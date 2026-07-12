@@ -433,6 +433,20 @@ def process(ctx: SymbolContext,
 
     candidates: list[SignalCandidate] = []
 
+    # ── 2026-07-11 (双脑清理): 盘中独立入场门 ──
+    # 纯双脑架构: DA/battle plan 是唯一入场决策脑。
+    # independent_entry_enabled=false 时, 盘中只保留 fast_lane (执行 DA 计划)
+    # + 持仓管理/退出, 关掉 ORB/technical/voting_llm/insider/earnings_revision
+    # 的独立入场, 消除第二入场脑的并行冲突。
+    _independent_entry_enabled = True
+    try:
+        from app.core.config_container import get_config as _gc_ie
+        _independent_entry_enabled = bool(_gc_ie().get_dotted("signal_stage.independent_entry_enabled", True))
+    except Exception:
+        pass
+    if not _independent_entry_enabled:
+        logger.debug(f"[SignalStage] {symbol} 双脑模式: 盘中独立入场已关, 仅 fast_lane")
+
     # ── 策略 1: 快车道 (作战计划, 永远放行 — 人已审核) ──
     if not has_position:
         try:
@@ -459,7 +473,7 @@ def process(ctx: SymbolContext,
     if regime_verdict and regime_verdict.blocks("orb"):
         _orb_allowed = False
         logger.debug(f"[Regime] {symbol} ORB 被 {regime_verdict.regime.value} 阻止")
-    if _orb_allowed and not has_position and not _non_trading_block_auto:
+    if _orb_allowed and not has_position and not _non_trading_block_auto and _independent_entry_enabled:
         try:
             candidate = eval_strategy("orb", ctx)
             if candidate is not None:
@@ -505,7 +519,7 @@ def process(ctx: SymbolContext,
     if regime_verdict and regime_verdict.blocks("TECHNICAL_MULTI_FACTOR"):
         _technical_regime_ok = False
         logger.debug(f"[Regime] {symbol} TECHNICAL 被 {regime_verdict.regime.value} 阻止")
-    if _technical_enabled and _technical_regime_ok and not _non_trading_block_auto:
+    if _technical_enabled and _technical_regime_ok and not _non_trading_block_auto and _independent_entry_enabled:
         try:
             candidate = eval_strategy("technical", ctx)
             if candidate is not None:
@@ -530,7 +544,7 @@ def process(ctx: SymbolContext,
     _llm_regime_ok = True
     if regime_verdict and regime_verdict.regime.value in ("BEAR", "CRISIS"):
         _llm_regime_ok = False
-    if _voting_llm_enabled and _llm_regime_ok and not _non_trading_block_auto:
+    if _voting_llm_enabled and _llm_regime_ok and not _non_trading_block_auto and _independent_entry_enabled:
         try:
             # P0 (2026-06-29): TRADING阶段Playbook独占时跳过LLM投票, 消灭空转省$2.7/天
             if _skip_execution_in_trading:
@@ -571,7 +585,7 @@ def process(ctx: SymbolContext,
         _insider_enabled = bool(_cfg.get_dotted("strategies.insider.enabled", True))
     except Exception:
         pass
-    if _insider_enabled and not has_position and not _non_trading_block_auto:
+    if _insider_enabled and not has_position and not _non_trading_block_auto and _independent_entry_enabled:
         try:
             candidate = eval_strategy("insider", ctx)
             if candidate is not None:
@@ -591,7 +605,7 @@ def process(ctx: SymbolContext,
         _erev_enabled = bool(_cfg.get_dotted("strategies.earnings_revision.enabled", True))
     except Exception:
         pass
-    if _erev_enabled and not has_position and not _non_trading_block_auto:
+    if _erev_enabled and not has_position and not _non_trading_block_auto and _independent_entry_enabled:
         try:
             candidate = eval_strategy("earnings_revision", ctx)
             if candidate is not None:

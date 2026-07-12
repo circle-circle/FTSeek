@@ -4,25 +4,26 @@ screening_factors:
     enabled: true
     description: Insider cluster buy (SECForm4Provider cluster score > 0.5)
   insider_net_buy:
-    weight: 3
+    weight: 2
     enabled: true
     description: Insider net buy (non-cluster)
   rsi_oversold:
-    weight: -2
+    weight: -3
     enabled: false
     condition: rsi_14 < 40
     description: RSI oversold pullback
   above_ma20:
-    weight: 4
+    weight: 1
     enabled: true
     condition: price > ma20
-    description: Price above 20-day MA
+    description: 'Price above 20-day MA (2026-07-07: 降权4→2, bayesian_wr=21.8%, 需共振触发)'
+    requires_co_factor: true
   macd_golden_cross:
-    weight: 4
+    weight: 3
     enabled: true
     description: MACD golden cross
   news_positive:
-    weight: 2
+    weight: 1
     enabled: true
     condition: sentiment_score > 0
     description: Positive news sentiment (last 3 days)
@@ -32,31 +33,31 @@ screening_factors:
     condition: beat_rate > 0.5
     description: Earnings beat rate > 50%
   volume_expansion:
-    weight: -1
+    weight: -2
     enabled: true
     condition: volume_5d_avg_ratio > 1.2
     description: Volume expansion
   pe_below_industry:
-    weight: -2
+    weight: -3
     enabled: false
     description: PE below industry average
   rsi_overbought:
-    weight: -3
+    weight: -4
     enabled: true
     condition: rsi_14 > 70
     description: RSI overbought
   insider_net_sell:
-    weight: -4
+    weight: -5
     enabled: false
     description: Insider net sell
   news_negative:
-    weight: -3
+    weight: -4
     enabled: false
     condition: sentiment_score < -0.3
     description: Negative news sentiment
   earnings_imminent:
     weight: -3
-    enabled: false  # 7/7: 禁用 — 不在 condition_taxonomy 枚举中, 与 earnings_approaching 语义重复
+    enabled: false
     condition: days_until_earnings < 3
     description: Earnings < 3 days, too volatile
 weight_adjustments:
@@ -124,3 +125,43 @@ weight_adjustments:
   factor: macd_golden_cross
   delta: 1
   reason: 'OKR-062 急救: PF 4.17, PnL +$1121, 进一步提升'
+- date: '2026-07-08'
+  factor: above_ma20
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率22%'
+- date: '2026-07-08'
+  factor: news_positive
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率18%'
+- date: '2026-07-08'
+  factor: pe_below_industry
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率27%'
+- date: '2026-07-08'
+  factor: macd_golden_cross
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率22%'
+- date: '2026-07-08'
+  factor: volume_expansion
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率38%'
+- date: '2026-07-08'
+  factor: insider_net_sell
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率25%'
+- date: '2026-07-08'
+  factor: rsi_overbought
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率18%'
+- date: '2026-07-08'
+  factor: rsi_oversold
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率11%'
+- date: '2026-07-08'
+  factor: news_negative
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率27%'
+- date: '2026-07-08'
+  factor: insider_net_buy
+  delta: -1
+  reason: '负收益因子: 贝叶斯胜率25%'

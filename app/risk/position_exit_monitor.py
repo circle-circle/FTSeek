@@ -785,10 +785,19 @@ class ExitMonitor:
         skipped_broker = 0
         skipped_manual = 0
 
+        _skipped_playbook = 0
         for p in positions:
             # 1. ORB 自管 (P0 2026-06-07: ORBEngine._monitor_exits 独立退出栈)
             if self._is_orb_position(p):
                 skipped_orb += 1
+                continue
+            # 2026-07-09: playbook_sim/live/shadow 仓位由 monitor_playbook_sim_exits 自管退出
+            # DEM 不得干预 — 防止 adaptive_pre_close/trailing 等规则双重平仓
+            # (position_monitor.py:1272 已跳过 ExitDispatcher 路径, 但 DEM.scan_positions
+            #  内部仍有自己的 6 规则 + dispatcher, 必须在此拦截)
+            _pb_owner = (getattr(p, 'owner_strategy', '') or '').strip().lower()
+            if _pb_owner in ('playbook_sim', 'playbook_live', 'playbook_shadow'):
+                _skipped_playbook += 1
                 continue
             # Broker-first (2026-06-03): 不再跳过 broker_sync 仓位，全部进入退出监控
             # 双重平仓防护下沉到 _close_position 的执行前持仓校验
@@ -825,6 +834,8 @@ class ExitMonitor:
             )
         if skipped_manual > 0:
             logger.info(f"[退出监控·manual] 跳过 {skipped_manual} 个 owner=manual 仓位 (web手动/自管)")
+        if _skipped_playbook > 0:
+            logger.info(f"[退出监控·playbook] 跳过 {_skipped_playbook} 个 playbook 仓位 (monitor_playbook_sim_exits 自管)")
 
         # P0-2 (2026-05-14): ExitDispatcher 路由 — 按 owner_strategy 选 ExitPolicy
         # Phase A 多数 ExitPolicy 返回 NO_ACTION (兜底走原 6 规则), 但 thesis-driven exit 可在此抢先决断
@@ -852,12 +863,30 @@ class ExitMonitor:
                 if _strict_owner:
                     _owner = (getattr(position, "owner_strategy", None) or "").strip().lower()
                     if not _owner or _owner in ("unknown", "none", "null"):
+                        # 2026-07-10 fix: 查 trade_records 判断是否为 playbook 仓位,
+                        # 是则赋 'playbook_sim' 而非 'main', 防止 exit_monitor 劫持
+                        # playbook 仓位 → 双重平仓 (PLAYBOOK_SIM + MAIN_PIPELINE)
+                        _fallback_owner = "main"
+                        try:
+                            from app.core.paths import get_trade_records_db
+                            import sqlite3 as _sql3
+                            _pc = _sql3.connect(str(get_trade_records_db()), timeout=3)
+                            _pb_row = _pc.execute(
+                                "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+                                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) LIMIT 1",
+                                (symbol,)
+                            ).fetchone()
+                            _pc.close()
+                            if _pb_row:
+                                _fallback_owner = "playbook_sim"
+                        except Exception:
+                            pass
                         logger.warning(
                             f"[策略隔离·兜底] {symbol} owner_strategy 为空/未知 ('{_owner}'), "
-                            f"默认赋值 'main' 以确保退出检查不丢失"
+                            f"默认赋值 '{_fallback_owner}' 以确保退出检查不丢失"
                         )
-                        position.owner_strategy = "main"
-                        _owner = "main"
+                        position.owner_strategy = _fallback_owner
+                        _owner = _fallback_owner
                 direction = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
                 entry_price = position.avg_entry_price
                 if entry_price <= 0:

@@ -37,8 +37,11 @@ class PlaybookConfig:
         "sell_short_min_confidence": 65,
         "buying_power_fallback_alert": True,
         # 2026-06-28: 单日 guardrail (仅 auto_execute 阶段生效)
-        "daily_notional_cap_pct": 0.20,
-        "max_daily_positions": 5,
+        # 2026-07-06: 模拟交易期提升交易量 20%→40%, 5→10 (收集更多样本数据)
+        # 2026-07-09: 40%→60% — bridge候选直写DB后, deep_analysis信号质量提升,
+        #   更多资金给bridge候选执行, 积累更多交易数据验证方向+退出策略
+        "daily_notional_cap_pct": 0.60,
+        "max_daily_positions": 10,
         # horizon defaults
         "short_rr_ratio": 1.0,
         "long_rr_ratio": 2.5,

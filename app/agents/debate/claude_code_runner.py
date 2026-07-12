@@ -90,12 +90,8 @@ class ClaudeCodeRunner:
         self.timeout = timeout
         self.retry_policy = RetryPolicy()
         
-        # API 配置 (复用 Bailian)
-        self.base_url = os.getenv("BAILIAN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.api_key = os.getenv("BAILIAN_API_KEY", "")
-        if not self.api_key:
-            logger.warning("[ClaudeRunner] BAILIAN_API_KEY 为空，LLM 调用将失败")
-        
+        # 2026-07-06: API key / base_url 统一走 UnifiedLLMService → model_call.py →
+        # unified_config.yaml, 此处不再读取环境变量做本地校验.
         logger.info(f"[ClaudeRunner] 已初始化 | model={self.default_model} | timeout={timeout}s")
     
     def run_analysis(self, prompt: str, system_prompt: str = None,

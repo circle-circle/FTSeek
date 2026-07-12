@@ -317,6 +317,13 @@ class VotingCoordinator:
         self.enable_cache = enable_cache
         self.vote_cache = VotingCache() if enable_cache else None
 
+        # 2026-07-08: 批次模板投票检测
+        # 问题: deepseek_v4_pro 在04:xx批次对38只股票全投37/47(std=5.1),
+        # LLM API返回200+reasoning但strength是模板值,不是真实分析.
+        # 检测: 跟踪每个模型最近N次strength, std<5时标记degraded.
+        self._batch_strength_history: Dict[str, List[int]] = {}  # model_id → [strength, ...]
+        self._batch_history_size = 10  # 用最近10次投票计算std
+
         # P1 (2026-05-27): 投票上下文丰富化辅助单例
         # - news_provider: USNewsProvider 实例 (按需初始化)
         # - market_data_router: MarketDataRouter 实例 (按需初始化, 用于取 bid/ask spread)
@@ -453,6 +460,10 @@ class VotingCoordinator:
         enriched_data = self._enrich_voting_context(market_data)
 
         scores = self._collect_scores_parallel(enriched_data)
+
+        # 2026-07-08: 批次模板投票检测
+        # 在aggregate前检查每个模型最近N次strength的方差, std<5标记为degraded
+        scores = self._detect_template_votes(scores)
 
         # P0 优化 (2026-04-17): 注入外部投票 (LLM 策略引擎)
         # P1 修复 (2026-04-17): ModelScore 使用 model_id= 而非 model=, direction 转字符串
@@ -1203,6 +1214,61 @@ class VotingCoordinator:
                 [m for m, _ in failed_models],
                 market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN",
             )
+
+        return scores
+
+    def _detect_template_votes(self, scores: List[ModelScore]) -> List[ModelScore]:
+        """2026-07-08: 检测批次内模板投票(LLM返回200但strength是模板值).
+
+        问题: deepseek_v4_pro 在04:xx批次对38只股票全投37/47(std=5.1).
+        LLM API返回200+reasoning文本,但strength值高度重复=模板/缓存行为.
+        这种"隐性降级"不会被degraded_vote捕获,污染consensus和IC.
+
+        检测逻辑:
+        1. 记录每个模型最近N次strength到_batch_strength_history
+        2. 当历史>=5条且std<5时,标记该模型本次投票为degraded_vote=True
+        3. 被标记的票在aggregator里权重降至30%且不参与consensus计算
+
+        数据依据(7/7 04:xx批次):
+        - deepseek_v4_pro: 38票, 2个unique值(37/47), std=5.1 → 模板
+        - qwen3.7_max: 38票, 5个unique值, std=10.5 → 正常
+        - glm_5_2: 38票, 11个unique值, std=7.5 → 正常
+        """
+        import statistics as _stats
+
+        for score in scores:
+            # 跳过已经是degraded的(超时/fallback的不需要再检测)
+            if getattr(score, "degraded_vote", False):
+                continue
+
+            model_id = score.model_id
+            history = self._batch_strength_history.setdefault(model_id, [])
+            history.append(score.strength)
+
+            # 只保留最近N条
+            if len(history) > self._batch_history_size:
+                history.pop(0)
+
+            # 当历史>=5条且(std<6或unique_values<=2) → 标记为模板投票
+            # 阈值依据(7/7 04:xx 38只股票实算):
+            # - deepseek: std=5.06, unique=2 → 模板 ✅
+            # - glm: std=7.5, unique=11 → 正常
+            # - qwen: std=10.5, unique=5 → 正常
+            if len(history) >= 5:
+                try:
+                    std = _stats.stdev(history)
+                except _stats.StatisticsError:
+                    continue  # 只有1条无法算std
+
+                unique_values = len(set(history))
+                if std < 6.0 or unique_values <= 2:
+                    # 不修改strength(让aggregator自己处理),只标记degraded
+                    score.degraded_vote = True
+                    score.failure_reason = f"template_pattern: std={std:.1f} over {len(history)} votes"
+                    logger.warning(
+                        f"[模板检测] {model_id} 最近{len(history)}次strength std={std:.1f}<5 "
+                        f"→ 标记degraded (values={history[-5:]})"
+                    )
 
         return scores
 

@@ -58,15 +58,14 @@ class WeeklyProposer:
     周度假设生成器
     
     用法:
-        proposer = WeeklyProposer(llm_client)
+        proposer = WeeklyProposer()
         proposals = proposer.generate_weekly_proposals()
         for p in proposals:
             pipeline.submit(p)
     """
 
-    def __init__(self, llm_client=None, model="deepseek"):
-        self.llm_client = llm_client
-        self.proposal_model = model  # 默认 deepseek (推理强)
+    def __init__(self):
+        pass
 
     def generate_weekly_proposals(
         self,
@@ -276,8 +275,8 @@ class WeeklyProposer:
 
 _weekly_proposer: Optional[WeeklyProposer] = None
 
-def get_weekly_proposer(llm_client=None, model="deepseek") -> WeeklyProposer:
+def get_weekly_proposer() -> WeeklyProposer:
     global _weekly_proposer
     if _weekly_proposer is None:
-        _weekly_proposer = WeeklyProposer(llm_client=llm_client, model=model)
+        _weekly_proposer = WeeklyProposer()
     return _weekly_proposer

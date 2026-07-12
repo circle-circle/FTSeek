@@ -284,6 +284,7 @@ def create_app() -> FastAPI:
     from app.web_dashboard.routes import battle_plan as r_battle_plan
     from app.web_dashboard.routes import trade_intel as r_trade_intel
     from app.web_dashboard.routes import playbook as r_playbook
+    from app.web_dashboard.routes import chain as r_chain
     from app.web_dashboard.routes import ws as r_ws
 
     r_dashboard.register(app, templates, dashboard)
@@ -296,6 +297,7 @@ def create_app() -> FastAPI:
     r_battle_plan.register(app, templates)
     r_trade_intel.register(app, templates)
     r_playbook.register(app, templates)
+    r_chain.register(app, templates)
     r_ws.register(app)
 
     logger.info("Dashboard v2.0 已创建 (路由模块化 + DataService 共享缓存)")

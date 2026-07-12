@@ -141,11 +141,6 @@ def main():
         avg_pnl = d['pnl'] / d['n'] if d['n'] else 0
 
         # avg MFE across all trades with this factor
-        all_mfes = []
-        for exit_r, ed in d['exit_breakdown'].items():
-            for _ in range(ed['n']):
-                pass  # MFE is per-trade not per-exit, we need to re-fetch
-        # Simpler: collect from factor_exit
         factor_mfes = []
         for key, fd in factor_exit.items():
             if key.startswith(factor + '::'):

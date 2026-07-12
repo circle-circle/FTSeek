@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-FTSeek-US 多模型 LLM 客户端 — 异构模型支持
+FTSeek-US 多模型 LLM 客户端 — 已废弃 (DEPRECATED)
 
-通过阿里百炼 API 接入多个异构模型:
-- Qwen-Max: 综合策略分析（归因主力）
-- DeepSeek-V4-Pro: 逻辑推理（假设生成主力）
-- MiniMax-M2.5: 情绪分析（辅助归因）
-- GLM-4.7: 技术指标分析（备用）
+⚠️ 2026-07-06: 该模块已废弃。新代码请使用 SSOT 入口:
+  - app.llm.model_call.call_llm(feature, prompt, ...)
+  - app.llm.unified_service.UnifiedLLMService.call_text(...)
 
-所有模型通过 OpenAI 兼容 API 调用，共享 BAILIAN_API_KEY。
-
-2026-05-13: 初始实现
+保留此文件仅用于兼容旧调用，所有路由 / API Key / 降级 / 审计
+均由 model_call 统一管理。
 """
 import os
 import json
@@ -337,5 +334,9 @@ def get_multi_model_client(
 ) -> MultiModelClient:
     global _multi_model_client
     if _multi_model_client is None:
+        logger.warning(
+            "[DEPRECATED] get_multi_model_client() is deprecated; "
+            "use app.llm.model_call.call_llm() or UnifiedLLMService instead."
+        )
         _multi_model_client = MultiModelClient(api_key=api_key, base_url=base_url)
     return _multi_model_client

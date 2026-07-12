@@ -16,7 +16,7 @@ echo ""
 export PYTHONPATH="/opt/ftseek/FTSeek-US:$PYTHONPATH"
 
 echo "1. 风险引擎测试..."
-python3.8 -c "
+python3.11 -c "
 from app.risk.engine import RiskEngine
 from app.core.events import EventStore
 from app.core.models import SignalScore, Direction
@@ -39,7 +39,7 @@ print('   ✅ 风险引擎正常')
 
 echo ""
 echo "2. 执行引擎测试..."
-python3.8 -c "
+python3.11 -c "
 from app.execution.engine import ExecutionEngine
 from app.core.events import EventStore
 
@@ -53,7 +53,7 @@ print('   ✅ 执行引擎正常')
 
 echo ""
 echo "3. 观测引擎测试..."
-python3.8 -c "
+python3.11 -c "
 from app.observability.engine import ObservabilityEngine
 from app.core.events import EventStore
 
@@ -69,7 +69,7 @@ print('   ✅ 观测引擎正常')
 
 echo ""
 echo "4. 多 Agent 投票测试..."
-python3.8 -c "
+python3.11 -c "
 from app.agents.voting.voting_coordinator import VotingCoordinator
 
 coordinator = VotingCoordinator()
@@ -92,7 +92,7 @@ print('   ✅ 投票系统正常')
 
 echo ""
 echo "5. Yahoo Finance 数据测试..."
-python3.8 -c "
+python3.11 -c "
 from app.data.yahoo_provider import YahooFinanceProvider
 
 provider = YahooFinanceProvider()

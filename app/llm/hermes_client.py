@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-FTSeek-US HermesClient — Python 3.8 兼容的 Hermes Agent REST 客户端
+FTSeek-US HermesClient — Python 3.11 兼容的 Hermes Agent REST 客户端
 
 通过 subprocess 与 hermes_worker.py (Python 3.11) 通信。
-纯 Python 3.8 实现，仅依赖 subprocess + json + threading。
+纯 Python 3.11 实现，仅依赖 subprocess + json + threading。
 
 协议:
   → stdin:  {"id": "req-1", "method": "chat", "params": {...}}
@@ -53,7 +53,7 @@ class HermesClient:
 
     通过 subprocess 与 Python 3.11 worker 进程通信，
     获取 Hermes Agent 全部 AI 能力。
-    纯 Python 3.8 兼容，零外部依赖。
+    纯 Python 3.11 兼容，零外部依赖。
     """
 
     def __init__(self,

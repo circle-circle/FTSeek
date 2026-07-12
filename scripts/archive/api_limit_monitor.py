@@ -16,6 +16,7 @@ API 限流监控脚本
 import os
 import sys
 import json
+import tempfile
 import logging
 import hashlib
 import hmac
@@ -49,7 +50,10 @@ def _ensure_logger():
 logger = logging.getLogger(__name__)
 
 # 常量
-STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "api_limit_state.json"
+# 2026-07-10 修复: 文件已迁入 scripts/archive/, parent.parent 只到 scripts/ →
+#   误写 scripts/data/api_limit_state.json, 架空了仓库根 data/ (premarket_data_check 查此处).
+#   上溯三级回到仓库根 data/.
+STATE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "api_limit_state.json"
 TWELVEDATA_DAILY_LIMIT = 800  # TwelveData 免费计划：800 次/天
 TWELVEDATA_WARNING_THRESHOLD = 700  # 预警阈值
 FINNHUB_DAILY_LIMIT = 60 * 60 * 24  # Finnhub: 60 次/分钟，理论上 unlimited daily
@@ -175,14 +179,31 @@ class APILimitMonitor:
         }
     
     def _save_state(self):
-        """保存状态文件"""
+        """保存状态文件 (2026-07-10: 原子写 — 临时文件 + os.replace,
+        避免 twelvedata/finnhub 两 provider 无锁并发时, 读方撞上 open('w') 截断的空文件
+        导致 'Expecting value' 解析报错 + 计数丢失)
+        2026-07-11: 改用 tempfile.mkstemp 保证临时名全局唯一 — 原 os.getpid() 名在
+        两 provider 线程同 PID 并发时撞名, 一线程 os.replace 消费后另一线程
+        再 replace 报 'No such file'; mkstemp 不依赖 pid/tid, 彻底隔离"""
+        _tmp = None
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, 'w', encoding='utf-8') as f:
+            _fd, _tmp = tempfile.mkstemp(
+                dir=str(self.state_file.parent),
+                prefix=self.state_file.name + ".tmp.",
+            )
+            with os.fdopen(_fd, 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=2, ensure_ascii=False)
+            os.replace(_tmp, self.state_file)  # 原子替换: 读方永远看到完整文件
+            _tmp = None
             logger.debug(f"[API 监控] 状态已保存：{self.state_file}")
         except Exception as e:
             logger.error(f"[API 监控] 保存状态文件失败：{e}")
+            if _tmp:  # 清理残留临时文件
+                try:
+                    os.unlink(_tmp)
+                except OSError:
+                    pass
     
     def record_call(self, source: str, count: int = 1):
         """

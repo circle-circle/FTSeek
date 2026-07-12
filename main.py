@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.11
 """
 FTSeek-US 主入口
 美股AI投研系统 v2.0.0 — 多模型投票 + 自适应轮询 + Futu LV3实时行情

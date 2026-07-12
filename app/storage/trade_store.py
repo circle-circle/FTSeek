@@ -660,8 +660,10 @@ class TradeStore:
                 metadata_json = json.dumps(metadata_json, ensure_ascii=False, default=str)
 
                 # P0 (2026-06-07): factor_detail 处理
+                # 2026-07-09: 修复list类型 — _row_to_dict自动json.loads了conditions_json,
+                # 使其从string变成list, 但此处只处理dict, 导致sqlite3 "unsupported type"
                 factor_detail = record.get("factor_detail")
-                if isinstance(factor_detail, dict):
+                if isinstance(factor_detail, (dict, list)):
                     factor_detail = json.dumps(factor_detail, ensure_ascii=False, default=str)
                 elif not factor_detail:
                     factor_detail = None
@@ -693,8 +695,8 @@ class TradeStore:
                         owner_strategy, mode, market_regime, trade_mode,
                         signal_id, decision_id, factor_detail,
                         f1_trend, f2_momentum, f3_volume, f4_orderflow, f5_lifecycle,
-                        created_at, config_version
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2')
+                        created_at, config_version, entry_vix, entry_session
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2',?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -734,6 +736,8 @@ class TradeStore:
                     factor_detail,
                     _f1_trend, _f2_momentum, _f3_volume, _f4_orderflow, _f5_lifecycle,
                     datetime.now().isoformat(),
+                    record.get("entry_vix", 0.0) or 0.0,
+                    record.get("entry_session", "") or "",
                 ))
                 conn.commit()
                 rowid = cursor.lastrowid

@@ -451,7 +451,373 @@ class ObsidianWriter:
         return self._write_md("strategies", filename, content, overwrite=overwrite)
 
     # ============================================================
-    # 6. Daily 笔记 — 日报 (盘前 + 盘后)
+    # 6. Symbol 笔记 — per-symbol 深度分析归档 (持续积累)
+    # ============================================================
+
+    def write_symbol_analysis(self, analysis: Dict) -> Optional[str]:
+        """
+        写入 per-symbol 深度分析笔记 (追加模式, 持续积累)
+
+        每次 deep_analysis 产出后追加一个日期 section 到 symbols/US.XXX.md,
+        记录 verdict/bull_case/bear_case/execution_plan/causal_chain。
+        frontmatter 同步刷新 latest 方向/评分/战绩。
+
+        幂等: 同日同 decision_id 不重复追加。
+        best-effort: 失败只 log warning 不抛异常。
+
+        Args:
+            analysis: deep_analysis 的完整 result dict, 包含:
+                symbol, name, rating, confidence, score, action,
+                conclusion, bull_reasons, bear_reasons, constraints,
+                entry_plan, stop_loss, target, key_levels, risks,
+                _llm_output (含 bull_case/bear_case/execution_plan/causal_chain),
+                _ic_decision_id, snapshot, plates, data_quality
+        """
+        try:
+            symbol = analysis.get("symbol", "UNKNOWN")
+            safe_name = symbol.replace(".", "_")
+            filename = f"{safe_name}.md"
+
+            # -- 从 _llm_output 提取结构化论据 --
+            llm_out = analysis.get("_llm_output", {})
+            bull_cases = llm_out.get("bull_case", [])
+            bear_cases = llm_out.get("bear_case", [])
+            execution_plan = llm_out.get("execution_plan", {})
+            causal_chain = llm_out.get("causal_chain", "")
+            risks = llm_out.get("risks", [])
+
+            # -- 日期 + decision_id (幂等键) --
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            decision_id = analysis.get("_ic_decision_id", "")
+            id_suffix = decision_id.split("-")[-1] if decision_id else datetime.now().strftime("%H%M%S")
+            section_anchor = f"{date_str}-{id_suffix}"
+
+            # -- 从 strategy_memory.db 读战绩 (best-effort) --
+            stats = self._read_symbol_stats(symbol)
+
+            # -- 构建 section 内容 --
+            score = analysis.get("score", 0)
+            rating = analysis.get("rating", "")
+            confidence = analysis.get("confidence", "")
+            action = analysis.get("action", "")
+            conclusion = analysis.get("conclusion", "")
+            name = analysis.get("name", "")
+
+            snap = analysis.get("snapshot", {})
+            price = snap.get("price", 0)
+
+            # -- claim IC 缓存 (论据级预测力) --
+            claim_ic = self._load_claim_ic()
+
+            # bull/bear 论据 (带IC标注)
+            bull_lines = []
+            for i, r in enumerate(bull_cases[:5], 1):
+                thesis = r.get("thesis", "")[:120]
+                st = r.get("strength", "MEDIUM")
+                src = r.get("source_type", "")
+                ct = r.get("claim_type", "")
+                ic_tag = self._claim_ic_tag(ct, claim_ic)
+                bull_lines.append(f"  {i}. [{st}]{ic_tag} {thesis}" + (f" ({src})" if src else ""))
+            if not bull_lines:
+                for r in (analysis.get("bull_reasons") or [])[:5]:
+                    bull_lines.append(f"  - [{r.get('strength','')}] {r.get('text','')[:120]}")
+
+            bear_lines = []
+            for i, r in enumerate(bear_cases[:5], 1):
+                thesis = r.get("thesis", "")[:120]
+                st = r.get("strength", "MEDIUM")
+                src = r.get("source_type", "")
+                ct = r.get("claim_type", "")
+                ic_tag = self._claim_ic_tag(ct, claim_ic)
+                bear_lines.append(f"  {i}. [{st}]{ic_tag} {thesis}" + (f" ({src})" if src else ""))
+            if not bear_lines:
+                for r in (analysis.get("bear_reasons") or [])[:5]:
+                    bear_lines.append(f"  - [{r.get('strength','')}] {r.get('text','')[:120]}")
+
+            # IC 汇总段
+            ic_summary = self._build_ic_summary(bull_cases + bear_cases, claim_ic)
+
+            # 执行计划
+            entry_str = execution_plan.get("entry_strategy", analysis.get("entry_plan", ""))
+            sl_str = execution_plan.get("stop_loss", analysis.get("stop_loss", ""))
+            tp_str = execution_plan.get("take_profit", analysis.get("target", ""))
+
+            # 关键价位
+            kl = llm_out.get("key_levels", {})
+            support_lines = ", ".join(str(s) for s in kl.get("support", [])) if kl else ""
+            resistance_lines = ", ".join(str(r) for r in kl.get("resistance", [])) if kl else ""
+
+            # 风险
+            risk_lines = []
+            for r in risks[:5]:
+                if isinstance(r, dict):
+                    risk_lines.append(f"  - [{r.get('severity','')}] {r.get('description','')[:100]}")
+                else:
+                    risk_lines.append(f"  - {str(r)[:100]}")
+            if not risk_lines:
+                risk_lines = [f"  - {r[:100]}" for r in (analysis.get("risks") or [])[:5]]
+
+            # wikilink peers (同行业, 扫描已有symbol pages)
+            peer_links = ""
+            plates = analysis.get("plates", [])
+            industry = ""
+            if plates:
+                industry = plates[0].get("name", "") if plates else ""
+            if industry:
+                peers = self._find_industry_peers(industry, safe_name)
+                if peers:
+                    peer_links = f"\n## 同行业 ({industry})\n" + "\n".join(f"- [[{p}]]" for p in peers)
+
+            # 数据质量
+            dq = analysis.get("data_quality", {})
+            dq_str = f"数据源 {dq.get('ok',0)}/{dq.get('total',0)} ({dq.get('coverage_pct',0):.0f}%)"
+
+            section = f"""
+## {date_str} | {rating} | 信心{confidence} | {action}
+<!-- id:{section_anchor} -->
+
+> {conclusion}
+
+- **标的**: {name} ({symbol}) | 现价: {price} | 评分: {score}/10
+- **IC ID**: `{decision_id}`
+- **数据质量**: {dq_str}
+
+### 看多论据
+{chr(10).join(bull_lines) if bull_lines else '- 无'}
+
+### 看空论据
+{chr(10).join(bear_lines) if bear_lines else '- 无'}
+
+### 交易计划
+- 入场: {entry_str or 'N/A'}
+- 止损: {sl_str or 'N/A'}
+- 止盈: {tp_str or 'N/A'}
+- 支撑: {support_lines or 'N/A'} | 阻力: {resistance_lines or 'N/A'}
+
+### 风险
+{chr(10).join(risk_lines) if risk_lines else '- 无'}
+
+### 因果链
+{causal_chain or 'N/A'}
+
+### 论据IC验证
+{ic_summary}
+{peer_links}
+---
+"""
+            # -- 读现有文件 or 创建新文件 --
+            filepath = os.path.join(self.vault, "symbols", filename)
+            os.makedirs(os.path.join(self.vault, "symbols"), exist_ok=True)
+
+            if os.path.exists(filepath):
+                # 幂等: 检查同 section_anchor 是否已存在
+                with open(filepath, "r", encoding="utf-8") as f:
+                    existing = f.read()
+                if section_anchor in existing:
+                    logger.debug(f"[Obsidian] 跳过重复写入: {symbol} {section_anchor}")
+                    return filepath
+
+                # 追加 section + 更新 frontmatter
+                # 追加 section 到文件末尾
+                with open(filepath, "a", encoding="utf-8") as f:
+                    f.write(section)
+                # 更新 frontmatter (重写文件头部)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # 用更新后的 frontmatter 替换旧的
+                content = self._replace_frontmatter(content, {
+                    "latest_date": date_str,
+                    "latest_direction": action,
+                    "latest_score": score,
+                    "latest_rating": rating,
+                    "total_trades": stats.get("total_trades", 0),
+                    "win_rate": stats.get("win_rate", 0),
+                    "industry": industry or "",
+                })
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                logger.info(f"[Obsidian] 追加分析: {symbol} {section_anchor}")
+            else:
+                # 创建新文件
+                fm = self._fm(
+                    type="symbol",
+                    symbol=symbol,
+                    name=name,
+                    industry=industry or "",
+                    latest_date=date_str,
+                    latest_direction=action,
+                    latest_score=score,
+                    latest_rating=rating,
+                    total_trades=stats.get("total_trades", 0),
+                    win_rate=stats.get("win_rate", 0),
+                    tags=["symbol", symbol.split(".")[0] if "." in symbol else "US"],
+                )
+                content = f"""{fm}
+
+# {name} ({symbol})
+
+> 本页持续积累每次 deep_analysis 的深度分析结果。
+> 每次 LLM 分析产出后自动追加, 含论据/交易计划/风险/因果链。
+> 战绩数据从 strategy_memory.db 同步。
+
+{section}"""
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                logger.info(f"[Obsidian] 创建标的页: {symbol}")
+
+            return filepath
+
+        except Exception as e:
+            logger.warning(f"[Obsidian] write_symbol_analysis 失败 (不影响pipeline): {e}")
+            return None
+
+    def _load_claim_ic(self) -> Dict:
+        """读取 claim_ic_cache.json (论据级IC, best-effort)"""
+        try:
+            cache_path = os.path.join(
+                os.path.expanduser("~"), ".hermes", "skills",
+                "deep-stock-analysis", "scripts", "claim_ic_cache.json"
+            )
+            if not os.path.exists(cache_path):
+                return {}
+            import json
+            with open(cache_path) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _claim_ic_tag(self, claim_type: str, claim_ic: Dict) -> str:
+        """给单条论据生成IC标注, 如 [IC=+0.56✅] 或 [IC=-0.07⚠️] 或空"""
+        if not claim_type or not claim_ic:
+            return ""
+        claims = claim_ic.get("claims", {})
+        entry = claims.get(claim_type)
+        if not entry:
+            # 尝试模糊匹配 (claim_type可能带后缀如 theme_momentum:+0.05)
+            for k, v in claims.items():
+                if k.startswith(claim_type + ":") or claim_type.startswith(k.split(":")[0]):
+                    entry = v
+                    break
+        if not entry:
+            return ""
+        ic = entry.get("ic_t1")
+        n = entry.get("count", 0)
+        if ic is None:
+            return ""
+        if ic > 0.05:
+            return f"[IC={ic:+.2f}✅n={n}]"
+        elif ic < -0.05:
+            return f"[IC={ic:+.2f}⚠️n={n}]"
+        else:
+            return f"[IC={ic:+.2f}n={n}]"
+
+    def _build_ic_summary(self, all_cases: list, claim_ic: Dict) -> str:
+        """构建论据IC汇总段"""
+        if not claim_ic or not all_cases:
+            return "- IC缓存不可用"
+        total = claim_ic.get("total_samples", 0)
+        if total < 10:
+            return f"- IC样本不足({total}条), 暂无统计意义"
+        effective = claim_ic.get("effective_claims", [])
+        ineffective = claim_ic.get("ineffective_claims", [])
+        lines = [f"- 基于{total}条历史信号alpha IC验证 (overall_t1={claim_ic.get('overall_ic_t1',0):+.4f})"]
+        if effective:
+            lines.append(f"- ✅ 有效论据(IC>0.05): {', '.join(effective)}")
+        if ineffective:
+            lines.append(f"- ⚠️ 无效论据(IC<-0.05): {', '.join(ineffective)}")
+        return "\n".join(lines)
+
+    def _find_industry_peers(self, industry: str, exclude_symbol: str) -> list:
+        """扫描 symbols/ 目录, 找同行业的其他symbol page (返回wikilink名列表)"""
+        try:
+            symbols_dir = os.path.join(self.vault, "symbols")
+            if not os.path.isdir(symbols_dir):
+                return []
+            peers = []
+            for fname in os.listdir(symbols_dir):
+                if not fname.endswith(".md"):
+                    continue
+                if fname.replace(".md", "") == exclude_symbol:
+                    continue
+                fpath = os.path.join(symbols_dir, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        head = f.read(2000)  # 只读frontmatter
+                    # 检查 industry 字段
+                    if f'industry: "{industry}"' in head or f'industry: {industry}' in head:
+                        peers.append(fname.replace(".md", ""))
+                except Exception:
+                    continue
+            return sorted(peers)[:10]  # 最多10个
+        except Exception:
+            return []
+
+    def _read_symbol_stats(self, symbol: str) -> Dict:
+        """从 strategy_memory.db 读取 per-symbol 战绩 (best-effort)"""
+        try:
+            import sqlite3
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "strategy_memory.db")
+            if not os.path.exists(db_path):
+                return {}
+            conn = sqlite3.connect(db_path, timeout=3)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT total_trades, win_rate, avg_pnl FROM symbol_memory WHERE symbol = ?",
+                (symbol,)
+            ).fetchall()
+            conn.close()
+            if rows:
+                r = rows[0]
+                return {
+                    "total_trades": r["total_trades"],
+                    "win_rate": round(r["win_rate"], 2) if r["win_rate"] else 0,
+                }
+            return {}
+        except Exception:
+            return {}
+
+    def _replace_frontmatter(self, content: str, updates: Dict) -> str:
+        """替换文件 frontmatter 中的字段值"""
+        try:
+            if not content.startswith("---"):
+                return content
+            end_idx = content.index("---", 3)
+            fm_block = content[3:end_idx]
+            lines = fm_block.strip().split("\n")
+            updated_lines = []
+            keys_updated = set()
+            for line in lines:
+                # 检查是否是需要更新的字段
+                for k, v in updates.items():
+                    if line.strip().startswith(f"{k}:"):
+                        updated_lines.append(self._format_fm_line(k, v))
+                        keys_updated.add(k)
+                        break
+                else:
+                    updated_lines.append(line)
+            # 添加未找到的新字段
+            for k, v in updates.items():
+                if k not in keys_updated:
+                    updated_lines.append(self._format_fm_line(k, v))
+            new_fm = "\n".join(updated_lines)
+            return f"---\n{new_fm}\n---{content[end_idx+3:]}"
+        except Exception:
+            return content
+
+    def _format_fm_line(self, key: str, value) -> str:
+        """格式化单行 frontmatter"""
+        if isinstance(value, bool):
+            return f"{key}: {'true' if value else 'false'}"
+        elif isinstance(value, (int, float)):
+            return f"{key}: {value}"
+        elif isinstance(value, str) and value:
+            escaped = value.replace('"', '\\"')
+            return f'{key}: "{escaped}"'
+        else:
+            return f"{key}:"
+
+    # ============================================================
+    # 7. Daily 笔记 — 日报 (盘前 + 盘后)
     # ============================================================
 
     def write_daily_premarket(self, data: Dict) -> Optional[str]:

@@ -36,6 +36,24 @@ SNAP_DB = PROJECT_ROOT / "data" / "signal_snapshots.db"
 DEC_DB = PROJECT_ROOT / "data" / "decisions.db"
 
 
+def _norm_conf(v):
+    """量纲统一: signal_confidence 一律归到 0-1.
+
+    根因 (2026-07-11): best_conf 汇聚 snapshot(0-1) / trade_records(0-100) /
+    decisions(0-1) 三源, 混合量纲把 signal_lifecycle 均值拖到 ~4, 污染校准度量。
+    规则: None→None; >1.5 视为 0-100 除以 100; 再夹到 [0,1]。
+    """
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f > 1.5:
+        f = f / 100.0
+    return max(0.0, min(1.0, f))
+
+
 def ensure_lifecycle_table(conn: sqlite3.Connection):
     """确保 signal_lifecycle 表存在"""
     conn.execute("""
@@ -126,10 +144,23 @@ def full_rebuild():
             """, (dec_id,)).fetchone()
             if row:
                 dec_str, consensus, vix_val = row
-        
+
+        # DA 决策原始 confidence (指令携带的, 优先级最高)
+        # 根因 (2026-07-11): 归因原用 snap_conf/consensus, 与 DA 实际给的 confidence
+        # 分歧 (如 GOOG 指令=35 vs 归因=0.70), 导致一切按 confidence 的校准分错桶。
+        # 修复: 优先取 playbook_instructions.confidence (DA 原值), 无则回退旧来源。
+        instr_conf = None
+        if dec_id:
+            row = conn.execute(
+                "SELECT confidence FROM playbook_instructions "
+                "WHERE decision_id = ? ORDER BY created_at DESC LIMIT 1",
+                (dec_id,)).fetchone()
+            if row:
+                instr_conf = row[0]
+
         # Best available strength
         best_str = snap_str or trade_str or dec_str
-        best_conf = snap_conf or trade_conf or consensus
+        best_conf = _norm_conf(instr_conf or snap_conf or trade_conf or consensus)
         
         direction_aligned = 1 if (snap_dir and snap_dir == tdir) else 0
         trade_win = 1 if (pnl_pct and pnl_pct > 0) else (0 if (pnl_pct and pnl_pct < 0) else None)
@@ -240,9 +271,19 @@ def incremental_update():
             """, (dec_id,)).fetchone()
             if row:
                 dec_str, consensus, vix_val = row
-        
+
+        # DA 原始 confidence 优先 (同 full_rebuild, 2026-07-11 修复)
+        instr_conf = None
+        if dec_id:
+            row = conn.execute(
+                "SELECT confidence FROM playbook_instructions "
+                "WHERE decision_id = ? ORDER BY created_at DESC LIMIT 1",
+                (dec_id,)).fetchone()
+            if row:
+                instr_conf = row[0]
+
         best_str = snap_str or trade_str or dec_str
-        best_conf = snap_conf or trade_conf or consensus
+        best_conf = _norm_conf(instr_conf or snap_conf or trade_conf or consensus)
         direction_aligned = 1 if (snap_dir and snap_dir == tdir) else 0
         trade_win = 1 if (pnl_pct and pnl_pct > 0) else (0 if (pnl_pct and pnl_pct < 0) else None)
         

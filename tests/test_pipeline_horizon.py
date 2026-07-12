@@ -65,6 +65,9 @@ class TestPipelineHorizon:
 
     def test_check_playbook_exit_rules_long_horizon_skips_pre_close(self):
         """long horizon 盈利仓应跳过 EOD 强平."""
+        from datetime import datetime
+        # 用今天的日期作为 entry_time, 避免触发 MAX_HOLD (entry 在今天, max_hold_days=3 未到)
+        _today = datetime.now().strftime("%Y-%m-%dT10:00:00")
         meta = {"horizon": "long"}
         exit_reason, exit_price, _, _ = _check_playbook_exit_rules(
             direction="LONG",
@@ -76,6 +79,6 @@ class TestPipelineHorizon:
             held_minutes=300,
             minutes_to_close=5,
             minutes_from_open=390,
-            entry_time_str="2026-06-26T10:00:00",
+            entry_time_str=_today,
         )
         assert exit_reason == ""

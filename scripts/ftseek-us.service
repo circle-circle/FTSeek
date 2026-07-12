@@ -4,8 +4,9 @@ Documentation=https://github.com/ftseek/FTSeek-US
 After=network.target network-online.target
 Wants=network-online.target
 
-# 进程锁：确保只有一个实例运行
-ConditionPathExists=!/run/ftseek-us.lock
+# 单实例保护: main.py 的 fcntl.flock (进程死/SIGKILL 内核自动释放) + ExecStartPre 清锁
+# (2026-07-11 移除 ConditionPathExists=!/run/ftseek-us.lock: 它仅看文件存在性,
+#  SIGKILL 残留锁文件会在 ExecStartPre 清锁前被评估, 从而静默挡住启动)
 
 [Service]
 Type=simple

@@ -249,8 +249,11 @@ class DualBrokerAdapter:
     def close_position(self, symbol: str, qty: float, direction_held: str, target_env: str = "sim") -> Dict[str, Any]:
         """市价平仓 (持仓方向 → 反向市价单).
 
-        2026-07-03: 平仓前查 broker 实际持仓量 (防 DB qty ≠ broker qty → "持仓不足"),
-        平仓后验证 broker 已无仓 (防 fill=0 假平仓).
+        根因修复 (2026-07-07): 订单状态是成交的唯一真相来源.
+        旧实现用 position_list_query (持仓列表) 验证平仓 — SIM 环境持仓列表更新延迟可达 29s,
+        3s 轮询不够 → 假阴性 broker_close_failed → 下一轮 broker_no_position → BROKER_GHOST_CLOSE.
+        现改为用 order_list_query 的 order_status 验证 (FILLED_ALL = 全部成交),
+        与持仓列表更新延迟无关, 从源头消灭整类问题.
 
         Args:
             direction_held: "LONG" | "SHORT" — 持仓方向; 平仓用反向.
@@ -260,12 +263,13 @@ class DualBrokerAdapter:
              "price_source": str, "broker_qty_before": float, "broker_qty_after": float, "error": str}
         """
         try:
-            from futu import TrdSide, OrderType as FutuOrderType, RET_OK
+            from futu import TrdSide, OrderType as FutuOrderType, RET_OK, OrderStatus
             from app.core.models import Order, Direction, OrderType
+            import time as _t
 
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
 
-            # ── Fix 2: 平仓前查 broker 实际持仓量 ──
+            # ── 平仓前查 broker 实际持仓量 ──
             broker_qty_before = 0.0
             with lock:
                 ret_pos, pos_data = ctx.position_list_query(trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0)
@@ -297,35 +301,63 @@ class DualBrokerAdapter:
                         "broker_qty_before": broker_qty_before, "broker_qty_after": broker_qty_before}
 
             futu_id = str(data["order_id"].values[0])
-            filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
 
-            # ── Fix 4: 平仓后验证 broker 已无仓 ──
-            import time as _t
-            _t.sleep(0.5)  # 给 broker 0.5s 处理
-            broker_qty_after = broker_qty_before  # 默认假设没平掉
-            with lock:
-                ret_pos2, pos_data2 = ctx.position_list_query(trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0)
-            if ret_pos2 == RET_OK and pos_data2 is not None and not pos_data2.empty:
-                _matches2 = pos_data2[pos_data2["code"] == symbol]
-                if not _matches2.empty:
-                    broker_qty_after = abs(float(_matches2.iloc[0].get("qty", 0) or 0))
+            # ── 根因修复: 用订单状态验证成交, 不用持仓列表 ──
+            # order_list_query 返回 order_status + dealt_qty, 与持仓列表更新延迟无关.
+            # FILLED_ALL = 全部成交; FILLED_PART = 部分成交.
+            # 最多等待 30s (60×0.5s), 覆盖 SIM 环境 ~29s 延迟.
+            order_filled = False
+            dealt_qty = 0.0
+            filled_price = 0.0
+
+            for _wait in range(60):  # 最多 30s (60×0.5s)
+                _t.sleep(0.5)
+                # 查订单状态
+                try:
+                    with lock:
+                        ret_od, od_data = ctx.order_list_query(order_id=futu_id, trd_env=trd_env)
+                    if ret_od == RET_OK and od_data is not None and not od_data.empty:
+                        _row = od_data.iloc[0]
+                        _status = str(_row.get("order_status", ""))
+                        dealt_qty = float(_row.get("dealt_qty", 0) or 0)
+                        # FILLED_ALL 或 dealt_qty >= close_qty = 成交完成
+                        if "FILLED_ALL" in _status or dealt_qty >= close_qty:
+                            order_filled = True
+                            break
+                        # 订单失败/取消 = 不可恢复
+                        if any(_x in _status for _x in ("FAILED", "CANCELLED", "DELETED", "TIMEOUT", "REJECTED")):
+                            logger.warning(f"[DualBroker] {symbol} 平仓订单失败: status={_status}")
+                            break
+                except Exception as _od_err:
+                    logger.debug(f"[DualBroker] {symbol} order_list_query 异常: {_od_err}")
+                # 同时尝试获取成交价 (可能在等待期间成交了)
+                if filled_price <= 0:
+                    filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
+
+            # 订单成交后再查一次成交价 (确保拿到最终价)
+            if order_filled and filled_price <= 0:
+                filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
+
+            # 计算剩余持仓 (仅用于日志/审计, 不作为成交判定依据)
+            broker_qty_after = broker_qty_before - dealt_qty if dealt_qty > 0 else broker_qty_before
 
             # 确定价格来源
-            if filled_price > 0:
+            if order_filled and filled_price > 0:
                 price_source = "broker_deal"
-            elif broker_qty_after < 0.5:
-                price_source = "broker_closed_no_price"  # 平了但价格查不到
+            elif order_filled and filled_price <= 0:
+                price_source = "broker_closed_no_price"  # 成交了但价格查不到
             else:
-                price_source = "broker_close_failed"  # 没平掉
+                price_source = "broker_close_failed"  # 订单未成交
 
             logger.info(
                 f"[DualBroker] 平仓: {symbol} qty={close_qty} env={target_env} "
-                f"fill={filled_price} src={price_source} "
-                f"broker_qty: {broker_qty_before}→{broker_qty_after}"
+                f"fill={filled_price} src={price_source} order_filled={order_filled} "
+                f"dealt={dealt_qty} broker_qty: {broker_qty_before}→{broker_qty_after}"
             )
             return {"success": True, "futu_order_id": futu_id, "filled_price": filled_price,
                     "price_source": price_source,
-                    "broker_qty_before": broker_qty_before, "broker_qty_after": broker_qty_after, "error": ""}
+                    "broker_qty_before": broker_qty_before, "broker_qty_after": broker_qty_after,
+                    "order_filled": order_filled, "dealt_qty": dealt_qty, "error": ""}
 
         except Exception as e:
             logger.exception(f"[DualBroker] close_position 异常 {symbol}: {e}")

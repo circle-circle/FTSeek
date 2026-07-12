@@ -32,6 +32,13 @@ class VotingConfig:
     NEUTRAL_LOW = 40             # 45 → 40，降低过滤率至~22%
     NEUTRAL_HIGH = 60            # 55 → 60，降低过滤率至~22%
     NEUTRAL_MAX_STD = 10.0
+
+    # 2026-07-11: 中性带"多数收敛" — 统一带内/带外口径.
+    # 现状不一致: 带内要求全体模型同向(unanimous)才豁免中性, 带外只需加权多数.
+    # 收敛: 带内若存在 >=2/3 加权多数方向, 也不判中性(direction 走 _majority_dir).
+    # 不动带宽(40-60)与 std 门槛(10), 非放松阈值; 无多数(硬币翻转)仍判中性.
+    NEUTRAL_MAJORITY_OVERRIDE_ENABLED = True
+    NEUTRAL_MAJORITY_OVERRIDE_RATIO = 0.67   # 加权多数占比阈值 (>=2/3)
     
     # Fallback 置信度 - 方案 E 优化：提高利用率 (0.40 → 0.50)
     FALLBACK_CONFIDENCE_COMPLETE = 0.50  # 0.40 → 0.50

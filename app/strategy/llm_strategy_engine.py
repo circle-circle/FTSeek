@@ -14,25 +14,15 @@ FTSeek-US LLM 二阶推理策略引擎
 日期: 2026-04-16
 """
 
-import os
 import re
 import json
 import queue
 import logging
-import time
 import uuid
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from pathlib import Path
-
-import requests
-from dotenv import load_dotenv
-
-_env_path = Path(__file__).resolve().parent.parent.parent / ".env.us"
-if _env_path.exists():
-    load_dotenv(_env_path)
 
 logger = logging.getLogger("ftseek.llm_strategy")
 
@@ -42,6 +32,7 @@ logger = logging.getLogger("ftseek.llm_strategy")
 # ============================================================
 
 from app.llm.prompts.strategy import SYSTEM_PROMPT, LLM_REASONING_PROMPT, ANALYSIS_SYSTEM_PROMPT
+from app.llm.unified_service import UnifiedLLMService
 
 USER_PROMPT_TEMPLATE = """
 请基于以下事件包，输出严格 JSON。
@@ -176,16 +167,6 @@ class LLMStrategyEngine:
             cfg = {}
             
         self.enabled = cfg.get('enabled', False)
-        # 默认使用 qwen3.6-flash (二阶推理专用)
-        self.model = cfg.get('model', os.getenv("BAILIAN_MODEL_STRATEGY", os.getenv("BAILIAN_MODEL_FAST", "qwen-flash")))
-        self.bailian_base_url = cfg.get('base_url', os.getenv("BAILIAN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
-        
-        # 读取 API Key: 优先 config -> 其次环境变量
-        api_key_from_cfg = cfg.get('api_key', '')
-        api_key_env_name = cfg.get('api_key_env', 'BAILIAN_API_KEY')
-        self.bailian_api_key = api_key_from_cfg or os.getenv(api_key_env_name, "")
-        
-        self.enabled = self.enabled and bool(self.bailian_api_key)
         
         # 策略历史 (用于冷却/去重)
         self._recent_strategies: List[OrderStrategy] = []
@@ -195,7 +176,7 @@ class LLMStrategyEngine:
         self._urgent_queue: queue.Queue = queue.Queue(maxsize=50)
         self._scan_event: threading.Event = threading.Event()
 
-        logger.info(f"[LLM策略引擎] 初始化 | 模型={self.model} | 启用={self.enabled} | 来源=unified_config")
+        logger.info(f"[LLM策略引擎] 初始化 | 启用={self.enabled} | 来源=unified_config")
     
     def analyze_and_generate(
         self,
@@ -321,10 +302,10 @@ class LLMStrategyEngine:
         if not strategy:
             return None
 
-        # 1. 检查置信度
-        if strategy.confidence < 0.60:
-            logger.warning(f"📉 [校验] 策略 {strategy.symbol} 置信度过低 ({strategy.confidence:.2f}) -> 拒绝")
-            return None # 返回 None 以便后续过滤
+        # 2026-07-10: 删除 confidence < 0.60 gate
+        # 数据验证: LLM confidence r=-0.211(负相关), 被此gate拦截的27笔WR=48%总盈利+$5,654
+        # → 此gate在拦截更好的交易, 有害, 删除
+        # 保留 tradeability/pricing_status 校验 (这些不依赖LLM自评)
 
         # 2. 检查交易可行性
         if hasattr(strategy, 'tradeability') and strategy.tradeability == 'no_trade':
@@ -407,7 +388,7 @@ class LLMStrategyEngine:
         timeout: int = 90
     ) -> Optional[str]:
         """
-        底层 LLM API 调用
+        底层 LLM API 调用 — 统一走 UnifiedLLMService (SSOT)
         
         Args:
             prompt: 用户 prompt
@@ -416,55 +397,27 @@ class LLMStrategyEngine:
             timeout: 超时秒数
         """
         try:
-            base = self.bailian_base_url.rstrip('/')
-            url = f"{base}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.bailian_api_key}",
-                "Content-Type": "application/json",
-            }
+            sys_prompt = SYSTEM_PROMPT if json_mode else (system_prompt or ANALYSIS_SYSTEM_PROMPT)
             
-            # 根据模式选择不同的 system prompt
+            text = UnifiedLLMService.call_text(
+                "llm_strategy_engine",
+                prompt,
+                system=sys_prompt,
+                temperature=0.3 if json_mode else 0.7,
+                max_tokens=4000,
+                json_mode=json_mode,
+                timeout=timeout,
+            )
+            
+            if not text:
+                return None
+            
+            # JSON 模式: 清理 markdown 代码块
             if json_mode:
-                sys_prompt = SYSTEM_PROMPT
-            else:
-                sys_prompt = system_prompt or ANALYSIS_SYSTEM_PROMPT
+                text = re.sub(r'^```json\s*', '', text, flags=re.MULTILINE)
+                text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
             
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.3 if json_mode else 0.7,
-                "max_tokens": 4000,
-            }
-            
-            # 仅 JSON 模式强制 response_format
-            if json_mode:
-                payload["response_format"] = {"type": "json_object"}
-            
-            for attempt in range(2):
-                try:
-                    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    
-                    # JSON 模式: 清理 markdown 代码块
-                    if json_mode:
-                        content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
-                        content = re.sub(r'\s*```$', '', content, flags=re.MULTILINE)
-                    
-                    return content.strip()
-                except requests.exceptions.Timeout:
-                    logger.warning(f"[LLM API] 超时 (尝试 {attempt+1}/2), 等待重试...")
-                    time.sleep(5)
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"[LLM API] 请求异常: {e}")
-                    return None
-                    
-            logger.error(f"[LLM API] 重试后仍然超时 (mode={'json' if json_mode else 'text'})")
-            return None
+            return text.strip()
             
         except Exception as e:
             logger.error(f"[LLM API] 调用失败: {e}")
@@ -568,35 +521,6 @@ class LLMStrategyEngine:
         except Exception as e:
             logger.error(f"[解析] 解析异常: {e}")
             return []
-            event_category = result.get("event_category", "")
-            direct_impact = result.get("direct_impact", "")
-            second_order = result.get("second_order_impact", "")
-            
-            event_summary = f"[{event_category}] {direct_impact}"
-            if second_order:
-                event_summary += f" → {second_order}"
-            
-            for s in strategy_list:
-                strategy = OrderStrategy(
-                    symbol=s.get("symbol", ""),
-                    direction=s.get("direction", ""),
-                    confidence=min(1.0, max(0.0, float(s.get("confidence", 0)))),
-                    reasoning=s.get("reasoning", ""),
-                    take_profit_pct=float(s.get("take_profit_pct", 0.15)),
-                    stop_loss_pct=float(s.get("stop_loss_pct", 0.25)),
-                    time_horizon_hours=int(s.get("time_horizon_hours", 72)),
-                    trigger_condition=s.get("trigger_condition", "immediate"),
-                    max_position_pct=min(0.25, float(s.get("max_position_pct", 0.05))),
-                    related_event=event_summary,
-                    impact_chain=impact_chain,
-                    source_news_ids=[n.get('id', '') for n in news_items[:5]],
-                    expiry_time=(datetime.now() + timedelta(hours=4)).isoformat(),
-                )
-                strategies.append(strategy)
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"[LLM策略引擎] JSON 解析失败: {e}")
-            logger.debug(f"[LLM策略引擎] 原始响应: {response_text[:500]}")
         
         return strategies
     

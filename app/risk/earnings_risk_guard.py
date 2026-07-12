@@ -17,7 +17,7 @@ Phase 2 核心组件: 针对财报期间的特殊风控逻辑
 import os
 import logging
 from datetime import datetime, timedelta
-from app.utils.timezone import now_et
+from app.utils.timezone import now_et, ET
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
@@ -119,6 +119,9 @@ class EarningsRiskGuard:
         info = self._earnings_symbols[symbol]
         try:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
+            # strptime returns naive datetime; make it tz-aware before subtracting from now_et()
+            if report_date.tzinfo is None:
+                report_date = report_date.replace(tzinfo=ET)
             today = now_et()
             delta = (today - report_date).days
             # 财报日前 1 天 到 财报日后 2 天 = 3 天窗口
@@ -139,6 +142,9 @@ class EarningsRiskGuard:
         info = self._earnings_symbols[symbol]
         try:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
+            # strptime returns naive datetime; make it tz-aware before subtracting from now_et()
+            if report_date.tzinfo is None:
+                report_date = report_date.replace(tzinfo=ET)
             now = now_et()
             hours_until = (report_date - now).total_seconds() / 3600
             

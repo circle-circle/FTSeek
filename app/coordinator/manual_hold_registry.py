@@ -22,6 +22,7 @@ ManualHoldRegistry — 手动持仓标记注册表 (全局单例)
 """
 from __future__ import annotations
 
+import os
 import threading
 import logging
 from typing import Dict, Set, Optional
@@ -118,8 +119,7 @@ class ManualHoldRegistry:
         解决: 同标的在 SIM(auto) + REAL(manual) 共存时,
         REAL 的 manual 不应阻止 SIM 的 auto 交易.
         """
-        import os as _os
-        _auto_acc = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
         return self.is_manual_held(symbol, account=_auto_acc)
 
     def get_all_manual_symbols(self) -> Set[str]:
@@ -253,9 +253,15 @@ class ManualHoldRegistry:
                     except Exception:
                         quantity = 0
 
+                    # ponytail: skip closed positions + pass account from metadata
+                    if quantity <= 0:
+                        continue
+                    _acct = "sim" if isinstance(meta, dict) and meta.get("account_type") == "sim" else "real"
+
                     self.register(
                         symbol, direction, quantity,
                         reason="restored_on_startup",
+                        account=_acct,
                     )
                     restored_count += 1
                 except Exception as _pe:

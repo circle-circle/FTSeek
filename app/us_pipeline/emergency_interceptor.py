@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.us_pipeline.battle_plan_manager import USBattlePlanManager
 from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
 from app.notifier.dingtalk import DingTalkNotifier
+from app.llm.unified_service import UnifiedLLMService
 
 logger = logging.getLogger("ftseek.us_pipeline.emergency_interceptor")
 
@@ -173,10 +174,6 @@ class USEmergencyInterceptor:
         self.check_interval = 30  # 每 30 秒检查一次 (行情监控需要更高频率)
         self.finnhub_api_key = os.environ.get("FINNHUB_API_KEY")
 
-        # LLM 配置
-        self.llm_model = os.getenv("BAILIAN_MODEL_FAST", "qwen-flash")
-        self.llm_api_key = os.environ.get("BAILIAN_API_KEY")
-
         # 记录已处理的新闻 ID (防抖辅助)
         self.processed_news_ids = set()
         # P1 修复 (2026-05-13): 关键词冷却期 — 防止同一关键词在恢复后重复触发 RISK_OFF
@@ -208,6 +205,18 @@ class USEmergencyInterceptor:
 
         while True:
             try:
+                # 顶层守卫: 非交易时段直接休眠, 避免 30s 空转
+                # _check_market_indicators 内部也有守卫, 但这里拦截更早,
+                # 连 auto_recovery + news_cycle 都跳过
+                try:
+                    from app.core.scheduler_triggers import get_market_phase, MarketPhase
+                    _phase = get_market_phase()
+                    if _phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT):
+                        await asyncio.sleep(300)
+                        continue
+                except Exception:
+                    pass  # 降级到原有逻辑
+
                 # 1. 自动恢复检查
                 self.state_machine.auto_recovery()
 
@@ -693,8 +702,6 @@ class USEmergencyInterceptor:
         区分技术性回调 vs 基本面崩溃
         """
         try:
-            from openai import AsyncOpenAI
-
             system_prompt = EMERGENCY_SYSTEM_PROMPT
 
             user_prompt = f"""标的: {symbol}
@@ -710,22 +717,16 @@ class USEmergencyInterceptor:
 
 只输出 EXIT 或 HOLD。"""
 
-            client = AsyncOpenAI(
-                api_key=self.llm_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-            )
-
-            response = await client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+            text = await UnifiedLLMService.call_text_async(
+                "emergency_interceptor",
+                user_prompt,
+                system=system_prompt,
                 temperature=0.0,
                 max_tokens=10,
+                timeout=15,
             )
 
-            result = response.choices[0].message.content.strip().upper()
+            result = (text or "").strip().upper()
             logger.info(f"[行情 LLM] {symbol} {trigger_type} → {result}")
             return result if result in ("EXIT", "HOLD") else "HOLD"
 
@@ -744,8 +745,6 @@ class USEmergencyInterceptor:
             "RISK_OFF" (确认为黑天鹅) 或 "IGNORE" (非黑天鹅)
         """
         try:
-            from openai import AsyncOpenAI
-
             headline = news_item.get("headline", "")
             summary = news_item.get("summary", "")
             symbols = ", ".join([p.symbol.replace("US.", "") for p in positions])
@@ -770,22 +769,16 @@ class USEmergencyInterceptor:
                 "只输出 RISK_OFF 或 IGNORE。"
             )
 
-            client = AsyncOpenAI(
-                api_key=self.llm_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-            )
-
-            response = await client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+            text = await UnifiedLLMService.call_text_async(
+                "emergency_interceptor",
+                user_prompt,
+                system=system_prompt,
                 temperature=0.0,
                 max_tokens=10,
+                timeout=15,
             )
 
-            result = response.choices[0].message.content.strip().upper()
+            result = (text or "").strip().upper()
             logger.info(f"[新闻 LLM 二阶确认] {symbols} → {result}")
             return result if result in ("RISK_OFF", "IGNORE") else "IGNORE"
 
@@ -798,8 +791,6 @@ class USEmergencyInterceptor:
     async def _llm_risk_judgment(self, news_item, position) -> str:
         """新闻触发的 LLM 研判"""
         try:
-            from openai import AsyncOpenAI
-
             headline = news_item.get("headline", "")
             summary = news_item.get("summary", "")
             symbol = position.symbol.replace("US.", "")
@@ -810,22 +801,16 @@ class USEmergencyInterceptor:
                 f"判断: 立即清仓 (EXIT) 或持有 (HOLD)？"
             )
 
-            client = AsyncOpenAI(
-                api_key=self.llm_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-            )
-
-            response = await client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+            text = await UnifiedLLMService.call_text_async(
+                "emergency_interceptor",
+                user_prompt,
+                system=system_prompt,
                 temperature=0.0,
                 max_tokens=10,
+                timeout=15,
             )
 
-            result = response.choices[0].message.content.strip().upper()
+            result = (text or "").strip().upper()
             logger.info(f"[新闻 LLM] {symbol} → {result}")
             return result if result in ("EXIT", "HOLD") else "HOLD"
 

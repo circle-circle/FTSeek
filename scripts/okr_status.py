@@ -117,9 +117,6 @@ try:
           AND trade_mode != 'live'
           AND exit_reason IS NOT NULL
           AND exit_reason != ''
-          AND exit_reason NOT LIKE '%PHANTOM%'
-          AND exit_reason NOT LIKE '%GHOST%'
-          AND exit_reason NOT LIKE '%ORPHAN%'
     """, (_cutoff_30d,)).fetchall()
     if _tr_real:
         _tr_pnl = sum(r[0] or 0 for r in _tr_real)
@@ -291,6 +288,38 @@ if by_strategy:
     for s in sorted(by_strategy, key=lambda x: x.get('total_pnl', 0), reverse=True):
         wr = s['wins'] / s['cnt'] * 100 if s['cnt'] > 0 else 0
         print(f"  {s.get('strategy_id','?')}: {s['cnt']} trades, WR={wr:.0f}%, PnL=${s.get('total_pnl',0):.2f}")
+
+# ── Signal source attribution (voting_llm vs deep_analysis) ──
+try:
+    _snap_db_path = str(Path(get_db("ftseek_us")._get_path("ftseek_us")).parent / "signal_snapshots.db")
+    conn.execute("ATTACH DATABASE ? AS snap", (_snap_db_path,))
+    _attr_rows = conn.execute(f"""
+        SELECT ss.strategy_id as signal_source,
+               COUNT(*) as cnt,
+               SUM(CASE WHEN tr.realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN tr.realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+               SUM(tr.realized_pnl) as total_pnl
+        FROM trade_records tr
+        LEFT JOIN snap.signal_snapshots ss ON tr.decision_id = ss.decision_id
+        WHERE tr.trade_date >= ?
+          AND tr.source_type IN ({_source_filter})
+          AND tr.trade_mode != 'live'
+          AND tr.exit_reason IS NOT NULL AND tr.exit_reason != ''
+        GROUP BY ss.strategy_id
+        ORDER BY total_pnl DESC
+    """, (_cutoff_30d,)).fetchall()
+    if _attr_rows:
+        print(f"\n🏷️ SIGNAL SOURCE ATTRIBUTION (30d)")
+        for r in _attr_rows:
+            d = dict(r)
+            _w = d['wins'] or 0
+            _l = d['losses'] or 0
+            _wr = _w/(_w+_l)*100 if (_w+_l) > 0 else 0
+            _src = d['signal_source'] or 'unlinked'
+            print(f"  {_src:20s}: {d['cnt']:3d} trades, WR={_wr:.0f}%, PnL=${d['total_pnl'] or 0:.2f}")
+    conn.execute("DETACH DATABASE snap")
+except Exception as _attr_err:
+    pass
 
 print(f"\n⚙️ CONFIG")
 for k, v in config_state.items():

@@ -132,6 +132,17 @@ def _http_call(
     if extra_body:
         payload.update(extra_body)
 
+    # 2026-07-06 P0修复: DashScope 推理模型 (glm-5.2/deepseek-v4-pro/qwen3.7-max)
+    # 默认 enable_thinking=True, 内部 reasoning 消耗 max_tokens → empty_response
+    # 实测: glm-5.2 max_tokens=800 时 800 reasoning → 0 输出 = empty_response
+    # 投票/评分场景不需要 chain-of-thought, 关闭 thinking 可:
+    #   1. 消灭 empty_response 根因 (78/210 失败的根因)
+    #   2. 速度 10x 提升 (39s→4s)
+    #   3. token 消耗大幅降低 (1297 reasoning → 0)
+    # 只对 dashscope provider 生效, deepseek 官方 API 无此参数会被忽略
+    if "dashscope.aliyuncs.com" in base_url:
+        payload.setdefault("enable_thinking", False)
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",

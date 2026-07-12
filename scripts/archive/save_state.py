@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.11
 """
 FTSeek-US 状态落盘保存脚本
 

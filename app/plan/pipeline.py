@@ -778,12 +778,12 @@ def run_pipeline() -> Optional[Dict]:
         import asyncio
         from app.plan.deep_research_pipeline import run_deep_research_batch
 
-        # 获取盘前数据 (如果可用)
+        # 盘前数据: 用活的内存 collector (premarket_enrichment.json 已无写方, 2026-07-11)
         premarket_data = None
         try:
-            _premarket_path = _PLAN_PATH.parent / "premarket_enrichment.json"
-            if _premarket_path.exists():
-                premarket_data = json.loads(_premarket_path.read_text())
+            from app.data.premarket_enrichment import collect_premarket_data
+            _syms = [(t.get("symbol") or "").replace("US.", "") for t in targets]
+            premarket_data = collect_premarket_data(watchlist_symbols=[s for s in _syms if s][:15])
         except Exception:
             pass
 

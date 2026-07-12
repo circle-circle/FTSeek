@@ -2,9 +2,11 @@
 # 用于个股阶段驱动的短线/长线决策
 
 horizon_selector:
-  # 2026-06-26 (MADP DEB-20260626-horizon_model): 当前样本不足，
-  # HorizonReturnModel 仅作观测工具，实时决策关闭，所有指令默认 short。
-  enabled: false
+  # 2026-07-08: 启用趋势强度驱动的 horizon 选择
+  # 数据支持: T3 WR 55-60% > T1 39-40%, 6-12h持仓 avg+$131 70%WR
+  # 强趋势标的 → long (波段, max_hold=3天, 宽SL)
+  # 高波动/震荡 → short (日内, 快进快出)
+  enabled: true
   # 使用历史收益模型所需的最小样本数
   min_samples_for_model: 5
   # 选择阈值: long_score > short_score * (1 + margin_threshold) 时才选 long
@@ -33,18 +35,25 @@ horizon_selector:
 # max_hold_days: 最大持有交易日 (由 EOD 兜底的 MAX_HOLD_T5 执行, 盘中不检查)
 factor_exit_rules:
   # 默认规则
+  # 2026-07-08: time_exit 2.0→4.0 (2-4h死亡区间-$10,229 vs 4-8h黄金时段+$14,573)
+  # 2026-07-09: breakeven 1.5→1.0, drawdown 0.8→0.5
+  #   数据: MFE中位数1.5%, 85%利润被giveback. breakeven更早保本+drawdown更紧锁利
+  #   效果: 浮盈1%→保本(亏不了) → 浮盈1.5%→回撤0.5%→锁1.0%(落袋)
   default:
-    trailing_enabled: false
-    breakeven_at_pct: 0.5
-    trailing_step_pct: 2.0
-    time_exit_hours: 2.0
+    trailing_enabled: true
+    breakeven_at_pct: 1.0           # 1.5→1.0: 更早保本, 减少SL出血
+    drawdown_from_peak_pct: 0.5     # 0.8→0.5: 更紧锁利, 减少giveback
+    trailing_step_pct: 2.0          # 兼容回退(无drawdown时用)
+    time_exit_hours: 4.0
     time_exit_only_if_loss: true
     max_hold_days: 1
 
-  # 趋势/动量类: 让利润奔跑, 用 trailing stop 锁定利润
+  # 趋势/动量类: 让利润奔跑, 用回撤止损锁定利润
+  # 2026-07-09: drawdown 0.6-0.7→0.5-0.6, 与default(0.5)对齐, 更紧锁利
   insider_cluster_buy:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5: 更紧锁利
     trailing_step_pct: 1.5
     time_exit_hours: 999       # 盈利仓不 time_exit
     time_exit_only_if_loss: true
@@ -52,6 +61,7 @@ factor_exit_rules:
   macd_golden_cross:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -59,6 +69,7 @@ factor_exit_rules:
   above_ma20:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -66,6 +77,7 @@ factor_exit_rules:
   news_positive:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -100,6 +112,7 @@ factor_exit_rules:
   above_ma50:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -107,6 +120,7 @@ factor_exit_rules:
   ma_golden_cross:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -114,6 +128,7 @@ factor_exit_rules:
   bollinger_upper:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -121,6 +136,7 @@ factor_exit_rules:
   bollinger_squeeze:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -128,15 +144,18 @@ factor_exit_rules:
   near_52w_high:
     trailing_enabled: true
     breakeven_at_pct: 1.0
+    drawdown_from_peak_pct: 0.6   # 0.7→0.6
     trailing_step_pct: 2.0
     time_exit_hours: 4
     time_exit_only_if_loss: true
     max_hold_days: 2
 
-  # 基本面/内部人类 (中长期持有, trailing 锁利)
+  # 基本面/内部人类 (中长期持有, 回撤止损锁利)
+  # 2026-07-09: drawdown 0.6→0.5, 与趋势类对齐
   insider_net_buy:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -144,6 +163,7 @@ factor_exit_rules:
   revenue_growth_high:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -151,6 +171,7 @@ factor_exit_rules:
   roe_high:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -158,6 +179,7 @@ factor_exit_rules:
   earnings_beat_streak:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 8
     time_exit_only_if_loss: true
@@ -165,15 +187,18 @@ factor_exit_rules:
   post_earnings_momentum:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 8
     time_exit_only_if_loss: true
     max_hold_days: 3
 
-  # 情绪/新闻类 (中短期, trailing 锁利)
+  # 情绪/新闻类 (中短期, 回撤止损锁利)
+  # 2026-07-09: drawdown 0.6→0.5
   sentiment_bullish:
     trailing_enabled: true
     breakeven_at_pct: 0.5
+    drawdown_from_peak_pct: 0.5   # 0.6→0.5
     trailing_step_pct: 1.5
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -323,80 +348,92 @@ market_state_overlay:
 short_horizon:
   label: "SHORT_HORIZON"
   fixed_stop_loss_pct: 2.0
-  buy_fixed_stop_loss_pct: 2.5  # 2026-06-30 Phase 1: BUY 止损从 2.0% 恢复 2.5%, 减少开盘噪声扫损
+  buy_fixed_stop_loss_pct: 2.5  # fallback only (vol_buckets未命中时); 7/7全部走vol_buckets路径
   sell_fixed_stop_loss_pct: 2.0
   rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润(100%WR avg+$203). TP=3%从未触发且会截断SHORT EOD avg=5.66%
   max_hold_days: 1
   skip_pre_close_if_profit: false
   time_exit_hours: 2.0
   # Phase 2 (2026-06-30): 波动率分桶止损/止盈
+  # 2026-07-08: sl_multiplier 0.8/0.7/0.6/0.5 → 1.2/1.5/1.5/1.2
+  #   根因: SL=0.7×ATR 止在1个ATR以内=统计噪声, 7/7的BA(0.70×ATR)AMZN(0.70×)NVDA(0.70×)全被扫损
+  #   规则: SL≥1.2×ATR 让正常波动不触发止损, 让趋势有时间发展
+  # 2026-07-09: 数据驱动调整 — SL距离 vs 胜率回测:
+  #   <2%: WR=47% SL触发率=41% 亏$1352 (太紧, 开盘噪声扫损)
+  #   2-3%: WR=59% SL触发率=9% 赚$601 (最优区间)
+  #   >5%: WR=14% (太松, 方向错亏太多)
+  #   调整: low floor 1.5→2.0, high ceil 8.0→5.0, 收紧到2-5%最优区
   vol_buckets:
     low:
       atr_pct_max: 0.015
-      sl_multiplier: 0.8
-      sl_floor_pct: 1.2
-      sl_ceil_pct: 1.8
+      sl_multiplier: 1.2
+      sl_floor_pct: 2.0         # 1.5→2.0: 避免落入<2%的噪声扫损区
+      sl_ceil_pct: 2.5
       tp_multiplier: 2.0
       short_widen_pct: 0.2
       max_hold_hours: 6
     medium:
       atr_pct_max: 0.035
-      sl_multiplier: 0.7
-      sl_floor_pct: 1.8
-      sl_ceil_pct: 2.8
+      sl_multiplier: 1.5
+      sl_floor_pct: 2.5
+      sl_ceil_pct: 4.5
       tp_multiplier: 1.8
       short_widen_pct: 0.3
       max_hold_hours: 4
     high:
-      atr_pct_max: 0.08            # 2026-06-30 DEB: 从999改为0.08, 新增extreme桶
-      sl_multiplier: 0.6
-      sl_floor_pct: 2.5
-      sl_ceil_pct: 5.0
+      atr_pct_max: 0.08
+      sl_multiplier: 1.5
+      sl_floor_pct: 3.5
+      sl_ceil_pct: 5.0           # 8.0→5.0: >5%胜率仅14%, 收紧止损
       tp_multiplier: 1.5
       short_widen_pct: 0.5
       max_hold_hours: 2
-    extreme:                       # 2026-06-30 DEB: 新增, ATR%>8%的极端波动股
+    extreme:
       atr_pct_max: 999.0
-      sl_multiplier: 0.5
-      sl_floor_pct: 2.5
-      sl_ceil_pct: 4.0
+      sl_multiplier: 1.2
+      sl_floor_pct: 3.5
+      sl_ceil_pct: 5.0           # 6.0→5.0: 同high桶, >5%胜率差
       tp_multiplier: 1.5
       short_widen_pct: 0.8
       max_hold_hours: 1
-      position_mult: 0.5           # extreme桶降仓50% (信号过滤, 非放宽SL)
+      position_mult: 0.5
 
 # 长线参数
 long_horizon:
   label: "LONG_HORIZON"
-  rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润, 与short_horizon保持一致
+  # 2026-07-08: rr_ratio 999→2.0 (波段需要止盈目标, 不能完全靠EOD)
+  # 数据: T3 WR最优(55-60%), T5回落(43-44%) → max_hold=3天
+  rr_ratio: 2.0
   fixed_stop_loss_pct: 2.0
-  max_hold_days: 5
+  # 2026-07-08: max_hold_days 5→3 (T3数据最优, T5胜率回落)
+  max_hold_days: 3
   skip_pre_close_if_profit: true
   overnight_gap_stop_pct: 3.0
   time_exit_hours: 999
   # Phase 2 (2026-06-30): 波动率分桶止损/止盈 (长线默认用更宽的止损让利润奔跑)
+  # 2026-07-08 DEB: sl_ceil+0.5% (3天持仓波动>日内, 给趋势发展空间)
   vol_buckets:
     low:
       atr_pct_max: 0.015
-      sl_multiplier: 0.8
-      sl_floor_pct: 1.2
-      sl_ceil_pct: 1.8
+      sl_multiplier: 1.2
+      sl_floor_pct: 1.5
+      sl_ceil_pct: 3.0
       tp_multiplier: 2.5
       short_widen_pct: 0.2
       max_hold_hours: 24
     medium:
       atr_pct_max: 0.035
-      sl_multiplier: 0.7
-      sl_floor_pct: 1.8
-      sl_ceil_pct: 2.8
+      sl_multiplier: 1.5
+      sl_floor_pct: 2.5
+      sl_ceil_pct: 5.0
       tp_multiplier: 2.0
       short_widen_pct: 0.3
       max_hold_hours: 16
     high:
       atr_pct_max: 999.0
-      sl_multiplier: 0.6
-      sl_floor_pct: 2.5
-      sl_ceil_pct: 5.0
+      sl_multiplier: 1.5
+      sl_floor_pct: 3.5
+      sl_ceil_pct: 5.0           # 8.5→5.0: 同short_horizon, >5%胜率差
       tp_multiplier: 1.8
       short_widen_pct: 0.5
       max_hold_hours: 8

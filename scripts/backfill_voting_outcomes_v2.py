@@ -229,4 +229,9 @@ def backfill_voting_outcomes():
 if __name__ == "__main__":
     from scripts.utils.market_guard import exit_if_not_trading_day
     exit_if_not_trading_day()
-    backfill_voting_outcomes()
+    try:
+        backfill_voting_outcomes()
+    finally:
+        if _futu_ctx and _futu_ctx is not False:
+            _futu_ctx.close()
+            logger.info("Futu OpenQuoteContext 已关闭")

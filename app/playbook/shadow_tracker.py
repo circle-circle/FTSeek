@@ -144,10 +144,13 @@ class ShadowTracker:
         # shadow_tracker 盘后跑, 用 day_high/day_low 判断当日是否突破 MA20
         entry_price = inst.get("entry_price")
         if entry_price and entry_price > 0:
-            day_low = day_data.get("low", 0)
-            day_high = day_data.get("high", 0)
-            day_close = day_data.get("close", 0)
-            ma20 = day_data.get("ma20", 0)
+            # 2026-07-10: low/high/close 可能显式为 None (盘前/数据不全),
+            #   .get(key, 0) 仅在键缺失时返回默认, 值为 None 时仍返 None →
+            #   后续 day_close > ma20 触发 'NoneType > int'. 与 ma20/position_size 同样 or 0 兜底.
+            day_low = day_data.get("low", 0) or 0
+            day_high = day_data.get("high", 0) or 0
+            day_close = day_data.get("close", 0) or 0
+            ma20 = day_data.get("ma20") or 0
             vol_ratio = day_data.get("volume_5d_avg_ratio", 0) or day_data.get("volume_ratio", 0)
             direction = inst.get("direction", "")
             is_short = "SHORT" in direction.upper()
@@ -181,8 +184,8 @@ class ShadowTracker:
                 # 检查是否已平仓
                 exit_trade = self._find_exit_trade(symbol, trade_date)
                 if exit_trade:
-                    exit_price = exit_trade.get("exit_price", 0)
-                    position_size = inst.get("position_size", 0)
+                    exit_price = exit_trade.get("exit_price", 0) or 0
+                    position_size = inst.get("position_size") or 0
                     if exit_price > 0 and position_size > 0:
                         # direction 是 BUY/SELL_SHORT (playbook 指令格式)
                         if direction == "BUY":
@@ -206,8 +209,8 @@ class ShadowTracker:
                         updates["mfe_analysis"] = analyze_mfe_mae(inst, updates)
                 else:
                     # 持仓中: 用收盘价计算浮盈
-                    close_price = day_data.get("close", 0)
-                    position_size = inst.get("position_size", 0)
+                    close_price = day_data.get("close", 0) or 0
+                    position_size = inst.get("position_size") or 0
                     if close_price > 0 and position_size > 0:
                         if direction == "BUY":
                             pnl = (close_price - exec_price) * position_size

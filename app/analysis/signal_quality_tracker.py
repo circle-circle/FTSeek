@@ -159,12 +159,17 @@ def _empty_stats() -> Dict[str, Any]:
         "total_pnl": 0.0,
         "max_loss": 0.0,
         "max_win": 0.0,
+        # P2 (2026-07-11): 风险归一 — 用收益率而非绝对美元,消除仓位大小/离群值污染
+        # avg_pnl_pct 即风险归一后的单笔期望 (edge 真正度量)
+        "avg_pnl_pct": 0.0,
+        "total_pnl_pct": 0.0,
     }
 
 
-def _accumulate(stats: Dict[str, Any], pnl: float) -> None:
+def _accumulate(stats: Dict[str, Any], pnl: float, pnl_pct: float = 0.0) -> None:
     stats["total"] += 1
     stats["total_pnl"] += pnl
+    stats["total_pnl_pct"] += pnl_pct
     if pnl > 0:
         stats["wins"] += 1
         if pnl > stats["max_win"]:
@@ -180,7 +185,10 @@ def _finalize(stats: Dict[str, Any]) -> Dict[str, Any]:
     if n > 0:
         stats["win_rate"] = round(stats["wins"] / n, 4)
         stats["avg_pnl"] = round(stats["total_pnl"] / n, 4)
+        # 风险归一期望: 平均每笔收益率 (edge 的可信度量, 不受仓位大小影响)
+        stats["avg_pnl_pct"] = round(stats["total_pnl_pct"] / n, 6)
     stats["total_pnl"] = round(stats["total_pnl"], 4)
+    stats["total_pnl_pct"] = round(stats["total_pnl_pct"], 6)
     stats["max_loss"] = round(stats["max_loss"], 4)
     stats["max_win"] = round(stats["max_win"], 4)
     return stats
@@ -273,6 +281,7 @@ class SignalQualityTracker:
                 r.get("decision_reason"),
             )
             r["_pnl"] = _safe_float(r.get("realized_pnl"))
+            r["_pnl_pct"] = _safe_float(r.get("pnl_pct"))  # P2: 风险归一原料
             r["_confidence"] = _safe_float(r.get("signal_confidence"))
         return rows
 
@@ -287,7 +296,7 @@ class SignalQualityTracker:
         }
         for t in trades:
             label = _bucket_for_confidence(t["_confidence"])
-            _accumulate(buckets[label], t["_pnl"])
+            _accumulate(buckets[label], t["_pnl"], t["_pnl_pct"])
 
         for s in buckets.values():
             _finalize(s)
@@ -331,12 +340,12 @@ class SignalQualityTracker:
             cat = t["_category"]
             if cat not in all_stats:
                 cat = "其他"
-            _accumulate(all_stats[cat], t["_pnl"])
+            _accumulate(all_stats[cat], t["_pnl"], t["_pnl_pct"])
 
             td = t.get("trade_date") or ""
             for w in ROLLING_WINDOWS:
                 if td >= windows_since[w]:
-                    _accumulate(rolling[w][cat], t["_pnl"])
+                    _accumulate(rolling[w][cat], t["_pnl"], t["_pnl_pct"])
 
         for s in all_stats.values():
             _finalize(s)
@@ -371,11 +380,11 @@ class SignalQualityTracker:
                 continue
             combo_key = "+".join(reasons)
             combo_stats.setdefault(combo_key, _empty_stats())
-            _accumulate(combo_stats[combo_key], t["_pnl"])
+            _accumulate(combo_stats[combo_key], t["_pnl"], t["_pnl_pct"])
 
             for r in reasons:
                 single_stats.setdefault(r, _empty_stats())
-                _accumulate(single_stats[r], t["_pnl"])
+                _accumulate(single_stats[r], t["_pnl"], t["_pnl_pct"])
 
         for s in combo_stats.values():
             _finalize(s)
@@ -428,6 +437,7 @@ class SignalQualityTracker:
             _accumulate(
                 recent_buckets[_bucket_for_confidence(t["_confidence"])],
                 t["_pnl"],
+                t["_pnl_pct"],
             )
         for s in recent_buckets.values():
             _finalize(s)
@@ -475,13 +485,39 @@ class SignalQualityTracker:
                     ),
                 })
 
-        # 3) confidence 单调性异常告警
+        # 3) confidence 单调性 — 胜率视角仅作参考; edge/脱钩 判定以期望值单调性为准 (见下方 P2)
         anomalies: List[str] = []
         if confidence_map.get("total_samples", 0) >= 20 and not confidence_map.get(
             "monotonic"
         ):
             anomalies.append(
-                "confidence 桶胜率非单调递增 — 模型置信度可能与真实胜率脱钩"
+                "confidence 桶胜率非单调 (仅胜率视角, 非 edge 判定 — 以期望值单调性为准)"
+            )
+
+        # P2 (2026-07-11): edge 视角 — 基于风险归一期望 (avg_pnl_pct), 与胜率视角并列
+        expectancy_by_bucket = {
+            label: recent_buckets[label]["avg_pnl_pct"]
+            for _, _, label in CONFIDENCE_BUCKETS
+        }
+        suggested_by_expectancy: Optional[float] = None
+        for lo, _hi, label in CONFIDENCE_BUCKETS:
+            st = recent_buckets[label]
+            if st["total"] >= 5 and st["avg_pnl_pct"] > 0:
+                suggested_by_expectancy = lo
+                break
+        # confidence 是否对 edge 有单调预测力 (期望应随桶递增)
+        _ordered_exp = [
+            recent_buckets[l]["avg_pnl_pct"]
+            for _, _, l in CONFIDENCE_BUCKETS
+            if recent_buckets[l]["total"] >= 5
+        ]
+        expectancy_monotonic = (
+            all(_ordered_exp[i] <= _ordered_exp[i + 1] for i in range(len(_ordered_exp) - 1))
+            if len(_ordered_exp) >= 2 else True
+        )
+        if len(_ordered_exp) >= 2 and not expectancy_monotonic:
+            anomalies.append(
+                "⚠️ confidence 与 edge 脱钩 — 桶期望(pnl_pct)非单调递增, 置信度无法预测收益, 单一阈值非合适工具"
             )
 
         return {
@@ -491,6 +527,10 @@ class SignalQualityTracker:
             "rationale": "; ".join(rationale_parts),
             "strategy_actions": strategy_actions,
             "anomalies": anomalies,
+            # P2: edge 视角输出 (风险归一), 供 P0 影子闸门消费
+            "expectancy_by_bucket": expectancy_by_bucket,
+            "suggested_by_expectancy": suggested_by_expectancy,
+            "expectancy_monotonic": expectancy_monotonic,
             "applied": False,  # 安全起见不自动落地
             "note": "本建议仅供参考, 不会自动修改 config; 由人工或灰度流程审批后再落地",
         }

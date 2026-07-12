@@ -96,6 +96,10 @@ class Instruction:
     horizon: str = "short"
     horizon_confidence: float = 0.0
     horizon_reasoning: Dict[str, Any] = field(default_factory=dict)
+    # DA 决策脑富文本 (2026-07-11 Stage 1): 失效条件 + 真实论点.
+    # 仅用于归因/复盘/退出触发地基, 不参与数值计算; da_thesis 不覆盖模板 thesis.
+    invalidation: str = ""
+    da_thesis: str = ""
 
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========
@@ -316,6 +320,11 @@ def compute_instruction_values(
     atr_14 = getattr(tech, "atr_14", 0) or 0
     atr_pct = (atr_14 / entry_price) if entry_price > 0 else 0.0
 
+    # ATR 数据缺失 → 无法评估波动率, 跳过 (防 vol_buckets 误匹配 low桶)
+    if atr_pct <= 0:
+        logger.info(f"[Playbook] {decision.get('symbol','')} 跳过: ATR 数据缺失 (atr_14=0), 无法评估波动率")
+        return {}
+
     _vol_sl_info = _compute_volatility_based_sl_tp(
         atr_pct, _direction, _horizon_params, pb_cfg
     )
@@ -356,6 +365,7 @@ def compute_instruction_values(
     else:
         tp_distance = sl_distance * rr_ratio
         take_profit = entry_price + tp_distance if decision["direction"] == "BUY" else entry_price - tp_distance
+        result["take_profit"] = round(take_profit, 2)
         result["risk_reward"] = rr_ratio
 
     # ── Phase 4 (2026-06-30): 市场状态叠加 ──

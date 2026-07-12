@@ -354,13 +354,24 @@ class AttributionScheduler:
                     trade_id,
                 ))
             else:
+                # 2026-07-09: 从 trade_records 查 decision_id 并写入 (P1: 归因链路贯穿)
+                _dec_id = None
+                try:
+                    _tr_row = conn.execute(
+                        "SELECT decision_id FROM trade_records WHERE id = ?", (trade_id,)
+                    ).fetchone()
+                    if _tr_row:
+                        _dec_id = _tr_row[0]
+                except Exception:
+                    pass
+
                 conn.execute("""
                     INSERT INTO trade_attribution (
                         trade_id, trace_id, key_decision_factor,
                         should_have_done_differently, specific_suggestion,
                         is_systemic_issue, systemic_pattern, root_cause_category,
-                        confidence, llm_model, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        confidence, llm_model, created_at, updated_at, decision_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     trade_id,
                     result.get("trace_id"),
@@ -372,7 +383,7 @@ class AttributionScheduler:
                     result.get("root_cause_category"),
                     result.get("confidence"),
                     result.get("llm_model"),
-                    now, now,
+                    now, now, _dec_id,
                 ))
             conn.commit()
             logger.info(

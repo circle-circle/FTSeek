@@ -42,7 +42,7 @@ fi
 # ── 2. 虚拟环境检查 ──
 if [ ! -d "$VENV_DIR" ]; then
     echo "创建虚拟环境..."
-    python3.8 -m venv "$VENV_DIR"
+    python3.11 -m venv "$VENV_DIR"
 fi
 
 if [ ! -x "$PYTHON" ]; then

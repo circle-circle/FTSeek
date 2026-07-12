@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.11
 """
 FTSeek-US 美股行情监控测试脚本
 

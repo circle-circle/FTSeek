@@ -283,6 +283,7 @@ class DecisionRecorder:
                         confidence=voting_result.get("consensus_level", 0),
                         consensus_level=voting_result.get("consensus_level", 0),
                         strategy_id=voting_result.get("strategy_id"),
+                        market_context=market_data,  # P1 (2026-07-11): 主通道 regime/vix 市场上下文持久化
                         created_at=now,
                     )
                 except Exception as _ic_e:

@@ -142,8 +142,8 @@ def compute_attribution(
     )
 
     # 价格范围 — 7/7 增强: 用 peak_price 补充 MFE 计算
-    all_highs = high_prices or [max(entry_price, exit_price)]
-    all_lows = low_prices or [min(entry_price, exit_price)]
+    all_highs = list(high_prices) if high_prices else [max(entry_price, exit_price)]
+    all_lows = list(low_prices) if low_prices else [min(entry_price, exit_price)]
     # 如果有 peak_price, 用它补充价格范围 (Pipeline 的 peak tracking 比无数据好)
     if peak_price is not None and peak_price > 0:
         all_highs.append(peak_price)

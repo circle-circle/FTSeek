@@ -171,17 +171,31 @@ class HorizonSelector:
         volume_ratio = 1.0
         rsi_14 = 50.0
         macd_signal = "neutral"
+        ma20 = 0.0
+        ma50 = 0.0
+        trend_5d = ""
 
         if technical is not None:
             # 尝试从 technical 提取
             ma20 = _data_attr(technical, "ma20") or 0
+            ma50 = _data_attr(technical, "ma50") or 0
             price = _data_attr(technical, "price") or 0
             if price and ma20:
                 price_vs_ma20 = (price - ma20) / ma20
-            atr_pct = _data_attr(technical, "atr_pct") or _data_attr(technical, "atr_14") or 0.0
+            # atr_pct: SymbolContext 有原生 atr_pct(已是百分比); TechnicalData 只有 atr_14(绝对值),
+            # 需除以 price 转换为百分比 (如 ATR=3.5, price=150 → 0.0233)
+            _atr_pct_native = _data_attr(technical, "atr_pct")
+            if _atr_pct_native is not None:
+                atr_pct = _atr_pct_native
+            else:
+                _atr_abs = _data_attr(technical, "atr_14") or 0.0
+                _price_for_atr = _data_attr(technical, "price") or 0
+                atr_pct = (_atr_abs / _price_for_atr) if (_atr_abs and _price_for_atr) else 0.0
+            # TechnicalData 用 volume_5d_avg_ratio, SymbolContext 用 volume_ratio
             volume_ratio = _data_attr(technical, "volume_ratio") or _data_attr(technical, "volume_5d_avg_ratio") or 1.0
-            rsi_14 = _data_attr(technical, "rsi_14") or 50.0
+            rsi_14 = _data_attr(technical, "rsi_14") or _data_attr(technical, "rsi") or 50.0
             macd_signal = _data_attr(technical, "macd_signal") or "neutral"
+            trend_5d = _data_attr(technical, "trend_5d") or ""
 
         # 市场环境
         vix = 20.0
@@ -210,6 +224,9 @@ class HorizonSelector:
             "factor_count": len(factor_names),
             "confidence": confidence,
             "price_vs_ma20": price_vs_ma20,
+            "ma20": ma20,
+            "ma50": ma50,
+            "trend_5d": trend_5d,
             "atr_pct": atr_pct,
             "volume_ratio": volume_ratio,
             "rsi_14": rsi_14,
@@ -276,60 +293,131 @@ class HorizonSelector:
         )
 
     def _fallback_score(self, features: Dict[str, Any]) -> HorizonDecision:
-        """历史数据不足时，使用默认规则兜底"""
+        """历史数据不足时，使用趋势强度规则兜底。
+
+        设计逻辑 (2026-07-08):
+          数据显示 T3(3天) 胜率最优 (BUY 55%, SHORT 60%), T1/T5 均回落。
+          6-12h 持仓是利润甜区 (avg +$131, 70%WR), <2h 被扫损是亏损主因。
+          → 强趋势标的选 long (波段, max_hold=3天, 宽SL让趋势发展)
+          → 高波动/震荡/无趋势 选 short (日内, 快进快出)
+
+        趋势强度评分 (trend_strength) 范围 0-6:
+          momentum (price vs MA20): |偏离|>3% → +2, >1.5% → +1
+          均线排列: MA20>MA50 同向 → +1 (BUY), MA20<MA50 同向 → +1 (SHORT)
+          MACD: 金叉→+1 (BUY), 死叉→+1 (SHORT)
+          volume_ratio >1.3: +1
+          trend_5d: 明确方向 → +1
+        """
         short_score = 0.0
         long_score = 0.0
         matched_rules = []
 
-        # 规则 1: 财报临近 → 短线
+        direction = features.get("direction", "BUY")
+        is_buy = direction == "BUY"
+
+        # ── 规则 1: 财报临近 → 短线 (事件风险, 不论趋势) ──
         if features.get("earnings_days") is not None and features["earnings_days"] <= 3:
-            short_score += 1.0
-            matched_rules.append("earnings_near: short +1.0")
+            short_score += 1.5
+            matched_rules.append("earnings_near: short +1.5")
 
-        # 规则 2: 高波动/VIX 高 → 短线
-        if features.get("atr_pct", 0) > 0.15 or features.get("vix", 0) > 22:
+        # ── 规则 2: 高波动 → 短线 (VIX>22 或 ATR%>4%, 波段持有风控成本过高) ──
+        vix = features.get("vix", 20)
+        atr_pct = features.get("atr_pct", 0)
+        if vix > 22 or atr_pct > 0.04:
             short_score += 1.0
-            matched_rules.append("high_volatility: short +1.0")
+            matched_rules.append(f"high_volatility: short +1.0 (vix={vix}, atr_pct={atr_pct:.3f})")
 
-        # 规则 3: RSI 极端 → 短线
+        # ── 规则 3: RSI 极端 → 短线 (均值回归概率高, 趋势延续概率低) ──
         rsi = features.get("rsi_14", 50)
         if rsi > 70 or rsi < 30:
             short_score += 0.5
-            matched_rules.append("rsi_extreme: short +0.5")
+            matched_rules.append(f"rsi_extreme: short +0.5 (rsi={rsi})")
 
-        # 方向提取（后续规则需要）
-        direction = features.get("direction", "BUY")
+        # ── 规则 4: 趋势强度评分 → 长线候选 ──
+        # 核心逻辑: 强趋势标的适合波段持有 (T3 数据支持)
+        trend_strength = 0
 
-        # 规则 4: 强趋势 + 放量 + 低波动 → 长线 (仅 BUY, 避免给 SHORT 多头信号加分)
-        if (direction == "BUY" and
-            features.get("volume_ratio", 1.0) > 1.2 and
-            abs(features.get("price_vs_ma20", 0)) > 0.02 and
-            features.get("vix", 20) < 20):
-            long_score += 1.0
-            matched_rules.append("trend_volume_lowvol: long +1.0")
+        # 4a: momentum (price vs MA20 偏离度)
+        price_vs_ma20 = features.get("price_vs_ma20", 0)
+        abs_mom = abs(price_vs_ma20)
+        if abs_mom > 0.03:
+            trend_strength += 2
+            matched_rules.append(f"momentum_strong: +2 (price_vs_ma20={price_vs_ma20:+.3f})")
+        elif abs_mom > 0.015:
+            trend_strength += 1
+            matched_rules.append(f"momentum_moderate: +1 (price_vs_ma20={price_vs_ma20:+.3f})")
 
-        # 规则 5: 基本面/资金面因子 → 长线（方向感知）
+        # 4b: 均线排列 (MA20 vs MA50 方向一致性)
+        ma20 = features.get("ma20", 0) or 0
+        ma50 = features.get("ma50", 0) or 0
+        if ma20 > 0 and ma50 > 0:
+            if is_buy and ma20 > ma50:
+                trend_strength += 1
+                matched_rules.append("ma_alignment_bullish: +1 (MA20>MA50)")
+            elif not is_buy and ma20 < ma50:
+                trend_strength += 1
+                matched_rules.append("ma_alignment_bearish: +1 (MA20<MA50)")
+
+        # 4c: MACD 方向一致
+        macd_signal = features.get("macd_signal", "neutral")
+        if is_buy and macd_signal == "golden_cross":
+            trend_strength += 1
+            matched_rules.append("macd_golden_cross: +1")
+        elif not is_buy and macd_signal == "dead_cross":
+            trend_strength += 1
+            matched_rules.append("macd_dead_cross: +1")
+
+        # 4d: 放量确认
+        volume_ratio = features.get("volume_ratio", 1.0)
+        if volume_ratio > 1.3:
+            trend_strength += 1
+            matched_rules.append(f"volume_confirm: +1 (vr={volume_ratio:.2f})")
+
+        # 4e: 5日趋势方向
+        trend_5d = features.get("trend_5d", "")
+        if is_buy and trend_5d == "up":
+            trend_strength += 1
+            matched_rules.append("trend_5d_up: +1")
+        elif not is_buy and trend_5d == "down":
+            trend_strength += 1
+            matched_rules.append("trend_5d_down: +1")
+
+        # 趋势强度 → 长线候选, 但高波动一票否决 (波段持有风控成本过高)
+        # 数据支持: T3 WR 55-60% > T1 39-40%, 但 ATR>4% 时波段回撤超SL概率高
+        _high_vol = vix > 22 or atr_pct > 0.04
+        if _high_vol:
+            if trend_strength >= 3:
+                long_score += 0.5
+                matched_rules.append(f"strong_trend_but_high_vol: long +0.5 (ts={trend_strength}, blocked by vol)")
+            else:
+                matched_rules.append(f"no_trend_high_vol: short (ts={trend_strength})")
+        elif trend_strength >= 4 and vix < 20:
+            long_score += 2.0
+            matched_rules.append(f"strong_trend_low_vol: long +2.0 (trend_strength={trend_strength})")
+        elif trend_strength >= 3:
+            long_score += 1.5
+            matched_rules.append(f"strong_trend: long +1.5 (trend_strength={trend_strength})")
+        elif trend_strength >= 2:
+            long_score += 0.5
+            matched_rules.append(f"moderate_trend: long +0.5 (trend_strength={trend_strength})")
+
+        # ── 规则 5: 基本面/资金面因子 → 长线加成（方向感知）──
         fundamental_long_buy = {"insider_cluster_buy", "insider_net_buy"}
-        if direction == "BUY" and any(f in fundamental_long_buy for f in features.get("factors", [])):
+        if is_buy and any(f in fundamental_long_buy for f in features.get("factors", [])):
             long_score += 0.5
             matched_rules.append("fundamental_factor_buy: long +0.5")
+
+        # ── 规则 6: 方向-因子共振 ──
         # SHORT + 放量 → 恐慌性抛售，倾向短线
-        if direction == "SELL_SHORT" and "volume_expansion" in features.get("factors", []):
+        if not is_buy and "volume_expansion" in features.get("factors", []):
             short_score += 0.5
             matched_rules.append("volume_expansion_short: short +0.5")
         # BUY + 放量 → 资金流入，倾向长线
-        if direction == "BUY" and "volume_expansion" in features.get("factors", []):
+        if is_buy and "volume_expansion" in features.get("factors", []):
             long_score += 0.5
             matched_rules.append("volume_expansion_buy: long +0.5")
 
-        # 规则 6: MACD 金叉 + 价格在 MA20 上方 → 长线 (仅 BUY, 空头不因此加分)
-        if (direction == "BUY" and
-            features.get("macd_signal") == "golden_cross" and
-            features.get("price_vs_ma20", 0) > 0):
-            long_score += 0.5
-            matched_rules.append("macd_golden_cross_above_ma20: long +0.5")
-
-        # 默认短线
+        # ── 决策: long_score > short_score * 1.1 时选 long ──
         if long_score > short_score * 1.1:
             chosen = "long"
         else:
@@ -343,6 +431,7 @@ class HorizonSelector:
             reasoning={
                 "source": "fallback_rules",
                 "matched_rules": matched_rules,
+                "trend_strength": trend_strength,
                 "vix_state": self._vix_state(features["vix"]),
                 "market_regime": features["market_regime"],
             },
@@ -355,7 +444,7 @@ class HorizonSelector:
         vix_state = self._vix_state(features["vix"])
         regime = str(features.get("market_regime", "UNKNOWN")).replace(" ", "_")
         trend_state = "up" if features.get("price_vs_ma20", 0) > 0 else "down"
-        vol_state = "high" if (features.get("atr_pct", 0) > 0.15 or features.get("vix", 0) > 22) else "low"
+        vol_state = "high" if (features.get("atr_pct", 0) > 0.04 or features.get("vix", 0) > 22) else "low"
 
         keys = []
         for factor in factor_names:

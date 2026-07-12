@@ -247,6 +247,30 @@ class StartupReconciler:
         3. strategy_id 启发式 (futu_sync 之外的策略名)
         4. 兜底: LEGACY + PROTECTED
         """
+        # 2026-07-09: playbook 仓位由 monitor_playbook_sim_exits 自管退出,
+        # 不应被 Reconciler 收养为 AUTO_MAIN+MANAGED → 否则 DEM 会双重管理.
+        # 在所有线索之前检查, 确保不被线索2(action_log)/线索3(strategy_id)绕回.
+        # 检查1: position对象上的owner_strategy/strategy_id
+        _pb_raw = (str(getattr(position, 'owner_strategy', '') or '') +
+                   str(getattr(position, 'strategy_id', '') or '')).lower()
+        if 'playbook_sim' in _pb_raw or 'playbook_live' in _pb_raw or 'playbook_shadow' in _pb_raw:
+            logger.info(f"[Reconciler·playbook] {symbol}: position标记为playbook → 不收养")
+            return PositionSource.UNKNOWN, ProtectionState.PROTECTED
+        # 检查2: position对象无标记时, 查trade_records(broker_only新Position无owner_strategy)
+        try:
+            _pb_conn = sqlite3.connect(self._db_path)
+            _pb_row = _pb_conn.execute(
+                "SELECT source_type FROM trade_records WHERE symbol=? "
+                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "ORDER BY id DESC LIMIT 1",
+                (symbol,)).fetchone()
+            _pb_conn.close()
+            if _pb_row:
+                logger.info(f"[Reconciler·playbook] {symbol}: trade_records标记为{_pb_row[0]} → 不收养")
+                return PositionSource.UNKNOWN, ProtectionState.PROTECTED
+        except Exception:
+            pass
+
         # P0 线索 0 (2026-06-15): 手动持仓优先 — 防止被误判为策略孤儿
         # MU 事件: 手动 SHORT 被 _infer_source 误判为 AUTO_MAIN, ExitMonitor 自动平仓
         try:

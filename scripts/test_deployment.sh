@@ -14,7 +14,7 @@ echo ""
 # 检查虚拟环境
 if [ ! -d "venv" ]; then
     echo "❌ 虚拟环境不存在"
-    echo "   请运行：python3.8 -m venv venv"
+    echo "   请运行：python3.11 -m venv venv"
     exit 1
 fi
 

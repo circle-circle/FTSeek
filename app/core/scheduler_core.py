@@ -27,8 +27,9 @@ sys.path.insert(0, str(BASE_DIR))
 
 from app.data.news_provider import USNewsProvider
 from app.data.market_data_router import MarketDataRouter
-from app.agents.voting.voting_coordinator import VotingCoordinator
-from app.agents.voting.voting_config import VotingConfig
+# 2026-07-10: VotingCoordinator/VotingConfig 顶层 import 已移除.
+# scheduler 不再实例化 VotingCoordinator (改用 NullVotingAdapter/BridgeVotingAdapter).
+# DI 容器的 voting_coordinator() 工厂保留但仅作为 playbook fallback, 那里用延迟 import.
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
     Order, OrderType, OrderState, Position,
@@ -226,6 +227,10 @@ class TradingScheduler:
             futu_opend_port=futu_opend_port,
             enable_futu_lv3=enable_lv3,
         )
+        # 2026-07-11: 注册为进程级共享单例, 全进程 (regime/position_sync/
+        # order_executor 等) 复用此 Futu 连接, 消除 per-cycle 重建 + 线程泄漏
+        from app.data.market_data_router import set_market_data_router
+        set_market_data_router(self.data_router)
         # 保留 yahoo 属性别名，防止其他地方引用
         self.market_data = self.data_router
 
@@ -240,15 +245,55 @@ class TradingScheduler:
 
         # 多模型投票
         # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.
+        # 2026-07-09: bridge模式 — 如果opportunity_scan_YYYYMMDD.json存在,
+        # 2026-07-09: 移除VotingCoordinator fallback。
+        # 根因: 3模型投票方向准确率47%≈随机(DeepSeek 88%偏空/qwen 88%偏多),
+        #       bridge不存在时fallback到投票=用噪声替代信号。
+        # 新逻辑: bridge存在 → BridgeVotingAdapter; bridge不存在 → NullVotingAdapter(全SKIP)。
+        # deep_analysis skill负责盘前生成bridge文件(cron CST 21:00/ET 09:00)。
+        self.voting_coordinator = None  # 先置空, 下面按bridge状态赋值
+
+        # bridge覆盖: 尝试加载今日bridge文件
+        _bridge_loaded = False
         try:
-            from app.core.config import get_config as _gc_vc
-            _voting_timeout = int(_gc_vc().get_dotted("llm.defaults.voting_timeout_seconds", 60))
-        except Exception:
-            _voting_timeout = 60
-        self.voting_coordinator = VotingCoordinator(
-            config=VotingConfig.get_default_config(),
-            timeout_seconds=_voting_timeout,
-        )
+            from app.playbook.pipeline import _try_load_bridge
+            _bridge = _try_load_bridge()
+            if _bridge is not None:
+                _bridge_n = len(_bridge._candidates)
+                if _bridge_n < 3:
+                    logger.warning(f"[scheduler] bridge加载成功但只有{_bridge_n}个候选(<3), 信号覆盖可能不足")
+                else:
+                    logger.info(f"[scheduler] bridge文件加载成功 ({_bridge_n}候选), voting_coordinator → BridgeVotingAdapter")
+                self.voting_coordinator = _bridge
+                _bridge_loaded = True
+        except Exception as _bridge_err:
+            logger.warning(f"[scheduler] bridge加载失败: {_bridge_err}")
+
+        # bridge不存在 → 按配置 fallback (2026-07-11 双脑清理)
+        # playbook.fallback_when_no_bridge: technical → TechnicalFallbackAdapter (确定性兜底)
+        #                                    none      → NullVotingAdapter (全 SKIP, 保守)
+        if not _bridge_loaded:
+            _fb_mode = "technical"
+            try:
+                from app.core.config_container import get_config as _gc_fb
+                _fb_mode = str(_gc_fb().get_dotted("playbook.fallback_when_no_bridge", "technical")).lower()
+            except Exception:
+                pass
+            if _fb_mode == "technical":
+                from app.playbook.pipeline import TechnicalFallbackAdapter
+                self.voting_coordinator = TechnicalFallbackAdapter()
+                logger.warning(
+                    "[scheduler] bridge文件不存在 → TechnicalFallbackAdapter (确定性 technical 兜底). "
+                    "deep_analysis cron应在盘前ET 09:00生成bridge文件. "
+                    "如需回退全SKIP, 设 playbook.fallback_when_no_bridge=none"
+                )
+            else:
+                from app.playbook.pipeline import NullVotingAdapter
+                self.voting_coordinator = NullVotingAdapter()
+                logger.warning(
+                    "[scheduler] bridge文件不存在 → NullVotingAdapter (全SKIP). "
+                    "deep_analysis cron应在盘前ET 09:00生成bridge文件."
+                )
         
         # P0 清理 2026-04-25: 移除已废弃的 ai_trading_integration
         # ai_executor 和 ai_stoploss_monitor 从未被实际调用
@@ -1733,7 +1778,7 @@ class TradingScheduler:
     
     def _llm_strategy_loop(self):
         """LLM 策略引擎循环 - 按市场阶段自适应调度"""
-        from app.pipeline.llm_pipeline import run_after_hours_llm_scan, run_premarket_planning, run_open_checker, run_open_price_refresh
+        from app.pipeline.llm_pipeline import run_after_hours_llm_scan, run_open_checker, run_open_price_refresh
         from .scheduler_triggers import get_market_phase, MarketPhase
         import time
 
@@ -1754,13 +1799,22 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[playbook] TRADING catch-up生成异常 (已隔离): {_e}")
 
+                    # 2026-07-11: 独立盘前指令推送 (不依赖生成内联, 持久化幂等+重试)
+                    try:
+                        from app.playbook.pipeline import run_playbook_morning_push
+                        run_playbook_morning_push(self)
+                    except Exception as _e:
+                        logger.warning(f"[playbook] TRADING 盘前指令推送异常 (已隔离): {_e}")
+
                     # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
-                    # 每30分钟检查一次是否有新的 triggered 指令需要自动执行
+                    # 每5分钟检查一次是否有新的 triggered 指令需要自动执行
+                    # 2026-07-10: 从30分钟降到5分钟 — 分批建仓指令依赖价格触及入场区间,
+                    #   30分钟间隔可能错过最佳入场窗口(如日内闪崩回调后快速反弹)
                     if not hasattr(self, '_playbook_auto_execute_last_run'):
                         self._playbook_auto_execute_last_run = None
                     
                     if (self._playbook_auto_execute_last_run is None or 
-                        (now - self._playbook_auto_execute_last_run).total_seconds() >= 1800):
+                        (now - self._playbook_auto_execute_last_run).total_seconds() >= 300):
                         try:
                             from app.playbook.pipeline import run_playbook_auto_execute
                             run_playbook_auto_execute(self)
@@ -1802,9 +1856,6 @@ class TradingScheduler:
                     except Exception as e:
                         logger.debug(f"[LLM策略] 节假日检查异常 (继续): {e}")
 
-                    # 盘前: 生成作战计划 (每日一次)
-                    run_premarket_planning(self)
-
                     # P0 修复: 开盘确认器 — run_open_checker 内部自带时间窗口 + 日期幂等
                     # 无需外部 guard，函数自行判断 09:15-09:29 ET 窗口并每日执行一次
                     run_open_checker(self)
@@ -1829,6 +1880,13 @@ class TradingScheduler:
                     except Exception as _e:
                         # 2026-07-04: debug→warning — 盘前生成失败会导致当日无作战计划, 必须可见
                         logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+
+                    # 2026-07-11: 独立盘前指令推送 (不依赖生成内联, 持久化幂等+重试)
+                    try:
+                        from app.playbook.pipeline import run_playbook_morning_push
+                        run_playbook_morning_push(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] playbook 盘前指令推送异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
@@ -1864,7 +1922,6 @@ class TradingScheduler:
                     last_trading_run = None
                     last_afterhours_run = None
                     # 重置日级标志
-                    self._premarket_plan_executed_today = False
                     self._open_checker_executed_today = False
 
                 time.sleep(60)  # 每分钟检查阶段变化 (可中断)
@@ -2138,7 +2195,10 @@ class TradingScheduler:
           3. 信号在下次 signal_stage.process() 时被 insider 策略自然消费
         """
         logger.info("[InsiderScan] 每日扫描循环已启动 (interval=4h)")
-        _scanned_today: str = ""
+
+        # 持久化 scanned_today 到文件，避免调度器重启后 _scanned_today 丢失导致重复扫描
+        from pathlib import Path
+        _sentinel_file = Path("data") / ".insider_scanned_today"
 
         while self.running:
             try:
@@ -2153,7 +2213,7 @@ class TradingScheduler:
                 hour = now_et().hour
 
                 # 每天 ET 6-9 点之间执行一次扫描
-                if today == _scanned_today or hour < 6 or hour >= 10:
+                if hour < 6 or hour >= 10:
                     # 等待 1 小时后再次检查
                     for _ in range(3600):
                         if not self.running:
@@ -2161,7 +2221,21 @@ class TradingScheduler:
                         time.sleep(1)
                     continue
 
-                _scanned_today = today
+                # 文件持久化: 读取上次扫描日期
+                _scanned_today = ""
+                if _sentinel_file.exists():
+                    try:
+                        _scanned_today = _sentinel_file.read_text().strip()
+                    except Exception:
+                        pass
+
+                if today == _scanned_today:
+                    # 等待 1 小时后再次检查
+                    for _ in range(3600):
+                        if not self.running:
+                            return
+                        time.sleep(1)
+                    continue
 
                 # 收集扫描列表: watchlist + ORB universe
                 symbols_to_scan = list(set(self.watchlist))
@@ -2195,6 +2269,13 @@ class TradingScheduler:
                                 logger.debug(f"[InsiderScan] 通知失败: {_e}")
                 else:
                     logger.info(f"[InsiderScan] 扫描完成, 未发现集群买入信号")
+
+                # 扫描成功后写入 sentinel (修复: 原来在扫描前写, 进程被kill则标记已扫描但实际未扫)
+                try:
+                    _sentinel_file.parent.mkdir(parents=True, exist_ok=True)
+                    _sentinel_file.write_text(today)
+                except Exception:
+                    pass
 
             except Exception as e:
                 logger.warning(f"[InsiderScan] 扫描异常: {e}")

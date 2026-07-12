@@ -71,9 +71,35 @@ class ReviewDataCollector:
             return []
     
     def collect_daily(self, date: str) -> Dict:
-        """采集日级复盘数据 (P0 修复 2026-05-08: 添加 source_type 分类)"""
+        """采集日级复盘数据 (P0 修复 2026-05-08: 添加 source_type 分类)
+        P0 修复 (2026-07-07): JOIN playbook_instructions 注入 MFE/MAE/conditions/thesis，
+        让 LLM 复盘能看到"信号方向正确率"而非只看到 pnl/exit_reason。
+        """
+        # JOIN trade_records + playbook_instructions (通过 decision_id 关联)
+        # playbook_instructions 含 max_favorable_excursion/max_adverse_excursion/
+        # conditions_json/thesis/matched_patterns_json/pattern_verdict/fwd_return_t1/t3/t5
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date = ? ORDER BY created_at",
+            """SELECT
+                tr.*,
+                pi.max_favorable_excursion  AS mfe,
+                pi.max_adverse_excursion   AS mae,
+                pi.mfe_analysis            AS mfe_analysis,
+                pi.conditions_json         AS pb_conditions,
+                pi.thesis                  AS pb_thesis,
+                pi.matched_patterns_json   AS pb_patterns,
+                pi.pattern_verdict         AS pb_pattern_verdict,
+                pi.fwd_return_t1           AS fwd_t1,
+                pi.fwd_return_t3           AS fwd_t3,
+                pi.fwd_return_t5           AS fwd_t5,
+                pi.confidence              AS pb_confidence,
+                pi.market_regime           AS pb_market_regime,
+                pi.vix_at_generation       AS pb_vix,
+                pi.stop_loss               AS pb_stop_loss,
+                pi.take_profit             AS pb_take_profit
+               FROM trade_records tr
+               LEFT JOIN playbook_instructions pi ON tr.decision_id = pi.decision_id
+               WHERE tr.trade_date = ?
+               ORDER BY tr.created_at""",
             (date,)
         )
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
@@ -1276,6 +1302,19 @@ class ReviewAnalyst:
                     "pnl": t.get("realized_pnl"),
                     "pnl_pct": t.get("pnl_pct"),
                     "exit_reason": t.get("exit_reason"),
+                    "holding_hours": t.get("holding_hours"),
+                    # ★ P0 修复 (2026-07-07): 注入信号质量数据
+                    "mfe": t.get("mfe"),          # 最大有利波动 — 判断方向是否正确
+                    "mae": t.get("mae"),          # 最大不利波动 — 判断止损是否合理
+                    "conditions": t.get("pb_conditions"),   # 选股条件 JSON
+                    "thesis": t.get("pb_thesis"),           # 入场逻辑
+                    "pattern_verdict": t.get("pb_pattern_verdict"),
+                    "fwd_t1": t.get("fwd_t1"),    # T+1 前瞻收益
+                    "fwd_t3": t.get("fwd_t3"),
+                    "fwd_t5": t.get("fwd_t5"),
+                    "pb_confidence": t.get("pb_confidence"),
+                    "pb_vix": t.get("pb_vix"),
+                    "pb_stop_loss": t.get("pb_stop_loss"),
                 }
                 for t in trades[:10]
             ], ensure_ascii=False, indent=2),
@@ -1285,9 +1324,11 @@ class ReviewAnalyst:
             "2. 对比活跃教训, 判断今日是否重复犯错",
             "3. 结合已知问题 (known_issues), 验证问题是否仍在恶化",
             "4. 根据性能趋势, 判断策略是否在退化",
-            "5. 给出 2-3 条具体的策略调整建议 (必须有代码/配置变更)",
-            "6. 指出需要重点关注的标的和风险点",
-            "7. 输出严格 JSON: {\"insights\": [...], \"root_causes\": [...], \"fixes\": [...], \"warnings\": [...], \"next_focus\": [...]}",
+            "5. ★ 信号质量分析: 对比 mfe 和 pnl — 若 mfe>0 但 pnl<0, 说明方向正确但退出策略失败 (非信号问题), 建议'优化退出'而非'更换信号'",
+            "6. ★ 前瞻收益验证: 对比 fwd_t1/t3/t5 与实际 pnl — 若 fwd>0 但 pnl<0, 说明入场时机正确但持有时间不足",
+            "7. 给出 2-3 条具体的策略调整建议 (必须有代码/配置变更)",
+            "8. 指出需要重点关注的标的和风险点",
+            "9. 输出严格 JSON: {\"insights\": [...], \"root_causes\": [...], \"fixes\": [...], \"warnings\": [...], \"next_focus\": [...]}",
         ]
         
         return "\n".join(lines)
@@ -1618,32 +1659,53 @@ class ReviewOrchestrator:
             return 0
         
         lessons = []
-        
-        # 从 adjustments 提取
-        for adj in debate.get("adjustments", [])[:3]:
-            if adj and isinstance(adj, str) and len(adj) > 10:
-                lessons.append({
-                    "lesson_text": adj[:200],
-                    "lesson_category": "trading",
-                    "lesson_subcategory": "review_adjustment",
-                    "impact_score": 0.7,
-                    "confidence": 0.8,
-                    "source_type": "review_orchestrator",
-                    "expiry_date": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
-                })
-        
-        # 从 warnings 提取
-        for w in debate.get("warnings", [])[:3]:
-            if w and isinstance(w, str) and len(w) > 10:
-                lessons.append({
-                    "lesson_text": f"风险警告: {w[:150]}",
-                    "lesson_category": "risk",
-                    "lesson_subcategory": "review_warning",
-                    "impact_score": 0.6,
-                    "confidence": 0.7,
-                    "source_type": "review_orchestrator",
-                    "expiry_date": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
-                })
+
+        # P0 修复 (2026-07-07): arbiter prompt 输出 actionable_fixes / final_conclusions，
+        # 但旧代码读 adjustments / warnings → 字段名不匹配 → lessons 永远 = 0。
+        # 现在对齐到实际 prompt schema (review_orchestrator.py L813-830)。
+
+        # 从 actionable_fixes 提取（替代旧 adjustments）
+        for fix in debate.get("actionable_fixes", [])[:5]:
+            if not fix or not isinstance(fix, dict):
+                continue
+            fix_text = fix.get("fix", "")
+            if not fix_text or len(fix_text) < 10:
+                continue
+            target = fix.get("target", "process")
+            expected_impact = fix.get("expected_impact", "")
+            conf = fix.get("confidence", 0.7)
+            lessons.append({
+                "lesson_text": f"[{target}] {fix_text[:180]}{f' → {expected_impact[:80]}' if expected_impact else ''}",
+                "lesson_category": "trading",
+                "lesson_subcategory": f"review_fix_{target}",
+                "impact_score": min(0.9, max(0.5, conf)),
+                "confidence": conf,
+                "source_type": "review_orchestrator",
+                "expiry_date": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
+            })
+
+        # 从 final_conclusions 提取（替代旧 warnings，含 priority 分级）
+        for fc in debate.get("final_conclusions", [])[:5]:
+            if not fc or not isinstance(fc, dict):
+                continue
+            conclusion = fc.get("conclusion", "")
+            if not conclusion or len(conclusion) < 10:
+                continue
+            priority = fc.get("priority", "P2")
+            eq = fc.get("evidence_quality", "weak")
+            conf = fc.get("confidence", 0.6)
+            reasoning = fc.get("reasoning", "")
+            # P0/P1 作为高优教训，P2 作为一般教训
+            impact = 0.8 if priority in ("P0", "P1") else 0.5
+            lessons.append({
+                "lesson_text": f"[{priority}|{eq}] {conclusion[:180]}{f' ({reasoning[:100]})' if reasoning else ''}",
+                "lesson_category": "risk" if priority == "P0" else "trading",
+                "lesson_subcategory": f"review_conclusion_{priority}",
+                "impact_score": min(0.9, max(0.3, conf, impact)),
+                "confidence": conf,
+                "source_type": "review_orchestrator",
+                "expiry_date": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
+            })
         
         if not lessons:
             return 0

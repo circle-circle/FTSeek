@@ -198,6 +198,15 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
                     fwd_return = sign * (close - entry_price) / entry_price
                     updates[field_name] = round(fwd_return, 6)
 
+        # 2026-07-12: 日内 IC — entry → 当日收盘 (纯日内系统真正收割的 horizon).
+        #   与 t+N 同口径 (用收盘价), 但 horizon=当日. DA horizon 几乎恒 short (当天平),
+        #   t+3/t+5 是系统收割不到的多日 edge → 用日内收益评信号方向预测力才不 horizon 错配.
+        #   保留 t+1/t+3/t+5 供对比: 若某标的多日 IC 显著 > 日内 IC, 是"该不该转非日内持有"的证据.
+        if inst_date_str in bars_by_date:
+            _close0 = bars_by_date[inst_date_str].get("close", 0)
+            if _close0 and _close0 > 0:
+                updates["fwd_return_intraday"] = round(sign * (_close0 - entry_price) / entry_price, 6)
+
         if updates:
             try:
                 db.update_instruction_tracking(inst["id"], updates)
@@ -248,6 +257,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         return {"overall_ic": None, "sample_count": 0}
 
     # 过滤有前瞻收益的指令
+    valid_intraday = []  # (confidence, fwd_return, conditions, regime, horizon) — 日内 horizon (主 edge 尺子)
     valid_t1 = []  # (confidence, fwd_return, conditions, regime, horizon)
     valid_t3 = []
     valid_t5 = []
@@ -257,6 +267,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         if not conf or conf <= 0:
             continue
 
+        fwd_intraday = inst.get("fwd_return_intraday")
         fwd_t1 = inst.get("fwd_return_t1")
         fwd_t3 = inst.get("fwd_return_t3")
         fwd_t5 = inst.get("fwd_return_t5")
@@ -273,6 +284,8 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         regime = inst.get("market_regime", "UNKNOWN")
         horizon = inst.get("horizon", "short") or "short"
 
+        if fwd_intraday is not None:
+            valid_intraday.append((conf, fwd_intraday, conditions, regime, horizon))
         if fwd_t1 is not None:
             valid_t1.append((conf, fwd_t1, conditions, regime, horizon))
         if fwd_t3 is not None:
@@ -281,6 +294,10 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
             valid_t5.append((conf, fwd_t5, conditions, regime, horizon))
 
     # 计算整体 IC
+    overall_intraday, overall_intraday_p = _spearman_rank_correlation(
+        [v[0] for v in valid_intraday], [v[1] for v in valid_intraday]
+    ) if len(valid_intraday) >= 5 else (None, None)
+
     overall_t1, overall_t1_p = _spearman_rank_correlation(
         [v[0] for v in valid_t1], [v[1] for v in valid_t1]
     ) if len(valid_t1) >= 5 else (None, None)
@@ -401,12 +418,15 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
                     }
 
     result = {
+        "overall_ic_intraday": round(overall_intraday, 4) if overall_intraday is not None else None,
+        "overall_ic_intraday_p": round(overall_intraday_p, 4) if overall_intraday_p is not None else None,
         "overall_ic_t1": round(overall_t1, 4) if overall_t1 is not None else None,
         "overall_ic_t1_p": round(overall_t1_p, 4) if overall_t1_p is not None else None,
         "overall_ic_t3": round(overall_t3, 4) if overall_t3 is not None else None,
         "overall_ic_t3_p": round(overall_t3_p, 4) if overall_t3_p is not None else None,
         "overall_ic_t5": round(overall_t5, 4) if overall_t5 is not None else None,
         "overall_ic_t5_p": round(overall_t5_p, 4) if overall_t5_p is not None else None,
+        "sample_intraday": len(valid_intraday),
         "sample_t1": len(valid_t1),
         "sample_t3": len(valid_t3),
         "sample_t5": len(valid_t5),

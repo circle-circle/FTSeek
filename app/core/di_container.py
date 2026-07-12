@@ -120,7 +120,16 @@ class DIContainer:
     #  投票 & 共识
     # ================================================================
     def voting_coordinator(self) -> "VotingCoordinator":
-        """多模型投票协调器"""
+        """多模型投票协调器
+
+        2026-07-10: DEPRECATED. scheduler 不再调用此工厂.
+        仅作为 playbook/pipeline.py 的 fallback 存在, 实际不会执行
+        (scheduler.voting_coordinator 在 __init__ 中总是被赋值 NullVotingAdapter 或 bridge).
+        保留是为向后兼容, 不删除以避免破坏外部引用.
+        """
+        import logging as _logging
+        _log = _logging.getLogger("ftseek.di_container")
+        _log.debug("[DI] voting_coordinator() 被调用 (DEPRECATED, 仅 playbook fallback)")
         from app.agents.voting.voting_coordinator import VotingCoordinator
         from app.agents.voting.voting_config import VotingConfig
         # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.

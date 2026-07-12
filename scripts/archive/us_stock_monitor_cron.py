@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.11
 """
 美股监控器 - Cron 任务入口
 
@@ -9,11 +9,11 @@
 
 配置 cron 示例 (crontab -e):
 # 每 5 分钟检查一次 (美东交易时段 21:30-04:00)
-*/5 21-23 * * * cd /opt/ftseek/FTSeek && /usr/bin/python3.8 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
-*/5 0-3 * * * cd /opt/ftseek/FTSeek && /usr/bin/python3.8 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
+*/5 21-23 * * * cd /opt/ftseek/FTSeek && /usr/local/bin/python3.11 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
+*/5 0-3 * * * cd /opt/ftseek/FTSeek && /usr/local/bin/python3.11 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
 
 # 每 15 分钟检查一次 (美东非交易时段)
-*/15 4-20 * * * cd /opt/ftseek/FTSeek && /usr/bin/python3.8 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
+*/15 4-20 * * * cd /opt/ftseek/FTSeek && /usr/local/bin/python3.11 scripts/us_stock_monitor_cron.py >> logs/us_monitor.log 2>&1
 """
 import os
 import sys

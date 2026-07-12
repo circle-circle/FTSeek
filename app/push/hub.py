@@ -79,22 +79,24 @@ class PushHub:
             f"async={async_mode} workers={async_workers}"
         )
 
-    def push(self, msg: PushMessage) -> bool:
+    def push(self, msg: PushMessage, sync: bool = False) -> bool:
         """主入口. 返回 True = 已处理 (送达或聚合), False = 全部失败.
 
         - dedup: 60s 内同 key 跳过
         - 聚合: LOW + aggregate_key → 入桶 (返回 True 表示已处理)
         - 立即: 其他级别 → 按 channel 优先级发送
+        - sync=True: 绕过异步与去重/聚合, 同步立即送达并返回真实结果
+          (用于关键必达推送, 如盘前指令; 调用方据此决定是否重试)
         """
         try:
             dedup_key = msg.auto_dedup_key()
-            if not self._dedup.should_send(dedup_key):
+            if not sync and not self._dedup.should_send(dedup_key):
                 with self._lock:
                     self._deduped += 1
                 logger.debug(f"[PushHub·dedup] 跳过 key={dedup_key} title={msg.title}")
                 return True  # 视为已处理
 
-            if msg.is_aggregable():
+            if not sync and msg.is_aggregable():
                 added = self._aggregator.add(msg)
                 if added:
                     with self._lock:
@@ -103,7 +105,7 @@ class PushHub:
                     return True
 
             # R2: 异步 fire-and-forget (主线 0 阻塞), 同步模式仅测试用
-            if self._async_mode and self._executor is not None:
+            if self._async_mode and self._executor is not None and not sync:
                 self._async_send(msg)
                 return True
             return self._immediate_send(msg)

@@ -48,7 +48,7 @@ def call_llm(
             logger.warning(f"[LLM·{feature}] 单 feature 预算耗尽 ${spent:.2f} >= ${feature_budget:.2f}, 跳过")
             return None
 
-    # 调用
+    # 调用 — 统一走 model_call (YAML 路由 / SSOT)
     start = time.time()
     response: Optional[str] = None
     error_msg: Optional[str] = None
@@ -57,27 +57,25 @@ def call_llm(
     tokens_out = 0
     actual_model = model
     try:
-        from app.llm.multi_model_client import get_multi_model_client
-        client = get_multi_model_client()
-        response = client.chat(
-            user_prompt=prompt,
+        from app.llm.model_call import call_llm as _model_call, CallResult
+        res: Optional[CallResult] = _model_call(
+            feature,
+            prompt,
             system=system,
-            model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
         )
-        # 抽取 cost / tokens (从最近 1 条 cost_tracker)
-        try:
-            tracker = getattr(client, "_cost_tracker", [])
-            if tracker:
-                last = tracker[-1]
-                cost = float(last.get("cost", 0) or 0)
-                tokens_in = int(last.get("tokens_in", 0) or 0)
-                tokens_out = int(last.get("tokens_out", 0) or 0)
-                actual_model = last.get("model", model)
-        except Exception:
-            pass
+        if res:
+            actual_model = res.model_used or model
+            cost = res.cost_usd or 0.0
+            tokens_in = res.tokens_in or 0
+            tokens_out = res.tokens_out or 0
+            if res.success:
+                response = res.response if isinstance(res.response, str) else None
+            else:
+                error_msg = res.error or "model_call failed"
+                logger.warning(f"[LLM·{feature}] 调用失败: {error_msg}")
     except Exception as e:
         error_msg = str(e)
         logger.warning(f"[LLM·{feature}] 调用异常: {e}")

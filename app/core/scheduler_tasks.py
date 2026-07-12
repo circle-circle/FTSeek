@@ -62,7 +62,6 @@ from app.pipeline.llm_pipeline import (
     run_llm_strategy_scan,
     run_llm_backtest,
     run_after_hours_llm_scan,
-    run_premarket_planning,
     run_open_checker,
     _fallback_to_finnhub_news,
     _generate_degraded_recommendation,
@@ -87,7 +86,7 @@ __all__ = [
     "_notify_risk_blocked",
     # llm_pipeline
     "run_llm_strategy_scan", "run_llm_backtest",
-    "run_after_hours_llm_scan", "run_premarket_planning", "run_open_checker",
+    "run_after_hours_llm_scan", "run_open_checker",
     "_fallback_to_finnhub_news", "_generate_degraded_recommendation",
     "_send_rsshub_alert",
     "_merge_agent_plan_into_battle_plan", "_deduplicate_strings",

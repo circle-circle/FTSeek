@@ -28,7 +28,7 @@ class PlaybookPusher:
     def __init__(self, playbook_db: PlaybookDB = None):
         self.db = playbook_db or PlaybookDB()
 
-    def push_morning_instructions(self, trade_date: str = None) -> bool:
+    def push_morning_instructions(self, trade_date: str = None, sync: bool = False) -> bool:
         """
         盘前推送: 今日交易指令 + 市场环境
 
@@ -61,7 +61,7 @@ class PlaybookPusher:
         # 构建消息
         message = self._format_morning_message(trade_date, instructions, regime_info)
 
-        return self._send(message)
+        return self._send(message, dedup_key=f"playbook:morning:{trade_date}", sync=sync)
 
     def push_evening_tracking(self, trade_date: str = None) -> bool:
         """
@@ -195,7 +195,7 @@ class PlaybookPusher:
 
     # ========== 内部方法 ==========
 
-    def _send(self, message: str, dedup_key: str = None) -> bool:
+    def _send(self, message: str, dedup_key: str = None, sync: bool = False) -> bool:
         """发送飞书消息"""
         try:
             # 优先使用 PushHub
@@ -207,9 +207,9 @@ class PlaybookPusher:
                 category=Category.PLAN_PREMARKET,
                 dedup_key=dedup_key or f"playbook:{date.today().isoformat()}",
             )
-            get_push_hub().push(msg)
-            logger.info("Playbook push sent via PushHub")
-            return True
+            ok = get_push_hub().push(msg, sync=sync)
+            logger.info(f"Playbook push via PushHub: sent={ok} sync={sync}")
+            return ok
         except ImportError:
             pass
 

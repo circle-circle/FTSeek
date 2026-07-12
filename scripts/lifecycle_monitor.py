@@ -201,8 +201,13 @@ def check_emergency(snapshot: dict, sent_state: dict) -> list:
 
 
 def send_feishu(text: str) -> bool:
-    """Send via Feishu webhook (keyword: [FTSeek-US])."""
+    """Send via Feishu webhook (keyword: [FTSeek-US]).
+
+    限流保护: 逐条发送时间隔 300ms, 避免命中飞书 5/s 频率限制 (code=11232).
+    """
     import requests
+    import time as _time
+
     webhook_url = os.getenv("FEISHU_WEBHOOK_URL_US", "")
     if not webhook_url:
         print("[warn] FEISHU_WEBHOOK_URL_US not set", file=sys.stderr)
@@ -211,10 +216,18 @@ def send_feishu(text: str) -> bool:
     content = f"[FTSeek-US] {text}" if not text.startswith("[FTSeek-US]") else text
     payload = {"msg_type": "text", "content": {"text": content}}
     try:
+        _time.sleep(0.3)  # 防止 burst 触发飞书 11232 限频
         resp = requests.post(webhook_url, json=payload, timeout=10)
         result = resp.json()
         if result.get("code") == 0 or result.get("StatusCode") == 0:
             return True
+        # 飞书限频 → 指数退避重试 1 次
+        if result.get("code") == 11232:
+            _time.sleep(2)
+            resp = requests.post(webhook_url, json=payload, timeout=10)
+            result = resp.json()
+            if result.get("code") == 0 or result.get("StatusCode") == 0:
+                return True
         print(f"[feishu] send failed: {result}", file=sys.stderr)
         return False
     except Exception as e:

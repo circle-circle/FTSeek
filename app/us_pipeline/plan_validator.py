@@ -101,6 +101,18 @@ class PlanValidator:
         scan_targets = scan_result.get("targets", {})
         sector_rotation = scan_result.get("sector_rotation", {})
         
+        # 改动7b: 如果premarket_scanner没有sector_rotation, 用deep_analysis的作fallback
+        if not sector_rotation:
+            try:
+                import json as _json, os
+                _sr_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "deep_sector_rotation.json")
+                if os.path.exists(_sr_path):
+                    with open(_sr_path) as _f:
+                        sector_rotation = _json.load(_f)
+                    logger.info(f"[PlanValidator] 使用deep_analysis sector_rotation fallback: strongest={sector_rotation.get('strongest', [])[:2]}")
+            except Exception as _sr_err:
+                logger.debug(f"[PlanValidator] deep_sector_rotation.json读取失败(忽略): {_sr_err}")
+        
         for target in targets:
             symbol = target.get("symbol")
             if not symbol:

@@ -90,7 +90,7 @@ def _check_arbitrator(days: int):
         rows = conn.execute(f"""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN n_candidates > 1 THEN 1 ELSE 0 END) as multi,
+                COALESCE(SUM(CASE WHEN n_candidates > 1 THEN 1 ELSE 0 END), 0) as multi,
                 COUNT(DISTINCT winner_strategy) as winners
             FROM signal_arbitration
             WHERE timestamp > strftime('%s', 'now', ?)

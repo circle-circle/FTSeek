@@ -70,6 +70,7 @@ class PlaybookDB:
         """为已存在的 playbook_instructions 表补缺失列 (SQLite 无 ADD COLUMN IF NOT EXISTS)."""
         # name → type, 仅列 schema 定义但可能未迁移的列
         needed = {
+            "fwd_return_intraday": "REAL",
             "fwd_return_t1": "REAL",
             "fwd_return_t3": "REAL",
             "fwd_return_t5": "REAL",
@@ -77,6 +78,7 @@ class PlaybookDB:
             "horizon_confidence": "REAL",
             "horizon_reasoning": "TEXT",
             "config_version": "TEXT",
+            "invalidation": "TEXT",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -119,8 +121,8 @@ class PlaybookDB:
                 matched_patterns_json, pattern_verdict,
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
-                created_at, updated_at, config_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')
+                created_at, updated_at, config_version, invalidation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -144,6 +146,7 @@ class PlaybookDB:
                 horizon=excluded.horizon,
                 horizon_confidence=excluded.horizon_confidence,
                 horizon_reasoning=excluded.horizon_reasoning,
+                invalidation=excluded.invalidation,
                 updated_at=excluded.updated_at
         """, (
             inst.get("date"),
@@ -175,6 +178,7 @@ class PlaybookDB:
             _to_json(inst.get("horizon_reasoning")),
             inst.get("created_at", now),
             now,
+            inst.get("invalidation", "") or "",
         ))
         conn.commit()
         # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询
@@ -716,11 +720,17 @@ _TRACKING_FIELDS = {
     "outcome", "shadow_pnl", "lesson",
     "decision_id",
     # Phase 1: IC 追踪
-    "fwd_return_t1", "fwd_return_t3", "fwd_return_t5",
+    "fwd_return_intraday", "fwd_return_t1", "fwd_return_t3", "fwd_return_t5",
     # Horizon 决策追踪
     "horizon", "horizon_confidence", "horizon_reasoning",
     # 2026-06-29: re-price 审计 — 记录触发时重新定价后的 entry/stop
     "entry_price", "stop_loss",
+    # 2026-07-11: re-price 审计补全 — position_size/take_profit 此前被 whitelist 挡下,
+    #   导致 bridge(DA) 路径触发时兜底算出的仓位/止盈从不落库 (审计断裂: 成交单已正确
+    #   带 size 走 execute_instruction 的 custom_params, 但 playbook_instructions 审计列恒 0)。
+    #   加入后 re-price 的 position_size/take_profit 与实际下单一致, 审计可追溯。
+    #   (reprice_from/to/original_sl 非 DB 列, 仍由 whitelist 正确忽略。)
+    "position_size", "take_profit",
 }
 
 
@@ -854,6 +864,7 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     shadow_pnl REAL,
 
     -- IC 追踪 (Phase 1: 2026-06-19)
+    fwd_return_intraday REAL,
     fwd_return_t1 REAL,
     fwd_return_t3 REAL,
     fwd_return_t5 REAL,

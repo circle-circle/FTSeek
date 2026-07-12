@@ -19,7 +19,7 @@ from collections import defaultdict
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent
-LOG_FILE = PROJECT_ROOT / "logs" / "ftseek.log"
+LOG_FILE = PROJECT_ROOT / "logs" / "ftseek_us.log"
 SIGNAL_LOG = PROJECT_ROOT / "logs" / "insider_signals.jsonl"
 STATS_DIR = PROJECT_ROOT / "data" / "stats"
 REPORTS_DIR = PROJECT_ROOT / "data" / "reports"
@@ -29,37 +29,56 @@ STATS_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def parse_insider_signals_from_log(log_file: Path, days_back: int = 1) -> List[Dict]:
-    """从主日志解析 insider 信号"""
+def parse_insider_signals_from_log(log_file, days_back: int = 1) -> List[Dict]:
+    """从主日志解析 insider 信号
+
+    实际日志格式（两行）:
+      2026-07-06 18:08:38,800 [...] INFO: [InsiderScan] 🟢 发现 1 个集群买入信号!
+      2026-07-06 18:08:38,800 [...] INFO: [InsiderScan] 🟢 内部人集群买入: US.TSM
+
+    Args:
+        log_file: Path 对象或已打开的文件对象 (支持 StringIO/gzip 文件)
+        days_back: 向前回溯天数
+    """
     signals = []
     cutoff = datetime.now() - timedelta(days=days_back)
-    
-    # 匹配模式: [InsiderScan] 🟢 集群买入信号: US.TSLA 2人 $1,234,567
-    pattern = re.compile(
-        r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\].*?\[InsiderScan\] 🟢 集群买入信号: '
-        r'(US\.\w+) (\d+)人 \$(\d+(?:,\d+)*)'
+
+    # 匹配: [InsiderScan] 🟢 内部人集群买入: US.TSM
+    symbol_pattern = re.compile(
+        r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+.*?\[InsiderScan\] '
+        r'🟢 内部人集群买入: (US\.\w+)'
     )
-    
-    if not log_file.exists():
-        print(f"⚠ Log file not found: {log_file}")
-        return signals
-    
-    with open(log_file, 'r', encoding='utf-8') as f:
+
+    # 处理 Path 对象或文件对象
+    if hasattr(log_file, 'exists'):
+        if not log_file.exists():
+            print(f"⚠ Log file not found: {log_file}")
+            return signals
+        f = open(log_file, 'r', encoding='utf-8', errors='replace')
+        close_after = True
+    else:
+        f = log_file
+        close_after = False
+
+    try:
         for line in f:
-            match = pattern.search(line)
+            match = symbol_pattern.search(line)
             if match:
-                timestamp_str, symbol, buyers, amount = match.groups()
+                timestamp_str, symbol = match.groups()
                 timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                
+
                 if timestamp >= cutoff:
                     signals.append({
                         'timestamp': timestamp.isoformat(),
                         'symbol': symbol,
-                        'buyers': int(buyers),
-                        'amount': int(amount.replace(',', '')),
+                        'buyers': 0,      # 不在日志行中，留占位
+                        'amount': 0,       # 同上
                         'source': 'log'
                     })
-    
+    finally:
+        if close_after:
+            f.close()
+
     return signals
 
 
@@ -120,9 +139,28 @@ def generate_daily_report(date_str: Optional[str] = None) -> Dict:
     """生成每日报告"""
     if date_str is None:
         date_str = datetime.now().strftime('%Y-%m-%d')
-    
-    # 解析今日信号
-    signals_today = parse_insider_signals_from_log(LOG_FILE, days_back=1)
+
+    # 解析今日信号 — 同时搜索当前日志和最近轮转的日志
+    all_log_files = [LOG_FILE]
+    # 添加轮转日志 (格式: ftseek_us.log-YYYYMMDD 或 .gz)
+    for f in LOG_FILE.parent.glob("ftseek_us.log-*"):
+        all_log_files.append(f)
+
+    signals_today = []
+    for lf in all_log_files:
+        if lf.suffix == '.gz':
+            import gzip
+            try:
+                with gzip.open(lf, 'rt', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                # 写到临时变量供 parse 函数处理
+                from io import StringIO
+                signals = parse_insider_signals_from_log(StringIO(content), days_back=1) if isinstance(content, str) else []
+            except Exception:
+                continue
+        else:
+            signals = parse_insider_signals_from_log(lf, days_back=1)
+        signals_today.extend(signals)
     signals_today += parse_insider_signals_from_jsonl(SIGNAL_LOG, days_back=1)
     
     # 去重（按 timestamp + symbol）
@@ -153,8 +191,22 @@ def generate_daily_report(date_str: Optional[str] = None) -> Dict:
 
 def generate_cumulative_stats() -> Dict:
     """生成累积统计"""
-    # 解析最近 14 天信号
-    signals_14d = parse_insider_signals_from_log(LOG_FILE, days_back=14)
+    # 解析最近 14 天信号 — 搜索当前日志 + 所有轮转日志
+    all_log_files = [LOG_FILE]
+    for f in LOG_FILE.parent.glob("ftseek_us.log-*"):
+        all_log_files.append(f)
+
+    signals_14d = []
+    for lf in all_log_files:
+        if lf.suffix == '.gz':
+            import gzip
+            try:
+                with gzip.open(lf, 'rt', encoding='utf-8', errors='replace') as gz_f:
+                    signals_14d.extend(parse_insider_signals_from_log(gz_f, days_back=14))
+            except Exception:
+                continue
+        else:
+            signals_14d.extend(parse_insider_signals_from_log(lf, days_back=14))
     signals_14d += parse_insider_signals_from_jsonl(SIGNAL_LOG, days_back=14)
     
     # 去重

@@ -31,7 +31,7 @@ _BLACKLIST_TTL: float = 60.0
 
 
 def _load_blacklist() -> Set[str]:
-    """读 unified_config.yaml::risk.global_blacklist (60s 缓存)"""
+    """读 unified_config.yaml::risk.global_blacklist + data/dynamic_blacklist.json (60s 缓存)"""
     global _BLACKLIST_CACHE, _BLACKLIST_CACHE_TS
     now = time.time()
     if now - _BLACKLIST_CACHE_TS < _BLACKLIST_TTL and _BLACKLIST_CACHE:
@@ -41,10 +41,23 @@ def _load_blacklist() -> Set[str]:
         cfg = get_config()
         bl = cfg.get_dotted("risk.global_blacklist", []) or []
         _BLACKLIST_CACHE = {str(s).strip() for s in bl if s}
-        _BLACKLIST_CACHE_TS = now
     except Exception as e:
         logger.warning(f"[BlackList] yaml 读取失败 (用空集合保守放行): {e}")
         _BLACKLIST_CACHE = set()
+    # 改动5b: 合并 deep_analysis 动态黑名单 (falling knife 等)
+    try:
+        import json as _json, os
+        _dyn_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "dynamic_blacklist.json")
+        if os.path.exists(_dyn_path):
+            with open(_dyn_path) as _f:
+                _dyn = _json.load(_f)
+            for _sym in _dyn.get("symbols", []):
+                _BLACKLIST_CACHE.add(str(_sym).strip())
+            if _dyn.get("symbols"):
+                logger.info(f"[BlackList] 动态黑名单合并: {_dyn['symbols']}")
+    except Exception as _dyn_err:
+        logger.debug(f"[BlackList] dynamic_blacklist.json 读取失败(忽略): {_dyn_err}")
+    _BLACKLIST_CACHE_TS = now
     return _BLACKLIST_CACHE
 
 

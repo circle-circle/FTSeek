@@ -302,6 +302,28 @@ class PlaybookScreener:
                     'value': triggered  # 实际值
                 }
 
+        # P0 修复 (2026-07-07): above_ma20 共振门控
+        # 辩论共识: above_ma20 bayesian_wr=21.8%, 单独触发不足以入场。
+        # requires_co_factor=true 时, 若 above_ma20 触发但无 volume_expansion
+        # 或 insider_cluster_buy 共振, 则从 score 中扣除 above_ma20 的贡献并标记 suppressed。
+        if 'above_ma20' in triggered_factors:
+            above_ma20_cfg = factors_config.get('above_ma20', {})
+            if above_ma20_cfg.get('requires_co_factor', False):
+                co_factors_present = (
+                    'volume_expansion' in triggered_factors or
+                    'insider_cluster_buy' in triggered_factors
+                )
+                if not co_factors_present:
+                    # 回退 above_ma20 的加分: 从 score 扣除, 从 triggered_factors 标记
+                    am20_w = triggered_factors['above_ma20'].get('weight', 0)
+                    score -= am20_w
+                    triggered_factors['above_ma20']['suppressed'] = True
+                    triggered_factors['above_ma20']['suppression_reason'] = (
+                        'requires_co_factor: above_ma20 单独触发胜率21.8%, 需配合 volume_expansion 或 insider_cluster_buy'
+                    )
+                    triggered_factors['above_ma20']['original_weight'] = am20_w
+                    triggered_factors['above_ma20']['weight'] = 0
+
         # 应用权重调整历史
         adjustments = self.config.get('weight_adjustments', [])
         for adj in adjustments:

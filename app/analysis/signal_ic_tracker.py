@@ -211,6 +211,7 @@ def record_signal_snapshot(
     created_at: Optional[str] = None,
     trade_date: Optional[str] = None,
     factors: Optional[list] = None,  # 2026-06-30 Phase 1: 命中的因子列表 ["insider_cluster_buy", "above_ma20", ...]
+    market_context: Optional[dict] = None,  # P1 2026-07-11: 决策时数值特征快照 (RSI/MACD/ATR/因子详情) — 供 per-feature edge 测量
 ):
     """
     记录信号快照 — 由 decision_recorder.record_decision() 调用
@@ -266,19 +267,24 @@ def record_signal_snapshot(
         conn = _conn()
         try:
             _factors_json = json.dumps(factors) if factors else None
+            # P1 (2026-07-11): 持久化决策时特征向量 (default=str 兜底不可序列化对象)
+            _mc_json = json.dumps(market_context, default=str) if market_context else None
             # UPSERT: 若 decision_recorder 先写入(无factors), 后续 pipeline 带 factors 时更新
             conn.execute("""
                 INSERT INTO signal_snapshots
                 (decision_id, symbol, direction, strength, confidence,
                  consensus_level, strategy_id, created_at, trade_date,
-                 created_at_snap, trade_mode, weight_version, factors_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at_snap, trade_mode, weight_version, factors_json,
+                 market_context_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(decision_id) DO UPDATE SET
-                    factors_json = COALESCE(excluded.factors_json, signal_snapshots.factors_json)
+                    factors_json = COALESCE(excluded.factors_json, signal_snapshots.factors_json),
+                    market_context_json = COALESCE(excluded.market_context_json, signal_snapshots.market_context_json)
             """, (
                 decision_id, symbol, direction, strength, confidence,
                 consensus_level, strategy_id, created_at, trade_date,
                 now_snap, _trade_mode, _weight_version, _factors_json,
+                _mc_json,
             ))
             conn.commit()
         finally:
@@ -726,17 +732,9 @@ def run_signal_ic_backfill(dry_run: bool = False) -> Dict[str, int]:
 
     # 获取 router (复用 scripts 的 _get_data_router 逻辑)
     try:
-        from app.data.market_data_router import MarketDataRouter
-        import os as _os
-        router = MarketDataRouter(
-            twelvedata_api_key=_os.environ.get("TWELVEDATA_API_KEY"),
-            finnhub_api_key=_os.environ.get("FINNHUB_API_KEY"),
-            alphavantage_api_key=_os.environ.get("ALPHAVANTAGE_API_KEY"),
-            cache_ttl_seconds=900,
-            futu_opend_host=_os.environ.get("FUTU_OPEND_HOST", "127.0.0.1"),
-            futu_opend_port=int(_os.environ.get("FUTU_OPEND_PORT", "11111")),
-            enable_futu_lv3=_os.environ.get("ENABLE_FUTU_LV3", "true").lower() in ("true", "1", "yes"),
-        )
+        # 2026-07-11: 复用进程级共享单例, 避免每次 backfill 新建 Futu 连接+watchdog
+        from app.data.market_data_router import get_market_data_router
+        router = get_market_data_router()
     except Exception as e:
         _bl.error(f"[SignalIC-Backfill] Router 初始化失败: {e}")
         return {}

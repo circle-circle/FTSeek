@@ -130,8 +130,10 @@ class FutuBrokerAdapter:
                 RET_OK,
             )
 
-            # 行情 Context
-            self.quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
+            # 行情 Context — 已移除 (2026-07-10)
+            # 根因: quote_ctx 仅被 get_realtime_price() 使用, 而该方法从未被调用
+            # (行情查询统一走 data_router.futu._quote_ctx). 保留 = 白占 1 个 OpenD 连接.
+            # get_realtime_price() 保留为空壳, 向后兼容.
 
             # 交易 Context（美股市场）
             self.trade_ctx = OpenSecTradeContext(
@@ -723,6 +725,8 @@ class FutuBrokerAdapter:
             当前价格，失败返回 0.0
         """
         if not self.is_connected() or not self.quote_ctx:
+            # 2026-07-10: quote_ctx 已移除, 用 data_router 替代
+            # 调用方应直接用 scheduler.data_router.get_quote(symbol)
             return 0.0
 
         try:

@@ -229,8 +229,9 @@ class PlanEffectivenessTracker:
             else:
                 zone = []
             # 方向归一化: SELL_SHORT→SHORT, BUY→LONG
+            _DIR_MAP = {"SELL_SHORT": "SHORT", "SELL": "SHORT", "SHORT": "SHORT", "BUY": "LONG", "LONG": "LONG"}
             raw_dir = str(r["direction"] or "").upper()
-            direction = "SHORT" if "SHORT" in raw_dir or "SELL" in raw_dir else ("LONG" if "BUY" in raw_dir else raw_dir)
+            direction = _DIR_MAP.get(raw_dir, raw_dir)
             targets.append({
                 "symbol": r["symbol"],
                 "direction": direction,

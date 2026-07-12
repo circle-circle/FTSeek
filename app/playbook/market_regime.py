@@ -19,7 +19,7 @@ from typing import Dict, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 
-from app.data.market_data_router import MarketDataRouter
+from app.data.market_data_router import MarketDataRouter, get_market_data_router
 from app.data.alphavantage_provider import AlphaVantageProvider
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,8 @@ class MarketRegimeGate:
         # 如果没有传入，尝试创建默认实例
         if not self.router:
             try:
-                self.router = MarketDataRouter()
+                # 2026-07-11: 复用进程级共享单例, 避免每次实例化都新建 Futu 连接+watchdog
+                self.router = get_market_data_router()
             except Exception as e:
                 logger.warning(f"Failed to create MarketDataRouter: {e}")
         

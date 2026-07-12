@@ -69,8 +69,9 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
     if not src or "=" not in src:
         return 0.0
     try:
-        # 取第一个 "=" 后、空格前的数值
-        return float(src.split("=", 1)[1].split(" ")[0])
+        # 取第一个 "=" 后、空格前的数值, 去掉 % 后缀
+        raw_val = src.split("=", 1)[1].split(" ")[0]
+        return float(raw_val.rstrip("%"))
     except (ValueError, IndexError):
         return 0.0
 
@@ -860,6 +861,19 @@ class PlaybookService:
             _ts = TradeStore(str(get_trade_records_db()))
             _trace_id = f"playbook-{_mode_label}-{symbol}-{_now_iso[:10]}"
 
+            # 2026-07-11: 入场市场上下文补全 (entry_vix/entry_session 此前 PLAYBOOK 全空,
+            #   供 config_version×regime×session 三维分层复盘). fail-closed: 取不到落 0/"".
+            try:
+                from app.utils.timezone import get_current_session as _get_sess
+                _entry_session = _get_sess() or ""
+            except Exception:
+                _entry_session = ""
+            try:
+                from app.data.market_data_router import MarketDataRouter as _MDR
+                _entry_vix = _MDR().get_vix_or_none() or 0.0
+            except Exception:
+                _entry_vix = 0.0
+
             # 2026-07-03 fix: 从 voting_predictions 表查投票数据, 写入 trade_records
             # 根因: save_trade 未传 voting_result/model_scores/consensus_level/final_strength
             _voting_data = None
@@ -904,24 +918,36 @@ class PlaybookService:
                 "pnl_pct": 0,
                 "exit_reason": "",
                 "holding_hours": 0,
-                "signal_strength": int(inst.get("confidence", 0) * 100) if inst.get("confidence") else 0,
-                "signal_confidence": float(inst.get("confidence", 0)),
+                # 2026-07-11 量纲统一: signal_strength 0-100, signal_confidence 0-1 (对齐其他信号源)
+                "signal_strength": int(inst.get("confidence", 0)) if inst.get("confidence") else 0,
+                "signal_confidence": float(inst.get("confidence", 0)) / 100.0,
                 "futu_order_id": _futu_id or _order_id,
                 "source_type": _source_type,
                 "entry_reason": f"playbook_{_mode_label}",
                 "owner_strategy": _owner,
                 "market_regime": inst.get("market_regime", ""),
+                "entry_vix": _entry_vix,
+                "entry_session": _entry_session,
                 "mode": _mode_label,
                 "trade_mode": _trade_mode,
                 "signal_id": _trace_id,
                 "decision_id": matched_decision_id,
+                # 2026-07-09: 因子快照持久化 — 从conditions提取因子标记到f1-f5独立列
+                "f1_trend": 1.0 if any("ma" in c or "macd" in c or "trend" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f2_momentum": 1.0 if any("momentum" in c or "rsi" in c or "overbought" in c or "oversold" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f3_volume": 1.0 if any("volume" in c or "vol" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f4_orderflow": 0.0,  # orderflow不在playbook conditions中
+                "f5_lifecycle": 1.0 if any("lifecycle" in c or "breakout" in c or "support" in c or "resistance" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "factor_detail": inst.get("conditions_json", ""),
                 "metadata_json": _json.dumps({
                     "playbook_instruction_id": instruction_id,
                     "stop_loss": float(stop_loss) if stop_loss else 0,
                     "take_profit": float(take_profit) if take_profit else 0,
                     "atr": _extract_atr_from_instruction(inst),
                     "thesis": inst.get("thesis", "")[:200],
+                    "invalidation": inst.get("invalidation", "") or "",  # 2026-07-11 Stage2a: 供退出侧影子评估
                     "peak_price": float(_fill),
+                    "trough_price": float(_fill),  # 2026-07-11: 谷值追踪初始化 (与 peak 对称)
                     "entry_price_source": _entry_price_source,  # 2026-07-03: 追踪 entry_price 来源
                     # 2026-06-26: Horizon 决策写入 metadata
                     "horizon": inst.get("horizon", "short"),

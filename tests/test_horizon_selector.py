@@ -17,10 +17,12 @@ class MockPlaybookData:
         self.technical.bid = 99.5
         self.technical.ask = 100.5
         self.technical.ma20 = 98.0
+        self.technical.ma50 = 95.0
         self.technical.atr_pct = 0.12
         self.technical.volume_ratio = 1.5
         self.technical.rsi_14 = 55.0
         self.technical.macd_signal = "golden_cross"
+        self.technical.trend_5d = "up"
         self.technical.quality = "ok"
         self.fundamental = MagicMock()
         self.fundamental.quality = "ok"
@@ -113,10 +115,14 @@ class TestHorizonSelector:
         assert decision.horizon == "short"
 
     def test_fallback_direction_aware_buy_volume(self, db):
-        """BUY + volume_expansion 应倾向 long。"""
+        """BUY + volume_expansion 应倾向 long."""
         selector = HorizonSelector(db)
         selector.config["horizon_selector"]["enabled"] = True
         sr = MockScreenResult(direction="BUY", factors={"volume_expansion": {"weight": 1}})
+        # atr_pct=0.12 在 TechnicalData 上是 atr_14(绝对值), 会被转换为 0.12/100=0.0012 (低波动)
+        # 但 MockPlaybookData.technical 是 MagicMock, atr_pct 直接返回 0.12 (已是百分比)
+        # 0.12 = 12% → 高波动规则触发 → short. 测试需低波动才能期望 long.
+        sr.data.technical.atr_pct = 0.02  # 2% — 正常波动, 不触发高波动规则
         decision = selector.select(sr, None)
         assert decision.horizon == "long"
 

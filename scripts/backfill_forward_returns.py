@@ -471,6 +471,17 @@ def main():
         logger.info(f"  完全回填: {final['fully_realized']}")
         logger.info(f"  待回填: {final['pending']}")
 
+    # 显式关闭 MarketDataRouter 的 Futu 连接, 防止非 daemon 线程阻止进程退出
+    # (2026-07-10: backfill 完成后卡在 futex_wait 4h+ 不退出, 91MB RSS 白占)
+    if _DATA_ROUTER and hasattr(_DATA_ROUTER, 'close'):
+        try:
+            _DATA_ROUTER.close()
+        except Exception as _close_err:
+            logger.warning(f"router close 失败: {_close_err}")
+
 
 if __name__ == "__main__":
     main()
+    # 强制退出: Futu SDK 内部非 daemon 线程可能仍阻止退出
+    import os as _os
+    _os._exit(0)

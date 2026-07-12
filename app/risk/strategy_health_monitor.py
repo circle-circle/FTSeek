@@ -182,6 +182,11 @@ class StrategyHealthMonitor:
                 active_count = 0
 
                 for strategy_id, stats in by_strategy.items():
+                    # P0 (2026-07-09): "unknown" 是6月旧信号的遗留标签(strategy_id为空被标记),
+                    # 7月后已不再产生. 用死数据计算IC并暂停策略是误杀.
+                    if strategy_id == "unknown":
+                        continue
+
                     ic = stats.get("ic", 0)
                     pval = stats.get("pval", 1.0)
                     n_signals = stats.get("n", 0)

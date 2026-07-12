@@ -816,12 +816,9 @@ def run_factor_screen(top_n: int = 8) -> Dict:
     spy_change_20d = 0
     technicals = {}
     try:
-        from app.data.market_data_router import MarketDataRouter
-        data_router = MarketDataRouter(
-            twelvedata_api_key=os.getenv("TWELVEDATA_API_KEY"),
-            finnhub_api_key=os.getenv("FINNHUB_API_KEY"),
-            alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY"),
-        )
+        # 2026-07-11: 复用进程级共享单例, 避免每次因子扫描新建 Futu 连接+watchdog
+        from app.data.market_data_router import get_market_data_router
+        data_router = get_market_data_router()
 
         # SPY 20d change
         spy_bars = data_router.get_daily_bars("US.SPY", count=25)

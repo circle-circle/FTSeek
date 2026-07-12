@@ -301,7 +301,7 @@ class MemoryInjector:
                 strat = r["strategy_id"] or "N/A"
                 exit_r = r["exit_reason"] or "N/A"
                 lines.append(
-                    f"    {direction} {sym} | {sign}{pnl:.0f} ({sign}{pnl_pct:.1f}%) "
+                    f"    {direction} {sym} | {sign}{pnl:.0f} ({sign}{pnl_pct*100:.1f}%) "
                     f"| {strat} | 退出: {exit_r}"
                 )
 

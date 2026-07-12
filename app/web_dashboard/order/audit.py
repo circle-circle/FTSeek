@@ -198,7 +198,7 @@ def push_attribution_to_feishu(service: "ManualOrderService", attr) -> bool:
 
         # 主体内容
         content_lines = [
-            f"{attr['direction']} | 盈亏: ${attr['pnl']:.2f} ({attr['pnl_pct']:.1f}%)",
+            f"{attr['direction']} | 盈亏: ${attr['pnl']:.2f} ({attr['pnl_pct']*100:.1f}%)",
             f"入场: ${attr['entry_price']:.2f} → 出场: ${attr['exit_price']:.2f}",
             f"持仓: {attr['holding_hours']:.1f}小时",
             "",

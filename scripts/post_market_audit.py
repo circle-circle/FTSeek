@@ -429,8 +429,17 @@ def attribution_risk(db, today):
 # 作战计划归因
 # ════════════════════════════════════════════════════════════
 def attribution_plan(db, today, plan):
-    """计划 vs 执行: 命中/错失/计划外"""
-    plan_targets = {t.get("symbol"): t for t in plan.get("targets", [])}
+    """计划 vs 执行: 命中/错失/计划外
+
+    SSOT 是 playbook_instructions 表（当天实际指令），不是 JSON 文件
+    （JSON 可能是昨天的残留，导致用旧计划归因今天的交易）。
+    """
+    rows = db.execute("""
+        SELECT symbol, direction, confidence FROM playbook_instructions
+        WHERE date = ? AND direction != 'SKIP'
+    """, (today,)).fetchall()
+
+    plan_targets = {r['symbol']: r for r in rows}
     traded = db.execute("""
         SELECT DISTINCT symbol FROM trade_records WHERE trade_date = ?
     """, (today,)).fetchall()
@@ -441,20 +450,24 @@ def attribution_plan(db, today, plan):
         if sym not in traded_set:
             missed.append({
                 "symbol": sym,
-                "direction": target.get("direction", "?"),
-                "urgency": target.get("urgency", "?"),
-                "rationale": (target.get("rationale", "") or "")[:60],
+                "direction": target["direction"],
+                "urgency": "?",
+                "rationale": "",
             })
 
     unplanned = [sym for sym in traded_set if sym not in plan_targets]
+
+    # ponytail: confidence 从 DB 行直接取，不依赖 JSON 字段名（修 final_confidence bug）
+    confidences = [r['confidence'] for r in rows if r['confidence']]
+    avg_conf = round(sum(confidences) / max(len(confidences), 1), 0) if confidences else 0
 
     return {
         "plan_count": len(plan_targets),
         "executed": len(traded_set & set(plan_targets.keys())),
         "missed": missed,
         "unplanned": unplanned,
-        "confidence": plan.get("final_confidence", 0),
-        "risk_warnings": plan.get("final_risk_warnings", []),
+        "confidence": avg_conf,
+        "risk_warnings": plan.get("risk_warnings", []),
         "debate_summary": plan.get("debate_summary", ""),
     }
 

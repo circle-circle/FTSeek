@@ -190,7 +190,7 @@ class DualAgentDebate:
             
             enhanced_prompt = self._inject_lessons(prompt, lessons) if lessons else prompt
             
-            # 在线程池中执行同步的HTTP调用 (兼容Python 3.8)
+            # 在线程池中执行同步的HTTP调用 (兼容Python 3.11)
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor() as executor:
                 result = await loop.run_in_executor(
@@ -221,7 +221,7 @@ class DualAgentDebate:
             
             enhanced_prompt = self._inject_lessons(prompt, lessons) if lessons else prompt
             
-            # 在线程池中执行 (兼容Python 3.8)
+            # 在线程池中执行 (兼容Python 3.11)
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor() as executor:
                 result = await loop.run_in_executor(

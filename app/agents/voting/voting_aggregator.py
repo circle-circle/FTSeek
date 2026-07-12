@@ -211,6 +211,8 @@ class VotingAggregator:
         # 可能把 final_strength 翻转到与多数模型相反的方向.
         # 修复: 计算所有 scores 的加权多数方向, final_strength 不得与多数方向相反.
         _majority_dir = None
+        _long_weight = 0.0   # 2026-07-11: 前置初始化, 供下方 is_neutral 多数收敛复用(防 try 异常未定义)
+        _short_weight = 0.0
         try:
             _all_dirs = []
             for _s in scores:
@@ -289,10 +291,18 @@ class VotingAggregator:
 
         # 4. 中性信号检测：评分在中性区间且模型分歧小 → 无交易信号
         # 2026-04-16 修复: 如果所有模型方向一致(都SHORT或都LONG), 即使strength在中性区也不应跳过
+        # 2026-07-11: 中性带"多数收敛" — 带内若有 >=2/3 加权多数方向, 也不判中性(统一带外口径).
+        _maj_total = _long_weight + _short_weight
+        _maj_ratio = (max(_long_weight, _short_weight) / _maj_total) if _maj_total > 0 else 0.0
+        _strong_majority = (
+            getattr(self.config, "NEUTRAL_MAJORITY_OVERRIDE_ENABLED", False)
+            and _maj_ratio >= getattr(self.config, "NEUTRAL_MAJORITY_OVERRIDE_RATIO", 0.67)
+        )
         is_neutral = (
             self.config.NEUTRAL_LOW <= final_strength <= self.config.NEUTRAL_HIGH
             and std_dev <= self.config.NEUTRAL_MAX_STD
-            and not direction_agreed  # 新增: 全同向时不判定为中性
+            and not direction_agreed  # 全同向时不判定为中性
+            and not _strong_majority  # 2026-07-11: >=2/3 加权多数也豁免中性(direction 走 _majority_dir)
         )
         
         # 5. 确定方向 (2026-07-06: 优先使用加权多数方向, 避免 final_strength 与模型方向背离)

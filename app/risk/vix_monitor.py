@@ -188,7 +188,6 @@ class VIXMonitor:
                     "source": "fred/alphavantage/finnhub/fallback",
                 }
             self._save_cache(self._cache)
-            logger.info("VIX 指数：%.2f", vix)
         else:
             self._mark_failure()
 

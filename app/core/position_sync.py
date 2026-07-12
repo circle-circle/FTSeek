@@ -1048,6 +1048,26 @@ class USPositionSync:
             if self._is_tombstoned(symbol):
                 logger.warning(f"[US Sync·H6] 跳过 tombstoned {symbol} (刚平仓, 防止重入)")
                 continue
+            # 2026-07-09: Playbook 仓位统一跳过 — 防止跨日重启后 position_sync 劫持
+            # 根因: playbook 7/8 下单, 7/9 重启后 _today_orders 为空 → 走 else → MANUAL
+            # → Reconciler 收养 → DEM 双重管理. 此检查在所有 manual/auto 分支之前拦截.
+            _is_pb = False
+            try:
+                from app.core.scheduler_triggers import ET as _et
+                from datetime import timedelta as _td
+                _pb_yesterday = (datetime.now(_et).date() - _td(days=2)).isoformat()
+                _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
+                _pb_row = _pc.execute(
+                    "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+                    "AND entry_time >= ? LIMIT 1",
+                    (symbol, _pb_yesterday)).fetchone()
+                _pc.close()
+                _is_pb = _pb_row is not None
+            except Exception:
+                pass
+            if _is_pb:
+                logger.info(f"[US Sync·playbook] 跳过 playbook 仓位 {symbol} (由 monitor_playbook_sim_exits 自管)")
+                continue
             # Broker-first (2026-06-03): 不再从 DB 恢复，新发现的仓位统一用全新计算的 SL/TP
 
             info = futu_positions[symbol]

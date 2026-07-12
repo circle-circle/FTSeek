@@ -30,11 +30,22 @@ from app.storage.rejection_logger import get_rejection_logger
 from app.execution.twap_executor import (
     TWAPExecutor, TWAPResult, should_use_twap, cancel_active_twap,
 )
+from app.execution.symbol_lock_manager import get_symbol_lock_manager
+from app.risk.pdt_guard import PDTGuard
 
 logger = logging.getLogger(__name__)
 
 # ── 全局常量 ──
 DEFAULT_ORDER_QTY = 50  # 默认下单股数 (watchlist_us.json 可覆盖)
+
+_pdt_guard: Optional[PDTGuard] = None
+
+def _get_pdt_guard() -> PDTGuard:
+    """懒加载并复用 PDTGuard 实例, 避免 import 时访问 DB."""
+    global _pdt_guard
+    if _pdt_guard is None:
+        _pdt_guard = PDTGuard()
+    return _pdt_guard
 
 
 def _with_symbol_lock_release(func):
@@ -47,7 +58,6 @@ def _with_symbol_lock_release(func):
             return func(scheduler, position, *args, **kwargs)
         finally:
             try:
-                from app.execution.symbol_lock_manager import get_symbol_lock_manager
                 _dir_str = position.direction.value if hasattr(position.direction, "value") else str(position.direction)
                 _owner = getattr(position, "owner_strategy", None) or "main"
                 get_symbol_lock_manager().release(position.symbol, _dir_str, _owner)
@@ -3545,14 +3555,9 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
     # 0. PDT 保护门禁 (P0-fix 2026-05-02: 集成到执行路径)
     # 模拟盘也守 PDT (2026-06-24): sim 验证 PDT 合规策略, 避免 sim 达标 live 跑不了的假达标
     try:
-        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由)
-        _auto_acc_pdt = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-        _is_real_account = (_auto_acc_pdt == "real")
         # sim/live 统一查 PDT (is_pdt_account: equity≥25k 豁免, <25k 守 ≤3/5日)
-        from app.risk.pdt_guard import PDTGuard
-        pdt = PDTGuard()
         is_overnight = signal.direction in (Direction.LONG,)  # SHORT 总是日内
-        allowed, reason, _level = pdt.check_trade_permission(is_overnight=is_overnight)
+        allowed, reason, _level = _get_pdt_guard().check_trade_permission(is_overnight=is_overnight)
         if not allowed:
             logger.warning(f"🚫 [PDT 拦截] {symbol}: {reason}")
             return

@@ -133,8 +133,8 @@ class TestCheckIntradayTrigger:
         assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_long_price_above_upper_band_no_trigger(self):
-        # entry=100, upper=101, price=102 → 未触发 (>101)
-        scheduler = self._make_scheduler(price=102.0, day_high=103.0, day_low=99.0)
+        # 2026-07-11: entry=100, 追涨带 +5% + 重锚上限 4%; price=106 (>6%) 两者皆超 → 未触发
+        scheduler = self._make_scheduler(price=106.0, day_high=107.0, day_low=99.0)
         inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
 
@@ -151,10 +151,22 @@ class TestCheckIntradayTrigger:
         assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_short_price_below_lower_band_no_trigger(self):
-        # entry=100, lower=99, price=98 → 未触发 (<99)
-        scheduler = self._make_scheduler(price=98.0, day_high=101.0, day_low=97.0)
+        # 2026-07-11: entry=100, 追空带 -5% + 重锚上限 4%; price=94 (>6%) 两者皆超 → 未触发
+        scheduler = self._make_scheduler(price=94.0, day_high=101.0, day_low=93.0)
         inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
+
+    def test_long_reanchor_within_cap_triggers(self):
+        # 2026-07-11 Lever A: entry=100, price=96.5 (跌破 -3% 接飞刀带但 <=4% 重锚上限) → 重锚触发
+        scheduler = self._make_scheduler(price=96.5, day_high=100.0, day_low=96.0)
+        inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is True
+
+    def test_short_reanchor_within_cap_triggers(self):
+        # 2026-07-11 Lever A: entry=100, price=103.5 (升破 +3% 带但 <=4% 重锚上限) → 重锚触发
+        scheduler = self._make_scheduler(price=103.5, day_high=104.0, day_low=99.0)
+        inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_short_price_above_lower_band_trigger(self):
         # entry=100, lower=99, price=100 → 触发 (>=99)

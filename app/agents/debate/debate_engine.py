@@ -12,7 +12,6 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
 
 from .debate_models import DebateArgument, DebateRound, DebateSummary
@@ -28,20 +27,16 @@ logger = logging.getLogger(__name__)
 class ResearcherAgent:
     """研究员Agent (多头/空头)"""
     
-    def __init__(self, side: str, model_name: str, api_key: str, base_url: str):
+    def __init__(self, side: str, model_name: str):
         """
         初始化研究员
         
         Args:
             side: "BULL" 或 "BEAR"
-            model_name: 模型名称
-            api_key: API密钥
-            base_url: API基础URL
+            model_name: 模型名称 (仅用于日志, 实际路由由 YAML 决定)
         """
         self.side = side
         self.model_name = model_name
-        self.api_key = api_key
-        self.base_url = base_url
         self.system_prompt = self._build_system_prompt()
     
     def _build_system_prompt(self) -> str:
@@ -304,25 +299,13 @@ class DebateEngine:
         self.max_rounds = max_rounds
         self.fast_mode = fast_mode
         
-        # 从环境变量读取API配置
-        import os
-        bailian_api_key = os.getenv("BAILIAN_API_KEY", "")
-        bailian_base_url = os.getenv("BAILIAN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-        
-        # 提取模型ID
+        # 提取模型ID (仅用于日志, 实际路由由 YAML 决定)
         bull_model_id = bull_model.split("/")[-1] if "/" in bull_model else bull_model
         bear_model_id = bear_model.split("/")[-1] if "/" in bear_model else bear_model
         
         # P0优化: 多头用MiniMax (百炼), 空头用DeepSeek
-        self.bull_researcher = ResearcherAgent("BULL", bull_model_id, bailian_api_key, bailian_base_url)
-        
-        # DeepSeek需要独立的API配置
-        if "deepseek" in bear_model.lower():
-            self.bear_researcher = ResearcherAgent("BEAR", bear_model_id, deepseek_api_key, deepseek_base_url)
-        else:
-            self.bear_researcher = ResearcherAgent("BEAR", bear_model_id, bailian_api_key, bailian_base_url)
+        self.bull_researcher = ResearcherAgent("BULL", bull_model_id)
+        self.bear_researcher = ResearcherAgent("BEAR", bear_model_id)
         
         logger.info(f"[辩论引擎-P0优化] 已初始化: 多头={bull_model_id}, 空头={bear_model_id}, 快速模式={fast_mode}")
 

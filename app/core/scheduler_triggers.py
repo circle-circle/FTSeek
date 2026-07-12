@@ -805,34 +805,29 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
                 try:
                     from app.llm.weekly_proposer import get_weekly_proposer
                     from app.evolution.improvement_pipeline import get_pipeline
-                    from app.llm.multi_model_client import get_multi_model_client
                     
-                    mmc = get_multi_model_client()
-                    if mmc.is_budget_exhausted():
-                        logger.warning("[周度假设] 日预算已用完，跳过")
-                    else:
-                        proposer = get_weekly_proposer(llm_client=mmc, model="deepseek")
-                        proposals = proposer.generate_weekly_proposals(days=7)
+                    proposer = get_weekly_proposer()
+                    proposals = proposer.generate_weekly_proposals(days=7)
+                    
+                    if proposals:
+                        pipeline = get_pipeline()
+                        for p in proposals:
+                            pid = pipeline.submit(p)
+                            logger.info(
+                                f"[周度假设] 提议已提交: {pid} | "
+                                f"{p.target_param} {p.current_value} → {p.proposed_value}"
+                            )
                         
-                        if proposals:
-                            pipeline = get_pipeline()
-                            for p in proposals:
-                                pid = pipeline.submit(p)
-                                logger.info(
-                                    f"[周度假设] 提议已提交: {pid} | "
-                                    f"{p.target_param} {p.current_value} → {p.proposed_value}"
-                                )
-                            
-                            if scheduler.notifier:
-                                summary = "\n".join(
-                                    f"• {p.target_param}: {p.current_value} → {p.proposed_value} ({p.rationale[:50]})"
-                                    for p in proposals
-                                )
-                                scheduler.notifier.send_text(
-                                    f"📊 [周度假设] 本周生成 {len(proposals)} 个参数调整提议:\n{summary}"
-                                )
-                        else:
-                            logger.info("[周度假设] 本周交易不足或无有效提议")
+                        if scheduler.notifier:
+                            summary = "\n".join(
+                                f"• {p.target_param}: {p.current_value} → {p.proposed_value} ({p.rationale[:50]})"
+                                for p in proposals
+                            )
+                            scheduler.notifier.send_text(
+                                f"📊 [周度假设] 本周生成 {len(proposals)} 个参数调整提议:\n{summary}"
+                            )
+                    else:
+                        logger.info("[周度假设] 本周交易不足或无有效提议")
                 except Exception as wpe:
                     logger.debug(f"[周度假设] 失败 (不影响主流程): {wpe}")
             # ── LLM 周度假设生成结束 ──

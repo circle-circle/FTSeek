@@ -316,7 +316,7 @@ def register(app, templates):
             plan["_stale"] = _is_stale
             plan["_confirmed"] = plan.get("_confirmed", False)
             plan["_paused"] = plan.get("_paused", False)
-            plan["_is_live"] = __import__("os").getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"
+            plan["_is_live"] = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"
             try:
                 await _refresh_position_actions(plan)
             except Exception as e:
@@ -693,12 +693,12 @@ def register(app, templates):
         if not targets:
             return api_error("BATTLE_PLAN_ERROR", "当前计划无 targets", 400)
 
-        # 获取盘前数据 (如果可用)
+        # 盘前数据: 用活的内存 collector (premarket_enrichment.json 已无写方, 2026-07-11)
         premarket_data = None
         try:
-            _premarket_path = _PLAN_PATH.parent / "premarket_enrichment.json"
-            if _premarket_path.exists():
-                premarket_data = json.loads(_premarket_path.read_text())
+            from app.data.premarket_enrichment import collect_premarket_data
+            _syms = [(t.get("symbol") or "").replace("US.", "") for t in targets]
+            premarket_data = collect_premarket_data(watchlist_symbols=[s for s in _syms if s][:15])
         except Exception:
             pass
 
@@ -793,12 +793,12 @@ def register(app, templates):
                     "summary": existing_dr.get("executive_summary", ""),
                 }
 
-        # 获取盘前数据
+        # 盘前数据: 用活的内存 collector (premarket_enrichment.json 已无写方, 2026-07-11)
         premarket_data = None
         try:
-            _premarket_path = _PLAN_PATH.parent / "premarket_enrichment.json"
-            if _premarket_path.exists():
-                premarket_data = json.loads(_premarket_path.read_text())
+            from app.data.premarket_enrichment import collect_premarket_data
+            _sym = (target.get("symbol") or "").replace("US.", "")
+            premarket_data = collect_premarket_data(watchlist_symbols=[_sym] if _sym else None)
         except Exception:
             pass
 
