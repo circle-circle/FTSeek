@@ -32,6 +32,7 @@ LV3 降级策略：
   - LV3 连接健康监控
 """
 import logging
+import threading
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 
@@ -433,49 +434,74 @@ class MarketDataRouter:
                         }
                         logger.info(f"[Router] {symbol} ★ 期权报价 | price=${futu_quote['price']:.2f} vol={futu_quote.get('volume', 0)}")
                     else:
-                        # 获取 K 线数据用于技术指标计算
+                        # 获取 1分钟K线 (盘中短周期信号: slope_5m/recent_closes)
                         klines = self.futu.get_kline(symbol, ktype="K_1M", count=200)
-                    
-                    if klines and len(klines) >= 30:
-                        # 从 LV3 K 线计算技术指标
+                        # 获取 日K线 (盘前技术指标: MA/MACD/RSI/Boll — 日线级别信号过夜不失效)
+                        daily_klines = self.get_daily_bars(symbol, count=60)
+
+                    # 2026-07-09: 技术指标改用日K线计算 (盘前信号时间框架对齐)
+                    # 根因: 原用K_1M算MACD/MA20 → 1分钟级别信号持续几分钟 → 盘前生成到开盘
+                    # 已过5小时 → 信号失效. 日线MACD金叉/MA20持续1-3天, 过夜不失效.
+                    # 1分钟K线仍用于slope_5m/recent_closes等盘中实时短周期信号.
+                    if daily_klines and len(daily_klines) >= 30:
                         from app.data.lv3_technical_calculator import LV3TechnicalCalculator
                         calc = LV3TechnicalCalculator()
-                        tech = calc.calculate_from_klines(klines)
-                        
+                        tech = calc.calculate_from_klines(daily_klines)
+
                         if tech:
                             # 合并技术指标 + LV3 报价
                             ts_ctx = tech
-                            ts_ctx["data_source"] = "futu_lv3"
-                            
-            # 2026-06-26: 用日K线ATR覆盖1分钟ATR — 技术策略的 atr_pct < 0.5% 门禁
-            # 需要日级别波动率, 1分钟ATR太低 (0.03-0.20%) 导致全部信号被拦截
-            # 2026-06-26 补丁: 当日K线获取失败时, 用 price*2% 兜底 (美股平均日波动率)
-                            try:
-                                daily_bars = self.get_daily_bars(symbol, count=30)
-                                if daily_bars and len(daily_bars) >= 15:
-                                    from app.data.lv3_technical_calculator import LV3TechnicalCalculator as _Calc
-                                    _df = _Calc()._klines_to_dataframe(daily_bars)
-                                    if _df is not None and len(_df) >= 15:
-                                        _h = _df["high"]; _l = _df["low"]; _pc = _df["close"].shift(1)
-                                        _tr = pd.concat([_h - _l, (_h - _pc).abs(), (_l - _pc).abs()], axis=1).max(axis=1)
-                                        _daily_atr = float(_tr.rolling(window=14).mean().iloc[-1])
-                                        if _daily_atr > 0:
-                                            ts_ctx["atr"] = round(_daily_atr, 2)
-                                            _price = ts_ctx.get("price", 0)
-                                            ts_ctx["atr_percent"] = round(_daily_atr / _price * 100, 2) if _price > 0 else 0.0
-                                # 兜底: 如果ATR%仍 < 0.5%, 用 price*2% 作为最小日波动率
-                                _atr_val = float(ts_ctx.get("atr", 0) or 0)
-                                _price_val = float(ts_ctx.get("price", 0) or 0)
-                                if _price_val > 0 and _atr_val > 0:
-                                    _atr_pct_check = _atr_val / _price_val * 100
-                                    if _atr_pct_check < 0.5:
-                                        _floor_atr = _price_val * 0.02  # 2% 日波动率兜底
-                                        ts_ctx["atr"] = round(_floor_atr, 2)
-                                        ts_ctx["atr_percent"] = 2.0
-                                        logger.debug(f"[Router] {symbol} ATR兜底: {_atr_val:.2f}({_atr_pct_check:.2f}%) → {_floor_atr:.2f}(2.0%)")
-                            except Exception as _atr_err:
-                                logger.debug(f"[Router] {symbol} 日ATR覆盖失败 (用1分钟ATR): {_atr_err}")
-                            
+                            ts_ctx["data_source"] = "futu_lv3_daily"
+                            ts_ctx["indicator_timeframe"] = "daily"
+                        else:
+                            ts_ctx = None  # 日K线计算失败, 下面fallback到1分钟
+                    else:
+                        ts_ctx = None  # 日K线不足, fallback
+
+                    # Fallback: 日K线不可用时, 回退到1分钟K线 (保持原有行为)
+                    if ts_ctx is None and klines and len(klines) >= 30:
+                        from app.data.lv3_technical_calculator import LV3TechnicalCalculator
+                        calc = LV3TechnicalCalculator()
+                        tech = calc.calculate_from_klines(klines)
+                        if tech:
+                            ts_ctx = tech
+                            ts_ctx["data_source"] = "futu_lv3_1m_fallback"
+                            ts_ctx["indicator_timeframe"] = "1m"
+                            logger.debug(f"[Router] {symbol} 日K线不足, 回退到1分钟技术指标")
+
+                    # ATR覆盖 + 快照价格注入 (对所有ts_ctx生效, 不限来源)
+                    if ts_ctx is not None:
+                        # 2026-06-26: 用日K线ATR覆盖 — atr_pct < 0.5% 门禁
+                        # 日K线主路径下ATR已是日级别, fallback到1分钟时仍需覆盖
+                        try:
+                            daily_bars = self.get_daily_bars(symbol, count=30)
+                            if daily_bars and len(daily_bars) >= 15:
+                                from app.data.lv3_technical_calculator import LV3TechnicalCalculator as _Calc
+                                _df = _Calc()._klines_to_dataframe(daily_bars)
+                                if _df is not None and len(_df) >= 15:
+                                    _h = _df["high"]; _l = _df["low"]; _pc = _df["close"].shift(1)
+                                    _tr = pd.concat([_h - _l, (_h - _pc).abs(), (_l - _pc).abs()], axis=1).max(axis=1)
+                                    _daily_atr = float(_tr.rolling(window=14).mean().iloc[-1])
+                                    if _daily_atr > 0:
+                                        ts_ctx["atr"] = round(_daily_atr, 2)
+                                        _price = ts_ctx.get("price", 0)
+                                        ts_ctx["atr_percent"] = round(_daily_atr / _price * 100, 2) if _price > 0 else 0.0
+                            # 兜底: 如果ATR%仍 < 0.5%, 用 price*2% 作为最小日波动率
+                            _atr_val = float(ts_ctx.get("atr", 0) or 0)
+                            _price_val = float(ts_ctx.get("price", 0) or 0)
+                            if _price_val > 0 and _atr_val > 0:
+                                _atr_pct_check = _atr_val / _price_val * 100
+                                if _atr_pct_check < 0.5:
+                                    _floor_atr = _price_val * 0.02  # 2% 日波动率兜底
+                                    ts_ctx["atr"] = round(_floor_atr, 2)
+                                    ts_ctx["atr_percent"] = 2.0
+                                    logger.debug(f"[Router] {symbol} ATR兜底: {_atr_val:.2f}({_atr_pct_check:.2f}%) → {_floor_atr:.2f}(2.0%)")
+                        except Exception as _atr_err:
+                            logger.debug(f"[Router] {symbol} 日ATR覆盖失败 (用1分钟ATR): {_atr_err}")
+
+                        # ★★★ FIX 2026-07-11: 富因子注入原被误缩进进 except 分支, 移回正常路径
+                        # 用此 if 承载块内 28 缩进 (恒真: 外层已判 ts_ctx 非 None), 避免大范围重排
+                        if ts_ctx is not None:
                             # ★★★ 关键修复: 使用 LV3 实时快照价格覆盖 K 线收盘价
                             # K 线数据可能存在延迟或复权差异，快照价格是最新的真实成交价。
                             if futu_quote and futu_quote.get("price", 0) > 0:
@@ -498,7 +524,7 @@ class MarketDataRouter:
                             # P1 2026-05-12 审计修复: 注入短期价格斜率 (替代日累计 change_percent)
                             # 计算最近 5 根 1-min K 线的价格变化率 (slope_5m)
                             # 对日内入场决策更有意义: 反映"当下"的动量方向
-                            if len(klines) >= 5:
+                            if klines and len(klines) >= 5:
                                 recent_closes = [float(k.get('close', 0)) for k in klines[-5:]]
                                 if recent_closes[0] > 0:
                                     slope_5m = (recent_closes[-1] - recent_closes[0]) / recent_closes[0] * 100
@@ -599,15 +625,6 @@ class MarketDataRouter:
                                 f" | ticker={ts_ctx.get('ticker_signal', 'N/A')}"
                                 f" | ob={ts_ctx.get('ob_signal', 'N/A')}"
                             )
-                        else:
-                            # K 线有但指标计算失败，使用基础报价
-                            ts_ctx = {
-                                "price": futu_quote["price"],
-                                "change_percent": futu_quote.get("change_percent", 0.0),
-                                "volume": futu_quote.get("volume", 0),
-                                "data_source": "futu_lv3_quote_only",
-                            }
-                            logger.warning(f"[Router] {symbol} LV3 K 线技术指标计算失败，仅使用报价")
                     else:
                         # K 线数据不足，使用基础报价
                         ts_ctx = {
@@ -617,6 +634,28 @@ class MarketDataRouter:
                             "data_source": "futu_lv3_quote_only",
                         }
                         logger.warning(f"[Router] {symbol} LV3 K 线数据不足 ({len(klines) if klines else 0} 条)")
+
+                    # 日K线ATR fallback: K_1M失败/不足时, ts_ctx无atr → 从日K线计算
+                    # 根因修复: 原日K线ATR覆盖在 if klines>=30 → if tech: 块内,
+                    # K_1M失败时永远不执行 → 盘前ATR=0 → vol_buckets误匹配low桶
+                    if ts_ctx and ts_ctx.get("price", 0) > 0 and not ts_ctx.get("atr"):
+                        try:
+                            daily_bars = self.get_daily_bars(symbol, count=30)
+                            if daily_bars and len(daily_bars) >= 15:
+                                from app.data.lv3_technical_calculator import LV3TechnicalCalculator as _Calc
+                                _df = _Calc()._klines_to_dataframe(daily_bars)
+                                if _df is not None and len(_df) >= 15:
+                                    _h = _df["high"]; _l = _df["low"]; _pc = _df["close"].shift(1)
+                                    _tr = pd.concat([_h - _l, (_h - _pc).abs(), (_l - _pc).abs()], axis=1).max(axis=1)
+                                    _daily_atr = float(_tr.rolling(window=14).mean().iloc[-1])
+                                    if _daily_atr > 0:
+                                        ts_ctx["atr"] = round(_daily_atr, 2)
+                                        _p = ts_ctx.get("price", 0)
+                                        ts_ctx["atr_percent"] = round(_daily_atr / _p * 100, 2) if _p > 0 else 0.0
+                                        logger.debug(f"[Router] {symbol} 日K线ATR fallback: {_daily_atr:.2f} ({_daily_atr/_p*100:.2f}%)")
+                        except Exception as _atr_fb_err:
+                            logger.debug(f"[Router] {symbol} 日K线ATR fallback 失败: {_atr_fb_err}")
+
             except Exception as e:
                 errors.append(f"FutuLV3: {e}")
                 logger.warning(f"[Router] Futu LV3 主通道失败 {symbol}: {e}")
@@ -1071,10 +1110,46 @@ class MarketDataRouter:
         logger.info("[MarketDataRouter] 所有连接已关闭")
 
 
+# ── 进程级共享单例 (2026-07-11) ────────────────────────
+# 根因修复: 此前 market_regime.MarketRegimeGate() / factor_engine 等处直接
+# new MarketDataRouter(), 导致每个 playbook 周期都新建一个 Futu LV3 连接 +
+# 30s watchdog 线程 (旧实例被线程引用无法回收 → 线程泄漏 + OpenD 连接churn).
+# 所有非启动路径应通过 get_market_data_router() 复用同一实例.
+_shared_router: Optional["MarketDataRouter"] = None
+_shared_router_lock = threading.Lock()
+
+
+def get_market_data_router(**kwargs) -> "MarketDataRouter":
+    """返回进程级共享的 MarketDataRouter 单例 (懒创建, 线程安全, 双重检查锁).
+
+    启动时 scheduler 会通过 set_market_data_router() 注册主 router,
+    因此常规运行期此函数直接返回那个已连接 Futu 的实例, 不会二次建连.
+    仅在无人注册的独立上下文 (CLI/测试) 才懒创建一个.
+    """
+    global _shared_router
+    if _shared_router is None:
+        with _shared_router_lock:
+            if _shared_router is None:
+                _shared_router = MarketDataRouter(**kwargs)
+    return _shared_router
+
+
+def set_market_data_router(router: "MarketDataRouter") -> None:
+    """注册已创建的 router 为进程级共享单例 (启动时由 scheduler 调用).
+
+    让全进程共用 scheduler 已建立的 Futu 连接, 避免任何二次创建.
+    """
+    global _shared_router
+    with _shared_router_lock:
+        _shared_router = router
+
+
 # 模块级导出
 __all__ = [
     "MarketDataRouter",
     "MarketDataRouterError",
     "DataSourceError",
     "AllSourcesFailedError",
+    "get_market_data_router",
+    "set_market_data_router",
 ]

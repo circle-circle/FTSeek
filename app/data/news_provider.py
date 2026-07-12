@@ -4,23 +4,15 @@
 基于 RSS 抓取 + Qwen LLM 情绪分析
 复用 FTSeek-HK news_push 链路思路
 """
-import os
 import re
 import json
 import logging
-import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
 
-import requests
 import feedparser
-from dotenv import load_dotenv
 
-# 加载环境变量
-_env_path = Path(__file__).resolve().parent.parent.parent / ".env.us"
-if _env_path.exists():
-    load_dotenv(_env_path)
+from app.llm.unified_service import UnifiedLLMService
 
 logger = logging.getLogger(__name__)
 
@@ -85,14 +77,8 @@ class USNewsProvider:
         self._news_cache: Dict[str, Tuple[datetime, List[str]]] = {}
         self._sentiment_cache: Dict[str, Tuple[datetime, float]] = {}
 
-        # Qwen API 配置
-        self.bailian_api_key = os.getenv("BAILIAN_API_KEY", "")
-        self.bailian_base_url = os.getenv(
-            "BAILIAN_BASE_URL",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        )
-        self.qwen_model = "qwen-turbo"  # 使用轻量模型降低延迟和费用
-        self.qwen_enabled = False  # 2026-04-16: 禁用 — 投票系统 MiniMax 已覆盖情绪分析, 避免冗余调用
+        # LLM 情绪分析已禁用: 投票系统已覆盖情绪分析, 避免冗余调用
+        self.qwen_enabled = False
 
     def fetch_recent_news(self, symbol: str, hours: int = 12) -> List[str]:
         """
@@ -172,7 +158,7 @@ class USNewsProvider:
         return score
 
     def _analyze_with_qwen(self, symbol: str, headlines: List[str]) -> float:
-        """调用 Qwen API 分析情绪"""
+        """调用 LLM 分析情绪 (SSOT 路由)"""
         try:
             headlines_text = "\n".join(f"- {h}" for h in headlines[:10])
             prompt = f"""请分析以下关于 {symbol} 的新闻标题，判断整体市场情绪。
@@ -187,34 +173,25 @@ class USNewsProvider:
 
 只返回 JSON，不要其他文字：{{"sentiment_score": <数值>, "confidence": <数值>, "summary": "<文字>"}}"""
 
-            url = f"{self.bailian_base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.bailian_api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.qwen_model,
-                "messages": [
-                    {"role": "system", "content": "你是专业的金融情绪分析师，请用中立客观的态度分析新闻情绪。"},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.1,
-                "max_tokens": 150,
-            }
-            resp = requests.post(url, headers=headers, json=payload, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            res = UnifiedLLMService.call(
+                "sentiment",
+                prompt,
+                system="你是专业的金融情绪分析师，请用中立客观的态度分析新闻情绪。",
+                temperature=0.1,
+                max_tokens=150,
+                json_mode=True,
+                timeout=15,
+            )
+            if not res or not res.success:
+                logger.warning(f"[LLM情绪] {symbol} 调用失败，使用规则fallback")
+                return self._analyze_with_rules(headlines)
 
-            # 解析响应
-            match = re.search(r'\{[^{}]*"sentiment_score"[^{}]*\}', content, re.DOTALL)
-            if match:
-                result = json.loads(match.group())
-                score = float(result.get("sentiment_score", 0))
-                logger.debug(f"[Qwen情绪] {symbol} score={score:.2f} summary={result.get('summary','')}")
-                return score
+            data = res.response if isinstance(res.response, dict) else json.loads(res.response)
+            score = float(data.get("sentiment_score", 0))
+            logger.debug(f"[LLM情绪] {symbol} score={score:.2f} summary={data.get('summary','')}")
+            return score
         except Exception as e:
-            logger.warning(f"[Qwen情绪] {symbol} 调用失败，使用规则fallback: {e}")
+            logger.warning(f"[LLM情绪] {symbol} 解析失败，使用规则fallback: {e}")
 
         return self._analyze_with_rules(headlines)
 
