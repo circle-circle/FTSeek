@@ -873,9 +873,10 @@ news_v2:
       min_score: 0.1
   skip_market_hours: true
   # 突发新闻驱动盘中即时扫描 (2026-06-30)
+  # 2026-07-11: 用户决定暂停 — 盘中突发新闻推送过于复杂, 先停止 (可随时翻回 true)
   immediate_scan:
     # 总开关: 是否允许突发新闻触发即时信号扫描
-    enabled: true
+    enabled: false
     # 同一标的冷却时间 (秒), 防止同一事件反复扫描
     cooldown_seconds: 300
     # 是否只在盘中交易时段触发
@@ -1013,7 +1014,7 @@ options:
 orb:
   breakout_buffer_pct: 0.1
   capital_pct: 0.2
-  enabled: true
+  enabled: false  # 2026-07-09: 停用, 6/22后0笔交易, PnL=-$1002, daemon空跑
   entry_end_et: '10:45'
   entry_start_et: 09:50
   eod_exit_time: '15:55'
@@ -1104,6 +1105,10 @@ playbook:
   # 注意: playbook_sim 近 30d 亏损 $1,832.84 (WR 30%), 需继续观察真实成交与 shadow 的差异.
   auto_execute: true
   direction_mode: llm_vote
+  # 2026-07-11 (双脑清理): DA bridge 缺席时的入场 fallback。
+  #   technical → TechnicalFallbackAdapter (确定性 technical 策略出方向, 独立归因)
+  #   none      → NullVotingAdapter (全 SKIP, 最保守)
+  fallback_when_no_bridge: technical
   enable_weekly: true
   enabled: true
   execute_mode: futu_simulate
@@ -1112,8 +1117,20 @@ playbook:
     buying_power_fallback_alert: true
     intraday_breakout_pct: 0.5
     intraday_volume_ratio: 1.5
-    min_confidence: 70
-    sell_short_min_confidence: 70
+    min_confidence: 60
+    sell_short_min_confidence: 60
+    # SSOT 显式化 (2026-07-10): 单日风控上限. 此前仅存在于 PlaybookConfig.DEFAULTS,
+    # 但 pipeline.py 调用 pb_cfg.get(key, <显式默认>) 时显式默认会遮蔽 DEFAULTS,
+    # 导致声明的 0.60/10 从未生效 (实际跑 0.20/5). 在此显式写死, 声明即生效.
+    # 风险口径: 每仓风险 risk_pct=0.5%, 10 仓全止损 = 单日 5% 风险预算上限 (可控).
+    # 配合触发质量门 (量能确认+接飞刀保护), 高上限只在信号足够优质时才被用满.
+    daily_notional_cap_pct: 0.60
+    max_daily_positions: 10
+    # 2026-07-11: 入场重锚 (Lever A) — 带内未触发但漂移<=上限时, 用盘中价重锚触发;
+    #   下游 re-price 块会重算 entry/SL/TP (每笔风险% 不变). 超上限不追. 可秒关回滚.
+    #   目的: 捐回"带边缘刚好跳过"的可成交单(入场价冻结在盘前导致). extreme_gap>8% 仍拦.
+    entry_reanchor_enabled: true
+    entry_reanchor_max_drift_pct: 4.0
   exit_rules:
     # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
     # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.
@@ -1126,10 +1143,19 @@ playbook:
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
-    max_position_pct: 0.08
+    # 2026-07-09: 8%→4% — 降低单仓notional, 增加日交易笔数
+    # 数据: 日notional cap=$19.8K, 8%→每仓$6.5K→只能3笔/天
+    # 4%→每仓$3.3K→6笔/天, 更多验证方向+策略, 前期重验证不重单笔利润
+    max_position_pct: 0.04
     risk_base_capital: 82000.0
-    risk_pct: 1.0
+    # 2026-07-09: 1.0%→0.5% — 配合更小仓位, 单笔风险$410→实际$65-98
+    risk_pct: 0.5
     rr_ratio: 1.0
+    # 2026-07-12: confidence 加权仓位开关. 默认 false → 拍平为 1.0 (等权).
+    #   依据 exit_scorecard 实测: 当前 DA confidence 未校准且反向 (低信心桶反而胜率/收益更高,
+    #   Playbook IC 为负), 按 confidence 放大仓位 = 给更差的信号加钱. 待 IC 校准为正再开.
+    #   (见 OKR-2026-08 Guardrail 3. 秒改秒回滚.)
+    confidence_sizing_enabled: false
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
@@ -1378,6 +1404,11 @@ signal_scoring:
   weights_v2: null
 signal_stage:
   mode: technical_direction_arbitration
+  # 2026-07-11 (双脑清理): 纯双脑 — DA/battle plan 为唯一入场决策脑。
+  # false 时盘中只保留 fast_lane (执行 DA 计划) + 持仓管理/退出,
+  # 关掉 ORB/technical/voting_llm/insider/earnings_revision 的独立入场。
+  # true 恢复盘中多策略独立入场 (回退开关)。
+  independent_entry_enabled: false
   technical_arbitration:
     agreement_boost: 0.05
     llm_conflict_confidence_threshold: 0.7
@@ -1788,11 +1819,39 @@ watchlist:
     notes: 新能源车龙头 | ATR%≈0.08% | 高波收紧仓位
     sector: Consumer Cyclical
     tier: TIER1
+  - code: US.COIN
+    enabled: true
+    max_position_ratio: 0.08
+    name: Coinbase Global
+    notes: 加密交易所 | 高波动 | 活跃成交常被扫描器抓到但漏在名单外, 补入 (2026-07-13)
+    sector: Financial Services
+    tier: TIER1
+  - code: US.CAT
+    enabled: true
+    max_position_ratio: 0.10
+    name: Caterpillar Inc
+    notes: 工业龙头(重机械) | 跨行业分散补入 (2026-07-13) | 进不进交易看DA+gate
+    sector: Industrials
+    tier: TIER1
+  - code: US.GS
+    enabled: true
+    max_position_ratio: 0.10
+    name: Goldman Sachs
+    notes: 投行龙头 | 金融板块高波动分散 (2026-07-13) | 进不进交易看DA+gate
+    sector: Financial Services
+    tier: TIER1
+  - code: US.CVX
+    enabled: true
+    max_position_ratio: 0.10
+    name: Chevron Corp
+    notes: 能源龙头(与XOM配对) | 跨行业分散补入 (2026-07-13) | 进不进交易看DA+gate
+    sector: Energy
+    tier: TIER1
   - code: US.NVDA
-    enabled: false
+    enabled: true
     max_position_ratio: 0.15
     name: NVIDIA Corp
-    notes: AI芯片核心 | 近期ATR极低0%胜率，暂停 (2026-05-30)
+    notes: AI芯片核心 | 顶级流动高β | 2026-07-13重新启用(低ATR为5-30旧因) | 仍受gate/波动筛选
     sector: Semiconductors
     tier: TIER1
   - code: US.RIVN

@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.utils.symbol_utils import normalize_symbol
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = str(
@@ -102,6 +104,8 @@ class VotingAccuracyTracker:
             predicted_confidence: 0.0-1.0
             model_votes: 各模型投票明细 {"qwen": {"direction": "LONG", "strength": 70}, ...}
         """
+        # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG)
+        symbol = normalize_symbol(symbol)
         with self._lock:
             conn = self._get_conn()
             try:

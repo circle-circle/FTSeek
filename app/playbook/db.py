@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from app.storage.db_pool import get_db
+from app.utils.symbol_utils import normalize_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ class PlaybookDB:
             "horizon_reasoning": "TEXT",
             "config_version": "TEXT",
             "invalidation": "TEXT",
+            "entry_low": "REAL",
+            "entry_high": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -107,6 +110,8 @@ class PlaybookDB:
         Returns:
             row id
         """
+        # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG), 防数据割裂
+        inst["symbol"] = normalize_symbol(inst.get("symbol"))
         conn = self._conn()
         now = datetime.utcnow().isoformat()
 
@@ -114,6 +119,7 @@ class PlaybookDB:
             INSERT INTO playbook_instructions (
                 date, symbol, direction, skip_reason,
                 entry_price, stop_loss, take_profit,
+                entry_low, entry_high,
                 position_size, risk_amount, risk_reward, confidence,
                 conditions_json, thesis, sector, risks_json,
                 market_regime, vix_at_generation, spy_trend_at_generation,
@@ -122,13 +128,15 @@ class PlaybookDB:
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
                 created_at, updated_at, config_version, invalidation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
                 entry_price=excluded.entry_price,
                 stop_loss=excluded.stop_loss,
                 take_profit=excluded.take_profit,
+                entry_low=excluded.entry_low,
+                entry_high=excluded.entry_high,
                 position_size=excluded.position_size,
                 risk_amount=excluded.risk_amount,
                 risk_reward=excluded.risk_reward,
@@ -156,6 +164,8 @@ class PlaybookDB:
             inst.get("entry_price"),
             inst.get("stop_loss"),
             inst.get("take_profit"),
+            inst.get("entry_low"),
+            inst.get("entry_high"),
             inst.get("position_size"),
             inst.get("risk_amount"),
             inst.get("risk_reward"),
