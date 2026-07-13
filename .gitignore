@@ -15,5 +15,14 @@ data/*.db
 
 # 数据库备份 — 不应入库
 data/backups/
+
+# 数据库文件(所有路径, 覆盖 app/data/ 与根目录)+ SQLite WAL/SHM — 不应入库
+*.db
+*.db-wal
+*.db-shm
+# 各类备份/损坏文件 (*.bak 只匹配后缀, *.bak* 才能抓到 .bak.时间戳 / .bak_xxx)
+*.bak*
+*.corrupted*
+
 *__pycache__*
 *.pyc
