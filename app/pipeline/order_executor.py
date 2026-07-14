@@ -111,6 +111,16 @@ _CLOSE_BACKOFF_LADDER = {
 
 _CLOSE_BLOCK_THRESHOLD = 5  # 达到此次数 → block + 推送告警
 
+# [ADR-015] owner_strategy → source_type 派生表 (2026-07-14)
+# 平仓记录若漏传 source_type, trade_store 默认 MAIN_PIPELINE → 主线路径平掉
+# playbook/orb 仓时归因误标. 此表让 close-side 按持仓真实 owner 落正确来源。
+_OWNER_SOURCE_TYPE = {
+    "playbook_sim": "PLAYBOOK_SIM",
+    "playbook_live": "PLAYBOOK_LIVE",
+    "playbook_shadow": "PLAYBOOK_SHADOW",
+    "orb_engine": "ORB_ENGINE",
+}
+
 
 def _close_retry_key(symbol: str, direction) -> Tuple[str, str]:
     """生成 (symbol, direction) 的退避计数键"""
@@ -4970,6 +4980,14 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             "signal_id":         getattr(position, "signal_id", "") or meta.get("signal_id", "") or _trace_id,
             # Phase A (2026-05-14): 持仓的 owner_strategy 必须落到 trade_records
             "owner_strategy":    getattr(position, "owner_strategy", None) or "main",
+            # [ADR-015] 归因修正 (2026-07-14): source_type 按 owner 派生, 不再漏传→默认 MAIN_PIPELINE.
+            #   根因: 组合级熔断(FLAT_ALL/REDUCE_50)等主线路径平掉 playbook 仓时本 dict 漏传
+            #   source_type → 通知误标"主线策略"+归因双计数 (CVE/EOG 07-14). owner=main/auto_main
+            #   仍落 MAIN_PIPELINE (行为不变), 仅 playbook_*/orb_engine 归位正确来源。
+            "source_type":       _OWNER_SOURCE_TYPE.get(
+                                     (getattr(position, "owner_strategy", None) or "main").strip().lower(),
+                                     "MAIN_PIPELINE",
+                                 ),
             # O4 (2026-05-16): regime + mode 落库 (此前两列 UNKNOWN/normal 都未传入)
             "market_regime":     _regime or "RANGE",
             "mode":              _mode,
