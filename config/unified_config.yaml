@@ -329,6 +329,18 @@ dual_mode:
     min_signal_strength: 70
     position_scale_factor: 0.5
     stop_loss_tighten_factor: 0.7
+  # 2026-07-14 (ADR-011): normal 档补齐 (此前仅 Python fallback, ADR-010 已启用 normal).
+  #   三档 max_total_exposure (0.30/0.60/0.75) = auto 交易量档位 %,
+  #   capital_safety 读此值 × buying_power = auto 预算 (单一可调源, sim/live 统一, 热重载).
+  normal:
+    max_daily_auto_trades: 4
+    max_per_trade_usd: 20000
+    max_position_pct: 0.12
+    max_total_exposure: 0.60
+    min_confidence: 0.55
+    min_signal_strength: 50
+    position_scale_factor: 1.0
+    stop_loss_tighten_factor: 1.0
   default_aggression: conservative
   exposure_control:
     global_max_per_direction: 0.4

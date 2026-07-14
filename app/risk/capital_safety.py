@@ -512,7 +512,7 @@ class CapitalSafetySystem:
     #  所有方法均带 try/except 兜底, 失败返回 0.0 不阻塞主流程
     # ═══════════════════════════════════════════════════════════════════
 
-    # 自动交易激进度对应的总敞口上限
+    # 自动交易激进度对应的总敞口上限 (fallback; 单一可调源 = config dual_mode.<level>.max_total_exposure)
     _AUTO_LEVEL_CAPS = {
         "conservative": 0.30,
         "normal": 0.60,
@@ -548,7 +548,8 @@ class CapitalSafetySystem:
 
         规则:
           1. buying_power (富途 accinfo_query, 30s刷新) 是真实可用资金
-          2. auto 按激进度比例分配: conservative=30% / normal=60% / aggressive=75%
+          2. auto 按激进度比例分配: 读 config dual_mode.<level>.max_total_exposure
+             (conservative=30% / normal=60% / aggressive=75%, 一键可调, sim/live 统一)
         """
         try:
             bp = float(self._state.buying_power or 0)
@@ -559,12 +560,21 @@ class CapitalSafetySystem:
                     return 0.0
                 bp = equity * 0.80
 
+            # 交易量档位 % (BP占比) = config dual_mode.<level>.max_total_exposure
+            #   (单一可调源, 与 exposure 控制同源, sim/live 统一, 支持热重载);
+            #   _AUTO_LEVEL_CAPS 仅作最终 fallback。
             try:
-                from app.web_dashboard.mode_switch_service import get_mode_switch_service
-                level = get_mode_switch_service().get_auto_aggression()
+                from app.coordinator.dual_mode_params import (
+                    get_conservative_param, get_current_aggression_level,
+                )
+                level = get_current_aggression_level()
+                auto_cap_pct = get_conservative_param("max_total_exposure")
+                if auto_cap_pct is None:
+                    auto_cap_pct = self._AUTO_LEVEL_CAPS.get(level, 0.30)
             except Exception:
                 level = "conservative"
-            auto_cap_pct = self._AUTO_LEVEL_CAPS.get(level, 0.30)
+                auto_cap_pct = self._AUTO_LEVEL_CAPS.get(level, 0.30)
+            auto_cap_pct = float(auto_cap_pct)
             available = bp * auto_cap_pct
 
             logger.info(
