@@ -58,7 +58,7 @@ class SizingResult:
 DEFAULT_TIERS = {
     "micro":    {"min_equity": 0,       "max_equity": 10000,   "risk_pct": 0.05,  "total_pct": 0.30, "max_positions": 3,  "min_trade_usd": 100,   "max_position_pct": 0.35},
     "small":    {"min_equity": 10000,   "max_equity": 50000,   "risk_pct": 0.035, "total_pct": 0.25, "max_positions": 5,  "min_trade_usd": 500,   "max_position_pct": 0.30},
-    "medium":   {"min_equity": 50000,   "max_equity": 200000,  "risk_pct": 0.03,  "total_pct": 0.20, "max_positions": 8,  "min_trade_usd": 2000,  "max_position_pct": 0.25},
+    "medium":   {"min_equity": 50000,   "max_equity": 200000,  "risk_pct": 0.03,  "total_pct": 0.20, "max_positions": 10, "min_trade_usd": 2000,  "max_position_pct": 0.25},
     "large":    {"min_equity": 200000,  "max_equity": 1000000, "risk_pct": 0.025, "total_pct": 0.15, "max_positions": 10, "min_trade_usd": 5000,  "max_position_pct": 0.20},
     "inst":     {"min_equity": 1000000, "max_equity": None,    "risk_pct": 0.02,  "total_pct": 0.10, "max_positions": 15, "min_trade_usd": 10000, "max_position_pct": 0.15},
 }

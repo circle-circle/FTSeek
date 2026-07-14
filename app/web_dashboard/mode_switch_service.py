@@ -401,7 +401,7 @@ class ModeSwitchService:
     def __init__(self, scheduler=None):
         self._lock = threading.RLock()
         self._auto_enabled: bool = self._read_yaml_auto_trading()  # 从 YAML 恢复, 重启后状态一致
-        self._auto_aggression: str = "conservative"  # 默认保守模式
+        self._auto_aggression: str = self._read_yaml_auto_aggression()  # 从 YAML 恢复, 重启后状态一致
         self._scheduler = scheduler
         self._last_toggle_time: Optional[datetime] = None
         self._toggle_history: list = []
@@ -427,6 +427,24 @@ class ModeSwitchService:
         except Exception:
             pass
         return False  # 读取失败 → 默认关闭 (安全优先)
+
+    @staticmethod
+    def _read_yaml_auto_aggression() -> str:
+        """从 unified_config.yaml 读取 feature_flags.auto_aggression (启动时恢复; 默认 conservative)"""
+        import re as _re
+        try:
+            _yaml_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "config", "unified_config.yaml"
+            )
+            with open(_yaml_path, "r") as _f:
+                for _line in _f:
+                    _m = _re.match(r'\s+auto_aggression:\s*(conservative|normal|aggressive)', _line)
+                    if _m:
+                        return _m.group(1)
+        except Exception:
+            pass
+        return "conservative"  # 读取失败 → 保守 (安全优先)
 
     # ---- Dashboard 控制接口 -------------------------------------------------
 

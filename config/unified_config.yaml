@@ -104,7 +104,7 @@ capital:
     medium:
       max_equity: 200000
       max_position_pct: 0.25
-      max_positions: 8
+      max_positions: 10
       min_equity: 50000
       min_trade_usd: 2000
       risk_pct: 0.03
@@ -467,6 +467,9 @@ exit_rules_controller:
   shadow_mode: false
 feature_flags:
   auto_trading_enabled: true
+  # 2026-07-14 (ADR-010): auto 交易量档位 (BP占比). conservative=30%/normal=60%/aggressive=75%.
+  #   启动时由 ModeSwitchService 读取恢复 (同 auto_trading_enabled 机制), Dashboard 可运行时覆盖.
+  auto_aggression: normal
 llm:
   defaults:
     cache_dir: data/llm_cache
