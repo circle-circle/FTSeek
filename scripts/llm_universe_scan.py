@@ -52,6 +52,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
+PROMPT_VERSION = "v2.0"  # scan-eval 的 V2 prompt 版本 (未来迭代 P1/P2 改此号, 供归因)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -63,6 +64,26 @@ SYSTEM_PROMPT = (
     "winner_loser(WINNER 或 LOSER), corroborated_by_market(bool, 市场异动是否已印证)。\n"
     "只输出可在美股实际交易的真实 symbol; 不确定的标的 direction 填 SKIP。"
     "不要输出任何价格数字(entry/止损/止盈由下游代码计算)。\n"
+    "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
+)
+
+# P0 (意图对齐 + 强制引证自评): 与 V1 同源, 仅用于 scan-eval A/B; 不覆盖 V1。
+SYSTEM_PROMPT_V2 = (
+    "你是资深事件驱动型美股分析师。职责: 仅当存在【明确、可核验的因果传导路径】时才浮现标的; "
+    "没有强事件支撑时, 宁可少报或不报, 绝不为凑数做板块联想。\n"
+    "要求:\n"
+    "1. evidence_ref(强制): 每个标的必须引用给定材料中的【具体证据原文】—— 某条新闻标题 / "
+    "某个市场异动数据 / 某条人工线索。若无法从给定材料引出具体证据(仅凭行业常识或板块联想), evidence_ref 留空。\n"
+    "2. self_tier(强制自评): HARD_EVENT=因果链第一环锚定 evidence_ref 里的具体事件(封锁/战争/财报/监管/事故); "
+    "MARKET_CORROBORATED=无具体事件但 evidence_ref 是真实市场异动/板块轮动数据; "
+    "THESIS_ONLY=无 evidence_ref, 仅逻辑或板块联想。\n"
+    "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60。\n"
+    "4. 宁缺毋滥: 0~2 个高置信标的优于 5 个勉强凑数; 今日无强事件则返回 {\"surfaced\": []}。\n"
+    "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
+    "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
+    "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
+    "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
+    "corroborated_by_market(bool)。\n"
     "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
 )
 
@@ -195,7 +216,10 @@ def _build_clue_brief(manual_clue: str = "") -> str:
 
 
 # ── scan: LLM 推理浮现标的 ─────────────────────────────────────
-def _normalize_surfaced(raw: Any) -> List[Dict[str, Any]]:
+def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any]]:
+    """归一化 LLM 浮现标的。with_tier=True 时额外解析 evidence_ref/self_tier,
+    并做 Track A 夹逼: evidence_ref 为空 → 强制 self_tier=THESIS_ONLY 且 confidence≤0.60
+    (标签归一化, 非过滤门; V1 路径不传 with_tier, 行为不变)。"""
     if not isinstance(raw, list):
         return []
     out = []
@@ -211,7 +235,7 @@ def _normalize_surfaced(raw: Any) -> List[Dict[str, Any]]:
         except (TypeError, ValueError):
             conf = 0.0
         wl = str(it.get("winner_loser", "")).upper().strip()
-        out.append({
+        item = {
             "symbol": sym,
             "direction": direction,
             "causal_chain": str(it.get("causal_chain", ""))[:200],
@@ -220,7 +244,25 @@ def _normalize_surfaced(raw: Any) -> List[Dict[str, Any]]:
             "is_universe_external": bool(it.get("is_universe_external", False)),
             "winner_loser": wl if wl in ("WINNER", "LOSER") else "",
             "corroborated_by_market": bool(it.get("corroborated_by_market", False)),
-        })
+        }
+        if with_tier:
+            ev = str(it.get("evidence_ref", ""))[:200].strip()
+            tier = str(it.get("self_tier", "")).upper().strip()
+            if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
+                tier = "THESIS_ONLY"
+            raw_conf = conf
+            clamped = False
+            if not ev:  # Track A 夹逼: 无证据 → 强制降级 (兜底 LLM 不守自律约束)
+                tier = "THESIS_ONLY"
+                if conf > 0.60:
+                    clamped = True
+                conf = min(conf, 0.60)
+            item["evidence_ref"] = ev
+            item["self_tier"] = tier
+            item["raw_confidence"] = round(raw_conf, 3)
+            item["clamped"] = clamped
+            item["confidence"] = round(conf, 3)
+        out.append(item)
     return out
 
 
@@ -532,6 +574,158 @@ def cmd_report(days: int = 30) -> int:
     return 0
 
 
+# ── scan-eval: V1/V2 prompt A/B 对比 (shadow, 不落主scan/不下单) ──
+_PROMPT_EVAL_PATH = _ROOT / "data" / "shadow" / "prompt_eval.jsonl"
+
+
+def cmd_scan_eval(manual_clue: str = "") -> int:
+    """同一 clue brief 分别喂 V1(现状)/V2(P0 意图对齐+引证自评), 并排对比。
+    纯 shadow: 不落主 scan、不 inject、不下单。唯一变量=SYSTEM_PROMPT。"""
+    brief = _build_clue_brief(manual_clue)
+    print("=" * 72)
+    print(f"scan-eval clue brief ({'有人工线索' if manual_clue else '无clue,自动新闻'}):")
+    print(brief[:1200])
+    print("=" * 72)
+
+    try:
+        from app.llm.model_call import call_llm
+    except Exception as e:
+        print(f"[scan-eval] 无法导入 call_llm: {e}")
+        return 1
+
+    def _run(system: str, tag: str, with_tier: bool):
+        res = call_llm("universe_expansion_reasoning", brief, system=system,
+                       temperature=0.2, max_tokens=2500,
+                       schema_required={"surfaced": list}, json_mode=True)
+        if not res or not res.success:
+            print(f"[{tag}] LLM 调用失败: {getattr(res, 'error', '?') if res else 'no_result'}")
+            return [], None
+        parsed = res.response if isinstance(res.response, dict) else {}
+        return _normalize_surfaced(parsed.get("surfaced"), with_tier=with_tier), getattr(res, "model_used", None)
+
+    print("[V1] 现状 prompt 推理中 ...")
+    v1, m1 = _run(SYSTEM_PROMPT, "V1", False)
+    print("[V2] P0 意图对齐 prompt 推理中 ...")
+    v2, m2 = _run(SYSTEM_PROMPT_V2, "V2", True)
+
+    # 抓 scan 参考价 (供远端 T+N 前瞻评分, Layer 0 补缺)
+    try:
+        router = _build_router()
+        _all = list({s["symbol"] for s in (v1 + v2) if s["direction"] in ("LONG", "SHORT")})
+        _q = _batch_quotes(router, _all)
+        for s in (v1 + v2):
+            _px = _quote_price(_q.get(s["symbol"], {}))
+            s["scan_price"] = round(_px, 4) if _px else None
+    except Exception as _pe:
+        print(f"  [warn] 抓参考价失败 (不影响近端评估): {_pe}")
+
+    v1_by = {s["symbol"]: s for s in v1}
+    v2_by = {s["symbol"]: s for s in v2}
+    syms = sorted(set(v1_by) | set(v2_by))
+
+    print("\n" + "=" * 72)
+    print(f"V1/V2 并排对比  (V1浮现{len(v1)} vs V2浮现{len(v2)})")
+    print("-" * 72)
+    for sym in syms:
+        a = v1_by.get(sym)
+        b = v2_by.get(sym)
+        a_str = f"{a['direction']:5} conf={a['confidence']:.2f}" if a else "  —(未浮现)"
+        if b:
+            ev = b.get("evidence_ref", "")
+            b_str = (f"{b['direction']:5} conf={b['confidence']:.2f} {b.get('self_tier','?'):<18} "
+                     f"ev={('有:'+ev[:24]) if ev else '空->自降'}")
+        else:
+            b_str = "  —(未浮现/弃选)"
+        print(f"  {sym:6}  V1[{a_str}]  ||  V2[{b_str}]")
+    print("-" * 72)
+
+    _append_jsonl(_PROMPT_EVAL_PATH, {
+        "type": "prompt_eval", "date": _today(), "evaluated_at": _now_et().isoformat(),
+        "prompt_version": PROMPT_VERSION,
+        "clue": manual_clue, "v1": {"model": m1, "surfaced": v1},
+        "v2": {"model": m2, "surfaced": v2},
+    })
+    print(f"[scan-eval] 已落对比文件: {_PROMPT_EVAL_PATH.name} (record-only, 未下单)")
+    return 0
+
+
+# ── eval-report: 近端评估 (浮现质量, 当天可得) ─────────
+def cmd_eval_report(days: int = 14) -> int:
+    """Layer 1 近端评估: 聚合 prompt_eval.jsonl 的浮现质量指标
+    (克制比/引证率/tier分布/夹逼率/稳定性), 不依赖市场。"""
+    import statistics
+    from collections import defaultdict
+
+    recs = [r for r in _read_jsonl(_PROMPT_EVAL_PATH) if r.get("type") == "prompt_eval"]
+    cutoff = (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recs = [r for r in recs if r.get("date", "") >= cutoff]
+    if not recs:
+        print(f"[eval-report] 近{days}天无 prompt_eval 数据 (先跑 scan-eval)")
+        return 0
+
+    def _trade(surf):
+        return [s for s in surf if s.get("direction") in ("LONG", "SHORT")]
+
+    restraint = []
+    ev_total, ev_cited = 0, 0
+    tier_cnt = {"HARD_EVENT": 0, "MARKET_CORROBORATED": 0, "THESIS_ONLY": 0}
+    clamp_total, clamp_hit = 0, 0
+    groups = defaultdict(list)
+
+    for r in recs:
+        v1 = _trade(r.get("v1", {}).get("surfaced", []))
+        v2 = _trade(r.get("v2", {}).get("surfaced", []))
+        if len(v1) > 0:
+            restraint.append(len(v2) / len(v1))
+        for s in v2:
+            ev_total += 1
+            if s.get("evidence_ref"):
+                ev_cited += 1
+            tier_cnt[s.get("self_tier", "THESIS_ONLY")] = tier_cnt.get(s.get("self_tier", "THESIS_ONLY"), 0) + 1
+            if "clamped" in s:
+                clamp_total += 1
+                clamp_hit += 1 if s.get("clamped") else 0
+        key = (r.get("date"), r.get("clue", ""))
+        groups[key].append((frozenset(s["symbol"] for s in v1),
+                            frozenset(s["symbol"] for s in v2)))
+
+    def _avg_jaccard(sets):
+        pairs = []
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                a, b = sets[i], sets[j]
+                u = len(a | b)
+                pairs.append((len(a & b) / u) if u else 1.0)
+        return statistics.mean(pairs) if pairs else None
+
+    v1_stab, v2_stab = [], []
+    for _key, runs in groups.items():
+        if len(runs) >= 2:
+            a = _avg_jaccard([x[0] for x in runs])
+            b = _avg_jaccard([x[1] for x in runs])
+            if a is not None:
+                v1_stab.append(a)
+            if b is not None:
+                v2_stab.append(b)
+
+    print("=" * 66)
+    print(f"📊 scan-eval 近端评估 (近{days}天, {len(recs)}次A/B)   prompt_eval.jsonl")
+    print("=" * 66)
+    if restraint:
+        print(f"克制比 V2/V1       : {statistics.mean(restraint):.2f}  (均值; <1=V2更克制)")
+    if ev_total:
+        print(f"V2 引证率          : {ev_cited/ev_total:.0%}  ({ev_cited}/{ev_total})")
+    print(f"V2 tier 分布       : HARD {tier_cnt['HARD_EVENT']} / MARKET {tier_cnt['MARKET_CORROBORATED']} / THESIS {tier_cnt['THESIS_ONLY']}")
+    if clamp_total:
+        print(f"夹逼率(无据却高置信) : {clamp_hit/clamp_total:.0%}  ({clamp_hit}/{clamp_total}; 越低=LLM越守自律)")
+    if v2_stab:
+        print(f"稳定性(Jaccard)    : V2={statistics.mean(v2_stab):.2f}  vs  V1={statistics.mean(v1_stab):.2f}  (越高越稳; {len(v2_stab)}组多跑)")
+    else:
+        print("稳定性            : (需同日同场景多次跑才有; 每周3连跑后可见)")
+    print("=" * 66)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="LLM 事件推理驱动的选股宇宙扩张")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -542,6 +736,10 @@ def main() -> int:
     sub.add_parser("score", help="对已 scan 未评分标的算前瞻收益")
     p_rep = sub.add_parser("report", help="查看近 N 天效果")
     p_rep.add_argument("--days", type=int, default=30)
+    p_eval = sub.add_parser("scan-eval", help="V1/V2 prompt A/B 对比 (shadow, 不落主scan/不下单)")
+    p_eval.add_argument("--clue", default="", help="人工线索 (复现强事件场景做对比)")
+    p_evr = sub.add_parser("eval-report", help="近端评估: 聚合浮现质量指标 (克制比/引证率/稳定性)")
+    p_evr.add_argument("--days", type=int, default=14)
     args = ap.parse_args()
 
     try:
@@ -553,6 +751,10 @@ def main() -> int:
             return cmd_score()
         if args.cmd == "report":
             return cmd_report(days=args.days)
+        if args.cmd == "scan-eval":
+            return cmd_scan_eval(manual_clue=args.clue)
+        if args.cmd == "eval-report":
+            return cmd_eval_report(days=args.days)
     except Exception as e:
         import traceback
         print(f"⚠️ 执行异常 ({args.cmd}): {e}")
