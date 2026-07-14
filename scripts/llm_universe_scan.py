@@ -4,8 +4,8 @@
 LLM 事件推理驱动的选股宇宙扩张 (LLM Universe Scan)
 ==================================================
 把 LLM 用在"发现哪些标的"这一步: 读今日新闻事件 + 市场佐证 → LLM 关联因果推理 →
-浮现受影响标的(含宇宙外, 受益+受损方) → 代码出数值(entry/SL/TP) → 注入现有作战计划 →
-共用 fast_lane→下单→现有退出 在模拟盘执行。
+浮现受影响标的(含宇宙外, 受益+受损方) → 代码出数值(entry/SL/TP) → 写 playbook_instructions →
+与 DA 共用同一自动执行/触发/退出轨道 在模拟盘执行 (2026-07: 从 fast_lane 迁移, 统一执行层)。
 
 设计 (见 plan: LLM 事件推理驱动的选股宇宙扩张):
   - 信息源 = 新闻事件为主 + 市场佐证(板块轮动/异动)
@@ -15,7 +15,7 @@ LLM 事件推理驱动的选股宇宙扩张 (LLM Universe Scan)
 
 子命令:
   scan    组装 clue brief → LLM 推理 → 落影子日志 (含 causal_chain/thesis); 不写作战计划
-  inject  读最近 scan → 代码算 entry/SL/TP → 写 battle_plan targets + 加池 (仅 entry_enabled=true)
+  inject  读最近 scan → 代码算 entry/SL/TP → 写 playbook_instructions (走 DA 统一执行轨道, 仅 entry_enabled=true)
   score   对已 scan 未评分标的取现价 → 前瞻收益 + 命中率
   report  查看近 N 天 scan/score 效果 (归因源=LLM_EVENT_SCAN)
 
@@ -403,26 +403,37 @@ def cmd_inject(force_dry: bool = False) -> int:
         return 0
     surfaced = today_scans[-1].get("surfaced", [])
 
-    plan = _load_battle_plan()
-    existing = _existing_plan_symbols(plan)
+    today = _today()
     positions = _position_symbols()
 
-    # 候选筛选: 可交易方向 + 置信度达标 + 非重复 + 非持仓
+    # 排重: 今日已在 playbook_instructions 的标的 (DA 优先, universe_expansion 让路).
+    #   save_instruction 按 (date,symbol) UPSERT — 同标的会覆盖 DA, 故此处排除.
+    existing_pb = set()
+    try:
+        from app.playbook.db import PlaybookDB
+        for _inst in PlaybookDB().get_instructions_by_date(today):
+            _s = str(_inst.get("symbol", "")).replace("US.", "").upper()
+            if _s:
+                existing_pb.add(_s)
+    except Exception as e:
+        print(f"  [warn] 读取 playbook_instructions 排重失败 (继续): {e}")
+
+    # 候选筛选: 可交易方向 + 置信度达标 + 非持仓 + 非DA已写
     cand = [s for s in surfaced
             if s["direction"] in ("LONG", "SHORT")
             and s["confidence"] >= min_conf
-            and s["symbol"] not in existing
-            and s["symbol"] not in positions]
+            and s["symbol"] not in positions
+            and s["symbol"] not in existing_pb]
     cand.sort(key=lambda s: s["confidence"], reverse=True)
     cand = cand[:max_n]
 
     if not cand:
-        print(f"[inject] 无合格候选 (min_conf={min_conf}, 已排除重复/持仓)")
+        print(f"[inject] 无合格候选 (min_conf={min_conf}, 已排除持仓/DA已写)")
         return 0
 
     router = _build_router()
     q = _batch_quotes(router, [s["symbol"] for s in cand])
-    new_targets = []
+    instructions = []
     for s in cand:
         px = _quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
         if not px:
@@ -432,58 +443,66 @@ def cmd_inject(force_dry: bool = False) -> int:
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
             continue
-        new_targets.append({
+        # entry_zone 即 compute_entry_band 输出 (执行端同源, band 一致)
+        entry_low, entry_high = nums["entry_zone"][0], nums["entry_zone"][1]
+        # 方向映射到 playbook 词汇 (以 DA 实际写入值为准: pipeline.py L736)
+        pb_direction = "BUY" if s["direction"] == "LONG" else "SELL_SHORT"
+        instructions.append({
+            "date": today,
             "symbol": f"US.{s['symbol']}",
-            "direction": s["direction"],
-            "status": "ACTIVE",
-            "entry_zone": nums["entry_zone"],
+            "direction": pb_direction,
+            "entry_price": round(float(px), 4),  # 触发基准 (_check_intraday_trigger 用)
+            "entry_low": entry_low,
+            "entry_high": entry_high,
             "stop_loss": nums["stop_loss"],
             "take_profit": nums["take_profit"],
-            "urgency": "NORMAL",
-            "confidence": s["confidence"],
-            "position_size_pct": 0.05,  # 复用作战计划典型默认档
-            "discovery_source": DISCOVERY_SOURCE,
-            "catalyst": {"type": "LLM_EVENT_SCAN", "detail": s["causal_chain"][:120]},
-            "rationale": s["thesis"],
-            "current_price": round(float(px), 4),
-            "origin": {
-                "info_source": INFO_SOURCE,
-                "causal_chain": s["causal_chain"],
-                "winner_loser": s["winner_loser"],
-                "corroborated_by_market": s["corroborated_by_market"],
+            "confidence": int(round(float(s["confidence"]) * 100)),  # schema INTEGER 0-100
+            "thesis": s.get("thesis", ""),
+            "sector": s.get("sector", ""),
+            "horizon": "short",
+            # 归因 (轻量, 复用现有字段, 无需 schema 迁移):
+            "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
+            "raw_instruction": {
+                "source": STRATEGY_ID,  # universe_expansion — 报表侧切分 DA vs 本源
+                "prompt_version": PROMPT_VERSION,
+                "origin": {
+                    "info_source": INFO_SOURCE,
+                    "causal_chain": s.get("causal_chain", ""),
+                    "winner_loser": s.get("winner_loser", ""),
+                    "corroborated_by_market": s.get("corroborated_by_market"),
+                },
             },
         })
 
-    print(f"[inject] entry_enabled={enabled} → {'DRY-RUN (不写盘)' if dry else '写入作战计划'}")
-    for t in new_targets:
-        print(f"  {t['direction']:5} {t['symbol']:8} zone={t['entry_zone']} "
-              f"SL={t['stop_loss']} TP={t['take_profit']} conf={t['confidence']}")
+    print(f"[inject] entry_enabled={enabled} → {'DRY-RUN (不写库)' if dry else '写入 playbook_instructions'}")
+    for it in instructions:
+        print(f"  {it['direction']:10} {it['symbol']:8} entry={it['entry_price']} "
+              f"zone=[{it['entry_low']},{it['entry_high']}] SL={it['stop_loss']} TP={it['take_profit']} "
+              f"conf={it['confidence']} src={STRATEGY_ID}")
 
     if dry:
         if not enabled:
-            print("  [安全阀] universe_expansion.entry_enabled=false → 未注入, 未下单。")
+            print("  [安全阀] universe_expansion.entry_enabled=false → 未写库, 未下单。")
         return 0
 
-    if not new_targets:
+    if not instructions:
         return 0
 
-    # 追加到作战计划 targets (append-only, 保留 DA 内容)
-    plan.setdefault("targets", []).extend(new_targets)
-    with open(_BATTLE_PLAN_PATH, "w", encoding="utf-8") as f:
-        json.dump(plan, f, ensure_ascii=False, indent=2)
+    # 写入 playbook_instructions — 与 DA 共用同一执行/触发/退出轨道.
+    #   auto_execute 会对未触发指令做 _check_intraday_trigger (symbol-agnostic 取价),
+    #   宇宙外标的无需订阅/轮询注册即可被执行.
+    from app.playbook.db import PlaybookDB
+    db = PlaybookDB()
+    db.ensure_tables()
+    saved = 0
+    for it in instructions:
+        try:
+            db.save_instruction(it)
+            saved += 1
+        except Exception as e:
+            print(f"  [warn] {it['symbol']} 写库失败: {e}")
 
-    # 加入盘中活跃池 (INTRADAY_ALERT)
-    try:
-        from app.utils.daily_active_pool import DailyActivePool
-        p = DailyActivePool()
-        p.load()
-        for t in new_targets:
-            p.add_intraday_alert(t["symbol"], reason=f"LLM_EVENT_SCAN:{t['rationale'][:40]}")
-        p.save()
-    except Exception as e:
-        print(f"  [warn] 加池失败 (target 已注入, fast_lane 需标的在池内): {e}")
-
-    print(f"[inject] 已注入 {len(new_targets)} 个 target (discovery_source={DISCOVERY_SOURCE}) + 加池")
+    print(f"[inject] 已写入 {saved} 条 playbook_instructions (source={STRATEGY_ID}, 走 DA 统一执行轨道)")
     return 0
 
 

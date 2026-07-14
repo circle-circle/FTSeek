@@ -27,6 +27,47 @@ from app.strategy.pure import evaluate as eval_strategy
 logger = logging.getLogger(__name__)
 
 
+# ── fast_lane skip 落库 (2026-07-14) ──────────────────────────────
+#   为什么: fast_lane 纯函数在 4 处静默 return None (价格不在 entry_zone / conf 不足 等),
+#   导致 RIVN 类"有计划却整天没执行"无可观测记录. 此处按 (交易日, symbol, reason)
+#   去重追加 JSONL (仿guard_decisions.jsonl), 避免每 tick 刷盘.
+_FAST_LANE_SKIP_SEEN: set = set()
+_FAST_LANE_SKIP_DAY: list = [""]
+
+
+def _record_fast_lane_skip(ctx) -> None:
+    """ACTIVE 作战计划未命中时, 将 fast_lane 返回的 skip 原因落库 (按天+symbol+reason 去重)."""
+    skip = (getattr(ctx, "metadata", None) or {}).get("fast_lane_skip")
+    if not skip:
+        return
+    try:
+        import json
+        import os
+        from datetime import datetime
+
+        _day = datetime.now().strftime("%Y-%m-%d")
+        if _FAST_LANE_SKIP_DAY[0] != _day:
+            _FAST_LANE_SKIP_SEEN.clear()
+            _FAST_LANE_SKIP_DAY[0] = _day
+        _key = (ctx.symbol, skip.get("reason"))
+        if _key in _FAST_LANE_SKIP_SEEN:
+            return
+        _FAST_LANE_SKIP_SEEN.add(_key)
+        rec = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "date": _day,
+            "symbol": ctx.symbol,
+            "reason": skip.get("reason"),
+            "detail": skip.get("detail"),
+            "price": getattr(ctx, "price", None),
+        }
+        with open(os.path.join("data", "fast_lane_skips.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        logger.info(f"[FastLaneSkip] {ctx.symbol} {skip.get('reason')}: {skip.get('detail')}")
+    except Exception as _e:
+        logger.debug(f"[FastLaneSkip] 落库异常(忽略): {_e}")
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  P1 (2026-06-17): 日均信号数量监控 — 防止过度过滤
 #  跟踪每日信号放行/过滤数量, 信号过少时发出警告
@@ -464,6 +505,9 @@ def process(ctx: SymbolContext,
                             # 归因贯穿: LLM 事件推理浮现的标的 (选股宇宙扩张独立策略)
                             # 覆盖 fast_lane 硬编码的 strategy_id, 使 order_executor 落库时
                             # trade_records.strategy_id=universe_expansion, 报表可按来源切片。
+                            # 2026-07: universe_expansion 已迁移到 playbook_instructions 统一执行轨道,
+                            #   inject 不再写 discovery_source=LLM_EVENT_SCAN 的 battle_plan target,
+                            #   故本分支为迁移后死路 (保留以防遗留 target / 手动注入, 零行为影响)。
                             if target.get("discovery_source") == "LLM_EVENT_SCAN":
                                 candidate.strategy_id = "universe_expansion"
                                 candidate.metadata["source_type"] = "UNIVERSE_EXPANSION"
@@ -479,6 +523,8 @@ def process(ctx: SymbolContext,
                                 f"[Signal] {symbol} 快车道命中: {candidate.rationale}"
                             )
                             candidates.append(candidate)
+                        else:
+                            _record_fast_lane_skip(ctx)
         except Exception as e:
             logger.debug(f"[Signal] 快车道检查异常 (放行): {e}")
 
