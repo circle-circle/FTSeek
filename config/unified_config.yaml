@@ -482,6 +482,11 @@ feature_flags:
   # 2026-07-14 (ADR-010): auto 交易量档位 (BP占比). conservative=30%/normal=60%/aggressive=75%.
   #   启动时由 ModeSwitchService 读取恢复 (同 auto_trading_enabled 机制), Dashboard 可运行时覆盖.
   auto_aggression: normal
+  # 2026-07-14 (ADR-012): 旧 US discovery 作战计划轨道 (daily_battle_plan_us.json) 开关.
+  #   生成端已停用冻结 (2026-07-13, discovery管线不再再生). false=下线两个残留消费端:
+  #   开盘确认钉钉推送 (run_open_checker) + 启动扫描池注入 (_inject_battle_plan_to_pool).
+  #   真实执行轨道为 playbook_instructions, 不受此开关影响. 复活整条旧轨道置 true + 重启.
+  legacy_battle_plan_enabled: false
 llm:
   defaults:
     cache_dir: data/llm_cache

@@ -1035,6 +1035,16 @@ def run_open_checker(scheduler):
     验证作战计划中的目标是否符合执行条件。
     在 PRE_MARKET → TRADING 过渡窗口执行，确保 CANCELLED 标的不进入信号扫描。
     """
+    # [ADR-012] 旧作战计划轨道 (daily_battle_plan_us.json) 已废弃冻结 (2026-07-13 discovery管线停用)。
+    # 开盘 gap 校验 + 钉钉推送默认下线, 避免推送过时标的; 真实轨道为 playbook_instructions。
+    # 复活整条旧轨道: feature_flags.legacy_battle_plan_enabled=true + 重启。config 不可用时保持下线。
+    try:
+        from app.core.config_container import get_config as _gc
+        if not _gc().get_dotted("feature_flags.legacy_battle_plan_enabled", False):
+            return
+    except Exception:
+        return
+
     from app.core.scheduler_triggers import ET
     now_et = datetime.now(ET)
     today_et = now_et.date()

@@ -1090,7 +1090,18 @@ class TradingScheduler:
         本方法在启动时自动将其注入到 daily_active_pool, 确保轮询扫描覆盖。
 
         P0 修复 (2026-05-20): sandbox 模式下过滤非 universe 标的
+
+        [ADR-012] 旧作战计划轨道已废弃冻结 (2026-07-13 discovery管线停用); 注入默认下线,
+        避免冻结标的污染扫描池。复活: feature_flags.legacy_battle_plan_enabled=true + 重启。
         """
+        try:
+            from app.core.config_container import get_config as _gc0
+            if not _gc0().get_dotted("feature_flags.legacy_battle_plan_enabled", False):
+                logger.info("[调度器] 旧作战计划轨道已下线 (legacy_battle_plan_enabled=false), 跳过注入")
+                return
+        except Exception:
+            return
+
         try:
             from app.us_pipeline.battle_plan_manager import USBattlePlanManager
             from app.utils.daily_active_pool import get_daily_active_pool
@@ -1306,6 +1317,11 @@ class TradingScheduler:
                     continue
                 if '26' in symbol or symbol.endswith('P') or symbol.endswith('C'):
                     # 期权由 position_sync 单独处理
+                    continue
+                # 2026-07-14: 跳过 playbook_sim 仓位 — position_sync 正确跳过它们 (line 1069),
+                #   若此处恢复到 position_store 会导致一致性校验报幽灵仓
+                _owner = db_pos.get("owner_strategy") or db_pos.get("strategy_id")
+                if _owner == "playbook_sim":
                     continue
                 # 恢复股票持仓到 PositionStore (2026-06-12 实现)
                 try:
