@@ -97,6 +97,19 @@ def _today() -> str:
     return _now_et().strftime("%Y-%m-%d")
 
 
+def _is_us_trading_day_today() -> bool:
+    """美股交易日判断 (复用 holiday_calendar 权威能力: Futu缓存+硬编码降级+周末兑底).
+
+    cron `30 20 * * 1-5` 仅排周末, 不排美股节假日 → 靠本守卫避免假日白跑 LLM/写陈旧指令.
+    日历不可用时 fail-open 按交易日 (与 app/playbook _is_trading_day_today 一致, 宁可跑不可漏).
+    """
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        return get_holiday_calendar().is_trading_day("US", _now_et().date())
+    except Exception:
+        return True
+
+
 def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         return []
@@ -267,6 +280,9 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
 
 
 def cmd_scan(manual_clue: str = "") -> int:
+    if not _is_us_trading_day_today():
+        print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
+        return 0
     brief = _build_clue_brief(manual_clue)
     print("=" * 64)
     print("clue brief (喂给 LLM):")
@@ -391,6 +407,9 @@ def _position_symbols() -> set:
 
 
 def cmd_inject(force_dry: bool = False) -> int:
+    if not _is_us_trading_day_today():
+        print(f"[inject] {_today()} 非美股交易日 (周末/节假日), 跳过注入")
+        return 0
     enabled = bool(_cfg("universe_expansion.entry_enabled", False))
     dry = force_dry or not enabled
     min_conf = float(_cfg("universe_expansion.min_confidence", 0.70))
