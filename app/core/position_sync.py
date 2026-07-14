@@ -1066,7 +1066,9 @@ class USPositionSync:
             except Exception:
                 pass
             if _is_pb:
-                logger.info(f"[US Sync·playbook] 跳过 playbook 仓位 {symbol} (由 monitor_playbook_sim_exits 自管)")
+                # [hotfix] 稳态噪声降级 INFO→DEBUG: 该仓位每轮都在 new_symbols 中被跳过,
+                # 原 INFO 每轮每只重打 (上千条/窗口). 行为不变, 仅降日志 I/O.
+                logger.debug(f"[US Sync·playbook] 跳过 playbook 仓位 {symbol} (由 monitor_playbook_sim_exits 自管)")
                 continue
             # Broker-first (2026-06-03): 不再从 DB 恢复，新发现的仓位统一用全新计算的 SL/TP
 

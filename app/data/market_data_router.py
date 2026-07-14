@@ -617,7 +617,7 @@ class MarketDataRouter:
                             except Exception as obe:
                                 logger.debug(f"[Router] {symbol} OrderBook 因子注入跳过: {obe}")
 
-                            logger.info(
+                            logger.debug(
                                 f"[Router] {symbol} ★★★ LV3 主通道 | "
                                 f"price=${ts_ctx['price']:.2f} RSI={ts_ctx.get('rsi', 0):.1f} "
                                 f"MACD={ts_ctx.get('macd', 0):.4f} ATR={ts_ctx.get('atr', 0):.2f} "
