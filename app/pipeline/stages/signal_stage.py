@@ -461,6 +461,20 @@ def process(ctx: SymbolContext,
                         candidate = eval_strategy("fast_lane", ctx)
                         if candidate is not None:
                             _apply_quality_scoring(ctx, candidate)
+                            # 归因贯穿: LLM 事件推理浮现的标的 (选股宇宙扩张独立策略)
+                            # 覆盖 fast_lane 硬编码的 strategy_id, 使 order_executor 落库时
+                            # trade_records.strategy_id=universe_expansion, 报表可按来源切片。
+                            if target.get("discovery_source") == "LLM_EVENT_SCAN":
+                                candidate.strategy_id = "universe_expansion"
+                                candidate.metadata["source_type"] = "UNIVERSE_EXPANSION"
+                                candidate.metadata["owner_strategy"] = "universe_expansion"
+                                _origin = target.get("origin") or {}
+                                candidate.metadata["origin"] = {
+                                    "info_source": _origin.get("info_source", "LLM_EVENT_REASONING"),
+                                    "causal_chain": _origin.get("causal_chain", ""),
+                                    "winner_loser": _origin.get("winner_loser", ""),
+                                    "thesis": target.get("rationale", ""),
+                                }
                             logger.info(
                                 f"[Signal] {symbol} 快车道命中: {candidate.rationale}"
                             )

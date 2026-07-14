@@ -582,6 +582,9 @@ llm:
       primary: glm-5
     thesis_challenge: qwen-max
     thesis_inferer: qwen-max
+    universe_expansion_reasoning:
+      fallback: deepseek-pro
+      primary: qwen-max
     voting_deepseek:
       fallback: qwen-max
       primary: kimi-k2
@@ -1413,6 +1416,15 @@ signal_stage:
     agreement_boost: 0.05
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
+# 选股宇宙扩张 (LLM 事件推理驱动的独立模拟策略, 2026-07-14)
+# 信息源=新闻事件为主+市场佐证; LLM出判断/代码出数值; 共用 fast_lane→现有退出。
+universe_expansion:
+  entry_enabled: true         # 已启用(2026-07-14): scan→inject 后注入作战计划 → fast_lane 模拟盘下单 (仅 sim)
+  min_confidence: 0.70        # LLM 浮现标的的最低置信度 (低于此不注入)
+  max_targets_per_day: 5      # 每日最多注入的 target 数
+  news_lookback_hours: 24     # clue brief 拉取近 N 小时新闻
+  default_stop_pct: 3.0       # 初始止损% (代码出数, 现有退出策略后续托管)
+  default_tp_pct: 6.0         # 初始止盈% (2:1 RR)
 stop_loss:
   default_stop_loss_pct: 0.05
 strategies:
