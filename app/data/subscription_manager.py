@@ -263,9 +263,13 @@ class SubscriptionManager:
             return {"success": False, "new_subs": 0, "already_subscribed": 0}
 
         if sub_types is None:
-            # 2026-06-16 修复: 增加 ORDER_BOOK + TICKER (原默认仅 QUOTE+K_1M)
-            # ORDER_BOOK 和 TICKER 为 order_flow 维度提供数据, 缺失导致 scorer 退化
-            sub_types = ["QUOTE", "K_1M", "ORDER_BOOK", "TICKER"]
+            # [ADR-013] 默认改为可配置精简集 (QUOTE+K_1M), 不再默认 ORDER_BOOK+TICKER (无有效消费者).
+            #   覆盖 auto_loop 盘中重订阅路径 (ensure_subscribed(codes) 无参调用).
+            try:
+                from app.data.futu_lv3_provider import _configured_stock_sub_types
+                sub_types = _configured_stock_sub_types()
+            except Exception:
+                sub_types = ["QUOTE", "K_1M"]
 
         if not self._check_cooldown():
             return {"success": False, "new_subs": 0, "already_subscribed": 0}

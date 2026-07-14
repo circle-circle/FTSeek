@@ -1226,17 +1226,20 @@ class TradingScheduler:
                 f"(universe={sorted(_sandbox_universe)})"
             )
 
-        # V6 (2026-05-20): 全量订阅 QUOTE + K_1M + K_5M + K_15M + K_30M + ORDER_BOOK + TICKER
-        # 槽位计算: 30只×7 + 2ETF×2 = 214/1000 (ETF 不需要订单流/逐笔/多周期)
+        # [ADR-013] LV3 股票推送订阅类型改为可配置精简集 (默认 QUOTE+K_1M).
+        #   历史 V6 全量订阅 7 类 → 每笔成交多周期 kline 推送, SDK 逐条建 DataFrame, 接收线程满载一核。
+        #   K_5M/K_15M/K_30M/ORDER_BOOK/TICKER 无有效消费者, 收敛后零交易链路影响。
+        from app.data.futu_lv3_provider import _configured_stock_sub_types
+        _stock_sub_types = _configured_stock_sub_types()
         all_stocks = tier1 + tier2
         if all_stocks:
             self.data_router.futu.subscribe(
-                all_stocks, 
-                sub_types=['QUOTE', 'K_1M', 'K_5M', 'K_15M', 'K_30M', 'ORDER_BOOK', 'TICKER']
+                all_stocks,
+                sub_types=_stock_sub_types
             )
             logger.info(
-                f"[FutuLV3] ✅ 全量 Push 订阅: {len(all_stocks)} 只 "
-                f"(QUOTE+K_1M+K_5M+K_15M+K_30M+ORDER_BOOK+TICKER)"
+                f"[FutuLV3] ✅ Push 订阅: {len(all_stocks)} 只 "
+                f"({'+'.join(_stock_sub_types)})"
             )
 
         # ETF 单独订阅 QUOTE + K_1M + K_15M (不需要订单流/逐笔)
@@ -1259,7 +1262,7 @@ class TradingScheduler:
         except Exception as e:
             logger.warning(f"[ORB] ⚠️ Futu 订阅失败: {e}")
 
-        total_slots = (len(tier1) + len(tier2)) * 7 + len(etfs) * 3
+        total_slots = (len(tier1) + len(tier2)) * len(_stock_sub_types) + len(etfs) * 3
         logger.info(
             f"[FutuLV3] ✅ Push 订阅模式已激活 | "
             f"监控 {len(self.watchlist)} 只美股 | "
@@ -1527,9 +1530,10 @@ class TradingScheduler:
             # 根据当前时段决定：立即订阅 / 等待自动循环激活
             if self._subscription_mgr.should_be_subscribed():
                 logger.info("[分时调度] 当前为美股盘前/交易时段，立即订阅 watchlist...")
+                from app.data.futu_lv3_provider import _configured_stock_sub_types
                 self._subscription_mgr.ensure_subscribed(
                     self.watchlist,
-                    sub_types=["QUOTE", "K_1M", "K_15M", "K_30M", "ORDER_BOOK", "TICKER"],
+                    sub_types=_configured_stock_sub_types(),
                 )
             else:
                 reason = "港股交易时段" if self._subscription_mgr.is_hk_trading() else "美股已收盘"

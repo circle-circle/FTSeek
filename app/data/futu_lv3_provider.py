@@ -36,6 +36,25 @@ from futu import CurKlineHandlerBase
 logger = logging.getLogger("ftseek_us.futu_lv3")
 
 
+def _configured_stock_sub_types() -> List[str]:
+    """LV3 股票推送订阅类型 (单一可配置源, 默认精简集 QUOTE+K_1M).
+
+    [ADR-013] K_5M/K_15M/K_30M/ORDER_BOOK/TICKER 无有效交易链路消费者:
+      日线指标走 request_history_kline, 1分钟走 K_1M; K_15M 下单时 get_kline 按需 HTTP 拉取(不需订阅);
+      TICKER/ORDER_BOOK 实测 100% 未被使用 (router 恒 N/A).
+    过度订阅 → Futu SDK 对每条推送构造 DataFrame → 接收线程持续占满一核.
+    如需恢复, 在 config data_sources.futu_lv3.stock_sub_types 追加类型即可.
+    """
+    try:
+        from app.core.config_container import get_config
+        v = get_config().get_dotted("data_sources.futu_lv3.stock_sub_types", None)
+        if v:
+            return list(v)
+    except Exception:
+        pass
+    return ['QUOTE', 'K_1M']
+
+
 class FutuLV3Provider:
     """
     富途 LV3 美股实时行情提供商
@@ -595,9 +614,9 @@ class FutuLV3Provider:
         try:
             from futu import SubType
 
-            # 默认订阅类型 (2026-05-20 增强: 新增 K_15M/K_30M 多时间框架对齐)
+            # 默认订阅类型 ([ADR-013] 改为可配置精简集, 默认 QUOTE+K_1M; 覆盖重连恢复路径)
             if sub_types is None:
-                sub_types = ['QUOTE', 'K_1M', 'K_15M', 'K_30M']
+                sub_types = _configured_stock_sub_types()
 
             sub_type_map = {
                 'QUOTE': SubType.QUOTE,
@@ -642,7 +661,7 @@ class FutuLV3Provider:
                 try:
                     # 重连后 _subscribed_symbols 已清空，全部视为 new
                     futu_symbols_retry = [self._to_futu_symbol(s) for s in symbols]
-                    for st_name in (sub_types or ['QUOTE', 'K_1M', 'K_15M', 'K_30M']):
+                    for st_name in (sub_types or _configured_stock_sub_types()):
                         from futu import SubType as _ST
                         _sub = {
                             'QUOTE': _ST.QUOTE, 'K_1M': _ST.K_1M,

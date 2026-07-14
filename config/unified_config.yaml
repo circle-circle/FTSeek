@@ -214,6 +214,14 @@ data_sources:
       vix: 60
     rate_limit_per_min: 8
     refill_interval_sec: 7.5
+  futu_lv3:
+    # [ADR-013] LV3 股票推送订阅类型 (单一可配置源, 一键可调). 默认精简集 QUOTE+K_1M.
+    #   K_5M/K_15M/K_30M/ORDER_BOOK/TICKER 无有效交易链路消费者:
+    #     日线指标走 request_history_kline, 1分钟走 K_1M; K_15M 下单时按需 HTTP 拉取(不需订阅);
+    #     TICKER/ORDER_BOOK 实测 100% 未被使用 (router 恒 N/A).
+    #   过度订阅 → Futu SDK 对每条推送构造 DataFrame → 接收线程持续占满一核.
+    #   如需恢复微观因子, 在此列表追加类型即可 (如 'ORDER_BOOK','TICKER').
+    stock_sub_types: ['QUOTE', 'K_1M']
 database:
   backup_enabled: true
   backup_interval_hours: 24
