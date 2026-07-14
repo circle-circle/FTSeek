@@ -368,7 +368,9 @@ def register(app, templates):
             "TIME_EXIT": "clock", "PRE_CLOSE_EXIT": "clock", "EOD_FORCE_CLOSE": "clock",
             "MAX_HOLD": "clock", "MAX_HOLD_T5": "clock", "DAY_TRADE_TIMEOUT": "clock",
             # 止损类 (保护性止损 + 跟踪止损; TRAILING 意图锁利但当前系统性亏损)
-            "SL_FIXED_PCT": "stop", "SL_ATR_STOP": "stop", "HARD_STOP": "stop",
+            # 2026-07-14: SL_FIXED_PCT 已拆为 SL_INITIAL/SL_BREAKEVEN/SL_TRAIL_LOCK (旧标签保留兼容历史).
+            "SL_FIXED_PCT": "stop", "SL_INITIAL": "stop", "SL_BREAKEVEN": "stop",
+            "SL_TRAIL_LOCK": "stop", "SL_ATR_STOP": "stop", "HARD_STOP": "stop",
             "BREAKEVEN_STOP": "stop", "TRAILING_STOP": "stop", "ORB_TRAILING_STOP": "stop",
             "ORB_FLOOR_STOP": "stop", "ORB_BREAKDOWN": "stop", "FLASH_EXIT": "stop",
             "OVERNIGHT_GAP_STOP": "stop",

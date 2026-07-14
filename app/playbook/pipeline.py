@@ -1916,7 +1916,7 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
             try:
                 from app.playbook.db import PlaybookDB
                 db = PlaybookDB()
-                regime_log = db.get_regime_log(days=7)
+                regime_log = db.get_regime_log(days=7, include_markers=True)
                 has_weekly = any(
                     r.get("regime") == "weekly_report" or "weekly" in str(r.get("regime", ""))
                     for r in regime_log
@@ -2366,6 +2366,11 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             # 2026-06-29: 必须传 position_size, 否则 execute_instruction
                             # 走 custom_params 分支但取不到 position_size → None → 降为1股
                             "position_size": _inst_ps or 1,
+                            # 2026-07-13: risk_amount 派生落库 (显示/审计字段) = |entry-SL|×实际仓位.
+                            #   此前 DA/bridge 路径 risk_amount 恒 NULL → 盘前推送 {risk:.0f} 曾崩
+                            #   (已加 or 0 兜底); 此处补写真实值, 让推送/周报显示每笔风险敞口.
+                            #   纯派生, 不影响 sizing 决策.
+                            "risk_amount": round(abs(_new_entry - _new_sl) * (_inst_ps or 1), 2),
                             # 2026-06-29: 审计字段 — 记录 re-price 来源
                             "reprice_from": round(float(inst.get("entry_price", 0) or 0), 2),
                             "reprice_to": round(_new_entry, 2),
@@ -2378,6 +2383,22 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             f"盘前=${inst.get('entry_price', 0):.2f} → 实时=${_new_entry:.2f} "
                             f"SL={_new_sl:.2f} ({_sl_pct:.2f}%) TP={_new_tp:.2f}"
                         )
+
+                        # 2026-07-12 L1: SL/TP 验证影子 (record-only, 不改任何交易动作)。
+                        #   记录 LLM 原始 SL/TP vs 代码波动率桶 SL/TP 的分歧, 供日后与 pnl 联合校准。
+                        #   自带 try/except, 绝不影响 reprice 与下单。
+                        try:
+                            from app.playbook.sltp_verify_shadow import record_sltp_shadow
+                            record_sltp_shadow(
+                                inst_id=inst.get("id"), symbol=inst.get("symbol", ""),
+                                direction=_dir, entry=_new_entry,
+                                llm_sl=inst.get("stop_loss", 0), llm_tp=inst.get("take_profit", 0),
+                                code_sl=_new_sl, code_tp=_new_tp,
+                                sl_pct=_sl_pct, bucket=(_vol_info or {}).get("bucket", ""),
+                                atr_pct=atr_pct, regime=inst.get("market_regime", ""),
+                            )
+                        except Exception:
+                            pass
             except Exception as _rp_err:
                 logger.debug(f"[playbook] re-price 失败, 用DB原值: {_rp_err}")
 
@@ -2566,8 +2587,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   日级别 vol_ratio 不是 intraday breakout 的有效信号 → 移除门, 不假装有信号.
     #   保护仍来自: +5%追入带 + 3%接飞刀 + 8%极端gap过滤 + SL检查.
     #   未来: 实现真正的盘中 vol_ratio (1分钟K线聚合今日累计量/同时段均量) 后再加回.
-    _chase_zone = 0.05    # 追入最大幅度 (顺势加速方向)
-    _knife_floor = 0.03   # 逆势偏离上限 (接飞刀保护, 略宽于典型 2-2.5% SL)
+    # 单一真源 app/playbook/entry_band.py — 执行端与 DA 直写共用同一 band 定义, 防百分比漂移/记录冲突.
+    from app.playbook.entry_band import CHASE_ZONE_PCT as _chase_zone, KNIFE_FLOOR_PCT as _knife_floor
     _vol_ok = True
 
     if is_short:
@@ -2667,7 +2688,8 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
 
     根因修复 (2026-07-01): 之前只更新 trade_records + instructions,
     不碰 open_positions → position_sync 从 DB 重建幽灵仓 → 开盘后异常平仓.
-    现在同时 soft-delete open_positions, 从源头消灭状态分裂.
+    现在直接 DELETE open_positions, 从源头消灭状态分裂.
+    2026-07-14: 软删除→物理删除 (trade_records已有完整审计记录, 软删除行无消费者).
     根因修复 (2026-07-07): 
       1. 增加 close_futu_order_id 参数, 确保平仓订单可追溯.
       2. 从 trade_records 查 entry_time, 用 get_market_hours_us 重算 holding_hours.
@@ -2725,6 +2747,27 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         _mfe_pct = 0.0
     if _mae_pct > _MFE_MAE_SANE_MAX:
         _mae_pct = 0.0
+
+    # 2026-07-13: 退出参数影子 — close 时对比"更紧 breakeven/drawdown 变体"反事实 capture。
+    #   record-only, 读 metadata._exit_shadow(各变体首触发)+peak/trough, 落 JSONL。自带 try/except。
+    try:
+        from app.playbook.exit_shadow import finalize_exit_shadow
+        _es_row = conn.execute(
+            "SELECT metadata_json, direction, entry_price FROM trade_records WHERE id=?",
+            (trade_id,),
+        ).fetchone()
+        if _es_row and _es_row[0]:
+            _es_meta = json.loads(_es_row[0])
+            finalize_exit_shadow(
+                symbol=symbol or "", direction=(_es_row[1] or "LONG"),
+                entry_price=float(_es_row[2] or 0), live_exit_price=float(exit_price or 0),
+                peak_price=float(_es_meta.get("peak_price", 0) or 0),
+                trough_price=float(_es_meta.get("trough_price", 0) or 0),
+                live_exit_reason=exit_reason, held_minutes=float(holding_hours or 0) * 60,
+                meta=_es_meta, inst_id=inst_id,
+            )
+    except Exception:
+        pass
 
     # ── 根因修复 (2026-07-07): 从 DB 查 entry_time, 用 get_market_hours_us 重算 holding_hours ──
     # 消灭所有调用方传 wall-clock 差值的变体 (naive TypeError, CST时间差, 纯秒数差).
@@ -2795,11 +2838,13 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
              round(pnl_pct, 4), round(holding_hours, 1), inst_id),
         )
     # 根因修复: 同时关闭 open_positions, 消灭幽灵仓源头
+    # 2026-07-14: 软删除→直接DELETE, 软删除行无消费者(所有查询都过滤sync_status),
+    #             且auto_position_reconcile只在09:30 ET运行, 非交易日/非开盘时残留→EOD报告误读
     if symbol:
         conn.execute(
-            "UPDATE open_positions SET sync_status='closed_by_scheduler', updated_at=? WHERE symbol=? "
-            "AND sync_status NOT IN ('closed_by_daemon','closed_by_scheduler','closed_by_sync','closed_emergency','stale_not_in_broker')",
-            (now_iso, symbol),
+            "DELETE FROM open_positions WHERE symbol=? "
+            "AND sync_status NOT IN ('closed_by_daemon','closed_by_sync','closed_emergency','stale_not_in_broker')",
+            (symbol,)
         )
     conn.commit()
 
@@ -2813,10 +2858,13 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             ).fetchone()
             if _row:
                 # 7/7 增强: 传入 peak_price 用于真实 MFE 计算
+                # 2026-07-13: 同时传 trough_price (07-11 起记录), 让入场时机/止损效率维度用真实谷值
                 _peak_price = None
+                _trough_price = None
                 try:
                     _tmp_meta = json.loads(_row[4]) if _row[4] else {}
                     _peak_price = float(_tmp_meta.get("peak_price", 0)) or None
+                    _trough_price = float(_tmp_meta.get("trough_price", 0)) or None
                 except Exception:
                     pass
                 _attr = compute_attribution(
@@ -2828,6 +2876,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     entry_time=_row[3] or now_iso,
                     exit_time=now_iso,
                     peak_price=_peak_price,
+                    trough_price=_trough_price,
                 )
                 logger.info(f"[归因] {symbol}: {_attr.summary} | {_attr.improvement}")
                 # 写入 metadata_json (与 manual_order_service 一致)
@@ -2945,11 +2994,11 @@ def _compute_dynamic_effective_sl(
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
                                peak_price, meta, held_minutes, minutes_to_close,
                                minutes_from_open, entry_time_str):
-    """共用退出规则判断 — 被 monitor_playbook_shadow_exits / monitor_playbook_sim_exits 调用.
+    """共用退出规则判断 — 被 monitor_playbook_sim_exits 调用.
 
     计算盈利百分比 → peak tracking → breakeven ratchet / trailing stop (factor-specific) → 5 条退出规则.
     退出规则 (按优先级):
-      [1] SL_FIXED_PCT: effective_sl 触及 (含 breakeven ratchet + trailing stop)
+      [1] SL_INITIAL/SL_BREAKEVEN/SL_TRAIL_LOCK: effective_sl 触及 (按初始止损/保本/锁利区分)
       [2] OVERNIGHT_GAP_STOP: cohort B 隔夜仓跳空 >3%
       [3] PRE_CLOSE_EXIT: 收盘前 8min (cohort B 盈利可跳过)
       [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific)
@@ -3052,13 +3101,19 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _active_sl = effective_sl
 
     # 规则1: SL止损 (最高优先级 — 亏损仓位必须先检查止损)
-    if _active_sl > 0:
-        if direction == "LONG" and current_price <= _active_sl:
-            exit_reason = "SL_FIXED_PCT"
-            exit_price = _active_sl
-        elif direction == "SHORT" and current_price >= _active_sl:
-            exit_reason = "SL_FIXED_PCT"
-            exit_price = _active_sl
+    # 2026-07-14: 拆分原 SL_FIXED_PCT 复合标签. 同一标签曾混合三种机制(近30天9笔仅1笔
+    #   真止损, 其余为保本+锁利), 污染退出侧诊断. 按 effective_sl 相对 entry 的位置区分,
+    #   便于 exit_shadow / 报表按真实语义归因. 保留 SL_ 前缀以兼容 LIKE 'SL%' 过滤.
+    if _active_sl > 0 and ((direction == "LONG" and current_price <= _active_sl) or
+                           (direction == "SHORT" and current_price >= _active_sl)):
+        exit_price = _active_sl
+        if not breakeven_triggered:
+            exit_reason = "SL_INITIAL"        # 浮盈未达 breakeven → 初始固定止损被打掉
+        elif (direction == "LONG" and effective_sl > entry_price) or \
+             (direction == "SHORT" and 0 < effective_sl < entry_price):
+            exit_reason = "SL_TRAIL_LOCK"     # 回撤锁利 → SL 已锁在成本价之上(空:之下)
+        else:
+            exit_reason = "SL_BREAKEVEN"      # 保本 ratchet → SL 提到成本价附近
 
     # 规则1.5 (2026-06-28): 止盈退出 — 价格触及 take_profit 时主动锁定利润.
     # 智能跳过: rr_ratio=999 / take_profit=0 的指令不触发 (用户决策).
@@ -3201,26 +3256,6 @@ def _horizon_max_hold_hit(entry_time_str: str, max_hold_days: int) -> bool:
         return False
 
 
-def monitor_playbook_shadow_exits(scheduler) -> int:
-    """[已废弃] PLAYBOOK_SHADOW 纯虚拟路径已于 2026-06-26 停止.
-
-    保留函数签名以兼容旧代码引用, 但不再执行任何 shadow 退出逻辑.
-    所有 Playbook 执行统一走 PLAYBOOK_SIM/PLAYBOOK_LIVE 真实下单路径.
-    """
-    logger.debug("[playbook shadow] monitor 已废弃, 忽略")
-    return 0
-
-
-def _force_close_orphaned_shadow_positions(scheduler) -> int:
-    """[已废弃] PLAYBOOK_SHADOW 纯虚拟路径已于 2026-06-26 停止.
-
-    保留函数签名以兼容旧代码引用, 但不再执行任何 shadow EOD 兜底逻辑.
-    所有 Playbook 执行统一走 PLAYBOOK_SIM/PLAYBOOK_LIVE 真实下单路径.
-    """
-    logger.debug("[playbook shadow] _force_close_orphaned_shadow_positions 已废弃, 忽略")
-    return 0
-
-
 # ── Phase 1 (2026-06-24): futu_simulate 真实仓位退出监控 ──────────────
 
 def monitor_playbook_sim_exits(scheduler) -> int:
@@ -3231,7 +3266,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
     而非仅更新 trade_records 字段.
 
     退出规则 (与 shadow 对齐, 复用 exit_policy 阈值):
-      [1] SL_FIXED_PCT: 当前价触及 stop_loss
+      [1] SL_INITIAL: 当前价触及原始 stop_loss (兜底)
       [2] TIME_EXIT: 持仓>2h 且 盈利<-0.5% → 退出 (2026-06-24放宽)
       [3] PRE_CLOSE_EXIT: 收盘前 8min → 全平
 
@@ -3396,11 +3431,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                                  (_json.dumps(_sl_meta), r["id"]))
                     conn.commit()
-                    _close_trade_record(conn, r["id"], _exit_price, "SL_FIXED_PCT",
+                    # 2026-07-14: 兜底用原始 initial stop_loss(L3361 判定) → 归为 SL_INITIAL.
+                    _close_trade_record(conn, r["id"], _exit_price, "SL_INITIAL",
                                         _pnl, _pnl_pct / 100, _hh, inst_id=inst_id, symbol=symbol,
                                         close_futu_order_id=_sl_close_futu_id)
                     exited += 1
-                    logger.info(f"[playbook sim] ✅ {symbol} SL_FIXED_PCT 兜底: exit=${_exit_price:.2f} src={_sl_src} pnl=${_pnl:.2f}")
+                    logger.info(f"[playbook sim] ✅ {symbol} SL_INITIAL 兜底: exit=${_exit_price:.2f} src={_sl_src} pnl=${_pnl:.2f}")
                     continue
 
             if abs(current_price - entry_price) / entry_price > 0.15:
@@ -3475,8 +3511,25 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     except Exception:
                         pass
 
+                # 2026-07-13: 退出参数影子 (record-only) — 回放更紧 breakeven/drawdown 变体首次触发,
+                #   供 close 时对比 capture。纯记录, 不改任何实盘退出。仅能评估比现行更紧的变体。
+                _exit_shadow_new = False
+                try:
+                    from app.playbook.exit_shadow import record_exit_shadow_poll
+                    _peak_prof = 0.0
+                    if entry_price > 0 and peak_price > 0:
+                        _peak_prof = (((peak_price - entry_price) if direction == "LONG"
+                                       else (entry_price - peak_price)) / entry_price * 100)
+                    _exit_shadow_new = record_exit_shadow_poll(
+                        meta, direction=direction, entry_price=entry_price,
+                        initial_sl=stop_loss, current_price=current_price,
+                        peak_profit_pct=_peak_prof, held_minutes=held_minutes,
+                    )
+                except Exception:
+                    pass
+
                 # peak_price metadata 写回 (即使不退出也要跟踪, 与 shadow 对齐)
-                if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new:
+                if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new:
                     # 清理临时注入字段, 不持久化到 DB
                     for _k in ("_log_tag", "_symbol", "_skip_allowed"):
                         meta.pop(_k, None)

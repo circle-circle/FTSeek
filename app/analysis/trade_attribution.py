@@ -96,6 +96,7 @@ def compute_attribution(
     high_prices: Optional[List[float]] = None,
     low_prices: Optional[List[float]] = None,
     peak_price: Optional[float] = None,
+    trough_price: Optional[float] = None,
 ) -> AttributionResult:
     """
     计算交易归因
@@ -106,6 +107,9 @@ def compute_attribution(
         peak_price: 持仓期间峰值价 (来自 metadata.peak_price, Pipeline 实时跟踪).
                     如果提供, 用于补充 high_prices/low_prices 缺失时的 MFE 计算.
                     如果为 None, 则用 entry/exit 价格近似
+        trough_price: 持仓期间谷值价 (来自 metadata.trough_price, 07-11 起记录).
+                    与 peak_price 对称, 补充真实最不利价位, 让入场时机(D2)/止损效率(D5)
+                    不再退化用 min(entry,exit)。
     """
     # 基础计算
     if direction == "LONG":
@@ -147,6 +151,10 @@ def compute_attribution(
     # 如果有 peak_price, 用它补充价格范围 (Pipeline 的 peak tracking 比无数据好)
     if peak_price is not None and peak_price > 0:
         all_highs.append(peak_price)
+    # 2026-07-13: trough_price 对称接入 — 补充持仓期真实谷值, 让入场时机(D2)/止损效率(D5)
+    #   不再退化用 min(entry,exit)。数据来自 metadata.trough_price (07-11 起记录)。
+    if trough_price is not None and trough_price > 0:
+        all_lows.append(trough_price)
     period_high = max(all_highs)
     period_low = min(all_lows)
 

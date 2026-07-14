@@ -54,9 +54,21 @@ class PlaybookPusher:
             logger.info(f"No instructions for {trade_date}, skip morning push")
             return False
 
-        # 获取 regime
-        regime_log = self.db.get_regime_log(days=1)
-        regime_info = regime_log[0] if regime_log else {}
+        # 获取 regime: 优先实时评估 (regime_log 由已休眠的 in-app 生成任务写, DA 链不写 → 易陈旧;
+        # assess() 已在调度环每轮运行, 取当前真值), 失败再回退到 (已过滤标记的) regime_log 缓存。
+        regime_info = {}
+        try:
+            from app.playbook.market_regime import MarketRegimeGate
+            _ctx = MarketRegimeGate().assess()
+            regime_info = {
+                "regime": _ctx.regime.value,
+                "vix": _ctx.vix,
+                "spy_price": _ctx.spy_price,
+            }
+        except Exception as _re:
+            logger.debug(f"[playbook] 实时 regime 评估失败, 回退 regime_log 缓存: {_re}")
+            regime_log = self.db.get_regime_log(days=1)
+            regime_info = regime_log[0] if regime_log else {}
 
         # 构建消息
         message = self._format_morning_message(trade_date, instructions, regime_info)
@@ -95,9 +107,10 @@ class PlaybookPusher:
     ) -> str:
         """格式化盘前推送消息"""
         # 环境描述
-        regime = regime_info.get("regime", "未知")
-        vix = regime_info.get("vix", 0)
-        spy = regime_info.get("spy_price", 0)
+        regime = str(regime_info.get("regime", "未知")).upper()  # 库里存小写 risk_on, 统一大写以匹配 emoji 表
+        # or 0: .get(k,0) 仅挡键缺失, 挡不住键存在但值为 NULL/None (会令 {x:.1f} 崩溃)
+        vix = regime_info.get("vix", 0) or 0
+        spy = regime_info.get("spy_price", 0) or 0
         regime_emoji = {
             "RISK_ON": "🟢", "CAUTIOUS": "🟡",
             "RISK_OFF": "🔴", "NO_TRADE": "⛔",
@@ -117,15 +130,15 @@ class PlaybookPusher:
         for idx, inst in enumerate(active, 1):
             sym = inst.get("symbol", "?")
             direction = inst.get("direction", "?")
-            confidence = inst.get("confidence", 0)
-            entry = inst.get("entry_price", 0)
-            sl = inst.get("stop_loss", 0)
-            tp = inst.get("take_profit", 0)
-            pos = inst.get("position_size", 0)
-            rr = inst.get("risk_reward", 0)
-            risk = inst.get("risk_amount", 0)
+            confidence = inst.get("confidence") or 0  # 2026-07-13: NULL 值(键存在但为None)会显示 'None%', 与兄弟字段统一 or 0
+            entry = inst.get("entry_price", 0) or 0
+            sl = inst.get("stop_loss", 0) or 0
+            tp = inst.get("take_profit", 0) or 0
+            pos = inst.get("position_size", 0) or 0
+            rr = inst.get("risk_reward", 0) or 0
+            risk = inst.get("risk_amount", 0) or 0
             conditions = self._parse_conditions(inst.get("conditions_json"))
-            horizon = inst.get("horizon", "short")
+            horizon = inst.get("horizon") or "short"  # 2026-07-14: or guard for NULL horizon
             horizon_emoji = {"short": "⚡", "long": "🌙"}.get(horizon, "❓")
 
             conf_icon = "✅" if (confidence or 0) >= 70 else "⚠️" if (confidence or 0) >= 50 else "❌"
@@ -168,7 +181,7 @@ class PlaybookPusher:
             pnl = inst.get("pnl", 0)
             mfe = inst.get("max_favorable_excursion", 0)
             mae = inst.get("max_adverse_excursion", 0)
-            horizon = inst.get("horizon", "short")
+            horizon = inst.get("horizon") or "short"  # 2026-07-14: or guard for NULL horizon
             horizon_emoji = {"short": "⚡", "long": "🌙"}.get(horizon, "❓")
 
             dir_text = "BUY LONG" if direction == "BUY" else "SELL SHORT"
@@ -177,7 +190,7 @@ class PlaybookPusher:
             if executed:
                 executed_count += 1
                 total_pnl += pnl or 0
-                exec_price = inst.get("execution_price", 0)
+                exec_price = inst.get("execution_price", 0) or 0  # 2026-07-14: or guard for NULL
                 status = "持仓中" if outcome == "holding" else outcome
                 pnl_text = f"{'+' if pnl >= 0 else ''}${pnl:.0f}" if pnl else "-"
                 lines.append(f"   ✅ 执行 ${exec_price:.2f} | {status} | {pnl_text}")

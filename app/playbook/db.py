@@ -608,13 +608,26 @@ class PlaybookDB:
         ))
         conn.commit()
 
-    def get_regime_log(self, days: int = 30) -> List[Dict]:
-        """获取近期 regime 日志"""
+    def get_regime_log(self, days: int = 30, include_markers: bool = False) -> List[Dict]:
+        """获取近期 regime 日志
+
+        include_markers=False (默认): 过滤掉非市场环境的幂等标记行 (周报任务借本表
+            存幂等标记, regime='weekly_report' 且 date=未来周五, 会排到真实环境行之上),
+            供 push/service 读"最新真实环境"。
+        include_markers=True: 返回全部行 (供周报幂等自查等需要看到标记的场景)。
+        """
         conn = self._conn()
-        rows = conn.execute(
-            "SELECT * FROM playbook_regime_log ORDER BY date DESC LIMIT ?",
-            (days,)
-        ).fetchall()
+        if include_markers:
+            rows = conn.execute(
+                "SELECT * FROM playbook_regime_log ORDER BY date DESC LIMIT ?",
+                (days,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM playbook_regime_log WHERE regime NOT LIKE '%weekly%' "
+                "ORDER BY date DESC LIMIT ?",
+                (days,)
+            ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
     # ========== 汇总统计 ==========
@@ -741,6 +754,9 @@ _TRACKING_FIELDS = {
     #   加入后 re-price 的 position_size/take_profit 与实际下单一致, 审计可追溯。
     #   (reprice_from/to/original_sl 非 DB 列, 仍由 whitelist 正确忽略。)
     "position_size", "take_profit",
+    # 2026-07-13: risk_amount 派生落库 — re-price 时补算 |entry-SL|×position_size,
+    #   此前 DA/bridge 路径恒 NULL (盘前推送 {risk:.0f} 曾崩). 让审计/推送/周报可见每笔风险敞口。
+    "risk_amount",
 }
 
 
