@@ -1448,6 +1448,7 @@ signal_stage:
 # 信息源=新闻事件为主+市场佐证; LLM出判断/代码出数值; 共用 fast_lane→现有退出。
 universe_expansion:
   entry_enabled: true         # 已启用(2026-07-14): scan→inject 后注入作战计划 → fast_lane 模拟盘下单 (仅 sim)
+  prompt_version: v2          # [ADR-016] live scan prompt 版本 v1|v2; v2=事件驱动+强制引证+Track A夹逼(更克制/更稳); 回退设 v1
   min_confidence: 0.70        # LLM 浮现标的的最低置信度 (低于此不注入)
   max_targets_per_day: 5      # 每日最多注入的 target 数
   news_lookback_hours: 24     # clue brief 拉取近 N 小时新闻

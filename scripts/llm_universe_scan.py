@@ -295,10 +295,16 @@ def cmd_scan(manual_clue: str = "") -> int:
         print(f"[scan] 无法导入 call_llm: {e}")
         return 1
 
+    # [ADR-016] live scan prompt 版本 config 驱动 (v1|v2); 默认 v1 安全回退,
+    # 设 universe_expansion.prompt_version=v2 → 事件驱动+强制引证+Track A 夹逼 (更克制/更稳)。
+    _pv = str(_cfg("universe_expansion.prompt_version", "v1")).strip().lower()
+    _use_v2 = _pv in ("v2", "v2.0")
+    _system = SYSTEM_PROMPT_V2 if _use_v2 else SYSTEM_PROMPT
+    print(f"[scan] prompt_version={'v2' if _use_v2 else 'v1'} (config: universe_expansion.prompt_version)")
     res = call_llm(
         "universe_expansion_reasoning",
         brief,
-        system=SYSTEM_PROMPT,
+        system=_system,
         temperature=0.2,
         max_tokens=2500,
         schema_required={"surfaced": list},
@@ -310,7 +316,7 @@ def cmd_scan(manual_clue: str = "") -> int:
         return 1
 
     parsed = res.response if isinstance(res.response, dict) else {}
-    surfaced = _normalize_surfaced(parsed.get("surfaced"))
+    surfaced = _normalize_surfaced(parsed.get("surfaced"), with_tier=_use_v2)
     if not surfaced:
         print("[scan] LLM 未浮现有效标的 (schema 通过但 surfaced 空)")
         return 0
@@ -332,6 +338,7 @@ def cmd_scan(manual_clue: str = "") -> int:
         "discovery_source": DISCOVERY_SOURCE,
         "info_source": INFO_SOURCE,
         "model_used": getattr(res, "model_used", None),
+        "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
         "surfaced": surfaced,
         "note": "record-only; 不驱动 live, inject 另需 entry_enabled=true",
     }
