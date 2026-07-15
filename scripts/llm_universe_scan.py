@@ -197,12 +197,70 @@ def _gather_market_corroboration() -> Dict[str, Any]:
     }
 
 
+def _gather_hard_events(news: List[Dict[str, Any]]) -> List[str]:
+    """[ADR-017] 复用 CatalystClassifier(纯关键词, use_llm=False) 把已拉取新闻分类为
+    结构化硬事件 → clue brief 的 [硬事件] 段, 供 V2 自评 HARD_EVENT。失败降级返回 []。"""
+    if not news:
+        return []
+    try:
+        from app.catalyst.event_classifier import CatalystClassifier
+        from app.news_v2.models import UnifiedNewsItemV2, NewsUrgency
+    except Exception as e:
+        print(f"  [warn] 催化分类器不可用 (降级, 无硬事件段): {e}")
+        return []
+    items = []
+    for n in news:
+        rel = n.get("symbols") or "[]"
+        if isinstance(rel, str):
+            try:
+                rel = json.loads(rel)
+            except Exception:
+                rel = []
+        if not isinstance(rel, list):
+            rel = []
+        try:
+            items.append(UnifiedNewsItemV2(
+                id=str(n.get("id", "")),
+                title=str(n.get("title", "")),
+                content=str(n.get("summary", "")),
+                source=str(n.get("source", "rsshub")),
+                source_name=str(n.get("source_name") or n.get("source", "rsshub")),
+                timestamp=0.0,
+                related_stocks=[str(s) for s in rel],
+                urgency=NewsUrgency.NORMAL,
+            ))
+        except Exception:
+            continue
+    try:
+        events = CatalystClassifier().classify(items, use_llm=False)
+    except Exception as e:
+        print(f"  [warn] 催化分类失败 (降级): {e}")
+        return []
+    _rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
+    events.sort(key=lambda ev: _rank.get(getattr(ev, "severity", "MEDIUM"), 3))
+    out = []
+    for ev in events[:15]:
+        tks = ", ".join(str(t).replace("US.", "") for t in (ev.tickers or []))
+        head = (ev.headline or "").strip()[:70]
+        out.append(f"[{ev.severity}/{ev.event_type}] {head} → 关联: {tks or '(板块传导)'}")
+    return out
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
 
     if manual_clue:
         parts.append(f"\n[人工线索]\n{manual_clue.strip()}")
+
+    news = _gather_news(hours)
+
+    # [ADR-017] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
+    if bool(_cfg("universe_expansion.clue_hard_events", False)):
+        hard = _gather_hard_events(news)
+        if hard:
+            parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
+            parts.extend(hard)
 
     mkt = _gather_market_corroboration()
     if mkt:
@@ -214,7 +272,6 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         if mkt.get("movers"):
             parts.append("宇宙外异动: " + ", ".join(mkt["movers"][:12]))
 
-    news = _gather_news(hours)
     if news:
         parts.append(f"\n[近{hours}h 新闻头条 (共{len(news)}条, 取前20)]")
         for n in news[:20]:
