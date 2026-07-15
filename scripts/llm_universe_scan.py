@@ -246,6 +246,48 @@ def _gather_hard_events(news: List[Dict[str, Any]]) -> List[str]:
     return out
 
 
+def _gather_earnings_events() -> List[str]:
+    """[ADR-018] 复用 EarningsCalendar (Alpha Vantage, 仅 1 次日历调用+内置缓存) 注入
+    财报硬事件: 近期已发布(EARNINGS) + 临近(EARNINGS_UPCOMING 时点风险)。
+    不用逐股 history 接口(5/min 限流不稳)。失败降级返回 []。"""
+    try:
+        from app.data.earnings_calendar import EarningsCalendar
+    except Exception as e:
+        print(f"  [warn] 财报日历不可用 (降级): {e}")
+        return []
+    out: List[str] = []
+    try:
+        ec = EarningsCalendar()
+        for e in ec.get_recently_reported(days_back=2)[:8]:
+            out.append(f"[HIGH/EARNINGS] {e.get('ticker','')} 财报已发布 {e.get('report_date','')}"
+                       f"({e.get('time_of_day','')}) → 关注财报后动量")
+        for u in ec.get_watchlist_earnings(days_ahead=3)[:8]:
+            out.append(f"[MEDIUM/EARNINGS_UPCOMING] {u.get('ticker','')} 财报临近 {u.get('report_date','')}"
+                       f"({u.get('days_until','?')}d) → 时点风险")
+    except Exception as e:
+        print(f"  [warn] 财报事件拉取失败 (降级): {e}")
+    return out
+
+
+def _gather_insider_clusters() -> List[str]:
+    """[ADR-018] 读今日已持久化的内部人集群报告 (insider_daily_{date}.json, 无网络).
+    集群买入=看多硬事件。无今日文件/无信号 → []。"""
+    try:
+        path = _ROOT / "data" / "reports" / f"insider_daily_{_today()}.json"
+        if not path.exists():
+            return []
+        d = json.loads(path.read_text())
+        by_sym = (d.get("stats") or {}).get("by_symbol") or {}
+        out: List[str] = []
+        for sym, cnt in by_sym.items():
+            t = str(sym).replace("US.", "")
+            out.append(f"[HIGH/INSIDER_CLUSTER] {t} 内部人集群买入信号 x{cnt} → 看多")
+        return out
+    except Exception as e:
+        print(f"  [warn] 内部人集群读取失败 (降级): {e}")
+        return []
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
@@ -255,12 +297,17 @@ def _build_clue_brief(manual_clue: str = "") -> str:
 
     news = _gather_news(hours)
 
-    # [ADR-017] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
+    # [ADR-017/018] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
+    hard: List[str] = []
     if bool(_cfg("universe_expansion.clue_hard_events", False)):
-        hard = _gather_hard_events(news)
-        if hard:
-            parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
-            parts.extend(hard)
+        hard += _gather_hard_events(news)          # 新闻分类 (关键词, 零成本)
+    if bool(_cfg("universe_expansion.clue_earnings_events", False)):
+        hard += _gather_earnings_events()          # 财报日历 (Alpha Vantage)
+    if bool(_cfg("universe_expansion.clue_insider_clusters", False)):
+        hard += _gather_insider_clusters()         # 内部人集群 (已持久化文件)
+    if hard:
+        parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
+        parts.extend(hard)
 
     mkt = _gather_market_corroboration()
     if mkt:
