@@ -538,10 +538,15 @@ def cmd_inject(force_dry: bool = False) -> int:
 
     # 排重: 今日已在 playbook_instructions 的标的 (DA 优先, universe_expansion 让路).
     #   save_instruction 按 (date,symbol) UPSERT — 同标的会覆盖 DA, 故此处排除.
+    # [ADR-019] 只对"实际占位"指令让路: 跳过 direction=SKIP 的被拒候选行.
+    #   根因: get_instructions_by_date 不过滤 SKIP, 而 SKIP 是 DB 最大类 (163 vs BUY 112),
+    #   若一律纳入排重 → DA/投票拒绝(SKIP)的标的会连带封杀 universe 浮现同一标的.
     existing_pb = set()
     try:
         from app.playbook.db import PlaybookDB
         for _inst in PlaybookDB().get_instructions_by_date(today):
+            if str(_inst.get("direction", "")).upper() == "SKIP":
+                continue
             _s = str(_inst.get("symbol", "")).replace("US.", "").upper()
             if _s:
                 existing_pb.add(_s)
