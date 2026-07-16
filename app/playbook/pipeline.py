@@ -2953,13 +2953,13 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         _row = conn.execute("SELECT entry_time FROM trade_records WHERE id=?", (trade_id,)).fetchone()
         if _row and _row[0]:
             _entry_dt = datetime.fromisoformat(_row[0])
-            _now_et = _now_et()
-            _now_dt = datetime.now(_now_et)
+            _et_tz = _now_et()
+            _now_dt = datetime.now(_et_tz)
             # 2026-07-16 P1 修复: entry_time 可能是 naive (CST 无 tz), now_dt 是 tz-aware (ET).
             #   两者相减抛 TypeError → holding_hours 回退为调用方传入值 (0.0).
             #   修复: naive entry_dt 加上 ET tz 再相减, 或用 wall-clock fallback.
             if _entry_dt.tzinfo is None:
-                _entry_dt = _entry_dt.replace(tzinfo=_now_et)
+                _entry_dt = _entry_dt.replace(tzinfo=_et_tz)
             from app.risk.position_exit_monitor import get_market_hours_us
             _market_hh = get_market_hours_us(_entry_dt, _now_dt)
             if _market_hh > 0:

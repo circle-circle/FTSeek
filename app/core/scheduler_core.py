@@ -815,7 +815,11 @@ class TradingScheduler:
                 ).fetchall()
             for sym, exit_ts in rows:
                 try:
-                    self._signal_cooldown[sym] = datetime.fromisoformat(exit_ts)
+                    restored = datetime.fromisoformat(exit_ts)
+                    if restored.tzinfo is None:
+                        from app.utils.timezone import ET
+                        restored = restored.astimezone(ET)
+                    self._signal_cooldown[sym] = restored
                 except (ValueError, TypeError):
                     pass
             if rows:
