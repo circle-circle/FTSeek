@@ -52,6 +52,7 @@ with open(HERMES_HOME / "config.yaml") as f:
     _cfg = yaml.safe_load(f)
 
 _model_cfg = _cfg["model"]
+_model_name = _model_cfg.get("model") or _model_cfg.get("default")
 os.environ["OPENAI_API_KEY"] = _model_cfg["api_key"]
 os.environ["OPENAI_BASE_URL"] = _model_cfg["base_url"]
 
@@ -86,7 +87,7 @@ class HermesWorker:
             self._agent_cache[cache_key] = AIAgent(
                 base_url=_model_cfg["base_url"],
                 api_key=_model_cfg["api_key"],
-                model=_model_cfg["model"],
+                model=_model_name,
                 provider=_model_cfg.get("provider", "custom"),
                 max_iterations=max_iterations,
                 quiet_mode=True,
@@ -105,7 +106,7 @@ class HermesWorker:
         try:
             if method == "ping":
                 return {"id": req_id, "status": "ok", "result": {
-                    "model": _model_cfg["model"],
+                    "model": _model_name,
                     "base_url": _model_cfg["base_url"],
                     "timestamp": time.time(),
                 }}
@@ -254,7 +255,7 @@ class HermesWorker:
             agent = AIAgent(
                 base_url=_model_cfg["base_url"],
                 api_key=_model_cfg["api_key"],
-                model=_model_cfg["model"],
+                model=_model_name,
                 max_iterations=2,
                 quiet_mode=True,
                 enabled_toolsets=[],
@@ -288,7 +289,7 @@ class HermesWorker:
         judge_agent = AIAgent(
             base_url=_model_cfg["base_url"],
             api_key=_model_cfg["api_key"],
-            model=_model_cfg["model"],
+            model=_model_name,
             max_iterations=2,
             quiet_mode=True,
             enabled_toolsets=[],
@@ -376,7 +377,7 @@ def run_test():
     print("=" * 50)
     print(f"Python:   {sys.version}")
     print(f"Hermes:   {HERMES_AGENT_DIR}")
-    print(f"Model:    {_model_cfg['model']}")
+    print(f"Model:    {_model_name}")
     print(f"Base URL: {_model_cfg['base_url']}")
     print()
 
