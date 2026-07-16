@@ -656,6 +656,61 @@ class USPositionSync:
                 (symbol,)
             )
 
+        # 3b. 孤儿 trade_records 清理 (2026-07-16 源头规避)
+        # 根因: MANUAL 单写 trade_records(exit_time=NULL) 但从未进 open_positions
+        #       (如 PDD id=1039 100股) → ghost 清理循环只遍历 open_positions, 够不到它
+        #       → 账本永久残留幻影未平仓. 此扫描补齐这一缺口.
+        # 保护条件: 非 broker 持仓 + 非 open_positions + 非 playbook 管理 + 建仓>1天
+        #   (1天保护窗避免抢跑成交, 且本次 sync 只查单一 trade env, 防止误伤另一环境真实仓).
+        try:
+            from app.playbook.pipeline import is_playbook_open_position as _is_pb_open
+            cursor.execute(
+                "SELECT id, symbol, entry_price, entry_time, quantity, source_type "
+                "FROM trade_records WHERE exit_time IS NULL OR exit_time=''"
+            )
+            _orphan_rows = cursor.fetchall()
+            _orphan_cleaned = 0
+            for _orow in _orphan_rows:
+                _oid, _osym = _orow[0], _orow[1]
+                _oentry, _oetime = _orow[2], _orow[3]
+                # (a)(b) broker 或 open_positions 持有 → 跳过
+                if _osym in futu_symbols or _osym in db_symbols:
+                    continue
+                # (c) playbook 管理仓 → 跳过 (由 exit monitor 负责)
+                if _is_pb_open(_osym):
+                    continue
+                # (d) 建仓时间保护窗: 1 天内不清 (防抢跑成交/单环境查询误判)
+                if _oetime:
+                    try:
+                        _oentry_dt = datetime.fromisoformat(str(_oetime).replace('Z', '+00:00'))
+                        if _oentry_dt.tzinfo is not None:
+                            _oentry_dt = _oentry_dt.replace(tzinfo=None)
+                        if (_now - _oentry_dt).total_seconds() < 86400:
+                            continue
+                    except (ValueError, TypeError):
+                        # 时间解析失败 → 保守跳过, 不清
+                        continue
+                else:
+                    # 无 entry_time → 无法判定保护窗 → 保守跳过
+                    continue
+                _oexit = datetime.now().isoformat()
+                cursor.execute(
+                    "UPDATE trade_records SET exit_time=?, exit_price=entry_price, "
+                    "realized_pnl=0, pnl_pct=0, holding_hours=0, exit_reason=? "
+                    "WHERE id=? AND (exit_time IS NULL OR exit_time='')",
+                    (_oexit, 'RECONCILE_ORPHAN_CLOSE', _oid)
+                )
+                if cursor.rowcount:
+                    _orphan_cleaned += 1
+                    logger.warning(
+                        f"[US Sync] 孤儿 trade_records 清理: id={_oid} {_osym} "
+                        f"(broker/open_positions 均无, 建仓>1天) → 标记已平 pnl=0"
+                    )
+            if _orphan_cleaned:
+                logger.warning(f"[US Sync] 孤儿 trade_records 清理完成: {_orphan_cleaned} 笔")
+        except Exception as _orphan_err:
+            logger.warning(f"[US Sync] 孤儿 trade_records 扫描异常 (已隔离, 不影响 sync): {_orphan_err}")
+
         # 4. Update/Insert Futu positions
         # P0 fix (2026-05-21): Load PRICE_FAIL-closed set to skip re-insert/update
         _pf_closed = set()
