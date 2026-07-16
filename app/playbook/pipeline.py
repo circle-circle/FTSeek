@@ -3936,7 +3936,9 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         return exited
 
     except Exception as e:
-        logger.debug(f"[playbook sim] exit monitor 异常 (已隔离): {e}")
+        # 2026-07-16: debug→exception — 退出监控循环顶层崩溃(如 pb_cfg NameError)
+        # 在 debug 级别下生产 INFO 日志完全隐身, 曾导致 P0 潜伏. 必须带 traceback 可见.
+        logger.exception(f"[playbook sim] exit monitor 异常 (已隔离): {e}")
         return 0
 
 
