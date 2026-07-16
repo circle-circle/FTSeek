@@ -670,19 +670,31 @@ class TradeStore:
 
                 # P1 (2026-06-10): 因子归因落库 — 从 factor_detail 提取各因子 raw score
                 # IntradayScorer 5因子: trend, momentum, volume, orderflow, lifecycle
-                _fd_raw = record.get("factor_detail")
-                if isinstance(_fd_raw, str):
-                    try:
-                        _fd_raw = json.loads(_fd_raw)
-                    except Exception:
+                # 2026-07-16: 优先用 record 显式传入的 f1-f5 (Playbook 路径按 conditions 自算好),
+                #   仅当 record 未携带任一 f 键时, 才从 factor_detail 5因子 dict 反解 (MAIN_PIPELINE).
+                #   根因: 旧逻辑无条件从 factor_detail 反解, 而 Playbook 的 factor_detail 是 conditions
+                #   字符串数组 (非 5因子 dict) → 反解成空 → f1-f5 全 0, Playbook 因子归因瘫痪.
+                _f_keys = ("f1_trend", "f2_momentum", "f3_volume", "f4_orderflow", "f5_lifecycle")
+                if any(k in record for k in _f_keys):
+                    _f1_trend = float(record.get("f1_trend", 0) or 0)
+                    _f2_momentum = float(record.get("f2_momentum", 0) or 0)
+                    _f3_volume = float(record.get("f3_volume", 0) or 0)
+                    _f4_orderflow = float(record.get("f4_orderflow", 0) or 0)
+                    _f5_lifecycle = float(record.get("f5_lifecycle", 0) or 0)
+                else:
+                    _fd_raw = record.get("factor_detail")
+                    if isinstance(_fd_raw, str):
+                        try:
+                            _fd_raw = json.loads(_fd_raw)
+                        except Exception:
+                            _fd_raw = {}
+                    if not isinstance(_fd_raw, dict):
                         _fd_raw = {}
-                if not isinstance(_fd_raw, dict):
-                    _fd_raw = {}
-                _f1_trend = float((_fd_raw.get("trend") or {}).get("raw", 0))
-                _f2_momentum = float((_fd_raw.get("momentum") or {}).get("raw", 0))
-                _f3_volume = float((_fd_raw.get("volume") or {}).get("raw", 0))
-                _f4_orderflow = float((_fd_raw.get("orderflow") or {}).get("raw", 0))
-                _f5_lifecycle = float((_fd_raw.get("lifecycle") or {}).get("raw", 0))
+                    _f1_trend = float((_fd_raw.get("trend") or {}).get("raw", 0))
+                    _f2_momentum = float((_fd_raw.get("momentum") or {}).get("raw", 0))
+                    _f3_volume = float((_fd_raw.get("volume") or {}).get("raw", 0))
+                    _f4_orderflow = float((_fd_raw.get("orderflow") or {}).get("raw", 0))
+                    _f5_lifecycle = float((_fd_raw.get("lifecycle") or {}).get("raw", 0))
 
                 cursor = conn.execute("""
                     INSERT INTO trade_records (
@@ -1077,39 +1089,27 @@ class TradeStore:
 
     def remove_open_position(self, symbol: str, source: str = "scheduler",
                               trace_id: str = "", exit_reason: str = "") -> None:
-        """平仓后标记持仓快照 (软删除, 2026-04-24 方案A)
+        """平仓后物理删除持仓记录
 
-        方案A: 股票退出由 Daemon 独占, 主线程可能直接调用此方法的来源:
-            - 期权平仓 (scheduler)
-            - 主线程主动平仓 (scheduler, 仅特殊分支)
-            - 外部同步脚本 (sync/emergency)
-
-        统一软删除语义: UPDATE sync_status='closed_by_scheduler', 与 Daemon 的
-        'closed_by_daemon' 形成对称. auto_position_reconcile.py 统一延后 DELETE.
+        2026-07-14: 软删除→直接DELETE (trade_records已有完整审计记录).
+        来源: scheduler/sync/emergency, 均直接DELETE.
         """
         with self._lock:
             conn = self._get_conn()
             try:
                 row = conn.execute(
-                    "SELECT symbol, sync_status FROM open_positions WHERE symbol = ?",
+                    "SELECT symbol FROM open_positions WHERE symbol = ?",
                     (symbol,)
                 ).fetchone()
                 if not row:
                     return
-                # 根据 source 区分软删除标签, 便于审计
-                new_status = {
-                    "scheduler": "closed_by_scheduler",
-                    "sync":      "closed_by_sync",
-                    "emergency": "closed_emergency",
-                }.get(source, "closed_by_scheduler")
-                conn.execute("""
-                    UPDATE open_positions
-                    SET sync_status=?, updated_at=?
-                    WHERE symbol=?
-                """, (new_status, datetime.now().isoformat(), symbol))
+                conn.execute(
+                    "DELETE FROM open_positions WHERE symbol=?",
+                    (symbol,)
+                )
                 conn.commit()
                 logger.info(
-                    f"[TruthSource] 仓位软删除 {symbol} → {new_status} "
+                    f"[TruthSource] 仓位物理删除 {symbol} "
                     f"src={source} reason={exit_reason} trace={trace_id}"
                 )
             finally:

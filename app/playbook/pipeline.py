@@ -2893,11 +2893,29 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                         _calc_mfe = (_entry - _peak) / _entry * 100
                     if _calc_mfe > 0:
                         _mfe_pct = round(_calc_mfe, 4)
+            # 2026-07-16: MAE 对称反算 — 与 MFE 同理, mae_pct 缺失时从 trough_price 反算.
+            #   根因: trough_price 入场写入 + 每轮更新 (与 peak 对称), 但 close 时从未回算成 mae_pct,
+            #   导致 MAE 常年为 0, 无法评估止损距离/浮亏承受度. 纯 surgical, 对新平仓向前生效.
+            if _mae_pct <= 0:
+                _trough = float(_meta.get("trough_price", 0) or 0)
+                _entry = float(_meta_row[2] or 0)
+                _dir = (_meta_row[1] or "LONG").upper()
+                if _trough > 0 and _entry > 0:
+                    if _dir == "LONG":
+                        _calc_mae = (_entry - _trough) / _entry * 100
+                    else:
+                        _calc_mae = (_trough - _entry) / _entry * 100
+                    if _calc_mae > 0:
+                        _mae_pct = round(_calc_mae, 4)
             # 定义兜底: MFE 必须 ≥ 已落袋的有利变动 (pnl_pct 为分数, 转百分比).
             #   处理采样粒度问题: 峰值轮询未抓到最高点 (如 META peak<exit) 时不至低估 MFE.
             _realized_fav = round(pnl_pct * 100, 4)
             if _realized_fav > _mfe_pct:
                 _mfe_pct = _realized_fav
+            # 对称兜底: 亏损单的 MAE 必须 ≥ 已实现的不利变动 (谷值轮询未抓到最低点时不低估 MAE).
+            _realized_adv = round(-pnl_pct * 100, 4)
+            if _realized_adv > _mae_pct:
+                _mae_pct = _realized_adv
     except Exception:
         pass
     # 2026-07-11: 量纲夹取 — 日内单笔 MFE/MAE >50% 基本是脏价位 (entry_price 异常等),
