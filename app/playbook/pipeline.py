@@ -2344,6 +2344,16 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             _conf_factor = 1.0
                             if bool(pb_cfg.get("confidence_sizing_enabled", False)) and _conf > 0 and _conf_base > 0:
                                 _conf_factor = max(0.6, min(1.4, _conf / _conf_base))
+                            # 2026-07-16 P1: LONG conf<50 降仓50%.
+                            #   数据: LONG 38笔 39.5%WR -$2435 vs SHORT 23笔 43.5%WR +$1467.
+                            #   LONG conf=35 (2模型分歧) 占多数, 系统性亏损.
+                            #   修复: LONG conf<50 时 _conf_factor *= 0.5 (降仓但不SKIP, 保留方向验证).
+                            if _dir == "BUY" and _conf < 50:
+                                _conf_factor *= 0.5
+                                logger.info(
+                                    f"[playbook] {inst['symbol']} LONG conf={_conf}<50, 降仓50% "
+                                    f"(conf_factor={_conf_factor:.2f})"
+                                )
                             _risk_amount = _risk_base * (_risk_pct / 100) * _conf_factor
                             _per_share_risk = abs(_new_entry - _new_sl)
                             if _per_share_risk > 0:

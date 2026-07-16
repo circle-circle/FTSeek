@@ -48,7 +48,7 @@ factor_exit_rules:
     breakeven_at_pct: 0.5           # 1.0→0.5: 更早保本, 影子数据验证
     drawdown_from_peak_pct: 0.4     # 0.5→0.4: 更紧锁利, 减少giveback
     trailing_step_pct: 2.0          # 兼容回退(无drawdown时用)
-    time_exit_hours: 4.0
+    time_exit_hours: 6.0           # 4.0→6.0: TIME_EXIT 7笔0%WR-$238, 2h-4h死亡区间, 延长让趋势仓不被砍
     time_exit_only_if_loss: true
     max_hold_days: 1
 
