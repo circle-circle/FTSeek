@@ -39,7 +39,9 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
         if _plan_path.exists():
             import json as _json
             plan = _json.loads(_plan_path.read_text())
-            for t in plan.get("targets", []):
+            from app.web_dashboard.data_service import battle_plan_is_stale
+            _pm_targets = [] if battle_plan_is_stale(plan) else plan.get("targets", [])
+            for t in _pm_targets:
                 t_sym = t.get("symbol", "").replace("US.", "")
                 if t_sym == bare:
                     ctx["plan_match"] = True

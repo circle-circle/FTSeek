@@ -851,12 +851,17 @@ def register(app, templates):
             except Exception:
                 pass
 
+        # 过期护栏: 冻结的旧计划不作为今日"机会"展示 (仅清 targets, 保留持仓相关)
+        from app.web_dashboard.data_service import battle_plan_is_stale
+        if battle_plan_is_stale(plan):
+            plan["_stale"] = True
+            plan["targets"] = []
+
         targets = plan.get("targets", [])
         position_actions = plan.get("position_actions", [])
         restricted = set(plan.get("restricted", []))
         regime = plan.get("market_regime", "UNKNOWN")
         confidence = plan.get("confidence", 0)
-
         # ── 2. 从 SQLite 读取持仓 (纯本地, 无 broker 调用) ──
         positions = []
         stop_distances = []
@@ -978,7 +983,8 @@ def register(app, templates):
             "avoid": [],         # Layer 4: 今日回避
         }
 
-        # Query ghost/anomalous positions before processing
+        # 2026-07-14: 软删除已改为物理DELETE, closed_by_sync行不再存在.
+        # 保留 is_anomalous 过滤 (stale_not_in_broker 仍用软标记 + size=0).
         ghost_symbols = set()
         try:
             import sqlite3
@@ -988,12 +994,12 @@ def register(app, templates):
                 cur = conn.cursor()
                 cur.execute("""
                     SELECT symbol FROM open_positions
-                    WHERE sync_status='closed_by_sync' OR is_anomalous=1
+                    WHERE is_anomalous=1
                 """)
                 ghost_symbols = {row[0] for row in cur.fetchall()}
                 conn.close()
                 if ghost_symbols:
-                    logger.info(f"[BattlePlan] Filtered {len(ghost_symbols)} ghost/anomalous positions: {ghost_symbols}")
+                    logger.info(f"[BattlePlan] Filtered {len(ghost_symbols)} anomalous positions: {ghost_symbols}")
         except Exception as e:
             logger.debug(f"[BattlePlan] Ghost position query error: {e}")
         
@@ -1366,6 +1372,14 @@ def register(app, templates):
             logger.debug(f"[decision-hub] plan load error: {e}")
             plan = {}
 
+        # 过期护栏: 旧 discovery 链已停用, 冻结计划不作为今日交易目标展示
+        from app.web_dashboard.data_service import battle_plan_is_stale
+        _plan_stale = battle_plan_is_stale(plan)
+        result["plan_stale"] = _plan_stale
+        result["plan_date"] = plan.get("date", "")
+        if _plan_stale:
+            plan["targets"] = []
+
         # 实时报价补充到 targets
         targets_raw = plan.get("targets", []) or []
         try:
@@ -1643,7 +1657,8 @@ async def get_ai_suggestion(symbol: str):
         if _PLAN_PATH.exists():
             with open(_PLAN_PATH) as _pf:
                 plan = json.load(_pf)
-        targets = plan.get("targets", [])
+        from app.web_dashboard.data_service import battle_plan_is_stale
+        targets = [] if battle_plan_is_stale(plan) else plan.get("targets", [])
         plan_target = None
         for t in targets:
             t_sym = (t.get("symbol", "") or "").upper()

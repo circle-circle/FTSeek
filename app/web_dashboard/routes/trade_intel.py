@@ -187,6 +187,10 @@ async def _get_plan_match(symbol: str) -> dict:
         with open(_BATTLE_PLAN_PATH) as f:
             plan = json.load(f)
 
+        from app.web_dashboard.data_service import battle_plan_is_stale
+        if battle_plan_is_stale(plan):
+            return {"in_plan": False}
+
         for target in plan.get("targets", []):
             if target.get("symbol", "").upper() == symbol.upper():
                 entry_zone = target.get("entry_zone", [])

@@ -1306,7 +1306,8 @@ def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: di
         if _plan_path.exists():
             with open(_plan_path) as f:
                 plan = _json.load(f)
-            targets = plan.get("targets", [])
+            from app.web_dashboard.data_service import battle_plan_is_stale
+            targets = [] if battle_plan_is_stale(plan) else plan.get("targets", [])
             position_actions = plan.get("position_actions", [])
             restricted = set(plan.get("restricted", []))
 

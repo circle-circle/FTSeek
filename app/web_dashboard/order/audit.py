@@ -245,7 +245,8 @@ def record_manual_open(service: "ManualOrderService", order: "ManualOrder") -> N
             if plan_path.exists():
                 import json as _json
                 _plan = _json.loads(plan_path.read_text())
-                _plan_targets = {t.get("symbol", ""): t for t in _plan.get("targets", [])}
+                from app.web_dashboard.data_service import battle_plan_is_stale
+                _plan_targets = {} if battle_plan_is_stale(_plan) else {t.get("symbol", ""): t for t in _plan.get("targets", [])}
                 if order.symbol in _plan_targets:
                     _pt = _plan_targets[order.symbol]
                     _plan_dir = str(_pt.get("direction", "")).upper()
@@ -329,7 +330,8 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
             if plan_path.exists():
                 import json as _json
                 _plan = _json.loads(plan_path.read_text())
-                _plan_targets = {t.get("symbol", ""): t for t in _plan.get("targets", [])}
+                from app.web_dashboard.data_service import battle_plan_is_stale
+                _plan_targets = {} if battle_plan_is_stale(_plan) else {t.get("symbol", ""): t for t in _plan.get("targets", [])}
                 if symbol in _plan_targets:
                     _pt = _plan_targets[symbol]
                     if _pt.get("direction") == direction:

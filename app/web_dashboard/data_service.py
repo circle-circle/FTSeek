@@ -46,6 +46,21 @@ def et_days_ago(n: int) -> str:
     return (et_now() - timedelta(days=n)).strftime("%Y-%m-%d")
 
 
+def battle_plan_is_stale(plan: dict) -> bool:
+    """判断作战计划是否过期 (非今日 ET).
+
+    旧 US discovery 生成链已于 2026-07-13 停用, daily_battle_plan_us.json
+    冻结在最后一次生成日。实际交易已迁移至 DA + UE → playbook_instructions。
+    Web 展示端据此判断: 计划 date != 今日 ET → 视为过期, 不应作为"今日交易计划"展示。
+    """
+    if not isinstance(plan, dict):
+        return True
+    _d = plan.get("date", "")
+    if not _d:
+        return True
+    return _d != et_today()
+
+
 def safe_float(v, default: float = 0.0) -> float:
     """统一 safe_float (SSOT: app.utils.numeric) — 向后兼容 re-export"""
     from app.utils.numeric import safe_float as _sf
