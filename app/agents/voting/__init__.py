@@ -1,17 +1,8 @@
-"""投票模块 - 多 Agent 投票决策系统"""
+"""投票模块 — 2026-07-14: 死投票脑(coordinator/aggregator/model_agent)已清理,
+仅保留 VotingConfig/ModelRole 供 app/risk/vix_monitor.py 读 VIX 权重常量。"""
 from .voting_config import VotingConfig, ModelRole
-from .model_agent import ModelAgent, ModelScore
-from .voting_aggregator import VotingAggregator
-from .voting_coordinator import VotingCoordinator
-from .performance_tracker import VotingPerformanceTracker, tracker
 
 __all__ = [
     "VotingConfig",
     "ModelRole",
-    "ModelAgent",
-    "ModelScore",
-    "VotingAggregator",
-    "VotingCoordinator",
-    "VotingPerformanceTracker",
-    "tracker",
 ]
