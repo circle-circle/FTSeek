@@ -2412,6 +2412,16 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         }
                         # 更新 DB 记录 re-priced 值 (审计可追溯)
                         db.update_instruction_tracking(inst["id"], _reprice_params)
+                        # 2026-07-16: 盘中数据质量护栏 — 记录 re-price 时的数据完整性
+                        _dq_flags = []
+                        if _atr <= 0: _dq_flags.append("atr_missing")
+                        if not _ctx.get("lv3_bid") or not _ctx.get("lv3_ask"):
+                            _dq_flags.append("no_lv3_bidask")
+                        if _dq_flags:
+                            logger.warning(
+                                f"[playbook] {inst['symbol']} re-price 数据质量: {', '.join(_dq_flags)} "
+                                f"(使用 instruction 原始 SL 反算, 不影响执行)"
+                            )
                         logger.info(
                             f"[playbook] re-price: {inst['symbol']} {_dir} "
                             f"盘前=${inst.get('entry_price', 0):.2f} → 实时=${_new_entry:.2f} "

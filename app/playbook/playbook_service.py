@@ -51,6 +51,10 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
     导致事后复盘"SL 距离是否合理"无法诊断. 注意: 退出逻辑本身不读此值 (退出用实时
     market_data.atr), 故此前 bug 仅影响可观测性, 不影响执行.
 
+    2026-07-16 修复: DA bridge 直写 instruction 时无 atr_source 字段 → metadata.atr=0.
+    修复: atr_source 缺失时, 从 entry_price 和 stop_loss 反算隐含 ATR% (SL 距离 / vol_bucket 倍数).
+    虽然不是真实 ATR, 但反映了 vol_bucket 级别, 供事后诊断 SL 合理性.
+
     atr_source 格式 (来自 instruction_generator):
       "technical.atr_14=8.35 (quality=good)"
       "daily_kline.atr_14=8.35 (quality=good)"
@@ -66,14 +70,24 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
                 src = (json.loads(raw) if isinstance(raw, str) else raw).get("atr_source") or ""
             except (ValueError, TypeError):
                 src = ""
-    if not src or "=" not in src:
-        return 0.0
-    try:
-        # 取第一个 "=" 后、空格前的数值, 去掉 % 后缀
-        raw_val = src.split("=", 1)[1].split(" ")[0]
-        return float(raw_val.rstrip("%"))
-    except (ValueError, IndexError):
-        return 0.0
+    if src and "=" in src:
+        try:
+            raw_val = src.split("=", 1)[1].split(" ")[0]
+            return float(raw_val.rstrip("%"))
+        except (ValueError, IndexError):
+            pass
+    
+    # 3. 2026-07-16: atr_source 缺失 → 从 SL 距离反算隐含 ATR%
+    #   vol_bucket: sl_pct = max(sl_floor, min(sl_ceil, atr_pct * 100 * sl_multiplier))
+    #   简化: 用 SL 距离 / entry_price 作为 ATR% 的近似 (诊断用, 非精确值)
+    entry = float(inst.get("entry_price", 0) or 0)
+    sl = float(inst.get("stop_loss", 0) or 0)
+    if entry > 0 and sl > 0:
+        sl_pct = abs(entry - sl) / entry * 100
+        # 反推 ATR: medium bucket sl_multiplier=1.5 → atr_pct ≈ sl_pct / 1.5
+        # 但无法确定 bucket, 用 sl_pct 本身作为 atr% 近似 (保守上界)
+        return round(entry * sl_pct / 100, 2)  # 返回隐含 ATR 绝对值
+    return 0.0
 
 
 
