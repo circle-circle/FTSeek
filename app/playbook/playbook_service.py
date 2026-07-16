@@ -1104,7 +1104,7 @@ class PlaybookService:
                 trace_id=matched_decision_id or None,
             ))
         except Exception as _pb_push_e:
-            logger.debug(f"[playbook推送] {symbol} 成交推送失败 (不影响下单): {_pb_push_e}")
+            logger.warning(f"[playbook推送] {symbol} 成交推送失败 (不影响下单): {_pb_push_e}")
 
         return {
             "success": True,

@@ -100,14 +100,16 @@ class PushMessage:
 # 便捷构造器 — 给上游模块提供语义化 API
 def trade_entry(symbol: str, direction: str, qty: int, price: float,
                 strategy: str = "main", trace_id: Optional[str] = None) -> PushMessage:
-    """成交开仓 (LOW + 5min 聚合)"""
+    """成交开仓 (NORMAL + 立即推送 — 成交是关键事件, 不聚合)"""
+    # 2026-07-16: LOW→NORMAL, 移除聚合. 根因: 7/15 9笔成交在5min聚合窗口内被聚合,
+    # 但 flush 时 send 失败 (可能 PushHub async worker 异常), 且 logger.debug 吞掉错误.
+    # 修复: 升级为 NORMAL 立即推送, 不走聚合桶. 每笔成交都应即时通知.
     return PushMessage(
-        title=f"{symbol} {direction} 成交",
+        title=f"✅ {symbol} {direction} 成交",
         body=f"qty={qty} price=${price:.2f} strategy={strategy}",
-        level=Level.LOW,
+        level=Level.NORMAL,
         category=Category.TRADE_ENTRY,
         dedup_key=f"entry:{symbol}:{trace_id or 'na'}",
-        aggregate_key="trade_events",
         payload={"symbol": symbol, "direction": direction, "qty": qty,
                  "price": price, "strategy": strategy, "kind": "entry"},
         trace_id=trace_id,
@@ -116,18 +118,16 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
 
 def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                strategy: str = "main", trace_id: Optional[str] = None) -> PushMessage:
-    """平仓 (NORMAL + 聚合 — 盈亏汇总价值)"""
-    # 大额 PnL 升级 LOW → NORMAL 立即推送
+    """平仓 (NORMAL + 立即推送 — 平仓是关键事件, 不聚合)"""
+    # 2026-07-16: 移除聚合. 根因: trade_entry 聚合导致7/15成交无通知.
+    # 修复: 所有平仓立即推送, 不走聚合桶. 大额亏损也走 NORMAL (不再降级 LOW).
     sign = "+" if pnl >= 0 else ""
-    abs_pnl = abs(pnl)
-    lvl = Level.NORMAL if abs_pnl >= 500 else Level.LOW
     return PushMessage(
-        title=f"{symbol} 平仓 {sign}${pnl:.2f}",
+        title=f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f}",
         body=f"{direction} reason={exit_reason} strategy={strategy}",
-        level=lvl,
+        level=Level.NORMAL,
         category=Category.TRADE_EXIT,
         dedup_key=f"exit:{symbol}:{trace_id or 'na'}",
-        aggregate_key="trade_events" if lvl == Level.LOW else None,
         payload={"symbol": symbol, "direction": direction, "pnl": pnl,
                  "exit_reason": exit_reason, "strategy": strategy, "kind": "exit"},
         trace_id=trace_id,
