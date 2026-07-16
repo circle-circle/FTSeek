@@ -4268,6 +4268,19 @@ def _verify_position_still_held(scheduler, position: Position) -> bool:
 @_with_symbol_lock_release
 def _close_position(scheduler, position: Position, current_price: float, exit_reason: ExitReason):
     """平仓 — 触及即全平，简洁优先"""
+    # 2026-07-16 P0: 纵深防御 — 即使上游所有护栏被绕过, _close_position 也不平 Playbook 仓位.
+    #   上游: position_sync/restore/reconcile/ExitDispatcher/DEM 全部跳过 Playbook.
+    #   此处: 最后一道防线, 万一仓位漏网到此, 直接 return 不平仓.
+    try:
+        from app.playbook.pipeline import is_playbook_open_position
+        if is_playbook_open_position(position.symbol):
+            logger.warning(
+                f"[平仓·playbook护栏] {position.symbol} 是未平 PLAYBOOK_SIM 仓, "
+                f"跳过旧管线平仓 (由 monitor_playbook_sim_exits 自管)"
+            )
+            return
+    except Exception:
+        pass
     # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
     # ExitRuleDispatcher + legacy ExitMonitor 可能在同一监控周期对同一 position 各触发一次
     meta = getattr(position, "metadata", {}) or {}

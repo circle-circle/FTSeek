@@ -368,19 +368,22 @@ dual_mode:
     position_scale_factor: 1.0
     stop_loss_tighten_factor: 1.0
 dynamic_exit:
+  # 2026-07-16: 旧管线退出规则全部禁用 — Playbook 有独立退出栈 (monitor_playbook_sim_exits).
+  #   ExitDispatcher 已禁用 (exit_rules_controller.dispatcher_enabled=false), 这些规则无消费者.
+  #   保留配置结构供回滚, 但全部 enabled: false.
   default:
     atr_stop:
-      enabled: true
+      enabled: false
       multiplier: 2.5
     breakeven_stop:
-      enabled: true
+      enabled: false
       stop_profit: 0.01
       trigger_profit: 0.03
     intraday_stop:
-      enabled: true
+      enabled: false
       stop_percent: 0.02
     partial_take_profit:
-      enabled: true
+      enabled: false
       levels:
       - ratio: 0.5
         trigger: 0.025
@@ -389,57 +392,57 @@ dynamic_exit:
     stop_loss: -0.02
     take_profit: 0.05
     time_stop:
-      enabled: true
+      enabled: false
       max_holding_days: 10
     trailing_stop:
-      enabled: true
+      enabled: false
       trail_percent: 0.005
       trigger_profit: 0.01
   high_volatility:
     atr_stop:
-      enabled: true
+      enabled: false
       multiplier: 3.2
     stop_loss: -0.07
     take_profit: 0.09
     time_stop:
-      enabled: true
+      enabled: false
       max_holding_days: 96
     trailing_stop:
-      enabled: true
+      enabled: false
       trail_percent: 0.045
       trigger_profit: 0.05
   range_bound:
     atr_stop:
-      enabled: true
+      enabled: false
       multiplier: 1.6
     stop_loss: -0.035
     take_profit: 0.05
     time_stop:
-      enabled: true
+      enabled: false
       max_holding_days: 3
     trailing_stop:
-      enabled: true
+      enabled: false
       trail_percent: 0.018
       trigger_profit: 0.025
   strong_trend_down:
     atr_stop:
-      enabled: true
+      enabled: false
       multiplier: 1.4
     stop_loss: -0.03
     take_profit: 0.045
     time_stop:
-      enabled: true
+      enabled: false
       max_holding_days: 24
     trailing_stop:
-      enabled: true
+      enabled: false
       trail_percent: 0.015
       trigger_profit: 0.02
   strong_trend_up:
     atr_stop:
-      enabled: true
+      enabled: false
       multiplier: 3.0
     partial_take_profit:
-      enabled: true
+      enabled: false
       levels:
       - ratio: 0.25
         trigger: 0.1
@@ -450,10 +453,10 @@ dynamic_exit:
     stop_loss: -0.08
     take_profit: 0.25
     time_stop:
-      enabled: true
+      enabled: false
       max_holding_days: 25
     trailing_stop:
-      enabled: true
+      enabled: false
       trail_percent: 0.05
       trigger_profit: 0.08
 execution:
@@ -477,13 +480,15 @@ execution:
   simulate_realistic_flow: true
   simulate_slippage_bps: 5.0
   slippage:
-    check_enabled: true
+    check_enabled: false
     max_ratio: 0.005
 exit_rules_controller:
-  dispatcher_enabled: true
-  fallback_on_error: true
+  # 2026-07-16: 禁用旧管线 ExitDispatcher — Playbook 仓位由 monitor_playbook_sim_exits 自管,
+  #   DB 确认无非 Playbook 未平仓 (open_positions=0), ExitDispatcher 无仓位可管.
+  dispatcher_enabled: false
+  fallback_on_error: false  # dispatcher 已禁用, 不需要 fallback
   log_suppressed_rules: true
-  monitor_comparison: true
+  monitor_comparison: false  # 无需对比旧管线 vs 新管线
   shadow_mode: false
 feature_flags:
   auto_trading_enabled: true
