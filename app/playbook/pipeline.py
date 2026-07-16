@@ -1339,7 +1339,6 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
         from app.playbook.db import PlaybookDB
         from app.playbook.market_regime import MarketRegimeGate
         from app.playbook.screener import PlaybookScreener
-        from app.playbook.feishu_push import PlaybookPusher
 
         db = PlaybookDB()
         db.ensure_tables()
@@ -1406,11 +1405,9 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
 
         logger.info(f"[playbook] ✅ 生成完成: {saved}/{len(instructions)} 条指令入库")
 
-        # 飞书盘前推送
-        try:
-            PlaybookPusher(db).push_morning_instructions(today)
-        except Exception as e:
-            logger.debug(f"[playbook] 盘前推送失败 (不影响生成): {e}")
+        # 2026-07-16: 盘前推送已移除内联触发, 统一归 run_playbook_morning_push 独占。
+        # 根因: 内联走 sync=False, 而独立任务走 sync=True (绕过 PushHub dedup) →
+        #       两条路径都发 → 用户收到两次。独立任务有持久化幂等+重试, 足以覆盖送达。
 
         scheduler._playbook_generated_date = today
         return {"date": today, "instructions": saved, "regime": regime_ctx.regime.value}

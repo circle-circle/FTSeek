@@ -92,18 +92,18 @@ flowchart TD
 ## 实时参数快照
 
 <!-- AUTOGEN:params:start -->
-> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-16 05:51 ET · commit `e3245cc1`
+> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-16 07:02 ET · commit `a9ff6f22`
 > 数值均从真实配置/代码抽取, 带出处; 结构(上方流程图)才是手维护的 SSOT。
 
 #### 执行护栏 (Execution Guardrails)
 | 参数 | 值 | 出处 | 说明 |
 |---|---|---|---|
-| 开盘后缓冲 | 5 分钟 | pipeline.py:2111 | 避开开盘噪声, 之后才执行 |
-| max_position_pct | 4% | pipeline.py:2361 代码默认 | 单笔仓位上限(占基准资金) |
-| daily_notional_cap_pct | 20% | pipeline.py:2194 代码默认 | 单日总敞口上限 |
-| max_daily_positions | 5笔 | pipeline.py:2196 代码默认 | 单日最多开仓数 |
-| risk_pct | 0.5% | pipeline.py:2360 代码默认 | 单笔风险预算(占基准资金) |
-| min_confidence | 60 | pipeline.py:2363 代码默认 | 信心基准(仓位加权中性点) |
+| 开盘后缓冲 | 5 分钟 | pipeline.py:2108 | 避开开盘噪声, 之后才执行 |
+| max_position_pct | 4% | pipeline.py:2358 代码默认 | 单笔仓位上限(占基准资金) |
+| daily_notional_cap_pct | 20% | pipeline.py:2191 代码默认 | 单日总敞口上限 |
+| max_daily_positions | 5笔 | pipeline.py:2193 代码默认 | 单日最多开仓数 |
+| risk_pct | 0.5% | pipeline.py:2357 代码默认 | 单笔风险预算(占基准资金) |
+| min_confidence | 60 | pipeline.py:2360 代码默认 | 信心基准(仓位加权中性点) |
 
 #### 止损止盈波动率桶 (playbook_horizon.yaml::vol_buckets)
 | 桶 | ATR%上限 | SL范围 | TP倍数 | 最长持仓 |

@@ -117,7 +117,7 @@ class PlaybookPusher:
         }.get(regime, "❓")
 
         lines = [
-            f"📋 今日交易指令 ({trade_date})",
+            f"今日交易指令 ({trade_date})",
             f"环境: {regime_emoji} {regime}" + (f" (VIX {vix:.1f}, SPY ${spy:.0f})" if vix else ""),
             "━" * 20,
             "",
