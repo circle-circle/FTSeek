@@ -169,6 +169,10 @@ def scan_loop(scheduler):
 
             # 2026-06-28: TRADING 阶段新单执行由 playbook futu_simulate 独占.
             # scan_loop 仅做信号研究与 IC 数据采集, 不再下单, 避免与 Playbook 路径冲突.
+            # 架构 (见 AGENT.md): playbook 为唯一下单/管理管线; 主管线新仓双重冻结
+            #   (此处 _skip_execution_in_trading + order_executor._submit_order 白名单).
+            # ⚠️ 勿 gate 掉整个 scan_loop 线程: 它还独家驱动日/周/月复盘、持仓快照、
+            #   看门狗心跳、财报刷新 (见本函数下方 _check_*_review / _check_position_snapshot).
             _skip_execution_in_trading = True
             scheduler._skip_execution_in_trading = True
 
