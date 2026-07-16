@@ -860,33 +860,31 @@ class ExitMonitor:
                 symbol = position.symbol
                 # Phase 1 (2026-05-31): owner_strategy 严格校验 — 防双重执行竞争
                 # 修复 (2026-06-02 P1): null/unknown → 默认 "main" 而非跳过, 防止退出检查丢失
-                if _strict_owner:
-                    _owner = (getattr(position, "owner_strategy", None) or "").strip().lower()
-                    if not _owner or _owner in ("unknown", "none", "null"):
-                        # 2026-07-10 fix: 查 trade_records 判断是否为 playbook 仓位,
-                        # 是则赋 'playbook_sim' 而非 'main', 防止 exit_monitor 劫持
-                        # playbook 仓位 → 双重平仓 (PLAYBOOK_SIM + MAIN_PIPELINE)
-                        _fallback_owner = "main"
-                        try:
-                            from app.core.paths import get_trade_records_db
-                            import sqlite3 as _sql3
-                            _pc = _sql3.connect(str(get_trade_records_db()), timeout=3)
-                            _pb_row = _pc.execute(
-                                "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) LIMIT 1",
-                                (symbol,)
-                            ).fetchone()
-                            _pc.close()
-                            if _pb_row:
-                                _fallback_owner = "playbook_sim"
-                        except Exception:
-                            pass
+                # 2026-07-16 P0 修复 (重启误平 playbook 仓): owner_strategy 兜底 + playbook 护栏。
+                #   [持仓恢复] 重启恢复的 playbook 仓 owner_strategy 为空 (line-799 过滤漏网) → 落到此处。
+                #   若 trade_records 查实为未平 PLAYBOOK_SIM 仓, 必须跳过主线退出 (由
+                #   monitor_playbook_sim_exits 自管); 否则重启瞬间 effective_atr=0 触发 ATR底限 →
+                #   误 ATR_STOP 平仓 (胜率杀手)。此护栏独立于 strict_owner 开关, 保证正确性。
+                _owner = (getattr(position, "owner_strategy", None) or "").strip().lower()
+                # 2026-07-16: 统一用 is_playbook_open_position 替代内联 SQL 查询.
+                #   无论 owner_strategy 是空/unknown/main/auto_main, 只要 trade_records
+                #   有未平 PLAYBOOK_SIM 仓, 一律跳过主线退出 (monitor_playbook_sim_exits 自管).
+                #   消灭 position_sync 漏判 → auto_main → 主线退出误平的整类问题.
+                from app.playbook.pipeline import is_playbook_open_position
+                if is_playbook_open_position(symbol):
+                    logger.info(
+                        f"[策略隔离·playbook护栏] {symbol} trade_records 有未平 PLAYBOOK_SIM 仓, "
+                        f"跳过主线退出 (monitor_playbook_sim_exits 自管)"
+                    )
+                    continue
+                if not _owner or _owner in ("unknown", "none", "null"):
+                    if _strict_owner:
                         logger.warning(
                             f"[策略隔离·兜底] {symbol} owner_strategy 为空/未知 ('{_owner}'), "
-                            f"默认赋值 '{_fallback_owner}' 以确保退出检查不丢失"
+                            f"默认赋值 'main' 以确保退出检查不丢失"
                         )
-                        position.owner_strategy = _fallback_owner
-                        _owner = _fallback_owner
+                        position.owner_strategy = "main"
+                        _owner = "main"
                 direction = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
                 entry_price = position.avg_entry_price
                 if entry_price <= 0:

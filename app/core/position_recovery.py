@@ -598,6 +598,12 @@ def restore_positions_from_db(scheduler):
                     code = row.get('code', '')
                     if code not in real_missing_p0:
                         continue
+                    # 2026-07-16: 跳过 Playbook 管理的仓位 — 防止 P0 回填将其标为 broker_reconcile_p0
+                    # → 主线 DEM 接管 → 双重平仓 (与 position_sync / position_monitor 统一逻辑).
+                    from app.playbook.pipeline import is_playbook_open_position
+                    if is_playbook_open_position(code):
+                        logger.info(f"[恢复·P0 回填·playbook] 跳过 {code} (未平 PLAYBOOK_SIM 仓, 由 monitor_playbook_sim_exits 自管)")
+                        continue
                     qty = abs(float(row.get('qty', 0)))
                     cost = float(row.get('cost_price', 0))
                     side = str(row.get('position_side', 'LONG'))

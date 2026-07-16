@@ -1323,8 +1323,10 @@ class TradingScheduler:
                     continue
                 # 2026-07-14: 跳过 playbook_sim 仓位 — position_sync 正确跳过它们 (line 1069),
                 #   若此处恢复到 position_store 会导致一致性校验报幽灵仓
-                _owner = db_pos.get("owner_strategy") or db_pos.get("strategy_id")
-                if _owner == "playbook_sim":
+                # 2026-07-16 P0 (重启误平根因): open_positions 的 owner_strategy/strategy_id
+                #   在重启时可能尚未回填 → 字段判定不可靠, 统一用 is_playbook_open_position.
+                from app.playbook.pipeline import is_playbook_open_position
+                if is_playbook_open_position(symbol):
                     continue
                 # 恢复股票持仓到 PositionStore (2026-06-12 实现)
                 try:
@@ -1804,7 +1806,30 @@ class TradingScheduler:
 
         logger.info("[LLM策略] 策略引擎循环已启动 (按市场阶段自适应)")
         last_trading_run = None
+
+        # 2026-07-16: last_afterhours_run 持久化 — 修复"每次重启即重推盘前/盘后LLM推荐".
+        #   原为纯内存变量, 重启复位 None → 循环首圈命中 is-None 立即重推(不管刚推过).
+        #   现启动时从 data/llm_scan_state.json 载回上次时间, 距上次不足窗口则不重推.
+        import json as _json
+        from pathlib import Path as _Path
+        _llm_scan_state = _Path(__file__).resolve().parents[2] / "data" / "llm_scan_state.json"
+
+        def _persist_ah(ts):
+            try:
+                with open(_llm_scan_state, "w", encoding="utf-8") as _f:
+                    _json.dump({"last_afterhours_run": ts.isoformat() if ts else None}, _f)
+            except Exception as _pe:
+                logger.debug(f"[LLM策略] scan 时间持久化失败 (不影响): {_pe}")
+
         last_afterhours_run = None
+        try:
+            if _llm_scan_state.exists():
+                _saved = _json.load(open(_llm_scan_state, encoding="utf-8")).get("last_afterhours_run")
+                if _saved:
+                    last_afterhours_run = datetime.fromisoformat(_saved)
+                    logger.info(f"[LLM策略] 载回上次LLM推荐时间: {_saved} (重启不重推)")
+        except Exception as _le:
+            logger.debug(f"[LLM策略] scan 时间载入失败 (视为无记录): {_le}")
 
         while self.running:
             try:
@@ -1867,6 +1892,7 @@ class TradingScheduler:
                             logger.debug("[LLM策略] 今日美股节假日，跳过盘前计划")
                             if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
                                 last_afterhours_run = now  # 重置计时器
+                                _persist_ah(now)
                             time.sleep(60)  # 可中断休眠
                             for _ in range(59):
                                 if not self.running:
@@ -1888,6 +1914,7 @@ class TradingScheduler:
                         logger.info("[LLM策略] 盘前 → 新闻采集 + LLM 推荐")
                         run_after_hours_llm_scan(self, phase=phase)
                         last_afterhours_run = now
+                        _persist_ah(now)
 
                     # 2026-04-24 关闭: 盘前观察模式已彻底移除 (Phase 1 dead code deleted)
                     # 原因: Futu LV3 盘前无数据，轮询无意义，观察模式已退役。
@@ -1917,6 +1944,7 @@ class TradingScheduler:
                         logger.info("[LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐")
                         run_after_hours_llm_scan(self, phase=phase)
                         last_afterhours_run = now
+                        _persist_ah(now)
 
                     # Playbook Layer 3 每日盘后追踪 (每日幂等)
                     try:
@@ -1934,6 +1962,7 @@ class TradingScheduler:
                         logger.info("[LLM策略] 深夜 → 低频新闻 + LLM 推荐")
                         run_after_hours_llm_scan(self, phase=MarketPhase.OVERNIGHT)
                         last_afterhours_run = now
+                        _persist_ah(now)
 
                 elif phase == MarketPhase.WEEKEND:
                     # 周末: 完全休眠，不请求任何 API
@@ -1941,6 +1970,7 @@ class TradingScheduler:
                     # 重置计数器，周一重新计算
                     last_trading_run = None
                     last_afterhours_run = None
+                    _persist_ah(None)
                     # 重置日级标志
                     self._open_checker_executed_today = False
 

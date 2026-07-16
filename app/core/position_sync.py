@@ -360,7 +360,7 @@ class USPositionSync:
                 return {}
         
         try:
-            ret, data = ctx.position_list_query(trd_env=trade_env)
+            ret, data = ctx.position_list_query(trd_env=trade_env, refresh_cache=True)  # 2026-07-16: 强制刷新, 防陈旧缓存幻影 (见 _sync_once 同款修复)
             if ret != RET_OK:
                 logger.warning(f"[US Sync] query_broker_positions 查询失败 (ret={ret})，重置连接")
                 self._reset_futu_ctx("query失败")
@@ -490,7 +490,11 @@ class USPositionSync:
             _combined_data = None
             _query_failed = False
             for _env in _envs_to_query:
-                ret, data = ctx.position_list_query(trd_env=_env)
+                # 2026-07-16 根因修复: refresh_cache=True 强制服务端刷新。
+                #   缺失时读 OpenD 陈旧缓存 → 已平仓位(qty=0)检测不到 →
+                #   open_positions 残留幻影 (如 RIVN 平后仍 SHORT 182, 被标 synced) →
+                #   退出引擎可能对已平仓发错误回补单(反向开仓)。
+                ret, data = ctx.position_list_query(trd_env=_env, refresh_cache=True)
                 if ret != 0:
                     logger.warning(f"[US Sync] Futu 持仓查询失败 (env={_env}, ret={ret})")
                     _query_failed = True
@@ -603,24 +607,9 @@ class USPositionSync:
         _now = datetime.now()
         for symbol in db_symbols - futu_symbols:
             # P0 修复 2026-07-06: Playbook SIM 仓位由 playbook exit monitor 独占管理,
-            # position_sync 不应将其标记为 ghost. 根因: sim 账户持仓查询延迟/缺失,
-            # playbook 刚写入的 open_positions 被 sync 清零 size → 孤儿仓/重复下单.
-            # 判断: open_positions.owner_strategy='playbook_sim' 或 trade_records 有未平仓 PLAYBOOK_SIM.
-            _is_playbook_managed = False
-            try:
-                _op_owner = db_positions.get(symbol, {}).get('owner') or db_positions.get(symbol, {}).get('owner_strategy')
-                if _op_owner == 'playbook_sim':
-                    _is_playbook_managed = True
-                else:
-                    cursor.execute(
-                        "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                        "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) LIMIT 1",
-                        (symbol,)
-                    )
-                    _is_playbook_managed = cursor.fetchone() is not None
-            except Exception:
-                pass
-            if _is_playbook_managed:
+            # position_sync 不应将其标记为 ghost. 2026-07-16: 统一用 is_playbook_open_position.
+            from app.playbook.pipeline import is_playbook_open_position
+            if is_playbook_open_position(symbol):
                 logger.info(f"[US Sync] 跳过 Playbook SIM 仓位 ghost 清理: {symbol} (由 playbook exit monitor 管理)")
                 continue
 
@@ -656,11 +645,10 @@ class USPositionSync:
                 logger.info(f"[US Sync] ✅ 确认平仓 {symbol} (Futu 已无，pending_close 完成)")
             else:
                 logger.warning("[US Sync] Ghost position: %s (DB only, closing)", symbol)
-            # M10 (2026-06-03): 软删除保留审计记录, 替代硬 DELETE
-            # 2026-07-02: 同时清零 size, 防止幽灵仓触发 SL danger 误报
+            # 2026-07-14: 直接DELETE, 不再软删除 (trade_records已有完整审计记录)
             cursor.execute(
-                "UPDATE open_positions SET sync_status='closed_by_sync', size=0, updated_at=? WHERE symbol=?",
-                (datetime.now().isoformat(), symbol)
+                "DELETE FROM open_positions WHERE symbol=?",
+                (symbol,)
             )
             # 2026-06-25: 清理 ghost 对应的幻影 trade_records (订单 submit 时写入但未成交)
             cursor.execute(
@@ -1049,25 +1037,11 @@ class USPositionSync:
                 logger.warning(f"[US Sync·H6] 跳过 tombstoned {symbol} (刚平仓, 防止重入)")
                 continue
             # 2026-07-09: Playbook 仓位统一跳过 — 防止跨日重启后 position_sync 劫持
-            # 根因: playbook 7/8 下单, 7/9 重启后 _today_orders 为空 → 走 else → MANUAL
-            # → Reconciler 收养 → DEM 双重管理. 此检查在所有 manual/auto 分支之前拦截.
-            _is_pb = False
-            try:
-                from app.core.scheduler_triggers import ET as _et
-                from datetime import timedelta as _td
-                _pb_yesterday = (datetime.now(_et).date() - _td(days=2)).isoformat()
-                _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
-                _pb_row = _pc.execute(
-                    "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                    "AND entry_time >= ? LIMIT 1",
-                    (symbol, _pb_yesterday)).fetchone()
-                _pc.close()
-                _is_pb = _pb_row is not None
-            except Exception:
-                pass
-            if _is_pb:
-                # [hotfix] 稳态噪声降级 INFO→DEBUG: 该仓位每轮都在 new_symbols 中被跳过,
-                # 原 INFO 每轮每只重打 (上千条/窗口). 行为不变, 仅降日志 I/O.
+            # 2026-07-16: 统一用 is_playbook_open_position 替代时间窗口检查 (旧逻辑用
+            #   2-day/1-day 窗口导致跨日/跨窗口漏判, position_sync 标记 auto_main →
+            #   旧管线 exit_monitor 接管 → 双重平仓, 7/15 RIVN/NVDA/XOM 各亏 $37-52).
+            from app.playbook.pipeline import is_playbook_open_position
+            if is_playbook_open_position(symbol):
                 logger.debug(f"[US Sync·playbook] 跳过 playbook 仓位 {symbol} (由 monitor_playbook_sim_exits 自管)")
                 continue
             # Broker-first (2026-06-03): 不再从 DB 恢复，新发现的仓位统一用全新计算的 SL/TP
@@ -1136,27 +1110,11 @@ class USPositionSync:
                     f"[US Sync·P3] {symbol} 今日有手动订单，标记为 manual_sync"
                 )
             elif _has_today_order:
-                # P0 fix (2026-06-25): 跳过 Playbook SIM 仓位 — 防止 position_sync 劫持
-                # 根因: Playbook auto_execute → DualBroker 下单 → Futu 有仓 → position_sync
-                # 同步回来标记 auto_main → MAIN_PIPELINE exit_monitor 接管 → 双重平仓
-                # 修复 (2026-07-01): 原查询条件 exit_time IS NULL 在 EOD close 后失效
-                # → trade_records 有 exit_time → _is_playbook=False → 不跳过 → 覆盖 owner_strategy
-                # 现在: 只要有 PLAYBOOK_SIM 开仓记录就跳过 (不管是否已平仓)
-                # 因为 open_positions.sync_status 已由 _close_trade_record 管理
-                _is_playbook = False
-                try:
-                    from app.core.scheduler_triggers import ET as _et
-                    _et_yesterday = (datetime.now(_et).date() - timedelta(days=1)).isoformat()
-                    _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
-                    _row = _pc.execute(
-                        "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                        "AND entry_time >= ? LIMIT 1",
-                        (symbol, _et_yesterday)).fetchone()
-                    _pc.close()
-                    _is_playbook = _row is not None
-                except Exception:
-                    pass
-                if _is_playbook:
+                # 2026-07-16: 统一用 is_playbook_open_position 跳过 Playbook 仓位.
+                # 旧逻辑用 1-day 时间窗口查 PLAYBOOK_SIM 记录, 跨日/跨窗口漏判后
+                # position_sync 标记 auto_main → 旧管线 exit_monitor 接管 → 双重平仓.
+                from app.playbook.pipeline import is_playbook_open_position
+                if is_playbook_open_position(symbol):
                     logger.debug(f"[US Sync·P0] 跳过 Playbook SIM 仓位 {symbol} (由 playbook exit monitor 独占管理)")
                     continue
                 strategy_id = "auto_main"
@@ -1643,8 +1601,26 @@ class USPositionSync:
             except Exception:
                 _self_managed = set()
 
+            # 2026-07-14: 同步排除 playbook_sim 仓位 — sync 循环正确跳过了它们 (line 1069),
+            #   但一致性校验未排除 → 永久误报 "Memory 缺少 Broker 持仓"
+            _playbook_symbols = set()
+            try:
+                _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
+                _pb_rows = _pc.execute(
+                    "SELECT DISTINCT symbol FROM open_positions "
+                    "WHERE owner_strategy = 'playbook_sim' "
+                    "AND (sync_status IS NULL OR sync_status NOT IN ("
+                    "'closed_by_daemon','closed_by_scheduler','closed_by_sync',"
+                    "'closed_emergency','stale_not_in_broker'))"
+                ).fetchall()
+                _playbook_symbols = {r[0] for r in _pb_rows}
+                _pc.close()
+            except Exception:
+                pass
+
             # 检查不一致
             issues = []
+            # DB 比较: DB 和 Broker 都应有 playbook_sim 仓位 (sync_status='synced'), 不排除
             if futu_set != db_set:
                 missing_db = futu_set - db_set
                 missing_futu = db_set - futu_set
@@ -1653,8 +1629,8 @@ class USPositionSync:
                 if missing_futu:
                     issues.append(f"DB 有多余持仓 (Broker 已无): {missing_futu}")
 
-            # Memory 比较时排除自管持仓 (自管持仓故意不写入 position_store)
-            futu_set_for_mem = futu_set - (_self_managed or set())
+            # Memory 比较时排除自管持仓 + playbook_sim (两者均故意不写入 position_store)
+            futu_set_for_mem = futu_set - (_self_managed or set()) - _playbook_symbols
             if futu_set_for_mem != mem_set and self.position_store:
                 missing_mem = futu_set_for_mem - mem_set
                 missing_mem_ghost = mem_set - futu_set_for_mem
@@ -1986,10 +1962,9 @@ class USPositionSync:
                 if trader_type and str(trader_type).upper() == 'MANUAL':
                     continue
                 # ponytail (2026-06-25): 跳过 Playbook SIM 仓位 — 由 playbook exit monitor 独占管理
-                # 根因: position_sync 减仓 Playbook 仓位 → trade_records qty 不更新 → close 时 "持仓不足" → ghost
-                _owner = cursor.execute(
-                    "SELECT owner_strategy FROM open_positions WHERE symbol=?", (sym,)).fetchone()
-                if _owner and _owner[0] and 'playbook' in str(_owner[0]).lower():
+                # 2026-07-16: 统一用 is_playbook_open_position 替代 owner_strategy 字符串匹配
+                from app.playbook.pipeline import is_playbook_open_position
+                if is_playbook_open_position(sym):
                     continue
                 if sym in trims_to_execute:
                     continue  # 已在 pending_trims 中

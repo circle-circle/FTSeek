@@ -676,6 +676,17 @@ def restore_positions_from_db(scheduler):
                 if symbol in _pf_closed:
                     logger.warning(f"[持仓恢复] 跳过 PRICE_FAIL 已关闭: {symbol}")
                     continue
+                # 2026-07-16 P0 修复 (重启误平): 跳过恢复 playbook_sim 仓到主线 PositionStore。
+                #   playbook 仓由 monitor_playbook_sim_exits 自管退出; 若恢复到主线 store 会被
+                #   coordinator 锁为 owner='main' 并被主线 DEM 用 ATR_STOP 误平 (胜率杀手)。
+                #   统一用 is_playbook_open_position 替代内联 SQL, 保证全链路判定一致。
+                from app.playbook.pipeline import is_playbook_open_position
+                if is_playbook_open_position(symbol):
+                    logger.info(
+                        f"[持仓恢复·playbook] 跳过 {symbol} (未平 PLAYBOOK_SIM 仓, 由 "
+                        f"monitor_playbook_sim_exits 自管, 不纳入主线 PositionStore)"
+                    )
+                    continue
                 direction_str = row.get("direction", "LONG")
                 direction = Direction.SHORT if direction_str == "SHORT" else Direction.LONG
                 
@@ -1482,6 +1493,53 @@ def _is_manual_position_for_reconcile(symbol: str) -> bool:
     return result
 
 
+def _reconcile_is_system_owned(symbol: str) -> bool:
+    """未知持仓采纳前置检查: 是否有本系统开仓的证据.
+
+    [SAFETY 2026-07-14] 旧逻辑依赖 _is_manual_position_for_reconcile 将手动仓排除,
+    但那依赖手动仓被打标; 若用户在 sim 账户直接下未打标手动单, 旧逻辑会将其
+    采纳为 broker_reconcile 仓 → ExitMonitor 可能自动平掉手动仓. 改为白名单式:
+    仅采纳能证明是系统所开的仓, 其余一律只告警不纳管.
+
+    系统所有权证据 (任一):
+      - open_positions 有该标的且非手动标记 (owner!=manual 且 trader_type!=MANUAL)
+      - 未平 trade_records 有该标的且 source_type ∈ (PLAYBOOK_SIM/LIVE/ORB_ENGINE)
+    无证据 → 视为外部/手动仓, 调用方只告警不纳管.
+    """
+    try:
+        from app.core.db_utils import get_main_db
+        import sqlite3 as _s3
+        _c = _s3.connect(str(get_main_db()), timeout=5)
+        _row = _c.execute(
+            "SELECT owner, trader_type FROM open_positions WHERE symbol=? LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        _c.close()
+        if _row:
+            _owner = (_row[0] or "").lower()
+            _ttype = (_row[1] or "").upper()
+            if _owner != "manual" and _ttype != "MANUAL":
+                return True  # 系统台账有记录且非手动 → 系统仓
+    except Exception:
+        pass
+    try:
+        from app.core.paths import get_trade_records_db
+        import sqlite3 as _s3
+        _c = _s3.connect(str(get_trade_records_db()), timeout=5)
+        _row = _c.execute(
+            "SELECT 1 FROM trade_records WHERE symbol=? "
+            "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE','ORB_ENGINE') "
+            "AND (exit_time IS NULL OR exit_time='') LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        _c.close()
+        if _row:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _reconcile_position_store(scheduler):
     """P0: 强制 Broker 对账并同步到 PositionStore
 
@@ -1525,6 +1583,13 @@ def _reconcile_position_store(scheduler):
             logger.info(f"[持仓对账] 跳过手动持仓 {symbol} (不纳入自动管理)")
             continue
 
+        # 2026-07-16: 跳过 Playbook 管理的仓位 — 防止 broker 对账将 Playbook 仓
+        # 重新纳管为 broker_reconcile → 主线 DEM 接管 → 双重平仓.
+        from app.playbook.pipeline import is_playbook_open_position
+        if is_playbook_open_position(symbol):
+            logger.debug(f"[持仓对账·playbook] 跳过 {symbol} (未平 PLAYBOOK_SIM 仓, 由 monitor_playbook_sim_exits 自管)")
+            continue
+
         bp = broker_positions[symbol]
 
         # 完全未知的新持仓 → 可能是漏记，也可能是 Futu 结算延迟
@@ -1555,6 +1620,23 @@ def _reconcile_position_store(scheduler):
                 continue
         except Exception as check_err:
             logger.debug(f"[持仓对账] {symbol}: 冷却期检查失败，继续按新持仓处理: {check_err}")
+
+        # [SAFETY 2026-07-14] 外部仓保护: 采纳未知持仓前须有本系统开仓证据, 否则只告警不纳管.
+        #   根因: layer2(_is_manual_position_for_reconcile) 依赖手动仓被打标; sim 账户里未打标
+        #   的手动单会被旧逻辑采纳为 broker_reconcile → ExitMonitor 可能自动平掉手动仓.
+        if not _reconcile_is_system_owned(symbol):
+            logger.warning(
+                f"[持仓对账·外部仓保护] {symbol} broker 有持仓但无本系统开仓证据 → "
+                f"视为外部/手动仓, 只告警不纳入自动管理 ({bp['direction']} {bp['qty']}股 @${bp['cost']:.2f})"
+            )
+            discrepancies.append({
+                "type": "external_unmanaged_position",
+                "symbol": symbol,
+                "direction": bp['direction'],
+                "size": bp['qty'],
+                "cost": bp['cost'],
+            })
+            continue
 
         direction = Dir.SHORT if bp['direction'] == 'SHORT' else Dir.LONG
         cost, size = bp['cost'], bp['qty']
@@ -1721,6 +1803,7 @@ def _send_reconcile_alert(scheduler, discrepancies: list, broker_positions: dict
         # 统计
         unknown = [d for d in discrepancies if d['type'] == 'unknown_position']
         ghosts = [d for d in discrepancies if d['type'] == 'ghost_cleaned']
+        external = [d for d in discrepancies if d['type'] == 'external_unmanaged_position']
 
         broker_count = len(broker_positions)
         mem_count = len(mem_positions)
@@ -1735,6 +1818,11 @@ def _send_reconcile_alert(scheduler, discrepancies: list, broker_positions: dict
         if unknown:
             lines.append(f"**🔴 未知新持仓 (需人工确认)**:\n\n")
             for d in unknown:
+                lines.append(f"- {d['symbol']} {d['direction']} {d['size']}股 @${d['cost']:.2f}\n\n")
+
+        if external:
+            lines.append(f"**🟡 外部/手动仓 (已保护·未纳入自动管理)**:\n\n")
+            for d in external:
                 lines.append(f"- {d['symbol']} {d['direction']} {d['size']}股 @${d['cost']:.2f}\n\n")
 
         if ghosts:

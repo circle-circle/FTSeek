@@ -1153,15 +1153,27 @@ playbook:
     # SSOT 显式化 (2026-07-10): 单日风控上限. 此前仅存在于 PlaybookConfig.DEFAULTS,
     # 但 pipeline.py 调用 pb_cfg.get(key, <显式默认>) 时显式默认会遮蔽 DEFAULTS,
     # 导致声明的 0.60/10 从未生效 (实际跑 0.20/5). 在此显式写死, 声明即生效.
-    # 风险口径: 每仓风险 risk_pct=0.5%, 10 仓全止损 = 单日 5% 风险预算上限 (可控).
+    # 风险口径: 每仓风险 risk_pct=0.5%, 30 仓全止损 = 单日 15% 风险预算 (理论极端);
+    #   熔断 -3% 全平先触发, 实际可控; SIM 模拟盘放量充分验证 bridge+universe+兜底池信号.
     # 配合触发质量门 (量能确认+接飞刀保护), 高上限只在信号足够优质时才被用满.
-    daily_notional_cap_pct: 0.60
-    max_daily_positions: 10
+    # 2026-07-10: 全量交易两源候选 (bridge + llm_universe_scan) — 10→30 / 0.60→0.80.
+    daily_notional_cap_pct: 0.80
+    max_daily_positions: 30
+    # 2026-07-10: 单仓上限硬顶 (显式写死防遮蔽 code 默认). confidence_sizing 默认关
+    #   (实证: DA confidence 未校准且反向), 故近似等权; 30 仓 × ~2.67% ≈ 铺满 80% 敞口,
+    #   强信号至多 4%. 可回滚: 删本行 → 回落 code 默认 0.04.
+    max_position_pct: 0.04
     # 2026-07-11: 入场重锚 (Lever A) — 带内未触发但漂移<=上限时, 用盘中价重锚触发;
     #   下游 re-price 块会重算 entry/SL/TP (每笔风险% 不变). 超上限不追. 可秒关回滚.
     #   目的: 捐回"带边缘刚好跳过"的可成交单(入场价冻结在盘前导致). extreme_gap>8% 仍拦.
     entry_reanchor_enabled: true
     entry_reanchor_max_drift_pct: 4.0
+    # 2026-07-15: VWAP 方向一致性硬门 (Tier1). 盘中触发时价在当日 VWAP 逆侧则拦单.
+    #   true = 实盘过滤 (sim 模拟盘, 非真实资金); 2026-07-16 修正为当日累计 VWAP (ctx["vwap"], K_1M K线),
+    #   数据缺失(盘初 K 线不足) fail-open; kill-switch = 改回 false. breakout/gate 影子分开记保留基线.
+    #   tolerance=0.003 (0.3%): ticker_analyzer 自身噪声底, 0.3% 以内视为噪声不拦, 避免边界抖动误拦.
+    entry_vwap_gate_enabled: true
+    entry_vwap_gate_tolerance: 0.003
   exit_rules:
     # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
     # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.
@@ -1187,6 +1199,16 @@ playbook:
     #   Playbook IC 为负), 按 confidence 放大仓位 = 给更差的信号加钱. 待 IC 校准为正再开.
     #   (见 OKR-2026-08 Guardrail 3. 秒改秒回滚.)
     confidence_sizing_enabled: false
+    # 2026-07-16: VWAP 方向一致性硬门 — LONG 要价在 VWAP 上侧, SHORT 要价在下侧.
+    #   代码在 pipeline.py _check_intraday_trigger, 用当日累计 VWAP (K线 cum(tp×vol)/cum(vol)).
+    #   tolerance=0.003 (0.3%): 价格偏离 VWAP 在 0.3% 内视为"贴合", 不拦 (模块噪声底).
+    #   VWAP 缺失 (盘初K线不足) → fail-open (不拦).
+    entry_vwap_gate_enabled: true
+    entry_vwap_gate_tolerance: 0.003
+    # 2026-07-16: 入场重锚 — 带内未触发但价格漂移在上限内, 用盘中价重锚触发.
+    #   下游 auto_execute 的 re-price 块以实时 bid/ask 重算 entry/SL/TP.
+    entry_reanchor_enabled: true
+    entry_reanchor_max_drift_pct: 4.0
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
@@ -1453,7 +1475,7 @@ universe_expansion:
   clue_earnings_events: true  # [ADR-018] clue brief 注入财报硬事件(复用 EarningsCalendar/AlphaVantage,1次日历调用); 回退设 false
   clue_insider_clusters: true # [ADR-018] clue brief 注入内部人集群(读 insider_daily_{date}.json,无网络); 回退设 false
   min_confidence: 0.70        # LLM 浮现标的的最低置信度 (低于此不注入)
-  max_targets_per_day: 5      # 每日最多注入的 target 数
+  max_targets_per_day: 30     # 2026-07-10: 5→30 — 全量交易 universe_scan 产生的所有标的 (充分验证)
   news_lookback_hours: 24     # clue brief 拉取近 N 小时新闻
   default_stop_pct: 3.0       # 初始止损% (代码出数, 现有退出策略后续托管)
   default_tp_pct: 6.0         # 初始止盈% (2:1 RR)

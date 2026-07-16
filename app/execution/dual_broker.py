@@ -374,14 +374,18 @@ class DualBrokerAdapter:
         """
         from futu import RET_OK
         import time
-        from datetime import datetime
+        from datetime import datetime, timezone, timedelta
 
         # ── 主路径: history_deal_list_query (真实成交记录) ──
+        # 2026-07-16 P0 修复: 用 ET 时区查询当日成交, 而非服务器 CST 时间.
+        #   CST 比 ET 快 12 小时, 用 CST 查询可能导致跨日查不到当日成交.
+        #   富途 API 按 ET 交易日返回, start/end 应是 ET 日期.
+        _et_tz = timezone(timedelta(hours=-4))
         for _attempt in range(3):
             try:
-                now = datetime.now()
-                start = now.strftime('%Y-%m-%d')
-                end = now.strftime('%Y-%m-%d')
+                now_et = datetime.now(_et_tz)
+                start = now_et.strftime('%Y-%m-%d')
+                end = now_et.strftime('%Y-%m-%d')
                 with lock:
                     ret, data = ctx.history_deal_list_query(
                         start=start, end=end, trd_env=trd_env,

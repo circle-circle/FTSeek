@@ -835,16 +835,27 @@ class PlaybookService:
         if not _fill or _fill <= 0:
             # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
             # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
+            # 2026-07-16 P2 修复: 用 bid/ask 替代 last price (BUY→ask, SHORT→bid),
+            #   更接近实际成交价. last price 可能是上一笔成交, 偏离当前 bid-ask.
             try:
                 from app.data.market_data_router import MarketDataRouter
                 _dr = MarketDataRouter()
                 _ctx = _dr.get_quote(symbol)
                 if _ctx and _ctx.get("price", 0) > 0:
-                    _fill = float(_ctx["price"])
+                    _cur = float(_ctx["price"])
+                    _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
+                    _ask = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
+                    # BUY 成交在 ask 侧, SHORT 成交在 bid 侧
+                    if mos_direction == "SHORT" and _bid > 0:
+                        _fill = _bid
+                    elif mos_direction != "SHORT" and _ask > 0:
+                        _fill = _ask
+                    else:
+                        _fill = _cur
                     _entry_price_source = "quote_fallback"
                     logger.warning(
-                        f"[playbook] {_mode_label} {symbol} 成交价=0, 用实时报价${_fill:.2f}兜底记账 "
-                        f"(订单 {_futu_id} 已确认成交) src=quote_fallback"
+                        f"[playbook] {_mode_label} {symbol} 成交价=0, 用bid/ask${_fill:.2f}兜底记账 "
+                        f"(订单 {_futu_id} 已确认成交) src=quote_fallback dir={mos_direction}"
                     )
             except Exception:
                 pass
@@ -863,6 +874,7 @@ class PlaybookService:
 
             # 2026-07-11: 入场市场上下文补全 (entry_vix/entry_session 此前 PLAYBOOK 全空,
             #   供 config_version×regime×session 三维分层复盘). fail-closed: 取不到落 0/"".
+            # 2026-07-16 P1 修复: market_regime 从 MarketRegimeGate 实时获取, 不依赖 instruction.
             try:
                 from app.utils.timezone import get_current_session as _get_sess
                 _entry_session = _get_sess() or ""
@@ -873,6 +885,15 @@ class PlaybookService:
                 _entry_vix = _MDR().get_vix_or_none() or 0.0
             except Exception:
                 _entry_vix = 0.0
+            # 2026-07-16: regime 从 MarketRegimeGate 实时判定, instruction 中无此字段.
+            _live_regime = inst.get("market_regime", "")
+            if not _live_regime:
+                try:
+                    from app.playbook.market_regime import MarketRegimeGate
+                    _rc = MarketRegimeGate().assess()
+                    _live_regime = str(_rc.regime.value if hasattr(_rc.regime, 'value') else _rc.regime)
+                except Exception:
+                    _live_regime = "UNKNOWN"
 
             # 2026-07-03 fix: 从 voting_predictions 表查投票数据, 写入 trade_records
             # 根因: save_trade 未传 voting_result/model_scores/consensus_level/final_strength
@@ -919,13 +940,16 @@ class PlaybookService:
                 "exit_reason": "",
                 "holding_hours": 0,
                 # 2026-07-11 量纲统一: signal_strength 0-100, signal_confidence 0-1 (对齐其他信号源)
+                # 2026-07-16 P2: signal_strength 不是独立质量分, 是 confidence 的镜像值.
+                #   下游分析(分层/归因/IC)不应当质量分使用 — 用 source_type 区分信号源质量:
+                #   PLAYBOOK_SIM(DA)=35/70, universe_expansion=50(capped), MAIN_PIPELINE=旧pipeline.
                 "signal_strength": int(inst.get("confidence", 0)) if inst.get("confidence") else 0,
                 "signal_confidence": float(inst.get("confidence", 0)) / 100.0,
                 "futu_order_id": _futu_id or _order_id,
                 "source_type": _source_type,
                 "entry_reason": f"playbook_{_mode_label}",
                 "owner_strategy": _owner,
-                "market_regime": inst.get("market_regime", ""),
+                "market_regime": _live_regime,
                 "entry_vix": _entry_vix,
                 "entry_session": _entry_session,
                 "mode": _mode_label,
@@ -933,11 +957,14 @@ class PlaybookService:
                 "signal_id": _trace_id,
                 "decision_id": matched_decision_id,
                 # 2026-07-09: 因子快照持久化 — 从conditions提取因子标记到f1-f5独立列
-                "f1_trend": 1.0 if any("ma" in c or "macd" in c or "trend" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
-                "f2_momentum": 1.0 if any("momentum" in c or "rsi" in c or "overbought" in c or "oversold" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                # 2026-07-16 P1 修复: 扩展关键字匹配 — DA 的 conditions 用 "insider_net_sell"/
+                #   "pe_above_industry"/"below_ma20"/"news_positive"/"earnings_beat_streak" 等,
+                #   原映射关键字不匹配 → f1-f5 全 0. 修复: 补充 DA conditions 的关键字.
+                "f1_trend": 1.0 if any("ma" in c or "macd" in c or "trend" in c or "above_ma" in c or "below_ma" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f2_momentum": 1.0 if any("momentum" in c or "rsi" in c or "overbought" in c or "oversold" in c or "breakout" in c or "earnings_beat" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
                 "f3_volume": 1.0 if any("volume" in c or "vol" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
-                "f4_orderflow": 0.0,  # orderflow不在playbook conditions中
-                "f5_lifecycle": 1.0 if any("lifecycle" in c or "breakout" in c or "support" in c or "resistance" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f4_orderflow": 1.0 if any("insider" in c or "msp" in c or "order_flow" in c or "net_sell" in c or "net_buy" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
+                "f5_lifecycle": 1.0 if any("lifecycle" in c or "breakout" in c or "support" in c or "resistance" in c or "pe_above" in c or "pe_below" in c or "news_positive" in c or "news_negative" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
                 "factor_detail": inst.get("conditions_json", ""),
                 "metadata_json": _json.dumps({
                     "playbook_instruction_id": instruction_id,
@@ -1048,6 +1075,22 @@ class PlaybookService:
                 )
             except Exception as _se:
                 logger.warning(f"[playbook] live STOP 兜底失败 {symbol}: {_se}")
+
+        # 2026-07-16: playbook 成交逐笔飞书推送 (复用 PushHub trade_entry)。
+        #   来源精准标注 — sim→playbook_sim / live→playbook_live。自带 try/except, 绝不影响下单。
+        try:
+            from app.push import get_push_hub, trade_entry as _pb_entry
+            _pb_strategy = "playbook_live" if _is_live else "playbook_sim"
+            get_push_hub().push(_pb_entry(
+                symbol=symbol,
+                direction=mos_direction,
+                qty=int(position_size) if position_size else 1,
+                price=float(_fill),
+                strategy=_pb_strategy,
+                trace_id=matched_decision_id or None,
+            ))
+        except Exception as _pb_push_e:
+            logger.debug(f"[playbook推送] {symbol} 成交推送失败 (不影响下单): {_pb_push_e}")
 
         return {
             "success": True,

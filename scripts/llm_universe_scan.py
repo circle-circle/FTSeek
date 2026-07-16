@@ -582,6 +582,15 @@ def cmd_inject(force_dry: bool = False) -> int:
         entry_low, entry_high = nums["entry_zone"][0], nums["entry_zone"][1]
         # 方向映射到 playbook 词汇 (以 DA 实际写入值为准: pipeline.py L736)
         pb_direction = "BUY" if s["direction"] == "LONG" else "SELL_SHORT"
+        # 2026-07-16 P1 修复: universe_expansion confidence 上限 50.
+        #   根因: LLM 直接输出 confidence=0.85-0.92, 高于 DA 2模型一致的 0.70.
+        #   但 universe_expansion 的分析深度 (1句thesis, 无conditions, 无invalidation)
+        #   远不如 DA (200字thesis + 3 conditions + invalidation).
+        #   高 confidence → auto_execute 排序优先 → 抢占 DA 信号的预算分配.
+        #   修复: 上限 50 (低于 DA 一致70, 高于 DA 分歧35), 反映"有方向但无深度分析".
+        _raw_conf = int(round(float(s["confidence"]) * 100))  # schema INTEGER 0-100
+        _UE_CONF_CAP = 50
+        _capped_conf = min(_raw_conf, _UE_CONF_CAP)
         instructions.append({
             "date": today,
             "symbol": f"US.{s['symbol']}",
@@ -591,7 +600,7 @@ def cmd_inject(force_dry: bool = False) -> int:
             "entry_high": entry_high,
             "stop_loss": nums["stop_loss"],
             "take_profit": nums["take_profit"],
-            "confidence": int(round(float(s["confidence"]) * 100)),  # schema INTEGER 0-100
+            "confidence": _capped_conf,
             "thesis": s.get("thesis", ""),
             "sector": s.get("sector", ""),
             "horizon": "short",
@@ -880,6 +889,74 @@ def cmd_eval_report(days: int = 14) -> int:
     return 0
 
 
+def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
+    """读今日最新一轮 scan → 钉钉推一条整体汇总 (镜像 da_bridge_dingtalk_push 模式)。
+
+    新鲜度守卫: 只推今日 ET 的 scan 记录; 无今日记录 → 跳过不推 (绝不推陈旧)。
+    失败安全: 钉钉异常吞掉, 不影响主链。entry_enabled 状态一并汇报 (record-only / 已注入)。
+    """
+    target = date or _today()
+    recs = [r for r in _read_jsonl(_SCAN_PATH)
+            if r.get("type") == "scan" and r.get("date") == target]
+    if not recs:
+        print(f"[push] {target} 无 scan 记录 (今日未扫描/非交易日), 跳过不推")
+        return 0
+    rec = recs[-1]  # 今日最后一轮
+    surfaced = rec.get("surfaced", []) or []
+    tradeable = [s for s in surfaced if s.get("direction") in ("LONG", "SHORT")]
+    entry_enabled = bool(_cfg("universe_expansion.entry_enabled", False))
+
+    n_long = sum(1 for s in tradeable if s.get("direction") == "LONG")
+    n_short = sum(1 for s in tradeable if s.get("direction") == "SHORT")
+    n_ext = sum(1 for s in tradeable if s.get("is_universe_external"))
+    n_skip = sum(1 for s in surfaced if s.get("direction") == "SKIP")
+    tier_cnt: Dict[str, int] = {}
+    for s in tradeable:
+        t = s.get("self_tier") or "-"
+        tier_cnt[t] = tier_cnt.get(t, 0) + 1
+
+    mode = "已注入DB→执行轨道" if entry_enabled else "record-only(未下单)"
+    lines = [
+        f"🌌 Universe选股扫描完成 ({target})",
+        f"模型={rec.get('model_used','?')} prompt={rec.get('prompt_version','?')} · {mode}",
+        f"可交易: {len(tradeable)}只 (多{n_long}/空{n_short}) · 池外{n_ext} · SKIP{n_skip}",
+    ]
+    if tier_cnt:
+        lines.append("自评tier: " + " ".join(f"{k}:{v}" for k, v in tier_cnt.items()))
+    lines.append("")
+    for s in sorted(tradeable, key=lambda x: x.get("confidence", 0) or 0, reverse=True):
+        sym = s.get("symbol", "")
+        d = s.get("direction", "")
+        conf = s.get("confidence", 0) or 0
+        wl = s.get("winner_loser", "")
+        ext = "🌍外 " if s.get("is_universe_external") else ""
+        tier = s.get("self_tier", "")
+        tier_str = f" [{tier}]" if tier else ""
+        px = s.get("scan_price")
+        px_str = f" 参考${px:.2f}" if px else ""
+        chain = (s.get("causal_chain", "") or "")[:60]
+        thesis = (s.get("thesis", "") or "")[:50]
+        lines.append(f"{d} {sym} conf={conf:.2f} {ext}{wl}{tier_str}{px_str}")
+        if chain:
+            lines.append(f"  链: {chain}")
+        if thesis:
+            lines.append(f"  论: {thesis}")
+    lines.append("")
+    lines.append("数值(entry/SL/TP)由 inject 代码计算; 实际执行价=re-price 实时bid/ask")
+    msg = "\n".join(lines)
+    print(msg)
+    if dry:
+        print("\n[dry-run] 未推送")
+        return 0
+    try:
+        from app.notifier.dingtalk import DingTalkNotifier
+        DingTalkNotifier().send_text(msg)
+        print("\n[ok] 钉钉已推送")
+    except Exception as e:
+        print(f"\n[warn] 钉钉推送失败(不影响链路): {e}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="LLM 事件推理驱动的选股宇宙扩张")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -894,6 +971,9 @@ def main() -> int:
     p_eval.add_argument("--clue", default="", help="人工线索 (复现强事件场景做对比)")
     p_evr = sub.add_parser("eval-report", help="近端评估: 聚合浮现质量指标 (克制比/引证率/稳定性)")
     p_evr.add_argument("--days", type=int, default=14)
+    p_push = sub.add_parser("push", help="读今日最新一轮 scan → 钉钉整体汇总 (新鲜度守卫)")
+    p_push.add_argument("--dry", action="store_true", help="只打印不推送")
+    p_push.add_argument("--date", help="scan 日期 YYYY-MM-DD (默认今日 ET)")
     args = ap.parse_args()
 
     try:
@@ -909,6 +989,8 @@ def main() -> int:
             return cmd_scan_eval(manual_clue=args.clue)
         if args.cmd == "eval-report":
             return cmd_eval_report(days=args.days)
+        if args.cmd == "push":
+            return cmd_push(dry=args.dry, date=args.date)
     except Exception as e:
         import traceback
         print(f"⚠️ 执行异常 ({args.cmd}): {e}")
@@ -918,4 +1000,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    _ret = main()
+    # 2026-07-16: 强制干净退出。futu OpenQuoteContext 的非 daemon 看门狗线程会吊住
+    # 进程 (曾观测 scan 写完记录后挂起 10min+), 导致 cron `scan && inject && push`
+    # 卡在第一段不推进。所有实质工作 (jsonl 落盘 / DB 提交 / 钉钉发送) 均在 main()
+    # return 前同步完成, 残留仅为 futu 线程 → flush 后直接终止, 不等待残留线程。
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(_ret if isinstance(_ret, int) else 0)

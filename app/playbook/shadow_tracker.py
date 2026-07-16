@@ -142,8 +142,13 @@ class ShadowTracker:
         # 1. 检查是否触发 (突破MA20 + 成交量确认)
         # 2026-06-25: 从 ±5% 价格区间改为突破确认, 与 _check_intraday_trigger 对齐
         # shadow_tracker 盘后跑, 用 day_high/day_low 判断当日是否突破 MA20
+        # 2026-07-16 P0 修复: 不覆盖 auto_execute 已设置的 triggered=1.
+        #   根因: shadow_tracker 用日K线 breakout 判定触发, auto_execute 用盘中穿越判定.
+        #   两者标准不同 → shadow_tracker 盘后覆盖 triggered=0 → 退出参数分析失真.
+        #   修复: 只在 inst.triggered 未被 auto_execute 设置(=0 或 NULL) 时回填 shadow 判定.
+        _already_triggered = bool(inst.get("triggered"))
         entry_price = inst.get("entry_price")
-        if entry_price and entry_price > 0:
+        if entry_price and entry_price > 0 and not _already_triggered:
             # 2026-07-10: low/high/close 可能显式为 None (盘前/数据不全),
             #   .get(key, 0) 仅在键缺失时返回默认, 值为 None 时仍返 None →
             #   后续 day_close > ma20 触发 'NoneType > int'. 与 ma20/position_size 同样 or 0 兜底.

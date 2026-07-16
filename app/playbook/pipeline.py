@@ -1174,7 +1174,7 @@ def _apply_portfolio_guardrails(
     *,
     max_sector_pct: float = 0.40,
     max_direction_skew: float = 0.80,  # 2026-06-30: 0.65→0.80, 允许cautious regime偏SHORT
-    min_rr: float = 0.8,  # 2026-06-30: 1.5→0.8, 与config rr_ratio=1.0对齐
+    min_rr: float = 1.0,  # 2026-07-16: 0.8→1.0, R:R≥1 保证正期望 (还需胜率>50%)
 ) -> List[Any]:
     """组合级风险 guardrail (2026-06-25).
 
@@ -2522,6 +2522,68 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         except Exception:
             pass
 
+    # 2026-07-15: 只读影子埋点 (入场时机门验证 v3) — 记录门的原始微结构特征
+    #   + 司机(突破触发)的真实决策. 离线切片验证"过滤价值": 真实入场单中,
+    #   同时过新门(VWAP/量能/大盘)的那批 PnL 是否更好. 全源通用.
+    # 零行为改动: 仅 append JSONL, best-effort, 不影响触发判定与返回值 (镜像 _emit_trigger_miss).
+    def _emit_entry_shadow(triggered_val, breakout_val=None, gate_enabled=False,
+                           gate_block=None, gate_reason=None, vwap_dev=None,
+                           vwap_populated=None):
+        try:
+            import json as _json
+            from datetime import datetime as _dt
+            from pathlib import Path as _Path
+            _c = ctx if isinstance(ctx, dict) else {}
+            _keys = [
+                "vwap", "ticker_vwap_deviation", "slope_5m", "rsi", "atr",
+                "volume", "volume_ratio", "opening_high", "opening_low",
+                "opening_range_ready", "order_flow_imbalance", "ob_spread_bps",
+                "ob_depth_imbalance", "ticker_buy_sell_ratio",
+                "spy_price", "spy_ma20", "spy_ma50", "spy_ma200",
+                "change_percent", "trend",
+            ]
+            _feat = {k: _c.get(k) for k in _keys}
+            _did = str(inst.get("decision_id") or "")
+            _src = _did.split(":")[0] if ":" in _did else ""
+            if not _src:
+                try:
+                    _raw = _json.loads(inst.get("raw_instruction_json") or "{}")
+                    _src = str(_raw.get("source") or "")
+                except Exception:
+                    _src = ""
+            try:
+                _et = _dt.now(_now_et())
+                _hm = _et.hour * 100 + _et.minute
+                _sess = "open" if _hm < 945 else ("late" if _hm >= 1530 else "mid")
+                _ts = _et.isoformat(timespec="seconds")
+            except Exception:
+                _sess = "unknown"
+                _ts = _dt.now().isoformat(timespec="seconds")
+            _row = {
+                "ts": _ts,
+                "session": _sess,
+                "inst_id": inst.get("id"),
+                "decision_id": _did,
+                "source": _src,
+                "symbol": symbol,
+                "direction": "SHORT" if is_short else "BUY",
+                "entry_price": round(float(entry_price or 0), 4),
+                "current_price": round(float(current_price or 0), 4),
+                "live_triggered": bool(triggered_val),
+                "breakout_triggered": (bool(breakout_val) if breakout_val is not None else None),
+                "gate_enabled": bool(gate_enabled),
+                "gate_block": (bool(gate_block) if gate_block is not None else None),
+                "gate_reason": gate_reason,
+                "vwap_dev": vwap_dev,
+                "vwap_populated": bool(vwap_populated),
+                "features": _feat,
+            }
+            _tp = _Path(__file__).resolve().parents[2] / "data" / "entry_timing_shadow.jsonl"
+            with open(_tp, "a", encoding="utf-8") as _f:
+                _f.write(_json.dumps(_row, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     data_router = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
     if not data_router:
         return False
@@ -2531,6 +2593,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     day_high = None
     day_low = None
     vol_ratio = None
+    ctx = None  # 2026-07-15: 预置, 供 _emit_entry_shadow 安全引用 (取数异常时保持 None)
     try:
         ctx = data_router.get_full_market_context(symbol)
         if ctx and isinstance(ctx, dict):
@@ -2660,6 +2723,53 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 _emit_trigger_miss("sl_crossed", current_price)
                 return False
 
+    # ── 2026-07-15: VWAP 方向一致性硬门 (Tier1, 免标定) ──
+    #   规则: LONG 要价在当日 VWAP 上侧(dev>=tol), SHORT 要价在下侧(dev<=-tol), 逆侧拦.
+    #   2026-07-16 修正: 改用当日累计 VWAP ctx["vwap"] (K线 cum(tp×vol)/cum(vol), K_1M 可靠填充);
+    #     原 ticker_vwap_deviation 仅 ~250 笔滚动VWAP — 语义错(非当日锚, 突破瞬间近乎恒真),
+    #     且依赖 futu push tickers>=10 常缺失. dev=(price-vwap)/vwap; VWAP缺失(盘初K线不足)→fail-open.
+    #   config: entry_vwap_gate_enabled(开关) / entry_vwap_gate_tolerance(0.003=0.3%, 模块噪声底).
+    breakout_triggered = triggered
+    _vwap_dev = None
+    _vwap_populated = False
+    _vwap_val = None
+    try:
+        if isinstance(ctx, dict) and current_price and current_price > 0:
+            _vw = ctx.get("vwap")
+            if _vw is not None and float(_vw) > 0:
+                _vwap_val = float(_vw)
+                _vwap_dev = (float(current_price) - _vwap_val) / _vwap_val
+                _vwap_populated = True
+    except Exception:
+        _vwap_dev, _vwap_populated, _vwap_val = None, False, None
+
+    try:
+        _gate_tol = float(pb_cfg.get("entry_vwap_gate_tolerance", 0.0) or 0.0)
+    except Exception:
+        _gate_tol = 0.0
+    _gate_block = False
+    if not _vwap_populated:
+        _gate_reason = "vwap_missing"  # fail-open: 无 VWAP 数据不拦
+    else:
+        if is_short:
+            _gate_block = _vwap_dev > _gate_tol   # 价在 VWAP 上侧 → 逆 SHORT
+        else:
+            _gate_block = _vwap_dev < -_gate_tol  # 价在 VWAP 下侧 → 逆 LONG
+        _gate_reason = "wrong_side" if _gate_block else "aligned"
+
+    try:
+        _gate_enabled = bool(pb_cfg.get("entry_vwap_gate_enabled", False))
+    except Exception:
+        _gate_enabled = False
+
+    if _gate_enabled and triggered and _gate_block:
+        triggered = False
+        logger.info(
+            f"[playbook] VWAP门拦截: {symbol} price=${current_price:.2f} vwap=${_vwap_val:.2f} "
+            f"dev={_vwap_dev:+.4f} dir={'SHORT' if is_short else 'BUY'} (当日VWAP逆侧)"
+        )
+        _emit_trigger_miss("vwap_gate_block", current_price)
+
     if triggered:
         logger.info(
             f"[playbook] 方向穿越触发: {symbol} price=${current_price:.2f} "
@@ -2677,6 +2787,15 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             _miss_reason = "runaway_up" if current_price > entry_price else "knife_below"
         _emit_trigger_miss(_miss_reason, current_price)
 
+    _emit_entry_shadow(
+        triggered,
+        breakout_val=breakout_triggered,
+        gate_enabled=_gate_enabled,
+        gate_block=_gate_block,
+        gate_reason=_gate_reason,
+        vwap_dev=_vwap_dev,
+        vwap_populated=_vwap_populated,
+    )
     return triggered
 
 
@@ -2775,14 +2894,43 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         _row = conn.execute("SELECT entry_time FROM trade_records WHERE id=?", (trade_id,)).fetchone()
         if _row and _row[0]:
             _entry_dt = datetime.fromisoformat(_row[0])
-            _now_dt = datetime.now(_now_et())
+            _now_et = _now_et()
+            _now_dt = datetime.now(_now_et)
+            # 2026-07-16 P1 修复: entry_time 可能是 naive (CST 无 tz), now_dt 是 tz-aware (ET).
+            #   两者相减抛 TypeError → holding_hours 回退为调用方传入值 (0.0).
+            #   修复: naive entry_dt 加上 ET tz 再相减, 或用 wall-clock fallback.
+            if _entry_dt.tzinfo is None:
+                _entry_dt = _entry_dt.replace(tzinfo=_now_et)
             from app.risk.position_exit_monitor import get_market_hours_us
             _market_hh = get_market_hours_us(_entry_dt, _now_dt)
             if _market_hh > 0:
                 holding_hours = round(_market_hh, 1)
+            else:
+                # fallback: wall-clock 差值 (比 0 好)
+                holding_hours = round((_now_dt - _entry_dt).total_seconds() / 3600, 1)
     except Exception as _hh_err:
         logger.debug(f"[_close_trade_record] holding_hours 重算失败 trade_id={trade_id}: {_hh_err}")
         # 降级: 用调用方传入的 holding_hours (比0好)
+
+    # 2026-07-16 P1 修复: pnl_pct 兜底反算.
+    #   旧逻辑: pnl_pct 由调用方传入, 但某些路径 (旧管线写入/早期代码) 传 0 →
+    #   下游所有按 pnl_pct 的分析 (影子退出/归因/回测) 全部出错.
+    #   修复: pnl_pct=0 且 pnl≠0 时, 用 exit_price/entry_price 反算.
+    if abs(pnl_pct) < 1e-10 and abs(pnl) > 1e-6 and exit_price and entry_price > 0:
+        try:
+            _ep_row = conn.execute(
+                "SELECT direction, entry_price FROM trade_records WHERE id=?", (trade_id,)
+            ).fetchone()
+            if _ep_row:
+                _dir = str(_ep_row[0] or "LONG").upper()
+                _ent = float(_ep_row[1] or 0)
+                if _ent > 0:
+                    if _dir == "SHORT":
+                        pnl_pct = (_ent - exit_price) / _ent
+                    else:
+                        pnl_pct = (exit_price - _ent) / _ent
+        except Exception:
+            pass
 
     # 2026-07-11: exit_telemetry — 平仓时集中组装退出画像写回 metadata_json,
     #   供 config_version×regime×session 分层复盘 (命中规则/峰谷价位/MFE-MAE/保本触发).
@@ -2831,9 +2979,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     if inst_id:
         _is_ghost = "ORPHAN" in exit_reason.upper() or "PHANTOM" in exit_reason.upper() or "GHOST" in exit_reason.upper()
         _outcome = "void" if _is_ghost else ("win" if pnl > 0 else "loss")
+        # 2026-07-16 P0 修复: 幂等条件加入 'void', 防止已标 void 的幽灵仓被重复处理.
+        #   旧逻辑 WHERE outcome NOT IN ('win','loss') — void 不在排除列表 →
+        #   幽灵仓可被重复平仓写入. 修复: 排除 'void' 终态.
         conn.execute(
             "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
-            "holding_period_hours=? WHERE id=? AND outcome NOT IN ('win','loss')",
+            "holding_period_hours=? WHERE id=? AND outcome NOT IN ('win','loss','void')",
             (_outcome, exit_price, exit_reason, round(pnl, 2),
              round(pnl_pct, 4), round(holding_hours, 1), inst_id),
         )
@@ -2841,9 +2992,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     # 2026-07-14: 软删除→直接DELETE, 软删除行无消费者(所有查询都过滤sync_status),
     #             且auto_position_reconcile只在09:30 ET运行, 非交易日/非开盘时残留→EOD报告误读
     if symbol:
+        # 2026-07-16 P1 修复: sync_status NULL 行也会被删除 (旧 NOT IN 不匹配 NULL).
+        #   正常流程 sync_status 会被设置, 但重启恢复或异常写入可能 NULL.
         conn.execute(
             "DELETE FROM open_positions WHERE symbol=? "
-            "AND sync_status NOT IN ('closed_by_daemon','closed_by_sync','closed_emergency','stale_not_in_broker')",
+            "AND (sync_status IS NULL OR sync_status NOT IN "
+            "('closed_by_daemon','closed_by_sync','closed_emergency','stale_not_in_broker'))",
             (symbol,)
         )
     conn.commit()
@@ -2892,6 +3046,30 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 conn.commit()
         except Exception as _attr_e:
             logger.warning(f"[归因] {symbol} 自动归因失败 (不影响平仓): {_attr_e}", exc_info=True)
+
+    # 2026-07-16: playbook 平仓逐笔飞书推送 (复用 PushHub trade_exit)。
+    #   来源精准标注 — 按 trade_records.source_type 映射 strategy (PLAYBOOK_SIM→playbook_sim,
+    #   PLAYBOOK_LIVE→playbook_live); shadow 仓不推 (纯影子追踪, 非真实成交)。
+    #   自带 try/except, 绝不影响平仓。dedup 用 trade_id 保证每笔平仓唯一推送。
+    try:
+        _pb_src_row = conn.execute(
+            "SELECT direction, source_type FROM trade_records WHERE id=?", (trade_id,)
+        ).fetchone()
+        _pb_src_type = ((_pb_src_row[1] if _pb_src_row else "") or "").upper()
+        _pb_strategy_map = {"PLAYBOOK_SIM": "playbook_sim", "PLAYBOOK_LIVE": "playbook_live"}
+        _pb_strategy = _pb_strategy_map.get(_pb_src_type)
+        if symbol and _pb_strategy:
+            from app.push import get_push_hub, trade_exit as _pb_exit
+            get_push_hub().push(_pb_exit(
+                symbol=symbol,
+                direction=(_pb_src_row[0] if _pb_src_row else "LONG") or "LONG",
+                pnl=round(float(pnl or 0), 2),
+                exit_reason=exit_reason,
+                strategy=_pb_strategy,
+                trace_id=str(trade_id),
+            ))
+    except Exception as _pb_push_e:
+        logger.debug(f"[playbook推送] {symbol} 平仓推送失败 (不影响平仓): {_pb_push_e}")
 
 
 def _get_factor_exit_config(conditions: list, factor_rules: dict, direction: str = None) -> dict:
@@ -2989,6 +3167,30 @@ def _compute_dynamic_effective_sl(
                                  entry_price * (1 - locked_pct / 100))
 
     return effective_sl
+
+
+def is_playbook_open_position(symbol: str) -> bool:
+    """统一判定: 该 symbol 是否有未平仓的 Playbook 仓位 (由 monitor_playbook_sim_exits 自管).
+
+    所有旧管线入口 (position_sync, position_monitor, scheduler_core 等) 必须调用此函数
+    跳过 Playbook 管理的仓位, 防止双重管理/重复平仓.
+
+    判定标准: trade_records 中存在 source_type='PLAYBOOK_SIM' 且 exit_time 为空的记录.
+    不使用时间窗口 (旧代码用 yesterday/2-days-ago 导致跨日/跨窗口漏判).
+    """
+    try:
+        from app.core.paths import get_trade_records_db
+        import sqlite3 as _pb_sql
+        _c = _pb_sql.connect(str(get_trade_records_db()), timeout=3)
+        _row = _c.execute(
+            "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) LIMIT 1",
+            (symbol,)
+        ).fetchone()
+        _c.close()
+        return _row is not None
+    except Exception:
+        return False
 
 
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
@@ -3092,7 +3294,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     # 规则0: 开盘冷却期 — 前15分钟SL放宽到4% (不改SL参数本身, 只加时间窗口保护)
     # 原因: 3/5笔在0-6min秒杀, MFE=0%, 价格从未浮盈. 开盘噪声大, 2%SL被瞬间打掉.
     # 诊断: 修后MFE>0%=时机问题, MFE仍=0%=信号问题
-    _cooldown_pct = 4.0
+    _cooldown_pct = float(pb_cfg.get("cooldown_sl_pct", 4.0))  # 2026-07-16: 从 config 读取, 默认 4%
     _cooldown_sl = entry_price * (1 - _cooldown_pct / 100.0) if direction == "LONG" else entry_price * (1 + _cooldown_pct / 100.0)
     _in_cooldown = minutes_from_open is not None and minutes_from_open < 15
     if _in_cooldown:
@@ -3106,7 +3308,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   便于 exit_shadow / 报表按真实语义归因. 保留 SL_ 前缀以兼容 LIKE 'SL%' 过滤.
     if _active_sl > 0 and ((direction == "LONG" and current_price <= _active_sl) or
                            (direction == "SHORT" and current_price >= _active_sl)):
-        exit_price = _active_sl
+        # 2026-07-16 P0 修复: exit_price 用 current_price 而非 _active_sl.
+        #   _active_sl 是止损线价格, 实际市价单成交价可能远低于 SL (滑点/gap).
+        #   旧逻辑 exit_price = _active_sl 系统性高估退出价 → PnL 偏高.
+        #   修复: 用 current_price (本轮报价) 作为退出价, 与 broker 实际成交更接近.
+        #   最终退出价在调用方 (monitor_playbook_sim_exits) 用 broker filled_price 覆盖.
+        exit_price = current_price
         if not breakeven_triggered:
             exit_reason = "SL_INITIAL"        # 浮盈未达 breakeven → 初始固定止损被打掉
         elif (direction == "LONG" and effective_sl > entry_price) or \
@@ -3462,58 +3669,36 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 minutes_from_open, r["entry_time"],
             )
 
+            # 2026-07-16 P1 修复: MFE/MAE/peak/trough 在每一轮都采集 (含退出轮).
+            #   旧逻辑: 这段代码在 `if not exit_reason:` 内, 退出轮跳过 →
+            #   peak_price/trough_price 从未在退出轮写回 → _close_trade_record 读到旧值 →
+            #   mfe_pct=0/mae_pct=0 (393/397 笔为0, 含121/122盈利单).
+            #   修复: 移到 exit_reason 判断之前, 退出轮也更新 peak/trough/mfe/mae.
+            if direction == "LONG":
+                _cur_mfe = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                _cur_mae = (entry_price - current_price) / entry_price * 100 if entry_price > 0 else 0
+            else:
+                _cur_mfe = (entry_price - current_price) / entry_price * 100 if entry_price > 0 else 0
+                _cur_mae = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+            _cur_mfe = max(_cur_mfe, 0)
+            _cur_mae = max(_cur_mae, 0)
+            _MFE_MAE_SANE_MAX = 50.0
+            if 0 < _cur_mfe <= _MFE_MAE_SANE_MAX and _cur_mfe > float(meta.get("mfe_pct", 0) or 0):
+                meta["mfe_pct"] = round(_cur_mfe, 4)
+            if 0 < _cur_mae <= _MFE_MAE_SANE_MAX and _cur_mae > float(meta.get("mae_pct", 0) or 0):
+                meta["mae_pct"] = round(_cur_mae, 4)
+
+            _trough_old = float(meta.get("trough_price", 0) or 0)
+            _trough = _trough_old if _trough_old > 0 else entry_price
+            if direction == "LONG":
+                _trough = min(_trough, current_price)
+            else:
+                _trough = max(_trough, current_price)
+            _trough = round(_trough, 4)
+
+            # 退出参数影子 (record-only) — 仅在非退出轮评估 (退出轮无意义).
+            _exit_shadow_new = False
             if not exit_reason:
-                # 2026-07-09: MFE/MAE 采集 — 每轮检查时更新最大有利/不利偏移
-                if direction == "LONG":
-                    _cur_mfe = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
-                    _cur_mae = (entry_price - current_price) / entry_price * 100 if entry_price > 0 else 0
-                else:
-                    _cur_mfe = (entry_price - current_price) / entry_price * 100 if entry_price > 0 else 0
-                    _cur_mae = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
-                _cur_mfe = max(_cur_mfe, 0)
-                _cur_mae = max(_cur_mae, 0)
-                # 2026-07-11: 量纲夹取 — 日内单笔 MFE/MAE >50% 基本是脏价位 (如 current/entry
-                #   异常), 视为坏采样点跳过, 不污染 metadata。与 _finalize 反算处阈值一致。
-                _MFE_MAE_SANE_MAX = 50.0
-                if 0 < _cur_mfe <= _MFE_MAE_SANE_MAX and _cur_mfe > float(meta.get("mfe_pct", 0) or 0):
-                    meta["mfe_pct"] = round(_cur_mfe, 4)
-                if 0 < _cur_mae <= _MFE_MAE_SANE_MAX and _cur_mae > float(meta.get("mae_pct", 0) or 0):
-                    meta["mae_pct"] = round(_cur_mae, 4)
-
-                # 2026-07-11: trough_price 谷值追踪 — 与 peak_price 对称, 记录最不利绝对价位.
-                #   mae_pct% 已采集, exit_telemetry 另需价格水位; 零改 _check_playbook_exit_rules 签名.
-                _trough_old = float(meta.get("trough_price", 0) or 0)
-                _trough = _trough_old if _trough_old > 0 else entry_price
-                if direction == "LONG":
-                    _trough = min(_trough, current_price)
-                else:  # SHORT: 价格越高越不利
-                    _trough = max(_trough, current_price)
-                _trough = round(_trough, 4)
-
-                # 2026-07-11 Stage2a: invalidation 影子评估 (不实平, 仅记录首次命中).
-                #   记录"若按 DA 的 invalidation 离场会在何时/何价触发", 与实际退出对比累积
-                #   样本; 老单 meta 无 invalidation 键→自然跳过 (骨架就位, go-forward 新单生效)。
-                _inval_shadow_new = False
-                if not meta.get("invalidation_shadow") and (meta.get("invalidation") or ""):
-                    try:
-                        from app.playbook.invalidation_shadow import evaluate_invalidation_shadow
-                        _sh = evaluate_invalidation_shadow(
-                            invalidation=meta.get("invalidation"), direction=direction,
-                            entry_price=entry_price, current_price=current_price,
-                        )
-                        if _sh.get("would_trigger"):
-                            meta["invalidation_shadow"] = {
-                                "reason": _sh["reason"],
-                                "held_minutes_at_hit": held_minutes,
-                                "price_at_hit": current_price,
-                            }
-                            _inval_shadow_new = True
-                    except Exception:
-                        pass
-
-                # 2026-07-13: 退出参数影子 (record-only) — 回放更紧 breakeven/drawdown 变体首次触发,
-                #   供 close 时对比 capture。纯记录, 不改任何实盘退出。仅能评估比现行更紧的变体。
-                _exit_shadow_new = False
                 try:
                     from app.playbook.exit_shadow import record_exit_shadow_poll
                     _peak_prof = 0.0
@@ -3528,19 +3713,39 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 except Exception:
                     pass
 
-                # peak_price metadata 写回 (即使不退出也要跟踪, 与 shadow 对齐)
-                if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new:
-                    # 清理临时注入字段, 不持久化到 DB
-                    for _k in ("_log_tag", "_symbol", "_skip_allowed"):
-                        meta.pop(_k, None)
-                    meta["peak_price"] = peak_price
-                    meta["trough_price"] = _trough
-                    meta["breakeven_triggered"] = _be
-                    conn.execute(
-                        "UPDATE trade_records SET metadata_json = ? WHERE id = ?",
-                        (_json.dumps(meta), r["id"]),
+            # invalidation 影子 — 仅在非退出轮评估.
+            _inval_shadow_new = False
+            if not exit_reason and not meta.get("invalidation_shadow") and (meta.get("invalidation") or ""):
+                try:
+                    from app.playbook.invalidation_shadow import evaluate_invalidation_shadow
+                    _sh = evaluate_invalidation_shadow(
+                        invalidation=meta.get("invalidation"), direction=direction,
+                        entry_price=entry_price, current_price=current_price,
                     )
-                    conn.commit()
+                    if _sh.get("would_trigger"):
+                        meta["invalidation_shadow"] = {
+                            "reason": _sh["reason"],
+                            "held_minutes_at_hit": held_minutes,
+                            "price_at_hit": current_price,
+                        }
+                        _inval_shadow_new = True
+                except Exception:
+                    pass
+
+            # peak/trough/mfe/mae metadata 写回 (每一轮, 含退出轮 — 这是修复的核心)
+            if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new:
+                for _k in ("_log_tag", "_symbol", "_skip_allowed"):
+                    meta.pop(_k, None)
+                meta["peak_price"] = peak_price
+                meta["trough_price"] = _trough
+                meta["breakeven_triggered"] = _be
+                conn.execute(
+                    "UPDATE trade_records SET metadata_json = ? WHERE id = ?",
+                    (_json.dumps(meta), r["id"]),
+                )
+                conn.commit()
+
+            if not exit_reason:
                 continue
 
             # 真实平仓 (broker) — target_env 按 source_type (PLAYBOOK_LIVE→real, 否则 sim)
