@@ -1003,7 +1003,30 @@ class USPositionSync:
 
         self._last_sync_time = datetime.now()
         _db_count = self.position_store.count() if self.position_store else len(futu_positions)
-        logger.info("[US Sync] Done | Futu: %d | DB: %d", len(futu_positions), _db_count)
+        # playbook 自管仓按设计不纳入 PositionStore (line ~1099 防旧管线劫持),
+        # 故 position_store.count() 只含主线内存仓。单独统计 playbook 开仓数,
+        # 避免 "Futu:N | DB:M" 因 playbook 仓存在而恒显不一致 (误报噪音)。
+        _pb_count = 0
+        try:
+            _pb_conn = safe_sqlite_connect(_get_db_path(), timeout=5)
+            _pb_row = _pb_conn.execute(
+                "SELECT COUNT(*) FROM trade_records "
+                "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+            ).fetchone()
+            _pb_count = int(_pb_row[0]) if _pb_row else 0
+            _pb_conn.close()
+        except Exception:
+            _pb_count = -1  # 取数失败标记, 不阻断
+        _futu_n = len(futu_positions)
+        if _pb_count >= 0:
+            _consistent = "✓" if _futu_n == _db_count + _pb_count else "⚠差异"
+            logger.info(
+                "[US Sync] Done | Futu: %d | 主线DB: %d | playbook自管: %d | 一致性: %s",
+                _futu_n, _db_count, _pb_count, _consistent,
+            )
+        else:
+            logger.info("[US Sync] Done | Futu: %d | 主线DB: %d | playbook自管: n/a", _futu_n, _db_count)
 
         # P2 新增 (2026-04-29): 一致性校验 + 资本安全同步
         self._verify_and_sync_capital(futu_positions)
