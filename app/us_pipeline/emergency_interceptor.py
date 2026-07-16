@@ -33,6 +33,7 @@ from app.us_pipeline.battle_plan_manager import USBattlePlanManager
 from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
 from app.notifier.dingtalk import DingTalkNotifier
 from app.llm.unified_service import UnifiedLLMService
+from app.llm.prompts.emergency import EMERGENCY_SYSTEM_PROMPT, EMERGENCY_DESTRUCTIVE_PROMPT
 
 logger = logging.getLogger("ftseek.us_pipeline.emergency_interceptor")
 

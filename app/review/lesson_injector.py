@@ -430,6 +430,17 @@ class LessonInjector:
 #  公共接口
 # ============================================================================
 
+_lesson_injector_singleton: Optional[LessonInjector] = None
+
+
+def get_lesson_injector() -> LessonInjector:
+    """返回进程级 LessonInjector 单例 (懒加载)。"""
+    global _lesson_injector_singleton
+    if _lesson_injector_singleton is None:
+        _lesson_injector_singleton = LessonInjector()
+    return _lesson_injector_singleton
+
+
 def get_next_day_hints() -> Dict:
     """获取次日交易提示 — P0-5 修复: 不再依赖不存在的 ExperienceAccumulator"""
     injector = get_lesson_injector()

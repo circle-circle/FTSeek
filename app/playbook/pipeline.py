@@ -2960,7 +2960,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     #   旧逻辑: pnl_pct 由调用方传入, 但某些路径 (旧管线写入/早期代码) 传 0 →
     #   下游所有按 pnl_pct 的分析 (影子退出/归因/回测) 全部出错.
     #   修复: pnl_pct=0 且 pnl≠0 时, 用 exit_price/entry_price 反算.
-    if abs(pnl_pct) < 1e-10 and abs(pnl) > 1e-6 and exit_price and entry_price > 0:
+    if abs(pnl_pct) < 1e-10 and abs(pnl) > 1e-6 and exit_price:
         try:
             _ep_row = conn.execute(
                 "SELECT direction, entry_price FROM trade_records WHERE id=?", (trade_id,)

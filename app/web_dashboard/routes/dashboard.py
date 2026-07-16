@@ -331,6 +331,7 @@ def register(app, templates, dashboard):
         bear_cases = ""
         try:
             import json as _json
+            from pathlib import Path
             bp_path = Path(__file__).parent.parent.parent.parent / "data" / "daily_battle_plan_us.json"
             if bp_path.exists():
                 with open(bp_path) as f:

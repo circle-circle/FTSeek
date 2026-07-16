@@ -801,6 +801,7 @@ class TradingScheduler:
             import sqlite3
             from app.core.db_utils import get_main_db
             from datetime import timedelta
+            from app.utils.timezone import now_et
             db_path = get_main_db()
             if not db_path.exists():
                 return

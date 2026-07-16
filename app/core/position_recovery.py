@@ -7,6 +7,7 @@ FTSeek-US 持仓恢复模块 (P2-1 拆分自 scheduler_tasks.py)
 - 一致性校验 (DB vs Broker)
 """
 import logging
+import json
 from datetime import datetime
 from typing import Dict, Any
 

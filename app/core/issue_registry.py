@@ -14,6 +14,7 @@ import threading
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
+from app.core.paths import get_data_dir
 
 logger = logging.getLogger("ftseek_us.issue_registry")
 

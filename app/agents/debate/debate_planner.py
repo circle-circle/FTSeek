@@ -72,9 +72,9 @@ class DebatePlanner:
             # 回退到硬编码默认值
             logger.warning(f"[DebatePlanner] 加载辩论配置失败，使用默认值: {e}")
             self.enabled = True
-            self.max_rounds = max_rounds
-            self.divergence_threshold = divergence_threshold
-            self.max_total_timeout = max_total_timeout
+            self.max_rounds = 2
+            self.divergence_threshold = 0.4
+            self.max_total_timeout = 600
             self.hermes_model = os.getenv("HERMES_DEBATE_MODEL", "qwen-max")
             self.claude_cli_model = "deepseek-v4-pro"
             self.claude_api_models = ["deepseek-v4-pro", "qwen-max", "minimax-m2.5"]

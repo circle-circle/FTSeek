@@ -50,6 +50,7 @@ class ImprovementProposal:
 # ─────────────────────────────────────────────────────────────
 
 from app.llm.prompts.weekly import WEEKLY_PROPOSER_SYSTEM_PROMPT, WEEKLY_PROPOSER_USER_PROMPT
+from app.core.paths import get_exit_policy_path
 
 
 

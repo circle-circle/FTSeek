@@ -2675,7 +2675,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                 from app.utils.critical_alerts import send_critical
                 send_critical(
                     f"⚠️ 持仓 DB 持久化失败 (订单已成交但本地不知道)\n"
-                    f"Symbol: {symbol} {direction}\n"
+                    f"Symbol: {symbol} LONG\n"
                     f"Qty: {quantity} Price: ${price:.2f}\n"
                     f"Error: {e}\n"
                     f"broker_reconcile 将在 5min 内尝试修复",
@@ -3453,7 +3453,7 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
 
     # ── H3 (2026-06-03): 退出屏障 — 线程安全检查 ──
     try:
-        from app.pipeline.position_monitor import _check_exit_barrier
+        from app.pipeline.position_monitor import _check_exit_barrier, _EXIT_BARRIER_SECONDS
         if _check_exit_barrier(symbol):
             logger.warning(
                 f"🚫 [退出屏障] {symbol} {_EXIT_BARRIER_SECONDS}s 内刚平仓，拒绝入场 "

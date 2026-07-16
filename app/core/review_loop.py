@@ -26,6 +26,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass, field
+from app.core.paths import get_data_dir
 
 logger = logging.getLogger("ftseek_us.review_loop")
 
