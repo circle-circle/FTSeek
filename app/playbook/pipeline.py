@@ -3338,7 +3338,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     # 规则0: 开盘冷却期 — 前15分钟SL放宽到4% (不改SL参数本身, 只加时间窗口保护)
     # 原因: 3/5笔在0-6min秒杀, MFE=0%, 价格从未浮盈. 开盘噪声大, 2%SL被瞬间打掉.
     # 诊断: 修后MFE>0%=时机问题, MFE仍=0%=信号问题
-    _cooldown_pct = float(pb_cfg.get("cooldown_sl_pct", 4.0))  # 2026-07-16: 从 config 读取, 默认 4%
+    _cooldown_pct = float(_pb_cfg.get("cooldown_sl_pct", 4.0))  # 2026-07-16: 从 config 读取, 默认 4%
     _cooldown_sl = entry_price * (1 - _cooldown_pct / 100.0) if direction == "LONG" else entry_price * (1 + _cooldown_pct / 100.0)
     _in_cooldown = minutes_from_open is not None and minutes_from_open < 15
     if _in_cooldown:

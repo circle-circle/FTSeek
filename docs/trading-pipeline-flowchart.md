@@ -92,18 +92,18 @@ flowchart TD
 ## 实时参数快照
 
 <!-- AUTOGEN:params:start -->
-> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-14 22:40 ET · commit `bbc3b1d8`
+> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-16 03:03 ET · commit `2892524a`
 > 数值均从真实配置/代码抽取, 带出处; 结构(上方流程图)才是手维护的 SSOT。
 
 #### 执行护栏 (Execution Guardrails)
 | 参数 | 值 | 出处 | 说明 |
 |---|---|---|---|
 | 开盘后缓冲 | 5 分钟 | pipeline.py:2111 | 避开开盘噪声, 之后才执行 |
-| max_position_pct | 4% | pipeline.py:2337 代码默认 | 单笔仓位上限(占基准资金) |
+| max_position_pct | 4% | pipeline.py:2361 代码默认 | 单笔仓位上限(占基准资金) |
 | daily_notional_cap_pct | 20% | pipeline.py:2194 代码默认 | 单日总敞口上限 |
 | max_daily_positions | 5笔 | pipeline.py:2196 代码默认 | 单日最多开仓数 |
-| risk_pct | 0.5% | pipeline.py:2336 代码默认 | 单笔风险预算(占基准资金) |
-| min_confidence | 60 | pipeline.py:2339 代码默认 | 信心基准(仓位加权中性点) |
+| risk_pct | 0.5% | pipeline.py:2360 代码默认 | 单笔风险预算(占基准资金) |
+| min_confidence | 60 | pipeline.py:2363 代码默认 | 信心基准(仓位加权中性点) |
 
 #### 止损止盈波动率桶 (playbook_horizon.yaml::vol_buckets)
 | 桶 | ATR%上限 | SL范围 | TP倍数 | 最长持仓 |
@@ -119,19 +119,19 @@ flowchart TD
 #### 退出规则 factor_exit_rules (playbook_horizon.yaml)
 | 因子 | 保本触发 | 时间退出 | trailing |
 |---|---|---|---|
-| default | 1.0% | 4.0h | on |
+| default | 0.5% | 6.0h | on |
 | insider_cluster_buy | 0.5% | 禁用 | on |
-| macd_golden_cross | 1.0% | 6h | on |
-| above_ma20 | 1.0% | 6h | on |
+| macd_golden_cross | 0.5% | 6h | on |
+| above_ma20 | 0.5% | 6h | on |
 | news_positive | 0.5% | 4h | on |
 | volume_expansion | 0.5% | 0.5h | off |
 | rsi_oversold | 0.5% | 0.5h | off |
 | pe_below_industry | 0.5% | 0.5h | off |
-| above_ma50 | 1.0% | 6h | on |
-| ma_golden_cross | 1.0% | 6h | on |
-| bollinger_upper | 1.0% | 4h | on |
-| bollinger_squeeze | 1.0% | 6h | on |
-| near_52w_high | 1.0% | 4h | on |
+| above_ma50 | 0.5% | 6h | on |
+| ma_golden_cross | 0.5% | 6h | on |
+| bollinger_upper | 0.5% | 4h | on |
+| bollinger_squeeze | 0.5% | 6h | on |
+| near_52w_high | 0.5% | 4h | on |
 | insider_net_buy | 0.5% | 禁用 | on |
 | revenue_growth_high | 0.5% | 禁用 | on |
 | roe_high | 0.5% | 禁用 | on |
