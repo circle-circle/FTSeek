@@ -2290,6 +2290,11 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             _new_entry = _bid
 
                         # 优先用真实 ATR 计算 atr_pct, 未取到则回退到 ctx 中的 atr_percent
+                        # 2026-07-16 P1 修复: ATR=0 时保留 instruction 原始 SL/TP, 不用固定 fallback 覆盖.
+                        #   根因: 盘前生成 instruction 时 ATR 可用 (vol_bucket 正确匹配),
+                        #   但盘中 re-price 时 OpenD 可能不可用 → _atr=0 → atr_pct=0 →
+                        #   vol_bucket 返回 None → 固定 fallback (2.0-2.5%) 覆盖原 SL.
+                        #   修复: ATR=0 时从 instruction 原始 SL 反算 sl_pct, 保持 vol_bucket 比例不变.
                         _atr = float(_ctx.get("atr") or _ctx.get("atr_14") or 0)
                         atr_pct = 0.0
                         if _new_entry > 0 and _atr > 0:
@@ -2301,8 +2306,27 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         if _vol_info:
                             _sl_pct = _vol_info["sl_pct"]
                             _tp_mult = _vol_info["tp_multiplier"]
+                        elif inst.get("stop_loss") and _new_entry > 0:
+                            # 2026-07-16: ATR=0 → 从 instruction 原始 SL/TP 反算比例, 保持 vol_bucket 级别
+                            _orig_sl = float(inst.get("stop_loss", 0))
+                            _orig_tp = float(inst.get("take_profit", 0))
+                            if _orig_sl > 0:
+                                _sl_pct = abs(_new_entry - _orig_sl) / _new_entry * 100
+                            else:
+                                _sl_pct = float(_hp.get("buy_fixed_stop_loss_pct", 2.5)) if _dir == "BUY" else float(_hp.get("sell_fixed_stop_loss_pct", 2.0))
+                            # TP: 用原始 TP 距离 / 新 entry 反算倍数
+                            if _orig_tp > 0 and _orig_sl > 0:
+                                _orig_sl_dist = abs(float(inst.get("entry_price", _new_entry)) - _orig_sl)
+                                _orig_tp_dist = abs(_orig_tp - float(inst.get("entry_price", _new_entry)))
+                                _tp_mult = _orig_tp_dist / _orig_sl_dist if _orig_sl_dist > 0 else float(_hp.get("rr_ratio", 1.5))
+                            else:
+                                _tp_mult = float(_hp.get("rr_ratio", 1.5))
+                            logger.info(
+                                f"[playbook] {inst['symbol']} re-price: ATR=0, 保留 instruction SL%={_sl_pct:.2f}% "
+                                f"(从原始 SL=${_orig_sl:.2f} 反算)"
+                            )
                         else:
-                            # 未配置 vol_buckets 时回退固定百分比
+                            # 未配置 vol_buckets 且无 instruction SL 时回退固定百分比
                             if _dir == "BUY":
                                 _sl_pct = float(_hp.get("buy_fixed_stop_loss_pct", 2.5))
                             else:
