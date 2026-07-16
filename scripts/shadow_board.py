@@ -316,4 +316,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="影子统一看板 (只读)")
     ap.add_argument("--push", action="store_true", help="推送飞书")
     a = ap.parse_args()
+    if a.push:
+        from scripts.utils.market_guard import exit_if_not_trading_day
+        exit_if_not_trading_day()
     main(push=a.push)
