@@ -3561,6 +3561,17 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         market_open_minutes = 9 * 60 + 30
         minutes_from_open = now_minutes - market_open_minutes
 
+        # M1 修复 (2026-07-16): 开盘冷却 SL 放宽参数 — 与 _check_playbook_exit_rules 规则0 对齐.
+        #   原始 SL 硬兜底 (下方) 此前直接比原始 stop_loss, 绕过了冷却放宽,
+        #   导致开盘 15min 内价格触及原始(较紧)SL 就被兜底先斩, 架空"防开盘秒杀"意图.
+        #   此处预取冷却参数 (循环不变量), 兜底处按 entry_price 逐仓放宽 SL floor.
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_m1
+            _cooldown_sl_pct = float(_get_pb_cfg_m1().get("cooldown_sl_pct", 4.0))
+        except Exception:
+            _cooldown_sl_pct = 4.0
+        _in_open_cooldown = minutes_from_open is not None and minutes_from_open < 15
+
         exited = 0
         for r in rows:
             symbol = r["symbol"]
@@ -3616,12 +3627,21 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
             # ponytail: 止损兜底 — 同 monitor_playbook_shadow_exits, 防止隔夜跳空越过 SL 被 TIME_EXIT 抢占
             if stop_loss > 0:
-                _sl_hit = (direction == "LONG" and current_price <= stop_loss) or \
-                          (direction == "SHORT" and current_price >= stop_loss)
+                # M1 修复 (2026-07-16): 开盘冷却期放宽兜底 SL, 与规则0一致.
+                #   冷却窗内取原始 SL 与冷却 SL 中"更松"的一侧 (LONG 取更低价, SHORT 取更高价),
+                #   避免开盘噪声触及较紧的原始 SL 被兜底秒杀.
+                _sl_floor = stop_loss
+                if _in_open_cooldown:
+                    _cd_sl = entry_price * (1 - _cooldown_sl_pct / 100.0) if direction == "LONG" \
+                        else entry_price * (1 + _cooldown_sl_pct / 100.0)
+                    _sl_floor = min(stop_loss, _cd_sl) if direction == "LONG" else max(stop_loss, _cd_sl)
+                _sl_hit = (direction == "LONG" and current_price <= _sl_floor) or \
+                          (direction == "SHORT" and current_price >= _sl_floor)
                 if _sl_hit:
                     logger.warning(
                         f"[playbook sim] {symbol} {direction} 止损兜底: "
-                        f"price=${current_price:.2f} ≤ SL=${stop_loss:.2f} (entry=${entry_price:.2f})"
+                        f"price=${current_price:.2f} 触及 SL=${_sl_floor:.2f} "
+                        f"(原始SL=${stop_loss:.2f}{' 冷却放宽' if _in_open_cooldown else ''}, entry=${entry_price:.2f})"
                     )
                     # 真实平仓 (broker)
                     _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"

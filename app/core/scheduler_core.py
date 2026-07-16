@@ -940,8 +940,12 @@ class TradingScheduler:
             monitor_interval = cfg.get_dotted("scheduler.monitor_interval_minutes", 0.5) if cfg else 0.5
             wd.register("scan_loop", stale_threshold_sec=scan_interval * 60 * 5)  # 5 倍间隔
             wd.register("monitor_loop", stale_threshold_sec=monitor_interval * 60 * 5)
+            # 2026-07-16 (H1): playbook 退出监控跑在 _llm_strategy_loop 内, 此前无看门狗覆盖 —
+            #   若 dual.close_position 阻塞, 整个循环卡死 → 退出静默停摆, 止损失效.
+            #   基础节奏 60s, 但盘后 LLM scan 可能耗时数分钟, 阈值放宽到 600s.
+            wd.register("llm_strategy_loop", stale_threshold_sec=600)
             wd.start(check_interval_sec=60.0)
-            logger.info(f"[Watchdog] 已启动 — scan={scan_interval}min, monitor={monitor_interval}min")
+            logger.info(f"[Watchdog] 已启动 — scan={scan_interval}min, monitor={monitor_interval}min, llm_strategy_loop=600s")
         except Exception as _we:
             logger.warning(f"[Watchdog] 启动失败 (不影响交易): {_we}")
 
@@ -1833,6 +1837,11 @@ class TradingScheduler:
             logger.debug(f"[LLM策略] scan 时间载入失败 (视为无记录): {_le}")
 
         while self.running:
+            try:
+                from app.observability.watchdog import get_watchdog
+                get_watchdog().ping("llm_strategy_loop")
+            except Exception:
+                pass
             try:
                 phase = get_market_phase()
                 now = datetime.now(ET)
