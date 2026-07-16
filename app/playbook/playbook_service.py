@@ -895,8 +895,8 @@ class PlaybookService:
             except Exception:
                 _entry_session = ""
             try:
-                from app.data.market_data_router import MarketDataRouter as _MDR
-                _entry_vix = _MDR().get_vix_or_none() or 0.0
+                from app.data.market_data_router import get_market_data_router as _get_mdr
+                _entry_vix = _get_mdr().get_vix_or_none() or 0.0
             except Exception:
                 _entry_vix = 0.0
             # 2026-07-16: regime 从 MarketRegimeGate 实时判定, instruction 中无此字段.

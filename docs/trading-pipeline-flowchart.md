@@ -92,7 +92,7 @@ flowchart TD
 ## 实时参数快照
 
 <!-- AUTOGEN:params:start -->
-> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-16 10:24 ET · commit `31f0d0e1`
+> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-16 10:31 ET · commit `cd1c9d19`
 > 数值均从真实配置/代码抽取, 带出处; 结构(上方流程图)才是手维护的 SSOT。
 
 #### 执行护栏 (Execution Guardrails)
