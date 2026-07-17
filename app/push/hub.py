@@ -43,6 +43,8 @@ class PushHub:
         # R2 (2026-05-16): 异步化 — 主线调用 push() 不阻塞, send 在 thread pool 执行
         async_mode: bool = True,
         async_workers: int = 4,
+        # 3a (2026-07-17): 单通道发送失败后的额外重试次数 (间隔 1s, 在 async worker 内 sleep 不阻塞主线)
+        send_retries: int = 1,
     ):
         # 默认 channel 优先级: DingTalk > Feishu > FlagFile
         self.channels: List[Channel] = channels or [
@@ -68,6 +70,7 @@ class PushHub:
         self._executor = ThreadPoolExecutor(
             max_workers=async_workers, thread_name_prefix="PushHub"
         ) if async_mode else None
+        self._send_retries = max(0, int(send_retries))
         # 计数器
         self._sent = 0
         self._deduped = 0
@@ -76,7 +79,7 @@ class PushHub:
         logger.info(
             f"[PushHub] 启动 — channels={[c.name for c in self.channels]} "
             f"dedup_ttl={dedup_ttl_sec}s aggregate_window={aggregate_window_sec}s "
-            f"async={async_mode} workers={async_workers}"
+            f"async={async_mode} workers={async_workers} send_retries={self._send_retries}"
         )
 
     def push(self, msg: PushMessage, sync: bool = False) -> bool:
@@ -179,7 +182,7 @@ class PushHub:
                     if sent_count == 0 and msg.is_critical():
                         ch.send(msg)
                     continue
-                ok = ch.send(msg)
+                ok = self._send_once_with_retry(ch, msg)
                 if ok:
                     sent_count += 1
                     if not broadcast_all:
@@ -194,10 +197,54 @@ class PushHub:
                 self._failed += 1
 
         if sent_count == 0:
-            logger.warning(
+            logger.error(
                 f"[PushHub] 所有 channel 失败! title={msg.title} level={msg.level.value}"
             )
+            # NORMAL 及以上失败 durable 落盘 (成交/平仓 async fire-and-forget 不再静默丢失)
+            if msg.level != Level.INFO:
+                self._record_failure(msg)
         return sent_count > 0
+
+    def _send_once_with_retry(self, ch, msg: PushMessage) -> bool:
+        """单通道发送 + 轻量重试 (失败/异常均重试, 间隔 1s). 在 async worker 内执行, 不阻塞主线."""
+        import time as _t
+        attempts = 1 + self._send_retries
+        for i in range(attempts):
+            try:
+                if ch.send(msg):
+                    return True
+            except Exception as e:
+                logger.debug(f"[PushHub] channel {ch.name} send 异常 (第{i+1}/{attempts}次): {e}")
+            if i < attempts - 1:
+                _t.sleep(1)
+        return False
+
+    def _record_failure(self, msg: PushMessage):
+        """全通道失败时追加一条到 data/push_failures.jsonl (ops 可回溯). 绝不抛异常."""
+        try:
+            import json
+            import os
+            import time as _t
+            try:
+                from app.core.paths import get_data_dir
+                data_dir = str(get_data_dir())
+            except Exception:
+                data_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"
+                )
+            path = os.path.join(data_dir, "push_failures.jsonl")
+            rec = {
+                "ts": _t.strftime("%Y-%m-%d %H:%M:%S"),
+                "title": msg.title,
+                "level": msg.level.value,
+                "category": msg.category.value,
+                "body": (msg.body or "")[:500],
+                "trace_id": msg.trace_id,
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug(f"[PushHub·_record_failure] 落盘失败 (忽略): {e}")
 
 
 # ─── 单例 ───
@@ -218,12 +265,14 @@ def get_push_hub() -> PushHub:
                 dedup_ttl = int(cfg.get_dotted("push.dedup_ttl_sec", 60))
                 agg_window = int(cfg.get_dotted("push.aggregate_window_sec", 300))
                 health = bool(cfg.get_dotted("push.health_check", True))
+                send_retries = int(cfg.get_dotted("push.send_retries", 1))
             except Exception:
-                dedup_ttl, agg_window, health = 60, 300, True
+                dedup_ttl, agg_window, health, send_retries = 60, 300, True, 1
             _singleton = PushHub(
                 dedup_ttl_sec=dedup_ttl,
                 aggregate_window_sec=agg_window,
                 enable_health_check=health,
+                send_retries=send_retries,
             )
     return _singleton
 
