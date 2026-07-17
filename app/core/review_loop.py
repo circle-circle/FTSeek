@@ -104,7 +104,10 @@ class IssueDetector:
                 "category": "signal_quality", 
                 "severity": IssueSeverity.P0,
                 "check": self._check_signal_strength,
-                "auto_fix": True,
+                # 2026-07-17 降级为仅建议: 触发的 _adjust_signal_threshold 改写 SIGNAL_MIN_SCORE,
+                # 而该参数只喂给已停用主线的 PreTradeChecker (app/risk/engine.py), 实盘 playbook 链不消费.
+                # 自动调死参数会制造"已修复"假象, 故改为通知不落配置.
+                "auto_fix": False,
             },
             # 投票一致性规则
             {
@@ -138,12 +141,16 @@ class IssueDetector:
                 "auto_fix": False,
             },
             # 执行规则
+            # 2026-07-17 已停用: 数据源 plan_vs_actual 读取的是已退役的 battle plan,
+            # 而实盘成交来自 DA/UE → playbook 链, 导致每笔都被误判为"计划外" → 恒定误报.
+            # 保留 _check_unplanned 实现但不再注册, 待重接 playbook_instructions 数据源后恢复.
             {
                 "name": "unplanned_trades",
                 "category": "execution",
                 "severity": IssueSeverity.P1,
                 "check": self._check_unplanned,
-                "auto_fix": True,
+                "auto_fix": False,
+                "enabled": False,
             },
             # 归因规则
             {
@@ -182,6 +189,8 @@ class IssueDetector:
         pva = report.get("plan_vs_actual", {})
         
         for rule in self._rules:
+            if not rule.get("enabled", True):
+                continue
             try:
                 issue = rule["check"](report, dims, summary, funnel, rejections, capital, pva)
                 if issue:
@@ -753,6 +762,9 @@ class ReviewEffectTracker:
     
     DETERIORATION_THRESHOLD = 0.10  # 10% 恶化触发回滚
     CHECK_PERIOD_DAYS = 3  # 3 天后检查效果
+    # 2026-07-17: 当 baseline_dd≈0 时, 比例判据 abs(dd) > abs(0)*1.1 = 0 会把任何回撤都判为恶化.
+    # 改用绝对增量地板: 仅当回撤比基线恶化超过此百分点时才计入.
+    DD_ABSOLUTE_FLOOR_PCT = 2.0  # 回撤绝对恶化地板 (百分点)
     
     def __init__(self, tracker_path: str = None):
         self.tracker_path = tracker_path or str(get_data_dir() / "review_effects.json")
@@ -803,10 +815,25 @@ class ReviewEffectTracker:
         deteriorated = False
         reason = ""
         
+        # 2026-07-17: 空基线保护 — 当基线胜率与回撤均为 0 时视为"未采集到有效基线"
+        # (常见于修复当日无平仓交易), 无法据此判断恶化, 直接跳过回滚, 等待有效样本.
+        if baseline_wr == 0 and baseline_dd == 0:
+            return {
+                "deteriorated": False,
+                "reason": "基线为空(无有效样本), 跳过恶化判定",
+                "baseline_wr": baseline_wr,
+                "current_wr": current_wr,
+                "baseline_dd": baseline_dd,
+                "current_dd": current_dd,
+            }
+        
         if baseline_wr > 0 and current_wr < baseline_wr * (1 - self.DETERIORATION_THRESHOLD):
             deteriorated = True
             reason = f"胜率恶化: {baseline_wr*100:.0f}% → {current_wr*100:.0f}%"
-        elif abs(current_dd) > abs(baseline_dd) * (1 + self.DETERIORATION_THRESHOLD):
+        elif (
+            abs(current_dd) > abs(baseline_dd) * (1 + self.DETERIORATION_THRESHOLD)
+            and abs(current_dd) - abs(baseline_dd) >= self.DD_ABSOLUTE_FLOOR_PCT
+        ):
             deteriorated = True
             reason = f"回撤恶化: {baseline_dd:.1f}% → {current_dd:.1f}%"
         
