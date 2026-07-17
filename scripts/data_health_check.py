@@ -180,9 +180,13 @@ def main():
     # 飞书推送
     if has_error:
         try:
-            from app.core.push_hub import PushHub
-            hub = PushHub()
-            hub.send_text("⚠️ 数据源健康检查发现问题\n\n" + output)
+            from app.push import get_push_hub
+            from app.push.message import Level, Category
+            get_push_hub().push_text(
+                "⚠️ 数据源健康检查发现问题\n\n" + output,
+                level=Level.HIGH,
+                category=Category.HEALTH,
+            )
         except Exception:
             pass
     

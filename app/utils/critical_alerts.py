@@ -32,10 +32,8 @@ def _flag_path() -> str:
 
 def _try_dingtalk(content: str) -> bool:
     try:
-        from app.notifier.dingtalk import get_dingtalk_notifier
-        notifier = get_dingtalk_notifier()
-        if hasattr(notifier, "send_message"):
-            return bool(notifier.send_message(content))
+        from app.notifier.dingtalk import DingTalkNotifier
+        return bool(DingTalkNotifier().send_text(content))
     except Exception as e:
         logger.debug(f"[CriticalNotifier] DingTalk fail: {e}")
     return False

@@ -125,12 +125,14 @@ class DegradationMonitor:
 
         # 异步推送 PushHub (best-effort)
         try:
-            from app.push.hub import PushHub, PushMessage
-            PushHub.push(PushMessage(
-                category="degradation_alert",
-                severity="WARNING",
+            from app.push import get_push_hub
+            from app.push.message import PushMessage, Level, Category
+            get_push_hub().push(PushMessage(
                 title=f"降级告警: {rec.module}",
                 body=alert_msg,
+                level=Level.HIGH,
+                category=Category.SYSTEM,
+                dedup_key=f"degradation:{rec.module}",
             ))
         except Exception:
             pass  # PushHub 不可用时不影响主流程

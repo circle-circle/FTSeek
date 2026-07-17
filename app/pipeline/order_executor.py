@@ -1067,13 +1067,10 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             f"[Task#42] {symbol} 写 position.metadata 失败 (signal_strength 链路降级到 attribution/decisions 兜底): {_meta_err}"
         )
 
-    if scheduler.notifier:
-        try:
-            scheduler.notifier.notify_order_filled(order, position, voting_result=voting_result)
-        except Exception as e:
-            logger.error(f"[通知] 下单通知失败: {e}", exc_info=True)
-
-    # P-Push: 同步进入 PushHub (聚合 5min 窗口)
+    # P-Push (2026-07-17): 成交通知统一单路走 PushHub。
+    #   旧 scheduler.notifier.notify_order_filled 已移除 — 它内部同推钉钉+飞书,
+    #   与下方 PushHub 重复 (同一笔推 2~3 次)。position.metadata 已在上方 Task#42
+    #   解耦写入, 与通知无关, 移除通知不影响数据链路。
     try:
         from app.push import get_push_hub, trade_entry as _tx_entry
         _hub_msg = _tx_entry(
@@ -1086,20 +1083,14 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:
-        logger.debug(f"[PushHub·entry] 失败 (不影响旧通道): {_pe}")
+        logger.debug(f"[PushHub·entry] 失败: {_pe}")
 
 
 def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, pnl_pct: float):
-    """平仓通知 (钉钉 + 飞书)
+    """平仓通知 — 统一单路走 PushHub (2026-07-17)。
 
-    P-Push: 同时入 PushHub. 平仓小亏 (<$500) 进聚合, 大单立即推.
+    旧 scheduler.notifier.notify_exit 已移除 (内部同推钉钉+飞书, 与 PushHub 重复)。
     """
-    if scheduler.notifier:
-        try:
-            scheduler.notifier.notify_exit(position, reason, pnl)
-        except Exception as e:
-            logger.error(f"[通知] 平仓通知失败: {e}", exc_info=True)
-
     try:
         from app.push import get_push_hub, trade_exit as _tx_exit
         _reason_str = reason.value if hasattr(reason, "value") else str(reason)
@@ -1113,7 +1104,7 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:
-        logger.debug(f"[PushHub·exit] 失败 (不影响旧通道): {_pe}")
+        logger.debug(f"[PushHub·exit] 失败: {_pe}")
 
 
 # ═══════════════════════════════════════════════════════════════════
