@@ -3326,22 +3326,46 @@ def is_playbook_open_position(symbol: str) -> bool:
     所有旧管线入口 (position_sync, position_monitor, scheduler_core 等) 必须调用此函数
     跳过 Playbook 管理的仓位, 防止双重管理/重复平仓.
 
-    判定标准: trade_records 中存在 source_type='PLAYBOOK_SIM' 且 exit_time 为空的记录.
+    判定标准: trade_records 中存在 source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') 且 exit_time
+    为空的记录. 与 monitor_playbook_sim_exits 的查询对齐 (含 LIVE, 切 live 后不漏兜底护栏).
     不使用时间窗口 (旧代码用 yesterday/2-days-ago 导致跨日/跨窗口漏判).
+
+    异常处理 (分层 fail-closed):
+      - sqlite3.OperationalError (锁超时/DB busy): return True (fail-closed) — 宁可让主线跳过,
+        由 sim_exits 自管, 避免 DB 异常时护栏失效导致主线双重平仓.
+      - 其他未知异常: return False + warning — 不无条件 fail-closed, 否则结构性错误 (schema/路径)
+        会让主线对所有 symbol 永久失管、漏平真实风险仓.
     """
+    import sqlite3 as _pb_sql
+    from app.core.paths import get_trade_records_db
+    _c = None
     try:
-        from app.core.paths import get_trade_records_db
-        import sqlite3 as _pb_sql
-        _c = _pb_sql.connect(str(get_trade_records_db()), timeout=3)
+        _c = _pb_sql.connect(str(get_trade_records_db()), timeout=5)
         _row = _c.execute(
-            "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+            "SELECT 1 FROM trade_records WHERE symbol=? "
+            "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
             "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) LIMIT 1",
             (symbol,)
         ).fetchone()
-        _c.close()
         return _row is not None
-    except Exception:
+    except _pb_sql.OperationalError as e:
+        logger.warning(
+            f"[playbook护栏] is_playbook_open_position({symbol}) DB 锁超时/忙: {e} "
+            f"→ fail-closed (return True, 主线跳过交由 sim_exits 自管)"
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            f"[playbook护栏] is_playbook_open_position({symbol}) 未知异常: {e} "
+            f"→ return False (主线接管). 请排查 DB schema/路径."
+        )
         return False
+    finally:
+        if _c is not None:
+            try:
+                _c.close()
+            except Exception:
+                pass
 
 
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
