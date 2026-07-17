@@ -84,6 +84,7 @@ class EdgeShadowGate:
         direction: str,
         confidence_0_100: float,
         live_pass: bool,
+        log: bool = True,
     ) -> Dict[str, Any]:
         """
         返回 edge 判定 (影子), 并落 jsonl 供事后与实盘判定对照.
@@ -91,6 +92,8 @@ class EdgeShadowGate:
         Args:
             confidence_0_100: 信号置信度 (0-100 尺度, 与 pipeline 一致)
             live_pass: 实盘闸门此刻是否放行 (confidence >= 门槛)
+            log: 是否写 edge_gate_shadow.jsonl. 统一收口审计 (exec_gate_audit) 已落库
+                 edge 判定时传 False, 避免同一场景双写 (2026-07-17).
 
         Returns dict:
             edge_verdict: "PASS" / "BLOCK"
@@ -123,7 +126,8 @@ class EdgeShadowGate:
             result["agree_with_live"] = (
                 (result["edge_verdict"] == "PASS") == bool(live_pass)
             )
-            self._log(symbol, direction, confidence_0_100, live_pass, result)
+            if log:
+                self._log(symbol, direction, confidence_0_100, live_pass, result)
         except Exception as e:
             logger.debug(f"[EdgeShadowGate] 判定失败 (忽略, 返回 PASS): {e}")
         return result

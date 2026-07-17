@@ -2071,6 +2071,74 @@ def _check_graduation_gate() -> Dict[str, Any]:
         return {"graduated": False, "checks": {}, "reason": f"门禁异常: {e}"}
 
 
+def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
+                          size: float, notional: float, extra: Optional[Dict[str, Any]] = None) -> None:
+    """统一收口审计 (2026-07-17): 记录每个到达执行漏斗的候选单 → data/shadow/exec_gate_audit.jsonl.
+
+    背景: DA-bridge 直写 DB 的指令绕过 _generate_instructions 的 G6 confidence 门与
+    EdgeShadowGate; 实盘走量全是 DA-bridge → 无任何统一、可解释的下单前收口点.
+    本函数装在 run_playbook_auto_execute 下单前唯一汇合点, 无论来源一律记录, 让全链路可见.
+
+    同时对所有执行候选 (含 DA-bridge) 跑一次 EdgeShadowGate — edge 判定首次覆盖 DA-bridge.
+    纯影子: 只记录, 绝不拦单、不改任何交易动作. best-effort, 异常一律吞掉.
+    """
+    try:
+        import json as _json
+        from datetime import datetime as _dt
+        from pathlib import Path as _Path
+
+        _did = str(inst.get("decision_id", "") or "")
+        if _did.startswith("DA-"):
+            _source = "da_bridge"
+        elif _did.startswith("universe_expansion"):
+            _source = "universe_expansion"
+        elif _did:
+            _source = "internal"
+        else:
+            _source = "unknown"
+
+        _direction = inst.get("direction", "")
+        _conf = float(inst.get("confidence", 0) or 0)
+
+        # EdgeShadowGate — 数据驱动 edge 判定首次覆盖 DA-bridge (纯影子, live_pass=None 语义: 无实盘门)
+        _edge = {}
+        try:
+            from app.decision.edge_shadow_gate import get_edge_shadow_gate
+            _edge = get_edge_shadow_gate().evaluate(
+                inst.get("symbol", ""), _direction, _conf, live_pass=True, log=False,
+            ) or {}
+        except Exception:
+            _edge = {}
+
+        _row = {
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "date": _dt.now().strftime("%Y-%m-%d"),
+            "inst_id": inst.get("id"),
+            "symbol": inst.get("symbol", ""),
+            "direction": _direction,
+            "confidence": round(_conf, 2),
+            "source": _source,
+            "decision_id": _did,
+            "action": action,  # executed / skipped_* / error
+            "entry": round(float(entry or 0), 4),
+            "size": int(size or 0),
+            "notional": round(float(notional or 0), 2),
+            "edge_bucket": _edge.get("bucket"),
+            "edge_expectancy": _edge.get("expectancy"),
+            "edge_verdict": _edge.get("edge_verdict"),
+            "edge_reason": _edge.get("reason"),
+        }
+        if extra:
+            _row.update(extra)
+
+        _p = _Path(__file__).resolve().parents[2] / "data" / "shadow" / "exec_gate_audit.jsonl"
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        with open(_p, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # 纯审计, 绝不影响交易主流程
+
+
 def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """
     盘中自动执行 triggered 的指令 (Paper Trade 模式)。
@@ -2462,6 +2530,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     f"[playbook] {inst['symbol']} 跳过 — 购买力上限 "
                     f"(已用=${_max_deploy:,.0f} + 新=${_new_notional:,.0f} > 限=${_bp_limit:,.0f})"
                 )
+                _emit_exec_gate_audit(inst, action="skipped_bp_cap", entry=_entry,
+                                      size=_size, notional=_new_notional)
                 skipped_count += 1
                 continue
 
@@ -2471,6 +2541,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     f"[playbook] {inst['symbol']} 跳过 — 单日notional上限 "
                     f"(已用=${_today_opened_notional:,.0f} + 新=${_new_notional:,.0f} > 限=${_daily_notional_cap:,.0f})"
                 )
+                _emit_exec_gate_audit(inst, action="skipped_notional_cap", entry=_entry,
+                                      size=_size, notional=_new_notional)
                 skipped_count += 1
                 continue
 
@@ -2479,10 +2551,13 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     f"[playbook] {inst['symbol']} 跳过 — 单日开仓数上限 "
                     f"(已达到 {_max_daily_positions} 笔)"
                 )
+                _emit_exec_gate_audit(inst, action="skipped_max_positions", entry=_entry,
+                                      size=_size, notional=_new_notional)
                 skipped_count += 1
                 continue
 
             # 自动执行
+            _audit_action = "error"
             try:
                 result = service.execute_instruction(
                     instruction_id=inst["id"],
@@ -2494,16 +2569,33 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     _max_deploy += _new_notional  # 累加已用额度
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
+                    _audit_action = "executed"
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
                 else:
                     skipped_count += 1
+                    _audit_action = "skipped_fail"
                     errors.append(f"{inst['symbol']}: {result.get('message', 'unknown')}")
             except Exception as e:
                 skipped_count += 1
+                _audit_action = "error"
                 errors.append(f"{inst['symbol']}: {str(e)}")
                 logger.warning(f"[playbook] 自动执行失败 {inst['symbol']}: {e}")
+            # 统一收口审计 (2026-07-17): 记录到达下单漏斗并被执行/失败的候选 (含 DA-bridge)
+            _emit_exec_gate_audit(inst, action=_audit_action, entry=_entry,
+                                  size=_size, notional=_new_notional)
 
         logger.info(f"[playbook] 自动执行完成: {executed_count} 成功, {skipped_count} 跳过")
+        # 盘中实时化: 广播轻量 nudge, 已连 dashboard 收到后自拉缓存接口刷新. 没人连时 broadcast 直接 return.
+        try:
+            from app.web_dashboard.routes.ws import publish_event_sync
+            publish_event_sync("pipeline_update", {
+                "date": today,
+                "executed": executed_count,
+                "skipped": skipped_count,
+                "errors": len(errors),
+            })
+        except Exception:
+            pass  # WS 推送失败不影响交易主流程
         return {
             "date": today,
             "executed": executed_count,
