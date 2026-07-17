@@ -3218,6 +3218,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 exit_reason=exit_reason,
                 strategy=_pb_strategy,
                 trace_id=str(trade_id),
+                source_type=_pb_strategy,
             ))
     except Exception as _pb_push_e:
         logger.warning(f"[playbook推送] {symbol} 平仓推送失败 (不影响平仓): {_pb_push_e}")

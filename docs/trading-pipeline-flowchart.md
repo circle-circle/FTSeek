@@ -92,7 +92,7 @@ flowchart TD
 ## 实时参数快照
 
 <!-- AUTOGEN:params:start -->
-> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-17 04:26 ET · commit `9743f53a`
+> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-17 07:18 ET · commit `7db6ad6c`
 > 数值均从真实配置/代码抽取, 带出处; 结构(上方流程图)才是手维护的 SSOT。
 
 #### 执行护栏 (Execution Guardrails)
@@ -159,7 +159,6 @@ flowchart TD
 | deep-stock-analysis 每日盘前扫描+分析 | 0 18 * * 1-5 | ✅启用 (scheduled) | jobs.json |
 | deep-analysis 盘后复盘+记忆更新 | 0 5 * * 2-6 | ✅启用 (scheduled) | jobs.json |
 | deep-analysis-bridge-generation | 0 4 * * 2-6 | ⏸暂停 (paused) | jobs.json |
-| sltp_shadow_pnl | 0 6 * * 2-6 | crontab | crontab -l |
 | da_chain_health | 5 6 * * 2-6 | crontab | crontab -l |
 | da_bridge_dingtalk | 30 20 * * 1-5 | crontab | crontab -l |
 | divergence_arbitration | 8 6 * * 2-6 | crontab | crontab -l |

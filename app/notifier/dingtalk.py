@@ -428,11 +428,11 @@ class DingTalkNotifier:
     # 内部发送
     # ------------------------------------------------------------------
 
-    def _send_markdown(self, title: str, content: str):
-        """发送 Markdown 消息"""
+    def _send_markdown(self, title: str, content: str) -> bool:
+        """发送 Markdown 消息. 返回 True=送达成功, False=禁用/失败/异常."""
         if not self.enabled:
             logger.debug(f"[钉钉] 推送已禁用: {title}")
-            return
+            return False
 
         payload = {
             "msgtype": "markdown",
@@ -449,10 +449,12 @@ class DingTalkNotifier:
             result = resp.json()
             if result.get("errcode", 0) != 0:
                 logger.warning(f"[钉钉] 发送失败: {result}")
-            else:
-                logger.info(f"[钉钉] 推送成功: {title}")
+                return False
+            logger.info(f"[钉钉] 推送成功: {title}")
+            return True
         except Exception as e:
             logger.error(f"[钉钉] 推送异常: {e}")
+            return False
 
     def _build_signed_url(self) -> str:
         """构建带签名的 URL（安全模式）"""

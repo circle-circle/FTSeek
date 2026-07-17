@@ -53,6 +53,9 @@ class DingTalkChannel(Channel):
         if not self._available or self._notifier is None:
             return False
         try:
+            from .message import Category
+            if msg.category in (Category.TRADE_ENTRY, Category.TRADE_EXIT):
+                return bool(self._notifier._send_markdown(msg.title, msg.render_markdown()))
             return bool(self._notifier.send_text(msg.render_text()))
         except Exception as e:
             logger.warning(f"[PushChannel·dingtalk·send] 失败: {e}")

@@ -1073,6 +1073,19 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
     #   解耦写入, 与通知无关, 移除通知不影响数据链路。
     try:
         from app.push import get_push_hub, trade_entry as _tx_entry
+        _meta = getattr(position, "metadata", {}) or {}
+        _sl = None
+        try:
+            _isl = getattr(position, "initial_sl", 0) or 0
+            _sl = float(_isl) if _isl and float(_isl) > 0 else None
+        except Exception:
+            _sl = None
+        _tp = None
+        try:
+            _tpl = getattr(position, "take_profit_levels", None) or []
+            _tp = [lv["price"] for lv in _tpl if isinstance(lv, dict) and lv.get("price")] or None
+        except Exception:
+            _tp = None
         _hub_msg = _tx_entry(
             symbol=symbol,
             direction=signal.direction.value if hasattr(signal.direction, "value") else str(signal.direction),
@@ -1080,6 +1093,12 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             price=float(getattr(order, "price", 0) or 0),
             strategy=getattr(position, "owner_strategy", None) or "main",
             trace_id=getattr(signal, "trace_id", "") or getattr(position, "trace_id", ""),
+            sl=_sl,
+            tp=_tp,
+            signal_strength=_meta.get("signal_strength") or None,
+            signal_confidence=_meta.get("signal_confidence") or None,
+            voting=_meta.get("voting_result") or None,
+            source_type=_meta.get("source_type") or "MAIN_PIPELINE",
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:
@@ -1094,6 +1113,7 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
     try:
         from app.push import get_push_hub, trade_exit as _tx_exit
         _reason_str = reason.value if hasattr(reason, "value") else str(reason)
+        _meta = getattr(position, "metadata", {}) or {}
         _hub_msg = _tx_exit(
             symbol=position.symbol,
             direction=position.direction.value if hasattr(position.direction, "value") else str(position.direction),
@@ -1101,6 +1121,9 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
             exit_reason=_reason_str,
             strategy=getattr(position, "owner_strategy", None) or "main",
             trace_id=getattr(position, "trace_id", ""),
+            signal_strength=_meta.get("signal_strength") or None,
+            signal_confidence=_meta.get("signal_confidence") or None,
+            source_type=_meta.get("source_type") or "MAIN_PIPELINE",
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:

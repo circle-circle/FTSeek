@@ -1127,9 +1127,18 @@ class PlaybookService:
 
         # 2026-07-16: playbook 成交逐笔飞书推送 (复用 PushHub trade_entry)。
         #   来源精准标注 — sim→playbook_sim / live→playbook_live。自带 try/except, 绝不影响下单。
+        #   2026-07-17: 回填 SL/TP/来源 → 富卡 (钉钉 markdown / 飞书多行)。
         try:
             from app.push import get_push_hub, trade_entry as _pb_entry
             _pb_strategy = "playbook_live" if _is_live else "playbook_sim"
+            try:
+                _pb_sl = float(stop_loss) if stop_loss and float(stop_loss) > 0 else None
+            except Exception:
+                _pb_sl = None
+            try:
+                _pb_tp = [float(take_profit)] if take_profit and float(take_profit) > 0 else None
+            except Exception:
+                _pb_tp = None
             get_push_hub().push(_pb_entry(
                 symbol=symbol,
                 direction=mos_direction,
@@ -1137,6 +1146,9 @@ class PlaybookService:
                 price=float(_fill),
                 strategy=_pb_strategy,
                 trace_id=matched_decision_id or None,
+                sl=_pb_sl,
+                tp=_pb_tp,
+                source_type=_pb_strategy,
             ))
         except Exception as _pb_push_e:
             logger.warning(f"[playbook推送] {symbol} 成交推送失败 (不影响下单): {_pb_push_e}")
