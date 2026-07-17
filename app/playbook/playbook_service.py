@@ -219,13 +219,17 @@ class PlaybookService:
         vote_map = self._get_vote_map(trade_date)
 
         # ③ factor_screen_latest.json — 候选池 + 因子评分
-        screen_data = self._load_json_file("data/factor_screen_latest.json")
+        #   candidates[] 仅 top_n 截断 (默认8), 非真实打分池; 漏斗"候选池"须用 scored_count
+        #   (实际打分标的数, 如43), 否则会出现 候选池(8) < 投票(37) 的逻辑倒挂.
+        screen_data = self._load_json_file("data/factor_screen_latest.json") or {}
         screen_map = {}
-        if screen_data and screen_data.get("candidates"):
+        if screen_data.get("candidates"):
             for c in screen_data["candidates"]:
                 sym = c.get("symbol", "")
                 if sym:
                     screen_map[sym] = c
+        screen_scored = int(screen_data.get("scored_count") or screen_data.get("pool_size") or len(screen_map))
+        screen_date = str(screen_data.get("timestamp", ""))[:10]
 
         # ④ factor_ic_latest.json — 因子 IC
         factor_ic = self._load_json_file("data/factor_ic_latest.json") or {}
@@ -300,8 +304,23 @@ class PlaybookService:
                 if f_key in factor_ic:
                     factor_ic_for_symbol[f_key] = factor_ic[f_key]
 
+            # 来源归因: DA (da_bridge) vs 宇宙扩张 (universe_expansion) vs 其他.
+            #   优先取 raw_instruction_json.source (UE inject 显式写入), 回退按 decision_id 前缀判定.
+            _did = str(inst.get("decision_id", "") or "")
+            _src = str(raw.get("source") or "").strip()
+            if not _src:
+                if _did.startswith("DA-"):
+                    _src = "da_bridge"
+                elif _did.startswith("universe_expansion"):
+                    _src = "universe_expansion"
+                elif _did:
+                    _src = "internal"
+                else:
+                    _src = "unknown"
+
             items.append({
                 "symbol": sym,
+                "source": _src,
                 "direction": inst.get("direction", ""),
                 "confidence": inst.get("confidence", 0),
                 "sector": inst.get("sector", ""),
@@ -348,7 +367,10 @@ class PlaybookService:
         vote_directions = [v.get("direction", "") for v in vote_map.values()]
         inst_directions = [i.get("direction", "") for i in instructions]
         funnel = {
-            "candidates": len(screen_map),
+            "candidates": screen_scored,
+            "candidates_scored": screen_scored,
+            "screen_date": screen_date,
+            "screen_stale": bool(screen_date and screen_date != trade_date),
             "voted": len(vote_map),
             "vote_long": sum(1 for d in vote_directions if d == "LONG"),
             "vote_short": sum(1 for d in vote_directions if d == "SHORT"),

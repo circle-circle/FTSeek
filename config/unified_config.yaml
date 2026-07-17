@@ -2150,3 +2150,87 @@ watchlist:
     notes: Playbook/主线双亏，暂停 (2026-06-26)
     sector: Consumer Defensive
     tier: TIER2
+  - code: US.WMT
+    enabled: true
+    max_position_ratio: 0.12
+    name: Walmart Inc
+    notes: 消费防御龙头 | 跨行业分散补入 (2026-07-17) | 进不进交易看DA+gate
+    sector: Consumer Defensive
+    tier: TIER1
+  - code: US.COST
+    enabled: true
+    max_position_ratio: 0.12
+    name: Costco Wholesale
+    notes: 会员制零售龙头 | 消费防御分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Consumer Defensive
+    tier: TIER1
+  - code: US.KO
+    enabled: true
+    max_position_ratio: 0.10
+    name: Coca-Cola Co
+    notes: 饮料防御龙头 | 低β对冲 (2026-07-17) | 进不进交易看DA+gate
+    sector: Consumer Defensive
+    tier: TIER2
+  - code: US.PEP
+    enabled: true
+    max_position_ratio: 0.10
+    name: PepsiCo Inc
+    notes: 食品饮料防御 | 消费防御分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Consumer Defensive
+    tier: TIER2
+  - code: US.DIS
+    enabled: true
+    max_position_ratio: 0.12
+    name: Walt Disney Co
+    notes: 媒体娱乐龙头 | 通信服务分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Communication Services
+    tier: TIER2
+  - code: US.VZ
+    enabled: true
+    max_position_ratio: 0.10
+    name: Verizon Communications
+    notes: 电信龙头 | 高股息低β分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Communication Services
+    tier: TIER2
+  - code: US.JNJ
+    enabled: true
+    max_position_ratio: 0.12
+    name: Johnson & Johnson
+    notes: 医药防御龙头 | 医疗板块加深 (2026-07-17) | 进不进交易看DA+gate
+    sector: Healthcare
+    tier: TIER1
+  - code: US.ABBV
+    enabled: true
+    max_position_ratio: 0.12
+    name: AbbVie Inc
+    notes: 生物制药龙头 | 医疗分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Healthcare
+    tier: TIER2
+  - code: US.MRK
+    enabled: true
+    max_position_ratio: 0.12
+    name: Merck & Co
+    notes: 制药龙头 | 医疗分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Healthcare
+    tier: TIER2
+  - code: US.V
+    enabled: true
+    max_position_ratio: 0.12
+    name: Visa Inc
+    notes: 支付网络龙头 | 金融支付分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Financial Services
+    tier: TIER1
+  - code: US.MA
+    enabled: true
+    max_position_ratio: 0.12
+    name: Mastercard Inc
+    notes: 支付网络龙头 | 金融支付分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Financial Services
+    tier: TIER2
+  - code: US.HON
+    enabled: true
+    max_position_ratio: 0.10
+    name: Honeywell International
+    notes: 多元工业龙头 | 工业分散 (2026-07-17) | 进不进交易看DA+gate
+    sector: Industrials
+    tier: TIER2

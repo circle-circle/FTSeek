@@ -47,6 +47,9 @@
     .pl-dir-SELL_SHORT { background: #ef444433; color: #f87171; }
     .pl-dir-SKIP { background: #6b728033; color: #9ca3af; }
     .pl-sector { font-size: 11px; color: #8b949e; }
+    .pl-src-badge { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+    .pl-src-ue { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b55; }
+    .pl-src-other { background: #6b728022; color: #9ca3af; border: 1px solid #6b728055; }
     .pl-card-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: #8b949e; }
     .pl-conf-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .pl-conf-high { background: #16a34a22; color: #4ade80; }
@@ -141,6 +144,7 @@
     <div class="pl-filter-bar">
         <input type="date" id="plDate" class="pl-date-input" value="">
         <button class="pl-refresh-btn" onclick="loadPipeline()">🔄 刷新</button>
+        <span id="plLiveStatus" style="font-size:12px;color:#8b949e;margin-left:8px;">⚪ 连接中</span>
         <span style="flex:1"></span>
         <button class="pl-filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
         <button class="pl-filter-btn" data-filter="BUY" onclick="setFilter('BUY')">BUY</button>
@@ -159,6 +163,7 @@
         <div class="pl-funnel-stage">
             <div class="pl-funnel-num" id="fnCandidates">-</div>
             <div class="pl-funnel-label">候选池</div>
+            <div class="pl-funnel-detail" id="fnCandDetail"></div>
         </div>
         <span class="pl-funnel-arrow">→</span>
         <div class="pl-funnel-stage">
@@ -174,9 +179,31 @@
         </div>
     </div>
 
+    <!-- Execution Progress -->
+    <div class="pl-funnel" id="execProgress" style="display:none;">
+        <div class="pl-funnel-stage active">
+            <div class="pl-funnel-num" id="epExecuted" style="color:#4ade80;">-</div>
+            <div class="pl-funnel-label">已执行</div>
+            <div class="pl-funnel-detail" id="epExecutedDetail"></div>
+        </div>
+        <div class="pl-funnel-stage">
+            <div class="pl-funnel-num" id="epWaiting" style="color:#facc15;">-</div>
+            <div class="pl-funnel-label">等待触发</div>
+        </div>
+        <div class="pl-funnel-stage">
+            <div class="pl-funnel-num" id="epSkipped" style="color:#9ca3af;">-</div>
+            <div class="pl-funnel-label">已跳过</div>
+        </div>
+        <div class="pl-funnel-stage">
+            <div class="pl-funnel-num" id="epClosed" style="color:#58a6ff;">-</div>
+            <div class="pl-funnel-label">已平仓</div>
+            <div class="pl-funnel-detail" id="epClosedDetail"></div>
+        </div>
+    </div>
+
     <!-- Theme Radar (Deepulse) -->
     <div id="themeRadar" style="display:none; margin-bottom:12px;">
-        <div class="pl-section-title" style="margin-bottom:6px;">📡 Deepulse 主题雷达</div>
+        <div class="pl-section-title" id="themeTitle" style="margin-bottom:6px;">📡 Deepulse 主题雷达</div>
         <div class="pl-theme-bar" id="themeBar"></div>
     </div>
 
@@ -198,6 +225,20 @@
         renderItems();
     }
 
+    let _lastServedAt = null;
+
+    function updateLiveStatus() {
+        const el = document.getElementById('plLiveStatus');
+        if (!el) return;
+        const connected = (window.WSManager && WSManager.isConnected());
+        let t = '';
+        if (_lastServedAt) {
+            const d = new Date(_lastServedAt);
+            if (!isNaN(d)) t = ' · ' + d.toLocaleTimeString('en-GB');
+        }
+        el.textContent = (connected ? '🟢 实时' : '⚪ 轮询中') + t;
+    }
+
     async function loadPipeline() {
         const dateInput = document.getElementById('plDate');
         let url = '/api/playbook/pipeline';
@@ -208,9 +249,11 @@
             const data = await resp.json();
             if (data.success) {
                 _pipelineData = data.data;
+                _lastServedAt = data.data.served_at || null;
                 // 回填日期输入框 (后端返回的 ET 日期)
                 if (data.data.date) document.getElementById('plDate').value = data.data.date;
                 render();
+                updateLiveStatus();
             } else {
                 document.getElementById('pipelineItems').innerHTML = '<div class="pl-empty">加载失败</div>';
             }
@@ -237,6 +280,14 @@
         const fn = document.getElementById('funnel');
         fn.style.display = 'flex';
         document.getElementById('fnCandidates').textContent = f.candidates ?? '-';
+        const candDetailEl = document.getElementById('fnCandDetail');
+        if (candDetailEl) {
+            let candDetail = f.candidates_scored != null ? `打分池 ${f.candidates_scored}` : '';
+            if (f.screen_stale && f.screen_date) {
+                candDetail += `<span style="color:#fbbf24" title="因子筛快照日期与计划日期不一致(旧discovery管线已冻结)"> ⚠ 快照 ${f.screen_date}</span>`;
+            }
+            candDetailEl.innerHTML = candDetail;
+        }
         document.getElementById('fnVoted').textContent = f.voted ?? '-';
         document.getElementById('fnVoteDetail').innerHTML =
             `<span style="color:#4ade80">L${f.vote_long||0}</span> / <span style="color:#f87171">S${f.vote_short||0}</span> / <span style="color:#9ca3af">N${f.vote_neutral||0}</span>`;
@@ -244,10 +295,50 @@
         document.getElementById('fnInstDetail').innerHTML =
             `<span style="color:#4ade80">B${f.buy||0}</span> / <span style="color:#f87171">S${f.sell_short||0}</span> / <span style="color:#9ca3af">K${f.skip||0}</span>`;
 
+        // Execution Progress
+        renderExecProgress(d.items || []);
+
         // Theme Radar
         renderThemeRadar(d.theme_radar);
 
         renderItems();
+    }
+
+    function renderExecProgress(items) {
+        const ep = document.getElementById('execProgress');
+        if (!items || items.length === 0) { ep.style.display = 'none'; return; }
+
+        const CLOSED = new Set(['win', 'loss', 'void']);
+        let executed = 0, waiting = 0, skipped = 0, closed = 0, holding = 0, wins = 0, losses = 0;
+        items.forEach(i => {
+            const oc = i.outcome || '';
+            const isClosed = CLOSED.has(oc);
+            const isSkip = i.direction === 'SKIP' || !!i.skip_reason || oc === 'daily_cap';
+            if (i.executed === true) {
+                executed++;
+                if (isClosed) {
+                    closed++;
+                    if (oc === 'win') wins++;
+                    else if (oc === 'loss') losses++;
+                } else {
+                    holding++;
+                }
+            } else if (isSkip) {
+                skipped++;
+            } else {
+                waiting++;
+            }
+        });
+
+        ep.style.display = 'flex';
+        document.getElementById('epExecuted').textContent = executed;
+        document.getElementById('epWaiting').textContent = waiting;
+        document.getElementById('epSkipped').textContent = skipped;
+        document.getElementById('epClosed').textContent = closed;
+        document.getElementById('epExecutedDetail').innerHTML =
+            holding > 0 ? `<span style="color:#8b949e">持仓 ${holding}</span>` : '';
+        document.getElementById('epClosedDetail').innerHTML =
+            closed > 0 ? `<span style="color:#4ade80">W${wins}</span> / <span style="color:#f87171">L${losses}</span>` : '';
     }
 
     function renderThemeRadar(tr) {
@@ -259,6 +350,20 @@
         if (domains.length === 0) { el.style.display = 'none'; return; }
 
         el.style.display = 'block';
+
+        // stale 标注: 主题数据日期早于当前视图日期 → 灰徐 + 半透明 (数据源无活跃刷新任务)
+        const viewDate = (_pipelineData && _pipelineData.date) || new Date().toISOString().slice(0, 10);
+        const trDate = tr.date || '';
+        const title = document.getElementById('themeTitle');
+        const isStale = !trDate || trDate < viewDate;
+        if (isStale) {
+            title.innerHTML = `📡 Deepulse 主题雷达 <span style="color:#f59e0b;font-size:10px;">⚠ 数据陈旧 · ${trDate || '未知'}</span>`;
+            bar.style.opacity = '0.55';
+        } else {
+            title.innerHTML = `📡 Deepulse 主题雷达 <span style="color:#8b949e;font-size:10px;">· ${trDate}</span>`;
+            bar.style.opacity = '1';
+        }
+
         bar.innerHTML = domains.map(([name, d]) => {
             const mom = d.momentum ?? 0;
             const cls = mom > 0.1 ? 'pl-theme-pos' : mom < -0.1 ? 'pl-theme-neg' : 'pl-theme-neu';
@@ -312,6 +417,15 @@
         const dirClass = `pl-dir-${dir || 'SKIP'}`;
         const conf = item.confidence || 0;
         const confClass = conf >= 80 ? 'pl-conf-high' : conf >= 60 ? 'pl-conf-mid' : 'pl-conf-low';
+
+        // 来源徽标: DA(da_bridge/deep_analysis) 为默认(不标); UE(宇宙扩张)/其他显式标注
+        const _src = item.source || '';
+        let srcBadge = '';
+        if (_src === 'universe_expansion') {
+            srcBadge = '<span class="pl-src-badge pl-src-ue" title="宇宙扩张: 事件驱动, 无投票/因子, 仅sim">UE</span>';
+        } else if (_src && _src !== 'da_bridge' && _src !== 'deep_analysis') {
+            srcBadge = `<span class="pl-src-badge pl-src-other" title="来源: ${_src}">${_src}</span>`;
+        }
 
         // 信息层上下文
         const ctx = item.signal_context;
@@ -410,7 +524,7 @@
         const vote = item.vote;
         let voteHtml = '<div class="pl-section-title">投票信号</div><div style="font-size:12px;color:#8b949e">无投票数据</div>';
         if (vote) {
-            const factors = (vote.factors || []).map(f => `<span class="pl-tag">${f}</span>`).join('');
+            const factors = (Array.isArray(vote.factors) ? vote.factors : []).map(f => `<span class="pl-tag">${f}</span>`).join('');
             voteHtml = `
                 <div class="pl-section">
                     <div class="pl-section-title">投票信号 (signal_snapshots)</div>
@@ -539,6 +653,7 @@
                         <span class="pl-symbol">${item.symbol}</span>
                         <span class="pl-direction ${dirClass}">${dir}</span>
                         <span class="pl-sector">${item.sector || ''}</span>
+                        ${srcBadge}
                     </div>
                     <div class="pl-card-right">
                         ${dir !== 'SKIP' ? `<span class="pl-conf-badge ${confClass}">conf ${conf}</span>` : ''}
@@ -571,8 +686,32 @@
         }
     }
 
-    // 初始化: 不传 date → 后端用 ET 今日
+    // 是否处于"今日实时"视图 (选了历史日期则不自动刷新)
+    function _isTodayView() {
+        const di = document.getElementById('plDate');
+        return !di || !di.value || (_pipelineData && _pipelineData.date === di.value);
+    }
+
+    // 初始化: 不传 date → 后端用 ET 今日; 混合实时化 (WS 推送优先 + 轮询降级)
     (function() {
         loadPipeline();
+
+        // WS 推送: auto_execute 每轮末尾广播 pipeline_update → 自动刷新 (仅今日视图)
+        if (window.WSManager) {
+            WSManager.on('pipeline_update', function() {
+                if (_isTodayView()) loadPipeline();
+            });
+        }
+
+        // 轮询降级: WS 断开且标签页可见且今日视图时, 每 30s 刷新一次
+        setInterval(function() {
+            const connected = (window.WSManager && WSManager.isConnected());
+            if (!connected && document.visibilityState === 'visible' && _isTodayView()) {
+                loadPipeline();
+            }
+        }, 30000);
+
+        // 状态标签定时刷新 (反映 WS 连接/断开)
+        setInterval(updateLiveStatus, 5000);
     })();
 {% endblock %}

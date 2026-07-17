@@ -2285,13 +2285,21 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             f"已开仓: ${_today_opened_notional:,.0f}/{_today_opened_count}笔"
         )
 
-        # 按confidence降序排序 — 购买力优先分配给最强信号 (DEB-20260629)
-        # 漏斗最后一层: 7层过滤后剩N只, BP只够开2-3笔 → 先执行最强的
-        # 2026-07-09: bridge候选优先 — deep_analysis信号比VotingCoordinator更高质量,
-        # 但confidence=70 < VotingCoordinator的88-100, 排序时被排在后面吃不到预算.
-        # 修复: bridge候选(decision_id以DA-开头)排前面.
+        # 按来源优先级 + confidence 降序 — 购买力优先分配给高优先来源的最强信号.
+        # 漏斗最后一层: 多层过滤后剩N只, BP只够开2-3笔 → 先执行优先级最高的.
+        # [ADR-020] 2026-07-17: UE(宇宙扩张) 执行优先级高于 DA — 新机会/新资讯动态标的
+        #   优先占预算, DA 静态盘次之. 以 source_priority 为主键、confidence 为次键,
+        #   与 confidence 语义解耦 (UE conf 上限50 仍保留在 llm_universe_scan.py, 不为排序而篡改).
+        #   (取代 2026-07-09 "bridge候选(DA-)优先" 旧策略.)
+        def _src_priority(inst):
+            did = (inst.get("decision_id", "") or "")
+            if did.startswith("universe_expansion"):
+                return 2   # UE 最优先 (用户指定)
+            if did.startswith("DA-"):
+                return 1   # DA 次之
+            return 0       # VotingCoordinator / 其他
         instructions.sort(key=lambda x: (
-            1 if (x.get("decision_id", "") or "").startswith("DA-") else 0,
+            _src_priority(x),
             x.get("confidence", 0) or 0
         ), reverse=True)
 
