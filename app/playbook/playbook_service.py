@@ -18,6 +18,7 @@ Usage:
 """
 import logging
 import json
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Singleton
 _service_instance = None
+
+# pipeline_view TTL 缓存 (秒). 盘中数据每 5min 才变, 30s 缓存挡住高频轮询打 DB.
+_PV_TTL = 30
 
 
 def _parse_json_field(val: Any, default: Any) -> Any:
@@ -105,6 +109,10 @@ class PlaybookService:
     def __init__(self, playbook_db: PlaybookDB = None):
         self.db = playbook_db or PlaybookDB()
         self.db.ensure_tables()
+        # pipeline_view TTL 缓存 (按 trade_date 键控)
+        self._pv_cache: Optional[Dict[str, Any]] = None
+        self._pv_ts: float = 0.0
+        self._pv_key: Optional[str] = None
 
     # ========== 查询接口 ==========
 
@@ -171,14 +179,29 @@ class PlaybookService:
     # ========== Pipeline 可视化 ==========
 
     def get_pipeline_view(self, trade_date: str = None) -> Dict[str, Any]:
-        """聚合管道各阶段数据, 供 Dashboard 可视化.
+        """聚合管道各阶段数据, 供 Dashboard 可视化 (带 30s TTL 缓存).
 
         数据流: 候选池(factor_screen) → 投票(signal_snapshots) → 指令(playbook_instructions)
         附: 因子IC(factor_ic_latest) + 方向审计(playbook_direction_audit.jsonl)
 
         Returns:
-            {date, regime, funnel, factor_ic, items: [{symbol, direction, ...vote, ...factor_scores}]}
+            {date, regime, funnel, factor_ic, items: [...], served_at}
         """
+        # 缓存键: 输入日期; None → ET 今日. (回退到最近交易日在 _build 内发生, TTL 内稳定)
+        cache_key = trade_date or self._et_today()
+        if (self._pv_cache is not None and self._pv_key == cache_key
+                and (time.time() - self._pv_ts) < _PV_TTL):
+            return self._pv_cache
+
+        view = self._build_pipeline_view(trade_date)
+        view["served_at"] = datetime.now().isoformat()
+        self._pv_cache = view
+        self._pv_ts = time.time()
+        self._pv_key = cache_key
+        return view
+
+    def _build_pipeline_view(self, trade_date: str = None) -> Dict[str, Any]:
+        """实际组装 pipeline_view (无缓存). 由 get_pipeline_view 包装调用."""
         if trade_date is None:
             trade_date = self._et_today()
 
@@ -267,6 +290,9 @@ class PlaybookService:
                     trigger_factors = _json.loads(trigger_factors)
                 except Exception:
                     trigger_factors = []
+            if not isinstance(trigger_factors, list):
+                # dict / 其他类型 → 前端 factors.map 会崩; 统一降级为 list
+                trigger_factors = list(trigger_factors.keys()) if isinstance(trigger_factors, dict) else []
             factor_ic_for_symbol = {}
             for f in trigger_factors:
                 # factors 可能是 "theme_momentum:+0.20" 格式, 取冒号前
@@ -894,20 +920,29 @@ class PlaybookService:
                 _entry_session = _get_sess() or ""
             except Exception:
                 _entry_session = ""
-            try:
-                from app.data.market_data_router import get_market_data_router as _get_mdr
-                _entry_vix = _get_mdr().get_vix_or_none() or 0.0
-            except Exception:
-                _entry_vix = 0.0
             # 2026-07-16: regime 从 MarketRegimeGate 实时判定, instruction 中无此字段.
+            # 2026-07-17: entry_vix 复用 regime 评估的 vix — assess() 内含 VIX 多级重试
+            #   (Router→AV→重试→兜底 20.0) 并落在 RegimeContext.vix. 此前 entry_vix 单独调
+            #   get_vix_or_none() 无缓存无重试, 盘前/限流恒 None→0.0 (填充率仅 10%).
+            _entry_vix = 0.0
             _live_regime = inst.get("market_regime", "")
-            if not _live_regime:
-                try:
-                    from app.playbook.market_regime import MarketRegimeGate
-                    _rc = MarketRegimeGate().assess()
+            _rc = None
+            try:
+                from app.playbook.market_regime import MarketRegimeGate
+                _rc = MarketRegimeGate().assess()
+                if not _live_regime:
                     _live_regime = str(_rc.regime.value if hasattr(_rc.regime, 'value') else _rc.regime)
-                except Exception:
+                _entry_vix = float(getattr(_rc, "vix", 0.0) or 0.0)
+            except Exception:
+                if not _live_regime:
                     _live_regime = "UNKNOWN"
+            # 兜底: regime 评估失败时单独取一次 VIX (仍可能取不到 → 0.0)
+            if _entry_vix <= 0:
+                try:
+                    from app.data.market_data_router import get_market_data_router as _get_mdr
+                    _entry_vix = _get_mdr().get_vix_or_none() or 0.0
+                except Exception:
+                    _entry_vix = 0.0
 
             # 2026-07-03 fix: 从 voting_predictions 表查投票数据, 写入 trade_records
             # 根因: save_trade 未传 voting_result/model_scores/consensus_level/final_strength
