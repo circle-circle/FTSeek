@@ -1179,6 +1179,14 @@ playbook:
     #   tolerance=0.003 (0.3%): ticker_analyzer 自身噪声底, 0.3% 以内视为噪声不拦, 避免边界抖动误拦.
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
+    # 2026-07-17: TP 的 RR 底线门禁 config 化 (SSOT). 原为 pipeline.py 模块级硬编码常量 1.5,
+    #   与同函数其他退出参数 (cooldown_sl_pct/factor_exit_rules 均走 config) 不一致.
+    #   TP 相对初始 SL 的 RR < 此值时忽略该 TP, 交给 trailing/EOD. 改值不碰代码. 回滚: 保持 1.5.
+    min_tp_rr: 1.5
+    # 2026-07-17: 隔夜持仓总开关. 关闭时 _check_playbook_exit_rules / _force_close_orphaned_sim_positions
+    #   强制不跳过 EOD/PRE_CLOSE → 全部当日平仓 (一处收口 OVERNIGHT_GAP_STOP/PRE_CLOSE_EXIT/MAX_HOLD 三个隔夜分支).
+    #   true = 允许 cohort B / long horizon 盈利仓过夜; false = 极简版 B, 全平不留隔夜敞口. 回滚: 改 true.
+    overnight_hold_enabled: false
   exit_rules:
     # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
     # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.

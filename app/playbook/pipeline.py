@@ -3402,6 +3402,11 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     _horizon = meta.get("horizon", "short")
     # _skip_allowed: 盈利仓跳过 EOD 的条件
     _skip_allowed = meta.get("_skip_allowed", _cohort == "B" or _horizon == "long")
+    # 极简版B (2026-07-17): 隔夜总开关关闭时强制不跳过 EOD/PRE_CLOSE → 全部当日平仓.
+    #   一处收口: 失效 OVERNIGHT_GAP_STOP / PRE_CLOSE_EXIT 盈利仓 pass / MAX_HOLD 三个隔夜分支.
+    from app.playbook.config import get_playbook_config as _get_pb_cfg
+    if not _get_pb_cfg().get("overnight_hold_enabled", False):
+        _skip_allowed = False
     _horizon_cfg = _load_horizon_config(_horizon)
     _overnight_gap_stop_pct = _horizon_cfg.get("overnight_gap_stop_pct", 3.0)
 
@@ -3481,7 +3486,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   修法: TP 相对【初始SL】的 RR < 1.5 时忽略该 TP, 交给 trailing/EOD;
     #   RR>=1.5 的好几何(如 NU RR=2.26)仍正常止盈. 无初始SL时不做门禁(退回原行为).
     _take_profit = meta.get("take_profit", 0)
-    _MIN_TP_RR = 1.5
+    _MIN_TP_RR = float(_pb_cfg.get("min_tp_rr", 1.5))  # 2026-07-17: config 化 (SSOT), 原硬编码 1.5
     if not exit_reason and _take_profit and float(_take_profit) > 0:
         _tp = float(_take_profit)
         _tp_risk = abs(entry_price - initial_sl) if (initial_sl and initial_sl > 0) else 0
@@ -4109,6 +4114,10 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             _cohort = _meta.get("cohort", "A")
             from app.storage.trade_store import cohort_b_skip_allowed as _skip_ok
             _skip_allowed = (_cohort == "B" and _skip_ok(r["source_type"]))
+            # 极简版B (2026-07-17): 隔夜总开关关闭 → EOD 全平, cohort B 盈利仓不跳过.
+            from app.playbook.config import get_playbook_config as _get_pb_cfg
+            if not _get_pb_cfg().get("overnight_hold_enabled", False):
+                _skip_allowed = False
             _eod_reason = "EOD_FORCE_CLOSE"
             if _skip_allowed and _cohort_b_max_hold_hit(r["entry_time"]):
                 _eod_reason = "MAX_HOLD_T5"  # 5 交易日硬上限, 仍须 broker 平仓
