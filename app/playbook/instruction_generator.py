@@ -396,14 +396,17 @@ def compute_instruction_values(
         return {}
 
     # ── 仓位 = risk_amount / per_share_risk ──
-    # P0: 用配置 risk_base_capital (默认 $82K) 作为 risk_base, 不读 sim BP ($313K)
-    # 原因: sim BP 是 $313K → 单仓 $25K → 切实盘后仓位缩3.8x, PnL不可比
-    # 用 $82K: sim 和 live 仓位 1:1, OKR 数据直接代表实盘表现
+    # 2026-07-18 (R4 SSOT): risk_base 优先取富途服务端实时净值 (capital_safety.current_equity,
+    #   accinfo_query 每 30s 刷新, 跟随 AUTO_TRADE_ACCOUNT 自动切 sim/real); 与 pipeline
+    #   日名义额度共用同一基数。净值随实盘变化 → 仓位同步缩放, 亏损后自动缩小 = 天然防爆仓。
+    #   仅在净值取不到时兜底 config risk_base_capital (默认 $82K)。
     from app.risk.capital_safety import get_capital_safety_system
     _water_mult = 1.0
     _risk_base = float(pb_cfg.get("risk_base_capital", 82000.0))
     try:
         _cs = get_capital_safety_system()
+        if _cs._state and _cs._state.current_equity and _cs._state.current_equity > 0:
+            _risk_base = float(_cs._state.current_equity)
         _pos_mult = _cs.get_position_multiplier()
         _risk_mult = _cs.get_risk_multiplier()
         _water_mult = min(_pos_mult, _risk_mult)

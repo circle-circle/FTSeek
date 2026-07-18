@@ -271,6 +271,30 @@ def _get_total_equity(scheduler) -> float:
         return 100_000.0
 
 
+def _resolve_sizing_base(pb_cfg=None) -> float:
+    """R4 统一风险基数 (SSOT): 单笔风险 + 日名义额度共用同一基数, 消除双尺子。
+
+    面向未来切实盘: 优先取富途服务端真实净值 (capital_safety.current_equity,
+    由 accinfo_query 每 30s 刷新, 跟随 AUTO_TRADE_ACCOUNT 自动切 sim/real)。
+    净值随实盘变化 → 单笔/日额度同步缩放, 亏损后基数自动缩小 = 天然防爆仓。
+    仅在净值取不到时兜底到 config risk_base_capital (默认 82000), 不再作为主口径。
+    """
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        _cs = get_capital_safety_system()
+        if _cs._state and _cs._state.current_equity and _cs._state.current_equity > 0:
+            return float(_cs._state.current_equity)
+    except Exception:
+        pass
+    try:
+        if pb_cfg is None:
+            from app.playbook.config import get_playbook_config
+            pb_cfg = get_playbook_config()
+        return float(pb_cfg.get("risk_base_capital", 82000.0))
+    except Exception:
+        return 82000.0
+
+
 # ── VotingCoordinator → Instruction 转换器 ─────────────────────────────
 # Playbook 不再跑独立 LLM, 而是消费 VotingCoordinator 的多模型投票结果.
 # 方向由投票决定 (LONG/SHORT/NEUTRAL), 数值由 compute_instruction_values 确定性计算.
@@ -2306,19 +2330,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             _bp_source = f"capital_safety_auto_budget"
         except Exception as e:
             logger.warning(f"[playbook] capital_safety auto_budget 读取失败: {e}")
-        # 降级: 用 risk_base_capital × 80% 兜底
+        # 降级: 用 sizing_base × 80% 兜底
         if _bp_limit <= 0:
-            _risk_base = float(pb_cfg.get("risk_base_capital", 82000.0))
+            _risk_base = _resolve_sizing_base(pb_cfg)  # R4 SSOT: 富途实时净值
             _bp_limit = _risk_base * 0.8
             _bp_source = f"fallback_{_risk_base:.0f}×80%"
         logger.info(f"[playbook] 预算上限: ${_bp_limit:,.0f} (来源={_bp_source}), 已部署=${_max_deploy:,.0f}")
 
         # 2026-06-28: 单日交易 guardrail — 防止恢复BUY过滤后市场过冷/过热时爆量
-        # 2026-07-02: risk_base 从硬编码 $82K 改为实时 equity (via _get_total_equity)
-        # 原因: 实际 equity=$176K, 硬编码 $82K 导致 cap=$16.4K 过低, 3单就满
-        _risk_base_capital = _get_total_equity(scheduler)
-        if _risk_base_capital <= 0:
-            _risk_base_capital = float(pb_cfg.get("risk_base_capital", 82000.0))
+        # 2026-07-18 (R4 SSOT): 日名义额度与单笔风险共用 _resolve_sizing_base (富途实时净值),
+        #   消除双尺子; 净值取不到时兜底 config risk_base_capital。
+        _risk_base_capital = _resolve_sizing_base(pb_cfg)
         _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.20))
         _daily_notional_cap = _risk_base_capital * _daily_notional_cap_pct
         _max_daily_positions = int(pb_cfg.get("max_daily_positions", 5))
@@ -2516,7 +2538,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         #   max_position_pct 仍是硬上限, confidence 只在其内部分配.
                         _inst_ps = inst.get("position_size") or 0
                         if _inst_ps <= 0 and _new_sl > 0:
-                            _risk_base = float(pb_cfg.get("risk_base_capital", 82000.0))
+                            _risk_base = _resolve_sizing_base(pb_cfg)  # R4 SSOT: 富途实时净值
                             _risk_pct = float(pb_cfg.get("risk_pct", 0.5))
                             _max_pos_pct = float(pb_cfg.get("max_position_pct", 0.04))
                             _conf = float(inst.get("confidence", 0) or 0)
