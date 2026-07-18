@@ -2162,9 +2162,14 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
                           size: float, notional: float, extra: Optional[Dict[str, Any]] = None) -> None:
     """统一收口审计 (2026-07-17): 记录每个到达执行漏斗的候选单 → data/shadow/exec_gate_audit.jsonl.
 
-    背景: DA-bridge 直写 DB 的指令绕过 _generate_instructions 的 G6 confidence 门与
-    EdgeShadowGate; 实盘走量全是 DA-bridge → 无任何统一、可解释的下单前收口点.
-    本函数装在 run_playbook_auto_execute 下单前唯一汇合点, 无论来源一律记录, 让全链路可见.
+    背景 (2026-07-18 显式化): DA-bridge / UE 直写 DB 的指令绕过 _generate_instructions 的
+    G6 confidence 门与 EdgeShadowGate; 实盘走量几乎全是 DA-bridge/UE → 主路径无 confidence 质量门.
+    这是当前刻意设计, 非疏漏: IC/confidence 属未校准的历史/legacy 数据, 不足以作为新统一管线的
+    下单门 (校准前用它拦单 = 拿噪声当信号). 风控由"安全带"承担 — 触发带 + VWAP 方向门 +
+    敞口三闸 (单仓4% / 日名义80% / 日30笔) + vol_bucket SL 钳制, 而非 confidence 门.
+    本函数装在 run_playbook_auto_execute 下单前唯一汇合点, 无论来源一律记录, 让全链路可见;
+    G6 若"假设生效"会拦掉哪些、这些后来盈亏如何, 由本审计 + edge_gate 影子持续观测,
+    待实盘样本充足、confidence 校准为正后再评估是否对走量激活质量门.
 
     同时对所有执行候选 (含 DA-bridge) 跑一次 EdgeShadowGate — edge 判定首次覆盖 DA-bridge.
     纯影子: 只记录, 绝不拦单、不改任何交易动作. best-effort, 异常一律吞掉.
@@ -2550,14 +2555,18 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             _conf_factor = 1.0
                             if bool(pb_cfg.get("confidence_sizing_enabled", False)) and _conf > 0 and _conf_base > 0:
                                 _conf_factor = max(0.6, min(1.4, _conf / _conf_base))
-                            # 2026-07-16 P1: LONG conf<50 降仓50%.
-                            #   数据: LONG 38笔 39.5%WR -$2435 vs SHORT 23笔 43.5%WR +$1467.
-                            #   LONG conf=35 (2模型分歧) 占多数, 系统性亏损.
-                            #   修复: LONG conf<50 时 _conf_factor *= 0.5 (降仓但不SKIP, 保留方向验证).
-                            if _dir == "BUY" and _conf < 50:
+                            # 2026-07-16 P1 (2026-07-18 去黑盒): LONG "模型分歧" 降仓50%.
+                            #   注意: 此处 conf<50 不是"低信心"语义 — DA confidence 未校准且反向
+                            #   (低信心桶实测反而更好, 见上文 confidence_sizing 注释). conf<50 实际是
+                            #   "2模型方向分歧" 的代理: DA 分歧写 conf=35, 一致写 ~70. 故变量命名为
+                            #   _model_disagreement 而非"低信心", 避免误读为信心质量门.
+                            #   数据依据: LONG 分歧单 38笔 39.5%WR -$2435 vs SHORT 23笔 43.5%WR +$1467 →
+                            #   LONG 方向分歧系统性亏损. 修复: 降仓50% (不SKIP, 保留方向验证观测).
+                            _model_disagreement = _conf < 50
+                            if _dir == "BUY" and _model_disagreement:
                                 _conf_factor *= 0.5
                                 logger.info(
-                                    f"[playbook] {inst['symbol']} LONG conf={_conf}<50, 降仓50% "
+                                    f"[playbook] {inst['symbol']} LONG 模型分歧(conf={_conf}<50), 降仓50% "
                                     f"(conf_factor={_conf_factor:.2f})"
                                 )
                             _risk_amount = _risk_base * (_risk_pct / 100) * _conf_factor
