@@ -1865,6 +1865,14 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[playbook] TRADING 盘前指令推送异常 (已隔离): {_e}")
 
+                    # 2026-07-17: 定桶 catch-up — 盘中重启/盘中新增指令会错过 PRE_MARKET 定桶,
+                    #   此处幂等补标 (已落桶的行跳过), 保证下单审计能读到 vol_bucket。
+                    try:
+                        from app.playbook.pipeline import run_playbook_normalize_vol_buckets
+                        run_playbook_normalize_vol_buckets(self)
+                    except Exception as _e:
+                        logger.warning(f"[playbook] TRADING 定桶 catch-up 异常 (已隔离): {_e}")
+
                     # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
                     # 每5分钟检查一次是否有新的 triggered 指令需要自动执行
                     # 2026-07-10: 从30分钟降到5分钟 — 分批建仓指令依赖价格触及入场区间,
@@ -1941,6 +1949,13 @@ class TradingScheduler:
                     except Exception as _e:
                         # 2026-07-04: debug→warning — 盘前生成失败会导致当日无作战计划, 必须可见
                         logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+
+                    # 2026-07-17: 盘前波动率定桶落库 (DA/UE 直写指令补 vol_bucket/atr_pct 到主表)
+                    try:
+                        from app.playbook.pipeline import run_playbook_normalize_vol_buckets
+                        run_playbook_normalize_vol_buckets(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] playbook 盘前定桶异常 (已隔离): {_e}")
 
                     # 2026-07-11: 独立盘前指令推送 (不依赖生成内联, 持久化幂等+重试)
                     try:

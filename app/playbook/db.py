@@ -82,6 +82,8 @@ class PlaybookDB:
             "invalidation": "TEXT",
             "entry_low": "REAL",
             "entry_high": "REAL",
+            "vol_bucket": "TEXT",
+            "atr_pct": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -757,6 +759,9 @@ _TRACKING_FIELDS = {
     # 2026-07-13: risk_amount 派生落库 — re-price 时补算 |entry-SL|×position_size,
     #   此前 DA/bridge 路径恒 NULL (盘前推送 {risk:.0f} 曾崩). 让审计/推送/周报可见每笔风险敞口。
     "risk_amount",
+    # 2026-07-17: 盘前定桶落库 — DA/UE 直写指令绕过 vol_bucket 分桶, 盘前用日线 ATR 定桶后
+    #   落主表, 使桶分类可解释、可事后查询 (此前桶名仅落 shadow jsonl)。
+    "vol_bucket", "atr_pct",
 }
 
 
@@ -885,6 +890,10 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     horizon TEXT DEFAULT 'short',
     horizon_confidence REAL,
     horizon_reasoning TEXT,
+
+    -- 波动率分桶 (2026-07-17: 盘前用日线 ATR 定桶落库, 桶分类可解释可查)
+    vol_bucket TEXT,
+    atr_pct REAL,
 
     outcome TEXT,
     shadow_pnl REAL,

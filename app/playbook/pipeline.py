@@ -559,6 +559,7 @@ from app.playbook.instruction_generator import (
     compute_confidence,
     build_thesis,
     _compute_volatility_based_sl_tp,
+    _vol_bucket_sl_bounds,
 )
 
 
@@ -1476,6 +1477,68 @@ def run_playbook_morning_push(scheduler=None) -> Optional[bool]:
         return None
 
 
+def run_playbook_normalize_vol_buckets(scheduler=None) -> Optional[Dict[str, Any]]:
+    """盘前波动率定桶落库 (2026-07-17): 为当日指令补 vol_bucket + atr_pct 到主表。
+
+    背景: DA/UE bridge 直写 DB 的指令绕过 _generate_instructions → 从不经过 vol_bucket 分桶体系,
+    写库那刻也拿不到 ATR (DA 在外部 skill / UE 只取现价)。此前桶分类只在盘中 re-price 时临时算,
+    且仅落 shadow jsonl, 主表无从查询"这单当初被分到哪个波动桶"。
+
+    本任务在盘前跑一次: 用日线 ATR (ATRProvider, 盘前稳定, 不依赖盘中 OpenD) 定桶, 落主表
+    vol_bucket / atr_pct 列, 使桶分类可解释、可事后查询。
+    - 只写分类字段, 不覆盖 entry/SL/TP (精确价留给触发时 re-price)。
+    - 幂等: 每轮盘前重算覆盖同分类, 无副作用。
+    - best-effort: 每行独立 try, ATR 取不到则跳过 (vol_bucket 留空), 绝不影响盘前流程。
+    """
+    try:
+        from app.playbook.db import PlaybookDB
+        from app.playbook.config import get_playbook_config
+        from app.core.di_container import get_di_container
+
+        today = _today_et_str()
+        db = PlaybookDB()
+        db.ensure_tables()
+        instructions = db.get_instructions_by_date(today)
+        if not instructions:
+            return None
+
+        pb_cfg = get_playbook_config()
+        atr_provider = get_di_container().atr_provider()
+
+        _tagged = 0
+        _missing = 0
+        for inst in instructions:
+            if inst.get("direction") not in ("BUY", "SELL_SHORT"):
+                continue
+            # 幂等: 已落桶的行跳过 (盘前首跑标注; TRADING catch-up 只补盘中重启/新增漏掉的)
+            if inst.get("vol_bucket"):
+                continue
+            symbol = inst.get("symbol", "")
+            try:
+                atr_pct = atr_provider.get_atr_pct(symbol)
+                if not atr_pct or atr_pct <= 0:
+                    _missing += 1
+                    continue
+                _hp = pb_cfg.get_horizon_params(inst.get("horizon", "short"))
+                _vol_info = _compute_volatility_based_sl_tp(atr_pct, inst["direction"], _hp, pb_cfg)
+                db.update_instruction_tracking(inst["id"], {
+                    "vol_bucket": (_vol_info or {}).get("bucket"),
+                    "atr_pct": round(float(atr_pct), 6),
+                })
+                _tagged += 1
+            except Exception as _e:
+                logger.debug(f"[playbook] {symbol} 定桶跳过 (已隔离): {_e}")
+                continue
+
+        logger.info(
+            f"[playbook] 盘前定桶落库 ({today}): 已标注 {_tagged} 条, ATR 缺失 {_missing} 条"
+        )
+        return {"tagged": _tagged, "missing": _missing}
+    except Exception as e:
+        logger.warning(f"[playbook] 盘前定桶任务异常 (已隔离): {e}")
+        return None
+
+
 def _compute_key_levels(data: Any) -> Dict[str, Any]:
     """从 PlaybookData 计算支撑/阻力位. 纯Python, 零LLM.
 
@@ -2345,6 +2408,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             # 修复: 触发瞬间取实时 bid/ask, 重算 entry_price + stop_loss, 传 custom_params 给 executor
             # DB 原值保留不动 (审计可追溯盘前价), custom_params 覆盖执行价
             _reprice_params = None
+            _sl_clamp_meta = {}
             try:
                 _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
                 if _dr:
@@ -2405,6 +2469,29 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             else:
                                 _sl_pct = float(_hp.get("sell_fixed_stop_loss_pct", 2.0))
                             _tp_mult = float(_hp.get("rr_ratio", 1.5))
+
+                        # ── 2026-07-17: 出价前 SL 钳制不变量 (ATR 无关, 越界必钳) ──
+                        # 根因: DA/UE 直写指令绕过 vol_bucket; ATR 缺失时 fallback 用来源原始 SL
+                        #   反算 sl_pct → 可能越过桶天花板 (MCK 6% / ABT 7.3% > ceil 5.0%)。
+                        # 只堵越界: 已按桶钳过的合法值 (ceil ≤ max_ceil) 是 no-op; SHORT 含 short_widen。
+                        _sl_pct_raw = _sl_pct
+                        _sl_clamped = False
+                        _bounds = _vol_bucket_sl_bounds(_hp, pb_cfg)
+                        if _bounds:
+                            _min_floor, _max_ceil, _max_widen = _bounds
+                            _cap = _max_ceil + (_max_widen if _dir == "SELL_SHORT" else 0.0)
+                            _sl_pct = max(_min_floor, min(_cap, _sl_pct))
+                            if abs(_sl_pct - _sl_pct_raw) > 1e-6:
+                                _sl_clamped = True
+                                logger.info(
+                                    f"[playbook] {inst['symbol']} SL 收口: "
+                                    f"{_sl_pct_raw:.2f}%→{_sl_pct:.2f}% (桶上界 cap={_cap:.2f}%, 来源 SL 超界)"
+                                )
+                        _sl_clamp_meta = {
+                            "sl_pct_raw": round(_sl_pct_raw, 3),
+                            "sl_pct_final": round(_sl_pct, 3),
+                            "sl_clamped": _sl_clamped,
+                        }
 
                         # 计算新 stop_loss
                         if _dir == "BUY":
@@ -2590,7 +2677,12 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 logger.warning(f"[playbook] 自动执行失败 {inst['symbol']}: {e}")
             # 统一收口审计 (2026-07-17): 记录到达下单漏斗并被执行/失败的候选 (含 DA-bridge)
             _emit_exec_gate_audit(inst, action=_audit_action, entry=_entry,
-                                  size=_size, notional=_new_notional)
+                                  size=_size, notional=_new_notional,
+                                  extra={
+                                      "vol_bucket": inst.get("vol_bucket"),
+                                      "atr_pct": inst.get("atr_pct"),
+                                      **_sl_clamp_meta,
+                                  })
 
         logger.info(f"[playbook] 自动执行完成: {executed_count} 成功, {skipped_count} 跳过")
         # 盘中实时化: 广播轻量 nudge, 已连 dashboard 收到后自拉缓存接口刷新. 没人连时 broadcast 直接 return.
@@ -3135,6 +3227,22 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?
             WHERE id=?
         """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), round(_mae_pct, 4), trade_id))
+    # instruction 表的 MFE/MAE 列历史语义是【美元金额】(shadow_tracker 写 (high-price)*size,
+    #   feishu 显示 ${mfe:.0f}), 而 _mfe_pct/_mae_pct 是百分比 → 按 notional 换算成美元后落库,
+    #   与所有既有消费者单位一致. notional = entry_price * quantity.
+    _mfe_usd = 0.0
+    _mae_usd = 0.0
+    try:
+        _qty_row = conn.execute(
+            "SELECT entry_price, quantity FROM trade_records WHERE id=?", (trade_id,)
+        ).fetchone()
+        if _qty_row:
+            _notional = float(_qty_row[0] or 0) * float(_qty_row[1] or 0)
+            _mfe_usd = round(_mfe_pct / 100.0 * _notional, 2)
+            _mae_usd = round(_mae_pct / 100.0 * _notional, 2)
+    except Exception:
+        pass
+
     if inst_id:
         _is_ghost = "ORPHAN" in exit_reason.upper() or "PHANTOM" in exit_reason.upper() or "GHOST" in exit_reason.upper()
         _outcome = "void" if _is_ghost else ("win" if pnl > 0 else "loss")
@@ -3143,9 +3251,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         #   幽灵仓可被重复平仓写入. 修复: 排除 'void' 终态.
         conn.execute(
             "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
-            "holding_period_hours=? WHERE id=? AND outcome NOT IN ('win','loss','void')",
+            "holding_period_hours=?, max_favorable_excursion=?, max_adverse_excursion=? "
+            "WHERE id=? AND outcome NOT IN ('win','loss','void')",
             (_outcome, exit_price, exit_reason, round(pnl, 2),
-             round(pnl_pct, 4), round(holding_hours, 1), inst_id),
+             round(pnl_pct, 4), round(holding_hours, 1),
+             _mfe_usd, _mae_usd, inst_id),
         )
     # 根因修复: 同时关闭 open_positions, 消灭幽灵仓源头
     # 2026-07-14: 软删除→直接DELETE, 软删除行无消费者(所有查询都过滤sync_status),
@@ -3273,6 +3383,7 @@ def _compute_dynamic_effective_sl(
     initial_sl: float,
     peak_profit_pct: float,
     exit_cfg: dict,
+    fee_cushion_pct: float = 0.0,
 ) -> float:
     """根据因子退出规则计算动态 effective stop loss.
 
@@ -3290,10 +3401,13 @@ def _compute_dynamic_effective_sl(
         return effective_sl
 
     # 浮盈超过 breakeven: 先保本
+    # 2026-07-17: 净保本 — 保本线含手续费缓冲 (成本价 ± fee_cushion), 确保被保本SL打掉时不亏双边费用.
     if direction == "LONG":
-        effective_sl = max(effective_sl, entry_price)
+        _be_line = entry_price * (1 + fee_cushion_pct / 100.0)
+        effective_sl = max(effective_sl, _be_line)
     else:
-        effective_sl = min(effective_sl if effective_sl > 0 else entry_price, entry_price)
+        _be_line = entry_price * (1 - fee_cushion_pct / 100.0)
+        effective_sl = min(effective_sl if effective_sl > 0 else _be_line, _be_line)
 
     if not exit_cfg.get("trailing_enabled", False):
         return effective_sl
@@ -3470,8 +3584,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
 
     # ── effective SL (factor-specific breakeven ratchet + trailing stop) ──
     # Phase 3 (2026-06-30): 按因子类型动态调整利润锁定/跟踪止损
+    _fee_cushion_pct = float(_pb_cfg.get("breakeven_fee_cushion_pct", 0.0))
     effective_sl = _compute_dynamic_effective_sl(
-        direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg
+        direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct
     )
     breakeven_triggered = peak_profit_pct >= float(_exit_cfg.get("breakeven_at_pct", 0.5))
 
@@ -3503,13 +3618,17 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         #   修复: 用 current_price (本轮报价) 作为退出价, 与 broker 实际成交更接近.
         #   最终退出价在调用方 (monitor_playbook_sim_exits) 用 broker filled_price 覆盖.
         exit_price = current_price
+        # 2026-07-17: 分类阈值用"净保本线"(成本±fee_cushion), 否则纯净保本会被误标 SL_TRAIL_LOCK.
+        _be_line = entry_price * (1 + _fee_cushion_pct / 100.0) if direction == "LONG" \
+            else entry_price * (1 - _fee_cushion_pct / 100.0)
+        _be_tol = entry_price * 1e-4  # 1bp 容差, 吸收浮点/取整
         if not breakeven_triggered:
             exit_reason = "SL_INITIAL"        # 浮盈未达 breakeven → 初始固定止损被打掉
-        elif (direction == "LONG" and effective_sl > entry_price) or \
-             (direction == "SHORT" and 0 < effective_sl < entry_price):
-            exit_reason = "SL_TRAIL_LOCK"     # 回撤锁利 → SL 已锁在成本价之上(空:之下)
+        elif (direction == "LONG" and effective_sl > _be_line + _be_tol) or \
+             (direction == "SHORT" and 0 < effective_sl < _be_line - _be_tol):
+            exit_reason = "SL_TRAIL_LOCK"     # 回撤锁利 → SL 已锁在净保本线之上(空:之下)
         else:
-            exit_reason = "SL_BREAKEVEN"      # 保本 ratchet → SL 提到成本价附近
+            exit_reason = "SL_BREAKEVEN"      # 净保本 ratchet → SL 提到成本价+手续费缓冲附近
 
     # 规则1.5 (2026-06-28): 止盈退出 — 价格触及 take_profit 时主动锁定利润.
     # 智能跳过: rr_ratio=999 / take_profit=0 的指令不触发 (用户决策).

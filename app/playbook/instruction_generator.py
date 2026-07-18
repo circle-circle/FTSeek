@@ -155,6 +155,26 @@ def _compute_volatility_based_sl_tp(
     }
 
 
+def _vol_bucket_sl_bounds(
+    _horizon_params: Dict[str, Any],
+    pb_cfg: PlaybookConfig,
+) -> Optional[tuple]:
+    """派生该 horizon 全部桶的全局 SL 边界: (min_floor_pct, max_ceil_pct, max_short_widen_pct).
+
+    用途 (2026-07-17): 出价前 ATR 无关的钳制不变量。ATR 缺失时 re-price fallback 用来源原始 SL
+    反算 sl_pct, 可能越过任何桶的天花板 (如 DA MCK 6% / ABT 7.3% > 桶 ceil 5.0%)。用全局
+    [min_floor, max_ceil(+max_short_widen if SHORT)] 钳回, 只堵越界、不改合法值 (已按桶钳过的
+    值 ceil ≤ max_ceil, 是 no-op)。无 vol_buckets 配置时返回 None, 调用方跳过钳制。
+    """
+    vol_buckets = _horizon_params.get("vol_buckets") or pb_cfg.get("vol_buckets")
+    if not vol_buckets:
+        return None
+    min_floor = min(b.get("sl_floor_pct", 1.5) for b in vol_buckets.values())
+    max_ceil = max(b.get("sl_ceil_pct", 3.0) for b in vol_buckets.values())
+    max_short_widen = max(b.get("short_widen_pct", 0.3) for b in vol_buckets.values())
+    return (min_floor, max_ceil, max_short_widen)
+
+
 def _apply_market_state_overlay(
     result: Dict[str, Any],
     decision: Dict[str, Any],
