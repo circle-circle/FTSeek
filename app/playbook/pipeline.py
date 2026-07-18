@@ -2884,6 +2884,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   保护仍来自: +5%追入带 + 3%接飞刀 + 8%极端gap过滤 + SL检查.
     #   未来: 实现真正的盘中 vol_ratio (1分钟K线聚合今日累计量/同时段均量) 后再加回.
     # 单一真源 app/playbook/entry_band.py — 执行端与 DA 直写共用同一 band 定义, 防百分比漂移/记录冲突.
+    # 注意 (R3 澄清): 触发带 = entry_price × (1 ± chase/knife), 不是 DB 的 entry_low/entry_high 列.
+    #   entry_low/entry_high 仅供推送展示 (push_trigger), 不参与触发判定 — 勿误读为触发价带.
     from app.playbook.entry_band import CHASE_ZONE_PCT as _chase_zone, KNIFE_FLOOR_PCT as _knife_floor
     _vol_ok = True
 

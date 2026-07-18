@@ -1180,9 +1180,18 @@ playbook:
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
     # 2026-07-17: TP 的 RR 底线门禁 config 化 (SSOT). 原为 pipeline.py 模块级硬编码常量 1.5,
-    #   与同函数其他退出参数 (cooldown_sl_pct/factor_exit_rules 均走 config) 不一致.
     #   TP 相对初始 SL 的 RR < 此值时忽略该 TP, 交给 trailing/EOD. 改值不碰代码. 回滚: 保持 1.5.
     min_tp_rr: 1.5
+    # 2026-07-18: 开盘冷却期 SL 放宽 config 化 (SSOT). 原 pipeline.py:3601/3834 读 cooldown_sl_pct
+    #   但配置从未定义该键 → 静默 fallback 硬编码 4.0 (黑盒). 现落配置, 默认 4.0 = 行为不变.
+    #   语义: 开盘前 15 分钟 SL 临时放宽到此 % (吸收开盘噪声, 不改 SL 参数本身). 回滚: 保持 4.0.
+    cooldown_sl_pct: 4.0
+    # 2026-07-17: 净保本缓冲. breakeven ratchet 保本线从"毛保本(=成本价)"抬到
+    #   "净保本(成本价 + 此缓冲%)", 确保浮盈达标后被保本SL打掉时不亏双边手续费/滑点.
+    #   0.15% ≈ 覆盖美股双边佣金+平台费的保守上界 (小仓佣金占比更高时仍足够);
+    #   breakeven_at_pct(0.5%)触发时机不变, 仅抬 SL 落点, 仍留 ~0.35% 缓冲空间防小回撤误扫.
+    #   config 驱动, 改值不碰代码; 回滚设 0.0 = 回到毛保本.
+    breakeven_fee_cushion_pct: 0.15
     # 2026-07-17: 隔夜持仓总开关. 关闭时 _check_playbook_exit_rules / _force_close_orphaned_sim_positions
     #   强制不跳过 EOD/PRE_CLOSE → 全部当日平仓 (一处收口 OVERNIGHT_GAP_STOP/PRE_CLOSE_EXIT/MAX_HOLD 三个隔夜分支).
     #   true = 允许 cohort B / long horizon 盈利仓过夜; false = 极简版 B, 全平不留隔夜敞口. 回滚: 改 true.
