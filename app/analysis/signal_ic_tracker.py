@@ -535,20 +535,18 @@ def get_ic_summary(
         rows = _clean_rows
 
         # 全局 IC
-        # 2026-06-30 修复: 使用signed strength (LONG=+s, SHORT=-s)
-        # 之前用raw strength，LONG和SHORT同值互相抵消，IC无法区分方向
+        # 2026-07-19 修复 sign double-adjustment: fwd_ret 回填时已按方向调整
+        #   (_calc_fwd: SHORT 用 t0/close_tn-1), 此处不可再对 SHORT strength 取负,
+        #   否则双重调整使 SHORT 信号 IC 系统性反号. LONG/SHORT 均用 raw strength.
         signed_strengths = []
         fwd_rets_list = []
         for r in rows:
             s = r["strength"]
             d = r["direction"]
             fr = r[forward_col]
-            if d == "LONG":
-                signed_strengths.append(float(s))
-            elif d == "SHORT":
-                signed_strengths.append(-float(s))
-            else:
-                continue  # NEUTRAL skip
+            if d == "NEUTRAL":
+                continue
+            signed_strengths.append(float(s))
             fwd_rets_list.append(float(fr))
         
         if spearmanr is not None:
@@ -566,16 +564,13 @@ def get_ic_summary(
         for date, day_rows in by_date.items():
             if len(day_rows) < 3:
                 continue
-            # 2026-06-30: signed strength for daily IC too
+            # 2026-07-19 修复 sign double-adjustment: fwd_ret 已方向调整, strength 用 raw
             d_signed = []
             d_rets = []
             for r in day_rows:
-                if r["direction"] == "LONG":
-                    d_signed.append(float(r["strength"]))
-                elif r["direction"] == "SHORT":
-                    d_signed.append(-float(r["strength"]))
-                else:
+                if r["direction"] == "NEUTRAL":
                     continue
+                d_signed.append(float(r["strength"]))
                 d_rets.append(float(r[forward_col]))
             if len(d_signed) < 3:
                 continue
@@ -602,16 +597,13 @@ def get_ic_summary(
         for sid, group in strat_groups.items():
             if len(group) < 5:
                 continue
-            # 2026-06-30: signed strength
+            # 2026-07-19 修复 sign double-adjustment: fwd_ret 已方向调整, strength 用 raw
             g_signed = []
             g_rets = []
             for r in group:
-                if r["direction"] == "LONG":
-                    g_signed.append(float(r["strength"]))
-                elif r["direction"] == "SHORT":
-                    g_signed.append(-float(r["strength"]))
-                else:
+                if r["direction"] == "NEUTRAL":
                     continue
+                g_signed.append(float(r["strength"]))
                 g_rets.append(float(r[forward_col]))
             if len(g_signed) < 5:
                 continue

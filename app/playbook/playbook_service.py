@@ -696,6 +696,17 @@ class PlaybookService:
         except Exception as _cb_err:
             logger.warning("[playbook] 熔断检查异常 (放行): %s", _cb_err)
 
+        # 切实盘前风控接线: 绝对熔断硬门 (连亏5笔/日亏$2K/时亏$1K).
+        #   此前 can_open_new_position 从未在 Playbook 路径调用 → ACB 形同虚设.
+        try:
+            from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
+            _allowed, _acb_reason = get_absolute_circuit_breaker().can_open_new_position("playbook")
+            if not _allowed:
+                logger.warning(f"[绝对熔断] {_acb_reason}, 拒绝开仓")
+                return {"success": False, "message": f"[绝对熔断] {_acb_reason}"}
+        except Exception as _acb_err:
+            logger.warning("[playbook] 绝对熔断检查异常 (放行): %s", _acb_err)
+
         # 读取下单模式: 统一走 broker 真实下单 (futu_simulate / live), 禁止纯虚拟 shadow.
         # simulate (shadow) 模式已废弃, 如果配置误设为 simulate, 强制降级为 futu_simulate.
         try:
@@ -864,6 +875,22 @@ class PlaybookService:
         except Exception as _pe:
             logger.warning(f"[playbook] PDT 检查异常 (放行): {_pe}")
 
+        # 滑点数据闭环 (P0): 下单前抓 arrival price (信号参考价), 事后与真实成交价对比.
+        #   口径: bid/ask 中间价优先, 兜底 last price. 取价失败不阻塞下单 (fail-open, 记 0).
+        _arrival_price = 0.0
+        try:
+            from app.data.market_data_router import MarketDataRouter as _MDR
+            _arr_ctx = _MDR().get_quote(symbol)
+            if _arr_ctx:
+                _a_bid = float(_arr_ctx.get("lv3_bid") or _arr_ctx.get("bid") or 0)
+                _a_ask = float(_arr_ctx.get("lv3_ask") or _arr_ctx.get("ask") or 0)
+                if _a_bid > 0 and _a_ask > 0:
+                    _arrival_price = round((_a_bid + _a_ask) / 2.0, 4)
+                else:
+                    _arrival_price = float(_arr_ctx.get("price", 0) or 0)
+        except Exception as _arr_e:
+            logger.debug(f"[playbook] {symbol} arrival price 抓取失败 (不阻塞下单): {_arr_e}")
+
         _order = Order(
             symbol=symbol,
             direction=Direction.LONG if direction == "BUY" else Direction.SHORT,
@@ -926,6 +953,24 @@ class PlaybookService:
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
         _now_iso = now_et().isoformat()
         _order_id = f"{_mode_label}_{_uuid.uuid4().hex[:8]}"
+
+        # 滑点数据闭环 (P0): 用 arrival price 与真实成交价算滑点 bps (正=不利).
+        #   BUY 成交价 > 参考价 → 不利; SHORT 成交价 < 参考价 → 不利.
+        _slippage_bps = None
+        if _arrival_price and _arrival_price > 0 and _fill and _fill > 0:
+            _raw_bps = (float(_fill) - float(_arrival_price)) / float(_arrival_price) * 10000.0
+            _slippage_bps = round(-_raw_bps if mos_direction == "SHORT" else _raw_bps, 2)
+            if abs(_slippage_bps) > 50.0:
+                logger.warning(
+                    f"[playbook] {_mode_label} {symbol} 滑点 {_slippage_bps:+.1f}bps 超阈值 50bps "
+                    f"(参考${_arrival_price:.2f} → 成交${_fill:.2f} dir={mos_direction})"
+                )
+        _exec_meta = {
+            "arrival_price": float(_arrival_price) if _arrival_price else None,
+            "fill_price": float(_fill),
+            "slippage_bps": _slippage_bps,
+            "entry_price_source": _entry_price_source,
+        }
 
         # 写 trade_records (真实成交价, source_type 按 target_env 区分)
         try:
@@ -1055,6 +1100,8 @@ class PlaybookService:
                     # 写入触发条件 + 数据质量, 供 OKR 按 source/factor 拆分 (与 MAIN_PIPELINE factor_detail 同用途)
                     "conditions": _parse_json_field(inst.get("conditions_json"), []),
                     "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
+                    # 滑点数据闭环 (P0): arrival price / 真实成交价 / 滑点 bps
+                    "execution": _exec_meta,
                 }),
                 "signal_details": _json.dumps({
                     "source": f"playbook_{_mode_label}",

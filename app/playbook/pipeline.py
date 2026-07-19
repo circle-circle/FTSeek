@@ -3248,6 +3248,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     except Exception as _tel_err:
         logger.debug(f"[_close_trade_record] exit_telemetry 组装失败 trade_id={trade_id}: {_tel_err}")
 
+    # ── 量纲约定 (2026-07-18 显式文档化) ──
+    #   pnl_pct: ratio (0.0311 = 3.11%)  — 与 realized_pnl 同向, 下游消费者按 ratio 处理
+    #   mfe_pct / mae_pct: percentage (3.72 = 3.72%) — 与 peak_price/trough_price 反算一致
+    #   两者差 100x, 混合比较时必须 pnl_pct*100 或 mfe_pct/100 对齐.
+    #   历史原因: mfe/mae 从 metadata["mfe_pct"] 继承百分比语义, pnl_pct 从 order_executor 继承 ratio 语义.
     if close_futu_order_id:
         conn.execute("""
             UPDATE trade_records
@@ -3290,6 +3295,29 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
              round(pnl_pct, 4), round(holding_hours, 1),
              _mfe_usd, _mae_usd, inst_id),
         )
+
+    # ── 切实盘前风控接线: 平仓后喂给 record 端 (复用现有模块, fail-open) ──
+    #   此前 Playbook 路径从不调用这两个 record, 导致 ACB 连亏/日亏计数恒为0、
+    #   PDT 日内交易数恒为0 → 绝对熔断与 PDT 限制在实盘形同虚设.
+    #   幽灵/孤儿平仓不计入风控统计 (非真实交易结果).
+    _rc_is_ghost = any(_k in (exit_reason or "").upper() for _k in ("ORPHAN", "PHANTOM", "GHOST"))
+    if symbol and not _rc_is_ghost:
+        try:
+            from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
+            get_absolute_circuit_breaker().record_trade_result("playbook", float(pnl), symbol)
+        except Exception as _acb_e:
+            logger.debug(f"[风控接线] ACB record 跳过 {symbol}: {_acb_e}")
+        try:
+            _entry_time_row = conn.execute(
+                "SELECT entry_time FROM trade_records WHERE id=?", (trade_id,)
+            ).fetchone()
+            _entry_time_val = _entry_time_row[0] if _entry_time_row else None
+            if _entry_time_val:
+                from app.risk.pdt_guard import get_pdt_guard
+                get_pdt_guard().record_close(symbol, _entry_time_val)
+        except Exception as _pdt_e:
+            logger.debug(f"[风控接线] PDT record 跳过 {symbol}: {_pdt_e}")
+
     # 根因修复: 同时关闭 open_positions, 消灭幽灵仓源头
     # 2026-07-14: 软删除→直接DELETE, 软删除行无消费者(所有查询都过滤sync_status),
     #             且auto_position_reconcile只在09:30 ET运行, 非交易日/非开盘时残留→EOD报告误读
@@ -3443,6 +3471,31 @@ def _compute_dynamic_effective_sl(
         effective_sl = min(effective_sl if effective_sl > 0 else _be_line, _be_line)
 
     if not exit_cfg.get("trailing_enabled", False):
+        # 2026-07-18 profit_override (三轮辩论裁决): 浮盈超过阈值时强制启用锁利.
+        #   根因: trailing_enabled=false 的因子(17个"快速证伪"类)只有保本没有锁利,
+        #   浮盈 3.89% 的 COIN SHORT 最终保本出场, 白送 3.9% 利润.
+        #   修复: 浮盈 >= 1.5% (3×breakeven) 时, 不管因子配置, 强制启用回撤锁利.
+        #   安全: 0-1.5% 证伪期行为不变, 设计意图兼容.
+        #   回滚: 设 profit_override_threshold_pct=999 即禁用.
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_override
+            _po_cfg = _get_pb_cfg_override()
+            _po_threshold = float(_po_cfg.get("profit_override_threshold_pct", 1.5))
+            _po_dd = float(_po_cfg.get("profit_override_drawdown_pct", 0.5))
+        except Exception:
+            _po_threshold = 1.5
+            _po_dd = 0.5
+        if peak_profit_pct < _po_threshold:
+            return effective_sl
+        # 浮盈已大, 强制锁利: SL = peak × (1 - dd%), 但不低于保本线
+        if direction == "LONG":
+            _po_peak = entry_price * (1 + peak_profit_pct / 100)
+            _po_sl = _po_peak * (1 - _po_dd / 100)
+            effective_sl = max(effective_sl, _po_sl)
+        else:
+            _po_peak = entry_price * (1 - peak_profit_pct / 100)
+            _po_sl = _po_peak * (1 + _po_dd / 100)
+            effective_sl = min(effective_sl if effective_sl > 0 else entry_price, _po_sl)
         return effective_sl
 
     # ── 回撤止损 (新逻辑, 2026-07-09) ──
@@ -4066,10 +4119,20 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     if entry_price > 0 and peak_price > 0:
                         _peak_prof = (((peak_price - entry_price) if direction == "LONG"
                                        else (entry_price - peak_price)) / entry_price * 100)
+                    # 2026-07-18: 传入 time_exit_hours 供提案 B 作用域判断
+                    from app.playbook.config import get_playbook_config as _get_pb_cfg_shadow
+                    _shadow_conditions = meta.get("conditions", [])
+                    _shadow_exit_cfg = _get_factor_exit_config(
+                        _shadow_conditions,
+                        _get_pb_cfg_shadow().get_horizon_top("factor_exit_rules", {}),
+                        direction=direction,
+                    )
+                    _shadow_te_hours = float(_shadow_exit_cfg.get("time_exit_hours", 0.0))
                     _exit_shadow_new = record_exit_shadow_poll(
                         meta, direction=direction, entry_price=entry_price,
                         initial_sl=stop_loss, current_price=current_price,
                         peak_profit_pct=_peak_prof, held_minutes=held_minutes,
+                        time_exit_hours=_shadow_te_hours,
                     )
                 except Exception:
                     pass

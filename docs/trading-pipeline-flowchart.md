@@ -92,7 +92,7 @@ flowchart TD
 ## 实时参数快照
 
 <!-- AUTOGEN:params:start -->
-> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-18 07:55 ET · commit `45fcea8a`
+> 🤖 自动生成 · 请勿手改此块 · 生成时间 2026-07-18 21:53 ET · commit `87f2f70f`
 > 数值均从真实配置/代码抽取, 带出处; 结构(上方流程图)才是手维护的 SSOT。
 
 #### 执行护栏 (Execution Guardrails)
@@ -108,13 +108,13 @@ flowchart TD
 #### 止损止盈波动率桶 (playbook_horizon.yaml::vol_buckets)
 | 桶 | ATR%上限 | SL范围 | TP倍数 | 最长持仓 |
 |---|---|---|---|---|
-| short/low | ATR<0.015 | 2.0~2.5% | 2.0 | 6h |
-| short/medium | ATR<0.035 | 2.5~4.5% | 1.8 | 4h |
-| short/high | ATR<0.08 | 3.5~5.0% | 1.5 | 2h |
-| short/extreme | ATR<999.0 | 3.5~5.0% | 1.5 | 1h |
-| long/low | ATR<0.015 | 1.5~3.0% | 2.5 | 24h |
-| long/medium | ATR<0.035 | 2.5~5.0% | 2.0 | 16h |
-| long/high | ATR<999.0 | 3.5~5.0% | 1.8 | 8h |
+| short/low | ATR<0.015 | 2.0~2.5% | 2.0 | Noneh |
+| short/medium | ATR<0.035 | 2.5~4.5% | 1.8 | Noneh |
+| short/high | ATR<0.08 | 3.5~5.0% | 1.5 | Noneh |
+| short/extreme | ATR<999.0 | 3.5~5.0% | 1.5 | Noneh |
+| long/low | ATR<0.015 | 1.5~3.0% | 2.5 | Noneh |
+| long/medium | ATR<0.035 | 2.5~5.0% | 2.0 | Noneh |
+| long/high | ATR<999.0 | 3.5~5.0% | 1.8 | Noneh |
 
 #### 退出规则 factor_exit_rules (playbook_horizon.yaml)
 | 因子 | 保本触发 | 时间退出 | trailing |
