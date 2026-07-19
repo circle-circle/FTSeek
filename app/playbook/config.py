@@ -35,7 +35,13 @@ class PlaybookConfig:
         # 2026-06-28: 方向差异化 confidence 门槛 (BUY 要求更高, SHORT 维持默认)
         "buy_min_confidence": 80,
         "sell_short_min_confidence": 65,
+        "min_tp_rr": 1.5,
         "buying_power_fallback_alert": True,
+        # 2026-07-19: 下单前报价健康门 (复用 data_health_guard.check_quote_health).
+        #   拦截过宽 spread / 过期报价 → 阻止市价单打在坏价上. gate 失败时 fail-open (取价异常不阻塞).
+        "pretrade_quote_gate_enabled": True,
+        "pretrade_max_spread_pct": 0.05,
+        "pretrade_max_quote_age_sec": 60.0,
         # 2026-06-28: 单日 guardrail (仅 auto_execute 阶段生效)
         # 2026-07-06: 模拟交易期提升交易量 20%→40%, 5→10 (收集更多样本数据)
         # 2026-07-09: 40%→60% — bridge候选直写DB后, deep_analysis信号质量提升,

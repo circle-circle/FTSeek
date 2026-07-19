@@ -878,6 +878,7 @@ class PlaybookService:
         # 滑点数据闭环 (P0): 下单前抓 arrival price (信号参考价), 事后与真实成交价对比.
         #   口径: bid/ask 中间价优先, 兜底 last price. 取价失败不阻塞下单 (fail-open, 记 0).
         _arrival_price = 0.0
+        _arr_ctx = None
         try:
             from app.data.market_data_router import MarketDataRouter as _MDR
             _arr_ctx = _MDR().get_quote(symbol)
@@ -890,6 +891,34 @@ class PlaybookService:
                     _arrival_price = float(_arr_ctx.get("price", 0) or 0)
         except Exception as _arr_e:
             logger.debug(f"[playbook] {symbol} arrival price 抓取失败 (不阻塞下单): {_arr_e}")
+
+        # 下单前报价健康门 (Tier B 2026-07-19): 复用 check_quote_health 拦截过宽 spread / 过期报价.
+        #   复用上面已抓的 _arr_ctx (不额外调 API). 取价失败/无报价 → fail-open (下游另有兜底).
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_gate
+            _gate_cfg = _get_pb_cfg_gate()
+            if _gate_cfg.get("pretrade_quote_gate_enabled", True) and _arr_ctx:
+                from app.risk.data_health_guard import check_quote_health
+                _g_bid = float(_arr_ctx.get("lv3_bid") or _arr_ctx.get("bid") or 0)
+                _g_ask = float(_arr_ctx.get("lv3_ask") or _arr_ctx.get("ask") or 0)
+                # 仅在 bid/ask 齐备时硬门 (缺失=薄盘/盘前, 不过度拦截, 交由下游兜底).
+                if _g_bid > 0 and _g_ask > 0:
+                    _gate_quote = {
+                        "bid": _g_bid,
+                        "ask": _g_ask,
+                        "price": float(_arr_ctx.get("price", 0) or _arr_ctx.get("last", 0) or 0),
+                        "timestamp": _arr_ctx.get("timestamp"),
+                    }
+                    _q_ok, _q_reason = check_quote_health(
+                        _gate_quote,
+                        max_age_seconds=float(_gate_cfg.get("pretrade_max_quote_age_sec", 60.0)),
+                        max_spread_pct=float(_gate_cfg.get("pretrade_max_spread_pct", 0.05)),
+                    )
+                    if not _q_ok:
+                        logger.warning(f"[playbook] {_mode_label} {symbol} 报价健康门拒绝下单: {_q_reason}")
+                        return {"success": False, "message": f"报价健康门拒绝: {_q_reason}"}
+        except Exception as _gate_e:
+            logger.debug(f"[playbook] {symbol} 报价健康门异常 (放行): {_gate_e}")
 
         _order = Order(
             symbol=symbol,
