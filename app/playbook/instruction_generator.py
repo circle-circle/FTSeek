@@ -33,6 +33,52 @@ from app.playbook.config import get_playbook_config, PlaybookConfig
 logger = logging.getLogger(__name__)
 
 
+def compute_position_size(
+    risk_base: float,
+    risk_pct: float,
+    entry_price: float,
+    stop_loss: float,
+    max_position_pct: float,
+    *,
+    regime_mult: float = 1.0,
+    water_mult: float = 1.0,
+    conf_factor: float = 1.0,
+) -> int:
+    """确定性仓位计算 SSOT (F1, 2026-07-19, DEB-20260719-round2 Ω.3-4).
+
+    主路径(instruction_generator)与兜底路径(pipeline auto_execute)共用, 消除 sizing 双实现。
+    公式:
+        risk_amount = risk_base × (risk_pct/100) × regime_mult × water_mult × conf_factor
+        size = int(risk_amount / |entry_price - stop_loss|)
+        受 max_position_pct 截断: size×entry > risk_base×max_position_pct 时缩至上限
+
+    参数全开放契约 (β焦点4): 函数体只做确定性计算, 乘数由调用方决定。
+      - 主路径: regime_mult=regime_multiplier, water_mult=水位乘数, conf_factor=1.0
+      - 兜底: regime_mult/water_mult 补传(F1 修复点), conf_factor=含 LONG 分歧降仓
+      - LONG 分歧降仓50% / market_state_mult 等路径专属逻辑留在调用侧, 不进本函数。
+
+    Returns:
+        仓位股数 (int)。sl_distance<=0 或价格非法时返回 0; 截断时至少 1 股。
+    """
+    if entry_price <= 0 or stop_loss <= 0:
+        return 0
+    per_share_risk = abs(entry_price - stop_loss)
+    if per_share_risk <= 0:
+        return 0
+    risk_amount = risk_base * (risk_pct / 100) * regime_mult * water_mult * conf_factor
+    size = int(risk_amount / per_share_risk)
+    # max_position_pct 截断 — 单仓位不超过 risk_base 的配置比例
+    if max_position_pct and max_position_pct > 0:
+        max_position_value = risk_base * max_position_pct
+        if size * entry_price > max_position_value:
+            size = max(1, int(max_position_value / entry_price))
+            logger.debug(
+                f"[sizing] 仓位截断至 {size}股 (上限{max_position_pct*100:.0f}%=${max_position_value:,.0f})"
+            )
+    return size
+
+
+
 # ========== Thesis 模板 (禁止自由文本) ==========
 
 THESIS_TEMPLATES = {
@@ -413,23 +459,20 @@ def compute_instruction_values(
     except Exception:
         pass
 
+    # F1 (2026-07-19): sizing SSOT 公共函数 — 主路径/兜底共用, 消除双实现 (DEB-round2 Ω.3-4).
+    #   risk_amount 保留供 result["risk_amount"] 报告; size 数学(除法+截断)全在 compute_position_size.
     risk_amount = _risk_base * (risk_pct / 100) * regime_multiplier * _water_mult
-    per_share_risk = abs(entry_price - result["stop_loss"])
-    if per_share_risk > 0:
-        position_size = int(risk_amount / per_share_risk)
-    else:
-        position_size = 0
-
-    # P0: max_position_pct 截断 — 单仓位不超过 risk_base 的配置比例
     _max_position_pct = float(pb_cfg.get("max_position_pct", 0.08))
+    position_size = compute_position_size(
+        _risk_base, risk_pct, entry_price, result["stop_loss"], _max_position_pct,
+        regime_mult=regime_multiplier, water_mult=_water_mult, conf_factor=1.0,
+    )
+    # 截断可观测性: sizing 数学在 SSOT 函数内, 此处仅在上限边界触发 info 日志
     _max_position_value = _risk_base * _max_position_pct
-    _position_value = position_size * entry_price
-    if _position_value > _max_position_value:
-        _old_qty = position_size
-        position_size = max(1, int(_max_position_value / entry_price))
+    if position_size > 0 and position_size * entry_price <= _max_position_value < (position_size + 1) * entry_price:
         logger.info(
-            f"[Playbook] {decision.get('symbol','')} 仓位截断: {_old_qty}股(${_position_value:,.0f}) "
-            f"→ {position_size}股(${position_size*entry_price:,.0f}) [上限{_max_position_pct*100:.0f}%=${_max_position_value:,.0f}]"
+            f"[Playbook] {decision.get('symbol','')} 仓位触及上限: {position_size}股(${position_size*entry_price:,.0f}) "
+            f"[上限{_max_position_pct*100:.0f}%=${_max_position_value:,.0f}]"
         )
 
     # Phase 4: 应用市场状态仓位乘数

@@ -2286,6 +2286,16 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 )
                 return {"date": today, "executed": 0, "skipped": 0, "reason": f"risk_state_{risk_state}"}
         except Exception as e:
+            # R1a (2026-07-19, DEB-round2 Ω.3-3): 预检 fail 模式由 risk.preflight_fail_mode 驱动.
+            #   closed → 跳过本轮 auto_execute (regime/risk_state 未知时不开仓). SIM 默认 open.
+            try:
+                from app.core.config_container import get_config as _get_cfg_r1a
+                _r1a_mode = _get_cfg_r1a().get_dotted("risk.preflight_fail_mode", "open")
+            except Exception:
+                _r1a_mode = "open"
+            if _r1a_mode == "closed":
+                logger.error(f"[playbook] 风险状态检查异常 (fail-close 跳过本轮): {e}")
+                return {"date": today, "executed": 0, "skipped": 0, "reason": "preflight_fail_close"}
             logger.warning(f"[playbook] 风险状态检查异常 (放行): {e}")
 
         db = PlaybookDB()
@@ -2317,8 +2327,13 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             ).fetchone()
             _bp_conn.close()
             _max_deploy = _row[0] if _row else 0.0
-        except Exception:
-            pass
+        except Exception as _r1b_err:
+            # R1b (2026-07-19, DEB-round2 Ω.3-1): 预算门无条件 fail-close (不受配置开关控制).
+            #   本地 SQLite 只读查询失败 = DB 级严重事件 (非网络抖动), 不可静默放行.
+            #   _max_deploy=+inf 视为预算已用满 → 拦后续所有开仓 (宁可误拦一轮, 不可无上限开仓).
+            #   历史根因: 2026-06-25 静默放行 → $388K on $82K 账户 (见上方注释).
+            _max_deploy = float("inf")
+            logger.error(f"[playbook] R1b 预算查询失败 → fail-close 拦后续开仓: {_r1b_err}")
 
         from app.playbook.config import get_playbook_config
         pb_cfg = get_playbook_config()
@@ -2357,9 +2372,14 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             import sqlite3 as _sql3
             _db_path = "/opt/ftseek/FTSeek-US/data/ftseek_us.db"
             _db_conn = _sql3.connect(_db_path)
+            # S3 (2026-07-19, DEB-round2 Ω.3-6): 日名义额度仅统计 Playbook 自身交易.
+            #   修复前无 source_type 过滤 → 当日手动/ORB/主线交易 notional 挤占 Playbook 的
+            #   daily_notional_cap, 导致 Playbook 被误拦 (保守方向, 不漏放但漏信号).
+            #   与同函数 R1b 查询 (2315 source_type='PLAYBOOK_SIM') 口径对齐.
             _row = _db_conn.execute(
                 "SELECT COALESCE(SUM(entry_price * quantity), 0), COUNT(*) "
-                "FROM trade_records WHERE substr(entry_time,1,10) = ?",
+                "FROM trade_records WHERE substr(entry_time,1,10) = ? "
+                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')",
                 (today,)
             ).fetchone()
             _today_opened_notional = float(_row[0] or 0)
@@ -2417,6 +2437,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     skipped_count += 1
                     continue
             except Exception as _bh_err:
+                # R1c (2026-07-19, DEB-round2 Ω.3-3): 预检 fail 模式由 risk.preflight_fail_mode 驱动.
+                #   closed → 跳过该仓 (broker 持仓未知时不重复下单). SIM 默认 open.
+                try:
+                    from app.core.config_container import get_config as _get_cfg_r1c
+                    _r1c_mode = _get_cfg_r1c().get_dotted("risk.preflight_fail_mode", "open")
+                except Exception:
+                    _r1c_mode = "open"
+                if _r1c_mode == "closed":
+                    logger.error(f"[playbook] broker持仓检查失败 (fail-close 跳过该仓): {_bh_err}")
+                    skipped_count += 1
+                    continue
                 logger.debug(f"[playbook] broker持仓检查失败 (放行): {_bh_err}")
 
             # 盘中实时触发检查: 价格是否进入入场区间 ±5%
@@ -2546,6 +2577,24 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             _risk_base = _resolve_sizing_base(pb_cfg)  # R4 SSOT: 富途实时净值
                             _risk_pct = float(pb_cfg.get("risk_pct", 0.5))
                             _max_pos_pct = float(pb_cfg.get("max_position_pct", 0.04))
+                            # F1 (2026-07-19): 补水位/regime 乘数, 与主路径 compute_position_size 对齐
+                            #   (DEB-20260719-round2 Ω.3-4). 修复前兜底缺二者 → 回撤期仓位反向放大.
+                            #   water_mult: capital_safety 水位减仓 (YELLOW/ORANGE), 单一真源同主路径.
+                            #   regime_mult: MarketRegimeGate (live regime SSOT) + 主路径同款 regime 表.
+                            _water_mult = 1.0
+                            _regime_mult = 1.0
+                            try:
+                                from app.risk.capital_safety import get_capital_safety_system as _get_cs_f1
+                                _cs_f1 = _get_cs_f1()
+                                _water_mult = min(_cs_f1.get_position_multiplier(), _cs_f1.get_risk_multiplier())
+                            except Exception:
+                                pass
+                            try:
+                                from app.playbook.market_regime import MarketRegimeGate as _MRG_f1
+                                _regime_str_f1 = _normalize_regime_str(_MRG_f1().assess())
+                                _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
+                            except Exception:
+                                pass
                             _conf = float(inst.get("confidence", 0) or 0)
                             _conf_base = float(pb_cfg.get("min_confidence", 60) or 60)
                             # 2026-07-12: confidence 加权默认关闭 (拍平为 1.0). exit_scorecard 实测
@@ -2569,19 +2618,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                     f"[playbook] {inst['symbol']} LONG 模型分歧(conf={_conf}<50), 降仓50% "
                                     f"(conf_factor={_conf_factor:.2f})"
                                 )
-                            _risk_amount = _risk_base * (_risk_pct / 100) * _conf_factor
-                            _per_share_risk = abs(_new_entry - _new_sl)
-                            if _per_share_risk > 0:
-                                _inst_ps = int(_risk_amount / _per_share_risk)
-                            _max_pos_val = _risk_base * _max_pos_pct
-                            if _inst_ps * _new_entry > _max_pos_val:
-                                _inst_ps = max(1, int(_max_pos_val / _new_entry))
+                            # F1: sizing SSOT 公共函数 (含 water_mult×regime_mult×conf_factor + 截断)
+                            from app.playbook.instruction_generator import compute_position_size as _cps_f1
+                            _inst_ps = _cps_f1(
+                                _risk_base, _risk_pct, _new_entry, _new_sl, _max_pos_pct,
+                                regime_mult=_regime_mult, water_mult=_water_mult, conf_factor=_conf_factor,
+                            )
                             if _inst_ps > 0:
                                 logger.info(
-                                    f"[playbook] {inst['symbol']} position_size兜底: "
-                                    f"{_inst_ps}股 (risk=${_risk_amount:.0f}×conf{_conf_factor:.2f}"
-                                    f"/share_risk=${_per_share_risk:.2f}, "
-                                    f"上限{int(_max_pos_pct*100)}%=${_max_pos_val:.0f})"
+                                    f"[playbook] {inst['symbol']} position_size兜底(F1 SSOT): "
+                                    f"{_inst_ps}股 (water={_water_mult:.2f}×regime={_regime_mult:.2f}"
+                                    f"×conf={_conf_factor:.2f}, 上限{int(_max_pos_pct*100)}%)"
                                 )
 
                         _reprice_params = {
@@ -3282,6 +3329,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         pass
 
     if inst_id:
+        # E2 契约 (2026-07-19, DEB-round2 Ω.3-5): exit_reason 含 ORPHAN/PHANTOM/GHOST → outcome=void.
+        #   ghost 平仓 (含无报价兜底 PnL=0) 经此标 void, 不计 win/loss 统计 — get_summary_stats 仅计
+        #   outcome IN (win,loss), void 被排除, 故无报价 ghost 不污染胜率/净PnL. trade_records 无 outcome
+        #   列, 基于它的统计须过滤 exit_reason NOT LIKE '%GHOST%'.
         _is_ghost = "ORPHAN" in exit_reason.upper() or "PHANTOM" in exit_reason.upper() or "GHOST" in exit_reason.upper()
         _outcome = "void" if _is_ghost else ("win" if pnl > 0 else "loss")
         # 2026-07-16 P0 修复: 幂等条件加入 'void', 防止已标 void 的幽灵仓被重复处理.
@@ -3859,6 +3910,13 @@ def _horizon_max_hold_hit(entry_time_str: str, max_hold_days: int) -> bool:
 
 # ── Phase 1 (2026-06-24): futu_simulate 真实仓位退出监控 ──────────────
 
+# R2 (2026-07-19, DEB-round2 Ω.3-4): 取价失败连续轮次追踪 (进程级跨轮记忆).
+#   monitor 无状态设计, 但"连续 N 轮取价失败告警"需跨轮记忆 → 模块级 dict.
+#   symbol→连续失败轮数; _alerted 避免每轮重复推送 (取价恢复后重置).
+_quote_fail_streak = {}
+_quote_fail_alerted = set()
+
+
 def monitor_playbook_sim_exits(scheduler) -> int:
     """盘中监控 PLAYBOOK_SIM 真实模拟仓位的退出.
 
@@ -3948,7 +4006,29 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             except Exception:
                 pass
             if not current_price or current_price <= 0:
+                # R2 (2026-07-19): 连续取价失败追踪 + 3 轮告警 (不改跳过行为, 仅升级可观测性).
+                #   单仓价格源持续失败 (如 Finnhub 限流) → 该仓多轮无止损保护, 必须可见.
+                _quote_fail_streak[symbol] = _quote_fail_streak.get(symbol, 0) + 1
+                if _quote_fail_streak[symbol] >= 3 and symbol not in _quote_fail_alerted:
+                    _quote_fail_alerted.add(symbol)
+                    logger.error(
+                        f"[playbook] R2 {symbol} 连续 {_quote_fail_streak[symbol]} 轮取价失败, 本轮无止损保护"
+                    )
+                    try:
+                        from app.push import get_push_hub
+                        from app.push.message import Level as _PushLevel
+                        get_push_hub().push_text(
+                            f"⚠️ [Playbook退出监控] {symbol} 连续 {_quote_fail_streak[symbol]} 轮取价失败, "
+                            f"该仓本轮无止损保护 (下轮重试). 请检查报价源.",
+                            level=_PushLevel.HIGH,
+                        )
+                    except Exception as _r2_push_err:
+                        logger.warning(f"[playbook] R2 取价失败告警推送失败: {_r2_push_err}")
                 continue
+            # 取价成功 → 重置连续失败计数 + 告警标记 (下次再失败重新计 3 轮)
+            if symbol in _quote_fail_streak:
+                _quote_fail_streak.pop(symbol, None)
+                _quote_fail_alerted.discard(symbol)
 
             # 持仓时长 (在止损兜底之前计算, 兜底需要用到)
             # 2026-07-03 fix: entry_time 带 tz 后缀 (如 -04:00) 是 aware, datetime.now() 是 naive,
@@ -4204,7 +4284,14 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         logger.warning(f"[playbook dual] 查询 broker 持仓异常 {symbol}: {_be}")
                     if _broker_qty <= 0:
                         # Broker 无此持仓 → DB-only 平仓 (ghost position)
-                        _db_exit_price = current_price if current_price and current_price > 0 else entry_price
+                        # E2 (2026-07-19): 无报价 ghost 用入场价兜底 → PnL=0, 标 void 不计统计 (告警保证可见).
+                        _db_has_quote = bool(current_price and current_price > 0)
+                        _db_exit_price = current_price if _db_has_quote else entry_price
+                        if not _db_has_quote:
+                            logger.warning(
+                                f"[playbook sim] E2 {symbol} ghost 无报价, 用入场价${entry_price:.2f}兜底 "
+                                f"(PnL=0, 标 void 不计统计)"
+                            )
                         _db_pnl = (_db_exit_price - entry_price) * qty if direction == "LONG" else (entry_price - _db_exit_price) * qty
                         _db_pnl_pct = (_db_exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _db_exit_price) / entry_price * 100
                         _db_hh = round(held_minutes / 60, 1)
@@ -4433,7 +4520,12 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         except Exception:
                             pass
                         if _eod_price <= 0:
-                            _eod_price = entry_price  # 无报价用入场价
+                            # E2 (2026-07-19): 无报价 ghost 用入场价兜底 → PnL=0, 标 void 不计统计 (告警保证可见).
+                            _eod_price = entry_price
+                            logger.warning(
+                                f"[playbook sim] E2 {symbol} EOD ghost 无报价, 用入场价${entry_price:.2f}兜底 "
+                                f"(PnL=0, 标 void 不计统计)"
+                            )
                         _eod_pnl = (_eod_price - entry_price) * qty if direction == "LONG" else (entry_price - _eod_price) * qty
                         _eod_pct = (_eod_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _eod_price) / entry_price * 100
                         _eod_hh = 0.0

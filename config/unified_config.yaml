@@ -1284,6 +1284,11 @@ risk:
   #   closed = 异常拒绝开仓 (live 前切换, 风控失效代价 > 误拦一笔)
   #   可回滚: 改回 open 即恢复放行.
   acb_fail_mode: open
+  # R1a/R1c (2026-07-19, DEB-round2 Ω.3-3): 开仓前预检 (regime/risk_state + broker持仓) 异常 fail 模式.
+  #   open  = 异常放行 (默认, SIM 期合理)
+  #   closed = 异常拒绝开仓 (live 前切换)
+  #   注: R1b 预算门独立无条件 fail-close, 不受本开关控制 (预算失效=无上限开仓, 灾难性).
+  preflight_fail_mode: open
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08

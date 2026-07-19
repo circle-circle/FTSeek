@@ -78,6 +78,16 @@ CONSISTENCY_RULES = [
         "check": lambda v: 0.0 <= v <= 1.0,
         "message": "置信度 ({}) 必须在 [0, 1] 范围内",
     },
+    {
+        # S2 (2026-07-19, DEB-round2 Ω.3-5): 资金基准双 key 防漂移.
+        #   capital.fixed_amount (熔断/水位兜底) 与 playbook.risk_parameters.risk_base_capital
+        #   (仓位/日额度基数) 当前均 82K, 但是两个独立配置项 — 运维改一个忘改另一个会静默分叉,
+        #   导致水位偏松+仓位偏保守 (风险敞口被低估). 启动校验不一致即 warning (显式可观测, 优于隐式派生).
+        "name": "资金基准一致性 (S2)",
+        "keys": ["capital.fixed_amount", "playbook.risk_parameters.risk_base_capital"],
+        "check": lambda v1, v2: abs(float(v1) - float(v2)) < 1.0,
+        "message": "资金基准漂移: capital.fixed_amount ({}) != risk_base_capital ({}), 熔断/水位与仓位口径矛盾",
+    },
 ]
 
 # ============================================================================
