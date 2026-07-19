@@ -738,6 +738,47 @@ class FutuLV3Provider:
         if self._is_cache_valid(cache_key):
             return self._cache[cache_key]
 
+        # 2.5 订阅报价读取 (2026-07-16 核心修复): get_stock_quote 读 OpenD 本地订阅缓存。
+        #     实时 (由 QUOTE/TICKER push 持续维护), 且不做服务端拉取 → 不消耗 get_market_snapshot
+        #     的频率配额。仅对已订阅标的可用 (监控池 32 只 + 持仓均已订阅)。
+        #     根因: 原来 push 缓存 (5s TTL) 一 miss 就落 rate-limited snapshot; 止损/止盈/入场
+        #     高频取价打爆 snapshot 配额 → 级联降级到 TD (429)。实时价是核心场景, 不能靠兜底。
+        if futu_symbol in self._subscribed_symbols and self._ensure_connected():
+            try:
+                ret, data = self._quote_ctx.get_stock_quote([futu_symbol])
+                if ret == 0 and data is not None and len(data) > 0:
+                    row = data.iloc[0]
+                    last_price = row.get("last_price", 0)
+                    if last_price > 0:
+                        prev_close = row.get("prev_close_price", last_price) or last_price
+                        change = last_price - prev_close
+                        change_pct = (change / prev_close * 100) if prev_close > 0 else 0
+                        result = {
+                            "price": float(last_price),
+                            "open": float(row.get("open_price", last_price) or last_price),
+                            "high": float(row.get("high_price", last_price) or last_price),
+                            "low": float(row.get("low_price", last_price) or last_price),
+                            "prev_close": float(prev_close),
+                            "volume": float(row.get("volume", 0) or 0),
+                            "turnover": float(row.get("turnover", 0) or 0),
+                            "change": float(change),
+                            "change_percent": float(change_pct),
+                            # get_stock_quote 不含盘口, 用 last_price 兜底 (与 push handler L403-404 一致)
+                            "bid": float(last_price),
+                            "ask": float(last_price),
+                            "bid_vol": 0.0,
+                            "ask_vol": 0.0,
+                            "data_source": "futu_lv3_subscribed",
+                            "timestamp": time.time(),
+                            "delay_ms": "<100",
+                        }
+                        self._cache[cache_key] = result
+                        self._cache_time[cache_key] = time.time()
+                        self._success_count += 1
+                        return result
+            except Exception as e:
+                logger.debug(f"[FutuLV3] {symbol} get_stock_quote 失败, 尝试 snapshot: {e}")
+
         # 3. 尝试 Futu LV3 快照
         if self._ensure_connected():
             try:

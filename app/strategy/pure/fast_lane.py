@@ -39,6 +39,7 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     direction = str(plan_match.get("direction", "LONG")).upper()
     if direction not in ("LONG", "SHORT"):
+        ctx.metadata["fast_lane_skip"] = {"reason": "INVALID_DIRECTION", "detail": direction}
         return None
 
     entry_zone: List[float] = plan_match.get("entry_zone", [])
@@ -51,6 +52,7 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         # 但 confirmed_price 可能是 119.0，导致 119.0 ± 0.5% 包含了 119.0
         # 修复: 必须使用原始 entry_zone，confirmed_price 仅作为参考
         if not entry_zone or len(entry_zone) != 2:
+            ctx.metadata["fast_lane_skip"] = {"reason": "NO_ENTRY_ZONE", "detail": str(entry_zone)}
             return None
         low, high = entry_zone
         
@@ -60,6 +62,10 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         effective_high = high + tol
         
         if not (effective_low <= ctx.price <= effective_high):
+            ctx.metadata["fast_lane_skip"] = {
+                "reason": "PRICE_OUT_OF_ZONE",
+                "detail": f"price={ctx.price:.2f} zone=[{low:.2f},{high:.2f}]±3%",
+            }
             logger.debug(
                 f"[FastLane] {ctx.symbol} 价格 {ctx.price:.2f} 不在 entry_zone "
                 f"[{low:.2f}, {high:.2f}] ± 3% 范围内，拒绝"
@@ -74,6 +80,10 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     confidence = plan_match.get("confidence", 0.85)
     if confidence < config.get("min_confidence", 0.70):
+        ctx.metadata["fast_lane_skip"] = {
+            "reason": "CONFIDENCE_BELOW_MIN",
+            "detail": f"{confidence} < {config.get('min_confidence', 0.70)}",
+        }
         return None
 
     return SignalCandidate(

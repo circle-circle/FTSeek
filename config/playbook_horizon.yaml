@@ -375,7 +375,6 @@ short_horizon:
       sl_ceil_pct: 2.5
       tp_multiplier: 2.0
       short_widen_pct: 0.2
-      max_hold_hours: 6
     medium:
       atr_pct_max: 0.035
       sl_multiplier: 1.5
@@ -383,7 +382,6 @@ short_horizon:
       sl_ceil_pct: 4.5
       tp_multiplier: 1.8
       short_widen_pct: 0.3
-      max_hold_hours: 4
     high:
       atr_pct_max: 0.08
       sl_multiplier: 1.5
@@ -391,7 +389,6 @@ short_horizon:
       sl_ceil_pct: 5.0           # 8.0→5.0: >5%胜率仅14%, 收紧止损
       tp_multiplier: 1.5
       short_widen_pct: 0.5
-      max_hold_hours: 2
     extreme:
       atr_pct_max: 999.0
       sl_multiplier: 1.2
@@ -399,7 +396,6 @@ short_horizon:
       sl_ceil_pct: 5.0           # 6.0→5.0: 同high桶, >5%胜率差
       tp_multiplier: 1.5
       short_widen_pct: 0.8
-      max_hold_hours: 1
       position_mult: 0.5
 
 # 长线参数
@@ -424,7 +420,6 @@ long_horizon:
       sl_ceil_pct: 3.0
       tp_multiplier: 2.5
       short_widen_pct: 0.2
-      max_hold_hours: 24
     medium:
       atr_pct_max: 0.035
       sl_multiplier: 1.5
@@ -432,7 +427,6 @@ long_horizon:
       sl_ceil_pct: 5.0
       tp_multiplier: 2.0
       short_widen_pct: 0.3
-      max_hold_hours: 16
     high:
       atr_pct_max: 999.0
       sl_multiplier: 1.5
@@ -440,4 +434,3 @@ long_horizon:
       sl_ceil_pct: 5.0           # 8.5→5.0: 同short_horizon, >5%胜率差
       tp_multiplier: 1.8
       short_widen_pct: 0.5
-      max_hold_hours: 8

@@ -209,8 +209,10 @@ def build_loop_health(days: int = 7) -> Dict[str, Any]:
     try:
         conn = _ro_conn(_MAIN_DB)
         wins = conn.execute("SELECT COUNT(*) FROM trade_records WHERE pnl_pct > 0.001").fetchone()[0]
+        # 2026-07-18 fix: mfe_pct 存储单位为百分比 (3.72=3.72%), pnl_pct 为 ratio (0.0311=3.11%).
+        #   原 mfe_pct > pnl_pct 因量纲差 100x 恒真, 修正为同单位比较.
         valid = conn.execute(
-            "SELECT COUNT(*) FROM trade_records WHERE pnl_pct > 0.001 AND mfe_pct > pnl_pct"
+            "SELECT COUNT(*) FROM trade_records WHERE pnl_pct > 0.001 AND mfe_pct > pnl_pct * 100"
         ).fetchone()[0]
         conn.close()
         if isinstance(health.get("record"), dict):

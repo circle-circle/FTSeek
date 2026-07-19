@@ -669,11 +669,15 @@ class MarketDataRouter:
         # P1 修复 (2026-06-17): quote_only 也允许 TwelveData 降级获取技术指标
         # 根因: K线<30条时 data_source=quote_only (无 RSI/MACD/ATR),
         #   但原代码将 quote_only 视为"已完成"跳过 TwelveData → IC 死锁
-        _needs_td_fallback = (
-            not ts_ctx
-            or ts_ctx.get("data_source") not in ("futu_lv3", "futu_lv3_quote_only")
-            or ts_ctx.get("data_source") == "futu_lv3_quote_only"
+        # 2026-07-16 根因修复: 原白名单 ("futu_lv3","futu_lv3_quote_only") 漏了
+        #   "futu_lv3_daily"/"futu_lv3_1m_fallback" (两者均含完整技术指标) → 被判"需 TD" →
+        #   TD 可用时下方用 TD 覆盖掉本来更好的 LV3 日线数据 (source=twelvedata),
+        #   TD 限流时反而保留 LV3 → 白白浪费 TD 调用打爆 429。
+        #   正确语义: 仅当 LV3 完全无数据(None) 或 仅有报价无指标(quote_only) 才需 TD。
+        _lv3_full = bool(ts_ctx) and ts_ctx.get("data_source") in (
+            "futu_lv3", "futu_lv3_daily", "futu_lv3_1m_fallback"
         )
+        _needs_td_fallback = not _lv3_full
         if _needs_td_fallback:
             if self.td:
                 try:
@@ -691,6 +695,10 @@ class MarketDataRouter:
                             logger.debug(f"[Router] {symbol} LV3 报价 + TwelveData 技术指标合并成功")
                         else:
                             ts_ctx = td_ctx
+                            # 2026-07-16 修复: 补 data_source 标签。td_ctx 自身不带标签,
+                            #   直接赋值会导致日志 source=unknown (掩盖了"已降级到 TwelveData"这一真实信号)。
+                            if isinstance(ts_ctx, dict):
+                                ts_ctx.setdefault("data_source", "twelvedata")
                             logger.debug(f"[Router] {symbol} 从 TwelveData 获取技术指标 (LV3 降级)")
                 except Exception as e:
                     errors.append(f"TwelveData: {e}")
@@ -790,7 +798,11 @@ class MarketDataRouter:
         """
         vix = ctx.get("vix", 20.0)
         vol = ctx.get("volatility", 0)
-        avg_vol = ctx.get("avg_volatility", 0.001)
+        # 2026-07-16 修复: 默认值 0 (原 0.001)。0.001 使下方 `avg_vol > 0` 恒真且分母极小,
+        #   任何真实个股波动率(~0.02) > 0.001*3=0.003 → regime 永远误判 HIGH_VOL, 无视真实 VIX。
+        #   avg_volatility 仅由 LV3 日线计算器填充; 缺失(降级路径)时应跳过个股波动率分支。
+        #   与 signal_scorer.py 的默认值 0 保持一致。
+        avg_vol = ctx.get("avg_volatility", 0)
         trend = ctx.get("trend", "NEUTRAL")
 
         # 高波动: VIX > 25 (市场恐慌) 或 个股波动率显著高于均值 (3x, 提高阈值避免误判)

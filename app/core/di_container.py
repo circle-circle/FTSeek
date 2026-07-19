@@ -116,32 +116,9 @@ class DIContainer:
         from app.strategy.registry import get_strategy_registry
         return self._get_or_create("strategy_registry", get_strategy_registry)
 
-    # ================================================================
-    #  投票 & 共识
-    # ================================================================
-    def voting_coordinator(self) -> "VotingCoordinator":
-        """多模型投票协调器
-
-        2026-07-10: DEPRECATED. scheduler 不再调用此工厂.
-        仅作为 playbook/pipeline.py 的 fallback 存在, 实际不会执行
-        (scheduler.voting_coordinator 在 __init__ 中总是被赋值 NullVotingAdapter 或 bridge).
-        保留是为向后兼容, 不删除以避免破坏外部引用.
-        """
-        import logging as _logging
-        _log = _logging.getLogger("ftseek.di_container")
-        _log.debug("[DI] voting_coordinator() 被调用 (DEPRECATED, 仅 playbook fallback)")
-        from app.agents.voting.voting_coordinator import VotingCoordinator
-        from app.agents.voting.voting_config import VotingConfig
-        # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.
-        try:
-            from app.core.config_container import get_config as _gc_vc
-            _voting_timeout = int(_gc_vc().get_dotted("llm.defaults.voting_timeout_seconds", 60))
-        except Exception:
-            _voting_timeout = 60
-        return self._get_or_create("voting_coordinator", lambda: VotingCoordinator(
-            config=VotingConfig.get_default_config(),
-            timeout_seconds=_voting_timeout,
-        ))
+    # [CLEANUP 2026-07-14] voting_coordinator() 工厂已删除 — 零调用者.
+    #   scheduler 恒用 Null/Bridge/TechnicalFallbackAdapter; 真·3模型VotingCoordinator
+    #   已随死投票脑 (voting_coordinator.py/voting_aggregator.py/model_agent.py) 一同清理.
 
     # [CLEANUP 2026-06-13] consensus_engine removed — zero calls, self-documented as disconnected
 

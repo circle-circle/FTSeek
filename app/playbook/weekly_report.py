@@ -94,15 +94,33 @@ class WeeklyReportGenerator:
         skip_analysis = report.get("skip_analysis", {}) or {}
 
         date_str = report.get("date", "")
+        _unified = week.get("unified", {}) if isinstance(week, dict) else {}
+        _legacy = week.get("legacy", {}) if isinstance(week, dict) else {}
         lines = [
             f"📊 周度因子复盘 ({date_str})",
             "━" * 20,
             "",
-            f"本周交易: {_num(week, 'total', 0)} 笔 | "
+            f"本周已平仓: {_num(week, 'total', 0)} 笔 | "
             f"胜率 {_num(week, 'win_rate', 0):.0f}% | "
-            f"净盈亏 {'+' if _num(week, 'net_pnl', 0) >= 0 else ''}${_num(week, 'net_pnl', 0):.0f}",
-            "",
+            f"净盈亏 {'+' if _num(week, 'net_pnl', 0) >= 0 else ''}${_num(week, 'net_pnl', 0):.0f} | "
+            f"PF {_num(week, 'profit_factor', 0):.2f}",
         ]
+        # playbook 统一管线 (当前系统真实表现, 旧管线 7/16 起已禁用)
+        if _num(_unified, "total", 0) > 0:
+            lines.append(
+                f"  └ 统一管线: {_num(_unified, 'total', 0)}笔 | "
+                f"胜率 {_num(_unified, 'win_rate', 0):.0f}% | "
+                f"净 {'+' if _num(_unified, 'net_pnl', 0) >= 0 else ''}${_num(_unified, 'net_pnl', 0):.0f} | "
+                f"PF {_num(_unified, 'profit_factor', 0):.2f}"
+            )
+        # 旧管线残留 (已禁用, 仅历史残留; 不代表当前系统)
+        if _num(_legacy, "total", 0) > 0:
+            lines.append(
+                f"  └ 旧管线残留(已禁用): {_num(_legacy, 'total', 0)}笔 | "
+                f"净 {'+' if _num(_legacy, 'net_pnl', 0) >= 0 else ''}${_num(_legacy, 'net_pnl', 0):.0f} "
+                f"— 不计入当前系统评价"
+            )
+        lines.append("")
 
         # 正收益单因子
         pos_singles = factors.get("positive_singles", [])[:5]
@@ -177,8 +195,15 @@ class WeeklyReportGenerator:
         text = self.format_report(report)
         return self.pusher._send(text)
 
+    # 旧管线退出标签 (2026-07-16 commit 9302339a 起 ExitDispatcher/dynamic_exit 全禁).
+    #   这些 exit_reason 只会出现在禁用前的残留平仓中, 不再由 playbook 统一管线产生.
+    #   周报按此分列, 避免旧管线亏损污染对当前系统的评价.
+    _LEGACY_EXIT_REASONS = frozenset({
+        "TRAILING_STOP", "TRAILING_STOP_BY_MAIN", "SL_FIXED_PCT",
+    })
+
     def _get_week_stats(self, trade_date: str) -> Dict[str, Any]:
-        """本周交易汇总"""
+        """本周交易汇总 — 分列'旧管线残留' vs 'playbook 统一管线'."""
         try:
             dt = date.fromisoformat(trade_date)
         except ValueError:
@@ -186,27 +211,43 @@ class WeeklyReportGenerator:
 
         # 本周一
         monday = dt - timedelta(days=dt.weekday())
-        total = 0
-        wins = 0
-        net_pnl = 0.0
 
+        unified_rows = []
+        legacy_rows = []
         for i in range(7):
             day = (monday + timedelta(days=i)).isoformat()
             instructions = self.db.get_instructions_by_date(day)
             for inst in instructions:
                 if inst.get("executed") and inst.get("outcome") in ("win", "loss"):
-                    total += 1
-                    if inst.get("outcome") == "win":
-                        wins += 1
-                    net_pnl += inst.get("pnl", 0) or 0
+                    _reason = (inst.get("exit_reason") or "").upper()
+                    _row = (inst.get("outcome"), inst.get("pnl", 0) or 0)
+                    if _reason in self._LEGACY_EXIT_REASONS:
+                        legacy_rows.append(_row)
+                    else:
+                        unified_rows.append(_row)
 
-        win_rate = (wins / total * 100) if total > 0 else 0
-        return {
-            "total": total,
-            "wins": wins,
-            "win_rate": round(win_rate, 1),
-            "net_pnl": round(net_pnl, 2),
-        }
+        def _agg(rows):
+            n = len(rows)
+            wins = sum(1 for o, _ in rows if o == "win")
+            net = sum(p for _, p in rows)
+            gross_profit = sum(p for _, p in rows if p > 0)
+            gross_loss = abs(sum(p for _, p in rows if p < 0))
+            pf = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+            return {
+                "total": n,
+                "wins": wins,
+                "win_rate": round((wins / n * 100) if n > 0 else 0, 1),
+                "net_pnl": round(net, 2),
+                "profit_factor": round(pf, 2),
+            }
+
+        all_rows = unified_rows + legacy_rows
+        combined = _agg(all_rows)
+        # 顶层键保持向后兼容 (total/wins/win_rate/net_pnl 指全部已平仓单)
+        combined["profit_factor"] = combined.get("profit_factor", 0.0)
+        combined["unified"] = _agg(unified_rows)
+        combined["legacy"] = _agg(legacy_rows)
+        return combined
 
     def _analyze_user_skips(self, trade_date: str) -> Dict[str, Any]:
         """分析用户跳过的指令"""

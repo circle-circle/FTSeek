@@ -13,6 +13,13 @@
 由 feature flag `exit_param_shadow` 控制 (默认 on, 可随时关)。
 
 ⚠️ 只能评估【比现行更紧】的变体 —— 更松的变体会骑过实盘退出点, 路径不可观测。
+
+2026-07-18 新增 (三轮辩论裁决):
+  - 提案 A: profit_override 变体 — 浮盈≥1.5% 时强制锁利 (dd=0.5%),
+    针对 trailing_enabled=false 因子的利润回吐问题
+  - 提案 B: dead_signal_exit 变体 — 60min 时 MFE<0.2%/0.3% 则标记信号失效,
+    仅对 time_exit_hours≥4 的因子 + default(空 conditions) 路径
+  - 60min-MFE 打点: 每笔仓位在 60min 时点显式记录当前 MFE, 供 B 阈值定稿
 """
 from __future__ import annotations
 
@@ -33,6 +40,18 @@ EXIT_VARIANTS: Dict[str, Dict[str, float]] = {
     "baseline_be1.0_dd0.5": {"be": 1.0, "dd": 0.5},   # 对照: 现行 default
     "be0.5_dd0.4":          {"be": 0.5, "dd": 0.4},   # 更早保本 + 更紧锁利
     "be0.3_dd0.3":          {"be": 0.3, "dd": 0.3},   # 激进锁利 (贴合 MFE 中位 ~0.9%)
+    # ── 2026-07-18 提案 A: profit_override ──
+    # 浮盈≥1.5% 时强制启用回撤锁利 (dd=0.5%), 针对 trailing_enabled=false 因子.
+    # be=0.5 保持现行保本触发, dd_threshold=1.5 表示回撤锁利仅在浮盈≥1.5%后激活.
+    "profit_override_1.5_dd0.5": {"be": 0.5, "dd": 0.5, "dd_threshold": 1.5},
+}
+
+# ── 2026-07-18 提案 B: dead_signal_exit 变体 ──
+# 60min 检查点, MFE < 阈值则标记信号失效 (仅 record, 不触发真实退出).
+# 双档阈值并行: 0.2% / 0.3%, 用真实采集数据定稿.
+DEAD_SIGNAL_VARIANTS: Dict[str, Dict[str, float]] = {
+    "dead_signal_60m_mfe0.2": {"check_minutes": 60, "mfe_threshold": 0.2},
+    "dead_signal_60m_mfe0.3": {"check_minutes": 60, "mfe_threshold": 0.3},
 }
 
 # app/playbook/exit_shadow.py → parents[2] = 仓库根
@@ -40,10 +59,15 @@ _SHADOW_PATH = Path(__file__).resolve().parents[2] / "data" / "shadow" / "exit_p
 
 
 def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
-                          peak_profit_pct: float, be_pct: float, dd_pct: float) -> float:
+                          peak_profit_pct: float, be_pct: float, dd_pct: float,
+                          dd_threshold: float = 0.0) -> float:
     """纯函数: 忠实复刻 pipeline._compute_dynamic_effective_sl (trailing_enabled=True 分支)。
 
     保持与实盘退出同一数学, 只替换 breakeven_at_pct / drawdown_from_peak_pct 两个参数。
+
+    2026-07-18: 新增 dd_threshold 参数 (提案 A profit_override):
+      dd_threshold > 0 时, 回撤锁利仅在 peak_profit_pct >= dd_threshold 后激活,
+      而非 peak > be_pct 即激活。模拟「浮盈≥1.5% 才强制锁利」的行为。
     """
     eff = initial_sl
     if peak_profit_pct < be_pct:
@@ -53,8 +77,9 @@ def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
         eff = max(eff, entry)
     else:
         eff = min(eff if eff > 0 else entry, entry)
-    # 回撤锁利
-    if dd_pct > 0 and peak_profit_pct > be_pct:
+    # 回撤锁利 (dd_threshold: 浮盈达到此值后才启用回撤锁利)
+    _dd_active_threshold = dd_threshold if dd_threshold > 0 else be_pct
+    if dd_pct > 0 and peak_profit_pct > _dd_active_threshold:
         if direction == "LONG":
             peak = entry * (1 + peak_profit_pct / 100)
             dd_sl = peak * (1 - dd_pct / 100)
@@ -68,10 +93,16 @@ def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
 
 def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price: float,
                             initial_sl: float, current_price: float,
-                            peak_profit_pct: float, held_minutes: float) -> bool:
+                            peak_profit_pct: float, held_minutes: float,
+                            time_exit_hours: float = 0.0) -> bool:
     """每轮巡检: 回放各变体, 记录首次触发到 meta["_exit_shadow"]。record-only, 永不抛异常。
 
-    返回 True 表示本轮有【新】变体触发 (供调用方决定是否写回 metadata)。
+    2026-07-18 新增:
+      - 60min-MFE 打点: held_minutes 跨越 60 时记录当前 peak_profit_pct
+      - dead_signal_exit 变体: 60min 时 MFE < 阈值则标记
+      - time_exit_hours: 调用方传入当前因子的 time_exit_hours, 用于 B 的作用域判断
+
+    返回 True 表示本轮有【新】变体触发或新打点 (供调用方决定是否写回 metadata)。
     """
     try:
         if not is_enabled("exit_param_shadow"):
@@ -82,11 +113,14 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
             return False
         sh = meta.get("_exit_shadow") or {}
         new_trigger = False
+
+        # ── 原有: breakeven/drawdown 变体回放 ──
         for name, p in EXIT_VARIANTS.items():
             if name in sh:  # 只记首次触发, 已触发的不覆盖
                 continue
             eff = _variant_effective_sl(direction, entry_price, float(initial_sl or 0),
-                                        peak_profit_pct, p["be"], p["dd"])
+                                        peak_profit_pct, p["be"], p["dd"],
+                                        p.get("dd_threshold", 0.0))
             if eff <= 0:
                 continue
             hit = ((direction == "LONG" and current_price <= eff) or
@@ -100,6 +134,34 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
                     "profit_pct": round(exit_pct, 4),
                 }
                 new_trigger = True
+
+        # ── 2026-07-18: 60min-MFE 打点 (所有仓位, 不分因子) ──
+        _held = float(held_minutes or 0)
+        if "_mfe_at_60min" not in sh and _held >= 60:
+            sh["_mfe_at_60min"] = round(float(peak_profit_pct or 0), 4)
+            new_trigger = True
+
+        # ── 2026-07-18 提案 B: dead_signal_exit 变体 ──
+        # 作用域: 仅 time_exit_hours >= 4 的因子 + default (time_exit_hours=0 表示未传入/空 conditions)
+        _te_h = float(time_exit_hours or 0)
+        _b_eligible = (_te_h >= 4.0 or _te_h == 0.0)  # 0 = default/空 conditions 路径
+        if _b_eligible and _held >= 60:
+            for name, bp in DEAD_SIGNAL_VARIANTS.items():
+                if name in sh:
+                    continue
+                _check_min = float(bp["check_minutes"])
+                if _held >= _check_min:
+                    _mfe_now = float(peak_profit_pct or 0)
+                    _threshold = float(bp["mfe_threshold"])
+                    # 标记: 在检查点时 MFE 是否低于阈值 (信号未兑现)
+                    sh[name] = {
+                        "triggered": _mfe_now < _threshold,
+                        "mfe_at_check": round(_mfe_now, 4),
+                        "held_minutes": round(_held, 1),
+                        "threshold": _threshold,
+                    }
+                    new_trigger = True
+
         if new_trigger:
             meta["_exit_shadow"] = sh
         return new_trigger
@@ -120,6 +182,8 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
     """close 时: 对比各变体反事实 capture vs 实盘 capture, 落 JSONL。record-only, 永不抛异常。
 
     变体未触发 → 视同随实盘退出 (capture 与实盘一致)。capture = 已实现有利% / 最大浮盈%。
+
+    2026-07-18: 新增 dead_signal 变体结果 + 60min-MFE 打点写入 JSONL。
     """
     try:
         if not is_enabled("exit_param_shadow"):
@@ -162,6 +226,14 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
                 "capture": v_cap,
             }
 
+        # ── 2026-07-18: dead_signal 变体结果 ──
+        dead_signal_out: Dict[str, Any] = {}
+        for name in DEAD_SIGNAL_VARIANTS:
+            if name in sh:
+                dead_signal_out[name] = sh[name]
+            else:
+                dead_signal_out[name] = {"triggered": False, "reason": "not_evaluated"}
+
         rec = {
             "ts": datetime.utcnow().isoformat(),
             "inst_id": inst_id,
@@ -179,6 +251,9 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
                 "capture": live_cap,
             },
             "variants": variants_out,
+            # 2026-07-18 新增字段
+            "mfe_at_60min": sh.get("_mfe_at_60min"),  # 60min-MFE 打点 (可能 None = 持仓<60min)
+            "dead_signal": dead_signal_out,
         }
         _append_jsonl(rec)
         return rec
