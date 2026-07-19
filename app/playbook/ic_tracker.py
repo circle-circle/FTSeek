@@ -162,7 +162,7 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         entry_price = inst.get("execution_price") or inst.get("entry_price", 0) or 0
         symbol = inst.get("symbol", "")
 
-        if direction == "SKIP" or not entry_price or entry_price <= 0 or not symbol:
+        if direction == "SKIP" or not symbol:
             continue
 
         # 获取日线数据
@@ -183,7 +183,25 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
             if bar_date:
                 bars_by_date[bar_date] = bar
 
+        # 2026-07-19 (DEB-round3 #11): 未触发指令 entry_price 缺失 → 当日 open 代理回填.
+        #   背景: 154 条未触发指令缺 entry_price (2026-06-14~07-08, 145 条在 30 天窗口),
+        #   旧逻辑直接 skip → IC 漏掉"未触发但方向可验证"样本, 覆盖率虚低.
+        #   口径: 仅 triggered=0 且 entry_price≤0 才代理 — 已触发缺价属数据异常, 不伪造.
+        #   fwd_proxy=1 落库标记 (db 迁移列), IC 统计可区分/剔除代理样本.
+        _proxy = False
+        if (not entry_price or entry_price <= 0) and not inst.get("triggered", 0):
+            _day_bar = bars_by_date.get(inst_date_str) or {}
+            _open0 = float(_day_bar.get("open", 0) or 0)
+            if _open0 > 0:
+                entry_price = _open0
+                _proxy = True
+
+        if not entry_price or entry_price <= 0:
+            continue
+
         updates = {}
+        if _proxy:
+            updates["fwd_proxy"] = 1
         sign = 1 if direction == "BUY" else -1
 
         for horizon, field_name in [(1, "fwd_return_t1"), (3, "fwd_return_t3"), (5, "fwd_return_t5")]:

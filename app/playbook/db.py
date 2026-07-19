@@ -84,6 +84,9 @@ class PlaybookDB:
             "entry_high": "REAL",
             "vol_bucket": "TEXT",
             "atr_pct": "REAL",
+            # 2026-07-19 (DEB-round3 #11): IC 代理回填标记 — fwd_return_* 用当日 open
+            #   代理 (未触发指令无 entry_price) 时置 1, 供 IC 统计区分真实/代理样本.
+            "fwd_proxy": "INTEGER",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -788,6 +791,11 @@ _TRACKING_FIELDS = {
     # 2026-07-17: 盘前定桶落库 — DA/UE 直写指令绕过 vol_bucket 分桶, 盘前用日线 ATR 定桶后
     #   落主表, 使桶分类可解释、可事后查询 (此前桶名仅落 shadow jsonl)。
     "vol_bucket", "atr_pct",
+    # 2026-07-19 (DEB-round3 #2): thesis 失效作废 — 漂移>5% 写 skip_reason=
+    #   'thesis_drift_invalidate' 永久作废指令, 需经白名单才能落库.
+    "skip_reason",
+    # 2026-07-19 (DEB-round3 #11): ic_tracker open 代理回填标记 (见迁移注释).
+    "fwd_proxy",
 }
 
 

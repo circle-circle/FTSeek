@@ -981,6 +981,24 @@ class PlaybookService:
             if _fill > 0:
                 _entry_price_source = "broker_deal_retry"
         if not _fill or _fill <= 0:
+            # 2026-07-19 (DEB-round3 GHOST-RC1 根因修复): quote 兜底前先确认订单真成交.
+            #   根因: 旧逻辑 fill=0 时无条件假设"已成交"用报价记账, 实际订单可能 FAILED/
+            #   CANCELLED/TIMEOUT → 虚假仓位 → 退出 broker_no_position → BROKER_GHOST_CLOSE
+            #   (7/6 六连实证: position_sync 证实 broker 无持仓且无今日成交记录).
+            #   真相源与 close 路径一致: order_list_query.order_status (2026-07-07 修复确立).
+            #   查询异常 → 降级维持旧兜底 (宁可记不错杀, 与 2026-06-29 辩论一致).
+            try:
+                _confirmed, _ostatus = self._confirm_order_filled(_futu_id, target_env)
+            except Exception as _cf_err:
+                logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (降级放行): {_cf_err}")
+                _confirmed, _ostatus = True, "query_error"
+            if not _confirmed:
+                logger.error(
+                    f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未成交 (status={_ostatus}), "
+                    f"拒绝记账 — 消除 GHOST-RC1 虚假仓位"
+                )
+                self.db.release_execution_claim(instruction_id)
+                return {"success": False, "message": f"{_mode_label} {symbol} 订单未成交 (status={_ostatus})"}
             # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
             # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
             # 2026-07-16 P2 修复: 用 bid/ask 替代 last price (BUY→ask, SHORT→bid),
@@ -1317,6 +1335,45 @@ class PlaybookService:
         except Exception as e:
             logger.warning(f"[playbook] 查成交价失败 {futu_order_id}: {e}")
         return 0.0
+
+    def _confirm_order_filled(self, futu_order_id: str, target_env: str,
+                              max_wait_s: float = 5.0) -> tuple:
+        """确认订单是否真实成交 → (confirmed: bool, status: str).
+
+        2026-07-19 (DEB-round3 GHOST-RC1): 入场侧成交确认, 与 dual_broker.close_position
+        的平仓侧验证共用同一真相源 — order_list_query.order_status (FILLED_ALL).
+        短轮询 ≤5s (入场路径不阻塞批量执行, 平仓侧 30s 轮询的收紧版).
+
+        判定:
+          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status)
+          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status) 不可恢复
+          超时仍非 FILLED → (False, status) (宁可拒记不记假仓)
+        """
+        from futu import RET_OK
+        from app.execution.dual_broker import get_dual_broker
+        dual = get_dual_broker()
+        ctx, acc_id, trd_env, lock = dual._ctx_and_acc(target_env)
+        _deadline = time.time() + max_wait_s
+        _last_status = "UNKNOWN"
+        while time.time() < _deadline:
+            try:
+                with lock:
+                    ret_od, od_data = ctx.order_list_query(
+                        order_id=str(futu_order_id), trd_env=trd_env)
+                if ret_od == RET_OK and od_data is not None and not od_data.empty:
+                    _row = od_data.iloc[0]
+                    _status = str(_row.get("order_status", ""))
+                    _last_status = _status
+                    _dealt = float(_row.get("dealt_qty", 0) or 0)
+                    if "FILLED_ALL" in _status or "FILLED_PART" in _status or _dealt > 0:
+                        return True, _status
+                    if any(_k in _status for _k in
+                           ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
+                        return False, _status
+            except Exception as _od_err:
+                logger.debug(f"[playbook] order_list_query 确认异常 {futu_order_id}: {_od_err}")
+            time.sleep(0.5)
+        return False, _last_status
 
     def skip_instruction(
         self,

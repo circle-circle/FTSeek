@@ -457,6 +457,88 @@ class BridgeVotingAdapter:
         pass
 
 
+# ── 2026-07-19 (DEB-round3 #1): bridge 三态健康告警 + schema fail-safe ──
+# 缺失/空候选/schema非法 → 飞书 HIGH 告警 (当日去重, 不阻断).
+# 盲区: bridge 文件仅 scheduler 启动时 _try_load_bridge 加载一次, 运行期不重载 →
+#   启动后 Hermes cron 失败/文件损坏, 系统一整天 0 决策而运维不知情.
+# 告警函数直读文件, 独立于 adapter 状态, 在 run_generate / auto_execute 入口调用.
+_bridge_alert_sent = set()
+
+
+def _validate_bridge_schema(candidates) -> bool:
+    """轻量 schema 校验: list[dict] 且每项含 symbol/direction/decision_id.
+
+    fail-safe 语义: 非法 → 视作缺失 (走技术面降级), 不消费半损坏文件.
+    """
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    for c in candidates:
+        if not isinstance(c, dict):
+            return False
+        if not c.get("symbol") or not c.get("direction") or not c.get("decision_id"):
+            return False
+    return True
+
+
+def _bridge_file_state(trade_date: str) -> str:
+    """直读当日 bridge 文件 → ok / missing / empty / invalid (record-only, 不抛异常)."""
+    try:
+        import json as _json
+        import os as _os
+        _path = f"/opt/ftseek/FTSeek-US/data/opportunity_scan_{trade_date}.json"
+        if not _os.path.exists(_path):
+            return "missing"
+        with open(_path) as _f:
+            _data = _json.load(_f)
+        _cands = _data.get("candidates", [])
+        if not _cands:
+            return "empty"
+        if not _validate_bridge_schema(_cands):
+            return "invalid"
+        return "ok"
+    except Exception:
+        return "invalid"
+
+
+def _check_bridge_health_and_alert(context: str) -> None:
+    """交易日 ET≥09:00 检查当日 bridge 三态, 异常 → HIGH 告警 (当日去重, 不阻断)."""
+    try:
+        if not _is_trading_day_today():
+            return
+        _today = _today_et_str()
+        from datetime import datetime as _dt
+        _now = _dt.now(_now_et())
+        if _now.hour < 9:
+            return
+        _state = _bridge_file_state(_today)
+        if _state == "ok":
+            return
+        _key = f"{_today}:{_state}"
+        if _key in _bridge_alert_sent:
+            return
+        _bridge_alert_sent.add(_key)
+        _msg = {
+            "missing": "bridge 文件缺失 (Hermes DA 未产出?)",
+            "empty": "bridge 文件无候选 (0 candidates)",
+            "invalid": "bridge 文件 schema 非法 (缺 symbol/direction/decision_id)",
+        }.get(_state, _state)
+        logger.error(
+            f"[playbook] #1 bridge健康告警 ({context}): {_today} {_msg} → 决策降级, 请检查 DA 产出链"
+        )
+        try:
+            from app.push import get_push_hub
+            from app.push.message import Level as _PushLevel
+            get_push_hub().push_text(
+                f"🚨 [Playbook bridge] {_today} {_msg}. 决策链降级 (Bridge→Technical/Null), "
+                f"今日可能 0 决策. 请检查 Hermes DA 产出链 (入口={context}).",
+                level=_PushLevel.HIGH,
+            )
+        except Exception as _push_e:
+            logger.warning(f"[playbook] #1 bridge告警推送失败: {_push_e}")
+    except Exception as _bh_e:
+        logger.warning(f"[playbook] #1 bridge健康检查异常 (不阻断): {_bh_e}")
+
+
 def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     """加载今日 bridge 文件。不存在 → None (调用方 fallback 到 VotingCoordinator)。"""
     import json as _json
@@ -481,6 +563,15 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     candidates = data.get("candidates", [])
     if not candidates:
         logger.info(f"[playbook] bridge文件无候选, fallback到VotingCoordinator")
+        return None
+
+    # 2026-07-19 (DEB-round3 #1): schema fail-safe — 非法文件视作缺失,
+    #   走技术面降级而非消费半损坏数据 (错价决策比 0 决策更危险).
+    if not _validate_bridge_schema(candidates):
+        logger.error(
+            f"[playbook] bridge文件schema非法 (缺symbol/direction/decision_id), "
+            f"fail-safe视作缺失, fallback到VotingCoordinator"
+        )
         return None
 
     # 按 symbol 索引
@@ -511,7 +602,9 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
                     "code": _sym,
                     "source": "SCAN",
                     "added_at": datetime.now(timezone.utc).isoformat(),
-                    "expires_at": None,
+                    # 2026-07-19 (DEB-round3 #3-B): 对齐 TTL_PLAN_HOURS=24h — 此前 None=永久,
+                    #   SCAN 注入条目绕过池 TTL 管理永久驻留, 挤占容量且信号过期不淘汰.
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
                     "metadata": {"bridge": True, "strategy_id": "deep_analysis"},
                 })
                 _injected.append(_sym)
@@ -1360,6 +1453,9 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
                     return None
 
         logger.info(f"[playbook] 🚀 盘前生成开始 (date={today})")
+
+        # 2026-07-19 (DEB-round3 #1): bridge 三态告警 (缺失/空/非法 → 飞书, 不阻断生成)
+        _check_bridge_health_and_alert("run_generate")
 
         from app.playbook.db import PlaybookDB
         from app.playbook.market_regime import MarketRegimeGate
@@ -2269,6 +2365,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             logger.info(f"[playbook] 开盘5分钟内不执行 (now={_now_et_dt.strftime('%H:%M')} ET)")
             return None
 
+        # 2026-07-19 (DEB-round3 #1): bridge 三态告警 — auto_execute 每30min入口,
+        #   覆盖"启动后文件仍缺失"盲区 (bridge 仅启动时加载一次). 当日去重, 不阻断.
+        _check_bridge_health_and_alert("auto_execute")
+
         # 2026-06-30: 全局风险/市场环境检查 — 极端 regime 或风险状态禁止新开仓
         try:
             from app.playbook.market_regime import MarketRegime, MarketRegimeGate
@@ -2418,6 +2518,9 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             if inst.get("executed"):
                 continue
             if inst.get("direction") == "SKIP":
+                continue
+            # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
+            if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
                 continue
 
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
@@ -2805,6 +2908,11 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     direction = inst.get("direction", "")
     is_short = "SHORT" in direction.upper()
 
+    # 2026-07-19 (DEB-round3 #2): 已作废指令直接拒 — 与 auto_execute 头检双保险.
+    #   特异性匹配 'thesis_drift_invalidate', 不误伤其他 skip_reason 语义.
+    if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
+        return False
+
     # 2026-07-11: 只读埋点 — 记录未触发原因/实时价/偏离幅度.
     # 目的: 量化 never-trigger 里 "追高/接飞刀被正确拒绝" vs "盘前参考价过期但盘中价合理".
     # 零行为改动: 仅 append JSONL, best-effort, 不影响触发判定与返回值.
@@ -2933,14 +3041,57 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     if day_low is None or day_low <= 0:
         day_low = entry_price
 
+    # pb_cfg 提前加载 (下方 #2 三道门 + 触发带共用)
+    from app.playbook.config import get_playbook_config
+    pb_cfg = get_playbook_config()
+
+    # ── 2026-07-19 (DEB-round3 #2): 触发时间窗收紧 — ET≥14:00 不再新触发 ──
+    #   根因: bridge ~9:00 ET 写入方向, 盘中数小时后 thesis 衰减; TIME_EXIT 11笔0%WR
+    #   全部为午盘后方向未兑现单. 14:00 后触发=高噪音入场, 直接拒.
+    try:
+        _cutoff_enabled = bool(pb_cfg.get("entry_time_cutoff_enabled", True))
+        _cutoff_hhmm = int(pb_cfg.get("entry_time_cutoff_hhmm", 1400))
+    except Exception:
+        _cutoff_enabled, _cutoff_hhmm = True, 1400
+    if _cutoff_enabled:
+        try:
+            from datetime import datetime as _dt
+            _now_gate = _dt.now(_now_et())
+            if _now_gate.hour * 100 + _now_gate.minute >= _cutoff_hhmm:
+                logger.info(
+                    f"[playbook] #2 触发窗截止: {symbol} ET={_now_gate.strftime('%H:%M')} "
+                    f">= {_cutoff_hhmm // 100:02d}:{_cutoff_hhmm % 100:02d}, 不再新触发"
+                )
+                _emit_trigger_miss("after_cutoff", None)
+                return False
+        except Exception:
+            pass  # 时间获取异常 → fail-open (与既有异常处理一致, 不拦)
+
+    # ── 2026-07-19 (DEB-round3 #2): 财报禁建门 — 触发时距财报<24h 不入场 ──
+    #   bridge 盘前写入时距财报可能>1天, 盘中进入禁建窗后 thesis 面临事件风险重估.
+    try:
+        _eb_enabled = bool(pb_cfg.get("earnings_blackout_gate_enabled", True))
+    except Exception:
+        _eb_enabled = True
+    if _eb_enabled:
+        try:
+            _erg = getattr(scheduler, "earnings_risk_guard", None)
+            if _erg is not None:
+                _is_eb, _eb_reason = _erg.is_earnings_blackout(symbol)
+                if _is_eb:
+                    logger.info(f"[playbook] #2 财报门拦截: {symbol} {_eb_reason}")
+                    _emit_trigger_miss("earnings_blackout", current_price)
+                    return False
+        except Exception:
+            pass  # 财报日历异常 → fail-open (与系统既有财报门行为一致)
+
     # ── 触发条件: 方向穿越触发 (2026-07-02: 从±0.5%改为方向穿越) ──
     # 根因: ±0.5% touch zone导致0%触发率(17/17 miss).
     # 修复: 限价单逻辑 — 价格从entry_price的盈利方向穿越即触发.
     #   BUY:  当前价 ≤ entry_price × 1.01 (回落到入场价或更低 → 买)
     #   SHORT: 当前价 ≥ entry_price × 0.99 (反弹到入场价或更高 → 做空)
     # SL控制风险: 触发后仍检查是否已越过stop_loss.
-    from app.playbook.config import get_playbook_config
-    pb_cfg = get_playbook_config()
+    # (pb_cfg 已在上方 #2 门处加载, 不重复获取)
 
     # ── 触发条件: 顺势直接触发 + 逆势追入需量能确认 (质量门设计) ──
     # 设计原则 (非历史回填): 入场质量决定胜率, 分两类:
@@ -3002,6 +3153,35 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         )
         _emit_trigger_miss("extreme_gap", current_price)
         return False
+
+    # ── 2026-07-19 (DEB-round3 #2): thesis 漂移作废门 (5%, 永久作废) ──
+    #   价格相对 bridge 入场价【逆方向】漂移 >5% → 盘前 thesis 失效:
+    #     BUY: current < entry×(1-5%);  SHORT: current > entry×(1+5%).
+    #   写 skip_reason='thesis_drift_invalidate' 永久作废 (本指令不再触发/执行).
+    #   与 knife_floor(3%) 间留 2% 缓冲防误杀正常回调; >8% 由 extreme_gap 拦截在上方,
+    #   不作废 (极端波动日保留回旋). 特异性 skip_reason 不影响其他语义.
+    try:
+        _drift_enabled = bool(pb_cfg.get("thesis_drift_invalidate_enabled", True))
+        _drift_pct = float(pb_cfg.get("thesis_drift_invalidate_pct", 5.0)) / 100.0
+    except Exception:
+        _drift_enabled, _drift_pct = True, 0.05
+    if _drift_enabled:
+        _adverse = ((not is_short and current_price < entry_price * (1 - _drift_pct)) or
+                    (is_short and current_price > entry_price * (1 + _drift_pct)))
+        if _adverse:
+            try:
+                from app.playbook.db import PlaybookDB as _PBDB
+                _PBDB().update_instruction_tracking(
+                    inst["id"], {"skip_reason": "thesis_drift_invalidate"})
+            except Exception as _inv_e:
+                logger.warning(f"[playbook] #2 漂移作废落库失败 {symbol}: {_inv_e}")
+            logger.warning(
+                f"[playbook] #2 thesis漂移作废: {symbol} dir={'SHORT' if is_short else 'BUY'} "
+                f"entry=${entry_price:.2f} current=${current_price:.2f} "
+                f"漂移={_price_gap:.1%} > {_drift_pct:.0%} → 指令永久作废"
+            )
+            _emit_trigger_miss("thesis_drift_invalidate", current_price)
+            return False
 
     # 2026-07-11: 入场重锚 (Lever A) — 带内未触发但漂移在上限内, 用盘中价重锚触发.
     # 下游 auto_execute 的 re-price 块会以实时 bid/ask 重算 entry/SL/TP (风险% 不变),
@@ -3110,6 +3290,37 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         vwap_populated=_vwap_populated,
     )
     return triggered
+
+
+def _classify_ghost_cause(conn, symbol: str, self_trade_id: int) -> str:
+    """GHOST 平仓归因 (2026-07-19, DEB-round3 GHOST 根因诊断).
+
+    RC1 (entry_unfilled): 入场单未成交却记账 — quote_fallback 无成交校验 → 虚假仓位,
+        退出时 broker_no_position → BROKER_GHOST_CLOSE (7/6 六连实证, position_sync
+        证实 broker 无持仓且无今日成交记录).
+    RC2 (double_tracked): 一仓两账 — 同一 broker 净仓位被 playbook (ET-aware) 与主链路
+        (naive-CST) 各自记账, 先平者抽空 broker, 后者 ghost (RIVN #1060/#1069 同刻双记录).
+    判定: 当日同 symbol 存在其他非 ghost 已平仓记录 → double_tracked(linked=#id:reason);
+          否则 entry_unfilled_or_external.
+    record-only: 供 2 周 shadow 复审区分 RC1/RC2 处置, 不改任何平仓行为.
+    """
+    try:
+        _today_et = datetime.now(_now_et()).strftime("%Y-%m-%d")
+        _row = conn.execute(
+            "SELECT id, exit_reason FROM trade_records "
+            "WHERE symbol=? AND id!=? AND exit_time IS NOT NULL AND exit_time != '' "
+            "AND substr(exit_time,1,10)=? "
+            "AND exit_reason NOT LIKE '%GHOST%' "
+            "AND exit_reason NOT LIKE '%ORPHAN%' "
+            "AND exit_reason NOT LIKE '%PHANTOM%' "
+            "ORDER BY id DESC LIMIT 1",
+            (symbol, self_trade_id, _today_et),
+        ).fetchone()
+        if _row:
+            return f"double_tracked(linked=#{_row[0]}:{_row[1]})"
+        return "entry_unfilled_or_external"
+    except Exception:
+        return "unknown"
 
 
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
@@ -3295,6 +3506,28 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     except Exception as _tel_err:
         logger.debug(f"[_close_trade_record] exit_telemetry 组装失败 trade_id={trade_id}: {_tel_err}")
 
+    # 2026-07-19 (DEB-round3 GHOST-RC2): ghost 平仓归因标记 — 写 metadata.ghost_cause.
+    #   record-only, 供 shadow 复审区分 RC1 (入场未成交) / RC2 (一仓两账) 处置,
+    #   不改平仓行为. 需在主 UPDATE (下方) 之前读改写 metadata, 避免被覆盖.
+    try:
+        if symbol and "GHOST" in (exit_reason or "").upper():
+            _gc_row = conn.execute(
+                "SELECT metadata_json FROM trade_records WHERE id=?", (trade_id,)
+            ).fetchone()
+            _gc_meta = {}
+            if _gc_row and _gc_row[0]:
+                try:
+                    _gc_meta = json.loads(_gc_row[0])
+                except Exception:
+                    _gc_meta = {}
+            _gc_meta["ghost_cause"] = _classify_ghost_cause(conn, symbol, trade_id)
+            conn.execute(
+                "UPDATE trade_records SET metadata_json=? WHERE id=?",
+                (json.dumps(_gc_meta, ensure_ascii=False, default=str), trade_id),
+            )
+    except Exception as _gc_err:
+        logger.debug(f"[_close_trade_record] ghost_cause 写入失败 trade_id={trade_id}: {_gc_err}")
+
     # ── 量纲约定 (2026-07-18 显式文档化) ──
     #   pnl_pct: ratio (0.0311 = 3.11%)  — 与 realized_pnl 同向, 下游消费者按 ratio 处理
     #   mfe_pct / mae_pct: percentage (3.72 = 3.72%) — 与 peak_price/trough_price 反算一致
@@ -3368,6 +3601,44 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 get_pdt_guard().record_close(symbol, _entry_time_val)
         except Exception as _pdt_e:
             logger.debug(f"[风控接线] PDT record 跳过 {symbol}: {_pdt_e}")
+
+        # 2026-07-19 (DEB-round3): 批量止损熔断 — shadow 告警版 (命中即告警, 不阻断).
+        #   背景: 7/6 六连分钟级止损 (-$312) 疑似系统性失效; 实单熔断需 2 周 shadow 数据定阈值.
+        #   规则: 当日 PLAYBOOK_SIM/LIVE 平仓中 holding≤0.1h 且亏损 ≥2 笔 → HIGH 告警 (当日去重).
+        #   口径说明: holding_hours 落库已 round(.,1), <5min 的原始时长只能存成 0.0/0.1,
+        #   故用 <=0.1 覆盖"分钟级"语义 (0.1h=6min 上限, 贴近 5min 设计意图).
+        try:
+            from app.playbook.config import get_playbook_config as _get_pbcfg_sl
+            if bool(_get_pbcfg_sl().get("sl_burst_alert_enabled", True)):
+                _sl_today = now_iso[:10]
+                _burst_n = conn.execute(
+                    "SELECT COUNT(*) FROM trade_records "
+                    "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                    "AND substr(exit_time,1,10)=? "
+                    "AND holding_hours <= 0.1 AND realized_pnl < 0 "
+                    "AND exit_reason NOT LIKE '%GHOST%' "
+                    "AND exit_reason NOT LIKE '%ORPHAN%' "
+                    "AND exit_reason NOT LIKE '%PHANTOM%'",
+                    (_sl_today,),
+                ).fetchone()[0]
+                if _burst_n >= 2 and _sl_today not in _sl_burst_alerted:
+                    _sl_burst_alerted.add(_sl_today)
+                    logger.error(
+                        f"[playbook] 批量止损熔断 shadow: {_sl_today} 已 {_burst_n} 笔分钟级亏损平仓 "
+                        f"(最新 {symbol} {exit_reason}) — 疑似系统性失效, 请人工复核"
+                    )
+                    try:
+                        from app.push import get_push_hub
+                        from app.push.message import Level as _SLLevel
+                        get_push_hub().push_text(
+                            f"🚨 [Playbook熔断shadow] {_sl_today} {_burst_n} 笔分钟级亏损平仓 "
+                            f"(最新 {symbol} {exit_reason}). 疑似系统性失效, 请人工复核 (不阻断).",
+                            level=_SLLevel.HIGH,
+                        )
+                    except Exception:
+                        pass
+        except Exception as _slb_e:
+            logger.debug(f"[playbook] 批量止损 shadow 检查异常 (不影响平仓): {_slb_e}")
 
     # 根因修复: 同时关闭 open_positions, 消灭幽灵仓源头
     # 2026-07-14: 软删除→直接DELETE, 软删除行无消费者(所有查询都过滤sync_status),
@@ -3454,6 +3725,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         logger.warning(f"[playbook推送] {symbol} 平仓推送失败 (不影响平仓): {_pb_push_e}")
 
 
+# 2026-07-19 (DEB-round3 #6-A): factor_exit 缺规则 WARN 去重 (进程级, 防刷屏)
+_factor_exit_warned = set()
+
+
 def _get_factor_exit_config(conditions: list, factor_rules: dict, direction: str = None) -> dict:
     """根据触发因子选择对应的退出规则配置 (Phase 3 2026-06-30).
 
@@ -3485,6 +3760,20 @@ def _get_factor_exit_config(conditions: list, factor_rules: dict, direction: str
     for cond in conditions:
         if cond in factor_rules:
             return factor_rules[cond]
+
+    # 2026-07-19 (DEB-round3 #6-A): conditions 非空但零命中 → WARN (去重防刷屏).
+    #   根因: 新因子进了 conditions 但未配 factor_exit_rules → 静默落 default,
+    #   退出行为与设计意图漂移而无人察觉. 只告警不改行为 (default 兜底不变).
+    _unregistered = [c for c in conditions if c not in factor_rules]
+    if _unregistered:
+        _wkey = tuple(sorted(str(c) for c in _unregistered))
+        if _wkey not in _factor_exit_warned:
+            _factor_exit_warned.add(_wkey)
+            logger.warning(
+                f"[playbook] #6-A factor_exit 缺规则: conditions={_unregistered} 未注册 "
+                f"factor_exit_rules, 落 default 退出 (direction={direction}) — "
+                f"请在 playbook_horizon.yaml 补配或确认有意为之"
+            )
 
     return default
 
@@ -3915,6 +4204,10 @@ def _horizon_max_hold_hit(entry_time_str: str, max_hold_days: int) -> bool:
 #   symbol→连续失败轮数; _alerted 避免每轮重复推送 (取价恢复后重置).
 _quote_fail_streak = {}
 _quote_fail_alerted = set()
+
+# 2026-07-19 (DEB-round3): 批量止损熔断 shadow 告警去重 (进程级, 当日去重).
+#   与 _quote_fail_alerted 同范式: monitor 无状态, 跨轮记信用模块级 set.
+_sl_burst_alerted = set()
 
 
 def monitor_playbook_sim_exits(scheduler) -> int:

@@ -20,6 +20,12 @@
   - 提案 B: dead_signal_exit 变体 — 60min 时 MFE<0.2%/0.3% 则标记信号失效,
     仅对 time_exit_hours≥4 的因子 + default(空 conditions) 路径
   - 60min-MFE 打点: 每笔仓位在 60min 时点显式记录当前 MFE, 供 B 阈值定稿
+
+2026-07-19 新增 (DEB-round3 执行清单):
+  - 30min-abort 变体 — 持仓 30min 时 MFE<0.1% 且浮亏 → would_abort 标记,
+    close 时反事实 counterfactual_saved_pct (正=abort更优). 全路径适用.
+    背景: TIME_EXIT 11笔0%WR 根因=方向未兑现, 但实单 abort 反事实 -$160
+    (杀 EOD 慢热赢家), 故仅 shadow 验证, 2 周数据定是否实单化.
 """
 from __future__ import annotations
 
@@ -52,6 +58,15 @@ EXIT_VARIANTS: Dict[str, Dict[str, float]] = {
 DEAD_SIGNAL_VARIANTS: Dict[str, Dict[str, float]] = {
     "dead_signal_60m_mfe0.2": {"check_minutes": 60, "mfe_threshold": 0.2},
     "dead_signal_60m_mfe0.3": {"check_minutes": 60, "mfe_threshold": 0.3},
+}
+
+# ── 2026-07-19 (DEB-round3): TIME_EXIT 30min-abort 变体 ──
+# 背景: TIME_EXIT 11 笔 0%WR -$312, 根因=方向未兑现 (MFE 全<0.5%) — 持仓 30min
+#   仍 MFE<0.1% 且浮亏的单, 后续大概率 TIME_EXIT 亏损.
+# 但实单 30min abort 反事实净 -$160 (杀掉 EOD 慢热赢家) → 只能 shadow 验证, 不实单.
+# 全路径适用 (不限 time_exit_hours 因子), record-only.
+ABORT_30M_VARIANTS: Dict[str, Dict[str, float]] = {
+    "abort_30m_mfe0.1_loss": {"check_minutes": 30, "mfe_threshold": 0.1, "require_loss": 1},
 }
 
 # app/playbook/exit_shadow.py → parents[2] = 仓库根
@@ -162,6 +177,26 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
                     }
                     new_trigger = True
 
+        # ── 2026-07-19 (DEB-round3): 30min-abort 变体 (全路径, 不限 time_exit_hours) ──
+        # held>=30min 时点记录: would_abort = MFE<阈值 且 当前浮亏.
+        # pnl_at_check 供 finalize 算反事实收益 (abort 在检查点价平 vs 实盘持有到底).
+        for name, ap in ABORT_30M_VARIANTS.items():
+            if name in sh:
+                continue
+            if _held >= float(ap["check_minutes"]):
+                _mfe_now = float(peak_profit_pct or 0)
+                _cur_pct = (((current_price - entry_price) if direction == "LONG"
+                             else (entry_price - current_price)) / entry_price * 100)
+                _would = (_mfe_now < float(ap["mfe_threshold"])
+                          and (not ap.get("require_loss") or _cur_pct < 0))
+                sh[name] = {
+                    "would_abort": _would,
+                    "mfe_at_check": round(_mfe_now, 4),
+                    "pnl_at_check": round(_cur_pct, 4),
+                    "held_minutes": round(_held, 1),
+                }
+                new_trigger = True
+
         if new_trigger:
             meta["_exit_shadow"] = sh
         return new_trigger
@@ -234,6 +269,21 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
             else:
                 dead_signal_out[name] = {"triggered": False, "reason": "not_evaluated"}
 
+        # ── 2026-07-19 (DEB-round3): 30min-abort 反事实 ──
+        # counterfactual_saved_pct = pnl_at_check - live_pct
+        #   正 = abort 更优 (实盘继续持有回吐/扩大亏损); 负 = 实盘更优 (abort 杀了慢热赢家).
+        #   2 周样本后若 mean(saved) > 0 且would_abort命中率稳定, 才评估实单化.
+        abort_out: Dict[str, Any] = {}
+        for name in ABORT_30M_VARIANTS:
+            if name in sh:
+                _pnl_chk = float(sh[name].get("pnl_at_check", 0) or 0)
+                abort_out[name] = {
+                    **sh[name],
+                    "counterfactual_saved_pct": round(_pnl_chk - live_pct, 4),
+                }
+            else:
+                abort_out[name] = {"would_abort": False, "reason": "not_evaluated"}
+
         rec = {
             "ts": datetime.utcnow().isoformat(),
             "inst_id": inst_id,
@@ -254,6 +304,8 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
             # 2026-07-18 新增字段
             "mfe_at_60min": sh.get("_mfe_at_60min"),  # 60min-MFE 打点 (可能 None = 持仓<60min)
             "dead_signal": dead_signal_out,
+            # 2026-07-19 (DEB-round3) 新增字段
+            "abort_30m": abort_out,
         }
         _append_jsonl(rec)
         return rec
