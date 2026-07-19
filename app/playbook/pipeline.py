@@ -2522,6 +2522,11 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
             if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
                 continue
+            # 2026-07-19 (DEB-round3 #3-B 消费端): expires_at 过期指令跳过 (SCAN 24h 失效)
+            if _is_instruction_expired(inst):
+                logger.info(f"[playbook] {inst.get('symbol')} 指令已过期 (expires_at={inst.get('expires_at')}), 跳过")
+                skipped_count += 1
+                continue
 
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
             # 根因: fill=0时playbook拒绝记账但broker已成交, 下次auto_execute又下单 → 仓位叠加
@@ -2912,6 +2917,9 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   特异性匹配 'thesis_drift_invalidate', 不误伤其他 skip_reason 语义.
     if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
         return False
+    # 2026-07-19 (DEB-round3 #3-B 消费端): 过期指令不再触发 — 与 auto_execute 双保险.
+    if _is_instruction_expired(inst):
+        return False
 
     # 2026-07-11: 只读埋点 — 记录未触发原因/实时价/偏离幅度.
     # 目的: 量化 never-trigger 里 "追高/接飞刀被正确拒绝" vs "盘前参考价过期但盘中价合理".
@@ -3290,6 +3298,24 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         vwap_populated=_vwap_populated,
     )
     return triggered
+
+
+def _is_instruction_expired(inst) -> bool:
+    """#3-B (2026-07-19, DEB-round3): expires_at 过期判定 (SCAN 注入 24h 失效).
+
+    消费端: auto_execute 跳过 + _check_intraday_trigger 拒触发 (双保险).
+    无 expires_at 字段 → 不过期 (旧指令/非 SCAN 源兼容). 解析异常 → 不过期 (不误杀).
+    """
+    try:
+        _exp = inst.get("expires_at")
+        if not _exp:
+            return False
+        _exp_dt = datetime.fromisoformat(str(_exp).replace("Z", "+00:00"))
+        if _exp_dt.tzinfo is None:
+            _exp_dt = _exp_dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= _exp_dt
+    except Exception:
+        return False
 
 
 def _classify_ghost_cause(conn, symbol: str, self_trade_id: int) -> str:
