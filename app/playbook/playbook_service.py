@@ -899,6 +899,13 @@ class PlaybookService:
             price=0.0,  # 市价单
         )
         _order.metadata = {"playbook_instruction_id": instruction_id, "source": f"playbook_{_mode_label}"}
+        _order.client_order_id = f"pb_{instruction_id}_{target_env}"
+
+        # 幂等抢占 (P0 2026-07-19): 下单前原子置位 executed, 防并发/重启重试双重下单.
+        #   抢占失败 → 已有其他调用在处理该指令, 直接放弃 (不重复下单).
+        if not self.db.try_claim_execution(instruction_id):
+            logger.warning(f"[playbook] {_mode_label} {symbol} 指令 {instruction_id} 已被抢占, 跳过 (防重复下单)")
+            return {"success": False, "message": "指令已被执行或正在执行 (幂等抢占)"}
 
         # 下单 (sim 或 real, 同一方法)
         try:
@@ -906,10 +913,12 @@ class PlaybookService:
             _result = _dual.submit_order(_order, target_env=target_env)
         except Exception as _e:
             logger.error(f"[playbook] {_mode_label} 下单异常 {symbol}: {_e}")
+            self.db.release_execution_claim(instruction_id)
             return {"success": False, "message": f"{_mode_label} 下单异常: {_e}"}
 
         if not _result.get("success"):
             logger.error(f"[playbook] {_mode_label} 下单失败 {symbol}: {_result.get('error')}")
+            self.db.release_execution_claim(instruction_id)
             return {"success": False, "message": f"{_mode_label} 下单失败: {_result.get('error')}"}
 
         _futu_id = _result.get("futu_order_id", "")
@@ -951,6 +960,18 @@ class PlaybookService:
         if not _fill or _fill <= 0:
             logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
+        # 部分成交处理 (P0 2026-07-19): 用真实成交量记账, 消除幽灵仓.
+        #   broker 返回 filled_qty=0 时 (SIM avg_price=0 / 查询未命中) 回退下单量.
+        _req_qty = int(position_size) if position_size else 1
+        _filled_qty = float(_result.get("filled_qty", 0) or 0)
+        if 0 < _filled_qty < _req_qty:
+            _effective_qty = int(_filled_qty)
+            logger.warning(
+                f"[playbook] {_mode_label} {symbol} 部分成交: 下单 {_req_qty} 实际 {_effective_qty}, "
+                f"按实际成交量记账 (futu_id={_futu_id})"
+            )
+        else:
+            _effective_qty = _req_qty
         _now_iso = now_et().isoformat()
         _order_id = f"{_mode_label}_{_uuid.uuid4().hex[:8]}"
 
@@ -1050,7 +1071,7 @@ class PlaybookService:
                 "exit_time": "",
                 "entry_price": float(_fill),
                 "exit_price": 0,
-                "quantity": int(position_size),
+                "quantity": _effective_qty,
                 "realized_pnl": 0,
                 "pnl_pct": 0,
                 "exit_reason": "",
@@ -1121,7 +1142,7 @@ class PlaybookService:
                 _ts.upsert_position_simple(
                     symbol=symbol,
                     direction=mos_direction,
-                    size=int(position_size),
+                    size=_effective_qty,
                     entry_price=float(_fill),
                     owner_strategy=_owner,
                     owner='auto',
@@ -1140,7 +1161,7 @@ class PlaybookService:
             logger.error(f"[playbook] {_mode_label} trade_record 写入失败, 回滚平仓 {symbol}: {_tre}")
             try:
                 _dual_rb = get_dual_broker()
-                _rb = _dual_rb.close_position(symbol, int(position_size), mos_direction, target_env=target_env)
+                _rb = _dual_rb.close_position(symbol, _effective_qty, mos_direction, target_env=target_env)
                 if _rb.get("success"):
                     logger.warning(
                         f"[playbook] {_mode_label} 回滚平仓成功 {symbol} @ {_rb.get('filled_price')} "
@@ -1164,7 +1185,7 @@ class PlaybookService:
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry
             manual_hold_registry.register(
-                symbol=symbol, direction=mos_direction, quantity=int(position_size),
+                symbol=symbol, direction=mos_direction, quantity=_effective_qty,
                 reason=f"Playbook {_mode_label}: {inst.get('thesis', '')[:60]}",
                 account=("real" if _trade_mode == "live" else "sim"),
             )
@@ -1188,7 +1209,7 @@ class PlaybookService:
         if _is_live and stop_loss and float(stop_loss) > 0:
             try:
                 _dual.place_protective_stop(
-                    symbol, int(position_size) if position_size else 1,
+                    symbol, _effective_qty,
                     mos_direction, float(stop_loss), target_env="real",
                 )
             except Exception as _se:
@@ -1211,7 +1232,7 @@ class PlaybookService:
             get_push_hub().push(_pb_entry(
                 symbol=symbol,
                 direction=mos_direction,
-                qty=int(position_size) if position_size else 1,
+                qty=_effective_qty,
                 price=float(_fill),
                 strategy=_pb_strategy,
                 trace_id=matched_decision_id or None,

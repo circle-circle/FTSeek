@@ -243,6 +243,32 @@ class PlaybookDB:
         )
         conn.commit()
 
+    def try_claim_execution(self, instruction_id: int) -> bool:
+        """原子抢占执行权 — 防止同一指令被并发/重试双重下单.
+
+        用条件 UPDATE (WHERE executed 未置位) 把 executed 置 1, 仅当本次调用
+        真正翻转了行 (rowcount == 1) 才返回 True. 两个并发线程只有一个能抢到.
+        必须在调用 broker submit_order 之前调用; 若后续下单失败可用
+        release_execution_claim 释放以便重试.
+        """
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET executed = 1, updated_at = ? "
+            "WHERE id = ? AND (executed IS NULL OR executed = 0)",
+            (datetime.utcnow().isoformat(), instruction_id),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
+    def release_execution_claim(self, instruction_id: int):
+        """释放执行抢占 (executed 置回 0) — 下单前失败时允许重试."""
+        conn = self._conn()
+        conn.execute(
+            "UPDATE playbook_instructions SET executed = 0, updated_at = ? WHERE id = ?",
+            (datetime.utcnow().isoformat(), instruction_id),
+        )
+        conn.commit()
+
     def get_instructions_with_outcome(self, days_back: int = 90) -> List[Dict]:
         """获取有结果的指令 (用于因子分析)"""
         conn = self._conn()

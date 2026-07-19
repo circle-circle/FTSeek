@@ -15,6 +15,7 @@ import time
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple
 from pathlib import Path
+from app.utils.timezone import now_et, to_et
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -121,7 +122,7 @@ class PDTGuard:
 
     def _get_rolling_window_trades(self) -> list:
         """获取 5 个交易日滑动窗口内的交易记录"""
-        today = date.today()
+        today = now_et().date()
         # 向前数 5 个交易日 (约 7-9 个日历日)
         trading_days_found = 0
         check_date = today
@@ -256,7 +257,7 @@ class PDTGuard:
         sim 日内交易现在也计数, 由 check_trade_permission 的 is_pdt_account (equity≥25k) 判断
         是否受限 — sim 余额 <25k 时守 PDT (验证策略 PDT 合规), ≥25k 豁免.
         """
-        today = date.today().isoformat()
+        today = now_et().date().isoformat()
         try:
             with sqlite3.connect(self._db_path) as conn:
                 cursor = conn.cursor()
@@ -297,13 +298,15 @@ class PDTGuard:
             logger.warning(f"[PDT] {symbol} entry_time 类型异常: {type(entry_time)}")
             return False
         
-        # 判断: 入场日 == 今天?
-        if entry_time.date() == date.today():
+        # 判断: 入场日 == 今天? (统一按美东日期比较, 避免服务器本地时区误判)
+        _entry_et = to_et(entry_time)
+        _today_et = now_et().date()
+        if _entry_et.date() == _today_et:
             self.record_day_trade(symbol)
-            logger.info(f"[PDT] {symbol} 日内往返 (entry={entry_time.date()}, today={date.today()})")
+            logger.info(f"[PDT] {symbol} 日内往返 (entry_et={_entry_et.date()}, today_et={_today_et})")
             return True
         else:
-            logger.debug(f"[PDT] {symbol} 隔夜仓平仓, 不计入 day trade (entry={entry_time.date()})")
+            logger.debug(f"[PDT] {symbol} 隔夜仓平仓, 不计入 day trade (entry_et={_entry_et.date()})")
             return False
 
     def check_trade_permission(self, is_overnight: bool = False) -> Tuple[bool, str, PDTRiskLevel]:

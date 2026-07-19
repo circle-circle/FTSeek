@@ -234,13 +234,20 @@ class DualBrokerAdapter:
                 return {"success": False, "error": f"place_order 失败: {data}", "futu_order_id": ""}
 
             futu_id = str(data["order_id"].values[0])
-            filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
+            filled_price, filled_qty = self._query_fill(ctx, futu_id, trd_env, lock)
+
+            if filled_qty > 0 and filled_qty < float(order.quantity):
+                logger.warning(
+                    f"[DualBroker] 部分成交: {order.symbol} 下单 {order.quantity} 实际成交 {filled_qty} "
+                    f"env={target_env} futu_id={futu_id}"
+                )
 
             logger.info(
                 f"[DualBroker] 下单成功: {order.symbol} {order.direction} qty={order.quantity} "
-                f"env={target_env} futu_id={futu_id} fill={filled_price}"
+                f"env={target_env} futu_id={futu_id} fill={filled_price} filled_qty={filled_qty}"
             )
-            return {"success": True, "futu_order_id": futu_id, "filled_price": filled_price, "error": ""}
+            return {"success": True, "futu_order_id": futu_id, "filled_price": filled_price,
+                    "filled_qty": filled_qty, "error": ""}
 
         except Exception as e:
             logger.exception(f"[DualBroker] submit_order 异常 {order.symbol}: {e}")
@@ -365,12 +372,21 @@ class DualBrokerAdapter:
                     "price_source": "exception", "broker_qty_before": 0, "broker_qty_after": 0}
 
     def _query_filled_price(self, ctx, futu_order_id: str, trd_env, lock) -> float:
-        """查订单成交均价 (市价单通常立即成交, 但 sim 可能有延迟).
+        """查订单成交均价 (兼容旧调用, 只取价格). 内部委托 _query_fill."""
+        price, _qty = self._query_fill(ctx, futu_order_id, trd_env, lock)
+        return price
+
+    def _query_fill(self, ctx, futu_order_id: str, trd_env, lock):
+        """查订单成交均价 + 实际成交数量 → (price, dealt_qty).
 
         2026-07-03: 改用 history_deal_list_query 作为主路径 — order_list_query 在
         SIM 环境系统性返回 avg_price=0, 导致所有 sim 交易 exit_price 不可信.
         history_deal_list_query 返回真实成交记录的 price 字段, 可靠得多.
         order_list_query 降级为 fallback.
+
+        2026-07-19: 同时返回真实成交量 (dealt_qty), 供上游识别部分成交 —
+            此前只取价格, 部分成交时上游按下单量记账 → 幽灵仓.
+            同一 order_id 可能有多笔成交, price 用最后一笔, qty 累加.
         """
         from futu import RET_OK
         import time
@@ -391,13 +407,18 @@ class DualBrokerAdapter:
                         start=start, end=end, trd_env=trd_env,
                     )
                 if ret == RET_OK and data is not None and not data.empty:
+                    _last_price = 0.0
+                    _sum_qty = 0.0
                     for _, deal in data.iterrows():
                         deal_order_id = str(deal.get("order_id", ""))
                         if deal_order_id == futu_order_id:
                             price = float(deal.get("price", 0))
                             dealt_qty = float(deal.get("qty", 0) or 0)
                             if price > 0 and dealt_qty > 0:
-                                return price
+                                _last_price = price
+                                _sum_qty += dealt_qty
+                    if _last_price > 0 and _sum_qty > 0:
+                        return _last_price, _sum_qty
             except Exception as e:
                 logger.debug(f"[DualBroker] history_deal_list_query 失败 {futu_order_id}: {e}")
             if _attempt < 2:
@@ -411,11 +432,11 @@ class DualBrokerAdapter:
                 avg = data.iloc[0].get("avg_price", 0)
                 dealt = data.iloc[0].get("dealt_qty", 0)
                 if avg and float(avg) > 0 and float(dealt or 0) > 0:
-                    return float(avg)
+                    return float(avg), float(dealt)
         except Exception as e:
             logger.debug(f"[DualBroker] order_list_query fallback 失败 {futu_order_id}: {e}")
 
-        return 0.0
+        return 0.0, 0.0
 
     def get_positions(self, target_env: str = "sim") -> list:
         """查询指定账户持仓."""
