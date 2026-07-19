@@ -1196,6 +1196,13 @@ playbook:
     #   强制不跳过 EOD/PRE_CLOSE → 全部当日平仓 (一处收口 OVERNIGHT_GAP_STOP/PRE_CLOSE_EXIT/MAX_HOLD 三个隔夜分支).
     #   true = 允许 cohort B / long horizon 盈利仓过夜; false = 极简版 B, 全平不留隔夜敞口. 回滚: 改 true.
     overnight_hold_enabled: false
+    # 2026-07-18: profit_override — 浮盈超过阈值时强制锁利 (三轮辩论裁决).
+    #   根因: trailing_enabled=false 的 17 个"快速证伪"因子只有保本没有锁利,
+    #   COIN SHORT 浮盈 3.89% 最终保本出场 (-0.01%), 白送 3.9% 利润.
+    #   逻辑: 浮盈 >= threshold 时, 不管因子配置, 强制从峰值回撤 drawdown% 就锁利出场.
+    #   0-1.5% 证伪期行为不变, 设计意图兼容. 回滚: threshold 设 999 即禁用.
+    profit_override_threshold_pct: 1.5   # 浮盈超过此值强制锁利 (3×breakeven_at_pct)
+    profit_override_drawdown_pct: 0.5    # 强制锁利时的回撤百分比 (从峰值回落此值即出场)
   exit_rules:
     # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
     # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.
@@ -1205,6 +1212,20 @@ playbook:
     config_path: config/playbook_horizon.yaml
     enabled: true
   live_trial: true
+  # B5 (2026-07-19): daily_notional_cap_pct 回调触发条件 (graduation gate).
+  #   当前 0.80 是数据积累期临时措施, 达标后回调至 0.30.
+  #   enabled=false: 仅定义门槛, 不启用自动回调 (人审确认后手动改 true).
+  #   实证 (2026-07-19): 83笔已平仓 / 43.4%胜率 / -$976.93净PnL → 未达标.
+  cap_reduction_trigger:
+    enabled: false
+    min_closed_trades: 50
+    min_win_rate: 0.45
+    require_positive_net_pnl: true
+    min_global_ic: 0.03
+    max_drawdown_pct: 0.08
+    data_window_days: 7
+    target_cap_pct: 0.30
+    current_cap_pct: 0.80
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
@@ -1258,6 +1279,11 @@ regime_adaptation:
     TREND_DOWN: 0.8
     TREND_UP: 1.0
 risk:
+  # A1+ (2026-07-19): ACB/PDT 风控检查异常时的 fail 模式.
+  #   open  = 异常放行 (默认, SIM 期合理)
+  #   closed = 异常拒绝开仓 (live 前切换, 风控失效代价 > 误拦一笔)
+  #   可回滚: 改回 open 即恢复放行.
+  acb_fail_mode: open
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08

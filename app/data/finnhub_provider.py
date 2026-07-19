@@ -258,7 +258,10 @@ class FinnhubProvider:
                 "previous_close": prev_close,
                 "change_percent": change_pct,
                 "volume": 0,   # /quote 不含成交量
-                "timestamp": datetime.now().isoformat(),
+                # C3 修复 (2026-07-19): 用上游报价时间 (Unix float), 对齐 futu_lv3_provider 契约.
+                # 此前用 datetime.now().isoformat() → check_quote_health 的 float(ts) 抛异常被吞 → 过期门失效.
+                # Finnhub /quote 返回 t = 最后成交 Unix 时间戳; 无 t 时退取 fetch 时间.
+                "timestamp": float(data.get("t") or 0) or time.time(),
                 "source": "finnhub",
             }
             self._set_cache(cache_key, quote)

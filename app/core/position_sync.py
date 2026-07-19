@@ -1727,6 +1727,21 @@ class USPositionSync:
                     if not ghost_set:
                         self._last_reported_ghosts = frozenset()
 
+            # B3 (2026-07-19): 入场量一致性校验 (DB.size vs Broker.qty).
+            #   现有对账仅覆盖 symbol 存在性, 不覆盖 quantity 级.
+            #   部分成交时 trade_records.quantity 可能记错 → 幽灵仓.
+            for sym in (futu_set & db_set):
+                try:
+                    broker_qty = float(futu_positions[sym].get('qty', 0) or 0)
+                    db_qty = float(db_positions[sym].get('size', 0) or 0)
+                    if broker_qty > 0 and db_qty > 0 and abs(broker_qty - db_qty) >= 1:
+                        issues.append(
+                            f"⚠️ {sym} 量偏差: DB={db_qty:.0f} vs Broker={broker_qty:.0f} "
+                            f"(差{abs(broker_qty-db_qty):.0f}股, 可能部分成交记账偏差)"
+                        )
+                except Exception:
+                    pass  # 单个 symbol 校验失败不阻断整体
+
             if issues:
                 logger.warning(
                     "⚠️ [US Sync Consistency] 检测到 %d 个不一致:\n  %s",

@@ -698,6 +698,8 @@ class PlaybookService:
 
         # 切实盘前风控接线: 绝对熔断硬门 (连亏5笔/日亏$2K/时亏$1K).
         #   此前 can_open_new_position 从未在 Playbook 路径调用 → ACB 形同虚设.
+        #   A1+ (2026-07-19): fail 模式由配置 risk.acb_fail_mode 驱动 (open|closed, 默认 open).
+        #   live 切换时翻 closed, 符合"可回滚、可配置化"铁律.
         try:
             from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
             _allowed, _acb_reason = get_absolute_circuit_breaker().can_open_new_position("playbook")
@@ -705,6 +707,15 @@ class PlaybookService:
                 logger.warning(f"[绝对熔断] {_acb_reason}, 拒绝开仓")
                 return {"success": False, "message": f"[绝对熔断] {_acb_reason}"}
         except Exception as _acb_err:
+            # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
+            try:
+                from app.core.config_container import get_config as _get_cfg_acb
+                _acb_fail_mode = _get_cfg_acb().get_dotted("risk.acb_fail_mode", "open")
+            except Exception:
+                _acb_fail_mode = "open"
+            if _acb_fail_mode == "closed":
+                logger.error(f"[playbook] 绝对熔断检查异常 (fail-close 拒绝开仓): {_acb_err}")
+                return {"success": False, "message": f"绝对熔断检查异常 (fail-close): {_acb_err}"}
             logger.warning("[playbook] 绝对熔断检查异常 (放行): %s", _acb_err)
 
         # 读取下单模式: 统一走 broker 真实下单 (futu_simulate / live), 禁止纯虚拟 shadow.
@@ -861,6 +872,7 @@ class PlaybookService:
         # Phase 3 (2026-06-24, decision "sim 也守 PDT"): 下单前查 PDT 权限.
         # sim/live 统一查 (is_pdt_account: equity≥25k 豁免, <25k 守 ≤3/5日).
         # 确保 sim 验证的是 PDT 合规策略, 避免 sim 达标 live(<25k) 跑不了的假达标.
+        # A1+ (2026-07-19): fail 模式同 ACB, 由 risk.acb_fail_mode 统一驱动.
         try:
             from app.risk.pdt_guard import get_pdt_guard
             _pdt = get_pdt_guard()
@@ -873,6 +885,15 @@ class PlaybookService:
                     "skipped_pdt": True,
                 }
         except Exception as _pe:
+            # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
+            try:
+                from app.core.config_container import get_config as _get_cfg_pdt
+                _pdt_fail_mode = _get_cfg_pdt().get_dotted("risk.acb_fail_mode", "open")
+            except Exception:
+                _pdt_fail_mode = "open"
+            if _pdt_fail_mode == "closed":
+                logger.error(f"[playbook] PDT 检查异常 (fail-close 拒绝开仓): {_pe}")
+                return {"success": False, "message": f"PDT 检查异常 (fail-close): {_pe}"}
             logger.warning(f"[playbook] PDT 检查异常 (放行): {_pe}")
 
         # 滑点数据闭环 (P0): 下单前抓 arrival price (信号参考价), 事后与真实成交价对比.

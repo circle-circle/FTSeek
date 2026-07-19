@@ -30,7 +30,9 @@ def check_quote_health(
     检查报价是否健康。
 
     Args:
-        quote: 报价字典, 需要包含 bid, ask, price
+        quote: 报价字典, 需要包含 bid, ask, price.
+            timestamp 必须为 Unix float (time.time() 兼容), 不接受 ISO 字符串.
+            契约来源: futu_lv3_provider / finnhub_provider 均产出 float timestamp.
         max_age_seconds: 最大允许延迟 (秒)
         max_spread_pct: 最大允许 bid-ask spread
 

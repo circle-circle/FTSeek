@@ -228,6 +228,8 @@ class DualBrokerAdapter:
                     price=order.price, qty=order.quantity, code=order.symbol,
                     trd_side=trd_side, order_type=futu_order_type,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                    # B4 (2026-07-19): 透传 client_order_id 到 broker 侧留痕 (崩溃后可审计/可定位, 非真幂等).
+                    remark=getattr(order, 'client_order_id', '') or None,
                 )
 
             if ret != RET_OK:
@@ -300,6 +302,7 @@ class DualBrokerAdapter:
                     price=0.0, qty=close_qty, code=symbol,
                     trd_side=close_side, order_type=FutuOrderType.MARKET,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                    remark=f"pb_close_{symbol}_{target_env}",  # B4: 平仓单留痕
                 )
 
             if ret != 0:
@@ -478,6 +481,7 @@ class DualBrokerAdapter:
                     price=stop_price, qty=qty, code=symbol,
                     trd_side=stop_side, order_type=FutuOrderType.STOP,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                    remark=f"pb_stop_{symbol}_{target_env}",  # B4: STOP 单留痕
                 )
             if ret != RET_OK:
                 logger.warning(f"[DualBroker] live STOP 单失败 {symbol}: {data}")
