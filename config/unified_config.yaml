@@ -1178,11 +1178,42 @@ playbook:
     # 2026-07-17: TP 的 RR 底线门禁 config 化 (SSOT). 原为 pipeline.py 模块级硬编码常量 1.5,
     #   TP 相对初始 SL 的 RR < 此值时忽略该 TP, 交给 trailing/EOD. 改值不碰代码. 回滚: 保持 1.5.
     min_tp_rr: 1.5
+    # 2026-07-20: 盘中量能门 config 化 (SSOT) + 误拦根因修复.
+    #   根因: 分子(今日累计量)原聚合 K_1M(300s缓存) 系统性滞后低估 → AAPL/MSFT 盘中40min
+    #     仍仅~0.7 → 门槛1.5 令几乎全部追入被 BLOCK. 修复: 分子改用 Futu LV3 实时快照
+    #     当日累计成交量(get_quote()["volume"], <100ms 推送维护, 无缓存滞后); 快照不可用才回退 K_1M.
+    #   语义: today_cum_vol / (avg_daily_vol_5d × elapsed_fraction) ≥ threshold 才允许"追入".
+    #   grace_min: 盘初 N 分钟数据最不可靠, 此窗内不拦 (fail-open). kill-switch: enabled 设 false 整门关闭.
+    intraday_vol_gate_enabled: true
+    # 2026-07-20 二次校准: 1.5 → 0.8. 重启后实测 (分子已改 LV3 实时快照, 无低估):
+    #   午盘 18 只标的 ratio 分布 0.51~1.34 (中位数~0.73), 1.5 仍 100% BLOCK.
+    #   根因: 分母用 elapsed_fraction 线性折算, 而真实成交量呈 U 型 (开盘前置),
+    #   午盘"正常节奏"的 ratio 天然落在 0.7~0.9, 1.5 等于要求异常放量才准追入.
+    #   0.8 语义 = "不低于午盘正常节奏"——仍拦真正缩量追高 (实测可拦~2/3),
+    #   但放行正常/放量标的, 恢复样本量积累. 回滚: 改回 1.5.
+    chase_vol_ratio_threshold: 0.8
+    intraday_vol_gate_grace_min: 15
+    # 2026-07-21 (GHOST-RC1 时序修复): 入场成交确认窗 (秒). 5s→30s, 对齐平仓侧 30s 轮询先例.
+    #   根因: SUBMITTED 是等待态而非失败态; 实证 EOG(7/20)/TTE/UBER(7/21) 均在拒记后
+    #   9~29s 内成交 → 5s 窗误判"未成交" → 真仓无账走 position_sync 降级补录 (假归因 50/0.5).
+    #   仅 fill=0 且快查无成交价的模糊单才进等待, 正常成交不阻塞. 回滚: 改回 5.
+    entry_confirm_max_wait_s: 30
     # 2026-07-18: 开盘冷却期 SL 放宽 config 化 (SSOT). 原 pipeline.py:3601/3834 读 cooldown_sl_pct
     #   但配置从未定义该键 → 静默 fallback 硬编码 4.0 (黑盒). 现落配置, 默认 4.0 = 行为不变.
     #   语义: 开盘前 15 分钟 SL 临时放宽到此 % (吸收开盘噪声, 不改 SL 参数本身). 回滚: 保持 4.0.
     cooldown_sl_pct: 4.0
-    # 2026-07-17: 净保本缓冲. breakeven ratchet 保本线从"毛保本(=成本价)"抬到
+    # 2026-07-19: 早期紧SL — 入场后 N 分钟内未浮盈达标(breakeven未激活) → SL收紧到 early_tight_sl_pct.
+    #   根因: TIME_EXIT 11笔 0%WR, MFE 全部<0.5%, 方向从未兑现但等 4-6h 才 TIME_EXIT.
+    #   逻辑: 方向对→价格很快浮盈→breakeven激活→本规则自动失效; 方向错→1%紧SL快速触发SL_INITIAL.
+    #   与 cooldown 互补: cooldown 防开盘瞬间秒杀(放宽到4%); 本规则防方向全错慢性失血(收紧到1%).
+    # 2026-07-20 (DEB-20260720 修复M): 收编为 shadow-only — 积累期实单退出参数冻结,
+    #   避免再引入 config_version 断点污染毕业统计. 反事实评估由 exit_shadow EARLY_TIGHT_VARIANTS
+    #   (early_tight_30m_1pct) 采集, 2 周数据 counterfactual_saved_pct>0 且稳定后再评估实单化.
+    #   参数保留供 shadow 变体口径对齐. 回滚/实单化: early_tight_sl_enabled 改 true.
+    early_tight_sl_enabled: false
+    early_tight_sl_minutes: 30
+    early_tight_sl_pct: 1.0
+    # 2026-07-17: 净保本缓冲. breakeven ratchet 保本线从“毛保本(=成本价)”抬到
     #   "净保本(成本价 + 此缓冲%)", 确保浮盈达标后被保本SL打掉时不亏双边手续费/滑点.
     #   0.15% ≈ 覆盖美股双边佣金+平台费的保守上界 (小仓佣金占比更高时仍足够);
     #   breakeven_at_pct(0.5%)触发时机不变, 仅抬 SL 落点, 仍留 ~0.35% 缓冲空间防小回撤误扫.
@@ -1539,7 +1570,10 @@ universe_expansion:
   clue_hard_events: true      # [ADR-017] clue brief 注入结构化硬事件(复用 CatalystClassifier 纯关键词,零LLM成本); 回退设 false
   clue_earnings_events: true  # [ADR-018] clue brief 注入财报硬事件(复用 EarningsCalendar/AlphaVantage,1次日历调用); 回退设 false
   clue_insider_clusters: true # [ADR-018] clue brief 注入内部人集群(读 insider_daily_{date}.json,无网络); 回退设 false
-  min_confidence: 0.70        # LLM 浮现标的的最低置信度 (低于此不注入)
+  # 2026-07-20: 0.70→0.50 — 死锁修复: V2 prompt Track A 夹逼强制无证据候选 conf≤0.60,
+  #   与旧门槛 0.70 叠加 = 被夹逼候选 100% 进不来 (实测 4 天 28 浮现仅 2 注入, 链路近乎白跑).
+  #   0.50 让 MARKET_CORROBORATED 类进入; self_tier 标记保留, 评测按 tier 切片; 回滚: 改回 0.70.
+  min_confidence: 0.50        # LLM 浮现标的的最低置信度 (低于此不注入)
   max_targets_per_day: 30     # 2026-07-10: 5→30 — 全量交易 universe_scan 产生的所有标的 (充分验证)
   news_lookback_hours: 24     # clue brief 拉取近 N 小时新闻
   default_stop_pct: 3.0       # 初始止损% (代码出数, 现有退出策略后续托管)
