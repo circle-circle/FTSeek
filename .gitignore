@@ -26,3 +26,7 @@ data/backups/
 
 *__pycache__*
 *.pyc
+
+# 工具运行时目录 (Qoder/Hermes plans/worktrees/settings) — 不应入库
+.qoder/
+.hermes/
