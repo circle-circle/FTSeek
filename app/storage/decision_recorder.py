@@ -318,7 +318,12 @@ class DecisionRecorder:
         P2 G13: entry_session + strategy_type 用于时段-策略对齐学习
         """
         now = datetime.now().isoformat()
+        # DEB-20260721 B-1: 增加方向感知 (原式 SHORT 符号反); 与下方 outcome_correct
+        # 的 LONG/非LONG 二分保持一致. 注意: 本表 pnl_pct 约定为百分比 (0-100 标尺),
+        # 与 trade_records.pnl_pct (比例 0-1) 不同, 跨表使用需换算.
         pnl_pct = ((exit_price - entry_price) / entry_price * 100) if exit_price and entry_price else 0
+        if pnl_pct and direction != "LONG":
+            pnl_pct = -pnl_pct
 
         # Determine if prediction was correct
         outcome_correct = -1  # open

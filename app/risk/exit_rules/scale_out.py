@@ -295,7 +295,8 @@ def _check_scale_out_pct(position, current_price, trail_state, direction, entry_
             symbol, direction, i+1, len(tiers),
             pnl_pct * 100, close_pct, applied_stop, trailing_remainder
         )
-        sign = "+" if direction == "LONG" else "+"
+        # DEB-20260721 D-3: 原两分支同为 "+"; pnl_pct 已方向感知, 按符号显示
+        sign = "+" if pnl_pct >= 0 else ""
         return {
             "reason": "SCALE_OUT",
             "reason_cn": f"锯齿止盈 Tier {i+1}/{len(tiers)} ({sign}{pnl_pct*100:.2f}% ≥ {trigger_pct*100:.2f}%)",

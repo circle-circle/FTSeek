@@ -17,7 +17,8 @@ class ConfigKeys(str, Enum):
 
     # ── 风控 / 信号质量 ──────────────────────────────────────
     MIN_CONFIDENCE = "risk.signal_quality.min_confidence"
-    MIN_EFFECTIVE_STRENGTH = "risk.pre_trade.min_effective_strength"
+    # DEB-20260721 A-1: 原路径少 "_floor" 后缀 → YAML 声明值永不生效, 恒回退 50.
+    MIN_EFFECTIVE_STRENGTH = "risk.pre_trade.min_effective_strength_floor"
     SHORT_MIN_STRENGTH = "risk.pre_trade.short_min_strength"
     BATTLE_PLAN_BONUS = "risk.pre_trade.battle_plan_bonus"
 

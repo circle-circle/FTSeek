@@ -694,6 +694,17 @@ class PlaybookService:
                     logger.warning(_msg)
                     return {"success": False, "message": _msg}
         except Exception as _cb_err:
+            # DEB-20260721 R4 GATE-1: 纳入 risk.acb_fail_mode 统一 fail 语义 (C-7 的第三份拷贝).
+            #   当前 mode=closed → 检查失明即拒绝开仓 (行为变更, 与批次② C-7 裁决同向:
+            #   失明的熔断器=没有熔断器). 回滚: acb_fail_mode 改回 open.
+            try:
+                from app.core.config_container import get_config as _get_cfg_okr
+                _okr_fail_mode = _get_cfg_okr().get_dotted("risk.acb_fail_mode", "open")
+            except Exception:
+                _okr_fail_mode = "open"
+            if _okr_fail_mode == "closed":
+                logger.error(f"[playbook] OKR熔断检查异常 (fail-close 拒绝开仓): {_cb_err}")
+                return {"success": False, "message": f"OKR熔断检查异常 (fail-close): {_cb_err}"}
             logger.warning("[playbook] 熔断检查异常 (放行): %s", _cb_err)
 
         # 切实盘前风控接线: 绝对熔断硬门 (连亏5笔/日亏$2K/时亏$1K).
@@ -939,7 +950,28 @@ class PlaybookService:
                         logger.warning(f"[playbook] {_mode_label} {symbol} 报价健康门拒绝下单: {_q_reason}")
                         return {"success": False, "message": f"报价健康门拒绝: {_q_reason}"}
         except Exception as _gate_e:
-            logger.debug(f"[playbook] {symbol} 报价健康门异常 (放行): {_gate_e}")
+            # DEB-20260721 R4: debug→warning — fail-open 失明必须可观测可计数 (grep "报价健康门异常").
+            logger.warning(f"[playbook] {symbol} 报价健康门异常 (fail-open 放行): {_gate_e}")
+
+        # B4 数据新鲜度门 (2026-07-20): 降级源 (finnhub 15min延迟等) / 过期报价 → 禁开新仓.
+        #   补 health 门盲区: 降级源恰好无 bid/ask → 整体绕过上面的 health 门.
+        #   仅拦开仓 (本路径只做开仓, 平仓走 monitor_playbook_sim_exits 不经此处).
+        #   _arr_ctx 为 None (取价失败) 维持 fail-open, 与 health 门语义一致.
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_fresh
+            _fresh_cfg = _get_pb_cfg_fresh()
+            if _fresh_cfg.get("entry_freshness_gate_enabled", True) and _arr_ctx:
+                from app.risk.data_health_guard import check_quote_freshness
+                _f_ok, _f_reason = check_quote_freshness(
+                    _arr_ctx,
+                    max_age_seconds=float(_fresh_cfg.get("entry_max_quote_age_sec", 90.0)),
+                )
+                if not _f_ok:
+                    logger.warning(f"[playbook] {_mode_label} {symbol} 数据新鲜度门拒绝开仓: {_f_reason}")
+                    return {"success": False, "message": f"数据新鲜度门拒绝: {_f_reason}"}
+        except Exception as _fresh_e:
+            # DEB-20260721 R4: debug→warning — fail-open 失明必须可观测可计数 (grep "新鲜度门异常").
+            logger.warning(f"[playbook] {symbol} 数据新鲜度门异常 (fail-open 放行): {_fresh_e}")
 
         _order = Order(
             symbol=symbol,
@@ -987,8 +1019,15 @@ class PlaybookService:
             #   (7/6 六连实证: position_sync 证实 broker 无持仓且无今日成交记录).
             #   真相源与 close 路径一致: order_list_query.order_status (2026-07-07 修复确立).
             #   查询异常 → 降级维持旧兜底 (宁可记不错杀, 与 2026-06-29 辩论一致).
+            # 2026-07-21 (GHOST-RC1 时序修复): 确认窗 5s→30s (对齐平仓侧轮询先例).
+            #   根因: SUBMITTED 是等待态而非失败态; 实证 EOG(7/20)/TTE/UBER(7/21) 均在
+            #   拒记后 9~29s 内成交 → 5s 窗误判 → 真仓无账走降级补录 (假归因 50/0.5).
+            #   仅 fill=0 的模糊单进等待, 正常成交不受影响. 回滚: 配置改回 5.
             try:
-                _confirmed, _ostatus = self._confirm_order_filled(_futu_id, target_env)
+                from app.playbook.config import get_playbook_config as _gpc_cw
+                _confirm_wait = float(_gpc_cw().get("entry_confirm_max_wait_s", 30.0))
+                _confirmed, _ostatus = self._confirm_order_filled(
+                    _futu_id, target_env, max_wait_s=_confirm_wait)
             except Exception as _cf_err:
                 logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (降级放行): {_cf_err}")
                 _confirmed, _ostatus = True, "query_error"

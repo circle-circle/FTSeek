@@ -659,12 +659,18 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
             db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
-            # 用 timestamp 字段 (本地时间) 做今日过滤
-            today = datetime.now().strftime("%Y-%m-%d")
+            # DEB-20260721 E-1: "今日"按 ET 交易日过滤 (原北京 LIKE 盘中差一天).
+            # timestamp 写入为 naive 北京; ET 日 D 对应北京区间 [D 12:00, D+1 12:00)
+            # (对齐 timezone._et_trade_date 的 -12h 约定).
+            from app.utils.timezone import now_et as _now_et
+            from datetime import timedelta as _td
+            _et_now = _now_et().replace(tzinfo=None)
+            _lo = _et_now.strftime("%Y-%m-%dT12:00:00")
+            _hi = (_et_now + _td(days=1)).strftime("%Y-%m-%dT12:00:00")
             rows = conn.execute(
                 "SELECT * FROM manual_order_audit "
-                "WHERE timestamp LIKE ? ORDER BY timestamp DESC LIMIT 50",
-                (today + "%",),
+                "WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC LIMIT 50",
+                (_lo, _hi),
             ).fetchall()
             conn.close()
             for r in rows:

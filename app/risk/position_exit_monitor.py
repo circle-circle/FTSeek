@@ -773,8 +773,13 @@ class ExitMonitor:
         try:
             from app.positions import is_strategy_managed, get_position_source, get_protection_state
             from app.positions.source import PositionSource
-        except Exception:
-            is_strategy_managed = lambda p: True  # 模块异常时不阻断 (向后兼容)
+        except Exception as _ie:
+            # DEB-20260721 C-6: 原 fallback=True 会把手动/保护仓全视为 managed → 可能误平.
+            # 对齐 L679 已验证的安全侧模式 (P0-3): 失败时全部跳过, 宁可本轮不管也不误杀.
+            logger.error(
+                f"[DEM·安全降级] app.positions 导入失败 ({_ie}), "
+                f"本轮全部仓位按非托管跳过 (原 fail-open 会误平手动仓)")
+            is_strategy_managed = lambda p: False
             get_position_source = lambda p: None
             get_protection_state = lambda p: None
             PositionSource = None
@@ -1045,14 +1050,28 @@ class ExitMonitor:
                 # 2026-06-05 根因修复: ATR=0 绝对底限 (price × 0.5%)
                 # 场景: broker_reconcile 发现的仓位 (如 PG) 没有 ATR 数据
                 # 无 ATR → effective_atr=0 → SL 计算全部失效 → 无保护敞口
+                # 2026-07-20: 0.5% 死底限令刚开仓/重启期(ATR=0)止损过紧(~5x). 改优先用入场
+                #   SL 距离反推 ATR 代理 (|entry-initial_sl| / 2.0, 2.0=典型 ATR 倍数),
+                #   仅当代理 > 0.5% 底限时采用; 无有效 initial_sl 才回落 0.5%.
                 _price_atr_floor = entry_price * 0.005  # 0.5% of price
                 if effective_atr < _price_atr_floor:
-                    logger.warning(
-                        f"[ATR底限] {symbol} effective_atr={effective_atr:.4f} "
-                        f"< price_floor=${_price_atr_floor:.2f} (0.5%×${entry_price:.2f}), "
-                        f"使用底限值"
-                    )
-                    effective_atr = _price_atr_floor
+                    _init_sl = float(getattr(position, "initial_sl", 0) or 0)
+                    _sl_dist = abs(entry_price - _init_sl) if (_init_sl and entry_price) else 0.0
+                    _sl_proxy_atr = _sl_dist / 2.0 if _sl_dist > 0 else 0.0
+                    if _sl_proxy_atr > _price_atr_floor:
+                        logger.warning(
+                            f"[ATR底限] {symbol} effective_atr={effective_atr:.4f} < "
+                            f"price_floor=${_price_atr_floor:.2f}, 用入场SL距离反推 "
+                            f"atr_proxy=${_sl_proxy_atr:.2f} (|{entry_price:.2f}-{_init_sl:.2f}|/2)"
+                        )
+                        effective_atr = _sl_proxy_atr
+                    else:
+                        logger.warning(
+                            f"[ATR底限] {symbol} effective_atr={effective_atr:.4f} "
+                            f"< price_floor=${_price_atr_floor:.2f} (0.5%×${entry_price:.2f}), "
+                            f"无有效initial_sl → 使用0.5%底限值"
+                        )
+                        effective_atr = _price_atr_floor
 
                 # 日志: session 切换时记录
                 if abs(session_ratio - entry_ratio) > 0.1 and blend_weight > 0:

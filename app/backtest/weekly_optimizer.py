@@ -263,7 +263,11 @@ def _row_to_trade(d: Dict[str, Any]) -> TradeRow:
     exit_ = float(d.get("exit_price") or 0)
     pnl_pct = d.get("pnl_pct")
     if pnl_pct is None:
+        # DEB-20260721 D-1: fallback 增加方向感知 (原式 SHORT 符号反).
+        # 休眠路径 (实测 437 笔已平仓 pnl_pct NULL=0), 防御性修复.
         pnl_pct = (exit_ - entry) / entry if entry > 0 else 0.0
+        if str(d.get("direction") or "").upper() == "SHORT":
+            pnl_pct = -pnl_pct
     pnl_pct = float(pnl_pct)
     # 兼容百分比形式 (5.2 表示 5.2%)
     if abs(pnl_pct) > 1.5:  # 几乎不可能 > 150% 的小数比, 视为百分数

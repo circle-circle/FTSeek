@@ -238,10 +238,17 @@ def count_today_manual_orders(service: "ManualOrderService") -> int:
     """统计今日手动下单次数."""
     try:
         conn = service._db()
-        today = datetime.now().strftime("%Y-%m-%d")
+        # DEB-20260721 E-1: 日限按 ET 交易日统计 (原北京 LIKE 在盘中被午夜切断 →
+        # 计数清零, 日限可被绕过 ~2 倍). timestamp 为 naive 北京, ET 日 D 对应
+        # 北京区间 [D 12:00, D+1 12:00) (对齐 timezone._et_trade_date 的 -12h 约定).
+        from app.utils.timezone import now_et as _now_et
+        from datetime import timedelta as _td
+        _et_now = _now_et().replace(tzinfo=None)
+        _lo = _et_now.strftime("%Y-%m-%dT12:00:00")
+        _hi = (_et_now + _td(days=1)).strftime("%Y-%m-%dT12:00:00")
         count = conn.execute(
-            "SELECT COUNT(*) FROM manual_order_audit WHERE timestamp LIKE ?",
-            (f"{today}%",),
+            "SELECT COUNT(*) FROM manual_order_audit WHERE timestamp >= ? AND timestamp < ?",
+            (_lo, _hi),
         ).fetchone()[0]
         conn.close()
         return count
