@@ -14,6 +14,8 @@ import logging
 import os
 import sqlite3
 
+from app.utils.timezone import _et_trade_date, now_et
+
 logger = logging.getLogger(__name__)
 
 # DB 路径: data/drawdown_state.db
@@ -120,7 +122,7 @@ class DrawdownController:
         """从 DB 恢复今日状态 (防止重启归零)"""
         try:
             conn = sqlite3.connect(_DB_PATH, timeout=5)
-            today = date.today().isoformat()
+            today = _et_trade_date(now_et())
             row = conn.execute(
                 "SELECT daily_start_assets, current_daily_dd_abs, block_reason, "
                 "baseline, current_assets FROM drawdown_state WHERE trade_date=?",
@@ -146,7 +148,7 @@ class DrawdownController:
         """持久化当前状态到 DB"""
         try:
             conn = sqlite3.connect(_DB_PATH, timeout=5)
-            today = date.today().isoformat()
+            today = _et_trade_date(now_et())
             conn.execute(
                 "INSERT OR REPLACE INTO drawdown_state "
                 "(trade_date, daily_start_assets, current_daily_dd_abs, block_reason, "
@@ -191,7 +193,7 @@ class DrawdownController:
         self.daily_start_assets = self.current_assets
         self.current_daily_dd_abs = 0.0
         self.current_daily_dd = 0.0
-        self.last_reset_date = date.today()
+        self.last_reset_date = now_et().date()
         logger.info(
             f"[回撤基准] 日内基准重置: {old:.2f} -> {self.daily_start_assets:.2f} ({reason})"
         )

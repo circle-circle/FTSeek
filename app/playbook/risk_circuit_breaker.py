@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional
 from datetime import date, datetime, timedelta
 
 from app.playbook.db import PlaybookDB
+from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class RiskCircuitBreaker:
 
     def _get_daily_realized_loss(self) -> float:
         """获取当日已实现亏损 (负数)"""
-        today = date.today().isoformat()
+        today = _et_trade_date(now_et())
         instructions = self.db.get_instructions_by_date(today)
 
         total_loss = 0.0

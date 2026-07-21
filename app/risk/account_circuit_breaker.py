@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from app.core.paths import get_trade_records_db
+from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class AccountCircuitBreaker:
                 current_equity=current_equity,
             )
 
-        today = date.today().isoformat()
+        today = _et_trade_date(now_et())
         daily_pnl, _ = self._get_daily_pnl_and_peak(today, current_equity)
         # 2026-06-26: peak_equity 不用 trade_records 的 max(notional) — ETF 大批量交易
         # (如 XLF 22404股=$1.14M) 会产生虚假 peak, 导致回撤 91% 误判熔断.
