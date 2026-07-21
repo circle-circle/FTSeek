@@ -358,15 +358,6 @@ dual_mode:
     force_close_on_red: true
     loss_alert_threshold: -0.08
     pre_close_alert_time: '15:50'
-  normal:
-    max_daily_auto_trades: 4
-    max_per_trade_usd: 20000
-    max_position_pct: 0.12
-    max_total_exposure: 0.6
-    min_confidence: 0.55
-    min_signal_strength: 50
-    position_scale_factor: 1.0
-    stop_loss_tighten_factor: 1.0
 dynamic_exit:
   # 2026-07-16: 旧管线退出规则全部禁用 — Playbook 有独立退出栈 (monitor_playbook_sim_exits).
   #   ExitDispatcher 已禁用 (exit_rules_controller.dispatcher_enabled=false), 这些规则无消费者.
@@ -479,6 +470,13 @@ execution:
   simulate_partial_fill: false
   simulate_realistic_flow: true
   simulate_slippage_bps: 5.0
+  # DEB-20260721 A-4 锁现值: TWAP kill-switch 原读死路径 (execution.twap_* 键缺失),
+  #   以下为代码默认值 (零行为变更); enable_twap=false 即可真正关闭拆单.
+  enable_twap: true
+  twap_threshold_usd: 5000
+  twap_slices: 4
+  twap_interval_seconds: 30
+  enable_latency_tracking: true
   slippage:
     check_enabled: false
     max_ratio: 0.005
@@ -1149,12 +1147,10 @@ playbook:
   enabled: true
   execute_mode: futu_simulate
   execution_parameters:
-    buy_min_confidence: 85
     buying_power_fallback_alert: true
     intraday_breakout_pct: 0.5
     intraday_volume_ratio: 1.5
     min_confidence: 60
-    sell_short_min_confidence: 60
     # SSOT 显式化 (2026-07-10): 单日风控上限. 此前仅存在于 PlaybookConfig.DEFAULTS,
     # 但 pipeline.py 调用 pb_cfg.get(key, <显式默认>) 时显式默认会遮蔽 DEFAULTS,
     # 导致声明的 0.60/10 从未生效 (实际跑 0.20/5). 在此显式写死, 声明即生效.
@@ -1283,7 +1279,9 @@ risk:
   #   open  = 异常放行 (默认, SIM 期合理)
   #   closed = 异常拒绝开仓 (live 前切换, 风控失效代价 > 误拦一笔)
   #   可回滚: 改回 open 即恢复放行.
-  acb_fail_mode: open
+  # DEB-20260721 C-7: open→closed — 熔断器本职是保命, 检查异常时应停下排查而非裸奔;
+  #   异常场景本身就该修, ERROR 日志会暴露. 回滚: 改回 open.
+  acb_fail_mode: closed
   # R1a/R1c (2026-07-19, DEB-round2 Ω.3-3): 开仓前预检 (regime/risk_state + broker持仓) 异常 fail 模式.
   #   open  = 异常放行 (默认, SIM 期合理)
   #   closed = 异常拒绝开仓 (live 前切换)
@@ -1388,6 +1386,9 @@ risk:
   position:
     max_per_direction: 0.65
     max_per_symbol: 0.25
+    # DEB-20260721 A-2 锁现值: position_monitor 对账循环单仓上限 (原读死路径恒回退 0.15).
+    #   与开仓侧 position_sizing.max_position_pct=0.12 是否收敛为一, 待单点决策.
+    max_position_pct: 0.15
     max_total: 0.8
   position_sizing:
     max_position_pct: 0.12
@@ -1396,8 +1397,19 @@ risk:
     battle_plan_bonus: 0.5
     battle_plan_bonus_enabled: true
     long_min_strength: 60
-    min_effective_strength_floor: 5
+    # DEB-20260721 A-1 锁现值: 原声明 5 因 config_keys 路径拼错从未生效, 实际恒跑 50.
+    #   现路径已修复, 写入实际生效值 50 = 零行为变更. 5 vs 50 意图裁决待反事实数据.
+    min_effective_strength_floor: 50
     short_min_strength: 45
+  # DEB-20260721 A-3 锁现值: order_executor 动态仓位 SL/TP 分层原读死路径,
+  #   以下为路径修复前实际生效的代码默认值 (零行为变更), 调整前需反事实数据.
+  stop_loss:
+    default: -0.06
+    trailing_atr_mult: 2.0
+  take_profit:
+    tier1: 0.08
+    tier2: 0.15
+    tier3: 0.25
   self_managed_symbols:
   - HK.00700
   - US.HK.00700
