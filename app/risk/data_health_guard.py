@@ -73,3 +73,50 @@ def check_quote_health(
             return False, f"last_price {price} 偏离 mid {mid} 过大"
 
     return True, "ok"
+
+
+# B4 (2026-07-20): 已知降级数据源 — 均为延迟/无盘口报价, 不可作为开新仓的价格依据.
+#   finnhub /quote 15min 延迟; twelvedata/alphavantage timestamp 为抓取时间 (非成交时间).
+DEGRADED_QUOTE_SOURCES = {"finnhub", "finnhub_fallback", "twelvedata", "alphavantage"}
+
+
+def check_quote_freshness(
+    quote: Optional[Dict[str, Any]],
+    max_age_seconds: float = 90.0,
+    degraded_sources: Optional[set] = None,
+) -> Tuple[bool, str]:
+    """开新仓专用数据新鲜度检查 (B4, 2026-07-20)。
+
+    与 check_quote_health 互补: health 门依赖 bid/ask 齐备, 而降级源报价
+    (finnhub /quote 等) 恰好无盘口 → 整体绕过 health 门。本检查不依赖盘口:
+      1. data_source/source 命中降级源 → 不新鲜 (延迟数据不可开仓)
+      2. timestamp 年龄 > max_age_seconds → 不新鲜 (兼容 Unix float 与 ISO 字符串)
+    仅用于拦开新仓; 平仓路径不应调用本函数 (平仓宁可用旧价也要能出场)。
+
+    Returns:
+        (is_fresh, reason)
+    """
+    if not quote:
+        return False, "quote is None"
+
+    src = str(quote.get("data_source") or quote.get("source") or "").lower()
+    if degraded_sources is None:
+        degraded_sources = DEGRADED_QUOTE_SOURCES
+    if src in degraded_sources:
+        return False, f"降级数据源 ({src})"
+
+    ts = quote.get("timestamp")
+    if ts:
+        age = None
+        try:
+            age = time.time() - float(ts)
+        except (TypeError, ValueError):
+            try:
+                from datetime import datetime as _dt
+                age = time.time() - _dt.fromisoformat(str(ts)).timestamp()
+            except Exception:
+                age = None
+        if age is not None and age > max_age_seconds:
+            return False, f"quote 过期 (age={age:.0f}s > {max_age_seconds:.0f}s, source={src or 'unknown'})"
+
+    return True, "ok"

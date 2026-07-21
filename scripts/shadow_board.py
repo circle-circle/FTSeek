@@ -288,10 +288,46 @@ def _sec_universe_expansion():
     return lines
 
 
+# ── 段9: 下单前统一收口审计 (exec_gate_audit) ─────────────────
+def _sec_exec_gate():
+    """下单前统一收口审计 (2026-07-17)。
+
+    exec_gate_audit.jsonl: 每个到达执行漏斗的候选 (DA/UE/内部全覆盖) 的
+    来源 + 最终动作 + EdgeShadowGate 判定。核心指标: 已执行单里 edge 判为
+    BLOCK (负期望) 的比例 — 量化"若 edge 门实装, 会拦掉多少我们实际下的单"。
+    """
+    recs = _read_jsonl(SHADOW_DIR / "exec_gate_audit.jsonl")
+    lines = ["【下单前收口审计 (全来源: DA/UE/内部)】"]
+    if not recs:
+        lines.append("  暂无样本 (盘中未执行 / 刚上线) — 产出后自动显示")
+        return lines
+
+    def blk(days):
+        sub = [r for r in recs if _within(r.get("date"), days)]
+        n = len(sub)
+        if not n:
+            return "无样本"
+        src = Counter(r.get("source") for r in sub)
+        src_s = " ".join(f"{k}:{v}" for k, v in src.most_common())
+        execed = [r for r in sub if r.get("action") == "executed"]
+        skipped = [r for r in sub if str(r.get("action", "")).startswith("skipped")]
+        # 核心: 已执行单里 edge 判 BLOCK 的 (edge 门若实装会拦掉的实盘单)
+        edge_block_exec = [r for r in execed if r.get("edge_verdict") == "BLOCK"]
+        s = f"候选{n} 执行{len(execed)} 跳过{len(skipped)} | 来源[{src_s}]"
+        if execed:
+            s += (f" | edge门若实装会拦{len(edge_block_exec)}/{len(execed)}执行单"
+                  f"({len(edge_block_exec)/len(execed)*100:.0f}%)")
+        return s
+
+    lines.append(f"  今日 : {blk(1)}")
+    lines.append(f"  近7天: {blk(7)}")
+    return lines
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_technical, _sec_sltp, _sec_edge, _sec_verdict, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion):
+    for sec in (_sec_divergence, _sec_technical, _sec_sltp, _sec_edge, _sec_verdict, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate):
         try:
             body += sec() + [""]
         except Exception as e:

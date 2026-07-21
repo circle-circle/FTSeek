@@ -43,10 +43,17 @@ factor_exit_rules:
   #   7/15 影子退出: COIN be0.5_dd0.4=+3.51% vs actual=-0.01% (浪费3.52%浮盈)
   #   ORCL be0.3_dd0.3=+1.28% vs actual=-0.20%, MSFT be0.5_dd0.4=+2.08% vs actual=+1.91%
   #   3/4 笔在更紧参数下更优. be0.5_dd0.4 是 be0.3_dd0.3 (太紧,频繁误触) 和 be1.0_dd0.5 (太松) 的平衡点.
+  # 2026-07-19: drawdown 0.4→0.8 (handoff 处方回归, DEB-round3 实证)
+  #   根因: 7/16 基于 n=4 影子样本收紧, 与 handoff n=61 实证诊断("退出砍赢家, R:R 不足")方向相反.
+  #   实测: SL_TRAIL_LOCK 15笔 avg_win=$27.59 (MFE 1.48% 仅捕获一半), EOD 赢家 avg=$96.74.
+  #   0.4% 回撤锁在日内噪声底附近触发, 系统性截断赢家 → avg_win 上不去 → R:R 被压.
+  #   0.8% = handoff 原始处方, 给赢家 0.8% 呼吸空间, 让趋势跑完再锁.
+  #   breakeven_at_pct=0.5 不动 (仍早保本, 亏不了), 只放宽锁利回撤容忍.
+  #   回滚: 改回 0.4. 判分: 下周五 exit_scorecard R:R + avg_win 对比.
   default:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 更早保本, 影子数据验证
-    drawdown_from_peak_pct: 0.4     # 0.5→0.4: 更紧锁利, 减少giveback
+    breakeven_at_pct: 0.5           # 1.0→0.5: 更早保本, 影子数据验证 (不动)
+    drawdown_from_peak_pct: 0.8     # 0.4→0.8: handoff处方回归, 释放赢家呼吸空间
     trailing_step_pct: 2.0          # 兼容回退(无drawdown时用)
     time_exit_hours: 6.0           # 4.0→6.0: TIME_EXIT 7笔0%WR-$238, 2h-4h死亡区间, 延长让趋势仓不被砍
     time_exit_only_if_loss: true
@@ -54,10 +61,16 @@ factor_exit_rules:
 
   # 趋势/动量类: 让利润奔跑, 用回撤止损锁定利润
   # 2026-07-09: drawdown 0.6-0.7→0.5-0.6, 与default(0.5)对齐, 更紧锁利
+  # 2026-07-20 P0-1: 趋势类(trailing=true) drawdown 0.5→0.8 与 default 对齐.
+  #   根因: 7/19 只放宽了 default, 但 _get_factor_exit_config 命中注册因子时用因子规则,
+  #   default 仅兜底无因子/未注册单 → 绝大多数带因子 BUY 单仍被 0.5 锁在噪声底,
+  #   7/19 处方(释放赢家呼吸空间)实际未生效, 周五判分会得出假阴性.
+  #   快速证伪类(trailing=false)不动 — 它们走 profit_override, 语义不同.
+  #   回滚: 全部改回 0.5. 判分: 与 default 同窗口, 下周五 exit_scorecard R:R + avg_win.
   insider_cluster_buy:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5: 更紧锁利
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default: 释放赢家呼吸空间
     trailing_step_pct: 1.5
     time_exit_hours: 999       # 盈利仓不 time_exit
     time_exit_only_if_loss: true
@@ -65,7 +78,7 @@ factor_exit_rules:
   macd_golden_cross:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5: 更紧锁利
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -73,7 +86,7 @@ factor_exit_rules:
   above_ma20:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5: 更紧锁利
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -81,7 +94,7 @@ factor_exit_rules:
   news_positive:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -116,7 +129,7 @@ factor_exit_rules:
   above_ma50:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -124,7 +137,7 @@ factor_exit_rules:
   ma_golden_cross:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -132,7 +145,7 @@ factor_exit_rules:
   bollinger_upper:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -140,7 +153,7 @@ factor_exit_rules:
   bollinger_squeeze:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
     time_exit_only_if_loss: true
@@ -148,7 +161,7 @@ factor_exit_rules:
   near_52w_high:
     trailing_enabled: true
     breakeven_at_pct: 0.5           # 1.0→0.5
-    drawdown_from_peak_pct: 0.5     # 0.6→0.5
+    drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -159,7 +172,7 @@ factor_exit_rules:
   insider_net_buy:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -167,7 +180,7 @@ factor_exit_rules:
   revenue_growth_high:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -175,7 +188,7 @@ factor_exit_rules:
   roe_high:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
     time_exit_only_if_loss: true
@@ -183,7 +196,7 @@ factor_exit_rules:
   earnings_beat_streak:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 8
     time_exit_only_if_loss: true
@@ -191,7 +204,7 @@ factor_exit_rules:
   post_earnings_momentum:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 8
     time_exit_only_if_loss: true
@@ -202,7 +215,7 @@ factor_exit_rules:
   sentiment_bullish:
     trailing_enabled: true
     breakeven_at_pct: 0.5
-    drawdown_from_peak_pct: 0.5   # 0.6→0.5
+    drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 4
     time_exit_only_if_loss: true
@@ -355,6 +368,10 @@ short_horizon:
   buy_fixed_stop_loss_pct: 2.5  # fallback only (vol_buckets未命中时); 7/7全部走vol_buckets路径
   sell_fixed_stop_loss_pct: 2.0
   rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润(100%WR avg+$203). TP=3%从未触发且会截断SHORT EOD avg=5.66%
+                 # ⚠️ P1-2 (2026-07-20): 此 999 哨兵实际不生效 — instruction_generator L399 vol_bucket
+                 # 路径 rr_ratio=tp_multiplier(1.5~2.0) 覆写了此值, 每单仍生成 TP. 7/7 注释"全部走
+                 # vol_buckets 路径"→ 999 从未被消费. 真实行为=有TP(RR 1.5-2.0). 待裁决: 删999承认TP存在,
+                 # 或让 vol_bucket 尊重 999 哨兵(恢复无TP). 当前不动, 先观察 TP 触发对 SHORT EOD 的影响.
   max_hold_days: 1
   skip_pre_close_if_profit: false
   time_exit_hours: 2.0

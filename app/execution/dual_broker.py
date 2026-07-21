@@ -387,6 +387,11 @@ class DualBrokerAdapter:
         history_deal_list_query 返回真实成交记录的 price 字段, 可靠得多.
         order_list_query 降级为 fallback.
 
+        2026-07-21 更正: 上述"SIM 系统性返回 avg_price=0"系误判 — 真根因是 fallback
+        字段名笔误 (读 avg_price, 富途真实字段为 dealt_avg_price); 且 history_deal_list_query
+        在 SIM 环境平台侧不支持 (实测报错"模拟交易不支持成交数据"), 主路径 sim 恒失败.
+        本日已修复 fallback 字段名, sim 真实成交均价 (dealt_avg_price) 可正常获取.
+
         2026-07-19: 同时返回真实成交量 (dealt_qty), 供上游识别部分成交 —
             此前只取价格, 部分成交时上游按下单量记账 → 幽灵仓.
             同一 order_id 可能有多笔成交, price 用最后一笔, qty 累加.
@@ -401,7 +406,10 @@ class DualBrokerAdapter:
         #   CST 比 ET 快 12 小时, 用 CST 查询可能导致跨日查不到当日成交.
         #   富途 API 按 ET 交易日返回, start/end 应是 ET 日期.
         # 2026-07-19: 改用 now_et() (DST 正确), 原硬编码 -4 在冬令时 (EST=-5) 错标日期.
-        for _attempt in range(3):
+        # 2026-07-21: SIM 环境主路径恒失败 (平台不支持, 见 docstring) → 仅试 1 次,
+        #   省 2 次无效重试 (~1-2s), 让 30s 订单确认窗口更多留给 fallback 生效.
+        _max_attempts = 1 if str(trd_env).endswith("SIMULATE") else 3
+        for _attempt in range(_max_attempts):
             try:
                 _et_dt = _now_et()
                 start = _et_dt.strftime('%Y-%m-%d')
@@ -433,7 +441,10 @@ class DualBrokerAdapter:
             with lock:
                 ret, data = ctx.order_list_query(order_id=futu_order_id, trd_env=trd_env)
             if ret == RET_OK and not data.empty:
-                avg = data.iloc[0].get("avg_price", 0)
+                # 2026-07-21 根因修复: 富途成交均价字段是 dealt_avg_price (avg_price 系笔误,
+                #   永远得 0 → fallback 失效 → sim 全部交易用 bid/ask 兜底记账, 价格系统性失真).
+                #   保留旧键作末位兼容. 回滚: 恢复单行 .get("avg_price", 0).
+                avg = data.iloc[0].get("dealt_avg_price", 0) or data.iloc[0].get("avg_price", 0)
                 dealt = data.iloc[0].get("dealt_qty", 0)
                 if avg and float(avg) > 0 and float(dealt or 0) > 0:
                     return float(avg), float(dealt)

@@ -1506,6 +1506,9 @@ scheduler:
   min_consensus_level: 0.25
   min_signal_strength: 60
   monitor_interval_minutes: 0.25
+  # 2026-07-21: playbook 退出监控独立快循环 (单宿主开关: true=独立线程20s节奏, llm_strategy_loop 旧调用点自动跳过; false=恢复旧宿主 60s 节奏)
+  playbook_exit_fast_loop_enabled: true
+  playbook_exit_fast_loop_interval_sec: 20
   scan_interval_minutes: 5
 service:
   api:
@@ -1570,6 +1573,7 @@ universe_expansion:
   clue_hard_events: true      # [ADR-017] clue brief 注入结构化硬事件(复用 CatalystClassifier 纯关键词,零LLM成本); 回退设 false
   clue_earnings_events: true  # [ADR-018] clue brief 注入财报硬事件(复用 EarningsCalendar/AlphaVantage,1次日历调用); 回退设 false
   clue_insider_clusters: true # [ADR-018] clue brief 注入内部人集群(读 insider_daily_{date}.json,无网络); 回退设 false
+  clue_event_symbols: true    # [P2' 2026-07-21] clue brief 注入今日事件驱动标的(读 gen_event_symbols 产出,与 DA --symbols 同源); 回退设 false
   # 2026-07-20: 0.70→0.50 — 死锁修复: V2 prompt Track A 夹逼强制无证据候选 conf≤0.60,
   #   与旧门槛 0.70 叠加 = 被夹逼候选 100% 进不来 (实测 4 天 28 浮现仅 2 注入, 链路近乎白跑).
   #   0.50 让 MARKET_CORROBORATED 类进入; self_tier 标记保留, 评测按 tier 切片; 回滚: 改回 0.70.

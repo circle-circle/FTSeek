@@ -216,8 +216,9 @@
 1. **void 不计**: `exit_reason` 含 `ORPHAN`/`PHANTOM`/`GHOST` 的平仓 → `outcome=void`, 不计 win/loss — 不进胜率、净 PnL、连续亏损计数 (ghost 是记账异常, 非真实交易结果).
 2. **事件日双向对称剔除**: 财报/黑天鹅等事件日的交易, 盈与亏**双向对称**剔除 — 不允许只剔亏损留盈利的选择性清洗.
 3. **PLAYBOOK_SHADOW 本就不计毕业**: shadow 路径纯影子追踪, 从未进入毕业样本, 无需额外剔除.
+4. **PnL/胜率维度按 config_version 窗口取样** (修复M, 2026-07-20 DEB-20260720): 已实现 PnL = 入场 edge × 退出执行, 退出参数一变同一批入场信号的胜率/PnL 就变。故 cap_reduction (45%胜率+正PnL) 类毕业样本**只取当前退出参数版本 (`metadata_json.config_version`) 窗口内的已平仓样本**, 消除"边积累边调退出参数"的污染。**注**: IC(T+3) 侧 (`ic_positive`) 基于 forward return (入场锚定、退出无关), 天然免疫退出参数污染, **不需窗口化**。参数探索一律走 `exit_shadow` (record-only), 实单退出参数在积累窗口内冻结, 影子选出赢家再一次性切换 (换参数=开新 config_version 窗口)。
 
-清洗后基线 (2026-07-19 实证): **80 笔 / 45.0% WR / +$1422.40**, 系统期望值为正 (payoff 2.65, 期望 +$17.78/笔). 代码锚点: `pipeline._close_trade_record` (void 幂等 + ghost_cause 归因标记), `db.get_summary_stats` (仅计 win/loss).
+清洗后基线 (2026-07-19 实证): **80 笔 / 45.0% WR / +$1422.40**, 系统期望值为正 (payoff 2.65, 期望 +$17.78/笔). 代码锚点: `pipeline._close_trade_record` (void 幂等 + ghost_cause 归因 + config_version 打标), `db.get_summary_stats` (仅计 win/loss), `scripts/okr_status.py::graduation_sample` (config_version 窗口取样), `config.PlaybookConfig.get_exit_config_version` (退出参数快照哈希).
 
 ---
 
@@ -356,3 +357,4 @@
 | 2026-06-19 | 初始版本 | OKR 启动 |
 | 2026-06-19 | KR1.2/1.3/2.1/2.2 标注 Paper 性质；KR2.2 改为"模拟周收益"；新增 Week 2 IC<0 硬退出触发器；新增 Week 4 Paper→Live 切换门禁 | 消除 paper/real 混用歧义 (auto_execute 实为影子单 `pipeline.py:508`)；预设因子无预测力的退出路径；明确毕业前不接 live broker，与 `_submit_order` 风控层/kill switch 打通 |
 | 2026-07-19 | 新增 δ.6 毕业统计清洗口径 (void 不计 + 事件日双向对称剔除 + SHADOW 不计) | DEB-round3 三方收敛: 幽灵仓/事件日噪声曾污染胜率与收益判定, 清洗后基线 80笔/45.0%WR/+$1422.40 才为毕业门禁有效口径 |
+| 2026-07-20 | 新增第4条清洗口径: PnL/胜率维度按 config_version 窗口取样 (修复M); IC 侧免疫不窗口化 | DEB-20260720 元风险: 积累期边调退出参数边积累样本, 同一批入场信号的胜率/PnL 随退出参数漂移 → 毕业判定失效。config_version 打标 + 窗口取样 + 探索走 shadow, 既保护 PnL 侧可比又不停探索 |

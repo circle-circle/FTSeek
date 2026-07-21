@@ -68,27 +68,7 @@ print('   ✅ 观测引擎正常')
 "
 
 echo ""
-echo "4. 多 Agent 投票测试..."
-python3.11 -c "
-from app.agents.voting.voting_coordinator import VotingCoordinator
-
-coordinator = VotingCoordinator()
-
-market_data = {
-    'symbol': 'US.AAPL',
-    'price': 175.0,
-    'volume_ratio': 1.5,
-    'momentum': 0.02,
-}
-
-result = coordinator.run_voting(market_data)
-
-print(f'   最终评分：{result[\"final_strength\"]}')
-print(f'   置信度：{result[\"final_confidence\"]}')
-print(f'   一致性：{result[\"consensus_level\"]}')
-print(f'   模型数：{len(result[\"model_scores\"])}')
-print('   ✅ 投票系统正常')
-"
+echo "4. (2026-07-14) 多 Agent 投票测试已移除 — VotingCoordinator 退役, 双脑走 DA bridge"
 
 echo ""
 echo "5. Yahoo Finance 数据测试..."

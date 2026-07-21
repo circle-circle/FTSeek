@@ -104,7 +104,7 @@ class TestMarketRegimeGate:
         ctx = gate.assess()
 
         assert ctx.regime == MarketRegime.CAUTIOUS
-        assert ctx.top_n == 5
+        assert ctx.top_n == 8  # 2026-07-21 P1: cautious top_n 5→8 (market_regime.py 同步)
         assert ctx.position_multiplier == 0.5
         assert ctx.min_strength == 60
         # score: -2 (SPY<MA20) +2 (MA20>MA50) +1 (SPY>MA200) +1 (VIX 15-20) = 2

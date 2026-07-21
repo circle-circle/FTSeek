@@ -98,21 +98,35 @@ class StartupReconciler:
             if self._signature_path.exists():
                 with open(self._signature_path, 'r', encoding='utf-8') as f:
                     raw = json.load(f) or {}
-                if isinstance(raw, dict):
+                if isinstance(raw, dict) and raw:
                     return {str(k): str(v) for k, v in raw.items()}
+                # 2026-07-20 修复5: 文件存在但为空/非法 → 幂等失效 (2字节 {} bug), 升级告警
+                logger.warning(
+                    f"[Reconciler·sig] 签名缓存文件存在但为空或非法 → 幂等失效, "
+                    f"本次启动可能重复告警/重复对账 (path={self._signature_path})"
+                )
         except Exception as e:
-            logger.debug(f"[Reconciler·sig] 加载签名缓存失败 (忽略): {e}")
+            logger.warning(f"[Reconciler·sig] 加载签名缓存失败 → 幂等降级: {e}")
         return {}
 
     def _save_signatures(self) -> None:
         try:
+            # 2026-07-20 修复5: 防止 reconcile 异常时用空 dict 覆盖已有非空签名 (幂等失效根因).
+            #   run() 在 finally 无条件调用本方法; 若 _reconcile 抛异常, _current_signature 可能仍空,
+            #   直接覆盖会清空上一轮的好状态 → 下次启动幂等失效重复告警.
+            if not self._current_signature and self._last_seen_signature:
+                logger.warning(
+                    f"[Reconciler·sig] 本轮签名为空但历史非空 → 跳过写入以保留幂等状态 "
+                    f"(历史 {len(self._last_seen_signature)} 项)"
+                )
+                return
             self._signature_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._signature_path.with_suffix('.json.tmp')
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self._current_signature, f, ensure_ascii=False, indent=2)
             tmp.replace(self._signature_path)
         except Exception as e:
-            logger.debug(f"[Reconciler·sig] 保存签名缓存失败 (忽略): {e}")
+            logger.warning(f"[Reconciler·sig] 保存签名缓存失败 → 下次启动可能重复告警: {e}")
 
     def _signature_changed(self, symbol: str, signature: str) -> bool:
         """True 表示状态变化 (新发现/数量/方向/来源 变化), False 表示与上次完全一致."""

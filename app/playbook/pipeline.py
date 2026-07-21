@@ -3849,14 +3849,13 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             get_absolute_circuit_breaker().record_trade_result("playbook", float(pnl), symbol)
         except Exception as _acb_e:
             logger.debug(f"[风控接线] ACB record 跳过 {symbol}: {_acb_e}")
-        try:
-            # #6: 复用 _tr (原此处独立 SELECT entry_time)
-            _entry_time_val = _tr[3] if _tr is not None else None
-            if _entry_time_val:
-                from app.risk.pdt_guard import get_pdt_guard
-                get_pdt_guard().record_close(symbol, _entry_time_val)
-        except Exception as _pdt_e:
-            logger.debug(f"[风控接线] PDT record 跳过 {symbol}: {_pdt_e}")
+        # #6: 复用 _tr (原此处独立 SELECT entry_time)
+        _entry_time_val = _tr[3] if _tr is not None else None
+        # 2026-07-21 修复: PDT record_close 调用移至本函数 conn.commit() 之后 (原在此处).
+        #   根因: 原调用点在主DB事务中间 (UPDATE 后 commit 前), PDT 用独立连接写同库
+        #   → WAL 单写者原则下自己等自己 → 死等 30s 超时, PDT 必失败 + 平仓链路卡 30s,
+        #   同窗口 capital_safety._save_state (timeout=5s) 也撞锁失败. 7/21 每次平仓 100% 复现.
+        #   回滚: 把 commit 后的 PDT 块移回此处即可.
 
         # 2026-07-19 (DEB-round3): 批量止损熔断 — shadow 告警版 (命中即告警, 不阻断).
         #   背景: 7/6 六连分钟级止损 (-$312) 疑似系统性失效; 实单熔断需 2 周 shadow 数据定阈值.
@@ -3909,6 +3908,28 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             (symbol,)
         )
     conn.commit()
+
+    # 2026-07-21 修复: 平仓落库后同步注销 ManualHoldRegistry.
+    #   根因: 开仓时注册 (playbook_service "防 auto pipeline 干扰") 但平仓路径从不注销,
+    #   进程内残留 → position_monitor 对账把已平仓标的一直报"跳过手动持仓",
+    #   且 registry 被陈旧条目污染 (仅服务重启才清零). fail-open: 注销异常不影响平仓.
+    #   回滚: 删除本块即可 (仅影响对账提示与手动仓判定, 不影响平仓写入).
+    if symbol:
+        try:
+            from app.coordinator.manual_hold_registry import manual_hold_registry as _mhr_close
+            if _mhr_close.get_hold_info(symbol) is not None:
+                _mhr_close.unregister(symbol)
+        except Exception as _unreg_e:
+            logger.debug(f"[playbook] ManualHoldRegistry 注销跳过 {symbol}: {_unreg_e}")
+    
+    # 2026-07-21: PDT 日内交易记录 (从事务内移至 commit 后, 消除 WAL 自锁; 详见函数中部注释).
+    #   _entry_time_val/_rc_is_ghost 在上方已定义, 此处仅复用; fail-open 不影响平仓结果.
+    if symbol and not _rc_is_ghost and _entry_time_val:
+        try:
+            from app.risk.pdt_guard import get_pdt_guard
+            get_pdt_guard().record_close(symbol, _entry_time_val)
+        except Exception as _pdt_e:
+            logger.debug(f"[风控接线] PDT record 跳过 {symbol}: {_pdt_e}")
 
     # 2026-07-03: PLAYBOOK_SIM 平仓后自动归因 (之前只在 manual_order_service 调用, 212笔0归因)
     if symbol and exit_price > 0:
@@ -4664,6 +4685,19 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             conn.close()
             return 0
 
+        # 2026-07-21: 批量取价 (独立快循环配套) — get_batch_quotes 一次调用:
+        #   Futu Push缓存优先(近零成本)→快照→Finnhub 逐个回落. 替代逐仓串行 get_quote
+        #   (原单轮 ~48s, 20s 快循环节奏下会打爆 Finnhub 限额). 缺失标的循环内回落单原取价.
+        #   回滚: 删除本块, 并把循环内 quote 来源改回 data_router.get_quote(symbol) 即可.
+        _batch_quotes: dict = {}
+        try:
+            _bq = data_router.get_batch_quotes([r["symbol"] for r in rows])
+            if isinstance(_bq, dict):
+                _batch_quotes = _bq
+                logger.debug(f"[playbook dual] 批量取价: {len(_batch_quotes)}/{len(rows)} 命中")
+        except Exception as _bq_e:
+            logger.debug(f"[playbook dual] 批量取价失败, 本轮回落逐仓取价: {_bq_e}")
+
         # 市场时段 (ET) — 复用 scheduler_triggers.ET (pytz, 处理夏令时)
         now_et = datetime.now(_et)
         now_minutes = now_et.hour * 60 + now_et.minute
@@ -4699,10 +4733,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             inst_id = meta.get("playbook_instruction_id")
             qty = r["quantity"] or 0
 
-            # 当前价
+            # 当前价 (2026-07-21: 批量快照优先, 缺失/无价的标的回落单原取价)
             current_price = None
             try:
-                quote = data_router.get_quote(symbol)
+                quote = _batch_quotes.get(symbol)
+                if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
+                    quote = data_router.get_quote(symbol)
                 if quote and isinstance(quote, dict):
                     current_price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
             except Exception:

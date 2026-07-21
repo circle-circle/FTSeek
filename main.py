@@ -439,15 +439,33 @@ def _run_new_scheduler(args):
         pool = get_daily_active_pool()
         pool.initialize()
 
-        # 1. 注入当前持仓 (从 trade_records.json)
-        trade_records_path = os.path.join(config.BASE_DIR, 'data', 'trade_records.json')
-        if os.path.exists(trade_records_path):
-            with open(trade_records_path, 'r') as f:
-                trades = json.loads(f.read())
-            position_codes = [t['code'] for t in trades if t.get('code', '').startswith('US.')]
-            if position_codes:
-                pool.inject_positions(position_codes)
-                logger.info(f"💼 US 注入持仓: {len(position_codes)} 只 -> {position_codes}")
+        # 1. 注入当前持仓 — 2026-07-16 修复: 从 open_positions (SSOT) 自愈式重建 POSITION 池。
+        #   原实现读 data/trade_records.json (2026-03 死种子文件, 从不更新), 每次启动把 9 个
+        #   3 月的幻影 SHORT 灌进池, 且无 env 隔离 (曾混入实盘/港股残留 US.HK.00700 等) →
+        #   污染 inject 去重 + 扫描池, 压制真实交易机会。
+        #   open_positions 已由 position_sync 持续对齐当前 SIM broker (owner=auto/sync=synced),
+        #   干净且带方向/数量。自愈: 先删与真实持仓不符的陈旧 POSITION, 再按 SSOT 注入。
+        try:
+            import sqlite3 as _sq
+            from app.core.position_sync import _get_db_path as _gdp
+            from app.utils.daily_active_pool import SOURCE_POSITION as _SP
+            _conn = _sq.connect(_gdp(), timeout=10)
+            _rows = _conn.execute(
+                "SELECT symbol, direction, size FROM open_positions WHERE symbol LIKE 'US.%'"
+            ).fetchall()
+            _conn.close()
+            _live = {r[0] for r in _rows}
+            for _e in list(pool.get_entries()):
+                if _e.source == _SP and _e.code not in _live:
+                    pool.remove_position(_e.code)
+            if _rows:
+                _pmap = {r[0]: {"direction": r[1], "quantity": r[2]} for r in _rows}
+                pool.inject_positions(list(_live), position_map=_pmap)
+                logger.info(f"💼 US 注入持仓 (源: open_positions SSOT): {len(_live)} 只 -> {sorted(_live)}")
+            else:
+                logger.info("💼 US 无当前持仓 (open_positions 空), 已清陈旧 POSITION")
+        except Exception as _pe:
+            logger.warning(f"💼 US 持仓注入失败 (源: open_positions): {_pe}")
 
         # 2. 注入盘前计划目标
         if os.path.exists(plan_path):

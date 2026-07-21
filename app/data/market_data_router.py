@@ -435,7 +435,12 @@ class MarketDataRouter:
                         logger.info(f"[Router] {symbol} ★ 期权报价 | price=${futu_quote['price']:.2f} vol={futu_quote.get('volume', 0)}")
                     else:
                         # 获取 1分钟K线 (盘中短周期信号: slope_5m/recent_closes)
-                        klines = self.futu.get_kline(symbol, ktype="K_1M", count=200)
+                        # 2026-07-20 修复: count 200→800 — get_kline HTTP 冷路径 start=T-1,
+                        #   范围含 T-1+今日 ~780 根 1min bar; OpenD 对 max_count<范围总数返回
+                        #   "最旧的N根" (见 futu_lv3_provider 2026-06-30 注释), count=200 时
+                        #   冷缓存拿到的是纯 T-1 旧 bar → slope_5m 算的是昨天的斜率,
+                        #   当日 VWAP/ORB/今日过滤全部落空. 800 覆盖两日全时段.
+                        klines = self.futu.get_kline(symbol, ktype="K_1M", count=800)
                         # 获取 日K线 (盘前技术指标: MA/MACD/RSI/Boll — 日线级别信号过夜不失效)
                         daily_klines = self.get_daily_bars(symbol, count=60)
 
@@ -508,6 +513,43 @@ class MarketDataRouter:
                                 ts_ctx["price"] = futu_quote["price"]
                                 logger.debug(f"[Router] {symbol} 使用快照价格覆盖 K 线价格: ${futu_quote['price']:.2f}")
                             
+                            # ★★★ 2026-07-20 修复: 当日累计 VWAP — 07-16 遗留语义错配
+                            # 根因: ts_ctx["vwap"] 主路径来自日K calculate_from_klines(daily_klines),
+                            #   _calc_vwap 对 60 根日K 全量 cumsum → 实为"60日量加权均价"而非当日 VWAP;
+                            #   VWAP 入场硬门 (entry_vwap_gate, 实盘启用) 误用该值 → 近期上涨股
+                            #   SHORT 恒被拦 / 下跌股 LONG 恒被拦 (方向性系统误拦).
+                            # 修复: 用 1min K 线过滤今日 bar 单独算 cum(tp×vol)/cum(vol),
+                            #   写 vwap_intraday (门专用) 并覆盖 vwap (07-16 修复的原始意图).
+                            #   今日 bar<5 (盘前/开盘头几分钟) → vwap_intraday=0, 门侧视缺失 fail-open.
+                            ts_ctx["vwap_intraday"] = 0.0
+                            try:
+                                if klines:
+                                    import pytz as _pz_vw
+                                    from datetime import datetime as _dt_vw
+                                    _today_vw = _dt_vw.now(_pz_vw.timezone('US/Eastern')).strftime("%Y-%m-%d")
+                                    _cum_tpv = 0.0
+                                    _cum_v = 0.0
+                                    _n_today = 0
+                                    for _k in klines:
+                                        _tk = str(_k.get("time_key") or _k.get("time") or "")
+                                        if _tk[:10] != _today_vw:
+                                            continue
+                                        _kh = float(_k.get("high", 0) or 0)
+                                        _kl = float(_k.get("low", 0) or 0)
+                                        _kc = float(_k.get("close", 0) or 0)
+                                        _kv = float(_k.get("volume", 0) or 0)
+                                        if _kh <= 0 or _kl <= 0 or _kc <= 0 or _kv <= 0:
+                                            continue
+                                        _cum_tpv += (_kh + _kl + _kc) / 3.0 * _kv
+                                        _cum_v += _kv
+                                        _n_today += 1
+                                    if _n_today >= 5 and _cum_v > 0:
+                                        _vwap_id = round(_cum_tpv / _cum_v, 4)
+                                        ts_ctx["vwap_intraday"] = _vwap_id
+                                        ts_ctx["vwap"] = _vwap_id
+                            except Exception as _vw_err:
+                                logger.debug(f"[Router] {symbol} 当日VWAP计算跳过: {_vw_err}")
+
                             # 注入 LV3 深度数据
                             ts_ctx["lv3_bid"] = futu_quote.get("bid", ts_ctx["price"])
                             ts_ctx["lv3_ask"] = futu_quote.get("ask", ts_ctx["price"])
@@ -554,7 +596,9 @@ class MarketDataRouter:
                                     market_open_str = now_et.strftime("%Y-%m-%d") + " 09:30"
                                     today_bars = []
                                     for k in klines:
-                                        tk = str(k.get("time_key", ""))
+                                        # 2026-07-20 修复: HTTP 路径 bar 键是 "time", push 路径是 "time_key"
+                                        #   — 原只认 time_key, HTTP 冷路径下 today_bars 恒空 → ORB 区间永不注入
+                                        tk = str(k.get("time_key") or k.get("time") or "")
                                         if tk >= market_open_str:
                                             today_bars.append(k)
                                     # 取前15根 (09:30-09:44)

@@ -74,7 +74,7 @@ def register(app, templates):
             "COUNT(*) as trades, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
             "FROM trade_records WHERE trade_date >= ? "
-            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
+            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
             "GROUP BY trade_date ORDER BY trade_date",
             (start_date,),
         )
@@ -133,7 +133,7 @@ def register(app, templates):
                    ROUND(AVG(realized_pnl), 2) as avg_pnl
             FROM trade_records
             WHERE trade_date = (SELECT MAX(trade_date) FROM trade_records)
-              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
+              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
             GROUP BY strategy_id ORDER BY pnl DESC
         """)
         for r in strat_rows:
@@ -155,7 +155,7 @@ def register(app, templates):
                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                    ROUND(SUM(realized_pnl), 2) as pnl
             FROM trade_records WHERE trade_date >= ?
-              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
+              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
             GROUP BY strategy_id ORDER BY pnl DESC
         """, (et_days_ago(7),))
         result["weekly"] = [{

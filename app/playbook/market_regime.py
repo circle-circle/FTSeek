@@ -111,7 +111,7 @@ class MarketRegimeGate:
         
         Regime 映射：
         - score >= 5: RISK_ON (top_n=10, multiplier=1.0)
-        - score 0-4: CAUTIOUS (top_n=5, multiplier=0.5)
+        - score 0-4: CAUTIOUS (top_n=8, multiplier=0.5)  # 2026-07-21: 5→8 见 L251 注释
         - score -5 to -1: RISK_OFF (top_n=3, multiplier=0.3)
         - score < -5: NO_TRADE (top_n=0, multiplier=0.0)
         """
@@ -248,7 +248,11 @@ class MarketRegimeGate:
             min_strength = 50
         elif score >= 0:
             regime = MarketRegime.CAUTIOUS
-            top_n = 5
+            # 2026-07-21 标的量辩论 P1: cautious top_n 5→8 — 低频日供给端保险.
+            #   只动指令生成数量, 不动任何盘中质量门 (VWAP/量能/RR 已验证拦得对).
+            #   近5日全 risk_on 故现状增量≈0, 仅 cautious 日生效. multiplier/min_strength 不变.
+            #   回滚: 改回 5 (注意同步下方 VIX 不确定降级分支).
+            top_n = 8
             position_multiplier = 0.5
             min_strength = 60
         elif score >= -5:
@@ -266,7 +270,7 @@ class MarketRegimeGate:
         # 理由: 缺 VIX 时无法确认波动环境, 不应给激进仓位.
         if vix_uncertain and regime == MarketRegime.RISK_ON:
             regime = MarketRegime.CAUTIOUS
-            top_n = 5
+            top_n = 8  # 2026-07-21 P1: 与上方 CAUTIOUS 分支同步 5→8
             position_multiplier = 0.5
             min_strength = 60
             logger.info("[Regime] VIX uncertain, RISK_ON 降级为 CAUTIOUS (保守)")

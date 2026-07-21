@@ -1049,7 +1049,7 @@ class DataService:
         row = await self.db_query_one(
             "SELECT COUNT(*) as cnt FROM trade_records "
             "WHERE trade_date = ? AND exit_price > 0 "
-            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')",
+            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')",
             (today,),
         )
         return row["cnt"] if row else 0
@@ -1104,7 +1104,7 @@ class DataService:
         date_filter = f"AND trade_date >= date('now', '-{days} days')" if days > 0 else ""
         row = await self.db_query_one(
             f"SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records "
-            f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 {date_filter}"
+            f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 {date_filter}"
         )
         return float(row["pnl"]) if row else 0.0
 

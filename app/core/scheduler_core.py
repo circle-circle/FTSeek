@@ -173,6 +173,9 @@ class TradingScheduler:
     # unified_config.yaml 读取。如需修改, 请改 YAML, 不要改这里。
     SCAN_INTERVAL_MINUTES = 5      # ADR-005: 10→5min, 加速数据采集
     MONITOR_INTERVAL_MINUTES = 0.5  # fallback: scheduler.monitor_interval_minutes
+    # 2026-07-21: playbook 退出监控独立快循环默认值 (实例值由 _sb_get 覆盖; 配置加载失败时类属性兜底)
+    PLAYBOOK_EXIT_FAST_LOOP_ENABLED = True
+    PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC = 20
     MAX_POSITIONS = 12             # fallback: scheduler.max_positions (同步 YAML 2026-06-03: 5→12)
     _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
     _DEFAULT_MIN_CONFIDENCE = 0.70        # 2026-06-13: fail-safe 统一 YAML SSOT
@@ -782,6 +785,7 @@ class TradingScheduler:
         self.running = False
         self._scan_thread: Optional[threading.Thread] = None
         self._monitor_thread: Optional[threading.Thread] = None
+        self._playbook_exit_thread: Optional[threading.Thread] = None  # 2026-07-21 独立快循环
 
         # 信号冷却（避免同标的短时间重复下单）
         self._signal_cooldown: Dict[str, datetime] = {}
@@ -990,6 +994,13 @@ class TradingScheduler:
             self.MONITOR_INTERVAL_MINUTES = _sb_get(
                 "scheduler.monitor_interval_minutes", self.MONITOR_INTERVAL_MINUTES
             )
+            # 2026-07-21: playbook 退出监控独立快循环 (单宿主开关+间隔)
+            self.PLAYBOOK_EXIT_FAST_LOOP_ENABLED = _sb_get(
+                "scheduler.playbook_exit_fast_loop_enabled", self.PLAYBOOK_EXIT_FAST_LOOP_ENABLED
+            )
+            self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC = int(_sb_get(
+                "scheduler.playbook_exit_fast_loop_interval_sec", self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC
+            ))
             self.MAX_POSITIONS = cfg.get_dotted(
                 "scheduler.max_positions", self.MAX_POSITIONS
             )
@@ -1454,6 +1465,29 @@ class TradingScheduler:
         self.running = True
         logger.info("[调度器] 服务启动")
 
+        # B3 (2026-07-20): 交易环境横幅 — 启动时醒目打印账户路由与风控 fail 模式,
+        #   防止切实盘时配置组合被忽视 (LIVE + fail-open 的硬拦截在 di_container, 此处仅可见性).
+        try:
+            import os as _os_b3
+            from app.core.config_container import get_config as _get_cfg_b3
+            _cfg_b3 = _get_cfg_b3()
+            _acct_b3 = _os_b3.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            _allow_b3 = _os_b3.getenv("ALLOW_REAL_TRADING", "false").lower() == "true"
+            _acb_b3 = _cfg_b3.get_dotted("risk.acb_fail_mode", "open")
+            _pf_b3 = _cfg_b3.get_dotted("risk.preflight_fail_mode", "open")
+            _exec_b3 = _cfg_b3.get_dotted("playbook.execute_mode", "futu_simulate")
+            _banner_log = logger.warning if _acct_b3 == "real" else logger.info
+            _banner_log(
+                "=" * 20 + " [交易环境] " + "=" * 20 + "\n"
+                f"  账户路由 AUTO_TRADE_ACCOUNT={_acct_b3} | ALLOW_REAL_TRADING={_allow_b3}\n"
+                f"  playbook.execute_mode={_exec_b3}\n"
+                f"  risk.acb_fail_mode={_acb_b3} | risk.preflight_fail_mode={_pf_b3}"
+                + (" ⚠️ 实盘要求均为 closed" if _acct_b3 == "real" else " (SIM 期 open 合理)")
+                + "\n" + "=" * 52
+            )
+        except Exception as _b3_err:
+            logger.warning(f"[调度器] 交易环境横幅打印失败 (不影响启动): {_b3_err}")
+
         # 从 DB 恢复上次未平仓持仓（重启保护，含股票持仓 + 期权持仓）
         self._restore_positions_from_db()
 
@@ -1520,6 +1554,15 @@ class TradingScheduler:
         )
         self._insider_scan_thread.start()
         logger.info("[InsiderScan] 每日内部人集群扫描线程已启动")
+
+        # Playbook 退出监控独立快循环线程 (2026-07-21)
+        #   单宿主: enabled 时 llm_strategy_loop 内旧调用点自动跳过 (防并发重复平仓)
+        if self.PLAYBOOK_EXIT_FAST_LOOP_ENABLED:
+            self._playbook_exit_thread = threading.Thread(
+                target=self._playbook_exit_fast_loop, name="PlaybookExitFastLoop", daemon=True
+            )
+            self._playbook_exit_thread.start()
+            logger.info(f"[PlaybookExit] 独立快循环线程已启动 (interval={self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC}s)")
 
         # RFC-056: ORB 辅线引擎 (循环内部自带 sleep_if_market_closed 守卫)
         if self.orb_engine:
@@ -1890,11 +1933,14 @@ class TradingScheduler:
                             logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
 
                     # Phase 1 (2026-06-24): futu_simulate 真实模拟仓位退出监控 (broker 平仓)
-                    try:
-                        from app.playbook.pipeline import monitor_playbook_sim_exits
-                        monitor_playbook_sim_exits(self)
-                    except Exception as _e:
-                        logger.warning(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
+                    # 2026-07-21: 独立快循环启用时跳过 (单宿主约束, 防双线程并发重复平仓;
+                    #   DB outcome 幂等兜底仍在, 双保险). 回滚: 配置 enabled=false 即恢复此路径.
+                    if not self.PLAYBOOK_EXIT_FAST_LOOP_ENABLED:
+                        try:
+                            from app.playbook.pipeline import monitor_playbook_sim_exits
+                            monitor_playbook_sim_exits(self)
+                        except Exception as _e:
+                            logger.warning(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
 
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
@@ -2264,6 +2310,47 @@ class TradingScheduler:
                 time.sleep(1)
 
         logger.info("[VIX Monitor] 监控循环已停止")
+
+    def _playbook_exit_fast_loop(self):
+        """Playbook 退出监控独立快循环 (2026-07-21).
+
+        背景: 此前 monitor_playbook_sim_exits 捎带在 llm_strategy_loop 一串任务末尾,
+        节奏 ~60-108s 且受前序任务慢/卡牵连, 无独立存活监控.
+        本循环: 市场开放时每 PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC (默认20s) 调用一次;
+        配合函数内批量取价 (Futu Push缓存优先, 近零成本), 端到端退出延迟 ~25s.
+        单宿主: 启用时 llm_strategy_loop 旧调用点跳过. 回滚: 配置 enabled=false 恢复旧宿主.
+        """
+        logger.info(f"[PlaybookExit] 快循环已启动 (interval={self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC}s)")
+        try:
+            from app.observability.watchdog import get_watchdog
+            get_watchdog().register("playbook_exit_loop", stale_threshold_sec=120)
+        except Exception as _wd_e:
+            logger.debug(f"[PlaybookExit] watchdog 注册失败 (降级运行): {_wd_e}")
+
+        while self.running:
+            try:
+                try:
+                    from app.observability.watchdog import get_watchdog
+                    get_watchdog().ping("playbook_exit_loop")
+                except Exception:
+                    pass
+                # 市场关闭时休眠 (照抄 VIX 样板: sleep_if_market_closed 返回 True=已睡到开市)
+                from app.core.scheduler_triggers import sleep_if_market_closed
+                if sleep_if_market_closed(self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC, lambda: self.running):
+                    continue
+
+                from app.playbook.pipeline import monitor_playbook_sim_exits
+                monitor_playbook_sim_exits(self)
+            except Exception as _e:
+                logger.warning(f"[PlaybookExit] 快循环异常 (已隔离): {_e}")
+
+            # 可中断 sleep (照抄 VIX 样板)
+            for _ in range(max(1, int(self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC))):
+                if not self.running:
+                    return
+                time.sleep(1)
+
+        logger.info("[PlaybookExit] 快循环已停止")
 
     def _insider_scan_loop(self):
         """内部人集群买入每日扫描 — 每天盘前 1 次, SEC EDGAR Form 4 数据

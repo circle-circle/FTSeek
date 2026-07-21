@@ -288,6 +288,28 @@ def _gather_insider_clusters() -> List[str]:
         return []
 
 
+def _gather_event_symbols_file() -> List[str]:
+    """[P2' 2026-07-21] 读 gen_event_symbols.py 的当日产出 (data/event_symbols_{ET}.json).
+
+    给 V2 提供"预消化的事件驱动标的+原因"作为佐证原料 — MARKET_CORROBORATED 需要
+    可引用证据, 事件清单正是证据源; 不动 prompt 克制标准. 文件不存在/为空 → []。
+    同一天 DA --symbols 与本段共用同一文件, 双源原料同源。"""
+    try:
+        path = _ROOT / "data" / f"event_symbols_{_today()}.json"
+        if not path.exists():
+            return []
+        d = json.loads(path.read_text())
+        out: List[str] = []
+        for e in (d.get("event_symbols") or [])[:10]:
+            t = str(e.get("symbol", "")).replace("US.", "")
+            reasons = "; ".join(str(r)[:60] for r in (e.get("reasons") or [])[:2])
+            out.append(f"- {t} (score={e.get('score', 0)}): {reasons}")
+        return out
+    except Exception as e:
+        print(f"  [warn] 事件标的文件读取失败 (降级): {e}")
+        return []
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
@@ -308,6 +330,14 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
         parts.extend(hard)
+
+    # [P2' 2026-07-21] 事件驱动标的清单 (gen_event_symbols 当日产出, 与 DA --symbols 同源).
+    #   给 V2 可引用的佐证原料; 文件缺失=当日未生成 → 跳过, 行为与之前一致. 回滚: 配置设 false.
+    if bool(_cfg("universe_expansion.clue_event_symbols", True)):
+        es = _gather_event_symbols_file()
+        if es:
+            parts.append("\n[今日事件驱动标的 (事件清单, 可作 evidence_ref 引用)]")
+            parts.extend(es)
 
     mkt = _gather_market_corroboration()
     if mkt:

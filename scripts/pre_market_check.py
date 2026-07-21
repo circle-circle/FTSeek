@@ -3,8 +3,21 @@
 """
 FTSeek-US 盘前预检 (Pre-Market Check)
 
-执行时间: 美东 09:00 (北京时间 21:00)
+执行时间: 北京时间 20:00 (美东 08:00, Hermes "FTSeek-US 盘前综合预检" cron 触发)
 目的: 确保开盘前系统就绪，检查昨日遗留问题
+
+检查项 (2026-07-21 P0+P1 修订):
+  1. 服务进程状态 (systemctl)
+  2. 做空策略路由器初始化
+  3. 退出策略兜底配置 (注: playbook 指令逐条自带退出参数)
+  5. 数据源连接 (AAPL 报价)
+  5b. DA bridge 就绪 (opportunity_scan_{ET今日}.json 候选数/新鲜度)
+  5c. 当日指令统计 (DA/UE 来源分布)
+  5d. 持仓遗留 (过夜 open 仓位)
+  5e. 事件文件就绪 (event_symbols_{ET今日}.json, P2' 生成器心跳)
+  6. 昨日交易回顾 (trade_records DB 权威源, 按 trade_date)
+  7. 日志错误扫描 (最近500行)
+  8. 系统资源 (服务 MainPID, 非预检进程自身)
 """
 import sys
 import os
@@ -24,17 +37,7 @@ logger = logging.getLogger("ftseek_us.premarket")
 
 def run_premarket_check() -> dict:
     """
-    执行盘前预检
-
-    检查项:
-    1. 服务进程状态
-    2. 做空策略路由器初始化
-    3. 快速退出引擎状态
-    4. 期权持仓恢复情况
-    5. 数据源连接检查
-    6. 昨日交易回顾
-    7. 配置一致性检查
-    8. 日志错误扫描
+    执行盘前预检 (检查项清单见模块 docstring, 2026-07-21 P0+P1 修订)
 
     Returns:
         检查结果字典
@@ -73,7 +76,7 @@ def run_premarket_check() -> dict:
         cfg = load_short_config()
         router = get_short_strategy_router(cfg)
         strategy_count = len(router.strategies)
-        default_method = cfg.get("default_short_method", "unknown")
+        default_method = cfg.get("default_method", "unknown")  # 2026-07-21 修复键名漂移: 配置真实键=default_method, 此前读default_short_method永远显示unknown
         sim_force = cfg.get("simulated_mode_force_options", False)
 
         results["checks"].append({
@@ -102,7 +105,7 @@ def run_premarket_check() -> dict:
             "name": "股票退出策略",
             "status": "PASS",
             "detail": f"SL={sl_pct} | TP={tp_pct} | ATR×{atr_mult} | "
-                      f"Trailing={'on' if trailing.get('enabled') else 'off'}"
+                      f"Trailing={'on' if trailing.get('enabled') else 'off'} | 注: 此为无指令兜底值, playbook指令逐条自带SL/TP/退出策略"
         })
     except Exception as e:
         results["checks"].append({"name": "退出策略", "status": "FAIL", "detail": str(e)})
@@ -141,32 +144,96 @@ def run_premarket_check() -> dict:
         results["checks"].append({"name": "数据源连接", "status": "ERROR", "detail": str(e)})
         results["warnings"].append(f"数据源检查异常: {e}")
 
+    # ── 5b. DA bridge 就绪 (2026-07-21 P0: 供给链路核心; DA 18:00任务 ~19:10 产出当日文件) ──
+    try:
+        from app.utils.timezone import now_et as _now_et_chk
+        today_et = _now_et_chk().strftime("%Y-%m-%d")
+        bp = BASE_DIR / "data" / f"opportunity_scan_{today_et}.json"
+        if not bp.exists():
+            results["checks"].append({"name": "DA bridge 就绪", "status": "WARN",
+                                      "detail": f"{today_et} bridge 未生成 (DA 18:00任务未产出或今日非交易日)"})
+            results["warnings"].append(f"bridge 未生成: opportunity_scan_{today_et}.json")
+        else:
+            _bd = json.loads(bp.read_text())
+            _bc = _bd.get("candidates", [])
+            _age = (datetime.now() - datetime.fromtimestamp(bp.stat().st_mtime)).total_seconds() / 60
+            _hints = {}
+            for c in _bc:
+                h = c.get("position_size_hint") or "?"
+                _hints[h] = _hints.get(h, 0) + 1
+            _st = "PASS" if _bc and _age < 360 else "WARN"
+            results["checks"].append({"name": "DA bridge 就绪", "status": _st,
+                                      "detail": f"{len(_bc)} 候选 | size={_hints} | {_age:.0f}分钟前生成"})
+            if _st == "WARN":
+                results["warnings"].append(f"bridge 异常: {len(_bc)}候选/{_age:.0f}分钟前生成")
+    except Exception as e:
+        results["checks"].append({"name": "DA bridge 就绪", "status": "ERROR", "detail": str(e)})
+
+    # ── 5c. 当日指令统计 (decision_id 前缀归因; UE 21:10注入, 预检时点通常为0属正常) ──
+    try:
+        import sqlite3 as _sq
+        _con = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _r = _con.execute(
+            "SELECT COUNT(*), "
+            "COALESCE(SUM(CASE WHEN decision_id LIKE 'UE%' THEN 1 ELSE 0 END),0), "
+            "COALESCE(SUM(CASE WHEN decision_id LIKE 'DA%' THEN 1 ELSE 0 END),0) "
+            "FROM playbook_instructions WHERE date=?", (today_et,)).fetchone()
+        _con.close()
+        results["checks"].append({"name": "当日指令统计", "status": "PASS" if (_r[0] or 0) > 0 else "WARN",
+                                  "detail": f"{today_et}: 共{_r[0] or 0}条 | DA={_r[2] or 0} | UE={_r[1] or 0} (UE 21:10注入)"})
+    except Exception as e:
+        results["checks"].append({"name": "当日指令统计", "status": "ERROR", "detail": str(e)})
+
+    # ── 5d. 持仓遗留 (过夜风险第一眼) ──
+    try:
+        import sqlite3 as _sq
+        _con2 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _r2 = _con2.execute(
+            "SELECT COUNT(*), COALESCE(GROUP_CONCAT(symbol),'') FROM trade_records "
+            "WHERE exit_time IS NULL OR exit_time=''").fetchone()
+        _con2.close()
+        results["checks"].append({"name": "持仓遗留", "status": "PASS",
+                                  "detail": f"open {_r2[0] or 0} 笔" + (f" ({_r2[1]})" if _r2[1] else "")})
+    except Exception as e:
+        results["checks"].append({"name": "持仓遗留", "status": "ERROR", "detail": str(e)})
+
+    # ── 5e. 事件文件就绪 (P2' 新组件; 兼作 18:30 生成器 cron 心跳) ──
+    try:
+        ep = BASE_DIR / "data" / f"event_symbols_{today_et}.json"
+        if not ep.exists():
+            results["checks"].append({"name": "事件文件就绪", "status": "WARN",
+                                      "detail": f"{today_et} 未生成 (18:30 生成器未运行?)"})
+        else:
+            _ed = json.loads(ep.read_text())
+            _es = _ed.get("event_symbols", [])
+            _note = ("quiet day (回退核心熟股)" if _ed.get("quiet_day_fallback")
+                     else f"{len(_es)} 事件标的: {', '.join(str(x.get('symbol','')).replace('US.','') for x in _es[:6])}")
+            results["checks"].append({"name": "事件文件就绪", "status": "PASS", "detail": _note})
+    except Exception as e:
+        results["checks"].append({"name": "事件文件就绪", "status": "ERROR", "detail": str(e)})
+
     # ── 6. 昨日交易回顾 ──
     try:
         from app.utils.timezone import now_et, get_last_trade_date
-        yesterday = get_last_trade_date(now_et())  # ET 最后交易日, 跳过周末
-
-        log_path = BASE_DIR / "logs" / "ftseek_us.log"
-        trades_count = 0
-        short_trades = 0
-        long_trades = 0
-
-        if log_path.exists():
-            # P1 修复 (2026-04-22): 添加 errors='replace' 容错处理非UTF-8字符
-            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-                for line in f:
-                    if yesterday in line:
-                        if "模拟成交" in line or "下单成功" in line:
-                            trades_count += 1
-                            if "SHORT" in line:
-                                short_trades += 1
-                            elif "LONG" in line:
-                                long_trades += 1
-
+        from datetime import timedelta as _td
+        import sqlite3 as _sq
+        # 2026-07-21 修复双 bug:
+        #   ① get_last_trade_date 交易日含当天 → "昨日"=前一交易日 (传 now-1d, 函数自带跳周末);
+        #   ② 数据源从"当前日志文本匹配模拟成交"(北京零点轮转后永远≈0) 改为 trade_records DB 权威源,
+        #      按 trade_date 统计 (与补录记录口径一致).
+        yesterday = get_last_trade_date(now_et() - _td(days=1))
+        _con3 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _r3 = _con3.execute(
+            "SELECT COUNT(*), "
+            "COALESCE(SUM(CASE WHEN direction='LONG' THEN 1 ELSE 0 END),0), "
+            "COALESCE(SUM(CASE WHEN direction LIKE 'SHORT%' THEN 1 ELSE 0 END),0), "
+            "COALESCE(ROUND(SUM(realized_pnl),2),0) "
+            "FROM trade_records WHERE trade_date=?", (yesterday,)).fetchone()
+        _con3.close()
         results["checks"].append({
             "name": "昨日交易回顾",
             "status": "PASS",
-            "detail": f"日期={yesterday} | 总交易={trades_count} | 做多={long_trades} | 做空/期权={short_trades}"
+            "detail": f"日期={yesterday} | 总交易={_r3[0] or 0} | 做多={_r3[1] or 0} | 做空={_r3[2] or 0} | 已实现PnL=${_r3[3] or 0}"
         })
     except Exception as e:
         results["checks"].append({"name": "昨日交易回顾", "status": "ERROR", "detail": str(e)})
@@ -202,14 +269,27 @@ def run_premarket_check() -> dict:
     # ── 8. 系统资源检查 ──
     try:
         import psutil
-        proc = psutil.Process()
-        mem_mb = proc.memory_info().rss / 1024 / 1024
-        cpu_pct = proc.cpu_percent()
+        import subprocess as _sp
+        # 2026-07-21 修复: 此前 psutil.Process() 测的是预检脚本自身 (报告的104MB系误报);
+        #   改测 ftseek-us 服务 MainPID; 获取失败才回退测自身并明示.
+        _pid_s = _sp.run(["systemctl", "show", "-p", "MainPID", "--value", "ftseek-us.service"],
+                         capture_output=True, text=True, timeout=10).stdout.strip()
+        _pid = int(_pid_s) if _pid_s.isdigit() and int(_pid_s) > 0 else 0
+        if _pid > 0:
+            _p = psutil.Process(_pid)
+            mem_mb = _p.memory_info().rss / 1024 / 1024
+            cpu_pct = _p.cpu_percent(interval=0.2)
+            src = f"服务PID={_pid}"
+        else:
+            _p = psutil.Process()
+            mem_mb = _p.memory_info().rss / 1024 / 1024
+            cpu_pct = _p.cpu_percent()
+            src = "预检进程(服务PID获取失败)"
 
         results["checks"].append({
             "name": "系统资源",
-            "status": "PASS" if mem_mb < 500 else "WARN",
-            "detail": f"内存={mem_mb:.0f}MB | CPU={cpu_pct:.1f}%"
+            "status": "PASS" if mem_mb < 1500 else "WARN",
+            "detail": f"{src} | 内存={mem_mb:.0f}MB | CPU={cpu_pct:.1f}%"
         })
     except Exception:
         results["checks"].append({"name": "系统资源", "status": "SKIP", "detail": "psutil 不可用"})

@@ -82,6 +82,20 @@
 
 **回滚**:`.bak_symhygiene_20260713_180727` 逐库还原;代码改动为可逆。注:`GOOGL`(Alphabet A类) 与 `GOOG`(C类) 技术上为两支,本系统按单一标的追踪 Alphabet(watchlist 用 GOOG)故归并,别名表 `SYMBOL_ALIASES` 可随时调整。
 
+### 0.5 signal_gate 个股历史去陈旧化 · 2026-07-13(已执行)
+
+> 问题:07-13 DA 跑完 35 只分析(21 actionable)只落 2 条指令。根因之一——`signal_gate` 的个股历史扣分(-15,同方向3+笔且WR<30%且亏损)读自 `strategy_memory.symbol_memory` 的**全时段累计**(无窗口、无策略标签)。**旧策略/旧治理期的亏损把新策略信号永久按住**,形成"旧亏损→拦新信号→无新数据→无法翻身"死循环。用户裁决:过去时表现不能拦新策略,须给机会;且新老成交都要有过期时间;明显好的信号不能被历史否决。
+
+**改动一(去陈旧化,源头)**:`strategy_memory.get_strategy_hint()` 个股历史改为读 `trade_records` **近 30 天滚动窗口**(`SYMBOL_HISTORY_WINDOW_DAYS=30`,排除 manual/sync 等非策略成交),与 `pattern_memory` 既有 30 天窗口对齐。新老成交一视同仁,超窗一律不计 → 新策略成交回补窗口,gate 用近期数据重新学。(注:`trade_records` 无 `deep_analysis` 标签,DA 指令执行后记为 auto_main/playbook_sim/shadow,故"策略优先"由窗口本身实现。)
+
+**改动二(软约束,终判)**:`signal_gate.evaluate_signal` 追踪 `hist_penalty`,末尾加两条覆盖——① 剔除个股历史后信号本身够强(≥65)→ 不因过去时历史放过,强制 PASS(仍小仓);② 个股差历史**永不单独 BLOCK**:剔除后达 WARN 档(≥40)→ 降 WARN 小仓试错。固有质量项(RR/数据质量/claim-IC/regime)不受影响。
+
+**验证**(只读,未碰 live):①今日 21 个 actionable 标的,触发 -15 的数量 全时段 **8** → 30天窗口 **0**(UBER/LLY/TSM/PDD/NTES/UNH/BA/COIN 解锁);②override 单测 3/3(强信号+差历史→PASS、弱信号+差历史→WARN、真差信号→仍 BLOCK)。真实效果待 07-14 DA 这轮指令数印证。
+
+**回滚**:`data/backups/da_gate_20260713_203715/{strategy_memory,signal_gate}.py` 覆盖还原即可。
+
+**观测缺口已闭合(2026-07-13)**:之前 gate 逐只 PASS/WARN/BLOCK 决策仅 print 到被 `2>/dev/null` 丢弃的 stderr。已在 `pipeline.py` gate 调用处加**专用落盘** `data/da_gate_decisions.jsonl`(嵌套 try/except 永不影响管线,不碰 trade_guard 的 `guard_decisions.jsonl`),逐只记 datetime/trade_date/symbol/direction/decision/quality_score/position_size_hint/reasons。自 07-14 DA 这轮起可直接审计"哪只为何被拦"。回滚:`data/backups/da_gate_20260713_203715/pipeline.py.bak_*`。
+
 ---
 
 ## 1. 背景与问题(证据)

@@ -1040,6 +1040,8 @@ class PlaybookService:
                 return {"success": False, "message": f"{_mode_label} {symbol} 订单未成交 (status={_ostatus})"}
             # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
             # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
+            # 2026-07-21 更正: "avg_price=0"真根因是 dual_broker fallback 字段名笔误 (当日已修复为
+            #   dealt_avg_price, sim 真实成交均价可正常获取); 本 bid/ask 兜底保留作极端后备, 触发应罕见.
             # 2026-07-16 P2 修复: 用 bid/ask 替代 last price (BUY→ask, SHORT→bid),
             #   更接近实际成交价. last price 可能是上一笔成交, 偏离当前 bid-ask.
             try:

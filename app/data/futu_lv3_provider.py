@@ -847,7 +847,10 @@ class FutuLV3Provider:
                 quote = self.fallback.get_quote(symbol)
                 if quote and quote.get("price", 0) > 0:
                     quote["data_source"] = "finnhub_fallback"
-                    quote["timestamp"] = time.time()
+                    # B4 (2026-07-20): 不再覆写 timestamp — finnhub C3 修复已回传上游成交时间,
+                    #   覆写为抓取时间会把 15min 延迟报价"洗白"成新鲜 → 新鲜度门失效. 仅缺失时兜底.
+                    if not quote.get("timestamp"):
+                        quote["timestamp"] = time.time()
                     self._cache[cache_key] = quote
                     self._cache_time[cache_key] = time.time()
                     logger.info(

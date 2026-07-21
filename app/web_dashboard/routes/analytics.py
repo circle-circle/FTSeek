@@ -473,7 +473,7 @@ def register(app, templates):
                 recent_rows = await ds.db_query(
                     "SELECT symbol, direction, realized_pnl, exit_reason, trade_date "
                     "FROM trade_records "
-                    "WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
+                    "WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
                     "ORDER BY trade_date DESC, id DESC LIMIT 5"
                 )
                 today_trades = [{
@@ -599,7 +599,7 @@ def register(app, templates):
                        COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
                 FROM trade_records
                 WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
-                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
+                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
                   AND exit_price > 0
             """)
 
@@ -613,7 +613,7 @@ def register(app, templates):
                 WHERE (strategy_id != 'manual' OR strategy_id IS NULL)
                   AND source_type != 'MANUAL'
                   AND source_type NOT IN ('manual_sync', 'reconciler')
-                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
+                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
                   AND exit_price > 0
             """)
 
@@ -624,7 +624,7 @@ def register(app, templates):
                        COALESCE(signal_id, '') as signal_id,
                        COALESCE(trace_id, '') as trace_id
                 FROM trade_records
-                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
+                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')
                   AND exit_price > 0
                 ORDER BY trade_date DESC, id DESC LIMIT 20
             """)
@@ -681,7 +681,7 @@ def register(app, templates):
                 "realized_pnl, pnl_pct, entry_time, exit_time, trade_date, "
                 "metadata_json FROM trade_records "
                 "WHERE trade_date >= date('now', ? || ' days') "
-                "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
+                "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
                 "AND exit_time IS NOT NULL "
                 "ORDER BY trade_date DESC",
                 (str(days),),
@@ -794,7 +794,7 @@ def register(app, templates):
                 f"SELECT id, symbol, direction, realized_pnl, pnl_pct, trade_date, "
                 f"entry_price, exit_price, quantity, exit_reason, metadata_json, source_type "
                 f"FROM trade_records "
-                f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 {date_filter} "
+                f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 {date_filter} "
                 f"ORDER BY trade_date DESC, id DESC"
             )
 
@@ -947,7 +947,7 @@ def register(app, templates):
             if days > 0:
                 prev_rows = await ds.db_query(
                     f"SELECT id, realized_pnl FROM trade_records "
-                    f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 "
+                    f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 "
                     f"AND trade_date >= date('now', '-{prev_days} days') "
                     f"AND trade_date < date('now', '-{days} days') "
                     f"ORDER BY trade_date DESC"
@@ -1006,7 +1006,7 @@ def register(app, templates):
                     "ta.execution_score, ta.timing_score, ta.risk_score "
                     "FROM trade_records tr "
                     "LEFT JOIN trade_attribution ta ON tr.id = ta.trade_id "
-                    "WHERE tr.source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(tr.exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND tr.exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND tr.exit_price > 0 "
+                    "WHERE tr.source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(tr.exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND tr.exit_price > 0 "
                     "ORDER BY tr.trade_date DESC, tr.id DESC LIMIT 5"
                 )
                 _dim_labels = {"direction": "方向", "signal": "信号",

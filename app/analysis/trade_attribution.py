@@ -148,13 +148,22 @@ def compute_attribution(
     # 价格范围 — 7/7 增强: 用 peak_price 补充 MFE 计算
     all_highs = list(high_prices) if high_prices else [max(entry_price, exit_price)]
     all_lows = list(low_prices) if low_prices else [min(entry_price, exit_price)]
-    # 如果有 peak_price, 用它补充价格范围 (Pipeline 的 peak tracking 比无数据好)
+    # 2026-07-20 修复: peak/trough 是"最有利/最不利价"语义 (方向相关), 不是"高/低价".
+    #   SHORT 时 metadata.peak_price=持仓期最低价, trough_price=持仓期最高价 —
+    #   原实现不分方向把 peak 塞 highs / trough 塞 lows, SHORT 侧真实极值被 max/min
+    #   直接忽略 → D2入场/D3出场/D5锁利全部退化回 entry/exit 近似 (归因失真).
     if peak_price is not None and peak_price > 0:
-        all_highs.append(peak_price)
+        if direction == "LONG":
+            all_highs.append(peak_price)
+        else:
+            all_lows.append(peak_price)
     # 2026-07-13: trough_price 对称接入 — 补充持仓期真实谷值, 让入场时机(D2)/止损效率(D5)
     #   不再退化用 min(entry,exit)。数据来自 metadata.trough_price (07-11 起记录)。
     if trough_price is not None and trough_price > 0:
-        all_lows.append(trough_price)
+        if direction == "LONG":
+            all_lows.append(trough_price)
+        else:
+            all_highs.append(trough_price)
     period_high = max(all_highs)
     period_low = min(all_lows)
 

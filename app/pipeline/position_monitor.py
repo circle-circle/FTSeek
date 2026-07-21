@@ -1581,7 +1581,18 @@ def _reconcile_position_store(scheduler):
         # P0 修复 (2026-06-15): 跳过手动持仓 — 防止运行时对账将手动仓位纳入自动管理
         # SNDK/MU 事件根因: broker 对账每 5min 运行, 不检查手动标记直接 add 到 position_store
         if _is_manual_position_for_reconcile(symbol):
-            logger.info(f"[持仓对账] 跳过手动持仓 {symbol} (不纳入自动管理)")
+            # 2026-07-21 措辞修正: 此分支同时命中真手动仓与 playbook 托管仓
+            #   (playbook 开仓时注册 ManualHoldRegistry 做隔离, reason 以 "Playbook" 开头),
+            #   原统一报"手动持仓"误导排障 (7/21 用户误读事件). 区分来源输出.
+            try:
+                from app.coordinator.manual_hold_registry import manual_hold_registry as _mhr_pm
+                _hi_pm = _mhr_pm.get_hold_info(symbol)
+            except Exception:
+                _hi_pm = None
+            if _hi_pm is not None and str(getattr(_hi_pm, "reason", "") or "").startswith("Playbook"):
+                logger.info(f"[持仓对账] 跳过 playbook 托管仓 {symbol} (由 playbook 退出监控管理)")
+            else:
+                logger.info(f"[持仓对账] 跳过手动持仓 {symbol} (不纳入自动管理)")
             continue
 
         # 2026-07-16: 跳过 Playbook 管理的仓位 — 防止 broker 对账将 Playbook 仓

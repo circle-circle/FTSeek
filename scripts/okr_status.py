@@ -130,6 +130,70 @@ try:
 except Exception:
     pass
 
+# ─── 2c. 毕业统计按 exit config_version 窗口归一化 (2026-07-20 修复M) ───
+# cap_reduction / 毕业判定的 PnL/胜率维度 = 入场 edge × 退出执行. 退出参数一变,
+# 同一批入场信号的胜率就变. 只取"当前退出参数版本"窗口内的已平仓样本, 消除
+# "边积累边调参数"的污染 (IC 侧 forward-return 天然免疫, 不需窗口化).
+versioned_stats = {}
+try:
+    from app.playbook.config import get_playbook_config as _get_pb_cfg
+    _cur_ver = _get_pb_cfg().get_exit_config_version()
+    _vrows = conn.execute(f"""
+        SELECT realized_pnl
+        FROM trade_records
+        WHERE trade_date >= ?
+          AND source_type IN ({_source_filter})
+          AND trade_mode != 'live'
+          AND exit_reason IS NOT NULL
+          AND exit_reason != ''
+          AND json_extract(metadata_json, '$.config_version') = ?
+    """, (_cutoff_30d, _cur_ver)).fetchall()
+    _vp = sum((r[0] or 0) for r in _vrows)
+    _vw = sum(1 for r in _vrows if (r[0] or 0) > 0)
+    _vl = sum(1 for r in _vrows if (r[0] or 0) < 0)
+    _vn = _vw + _vl
+    versioned_stats = {
+        "config_version": _cur_ver,
+        "cnt": len(_vrows),
+        "wins": _vw,
+        "losses": _vl,
+        "win_rate": round(_vw / _vn * 100, 1) if _vn > 0 else 0,
+        "total_pnl": round(_vp, 2),
+    }
+except Exception as _ver_err:
+    versioned_stats = {"error": str(_ver_err)}
+
+# ─── 2d. Void 率趋势 (2026-07-20 #7) ───
+# void = ghost/orphan 幽灵仓判定 (非真实交易, 毕业样本清洗时剔除, 见 OKR-SPEC δ.6).
+# 口径: void / (win+loss+void) = 进入平仓终态的指令中被判幽灵的比例.
+# void 率回升 = 执行/对账链路又在产幽灵仓, 是数据质量回退信号, 需趋势可见而非事后才发现.
+void_trend = {"weekly": [], "overall_rate": None}
+try:
+    _void_rows = conn.execute("""
+        SELECT strftime('%Y-W%W', date) AS wk,
+               SUM(CASE WHEN outcome IN ('win','loss','void') THEN 1 ELSE 0 END) AS closed,
+               SUM(CASE WHEN outcome='void' THEN 1 ELSE 0 END) AS voids
+        FROM playbook_instructions
+        WHERE date >= date('now', '-42 days')
+        GROUP BY wk ORDER BY wk
+    """).fetchall()
+    _v_total_closed = 0
+    _v_total_void = 0
+    for _vr in _void_rows:
+        _wk, _closed, _voids = _vr[0], int(_vr[1] or 0), int(_vr[2] or 0)
+        if _closed <= 0:
+            continue
+        _v_total_closed += _closed
+        _v_total_void += _voids
+        void_trend["weekly"].append({
+            "week": _wk, "closed": _closed, "voids": _voids,
+            "void_rate": round(_voids / _closed * 100, 1),
+        })
+    if _v_total_closed > 0:
+        void_trend["overall_rate"] = round(_v_total_void / _v_total_closed * 100, 1)
+except Exception as _void_err:
+    void_trend["error"] = str(_void_err)
+
 # ─── 3. IC ───
 # Phase 0 (2026-06-29): Playbook IC 是 Playbook 策略 end-to-end 的 SSOT；
 # Signal IC 仅作为 VotingCoordinator 模型的诊断参考。
@@ -283,6 +347,20 @@ if trade_stats and 'error' not in trade_stats:
     print(f"  Wins: {trade_stats.get('wins', 0)}, Losses: {trade_stats.get('losses', 0)}")
     print(f"  PnL: ${trade_stats.get('total_pnl', 0):.2f}")
 
+if versioned_stats and 'error' not in versioned_stats:
+    print(f"\n🎓 GRADUATION SAMPLE (当前退出参数版本, 30d)")
+    print(f"  config_version: {versioned_stats.get('config_version', '?')}")
+    print(f"  Closed: {versioned_stats.get('cnt', 0)} (W:{versioned_stats.get('wins', 0)} L:{versioned_stats.get('losses', 0)})")
+    print(f"  Win Rate: {versioned_stats.get('win_rate', 0):.1f}%  PnL: ${versioned_stats.get('total_pnl', 0):.2f}")
+    print(f"  (毕业判定只取本窗口样本, 消除跨版本退出参数污染)")
+
+if void_trend.get("weekly"):
+    print(f"\n👻 VOID RATE TREND (幽灵仓占平仓终态比例, 6周)")
+    for _w in void_trend["weekly"]:
+        _flag = " ⚠️" if _w["void_rate"] >= 10 else ""
+        print(f"  {_w['week']}: {_w['voids']}/{_w['closed']} ({_w['void_rate']:.1f}%){_flag}")
+    print(f"  overall: {void_trend.get('overall_rate', 0)}% (void 不计入毕业样本; 回升=执行/对账链路在产幽灵仓)")
+
 if by_strategy:
     print(f"\n📋 BY STRATEGY (30d)")
     for s in sorted(by_strategy, key=lambda x: x.get('total_pnl', 0), reverse=True):
@@ -344,6 +422,8 @@ output = {
     },
     "factors": factor_stats,
     "trade_records": trade_stats,
+    "graduation_sample": versioned_stats,
+    "void_trend": void_trend,
     "by_strategy": by_strategy,
     "config": config_state,
 }

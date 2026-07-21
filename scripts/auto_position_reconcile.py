@@ -188,16 +188,11 @@ def main():
         
         # 3b. [SKIP] trail_state 已合并到 open_positions.trail_state_json，无独立表
         
-        # 4. 标记多余持仓 (Broker 已不存在)
+        # 4. 清理多余持仓 (Broker 已不存在) — 2026-07-14: 直接DELETE替代stale标记
         for sym in sorted(extra):
-            now = datetime.now().isoformat()
-            conn.execute("""
-                UPDATE open_positions
-                SET is_anomalous=1, sync_status='stale_not_in_broker', updated_at=?
-                WHERE symbol=?
-            """, (now, sym))
-            issues.append(f"标记 stale: {sym}")
-            logger.info(f"标记 stale: {sym}")
+            conn.execute("DELETE FROM open_positions WHERE symbol=?", (sym,))
+            issues.append(f"清理多余持仓: {sym}")
+            logger.info(f"清理多余持仓 {sym} (broker已无)")
         
         # 4. 确保所有持仓都有激活的 trail_state
         for sym in broker_symbols & db_symbols:

@@ -98,37 +98,9 @@ def test_deepulse_injection():
 # T2: 信号生成 → VotingCoordinator
 # ============================================================
 def test_signal_generation():
-    section("T2: 信号生成 → VotingCoordinator")
-    try:
-        from app.agents.voting.voting_coordinator import VotingCoordinator
-        from app.playbook.pipeline import _build_data_collector, _build_vote_market_data
-        from app.playbook.market_regime import MarketRegime, RegimeContext
-        from app.data.market_data_router import MarketDataRouter
-
-        collector = _build_data_collector()
-        data = collector.collect("US.NVDA")
-
-        router = MarketDataRouter()
-        regime_ctx = RegimeContext(
-            regime=MarketRegime.RISK_ON, vix=18.0,
-            spy_price=500, spy_ma20=490, spy_ma50=480, spy_ma200=450,
-            spy_change_pct=0.5, score=6, top_n=10, position_multiplier=1.0,
-            min_strength=60,
-        )
-        market_data = _build_vote_market_data("US.NVDA", data, regime_ctx, router)
-        check("market_data 构造", market_data is not None, "market_data为None")
-
-        if market_data:
-            vc = VotingCoordinator()
-            result = vc.vote("US.NVDA", market_data)
-            check("VotingCoordinator 返回结果", result is not None, "投票返回None")
-            if result:
-                check("投票有方向", "direction" in result, f"keys={list(result.keys())}")
-                check("投票有strength", "final_strength" in result, f"keys={list(result.keys())}")
-                check("投票有decision_id", "decision_id" in result, f"keys={list(result.keys())}")
-                print(f"    → direction={result.get('direction')} strength={result.get('final_strength')} confidence={result.get('consensus_level')}")
-    except Exception as e:
-        check("信号生成无异常", False, str(e))
+    # 2026-07-14: VotingCoordinator 死投票脑已清理; 双脑架构入场走 DA bridge → BridgeVotingAdapter.
+    section("T2: 信号生成 (旧 3 模型投票已退役)")
+    check("T2 跳过", True, "voting 脑已删除; 入场经 DA bridge, 见 shadow_board / da_chain_health")
 
 
 # ============================================================
@@ -317,7 +289,7 @@ def test_sl_logic():
     # 截取从 _check_playbook_exit_rules 到 _force_close_orphaned_sim_positions
     sl_section = content[content.find("def _check_playbook_exit_rules"):content.find("def _force_close_orphaned_sim_positions")]
 
-    check("SL_FIXED_PCT活跃", "SL_FIXED_PCT" in sl_section, "未找到SL_FIXED_PCT")
+    check("SL止损标签活跃", "SL_INITIAL" in sl_section, "未找到 SL_INITIAL(拆分后的止损标签)")
     check("15min开盘冷却", "15" in sl_section and "冷却" in sl_section, "未找到开盘冷却")
     check("breakeven ratchet", "breakeven" in sl_section.lower(), "未找到breakeven")
     check("trailing stop", "trail" in sl_section.lower(), "未找到trailing")

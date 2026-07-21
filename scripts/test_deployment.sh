@@ -86,7 +86,7 @@ echo ""
 echo "4. 检查模块导入..."
 
 python -c "from app.core.models import SignalScore" 2>/dev/null && echo "   ✅ core.models" || echo "   ❌ core.models"
-python -c "from app.agents.voting.voting_coordinator import VotingCoordinator" 2>/dev/null && echo "   ✅ agents.voting" || echo "   ❌ agents.voting"
+python -c "from app.agents.voting import VotingConfig" 2>/dev/null && echo "   ✅ agents.voting.config" || echo "   ❌ agents.voting.config"
 python -c "from app.observability.alert_manager import AlertManager" 2>/dev/null && echo "   ✅ observability.alert" || echo "   ❌ observability.alert"
 python -c "from app.risk.engine import RiskEngine" 2>/dev/null && echo "   ✅ risk.engine" || echo "   ❌ risk.engine"
 python -c "from app.execution.engine import ExecutionEngine" 2>/dev/null && echo "   ✅ execution.engine" || echo "   ❌ execution.engine"
@@ -118,30 +118,7 @@ else:
 
 echo ""
 
-# 6. 测试投票系统
-echo "6. 测试投票系统..."
-python -c "
-from app.agents.voting.voting_coordinator import VotingCoordinator
-
-coordinator = VotingCoordinator()
-
-market_data = {
-    'symbol': 'US.AAPL',
-    'price': 175.0,
-    'volume_ratio': 1.5,
-    'momentum': 0.02,
-}
-
-result = coordinator.run_voting(market_data)
-
-if 'final_strength' in result:
-    print(f'   ✅ 投票系统测试成功')
-    print(f'      最终评分：{result[\"final_strength\"]}')
-    print(f'      一致性：{result[\"consensus_level\"]}')
-    print(f'      模型数：{len(result[\"model_scores\"])}')
-else:
-    print('   ❌ 投票系统测试失败')
-" 2>/dev/null || echo "   ❌ 投票系统测试失败"
+# 6. (2026-07-14) 投票系统测试已移除 — 3 模型 VotingCoordinator 退役, 双脑走 DA bridge.
 
 echo ""
 

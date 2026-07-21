@@ -155,6 +155,28 @@ class DIContainer:
             logging.getLogger("ftseek.di_container").warning(
                 "[实盘模式] AUTO_TRADE_ACCOUNT=real, ALLOW_REAL_TRADING=true — 主 pipeline 自动交易走实盘"
             )
+            # 修复6a (2026-07-20, DEB-20260720): LIVE 启动断言 — 真账户禁止 fail-open 裸奔.
+            #   risk.acb_fail_mode / preflight_fail_mode 若非 closed, 风控异常会放行开仓;
+            #   在真金账户上这是灾难性的. SIM 模式不进本分支, 零行为影响. 断言失败拒绝启动.
+            import logging as _logging_6a
+            _log6a = _logging_6a.getLogger("ftseek.di_container")
+            try:
+                from app.core.config_container import ConfigContainer as _CC6a
+                _cc6a = _CC6a.get_instance()
+                _acb_fm = str(_cc6a.get_dotted("risk.acb_fail_mode", "open")).strip().lower()
+                _pf_fm = str(_cc6a.get_dotted("risk.preflight_fail_mode", "open")).strip().lower()
+            except Exception as _e6a:
+                _log6a.critical(f"[LIVE启动断言] 读取 fail_mode 配置失败, 拒绝以实盘启动: {_e6a}")
+                raise RuntimeError("LIVE 启动断言: 无法读取 risk.*_fail_mode 配置") from _e6a
+            _bad = [n for n, v in (("acb_fail_mode", _acb_fm), ("preflight_fail_mode", _pf_fm)) if v != "closed"]
+            if _bad:
+                _log6a.critical(
+                    f"[LIVE启动断言] 实盘模式要求 {_bad} 必须为 'closed' (当前 "
+                    f"acb={_acb_fm}, preflight={_pf_fm}); fail-open 在真账户会放行风控异常开仓 → 拒绝启动"
+                )
+                raise RuntimeError(
+                    f"LIVE 启动断言失败: {_bad} 必须为 closed (实盘禁止 fail-open)"
+                )
 
         exec_config = {
             "market_order_min_score": exec_section.get("order_type", {}).get("market_min_score", 80),

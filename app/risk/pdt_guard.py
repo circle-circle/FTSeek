@@ -57,11 +57,17 @@ class PDTGuard:
         self._db_path = db_path or str(get_main_db())
         self._ensure_db_table()
         self._state = self._load_state()
-        
+
+    def _connect(self):
+        """打开 sqlite 连接并设置 busy_timeout，避免收盘批量平仓时并发写触发 'database is locked'。"""
+        conn = sqlite3.connect(self._db_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        return conn
+
     def _ensure_db_table(self):
         """创建 PDT 状态表"""
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS pdt_trades (
@@ -134,7 +140,7 @@ class PDTGuard:
         window_start = check_date + timedelta(days=1)
 
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT trade_date, symbol FROM pdt_trades WHERE trade_date >= ?",
@@ -155,7 +161,7 @@ class PDTGuard:
             trades = self._get_rolling_window_trades()
             if trades:
                 oldest_date = min(t[0] for t in trades)
-                with sqlite3.connect(self._db_path) as conn:
+                with self._connect() as conn:
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM pdt_trades WHERE trade_date < ?", (oldest_date,))
                     conn.commit()
@@ -170,7 +176,7 @@ class PDTGuard:
         """
         state = PDTState()
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT account_equity, is_pdt_account FROM pdt_state WHERE id = 1")
                 row = cursor.fetchone()
@@ -187,7 +193,7 @@ class PDTGuard:
                 state.account_equity = _live_equity
                 state.is_pdt_account = _live_equity >= self.PDT_EQUITY_THRESHOLD
                 # 同步到 DB
-                with sqlite3.connect(self._db_path) as conn:
+                with self._connect() as conn:
                     conn.execute(
                         "UPDATE pdt_state SET account_equity = ?, is_pdt_account = ?, last_update = ? WHERE id = 1",
                         (_live_equity, state.is_pdt_account, datetime.now().isoformat())
@@ -223,7 +229,7 @@ class PDTGuard:
             pass
         # 降级: 从 capital_state 读最近一次刷新值
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 row = conn.execute("SELECT current_equity FROM capital_state ORDER BY id DESC LIMIT 1").fetchone()
                 if row and row[0] and row[0] > 0:
                     return float(row[0])
@@ -236,7 +242,7 @@ class PDTGuard:
         self._state.account_equity = equity
         self._state.is_pdt_account = equity >= self.PDT_EQUITY_THRESHOLD
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE pdt_state SET account_equity = ?, is_pdt_account = ?, last_update = ? WHERE id = 1",
@@ -259,7 +265,7 @@ class PDTGuard:
         """
         today = now_et().date().isoformat()
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO pdt_trades (trade_date, symbol, timestamp) VALUES (?, ?, ?)",

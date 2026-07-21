@@ -40,10 +40,13 @@ except Exception:  # pragma: no cover - flag 模块不可用时默认开启记�
     def is_enabled(_feature: str) -> bool:
         return True
 
-# 待测变体 (均比现行 default be=1.0/dd=0.5 更紧, 保证反事实退出可观测)。
-#   baseline 为对照组 = 现行 default, 用于同口径比对。
+# 待测变体 (均比现行 default 更紧, 保证反事实退出可观测)。
+# P1-1 fix (2026-07-20): baseline 对齐现行 default (be0.5/dd0.8, 7/19 处方后).
+#   旧 baseline_be1.0_dd0.5 保留为历史对照 (已有 in-progress 数据键名不可变), 不再是对照组.
+#   铁律: 只能评估比现行更紧的变体, 更松的会骑过实盘退出点、路径不可观测.
 EXIT_VARIANTS: Dict[str, Dict[str, float]] = {
-    "baseline_be1.0_dd0.5": {"be": 1.0, "dd": 0.5},   # 对照: 现行 default
+    "baseline_be1.0_dd0.5": {"be": 1.0, "dd": 0.5},   # LEGACY 历史对照 (7/19前default, 不再是对照组)
+    "baseline_be0.5_dd0.8": {"be": 0.5, "dd": 0.8},   # 对照: 现行 default (7/19 处方后)
     "be0.5_dd0.4":          {"be": 0.5, "dd": 0.4},   # 更早保本 + 更紧锁利
     "be0.3_dd0.3":          {"be": 0.3, "dd": 0.3},   # 激进锁利 (贴合 MFE 中位 ~0.9%)
     # ── 2026-07-18 提案 A: profit_override ──
@@ -69,13 +72,23 @@ ABORT_30M_VARIANTS: Dict[str, Dict[str, float]] = {
     "abort_30m_mfe0.1_loss": {"check_minutes": 30, "mfe_threshold": 0.1, "require_loss": 1},
 }
 
+# ── 2026-07-20 (DEB-20260720 修复M): early_tight_sl 收编为 shadow-only ──
+# 背景: 修复B 曾以 early_tight_sl_enabled=true 实单化 (入场 N min 内未浮盈 → SL 收紧到 X%),
+#   但与修复M 一致 —— 积累期实单退出参数应冻结, 任何新退出规则先走 shadow, 避免再引入
+#   一个 config_version 断点污染毕业统计. 故此处以 record-only 变体评估其反事实收益.
+# 语义: held<=minutes 且 breakeven 未激活时, SL 收紧到 entry*(1±pct/100); 若现价击穿则记录触发.
+# finalize 时算 counterfactual_saved_pct (紧SL在触发点平 vs 实盘持有到底).
+EARLY_TIGHT_VARIANTS: Dict[str, Dict[str, float]] = {
+    "early_tight_30m_1pct": {"window_minutes": 30, "sl_pct": 1.0},
+}
+
 # app/playbook/exit_shadow.py → parents[2] = 仓库根
 _SHADOW_PATH = Path(__file__).resolve().parents[2] / "data" / "shadow" / "exit_param_shadow.jsonl"
 
 
 def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
                           peak_profit_pct: float, be_pct: float, dd_pct: float,
-                          dd_threshold: float = 0.0) -> float:
+                          dd_threshold: float = 0.0, fee_cushion_pct: float = 0.0) -> float:
     """纯函数: 忠实复刻 pipeline._compute_dynamic_effective_sl (trailing_enabled=True 分支)。
 
     保持与实盘退出同一数学, 只替换 breakeven_at_pct / drawdown_from_peak_pct 两个参数。
@@ -83,15 +96,19 @@ def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
     2026-07-18: 新增 dd_threshold 参数 (提案 A profit_override):
       dd_threshold > 0 时, 回撤锁利仅在 peak_profit_pct >= dd_threshold 后激活,
       而非 peak > be_pct 即激活。模拟「浮盈≥1.5% 才强制锁利」的行为。
+    2026-07-20 (P1-1): 新增 fee_cushion_pct — 保本线含手续费缓冲, 对齐实盘
+      pipeline L3961: _be_line = entry * (1 + fee_cushion_pct/100).
     """
     eff = initial_sl
     if peak_profit_pct < be_pct:
         return eff
-    # 先保本
+    # 先保本 (含 fee_cushion, 对齐实盘)
     if direction == "LONG":
-        eff = max(eff, entry)
+        _be_line = entry * (1 + fee_cushion_pct / 100.0)
+        eff = max(eff, _be_line)
     else:
-        eff = min(eff if eff > 0 else entry, entry)
+        _be_line = entry * (1 - fee_cushion_pct / 100.0)
+        eff = min(eff if eff > 0 else _be_line, _be_line)
     # 回撤锁利 (dd_threshold: 浮盈达到此值后才启用回撤锁利)
     _dd_active_threshold = dd_threshold if dd_threshold > 0 else be_pct
     if dd_pct > 0 and peak_profit_pct > _dd_active_threshold:
@@ -130,12 +147,20 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
         new_trigger = False
 
         # ── 原有: breakeven/drawdown 变体回放 ──
+        # P1-1 (2026-07-20): 读 fee_cushion 对齐实盘保本线数学
+        #   修正: 用与 pipeline 相同的 get_playbook_config 路径 (config_container.get_dotted
+        #   实测返回 0.0 默认值, 读不到 playbook.breakeven_fee_cushion_pct=0.15).
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_shadow
+            _fee_cushion = float(_get_pb_cfg_shadow().get("breakeven_fee_cushion_pct", 0.0))
+        except Exception:
+            _fee_cushion = 0.0
         for name, p in EXIT_VARIANTS.items():
             if name in sh:  # 只记首次触发, 已触发的不覆盖
                 continue
             eff = _variant_effective_sl(direction, entry_price, float(initial_sl or 0),
                                         peak_profit_pct, p["be"], p["dd"],
-                                        p.get("dd_threshold", 0.0))
+                                        p.get("dd_threshold", 0.0), _fee_cushion)
             if eff <= 0:
                 continue
             hit = ((direction == "LONG" and current_price <= eff) or
@@ -194,6 +219,29 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
                     "mfe_at_check": round(_mfe_now, 4),
                     "pnl_at_check": round(_cur_pct, 4),
                     "held_minutes": round(_held, 1),
+                }
+                new_trigger = True
+
+        # ── 2026-07-20 (修复M): early_tight_sl 变体 (shadow-only) ──
+        # 仅在入场窗口内 (held<=window) 且 breakeven 未激活 (peak<0.5%) 评估;
+        # 现价击穿紧SL 则记首次触发, 供 finalize 算反事实. record-only.
+        for name, ep in EARLY_TIGHT_VARIANTS.items():
+            if name in sh:
+                continue
+            if _held > float(ep["window_minutes"]) or float(peak_profit_pct or 0) >= 0.5:
+                continue
+            _et_pct = float(ep["sl_pct"])
+            _et_sl = (entry_price * (1 - _et_pct / 100.0) if direction == "LONG"
+                      else entry_price * (1 + _et_pct / 100.0))
+            _et_hit = ((direction == "LONG" and current_price <= _et_sl) or
+                       (direction != "LONG" and current_price >= _et_sl))
+            if _et_hit:
+                _et_exit_pct = (((_et_sl - entry_price) if direction == "LONG"
+                                 else (entry_price - _et_sl)) / entry_price * 100)
+                sh[name] = {
+                    "exit_price": round(_et_sl, 4),
+                    "held_minutes": round(_held, 1),
+                    "profit_pct": round(_et_exit_pct, 4),
                 }
                 new_trigger = True
 
@@ -284,6 +332,21 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
             else:
                 abort_out[name] = {"would_abort": False, "reason": "not_evaluated"}
 
+        # ── 2026-07-20 (修复M): early_tight_sl 反事实 ──
+        # counterfactual_saved_pct = 紧SL触发点 realized_pct - live_pct.
+        #   正 = 紧SL更优 (实盘继续持有扩大亏损); 负 = 紧SL杀了慢热赢家.
+        early_tight_out: Dict[str, Any] = {}
+        for name in EARLY_TIGHT_VARIANTS:
+            if name in sh:
+                _et_pct = float(sh[name].get("profit_pct", 0) or 0)
+                early_tight_out[name] = {
+                    **sh[name],
+                    "triggered": True,
+                    "counterfactual_saved_pct": round(_et_pct - live_pct, 4),
+                }
+            else:
+                early_tight_out[name] = {"triggered": False, "reason": "not_triggered"}
+
         rec = {
             "ts": datetime.utcnow().isoformat(),
             "inst_id": inst_id,
@@ -306,6 +369,8 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
             "dead_signal": dead_signal_out,
             # 2026-07-19 (DEB-round3) 新增字段
             "abort_30m": abort_out,
+            # 2026-07-20 (修复M) 新增字段
+            "early_tight": early_tight_out,
         }
         _append_jsonl(rec)
         return rec
