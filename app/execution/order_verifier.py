@@ -6,6 +6,8 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+from app.utils.timezone import get_trade_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,8 +156,8 @@ def verify_recent_orders(hours: int = 24) -> Dict[str, Any]:
         
         # 查询最近的订单
         ret, data = trd_ctx.history_order_list_query(
-            start=datetime.now().strftime('%Y-%m-%d'),
-            end=datetime.now().strftime('%Y-%m-%d'),
+            start=get_trade_date(),
+            end=get_trade_date(),
             trd_env=TrdEnv.SIMULATE,
         )
         

@@ -32,6 +32,82 @@ DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__
 class USPositionSync:
     """美股持仓同步器"""
 
+    def _backfill_playbook_trade_record(self, symbol: str, direction: str, qty: int,
+                                        entry: float, sl: float, tp: float,
+                                        trace_id: str, futu_order_id: str = "") -> None:
+        """统一管线 #4 (2026-07-20): 恢复仓位标 playbook_sim 时补录未平 PLAYBOOK_SIM trade_record.
+
+        场景: playbook 下单后 GHOST-RC1 拒绝记账但订单实际成交 → trade_records 无记录 →
+        is_playbook_open_position=False. 若只改 owner_strategy 标记, 主线护栏 (查 trade_records)
+        跳过 + playbook 监控 (查 trade_records) 也不管 → 两不管孤儿仓. 补录后 playbook 接管.
+        幂等: 已有未平 PLAYBOOK 记录则跳过. 失败仅告警不中断同步 (可用
+        scripts/adopt_position_to_playbook.py 人工收编).
+        """
+        try:
+            db_path = _get_db_path()
+            conn = safe_sqlite_connect(db_path, timeout=5)
+            try:
+                existing = conn.execute(
+                    "SELECT id FROM trade_records WHERE symbol=? "
+                    "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                    "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) "
+                    "LIMIT 1", (symbol,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if existing:
+                return
+            now_iso = datetime.now().astimezone().isoformat()
+            # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
+            atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
+            record = {
+                "trace_id": trace_id,
+                "trade_date": now_iso[:10],
+                "symbol": symbol,
+                "direction": direction,
+                "entry_time": now_iso,
+                "exit_time": "",
+                "entry_price": entry,
+                "exit_price": 0,
+                "quantity": qty,
+                "realized_pnl": 0,
+                "pnl_pct": 0,
+                "exit_reason": "",
+                "holding_hours": 0,
+                "signal_strength": 50,
+                "signal_confidence": 0.5,
+                "futu_order_id": futu_order_id,
+                "source_type": "PLAYBOOK_SIM",
+                "entry_reason": "sync_recovery_backfill",
+                "owner_strategy": "playbook_sim",
+                "strategy_id": "playbook_sim",
+                "market_regime": "RANGE",
+                "mode": "normal",
+                "trade_mode": "sim",
+                "signal_id": trace_id,
+                "metadata_json": json.dumps({
+                    "stop_loss": sl,
+                    "take_profit": tp,
+                    "atr": atr_guess,
+                    "peak_price": entry,
+                    "trough_price": entry,
+                    "entry_price_source": "sync_recovery_backfill",
+                    "adopted": True,
+                    "adopt_origin": "position_sync",
+                }),
+            }
+            from app.storage.trade_store import TradeStore
+            rid = TradeStore(db_path).save_trade(record)
+            logger.info(
+                f"[US Sync·P3] {symbol} 已补录未平 PLAYBOOK_SIM trade_record (id={rid}, "
+                f"sl=${sl:.2f}) → playbook 监控接管"
+            )
+        except Exception as e:
+            logger.error(
+                f"[US Sync·P3] {symbol} playbook trade_record 补录失败: {e} — "
+                f"该仓可能两不管, 请人工执行 scripts/adopt_position_to_playbook.py {symbol}"
+            )
+
     def __init__(self, sync_interval: int = 30, position_store=None, broker_adapter=None):
         self.sync_interval = sync_interval
         self._running = False
@@ -604,7 +680,10 @@ class USPositionSync:
 
         # 3. Close ghost positions (DB has, Futu doesn't)
         # P0 修复 (2026-05-04): 新创建不足60秒的持仓跳过清理，等待 Futu 确认成交
-        _now = datetime.now()
+        # 2026-07-21 时区修复: _now 用 ET-aware, 避免 naive北京 − ET-aware entry_dt 抛 TypeError
+        #   被静默吞掉 → 180s 保护窗失效 → 误删刚开、待成交的仓.
+        from app.utils.timezone import now_et as _now_et_ghost, to_et as _to_et_ghost
+        _now = _now_et_ghost()
         for symbol in db_symbols - futu_symbols:
             # P0 修复 2026-07-06: Playbook SIM 仓位由 playbook exit monitor 独占管理,
             # position_sync 不应将其标记为 ghost. 2026-07-16: 统一用 is_playbook_open_position.
@@ -630,7 +709,7 @@ class USPositionSync:
             # 2026-05-12 延长 60s→180s: 模拟盘 Futu SIMULATE 延迟明显，60s 不足
             if row and row[1]:
                 try:
-                    entry_dt = datetime.fromisoformat(str(row[1]))
+                    entry_dt = _to_et_ghost(datetime.fromisoformat(str(row[1])))
                     age_seconds = (_now - entry_dt).total_seconds()
                     if age_seconds < 180 and not is_pending_close:
                         logger.info(
@@ -1195,12 +1274,16 @@ class USPositionSync:
                 if is_playbook_open_position(symbol):
                     logger.debug(f"[US Sync·P0] 跳过 Playbook SIM 仓位 {symbol} (由 playbook exit monitor 独占管理)")
                     continue
-                strategy_id = "auto_main"
+                # 2026-07-20 统一管线: 主线入场已永久冻结 (order_executor.py:3120 仅放行
+                #   PLAYBOOK/ORB), ORB 已禁用 → 当日非手动 broker 单只可能来自 playbook.
+                #   playbook trade_record 未落库时 (SUBMITTED/ghost) is_playbook_open_position
+                #   漏判, 旧逻辑标 auto_main → 主 ExitMonitor 接管 → 双重管理+ATR=0. 改归 playbook_sim.
+                strategy_id = "playbook_sim"
                 trader_type = "AUTO"
                 _order_info = _today_orders[symbol]
                 logger.info(
                     f"[US Sync·P3] {symbol} 匹配到当日委托 (order_id={_order_info['order_id']}), "
-                    f"标记为 auto_main (非手动)"
+                    f"标记为 playbook_sim (统一管线, 非手动)"
                 )
             else:
                 strategy_id = "manual_sync"
@@ -1230,10 +1313,10 @@ class USPositionSync:
             import uuid as _sync_uuid
             _sync_trace = f"sync-{symbol}-{int(time.time())}-{_sync_uuid.uuid4().hex[:4]}"
             if _has_today_order:
-                # P3: 策略开仓恢复 — 标记为 auto_main 恢复
+                # P3: 策略开仓恢复 — 2026-07-20 统一管线, 归 playbook_sim (非 auto_main)
                 _order_info = _today_orders[symbol]
                 position.metadata = {
-                    "source": "auto_main",
+                    "source": "playbook_sim",
                     "origin": "sync_recovery",
                     "sync_origin": "position_sync",
                     "trace_id": _sync_trace,
@@ -1269,7 +1352,17 @@ class USPositionSync:
             if _has_today_order:
                 logger.info(
                     f"🔄 [US Sync·P3] 策略仓位恢复 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
-                    f"匹配当日委托 → auto_main | SL=${sl_price:.2f}"
+                    f"匹配当日委托 → playbook_sim (统一管线) | SL=${sl_price:.2f}"
+                )
+                # 2026-07-20 统一管线 #4: 标 playbook_sim 的同时必须补录未平 PLAYBOOK_SIM
+                # trade_record — 主线护栏与 monitor_playbook_sim_exits 查的都是 trade_records
+                # 而非 owner_strategy, 只改标记会造成 "主线跳过 + playbook 不管" 的两不管孤儿仓.
+                # (走到这里说明 L1195 is_playbook_open_position=False, 即 playbook 漏账/ghost 场景)
+                self._backfill_playbook_trade_record(
+                    symbol=symbol, direction=info['direction'], qty=int(size),
+                    entry=cost, sl=sl_price, tp=tp_price,
+                    trace_id=_sync_trace,
+                    futu_order_id=str(_order_info.get('order_id', '')),
                 )
             else:
                 logger.warning(

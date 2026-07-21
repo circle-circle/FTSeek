@@ -16,6 +16,8 @@ import logging
 from typing import Dict, List, Optional
 from datetime import date
 
+from app.utils.timezone import _et_trade_date, now_et
+
 from app.playbook.db import PlaybookDB
 from app.playbook.shadow_tracker import is_trading_day
 
@@ -43,7 +45,7 @@ class PlaybookPusher:
         跳过: META(财报3天内)
         """
         if trade_date is None:
-            trade_date = date.today().isoformat()
+            trade_date = _et_trade_date(now_et())
 
         if not is_trading_day(date.fromisoformat(trade_date)):
             logger.info(f"{trade_date} not a trading day, skip morning push")
@@ -88,7 +90,7 @@ class PlaybookPusher:
         今日总结: 执行 2/3, 浮盈 +$110
         """
         if trade_date is None:
-            trade_date = date.today().isoformat()
+            trade_date = _et_trade_date(now_et())
 
         if not is_trading_day(date.fromisoformat(trade_date)):
             return False
@@ -198,7 +200,13 @@ class PlaybookPusher:
                     lines.append(f"   MFE +${mfe:.0f} | MAE ${mae:.0f}")
             else:
                 shadow = inst.get("shadow_pnl") or 0
-                lines.append(f"   ❌ 未执行 | 理论盈亏: {'+' if shadow >= 0 else ''}${shadow:.0f}")
+                _sign = '+' if shadow >= 0 else ''
+                if inst.get("triggered"):
+                    # 真正错失: 已触发入场条件但未执行 (资金/时段/执行失败)
+                    lines.append(f"   ❌ 触发未执行 | 错失: {_sign}${shadow:.0f}")
+                else:
+                    # 未触发: 价格从未达入场确认带, shadow_pnl 仅为"假设已入场"的参考值, 非真实错失
+                    lines.append(f"   ⏸ 未触发(未达入场价) | 理论(参考): {_sign}${shadow:.0f}")
             lines.append("")
 
         # ── 退出质量段 (2026-07-18): 捕获率 = 落袋pnl / MFE, 评估退出是否及时 ──
@@ -216,19 +224,21 @@ class PlaybookPusher:
             for i in _closed:
                 _sym = i.get("symbol", "?")
                 _mfe = i.get("max_favorable_excursion") or 0
-                _mae = i.get("max_adverse_excursion") or 0
+                _mae = abs(i.get("max_adverse_excursion") or 0)
                 _pnl = i.get("pnl") or 0
                 _cap = (_pnl / _mfe * 100) if _mfe > 0 else 0
                 _caps.append(_cap)
-                # 逆势重、从未落袋 → 退出偏晚/方向存疑
+                # 逆势重、从未落袋 → 退出偏晚/方向存疑 (MAE 取幅度, 兼容两种符号约定)
                 _flag = " ⚠️逆势重" if (_mae > _mfe and _pnl <= 0) else ""
                 lines.append(
                     f"   {_sym}: {_cap:.0f}% (落袋${_pnl:.0f} / 峰值${_mfe:.0f}"
                     f" | MAE ${_mae:.0f}){_flag}"
                 )
             if _caps:
-                _avg = sum(_caps) / len(_caps)
-                lines.append(f"   平均捕获率: {_avg:.0f}% ({len(_caps)}笔)")
+                _s = sorted(_caps)
+                _n = len(_s)
+                _median = _s[_n // 2] if _n % 2 else (_s[_n // 2 - 1] + _s[_n // 2]) / 2
+                lines.append(f"   中位捕获率: {_median:.0f}% ({_n}笔, 中位数抗离群)")
             lines.append("")
 
         # ── 入场质量预警段 (2026-07-18): "入场即套牢" 检测 ──
@@ -269,6 +279,22 @@ class PlaybookPusher:
         lines.append(f"今日总结: 执行 {executed_count}/{len(instructions)}, "
                       f"盈亏 {'+' if total_pnl >= 0 else ''}${total_pnl:.0f}")
 
+        # 2026-07-21 语义修正: 未执行拆分为"真正错失(已触发)"与"未触发(仅假设参考)",
+        #   避免大额理论盈亏被误读为真实错失利润 (未触发单价格从未到入场带).
+        _missed_real = sum(
+            (i.get("shadow_pnl") or 0) for i in instructions
+            if i.get("direction") != "SKIP" and not i.get("executed") and i.get("triggered")
+        )
+        _missed_hypo = sum(
+            (i.get("shadow_pnl") or 0) for i in instructions
+            if i.get("direction") != "SKIP" and not i.get("executed") and not i.get("triggered")
+        )
+        if _missed_real or _missed_hypo:
+            lines.append(
+                f"   错失(触发未执行): {'+' if _missed_real >= 0 else ''}${_missed_real:.0f}"
+                f" | 理论参考(未触发,非真实错失): {'+' if _missed_hypo >= 0 else ''}${_missed_hypo:.0f}"
+            )
+
         return "\n".join(lines)
 
     # ========== 内部方法 ==========
@@ -283,7 +309,7 @@ class PlaybookPusher:
                 body=message,
                 level=Level.NORMAL,
                 category=Category.PLAN_PREMARKET,
-                dedup_key=dedup_key or f"playbook:{date.today().isoformat()}",
+                dedup_key=dedup_key or f"playbook:{_et_trade_date(now_et())}",
             )
             ok = get_push_hub().push(msg, sync=sync)
             logger.info(f"Playbook push via PushHub: sent={ok} sync={sync}")

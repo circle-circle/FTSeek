@@ -1036,7 +1036,8 @@ def _check_positions(scheduler):
         _entry_time = getattr(position, 'entry_time', None)
         if _entry_time:
             try:
-                _age_seconds = (_h2_now - _entry_time).total_seconds()
+                from app.utils.timezone import to_et as _to_et_h2
+                _age_seconds = (_h2_now - _to_et_h2(_entry_time)).total_seconds()
                 if 0 <= _age_seconds < _h2_grace_seconds:
                     logger.debug(
                         f"[H2·竞态保护] {position.symbol} 刚开仓 {_age_seconds:.0f}s < {_h2_grace_seconds}s, "

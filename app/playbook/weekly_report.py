@@ -18,6 +18,8 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import date, timedelta
 
+from app.utils.timezone import _et_trade_date, now_et
+
 from app.playbook.db import PlaybookDB
 from app.playbook.factor_analyzer import FactorAnalyzer
 from app.playbook.weight_adjuster import WeightAdjuster
@@ -52,7 +54,7 @@ class WeeklyReportGenerator:
             结构化报告 dict
         """
         if trade_date is None:
-            trade_date = date.today().isoformat()
+            trade_date = _et_trade_date(now_et())
 
         # 1. 更新因子统计
         update_result = self.analyzer.update_all_stats(days_back=90)

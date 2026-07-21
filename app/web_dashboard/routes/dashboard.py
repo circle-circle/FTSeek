@@ -1273,7 +1273,7 @@ async def _calc_weekly_pnl(ds) -> dict:
         row = await ds.db_query_one(
             "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
-            "FROM trade_records WHERE trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
+            "FROM trade_records WHERE trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
             "AND exit_price > 0",
             (monday.isoformat(),),
         )
@@ -1321,7 +1321,7 @@ def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: di
                 for t in targets
                 if t.get("symbol", "").replace("US.", "") not in restricted
                 and t.get("symbol", "") not in restricted
-                and float(t.get("confidence", 0) or 0) >= 0.5
+                and float(t.get("confidence", 0) or 0) >= 60
             )
             plan_actions["must_do"] = must_do
             plan_actions["opportunities"] = opps

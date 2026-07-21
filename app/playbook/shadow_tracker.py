@@ -165,7 +165,9 @@ class ShadowTracker:
                 breakout = breakout and day_close < ma20
             else:
                 breakout = breakout and day_close > ma20
-            vol_confirmed = vol_ratio >= 1.5 if vol_ratio else False
+            from app.playbook.config import get_playbook_config as _get_pb_cfg
+            _vol_gate = float(_get_pb_cfg().get("intraday_volume_ratio", 1.5))
+            vol_confirmed = vol_ratio >= _vol_gate if vol_ratio else False
             updates["triggered"] = 1 if (breakout and vol_confirmed) else 0
 
         # 2. 检查是否执行了 (匹配 trade_records)
@@ -197,13 +199,15 @@ class ShadowTracker:
                             pnl = (exit_price - exec_price) * position_size
                         else:
                             pnl = (exec_price - exit_price) * position_size
-                        pnl_pct = (pnl / (exec_price * position_size)) * 100
+                        # 2026-07-21 量纲统一: pnl_pct 存"比例"(0-1), 与 trade_records / pipeline 回填一致.
+                        #   旧代码 ×100 存百分比 → 同一笔在 playbook_instructions 与 trade_records 差 100 倍.
+                        pnl_pct = (pnl / (exec_price * position_size))
 
                         updates["exit_price"] = exit_price
                         updates["exit_time"] = exit_trade.get("exit_time", "")
                         updates["exit_reason"] = exit_trade.get("exit_reason", "unknown")
                         updates["pnl"] = round(pnl, 2)
-                        updates["pnl_pct"] = round(pnl_pct, 2)
+                        updates["pnl_pct"] = round(pnl_pct, 4)
                         updates["holding_period_hours"] = self._calc_holding_hours(inst, exit_trade)
                         # 2026-07-02: ORPHAN_CLEANUP等幽灵仓清理不应设outcome=win/loss
                         _exit_reason = exit_trade.get("exit_reason", "unknown")
@@ -232,6 +236,10 @@ class ShadowTracker:
             )
             updates["shadow_pnl"] = shadow_pnl
             updates["outcome"] = "missed"
+            # 2026-07-20 归因补齐: missed 曾 94/96 无 skip_reason → 漏斗/门成本不可测.
+            #   只在原 reason 为空时补标 (不覆盖 auto_execute 写入的具体拒因).
+            if not inst.get("skip_reason"):
+                updates["skip_reason"] = "已触发未执行 (trigger_no_execution: 资金护栏/时段/执行失败, 详见当日auto_execute日志)"
         else:
             # 未触发 → 计算 shadow pnl, 并标记终态 missed (避免 run_playbook_track 幂等失败反复推送)
             shadow_pnl = self._calc_shadow_pnl(
@@ -241,6 +249,9 @@ class ShadowTracker:
             if shadow_pnl is not None:
                 updates["shadow_pnl"] = shadow_pnl
             updates["outcome"] = "missed"
+            # 2026-07-20 归因补齐: 与上分支同理, 未触发是漏斗最大黑洞 (81/94), 必须可归因.
+            if not inst.get("skip_reason"):
+                updates["skip_reason"] = "未触发 (no_trigger: 盘中价格未突破入场确认条件)"
 
         if updates:
             self.db.update_instruction_tracking(inst_id, updates)
@@ -271,8 +282,15 @@ class ShadowTracker:
         if close_price <= 0:
             return None
 
-        # 使用实际 position_size, 无则 fallback 100 股
-        shares = position_size if (position_size and position_size > 0) else 100
+        # 使用实际 position_size; 缺失时按固定名义额反推股数, 而非硬编码 100 股.
+        #   B2 (2026-07-21): 100 股对高价股 (META $626→$62.6k notional) 严重高估 shadow_pnl,
+        #   与真实 playbook 单 (~$3,800 notional) 不可比. 改用 ~$3,800 名义额反推, 使 missed
+        #   理论盈亏与实际执行单同量纲.
+        if position_size and position_size > 0:
+            shares = position_size
+        else:
+            _shadow_notional = 3800.0
+            shares = max(1, int(_shadow_notional / entry_price))
 
         if direction == "BUY":
             shadow = (close_price - entry_price) * shares
@@ -473,14 +491,21 @@ class ShadowTracker:
         return None
 
     def _calc_holding_hours(self, inst: Dict, exit_trade: Dict) -> float:
-        """计算持仓时长 (小时)"""
+        """计算持仓时长 (小时)
+
+        2026-07-21 修复: entry/exit 时间时区混存 (ET/-04:00, 北京/+08:00, naive) →
+        naive−aware 抛 TypeError 被静默吞成 None; +08:00−(-04:00) 得负值 (如 EOG -6.7h).
+        统一归一到 ET 再相减: naive 视为已是 ET, aware 转 ET; 残留负值取绝对值兜底.
+        """
         try:
             entry_time = inst.get("execution_time", "")
             exit_time = exit_trade.get("exit_time", "")
             if entry_time and exit_time:
                 entry_dt = datetime.fromisoformat(entry_time)
                 exit_dt = datetime.fromisoformat(exit_time)
-                return round((exit_dt - entry_dt).total_seconds() / 3600, 1)
+                entry_dt = entry_dt.replace(tzinfo=_ET) if entry_dt.tzinfo is None else entry_dt.astimezone(_ET)
+                exit_dt = exit_dt.replace(tzinfo=_ET) if exit_dt.tzinfo is None else exit_dt.astimezone(_ET)
+                return round(abs((exit_dt - entry_dt).total_seconds()) / 3600, 1)
         except (ValueError, TypeError):
             pass
         return 0

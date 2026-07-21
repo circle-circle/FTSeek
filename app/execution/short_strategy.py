@@ -305,8 +305,9 @@ class StockShortStrategy:
 
         if entry_time_str:
             try:
-                entry_time = datetime.fromisoformat(entry_time_str)
-                days_held = (datetime.now() - entry_time).total_seconds() / 86400
+                from app.utils.timezone import now_et as _now_et, to_et as _to_et
+                entry_time = _to_et(datetime.fromisoformat(entry_time_str))
+                days_held = (_now_et() - entry_time).total_seconds() / 86400
 
                 if days_held >= max_days:
                     return True, f"持仓超时 ({days_held:.1f}d >= {max_days}d)"

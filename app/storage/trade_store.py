@@ -19,6 +19,8 @@ from datetime import datetime, date
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
+from app.utils.timezone import _et_trade_date, now_et
+
 logger = logging.getLogger(__name__)
 
 
@@ -800,7 +802,7 @@ class TradeStore:
 
     def query_today(self, trade_mode: Optional[str] = None) -> List[Dict[str, Any]]:
         """查询今日交易记录 (可按 trade_mode 过滤)"""
-        today = date.today().strftime("%Y-%m-%d")
+        today = _et_trade_date(now_et())
         return self.query_by_date(today, trade_mode=trade_mode)
 
     def query_range(self, start: str, end: str, trade_mode: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -888,7 +890,7 @@ class TradeStore:
 
     def stats_today(self, trade_mode: Optional[str] = None) -> Dict[str, Any]:
         """统计今日交易绩效 (可按 trade_mode 过滤)"""
-        return self.stats_by_date(date.today().strftime("%Y-%m-%d"), trade_mode=trade_mode)
+        return self.stats_by_date(_et_trade_date(now_et()), trade_mode=trade_mode)
 
     # ------------------------------------------------------------------
     # 未平仓持仓快照（重启后恢复用）
