@@ -85,6 +85,14 @@ EARLY_TIGHT_VARIANTS: Dict[str, Dict[str, float]] = {
     #   而 ORCL/MNSB (MFE≈0, 方向全错) 正确救回. mfe_gate=0.3 要求入场窗口内
     #   峰值浮盈从未达 0.3% 才收紧, 过滤掉中途浮盈过的慢热仓. 与纯时间窗并行判分.
     "early_tight_30m_mfe0.3": {"window_minutes": 30, "sl_pct": 1.0, "mfe_gate": 0.3},
+    # 2026-07-22: "早期方向证伪止损" 候选网格 (窗口30/60min × MFE门0.3/0.5%).
+    #   依据: TIME_EXIT 17笔深挖 — 平均MFE峰值仅0.17%, 14/17笔<0.3% (方向从未兑现),
+    #   靠拖4-6h超时才砍 → 净-$464. 铁律信号: 入场30~60min内MFE摸不到阈值=死单, 应认赔.
+    #   配合今日新增 time_to_mfe 采集, 1-2周后择优实盘化 (阶段一止血首要任务).
+    #   四组构成 2×2 网格: 窗口松紧 × MFE门松紧, 判分选"救回死单最多、误杀赢家最少"者.
+    "early_tight_60m_mfe0.3": {"window_minutes": 60, "sl_pct": 1.0, "mfe_gate": 0.3},
+    "early_tight_30m_mfe0.5": {"window_minutes": 30, "sl_pct": 1.0, "mfe_gate": 0.5},
+    "early_tight_60m_mfe0.5": {"window_minutes": 60, "sl_pct": 1.0, "mfe_gate": 0.5},
 }
 
 # app/playbook/exit_shadow.py → parents[2] = 仓库根
