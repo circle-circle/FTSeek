@@ -375,9 +375,22 @@ def _gather_peer_surge() -> List[str]:
         return []
 
 
+def _latest_insider_report_age() -> Optional[int]:
+    """最近一份 insider_daily 报告距今天数 (0=今日); 无任何报告返回 None."""
+    try:
+        files = sorted((_ROOT / "data" / "reports").glob("insider_daily_*.json"))
+        if not files:
+            return None
+        d = files[-1].stem.replace("insider_daily_", "")
+        return (datetime.strptime(_today(), "%Y-%m-%d") - datetime.strptime(d, "%Y-%m-%d")).days
+    except Exception:
+        return None
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
+    health: List[str] = []  # [新鲜度 2026-07-22] 各输入源健康摘要 (日志可观测, 区分"无事件"与"链路断")
 
     if manual_clue:
         parts.append(f"\n[人工线索]\n{manual_clue.strip()}")
@@ -387,11 +400,19 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     # [ADR-017/018] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
     hard: List[str] = []
     if bool(_cfg("universe_expansion.clue_hard_events", False)):
-        hard += _gather_hard_events(news)          # 新闻分类 (关键词, 零成本)
+        _he = _gather_hard_events(news)            # 新闻分类 (关键词, 零成本)
+        hard += _he
+        health.append(f"硬事件:{len(_he)}")
     if bool(_cfg("universe_expansion.clue_earnings_events", False)):
-        hard += _gather_earnings_events()          # 财报日历 (Alpha Vantage)
+        _ee = _gather_earnings_events()            # 财报日历 (Alpha Vantage)
+        hard += _ee
+        health.append(f"财报:{len(_ee)}")
     if bool(_cfg("universe_expansion.clue_insider_clusters", False)):
-        hard += _gather_insider_clusters()         # 内部人集群 (已持久化文件)
+        _ic = _gather_insider_clusters()           # 内部人集群 (已持久化文件)
+        hard += _ic
+        _age = _latest_insider_report_age()
+        health.append(f"内部人:{len(_ic)}" + ("(报告缺失)" if _age is None
+                      else (f"(断更{_age}d)" if _age > 0 else "")))
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
         parts.extend(hard)
@@ -400,6 +421,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     #   给 V2 可引用的佐证原料; 文件缺失=当日未生成 → 跳过, 行为与之前一致. 回滚: 配置设 false.
     if bool(_cfg("universe_expansion.clue_event_symbols", True)):
         es = _gather_event_symbols_file()
+        health.append(f"事件标的:{len(es)}")
         if es:
             parts.append("\n[今日事件驱动标的 (事件清单, 可作 evidence_ref 引用)]")
             parts.extend(es)
@@ -407,11 +429,13 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     # [P3 2026-07-22] 盘前板块峰群 (影子测量转 clue 输入; 仅热度参考, 跟随策略已回测否决).
     if bool(_cfg("universe_expansion.clue_peer_surge", False)):
         ps = _gather_peer_surge()
+        health.append(f"峰群:{len(ps)}组")
         if ps:
             parts.append("\n[盘前板块峰群 (影子实测, 热度参考非跟随信号)]")
             parts.extend(ps)
 
     mkt = _gather_market_corroboration()
+    health.append(f"佐证:{mkt.get('date') or '无/陈旧'}")
     if mkt:
         parts.append("\n[市场佐证 (板块轮动/异动)]")
         if mkt.get("strong_sectors"):
@@ -422,15 +446,28 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             parts.append("宇宙外异动: " + ", ".join(mkt["movers"][:12]))
 
     if news:
+        # [2026-07-22] symbols 字段为 JSON 字符串, 空列表 "[]" 真值恒真曾拼出 "[[]]" 噪声 → 解析后非空才展示
+        _n_sym = 0
         parts.append(f"\n[近{hours}h 新闻头条 (共{len(news)}条, 取前20)]")
         for n in news[:20]:
             title = (n.get("title") or "").strip()
             syms = n.get("symbols") or ""
+            if isinstance(syms, str):
+                try:
+                    syms = json.loads(syms)
+                except Exception:
+                    syms = [syms] if syms else []
+            syms = [str(s).replace("US.", "") for s in syms if s]
+            if syms:
+                _n_sym += 1
             if title:
-                parts.append(f"- {title}" + (f"  [{syms}]" if syms else ""))
+                parts.append(f"- {title}" + (f"  [{', '.join(syms)}]" if syms else ""))
+        health.append(f"新闻:{len(news)}条(带标的{_n_sym})")
     else:
         parts.append("\n[新闻] 无近期新闻 (依赖市场佐证 + 人工线索推理)")
+        health.append("新闻:0⚠️")
 
+    print(f"  [输入源健康] " + " | ".join(health))
     return "\n".join(parts)
 
 
