@@ -473,6 +473,45 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
     return out
 
 
+def _annotate_emergence_streak(surfaced: List[Dict[str, Any]]) -> None:
+    """[shadow 2026-07-22] 浮现连续天数埋点 (record-only, 不影响任何筛选/排序).
+
+    背景: 7/9-7/21 实证重开≥3次标的 +$202 vs 一次性标的 -$331 (含幸存者偏差),
+    且 UE 存在同 thesis 惯性续期 (ORCL 连续 6 日空, 第 6 天 -$100 回吐)。
+    本埋点给每个浮现标的标注 emergence_streak_days, 两周后判分
+    "首日浮现 vs 续期第 N 天"绩效差。
+
+    口径: 以 scan jsonl 历史中的 distinct scan 日期序列为日历 (scan 仅交易日跑,
+    天然跳过周末/节假日), 同 symbol+direction 在紧邻的前序 scan 日持续出现则续期。
+    首日浮现 streak=1; 中断后重新浮现从 1 重计。今日多次 scan 不重复累加。
+    """
+    try:
+        history = [r for r in _read_jsonl(_SCAN_PATH)
+                   if r.get("type") == "scan" and r.get("date") and r.get("date") < _today()]
+        # 每个历史 scan 日 → 当日浮现过的 (symbol, direction) 集合 (同日多次 scan 合并)
+        by_date: Dict[str, set] = {}
+        for r in history:
+            keys = by_date.setdefault(r["date"], set())
+            for s in r.get("surfaced", []):
+                if s.get("direction") in ("LONG", "SHORT"):
+                    keys.add((s.get("symbol"), s.get("direction")))
+        prior_dates = sorted(by_date.keys(), reverse=True)  # 紧邻在前
+        for s in surfaced:
+            streak = 1
+            if s.get("direction") in ("LONG", "SHORT"):
+                key = (s["symbol"], s["direction"])
+                for d in prior_dates:
+                    if key in by_date[d]:
+                        streak += 1
+                    else:
+                        break
+            s["emergence_streak_days"] = streak
+    except Exception as e:  # 埋点失败不阻断 scan 主流程
+        print(f"  [warn] emergence_streak 埋点失败 (继续): {e}")
+        for s in surfaced:
+            s.setdefault("emergence_streak_days", None)
+
+
 def cmd_scan(manual_clue: str = "") -> int:
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
@@ -523,6 +562,9 @@ def cmd_scan(manual_clue: str = "") -> int:
         px = _quote_price(q.get(s["symbol"], {}))
         s["scan_price"] = round(px, 4) if px else None
 
+    # [shadow] 浮现连续天数标注 (必须在 _append_jsonl 前: 只读历史日, 不含今日)
+    _annotate_emergence_streak(surfaced)
+
     rec = {
         "type": "scan",
         "date": _today(),
@@ -541,8 +583,10 @@ def cmd_scan(manual_clue: str = "") -> int:
     print(f"[scan] {_today()} 模型={getattr(res,'model_used','?')} 浮现 {len(surfaced)} 标的:")
     for s in surfaced:
         tag = "🌍外" if s["is_universe_external"] else "  "
+        _stk = s.get("emergence_streak_days")
+        _stk_tag = f" 续期D{_stk}" if _stk and _stk > 1 else ""
         print(f"  {s['direction']:5} {s['symbol']:6} conf={s['confidence']:.2f} {tag} "
-              f"{s['winner_loser']:6} | {s['causal_chain'][:70]}")
+              f"{s['winner_loser']:6} | {s['causal_chain'][:70]}{_stk_tag}")
     return 0
 
 
@@ -704,6 +748,8 @@ def cmd_inject(force_dry: bool = False) -> int:
                     "causal_chain": s.get("causal_chain", ""),
                     "winner_loser": s.get("winner_loser", ""),
                     "corroborated_by_market": s.get("corroborated_by_market"),
+                    # [shadow] 浮现连续天数透传 → 交易级判分可直接 join (首日=1)
+                    "emergence_streak_days": s.get("emergence_streak_days"),
                 },
             },
         })
