@@ -1102,6 +1102,28 @@ class PlaybookService:
             "entry_price_source": _entry_price_source,
         }
 
+        # 2026-07-22 只读探针: 开盘 gap 采集 (不拦截, 纯记录). 复用上面已抓的 _arr_ctx, 零额外 API.
+        #   动机: 无法凭感觉给 gap 拦截阈值 — 先积累 gap↔outcome 数据 (join 本单最终 pnl/mfe/mae),
+        #   2周后用相关性裁决"高开追单是否真更易亏 / 拐点在几%", 再决定是否加门. fail-open 记 None.
+        _gap_meta = None
+        try:
+            if _arr_ctx:
+                _prev_close = float(_arr_ctx.get("prev_close", 0) or 0)
+                _today_open = float(_arr_ctx.get("open", 0) or 0)
+                if _prev_close > 0 and _today_open > 0:
+                    _gap_pct = (_today_open - _prev_close) / _prev_close * 100.0
+                    _is_short = "SHORT" in str(mos_direction).upper() or "SELL" in str(mos_direction).upper()
+                    _aligned_gap = -_gap_pct if _is_short else _gap_pct
+                    _gap_meta = {
+                        "prev_close": round(_prev_close, 4),
+                        "today_open": round(_today_open, 4),
+                        "fill_price": float(_fill),
+                        "gap_pct": round(_gap_pct, 3),
+                        "aligned_gap_pct": round(_aligned_gap, 3),
+                    }
+        except Exception:
+            _gap_meta = None
+
         # 写 trade_records (真实成交价, source_type 按 target_env 区分)
         try:
             from app.storage.trade_store import TradeStore
@@ -1232,6 +1254,8 @@ class PlaybookService:
                     "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
                     # 滑点数据闭环 (P0): arrival price / 真实成交价 / 滑点 bps
                     "execution": _exec_meta,
+                    # 2026-07-22 只读探针: 开盘 gap (record-only, 供 gap↔outcome 裁决)
+                    "entry_gap": _gap_meta,
                 }),
                 "signal_details": _json.dumps({
                     "source": f"playbook_{_mode_label}",
