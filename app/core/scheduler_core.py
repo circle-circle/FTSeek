@@ -1076,10 +1076,14 @@ class TradingScheduler:
             logger.warning("[调度器] 配置加载失败，使用类默认值: %s", e)
 
     def _get_subscription_codes(self) -> List[str]:
-        """订阅集合 = watchlist ∪ 当前实盘持仓 (每60s被自动订阅循环调用, 动态同步)。
+        """订阅集合 = watchlist ∪ 主线 PositionStore 持仓 (每60s被自动订阅循环调用)。
 
-        持仓并入后走 path 2.5 免配额取价, 避免 position_monitor 对未订阅持仓
-        高频打 get_market_snapshot 消耗配额。
+        备注 (2026-07-23 校正): 当前统一管线为 playbook — 所有持仓均为 PLAYBOOK_SIM 仓,
+        由 monitor_playbook_sim_exits 自管 (自 2026-07-21 起已用 get_batch_quotes 批量取价,
+        Push缓存优先, 不逐个打 snapshot), 且不纳入主线 PositionStore。因此 position_store.all()
+        当前通常为空, 本方法实际只在"存在主线/legacy 持仓"时才会额外并入其标的 —
+        playbook-only 场景下通常不新增。保留作为前向安全网 (若未来恢复主线持仓, 自动让其
+        走 path 2.5 免配额取价), 无害且零额外订阅开销 (增量去重)。
         """
         codes = set(self.watchlist)
         try:
