@@ -3743,6 +3743,9 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 "trough_price_bar": float(_tmeta.get("trough_price_bar", 0) or 0),
                 "mfe_pct": round(_mfe_pct, 4),
                 "mae_pct": round(_mae_pct, 4),
+                # 2026-07-22: MFE/MAE 到达时点 (分钟) — 解锁路径依赖退出验证.
+                "time_to_mfe": _tmeta.get("time_to_mfe"),
+                "time_to_mae": _tmeta.get("time_to_mae"),
                 "pnl_pct": round(pnl_pct * 100, 4),
                 "holding_hours": round(holding_hours, 2),
                 "breakeven_triggered": bool(_tmeta.get("breakeven_triggered", False)),
@@ -4661,6 +4664,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         from datetime import datetime
         from app.core.scheduler_triggers import ET as _et
 
+        # 2026-07-22: 交易时段门 — 仅盘中执行退出监控.
+        #   根因: 旧宿主调用点在 llm_strategy_loop 的 `phase == TRADING` 分支内 (仅盘中);
+        #   独立快循环仅用 sleep_if_market_closed (只在 WEEKEND 休眠), 工作日
+        #   PRE_MARKET/AFTER_HOURS/OVERNIGHT 仍会跑 → 用延迟/盘后失真价比 SL 兜底,
+        #   产生非常规时段误动作+告警噪声. 此门收口, 非 TRADING 直接返回 (无副作用).
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        if get_market_phase() != MarketPhase.TRADING:
+            return 0
+
         db_path = str(get_trade_records_db())
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -4933,8 +4945,13 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             _MFE_MAE_SANE_MAX = 50.0
             if 0 < _cur_mfe <= _MFE_MAE_SANE_MAX and _cur_mfe > float(meta.get("mfe_pct", 0) or 0):
                 meta["mfe_pct"] = round(_cur_mfe, 4)
+                # 2026-07-22: 记录浮盈峰值到达时点 (分钟) — 解锁路径依赖退出验证.
+                #   record-only, 与 mfe_pct 同步刷新: 每次创新高即覆盖为当时 held.
+                meta["time_to_mfe"] = round(held_minutes, 1)
             if 0 < _cur_mae <= _MFE_MAE_SANE_MAX and _cur_mae > float(meta.get("mae_pct", 0) or 0):
                 meta["mae_pct"] = round(_cur_mae, 4)
+                # 2026-07-22: 记录最大回撤到达时点 (分钟), 同上.
+                meta["time_to_mae"] = round(held_minutes, 1)
 
             _trough_old = float(meta.get("trough_price", 0) or 0)
             _trough = _trough_old if _trough_old > 0 else entry_price

@@ -80,6 +80,11 @@ ABORT_30M_VARIANTS: Dict[str, Dict[str, float]] = {
 # finalize 时算 counterfactual_saved_pct (紧SL在触发点平 vs 实盘持有到底).
 EARLY_TIGHT_VARIANTS: Dict[str, Dict[str, float]] = {
     "early_tight_30m_1pct": {"window_minutes": 30, "sl_pct": 1.0},
+    # 2026-07-22: MFE 条件式变体 — 仅"方向全错"仓收紧, 避免误杀慢热赢家.
+    #   根因: 纯时间窗变体 (上一行) 7/21 误杀 GS(+$12→-$21)/NVDA (中途有微浮盈),
+    #   而 ORCL/MNSB (MFE≈0, 方向全错) 正确救回. mfe_gate=0.3 要求入场窗口内
+    #   峰值浮盈从未达 0.3% 才收紧, 过滤掉中途浮盈过的慢热仓. 与纯时间窗并行判分.
+    "early_tight_30m_mfe0.3": {"window_minutes": 30, "sl_pct": 1.0, "mfe_gate": 0.3},
 }
 
 # app/playbook/exit_shadow.py → parents[2] = 仓库根
@@ -228,7 +233,9 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
         for name, ep in EARLY_TIGHT_VARIANTS.items():
             if name in sh:
                 continue
-            if _held > float(ep["window_minutes"]) or float(peak_profit_pct or 0) >= 0.5:
+            # mfe_gate: 峰值浮盈达到此值即视为方向已兑现, 不再收紧 (缺省 0.5 = 原纯时间窗行为).
+            _et_mfe_gate = float(ep.get("mfe_gate", 0.5))
+            if _held > float(ep["window_minutes"]) or float(peak_profit_pct or 0) >= _et_mfe_gate:
                 continue
             _et_pct = float(ep["sl_pct"])
             _et_sl = (entry_price * (1 - _et_pct / 100.0) if direction == "LONG"
