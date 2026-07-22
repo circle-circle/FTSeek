@@ -186,6 +186,18 @@ def _gather_market_corroboration() -> Dict[str, Any]:
     if not caps:
         return {}
     last = caps[-1]
+    # 防腐守卫 (2026-07-22): capture writer 曾停更, LLM 每日啃陈旧轮动数据浮现同批标的.
+    #   若最新 capture 早于 4 个自然日, 视为失效 → 返回 {}, 让 LLM 落回实时新闻+硬事件推理.
+    _cap_date = str(last.get("date", ""))
+    try:
+        _age_days = (datetime.strptime(_today(), "%Y-%m-%d")
+                     - datetime.strptime(_cap_date, "%Y-%m-%d")).days
+    except Exception:
+        _age_days = 999
+    if _age_days > 4:
+        print(f"  [warn] 市场佐证 capture 已陈旧 (date={_cap_date or '?'}, {_age_days}d) → 跳过, "
+              f"LLM 落回新闻+硬事件推理")
+        return {}
     return {
         "date": last.get("date"),
         "strong_sectors": [f"{s['etf']}({s['name']}) {s['change_pct']:+}%"
