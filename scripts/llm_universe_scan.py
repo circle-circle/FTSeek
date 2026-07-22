@@ -633,6 +633,14 @@ def cmd_scan(manual_clue: str = "") -> int:
     _append_jsonl(_SCAN_PATH, rec)
 
     print(f"[scan] {_today()} 模型={getattr(res,'model_used','?')} 浮现 {len(surfaced)} 标的:")
+    # [2026-07-22] tier 分布计数: 解除数量压制后监控 THESIS_ONLY 是否洪泛 (配合输入源健康行)
+    _tc = {"HARD_EVENT": 0, "MARKET_CORROBORATED": 0, "THESIS_ONLY": 0}
+    for s in surfaced:
+        _t = str(s.get("self_tier", "")).upper()
+        if _t in _tc:
+            _tc[_t] += 1
+    print(f"  [tier分布] HARD {_tc['HARD_EVENT']} / CORR {_tc['MARKET_CORROBORATED']} / "
+          f"THESIS {_tc['THESIS_ONLY']}" + (" ⚠️THESIS占多数" if _tc['THESIS_ONLY'] > len(surfaced) / 2 else ""))
     for s in surfaced:
         tag = "🌍外" if s["is_universe_external"] else "  "
         _stk = s.get("emergence_streak_days")
@@ -802,6 +810,9 @@ def cmd_inject(force_dry: bool = False) -> int:
                     "corroborated_by_market": s.get("corroborated_by_market"),
                     # [shadow] 浮现连续天数透传 → 交易级判分可直接 join (首日=1)
                     "emergence_streak_days": s.get("emergence_streak_days"),
+                    # [2026-07-22] 解除数量压制后按证据层级分层判分的前提: tier/证据透传落库
+                    "self_tier": s.get("self_tier") or None,
+                    "evidence_ref": (s.get("evidence_ref") or "")[:300] or None,
                 },
             },
         })
