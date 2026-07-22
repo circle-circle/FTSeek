@@ -310,6 +310,59 @@ def _gather_event_symbols_file() -> List[str]:
         return []
 
 
+def _gather_peer_surge() -> List[str]:
+    """[P3 2026-07-22] 盘前峰群异动段 — 读 premarket_peer_shadow.jsonl 当日记录 (record-only 影子),
+    把板块级盘前异动作为 clue 供 V2 引用 (evidence_ref 可用 peer_surge).
+    定位: 输入端扩容, 非放行信号 — "峰群直接跟随"已被 7 天回测否决 (-8.48%, 唯一 CONFIRM 日 -1.32%),
+    此段仅把高波动板块票送入分析池, gate 照常把关. 文件缺失/当日无记录 → 跳过 (降级无碍).
+    回滚: 配置 universe_expansion.clue_peer_surge: false."""
+    try:
+        path = Path("data/shadow/premarket_peer_shadow.jsonl")
+        if not path.exists():
+            return []
+        today = _today()
+        rec: Optional[dict] = None
+        for line in path.read_text().strip().splitlines():
+            try:
+                d = json.loads(line)
+                if d.get("date") == today and d.get("peers_snapshot"):
+                    rec = d  # 当日最后一条 (refresh-join 复写保留快照)
+            except Exception:
+                continue
+        if not rec:
+            return []
+        snap = rec.get("peers_snapshot") or {}
+
+        def _fmt(members: List[str]) -> str:
+            cells = []
+            for sym in members:
+                v = snap.get(sym)
+                if isinstance(v, dict) and v.get("pre_change") is not None:
+                    cells.append(f"{sym}{float(v['pre_change']):+.1f}%(量比{float(v.get('volume_ratio', 0)):.2f})")
+            return " ".join(cells)
+
+        # 2026-07-22: 多板块组 (groups + groups_members 自描述成分); 旧记录无 groups → 回落顶层存储组 (向后兼容)
+        groups = rec.get("groups") or {}
+        if groups:
+            members_map = rec.get("groups_members") or {}
+            out = []
+            for name, gd in groups.items():
+                line = _fmt([str(s).upper() for s in (members_map.get(name) or [])])
+                if line:
+                    out.append(f"{name}峰群 verdict={(gd or {}).get('verdict', '?')}: {line}")
+            return out
+        cells: List[str] = []
+        for sym, v in snap.items():
+            if isinstance(v, dict) and v.get("pre_change") is not None:
+                cells.append(f"{sym}{float(v['pre_change']):+.1f}%(量比{float(v.get('volume_ratio', 0)):.2f})")
+        if not cells:
+            return []
+        return [f"存储峰群 verdict={rec.get('group_verdict', '?')}: " + " ".join(cells)]
+    except Exception as e:
+        print(f"  [warn] 峰群影子读取失败 (降级): {e}")
+        return []
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
@@ -338,6 +391,13 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         if es:
             parts.append("\n[今日事件驱动标的 (事件清单, 可作 evidence_ref 引用)]")
             parts.extend(es)
+
+    # [P3 2026-07-22] 盘前板块峰群 (影子测量转 clue 输入; 仅热度参考, 跟随策略已回测否决).
+    if bool(_cfg("universe_expansion.clue_peer_surge", False)):
+        ps = _gather_peer_surge()
+        if ps:
+            parts.append("\n[盘前板块峰群 (影子实测, 热度参考非跟随信号)]")
+            parts.extend(ps)
 
     mkt = _gather_market_corroboration()
     if mkt:

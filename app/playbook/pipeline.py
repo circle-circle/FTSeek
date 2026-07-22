@@ -3748,7 +3748,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 "time_to_mae": _tmeta.get("time_to_mae"),
                 "pnl_pct": round(pnl_pct * 100, 4),
                 "holding_hours": round(holding_hours, 2),
-                "breakeven_triggered": bool(_tmeta.get("breakeven_triggered", False)),
+                # 2026-07-21 修复: breakeven 终态丢失兜底 — 触发平仓那轮不走监控循环的
+                #   metadata 写回 (仅未退出轮执行), _be=True 无人持久化 (7/21 NTES 实证:
+                #   SL_BREAKEVEN 单 metadata 却记 False). 用 exit_reason 蕴含关系兜底:
+                #   这两个标签只在 breakeven 触发后产出 (退出分类逻辑保证). 零行为变更.
+                "breakeven_triggered": bool(_tmeta.get("breakeven_triggered", False)) \
+                    or exit_reason in ("SL_BREAKEVEN", "SL_TRAIL_LOCK"),
                 "initial_sl": float(_tmeta.get("stop_loss", 0) or 0),
                 "take_profit": float(_tmeta.get("take_profit", 0) or 0),
                 "config_version": _tmeta.get("config_version", ""),

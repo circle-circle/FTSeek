@@ -1574,6 +1574,18 @@ universe_expansion:
   clue_earnings_events: true  # [ADR-018] clue brief 注入财报硬事件(复用 EarningsCalendar/AlphaVantage,1次日历调用); 回退设 false
   clue_insider_clusters: true # [ADR-018] clue brief 注入内部人集群(读 insider_daily_{date}.json,无网络); 回退设 false
   clue_event_symbols: true    # [P2' 2026-07-21] clue brief 注入今日事件驱动标的(读 gen_event_symbols 产出,与 DA --symbols 同源); 回退设 false
+  clue_peer_surge: true       # [P3 2026-07-22] clue brief 注入盘前峰群异动(读 premarket_peer_shadow.jsonl 当日记录,输入端扩容非跟随信号——跟随已回测否决-8.48%); 回退设 false
+  # 2026-07-22: 峰群板块组 (用户要求不锁死存储) — premarket_peer_shadow 逐组判定+clue 逐组注入.
+  #   可加/删行业组或调成分票, 次日生效; 回滚: 删本块 → 脚本回落内置存储组默认. 成分与实际交易宇宙对齐.
+  peer_surge_groups:
+    存储: [MU, SNDK, WDC, STX]
+    半导体: [NVDA, AMD, AVGO, TSM, ARM]
+    大科技: [AAPL, MSFT, GOOG, AMZN, META]
+    金融: [JPM, V, MA, GS]
+    能源: [XOM, CVX, EOG, COP]
+    医药: [LLY, UNH, JNJ, ABBV, MRK]
+    电动车: [TSLA, RIVN, NIO]
+    中概: [BABA, PDD, JD, NTES]
   # 2026-07-20: 0.70→0.50 — 死锁修复: V2 prompt Track A 夹逼强制无证据候选 conf≤0.60,
   #   与旧门槛 0.70 叠加 = 被夹逼候选 100% 进不来 (实测 4 天 28 浮现仅 2 注入, 链路近乎白跑).
   #   0.50 让 MARKET_CORROBORATED 类进入; self_tier 标记保留, 评测按 tier 切片; 回滚: 改回 0.70.
