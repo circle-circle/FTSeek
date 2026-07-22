@@ -311,6 +311,15 @@ class FutuLV3Provider:
                     return False
 
                 # 禁用 Futu SDK 日志
+                # 关键: SDK 通过单例 FTLog(logger 名 'FTFileLog'/'FTConsoleLog') 记录日志,
+                # 默认 file_level=DEBUG 会把每个行情推送包写盘并做昂贵的 findCaller 堆栈回溯,
+                # 直接吃满回调线程 CPU。必须调高单例的 file_level/console_level 才能真正止血。
+                try:
+                    import futu.common.ft_logger as _ft_logger
+                    _ft_logger.logger.file_level = logging.WARNING
+                    _ft_logger.logger.console_level = logging.WARNING
+                except Exception as _e:
+                    logger.warning(f"[FutuLV3] 调整 Futu SDK 日志级别失败: {_e}")
                 futu_logger = logging.getLogger("futu")
                 futu_logger.setLevel(logging.CRITICAL)
                 futu_logger.handlers = []

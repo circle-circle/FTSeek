@@ -99,6 +99,17 @@ def create_app() -> FastAPI:
         version="2.0.0",
     )
 
+    # ── 关闭 Futu SDK 日志 ──
+    # dashboard 自建 OpenQuoteContext/OpenSecTradeContext 但未降日志级别,
+    # SDK 单例 FTLog 默认 file_level=DEBUG 会把每个 query/recv 包写盘并做昂贵的
+    # findCaller 堆栈回溯。FTLog 为进程级单例,此处调高一次即覆盖本进程所有连接。
+    try:
+        import futu.common.ft_logger as _ft_logger
+        _ft_logger.logger.file_level = logging.WARNING
+        _ft_logger.logger.console_level = logging.WARNING
+    except Exception as _e:
+        logger.warning(f"调整 Futu SDK 日志级别失败: {_e}")
+
     # ── 路径 ──
     base_dir = Path(__file__).parent
 
