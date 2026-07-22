@@ -809,7 +809,18 @@ class DailyReviewGenerator:
         
         total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in closed_trades)
         winning = [t for t in closed_trades if (t.get('realized_pnl', 0) or 0) > 0]
-        
+
+        # MFE 捕获效率: 退出引擎是利润核心, 衡量实际落袋占最大有利波动的比例。
+        #   单位对齐: pnl_pct 存小数(0.0174=1.74%), mfe_pct 存百分数(1.7383=1.74%) → pnl_pct*100。
+        #   每笔 = clamp(pnl_pct*100 / mfe_pct, 0, 1) — 止损单(负pnl)记0, 不奖励 overshoot 伪影。
+        #   仅统计有可用 mfe_pct(>0) 的已平仓交易; 无样本则 None。
+        _cap_ratios = []
+        for t in closed_trades:
+            _mfe = t.get('mfe_pct') or 0
+            if _mfe > 0:
+                _pp = (t.get('pnl_pct') or 0) * 100.0
+                _cap_ratios.append(max(0.0, min(1.0, _pp / _mfe)))
+
         return {
             'total_trades': len(all_trades),
             'closed_trades': len(closed_trades),
@@ -819,6 +830,8 @@ class DailyReviewGenerator:
             'win_rate': round(len(winning) / len(closed_trades), 4),
             'avg_pnl': round(total_pnl / len(closed_trades), 2),
             'avg_holding_period': round(sum(t.get('holding_hours') or 0 for t in closed_trades) / len(closed_trades), 1) if closed_trades else 0,
+            'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,
+            'mfe_capture_n': len(_cap_ratios),
         }
     
     # =========================================================================

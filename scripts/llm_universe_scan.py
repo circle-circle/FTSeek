@@ -78,7 +78,10 @@ SYSTEM_PROMPT_V2 = (
     "MARKET_CORROBORATED=无具体事件但 evidence_ref 是真实市场异动/板块轮动数据; "
     "THESIS_ONLY=无 evidence_ref, 仅逻辑或板块联想。\n"
     "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60。\n"
-    "4. 宁缺毋滥: 0~2 个高置信标的优于 5 个勉强凑数; 今日无强事件则返回 {\"surfaced\": []}。\n"
+    "4. 充分浮现: 凡具备【可核验因果路径 + 真实可执行机会】的标的都要浮现(多空对等), 不设人为数量上限, "
+    "也不为控量而漏报——质量由 self_tier/evidence_ref 标签与模拟交易结果在下游度量, 而非在浮现端压制。"
+    "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY); "
+    "确无任何可核验机会时才返回 {\"surfaced\": []}, 不牵强凑数。\n"
     "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
@@ -588,7 +591,7 @@ def cmd_scan(manual_clue: str = "") -> int:
         brief,
         system=_system,
         temperature=0.2,
-        max_tokens=2500,
+        max_tokens=4000,
         schema_required={"surfaced": list},
         json_mode=True,
     )

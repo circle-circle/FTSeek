@@ -152,6 +152,8 @@ class MonthlyReviewGenerator:
                 'profit_factor': 0,
                 'sharpe_ratio': 0,
                 'avg_pnl_pct': 0,
+                'mfe_capture_efficiency': None,
+                'mfe_capture_n': 0,
             }
         
         total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in trades)
@@ -171,7 +173,16 @@ class MonthlyReviewGenerator:
         avg_return = sum(returns) / len(returns) if returns else 0
         std_return = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5 if returns else 0
         sharpe_ratio = (avg_return * 12) / (std_return * (12 ** 0.5)) if std_return > 0 else 0  # 年化
-        
+
+        # MFE 捕获效率: 实际落袋占最大有利波动的比例 (退出引擎质量核心指标)。
+        #   单位对齐: pnl_pct 存小数, mfe_pct 存百分数 → pnl_pct*100。
+        #   每笔 = clamp(pnl_pct*100 / mfe_pct, 0, 1); 仅统计有可用 mfe_pct(>0) 的交易; 无样本则 None。
+        _cap_ratios = []
+        for t in trades:
+            _mfe = t.get('mfe_pct') or 0
+            if _mfe > 0:
+                _cap_ratios.append(max(0.0, min(1.0, (t.get('pnl_pct') or 0) * 100.0 / _mfe)))
+
         return {
             'total_trades': len(trades),
             'winning_trades': len(winning),
@@ -183,6 +194,8 @@ class MonthlyReviewGenerator:
             'profit_factor': round(profit_factor, 2),
             'sharpe_ratio': round(sharpe_ratio, 2),
             'avg_pnl_pct': round(avg_return, 4),
+            'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,
+            'mfe_capture_n': len(_cap_ratios),
         }
     
     def _calculate_risk_metrics(self, trades: List[Dict]) -> Dict:
