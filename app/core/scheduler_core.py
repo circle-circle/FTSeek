@@ -1075,6 +1075,23 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("[调度器] 配置加载失败，使用类默认值: %s", e)
 
+    def _get_subscription_codes(self) -> List[str]:
+        """订阅集合 = watchlist ∪ 当前实盘持仓 (每60s被自动订阅循环调用, 动态同步)。
+
+        持仓并入后走 path 2.5 免配额取价, 避免 position_monitor 对未订阅持仓
+        高频打 get_market_snapshot 消耗配额。
+        """
+        codes = set(self.watchlist)
+        try:
+            if self.position_store:
+                for p in self.position_store.all():
+                    sym = p.symbol
+                    if sym and sym.startswith("US."):
+                        codes.add(sym)
+        except Exception as e:
+            logger.debug(f"[订阅] 合并持仓标的失败(降级只用watchlist): {e}")
+        return list(codes)
+
     def _load_watchlist(self) -> List[str]:
         """从配置加载股票池 + 每日动态交易池 (P2 优化)"""
         codes = []
@@ -1595,7 +1612,7 @@ class TradingScheduler:
 
             # 启动自动循环 — 盘前自动订阅，港股时段/美股收盘自动退订
             self._subscription_mgr.start_auto_loop(
-                codes_callback=lambda: list(self.watchlist),
+                codes_callback=self._get_subscription_codes,
                 interval=60,
             )
         else:
