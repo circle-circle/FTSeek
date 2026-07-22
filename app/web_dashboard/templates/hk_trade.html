@@ -1,0 +1,523 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block nav_trade_hk_class %}class="active"{% endblock %}
+{% block nav_trade_hk_class2 %}class="active"{% endblock %}
+{% block nav_trade_hk_class3 %}class="active"{% endblock %}
+
+{% block extra_css %}
+        button, .btn, input, select, textarea, a, [onclick] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        .hk-banner { padding: 10px 14px; background: #1c1500; border: 1px solid #7a5c00; border-radius: 10px; color: #fbbf24; font-size: 12px; margin-bottom: 14px; }
+        .hk-grid { display: grid; grid-template-columns: 380px 1fr; gap: 14px; align-items: start; }
+        @media (max-width: 900px) { .hk-grid { grid-template-columns: 1fr; } }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+        .card h3 { margin: 0 0 12px; font-size: 14px; color: #e1e4e8; }
+        label { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, select, textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; color: #e1e4e8; font-size: 14px; outline: none; width: 100%; box-sizing: border-box; }
+        input:focus, select:focus, textarea:focus { border-color: #58a6ff; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .dir-group { display: flex; gap: 6px; }
+        .dir-btn { flex: 1; padding: 10px; border: 2px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; min-height: 44px; }
+        .dir-btn.active.buy { border-color: #22c55e; background: #0a2a1a; color: #4ade80; }
+        .dir-btn.active.sell { border-color: #ef4444; background: #2a0a0a; color: #f87171; }
+        .btn-primary { width: 100%; padding: 12px; border: none; border-radius: 6px; background: #b91c1c; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; min-height: 46px; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-sm { padding: 4px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 12px; cursor: pointer; }
+        .btn-sm:hover { color: #e1e4e8; border-color: #58a6ff; }
+        .quote-box { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 13px; display: none; }
+        .quote-box .q-name { font-size: 14px; font-weight: 700; color: #e1e4e8; }
+        .quote-box .q-price { font-size: 24px; font-weight: 700; margin: 4px 0; }
+        .quote-box .q-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; color: #8b949e; font-size: 12px; }
+        .quote-box .q-meta b { color: #e1e4e8; font-weight: 600; }
+        .green { color: #4ade80; } .red { color: #f87171; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th { text-align: left; color: #8b949e; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #30363d; text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px; }
+        td { padding: 8px; border-bottom: 1px solid #21262d; color: #e1e4e8; white-space: nowrap; }
+        .empty-hint { color: #8b949e; font-size: 12px; padding: 12px 4px; }
+        .qty-hint { font-size: 11px; color: #8b949e; margin-top: 2px; }
+        .warn-box { display: none; background: #2a0a0a; border: 1px solid #ef4444; border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 12px; color: #f87171; }
+        .warn-box label { display: flex; align-items: center; gap: 6px; color: #fbbf24; text-transform: none; font-size: 12px; margin-top: 6px; cursor: pointer; }
+        .warn-box input[type=checkbox] { width: auto; }
+        .msg-box { display: none; border-radius: 6px; padding: 10px 12px; margin-top: 10px; font-size: 12px; word-break: break-all; }
+        .msg-box.ok { display: block; background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
+        .msg-box.err { display: block; background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
+        .refresh-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .chip { padding: 3px 10px; border: 1px solid #30363d; border-radius: 12px; background: #0d1117; color: #8b949e; font-size: 11px; cursor: pointer; }
+        .chip:hover { color: #58a6ff; border-color: #58a6ff; }
+        .q-click { cursor: pointer; text-decoration: underline dotted; }
+        .q-click:hover { color: #58a6ff !important; }
+        .tick-btn { min-width: 40px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 16px; cursor: pointer; }
+        .tick-btn:hover { color: #e1e4e8; border-color: #58a6ff; }
+        .lot-quick { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 10px; }
+        .session-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; font-weight: 400; }
+        .session-tag.open { color: #4ade80; border-color: #22c55e; }
+        .session-tag.lunch { color: #fbbf24; border-color: #7a5c00; }
+        .q-age { font-size: 11px; color: #8b949e; font-weight: 400; }
+        .q-age.stale { color: #d29922; }
+{% endblock %}
+
+{% block content %}
+<div class="hk-banner">
+    ⚠️ 港股为<b>实盘直通下单</b>（不接入本系统风控/退出监控/复盘），成交与持仓管理请以<b>富途 App</b> 为准。止损止盈请在富途 App 自行设置。
+</div>
+
+<div class="hk-grid">
+    <div>
+        <!-- 报价卡 -->
+        <div class="card">
+            <h3 style="display:flex;align-items:center;gap:8px">📈 报价查询 <span style="color:#8b949e;font-weight:400;font-size:11px">(HKD)</span> <span class="session-tag" id="session-tag">--</span></h3>
+            <div class="form-group">
+                <label>代码（如 700 / 00700 / HK.00700）</label>
+                <div style="display:flex;gap:8px">
+                    <input id="q-symbol" placeholder="00700" autocomplete="off"
+                           onkeydown="if(event.key==='Enter')fetchQuote()">
+                    <button class="btn-sm" style="min-width:64px" onclick="fetchQuote()">查询</button>
+                </div>
+                <div class="chips" id="recent-chips"></div>
+            </div>
+            <div class="quote-box" id="quote-box">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div class="q-name" id="q-name">--</div>
+                    <span class="q-age" id="q-age"></span>
+                </div>
+                <div class="q-price" id="q-price">--</div>
+                <div class="q-meta">
+                    <span>买一 <b id="q-bid" class="q-click" title="点击填入限价" onclick="usePrice('bid')">--</b></span>
+                    <span>卖一 <b id="q-ask" class="q-click" title="点击填入限价" onclick="usePrice('ask')">--</b></span>
+                    <span>最高 <b id="q-high">--</b></span>
+                    <span>最低 <b id="q-low">--</b></span>
+                    <span>每手股数 <b id="q-lot" class="green">--</b></span>
+                    <span>更新 <b id="q-time">--</b></span>
+                </div>
+            </div>
+            <div class="msg-box" id="quote-msg"></div>
+        </div>
+
+        <!-- 下单表单 -->
+        <div class="card">
+            <h3>🔴 实盘下单（直通富途）</h3>
+            <div class="form-group">
+                <label>方向</label>
+                <div class="dir-group">
+                    <button type="button" class="dir-btn buy active" id="btn-buy" onclick="setAction('BUY')">买入</button>
+                    <button type="button" class="dir-btn sell" id="btn-sell" onclick="setAction('SELL')">卖出</button>
+                </div>
+            </div>
+            <div class="row2">
+                <div class="form-group">
+                    <label>订单类型</label>
+                    <select id="f-order-type" onchange="onTypeChange()">
+                        <option value="LIMIT">限价单</option>
+                        <option value="MARKET">市价单</option>
+                    </select>
+                </div>
+                <div class="form-group" id="price-group">
+                    <label>限价 (HKD)</label>
+                    <div style="display:flex;gap:6px">
+                        <button type="button" class="tick-btn" onclick="adjPrice(-1)" title="减一个价位">−</button>
+                        <input id="f-price" type="number" step="0.001" min="0" placeholder="0.000" oninput="updateQtyHint()">
+                        <button type="button" class="tick-btn" onclick="adjPrice(1)" title="加一个价位">+</button>
+                    </div>
+                </div>
+            </div>
+            <div class="row2">
+                <div class="form-group">
+                    <label id="qty-label">手数</label>
+                    <input id="f-lots" type="number" step="1" min="1" placeholder="1" oninput="updateQtyHint()">
+                </div>
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <div class="qty-hint" id="qty-hint" style="padding-top:12px">先查询报价获取每手股数</div>
+                </div>
+            </div>
+            <div class="lot-quick">
+                <button type="button" class="btn-sm" onclick="setLots(1)">1手</button>
+                <button type="button" class="btn-sm" onclick="setLots(2)">2手</button>
+                <button type="button" class="btn-sm" onclick="setLots(5)">5手</button>
+                <button type="button" class="btn-sm" onclick="setLots(10)">10手</button>
+                <button type="button" class="btn-sm" onclick="setLotsAllSellable()">全部可卖</button>
+            </div>
+            <div class="warn-box" id="warn-box">
+                <div id="warn-text"></div>
+                <label><input type="checkbox" id="f-ack-warn"> 我确认限价偏离无误，继续提交</label>
+            </div>
+            <button class="btn-primary" id="btn-submit" onclick="submitOrder()">提交实盘订单</button>
+            <div class="msg-box" id="order-msg"></div>
+        </div>
+    </div>
+
+    <div>
+        <!-- 持仓 -->
+        <div class="card">
+            <div class="refresh-bar">
+                <h3 style="margin:0">💼 港股持仓 <span style="color:#8b949e;font-weight:400;font-size:11px">(富途实时，只读)</span></h3>
+                <button class="btn-sm" onclick="loadPositions()">刷新</button>
+            </div>
+            <div style="overflow-x:auto">
+                <table>
+                    <thead><tr><th>代码</th><th>名称</th><th>持仓</th><th>可卖</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>盈亏%</th><th></th></tr></thead>
+                    <tbody id="pos-tbody"><tr><td colspan="10" class="empty-hint">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 今日订单 -->
+        <div class="card">
+            <div class="refresh-bar">
+                <h3 style="margin:0">📋 今日订单 <span style="color:#8b949e;font-weight:400;font-size:11px">(富途实时)</span></h3>
+                <button class="btn-sm" onclick="loadOrders()">刷新</button>
+            </div>
+            <div style="overflow-x:auto">
+                <table>
+                    <thead><tr><th>时间</th><th>代码</th><th>方向</th><th>类型</th><th>状态</th><th>数量</th><th>已成交</th><th>价格</th><th>成交均价</th><th></th></tr></thead>
+                    <tbody id="ord-tbody"><tr><td colspan="10" class="empty-hint">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+let currentAction = 'BUY';
+let lastQuote = null;   // 最近一次成功报价 (含 lot_size)
+let pendingKey = null;  // 幂等 key (提交期间复用, 完成后重置)
+let lastQuoteAt = 0;    // 报价本地时间戳 (新鲜度展示)
+let quoteTimer = null;  // 10s 自动刷新
+let ageTimer = null;    // 1s 新鲜度重绘
+let positionsCache = []; // 持仓缓存 (全部可卖用)
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmt(v, d = 3) {
+    return (v === null || v === undefined || isNaN(v)) ? '--' : Number(v).toFixed(d);
+}
+function showMsg(id, text, ok) {
+    const el = document.getElementById(id);
+    el.className = 'msg-box ' + (ok ? 'ok' : 'err');
+    el.textContent = text;
+}
+function hideMsg(id) { document.getElementById(id).className = 'msg-box'; }
+
+function setAction(a) {
+    currentAction = a;
+    document.getElementById('btn-buy').classList.toggle('active', a === 'BUY');
+    document.getElementById('btn-sell').classList.toggle('active', a === 'SELL');
+}
+function onTypeChange() {
+    const isMkt = document.getElementById('f-order-type').value === 'MARKET';
+    document.getElementById('price-group').style.display = isMkt ? 'none' : '';
+    updateQtyHint();
+}
+
+async function fetchQuote(silent = false) {
+    // silent=true 为后台自动刷新: 固定刷当前报价标的, 失败不清空旧报价
+    const raw = silent ? (lastQuote?.symbol || '') : document.getElementById('q-symbol').value.trim();
+    if (!raw) return;
+    if (!silent) hideMsg('quote-msg');
+    try {
+        const r = await fetch('/api/hk/quote?symbol=' + encodeURIComponent(raw));
+        const j = await r.json();
+        if (!j.ok) {
+            if (silent) return;  // 自动刷新失败保留旧报价, 靠新鲜度变色提示
+            document.getElementById('quote-box').style.display = 'none';
+            lastQuote = null;
+            showMsg('quote-msg', j.error?.message || '报价失败', false);
+            updateQtyHint();
+            return;
+        }
+        const q = j.data;
+        lastQuote = q;
+        lastQuoteAt = Date.now();
+        startQuoteTimers();
+        saveRecent(q.symbol);
+        document.getElementById('quote-box').style.display = 'block';
+        document.getElementById('q-name').textContent = `${q.symbol}  ${q.name || ''}`;
+        const pctStr = q.change_pct === null ? '' : ` (${q.change_pct >= 0 ? '+' : ''}${q.change_pct}%)`;
+        const pEl = document.getElementById('q-price');
+        pEl.textContent = `HK$ ${fmt(q.cur_price)}${pctStr}`;
+        pEl.className = 'q-price ' + (q.change_pct >= 0 ? 'green' : 'red');
+        document.getElementById('q-bid').textContent = `${fmt(q.bid_price)} x ${q.bid_vol ?? '--'}`;
+        document.getElementById('q-ask').textContent = `${fmt(q.ask_price)} x ${q.ask_vol ?? '--'}`;
+        document.getElementById('q-high').textContent = fmt(q.high_price);
+        document.getElementById('q-low').textContent = fmt(q.low_price);
+        document.getElementById('q-lot').textContent = q.lot_size ?? '--';
+        document.getElementById('q-time').textContent = (q.update_time || '').slice(11) || '--';
+        // 限价默认带入现价
+        const priceInput = document.getElementById('f-price');
+        if (!priceInput.value && q.cur_price) priceInput.value = q.cur_price;
+        updateQtyHint();
+    } catch (e) {
+        if (!silent) showMsg('quote-msg', '请求失败: ' + e, false);
+    }
+}
+
+// ── 报价新鲜度 + 10s 自动刷新 ──
+function startQuoteTimers() {
+    if (!quoteTimer) quoteTimer = setInterval(() => fetchQuote(true), 10000);
+    if (!ageTimer) ageTimer = setInterval(renderQuoteAge, 1000);
+}
+function renderQuoteAge() {
+    const el = document.getElementById('q-age');
+    if (!lastQuoteAt) { el.textContent = ''; return; }
+    const s = Math.round((Date.now() - lastQuoteAt) / 1000);
+    el.textContent = s <= 1 ? '⭕ 刚刷新' : `${s}s 前`;
+    el.className = 'q-age' + (s > 25 ? ' stale' : '');
+}
+
+// ── 买一/卖一点击取价 + 港股价位表 ±tick ──
+function usePrice(side) {
+    const v = side === 'bid' ? lastQuote?.bid_price : lastQuote?.ask_price;
+    if (!v) return;
+    document.getElementById('f-price').value = v;
+    updateQtyHint();
+}
+function hkTick(p) {  // 港交所价位表 (股本证券)
+    if (p < 0.25) return 0.001;
+    if (p < 0.5) return 0.005;
+    if (p < 10) return 0.01;
+    if (p < 20) return 0.02;
+    if (p < 100) return 0.05;
+    if (p < 200) return 0.1;
+    if (p < 500) return 0.2;
+    if (p < 1000) return 0.5;
+    if (p < 2000) return 1;
+    if (p < 5000) return 2;
+    return 5;
+}
+function tickDecimals(t) { return t < 0.01 ? 3 : t < 0.1 ? 2 : t < 1 ? 1 : 0; }
+function adjPrice(dir) {
+    const el = document.getElementById('f-price');
+    const base = parseFloat(el.value) || lastQuote?.cur_price || 0;
+    if (!base) return;
+    const t = hkTick(base);
+    const next = Math.max(t, base + dir * t);
+    el.value = next.toFixed(tickDecimals(hkTick(next)));
+    updateQtyHint();
+}
+
+// ── 手数快捷 ──
+function setLots(n) { document.getElementById('f-lots').value = n; updateQtyHint(); }
+function setLotsAllSellable() {
+    const sym = lastQuote?.symbol, lot = lastQuote?.lot_size;
+    if (!sym || !lot) { showMsg('order-msg', '请先查询报价', false); return; }
+    const pos = positionsCache.find(p => p.symbol === sym);
+    if (!pos || !(pos.can_sell_qty > 0)) { showMsg('order-msg', `无 ${sym} 可卖持仓`, false); return; }
+    hideMsg('order-msg');
+    setAction('SELL');
+    document.getElementById('f-lots').value = Math.floor(pos.can_sell_qty / lot);
+    updateQtyHint();
+}
+
+// ── 持仓一键卖出 ──
+async function sellFromPosition(sym, canSell) {
+    document.getElementById('q-symbol').value = sym.replace('HK.', '');
+    setAction('SELL');
+    await fetchQuote();
+    const lot = lastQuote?.lot_size;
+    if (lot && canSell > 0) document.getElementById('f-lots').value = Math.floor(canSell / lot);
+    updateQtyHint();
+    window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+// ── 最近交易代码 (localStorage) ──
+function saveRecent(sym) {
+    try {
+        let arr = JSON.parse(localStorage.getItem('hk_recent_codes') || '[]');
+        arr = [sym, ...arr.filter(x => x !== sym)].slice(0, 5);
+        localStorage.setItem('hk_recent_codes', JSON.stringify(arr));
+        renderRecent();
+    } catch (e) {}
+}
+function renderRecent() {
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem('hk_recent_codes') || '[]'); } catch (e) {}
+    document.getElementById('recent-chips').innerHTML = arr.map(s =>
+        `<span class="chip" onclick="pickRecent('${esc(s)}')">${esc(s.replace('HK.', ''))}</span>`).join('');
+}
+function pickRecent(sym) {
+    document.getElementById('q-symbol').value = sym.replace('HK.', '');
+    fetchQuote();
+}
+
+// ── 港股交易时段 (HKT=UTC+8, 客户端时区无关) ──
+function renderSession() {
+    const now = new Date();
+    const hkt = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
+    const day = hkt.getDay(), m = hkt.getHours() * 60 + hkt.getMinutes();
+    let txt = '已收盘', cls = '';
+    if (day === 0 || day === 6) { txt = '休市(周末)'; }
+    else if (m >= 540 && m < 570) { txt = '盘前竞价'; cls = 'lunch'; }
+    else if (m >= 570 && m < 720) { txt = '早市'; cls = 'open'; }
+    else if (m >= 720 && m < 780) { txt = '午休'; cls = 'lunch'; }
+    else if (m >= 780 && m < 960) { txt = '午市'; cls = 'open'; }
+    else if (m >= 960 && m < 970) { txt = '收盘竞价'; cls = 'lunch'; }
+    const el = document.getElementById('session-tag');
+    el.textContent = `HKT ${String(hkt.getHours()).padStart(2, '0')}:${String(hkt.getMinutes()).padStart(2, '0')} · ${txt}`;
+    el.className = 'session-tag' + (cls ? ' ' + cls : '');
+}
+
+function updateQtyHint() {
+    const lots = parseInt(document.getElementById('f-lots').value) || 0;
+    const hintEl = document.getElementById('qty-hint');
+    const lot = lastQuote?.lot_size;
+    if (!lot) {
+        document.getElementById('qty-label').textContent = '股数（未获报价，按股输入）';
+        hintEl.textContent = '报价不可用时按股数直接输入，整手校验由券商裁决';
+        return;
+    }
+    document.getElementById('qty-label').textContent = '手数';
+    const shares = lots * lot;
+    let txt = `= ${shares.toLocaleString()} 股`;
+    const px = document.getElementById('f-order-type').value === 'MARKET'
+        ? lastQuote?.cur_price
+        : parseFloat(document.getElementById('f-price').value) || lastQuote?.cur_price;
+    if (shares > 0 && px > 0) txt += `，约 HK$ ${(shares * px).toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+    hintEl.textContent = txt;
+}
+
+async function submitOrder() {
+    hideMsg('order-msg');
+    const btn = document.getElementById('btn-submit');
+    const symbol = (lastQuote?.symbol) || document.getElementById('q-symbol').value.trim();
+    if (!symbol) { showMsg('order-msg', '请先输入/查询标的代码', false); return; }
+    const lots = parseInt(document.getElementById('f-lots').value) || 0;
+    const lot = lastQuote?.lot_size;
+    const quantity = lot ? lots * lot : lots;  // 无报价时按股数直填
+    const orderType = document.getElementById('f-order-type').value;
+    const body = {
+        symbol: symbol,
+        action: currentAction,
+        quantity: quantity,
+        order_type: orderType,
+        price: orderType === 'LIMIT' ? parseFloat(document.getElementById('f-price').value) || null : null,
+        reason: '',
+        acknowledge_price_warning: document.getElementById('f-ack-warn').checked,
+        idempotency_key: pendingKey || (pendingKey = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random())),
+    };
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    try {
+        const r = await fetch('/api/hk/orders', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        pendingKey = null;
+        if (j.ok) {
+            const d = j.data;
+            let msg = `✅ 已提交 order_id=${d.order_id}。${d.note || ''}`;
+            if (d.warnings?.length) msg += ' ⚠️ ' + d.warnings.join('; ');
+            showMsg('order-msg', msg, true);
+            document.getElementById('warn-box').style.display = 'none';
+            document.getElementById('f-ack-warn').checked = false;
+            loadOrders(); loadPositions();
+            burstRefresh();  // 秒级跟进成交状态
+        } else {
+            const errMsg = j.error?.message || '下单失败';
+            if (errMsg.includes('PRICE_WARNING:')) {
+                document.getElementById('warn-box').style.display = 'block';
+                document.getElementById('warn-text').textContent = errMsg.replace('PRICE_WARNING:', '⚠️ ');
+                showMsg('order-msg', '存在限价偏离警告，请勾选确认后重新提交', false);
+            } else {
+                showMsg('order-msg', '❌ ' + errMsg, false);
+            }
+        }
+    } catch (e) {
+        pendingKey = null;
+        showMsg('order-msg', '请求失败: ' + e, false);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '提交实盘订单';
+    }
+}
+
+// 提交/撤单后短时高频轮询 (2s x 5), 让 已提交→已成交 几秒内可见
+function burstRefresh(times = 5, interval = 2000) {
+    let i = 0;
+    const t = setInterval(() => {
+        loadOrders();
+        if (++i >= times) { clearInterval(t); loadPositions(); }
+    }, interval);
+}
+
+async function loadPositions() {
+    const tb = document.getElementById('pos-tbody');
+    try {
+        const r = await fetch('/api/hk/positions');
+        const j = await r.json();
+        const rows = j.ok ? (j.data.positions || []) : [];
+        positionsCache = rows;
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="10" class="empty-hint">无港股持仓</td></tr>';
+            return;
+        }
+        tb.innerHTML = rows.map(p => {
+            const cls = p.pl_val >= 0 ? 'green' : 'red';
+            return `<tr>
+                <td>${esc(p.symbol)}</td><td>${esc(p.name)}</td>
+                <td>${p.qty}</td><td>${p.can_sell_qty}</td>
+                <td>${fmt(p.cost_price)}</td><td>${fmt(p.cur_price)}</td>
+                <td>${Number(p.market_val).toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                <td class="${cls}">${p.pl_val >= 0 ? '+' : ''}${fmt(p.pl_val, 0)}</td>
+                <td class="${cls}">${p.pl_ratio >= 0 ? '+' : ''}${p.pl_ratio}%</td>
+                <td>${p.can_sell_qty > 0 ? `<button class="btn-sm" onclick="sellFromPosition('${esc(p.symbol)}', ${p.can_sell_qty})">卖出</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tb.innerHTML = `<tr><td colspan="10" class="empty-hint">加载失败: ${esc(e)}</td></tr>`;
+    }
+}
+
+const CANCELLABLE = ['SUBMITTED', 'WAITING_SUBMIT', 'SUBMITTING', 'FILLED_PART'];
+async function loadOrders() {
+    const tb = document.getElementById('ord-tbody');
+    try {
+        const r = await fetch('/api/hk/orders/today');
+        const j = await r.json();
+        const rows = j.ok ? (j.data.orders || []) : [];
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="10" class="empty-hint">今日无订单</td></tr>';
+            return;
+        }
+        tb.innerHTML = rows.map(o => {
+            const sideCls = String(o.trd_side).includes('BUY') ? 'green' : 'red';
+            const canCancel = CANCELLABLE.some(s => String(o.status).toUpperCase().includes(s));
+            return `<tr>
+                <td>${esc((o.create_time || '').slice(11, 19))}</td>
+                <td>${esc(o.symbol)} ${esc(o.name)}</td>
+                <td class="${sideCls}">${esc(o.trd_side)}</td>
+                <td>${esc(o.order_type)}</td><td>${esc(o.status)}</td>
+                <td>${o.qty}</td><td>${o.dealt_qty}</td>
+                <td>${fmt(o.price)}</td><td>${fmt(o.dealt_avg_price)}</td>
+                <td>${canCancel ? `<button class="btn-sm" onclick="cancelOrder('${esc(o.order_id)}')">撤单</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tb.innerHTML = `<tr><td colspan="10" class="empty-hint">加载失败: ${esc(e)}</td></tr>`;
+    }
+}
+
+async function cancelOrder(orderId) {
+    if (!window.confirm(`确认撤销订单 ${orderId}?`)) return;
+    try {
+        const r = await fetch('/api/hk/orders/cancel', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({order_id: orderId}),
+        });
+        const j = await r.json();
+        if (j.ok) { loadOrders(); burstRefresh(3); }
+        else { alert(j.error?.message || '撤单失败'); }
+    } catch (e) { alert('撤单请求失败: ' + e); }
+}
+
+loadPositions();
+loadOrders();
+renderRecent();
+renderSession();
+setInterval(renderSession, 30000);
+setInterval(() => { loadOrders(); loadPositions(); }, 30000);
+{% endblock %}

@@ -276,6 +276,7 @@ def create_app() -> FastAPI:
     # ── 注册路由模块 ──
     from app.web_dashboard.routes import dashboard as r_dashboard
     from app.web_dashboard.routes import trade as r_trade
+    from app.web_dashboard.routes import hk_trade as r_hk_trade
     from app.web_dashboard.routes import risk as r_risk
     from app.web_dashboard.routes import analytics as r_analytics
     from app.web_dashboard.routes import stock_detail as r_stock_detail
@@ -289,6 +290,7 @@ def create_app() -> FastAPI:
 
     r_dashboard.register(app, templates, dashboard)
     r_trade.register(app, templates)
+    r_hk_trade.register(app, templates)
     r_risk.register(app, templates)
     r_analytics.register(app, templates)
     r_stock_detail.register(app, templates)

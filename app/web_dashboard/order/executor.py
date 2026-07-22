@@ -629,6 +629,9 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
                 et_tz = timezone(timedelta(hours=-4))
                 today_et = datetime.now(et_tz).strftime("%Y-%m-%d")
                 for _, row in data.iterrows():
+                    # 综合账户返回全市场订单, 美股页只展示 US. (港股见 /trade/hk)
+                    if not str(row.get("code", "")).startswith("US."):
+                        continue
                     create_time = str(row.get("create_time", ""))
                     # Extract date part from "2026-06-17 23:36:13.188"
                     order_date = create_time.split(" ")[0] if create_time else ""
