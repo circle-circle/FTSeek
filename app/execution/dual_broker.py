@@ -10,7 +10,6 @@ OpenSecTradeContext, submit_order/close_position 按 target_env 路由到对应�
   - 手动交易仍走 manual_order_service 独立 ctx (实盘), 不经此组件
 
 设计:
-  - 共享一个 OpenQuoteContext (行情无需区分账户)
   - sim_ctx: OpenSecTradeContext, 无需解锁, 自动探测 SIMULATE 账户
   - real_ctx: OpenSecTradeContext + unlock_trade, 自动探测 REAL 账户
   - real 解锁失败 → real_ctx=None (fail-close: 实盘下单被拒)
@@ -53,7 +52,6 @@ class DualBrokerAdapter:
         self.real_account_id = os.getenv("REAL_ACCOUNT_ID", "").strip()
         self._unlock_pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "").strip()
 
-        self._quote_ctx = None
         self._sim_ctx = None
         self._real_ctx = None
         self._sim_lock = threading.Lock()
@@ -70,9 +68,7 @@ class DualBrokerAdapter:
         if self._connected:
             return True
         try:
-            from futu import OpenQuoteContext, OpenSecTradeContext, TrdMarket, RET_OK
-
-            self._quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
+            from futu import OpenSecTradeContext, TrdMarket, RET_OK
 
             # ── sim ctx (2026-06-24: 也需解锁 — 美股模拟用实盘账户+TrdEnv.SIMULATE, 需解锁才能下单) ──
             try:
@@ -518,11 +514,11 @@ class DualBrokerAdapter:
             return False
 
     def disconnect(self):
-        for ctx in (self._sim_ctx, self._real_ctx, self._quote_ctx):
+        for ctx in (self._sim_ctx, self._real_ctx):
             try:
                 if ctx is not None:
                     ctx.close()
             except Exception:
                 pass
-        self._sim_ctx = self._real_ctx = self._quote_ctx = None
+        self._sim_ctx = self._real_ctx = None
         self._connected = False

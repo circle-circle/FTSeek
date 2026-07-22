@@ -118,6 +118,11 @@ class FutuLV3Provider:
         self._push_ticker_count: int = 0
         self._push_orderbook_count: int = 0
 
+        # Push Handler 异常观测: 原为 except:pass 静默吞错导致行情丢失不可诊断。
+        # 累计计数 + 30s 节流日志, 既可见又不刷屏。
+        self._push_error_count: int = 0
+        self._last_push_error_log: float = 0.0
+
         # 延迟初始化 (首次调用时连接)
         self._initialized = False
 
@@ -378,6 +383,17 @@ class FutuLV3Provider:
         """US.AAPL → AAPL"""
         return symbol.replace("US.", "")
 
+    def _record_push_error(self, handler: str, exc: Exception):
+        """记录 Push Handler 异常 (累计计数 + 30s 节流日志), 替代原静默 except:pass。"""
+        self._push_error_count += 1
+        now = time.time()
+        if now - self._last_push_error_log >= 30:
+            self._last_push_error_log = now
+            logger.debug(
+                f"[FutuLV3] Push Handler[{handler}] 异常 (累计 {self._push_error_count} 次): "
+                f"{type(exc).__name__}: {exc}"
+            )
+
     def _setup_push_handlers(self):
         """
         设置轻量 Push Handler (2026-04-23 新增)
@@ -423,8 +439,8 @@ class FutuLV3Provider:
                                 syms = data["code"].tolist()[:5]
                                 logger.info(f"[FutuLV3] ✅ Push 数据到达: {len(data)} 条, 首批: {syms}")
                     return ret, data
-                except Exception:
-                    pass
+                except Exception as e:
+                    provider._record_push_error("quote", e)
                 return -1, None
 
         class PushKlineHandler(CurKlineHandlerBase):
@@ -459,8 +475,8 @@ class FutuLV3Provider:
                                         provider._push_kline_cache[sym] = cache_list[-300:]
                             provider._last_push_time = time.time()
                     return ret, data
-                except Exception:
-                    pass
+                except Exception as e:
+                    provider._record_push_error("kline", e)
                 return -1, None
 
         class PushTickerHandler(TickerHandlerBase):
@@ -503,8 +519,8 @@ class FutuLV3Provider:
                             syms = data["code"].tolist()[:5]
                             logger.info(f"[FutuLV3] ✅ Ticker 数据到达: {len(data)} 笔, 首批: {syms}")
                     return ret, data
-                except Exception:
-                    pass
+                except Exception as e:
+                    provider._record_push_error("ticker", e)
                 return -1, None
 
         class PushOrderBookHandler(OrderBookHandlerBase):
@@ -537,8 +553,8 @@ class FutuLV3Provider:
                             syms = data["code"].tolist()[:5]
                             logger.info(f"[FutuLV3] ✅ OrderBook 数据到达: 首批: {syms}")
                     return ret, data
-                except Exception:
-                    pass
+                except Exception as e:
+                    provider._record_push_error("orderbook", e)
                 return -1, None
 
         self._push_quote_handler = PushQuoteHandler()
@@ -1837,6 +1853,7 @@ class FutuLV3Provider:
             "push_quote_count": self._push_quote_count,
             "push_ticker_count": self._push_ticker_count,
             "push_orderbook_count": self._push_orderbook_count,
+            "push_error_count": self._push_error_count,
             "ticker_cache_symbols": len(self._push_ticker_cache),
             "orderbook_cache_symbols": len(self._push_orderbook_cache),
             "last_error": self._last_error,
