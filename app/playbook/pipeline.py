@@ -1886,7 +1886,14 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
 
 
 def _run_ic_backfill_only(scheduler, today: str) -> None:
-    """ponytail: 幂等跳过daily_tracking时仍跑IC backfill — Bug A修复."""
+    """ponytail: 幂等跳过daily_tracking时仍跑IC backfill — Bug A修复.
+
+    2026-07-23: 加日期级幂等 — 主循环每2分钟进一次幂等guard分支, 曾导致
+    30天窗口249条指令被全天反复重算 (119次/日, 纯无用功: 日线收盘价每天
+    只变一次, backfill 每天一次即完备). 重启后重跑一次无害.
+    """
+    if getattr(scheduler, "_ic_backfilled_date", None) == today:
+        return
     try:
         from app.playbook.ic_tracker import backfill_forward_returns
         from app.playbook.db import PlaybookDB
@@ -1894,7 +1901,8 @@ def _run_ic_backfill_only(scheduler, today: str) -> None:
         market_data = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
         if market_data:
             backfilled = backfill_forward_returns(db, market_data, today)
-            logger.info(f"[playbook] IC backfill (幂等路径): {backfilled} 条")
+            scheduler._ic_backfilled_date = today  # 日期级幂等置位 (成功才置, 失败下轮重试)
+            logger.info(f"[playbook] IC backfill (幂等路径): {backfilled} 条 (今日首次, 后续轮跳过)")
     except Exception as e:
         logger.debug(f"[playbook] IC backfill (幂等路径) 失败: {e}")
 
