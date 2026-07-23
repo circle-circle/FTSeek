@@ -215,13 +215,9 @@ data_sources:
     rate_limit_per_min: 8
     refill_interval_sec: 7.5
   futu_lv3:
-    # [ADR-013] LV3 股票推送订阅类型 (单一可配置源, 一键可调). 默认精简集 QUOTE+K_1M.
-    #   K_5M/K_15M/K_30M/ORDER_BOOK/TICKER 无有效交易链路消费者:
-    #     日线指标走 request_history_kline, 1分钟走 K_1M; K_15M 下单时按需 HTTP 拉取(不需订阅);
-    #     TICKER/ORDER_BOOK 实测 100% 未被使用 (router 恒 N/A).
-    #   过度订阅 → Futu SDK 对每条推送构造 DataFrame → 接收线程持续占满一核.
-    #   如需恢复微观因子, 在此列表追加类型即可 (如 'ORDER_BOOK','TICKER').
-    stock_sub_types: ['QUOTE', 'K_1M']
+    stock_sub_types:
+    - QUOTE
+    - K_1M
 database:
   backup_enabled: true
   backup_interval_hours: 24
@@ -285,12 +281,12 @@ deployment:
   feature_flags:
     event_driven_scan: false
     ic_feedback_to_screener: false
-    ic_feedback_to_voting: true  # 2026-06-30: 开启IC反馈到投票 (IC=0.16正, 让正alpha信号获权重加成)
+    ic_feedback_to_voting: true
     ic_hard_blocking: true
     signal_pipeline_lightweight_trading: true
     unified_backfill: false
     vix_hard_blocking: true
-    weight_v2_active: true  # 2026-07-01: 配置冻结点v2 (exit_policy v3.0 + vol_bucket + GLM fallback + SL 2%)
+    weight_v2_active: true
   shadow_mode:
     compare_with_legacy: true
     enabled: true
@@ -337,14 +333,11 @@ dual_mode:
     min_signal_strength: 70
     position_scale_factor: 0.5
     stop_loss_tighten_factor: 0.7
-  # 2026-07-14 (ADR-011): normal 档补齐 (此前仅 Python fallback, ADR-010 已启用 normal).
-  #   三档 max_total_exposure (0.30/0.60/0.75) = auto 交易量档位 %,
-  #   capital_safety 读此值 × buying_power = auto 预算 (单一可调源, sim/live 统一, 热重载).
   normal:
     max_daily_auto_trades: 4
     max_per_trade_usd: 20000
     max_position_pct: 0.12
-    max_total_exposure: 0.60
+    max_total_exposure: 0.6
     min_confidence: 0.55
     min_signal_strength: 50
     position_scale_factor: 1.0
@@ -359,9 +352,6 @@ dual_mode:
     loss_alert_threshold: -0.08
     pre_close_alert_time: '15:50'
 dynamic_exit:
-  # 2026-07-16: 旧管线退出规则全部禁用 — Playbook 有独立退出栈 (monitor_playbook_sim_exits).
-  #   ExitDispatcher 已禁用 (exit_rules_controller.dispatcher_enabled=false), 这些规则无消费者.
-  #   保留配置结构供回滚, 但全部 enabled: false.
   default:
     atr_stop:
       enabled: false
@@ -470,8 +460,6 @@ execution:
   simulate_partial_fill: false
   simulate_realistic_flow: true
   simulate_slippage_bps: 5.0
-  # DEB-20260721 A-4 锁现值: TWAP kill-switch 原读死路径 (execution.twap_* 键缺失),
-  #   以下为代码默认值 (零行为变更); enable_twap=false 即可真正关闭拆单.
   enable_twap: true
   twap_threshold_usd: 5000
   twap_slices: 4
@@ -481,28 +469,20 @@ execution:
     check_enabled: false
     max_ratio: 0.005
 exit_rules_controller:
-  # 2026-07-16: 禁用旧管线 ExitDispatcher — Playbook 仓位由 monitor_playbook_sim_exits 自管,
-  #   DB 确认无非 Playbook 未平仓 (open_positions=0), ExitDispatcher 无仓位可管.
   dispatcher_enabled: false
-  fallback_on_error: false  # dispatcher 已禁用, 不需要 fallback
+  fallback_on_error: false
   log_suppressed_rules: true
-  monitor_comparison: false  # 无需对比旧管线 vs 新管线
+  monitor_comparison: false
   shadow_mode: false
 feature_flags:
   auto_trading_enabled: true
-  # 2026-07-14 (ADR-010): auto 交易量档位 (BP占比). conservative=30%/normal=60%/aggressive=75%.
-  #   启动时由 ModeSwitchService 读取恢复 (同 auto_trading_enabled 机制), Dashboard 可运行时覆盖.
   auto_aggression: normal
-  # 2026-07-14 (ADR-012): 旧 US discovery 作战计划轨道 (daily_battle_plan_us.json) 开关.
-  #   生成端已停用冻结 (2026-07-13, discovery管线不再再生). false=下线两个残留消费端:
-  #   开盘确认钉钉推送 (run_open_checker) + 启动扫描池注入 (_inject_battle_plan_to_pool).
-  #   真实执行轨道为 playbook_instructions, 不受此开关影响. 复活整条旧轨道置 true + 重启.
   legacy_battle_plan_enabled: false
 llm:
   defaults:
     cache_dir: data/llm_cache
     divergence_threshold: 0.5
-    voting_timeout_seconds: 60  # 投票并行总超时 (as_completed+共享deadline, 非 3×T)
+    voting_timeout_seconds: 60
   features:
     adaptive_tuner:
       fallback: qwen-max
@@ -906,26 +886,18 @@ news_v2:
       force_pass_immediate: true
       min_score: 0.1
   skip_market_hours: true
-  # 突发新闻驱动盘中即时扫描 (2026-06-30)
-  # 2026-07-11: 用户决定暂停 — 盘中突发新闻推送过于复杂, 先停止 (可随时翻回 true)
   immediate_scan:
-    # 总开关: 是否允许突发新闻触发即时信号扫描
     enabled: false
-    # 同一标的冷却时间 (秒), 防止同一事件反复扫描
     cooldown_seconds: 300
-    # 是否只在盘中交易时段触发
     require_trading_hours: true
-    # 最低紧急程度: IMMEDIATE 才触发
     min_urgency: IMMEDIATE
-    # 是否允许无 related_stocks 的新闻通过关键词匹配触发
     allow_keyword_match: true
-    # 关键词黑名单: 标题含这些词时跳过, 避免噪音/广告
     title_blacklist:
-      - "sponsored"
-      - "promoted"
-      - "advertisement"
-      - "earnings preview"
-      - "analyst says"
+    - sponsored
+    - promoted
+    - advertisement
+    - earnings preview
+    - analyst says
   sources:
     finnhub:
       enabled: false
@@ -1048,7 +1020,7 @@ options:
 orb:
   breakout_buffer_pct: 0.1
   capital_pct: 0.2
-  enabled: false  # 2026-07-09: 停用, 6/22后0笔交易, PnL=-$1002, daemon空跑
+  enabled: false
   entry_end_et: '10:45'
   entry_start_et: 09:50
   eod_exit_time: '15:55'
@@ -1135,13 +1107,8 @@ pipeline:
     timeout_sec: 30.0
   use_modular_stages: true
 playbook:
-  # 2026-06-30 修正: 用户要求通过 sim 在富途 APP 模拟交易可见，恢复自动执行.
-  # 注意: playbook_sim 近 30d 亏损 $1,832.84 (WR 30%), 需继续观察真实成交与 shadow 的差异.
   auto_execute: true
   direction_mode: llm_vote
-  # 2026-07-11 (双脑清理): DA bridge 缺席时的入场 fallback。
-  #   technical → TechnicalFallbackAdapter (确定性 technical 策略出方向, 独立归因)
-  #   none      → NullVotingAdapter (全 SKIP, 最保守)
   fallback_when_no_bridge: technical
   enable_weekly: true
   enabled: true
@@ -1151,98 +1118,33 @@ playbook:
     intraday_breakout_pct: 0.5
     intraday_volume_ratio: 1.5
     min_confidence: 60
-    # SSOT 显式化 (2026-07-10): 单日风控上限. 此前仅存在于 PlaybookConfig.DEFAULTS,
-    # 但 pipeline.py 调用 pb_cfg.get(key, <显式默认>) 时显式默认会遮蔽 DEFAULTS,
-    # 导致声明的 0.60/10 从未生效 (实际跑 0.20/5). 在此显式写死, 声明即生效.
-    # 风险口径: 每仓风险 risk_pct=0.5%, 30 仓全止损 = 单日 15% 风险预算 (理论极端);
-    #   熔断 -3% 全平先触发, 实际可控; SIM 模拟盘放量充分验证 bridge+universe+兜底池信号.
-    # 配合触发质量门 (量能确认+接飞刀保护), 高上限只在信号足够优质时才被用满.
-    # 2026-07-10: 全量交易两源候选 (bridge + llm_universe_scan) — 10→30 / 0.60→0.80.
-    daily_notional_cap_pct: 0.80
+    daily_notional_cap_pct: 0.8
     max_daily_positions: 30
-    # 2026-07-10: 单仓上限硬顶 (显式写死防遮蔽 code 默认). confidence_sizing 默认关
-    #   (实证: DA confidence 未校准且反向), 故近似等权; 30 仓 × ~2.67% ≈ 铺满 80% 敞口,
-    #   强信号至多 4%. 可回滚: 删本行 → 回落 code 默认 0.04.
     max_position_pct: 0.04
-    # 2026-07-11: 入场重锚 (Lever A) — 带内未触发但漂移<=上限时, 用盘中价重锚触发;
-    #   下游 re-price 块会重算 entry/SL/TP (每笔风险% 不变). 超上限不追. 可秒关回滚.
-    #   目的: 捐回"带边缘刚好跳过"的可成交单(入场价冻结在盘前导致). extreme_gap>8% 仍拦.
     entry_reanchor_enabled: true
     entry_reanchor_max_drift_pct: 4.0
-    # 2026-07-15: VWAP 方向一致性硬门 (Tier1). 盘中触发时价在当日 VWAP 逆侧则拦单.
-    #   true = 实盘过滤 (sim 模拟盘, 非真实资金); 2026-07-16 修正为当日累计 VWAP (ctx["vwap"], K_1M K线),
-    #   数据缺失(盘初 K 线不足) fail-open; kill-switch = 改回 false. breakout/gate 影子分开记保留基线.
-    #   tolerance=0.003 (0.3%): ticker_analyzer 自身噪声底, 0.3% 以内视为噪声不拦, 避免边界抖动误拦.
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # 2026-07-17: TP 的 RR 底线门禁 config 化 (SSOT). 原为 pipeline.py 模块级硬编码常量 1.5,
-    #   TP 相对初始 SL 的 RR < 此值时忽略该 TP, 交给 trailing/EOD. 改值不碰代码. 回滚: 保持 1.5.
     min_tp_rr: 1.5
-    # 2026-07-20: 盘中量能门 config 化 (SSOT) + 误拦根因修复.
-    #   根因: 分子(今日累计量)原聚合 K_1M(300s缓存) 系统性滞后低估 → AAPL/MSFT 盘中40min
-    #     仍仅~0.7 → 门槛1.5 令几乎全部追入被 BLOCK. 修复: 分子改用 Futu LV3 实时快照
-    #     当日累计成交量(get_quote()["volume"], <100ms 推送维护, 无缓存滞后); 快照不可用才回退 K_1M.
-    #   语义: today_cum_vol / (avg_daily_vol_5d × elapsed_fraction) ≥ threshold 才允许"追入".
-    #   grace_min: 盘初 N 分钟数据最不可靠, 此窗内不拦 (fail-open). kill-switch: enabled 设 false 整门关闭.
     intraday_vol_gate_enabled: true
-    # 2026-07-20 二次校准: 1.5 → 0.8. 重启后实测 (分子已改 LV3 实时快照, 无低估):
-    #   午盘 18 只标的 ratio 分布 0.51~1.34 (中位数~0.73), 1.5 仍 100% BLOCK.
-    #   根因: 分母用 elapsed_fraction 线性折算, 而真实成交量呈 U 型 (开盘前置),
-    #   午盘"正常节奏"的 ratio 天然落在 0.7~0.9, 1.5 等于要求异常放量才准追入.
-    #   0.8 语义 = "不低于午盘正常节奏"——仍拦真正缩量追高 (实测可拦~2/3),
-    #   但放行正常/放量标的, 恢复样本量积累. 回滚: 改回 1.5.
     chase_vol_ratio_threshold: 0.8
     intraday_vol_gate_grace_min: 15
-    # 2026-07-21 (GHOST-RC1 时序修复): 入场成交确认窗 (秒). 5s→30s, 对齐平仓侧 30s 轮询先例.
-    #   根因: SUBMITTED 是等待态而非失败态; 实证 EOG(7/20)/TTE/UBER(7/21) 均在拒记后
-    #   9~29s 内成交 → 5s 窗误判"未成交" → 真仓无账走 position_sync 降级补录 (假归因 50/0.5).
-    #   仅 fill=0 且快查无成交价的模糊单才进等待, 正常成交不阻塞. 回滚: 改回 5.
     entry_confirm_max_wait_s: 30
-    # 2026-07-18: 开盘冷却期 SL 放宽 config 化 (SSOT). 原 pipeline.py:3601/3834 读 cooldown_sl_pct
-    #   但配置从未定义该键 → 静默 fallback 硬编码 4.0 (黑盒). 现落配置, 默认 4.0 = 行为不变.
-    #   语义: 开盘前 15 分钟 SL 临时放宽到此 % (吸收开盘噪声, 不改 SL 参数本身). 回滚: 保持 4.0.
     cooldown_sl_pct: 4.0
-    # 2026-07-19: 早期紧SL — 入场后 N 分钟内未浮盈达标(breakeven未激活) → SL收紧到 early_tight_sl_pct.
-    #   根因: TIME_EXIT 11笔 0%WR, MFE 全部<0.5%, 方向从未兑现但等 4-6h 才 TIME_EXIT.
-    #   逻辑: 方向对→价格很快浮盈→breakeven激活→本规则自动失效; 方向错→1%紧SL快速触发SL_INITIAL.
-    #   与 cooldown 互补: cooldown 防开盘瞬间秒杀(放宽到4%); 本规则防方向全错慢性失血(收紧到1%).
-    # 2026-07-20 (DEB-20260720 修复M): 收编为 shadow-only — 积累期实单退出参数冻结,
-    #   避免再引入 config_version 断点污染毕业统计. 反事实评估由 exit_shadow EARLY_TIGHT_VARIANTS
-    #   (early_tight_30m_1pct) 采集, 2 周数据 counterfactual_saved_pct>0 且稳定后再评估实单化.
-    #   参数保留供 shadow 变体口径对齐. 回滚/实单化: early_tight_sl_enabled 改 true.
     early_tight_sl_enabled: false
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
-    # 2026-07-17: 净保本缓冲. breakeven ratchet 保本线从“毛保本(=成本价)”抬到
-    #   "净保本(成本价 + 此缓冲%)", 确保浮盈达标后被保本SL打掉时不亏双边手续费/滑点.
-    #   0.15% ≈ 覆盖美股双边佣金+平台费的保守上界 (小仓佣金占比更高时仍足够);
-    #   breakeven_at_pct(0.5%)触发时机不变, 仅抬 SL 落点, 仍留 ~0.35% 缓冲空间防小回撤误扫.
-    #   config 驱动, 改值不碰代码; 回滚设 0.0 = 回到毛保本.
     breakeven_fee_cushion_pct: 0.15
-    # 2026-07-17: 隔夜持仓总开关. 关闭时 _check_playbook_exit_rules / _force_close_orphaned_sim_positions
-    #   强制不跳过 EOD/PRE_CLOSE → 全部当日平仓 (一处收口 OVERNIGHT_GAP_STOP/PRE_CLOSE_EXIT/MAX_HOLD 三个隔夜分支).
-    #   true = 允许 cohort B / long horizon 盈利仓过夜; false = 极简版 B, 全平不留隔夜敞口. 回滚: 改 true.
     overnight_hold_enabled: false
-    # 2026-07-18: profit_override — 浮盈超过阈值时强制锁利 (三轮辩论裁决).
-    #   根因: trailing_enabled=false 的 17 个"快速证伪"因子只有保本没有锁利,
-    #   COIN SHORT 浮盈 3.89% 最终保本出场 (-0.01%), 白送 3.9% 利润.
-    #   逻辑: 浮盈 >= threshold 时, 不管因子配置, 强制从峰值回撤 drawdown% 就锁利出场.
-    #   0-1.5% 证伪期行为不变, 设计意图兼容. 回滚: threshold 设 999 即禁用.
-    profit_override_threshold_pct: 1.5   # 浮盈超过此值强制锁利 (3×breakeven_at_pct)
-    profit_override_drawdown_pct: 0.5    # 强制锁利时的回撤百分比 (从峰值回落此值即出场)
+    profit_override_threshold_pct: 1.5
+    profit_override_drawdown_pct: 0.5
   exit_rules:
-    # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
-    # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.
     breakeven_ratchet_enabled: true
     time_exit_enabled: true
   horizon_strategy:
     config_path: config/playbook_horizon.yaml
     enabled: true
   live_trial: true
-  # B5 (2026-07-19): daily_notional_cap_pct 回调触发条件 (graduation gate).
-  #   当前 0.80 是数据积累期临时措施, 达标后回调至 0.30.
-  #   enabled=false: 仅定义门槛, 不启用自动回调 (人审确认后手动改 true).
-  #   实证 (2026-07-19): 83笔已平仓 / 43.4%胜率 / -$976.93净PnL → 未达标.
   cap_reduction_trigger:
     enabled: false
     min_closed_trades: 50
@@ -1251,32 +1153,18 @@ playbook:
     min_global_ic: 0.03
     max_drawdown_pct: 0.08
     data_window_days: 7
-    target_cap_pct: 0.30
-    current_cap_pct: 0.80
+    target_cap_pct: 0.3
+    current_cap_pct: 0.8
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
-    # 2026-07-09: 8%→4% — 降低单仓notional, 增加日交易笔数
-    # 数据: 日notional cap=$19.8K, 8%→每仓$6.5K→只能3笔/天
-    # 4%→每仓$3.3K→6笔/天, 更多验证方向+策略, 前期重验证不重单笔利润
     max_position_pct: 0.04
     risk_base_capital: 82000.0
-    # 2026-07-09: 1.0%→0.5% — 配合更小仓位, 单笔风险$410→实际$65-98
     risk_pct: 0.5
     rr_ratio: 1.0
-    # 2026-07-12: confidence 加权仓位开关. 默认 false → 拍平为 1.0 (等权).
-    #   依据 exit_scorecard 实测: 当前 DA confidence 未校准且反向 (低信心桶反而胜率/收益更高,
-    #   Playbook IC 为负), 按 confidence 放大仓位 = 给更差的信号加钱. 待 IC 校准为正再开.
-    #   (见 OKR-2026-08 Guardrail 3. 秒改秒回滚.)
     confidence_sizing_enabled: false
-    # 2026-07-16: VWAP 方向一致性硬门 — LONG 要价在 VWAP 上侧, SHORT 要价在下侧.
-    #   代码在 pipeline.py _check_intraday_trigger, 用当日累计 VWAP (K线 cum(tp×vol)/cum(vol)).
-    #   tolerance=0.003 (0.3%): 价格偏离 VWAP 在 0.3% 内视为"贴合", 不拦 (模块噪声底).
-    #   VWAP 缺失 (盘初K线不足) → fail-open (不拦).
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # 2026-07-16: 入场重锚 — 带内未触发但价格漂移在上限内, 用盘中价重锚触发.
-    #   下游 auto_execute 的 re-price 块以实时 bid/ask 重算 entry/SL/TP.
     entry_reanchor_enabled: true
     entry_reanchor_max_drift_pct: 4.0
   technical_arbitration:
@@ -1306,17 +1194,7 @@ regime_adaptation:
     TREND_DOWN: 0.8
     TREND_UP: 1.0
 risk:
-  # A1+ (2026-07-19): ACB/PDT 风控检查异常时的 fail 模式.
-  #   open  = 异常放行 (默认, SIM 期合理)
-  #   closed = 异常拒绝开仓 (live 前切换, 风控失效代价 > 误拦一笔)
-  #   可回滚: 改回 open 即恢复放行.
-  # DEB-20260721 C-7: open→closed — 熔断器本职是保命, 检查异常时应停下排查而非裸奔;
-  #   异常场景本身就该修, ERROR 日志会暴露. 回滚: 改回 open.
   acb_fail_mode: closed
-  # R1a/R1c (2026-07-19, DEB-round2 Ω.3-3): 开仓前预检 (regime/risk_state + broker持仓) 异常 fail 模式.
-  #   open  = 异常放行 (默认, SIM 期合理)
-  #   closed = 异常拒绝开仓 (live 前切换)
-  #   注: R1b 预算门独立无条件 fail-close, 不受本开关控制 (预算失效=无上限开仓, 灾难性).
   preflight_fail_mode: open
   account:
     max_daily_drawdown: 0.03
@@ -1417,8 +1295,6 @@ risk:
   position:
     max_per_direction: 0.65
     max_per_symbol: 0.25
-    # DEB-20260721 A-2 锁现值: position_monitor 对账循环单仓上限 (原读死路径恒回退 0.15).
-    #   与开仓侧 position_sizing.max_position_pct=0.12 是否收敛为一, 待单点决策.
     max_position_pct: 0.15
     max_total: 0.8
   position_sizing:
@@ -1428,12 +1304,8 @@ risk:
     battle_plan_bonus: 0.5
     battle_plan_bonus_enabled: true
     long_min_strength: 60
-    # DEB-20260721 A-1 锁现值: 原声明 5 因 config_keys 路径拼错从未生效, 实际恒跑 50.
-    #   现路径已修复, 写入实际生效值 50 = 零行为变更. 5 vs 50 意图裁决待反事实数据.
     min_effective_strength_floor: 50
     short_min_strength: 45
-  # DEB-20260721 A-3 锁现值: order_executor 动态仓位 SL/TP 分层原读死路径,
-  #   以下为路径修复前实际生效的代码默认值 (零行为变更), 调整前需反事实数据.
   stop_loss:
     default: -0.06
     trailing_atr_mult: 2.0
@@ -1445,7 +1317,7 @@ risk:
   - HK.00700
   - US.HK.00700
   signal_quality:
-    min_confidence: 0.7
+    min_confidence: 0.8
     min_consensus: 0.25
     min_score: 60
   strategy_enforcement:
@@ -1506,7 +1378,6 @@ scheduler:
   min_consensus_level: 0.25
   min_signal_strength: 60
   monitor_interval_minutes: 0.25
-  # 2026-07-21: playbook 退出监控独立快循环 (单宿主开关: true=独立线程20s节奏, llm_strategy_loop 旧调用点自动跳过; false=恢复旧宿主 60s 节奏)
   playbook_exit_fast_loop_enabled: true
   playbook_exit_fast_loop_interval_sec: 20
   scan_interval_minutes: 5
@@ -1556,44 +1427,67 @@ signal_scoring:
   weights_v2: null
 signal_stage:
   mode: technical_direction_arbitration
-  # 2026-07-11 (双脑清理): 纯双脑 — DA/battle plan 为唯一入场决策脑。
-  # false 时盘中只保留 fast_lane (执行 DA 计划) + 持仓管理/退出,
-  # 关掉 ORB/technical/voting_llm/insider/earnings_revision 的独立入场。
-  # true 恢复盘中多策略独立入场 (回退开关)。
   independent_entry_enabled: false
   technical_arbitration:
     agreement_boost: 0.05
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
-# 选股宇宙扩张 (LLM 事件推理驱动的独立模拟策略, 2026-07-14)
-# 信息源=新闻事件为主+市场佐证; LLM出判断/代码出数值; 共用 fast_lane→现有退出。
 universe_expansion:
   entry_enabled: true         # 已启用(2026-07-14): scan→inject 后注入作战计划 → fast_lane 模拟盘下单 (仅 sim)
-  prompt_version: v2          # [ADR-016] live scan prompt 版本 v1|v2; v2=事件驱动+强制引证+Track A夹逼(更克制/更稳); 回退设 v1
-  clue_hard_events: true      # [ADR-017] clue brief 注入结构化硬事件(复用 CatalystClassifier 纯关键词,零LLM成本); 回退设 false
-  clue_earnings_events: true  # [ADR-018] clue brief 注入财报硬事件(复用 EarningsCalendar/AlphaVantage,1次日历调用); 回退设 false
-  clue_insider_clusters: true # [ADR-018] clue brief 注入内部人集群(读 insider_daily_{date}.json,无网络); 回退设 false
-  clue_event_symbols: true    # [P2' 2026-07-21] clue brief 注入今日事件驱动标的(读 gen_event_symbols 产出,与 DA --symbols 同源); 回退设 false
-  clue_peer_surge: true       # [P3 2026-07-22] clue brief 注入盘前峰群异动(读 premarket_peer_shadow.jsonl 当日记录,输入端扩容非跟随信号——跟随已回测否决-8.48%); 回退设 false
-  # 2026-07-22: 峰群板块组 (用户要求不锁死存储) — premarket_peer_shadow 逐组判定+clue 逐组注入.
-  #   可加/删行业组或调成分票, 次日生效; 回滚: 删本块 → 脚本回落内置存储组默认. 成分与实际交易宇宙对齐.
+  prompt_version: v2
+  clue_hard_events: true
+  clue_earnings_events: true
+  clue_insider_clusters: true
+  clue_event_symbols: true
+  clue_peer_surge: true
   peer_surge_groups:
-    存储: [MU, SNDK, WDC, STX]
-    半导体: [NVDA, AMD, AVGO, TSM, ARM]
-    大科技: [AAPL, MSFT, GOOG, AMZN, META]
-    金融: [JPM, V, MA, GS]
-    能源: [XOM, CVX, EOG, COP]
-    医药: [LLY, UNH, JNJ, ABBV, MRK]
-    电动车: [TSLA, RIVN, NIO]
-    中概: [BABA, PDD, JD, NTES]
-  # 2026-07-20: 0.70→0.50 — 死锁修复: V2 prompt Track A 夹逼强制无证据候选 conf≤0.60,
-  #   与旧门槛 0.70 叠加 = 被夹逼候选 100% 进不来 (实测 4 天 28 浮现仅 2 注入, 链路近乎白跑).
-  #   0.50 让 MARKET_CORROBORATED 类进入; self_tier 标记保留, 评测按 tier 切片; 回滚: 改回 0.70.
-  min_confidence: 0.50        # LLM 浮现标的的最低置信度 (低于此不注入)
-  max_targets_per_day: 30     # 2026-07-10: 5→30 — 全量交易 universe_scan 产生的所有标的 (充分验证)
-  news_lookback_hours: 24     # clue brief 拉取近 N 小时新闻
-  default_stop_pct: 3.0       # 初始止损% (代码出数, 现有退出策略后续托管)
-  default_tp_pct: 6.0         # 初始止盈% (2:1 RR)
+    存储:
+    - MU
+    - SNDK
+    - WDC
+    - STX
+    半导体:
+    - NVDA
+    - AMD
+    - AVGO
+    - TSM
+    - ARM
+    大科技:
+    - AAPL
+    - MSFT
+    - GOOG
+    - AMZN
+    - META
+    金融:
+    - JPM
+    - V
+    - MA
+    - GS
+    能源:
+    - XOM
+    - CVX
+    - EOG
+    - COP
+    医药:
+    - LLY
+    - UNH
+    - JNJ
+    - ABBV
+    - MRK
+    电动车:
+    - TSLA
+    - RIVN
+    - NIO
+    中概:
+    - BABA
+    - PDD
+    - JD
+    - NTES
+  min_confidence: 0.5
+  max_targets_per_day: 30
+  news_lookback_hours: 24
+  default_stop_pct: 3.0
+  default_tp_pct: 6.0
 stop_loss:
   default_stop_loss_pct: 0.05
 strategies:
@@ -2009,21 +1903,21 @@ watchlist:
     tier: TIER1
   - code: US.CAT
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Caterpillar Inc
     notes: 工业龙头(重机械) | 跨行业分散补入 (2026-07-13) | 进不进交易看DA+gate
     sector: Industrials
     tier: TIER1
   - code: US.GS
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Goldman Sachs
     notes: 投行龙头 | 金融板块高波动分散 (2026-07-13) | 进不进交易看DA+gate
     sector: Financial Services
     tier: TIER1
   - code: US.CVX
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Chevron Corp
     notes: 能源龙头(与XOM配对) | 跨行业分散补入 (2026-07-13) | 进不进交易看DA+gate
     sector: Energy
@@ -2268,14 +2162,14 @@ watchlist:
     tier: TIER1
   - code: US.KO
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Coca-Cola Co
     notes: 饮料防御龙头 | 低β对冲 (2026-07-17) | 进不进交易看DA+gate
     sector: Consumer Defensive
     tier: TIER2
   - code: US.PEP
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: PepsiCo Inc
     notes: 食品饮料防御 | 消费防御分散 (2026-07-17) | 进不进交易看DA+gate
     sector: Consumer Defensive
@@ -2289,7 +2183,7 @@ watchlist:
     tier: TIER2
   - code: US.VZ
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Verizon Communications
     notes: 电信龙头 | 高股息低β分散 (2026-07-17) | 进不进交易看DA+gate
     sector: Communication Services
@@ -2331,7 +2225,7 @@ watchlist:
     tier: TIER2
   - code: US.HON
     enabled: true
-    max_position_ratio: 0.10
+    max_position_ratio: 0.1
     name: Honeywell International
     notes: 多元工业龙头 | 工业分散 (2026-07-17) | 进不进交易看DA+gate
     sector: Industrials
