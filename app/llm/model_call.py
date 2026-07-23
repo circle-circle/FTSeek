@@ -558,10 +558,10 @@ def _record_audit(feature: str, res: CallResult, prompt_sample: str):
                       else (res.response or "")[:1000]),
             tokens_in=res.tokens_in,
             tokens_out=res.tokens_out,
-            cost=res.cost_usd,
+            cost_usd=res.cost_usd,
             latency_ms=int(res.latency_ms),
             success=res.success,
-            error=res.error or "",
+            error_msg=res.error or "",
         )
     except Exception as e:
         logger.debug(f"[ModelCall·audit] {e}")
