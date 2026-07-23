@@ -52,7 +52,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
-PROMPT_VERSION = "v2.0"  # scan-eval 的 V2 prompt 版本 (未来迭代 P1/P2 改此号, 供归因)
+PROMPT_VERSION = "v2.1"  # scan 落库归因戳; v2.1=开放 THESIS_ONLY 通道 (2026-07-23 用户批准)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -68,20 +68,25 @@ SYSTEM_PROMPT = (
 )
 
 # P0 (意图对齐 + 强制引证自评): 与 V1 同源, 仅用于 scan-eval A/B; 不覆盖 V1。
+# v2.1 (2026-07-23 用户批准, DEB-20260723-da-ue-prompt-optimization): 开放 THESIS_ONLY 通道 —
+#   V2 "绝不为凑数做板块联想"致 THESIS_ONLY n=0 (不可证伪) + 模拟期样本不足 (日仅 2-3 浮现).
+#   改双通道: 主通道纪律不变, 板块联想/逻辑推演可经 THESIS_ONLY 通道浮现 (标签+夹逼照常),
+#   质量分层交给 score tier 切片用数据判定, 不在浮现端压制. 加法式变更, 回滚=git revert.
 SYSTEM_PROMPT_V2 = (
-    "你是资深事件驱动型美股分析师。职责: 仅当存在【明确、可核验的因果传导路径】时才浮现标的; "
-    "没有强事件支撑时, 宁可少报或不报, 绝不为凑数做板块联想。\n"
+    "你是资深事件驱动型美股分析师。职责: 浮现受事件/市场/逻辑驱动的美股标的, 双通道运行: "
+    "主通道=存在【明确、可核验的因果传导路径】的标的(HARD_EVENT/MARKET_CORROBORATED); "
+    "THESIS_ONLY 通道=有交易价值的板块联想/逻辑推演类标的(模拟验证期开放, 供下游分层判分)。\n"
     "要求:\n"
-    "1. evidence_ref(强制): 每个标的必须引用给定材料中的【具体证据原文】—— 某条新闻标题 / "
+    "1. evidence_ref(主通道强制): 主通道标的必须引用给定材料中的【具体证据原文】—— 某条新闻标题 / "
     "某个市场异动数据 / 某条人工线索。若无法从给定材料引出具体证据(仅凭行业常识或板块联想), evidence_ref 留空。\n"
     "2. self_tier(强制自评): HARD_EVENT=因果链第一环锚定 evidence_ref 里的具体事件(封锁/战争/财报/监管/事故); "
     "MARKET_CORROBORATED=无具体事件但 evidence_ref 是真实市场异动/板块轮动数据; "
     "THESIS_ONLY=无 evidence_ref, 仅逻辑或板块联想。\n"
-    "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60。\n"
+    "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60; "
+    "THESIS_ONLY 标的的 thesis 必须以'板块联想:'或'逻辑推演:'开头, 明示推演性质。\n"
     "4. 充分浮现: 凡具备【可核验因果路径 + 真实可执行机会】的标的都要浮现(多空对等), 不设人为数量上限, "
     "也不为控量而漏报——质量由 self_tier/evidence_ref 标签与模拟交易结果在下游度量, 而非在浮现端压制。"
-    "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY); "
-    "确无任何可核验机会时才返回 {\"surfaced\": []}, 不牵强凑数。\n"
+    "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY)。\n"
     "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
@@ -876,6 +881,10 @@ def cmd_score() -> int:
             results.append({"symbol": s["symbol"], "direction": s["direction"],
                             "scan_price": base, "scored_price": round(cur, 4),
                             "fwd_pct": fwd, "hit": hit, "confidence": s["confidence"],
+                            # [P0.1-b 2026-07-23] 分层标签随行落库: tier 排序验证 + streak 判分的原料
+                            "self_tier": s.get("self_tier"),
+                            "emergence_streak_days": s.get("emergence_streak_days"),
+                            "evidence_ref": (s.get("evidence_ref") or "")[:80] or None,
                             "strategy_id": STRATEGY_ID})
         n = len(results)
         summary = {"n": n, "hit_rate": round(hits / n, 3) if n else None,
@@ -912,6 +921,39 @@ def cmd_report(days: int = 30) -> int:
         print(f"平均前瞻收益     : {round(sum(fwd)/len(fwd),2)}%")
     else:
         print("已评分           : 0 (待 score)")
+
+    # [P0.1-b 2026-07-23] 分层切片: self_tier 排序验证 (P1.3 判据) + streak 判分
+    _rows = [x for r in scores for x in r.get("results", [])]
+
+    def _slice_print(title: str, key_fn, order=None):
+        buckets: Dict[str, List[float]] = {}
+        hits_m: Dict[str, int] = {}
+        for x in _rows:
+            k = key_fn(x)
+            if k is None:
+                continue
+            buckets.setdefault(k, []).append(x["fwd_pct"])
+            hits_m[k] = hits_m.get(k, 0) + (1 if x.get("hit") else 0)
+        if not buckets:
+            print(f"{title}: 无带标签评分数据 (score 需含分层字段)")
+            return
+        print(title)
+        keys = order or sorted(buckets)
+        for k in keys:
+            if k not in buckets:
+                continue
+            v = buckets[k]
+            print(f"    {k:24s} n={len(v):3d} 命中率={round(hits_m[k]/len(v),3):.3f}"
+                  f" 平均前瞻={sum(v)/len(v):+.2f}%")
+
+    _slice_print("按 self_tier 切片 (预期 HARD_EVENT > MARKET_CORROBORATED > THESIS_ONLY):",
+                 lambda x: x.get("self_tier"),
+                 order=["HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"])
+    _slice_print("按浮现连续天数切片 (07-22 埋点判分):",
+                 lambda x: ("首日" if (x.get("emergence_streak_days") or 0) <= 1
+                            else ("2日续期" if x["emergence_streak_days"] == 2 else "≥3日续期"))
+                 if x.get("emergence_streak_days") is not None else None,
+                 order=["首日", "2日续期", "≥3日续期"])
     print("-" * 64)
     sc_by_date = {s["scan_date"]: s for s in scores}
     for c in sorted(scans, key=lambda x: x.get("date", "")):
