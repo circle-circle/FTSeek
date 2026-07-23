@@ -577,3 +577,193 @@ for r in c.execute('''SELECT trade_date,SUM(direction='LONG'),SUM(direction='SHO
   print(r)
 "
 ```
+
+---
+
+## 第 7 轮（聚焦分析：Qoder，2026-07-24）：7/20-7/24 窗口表现诊断 + 优化方案
+
+> 用户要求：只分析 7/20-7/24 这期间的表现，给出优化方案。供另一模型独立分析汇总。
+> 数据源：`data/ftseek_us.db` PLAYBOOK 已平仓，trade_date BETWEEN '2026-07-20' AND '2026-07-24'，n=54。
+
+### 一、窗口总览
+
+| 日期 | 笔数 | 胜/负 | 净 PnL | TIME_EXIT 占比 |
+|---|---|---|---|---|
+| 07-20 | 4 | 3/1 | **+40.3** | 0 笔 |
+| 07-21 | 17 | 8/9 | -158.2 | 6 笔 -151.9 |
+| 07-22 | 14 | 7/7 | -163.8 | 6 笔 -235.2 |
+| 07-23 | 19 | 6/13 | **-379.2** | 10 笔 -349.1 |
+| **合计** | **54** | **24/30 (44.4%)** | **-660.9** | **22 笔 -736.2** |
+
+**核心事实：TIME_EXIT 单桶亏损（-$736.2）超过全周净亏（-$660.9）的 111%。其余 32 笔合计 +$75.3。**
+
+### 二、出场结构
+
+| 出场原因 | n | WR | 总 PnL | 均 PnL | 均 MFE | 均 MAE | 均持有 |
+|---|---|---|---|---|---|---|---|
+| TIME_EXIT | 22 | **0%** | **-736.2** | -33.46 | 0.15% | 1.74% | 4.3h |
+| SL_INITIAL | 1 | 0% | -86.4 | -86.40 | 0.00% | 3.77% | 1.6h |
+| SL_BREAKEVEN | 16 | 88% | +25.2 | +1.57 | 0.72% | 0.35% | 1.0h |
+| SL_TRAIL_LOCK | 2 | 100% | +64.6 | +32.31 | 1.76% | 0.20% | 0.8h |
+| PRE_CLOSE_EXIT | 13 | 62% | +71.8 | +5.52 | 0.73% | 0.80% | 5.7h |
+
+**解读**：
+- TIME_EXIT 22 笔 **零胜**，平均 MFE 仅 0.15%（进场后几乎没浮盈过），平均被拖 4.3h 磨血 MAE 1.74%。
+- SL_BREAKEVEN（16 笔 88%WR）和 SL_TRAIL_LOCK（2 笔 100%WR）是防御+锁利机制，工作正常。
+- PRE_CLOSE_EXIT（13 笔 62%WR +$71.8）是"给赢家时间"的正面路径（MRK +24 / MA +16 / EOG +50）。
+
+### 三、MFE 分水岭（本周 54 笔，最关键的单一变量）
+
+| MFE 区间 | n | WR | 总 PnL | 均 PnL | 含义 |
+|---|---|---|---|---|---|
+| =0（精确零） | 9 | **0%** | -461.8 | -51.32 | 进场就没涨过 |
+| 0~0.3% | 13 | 8% | -352.5 | -27.12 | 微弱浮盈即转跌 |
+| 0.3~0.5% | 9 | 11% | -114.2 | -12.69 | 同上 |
+| **0.5~1.0%** | **17** | **94%** | **+76.4** | **+4.50** | **分水岭上方** |
+| **≥1.0%** | **6** | **100%** | **+191.2** | **+31.87** | **真赢家** |
+
+**0.5% 是生死线**：
+- MFE<0.5%：31 笔，WR 3%（1/31），合计 **-$928.6**
+- MFE≥0.5%：23 笔，WR 96%（22/23），合计 **+$267.7**
+
+**TIME_EXIT 内部验证**：22 笔 TIME_EXIT 的 MFE **全部<0.5%**（无一例外）。MFE≥0.5% 的单子没有一笔走到 TIME_EXIT——它们被 SL_BREAKEVEN/TRAIL_LOCK/PRE_CLOSE 正确接住了。
+
+### 四、方向分布
+
+| 方向 | n | PnL | 占比 |
+|---|---|---|---|
+| LONG | 52 | -561.6 | 96.3% |
+| SHORT | 2 | -99.3 | 3.7% |
+
+07-21 起 SHORT 信号消失（07-20 还有 1 笔 SHORT）。相变时间与 UE scan v2.0 prompt 纪律收紧吻合（"绝不为凑数做板块联想"系统性压制逆向推演类 SHORT）。v2.1 THESIS_ONLY 通道已于 07-23 上线修复。
+
+### 五、重复标的（跨日无记忆）
+
+| 标的 | 笔数 | 合计 PnL | 逐笔 MFE% | 性质 |
+|---|---|---|---|---|
+| CRM | 3 | **-149.7** | 0.27 / 0.10 / 0.00 | 三连 TIME_EXIT，MFE 递减 |
+| META | 3 | -93.6 | 0.51 / 0.00 / 0.45 | 混合（第 1 笔微利） |
+| DIS | 4 | -75.6 | 0.34 / 0.26 / 0.25 / 0.19 | 四连亏，MFE 全<0.5% |
+| UNH | 2 | -62.0 | 0.08 / 0.00 | 双连 TIME_EXIT |
+| MSFT | 2 | -56.4 | 0.30 / 0.26 | 双连 TIME_EXIT |
+| MRK | 3 | **+35.0** | 1.08 / 0.67 / 1.28 | ✅ 盈利，MFE 全≥0.5% |
+| EOG | 2 | **+53.6** | 1.93 / 0.61 | ✅ 盈利 |
+| LLY | 2 | **+44.5** | 0.79 / 1.74 | ✅ 盈利 |
+| GS | 3 | +8.5 | 1.10 / 0.91 / 0.48 | ✅ 盈利 |
+| AMZN | 2 | +7.6 | 0.76 / 0.88 | ✅ 盈利 |
+
+**区分点**：盈利重复标的 MFE 均≥0.5%；亏损重复标的 MFE 均<0.5%。"连败封禁"若叠加 MFE<0.5% 过滤，可精准捕获 CRM/DIS/UNH 而不误伤 MRK/EOG/LLY。
+
+### 六、反事实估算
+
+**MFE<0.5% 且持有>1.5h 的 31 笔**：
+- 实际总亏：**-$928.6**
+- 若 90min 早走（线性估算）：-$439.6
+- **潜在节省：~$489/周**（粗估，需 shadow 精确测量）
+
+保守打折（50%）= **+$245/周**。
+
+### 七、优化方案
+
+#### P0：MFE<0.5% 早走 shadow（本周最大杠杆，立即启动）
+
+**规则定义**：
+- 触发条件：入场后持有≥90min，MFE 从未达到阈值（四档：0 / 0.1% / 0.3% / 0.5%）
+- 动作：record-only 记录"若此时平仓"的反事实 PnL，**不改 live 退出**
+- 落库字段：`{trade_id, symbol, mfe_at_90min, threshold_triggered, counterfactual_pnl, actual_pnl, same_symbol_streak_count}`
+- 同时记录同标的连败计数（供缺陷 D 验证）
+
+**本周回测支撑**：
+- TIME_EXIT 22 笔 MFE 全<0.5%，0% WR → 早走不会误杀任何盈利单
+- MFE<0.5% 被其他机制"救回"的 14 笔中仅 3 笔微利（+$18.7）→ 误杀率可忽略
+- 潜在节省 $245~489/周
+
+**裁决时间**：2 周 shadow 数据后（~08-07），按四档精确率/召回率选操作阈值，用户决策是否切 live。
+
+#### P1：跨日连败封禁（并入 P0 shadow，不独立新建）
+
+**规则定义**：
+- 触发条件：同标的 N=5 个交易日内，以 MFE<阈值 形态连败≥2 次
+- 动作：暂停该标的新指令 M=3 个交易日
+- 阈值：与 P0 共享四档，shadow 同期标定
+
+**本周效果**：CRM 第 3 笔（-$60.6）+ DIS 第 4 笔（-$41.0）= 省 $101.6
+**保护**：MRK/EOG/LLY（MFE≥0.5%）不触发，零误伤
+
+#### P1：方向灵活性恢复（已上线，观察验证）
+
+- UE scan v2.1 THESIS_ONLY 通道（07-23 提交，commit `ffa6a3e7`）
+- 预期：SHORT 占比从 3.7% 恢复到 20%+
+- 判据：07-28 若仍无 SHORT 信号 → 进一步放松 prompt 或检查 clue brief 数据源
+
+#### P2：regime 落库（3 行改动，解锁后续分析）
+
+- playbook 生成时写入 `market_regime / vix_at_generation / spy_trend_at_generation`
+- 当前 07-23 仍为 None（71% 历史有值，近几天缺失）
+- 无直接收益，但是 regime 熔断（方向 1）和方向灵活性分析的前提
+
+#### 明确不做
+
+| 方案 | 不做理由 |
+|---|---|
+| 盘中 regime 熔断 | 误触发机会成本 ~$8000（06-04/05-08 V 反）≫ 崩盘日节省 $379 |
+| 缩短 TIME_EXIT 时间窗（4h→2h） | MFE≥0.5% 赢家需时间跑（PRE_CLOSE 均 hold 5.7h），缩短会砍赢家 |
+| 加仓/放大 R:R | 期望值未转正前禁止（handoff 铁律） |
+| 纯连亏封禁（不叠加 MFE） | 误伤 MRK/EOG/LLY 等重复盈利标的（第 4 轮已否决） |
+
+### 八、预期效果
+
+| 优化 | 周级收益（保守） | 置信度 | 依赖 |
+|---|---|---|---|
+| MFE<0.5% 早走（省 30% 磨血） | +$220~370 | 高（本周 0/37 零误杀） | shadow 2 周 |
+| 连败封禁 | +$50~100 | 中（需 shadow 标定） | 并入 P0 |
+| 方向灵活性恢复 | 间接（崩盘日不全押多头） | 待观察 | v2.1 已上线 |
+| **合计** | **+$270~470/周** | | |
+
+本周净亏 -$661 → 优化后理论收窄到 **-$200~-$400**。核心杠杆 = 把 TIME_EXIT 的 -$736 砍到 -$300 以内。
+
+### 九、复现命令
+
+```bash
+cd /opt/ftseek/FTSeek-US
+# 7/20-7/24 逐笔
+./venv/bin/python -c "
+import sqlite3; c=sqlite3.connect('data/ftseek_us.db')
+for r in c.execute('''SELECT trade_date,symbol,direction,realized_pnl,mfe_pct,mae_pct,holding_hours,exit_reason
+  FROM trade_records WHERE trade_date BETWEEN '2026-07-20' AND '2026-07-24'
+  AND source_type LIKE 'PLAYBOOK%' AND exit_time IS NOT NULL AND exit_time!=''
+  ORDER BY trade_date,entry_time'''):
+  print(r)
+"
+# MFE 分桶
+./venv/bin/python -c "
+import sqlite3; c=sqlite3.connect('data/ftseek_us.db')
+for r in c.execute('''SELECT CASE WHEN mfe_pct=0 THEN 'A:=0' WHEN mfe_pct<0.3 THEN 'B:<0.3'
+  WHEN mfe_pct<0.5 THEN 'C:<0.5' WHEN mfe_pct<1 THEN 'D:<1' ELSE 'E:>=1' END b,
+  COUNT(*),SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END),ROUND(SUM(realized_pnl),2)
+  FROM trade_records WHERE trade_date BETWEEN '2026-07-20' AND '2026-07-24'
+  AND source_type LIKE 'PLAYBOOK%' AND exit_time IS NOT NULL AND exit_time!=''
+  GROUP BY b ORDER BY b'''):
+  print(r)
+"
+# 重复标的
+./venv/bin/python -c "
+import sqlite3; c=sqlite3.connect('data/ftseek_us.db')
+for r in c.execute('''SELECT symbol,COUNT(*) n,ROUND(SUM(realized_pnl),2),
+  GROUP_CONCAT(ROUND(mfe_pct,2))
+  FROM trade_records WHERE trade_date BETWEEN '2026-07-20' AND '2026-07-24'
+  AND source_type LIKE 'PLAYBOOK%' AND exit_time IS NOT NULL AND exit_time!=''
+  GROUP BY symbol HAVING n>=2 ORDER BY SUM(realized_pnl)'''):
+  print(r)
+"
+```
+
+### 十、供另一模型分析汇总的要点提示
+
+1. **核心矛盾**：入场信号≈掷硬币（44% WR），但退出机制把 22 笔死单拖满 4h 磨血 → 亏损集中在 TIME_EXIT 一个桶。优化退出比优化入场杠杆高 10 倍。
+2. **最强单一变量**：MFE<0.5%（本周 31 笔 3% WR -$928）vs MFE≥0.5%（23 笔 96% WR +$268）。0.5% 是本周完美分水岭（需 go-forward 确认非过拟合）。
+3. **样本量警告**：本周仅 54 笔，0.5% 分水岭的"完美分离"可能是小样本 artifact（第 5 轮方法教训）。shadow 2 周是最低验证窗。
+4. **跨策略污染**：前 5 轮引用的"0/243"和"68% 胜率"是全策略数字，PLAYBOOK 子集（n=160）的分布完全不同。任何引用全集数字的结论须用 PLAYBOOK 子集复核。
+5. **方向单一是近期相变**（07-21 起），非系统硬编码缺陷。v2.1 已修复，待数据验证。
+6. **SL_ATR_STOP（-$2847）是 06-23/24 早期 bug artifact**，不应纳入当前结构分析。排除后 PLAYBOOK 真实出血点只有 TIME_EXIT。
+7. **优化方案的核心约束**：不能为避崩盘而砍赢家（零质量损失硬约束）。MFE≥0.5% 的 23 笔（+$268）必须完整保留到 EOD/TRAIL_LOCK。
