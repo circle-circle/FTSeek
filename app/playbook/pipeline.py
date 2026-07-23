@@ -4206,6 +4206,32 @@ def is_playbook_open_position(symbol: str) -> bool:
 _EARLY_TIGHT_SL_LOGGED: set = set()
 
 
+def _extract_invalidation_price(text: str, direction: str, entry_price: float):
+    """A-lite shadow (DEB-20260723): 从 DA invalidation 自然语言提取首个方向合理的证伪价.
+
+    取 $123.45 / 跌破578 样式的价格, 方向合理性夹逼防误取无关数字:
+      LONG : 证伪价 ∈ [entry*0.5, entry)   (跌破证伪)
+      SHORT: 证伪价 ∈ (entry, entry*1.5]   (升破证伪)
+    无命中返回 None (落 meta 占位, 避免监控轮重复解析). record-only, 不参与退出决策.
+    """
+    if not text or not entry_price or entry_price <= 0:
+        return None
+    try:
+        import re as _re
+        prices = [float(m) for m in _re.findall(r"\$\s*(\d+(?:\.\d+)?)", text)]
+        if not prices:  # 兼容 "跌破578美元" / "跌破 578" 样式
+            prices = [float(m) for m in _re.findall(
+                r"(?:跌破|升破|突破|跌至|回落至)\s*(\d+(?:\.\d+)?)", text)]
+        for p in prices:
+            if direction == "LONG" and entry_price * 0.5 <= p < entry_price:
+                return round(p, 4)
+            if direction == "SHORT" and entry_price < p <= entry_price * 1.5:
+                return round(p, 4)
+    except Exception:
+        pass
+    return None
+
+
 def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction="LONG") -> bool:
     """#3 (2026-07-20, record-only): 1min bar 高低点并行采集 peak_price_bar/trough_price_bar.
 
@@ -4957,6 +4983,44 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 meta["mae_pct"] = round(_cur_mae, 4)
                 # 2026-07-22: 记录最大回撤到达时点 (分钟), 同上.
                 meta["time_to_mae"] = round(held_minutes, 1)
+
+            # ── E shadow (DEB-20260723, record-only): 早砍判定多阈值矩阵 ──
+            #   首次跨过 45/60/90min 时点时快照累计 MFE/MAE → 事后可判任意
+            #   (时点 × 0.2/0.3/0.5% 阈值) 组合的错杀/节省, 与反事实臂对齐口径.
+            #   背景: 7月终值 MFE<0.3% 组 39笔 -$1364 vs >=0.3% 组 70笔 +$1392.
+            #   不平仓不拦截; 裁决门槛见 DEB 决策栏 (错杀成本<节省50%).
+            try:
+                for _ckpt in (45, 60, 90):
+                    _ck = f"e_shadow_{_ckpt}m"
+                    if held_minutes >= _ckpt and _ck not in meta:
+                        meta[_ck] = {
+                            "mfe_pct": float(meta.get("mfe_pct", 0) or 0),
+                            "mae_pct": float(meta.get("mae_pct", 0) or 0),
+                            "price": round(float(current_price), 4),
+                            "held_min": round(held_minutes, 1),
+                        }
+            except Exception:
+                pass  # 埋点异常不阻断退出监控
+
+            # ── A-lite shadow (DEB-20260723, record-only): DA 证伪价跌破记录 ──
+            #   从 invalidation 自然语言提取首个方向合理的 $价格 (首轮算一次缓存),
+            #   盘中首次穿越时记录时点/价格 → 事后判 "若按证伪价退出" 反事实.
+            try:
+                if "alite_inv_price" not in meta:
+                    meta["alite_inv_price"] = _extract_invalidation_price(
+                        str(meta.get("invalidation") or ""), direction, entry_price)
+                _inv_px = meta.get("alite_inv_price")
+                if _inv_px and "alite_breach" not in meta:
+                    _breached = (current_price <= _inv_px if direction == "LONG"
+                                 else current_price >= _inv_px)
+                    if _breached:
+                        meta["alite_breach"] = {
+                            "held_min": round(held_minutes, 1),
+                            "price": round(float(current_price), 4),
+                            "inv_price": _inv_px,
+                        }
+            except Exception:
+                pass  # 埋点异常不阻断退出监控
 
             _trough_old = float(meta.get("trough_price", 0) or 0)
             _trough = _trough_old if _trough_old > 0 else entry_price

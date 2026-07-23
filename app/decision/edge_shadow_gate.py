@@ -1,6 +1,15 @@
 """
 EdgeShadowGate — P0 (2026-07-11): 数据驱动闸门 (影子模式)
 
+⚠️ DEPRECATED-SHADOW (2026-07-23, DEB-20260723 C-1 诊断裁决):
+    本门永不激活为 live gate (当前形态)。根因非 bug 而是设计局限:
+    - 唯一特征 = confidence (已实证反指, IC 为负)
+    - 桶级期望量级 ±0.001~0.009 为噪声级, 判定随 latest.json 每日滚动翻转
+      (07-22 桶0.3-0.5=+0.000338 放行12条DA全亏; 07-23 同桶=-0.0011 会全拦含唯一盈利INTC)
+    - 替代路径: per-trade 评分重建 (MFE表态速度/source/sector momentum等特征), 独立 DEB
+    保留 shadow 记录供 per-trade 模型对照基线; 任何激活提案必须先过 INTC 测试
+    (07-22 回放不得拦 INTC)。
+
 背景 (数据驱动结论):
 - signal_quality 实测: 置信度与真实胜率/风险归一期望脱钩 (confidence 桶非单调)
 - 现行闸门 min_confidence 用未校准置信度做门槛 → 无法可靠选出正期望信号
