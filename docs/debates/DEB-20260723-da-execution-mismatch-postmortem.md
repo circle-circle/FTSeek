@@ -323,6 +323,63 @@ EOD_FORCE_CLOSE/PRE_CLOSE_EXIT 的存在证明当前是日内框架；DA 的"持
 
 **辩论收口**：两 Agent 在事实层、因果层、方案排序上全部收敛，无残留分歧。共识稿即终稿，待用户确认后翻状态至"已决策"。
 
+### 第 6 轮（复盘 Agent：代码验证 + INTC 测试，2026-07-23）
+
+**对 commit `31c4984a` 的逐项验证结果：**
+
+**1. EdgeShadowGate deprecated 标记** ✅
+- 文件头 docstring 新增 9 行 DEPRECATED-SHADOW 声明，含根因、INTC 测试要求、替代路径。
+- 无行为变更（纯文档），`evaluate()` 逻辑未动，shadow 记录继续供 per-trade 模型对照基线。
+
+**2. E shadow 多阈值矩阵** ✅
+- 位置正确：在 MFE/MAE 更新（L4968-4985）之后、trough 跟踪（L5025）之前。
+- 逻辑正确：`held_minutes >= _ckpt and _ck not in meta` → 每个时点只快照一次（幂等）。
+- 快照内容：`{mfe_pct, mae_pct, price, held_min}` — 读取的是累计最大 MFE/MAE（非窗口内），语义正确（"到该时点为止是否曾表态"）。
+- 数据持久化：meta 在 L5086-5096 的常规周期写回中落库（条件 `_cur_mae > 0` 对活跃仓位几乎恒真），shadow 数据搭车持久化。
+- 安全性：try/except pass 包裹，不阻断退出监控主循环。
+- **record-only 确认**：无任何 `exit_reason` 赋值、无 `close_position` 调用、无 `continue` 跳出。
+
+**3. A-lite shadow 证伪价提取** ✅（附 1 个已知局限）
+- `_extract_invalidation_price()` 独立函数，双路正则（`$123.45` + `跌破578` 中文样式）。
+- 方向合理性夹逼：LONG ∈ [entry×0.5, entry)，SHORT ∈ (entry, entry×1.5]。
+- **07-22 真实数据验证（14 笔）**：
+
+| 标的 | 提取结果 | 原文关键片段 | 判定 |
+|---|---|---|---|
+| META | **578.0** ✅ | "跌破$578" | 正确 |
+| AMZN | **239.0** ✅ | "跌破$239.00" | 正确 |
+| CRM | **163.97** ✅ | "跌破$163.97(MA20)" | 正确 |
+| UNH | **408.0** ✅ | "低于$408" | 正确 |
+| KO | **78.2** ✅ | "跌破$78.20" | 正确 |
+| DIS | **91.48** ✅ | "跌破$91.48" | 正确 |
+| PDD | **81.89** ✅ | "跌破81.89(MA20)"（中文样式路径） | 正确 |
+| COF | **155.0** ⚠️ | "$155亿"（营收指引，非股价） | **误提取**（shadow 可接受） |
+| SYF/GS/MRK/HON/NTES/INTC | None | 无方向合理价格 / 无$文本 | 正确跳过 |
+
+- **已知局限**：COF "$155亿" 是营收指引非股价，被方向夹逼误通过（155 < entry 201.95）。Shadow 模式下可接受（人工审阅时排除）；若转 live 需加"排除亿/万/营收/指引"上下文过滤。
+- 缓存机制：`"alite_inv_price" not in meta` → 首轮解析一次，后续轮直接读缓存。
+- 穿越记录：`current_price <= inv_px`（LONG）时写 `meta.alite_breach`，只记一次。
+- **record-only 确认**：同 E，无退出触发。
+
+**4. INTC 测试** ✅
+- INTC 的 `invalidation` 字段为空（UE 源无 DA 论点）→ A-lite 返回 None → 不会触发任何记录。
+- E shadow 对 INTC 同样只记录不拦截（INTC 在 0.5h 内已 TRAIL_LOCK 退出，不会到达 45min 检查点）。
+- EdgeShadowGate 维持 shadow-only，不拦截任何标的。
+- **结论：07-22 回放中 INTC 不受任何新增逻辑影响。** ✅
+
+**5. 整体验证结论**
+
+| 检查项 | 结果 |
+|---|---|
+| 新增代码是否 record-only（不触发退出/不拦截） | ✅ 全部 pass 包裹，无 exit_reason 赋值 |
+| 是否影响现有退出逻辑（BREAKEVEN/TRAIL/TIME/PRE_CLOSE） | ✅ 无影响，插入点在退出判定之后 |
+| 数据持久化路径是否可靠 | ✅ 搭车现有 meta 写回（L5086-5096） |
+| 异常安全性 | ✅ 双 try/except pass |
+| INTC 测试 | ✅ 不拦 INTC |
+| 已知风险 | ⚠️ COF 误提取（shadow 可接受，转 live 前需修） |
+
+**验证签字**：代码实现与 DEB 共识一致，record-only 安全，INTC 测试通过。建议翻状态至"已决策"。
+
 ---
 
 ## 决策（共识稿，待用户确认）
