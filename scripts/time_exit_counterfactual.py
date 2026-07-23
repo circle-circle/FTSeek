@@ -8,6 +8,10 @@
 产出: data/shadow/time_exit_counterfactual.jsonl (逐笔 + 当日汇总, append-only, 幂等).
 裁决: 连续测量 ~2 周 (≥10 个交易日) 后, 用累计 delta 裁决 time_exit 参数是否调整.
      首验: 2026-07-21 手测 6 笔合计 delta=-$11 (TIME_EXIT 判对).
+     2026-07-23 第 8 轮判决修复: 原实现误把 counterfactual_pnl 算成增量 (close-exit_price)*qty,
+     delta 再减 realized 时重复计入 entry→exit 段, 虚增 |realized| 致亏损单系统性误判"割早"
+     (与首验手测注记矛盾). 现改回 docstring 语义: counterfactual_pnl=总量 (close-entry_price)*qty,
+     delta=counterfactual-realized=(close-exit_price)*qty. 见 DEB-20260723-da-execution-mismatch-postmortem 第 8 轮.
 """
 import json
 import os
@@ -53,7 +57,7 @@ def main() -> int:
     conn = sqlite3.connect(DB, timeout=30)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""
-        SELECT id, symbol, direction, quantity, exit_price, realized_pnl, exit_time
+        SELECT id, symbol, direction, quantity, entry_price, exit_price, realized_pnl, exit_time
         FROM trade_records
         WHERE source_type LIKE 'PLAYBOOK%' AND trade_date = ? AND exit_reason = 'TIME_EXIT'
     """, (trade_date,)).fetchall()
@@ -69,13 +73,17 @@ def main() -> int:
     try:
         for r in rows:
             sym, xp, qty = r["symbol"], float(r["exit_price"]), float(r["quantity"])
+            entry = float(r["entry_price"])
             direction = r["direction"]
             ret, k, _ = ctx.request_history_kline(sym, start=trade_date, end=trade_date, ktype="K_15M")
             if ret != RET_OK or k.empty:
                 print(f"[time_exit_cf] {sym} K线获取失败, 跳过")
                 continue
             close = float(k.iloc[-1]["close"])
-            cf_pnl = round((close - xp) * qty if direction == "LONG" else (xp - close) * qty, 2)
+            # 持有到收盘的 PnL (总量, entry→close 参考系). 注意必须用 entry 而非 xp:
+            # (close-xp)*qty 只是增量(exit→close), 若把它当 counterfactual 再减 realized
+            # 会重复计入 entry→exit 段, 虚增 |realized|, 对亏损单系统性误判"割早"(第 8 轮修复).
+            cf_pnl = round((close - entry) * qty if direction == "LONG" else (entry - close) * qty, 2)
             realized = round(float(r["realized_pnl"] or 0), 2)
             rec = {
                 "trade_date": trade_date, "trade_id": r["id"], "symbol": sym,
