@@ -3988,6 +3988,32 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         _pb_strategy = _pb_strategy_map.get(_pb_src_type)
         if symbol and _pb_strategy:
             from app.push import get_push_hub, trade_exit as _pb_exit
+            # 2026-07-23: 平仓通知画像显性化 — 路径(MFE/MAE/表态时点/capture)、
+            #   持有时长、60min表态判定(E shadow 同源)、cohort/horizon 分桶。
+            #   全部取自 _meta 已有字段, 组装失败降级为原精简版, 不影响平仓。
+            _px_extra = {}
+            try:
+                _entry_px = float(_tr[2] or 0) if _tr is not None else 0
+                _mfe = float(_meta.get("mfe_pct", 0) or 0)
+                _px_extra = {
+                    "entry_price": _entry_px or None,
+                    "exit_price": float(exit_price or 0) or None,
+                    "held_h": round(float(holding_hours or 0), 1),
+                    "mfe_pct": _mfe if _meta.get("mfe_pct") is not None else None,
+                    "mae_pct": float(_meta.get("mae_pct", 0) or 0),
+                    "time_to_mfe": _meta.get("time_to_mfe"),
+                    "cohort": _meta.get("cohort"),
+                    "horizon": _meta.get("horizon"),
+                    "inv_price": _meta.get("alite_inv_price"),
+                }
+                if _mfe > 0:
+                    _px_extra["capture_pct"] = round(
+                        max(0.0, min(1.0, float(pnl_pct or 0) * 100.0 / _mfe)) * 100, 0)
+                _e60 = _meta.get("e_shadow_60m")
+                if isinstance(_e60, dict):
+                    _px_extra["e60_ok"] = float(_e60.get("mfe_pct", 0) or 0) >= 0.3
+            except Exception:
+                _px_extra = {}
             get_push_hub().push(_pb_exit(
                 symbol=symbol,
                 direction=(_tr[1] if _tr is not None else "LONG") or "LONG",
@@ -3996,6 +4022,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 strategy=_pb_strategy,
                 trace_id=str(trade_id),
                 source_type=_pb_strategy,
+                extra=_px_extra,
             ))
     except Exception as _pb_push_e:
         logger.warning(f"[playbook推送] {symbol} 平仓推送失败 (不影响平仓): {_pb_push_e}")

@@ -1351,6 +1351,8 @@ class PlaybookService:
         # 2026-07-16: playbook 成交逐笔飞书推送 (复用 PushHub trade_entry)。
         #   来源精准标注 — sim→playbook_sim / live→playbook_live。自带 try/except, 绝不影响下单。
         #   2026-07-17: 回填 SL/TP/来源 → 富卡 (钉钉 markdown / 飞书多行)。
+        #   2026-07-23: 画像显性化 — 计划价+偏离、DA/UE 细分来源、tier/streak/horizon/conf
+        #   (DEB-20260723 配套: 通知端把当日埋点可视化, 组装失败降级原版式)。
         try:
             from app.push import get_push_hub, trade_entry as _pb_entry
             _pb_strategy = "playbook_live" if _is_live else "playbook_sim"
@@ -1362,6 +1364,29 @@ class PlaybookService:
                 _pb_tp = [float(take_profit)] if take_profit and float(take_profit) > 0 else None
             except Exception:
                 _pb_tp = None
+            _pb_extra = {}
+            try:
+                _raw = inst.get("raw_instruction_json")
+                _raw = json.loads(_raw) if isinstance(_raw, str) and _raw else (_raw or {})
+                _origin = _raw.get("origin") or {}
+                _src_raw = str(_raw.get("source") or "")
+                _src_detail = {"deep_analysis": "DA", "universe_expansion": "UE"}.get(_src_raw)
+                _planned = _raw.get("planned_entry") or None
+                _pb_extra = {
+                    "planned_entry": float(_planned) if _planned else None,
+                    "horizon": inst.get("horizon"),
+                    "src_detail": _src_detail,
+                    "self_tier": _origin.get("self_tier"),
+                    "emergence_streak": _origin.get("emergence_streak_days"),
+                }
+                _conf = inst.get("confidence")
+                if _conf is not None:
+                    _pb_extra["conf_note"] = f"conf {int(_conf)}"
+                if _planned and float(_planned) > 0 and float(_fill) > 0:
+                    _pb_extra["entry_dev_pct"] = round(
+                        (float(_fill) - float(_planned)) / float(_planned) * 100, 1)
+            except Exception:
+                _pb_extra = {}
             get_push_hub().push(_pb_entry(
                 symbol=symbol,
                 direction=mos_direction,
@@ -1372,6 +1397,7 @@ class PlaybookService:
                 sl=_pb_sl,
                 tp=_pb_tp,
                 source_type=_pb_strategy,
+                extra=_pb_extra,
             ))
         except Exception as _pb_push_e:
             logger.warning(f"[playbook推送] {symbol} 成交推送失败 (不影响下单): {_pb_push_e}")

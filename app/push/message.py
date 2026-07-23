@@ -111,18 +111,49 @@ class PushMessage:
         lines.append(f"📍 标的: {symbol}  |  方向: {dir_cn}")
         if self.category == Category.TRADE_ENTRY:
             lines.append(f"📈 成交价: ${float(p.get('price', 0) or 0):.2f}  数量: {int(p.get('qty', 0) or 0)} 股")
+            # 2026-07-23: 计划价与偏离显性化 (DEB 实证: 偏离度与输赢无关, 但可观测防意外滑点)
+            _pe = p.get("planned_entry")
+            if _pe:
+                _dev = p.get("entry_dev_pct")
+                _dev_s = f" (偏离 {float(_dev):+.1f}%)" if _dev is not None else ""
+                lines.append(f"📐 计划价: ${float(_pe):.2f}{_dev_s}")
         else:
             _pnl = float(p.get("pnl", 0) or 0)
             _psign = "+" if _pnl >= 0 else "-"
             lines.append(f"💰 实现盈亏: {_psign}${abs(_pnl):.2f}  原因: {p.get('exit_reason', '?')}")
+            # 2026-07-23: 平仓路径画像显性化 (MFE/MAE/表态时点/capture — E shadow 同源口径)
+            if p.get("entry_price") and p.get("exit_price"):
+                _held = p.get("held_h")
+                _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
+                lines.append(f"📈 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
+            if p.get("mfe_pct") is not None:
+                _t2m = p.get("time_to_mfe")
+                _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
+                _cap = p.get("capture_pct")
+                _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
+                lines.append(f"📊 路径: MFE {float(p['mfe_pct']):.2f}%{_t2s} / MAE {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
+            _e60 = p.get("e60_ok")
+            if _e60 is not None:
+                lines.append("⏱️ 60min表态: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))
         if src:
-            lines.append(f"📡 来源: {src}")
+            _sd = p.get("src_detail")
+            lines.append(f"📡 来源: {src}" + (f" · {_sd}" if _sd else ""))
         _sl = p.get("sl")
         _tp = p.get("tp")
         if _sl or _tp:
+            _px = float(p.get("price", 0) or 0)
             sl_s = f"${float(_sl):.2f}" if _sl else "N/A"
+            if _sl and _px > 0:
+                sl_s += f" ({(float(_sl) - _px) / _px * 100:+.1f}%)"
             tp_s = " / ".join(f"${float(x):.2f}" for x in (_tp or [])[:3]) or "N/A"
+            if _tp and _px > 0:
+                tp_s += f" ({(float(_tp[0]) - _px) / _px * 100:+.1f}%)"
             lines.append(f"🛡️ 止损: {sl_s}  🎯 止盈: {tp_s}")
+        if p.get("inv_price"):
+            lines.append(f"🧯 论点证伪价: ${float(p['inv_price']):.2f} (A-lite shadow)")
+        _prof = _profile_line(p)
+        if _prof:
+            lines.append(f"🏷️ 画像: {_prof}")
         ss = p.get("signal_strength")
         if ss:
             sc = p.get("signal_confidence")
@@ -159,19 +190,48 @@ class PushMessage:
                  f"**📍 标的**: {symbol}  **📊 方向**: {dir_cn}"]
         if self.category == Category.TRADE_ENTRY:
             lines.append(f"**📈 成交价**: ${float(p.get('price', 0) or 0):.2f}  **📦 数量**: {int(p.get('qty', 0) or 0)} 股")
+            _pe = p.get("planned_entry")
+            if _pe:
+                _dev = p.get("entry_dev_pct")
+                _dev_s = f" (偏离 {float(_dev):+.1f}%)" if _dev is not None else ""
+                lines.append(f"**📐 计划价**: ${float(_pe):.2f}{_dev_s}")
         else:
             _pnl = float(p.get("pnl", 0) or 0)
             _psign = "+" if _pnl >= 0 else "-"
             lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {p.get('exit_reason', '?')}")
+            if p.get("entry_price") and p.get("exit_price"):
+                _held = p.get("held_h")
+                _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
+                lines.append(f"**📈 路径**: 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
+            if p.get("mfe_pct") is not None:
+                _t2m = p.get("time_to_mfe")
+                _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
+                _cap = p.get("capture_pct")
+                _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
+                lines.append(f"**📊 MFE/MAE**: {float(p['mfe_pct']):.2f}%{_t2s} / {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
+            _e60 = p.get("e60_ok")
+            if _e60 is not None:
+                lines.append("**⏱️ 60min表态**: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))
         if src:
-            lines.append(f"**📡 来源**: {src}")
+            _sd = p.get("src_detail")
+            lines.append(f"**📡 来源**: {src}" + (f" · {_sd}" if _sd else ""))
         _sl = p.get("sl")
         _tp = p.get("tp")
         if _sl or _tp:
+            _px = float(p.get("price", 0) or 0)
             sl_s = f"${float(_sl):.2f}" if _sl else "N/A"
+            if _sl and _px > 0:
+                sl_s += f" ({(float(_sl) - _px) / _px * 100:+.1f}%)"
             tp_s = " / ".join(f"${float(x):.2f}" for x in (_tp or [])[:3]) or "N/A"
+            if _tp and _px > 0:
+                tp_s += f" ({(float(_tp[0]) - _px) / _px * 100:+.1f}%)"
             lines.append("")
             lines.append(f"**🛡️ 止损**: {sl_s}  **🎯 止盈**: {tp_s}")
+        if p.get("inv_price"):
+            lines.append(f"**🧯 论点证伪价**: ${float(p['inv_price']):.2f} (A-lite shadow)")
+        _prof = _profile_line(p)
+        if _prof:
+            lines.append(f"**🏷️ 画像**: {_prof}")
         ss = p.get("signal_strength")
         if ss:
             sc = p.get("signal_confidence")
@@ -213,6 +273,27 @@ class PushMessage:
 
 
 # ─── 渲染 helper ───
+def _profile_line(p: Dict[str, Any]) -> str:
+    """画像行: cohort 分组 / horizon / streak 等分桶标签拼接 (有则显示).
+
+    2026-07-23: 把当日已落库的分桶画像显性化到通知 (cohort=A/B 实验组,
+    horizon=持有期档, emergence_streak=UE 浮现连续天数, tier=UE 证据层级)。
+    """
+    parts = []
+    if p.get("cohort"):
+        parts.append(f"cohort {p['cohort']}")
+    if p.get("horizon"):
+        parts.append(f"horizon {p['horizon']}")
+    if p.get("self_tier"):
+        parts.append(str(p["self_tier"]))
+    _stk = p.get("emergence_streak")
+    if _stk and int(_stk) > 1:
+        parts.append(f"续期D{int(_stk)}")
+    if p.get("conf_note"):
+        parts.append(str(p["conf_note"]))
+    return " · ".join(parts)
+
+
 def _strength_bar(strength: int) -> str:
     """0-100 强度 → 10 格进度条."""
     try:
@@ -242,11 +323,14 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
                 signal_strength: Optional[int] = None,
                 signal_confidence: Optional[float] = None,
                 voting: Optional[Dict] = None,
-                source_type: Optional[str] = None) -> PushMessage:
+                source_type: Optional[str] = None,
+                extra: Optional[Dict[str, Any]] = None) -> PushMessage:
     """成交开仓 (NORMAL + 立即推送 — 成交是关键事件, 不聚合).
 
     富字段 (sl/tp/signal_strength/signal_confidence/voting/source_type) 可选,
     提供则渲染富卡 (钉钉 markdown / 飞书多行), 不提供则精简版。
+    extra (2026-07-23): 附加画像字段直并 payload — planned_entry/entry_dev_pct/
+    cohort/horizon/self_tier/emergence_streak/inv_price/src_detail/conf_note。
     """
     # 2026-07-16: LOW→NORMAL, 移除聚合. 根因: 7/15 9笔成交在5min聚合窗口内被聚合,
     # 但 flush 时 send 失败 (可能 PushHub async worker 异常), 且 logger.debug 吞掉错误.
@@ -258,6 +342,10 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
                    ("source_type", source_type)):
         if _v is not None:
             _payload[_k] = _v
+    if extra:
+        for _k, _v in extra.items():
+            if _v is not None:
+                _payload[_k] = _v
     return PushMessage(
         title=f"✅ {symbol} {direction} 成交",
         body=f"qty={qty} price=${price:.2f} strategy={strategy}",
@@ -273,10 +361,13 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                strategy: str = "main", trace_id: Optional[str] = None,
                signal_strength: Optional[int] = None,
                signal_confidence: Optional[float] = None,
-               source_type: Optional[str] = None) -> PushMessage:
+               source_type: Optional[str] = None,
+               extra: Optional[Dict[str, Any]] = None) -> PushMessage:
     """平仓 (NORMAL + 立即推送 — 平仓是关键事件, 不聚合).
 
     富字段可选, 提供则渲染富卡, 不提供则精简版。
+    extra (2026-07-23): 附加画像字段直并 payload — entry_price/exit_price/held_h/
+    mfe_pct/mae_pct/time_to_mfe/capture_pct/e60_ok/cohort/horizon/src_detail。
     """
     # 2026-07-16: 移除聚合. 根因: trade_entry 聚合导致7/15成交无通知.
     # 修复: 所有平仓立即推送, 不走聚合桶. 大额亏损也走 NORMAL (不再降级 LOW).
@@ -288,6 +379,10 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                    ("source_type", source_type)):
         if _v is not None:
             _payload[_k] = _v
+    if extra:
+        for _k, _v in extra.items():
+            if _v is not None:
+                _payload[_k] = _v
     return PushMessage(
         title=f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f}",
         body=f"{direction} reason={exit_reason} strategy={strategy}",
