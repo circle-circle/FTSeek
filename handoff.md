@@ -74,6 +74,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-25 (周末·P5/A2 落地) · SHORT 高门槛 + UE self-critique shadow (用户裁"提质量且不改交易流程可执行")
+**双条件过滤裁决**: P5 ✅ (输出字段加法, SHORT 照常入库执行) / A2 ✅ (shadow 形态, 注入集合零变化) / **A1 ❌ 不动** (改 conf=改执行排序, 继续攒 n≥100) / **A4 ⚠️ 拆分** (字段已被 horizon_hours 覆盖; price-in 复核要挂盘前主循环侵入面大, 列下周)。
+1. **P5-UE** (`llm_universe_scan.py` v2.2 规则8): SHORT 强制 short_check{borrow_feasible/downside_catalyst_expiry_hours/squeeze_risk} + "无具体下跌催化剂不得浮现"; normalize 解析含 provided 标记 (模型没交作业可切片) → inject 落 origin。
+2. **P5-DA** (skill `llm_synth.py`, 备份 .bak_20260725_shortgate): 主分析师 prompt 补 SHORT 三问 (答不全改 SKIP) + 挑战者补 SHORT 加严审查项 (缺问标 missed_risks)。DA 是重灾区 (分歧SHORT 0%命中)。
+3. **A2 self-critique shadow** (`llm_universe_scan.py` cmd_scan): surfaced 后同模型二次调用逐条攻击因果链最弱环, verdict(KEEP/DOWNGRADE/DROP) 只落库不拦截; 回滚 `universe_expansion.self_critique=false`。判分路径: scorecard 新增 critique 切片 → DROP 组若显著更差再裁升级实拦。
+**端到端验证亮点**: critique 真调用中主动引用 P5 规则 DROP 了无催化剂 SHORT 桩 ("违反 SHORT 高门槛强制约束...") — 两新规则互锁。P5 冒烟 3/3 ✓; py_compile ✓。
+**验证路径**: 周一首跑后 scorecard 看 short_check.provided 率/critique 分布; SHORT 浮现量预期下降 (设计意图: 宁缺毋滥)。
+
 ### 2026-07-25 (周末·UE v2.2 修尺子批落地) · PE 优化 P1-P4+E1 全部执行 (用户裁"明确的现在就做, 下周开盘验证")
 **范围**: DEB-da-ue-pe-agent-optimization 修尺子先行五项, 全部 UE 侧 (`llm_universe_scan.py` → **PROMPT_VERSION v2.2**) + scorecard 读侧。零执行行为变更 (新字段纯落库, 排序/门禁不动)。
 1. **P1 可证伪字段**: 非 SKIP 标的强制输出 invalidation/horizon_hours/expected_move_pct → normalize 解析 + inject 落 origin。

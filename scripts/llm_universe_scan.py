@@ -94,11 +94,17 @@ SYSTEM_PROMPT_V2 = (
     "7. 证据清单(强制, 如实勾选不得美化): evidence_checklist 四项布尔 — "
     "catalyst_specific(存在具体催化事件非泛情绪), catalyst_within_24h(催化发生在24h内), "
     "price_volume_confirmed(给定材料中有量价异动印证), crowding_low(非已被充分炒作2日以上的拥挤交易)。\n"
+    # v2.2 (2026-07-25, P5 SHORT 高门槛): LLM 多头叙事先验强, 提高 SHORT 输出成本=天然质量门
+    #   (实证: 本源 SHORT 命中 25%, DA 分歧SHORT 0%)。不禁 SHORT, 只要求想清三件事。
+    "8. SHORT 高门槛(强制): direction=SHORT 的标的必须额外输出 short_check — "
+    "borrow_feasible(bool, 大盘股/流动性好可借券), downside_catalyst_expiry_hours(int, 下跌催化剂时效), "
+    "squeeze_risk(1-5, 逼空风险自评)。无具体下跌催化剂(仅'估值高'/'涨多了')的 SHORT 不得浮现。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
     "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
     "corroborated_by_market(bool), invalidation(str), horizon_hours(int), expected_move_pct(float), "
-    "evidence_checklist({catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low} 均bool)。\n"
+    "evidence_checklist({catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low} 均bool), "
+    "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk})。\n"
     "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
 )
 
@@ -612,6 +618,25 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             _keys = ("catalyst_specific", "catalyst_within_24h", "price_volume_confirmed", "crowding_low")
             item["evidence_checklist"] = {k: bool(_cl.get(k, False)) for k in _keys}
             item["rubric_score"] = sum(1 for k in _keys if _cl.get(k))
+            # v2.2 (P5 SHORT 高门槛): short_check 解析落库 (纯归因, 不拦不改流程)
+            if direction == "SHORT":
+                _sc = it.get("short_check") or {}
+                if not isinstance(_sc, dict):
+                    _sc = {}
+                try:
+                    _sqz = int(_sc.get("squeeze_risk", 0) or 0)
+                except (TypeError, ValueError):
+                    _sqz = 0
+                try:
+                    _dce = int(_sc.get("downside_catalyst_expiry_hours", 0) or 0)
+                except (TypeError, ValueError):
+                    _dce = 0
+                item["short_check"] = {
+                    "borrow_feasible": bool(_sc.get("borrow_feasible", False)),
+                    "downside_catalyst_expiry_hours": _dce,
+                    "squeeze_risk": _sqz,
+                    "provided": bool(_sc),   # 模型是否交作业 (未交=旧习惯残留, 切片可判)
+                }
         out.append(item)
     return out
 
@@ -707,6 +732,40 @@ def cmd_scan(manual_clue: str = "") -> int:
 
     # [shadow] 浮现连续天数标注 (必须在 _append_jsonl 前: 只读历史日, 不含今日)
     _annotate_emergence_streak(surfaced)
+
+    # v2.2 (2026-07-25, A2 self-critique shadow, 用户批"不改流程可执行"): 同模型二次调用
+    #   逐条攻击因果链最弱环, verdict(KEEP/DOWNGRADE/DROP) 只落库不拦截 — 注入集合零变化。
+    #   判分: 攒样本后切 DROP vs KEEP 的 fwd 对比, 显著则再裁是否实拦。
+    #   回滚: universe_expansion.self_critique=false。显式缓存已开 → 二次调用前缀命中成本低。
+    if bool(_cfg("universe_expansion.self_critique", True)) and tradeable:
+        try:
+            _cr_prompt = ("以下是你刚浮现的标的列表(JSON)。现在切换为独立审查官角色: 逐条攻击其因果链最薄弱的一环 "
+                          "(传导断点/已price-in/拥挤/证据不足), 如实输出。严格 JSON: "
+                          "{\"critiques\": [{\"symbol\": str, \"weakest_link\": 一句话, "
+                          "\"verdict\": \"KEEP/DOWNGRADE/DROP\"}]}\n\n"
+                          + json.dumps([{k: s.get(k) for k in ("symbol", "direction", "causal_chain", "thesis", "self_tier")}
+                                        for s in tradeable], ensure_ascii=False))
+            _cr = call_llm(feature="universe_expansion_reasoning", prompt=_cr_prompt,
+                           system=_system, json_mode=True, max_tokens=1500)
+            if _cr and _cr.success:
+                _crp = _cr.response if isinstance(_cr.response, dict) else json.loads(_cr.response)
+                _cmap = {str(c.get("symbol", "")).replace("US.", "").upper(): c
+                         for c in (_crp.get("critiques") or []) if isinstance(c, dict)}
+                _n_drop = 0
+                for s in surfaced:
+                    c = _cmap.get(s["symbol"])
+                    if c:
+                        _v = str(c.get("verdict", "")).upper()
+                        s["critique"] = {
+                            "weakest_link": str(c.get("weakest_link", ""))[:120],
+                            "verdict": _v if _v in ("KEEP", "DOWNGRADE", "DROP") else "KEEP",
+                        }
+                        if _v in ("DOWNGRADE", "DROP"):
+                            _n_drop += 1
+                print(f"  [self-critique shadow] 覆盖 {len(_cmap)}/{len(tradeable)}, "
+                      f"DOWNGRADE/DROP {_n_drop} (只落库不拦截)")
+        except Exception as _cr_e:
+            print(f"  [warn] self-critique 失败 (降级无批注): {_cr_e}")
 
     rec = {
         "type": "scan",
@@ -916,6 +975,9 @@ def cmd_inject(force_dry: bool = False) -> int:
                     "expected_move_pct": s.get("expected_move_pct") or None,
                     "rubric_score": s.get("rubric_score"),
                     "evidence_checklist": s.get("evidence_checklist") or None,
+                    # [v2.2 2026-07-25, P5/A2] SHORT 三问 + self-critique shadow 落库 (纯归因)
+                    "short_check": s.get("short_check") or None,
+                    "critique": s.get("critique") or None,
                 },
             },
         })

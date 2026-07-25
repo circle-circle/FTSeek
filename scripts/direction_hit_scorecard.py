@@ -104,6 +104,10 @@ def main() -> int:
     # 2026-07-25 (P2 rubric 判据 Q2): rubric_score 高低桶 vs 命中 — 与 conf 相关性对比的消费端
     emit("rubric", "UE·rubric≥3", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"rubric_score\": 3%' OR raw_instruction_json LIKE '%\"rubric_score\": 4%')")
     emit("rubric", "UE·rubric≤2", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"rubric_score\": 0%' OR raw_instruction_json LIKE '%\"rubric_score\": 1%' OR raw_instruction_json LIKE '%\"rubric_score\": 2%')")
+    # 2026-07-25 (A2 self-critique shadow 判分): DROP/DOWNGRADE vs KEEP 的 fwd 对比 —
+    #   若 DROP 组显著更差 → 再裁升级实拦 (那才是机制变更)
+    emit("critique", "UE·critique:KEEP", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%\"verdict\": \"KEEP\"%'")
+    emit("critique", "UE·critique:DOWN/DROP", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"verdict\": \"DROP\"%' OR raw_instruction_json LIKE '%\"verdict\": \"DOWNGRADE\"%')")
     # regime 切分 (07-24 起落库补全, 早期多为 NULL)
     emit("regime", "regime:cautious", "LOWER(market_regime) LIKE '%caution%'")
     emit("regime", "regime:risk_on", "LOWER(market_regime) LIKE '%risk_on%'")
