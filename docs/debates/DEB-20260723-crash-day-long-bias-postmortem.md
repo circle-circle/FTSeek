@@ -178,9 +178,9 @@ python3 -c "import sqlite3;c=sqlite3.connect('data/ftseek_us.db');[print(r) for 
 
 ## 验证项
 
-- [ ] 方向4 上线后：新指令 regime/VIX/SPY 不再为 None
+- [x] 方向4 上线后：新指令 regime/VIX/SPY 不再为 None — **首夜达成 (07-24: 18/18 非 NULL，见第 8 轮首夜验证结果)**
 - [ ] MFE=0 shadow 跨日回测：早走的反事实累计 PnL vs 实际，且误杀率（被砍的最终盈利单占比）量化
-- [ ] 若切 live：MFE=0 早走规则上线后，TIME_EXIT 类亏损是否下降且未误伤盈利单
+- [ ] 若切 live：MFE=0 早走规则上线后，TIME_EXIT 类亏损是否下降且未误伤盈利单 — **首夜首样本正向 (07-24: TIME_EXIT 桶 0笔$0 vs 07-23 -$349，MFE≥0.5% 4笔零误伤，见第 8 轮首夜验证结果)；持续至 08-07 裁决点**
 
 ## 讨论记录
 
@@ -696,6 +696,33 @@ for r in c.execute('''SELECT trade_date,SUM(direction='LONG'),SUM(direction='SHO
 - 预期：SHORT 占比从 3.7% 恢复到 20%+
 - 判据：07-28 若仍无 SHORT 信号 → 进一步放松 prompt 或检查 clue brief 数据源
 
+**✅ 验收记录（2026-07-23，Qoder，上线首日即达成，提前 5 天）**：
+
+v2.1 首日盘前 scan 即产出 SHORT 信号并走通端到端全链路，无需等 07-28：
+
+| 链路层 | 证据 | 状态 |
+|---|---|---|
+| ① UE 浮现 | 07-23 05:10 ET scan：`SHORT GOOG` conf=0.82，**HARD_EVENT 层**，evidence_ref="瑞银下调目标价400→379; 盘前跌5%"（`data/shadow/llm_universe_scan.jsonl`） | ✅ |
+| ② inject 闸门 | live config 实测 `entry_enabled=True`、`min_confidence=0.5` → 0.82 过闸 | ✅ |
+| ③ 指令落库 | `playbook_instructions` 07-23 存在 `US.GOOG SELL_SHORT`：entry 341.91 / band [324.81, 352.17] / SL 362.73（严格高于 band high ✓）/ TP 305.33（严格低于 band low ✓），raw provenance 戳 `prompt_version=v2.1`、`source=universe_expansion` | ✅ |
+| ④ 执行轨道 | 盘中按空头几何规则检查入场确认 → "未触发"（价格未跌破确认位）→ 正确放弃（保护机制正常，非故障） | ✅ |
+
+- DA 侧机制复核：`llm_synth.py:85` 分析师 prompt 明示"多空对等…数据支持看空就坚定给SELL_SHORT"；`:695` 挑战者同款。SHORT 消失根因确认在 UE 侧 prompt 纪律（v2.0），非 DA 压制。
+- **残余观察项**：① SHORT 占比持续性（首日 1/8=12.5%，20%+ 目标需 go-forward 数据）；② ~~THESIS_ONLY 通道 SHORT 无真实样本~~ → **已补测关闭**（见下）。
+
+**🧪 THESIS_ONLY 通道 SHORT dry-run 补测（2026-07-23，scan-eval 纯 shadow）**：
+
+注入板块级利空推演 clue（半导体设备库存周期 + 航空燃油/运力，均无硬事件），`scan-eval` 同 brief 跑 V1/V2 对照（落 `prompt_eval.jsonl`，不落主 scan）：
+
+| 标的 | V2 方向 | tier | conf | 自律约束核验 |
+|---|---|---|---|---|
+| NVDA | **SHORT** | THESIS_ONLY | 0.55 | thesis 以"逻辑推演："开头 ✓；evidence_ref 空 ✓；conf≤0.60 ✓ |
+| LUV | **SHORT** | THESIS_ONLY | 0.50 | 同上 ✓ |
+
+- **tier 阶梯分层正确**：HARD_EVENT（INTC 0.85 / TSM 0.82）> MARKET_CORROBORATED（XLE 0.75 / FCX 0.72）> THESIS_ONLY（NVDA 0.55 / LUV 0.50）——三档单调递减，夹逼机制工作正常。
+- **V1 对照组旁证**：V1（无 v2.0 纪律）同 brief 浮现 3 个 SHORT（AMKL/LUV/MKSI）→ 再次印证"SHORT 消失 = v2.0 纪律收紧副作用"的相变归因，非系统硬编码缺陷；v2.1 经 THESIS_ONLY 通道恢复了该能力。
+- **结论**：THESIS_ONLY 通道 SHORT 产出能力 ✅ 验证通过。方向灵活性恢复两项观察全部关闭，仅剩"go-forward SHORT 占比 ≥20%"随日常 scan 自然累积验证。
+
 #### P2：regime 落库（3 行改动，解锁后续分析）
 
 - playbook 生成时写入 `market_regime / vix_at_generation / spy_trend_at_generation`
@@ -767,3 +794,39 @@ for r in c.execute('''SELECT symbol,COUNT(*) n,ROUND(SUM(realized_pnl),2),
 5. **方向单一是近期相变**（07-21 起），非系统硬编码缺陷。v2.1 已修复，待数据验证。
 6. **SL_ATR_STOP（-$2847）是 06-23/24 早期 bug artifact**，不应纳入当前结构分析。排除后 PLAYBOOK 真实出血点只有 TIME_EXIT。
 7. **优化方案的核心约束**：不能为避崩盘而砍赢家（零质量损失硬约束）。MFE≥0.5% 的 23 笔（+$268）必须完整保留到 EOD/TRAIL_LOCK。
+
+---
+
+## 第 8 轮（落地执行：Qoder，2026-07-24）：用户裁决绕过 shadow-first，三门 live 上线，今晚开盘验证
+
+> 用户对纯 shadow 路径不满意（"希望今晚开盘能得到验证"）。独立复核后的差异化判断：对误杀成本已被历史数据全额回答的规则（MFE<0.5% 且持有≥2.5h 共 47 笔仅 3 胜 +$18.7，误杀上限 $6.7），再等 2 周 shadow 是程序正义换真金白银。经用户确认（选项：全部三项上 live），2026-07-24 盘前上线：
+
+| # | 规则 | 实现 | 开关 |
+|---|---|---|---|
+| ① | **MFE_STALL_EXIT**：持仓≥150min 且 峰值浮盈<0.5% 且 当前水下 → 立即离场 | `pipeline.py` 退出链规则 3.4（PRE_CLOSE 之后、TIME_EXIT 之前） | `mfe_stall_exit_enabled` |
+| ② | **连败封禁**：同标的近 7 日连续≥2 笔[亏损且 MFE<0.5%] → 拒新触发（遥测 `streak_ban`） | `_symbol_streak_banned`（触发侧，5min TTL 缓存，亏损单滑出窗口自然解封） | `symbol_streak_ban_enabled` |
+| ③ | **低ATR硬门**：指令 atr_pct<2.5% → 拒触发（遥测 `low_atr_block`） | 触发侧，财报门之后 | `low_atr_gate_enabled` |
+| ④ | **regime/VIX/SPY 落库补全**：DA/UE 直写指令三字段恒 NULL（07-20~23 全缺），盘前由 `run_playbook_normalize_vol_buckets` 统一补写 | 落库白名单 + 盘前补写块 | 无（纯观测） |
+
+**冒烟验证（全过）**：① 五场景（死单触发/曾浮盈走保本/未满150min不触/水上不触/SHORT镜像）；② 真实 DB：CRM/DIS 正确封禁，MRK/EOG/UBER/NVDA 正确放行；存量测试 44 笔全过（`test_playbook_exit_rules.py` 已同步新优先级）；服务 10:38 CST 优雅重启，对账 0 持仓，无新增异常。shadow（mfe_early_exit / entry_timing）继续并行，供后续阈值精调。
+
+**今晚（07-24）开盘验证判据（明早盘后查）**：
+1. `trade_records` 出现 `MFE_STALL_EXIT` 且触发单均为水下低MFE；TIME_EXIT 中不再有 MFE<0.5% 且持有>3h 的单
+2. `trigger_miss_telemetry.jsonl` 有 `streak_ban`/`low_atr_block` 记录（若当日有命中标的）
+3. 当日指令 `market_regime/vix_at_generation` 非 NULL
+4. 当日 TIME_EXIT 桶亏损 < $100（vs 07-23 的 -$349）；MFE≥0.5% 赢家仍由 BREAKEVEN/TRAIL_LOCK/EOD 接住（零质量损失核验）
+
+**回滚**：三开关均在 `unified_config.yaml → playbook.execution_parameters`，任一改 false + 重启即退回。
+
+### 第 8 轮首夜验证结果（Qoder，2026-07-25 盘后，`scripts/first_night_gate_report.py 2026-07-24`）：四判据实质全过，三门保留，无需回滚
+
+**当日盘面**：开仓 8 笔全部平仓，净 PnL **-$30.9**（vs 本周基线 07-21 -$158 / 07-22 -$164 / 07-23 -$379，降幅 ~80-92%；注意当日仅 8 笔 vs 基线 14-19 笔，门拦掉83致样本量同降，单日不能归因）。退出分桶：MFE_STALL_EXIT 4笔 -$73.3 / SL_TRAIL_LOCK 3笔 +$39.1 / SL_BREAKEVEN 1笔 +$3.4；**TIME_EXIT 桶 0 笔 $0**。
+
+1. **判据1 ✅（含一例脚本假阳性，已实锤澄清）**：MFE_STALL_EXIT 4 笔。LMT(-38.7/mfe0.25)/RTX(-24.7/0.17)/TMO(-10.1/0.01) 均入场后精确 150min 触发，水下低MFE，合法。**MRK 被脚本标 ❌(pnl=+0.12)係尺子问题非门问题**：日志实锤 `02:31:23 held=245min peak=0.33%<0.5% cur=-0.03% → 提前离场`，触发瞬间水下三重条件全满足；4 秒后成交价 131.065 比入场价高半个 tick → 落库 +$0.12。脚本用落库 PnL 代替"触发时水下"判定，零附近边界单必然误报。**反证防误杀有效**：MRK 在 150min 时刻(00:56 CST)因当时盈利未触发，直到 245min 水下才触发。TIME_EXIT 漏网 0 笔。尺子修正入周末批：判据改用触发日志 cur 或 pnl 容差 ±半tick；另补 stall 触发现场字段(stall_minutes/mfe_at_trigger)入 metadata_json，免事后翻日志。
+2. **判据2 ✅**：遥测 streak_ban=159（MSFT/PDD/UNH 各~49+次，每轮重评重复计数）、low_atr_block=265（XLY/CSX/JPM/KO/MA）。盘前干跑预演 (`early_acceptance_check.py --phase PRE`) 名单与实际命中 **完全吻合**（KO 双门重叠由低ATR门先拦，行为正确）；被拦 8 标的均零开仓。
+3. **判据3 ✅**：当日 18 条指令 regime 落库 18/18（全 cautious），atr 覆盖 18/18。方向4 基建首夜达成。
+4. **判据4 ✅**：TIME_EXIT 桶 0 笔 $0（目标 >-$100，07-23 为 -$349）—低MFE死单全部被 STALL_EXIT 提前接管。**零质量损失成立**：MFE≥0.5% 的 4 笔（TSM 1.00/GOOG 0.96/NVDA 1.90/BABA）全部由 TRAIL_LOCK/BREAKEVEN 盈利路径接住，无一被停滞退出砍。
+
+**附加 C1 出场滑点（往返成本另一半，埋点首夜）**：n=8/8 全落盘，中位 +0.0bps / 均值 -0.5bps / 最差 +3.5bps；叠加入场中位 +2.7bps，往返 ~3bps 量级 — S1 滑点叙事再度降级。
+
+**处置**：三开关（mfe_stall_exit_enabled / symbol_streak_ban_enabled / low_atr_gate_enabled）全部保留 ON，不回滚。继续按 08-07 裁决点积累 go-forward 样本；周末批修尺子（脚本容差 + stall 触发现场埋点）。

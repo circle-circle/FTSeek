@@ -1,5 +1,7 @@
 # FTSeek-US Agent Notes
 
+> **多模型协作必读**：本文件（运维/架构规矩）→ `handoff.md`（进度状态）→ **`docs/specs/multi-agent-collaboration-charter.md`（协作宪章：角色协议/数据口径七律/落档强制/变更纪律）** → 相关 DEB。验证期（至 2026-08-29）只允许"修尺子/攒样本/做减法"三类动作，新机制排队 9 月。
+
 ## 运维
 
 - 重启服务统一使用：`systemctl restart ftseek-us`

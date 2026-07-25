@@ -1,8 +1,8 @@
 # FTSeek-US · HANDOFF
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
-> **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。
-> **最后更新**: 2026-07-20 · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
+> **最后更新**: 2026-07-25 (时区SSOT全仓统一批) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -35,6 +35,7 @@
 | `python scripts/exit_scorecard.py [--since 2026-07-11] [--days N]` | 退出纪律周度判分 (只读)。落 `data/exit_scorecard_latest.json`+history |
 | `python scripts/okr_status.py` | OKR 总览 (胜率/PnL/IC/因子/void率趋势)。落 `data/okr_latest.json` |
 | `python scripts/trigger_gate_report.py` | 触发门判分 (只读): executed vs missed 的 fwd_return 缺口/方向分层/机会成本。落 `data/trigger_gate_latest.json`+history |
+| `python scripts/direction_hit_scorecard.py [--since D]` | 方向命中率记分牌 (只读, 2026-07-24): 指令台账 fwd_return 按 方向/来源/辩论共识/regime/周 切片 — "LLM看没看清方向"的信心仪表。落 `data/direction_scorecard_latest.json` |
 
 ## 🗺️ 退出旋钮地图 (`config/playbook_horizon.yaml`, DA 恒走 `short_horizon`)
 **A. 赢家被锁太小 (R:R 缺口主因) — `factor_exit_rules.default`**
@@ -53,16 +54,197 @@
 - **为什么降级**: 见变更日志 07-20 修复M — 积累期每改一次实单退出参数就断一次 config_version 窗口, 污染毕业(胜率/PnL)判定。新退出规则一律先走 shadow, 2 周数据选出赢家再一次性切换。
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
-## ➡️ 下一步 (下周五第一个动作)
-**跑 `scripts/exit_scorecard.py --since 2026-07-21`** → 对比本次修复前后:
-- R:R 是否从 1.63 提升 (drawdown 0.4→0.8 释放赢家)
-- 早期紧SL 现为 shadow-only: 查 `data/shadow/exit_param_shadow.jsonl` 的 `early_tight` 反事实 (`counterfactual_saved_pct` 均值>0 且稳定才评估实单化)
-- avg_win 是否从 $27.59 提升 (SL_TRAIL_LOCK 不再 0.4% 就锁)
-- 若 R:R 仍<1.5: 动 B (`sl_floor` low/medium +0.5%)。**别 A/B 同时动。**
+## ➡️ 下一步 (按时间顺序)
+0a. **07-25 04:20 CST (收盘后, 已排定时任务)**: 重启 `ftseek-us.service` 激活凌晨修复批 (5项, 见变更日志首节) + 启动验证三判据: ①[ConfigGov] 热重载/漂移检测启动 + [ConfigAudit] 审计通过 ②无启动期 stages Pipeline 扫描 ③Reconciler 无 playbook 仓 broker_only 补录。
+0. **八月终裁框架已预注册** (`docs/specs/august-verdict-framework-20260831.md`, 2026-07-24 冻结): 08-29 盘后按 G1~G5 判据出 GO(切实盘)/PIVOT(降频高信念或更长持有期或纯事件驱动)/STOP 结论。8月只允许"修尺子、攒样本、做减法"三类动作，禁新机制。前置：P0.2 conf修复(X1赛道前提) + UE tier透传(事件赛道前提, 周末补)。
+1. **07-25 晨**: 看两个定时任务产出 — 00:30 盘中链路验收 + 08:30 首夜报告 (`scripts/first_night_gate_report.py`)。判据异常 → 按 crash-day DEB 第8轮预案一键回滚 (三开关在 `playbook.execution_parameters`)。
+1b. ~~**07-25 04:20 CST** (美股收盘后): 重启 `ftseek-us.service` 激活 topup 盘中窗~~ → 已合并入 0a (盘中窗 07-24 晚重启时已提前激活, 本次重启另携 yaml 盘中窗恢复 1130 + 凌晨修复批)。
+1c. **07-27 周一 10:30-11:30 ET**: 盘中窗首日验证 — 日志 `[playbook·topup] 补量启动 (intraday)` + DB 新行 `raw.timing=intraday` + 定桶/regime 当轮补齐; 效果按 timing 切分 (盘前批 vs 盘中批)。回滚: `intraday_start/end` 设同值。
+2. **07-24 scan 生成后**: 跑挑战者 A/B 第2轮 `./venv/bin/python scripts/challenger_model_ab.py 2026-07-24 15`, 两日合并裁决是否切 glm-5.2 (首轮裁决: 机械判据过/行为判据存疑, 维持 deepseek)。
+3. **周末 (07-25/26)**: 已立项 P-1 名单合一(角色标签单真源, 非简单并集——watchlist 含低波防御股不可入 topup) + P-2 订阅动态化(指令+持仓+基准; 前置=隐性消费者 5 处定性)。方案见 da-chain-audit DEB §七。~~ConfigGov 失联~~/~~预热绕过门~~/~~补录守卫~~/~~解锁反模式 9 处~~/~~MFE shadow 死块~~ → 已于 07-25 凌晨提前修复 (见变更日志首节), 周末不再重复。
+4. **周五盘后**: 老动作不变 — `scripts/exit_scorecard.py --since 2026-07-21` 看 R:R。
+5. **08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。X2 若启动须满足**四前置**（新增第 4 条"SHORT 不隔夜"，依据主文档 §13.1，叙事已由 §14.2 修正）。
 
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-07-25 (周末·提量裁决) · 用户裁: 验证期保持 UE 优先 (ADR-020 维持) + 提升每日交易量快速攒样本
+**用户裁决**: ① ADR-020 "UE 最优先"维持不变 (信息源复盘提出的翻转议题否决 — 验证期以攒样本为重, UE 继续优先成交攒其判分样本) ② 提升每日交易量。
+**漏斗诊断 (动手前实测)**: 执行侧上限全部未触顶 (max_daily_positions=30 昨日用 8 / notional cap 用 32% / 预算用 5%); 真瓶颈在供给侧 (近5日指令 15-21 条/日) + 三门拦截 (验证对象不动)。top_n 已废弃不截断, 非限量器。
+**提量落地 (仅抬配额不降标准, 三门/质量门/退出参数零变更)**:
+1. **topup 配额**: target_min_instructions 25→30, max_add_per_day 12→18 (`unified_config.yaml`, 备份 .bak_20260725_topup_quota)。
+2. **topup 池扩容 16→24 只**: +ARM/MRVL/UBER/RIVN/SNOW/SHOP/DELL/CRWD — 选标口径 = ATR 甜蜜区 3-4% 画像 (07-24 复盘唯一正期望桶) + 避开低波防御股 (2.5-3.0% 次差桶)。仍经 Screener 质量门+三门。
+3. **生效**: 热重载实战首秀 — 10:02 CST HotReloader 自动生效 (凌晨 ConfigGov 修复的直接收益, 零重启), 运行时确认 30/18/24。
+**预期效果**: 盘前批 (08:45-09:30) + 盘中窗 (10:30-11:30, 周一首验) 双窗可补至 ≤18 条/日, 叠加 DA 13-18 + UE 2-5 → 供给上限 ~30-40, 经三门后预期成交 15-25 笔/日 (vs 昨日 8)。样本速度翻倍, 08-07 裁决点前可攒 ~150-250 笔 go-forward。
+**风险提示 (已入帐)**: 提量 = 日亏损绝对值可能同步放大 (昨日 -$31 是 8 笔规模); 若日亏 > $150 (回到旧基线量级) → 配额回滚 25/12 一行恢复。回滚: yaml 两处改回 + 删池扩容段。
+
+### 2026-07-25 (周末·信息源复盘) · UE/DA/topup 源头质量实证切片 — 3 项修尺子落地 (策略/退出逻辑冻结不动)
+**背景**: 用户定调"现有策略逻辑不动, 单独分析信息源头质量"。近14天 134 条指令按源实证切片 (fwd_return 前向台账, 不受退出污染)。
+**源头画像 (实测)**:
+- **DA** (108指令/成交69%): 方向命中 52% 均fwd +0.31% (薄弱正edge, 与北极星诊断一致); 但 **conf 退化为常量** (89/95条<40, gate WARN 罚成 35 后分层能力=0); **debate_outcome 是隐藏分层器**: 分歧BUY 67%命中+0.9% > 弃权 47%+0.39% (反直觉: 有争议的 BUY 更好); **SHORT 系统性烂**: 全部 SHORT 相关 outcome 均负 (分歧SHORT T+1 0%命中 -4.5%, n=6; SELL_SHORT 整体 29% -2.2%, n=17)。
+- **UE** (26指令/成交81%): **方向命中仅 29% 均fwd -0.67% (负edge)**; 高度重复推荐 (ORCL SHORT×5/EOG BUY×4, 无衰减机制); conf 库内恒=50 (07-16 cap 把 LLM 0.85-0.92 分层全抹); tier 写侧 07-22 已落但 v2 时代样本少且初样本全负 (HARD_EVENT n=2 0%命中 — n<30 不下结论, 八月继续攒)。
+- **topup**: 零成交样本 (首跑+0 诚实), 周一盘中窗才有数据; 风险前瞻: 池源=watchlist 含低波防御股 = 昨日复盘 2.5-3.0% 次差桶主力 → 与 P-1 名单合一联动设计 ATR 过滤。
+**修尺子落地 (3 项, 均纯归因数据, 零排序/交易行为变更)**:
+1. **UE cap 前原始 conf 落库** (`llm_universe_scan.py` origin.raw_confidence): 排序仍用 capped=50, 归因恢复分层。
+2. **DA confidence_semantic 落库** (Hermes skill `pipeline.py` raw_instruction 补字段, 备份 .bak_20260725_confsem): bridge cand 块早已双写但落库丢失 → P0.2 conf 校准修复 (X1 赛道前提) 的归因地基补齐。下次 DA 运行自动生效。
+3. **判分工具补读侧** (`direction_hit_scorecard.py` 新增 2 组切片): debate_outcome 4 档 (弃权/分歧BUY/分歧SHORT/一致) + UE self_tier 4 档 — 八月终裁事件赛道判据消费端接通, 周度仪表化。
+**观察入帐 (不动手, 攒样本/待裁)**: ① UE 重复推荐衰减 (同 symbol+direction 连续负 fwd → 冷却; 信息源侧的"连败封禁", 需 DEB) ② DA SHORT 质量门候选 (SHORT 需 HARD_EVENT 级证据, 与 X2 四前置"SHORT不隔夜"呼应; n=17 小样本先观察) ③ debate_outcome 分层若 2 周后仍稳定 → 候选替代 conf 做仲裁变量 (需 DEB)。
+**⚠️ ADR-020 与实证冲突, 需用户重新裁决 (2026-07-25 勘误发现)**: auto_execute 预算排序主键 = `_src_priority` (ADR-020, 07-17 用户指定 **UE 最优先**、DA 次之), conf 仅同源内次键。当时逻辑"新资讯动态标的优先占预算"; 但如今指令层实证 UE 方向命中 29%/均fwd -0.67% (负 edge) vs DA 52%/+0.31% — **最弱源持有最高执行优先级** (07-24: UE 指令转化80% vs DA 31%, UE 占昨日一半仓位含 LMT/RTX 两大亏单)。候选处方: _src_priority 改 DA(2)>UE(1) 或按滚动 fwd 胜率动态定序 — 属 ADR 变更, 待用户确认后一行切换。(勘误过程: 曾试 UE conf cap 50→30 降优先级, 发现对跨源排序无效且污染 conf 分桶已回滚, cap 保持 50。)
+**验证**: py_compile 3 文件 ✓; scorecard 新切片实跑出数 ✓; skill 侧 patch 带备份+锚点断言 ✓。无需重启 (llm_universe_scan/DA skill 均为每日新进程)。
+
+### 2026-07-25 (周末·首夜复盘) · 07-24 交易链路实证复盘 — 防守已到位, 下一刀在赢家捕获率 (只读分析, 零改动)
+**总评**: 三门砍掉大亏尾部 (-$31 vs 基线 -158/-164/-379), 但 R:R 倒挂创新低 (昨日 0.35 / 近14天 0.58, 北极星需 >1.29)。
+**发现 A (最强, 双重确认)**: ATR 甜蜜区 3.0-4.0% — 昨日赢家 (NVDA/TSM/BABA/GOOG, atr 3.5-3.9, mfe≥0.95) vs 输家 (RTX/MRK/LMT/TMO, atr 2.58-3.00, mfe≤0.33) 按 ATR 完美二分; 近14天分桶: <2.5% 35%WR -$6.7/笔 | **2.5-3.0% 52%WR -$8.5/笔 (现在放行的次差桶)** | **3.0-4.0% 71%WR +$3.2/笔 (全仓唯一正期望桶)** | ≥4% 38%WR -$25/笔。
+**发现 B (机制实锤)**: 赢家捕获率 15% — TSM/GOOG/BABA mfe≈1% 全部只落袋 0.14-0.15%; drawdown 0.8 对 mfe≈1% 是"利润归零锁" (公式 (mfe-0.8)/mfe: NVDA 1.9%→54% 实测吻合)。R:R 倒挂的直接现场。
+**发现 C**: STALL 150min 反事实混合 (e_shadow: LMT/RTX 早45min砍各省~$15/$12, TMO/MRK 早砍更差) → 不动, 攒样本 08-07 裁。
+**发现 D**: 8 笔全部 10:25-26 单点批量入场, LMT/TMO 入场即水下 (45min MAE 0.67-1.15%) → 周一 topup 盘中窗 = 入场分散化第一步, 先看它的数据。
+**周末议题 (按数据强度)**: ① ATR 门 2.5→3.0 + ≥4% 上限门 (先 shadow 干跑, n=21/17/13 样本小禁直接切) ② 分层 drawdown lock (mfe<1.2 用 0.4-0.5 / ≥1.5 保持 0.8, exit_param_shadow 变体) ③ STALL 不动 ④ 入场分散化等 topup 数据 ⑤ 方向偏斜 16:2 继续观察。全部遵守验证期纪律: shadow-first, 零 live 参数变更。
+
+**议题①② shadow 已搭建 (用户批准"同意", 当日落地)**:
+- **② 分层 drawdown 变体** (`exit_shadow.py::EXIT_VARIANTS` 新增 2 个): `tiered_dd0.4_tier1.2` (peak<1.2% 用 dd0.4, 否则 0.8) + `tiered_dd0.5_tier1.5`。铁律合规: dd_eff 恒不松于现行 0.8 → 路径可观测。poll 循环内按 peak 切档; finalize 通用循环自动覆盖无需改。冒烟 3/3 (小peak用紧锁先触发/大peak回落 0.8 与 baseline 同步/SHORT 镜像)。周一开盘起随退出快循环自动采集, 落 `data/shadow/exit_param_shadow.jsonl`。
+- **① ATR 门干跑判分** (`scripts/atr_gate_shadow.py` 新建, 只读): 6 变体 (lo2.8/lo3.0/hi4.0/lo3.0_hi4.0/lo3.0_hi5.0 + live 对照), 口径 = 拦"实际已成交"单的 saved=-pnl (均比现行严 → 完全可测)。首夜 go-forward: lo3.0 拦 4 笔 省 +$73.3 仅误杀 MRK(+$0.1)。⚠️ 14 天回看 (lo3.0 省 +$398 但杀赢家 24 笔含 NVDA+102) 混杂旧退出时代, **裁决只用 07-24 起 go-forward 样本**。cron 已加 (每交易日 05:58 CST `--since 2026-07-24` 累计判分, 落 `data/shadow/atr_gate_shadow_latest.json`)。
+- 生效: 09:14 CST 重启 (active/0 Traceback/审计过)。裁决点: 与 08-07 合并, ≥2 周 go-forward 样本后提 DEB。回滚: 变体从 EXIT_VARIANTS 删除 + 删 cron 行 + 删脚本。
+
+### 2026-07-25 (盘后·隐患扫描) · 时区同款"跨模块隐性契约"全仓排查 → 用户裁"顺手修", 6 项全部修复落地
+**背景**: 用户问"时区之外还有没有同类未发现问题"。按 6 类高危反模式扫描: 配置漂移/单位口径/cron季节错位/半日市/静默吞异常/PDT。用户裁决"那就顺手修复掉"。
+**✅ 健康项 (实测, 无需动)**: 配置审计 0 条; mfe/profit 百分比口径无混用; PDT "51/3" 係合规放行 (equity $98k≥$25k 豁免); dual_broker 平仓失败有告警链非静默。
+**修复清单 (6 项, 全部落地)**:
+1. **半日市 13:00 ET 提前收盘支持**: `holiday_calendar.py` 新增 `US_EARLY_CLOSE_DATES` (2026-11-27/2026-12-24/2027-11-26) + `get_us_close_minutes_et()` (780/960); 接入 3 消费点 — `pipeline.py:5092` (sim 退出主循环 minutes_to_close) / `pre_close.py:48` (主线 pre_close 窗口) / `pipeline.py:3223` (量能门 elapsed_fraction 分母), 均 try/except 兜底 960。position_sync 同步频率档未接 (无害仅多同步 3h, 范围控制)。验证: 4 断言 + 模拟 11-27 12:53 ET → mtc=7 命中 PRE_CLOSE 窗口 ✓。
+2. **监控 cron 冬令时盲区**: crontab `error_alert.sh` (*/15) + `combined_monitor.py` (*/10) 凌晨窗口 0-4 → **0-5** (冬令时收盘 05:00 CST 覆盖); 备份 `data/crontab.backup.20260725_*.txt`。
+3. **Task#36 死引用移除** (`main.py`): migrate_trade_records 块删除留墓碑 (schema 早稳定, TradeStore 自建表); 重启后 Task#36 WARNING = 0 ✓。
+4. **定桶落库日志降噪** (`pipeline.py`): 零工作轮 (幂等全跳) INFO→debug, 有工作仍 INFO。
+5. **PDT 日志豁免标注** (`pdt_guard.py`): 计数行追加 "(equity≥$25k 豁免)"/"(PDT 受限)", 消 "51/3" 误读。
+6. **遥测读侧去重展示** (`first_night_gate_report.py` + `early_acceptance_check.py`): 增去重标的数 — 重跑 07-24: "streak_ban=159 (3 标的) low_atr_block=265 (5 标的)" ✓ (写侧遥测语义不动)。
+**验证**: py_compile 7 文件 ✓; 半日市 4 断言+窗口模拟 ✓; test_playbook_exit_rules 1 passed ✓; 两报告重跑全过且无度量回归 ✓; main.py AST ✓。
+**生效**: 08:48 CST 重启 (盘后 0 持仓): active / Task#36 WARNING=0 / 0 Traceback / ConfigGov 全绿 / 模拟盘 ✓。回滚: 各项独立 git revert; cron 用备份还原。
+**分类**: 全部"修尺子/修基建", 零退出参数变更, 零 config_version 断点。半日市改动在 11-27 前无行为差异 (普通日 960 不变)。
+
+### 2026-07-25 (盘后·时区SSOT全仓统一) · 修尺子 — 5 Critical + 4 High 时区不一致系统修复, 零交易行为变更
+**背景**: 07-24 观察⑤ 实锤 `_et_trade_date(now_et())` 双重转换 bug 后, 全仓时区审计发现 5C+4H 共 9 类不一致 (134 文件)。本批为系统性补全, 与 07-24 单点修复互补。
+**分类**: 修尺子 (度量/校准修复)。零退出参数变更, 零 config_version 断点, 零信号分布影响。
+**DEB**: `docs/debates/DEB-20260725-timezone-ssot-consolidation.md` (完整清单+验证+回滚)
+**修复摘要**:
+1. **C1** `trade_recorder.py` trade_date 二次转换 → `get_trade_date()` (ET 上午交易不再标到前一天)
+2. **C2** `symbol_daily_loss_guard.py` 读写契约统一 (48h 宽窗口 + `_et_trade_date` 精确过滤, 消除 CST-cutoff vs ET-aware-ISO 12h 偏移)
+3. **C3** `datetime_utils.py` 合并为 shim (消除两模块 `to_et()` naive 假设冲突: CST vs UTC 差 8-13h)
+4. **C4/C5** 22 处硬编码 `timezone(timedelta(hours=-4))` + 月份 DST 判断 → SSOT `now_et()`/`ET` (冬令时不再差 1h)
+5. **H1** 5 处 `entry_time=datetime.now()` → `now_et()` + scheduler_core `astimezone` 修正
+6. **H2** `intraday_heartbeat.py` 信号漏斗 cutoff / 显示 / 推送统一 ET
+7. **H3/H4** app/ 下 50+ 处 `utcnow()` → `now_utc()`/`now_et()` (**0 残留**, grep 确认)
+8. **H6** pytz `replace(tzinfo=)` → `localize()` (timezone.py + risk 模块, 消除 LMT 偏移)
+9. **额外** `scheduler_core.py` 裸 `import pytz` → SSOT ET (消除 pytz 缺失时启动崩溃)
+**验证**: py_compile 134 文件 ✓; 核心模块 import ✓; `utcnow()`/硬编码偏移/`replace(tzinfo=ET)` 残留 = 0 (grep 确认)。
+**对毕业数据**: 无影响 (不改退出参数/触发逻辑/config_version; 只修"读哪天的交易"的尺子)。
+**生效**: 盘后 0 持仓窗口, 下次重启即生效。回滚: `git revert` 整批或按文件独立 revert。
+**独立审查 (Qoder, 盘后)**: 批次完整合理 — 声明逐项实证复核全过 (残留 grep/C1・C2・C3・H2 diff 实核/运行时双路径语义/shim 消费者全查); **发现并补修 H6 漏网 2 处** (pipeline.py:3980 `replace(tzinfo=_et_tz)` + shadow_tracker.py:506-507 `replace(tzinfo=_ET)` — 别名逃过字面 grep, 运行时实锤 -04:56 LMT/56min 误差, 影响 holding_hours 度量; 同款 localize 处方补修)。to_et 语义变更 (naive UTC→CST) 查无真实调用方, 风险解除。first_night_gate_report 重跑无度量回归。**08:15 CST 已重启含补修 (active/0 Traceback/ConfigGov 全绿)**。详见 DEB §九。
+
+### 2026-07-25 (盘后·首夜验证遗留处置) · 修尺子两项 — stall 埋点 + 判据容差, 零行为变更
+**背景**: C0 首夜验证 MRK 被脚本误报 ❌ (触发时 cur=-0.03% 水下合法, 成交后落库 +$0.12 被落库PnL尺子误判)。两项均"修尺子"类, 不改任何触发/退出行为。
+1. **stall 触发现场埋点** (`pipeline.py`): 规则 3.4 触发时写 `meta["stall_exit"]={stall_minutes, mfe_at_trigger, cur_at_trigger, threshold}`; 主退出落盘处从内存 meta 搬运入 `_meta_out` (必须显式搬 — `_meta_out` 基于开环旧行重建会丢字段)。SL 兜底路径在规则评估前且只产 SL_*, 无需搬; 部分平仓/ghost 路径由每轮 meta 写回 (L5432) 兜底。
+2. **判据尺子修正** (`first_night_gate_report.py`): "水下"判定优先读 `stall_exit.cur_at_trigger` (触发现场); 无埋点存量单回退落库 PnL 容差 ±半tick×qty。重跑 07-24: MRK 转 ✅, **四判据全过 (结论行从"1项异常"转"全部通过")**。
+**验证**: py_compile 2 文件 ✓; `test_playbook_exit_rules.py` 1 passed (存量 44 场景套件零回归); 定制冒烟 3 场景 (触发+埋点/水上无埋点/曾浮盈无埋点) ✓。
+**生效**: 盘后 playbook 0 持仓零风险窗口, 07:49 CST 已重启 (ConfigGov 全绿/模拟盘/0 Traceback), 周一开盘即带埋点。回滚: 两文件各自 git revert, 不影响三门开关。
+
+### 2026-07-25 (凌晨·现场修复批) · 巡检定性项提前修复 — 5 项落地, 04:20 重启生效 (用户授权"能现场修的不等周末"+重启权)
+**范围纪律**: 只修巡检/日志已定性、有明确处方的小改动; 大项 (P-1 名单合一 / P-2 订阅动态化 / P0.2 conf修复 / UE tier透传) 仍留周末。零实单退出参数变更, 零 config_version 断点。
+1. **启动预热绕过静默门 → ✅修** (`signal_pipeline.py::run_signal_scan`): 外部入口 (ImmediateScan/force_scan) 补同款 `strategy.main_scan_enabled` 门, 静默时直接 return。冒烟: mock 双场景 (静默不下钻/开启下钻) ✓。回滚: 删该块。
+2. **Reconciler broker_only 补录缺 playbook 守卫 → ✅修** (`reconciler.py::_add_legacy_position`): 补录路径补 `is_playbook_open_position` 守卫 (与收养路径同款), playbook 仓不再被补录成 unknown+protected stub。冒烟: 双场景 (playbook跳过/非playbook照常) ✓。验收: 下次重启无 "broker_only 补录: <playbook持仓>" 日志。
+3. **解锁 spam 反模式全量收敛 → ✅修**: 剩余 9 处 `ManualOrderService()` 直构全部改 `get_manual_order_service()` 单例 + 删 disconnect (thesis_challenge×3 / plan/pipeline×2 / llm_validator / compute_indicators_full / plan_feedback / premarket_enrichment)。与 07-24 夜 fundamental_provider 同款处方; 至此全仓直构仅剩单例工厂本体。
+4. **ConfigGov 热重载失联 (周末必修项提前) → ✅修**, 双管齐下:
+   - 根因实锤: main.py Layer 1.7 strict 审计在 Layer 2/3 之前, 存量 BLOCKING (`CFG.MIN_CONFIDENCE 0.7 ≠ YAML 0.8`, 全仓仅此一条) raise 被外层"降级运行"吞 → 漂移检测+热重载根本没启动。
+   - (a) 消漂移: `config_defaults.py` MIN_CONFIDENCE 0.70→0.80 同步 YAML SSOT。影响面已查: 运行时真值由 resolver 读 YAML (intraday=strategies.defaults 0.7 / ssot 0.8) **不变**; 变化仅 resolver 异常兜底 + DEGRADED 降档地板 (0.7→0.8, 更保守, 且主线扫描已静默=休眠路径)。
+   - (b) 结构加固: main.py Layer 2/3 启动前置、strict 审计后置 (告警/raise 语义不变) — 未来再有存量 BLOCKING 不再连坐热重载。
+   - 验证: venv 实测 audit BLOCKING 1→0, resolver 各 phase 取值不变 ✓。验收: 重启后日志见 "[ConfigGov] ✅ 热重载已启动" + "[ConfigAudit] ✅ 审计通过"。
+5. **🔪 减法: P0 MFE shadow 死路径移除** (`position_monitor.py` L1084-1142 整块删, 留墓碑注释指向 e_shadow_*): 无脚本消费者 (仅 DEB 文档引用且已同步标注), jsonl 从未产出。
+**验证**: py_compile 11 文件 ✓; 定制冒烟 4 场景 ✓; pytest tests/risk+core+config 92 过/16 败 — git stash 对照基线同样 16 败 (含 test_exit_engine.py 引用已删模块, 均基线遗留) → **零新回归**。
+**生效安排**: 盘中不重启 (守首夜三门+8持仓观察不受污染), **04:20 CST (收盘后) 定时重启 `ftseek-us.service`** 并验启动日志 (ConfigGov 全绿 / 无预热扫描 / reconciler 无 playbook stub)。回滚: 各项独立 git revert, 互不耦合。
+
+**04:20 重启验证结果 (2026-07-25 04:21:46 CST 启动 / ET 16:21:46, 已过 16:00 收盘)**:
+- 服务状态: `systemctl restart ftseek-us` 成功, PID 46905 运行中 ✅
+- 运行模式: 模拟盘 `TRADE_ENV=1 | FUTU_TRADE_ENV=1` ✅
+- 判据① [ConfigGov]: `[ConfigGov] ✅ 漂移检测已启动 (interval=4h)` + `[ConfigGov] ✅ 热重载已启动 (cooldown=60s)` + `[ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测` (0 BLOCKING) ✅
+- 判据② 无启动期主线扫描: 重启后日志无「开始信号扫描」「自适应扫描」「run_signal_scan」等批量 stages Pipeline 痕迹 ✅
+- 判据③ Reconciler 无 playbook 补录: `[M1] 启动对账完成: matched=0 broker_only=0 local_only=0 legacy_tagged=0`, 未见「broker_only 补录」或 playbook 持仓 stub ✅
+- 附加: Futu 连接正常, OpenD 127.0.0.1:11111 连通; 启动后仅 1 次 `SubscriptionManager reconnect_failed_x1` 瞬时告警, 3ms 内重连成功并恢复 `FutuLV3·历史 盘后连接 OpenD 成功`; 无 Traceback, 无 ERROR 循环 ✅
+- 重启后 `early_acceptance_check.py --phase OPEN`: 今日开仓 8 笔/已平 8 笔, 入场滑点 8/8, streak_ban=159 low_atr_block=265, 通过 ✅
+- **结论: 三判据全绿, 无需回滚, 凌晨修复批全部生效。**
+
+### 2026-07-24 (深夜·现场巡检) · 首夜实盘全面体检 — 8 绿 3 黄 1 减法发现
+**✅ 健康项 (实测)**: ①解锁spam修复稳定(0次) ②主线扫描静默生效("开始信号扫描"0次) ③三门live实拦: 连败封禁拒 MSFT/PDD 新触发 + GOOG SHORT 由 SL_TRAIL_LOCK 锁利 +$5.5 ④**C1 往返滑点闭环首夜双样本**: GOOG 入场 2.03bps + 出场 2.19bps (往返 ~4bps 极低, S1 降级再坐实) ⑤今日 18 指令 regime/atr 覆盖 18/18 (方向4首夜达成) ⑥入场滑点 8/8 全录(中位~2.6bps) ⑦E shadow 45/60/90min 检查点 7/7 实采 ⑧Futu 启动抖动后 20s 退出循环稳定。
+**⚠ 异常定性 (周末处置, 今夜均无实害)**:
+1. **启动预热绕过静默门**: `_run_signal_scan_body`(:517) 启动期跑了一轮 stages Pipeline (44 标的, 23:41-42, 后零复发); 三重下单锁在(signal拦截+执行冻结+source白名单) → 预热路径补同款 main_scan_enabled 门。
+2. **Reconciler broker_only 补录缺 playbook 守卫**: 每次重启把 7 个 playbook 仓补录成 unknown+protected stub (收养路径有 is_playbook_open_position 守卫, 补录路径没有) → 补同款守卫。
+3. **TwelveData 429 自熔断 10min** (备源自恢复, 无害, 仅记录)。
+**🔪 减法发现**: 今晨 P0 MFE shadow (position_monitor → mfe_early_exit.jsonl) 是**挂错宿主的死路径**(playbook 仓不进主线 store); 同功能由正确宿主的 e_shadow_45/60/90m (trade_records.metadata) 覆盖且首夜 7/7 实采 → 分析 SQL 改读 e_shadow_*, 死块周末移除。方法教训: **落 shadow 前先查正确宿主是否已有同功能埋点**。
+**待观察 (今夜剩余)**: 首批 MFE_STALL_EXIT 资格约 00:55 CST (TSM/LMT/RTX/TMO/MRK 五候选若仍水下); EOD 处置; 00:30 检查点。
+
+### 2026-07-25 (凌晨) · topup 路径今夜验证尝试 — 机制全绿, 策略诚实 +0, 完整路径待周一
+**背景**: 用户要求今夜走通 topup 成交路径。双窗已过 → 临时延盘中窗至 1345 ET (不降质量标准, 仅加评估时点)。发现: yaml 热重载失效 (ConfigGov 因存量 MIN_CONFIDENCE BLOCKING 审计降级失联 — **存量告警升级为功能损失, 周末必修**) → 00:23 重启生效。
+**结果**: 机制全绿 — 窗口门/D2退避(尝试 1/2 → 15min → 2/2 封顶, live 首验完美)/11 候选评估/无方向不硬凑, 全部按设计。**策略层两次实时价评估 (12:23/12:38 ET) 均 +0** — 池内今日确无"趋势+回调到位"setup, 宁缺毋滥是诚实答案。未验段 (写库→触发→成交→退出→归因) 需真 setup 日 — 周一 10:30-11:30 ET 窗口。盘中窗已恢复 1130 (yaml 已改, 下次重启生效, 周末批次会重启)。
+
+### 2026-07-24 (夜·P0事故修复) · 实盘解锁 spam 止血 — FundamentalProvider 反模式
+**现象**: 盘中无人手动下单, 但 manual_order_service 每 ~3s 一次"连接+实盘解锁", 撞富途限频 (30s/10次) 报 ERROR。
+**根因链**: topup 盘中窗 (22:24 重启提前激活) 每 ~2min 扫 11 只 → Screener → `FundamentalProvider._fetch_futu` **每只标的 new 全新 ManualOrderService + connect()** (绕过单例) → connect() 对实盘无条件 unlock_trade → 解锁 spam。放大器 = 观察② +0 重试风暴。
+**修复** (`app/data/providers/fundamental_provider.py`): 改用 `get_manual_order_service()` 单例 (connected 短路→零额外解锁) + 删 disconnect (单例连接常驻, 不可断 dashboard 共享连接)。23:01 重启, 8 持仓全部重新接管。
+**验证**: 23:02 后 6.5min 内 topup/Screener 22 轮次活动, 解锁次数 **0** (此前同负载每轮 8-11 次); 预期未来每进程生命周期最多 1 次首连解锁。
+**遗留** (周末收敛, 入减法第1批): 同款反模式共 **9 处** `ManualOrderService()` 直接构造 (thesis_challenge×3 / plan/×4 / premarket_enrichment) — 均低频路径但同存解锁副作用, 统一改单例。另: 行情快照类需求长期应脱离交易服务 (只建 quote_ctx 不碰解锁), 归入减法 B 类评估。
+
+### 2026-07-24 (晚) · 指令链回溯 + topup 首跑验证 — 零代码改动, 四条计入观察
+
+**指令链回溯 (全实测)**: 今晚 13 条指令全部来自 Hermes DA skill (v0.61) 直写 DB — 18:05→19:31 CST 分析 ~48 只 → 19:31:31 写 `opportunity_scan_2026-07-24.json` + 同秒批写 `playbook_instructions` (与 `daily_battle_plan_us.json` 无关, 那是 07-23 旧产物)。漏斗: 48 只 → gate 全部 SHORT/SKIP/tier差 BLOCK → 13 只 BUY tier中 WARN 放行。推送口径: 35% = gate WARN 罚 (0.50−0.15, 辩论弃权未罚, 语义置信度在 bridge `confidence_semantic`); 0股/风险$0 = sizing 执行时才算; ❌ = confidence<50 图标非未成交。
+
+**topup 首跑验证 (设计路径自动触发, 非手动)**: 机制全过 — 时间门 (08:31 干跑 None / 08:45:02 首触发)、循环接线 (~2.5min/轮)、缺口计算 (13<25→补≤12)、池去重 (排 NVDA/MU/MSFT)、Screener 13/13 过质量门、无方向不硬凑 (+0 零写入)。+0 根因 (离线逐只复现, ctx 字段健康): 8 只 NEUTRAL 无方向 + 3 只有方向非回调窗 (TSLA/NFLX/QCOM) + 2 只回调质量 q=0.3<0.5 (GOOG/AAPL)。cautious 大盘下池内无"趋势明确+回调到位"标的, 是 technical 策略的诚实答案, 非数据/代码故障。
+
+**计入观察 (验证期不动手, 9 月或用户裁决再议)**:
+1. **过滤审计盲区 (修尺子候选)**: `_build_instructions_from_votes` 的 `vote_result is None` 分支 (pipeline.py:765) 无计数器 → 审计 breakdown 全 0 却 skips=13 无法自解释; `TechnicalFallbackAdapter` None 路径无 info 日志。一行计数+一行日志可补。
+2. **topup +0 重试风暴 (行为变更, 排队)**: 幂等标记仅在 ≥1 条写入时落, +0 → 08:45–09:30 每轮重扫 13 只 (~60s/轮 ≈18 轮近连续)。候选方向: +0 也落标记 / 退避。
+3. **gate RR<1 不 BLOCK (skill 侧)**: BABA 指令 R:R 0.65 仅 WARN 放行 — signal_gate 的 WARN 理由无 RR 拦截; 是否加 RR 下限硬门待裁决。
+4. **双 adapter 弃权口径分叉 (休眠)**: skill 侧 adapter 07-18 已修"弃权不罚", FTSeek 侧 `BridgeVotingAdapter` (pipeline.py:414-428) 仍把 BUY↔SKIP 当分歧罚 0.15 (且 "BUY"≠"LONG" 字符串比较会误罚方向一致); 今晚直写 DB 路径未触发, 若 bridge 兜底路径复活需先对齐。
+
+**topup 盘中窗实施 (知情破例已落地, 未激活)** — 用户裁决 2026-07-24 晚: 盘前批用昨收价评回调窗系统性偏陈旧 (首跑 +0 实证: 8 NEUTRAL/3 非回调窗/2 质量不足), 加盘中实时评估窗。
+- 改动: `pipeline.py` 新增 `_topup_window()` (双窗口: 盘前 845-930 / 盘中 1030-1130 ET, 可配置) + `run_playbook_topup_supplement` 改分窗幂等 (raw.source+raw.timing, 历史无标记行视为 premarket) + 两窗共享 max_add_per_day=12 + 归因 `raw.timing=premarket/intraday`; `scheduler_core.py` TRADING 分支接线 (定桶 catch-up 前, 新行当轮补 vol_bucket/regime); `unified_config.yaml` `playbook.topup` 增 `premarket_end_et_hhmm:930 / intraday_start_et_hhmm:1030 / intraday_end_et_hhmm:1130`。
+- 冒烟: py_compile ✓ + 窗口单测 13 例 ✓ + 桩写库全链 8 场景 ✓ (盘中首跑/分窗幂等/跨窗不阻塞/共享上限/窗外不触发/历史标记兼容), 零生产写入。
+- **激活安排 (守一次一变量)**: 今日 (07-24) 已是退出三门首日 + 盘前 topup 已跑, 盘中窗**不在今日叠加** — 07-25 04:20 CST (美股收盘后) 重启 `ftseek-us.service`, 首个 live 盘中窗 = **周一 07-27 10:30-11:30 ET**。周一验证: 日志 `[playbook·topup] 补量启动 (intraday)` + DB 新行 `raw.timing=intraday` + 定桶/regime 当轮补齐 + 与盘前批效果切分。
+- 回滚: `playbook.topup.enabled: false` (整体) 或把 `intraday_start/end` 设为相同值 (仅关盘中窗); 代码级 git revert 两 .py 文件。
+
+**0成交诊断 (22:20 CST 实测, 用户问"还没有自动成交是否正常")** — 机制全部正常, 成交为零是 OKR 账户熔断按设计拦截:
+- 链路实测: 18 条指令 (13 DA + **5 条 UE** `universe_expansion` 09:10 ET 写入: TSM/LMT/RTX BUY + GOOG/XLY SELL_SHORT — 非 topup 非 catch-up 生成); 8 条价格触发 (triggered=1: TMO/NVDA/BABA/MRK/TSM/LMT/RTX/GOOG); 触发检测/低ATR门 (拦 CSX/JPM/KO/MA/XLY)/连败封禁 (拦 MSFT/PDD/UNH)/量能门/预算门 全部按设计工作。
+- **0 成交根因**: `capital_state` peak=101,263.65 (2026-06-25 创立) vs equity=98,067.69 (全现金无持仓) → 回撤 **3.156% ≥ 3%** → AccountCircuitBreaker 动作=**LIQUIDATE** → `playbook_service.execute_instruction` 入口拒绝 ("[OKR熔断] 暂停 Playbook 执行", 09:37 ET 首轮起 40+ 次)。06-25 上线的 OKR 风控规则在生效, 非故障。昨两日盘中权益高于 98,226 (3%线) 故判 NORMAL; 昨日 EOD 平仓后权益定死 98,068 → 今起全天越线。
+- **⚠ 自锁状态 (需用户裁决, 不擅自动风控)**: 不能开仓 → 权益无法回到 peak → 熔断永不解除。选项: (a) 维持现状 ( playbook 停摆待自然变化) (b) 重置 peak 基准 (等于豁免历史亏损, 08 终裁框架外的破例) (c) 调 3% 阈值。在裁决前 playbook 新开仓持续为 0。
+- 对今日验证影响: 触发侧两门 (连败/低ATR) 拦截日志已验证; MFE_STALL_EXIT (持仓门) 今日无新仓 → 无样本; topup 盘前批 +0 已验证; 盘中窗 07-27 激活计划不变。
+
+5. **观察⑤ — `_et_trade_date(now_et())` 双重转换 bug → ✅ 已修复 (07-24 盘中, 用户授权"明确 bug 可以做修复")**: `_et_trade_date` 契约是"naive CST − 12h → ET 日期", 但读侧传入**已是 ET** 的 `now_et()` → ET 中午前日期=昨天。实锤: 熔断日志"日亏损=-0.39%"精确等于 07-23 已实现亏损 (−$379.21/98,068=−0.3867%)。**单点修复** (`app/utils/timezone.py`): tz-aware 输入走 `astimezone(ET).date()` 分支, naive 输入维持 CST−12h 契约 — 一处改动覆盖全部 13 处 `now_et()` 调用点 (account_circuit_breaker / absolute_circuit_breaker×2 / drawdown_control×2 / playbook risk_circuit_breaker / trade_store×2 / order_executor×2 / feishu_push×3 / weekly_report) + 6 处 aware `position.entry_time` 调用点 (order_executor×5 / position_monitor×2)。安全性论据: 写入侧实测本就用正确标签 (今日 8 笔成交 trade_date='2026-07-24'), 只修读侧无读写分裂; naive 分支零变化。验证: py_compile ✓ + 6 用例 (aware ET/UTC/CST + naive CST 边界) ✓ + 22:49 重启后 venv 生产直测 `_et_trade_date(now_et())='2026-07-24'`、熔断器 `NORMAL 日盈亏=0.00%` (真实当日, 修复前=-0.39%) + 零 Traceback。⚠ 口径注意: 修复后 HALT/REDUCE 档读**真实当日**日亏 — 今起若当日已实现亏损 ≥1%/2% 会按设计触发 (非误报)。回滚: git revert `app/utils/timezone.py` 该 hunk。
+
+**心跳"今日"时区统一 (00:4x 用户问"是否还跨时区, 请统一时区统计") → ✅ 已修**:
+- 对账结论: 00:23 北京 (12:23 ET) 心跳"已平盈亏 +$5.52/1笔"**未跨时区** — 与 trade_records 精确一致 (当时仅 GOOG 11:02 ET +5.52 已平; TSM 12:30/NVDA 12:43 在其后)。
+- 但发现隐患: 心跳 SQL 用 `date('now','-4 hours')` (UTC−4h) 近似 ET — 夏令时碰巧正确, **冬季 EST 晚间 20:00-24:00 会把"今日"错成次日**, 且与系统唯一真源 `_et_trade_date(now_et())` 口径分裂。
+- 修复: `intraday_heartbeat._query_today_trades` 改为 Python 侧 `_et_trade_date(now_et())` 作 SQL 参数 — 与熔断器/写入标签同一口径, EDT/EST 自动。venv 直测: 今日 3 笔 +$39.12 (GOOG+5.52/TSM+5.65/NVDA+27.95), 持仓 5 只 ✓ → 00:53 重启, 下一次心跳起生效。全仓扫描确认 `date('now','-4 hours')` 近似仅此一处。
+- 6. **计入观察⑥ (心跳健康探测回退)**: 00:23 心跳"已运行 0s | thread=n/a broker=n/a" = `_query_service_health` 异常被 `_safe_query` 吞掉回退默认值 (服务实际已运行 1.5h)。探测失败原因待查, 非时区问题。
+
+**熔断解锁执行 (22:20 用户裁决: "需要解锁, 在模拟账号中尽快实现交易收集数据" — 知情破例, 选 peak 重置方案)**:
+- 操作: `capital_state.peak_equity` 101,263.65 → **98,067.69** (17,911 行全量更新防竞态) → 22:24 `systemctl restart ftseek-us` (加载 DB 峰值, 内存单例无他法)。旧 peak 已存档于本节上文。ACB 绝对熔断事前验证=放行 (07-23 EOD MRK/MA 盈利已清连败计数), 单锁无叠加。
+- 结果 (22:26 首个执行周期, 全部 futu_simulate 真实模拟成交+钉钉推送): **8/8 触发指令全部成交** — DA 4 笔: TMO 4股@563.08 / NVDA 13股@207.88 / BABA 21股@112.24 / MRK 24股@131.06; UE 4 笔: TSM@406.59 / LMT@585.32 / RTX@214.24 / GOOG SHORT@320.63。熔断器恢复"账户正常" (回撤 0.00%)。连败封禁 (MSFT/PDD/UNH) 与低ATR门照常拦截, 风控其余维度未动。
+- **副作用 (透明记录)**: 本次重启把 topup 盘中窗提前一天激活 — **首个 live 盘中窗=今日 10:30-11:30 ET (非周一)**。首两轮 22:30/22:32 各 +0 (池 11 只, 无方向/被门拦; 与盘前批同因: cautious 下池内无"趋势+回调"标的)。`raw.timing=intraday` 归因字段就位, 效果可按 timing 切分, 口径不受污染。观察② (+0 重试风暴) 在新窗口复现 (~2min/轮), 符合既有记录。原定 07-25 04:20 重启 cron 已取消 (激活目的达成)。
+- 后续: 持仓 8 笔由 playbook 退出监控+独立快循环托管, MFE_STALL_EXIT 等三门首次有真实持仓可管; 明日盘前按常态。
+
+### 2026-07-24 (复核批) · 第二模型独立复核 — X2 第四前置 + shadow 异常当日结案
+**锚点**: 主文档 `docs/debates/DEB-20260724-monitoring-rigidity-premarket-intelligence.md` §十三 (第 5 轮) + §十四 (第 6 轮作者复核)。用户委托第二模型对当日四文档独立复核: 方法论与证据链通过, C0~C5 无推翻。
+1. **X2 第四前置 — SHORT 不隔夜** (立案保留, **叙事已被第6轮同窗复核修正**): 原叙事"日内有效隔夜衰减"不成立 — 7月 SHORT 全时限无效 (日内39.0%/T+1 44.1%/T+3 37.9%, n=59), 65.2%WR 系 6 月旧时代样本。真命题 = SHORT 入场质量门 (待立案); "不隔夜"作为止损性约束保留且更强。
+2. **shadow "+$903" 异常 — 立案当日结案** (第6轮对账确认): okr by_strategy 的 playbook_shadow +$903/21笔 实查为 2026-06-22~23 旧影子队列, 30d 滑窗滤掉 06-22 两笔 (−$660.95) 后数字逐项吻合; 非现存正期望口袋, 07-24 起自然 age out。
+3. **三件事优先级** (第6轮修正后): ① C2 第二步 **非零风险** (prompt=信号分布源头, v2.0 相变前车之鉴) → 先 scan-eval 离线 A/B, 首夜+模型A/B第2轮收尾后再上 live ② exit_shadow 毕业**基线已失效** (三门改了退出栈) → 窗口从 07-24 新基线重起 ③ 真反向→SKIP 攒 ≥30 样本裁决。
+
+### 2026-07-24 · 退出三门 live + 扩容补量 + 滑点裁决 + 模型A/B — 当日全部逻辑见两份 DEB
+**主文档**: `docs/debates/DEB-20260724-monitoring-rigidity-premarket-intelligence.md` (诊断+共识C0~C5+落地记录+topup+提前验收, §十二有全索引) · `docs/debates/DEB-20260724-challenger-model-ab.md` (模型切换评估)
+1. **三门 live** (crash-day DEB 第8轮, 绕过 shadow-first 经用户裁决): ① MFE_STALL_EXIT (持仓≥150min且峰值浮盈<0.5%且水下→提前离场, 历史 0/37 零例外) ② 同标的低MFE连败封禁 (触发侧) ③ 低ATR硬门 (atr_pct<2.5% 拒触发)。开关: `mfe_stall_exit_enabled`/`symbol_streak_ban_enabled`/`low_atr_gate_enabled`。
+2. **regime/VIX/SPY 落库补全**: DA/UE 直写指令三字段恒 NULL → 盘前 `run_playbook_normalize_vol_buckets` 统一补写。
+3. **滑点裁决**: 入场滑点已有基建+50笔数据, 中位 4.6bps < 5bps 预注册线 → 限价单方案降级不建; 补了**出场侧**滑点埋点 (`exit_slippage_bps`, 往返另一半)。
+4. **论据三分类记分牌**: `scripts/factor_verdict_scorecard.py` → 16 个"方向错用"(信号真方向反, 如 valuation_expensive IC 0.20/α-0.57%) vs 仅 3 个真该剔 — 回灌 prompt 为第二步待裁决。
+5. **扩容补量 topup** (`playbook.topup`, target 25/日): 指令不足时从 16 只流动性池走**与 DA 同链**补足 (质量门+technical确定性方向, 无方向不硬凑); 归因 `raw.source=topup_pool`, **评估必须按 source 切分**。注: 旧 ADR 的 fallback_pool 从未实现, 已由此替代。
+6. **链路提前验收三阶段**: `scripts/early_acceptance_check.py` (PRE/OPEN/MID)。PRE 干跑: 三门将拦 11/21, 被拦组 07-23 实亏 -$311(1胜) vs 放行组 -$68(5胜)。
+7. **挑战者模型 A/B** (deepseek-v4-pro vs glm-5.2, n=15 record-only): 机械判据 glm 全优 (快29%/零空响应) 但人格更保守 (93% SKIP vs deepseek 敢给 4 个反向) — 与 SHORT 恢复目标冲突, 首轮裁决不切。DA/UE 配置**不统一** (DA=skill硬编码, UE=统一路由表), 收敛待办。
+8. **时区双轨坑** (分析时必踩): 遥测 jsonl 的 date=CST, trade_records=ET, 跨表 join 需双日兼容。
+9. **方向信心体系** (回应"对标的/方向没底气"): 新建方向命中率记分牌 (工具表) — 7月全部 51.9%≈掷硬币, 但辩论共识分层单调有效 (分歧45.1% vs 一致58.1%)。细切后发现坑: conf≤40 桶 87% 是"弃权"(近中性不该杀), 真反向仅 n=10 (40%/-0.51%) — 立案 `docs/debates/DEB-20260724-debate-divergence-consumption.md`: 真反向→SKIP shadow + 弃权豁免(并入P0.2) + 辩论产物透传落库; 一刀切"分歧→SKIP"已自我否决。
 
 ### 2026-07-20 (四批) · 退出策略全链路审计修复 — 2P0 + 2P1
 
