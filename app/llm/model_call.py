@@ -44,6 +44,8 @@ class CallResult:
     schema_passed: Optional[bool] = None       # None=未校验 / True/False=结果
     cross_check: Optional[Dict] = None         # critique 结果, 仅 cross_check 场景
     error: Optional[str] = None
+    finish_reason: str = ""                    # 2026-07-25 (failure DEB B①): 截断可观测 (length=被 max_tokens 截)
+    cached_tokens: int = 0                     # 2026-07-25 (缓存探针实锤): 服务端隐式前缀缓存命中量 (deepseek 已证自动生效)
 
     def __bool__(self) -> bool:
         return self.success
@@ -78,6 +80,10 @@ def _resolve_feature_route(feature: str, cfg: Dict) -> Optional[Dict]:
             "primary": raw.get("primary"),
             "fallback": raw.get("fallback"),
             "cache_on_fail": bool(raw.get("cache_on_fail", False)),
+            # 2026-07-25 (thinking DEB E3): 透传路由级 extra_body (per-feature thinking 开关)
+            "extra_body": raw.get("extra_body"),
+            # 2026-07-25 (显式缓存实锤): per-feature 前缀缓存开关 (仅 dashscope 生效)
+            "prompt_cache": bool(raw.get("prompt_cache", False)),
         }
     return None
 
@@ -107,6 +113,7 @@ def _http_call(
     timeout: int,
     json_mode: bool = False,
     extra_body: Optional[Dict] = None,
+    prompt_cache: bool = False,
 ) -> Dict:
     """单次 HTTP 调用. 返回 {text, tokens_in, tokens_out, raw_response} 或 raise"""
     import urllib.request
@@ -114,7 +121,16 @@ def _http_call(
 
     messages = []
     if system:
-        messages.append({"role": "system", "content": system})
+        # 2026-07-25 (用户指正后实锤): DashScope qwen 系支持显式前缀缓存 —
+        #   system 用 content 数组 + cache_control ephemeral 标记, 创建后 5min TTL 内
+        #   同前缀命中 (实测: 创建 3719tok → 第2发 cached=3719, 99.4%)。
+        #   仅 dashscope 启用 (其他 provider 数组格式兼容性未验)。开关: route.prompt_cache。
+        if prompt_cache and "dashscope.aliyuncs.com" in base_url:
+            messages.append({"role": "system", "content": [
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ]})
+        else:
+            messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user})
 
     payload = {
@@ -163,13 +179,22 @@ def _http_call(
         data = json.loads(resp.read().decode("utf-8"))
 
     text = ""
+    _finish = ""
     if "choices" in data and data["choices"]:
         text = data["choices"][0].get("message", {}).get("content", "") or ""
+        # 2026-07-25 (failure DEB B①): finish_reason 透传 — 此前完全不读,
+        #   max_tokens 截断 (length) 与"模型本就坏 JSON"不可区分
+        _finish = str(data["choices"][0].get("finish_reason", "") or "")
         if not text.strip():
             raise ValueError(f"empty_response_from_{model_name}")
     usage = data.get("usage", {}) or {}
+    # 2026-07-25 (缓存探针): cached_tokens 透传 — deepseek 隐式前缀缓存实测自动生效
+    #   (同前缀第2发 cached=3072/3298, 时延-45%), 此前不采=命中率/真实成本不可见
+    _cached = int((usage.get("prompt_tokens_details", {}) or {}).get("cached_tokens", 0) or 0)
     return {
         "text": text,
+        "finish_reason": _finish,
+        "cached_tokens": _cached,
         "tokens_in": int(usage.get("prompt_tokens", 0) or 0),
         "tokens_out": int(usage.get("completion_tokens", 0) or 0),
         "raw": data,
@@ -187,6 +212,7 @@ def _try_single_model(
     timeout_override: Optional[int] = None,
     json_mode: bool = False,
     extra_body: Optional[Dict] = None,
+    prompt_cache: bool = False,
 ) -> CallResult:
     """单一模型调用 + retry 1 次. 不做 schema 校验 / 不做 fallback. 失败返回 success=False."""
     model_cfg = _resolve_model(alias, cfg)
@@ -211,7 +237,7 @@ def _try_single_model(
             r = _http_call(
                 base_url, api_key, model_name, system, user,
                 temperature=temperature, max_tokens=max_tokens, timeout=timeout,
-                json_mode=json_mode, extra_body=extra_body,
+                json_mode=json_mode, extra_body=extra_body, prompt_cache=prompt_cache,
             )
             elapsed_ms = (time.time() - start) * 1000
             cost = (r["tokens_in"] / 1000.0 * cost_in_per_1k +
@@ -220,6 +246,8 @@ def _try_single_model(
                 success=True, response=r["text"], model_used=f"{model_name}",
                 latency_ms=elapsed_ms, cost_usd=cost,
                 tokens_in=r["tokens_in"], tokens_out=r["tokens_out"],
+                finish_reason=r.get("finish_reason", ""),
+                cached_tokens=r.get("cached_tokens", 0),
             )
         except Exception as e:
             last_error = str(e)
@@ -334,6 +362,13 @@ def call_llm(
         logger.warning(f"[ModelCall] feature '{feature}' 未在 yaml.llm.features 配置")
         return CallResult(success=False, error=f"feature_not_routed:{feature}")
 
+    # 2026-07-25 (thinking DEB E3 接线, 用户裁决): yaml 路由级 extra_body — per-feature
+    #   thinking 灰度的基建开关 (如 route.extra_body.enable_thinking: true)。
+    #   调用方显式传入优先 (dict 合并后者覆盖); yaml 无配置时行为不变。回滚: 删 yaml key。
+    _route_eb = route.get("extra_body")
+    if isinstance(_route_eb, dict) and _route_eb:
+        extra_body = {**_route_eb, **(extra_body or {})}
+
     has_schema = (schema_required is not None)
 
     # ── cross_check 路径: 双调 primary + fallback, critique 仲裁 ──
@@ -358,6 +393,7 @@ def call_llm(
             alias, cfg, system, prompt,
             temperature=temperature, max_tokens=max_tokens, timeout_override=timeout,
             json_mode=json_mode, extra_body=extra_body,
+            prompt_cache=bool(route.get("prompt_cache", False)),
         )
         if not res.success:
             # L2-B 修复 (2026-05-19): API 失败也记 audit, 否则失败原因 (timeout/auth/rate_limit) 不可观测
@@ -380,6 +416,40 @@ def call_llm(
                 parsed = None
             schema_passed = parsed is not None
             if not schema_passed:
+                # 2026-07-25 (failure DEB B②, 双信号触发): schema 失败 且 finish_reason=length
+                #   → 同模型降 max_tokens 自救一次 (agent_bridge L1059 自救模式上提标准链).
+                #   仅双信号: 只 parse 失败=模型能力问题降无益; 只 length=输出可能完整可解。
+                #   降幅比例制 ×0.5 下限 1024 (非一刀切)。flag 回滚: llm.retry_downshift_enabled=false。
+                if (res.finish_reason == "length"
+                        and bool(cfg.get("retry_downshift_enabled", True))
+                        and (max_tokens or 0) > 1024):
+                    _ds_tokens = max(1024, int((max_tokens or 2048) * 0.5))
+                    logger.warning(
+                        f"[ModelCall·{feature}·truncat_downshift] alias={alias} 截断+parse失败 "
+                        f"→ 降 max_tokens {max_tokens}→{_ds_tokens} 自救重试"
+                    )
+                    _ds_res = _try_single_model(
+                        alias, cfg, system,
+                        prompt + "\n\n(输出被截断过一次: 请精简内容, 保证 JSON 完整闭合)",
+                        temperature=temperature, max_tokens=_ds_tokens, timeout_override=timeout,
+                        json_mode=json_mode, extra_body=extra_body,
+                        prompt_cache=bool(route.get("prompt_cache", False)),
+                    )
+                    if _ds_res.success:
+                        try:
+                            _ds_parsed = parse_and_validate(
+                                _ds_res.response or "", schema_required, schema_optional,
+                                schema_enums, feature=feature)
+                        except Exception:
+                            _ds_parsed = None
+                        if _ds_parsed is not None:
+                            _ds_res.fallback_used = (idx > 0)
+                            _ds_res.schema_passed = True
+                            _ds_res.response = _ds_parsed
+                            _record_audit(feature, _ds_res, prompt)
+                            if cache_on_fail and _ds_res.success:
+                                _save_cache(feature, _ds_res.response)
+                            return _ds_res
                 # schema 失败 → 视为本模型失败, 走 fallback
                 # L2-B 修复 (2026-05-19): schema 失败时记 audit 保留 raw response.
                 # 5/15 thesis_inferer 5 笔 100% 失败 (response_len=0), 但 raw 没保留 → 无法诊断.
@@ -561,7 +631,11 @@ def _record_audit(feature: str, res: CallResult, prompt_sample: str):
             cost_usd=res.cost_usd,
             latency_ms=int(res.latency_ms),
             success=res.success,
-            error_msg=res.error or "",
+            error_msg=" ".join(filter(None, [
+                res.error or "",
+                f"finish_reason={res.finish_reason}" if res.finish_reason and res.finish_reason != "stop" else "",
+                f"cached_tokens={res.cached_tokens}" if res.cached_tokens else "",
+            ])),
         )
     except Exception as e:
         logger.debug(f"[ModelCall·audit] {e}")

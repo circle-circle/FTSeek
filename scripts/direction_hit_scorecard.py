@@ -97,6 +97,13 @@ def main() -> int:
     emit("ue_tier", "UE·MARKET_CORROB", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%MARKET_CORROBORATED%'")
     emit("ue_tier", "UE·THESIS_ONLY", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%THESIS_ONLY%'")
     emit("ue_tier", "UE·tier未落(旧)", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json NOT LIKE '%self_tier%'")
+    # 2026-07-25 (E1, DEB-da-ue-pe-agent-optimization): prompt_version 自动 A/B 切片 —
+    #   每次 prompt 变更自动可判, 不再靠人工回忆"哪天改的 prompt"。n<30 不下结论。
+    emit("prompt_ver", "UE·v2.1", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%v2.1%'")
+    emit("prompt_ver", "UE·v2.2", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%v2.2%'")
+    # 2026-07-25 (P2 rubric 判据 Q2): rubric_score 高低桶 vs 命中 — 与 conf 相关性对比的消费端
+    emit("rubric", "UE·rubric≥3", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"rubric_score\": 3%' OR raw_instruction_json LIKE '%\"rubric_score\": 4%')")
+    emit("rubric", "UE·rubric≤2", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"rubric_score\": 0%' OR raw_instruction_json LIKE '%\"rubric_score\": 1%' OR raw_instruction_json LIKE '%\"rubric_score\": 2%')")
     # regime 切分 (07-24 起落库补全, 早期多为 NULL)
     emit("regime", "regime:cautious", "LOWER(market_regime) LIKE '%caution%'")
     emit("regime", "regime:risk_on", "LOWER(market_regime) LIKE '%risk_on%'")

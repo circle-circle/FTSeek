@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-07-25 (时区SSOT全仓统一批) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-07-25 (离线退出回放器落地) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -36,6 +36,7 @@
 | `python scripts/okr_status.py` | OKR 总览 (胜率/PnL/IC/因子/void率趋势)。落 `data/okr_latest.json` |
 | `python scripts/trigger_gate_report.py` | 触发门判分 (只读): executed vs missed 的 fwd_return 缺口/方向分层/机会成本。落 `data/trigger_gate_latest.json`+history |
 | `python scripts/direction_hit_scorecard.py [--since D]` | 方向命中率记分牌 (只读, 2026-07-24): 指令台账 fwd_return 按 方向/来源/辩论共识/regime/周 切片 — "LLM看没看清方向"的信心仪表。落 `data/direction_scorecard_latest.json` |
+| `python scripts/exit_replay_backtest.py [--since D] [--refresh-bars]` | 离线退出回放器 (只读, 2026-07-25): PLAYBOOK_SIM 历史交易 × 1min bar 反事实回放 dd/be/tiered/early_tight 网格, 双序区间+Δbaseline 口径。落 `data/exit_replay_latest.json`, bar 缓存 `data/replay_bars/`。详见 `docs/debates/DEB-20260725-exit-replay-backtest.md` |
 
 ## 🗺️ 退出旋钮地图 (`config/playbook_horizon.yaml`, DA 恒走 `short_horizon`)
 **A. 赢家被锁太小 (R:R 缺口主因) — `factor_exit_rules.default`**
@@ -62,12 +63,50 @@
 1c. **07-27 周一 10:30-11:30 ET**: 盘中窗首日验证 — 日志 `[playbook·topup] 补量启动 (intraday)` + DB 新行 `raw.timing=intraday` + 定桶/regime 当轮补齐; 效果按 timing 切分 (盘前批 vs 盘中批)。回滚: `intraday_start/end` 设同值。
 2. **07-24 scan 生成后**: 跑挑战者 A/B 第2轮 `./venv/bin/python scripts/challenger_model_ab.py 2026-07-24 15`, 两日合并裁决是否切 glm-5.2 (首轮裁决: 机械判据过/行为判据存疑, 维持 deepseek)。
 3. **周末 (07-25/26)**: 已立项 P-1 名单合一(角色标签单真源, 非简单并集——watchlist 含低波防御股不可入 topup) + P-2 订阅动态化(指令+持仓+基准; 前置=隐性消费者 5 处定性)。方案见 da-chain-audit DEB §七。~~ConfigGov 失联~~/~~预热绕过门~~/~~补录守卫~~/~~解锁反模式 9 处~~/~~MFE shadow 死块~~ → 已于 07-25 凌晨提前修复 (见变更日志首节), 周末不再重复。
+3b. **待用户裁决 (辩论已完成)**: `docs/debates/DEB-20260725-llm-cache-cross-symbol-pollution.md` — LLM 缓存跨标的污染。**辩论方 (主工程会话) 已逐 Q 实证作答 (§八)**: Q1 无隐蔽消费端 / Q2 死路由成立 (grep 命中全是注释) / Q3 日志零命中→方案B依据成立 / Q4 追加发现 audit 库 57% 是 test 污染。**双方一致推荐方案 B** (附失败提示验证条件)。
+3c. **待用户裁决 (辩论已完成, 有分歧点)**: `docs/debates/DEB-20260725-llm-thinking-mode-tradeoff.md`。**辩论方作答 (§七)**: 事实链全部复核属实 (含 hermes config 0 thinking 键实锤); **分歧点 = B 的时机**: 作者倾向三前置后灰度, 辩论方指出 Q1 判据需 4-6 周样本与 08-29 终裁撞期, 建议 **D 立即做、B 延至终裁后**。待用户在"提前三前置串行" vs "终裁后再议"之间拍板。
+3d. **待用户裁决 (辩论已完成)**: `docs/debates/DEB-20260725-llm-failure-semantics.md`。**辩论方作答 (§五)**: 事实链复核属实; **支持 B 三件套全做** (②重试分流加 flag + 双信号触发 + 比例制降幅修正), 作为 thinking 灰度硬前置且独立价值成立。双方无实质分歧。
+3e. **新起案 (待辩论/裁决)**: `docs/debates/DEB-20260725-da-ue-pe-agent-optimization.md` — DA/UE 链路 PE 工程与 Agent 编排优化 (用户命题)。P1-P5 (PE层: 可证伪字段/rubric化conf/负反馈注入/信息饮食/SHORT高门槛) + A1-A4 (编排层: **分歧奖励反转**=最大错位/UE self-critique/裁判分离存储/时效复核) + E1-E2 (评估闭环)。修尺子五项可先行, A1 等 n≥100 (衍接 08-07), 编排重构终裁后。预注册 Q1-Q4。
 4. **周五盘后**: 老动作不变 — `scripts/exit_scorecard.py --since 2026-07-21` 看 R:R。
 5. **08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。X2 若启动须满足**四前置**（新增第 4 条"SHORT 不隔夜"，依据主文档 §13.1，叙事已由 §14.2 修正）。
 
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-07-25 (周末·UE v2.2 修尺子批落地) · PE 优化 P1-P4+E1 全部执行 (用户裁"明确的现在就做, 下周开盘验证")
+**范围**: DEB-da-ue-pe-agent-optimization 修尺子先行五项, 全部 UE 侧 (`llm_universe_scan.py` → **PROMPT_VERSION v2.2**) + scorecard 读侧。零执行行为变更 (新字段纯落库, 排序/门禁不动)。
+1. **P1 可证伪字段**: 非 SKIP 标的强制输出 invalidation/horizon_hours/expected_move_pct → normalize 解析 + inject 落 origin。
+2. **P2 rubric 化**: evidence_checklist 四项 bool (催化具体/24h内/量价印证/非拥挤) → **rubric_score 代码侧计算** (校准从模型移到代码), 与 conf 并列落库供 Q2 相关性对比。
+3. **P3 负反馈注入**: `_build_feedback_table()` 查本源近7日浮现→fwd 结果小表注入 brief + "连错同标的同方向须新增量证据"规则 — 验证时表内已含 GOOG SHORT 连两日 (-6.9%✗) 实弹。回滚: `universe_expansion.clue_feedback=false`。
+4. **P4 信息饮食**: 每条新闻带时效小时数 (RFC2822 解析修复后 20/20 生效); premarket_movers 注入**放弃** (数据陈旧 06-26, 防腐守卫教训)。
+5. **E1 切片**: scorecard 新增 prompt_ver (v2.1/v2.2) + rubric (≥3/≤2) 两组 — v2.2 效果自动 A/B 可判。
+**端到端验证**: 真 LLM 调用 (v2.2 prompt + 真实 brief) → 浮现 7 标的 **v2.2 字段完整率 7/7** (含合理 invalidation 如 'XLI转跌或LMT放量跌破日内均线'); 冒烟 3 场景 ✓; py_compile ✓。
+**验证路径 (下周)**: 周一 21:10 cron 首跑 v2.2 → 每日 scorecard 看 prompt_ver/rubric 切片 → n≥30 后按预注册 Q1/Q2/Q4 判 (重复推荐占比/rubric vs conf 相关性/命中是否脱离 29% 负 edge)。
+**未动 (按分级)**: P5 SHORT 高门槛/A1 分歧奖励反转/A2 self-critique/A4 时效复核 — 待裁决或等样本; A3 裁判分离存储 (skill 侧) 排下周。
+
+### 2026-07-25 (周末·LLM DEB 裁决落地批) · Cache B + 失败语义三件套 + Thinking D 实测/接线 (用户裁"无争议完成更新")
+**裁决**: 用户定调信号产生/筛选优化属"修尺子"; 无争议三项立即落地。
+1. **Cache 方案 B**: yaml 6 处 `cache_on_fail→false` (跨标的污染消毒, 历史零命中); 附带条件验证 ✓ (dashboard 失败路径有显式 WARNING 非静默)。回滚: 改回 true。
+2. **失败语义 B 三件套** (`model_call.py` + `hermes_worker.py`): ①finish_reason 全链透传+落审计 (截断可观测) ②双信号截断降档自救 (parse失败且length → ×0.5 下限1024, flag `llm.retry_downshift_enabled` 回滚) ③hermes 空 verdict 质量门 (per-role 兜底+缺席标注+absent_roles 透出)。验证: py_compile+真调用回归 ✓。
+3. **Thinking D 实测实锤**: 探针 A/B 对照 — DashScope 不传参时 **reasoning=117tok/2.8s** vs 显式False 0/0.8s → **外部 Hermes DA 链 (48标的) 一直 thinking ON 运行且系统正常** (18:05→19:31, 余量2h)。用户担忧的"全标的耗时"已是现状。
+4. **Thinking 基建接线**: yaml 路由级 `extra_body` 透传+合并 (调用方优先, 无配置行为不变, 回归冒烟 ✓) — per-feature 灰度至此 = yaml 2 行。
+**待用户确认**: thinking 分层方案首灰特征 (建议 dr_debate, 见下次回复方案表)。Q4 观测缺口 (audit 盲区+test 污染 57%) 另立案。
+
+### 2026-07-25 (周末·thinking 首灰 + 缓存探针实锤) · dr_debate 灰度上线 + 隐式缓存观测落地 (用户批)
+1. **dr_debate thinking 首灰上线**: yaml `extra_body.enable_thinking: true` + 调用方 max_tokens 2500→5000 (防 07-06 empty_response 复现)。端到端真调用: 6.7s/输出完整/finish=stop ✓。观察指标: empty 率/时延/截断率 (finish_reason 已落审计)。回滚: 删 yaml 两行 + max_tokens 改回。效果**不设为 08-29 终裁判据** (样本周期 4-6 周不够)。
+2. **缓存机制探针实锤 (用户问 cache_control ephemeral)**: DashScope 兼容模式实测 — ① **deepseek-v4-pro 隐式前缀缓存自动生效** (同前缀第2发 cached=3072/3298, 时延 -45%, 无需任何参数) ② qwen3.7-max 未见命中 (同条件 cached 恒=0) ③ Anthropic 式 `cache_control: ephemeral` 被**静默忽略** (接受不报错不生效) → 无需也无法显式标记, 降本靠"固定前缀 prompt 结构"+deepseek 自动缓存。
+3. **cached_tokens 观测落地** (`model_call.py`): CallResult.cached_tokens + audit error_msg 拼接。生产链端到端: agent_bridge 第2发 cached=1024/1344 (76% 前缀命中) 已入库 ✓ — token 大头 (agent_bridge 4.5k×28次/日) 的真实成本从此可见。
+4. **prompt 结构建议入帐 (不动手)**: 缓存友好 = 固定 system/规则前置 + 变化数据 (价格/时间戳) 后置; 待首周 cached_tokens 数据出来后再定向优化 prompt 拼接顺序 (避免盲改)。
+5. **⚠️ 勘误 (用户指正, 2026-07-25 晚)**: 上述②的"cache_control 被静默忽略"结论**错误** — 我的探针只发了一次 (创建轮必然 cached=0) 就误判。重测 (创建轮→命中轮): **qwen 显式缓存完全有效** — 第1发 cache_creation=3719tok, 第2/3发 cached=3719 (99.4%), TTL 5min (ephemeral_5m)。**已落地**: `model_call.py` 新增 route 级 `prompt_cache` 开关 (仅 dashscope 启用数组格式, 自救重试同步透传); yaml 首批开 deep_target_analysis + universe_expansion_reasoning (qwen 主力+批量连发适配 5min TTL)。生产链端到端: **98% 命中, 时延 3559→762ms (-79%)**, audit 已记。回滚: 删 yaml prompt_cache 行。方法教训: **缓存类探针必须测"创建→命中"全周期, 单发判无效=方法错误**。
+
+### 2026-07-25 (周末·离线退出回放器落地) · 路径1 建成 + 首轮网格结果 (只读工具, 零 live 变更)
+**是什么**: `scripts/exit_replay_backtest.py` — PLAYBOOK_SIM 全历史 (n=145) × Futu 1min bar (深度实测≥2026-01) 离线反事实回放退出参数。直接 import 实盘 `_compute_dynamic_effective_sl`/`_get_factor_exit_config` 杜绝两份数学; pess/opt 双序报区间; 费用/滑点/冷却/TP门禁/MFE_STALL/TIME_EXIT 全链复刻。验证锚点: 回放MFE vs 记录 median差0.077%, 退出价差median 0.136%; 固有乐观偏差+$1.9/笔 (bar影线>轮询采样, 变体排序无偏, 紧dd类收益为保守低估)。详见 `docs/debates/DEB-20260725-exit-replay-backtest.md`。
+**首轮结果 (Δbaseline 口径)**:
+- 全史 (n=141): early_tight 巨量止血 +$1050~1170 但**集中6月崩盘regime** (近期仅+$40~78, 与live shadow互证); dd 0.4/0.5/0.8 处平台区 (差≤$2/笔)。
+- **近期窗口 (n=62≥30) 一致指向"更早保护"**: be_0.3 (+$191~209) ≈ dd_0.4 (+$160~187) > tiered_dd0.4_tier1.2 (+$131~149) — 与07-19放宽处方有张力, 裁决路径=tiered_dd live shadow (07-25起采集) 2周后双源交叉, 一次一变量, 暂不行动。
+- 所有变体期望仍负 → 退出调参是二阶杠杆, 与核心诊断一致。
+**边界**: 三门/入场门不可回放 (路径2); sl_floor网格需ATR重建 (v2候选); 4笔时区修复前损坏时间戳交易已排除。
 
 ### 2026-07-25 (周末·提量裁决) · 用户裁: 验证期保持 UE 优先 (ADR-020 维持) + 提升每日交易量快速攒样本
 **用户裁决**: ① ADR-020 "UE 最优先"维持不变 (信息源复盘提出的翻转议题否决 — 验证期以攒样本为重, UE 继续优先成交攒其判分样本) ② 提升每日交易量。

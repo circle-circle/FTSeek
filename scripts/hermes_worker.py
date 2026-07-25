@@ -272,17 +272,35 @@ class HermesWorker:
             }
 
         analysts = []
+        absent_roles = []
         with ThreadPoolExecutor(max_workers=min(len(roles), 4)) as executor:
             futures = {executor.submit(run_role, r): r for r in roles}
             for future in as_completed(futures):
-                analysts.append(future.result())
+                # 2026-07-25 (failure DEB B③): per-role 兜底 — 单角色异常不再整场全灭
+                try:
+                    _a = future.result()
+                except Exception as _re:
+                    _a = {"role": futures[future].get("name", "?"), "verdict": "", "tokens": 0,
+                          "error": str(_re)[:200]}
+                analysts.append(_a)
 
-        # Phase 2: 法官综合
+        # 2026-07-25 (failure DEB B③): 空 verdict 质量门 — 空意见不入法官 prompt
+        #   (此前静默混入, 法官在残缺输入上综合)。语义=标注缺席继续 (对齐 dual_agent_debate
+        #   hermes_only/claude_only 降级模式); 缺席角色计数入响应供 DA 侧告警。
+        _present = [a for a in analysts if (a.get("verdict") or "").strip()]
+        absent_roles = [a.get("role", "?") for a in analysts if not (a.get("verdict") or "").strip()]
+        if not _present:
+            return {"id": req_id, "status": "error",
+                    "error": f"all_roles_absent ({len(analysts)} roles, 全部空 verdict)"}
+
+        # Phase 2: 法官综合 (仅非空意见; 缺席角色显式标注)
         opinions = "\n\n".join(
-            f"【{a['role']}】: {a['verdict']}" for a in analysts
+            f"【{a['role']}】: {a['verdict']}" for a in _present
         )
+        if absent_roles:
+            opinions += f"\n\n(注: 角色 {', '.join(absent_roles)} 本场缺席/无输出, 未纳入意见)"
         judge_default = (
-            f"以下是 {len(analysts)} 位分析师对同一问题的独立判断:\n\n{opinions}\n\n"
+            f"以下是 {len(_present)} 位分析师对同一问题的独立判断:\n\n{opinions}\n\n"
             "请综合以上各方意见，给出最终判断，说明共识程度和分歧点。"
         )
 
@@ -308,6 +326,8 @@ class HermesWorker:
             ],
             "total_tokens": final.get("total_tokens", 0),
             "completed": final.get("completed", False),
+            # 2026-07-25 (failure DEB B③): 缺席角色透出, 供 DA 侧告警 (阈值首周数据校准)
+            "absent_roles": absent_roles,
         }}
 
     def shutdown(self):

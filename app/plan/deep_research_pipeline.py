@@ -94,7 +94,9 @@ async def _run_stage7_debate(
                     prompt=user_prompt,
                     system=DEBATE_SYSTEM,
                     temperature=0.3,
-                    max_tokens=2500,
+                    # 2026-07-25 thinking 首灰配套: 2500→5000 — dr_debate 开 thinking 后
+                    #   reasoning 与可见输出共享预算, 不上调则复现 07-06 empty_response 故障。
+                    max_tokens=5000,
                     json_mode=True,
                 ),
             ),

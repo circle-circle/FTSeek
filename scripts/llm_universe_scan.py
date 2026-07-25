@@ -52,7 +52,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
-PROMPT_VERSION = "v2.1"  # scan 落库归因戳; v2.1=开放 THESIS_ONLY 通道 (2026-07-23 用户批准)
+PROMPT_VERSION = "v2.2"  # scan 落库归因戳; v2.2=可证伪字段+证据清单+负反馈注入 (2026-07-25 用户批, DEB-20260725-da-ue-pe-agent-optimization P1/P2/P3/P4)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -88,10 +88,17 @@ SYSTEM_PROMPT_V2 = (
     "也不为控量而漏报——质量由 self_tier/evidence_ref 标签与模拟交易结果在下游度量, 而非在浮现端压制。"
     "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY)。\n"
     "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
+    # v2.2 (2026-07-25, P1 可证伪字段 + P2 证据清单): 预测与叙事分离
+    "6. 可证伪性(强制): 每个非 SKIP 标的额外输出 — invalidation(一句话失效条件, ≤40字), "
+    "horizon_hours(论点预期兑现时效, 整数小时, 日内动量 4-8), expected_move_pct(预期方向幅度%, 小数)。\n"
+    "7. 证据清单(强制, 如实勾选不得美化): evidence_checklist 四项布尔 — "
+    "catalyst_specific(存在具体催化事件非泛情绪), catalyst_within_24h(催化发生在24h内), "
+    "price_volume_confirmed(给定材料中有量价异动印证), crowding_low(非已被充分炒作2日以上的拥挤交易)。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
     "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
-    "corroborated_by_market(bool)。\n"
+    "corroborated_by_market(bool), invalidation(str), horizon_hours(int), expected_move_pct(float), "
+    "evidence_checklist({catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low} 均bool)。\n"
     "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
 )
 
@@ -395,6 +402,38 @@ def _latest_insider_report_age() -> Optional[int]:
         return None
 
 
+def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
+    """v2.2 (P3): 本源近 N 日浮现→fwd 结果小表 (供 prompt 负反馈注入)。
+
+    口径: playbook_instructions 中 source=universe_expansion 的方向指令,
+    fwd = fwd_return_intraday 优先 (t1 兜底), 按方向调整 (SHORT 取负)。失败返回 []。
+    """
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{_ROOT / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT date, symbol, direction, fwd_return_intraday, fwd_return_t1, raw_instruction_json "
+            "FROM playbook_instructions WHERE date >= date(?, ?) "
+            "AND direction IN ('BUY','SELL_SHORT') AND raw_instruction_json LIKE '%universe_expansion%' "
+            "ORDER BY date DESC, symbol", (_today(), f"-{days} day")).fetchall()
+        conn.close()
+        out = []
+        for r in rows[:max_rows]:
+            f = r["fwd_return_intraday"] if r["fwd_return_intraday"] is not None else r["fwd_return_t1"]
+            if f is None:
+                res = "待回填"
+            else:
+                adj = float(f) * (1 if r["direction"] == "BUY" else -1) * 100
+                res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗")
+            _dir = "LONG" if r["direction"] == "BUY" else "SHORT"
+            out.append(f"- {r['date']} {r['symbol'].replace('US.', '')} {_dir}: {res}")
+        return out
+    except Exception as e:
+        print(f"  [warn] 负反馈表构建失败 (降级无注入): {e}")
+        return []
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
@@ -456,7 +495,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     if news:
         # [2026-07-22] symbols 字段为 JSON 字符串, 空列表 "[]" 真值恒真曾拼出 "[[]]" 噪声 → 解析后非空才展示
         _n_sym = 0
-        parts.append(f"\n[近{hours}h 新闻头条 (共{len(news)}条, 取前20)]")
+        parts.append(f"\n[近{hours}h 新闻头条 (共{len(news)}条, 取前20; 时效越新传导价值越高)]")
         for n in news[:20]:
             title = (n.get("title") or "").strip()
             syms = n.get("symbols") or ""
@@ -468,12 +507,41 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             syms = [str(s).replace("US.", "") for s in syms if s]
             if syms:
                 _n_sym += 1
+            # v2.2 (2026-07-25, P4 信息饮食): 每条带时效小时数 — LLM 无时钟,
+            #   不标时效则 23h 前旧闻与 1h 前突发同权重 (重复推荐的助燃剂之一)
+            _age_tag = ""
+            try:
+                _pub = str(n.get("published_at") or "")
+                if _pub:
+                    # RSSHub 返 RFC2822 ('Fri, 24 Jul 2026 16:21:16 -0400'); ISO 兜底
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        _pub_dt = parsedate_to_datetime(_pub)
+                    except Exception:
+                        _pub_dt = datetime.fromisoformat(_pub.replace("Z", "+00:00"))
+                    _age_h = (datetime.now(_pub_dt.tzinfo) - _pub_dt).total_seconds() / 3600
+                    if 0 <= _age_h < 200:
+                        _age_tag = f" ({_age_h:.0f}h前)"
+            except Exception:
+                pass
             if title:
-                parts.append(f"- {title}" + (f"  [{', '.join(syms)}]" if syms else ""))
+                parts.append(f"- {title}{_age_tag}" + (f"  [{', '.join(syms)}]" if syms else ""))
         health.append(f"新闻:{len(news)}条(带标的{_n_sym})")
     else:
         parts.append("\n[新闻] 无近期新闻 (依赖市场佐证 + 人工线索推理)")
         health.append("新闻:0⚠️")
+
+    # v2.2 (2026-07-25, P3 负反馈注入): 本源近7日浮现→结果小表 — 模型每天看同样新闻
+    #   自然得同样结论, 它不知道昨天推错了 (ORCL SHORT×5 根因)。比代码硬冷却聪明:
+    #   保留"事件持续发酵"的合理重复, 砍"无新信息惯性重复"。回滚: 配置 clue_feedback=false。
+    if bool(_cfg("universe_expansion.clue_feedback", True)):
+        fb = _build_feedback_table()
+        health.append(f"负反馈:{len(fb)}条")
+        if fb:
+            parts.append("\n[本源近7日浮现回顾 (方向调整后前瞻收益, 负=推错)]")
+            parts.extend(fb)
+            parts.append("规则: 对上表中连续推错(连续负收益)的 同标的+同方向, 除非今日材料中出现"
+                         "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。")
 
     print(f"  [输入源健康] " + " | ".join(health))
     return "\n".join(parts)
@@ -526,6 +594,24 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["raw_confidence"] = round(raw_conf, 3)
             item["clamped"] = clamped
             item["confidence"] = round(conf, 3)
+            # v2.2 (2026-07-25, P1 可证伪字段): 纯落库供判分, 不进任何执行逻辑
+            item["invalidation"] = str(it.get("invalidation", ""))[:120]
+            try:
+                item["horizon_hours"] = int(it.get("horizon_hours", 0) or 0)
+            except (TypeError, ValueError):
+                item["horizon_hours"] = 0
+            try:
+                item["expected_move_pct"] = round(float(it.get("expected_move_pct", 0) or 0), 2)
+            except (TypeError, ValueError):
+                item["expected_move_pct"] = 0.0
+            # v2.2 (P2 rubric化): 校准从模型移到代码 — 模型只枚举证据, 分数代码算。
+            #   rubric_score = 四项 checklist 命中数 (0-4), 与 conf 并列落库供相关性对比 (预注册 Q2)。
+            _cl = it.get("evidence_checklist") or {}
+            if not isinstance(_cl, dict):
+                _cl = {}
+            _keys = ("catalyst_specific", "catalyst_within_24h", "price_volume_confirmed", "crowding_low")
+            item["evidence_checklist"] = {k: bool(_cl.get(k, False)) for k in _keys}
+            item["rubric_score"] = sum(1 for k in _keys if _cl.get(k))
         out.append(item)
     return out
 
@@ -824,6 +910,12 @@ def cmd_inject(force_dry: bool = False) -> int:
                     # [2026-07-25 信息源复盘] cap 前原始 conf 落库 — 否则 07-16 cap=50 把 LLM
                     #   置信分层全抹掉 (库内 UE conf 恒=50, 归因无信息量)。排序仍用 capped。
                     "raw_confidence": _raw_conf,
+                    # [v2.2 2026-07-25, P1/P2] 可证伪字段 + rubric 落库 (纯归因, 不进执行)
+                    "invalidation_ue": s.get("invalidation") or None,
+                    "horizon_hours": s.get("horizon_hours") or None,
+                    "expected_move_pct": s.get("expected_move_pct") or None,
+                    "rubric_score": s.get("rubric_score"),
+                    "evidence_checklist": s.get("evidence_checklist") or None,
                 },
             },
         })

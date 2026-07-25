@@ -518,7 +518,7 @@ llm:
       fallback: qwen-max
       primary: deepseek-pro
     daily_review:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: qwen-max
       primary: deepseek-pro
     debate_arbiter:
@@ -534,13 +534,21 @@ llm:
       fallback: deepseek-pro
       primary: qwen-max
     deep_target_analysis:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: deepseek-pro
       max_tokens: 3000
       primary: qwen-max
+      # 2026-07-25 显式前缀缓存 (用户指正后实锤, TTL 5min): dashboard 批量深析多标的连发
+      #   同固定 SYSTEM_PROMPT = 完美命中场景 (实测 99.4% 前缀命中)。回滚: 删本行。
+      prompt_cache: true
       temperature: 0.4
     dr_debate:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      # 2026-07-25 thinking 首灰 (用户批, L1层单特征): 推理最重+零审计=增量可对照。
+      #   配套 max_tokens 2500→5000 在 deep_research_pipeline.py (防 reasoning 吃光预算)。
+      #   观察: empty_response 率/时延/截断率 (finish_reason 已落审计)。回滚: 删 extra_body 两行。
+      extra_body:
+        enable_thinking: true
       fallback: qwen-max
       max_tokens: 2500
       primary: deepseek-pro
@@ -571,7 +579,7 @@ llm:
       fallback: deepseek-pro
       primary: qwen-max
     playbook_generator:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: deepseek-pro
       max_tokens: 2048
       primary: qwen-max
@@ -581,7 +589,7 @@ llm:
       fallback: qwen-max
       primary: deepseek-pro
     premarket_planner:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: deepseek-pro
       primary: qwen-max
     regime_classifier:
@@ -596,6 +604,8 @@ llm:
     universe_expansion_reasoning:
       fallback: deepseek-pro
       primary: qwen-max
+      # 2026-07-25 显式前缀缓存 (同 deep_target_analysis, 盘前批扫描连发场景)。回滚: 删本行。
+      prompt_cache: true
     voting_deepseek:
       fallback: qwen-max
       primary: kimi-k2
@@ -606,7 +616,7 @@ llm:
       fallback: deepseek-flash
       primary: qwen-max
     web_search_fundamental:
-      cache_on_fail: true
+      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: deepseek-pro
       max_tokens: 1500
       primary: qwen-max
