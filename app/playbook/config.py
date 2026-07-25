@@ -132,6 +132,10 @@ class PlaybookConfig:
                 "early_tight_sl_minutes": self.get("early_tight_sl_minutes", 30),
                 "early_tight_sl_pct": self.get("early_tight_sl_pct", 1.0),
                 "breakeven_fee_cushion_pct": self.get("breakeven_fee_cushion_pct", 0.0),
+                # 2026-07-24 (DEB-20260723/24): MFE停滞退出参数 — 改变已实现 PnL, 纳入版本哈希
+                "mfe_stall_exit_enabled": self.get("mfe_stall_exit_enabled", False),
+                "mfe_stall_exit_minutes": self.get("mfe_stall_exit_minutes", 150),
+                "mfe_stall_exit_mfe_pct": self.get("mfe_stall_exit_mfe_pct", 0.5),
             }
             _blob = json.dumps(_snapshot, sort_keys=True, ensure_ascii=False, default=str)
             self._exit_config_version = "exit-" + hashlib.sha1(_blob.encode("utf-8")).hexdigest()[:12]

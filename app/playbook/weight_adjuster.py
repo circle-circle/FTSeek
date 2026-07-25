@@ -88,7 +88,8 @@ class WeightAdjuster:
             if "weight_adjustments" not in config:
                 config["weight_adjustments"] = []
 
-            now = datetime.utcnow().strftime("%Y-%m-%d")
+            from app.utils.timezone import now_utc
+            now = now_utc().strftime("%Y-%m-%d")
             for adj in adjustments:
                 config["weight_adjustments"].append({
                     "date": now,

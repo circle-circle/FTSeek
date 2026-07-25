@@ -503,8 +503,10 @@ class ShadowTracker:
             if entry_time and exit_time:
                 entry_dt = datetime.fromisoformat(entry_time)
                 exit_dt = datetime.fromisoformat(exit_time)
-                entry_dt = entry_dt.replace(tzinfo=_ET) if entry_dt.tzinfo is None else entry_dt.astimezone(_ET)
-                exit_dt = exit_dt.replace(tzinfo=_ET) if exit_dt.tzinfo is None else exit_dt.astimezone(_ET)
+                # 2026-07-25 (时区SSOT批漏网补修): pytz 时区禁 replace(tzinfo=) — 产生 -04:56 LMT 偏移
+                _attach = (lambda d: _ET.localize(d)) if hasattr(_ET, "localize") else (lambda d: d.replace(tzinfo=_ET))
+                entry_dt = _attach(entry_dt) if entry_dt.tzinfo is None else entry_dt.astimezone(_ET)
+                exit_dt = _attach(exit_dt) if exit_dt.tzinfo is None else exit_dt.astimezone(_ET)
                 return round(abs((exit_dt - entry_dt).total_seconds()) / 3600, 1)
         except (ValueError, TypeError):
             pass

@@ -70,10 +70,11 @@ def record_sltp_shadow(*, inst_id=None, symbol="", direction="", entry=0.0,
     返回落盘的 record dict; 未启用或异常时返回 None。
     """
     try:
+        from app.utils.timezone import now_utc
         if not force and not is_enabled("sltp_verify_shadow"):
             return None
         rec: Dict[str, Any] = {
-            "ts": datetime.utcnow().isoformat(),
+            "ts": now_utc().isoformat(),
             "inst_id": inst_id,
             "symbol": symbol,
             "direction": direction,

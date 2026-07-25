@@ -53,6 +53,15 @@ EXIT_VARIANTS: Dict[str, Dict[str, float]] = {
     # 浮盈≥1.5% 时强制启用回撤锁利 (dd=0.5%), 针对 trailing_enabled=false 因子.
     # be=0.5 保持现行保本触发, dd_threshold=1.5 表示回撤锁利仅在浮盈≥1.5%后激活.
     "profit_override_1.5_dd0.5": {"be": 0.5, "dd": 0.5, "dd_threshold": 1.5},
+    # ── 2026-07-25 (首夜复盘议题②, 用户批准): 分层 drawdown lock ──
+    # 背景: 07-24 赢家捕获率 15% (TSM/GOOG/BABA mfe≈1% 只落袋 0.14-0.15%) —
+    #   固定 dd=0.8 对 mfe≈1% 是"利润归零锁" ((mfe-0.8)/mfe), 对 mfe≥1.5% 才合理
+    #   (NVDA 1.9%→捕获 54% 实测吻合). 0.4 (7/19前) 问题是锁太早赢家做不大 —
+    #   分层 = 两次教训合成: 小 mfe 用紧锁保利润, 大 mfe 保持 0.8 呼吸空间.
+    # 铁律合规: dd_eff ∈ {dd_low, 0.8} 恒不松于现行 0.8 → 触发必在实盘退出前, 路径可观测.
+    # 语义: peak < tier_at 时用 dd_low, 否则用 dd (poll 循环内切换).
+    "tiered_dd0.4_tier1.2": {"be": 0.5, "dd": 0.8, "dd_low": 0.4, "tier_at": 1.2},
+    "tiered_dd0.5_tier1.5": {"be": 0.5, "dd": 0.8, "dd_low": 0.5, "tier_at": 1.5},
 }
 
 # ── 2026-07-18 提案 B: dead_signal_exit 变体 ──
@@ -171,8 +180,13 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
         for name, p in EXIT_VARIANTS.items():
             if name in sh:  # 只记首次触发, 已触发的不覆盖
                 continue
+            # 2026-07-25: 分层 dd 变体 — peak < tier_at 用 dd_low (更紧), 否则用 dd
+            _dd_eff = p["dd"]
+            _tier = float(p.get("tier_at", 0) or 0)
+            if _tier > 0 and float(peak_profit_pct or 0) < _tier:
+                _dd_eff = float(p.get("dd_low", p["dd"]))
             eff = _variant_effective_sl(direction, entry_price, float(initial_sl or 0),
-                                        peak_profit_pct, p["be"], p["dd"],
+                                        peak_profit_pct, p["be"], _dd_eff,
                                         p.get("dd_threshold", 0.0), _fee_cushion)
             if eff <= 0:
                 continue
@@ -284,6 +298,7 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
     2026-07-18: 新增 dead_signal 变体结果 + 60min-MFE 打点写入 JSONL。
     """
     try:
+        from app.utils.timezone import now_utc
         if not is_enabled("exit_param_shadow"):
             return None
         direction = (direction or "LONG").upper()
@@ -363,7 +378,7 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
                 early_tight_out[name] = {"triggered": False, "reason": "not_triggered"}
 
         rec = {
-            "ts": datetime.utcnow().isoformat(),
+            "ts": now_utc().isoformat(),
             "inst_id": inst_id,
             "symbol": symbol,
             "direction": direction,

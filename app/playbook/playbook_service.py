@@ -1370,7 +1370,11 @@ class PlaybookService:
                 _raw = json.loads(_raw) if isinstance(_raw, str) and _raw else (_raw or {})
                 _origin = _raw.get("origin") or {}
                 _src_raw = str(_raw.get("source") or "")
-                _src_detail = {"deep_analysis": "DA", "universe_expansion": "UE"}.get(_src_raw)
+                # D5 (2026-07-24 夜, DEB §十-b): topup 来源徽标含盘前/盘中窗口, 防与 DA/UE 人工混淆
+                if _src_raw == "topup_pool":
+                    _src_detail = "补量·盘中" if (_raw.get("timing") == "intraday") else "补量·盘前"
+                else:
+                    _src_detail = {"deep_analysis": "DA", "universe_expansion": "UE"}.get(_src_raw)
                 _planned = _raw.get("planned_entry") or None
                 _pb_extra = {
                     "planned_entry": float(_planned) if _planned else None,

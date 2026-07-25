@@ -23,14 +23,25 @@ def test_exit_rules():
 
     # TIME_EXIT 已重新启用 (2026-07-07): PLAYBOOK 仓位由 Pipeline 自管 time_exit.
     # 2026-07-16: default time_exit_hours 已升到 6h, 且 time_exit_only_if_loss=True.
-    # 持仓 7h (>6h) 且亏损 (99.5<100) → 触发 TIME_EXIT.
+    # 2026-07-24 (规则3.4): 此场景 (持仓7h, peak浮盈仅-0.5%从未达0.5%, 当前水下)
+    #   现由 MFE_STALL_EXIT 在 150min 处接管, 优先于 TIME_EXIT.
     reason, *_ = _check_playbook_exit_rules(
         direction="LONG", entry_price=100, current_price=99.5,
         initial_sl=90, peak_price=99.5, meta=meta,
         held_minutes=420, minutes_to_close=30, minutes_from_open=20, entry_time_str=""
     )
-    assert reason == "TIME_EXIT", f"TIME_EXIT 应被启用, got {reason}"
-    print(f"✅ TIME_EXIT 已启用: {reason}")
+    assert reason == "MFE_STALL_EXIT", f"低MFE水下死单应由停滞退出接管, got {reason}"
+    print(f"✅ MFE停滞退出接管低MFE死单: {reason}")
+
+    # 停滞退出不碰曾浮盈达标的仓: peak 1%≥0.5% → breakeven ratchet 接管 (SL=entry+0.15%费用垫),
+    #   current=100.2 在保本线上方 → 不触任何退出 (盈利仓继续持有, 零质量损失约束).
+    reason, *_ = _check_playbook_exit_rules(
+        direction="LONG", entry_price=100, current_price=100.2,
+        initial_sl=90, peak_price=101.0, meta=meta,
+        held_minutes=420, minutes_to_close=30, minutes_from_open=20, entry_time_str=""
+    )
+    assert reason == "", f"保本线上方盈利仓不应退出, got {reason}"
+    print(f"✅ 盈利仓不受停滞/时间退出影响")
 
     # breakeven ratchet 已启用 (factor_exit_rules 默认 breakeven_at_pct=0.5):
     # peak_profit=1.5% >= 0.5%, effective_sl 被上提到净保本线之上 (drawdown lock).

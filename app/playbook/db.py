@@ -28,6 +28,7 @@ from datetime import datetime
 
 from app.storage.db_pool import get_db
 from app.utils.symbol_utils import normalize_symbol
+from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class PlaybookDB:
         # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG), 防数据割裂
         inst["symbol"] = normalize_symbol(inst.get("symbol"))
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         conn.execute("""
             INSERT INTO playbook_instructions (
@@ -224,7 +225,7 @@ class PlaybookDB:
     def update_instruction_tracking(self, instruction_id: int, updates: Dict[str, Any]):
         """更新指令的追踪字段 (Layer 3 盘后填充)"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         set_clauses = []
         values = []
@@ -258,7 +259,7 @@ class PlaybookDB:
         cur = conn.execute(
             "UPDATE playbook_instructions SET executed = 1, updated_at = ? "
             "WHERE id = ? AND (executed IS NULL OR executed = 0)",
-            (datetime.utcnow().isoformat(), instruction_id),
+            (now_utc().isoformat(), instruction_id),
         )
         conn.commit()
         return cur.rowcount == 1
@@ -268,7 +269,7 @@ class PlaybookDB:
         conn = self._conn()
         conn.execute(
             "UPDATE playbook_instructions SET executed = 0, updated_at = ? WHERE id = ?",
-            (datetime.utcnow().isoformat(), instruction_id),
+            (now_utc().isoformat(), instruction_id),
         )
         conn.commit()
 
@@ -299,7 +300,7 @@ class PlaybookDB:
     def upsert_factor_stat(self, stat: Dict[str, Any]):
         """写入/更新因子统计"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         conn.execute("""
             INSERT INTO playbook_factor_stats (
@@ -373,7 +374,7 @@ class PlaybookDB:
     def upsert_pattern(self, pattern: Dict[str, Any]):
         """写入/更新 pattern"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         conn.execute("""
             INSERT INTO playbook_patterns (
@@ -442,7 +443,7 @@ class PlaybookDB:
     def save_user_feedback(self, feedback: Dict[str, Any]) -> int:
         """保存用户反馈"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         cursor = conn.execute("""
             INSERT INTO playbook_user_feedback (
@@ -475,7 +476,7 @@ class PlaybookDB:
         """获取最近 N 天的所有用户反馈 (Phase 1: 反馈学习)"""
         conn = self._conn()
         from datetime import datetime, timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
         rows = conn.execute(
             "SELECT * FROM playbook_user_feedback WHERE created_at >= ? ORDER BY created_at DESC",
             (cutoff,)
@@ -517,7 +518,7 @@ class PlaybookDB:
             return False
 
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
         conn.execute(
             "UPDATE playbook_instructions SET outcome=?, updated_at=? WHERE id=?",
             ("void", now, instruction_id),
@@ -541,7 +542,7 @@ class PlaybookDB:
     def save_signal_context(self, ctx: Dict[str, Any]) -> None:
         """UPSERT 信号上下文 (信息层数据)."""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
         conn.execute("""
             INSERT INTO playbook_signal_context (
                 date, symbol,
@@ -611,7 +612,7 @@ class PlaybookDB:
     def save_regime_log(self, regime_data: Dict[str, Any]):
         """保存市场环境日志 (每日一条, UPSERT by date)"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         conn.execute("""
             INSERT INTO playbook_regime_log (
@@ -707,7 +708,7 @@ class PlaybookDB:
     def save_horizon_stat(self, stat: Dict[str, Any]):
         """写入/更新 horizon 统计"""
         conn = self._conn()
-        now = datetime.utcnow().isoformat()
+        now = now_utc().isoformat()
 
         conn.execute("""
             INSERT INTO playbook_horizon_stats (
@@ -796,6 +797,9 @@ _TRACKING_FIELDS = {
     "skip_reason",
     # 2026-07-19 (DEB-round3 #11): ic_tracker open 代理回填标记 (见迁移注释).
     "fwd_proxy",
+    # 2026-07-24 (DEB-20260723 方向4): regime 落库补全 — DA/UE 直写指令三字段恒 NULL,
+    #   盘前由 run_playbook_normalize_vol_buckets 统一补写 (只填 NULL 行, 幂等).
+    "market_regime", "vix_at_generation", "spy_trend_at_generation",
 }
 
 

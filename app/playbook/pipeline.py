@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -543,11 +543,9 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     """加载今日 bridge 文件。不存在 → None (调用方 fallback 到 VotingCoordinator)。"""
     import json as _json
     import os as _os
-    from datetime import datetime, timezone, timedelta
+    from app.utils.timezone import get_trade_date
 
-    _et_offset = timedelta(hours=-4) if 3 <= datetime.now().month <= 11 else timedelta(hours=-5)
-    _et_tz = timezone(_et_offset)
-    _today_str = datetime.now(_et_tz).strftime("%Y-%m-%d")
+    _today_str = get_trade_date()
 
     bridge_path = f"/opt/ftseek/FTSeek-US/data/opportunity_scan_{_today_str}.json"
     if not _os.path.exists(bridge_path):
@@ -1597,6 +1595,164 @@ def run_playbook_morning_push(scheduler=None) -> Optional[bool]:
         return None
 
 
+# D2 (2026-07-24 夜): topup 每窗口尝试计数 {"YYYY-MM-DD:timing": [count, last_ts]} — +0 退避用,
+#   内存级 (重启重置无害), 隶属 run_playbook_topup_supplement。
+_TOPUP_ATTEMPTS: Dict[str, list] = {}
+
+
+def _topup_window(hhmm: int, cfg: Dict[str, Any]) -> Optional[str]:
+    """topup 时间窗判定 → "premarket" / "intraday" / None (窗外)。
+
+    2026-07-24 (用户裁决, 知情破例): 盘中窗 — 盘前批用昨收价评回调窗系统性偏陈旧,
+    盘中窗用实时价重评同一正式链, 捕捉当日跌进窗的标的。两窗共享当日上限, 分窗幂等。
+    """
+    _pm_start = int(cfg.get("not_before_et_hhmm", 845))
+    _pm_end = int(cfg.get("premarket_end_et_hhmm", 930))
+    _id_start = int(cfg.get("intraday_start_et_hhmm", 1030))
+    _id_end = int(cfg.get("intraday_end_et_hhmm", 1130))
+    if _pm_start <= hhmm < _pm_end:
+        return "premarket"
+    if _id_start <= hhmm < _id_end:
+        return "intraday"
+    return None
+
+
+def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
+    """扩容补量 (2026-07-24, 用户裁决: 加快样本收集, 但不降标准、走正式链).
+
+    当日可执行指令数 < 目标下限时, 从配置流动性池按**与 DA 完全相同的正式生成链**补足:
+      PlaybookScreener 质量门 → TechnicalFallbackAdapter 确定性方向 (无方向不硬凑)
+      → _build_instructions_from_votes (负 edge 拦截/价隔检查/确定性 SL-TP) → save_instruction。
+    下游全部质量闸照常适用: 低ATR门/连败封禁/VWAP门/量能门/触发窗/财报门/风控 sizing。
+
+    不降标准的保证:
+      - 方向来自确定性 technical 纯函数 (已有 fallback 设计, 非 LLM 噪声投票);
+      - 独立归因: strategy_id=technical_fallback + raw.source=topup_pool, 报表可切分;
+      - 时间门: 双窗口 — 盘前 (默认 08:45-09:30, DA/UE 供给定型后) +
+        盘中 (默认 10:30-11:30, 实时价评估, 避开开盘噪声且留足 14:00 触发窗);
+      - 幂等: 每交易日每窗一次 (raw.source+raw.timing 标记); 已有指令的标的不重复注入;
+      - 两窗共享 max_add_per_day 当日上限; raw.timing=premarket/intraday 供效果切分;
+      - 回滚: playbook.topup.enabled=false。
+    """
+    try:
+        from app.core.config_container import get_config as _gc_tu
+        _tu_cfg = _gc_tu().get_dotted("playbook.topup", {}) or {}
+    except Exception:
+        _tu_cfg = {}
+    if not bool(_tu_cfg.get("enabled", False)):
+        return None
+
+    try:
+        _now = datetime.now(_now_et())
+        _hhmm = _now.hour * 100 + _now.minute
+        _timing = _topup_window(_hhmm, _tu_cfg)
+        if _timing is None:
+            return None
+
+        # D2 (2026-07-24 夜, DEB §十-b 用户批): +0 退避 — 每窗口最多 N 次尝试、间隔≥M 分钟。
+        #   背景: +0 时不落幂等标记 → 每 ~2min 全池重扫 (解锁风暴放大器 + 无谓配额消耗)。
+        #   内存级计数 (重启重置可接受: 重启后多一次尝试无害)。回滚: max_attempts_per_window 设 999。
+        _att_key = f"{_today_et_str()}:{_timing}"
+        _max_att = int(_tu_cfg.get("max_attempts_per_window", 2))
+        _retry_min = float(_tu_cfg.get("retry_interval_min", 15))
+        _att = _TOPUP_ATTEMPTS.get(_att_key, [0, 0.0])
+        if _att[0] >= _max_att:
+            return None
+        if _att[0] > 0 and (time.time() - _att[1]) < _retry_min * 60:
+            return None
+
+        from app.playbook.db import PlaybookDB
+        from app.playbook.market_regime import MarketRegimeGate
+        from app.playbook.screener import PlaybookScreener
+
+        today = _today_et_str()
+        db = PlaybookDB()
+        db.ensure_tables()
+        existing = db.get_instructions_by_date(today)
+        # 分窗幂等: 本窗已补过则不再补; 无 timing 标记的历史行视为 premarket。
+        # 统计当日已补总数, 供两窗共享 max_add_per_day。
+        _topup_today = 0
+        for _e in existing:
+            _raw = _e.get("raw_instruction_json") or {}
+            if isinstance(_raw, dict) and _raw.get("source") == "topup_pool":
+                _topup_today += 1
+                if (_raw.get("timing") or "premarket") == _timing:
+                    return None
+
+        _target = int(_tu_cfg.get("target_min_instructions", 25))
+        _actionable = [e for e in existing if e.get("direction") in ("BUY", "SELL_SHORT")]
+        if len(_actionable) >= _target:
+            logger.info(f"[playbook·topup] 当日可执行指令 {len(_actionable)} ≥ 目标 {_target}, 无需补量")
+            return {"added": 0, "reason": "target_met"}
+
+        _need = min(
+            _target - len(_actionable),
+            int(_tu_cfg.get("max_add_per_day", 12)) - _topup_today,
+        )
+        _pool = [str(s) for s in (_tu_cfg.get("pool") or [])]
+        _held = {e.get("symbol") for e in existing}
+        _cands = [s for s in _pool if s not in _held]
+        if not _cands or _need <= 0:
+            return {"added": 0, "reason": "no_pool_candidates"}
+
+        logger.info(
+            f"[playbook·topup] 补量启动 ({_timing}): 当日 {len(_actionable)} 条 < 目标 {_target}, "
+            f"从池 {len(_cands)} 只补最多 {_need} 条 (正式链: 质量门+technical方向, 无方向不硬凑; "
+            f"尝试 {_att[0] + 1}/{_max_att})"
+        )
+        # D2: 记录本次尝试 (昂贵段开始前)
+        _TOPUP_ATTEMPTS[_att_key] = [_att[0] + 1, time.time()]
+
+        # 与 run_playbook_generate 同链: Layer0 regime → Layer1 质量筛 → 方向 → 指令构建
+        regime_ctx = MarketRegimeGate().assess()
+        collector = _build_data_collector()
+        screener = PlaybookScreener(collector)
+        positions = _get_positions_as_dicts(scheduler)
+        screen_results = screener.screen(watchlist=_cands, regime=regime_ctx.regime, positions=positions)
+        if not screen_results:
+            logger.info("[playbook·topup] 池内无标的通过质量门槛, 不硬凑")
+            return {"added": 0, "reason": "no_screen_pass"}
+
+        data_router = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
+        instructions = _build_instructions_from_votes(
+            screen_results=screen_results,
+            voting_coordinator=TechnicalFallbackAdapter(),
+            regime_context=regime_ctx,
+            total_equity=_get_total_equity(scheduler),
+            data_router=data_router,
+            today=today,
+        )
+
+        saved = 0
+        for inst in instructions:
+            if saved >= _need:
+                break
+            if getattr(inst, "direction", "SKIP") not in ("BUY", "SELL_SHORT"):
+                continue
+            try:
+                inst_dict = _instruction_to_db_dict(inst, regime_ctx, today)
+                inst_dict["raw_instruction"]["source"] = "topup_pool"  # 归因切分 + 幂等标记
+                inst_dict["raw_instruction"]["timing"] = _timing  # 分窗幂等 + 盘前/盘中效果切分
+                # D1 (2026-07-24 夜, DEB §十-b): 评估快照 — 生成时刻的实时价+时戳落库,
+                #   使"半新鲜(实时价×日线指标)是否伤害质量"可审计 (指标可由 eval_asof+日线确定性重算)。
+                try:
+                    _eq = data_router.get_quote(inst.symbol) if data_router else None
+                    inst_dict["raw_instruction"]["eval_price"] = round(float(
+                        (_eq or {}).get("last", 0) or (_eq or {}).get("price", 0) or 0), 4) or None
+                except Exception:
+                    inst_dict["raw_instruction"]["eval_price"] = None
+                inst_dict["raw_instruction"]["eval_asof"] = _now.isoformat()
+                db.save_instruction(inst_dict)
+                saved += 1
+            except Exception as e:
+                logger.warning(f"[playbook·topup] 指令入库失败 {getattr(inst, 'symbol', '?')}: {e}")
+        logger.info(f"[playbook·topup] ✅ 补量完成 ({_timing}): +{saved} 条 (池评估 {len(screen_results)} 只, 无方向/被门拦下的不计)")
+        return {"added": saved, "pool_screened": len(screen_results), "timing": _timing}
+    except Exception as e:
+        logger.warning(f"[playbook·topup] 补量任务异常 (已隔离): {e}")
+        return None
+
+
 def run_playbook_normalize_vol_buckets(scheduler=None) -> Optional[Dict[str, Any]]:
     """盘前波动率定桶落库 (2026-07-17): 为当日指令补 vol_bucket + atr_pct 到主表。
 
@@ -1650,9 +1806,40 @@ def run_playbook_normalize_vol_buckets(scheduler=None) -> Optional[Dict[str, Any
                 logger.debug(f"[playbook] {symbol} 定桶跳过 (已隔离): {_e}")
                 continue
 
-        logger.info(
+        # 2026-07-25 (隐患扫描小项②): 零工作轮 (全部已幂等跳过) 降为 debug —
+        #   TRADING catch-up 每分钟重跑, 原 INFO 刷屏淩没真信号
+        _bucket_log = logger.info if (_tagged or _missing) else logger.debug
+        _bucket_log(
             f"[playbook] 盘前定桶落库 ({today}): 已标注 {_tagged} 条, ATR 缺失 {_missing} 条"
         )
+
+        # 2026-07-24 (DEB-20260723 方向4): regime/VIX/SPY 落库补全 — DA/UE 直写指令绕过
+        #   _instruction_to_db_dict, 三字段恒 NULL (07-20~23 全部缺失), 归因地基断裂.
+        #   本块盘前统一补写: 每轮 assess 一次, 只填 NULL 行 (幂等, 不覆盖已有值).
+        try:
+            _regime_missing = [i for i in instructions if not i.get("market_regime")]
+            if _regime_missing:
+                from app.playbook.market_regime import MarketRegimeGate as _MRG_bf
+                _rc = _MRG_bf().assess()
+                _spy_trend = "above_ma20" if _rc.spy_ma20 >= _rc.spy_ma50 else "below_ma20"
+                _rg_tagged = 0
+                for _ri in _regime_missing:
+                    try:
+                        db.update_instruction_tracking(_ri["id"], {
+                            "market_regime": _rc.regime.value,
+                            "vix_at_generation": _rc.vix,
+                            "spy_trend_at_generation": _spy_trend,
+                        })
+                        _rg_tagged += 1
+                    except Exception:
+                        continue
+                logger.info(
+                    f"[playbook] regime落库补全 ({today}): {_rg_tagged}/{len(_regime_missing)} 条 "
+                    f"regime={_rc.regime.value} vix={_rc.vix}"
+                )
+        except Exception as _rg_e:
+            logger.warning(f"[playbook] regime落库补全失败 (已隔离): {_rg_e}")
+
         return {"tagged": _tagged, "missing": _missing}
     except Exception as e:
         logger.warning(f"[playbook] 盘前定桶任务异常 (已隔离): {e}")
@@ -2171,6 +2358,7 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
         scheduler._playbook_weekly_done = week_end
         # DB 幂等标记: 重启后仍可跳过
         try:
+            from app.utils.timezone import now_utc
             db.save_regime_log({
                 "date": week_end,
                 "regime": "weekly_report",
@@ -2179,7 +2367,7 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
                 "spy_ma20": 0,
                 "spy_ma50": 0,
                 "score": 0,
-                "notes": f"weekly_report generated at {datetime.utcnow().isoformat()}",
+                "notes": f"weekly_report generated at {now_utc().isoformat()}",
             })
         except Exception as e:
             logger.debug(f"[playbook] DB 幂等标记写入失败: {e}")
@@ -3033,9 +3221,14 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
             return None
 
         # ── 3. 已过交易时间占比 ──
-        # 美股常规交易时段: 9:30 - 16:00 ET = 390 min
+        # 美股常规交易时段: 9:30 - 16:00 ET = 390 min (半日市 13:00 收 = 210 min)
         _market_open_min = 9 * 60 + 30  # 570
-        _market_close_min = 16 * 60      # 960
+        # 2026-07-25 (隐患扫描修复): 半日市支持 — 否则提前收盘日 elapsed_fraction 分母偏大, 量能门误判
+        try:
+            from app.utils.holiday_calendar import get_us_close_minutes_et
+            _market_close_min = get_us_close_minutes_et(_now_et_dt.date())
+        except Exception:
+            _market_close_min = 16 * 60      # 960
         _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
         _elapsed = max(_now_min - _market_open_min, 1)
         _total = _market_close_min - _market_open_min  # 390
@@ -3049,6 +3242,60 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
         return round(ratio, 3)
     except Exception:
         return None
+
+
+# 2026-07-24 (DEB-20260723 缺陷D 修正版): 同标的低MFE连败封禁 — 触发侧查询缓存 (5min TTL,
+#   防盘中轮询每 tick 打 DB). 封禁自然过期: 亏损单滑出 lookback 窗口即解封, 无需持久化状态.
+_STREAK_BAN_CACHE: Dict[str, Any] = {}
+
+
+def _symbol_streak_banned(symbol: str, pb_cfg) -> bool:
+    """近 lookback 日内, 该标的最近连续≥min_streak 笔 [亏损且 MFE<阈值] → 拒新触发.
+
+    数据依据 (7月 PLAYBOOK): CRM 5笔-$150 / UBER 3笔-$102 / DIS 4笔-$76 同形态跨日重复出血;
+    盈利重复标的 (MRK/EOG/LLY) 逐笔 MFE 全≥0.5% 不会命中 (DEB 第4轮: 纯连亏封禁已否决,
+    必须叠加 MFE 过滤). 查询异常 → fail-open (不拦). 回滚: symbol_streak_ban_enabled 改 false.
+    """
+    try:
+        if not bool(pb_cfg.get("symbol_streak_ban_enabled", False)):
+            return False
+        _now = time.time()
+        _hit = _STREAK_BAN_CACHE.get(symbol)
+        if _hit and (_now - _hit[0]) < 300:
+            return _hit[1]
+        _lookback = int(pb_cfg.get("symbol_streak_ban_lookback_days", 7))
+        _min_streak = int(pb_cfg.get("symbol_streak_ban_min_streak", 2))
+        _mfe_th = float(pb_cfg.get("symbol_streak_ban_mfe_pct", 0.5))
+        import sqlite3 as _sq3
+        from app.core.paths import get_trade_records_db as _gtrd
+        _conn = _sq3.connect(str(_gtrd()))
+        _rows = _conn.execute(
+            "SELECT realized_pnl, mfe_pct FROM trade_records "
+            "WHERE symbol=? AND source_type LIKE 'PLAYBOOK%' "
+            "AND exit_time IS NOT NULL AND exit_time!='' "
+            "AND trade_date >= date('now', ?) "
+            "ORDER BY trade_date DESC, exit_time DESC LIMIT 10",
+            (symbol, f"-{_lookback} day"),
+        ).fetchall()
+        _conn.close()
+        # 从最近一笔往前数连续命中数; 任一笔盈利/高MFE/缺数据即断链 (不误伤既亏过又修复的标的)
+        _streak = 0
+        for _pnl, _mfe in _rows:
+            if _pnl is not None and _pnl < 0 and _mfe is not None and _mfe < _mfe_th:
+                _streak += 1
+            else:
+                break
+        _banned = _streak >= _min_streak
+        if _banned:
+            logger.info(
+                f"[playbook] 连败封禁: {symbol} 近{_lookback}日连续{_streak}笔低MFE亏损 "
+                f"(阈值{_min_streak}笔/MFE<{_mfe_th}%) → 拒新触发"
+            )
+        _STREAK_BAN_CACHE[symbol] = (_now, _banned)
+        return _banned
+    except Exception as _e:
+        logger.debug(f"[playbook] 连败封禁查询异常 (fail-open): {_e}")
+        return False
 
 
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
@@ -3113,7 +3360,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     def _emit_entry_shadow(triggered_val, breakout_val=None, gate_enabled=False,
                            gate_block=None, gate_reason=None, vwap_dev=None,
                            vwap_populated=None, vol_gate_ratio=None,
-                           vol_gate_block=None):
+                           vol_gate_block=None, entry_path=None, inst_confidence=None):
         try:
             import json as _json
             from datetime import datetime as _dt
@@ -3163,6 +3410,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 "vwap_populated": bool(vwap_populated),
                 "vol_gate_ratio": vol_gate_ratio,
                 "vol_gate_block": (bool(vol_gate_block) if vol_gate_block is not None else None),
+                "entry_path": entry_path,
+                "inst_confidence": inst_confidence,
                 "features": _feat,
             }
             _tp = _Path(__file__).resolve().parents[2] / "data" / "entry_timing_shadow.jsonl"
@@ -3253,6 +3502,32 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         except Exception:
             pass  # 财报日历异常 → fail-open (与系统既有财报门行为一致)
 
+    # ── 2026-07-24 (DEB-20260723/24): 触发侧双闸门 — 低ATR硬门 + 同标的低MFE连败封禁 ──
+    #   低ATR门: 低波动票做日内动量结构性失败 (7月 atr_pct<2.5% 桶 13笔 15%WR -$244,
+    #   MFE<0.5% 占 85% — 波动能力决定 MFE 天花板). atr_pct 缺失 → fail-open 不拦.
+    #   回滚: low_atr_gate_enabled 改 false.
+    try:
+        _atr_gate_enabled = bool(pb_cfg.get("low_atr_gate_enabled", False))
+        _atr_gate_min = float(pb_cfg.get("low_atr_gate_min_atr_pct", 0.025))
+    except Exception:
+        _atr_gate_enabled, _atr_gate_min = False, 0.025
+    if _atr_gate_enabled:
+        try:
+            _inst_atr = inst.get("atr_pct")
+            if _inst_atr is not None and 0 < float(_inst_atr) < _atr_gate_min:
+                logger.info(
+                    f"[playbook] 低ATR门拦截: {symbol} atr_pct={float(_inst_atr):.4f} "
+                    f"< {_atr_gate_min} (低波票不做日内动量)"
+                )
+                _emit_trigger_miss("low_atr_block", current_price)
+                return False
+        except Exception:
+            pass  # atr 解析异常 → fail-open
+    #   连败封禁: 跨日亏损记忆 (CRM 三连 TIME_EXIT 磨死类模式), 见 _symbol_streak_banned 注释.
+    if _symbol_streak_banned(symbol, pb_cfg):
+        _emit_trigger_miss("streak_ban", current_price)
+        return False
+
     # ── 触发条件: 方向穿越触发 (2026-07-02: 从±0.5%改为方向穿越) ──
     # 根因: ±0.5% touch zone导致0%触发率(17/17 miss).
     # 修复: 限价单逻辑 — 价格从entry_price的盈利方向穿越即触发.
@@ -3316,24 +3591,33 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         # DEB-20260721 R4: 数据缺失失明必须可观测可计数 (原完全静默放行). 豁免窗跳过是设计行为, 维持 debug.
         logger.warning(f"[playbook] 盘中量能门: {symbol} 量能数据缺失 (fail-open 放行)")
 
+    # P1-C (2026-07-24, DEB-20260724): 入场路径标注 — pullback(回调/反弹有利侧) / chase(追入) /
+    #   out_of_band(出带未触发). 量能门拦截时保留 chase (表示"想走 chase 被拦"). 供 _emit_entry_shadow 落库.
+    _entry_path = None
     if is_short:
         if current_price >= entry_price:
             # 反弹到入场价或更高 → 更优做空点, 直接触发 (设上限防已冲高背离)
             triggered = current_price <= entry_price * (1 + _knife_floor)
+            _entry_path = "pullback"
         elif current_price >= entry_price * (1 - _chase_zone):
             # 跌破入场价 → 追空, 需量能确认 (防无量假跌)
             triggered = _vol_ok
+            _entry_path = "chase"
         else:
             triggered = False
+            _entry_path = "out_of_band"
     else:
         if current_price <= entry_price:
             # 回调到入场价或更低 → 更优买点, 直接触发 (设下限防接飞刀)
             triggered = current_price >= entry_price * (1 - _knife_floor)
+            _entry_path = "pullback"
         elif current_price <= entry_price * (1 + _chase_zone):
             # 突破入场价 → 追涨, 需量能确认 (防无量假突破)
             triggered = _vol_ok
+            _entry_path = "chase"
         else:
             triggered = False
+            _entry_path = "out_of_band"
 
     if not triggered and current_price > 0:
         # 区分量能门拦截 vs 其他原因 (供离线分析追入被拦频率)
@@ -3403,6 +3687,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         if _ra_enabled and _price_gap <= _ra_max_drift:
             _reanchored = True
             triggered = True
+            _entry_path = "reanchored"
             _emit_trigger_miss("reanchored", current_price)
             logger.info(
                 f"[playbook] 入场重锚触发: {symbol} price=${current_price:.2f} "
@@ -3509,6 +3794,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         #   离线切片: 真实入场单中过量能门那批 PnL 是否更好 → 验证门的过滤价值.
         vol_gate_ratio=_intraday_vr,
         vol_gate_block=_vol_gate_actively_blocked,
+        # P1-C (2026-07-24, DEB-20260724): 入场路径 + 指令conf — 分离 pullback/chase 两路径效果,
+        #   并按 conf 切片验证"低conf回调路径零确认"是否为 MFE≈0 主力成因.
+        entry_path=_entry_path,
+        inst_confidence=inst.get("confidence"),
     )
     return triggered
 
@@ -3696,7 +3985,8 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             #   两者相减抛 TypeError → holding_hours 回退为调用方传入值 (0.0).
             #   修复: naive entry_dt 加上 ET tz 再相减, 或用 wall-clock fallback.
             if _entry_dt.tzinfo is None:
-                _entry_dt = _entry_dt.replace(tzinfo=_et_tz)
+                # 2026-07-25 (时区SSOT批漏网补修): pytz 时区禁 replace(tzinfo=) — 产生 -04:56 LMT 偏移
+                _entry_dt = _et_tz.localize(_entry_dt) if hasattr(_et_tz, "localize") else _entry_dt.replace(tzinfo=_et_tz)
             from app.risk.position_exit_monitor import get_market_hours_us
             _market_hh = get_market_hours_us(_entry_dt, _now_dt)
             if _market_hh > 0:
@@ -4362,6 +4652,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
       [1.5] TAKE_PROFIT: 触及止盈价 (RR≥1.5 才生效)
       [2] OVERNIGHT_GAP_STOP: cohort B 隔夜仓跳空 >3%
       [3] PRE_CLOSE_EXIT: 收盘前 8min (cohort B 盈利可跳过)
+      [3.4] MFE_STALL_EXIT: 持仓≥150min 且 峰值浮盈<0.5% 且 当前水下 → 提前离场 (2026-07-24)
       [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific)
       [5] MAX_HOLD_T5: cohort B 持仓≥5 交易日
 
@@ -4561,6 +4852,33 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
+
+    # 规则3.4 (2026-07-24, DEB-20260723 crash-day + DEB-20260724 rootcause): MFE停滞退出 —
+    #   持仓≥stall_minutes 且 峰值浮盈从未达标 且 当前水下 → 立即离场, 不等 TIME_EXIT 磨满时间窗.
+    #   数据依据 (PLAYBOOK 全历史): MFE<0.5% 且持有≥2.5h 共47笔仅3胜(+$18.7),
+    #   TIME_EXIT 子集 0/33 -$1666; 赢家 MFE≥0.5% 平均 2.1h 内达成 → 2.5h 检查点几乎碰不到
+    #   未来赢家 (历史误杀上限 $6.7: ORCL+1.0/COF+5.7).
+    #   三重条件防误杀: 时间 × 峰值(从未≥0.5%) × 现状(水下); 盈利/曾浮盈达标的仓不受影响
+    #   (零质量损失约束: EOD/TRAIL_LOCK 盈利路径完整保留). 回滚: mfe_stall_exit_enabled 改 false.
+    if not exit_reason and bool(_pb_cfg.get("mfe_stall_exit_enabled", False)):
+        _stall_minutes = float(_pb_cfg.get("mfe_stall_exit_minutes", 150))
+        _stall_mfe_pct = float(_pb_cfg.get("mfe_stall_exit_mfe_pct", 0.5))
+        if held_minutes >= _stall_minutes and peak_profit_pct < _stall_mfe_pct and profit_pct < 0:
+            exit_reason = "MFE_STALL_EXIT"
+            exit_price = current_price
+            # 2026-07-25 (首夜验证遗留): 触发现场字段入 meta — 零附近边界单 (如 MRK
+            #   cur=-0.03% 触发、成交后落库 +$0.12) 事后归因不再翻日志。
+            #   调用方退出落盘处从内存 meta 搬运 (主路径 _meta_out 用的是开环旧行).
+            meta["stall_exit"] = {
+                "stall_minutes": round(held_minutes, 1),
+                "mfe_at_trigger": round(peak_profit_pct, 4),
+                "cur_at_trigger": round(profit_pct, 4),
+                "threshold": _stall_mfe_pct,
+            }
+            logger.info(
+                f"[规则3.4-MFE停滞] {_symbol} {direction} held={held_minutes:.0f}min "
+                f"peak={peak_profit_pct:.2f}%<{_stall_mfe_pct}% cur={profit_pct:.2f}% → 提前离场"
+            )
 
     # 规则3: 时间退出 — 7/7 fix: 恢复此规则, 由 factor_exit_rules.time_exit_hours 驱动
     # 原因: 6/30 DEB 禁用时把 time_exit 交给 exit_policy.yaml, 但 7/3 fix 后 ExitMonitor 不再管
@@ -4779,7 +5097,14 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         # 市场时段 (ET) — 复用 scheduler_triggers.ET (pytz, 处理夏令时)
         now_et = datetime.now(_et)
         now_minutes = now_et.hour * 60 + now_et.minute
-        minutes_to_close = 16 * 60 - now_minutes
+        # 2026-07-25 (隐患扫描修复): 半日市 (13:00 ET 提前收盘) 支持 — 原硬编码 16*60
+        #   导致提前收盘日 PRE_CLOSE_EXIT/EOD 不触发, 日内仓被迫隔夜。兜底 960。
+        try:
+            from app.utils.holiday_calendar import get_us_close_minutes_et
+            _close_min = get_us_close_minutes_et(now_et.date())
+        except Exception:
+            _close_min = 16 * 60
+        minutes_to_close = _close_min - now_minutes
         market_open_minutes = 9 * 60 + 30
         minutes_from_open = now_minutes - market_open_minutes
 
@@ -4961,6 +5286,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     _sl_meta["exit_price_source"] = _sl_src
                     _sl_meta["broker_qty_before"] = close_res.get("broker_qty_before")
                     _sl_meta["broker_qty_after"] = _sl_broker_after
+                    # C1 补测 (2026-07-24, DEB-20260724 §八): 出场滑点 — 决策参考价(current_price) vs 成交价.
+                    #   入场侧已有 execution.slippage_bps (中位 4.6bps), 出场侧此前 0 记录 → 往返成本只测了一半.
+                    #   正值=不利 (LONG 卖在参考价下方 / SHORT 回补在参考价上方). record-only.
+                    if current_price and current_price > 0 and _exit_price > 0:
+                        _sl_xraw = (current_price - _exit_price) / current_price * 10000.0
+                        _sl_meta["exit_slippage_bps"] = round(_sl_xraw if direction == "LONG" else -_sl_xraw, 2)
                     conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                                  (_json.dumps(_sl_meta), r["id"]))
                     conn.commit()
@@ -5251,6 +5582,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             _meta_out["exit_price_source"] = _price_source
             _meta_out["broker_qty_before"] = close_res.get("broker_qty_before")
             _meta_out["broker_qty_after"] = _broker_qty_after
+            # 2026-07-25: stall 触发现场从内存 meta 搬运 (_meta_out 基于开环旧行重建,
+            #   规则函数写进 meta 的字段不搬会丢)
+            if meta.get("stall_exit"):
+                _meta_out["stall_exit"] = meta["stall_exit"]
+            # C1 补测 (2026-07-24, DEB-20260724 §八): 出场滑点 (主退出路径: TIME_EXIT/SL/TRAIL/
+            #   PRE_CLOSE/MFE_STALL 全覆盖). 口径同 SL 路径: 决策参考价 vs 成交价, 正=不利.
+            if current_price and current_price > 0 and exit_price > 0:
+                _x_raw = (current_price - exit_price) / current_price * 10000.0
+                _meta_out["exit_slippage_bps"] = round(_x_raw if direction == "LONG" else -_x_raw, 2)
             conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                          (_json.dumps(_meta_out), r["id"]))
             conn.commit()

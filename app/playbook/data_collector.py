@@ -546,6 +546,7 @@ class PlaybookDataCollector:
         委托 FinnhubProvider.get_company_news(symbol, days=3)
         """
         try:
+            from app.utils.timezone import now_utc
             news_list = self.finnhub.get_company_news(symbol, days=3)
             if not news_list:
                 return NewsData(quality="missing")
@@ -570,7 +571,7 @@ class PlaybookDataCollector:
                 headlines=headlines,
                 sentiment_score=sentiment_score,
                 source="finnhub",
-                fetched_at=datetime.utcnow().isoformat(),
+                fetched_at=now_utc().isoformat(),
                 quality=self._check_news_freshness(news_list),
             )
         except Exception as e:

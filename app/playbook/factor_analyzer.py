@@ -319,8 +319,8 @@ class FactorAnalyzer:
             else:
                 status = "observing"
 
-            from datetime import datetime
-            now = datetime.utcnow().isoformat()
+            from app.utils.timezone import now_utc
+            now = now_utc().isoformat()
 
             self.db.upsert_pattern({
                 "pattern_key": combo_key,
