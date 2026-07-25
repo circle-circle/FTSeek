@@ -23,7 +23,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ET = timezone(timedelta(hours=-4))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.utils.timezone import ET
+
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
 SHADOW_DIR = ROOT / "data" / "shadow"

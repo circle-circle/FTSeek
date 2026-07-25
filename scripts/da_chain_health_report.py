@@ -18,8 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.storage.db_pool import get_db
-
-ET = timezone(timedelta(hours=-4))  # EDT (夏令时); 换季 -5, 仅影响 ET 小时显示
+from app.utils.timezone import ET
 OPEN_ET_H = 9  # 开盘 ET 09:30; created_at(UTC) 的 ET 小时 < 9(或=9且分<30) 视为盘前
 SNAP_DB = Path(__file__).resolve().parents[1] / "data" / "signal_snapshots.db"
 

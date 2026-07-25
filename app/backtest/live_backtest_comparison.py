@@ -31,6 +31,7 @@ from app.backtest.weekly_optimizer import (
     replay_pnl_series,
     _stats,
 )
+from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class LiveBacktestComparator:
         self.days = days
 
     def run(self) -> ComparisonReport:
-        end_dt = datetime.utcnow().date()
+        end_dt = now_utc().date()
         start_dt = end_dt - timedelta(days=self.days)
         rows = load_trade_rows(start_date=start_dt.isoformat(), end_date=end_dt.isoformat())
         notes: List[str] = []
@@ -130,7 +131,7 @@ class LiveBacktestComparator:
         if not rows:
             notes.append("窗口内无已平仓成交, 报告为空。")
             return ComparisonReport(
-                generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                generated_at=now_utc().isoformat(timespec="seconds"),
                 window=(start_dt.isoformat(), end_dt.isoformat()),
                 params=self.params,
                 n_live=0, n_backtest=0,
@@ -183,7 +184,7 @@ class LiveBacktestComparator:
             )
 
         return ComparisonReport(
-            generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            generated_at=now_utc().isoformat(timespec="seconds"),
             window=(start_dt.isoformat(), end_dt.isoformat()),
             params=self.params,
             n_live=len(rows),
@@ -239,7 +240,7 @@ def render_markdown(report: ComparisonReport) -> str:
 def write_report(report: ComparisonReport, out_dir: Optional[Path] = None) -> Tuple[Path, Path]:
     out_dir = out_dir or _REPORT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = now_utc().strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"live_vs_backtest_{ts}.json"
     md_path = out_dir / f"live_vs_backtest_{ts}.md"
     json_path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2),

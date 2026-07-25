@@ -121,7 +121,7 @@ class EarningsRiskGuard:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
             # strptime returns naive datetime; make it tz-aware before subtracting from now_et()
             if report_date.tzinfo is None:
-                report_date = report_date.replace(tzinfo=ET)
+                report_date = ET.localize(report_date)
             today = now_et()
             delta = (today - report_date).days
             # 财报日前 1 天 到 财报日后 2 天 = 3 天窗口
@@ -144,7 +144,7 @@ class EarningsRiskGuard:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
             # strptime returns naive datetime; make it tz-aware before subtracting from now_et()
             if report_date.tzinfo is None:
-                report_date = report_date.replace(tzinfo=ET)
+                report_date = ET.localize(report_date)
             now = now_et()
             hours_until = (report_date - now).total_seconds() / 3600
             

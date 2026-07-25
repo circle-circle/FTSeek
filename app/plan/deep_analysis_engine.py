@@ -195,7 +195,8 @@ async def _fetch_real_fundamental(symbol: str, company_name: str = "") -> Dict:
         logger.error(f"[deep_analysis] enrichment_router failed for {symbol}: {e}")
     
     # 全部失败，返回空结构
-    now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    from app.utils.timezone import now_utc
+    now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
         "financials": {"source": "none", "fetched_at": now_iso},
         "analyst": {"source": "none", "fetched_at": now_iso},

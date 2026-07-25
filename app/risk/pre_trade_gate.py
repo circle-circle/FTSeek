@@ -160,9 +160,8 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
     # Check cache validity
     now = time.time()
     # Use ET date for "today"
-    from datetime import datetime, timezone, timedelta
-    _ET = timezone(timedelta(hours=-4))
-    today = datetime.now(_ET).strftime('%Y-%m-%d')
+    from app.utils.timezone import get_trade_date
+    today = get_trade_date()
 
     if (_daily_pnl_cache["date"] == today
             and now - _daily_pnl_cache["ts"] < _DAILY_PNL_TTL):

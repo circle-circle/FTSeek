@@ -68,7 +68,7 @@ def to_et(dt: datetime) -> datetime:
     """将任意时区时间转换为美东时间"""
     if _HAS_PYTZ:
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=CST)  # 假设是北京时间
+            dt = CST.localize(dt)  # 假设是北京时间
         return dt.astimezone(ET)
     return dt
 
@@ -77,19 +77,25 @@ def to_cst(dt: datetime) -> datetime:
     """将任意时区时间转换为北京时间"""
     if _HAS_PYTZ:
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=ET)  # 假设是美东时间
+            dt = ET.localize(dt)  # 假设是美东时间
         return dt.astimezone(CST)
     return dt
 
 
 def _et_trade_date(entry_time) -> str:
-    """Convert naive CST entry_time to US Eastern trading date (YYYY-MM-DD).
+    """Convert entry_time to US Eastern trading date (YYYY-MM-DD).
 
     P2' 修复 (2026-05-26): trade_date 原用 CST 日期，导致美东下午交易
     (CST 次日凌晨) 被标记到下一天，审计计数偏差。
     CST(UTC+8) → ET(UTC-4/5): 减 12h 对日期边界始终正确。
+
+    2026-07-24 修复: tz-aware 输入 (如 now_et()) 直接按 ET 日历日 — 原一律 -12h
+    把 ET 时间当 CST 二次转换, ET 中午前读侧"今天"=昨天 (07-24 实锤: 账户熔断器
+    日亏读到前一交易日)。naive 输入维持 CST-12h 契约不变。
     """
     from datetime import timedelta
+    if getattr(entry_time, "tzinfo", None) is not None:
+        return entry_time.astimezone(ET).strftime("%Y-%m-%d")
     return (entry_time - timedelta(hours=12)).strftime("%Y-%m-%d")
 
 
@@ -108,7 +114,7 @@ def is_market_open(dt: Optional[datetime] = None) -> bool:
     if dt is None:
         dt = now_et()
     elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
+        dt = CST.localize(dt)
         dt = dt.astimezone(ET)
     elif _HAS_PYTZ and dt.tzinfo != ET:
         dt = dt.astimezone(ET)
@@ -135,7 +141,7 @@ def is_pre_market(dt: Optional[datetime] = None) -> bool:
     if dt is None:
         dt = now_et()
     elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
+        dt = CST.localize(dt)
         dt = dt.astimezone(ET)
 
     if dt.weekday() >= 5:
@@ -150,7 +156,7 @@ def is_after_hours(dt: Optional[datetime] = None) -> bool:
     if dt is None:
         dt = now_et()
     elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
+        dt = CST.localize(dt)
         dt = dt.astimezone(ET)
 
     if dt.weekday() >= 5:
@@ -170,7 +176,7 @@ def get_market_session(dt: Optional[datetime] = None) -> str:
     if dt is None:
         dt = now_et()
     elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
+        dt = CST.localize(dt)
         dt = dt.astimezone(ET)
 
     if dt.weekday() >= 5:
@@ -195,7 +201,7 @@ def get_trade_date(dt: Optional[datetime] = None) -> str:
     if dt is None:
         dt = now_et()
     elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
+        dt = CST.localize(dt)
         dt = dt.astimezone(ET)
 
     return dt.strftime("%Y-%m-%d")
@@ -231,3 +237,113 @@ def is_trading_hours(dt: Optional[datetime] = None) -> bool:
 def get_current_session() -> str:
     """向后兼容: 获取当前时段"""
     return get_market_session()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  UTC 工具 + 安全比较 (原 datetime_utils.py, 2026-07-25 合并)
+# ═══════════════════════════════════════════════════════════════════
+
+UTC = timezone.utc
+
+
+def now_utc() -> datetime:
+    """获取当前 UTC 时间 (aware)"""
+    return datetime.now(UTC)
+
+
+def to_utc(dt: datetime) -> datetime:
+    """将任意 datetime 转为 UTC aware. naive 视为 UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def compare_safe(a: datetime, b: datetime) -> int:
+    """
+    安全比较两个 datetime, 自动处理 naive/aware 混用.
+    Returns: -1 if a<b, 0 if equal, 1 if a>b. None 视为最大值.
+    naive 视为 UTC.
+    """
+    if a is None and b is None:
+        return 0
+    if a is None:
+        return 1
+    if b is None:
+        return -1
+    if a.tzinfo is None:
+        a = a.replace(tzinfo=UTC)
+    if b.tzinfo is None:
+        b = b.replace(tzinfo=UTC)
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    return 0
+
+
+def is_expired_safe(expires_at: Optional[datetime]) -> bool:
+    """检查是否已过期, 时区安全."""
+    if expires_at is None:
+        return False
+    return compare_safe(now_utc(), expires_at) > 0
+
+
+def parse_iso_safe(s: Optional[str]) -> Optional[datetime]:
+    """解析 ISO 字符串, 支持带/不带时区格式. 失败返回 None."""
+    if not s:
+        return None
+    try:
+        s = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except Exception:
+        try:
+            return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+        except Exception:
+            return None
+
+
+def market_phase_now() -> str:
+    """返回当前 ET 市场 phase"""
+    n = now_et()
+    if n.weekday() >= 5:
+        return "weekend"
+    minutes = n.hour * 60 + n.minute
+    if minutes < 240:
+        return "overnight"
+    if minutes < 570:
+        return "premarket"
+    if minutes < 590:
+        return "opening_drive"
+    if minutes < 690:
+        return "morning"
+    if minutes < 840:
+        return "midday"
+    if minutes < 930:
+        return "afternoon"
+    if minutes < 960:
+        return "closing_drive"
+    if minutes < 1200:
+        return "after_hours"
+    return "overnight"
+
+
+SIGNAL_EXPIRY_MINUTES_BY_PHASE = {
+    "opening_drive":  5,
+    "morning":       10,
+    "midday":        15,
+    "afternoon":     10,
+    "closing_drive":  3,
+    "premarket":     30,
+    "after_hours":   30,
+    "overnight":     30,
+    "weekend":       30,
+}
+
+
+def signal_expires_at(phase: Optional[str] = None) -> datetime:
+    """phase-aware signal 过期时间, 返回 UTC aware datetime."""
+    p = phase or market_phase_now()
+    minutes = SIGNAL_EXPIRY_MINUTES_BY_PHASE.get(p, 10)
+    return now_utc() + timedelta(minutes=minutes)

@@ -234,12 +234,9 @@ def record_manual_open(service: "ManualOrderService", order: "ManualOrder") -> N
       - 非阻塞, 失败静默
     """
     try:
-        from datetime import timezone, timedelta
-        et_now = datetime.now(timezone(timedelta(hours=-4)))
-        trade_date = et_now.strftime("%Y-%m-%d")
-
-        # 判断是否执行了盘前计划 (strategy_id 标记)
-        strategy_id = "manual"
+        from app.utils.timezone import now_et, get_trade_date
+        et_now = now_et()
+        trade_date = get_trade_date()
         try:
             plan_path = Path(__file__).parent.parent.parent.parent / "data" / "daily_battle_plan_us.json"
             if plan_path.exists():
@@ -318,10 +315,9 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
 
         conn = service._db()
         now = datetime.now()
-        # trade_date 用美东时间 (EDT=UTC-4), 避免服务器时区导致交易日偏移
-        from datetime import timezone, timedelta
-        et_now = datetime.now(timezone(timedelta(hours=-4)))
-        trade_date = et_now.strftime("%Y-%m-%d")
+        from app.utils.timezone import now_et, get_trade_date
+        et_now = now_et()
+        trade_date = get_trade_date()
 
         # Check if this trade matches today's battle plan targets
         strategy_id = "manual"

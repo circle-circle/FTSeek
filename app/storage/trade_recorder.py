@@ -12,7 +12,7 @@
 import sqlite3
 import logging
 from datetime import datetime, timedelta
-from app.utils.timezone import now_et
+from app.utils.timezone import now_et, get_trade_date
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import uuid
@@ -176,7 +176,7 @@ class TradeRecorder:
             trade_id: 交易 ID
         """
         trade_id = kwargs.get('trade_id', str(uuid.uuid4())[:8])
-        trade_date = (now_et() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
+        trade_date = get_trade_date()
         entry_time = now_et().isoformat()
         direction = 'LONG' if side.lower() in ['buy', 'long'] else 'SHORT'
         

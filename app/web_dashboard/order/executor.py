@@ -625,9 +625,8 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
             )
             if ret == RET_OK and not data.empty:
                 # Use ET timezone for today filter (Futu returns ET timestamps)
-                from datetime import timezone, timedelta
-                et_tz = timezone(timedelta(hours=-4))
-                today_et = datetime.now(et_tz).strftime("%Y-%m-%d")
+                from app.utils.timezone import get_trade_date
+                today_et = get_trade_date()
                 for _, row in data.iterrows():
                     # 综合账户返回全市场订单, 美股页只展示 US. (港股见 /trade/hk)
                     if not str(row.get("code", "")).startswith("US."):

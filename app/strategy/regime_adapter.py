@@ -364,6 +364,7 @@ class RegimeAdapter:
         if event_store is not None:
             try:
                 from app.core.models import TradeEvent, AlertLevel
+                from app.utils.timezone import now_utc
                 event_store.append(TradeEvent(
                     event_type="regime_changed_review",
                     data={
@@ -374,7 +375,7 @@ class RegimeAdapter:
                         "high_vol_position_scale":
                             self._high_vol_scale if new_norm == "HIGH_VOL" else None,
                         "message": alert_msg,
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": now_utc().isoformat(),
                     },
                     source="strategy.regime_adapter",
                     severity=(AlertLevel.WARNING if to_review or new_norm == "HIGH_VOL"

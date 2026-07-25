@@ -276,8 +276,8 @@ def restore_positions_from_db(scheduler):
                         )
                         # 写入 trade_record
                         try:
-                            from datetime import timezone, timedelta
-                            _et_now = datetime.now(timezone(timedelta(hours=-4)))
+                            from app.utils.timezone import now_et as _now_et
+                            _et_now = _now_et()
                             _record = {
                                 "trade_date": _et_now.strftime('%Y-%m-%d'),
                                 "symbol": sym,
@@ -323,7 +323,11 @@ def restore_positions_from_db(scheduler):
                     except ValueError:
                         regime = MarketRegime.RANGE
                     entry_time_str = snap.get("entry_time", "")
-                    entry_time = datetime.fromisoformat(entry_time_str) if entry_time_str else datetime.now()
+                    if entry_time_str:
+                        entry_time = datetime.fromisoformat(entry_time_str)
+                    else:
+                        from app.utils.timezone import now_et as _now_et_fb
+                        entry_time = _now_et_fb()
 
                     position = Position(
                         strategy_id=snap.get("strategy_id", "") or "main_pipeline",  # P0 (2026-06-05): 中性fallback

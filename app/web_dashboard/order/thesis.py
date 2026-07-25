@@ -117,8 +117,8 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
 
     # 5. 交易时段 (ET)
     try:
-        et_offset = timezone(timedelta(hours=-4))  # EDT (夏令时)
-        et_now = datetime.now(et_offset)
+        from app.utils.timezone import now_et
+        et_now = now_et()
         et_h = et_now.hour
         et_m = et_now.minute
         et_minutes = et_h * 60 + et_m
@@ -227,8 +227,8 @@ def build_exit_context(service: "ManualOrderService", symbol: str,
 
     # 交易时段
     try:
-        et_offset = timezone(timedelta(hours=-4))
-        et_now = datetime.now(et_offset)
+        from app.utils.timezone import now_et
+        et_now = now_et()
         et_minutes = et_now.hour * 60 + et_now.minute
         if et_minutes < 570:
             exit_ctx["session_phase"] = "pre_market"

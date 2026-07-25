@@ -191,7 +191,8 @@ class TradingMonitor:
         三重门控: 周末 → 假日 → 盘中时间窗口.
         """
         from datetime import timedelta as _td
-        utc_now = datetime.utcnow()
+        from app.utils.timezone import now_utc
+        utc_now = now_utc()
 
         # 1. 周末
         if utc_now.weekday() >= 5:

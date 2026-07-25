@@ -661,8 +661,9 @@ class USEmergencyInterceptor:
         for pos in positions:
             symbol = pos.symbol.replace("US.", "")
             try:
-                today = datetime.utcnow().strftime("%Y-%m-%d")
-                tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+                from app.utils.timezone import get_trade_date, now_et
+                today = get_trade_date()
+                tomorrow = (now_et() + timedelta(days=1)).strftime("%Y-%m-%d")
 
                 url = "https://finnhub.io/api/v1/company-news"
                 params = {

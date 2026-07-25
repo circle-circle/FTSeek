@@ -45,10 +45,9 @@ def main():
         print("TRADING_DAY")
     except Exception as e:
         # fallback: 只检查工作日
-        from datetime import datetime, timezone, timedelta
-        et = timezone(timedelta(hours=-4))  # EDT
-        now_et = datetime.now(et)
-        if now_et.weekday() >= 5:
+        from app.utils.timezone import now_et as _now_et
+        et_now = _now_et()
+        if et_now.weekday() >= 5:
             print("NON_TRADING_DAY")
             return
         print("TRADING_DAY")

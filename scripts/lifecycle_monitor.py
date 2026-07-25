@@ -41,7 +41,7 @@ STATE_FILE = ROOT / "data" / "lifecycle_alerts_sent.json"
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://127.0.0.1:8901")
 EXTERNAL_URL = os.getenv("EXTERNAL_DASHBOARD_URL", "https://ft.aitz.cc:8888")
 
-ET = timezone(timedelta(hours=-4))  # US Eastern (EDT, summer)
+from app.utils.timezone import ET
 
 
 def is_market_window() -> bool:

@@ -24,7 +24,9 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-ET = timezone(timedelta(hours=-4))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.utils.timezone import ET
+
 ROOT = Path(__file__).resolve().parents[1]
 SHADOW_DIR = ROOT / "data" / "shadow"
 _SCRIPTS = Path(__file__).resolve().parent

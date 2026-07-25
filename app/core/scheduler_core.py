@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Optional, Set
 from pathlib import Path
 import sys
 
-import pytz
+from app.utils.timezone import ET
 
 from app.core.config_defaults import CFG
 
@@ -42,9 +42,6 @@ from app.storage.trade_store import TradeStore
 # from app.execution.options_selector import OptionSelector, OptionContract
 
 logger = logging.getLogger(__name__)
-
-# 美东时区
-ET = pytz.timezone("America/New_York")
 
 
 class PositionStore:
@@ -821,8 +818,8 @@ class TradingScheduler:
                 try:
                     restored = datetime.fromisoformat(exit_ts)
                     if restored.tzinfo is None:
-                        from app.utils.timezone import ET
-                        restored = restored.astimezone(ET)
+                        from app.utils.timezone import to_et
+                        restored = to_et(restored)
                     self._signal_cooldown[sym] = restored
                 except (ValueError, TypeError):
                     pass
@@ -1383,9 +1380,11 @@ class TradingScheduler:
                             from datetime import datetime as _dt
                             entry_time = _dt.fromisoformat(str(entry_time_str))
                         except (ValueError, TypeError):
-                            entry_time = __import__("datetime").datetime.now()
+                            from app.utils.timezone import now_et as _now_et
+                            entry_time = _now_et()
                     else:
-                        entry_time = __import__("datetime").datetime.now()
+                        from app.utils.timezone import now_et as _now_et
+                        entry_time = _now_et()
 
                     position = Position(
                         strategy_id=db_pos.get("strategy_id", "") or "main_pipeline",
@@ -1929,6 +1928,15 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[playbook] TRADING 盘前指令推送异常 (已隔离): {_e}")
 
+                    # 2026-07-24 (用户裁决): topup 盘中窗 (默认 10:30-11:30 ET) — 实时价重评
+                    #   回调窗, 捕捉当日跌进窗的标的; 盘前窗命中 PRE_MARKET 分支的同一调用。
+                    #   函数自带双窗口时间门/分窗幂等/共享当日上限, 此处无条件调用安全。
+                    try:
+                        from app.playbook.pipeline import run_playbook_topup_supplement
+                        run_playbook_topup_supplement(self)
+                    except Exception as _e:
+                        logger.warning(f"[playbook] TRADING topup 补量异常 (已隔离): {_e}")
+
                     # 2026-07-17: 定桶 catch-up — 盘中重启/盘中新增指令会错过 PRE_MARKET 定桶,
                     #   此处幂等补标 (已落桶的行跳过), 保证下单审计能读到 vol_bucket。
                     try:
@@ -2016,6 +2024,14 @@ class TradingScheduler:
                     except Exception as _e:
                         # 2026-07-04: debug→warning — 盘前生成失败会导致当日无作战计划, 必须可见
                         logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+
+                    # 2026-07-24 (用户裁决): 扩容补量 — 当日指令 < 目标下限时从流动性池走正式链补足.
+                    #   函数内自带双窗口时间门(盘前08:45-09:30/盘中10:30-11:30 ET)/分窗幂等/开关, 此处无条件调用安全.
+                    try:
+                        from app.playbook.pipeline import run_playbook_topup_supplement
+                        run_playbook_topup_supplement(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] playbook 补量异常 (已隔离): {_e}")
 
                     # 2026-07-17: 盘前波动率定桶落库 (DA/UE 直写指令补 vol_bucket/atr_pct 到主表)
                     try:

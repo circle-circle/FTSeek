@@ -80,22 +80,23 @@ def _is_market_hours() -> bool:
 
 def _query_today_trades() -> Dict:
     """今日交易 + 持仓 + 盈亏汇总
-    
+
     注意：美股交易日使用美东时间，而非北京时间。
-    美东时间 = UTC-4 (EDT) 或 UTC-5 (EST)。
-    使用 'now', '-4 hours' 近似美东时间，避免跨日混淆。
+    2026-07-24: "今日"统一走系统唯一真源 _et_trade_date(now_et()) (真 ET 时区,
+    EDT/EST 自动) — 原 date('now','-4 hours') 近似在冬季 EST 20:00-24:00
+    会把"今日"错成次日, 与 trade_date 写入标签口径分裂。
     """
     try:
+        from app.utils.timezone import _et_trade_date, now_et
         conn = get_pool().connection("ftseek_us")
         cur = conn.cursor()
-        # 今日已平 — 使用美东时间 (UTC-4)
-        # date('now', '-4 hours') 近似美东日期
         cur.execute(
             "SELECT COUNT(*), SUM(realized_pnl), "
             "  SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) "
             "FROM trade_records "
-            "WHERE trade_date=date('now', '-4 hours') AND realized_pnl IS NOT NULL "
-            "AND exit_price > 0"
+            "WHERE trade_date=? AND realized_pnl IS NOT NULL "
+            "AND exit_price > 0",
+            (_et_trade_date(now_et()),),
         )
         n, pnl, wins = cur.fetchone()
         # 持仓
@@ -126,7 +127,8 @@ def _query_signal_funnel(window_min: int = 30) -> Dict:
     入场数从 trade_records 查 (近 N min entry_time).
     拒绝数从 rejections.db 查 (近 N min timestamp).
     """
-    cutoff_iso = (datetime.now() - timedelta(minutes=window_min)).isoformat()
+    from app.utils.timezone import now_et
+    cutoff_iso = (now_et() - timedelta(minutes=window_min)).isoformat()
     entries = 0
     total_rejects = 0
     top_reasons: List[Tuple[str, int]] = []
@@ -360,7 +362,8 @@ def _query_service_health(scheduler=None) -> Dict:
         sync = get_us_position_sync()
         last_sync = getattr(sync, "_last_sync_time", None)
         if last_sync:
-            age_sec = (datetime.now() - last_sync).total_seconds()
+            from app.utils.timezone import now_et
+            age_sec = (now_et() - last_sync).total_seconds()
             result["broker_ok"] = (age_sec < 120)  # 2 分钟内 sync 算健康
             result["last_sync_age_sec"] = int(age_sec)
     except Exception as e:
@@ -384,7 +387,8 @@ def _format_uptime(sec: int) -> str:
 
 def _format_heartbeat(scheduler=None) -> str:
     """组装心跳报告 (Markdown 格式, 钉钉/飞书友好). 每个 query 独立容错."""
-    now = datetime.now()
+    from app.utils.timezone import now_et
+    now = now_et()
     trades = _safe_query(_query_today_trades,
                           {"today_trades": 0, "today_pnl": 0.0, "today_wins": 0, "positions": []})
     funnel = _safe_query(lambda: _query_signal_funnel(30),
@@ -468,13 +472,15 @@ def push_heartbeat(scheduler=None, force: bool = False) -> bool:
     try:
         from app.push import get_push_hub
         from app.push.message import PushMessage, Level, Category
+        from app.utils.timezone import now_et
+        _push_now = now_et()
         # NORMAL 级别 + dedup 30min (防 cron 重复触发)
         msg = PushMessage(
-            title=f"FTSeek-US 心跳 {datetime.now().strftime('%H:%M')}",
+            title=f"FTSeek-US 心跳 {_push_now.strftime('%H:%M')}",
             body=text,
             level=Level.NORMAL,
             category=Category.SYSTEM,
-            dedup_key=f"heartbeat_{datetime.now().strftime('%Y%m%d_%H%M')[:11]}",  # 10min 粒度
+            dedup_key=f"heartbeat_{_push_now.strftime('%Y%m%d_%H%M')[:11]}",  # 10min 粒度
         )
         ok = get_push_hub().push(msg)
         if ok:

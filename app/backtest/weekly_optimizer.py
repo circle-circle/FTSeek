@@ -45,6 +45,8 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.utils.timezone import now_utc
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -452,7 +454,7 @@ class WeeklyParameterOptimizer:
 
     # ──────── 入口 ────────
     def run(self) -> OptimizationReport:
-        end_dt = datetime.utcnow().date()
+        end_dt = now_utc().date()
         valid_start = end_dt - timedelta(days=self.valid_days)
         train_start = valid_start - timedelta(days=self.train_days)
 
@@ -519,7 +521,7 @@ class WeeklyParameterOptimizer:
         }
 
         report = OptimizationReport(
-            generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            generated_at=now_utc().isoformat(timespec="seconds"),
             train_window=(train_start.isoformat(), valid_start.isoformat()),
             valid_window=(valid_start.isoformat(), end_dt.isoformat()),
             train_size=len(train_rows),
@@ -720,10 +722,10 @@ def export_heatmap_bundle(
         except Exception as e:
             logger.debug(f"heatmap {p} 失败: {e}")
 
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = now_utc().strftime("%Y%m%d_%H%M%S")
     out_path = out_dir / f"heatmap_{ts}.json"
     payload = {
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": now_utc().isoformat(timespec="seconds"),
         "base_params": report.best_params,
         "safe_zones": {k: list(v) for k, v in report.safe_zones.items()},
         "heatmaps": heatmaps,
@@ -823,7 +825,7 @@ def render_markdown(report: OptimizationReport) -> str:
 def write_report(report: OptimizationReport, out_dir: Optional[Path] = None) -> Tuple[Path, Path]:
     out_dir = out_dir or _REPORT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = now_utc().strftime("%Y%m%d_%H%M%S")
     json_path = out_dir / f"weekly_optimization_{ts}.json"
     md_path = out_dir / f"weekly_optimization_{ts}.md"
 
@@ -879,7 +881,7 @@ def run_weekly_optimization(
 
     # 同步导出 heatmap bundle (供前端 / 复盘使用)
     try:
-        end_dt = datetime.utcnow().date()
+        end_dt = now_utc().date()
         all_rows = load_trade_rows(
             start_date=(end_dt - timedelta(days=opt.train_days + opt.valid_days)).isoformat(),
             end_date=end_dt.isoformat(),

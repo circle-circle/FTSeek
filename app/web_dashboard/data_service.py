@@ -886,7 +886,8 @@ class DataService:
         if not ghosts_to_mark and not ghosts_to_delete:
             return
 
-        now_iso = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        from app.utils.timezone import now_utc
+        now_iso = now_utc().strftime("%Y-%m-%d %H:%M:%S")
         path = self._get_db()
         try:
             conn = sqlite3.connect(path, timeout=10)
@@ -928,7 +929,8 @@ class DataService:
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
                 ts = datetime.strptime(s, fmt)
-                return (datetime.utcnow() - ts).total_seconds() > hours * 3600
+                from app.utils.timezone import now_utc
+                return (now_utc().replace(tzinfo=None) - ts).total_seconds() > hours * 3600
             except ValueError:
                 continue
         return False

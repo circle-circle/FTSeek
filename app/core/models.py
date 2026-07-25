@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 import uuid
 
+from app.utils.timezone import now_et
+
 
 class EntryReason(str, Enum):
     """入场原因枚举 (2026-05-30: 支持归因系统 entry_reason 推导)"""
@@ -349,7 +351,7 @@ class Position:
     structure_exit_price: Optional[float] = None
     
     # 时间戳
-    entry_time: datetime = field(default_factory=datetime.now)
+    entry_time: datetime = field(default_factory=now_et)
     exit_time: Optional[datetime] = None
     
     # 退出信息

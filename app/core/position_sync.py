@@ -808,7 +808,8 @@ class USPositionSync:
         # P3 修复 (2026-06-12): 查询 manual_order_audit 今日手动订单，防止被误标为 auto_main
         _manual_today = set()
         try:
-            today_et = (datetime.now(timezone(timedelta(hours=-4)))).strftime('%Y-%m-%d')
+            from app.utils.timezone import get_trade_date
+            today_et = get_trade_date()
             cursor.execute(
                 "SELECT DISTINCT symbol FROM manual_order_audit "
                 "WHERE status='submitted' AND date(timestamp) = ?",
@@ -1478,7 +1479,8 @@ class USPositionSync:
                         import sqlite3 as _sqlite3
                         _db_path = _get_db_path()
                         _conn = _sqlite3.connect(_db_path)
-                        _et_now = datetime.now(timezone(timedelta(hours=-4)))
+                        from app.utils.timezone import now_et as _now_et
+                        _et_now = _now_et()
                         _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
                         _entry_time_str = _entry_time.isoformat() if hasattr(_entry_time, 'isoformat') else str(_entry_time)
                         _cursor = _conn.execute(

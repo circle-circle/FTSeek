@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from app.data.providers.base import BaseDataProvider
+from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class FutuExtendedProvider(BaseDataProvider):
 
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """统一入口：返回该 symbol 的全部扩展数据"""
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         result: Dict[str, Any] = {
             "status": "ok",
             "data_source": "futu_opend",
@@ -80,7 +81,7 @@ class FutuExtendedProvider(BaseDataProvider):
                 }
             }
         """
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         cache_key = f"si_{symbol}"
         if self._is_cache_valid(cache_key):
             return self._cache[cache_key]
@@ -116,7 +117,7 @@ class FutuExtendedProvider(BaseDataProvider):
 
     def get_daily_short_volume(self, symbol: str, num: int = 5) -> Dict[str, Any]:
         """获取每日卖空成交量"""
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         cache_key = f"dsv_{symbol}"
         if self._is_cache_valid(cache_key, ttl_override=3600):
             return self._cache.get(cache_key, {"status": "failed", "error": "cache miss"})
@@ -155,7 +156,7 @@ class FutuExtendedProvider(BaseDataProvider):
         2026-07-02: Futu SDK 10.03 无 get_research_analyst_consensus 方法, 删除调用。
         调用方应检查 status=="ok", 失败时优雅降级。
         """
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         return {"status": "failed", "error": "Futu SDK does not support analyst consensus", "fetched_at": now_iso}
 
     def get_insider_trades(self, symbol: str, num: int = 20) -> Dict[str, Any]:
@@ -174,7 +175,7 @@ class FutuExtendedProvider(BaseDataProvider):
                 }
             }
         """
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         cache_key = f"it_{symbol}"
         if self._is_cache_valid(cache_key):
             return self._cache[cache_key]

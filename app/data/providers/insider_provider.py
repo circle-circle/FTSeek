@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
 from app.data.providers.base import BaseDataProvider
+from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class InsiderProvider(BaseDataProvider):
 
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """获取内部人交易数据"""
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # 尝试数据源 1: SEC EDGAR
         result = self._fetch_sec_edgar(symbol)
@@ -57,7 +58,7 @@ class InsiderProvider(BaseDataProvider):
             transactions = sec.get_form4_transactions(bare, days=30)
             
             if transactions is not None:
-                now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
                 
                 # 计算因子
                 buy_count = sum(1 for t in transactions if t.get("type") == "buy")
@@ -95,7 +96,7 @@ class InsiderProvider(BaseDataProvider):
                 return None
             
             bare = symbol.replace("US.", "").replace("HK.", "").upper()
-            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
             
             # Finnhub insider transactions API
             resp = requests.get(

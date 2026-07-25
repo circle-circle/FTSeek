@@ -28,7 +28,7 @@ from datetime import datetime, timezone, timedelta
 
 os.chdir('/opt/ftseek/FTSeek-US')
 
-ET = timezone(timedelta(hours=-4))  # EDT; 换季 -5 仅影响显示, 不影响日期判定
+from app.utils.timezone import ET
 DB = 'data/ftseek_us.db'
 UE_JSONL = 'data/shadow/llm_universe_scan.jsonl'
 

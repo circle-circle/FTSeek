@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import requests
 
+from app.utils.timezone import now_utc
+
 # P1 (2026-05-02): 抑制 urllib3 TLS 警告 (verify=False 是 Finnhub 免费 API 的已知问题)
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -287,8 +289,8 @@ class FinnhubProvider:
             return self._cache[cache_key]
 
         ticker = self._to_ticker(symbol)
-        end_date   = datetime.utcnow().strftime("%Y-%m-%d")
-        start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        end_date   = now_utc().strftime("%Y-%m-%d")
+        start_date = (now_utc() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         data = self._get("company-news", {
             "symbol": ticker,
@@ -359,7 +361,7 @@ class FinnhubProvider:
 
         score = 0.0
         count = 0
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = now_utc().replace(tzinfo=None) - timedelta(hours=hours)
 
         for article in data[:30]:
             ts = article.get("datetime", 0)

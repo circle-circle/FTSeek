@@ -55,8 +55,10 @@ class BaseDataProvider(ABC):
         if symbol not in self._cache:
             return False
         cached = self._cache[symbol]
-        fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01").replace("Z", ""))
-        age_seconds = (datetime.utcnow() - fetched_at).total_seconds()
+        from app.utils.timezone import now_utc
+        from datetime import timezone
+        fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01").replace("Z", "+00:00"))
+        age_seconds = (now_utc() - fetched_at).total_seconds()
         return age_seconds < self.cache_ttl
 
     def _get_cached(self, symbol: str) -> Optional[Dict]:

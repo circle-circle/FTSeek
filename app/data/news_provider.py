@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import feedparser
 
 from app.llm.unified_service import UnifiedLLMService
+from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class USNewsProvider:
 
         keywords = SYMBOL_KEYWORDS.get(symbol, [symbol.replace("US.", "")])
         headlines: List[str] = []
-        cutoff = datetime.utcnow() - timedelta(hours=hours)  # feedparser 返回 UTC 时间
+        cutoff = now_utc().replace(tzinfo=None) - timedelta(hours=hours)  # feedparser 返回 UTC 时间
 
         for category, urls in RSS_FEEDS.items():
             for url in urls:
@@ -225,7 +226,7 @@ class USNewsProvider:
             {"sentiment": float, "top_headlines": List[str], "headline_count": int}
         """
         all_headlines: List[str] = []
-        cutoff = datetime.utcnow() - timedelta(hours=hours)  # feedparser 返回 UTC 时间
+        cutoff = now_utc().replace(tzinfo=None) - timedelta(hours=hours)  # feedparser 返回 UTC 时间
 
         for category in ["market"]:
             for url in RSS_FEEDS.get(category, []):

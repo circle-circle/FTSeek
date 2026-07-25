@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 
-from app.utils.timezone import now_et, now_cst, get_trade_date, to_et
+from app.utils.timezone import now_et, now_cst, get_trade_date, to_et, _et_trade_date
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,9 @@ class SymbolDailyLossGuard:
         """
         启动时从 trade_records 重建当日状态.
 
-        关键: exit_time 存储为 CST naive datetime, 需要转换为 ET 日期后匹配.
-        查询策略: 取最近 36 小时的交易, 在 Python 中用 ET 日期过滤.
+        exit_time 主写入路径为 ET-aware ISO (now_et().isoformat()),
+        少量遗留写入为 naive datetime. 查询策略: 取最近 48h 宽窗口,
+        在 Python 中用 _et_trade_date() 统一过滤 (aware→直接ET日, naive→CST-12h).
         """
         try:
             from app.core.paths import get_trade_records_db
@@ -139,15 +140,14 @@ class SymbolDailyLossGuard:
                 return
 
             conn = sqlite3.connect(str(get_trade_records_db()))
-            # P1 修复 (2026-06-02): cutoff 必须用 CST 匹配 DB 中的 CST naive exit_time
-            # 旧 bug: now_et() 返回 ET 时间, 与 CST DB 值比较导致 12h 偏移
-            # 修复: 使用 now_cst() 计算 cutoff, 与 DB 存储格式一致
-            cutoff_cst = now_cst().replace(tzinfo=None) - timedelta(hours=36)
+            # 2026-07-25 修复: DB 主路径存 ET-aware ISO (带 -04:00 后缀),
+            # 遗留路径存 naive. 用 48h 宽窗口 + Python 侧 _et_trade_date 精确过滤.
+            cutoff_et = now_et() - timedelta(hours=48)
             rows = conn.execute(
                 "SELECT symbol, realized_pnl, exit_time FROM trade_records "
                 "WHERE exit_time >= ? AND realized_pnl IS NOT NULL "
                 "ORDER BY exit_time",
-                (cutoff_cst.strftime("%Y-%m-%dT%H:%M:%S"),),
+                (cutoff_et.strftime("%Y-%m-%dT%H:%M:%S"),),
             ).fetchall()
             conn.close()
 
@@ -155,15 +155,11 @@ class SymbolDailyLossGuard:
                 for sym, pnl, exit_time_str in rows:
                     if not sym:
                         continue
-                    # 将 CST naive exit_time 转为 ET 日期
                     try:
                         exit_dt = datetime.fromisoformat(exit_time_str)
-                        exit_et_date = to_et(exit_dt).strftime("%Y-%m-%d")
+                        exit_et_date = _et_trade_date(exit_dt)
                     except Exception:
-                        # fallback: _et_trade_date 逻辑 (CST 减 12 小时 ≈ ET 日期)
-                        exit_et_date = (
-                            datetime.fromisoformat(exit_time_str) - timedelta(hours=12)
-                        ).strftime("%Y-%m-%d")
+                        continue
 
                     if exit_et_date != today_et:
                         continue  # 不属于今天的 ET 交易日
