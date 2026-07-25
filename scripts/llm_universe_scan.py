@@ -787,6 +787,9 @@ def cmd_inject(force_dry: bool = False) -> int:
         #   远不如 DA (200字thesis + 3 conditions + invalidation).
         #   高 confidence → auto_execute 排序优先 → 抢占 DA 信号的预算分配.
         #   修复: 上限 50 (低于 DA 一致70, 高于 DA 分歧35), 反映"有方向但无深度分析".
+        #   [2026-07-25 勘误留记] 曾试 cap→30 降 UE 排序优先级, 后发现排序主键是
+        #   pipeline.py::_src_priority (ADR-020 用户指定 UE 最优先), conf 仅同源内次键 —
+        #   改 cap 对跨源排序无效且污染 scorecard conf 分桶, 已回滚。资源错配议题见 handoff。
         _raw_conf = int(round(float(s["confidence"]) * 100))  # schema INTEGER 0-100
         _UE_CONF_CAP = 50
         _capped_conf = min(_raw_conf, _UE_CONF_CAP)
@@ -818,6 +821,9 @@ def cmd_inject(force_dry: bool = False) -> int:
                     # [2026-07-22] 解除数量压制后按证据层级分层判分的前提: tier/证据透传落库
                     "self_tier": s.get("self_tier") or None,
                     "evidence_ref": (s.get("evidence_ref") or "")[:300] or None,
+                    # [2026-07-25 信息源复盘] cap 前原始 conf 落库 — 否则 07-16 cap=50 把 LLM
+                    #   置信分层全抹掉 (库内 UE conf 恒=50, 归因无信息量)。排序仍用 capped。
+                    "raw_confidence": _raw_conf,
                 },
             },
         })

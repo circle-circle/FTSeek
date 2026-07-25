@@ -1134,6 +1134,19 @@ playbook:
     early_tight_sl_enabled: false
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
+    # 2026-07-24 (DEB-20260723/24): 三项 live 优化 — 各自独立开关一键回滚
+    # ① MFE停滞退出: 持仓≥150min 且峰值浮盈<0.5% 且水下 → 提前离场 (历史 0/37 零例外)
+    mfe_stall_exit_enabled: true
+    mfe_stall_exit_minutes: 150
+    mfe_stall_exit_mfe_pct: 0.5
+    # ② 同标的低MFE连败封禁: 近7日连续≥2笔[亏损且MFE<0.5%] → 拒新触发 (CRM三连磨死类模式)
+    symbol_streak_ban_enabled: true
+    symbol_streak_ban_lookback_days: 7
+    symbol_streak_ban_min_streak: 2
+    symbol_streak_ban_mfe_pct: 0.5
+    # ③ 低ATR硬门: atr_pct<2.5% 低波票不做日内动量 (7月13笔 15%WR -$244)
+    low_atr_gate_enabled: true
+    low_atr_gate_min_atr_pct: 0.025
     breakeven_fee_cushion_pct: 0.15
     overnight_hold_enabled: false
     profit_override_threshold_pct: 1.5
@@ -1170,6 +1183,54 @@ playbook:
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
+  # 2026-07-24 (用户裁决): 扩容补量 — 加快样本收集但不降标准.
+  #   当日可执行指令 < target 时, 从 pool 走正式生成链补足 (质量门+technical确定性方向,
+  #   无方向不硬凑; 下游低ATR门/连败封禁/VWAP门/量能门照常适用). 归因 raw.source=topup_pool.
+  topup:
+    enabled: true
+    # 2026-07-25 (用户裁决"验证期提升每日交易量快速攒样本"): target 25→30 / max_add 12→18.
+    #   执行侧上限未触顶 (max_daily_positions=30, notional cap 昨日仅用 32%), 瓶颈在供给;
+    #   质量门/三门/无方向不硬凑 照常适用 — 只抬配额不降标准. 回滚: 25/12.
+    target_min_instructions: 30
+    max_add_per_day: 18
+    # D2 (2026-07-24 夜, 用户批): +0 退避 — 每窗口最多 N 次尝试/间隔 M 分钟. 回滚: 设 999/0.
+    max_attempts_per_window: 2
+    retry_interval_min: 15
+    not_before_et_hhmm: 845
+    # 2026-07-24 (用户裁决, 验证期知情破例): 加盘中实时评估窗 — 盘前批用昨收价评
+    #   回调窗系统性偏陈旧 (07-24 首跑 +0 实证), 盘中窗以实时价重评同一正式链。
+    #   两窗共享 max_add_per_day; 分窗幂等; raw.timing=premarket/intraday 供效果切分。
+    premarket_end_et_hhmm: 930
+    intraday_start_et_hhmm: 1030
+    intraday_end_et_hhmm: 1130
+    pool:
+    - US.NVDA
+    - US.TSLA
+    - US.AMD
+    - US.META
+    - US.AMZN
+    - US.GOOG
+    - US.MSFT
+    - US.AAPL
+    - US.AVGO
+    - US.TSM
+    - US.NFLX
+    - US.SMCI
+    - US.PLTR
+    - US.COIN
+    - US.MU
+    - US.QCOM
+    # 2026-07-25 扩容 (用户裁决提量): +8 只高流动性标的, 选标口径 = 07-24 复盘 ATR 甜蜜区
+    #   3-4% 画像为主 (历史唯一正期望桶 71%WR) + 避开 watchlist 低波防御股 (2.5-3.0% 次差桶)。
+    #   仍经 Screener 质量门+三门, 回滚: 删本段。
+    - US.ARM
+    - US.MRVL
+    - US.UBER
+    - US.RIVN
+    - US.SNOW
+    - US.SHOP
+    - US.DELL
+    - US.CRWD
 pre_market_ranker:
   cache_ttl_seconds: 3600
   enabled: false
@@ -1694,6 +1755,9 @@ strategies:
   voting_llm:
     enabled: true
 strategy:
+  # 2026-07-24 (用户裁决, da-chain-audit DEB §7.5): 主线扫描本体静默 — 主线4日0交易纯空转.
+  #   只停扫描, scan_loop 寄宿任务(巡检/复盘/快照)保留. 回滚: 改 true.
+  main_scan_enabled: false
   consensus_threshold: 0.4
   consensus_threshold_by_vix:
     elevated: 0.45
