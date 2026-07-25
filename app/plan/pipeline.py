@@ -17,10 +17,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from app.utils.timezone import ET, now_et, get_trade_date
+
 logger = logging.getLogger("ftseek_us.plan_pipeline")
 
 PLAN_OUTPUT = Path(__file__).parent.parent.parent / "data" / "daily_battle_plan_us.json"
-ET = timezone(timedelta(hours=-4))
 
 
 def _composite_rank(factor_score: float, llm_confidence: float, verdict: str) -> float:
@@ -166,9 +167,10 @@ def _generate_position_actions(factor_screen: Dict, validation: Dict, targets: L
     # Get current positions from Futu
     positions = []
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
         from futu import RET_OK, TrdEnv
-        svc = ManualOrderService()
+        svc = get_manual_order_service()
         if svc.connect():
             is_live = svc._is_live()
             trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
@@ -178,7 +180,6 @@ def _generate_position_actions(factor_screen: Dict, validation: Dict, targets: L
             ret, data = svc._broker_ctx.position_list_query(
                 trd_env=trd_env, acc_id=acc_id,
             )
-            svc.disconnect()
             if ret == RET_OK and not data.empty:
                 for _, row in data.iterrows():
                     code = str(row.get("code", ""))
@@ -292,8 +293,9 @@ def _generate_orb_status(factor_screen: Dict) -> List[Dict]:
     }
 
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
+        # 2026-07-25: 改单例 + 不 disconnect (同上)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
         if not svc.connect():
             return status_list
 
@@ -352,7 +354,6 @@ def _generate_orb_status(factor_screen: Dict) -> List[Dict]:
             except Exception:
                 pass
 
-        svc.disconnect()
     except Exception as e:
         logger.debug(f"[Pipeline] ORB status error: {e}")
 

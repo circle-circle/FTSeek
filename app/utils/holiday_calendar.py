@@ -82,6 +82,34 @@ _HOLIDAYS_BY_MARKET: Dict[str, Set[date]] = {
     "US": US_HOLIDAYS,
 }
 
+# 2026-07-25 (隐患扫描修复): NYSE 提前收盘日 (13:00 ET) — 此前全仓硬编码 16:00,
+#   半日市 PRE_CLOSE_EXIT/EOD 不触发 → 日内仓被迫隔夜。
+#   口径: 感恩节次日恒半日; 平安夜仅当天为交易日时半日 (2027 圣诞观察在 12-24 周五整休, 无半日)。
+#   注: 2026-12-24 在上方 US_HOLIDAYS 被保守标为整休 (Futu API 为主真源会覆盖);
+#   若实际开市则本表兼容按 13:00 收。新增年份时同步维护本表。
+US_EARLY_CLOSE_DATES: Set[date] = {
+    date(2026, 11, 27),   # 感恩节次日 (周五)
+    date(2026, 12, 24),   # 平安夜 (周四, 若开市)
+    date(2027, 11, 26),   # 感恩节次日 (周五)
+}
+
+_US_EARLY_CLOSE_MINUTES = 13 * 60   # 13:00 ET
+_US_REGULAR_CLOSE_MINUTES = 16 * 60  # 16:00 ET
+
+
+def get_us_close_minutes_et(d: Optional[date] = None) -> int:
+    """当日美股收盘时刻 (ET 分钟数): 提前收盘日 780 (13:00), 否则 960 (16:00).
+
+    d 缺省 = 今日 (ET)。供退出链 minutes_to_close 计算用, 调用方应 try/except 兜底 960。
+    """
+    if d is None:
+        try:
+            from app.utils.timezone import now_et
+            d = now_et().date()
+        except Exception:
+            d = date.today()
+    return _US_EARLY_CLOSE_MINUTES if d in US_EARLY_CLOSE_DATES else _US_REGULAR_CLOSE_MINUTES
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Futu API 适配层

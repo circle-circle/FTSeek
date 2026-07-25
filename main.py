@@ -185,17 +185,9 @@ def _run_new_scheduler(args):
         logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
         logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略")
 
-    # ── Task #36 (2026-06-16): trade_records schema 迁移 (幂等) ──
-    # 在 scheduler/trade_store 初始化前先确保 schema 完整, 防止
-    # 实盘 ftseek_us_live.db 缺表/缺列时 INSERT 失败.
-    try:
-        from scripts.migrate_trade_records import ensure_trade_records_schema
-        from app.core.paths import get_trade_records_db
-        _migrate_db = get_trade_records_db()
-        _mig_result = ensure_trade_records_schema(_migrate_db)
-        logger.info(f"[Task#36·migration] {_mig_result}")
-    except Exception as _mig_err:
-        logger.warning(f"⚠️ [Task#36·migration] 失败 (降级运行): {_mig_err}")
+    # (已移除 2026-07-25, 隐患扫描小项①) Task#36 (2026-06-16) trade_records schema 迁移:
+    #   scripts/migrate_trade_records.py 已删 (schema 早已稳定, TradeStore 自建表),
+    #   死引用每次启动报 WARNING 噪声。恢复: git revert 本块。
 
     # ── DI 容器装配核心组件 ──
     from app.core.di_container import get_di_container
@@ -391,20 +383,11 @@ def _run_new_scheduler(args):
         except Exception as e:
             logger.error("[ShortConfig] 做空配置校验异常 (降级运行): %s", e)
 
-        # Layer 1.7: SSOT 配置一致性审计 (YAML vs CFG 默认值, 严格模式)
-        try:
-            from app.core.config_audit import print_config_audit, ConfigAuditError
-            _yaml_data = loader._raw_config
-            _blocking = print_config_audit(_yaml_data, strict=True)
-            if _blocking == 0:
-                logger.info("[ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测")
-        except ConfigAuditError as e:
-            logger.critical("[ConfigAudit] ❌ 配置一致性审计失败 — 实盘启动已阻止: %s", e)
-            raise
-        except Exception as e:
-            logger.warning("[ConfigAudit] 配置审计异常 (降级运行): %s", e)
-
         # Layer 2: 漂移检测 (4 小时)
+        # 2026-07-25 修复 (handoff 07-25 凌晨: ConfigGov 失联): Layer 2/3 启动挡在
+        #   Layer 1.7 strict 审计之后 → 存量 BLOCKING (MIN_CONFIDENCE 漂移) raise 被外层
+        #   "降级运行" 吞掉, 热重载/漂移检测根本没启动 (告警升级为功能损失)。
+        #   调序: Layer 2/3 先启动, strict 审计后置 (告警/raise 语义不变)。回滚: 换回原顺序。
         drift_detector = ConfigDriftDetector(loader, interval_hours=4.0)
         drift_detector.start()
         logger.info("[ConfigGov] ✅ 漂移检测已启动 (interval=4h)")
@@ -428,6 +411,20 @@ def _run_new_scheduler(args):
         scheduler.config_validator = validator
         scheduler.config_drift_detector = drift_detector
         scheduler.config_hot_reloader = hot_reloader
+
+        # Layer 1.7: SSOT 配置一致性审计 (YAML vs CFG 默认值, 严格模式)
+        # (2026-07-25 后置到 Layer 2/3 之后, 见上方调序注释)
+        try:
+            from app.core.config_audit import print_config_audit, ConfigAuditError
+            _yaml_data = loader._raw_config
+            _blocking = print_config_audit(_yaml_data, strict=True)
+            if _blocking == 0:
+                logger.info("[ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测")
+        except ConfigAuditError as e:
+            logger.critical("[ConfigAudit] ❌ 配置一致性审计失败 — 实盘启动已阻止: %s", e)
+            raise
+        except Exception as e:
+            logger.warning("[ConfigAudit] 配置审计异常 (降级运行): %s", e)
 
     except Exception as e:
         logger.warning(f"[ConfigGov] 配置治理初始化失败 (降级运行): {e}")

@@ -244,8 +244,11 @@ def _collect_sector_reuse(svc, symbol: str) -> Dict:
 def _collect_technicals(symbol: str) -> Dict:
     """从Futu获取技术指标 (MA/RSI/MACD/ATR/量比)"""
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛,
+        #   connect 对实盘无条件 unlock_trade; 单例 connected 短路→零额外解锁,
+        #   且不可断 dashboard 共享连接)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
         if not svc.connect():
             return {"error": "broker_disconnected"}
 
@@ -253,7 +256,6 @@ def _collect_technicals(symbol: str) -> Dict:
         # Must subscribe before fetching K-line
         ret_sub, _ = svc._quote_ctx.subscribe([symbol], [SubType.K_DAY])
         if ret_sub != RET_OK:
-            svc.disconnect()
             return {"error": "subscribe_failed"}
         import time; time.sleep(0.5)
 
@@ -338,7 +340,6 @@ def _collect_technicals(symbol: str) -> Dict:
             if h != l:
                 result["range_position_pct"] = round((c - l) / (h - l) * 100, 0)
 
-        svc.disconnect()
         return result
 
     except Exception as e:
@@ -366,8 +367,9 @@ def _collect_sector_context(symbol: str) -> Dict:
 
     # Get peer quotes
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
+        # 2026-07-25: 同上, 改单例 + 不 disconnect
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
         if not svc.connect():
             return result
 
@@ -375,7 +377,6 @@ def _collect_sector_context(symbol: str) -> Dict:
         peers = [t for sec, tickers in SECTOR_MAP.items()
                  for t in tickers if t != symbol and sec == result["sector"]]
         if not peers:
-            svc.disconnect()
             return result
 
         # Must subscribe before snapshot
@@ -391,7 +392,6 @@ def _collect_sector_context(symbol: str) -> Dict:
                 if prev > 0 and cur > 0:
                     result["peer_changes"][code.replace("US.", "")] = round((cur - prev) / prev * 100, 2)
 
-        svc.disconnect()
     except Exception:
         pass
 
@@ -523,8 +523,9 @@ def challenge_thesis(
     # 2. Collect deep context (single broker connection for efficiency)
     tech, sector, trade_hist = {}, {}, {}
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService as _Svc
-        _svc = _Svc()
+        # 2026-07-25: 同上, 改单例 + 不 disconnect (复用连接采集 tech/sector)
+        from app.web_dashboard.manual_order_service import get_manual_order_service as _get_svc
+        _svc = _get_svc()
         _connected = _svc.connect()
     except Exception:
         _connected = False
@@ -538,10 +539,6 @@ def challenge_thesis(
             sector = _collect_sector_reuse(_svc, symbol)
         except Exception as e:
             sector = {"sector": "Unknown", "peer_changes": {}}
-        try:
-            _svc.disconnect()
-        except Exception:
-            pass
 
     try:
         trade_hist = _collect_trade_history(symbol)

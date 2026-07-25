@@ -53,7 +53,8 @@ class ConfigDefaults:
     # 风控 — 信号质量 (risk.signal_quality)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会，模拟盘阶段优先获取数据
     # ============================================================
-    MIN_CONFIDENCE = 0.70                   # 高确信度门槛 (2026-06-13): 0.55→0.70
+    MIN_CONFIDENCE = 0.80                   # 2026-07-25: 0.70→0.80 同步 YAML SSOT (存量 BLOCKING 审计消除;
+                                            #   运行时真值早已是 YAML 0.8, 本行仅 resolver 异常兜底路径用)
     MIN_CONSENSUS = 0.25                    # P0 (2026-06-03): 0.2→0.25 (轻度收紧)
     MIN_SIGNAL_SCORE = 60                   # Synced to YAML risk.signal_quality.min_score (2026-06-16: 50→60)
 

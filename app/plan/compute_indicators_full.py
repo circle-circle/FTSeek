@@ -469,10 +469,11 @@ def compute_from_futu_kline(symbol: str, num_bars: int = 250) -> Optional[Dict]:
     用于 Pipeline 中自动获取数据。若 Futu 不可用返回 None。
     """
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
         from futu import RET_OK, SubType
 
-        svc = ManualOrderService()
+        svc = get_manual_order_service()
         if not svc.connect():
             return None
 
@@ -481,7 +482,6 @@ def compute_from_futu_kline(symbol: str, num_bars: int = 250) -> Optional[Dict]:
         time.sleep(0.3)
 
         ret, data = svc._quote_ctx.get_cur_kline(symbol, num_bars, ktype="K_DAY")
-        svc.disconnect()
 
         if ret != RET_OK or data.empty:
             return None

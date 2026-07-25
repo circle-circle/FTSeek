@@ -45,7 +45,14 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         eod_cfg = load_eod_config()
 
         window_minutes = int(pc_cfg.get("window_minutes", 15))
-        minutes_to_close = 16 * 60 - (now_et.hour * 60 + now_et.minute)
+        # 2026-07-25 (隐患扫描修复): 半日市 (13:00 ET) 支持 — 原硬编码 16*60 导致
+        #   提前收盘日 pre_close 窗口不触发。兜底 960。
+        try:
+            from app.utils.holiday_calendar import get_us_close_minutes_et
+            _close_min = get_us_close_minutes_et(now_et.date())
+        except Exception:
+            _close_min = 16 * 60
+        minutes_to_close = _close_min - (now_et.hour * 60 + now_et.minute)
         if minutes_to_close > window_minutes or minutes_to_close < 0:
             return None
 
@@ -60,7 +67,7 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         if entry_time:
             try:
                 if hasattr(entry_time, 'tzinfo') and entry_time.tzinfo is None:
-                    entry_time = entry_time.replace(tzinfo=ET) if ET else entry_time
+                    entry_time = ET.localize(entry_time) if ET else entry_time
                 held_minutes = (now_et - entry_time).total_seconds() / 60.0
                 min_hold_minutes = float(pc_cfg.get("min_hold_minutes_before_pre_close", eod_cfg.min_hold_minutes_before_eod_exit))
                 if held_minutes < min_hold_minutes:

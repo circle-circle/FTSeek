@@ -424,6 +424,21 @@ class StartupReconciler:
     def _add_legacy_position(self, symbol: str, info: Dict):
         """broker_only — 启动期补录. M1.1: 多线索推断, 不一刀切."""
         from app.core.models import Position, Direction, MarketRegime
+        from app.utils.timezone import now_et as _now_et
+        # 2026-07-25 修复 (handoff 07-24 深夜巡检 异常②): 收养路径 (_infer_source) 有
+        #   is_playbook_open_position 守卫, 但补录路径没有 → 每次重启把 playbook 仓
+        #   补录成 unknown+protected stub 进主线 store。playbook 仓由
+        #   monitor_playbook_sim_exits 自管, 补录路径补同款守卫直接跳过。回滚: 删本块。
+        try:
+            from app.playbook.pipeline import is_playbook_open_position
+            if is_playbook_open_position(symbol):
+                logger.info(
+                    f"[Reconciler·playbook] {symbol}: trade_records 有未平 PLAYBOOK_SIM 仓 "
+                    f"→ 跳过 broker_only 补录 (playbook 自管退出, 不进主线 store)"
+                )
+                return
+        except Exception as e:
+            logger.debug(f"[Reconciler·broker_only·playbook_guard] {symbol}: {e}")
         size = float(info.get("qty", 0) or 0)
         cost = float(info.get("cost", 0) or 0)
         direction = info.get("direction", "LONG")
@@ -444,7 +459,7 @@ class StartupReconciler:
             initial_sl=0.0,
             current_sl=0.0,
             initial_tp=0.0,
-            entry_time=datetime.now(),  # 真实 entry 不可知, 用启动时间
+            entry_time=_now_et(),  # 真实 entry 不可知, 用启动时间
             market_regime=MarketRegime.RANGE,
         )
 

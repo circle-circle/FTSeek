@@ -84,7 +84,8 @@ def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dic
     if now - _cache_ts < _CACHE_TTL and _cache:
         return _cache
 
-    result = {"collected_at": datetime.utcnow().isoformat() + "Z"}
+    from app.utils.timezone import now_utc
+    result = {"collected_at": now_utc().isoformat()}
 
     # ── 0. Futu Market Snapshot (主数据源 — 板块轮动+异动+基本面) ──
     futu_data = _collect_futu_market_data(watchlist_symbols)
@@ -181,9 +182,10 @@ def _collect_futu_market_data(watchlist_symbols: Optional[List[str]] = None) -> 
     主数据源 — 不依赖外部API key
     """
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
         from futu import RET_OK
-        svc = ManualOrderService()
+        svc = get_manual_order_service()
         if not svc.connect():
             logger.warning("[PreMarket] Futu connect failed")
             return None
@@ -245,7 +247,6 @@ def _collect_futu_market_data(watchlist_symbols: Optional[List[str]] = None) -> 
                 indices[sym] = {"price": last, "change_pct": chg_pct}
             result["market_indices"] = indices
 
-        svc.disconnect()
         return result
 
     except Exception as e:
@@ -419,7 +420,8 @@ def _collect_analyst_sentiment(client, watchlist_symbols: List[str]) -> Dict[str
 
 def _collect_earnings_calendar(client) -> str:
     """本周财报日历"""
-    today = datetime.utcnow().date()
+    from app.utils.timezone import now_et
+    today = now_et().date()
     week_end = today + timedelta(days=7)
 
     try:
@@ -507,7 +509,8 @@ def _collect_futu_analyst_consensus(watchlist_symbols: List[str]) -> Dict[str, A
 
 def _get_economic_calendar() -> str:
     """本周重要经济数据 (硬编码规则 — 最可靠)"""
-    today = datetime.utcnow().date()
+    from app.utils.timezone import now_et
+    today = now_et().date()
     week_end = today + timedelta(days=7)
     events = []
 
@@ -548,7 +551,8 @@ def _collect_treasury_yields() -> Dict[str, Any]:
     }
 
     results = {}
-    today = datetime.utcnow().date()
+    from app.utils.timezone import now_et as _now_et_fred
+    today = _now_et_fred().date()
     start = (today - timedelta(days=14)).strftime("%Y-%m-%d")
     end = today.strftime("%Y-%m-%d")
 

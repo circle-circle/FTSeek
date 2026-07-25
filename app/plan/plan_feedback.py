@@ -59,8 +59,9 @@ def get_fwd_returns(symbols: List[str], days: int = 1) -> Dict[str, float]:
     """获取股票的前N日收益 (用Futu K线)"""
     results = {}
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
         if not svc.connect():
             return results
 
@@ -84,7 +85,6 @@ def get_fwd_returns(symbols: List[str], days: int = 1) -> Dict[str, float]:
             except Exception:
                 pass
 
-        svc.disconnect()
     except Exception as e:
         logger.debug(f"[PlanFeedback] fwd returns error: {e}")
     return results
@@ -217,7 +217,8 @@ def match_plan_trades(plan: Dict) -> List[Dict]:
     target_symbols = {t.get("symbol", ""): t for t in targets}
 
     conn = _get_db()
-    today = datetime.now(timezone(timedelta(hours=-4))).strftime("%Y-%m-%d")
+    from app.utils.timezone import get_trade_date
+    today = get_trade_date()
     rows = conn.execute(
         "SELECT symbol, direction, entry_price, exit_price, realized_pnl, "
         "close_time, strategy FROM trade_records "
@@ -258,7 +259,8 @@ def run_feedback(date_str: str = None) -> Dict:
     }
     """
     if not date_str:
-        date_str = datetime.now(timezone(timedelta(hours=-4))).strftime("%Y-%m-%d")
+        from app.utils.timezone import get_trade_date
+        date_str = get_trade_date()
 
     result = {
         "date": date_str,

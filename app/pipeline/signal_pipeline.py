@@ -238,13 +238,26 @@ def scan_loop(scheduler):
                 pass
             if scheduler._is_market_open():
                 scheduler.post_market_audit_done = False
-                logger.info("[扫描] 开始信号扫描...")
+                # P-2 衍生项 (2026-07-24, DEB-20260724-da-chain-audit §7.5, 用户裁决):
+                #   主线扫描本体静默化 — 近4日成交 100% PLAYBOOK、主线 0 笔, 扫描仅空转烧配额/CPU。
+                #   只停 _run_signal_scan_impl 本体; 寄宿任务 (盘前/盘后巡检、日周月度复盘、
+                #   持仓快照、watchdog) 全部保留。回滚: strategy.main_scan_enabled 改 true。
+                _main_scan_on = True
                 try:
-                    _run_signal_scan_impl(scheduler)
-                    record_api_success()
-                except Exception as e:
-                    record_api_error()
-                    logger.error(f"[扫描] 扫描异常: {e}", exc_info=True)
+                    from app.core.config_container import get_config as _get_cfg_ms
+                    _main_scan_on = bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", True))
+                except Exception:
+                    pass
+                if not _main_scan_on:
+                    logger.debug("[扫描] 主线扫描已静默 (strategy.main_scan_enabled=false), 寄宿任务照常")
+                else:
+                    logger.info("[扫描] 开始信号扫描...")
+                    try:
+                        _run_signal_scan_impl(scheduler)
+                        record_api_success()
+                    except Exception as e:
+                        record_api_error()
+                        logger.error(f"[扫描] 扫描异常: {e}", exc_info=True)
             else:
                 logger.debug(f"[扫描] {phase.value} → 跳过行情轮询")
                 if not getattr(scheduler, 'post_market_audit_done', False):
@@ -743,6 +756,17 @@ def _bridge_candidate_to_old_format(candidate):
 
 def run_signal_scan(scheduler):
     """遍历股票池，生成并执行交易信号 - 外部调用入口"""
+    # 2026-07-25 修复 (handoff 07-24 深夜巡检 异常①): 启动预热 ImmediateScan/force_scan
+    #   走本入口直调 _run_signal_scan_impl, 绕过了 scan_loop 内的主线静默门 →
+    #   启动期跑了一轮 stages Pipeline (44 标的)。此处补同款 main_scan_enabled 门。
+    #   回滚: 删本块。
+    try:
+        from app.core.config_container import get_config as _get_cfg_ms
+        if not bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", True)):
+            logger.info("[扫描] 主线扫描已静默 (strategy.main_scan_enabled=false), 跳过外部入口扫描 (预热/force_scan)")
+            return
+    except Exception:
+        pass
     _run_signal_scan_impl(scheduler)
 
 

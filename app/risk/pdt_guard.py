@@ -273,7 +273,13 @@ class PDTGuard:
                 )
                 conn.commit()
             count = self._get_day_trade_count()
-            logger.info(f"[PDT] 记录日内交易: {symbol}, 5日窗口内计数: {count}/{self.MAX_DAY_TRADES}")
+            # 2026-07-25 (隐患扫描小项③): 加豁免标注 — "51/3" 裸读易误判为风控失效,
+            #   实为 equity≥$25k 合规豁免 (check_trade_permission 按 is_pdt_account 判定)
+            try:
+                _exempt = " (equity≥$25k 豁免)" if self._state.is_pdt_account else " (PDT 受限)"
+            except Exception:
+                _exempt = ""
+            logger.info(f"[PDT] 记录日内交易: {symbol}, 5日窗口内计数: {count}/{self.MAX_DAY_TRADES}{_exempt}")
         except Exception as e:
             logger.error(f"[PDT] 记录日内交易失败: {e}")
         

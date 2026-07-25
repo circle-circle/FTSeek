@@ -18,6 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.data.providers.base import BaseDataProvider
+from app.utils.timezone import now_utc
 
 # 抑制 TLS 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -57,7 +58,7 @@ class FundamentalProvider(BaseDataProvider):
 
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """获取基本面数据（自动降级: Futu → Finnhub → Yahoo → AlphaVantage）"""
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # 尝试数据源 0: Futu (主数据源 — 真实数据，无需API key)
         result = self._fetch_futu(symbol)
@@ -92,17 +93,22 @@ class FundamentalProvider(BaseDataProvider):
 
     def _fetch_futu(self, symbol: str) -> Optional[Dict[str, Any]]:
         """从 Futu get_market_snapshot 获取基本面（主数据源 — 真实数据）"""
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            from app.web_dashboard.manual_order_service import ManualOrderService
-            svc = ManualOrderService()
+            # P0 事故修复 (2026-07-24 夜): 改用单例 + 不 disconnect — 原 "每次 new + connect + disconnect"
+            #   在实盘模式下每次都触发一次实盘解锁 (connect 内无条件 unlock_trade)。
+            #   topup 盘中窗每 ~2min 扫 11 只 → 解锁 spam 撞富途限频 (30s/10次) → ERROR 循环。
+            #   本方法只需 quote_ctx 行情快照, 单例 _connected 短路后零额外解锁。
+            #   同款反模式共 9 处 (thesis_challenge/plan/*), 本处为热路径先修, 余者周末收敛。
+            from app.web_dashboard.manual_order_service import get_manual_order_service
+            svc = get_manual_order_service()
             if not svc.connect():
                 logger.warning("[FundamentalProvider] Futu connect failed")
                 return None
 
             from futu import RET_OK
             ret, data = svc._quote_ctx.get_market_snapshot([symbol])
-            svc.disconnect()
+            # 注意: 单例连接常驻, 绝不在此 disconnect (会断掉 dashboard 手动交易的共享连接)
 
             if ret != RET_OK or data.empty:
                 logger.warning(f"[FundamentalProvider] Futu snapshot failed: {data}")
@@ -190,20 +196,20 @@ class FundamentalProvider(BaseDataProvider):
     def _fetch_finnhub(self, symbol: str) -> Optional[Dict[str, Any]]:
         """从 Finnhub 获取（主数据源）"""
         bare = symbol.replace("US.", "").replace("HK.", "").upper()
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # 并行获取 4 个维度（串行实现，可优化为 ThreadPoolExecutor）
         metric = self._finnhub_get("stock/metric", {"symbol": bare, "metric": "all"})
         recommendations = self._finnhub_get("stock/recommendation", {"symbol": bare})
         profile = self._finnhub_get("stock/profile2", {"symbol": bare})
         
-        end_d = datetime.utcnow().strftime("%Y-%m-%d")
-        start_d = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        end_d = now_utc().strftime("%Y-%m-%d")
+        start_d = (now_utc() - timedelta(days=7)).strftime("%Y-%m-%d")
         news = self._finnhub_get("company-news", {
             "symbol": bare, "from": start_d, "to": end_d,
         })
         
-        today = datetime.utcnow().date()
+        today = now_utc().date()
         end = today + timedelta(days=90)
         earnings = self._finnhub_get("calendar/earnings", {
             "symbol": bare,
@@ -307,7 +313,7 @@ class FundamentalProvider(BaseDataProvider):
             market_data = yf.get_market_data(bare)
             
             if market_data and market_data.get("fundamentals"):
-                now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
                 fund = market_data["fundamentals"]
                 return {
                     "status": "ok",

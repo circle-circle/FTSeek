@@ -1080,6 +1080,11 @@ def _check_positions(scheduler):
                         position.max_favorable_excursion = _unrealized_pnl
             except Exception:
                 pass  # MAE/MFE 跟踪失败不影响退出逻辑
+
+            # (已移除 2026-07-25) P0 MFE shadow (mfe_early_exit.jsonl): 挂错宿主的死路径 —
+            #   playbook 仓不进主线 position_store, 本 loop 永远采不到目标样本;
+            #   同功能由正确宿主的 e_shadow_45/60/90m (trade_records.metadata) 覆盖
+            #   (首夜 7/7 实采)。分析请读 e_shadow_*。见 handoff 07-24 深夜巡检 🔪。
     if not price_cache:
         metadata = getattr(scheduler, "_price_fail_metadata", {"count": 0, "last_alert": ""})
         metadata["count"] = metadata.get("count", 0) + 1

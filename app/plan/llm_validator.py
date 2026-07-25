@@ -460,8 +460,9 @@ def _get_peer_changes(candidates: List[Dict]) -> Dict[str, Dict]:
         return result
 
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
+        # 2026-07-25: 改单例 + 不 disconnect (handoff 07-24 解锁spam同款反模式收敛)
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
         if not svc.connect():
             return result
 
@@ -483,7 +484,6 @@ def _get_peer_changes(candidates: List[Dict]) -> Dict[str, Dict]:
                             if code in _SECTOR_MEMBERS.get(sec, []) and code != short:
                                 result.setdefault(c["symbol"], {})[code] = round((cur - prev) / prev * 100, 2)
 
-        svc.disconnect()
     except Exception as e:
         logger.debug(f"[Validator] peer changes error: {e}")
 
