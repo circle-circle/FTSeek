@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""盘前 DA bridge 生成完成 · 钉钉摘要推送 (2026-07-12)。
+
+背景: 指令来源已收敛为单一作业 A(盘前 ET06:00 deep-stock-analysis)。
+原 B(bridge-generation)自带的钉钉"盘前Bridge生成完成"摘要随 B 暂停而消失,
+本脚本把该摘要独立出来: 读 A 写的 bridge 文件 (opportunity_scan_{ET日期}.json) → 推钉钉。
+
+设计:
+  - 与 A 解耦: 不改 A 的 prompt; 单挂 cron 在 A 完成之后 (盘前) 触发。
+  - 新鲜度守卫: 只推"今日 ET"的 bridge 文件; 文件不存在/非今日 → 跳过不推 (绝不推陈旧)。
+  - 失败安全: 取价/推送异常都吞掉, 绝不抛错。
+运行: PYTHONPATH=. ./venv/bin/python scripts/da_bridge_dingtalk_push.py [--date YYYY-MM-DD] [--dry]
+"""
+import argparse
+import json
+import os
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.utils.timezone import ET
+
+DATA = Path(__file__).resolve().parents[1] / "data"
+
+# 自含 dotenv 加载: FINNHUB_API_KEY / 钉钉 webhook 均在 .env.us, 保证 cron 下也能拿到
+try:
+    from dotenv import load_dotenv
+    _ROOT = Path(__file__).resolve().parents[1]
+    load_dotenv(_ROOT / ".env")
+    load_dotenv(_ROOT / ".env.us")
+except Exception:
+    pass
+
+
+def _today_et():
+    return datetime.now(ET).strftime("%Y-%m-%d")
+
+
+def _bridge_path(date):
+    return DATA / f"opportunity_scan_{date}.json"
+
+
+def _finnhub_price(symbol):
+    """best-effort 取现价, 失败返回 0。"""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key:
+        return 0.0
+    sym = symbol.replace("US.", "")
+    try:
+        url = f"https://finnhub.io/api/v1/quote?symbol={sym}&token={key}"
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=8) as resp:
+            return float(json.loads(resp.read()).get("c", 0) or 0)
+    except Exception:
+        return 0.0
+
+
+def _build_message(date, bridge):
+    candidates = bridge.get("candidates", []) or []
+    lines = [f"📊 盘前Bridge生成完成 ({date})",
+             f"候选: {len(candidates)}只(动态扫描+熟股)", ""]
+    for c in candidates:
+        sym = c.get("symbol", "")
+        current = _finnhub_price(sym)
+        direction = c.get("direction", "")
+        conf = c.get("confidence", 0)
+        entry = c.get("entry_price", 0)
+        sl = c.get("stop_loss", 0)
+        debate = (c.get("debate_outcome", "") or "")[:40]
+        price_str = f"现价${current:.2f}" if current else "现价N/A"
+        lines.append(f"{sym}: {direction} conf={conf} {price_str}")
+        lines.append(f"  LLM建议入场${entry} SL${sl} (实际以re-price为准)")
+        if debate:
+            lines.append(f"  辩论: {debate}")
+    lines.append("")
+    lines.append("instruction直写DB ✅  实际执行价=re-price实时bid/ask")
+    return "\n".join(lines)
+
+
+def main(date=None, dry=False):
+    date = date or _today_et()
+    path = _bridge_path(date)
+
+    # 新鲜度守卫: 文件必须存在, 且其 trade_date 就是目标日 (绝不推陈旧文件)
+    if not path.exists():
+        print(f"[skip] bridge 文件不存在: {path.name} (A 可能尚未生成或非交易日)")
+        return
+    try:
+        bridge = json.loads(path.read_text())
+    except Exception as e:
+        print(f"[skip] bridge 文件解析失败: {e}")
+        return
+    td = bridge.get("trade_date")
+    if td and td != date:
+        print(f"[skip] bridge trade_date={td} ≠ 目标日 {date}, 视为陈旧, 不推")
+        return
+
+    msg = _build_message(date, bridge)
+    print(msg)
+    if dry:
+        print("\n[dry-run] 未推送")
+        return
+    try:
+        from app.notifier.dingtalk import DingTalkNotifier
+        DingTalkNotifier().send_text(msg)
+        print("\n[ok] 钉钉已推送")
+    except Exception as e:
+        print(f"\n[warn] 钉钉推送失败(不影响链路): {e}")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="盘前 DA bridge 钉钉摘要 (只读 bridge 文件)")
+    ap.add_argument("--date", help="bridge 日期 YYYY-MM-DD (默认今日 ET)")
+    ap.add_argument("--dry", action="store_true", help="只打印不推送")
+    a = ap.parse_args()
+    main(date=a.date, dry=a.dry)
