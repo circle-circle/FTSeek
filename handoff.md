@@ -37,6 +37,8 @@
 | `python scripts/trigger_gate_report.py` | 触发门判分 (只读): executed vs missed 的 fwd_return 缺口/方向分层/机会成本。落 `data/trigger_gate_latest.json`+history |
 | `python scripts/direction_hit_scorecard.py [--since D]` | 方向命中率记分牌 (只读, 2026-07-24): 指令台账 fwd_return 按 方向/来源/辩论共识/regime/周 切片 — "LLM看没看清方向"的信心仪表。落 `data/direction_scorecard_latest.json` |
 | `python scripts/exit_replay_backtest.py [--since D] [--refresh-bars]` | 离线退出回放器 (只读, 2026-07-25): PLAYBOOK_SIM 历史交易 × 1min bar 反事实回放 dd/be/tiered/early_tight 网格, 双序区间+Δbaseline 口径。落 `data/exit_replay_latest.json`, bar 缓存 `data/replay_bars/`。详见 `docs/debates/DEB-20260725-exit-replay-backtest.md` |
+| `python scripts/entry_gate_replay.py [--since D]` | 入场门/时点回放 L2 (只读, 2026-07-26): 全部方向指令 (含未成交) × 1min bar — ATR门网格拦对/拦错 + 入场时点变体 (09:35~11:00)。ATR 缺失用日K回算补齐 (无前视)。落 `data/entry_gate_replay_latest.json`。详见 `docs/debates/DEB-20260726-backtest-l2-l3.md` |
+| `python scripts/historical_robustness_check.py [--years 5]` | 跨期稳健性 L3 (只读, 2026-07-26): 78 标的 × 5 年日K, ATR 分桶机会结构逐年检验 — 防"6 周样本规律"当结构规律引用。日K缓存 `data/replay_bars_daily/` (与 L2 共享)。落 `data/historical_robustness_latest.json` |
 
 ## 🗺️ 退出旋钮地图 (`config/playbook_horizon.yaml`, DA 恒走 `short_horizon`)
 **A. 赢家被锁太小 (R:R 缺口主因) — `factor_exit_rules.default`**
@@ -73,6 +75,15 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-07-26 (周日夜·回测体系 L2/L3 落地) · 入场门回放 + 跨期稳健性首跑 — ATR 甜蜜区被降级为经验参数 (用户批"要", 只读零 live)
+**是什么**: 用户命题"拉历史数据+成交历史构建回测体系"。分层落地: L2 `entry_gate_replay.py` (308 方向指令含未成交 × 1min bar, 补上路径2缺口) + L3 `historical_robustness_check.py` (78 标的 × 5 年日K)。**L4 边界写死**: LLM 信号端到端历史回测永久不可行 (无新闻快照/prompt漂移/前视), 提案一律引用 DEB §L4 驳回。
+**L2 首跑 (n=307, bar 覆盖 307/308, ATR 回算补齐 212 无前视)**:
+- 入场时点单调衰减: 09:45-10:00 甜区 (均值 0.12%/胜率 0.56) → 11:00 期望砍半 (0.06%) — topup 盘中窗吃的是下半衰期, 判分须与盘前批分口径 (定量锚首次落地)。
+- ATR 门: **lo3.0 拦对 (第三重确认, Δ+0.49%)**; 但 **hi4.0 上限门指令层"拦错"翻案** — ≥4% 桶裸持有正期望, 交易层亏损疑似退出工程失配 (SL 被高波打穿) 而非信号差 → 处方方向改"高ATR退出档"而非拦入场, 待路径1高ATR切片交叉验证。
+**L3 首跑 (78/78 零失败, 判据❌不通过)**: 3-4% 桶动量跟随仅 1/6 年优于 2.5-3% 桶 → **ATR 甜蜜区非市场结构规律, 是"LLM信号质量×波动环境"交互 (仅在本系统信号分布上三重确认有效)。按预注册判据降级: 经验参数需每月复检, 08-29 终裁不得引用为结构规律。** 但机会规模分层跨 6 年稳定 (波幅 1.8/2.5/3.0/5.4%) 结构性成立。
+**预注册判据**: L2-Q1 (lo3.0 升 live 三条件) / L2-Q2 (hi4.0 翻案待路径1交叉) / L2-Q3 (时点甜区 n≥600 复跑再议) / L3-Q1 (已裁: 降级) — 见 `docs/debates/DEB-20260726-backtest-l2-l3.md`。
+**维护**: 无 cron (避免再造后台任务), 建议周五盘后随 exit_scorecard 手动复跑 L2; 缓存复用重跑零 API 增量。
 
 ### 2026-07-26 (周日夜·GitHub 异地容灾接线) · 首次推送+历史清洗+每夜备份自动化 (用户授权配置)
 1. **历史清洗推送**: 本地 510 提交经 git-filter-repo 剥离 .env*/node_modules (531MB→49MB, 密钥从全部历史剥净) — 与另一模型独立清洗结果逐字节一致互为验证。远端 master/main/rfc-060 = 清洗版; 港股旧代码 (5/26, 172 提交, 本地原本没有) 全量保全至 `archive/legacy-*` 三分支, 零丢失。
