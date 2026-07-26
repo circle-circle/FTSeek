@@ -23,10 +23,9 @@ logger = logging.getLogger("ftseek_us.config_mgmt.validator")
 
 REQUIRED_KEYS = {
     # 基础配置
-    "base.market": {"type": str, "expected": "US"},
-    "base.currency": {"type": str, "expected": "USD"},
-    "base.timezone": {"type": str},
-    "base.trade_env": {"type": int},
+    # (base.market/currency/timezone/trade_env removed 2026-07-26 — cleanup-r3 (70cecbdb)
+    #  已从 unified_config.yaml 删除整段 base: (无代码消费者: 时区硬编码 America/New_York,
+    #  trade_env 走 adapter 属性), validator 同步移除, 否则启动被 4 个假错误阻断)
 
     # 数据源
     "opend.host": {"type": str},

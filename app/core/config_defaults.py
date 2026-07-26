@@ -37,11 +37,8 @@ CRITICAL_KEYS = {
     "SIGNAL_COOLDOWN",
     "CB_CONSECUTIVE_LOSSES",
     "CB_PAUSE_DURATION",
-    "SCHEDULER_MIN_CONFIDENCE",
     "SCHEDULER_MAX_POSITIONS",
     "SCHEDULER_MIN_SIGNAL_STRENGTH",
-    "DEFAULT_STOP_LOSS_PCT",
-    "DEFAULT_TAKE_PROFIT_PCT",
     "BUDGET_SYSTEM_MAX_DAILY_LOSS",
 }
 
@@ -83,7 +80,7 @@ class ConfigDefaults:
     # 调度器 (scheduler)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会
     # ============================================================
-    SCHEDULER_MIN_CONFIDENCE = 0.70         # 高确信度门槛 (2026-06-13): 0.55→0.70
+    # (SCHEDULER_MIN_CONFIDENCE removed 2026-07-26 — 已废弃, 运行时走 MinConfidenceResolver)
     SCHEDULER_MAX_POSITIONS = 12            # scheduler.max_positions (同步 YAML 2026-06-03: 5→12, 模拟盘最大化数据采集)
     SCHEDULER_MIN_SIGNAL_STRENGTH = 60      # 高确信度门槛 (2026-06-13): 30→60
     SCHEDULER_MIN_CONSENSUS = 0.25          # P0 (2026-06-03): 0.2→0.25 (同步 YAML)
@@ -92,8 +89,8 @@ class ConfigDefaults:
     # ============================================================
     # 止损 / 止盈
     # ============================================================
-    DEFAULT_STOP_LOSS_PCT = 0.05            # stop_loss.default_stop_loss_pct
-    DEFAULT_TAKE_PROFIT_PCT = 0.1           # take_profit.default_take_profit_pct
+    # (DEFAULT_STOP_LOSS_PCT / DEFAULT_TAKE_PROFIT_PCT removed 2026-07-26 —
+    #  yaml 对应段已删 (cleanup-r3), 止损止盈 SSOT=exit_policy.yaml, 无其他消费者)
 
     # ============================================================
     # 信号融合 (signal_fusion.us)

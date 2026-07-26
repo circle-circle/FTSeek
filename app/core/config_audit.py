@@ -39,7 +39,8 @@ _AUDIT_ITEMS: List[Tuple[str, str, str]] = [
     ("risk.circuit_breaker.strategy.hourly_loss_threshold", "CB_HOURLY_LOSS_THRESHOLD", "小时亏损熔断"),
     ("risk.circuit_breaker.strategy.pause_duration", "CB_PAUSE_DURATION", "熔断暂停时长"),
     # 调度器
-    ("scheduler.min_confidence", "SCHEDULER_MIN_CONFIDENCE", "调度器最小置信度"),
+    # (scheduler.min_confidence removed 2026-07-26 — 已废弃, SSOT=risk.signal_quality.min_confidence
+    #  + MinConfidenceResolver, yaml 残留键已删, 见 validator.DEPRECATED_FIELDS)
     ("scheduler.max_positions", "SCHEDULER_MAX_POSITIONS", "调度器最大持仓"),
     ("scheduler.min_signal_strength", "SCHEDULER_MIN_SIGNAL_STRENGTH", "最小信号强度"),
     ("scheduler.min_consensus_level", "SCHEDULER_MIN_CONSENSUS", "调度器最小共识"),
@@ -49,8 +50,9 @@ _AUDIT_ITEMS: List[Tuple[str, str, str]] = [
     # 信号过期
     ("decision.signal_timing.expire_seconds", "SIGNAL_EXPIRE_SECONDS", "信号过期时间"),
     # 止损止盈
-    ("stop_loss.default_stop_loss_pct", "DEFAULT_STOP_LOSS_PCT", "默认止损比例"),
-    ("take_profit.default_take_profit_pct", "DEFAULT_TAKE_PROFIT_PCT", "默认止盈比例"),
+    # (stop_loss.default_stop_loss_pct / take_profit.default_take_profit_pct removed 2026-07-26 —
+    #  cleanup-r3 (70cecbdb) 已从 yaml 删除整段 (无代码消费者, 止损止盈 SSOT=exit_policy.yaml),
+    #  审计项同步移除, 否则 strict 审计报 2 个假 BLOCKING)
     # 信号融合
     ("signal_fusion.us.technical_weight", "FUSION_TECHNICAL_WEIGHT", "技术面权重"),
     ("signal_fusion.us.sentiment_weight", "FUSION_SENTIMENT_WEIGHT", "情绪面权重"),

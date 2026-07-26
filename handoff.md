@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-07-25 (离线退出回放器落地) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-07-26 (校验清单同步修复批) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -73,6 +73,12 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-07-26 (周日晚·校验清单同步修复) · cleanup-r3 删 yaml 段但漏改校验清单 → 启动 4 假错误+2 假 BLOCKING, 已修并重启验证全绿
+**根因**: 70cecbdb (cleanup-r3) 删了 yaml 无消费者段 (`base:`/`stop_loss:`/`take_profit:`), 但 validator REQUIRED_KEYS + config_audit CRITICAL 清单未同步 → 17:37 重启报 4 个 `base.*` 必需键缺失, raise 被外层吃成"降级运行" → **ConfigGov 整块中断 (漂移检测/热重载/审计均未启动)**; 且 Layer 1.7 还埋着 stop_loss/take_profit 2 个假 BLOCKING (被 validator 先挡住未暴露)。
+**修复 (尺子同步减法, 零行为变更)**: ① validator REQUIRED_KEYS 移除 4 个 `base.*` 键 ② config_audit 审计项移除 scheduler.min_confidence + stop_loss/take_profit.default_* 3 项 ③ config_defaults 同步删 CRITICAL_KEYS 条目及死常量 SCHEDULER_MIN_CONFIDENCE/DEFAULT_STOP_LOSS_PCT/DEFAULT_TAKE_PROFIT_PCT (全库确认无其他消费者) ④ yaml 删废弃残留键 scheduler.min_confidence (消 DEPRECATED WARNING, 运行时早已走 MinConfidenceResolver)。
+**验证**: 18:07 重启 — ConfigValidator ✅全部通过 / 漂移检测+热重载启动 / SSOT 审计 0 BLOCKING / 启动段 0 ERROR 0 Traceback / 模拟盘+Futu 连接正常。
+**遗留 (非阻断)**: 审计尚有 3 条 INFO 级警告 `signal_fusion.us.*` 三权重键缺失走 CFG 兜底 — FUSION_* 同样无任何代码消费者, 同款死审计项, 建议下轮减法批一并清。**方法论教训**: 删 yaml 段的零引用验证必须含“校验/审计清单”这个隐性消费面 (validator REQUIRED_KEYS / config_audit _AUDIT_ITEMS / CRITICAL_KEYS)。回滚: git revert 本批。
 
 ### 2026-07-26 (周日·扫尾清零批) · 修数据+理逻辑收尾 (用户令"清干净后集中优策略")
 1. **悬空键真 bug ×2**: `risk.blacklist`→`global_blacklist` (llm_pipeline 黑名单此前恒空形同虚设) / `main_pipeline.allow_live`→`strategy_budgets.` 真键 (值同 False 零行为变化, yaml 恢复真源)。
