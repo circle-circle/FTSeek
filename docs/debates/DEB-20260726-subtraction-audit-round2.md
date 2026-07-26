@@ -171,3 +171,22 @@ F3 已证: model_call(引擎) + unified_service(门面) 是一套; hermes_client
 - 第 1 轮"立即执行项"中 Q2 清空/5e 补键/Q6 watchdog 清单 均未执行 — 属裁决建议尚待用户确认, 不算缺陷, 但状态标注应从"立即"改"待确认"防误读。
 
 **方法论追加 (第四课)**: 归档前的"零引用验证"必须覆盖四个调用面 — 仓内 import / crontab / systemd / **Hermes prompt 文本** — 任一面漏查都会把活物送进 archive。建议把本次四面清单固化进减法审计 SOP。
+
+---
+
+## 框架收敛专题执行记录 (2026-07-26 周日, 用户问"今天能否完成收敛")
+
+**句识别答复: 大合一今天不可也不应做; 裁决建议的立即项今日全部完成。**
+
+**套数复核修正 (独立重查)**:
+- regime: 现存 **7 套** (3 套已在 R2 删) — 其中 4 套产 regime 标签, 3 套是 filter 语义 (不产标签)。
+- 熔断: 实为 **6 套全活引用** (absolute/capital_safety/account/market/circuit_breaker/drawdown_control), 分层正交确认。
+- 辩论引擎"4 套": **同 LLM 客户端款误判, 撤案** — 现存 3 个职责正交 (unified=主引擎 / debate_planner=盘前双 agent / catalyst_debate 头注自述"复用 DebatePlanner+call_llm"=复用非重复); 真重复的 2 个 R2 已删。
+- 裸 regex: **新发现修正 5e 建议** — 三处 `auto_trading_enabled` regex 读磁盘是刻意设计 (绕过热重载 60s 延迟的紧急开关语义), 改 get_dotted = 引入延迟窗口 = 行为变化。原建议降级为"提取共用 helper 保持磁盘语义", 触及 execution/engine.py 列下周末。已写入 AGENT.md 防误优化。
+
+**今日完成 (裁决建议立即项 5/5)**:
+1. 5d 熔断 map: `docs/circuit-breaker-map.md` (6 层表 + kill_switch 哨兵语义说明)。
+2. 5b 推送军规 + 四调用面验证 + regex 勿优化: 写入 `AGENT.md` 新增"军规"节。
+3. **5c regime shadow 对比器上线**: `scripts/regime_divergence_shadow.py` + cron 23:00 CST 交易日。首样本即出信号: playbook=CAUTIOUS vs risk_detector=RANGING — 两套连词汇表都不同, 初步支持"语义正交"派 (待 n≥10 交易日按预注册判据裁)。
+4. Q2/5e/Q6 上午已落 (见第 2 轮复核后续)。
+5. 存量大迁移 (5b 推送 5 旁路 / 5c 合一 / 5e 三体系) 全部按裁决留 08-29 后 — 明日开盘前不碰活链路。
