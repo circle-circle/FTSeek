@@ -2,7 +2,8 @@ name: CI — Regression Tests
 
 on:
   push:
-    branches: [master, main]
+    # 2026-07-26: 原只监 master/main, 而日常工作分支为 rfc-* — 本周 10+ commit CI 一次没跑过。
+    branches: [master, main, "rfc-*"]
   pull_request:
     branches: [master, main]
 
@@ -27,21 +28,12 @@ jobs:
           pip install -r requirements.txt 2>/dev/null || true
           pip install pytest pytest-asyncio pytest-cov pytz
 
-      - name: Run regression tests
+      - name: Run full test suite
+        # 2026-07-26: 扫尾清零批后全量 980 passed / ~35s, 首次具备当门禁的成本条件;
+        # 原三子集 (regression/risk/coordinator) 升级为全量 tests/。
         run: |
-          python -m pytest tests/regression/ -v --tb=short \
-            --junitxml=test-results/regression.xml
-
-      - name: Run risk tests
-        run: |
-          python -m pytest tests/risk/ -v --tb=short \
-            --ignore=tests/risk/test_exit_engine.py \
-            --junitxml=test-results/risk.xml
-
-      - name: Run coordinator tests
-        run: |
-          python -m pytest tests/coordinator/ -v --tb=short \
-            --junitxml=test-results/coordinator.xml
+          python -m pytest tests/ -q --tb=short \
+            --junitxml=test-results/full.xml
 
       - name: Syntax check all modified files
         run: |

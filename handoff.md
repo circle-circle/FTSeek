@@ -74,6 +74,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-26 (周日晚·回归验证接线批) · 启动冒烟脚本 + CI 补面 + 重启 SOP 军规 (用户裁"需要")
+**背景**: base.* 事故实锤回归体系缺口 — 980 测试全绿 + 人工重启 grep 都没拦住 ConfigGov 降级运行; 且 ci.yml 只监 master/main, 当前工作分支 rfc-060 本周 10+ commit CI 一次没跑。一次性接线, 之后零维护, 主战场回策略。
+1. **`scripts/startup_smoke_check.py`** (新建): 重启后七条机器断言 (ConfigValidator 全过/漂移检测/热重载/SSOT 审计 0 BLOCKING/模拟盘 TRADE_ENV=1/退出快循环/零 Traceback), 以最后 [PreFlight] 为启动段界, 启动段过旧(>6h)判 exit=2; `--wait N` 轮询适配启动耗时, `--push` 失败飞书告警。**验证**: 正例当前启动段 7/7 ✓; 负例用 17:37 故障日志样式合成复现 — 若当时有此脚本会抓住 5 项失败; 过旧启动段 exit=2 ✓。
+2. **ci.yml 补面**: 触发分支加 `rfc-*` (消"CI 从没跑过"盲区); 三子集升级为全量 `tests/` (扫尾批后 980/35s 首次具备当门禁成本)。注: 未推远端, GitHub runner 上首跑效果待 push 后观察 (requirements 安装 `|| true` 可能缺依赖)。
+3. **AGENT.md 军规**: 重启 SOP = restart + smoke `--wait 90`, 禁临场 grep 代替; 删 yaml 段零引用验证须含隐性消费面 (REQUIRED_KEYS/_AUDIT_ITEMS/CRITICAL_KEYS)。
+**不做**: 大规模补覆盖率/策略细粒度单测 — 本周末三次事故无一是"缺单测"造成, 且违背"聚焦策略"主方向。
+
 ### 2026-07-26 (周日晚·校验清单同步修复) · cleanup-r3 删 yaml 段但漏改校验清单 → 启动 4 假错误+2 假 BLOCKING, 已修并重启验证全绿
 **根因**: 70cecbdb (cleanup-r3) 删了 yaml 无消费者段 (`base:`/`stop_loss:`/`take_profit:`), 但 validator REQUIRED_KEYS + config_audit CRITICAL 清单未同步 → 17:37 重启报 4 个 `base.*` 必需键缺失, raise 被外层吃成"降级运行" → **ConfigGov 整块中断 (漂移检测/热重载/审计均未启动)**; 且 Layer 1.7 还埋着 stop_loss/take_profit 2 个假 BLOCKING (被 validator 先挡住未暴露)。
 **修复 (尺子同步减法, 零行为变更)**: ① validator REQUIRED_KEYS 移除 4 个 `base.*` 键 ② config_audit 审计项移除 scheduler.min_confidence + stop_loss/take_profit.default_* 3 项 ③ config_defaults 同步删 CRITICAL_KEYS 条目及死常量 SCHEDULER_MIN_CONFIDENCE/DEFAULT_STOP_LOSS_PCT/DEFAULT_TAKE_PROFIT_PCT (全库确认无其他消费者) ④ yaml 删废弃残留键 scheduler.min_confidence (消 DEPRECATED WARNING, 运行时早已走 MinConfidenceResolver)。
