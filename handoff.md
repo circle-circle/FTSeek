@@ -74,6 +74,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-26 (周日·重启验证+开盘就绪) · R2 删除首次重启全绿 + 复核修复/修尺子三项落地 + 周一就绪总检 (用户裁"重启后能修的修, 轻装上阵")
+1. **重启验证 (145 项删除后首次)**: 09:00 CST 重启 — 0 Traceback/ImportError, ConfigGov 全绿, 退出快循环+Watchdog 启动, 模拟盘 ✓。R2 删除正式验证安全。
+2. **复核修复已提交** (d0e8c759): Hermes 6 脚本移回 + api_limit_monitor 移回+import 修。
+3. **修尺子三项**: Q2 price_fail_closed 清空为 [] (机制留, 备份 .bak_20260726) / 5e llm_features 5 隐身键补 yaml 显式化 (值=代码默认零行为变化) / Q6 三高危文件入 data_freshness_watchdog (干跑即捕获 SHORT 门控 2100h 停更×2 — 设计意图达成)。
+4. **周一就绪总检全绿**: 三门 ON / topup 30/18+盘中窗 1130 / UE v2(v2.2 prompt)+负反馈+critique / thinking dr_debate / prompt_cache×2 / 主线静默; crontab 22 条无断链; Hermes 断链复查 3/4 为检查正则误报 (属 skill 自带目录)。
+5. **新备忘 (既有损坏非 R2 造成)**: 盘后综合复盘 job (7a40dd7c) Step6 引用 `scripts/position_reconcile.py` — 本仓 git 历史从未有过此文件 (幻影引用), agent 该步失败但不阻塞其余; 下次修 job prompt 时删除或指向真实对账方式。
+**周一观察清单**: 08:30 首夜报告 / 提量后成交量 (保险丝: 日亏>$150 回滚 25/12) / topup 盘中窗首验 10:30-11:30 ET / UE v2.2 首跑 21:10 (含 P1-P5+A2 全家桶, SHORT 量预期下降是设计意图) / thinking dr_debate 时延-empty率 / 两条 exit shadow 自动采集。
+
 ### 2026-07-26 (周末·减法审计R2) · 代码/配置/数据三维废物清算 145 对象 (用户四项全选: T1+T2+T3+DEB)
 **审计**: 3 路并行 (scripts 死活/app 模块引用/配置键+data 产消对账), 详见 `docs/debates/DEB-20260726-subtraction-audit-round2.md`。
 1. **T1 零风险**: atr_gate_shadow cron 停 (45KB/日零读者); yaml 删死 flag×3+shadow_mode 段+voting_* 三死路由+strategies.orb 死牌子; DEB-20260724 已裁决 3 模块删除。
