@@ -27,6 +27,27 @@ SHORT_INTEREST_FILE = _DATA_DIR / "short_interest.json"
 
 # ── helpers ────────────────────────────────────────────────────────
 
+_STALE_WARN_DAYS = 7
+_stale_warned: set = set()
+
+
+def _warn_if_stale(path: Path, label: str) -> None:
+    """数据文件超期未更新时 WARNING (每进程每文件一次) — fail-open 但不静默"""
+    try:
+        if not path.exists() or path in _stale_warned:
+            return
+        import time
+        age_days = (time.time() - path.stat().st_mtime) / 86400
+        if age_days > _STALE_WARN_DAYS:
+            _stale_warned.add(path)
+            logger.warning(
+                f"[ShortChecks] {label} 数据已 {age_days:.0f} 天未更新 (生产者未接线), "
+                f"门控 fail-open 放行中 — 数据源裁决见 DEB-20260726-subtraction-audit-round2"
+            )
+    except OSError:
+        pass
+
+
 def _load_json(path: Path) -> Dict[str, Any]:
     """加载 JSON 数据文件，文件不存在或无效返回空"""
     try:
@@ -73,6 +94,7 @@ def check_borrow_cost(symbol: str, config: Dict[str, Any] = None) -> Tuple[bool,
     action = config.get("hard_to_borrow_action", "fallback_to_put")
 
     # 从数据文件检查借券成本
+    _warn_if_stale(HTB_FILE, "借券成本 hard_to_borrow.json")
     htb_data = _load_json(HTB_FILE)
     symbol_key = symbol.replace("US.", "")
 
@@ -135,6 +157,7 @@ def check_short_squeeze(symbol: str, config: Dict[str, Any] = None) -> Tuple[boo
     max_float = float(config.get("max_short_float_pct", 20.0))
     action = config.get("action", "block")
 
+    _warn_if_stale(SHORT_INTEREST_FILE, "空头占比 short_interest.json")
     si_data = _load_json(SHORT_INTEREST_FILE)
     symbol_key = symbol.replace("US.", "")
 

@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 try:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-    from scripts.archive.api_limit_monitor import should_use_twelvedata, record_twelvedata_call
+    from scripts.api_limit_monitor import should_use_twelvedata, record_twelvedata_call
     API_LIMIT_MONITOR_ENABLED = True
 except Exception as e:
     logger.warning(f"[TwelveData] API 限流监控导入失败：{e}")

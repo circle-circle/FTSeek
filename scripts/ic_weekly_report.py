@@ -122,17 +122,21 @@ def generate_report():
 
     # 2. IC汇总
     lines.append("\n── IC汇总 (30天) ──")
-    if ic.get("status") == "ok":
-        lines.append(f"  全局IC: {ic['ic_mean']:.4f} (p={ic.get('ic_p_value','?'):.4f}) n={ic['n_signals']}")
+    def _fnum(x, fmt="{:.4f}"):
+        return fmt.format(x) if isinstance(x, (int, float)) else "?"
+    if ic.get("status") == "ok" and ic.get("ic_mean") is not None:
+        lines.append(f"  全局IC: {_fnum(ic['ic_mean'])} (p={_fnum(ic.get('ic_p_value'))}) n={ic['n_signals']}")
         lines.append(f"  按策略:")
         for s, v in ic.get("by_strategy", {}).items():
-            emoji = "✅" if v["ic"] > 0 else "🔴" if v["ic"] < -0.05 else "🟡"
-            lines.append(f"    {emoji} {s}: IC={v['ic']:.4f} p={v['pval']:.3f} n={v['n']}")
+            _iv = v.get("ic") or 0
+            emoji = "✅" if _iv > 0 else "🔴" if _iv < -0.05 else "🟡"
+            lines.append(f"    {emoji} {s}: IC={_fnum(v.get('ic'))} p={_fnum(v.get('pval'), '{:.3f}')} n={v['n']}")
         lines.append(f"  按方向:")
         for d, v in ic.get("by_direction", {}).items():
-            emoji = "✅" if v["ic"] > 0 else "🔴"
-            lines.append(f"    {emoji} {d}: IC={v['ic']:.4f} n={v['n']}")
-    elif ic.get("status") == "insufficient_data":
+            _iv = v.get("ic") or 0
+            emoji = "✅" if _iv > 0 else "🔴"
+            lines.append(f"    {emoji} {d}: IC={_fnum(v.get('ic'))} n={v['n']}")
+    elif ic.get("status") == "insufficient_data" or ic.get("ic_mean") is None:
         lines.append(f"  数据不足: {ic.get('n_signals',0)}/{ic.get('min_required',30)}")
     else:
         lines.append(f"  错误: {ic.get('error','unknown')}")

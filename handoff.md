@@ -74,6 +74,27 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-26 (周末·减法审计R2) · 代码/配置/数据三维废物清算 145 对象 (用户四项全选: T1+T2+T3+DEB)
+**审计**: 3 路并行 (scripts 死活/app 模块引用/配置键+data 产消对账), 详见 `docs/debates/DEB-20260726-subtraction-audit-round2.md`。
+1. **T1 零风险**: atr_gate_shadow cron 停 (45KB/日零读者); yaml 删死 flag×3+shadow_mode 段+voting_* 三死路由+strategies.orb 死牌子; DEB-20260724 已裁决 3 模块删除。
+2. **T2 死代码**: app/ 死模块 **73 文件 ~13,500 行** git rm (三重验证: 模块名+包级导入+类名; 分类器拦截后补强验证模式); 失效测试 16 个删除 (**pytest 收集从 16 ERROR → 1048 全过**); 孤儿脚本 58 个归档 scripts/archive/ (scripts 根 118→60)。4 个 `__init__.py` 断链已修。
+3. **T3 隐身放行**: **SHORT 门控 88 天空文件静默 fail-open** (hard_to_borrow/short_interest) → 加 stale WARNING (实测触发, 行为零变化); 悬空配置键补齐 (risk.portfolio 回撤三键+max_per_sector, 值=代码默认零变化, yaml 恢复真源); event_log (常驻线程+零读者) 与 position_snapshot (每小时×3 取价+零读者) 停写。
+**遗留裁决 (DEB §五)**: SHORT 门控数据源接线 vs 废弃 / price_fail_closed 65 天冻结 / api_limit_state 仓外生产者 / 推送 7 套+regime 7 套框架收敛 (留 08-29 后) / data 产消注册表进 watchdog。
+**回滚**: 全部 git revert 级; crontab 备份 data/crontab.backup.20260726_*.txt。
+
+### 2026-07-25 (周末·浪费清扫四项批) · 全项目定时任务审计落地 (用户四项全选)
+**审计**: 3 路并行扫描 (Hermes cron / 系统 crontab / 仓内任务) — 仓内干净 (全部 LLM 已审计 ≤$1.10/天), 浪费集中在 Hermes+crontab。
+1. **Hermes 重复任务暂停** ✅: `895169e95c50` ftseek-eod-feedback-loop 与孪生任务跑同一 `feedback_loop.py` 仅晚 30min (~30万 token/次重复) + 周一复盘周日数据 → `hermes cron pause` (可逆)。
+2. **两个每周必崩脚本修复** ✅: ①`ic_weekly_report.py` ic_mean=None 时 `f"{None:.4f}"` TypeError → `_fnum` 守卫 + by_strategy/direction 空值防护, 实测跑通并推飞书 ②crontab L20 `symbol_performance_report.py` 补 `PYTHONPATH=.` (兄弟条目均有), 实测跑通。crontab 备份 `data/crontab.backup.20260725_225836.txt`。
+3. **僵尸任务批清理** ✅: crontab 注释 4 条 (带日期+原因+恢复条件): `update_signal_lifecycle` (无 live 交易 2 周+, **转 LIVE 须恢复**) / `backfill_voting_outcomes_v2` (卡死行永真) / `factor_exit_pnl` (死消费者) / `time_exit_counterfactual` (无 TIME_EXIT 记录)。main.py Task#36 死 import 前批已移除。`/etc/cron.d/ftseek-tasks` L7 (*/5 curl :8901/health, 与 health_check.sh 重复) 已由用户手动注释 ✅ (备份 `ftseek-tasks.bak_20260725_zombie`, 已验证)。
+4. **combined_monitor 停用** ✅: 两条 cron 注释 — 39 次/日检出 84 告警但**零推送代码** (检出即终点); 覆盖已由 error_alert.sh (ERROR 计数+钉钉) + intraday_heartbeat (静默失败检测+推送) 承担。
+
+### 2026-07-25 (周末·LLM 成本堵漏) · Hermes 空转 cron 停用 (用户查账发现, 直接拍板执行)
+**发现**: Hermes cron `81002dff9b1d` "FTSeek-US Agent 请求处理" `*/5 * * * *` 24/7 无窗轮询 `~/.hermes/ftseek_requests/` 队列 — 每发 2 次 qwen3.7-max 调用 × 38,370 输入 token (~$0.61/次), 产出 8 字符 `[SILENT]`。**~$177/天, 04-25 创建以来 24,487 次 ≈ $1.5 万量级**, 全部在仓外 (不进 llm_audit.db / 不受 $5/天预算守卫)。
+**必要性核查 (结论: 无存在必要)**: ①仓内+`/opt/ftseek` 全局 grep 零生产者 (无任何代码写该队列) ②留存 50/50 次输出全是 [SILENT] ③队列目录 05-26 起为空 — 生产者早已退役, 消费者空转 3 个月。
+**动作**: `hermes cron pause 81002dff9b1d` (可逆, 备份 `jobs.json.bak_20260725_disable_reqpoll`)。其余 enabled cron 不动 (盘中诊断等均有正确交易时段窗)。
+**复活条件**: 若未来重建队列生产者, 须用 shell 门控形态 (script job: 空队列 0 成本退出, 非空才唤起 agent), 禁止恢复 LLM 直轮询。累计浪费金额计入 8 月复盘账本。
+
 ### 2026-07-25 (周末·P5/A2 落地) · SHORT 高门槛 + UE self-critique shadow (用户裁"提质量且不改交易流程可执行")
 **双条件过滤裁决**: P5 ✅ (输出字段加法, SHORT 照常入库执行) / A2 ✅ (shadow 形态, 注入集合零变化) / **A1 ❌ 不动** (改 conf=改执行排序, 继续攒 n≥100) / **A4 ⚠️ 拆分** (字段已被 horizon_hours 覆盖; price-in 复核要挂盘前主循环侵入面大, 列下周)。
 1. **P5-UE** (`llm_universe_scan.py` v2.2 规则8): SHORT 强制 short_check{borrow_feasible/downside_catalyst_expiry_hours/squeeze_risk} + "无具体下跌催化剂不得浮现"; normalize 解析含 provided 标记 (模型没交作业可切片) → inject 落 origin。

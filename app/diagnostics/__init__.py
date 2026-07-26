@@ -14,15 +14,11 @@ from typing import Dict
 
 from app.diagnostics.base import BaseDiagnostic, DiagnosticResult
 from app.diagnostics.shadow_account import ShadowAccountDiagnostic, create_shadow_diagnostic
-from app.diagnostics.statistical_validator import StatisticalValidator, create_statistical_validator
-from app.diagnostics.geopolitical_reasoner import GeopoliticalReasoner, create_geopolitical_reasoner
 
 
-# ── 诊断模块注册表 ──
+# 2026-07-26 减法R2: statistical_validator/geopolitical_reasoner 零调用方已删 (git revert 恢复)
 DIAGNOSTIC_REGISTRY: Dict[str, callable] = {
     "shadow_account": create_shadow_diagnostic,
-    "statistical_validator": create_statistical_validator,
-    "geopolitical_reasoner": create_geopolitical_reasoner,
 }
 
 

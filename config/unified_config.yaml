@@ -278,18 +278,14 @@ decision:
     price_break: 0.36
     rsi_rebound: 0.36
 deployment:
+  # 2026-07-26 减法R2: 删死flag event_driven_scan/ic_feedback_to_voting/signal_pipeline_lightweight_trading
+  # (零读取方) + shadow_mode整段 (is_shadow_mode/should_compare_legacy 零外部调用)。回滚: git revert。
   feature_flags:
-    event_driven_scan: false
     ic_feedback_to_screener: false
-    ic_feedback_to_voting: true
     ic_hard_blocking: true
-    signal_pipeline_lightweight_trading: true
     unified_backfill: false
     vix_hard_blocking: true
     weight_v2_active: true
-  shadow_mode:
-    compare_with_legacy: true
-    enabled: true
 description: FTSeek-US 美股模拟交易系统 - 统一配置 v3 (含新闻V2 + 配置治理 + 地缘增强)
 diagnostics:
   description: 非交易路径诊断 Overlay — 零侵入现有交易管线
@@ -606,15 +602,7 @@ llm:
       primary: qwen-max
       # 2026-07-25 显式前缀缓存 (同 deep_target_analysis, 盘前批扫描连发场景)。回滚: 删本行。
       prompt_cache: true
-    voting_deepseek:
-      fallback: qwen-max
-      primary: kimi-k2
-    voting_glm:
-      fallback: qwen-max
-      primary: glm-5
-    voting_qwen:
-      fallback: deepseek-flash
-      primary: qwen-max
+    # 2026-07-26 减法R2 (DEB-20260724-A2): voting_deepseek/voting_glm/voting_qwen 三路由代码零引用, 删。回滚: git revert。
     web_search_fundamental:
       cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
       fallback: deepseek-pro
@@ -705,6 +693,18 @@ llm_budget:
     premarket: 1.0
     weekly_proposal: 2.0
 llm_features:
+  # 2026-07-26 减法R2-5e: 补 5 个隐身键显式化 — 此前靠代码 _DEFAULT_FLAGS 默认运行,
+  #   yaml 无迹可寻 (sltp_verify_shadow/exit_param_shadow 默认 True 在跑)。值=代码默认, 零行为变化。
+  adaptive_tuner:
+    enabled: false
+  exit_param_shadow:
+    enabled: true
+  failure_mode_miner:
+    enabled: false
+  sltp_verify_shadow:
+    enabled: true
+  thesis_recheck:
+    enabled: false
   daily_auto_tuner:
     daily_max_usd: 0.5
     enabled: false
@@ -1027,6 +1027,8 @@ options:
   stop_loss_ratio: 0.5
   take_profit_ratio: 2.0
   time_decay_warning: 0.1
+# 2026-07-26 减法R2 (DEB-20260724-A1): 顶层 orb 段标注 deprecated — enabled=false 引擎不初始化,
+# 仅 scheduler_core 读 orb.universe 做订阅白名单。段保留只为 universe 订阅清单, 勿新增参数。
 orb:
   breakout_buffer_pct: 0.1
   capital_pct: 0.2
@@ -1365,9 +1367,17 @@ risk:
     vwap_threshold: -0.001
   position:
     max_per_direction: 0.65
+    # 2026-07-26 减法R2: 补悬空键 (pre_trade_check.py 在读, 原吃代码默认 0.40;
+    # sandbox overrides 另有 0.55 覆盖, 值不变仅使 yaml 成为真源)
+    max_per_sector: 0.40
     max_per_symbol: 0.25
     max_position_pct: 0.15
     max_total: 0.8
+  # 2026-07-26 减法R2: 补悬空段 (position_exit_monitor.py:526-528 在读, 原吃代码默认值, 零行为变化)
+  portfolio:
+    warn_drawdown_pct: 0.02
+    reduce_drawdown_pct: 0.025
+    stop_drawdown_pct: 0.03
   position_sizing:
     max_position_pct: 0.12
     risk_per_trade_pct: 0.008
@@ -1702,20 +1712,8 @@ strategies:
   main:
     capital_pct: 0.8
     priority: 5
-  orb:
-    breakout_buffer_pct: 0.1
-    enabled: true
-    entry_end_et: '11:00'
-    max_chase_pct: 1.5
-    max_daily_trades: 15
-    max_positions: 5
-    max_range_width_pct: 2.5
-    min_range_width_pct: 0.3
-    min_risk_reward: 1.5
-    min_volume_ratio: 1.3
-    no_entry_after_et: '15:30'
-    observe_only: false
-    stop_loss_atr_mult: 1.5
+  # 2026-07-26 减法R2 (DEB-20260724-A1): strategies.orb 为死牌子 — 引擎读顶层 orb.enabled=false 早已不初始化,
+  # 本段只管订阅路径且 universe=0 实际零订阅。删段防误导。回滚: git revert。
   technical:
     enabled: false
     indicators:

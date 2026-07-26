@@ -5337,21 +5337,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         # ═══════════════════════════════════════════════════════════
 
         # ── Phase 3: 记录退出事件 (WAL) ──
-        try:
-            from app.core.event_log import log_event
-            log_event(
-                trace_id=position.trace_id,
-                event_type="EXIT",
-                symbol=position.symbol,
-                data={
-                    "exit_price": current_price,
-                    "pnl": pnl,
-                    "exit_reason": exit_reason.value,
-                    "holding_hours": position.holding_hours,
-                }
-            )
-        except Exception as e:
-            logger.warning(f"[平仓] 写入交易记录失败: {e}")
+        # 2026-07-26 减法R2: event_log 表全仓零 SELECT 读者, import 即起常驻线程空耗, 停写。
+        # 退出记录真源 = 上方 signal_outcomes 写入。回滚=恢复 log_event(EXIT) 调用块。
 
     except Exception as e:
         logger.warning(f"[平仓] 写入交易记录失败（不影响平仓）: {e}")

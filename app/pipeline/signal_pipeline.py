@@ -271,7 +271,8 @@ def scan_loop(scheduler):
             scheduler._check_daily_review()
             scheduler._check_weekly_review()
             scheduler._check_monthly_review()
-            scheduler._check_position_snapshot()
+            # 2026-07-26 减法R2: position_snapshots 表零读者, 快照每小时×3逐持仓取价空耗 API, 停写。
+            # 函数保留可人工调用; 回滚=恢复下行。scheduler._check_position_snapshot()
 
             _earnings_refresh_counter += 1
             if _earnings_refresh_counter >= _EARNINGS_REFRESH_INTERVAL:
