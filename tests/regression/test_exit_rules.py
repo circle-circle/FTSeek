@@ -30,14 +30,29 @@ class TestExitRulePriority:
         return ExitRuleDispatcher(config)
 
     def test_pre_close_over_trailing(self, dispatcher):
-        """收盘前强平优先于追踪止损"""
+        """收盘前退出优先于追踪止损 (adaptive 语义: 浮盈≥1ATR 锁利全平).
+
+        Task #3 (2026-05-31): pre_close 默认 adaptive — 中间带 (0.3~1.0 ATR)
+        不再强平 (允许过夜), 只有利润/持平/深亏三分支触发.
+        """
         position = {'symbol': 'AAPL', 'entry_price': 100, 'position_id': 'p2', 'holding_hours': 2}
-        market = {'current_price': 101, 'minutes_to_close': 10, 'atr': 2.0}
+        # 浮盈 3.5/2.0 = 1.75 ATR ≥ 1.0 → adaptive profit 分支, 全平锁利
+        market = {'current_price': 103.5, 'minutes_to_close': 8, 'atr': 2.0}
         trail_state = {'trail_status': 'ACTIVE', 'trail_high': 105}
 
         result = dispatcher.evaluate(position, market, trail_state)
         assert result is not None
         assert result.rule_name == 'pre_close'
+        assert result.metadata.get('branch') == 'profit'
+
+    def test_pre_close_mid_band_holds_overnight(self, dispatcher):
+        """adaptive 中间带 (0.3~1.0 ATR 小利) → pre_close 不强平, 允许过夜"""
+        position = {'symbol': 'AAPL', 'entry_price': 100, 'position_id': 'p2b', 'holding_hours': 2}
+        # 浮盈 1.0/2.0 = 0.5 ATR ∈ (0.3, 1.0) 中间带
+        market = {'current_price': 101, 'minutes_to_close': 8, 'atr': 2.0}
+
+        result = dispatcher.evaluate(position, market)
+        assert result is None or result.rule_name != 'pre_close'
 
     def test_no_trigger_when_conditions_not_met(self, dispatcher):
         """所有条件不满足时不触发"""

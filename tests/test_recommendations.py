@@ -229,63 +229,45 @@ class TestPushTrigger:
         assert "71" in card
         assert "NVDA" in card
 
-
 class TestAccuracyTracker:
-    """测试准确率追踪器"""
+    """测试准确率追踪器 (API 演进: RecommendationAccuracyTracker.evaluate_daily →
+    AccuracyTracker.verify_date, store_dir + data_router 注入)"""
 
-    def test_evaluate_no_data(self):
-        """测试无数据时的容错"""
-        from app.recommendations.accuracy_tracker import RecommendationAccuracyTracker
+    def test_verify_no_data(self, tmp_path):
+        """测试无数据时的容错: 无该日期存档 → 空报告, 不抛异常"""
+        from app.recommendations.accuracy_tracker import AccuracyTracker
 
-        tracker = RecommendationAccuracyTracker()
-        result = tracker.evaluate_daily("2020-01-01")  # 不存在的日期
+        tracker = AccuracyTracker(store_dir=str(tmp_path))
+        result = tracker.verify_date("2020-01-01")  # 不存在的日期
 
-        # 不应抛异常，应返回空报告
-        assert result is not None
-        assert result["today_total"] == 0
-        assert result["results"] == []
+        assert result == {}
 
-    def test_evaluate_with_mock_data(self, tmp_path):
-        """测试带模拟数据的评估"""
-        from app.recommendations.accuracy_tracker import RecommendationAccuracyTracker
+    def test_verify_with_mock_data(self, tmp_path):
+        """测试带模拟数据的验证 (store → verify 全链路)"""
+        from app.recommendations.accuracy_tracker import AccuracyTracker
 
-        # 准备测试数据
-        daily_file = tmp_path / "daily_2026-05-27.json"
-        daily_file.write_text(
-            json.dumps(
-                {
-                    "date": "2026-05-27",
-                    "recommendations": [
-                        {
-                            "symbol": "NVDA",
-                            "action": "BUY",
-                            "entry_zone": "145.00-147.00",
-                        },
-                        {
-                            "symbol": "AAPL",
-                            "action": "BUY",
-                            "entry_zone": {"low": 180, "high": 185},
-                        },
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
+        tracker = AccuracyTracker(store_dir=str(tmp_path))
+        stored = tracker.store_recommendations({
+            "date": "2026-05-27",
+            "recommendations": [
+                {"symbol": "NVDA", "action": "BUY", "entry_zone": "145.00-147.00"},
+                {"symbol": "AAPL", "action": "BUY", "entry_zone": [180, 185]},
+            ],
+        })
+        assert stored is True
 
-        # Mock router
+        # Mock router (密封, 不触真实行情)
         mock_router = MagicMock()
         mock_router.get_quote.side_effect = lambda sym: {
-            "NVDA": {"price": 150.0, "close": 150.0},
-            "AAPL": {"price": 178.0, "close": 178.0},
+            "US.NVDA": {"price": 150.0},
+            "US.AAPL": {"price": 178.0},
         }.get(sym)
 
-        tracker = RecommendationAccuracyTracker(
-            data_dir=str(tmp_path), router=mock_router
-        )
-        result = tracker.evaluate_daily("2026-05-27")
+        result = tracker.verify_date("2026-05-27", data_router=mock_router)
 
-        assert result["today_total"] == 2
+        assert result["total"] == 2
         # NVDA: entry mid=146, close=150 → correct
         # AAPL: entry mid=182.5, close=178 → incorrect (BUY but went down)
-        assert result["today_correct"] == 1
+        assert result["correct"] == 1
         assert len(result["results"]) == 2
+        assert result["accuracy_pct"] == 50.0

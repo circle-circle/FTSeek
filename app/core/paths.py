@@ -154,8 +154,7 @@ def get_trade_records_legacy_db() -> Path:
     return _resolve("trade_records_legacy_db", "data/trade_records.db")
 
 
-def get_trade_records_json() -> Path:
-    return _resolve("trade_records_json", "data/trade_records.json")
+# get_trade_records_json 已删 (2026-07-26 扫尾): trade_records.json 07-15 deprecated, getter 零调用方
 
 
 def get_obsidian_vault() -> Path:

@@ -22,14 +22,7 @@ from datetime import date
 import pytest
 
 
-# ─── E1: audit_file 路径 ────────────────────────────────────
-def test_e1_futu_audit_file_uses_paths():
-    """audit_file 不再硬编码 /root"""
-    # 不实例化 FutuIntegration (依赖 futu SDK), 直接读源码字符串验证
-    src = open("app/futu_integration.py").read()
-    assert "/root/.futu_trade_audit.jsonl" not in src
-    assert "futu_trade_audit.jsonl" in src
-    assert "get_logs_dir" in src
+# ─── E1: audit_file 路径 — 已删除 (app/futu_integration.py 于减法审计R2退役) ───
 
 
 # ─── D1: 节假日日历 ─────────────────────────────────────────
@@ -146,13 +139,7 @@ def test_s2_halted_returns_neutral():
     assert "halted" in sig.reasoning
 
 
-# ─── E2: place_sell_order retry signature ──────────────────
-def test_e2_place_sell_order_has_retry_params():
-    """方法签名含 max_retries / backoff"""
-    src = open("app/futu_integration.py").read()
-    assert "_ensure_connected" in src
-    assert "max_retries" in src
-    assert "backoff" in src
+# ─── E2: place_sell_order retry — 已删除 (app/futu_integration.py 退役) ───
 
 
 # ─── E3: OrderTracker restore ───────────────────────────────

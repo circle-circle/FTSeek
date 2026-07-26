@@ -101,13 +101,23 @@ class TestEveningPush:
         assert "MFE" in message
 
     def test_evening_not_executed(self, pusher, db):
-        """未执行的指令显示 shadow"""
+        """未触发的指令显示 '⏸ 未触发' (2026-07: 未执行拆分为 未触发/触发未执行 两态)"""
         _save_inst(db)
 
         instructions = db.get_instructions_by_date("2026-06-18")
         message = pusher._format_evening_message("2026-06-18", instructions)
 
-        assert "❌ 未执行" in message
+        assert "⏸ 未触发(未达入场价)" in message
+
+    def test_evening_triggered_not_executed(self, pusher, db):
+        """已触发但未执行的指令显示 '❌ 触发未执行' (真正错失)"""
+        inst_id = _save_inst(db)
+        db.update_instruction_tracking(inst_id, {"triggered": 1})
+
+        instructions = db.get_instructions_by_date("2026-06-18")
+        message = pusher._format_evening_message("2026-06-18", instructions)
+
+        assert "❌ 触发未执行" in message
 
 
 class TestHelpers:

@@ -147,25 +147,26 @@ def test_p0_1_karpathy_v2_drift_logs_warning(caplog):
 
 
 def test_p0_2_tombstone_blocks_restore_within_ttl():
-    """P0-2: 60s 内 tombstone 阻止 sync 反向恢复."""
+    """P0-2: 60s 内 tombstone 阻止 sync 把刚平仓的 symbol 重新导入.
+
+    Broker-first (2026-06-03): _restore_position_from_db 已删除,
+    tombstone 拦截下沉到 _sync_to_position_store_locked 的新增持仓路径 (H6).
+    """
     from app.core.position_sync import USPositionSync
 
     sync = USPositionSync(position_store=None)
     sync.position_store = MagicMock()
     sync.position_store.get.return_value = None  # 内存中已无
+    sync.position_store._positions = {}
 
     # 主流程刚平仓 → 标 tombstone
     sync.mark_closed_tombstone("US.ARM")
     assert sync._is_tombstoned("US.ARM")
 
-    # 模拟 sync 试图从 DB 恢复
-    sync._get_db_positions = MagicMock(return_value={
-        "US.ARM": {
-            "size": 27, "avg_entry_price": 203.53,
-            "direction": "LONG", "initial_sl": 187, "current_sl": 187,
-        }
-    })
-    sync._restore_position_from_db("US.ARM", {"qty": 27, "cost": 203.53, "direction": "LONG"})
+    # 模拟 sync 看到 broker 端仍有该仓位, 试图当"新发现持仓"重新导入
+    sync._sync_to_position_store_locked(
+        {"US.ARM": {"qty": 27, "cost": 203.53, "direction": "LONG"}}
+    )
 
     # 关键: 不应 add 进 store (被 tombstone 拦截)
     sync.position_store.add.assert_not_called()
@@ -186,9 +187,29 @@ def test_p0_2_tombstone_expires_after_ttl():
     assert "US.TEST" not in sync._closed_tombstones
 
 
-def test_p0_3_portfolio_drawdown_excludes_ghost_and_pending():
+def _stub_capital_safety(monkeypatch):
+    """密封 capital_safety 全局状态: equity=0 → drawdown 分母回退到持仓成本.
+
+    P0 (2026-05-28): _check_portfolio_drawdown 演进为优先用账户净值做分母,
+    不 stub 会读到真实 data/ 下的 equity, 使浮亏百分比被稀释, 测试不密封.
+    """
+    class _StubState:
+        current_equity = 0.0
+        peak_equity = 0.0
+
+    class _StubCS:
+        _state = _StubState()
+
+    monkeypatch.setattr(
+        "app.risk.capital_safety.get_capital_safety_system", lambda: _StubCS()
+    )
+
+
+def test_p0_3_portfolio_drawdown_excludes_ghost_and_pending(monkeypatch):
     """P0-3: ghost / pending_close 仓位不进入组合止损计算."""
     from app.risk.position_exit_monitor import ExitMonitor
+
+    _stub_capital_safety(monkeypatch)
 
     class FakePos:
         def __init__(self, symbol, cost, size, metadata=None, source="auto_main"):
@@ -283,21 +304,7 @@ def test_d3_capital_conflict_blocks_reserve():
     assert cap.snapshot().by_strategy.get("main", 0) == 0
 
 
-def test_d3_scalping_loss_cooldown_90s():
-    """D3 修复 #2: scalping sl_hit 后 90s 二级冷却, 防"刚损刚再入".
-
-    源码静态检查 (避免 import 触发 pytz 等环境依赖).
-    """
-    from pathlib import Path
-    src = (Path(__file__).resolve().parent.parent.parent
-           / "app" / "scalping" / "engine.py").read_text()
-    assert "self._loss_cooldown:" in src, "_loss_cooldown 字典必须在 __init__"
-    assert "self._loss_cooldown_sec = 90" in src, "loss cooldown 应是 90s"
-    # entry 检查路径
-    assert "self._loss_cooldown.get(symbol, 0)" in src, "entry 路径必须查 loss cooldown"
-    assert "[Scalping冷却·loss]" in src, "loss cooldown 必须打日志可观测"
-    # sl_hit 写入路径
-    assert "self._loss_cooldown[symbol] = time.time()" in src, "sl_hit 时必须写 loss cooldown 时间戳"
+# 2026-07: test_d3_scalping_loss_cooldown_90s 已删除 — app/scalping/ 模块整体退役
 
 
 def test_d3_legacy_close_trace_id_fallback():
@@ -310,10 +317,12 @@ def test_d3_legacy_close_trace_id_fallback():
            "_close_position 必须为无 trace_id 的 legacy 仓位生成 close-side fallback"
 
 
-def test_p0_3_logs_detail_on_trigger(caplog):
+def test_p0_3_logs_detail_on_trigger(caplog, monkeypatch):
     """P0-3: 触发时打印浮亏 + 仓位清单, 便于追溯 5/18 类问题."""
     from app.risk.position_exit_monitor import ExitMonitor
     import logging
+
+    _stub_capital_safety(monkeypatch)
 
     class FakePos:
         symbol = "US.LOSER"; avg_entry_price = 100; size = 10

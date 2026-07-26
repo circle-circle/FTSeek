@@ -42,7 +42,8 @@ def test_capital_allocator_observe_mode_records_but_allows():
     assert cap.try_reserve("main", 0.50) is True
     assert cap.try_reserve("main", 0.30) is True  # 总 0.80 > cap 0.65, observe 放行
     snap = cap.snapshot()
-    assert snap.by_strategy["main"] == pytest.approx(0.80)
+    # H7 (2026-06-03): BLOCKED 事件不再记账 (防账本透支失真) — 只记 0.50
+    assert snap.by_strategy["main"] == pytest.approx(0.50)
     # 但事件标 BLOCKED
     events = cap.get_recent_events(10)
     assert any(e["decision"] == "BLOCKED_STRATEGY_CAP" for e in events)

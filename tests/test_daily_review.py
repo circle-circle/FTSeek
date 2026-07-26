@@ -10,38 +10,63 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.review.daily_review import DailyReviewGenerator
-from app.storage.trade_recorder import TradeRecorder
 
 
 class TestDailyReviewGenerator:
     """每日复盘生成器测试 (美股版)"""
     
     @pytest.fixture
-    def setup_data(self):
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
-            db_path = f.name
-        
-        recorder = TradeRecorder(db_path)
-        
+    def setup_data(self, monkeypatch, tmp_path):
+        """DailyReviewGenerator 现读 ftseek_us.db (TradeStore 口径, 经 get_trade_records_db).
+
+        密封: 构造临时 DB (含 generate() 查询引用的列) 并 monkeypatch 路径,
+        不再经由 legacy TradeRecorder (那是另一个 DB, 复盘生成器已不读它).
+        """
+        import sqlite3
+        import app.review.daily_review as dr_mod
+
+        db_path = tmp_path / "ftseek_us_test.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE trade_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT, symbol TEXT, direction TEXT,
+                entry_time TEXT, exit_time TEXT,
+                entry_price REAL, exit_price REAL, quantity INTEGER,
+                realized_pnl REAL, pnl_pct REAL, exit_reason TEXT,
+                holding_hours REAL, signal_strength INTEGER,
+                signal_confidence REAL, voting_result TEXT,
+                decision_reason TEXT, source_type TEXT DEFAULT 'MAIN_PIPELINE',
+                trade_mode TEXT DEFAULT 'simulate', mode TEXT DEFAULT 'normal',
+                owner_strategy TEXT, trace_id TEXT, mfe_pct REAL, mae_pct REAL,
+                created_at TEXT
+            )
+            """
+        )
+        today = datetime.now().strftime('%Y-%m-%d')
         for i in range(5):
-            trade_id = recorder.record(
-                stock_code='AAPL',
-                side='buy',
-                quantity=100,
-                price=175.5,
-                decision_reason='technical' if i < 3 else 'impulse',
-                emotion_state='calm' if i < 4 else 'anxious'
+            win = i < 3
+            conn.execute(
+                "INSERT INTO trade_records (trade_date, symbol, direction, entry_time, exit_time, "
+                "entry_price, exit_price, quantity, realized_pnl, pnl_pct, exit_reason, created_at) "
+                "VALUES (?, 'AAPL', 'LONG', ?, ?, 175.5, ?, 100, ?, ?, ?, ?)",
+                (
+                    today,
+                    f"{today}T10:0{i}:00",
+                    f"{today}T11:0{i}:00",
+                    180.0 if win else 170.0,
+                    450.0 if win else -550.0,
+                    0.0256 if win else -0.0313,
+                    'TP' if win else 'SL',
+                    f"{today}T11:0{i}:00",
+                ),
             )
-            
-            recorder.record_close(
-                trade_id=trade_id,
-                exit_price=180.0 if i < 3 else 170.0,
-                exit_reason='TP' if i < 3 else 'SL'
-            )
-        
-        yield recorder
-        os.unlink(db_path)
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(dr_mod, "get_trade_records_db", lambda: db_path)
+        yield db_path
     
     def test_generate(self, setup_data):
         generator = DailyReviewGenerator()

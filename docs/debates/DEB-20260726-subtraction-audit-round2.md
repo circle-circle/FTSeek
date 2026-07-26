@@ -190,3 +190,24 @@ F3 已证: model_call(引擎) + unified_service(门面) 是一套; hermes_client
 3. **5c regime shadow 对比器上线**: `scripts/regime_divergence_shadow.py` + cron 23:00 CST 交易日。首样本即出信号: playbook=CAUTIOUS vs risk_detector=RANGING — 两套连词汇表都不同, 初步支持"语义正交"派 (待 n≥10 交易日按预注册判据裁)。
 4. Q2/5e/Q6 上午已落 (见第 2 轮复核后续)。
 5. 存量大迁移 (5b 推送 5 旁路 / 5c 合一 / 5e 三体系) 全部按裁决留 08-29 后 — 明日开盘前不碰活链路。
+
+---
+
+## 第 3 轮 (2026-07-26 扫尾清零, 用户令"减成本/降冗余/去阻力/除冲突/修数据/理逻辑做到位, 然后集中优策略")
+
+**执行汇总** (全部落地, 验证 = 全量测试 **980 passed / 0 failed / 34.9s**; 此前状态: 16 收集 ERROR + ~164 failed + risk 目录 122s 纯睡眠 + 退出永久挂死):
+
+| 类 | 项 |
+|---|---|
+| 修数据 (真bug×4) | ①risk.blacklist→global_blacklist (llm_pipeline 黑名单恒空) ②实盘闸门异常 fail-open→fail-closed (order_executor) ③TradeStore 全新 DB 缺 20 列 → _init_db 补幂等 ALTER (清单=生产 schema 实测 diff; 与 06-23 因子列同病复发) ④upsert row=None 时 row[8]/row[9] 无守卫 TypeError (新标的首次 upsert 必炸路径) |
+| 除冲突 | main_pipeline.allow_live 悬空键对齐 strategy_budgets 真键; yaml 死段 12 段 133 行删除 (OPTION_QUALITY_GATE/STRATEGY_ORTHOGONALIZATION/agents/base/debate_mode/debate_planner/llm_voting/logging/signal_fusion/顶层stop_loss+take_profit/trading_hours, 逐段验证零读取) |
+| 降冗余 | run_llm_backtest 死函数删 (backtest_snapshots 只写不读 04-16 冻结); trade_records.json getter+暂存删除 (07-15 deprecated 半截迁移收尾); 测试删 66 个已退役目标断言 (含 test_bridge_architecture 43 个) |
+| 理逻辑 (测试大修, 代理 341 工具调用) | 修 30 文件 ~95 测试追平当前语义 (禁弱化断言); 密封化: 真调 LLM/真网络/wall-clock/TRADE_ENV 进程泄漏 (曾级联炸 ~100 测试) 全 monkeypatch; 2 个 122s 纯睡眠测试消除; SystemCircuitBreaker 测试改评分制语义 (04-17 起时间超时制已废) |
+| 去阻力 | watchdog cron 加 \|\| 钉钉兜底 (监控单点自监控); tests/test_no_archive_imports.py (archive 零活 import 固化 CI, F1 教训); 2 个挂死 9h+ 的 pytest 僵尸进程清理 |
+
+**新发现待裁 (非阻塞)**:
+- P2: futu network_manager / PushAggregator 线程非 daemon → 进程退出阶段 threading._shutdown 永久阻塞 (影响脚本/测试收尾, 不影响 systemd 常驻主进程)。方向: 两处加 daemon=True, 下周低风险窗。
+- P3: `_collect_fundamental` 中 industry="" 能通过 `f is not None and f != 0` → 缺行业数据时 quality 误报。方向: str 类型加非空判定, 一行修。
+
+**状态刷新**: Q2/Q4/5e/Q6/5b/5d ✅ (第2轮); Q3 观察期 07-26→08-02 删本体; 5c shadow 攒数据中 (n≥10); Q1 挂 LIVE checklist; 大迁移维持 08-29 后。
+**减法审计线至此收敛为纯挂账等待, 无未完成动作 — 主战场移交策略质量 (08-07 中期裁决点)。**

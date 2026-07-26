@@ -81,10 +81,15 @@ screening_factors:
 weight_adjustments: []
 """)
     
-    return PlaybookScreener(
+    screener_obj = PlaybookScreener(
         data_collector=mock_data_collector,
         config_path=str(config_path)
     )
+    # 密封 (2026-06-30 Phase 3): _load_factor_ic_adjustments 会读真实
+    # data/factor_ic_latest.json 对因子权重做 ±1 动态调整 → 测试分数漂移.
+    # 测试只验证注入 yaml 的静态权重逻辑.
+    screener_obj._load_factor_ic_adjustments = lambda: {}
+    return screener_obj
 
 
 def create_test_data(

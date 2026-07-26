@@ -3181,15 +3181,19 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
         if _auto_account == "real":
             from app.core.config_container import get_config as _get_cfg
-            _main_allow_live = bool(_get_cfg().get_dotted("main_pipeline.allow_live", False))
+            # 2026-07-26 扫尾: 原键 main_pipeline.allow_live 不存在恒 False, 真键在 strategy_budgets (yaml 同为 False, 零行为变化)
+            _main_allow_live = bool(_get_cfg().get_dotted("strategy_budgets.main_pipeline.allow_live", False))
             if not _main_allow_live:
                 logger.warning(
                     f"🚫 [MainPipeline] {symbol} 实盘已被禁用. "
-                    f"AUTO_TRADE_ACCOUNT=real 但 main_pipeline.allow_live=false. 仅 Playbook 可切换 live."
+                    f"AUTO_TRADE_ACCOUNT=real 但 strategy_budgets.main_pipeline.allow_live=false. 仅 Playbook 可切换 live."
                 )
                 return
     except Exception as _mp_err:
-        logger.warning(f"🚫 [MainPipeline] live 检查异常 (放行): {_mp_err}")
+        # 2026-07-26 扫尾: 原为异常放行 (fail-open) — 实盘闸门读不到配置时放行是反向安全, 改 fail-closed
+        logger.error(f"🚫 [MainPipeline] live 检查异常, fail-closed 拒绝: {_mp_err}")
+        if os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real":
+            return
 
     # ── P0: VIX 数据新鲜度 fail-close (Task #1) ──
     # VIX 数据不可用时拒绝新仓 (宁可错过, 不可放错)

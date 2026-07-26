@@ -47,25 +47,27 @@ def _make_hub(channels=None, **kw):
 
 
 # ─── Message helpers ───
+# 2026-07-16 语义变更: 成交/平仓是关键事件, trade_entry/trade_exit 一律
+# NORMAL + 立即推送, 不再走 LOW+聚合 (根因: 7/15 聚合窗口丢通知).
 def test_trade_entry_helper():
     msg = trade_entry("NVDA", "LONG", 100, 145.50, strategy="main", trace_id="abc")
-    assert msg.level == Level.LOW
+    assert msg.level == Level.NORMAL
     assert msg.category == Category.TRADE_ENTRY
-    assert msg.is_aggregable()
+    assert not msg.is_aggregable()  # 成交不聚合, 立即推
     assert msg.dedup_key == "entry:NVDA:abc"
-    assert msg.aggregate_key == "trade_events"
+    assert msg.aggregate_key is None
     assert msg.payload["symbol"] == "NVDA"
 
 
-def test_trade_exit_small_loss_aggregable():
+def test_trade_exit_small_loss_immediate():
     msg = trade_exit("NVDA", "LONG", -100.0, "STOP_LOSS")
-    assert msg.level == Level.LOW
-    assert msg.is_aggregable()
+    assert msg.level == Level.NORMAL  # 小额亏损也立即推 (2026-07-16)
+    assert not msg.is_aggregable()
 
 
 def test_trade_exit_large_gain_immediate():
     msg = trade_exit("ARM", "SHORT", 1200.0, "TRAILING_STOP")
-    assert msg.level == Level.NORMAL  # > $500 升级
+    assert msg.level == Level.NORMAL
     assert not msg.is_aggregable()
 
 
@@ -115,12 +117,26 @@ def test_hub_dedup_skips_second():
 
 
 # ─── Hub: 聚合 ───
+def _low_aggregable(symbol, kind="entry", pnl=None, dedup=None):
+    """构造 LOW+aggregate_key 消息 (trade_entry/exit 已升 NORMAL, 聚合路径用原始消息测)"""
+    payload = {"symbol": symbol, "kind": kind, "direction": "LONG"}
+    if pnl is not None:
+        payload["pnl"] = pnl
+        payload["exit_reason"] = "SL"
+    return PushMessage(
+        title=f"evt {symbol}", body="b", level=Level.LOW,
+        category=Category.TRADE_ENTRY if kind == "entry" else Category.TRADE_EXIT,
+        dedup_key=dedup or f"{kind}:{symbol}", aggregate_key="trade_events",
+        payload=payload,
+    )
+
+
 def test_hub_low_aggregates_not_immediate():
     ch = MockChannel()
     hub = _make_hub([ch], aggregate_window_sec=60)
     # 3 笔 LOW 入桶, 不立即推
     for i in range(3):
-        hub.push(trade_entry(f"SYM{i}", "LONG", 100, 50.0, trace_id=f"t{i}"))
+        hub.push(_low_aggregable(f"SYM{i}"))
     assert len(ch.sent) == 0  # 入桶不立即推
     hub.flush_aggregated()
     # flush 后应 1 条聚合
@@ -142,7 +158,8 @@ def test_hub_critical_always_immediate():
 def test_hub_fallback_to_secondary_on_failure():
     ch1 = MockChannel(name="ch1", priority=1, will_succeed=False)
     ch2 = MockChannel(name="ch2", priority=2, will_succeed=True)
-    hub = _make_hub([ch1, ch2])
+    # send_retries=0: 关闭 2026-07-17 新增的单通道重试, 只验证 fallback 语义
+    hub = _make_hub([ch1, ch2], send_retries=0)
     msg = PushMessage(title="t", body="b", level=Level.NORMAL,
                       dedup_key="x")
     assert hub.push(msg) is True
@@ -175,8 +192,9 @@ def test_hub_critical_broadcasts_all():
 def test_aggregator_summary_includes_pnl():
     flushed = []
     agg = Aggregator(window_sec=60, flush_callback=flushed.append)
-    agg.add(trade_exit("A", "LONG", 100, "SL"))
-    agg.add(trade_exit("B", "SHORT", -50, "TP"))
+    # trade_exit 已升 NORMAL 不入桶 (2026-07-16) — 用原始 LOW 消息测聚合汇总
+    agg.add(_low_aggregable("A", kind="exit", pnl=100))
+    agg.add(_low_aggregable("B", kind="exit", pnl=-50))
     agg.flush_all()
     assert len(flushed) == 1
     body = flushed[0].body

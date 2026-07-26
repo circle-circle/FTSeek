@@ -46,6 +46,13 @@ def tmp_config():
     os.unlink(tmp.name)
 
 
+def _today_trade_date() -> str:
+    """RiskCircuitBreaker._get_daily_realized_loss 按当日 ET 交易日过滤 —
+    日亏测试须写"今天"的记录 (与生产口径 _et_trade_date(now_et()) 对齐)."""
+    from app.utils.timezone import now_et, _et_trade_date
+    return _et_trade_date(now_et())
+
+
 def _save_result(db, symbol, conditions, outcome, pnl, date="2026-06-18"):
     inst_id = db.save_instruction({
         "date": date, "symbol": symbol, "direction": "BUY",
@@ -156,7 +163,7 @@ class TestRiskCircuitBreaker:
 
     def test_daily_loss_within_limit(self, db):
         """日内亏损在限额内"""
-        _save_result(db, "US.A", ["a"], "loss", -500)  # $500 亏损
+        _save_result(db, "US.A", ["a"], "loss", -500, date=_today_trade_date())  # $500 亏损
         breaker = RiskCircuitBreaker(playbook_db=db, daily_loss_limit_pct=1.0)
         status = breaker.check_status(total_equity=100000)
         assert status["daily_loss_ok"] is True  # $500 < $1000 limit
@@ -164,7 +171,7 @@ class TestRiskCircuitBreaker:
 
     def test_daily_loss_exceeds_limit(self, db):
         """日内亏损超限 → 禁止交易"""
-        _save_result(db, "US.A", ["a"], "loss", -1500)
+        _save_result(db, "US.A", ["a"], "loss", -1500, date=_today_trade_date())
         breaker = RiskCircuitBreaker(playbook_db=db, daily_loss_limit_pct=1.0)
         status = breaker.check_status(total_equity=100000)
         assert status["daily_loss_ok"] is False
@@ -226,7 +233,7 @@ class TestRiskCircuitBreaker:
 
     def test_reset_clears_stop(self, db):
         """reset() 清除停止期"""
-        _save_result(db, "US.A", ["a"], "loss", -1500)
+        _save_result(db, "US.A", ["a"], "loss", -1500, date=_today_trade_date())
         breaker = RiskCircuitBreaker(playbook_db=db, daily_loss_limit_pct=1.0)
         breaker.check_status(total_equity=100000)  # triggers stop
 
@@ -235,7 +242,7 @@ class TestRiskCircuitBreaker:
 
     def test_alerts_populated(self, db):
         """告警信息被填充"""
-        _save_result(db, "US.A", ["a"], "loss", -1500)
+        _save_result(db, "US.A", ["a"], "loss", -1500, date=_today_trade_date())
         breaker = RiskCircuitBreaker(playbook_db=db, daily_loss_limit_pct=1.0)
         status = breaker.check_status(total_equity=100000)
         assert len(status["alerts"]) > 0

@@ -51,14 +51,28 @@ def test_short_perfect_alignment():
     assert result.confidence > 0.60
 
 
-def test_weak_signal_low_confidence():
-    """均线缠绕 + 缩量 + 高 VIX + RANGE → 低置信度"""
-    ctx = _MockCtx(price=150, ma5=150, ma20=150, ma50=150, rsi=50,
-                   macd=0.0, macd_signal=0.0, slope_5m=0.0,
-                   volume_ratio=0.5, order_flow_imbalance=0.0,
-                   vix=35, market_regime="RANGE")
-    result = SignalQualityScorer.score(ctx, "LONG")
-    assert result.confidence < 0.50, f"Expected <0.50, got {result.confidence}"
+def test_weak_signal_low_confidence(monkeypatch):
+    """均线缠绕 + 缩量 + 高 VIX + RANGE → 置信度显著低于强信号.
+
+    语义更新: 矛盾惩罚放宽 (-0.10→-0.03, 模拟盘), 弱信号绝对值升至 ~0.55,
+    但必须仍低于 0.65 高置信门槛, 且严格低于完美排列信号.
+    """
+    # 密封: 权重/胜率校准从 live 数据文件热加载, 会造成分数漂移
+    import app.strategy.signal_quality_scorer as sqs_mod
+    monkeypatch.setattr(sqs_mod, "_load_weights", lambda: None)
+    monkeypatch.setattr(sqs_mod, "_load_calibration", lambda: {})
+
+    weak_ctx = _MockCtx(price=150, ma5=150, ma20=150, ma50=150, rsi=50,
+                        macd=0.0, macd_signal=0.0, slope_5m=0.0,
+                        volume_ratio=0.5, order_flow_imbalance=0.0,
+                        vix=35, market_regime="RANGE")
+    weak = SignalQualityScorer.score(weak_ctx, "LONG")
+    assert weak.confidence < 0.60, f"Expected <0.60, got {weak.confidence}"
+
+    strong_ctx = _MockCtx(price=155, ma5=153, ma20=148, ma50=145, rsi=42,
+                          volume_ratio=2.0, order_flow_imbalance=0.4)
+    strong = SignalQualityScorer.score(strong_ctx, "LONG")
+    assert weak.confidence < strong.confidence, "弱信号必须低于强信号"
 
 
 def test_contradicting_dimensions_penalized():

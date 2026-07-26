@@ -15,16 +15,29 @@ class TestCloseTradeRecord:
     def conn(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
+        # 2026-07 schema: _close_trade_record 现在读写 metadata_json/entry_time/quantity/
+        # source_type 快照 + mfe_pct/mae_pct/max_drawdown 落库 (2026-07-09 MFE/MAE 采集)
         conn.execute(
             """
             CREATE TABLE trade_records (
                 id INTEGER PRIMARY KEY,
+                symbol TEXT,
+                direction TEXT,
+                entry_price REAL,
+                entry_time TEXT,
+                quantity INTEGER,
+                source_type TEXT,
+                metadata_json TEXT,
                 exit_price REAL,
                 exit_time TEXT,
                 exit_reason TEXT,
                 realized_pnl REAL,
                 pnl_pct REAL,
-                holding_hours REAL
+                holding_hours REAL,
+                close_futu_order_id TEXT,
+                mfe_pct REAL,
+                mae_pct REAL,
+                max_drawdown REAL
             )
             """
         )
@@ -37,12 +50,26 @@ class TestCloseTradeRecord:
                 exit_reason TEXT,
                 pnl REAL,
                 pnl_pct REAL,
-                holding_period_hours REAL
+                holding_period_hours REAL,
+                max_favorable_excursion REAL,
+                max_adverse_excursion REAL
+            )
+            """
+        )
+        # _close_trade_record 平仓时物理删除 open_positions 行 (2026-07-01 幽灵仓根因修复)
+        conn.execute(
+            """
+            CREATE TABLE open_positions (
+                symbol TEXT PRIMARY KEY,
+                sync_status TEXT
             )
             """
         )
         conn.execute(
-            "INSERT INTO trade_records (id) VALUES (1)"
+            # entry_time 留空 → _close_trade_record 保留调用方传入的 holding_hours
+            # (2026-07-07 起 entry_time 存在时会用 get_market_hours_us 重算, 测试不密封)
+            "INSERT INTO trade_records (id, symbol, direction, entry_price, quantity, source_type) "
+            "VALUES (1, 'US.TEST', 'LONG', 100.0, 10, 'PLAYBOOK_SIM')"
         )
         conn.execute(
             "INSERT INTO playbook_instructions (id, outcome) VALUES (1, 'holding')"
@@ -113,7 +140,29 @@ class TestCloseTradeRecord:
 
 
 class TestCheckIntradayTrigger:
-    """_check_intraday_trigger 触发条件边界测试 (2026-06-29 后改为方向穿越触发)."""
+    """_check_intraday_trigger 触发条件边界测试 (2026-06-29 后改为方向穿越触发).
+
+    2026-07 密封: 生产新增 14:00 ET 触发截止/财报门/低ATR门/量能门等 wall-clock
+    与外部数据依赖的门 — 测试注入固定 pb_cfg 关闭这些门, 只验证触发带核心逻辑.
+    """
+
+    SEALED_CFG = {
+        "entry_time_cutoff_enabled": False,      # 密封 wall-clock (14:00 ET 截止)
+        "earnings_blackout_gate_enabled": False,
+        "low_atr_gate_enabled": False,
+        "symbol_streak_ban_enabled": False,
+        "intraday_vol_gate_enabled": False,      # 量能门密封 (fail-open)
+        "entry_vwap_gate_enabled": False,
+        "entry_reanchor_enabled": True,          # 与 unified_config.yaml 对齐 (Lever A)
+        "entry_reanchor_max_drift_pct": 4.0,
+        "thesis_drift_invalidate_enabled": True,
+    }
+
+    @pytest.fixture(autouse=True)
+    def _sealed_pb_cfg(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config", lambda: dict(self.SEALED_CFG)
+        )
 
     def _make_scheduler(self, price, day_high, day_low):
         """构造一个返回固定 SymbolContext 的 mock scheduler."""

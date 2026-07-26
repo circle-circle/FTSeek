@@ -134,5 +134,5 @@ def test_on_position_opened_main_path_not_blocked(monkeypatch):
     t0 = time.time()
     on_position_opened(_Pos(), _Sig(), {"vix": 18.5}, scheduler=None)
     assert time.time() - t0 < 0.1
-    # 4 hook 应都被 submit
-    assert called == ["attribution", "mirror", "push", "thesis"]
+    # 4 hook 应都被 submit (2026-06-19: mirror 退役; 新增 broker_stop_guard 双保险)
+    assert called == ["attribution", "push", "thesis", "broker_stop_guard"]

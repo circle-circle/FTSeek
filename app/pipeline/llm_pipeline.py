@@ -194,7 +194,8 @@ def run_llm_strategy_scan(scheduler):
                 "max_total_position": risk_cfg.get('risk.position.max_total', 0.80),
                 "max_daily_strategies": risk_cfg.get('risk.trading.max_daily_trades', 20),
                 "cooldown_seconds": risk_cfg.get('decision.signal_timing.cooldown_seconds', 3600),
-                "blacklist": risk_cfg.get('risk.blacklist', [])
+                # 2026-07-26 扫尾: 原键 risk.blacklist 不存在恒空, 真键 global_blacklist
+                "blacklist": risk_cfg.get('risk.global_blacklist', [])
             }
             scheduler.llm_validator = StrategyValidator(config=validator_cfg)
             scheduler.llm_notifier = StrategyNotifier()
@@ -564,22 +565,8 @@ def run_llm_strategy_scan(scheduler):
     logger.info(f"[LLM策略] 本轮完成: 生成 {len(strategies)} 条, 执行 {executed_count} 条")
 
 
-def run_llm_backtest(scheduler, days: int = 30):
-    """运行 LLM 策略回测"""
-    try:
-        from app.strategy.backtest_llm import LLMStrategyBacktester
-        from app.strategy.strategy_notifier import StrategyNotifier
-    except ImportError as e:
-        logger.warning(f"[LLM回测] 模块导入失败: {e}")
-        return
-    
-    backtester = LLMStrategyBacktester()
-    result = backtester.run_backtest(days=days)
-    
-    notifier = StrategyNotifier()
-    notifier.notify_backtest_result(result.to_dict())
-    
-    logger.info(f"[LLM回测] 回测完成: {result.to_dict()}")
+# run_llm_backtest 已删 (2026-07-26 扫尾): 全仓零调用点, 产出 backtest_snapshots.json
+# 只写不读且 04-16 起冻结 (DEB-20260720 已记死开关)。回滚: git revert。
 
 
 # ============================================================

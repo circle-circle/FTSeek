@@ -11,13 +11,16 @@ class TestTradeMode:
     """测试 trade_mode 字段"""
 
     def test_trade_mode_auto_fill(self):
-        """trade_mode 应自动填充"""
-        from app.storage.trade_store import TradeStore
-        # TradeStore 应该能根据环境变量填充 trade_mode
-        store = TradeStore.__new__(TradeStore)
-        if hasattr(store, '_get_trade_mode'):
-            mode = store._get_trade_mode()
-            assert mode in ('simulate', 'live')
+        """trade_mode 应根据 AUTO_TRADE_ACCOUNT 环境变量自动填充 (2026-07-03 收敛为模块级函数)"""
+        import os
+        from unittest.mock import patch
+        from app.storage.trade_store import _get_trade_mode
+
+        assert _get_trade_mode() in ('simulate', 'live')
+        with patch.dict(os.environ, {"AUTO_TRADE_ACCOUNT": "sim"}):
+            assert _get_trade_mode() == 'simulate'
+        with patch.dict(os.environ, {"AUTO_TRADE_ACCOUNT": "real"}):
+            assert _get_trade_mode() == 'live'
 
 
 class TestExitReasonRegistry:

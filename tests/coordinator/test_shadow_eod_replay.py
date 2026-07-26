@@ -1,6 +1,9 @@
 """Shadow EOD Replay 回归测试 (2026-05-19)
 
 核心: 8 个 variant 各自的 replay 逻辑是否正确实现 P3/P5/P7 等想法.
+
+2026-06-19: ShadowMirror (app.evolution.shadow_mirror) 退役,
+对应的 variant 定义/short_only 过滤测试已删除.
 """
 import pytest
 from pathlib import Path
@@ -8,26 +11,6 @@ from pathlib import Path
 
 def _read_src(rel: str) -> str:
     return (Path(__file__).resolve().parent.parent.parent / rel).read_text()
-
-
-def test_8_variants_defined():
-    """ShadowMirror 必须定义 8 个 variant: 4 老 + 4 新 (P3/P5/P7)."""
-    src = _read_src("app/evolution/shadow_mirror.py")
-    variants = [
-        "baseline", "tighter_stop", "no_chandelier", "quick_exit",  # 4 老
-        "tp_sl_5to1", "min_hold_6min", "short_only", "early_chandelier",  # 4 新
-    ]
-    for v in variants:
-        assert f'"{v}"' in src or f"'{v}'" in src, f"variant {v} 必须存在"
-
-
-def test_short_only_blocks_long_in_mirror_entry():
-    """short_only variant 必须在 mirror_entry 中过滤 LONG 信号."""
-    src = _read_src("app/evolution/shadow_mirror.py")
-    assert "block_directions" in src, "ShadowVariant 必须有 block_directions 字段"
-    assert "variant.block_directions and direction in variant.block_directions" in src, (
-        "mirror_entry 必须检查 block_directions"
-    )
 
 
 def test_eod_replay_handles_all_8_variants():

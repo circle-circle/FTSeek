@@ -47,23 +47,22 @@ def test_y1_position_scale_extreme_zero():
 # ─── Y2 BB 带宽崩溃过滤 (源码层验证 — scalping/signals.py 间接依赖 pytz) ─
 
 
-# ─── Y4 BREAKEVEN_STOP for SHORT 修复 ────────────────────────
-def test_y4_breakeven_short_above_entry():
-    """SHORT break-even 应在 entry 之上 (反弹回到 entry+buffer 触发保利)
-    验证: 修复后源码内 SHORT 也用 (1 + buffer_pct)
+# ─── Y4 BREAKEVEN_STOP 语义 (2026-06-25 已被阶梯式保利取代) ───────
+def test_y4_breakeven_stepped_ratchet_symmetric():
+    """2026-06-25 阶梯式利润锁定 (取代 Y4 单点保本):
+    ≥5%→锁3%, ≥3%→锁1%, ≥trigger→保本; LONG 锁在 entry 上方, SHORT 对称锁在下方.
     """
     src = open("app/risk/atr_stop_engine.py").read()
-    # 旧 bug: SHORT 用 entry_price * (1 - buffer_pct)
-    # 修复后: SHORT 也用 entry_price * (1 + buffer_pct)
-    assert "Y4" in src or "breakeven_stop = entry_price * (1 + buffer_pct)" in src
-    # 关键检查: SHORT 分支不应该有 (1 - buffer_pct) 用于 breakeven
-    # 取 breakeven 计算块
     bk_idx = src.find("=== 5. Breakeven")
-    bk_block = src[bk_idx : bk_idx + 1000]
-    # 修复后 LONG / SHORT 都用 (1 + buffer_pct)
-    plus_count = bk_block.count("(1 + buffer_pct)")
-    minus_count = bk_block.count("(1 - buffer_pct)")
-    assert plus_count >= 2, "SHORT 也应用 (1 + buffer_pct)"
+    assert bk_idx > 0, "breakeven 计算块必须存在"
+    bk_block = src[bk_idx : bk_idx + 3500]
+    # 三档阶梯配置键
+    assert "lock_3pct_trigger" in bk_block, "缺少锁3%档"
+    assert "lock_1pct_trigger" in bk_block, "缺少锁1%档"
+    # LONG 锁利在 entry 上方 (1 + x), SHORT 对称在下方 (1 - x)
+    assert "(1 + 0.03)" in bk_block and "(1 - 0.03)" in bk_block, "锁3%档 LONG/SHORT 必须对称"
+    assert "(1 + 0.01)" in bk_block and "(1 - 0.01)" in bk_block, "锁1%档 LONG/SHORT 必须对称"
+    assert "(1 + buffer_pct)" in bk_block and "(1 - buffer_pct)" in bk_block, "保本档 LONG/SHORT 必须对称"
 
 
 # test_y2_bb_filter_logic_in_source — 已随 scalping 引擎移除 (2026-06-19)
@@ -112,15 +111,16 @@ def test_y5_outlier_monitor_extreme_alerts(monkeypatch):
     assert m.check("GOOGL", -6000) is True
 
 
-# ─── Y3 STRUCTURE_EXIT 收紧 (yaml 改动验证) ────────────────────
-def test_y3_structure_exit_cooldown_tightened():
+# ─── Y3 STRUCTURE_EXIT 冷却配置 (Karpathy audit 回调后的现值) ──────
+def test_y3_structure_exit_cooldown_current_values():
+    """Y3 曾收紧为 2次/48h, 后经 Karpathy audit config-drift 修复回调为 3次/24h.
+    锚定当前显式值, 防止无意漂移."""
     import yaml
     cfg = yaml.safe_load(open("config/unified_config.yaml"))
     structure_cooldown = cfg.get("symbol_cooldown", {}).get("structure_exit", {})
-    # Y3: 从 3 → 2
-    assert structure_cooldown.get("consecutive_losses") == 2
-    # Y3: 从 24 → 48
-    assert structure_cooldown.get("cooldown_hours") == 48
+    assert structure_cooldown.get("consecutive_losses") == 3
+    assert structure_cooldown.get("cooldown_hours") == 24
+    assert structure_cooldown.get("direction") == "same_only"
 
 
 # ─── 集成 ───────────────────────────────────────

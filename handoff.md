@@ -74,6 +74,16 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-26 (周日·扫尾清零批) · 修数据+理逻辑收尾 (用户令"清干净后集中优策略")
+1. **悬空键真 bug ×2**: `risk.blacklist`→`global_blacklist` (llm_pipeline 黑名单此前恒空形同虚设) / `main_pipeline.allow_live`→`strategy_budgets.` 真键 (值同 False 零行为变化, yaml 恢复真源)。
+2. **实盘闸门 fail-open 反转** (order_executor ~3192): allow_live 检查异常时原逻辑**放行实盘** → 改 fail-closed (real 账户下异常即拒)。
+3. **yaml 死段删除 12 段 133 行** (逐段 grep 验证零读取): OPTION_QUALITY_GATE/STRATEGY_ORTHOGONALIZATION/agents/base/debate_mode/debate_planner/llm_voting/logging/signal_fusion/顶层stop_loss+take_profit/trading_hours。yaml 48 顶层键, 解析+容器加载 ✓。
+4. **测试大修 (代理执行, 341 工具调用)**: 修复 30 文件 ~95 测试 (断言追平当前语义, 禁弱化) + 删 66 个引用已退役目标的测试 + 密封化 (LLM/网络/wall-clock/env 泄漏全 monkeypatch — 其一 `TRADE_ENV=0` 进程泄漏曾级联炸 ~100 测试)。**164 failed → 4 failed**。
+5. **TradeStore P0 双修** (剩余 4 失败全歼): ①全新 DB 引导缺 20 列 (save_trade/upsert 引用但 _init_db 从未建, 生产 DB 靠 ad-hoc ALTER 存活) → 补幂等 ALTER 清单 (=生产 schema 实测 diff) ②upsert row=None 时 row[8]/row[9] 无守卫 TypeError (新标的首次 upsert 必炸路径)。6/6 ✓。
+6. **run_llm_backtest 死函数删** + trade_records.json 半截迁移收尾 (getter 删+暂存) + **watchdog cron 加 || 钉钉兜底** (监控者自己崩要有人知道) + **tests/test_no_archive_imports.py** (archive 零活 import 固化为 CI 断言, F1 教训) + 122s 纯睡眠测试修复 + 每次跑测试真调 LLM 的密封漏洞堵住。
+7. **测试遗留 2 项已知**: P2 退出阶段非 daemon 线程挂死 (futu network_manager/PushAggregator, 跑测试用 timeout 兜) / P3 `_collect_fundamental` industry="" 通过质量检查 — 均记 DEB 待裁。
+**全量测试终跑: 980 passed / 0 failed / 34.9s** (此前: 16 收集 ERROR + ~164 failed + risk 目录纯睡眠 122s + 退出挂死永不结束 → 现在 35 秒全绿, 测试套件首次恢复为可信回归工具)。
+
 ### 2026-07-26 (周日·重启验证+开盘就绪) · R2 删除首次重启全绿 + 复核修复/修尺子三项落地 + 周一就绪总检 (用户裁"重启后能修的修, 轻装上阵")
 1. **重启验证 (145 项删除后首次)**: 09:00 CST 重启 — 0 Traceback/ImportError, ConfigGov 全绿, 退出快循环+Watchdog 启动, 模拟盘 ✓。R2 删除正式验证安全。
 2. **复核修复已提交** (d0e8c759): Hermes 6 脚本移回 + api_limit_monitor 移回+import 修。

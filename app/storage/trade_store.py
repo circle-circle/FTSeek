@@ -392,6 +392,36 @@ class TradeStore:
                     except Exception:
                         pass  # 列已存在
 
+                # P0 (2026-07-26 扫尾): 全新 DB 引导缺列 — save_trade/upsert_open_position 引用
+                # 但 _init_db 从未创建 (生产 DB 靠历年 ad-hoc ALTER 存活; 与 06-23 因子列同病)。
+                # 全新部署/临时 DB 上必抛 OperationalError。清单 = 生产 schema 与全新 DB 实测 diff。
+                for stmt in [
+                    "ALTER TABLE trade_records ADD COLUMN config_version TEXT",
+                    "ALTER TABLE trade_records ADD COLUMN data_quality TEXT",
+                    "ALTER TABLE trade_records ADD COLUMN entry_session TEXT",
+                    "ALTER TABLE trade_records ADD COLUMN entry_vix REAL",
+                    "ALTER TABLE trade_records ADD COLUMN mae_pct REAL",
+                    "ALTER TABLE trade_records ADD COLUMN mfe_pct REAL",
+                    "ALTER TABLE open_positions ADD COLUMN account_type TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN entry_context_json TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN expected_hold_days INTEGER",
+                    "ALTER TABLE open_positions ADD COLUMN invalidation_price REAL",
+                    "ALTER TABLE open_positions ADD COLUMN metadata_json TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN owner TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN sl_broker_order_id TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN stop_loss_price REAL",
+                    "ALTER TABLE open_positions ADD COLUMN stop_loss_triggered INTEGER",
+                    "ALTER TABLE open_positions ADD COLUMN thesis TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN tp_broker_order_id TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN trader_type TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN trailing_stop_price REAL",
+                    "ALTER TABLE open_positions ADD COLUMN trailing_stop_triggered INTEGER",
+                ]:
+                    try:
+                        conn.execute(stmt)
+                    except Exception:
+                        pass  # 列已存在
+
                 conn.commit()
                 logger.info("[TradeStore] 交易记录表初始化完成")
             finally:
@@ -978,8 +1008,8 @@ class TradeStore:
                 _preserved_trader_type = row[5] if (row and row[5]) else 'MANUAL'
                 _preserved_invalidation = row[6] if (row and row[6] is not None) else 0
                 _preserved_hold_days = row[7] if (row and row[7] is not None) else 5
-                _preserved_sl_price = row[8]  # can be None
-                _preserved_trail_price = row[9]  # can be None
+                _preserved_sl_price = row[8] if row else None  # can be None
+                _preserved_trail_price = row[9] if row else None  # can be None
                 _preserved_sl_broker_id = row[10] if (row and row[10]) else ''
                 # P0 修复 (2026-05-12): 防止 update_trail 等操作覆盖 mark_anomalous 设置的 is_anomalous=1
                 # 如果 DB 中已标记异常且当前 position 未显式设置 _close_blocked，保留原值

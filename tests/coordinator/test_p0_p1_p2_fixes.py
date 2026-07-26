@@ -98,11 +98,11 @@ def test_p0_3_critical_first_success():
 def test_p0_4_capital_reset_and_reconcile():
     from app.coordinator.capital_allocator import CapitalAllocator
     cap = CapitalAllocator(caps={"main": 0.65, "scalping": 0.25}, observe_only=True)
-    # observe 模式记账, 透支
+    # observe 模式记账; H7 (2026-06-03): BLOCKED 不再记账 → 不会透支
     cap.try_reserve("main", 0.50)
-    cap.try_reserve("main", 0.50)  # 0.50+0.50=1.00 > cap 0.65, 但 observe 仍记
+    cap.try_reserve("main", 0.50)  # 0.50+0.50=1.00 > cap 0.65 → BLOCKED, 放行但不记账
     snap_before = cap.snapshot()
-    assert snap_before.by_strategy["main"] > 0.65  # 透支
+    assert snap_before.by_strategy["main"] == pytest.approx(0.50)  # H7: 无透支
 
     # reset_and_reconcile 用真实持仓重建
     cap.reset_and_reconcile({"main": 0.30, "scalping": 0.10})

@@ -201,13 +201,13 @@ class TestSessionAwareATR:
         assert effective == 3.0, f"期望 3.0, 实际 {effective}"
 
     def test_effective_atr_midday_contracts(self):
-        """LUNCH: atr=2.0, ratio=0.6 → effective_atr=1.2 (缩小)"""
+        """LUNCH: atr=2.0, ratio=0.75 → effective_atr=1.5 (缩小; 2026-05-30 Task#7: 0.60→0.75)"""
         from app.core.shared_kernel import get_shared_kernel
         kernel = get_shared_kernel()
         ratio = kernel.get_session_vol_ratio("midday")
         atr = 2.0
         effective = atr * ratio
-        assert effective == 1.2, f"期望 1.2, 实际 {effective}"
+        assert effective == 1.5, f"期望 1.5 (midday 0.75x), 实际 {effective}"
 
     def test_effective_atr_normal_unchanged(self):
         """afternoon: ratio=0.95 ≈ 1.0 (基本不变)"""
@@ -616,8 +616,8 @@ class TestIntegrationSanity:
         sa = policy["session_adaptation"]
         assert sa.get("enabled") is True
         assert sa.get("source") == "shared_kernel"
-        # flash_exit 已删除 (2026-06-20), apply_to 从 5 项降为 4 项
-        assert len(sa.get("apply_to", [])) >= 4, "apply_to 应覆盖退出规则"
+        # 死规则清理后 apply_to 收敛: 仅保留 atr_stop (ATR 止损距离 × session_vol_ratio)
+        assert "atr_stop" in sa.get("apply_to", []), "apply_to 必须覆盖 atr_stop"
 
 
 # ============================================================

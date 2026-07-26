@@ -375,12 +375,13 @@ class TestPositionAndStop:
                 f"High vol position({volatile.position_pct}) should not greatly exceed normal({normal.position_pct})"
 
     def test_stop_loss_reasonable(self, scorer):
-        """止损距离在合理范围 (1%-15%, VIX 自适应)"""
+        """止损距离在合理范围 — P0 (2026-06-04): stop = max(4×ATR/price, 2%),
+        ATR% 可交易带 0.8%-6% → stop 上限 4×6%=24% (VIX≤35)"""
         for atr_val in [5, 10, 20, 30]:
             signal = scorer.score(_base_context(atr=atr_val))
             if signal.direction != "NEUTRAL":
-                assert 0.01 <= signal.stop_loss_pct <= 0.15, \
-                    f"Stop loss {signal.stop_loss_pct:.3f} out of [0.01, 0.15] for ATR={atr_val}"
+                assert 0.02 <= signal.stop_loss_pct <= 0.24, \
+                    f"Stop loss {signal.stop_loss_pct:.3f} out of [0.02, 0.24] for ATR={atr_val}"
 
     def test_high_vix_wider_stop(self, scorer):
         """高 VIX → 放宽止损"""

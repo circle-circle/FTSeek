@@ -107,10 +107,12 @@ def test_audit_db_schema():
 
 
 # ─── L1 News classifier ─────────────────────────────────────
-def test_l1_news_classifier_disabled_returns_none():
-    from app.news_v2.processor.llm_classifier import classify_news
-    # feature 默认 disabled → return None 不调 LLM
-    result = classify_news("test-id", "Test title", "Body", "test_source")
+def test_l1_news_classifier_disabled_returns_none(monkeypatch):
+    # 2026-07-26: yaml 已常开 news_classifier, 原测试假设默认关 → 每次真调 LLM 花钱。
+    # 改为强制 disabled, 密封化验证关闭路径。
+    import app.news_v2.processor.llm_classifier as lc
+    monkeypatch.setattr(lc, "is_enabled", lambda *a, **k: False)
+    result = lc.classify_news("test-id", "Test title", "Body", "test_source")
     assert result is None
 
 
@@ -145,38 +147,8 @@ def test_l3_thesis_disabled_does_not_run():
     infer_thesis_async("NVDA", {"trace_id": "test"}, {})
 
 
-# ─── L6 regime classifier ────────────────────────────────────
-def test_l6_regime_disabled():
-    from app.llm.regime_classifier import classify
-    result = classify({"spy_change_pct": 0.01, "vix": 18})
-    assert result is None
-
-
-def test_l6_regime_factor_adjustments():
-    from app.llm.regime_classifier import get_factor_weight_adjustments
-    adj = get_factor_weight_adjustments("trend_continuation")
-    assert "trend" in adj
-    assert -0.10 <= adj["trend"] <= 0.10
-
-
-def test_l6_regime_unknown_returns_empty():
-    from app.llm.regime_classifier import get_factor_weight_adjustments
-    adj = get_factor_weight_adjustments("unknown_regime_xyz")
-    assert adj == {}
-
-
-# ─── L8 daily auto tuner ─────────────────────────────────────
-def test_l8_auto_tuner_disabled():
-    from app.llm.daily_auto_tuner import propose_from_daily_review
-    proposals = propose_from_daily_review({"summary": {}})
-    assert proposals == []
-
-
-def test_l8_pending_proposals_query():
-    """get_pending_proposals 不报错"""
-    from app.llm.daily_auto_tuner import get_pending_proposals
-    proposals = get_pending_proposals()
-    assert isinstance(proposals, list)
+# L6 regime_classifier / L8 daily_auto_tuner: 2026-07-26 减法R2 已删
+# (flag 恒 false 的死功能, 模块零生产调用方), 对应测试同步移除。
 
 
 # ─── 整体可控性测试 ──────────────────────────────────────────
@@ -200,13 +172,9 @@ def test_all_l_modules_importable():
         "app.llm.features.feature_flags",
         "app.llm.features.json_schema_guard",
         "app.llm.features.audit_db",
-        "app.llm.features.llm_helper",
         "app.news_v2.processor.llm_classifier",
         "app.news_v2.processor.event_signal_generator",
-        "app.news_v2.processor.news_attribution",
         "app.llm.thesis_inferer",
-        "app.llm.regime_classifier",
-        "app.llm.daily_auto_tuner",
     ]
     failed = []
     for m in modules:

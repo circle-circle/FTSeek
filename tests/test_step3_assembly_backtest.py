@@ -40,211 +40,216 @@ def _make_random_pnl(n=100, seed=42):
 
 
 # ── FactorAssembly 测试 ──
+class _StubFactor:
+    """固定输出的桩因子 (适配 v2 API: registry.create → factor.compute)"""
+    def __init__(self, fv):
+        self._fv = fv
+
+    def compute(self, symbol, market_data, ctx=None):
+        return self._fv
+
+
+class _StubRegistry:
+    """密封 FactorRegistry 替身 — 未注册因子抛 KeyError (与真 registry 一致)"""
+    def __init__(self, fvs):
+        self._fvs = fvs
+
+    def create(self, name, params=None):
+        if name not in self._fvs:
+            raise KeyError(f"因子未注册: {name}")
+        return _StubFactor(self._fvs[name])
+
+
+def _make_slots(specs):
+    """specs: [(name, weight, condition), ...] → List[FactorSlot]"""
+    from app.factors.assembly import FactorSlot
+    return [FactorSlot(name=n, weight=w, condition=c) for n, w, c in specs]
+
 
 class TestFactorAssembly:
-    
+    """FactorAssembly v2 (F1/F3 Phase 1 重写): slots + AssemblyResult API.
+
+    旧 API (factors/entry_conditions/evaluate(fv)→tuple) 已废弃,
+    本组测试等价迁移, 保留原回归点: 条件门禁 / 综合评分阈值 / 方向门控 / 序列化.
+    """
+
     def test_evaluate_all_conditions_met(self):
-        """所有条件满足 → 入场"""
+        """所有条件满足 → passed + LONG"""
         assembly = FactorAssembly(
             name="test_strategy",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.4},
-                {"name": "GDIAN", "params": {}, "weight": 0.3},
-                {"name": "MFFF", "params": {}, "weight": 0.3},
-            ],
+            timeframe="15min",
+            slots=_make_slots([
+                ("SSS", 0.4, "SSS.score >= -1"),
+                ("GDIAN", 0.3, "GDIAN.value <= 40"),
+                ("MFFF", 0.3, "MFFF.score >= 0.5"),
+            ]),
             direction_gate="ALL_LONG",
             min_composite_score=0.2,
-            timeframe="15min",
-            entry_conditions=["SSS.score >= -1", "GDIAN.value <= 40", "MFFF.score >= 0.5"],
         )
-        
-        fv = {
+        reg = _StubRegistry({
             "SSS": _make_factor_value("SSS", score=0.5, value=0.5, direction="LONG"),
             "GDIAN": _make_factor_value("GDIAN", score=0.3, value=30, direction="LONG"),
             "MFFF": _make_factor_value("MFFF", score=0.7, value=0.7, direction="LONG"),
-        }
-        
-        enter, comp_score, direction = assembly.evaluate(fv)
-        assert enter is True
-        assert comp_score > 0.2
-        assert direction == "LONG"
-    
+        })
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is True
+        assert res.composite_score > 0.2
+        assert res.direction == "LONG"
+
     def test_evaluate_condition_fails(self):
         """某个条件不满足 → 不入场"""
         assembly = FactorAssembly(
             name="test",
-            factors=[{"name": "SSS", "params": {}, "weight": 1.0}],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 1.0, "SSS.score >= -1")]),
             direction_gate="ALL_LONG",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=["SSS.score >= -1"],
         )
-        
-        fv = {"SSS": _make_factor_value("SSS", score=-1.5, direction="LONG")}
-        enter, _, _ = assembly.evaluate(fv)
-        assert enter is False
-    
+        reg = _StubRegistry({"SSS": _make_factor_value("SSS", score=-1.5, direction="LONG")})
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is False
+        assert res.direction == "NEUTRAL"
+
     def test_evaluate_missing_factor(self):
-        """缺少必需因子 → 不入场"""
+        """必需因子缺失 (未注册) → 其条件评估失败 → 不入场"""
         assembly = FactorAssembly(
             name="test",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.5},
-                {"name": "GDIAN", "params": {}, "weight": 0.5},
-            ],
+            timeframe="15min",
+            slots=_make_slots([
+                ("SSS", 0.5, "SSS.score >= -1"),
+                ("GDIAN", 0.5, "GDIAN.score >= -1"),
+            ]),
             direction_gate="ALL_LONG",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=[],
         )
-        
-        fv = {"SSS": _make_factor_value("SSS")}  # 缺少 GDIAN
-        enter, _, _ = assembly.evaluate(fv)
-        assert enter is False
-    
+        reg = _StubRegistry({"SSS": _make_factor_value("SSS")})  # 缺少 GDIAN
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is False
+        # 计算失败被记录为 condition_results 错误项
+        assert any(not ok for _, ok, _ in res.condition_results)
+
     def test_evaluate_composite_score_below_threshold(self):
         """综合评分低于阈值 → 不入场"""
         assembly = FactorAssembly(
             name="test",
-            factors=[{"name": "SSS", "params": {}, "weight": 1.0}],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 1.0, "")]),
             direction_gate="ALL_LONG",
             min_composite_score=0.8,  # 高阈值
-            timeframe="15min",
-            entry_conditions=[],
         )
-        
-        fv = {"SSS": _make_factor_value("SSS", score=0.3, confidence=0.5, direction="LONG")}
-        enter, comp_score, _ = assembly.evaluate(fv)
-        assert enter is False
-        assert comp_score < 0.8
-    
+        reg = _StubRegistry({"SSS": _make_factor_value("SSS", score=0.3, confidence=0.5, direction="LONG")})
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is False
+        assert res.composite_score < 0.8
+
     def test_direction_gate_all_long(self):
-        """ALL_LONG: 所有因子必须 LONG"""
+        """ALL_LONG: 因子方向不一致 → NEUTRAL (下游按无方向不入场)"""
         assembly = FactorAssembly(
             name="test",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.5},
-                {"name": "MFFF", "params": {}, "weight": 0.5},
-            ],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 0.5, ""), ("MFFF", 0.5, "")]),
             direction_gate="ALL_LONG",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=[],
         )
-        
-        # 一个 LONG 一个 SHORT
-        fv = {
+        reg = _StubRegistry({
             "SSS": _make_factor_value("SSS", direction="LONG"),
             "MFFF": _make_factor_value("MFFF", direction="SHORT"),
-        }
-        enter, _, direction = assembly.evaluate(fv)
-        assert enter is False
-    
+        })
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.direction == "NEUTRAL"
+
     def test_direction_gate_consensus(self):
-        """CONSENSUS: 多数方向一致"""
+        """CONSENSUS: 多数方向一致 → LONG"""
         assembly = FactorAssembly(
             name="test",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.33},
-                {"name": "GDIAN", "params": {}, "weight": 0.33},
-                {"name": "MFFF", "params": {}, "weight": 0.34},
-            ],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 0.33, ""), ("GDIAN", 0.33, ""), ("MFFF", 0.34, "")]),
             direction_gate="CONSENSUS",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=[],
         )
-        
-        fv = {
+        reg = _StubRegistry({
             "SSS": _make_factor_value("SSS", direction="LONG"),
             "GDIAN": _make_factor_value("GDIAN", direction="LONG"),
             "MFFF": _make_factor_value("MFFF", direction="SHORT"),
-        }
-        enter, _, direction = assembly.evaluate(fv)
-        assert enter is True
-        assert direction == "LONG"
-    
+        })
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is True
+        assert res.direction == "LONG"
+
     def test_direction_gate_any(self):
-        """ANY: 任意有方向即可"""
+        """ANY: 跟随综合评分方向 (负分 → SHORT)"""
         assembly = FactorAssembly(
             name="test",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.5},
-                {"name": "MFFF", "params": {}, "weight": 0.5},
-            ],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 0.5, ""), ("MFFF", 0.5, "")]),
             direction_gate="ANY",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=[],
         )
-        
-        fv = {
-            "SSS": _make_factor_value("SSS", direction="SHORT"),
-            "MFFF": _make_factor_value("MFFF", direction="NEUTRAL"),
-        }
-        enter, _, direction = assembly.evaluate(fv)
-        assert enter is True
-        assert direction == "SHORT"
-    
+        reg = _StubRegistry({
+            "SSS": _make_factor_value("SSS", score=-0.5, direction="SHORT"),
+            "MFFF": _make_factor_value("MFFF", score=0.0, direction="NEUTRAL"),
+        })
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is True
+        assert res.direction == "SHORT"
+
     def test_to_dict_from_dict(self):
-        """序列化/反序列化"""
+        """序列化/反序列化 (v2: slots 结构)"""
         assembly = FactorAssembly(
             name="test_strategy",
-            factors=[{"name": "SSS", "params": {}, "weight": 1.0}],
+            timeframe="15min",
+            slots=_make_slots([("SSS", 1.0, "SSS.score >= -1")]),
             direction_gate="ALL_LONG",
             min_composite_score=0.3,
-            timeframe="15min",
-            entry_conditions=["SSS.score >= -1"],
             description="test",
         )
         d = assembly.to_dict()
         restored = FactorAssembly.from_dict(d)
         assert restored.name == assembly.name
-        assert restored.factors == assembly.factors
-        assert restored.entry_conditions == assembly.entry_conditions
-    
+        assert restored.direction_gate == "ALL_LONG"
+        assert restored.min_composite_score == 0.3
+        assert len(restored.slots) == 1
+        assert restored.slots[0].name == "SSS"
+        assert restored.slots[0].weight == 1.0
+        assert restored.slots[0].condition == "SSS.score >= -1"
+
     def test_multiple_conditions_all_must_pass(self):
         """多个条件必须全部满足"""
         assembly = FactorAssembly(
             name="test",
-            factors=[
-                {"name": "SSS", "params": {}, "weight": 0.5},
-                {"name": "GDIAN", "params": {}, "weight": 0.5},
-            ],
+            timeframe="15min",
+            slots=_make_slots([
+                ("SSS", 0.5, "SSS.score >= -1"),
+                ("GDIAN", 0.5, "GDIAN.value <= 35"),
+            ]),
             direction_gate="ALL_LONG",
             min_composite_score=0.0,
-            timeframe="15min",
-            entry_conditions=[
-                "SSS.score >= -1",
-                "GDIAN.value <= 35",
-            ],
         )
-        
         # SSS 通过, GDIAN 失败 (value=40 > 35)
-        fv = {
+        reg = _StubRegistry({
             "SSS": _make_factor_value("SSS", score=0.5, direction="LONG"),
             "GDIAN": _make_factor_value("GDIAN", value=40, direction="LONG"),
-        }
-        enter, _, _ = assembly.evaluate(fv)
-        assert enter is False
-    
+        })
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is False
+
     def test_condition_operators(self):
-        """测试各种比较运算符"""
+        """测试比较运算符"""
         assembly = FactorAssembly(
-            name="test", factors=[{"name": "SSS", "params": {}, "weight": 1.0}],
-            direction_gate="ALL_LONG", min_composite_score=0.0,
-            timeframe="15min", entry_conditions=["SSS.value <= 35"],
+            name="test",
+            timeframe="15min",
+            slots=_make_slots([("SSS", 1.0, "SSS.value <= 35")]),
+            direction_gate="ALL_LONG",
+            min_composite_score=0.0,
         )
-        
         # value=30 <= 35 → 通过
-        fv = {"SSS": _make_factor_value("SSS", value=30, direction="LONG")}
-        enter, _, _ = assembly.evaluate(fv)
-        assert enter is True
-        
+        reg = _StubRegistry({"SSS": _make_factor_value("SSS", value=30, direction="LONG")})
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is True
         # value=40 > 35 → 失败
-        fv = {"SSS": _make_factor_value("SSS", value=40, direction="LONG")}
-        enter, _, _ = assembly.evaluate(fv)
-        assert enter is False
+        reg = _StubRegistry({"SSS": _make_factor_value("SSS", value=40, direction="LONG")})
+        res = assembly.evaluate("US.TEST", {}, registry=reg)
+        assert res.passed is False
 
 
 # ── WalkForward 测试 ──
@@ -451,26 +456,38 @@ class TestFactorProfilesConfig:
                 assert "weight" in factor, f"{name}: factor missing weight"
     
     def test_assembly_from_profile(self):
-        """从 YAML profile 创建 FactorAssembly"""
+        """从 YAML profile 创建 FactorAssembly (v2: profile 的 factors/entry_conditions 映射为 slots)"""
         import yaml
         from pathlib import Path
-        
+        from app.factors.assembly import FactorSlot
+
         path = Path(__file__).resolve().parent.parent / "config" / "factor_profiles.yaml"
         with open(path) as f:
             data = yaml.safe_load(f)
-        
+
         variant = data["strategy_variants"]["stable_15m_base"]
+        conditions = variant.get("entry_conditions", []) or []
+        slots = [
+            FactorSlot(
+                name=fac["name"],
+                params=fac.get("params", {}) or {},
+                weight=fac.get("weight", 1.0),
+                condition=next(
+                    (c for c in conditions if c.startswith(f"{fac['name']}.")), ""
+                ),
+            )
+            for fac in variant["factors"]
+        ]
         assembly = FactorAssembly(
             name="stable_15m_base",
-            factors=variant["factors"],
+            timeframe=variant["timeframe"],
+            slots=slots,
             direction_gate=variant["direction_gate"],
             min_composite_score=variant["min_composite_score"],
-            timeframe=variant["timeframe"],
-            entry_conditions=variant["entry_conditions"],
         )
-        
+
         assert assembly.name == "stable_15m_base"
-        assert len(assembly.factors) == 3
+        assert len(assembly.slots) == 3
         assert assembly.timeframe == "15min"
 
 

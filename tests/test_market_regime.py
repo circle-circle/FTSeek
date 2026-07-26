@@ -18,7 +18,7 @@ def mock_router():
         "spy_ma200": 520.0,
         "spx_change_percent": 0.5,
     }
-    router.get_vix.return_value = 18.0
+    router.get_vix_or_none.return_value = 18.0
     return router
 
 
@@ -31,7 +31,7 @@ def mock_av():
         "spy_ma50": 540.0,
         "spx_change_percent": 0.5,
     }
-    av.get_vix.return_value = 18.0
+    av.get_vix_or_none.return_value = 18.0
     return av
 
 
@@ -51,7 +51,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,
             "spx_change_percent": 0.8,
         }
-        mock_router.get_vix.return_value = 14.0
+        mock_router.get_vix_or_none.return_value = 14.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -76,7 +76,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,
             "spx_change_percent": 0.5,
         }
-        mock_router.get_vix.return_value = 17.0
+        mock_router.get_vix_or_none.return_value = 17.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -98,7 +98,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,  # SPY > MA200
             "spx_change_percent": -0.3,
         }
-        mock_router.get_vix.return_value = 18.0
+        mock_router.get_vix_or_none.return_value = 18.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -123,7 +123,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,
             "spx_change_percent": -2.0,
         }
-        mock_router.get_vix.return_value = 25.0
+        mock_router.get_vix_or_none.return_value = 25.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -145,7 +145,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 500.0,  # SPY > MA200
             "spx_change_percent": -1.0,
         }
-        mock_router.get_vix.return_value = 22.0
+        mock_router.get_vix_or_none.return_value = 22.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -167,7 +167,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 500.0,
             "spx_change_percent": -5.0,
         }
-        mock_router.get_vix.return_value = 35.0
+        mock_router.get_vix_or_none.return_value = 35.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -182,7 +182,7 @@ class TestMarketRegimeGate:
         """测试 Router 失败时使用 AlphaVantage 降级"""
         mock_router = Mock()
         mock_router.get_spy_context.side_effect = Exception("Router failed")
-        mock_router.get_vix.side_effect = Exception("Router failed")
+        mock_router.get_vix_or_none.side_effect = Exception("Router failed")
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -192,21 +192,23 @@ class TestMarketRegimeGate:
         assert ctx.vix == 18.0
 
     def test_default_values_when_all_fail(self):
-        """测试所有数据源失败时使用默认值"""
+        """测试所有数据源失败时使用兜底值 + vix_uncertain 标记 (RFC-060)"""
         mock_router = Mock()
         mock_router.get_spy_context.return_value = {}
-        mock_router.get_vix.return_value = 20.0
+        mock_router.get_vix_or_none.return_value = None
 
         mock_av = Mock()
         mock_av.get_spy_context.return_value = {}
-        mock_av.get_vix.return_value = 20.0
+        mock_av.get_vix_or_none.return_value = None
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
 
-        # 默认 VIX=20, 无趋势数据, score=0 → CAUTIOUS
+        # RFC-060: VIX 全源失败 → 兜底 20.0 + vix_uncertain, 跳过 VIX 评分
+        # 无趋势数据, score=0 → CAUTIOUS
         assert ctx.regime == MarketRegime.CAUTIOUS
         assert ctx.vix == 20.0
+        assert ctx.vix_uncertain is True
 
     def test_to_dict(self, mock_router, mock_av):
         """测试 to_dict() 方法"""
@@ -222,13 +224,19 @@ class TestMarketRegimeGate:
         assert "position_multiplier" in d
 
     def test_no_router_no_av(self):
-        """测试无 Router 和 AV 时不崩溃"""
-        gate = MarketRegimeGate(None, None)
+        """测试无 Router 和 AV 时不崩溃 (密封: 阻断默认实例自动创建)"""
+        # 2026-07-11 起构造器会自动创建共享 router/AV 实例; 测试密封为创建失败路径
+        with patch("app.playbook.market_regime.get_market_data_router",
+                   side_effect=Exception("sealed")), \
+             patch("app.playbook.market_regime.AlphaVantageProvider",
+                   side_effect=Exception("sealed")):
+            gate = MarketRegimeGate(None, None)
         ctx = gate.assess()
 
-        # 使用默认值
+        # RFC-060: 无任何 VIX 源 → 兜底 20.0 + vix_uncertain
         assert ctx.regime == MarketRegime.CAUTIOUS
         assert ctx.vix == 20.0
+        assert ctx.vix_uncertain is True
 
     def test_vix_boundary_15(self, mock_router, mock_av):
         """测试 VIX=15 边界"""
@@ -243,7 +251,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,
             "spx_change_percent": 0.5,
         }
-        mock_router.get_vix.return_value = 15.0
+        mock_router.get_vix_or_none.return_value = 15.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()
@@ -265,7 +273,7 @@ class TestMarketRegimeGate:
             "spy_ma200": 520.0,
             "spx_change_percent": 0.5,
         }
-        mock_router.get_vix.return_value = 20.0
+        mock_router.get_vix_or_none.return_value = 20.0
 
         gate = MarketRegimeGate(mock_router, mock_av)
         ctx = gate.assess()

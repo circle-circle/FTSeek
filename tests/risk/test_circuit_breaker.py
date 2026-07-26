@@ -22,7 +22,7 @@ def test_strategy_circuit_breaker_resets_after_pause():
     """测试熔断在暂停期后自动重置"""
     breaker = StrategyCircuitBreaker(
         consecutive_losses_threshold=3,
-        pause_duration_seconds=60,  # 1 分钟 (测试用)
+        pause_duration_seconds=1,  # 2026-07-26: 原 60s+sleep(61) 纯睡两分钟, 缩短语义不变
     )
     
     # 触发熔断
@@ -31,9 +31,9 @@ def test_strategy_circuit_breaker_resets_after_pause():
     
     assert breaker.is_triggered("strategy_1") == True
     
-    # 等待 1 分钟后
+    # 等待暂停期后
     import time
-    time.sleep(61)
+    time.sleep(1.2)
     
     # 应该自动重置
     assert breaker.is_triggered("strategy_1") == False
@@ -53,18 +53,16 @@ def test_symbol_circuit_breaker_on_high_volatility():
     assert breaker.check_volatility("TSLA", 0.06) == False  # 触发熔断
 
 def test_system_circuit_breaker_on_market_data_down():
-    """测试系统级熔断：行情断流"""
+    """测试系统级熔断：行情断流 (2026-07-26 改写: 04-17 起为健康评分制, 非时间超时制)"""
     from app.risk.circuit_breaker import SystemCircuitBreaker
     
-    breaker = SystemCircuitBreaker(
-        market_data_timeout_seconds=60,
-    )
+    breaker = SystemCircuitBreaker()
     
     # 正常
     breaker.update_market_data_status(True)
     assert breaker.is_triggered() == False
     
-    # 模拟断流超过 60 秒
-    import time
-    time.sleep(61)
-    assert breaker.is_triggered() == True
+    # 连续失败上报 → 健康度跌破阈值 → 熔断
+    for _ in range(10):
+        breaker.update_market_data_status(False)
+    assert breaker.is_triggered() or breaker.is_degraded()

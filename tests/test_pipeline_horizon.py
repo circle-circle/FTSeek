@@ -63,13 +63,18 @@ class TestPipelineHorizon:
         )
         assert exit_reason == "PRE_CLOSE_EXIT"
 
-    def test_check_playbook_exit_rules_long_horizon_skips_pre_close(self):
-        """long horizon 盈利仓应跳过 EOD 强平."""
+    def test_check_playbook_exit_rules_long_horizon_skips_pre_close(self, monkeypatch):
+        """long horizon 盈利仓跳过 EOD 强平 — 2026-07-17 极简版B 后需 overnight_hold_enabled=true.
+
+        默认 (总开关 off): 无论 horizon 一律 EOD 平仓; 开启后 long horizon 才可持夜.
+        """
         from datetime import datetime
-        # 用今天的日期作为 entry_time, 避免触发 MAX_HOLD (entry 在今天, max_hold_days=3 未到)
+        import app.playbook.config as pb_config_mod
+
+        # 用今天的日期作为 entry_time, 避免触发 MAX_HOLD (entry 在今天, max_hold_days 未到)
         _today = datetime.now().strftime("%Y-%m-%dT10:00:00")
         meta = {"horizon": "long"}
-        exit_reason, exit_price, _, _ = _check_playbook_exit_rules(
+        kwargs = dict(
             direction="LONG",
             entry_price=100.0,
             current_price=102.0,
@@ -81,4 +86,32 @@ class TestPipelineHorizon:
             minutes_from_open=390,
             entry_time_str=_today,
         )
+
+        # 1) 默认总开关 off → long horizon 也 EOD 强平 (极简版B 语义)
+        real_cfg = pb_config_mod.get_playbook_config()
+
+        class _Overnight:
+            def __init__(self, real, enabled):
+                self._real = real
+                self._enabled = enabled
+
+            def get(self, key, default=None):
+                if key == "overnight_hold_enabled":
+                    return self._enabled
+                return self._real.get(key, default)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        monkeypatch.setattr(
+            pb_config_mod, "get_playbook_config", lambda: _Overnight(real_cfg, False)
+        )
+        exit_reason, *_ = _check_playbook_exit_rules(**kwargs)
+        assert exit_reason == "PRE_CLOSE_EXIT", "总开关 off 时 long horizon 也应 EOD 平仓"
+
+        # 2) 总开关 on → long horizon 盈利仓跳过 EOD
+        monkeypatch.setattr(
+            pb_config_mod, "get_playbook_config", lambda: _Overnight(real_cfg, True)
+        )
+        exit_reason, *_ = _check_playbook_exit_rules(**kwargs)
         assert exit_reason == ""

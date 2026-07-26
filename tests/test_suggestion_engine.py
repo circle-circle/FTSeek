@@ -18,6 +18,8 @@ class TestSuggestionEngine:
     @pytest.fixture
     def setup_low_performance(self):
         import tempfile
+        import app.storage.trade_recorder as tr_mod
+
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
             db_path = f.name
         
@@ -29,7 +31,8 @@ class TestSuggestionEngine:
                 side='buy',
                 quantity=100,
                 price=175.5,
-                decision_reason='impulse'
+                decision_reason='impulse',
+                stop_loss=172.0,  # stop_loss_planned>0 → 进入止损执行率统计
             )
             
             recorder.record_close(
@@ -39,7 +42,12 @@ class TestSuggestionEngine:
                 stop_loss_executed=False
             )
         
+        # SuggestionEngine 经 get_trade_recorder() 单例取 recorder —
+        # 密封: 把单例指到临时 DB, 避免读真实 trade_records.db
+        _old_singleton = tr_mod._recorder
+        tr_mod._recorder = recorder
         yield recorder
+        tr_mod._recorder = _old_singleton
         os.unlink(db_path)
     
     def test_generate_suggestions(self, setup_low_performance):

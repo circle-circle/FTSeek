@@ -32,13 +32,17 @@ def mock_providers():
 
 @pytest.fixture
 def collector(mock_providers):
-    """创建 PlaybookDataCollector 实例"""
-    return PlaybookDataCollector(
+    """创建 PlaybookDataCollector 实例 (密封: 阻断真实 MarketDataRouter/Futu 网络)"""
+    c = PlaybookDataCollector(
         fundamental_provider=mock_providers["fundamental"],
         finnhub_provider=mock_providers["finnhub"],
         insider_provider=mock_providers["insider"],
         earnings_calendar=mock_providers["earnings"],
     )
+    # _collect_technical 会懒加载真实 MarketDataRouter (Futu/twelvedata 网络调用),
+    # 测试必须密封 → 返回 None, technical 走 missing 降级路径
+    c._get_market_data_router = lambda: None
+    return c
 
 
 class TestPlaybookDataCollector:
@@ -87,16 +91,19 @@ class TestPlaybookDataCollector:
 
     def test_collect_fundamental_ok(self, collector, mock_providers):
         """测试基本面数据收集成功"""
+        # 2026-06-29 契约: Provider 返回 {"data": {"financials": {...}}} 嵌套 + snake_case
         mock_providers["fundamental"].get_data.return_value = {
             "status": "ok",
             "data": {
-                "peTTM": 25.5,
-                "marketCapitalization": 2500000,
-                "industry": "Technology",
-                "roeTTM": 0.15,
-                "revenueGrowthTTMYoy": 0.12,
-                "52WeekHigh": 200.0,
-                "52WeekLow": 150.0,
+                "financials": {
+                    "pe_ttm": 25.5,
+                    "market_cap": 2500000,
+                    "industry": "Technology",
+                    "roe": 0.15,
+                    "revenue_yoy": 0.12,
+                    "52w_high": 200.0,
+                    "52w_low": 150.0,
+                },
             },
             "data_source": "finnhub",
             "fetched_at": "2026-06-18T10:00:00Z",
@@ -119,8 +126,10 @@ class TestPlaybookDataCollector:
         mock_providers["fundamental"].get_data.return_value = {
             "status": "ok",
             "data": {
-                "peTTM": 25.5,
-                # 缺少 market_cap 和 industry
+                "financials": {
+                    "pe_ttm": 25.5,
+                    # 缺少 market_cap 和 industry
+                },
             },
         }
 
@@ -141,21 +150,30 @@ class TestPlaybookDataCollector:
 
         assert result.quality == "missing"
 
-    def test_collect_insider_strong_buy(self, collector, mock_providers):
-        """测试内部人数据 - 强买入信号"""
-        mock_providers["insider"].get_data.return_value = {
-            "status": "ok",
-            "data": {
-                "buy_count_30d": 5,
-                "sell_count_30d": 0,
-                "net_shares_30d": 10000,
-                "cluster_score": 0.8,
-                "cluster_buyers": ["CEO", "CFO", "CTO"],
-                "transactions": [
-                    {"date": "2026-06-15", "person": "CEO", "type": "buy", "shares": 5000},
-                ],
-            },
+    @staticmethod
+    def _txn(code, shares):
+        """SEC Form4 交易桩 (fetch_company_form4s 元素契约)"""
+        return {
+            "transaction_code": code,
+            "shares": shares,
+            "insider_name": "Some Insider",
+            "price_per_share": 100.0,
+            "transaction_date": "2026-06-15",
         }
+
+    def test_collect_insider_strong_buy(self, collector, mock_providers):
+        """测试内部人数据 - 强买入信号 (契约: SEC fetch_company_form4s + detect_cluster_buys)"""
+        mock_providers["insider"].fetch_company_form4s.return_value = [
+            self._txn("P", 2000) for _ in range(5)
+        ]
+        cluster = Mock()
+        cluster.score = 0.8
+        cluster.buyers = [
+            {"name": "CEO", "role": "CEO"},
+            {"name": "CFO", "role": "CFO"},
+            {"name": "CTO", "role": "CTO"},
+        ]
+        mock_providers["insider"].detect_cluster_buys.return_value = cluster
 
         result = collector._collect_insider("US.AAPL")
 
@@ -167,15 +185,14 @@ class TestPlaybookDataCollector:
 
     def test_collect_insider_buy(self, collector, mock_providers):
         """测试内部人数据 - 买入信号"""
-        mock_providers["insider"].get_data.return_value = {
-            "status": "ok",
-            "data": {
-                "buy_count_30d": 3,
-                "sell_count_30d": 1,
-                "net_shares_30d": 2000,
-                "cluster_score": 0.3,  # < 0.5, 不是集群买入
-            },
-        }
+        mock_providers["insider"].fetch_company_form4s.return_value = [
+            self._txn("P", 1000), self._txn("P", 1000), self._txn("P", 500),
+            self._txn("S", 500),
+        ]
+        cluster = Mock()
+        cluster.score = 0.3  # < 0.5, 不是集群买入
+        cluster.buyers = []
+        mock_providers["insider"].detect_cluster_buys.return_value = cluster
 
         result = collector._collect_insider("US.AAPL")
 
@@ -183,15 +200,15 @@ class TestPlaybookDataCollector:
 
     def test_collect_insider_sell(self, collector, mock_providers):
         """测试内部人数据 - 卖出信号"""
-        mock_providers["insider"].get_data.return_value = {
-            "status": "ok",
-            "data": {
-                "buy_count_30d": 1,
-                "sell_count_30d": 5,
-                "net_shares_30d": -3000,
-                "cluster_score": 0.1,
-            },
-        }
+        mock_providers["insider"].fetch_company_form4s.return_value = [
+            self._txn("P", 1000),
+            self._txn("S", 800), self._txn("S", 800), self._txn("S", 800),
+            self._txn("S", 800), self._txn("S", 800),
+        ]
+        cluster = Mock()
+        cluster.score = 0.1
+        cluster.buyers = []
+        mock_providers["insider"].detect_cluster_buys.return_value = cluster
 
         result = collector._collect_insider("US.AAPL")
 
@@ -233,17 +250,16 @@ class TestPlaybookDataCollector:
         assert result.quality == "missing"
 
     def test_collect_earnings_ok(self, collector, mock_providers):
-        """测试财报数据收集成功"""
-        mock_providers["earnings"].get_next_earnings_date.return_value = {
-            "date": "2026-07-15",
+        """测试财报数据收集成功 (2026-06-22 起 Finnhub 为主源: calendar + stock/earnings)"""
+        mock_providers["finnhub"]._get.return_value = {
+            "earningsCalendar": [{"date": "2026-07-15"}],
         }
-        mock_providers["earnings"].get_earnings_history.return_value = [
-            {"quarter": "Q1", "surprise": 0.05},
-            {"quarter": "Q2", "surprise": 0.03},
-            {"quarter": "Q3", "surprise": -0.02},
-            {"quarter": "Q4", "surprise": 0.08},
+        mock_providers["finnhub"].get_company_earnings.return_value = [
+            {"quarter": "Q1", "epsActual": 1.05, "epsEstimate": 1.00},
+            {"quarter": "Q2", "epsActual": 1.03, "epsEstimate": 1.00},
+            {"quarter": "Q3", "epsActual": 0.98, "epsEstimate": 1.00},
+            {"quarter": "Q4", "epsActual": 1.08, "epsEstimate": 1.00},
         ]
-        mock_providers["earnings"].get_sector_atr_multiplier.return_value = 1.2
 
         result = collector._collect_earnings("US.AAPL")
 
@@ -251,14 +267,16 @@ class TestPlaybookDataCollector:
         assert result.next_date == "2026-07-15"
         assert result.days_until is not None
         assert result.beat_rate == 0.75  # 3/4 超预期
-        assert result.sector_atr_multiplier == 1.2
+        # 2026-06-22: sector_atr_multiplier 收敛为固定 1.0 (原 AlphaVantage 源退役)
+        assert result.sector_atr_multiplier == 1.0
         assert len(result.history) == 4
 
     def test_collect_earnings_partial(self, collector, mock_providers):
-        """测试财报数据部分缺失"""
-        mock_providers["earnings"].get_next_earnings_date.return_value = None
-        mock_providers["earnings"].get_earnings_history.return_value = []
-        mock_providers["earnings"].get_sector_atr_multiplier.return_value = 1.0
+        """测试财报数据部分缺失 (无未来财报日期, 但有历史 → partial)"""
+        mock_providers["finnhub"]._get.return_value = {}  # calendar 无数据
+        mock_providers["finnhub"].get_company_earnings.return_value = [
+            {"quarter": "Q1", "epsActual": 1.05, "epsEstimate": 1.00},
+        ]
 
         result = collector._collect_earnings("US.AAPL")
 
@@ -277,9 +295,7 @@ class TestPlaybookDataCollector:
         assert result.quality == "ok"
 
     def test_collect_technical_missing(self, collector, mock_providers):
-        """测试技术面数据 - 当前未实现"""
-        # TODO: 技术面数据收集未实现
-        
+        """测试技术面数据 - router 不可用时降级 missing (fixture 已密封 router=None)"""
         result = collector._collect_technical("US.AAPL")
 
         assert result.quality == "missing"

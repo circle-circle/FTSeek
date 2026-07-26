@@ -2,10 +2,10 @@
 """Unit tests for direction×strategy-aware scale_out exit rules.
 
 2026-06-20: 分层按 {direction}_{strategy}_atr_tiers 配置.
-  数据驱动:
-    SHORT|TECHNICAL_MULTI_FACTOR  t5=70%/+3.11% → 三层放长
-    LONG|TECHNICAL_MULTI_FACTOR    t5=34%/-1.10% → 单层快平
-    LONG|EARNINGS_REVISION_MOMENTUM t5 n=0      → 单层快平 (待补 t5)
+2026-07 更新: exit_policy.yaml 已按数据裁决停用 scale_out (enabled:false, tiers:[]),
+  direction×strategy tiers 从 yaml 移除. 但 scale_out.py 引擎逻辑仍在
+  (key 解析优先级 / multi-tier 可达性 / trailing_remainder), 本测试改为
+  注入 mock 配置密封验证引擎逻辑, 不再依赖 live yaml.
 
 关键回归点:
   - multi-tier 可达性 (is_partially_reduced 广域早退已移除, 依赖 triggered_tiers)
@@ -16,7 +16,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from app.risk.exit_rules.scale_out import check_scale_out, _strategy_slug
 
 
@@ -37,6 +37,43 @@ def md(price, atr, direction, strategy=""):
     return {"current_price": price, "atr": atr, "direction": direction, "strategy": strategy}
 
 
+# 2026-06-20 时期的 direction×strategy 配置快照 (yaml 已退役, 此处注入密封)
+TIER_CFG = {
+    "enabled": True,
+    "tier_mode": "atr",
+    "trailing_remainder": True,
+    # SHORT|TECHNICAL: 三层放长
+    "short_technical_multi_factor_atr_tiers": [
+        {"profit_atr": 1.0, "close_pct": 30, "ratchet_sl_pct": 0.0},
+        {"profit_atr": 2.0, "close_pct": 30, "ratchet_sl_pct": 1.0},
+        {"profit_atr": 3.0, "close_pct": 0, "ratchet_sl_pct": 1.5, "trailing_remainder": True},
+    ],
+    # LONG|TECHNICAL / LONG|EARNINGS: 单层快平
+    "long_technical_multi_factor_atr_tiers": [
+        {"profit_atr": 1.0, "close_pct": 100, "ratchet_sl_pct": 0.5},
+    ],
+    "long_earnings_revision_momentum_atr_tiers": [
+        {"profit_atr": 1.0, "close_pct": 100, "ratchet_sl_pct": 0.5},
+    ],
+    # 方向级兜底
+    "short_atr_tiers": [
+        {"profit_atr": 1.0, "close_pct": 100, "ratchet_sl_pct": 0.5},
+    ],
+    # 通用兜底
+    "atr_tiers": [
+        {"profit_atr": 1.0, "close_pct": 100, "ratchet_sl_pct": 0.5},
+    ],
+}
+
+
+def patched_cfg():
+    """密封注入 scale_out 配置 (yaml 中 scale_out 已 enabled:false + tiers:[])"""
+    return patch(
+        "app.risk.exit_rules.scale_out._load_scale_out_config",
+        return_value=TIER_CFG,
+    )
+
+
 # ── strategy slug ──
 
 def test_strategy_slug():
@@ -55,7 +92,8 @@ def test_short_technical_tier1():
     """SHORT|TECHNICAL 1.0ATR → 30% close + SL→entry(保本)."""
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
     # SHORT entry=100, price=98, ATR=2 → profit=(100-98)/2=1.0 ATR
-    result = check_scale_out(pos, 98.0, {}, "SHORT", market_data=md(98.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 98.0, {}, "SHORT", market_data=md(98.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
     assert result is not None
     assert result["close_ratio"] == 0.30, f"T1 close 30%, got {result['close_ratio']}"
     assert result["metadata"]["tier"] == 1
@@ -71,8 +109,9 @@ def test_short_technical_tier2_reachable():
     """
     pos = make_position(entry_price=100.0, is_reduced=True, strategy="TECHNICAL_MULTI_FACTOR")
     # SHORT entry=100, price=96, ATR=2 → profit=(100-96)/2=2.0 ATR
-    result = check_scale_out(pos, 96.0, {"triggered_tiers": [0]}, "SHORT",
-                             market_data=md(96.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 96.0, {"triggered_tiers": [0]}, "SHORT",
+                                 market_data=md(96.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
     assert result is not None, "T2 must be reachable despite is_partially_reduced=True"
     assert result["close_ratio"] == 0.30, f"T2 close 30%, got {result['close_ratio']}"
     assert result["metadata"]["tier"] == 2
@@ -85,8 +124,9 @@ def test_short_technical_tier3_trailing():
     """T3: 0% close + trailing_remainder."""
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
     # SHORT entry=100, price=94, ATR=2 → profit=3.0 ATR
-    result = check_scale_out(pos, 94.0, {"triggered_tiers": [0, 1]}, "SHORT",
-                             market_data=md(94.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 94.0, {"triggered_tiers": [0, 1]}, "SHORT",
+                                 market_data=md(94.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
     assert result is not None, "T3 must be reachable"
     assert result["close_qty"] == 0, "T3 no close"
     assert result["trailing_remainder"] is True
@@ -99,8 +139,9 @@ def test_short_technical_tier3_trailing():
 def test_long_technical_fast_close():
     """LONG|TECHNICAL 1.0ATR → 100% close (t5 负, 不放长)."""
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
-    result = check_scale_out(pos, 102.0, {}, "LONG",
-                             market_data=md(102.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 102.0, {}, "LONG",
+                                 market_data=md(102.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
     assert result is not None
     assert result["close_ratio"] == 1.0, f"LONG|TECHNICAL full close, got {result['close_ratio']}"
     assert result["metadata"]["tier"] == 1
@@ -111,8 +152,9 @@ def test_long_technical_fast_close():
 
 def test_long_earnings_fast_close():
     pos = make_position(entry_price=100.0, strategy="EARNINGS_REVISION_MOMENTUM")
-    result = check_scale_out(pos, 102.0, {}, "LONG",
-                             market_data=md(102.0, 2.0, "LONG", "EARNINGS_REVISION_MOMENTUM"))
+    with patched_cfg():
+        result = check_scale_out(pos, 102.0, {}, "LONG",
+                                 market_data=md(102.0, 2.0, "LONG", "EARNINGS_REVISION_MOMENTUM"))
     assert result is not None
     assert result["close_ratio"] == 1.0, f"EARNINGS full close, got {result['close_ratio']}"
     print("  ✅ LONG|EARNINGS 1.0ATR: 100% close (pending t5)")
@@ -123,8 +165,9 @@ def test_long_earnings_fast_close():
 def test_strategy_key_overrides_direction():
     """SHORT|TECHNICAL (30% close) 优先于 SHORT 通用 (100% close)."""
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
-    result = check_scale_out(pos, 98.0, {}, "SHORT",
-                             market_data=md(98.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 98.0, {}, "SHORT",
+                                 market_data=md(98.0, 2.0, "SHORT", "TECHNICAL_MULTI_FACTOR"))
     assert result["close_ratio"] == 0.30, "strategy-specific tier must win over direction tier"
     print("  ✅ strategy key 优先于 direction key")
 
@@ -132,8 +175,9 @@ def test_strategy_key_overrides_direction():
 def test_unknown_strategy_falls_back_to_direction():
     """未配置的 strategy → 方向级兜底 (100% close)."""
     pos = make_position(entry_price=100.0, strategy="SOME_NEW_STRATEGY")
-    result = check_scale_out(pos, 98.0, {}, "SHORT",
-                             market_data=md(98.0, 2.0, "SHORT", "SOME_NEW_STRATEGY"))
+    with patched_cfg():
+        result = check_scale_out(pos, 98.0, {}, "SHORT",
+                                 market_data=md(98.0, 2.0, "SHORT", "SOME_NEW_STRATEGY"))
     assert result is not None
     assert result["close_ratio"] == 1.0, f"fallback full close, got {result['close_ratio']}"
     print("  ✅ unknown strategy → direction fallback (full close)")
@@ -141,7 +185,8 @@ def test_unknown_strategy_falls_back_to_direction():
 
 def test_empty_direction_falls_back_to_atr_tiers():
     pos = make_position(entry_price=100.0, strategy="")
-    result = check_scale_out(pos, 102.0, {}, "LONG", market_data=md(102.0, 2.0, "LONG", ""))
+    with patched_cfg():
+        result = check_scale_out(pos, 102.0, {}, "LONG", market_data=md(102.0, 2.0, "LONG", ""))
     assert result is not None
     assert result["close_ratio"] == 1.0
     print("  ✅ empty strategy → atr_tiers fallback")
@@ -151,14 +196,16 @@ def test_empty_direction_falls_back_to_atr_tiers():
 
 def test_no_trigger_below_threshold():
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
-    result = check_scale_out(pos, 101.0, {}, "LONG", market_data=md(101.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 101.0, {}, "LONG", market_data=md(101.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
     assert result is None
     print("  ✅ No trigger below 1.0ATR")
 
 
 def test_no_trigger_when_loss():
     pos = make_position(entry_price=100.0, strategy="TECHNICAL_MULTI_FACTOR")
-    result = check_scale_out(pos, 98.0, {}, "LONG", market_data=md(98.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
+    with patched_cfg():
+        result = check_scale_out(pos, 98.0, {}, "LONG", market_data=md(98.0, 2.0, "LONG", "TECHNICAL_MULTI_FACTOR"))
     assert result is None
     print("  ✅ No trigger when losing")
 

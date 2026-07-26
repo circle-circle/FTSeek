@@ -118,7 +118,8 @@ def test_simple_call_success(mock_yaml, env_keys):
         res = call_llm("simple_feature", "ping")
         assert res.success is True
         assert res.response == "Hello world"
-        assert res.model_used == "qwen-flash"
+        # model_used 语义演进: 记录真实 model_name (非 alias), 便于成本/归因追踪
+        assert res.model_used == "qwen3.6-flash"
         assert res.tokens_in == 10
         assert res.fallback_used is False
 
@@ -153,7 +154,7 @@ def test_fallback_used_when_primary_fails(mock_yaml, env_keys):
         res = call_llm("fallback_feature", "test")
     assert res.success is True
     assert res.response == "ok from deepseek"
-    assert res.model_used == "deepseek-pro"
+    assert res.model_used == "deepseek-v4-pro"  # model_used 记录真实 model_name
     assert res.fallback_used is True
     # primary 调 2 次 (retry), fallback 调 1 次成功
     assert call_log.count("qwen3.6-plus") == 2

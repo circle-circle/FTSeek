@@ -24,7 +24,7 @@ from app.pipeline.position_monitor import (
     _check_positions,
 )
 from app.pipeline.llm_pipeline import (
-    run_llm_strategy_scan, run_llm_backtest,
+    run_llm_strategy_scan,
     run_after_hours_llm_scan, run_open_checker,
     _fallback_to_finnhub_news, _generate_degraded_recommendation, _send_rsshub_alert,
     _merge_agent_plan_into_battle_plan, _deduplicate_strings,
@@ -45,7 +45,7 @@ __all__ = [
     "_notify_risk_blocked", "_update_capital_safety",
     "_check_positions",
     # llm_pipeline
-    "run_llm_strategy_scan", "run_llm_backtest",
+    "run_llm_strategy_scan",
     "run_after_hours_llm_scan", "run_open_checker",
     "_fallback_to_finnhub_news", "_generate_degraded_recommendation", "_send_rsshub_alert",
     "_merge_agent_plan_into_battle_plan", "_deduplicate_strings",

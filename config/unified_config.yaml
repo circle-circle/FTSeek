@@ -15,71 +15,6 @@ COST_MODEL:
   option_exchange_fee_bps: 1.0
   option_max_spread_pct: 0.05
   pre_after_session_mult: 3.0
-OPTION_QUALITY_GATE:
-  dte_enabled: true
-  iv_rank_enabled: true
-  liquidity_enabled: true
-  max_dte: 45
-  max_iv_rank_buyer: 70.0
-  max_spread_pct: 0.05
-  max_theta_premium_ratio: 0.04
-  min_dte: 5
-  min_iv_rank_seller: 30.0
-  min_open_interest: 100
-  min_volume: 10
-  spread_pct_enabled: true
-  theta_enabled: true
-STRATEGY_ORTHOGONALIZATION:
-  enabled: true
-  group_prior_corr:
-    other: 0.3
-    reversion: 0.6
-    sentiment: 0.5
-    trend: 0.75
-  group_weight_cap: 0.45
-  min_samples: 30
-  persist_path: data/orthogonalizer_state.json
-  strategy_groups:
-    bollinger: reversion
-    llm: sentiment
-    ma_cross: trend
-    macd: trend
-    news: sentiment
-    price_break: trend
-    rsi: reversion
-    rsi_rebound: reversion
-    sentiment: sentiment
-    supertrend: trend
-  window_size: 500
-agents:
-  decision_agent:
-    id: ftseek_us_decision
-    model: deepseek-v4-pro
-    role: signal_generator
-  execution_agent:
-    id: ftseek_us_execution
-    model: bailian/qwen-max
-    role: order_executor
-  main_agent:
-    id: ftseek_us_main
-    model: bailian/qwen-max
-    role: coordinator
-  observability_agent:
-    id: ftseek_us_observability
-    model: bailian/qwen-max
-    role: monitor
-  risk_agent:
-    id: ftseek_us_risk
-    model: bailian/glm-5
-    role: risk_controller
-base:
-  currency: USD
-  market: US
-  project_name: FTSeek-US
-  simulate_account_id: ''
-  timezone: America/New_York
-  trade_env: 1
-  version: 1.0.0
 capital:
   description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
     reads from broker.'
@@ -223,42 +158,6 @@ database:
   backup_interval_hours: 24
   path: data/ftseek_us.db
   type: sqlite
-debate_mode:
-  enabled: true
-  env_overrides:
-    FTSEEK_DEBATE_FALLBACK_MODEL: qwen-max
-    FTSEEK_DEBATE_MODE: 'false'
-    FTSEEK_DEBATE_TIMEOUT: '300'
-  fallback_model: qwen-max
-  timeout_seconds: 300
-debate_planner:
-  agents:
-    claude_code:
-      model: deepseek-v4-pro
-      provider: bailian
-      timeout_seconds: 180
-    hermes:
-      model: qwen3.6-plus
-      provider: bailian
-      timeout_seconds: 180
-  divergence_threshold: 0.4
-  enabled: true
-  fallback:
-    min_success_rate: 0.5
-    rule_engine_enabled: true
-    single_agent_fallback: hermes
-  max_rounds: 2
-  max_total_timeout: 600
-  memory:
-    archive_enabled: true
-    auto_prune: true
-    max_historical_lessons: 20
-    max_tagged_lessons: 50
-    min_impact_score: 0.3
-  retry:
-    base_delay_seconds: 5
-    max_delay_seconds: 60
-    max_retries: 2
 decision:
   market_regime:
     check_interval: 300
@@ -754,17 +653,6 @@ llm_features:
     enabled: true
     model: qwen-plus
     timeout_sec: 15
-llm_voting:
-  cache_ttl_seconds: 300
-  max_cache_entries: 50
-  price_change_threshold: 0.005
-logging:
-  backup_count: 5
-  file: logs/ftseek_us.log
-  format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-  level: INFO
-  max_size_mb: 10
-  rotation: daily
 mode:
   sandbox:
     enabled: false
@@ -1476,18 +1364,6 @@ service:
     enabled: true
     secret: ${FEISHU_APP_SECRET}
     webhook_url: ${FEISHU_WEBHOOK_URL_US}
-signal_fusion:
-  us:
-    macro_resonance:
-      alignment_bonus: 1.2
-      divergence_penalty: 0.8
-      enabled: true
-      trend_proxy: SPY
-    macro_weight: 0.3
-    policy_weight: 0.0
-    sentiment_weight: 0.2
-    technical_weight: 0.5
-    veto_policy_negative: false
 signal_quality:
   confluence_bonus:
     '0': -0.1
@@ -1569,8 +1445,6 @@ universe_expansion:
   news_lookback_hours: 24
   default_stop_pct: 3.0
   default_tp_pct: 6.0
-stop_loss:
-  default_stop_loss_pct: 0.05
 strategies:
   coordinator:
     audit_arbitration: true
@@ -1901,13 +1775,6 @@ symbol_cooldown:
     consecutive_losses: 3
     cooldown_hours: 24
     direction: same_only
-take_profit:
-  default_take_profit_pct: 0.1
-trading_hours:
-  after_market_close: '20:00'
-  market_close: '16:00'
-  market_open: 09:30
-  pre_market_open: 04:00
 updated: '2026-04-29'
 version: 3.0.0
 watchlist:

@@ -55,13 +55,16 @@ def test_source_from_str_main():
     assert PositionSource.from_str("voting_llm") == PositionSource.AUTO_MAIN
 
 
-def test_source_from_str_scalping():
-    assert PositionSource.from_str("scalping") == PositionSource.AUTO_SCALPING
+def test_source_from_str_retired_scalping():
+    """scalping 策略已退役 (AUTO_SCALPING 枚举删除) — 历史字符串必须落 UNKNOWN 兜底"""
+    assert PositionSource.from_str("scalping") == PositionSource.UNKNOWN
 
 
 def test_source_from_str_manual():
     assert PositionSource.from_str("manual") == PositionSource.MANUAL
-    assert PositionSource.from_str("futu_sync") == PositionSource.MANUAL
+    assert PositionSource.from_str("futu_manual") == PositionSource.MANUAL
+    # P0-fix (2026-06-15): futu_sync 是同步标记非来源, 来源不明 → UNKNOWN (配 PROTECTED)
+    assert PositionSource.from_str("futu_sync") == PositionSource.UNKNOWN
 
 
 def test_source_from_str_legacy():
@@ -113,8 +116,12 @@ def test_get_source_metadata_priority():
 
 
 def test_get_source_owner_fallback():
-    p = MockPosition(owner_strategy="scalping", metadata={})
-    assert get_position_source(p) == PositionSource.AUTO_SCALPING
+    # scalping 已退役 → 改用在役策略 fast_lane 验证 owner_strategy 回退路径
+    p = MockPosition(owner_strategy="fast_lane", metadata={})
+    assert get_position_source(p) == PositionSource.AUTO_FAST_LANE
+    # 退役策略名走 owner 回退时必须落 UNKNOWN (不许误归 auto)
+    p2 = MockPosition(owner_strategy="scalping", metadata={})
+    assert get_position_source(p2) == PositionSource.UNKNOWN
 
 
 def test_get_source_strategy_id_last():
@@ -294,12 +301,20 @@ def test_infer_source_legacy_fallback():
 
 
 def test_infer_source_strategy_id_heuristic():
-    """trade_records 空, 但 strategy_id='scalping' → AUTO_SCALPING MANAGED"""
+    """trade_records 空, 但 strategy_id='fast_lane' → AUTO_FAST_LANE MANAGED.
+
+    scalping 已退役: strategy_id='scalping' 不再识别为 auto, 落 LEGACY+PROTECTED 兜底.
+    """
     rec, db = _make_reconciler_with_db()
-    p = MockPosition(symbol="US.X", strategy_id="scalping")
+    p = MockPosition(symbol="US.X", strategy_id="fast_lane")
     src, prot = rec._infer_source("US.X", p)
-    assert src == PositionSource.AUTO_SCALPING
+    assert src == PositionSource.AUTO_FAST_LANE
     assert prot == ProtectionState.MANAGED
+    # 退役策略名 → 兜底 LEGACY + PROTECTED (不许误收养为 auto)
+    p2 = MockPosition(symbol="US.X", strategy_id="scalping", owner_strategy="")
+    src2, prot2 = rec._infer_source("US.X", p2)
+    assert src2 == PositionSource.LEGACY
+    assert prot2 == ProtectionState.PROTECTED
     os.unlink(db)
 
 

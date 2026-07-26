@@ -60,116 +60,125 @@ def short_position():
 # ============================================================
 #  P0: Scale Out 分批止盈
 # ============================================================
-
 class TestScaleOut:
-    """分批止盈逻辑测试"""
+    """分批止盈逻辑测试 (Task #62 语义: yaml pct tiers, take_profit_levels 路径已退役).
 
-    def test_no_tiers_returns_none(self, monitor, long_position):
-        """无止盈层级 → 不触发"""
-        result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
-        assert result is None
+    2026-07: exit_policy.yaml 已停用 scale_out (enabled:false, tiers:[]),
+    此处注入 pct 模式配置密封验证引擎逻辑 (触发/去重/顺序/兜底).
+    """
+
+    # 注入配置: 等价旧 take_profit_levels 108/115/125 (entry=100)
+    PCT_CFG = {
+        "tier_mode": "pct",
+        "trailing_remainder": True,
+        "tiers": [
+            {"trigger_pct": 0.08, "close_pct": 0.30, "new_stop_pct": 0.0},
+            {"trigger_pct": 0.15, "close_pct": 0.30, "new_stop_pct": 0.05},
+            {"trigger_pct": 0.25, "close_pct": 0.40, "new_stop_pct": 0.10},
+        ],
+    }
+
+    def _cfg(self, cfg=None):
+        return patch(
+            "app.risk.exit_rules.scale_out._load_scale_out_config",
+            return_value=cfg if cfg is not None else self.PCT_CFG,
+        )
+
+    def test_yaml_empty_tiers_falls_back_to_defaults(self, monitor, long_position):
+        """yaml tiers 为空 → 回退 DEFAULT_TIERS (1.5%/3%/5%, close 25%)"""
+        with self._cfg({"tier_mode": "pct", "tiers": []}):
+            result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
+        assert result is not None
+        assert result["close_ratio"] == 0.25
+        assert result["metadata"]["tier"] == 1
 
     def test_long_hits_tier1(self, monitor, long_position):
         """做多触及 Tier 1 (+8%) → 返回部分平仓指令"""
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 108.0},
-            {"ratio": 0.30, "price": 115.0},
-            {"ratio": 0.40, "price": 125.0},
-        ]
-        result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
+        with self._cfg():
+            result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
         assert result is not None
         assert result["reason"] == "SCALE_OUT"
         assert result["close_qty"] == 30  # 30% of 100 shares
         assert result["exit_price"] == 110.0
 
     def test_long_below_tier1_no_trigger(self, monitor, long_position):
-        """做多价格未触及 Tier 1 → 不触发"""
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 108.0},
-        ]
-        result = monitor._check_scale_out(long_position, 105.0, {}, "LONG")
+        """做多涨幅未到 Tier 1 (8%) → 不触发"""
+        with self._cfg():
+            result = monitor._check_scale_out(long_position, 105.0, {}, "LONG")
         assert result is None
 
     def test_short_hits_tier1(self, monitor, short_position):
-        """做空触及止盈价 (价格下跌) → 返回部分平仓指令"""
-        short_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 92.0},
-            {"ratio": 0.30, "price": 85.0},
-        ]
-        result = monitor._check_scale_out(short_position, 90.0, {}, "SHORT")
+        """做空盈利 (价格下跌 10% ≥ 8%) → 返回部分平仓指令"""
+        with self._cfg():
+            result = monitor._check_scale_out(short_position, 90.0, {}, "SHORT")
         assert result is not None
         assert result["reason"] == "SCALE_OUT"
         assert result["close_qty"] == 30
 
     def test_short_above_tier1_no_trigger(self, monitor, short_position):
-        """做空价格未跌到 Tier 1 → 不触发"""
-        short_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 92.0},
-        ]
-        result = monitor._check_scale_out(short_position, 95.0, {}, "SHORT")
+        """做空跌幅未到 Tier 1 → 不触发"""
+        with self._cfg():
+            result = monitor._check_scale_out(short_position, 95.0, {}, "SHORT")
         assert result is None
 
     def test_tier_already_triggered_skips(self, monitor, long_position):
         """已触发的 Tier 不会重复触发"""
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 108.0},
-            {"ratio": 0.30, "price": 115.0},
-        ]
         trail_state = {"triggered_tiers": [0]}  # Tier 1 已触发
 
         # 价格同时超过 Tier 1 和 Tier 2 → 应触发 Tier 2 而不是 Tier 1
-        result = monitor._check_scale_out(long_position, 120.0, trail_state, "LONG")
+        with self._cfg():
+            result = monitor._check_scale_out(long_position, 120.0, trail_state, "LONG")
         assert result is not None
         assert result["close_qty"] == 30  # Tier 2's 30%
+        assert result["metadata"]["tier"] == 2
         assert trail_state["triggered_tiers"] == [0, 1]
 
     def test_sequential_tiers(self, monitor, long_position):
         """顺序触发所有三层"""
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 108.0},
-            {"ratio": 0.30, "price": 115.0},
-            {"ratio": 0.40, "price": 125.0},
-        ]
         trail_state = {}
 
-        # Tier 1
-        r1 = monitor._check_scale_out(long_position, 110.0, trail_state, "LONG")
-        assert r1["close_qty"] == 30
-        assert trail_state["triggered_tiers"] == [0]
+        with self._cfg():
+            # Tier 1 (+10% ≥ 8%)
+            r1 = monitor._check_scale_out(long_position, 110.0, trail_state, "LONG")
+            assert r1["close_qty"] == 30
+            assert trail_state["triggered_tiers"] == [0]
 
-        # Tier 2 (30% of **original** 100)
-        r2 = monitor._check_scale_out(long_position, 120.0, trail_state, "LONG")
-        assert r2["close_qty"] == 30
-        assert trail_state["triggered_tiers"] == [0, 1]
+            # Tier 2 (+20% ≥ 15%, 30% of **original** 100)
+            r2 = monitor._check_scale_out(long_position, 120.0, trail_state, "LONG")
+            assert r2["close_qty"] == 30
+            assert trail_state["triggered_tiers"] == [0, 1]
 
-        # Tier 3 (40% of **original** 100)
-        r3 = monitor._check_scale_out(long_position, 130.0, trail_state, "LONG")
-        assert r3["close_qty"] == 40
-        assert trail_state["triggered_tiers"] == [0, 1, 2]
+            # Tier 3 (+30% ≥ 25%, 40% of **original** 100)
+            r3 = monitor._check_scale_out(long_position, 130.0, trail_state, "LONG")
+            assert r3["close_qty"] == 40
+            assert trail_state["triggered_tiers"] == [0, 1, 2]
+            assert r3["trailing_remainder"] is True  # 最后一档 → 余仓交 trailing
 
-        # All done
-        r4 = monitor._check_scale_out(long_position, 200.0, trail_state, "LONG")
-        assert r4 is None
+            # All done
+            r4 = monitor._check_scale_out(long_position, 200.0, trail_state, "LONG")
+            assert r4 is None
 
     def test_close_qty_minimum_1(self, monitor, long_position):
         """最小平仓量为 1 股"""
         long_position.size = 5.0
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 108.0},
-        ]
-        result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
+        with self._cfg():
+            result = monitor._check_scale_out(long_position, 110.0, {}, "LONG")
         assert result["close_qty"] >= 1
 
-    def test_zero_price_tier_skipped(self, monitor, long_position):
-        """价格为 0 的 tier 被跳过"""
-        long_position.take_profit_levels = [
-            {"ratio": 0.30, "price": 0},
-            {"ratio": 0.30, "price": 115.0},
-        ]
-        result = monitor._check_scale_out(long_position, 120.0, {}, "LONG")
+    def test_invalid_tiers_filtered(self, monitor, long_position):
+        """trigger_pct<=0 的脏 tier 被过滤 (回退默认或跳过)"""
+        cfg = {
+            "tier_mode": "pct",
+            "tiers": [
+                {"trigger_pct": 0, "close_pct": 0.30},       # 无效 → 过滤
+                {"trigger_pct": 0.15, "close_pct": 0.30},    # 有效
+            ],
+        }
+        with self._cfg(cfg):
+            result = monitor._check_scale_out(long_position, 120.0, {}, "LONG")
         assert result is not None
-        # Should trigger tier index 1, not 0
-        assert "triggered_tiers" in result or True
+        assert result["close_qty"] == 30
+        assert result["metadata"]["total_tiers"] == 1  # 无效层被过滤
 
 
 # ============================================================
@@ -177,81 +186,76 @@ class TestScaleOut:
 # ============================================================
 
 class TestPreCloseExit:
-    """盘末强制退出逻辑测试"""
+    """盘末强制退出逻辑测试 (实现已迁移至 exit_rules/pre_close.py, patch 目标同步)"""
 
     def test_weekend_no_exit(self, monitor, long_position):
         """周末不触发盘末退出"""
-        with patch("app.risk.position_exit_monitor.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2026, 4, 25, 15, 50, 0)  # Saturday
-            mock_dt.strftime = datetime.strftime
-            # Mock ET timezone awareness
-            from pytz import timezone
-            ET = timezone("US/Eastern")
-            mock_now_et = ET.localize(datetime(2026, 4, 25, 15, 50, 0))
-            mock_dt.now.side_effect = lambda tz=None: mock_now_et if tz else datetime(2026, 4, 25, 15, 50, 0)
-
+        from pytz import timezone
+        ET = timezone("US/Eastern")
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 25, 15, 50, 0))  # Saturday
             result = monitor._check_pre_close_exit(long_position, 101.0, 2.0, {}, "LONG")
             assert result is None
 
-    @patch("app.risk.position_exit_monitor.datetime")
-    def test_within_15min_low_profit_exits(self, mock_dt, monitor, long_position):
-        """距收盘 < 15min 且浮盈 < 1 ATR → 强制退出"""
+    def test_within_window_low_profit_half_exit(self, monitor, long_position):
+        """窗口内 (距收盘<15min) 且微利 (<0.5ATR) → 盘末减仓 50% (2026-06 分层语义)"""
         from pytz import timezone
         ET = timezone("US/Eastern")
+        long_position.entry_time = datetime(2026, 4, 24, 10, 0, 0)  # 持仓已超最小持有时间
 
-        mock_now = ET.localize(datetime(2026, 4, 24, 15, 50, 0))  # Friday 15:50 ET
-        mock_dt.now.return_value = mock_now
-        mock_dt.strftime = datetime.strftime
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 24, 15, 50, 0))  # Friday 15:50 ET
+            # 浮盈很小 (profit_atr = 0.5/2.5 = 0.2 < half_exit 0.5)
+            result = monitor._check_pre_close_exit(long_position, 100.5, 2.5, {}, "LONG")
 
-        # 浮盈很小 (profit_atr ~= 0.2)
-        result = monitor._check_pre_close_exit(long_position, 100.5, 2.5, {}, "LONG")
         assert result is not None
-        assert result["reason"] == "PRE_CLOSE_EXIT"
+        assert result["reason"] == "PRE_CLOSE_EXIT_PARTIAL"
+        assert result["close_ratio"] == 0.5
         assert "距收盘" in result["reason_cn"]
 
-    @patch("app.risk.position_exit_monitor.datetime")
-    def test_within_15min_good_profit_holds(self, mock_dt, monitor, long_position):
-        """距收盘 < 15min 但浮盈 ≥ 1 ATR → 允许持仓过夜"""
+    def test_within_window_good_profit_holds(self, monitor, long_position):
+        """窗口内但浮盈处于分层之上 (≥1 ATR) → 允许持仓过夜"""
         from pytz import timezone
         ET = timezone("US/Eastern")
+        long_position.entry_time = datetime(2026, 4, 24, 10, 0, 0)
 
-        mock_now = ET.localize(datetime(2026, 4, 24, 15, 50, 0))
-        mock_dt.now.return_value = mock_now
-        mock_dt.strftime = datetime.strftime
-
-        # 浮盈充足: ATR=2.0, entry=100, price=104 → profit_atr = 4/100*100/2 = 2.0
-        result = monitor._check_pre_close_exit(long_position, 104.0, 2.0, {}, "LONG")
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 24, 15, 50, 0))
+            # 浮盈充足: ATR=2.0, entry=100, price=104 → profit_atr = 2.0
+            result = monitor._check_pre_close_exit(long_position, 104.0, 2.0, {}, "LONG")
         assert result is None
 
-    @patch("app.risk.position_exit_monitor.datetime")
-    def test_before_15min_no_trigger(self, mock_dt, monitor, long_position):
-        """距收盘 > 15min → 不触发"""
+    def test_before_window_no_trigger(self, monitor, long_position):
+        """距收盘 > 窗口 → 不触发"""
         from pytz import timezone
         ET = timezone("US/Eastern")
+        long_position.entry_time = datetime(2026, 4, 24, 10, 0, 0)
 
-        mock_now = ET.localize(datetime(2026, 4, 24, 14, 0, 0))  # 2 PM
-        mock_dt.now.return_value = mock_now
-        mock_dt.strftime = datetime.strftime
-
-        result = monitor._check_pre_close_exit(long_position, 100.5, 2.0, {}, "LONG")
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 24, 14, 0, 0))  # 2 PM
+            result = monitor._check_pre_close_exit(long_position, 100.5, 2.0, {}, "LONG")
         assert result is None
 
-    @patch("app.risk.position_exit_monitor.datetime")
-    def test_after_close_no_trigger(self, mock_dt, monitor, long_position):
+    def test_after_close_no_trigger(self, monitor, long_position):
         """收盘后 → 不触发"""
         from pytz import timezone
         ET = timezone("US/Eastern")
+        long_position.entry_time = datetime(2026, 4, 24, 10, 0, 0)
 
-        mock_now = ET.localize(datetime(2026, 4, 24, 16, 30, 0))
-        mock_dt.now.return_value = mock_now
-        mock_dt.strftime = datetime.strftime
-
-        result = monitor._check_pre_close_exit(long_position, 100.5, 2.0, {}, "LONG")
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 24, 16, 30, 0))
+            result = monitor._check_pre_close_exit(long_position, 100.5, 2.0, {}, "LONG")
         assert result is None
 
     def test_no_atr_fallback(self, monitor, long_position):
         """ATR=0 → 退化为不触发"""
-        result = monitor._check_pre_close_exit(long_position, 101.0, 0.0, {}, "LONG")
+        from pytz import timezone
+        ET = timezone("US/Eastern")
+        long_position.entry_time = datetime(2026, 4, 24, 10, 0, 0)
+
+        with patch("app.risk.exit_rules.pre_close.datetime") as mock_dt:
+            mock_dt.now.return_value = ET.localize(datetime(2026, 4, 24, 15, 50, 0))
+            result = monitor._check_pre_close_exit(long_position, 101.0, 0.0, {}, "LONG")
         assert result is None
 
 
@@ -263,7 +267,11 @@ class TestScorerStopLossWiring:
     """IntradayScorer 止损接入位置校验"""
 
     def test_stop_loss_pct_in_vote_result(self):
-        """验证 IntradaySignal.to_vote_result() 包含 stop_loss_pct"""
+        """验证 IntradaySignal.to_vote_result() 包含 stop_loss_pct.
+
+        P0 (2026-06-04): 止损倍数对齐 exit_policy — stop = max(4.0×ATR/price, 2%),
+        原 [0.01, 0.10] 区间断言随之更新为精确值校验.
+        """
         from app.core.intraday_scorer import get_intraday_scorer
 
         ctx = {
@@ -287,7 +295,11 @@ class TestScorerStopLossWiring:
 
         sl_pct = vr.get("position_suggestion", {}).get("stop_loss_pct", 0)
         assert sl_pct > 0, f"Expected positive stop_loss_pct, got {sl_pct}"
-        assert 0.01 <= sl_pct <= 0.10, f"stop_loss_pct={sl_pct:.3f} out of reasonable range [0.01, 0.10]"
+        # stop = round(max(4.0 × 12.5/450, 0.02), 3) = 0.111 (VIX 20 < 35 无恐慌放宽)
+        expected = round(max(4.0 * 12.5 / 450.0, 0.02), 3)
+        assert sl_pct == pytest.approx(expected, abs=1e-9), (
+            f"stop_loss_pct={sl_pct:.3f} != 4×ATR 对齐值 {expected:.3f}"
+        )
 
     @patch("app.risk.position_exit_monitor.datetime")
     def test_high_vix_wider_stop_in_vote_result(self, mock_dt):
@@ -318,6 +330,8 @@ class TestScorerStopLossWiring:
         if normal.direction != "NEUTRAL" and panic.direction != "NEUTRAL":
             assert panic_sl >= normal_sl, \
                 f"高VIX止损应该更宽: VIX=18→{normal_sl:.3f} vs VIX=32→{panic_sl:.3f}"
+
+
 
 
 # ============================================================
