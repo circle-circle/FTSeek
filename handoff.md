@@ -79,7 +79,8 @@
 2. **每夜备份自动化**: `scripts/git_backup_push.sh` (cron 03:30) — ①全分支推送 (已提交工作异地容灾) ②git plumbing 临时索引做运行态快照强推 `backup/runtime-snapshot` (未提交的 data/config 变更也有异地副本, 不触碰工作区/主索引, 服务零感知), 失败钉钉告警。端到端实测: 快照 b2f4fc8f 已上 GitHub; 曾撞 GitHub 100MB 限被拒 → 补 node_modules gitignore 后通过。
 3. **gitignore 封堵**: `.backup_premigration/` (含 env 明文副本+旧历史完整镜像, 本地保险, 30 天后可清) / node_modules/ / tmp_e2e_out.txt。
 4. **连带生效**: CI (980 门禁) 自下次 push 起真正运行; 本地 master 已切清洗版并跟踪远端。
-**建议遗留**: ①GitHub 仓库确认 Private ②.env.us 密钥曾在本地历史数月, 择机轮换 BAILIAN/DASHSCOPE key (低风险高收益)。
+5. **分支治理收尾 (用户裁"要")**: 删远端 `archive/legacy-main` (空壳 Initial commit) + `archive/legacy-ftseek-us` (4/28 早期美股版, 已被现历史覆盖; 本地 rewrite.git oldgh/* 仍留副本可反悔)。**最终 5 分支**: `rfc-060-phase1-hotfixes`(工作真源) / `master`+`main`(稳定基线) / `backup/runtime-snapshot`(每夜快照) / `archive/legacy-hk-master`(港股 172 提交唯一副本, 保留)。心智模型: 只看 rfc 和 master, 其余是保险柜。
+**建议遗留**: ①GitHub 仓库已确认 Private (用户) ②.env.us 密钥曾在本地历史数月, 择机轮换 BAILIAN/DASHSCOPE key (低风险高收益) ③GitHub 网页 Settings → Default branch 改为 rfc-060-phase1-hotfixes (仅用户可操作)。
 
 ### 2026-07-26 (周日晚·回归验证接线批) · 启动冒烟脚本 + CI 补面 + 重启 SOP 军规 (用户裁"需要")
 **背景**: base.* 事故实锤回归体系缺口 — 980 测试全绿 + 人工重启 grep 都没拦住 ConfigGov 降级运行; 且 ci.yml 只监 master/main, 当前工作分支 rfc-060 本周 10+ commit CI 一次没跑。一次性接线, 之后零维护, 主战场回策略。
