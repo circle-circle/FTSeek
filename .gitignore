@@ -13,6 +13,13 @@ data/*.db
 .env.backup.*
 .backups/
 
+# 2026-07-26 迁移备份区 (含 env 明文副本+旧历史镜像) — 永不入库
+.backup_premigration/
+tmp_e2e_out.txt
+
+# 2026-07-26 历史重写时剥离的 129MB 二进制 (曾撞 GitHub 100MB 限制) — 永不入库
+node_modules/
+
 # 数据库备份 — 不应入库
 data/backups/
 

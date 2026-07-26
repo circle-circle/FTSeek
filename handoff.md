@@ -74,6 +74,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-26 (周日夜·GitHub 异地容灾接线) · 首次推送+历史清洗+每夜备份自动化 (用户授权配置)
+1. **历史清洗推送**: 本地 510 提交经 git-filter-repo 剥离 .env*/node_modules (531MB→49MB, 密钥从全部历史剥净) — 与另一模型独立清洗结果逐字节一致互为验证。远端 master/main/rfc-060 = 清洗版; 港股旧代码 (5/26, 172 提交, 本地原本没有) 全量保全至 `archive/legacy-*` 三分支, 零丢失。
+2. **每夜备份自动化**: `scripts/git_backup_push.sh` (cron 03:30) — ①全分支推送 (已提交工作异地容灾) ②git plumbing 临时索引做运行态快照强推 `backup/runtime-snapshot` (未提交的 data/config 变更也有异地副本, 不触碰工作区/主索引, 服务零感知), 失败钉钉告警。端到端实测: 快照 b2f4fc8f 已上 GitHub; 曾撞 GitHub 100MB 限被拒 → 补 node_modules gitignore 后通过。
+3. **gitignore 封堵**: `.backup_premigration/` (含 env 明文副本+旧历史完整镜像, 本地保险, 30 天后可清) / node_modules/ / tmp_e2e_out.txt。
+4. **连带生效**: CI (980 门禁) 自下次 push 起真正运行; 本地 master 已切清洗版并跟踪远端。
+**建议遗留**: ①GitHub 仓库确认 Private ②.env.us 密钥曾在本地历史数月, 择机轮换 BAILIAN/DASHSCOPE key (低风险高收益)。
+
 ### 2026-07-26 (周日晚·回归验证接线批) · 启动冒烟脚本 + CI 补面 + 重启 SOP 军规 (用户裁"需要")
 **背景**: base.* 事故实锤回归体系缺口 — 980 测试全绿 + 人工重启 grep 都没拦住 ConfigGov 降级运行; 且 ci.yml 只监 master/main, 当前工作分支 rfc-060 本周 10+ commit CI 一次没跑。一次性接线, 之后零维护, 主战场回策略。
 1. **`scripts/startup_smoke_check.py`** (新建): 重启后七条机器断言 (ConfigValidator 全过/漂移检测/热重载/SSOT 审计 0 BLOCKING/模拟盘 TRADE_ENV=1/退出快循环/零 Traceback), 以最后 [PreFlight] 为启动段界, 启动段过旧(>6h)判 exit=2; `--wait N` 轮询适配启动耗时, `--push` 失败飞书告警。**验证**: 正例当前启动段 7/7 ✓; 负例用 17:37 故障日志样式合成复现 — 若当时有此脚本会抓住 5 项失败; 过旧启动段 exit=2 ✓。
