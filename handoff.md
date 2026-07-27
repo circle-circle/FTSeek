@@ -76,6 +76,20 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-27 (周一·时区同款漏网全仓扫尾) · 六类反模式拉网 → 8 处真问题统一修复 (用户令"统一修复")
+**背景**: position_sync CST×ET 错位后用户要求全面复查。按六类反模式拉网 (本地 weekday 判周末 / SQL date('now')=UTC / date.today()=CST / 本地 hour 判时段 / utcnow 残留 / naive 日期串), 候选 30+ 处逐个定性: **8 处真问题修复, 其余误报 (已有 ET 主路径/输入已是 ET/审计戳自洽)**。
+**修复清单 (按危害排序)**:
+1. **holiday_calendar.is_trading_day 缺省参数** (最高危): date.today()=CST → CST 周一凌晨把 ET 周日判成"交易日", 所有无参调用方中招 → 缺省改 ET。**冒烟黄金证据: 修前此刻 (ET 周日) 会返 True, 修后 False** ✓
+2. **earnings_guard 财报窗口** ×2: date.today()=CST 提前 12h 进/出窗口, 边界日误拦/误放 → ET
+3. **thesis_inferer 兜底 UPDATE**: SQL date('now')=UTC vs trade_date 列=ET → ET 20:00 后 thesis 更新静默丢失 → get_trade_date() 参数
+4. **postmarket_review**: date(exit_time)=date('now') UTC 错位 → ET 参数
+5. **trading_monitor**: UTC weekday + 硬编码 UTC13:30-20:00 窗口 (冬令时漂 1h) + 残留 utc_now-4h 硬编码 → 全改 ET
+6. **rejection_logger 双向错位**: 写 CST naive × 读 date('now')=UTC → 写读统一 ET (1 写 + 5 查)
+7. **signal_stage fast_lane 日界**: CST 日界在 ET 盘中 12:00 清去重集 → ET
+8. **扫尾**: review_orchestrator 教训过期 date('now') → ET 参数; exit_shadow_graduation utcnow() → SSOT now_utc
+**明确不动 (定性合理)**: 建表 DEFAULT datetime('now') (审计戳 UTC 自洽); pdt_guard/shadow_tracker/playbook 等 weekday (输入已 ET); try-except CST 兜底行 (降级路径); obsidian/reports 展示类; option_risk_monitor (模块已停用+偏差方向保守)。
+**验证**: py_compile 9 文件 / is_trading_day 无参≡显式 ET 断言 / 980 passed / 重启冒烟 7/7。回滚: 各文件独立 revert。
+
 ### 2026-07-27 (周一·信息渠道二轮复核补丁) · S0 歧义词守卫 + 基数自检军规 (用户裁"需要", 零交易行为变更)
 辩论方对执行批 (commit 3b618b77) 逐行复测, 发现并修复一处准确性漏洞, 教训固化:
 1. **S0 歧义词守卫补齐** (`llm_universe_scan.py`): 渠道归因的标题兜底 `\bSYM\b` 漏了 P4a 的歧义词排除 — F/T/V/MA 等歧义 ticker 会被标题里任意独立字母误归因, 污染 S1 渠道切片。修法: 歧义 ticker 只信 symbols 标注, 标题兜底仅留非歧义。3/3 断言通过。

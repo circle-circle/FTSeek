@@ -290,11 +290,14 @@ def _persist(symbol: str, trace_id: str, thesis_data: Dict[str, Any]):
             )
         else:
             # 兜底 — 用 symbol + 最近一条
+            # 2026-07-27 修复 (时区批同款): SQL date('now')=UTC 日, trade_date 列=ET 交易日 —
+            #   ET 20:00 后跨日窗口内匹配不到行, thesis 更新静默丢失。改传 ET 日期参数。
+            from app.utils.timezone import get_trade_date
             conn.execute(
                 "UPDATE trade_attribution SET entry_thesis = ?, metadata_json = ? "
-                "WHERE symbol = ? AND trade_date = date('now') "
+                "WHERE symbol = ? AND trade_date = ? "
                 "ORDER BY created_at DESC LIMIT 1",
-                (thesis_data["thesis"], meta_json, symbol),
+                (thesis_data["thesis"], meta_json, symbol, get_trade_date()),
             )
         conn.commit()
         conn.close()

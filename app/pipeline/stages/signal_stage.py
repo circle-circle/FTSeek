@@ -45,7 +45,13 @@ def _record_fast_lane_skip(ctx) -> None:
         import os
         from datetime import datetime
 
-        _day = datetime.now().strftime("%Y-%m-%d")
+        # 2026-07-27 修复 (时区批同款): 原 CST 日界 — 同文件 L95 已用 ET, 此处统一
+        #   (CST 日界会在 ET 盘中 12:00 清空 fast_lane skip 去重集, 同一标的重复记日志)
+        try:
+            from app.utils.timezone import now_et as _net
+            _day = _net().strftime("%Y-%m-%d")
+        except Exception:
+            _day = datetime.now().strftime("%Y-%m-%d")
         if _FAST_LANE_SKIP_DAY[0] != _day:
             _FAST_LANE_SKIP_SEEN.clear()
             _FAST_LANE_SKIP_DAY[0] = _day

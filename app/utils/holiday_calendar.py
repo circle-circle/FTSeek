@@ -292,7 +292,13 @@ class TradingHolidayCalendar:
             d: 日期 (默认今天, 调用方应传 ET 日期)
         """
         if d is None:
-            d = date.today()
+            # 2026-07-27 修复 (position_sync 同款漏网): 原 date.today()=CST — CST 周一凌晨
+            #   =ET 周日, 无参调用方会把 ET 周日判成"交易日(周一)"。缺省统一 ET 口径。
+            try:
+                from app.utils.timezone import now_et
+                d = now_et().date()
+            except Exception:
+                d = date.today()
 
         # 周末快速排除
         if d.weekday() >= 5:

@@ -48,7 +48,9 @@ def _load_records(days: int = 0) -> List[Dict[str, Any]]:
         return []
     cutoff = None
     if days > 0:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        # 2026-07-27: utcnow() 残留 → SSOT now_utc (写侧 exit_shadow.ts 同为 UTC, 口径自洽)
+        from app.utils.timezone import now_utc
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
     records = []
     for line in SHADOW_PATH.read_text(encoding="utf-8").strip().splitlines():
         if not line.strip():
@@ -244,8 +246,9 @@ def main():
         print("⚠️  无有效 shadow 数据 (exit_param_shadow.jsonl 为空或全为 TEST)")
         sys.exit(1)
 
+    from app.utils.timezone import now_utc as _now_utc
     report = {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": _now_utc().isoformat(),
         "total_records": len(records),
         "window_days": args.days or "all",
         "graduation_criteria": {

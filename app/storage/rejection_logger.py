@@ -68,8 +68,9 @@ class RejectionLogger:
             timestamp: ISO 格式时间戳
         """
         try:
-            from datetime import datetime
-            ts = timestamp or datetime.now().isoformat()
+            # 2026-07-27 修复 (时区批同款): 写入侧 CST naive → ET (与查询口径统一)
+            from app.utils.timezone import now_et
+            ts = timestamp or now_et().isoformat()
 
             conn = sqlite3.connect(self.db_path)
             conn.execute(
@@ -95,20 +96,24 @@ class RejectionLogger:
     def get_today_summary(self) -> Dict:
         """获取今日拒绝统计摘要（用于盘后归因）"""
         try:
+            # 2026-07-27 修复 (时区批同款): 原写入 CST naive、查询 date('now')=UTC —
+            #   双口径错位, CST 00:00-08:00 窗口"今日"统计漂移。写读统一 ET。
+            from app.utils.timezone import now_et
+            _et_day = now_et().strftime("%Y-%m-%d")
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             
             # 今日总数
             total = conn.execute(
-                "SELECT COUNT(*) as cnt FROM rejections WHERE date(timestamp) = date('now')"
+                "SELECT COUNT(*) as cnt FROM rejections WHERE date(timestamp) = ?", (_et_day,)
             ).fetchone()["cnt"]
             
             # 按分类统计
             by_category = {}
             rows = conn.execute(
                 "SELECT reason_category, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) = date('now') "
-                "GROUP BY reason_category ORDER BY cnt DESC"
+                "WHERE date(timestamp) = ? "
+                "GROUP BY reason_category ORDER BY cnt DESC", (_et_day,)
             ).fetchall()
             for r in rows:
                 by_category[r["reason_category"]] = r["cnt"]
@@ -117,8 +122,8 @@ class RejectionLogger:
             by_symbol = {}
             rows = conn.execute(
                 "SELECT symbol, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) = date('now') "
-                "GROUP BY symbol ORDER BY cnt DESC LIMIT 10"
+                "WHERE date(timestamp) = ? "
+                "GROUP BY symbol ORDER BY cnt DESC LIMIT 10", (_et_day,)
             ).fetchall()
             for r in rows:
                 by_symbol[r["symbol"]] = r["cnt"]
@@ -126,7 +131,7 @@ class RejectionLogger:
             # 平均置信度和强度
             avg = conn.execute(
                 "SELECT AVG(confidence) as avg_conf, AVG(strength) as avg_str FROM rejections "
-                "WHERE date(timestamp) = date('now')"
+                "WHERE date(timestamp) = ?", (_et_day,)
             ).fetchone()
             
             conn.close()
@@ -146,12 +151,14 @@ class RejectionLogger:
     def get_today_rejections(self, limit: int = 100) -> List[Dict]:
         """获取今日详细拒绝记录"""
         try:
+            from app.utils.timezone import now_et  # 2026-07-27: 同 get_today_summary, ET 口径
+            _et_day = now_et().strftime("%Y-%m-%d")
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT * FROM rejections WHERE date(timestamp) = date('now') "
+                "SELECT * FROM rejections WHERE date(timestamp) = ? "
                 "ORDER BY timestamp DESC LIMIT ?",
-                (limit,)
+                (_et_day, limit)
             ).fetchall()
             conn.close()
             return [dict(r) for r in rows]

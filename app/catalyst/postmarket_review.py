@@ -153,11 +153,14 @@ def _get_actual_returns(verdicts: List[Dict], scheduler=None) -> Dict[str, float
             db_path = PROJECT_ROOT / "data" / "ftseek_us.db"
             if db_path.exists():
                 conn = sqlite3.connect(str(db_path))
+                # 2026-07-27 修复 (时区批同款): date('now')=UTC 日 vs exit_time=ET/CST 墙钟时间 —
+                #   盘后复盘跑在 CST 早晨 (UTC 前一日晚间) 时错位。改 ET 交易日参数。
+                from app.utils.timezone import get_trade_date
                 row = conn.execute(
                     "SELECT pnl_pct FROM trade_records "
-                    "WHERE symbol = ? AND date(exit_time) = date('now') "
+                    "WHERE symbol = ? AND date(exit_time) = ? "
                     "ORDER BY exit_time DESC LIMIT 1",
-                    (symbol,)
+                    (symbol, get_trade_date())
                 ).fetchone()
                 conn.close()
                 if row and row[0]:

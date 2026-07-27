@@ -191,18 +191,20 @@ class TradingMonitor:
         三重门控: 周末 → 假日 → 盘中时间窗口.
         """
         from datetime import timedelta as _td
-        from app.utils.timezone import now_utc
-        utc_now = now_utc()
+        # 2026-07-27 修复 (时区批同款): 原 UTC weekday+硬编码 UTC 13:30-20:00 窗口 —
+        #   冬令时窗口漂移 1h (EST=UTC-5)。统一 ET 口径, DST 自动处理。
+        from app.utils.timezone import now_et
+        et_now = now_et()
 
         # 1. 周末
-        if utc_now.weekday() >= 5:
+        if et_now.weekday() >= 5:
             return False
 
-        # 2. 盘中时间窗口 (EDT 09:30-16:00 ≈ UTC 13:30-20:00)
-        h, m = utc_now.hour, utc_now.minute
-        if h < 13 or h >= 20:
+        # 2. 盘中时间窗口 (ET 09:30-16:00)
+        h, m = et_now.hour, et_now.minute
+        if h < 9 or h >= 16:
             return False
-        if h == 13 and m < 30:
+        if h == 9 and m < 30:
             return False
 
         # 3. 交易日检查 (复用 heartbeat 的缓存机制)
@@ -212,8 +214,8 @@ class TradingMonitor:
         except ImportError:
             pass
 
-        # Fallback: 已知假日
-        et_date = (utc_now - _td(hours=4)).strftime("%Y-%m-%d")
+        # Fallback: 已知假日 (2026-07-27: 原 utc_now-4h 硬编码换算, 冬令时错 1h — 直接用 ET)
+        et_date = et_now.strftime("%Y-%m-%d")
         _HOLIDAYS = {
             "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
             "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",

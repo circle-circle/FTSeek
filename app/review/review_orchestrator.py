@@ -336,14 +336,17 @@ class RichContextBuilder:
     
     def _build_active_lessons(self) -> List[Dict]:
         """提取活跃的高影响教训"""
+        # 2026-07-27 (时区批同款扫尾): date('now')=UTC → ET 日期参数 (过期边界差 1 天)
+        from app.utils.timezone import now_et
         lessons = self._query(
             "SELECT lesson_text, lesson_category, impact_score, confidence, "
             "symbols, expiry_date, validation_count "
             "FROM lessons WHERE status = 'active' "
-            "AND (expiry_date = '' OR expiry_date >= date('now')) "
+            "AND (expiry_date = '' OR expiry_date >= ?) "
             "AND impact_score >= 0.5 "
             "ORDER BY impact_score DESC, confidence DESC "
-            "LIMIT 15"
+            "LIMIT 15",
+            (now_et().strftime("%Y-%m-%d"),)
         )
         return lessons
     

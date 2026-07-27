@@ -78,7 +78,13 @@ class EarningsGuard:
         if not symbol:
             return False
         if check_date is None:
-            check_date = date.today()
+            # 2026-07-27 修复 (时区批同款漏网): date.today()=CST 比 ET 早 12h 进入/离开
+            #   财报窗口, 边界日误拦/误放。统一 ET 交易日口径。
+            try:
+                from app.utils.timezone import now_et
+                check_date = now_et().date()
+            except Exception:
+                check_date = date.today()
         window_start = check_date - timedelta(days=self.days_before)
         window_end = check_date + timedelta(days=self.days_after)
 
@@ -146,7 +152,11 @@ class EarningsGuard:
 
     def get_upcoming_earnings(self, days_ahead: int = 7) -> List[Dict[str, str]]:
         """获取未来 N 天内有财报的标的"""
-        today = date.today()
+        try:  # 2026-07-27: 同上, ET 口径
+            from app.utils.timezone import now_et
+            today = now_et().date()
+        except Exception:
+            today = date.today()
         end_dt = today + timedelta(days=days_ahead)
         try:
             conn = sqlite3.connect(self.db_path, timeout=3)
