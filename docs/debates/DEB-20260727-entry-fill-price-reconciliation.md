@@ -164,3 +164,17 @@
 **平仓侧存量 42 笔** (broker_closed_no_price 36 + NULL 6) 可用入场侧同款工具链 (impact_report → backfill) 回填。量级参考: 平仓假价是报价级而非 ask 单侧偏, 预期Δ 小于入场侧; 待用户裁决是否出 exit 侧影响面报告。
 
 验证: py_compile / 四元组+初始化+平仓带价断言 / 980 passed / 重启冒烟 7/7。
+
+---
+
+## 十、平仓侧存量回填执行 (2026-07-28 凌晨, 用户裁"需要回填")
+
+`scripts/exit_fill_backfill.py` (dry-run 报告→apply, 同入场侧规矩):
+- 候选 66 笔 (broker_closed_no_price 全史 60 + NULL 近两周 6); 匹配口径: 平仓单方向取反 (LONG→SELL/SHORT→BUY) + qty 精确 + exit_time 邻近
+- **Dry-run 影响面 (安心项)**: Δexit median **0.000%** (双侧对称 ±0.08%, 无系统性偏差 — 与入场侧 ask 单侧偏本质不同); ΔPnL 仅 +$7.48; 胜率零变化; 翻转 2 笔小额 (NVDA -1.32→+4.12 / META +0.82→-0.22) → Q2 类判据远未触发
+- **执行**: 回填 **59 笔** (首轮 55 + 复跑补 4 — 07-20 首轮拉单限频瞬时返空误判 NONE, 幂等复跑自动补齐, 第三跑 0 新增收敛); 真不可修 7 笔标 exit_uncorrectable
+- 重算: realized_pnl / pnl_pct (exit 价不影响 mfe/mae 不动); 审计字段全套 (exit_price_orig/原 source/order_id)
+- 备份: `ftseek_us.db.bak_exitfill_20260728_005633`
+- **方法论注记**: 幂等设计意外收获 — 限频瞬时失败不会永久误判, 复跑即自愈; 未来回填工具均应保持 "NONE 不落 uncorrectable 直到终跑"或简单复跑两次。
+
+**本案最终状态**: 入场 124 + 平仓 59 = **183 笔假价全部修真**; go-forward 双侧就地带价已上线; 观察判据: 修复后 3 交易日 quote_fallback+broker_closed_no_price 新增合计 ≤3 笔。
