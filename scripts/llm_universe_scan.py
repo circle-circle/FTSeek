@@ -221,8 +221,10 @@ def _gather_news(hours: int) -> List[Dict[str, Any]]:
                     continue
                 syms = set(f"US.{s}" for s in (a.get("relatedSymbols") or []) if s)
                 syms |= _matcher._match_symbols_v2(f"{title} {a.get('summary') or ''}")
+                # id 用 md5 非 hash(): hash() 带进程随机盐, 跨进程不稳定会污染 first_news_id 归因
+                import hashlib as _hl
                 items.append({
-                    "id": f"fh_{int(ts)}_{abs(hash(title)) % 10**8}",
+                    "id": f"fh_{_hl.md5(title.encode()).hexdigest()[:12]}",
                     "title": title,
                     "summary": str(a.get("summary") or "")[:300],
                     "source": "finnhub_market",
