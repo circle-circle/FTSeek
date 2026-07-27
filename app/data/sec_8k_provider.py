@@ -32,7 +32,12 @@ from app.data.sec_form4_provider import SEC_USER_AGENT, CACHE_DIR  # 复用框�
 
 GETCURRENT_URL = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
                   "&type=8-K&company=&dateb=&owner=include&count=100&output=atom")
+# C2 (2026-07-27, DEB-20260727 §九/§十): SC 13D/G 大股东举牌 — 常先于新闻,
+#   取 (Subject) 方 = 被举牌标的 (Filed by 方是举牌人, 非交易标的)
+GETCURRENT_13DG_URL = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
+                       "&type=SC+13&company=&dateb=&owner=include&count=100&output=atom")
 CACHE_FILE = CACHE_DIR / "edgar_8k_recent.json"
+CACHE_13DG_FILE = CACHE_DIR / "edgar_13dg_recent.json"
 CACHE_TTL_SEC = 600  # 10min — scan 是盘前批调用, 无需更细
 
 # item code → (中文语义, 方向先验)  先验只是提示词标注, 不进任何执行逻辑
@@ -52,8 +57,8 @@ ITEM_SEMANTICS: Dict[str, tuple] = {
 ITEM_WHITELIST = set(ITEM_SEMANTICS)
 
 
-def _fetch_atom() -> str:
-    req = Request(GETCURRENT_URL, headers={"User-Agent": SEC_USER_AGENT})
+def _fetch_atom(url: str = GETCURRENT_URL) -> str:
+    req = Request(url, headers={"User-Agent": SEC_USER_AGENT})
     with urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
@@ -142,9 +147,83 @@ def fetch_recent_8k(universe_tickers: Optional[set] = None,
     return out
 
 
+def fetch_recent_13dg(universe_tickers: Optional[set] = None,
+                      lookback_hours: int = 96) -> List[Dict]:
+    """C2: 近 N 小时 SC 13D/G 举牌 (取 Subject 方=被举牌标的)。默认 96h 回看
+    (举牌有 10 日披露窗, 信号衰减慢于新闻)。
+
+    返回 [{ticker, company, form (SC 13D=主动举牌强信号 / SC 13G=被动持仓), updated, url}]
+    格式假设: title = 'SC 13D/A - COMPANY (CIK) (Subject)' — 与 8-K 实测同源格式;
+    解析不到 (Subject) 则丢弃 (宁缺勿错, 测量层准确性优先)。
+    """
+    raw = None
+    try:
+        if CACHE_13DG_FILE.exists() and time.time() - CACHE_13DG_FILE.stat().st_mtime < CACHE_TTL_SEC:
+            raw = json.loads(CACHE_13DG_FILE.read_text())
+    except Exception:
+        raw = None
+    if raw is None:
+        try:
+            atom = _fetch_atom(GETCURRENT_13DG_URL)
+            raw = []
+            for m in re.finditer(r"<entry>(.*?)</entry>", atom, re.S):
+                e = m.group(1)
+                title = re.search(r"<title>(.*?)</title>", e, re.S)
+                t = (title.group(1) if title else "").strip()
+                # 只要 Subject 方 (被举牌标的); Filed by 方=举牌人, 丢
+                if not t.upper().startswith("SC 13") or "(Subject)" not in t:
+                    continue
+                cik_m = re.search(r"\((\d{7,10})\)", t)
+                comp_m = re.search(r"SC 13[DG](?:/A)?\s*-\s*(.+?)\s*\(", t)
+                form_m = re.match(r"(SC 13[DG](?:/A)?)", t)
+                updated = re.search(r"<updated>(.*?)</updated>", e)
+                link = re.search(r'href="([^"]+)"', e)
+                raw.append({
+                    "company": (comp_m.group(1) if comp_m else t)[:80],
+                    "cik": int(cik_m.group(1)) if cik_m else None,
+                    "form": form_m.group(1) if form_m else "SC 13",
+                    "updated": (updated.group(1) if updated else "")[:25],
+                    "url": link.group(1) if link else "",
+                })
+            CACHE_13DG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE_13DG_FILE.write_text(json.dumps(raw, ensure_ascii=False))
+        except Exception as e:
+            logger.warning("[13DG] EDGAR getcurrent 拉取失败 (降级空): %s", e)
+            return []
+
+    try:
+        from app.data.sec_form4_provider import SECForm4Provider
+        cik2tk = SECForm4Provider()._cik_ticker_map or {}
+    except Exception as e:
+        logger.warning("[13DG] CIK 映射不可用 (降级空): %s", e)
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    out = []
+    for e in raw:
+        tk = cik2tk.get(e.get("cik") or -1)
+        if not tk:
+            continue
+        tk = str(tk).upper()
+        if universe_tickers and tk not in universe_tickers:
+            continue
+        try:
+            if datetime.fromisoformat(e["updated"].replace("Z", "+00:00")) < cutoff:
+                continue
+        except Exception:
+            pass
+        out.append({"ticker": tk, "company": e["company"], "form": e["form"],
+                    "updated": e["updated"], "url": e["url"]})
+    return out
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     rows = fetch_recent_8k(lookback_hours=48)
     print(f"近48h 8-K (item 白名单+有 ticker): {len(rows)} 条")
     for r in rows[:10]:
         print(f"  {r['ticker']:<6} {r['updated']} {'; '.join(r['item_labels'])} — {r['company']}")
+    rows2 = fetch_recent_13dg(lookback_hours=96)
+    print(f"近96h SC 13D/G 举牌 (Subject+有 ticker): {len(rows2)} 条")
+    for r in rows2[:10]:
+        print(f"  {r['ticker']:<6} {r['form']:<9} {r['updated']} — {r['company']}")

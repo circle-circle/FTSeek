@@ -190,14 +190,57 @@ def _quote_price(q: Dict[str, Any]) -> Optional[float]:
 
 # ── clue brief 组装 (信息获取) ────────────────────────────────
 def _gather_news(hours: int) -> List[Dict[str, Any]]:
-    """近 N 小时新闻 (RSSHub, llm_pipeline 同源); 失败返回 []."""
+    """近 N 小时新闻 (RSSHub, llm_pipeline 同源); 失败返回 [].
+
+    C1 (2026-07-27, 用户裁"提升标的/指令质量优先"): 并入 finnhub 市场新闻 (已付费闲置
+    能力, 60/min 令牌桶+2h 缓存在位) — 同构 dict (source='finnhub_market') 进同一条链:
+    brief 新闻段 + S0 渠道归因 + S1 切片全自动覆盖, 判分"持证上岗"。
+    门控: universe_expansion.clue_finnhub_news (默认开); 回滚: 设 false。
+    """
+    items: List[Dict[str, Any]] = []
     try:
         from app.data.rsshub_us_news import RSSHubUSNewsFetcher
         items = RSSHubUSNewsFetcher().get_recent_news(hours=hours, limit=30) or []
-        return items
     except Exception as e:
         print(f"  [warn] 新闻拉取失败 (降级): {e}")
-        return []
+    if bool(_cfg("universe_expansion.clue_finnhub_news", True)):
+        try:
+            from datetime import timezone as _tz
+            from email.utils import format_datetime as _fmt_dt
+            from app.data.finnhub_provider import FinnhubProvider
+            from app.data.rsshub_us_news import RSSHubUSNewsFetcher as _RF
+            _matcher = _RF.__new__(_RF)  # 只用 P4a 匹配器, 不碰 db
+            fh = FinnhubProvider()
+            cutoff_ts = datetime.now(_tz.utc).timestamp() - hours * 3600
+            for a in (fh.get_market_news(limit=20) or []):
+                ts = float(a.get("datetime") or 0)
+                if ts and ts < cutoff_ts:
+                    continue
+                title = str(a.get("headline") or "").strip()
+                if not title:
+                    continue
+                syms = set(f"US.{s}" for s in (a.get("relatedSymbols") or []) if s)
+                syms |= _matcher._match_symbols_v2(f"{title} {a.get('summary') or ''}")
+                items.append({
+                    "id": f"fh_{int(ts)}_{abs(hash(title)) % 10**8}",
+                    "title": title,
+                    "summary": str(a.get("summary") or "")[:300],
+                    "source": "finnhub_market",
+                    "source_name": f"Finnhub({a.get('source') or 'market'})",
+                    "symbols": json.dumps(sorted(syms)),
+                    "published_at": _fmt_dt(datetime.fromtimestamp(ts, _tz.utc)) if ts else "",
+                })
+        except Exception as e:
+            print(f"  [warn] finnhub 新闻并入失败 (降级): {e}")
+    # 合并后按发布时间降序 (brief 展示只取前 20, 不排序则 finnhub 条目永远被截断)
+    def _pub_ts(n):
+        try:
+            from email.utils import parsedate_to_datetime
+            return parsedate_to_datetime(str(n.get("published_at") or "")).timestamp()
+        except Exception:
+            return 0.0
+    items.sort(key=_pub_ts, reverse=True)
+    return items
 
 
 def _gather_market_corroboration() -> Dict[str, Any]:
@@ -480,6 +523,20 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         except Exception as _8k_e:
             print(f"  [warn] 8-K 直连失败 (降级): {_8k_e}")
             health.append("8-K:err")
+    # C2 (2026-07-27, 用户裁"提升标的/指令质量优先"): SC 13D/G 举牌 — 常先于新闻的
+    #   强 HARD_EVENT (13D=主动举牌看多先验, 13G=被动持仓弱信号)。门控+降级同 8-K。
+    if bool(_cfg("universe_expansion.clue_13dg_events", True)):
+        try:
+            from app.data.sec_8k_provider import fetch_recent_13dg
+            _dg = fetch_recent_13dg(lookback_hours=96)
+            _dg_lines = [f"举牌 {r['ticker']}: {r['form']}"
+                         f"{' (主动举牌, 看多先验强)' if r['form'].startswith('SC 13D') else ' (被动持仓)'} "
+                         f"(filed {r['updated'][:16]})" for r in _dg[:10]]
+            hard += _dg_lines
+            health.append(f"13DG:{len(_dg_lines)}")
+        except Exception as _dg_e:
+            print(f"  [warn] 13D/G 直连失败 (降级): {_dg_e}")
+            health.append("13DG:err")
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
         parts.extend(hard)

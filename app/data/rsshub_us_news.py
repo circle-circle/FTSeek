@@ -265,12 +265,22 @@ class RSSHubUSNewsFetcher:
         'TTD': ['Trade Desk'], 'FSLR': ['First Solar'], 'ENPH': ['Enphase'], 'RUN': ['Sunrun'],
         'LI': ['理想汽车', 'Li Auto'], 'XPEV': ['小鹏', 'XPeng'], 'BILI': ['哔哩哔哩', 'Bilibili'],
         'FUTU': ['富途'], 'NTES': ['网易', 'NetEase'], 'TCOM': ['携程', 'Trip.com'],
+        # 2026-07-27 补缺 (用户裁"提升标的质量优先"): 指令台账 78 标的全覆盖 (原缺 23)
+        'APLD': ['Applied Digital'], 'ASML': ['阿斯麦'], 'BE': ['Bloom Energy'],
+        'BWXT': ['BWX Technologies'], 'CHWY': ['Chewy'], 'CME': ['CME Group', '芝加哥商交所'],
+        'COF': ['Capital One', '第一资本'], 'CVE': ['Cenovus'], 'E': ['Eni S.p.A'],
+        'MCK': ['McKesson', '麦克森'], 'MNSB': ['MainStreet Bancshares'], 'MPC': ['Marathon Petroleum'],
+        'NU': ['Nubank'], 'PNC': ['PNC Financial'], 'PSX': ['Phillips 66'],
+        'SHEL': ['Shell', '壳牌'], 'SNDK': ['SanDisk', '闪迪'], 'SYF': ['Synchrony'],
+        'TTE': ['TotalEnergies', '道达尔'], 'VLO': ['Valero'], 'WDFC': ['WD-40'],
+        'XLE': ['Energy Select SPDR'], 'XLY': ['Consumer Discretionary SPDR'],
     }
     # 歧义 ticker: 裸词禁匹配 (常见英文词/单字母), 只认 $X 或 (X) 形式; 别名照常
     AMBIGUOUS_TICKERS = {
         'A', 'B', 'C', 'D', 'F', 'T', 'V', 'X', 'MA', 'GM', 'DE', 'GE', 'BA', 'SO', 'ON',
         'IT', 'ALL', 'NOW', 'KEY', 'ARE', 'FOR', 'GO', 'AN', 'BE', 'BY', 'SQ', 'NET',
         'OPEN', 'COST', 'REAL', 'FAST', 'PLAY', 'LOVE', 'RUN', 'APP', 'LI', 'MS', 'UPS',
+        'E', 'NU', 'CME',  # 2026-07-27 补缺新增歧义词 (单字母/常见缩写), 只认 $X/(X)/别名
     }
     _symbol_regex_cache = None  # (bare_re, dollar_re, alias_list) 惰性编译
 

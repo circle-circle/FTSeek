@@ -111,7 +111,7 @@ def main() -> int:
     # 2026-07-27 (S1, DEB-20260727 Q1): 首报渠道×fwd 切片 — S0 起 origin.info_channel 落真渠道;
     #   判据: n≥30/源, 某源命中≥55% 且另一源≤40% → 信息饮食权重调整立案
     for _ch in ("us_bloomberg", "us_cls", "us_cnbc_direct", "us_seekingalpha_direct",
-                "us_wallstreetcn", "sec_8k", "none_matched"):
+                "us_wallstreetcn", "finnhub_market", "sec_8k", "none_matched"):
         emit("info_channel", f"UE·渠道:{_ch}",
              f"raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%\"info_channel\": \"{_ch}\"%'")
     # 2026-07-27 (军规: 新增字段必带基数自检 — "常量退化"已三例: DA conf罚35 / UE conf cap50 /

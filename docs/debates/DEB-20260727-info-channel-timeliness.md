@@ -186,3 +186,22 @@ S0 (落库端修复, S1 前置) → P4a (symbol 映射器) → S2/S4 (原案认�
 **处置清单 (待用户裁决, 本轮零代码变更)**:
 - D1 (减法): B1 social 子路径 (sentiment_analyst 两处死查询 + social_sentiment.py + db) + B2/B3 (含 llm_pipeline/reverse_catalyst 两个 fallback 消费面 + jin10 注释漂移) → 挂下轮减法批, 一并 git rm/清理。
 - D2 (等待): Q1 渠道判分出数前不加任何新源; C1 finnhub→UE brief 为判分后首候选 (成本最低+消费惯例已在)。
+
+---
+
+## 十一、执行记录 II (2026-07-27, 用户裁"提升标的股和指令质量的修尺子优先完成")
+
+**用户裁决口径**: 信号侧属修尺子, 不影响交易策略和链路, 能提升标的/指令质量的优先完成。据此 D2 的"等待"被裁决覆盖 — 新源按 §八 分层原则接入 (探索层可插拔/门控/独立回滚), 判分仍走 S0→S1 "持证上岗" (数据先流入, 结论等 Q1)。
+
+| 项 | 落地 | 验证 |
+|---|---|---|
+| **C1 finnhub 市场新闻** | `_gather_news` 并入同构 dict (source=finnhub_market, relatedSymbols+P4a 匹配器双标注, 按发布时间合并排序); 门控 `clue_finnhub_news` (默认开) | 真跑: 周末 RSS 停更窗 finnhub 补入 20 条 (缺口当场被填); S0 归因兼容 ✓ |
+| **C2 SC 13D/G 举牌直连** | `sec_8k_provider.fetch_recent_13dg` (取 Subject 方=被举牌标的, 13D=主动举牌看多先验/13G=被动持仓; 96h 回看适配 10 日披露窗); brief 硬事件段, 门控 `clue_13dg_events` | 周日 EDGAR 无 filing 合法空 (getcurrent 'No recent filings' 实测); **title 格式假设待今晚首个交易时段实测校验** (解析不到 Subject 则丢弃, 宁缺勿错) |
+| **P4a 词典补缺** | 台账 78 标的全覆盖 (补 23: APLD/ASML/SHEL/TTE/VLO/XLE...); 新增歧义词 E/NU/CME 禁裸匹配 | 78/78 断言 ✓ / 新歧义词零误报 ✓ / $X+别名照常 ✓ |
+| **C3 官方源路由** | **如实跳过** — 实测 rssforever 公共实例不支持 /federalreserve 等官方路由 (返回欢迎页)。留待自建 RSSHub docker 时再议 | curl 实测 ✓ |
+| S1 同步 | scorecard 渠道清单 + finnhub_market | — |
+| 可观测 | brief 健康行新增 `8-K:n / 13DG:n` 位 | 端到端 brief 实跑健康行在位 ✓ |
+
+**验证**: py_compile 4 文件 / 端到端 brief 实跑 / 重启+冒烟 7/7。**回滚**: C1=`clue_finnhub_news:false`; C2=`clue_13dg_events:false`; P4a=git revert。
+**判分闭环覆盖**: 三个新渠道 (finnhub_market/sec_8k/sec_13dg 经 S0 归因) 自动进 Q1 同一判据 — 2 周后与存量 5 渠道同场竞技, 谁没 alpha 谁下桌。
+**待观察**: ①13D/G title 格式假设 (今晚首个交易时段核验) ②finnhub 新闻 symbol 标注率 (周末样本全宏观带标的 0, 待盘中样本)。
