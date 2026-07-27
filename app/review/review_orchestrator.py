@@ -257,7 +257,10 @@ class RichContextBuilder:
                 "capital_trajectory": [...],       # 资金轨迹
             }
         """
-        target_date = date or datetime.now().strftime("%Y-%m-%d")
+        # 2026-07-28 修复 (CST 残留家族): datetime.now()=CST, ET 晚间跑会生成"明日"空数据
+        #   复盘 (实锤 daily_review_2026-07-28.json 于 ET 07-27 生成) — 统一 ET 口径。
+        from app.utils.timezone import now_et as _r_now_et
+        target_date = date or _r_now_et().strftime("%Y-%m-%d")
         
         return {
             "historical_patterns": self._build_historical_patterns(target_date),
@@ -361,7 +364,8 @@ class RichContextBuilder:
                 with open(log_path, "r") as f:
                     lines = f.readlines()[-2000:]
                 
-                today = datetime.now().strftime("%Y-%m-%d")
+                from app.utils.timezone import now_et as _lg_now_et
+                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
                 
                 error_patterns = {}
                 warning_patterns = {}
@@ -1558,7 +1562,9 @@ class ReviewOrchestrator:
     def run_daily(self, date: str = None) -> Dict:
         """运行日复盘 — 混合架构: Phase 1+2+3"""
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            # 2026-07-28 修复 (07-28.json 脏文件真凶): CST 缺省日期在 ET 晚间生成"明日"空复盘
+            from app.utils.timezone import now_et as _rd_now_et
+            date = _rd_now_et().strftime("%Y-%m-%d")
         
         logger.info(f"[Orchestrator] 开始日复盘: {date}")
         
@@ -2024,7 +2030,8 @@ class ValidationAgent:
                 with open(log_path, "r") as f:
                     lines = f.readlines()[-2000:]
                 
-                today = datetime.now().strftime("%Y-%m-%d")
+                from app.utils.timezone import now_et as _lg_now_et
+                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
                 keywords = ["滑点", "重复", "ghost", "幽灵", "持仓", "对账", "同步",
                            "slippage", "duplicate", "ghost", "reconcil", "sync"]
                 
@@ -2076,7 +2083,8 @@ class ValidationAgent:
                 with open(log_path, "r") as f:
                     lines = f.readlines()[-500:]
                 
-                today = datetime.now().strftime("%Y-%m-%d")
+                from app.utils.timezone import now_et as _lg_now_et
+                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
                 keywords = ["timeout", "connection", "refused", "failed", "error",
                            "断流", "降级", "不可用", "熔断"]
                 
@@ -2205,7 +2213,8 @@ class ValidationAgent:
                 with open(log_path, "r") as f:
                     lines = f.readlines()[-2000:]
                 
-                today = datetime.now().strftime("%Y-%m-%d")
+                from app.utils.timezone import now_et as _lg_now_et
+                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
                 # 提取 hint 中的关键词
                 keywords = [k for k in hint.split() if len(k) > 2]
                 match_count = 0
