@@ -155,3 +155,34 @@ S0 (落库端修复, S1 前置) → P4a (symbol 映射器) → S2/S4 (原案认�
 
 **待另一模型复核点**: ①B1 的 "4h TTL 兜底使读侧安全" 结论是否成立 (sentiment_analyst 降级路径实测);
 ②C1 finnhub 进主管线是否与其 credits 预算冲突 (company_news 每只 1 credit, universe 量级); ③B2/B3 删除前确认无其他消费面。
+
+---
+
+## 十、对 §九 的对抗式复核 (Qoder-主工程会话, 2026-07-27, 三个待复核点逐一实测作答)
+
+### 复核点① "4h TTL 兜底使读侧安全" — ❌ 不成立, 且实情比 B1 更糟 (双重断裂实锤)
+
+1. **"4h TTL"在写侧不在读侧**: `CACHE_TTL=3600*4` 位于 `social_sentiment.py:33` (写侧防重复拉取的缓存窗), `sentiment_analyst.py` 读侧**没有任何时效过滤** — 若有数据会永远吃 07-10 的陈旧行。
+2. **翻案发现 — 读侧从未连通过**: 读侧两处查询 `SELECT * FROM sentiment ...`, 而写侧建表名是 **`sentiment_cache`** (列也不同: data_json/fetched_at vs 读侧期望的 source/timestamp)。实测 `no such table: sentiment` → 被 except 吞 → 恒返 None。**即 2026-06-16 "修复"上线起, 这条读路径一天都没工作过** — 不是"渠道 07-10 熄灭", 是**线路从未通电** (写侧断于外部 skill 缺失只是第二重)。
+3. **对处置建议的影响**: B1 天平进一步倒向减法 — 社交情绪对 DA 的贡献不是"从未有判分证据", 是**物理上从未发生**; 且 sentiment_analyst 主路径 (新闻情绪) 不受影响, 删 social 子路径 = 名义删除零行为变化。修复则需同时接三处 (装外部 skill + 修表名 + 补读侧 TTL), 外部依赖不可控 — **维持 §九 推荐的减法方向, 且理由更硬**。
+
+### 复核点② C1 finnhub credits — 结论成立, 一处表述修正
+
+- 限频已有工程化护栏: `finnhub_provider` 内置 60 次/分令牌桶 + `api_limit_monitor` 记账 (F1 修复后路径正常)。UE brief 补充量级 (30 条/日) 远低于限额, **无预算冲突**。
+- **表述修正**: §九 称 "只服务 earnings_revision 单策略" 不准确 — `playbook/data_collector.py:546-550` 已委托 `get_company_news(symbol, days=3)` 服务 playbook 数据采集。C1 的真实缺口是 "未进 **UE brief 信息饮食**", 接线面比声称的更小 (provider+消费惯例都在, 只差 brief 段)。
+
+### 复核点③ B2/B3 消费面 — 有活引用, "死代码"定性需修正
+
+- newsnow **有两个活消费面**: `llm_pipeline.py:235-247` (LLM 策略循环 fallback, try/except 包裹) + `reverse_catalyst.py:146` (NewsNow DB fallback)。92 天零产出 = "活代码 × 死数据源", 非纯死代码。**删除时须连消费面一起处理** (删 fallback 块或改优雅跳过), 不能只删 fetcher/配置。
+- jin10: `rsshub_us_news.py` 头注释仍宣称 "P1: 金十数据" 但 SOURCES 无此路由 (注释漂移), `newsnow_us_news.py:65` 有源配置 — 与 newsnow 同批处置。
+
+### 补充分析 (渠道全景收束)
+
+1. **渠道判分闭环已全线就位, 本周唯一正确动作是等**: S0 归因(含歧义词守卫)→落库→S1 切片→基数自检, 今晚 21:10 UE 扫描起自动攒样本, Q1 判据 2 周后裁。任何"再加源"提案 (C1/C2/C3) 都应排在 Q1 出数之后 — 5 个现有渠道谁有 alpha 都不知道时加第 6 个源, 是给未判分的桶继续注水。
+2. **S4 周末 cron 状态勘误预防**: cron 今日 (周一) 装, `6,0` 窗口首跑在本周六 — 本周内 weekend_news_fetch.log 为空是**预期**, 勿误报故障。Q4 判据顺延至下周一。
+3. **"静默退化"第四类的通用教训**: B1 双重断裂 (表名错位+外部依赖缺失) 均无告警。与基数自检军规同款处方 — **跨模块数据契约 (表名/列名) 的消费端首次查询失败应 WARNING 一次**, 而非 debug 吞掉; 候选挂入 data_freshness_watchdog 模式 (已有先例: SHORT 门控 stale WARNING)。
+4. **维持不变**: M3>M1>M2 排序 / M1/M2 待裁 / Q1-Q4 预注册判据 / §八 分层原则。
+
+**处置清单 (待用户裁决, 本轮零代码变更)**:
+- D1 (减法): B1 social 子路径 (sentiment_analyst 两处死查询 + social_sentiment.py + db) + B2/B3 (含 llm_pipeline/reverse_catalyst 两个 fallback 消费面 + jin10 注释漂移) → 挂下轮减法批, 一并 git rm/清理。
+- D2 (等待): Q1 渠道判分出数前不加任何新源; C1 finnhub→UE brief 为判分后首候选 (成本最低+消费惯例已在)。
