@@ -68,3 +68,40 @@
 ## 五、执行记录
 
 - 2026-07-27 起案: 用户 SOLS 案例实锤 + 130 笔影响面初查 + 代码路径确认, 待另一模型复核。
+
+---
+
+## 六、另一模型复核 (Qoder-主工程会话, 2026-07-27 盘中) — 四待复核点作答 + 翻案 + go-forward 已修
+
+### 翻案: quote_fallback 不是"极端后备偶发", 事实上就是主路径
+
+实测近一周入场价源 broker_deal 占比: 07-21 **0/17**, 07-22 1/14, 07-23 **0/19**, 07-24 0/8, 07-27 **0/10**。
+**真根因是时序缺陷而非字段名** (07-21 修复未解决本问题):
+1. `filled_price` 在下单瞬间取 (sim 异步成交, 必为 0)
+2. 单次重查也在毫秒级后 (订单仍 SUBMITTING)
+3. **30s 确认循环等到 FILLED_ALL 时, `od_data.iloc[0]` 行里就有 `dealt_avg_price` 真值, 旧版只返 bool 把价丢了**
+4. 调用方被迫跳 quote 兜底记 ask 假价
+
+### 四待复核点作答
+
+| # | 问 | 答 |
+|---|---|---|
+| ① dealt_avg_price 返 0 触发条件 | **时序必然** (非偶发/非字段名残留): 下单瞬间查询早于 sim 成交回报, 几乎每笔都中 |
+| ② 延迟对账挂点选型 | **都不需要** — 确认循环行内本就有真价, 就地带回即可 (零新挂点/零额外 API/记账瞬间即正确); 连 Q1 "盘中重锚"争议都被绕开 — 锚从第一天就是对的, 无需事后重锚 |
+| ③ 130 笔回填可行性 | **起案的 deal_list 路径不可行** — 坑库已记录"富途 sim 不支持 history_deal_list_query"; 可行替代 = `history_order_list_query(start,end)` 带 dealt_avg_price (position_sync 既有消费惯例), sim 保留深度待实测 |
+| ④ quote_fallback 去留 | 保留作极端后备 (已有 WARNING 非静默); 修复后触发应真正罕见 — **观察判据: 修复后 3 交易日 quote_fallback 新增 ≤3 笔, 否则重查** |
+
+### go-forward 修复 (已落地, 盘中重启生效)
+
+`playbook_service.py` 两处:
+1. `_confirm_order_filled` 返三元组 `(confirmed, status, dealt_avg_price)` — 确认窗内行里真价就地带回;
+2. 调用点优先用真价记账 (`entry_price_source=broker_deal_confirm`), quote 兜底加 `_fill<=0` 守卫 (旧版无条件执行会覆盖真价 — 复核中发现的二阶陷阱)。
+验证: py_compile / 三元组签名+唯一调用点断言 / 980 passed。回滚: git revert 单文件。
+
+### 阶段2 (历史回填 130 笔) 裁决保留
+
+属历史数据改写 (entry_price/realized_pnl 重写 + 胜率统计重出), 按 Q2 判据**先出影响面报告再动手**, 且回填路径改用 history_order_list_query (见③)。待用户裁决后执行。
+
+### 附带修复 (同批)
+
+全量回归揭出 `test_intraday_scorer` 两个时间敏感假 mock (patch 打在不被调用的 5 档时代 API 上, 实测真墙钟, 盘中 prime 时段必挂 — 密封化漏网第三例) → 改 mock 真实调用链 (shared_kernel), 追平 2 档制语义, 980 全绿。

@@ -1026,11 +1026,11 @@ class PlaybookService:
             try:
                 from app.playbook.config import get_playbook_config as _gpc_cw
                 _confirm_wait = float(_gpc_cw().get("entry_confirm_max_wait_s", 30.0))
-                _confirmed, _ostatus = self._confirm_order_filled(
+                _confirmed, _ostatus, _confirm_davg = self._confirm_order_filled(
                     _futu_id, target_env, max_wait_s=_confirm_wait)
             except Exception as _cf_err:
                 logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (降级放行): {_cf_err}")
-                _confirmed, _ostatus = True, "query_error"
+                _confirmed, _ostatus, _confirm_davg = True, "query_error", 0.0
             if not _confirmed:
                 logger.error(
                     f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未成交 (status={_ostatus}), "
@@ -1038,34 +1038,47 @@ class PlaybookService:
                 )
                 self.db.release_execution_claim(instruction_id)
                 return {"success": False, "message": f"{_mode_label} {symbol} 订单未成交 (status={_ostatus})"}
+            # 2026-07-27 (DEB-entry-fill 复核翻案): 确认循环已带回 dealt_avg_price 真成交均价 —
+            #   优先用它记账 (broker_deal_confirm), quote 兜底降为真正的极端后备。
+            #   旧链路: 下单瞬间取价必为 0 (sim 异步成交) → 确认后直接跳 quote_fallback 记 ask
+            #   假价 (近一周 broker_deal 占比≈0, SOLS +$13 记成 -$0.96 实证)。回滚: 删本块。
+            if _confirm_davg and _confirm_davg > 0:
+                _fill = _confirm_davg
+                _entry_price_source = "broker_deal_confirm"
+                logger.info(
+                    f"[playbook] {_mode_label} {symbol} 确认窗内取得真成交均价 ${_fill:.4f} "
+                    f"(src=broker_deal_confirm, 订单 {_futu_id})"
+                )
             # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
             # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
             # 2026-07-21 更正: "avg_price=0"真根因是 dual_broker fallback 字段名笔误 (当日已修复为
             #   dealt_avg_price, sim 真实成交均价可正常获取); 本 bid/ask 兜底保留作极端后备, 触发应罕见.
             # 2026-07-16 P2 修复: 用 bid/ask 替代 last price (BUY→ask, SHORT→bid),
             #   更接近实际成交价. last price 可能是上一笔成交, 偏离当前 bid-ask.
-            try:
-                from app.data.market_data_router import MarketDataRouter
-                _dr = MarketDataRouter()
-                _ctx = _dr.get_quote(symbol)
-                if _ctx and _ctx.get("price", 0) > 0:
-                    _cur = float(_ctx["price"])
-                    _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
-                    _ask = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
-                    # BUY 成交在 ask 侧, SHORT 成交在 bid 侧
-                    if mos_direction == "SHORT" and _bid > 0:
-                        _fill = _bid
-                    elif mos_direction != "SHORT" and _ask > 0:
-                        _fill = _ask
-                    else:
-                        _fill = _cur
-                    _entry_price_source = "quote_fallback"
-                    logger.warning(
-                        f"[playbook] {_mode_label} {symbol} 成交价=0, 用bid/ask${_fill:.2f}兜底记账 "
-                        f"(订单 {_futu_id} 已确认成交) src=quote_fallback dir={mos_direction}"
-                    )
-            except Exception:
-                pass
+            # 2026-07-27: 加 _fill<=0 守卫 — 旧版无条件执行会把上面刚取得的真价覆盖回 ask 假价。
+            if not _fill or _fill <= 0:
+                try:
+                    from app.data.market_data_router import MarketDataRouter
+                    _dr = MarketDataRouter()
+                    _ctx = _dr.get_quote(symbol)
+                    if _ctx and _ctx.get("price", 0) > 0:
+                        _cur = float(_ctx["price"])
+                        _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
+                        _ask = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
+                        # BUY 成交在 ask 侧, SHORT 成交在 bid 侧
+                        if mos_direction == "SHORT" and _bid > 0:
+                            _fill = _bid
+                        elif mos_direction != "SHORT" and _ask > 0:
+                            _fill = _ask
+                        else:
+                            _fill = _cur
+                        _entry_price_source = "quote_fallback"
+                        logger.warning(
+                            f"[playbook] {_mode_label} {symbol} 成交价=0, 用bid/ask${_fill:.2f}兜底记账 "
+                            f"(订单 {_futu_id} 已确认成交) src=quote_fallback dir={mos_direction}"
+                        )
+                except Exception:
+                    pass
         if not _fill or _fill <= 0:
             logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
@@ -1433,16 +1446,19 @@ class PlaybookService:
 
     def _confirm_order_filled(self, futu_order_id: str, target_env: str,
                               max_wait_s: float = 5.0) -> tuple:
-        """确认订单是否真实成交 → (confirmed: bool, status: str).
-
+        """确认订单是否真实成交 → (confirmed: bool, status: str, dealt_avg_price: float).
+    
         2026-07-19 (DEB-round3 GHOST-RC1): 入场侧成交确认, 与 dual_broker.close_position
-        的平仓侧验证共用同一真相源 — order_list_query.order_status (FILLED_ALL).
-        短轮询 ≤5s (入场路径不阻塞批量执行, 平仓侧 30s 轮询的收紧版).
-
+        的平仓侧验证共用同一真相源 — order_list_query.order_status (FILLED_ALL)。
+        2026-07-27 (DEB-entry-fill 复核翻案): 确认循环拿到的行里本就有 dealt_avg_price
+        真成交均价, 旧版只返 bool 把价丢了 → 调用方被迫走 quote_fallback 记 ask 假价
+        (近一周 broker_deal 占比≈ 0, 多头入场价系统性记高+保本锚错, SOLS 实证杀单)。
+        本修复就地带回真价: 零新挂点/零额外 API。
+    
         判定:
-          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status)
-          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status) 不可恢复
-          超时仍非 FILLED → (False, status) (宁可拒记不记假仓)
+          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status, dealt_avg_price)
+          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status, 0.0) 不可恢复
+          超时仍非 FILLED → (False, status, 0.0) (宁可拒记不记假仓)
         """
         from futu import RET_OK
         from app.execution.dual_broker import get_dual_broker
@@ -1461,14 +1477,18 @@ class PlaybookService:
                     _last_status = _status
                     _dealt = float(_row.get("dealt_qty", 0) or 0)
                     if "FILLED_ALL" in _status or "FILLED_PART" in _status or _dealt > 0:
-                        return True, _status
+                        try:
+                            _davg = float(_row.get("dealt_avg_price", 0) or 0)
+                        except Exception:
+                            _davg = 0.0
+                        return True, _status, _davg
                     if any(_k in _status for _k in
                            ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
-                        return False, _status
+                        return False, _status, 0.0
             except Exception as _od_err:
                 logger.debug(f"[playbook] order_list_query 确认异常 {futu_order_id}: {_od_err}")
             time.sleep(0.5)
-        return False, _last_status
+        return False, _last_status, 0.0
 
     def skip_instruction(
         self,

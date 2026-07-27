@@ -409,30 +409,31 @@ class TestIntradaySession:
         assert 0.5 <= conf_mul <= 1.5
         assert 0.5 <= str_mul <= 1.5
 
-    @patch("app.core.intraday_scorer._get_intraday_session")
-    def test_open_session_lower_confidence(self, mock_session, scorer):
-        """开盘期 → 降低置信度"""
-        mock_session.return_value = "OPEN"
-        signal = scorer.score(_base_context())
-        # OPEN 阶段的 conf_mul=0.75, 应压制置信度
-        assert signal.confidence <= 0.85  # max confidence with 0.75 multiplier
+    # 2026-07-27 修尺子: 旧版 mock `_get_intraday_session` (5 档时代 API) 不在现实现调用链上 —
+    #   `_session_multiplier` 实走 shared_kernel.get_current_session() (2 档制), 假 mock 实测真墙钟:
+    #   非 prime 时段碰巧通过、盘中 prime 必挂 (密封化漏网第三例)。改 mock 真实调用链, 追平 2 档语义。
+    @patch("app.core.shared_kernel.get_shared_kernel")
+    def test_open_session_lower_confidence(self, mock_kernel, scorer):
+        """non-prime 时段 (opening_drive) → 置信度被 0.85 乘数压制 (对照 prime 不衰减)"""
+        mock_kernel.return_value.get_current_session.return_value = "opening_drive"
+        sig_open = scorer.score(_base_context())
+        mock_kernel.return_value.get_current_session.return_value = "morning"
+        sig_prime = scorer.score(_base_context())
+        assert sig_open.confidence <= sig_prime.confidence, \
+            f"non-prime({sig_open.confidence}) 应 ≤ prime({sig_prime.confidence})"
 
-    @patch("app.core.intraday_scorer._get_intraday_session")
-    def test_close_session_higher_strength(self, mock_session, scorer):
-        """收盘期 → 适度提升强度"""
-        mock_session.return_value = "CLOSE"
-        # 用强信号测, CLOSE 阶段 str_mul=1.10
+    @patch("app.core.shared_kernel.get_shared_kernel")
+    def test_close_session_higher_strength(self, mock_kernel, scorer):
+        """prime (closing_drive 1.0) 强度应 ≥ non-prime (midday 0.85), 方向一致时"""
         ctx = _base_context(price=460, ma20=430, rsi=62, volume_ratio=2.0,
                             lv3_bid_vol=20000, lv3_ask_vol=8000)
+        mock_kernel.return_value.get_current_session.return_value = "closing_drive"
         signal_close = scorer.score(ctx)
-
-        mock_session.return_value = "LUNCH"
+        mock_kernel.return_value.get_current_session.return_value = "midday"
         signal_lunch = scorer.score(ctx)
-
-        # CLOSE 阶段方向一致的情况下强度应 ≥ LUNCH(0.80) 阶段
         if signal_close.direction == signal_lunch.direction and signal_close.direction != "NEUTRAL":
             assert signal_close.strength >= signal_lunch.strength - 5, \
-                f"CLOSE={signal_close.strength} vs LUNCH={signal_lunch.strength}"
+                f"CLOSE={signal_close.strength} vs MIDDAY={signal_lunch.strength}"
 
 
 # ============================================================
