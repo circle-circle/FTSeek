@@ -68,9 +68,11 @@ class RejectionLogger:
             timestamp: ISO 格式时间戳
         """
         try:
-            # 2026-07-27 修复 (时区批同款): 写入侧 CST naive → ET (与查询口径统一)
+            # 2026-07-27 修复 (昨日扫尾自引瑕疵): aware ISO 带 -04:00 后缀会被 SQLite date()
+            #   折算成 UTC 日 (实测 date('...21:30:00-04:00')=次日) — ET 20:00 后写入与 ET 日
+            #   查询参数错位。改写 naive ET (date() 对 naive 不做时区转换), 写读同口径。
             from app.utils.timezone import now_et
-            ts = timestamp or now_et().isoformat()
+            ts = timestamp or now_et().replace(tzinfo=None).isoformat()
 
             conn = sqlite3.connect(self.db_path)
             conn.execute(
