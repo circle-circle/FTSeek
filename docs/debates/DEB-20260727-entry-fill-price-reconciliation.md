@@ -123,3 +123,16 @@
 **对历史结论的影响 (关键安心项)**: 本周基线日序不变 (07-23 仍最差 -379→-336; 07-24 三门首夜 -31→-25 结论更好); ATR 分桶/三门验证/复盘结论方向全部稳固。
 **报告产物**: `data/entry_fill_impact_report.json` 含逐笔明细 (id/entry_new/order_id/置信度), 回填执行时可直接消费, 无需重拉。
 **建议执行方式 (待裁决)**: 仅回填 HIGH 123 笔 (MEDIUM 1 笔人工过目后并入, NONE 6 笔保持原样+标记); 逐笔保留 `entry_price_orig`+`entry_corrected:true` 审计字段, DB 先备份; realized_pnl/相关衍生字段同步重算。
+
+---
+
+## 八、阶段2 执行记录 (2026-07-27 深夜, 用户裁"执行")
+
+`scripts/entry_fill_backfill.py` (dry-run 缺省 / --apply 真写 / sqlite backup API 在线备份 / 幂等):
+- **回填 124 笔** (HIGH 123 + MEDIUM 1 笔 NVDA Δ仅 0.02% 并入); uncorrectable 标记 6 笔
+- 衍生字段一致重算: entry_price / realized_pnl / pnl_pct / **mfe_pct / mae_pct** (基于 metadata peak/trough, 含 LONG/SHORT 方向语义)
+- 审计字段: entry_price_orig / entry_price_source_orig / entry_corrected_at / entry_backfill_order_id
+- **验证**: dry-run 与影响面报告完全对账 (124/+193.03/翻转2); SOLS 黄金样例 entry 61.10→60.882 / pnl -0.96→**+12.99** (与用户真实成交完全吻合); 全库计数 124/6 断言 ✓; 幂等复跑 0 笔 ✓
+- 备份: `ftseek_us.db.bak_entryfill_20260727_233630`; 回滚 = 恢复备份或按 entry_price_orig 逐笔还原
+- **另一处翻转**: COIN id=1080 -2.26→+0.21 (与 SOLS 同款)
+- 后续: 消费这些统计的报表 (scorecard/回放) 下次重跑自动吃到真值; ④观察判据继续 (修复后 3 交易日 quote_fallback 新增 ≤3 笔)。本案闭环, 状态 → ✅ 已裁决已执行。
