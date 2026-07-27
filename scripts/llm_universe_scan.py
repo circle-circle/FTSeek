@@ -466,6 +466,20 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         _age = _latest_insider_report_age()
         health.append(f"内部人:{len(_ic)}" + ("(报告缺失)" if _age is None
                       else (f"(断更{_age}d)" if _age > 0 else "")))
+    # S3 (2026-07-27, DEB-20260727): EDGAR 8-K 直连 — 分钟级官方一手源, CIK→ticker 精确,
+    #   item code 带方向先验标注 (2.02业绩/4.02重述强利空等)。config 门控, 失败降级空。
+    if bool(_cfg("universe_expansion.clue_8k_events", True)):
+        try:
+            from app.data.sec_8k_provider import fetch_recent_8k
+            _8k = fetch_recent_8k(lookback_hours=int(_cfg(
+                "universe_expansion.news_lookback_hours", 24)))
+            _8k_lines = [f"8-K {r['ticker']}: {'; '.join(r['item_labels'])} "
+                         f"(filed {r['updated'][:16]})" for r in _8k[:15]]
+            hard += _8k_lines
+            health.append(f"8-K:{len(_8k_lines)}")
+        except Exception as _8k_e:
+            print(f"  [warn] 8-K 直连失败 (降级): {_8k_e}")
+            health.append("8-K:err")
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
         parts.extend(hard)
@@ -641,6 +655,51 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
     return out
 
 
+def _annotate_news_channel(surfaced: List[Dict[str, Any]], news: List[Dict[str, Any]]) -> None:
+    """S0 (2026-07-27): 机械归因浮现标的 → 首报新闻渠道 (record-only, 不影响筛选/排序).
+
+    匹配口径: 新闻 symbols 标注含该标的 (P4a 匹配器产出), 或裸 ticker 词界出现在标题
+    (大小写敏感, 与 P4a 同规则)。多条命中取 published 最早者 = 首报。
+    落 s["info_channel"] (如 us_bloomberg / none_matched) + s["first_news_id"]。
+    """
+    import re as _re
+    from email.utils import parsedate_to_datetime as _p2d
+    if not surfaced:
+        return
+    prepared = []
+    for n in news or []:
+        syms = n.get("symbols") or "[]"
+        if isinstance(syms, str):
+            try:
+                syms = json.loads(syms)
+            except Exception:
+                syms = []
+        try:
+            pub = _p2d(str(n.get("published_at") or ""))
+        except Exception:
+            pub = None
+        prepared.append((set(str(x).replace("US.", "") for x in (syms or [])),
+                         str(n.get("title") or ""), str(n.get("source") or "unknown"),
+                         str(n.get("id") or ""), pub))
+    for s in surfaced:
+        sym = str(s.get("symbol", "")).replace("US.", "").upper()
+        if not sym:
+            continue
+        hits = []
+        pat = _re.compile(r"\b" + _re.escape(sym) + r"\b")
+        for syms, title, src, nid, pub in prepared:
+            if sym in syms or pat.search(title):
+                hits.append((pub, src, nid))
+        if hits:
+            # 最早 published 优先; None 沉底 (统一 timestamp 化, 防 None/naive-aware 比较炸)
+            hits.sort(key=lambda h: (h[0] is None, h[0].timestamp() if h[0] else 0))
+            s["info_channel"] = hits[0][1]
+            s["first_news_id"] = hits[0][2]
+        else:
+            s["info_channel"] = "none_matched"
+            s["first_news_id"] = None
+
+
 def _annotate_emergence_streak(surfaced: List[Dict[str, Any]]) -> None:
     """[shadow 2026-07-22] 浮现连续天数埋点 (record-only, 不影响任何筛选/排序).
 
@@ -732,6 +791,12 @@ def cmd_scan(manual_clue: str = "") -> int:
 
     # [shadow] 浮现连续天数标注 (必须在 _append_jsonl 前: 只读历史日, 不含今日)
     _annotate_emergence_streak(surfaced)
+
+    # S0 (2026-07-27, DEB-20260727 §六.3): 真实新闻渠道归因 — origin.info_source 此前
+    #   恒为常量 LLM_EVENT_REASONING (管线标签), 渠道判分零区分度 ("常量退化"第三例)。
+    #   机械归因: 标的出现在哪条新闻 (symbols 标注或标题词界) → 最早发布者=首报渠道。
+    #   无匹配 → none_matched (市场佐证/纯推理浮现)。S1 切片两周后判 Q1。
+    _annotate_news_channel(surfaced, _gather_news(48))
 
     # v2.2 (2026-07-25, A2 self-critique shadow, 用户批"不改流程可执行"): 同模型二次调用
     #   逐条攻击因果链最弱环, verdict(KEEP/DOWNGRADE/DROP) 只落库不拦截 — 注入集合零变化。
@@ -958,6 +1023,9 @@ def cmd_inject(force_dry: bool = False) -> int:
                 "prompt_version": PROMPT_VERSION,
                 "origin": {
                     "info_source": INFO_SOURCE,
+                    # S0 (2026-07-27): 真实首报渠道 + 新闻 id (机械归因, 见 _annotate_news_channel)
+                    "info_channel": s.get("info_channel") or None,
+                    "first_news_id": s.get("first_news_id") or None,
                     "causal_chain": s.get("causal_chain", ""),
                     "winner_loser": s.get("winner_loser", ""),
                     "corroborated_by_market": s.get("corroborated_by_market"),

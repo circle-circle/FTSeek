@@ -740,6 +740,14 @@ news_sources:
     - priority: 1
       url: https://rsshub.rssforever.com
       verify_ssl: false
+    # 2026-07-27 S2 (DEB-20260727): 消单点 — 备用公共实例, fetch 侧多实例回退早已实现
+    #   (rsshub_us_news._fetch_rsshub_source 按序尝试), 此前仅配 1 个 → 挂了就全断。回滚: 删两条。
+    - priority: 2
+      url: https://rsshub.app
+      verify_ssl: false
+    - priority: 3
+      url: https://rsshub.pseudoyu.com
+      verify_ssl: false
     retention_hours: 48
     sources:
       us_bloomberg:

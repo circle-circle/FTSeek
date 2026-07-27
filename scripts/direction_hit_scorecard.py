@@ -108,6 +108,12 @@ def main() -> int:
     #   若 DROP 组显著更差 → 再裁升级实拦 (那才是机制变更)
     emit("critique", "UE·critique:KEEP", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%\"verdict\": \"KEEP\"%'")
     emit("critique", "UE·critique:DOWN/DROP", "raw_instruction_json LIKE '%universe_expansion%' AND (raw_instruction_json LIKE '%\"verdict\": \"DROP\"%' OR raw_instruction_json LIKE '%\"verdict\": \"DOWNGRADE\"%')")
+    # 2026-07-27 (S1, DEB-20260727 Q1): 首报渠道×fwd 切片 — S0 起 origin.info_channel 落真渠道;
+    #   判据: n≥30/源, 某源命中≥55% 且另一源≤40% → 信息饮食权重调整立案
+    for _ch in ("us_bloomberg", "us_cls", "us_cnbc_direct", "us_seekingalpha_direct",
+                "us_wallstreetcn", "sec_8k", "none_matched"):
+        emit("info_channel", f"UE·渠道:{_ch}",
+             f"raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%\"info_channel\": \"{_ch}\"%'")
     # regime 切分 (07-24 起落库补全, 早期多为 NULL)
     emit("regime", "regime:cautious", "LOWER(market_regime) LIKE '%caution%'")
     emit("regime", "regime:risk_on", "LOWER(market_regime) LIKE '%risk_on%'")

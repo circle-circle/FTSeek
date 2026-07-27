@@ -55,3 +55,37 @@
 ---
 
 *修尺子 S1-S4 落地时各自带版本戳+回滚说明入 handoff; M1/M2 待另一模型辩论 + 用户裁决。*
+
+---
+
+## 六、辩论方复核 (Qoder-主工程会话, 2026-07-27, 全部独立实测)
+
+**总判断: 方案分级与 M3>M1>M2 排序成立; 但事实链 3 处修正, 其中一处改变 S1 的实施顺序。**
+
+### 事实修正
+1. **E4 路径勘误**: 真库在 `data/rsshub_us/news_us.db` (27,996 条 ✓); 根目录 `data/news_us.db` 是**零表僵尸文件** — 挂减法清单顺手删。
+2. **§二.1 "信息→决策分钟级" 不成立**: 实测近 7 天发布→入库时延 **p50=74min / p90=292min** (RSS 转述+采集间隔叠加)。结论方向不变 (74min 仍 ≪ 15h 决策→执行), 但"分钟级"表述错误; 这也抬升了 S3 的价值 — EDGAR 直连是把 74min 压到分钟级的唯一免费路径。
+3. **S1 有隐藏前置 (关键)**: UE `origin.info_source` **键已存在但退化为常量** — 全部 26 条 = `LLM_EVENT_REASONING` (管线阶段标签, 非新闻渠道)。直接接 scorecard 切片 = 零区分度。**同款"常量退化"第三次出现** (DA conf 罚成 35 / UE conf cap=50 / 本例)。S1 必须拆两步: **S0 先修落库端** (传真实渠道 us_bloomberg 等 + 首报 news id), 两周后才有 S1 切片可判。
+
+### 新增实测 (方向精准度相关, 起案未覆盖)
+4. **新闻→标的映射覆盖率仅 11%** (近 14 天 3,610 条中带 symbol 标注 384) — 89% 新闻靠 LLM 从标题猜标的, 这是**标的精准度的第一瓶颈**, 也是渠道判分无法机械 join 的根因。修法纯代码 (公司名→ticker 词典), 零 LLM 成本, 列 **P4a**。
+5. **debate_outcome 分层翻转迹象**: 最新 scorecard (07-25) 弃权 56.1% > 分歧BUY 45.8% — 与 07-25 信息源复盘 (分歧BUY 67% > 弃权 47%) 方向相反。印证 A1 预注册 n≥100 不提前动手的决定正确; 提醒: 任何"渠道→方向"推断同样必须过预注册判据。
+
+### 复核后行动排序 (修工具阶段)
+S0 (落库端修复, S1 前置) → P4a (symbol 映射器) → S2/S4 (原案认可) → S3 (加一条: 8-K item code 天然带方向语义 — 2.02 财报/1.01 并购/4.02 重述, 是渠道侧唯一能直接贡献**方向先验**的信息, 建议入库时保留 item 字段) → S1 切片 (S0 落库 2 周后)。
+
+## 七、执行记录 (2026-07-27, 用户裁"要执行", 主工程会话落地)
+
+**S0+P4a+S1接线+S2+S3+S4 全部落地, 全链验证通过, 零交易行为变更**:
+
+| 项 | 落地 | 验证 |
+|---|---|---|
+| **P4a** | `rsshub_us_news.py`: TICKER_ALIASES ~140 标的 + 歧义词禁裸匹配 ($X/(X) 形式豁免) + `_match_symbols_v2` 并入 `_match_keywords` + fetch_all 覆盖率仪表 | 8/8 断言 (含歧义词零误报); **近14天 3,610 条真实新闻重算: 覆盖 10%→21%** (余量多为宏观新闻本无标的) |
+| **S0** | `llm_universe_scan.py`: `_annotate_news_channel` 机械归因 (symbols 标注或标题词界 → 最早 published = 首报) → origin 落 `info_channel`+`first_news_id`; 无匹配=none_matched | 正例 (取最早首报 us_cnbc) ✓ / 负例 none_matched ✓ / 坏日期条目不炸 ✓ |
+| **S1 接线** | `direction_hit_scorecard.py` 加 info_channel×fwd 切片 (7 渠道含 sec_8k/none_matched) | 等 S0 落库 2 周后自动出数 (Q1 判据) |
+| **S2** | yaml instances 1→3 (rsshub.app/pseudoyu 备用); fetch 侧多实例回退**早已实现**, 纯配置 | yaml 解析 ✓ |
+| **S3** | 新建 `app/data/sec_8k_provider.py` (~150 行): getcurrent Atom 轻量解析 + item 白名单 (11 类**含方向先验标注**) + CIK→ticker (复用 form4 映射) + 10min 缓存; brief 接入 `clue_8k_events` (默认开, 失败降级空) | 真拉 EDGAR: 100 entry 解析 ✓, 96h 窗 65 条带 ticker+item ✓ (48h=0 係周末无 filing 合法空); 周一盘前批首次实战 |
+| **S4** | crontab 周末每 3h 采集 (`15 */3 * * 6,0`), 备份 crontab.backup.20260727_* | cron 已装; Q4 判据下周一对比 |
+
+**回滚**: P4a/S0 = git revert 单文件; S2 = 删 yaml 两条; S3 = `clue_8k_events: false`; S4 = 删 cron 行。
+**待样本判据**: Q1 渠道切片 (2周) / Q4 周末覆盖 (+3条/周) / 8-K item×fwd 方向先验 (S1 同框架攒样本)。M1/M2 维持待裁不变。

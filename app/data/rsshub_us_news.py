@@ -214,6 +214,95 @@ class RSSHubUSNewsFetcher:
         '百度': 'US.BIDU', 'BIDU': 'US.BIDU',
         '蔚来': 'US.NIO', 'NIO': 'US.NIO',
     }
+
+    # ── P4a (2026-07-27, DEB-20260727 §六.4): 标的映射器增强 ──
+    # 背景: 旧匹配寄生在 14 词 US_KEYWORDS 循环 → 近14天新闻 symbol 标注覆盖率仅 11%,
+    #   89% 新闻靠 LLM 从标题猜标的 (标的精准度第一瓶颈, 拥挤联想噪声根因之一)。
+    # 设计: ①裸 ticker 用大小写敏感 \b 词界正则 (标题惯例大写) ②歧义短词
+    #   (V/MA/IT/ALL/COST...) 禁裸匹配, 只认 $X / (X) 形式 ③公司名别名大小写不敏感。
+    # 回滚: universe_expansion 侧无依赖, 删本块 + _match_symbols_v2 调用点即回旧行为。
+    TICKER_ALIASES = {  # ticker → 公司名别名 (bare ticker 匹配自动生效, 别名补充)
+        'NVDA': ['Nvidia', '英伟达'], 'TSLA': ['Tesla', '特斯拉'], 'AAPL': ['Apple', '苹果公司'],
+        'MSFT': ['Microsoft', '微软'], 'GOOG': ['Google', 'Alphabet', '谷歌'], 'GOOGL': [],
+        'AMZN': ['Amazon', '亚马逊'], 'META': ['Facebook'], 'AMD': [], 'AVGO': ['Broadcom', '博通'],
+        'BABA': ['Alibaba', '阿里巴巴'], 'JD': ['京东'], 'PDD': ['Pinduoduo', 'Temu', '拼多多'],
+        'BIDU': ['Baidu', '百度'], 'NIO': ['蔚来'], 'TSM': ['TSMC', '台积电'],
+        'NFLX': ['Netflix', '奈飞'], 'SMCI': ['Super Micro'], 'PLTR': ['Palantir'],
+        'COIN': ['Coinbase'], 'MU': ['Micron', '美光'], 'QCOM': ['Qualcomm', '高通'],
+        'ARM': ['Arm Holdings'], 'MRVL': ['Marvell'], 'UBER': [], 'RIVN': ['Rivian'],
+        'SNOW': ['Snowflake'], 'SHOP': ['Shopify'], 'DELL': ['Dell'], 'CRWD': ['CrowdStrike'],
+        'LMT': ['Lockheed'], 'RTX': ['Raytheon'], 'TMO': ['Thermo Fisher'], 'MRK': ['Merck', '默沙东'],
+        'BAC': ['Bank of America', '美国银行'], 'JPM': ['JPMorgan', '摩根大通'], 'KO': ['Coca-Cola', '可口可乐'],
+        'DIS': ['Disney', '迪士尼'], 'MA': ['Mastercard', '万事达'], 'V': ['Visa'],
+        'CRM': ['Salesforce'], 'UNH': ['UnitedHealth'], 'CSX': [], 'WMT': ['Walmart', '沃尔玛'],
+        'PG': ['Procter'], 'JNJ': ['Johnson & Johnson', '强生'], 'PFE': ['Pfizer', '辉瑞'],
+        'ABBV': ['AbbVie'], 'LLY': ['Eli Lilly', '礼来'], 'XOM': ['Exxon', '埃克森'],
+        'CVX': ['Chevron', '雪佛龙'], 'COP': ['ConocoPhillips'], 'GS': ['Goldman', '高盛'],
+        'MS': ['Morgan Stanley', '摩根士丹利'], 'C': ['Citigroup', '花旗'], 'WFC': ['Wells Fargo', '富国银行'],
+        'BLK': ['BlackRock', '贝莱德'], 'SCHW': ['Charles Schwab', '嘉信'], 'AXP': ['American Express', '美国运通'],
+        'CAT': ['Caterpillar', '卡特彼勒'], 'DE': ['John Deere'], 'BA': ['Boeing', '波音'],
+        'GE': ['General Electric', '通用电气'], 'HON': ['Honeywell', '霍尼韦尔'], 'UPS': [],
+        'FDX': ['FedEx', '联邦快递'], 'ORCL': ['Oracle', '甲骨文'], 'ADBE': ['Adobe'],
+        'INTC': ['Intel', '英特尔'], 'CSCO': ['Cisco', '思科'], 'IBM': [], 'TXN': ['Texas Instruments', '德州仪器'],
+        'NOW': ['ServiceNow'], 'PANW': ['Palo Alto Networks'], 'NET': ['Cloudflare'],
+        'DDOG': ['Datadog'], 'MDB': ['MongoDB'], 'ZS': ['Zscaler'], 'OKTA': ['Okta'],
+        'ABNB': ['Airbnb', '爱彼迎'], 'DASH': ['DoorDash'], 'SQ': ['Block Inc'], 'PYPL': ['PayPal'],
+        'SOFI': ['SoFi'], 'HOOD': ['Robinhood'], 'ROKU': ['Roku'], 'SPOT': ['Spotify'],
+        'ZM': ['Zoom'], 'DOCU': ['DocuSign'], 'F': ['Ford', '福特'], 'GM': ['General Motors', '通用汽车'],
+        'TM': ['Toyota', '丰田'], 'COST': ['Costco', '开市客'], 'TGT': ['Target Corp'],
+        'HD': ['Home Depot', '家得宝'], 'LOW': ["Lowe's"], 'MCD': ["McDonald", '麦当劳'],
+        'SBUX': ['Starbucks', '星巴克'], 'NKE': ['Nike', '耐克'], 'LULU': ['Lululemon'],
+        'CMG': ['Chipotle'], 'ABT': ['Abbott', '雅培'], 'TMUS': ['T-Mobile'], 'VZ': ['Verizon'],
+        'T': ['AT&T'], 'CMCSA': ['Comcast'], 'EOG': ['EOG Resources'], 'SLB': ['Schlumberger', '斯伦贝谢'],
+        'OXY': ['Occidental', '西方石油'], 'FCX': ['Freeport'], 'NEM': ['Newmont', '纽蒙特'],
+        'NUE': ['Nucor'], 'CLF': ['Cleveland-Cliffs'], 'ORLY': ["O'Reilly"], 'AZO': ['AutoZone'],
+        'GILD': ['Gilead', '吉利德'], 'AMGN': ['Amgen', '安进'], 'BMY': ['Bristol-Myers', '百时美'],
+        'MRNA': ['Moderna'], 'BNTX': ['BioNTech'], 'REGN': ['Regeneron'], 'VRTX': ['Vertex Pharma'],
+        'ISRG': ['Intuitive Surgical'], 'AVAV': ['AeroVironment'], 'KTOS': ['Kratos'],
+        'ANET': ['Arista'], 'VRT': ['Vertiv'], 'CEG': ['Constellation Energy'], 'VST': ['Vistra'],
+        'ETN': ['Eaton'], 'PH': ['Parker Hannifin'], 'GEV': ['GE Vernova'], 'APP': ['AppLovin'],
+        'MSTR': ['MicroStrategy'], 'RDDT': ['Reddit'], 'SNAP': ['Snap Inc'], 'PINS': ['Pinterest'],
+        'TTD': ['Trade Desk'], 'FSLR': ['First Solar'], 'ENPH': ['Enphase'], 'RUN': ['Sunrun'],
+        'LI': ['理想汽车', 'Li Auto'], 'XPEV': ['小鹏', 'XPeng'], 'BILI': ['哔哩哔哩', 'Bilibili'],
+        'FUTU': ['富途'], 'NTES': ['网易', 'NetEase'], 'TCOM': ['携程', 'Trip.com'],
+    }
+    # 歧义 ticker: 裸词禁匹配 (常见英文词/单字母), 只认 $X 或 (X) 形式; 别名照常
+    AMBIGUOUS_TICKERS = {
+        'A', 'B', 'C', 'D', 'F', 'T', 'V', 'X', 'MA', 'GM', 'DE', 'GE', 'BA', 'SO', 'ON',
+        'IT', 'ALL', 'NOW', 'KEY', 'ARE', 'FOR', 'GO', 'AN', 'BE', 'BY', 'SQ', 'NET',
+        'OPEN', 'COST', 'REAL', 'FAST', 'PLAY', 'LOVE', 'RUN', 'APP', 'LI', 'MS', 'UPS',
+    }
+    _symbol_regex_cache = None  # (bare_re, dollar_re, alias_list) 惰性编译
+
+    @classmethod
+    def _build_symbol_matchers(cls):
+        import re
+        bare = [t for t in cls.TICKER_ALIASES if t not in cls.AMBIGUOUS_TICKERS]
+        bare_re = re.compile(r'\b(' + '|'.join(sorted(bare, key=len, reverse=True)) + r')\b')
+        dollar_re = re.compile(r'[$(](' + '|'.join(sorted(cls.TICKER_ALIASES, key=len, reverse=True)) + r')[)\s,.]')
+        aliases = [(a.lower(), t) for t, al in cls.TICKER_ALIASES.items() for a in al]
+        cls._symbol_regex_cache = (bare_re, dollar_re, aliases)
+
+    def _match_symbols_v2(self, text: str) -> Set[str]:
+        """P4a 独立标的匹配 (与 US_KEYWORDS 解耦): 裸 ticker 大小写敏感词界 +
+        $X/(X) 形式 + 公司名别名。返回 {'US.XXX', ...}"""
+        if self._symbol_regex_cache is None:
+            self._build_symbol_matchers()
+        bare_re, dollar_re, aliases = self._symbol_regex_cache
+        out = set()
+        try:
+            for m in bare_re.findall(text):
+                out.add(f'US.{m}')
+            for m in dollar_re.findall(text):
+                out.add(f'US.{m}')
+            tl = text.lower()
+            for alias, tk in aliases:
+                if alias in tl:
+                    out.add(f'US.{tk}')
+        except Exception:
+            pass
+        return out
+
     
     def _init_db(self):
         """初始化 SQLite 数据库"""
@@ -274,6 +363,8 @@ class RSSHubUSNewsFetcher:
                 if kw in self.SYMBOL_MAP:
                     matched_symbols.add(self.SYMBOL_MAP[kw])
         
+        # P4a (2026-07-27): 独立标的匹配器并集 — 修 11% 覆盖率瓶颈 (见 TICKER_ALIASES 注释)
+        matched_symbols |= self._match_symbols_v2(text)
         return list(matched_symbols), matched_keywords
     
     def fetch_source(self, source_key: str) -> List[Dict]:
@@ -464,7 +555,10 @@ class RSSHubUSNewsFetcher:
             logger.info(f"[RSSHub] {source_info['name']}: {len(articles)} 条相关新闻")
         
         saved = self.save_articles(all_articles)
-        logger.info(f"[RSSHub-US] 本轮采集完成: 获取 {len(all_articles)} 条, 保存 {saved} 条")
+        # P4a 覆盖率仪表: 本轮带 symbol 标注占比 (判据: 11% → 50%+; 持续 <30% 则映射词典需扩)
+        _tagged = sum(1 for a in all_articles if a.get('symbols') and a['symbols'] != '[]')
+        logger.info(f"[RSSHub-US] 本轮采集完成: 获取 {len(all_articles)} 条, 保存 {saved} 条, "
+                    f"symbol标注 {_tagged}/{len(all_articles) or 1} ({_tagged * 100 // (len(all_articles) or 1)}%)")
         return results
     
     def get_recent_news(self, hours: int = 2, limit: int = 50) -> List[Dict]:
