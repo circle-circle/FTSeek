@@ -76,6 +76,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-28 (早·三链复盘审计执行批) · 推送去重 + 双 CST 修复 (用户裁"按建议执行")
+**三链审计结论**: 链1 (进程内 orchestrator, 唯一有 Issue 自动修复闭环) / 链2 (Hermes 04:00 综合报告, OKR+告警独有) / 链3 (Hermes 05:00, feedback_loop.py 零 LLM, **DA 记忆闭环=信号链上游**) — 三链骨架各有不可替代性, 不砍。
+**诚实修正**: 审计初报称链2 有"归因辩论"与链1 重叠 — 读完整 prompt 后证伪 (Step 2 是方向归因脚本非 LLM 辩论), 方案 A 原样撤回。
+**已执行**: ①B: 链3 [SILENT] 化 — 记忆更新照跑, 不再重复推报告 (失败时仍推错误摘要); 早晨飞书 3→2 份 ②链2 Step 4 ShadowTracker `date.today()` CST 日期 bug (家族第八例): 04:00 CST 跑时 CST 已跨日但 ET 交易日还是昨天 → 一直 track 无指令的"明天" — 改 now_et()。均经 hermes cron edit 写回并断言验证。
+**链1 同批早先已修** (f89655af/218a26f5): 重启双跑幂等持久化 + orchestrator CST 缺省日期×6 (07-28 空复盘脏文件真凶)。
+**挂账**: 链1 的 3 次辩论调用不在 llm_audit.db (独立 provider 路径, 预算守卫盲区)。
+**验收**: 明晨 04:00 链2 报告 Shadow tracking 日期应为 ET 交易日; 05:00 链3 飞书应静默; 16:00 ET 链1 单轮单份。
+
 ### 2026-07-28 (凌晨·首夜复盘修复批) · 高 ATR 退出档 shadow + 归因块带回 (用户裁"按建议执行", 当时已无持仓)
 **背景**: 07-27 首夜 10 笔全平, 胜率 80% 但净 -118 (8 小胜 +58 vs TSM/GS 两笔 MFE_STALL 大亏 -176, 盈亏比 1:12)。两笔共性: ATR 5% 高波动 + 从未派过 (MFE≈0.07%) + 享 -5% 宽 SL + 150min 慢停损 — 正是 L2 回测 hi4.0 翻案处方缺失的代价。
 **#1 高 ATR 退出档 shadow** (`pipeline._check_playbook_exit_rules` 规则 3.4 前, record-only): ATR≥4% 且 held≥60min 且 MFE<0.3% 且水下 → 反事实退出点写 `data/high_atr_stall_shadow.jsonl` (防重标记 `_high_atr_stall_shadow`)。零行为影响; n≥5 后 08-07 裁决点定转 live。功能级验证: 触发+落盘+防重+不改真实决策 ✓。插曲: 首版用了 pipeline 不存在的 now_et 会被 try/except 吞成永久静默 — 自检揭出并修 (函数内 import), "静默失败路径自己先过尺子"再次应验。
