@@ -329,6 +329,16 @@ class DualBrokerAdapter:
                         # FILLED_ALL 或 dealt_qty >= close_qty = 成交完成
                         if "FILLED_ALL" in _status or dealt_qty >= close_qty:
                             order_filled = True
+                            # 2026-07-27 (DEB-entry-fill 同款对称修复): 本行里就有 dealt_avg_price
+                            #   真成交均价, 旧版只读 status/qty 丢价 → 事后 _query_filled_price
+                            #   (sim 主路径 history_deal 不支持) 失败率 41% → 41% 平仓价被报价兜底。
+                            if filled_price <= 0:
+                                try:
+                                    _davg = float(_row.get("dealt_avg_price", 0) or 0)
+                                    if _davg > 0:
+                                        filled_price = _davg
+                                except Exception:
+                                    pass
                             break
                         # 订单失败/取消 = 不可恢复
                         if any(_x in _status for _x in ("FAILED", "CANCELLED", "DELETED", "TIMEOUT", "REJECTED")):

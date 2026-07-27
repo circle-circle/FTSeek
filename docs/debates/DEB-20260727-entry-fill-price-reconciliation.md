@@ -136,3 +136,31 @@
 - 备份: `ftseek_us.db.bak_entryfill_20260727_233630`; 回滚 = 恢复备份或按 entry_price_orig 逐笔还原
 - **另一处翻转**: COIN id=1080 -2.26→+0.21 (与 SOLS 同款)
 - 后续: 消费这些统计的报表 (scorecard/回放) 下次重跑自动吃到真值; ④观察判据继续 (修复后 3 交易日 quote_fallback 新增 ≤3 笔)。本案闭环, 状态 → ✅ 已裁决已执行。
+
+---
+
+## 九、同款隐藏问题全面扫描 (2026-07-28 凌晨, 用户令"关联模块是否需调整 + 扫同款隐藏问题并修复")
+
+同款模式定义: ①"下单瞬间取值必空 → 快照/下单量兜底记账" ②"确认/轮询循环行里有真值却不带回"。
+
+### 🔴 实锤 2 处, 已修 (零新 API, 都是"就地带回")
+
+| # | 位置 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | **平仓侧** `dual_broker.close_position` | 完全对称同款: 轮询循环 `iloc[0]` 读了 status/dealt_qty 却不读同行 `dealt_avg_price`; 事后再查的主路径 history_deal sim 不支持 → 近两周 **41% 平仓价 (42/103) 是报价快照** (broker_closed_no_price 36 + NULL 6) | 轮询确认成交时就地带回 dealt_avg_price |
+| 2 | **入场部分成交量** playbook_service | `_result.filled_qty` 也是下单瞬间取 (sim 异步必 0) → 部分成交被回退成全量记账 (幽灵仓残余风险) | `_confirm_order_filled` 升四元组额外带回 dealt_qty, 优先真值 |
+
+### ✅ 扫过确认无同款 / 无需调整的关联面
+
+- **entry_price_source 消费面**: 无代码按 source 过滤判分 (纯标注), 新值 broker_deal_confirm/broker_deal_backfill 不破坏任何消费方
+- **SL/TP/保本锚**: 基于 `_fill` 计算 → go-forward 修复后自动正确, 无需改动
+- **slippage_bps**: arrival vs fill → fill 真了滑点测量自动变真 (历史 130 笔的 execution.slippage_bps 未回填 — 观测字段不驱动行为, 影响面报告已覆盖主度量)
+- **手动平仓** (web_dashboard/order/executor): 已是"带重试轮询 dealt_avg_price"正确模式
+- **回放/报表** (L2/exit_replay/scorecard): 吃 DB 列, 回填后自动真
+- **TWAP** (`fp=0 → slice_price` 同款兜底): 仅主线引擎 (已静默) 消费, playbook 不走 — 休眠路径挂账不动, 若未来启用 TWAP 须先修
+
+### 待裁决 (新增)
+
+**平仓侧存量 42 笔** (broker_closed_no_price 36 + NULL 6) 可用入场侧同款工具链 (impact_report → backfill) 回填。量级参考: 平仓假价是报价级而非 ask 单侧偏, 预期Δ 小于入场侧; 待用户裁决是否出 exit 侧影响面报告。
+
+验证: py_compile / 四元组+初始化+平仓带价断言 / 980 passed / 重启冒烟 7/7。

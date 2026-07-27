@@ -1007,6 +1007,7 @@ class PlaybookService:
         # 2026-06-27 辩论DEB-20260627: _fill=0时不fallback到entry_price
         # ponytail: 1次查询, 失败则warning+拒绝(不sleep阻塞批量路径)
         _fill = _result.get("filled_price", 0) or 0
+        _confirm_dqty = 0.0  # 2026-07-27: 确认窗带回的真成交量 (未走确认分支时为 0)
         _entry_price_source = "broker_deal" if _fill > 0 else "unknown"
         if not _fill or _fill <= 0:
             _fill = self._query_filled_price_for_order(_futu_id, target_env)
@@ -1026,11 +1027,11 @@ class PlaybookService:
             try:
                 from app.playbook.config import get_playbook_config as _gpc_cw
                 _confirm_wait = float(_gpc_cw().get("entry_confirm_max_wait_s", 30.0))
-                _confirmed, _ostatus, _confirm_davg = self._confirm_order_filled(
+                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = self._confirm_order_filled(
                     _futu_id, target_env, max_wait_s=_confirm_wait)
             except Exception as _cf_err:
                 logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (降级放行): {_cf_err}")
-                _confirmed, _ostatus, _confirm_davg = True, "query_error", 0.0
+                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = True, "query_error", 0.0, 0.0
             if not _confirmed:
                 logger.error(
                     f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未成交 (status={_ostatus}), "
@@ -1084,8 +1085,12 @@ class PlaybookService:
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
         # 部分成交处理 (P0 2026-07-19): 用真实成交量记账, 消除幽灵仓.
         #   broker 返回 filled_qty=0 时 (SIM avg_price=0 / 查询未命中) 回退下单量.
+        # 2026-07-27 (同款时序修复): _result.filled_qty 也是下单瞬间取的 (sim 异步必 0) —
+        #   优先用确认窗带回的 dealt_qty 真值, 部分成交不再被回退成全量记账。
         _req_qty = int(position_size) if position_size else 1
         _filled_qty = float(_result.get("filled_qty", 0) or 0)
+        if _filled_qty <= 0 and _confirm_dqty and _confirm_dqty > 0:
+            _filled_qty = float(_confirm_dqty)
         if 0 < _filled_qty < _req_qty:
             _effective_qty = int(_filled_qty)
             logger.warning(
@@ -1446,7 +1451,7 @@ class PlaybookService:
 
     def _confirm_order_filled(self, futu_order_id: str, target_env: str,
                               max_wait_s: float = 5.0) -> tuple:
-        """确认订单是否真实成交 → (confirmed: bool, status: str, dealt_avg_price: float).
+        """确认订单是否真实成交 → (confirmed, status, dealt_avg_price, dealt_qty).
     
         2026-07-19 (DEB-round3 GHOST-RC1): 入场侧成交确认, 与 dual_broker.close_position
         的平仓侧验证共用同一真相源 — order_list_query.order_status (FILLED_ALL)。
@@ -1456,9 +1461,9 @@ class PlaybookService:
         本修复就地带回真价: 零新挂点/零额外 API。
     
         判定:
-          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status, dealt_avg_price)
-          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status, 0.0) 不可恢复
-          超时仍非 FILLED → (False, status, 0.0) (宁可拒记不记假仓)
+          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status, dealt_avg_price, dealt_qty)
+          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status, 0.0, 0.0) 不可恢复
+          超时仍非 FILLED → (False, status, 0.0, 0.0) (宁可拒记不记假仓)
         """
         from futu import RET_OK
         from app.execution.dual_broker import get_dual_broker
@@ -1481,14 +1486,14 @@ class PlaybookService:
                             _davg = float(_row.get("dealt_avg_price", 0) or 0)
                         except Exception:
                             _davg = 0.0
-                        return True, _status, _davg
+                        return True, _status, _davg, _dealt
                     if any(_k in _status for _k in
                            ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
-                        return False, _status, 0.0
+                        return False, _status, 0.0, 0.0
             except Exception as _od_err:
                 logger.debug(f"[playbook] order_list_query 确认异常 {futu_order_id}: {_od_err}")
             time.sleep(0.5)
-        return False, _last_status, 0.0
+        return False, _last_status, 0.0, 0.0
 
     def skip_instruction(
         self,
