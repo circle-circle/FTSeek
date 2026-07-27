@@ -85,10 +85,18 @@ def main():
     ap.add_argument("--push", action="store_true", help="失败时飞书告警")
     args = ap.parse_args()
 
+    # 2026-07-27 修复 (实战暴露): restart 后立即跑 --wait 时, 新启动段尚未写出,
+    #   首轮匹配到"上一次启动段"且全绿 → 假阳性放行。--wait 模式下要求启动段
+    #   不早于脚本启动前 120s, 旧段视为"新段未出"继续轮询。
+    script_start = datetime.now()
     deadline = time.time() + max(args.wait, 0)
     while True:
         code, failed, boot_time = run_once()
-        if code == 0 or time.time() >= deadline:
+        stale_boot = (args.wait > 0 and boot_time is not None
+                      and boot_time < script_start - timedelta(seconds=120))
+        if stale_boot:
+            code, failed = 2, [f"启动段 ({boot_time}) 早于本次重启, 等待新段写出"]
+        if (code == 0 and not stale_boot) or time.time() >= deadline:
             break
         time.sleep(5)
 

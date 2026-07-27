@@ -311,31 +311,27 @@ class USPositionSync:
         import pytz
 
         now = datetime.now()
-        weekday = now.weekday()
 
-        # 周末判定
-        if weekday == 5:  # 周六
+        # 2026-07-27 修复 (时区批同款漏网): 周末判定原用 CST weekday, 时段判定用 ET 时刻 —
+        #   CST 周一凌晨 = ET 周日下午, 12h 错位窗内 ET 周日被误判 TRADING/AFTER
+        #   (实锤: 07-27 周一 03:42-08:00 CST 白跑 84 轮同步+解锁)。统一改 ET weekday。
+        try:
+            _et_now = now.astimezone(pytz.timezone("US/Eastern"))
+        except Exception:
+            _et_now = now
+        weekday = _et_now.weekday()
+
+        # 周末判定 (ET 口径: 周六/周日全天 CLOSED; 周五收盘后由下方 ET 时刻分支管)
+        if weekday >= 5:  # ET 周六/周日
             return ("CLOSED", 1800)  # 30 分钟检查一次
-        if weekday == 4:  # 周五 08:00 CST 之后到周一 16:00 CST 之间关闭
-            if now.hour >= 8:
-                return ("CLOSED", 1800)
-        if weekday == 6:  # 周日
-            if now.hour < 16:
-                return ("CLOSED", 1800)
 
-        # 节假日检查
+        # 节假日检查 (2026-07-27: 统一 ET 口径 — 用 ET 交易日查日历, 删除旧 CST 周一凌晨
+        #   特判 (那是 CST-weekday 时代补丁, ET 口径下周五夜盘属 ET 周五, 无需特判))
         try:
             from app.utils.holiday_calendar import get_holiday_calendar
             cal = get_holiday_calendar()
-            if not cal.is_trading_day("US", now.date()):
-                # 周一凌晨 05:00 前可能是周五夜盘延续
-                if weekday == 0 and now.hour < 5:
-                    pass
-                elif weekday == 0 and now.hour < 8:
-                    # 冬令时周一 08:00 CST = 周五 19:00 ET (盘后)
-                    pass
-                else:
-                    return ("CLOSED", 1800)
+            if not cal.is_trading_day("US", _et_now.date()):
+                return ("CLOSED", 1800)
         except Exception:
             pass
 
@@ -392,7 +388,7 @@ class USPositionSync:
                         logger.error(f"[US Sync] 实盘解锁失败: {data}")
                         self._reset_futu_ctx("实盘解锁失败")
                         return None
-                    logger.info("[US Sync] ✅ 实盘交易已解锁 (SIMULATE+REAL 双环境查询)")
+                    logger.info("[US Sync] ✅ REAL 持仓查询权限已解锁 (只读对账用, SIMULATE+REAL 双环境; 下单环境仍由 AUTO_TRADE_ACCOUNT 决定)")
                 else:
                     logger.error("[US Sync] FUTU_UNLOCK_PWD_MD5 未设置，无法查询 REAL 持仓")
                     self._reset_futu_ctx("缺少解锁密码")
@@ -605,7 +601,11 @@ class USPositionSync:
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
                             f"无已知持仓缓存，跳过本轮"
                         )
-                        self._reset_futu_ctx("空持仓无缓存")
+                        # 2026-07-27 修复 (自咬尾巴死循环): 原此处 _reset_futu_ctx 断连接
+                        #   并把计数器清零 → "连续3次确认真空"分支永不可达, 每轮重建连接
+                        #   +重新 unlock REAL (07-26 实锤 86 次/日)。查询成功返回空 df
+                        #   说明连接健康 — 保留连接与计数器, 3 轮后正常走"确认真实空仓"。
+                        #   (2026-05-11 P0 防的是"瞬断误删持仓", 那由 query 失败分支负责。)
                         return
                 else:
                     # 连续多次空查询，认为真实空仓

@@ -84,7 +84,11 @@ class TestTradeRecorder:
         assert record['realized_pnl'] > 0
     
     def test_get_records_by_date(self, recorder):
-        today = recorder._get_conn().execute("SELECT date('now')").fetchone()[0]
+        # 2026-07-27 修尺子: 原用 SQLite date('now') (UTC 日) 查询, 但 record() 落库
+        #   走 get_trade_date() (ET 交易日, 时区批 C1) — UTC/ET 跨日窗口 (ET 20:00 后)
+        #   两者差一天必失败 (时间敏感假阳性)。查询口径与写入口径对齐 SSOT。
+        from app.utils.timezone import get_trade_date
+        today = get_trade_date()
         
         recorder.record(
             stock_code='AAPL',
