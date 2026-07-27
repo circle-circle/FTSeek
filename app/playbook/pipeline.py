@@ -354,9 +354,12 @@ class TechnicalFallbackAdapter:
             from app.strategy.pure import evaluate as eval_strategy
             cand = eval_strategy("technical", ctx)
         except Exception as e:
-            logger.debug(f"[TechnicalFallback] {symbol} technical 评估异常: {e}")
+            # 2026-07-27 (topup 零产出诊断): debug→warning — 全史零方向产出而日志无声,
+            #   静默失败路径必须可见 (静默退化军规)
+            logger.warning(f"[TechnicalFallback] {symbol} technical 评估异常: {type(e).__name__}: {e}")
             return None
         if cand is None:
+            logger.debug(f"[TechnicalFallback] {symbol} 无候选 (momentum NEUTRAL 或回调不达标)")
             return None
         direction = str(getattr(cand, "direction", "") or "").upper()
         if direction not in ("LONG", "SHORT"):
@@ -761,6 +764,9 @@ def _build_instructions_from_votes(
             continue
         
         if vote_result is None:
+            # 2026-07-27 (topup 零产出诊断): 此分支原无审计桶 — 18 skip 而 breakdown 全 0
+            #   的隐形路径实锤。补桶使过滤审计闭合。
+            _filter_audit["vote_none"] = _filter_audit.get("vote_none", 0) + 1
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP", skip_reason="投票返回 None"
             ))
@@ -1251,7 +1257,12 @@ def _build_instructions_from_votes(
         f"[playbook] 过滤审计: input={_filter_audit['total_input']} → "
         f"instructions={_filter_audit['final_instructions']} skips={_skip_count} | "
         f"breakdown: mkt_data_none={_filter_audit['market_data_none']} "
-        f"vote_fail={_filter_audit['vote_failed']} neutral={_filter_audit['vote_neutral']} "
+        f"vote_fail={_filter_audit['vote_failed']} "
+        # 2026-07-27 (topup 零产出诊断): 补两个硬编码清单缺失桶 — skips=18 而 breakdown
+        #   全 0 的矛盾根因 (vote 返 None / technical 无信号都不在日志行里)
+        f"vote_none={_filter_audit.get('vote_none', 0)} "
+        f"tech_no_sig={_filter_audit.get('technical_no_signal', 0)} "
+        f"neutral={_filter_audit['vote_neutral']} "
         f"buy_str_skip={_filter_audit['buy_low_strength_skip']} "
         f"buy_std_skip={_filter_audit['buy_high_std_skip']} "
         f"low_conf_skip={_filter_audit['low_confidence_skip']} "

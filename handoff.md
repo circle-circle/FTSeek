@@ -76,6 +76,12 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-27 (深夜·topup 零产出定性) · 用户问"topup 能否正常下单" → 实锤"上线以来全史零补出" + 双盲区补丁, 根因待明日盘中诊断
+**用户问**: topup 是否可正常下单。**定性**: 机制层全部正常 (窗口如期 5 次/日、质量门过 18-20 只、分窗幂等、D2 退避均工作); 但 **topup 来源指令全史零条** — 不是今日市况, 是结构性零产出 ("线路从未通电"第二例)。
+**证据链**: ①TechnicalFallback 方向产出日志全史 0 次 (vote 从未成功出方向) ②过滤审计 skips=18 但 breakdown 全 0 — 双盲区实锤: `vote_result is None` 分支无审计桶 + breakdown 硬编码清单缺 vote_none/technical_no_signal 两桶 ③vote() 内 eval 异常被 debug 级吞 (静默失败)。
+**本批补丁 (可观测, 零行为变更)**: eval 异常 debug→warning / vote_none 审计桶补齐 / breakdown 清单补 vote_none+tech_no_sig 两桶。980 passed + 重启冒烟 7/7。
+**待诊 (明日盘中自动出数据)**: 新日志会区分三种真因 — ①eval 异常 (WARNING 可见) ②ctx 指标字段缺失致 momentum 恒 NEUTRAL ③策略门槛真拦 (回调质量门)。待真因落地后再修本体。同时注意: 盘前窗 topup 时 DA bridge 已在 (今日 12 条 DA), 但 topup 强制用 TechnicalFallbackAdapter — 设计如此 (池补量用确定性方向非 LLM)。
+
 ### 2026-07-27 (周一·仓外调度面 CST×ET 错位全普查) · Hermes 11 + crontab 28 条逐个判定 → 实锤 1 处 (S4 自身) 已修 (用户裁"需要")
 **背景**: 盘中诊断 job 错位窗是家族第五例后, 用户批准对仓外调度面 (Hermes jobs + 系统 crontab) 全量按 ET 口径过一遍。
 **判定结果**:
