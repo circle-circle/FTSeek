@@ -164,11 +164,14 @@ def fetch_bars(ctx, symbol: str, day: str, refresh: bool = False) -> list[dict] 
                      "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in raw]
         except Exception:
             pass
-    from futu import KLType, RET_OK
+    from futu import KLType, RET_OK, AuType
     data = None
     for attempt in (1, 2):  # 空结果重试一次 (区分限流失败 vs 休市合法空)
+        # 2026-07-28 (DEB-bar-ruler F2): autype=NONE — 回放的 entry/exit 是原始成交价,
+        #   缺省 QFQ 前复权在分红股跨除息日会错位 ~0.3-0.5%
         ret, data, _ = ctx.request_history_kline(
-            symbol, ktype=KLType.K_1M, start=day, end=day, max_count=1000)
+            symbol, ktype=KLType.K_1M, start=day, end=day, max_count=1000,
+            autype=AuType.NONE)
         if ret == RET_OK and data is not None and len(data) > 0:
             break
         if attempt == 1:

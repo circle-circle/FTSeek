@@ -1057,7 +1057,8 @@ class FutuLV3Provider:
         with self._kline_cache_lock:
             self._kline_data_cache[futu_sym] = {"data": data, "ts": time.time()}
 
-    def get_kline(self, symbol: str, ktype: str = "K_1M", count: int = 100) -> Optional[List[Dict]]:
+    def get_kline(self, symbol: str, ktype: str = "K_1M", count: int = 100,
+                  autype: str = "QFQ") -> Optional[List[Dict]]:
         """
         获取 K 线数据 (P0 修复 - 2026-05-06)
         
@@ -1065,30 +1066,39 @@ class FutuLV3Provider:
           1. 持久化缓存 (300s TTL, 不消耗配额)
           2. Push 缓存 (由 PushKlineHandler 累积 K 线列表，实时更新)
           3. HTTP 请求 (配额允许时)
+
+        2026-07-28 (DEB-bar-ruler F2): autype 显式化 — 缺省 QFQ (前复权, 与旧隐式行为
+        一致, 技术指标消费方零变化); bar 遥测等与原始成交价对比的消费方传 "NONE"。
+        注: NONE 请求与 QFQ 缓存分 key 存储, 避免口径串缓存。
         """
         if not self._ensure_connected():
             return None
 
         futu_symbol = self._to_futu_symbol(symbol)
+        # 非缺省复权口径用独立缓存 key (防 QFQ/NONE 串缓存); push 缓存为实时原始推送,
+        # 仅缺省口径复用。
+        _cache_sym = symbol if autype == "QFQ" else f"{symbol}#{autype}"
 
-        # ① 优先读持久化缓存 (60s TTL)
-        cached = self._get_cached_kline(symbol)
+        # ① 优先读持久化缓存 (60s TTL) — 按口径 key
+        cached = self._get_cached_kline(_cache_sym)
         if cached and len(cached) >= min(count, 10):
             return cached[-count:]
 
-        # ② 读 Push 缓存 (由 Handler 实时更新)
-        with self._push_kline_cache_lock:
-            if futu_symbol in self._push_kline_cache:
-                push_data = self._push_kline_cache[futu_symbol]
-                if len(push_data) >= min(count, 10):
-                    # 同时写入持久化缓存
-                    self._set_cached_kline(symbol, push_data[-count:])
-                    return push_data[-count:]
+        # ② 读 Push 缓存 (由 Handler 实时更新) — 仅缺省 QFQ 口径复用 (push 为实时推送,
+        # 当日无复权差异, 但 T-1 段口径不明, NONE 消费方不用)
+        if autype == "QFQ":
+            with self._push_kline_cache_lock:
+                if futu_symbol in self._push_kline_cache:
+                    push_data = self._push_kline_cache[futu_symbol]
+                    if len(push_data) >= min(count, 10):
+                        # 同时写入持久化缓存
+                        self._set_cached_kline(_cache_sym, push_data[-count:])
+                        return push_data[-count:]
 
         # ③ 配额允许才发 HTTP 请求
         if not self._wait_kline_quota(symbol):
             # 配额满/冷却中 → 返回已有缓存(哪怕不足)
-            all_cached = self._get_cached_kline(symbol)
+            all_cached = self._get_cached_kline(_cache_sym)
             if all_cached:
                 return all_cached[-count:]
             return None
@@ -1132,6 +1142,12 @@ class FutuLV3Provider:
                 "start": _start_date,
                 "end": _end_date,
             }
+            # 2026-07-28 (F2): autype 显式透传 (缺省 QFQ = futu 默认, 旧行为零变化)
+            try:
+                from futu import AuType as _AuT
+                hist_kwargs["autype"] = {"NONE": _AuT.NONE, "HFQ": _AuT.HFQ}.get(autype, _AuT.QFQ)
+            except Exception:
+                pass
             # 日内 K 线: start=T-1 获取前一交易日尾盘 K 线补充缓冲区, end=today 防止未来数据
             if ktype != "K_DAY":
                 hist_kwargs["start"] = prev_trading_day
@@ -1168,7 +1184,7 @@ class FutuLV3Provider:
                 # 更新所有缓存
                 with self._push_kline_cache_lock:
                     self._push_kline_cache[futu_symbol] = klines
-                self._set_cached_kline(symbol, klines)
+                self._set_cached_kline(_cache_sym, klines)
                 return klines
             else:
                 logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret}")

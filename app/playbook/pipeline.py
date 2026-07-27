@@ -4596,17 +4596,30 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
             return False
         try:
             _edt = datetime.fromisoformat(entry_time_str)
-            _entry_key = _edt.strftime("%Y-%m-%d %H:%M:00")
+            # 2026-07-28 (DEB-bar-ruler F1① 复核确证): futu K_1M time_key 是分钟末标签
+            #   (bar "09:36" 覆盖 09:35:00-59; 开盘量签名实证: 首根 09:31 带开盘巨量、无
+            #   09:30 bar)。旧版按首标签过滤把入场前一分钟整分钟混入 (SOLS trough_bar
+            #   60.777 实为入场前低点)。末标签口径: 入场分钟的 bar 标签 = 入场分钟+1min。
+            from datetime import timedelta as _btd
+            _entry_key = (_edt + _btd(minutes=1)).strftime("%Y-%m-%d %H:%M:00")
         except Exception:
             return False
         # 2026-07-20: count=800 — HTTP 冷路径 start=T-1 时 OpenD 返回"最旧N根",
         #   count 小于范围总数(~780)会拿到纯 T-1 bar → 入场后过滤恒空 → 采集失效.
-        bars = _futu.get_kline(symbol, ktype="K_1M", count=800) or []
+        # 2026-07-28 (F2): autype=NONE — 本尺子与原始成交价对比, 不得用前复权 bar
+        #   (除息日附近会错位 ~0.3-0.5%)。技术指标侧仍用缺省 QFQ, 互不影响。
+        try:
+            bars = _futu.get_kline(symbol, ktype="K_1M", count=800, autype="NONE") or []
+        except TypeError:  # 旧签名兼容 (provider 未重载时不阻断采集)
+            bars = _futu.get_kline(symbol, ktype="K_1M", count=800) or []
         if not bars:
             return False
         highs, lows = [], []
+        _max_key = ""
         for b in bars:
             _t = str(b.get("time") or b.get("time_key") or "")
+            if _t > _max_key:
+                _max_key = _t
             if not _t or _t < _entry_key:
                 continue
             _h = float(b.get("high", 0) or 0)
@@ -4616,6 +4629,23 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
             if _l > 0:
                 lows.append(_l)
         changed = False
+        # 2026-07-28 (F1②③): 覆盖可观测 + 冻结告警 — 07-27 实锤 bar 峰值锁死第一根
+        #   (真峰 61.695 全程未采), 降级链无声。bar_covered_until 使判分端可识别冻结;
+        #   连续 5 轮不前进 WARNING 一次 (静默退化军规)。冻结真因 (TTL 短路/配额/订阅)
+        #   由本可观测性上线后用真数据裁决 — 起案"配额打爆"假设未获日志证实, 存疑。
+        if _max_key:
+            _prev_covered = str(meta.get("bar_covered_until") or "")
+            if _max_key > _prev_covered:
+                meta["bar_covered_until"] = _max_key
+                meta["_bar_stall_rounds"] = 0
+            else:
+                _stall = int(meta.get("_bar_stall_rounds", 0) or 0) + 1
+                meta["_bar_stall_rounds"] = _stall
+                if _stall == 5:
+                    logger.warning(
+                        f"[bar遥测·冻结] {symbol} bar 覆盖停在 {_max_key} 已 {_stall} 轮未前进 "
+                        f"(缓存/配额/订阅链降级?) — bar 峰谷可能失真"
+                    )
         _is_short = direction.upper() in ("SHORT", "SELL_SHORT")
         if not _is_short:
             # LONG: peak = max(highs) 最有利, trough = min(lows) 最不利

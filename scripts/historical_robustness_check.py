@@ -61,13 +61,16 @@ def fetch_daily(ctx, symbol: str, start: str, end: str, refresh: bool = False) -
                 return rows
         except Exception:
             pass
-    from futu import KLType, RET_OK
+    from futu import KLType, RET_OK, AuType
     rows: list[list] = []
     page_key = None
     for _page in range(8):  # 5y/1000 根 ≈ 2 页, 上限 8 页防死循环
+        # 2026-07-28 (DEB-bar-ruler F2): 显式 QFQ — L3 五年跨度的连续性分析应用前复权
+        #   (除息跳空会污染长周期 ATR 分桶/趋势); ATR% 为比值, 复权同时缩放分子分母,
+        #   分桶口径不受影响 (复核待复核点④定性)。
         ret, data, page_key = ctx.request_history_kline(
             symbol, ktype=KLType.K_DAY, start=start, end=end,
-            max_count=1000, page_req_key=page_key)
+            max_count=1000, page_req_key=page_key, autype=AuType.QFQ)
         if ret != RET_OK or data is None:
             break
         for _, r in data.iterrows():
