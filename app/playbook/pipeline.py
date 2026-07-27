@@ -4864,6 +4864,37 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
 
+    # ── 高 ATR 退出档 shadow 探针 (2026-07-28 首夜复盘 #1, record-only 零行为影响) ──
+    #   处方源: L2 回测 hi4.0 翻案 (高 ATR 不拦入场→转退出档) + 07-27 实证 (TSM/GS ATR 5%
+    #   享 -5% 宽 SL + 150min 慢停损, 两笔 -$176)。shadow 假设: ATR≥4% 且 60min 内 MFE<0.3%
+    #   且水下 → 反事实提前离场。只记录触发点价格, 不动真实退出; 与真实 exit 对比出
+    #   反事实收益差, n≥5 后 08-07 裁决点定是否转 live。回滚: 删本块。
+    try:
+        _atr_val = float(meta.get("atr", 0) or 0)
+        _atr_pct_live = (_atr_val / entry_price * 100.0) if (entry_price and _atr_val) else 0.0
+        if (_atr_pct_live >= 4.0 and held_minutes >= 60 and peak_profit_pct < 0.3
+                and profit_pct < 0 and not meta.get("_high_atr_stall_shadow")):
+            meta["_high_atr_stall_shadow"] = True  # 会话内防重 (每仓位只记首次触发点)
+            import json as _sj
+            from pathlib import Path as _SP
+            from app.utils.timezone import now_et as _shadow_now_et  # pipeline 无模块级 now_et
+            _srow = {
+                "ts": _shadow_now_et().isoformat(), "symbol": _symbol, "direction": direction,
+                "entry_price": entry_price, "shadow_exit_price": current_price,
+                "held_minutes": round(held_minutes, 1), "mfe_pct": round(peak_profit_pct, 4),
+                "cur_pct": round(profit_pct, 4), "atr_pct": round(_atr_pct_live, 2),
+                "rule": "high_atr_stall_60m_mfe0.3",
+            }
+            with open(_SP("data/high_atr_stall_shadow.jsonl"), "a") as _sf:
+                _sf.write(_sj.dumps(_srow, ensure_ascii=False) + "\n")
+            logger.info(
+                f"[影子·高ATR停滞] {_symbol} {direction} atr={_atr_pct_live:.1f}% "
+                f"held={held_minutes:.0f}min mfe={peak_profit_pct:.2f}% cur={profit_pct:.2f}% "
+                f"反事实退出点=${current_price} (record-only)"
+            )
+    except Exception:
+        pass
+
     # 规则3.4 (2026-07-24, DEB-20260723 crash-day + DEB-20260724 rootcause): MFE停滞退出 —
     #   持仓≥stall_minutes 且 峰值浮盈从未达标 且 当前水下 → 立即离场, 不等 TIME_EXIT 磨满时间窗.
     #   数据依据 (PLAYBOOK 全历史): MFE<0.5% 且持有≥2.5h 共47笔仅3胜(+$18.7),

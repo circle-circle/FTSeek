@@ -1274,6 +1274,16 @@ class PlaybookService:
                     "execution": _exec_meta,
                     # 2026-07-22 只读探针: 开盘 gap (record-only, 供 gap↔outcome 裁决)
                     "entry_gap": _gap_meta,
+                    # 2026-07-28 (首夜复盘 #2): 归因块 — metadata 内自证信号源/分桶,
+                    #   此前只能跨表 join 指令表才能切分 UE/DA/topup (复盘时连自己都归错过)。
+                    #   decision_id 列已有真值, 这里冗余一份使单表切片完备。
+                    "attribution": {
+                        "signal_source": _parse_json_field(inst.get("raw_instruction_json"), {}).get("source") or "",
+                        "timing": _parse_json_field(inst.get("raw_instruction_json"), {}).get("timing") or "",
+                        "vol_bucket": inst.get("vol_bucket") or "",
+                        "atr_pct": inst.get("atr_pct"),
+                        "decision_id": matched_decision_id,
+                    },
                 }),
                 "signal_details": _json.dumps({
                     "source": f"playbook_{_mode_label}",

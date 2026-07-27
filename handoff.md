@@ -76,6 +76,12 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-28 (凌晨·首夜复盘修复批) · 高 ATR 退出档 shadow + 归因块带回 (用户裁"按建议执行", 当时已无持仓)
+**背景**: 07-27 首夜 10 笔全平, 胜率 80% 但净 -118 (8 小胜 +58 vs TSM/GS 两笔 MFE_STALL 大亏 -176, 盈亏比 1:12)。两笔共性: ATR 5% 高波动 + 从未派过 (MFE≈0.07%) + 享 -5% 宽 SL + 150min 慢停损 — 正是 L2 回测 hi4.0 翻案处方缺失的代价。
+**#1 高 ATR 退出档 shadow** (`pipeline._check_playbook_exit_rules` 规则 3.4 前, record-only): ATR≥4% 且 held≥60min 且 MFE<0.3% 且水下 → 反事实退出点写 `data/high_atr_stall_shadow.jsonl` (防重标记 `_high_atr_stall_shadow`)。零行为影响; n≥5 后 08-07 裁决点定转 live。功能级验证: 触发+落盘+防重+不改真实决策 ✓。插曲: 首版用了 pipeline 不存在的 now_et 会被 try/except 吞成永久静默 — 自检揭出并修 (函数内 import), "静默失败路径自己先过尺子"再次应验。
+**#2 归因块** (`playbook_service` 记账 metadata): 新增 `attribution` 块 (signal_source/timing/vol_bucket/atr_pct/decision_id) — 单表即可切 UE/DA/topup, 不再跨表 join。侦察修正复盘误判: decision_id 列其实 10/10 有值 (复盘时查错了地方—查了 metadata), 指令表也已有 vol_bucket/atr_pct 列; 真缺口仅为 metadata 自证块。
+**验证**: 980 passed / 重启冒烟 7/7 / shadow 测试行已清。下一步: 明日盘前窗 topup 新桶日志定 topup 零产出真因; shadow 等高 ATR 样本。
+
 ### 2026-07-27 (深夜·topup 零产出定性) · 用户问"topup 能否正常下单" → 实锤"上线以来全史零补出" + 双盲区补丁, 根因待明日盘中诊断
 **用户问**: topup 是否可正常下单。**定性**: 机制层全部正常 (窗口如期 5 次/日、质量门过 18-20 只、分窗幂等、D2 退避均工作); 但 **topup 来源指令全史零条** — 不是今日市况, 是结构性零产出 ("线路从未通电"第二例)。
 **证据链**: ①TechnicalFallback 方向产出日志全史 0 次 (vote 从未成功出方向) ②过滤审计 skips=18 但 breakdown 全 0 — 双盲区实锤: `vote_result is None` 分支无审计桶 + breakdown 硬编码清单缺 vote_none/technical_no_signal 两桶 ③vote() 内 eval 异常被 debug 级吞 (静默失败)。
