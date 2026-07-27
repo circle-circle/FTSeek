@@ -443,8 +443,23 @@ def check_daily_review(scheduler: 'TradingScheduler'):
         except Exception as _rae:
             logger.debug(f"[Recommendations] 准确率触发异常（不影响主流程）: {_rae}")
 
-        if getattr(scheduler, '_last_review_date', None) != now_et.date():
+        # 2026-07-28 修复: 内存幂等标记重启即丢 — 今晨实锤 04:30 正常跑后 06:37 重启又跑
+        #   一轮 (3 LLM 辩论 + 日K配额消耗双倍)。改文件持久化 (llm_scan_state 同款先例),
+        #   内存标记保留作同进程快速路径。
+        from pathlib import Path as _RP
+        _review_marker = _RP("data/.last_daily_review")
+        _done = getattr(scheduler, '_last_review_date', None) == now_et.date()
+        if not _done:
+            try:
+                _done = _review_marker.read_text().strip() == now_et.date().isoformat()
+            except Exception:
+                _done = False
+        if not _done:
             scheduler._last_review_date = now_et.date()
+            try:
+                _review_marker.write_text(now_et.date().isoformat())
+            except Exception:
+                pass  # 标记写失败不阻断复盘 (退化回内存幂等)
             try:
                 from app.review.daily_review import generate_daily_review
                 review = generate_daily_review(now_et.date().isoformat())
