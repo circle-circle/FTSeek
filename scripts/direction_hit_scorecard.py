@@ -114,6 +114,17 @@ def main() -> int:
                 "us_wallstreetcn", "sec_8k", "none_matched"):
         emit("info_channel", f"UE·渠道:{_ch}",
              f"raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%\"info_channel\": \"{_ch}\"%'")
+    # 2026-07-27 (军规: 新增字段必带基数自检 — "常量退化"已三例: DA conf罚35 / UE conf cap50 /
+    #   info_source 恒 LLM_EVENT_REASONING): 字段落库但取值退化为常量 → 一切切片零区分度。
+    #   此处对 info_channel 做基数体检: 样本≥10 但 distinct<2 → WARNING (S0 落库端失效信号)。
+    _row = conn.execute(
+        "SELECT COUNT(*), COUNT(DISTINCT json_extract(raw_instruction_json,'$.origin.info_channel')) "
+        "FROM playbook_instructions WHERE date>=? AND raw_instruction_json LIKE '%universe_expansion%' "
+        "AND raw_instruction_json LIKE '%\"info_channel\"%'", (since,)).fetchone()
+    if _row and _row[0] >= 10 and _row[1] < 2:
+        print(f"  ⚠️ [基数自检] info_channel n={_row[0]} 但 distinct={_row[1]} — 疑似常量退化 (第四例?), "
+              f"检查 S0 落库端 _annotate_news_channel")
+        report.setdefault("warnings", []).append("info_channel_cardinality<2")
     # regime 切分 (07-24 起落库补全, 早期多为 NULL)
     emit("regime", "regime:cautious", "LOWER(market_regime) LIKE '%caution%'")
     emit("regime", "regime:risk_on", "LOWER(market_regime) LIKE '%risk_on%'")

@@ -76,6 +76,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-27 (周一·信息渠道二轮复核补丁) · S0 歧义词守卫 + 基数自检军规 (用户裁"需要", 零交易行为变更)
+辩论方对执行批 (commit 3b618b77) 逐行复测, 发现并修复一处准确性漏洞, 教训固化:
+1. **S0 歧义词守卫补齐** (`llm_universe_scan.py`): 渠道归因的标题兜底 `\bSYM\b` 漏了 P4a 的歧义词排除 — F/T/V/MA 等歧义 ticker 会被标题里任意独立字母误归因, 污染 S1 渠道切片。修法: 歧义 ticker 只信 symbols 标注, 标题兜底仅留非歧义。3/3 断言通过。
+2. **基数自检军规** (AGENT.md 军规第 6 条 + scorecard 落地): "常量退化"已三例 (DA conf 35 / UE conf 50 / info_source 恒常量) — 新增落库字段必带 distinct 计数体检 (n≥10 且 distinct<2 → WARNING)。实跑 scorecard 不误报 ✓。
+**分层原则备忘**: 测量层准确性优先 (宁可 none_matched), 探索层灵活性优先 (可插拔/降级/回滚), 预注册判据做单向阀门。详见 DEB-20260727 §八。
+**回滚**: git revert 两文件各自独立。
+
 ### 2026-07-27 (周一·position_sync 周末空转修复) · 用户查日志揪出 2 真 bug + 1 措辞 (86 次/日解锁循环)
 **用户疑问**: 周末日志反复"实盘交易已解锁"循环是否合理。诊断实锤三件事:
 1. **Bug① 时区批同款漏网** (`position_sync._get_market_phase`): 周末判定用 CST weekday × 时段判定用 ET 时刻 — CST 周一凌晨=ET 周日下午的 12h 错位窗内, ET 周日被误判 TRADING(30s)/AFTER(5min) → 周日白天白跑 84 轮。修复: weekday 统一 ET 口径 (ET 周六/日→CLOSED), 节假日检查同步用 ET date, 删旧 CST 周一凌晨特判。冒烟: 当前 ET 周日晚正确判 CLOSED ✓, 重启后日志 "sync paused" ✓。

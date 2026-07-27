@@ -681,14 +681,21 @@ def _annotate_news_channel(surfaced: List[Dict[str, Any]], news: List[Dict[str, 
         prepared.append((set(str(x).replace("US.", "") for x in (syms or [])),
                          str(n.get("title") or ""), str(n.get("source") or "unknown"),
                          str(n.get("id") or ""), pub))
+    # 歧义 ticker (F/T/V/MA...) 标题兜底误归因风险 (独立字母命中任意标题) — 与 P4a 同规:
+    #   只信 symbols 标注 (P4a 产出已带歧义守卫), 不做标题裸词匹配。
+    try:
+        from app.data.rsshub_us_news import RSSHubUSNewsFetcher as _NF
+        _ambiguous = _NF.AMBIGUOUS_TICKERS
+    except Exception:
+        _ambiguous = frozenset()
     for s in surfaced:
         sym = str(s.get("symbol", "")).replace("US.", "").upper()
         if not sym:
             continue
         hits = []
-        pat = _re.compile(r"\b" + _re.escape(sym) + r"\b")
+        pat = None if sym in _ambiguous else _re.compile(r"\b" + _re.escape(sym) + r"\b")
         for syms, title, src, nid, pub in prepared:
-            if sym in syms or pat.search(title):
+            if sym in syms or (pat is not None and pat.search(title)):
                 hits.append((pub, src, nid))
         if hits:
             # 最早 published 优先; None 沉底 (统一 timestamp 化, 防 None/naive-aware 比较炸)

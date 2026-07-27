@@ -89,3 +89,23 @@ S0 (落库端修复, S1 前置) → P4a (symbol 映射器) → S2/S4 (原案认�
 
 **回滚**: P4a/S0 = git revert 单文件; S2 = 删 yaml 两条; S3 = `clue_8k_events: false`; S4 = 删 cron 行。
 **待样本判据**: Q1 渠道切片 (2周) / Q4 周末覆盖 (+3条/周) / 8-K item×fwd 方向先验 (S1 同框架攒样本)。M1/M2 维持待裁不变。
+
+## 八、二轮复核补丁 (2026-07-27, 辩论方对执行批的复测, 用户裁"需要")
+
+对 §七 执行批逐行复测, 发现并修复一处**准确性漏洞**, 同时把"常量退化"教训固化为军规:
+
+1. **S0 歧义词守卫补齐** (`llm_universe_scan.py._annotate_news_channel`): 原实现的标题兜底
+   `\bSYM\b` 未复用 P4a 的 AMBIGUOUS_TICKERS 排除 — 若浮现标的是 F/T/V/MA 等歧义 ticker,
+   标题里任何独立字母都会误归因渠道, 直接污染 S1 切片 (在修准确性的批次里埋准确性漏洞)。
+   修法: 歧义 ticker 只信 symbols 标注 (P4a 产出已带守卫), 标题裸词兜底仅对非歧义 ticker 保留。
+   验证: 3/3 断言 (F 经标注归因 ✓ / F 仅标题裸词→none_matched ✓ / NVDA 标题兜底保留 ✓)。
+2. **基数自检军规落地** (`direction_hit_scorecard.py` + AGENT.md 军规第 6 条):
+   "常量退化"已三例 (DA conf 罚 35 / UE conf cap 50 / info_source 恒常量), 共性是"字段落库但
+   取值恒定 → 一切切片零区分度且表面无恙"。scorecard 对 info_channel 加 distinct 计数体检
+   (n≥10 且 distinct<2 → WARNING); 军规固化: **新增落库字段必带基数自检**。实跑 scorecard
+   验证: 当前 info_channel 样本 <10 (S0 刚落库), 不误报 ✓。
+
+**分层原则备忘 (二轮复核输出, 供后续渠道/信号扩展引用)**:
+测量层准确性压倒灵活性 (宁可 none_matched 诚实空, 不可强行归因);
+探索层灵活性压倒准确性 (新渠道可插拔/失败降级/配置门控/独立回滚);
+两层之间用预注册判据做单向阀门 (数据自由流入, 结论持证上岗)。
