@@ -531,6 +531,10 @@ class MultiModelDebateRunner:
     """
     
     # 模型角色配置
+    # 2026-07-28 诚实化注记: model 字段自 2026-05-21 迁移 UnifiedLLMService 后不再生效 —
+    #   _call_llm_direct 忽略 model, 恒走 YAML agent_bridge 路由 (primary=deepseek-pro)。
+    #   llm_audit 实锤: 全部调用同一模型, "三模型辩论"实为单模型分饰三角 (仅角色 prompt 差异)。
+    #   model 字段保留作设计意图存照; 恢复真三模型属成本/provider 变更, 待裁决。
     MODEL_ROLES = [
         {"model": "qwen3.6-plus",    "role": "bull",     "label": "多头分析师"},
         {"model": "deepseek-v4-pro", "role": "bear",     "label": "空头审计师"},
@@ -649,13 +653,15 @@ class MultiModelDebateRunner:
                 if result:
                     with self._lock:
                         results[cfg["role"]] = result
-                        results[f"{cfg['role']}_model"] = cfg["model"]
+                        # 2026-07-28 诚实化: 落真实路由 (agent_bridge 恒走 YAML primary),
+                        #   不再把未生效的意图模型名当事实写进产出/日志
+                        results[f"{cfg['role']}_model"] = "agent_bridge_routed"
                         success_count += 1
-                    logger.info(f"[DebateRunner] R{round_num} {cfg['label']} ({cfg['model']}) 成功")
+                    logger.info(f"[DebateRunner] R{round_num} {cfg['label']} (via agent_bridge 路由) 成功")
                 else:
-                    logger.warning(f"[DebateRunner] R{round_num} {cfg['label']} ({cfg['model']}) 返回空")
+                    logger.warning(f"[DebateRunner] R{round_num} {cfg['label']} (via agent_bridge 路由) 返回空")
             except Exception as e:
-                logger.warning(f"[DebateRunner] R{round_num} {cfg['label']} ({cfg['model']}) 失败: {e}")
+                logger.warning(f"[DebateRunner] R{round_num} {cfg['label']} (via agent_bridge 路由) 失败: {e}")
         
         threads = []
         for cfg in self.MODEL_ROLES:
@@ -766,7 +772,7 @@ class MultiModelDebateRunner:
                 if result:
                     with self._lock:
                         results[role] = result
-                        results[f"{role}_model"] = cfg["model"]
+                        results[f"{role}_model"] = "agent_bridge_routed"  # 2026-07-28 诚实化
                         success_count += 1
                     logger.info(f"[DebateRunner] R2 {cfg['label']} 交叉反驳成功")
             except Exception as e:
