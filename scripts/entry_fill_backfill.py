@@ -33,20 +33,26 @@ REPORT = REPO / "data" / "entry_fill_impact_report.json"
 
 def recompute(direction: str, entry: float, exit_p: float | None, qty: float,
               peak: float | None, trough: float | None) -> dict:
-    """一致重算衍生字段 (口径与库内样例对齐: pnl_pct=小数收益率, mfe/mae=正百分比)."""
+    """一致重算衍生字段 (口径与库内样例对齐: pnl_pct=小数收益率, mfe/mae=正百分比)。
+
+    2026-07-28 修正 (不变量拉网揭出自引 bug): 库内 peak/trough 语义是“最有利/最不利”
+    而非物理高/低价 (坑库既有经验, 首版未查) — SHORT 旧公式把两者用反, 21 笔 mfe/mae
+    符号错; 且 mfe/mae 重算条件拆开 (旧版 trough 缺失时连 mfe 也跳过 → 改 entry 不跟 mfe
+    的半更新, LONG 6 笔)。方向无关统一式: mfe=(peak-entry)*sign/entry, mae=(entry-trough)*sign/entry。
+    """
     short = str(direction).upper() in ("SHORT", "SELL_SHORT")
     sign = -1 if short else 1
     out = {}
     if exit_p and exit_p > 0 and entry > 0:
         out["realized_pnl"] = round((exit_p - entry) * qty * sign, 4)
         out["pnl_pct"] = round((exit_p - entry) / entry * sign, 6)
-    if peak and trough and entry > 0:
-        if short:
-            out["mfe_pct"] = round((entry - trough) / entry * 100, 4)
-            out["mae_pct"] = round((peak - entry) / entry * 100, 4)
-        else:
-            out["mfe_pct"] = round((peak - entry) / entry * 100, 4)
-            out["mae_pct"] = round((entry - trough) / entry * 100, 4)
+    # peak=最有利价 (LONG 高/SHORT 低), trough=最不利价 — 条件拆开, 缺一不影响另一。
+    # clamp ≥0: MFE/MAE 定义为非负偏移量 — 回填改小 entry 后旧 trough 可能优于新 entry
+    # (从未不利 → mae=0), 负值是语义错而非数据错。
+    if peak and entry > 0:
+        out["mfe_pct"] = round(max(0.0, (float(peak) - entry) * sign / entry * 100), 4)
+    if trough and entry > 0:
+        out["mae_pct"] = round(max(0.0, (entry - float(trough)) * sign / entry * 100), 4)
     return out
 
 
