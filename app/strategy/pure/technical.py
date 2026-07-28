@@ -162,6 +162,12 @@ def _pullback_quality(ctx: SymbolContext, direction: str) -> float:
             return 0.7
         elif 30 <= rsi < 40:
             return 0.9
+        # 2026-07-29 (DEB-topup-F1, 用户裁执行): 06-26 _is_pullback_entry 新增的
+        #   "RSI 55-65 动量延续" 路径在本表恒 0.3 < 0.5 门槛 → 死路径, topup 上线
+        #   以来全史零产出的根因之一 (静态+两日遥测 vote_none 全量双坐实)。补 band
+        #   0.6: 高于门槛承认路径存在, 低于经典回调区 (0.7-1.0) 保持质量分级。
+        elif 55 < rsi <= 65:
+            return 0.6
         return 0.3
     elif direction == "SHORT":
         if 50 <= rsi <= 55:
@@ -170,6 +176,10 @@ def _pullback_quality(ctx: SymbolContext, direction: str) -> float:
             return 0.7
         elif 60 < rsi <= 70:
             return 0.9
+        # 2026-07-29 (DEB-topup-F1): 同上 — "RSI 30-45 趋势延续做空" 死路径修复。
+        #   阴跌市 (RSI 30-45 最常见) 的 SHORT 主入口就是这条。
+        elif 30 <= rsi < 45:
+            return 0.6
         return 0.3
     return 0.0
 
