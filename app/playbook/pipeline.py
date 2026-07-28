@@ -4860,6 +4860,64 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             exit_reason = "SL_TRAIL_LOCK"     # 回撤锁利 → SL 已锁在净保本线之上(空:之下)
         else:
             exit_reason = "SL_BREAKEVEN"      # 净保本 ratchet → SL 提到成本价+手续费缓冲附近
+            # ── 死亡谷 shadow 方案A (2026-07-28, record-only): breakeven 触发线 0.5%→0.8%
+            #   反事实 — 近两周 26 笔均浮盈 0.96% 只捕获 11% (保本锚上被回踩杀)。
+            #   触发时 MFE<0.8% 的仓在 A 方案下尚无保本锚→不会在此出场; 记快照,
+            #   最终反事实出场由离线回放补 (出场后走势超出仓位生命周期)。回滚: 删本块。
+            try:
+                if peak_profit_pct < 0.8 and not meta.get("_be_shadow_a"):
+                    meta["_be_shadow_a"] = True
+                    import json as _bj
+                    from app.utils.timezone import now_et as _be_now
+                    with open("data/breakeven_shadow.jsonl", "a") as _bf:
+                        _bf.write(_bj.dumps({
+                            "variant": "A_no_be_yet", "ts": _be_now().isoformat(),
+                            "symbol": _symbol, "direction": direction,
+                            "entry_price": entry_price, "real_exit_price": current_price,
+                            "mfe_at_trigger": round(peak_profit_pct, 4),
+                            "initial_sl": initial_sl, "held_minutes": round(held_minutes, 1),
+                        }, ensure_ascii=False) + "\n")
+                    logger.info(f"[影子·保本谷A] {_symbol} MFE={peak_profit_pct:.2f}%<0.8% "
+                                f"真实保本出@{current_price} (A方案不会在此出场, record-only)")
+            except Exception:
+                pass
+
+    # ── 死亡谷 shadow 方案B (2026-07-28, record-only): 保本锚 +0.15% 缓冲的反事实 —
+    #   B 锚更高→更早触发: 真实仓未出场但 B 锚已被碰到时记录反事实出场点。
+    #   真实仓继续持有, 后续真实结局与 B 出场点可直接对比 (无需离线回放)。
+    #   仅当 B 锚严于当前生效 SL (真实不会同点出) 才是真差异点。回滚: 删本块。
+    if (not exit_reason and breakeven_triggered and not meta.get("_be_shadow_b")
+            and _active_sl > 0):
+        try:
+            _b_buffer = 0.15
+            # 块内自算净保本线 (规则1 内的 _be_line/_be_tol 在本路径未定义 — NameError
+            # 会被 try 吞成永久静默, shadow now_et 教训同款, 自查揭出)
+            _b_be_line = entry_price * (1 + _fee_cushion_pct / 100.0) if direction == "LONG" \
+                else entry_price * (1 - _fee_cushion_pct / 100.0)
+            _b_be_tol = entry_price * 1e-4
+            _b_anchor = _b_be_line * (1 + _b_buffer / 100.0) if direction == "LONG" \
+                else _b_be_line * (1 - _b_buffer / 100.0)
+            _b_hit = (direction == "LONG" and current_price <= _b_anchor) or \
+                     (direction == "SHORT" and current_price >= _b_anchor)
+            _b_differs = (direction == "LONG" and _b_anchor > _active_sl + _b_be_tol) or \
+                         (direction == "SHORT" and _b_anchor < _active_sl - _b_be_tol)
+            if _b_hit and _b_differs:
+                meta["_be_shadow_b"] = True
+                import json as _bj
+                from app.utils.timezone import now_et as _be_now
+                with open("data/breakeven_shadow.jsonl", "a") as _bf:
+                    _bf.write(_bj.dumps({
+                        "variant": "B_buffer_exit", "ts": _be_now().isoformat(),
+                        "symbol": _symbol, "direction": direction,
+                        "entry_price": entry_price, "shadow_exit_price": current_price,
+                        "b_anchor": round(_b_anchor, 4),
+                        "mfe_pct": round(peak_profit_pct, 4),
+                        "held_minutes": round(held_minutes, 1),
+                    }, ensure_ascii=False) + "\n")
+                logger.info(f"[影子·保本谷B] {_symbol} B锚({_b_anchor:.4f})被碰到 "
+                            f"反事实出@{current_price}, 真实仓继续 (record-only)")
+        except Exception:
+            pass
 
     # 规则1.5 (2026-06-28): 止盈退出 — 价格触及 take_profit 时主动锁定利润.
     # 智能跳过: rr_ratio=999 / take_profit=0 的指令不触发 (用户决策).
