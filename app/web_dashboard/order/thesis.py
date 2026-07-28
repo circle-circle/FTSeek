@@ -95,13 +95,14 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
     # 4. 7 天战绩
     try:
         conn = service._db()
+        from app.web_dashboard.data_service import et_days_ago as _eda
         row = conn.execute(
             "SELECT COUNT(*) as cnt, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins, "
             "COALESCE(SUM(realized_pnl), 0) as net_pnl "
             "FROM trade_records WHERE symbol = ? "
-            "AND trade_date >= date('now', '-7 days') AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')",
-            (symbol,),
+            "AND trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP')",
+            (symbol, _eda(7)),  # 2026-07-28: date('now') UTC→ET (时区家族)
         ).fetchone()
         conn.close()
         if row and row[0] > 0:

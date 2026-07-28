@@ -202,6 +202,15 @@
             <div id="epReasons"></div>
         </div>
 
+        <!-- ═══ 新机制观测 (2026-07-28 看板审计 P1: shadow/板块脉搏/topup/价源爬坡) ═══ -->
+        <div id="newMech" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <h2 style="font-size:14px;margin:0">🧪 新机制观测 <span style="font-size:11px;color:#8b949e;font-weight:normal">shadow · 板块脉搏 · 价源爬坡</span></h2>
+                <span id="nmAsof" style="font-size:11px;color:#8b949e"></span>
+            </div>
+            <div id="nmBody" style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px"></div>
+        </div>
+
         <!-- ═══ 校准视图 (confidence 分桶 vs 胜率 — DA 原值, 复盘区) ═══ -->
         <div id="calibration" class="card" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -429,6 +438,36 @@
     }catch(e){}
   }
 
+  // ── 新机制观测 (2026-07-28) ──
+  async function loadNewMechanisms(){
+    try{
+      var d = await apiFetch('/api/analytics/new-mechanisms');
+      var el = document.getElementById('newMech'); if(!el) return;
+      el.style.display='block';
+      document.getElementById('nmAsof').textContent = 'ET ' + (d.asof_et||'');
+      function box(title, lines){
+        return '<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:8px 10px;min-width:150px">'+
+          '<div style="color:#8b949e;margin-bottom:4px">'+esc(title)+'</div>'+
+          lines.map(function(l){return '<div style="color:#c9d1d9">'+l+'</div>';}).join('')+'</div>';
+      }
+      var parts = [];
+      var ha = d.high_atr_stall_shadow||{}, be = d.breakeven_shadow||{};
+      parts.push(box('高ATR停滞 shadow', ['样本 '+(ha.count!=null?ha.count:'?')+' (n≥5 提裁决)']));
+      var bv = (be.by_variant||{});
+      parts.push(box('保本死亡谷 shadow', ['A(抬线) '+(bv.A||0)+' · B(缓冲) '+(bv.B||0), '合计 '+(be.count||0)+' (n≥10 提裁决)']));
+      if(d.sector_pulse){
+        parts.push(box('板块脉搏 '+esc(d.sector_pulse.asof_et||'')+' ET',
+          ['弱: '+esc((d.sector_pulse.weakest3||[]).join(', ')), '强: '+esc((d.sector_pulse.strongest3||[]).join(', '))]));
+      }
+      parts.push(box('topup 今日', [(d.topup_today>0?('<span class="green">+'+d.topup_today+'</span>'):'0 条 (全史零, 诊断中)')]));
+      var src = d.entry_price_source_7d||{};
+      var srcLines = Object.keys(src).sort(function(a,b){return src[b]-src[a];}).slice(0,4)
+        .map(function(k){ var good = k.indexOf('broker_deal')===0; return (good?'<span class="green">':'<span>')+esc(k)+'</span> '+src[k]; });
+      parts.push(box('入场价源 7日 (真价爬坡)', srcLines.length?srcLines:['无数据']));
+      document.getElementById('nmBody').innerHTML = parts.join('');
+    }catch(e){}
+  }
+
   // ── 信心校准 (confidence 分桶 vs 胜率) ──
   async function loadCalibration(){
     try{
@@ -453,7 +492,7 @@
     }catch(e){}
   }
 
-  function refreshChain(){ loadBrainHealth(); loadFunnel(); loadExitProfile(); loadCalibration(); }
+  function refreshChain(){ loadBrainHealth(); loadFunnel(); loadExitProfile(); loadCalibration(); loadNewMechanisms(); }
   setTimeout(refreshChain, 500);
   setInterval(refreshChain, 60000);
 })();

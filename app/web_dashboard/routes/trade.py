@@ -599,11 +599,12 @@ def register(app, templates):
 
             # ── 3. Decision quality from trade_attribution ──
             try:
-                attr_rows = await ds.db_query("""
+                from app.web_dashboard.data_service import et_days_ago as _eda
+                attr_rows = await ds.db_query(f"""
                     SELECT overall_score FROM trade_attribution
-                    WHERE trade_date >= date('now', '-30 days')
+                    WHERE trade_date >= '{_eda(30)}'
                     ORDER BY created_at DESC LIMIT 20
-                """)
+                """)  # 2026-07-28: date('now') UTC→ET (时区家族)
                 if attr_rows:
                     scores = [r["overall_score"] for r in attr_rows if r.get("overall_score")]
                     if scores:

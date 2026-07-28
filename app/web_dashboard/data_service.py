@@ -1103,7 +1103,7 @@ class DataService:
 
     async def get_total_pnl(self, days: int = 0) -> float:
         """累计已实现盈亏 — 仅计已平仓交易 (exit_price > 0)"""
-        date_filter = f"AND trade_date >= date('now', '-{days} days')" if days > 0 else ""
+        date_filter = f"AND trade_date >= '{et_days_ago(days)}'" if days > 0 else ""  # 2026-07-28: UTC→ET
         row = await self.db_query_one(
             f"SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records "
             f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 {date_filter}"

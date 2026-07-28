@@ -306,6 +306,9 @@ def register(app, templates):
                     })
 
             # Slippage from DB
+            # 2026-07-28 修复 (看板审计 P0): 原读 meta["slippage_pct"] — 该键从未存在
+            #   (落库真键=metadata.execution.slippage_bps, bps 非 pct) → 面板恒 0 假完美。
+            #   常量退化家族看板侧首例。阈值同步 bps 口径 (50bps 超标, 与落库告警一致)。
             slippage_data = []
             try:
                 rows = await ds.db_query(
@@ -316,20 +319,21 @@ def register(app, templates):
                 for r in rows:
                     try:
                         meta = _json.loads(r.get("metadata_json") or "{}")
-                        slip = meta.get("slippage_pct", 0)
-                        if slip:
+                        _exec = meta.get("execution") or {}
+                        slip_bps = _exec.get("slippage_bps")
+                        if slip_bps is not None:
                             slippage_data.append({
-                                "slippage_pct": slip,
-                                "signal_price": meta.get("signal_price", 0),
-                                "fill_price": meta.get("fill_price", 0),
+                                "slippage_bps": safe_float(slip_bps),
+                                "signal_price": _exec.get("arrival_price", 0),
+                                "fill_price": _exec.get("fill_price", 0),
                             })
                     except Exception:
                         pass
             except Exception:
                 pass
 
-            avg_slippage = round(sum(s["slippage_pct"] for s in slippage_data) / len(slippage_data), 4) if slippage_data else 0
-            alert_count = sum(1 for s in slippage_data if abs(s["slippage_pct"]) > 0.5)
+            avg_slippage_bps = round(sum(s["slippage_bps"] for s in slippage_data) / len(slippage_data), 2) if slippage_data else 0
+            alert_count = sum(1 for s in slippage_data if abs(s["slippage_bps"]) > 50.0)
             total_amount = sum(d["amount"] for d in deals)
 
             result = {
@@ -338,7 +342,9 @@ def register(app, templates):
                 "total_amount": round(total_amount, 2),
                 "avg_amount_per_deal": round(total_amount / len(deals), 2) if deals else 0,
                 "slippage_records": len(slippage_data),
-                "avg_slippage_pct": avg_slippage,
+                "avg_slippage_bps": avg_slippage_bps,
+                # 兼容旧前端键名 (pct 值≈bps/100, 前端迁移后可删)
+                "avg_slippage_pct": round(avg_slippage_bps / 100.0, 4),
                 "slippage_alerts": alert_count,
             }
             ds.cache.set("analytics_execution", result, ttl=60)
@@ -545,7 +551,7 @@ def register(app, templates):
                     "SELECT decision_id, symbol, direction, strength, "
                     "COALESCE(strategy_id,'(无标签)') sid, created_at "
                     "FROM signal_snapshots "
-                    "WHERE trade_date >= date('now','-3 days') "
+                    f"WHERE trade_date >= '{et_days_ago(3)}' "  # 2026-07-28: UTC→ET (时区家族)
                     "ORDER BY created_at DESC LIMIT 25",
                     db_path=_snap_db2,
                 )
@@ -680,11 +686,11 @@ def register(app, templates):
                 "SELECT symbol, direction, entry_price, exit_price, quantity, "
                 "realized_pnl, pnl_pct, entry_time, exit_time, trade_date, "
                 "metadata_json FROM trade_records "
-                "WHERE trade_date >= date('now', ? || ' days') "
+                "WHERE trade_date >= ? "  # 2026-07-28: UTC→ET, 参数改传 et_days_ago(days)
                 "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
                 "AND exit_time IS NOT NULL "
                 "ORDER BY trade_date DESC",
-                (str(days),),
+                (et_days_ago(abs(int(days))),),
             )
 
             import json as _json
@@ -786,7 +792,7 @@ def register(app, templates):
         try:
             # Build date filter
             if days > 0:
-                date_filter = f"AND trade_date >= date('now', '-{days} days')"
+                date_filter = f"AND trade_date >= '{et_days_ago(int(days))}'"  # 2026-07-28: UTC→ET
             else:
                 date_filter = ""
 
@@ -921,7 +927,7 @@ def register(app, templates):
                 # Current period
                 attr_rows = await ds.db_query(
                     f"SELECT overall_score FROM trade_attribution "
-                    f"WHERE trade_date >= date('now', '-{days if days > 0 else 30} days') "
+                    f"WHERE trade_date >= '{et_days_ago(days if days > 0 else 30)}' "  # 2026-07-28: UTC→ET
                     f"ORDER BY created_at DESC LIMIT 50"
                 )
                 if attr_rows:
@@ -932,8 +938,8 @@ def register(app, templates):
                 # Previous period
                 prev_rows = await ds.db_query(
                     f"SELECT overall_score FROM trade_attribution "
-                    f"WHERE trade_date >= date('now', '-{prev_days} days') "
-                    f"AND trade_date < date('now', '-{days if days > 0 else 30} days') "
+                    f"WHERE trade_date >= '{et_days_ago(prev_days)}' "
+                    f"AND trade_date < '{et_days_ago(days if days > 0 else 30)}' "
                     f"ORDER BY created_at DESC LIMIT 50"
                 )
                 if prev_rows:
@@ -948,8 +954,8 @@ def register(app, templates):
                 prev_rows = await ds.db_query(
                     f"SELECT id, realized_pnl FROM trade_records "
                     f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0 "
-                    f"AND trade_date >= date('now', '-{prev_days} days') "
-                    f"AND trade_date < date('now', '-{days} days') "
+                    f"AND trade_date >= '{et_days_ago(prev_days)}' "
+                    f"AND trade_date < '{et_days_ago(days)}' "
                     f"ORDER BY trade_date DESC"
                 )
                 if prev_rows:
@@ -1065,5 +1071,66 @@ def register(app, templates):
             logger.error(f"[trade/review] {e}")
             return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"dimension_stats": {}, "trade_count": 0})
+
+    # ═══════════════════════════════════════════════════════════
+    #  新机制观测面板 (2026-07-28 看板审计 P1): 本周上线机制此前看板零展示位 —
+    #  高ATR/保本谷 shadow、板块脉搏、topup、entry_price_source 修复爬坡。
+    #  只读聚合, 全部 best-effort (单项失败不拖垮整卡)。
+    # ═══════════════════════════════════════════════════════════
+    @router.get("/api/analytics/new-mechanisms")
+    async def new_mechanisms():
+        import json as _json
+        from pathlib import Path as _P
+        _root = _P("/opt/ftseek/FTSeek-US")
+        out: dict = {"asof_et": et_today()}
+        ds = get_data_service()
+        # 1) shadow 计数 (高 ATR 停滞 / 保本死亡谷 A/B)
+        for key, fn in (("high_atr_stall_shadow", "data/high_atr_stall_shadow.jsonl"),
+                        ("breakeven_shadow", "data/breakeven_shadow.jsonl")):
+            try:
+                _f = _root / fn
+                lines = [_json.loads(x) for x in _f.read_text().splitlines() if x.strip()] if _f.exists() else []
+                item = {"count": len(lines), "latest": lines[-1] if lines else None}
+                if key == "breakeven_shadow" and lines:
+                    item["by_variant"] = {
+                        "A": sum(1 for r in lines if str(r.get("variant", "")).startswith("A")),
+                        "B": sum(1 for r in lines if str(r.get("variant", "")).startswith("B")),
+                    }
+                out[key] = item
+            except Exception:
+                out[key] = {"count": -1}
+        # 2) 板块脉搏 (盘中 30min 刷新)
+        try:
+            _pf = _root / "data" / "sector_pulse.json"
+            if _pf.exists():
+                _pu = _json.loads(_pf.read_text())
+                out["sector_pulse"] = {"date": _pu.get("date"), "asof_et": _pu.get("asof_et"),
+                                       "weakest3": _pu.get("weakest3"), "strongest3": _pu.get("strongest3")}
+        except Exception:
+            pass
+        # 3) topup 今日产出 (全史零 → 修复观察点)
+        try:
+            rows = await ds.db_query(
+                "SELECT COUNT(*) n FROM playbook_instructions "
+                "WHERE date = ? AND raw_instruction_json LIKE '%topup_pool%'", (et_today(),))
+            out["topup_today"] = int(rows[0]["n"]) if rows else 0
+        except Exception:
+            out["topup_today"] = -1
+        # 4) entry_price_source 近 7 日分布 (broker_deal_confirm 爬坡 = 07-27 假价修复验收)
+        try:
+            rows = await ds.db_query(
+                "SELECT metadata_json FROM trade_records WHERE trade_date >= ? "
+                "AND source_type LIKE 'PLAYBOOK%'", (et_days_ago(7),))
+            _dist: dict = {}
+            for r in rows:
+                try:
+                    _src = (_json.loads(r.get("metadata_json") or "{}")).get("entry_price_source") or "unknown"
+                    _dist[_src] = _dist.get(_src, 0) + 1
+                except Exception:
+                    pass
+            out["entry_price_source_7d"] = _dist
+        except Exception:
+            out["entry_price_source_7d"] = {}
+        return api_ok(out)
 
     app.include_router(router)

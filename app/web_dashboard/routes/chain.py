@@ -16,7 +16,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from app.web_dashboard.data_service import get_data_service, safe_float, et_today
+from app.web_dashboard.data_service import get_data_service, safe_float, et_today, et_days_ago
 
 logger = logging.getLogger("ftseek_us.routes.chain")
 router = APIRouter()
@@ -350,11 +350,11 @@ def register(app, templates):
             "ROUND(AVG(pnl_pct)*100,2) avg_pct, "
             "SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) wins "
             "FROM trade_records "
-            "WHERE trade_date >= date('now', ?) AND exit_price > 0 "
+            "WHERE trade_date >= ? AND exit_price > 0 "  # 2026-07-28: UTC→ET
             "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
             "AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
             "GROUP BY exit_reason ORDER BY n DESC",
-            (f"-{int(days)} day",),
+            (et_days_ago(int(days)),),
         )
 
         # 归类: 时钟(到点就走) / 止损 / 逻辑(止盈·信号) / 券商(对账漂移) / 其他
@@ -454,8 +454,8 @@ def register(app, templates):
     async def calibration(days: int = 120, owner: str = ""):
         ds = get_data_service()
         where = ["signal_confidence IS NOT NULL", "trade_win IS NOT NULL",
-                 "trade_date >= date('now', ?)"]
-        params = [f"-{int(days)} day"]
+                 "trade_date >= ?"]  # 2026-07-28: UTC→ET
+        params = [et_days_ago(int(days))]
         if owner:
             where.append("owner_strategy = ?")
             params.append(owner)
