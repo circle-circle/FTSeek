@@ -529,7 +529,7 @@ class USPositionSync:
                     }
             
             if result:
-                logger.info(f"[US Sync·P3] Futu 当日委托: {len(result)} 只标的有成交记录")
+                logger.debug(f"[US Sync·P3] Futu 当日委托: {len(result)} 只标的有成交记录")  # 2026-07-28 降噪 INFO→DEBUG (每轮心跳重复)
         except Exception as e:
             logger.debug(f"[US Sync·P3] 查询 Futu 当日委托失败: {e}")
         
@@ -817,7 +817,12 @@ class USPositionSync:
             )
             _manual_today = {row[0] for row in cursor.fetchall()}
             if _manual_today:
-                logger.info(f"[US Sync·P3] 今日手动订单标的: {_manual_today}")
+                _mt_fp = str(sorted(_manual_today))
+                if _mt_fp != getattr(self, "_last_manual_fp", None):  # 2026-07-28 降噪: 变化才 INFO
+                    self._last_manual_fp = _mt_fp
+                    logger.info(f"[US Sync·P3] 今日手动订单标的: {_manual_today}")
+                else:
+                    logger.debug(f"[US Sync·P3] 今日手动订单标的: {_manual_today}")
             self._manual_today = _manual_today
         except Exception as e:
             logger.debug(f"[US Sync·P3] manual_order_audit 查询失败: {e}")
@@ -1099,9 +1104,15 @@ class USPositionSync:
         except Exception:
             _pb_count = -1  # 取数失败标记, 不阻断
         _futu_n = len(futu_positions)
+        # 2026-07-28 降噪: 每轮心跳 (盘中 30s) 无变化仍打 INFO → 日志 12% 是同一句。
+        #   状态指纹变化或不一致才 INFO, 否则 DEBUG (可观测性不降: 异常必现)。
         if _pb_count >= 0:
             _consistent = "✓" if _futu_n == _db_count + _pb_count else "⚠差异"
-            logger.info(
+            _sync_fp = (_futu_n, _db_count, _pb_count, _consistent)
+            _log_fn = logger.info if (_sync_fp != getattr(self, "_last_sync_fp", None)
+                                      or _consistent != "✓") else logger.debug
+            self._last_sync_fp = _sync_fp
+            _log_fn(
                 "[US Sync] Done | Futu: %d | 主线DB: %d | playbook自管: %d | 一致性: %s",
                 _futu_n, _db_count, _pb_count, _consistent,
             )

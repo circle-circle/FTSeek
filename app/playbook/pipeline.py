@@ -3309,6 +3309,9 @@ def _symbol_streak_banned(symbol: str, pb_cfg) -> bool:
         return False
 
 
+_CUTOFF_LOGGED: set = set()  # 2026-07-28 降噪: 触发窗截止日志 每标的每日一次 (重启清零无害)
+
+
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     """盘中实时检查指令是否触发 (突破当日高低点).
 
@@ -3486,10 +3489,14 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             from datetime import datetime as _dt
             _now_gate = _dt.now(_now_et())
             if _now_gate.hour * 100 + _now_gate.minute >= _cutoff_hhmm:
-                logger.info(
-                    f"[playbook] #2 触发窗截止: {symbol} ET={_now_gate.strftime('%H:%M')} "
-                    f">= {_cutoff_hhmm // 100:02d}:{_cutoff_hhmm % 100:02d}, 不再新触发"
-                )
+                # 2026-07-28 降噪: 每标的每天只 INFO 一次 (此前每轮扫描都打, 日志 35+ 条/日)
+                _cut_key = f"{symbol}:{_now_gate.strftime('%Y-%m-%d')}"
+                if _cut_key not in _CUTOFF_LOGGED:
+                    _CUTOFF_LOGGED.add(_cut_key)
+                    logger.info(
+                        f"[playbook] #2 触发窗截止: {symbol} ET={_now_gate.strftime('%H:%M')} "
+                        f">= {_cutoff_hhmm // 100:02d}:{_cutoff_hhmm % 100:02d}, 不再新触发 (今日仅提示一次)"
+                    )
                 _emit_trigger_miss("after_cutoff", None)
                 return False
         except Exception:
