@@ -99,6 +99,13 @@ SYSTEM_PROMPT_V2 = (
     "8. SHORT 高门槛(强制): direction=SHORT 的标的必须额外输出 short_check — "
     "borrow_feasible(bool, 大盘股/流动性好可借券), downside_catalyst_expiry_hours(int, 下跌催化剂时效), "
     "squeeze_risk(1-5, 逼空风险自评)。无具体下跌催化剂(仅'估值高'/'涨多了')的 SHORT 不得浮现。\n"
+    # v2.3 (2026-07-28, 板块级联): 07-27 芯片/存储大跌日系统满舵做多 (12/12 LONG, TSM BUY -95)
+    #   — 轮动数据已标 Technology 最弱但 prompt 未要求用于级联/做空推理。
+    "9. 板块级联(强制评估): 若事件涉及某板块龙头/产业链环节(如芯片/存储/能源/金融), "
+    "必须评估同板块传导: 负面事件下同板块弱势标的的 SHORT 侧与受益替代品的 LONG 侧均需考虑, "
+    "不得只输出事件主体本身; [市场佐证] 中的轮出板块/盘中脆弱板块可作级联 SHORT 的 "
+    "evidence_ref (self_tier=MARKET_CORROBORATED); 与轮出板块同向的 LONG 需在 thesis 中自证"
+    "为何逆板块风仍成立。级联 SHORT 同受第 8 条高门槛约束。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
     "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
@@ -246,7 +253,43 @@ def _gather_news(hours: int) -> List[Dict[str, Any]]:
 
 
 def _gather_market_corroboration() -> Dict[str, Any]:
-    """市场佐证: 复用机械影子最近一次 capture 的板块轮动/异动 (若有)."""
+    """市场佐证: 板块轮动/异动.
+
+    2026-07-28 (板块级联批, 用户裁"要动"): 主源升级为 deep_sector_rotation.json —
+    每日盘前生成 (07:42 ET) 含 sector_changes 数字, 但此前仓内零消费者 ("有人生成
+    没人吃"): 07-27 它明确标注 Technology -1.44% 最弱, UE 却因只读周更机械影子
+    capture 而对芯片满舵 BUY (TSM -95 实证)。周更 capture 降为 fallback。
+    盘中脉搏 sector_pulse.json (若存在且新鲜) 一并注入。
+    """
+    out: Dict[str, Any] = {}
+    # ── 主源: 每日盘前板块轮动 ──
+    try:
+        _rot_p = _ROOT / "data" / "deep_sector_rotation.json"
+        if _rot_p.exists():
+            _rot = json.loads(_rot_p.read_text())
+            if str(_rot.get("date", "")) == _today():
+                _chg = _rot.get("sector_changes") or {}
+                out = {
+                    "date": _rot.get("date"),
+                    "strong_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("strongest") or [])[:3]],
+                    "weak_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("weakest") or [])[:3]],
+                    "movers": [],
+                }
+    except Exception as _re:
+        print(f"  [warn] deep_sector_rotation 读取失败: {_re}")
+    # ── 盘中脉搏补充 (sector_pulse.py 产出, 盘中 30min 更新) ──
+    try:
+        _pulse_p = _ROOT / "data" / "sector_pulse.json"
+        if _pulse_p.exists():
+            _pu = json.loads(_pulse_p.read_text())
+            if str(_pu.get("date", "")) == _today() and _pu.get("ranked"):
+                out.setdefault("date", _pu.get("date"))
+                out["intraday_pulse"] = _pu["ranked"]
+    except Exception:
+        pass
+    if out:
+        return out
+    # ── fallback: 周更机械影子 capture (原逻辑) ──
     recs = _read_jsonl(_MECH_CAPTURE_PATH)
     caps = [r for r in recs if r.get("type") == "capture"]
     if not caps:
@@ -570,6 +613,8 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             parts.append("轮出板块: " + ", ".join(mkt["weak_sectors"]))
         if mkt.get("movers"):
             parts.append("宇宙外异动: " + ", ".join(mkt["movers"][:12]))
+        if mkt.get("intraday_pulse"):
+            parts.append("盘中板块脉搏(实时): " + ", ".join(str(x) for x in mkt["intraday_pulse"][:11]))
 
     if news:
         # [2026-07-22] symbols 字段为 JSON 字符串, 空列表 "[]" 真值恒真曾拼出 "[[]]" 噪声 → 解析后非空才展示
