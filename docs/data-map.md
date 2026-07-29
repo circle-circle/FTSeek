@@ -30,6 +30,7 @@
 |---|---|
 | 文件名 | `{decision_id sanitize [^A-Za-z0-9_-]→_}.json` |
 | 内容 | meta (entry/exit/peak/config_version/exit_reason/vol_bucket) + 1min bars |
+| bars 格式 | **[t, o, h, l, c] 五元组** (OHLC 俱全, t=ET naive 末标签) — §十二核查后显式写明, 防误读为二元组 |
 | 窗口 | entry-30min → exit+30min (bar 天然止于 16:00); 隔夜仓跨日采两日 |
 | 口径 | **autype=NONE** (原始价, 与成交价同口径); bar time_key=分钟**末标签** (DEB-bar-ruler) |
 | 写入方 | position_path_collector.py (盘后 cron 04:35 CST, 幂等) |
