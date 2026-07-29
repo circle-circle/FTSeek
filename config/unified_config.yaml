@@ -1029,7 +1029,7 @@ playbook:
     daily_notional_cap_pct: 0.8
     max_daily_positions: 30
     max_position_pct: 0.04
-    entry_reanchor_enabled: true
+    entry_reanchor_enabled: false  # 2026-07-29 O1 关停 (DEB-reanchor: 真零实弹+E1反事实-5.09%+几何半残); 一周 G3 漏斗对照后代码退役; 回滚=重新启用本开关
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
@@ -1086,7 +1086,7 @@ playbook:
     confidence_sizing_enabled: false
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    entry_reanchor_enabled: true
+    entry_reanchor_enabled: false  # 2026-07-29 O1 关停 (DEB-reanchor: 真零实弹+E1反事实-5.09%+几何半残); 一周 G3 漏斗对照后代码退役; 回滚=重新启用本开关
     entry_reanchor_max_drift_pct: 4.0
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7

@@ -111,3 +111,14 @@ O2 的护栏语义等价于"逆向漂移后等恢复确认" — 那正是**不�
 
 执行路径 (若用户裁 O1): 军规三步 — `entry_reanchor_enabled: false` (一行) → G3 一周漏斗对照 →
 代码退役; 关停日不叠加其他触发侧变更 (一次一变量)。
+
+## 九、执行记录 (2026-07-29, 用户裁 O1 — 军规三步·第一步完成)
+
+- **步骤1 ✅ 配置关停**: `entry_reanchor_enabled: false` × 2 处 (execution_parameters + risk_parameters),
+  运行时断言 get_playbook_config() 返回 False ✓; yaml 备份 + 内联注释含回滚路径。
+  980 passed / 重启冒烟 7/7。一次一变量: 今日触发侧仅此一项变更 (F1 属信号生成侧, 不同层)。
+- **步骤2 (进行中)**: G3 一周漏斗对照 — 至 08-05 对比关停前后 trigger_miss 各 reason 分布
+  (预期: reanchored 桶归零, 其余无显著漂移; miss 转入 price_band_miss 桶)。
+- **步骤3 (待步骤2 通过)**: 代码退役 (pipeline.py Lever A 块删除, 保留 entry_path 遥测语义供历史解读)。
+
+状态 → ✅ 已裁决 (O1) · 步骤1 已执行 · G3 观察期至 08-05。
