@@ -3311,6 +3311,69 @@ def _symbol_streak_banned(symbol: str, pb_cfg) -> bool:
 
 _CUTOFF_LOGGED: set = set()  # 2026-07-28 降噪: 触发窗截止日志 每标的每日一次 (重启清零无害)
 
+# 2026-07-30 流动性门: (symbol, date) → (adv_dollar, avg_vol) 日级缓存 — ADV 盘中不变,
+#   每标的每日只算一次, 不给触发循环增加 K 线配额压力 (bar-ruler 冻结教训)
+_LIQUIDITY_CACHE: dict = {}
+_LIQUIDITY_LOGGED: set = set()  # 拦截日志每标的每日一次
+
+
+def _check_liquidity_gate(data_router, symbol: str, current_price: float,
+                          pb_cfg) -> tuple:
+    """小盘/低流动性门 (2026-07-30, 用户裁"小盘票补充限制", 实盘基准审计 T1-#5)。
+
+    背景: 现有三面零覆盖 (screener 无流动性过滤/触发侧仅 gap 门/UE 仅 LLM 软自报);
+    低 ATR 门恰好不拦小票 (小票 ATR 高)。sim 按盘口快照成交, 低流动标的盈利含虚高
+    成分 (实盘冲击 30-100bps) — 拦掉它们让 sim 更贴实盘基准。
+
+    判据 (只减不加, 两条任一不过即拦):
+      ① current_price < min_price (仙股/枯竭票地板)
+      ② 估算仓位名义额 > max_adv_pct% × ADV$ (5日均成交额)
+    fail-open: 日K/均量数据不足 → 放行 (与量能门同口径, 可用性优先)。
+    Returns: (ok: bool, detail: str)
+    """
+    try:
+        if not pb_cfg.get("liquidity_gate_enabled", False):
+            return True, "disabled"
+        _min_px = float(pb_cfg.get("liquidity_gate_min_price", 3.0))
+        if current_price and 0 < current_price < _min_px:
+            return False, f"price ${current_price:.2f} < 地板 ${_min_px}"
+    except Exception:
+        return True, "cfg_error_failopen"
+    try:
+        from app.utils.timezone import now_et as _lq_now
+        _key = (symbol, _lq_now().strftime("%Y-%m-%d"))
+        if _key not in _LIQUIDITY_CACHE:
+            daily_bars = data_router.get_daily_bars(symbol, count=10) or []
+            _today = _key[1]
+            vols = [float(b.get("volume", 0) or 0) for b in daily_bars
+                    if str(b.get("time", ""))[:10] < _today and float(b.get("volume", 0) or 0) > 0]
+            vols = vols[-5:]
+            if len(vols) < 3:
+                _LIQUIDITY_CACHE[_key] = None  # 数据不足, 当日不再重查
+            else:
+                _LIQUIDITY_CACHE[_key] = sum(vols) / len(vols)  # 股数均量
+        _avg_vol = _LIQUIDITY_CACHE.get(_key)
+        if not _avg_vol:
+            return True, "no_adv_data_failopen"
+        _adv_dollar = _avg_vol * float(current_price or 0)
+        if _adv_dollar <= 0:
+            return True, "no_adv_data_failopen"
+        # 估算名义额: 资金 × 单仓上限 (触发时未定股数, 取保守上界)
+        try:
+            from app.core.config_container import get_config as _lq_gc
+            _cap = float(_lq_gc().get_dotted("capital.fixed_amount", 82000) or 82000)
+        except Exception:
+            _cap = 82000.0
+        _notional = _cap * float(pb_cfg.get("max_position_pct", 0.04) or 0.04)
+        _max_pct = float(pb_cfg.get("liquidity_gate_max_adv_pct", 0.5))
+        _ratio_pct = _notional / _adv_dollar * 100.0
+        if _ratio_pct > _max_pct:
+            return False, (f"名义额 ${_notional:.0f} = ADV$ {_adv_dollar / 1e6:.2f}M 的 "
+                           f"{_ratio_pct:.2f}% > {_max_pct}%")
+        return True, f"ok ({_ratio_pct:.3f}% of ADV)"
+    except Exception as _lq_err:
+        return True, f"failopen: {type(_lq_err).__name__}"  # 门自身异常不得拦交易
+
 
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     """盘中实时检查指令是否触发 (突破当日高低点).
@@ -3656,6 +3719,19 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             f"current=${current_price:.2f} entry=${entry_price:.2f} gap={_price_gap:.1%}"
         )
         _emit_trigger_miss("extreme_gap", current_price)
+        return False
+
+    # ── 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 仙股地板 + 名义额/ADV$ 上限 ──
+    #   低 ATR 门挡的是低波动, 恰不挡高波动小票; sim 盘口快照成交使低流动盈利虚高。
+    #   只减不加; ADV 日级缓存零配额增量; fail-open; 回滚=关 liquidity_gate_enabled。
+    _lq_ok, _lq_detail = _check_liquidity_gate(data_router, symbol, current_price, pb_cfg)
+    if not _lq_ok:
+        from app.utils.timezone import now_et as _lqt_now
+        _lq_key = f"{symbol}:{_lqt_now().strftime('%Y-%m-%d')}"
+        if _lq_key not in _LIQUIDITY_LOGGED:
+            _LIQUIDITY_LOGGED.add(_lq_key)
+            logger.warning(f"[playbook] 💧 {symbol} 流动性门拦截 (今日仅提示一次): {_lq_detail}")
+        _emit_trigger_miss("liquidity_gate", current_price)
         return False
 
     # ── 2026-07-19 (DEB-round3 #2): thesis 漂移作废门 (5%, 永久作废) ──

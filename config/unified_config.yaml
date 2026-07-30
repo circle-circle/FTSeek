@@ -1074,6 +1074,11 @@ playbook:
     # ③ 低ATR硬门: atr_pct<2.5% 低波票不做日内动量 (7月13笔 15%WR -$244)
     low_atr_gate_enabled: true
     low_atr_gate_min_atr_pct: 0.025
+    # ④ 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 低ATR门挡低波不挡高波小票 —
+    #   仙股地板 $3 + 仓位名义额≤ADV$(5日均成交额)的0.5%; 只减不加/fail-open/回滚=关开关
+    liquidity_gate_enabled: true
+    liquidity_gate_min_price: 3.0
+    liquidity_gate_max_adv_pct: 0.5
     breakeven_fee_cushion_pct: 0.15
     # 2026-07-30 D4 (DEB-fee-net-pnl, 用户裁"直接实现"): 保本线费用感知 — 用 fee_model
     #   真实往返费用/名义额替换上行固定 cushion (上行降为回退值); 回滚=关本开关

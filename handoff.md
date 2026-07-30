@@ -88,6 +88,12 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-30 (盘前·流动性门上线) · 用户裁"小盘票补充限制" — 触发侧第四门: 仙股地板 + 名义额/ADV$ 上限 (实盘基准审计 T1-#5 落地)
+**盘点实锤**: 现有三面对小盘票零覆盖 (screener 无流动性过滤 / 触发侧仅 >8% gap 门 / UE 仅 LLM 软自报 crowding_low); **低 ATR 门恰好反向** — 挡低波不挡高波小票。sim 按盘口快照成交, 低流动标的盈利含虚高成分 (实盘冲击 30-100bps)。
+**实现** (`pipeline._check_liquidity_gate`, 触发侧 gap 门旁): ①仙股地板 $3 ②仓位名义额 ≤ 0.5% × ADV$ (5日均成交额, 复用 get_daily_bars + (symbol,date) 日级缓存 — 零 K 线配额增量, bar-ruler 教训)。只减不加 / fail-open (数据不足放行, 与量能门同口径) / 门自身异常不拦交易 / telemetry reason=liquidity_gate / 拦截日志每标的每日一次 / 回滚=关 `liquidity_gate_enabled`。**spread 门如实放弃**: router quote 无 bid/ask 字段, 不硬造。
+**校准验证**: 功能级 5 场景 ✓ + 真实抽查 — 现役最小盘 GNK 仅 0.053% of ADV 照常放行, 现有宇宙零误伤, 只拦真枯竭票。998 passed / 冒烟 7/7。
+**验收 (预注册)**: ①3 日内 trigger_miss reason=liquidity_gate 出现即证明通电 (无也合法 — 现宇宙本就不该拦) ②被拦标的记入 telemetry 供反事实 (拦错了会在 scorecard 显形) ③与 UE 注入侧的关系: 门在触发层兜底, UE prompt 侧暂不加机械过滤 (一次一变量, 若门频繁拦 UE 标的再前置)。
+
 ### 2026-07-30 (盘前·D4 保本线费用感知实弹) · 用户改裁"直接实现" — 单开关落地, 双向修锚 (小仓抬线灭假保本/大仓放宽 6 倍缓解死亡谷)
 **如实定性**: 严格属出场行为变更 (非纯尺子), 但 0.15% cushion 本身是错尺子; 今日出场侧唯一实弹 → 分层一次一变量合规。实现: meta._qty 注入 + cushion 单点换算 (下游 ratchet/归类/be_shadow B 锚三处自动同口径) + `breakeven_fee_aware_enabled: true` (回滚=关开关) + **exit_config_version 轮转 → exit-ed3625929072** (毕业统计窗口切开, 07-20 军规)。功能级四场景 ✓ / 998 passed / 冒烟 7/7。
 **验收 (预注册, DEB §十二)**: ①BREAKEVEN 出场笔 _be_cushion_fee_aware 在 metadata 且净额≥−$0.5 ②3 日 BREAKEVEN 桶净额≥0 (基线 毛+89/净−48) ③占比不异常放大 ④回滚触发=假保本净亏>2笔。**08-07 be_shadow 解读须注明 07-30 起基线已是费用感知线。**
