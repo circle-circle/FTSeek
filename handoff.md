@@ -88,6 +88,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-30 (傍晚·盘中方向证据 Phase1) · topup 指令落库时并排记录三层证据 (record-only, 用户裁"统一, 今晚开盘前完成")
+**背景**: 用户问"盘中能否优雅简单精准识别多空方向" — 盘点结论: 识别管道已存在三层 (technical 三票[今日通电]/VWAP 硬门[live]/sector_pulse[有人生成没人吃]), 缺的是互通与预测力检验。三段式: Phase0 今晚 technical 裸奔基线 / **Phase1 本批** / Phase2 数据胜出者升门 (另裁)。
+**实现** (`pipeline._gather_intraday_evidence`, topup 落库环挂接): raw.evidence = {vwap_side/vwap_dev_pct, order_flow_imbalance, ticker_buy_sell_ratio, volume_ratio, sector, sector_pulse_chg, pulse_asof_et, **agree/avail 一致度**(方向无关统一式 sign×证据正负)}。record-only: 失败返 None 不阻断落库, 任何异常不影响指令。
+**连带修**: rotation 细分行业名 × pulse SPDR 12 键两套名库直匹配全 null (Semiconductors≠Semis / Health Care≠Healthcare) → `_SECTOR_TO_PULSE` 关键词映射表, 离线覆盖 18/18, 映射不上如实 null 不猜。
+**验证**: 真数据 NVDA SHORT agree=3/3 (VWAP below+OFI 负+Semis -2.18%) / HCA BUY agree=1/3; mock 双向语义 (同数据 SHORT 2 票 vs BUY 0 票); router=None 异常安全; 998 passed / 重启冒烟 7/7。
+**消费判据 (预注册)**: 攒 2-3 日后 S1 按 agree 分桶 (3/3 vs ≤1/3) 切方向命中率 — 差距 ≥15pp 才提 Phase2 升门案; 无差距则证据叠加不升门, 如实结案。
+
 ### 2026-07-30 (午后·遥测测试污染修尺子) · pytest 假事件写进生产遥测 5.6%/13.4% — 守卫+存量清理 (用户裁"要")
 **发现路径**: 07-29 复盘时 reanchor 关停后 trigger_miss 里仍持续出现 `reanchored` 事件 — 时间戳与每次全量回归完全吻合: 测试直调 `_check_intraday_trigger`, `_emit_trigger_miss`/`_emit_entry_shadow` 无隔离, **07-11 埋点上线起每跑一次 pytest 就写假事件** (trigger_miss 331/5893=5.6%, entry_shadow 336/2498=**13.4%**)。危害现行: G3 观察判据"reanchored 桶归零"被污染成永远非零; entry_shadow 的入场时机门离线切片 13.4% 假样本。
 **修复**: ①两 emit 函数入口加 `"TEST" in symbol.upper()` 守卫 (测试标的一律不落盘, 连 ZTEST 类交易所测试符号也覆盖) ②存量清理 331+336 行 (bak_testclean_20260730 双备份) ③闭环: 跑污染源测试文件 13 passed 且遥测零新增 / 全量 998 passed 后仍 0 残留 / **G3 判据修后真读数 = 0** ✓。

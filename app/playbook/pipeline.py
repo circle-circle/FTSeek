@@ -1768,6 +1768,11 @@ def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
                 except Exception:
                     inst_dict["raw_instruction"]["eval_price"] = None
                 inst_dict["raw_instruction"]["eval_asof"] = _now.isoformat()
+                # 2026-07-30 Phase1 (用户裁"统一"): 盘中方向证据并排记录 (record-only) —
+                #   VWAP侧/板块脉搏/订单流 × 一致度, 供 S1 按证据一致度切片定预测力。
+                _ev = _gather_intraday_evidence(data_router, inst.symbol, inst.direction)
+                if _ev is not None:
+                    inst_dict["raw_instruction"]["evidence"] = _ev
                 db.save_instruction(inst_dict)
                 saved += 1
             except Exception as e:
@@ -1777,6 +1782,85 @@ def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"[playbook·topup] 补量任务异常 (已隔离): {e}")
         return None
+
+
+# 2026-07-30 Phase1: rotation 细分行业名 → sector_pulse 12 键 (SPDR 口径) 关键词映射。
+#   两侧名库不同源 (实测 Semiconductors≠Semis / Health Care≠Healthcare 直匹配全 null),
+#   映射不上如实 null 不猜。顺序匹配, 特异词在前 (semi 先于 tech)。
+_SECTOR_TO_PULSE = (
+    (("semiconductor",), "Semis"),
+    (("software", "technology", "it services", "electronic"), "Technology"),
+    (("pharma", "biotech", "health", "medical", "life sciences"), "Healthcare"),
+    (("bank", "financial", "insurance", "capital markets", "consumer finance"), "Financials"),
+    (("real estate", "reit"), "RealEstate"),
+    (("telecom", "media", "entertainment", "interactive", "communication"), "Communication"),
+    (("energy", "oil", "gas"), "Energy"),
+    (("chemical", "metals", "mining", "materials", "paper", "container"), "Materials"),
+    (("staple", "food", "beverage", "household", "tobacco", "consumer products"), "ConsStaples"),
+    (("hotel", "restaurant", "leisure", "apparel", "luxury", "retail", "automobile", "textiles"), "ConsDiscretionary"),
+    (("aerospace", "defense", "machinery", "industrial", "transport", "airline", "construction", "building", "electrical"), "Industrials"),
+    (("utilit",), "Utilities"),
+)
+
+
+def _gather_intraday_evidence(data_router, symbol: str, direction: str) -> Optional[Dict[str, Any]]:
+    """盘中方向证据叠加 (2026-07-30 Phase1, 用户裁"统一" — record-only 零行为变更)。
+
+    背景: technical 三票/VWAP 门/sector_pulse/订单流四层盘中方向证据各自存在但互不
+    通气且无预测力检验。本函数在 topup 指令落库时把证据并排写进 raw.evidence —
+    S1 记分牌按"证据一致度"切片, 胜出者才升确认/否决门 (Phase2, 另裁)。
+    失败返 None 不阻断落库; 板块名与 pulse 键不匹配时 pulse_chg=null 如实缺省。
+    """
+    try:
+        raw = data_router.get_full_market_context(symbol) if data_router else None
+        if not raw:
+            return None
+        px = float(raw.get("price", 0) or 0)
+        vwap = float(raw.get("vwap", 0) or 0)
+        ofi = raw.get("order_flow_imbalance")
+        is_short = "SHORT" in str(direction).upper()
+        ev: Dict[str, Any] = {
+            "vwap_side": ("above" if px >= vwap else "below") if (px > 0 and vwap > 0) else None,
+            "vwap_dev_pct": round((px - vwap) / vwap * 100, 3) if (px > 0 and vwap > 0) else None,
+            "order_flow_imbalance": round(float(ofi), 4) if ofi is not None else None,
+            "ticker_buy_sell_ratio": raw.get("ticker_buy_sell_ratio"),
+            "volume_ratio": raw.get("volume_ratio"),
+            "sector": None, "sector_pulse_chg": None, "pulse_asof_et": None,
+        }
+        # 板块脉搏: symbol→sector (deep_sector_rotation) × 实时涨跌 (sector_pulse)
+        try:
+            import json as _json
+            _root = Path(__file__).resolve().parents[2] / "data"
+            _rot = _json.loads((_root / "deep_sector_rotation.json").read_text())
+            _sec = (_rot.get("symbol_sectors") or {}).get(symbol)
+            ev["sector"] = _sec
+            _pl = _json.loads((_root / "sector_pulse.json").read_text())
+            _chg = _pl.get("changes") or {}
+            if _sec:
+                _hit = _chg.get(_sec)
+                if _hit is None:  # 关键词映射 (两侧板块名库不同源, 映射不上如实 null)
+                    _sl = _sec.lower()
+                    _pk = next((pk for kws, pk in _SECTOR_TO_PULSE
+                                if any(kw in _sl for kw in kws)), None)
+                    _hit = _chg.get(_pk) if _pk else None
+                ev["sector_pulse_chg"] = _hit
+                ev["pulse_asof_et"] = _pl.get("asof_et")
+        except Exception:
+            pass
+        # 一致度计数: 可用证据里与方向同向的份数 (方向无关统一式: sign × 证据正负)
+        _sign = -1 if is_short else 1
+        _bits = []
+        if ev["vwap_dev_pct"] is not None:
+            _bits.append(_sign * ev["vwap_dev_pct"] > 0)
+        if ev["order_flow_imbalance"] is not None:
+            _bits.append(_sign * ev["order_flow_imbalance"] > 0)
+        if ev["sector_pulse_chg"] is not None:
+            _bits.append(_sign * float(ev["sector_pulse_chg"]) > 0)
+        ev["agree"] = sum(_bits)
+        ev["avail"] = len(_bits)
+        return ev
+    except Exception:
+        return None  # record-only, 任何异常不得影响指令落库
 
 
 def run_playbook_normalize_vol_buckets(scheduler=None) -> Optional[Dict[str, Any]]:
