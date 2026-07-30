@@ -10,7 +10,7 @@
 | 表 | 主键/串联 | 粒度 | 写入方 | 主要消费方 | 口径坑 |
 |---|---|---|---|---|---|
 | playbook_instructions | decision_id | 指令/日 | DA bridge / UE inject / topup | auto_execute, decision_view, scorecard | date=ET; raw_instruction_json.source 切分三源; vol_bucket 盘前定桶任务补 |
-| trade_records | decision_id, id | 成交笔 | playbook_service 记账 | 一切判分/回放/看板 | entry/exit_time=**naive ET**; peak/trough=**最有利/最不利**非高低价; mfe/mae≥0; entry_price_source 演进 (broker_deal_confirm=07-27 后真价); 07-28 前历史经 183 笔回填修真 |
+| trade_records | decision_id, id | 成交笔 | playbook_service 记账 | 一切判分/回放/看板 | entry/exit_time=**naive ET**; peak/trough=**最有利/最不利**非高低价; mfe/mae≥0; entry_price_source 演进 (broker_deal_confirm=07-27 后真价); 07-28 前历史经 183 笔回填修真; **fees_est/pnl_net/fees_source** (2026-07-30 费用净额批: est=费率表估算, 三态只升不降; 明细在 metadata.fee_breakdown) |
 | signal_snapshots (signal_snapshots.db) | decision_id | 信号 | signal_ic_tracker (过滤前全录) | IC 回填/analytics | 含被 SKIP 信号 (消选择偏差); fwd_ret T+N 到期才非 NULL |
 | trade_attribution | trade_date+symbol | 笔 | 复盘归因 | trade.py 看板 | overall_score 五维 |
 
@@ -50,6 +50,17 @@
 - `scripts/decision_view.py` — decision_id 一行一决策 (状态×动作×结果×路径×shadow); G5 join 100%
 - `scripts/dd_param_scan.py --exact` — 路径湖精确反事实
 - 看板 `/api/analytics/new-mechanisms` — shadow 计数/板块脉搏/价源爬坡
+
+## 🔒 裁决口径白名单 (强制, 2026-07-30 DEB-fee-net-pnl §九.4)
+
+**任何对外统计/裁决矩阵/周报引用 trade_records 时, 必须使用正向白名单**:
+```sql
+source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
+```
+- **不得用 NOT IN 黑名单** — 费用案中作者 (515 混 MAIN_PIPELINE 退休引擎 +$23k) 与辩论方
+  (191 漏 PLAYBOOK_SHADOW) 各中一次, 系"跨引擎拼接"口径事故第三次重演;
+- 新引擎上线默认**不进**裁决口径, 须显式加入本白名单并在此登记;
+- fees_est 等派生列可对全表回填 (无害), 但对外数字只取白名单子集。
 
 ## 已知历史口径事故 (引以为鉴)
 

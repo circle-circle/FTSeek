@@ -15,6 +15,25 @@ COST_MODEL:
   option_exchange_fee_bps: 1.0
   option_max_spread_pct: 0.05
   pre_after_session_mult: 3.0
+# 2026-07-30 DEB-fee-net-pnl D2: 富途美股费率表 (fee_model.py 消费, 券商调价改这里留 ConfigGov 痕)
+#   SEC 费率是 effective_from 时间序列 — 回填/记账按成交日选档 (官网实证 2026-04-04 生效 $20.60/M)
+broker:
+  futu_us:
+    commission_per_share: 0.01
+    commission_min_per_order: 1.99
+    commission_max_pct_of_amount: 0.003
+    platform_fee: 0.0
+    settlement_per_share: 0.003
+    sec_fee_schedule:
+    - {from: '1900-01-01', rate: 0.0}
+    - {from: '2026-04-04', rate: 0.0000206}
+    sec_fee_min: 0.01
+    taf_per_share: 0.000195
+    taf_min: 0.01
+    taf_max: 9.79
+    cat_per_share_nms: 0.000003
+    cat_per_share_otc: 0.00000003
+    borrow_day_basis: 365
 capital:
   description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
     reads from broker.'

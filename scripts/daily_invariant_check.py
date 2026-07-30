@@ -10,6 +10,7 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   I2 pnl_pct 符号 = pnl 符号                   I6 bar 峰谷物理性 (LONG bar_peak ≥ 0.995*max(e,x))
   I3 peak/trough 最有利/最不利语义             I7 exit_time > entry_time
   I4 mfe 与 peak 重算一致 (±0.05pp)            F  字段健康度 (关键测量字段非空率骤降/常量化)
+  I8 pnl_net = realized_pnl - fees_est (±0.02, 2026-07-30 费用净额批)
 
 输出: 违反数 >0 → logger.error (被 error_alert.sh 15min 扫描拾取推钉钉) + exit 1;
      全过 → 一行 OK + exit 0。结果落 data/invariant_check_latest.json。
@@ -85,6 +86,14 @@ def main() -> int:
             rec("I6_bar_peak_impossible", r["id"], sym, f"bar_peak={pkb} e={e} x={x}")
         if r["entry_time"] and r["exit_time"] and str(r["exit_time"]) <= str(r["entry_time"]):
             rec("I7_time_order", r["id"], sym, f"{r['entry_time']} → {r['exit_time']}")
+        # I8 (2026-07-30 DEB-fee-net-pnl): 净额三字段自洽 — 毛−费=净 (列可空, 有值才查)
+        try:
+            fees, net = r["fees_est"], r["pnl_net"]
+        except (IndexError, KeyError):
+            fees = net = None  # 旧库无列
+        if fees is not None and net is not None and abs(pnl - float(fees) - float(net)) > 0.02:
+            rec("I8_fee_net_identity", r["id"], sym,
+                f"pnl={pnl} fees={fees} net={net} (毛−费≠净)")
 
     # F: 字段健康度 — 非空率骤降即测量链断线 (常量退化族预警)
     field_health = {}
@@ -94,12 +103,13 @@ def main() -> int:
             "exit_telemetry": lambda r, m: m.get("exit_telemetry"),
             "entry_price_source": lambda r, m: m.get("entry_price_source"),
             "attribution": lambda r, m: m.get("attribution"),  # 2026-07-28 上线, 逐步爬坡
+            "fees_est": lambda r, m: (r["fees_est"] if "fees_est" in r.keys() else None),  # 2026-07-30 上线
         }
         for name, fn in checks.items():
             nn = sum(1 for r in rows if fn(r, json.loads(r["metadata_json"] or "{}")) not in (None, "", {}))
             field_health[name] = f"{nn}/{len(rows)}"
-            # attribution 是新字段, 首周不告警; 其余跌破 50% 告警
-            if name != "attribution" and len(rows) >= 10 and nn < len(rows) * 0.5:
+            # attribution/fees_est 是新字段, 首周不告警; 其余跌破 50% 告警
+            if name not in ("attribution", "fees_est") and len(rows) >= 10 and nn < len(rows) * 0.5:
                 rec("F_field_dropout", "-", name, f"非空率 {nn}/{len(rows)}")
 
     result = {

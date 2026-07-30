@@ -4091,6 +4091,25 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     except Exception as _gc_err:
         logger.debug(f"[_close_trade_record] ghost_cause 写入失败 trade_id={trade_id}: {_gc_err}")
 
+    # 2026-07-30 (DEB-fee-net-pnl D2 go-forward): 平仓时顺手估算往返费用 — 纯记账,
+    #   失败只 debug 绝不阻断平仓链路。fee_breakdown 入 metadata (审计/未来 broker 升级逐项 diff),
+    #   fees_est/pnl_net 列在主 UPDATE 后写 (列由 backfill_fee_net.py ALTER, 旧库无列时静默跳过)。
+    _fees_total = None
+    try:
+        if _tr is not None and _meta_parse_ok and exit_price and float(exit_price) > 0:
+            from app.execution.fee_model import estimate_round_trip as _est_rt
+            _f_qty = float(_tr[4] or 0)
+            _f_entry = float(_tr[2] or 0)
+            _f_edate = str(_tr[3] or "")[:10] or now_iso[:10]
+            if _f_qty > 0 and _f_entry > 0:
+                _f_rt = _est_rt(_f_qty, _f_entry, float(exit_price), str(_tr[1] or ""),
+                                trade_date=_f_edate, exit_date=now_iso[:10])
+                _fees_total = round(_f_rt["total"], 2)
+                _meta["fee_breakdown"] = {**_f_rt, "source": "est", "recorded_at": now_iso}
+                _meta_dirty = True
+    except Exception as _fee_err:
+        logger.debug(f"[_close_trade_record] 费用估算失败 trade_id={trade_id}: {_fee_err}")
+
     # #6: telemetry/ghost_cause 对 metadata 的读改写合并为一次写回 (仍在主 UPDATE 之前,
     #   内容与旧逻辑两次独立写的最终状态完全一致)
     if _meta_dirty:
@@ -4129,6 +4148,17 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?
             WHERE id=?
         """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), round(_mae_pct, 4), trade_id))
+    # 2026-07-30 (DEB-fee-net-pnl): 净额列跟随主 UPDATE 落库 — pnl_net = 毛 - 估算费;
+    #   三态只升不降 (broker/reconciled 不被 est 覆盖); 旧库/测试库无列 → 静默跳过。
+    if _fees_total is not None:
+        try:
+            conn.execute(
+                "UPDATE trade_records SET fees_est=?, pnl_net=?, "
+                "fees_source=CASE WHEN fees_source IN ('broker','reconciled') "
+                "THEN fees_source ELSE 'est' END WHERE id=?",
+                (_fees_total, round(round(pnl, 2) - _fees_total, 2), trade_id))
+        except Exception as _fee_col_err:
+            logger.debug(f"[_close_trade_record] 费用列写入跳过 trade_id={trade_id}: {_fee_col_err}")
     # instruction 表的 MFE/MAE 列历史语义是【美元金额】(shadow_tracker 写 (high-price)*size,
     #   feishu 显示 ${mfe:.0f}), 而 _mfe_pct/_mae_pct 是百分比 → 按 notional 换算成美元后落库,
     #   与所有既有消费者单位一致. notional = entry_price * quantity.
