@@ -73,7 +73,7 @@
 3g. **辩论完成, 待用户裁决 4 点**: `docs/debates/DEB-20260729-topup-event-veto-shadow.md` — 辩论方 **T1 反转**: news_sentiment 实测三值 {0:77,+1:35,-1:3} 非退化 (作者 §二结论系 falsy 过滤 bug+小窗, 已自我修正), veto 直接用现存 sentiment+earnings_days_until 两字段零新建; T3 收窄为财报前≤1日; T4 G4 降级日级。**裁决点**: ①F2a (半小时语义确认+口径成文) 现在做否; ②F2b 缓办规则批准否 — F1 三日速率 <3笔/日直接不做, ≥5笔/日启动瘦身版 (半天); ③(§十新增) F2b 瘦身版并入**板块盘中急跌 veto 源** (pulse weakest3/≤-2% → veto 同板块 LONG, 字段零新建, 随②同生同死); ④(§十新增) **pulse 历史落盘** append jsonl (纯记录侧, 不挂 F1 规则, 批准即做)。另 §十实证: sector_pulse 名义 UE 消费方系时区死锁 (UE 09:10 ET 盘前跑 vs pulse 10:00 ET 首写, 当日守卫 100% 失败=死接线), 建议不修, 真归宿=③。批准后本案挂起等 F1 数据, 不占验证窗口。
 3h. **已裁 O1 · 步骤1 已执行 · G3 观察期至 08-05**: `docs/debates/DEB-20260729-reanchor-knife-window.md` — 辩论方全线支持删除: E2 去重=7 独立事件 (NVDA 22 次实为 2 事件轮询重复), E1 反事实 6 可算 4 亏合计 -5.09% (MU -3.41 典型接飞刀), 埋点链路验证=真零实弹, T2 无意图证据 (双向救援设计落空半成品)。`entry_reanchor_enabled: false` 双处已关停+重启。Qoder 复核全复现 (§十, 含 MU 独立重算 -3.23%/-3.41% 双口径吻合)。**08-05 G3 漏斗对照通过 → 步骤3 代码退役**。
 3i. **辩论闭环, 待用户裁决 D1-D5 (用户命题"否则白干")**: `docs/debates/DEB-20260730-fee-net-pnl.md` — 全库 PnL 系毛盈亏零扣费。**两轮口径修正后终版 (SIM-only 白名单, §九)**: 07-29 毛+49.8→净+19.3 (三方一致) / **07月 毛−91→净−815** (费724) / **全史 168笔 毛−1365→净−2124**; 假盈利14 / SL_BREAKEVEN 桶毛+89→净−48 (假保本14笔)。⚠️口径教训: 作者首版 515 笔混入已退休引擎 (MAIN_PIPELINE +23298), 辩论方揪出但其"191 笔"自身混入 SHADOW — **跨引擎拼接系口径事故#1 第三次重演, D3 前置定为正向白名单 `IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')` 而非黑名单**。**双方一致**: D1 净额SSOT / D2 fee_model+yaml费率表+三态 / D3 回填+08-07矩阵净口径重算 / D4 保本线费用感知 (挂矩阵, 实弹排 F1 验收后) / D5 门槛 record-only 且永不作入场硬拦。待用户: D1-D5 拍板 + TAF/SEC 对 SHORT 入场腿照收的终确认 (§九: 监管惯例应收)。**§十 动态源实测 (用户问"更全面动态")**: ①`order_fee_query` = broker 实收落地接口但 SIM 订单历史为空 (实测), LIVE 专属 ②`get_margin_ratio.short_fee_rate` SIM 即可动态拿 (SNDR 3.0%/年) → SHORT 借券费盲区可补 ③SEC $20.60/M 自 2026-04-04 (此前 $0) → 费率表须 effective_from 时间序列, 回填按成交日分段。
-4. **周五盘后**: 老动作不变 — `scripts/exit_scorecard.py --since 2026-07-21` 看 R:R。
+4. **周五盘后**: 老动作不变 — `scripts/exit_scorecard.py --since 2026-07-21` 看 R:R。另数 trigger_miss 新两门计数: `liquidity_gate` (07-30 盘前上线) + `borrow_pool_gate` (07-30 盘中上线, SHORT 专属) — 零计数合法 (现宇宙本不该拦), 有计数则逐笔复核拦截正确性。
 5. **08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。X2 若启动须满足**四前置**（新增第 4 条"SHORT 不隔夜"，依据主文档 §13.1，叙事已由 §14.2 修正）。
 5a. **08-07 数据就绪审计 (Qoder, 07-29 夜, 用户令"先检查确认数据")** — 距裁决日 7 个交易日, 逐决定项盘点:
    - 🟢 **鲜活健康**: 路径湖 74 且 cron 04:35 日增 (→08-07 ~120+, dd 0.6/0.8+分层反事实主料); trigger_miss_telemetry (当日 22:38 仍写); trigger_gate_history 累计快照 (n=88/93 起, 逆向选择 gap 追踪); exit_param_shadow 114 行 (be/dd A/B 主料); scorecard 已平仓 512 (A1 切片 n≥100 可达)。
@@ -87,6 +87,16 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-07-30 (午后·遥测测试污染修尺子) · pytest 假事件写进生产遥测 5.6%/13.4% — 守卫+存量清理 (用户裁"要")
+**发现路径**: 07-29 复盘时 reanchor 关停后 trigger_miss 里仍持续出现 `reanchored` 事件 — 时间戳与每次全量回归完全吻合: 测试直调 `_check_intraday_trigger`, `_emit_trigger_miss`/`_emit_entry_shadow` 无隔离, **07-11 埋点上线起每跑一次 pytest 就写假事件** (trigger_miss 331/5893=5.6%, entry_shadow 336/2498=**13.4%**)。危害现行: G3 观察判据"reanchored 桶归零"被污染成永远非零; entry_shadow 的入场时机门离线切片 13.4% 假样本。
+**修复**: ①两 emit 函数入口加 `"TEST" in symbol.upper()` 守卫 (测试标的一律不落盘, 连 ZTEST 类交易所测试符号也覆盖) ②存量清理 331+336 行 (bak_testclean_20260730 双备份) ③闭环: 跑污染源测试文件 13 passed 且遥测零新增 / 全量 998 passed 后仍 0 残留 / **G3 判据修后真读数 = 0** ✓。
+**免重启说明**: 生产服务从不处理 TEST 标的, 守卫只对 pytest 进程有意义 (每次冷加载新代码) — 不重启, 避免非必要扰动。
+**教训 (归档)**: 只读埋点的"零行为改动"承诺不含测试进程 — best-effort append 类埋点必须带测试标的守卫, shadow/telemetry 消费前先查 symbol 基数里有无 TEST。
+
+### 2026-07-30 (盘中·Qoder) · 流动性门两补丁实弹 — ①名义额接真实 sizing ②SHORT 借券池门 (用户裁"直接做 并更新待办")
+**① sizing 修复**: 流动性门名义额原硬编码 `cap×4%`≈$3,280, 与真实 sizing (上限 $3,925) 低估 ~20% → 改从 `inst.position_size` 实取, 无值回退旧口径。**② 借券池门 v2**: SHORT 触发前查 `get_margin_ratio` — `is_short_permit=False` (券商不可卖空, sim 假成交陷阱) 或券池余量 < 计划股数×10 安全倍率 → 拦。复用流动性门同套纪律: (symbol,date) 日级缓存零配额增量 / fail-open / 拦截日志每标的每日一次 / telemetry reason=borrow_pool_gate / 回滚=关 `borrow_pool_gate_enabled`。
+**验证**: 功能级 10/10 (L1-L5+B1-B5) + **端到端实盘接口实测** (SNDR 池 58万股/费率 3.0%/可空✓, NVDA 1.09亿股✓, BABA 852万股✓ — `dual_broker.get_short_pool` SIM 环境可查) + 998 passed + 服务 13:00 重启冒烟干净。注: futu SDK 后台线程非 daemon, 脚本直调需显式退出, 服务进程无此问题。
 
 ### 2026-07-30 (盘前·流动性门上线) · 用户裁"小盘票补充限制" — 触发侧第四门: 仙股地板 + 名义额/ADV$ 上限 (实盘基准审计 T1-#5 落地)
 **盘点实锤**: 现有三面对小盘票零覆盖 (screener 无流动性过滤 / 触发侧仅 >8% gap 门 / UE 仅 LLM 软自报 crowding_low); **低 ATR 门恰好反向** — 挡低波不挡高波小票。sim 按盘口快照成交, 低流动标的盈利含虚高成分 (实盘冲击 30-100bps)。

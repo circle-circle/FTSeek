@@ -3457,6 +3457,11 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     # 零行为改动: 仅 append JSONL, best-effort, 不影响触发判定与返回值.
     def _emit_trigger_miss(reason: str, cur):
         try:
+            # 2026-07-30 修尺子: pytest 直调本函数把 US.TEST* 假事件写进生产遥测
+            #   (trigger_miss 5.6% / entry_shadow 13.4% 污染, 07-11 起) — G3 reanchor
+            #   归零判据被测试跑弄脏。测试标的一律不落盘 (存量已清, bak 留档)。
+            if "TEST" in symbol.upper():
+                return
             import json as _json
             from datetime import datetime as _dt
             from pathlib import Path as _Path
@@ -3489,6 +3494,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                            vwap_populated=None, vol_gate_ratio=None,
                            vol_gate_block=None, entry_path=None, inst_confidence=None):
         try:
+            if "TEST" in symbol.upper():  # 2026-07-30: 同款测试污染守卫 (见 _emit_trigger_miss)
+                return
             import json as _json
             from datetime import datetime as _dt
             from pathlib import Path as _Path
