@@ -54,3 +54,35 @@ SHORT RSI 30-45 趋势延续), 但 `_pullback_quality` 评分表未同步 — �
 
 - 2026-07-29: F1 修复落地 (technical.py 两 band) + DA cron stderr 重定向 + dd_param_scan.py
   首跑 + UE 锚定定性反转落档。UE O1/O2 待用户裁决 (建议 O2 观察 1 周)。
+
+## 第二轮 · 独立复核 (Qoder, 2026-07-29) — 通过, 附 2 个口径修正 + 1 个落档 nit
+
+**独立实证 (不引用作者数字, 全部重跑)**:
+1. **F1 band 语义**: inline 回归 20 断言全过 — 旧 12 band 零变化 (LONG 47→1.0/42→0.7/52→0.7/35→0.9/20→0.3; SHORT 52→1.0/47→0.7/57→0.7/65→0.9/75→0.3 等) + 新 band 边界无洞 (LONG rsi=55 落既有 0.7 / 56-65→0.6 / 66→0.3; SHORT rsi=45 落既有 0.7 / 30-44→0.6 / 29→0.3)。接线确认在 live 路径上 (`evaluate` L221 `require_pullback and pullback_q < min`, yaml 0.5/true)。
+2. **dd 扫描逐字复现**: 109 笔 / 实际 -477.6 / 0.6→-71.8 (+405.8) / 排序 0.6>0.8>1.0>1.2 — 与 DEB 表完全一致; 一阶近似偏差已如实标注, 结论只用于反转假设方向, 合规。
+3. **DA cron stderr**: `/root/.hermes/cron/jobs.json` 实测 `2>>.../logs/da_pipeline_stderr.log` (append 模式正确)。
+4. **看板 P0-1**: 旧键 `slippage_pct` 全库确认从未存在 (常量退化指控成立); 新查询同口径复跑 74 样本/均值 5.1bps/超标 2 (vs 作者 68/6.97/1 — 同一 SQL, 隔夜新增成交推移窗口所致, 非错误)。
+5. **date('now')**: web_dashboard 全目录仅剩 2 处注释命中, 代码清零 ✓。
+6. **980 passed** 独立重跑复现 (39.2s)。
+
+**口径修正 (2, 非阻断, 只改 DEB 数字不改结论)**:
+- **R1**: §二 "±3% band" 实为**非对称** — SHORT band = [锚×0.95, 锚×1.03] (`entry_band.py` CHASE 5%/KNIFE 3%, 追空方向给 5% 空间); "reanchor 上限 3%" 实测 yaml `entry_reanchor_max_drift_pct: 4.0`。9-19% gap 对两个真值同样远超 → "机制各自正确、组合失效" 定性不变。
+- **R2**: F1 commit 称 "单测 6 旧 band 零变化 + 两死路径复活", 但 commit 内无测试文件 — 系 inline 验证未落库, 他人不可复现 (落档纪律: 验证代码要么入库要么在 DEB 附命令)。本轮已在 §二轮第 1 条补上可复现断言清单, 视同补档。
+
+**变更纪律核对**: F1 扩大信号放行面, 但基线为零 (只增不改) + 验收判据 (3 日补量>0, 新增笔 3 日胜率<30% 回滚) 预注册 + 当日无其他信号侧变更叠加 → 合规。
+
+---
+
+## 第三轮 · F1 首夜 +0 溯因 — 第四道暗门实锤并修复 (Qoder, 2026-07-30, 用户问"F1 确认能启用吗")
+
+**首夜结果**: F1 (684e057e, 07-29 07:00 入腔) 当晚 4 轮补量全 +0, vote_none=17/17 全量、零评估异常 — F1 不是全部瓶颈。
+
+**溯因 (逐关排除法)**: 离线复现三关 (momentum/pullback窗/quality) — 池内 NVDA/GOOG/MU 三只 SHORT q=0.6 全过、手算 strength=65 ≥ min 40 本应产出; 但全路径 `evaluate()` 仍返 None → 定位到入口第一行: **yaml `strategies.technical.enabled: false`** (主线时代遗留开关, 05-20/06-17 主线止血期间关闭)。`_load_yaml_config` 加载后 evaluate 入口即 return None — **F1 修的两个 band 从未被执行过一次**。"线路从未通电"第三例, 且是四道门里最靠前的一道: enabled→momentum→pullback窗→quality, 前三周的诊断都在修后三道, 第一道从没开过。
+
+**修复 (最小面, 用户裁"启用")**: 不动 yaml 全局开关 (语义属主线退休资产, 不复活) — `TechnicalFallbackAdapter.vote` 局部覆写 `enabled=True` (其余参数仍从 strategies.technical 读, 调参单一真相源), 门控 `playbook.topup.technical_override_enabled: true`。受益面 = Adapter 两个设计内消费方: topup 补量 + 无 bridge 兜底 (后者同样闷杀至今)。L822 方向仲裁影子用途不动 (llm_vote 模式下纯审计)。
+
+**验证**: 功能级双态 — 开关开: NVDA/GOOG/MU vote → SHORT str=65 conf=0.78 (**上线以来首次方向产出**) / 开关关: 退回全 None (回滚路径实测) ✓; 998 passed / 重启冒烟 7/7。
+
+**验收判据 (沿用 §一预注册, 时钟重置今晚起)**: 3 日内补量 >0 且 S1 单列判分; 新增笔 3 日胜率 <30% → 关 technical_override_enabled 回滚。注意: 今晚若 CAUTIOUS regime 延续, 池内可补出的多为 SHORT (RSI 30-45 趋势延续) — 与 F1 band 语义一致, 属设计内。
+
+**供给量诚实边界 (回答"连续两天只有 7 笔")**: 7 笔 = DA 4 + UE 3, topup 0。本修复只解 topup 一路 (上限 +18/日, 实际受市况与四关约束); DA 11-15 候选×触发率 ~30% 与 UE 锚时滞 (O2 观察中) 是另外两路瓶颈, 不在本案范围。

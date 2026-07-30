@@ -1128,6 +1128,11 @@ playbook:
   #   无方向不硬凑; 下游低ATR门/连败封禁/VWAP门/量能门照常适用). 归因 raw.source=topup_pool.
   topup:
     enabled: true
+    # 2026-07-30 (零产出真凶修复, 用户裁"启用"): strategies.technical.enabled:false
+    #   是主线遗留开关, 把 TechnicalFallbackAdapter 两条设计内路径 (topup/无bridge
+    #   兜底) 一起闷杀 — F1 band 从未被执行。本开关仅在 Adapter 局部覆写 enabled,
+    #   min_strength/quality 等参数仍从 strategies.technical 读。回滚: 改 false。
+    technical_override_enabled: true
     # 2026-07-25 (用户裁决"验证期提升每日交易量快速攒样本"): target 25→30 / max_add 12→18.
     #   执行侧上限未触顶 (max_daily_positions=30, notional cap 昨日仅用 32%), 瓶颈在供给;
     #   质量门/三门/无方向不硬凑 照常适用 — 只抬配额不降标准. 回滚: 25/12.

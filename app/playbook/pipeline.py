@@ -352,7 +352,22 @@ class TechnicalFallbackAdapter:
         """跑 technical 纯策略出方向; 无方向 → None (SKIP, 不硬凑成交)。"""
         try:
             from app.strategy.pure import evaluate as eval_strategy
-            cand = eval_strategy("technical", ctx)
+            # 2026-07-30 (topup 零产出真凶, 第四道暗门): yaml `strategies.technical.
+            #   enabled: false` 是主线时代遗留开关 — evaluate() 入口即 return None,
+            #   F1 修的 band 从未被执行 (07-29 带 F1 跑 4 轮仍 +0, 手算三只 strength=65
+            #   本应过)。本 Adapter 两个消费方 (topup / 无 bridge 兜底) 设计上就该出
+            #   方向 — 局部覆写 enabled, 其余参数 (min_strength 等) 仍从 yaml 读,
+            #   调参保持单一真相源。回滚 = 关 playbook.topup.technical_override_enabled。
+            _t_cfg = None
+            try:
+                from app.core.config_container import get_config as _tf_gc
+                if bool(_tf_gc().get_dotted("playbook.topup.technical_override_enabled", False)):
+                    from app.strategy.pure import _load_yaml_config as _tf_lyc
+                    _t_cfg = dict(_tf_lyc("technical") or {})
+                    _t_cfg["enabled"] = True
+            except Exception:
+                _t_cfg = None  # 覆写失败退回 yaml 行为 (现状 = 全 None)
+            cand = eval_strategy("technical", ctx, config=_t_cfg)
         except Exception as e:
             # 2026-07-27 (topup 零产出诊断): debug→warning — 全史零方向产出而日志无声,
             #   静默失败路径必须可见 (静默退化军规)
