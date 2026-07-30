@@ -100,7 +100,8 @@ class PlaybookPusher:
             return False
 
         message = self._format_evening_message(trade_date, instructions)
-        return self._send(message, dedup_key=f"playbook:evening:{trade_date}")
+        return self._send(message, dedup_key=f"playbook:evening:{trade_date}",
+                          title="📊 Playbook 盘后追踪")
 
     # ========== 格式化 ==========
 
@@ -299,13 +300,14 @@ class PlaybookPusher:
 
     # ========== 内部方法 ==========
 
-    def _send(self, message: str, dedup_key: str = None, sync: bool = False) -> bool:
+    def _send(self, message: str, dedup_key: str = None, sync: bool = False,
+              title: str = "📋 Playbook 交易指令") -> bool:
         """发送飞书消息"""
         try:
             # 优先使用 PushHub
             from app.push import get_push_hub, PushMessage, Level, Category
             msg = PushMessage(
-                title="📋 Playbook 交易指令",
+                title=title,
                 body=message,
                 level=Level.NORMAL,
                 category=Category.PLAN_PREMARKET,

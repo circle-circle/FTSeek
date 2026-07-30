@@ -142,6 +142,11 @@ class RegimeVerdict:
     min_confidence: float       # 信号最低置信度要求
     allowed_directions: list    # 允许的方向 ["LONG"] / ["SHORT"] / ["LONG","SHORT"]
     rationale: str              # 人类可读的判定理由
+    # 2026-07-29: 补市场数值三字段 (regime_history 告警 "vix/spy_price=0.0 数据未注入"
+    #   根因 = 本类从未携带数值, record_regime_change 只能吃默认 0)。默认 0.0 兼容旧构造。
+    vix: float = 0.0
+    spy_price: float = 0.0
+    spy_ma200: float = 0.0
 
     def blocks(self, strategy_id: str) -> bool:
         """判断是否阻止特定策略"""
@@ -206,6 +211,7 @@ def evaluate_regime(
             min_confidence=0.99,
             allowed_directions=[],
             rationale=f"CRISIS: VIX={vix:.1f}>=35, 极端恐慌, 全面停止",
+            vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
         )
 
     # ── BEAR: SPY < MA200 + VIX > 25, 或宽度恐慌 ──
@@ -230,6 +236,7 @@ def evaluate_regime(
             min_confidence=0.70,
             allowed_directions=["SHORT"],
             rationale=f"BEAR: {', '.join(reasons)}",
+            vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
         )
 
     # ── CAUTION: SPY < MA200, 或 VIX 25-35, 或宽度警告 ──
@@ -254,6 +261,7 @@ def evaluate_regime(
             min_confidence=0.55,
             allowed_directions=["LONG", "SHORT"],
             rationale=f"CAUTION: {', '.join(reasons)}",
+            vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
         )
 
     # ── STRONG_BULL: SPY > MA200 + VIX < 18 + 宽度健康 ──
@@ -271,6 +279,7 @@ def evaluate_regime(
             min_confidence=0.35,
             allowed_directions=["LONG", "SHORT"],
             rationale=f"STRONG_BULL: SPY>MA200, VIX={vix:.1f}<18, oversold={oversold_count}",
+            vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
         )
 
     # ── BULL: SPY > MA200 + VIX 18-25 (default positive state) ──
@@ -288,6 +297,7 @@ def evaluate_regime(
             min_confidence=0.40,
             allowed_directions=["LONG", "SHORT"],
             rationale=f"BULL: SPY>MA200, VIX={vix:.1f}, oversold={oversold_count}",
+            vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
         )
 
     # ── Fallback: 数据不足, 默认 CAUTION ──
@@ -304,6 +314,7 @@ def evaluate_regime(
         min_confidence=0.55,
         allowed_directions=["LONG", "SHORT"],
         rationale=f"FALLBACK→CAUTION: spy={spy_price:.0f} ma200={spy_ma200:.0f} vix={vix:.1f}",
+        vix=vix, spy_price=spy_price, spy_ma200=spy_ma200,
     )
 
 
@@ -431,10 +442,15 @@ class RegimeHysteresis:
             if self._stable_regime is None:
                 self._stable_regime = raw_regime
                 self._last_verdict = raw_verdict
-                record_regime_change(
-                    None, raw_regime.value, "evaluate",
-                    rationale=raw_verdict.rationale,
-                )
+                # 2026-07-29: 无值首调不记 (重启期数据未就绪时 vix/spy 全 0 的 churn 行,
+                #   今日 13:44 一秒 8 行实证); 有值才落 regime_history。
+                if raw_verdict.vix > 0 or raw_verdict.spy_price > 0:
+                    record_regime_change(
+                        None, raw_regime.value, "evaluate",
+                        vix=raw_verdict.vix, spy_price=raw_verdict.spy_price,
+                        spy_ma200=raw_verdict.spy_ma200,
+                        rationale=raw_verdict.rationale,
+                    )
                 return raw_verdict
 
             # 安全通道: CRISIS/BEAR 立即切换
@@ -446,6 +462,8 @@ class RegimeHysteresis:
                     )
                     record_regime_change(
                         self._stable_regime.value, raw_regime.value, "safety",
+                        vix=raw_verdict.vix, spy_price=raw_verdict.spy_price,
+                        spy_ma200=raw_verdict.spy_ma200,
                         rationale=raw_verdict.rationale,
                     )
                 self._stable_regime = raw_regime
@@ -487,6 +505,8 @@ class RegimeHysteresis:
                 )
                 record_regime_change(
                     old.value, raw_regime.value, "hysteresis",
+                    vix=raw_verdict.vix, spy_price=raw_verdict.spy_price,
+                    spy_ma200=raw_verdict.spy_ma200,
                     rationale=raw_verdict.rationale,
                 )
                 return raw_verdict
