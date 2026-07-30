@@ -472,6 +472,40 @@ class DualBrokerAdapter:
             logger.warning(f"[DualBroker] get_positions {target_env} 失败: {e}")
             return []
 
+    def get_short_pool(self, code_list, target_env: str = "sim") -> Dict[str, Dict[str, Any]]:
+        """借券池/费率/可空状态快照 (futu get_margin_ratio; 2026-07-30 实测 SIM/REAL 均可查).
+
+        Returns {code: {"pool": 股数|None, "fee_rate": 年率%|None, "shortable": bool|None}}.
+        任何异常/空结果返回 {} — 是否放行由调用方决定 (门默认 fail-open)。
+        """
+        def _f(v):
+            try:
+                f = float(v)
+                return f if f == f else None  # NaN → None
+            except (TypeError, ValueError):
+                return None
+        try:
+            ctx, _acc_id, _trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.get_margin_ratio(code_list=list(code_list))
+            if ret != 0 or data is None or data.empty:
+                return {}
+            out = {}
+            for _, row in data.iterrows():
+                code = str(row.get("code", ""))
+                if not code:
+                    continue
+                sp = row.get("is_short_permit")
+                out[code] = {
+                    "pool": _f(row.get("short_pool_remain")),
+                    "fee_rate": _f(row.get("short_fee_rate")),
+                    "shortable": (bool(sp) if sp is not None and sp == sp else None),
+                }
+            return out
+        except Exception as e:
+            logger.debug(f"[DualBroker] get_short_pool 失败 (调用方 fail-open): {e}")
+            return {}
+
     def place_protective_stop(self, symbol: str, qty: float, direction_held: str,
                               stop_price: float, target_env: str = "real") -> Dict[str, Any]:
         """挂 broker STOP 单作 live 兜底 (服务断连时仍触发止损).

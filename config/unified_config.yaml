@@ -1079,6 +1079,11 @@ playbook:
     liquidity_gate_enabled: true
     liquidity_gate_min_price: 3.0
     liquidity_gate_max_adv_pct: 0.5
+    # ⑤ SHORT 借券池门 (2026-07-30, 用户裁"直接做"): is_short_permit=False 或
+    #   券池余量<计划股数×min_cover → 拦 (sim 假成交陷阱); 数据源 get_margin_ratio
+    #   日级缓存; fail-open; 回滚=关开关
+    borrow_pool_gate_enabled: true
+    borrow_pool_gate_min_cover: 10
     breakeven_fee_cushion_pct: 0.15
     # 2026-07-30 D4 (DEB-fee-net-pnl, 用户裁"直接实现"): 保本线费用感知 — 用 fee_model
     #   真实往返费用/名义额替换上行固定 cushion (上行降为回退值); 回滚=关本开关

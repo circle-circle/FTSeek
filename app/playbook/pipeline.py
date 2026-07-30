@@ -3318,7 +3318,7 @@ _LIQUIDITY_LOGGED: set = set()  # 拦截日志每标的每日一次
 
 
 def _check_liquidity_gate(data_router, symbol: str, current_price: float,
-                          pb_cfg) -> tuple:
+                          pb_cfg, planned_qty: float = 0.0) -> tuple:
     """小盘/低流动性门 (2026-07-30, 用户裁"小盘票补充限制", 实盘基准审计 T1-#5)。
 
     背景: 现有三面零覆盖 (screener 无流动性过滤/触发侧仅 gap 门/UE 仅 LLM 软自报);
@@ -3327,7 +3327,9 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
 
     判据 (只减不加, 两条任一不过即拦):
       ① current_price < min_price (仙股/枯竭票地板)
-      ② 估算仓位名义额 > max_adv_pct% × ADV$ (5日均成交额)
+      ② 仓位名义额 > max_adv_pct% × ADV$ (5日均成交额) — 名义额优先取真实计划仓位
+        (inst position_size×price, 2026-07-30 复核修正: 默认系数低估实际单 ~20%),
+        缺省回退 资金×max_position_pct 保守上界
     fail-open: 日K/均量数据不足 → 放行 (与量能门同口径, 可用性优先)。
     Returns: (ok: bool, detail: str)
     """
@@ -3358,13 +3360,17 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
         _adv_dollar = _avg_vol * float(current_price or 0)
         if _adv_dollar <= 0:
             return True, "no_adv_data_failopen"
-        # 估算名义额: 资金 × 单仓上限 (触发时未定股数, 取保守上界)
-        try:
-            from app.core.config_container import get_config as _lq_gc
-            _cap = float(_lq_gc().get_dotted("capital.fixed_amount", 82000) or 82000)
-        except Exception:
-            _cap = 82000.0
-        _notional = _cap * float(pb_cfg.get("max_position_pct", 0.04) or 0.04)
+        # 名义额: 优先真实计划仓位 (inst position_size×price); 缺省回退 资金×单仓上限 保守上界
+        _planned_notional = float(planned_qty or 0) * float(current_price or 0)
+        if _planned_notional > 0:
+            _notional = _planned_notional
+        else:
+            try:
+                from app.core.config_container import get_config as _lq_gc
+                _cap = float(_lq_gc().get_dotted("capital.fixed_amount", 82000) or 82000)
+            except Exception:
+                _cap = 82000.0
+            _notional = _cap * float(pb_cfg.get("max_position_pct", 0.04) or 0.04)
         _max_pct = float(pb_cfg.get("liquidity_gate_max_adv_pct", 0.5))
         _ratio_pct = _notional / _adv_dollar * 100.0
         if _ratio_pct > _max_pct:
@@ -3373,6 +3379,50 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
         return True, f"ok ({_ratio_pct:.3f}% of ADV)"
     except Exception as _lq_err:
         return True, f"failopen: {type(_lq_err).__name__}"  # 门自身异常不得拦交易
+
+
+# 2026-07-30 SHORT 借券池门: (symbol, date) → {pool, fee_rate, shortable} 日级缓存
+_BORROW_POOL_CACHE: dict = {}
+_BORROW_POOL_LOGGED: set = set()  # 拦截日志每标的每日一次
+
+
+def _check_borrow_pool_gate(symbol: str, planned_qty: float, pb_cfg) -> tuple:
+    """SHORT 借券池门 (2026-07-30, 用户裁"直接做" — Qoder 复核补充项②)。
+
+    背景: 做空低流动/小盘票的头号风险不是冲击成本而是借不到券/被召回 — sim 无条件
+    假成交, 实盘 is_short_permit=False 直接拒单, 券池枯竭则开不了仓或遭召回。
+    数据源 dual_broker.get_short_pool (get_margin_ratio, SIM/REAL 均可查, 实测)。
+
+    判据 (仅 SHORT 指令, 任一不过即拦):
+      ① is_short_permit=False → 不可卖空
+      ② 券池余量 < 计划股数 × min_cover (默认 10x — 券池盘中会被消耗, 留量级余量)
+    fail-open (查不到数据不拦) / 日级缓存零配额增量 / 回滚=关 borrow_pool_gate_enabled。
+    Returns: (ok: bool, detail: str)
+    """
+    try:
+        if not pb_cfg.get("borrow_pool_gate_enabled", False):
+            return True, "disabled"
+        from app.utils.timezone import now_et as _bp_now
+        _key = (symbol, _bp_now().strftime("%Y-%m-%d"))
+        if _key not in _BORROW_POOL_CACHE:
+            from app.execution.dual_broker import get_dual_broker
+            _info = get_dual_broker().get_short_pool([symbol])
+            _BORROW_POOL_CACHE[_key] = (_info or {}).get(symbol)
+        _bp = _BORROW_POOL_CACHE.get(_key)
+        if not _bp:
+            return True, "no_pool_data_failopen"
+        if _bp.get("shortable") is False:
+            return False, "is_short_permit=False (券商不可卖空, sim 假成交陷阱)"
+        _pool = _bp.get("pool")
+        _cover = float(pb_cfg.get("borrow_pool_gate_min_cover", 10.0))
+        if _pool is not None and planned_qty and planned_qty > 0:
+            if _pool < planned_qty * _cover:
+                return False, (f"券池 {_pool:,.0f}股 < 计划 {planned_qty:.0f}股 × "
+                               f"{_cover:.0f} 安全倍率")
+            return True, f"ok (券池覆盖 {_pool / planned_qty:.0f}x)"
+        return True, "ok"
+    except Exception as _bp_err:
+        return True, f"failopen: {type(_bp_err).__name__}"  # 门自身异常不得拦交易
 
 
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
@@ -3724,7 +3774,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     # ── 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 仙股地板 + 名义额/ADV$ 上限 ──
     #   低 ATR 门挡的是低波动, 恰不挡高波动小票; sim 盘口快照成交使低流动盈利虚高。
     #   只减不加; ADV 日级缓存零配额增量; fail-open; 回滚=关 liquidity_gate_enabled。
-    _lq_ok, _lq_detail = _check_liquidity_gate(data_router, symbol, current_price, pb_cfg)
+    #   名义额取真实计划仓位 position_size (复核修正: 默认系数低估实际单 ~20%)。
+    _planned_qty = float(inst.get("position_size") or 0)
+    _lq_ok, _lq_detail = _check_liquidity_gate(data_router, symbol, current_price, pb_cfg,
+                                               planned_qty=_planned_qty)
     if not _lq_ok:
         from app.utils.timezone import now_et as _lqt_now
         _lq_key = f"{symbol}:{_lqt_now().strftime('%Y-%m-%d')}"
@@ -3733,6 +3786,19 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             logger.warning(f"[playbook] 💧 {symbol} 流动性门拦截 (今日仅提示一次): {_lq_detail}")
         _emit_trigger_miss("liquidity_gate", current_price)
         return False
+
+    # ── SHORT 借券池门 (2026-07-30, 用户裁"直接做"): 不可卖空/券池枯竭 → 拦 ──
+    #   sim 无条件假成交, 实盘 is_short_permit=False 必拒/券池枯竭遭召回 — sim 贴实盘基准。
+    if is_short:
+        _bp_ok, _bp_detail = _check_borrow_pool_gate(symbol, _planned_qty, pb_cfg)
+        if not _bp_ok:
+            from app.utils.timezone import now_et as _bpt_now
+            _bp_key = f"{symbol}:{_bpt_now().strftime('%Y-%m-%d')}"
+            if _bp_key not in _BORROW_POOL_LOGGED:
+                _BORROW_POOL_LOGGED.add(_bp_key)
+                logger.warning(f"[playbook] 🩳 {symbol} 借券池门拦截 (今日仅提示一次): {_bp_detail}")
+            _emit_trigger_miss("borrow_pool_gate", current_price)
+            return False
 
     # ── 2026-07-19 (DEB-round3 #2): thesis 漂移作废门 (5%, 永久作废) ──
     #   价格相对 bridge 入场价【逆方向】漂移 >5% → 盘前 thesis 失效:
