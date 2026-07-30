@@ -1075,6 +1075,9 @@ playbook:
     low_atr_gate_enabled: true
     low_atr_gate_min_atr_pct: 0.025
     breakeven_fee_cushion_pct: 0.15
+    # 2026-07-30 D4 (DEB-fee-net-pnl, 用户裁"直接实现"): 保本线费用感知 — 用 fee_model
+    #   真实往返费用/名义额替换上行固定 cushion (上行降为回退值); 回滚=关本开关
+    breakeven_fee_aware_enabled: true
     overnight_hold_enabled: false
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5

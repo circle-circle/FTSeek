@@ -4815,6 +4815,20 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     # ── effective SL (factor-specific breakeven ratchet + trailing stop) ──
     # Phase 3 (2026-06-30): 按因子类型动态调整利润锁定/跟踪止损
     _fee_cushion_pct = float(_pb_cfg.get("breakeven_fee_cushion_pct", 0.0))
+    # 2026-07-30 (DEB-fee-net-pnl D4, 用户裁"直接实现"): 费用感知保本线 — 拍的 0.15%
+    #   换真实往返费用/名义额 (真成本由 $/股固定佣金主导: 小仓 cushion 低估→假保本净亏,
+    #   大仓高估→锁利线虚高)。同一 _fee_cushion_pct 变量下游三处 (ratchet/退出归类/
+    #   be_shadow B 锚) 自动同口径。失败/无股数 → 回退旧 cushion; 回滚=关 yaml 开关。
+    if _pb_cfg.get("breakeven_fee_aware_enabled", False):
+        try:
+            _d4_qty = float(meta.get("_qty", 0) or 0)
+            if _d4_qty > 0 and entry_price > 0:
+                from app.execution.fee_model import estimate_round_trip as _d4_rt
+                _d4_fee = _d4_rt(_d4_qty, entry_price, entry_price, direction)["total"]
+                _fee_cushion_pct = _d4_fee / (_d4_qty * entry_price) * 100.0
+                meta["_be_cushion_fee_aware"] = round(_fee_cushion_pct, 4)  # 验收可观测
+        except Exception:
+            pass  # 回退旧 cushion (静默容错: 保本链路不得因记账增强而阻断)
     effective_sl = _compute_dynamic_effective_sl(
         direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct
     )
@@ -5485,6 +5499,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             meta["_skip_allowed"] = _skip_allowed
             meta["_log_tag"] = "playbook sim"
             meta["_symbol"] = symbol
+            meta["_qty"] = qty  # 2026-07-30 D4: 保本线费用感知需股数换算每股往返成本
 
             # ── 共用退出规则判断 (与 shadow 完全对齐) ──
             exit_reason, _exit_price_hint, peak_price, _be = _check_playbook_exit_rules(
