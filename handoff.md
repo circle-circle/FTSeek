@@ -88,6 +88,33 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-31 (晨·Qoder) · 运维三项 — health_check 内存监控 + hermes 周重启 + dashboard 按需激活 (用户裁)
+**①health_check.sh**: 新增第6项内存水位 — 可用 <300MB 告警附 top3 RSS 大户 (07-30 OOM 杀 hermes 零预警的教训); dashboard 检查从 HTTP curl 改**被动端口监听** (配合③, curl 会唤醒按需服务)。单次跑验证通过。
+**②hermes gateway 周重启**: cron `30 5 * * 0 XDG_RUNTIME_DIR=/run/user/0 systemctl --user restart hermes-gateway` (systemd --user 单元, 通路已验证) — 418MB/13h 增长长尾封顶。
+**③dashboard 按需激活 (已部署✓)**: `app.py` 加 ASGI 活动追踪 (http+websocket 入站报文) + 闲置 watchdog (DASHBOARD_IDLE_MINUTES 默认15, os._exit(0) 干净退出); socket unit 持 127.0.0.1:8901, service 改 StandardInput=socket + --fd 0 + **Restart=on-failure** 关键: 正常退出不复活。用户执行部署后端到端验证: systemd 持端口 + 连接触发 fd0 拉起 + HTTP 302/1ms ✓; 闲置 15min 自退释放 ~128MB + 12 条 OpenD 连接, 下次访问冷启动 2-5s。实测: 中间件启动服务正常, 1.2s 阈值下 watchdog ~60s 自退 ✓ + 998 passed。
+
+### 2026-07-31 (晨·Qoder) · 收盘复盘 + pytest 挂死根治 + 系统巡检 (用户令"要清理挂死+检查优化")
+**昨夜复盘 (07-30 ET)**: 12 笔全平 毛+$145.48/费$50.70/**净+$94.78** 净胜率58% — G5 净额推送 12/12 新格式 ✓ · topup F1 首次实产 (盘中窗 +1 条 SHOP 净+$5.66, 盘前三窗 +0 门拦 by design) · P0 三采集全夜无缺 (spread 10×57, markout 36/36, 借券 57) · 盘后报告费用净额总览已出 (近7日净−393.54 假盈利6笔)。stall 反事实: T/LLY 切对, CRM/MRK 被杀 ~$20 留桌, 漏血程度轻微。
+**pytest 挂死根治**: 三具挂死 (最久 11h, 150-170MB/个, OOM 推手之一) 全部清掉 (可用内存 1378→1660MB)。根因 = 测试触达 lazy 连接 futu 的 app 代码路径, SDK 非 daemon 线程卡解释器退出 (测试本身 36s 全过)。修复: `tests/conftest.py` 加 pytest_sessionfinish 把非主线程置 _daemonic — 前台全量验证 998 passed + EXIT=0 干净退出。**今后后台跑测试不再产生残留**。
+**巡检结论**: 0 failed units · 无僵尸进程 · hermes cron 全 completed · 磁盘 41% 健康 · OpenD 连接 主服务22/仪表12 (观察项)。**发现缺口**: health_check.sh (*/10 cron) 不查内存水位 — 07-30 OOM 杀 hermes 时无预警; 另 hermes gateway 418MB/13h 持续增长, 小机定时重启值得考虑 (均需用户裁决, 未动)。
+
+### 2026-07-30 (深夜·Qoder) · P0 实盘数据准备三采集上线 — spread/盘口 + markout + 借券费率 (用户裁"要", record-only)
+**为什么**: 08-02 复盘→切实盘的核心未知是 sim→live **兑现率** — sim 按盘口快照成交, 低流动/宽价差标的盈利含虚高; 借券费率只用于门没落历史; 成交后价格漂移 (adverse selection) 无数据。三项采集只读落盘, 零交易影响, 攒 2-4 周替换 est 成本模型, 为 08-29 终裁提供量化依据。
+**落地 (scripts/ 三新脚本, 统一 flush+os._exit 防 futu SDK 挂死, cron timeout 180)**:
+- `spread_depth_capture.py` — 盘中每 30min 对活跃池 (57只) 抓 bid/ask/量 → `data/shadow/spread_depth.jsonl`。**设计改道**: 原计划 get_order_book, 实测需 ORDER_BOOK 订阅且坏连接会永久挂死; 改 `get_market_snapshot` 批量 (自带 bid/ask/量, Nasdaq Basic 权限即有, 单次往返零订阅)。
+- `markout_capture.py` — 每 5min 扫当日入场, 对 +60/300/900s 三 horizon 记方向感知 drift → `data/shadow/markout.jsonl` (trade_id+horizon 幂等)。
+- `borrow_rate_snapshot.py` — 21:05 开盘后对活跃池查空头池 → `data/shadow/borrow_rate_series.jsonl` (池数/年费率/可空, 复用 `dual_broker.get_short_pool`)。
+**验证 (盘中实测)**: spread 57/57 ✓ (WDFC 0.72% 宽 vs WMT 0.027% 窄 — 成本区分度正是目标数据) · markout 36/36 (12笔×3horizon, 报价 12/12) ✓ · 借券 57/57 ✓ · 三脚本均秒退无挂死。cron 5 条已挂 (*/30 + */5 盘中双时段 + 21:05)。**futu 新坑落档**: OpenQuoteContext 握手超时**不抛异常返回坏 context** (后续查询挂死) → 探活模式 get_global_state + 重试 3 次, 已内置于 spread 脚本; 另杀 1 个挂死 pytest 残留 (b3btjs59l 后台任务, 测试 36s 早过 998 passed, futu 线程卡退出 2h20m 白占 154MB)。
+
+### 2026-07-30 (晚·Qoder) · G5 报表净额化 — 平仓推送+盘后复盘从毛口径切净口径 (用户裁"要做")
+**实锤**: DEB-fee-net-pnl D1-D3 净额只到 DB 层, 推送/报表全毛 (trade_exit 标题/audit 全部 SUM(realized_pnl), pnl_net 零引用) — 07-29 那种"毛+50 推送, 净实为+19"的误导延续。**落地两处**: ①单笔平仓推送 — `trade_exit` 加 fees/pnl_net 可选参, 提供时标题 `净-$1.41 (毛+$3.20/费$4.61)` 图标按净额着色, pipeline 平仓环复用前段 `_fees_total` 传入, 估算失败自动退回毛口径 (向后兼容其他调用方) ②盘后复盘 (hermes 04:00) — 新增归因视角0 费用净额总览: 今日/近7日 毛/费/净三列 + 净胜率 + 假盈利计数 + 费用覆盖率, 旧库无列静默跳过。纯展示层, 零交易链路变更。
+**验证**: 双态标题 ✓ (净口径/旧兼容) + 真实库近7日 50笔 毛−237.09 费251.22 净−488.32 假盈利6笔 覆盖率100% ✓ + 服务 21:05 重启 (今晚平仓即带净口径)。明晨 04:00 复盘报告首见三列总览。
+
+### 2026-07-30 (晚·Qoder) · DA 补跑 + regime shadow 挂死根因修复 + battle_plan 退役三步 (用户令)
+**DA 补跑**: 18:00 盘前扫描触发后被 OOM 杀掉 (内核 18:12 杀 hermes 主进程, 3.5GB 小机; 挂死进程堆系推手), gateway 18:13 自拉起但执行标 unknown, 07-30 计划未生成。清理 3 个挂死进程后 18:30 手动补跑, 19:10 completed — opportunity_scan 13 候选 + 13 指令写 DB, 今晚供给就绪。
+**shadow 挂死根因 (实锤)**: 非采集卡死 — 脚本干完活 (jsonl 行已写) 但 futu SDK 非 daemon 线程 (network_manager/callback_executor/lv3 watchdog) 使解释器永卡 threading._shutdown; print 块缓冲随进程卡死 → 日志全空假象; cron 每晚新增实例逐夜堆积 (07-28/07-29 两具 20-44h)。修复: main 末尾 flush + os._exit (复现验证秒退) + cron timeout 300 双保险。
+**battle_plan 无损退役三步**: ①写入方已死 (premarket_planner.py 已删, ADR-012 冻结, legacy_battle_plan_enabled:false) ②dashboard stale 水印本就存在 (battle_plan_is_stale 三处), 补 `_stale_notice` 显式横幅字段 ③UE 去重源**经查证为死代码** (_load_battle_plan/_existing_plan_symbols 全仓零调用), 直接删除 — 此前"UE 永久回避 5 只"担忧证伪, 实为零效应残留。交易面零消费实证: playbook 读 daily_active_pool + playbook_instructions。**遗留疑点**: 文件 07-30 10:31 被写过一次, 现存代码无写入路径, 写入方身份未定论。
+
 ### 2026-07-30 (傍晚·盘中方向证据 Phase1) · topup 指令落库时并排记录三层证据 (record-only, 用户裁"统一, 今晚开盘前完成")
 **背景**: 用户问"盘中能否优雅简单精准识别多空方向" — 盘点结论: 识别管道已存在三层 (technical 三票[今日通电]/VWAP 硬门[live]/sector_pulse[有人生成没人吃]), 缺的是互通与预测力检验。三段式: Phase0 今晚 technical 裸奔基线 / **Phase1 本批** / Phase2 数据胜出者升门 (另裁)。
 **实现** (`pipeline._gather_intraday_evidence`, topup 落库环挂接): raw.evidence = {vwap_side/vwap_dev_pct, order_flow_imbalance, ticker_buy_sell_ratio, volume_ratio, sector, sector_pulse_chg, pulse_asof_et, **agree/avail 一致度**(方向无关统一式 sign×证据正负)}。record-only: 失败返 None 不阻断落库, 任何异常不影响指令。
