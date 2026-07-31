@@ -139,6 +139,51 @@
 4. **B1 shadow**: 支持挂 (record-only 便宜), 但明确定位 = 给 10 日后的 regime 统一裁决供数, 不单独催熟。
 5. **A 改道 A4 (新方案)**: A1/A2 都建立在"存量可用"上, 实测不可用。**先修生产端**: ①陈旧 74 条批量降 inactive (主线教训已完成历史使命) ②review_orchestrator/experience_accumulator 的 lessons 写入检查是否还在产 playbook 时代经验 (最新一条 07-22, 9 天未新增 — 生产端疑似也断了, 需先诊断) ③攒到 ≥10 条 playbook 时代 lessons 再回来裁 A1 注入。**顺序: 先有活水, 再谈引水**。
 
+---
+
+### 第 2 轮 (2026-07-31, 起案方确认 — 独立复核辩论方四项取证后**全部接受**)
+
+起案方不采信辩论方叙述, 逐项独立重跑验证:
+
+| # | 辩论方结论 | 起案方复核 | 裁决 |
+|---|---|---|---|
+| T1 lessons 时代切分 | 74 主线陈旧 / 2 playbook 时代 | ✅ 复核属实: sqlite 实查 76 active 中 74 条 created_at < 07-11 (主线时代), top-5 by impact 确为 5 月上旬 "避免盘前交易"×3, pnl_pct 含 -648.99%/-3166.44% 假价时代坏数据; 最新一条 2026-07-22 | **接受翻案**, A1 撤回, 转 A4 |
+| T3 NewsV2 | 通过=3 非恒零 + on_immediate 消费者存在 | ✅ 复核属实: 今晨 04:32/06:32 两轮 `采集20→通过3`; scheduler_core L581 `on_immediate` 挂接存在。另补一条支持辩论方 nuance 的证据: 全部 gz 留存日志 grep `IMMEDIATE` 触发次数 = **0** — 消费者存在但从未实际触发, C1' 的全史核查必要性成立 | **接受证伪**, C2 退役撤回, 转 C1' |
+| B 名义额同量级 | DA $2.3-3.1k < UE $3.0-3.9k, "双标"实证不成立 | ✅ 复核属实: 07-30 当日三池名义额同量级且 DA 最小, 我原表述 "cautious 日 DA 裸奔" 的当日风险暴露证据不成立 | **接受修正**, B1 紧迫性降级为 shadow 供数 |
+| F1 升主案 | anchor_dev_pct 统一插桩, DA/UE 同尺 | ✅ 复核成立: miss 解剖 5/8 幻影与 UE SHORT 锚时滞确属同一家族 (盘前锚 vs 开盘现实), 合并口径后一把尺可一次裁决 | **接受升级**, F1 为本案主交付 |
+
+**教训自记 (起案方)**: 三处起案框架被证据推翻, 共性 = 采样不足 + 叙事越界 — ①lessons 看到"76 条存量"就预设可用, 未做时代切分; ②NewsV2 抽一轮 0 通过就外推"近停摆"; ③B 拿结构性不对齐直接套当日"风险暴露双标"。DEB 流程的独立复核环节本次实际发挥了纠偏作用。
+
+**收敛后裁决路径 (双方一致, 全部 record-only, 与 08-07 验证冻结零冲突)**:
+1. **F1 主交付**: bridge/inject 落库统一记 `anchor_dev_pct` (entry 带与当时市价偏离度, 1 字段), DA/UE 同尺, 攒 2 周后一次裁决"入场区合理性门"
+2. **A4**: ①74 条主线陈旧 lessons 批量降 inactive ②诊断 lessons 生产端 9 天断更 (review_orchestrator/experience_accumulator) ③攒 ≥10 条 playbook 时代 lessons 再裁 A1 注入
+3. **C1'**: 补查 on_immediate 全史触发次数 (gz 留存=0, 若全史亦零 → C2 退役复活)
+4. **B1 shadow**: 挂 sizing-delta 影子记录, 定位 = 给 10 日后 regime 统一裁决供数, 不单独催熟
+5. 删 order_executor:5185 死调用 (代码卫生, 随下批顺手)
+
+**待用户裁决**: 上述 5 项是否放行执行。
+
 ### 与验证期纪律的一致性
 
 本回应五项建议全部为 record-only / 只读诊断 / 代码卫生 / 数据治理 — 零生成侧行为变更, 与"参数冻结至 08-07"零冲突。A1 prompt 注入(生成侧变更)被推迟到存量修复后, 恰好绕开纪律风险。
+
+---
+
+### 第 3 轮 (2026-07-31, 执行落档 — 用户放行 5 项收敛裁决)
+
+| 项 | 执行结果 | 证据 |
+|---|---|---|
+| **F1 主交付** anchor_dev_pct | ✅ 仓内全落地, DA skill 侧待用户一键补丁 | ①db.py: 迁移列 `anchor_dev_pct REAL` (幂等 ALTER 已实跑生效, 58 列) + save_instruction INSERT/UPSERT 接入, ON CONFLICT 用 `COALESCE(excluded, 原值)` 防无插桩路径 (topup/主链) 把已记值冲 NULL ②UE 侧 llm_universe_scan.py: 记 inject 现价 vs scan 浮现价漂移 ③DA 侧 patch 已 staged: `scripts/patches/apply_anchor_dev_da_skill.py` (仓外 skill, 分类器拦截, 待用户执行) ④冒烟三路径全过: 插入/COALESCE保留/覆盖 |
+| **A4①** 74 条陈旧降 inactive | ✅ 已执行 | `UPDATE lessons SET status='inactive'` 74 行 (created_at < 07-11 主线时代), 现役 active=2 (均 07-22 playbook 时代); 降级快照留档 `data/audit/lessons_a4_downgrade_snapshot.json` (可逆) |
+| **A4②** 生产端断更诊断 | ✅ 诊断+根因修复 | **三重过滤叠加**: (a) 结构性 bug — `_extract_lessons` 读 `debate_result` (按角色字典), 而 actionable_fixes/final_conclusions 在 `arbiter_conclusion` → 07-07 起 lessons 恒=0, **已修** (review_orchestrator.py:1676 优先读 arbiter_conclusion, analyze→_run_debate→result 链路核实); (b) accumulator 规则门槛与 07-22 退出链加固后形态脱节 (规则2需 strength≥60 且亏损 — 07-23 起亏损单只有 35/50; 规则3需 PRE_CLOSE_EXIT≥5h — 退出原因已变为 TIME_EXIT/MFE_STALL_EXIT); (c) 唯一合格的 07-23 (13亏) 恰逢服务宕机错过复盘窗 |
+| **C1'** on_immediate 全史 | ✅ 核查完成, 证据闭合 | **配置级死亡**: unified_config.yaml:815 `immediate_scan.enabled: false`, 处理器首道闸即 return (scheduler_core.py:2179) 且静默无日志; 全部 18 个 gz 归档 (07-18→07-31) + 当前日志 `NewsV2-Immediate` 行数 = **0**。消费者自挂接 (06-30) 起从未且不可能触发 → **C2 退役条件成立, 待裁决** (退役=删 wiring+handler+config 块, 行为零变化; 但 NewsV2 管线整体去留涉及 on_news_passed 消费者, 建议单独裁) |
+| **B1** sizing-delta shadow | ✅ 已挂 | pipeline.py 兜底 sizing 块 (bridge 直写指令 = DA/UE 唯一 sizing 入口) 落 `data/shadow/sizing_delta.jsonl`: 指令自带 regime 文本 vs MarketRegimeGate 实采 regime/mult + water/conf 乘数 + 最终 size。**意外发现**: 07-19 F1 修复 (DEB-20260719-round2 Ω.3-4) 已让兜底 sizing 走 MarketRegimeGate SSOT — 原 B 命题 "DA sizing 不过 gate" 结构性部分可能已过时, shadow 数据将给出终局证据 |
+| **项5** 死调用删除 | ✅ 已删 | order_executor.py Task#29 教训验证块 (24 行) — verify_lesson_application 全仓无定义, 自始零产出 |
+
+**回归**: 全量 pytest 998 passed, EXIT=0 (38s)。
+
+**遗留待裁决**:
+1. DA skill 补丁: `python3 scripts/patches/apply_anchor_dev_da_skill.py` (幂等, 仓外需用户执行)
+2. accumulator 规则 2/3 门槛重校准 (strength≥60 / PRE_CLOSE_EXIT≥5h 与现役形态对齐) — 属参数调整, 未擅自改
+3. C2 NewsV2 退役范围 (仅 immediate 死链 vs 管线整体) — 证据已齐, 待裁
+4. A1 lessons 注入: 待 playbook 时代 lessons 攒 ≥10 条 (orchestrator 修复后生产已恢复) 再回来裁

@@ -88,6 +88,9 @@ class PlaybookDB:
             # 2026-07-19 (DEB-round3 #11): IC 代理回填标记 — fwd_return_* 用当日 open
             #   代理 (未触发指令无 entry_price) 时置 1, 供 IC 统计区分真实/代理样本.
             "fwd_proxy": "INTEGER",
+            # 2026-07-31 (DEB-feedback-loop F1): 锚偏离度 — entry 锚 vs 生成时刻市价 (%).
+            #   DA=LLM entry vs 分析时刻快照价; UE=inject 现价 vs scan 浮现价 (锚时滞).
+            "anchor_dev_pct": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -133,8 +136,8 @@ class PlaybookDB:
                 matched_patterns_json, pattern_verdict,
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
-                created_at, updated_at, config_version, invalidation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)
+                created_at, updated_at, config_version, invalidation, anchor_dev_pct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -161,6 +164,7 @@ class PlaybookDB:
                 horizon_confidence=excluded.horizon_confidence,
                 horizon_reasoning=excluded.horizon_reasoning,
                 invalidation=excluded.invalidation,
+                anchor_dev_pct=COALESCE(excluded.anchor_dev_pct, anchor_dev_pct),
                 updated_at=excluded.updated_at
         """, (
             inst.get("date"),
@@ -195,6 +199,7 @@ class PlaybookDB:
             inst.get("created_at", now),
             now,
             inst.get("invalidation", "") or "",
+            inst.get("anchor_dev_pct"),
         ))
         conn.commit()
         # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询

@@ -44,41 +44,48 @@ SECTOR_ETFS = {
 def main() -> int:
     from app.data.market_data_router import MarketDataRouter
     router = MarketDataRouter()
-    changes = {}
-    for etf, name in SECTOR_ETFS.items():
+    try:
+        changes = {}
+        for etf, name in SECTOR_ETFS.items():
+            try:
+                q = router.get_quote(etf) or {}
+                # router 真实字段: change_percent (现成) / price + previous_close (兜底)
+                cp = q.get("change_percent")
+                if cp is None:
+                    px = float(q.get("price", 0) or 0)
+                    prev = float(q.get("previous_close", 0) or 0)
+                    cp = (px - prev) / prev * 100 if (px > 0 and prev > 0) else None
+                if cp is not None:
+                    changes[name] = round(float(cp), 2)
+            except Exception as e:
+                logger.warning(f"{etf} 取价失败: {e}")
+        if len(changes) < 6:  # 半数以上失败 → 不覆盖旧文件 (宁旧勿假)
+            logger.warning(f"仅 {len(changes)}/12 成功, 保留旧 pulse 不写")
+            return 1
+        ranked = sorted(changes.items(), key=lambda x: x[1])
+        result = {
+            "date": now_et().strftime("%Y-%m-%d"),
+            "asof_et": now_et().strftime("%H:%M"),
+            "changes": changes,
+            # ranked: 弱→强, 供 LLM 直读 "Semis(-2.1%)" 形式
+            "ranked": [f"{k}({v:+.1f}%)" for k, v in ranked],
+            "weakest3": [k for k, _ in ranked[:3]],
+            "strongest3": [k for k, _ in ranked[-3:]],
+        }
+        # 原子写 (脚本集惯例 os.replace)
+        fd, tmp = tempfile.mkstemp(dir=str(OUT.parent), suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            json.dump(result, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, str(OUT))
+        print(f"[sector_pulse] {result['asof_et']} ET | 弱: {', '.join(result['ranked'][:3])} "
+              f"| 强: {', '.join(result['ranked'][-3:])}")
+        return 0
+    finally:
+        # 2026-07-29: 不修则 Futu 非守护线程吊住解释器退出, cron 每 30min 泄漏一个进程
         try:
-            q = router.get_quote(etf) or {}
-            # router 真实字段: change_percent (现成) / price + previous_close (兜底)
-            cp = q.get("change_percent")
-            if cp is None:
-                px = float(q.get("price", 0) or 0)
-                prev = float(q.get("previous_close", 0) or 0)
-                cp = (px - prev) / prev * 100 if (px > 0 and prev > 0) else None
-            if cp is not None:
-                changes[name] = round(float(cp), 2)
-        except Exception as e:
-            logger.warning(f"{etf} 取价失败: {e}")
-    if len(changes) < 6:  # 半数以上失败 → 不覆盖旧文件 (宁旧勿假)
-        logger.warning(f"仅 {len(changes)}/12 成功, 保留旧 pulse 不写")
-        return 1
-    ranked = sorted(changes.items(), key=lambda x: x[1])
-    result = {
-        "date": now_et().strftime("%Y-%m-%d"),
-        "asof_et": now_et().strftime("%H:%M"),
-        "changes": changes,
-        # ranked: 弱→强, 供 LLM 直读 "Semis(-2.1%)" 形式
-        "ranked": [f"{k}({v:+.1f}%)" for k, v in ranked],
-        "weakest3": [k for k, _ in ranked[:3]],
-        "strongest3": [k for k, _ in ranked[-3:]],
-    }
-    # 原子写 (脚本集惯例 os.replace)
-    fd, tmp = tempfile.mkstemp(dir=str(OUT.parent), suffix=".tmp")
-    with os.fdopen(fd, "w") as f:
-        json.dump(result, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, str(OUT))
-    print(f"[sector_pulse] {result['asof_et']} ET | 弱: {', '.join(result['ranked'][:3])} "
-          f"| 强: {', '.join(result['ranked'][-3:])}")
-    return 0
+            router.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

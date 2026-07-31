@@ -88,6 +88,22 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-31 (午后·Qoder) · DEB-feedback-loop 收敛 5 项执行落档 (用户裁"请执行") + 998 回归全过
+**另一模型取证辩论 → 我独立复核全接受** (DEB 第2轮): lessons 74/76 主线时代陈旧 (A1 前提翻案) · NewsV2 非停摆 (通过=3, C2 前提削弱) · 07-30 三池名义额同量级 (B "双标"实证不成立) · F1 升主交付。
+**执行结果** (详见 DEB 第3轮落档表):
+①**F1 anchor_dev_pct 统一插桩**: db.py 幂等迁移列已生效 (58列) + save_instruction 接入 (ON CONFLICT COALESCE 防 topup/主链 UPSERT 冲 NULL) + UE inject 记 scan→inject 漂移; **DA skill 侧 staged** `scripts/patches/apply_anchor_dev_da_skill.py` (仓外分类器拦截, 待用户一键); 冒烟三路径 (插入/保留/覆盖) 全过。
+②**A4 lessons 治理**: 74 条主线时代降 inactive (快照 `data/audit/lessons_a4_downgrade_snapshot.json` 可逆, 现役=2); **断更根因修复** — `_extract_lessons` 读 `debate_result` (按角色字典) 而 actionable_fixes 在 `arbiter_conclusion` → 07-07 起恒=0, review_orchestrator.py:1676 已改优先读 arbiter_conclusion; 另两因 (accumulator 规则门槛与 07-22 退出链加固脱节 + 07-23 宕机错过复盘) 落档, 门槛重校准属参数调整**留用户裁决**。
+③**C1' on_immediate 全史核查闭合**: `immediate_scan.enabled: false` (unified_config.yaml:815) 配置级死亡 + 18 个 gz 归档零 `NewsV2-Immediate` 行 → 自 06-30 挂接从未且不可能触发, **C2 退役条件成立待裁**。
+④**B1 sizing-delta shadow 已挂**: pipeline.py 兜底 sizing (DA/UE 唯一 sizing 入口) 落 `data/shadow/sizing_delta.jsonl` (指令 regime 文本 vs MarketRegimeGate 实采 + 各乘数 + size)。**意外发现**: 07-19 F1 修复已让兜底 sizing 走 gate SSOT — 原 B "DA 裸奔" 结构性部分可能已过时, shadow 给终局证据。
+⑤死调用 order_executor Task#29 块 (24行) 已删。
+**回归**: pytest 998 passed EXIT=0。全部为 record-only/数据治理/代码卫生, 与 08-07 参数冻结零冲突。
+
+### 2026-07-31 (午·Qoder) · 全链路复盘 → 闭环两项 + DEB 起案 (用户裁"1和2先闭环, 其他DEB")
+**链路体检结论**: 信号发现层超预期 (方向命中 9-10/12, DA 候选带真催化) · regime 门控真实生效 (cautious×0.5 sizing) · **迭代层半断裂** — 三记分牌手动-only 零代码读者, lessons 注入接退役主线, DA/仓内 regime 双轨断开, NewsV2 零通过空转。
+**闭环①**: exit_scorecard/direction_hit/trigger_gate 挂周六 06:20 cron (fwd 回填+factor_ic 之后), 迭代仪式去人依赖。
+**闭环② miss 机会成本首跑 (解剖出幻影)**: IC backfill 手动补 307 条 → 10 miss 表面方向命中 9/10 均 +5.76%/条, **但 5/8 入场区全天未触** (MSFT −13%/MU −17% 脱节, 永远不可成交, 门拦对了); 真 miss 仅 SONO/E/ABBV 3 条。**新发现 F1**: DA 入场区与市价严重脱节 (生成侧价格基准缺陷) — 建议 bridge 落库记 entry 偏离度 record-only, 2 周量化后再裁"合理性门"。
+**DEB-20260731 起案** (`docs/debates/DEB-20260731-feedback-loop-wiring.md`): 议题A lessons 改接现役链 (A1生成注入/A2执行门/A3维持) · 议题B regime 双轨对齐 (B1接SSOT/B3维持, 建议先 shadow 记 sizing 差值) · 议题C NewsV2 (C1诊断→C2退役) + 顺手项 order_executor:5185 死调用删除。待用户裁决。
+
 ### 2026-07-31 (收盘复盘·Qoder 主工程) · 07-30 净 +$94.78 三连净正 + topup 上线以来首补首胜 + 五项验收 4 过 1 空窗 + 另一模型三批改动复核代提交
 **战绩 (净口径首个完整日)**: 12 笔 7W/5L, 毛 +$145.48 费 $50.70 **净 +$94.78** — 07-28 起三连净正 (+145.8/+19.3/+94.8)。结构: 4 笔 TRAIL_LOCK 赢家 (TSM+56/GRBK SHORT+46/NVDA+35/SHOP+5.7) + 3 笔 PRE_CLOSE 小胜 vs 5 笔 MFE_STALL 砍损 (GS/T/LLY 零 MFE 单 -44/-42/-43)。
 **验收对账**: ①**topup 首补首胜**: 22:30 盘中窗 +1 (SHOP, 上线以来第一条), 净 +$5.66 TRAIL_LOCK — 第四道暗门修复当夜即兑现; 但盘前窗 3 轮仍 +0 (momentum NEUTRAL 为主, 属市况非故障) ②Phase1 evidence 1/1 落库 (SHOP agree=1/2, sector null — SHOP 不在 rotation 名单, 覆盖率待扩) ③G3 reanchored 真归零 (测试污染清后首夜 0) ④费用净额 go-forward: 12/12 fees_est/pnl_net 非空, 推送净额口径实弹 3 笔自洽 ⑤D4 费用感知保本**零样本** (昨夜无 SL_BREAKEVEN 出场, 判据顺延) ⑥流动性/借券池门零拦截 (无小票触发场景, fail-open 未误伤 — GRBK SHORT 正常放行成交)。

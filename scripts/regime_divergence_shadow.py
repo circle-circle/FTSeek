@@ -130,4 +130,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    # 2026-07-30 (挂死修复): 采集链加载 futu 行情上下文, SDK network_manager/
+    #   callback_executor/lv3 watchdog 均非 daemon — 主线程会在 threading._shutdown
+    #   永久等待 (07-28/07-29 两实例各挂 20-44h 实证, 活已干完只是退不掉, 还白占
+    #   内存+futu 连接)。落盘已完成, flush 后硬退出。
+    import os
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)

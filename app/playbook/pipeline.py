@@ -3051,6 +3051,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             #   regime_mult: MarketRegimeGate (live regime SSOT) + 主路径同款 regime 表.
                             _water_mult = 1.0
                             _regime_mult = 1.0
+                            _regime_str_b1 = None  # B1 shadow 用: gate regime 标签 (assess 成功才填)
                             try:
                                 from app.risk.capital_safety import get_capital_safety_system as _get_cs_f1
                                 _cs_f1 = _get_cs_f1()
@@ -3060,6 +3061,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             try:
                                 from app.playbook.market_regime import MarketRegimeGate as _MRG_f1
                                 _regime_str_f1 = _normalize_regime_str(_MRG_f1().assess())
+                                _regime_str_b1 = _regime_str_f1
                                 _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
                             except Exception:
                                 pass
@@ -3092,6 +3094,42 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                 _risk_base, _risk_pct, _new_entry, _new_sl, _max_pos_pct,
                                 regime_mult=_regime_mult, water_mult=_water_mult, conf_factor=_conf_factor,
                             )
+                            # B1 shadow (DEB-feedback-loop, 2026-07-31): sizing-delta 对照 —
+                            #   指令自带 regime 文本 (生成侧视角) vs MarketRegimeGate (sizing 实采)
+                            #   + 各乘数与最终 size, 供 regime 统一裁决 (攒满10交易日) 供数. record-only.
+                            try:
+                                # 2026-07-31 复核补: 测试标的守卫 (07-30 遥测污染案军规 —
+                                #   只读埋点必带, pytest 直调本段不得写生产 shadow)
+                                if "TEST" in str(inst.get("symbol", "")).upper():
+                                    raise StopIteration
+                                from app.utils.timezone import now_et as _now_et_b1
+                                _ri_b1 = inst.get("raw_instruction_json")
+                                if isinstance(_ri_b1, str):
+                                    try:
+                                        _ri_b1 = json.loads(_ri_b1)
+                                    except Exception:
+                                        _ri_b1 = {}
+                                _src_b1 = ((_ri_b1 or {}).get("source") if isinstance(_ri_b1, dict) else "") \
+                                    or str(inst.get("decision_id") or "").split(":")[0]
+                                _shadow_b1 = {
+                                    "ts": _now_et_b1().isoformat(),
+                                    "date": inst.get("date"),
+                                    "symbol": inst.get("symbol"),
+                                    "direction": _dir,
+                                    "source": _src_b1,
+                                    "inst_regime_text": inst.get("market_regime"),
+                                    "gate_regime": _regime_str_b1,
+                                    "gate_mult": _regime_mult,
+                                    "water_mult": round(_water_mult, 4),
+                                    "conf_factor": round(_conf_factor, 4),
+                                    "size": _inst_ps,
+                                }
+                                _sp_b1 = Path(__file__).resolve().parents[2] / "data" / "shadow" / "sizing_delta.jsonl"
+                                _sp_b1.parent.mkdir(parents=True, exist_ok=True)
+                                with open(_sp_b1, "a") as _f_b1:
+                                    _f_b1.write(json.dumps(_shadow_b1, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
                             if _inst_ps > 0:
                                 logger.info(
                                     f"[playbook] {inst['symbol']} position_size兜底(F1 SSOT): "

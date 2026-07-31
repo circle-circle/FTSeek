@@ -42,7 +42,6 @@ for _p in (str(_ROOT), str(_SCRIPTS)):
         sys.path.insert(0, _p)
 
 _SCAN_PATH = _ROOT / "data" / "shadow" / "llm_universe_scan.jsonl"
-_BATTLE_PLAN_PATH = _ROOT / "data" / "daily_battle_plan_us.json"
 _MECH_CAPTURE_PATH = _ROOT / "data" / "shadow" / "universe_expansion_shadow.jsonl"
 
 # 归因分类 (与 config/signal_stage 对齐)
@@ -1005,26 +1004,6 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
     }
 
 
-def _load_battle_plan() -> Dict[str, Any]:
-    try:
-        return json.load(open(_BATTLE_PLAN_PATH, encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _existing_plan_symbols(plan: Dict[str, Any]) -> set:
-    syms = set()
-    for t in plan.get("targets", []) or []:
-        s = str(t.get("symbol", "")).replace("US.", "").upper()
-        if s:
-            syms.add(s)
-    for pa in plan.get("position_actions", []) or []:
-        s = str(pa.get("symbol", "")).replace("US.", "").upper()
-        if s:
-            syms.add(s)
-    return syms
-
-
 def _position_symbols() -> set:
     """现有持仓标的 (从 daily_active_pool 的 POSITION 来源)."""
     try:
@@ -1121,6 +1100,13 @@ def cmd_inject(force_dry: bool = False) -> int:
             "entry_price": round(float(px), 4),  # 触发基准 (_check_intraday_trigger 用)
             "entry_low": entry_low,
             "entry_high": entry_high,
+            # anchor_dev_pct (DEB-feedback-loop F1, 2026-07-31): UE 锚时滞 — inject 现价
+            #   相对 scan 浮现价的带符号漂移 (%). entry==px 构造上 dev≈0, 有意义的同尺锚
+            #   是 scan→inject 漂移; 与 DA (LLM entry vs 分析时刻市价) 一把尺裁决入场区.
+            "anchor_dev_pct": (
+                round((float(px) - float(s["scan_price"])) / float(s["scan_price"]) * 100, 3)
+                if (s.get("scan_price") and px) else None
+            ),
             "stop_loss": nums["stop_loss"],
             "take_profit": nums["take_profit"],
             "confidence": _capped_conf,

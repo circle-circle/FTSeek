@@ -1669,7 +1669,11 @@ class ReviewOrchestrator:
     
     def _extract_lessons(self, analysis: Dict, data: Dict) -> int:
         """从分析结果提取教训 → lessons DB"""
-        debate = analysis.get("debate_result", {})
+        # 2026-07-31 (DEB-feedback-loop A4②): 修读错字典 — actionable_fixes /
+        #   final_conclusions 由 arbiter 产出, 落在 result["arbiter_conclusion"]
+        #   (L1402); debate_result 是按角色 (bull/bear/auditor) 的字典, 恒无此二键
+        #   → 07-07 P0 修字段名后 lessons 仍恒=0 的结构性根因. 优先读 arbiter_conclusion.
+        debate = analysis.get("arbiter_conclusion") or analysis.get("debate_result", {})
         if not isinstance(debate, dict):
             return 0
         

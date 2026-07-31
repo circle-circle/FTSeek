@@ -5167,30 +5167,9 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         except Exception as _dd_e:
             logger.debug(f"[主线·C4] 回撤上报失败 (不影响平仓): {_dd_e}")
 
-        # Task #29 (2026-05-27): 教训应用验证 — 学了→用了 链路
-        try:
-            from app.review.lesson_injector import LessonInjector
-            _trade_dict = {
-                "symbol": position.symbol,
-                "trade_date": _et_trade_date(position.entry_time),
-                "direction": str(position.direction.value if hasattr(position.direction, "value") else position.direction),
-                "entry_time": position.entry_time.isoformat() if position.entry_time else "",
-                "entry_price": float(position.avg_entry_price),
-                "quantity": int(position.size),
-                "stop_loss": float(getattr(position, "current_sl", 0) or 0),
-                "signal_strength": int(signal_strength or 0),
-                "signal_confidence": float(signal_confidence or 0.0),
-                "realized_pnl": float(pnl),
-            }
-            _lesson_result = LessonInjector().verify_lesson_application(_trade_dict)
-            if _lesson_result.get("applicable_lessons", 0) > 0:
-                logger.info(
-                    f"[教训验证] {position.symbol} "
-                    f"教训应用率: {_lesson_result['application_rate']:.0%} "
-                    f"({_lesson_result['applied_lessons']}/{_lesson_result['applicable_lessons']})"
-                )
-        except Exception as _le:
-            logger.debug(f"[教训验证] 异常 (不影响平仓): {_le}")
+        # REMOVED (2026-07-31, DEB-feedback-loop 收敛项5): Task #29 教训应用验证块 —
+        #   LessonInjector.verify_lesson_application 全仓无定义, 调用必 raise 被 except 吞,
+        #   自始零产出 (死调用). 删除为代码卫生, 零行为变更.
         # REMOVED (2026-06-19): ShadowMirror 不再使用
         # 改用 Playbook shadow 模式做策略验证
         try:

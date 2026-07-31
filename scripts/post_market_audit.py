@@ -68,6 +68,46 @@ def get_db():
     return conn
 
 # ════════════════════════════════════════════════════════════
+# 归因视角 0: 费用净额总览 (2026-07-30, DEB-fee-net-pnl G5)
+# ════════════════════════════════════════════════════════════
+def attribution_fee_net(db, today, window_days=7):
+    """毛/费/净三列 — 净利才是真实盈利 (最低佣金$1.99×双边 → 每单固定成本≈$4-5,
+    毛利<$5皆白干)。假盈利单 = 毛>0 但净<=0。"""
+    since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
+
+    def _q(where_date, param):
+        return db.execute(f"""
+            SELECT COUNT(*) as cnt,
+                   SUM(realized_pnl) as gross,
+                   SUM(COALESCE(fees_est, 0)) as fees,
+                   SUM(COALESCE(pnl_net, realized_pnl)) as net,
+                   SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as net_wins,
+                   SUM(CASE WHEN realized_pnl > 0 AND COALESCE(pnl_net, realized_pnl) <= 0
+                       THEN 1 ELSE 0 END) as fake_wins,
+                   SUM(CASE WHEN fees_est IS NOT NULL THEN 1 ELSE 0 END) as fee_rows
+            FROM trade_records
+            WHERE {where_date} AND realized_pnl IS NOT NULL
+        """, (param,)).fetchone()
+
+    t = _q("trade_date = ?", today)
+    w = _q("trade_date >= ?", since)
+
+    def _pack(r):
+        cnt = r["cnt"] or 0
+        return {
+            "cnt": cnt,
+            "gross": round(r["gross"] or 0, 2),
+            "fees": round(r["fees"] or 0, 2),
+            "net": round(r["net"] or 0, 2),
+            "net_win_rate": (r["net_wins"] or 0) / cnt * 100 if cnt else 0,
+            "fake_wins": r["fake_wins"] or 0,
+            "fee_coverage": (r["fee_rows"] or 0) / cnt * 100 if cnt else 0,
+        }
+
+    return {"today": _pack(t), "window": _pack(w), "window_days": window_days}
+
+
+# ════════════════════════════════════════════════════════════
 # 归因视角 1: 策略归因
 # ════════════════════════════════════════════════════════════
 def attribution_strategy(db, today, window_days=7):
@@ -631,11 +671,34 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
 # 报告构建
 # ════════════════════════════════════════════════════════════
 def build_report(today, strategy, signal, exit_attr, regime, trend,
-                 execution, shadow, risk, plan_attr, lessons, debate):
+                 execution, shadow, risk, plan_attr, lessons, debate, fee_net=None):
     L = []
     L.append(f"### 📊 FTSeek-US 盘后归因辩论报告")
     L.append(f"**{today}** (美东) | equity=${risk['capital']['current_equity']:,.0f}" if risk['capital'] else f"**{today}**")
     L.append("")
+
+    # ─── 费用净额总览 (2026-07-30 G5: 净利才是真实盈利) ───
+    if fee_net:
+        ft, fw = fee_net["today"], fee_net["window"]
+        L.append("## 💰 费用净额总览 (毛/费/净)")
+        if ft["cnt"]:
+            L.append(
+                f"  **今日**: {ft['cnt']}笔 毛${ft['gross']:+,.2f} "
+                f"费${ft['fees']:,.2f} → **净${ft['net']:+,.2f}** "
+                f"| 净胜率{ft['net_win_rate']:.0f}%"
+                + (f" | ⚠️假盈利{ft['fake_wins']}笔" if ft["fake_wins"] else "")
+            )
+        if fw["cnt"]:
+            L.append(
+                f"  **近{fee_net['window_days']}日**: {fw['cnt']}笔 毛${fw['gross']:+,.2f} "
+                f"费${fw['fees']:,.2f} → **净${fw['net']:+,.2f}** "
+                f"| 净胜率{fw['net_win_rate']:.0f}%"
+                + (f" | ⚠️假盈利{fw['fake_wins']}笔" if fw["fake_wins"] else "")
+            )
+        if ft["cnt"] == 0 and fw["cnt"] == 0:
+            L.append("  窗口内无已平仓记录")
+        L.append(f"  (费用覆盖率: 今日{ft['fee_coverage']:.0f}%/窗口{fw['fee_coverage']:.0f}%, est口径)")
+        L.append("")
 
     # ─── 辩论结论 (最重要，放最前面) ───
     if debate['consensus'] or debate['disputes']:
@@ -875,6 +938,11 @@ def run_audit():
         risk = attribution_risk(db, today)
         plan_attr = attribution_plan(db, today, plan)
         lessons = attribution_lessons(db)
+        try:
+            fee_net = attribution_fee_net(db, today)
+        except Exception as _fn_err:
+            logger.debug(f"费用净额视角跳过 (旧库无列?): {_fn_err}")
+            fee_net = None
 
         # 辩论合成
         logger.info("🔥 交叉验证归因视角...")
@@ -886,7 +954,7 @@ def run_audit():
         # 构建报告
         report = build_report(
             today, strategy, signal, exit_attr, regime, trend,
-            execution, shadow, risk, plan_attr, lessons, debate
+            execution, shadow, risk, plan_attr, lessons, debate, fee_net=fee_net
         )
 
         # 推送
