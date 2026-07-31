@@ -463,6 +463,8 @@ class BridgeVotingAdapter:
             "stop_loss": cand.get("stop_loss", 0),
             "take_profit": cand.get("take_profit", 0),
             "entry_strategy": cand.get("entry_strategy", ""),
+            # F1 (2026-07-31): 透传 DA 锚偏离度 — 桥接 json 有则带上, 无则 None (record-only)
+            "anchor_dev_pct": cand.get("anchor_dev_pct"),
             "invalidation": cand.get("invalidation", ""),
             "risks": cand.get("risks", []),
             "strategy_type": cand.get("strategy_type", ""),
@@ -1249,6 +1251,8 @@ def _build_instructions_from_votes(
             # 2026-07-11 Stage 1: 保留 DA 失效条件 + 真实论点 (bridge 缺失时为空串)
             invalidation=vote_result.get("invalidation", "") or "",
             da_thesis=vote_result.get("thesis", "") or "",
+            # F1 (2026-07-31): DA 锚偏离度透传 (非 bridge 候选为 None, record-only)
+            anchor_dev_pct=vote_result.get("anchor_dev_pct"),
         )
         # 方向翻转时降仓50% — 同guardrail方式, 不SKIP信号只降风险敞口
         if _direction_flipped:
@@ -2176,6 +2180,8 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         },
         "decision_id": getattr(inst, "decision_id", "") or "",
         "invalidation": getattr(inst, "invalidation", "") or "",
+        # F1 (2026-07-31): 锚偏离度落库键 (save_instruction :202 读取, record-only)
+        "anchor_dev_pct": getattr(inst, "anchor_dev_pct", None),
         "horizon": getattr(inst, "horizon", "short"),
         "horizon_confidence": getattr(inst, "horizon_confidence", 0.0),
         "horizon_reasoning": getattr(inst, "horizon_reasoning", {}),

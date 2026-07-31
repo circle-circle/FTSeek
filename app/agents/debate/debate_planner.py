@@ -604,6 +604,8 @@ class DebatePlanner:
         cap = raw_context.get("capital_state", {})
         
         # ── 催化事件注入 (RFC-Catalyst 2026-05-27) ──
+        # TOMBSTONE 2026-07-31 (DEB 第5轮): 生产端 detector 零调度已死, battle plan 键恒缺失
+        #   → catalyst_events 永为空, 本注入块是死代码 (08-07 后随物理删除批清理)。
         overnight_news = raw_context.get("overnight_news", "无隔夜新闻")
         catalyst_events = raw_context.get("catalyst_events", [])
         if catalyst_events:

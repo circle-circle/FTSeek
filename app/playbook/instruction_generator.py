@@ -146,6 +146,9 @@ class Instruction:
     # 仅用于归因/复盘/退出触发地基, 不参与数值计算; da_thesis 不覆盖模板 thesis.
     invalidation: str = ""
     da_thesis: str = ""
+    # F1 (2026-07-31, DEB-feedback-loop): DA 入场锚偏离度 (LLM entry vs 分析时快照价, 有符号 %).
+    # record-only 归因字段, 量化"入场区与市价脱节"规模; bridge 缺失时为 None.
+    anchor_dev_pct: Optional[float] = None
 
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========

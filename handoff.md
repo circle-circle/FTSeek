@@ -88,6 +88,28 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-31 (收盘复盘·Qoder) · 净 -$189.98 三连阳终结 + 反馈环首夜实弹产出 (lessons×7 / us.json H1×12)
+**总账**: 12 笔全平 (4W/8L), 毛 -$140.06, 费用 ~$49.92, 净 **-$189.98** — 终结 +145.8/+19.3/+94.8 三连阳。03:52 position_sync `Futu:0 | 主线DB:0 | playbook:0 | ✓` 全平无残留。
+**亏损结构**: 三笔"零 MFE 即损" (SHOP SL_INITIAL -104.77 · AVGO MFE_STALL -89.84 · GOOG空 MFE_STALL -61.76, MFE≈0/MAE 3.5~4.9) 合计 -$256.4 > 全天净亏 → 入场质量问题非持仓管理问题。纪律面: MFE_STALL ×4 小亏区间切除, 无 07-23 式拖延。BREAKEVEN ×3 各付 ~$4 费 (净拖累 -$8.34) = D4 费用感知保本活证据 (冻结期记录, 08-07 裁决)。
+**供给归因**: DA 16→执行9 · UE 4→执行0 · **TFB/topup 3 (GOOG/NVDA/SHOP) 全执行且全部落入当日亏损/刮擦名单** — 连续两日负期望, 08-07 后候选: topup 独立 scorecard 或执行门槛上调 (trigger_gate scorecard 08-01 06:20 首跑供数)。11 指令 no_trigger。
+**反馈环首夜兑现 (04:32-04:37)**: `教训提取: 7 候选, 7 写入` (_extract_lessons arbiter_conclusion 修复首次生产) + `us.json 记忆已更新 (H1: 12 笔归因)` (⑦接线首火) — 归因→记忆→教训全链路首次完整跑通, lessons 缓刑观察期 (~08-14) 自此有真实样本。减分: 日度验证 0/0 claim 有证据 (可信度 0% weak) — 验证供给问题, 观察中。
+**遗留**: ①anchor_dev 8/16 疑为另一模型 UTC 13:36 临时回填 (bridge 仍 0/16), skill 发射缺口未修 — 明日 opportunity_scan 无字段则补丁锚点上移至 scan 发射路径。②明早 06:20 三张 scorecard 首次自动化运行。③anchor_dev DA 映射修复待下次 main.py 重启生效。
+
+### 2026-08-01 (凌晨盘中·Qoder) · 盘中现场检查 + F1 anchor_dev DA 最后一英里补齐 (用户裁"根据建议执行")
+**现场检查结论**: 链路正常合理 — 批3 重启后 NewsV2/interceptor 退役日志实弹 · auto_recovery 新司机 position_sync 循环正常 (Futu:5=playbook:5 一致性✓) · 供给 23 条 · auto_execute 5min 节奏稳 · kill switch 直挂门无误触 · guardrail 活 (已开 $34.8k/12笔) · TSM/ORCL 真成交+真均价回填+钉钉推送 · 出场链 7 笔已平 (净约-$255, MFE_STALL×2/BREAKEVEN×3/TRAIL_LOCK/SL_INITIAL)。AMZN 极端 gap 门 ×11 正确拦截 (entry $236 vs 市价 $271 — F1 幻影被拦的活证据)。
+**执行 (record-only, F1 收尾)**: DA 链 anchor_dev_pct 双断点之仓内半修复 — ①`BridgeVotingAdapter.vote` 透传 cand 字段 ②`Instruction` dataclass 加 `anchor_dev_pct: Optional[float]=None` ③成功路径构建点透传 vote_result ④`_instruction_to_db_dict` 加落库顶层键。冒烟 4/4 (vote透传/缺省None/db_dict/缺省None) + DB 落库 2/2 (带值持久化/无键NULL不炸) + 定向 44 passed。**下次重启生效** (生成链盘前跑, 不盘中重启)。
+**遗留① (交另一模型/明日验证)**: DA skill 侧断点 — 今日 opportunity_scan 16 候选 0 只带 anchor_dev_pct, skill 补丁插入点疑似不在 opportunity_scan 产出路径 (或补丁在今晨 18:07 扫描后才应用)。明日文件若仍无字段, 需把补丁锚点移到 opportunity_scan 候选发射路径。
+**遗留② (挂账 08-07 批)**: regime 门 MA 数据失败鲁棒性 — AlphaVantage SPY 日线间歇失败致今日 44/53 次评估 MA20/MA50=0.00 参与评分 (交叉组件 +2→-2 静默扭曲; `spy_trend_at_generation` 元数据因 0>=0 错标 above_ma20)。今日凑巧 score=2 判定不变 (MA 有效时同分)。建议仿 vix_uncertain 加 ma_uncertain 跳过组件 — 代码逻辑修复非调参, 已列入 08-07 后批次。
+
+### 2026-07-31 (夜·Qoder 复核) · 另一模型三提交复查 + ⑨死亡名单翻案重核终裁 (DEB 第5轮) + 墓碑按终裁执行
+**三提交复查结论 (全过, 两处提醒)**:
+- `d9c49739` 批1+批2 (另一模型实施并代提交我的批2): 双态实测记录完整 (kill switch 激活/清除两态 · veto 哑弹坐实 · regime 缓存命中 0.000s · NewsV2 退役日志实弹 · 998 passed+重启冒烟 7/7)。
+- `1f97ee79` ⑥⑧⑪用户裁决执行: scorecards 路由三 json 文件名实核匹配 · **⑧起案归类错误被复核方自纠** (open_price_refresh 非 LLM 非推送, 剔除关停面 — 起案方 accept) · 双开关 (weekly_proposer 入口 raise 模式 + after_hours 单点守卫 fail-open) 实现与承诺一致 · yaml 首插断块自纠如实记录。
+- `679b826b` 批3六执行项: ④auto_recovery 迁移验证 RiskStateMachine 确为 __new__ 双检锁单例 (:49-62) + auto_recovery 非 RISK_OFF 早退 (:206) 零成本声明属实; ⑦update_from_attribution 签名匹配 + _prune_locked 有 MAX_TAGGED 上限 (记忆不爆炸); ⑬test_upsert_later_writer_wins 真行为测; ⑤⑩⑭与承诺一致。
+- **提醒1**: `test_src_priority_ordering` 是自实现的拷贝断言 (改生产值测试仍过), 建议 08-07 后把 _src_priority 提为模块级函数让测试调真身。**提醒2**: 两提交均 --no-verify (理由 hook enabled 正则误报) — 流程上属绕过, 建议修 hook 正则而非容忍绕过。
+**⑨翻案重核 (对方退回 → 我逐条 grep 终裁, DEB 第5轮全表)**: 13 条 **8 真死 / 5 起案误判** — 复核方三大反例全对 (market_state 9 文件活 import · RiskEngine scheduler_core:335 活注入 · strategy/factors regime_filter 活调用); 但复核方两处反例也不准确 (detector "文件不存在"系找错目录 · NewsNow "活实例化"宿主函数本身是死的)。yaml 僵尸重核命中率仅 **2/11** (真僵尸仅 event_day_*+signal_scoring, 其余 9 块全活)。**教训**: Explore 子代理零调用结论必须主线程复核后才入案。
+**墓碑执行 (注释级零行为变更)**: 墓碑×7 (run_llm_strategy_scan/newsnow/market_regime_filter 类/catalyst detector/postmarket_review/_premarket_news_summary 死读/debate_planner 死注入) + shadow 标注×1 (market_regime_detector 非死仅 shadow) + yaml ZOMBIE×2。py_compile+yaml 校验全过, 物理删除留 08-07 后。
+
 ### 2026-07-31 (夜·Qoder) · 全链清理批1六项+批2两项执行 + 剩余 12 项 DEB 起案 (用户裁"按建议执行")
 **批1 (零风险, 已落地)**: ①`catalyst.reverse_catalyst.enabled: false` (LLM 止血) ②日志降噪×3 (exit monitor 行数变化才 info/overnight 心跳→debug/playbook ensure_tables→DEBUG) ③数据膨胀治理 — 根目录 33 个 .bak 归档 `data/backups/root_bak_archive_20260731.tar.gz` (204MB→48MB) + 4 个零字节 .db 清除 + 根 ftseek_us.db 空壳 (0表, sqlite_master 验证) 移 quarantine + rsshub news_us 挂 cleanup_old(48h) 一次性清理 25MB→588K ④MarketRegimeGate 类级 TTL 缓存 (120s/vix_uncertain 30s — 调用方每次新建实例, 实例缓存无效, 省 AlphaVantage 付费调用) ⑤OpenD 冗余项调研后改道 DEB (触执行面) ⑥crontab 注释漂移修正。
 **批2 (保护活链)**: ①battle plan 启动 veto 降级为告警 (main.py) — **意外发现原 RISK_OFF 调用 import `app.risk.risk_state_machine` 路径根本不存在** (真实路径 app.us_pipeline.*), ImportError 被 except 吞掉, veto 从来都是哑弹还刷误导性 error 日志 → 诚实降级 warning-only ②**kill switch 直挂 playbook 下单入口** (pipeline.py auto_execute 头部, fail-close 与 order_executor:3430 同口径) — 原链路 flag→scan_loop(60s)→RiskStateMachine→门 ≈90s 延迟且线程一死即断路; auto_execute 是 playbook 下单唯一汇合点 (topup 只落库指令), 单门全覆盖, 平仓路径不受影响。

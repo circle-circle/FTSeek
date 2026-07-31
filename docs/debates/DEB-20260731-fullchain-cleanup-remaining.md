@@ -202,3 +202,36 @@
 - (③ D1 已裁 08-07 后, 不在本批)
 
 **🔴 ⑨ I1 墓碑暂缓 — 死亡名单大面积翻案**: 独立 grep 复核起案"零调用者"清单: `analysis.market_state` 外部 import **8 处** / `RiskEngine` 引用 **22 处** / `NewsNowUSFetcher` 在 llm_pipeline.py:235 活代码实例化 / strategy.regime_filter 2 处 (且 07-30 刚被修过 vix/spy 字段)。名单可信度不足, 冻结期打墓碑风险 > 收益 — **退回起案方逐条重核后另批执行** (真死的如 market_regime_detector 文件已不存在, 说明部分条目是陈旧审计快照)。僵尸 yaml 块标注同缓 (与死代码名单同源)。
+
+### 第 5 轮 (2026-07-31 夜, 起案方 Qoder 重核终裁) — ⑨死亡名单逐条重核: 13 条 8 死 5 活, 墓碑按终裁执行
+
+复核方翻案**基本成立, 本席接受** — 起案 13 条独立 grep 重核 (全部 file:line 实跑), 终裁 **8 真死 / 5 误判**;
+同时复核方两处反例本身也不准确 (如实记): market_regime_detector "文件已不存在" 系找错目录 (实在 app/risk/);
+NewsNowUSFetcher "活实例化" 只看到一层 — 宿主函数 run_llm_strategy_scan 本身零调用, 实例化点在死函数肚子里。
+
+| 起案条目 | 终裁 | 证据 (实跑) |
+|---|---|---|
+| market_regime_detector | 非死·仅 shadow | 唯一调用 scripts/regime_divergence_shadow.py:77 (shadow 每日跑) — 文件头部加注, 不打墓碑 |
+| market_regime_filter (类) | ✅ 死 | 唯一实例化 llm_pipeline.py:299 **在死函数 run_llm_strategy_scan 内**; 注意 yaml 配置 risk.market_regime_filter 仍被 pre_trade_check:82-84 读 (类死配置活, 墓碑已注明删文件留配置) |
+| strategy/regime_filter | ❌ 活 (起案误判) | signal_stage.py:324 + signal_pipeline.py:413 活调用 |
+| factors/regime_filter | ❌ 活 (起案误判) | trade_quality_gate.py:53 |
+| market_state (app/analysis) | ❌ 活 (起案误判) | 9 文件 import 含 order_executor/scheduler_core/pre_trade_check — 复核方对 |
+| regime_adapter (app/strategy) | ❌ 活 (起案误判) | order_executor.py:1343 apply_regime_position_scale 活调用 |
+| RiskEngine | ❌ 活 (起案最大误判) | scheduler_core.py:335-354 position_store/capital_safety 注入, 仓位限制检查活跃 — 复核方对 |
+| run_llm_strategy_scan | ✅ 死 | 全仓零调用 (仅 __init__ re-export) |
+| NewsNowUSFetcher | ✅ 死 | 唯一实例化 llm_pipeline.py:236 在死函数内 |
+| catalyst detector | ✅ 死 | 全仓零调度 (无 scheduler/cron/main) |
+| postmarket_review | ✅ 死链 | 唯一调用方 scripts/post_market_audit.py 无 cron; battle plan catalyst_events **键缺失** (实测) → :117 早退 |
+| _premarket_news_summary | ✅ 死读 | llm_pipeline.py:866 getattr 无写者, 恒为默认值 |
+| debate_planner catalyst_events 注入 | ✅ 死注入 | 生产端死 + 键缺失 → if 永假 |
+
+**僵尸 yaml 重核 (命中率仅 2/11, 起案名单严重失真)**: 真僵尸 = `scheduler.event_day_*` + `signal_scoring` (全仓 0 引用);
+**误判 9 块全部活**: signal_thresholds/orb/symbol_cooldown/dynamic_exit/min_signal_strength/cost_model (16-33 处引用) ·
+regime_adaptation (regime_adapter.py:171 读) · pre_market_ranker (signal_pipeline.py:552 读) · catalyst (scheduler_core.py:488 读)。
+
+**执行 (注释级零行为变更)**: 墓碑×7 (llm_pipeline run_llm_strategy_scan+_premarket_news_summary 死读 / newsnow_us_news /
+market_regime_filter / catalyst.detector / postmarket_review / debate_planner 注入块) + shadow 标注×1 (market_regime_detector) +
+yaml ZOMBIE×2 (event_day_*/signal_scoring)。py_compile×7 + yaml 校验全过。物理删除统留 08-07 后批次。
+
+**教训 (双方各一记)**: 起案方 — Explore 子代理"零调用者"结论必须主线程 grep 复核后才可入案 (本名单代码命中率 8/13, yaml 2/11);
+复核方 — 反例举证要追到宿主函数死活, "有实例化"≠"活" (NewsNow 案例), 文件存在性核查要找对目录 (detector 案例)。

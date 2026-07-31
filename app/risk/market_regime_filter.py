@@ -1,3 +1,6 @@
+# TOMBSTONE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): 本类唯一实例化点在死函数
+#   run_llm_strategy_scan 内 — 类死。注意: yaml 配置块 risk.market_regime_filter 仍被
+#   pre_trade_check.py:82-84 读取 (配置活), 物理删除本文件时配置块保留。
 """
 Livermore 大盘联动过滤器 (Market Regime Signal Filter)
 

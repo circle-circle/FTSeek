@@ -1,3 +1,5 @@
+# TOMBSTONE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): 唯一调用方 scripts/post_market_audit.py
+#   无 cron; 且 battle plan catalyst_events 键缺失 (生产端 detector 已死) → 即便手动跑也在 :117 早退。
 """
 盘后催化回看 — 预测 vs 实际 + 教训提取
 

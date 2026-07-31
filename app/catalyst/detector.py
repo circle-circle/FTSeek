@@ -1,3 +1,5 @@
+# TOMBSTONE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): 全仓零调度方 (无 scheduler/cron/main
+#   调用) — 催化链生产端死, battle plan catalyst_events 键因此恒缺失, 下游全链空转。
 """
 催化事件检测调度器 — 盘前/盘后入口
 

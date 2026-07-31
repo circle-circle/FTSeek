@@ -156,6 +156,8 @@ def _send_rsshub_alert(scheduler, health_summary: dict):
 #  LLM 策略扫描主函数
 # ============================================================
 
+# TOMBSTONE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): 全仓零调用 (仅 app/pipeline/__init__
+#   re-export), 函数体是 NewsNowUSFetcher 与 app.risk.market_regime_filter 的唯一实例化点 — 三者同死。
 def run_llm_strategy_scan(scheduler):
     """
     LLM 二阶推理策略生成任务
@@ -861,6 +863,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
     except Exception as _silent_e:
         logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
 
+    # TOMBSTONE 2026-07-31 (DEB 第5轮): 全仓无写者 — 本行恒取默认值 '无隔夜新闻', 死读。
     overnight_news = getattr(scheduler, '_premarket_news_summary', '无隔夜新闻')
 
     watchlist = getattr(scheduler, 'watchlist', [])

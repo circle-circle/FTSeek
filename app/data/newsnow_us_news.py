@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# TOMBSTONE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): 唯一实例化点在死函数
+#   run_llm_strategy_scan (llm_pipeline.py:236) 内 — 零活调用, 保留备查, 08-07 后物理删除批处理。
 """
 FTSeek-US NewsNow 美股新闻采集器 (补充源)
 

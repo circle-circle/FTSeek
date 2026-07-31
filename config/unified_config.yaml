@@ -1396,6 +1396,7 @@ scheduler:
     hermes_model: qwen3.6-plus
     max_rounds: 2
     max_total_timeout_seconds: 600
+  # ZOMBIE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): event_day_* 全仓零代码引用, 08-07 后删
   event_day_interval_minutes: 3
   event_day_symbols: []
   max_positions: 12
@@ -1434,6 +1435,7 @@ signal_quality:
     order_flow: 0.15
     trend_quality: 0.25
     volume: 0.25
+# ZOMBIE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): signal_scoring 全仓零代码引用, 08-07 后删
 signal_scoring:
   active_version: v1
   weights_v2: null

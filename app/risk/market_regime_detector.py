@@ -1,3 +1,6 @@
+# 2026-07-31 (DEB-fullchain-cleanup 第5轮): 非死代码但**仅 shadow 消费** — 唯一调用方
+#   scripts/regime_divergence_shadow.py (regime 双轨仲裁 shadow, 10 交易日观察期),
+#   不进任何交易决策链。shadow 期结束后裁: 接正链或删。
 """
 Market Regime Detector (Y1, 2026-05-15)
 
