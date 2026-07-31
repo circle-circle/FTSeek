@@ -177,3 +177,15 @@
 
 **裁决建议更新 (与起案差异)**: ③ D1 → 08-07 后批次 (非本周) / ⑤ F1 执行但修法=注释化 weekly_report 调用 / ⑦ H1 简装 (跳过重叠度采样) / ⑨I1 墓碑、⑩J2 口径差记录、⑬L1 单测、⑭M2 shadow 评估均支持原案 / ⑥⑧⑪ 三个用户问题维持待答。
 
+
+### 第 3 轮 (2026-07-31 晚, 用户裁决 ⑥⑧⑪ + Qoder 执行)
+
+**用户裁决**: ⑥ 记分牌"看" → G1 挂 dashboard / ⑧ LLM 推送"不看" → 停 / ⑪ HK 页"用" → 保留不动。
+
+**执行记录**:
+- **⑥ G1**: `/api/analytics/scorecards` 只读聚合路由 (exit/direction/trigger_gate 三 latest json + mtime, 单张缺失不拖垮) + dashboard "周六记分牌"卡 (退出纪律 R:R/期望/错杀 · 方向命中 T+1 分组 · 触发门漏斗)。渲染字段先实测真实 json 结构再写 (sections 是嵌套 dict 非 list、benchmark 是字符串 — 首版假设全错, 实测后重写)。in-process 验证三张全 OK。
+- **⑧ 修正 + 双关停**: 起案清单三项中 **open_price_refresh 剔除** — 复核实证它非 LLM 非推送 (开盘价刷新 confirmed_entry_price + SL/TP 重算, 主线交易逻辑), 停它无依据。实际关停两项: `llm_pushes.weekly_proposer_enabled: false` (scheduler_triggers 挂点) + `llm_pushes.after_hours_scan_enabled: false` (llm_pipeline 入口单点守卫, 覆盖 scheduler_core 三调用点; 配置读取失败退回原行为)。双开关断言 False + after_hours 直调入口拦截实测 ✓。省 LLM 调用: 每日最多 3 次 (after_hours) + 每周 1 次 (proposer)。
+- **⑪**: HK 页零改动。
+- 插曲 (如实): ⑧ 开关首次插进 news_v2 块中间切断了块结构 (yaml 顶层键位置错), yaml 校验发现后移至块外重放 ✓。
+
+**本案状态**: ⑥⑧⑪ 已裁已执行; ③D1 (08-07 后) / ④E1 / ⑤F1 / ⑦H1简装 / ⑨I1 / ⑩J2 / ⑬L1 / ⑭M2 待用户对"执行类"整批放行或逐项裁。998 passed / 重启冒烟 7/7。

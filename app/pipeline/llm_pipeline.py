@@ -583,7 +583,17 @@ def run_after_hours_llm_scan(scheduler, phase=None):
     """
     from app.core.scheduler_triggers import MarketPhase
     phase = phase or MarketPhase.OVERNIGHT
-    
+
+    # 2026-07-31 议题⑧ (用户裁"不看"): 默认关停 — 钉钉 LLM 新闻推荐无人看, 纯 LLM 成本
+    #   (每日最多 3 次: 盘前/盘后/深夜)。入口单点守卫覆盖 scheduler_core 三个调用点。
+    try:
+        from app.core.config_container import get_config as _ah_gc
+        if not bool(_ah_gc().get_dotted("llm_pushes.after_hours_scan_enabled", False)):
+            logger.debug("[LLM推荐] 已关停 (llm_pushes.after_hours_scan_enabled=false), 跳过")
+            return
+    except Exception:
+        pass  # 配置读取失败 → 维持原行为 (不因守卫故障断掉既有链路)
+
     if phase == MarketPhase.WEEKEND:
         logger.debug("[LLM推荐] 周末休市 → 跳过")
         return

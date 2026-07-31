@@ -816,8 +816,12 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
             
             # ── LLM 周度假设生成 (角色重定位 2026-05-13) ──
             # 每周五盘后调 LLM 生成 1-3 个参数调整提议
+            # 2026-07-31 议题⑧ (用户裁"不看"): 默认关停 — 提议推送无人消费, 冻结期纯 LLM 成本
             if scheduler._last_weekly_review == week_end:  # 只在周报复盘成功后触发
                 try:
+                    from app.core.config_container import get_config as _wp_gc
+                    if not bool(_wp_gc().get_dotted("llm_pushes.weekly_proposer_enabled", False)):
+                        raise RuntimeError("weekly_proposer 已关停 (llm_pushes.weekly_proposer_enabled=false)")
                     from app.llm.weekly_proposer import get_weekly_proposer
                     from app.evolution.improvement_pipeline import get_pipeline
                     

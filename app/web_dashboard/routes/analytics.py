@@ -1133,4 +1133,28 @@ def register(app, templates):
             out["entry_price_source_7d"] = {}
         return api_ok(out)
 
+    # ═══════════════════════════════════════════════════════════
+    #  周六记分牌聚合 (2026-07-31 DEB-cleanup-remaining ⑥ G1, 用户裁"看"):
+    #  exit/direction/trigger_gate 三张已挂周六 06:20 cron 但零读者 —
+    #  本路由把"翻文件"变"开页面"。只读 latest json, 单张缺失不拖垮整卡。
+    # ═══════════════════════════════════════════════════════════
+    @router.get("/api/analytics/scorecards")
+    async def scorecards():
+        import json as _json
+        from pathlib import Path as _P
+        _root = _P("/opt/ftseek/FTSeek-US") / "data"
+        out: dict = {"asof_et": et_today()}
+        for key, fname in (("exit", "exit_scorecard_latest.json"),
+                           ("direction", "direction_scorecard_latest.json"),
+                           ("trigger_gate", "trigger_gate_latest.json")):
+            try:
+                _p = _root / fname
+                doc = _json.loads(_p.read_text())
+                doc["_mtime"] = __import__("datetime").datetime.fromtimestamp(
+                    _p.stat().st_mtime).strftime("%m-%d %H:%M")
+                out[key] = doc
+            except Exception as _e:
+                out[key] = {"error": f"{type(_e).__name__}"}
+        return {"success": True, "data": out}
+
     app.include_router(router)

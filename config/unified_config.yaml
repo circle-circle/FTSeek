@@ -837,6 +837,13 @@ news_v2:
     sec_edgar:
       enabled: false
       interval_seconds: 300
+# 2026-07-31 议题⑧ (DEB-cleanup-remaining, 用户裁"不看"): 人读型 LLM 推送关停 —
+#   WeeklyProposer (周五参数提议, 冻结期纯成本) + after_hours LLM 新闻推荐 (钉钉无人看).
+#   注: 起案清单里的 open_price_refresh 经复核非 LLM 非推送 (开盘价刷新主线逻辑), 不关.
+#   回滚: 各自改 true.
+llm_pushes:
+  weekly_proposer_enabled: false
+  after_hours_scan_enabled: false
 observability:
   alert_thresholds:
     api_failure_rate_critical: 50

@@ -211,6 +211,15 @@
             <div id="nmBody" style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px"></div>
         </div>
 
+        <!-- ═══ 周六记分牌 (2026-07-31 ⑥G1: exit/direction/trigger_gate — 翻文件→开页面) ═══ -->
+        <div id="scorecards" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <h2 style="font-size:14px;margin:0">📋 周六记分牌 <span style="font-size:11px;color:#8b949e;font-weight:normal">退出纪律 · 方向命中 · 触发门</span></h2>
+                <span id="scAsof" style="font-size:11px;color:#8b949e"></span>
+            </div>
+            <div id="scBody" style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px"></div>
+        </div>
+
         <!-- ═══ 校准视图 (confidence 分桶 vs 胜率 — DA 原值, 复盘区) ═══ -->
         <div id="calibration" class="card" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -492,7 +501,63 @@
     }catch(e){}
   }
 
-  function refreshChain(){ loadBrainHealth(); loadFunnel(); loadExitProfile(); loadCalibration(); loadNewMechanisms(); }
+  // ── 周六记分牌 (2026-07-31 ⑥G1) ──
+  async function loadScorecards(){
+    try{
+      var r = await apiFetch('/api/analytics/scorecards');
+      var d = (r && r.data) || r || {};
+      var el = document.getElementById('scorecards'); if(!el) return;
+      el.style.display='block';
+      document.getElementById('scAsof').textContent = 'ET ' + (d.asof_et||'');
+      function box(title, mtime, lines){
+        return '<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:8px 10px;min-width:180px">'+
+          '<div style="color:#8b949e;margin-bottom:4px">'+esc(title)+
+          (mtime?' <span style="color:#484f58">('+esc(mtime)+')</span>':'')+'</div>'+
+          lines.map(function(l){return '<div style="color:#c9d1d9">'+l+'</div>';}).join('')+'</div>';
+      }
+      var parts = [];
+      var ex = d.exit||{};
+      if(ex.error){ parts.push(box('退出纪律', null, ['<span style="color:#8b949e">'+esc(ex.error)+'</span>'])); }
+      else {
+        // 真实结构: payoff{n,win_rate,avg_win,avg_loss,rr,breakeven_rr,expectancy_per_trade}
+        //          confusion{held_to_close_wr,executed_wr,edge_leak_pts,killed_winners,saved_losers}
+        var pay = ex.payoff||{}, conf = ex.confusion||{};
+        var exl = [];
+        if(pay.win_rate!=null) exl.push('胜率 '+pay.win_rate+'% · R:R '+(pay.rr!=null?pay.rr:'?')+' (需 '+(pay.breakeven_rr!=null?pay.breakeven_rr:'?')+')');
+        if(pay.avg_win!=null) exl.push('均盈 $'+Number(pay.avg_win).toFixed(0)+' / 均亏 $'+Number(pay.avg_loss||0).toFixed(0)+' · 期望 $'+(pay.expectancy_per_trade!=null?pay.expectancy_per_trade:'?')+'/笔');
+        if(conf.killed_winners!=null) exl.push('错杀赢家 '+conf.killed_winners+' / 救回输家 '+(conf.saved_losers!=null?conf.saved_losers:'?')+' · 漏 edge '+(conf.edge_leak_pts!=null?conf.edge_leak_pts:'?')+'pt');
+        parts.push(box('退出纪律 n='+(pay.n!=null?pay.n:'?')+' (since '+esc(String(ex.since||''))+')', ex._mtime, exl.length?exl:['—']));
+      }
+      var dir = d.direction||{};
+      if(dir.error){ parts.push(box('方向命中', null, ['<span style="color:#8b949e">'+esc(dir.error)+'</span>'])); }
+      else {
+        // 真实结构: sections{total:{全部:{n,hit_t1,dir_ret_t1}}, direction:{...}, source:{...}}
+        var dl = [];
+        var secs = dir.sections||{};
+        var tot = (secs.total||{})['全部'] || {};
+        if(tot.hit_t1!=null) dl.push('T+1 命中 '+tot.hit_t1+'% (n='+(tot.n||'?')+', 基线50%)');
+        ['direction','source'].forEach(function(g){
+          var grp = secs[g]||{};
+          Object.keys(grp).slice(0,3).forEach(function(k){
+            var v = grp[k]||{};
+            if(v.hit_t1!=null) dl.push(esc(k)+': '+v.hit_t1+'% (n='+(v.n||'?')+')');
+          });
+        });
+        parts.push(box('方向命中 (since '+esc(String(dir.since||''))+')', dir._mtime, dl.length?dl:['—']));
+      }
+      var tg = d.trigger_gate||{};
+      if(tg.error){ parts.push(box('触发门', null, ['<span style="color:#8b949e">'+esc(tg.error)+'</span>'])); }
+      else {
+        var tl = [];
+        if(tg.executed!=null) tl.push('执行 '+tg.executed+' / miss '+(tg.missed!=null?tg.missed:'?'));
+        if(tg.missed_no_trigger!=null) tl.push('未触发 '+tg.missed_no_trigger+' · 触发未执 '+(tg.missed_triggered_no_exec!=null?tg.missed_triggered_no_exec:'?'));
+        parts.push(box('触发门 (since '+esc(String(tg.since||''))+')', tg._mtime, tl.length?tl:['—']));
+      }
+      document.getElementById('scBody').innerHTML = parts.join('');
+    }catch(e){ /* 静默: 记分牌卡失败不拖垮页面 */ }
+  }
+
+  function refreshChain(){ loadBrainHealth(); loadFunnel(); loadExitProfile(); loadCalibration(); loadNewMechanisms(); loadScorecards(); }
   setTimeout(refreshChain, 500);
   setInterval(refreshChain, 60000);
 })();
