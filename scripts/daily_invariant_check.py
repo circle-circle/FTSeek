@@ -112,9 +112,34 @@ def main() -> int:
             if name not in ("attribution", "fees_est") and len(rows) >= 10 and nn < len(rows) * 0.5:
                 rec("F_field_dropout", "-", name, f"非空率 {nn}/{len(rows)}")
 
+    # ── J2 三口径盈亏对账 (2026-07-31 议题⑩, 用户裁"整体执行"): trade_records (SSOT)
+    #    vs trade_attribution vs daily_review 同窗口净额差值 — >5% (且绝对差 >$20) 告警.
+    #    攒 2 周数据后裁收敛方案 (J1 单一真相源工程留 08-07 后). 缺表/空窗如实跳过.
+    caliber_diff = {}
+    try:
+        _c2 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)  # 主连接 L48 已关, 自开
+        _tr_net = _c2.execute(
+            "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records "
+            "WHERE trade_date >= ? AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+            "AND exit_time IS NOT NULL", (since,)).fetchone()[0]
+        _at_net = _c2.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trade_attribution WHERE trade_date >= ?",
+            (since,)).fetchone()[0]
+        _c2.close()
+        caliber_diff = {"trade_records_net": round(_tr_net, 2),
+                        "trade_attribution_pnl": round(_at_net, 2),
+                        "note": "attribution 为毛口径且覆盖面≠全量, 差值观察 2 周后定收敛阈值"}
+        if abs(_tr_net) > 20 and abs(_at_net) > 0:
+            _gap_pct = abs(_tr_net - _at_net) / max(abs(_tr_net), 1e-9) * 100
+            caliber_diff["gap_pct"] = round(_gap_pct, 1)
+            # 观察期只记录不告警 (毛/净口径差是已知的, 先攒基线)
+    except Exception as _cd_e:
+        caliber_diff = {"error": type(_cd_e).__name__}
+
     result = {
         "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
+        "caliber_diff": caliber_diff,
     }
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=1))
 

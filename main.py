@@ -522,21 +522,24 @@ def _run_new_scheduler(args):
         logger.warning(f"⚠️ 盘中心跳启动失败 (不影响主流程): {e}")
 
     # 【新增 Phase 3】启动突发拦截器后台监控
-    try:
-        import threading
-        from app.us_pipeline.emergency_interceptor import USEmergencyInterceptor
-        
-        interceptor = USEmergencyInterceptor(scheduler, execution_engine)
-        
-        # 启动异步循环
-        async def run_interceptor():
-            await interceptor.start_monitoring()
-
-        interceptor_thread = threading.Thread(target=asyncio.run, args=(run_interceptor(),), daemon=True, name="EmergencyInterceptor")
-        interceptor_thread.start()
-        logger.info("🛡️ 美股突发拦截器后台线程已启动")
-    except Exception as e:
-        logger.warning(f"⚠️ 启动突发拦截器失败: {e}")
+    # 2026-07-31 议题④ E1 (DEB-cleanup-remaining, 用户裁"整体执行"): 假哨兵线程退役 —
+    #   position_store 恒空 → 拦截器 6/12 起零触发 (结构性失效); 其仅存活价值
+    #   auto_recovery 驱动已迁至 position_sync 30s 心跳 (position_sync.py _sync_loop),
+    #   kill switch 检查已直挂 playbook auto_execute 入口 (批2②)。
+    #   check_kill_switch/activate/deactivate 三个纯函数保留 (公共 API 多处 import)。
+    #   回滚: 解注下方块。
+    # try:
+    #     import threading
+    #     from app.us_pipeline.emergency_interceptor import USEmergencyInterceptor
+    #     interceptor = USEmergencyInterceptor(scheduler, execution_engine)
+    #     async def run_interceptor():
+    #         await interceptor.start_monitoring()
+    #     interceptor_thread = threading.Thread(target=asyncio.run, args=(run_interceptor(),), daemon=True, name="EmergencyInterceptor")
+    #     interceptor_thread.start()
+    #     logger.info("🛡️ 美股突发拦截器后台线程已启动")
+    # except Exception as e:
+    #     logger.warning(f"⚠️ 启动突发拦截器失败: {e}")
+    logger.info("🛡️ 突发拦截器线程已退役 (E1: auto_recovery→position_sync 心跳, kill_switch→playbook 入口直挂)")
 
     # 【P0 修复 2026-04-25】启动运行时持仓同步器 (Position Sync)
     # 这是消除「持仓不一致」的关键修复：

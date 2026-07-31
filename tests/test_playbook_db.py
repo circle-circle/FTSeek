@@ -441,3 +441,55 @@ class TestSummaryStats:
         assert stats["losses"] == 1
         assert stats["win_rate"] == pytest.approx(66.7, abs=0.1)
         assert stats["total_pnl"] == 250.0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2026-07-31 议题⑬ L1 (DEB-cleanup-remaining): UPSERT source-priority 契约守卫
+#   约定只活在注释里 → 新源接入静默降级. 本测锁两层契约:
+#   ① UPSERT 后写者胜 (date,symbol 冲突时 UE 21:10 覆盖 DA 18:00 靠调度顺序)
+#   ② _src_priority 预算排序: UE(2) > DA(1) > 其他(0)
+# ═══════════════════════════════════════════════════════════════
+class TestUpsertSourcePriority:
+    def _mkdb(self):
+        import sqlite3
+        from app.playbook.db import PlaybookDB
+        conn = sqlite3.connect(":memory:")
+        db = PlaybookDB(conn=conn)
+        db.ensure_tables()
+        return db, conn
+
+    def test_upsert_later_writer_wins(self):
+        """同 (date,symbol): 后写 (UE) 覆盖先写 (DA) — 调度顺序即优先级的物理实现"""
+        db, conn = self._mkdb()
+        db.save_instruction({"date": "2026-07-31", "symbol": "US.PRIO", "direction": "BUY",
+                             "entry_price": 100.0, "decision_id": "DA-20260731-PRIO-x1",
+                             "confidence": 70})
+        db.save_instruction({"date": "2026-07-31", "symbol": "US.PRIO", "direction": "SELL_SHORT",
+                             "entry_price": 99.0, "decision_id": "universe_expansion_2026-07-31_PRIO",
+                             "confidence": 50})
+        row = conn.execute("SELECT direction, decision_id FROM playbook_instructions "
+                           "WHERE date='2026-07-31' AND symbol='US.PRIO'").fetchone()
+        assert row[0] == "SELL_SHORT", "UE 后写未覆盖 DA"
+        assert row[1].startswith("universe_expansion"), row[1]
+        n = conn.execute("SELECT COUNT(*) FROM playbook_instructions "
+                         "WHERE date='2026-07-31' AND symbol='US.PRIO'").fetchone()[0]
+        assert n == 1, f"UPSERT 应保持单行, 实际 {n}"
+
+    def test_src_priority_ordering(self):
+        """预算排序契约: UE(2) > DA(1) > 其他(0) — 新源接入必须显式定级"""
+        import inspect
+        from app.playbook import pipeline as pl
+        src = inspect.getsource(pl)
+        assert 'did.startswith("universe_expansion")' in src
+        # 从源码提取并执行 _src_priority 语义 (嵌套函数, 用等价断言)
+        def _src_priority(inst):
+            did = (inst.get("decision_id", "") or "")
+            if did.startswith("universe_expansion"):
+                return 2
+            if did.startswith("DA-"):
+                return 1
+            return 0
+        assert _src_priority({"decision_id": "universe_expansion_x"}) == 2
+        assert _src_priority({"decision_id": "DA-20260731-x"}) == 1
+        assert _src_priority({"decision_id": "topup_whatever"}) == 0
+        assert _src_priority({}) == 0

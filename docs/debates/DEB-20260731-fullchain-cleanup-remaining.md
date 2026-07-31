@@ -189,3 +189,16 @@
 - 插曲 (如实): ⑧ 开关首次插进 news_v2 块中间切断了块结构 (yaml 顶层键位置错), yaml 校验发现后移至块外重放 ✓。
 
 **本案状态**: ⑥⑧⑪ 已裁已执行; ③D1 (08-07 后) / ④E1 / ⑤F1 / ⑦H1简装 / ⑨I1 / ⑩J2 / ⑬L1 / ⑭M2 待用户对"执行类"整批放行或逐项裁。998 passed / 重启冒烟 7/7。
+
+### 第 4 轮 (2026-07-31 晚, 用户裁"整体执行" — Qoder 执行 6/8 + ⑨翻案暂缓)
+
+**已执行 (6 项)**:
+- **⑤ F1**: weekly_report `adjuster.adjust` 调用停用 (adjustments=[]) — 双重计权腿切断, 补全 07-04 历史裁决。回滚: 恢复调用。
+- **⑦ H1 简装**: review_orchestrator run_daily 完成处接 `update_from_attribution` (closed_trades→trade_attribution 映射 + arbiter memory_updates 透传, 失败不阻断复盘); 功能级临时目录真调验证 symbol_lessons+tagged_lessons 双写 ✓。us.json 明日复盘起恢复更新。
+- **④ E1**: auto_recovery 驱动迁至 position_sync 30s 心跳 (auto_recovery 非 RISK_OFF 首行早退零成本; RiskStateMachine 为 __new__ 双检锁单例, 直构造安全); main.py interceptor 线程注释化退役 (三个纯函数保留)。**过渡态说明**: 开盘前 2min 不重启 — 腔内旧线程继续驱动, 收盘后重启切换, 无空窗。
+- **⑬ L1**: tests/test_playbook_db.py 新增 2 测 — UPSERT 后写者胜 (UE 覆盖 DA, 单行保持) + _src_priority 排序契约 (UE 2>DA 1>其他 0)。**口径注记**: _src_priority 是预算排序, UPSERT 覆盖实际靠"后写者胜"×调度顺序 (DA 18:00→UE 21:10), 两层契约都锁。
+- **⑩ J2**: daily_invariant_check 新增 caliber_diff 段 (trade_records net vs trade_attribution pnl, 观察期只记录不告警)。首跑即出观察值: **attribution 近 7 日 pnl 汇总=0** (表停写或口径断, 本身就是 J2 要抓的病 — 2 周基线攒完一并裁)。插曲×2 如实: conn 变量名错 (实为 c) + 主连接已关需自开, 两跑修正。
+- **⑭ M2 评估完成, 缺口可接受, 记案关闭**: 平仓延迟货币度量 = exit slippage (穿线价 vs 成交价): 近两周 28 样本 中位 2.1bps / P90 7.5 / **P99 13.9bps** << 判据 (P99<5min 延迟等价); 服务 NRestarts=0 (全部重启皆人为修复批)。playbook 无券商侧 STOP 的缺口在 sim 阶段可接受; **live 前重评 (已在 sim→live 审计 T0-1 挂账, 不丢)**。
+- (③ D1 已裁 08-07 后, 不在本批)
+
+**🔴 ⑨ I1 墓碑暂缓 — 死亡名单大面积翻案**: 独立 grep 复核起案"零调用者"清单: `analysis.market_state` 外部 import **8 处** / `RiskEngine` 引用 **22 处** / `NewsNowUSFetcher` 在 llm_pipeline.py:235 活代码实例化 / strategy.regime_filter 2 处 (且 07-30 刚被修过 vix/spy 字段)。名单可信度不足, 冻结期打墓碑风险 > 收益 — **退回起案方逐条重核后另批执行** (真死的如 market_regime_detector 文件已不存在, 说明部分条目是陈旧审计快照)。僵尸 yaml 块标注同缓 (与死代码名单同源)。

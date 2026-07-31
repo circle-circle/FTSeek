@@ -66,7 +66,11 @@ class WeeklyReportGenerator:
         week_stats = self._get_week_stats(trade_date)
 
         # 4. 自动权重调整
-        adjustments = self.adjuster.adjust(factor_report)
+        # 2026-07-31 议题⑤ F1 (DEB-cleanup-remaining, 用户裁"整体执行"): 停用 —
+        #   本调用写 playbook_screening.yaml 基础权重, 与 screener 运行时 factor_ic
+        #   日更加成对同一 IC 信号双重计权。07-04 已识别此病并撤销 pipeline 侧接线
+        #   (pipeline.py L2293), 本处是漏掉的另一条腿, 补全历史裁决。回滚: 恢复 adjust 调用。
+        adjustments = []
 
         # 5. 用户跳过分析
         skip_analysis = self._analyze_user_skips(trade_date)

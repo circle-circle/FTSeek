@@ -1604,6 +1604,28 @@ class ReviewOrchestrator:
         
         # 5. 提取教训 (复用 EOD 的逻辑)
         lessons_count = self._extract_lessons(analysis, data)
+
+        # 5b. 2026-07-31 议题⑦ H1 简装 (DEB-cleanup-remaining, 用户裁"整体执行"):
+        #   us.json 记忆恢复更新 — update_from_attribution 此前全仓零调用, us.json
+        #   冻结 16 天而 debate memory_injector 每日活读 (喂过期经验)。
+        #   结构映射: closed_trades → trade_attribution 条目 (lesson 留空, tagged_lessons
+        #   以 pnl 权重记录); arbiter memory_updates 有则透传。失败不阻断复盘。
+        try:
+            from app.core.memory_manager import get_memory_manager as _gmm_h1
+            _arb = analysis.get("arbiter_conclusion") or {}
+            _attr_doc = {
+                "date": date,
+                "memory_updates": _arb.get("memory_updates", {}) if isinstance(_arb, dict) else {},
+                "trade_attribution": [
+                    {"symbol": t.get("symbol"), "pnl_pct": float(t.get("pnl_pct") or 0),
+                     "lesson": "", "plan_aligned": None}
+                    for t in (data.get("closed_trades") or []) if isinstance(t, dict)
+                ],
+            }
+            _gmm_h1().update_from_attribution(_attr_doc)
+            logger.info(f"[Orchestrator] us.json 记忆已更新 (H1: {len(_attr_doc['trade_attribution'])} 笔归因)")
+        except Exception as _mm_e:
+            logger.warning(f"[Orchestrator] 记忆更新失败 (不阻断复盘): {_mm_e}")
         
         # 从辩论结果提取结构化 Issue
         llm_issues = []

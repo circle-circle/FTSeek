@@ -247,6 +247,15 @@ class USPositionSync:
 
         while self._running:
             try:
+                # 2026-07-31 议题④ E1 (DEB-cleanup-remaining, 用户裁"整体执行"):
+                #   RiskStateMachine.auto_recovery 驱动从 emergency_interceptor 假哨兵
+                #   线程 (position_store 恒空, 6/12 起零触发, 已退役) 迁至本现役 30s 心跳。
+                #   auto_recovery 非 RISK_OFF 态首行早退, 零成本; 失败不阻断同步。
+                try:
+                    from app.us_pipeline.risk_state_machine import RiskStateMachine
+                    RiskStateMachine().auto_recovery()  # 进程级单例 (__new__ 双检锁)
+                except Exception:
+                    pass
                 phase, interval = self._get_market_phase()
                 if phase == "CLOSED":
                     consecutive_skips += 1
