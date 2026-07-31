@@ -4617,6 +4617,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 trace_id=str(trade_id),
                 source_type=_pb_strategy,
                 extra=_px_extra,
+                # 2026-07-30 (DEB-fee-net-pnl G5): 净额主口径 — _fees_total 由本函数
+                #   前段费用估算提供, None (估算失败/旧库) 时消息自动退回毛口径。
+                fees=_fees_total,
+                pnl_net=(round(round(float(pnl or 0), 2) - _fees_total, 2)
+                         if _fees_total is not None else None),
             ))
     except Exception as _pb_push_e:
         logger.warning(f"[playbook推送] {symbol} 平仓推送失败 (不影响平仓): {_pb_push_e}")

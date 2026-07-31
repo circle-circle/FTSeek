@@ -362,12 +362,16 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                signal_strength: Optional[int] = None,
                signal_confidence: Optional[float] = None,
                source_type: Optional[str] = None,
-               extra: Optional[Dict[str, Any]] = None) -> PushMessage:
+               extra: Optional[Dict[str, Any]] = None,
+               fees: Optional[float] = None,
+               pnl_net: Optional[float] = None) -> PushMessage:
     """平仓 (NORMAL + 立即推送 — 平仓是关键事件, 不聚合).
 
     富字段可选, 提供则渲染富卡, 不提供则精简版。
     extra (2026-07-23): 附加画像字段直并 payload — entry_price/exit_price/held_h/
     mfe_pct/mae_pct/time_to_mfe/capture_pct/e60_ok/cohort/horizon/src_detail。
+    fees/pnl_net (2026-07-30, DEB-fee-net-pnl G5): 提供时标题以净额为主口径
+    (净$X (毛$Y/费$Z)), 图标按净额着色; pnl 参数始终传毛值。
     """
     # 2026-07-16: 移除聚合. 根因: trade_entry 聚合导致7/15成交无通知.
     # 修复: 所有平仓立即推送, 不走聚合桶. 大额亏损也走 NORMAL (不再降级 LOW).
@@ -376,15 +380,23 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                 "exit_reason": exit_reason, "strategy": strategy, "kind": "exit"}
     for _k, _v in (("signal_strength", signal_strength),
                    ("signal_confidence", signal_confidence),
-                   ("source_type", source_type)):
+                   ("source_type", source_type),
+                   ("fees", fees), ("pnl_net", pnl_net)):
         if _v is not None:
             _payload[_k] = _v
     if extra:
         for _k, _v in extra.items():
             if _v is not None:
                 _payload[_k] = _v
+    if pnl_net is not None:
+        _nsign = "+" if pnl_net >= 0 else ""
+        _fee_txt = f"/费${fees:.2f}" if fees is not None else ""
+        _title = (f"{'🟢' if pnl_net >= 0 else '🔴'} {symbol} 平仓 "
+                  f"净{_nsign}${pnl_net:.2f} (毛{sign}${pnl:.2f}{_fee_txt})")
+    else:
+        _title = f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f}"
     return PushMessage(
-        title=f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f}",
+        title=_title,
         body=f"{direction} reason={exit_reason} strategy={strategy}",
         level=Level.NORMAL,
         category=Category.TRADE_EXIT,
