@@ -2675,6 +2675,19 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         #   覆盖"启动后文件仍缺失"盲区 (bridge 仅启动时加载一次). 当日去重, 不阻断.
         _check_bridge_health_and_alert("auto_execute")
 
+        # 2026-07-31 全链清理批2② (用户裁): kill switch 直挂 playbook 下单入口.
+        #   原链路 flag→scan_loop(60s)→RiskStateMachine→此门 ≈90s 延迟且 scan_loop
+        #   线程一死即断路; 现直读标记文件, 与 order_executor/engine 同函数同口径.
+        #   fail-close 与 order_executor.py:3430 一致 (检查异常即不下单).
+        try:
+            from app.us_pipeline.emergency_interceptor import check_kill_switch
+            if check_kill_switch():
+                logger.warning("🚨 [playbook] Kill Switch 已激活, 跳过 auto_execute")
+                return {"date": today, "executed": 0, "skipped": 0, "reason": "kill_switch"}
+        except Exception as _ks_err:
+            logger.warning(f"🚨 [playbook] Kill Switch 检查异常, fail-close 跳过本轮: {_ks_err}")
+            return {"date": today, "executed": 0, "skipped": 0, "reason": "kill_switch_check_error"}
+
         # 2026-06-30: 全局风险/市场环境检查 — 极端 regime 或风险状态禁止新开仓
         try:
             from app.playbook.market_regime import MarketRegime, MarketRegimeGate
@@ -5542,10 +5555,16 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         """).fetchall()
 
         if not rows:
+            monitor_playbook_sim_exits._last_n = 0
             conn.close()
             return 0
 
-        logger.info(f"[playbook dual] 退出监控: {len(rows)} 个未平仓 sim/live 仓位待检查")
+        # 2026-07-31 降噪: 20s 循环每轮 INFO → 持仓数变化才 INFO, 不变 DEBUG (~180条/盘中h → ~0)
+        if len(rows) != getattr(monitor_playbook_sim_exits, "_last_n", None):
+            logger.info(f"[playbook dual] 退出监控: {len(rows)} 个未平仓 sim/live 仓位待检查")
+            monitor_playbook_sim_exits._last_n = len(rows)
+        else:
+            logger.debug(f"[playbook dual] 退出监控: {len(rows)} 个未平仓 (不变)")
 
         data_router = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
         if not data_router:

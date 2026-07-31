@@ -70,7 +70,14 @@ class RegimeContext:
 
 class MarketRegimeGate:
     """市场环境门禁"""
-    
+
+    # 2026-07-31 全链清理: 类级 TTL 缓存 — 调用方 (auto_execute/sizing 兜底) 每次新建实例
+    #   且逐条指令各 assess 一次, 无缓存时每个周期打 AlphaVantage 付费 API 多次.
+    #   regime 基于 MA20/50/200+VIX, 分钟级新鲜度足够; uncertain 降级结果短 TTL 防兜底滞留.
+    _assess_cache = None          # tuple(monotonic_ts, RegimeContext)
+    _ASSESS_CACHE_TTL = 120.0     # 正常结果缓存 120s
+    _ASSESS_CACHE_TTL_UNCERTAIN = 30.0  # VIX uncertain 降级结果仅 30s
+
     def __init__(
         self,
         market_data_router: Optional[MarketDataRouter] = None,
@@ -116,8 +123,17 @@ class MarketRegimeGate:
         - score < -5: NO_TRADE (top_n=0, multiplier=0.0)
         """
         score = 0
-        
-        # 获取 SPY 数据
+
+        # TTL 缓存命中: 直接返回 (省 AlphaVantage 付费调用 + VIX 失败时的 2s sleep)
+        import time as _time_mod
+        _now_mono = _time_mod.monotonic()
+        _cached = MarketRegimeGate._assess_cache
+        if _cached is not None:
+            _c_ts, _c_ctx = _cached
+            _ttl = self._ASSESS_CACHE_TTL_UNCERTAIN if _c_ctx.vix_uncertain else self._ASSESS_CACHE_TTL
+            if (_now_mono - _c_ts) < _ttl:
+                logger.debug(f"[Regime] 缓存命中 ({_now_mono - _c_ts:.0f}s < {_ttl:.0f}s): {_c_ctx.regime.value}")
+                return _c_ctx
         spy_price = 0.0
         spy_ma20 = 0.0
         spy_ma50 = 0.0
@@ -281,7 +297,7 @@ class MarketRegimeGate:
             f"VIX={vix:.2f}{'(uncertain)' if vix_uncertain else ''} | top_n={top_n} multiplier={position_multiplier}"
         )
 
-        return RegimeContext(
+        ctx = RegimeContext(
             regime=regime,
             vix=vix,
             vix_uncertain=vix_uncertain,
@@ -295,3 +311,5 @@ class MarketRegimeGate:
             position_multiplier=position_multiplier,
             min_strength=min_strength,
         )
+        MarketRegimeGate._assess_cache = (_now_mono, ctx)
+        return ctx

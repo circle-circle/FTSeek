@@ -412,7 +412,19 @@ class TradingScheduler:
         self.news_pipeline_v2 = None
         self._news_v2_running = False
         self._news_v2_thread = None
+        # C2 退役 (DEB-feedback-loop, 2026-07-31 用户裁): 产出零消费者 (on_news_passed
+        #   只打日志, immediate_scan enabled=false 配置级死亡全史零触发), 采集能力被
+        #   UE 自有 finnhub 链 (llm_universe_scan clue_finnhub_news) 覆盖 → 默认关停.
+        #   保留 app.news_v2.models (UE 引用 UnifiedNewsItemV2 数据模型). 改 true 复活.
+        _nv2_retired = False
         try:
+            from app.core.config import get_config as _gc_nv2
+            _nv2_retired = not bool(_gc_nv2().get_dotted("news_v2.enabled", True))
+        except Exception:
+            pass
+        try:
+            if _nv2_retired:
+                raise RuntimeError("NewsV2 已退役 (news_v2.enabled=false, DEB-20260731 C2)")
             from app.news_v2.pipeline import NewsPipelineV2
             from app.news_v2.sources.finnhub_news_source import FinnhubNewsSource
             from app.news_v2.sources.sec_edgar_source import SECEdgarSource
@@ -595,7 +607,10 @@ class TradingScheduler:
             logger.info("[NewsV2] 管线已初始化 (observe 模式) | watchlist=%d | skip_market_hours=%s",
                         len(wl_codes), self._news_v2_skip_market_hours)
         except Exception as e:
-            logger.warning("[NewsV2] 初始化失败 (降级运行): %s", e)
+            if _nv2_retired:
+                logger.info("[NewsV2] 已退役 (news_v2.enabled=false) — 产出零消费者, DEB-20260731 C2")
+            else:
+                logger.warning("[NewsV2] 初始化失败 (降级运行): %s", e)
             self.news_pipeline_v2 = None
             self._news_v2_skip_market_hours = True
 

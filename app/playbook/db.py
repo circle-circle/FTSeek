@@ -63,7 +63,7 @@ class PlaybookDB:
             # 因列不存在而失败 (被 except 吞 → IC 永远 0). 显式 ALTER 补列.
             self._migrate_instruction_columns(conn)
             self._tables_created = True
-            logger.info("Playbook tables ensured")
+            logger.debug("Playbook tables ensured")  # 2026-07-31 降噪: INFO→DEBUG (每 ensure 都打, 23条/11h)
         except Exception as e:
             logger.error(f"Failed to create playbook tables: {e}")
             raise

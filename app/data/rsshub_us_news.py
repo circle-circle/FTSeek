@@ -569,6 +569,12 @@ class RSSHubUSNewsFetcher:
         _tagged = sum(1 for a in all_articles if a.get('symbols') and a['symbols'] != '[]')
         logger.info(f"[RSSHub-US] 本轮采集完成: 获取 {len(all_articles)} 条, 保存 {saved} 条, "
                     f"symbol标注 {_tagged}/{len(all_articles) or 1} ({_tagged * 100 // (len(all_articles) or 1)}%)")
+        # 2026-07-31 全链清理: 挂 TTL 清理 — 读者只读最近 2~30h, cleanup_old 此前全仓无调用方,
+        #   25MB 死重持续增长. 每轮采集末尾顺手清 48h 前数据 (失败不阻塞采集).
+        try:
+            self.cleanup_old(keep_hours=48)
+        except Exception as _cl_e:
+            logger.debug(f"[RSSHub-US] 旧数据清理失败 (不阻塞): {_cl_e}")
         return results
     
     def get_recent_news(self, hours: int = 2, limit: int = 50) -> List[Dict]:

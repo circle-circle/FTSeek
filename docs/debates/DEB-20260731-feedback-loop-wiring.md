@@ -187,3 +187,12 @@
 2. accumulator 规则 2/3 门槛重校准 (strength≥60 / PRE_CLOSE_EXIT≥5h 与现役形态对齐) — 属参数调整, 未擅自改
 3. C2 NewsV2 退役范围 (仅 immediate 死链 vs 管线整体) — 证据已齐, 待裁
 4. A1 lessons 注入: 待 playbook 时代 lessons 攒 ≥10 条 (orchestrator 修复后生产已恢复) 再回来裁
+
+---
+
+### 第 4 轮 (2026-07-31 深夜, 用户裁决遗留项 1+3)
+
+**裁决 3 → C2 NewsV2 整体退役 (已执行)**: 用户条件"如果重复无意义, 从节省资源角度退役" — 条件核实成立: ①on_news_passed = 只打日志 (observe 回调, scheduler_core.py:571) ②immediate_scan 配置级死亡全史零触发 ③UE 信息链自有 finnhub 直采 (llm_universe_scan.py:212 clue_finnhub_news, 独立令牌桶+缓存), 仅引用 news_v2.models 数据模型不读管线产出。执行: `news_v2.enabled: false` (unified_config.yaml) + scheduler_core 构建门 (退役走既有降级路径, 与真故障分级日志); 保留 models 包, 改 true 可完整复活。下次服务重启生效。节省: NewsV2Loop 线程 + RSSHub/SEC 轮询 + dedup sqlite 读写 + 日志噪音。
+
+**裁决 1 → lessons 保留生产线, 两周试用期**: 机制定位 = 每日复盘辩论的副产品 (边际成本≈0, 辩论反正要跑)。现役 2 条即"共性候选"样板 (高强度信号仍亏损→信号可靠性 / 6.2h 不触止损→止损过宽), 但均单样本孤证。**不拦截机会**: 当前 record-only 交易链零消费; 未来 A1 注入仅为 prompt 软建议 (A2 执行硬门已被 DEB 否决), 且前置 ≥10 条 + 质量审计 + 可回滚。试用期截止 ~08-14, 审计标准: 是否重复出现 (共性)、证据强度 (n≥2)、可操作 (指向具体旋钮)。审计不过 → 连生产线一起关。
+**门槛重校准 (遗留项2) 并入试用期审计**: orchestrator 修复后若两周仍产出 ≈0, 即证明门槛脱节, 届时与"是否保留"一并裁。

@@ -299,16 +299,13 @@ def _run_new_scheduler(args):
             # F3 (2026-05-14): 强制重启校验 + 失败时 RISK_OFF
             ok = mgr.revalidate_on_restart()
             if not ok:
-                logger.error(
-                    "🚨 [启动·F3] battle plan 校验失败且自动修复未通过, 进入 RISK_OFF"
+                # 2026-07-31 全链清理批2① (用户裁): veto 降级为告警 —
+                #   ①playbook 现役链不消费 battle plan, 退役产物不能否决活链;
+                #   ②原 RISK_OFF 调用 import app.risk.risk_state_machine 模块不存在
+                #     (真实路径 us_pipeline), ImportError 被吞 → 哑弹 + 误导性错误日志.
+                logger.warning(
+                    "⚠️ [启动·F3] battle plan 校验失败/过期 (playbook 链不消费, 仅告警不置 RISK_OFF)"
                 )
-                try:
-                    from app.risk.risk_state_machine import RiskStateMachine, RiskState
-                    RiskStateMachine().set_state(
-                        RiskState.RISK_OFF, "stale_battle_plan_F3", "main"
-                    )
-                except Exception as _rse:
-                    logger.warning(f"[启动·F3] RISK_OFF 设置失败 (降级): {_rse}")
         else:
             logger.warning("⚠️ 未找到美股作战计划，将使用默认策略")
     except Exception as e:

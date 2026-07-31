@@ -160,7 +160,7 @@ def scan_loop(scheduler):
             from app.core.scheduler_triggers import get_market_phase, MarketPhase
             phase = get_market_phase()
             if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT):
-                logger.info(f"[扫描] {phase.value} → 完全静默，跳过扫描")
+                logger.debug(f"[扫描] {phase.value} → 完全静默，跳过扫描")  # 2026-07-31 降噪: INFO→DEBUG (隔夜 ~7条/h 纯心跳)
                 for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
                     if not scheduler.running:
                         return

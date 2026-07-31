@@ -90,7 +90,9 @@ catalyst:
     min_severity: HIGH
     scan_news_hours: 12
   reverse_catalyst:
-    enabled: true
+    # 2026-07-31 全链清理批1 (用户裁): 盘中异动 3 次 LLM 调用 → 存内存零消费者,
+    #   重启即丢 (全链审计 V-类). 关停止血; 改 true 复活.
+    enabled: false
     min_change_pct: 0.03
     quick_debate_rounds: 1
     quick_debate_timeout: 60
@@ -792,7 +794,9 @@ news_sources:
         path: /cls/telegraph
         priority: 2
 news_v2:
-  enabled: true
+  # C2 退役 (DEB-feedback-loop 2026-07-31 用户裁): 产出零消费者 + 能力被 UE 自有
+  #   finnhub 链覆盖 → 关停. 保留 app.news_v2.models (UE 引用数据模型). 改 true 复活.
+  enabled: false
   mode: observe
   observe:
     data_dir: ~/.hermes/ftseek/data/v2_collection_us/

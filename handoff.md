@@ -88,6 +88,17 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-31 (夜·Qoder) · 全链清理批1六项+批2两项执行 + 剩余 12 项 DEB 起案 (用户裁"按建议执行")
+**批1 (零风险, 已落地)**: ①`catalyst.reverse_catalyst.enabled: false` (LLM 止血) ②日志降噪×3 (exit monitor 行数变化才 info/overnight 心跳→debug/playbook ensure_tables→DEBUG) ③数据膨胀治理 — 根目录 33 个 .bak 归档 `data/backups/root_bak_archive_20260731.tar.gz` (204MB→48MB) + 4 个零字节 .db 清除 + 根 ftseek_us.db 空壳 (0表, sqlite_master 验证) 移 quarantine + rsshub news_us 挂 cleanup_old(48h) 一次性清理 25MB→588K ④MarketRegimeGate 类级 TTL 缓存 (120s/vix_uncertain 30s — 调用方每次新建实例, 实例缓存无效, 省 AlphaVantage 付费调用) ⑤OpenD 冗余项调研后改道 DEB (触执行面) ⑥crontab 注释漂移修正。
+**批2 (保护活链)**: ①battle plan 启动 veto 降级为告警 (main.py) — **意外发现原 RISK_OFF 调用 import `app.risk.risk_state_machine` 路径根本不存在** (真实路径 app.us_pipeline.*), ImportError 被 except 吞掉, veto 从来都是哑弹还刷误导性 error 日志 → 诚实降级 warning-only ②**kill switch 直挂 playbook 下单入口** (pipeline.py auto_execute 头部, fail-close 与 order_executor:3430 同口径) — 原链路 flag→scan_loop(60s)→RiskStateMachine→门 ≈90s 延迟且线程一死即断路; auto_execute 是 playbook 下单唯一汇合点 (topup 只落库指令), 单门全覆盖, 平仓路径不受影响。
+**测试**: conftest 加 autouse fixture 每用例清 regime 类级缓存 (全量跑 test_risk_on_normal_vix 串上下文挂/单跑过的实证); 全量回归见 DEB/测试记录。
+**DEB-20260731-fullchain-cleanup-remaining.md 起案**: 12 项 — ③decisions.db 空桩(D1补最小实现) ④interceptor 假哨兵(E1 先迁 auto_recovery 再退役) ⑤因子权重双通道(F1 停周五通道) ⑥记分牌零读者(用户问题: 看→挂dashboard/不看→停cron) ⑦us.json 冻结记忆(H1 接线) ⑧三个 LLM 推送(用户问题: 看→留/不看→停) ⑨死代码×9+僵尸配置×11(I1 墓碑零行为变更) ⑩重复统计(J2 先记口径差) ⑪HK 手动页(用户问题) ⑫双 trade ctx(K1 口径契约) ⑬UPSERT 优先级(L1 加单测) ⑭playbook 无券商侧 STOP(M2 shadow 评估)。含 4 个待另一模型复核分歧点。**生效提示**: reverse_catalyst 关/regime 缓存/kill switch 直挂/veto 降级均下次重启生效。
+
+### 2026-07-31 (深夜·Qoder) · 用户裁决: NewsV2 整体退役 (已执行) + lessons 留生产线两周试用期
+**NewsV2 退役 (C2, 用户条件"重复无意义则退役"核实成立)**: on_news_passed=只打日志 · immediate_scan 配置级死亡全史零触发 · UE 自有 finnhub 直采链不读它 → `news_v2.enabled: false` + scheduler 构建门 (退役/真故障分级日志), models 包保留 (UE 引用), 改 true 可复活。**下次重启生效**, 省 NewsV2Loop 线程+RSSHub/SEC 轮询+dedup 库读写+日志噪音。
+**lessons (裁决保留)**: 定位=每日复盘辩论副产品 (边际成本≈0); 现役 2 条是共性候选样板但单样本孤证; 当前 record-only **零拦截风险**, 未来注入仅 prompt 软建议且前置 ≥10条+质量审计。试用期至 ~08-14, 审计标准: 重复出现/n≥2/指向具体旋钮; 审计不过连生产线一起关 (含 accumulator 门槛是否重校准一并裁)。
+**回归**: 998 passed EXIT=0。详见 DEB-20260731 第 4 轮落档。
+
 ### 2026-07-31 (午后·Qoder) · DEB-feedback-loop 收敛 5 项执行落档 (用户裁"请执行") + 998 回归全过
 **另一模型取证辩论 → 我独立复核全接受** (DEB 第2轮): lessons 74/76 主线时代陈旧 (A1 前提翻案) · NewsV2 非停摆 (通过=3, C2 前提削弱) · 07-30 三池名义额同量级 (B "双标"实证不成立) · F1 升主交付。
 **执行结果** (详见 DEB 第3轮落档表):
