@@ -314,6 +314,13 @@ def register(app, templates):
             plan["_is_trading_day"] = False
             plan["_weekend"] = _is_weekend
             plan["_stale"] = _is_stale
+            # 2026-07-30: 显式水印 — 旧 discovery 链已停用 (ADR-012), 本文件冻结,
+            #   真实交易轨道 = DA/UE → playbook_instructions; 前端可直展此横幅
+            if _is_stale:
+                plan["_stale_notice"] = (
+                    f"本计划日期 {_plan_date} 已过期 (旧作战计划链 07-13 停用, "
+                    f"当前交易以 playbook 指令为准)"
+                )
             plan["_confirmed"] = plan.get("_confirmed", False)
             plan["_paused"] = plan.get("_paused", False)
             plan["_is_live"] = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"

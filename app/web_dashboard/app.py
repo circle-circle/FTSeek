@@ -99,6 +99,48 @@ def create_app() -> FastAPI:
         version="2.0.0",
     )
 
+    # ── 按需激活: 闲置自动退出 (2026-07-31, 用户裁) ──
+    # dashboard 使用频率低, 配合 systemd socket 激活: 无访问时进程整体退出,
+    # 不占内存/OpenD 连接; 下次访问由 socket 瞬时拉起 (冷启动数秒)。
+    # ASGI 层记录 http+websocket 任何入站报文为活动时间; watchdog 每 60s 检查,
+    # 闲置超 DASHBOARD_IDLE_MINUTES (默认 15) 即 os._exit(0)。
+    # 注意: service 必须 Restart=on-failure, 正常退出不被复活。
+    import os as _os
+    _idle_sec = float(_os.getenv("DASHBOARD_IDLE_MINUTES", "15")) * 60
+    _act = {"last": time.monotonic()}
+
+    class _ActivityMiddleware:
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] in ("http", "websocket"):
+                _act["last"] = time.monotonic()
+
+                async def _receive_touch():
+                    msg = await receive()
+                    _act["last"] = time.monotonic()
+                    return msg
+
+                await self.inner(scope, _receive_touch, send)
+            else:
+                await self.inner(scope, receive, send)
+
+    app.add_middleware(_ActivityMiddleware)
+
+    @app.on_event("startup")
+    async def _idle_watchdog():
+        import asyncio
+
+        async def _loop():
+            while True:
+                await asyncio.sleep(60)
+                if time.monotonic() - _act["last"] > _idle_sec:
+                    logger.info(f"[dashboard] 闲置 {_idle_sec / 60:.0f}min 无活动, 按需激活模式退出")
+                    _os._exit(0)
+
+        asyncio.create_task(_loop())
+
     # ── 关闭 Futu SDK 日志 ──
     # dashboard 自建 OpenQuoteContext/OpenSecTradeContext 但未降日志级别,
     # SDK 单例 FTLog 默认 file_level=DEBUG 会把每个 query/recv 包写盘并做昂贵的
