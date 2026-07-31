@@ -88,6 +88,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-07-31 (收盘复盘·Qoder 主工程) · 07-30 净 +$94.78 三连净正 + topup 上线以来首补首胜 + 五项验收 4 过 1 空窗 + 另一模型三批改动复核代提交
+**战绩 (净口径首个完整日)**: 12 笔 7W/5L, 毛 +$145.48 费 $50.70 **净 +$94.78** — 07-28 起三连净正 (+145.8/+19.3/+94.8)。结构: 4 笔 TRAIL_LOCK 赢家 (TSM+56/GRBK SHORT+46/NVDA+35/SHOP+5.7) + 3 笔 PRE_CLOSE 小胜 vs 5 笔 MFE_STALL 砍损 (GS/T/LLY 零 MFE 单 -44/-42/-43)。
+**验收对账**: ①**topup 首补首胜**: 22:30 盘中窗 +1 (SHOP, 上线以来第一条), 净 +$5.66 TRAIL_LOCK — 第四道暗门修复当夜即兑现; 但盘前窗 3 轮仍 +0 (momentum NEUTRAL 为主, 属市况非故障) ②Phase1 evidence 1/1 落库 (SHOP agree=1/2, sector null — SHOP 不在 rotation 名单, 覆盖率待扩) ③G3 reanchored 真归零 (测试污染清后首夜 0) ④费用净额 go-forward: 12/12 fees_est/pnl_net 非空, 推送净额口径实弹 3 笔自洽 ⑤D4 费用感知保本**零样本** (昨夜无 SL_BREAKEVEN 出场, 判据顺延) ⑥流动性/借券池门零拦截 (无小票触发场景, fail-open 未误伤 — GRBK SHORT 正常放行成交)。
+**MFE_STALL 首次正名**: 5 笔零/低 MFE 单全部 150min 被砍 (对照 07-23 同款单 TIME_EXIT 拖 4-6h 亏 -370) — 平均单笔损失从 -$37 压到 -$31 且释放资金。high_atr shadow 继续攒样本。
+**另一模型三批改动复核 (全过, 代提交 72b6e5fc/f68b19d9/eacb0916)**: ①平仓推送净额主口径 (生产实弹 3 笔验证) ②dashboard 闲置自动退出 — systemd socket 配套完整核实 (socket enabled/--fd 0/Restart=on-failure), curl 实测拉起 302 ✓ ③battle_plan 过期水印 + DEB 三案落档 (含 veto-shadow T1 falsy bug 作者自纠: `if r['sentiment']` 把 0.0 滤掉致"常量退化"误判 — falsy 陷阱家族)。
+**待办滚动**: ①S1 按 evidence agree 分桶 (需 2-3 日样本) ②D4 判据顺延至首笔 SL_BREAKEVEN ③topup 盘前窗 NEUTRAL 高占比继续观察 (若 3 日 premarket 恒 +0 而 intraday 有产出, 补量窗口重心可议) ④SHOP 类池标的不在 rotation sector 名单 — evidence sector 覆盖率待 P4a 同款扩充。
+
 ### 2026-07-31 (晨·Qoder) · 运维三项 — health_check 内存监控 + hermes 周重启 + dashboard 按需激活 (用户裁)
 **①health_check.sh**: 新增第6项内存水位 — 可用 <300MB 告警附 top3 RSS 大户 (07-30 OOM 杀 hermes 零预警的教训); dashboard 检查从 HTTP curl 改**被动端口监听** (配合③, curl 会唤醒按需服务)。单次跑验证通过。
 **②hermes gateway 周重启**: cron `30 5 * * 0 XDG_RUNTIME_DIR=/run/user/0 systemctl --user restart hermes-gateway` (systemd --user 单元, 通路已验证) — 418MB/13h 增长长尾封顶。
