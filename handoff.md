@@ -58,7 +58,7 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
-3j. **DEB-20260801-direction-gate-calibration 待辩论+用户裁决** (08-01 起案): BUY 方向门校准 — quota=2 与"8 月攒数据验证"直接冲突 (实测日均 6.7-8.3 笔, quota2 砍 70%, 分层桶全 <30)。裁决 P (quota 2→4/999/维持) + Q (半码 0.5/0.7) + R (分层预注册)。辩论后交用户拍板, 未裁前参数不动 (quota=2 在产)。
+3j. **✅ DEB-20260801-direction-gate-calibration 已终裁 P2** (08-01 深夜): BUY quota 2→4→999 去配额 + 半码 0.5 维持 + R 分层批准。8 月 BUY 自然成交 ~140 笔, 08-14 主桶 n≥30; 周一开盘首验: ①BUY 执行量回到自然水平 (不再有 skip_reason=buy_quota) ②半码日志 [playbook] BUY 仓位因子 出现 ③服务由 systemd 托管单例 (PID 36456)。
 0a. **07-25 04:20 CST (收盘后, 已排定时任务)**: 重启 `ftseek-us.service` 激活凌晨修复批 (5项, 见变更日志首节) + 启动验证三判据: ①[ConfigGov] 热重载/漂移检测启动 + [ConfigAudit] 审计通过 ②无启动期 stages Pipeline 扫描 ③Reconciler 无 playbook 仓 broker_only 补录。
 0. **八月终裁框架已预注册** (`docs/specs/august-verdict-framework-20260831.md`, 2026-07-24 冻结): 08-29 盘后按 G1~G5 判据出 GO(切实盘)/PIVOT(降频高信念或更长持有期或纯事件驱动)/STOP 结论。8月只允许"修尺子、攒样本、做减法"三类动作，禁新机制。前置：P0.2 conf修复(X1赛道前提) + UE tier透传(事件赛道前提, 周末补)。
 1. **07-25 晨**: 看两个定时任务产出 — 00:30 盘中链路验收 + 08:30 首夜报告 (`scripts/first_night_gate_report.py`)。判据异常 → 按 crash-day DEB 第8轮预案一键回滚 (三开关在 `playbook.execution_parameters`)。
@@ -89,6 +89,9 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-01 (终裁落地·第三模型执行, 用户拍板"去配额999+半码0.5") · DEB 结案 P2 + 服务托管纠正回 systemd
+**P2 落地**: `buy_daily_exec_quota 4→999`（去配额, 用户"美股市场没有单方向的 buy 或 sell, 回自然不受限"; P1 quota=4 仅存活 1h 即被终裁替代, **quota=2/4 均未在任何交易日生效过, 零样本污染**）; `buy_position_factor 0.5` 维持 (8 月验证月控 $ 敞口, 不影响笔数); R 分层判分纪律批准 (半码净期望给"半码等效全码"列=2×半码毛利−全码费, 禁与全码历史直比)。8 月 BUY 自然 ~140 笔 → 主桶 n≥30 ~08-14 可及。原 08-15 检查点失效 (skip_reason=buy_quota 永不产生属预期)。**附随运维纠正 (AGENT.md 军规)**: 在产服务原由 Qoder CLI 进程托管 (非 systemd, 会话结束服务即死=周一开盘风险; 且出现双实例 34071+36456) → 已强杀 34071 并 `systemctl start ftseek-us` (systemd PID 36456), **启动冒烟 7/7 全过**, 服务现由 systemd 单例托管。DEB 状态 ✅ 已终裁 P2/Q1/R。
 
 ### 2026-08-01 (裁决落地·Qoder, 用户裁"保留quota但设更高上限+不要重复造轮子") · P1 quota 2→4 上线
 **裁决执行**: `buy_daily_exec_quota: 2 → 4` (DEB-20260801 P1) — 实测基线 6.7~8.3 笔/日下截断 ~44%, 主桶 n≥30 约 08-27 可及; 半码 0.5 维持 (Q1, 一次一变量本批只动 P)。pytest 1014 全过 (配额测试与 yaml 现值解耦), 服务 23:40 重启加载 (config 单例缓存必须重启)。
