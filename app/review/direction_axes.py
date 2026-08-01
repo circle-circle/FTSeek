@@ -33,10 +33,12 @@ def basis_quadrant(conn: sqlite3.Connection, since: str,
                    executed_only: bool = False) -> Dict[str, Any]:
     """方向 × 价格基准 四象限 (T+1/T+3).
 
-    executed_only=True 时仅 triggered=1 (交易相关口径).
+    executed_only=True 时仅 executed=1 (成交口径 — 2026-08-01 复核修正:
+    原用 triggered=1 (盘中条件穿越) 漏 17 笔已成交 DA 单, 且与 scorecard
+    已执行孪生行 executed=1 口径不一致; try_claim_execution 原子抢占语义).
     open 基准列为 NULL 的旧样本自动不计 (AVG 忽略 NULL, n_open 单列).
     """
-    trig = "AND COALESCE(triggered,0)=1" if executed_only else ""
+    trig = "AND COALESCE(executed,0)=1" if executed_only else ""
     out: Dict[str, Any] = {}
     for r in _rows(conn, f"""
         SELECT direction,
@@ -71,7 +73,7 @@ def direction_regime_cross(conn: sqlite3.Connection, since: str,
 
     返回 {direction: {regime: agg}}; regime 缺失归入 "未记录".
     """
-    trig = "AND COALESCE(triggered,0)=1" if executed_only else ""
+    trig = "AND COALESCE(executed,0)=1" if executed_only else ""
     out: Dict[str, Dict[str, Any]] = {}
     for r in _rows(conn, f"""
         SELECT direction,
@@ -96,7 +98,7 @@ def weekly_direction_stability(conn: sqlite3.Connection, weeks: int = 5,
     2026-08-01 判例: BUY 5/5 周 <50% + SHORT 5/5 周 >50% 是多空分门裁决的
     真正依据 (比汇总 p 值更抗单周 regime 混杂). 连续同向周数 >=4 视为"稳定".
     """
-    trig = "AND COALESCE(triggered,0)=1" if executed_only else ""
+    trig = "AND COALESCE(executed,0)=1" if executed_only else ""
     out: Dict[str, Any] = {}
     for r in _rows(conn, f"""
         SELECT direction, strftime('%W', date) wk, MIN(date) wk_start,
@@ -138,7 +140,7 @@ def quality_axis_status(conn: sqlite3.Connection, since: str,
     """
     out: Dict[str, Any] = {"min_n": min_n, "rubric": {}, "critique": {}}
     sql = f"""
-        SELECT {{bucket}} bucket, COALESCE(triggered,0) trig, COUNT(*) n,
+        SELECT {{bucket}} bucket, COALESCE(executed,0) trig, COUNT(*) n,
                ROUND(100.0*AVG(CASE WHEN fwd_return_t1>0 THEN 1 ELSE 0 END),1) hit_t1,
                ROUND(100.0*AVG(fwd_return_t1),3) mean_t1
         FROM playbook_instructions

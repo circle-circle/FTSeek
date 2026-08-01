@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-07-28 (DA 提速批独立复核) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-01 (四提交独立复核+口径修正) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -88,6 +88,12 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-01 (独立复核·第三模型, 用户令"检查最新变更是否合理") · 四提交复核 → P1-① 口径修复落地 + 两处数字勘正
+**复核对象**: 313002c7 (四议题 rulers) / a5d85cdf (Simpson 勘误) / a06cd36a (三批次) / 26c012cd (ATR 单位)。独立重跑数据，不引用作者数字。
+**修复 (P1-①, 已落地)**: `app/review/direction_axes.py` 三函数+质量轴共 **5 处 `COALESCE(triggered,0)=1` → `executed`**。实锤: executed=1 系 `try_claim_execution` 原子抢占 (db.py:281, 成交事实); triggered=1 系盘中条件穿越 (auto_execute), 两列全库不一致 34 行 (6月触发未成交 17 + **07-02~07-15 已真成交 DA 单 17 笔 triggered=0 被漏**)。修后 basis_quadrant_exec: BUY n 122→136 (hit 42.6%/-0.407) / SHORT 29→33 (54.5%/+0.973), 与 DB 对数一致。**此列混用恰是律1家族史重演, scorecard 孪生行 (executed=1) 与方向轴 (triggered=1) 此前永久错位**。1014 passed (tests/)。**附: 裸 `pytest` 收集会被 `scripts/archive/` 27 个退役 test_*.py 污染 (import 已删 voting 模块 → INTERNALERROR), 正式跑法必须 `pytest tests/`; pytest.ini ignore 建议留 08-07 后做减法时落**。
+**数字勘正 (P2)**: ①handoff 声称"已执行 BUY open 基准 −0.337%/43.3%" mean 可复现 (triggered 口径) 但 **hit 43.3% 任何口径不可复现** (实测 35.0~37.2%) — "自检过"带水分, scorecard 权威读数以 direction_scorecard_latest.json 为准 (BUY entry 42.6%/open 44.3% n=106); ②议题二 rubric 分桶披露 n=35/55 → 实测 **n=40/60 (hit 35.0% vs 46.7%)**, 区分力反向结论**不受影响** (B 被否定成立)。
+**未修 (列账)**: P2 open 孪生回填缺口 — fwd_return_t1_open 315/383 (82%), 缺 68 行**全部在 07-24~07-30 裁决窗口** (replay_daily 缓存缺口), 08-07 用 open 基准前须补回填; P3 rubric_shadow_daily cron 仍未注册 (handoff 已披露, 待用户执行); 07-31 指令级 rubric 21/23 (shadow 4 + backfill 12 + online 4) 已核属实。
 
 ### 2026-08-01 (议题二C 实施·Qoder, 用户裁"授权你执行") · BUY 半码+日配额落地, 全绿重启
 **背景**: 议题二B (rubric 质量门) 已被回填数据否定 (≥3桶 34.3% 反向于 ≤2桶 49.1%), 按预注册路径落 C。
