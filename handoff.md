@@ -78,15 +78,26 @@
 5a. **08-07 数据就绪审计 (Qoder, 07-29 夜, 用户令"先检查确认数据")** — 距裁决日 7 个交易日, 逐决定项盘点:
    - 🟢 **鲜活健康**: 路径湖 74 且 cron 04:35 日增 (→08-07 ~120+, dd 0.6/0.8+分层反事实主料); trigger_miss_telemetry (当日 22:38 仍写); trigger_gate_history 累计快照 (n=88/93 起, 逆向选择 gap 追踪); exit_param_shadow 114 行 (be/dd A/B 主料); scorecard 已平仓 512 (A1 切片 n≥100 可达)。
    - 🔴 **X1 降频不可评 (双重)**: ①P0.2 conf 校准前置未落地 — 近 14 日成交 **108/108 全部 conf≥0.85** (指令分布双峰: 319 笔≥0.85 / 142 笔<0.7 / 0 笔在中间, 桶完全失效); ②实证方向反转 — 该高 conf 桶近 14 日 pnl **-$361**, 与 X1 假设"高 conf 右尾厚 (+111.8/32笔, 7月上)"相矛盾。建议 08-07 将 X1 移"只读"档并如实公布反转, 判据重设。
-   - 🔴 **L2/L3 shadow 疑似断流**: `data/shadow/challenger_model_ab.jsonl` 16 行且 **07-24 停更** (若此即 L2/L3 落点) — 不修则"n≥10 交易日"判据到 08-07 必然不满足, 该项自动落"显式延期"。**请另一模型确认 L2/L3 shadow 真实落点; 若断流, 修复采集或正式宣告延期**。
-   - 🟡 **time_exit_counterfactual.jsonl 07-24 停更** (25 行) — 若为事件驱动属正常, 需确认; 若断流影响三门 TIME_EXIT 反事实评估。
+   - 🔴→🟢 **L2/L3 落点已确认 + 单位 bug 已修 (08-01)**: 真实落点 = `scripts/entry_gate_replay.py`→`data/entry_gate_replay_latest.json` (L2) + `scripts/historical_robustness_check.py`→`data/historical_robustness_latest.json` (L3)。两者系**离线回放工具** (非每日自动 shadow)，handoff 原误认 `challenger_model_ab.jsonl` 为落点。**修复前 L2 门网格全拦 (bug)**: DB 存 fraction (0.038=3.8%) 而门阈值用 percentage (2.5/3.0/4.0) → 所有指令被所有门拦截。已修 (`entry_gate_replay.py` load_instructions ×100)。**修复后重跑 (n=119, since 07-24) 结果反转**: 低 ATR 门 live_lo2.5/lo2.8/lo3.0 从历史"拦对"变**拦错** (拦掉组均% +0.12/+0.07/+0.05 > 放行组 -0.31/-0.37/-0.44)；高 ATR 门 hi4.0/lo3.0_hi4.0 从历史"拦错"变**拦对**。时点变体均值全负 (-0.08%~-0.21%)。L3 复跑结论不变 (3-4桶 vs 2.5-3桶 1/6 年占优 → 非结构性)。**08-07 含义**: ATR 门参数近期市况失效，精调须用修复后口径重评；L2/L3 已更新至 08-01。
+   - 🟡 **challenger_model_ab.jsonl 07-24 停更 (16 行)**: 系**手动脚本** (`scripts/challenger_model_ab.py`)，非 crontab 自动流。handoff 步骤 2 "第 2 轮"未执行，非断流。DEB-20260724-challenger-model-ab 状态仍"待决策 (等第 2 轮)"。08-07 前如不补跑，该案自动落"显式延期"。
+   - 🟡 **time_exit_counterfactual.jsonl 07-24 停更 (25 行)**: 脚本已归档 `scripts/archive/`，crontab 已注释。系 **intentional retirement**，非断流。三门 TIME_EXIT 反事实评估由 `exit_param_shadow.jsonl` (114 行, 鲜活) 替代。
    - 🟡 **MFE_STALL 仅 6 例** (规则 07-24 上线) → 08-07 ~15 例, 趋势级可读不可定论, 落"只读"档。
    - 🟡 **vol_bucket 分层 dd**: 路径湖分桶后每桶 n<30, 08-07 只能给方向不给参数。
-   - 行动项: ①另一模型确认 L2/L3 落点+修断流 (数据侧, 无交易影响); ②watchdog 是否盯 challenger/time_exit_cf 两文件, 未盯则补; ③X1 反转证据纳入 08-07 决策矩阵只读行。
+   - 行动项: ①✅ L2/L3 落点确认+单位 bug 修复+重跑 (08-01 完成); ②✅ watchdog 未盯 challenger/time_exit_cf — 两者均非每日自动流，无需纳入; ③X1 反转证据纳入 08-07 决策矩阵只读行 (待 08-07 矩阵编制时落)。
 
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-01 (数据侧·Qoder) · 5a 数据就绪审计行动项①②闭环 — L2/L3 落点确认 + ATR 单位 bug 修复 + 重跑
+**背景**: handoff 5a (07-29 夜) 行动项①"另一模型确认 L2/L3 落点+修断流" + ②"watchdog 是否盯 challenger/time_exit_cf"。
+**L2/L3 真实落点**: `scripts/entry_gate_replay.py`→`data/entry_gate_replay_latest.json` (L2 入场门/时点回放) + `scripts/historical_robustness_check.py`→`data/historical_robustness_latest.json` (L3 跨期稳健性)。两者系**离线回放工具** (按需重跑，非每日自动 shadow)。handoff 原误认 `data/shadow/challenger_model_ab.jsonl` 为 L2/L3 落点 — 实为手动 A/B 脚本 (`scripts/challenger_model_ab.py`)，非 crontab 自动流。
+**ATR 单位 bug (修尺子)**: `entry_gate_replay.py` 从 DB 读 `atr_pct` 为 fraction (0.038=3.8%)，但门阈值用 percentage (2.5/3.0/4.0) → 修复前所有 119 指令被所有门拦截 (门网格全同，显然异常)。根因 = DB 写入侧 (`pipeline.py:1916` `atr_provider.get_atr_pct` 返回 atr/price fraction) 与回放脚本门阈值单位不一致；回算补齐源 (`atr14_pct_series`) 返回 percentage，故 07-26 首跑 (212/308 回算) 结果正常，07-24 后全原生 fraction 即触发 bug。修法: `load_instructions` 读 DB 值 ×100 统一为 percentage。13 passed。
+**修复后 L2 重跑 (n=119, since 07-24)**: 门网格结果**反转** — 低 ATR 门 live_lo2.5/lo2.8/lo3.0 从 07-26 历史"拦对"变**拦错** (拦掉组均% +0.12/+0.07/+0.05，放行组 -0.31/-0.37/-0.44)；高 ATR 门 hi4.0/lo3.0_hi4.0 从历史"拦错"变**拦对**。时点变体均值全负 (-0.08%~-0.21%，07-26 首跑全正)。**08-07 含义**: ATR 门参数系近期市况+本信号源经验参数 (DEB-20260726 已预注册降级)，近期反转进一步证实不得引用为结构规律；精调须用修复后口径重评。
+**L3 重跑 (78 标的 × 5 年)**: 结论不变 — 3-4桶 vs 2.5-3桶 1/6 年占优 → ❌ 非结构性。
+**challenger/time_exit_cf 状态**: ①`challenger_model_ab.jsonl` 07-24 停更 = 手动脚本第 2 轮未跑 (handoff 步骤 2 待办)，非断流；08-07 前不补跑则该案自动"显式延期"。②`time_exit_counterfactual.jsonl` 07-24 停更 = 脚本已归档 `scripts/archive/` + crontab 已注释，系 intentional retirement；TIME_EXIT 反事实评估由 `exit_param_shadow.jsonl` (114 行, 鲜活) 替代。
+**watchdog 覆盖**: `data_freshness_watchdog.py` WATCHLIST 未含 challenger/time_exit_cf — 两者均非每日自动流，无需纳入 (行动项②闭环)。
+**落盘**: `data/entry_gate_replay_latest.json` (08-01T10:22) + `data/historical_robustness_latest.json` (08-01T10:23)。
 
 ### 2026-08-01 (执行·Qoder, 用户裁"请执行") · 记录侧两件落地 (ecfaaca1) + LLM 两件勘正: 07-25 早已落地, 另一模型"零命中"结论有误
 **勘正 (先取证后动口)**: 另一模型 0662078c 称"llm-cache B / failure-semantics B 三件套确认未实施 (git 全史零命中)" — **两条均不成立**, 两案 2026-07-25 已裁决已执行 (DEB §八/§五状态行本就有记录):

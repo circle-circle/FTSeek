@@ -67,8 +67,12 @@ def load_instructions(since: str) -> list[dict]:
         except Exception:
             src = "unknown"
         fwd = r["fwd_return_intraday"] if r["fwd_return_intraday"] is not None else r["fwd_return_t1"]
+        # DB 存 fraction (0.038=3.8%), 门阈值用 percentage (2.5/3.0/4.0) — 统一乘 100
+        # 回算补齐源 (atr14_pct_series) 本就返回 percentage, 无需再乘
+        raw_atr = r["atr_pct"]
         out.append({"date": r["date"], "symbol": r["symbol"], "direction": r["direction"],
-                    "atr_pct": r["atr_pct"], "regime": r["market_regime"] or "",
+                    "atr_pct": (float(raw_atr) * 100) if raw_atr is not None else None,
+                    "regime": r["market_regime"] or "",
                     "executed": bool(r["executed"]), "source": src,
                     "fwd_signed": (float(fwd) if r["direction"] == "BUY" else -float(fwd))
                     if fwd is not None else None})
