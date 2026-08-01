@@ -169,14 +169,24 @@ class TestDirectionGateC:
             return_value=db.get_instruction("2026-06-18", symbol),
         )
 
+    @staticmethod
+    def _patch_dg(quota=2, factor=0.5):
+        """钉死 direction_gate 配置 (与 yaml 现值解耦 — 裁决会把 quota 2→4)."""
+        mock_cfg = MagicMock()
+        mock_cfg.get_dotted.side_effect = lambda k, d=None: {
+            "playbook.direction_gate.buy_daily_exec_quota": quota,
+            "playbook.direction_gate.buy_position_factor": factor,
+        }.get(k, d)
+        return patch("app.core.config_container.get_config", return_value=mock_cfg)
+
     def test_buy_quota_blocks_third(self, svc, db):
-        """配额=2 (unified_config), 当日已有 2 笔 executed BUY → 第 3 笔被拦且不置 executed."""
+        """配额=2 时当日已有 2 笔 executed BUY → 第 3 笔被拦且不置 executed."""
         self._patch_gates_ok()
         for sym in ("US.QA", "US.QB"):
             iid = _save_inst(db, symbol=sym)
             db.update_instruction_tracking(iid, {"executed": 1})
         iid3 = _save_inst(db, symbol="US.QC")
-        with self._find(db, "US.QC"):
+        with self._patch_dg(quota=2), self._find(db, "US.QC"):
             result = svc.execute_instruction(iid3)
         assert result["success"] is False
         assert result.get("skipped_buy_quota") is True
@@ -191,11 +201,7 @@ class TestDirectionGateC:
             iid = _save_inst(db, symbol=sym)
             db.update_instruction_tracking(iid, {"executed": 1})
         _save_inst(db, symbol="US.RC")
-        mock_cfg = MagicMock()
-        mock_cfg.get_dotted.side_effect = lambda k, d=None: (
-            999 if k == "playbook.direction_gate.buy_daily_exec_quota" else d
-        )
-        with patch("app.core.config_container.get_config", return_value=mock_cfg), \
+        with self._patch_dg(quota=999), \
              self._find(db, "US.RC"), \
              patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
                    return_value={"success": True}) as mock_broker:
@@ -207,7 +213,7 @@ class TestDirectionGateC:
         """BUY position_size=50 → 半码 25 传入下单路径."""
         self._patch_gates_ok()
         _save_inst(db, symbol="US.PA", position_size=50)
-        with self._find(db, "US.PA"), \
+        with self._patch_dg(), self._find(db, "US.PA"), \
              patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
                    return_value={"success": True}) as mock_broker:
             svc.execute_instruction(1)
@@ -218,7 +224,7 @@ class TestDirectionGateC:
         """SHORT 不受方向门影响: size 50 原样通过, 配额门不计 SHORT."""
         self._patch_gates_ok()
         _save_inst(db, symbol="US.PS", direction="SHORT", position_size=50)
-        with self._find(db, "US.PS"), \
+        with self._patch_dg(), self._find(db, "US.PS"), \
              patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
                    return_value={"success": True}) as mock_broker:
             svc.execute_instruction(1)
@@ -231,7 +237,7 @@ class TestDirectionGateC:
             iid = _save_inst(db, symbol=sym, direction="SHORT")
             db.update_instruction_tracking(iid, {"executed": 1})
         _save_inst(db, symbol="US.SD", direction="BUY")
-        with self._find(db, "US.SD"), \
+        with self._patch_dg(quota=2), self._find(db, "US.SD"), \
              patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
                    return_value={"success": True}) as mock_broker:
             result = svc.execute_instruction(1)
