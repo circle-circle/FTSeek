@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-08-01T18:52:13.042749",
+ "generated_at": "2026-08-01T20:51:57.702478",
  "since": "2026-07-01",
  "benchmark": "命中=方向调整后 T+1 收益>0; 50%=掷硬币基线",
  "sections": {
@@ -450,6 +450,267 @@
     "dir_ret_t1": 2.672,
     "hit_t3": 59.5,
     "dir_ret_t3": 0.814
+   }
+  },
+  "basis_quadrant_exec": {
+   "BUY": {
+    "entry": {
+     "n": 122,
+     "hit_t1": 41.8,
+     "mean_t1": -0.524,
+     "hit_t3": 39.3,
+     "mean_t3": -0.429
+    },
+    "open": {
+     "n": 92,
+     "hit_t1": 41.3,
+     "mean_t1": -0.601,
+     "hit_t3": 27.2,
+     "mean_t3": -0.436
+    }
+   },
+   "SELL_SHORT": {
+    "entry": {
+     "n": 29,
+     "hit_t1": 58.6,
+     "mean_t1": 1.014,
+     "hit_t3": 58.6,
+     "mean_t3": 0.918
+    },
+    "open": {
+     "n": 26,
+     "hit_t1": 61.5,
+     "mean_t1": 1.042,
+     "hit_t3": 57.7,
+     "mean_t3": 1.118
+    }
+   }
+  },
+  "direction_regime_cross_exec": {
+   "BUY": {
+    "cautious": {
+     "n": 38,
+     "hit_t1": 44.7,
+     "mean_t1": -0.545,
+     "hit_t3": 21.1,
+     "mean_t3": -1.331
+    },
+    "risk_on": {
+     "n": 8,
+     "hit_t1": 37.5,
+     "mean_t1": -0.027,
+     "hit_t3": 37.5,
+     "mean_t3": -0.421
+    },
+    "未记录": {
+     "n": 76,
+     "hit_t1": 40.8,
+     "mean_t1": -0.565,
+     "hit_t3": 48.7,
+     "mean_t3": -0.168
+    }
+   },
+   "SELL_SHORT": {
+    "cautious": {
+     "n": 13,
+     "hit_t1": 61.5,
+     "mean_t1": 1.78,
+     "hit_t3": 38.5,
+     "mean_t3": 0.429
+    },
+    "risk_on": {
+     "n": 7,
+     "hit_t1": 57.1,
+     "mean_t1": 0.19,
+     "hit_t3": 71.4,
+     "mean_t3": 0.345
+    },
+    "未记录": {
+     "n": 9,
+     "hit_t1": 55.6,
+     "mean_t1": 0.548,
+     "hit_t3": 77.8,
+     "mean_t3": 1.905
+    }
+   }
+  },
+  "weekly_direction_stability_exec": {
+   "BUY": {
+    "weeks": [
+     {
+      "wk": "30",
+      "start": "2026-07-27",
+      "n": 29,
+      "hit_t1": 51.7
+     },
+     {
+      "wk": "29",
+      "start": "2026-07-20",
+      "n": 59,
+      "hit_t1": 37.3
+     },
+     {
+      "wk": "28",
+      "start": "2026-07-13",
+      "n": 22,
+      "hit_t1": 45.5
+     },
+     {
+      "wk": "27",
+      "start": "2026-07-07",
+      "n": 12,
+      "hit_t1": 33.3
+     },
+     {
+      "wk": "26",
+      "start": "2026-06-29",
+      "n": 2,
+      "hit_t1": 50.0
+     }
+    ],
+    "streak": 1,
+    "verdict": "方向不稳"
+   },
+   "SELL_SHORT": {
+    "weeks": [
+     {
+      "wk": "30",
+      "start": "2026-07-27",
+      "n": 6,
+      "hit_t1": 83.3
+     },
+     {
+      "wk": "29",
+      "start": "2026-07-20",
+      "n": 3,
+      "hit_t1": 0.0
+     },
+     {
+      "wk": "28",
+      "start": "2026-07-14",
+      "n": 7,
+      "hit_t1": 71.4
+     },
+     {
+      "wk": "27",
+      "start": "2026-07-07",
+      "n": 7,
+      "hit_t1": 57.1
+     },
+     {
+      "wk": "26",
+      "start": "2026-06-29",
+      "n": 8,
+      "hit_t1": 37.5
+     }
+    ],
+    "streak": 3,
+    "verdict": "方向不稳"
+   }
+  },
+  "quality_axis_status": {
+   "min_n": 30,
+   "rubric": {
+    "rubric≤2": {
+     "unexec": {
+      "n": 53,
+      "hit_t1": 79.2,
+      "mean_t1": 3.424
+     },
+     "exec": {
+      "n": 59,
+      "hit_t1": 50.8,
+      "mean_t1": 0.059
+     },
+     "gate_ready": true
+    },
+    "rubric≥3": {
+     "unexec": {
+      "n": 34,
+      "hit_t1": 85.3,
+      "mean_t1": 4.729
+     },
+     "exec": {
+      "n": 48,
+      "hit_t1": 41.7,
+      "mean_t1": -0.471
+     },
+     "gate_ready": true
+    },
+    "rubric未落": {
+     "unexec": {
+      "n": 69,
+      "hit_t1": 58.0,
+      "mean_t1": 0.338
+     },
+     "exec": {
+      "n": 44,
+      "hit_t1": 40.9,
+      "mean_t1": -0.349
+     },
+     "gate_ready": false
+    }
+   },
+   "critique": {
+    "DOWNGRADE": {
+     "unexec": {
+      "n": 8,
+      "hit_t1": 87.5,
+      "mean_t1": 8.376
+     },
+     "exec": {
+      "n": 5,
+      "hit_t1": 60.0,
+      "mean_t1": 0.519
+     },
+     "gate_ready": false
+    },
+    "DROP": {
+     "unexec": {
+      "n": 2,
+      "hit_t1": 50.0,
+      "mean_t1": 1.442
+     },
+     "exec": {
+      "n": 6,
+      "hit_t1": 66.7,
+      "mean_t1": 2.645
+     },
+     "gate_ready": false
+    },
+    "KEEP": {
+     "unexec": {
+      "n": 4,
+      "hit_t1": 50.0,
+      "mean_t1": 6.791
+     },
+     "exec": {
+      "n": 2,
+      "hit_t1": 50.0,
+      "mean_t1": -1.396
+     },
+     "gate_ready": false
+    },
+    "critique未落": {
+     "unexec": {
+      "n": 142,
+      "hit_t1": 71.1,
+      "mean_t1": 1.891
+     },
+     "exec": {
+      "n": 138,
+      "hit_t1": 43.5,
+      "mean_t1": -0.363
+     },
+     "gate_ready": false
+    }
+   }
+  },
+  "quality_axis_candidates": {
+   "未落": {
+    "n": 948,
+    "hit_t1": 49.3,
+    "mean_t1": -0.107
    }
   }
  }

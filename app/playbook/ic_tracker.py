@@ -189,9 +189,8 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         #   口径: 仅 triggered=0 且 entry_price≤0 才代理 — 已触发缺价属数据异常, 不伪造.
         #   fwd_proxy=1 落库标记 (db 迁移列), IC 统计可区分/剔除代理样本.
         _proxy = False
+        _open0 = float((bars_by_date.get(inst_date_str) or {}).get("open", 0) or 0)
         if (not entry_price or entry_price <= 0) and not inst.get("triggered", 0):
-            _day_bar = bars_by_date.get(inst_date_str) or {}
-            _open0 = float(_day_bar.get("open", 0) or 0)
             if _open0 > 0:
                 entry_price = _open0
                 _proxy = True
@@ -215,6 +214,11 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
                 if close > 0:
                     fwd_return = sign * (close - entry_price) / entry_price
                     updates[field_name] = round(fwd_return, 6)
+                    # 2026-08-01: open 基准孪生列 (双价格基准口径) — 同一 close, 起点换当日 open.
+                    #   未执行指令 limit 价不可成交, entry 基准会制造"纸面 edge"幻觉 (n=100 实测
+                    #   +1.65%→open 基准 +0.04%). t5 暂无消费端, 不落 open 孪生.
+                    if _open0 > 0 and field_name in ("fwd_return_t1", "fwd_return_t3"):
+                        updates[field_name + "_open"] = round(sign * (close - _open0) / _open0, 6)
 
         # 2026-07-12: 日内 IC — entry → 当日收盘 (纯日内系统真正收割的 horizon).
         #   与 t+N 同口径 (用收盘价), 但 horizon=当日. DA horizon 几乎恒 short (当天平),
@@ -224,6 +228,8 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
             _close0 = bars_by_date[inst_date_str].get("close", 0)
             if _close0 and _close0 > 0:
                 updates["fwd_return_intraday"] = round(sign * (_close0 - entry_price) / entry_price, 6)
+                if _open0 > 0:
+                    updates["fwd_return_intraday_open"] = round(sign * (_close0 - _open0) / _open0, 6)
 
         if updates:
             try:

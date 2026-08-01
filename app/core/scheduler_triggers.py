@@ -1327,6 +1327,27 @@ def _format_weekly_review(report: dict) -> str:
         except Exception:
             cohort_text = ""
 
+    # 2026-08-01 (议题四尺子固化): 方向稳定性 + 方向×regime 交叉 (已执行口径, 双基准戒律:
+    #   此处 T+1 命中为 entry 基准; open 基准孪生读数见周六 direction_scorecard 四象限块)
+    dax_text = ""
+    dax = report.get('direction_axes') or {}
+    if dax and not dax.get('error'):
+        stab = dax.get('stability_exec') or {}
+        if stab:
+            dax_text = "\n🧭 方向稳定性 (已执行·近5周)"
+            for d in ("BUY", "SELL_SHORT"):
+                s = stab.get(d)
+                if not s:
+                    continue
+                icon = "🟢" if s["streak"] >= 4 else "🔴" if s["streak"] <= -4 else "🟡"
+                dax_text += f"\n  {d}: {icon} {s['verdict']} (streak {s['streak']:+d})"
+        cross = dax.get('cross_exec') or {}
+        rows = [(d, rg, a) for d, rs in cross.items() for rg, a in rs.items()
+                if a.get("n", 0) >= 8]
+        if rows:
+            dax_text += "\n  方向×环境: " + " | ".join(
+                f"{d}/{rg} n{a['n']} {a['hit_t1']}%" for d, rg, a in sorted(rows))
+
     # 净口径头部 (2026-08-01, DEB-20260730 D1), 旧 JSON 无净字段回退毛口径
     _wpnl_net = summary.get('total_pnl_net')
     if _wpnl_net is not None:
@@ -1362,6 +1383,7 @@ def _format_weekly_review(report: dict) -> str:
 {daily_text}
 {strategy_text}
 {cohort_text}
+{dax_text}
 
 📋 下周计划
 {plan_text}

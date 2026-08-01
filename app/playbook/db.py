@@ -91,6 +91,12 @@ class PlaybookDB:
             # 2026-07-31 (DEB-feedback-loop F1): 锚偏离度 — entry 锚 vs 生成时刻市价 (%).
             #   DA=LLM entry vs 分析时刻快照价; UE=inject 现价 vs scan 浮现价 (锚时滞).
             "anchor_dev_pct": "REAL",
+            # 2026-08-01 (用户裁"同意"四议题方案): open 基准前瞻收益 — 与 entry 基准成对落库.
+            #   根因: 未执行桶"edge"经 open 基准检验≈100%基准幻觉 (limit 价不可成交),
+            #   任何 hit-rate 必须标注价格基准 (新口径戒律). ic_tracker 回填时同柱计算.
+            "fwd_return_intraday_open": "REAL",
+            "fwd_return_t1_open": "REAL",
+            "fwd_return_t3_open": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -805,6 +811,8 @@ _TRACKING_FIELDS = {
     # 2026-07-24 (DEB-20260723 方向4): regime 落库补全 — DA/UE 直写指令三字段恒 NULL,
     #   盘前由 run_playbook_normalize_vol_buckets 统一补写 (只填 NULL 行, 幂等).
     "market_regime", "vix_at_generation", "spy_trend_at_generation",
+    # 2026-08-01: open 基准前瞻收益 (见迁移注释 — 双价格基准口径).
+    "fwd_return_intraday_open", "fwd_return_t1_open", "fwd_return_t3_open",
 }
 
 

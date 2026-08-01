@@ -98,6 +98,24 @@ class WeeklyReviewGenerator:
             logger.warning(f"cohort A/B 度量失败 (不影响周复盘): {e}")
             cohort_ab = {"error": str(e)}
 
+        # 2026-08-01 (议题四尺子固化): 方向×regime 交叉 + 周度方向稳定性 — 与周六
+        #   direction_hit_scorecard 共用 app/review/direction_axes 同一口径源 (防两处 SQL 漂移).
+        #   窗口固定 trailing 35d 而非本周, 保证 5 周稳定性有序列可读.
+        direction_axes_block = {}
+        try:
+            from app.review.direction_axes import direction_regime_cross, weekly_direction_stability
+            from app.storage.db_pool import get_db
+            _ax_conn = get_db("ftseek_us").connection()
+            _since35 = (datetime.now() - timedelta(days=35)).strftime('%Y-%m-%d')
+            direction_axes_block = {
+                "cross_exec": direction_regime_cross(_ax_conn, _since35, executed_only=True),
+                "stability_exec": weekly_direction_stability(_ax_conn, weeks=5, executed_only=True),
+                "since": _since35,
+            }
+        except Exception as e:
+            logger.warning(f"direction_axes 读取失败 (不影响周复盘): {e}")
+            direction_axes_block = {"error": str(e)}
+
         # 生成报告
         report = {
             'report_type': 'weekly',
@@ -117,6 +135,7 @@ class WeeklyReviewGenerator:
             'improvement_plan': self._generate_plan(closed_trades, signal_funnel, rejection_trend),
             'daily_reviews_summary': daily_reviews,
             'cohort_ab': cohort_ab,
+            'direction_axes': direction_axes_block,
         }
         
         self._save_report(report, week_start, week_end)

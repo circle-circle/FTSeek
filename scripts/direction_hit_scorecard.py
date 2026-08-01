@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "ftseek_us.db"
 OUT = ROOT / "data" / "direction_scorecard_latest.json"
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 def q(conn, where: str, params=()):
     """返回 (n, hit_pct_t1, dir_ret_t1_pct, hit_pct_t3, dir_ret_t3_pct).
@@ -173,6 +176,81 @@ def main() -> int:
             "SELECT DISTINCT strftime('%W',date) FROM playbook_instructions "
             "WHERE date>=? AND fwd_return_t1 IS NOT NULL ORDER BY 1", (since,)):
         emit("weekly", f"第{wk}周", "strftime('%W',date)=?", (wk,))
+
+    # 2026-08-01 (用户裁"同意"四议题·议题四尺子固化): 以下四块统一走 app/review/direction_axes
+    #   (周报共用同一口径源). 核心戒律: hit-rate 必须标注价格基准 (entry/open 成对).
+    try:
+        from app.review.direction_axes import (
+            basis_quadrant, direction_regime_cross,
+            quality_axis_status, weekly_direction_stability,
+        )
+
+        print("-" * 78)
+        print("【方向×价格基准 四象限】 (已执行口径; open 基准=当日开盘起算, 最接近市价单可成交反事实)")
+        quad = basis_quadrant(conn, since, executed_only=True)
+        report["sections"]["basis_quadrant_exec"] = quad
+        for d in ("BUY", "SELL_SHORT"):
+            for basis in ("entry", "open"):
+                a = quad.get(d, {}).get(basis)
+                if a and a["n"]:
+                    print(f"  {d:<10} {basis:<6} n={a['n']:>4}  T+1 {a['hit_t1']}%/均{a['mean_t1']}%"
+                          f"  T+3 {a['hit_t3']}%/均{a['mean_t3']}%")
+
+        print("-" * 78)
+        print("【方向×regime 交叉表】 (已执行口径)")
+        cross = direction_regime_cross(conn, since, executed_only=True)
+        report["sections"]["direction_regime_cross_exec"] = cross
+        for d, regimes in cross.items():
+            for rg, a in sorted(regimes.items()):
+                print(f"  {d:<10} {rg:<10} n={a['n']:>4}  T+1 {a['hit_t1']}%/均{a['mean_t1']}%"
+                      f"  T+3 {a['hit_t3']}%/均{a['mean_t3']}%")
+
+        print("-" * 78)
+        print("【周度方向稳定性】 (已执行口径, 近5周; |streak|>=4 才称稳定)")
+        stab = weekly_direction_stability(conn, weeks=5, executed_only=True)
+        report["sections"]["weekly_direction_stability_exec"] = stab
+        for d, s in stab.items():
+            wk_str = " ".join(f"{w['start']}:n{w['n']}/{w['hit_t1']}%" for w in s["weeks"])
+            print(f"  {d:<10} streak={s['streak']:+d} [{s['verdict']}]  {wk_str}")
+
+        print("-" * 78)
+        print("【事件质量轴计数器】 (rubric/critique; exec n≥30 才允许用于设门)")
+        qa = quality_axis_status(conn, since, min_n=30)
+        report["sections"]["quality_axis_status"] = qa
+        for axis in ("rubric", "critique"):
+            for bucket, dd in qa[axis].items():
+                ex, un = dd.get("exec", {}), dd.get("unexec", {})
+                flag = "✅可设门" if dd["gate_ready"] else "⏳攒样本"
+                print(f"  {axis:<8} {bucket:<12} 已执行 n={ex.get('n', 0):>4} T+1 {ex.get('hit_t1')}%"
+                      f" | 未执行 n={un.get('n', 0):>4} T+1 {un.get('hit_t1')}% | {flag}")
+
+        # 2026-08-01 (议题三B): 候选级 rubric×结局 — signal_snapshots 全候选 (含 BLOCKED/SKIP,
+        #   rubric_shadow_daily 落分, fwd_ret_t1 快照回填链已有), 攒样速度 ×5 于指令级.
+        try:
+            import sqlite3 as _sq2
+            _snap = _sq2.connect(f"file:{ROOT/'data'/'signal_snapshots.db'}?mode=ro", uri=True)
+            _cand = {}
+            for _r in _snap.execute("""
+                SELECT CASE WHEN factors_json LIKE '%"rubric_score": 4%'
+                             OR factors_json LIKE '%"rubric_score": 3%' THEN 'rubric≥3'
+                            WHEN factors_json LIKE '%rubric_score%' THEN 'rubric≤2'
+                            ELSE '未落' END b,
+                       COUNT(*) n,
+                       ROUND(100.0*AVG(CASE WHEN fwd_ret_t1>0 THEN 1 ELSE 0 END),1) hit,
+                       ROUND(100.0*AVG(fwd_ret_t1),3) mean
+                FROM signal_snapshots
+                WHERE trade_date >= ? AND strategy_id='deep_analysis' AND fwd_ret_t1 IS NOT NULL
+                GROUP BY 1""", (since,)):
+                _cand[_r[0]] = {"n": _r[1], "hit_t1": _r[2], "mean_t1": _r[3]}
+                print(f"  候选级   {_r[0]:<12} n={_r[1]:>4} T+1 {_r[2]}%/均{_r[3]}%"
+                      + (" | ✅可设门" if _r[0] != "未落" and _r[1] >= 30 else ""))
+            report["sections"]["quality_axis_candidates"] = _cand
+            _snap.close()
+        except Exception as _ce:
+            print(f"  ⚠️ 候选级读取失败 (不影响): {_ce}")
+    except Exception as _ax_err:
+        print(f"  ⚠️ direction_axes 四块读取失败 (不影响上文切片): {_ax_err}")
+        report.setdefault("warnings", []).append(f"direction_axes_error:{_ax_err}")
 
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=1))
     print(f"\n解读指引: ①任何切片 n<30 不下结论 ②50%±5 视为无边缘 "
