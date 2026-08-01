@@ -58,6 +58,7 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
+3j. **DEB-20260801-direction-gate-calibration 待辩论+用户裁决** (08-01 起案): BUY 方向门校准 — quota=2 与"8 月攒数据验证"直接冲突 (实测日均 6.7-8.3 笔, quota2 砍 70%, 分层桶全 <30)。裁决 P (quota 2→4/999/维持) + Q (半码 0.5/0.7) + R (分层预注册)。辩论后交用户拍板, 未裁前参数不动 (quota=2 在产)。
 0a. **07-25 04:20 CST (收盘后, 已排定时任务)**: 重启 `ftseek-us.service` 激活凌晨修复批 (5项, 见变更日志首节) + 启动验证三判据: ①[ConfigGov] 热重载/漂移检测启动 + [ConfigAudit] 审计通过 ②无启动期 stages Pipeline 扫描 ③Reconciler 无 playbook 仓 broker_only 补录。
 0. **八月终裁框架已预注册** (`docs/specs/august-verdict-framework-20260831.md`, 2026-07-24 冻结): 08-29 盘后按 G1~G5 判据出 GO(切实盘)/PIVOT(降频高信念或更长持有期或纯事件驱动)/STOP 结论。8月只允许"修尺子、攒样本、做减法"三类动作，禁新机制。前置：P0.2 conf修复(X1赛道前提) + UE tier透传(事件赛道前提, 周末补)。
 1. **07-25 晨**: 看两个定时任务产出 — 00:30 盘中链路验收 + 08:30 首夜报告 (`scripts/first_night_gate_report.py`)。判据异常 → 按 crash-day DEB 第8轮预案一键回滚 (三开关在 `playbook.execution_parameters`)。
@@ -88,6 +89,9 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-01 (起案·第三模型, 用户令"调整 BUY 半码/日配额合理设定, 需更多数据验证") · DEB-20260801-direction-gate-calibration 起案
+**新案** (`docs/debates/DEB-20260801-direction-gate-calibration.md`): BUY 方向门校准 — 数据量优先再论证。**核心发现 (独立复现)**: ①handoff "基线 3.65 笔/日" 复现不出 — 实测 BUY 成交日均 **6.69 (全史 26 日 174 笔) / 7.10 (07-06 起) / 8.27 (近 15 日)**; ②quota=2 杀伤: 07-06 起 20 个成交日 **18 天当日 ≥3 笔 (90% 截断)**, 8 月自然 ~140 笔 → ≤40 笔; ③quota=2 下 4 周仅 ~8 笔/周, 任何分桶 <30 → **8 月 BUY 只能"无数据", 连负都不能下结论**; ④quota 截断按"触发先到先得"= 路径依赖选择偏差, 未来 BUY 转正转负都无法归因 (2 周后同一问题再问一遍); ⑤半码不减少笔数 (不影响样本量) 但固定费 $4.61/笔下净口径不可与全码历史直比 — 08-07 判分须给"半码等效全码期望"列。**裁决点**: P (quota 2→4 / 999去配额 / 维持2) · Q (半码 0.5 / 0.7) · R (配额批 vs 自然批分层预注册) · §五.5 负 edge 改 shadow-only 标注立场是否接受。待辩论+用户裁。
 
 ### 2026-08-01 (复核认账·第三模型) · 43.3% 精确复现 — 我上轮"不可复现"结论错误, Qoder 勘误之勘误成立
 **认账 (P2① 我错, 已独立重跑裁决)**: 上一轮称"open 基准 hit 43.3% 任何口径不可复现 (实测 35.0~37.2%)" **错误**。根因: 复现 SQL 的 WHERE 用 `fwd_return_t1 IS NOT NULL` (entry 列) 而非 `fwd_return_t1_open` — open=NULL 的 30 行被 `CASE WHEN NULL>0 ELSE 0` 计入分母拉低 8.3pp。正确口径 (triggered=1, since 06-01, WHERE 过滤 open 列, n=127): **hit 43.3% / mean −0.337% 逐字复现** ✓。完整校正表 (BUY open 基准): executed/06-01 n=134 hit 45.5% −0.453 · executed/07-01 n=106 hit 44.3% −0.444 (权威读数, 与落盘 JSON 逐键相等) · triggered/06-01 n=127 hit 43.3% −0.337 (原自检口径, 正确算术) · triggered/07-01 n=92 hit 41.3% −0.601。**原 self-check 无水分**; 我上轮"带水分"及 35.0/37.2/34.6 数字全部作废。
