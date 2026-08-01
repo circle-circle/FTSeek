@@ -88,6 +88,16 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-01 (执行·Qoder, 用户裁"请执行") · 记录侧两件落地 (ecfaaca1) + LLM 两件勘正: 07-25 早已落地, 另一模型"零命中"结论有误
+**勘正 (先取证后动口)**: 另一模型 0662078c 称"llm-cache B / failure-semantics B 三件套确认未实施 (git 全史零命中)" — **两条均不成立**, 两案 2026-07-25 已裁决已执行 (DEB §八/§五状态行本就有记录):
+- ①缓存方案B: yaml 6 处 `cache_on_fail: false` 带 DEB 注释 (:436-527 实测) — 方案B 的 yaml 变体即批准形态 ("cache_on_fail 全置 false 或删分支"二选一), 失败提示附带条件当日已验 (deep_analysis_engine.py:489-494 显式 WARNING)。
+- ②失败语义三件套: B① finish_reason 全链 (model_call.py:47/:185/:249/:636) + B② 双信号降档 (:419-428, flag retry_downshift_enabled) + B③ hermes 质量门 (hermes_worker.py:275/:291/:300/:330) — 代码锚点全部实测在产。
+- 教训 (双边): 验证"未实施"须查代码锚点而非仅 git 提交信息; 我复核方此前亦未回读 DEB 状态行即采信"待实施", 同记一过。
+**新执行 (ecfaaca1, 纯记录侧零交易影响)**:
+1. **pulse 历史落盘** (topup-veto DEB ④): sector_pulse.py 原子写后 append `data/sector_pulse_history.jsonl` (全量 12 板块读数), 失败只告警不污染主文件 — ③板块 veto 阈值设计的攒料前提。实测 exit=0 + 首行已落 (注: 手动验证跑在收盘后, pulse.json 被覆写为盘后零值读数, 周一 10:00 ET cron 自动刷新, 无实际影响)。
+2. **token 报表截断率列** (failure DEB Q4 验收尾款): daily_llm_token_report.py 按任务日截断率 + 近7日截断率段 (预注册判据 >5% 且 n≥10 → 🔴 复核 max_tokens)。内存库合成冒烟: 截断计数/n≥10 下限滤除/渲染标记全过; 真库 07-31 干跑正常 (当日零截断, 新段正确隐藏)。
+**验证**: 1000 passed (36s)。**至此五案裁决全部闭环**: topup veto ①②③按保险丝等 F1 数据 (挂起) / fee D1-D5 在产 (追认) / LLM 两件 07-25 已在产 / thinking 终裁后再议 / pulse 落盘+截断率列今日补齐。
+
 ### 2026-08-01 (用户裁决·Qoder 落档) · 四项 DEB 一次性拍板 — topup veto / 费用净额 D1-D5 / LLM 两件 / thinking 时机
 **裁决方式**: Qoder 逐案通俗解释"是什么/跟钱什么关系/代价"后用户四连拍, 全部按推荐通过:
 1. **DEB-20260729-topup-event-veto-shadow → 批准全部 4 点** (F2a 口径成文 + F2b 速率保险丝缓办规则 + 板块急跌 veto 源 + pulse 历史落盘)。直打 07-31 最大出血点 (topup 3/3 全执行全落亏)。自带保险丝: F1 三日速率 <3笔/日不启用。
