@@ -90,6 +90,9 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (起案·Qoder, 用户令"先针对方案写成DEBATE文档, 另外模型辩论再定") · DEB-20260802 SHORT 隔夜持仓试点
+**新案** (`docs/debates/DEB-20260802-short-overnight-hold.md`): 回应用户战略问"8月如何更精准止损止盈+合理增加持仓时间"的本质方案。**核心事实 (全部可复现)**: ①SHORT 唯一正 edge 分 horizon: EOD +0.50~0.81% → T+1 +0.97~1.46% → T+3 不再增 → edge T+1 兑现完毕, EOD 强平扔隔夜段; ②**关键发现 (反直觉)**: 隔夜段无条件 +0.31~0.42pp (中位≈均值非离群), 但分解后 **edge 集中在"EOD时亏损"桶 (+0.56~0.83pp 均值回归), 现有代码"赢家才过夜"语义下赢家桶期望 ≈0 (全史−0.05) ~ +0.29 (07-01起), 窗口间变号且 n<30** → 开总开关可能只收到跳空风险收不到 edge; ③机制: 总开关 false 时两处收口全强平, ON 时 skip 语义=cohortB∨long horizon (short 不在内), EOD 盈利才跳过, max_hold 盘中检查, gap_stop 3.0% 已在; ④费用 $4.88/$4,610=0.106% 往返, 隔夜摊薄+豁免 PDT (8月已触线3次) 属实。**起案方两处勘误落档 (§1.5)**: "skip_earnings_5d 已存在"=不实 (无在产硬财报门, 需新建或接受残余风险); "扔 +0.65pp"=无条件口径, 赢家语义下可收割量≈0。**裁决点**: A 赢家隔夜 (最小改动, 期望≈0 但验证机制) / B 全员隔夜 (期望+0.4pp 但扛单等回归语义, 与风控纪律张力) / C 纯影子 (exit_shadow 加 HOLD_T1 变体, 零风险但决定推迟9月) / D 不动; 起案方倾向 C先行+A并行。n≥30 冲突 (试点桶~19<30) 已申请律5显式豁免 (探索性地位不转正)。待另一模型辩论+用户裁。
+
 ### 2026-08-02 (裁决A落地·Qoder, 用户裁"A") · rr_ratio 999 死哨兵删除 — 配置与行为合一
 **落地**: ①playbook_horizon.yaml short_horizon `rr_ratio: 999 → 2.0` (诚实值: vol_buckets tp_multiplier low2.0/medium1.8/high1.5/extreme1.5 为唯一真源, 本键仅 fallback 路径消费, 对齐 long_horizon 07-08 决定); ②instruction_generator 删除 `rr_ratio>=100` 死分支 (999 退役后永不触发=死代码, 做减法)。**行为变化仅限 fallback 路径** (vol_buckets 未命中时 TP=0 → TP=2R; 07-20 P1-2 挂账裁决清零); 主路径零变化 → 零样本污染。下游 TP>0 两守卫 (order/executor, trade_recorder) 不依赖哨兵语义已核。pytest 1014 全过, yaml 加载验证, systemctl restart 生效。"无固定TP"若要做 = 预注册 A/B + 真开关, 不得再用哨兵 (已写进 yaml 注释军规)。
 
