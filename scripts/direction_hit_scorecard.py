@@ -24,17 +24,18 @@ OUT = ROOT / "data" / "direction_scorecard_latest.json"
 
 
 def q(conn, where: str, params=()):
-    """返回 (n, hit_pct_t1, dir_ret_t1_pct, hit_pct_t3, dir_ret_t3_pct)."""
+    """返回 (n, hit_pct_t1, dir_ret_t1_pct, hit_pct_t3, dir_ret_t3_pct).
+
+    fwd_return_t1/t3 在写入时已方向调整 (ic_tracker.py: sign*(close-entry)/entry),
+    正=方向对。直接 >0 判命中, 不再二次 CASE direction (原实现二次调整反转了 SHORT)。
+    """
     r = conn.execute(f"""
         SELECT COUNT(*) n,
-          ROUND(AVG(CASE WHEN (direction='BUY' AND fwd_return_t1>0)
-                          OR (direction='SELL_SHORT' AND fwd_return_t1<0) THEN 1.0 ELSE 0 END)*100,1) hit1,
-          ROUND(AVG(CASE direction WHEN 'BUY' THEN fwd_return_t1 ELSE -fwd_return_t1 END)*100,3) ret1,
+          ROUND(AVG(CASE WHEN fwd_return_t1>0 THEN 1.0 ELSE 0 END)*100,1) hit1,
+          ROUND(AVG(fwd_return_t1)*100,3) ret1,
           ROUND(AVG(CASE WHEN fwd_return_t3 IS NULL THEN NULL
-                         WHEN (direction='BUY' AND fwd_return_t3>0)
-                          OR (direction='SELL_SHORT' AND fwd_return_t3<0) THEN 1.0 ELSE 0 END)*100,1) hit3,
-          ROUND(AVG(CASE WHEN fwd_return_t3 IS NULL THEN NULL
-                         WHEN direction='BUY' THEN fwd_return_t3 ELSE -fwd_return_t3 END)*100,3) ret3
+                         WHEN fwd_return_t3>0 THEN 1.0 ELSE 0 END)*100,1) hit3,
+          ROUND(AVG(fwd_return_t3)*100,3) ret3
         FROM playbook_instructions
         WHERE fwd_return_t1 IS NOT NULL AND direction IN ('BUY','SELL_SHORT') AND {where}
     """, params).fetchone()
@@ -85,6 +86,36 @@ def main() -> int:
     emit("debate", "分歧(conf<=40)", "confidence<=40")
     emit("debate", "部分一致(40-75]", "confidence>40 AND confidence<=75")
     emit("debate", "高确认(>75)", "confidence>75")
+    # 2026-08-01 (P0.2 conf 校准, X1 前置): 逐离散值校准表 — conf 仅六档 {35,50,70,72,88,90},
+    #   每档给实证命中/收益, 即诚实的校准曲线; ladder_direction 判定阶梯是否单调。
+    print("-" * 78)
+    _cal_rows = []
+    for _cv, in conn.execute(
+            "SELECT DISTINCT confidence FROM playbook_instructions "
+            "WHERE date>=? AND fwd_return_t1 IS NOT NULL AND direction IN ('BUY','SELL_SHORT') "
+            "AND confidence IS NOT NULL ORDER BY 1", (since,)):
+        d = q(conn, "date>=? AND confidence=?", (since, _cv))
+        _cal_rows.append({"conf": _cv, **d})
+        if d["n"]:
+            print(f"{'conf=' + str(_cv):<26} {d['n']:>5} {d['hit_t1']:>9} {d['dir_ret_t1']:>12} "
+                  f"{str(d['hit_t3'] or '-'):>9} {str(d['dir_ret_t3'] or '-'):>9}")
+    _valid = [r for r in _cal_rows if (r["n"] or 0) >= 5 and r["hit_t1"] is not None]
+    # 阶梯判定对齐预注册三桶 (分歧<=40 vs 高确认>75, 与 debate 节同口径) —
+    # 线性秩相关会掩盖"中间高两头低"等非单调形态 (08-01 实测即此形态, 秩相关误判 calibrated)。
+    _lo = q(conn, "date>=? AND confidence<=40", (since,))
+    _hi = q(conn, "date>=? AND confidence>75", (since,))
+    if (_lo["n"] or 0) >= 5 and (_hi["n"] or 0) >= 5:
+        _ladder = "calibrated(高确认>分歧)" if _hi["hit_t1"] > _lo["hit_t1"] else "inverted(高确认<=分歧)"
+    else:
+        _ladder = "insufficient_data"
+    report["sections"]["calibration"] = {
+        "per_conf_value": _cal_rows,
+        "low_bucket_conf_le40": _lo,
+        "high_bucket_conf_gt75": _hi,
+        "ladder_direction": _ladder,
+        "note": "P0.2 校准标尺: 每档 n>=5 才参与阶梯判定; 倒挂=conf 不能作入场门 (X1 前置未达标)",
+    }
+    print(f"  → 阶梯判定: {_ladder} (仅 n>=5 档参与)")
     # 2026-07-25 (信息源复盘): debate_outcome 是隐藏分层器 (分歧BUY 67% vs 弃权 47%) — 固定成周度切片;
     #   SHORT 相关 outcome 历史全烂 (分歧SHORT 33%/-2.85%, 一致SHORT 0%/-4.61%), 监控是否持续
     emit("debate_outcome", "弃权(一方SKIP)", "raw_instruction_json LIKE '%一方弃权%'")

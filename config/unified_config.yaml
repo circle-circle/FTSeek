@@ -219,7 +219,8 @@ diagnostics:
       modules:
       - geopolitical_reasoner
     post_market:
-      enabled: true
+      # 2026-08-01 ZOMBIE 断线: runner (run_all_diagnostics) 全仓零调用, statistical_validator 已从注册表删除(悬空引用)
+      enabled: false
       modules:
       - shadow_account
       - statistical_validator
@@ -1159,34 +1160,8 @@ playbook:
     premarket_end_et_hhmm: 930
     intraday_start_et_hhmm: 1030
     intraday_end_et_hhmm: 1130
-    pool:
-    - US.NVDA
-    - US.TSLA
-    - US.AMD
-    - US.META
-    - US.AMZN
-    - US.GOOG
-    - US.MSFT
-    - US.AAPL
-    - US.AVGO
-    - US.TSM
-    - US.NFLX
-    - US.SMCI
-    - US.PLTR
-    - US.COIN
-    - US.MU
-    - US.QCOM
-    # 2026-07-25 扩容 (用户裁决提量): +8 只高流动性标的, 选标口径 = 07-24 复盘 ATR 甜蜜区
-    #   3-4% 画像为主 (历史唯一正期望桶 71%WR) + 避开 watchlist 低波防御股 (2.5-3.0% 次差桶)。
-    #   仍经 Screener 质量门+三门, 回滚: 删本段。
-    - US.ARM
-    - US.MRVL
-    - US.UBER
-    - US.RIVN
-    - US.SNOW
-    - US.SHOP
-    - US.DELL
-    - US.CRWD
+    # pool 静态列表已退役 (P-1 名单合一 2026-08-01, DEB-20260724 §7): 真源 = watchlist roles.topup_eligible,
+    #   防双名单漂移 (原 24 只含 07-25 扩容 8 只, 全量迁入 roles). 消费端 pipeline.py 派生. 回滚 = git revert 本提交.
 pre_market_ranker:
   cache_ttl_seconds: 3600
   enabled: false
@@ -1327,7 +1302,8 @@ risk:
     risk_per_trade_pct: 0.008
   pre_trade:
     battle_plan_bonus: 0.5
-    battle_plan_bonus_enabled: true
+    # 2026-08-01 ZOMBIE 断线: 全仓零代码读取 (battle plan 已冻结)
+    battle_plan_bonus_enabled: false
     long_min_strength: 60
     min_effective_strength_floor: 50
     short_min_strength: 45
@@ -1692,7 +1668,8 @@ strategies:
     trail_activation_atr: 1.0
     trail_atr_mult: 1.5
   voting_llm:
-    enabled: true
+    # 2026-08-01 ZOMBIE 断线: 仅已门死的 signal_stage 消费
+    enabled: false
 strategy:
   # 2026-07-24 (用户裁决, da-chain-audit DEB §7.5): 主线扫描本体静默 — 主线4日0交易纯空转.
   #   只停扫描, scan_loop 寄宿任务(巡检/复盘/快照)保留. 回滚: 改 true.
@@ -1765,7 +1742,8 @@ strategy_registry:
     direction_filter:
       BUY_min_confidence: 70
       SHORT_min_confidence: 70
-    enabled: true
+    # 2026-08-01 ZOMBIE 断线: fast_lane 仅门死 signal_stage 求值
+    enabled: false
     ic_gate:
       hard_block_threshold: -0.15
       min_signals: 10
@@ -1820,7 +1798,8 @@ strategy_registry:
       BUY_min_confidence: 70
       BUY_min_strength: 50
       SHORT_min_confidence: 70
-    enabled: true
+    # 2026-08-01 ZOMBIE 断线: 仅已门死的 signal_stage 消费
+    enabled: false
     ic_gate:
       hard_block_threshold: -0.15
       min_signals: 30
@@ -1834,14 +1813,24 @@ symbol_cooldown:
     direction: same_only
 updated: '2026-04-29'
 version: 3.0.0
+# 2026-08-01 P-2b 订阅动态化 (DEB-20260724 §7, 用户裁决): 应订集合 = 基准(roles.benchmark)
+#   ∪ 当日有效指令标的 ∪ playbook 未平仓 ∪ 主线 PositionStore 安全网; 静态 watchlist 降为
+#   可配置 (默认关 — 其唯一真实消费者主线 scan_loop 已静默, DEB §7.5). 收盘全退次日重建.
+#   回滚: dynamic_enabled=false (恢复 静态watchlist∪PositionStore).
+subscription:
+  dynamic_enabled: true
+  static_watchlist_enabled: false
+
 watchlist:
   etfs:
   - code: US.SPY
+    roles: [benchmark, subscribe]
     enabled: false
     name: SPDR S&P 500 ETF
     notes: → ORB 管理 | 主线仅用作市场方向参考
     tier: ETF
   - code: US.QQQ
+    roles: [benchmark, subscribe]
     enabled: false
     name: Invesco QQQ Trust
     notes: → ORB 管理 | 主线仅用作市场方向参考
@@ -1884,6 +1873,7 @@ watchlist:
     tier: ETF
   us_stocks:
   - code: US.TSLA
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: Tesla Inc
@@ -1891,6 +1881,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.COIN
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: Coinbase Global
@@ -1898,6 +1889,7 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.CAT
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Caterpillar Inc
@@ -1905,6 +1897,7 @@ watchlist:
     sector: Industrials
     tier: TIER1
   - code: US.GS
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Goldman Sachs
@@ -1912,6 +1905,7 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.CVX
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Chevron Corp
@@ -1919,6 +1913,7 @@ watchlist:
     sector: Energy
     tier: TIER1
   - code: US.NVDA
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: NVIDIA Corp
@@ -1926,6 +1921,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.RIVN
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: Rivian Automotive
@@ -1933,6 +1929,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.UBER
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Uber Technologies
@@ -1947,6 +1944,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.SNDK
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: SanDisk Corp
@@ -1954,6 +1952,7 @@ watchlist:
     sector: Technology
     tier: TIER1
   - code: US.ARM
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: Arm Holdings
@@ -1961,6 +1960,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.MU
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Micron Technology
@@ -1968,6 +1968,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.QCOM
+    roles: [liquidity_whitelist, topup_eligible]
     enabled: false
     max_position_ratio: 0.15
     name: Qualcomm Inc
@@ -1975,6 +1976,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.BWXT
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: BWX Technologies
@@ -1982,6 +1984,7 @@ watchlist:
     sector: Industrials
     tier: TIER1
   - code: US.LLY
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Eli Lilly
@@ -1989,6 +1992,7 @@ watchlist:
     sector: Healthcare
     tier: TIER1
   - code: US.AAPL
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Apple Inc
@@ -1996,6 +2000,7 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.MSFT
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Microsoft Corp
@@ -2003,6 +2008,7 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.GOOG
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Alphabet Inc Class C
@@ -2010,6 +2016,7 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.AMZN
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Amazon.com Inc
@@ -2017,6 +2024,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.META
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Meta Platforms
@@ -2024,6 +2032,7 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.AVGO
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Broadcom Inc
@@ -2031,6 +2040,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER2
   - code: US.TSM
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: TSMC
@@ -2038,6 +2048,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER2
   - code: US.AMD
+    roles: [liquidity_whitelist, topup_eligible, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Advanced Micro Devices
@@ -2045,6 +2056,7 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.NFLX
+    roles: [liquidity_whitelist, topup_eligible]
     enabled: false
     max_position_ratio: 0.12
     name: Netflix Inc
@@ -2052,6 +2064,7 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.BABA
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Alibaba Group
@@ -2059,6 +2072,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.PDD
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: PDD Holdings
@@ -2066,6 +2080,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.NIO
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.08
     name: NIO Inc
@@ -2073,6 +2088,7 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.NTES
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: NetEase Inc
@@ -2087,6 +2103,7 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.ORCL
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.06
     name: Oracle Corp
@@ -2094,6 +2111,7 @@ watchlist:
     sector: Technology
     tier: TIER1
   - code: US.CRM
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Salesforce Inc
@@ -2101,6 +2119,7 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.BA
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: Boeing Co
@@ -2108,6 +2127,7 @@ watchlist:
     sector: Industrials
     tier: TIER2
   - code: US.LMT
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.06
     name: Lockheed Martin
@@ -2115,6 +2135,7 @@ watchlist:
     sector: Industrials
     tier: TIER2
   - code: US.UNH
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.15
     name: UnitedHealth Group
@@ -2122,6 +2143,7 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.JPM
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: JPMorgan Chase
@@ -2129,6 +2151,7 @@ watchlist:
     sector: Financial Services
     tier: TIER2
   - code: US.XOM
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.06
     name: Exxon Mobil
@@ -2143,6 +2166,7 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.WMT
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Walmart Inc
@@ -2150,6 +2174,7 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER1
   - code: US.COST
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Costco Wholesale
@@ -2157,6 +2182,7 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER1
   - code: US.KO
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Coca-Cola Co
@@ -2164,6 +2190,7 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.PEP
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: PepsiCo Inc
@@ -2171,6 +2198,7 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.DIS
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Walt Disney Co
@@ -2178,6 +2206,7 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.VZ
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Verizon Communications
@@ -2185,6 +2214,7 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.JNJ
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Johnson & Johnson
@@ -2192,6 +2222,7 @@ watchlist:
     sector: Healthcare
     tier: TIER1
   - code: US.ABBV
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: AbbVie Inc
@@ -2199,6 +2230,7 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.MRK
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Merck & Co
@@ -2206,6 +2238,7 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.V
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Visa Inc
@@ -2213,6 +2246,7 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.MA
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.12
     name: Mastercard Inc
@@ -2220,9 +2254,68 @@ watchlist:
     sector: Financial Services
     tier: TIER2
   - code: US.HON
+    roles: [liquidity_whitelist, subscribe]
     enabled: true
     max_position_ratio: 0.1
     name: Honeywell International
     notes: 多元工业龙头 | 工业分散 (2026-07-17) | 进不进交易看DA+gate
     sector: Industrials
     tier: TIER2
+  # ── topup 补量池专属 (2026-08-01 P-1 名单合一迁入) — enabled:false 不进静态扫描池,
+  #    仅经 topup_eligible 角色进补量链 (Screener 质量门+三门照常). ──
+  - code: US.SMCI
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Super Micro Computer
+    notes: AI服务器 | 高波动高流动 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1
+  - code: US.PLTR
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Palantir Technologies
+    notes: 大数据分析 | 高β事件驱动 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1
+  - code: US.MRVL
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Marvell Technology
+    notes: 数据中心芯片 | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.SNOW
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Snowflake Inc
+    notes: 云数据仓库 | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1
+  - code: US.SHOP
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Shopify Inc
+    notes: 电商平台 | 高波动 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1
+  - code: US.DELL
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: Dell Technologies
+    notes: AI服务器/PC | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1
+  - code: US.CRWD
+    enabled: false
+    roles: [liquidity_whitelist, topup_eligible]
+    max_position_ratio: 0.08
+    name: CrowdStrike Holdings
+    notes: 网络安全 | 高波动事件驱动 | topup专属 (2026-08-01 合一迁入)
+    sector: Technology
+    tier: TIER1

@@ -159,8 +159,8 @@ push/K_1M 关键字初筛命中 12 文件，含假阳性（app/push/* 是飞书�
 ### 7.4 执行项（周末）
 
 - [x] P-2a 隐性消费者逐个定性（只读，**2026-07-24 当日完成**，见 7.5）；vol_gate None 归因拆分待周末（需盘中数据）
-- [ ] P-1 单文件角色标签名单（config 重构，topup/订阅/基准从同一真源派生）
-- [ ] P-2b 动态订阅：盘前指令生成后订阅当日指令标的+持仓+基准；静态订阅降可配置（默认仅基准）；开关可回滚。**（2026-07-24 补：实施路径已明确——统一框架现成，只需扩展一个回调。** 现有机制：`subscription_manager.start_auto_loop(codes_callback=_get_subscription_codes, interval=60)` 每 60s 取"应订集合"增量订阅（去重+冷却），时段切换时 unsubscribe_all 全退；但回调当前 = watchlist ∪ 主线 PositionStore（playbook 仓不入 PositionStore，注释自认 playbook-only 场景下恒为空）。**P-2b 实施 = 扩展 `_get_subscription_codes`（scheduler_core:1078）加两个源：当日 playbook_instructions 有效标的 + playbook 未平仓标的；退订复用现有时段机制（收盘全退，次日回调自然重建）**。待确认：Futu LV3 订阅额度上限 vs watchlist+指令+持仓峰值（~70-80 只）。
+- [x] P-1 单文件角色标签名单（config 重构，topup/订阅/基准从同一真源派生）— **2026-08-01 实施完成**：watchlist 块每标的注入 `roles: [benchmark|liquidity_whitelist|topup_eligible|subscribe]`（enabled=false 的 NFLX/QCOM 保留 topup_eligible；SMCI/PLTR/MRVL/SNOW/SHOP/DELL/CRWD 7 只 topup 专属迁入，enabled:false 不进扫描池）；静态 `playbook.topup.pool` 24 只列表退役，消费端 pipeline.py 改 `get_symbols_by_role("topup_eligible")` 派生（对账 24/24 一致）；`watchlist_manager.get_symbols_by_role` 新派生口。回滚 = git revert。
+- [x] P-2b 动态订阅 — **2026-08-01 实施完成**：`_get_subscription_codes` 重写 = 基准（roles.benchmark=SPY/QQQ）∪ 当日有效指令标的（BUY/SELL_SHORT）∪ playbook 未平仓 ∪ 主线 PositionStore 安全网；静态 watchlist 降为 `subscription.static_watchlist_enabled`（默认 false）；回滚 `subscription.dynamic_enabled=false` 走保留的 `_legacy_subscription_codes`。启动即订路径同步改动态集合。LV3 额度风险对账：动态峰值 ≈ 指令23 + 持仓≤30（大量重叠）+ 基准2 ≈ ≤55 只，不高于原静态 44+动态池规模，历史上无额度错误日志。周末实测：应订集合 = 基准 2 只（正确）。验收点移至周一盘中：指令标的 60s 内进入订阅、vol_gate/vwap 数据缺失率下降、无隐性消费者告警。
 - [x] **（P-2a 新增衍生项）主线 scan_loop 扫描本体静默化**（用户裁决，**2026-07-24 当日上线**）：外科手术式——只停 `_run_signal_scan_impl` 扫描本体（`strategy.main_scan_enabled=false`，`signal_pipeline.py` 扫描调用处加配置门）；**寄宿任务全部保留**（盘前/盘后巡检、日周月度复盘、持仓快照、watchdog 心跳——它们寄宿在同一循环内，整线程停掉会误伤，审计时发现的关键约束）。服务 16:25 CST 重启，PRE 验收通过（三门/topup/退出快循环全在线）。今晚验证点：盘中日志不再出现"[扫描] 开始信号扫描"。回滚：改 true + 重启。
 - [ ] 验收判据（周一盘前/盘中）：订阅数≈指令+持仓+基准；vol_gate/vwap 数据缺失率下降；无隐性消费者告警；CPU/配额下降可观测
 

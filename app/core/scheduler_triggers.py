@@ -362,15 +362,8 @@ def _trigger_eod_agent_review(scheduler, review: dict):
             logger.warning(f"[EOD Review] 资金轨迹收集失败: {e}")
             pass
         
-        # 作战计划
+        # 作战计划 — 2026-08-01 断线: battle plan 07-11 冻结, 陈旧 rationale 喂 LLM 系误导。
         battle_plan = {}
-        try:
-            from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-            mgr = USBattlePlanManager()
-            battle_plan = mgr.get_plan() or {}
-        except Exception as e:
-            logger.warning(f"[EOD Review] 作战计划加载失败: {e}")
-            pass
         try:
             search_terms = []
             for t in trades:
@@ -463,8 +456,7 @@ def check_daily_review(scheduler: 'TradingScheduler'):
             try:
                 from app.review.daily_review import generate_daily_review
                 review = generate_daily_review(now_et.date().isoformat())
-                if scheduler.notifier:
-                    scheduler.notifier.send_text(_format_daily_review(report=review))
+                _push_review_text(scheduler, _format_daily_review(report=review), "日报")
                 logger.info(f"[日报] 复盘推送完成：{now_et.date()}")
                 
                 # P3 (2026-05-03): Review Orchestrator — 辩论增强复盘 + LLM Issue 注入
@@ -714,8 +706,7 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
             try:
                 from app.review.weekly_review import generate_weekly_review
                 report = generate_weekly_review(week_start, week_end)
-                if scheduler.notifier:
-                    scheduler.notifier.send_text(_format_weekly_review(report=report))
+                _push_review_text(scheduler, _format_weekly_review(report=report), "周报")
                 logger.info(f"[周报] 复盘推送完成：{week_start} 至 {week_end}")
                 
                 # 2026-05-02: 接入完整 review_loop 闭环 (替代已废弃的 AutoTuner)
@@ -857,6 +848,7 @@ def check_monthly_review(scheduler: 'TradingScheduler'):
     每月 1 日 10:00+ ET 触发月报推送
     2026-04-24: 原逻辑要求 minute==0，易错过扫描间隔
     2026-05-02: 放宽触发条件 (hour>=10)，接入 review_loop 闭环
+    2026-08-01: 哨兵文件幂等 (内存标记重启即丢, 1日窗口内重启会重复推送)
     """
     now_et = datetime.now(ET)
     # 放宽条件: 1 日 10:00+ ET
@@ -871,30 +863,38 @@ def check_monthly_review(scheduler: 'TradingScheduler'):
         
         review_key = f"{year}-{month:02d}"
         
-        if not hasattr(scheduler, '_last_monthly_review'):
-            scheduler._last_monthly_review = None
-        
-        if scheduler._last_monthly_review != review_key:
-            scheduler._last_monthly_review = review_key
+        sentinel = os.path.join(os.path.dirname(__file__), '..', '..', 'data', '.last_monthly_review')
+        try:
+            if os.path.exists(sentinel) and open(sentinel).read().strip() == review_key:
+                return
+        except Exception:
+            pass
+        if getattr(scheduler, '_last_monthly_review', None) == review_key:
+            return
+        scheduler._last_monthly_review = review_key
+        try:
+            from app.review.monthly_review import generate_monthly_review
+            report = generate_monthly_review(year, month)
+            _push_review_text(scheduler, _format_monthly_review(report=report), "月报")
+            logger.info(f"[月报] 复盘推送完成：{year}年{month}月")
             try:
-                from app.review.monthly_review import generate_monthly_review
-                report = generate_monthly_review(year, month)
-                if scheduler.notifier:
-                    scheduler.notifier.send_text(_format_monthly_review(report=report))
-                logger.info(f"[月报] 复盘推送完成：{year}年{month}月")
-                
-                # 2026-05-02: 接入 review_loop 闭环
-                try:
-                    from app.core.review_loop import run_review_loop
-                    loop_result = run_review_loop(report, notifier=scheduler.notifier)
-                    logger.info(
-                        f"[ReviewLoop] 月度闭环完成: {loop_result['issues_detected']} 问题, "
-                        f"{loop_result['actions_taken']} 修复"
-                    )
-                except Exception as loop_err:
-                    logger.debug(f"[ReviewLoop] 月度闭环失败 (不影响主流程): {loop_err}")
-            except Exception as e:
-                logger.error(f"[月报] 复盘推送失败：{e}", exc_info=True)
+                with open(sentinel, 'w') as _f:
+                    _f.write(review_key)
+            except Exception:
+                pass
+            
+            # 2026-05-02: 接入 review_loop 闭环
+            try:
+                from app.core.review_loop import run_review_loop
+                loop_result = run_review_loop(report, notifier=scheduler.notifier)
+                logger.info(
+                    f"[ReviewLoop] 月度闭环完成: {loop_result['issues_detected']} 问题, "
+                    f"{loop_result['actions_taken']} 修复"
+                )
+            except Exception as loop_err:
+                logger.debug(f"[ReviewLoop] 月度闭环失败 (不影响主流程): {loop_err}")
+        except Exception as e:
+            logger.error(f"[月报] 复盘推送失败：{e}", exc_info=True)
 
 
 def check_position_snapshot(scheduler: 'TradingScheduler'):
@@ -992,6 +992,27 @@ def check_position_snapshot(scheduler: 'TradingScheduler'):
         logger.error(f"[快照] 记录失败：{e}", exc_info=True)
 
 
+def _push_review_text(scheduler, text: str, label: str) -> None:
+    """复盘报告推送 (2026-08-01, 用户裁): 走 PushHub — 钉钉失败自动 fallback 飞书 + 全失败落盘。
+    旧路径 scheduler.notifier.send_text 单通道无重试, webhook 故障 = 报告静默丢失。
+    PushHub 不可用时退化旧路径。"""
+    try:
+        from app.push import get_push_hub, PushMessage, Level, Category
+        first_nl = text.find("\n")
+        title = text[:first_nl] if first_nl > 0 else text[:60]
+        body = text[first_nl + 1:] if first_nl > 0 else ""
+        ok = get_push_hub().push(PushMessage(
+            title=title, body=body, level=Level.NORMAL, category=Category.SYSTEM,
+            dedup_key=f"review:{label}:{title}",
+        ))
+        if not ok:
+            logger.warning(f"[{label}] PushHub 全通道失败 (已落盘 push_failures.jsonl)")
+    except Exception as e:
+        logger.warning(f"[{label}] PushHub 异常 ({e}), 退化单通道")
+        if scheduler.notifier:
+            scheduler.notifier.send_text(text)
+
+
 def _format_daily_review(report: dict) -> str:
     """格式化日报为文本 (v2.0: 综合评分 + 6维度 + 市场状态)"""
     date_str = report.get('report_date', '')
@@ -1036,7 +1057,8 @@ def _format_daily_review(report: dict) -> str:
                 else:
                     status = dim.get('status', dim.get('data_available', ''))
                     if isinstance(status, bool):
-                        status = '✅' if status else '❌'
+                        # data_available=False 是"无数据"而非"失败" (如执行质量依赖未填充的 trade_attribution)
+                        status = '✅' if status else 'N/A'
                     elif status:
                         status = str(status)
                     else:
@@ -1050,9 +1072,13 @@ def _format_daily_review(report: dict) -> str:
     if regime_state and regime_state != 'unknown':
         regime_text = f"\n🌍 市场状态: {regime_state} ({regime.get('confidence', 'low')})"
     
-    # 信号漏斗
+    # 信号漏斗 (2026-08-01: 数据源已改 playbook_instructions, 标签随源)
     funnel = report.get('signal_funnel', {})
-    funnel_text = f"• 决策数: {funnel.get('total_decisions', 0)} 条"
+    _dec_label = "指令数" if funnel.get('source') == 'playbook_instructions' else "决策数"
+    funnel_text = f"• {_dec_label}: {funnel.get('total_decisions', 0)} 条"
+    _bd = funnel.get('by_direction_strength') or {}
+    if _bd:
+        funnel_text += " (" + ", ".join(f"{k}:{v}" for k, v in sorted(_bd.items())) + ")"
     
     # 拒绝分析
     rejections = report.get('rejection_analysis') or {}
@@ -1076,16 +1102,19 @@ def _format_daily_review(report: dict) -> str:
             f"• 水位: {capital['water_level']}"
         )
     
-    # v2.0: 计划对比
+    # v2.0: 计划对比 (2026-08-01: 基准=当日 playbook 指令)
     plan_text = ""
     pva = report.get('plan_vs_actual', {})
     if pva.get('plan_available'):
         executed = len(pva.get('executed_targets', []))
         missed = len(pva.get('missed_opportunities', []))
         unplanned = len(pva.get('unplanned_trades', []))
+        rate = pva.get('execution_rate')
         plan_text = (
-            f"\n📋 计划执行\n"
-            f"• 已执行: {executed} | 错过: {missed} | 计划外: {unplanned}"
+            f"\n📋 计划执行 (playbook 指令)\n"
+            f"• 已执行: {executed} | 未成交: {missed} | 计划外: {unplanned}"
+            + (f" | 执行率: {rate*100:.0f}%" if rate is not None else "")
+            + (" ⚠️计划外>0=链路异常" if unplanned else "")
         )
     
     # Phase 5: 逐笔交易分析摘要 (2026-05-02 新增)
@@ -1111,35 +1140,17 @@ def _format_daily_review(report: dict) -> str:
     suggestions = report.get('improvement_suggestions', ['暂无'])
     suggestions_text = chr(10).join(['• ' + s for s in (suggestions if suggestions else ['暂无'])])
 
-    # ── Phase 6: 五因子归因 (新增) ──
+    # ── Phase 6: 五因子归因 (2026-08-01 退役标注, 用户裁"做减法") ──
+    # 该块三重失真: ①过早止盈/延迟止损系死分支 (shadow_account.py else 内条件与
+    # in_rule_range 互斥, 恒 $0) ②噪声符号与标签相反 (负值实为规则外盈利)
+    # ③规则基线 (旧持仓天数规则) 已退役, 日内 playbook 单全被判"规则外噪声"。
+    # 停止推送数字, JSON 保留备查; 模块整体待 08-07 后下线。
     attribution_data = report.get('attribution_data', {})
     five_factor = attribution_data.get('five_factor', {})
     five_factor_text = ""
     if five_factor.get('five_factor_available'):
-        _lookback = five_factor.get('lookback_window', '')
-        _lookback_label = f" ({_lookback}回看)" if _lookback else ""
-        ff_lines = [
-            f"\n🔬 五因子归因分解{_lookback_label}",
-            f"• 噪声交易: ${five_factor['noise_trades_pnl']:+,.0f}  (规则外交易造成的损失)",
-            f"• 过早止盈: ${five_factor['early_exit_pnl']:+,.0f}  (提前平仓少赚的钱)",
-            f"• 延迟止损: ${five_factor['late_exit_pnl']:+,.0f}  (死扛造成的额外亏损)",
-            f"• 过度交易: ${five_factor['overtrading_pnl']:+,.0f}  (超出预期频率的交易)",
-        ]
-        score = five_factor.get('behavioral_score', {})
-        if score:
-            ff_lines.append(f"🧠 行为评分: {score.get('grade', '?')} ({score.get('score', '?')}/100)")
-
-        disp = five_factor.get('disposition_effect', {})
-        if disp.get('severity'):
-            sev_emoji = "🔴" if disp['severity'] == 'high' else "🟡" if disp['severity'] == 'medium' else "🟢"
-            ff_lines.append(f"{sev_emoji} 处置效应: {disp['severity'].upper()} (亏损/盈利持仓 = {disp.get('loser_winner_hold_ratio', '?')}x)")
-
-        chase = five_factor.get('chasing', {})
-        if chase.get('severity') and chase['severity'] != 'insufficient_data':
-            sev_emoji = "🔴" if chase['severity'] == 'high' else "🟡" if chase['severity'] == 'medium' else "🟢"
-            ff_lines.append(f"{sev_emoji} 追涨倾向: {chase['severity'].upper()} (偏离 {chase.get('avg_deviation_pct', 0):.3f}%)")
-
-        five_factor_text = "\n".join(ff_lines)
+        five_factor_text = ("\n🔬 五因子归因: ⚠️ 基线已退役 (旧持仓规则 vs 日内 playbook), "
+                            "读数无效 — 模块待 08-07 后下线")
 
     # ── 逐笔交易详情 (新增) ──
     trade_detail_text = ""
@@ -1154,10 +1165,12 @@ def _format_daily_review(report: dict) -> str:
             dir_emoji = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else ""
             entry = ta.get('entry_price', 0)
             exit_ = ta.get('exit_price', 0)
-            pnl = ta.get('realized_pnl', ta.get('pnl', 0))
+            # 2026-08-01 修复: 循环变量原名 pnl/pnl_sign/pnl_emoji 会覆盖头部总盈亏变量
+            # (07-31 推送"总盈亏 $-0.48"=最后一笔 ORCL, 真值 -140.06) — 改名隔离
+            t_pnl = ta.get('realized_pnl', ta.get('pnl', 0))
             pnl_pct = ta.get('pnl_pct', 0)
-            pnl_sign = "+" if pnl >= 0 else ""
-            pnl_emoji = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+            t_pnl_sign = "+" if t_pnl >= 0 else ""
+            t_pnl_emoji = "🟢" if t_pnl > 0 else "🔴" if t_pnl < 0 else "⚪"
             exit_reason = ta.get('exit_reason', '')
             holding = ta.get('holding_hours', 0)
             verdict = ta.get('verdict', '')
@@ -1165,7 +1178,7 @@ def _format_daily_review(report: dict) -> str:
             td_lines.append(
                 f"\n  {dir_emoji} {sym} ({direction})"
                 f"\n    买入: ${entry:,.2f} → 卖出: ${exit_:,.2f}"
-                f"\n    {pnl_emoji} 盈亏: ${pnl_sign}{pnl:,.2f} ({pnl_pct*100:+.1f}%) | 持仓: {holding:.1f}h"
+                f"\n    {t_pnl_emoji} 盈亏: ${t_pnl_sign}{t_pnl:,.2f} ({pnl_pct*100:+.1f}%) | 持仓: {holding:.1f}h"
                 f"\n    退出: {exit_reason} | 判定: {verdict}"
             )
         trade_detail_text = "\n".join(td_lines)
@@ -1178,29 +1191,45 @@ def _format_daily_review(report: dict) -> str:
             dir_emoji = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else ""
             entry = t.get('entry_price', 0)
             exit_ = t.get('exit_price', 0)
-            pnl = t.get('realized_pnl', t.get('pnl', 0))
+            t_pnl = t.get('realized_pnl', t.get('pnl', 0))
             pnl_pct = t.get('pnl_pct', 0)
-            pnl_sign = "+" if pnl >= 0 else ""
-            pnl_emoji = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+            t_pnl_sign = "+" if t_pnl >= 0 else ""
+            t_pnl_emoji = "🟢" if t_pnl > 0 else "🔴" if t_pnl < 0 else "⚪"
             exit_reason = t.get('exit_reason', '')
             holding = t.get('holding_hours', 0)
 
             td_lines.append(
                 f"\n  {dir_emoji} {sym} ({direction})"
                 f"\n    买入: ${entry:,.2f} → 卖出: ${exit_:,.2f}"
-                f"\n    {pnl_emoji} 盈亏: ${pnl_sign}{pnl:,.2f} ({pnl_pct*100:+.1f}%) | 持仓: {holding:.1f}h"
+                f"\n    {t_pnl_emoji} 盈亏: ${t_pnl_sign}{t_pnl:,.2f} ({pnl_pct*100:+.1f}%) | 持仓: {holding:.1f}h"
                 f"\n    退出: {exit_reason}"
             )
         trade_detail_text = "\n".join(td_lines)
 
+    # 净口径头部 (2026-08-01, DEB-20260730 D1): 毛/费/净三列 + 净胜率 + 假盈利
+    # 旧 JSON 无净字段 → 回退毛口径渲染
+    pnl_net = summary.get('total_pnl_net')
+    if pnl_net is not None:
+        _fees = summary.get('fees_total') or 0
+        _wr_net = (summary.get('win_rate_net') or 0) * 100
+        _fake = summary.get('fake_wins', 0)
+        header_emoji = "🟢" if pnl_net > 0 else "🔴" if pnl_net < 0 else "⚪"
+        pnl_lines = (
+            f"• 胜率：{win_rate*100:.1f}% (净 {_wr_net:.1f}%"
+            + (f", 假盈利 {_fake} 笔" if _fake else "") + ")\n"
+            f"• 总盈亏：毛 ${pnl:+.2f} | 费 ${_fees:.2f} | 净 ${pnl_net:+.2f}"
+        )
+    else:
+        header_emoji = pnl_emoji
+        pnl_lines = f"• 胜率：{win_rate*100:.1f}%\n• 总盈亏：${pnl_sign}{pnl:.2f}"
+
     return f"""📊 FTSeek-US 每日复盘 v{version} ({date_str})
 
-{pnl_emoji} 交易统计
+{header_emoji} 交易统计
 • 总交易：{total} 笔
 • 已平仓：{closed} 笔
 • 盈利笔数：{wins} 笔
-• 胜率：{win_rate*100:.1f}%
-• 总盈亏：${pnl_sign}{pnl:.2f}{score_text}{regime_text}
+{pnl_lines}{score_text}{regime_text}
 
 📈 信号漏斗
 {funnel_text}
@@ -1239,9 +1268,10 @@ def _format_weekly_review(report: dict) -> str:
             f"• 最大回撤: {capital.get('max_drawdown_pct', 0):.2f}%"
         )
     
-    # 信号漏斗
+    # 信号漏斗 (2026-08-01: 数据源已改 playbook_instructions, 标签随源)
     funnel = report.get('signal_funnel', {})
-    funnel_text = f"• 周决策数: {funnel.get('total_decisions', 0)} 条"
+    _wdec_label = "周指令数" if funnel.get('source') == 'playbook_instructions' else "周决策数"
+    funnel_text = f"• {_wdec_label}: {funnel.get('total_decisions', 0)} 条"
     
     # 拒绝趋势
     rejections = report.get('rejection_trend') or {}
@@ -1297,16 +1327,32 @@ def _format_weekly_review(report: dict) -> str:
         except Exception:
             cohort_text = ""
 
+    # 净口径头部 (2026-08-01, DEB-20260730 D1), 旧 JSON 无净字段回退毛口径
+    _wpnl_net = summary.get('total_pnl_net')
+    if _wpnl_net is not None:
+        _wfees = summary.get('fees_total') or 0
+        _wwr_net = (summary.get('win_rate_net') or 0) * 100
+        _wfake = summary.get('fake_wins', 0)
+        header_emoji = "🟢" if _wpnl_net > 0 else "🔴" if _wpnl_net < 0 else "⚪"
+        pnl_lines = (
+            f"• 胜率：{win_rate*100:.1f}% (净 {_wwr_net:.1f}%"
+            + (f", 假盈利 {_wfake} 笔" if _wfake else "") + ")\n"
+            f"• 总盈亏：毛 ${pnl:+,.2f} | 费 ${_wfees:,.2f} | 净 ${_wpnl_net:+,.2f}\n"
+            f"• 平均每笔: 毛 ${summary.get('avg_pnl_per_trade', 0):+,.2f} | 净 ${(_wpnl_net / closed if closed else 0):+,.2f}"
+        )
+    else:
+        header_emoji = pnl_emoji
+        pnl_lines = (f"• 胜率：{win_rate*100:.1f}%\n• 总盈亏：${pnl_sign}{pnl:,.2f}\n"
+                     f"• 平均每笔: ${summary.get('avg_pnl_per_trade', 0):,.2f}")
+
     return f"""📊 FTSeek-US 每周复盘
 
 📅 周期：{period_start} 至 {period_end}
 
-{pnl_emoji} 周度统计
+{header_emoji} 周度统计
 • 总交易：{total} 笔 (已平仓 {closed})
 • 盈利笔数：{wins} 笔
-• 胜率：{win_rate*100:.1f}%
-• 总盈亏：${pnl_sign}{pnl:,.2f}
-• 平均每笔: ${summary.get('avg_pnl_per_trade', 0):,.2f}
+{pnl_lines}
 {cap_text}
 
 📈 信号漏斗

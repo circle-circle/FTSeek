@@ -19,6 +19,13 @@ from app.push.dedup import DedupCache
 from app.push.aggregator import Aggregator
 
 
+@pytest.fixture(autouse=True)
+def _isolate_failure_log(tmp_path, monkeypatch):
+    """全通道失败落盘重定向到 tmp — 原实现在真实环境跑测试时把 t/b 写进生产 data/push_failures.jsonl。"""
+    import app.core.paths as _paths
+    monkeypatch.setattr(_paths, "get_data_dir", lambda: tmp_path)
+
+
 # ─── Mock Channel ───
 class MockChannel(Channel):
     def __init__(self, name="mock", priority=1, will_succeed=True):

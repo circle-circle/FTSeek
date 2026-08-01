@@ -73,30 +73,45 @@ if len(rows) >= 5:
     print(f"  LONG: {len(longs)} 样本")
     print(f"  SHORT: {len(shorts)} 样本")
     
-    def pearson(pairs):
-        if len(pairs) < 3: return None
-        xs = [p[0] for p in pairs]
-        ys = [p[1] for p in pairs]
+    def _ranks(xs):
+        order = sorted(range(len(xs)), key=lambda i: xs[i])
+        rk = [0.0] * len(xs)
+        i = 0
+        while i < len(xs):
+            j = i
+            while j + 1 < len(xs) and xs[order[j + 1]] == xs[order[i]]:
+                j += 1
+            for k in range(i, j + 1):
+                rk[order[k]] = (i + j) / 2.0
+            i = j + 1
+        return rk
+
+    def spearman(pairs):
+        # 与 signal_ic_tracker / expectancy_ic_backtest 同口径: Spearman 秩相关
+        # n<5 时秩相关无统计意义, 返回 None (原 Pearson n=3 会给出 |r|≈1 的假象)
+        if len(pairs) < 5: return None
+        xs = _ranks([p[0] for p in pairs])
+        ys = _ranks([p[1] for p in pairs])
         n = len(xs)
         mx, my = sum(xs)/n, sum(ys)/n
-        cov = sum((x-mx)*(y-my) for x,y in pairs)
+        cov = sum((x-mx)*(y-my) for x, y in zip(xs, ys))
         vx = sum((x-mx)**2 for x in xs)
         vy = sum((y-my)**2 for y in ys)
         if vx == 0 or vy == 0: return None
         return cov / math.sqrt(vx * vy)
-    
+
     if longs:
-        ic = pearson(longs)
-        print(f"  LONG IC (Pearson): {ic:+.4f}" if ic else "  LONG IC: 样本不足")
+        ic = spearman(longs)
+        print(f"  LONG IC (Spearman): {ic:+.4f}" if ic is not None else f"  LONG IC: 样本不足 (n={len(longs)}<5)")
     if shorts:
-        ic = pearson(shorts)
-        print(f"  SHORT IC (Pearson): {ic:+.4f}" if ic else "  SHORT IC: 样本不足")
-    
+        ic = spearman(shorts)
+        print(f"  SHORT IC (Spearman): {ic:+.4f}" if ic is not None else f"  SHORT IC: 样本不足 (n={len(shorts)}<5)")
+
     # Signed IC (LONG=+s, SHORT=-s)
-    signed = [(r["strength"] if r["direction"]=="LONG" else -r["strength"], r["fwd_ret_t1"]) 
+    signed = [(r["strength"] if r["direction"]=="LONG" else -r["strength"], r["fwd_ret_t1"])
               for r in rows if r["direction"] in ("LONG","SHORT")]
-    ic_signed = pearson(signed)
-    print(f"  整体signed IC: {ic_signed:+.4f}" if ic_signed else "  整体signed IC: 样本不足")
+    ic_signed = spearman(signed)
+    print(f"  整体signed IC: {ic_signed:+.4f}" if ic_signed is not None else f"  整体signed IC: 样本不足 (n={len(signed)}<5)")
 else:
     print("  ⚠️ 样本不足，无法计算IC")
 

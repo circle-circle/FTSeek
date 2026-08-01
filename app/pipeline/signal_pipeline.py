@@ -159,6 +159,12 @@ def scan_loop(scheduler):
                 logger.debug(f"[AUTO] auto_enabled 检查异常 (放行): {_ae_err}")
             from app.core.scheduler_triggers import get_market_phase, MarketPhase
             phase = get_market_phase()
+            # 2026-08-01: 月报只读库不依赖行情, 移到静默分支之前 — 原位置在 WEEKEND continue 之后,
+            # 1 日落周末/假日则整月永触不到 (7 月月报因此结构性漏跑)。
+            try:
+                scheduler._check_monthly_review()
+            except Exception as _mr_err:
+                logger.error(f"[月报] 触发异常: {_mr_err}")
             if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT):
                 logger.debug(f"[扫描] {phase.value} → 完全静默，跳过扫描")  # 2026-07-31 降噪: INFO→DEBUG (隔夜 ~7条/h 纯心跳)
                 for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
@@ -270,7 +276,6 @@ def scan_loop(scheduler):
 
             scheduler._check_daily_review()
             scheduler._check_weekly_review()
-            scheduler._check_monthly_review()
             # 2026-07-26 减法R2: position_snapshots 表零读者, 快照每小时×3逐持仓取价空耗 API, 停写。
             # 函数保留可人工调用; 回滚=恢复下行。scheduler._check_position_snapshot()
 

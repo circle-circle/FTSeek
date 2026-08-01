@@ -109,14 +109,9 @@ class IssueDetector:
                 # 自动调死参数会制造"已修复"假象, 故改为通知不落配置.
                 "auto_fix": False,
             },
-            # 投票一致性规则
-            {
-                "name": "voting_data_missing",
-                "category": "voting",
-                "severity": IssueSeverity.P0,
-                "check": self._check_voting_data,
-                "auto_fix": False,
-            },
+            # 投票一致性规则 — 2026-08-01 断线: voting_coordinator 已退役,
+            # final_strength/consensus_level 永为 NULL → 每日必触发一条指向死管线的误导性 P0 Issue。
+            # 规则实现保留 (_check_voting_data) 便于考古, 注册移除。
             # 风控规则
             {
                 "name": "high_drawdown",

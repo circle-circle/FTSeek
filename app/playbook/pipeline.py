@@ -1719,7 +1719,15 @@ def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
             _target - len(_actionable),
             int(_tu_cfg.get("max_add_per_day", 12)) - _topup_today,
         )
-        _pool = [str(s) for s in (_tu_cfg.get("pool") or [])]
+        # P-1 (2026-08-01 名单合一, DEB-20260724 §7): pool 真源 = watchlist roles.topup_eligible;
+        #   静态 playbook.topup.pool 双名单已退役 (漂移源). 回滚 = git revert.
+        try:
+            from app.utils.watchlist_manager import get_symbols_by_role as _tu_pool
+            _pool = [str(s) for s in _tu_pool("topup_eligible")]
+        except Exception as _pe:
+            logger.error(f"[playbook·topup] 名单真源解析失败 (roles.topup_eligible): {_pe}")
+            _pool = []
+        logger.info(f"[playbook·topup] 补量池 {len(_pool)} 只 (源=roles.topup_eligible)")
         _held = {e.get("symbol") for e in existing}
         _cands = [s for s in _pool if s not in _held]
         if not _cands or _need <= 0:

@@ -2,12 +2,13 @@
 """
 ADR-004 (2026-06-04): 标的表现周报 — 自动生成 + 飞书推送
 
-分析最近 14 天 MAIN_PIPELINE 交易数据，按标的聚合统计：
+分析最近 14 天 playbook 交易数据 (白名单 PLAYBOOK_SIM/PLAYBOOK_LIVE, 净口径)，按标的聚合统计：
 - 总交易数、胜率、累计盈亏、平均盈亏
 - 标注正 EV / 负 EV / 样本不足
 - 建议禁用/保留/观察
 
 数据驱动，不靠人猜。
+Traceback 预防: sys.path 必须在 `from scripts.utils...` 之前注入 (07 月三周 cron 崩溃即此因)。
 """
 
 import json
@@ -17,6 +18,8 @@ import sys
 from datetime import datetime, timedelta
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
 DB_PATH = os.path.join(PROJECT_DIR, "data", "ftseek_us.db")
 REPORT_PATH = os.path.join(PROJECT_DIR, "data", "symbol_performance.json")
 
@@ -32,18 +35,18 @@ def analyze_symbols(days=14):
         symbol,
         direction,
         COUNT(*) as trades,
-        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-        ROUND(100.0 * SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) as wr_pct,
-        ROUND(SUM(realized_pnl), 2) as total_pnl,
-        ROUND(AVG(realized_pnl), 2) as avg_pnl,
-        ROUND(MAX(realized_pnl), 2) as best,
-        ROUND(MIN(realized_pnl), 2) as worst,
+        SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END) as wins,
+        ROUND(100.0 * SUM(CASE WHEN net_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) as wr_pct,
+        ROUND(SUM(net_pnl), 2) as total_pnl,
+        ROUND(AVG(net_pnl), 2) as avg_pnl,
+        ROUND(MAX(net_pnl), 2) as best,
+        ROUND(MIN(net_pnl), 2) as worst,
         ROUND(AVG(holding_hours), 1) as avg_hold_hrs
-    FROM trade_records 
-    WHERE trade_date >= ?
-      AND source_type IN ('MAIN_PIPELINE', 'ORB_ENGINE')
-      AND direction != 'SHORT_PROXY_OPTION'
-      AND trade_mode != 'live'
+    FROM (SELECT *, COALESCE(pnl_net, realized_pnl) AS net_pnl FROM trade_records
+          WHERE trade_date >= ?
+            AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
+            AND direction != 'SHORT_PROXY_OPTION'
+            AND trade_mode != 'live')
     GROUP BY symbol, direction
     HAVING COUNT(*) >= 3
     ORDER BY total_pnl ASC
@@ -118,7 +121,9 @@ def generate_report(results):
 
 def main():
     from scripts.utils.market_guard import exit_if_not_trading_day
-    exit_if_not_trading_day()
+    # cron = 周一 08:00 CST: 默认 days_back=1 目标日=周日恒非交易日 → 静默退出 (07 月起 4 周+ 未交付)。
+    # 周一回退 3 天看上周五; 周五若遇节假日由 guard 自身判断。
+    exit_if_not_trading_day(days_back=3 if datetime.now().weekday() == 0 else 1)
     if not os.path.exists(DB_PATH):
         print(f"DB not found: {DB_PATH}")
         sys.exit(1)

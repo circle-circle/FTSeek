@@ -994,6 +994,9 @@ def register(app, templates):
                     beh_data = _json2.loads(beh_rows[0].get("data") or "{}")
                     behavioral = {
                         "available": True,
+                        # 2026-08-01: 五因子基线已退役, 写入已停, 此处为历史最后一帧 (只读墓碑)
+                        "retired": True,
+                        "retired_note": "五因子/行为诊断已退役 (基线不匹配日内 playbook), 显示为历史快照",
                         "disposition": beh_data.get("disposition", {}),
                         "anchoring": beh_data.get("anchoring", {}),
                         "chasing": beh_data.get("chasing", {}),

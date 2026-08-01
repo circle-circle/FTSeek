@@ -37,7 +37,7 @@ class TestDailyReviewGenerator:
                 realized_pnl REAL, pnl_pct REAL, exit_reason TEXT,
                 holding_hours REAL, signal_strength INTEGER,
                 signal_confidence REAL, voting_result TEXT,
-                decision_reason TEXT, source_type TEXT DEFAULT 'MAIN_PIPELINE',
+                decision_reason TEXT, source_type TEXT DEFAULT 'PLAYBOOK_SIM',
                 trade_mode TEXT DEFAULT 'simulate', mode TEXT DEFAULT 'normal',
                 owner_strategy TEXT, trace_id TEXT, mfe_pct REAL, mae_pct REAL,
                 created_at TEXT

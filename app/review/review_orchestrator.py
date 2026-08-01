@@ -130,12 +130,12 @@ class ReviewDataCollector:
         )
         capital_state = capital[0] if capital else {}
         
-        # 决策漏斗 (在 decisions.db 中)
+        # 决策漏斗 (2026-08-01: decisions.db 07-12 停写恒 0 → 改读 playbook_instructions, 与 daily_review 同源)
         total_decisions = 0
         try:
             result = self._query(
-                "SELECT COUNT(*) as total FROM decisions WHERE date(created_at) = ?",
-                (date,), db_path=DECISIONS_DB
+                "SELECT COUNT(*) as total FROM playbook_instructions WHERE date = ?",
+                (date,)
             )
             total_decisions = result[0]['total'] if result else 0
         except (sqlite3.Error, KeyError, IndexError):
@@ -422,51 +422,42 @@ class RichContextBuilder:
             return {"error": str(e)}
     
     def _build_decision_funnel(self, date: str) -> Dict:
-        """构建决策漏斗深度分析"""
+        """构建决策漏斗深度分析
+        2026-08-01: decisions.db 07-12 停写 → 改读 playbook_instructions。
+        字段口径: direction/executed 分布 + confidence 分桶 (0-100 量纲)。
+        """
         try:
-            # 按方向+强度分布
-            by_strength = self._query(
-                "SELECT direction, final_strength, COUNT(*) as cnt "
-                "FROM decisions WHERE date(created_at) = ? "
-                "GROUP BY direction, final_strength ORDER BY cnt DESC",
-                (date,), db_path=DECISIONS_DB
+            by_direction = self._query(
+                "SELECT direction, executed, COUNT(*) as cnt "
+                "FROM playbook_instructions WHERE date = ? "
+                "GROUP BY direction, executed ORDER BY cnt DESC",
+                (date,)
             )
             
-            # 共识度分布
-            by_consensus = self._query(
+            by_confidence = self._query(
                 "SELECT "
-                "  CASE WHEN consensus_level >= 0.8 THEN 'high' "
-                "       WHEN consensus_level >= 0.5 THEN 'medium' "
-                "       ELSE 'low' END as consensus_bucket, "
+                "  CASE WHEN confidence >= 85 THEN 'high(>=85)' "
+                "       WHEN confidence >= 70 THEN 'mid(70-85)' "
+                "       ELSE 'low(<70)' END as conf_bucket, "
                 "  COUNT(*) as cnt "
-                "FROM decisions WHERE date(created_at) = ? "
-                "GROUP BY consensus_bucket",
-                (date,), db_path=DECISIONS_DB
-            )
-            
-            # 标准差分布 (分歧度)
-            by_stddev = self._query(
-                "SELECT "
-                "  CASE WHEN std_dev = 0 THEN 'perfect' "
-                "       WHEN std_dev <= 0.5 THEN 'low' "
-                "       WHEN std_dev <= 1.0 THEN 'medium' "
-                "       ELSE 'high' END as stddev_bucket, "
-                "  COUNT(*) as cnt "
-                "FROM decisions WHERE date(created_at) = ? "
-                "GROUP BY stddev_bucket",
-                (date,), db_path=DECISIONS_DB
+                "FROM playbook_instructions WHERE date = ? "
+                "GROUP BY conf_bucket",
+                (date,)
             )
             
             total = self._query(
-                "SELECT COUNT(*) as total FROM decisions WHERE date(created_at) = ?",
-                (date,), db_path=DECISIONS_DB
+                "SELECT COUNT(*) as total, SUM(executed) as executed "
+                "FROM playbook_instructions WHERE date = ?",
+                (date,)
             )
             
+            t = total[0] if total else {}
             return {
-                "total_decisions": total[0]["total"] if total else 0,
-                "by_direction_strength": by_strength,
-                "by_consensus": by_consensus,
-                "by_stddev": by_stddev,
+                "source": "playbook_instructions",
+                "total_decisions": t.get("total") or 0,
+                "executed": t.get("executed") or 0,
+                "by_direction_executed": by_direction,
+                "by_confidence": by_confidence,
             }
         except Exception as e:
             logger.warning(f"[RichContext] 决策漏斗分析失败: {e}")

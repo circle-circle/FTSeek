@@ -285,31 +285,9 @@ def _run_new_scheduler(args):
     except Exception as _he:
         logger.warning("[HermesWorker] ⚠️ Worker 预检异常 (降级运行): %s", _he)
 
-    # 【新增 Phase US-1】加载美股盘前作战计划
-    try:
-        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-        
-        # F18 (2026-05-12): 路径走 paths.py 单一真相源
-        from app.core.paths import get_battle_plan_path
-        plan_path = str(get_battle_plan_path())
-        mgr = USBattlePlanManager()
-        loaded = mgr.load(plan_path)
-        if loaded:
-            logger.info(f"✅ 美股作战计划已加载: {plan_path}")
-            # F3 (2026-05-14): 强制重启校验 + 失败时 RISK_OFF
-            ok = mgr.revalidate_on_restart()
-            if not ok:
-                # 2026-07-31 全链清理批2① (用户裁): veto 降级为告警 —
-                #   ①playbook 现役链不消费 battle plan, 退役产物不能否决活链;
-                #   ②原 RISK_OFF 调用 import app.risk.risk_state_machine 模块不存在
-                #     (真实路径 us_pipeline), ImportError 被吞 → 哑弹 + 误导性错误日志.
-                logger.warning(
-                    "⚠️ [启动·F3] battle plan 校验失败/过期 (playbook 链不消费, 仅告警不置 RISK_OFF)"
-                )
-        else:
-            logger.warning("⚠️ 未找到美股作战计划，将使用默认策略")
-    except Exception as e:
-        logger.warning(f"⚠️ 加载美股作战计划失败: {e}")
+    # 【Phase US-1】美股盘前作战计划 — 2026-08-01 断线: battle plan 07-11 冻结,
+    # playbook 现役链不消费, 启动加载+revalidate 仅产告警噪声 (07-31 已降级为告警)。
+    # 墓碑: app/us_pipeline/battle_plan_manager.py 保留, 08-07 后随旧链批删。
 
     # 【P0-2 配置治理 2026-04-29 新增】三层防御机制
     # Layer 1: 启动时强制校验

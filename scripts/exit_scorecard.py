@@ -94,11 +94,12 @@ def compute(since: str) -> dict:
     buy_cm = confusion([r for r in ci_rows if r["direction"] == "BUY"])
     short_cm = confusion([r for r in ci_rows if ("SHORT" in (r["direction"] or "") or r["direction"] == "SELL")])
 
-    # ── 2. R:R & 期望值: trade_records.realized_pnl (SSOT) ──
+    # ── 2. R:R & 期望值: trade_records pnl_net (SSOT, DEB-20260730 D1) ──
+    #   旧库无 pnl_net 列 → COALESCE 回退 realized_pnl (毛口径, 仅兼容)
     src_filter = ", ".join(f"'{s}'" for s in PLAYBOOK_SOURCE_TYPES)
     tr_rows = conn.execute(
         f"""
-        SELECT realized_pnl AS pnl
+        SELECT COALESCE(pnl_net, realized_pnl) AS pnl
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({src_filter})
@@ -117,6 +118,9 @@ def compute(since: str) -> dict:
     rr = (avg_win / avg_loss) if avg_loss else float("inf")
     breakeven_rr = ((1 - wr) / wr) if wr else float("inf")   # 当前胜率的盈亏平衡 R:R
     expectancy = wr * avg_win - (1 - wr) * avg_loss           # 每笔期望值 ($)
+    gross_win = sum(wins)
+    gross_loss = sum(losses)
+    profit_factor = (gross_win / gross_loss) if gross_loss > 0 else float("inf")
 
     payoff = {
         "n": nwl,
@@ -128,9 +132,61 @@ def compute(since: str) -> dict:
         "rr_gap": round(rr - breakeven_rr, 2) if (rr != float("inf") and breakeven_rr != float("inf")) else None,
         "expectancy_per_trade": round(expectancy, 2),
         "total_pnl": round(sum(pnls), 2),
+        "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else None,
     }
 
-    return {"since": since, "confusion": overall_cm, "by_buy": buy_cm, "by_short": short_cm, "payoff": payoff}
+    # ── 3. G4 存活判据 (2026-08-01 补落盘: 原终裁 G4 无任何判分产物) ──
+    #    阈值按冻结框架: 最大回撤 <5% 且 无连续 5 笔亏损 (窗口 = since, 净口径)
+    #    回撤自算: capital_state.drawdown_pct 列语义不可信 (实测全 ≤0 的分数), 用权益曲线峰谷算
+    eq_rows = conn.execute(
+        "SELECT current_equity FROM capital_state WHERE date(last_update) >= ? "
+        "AND current_equity > 0 ORDER BY last_update",
+        (since,),
+    ).fetchall()
+    max_dd = None
+    if eq_rows:
+        _peak = 0.0
+        _mdd = 0.0
+        for r in eq_rows:
+            eq = r["current_equity"]
+            _peak = max(_peak, eq)
+            if _peak > 0:
+                _mdd = max(_mdd, (_peak - eq) / _peak * 100.0)
+        max_dd = _mdd
+
+    seq_rows = conn.execute(
+        f"""
+        SELECT COALESCE(pnl_net, realized_pnl) AS pnl
+        FROM trade_records
+        WHERE trade_date >= ?
+          AND source_type IN ({src_filter})
+          AND trade_mode != 'live'
+          AND exit_reason IS NOT NULL AND exit_reason != ''
+        ORDER BY exit_time
+        """,
+        (since,),
+    ).fetchall()
+    max_consec_loss = 0
+    _cur = 0
+    for r in seq_rows:
+        if (r["pnl"] or 0) < 0:
+            _cur += 1
+            max_consec_loss = max(max_consec_loss, _cur)
+        else:
+            _cur = 0
+    g4 = {
+        "max_drawdown_pct": round(max_dd, 2) if max_dd is not None else None,
+        "max_drawdown_ok": (max_dd < 5.0) if max_dd is not None else None,
+        "max_consecutive_losses": max_consec_loss,
+        "consecutive_losses_ok": max_consec_loss < 5,
+        "verdict": None,
+    }
+    if g4["max_drawdown_ok"] is not None:
+        g4["verdict"] = "PASS" if (g4["max_drawdown_ok"] and g4["consecutive_losses_ok"]) else "FAIL"
+
+    return {"since": since, "pnl_basis": "net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)",
+            "confusion": overall_cm, "by_buy": buy_cm, "by_short": short_cm, "payoff": payoff,
+            "g4_survival": g4}
 
 
 def render(rep: dict) -> None:
@@ -162,6 +218,17 @@ def render(rep: dict) -> None:
         _be = pf["breakeven_rr"] if pf["breakeven_rr"] is not None else "∞"
         print(f"  R:R = {_rr}   盈亏平衡需 ≥ {_be}   缺口 {pf['rr_gap']}")
         print(f"  每笔期望值: ${pf['expectancy_per_trade']}   总盈亏: ${pf['total_pnl']}")
+        _pfv = pf["profit_factor"] if pf["profit_factor"] is not None else "∞"
+        print(f"  Profit Factor: {_pfv}   (G2 裁决线 ≥1.3, 终裁窗整体)")
+        if pf["n"] < 30:
+            print(f"  ⚠️ n={pf['n']} <30 — 本窗统计功效不足, 期望值/PF 仅供方向参考")
+
+    g4 = rep.get("g4_survival") or {}
+    if g4:
+        print("\n🛡️ G4 SURVIVAL — 存活判据 (裁决线: 回撤<5% 且 连亏<5笔)")
+        _dd = g4.get("max_drawdown_pct")
+        print(f"  最大回撤: {('%s%%' % _dd) if _dd is not None else 'N/A (capital_state 无数据)'}   "
+              f"连亏峰值: {g4.get('max_consecutive_losses')} 笔   裁决: {g4.get('verdict') or 'N/A'}")
 
     print("\n🧭 BY DIRECTION — 命中率 (持到收盘 / 实际成交)")
     for label, key in (("BUY  ", "by_buy"), ("SHORT", "by_short")):
@@ -194,6 +261,13 @@ def main():
     args = ap.parse_args()
 
     since = args.since or _et_cutoff(args.days)
+
+    # 基线警告: 07-24 三门上线 = 退出参数 config_version 断点, 跨窗口混合无意义
+    BASELINE = "2026-07-24"
+    if since < BASELINE:
+        print(f"⚠️  警告: since={since} 早于三门基线 {BASELINE}, 窗口混入旧退出参数 regime。"
+              f" 周度对比/裁决判据请用 --since {BASELINE} 或更晚。", file=sys.stderr)
+
     rep = compute(since)
 
     if args.json:

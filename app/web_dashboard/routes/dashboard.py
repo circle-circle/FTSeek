@@ -328,20 +328,8 @@ def register(app, templates, dashboard):
         lc = lc_map.get(symbol, {})
 
         # Get bear cases from battle plan if available
+        # 2026-08-01 断线: battle plan 07-11 冻结, 陈旧 rationale 无 stale 检查直接当 bear_cases 喂 LLM 系误导。
         bear_cases = ""
-        try:
-            import json as _json
-            from pathlib import Path
-            bp_path = Path(__file__).parent.parent.parent.parent / "data" / "daily_battle_plan_us.json"
-            if bp_path.exists():
-                with open(bp_path) as f:
-                    bp = _json.load(f)
-                for t in (bp.get("targets") or []):
-                    if t.get("symbol", "").upper() == symbol.upper():
-                        bear_cases = t.get("rationale", "") or ""
-                        break
-        except Exception:
-            pass
 
         # Call LLM (in thread pool to not block event loop)
         import asyncio

@@ -178,6 +178,15 @@ def main():
     args = ap.parse_args()
     since = args.since or _et_today_minus(args.days)
 
+    # 基线警告: 07-24 三门上线 = 退出参数 config_version 断点
+    # 注: playbook_instructions 无 source_type 列, 本脚本度量指令层 (非 trade_records 层),
+    #     executed=1 的 win/loss 与 SIM/LIVE 成交一一对应 (实测无 SHADOW 混入)
+    BASELINE = "2026-07-24"
+    if since < BASELINE:
+        import sys
+        print(f"⚠️  警告: since={since} 早于三门基线 {BASELINE}, 窗口混入旧退出参数 regime。"
+              f" 裁决判据请用 --since {BASELINE} 或更晚。", file=sys.stderr)
+
     result = compute(since)
     print(render(result))
 

@@ -7,8 +7,10 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
 
 检查面 (近 7 天已平仓, 对齐判分窗):
   I1 realized_pnl ≈ (exit-entry)*qty*sign     I5 mfe/mae ≥ 0
-  I2 pnl_pct 符号 = pnl 符号                   I6 bar 峰谷物理性 (LONG bar_peak ≥ 0.995*max(e,x))
-  I3 peak/trough 最有利/最不利语义             I7 exit_time > entry_time
+     (+价格/数量 ≤0 即数据腐败单独告警)
+  I2 pnl_pct 符号 = pnl 符号                   I6 bar 峰谷物理性 (LONG bar_peak ≥ 0.995*max(e,x);
+                                                SHORT 镜像 bar_peak ≤ 1.005*min(e,x))
+  I3 peak/trough 最有利/最不利语义 (±0.5%)   I7 exit_time > entry_time
   I4 mfe 与 peak 重算一致 (±0.05pp)            F  字段健康度 (关键测量字段非空率骤降/常量化)
   I8 pnl_net = realized_pnl - fees_est (±0.02, 2026-07-30 费用净额批)
 
@@ -65,15 +67,19 @@ def main() -> int:
         short = str(r["direction"]).upper() in ("SHORT", "SELL_SHORT")
         sign = -1 if short else 1
         sym = str(r["symbol"])[3:]
-        if e > 0 and x > 0 and q > 0 and abs(pnl - (x - e) * q * sign) > max(0.02, abs(pnl) * 0.02):
+        if e <= 0 or x <= 0 or q <= 0:
+            rec("I1_price_qty_invalid", r["id"], sym, f"e={e} x={x} q={q}")
+        elif abs(pnl - (x - e) * q * sign) > max(0.02, abs(pnl) * 0.02):
             rec("I1_pnl_vs_prices", r["id"], sym, f"pnl={pnl} calc={(x-e)*q*sign:.2f}")
         if pct is not None and pnl != 0 and (float(pct) > 0) != (pnl > 0):
             rec("I2_pct_sign", r["id"], sym, f"pnl={pnl} pct={pct}")
         if pk:
             pkf = float(pk)
-            if not short and pkf + 1e-6 < max(e, x):
+            # 容差对齐 I6 (0.5%, 2026-08-01 用户裁): quote 采样在退出瞬间可滞后数 tick
+            # (id=1189 PDD exit 88.37 vs quote-peak 88.36, bar 版 88.4 证实物理合法)
+            if not short and pkf < max(e, x) * 0.995:
                 rec("I3_peak_semantics", r["id"], sym, f"peak={pkf} e={e} x={x}")
-            if short and pkf - 1e-6 > min(e, x):
+            if short and pkf > min(e, x) * 1.005:
                 rec("I3_peak_semantics", r["id"], sym, f"SHORT peak={pkf} e={e} x={x}")
         if pk and e > 0 and mfe is not None:
             calc = max(0.0, (float(pk) - e) * sign / e * 100)
@@ -84,6 +90,9 @@ def main() -> int:
         pkb = m.get("peak_price_bar")
         if pkb and not short and float(pkb) < max(e, x) * 0.995:
             rec("I6_bar_peak_impossible", r["id"], sym, f"bar_peak={pkb} e={e} x={x}")
+        # SHORT 镜像: peak_price_bar = min(lows) (pipeline.py:4933), 物理上 ≤ min(e,x)
+        if pkb and short and float(pkb) > min(e, x) * 1.005:
+            rec("I6_bar_peak_impossible", r["id"], sym, f"SHORT bar_peak={pkb} e={e} x={x}")
         if r["entry_time"] and r["exit_time"] and str(r["exit_time"]) <= str(r["entry_time"]):
             rec("I7_time_order", r["id"], sym, f"{r['entry_time']} → {r['exit_time']}")
         # I8 (2026-07-30 DEB-fee-net-pnl): 净额三字段自洽 — 毛−费=净 (列可空, 有值才查)
@@ -94,6 +103,27 @@ def main() -> int:
         if fees is not None and net is not None and abs(pnl - float(fees) - float(net)) > 0.02:
             rec("I8_fee_net_identity", r["id"], sym,
                 f"pnl={pnl} fees={fees} net={net} (毛−费≠净)")
+        # I9 (2026-08-01, P0.2): conf 量纲守卫 — 成交侧必须 0-1 (playbook_service.py:1233 /100),
+        #   越界=写入链退化或新旧量纲混入
+        try:
+            sc = r["signal_confidence"]
+        except (IndexError, KeyError):
+            sc = None
+        if sc is not None and not (0.0 <= float(sc) <= 1.0):
+            rec("I9_conf_unit_out_of_range", r["id"], sym, f"signal_confidence={sc} (应 0-1)")
+
+    # I9 镜像: 指令侧 confidence 必须 0-100 (两量纲并存系设计, 越界即事故)
+    try:
+        _c9 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        _bad = _c9.execute(
+            "SELECT COUNT(*) FROM playbook_instructions WHERE date>=? "
+            "AND confidence IS NOT NULL AND (confidence < 0 OR confidence > 100)",
+            (since,)).fetchone()[0]
+        _c9.close()
+        if _bad:
+            rec("I9_conf_unit_out_of_range", "-", "instructions", f"{_bad} 条 confidence 越界 [0,100]")
+    except Exception:
+        pass
 
     # F: 字段健康度 — 非空率骤降即测量链断线 (常量退化族预警)
     field_health = {}

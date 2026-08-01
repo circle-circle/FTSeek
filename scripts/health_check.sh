@@ -16,7 +16,8 @@ fi
 # 2. Dashboard 检查 (port 8901)
 # 2026-07-31: dashboard 改按需激活 (socket unit 持有监听, 闲置进程自退)。
 # 不能再 curl HTTP (会把服务唤醒, 按需激活失效) — 改为被动检查端口在听。
-if ! ss -tln 2>/dev/null | grep -q ':8901 '; then
+# 2026-08-01: 绝对路径 — cron PATH=/usr/bin:/bin 无 ss (在 /usr/sbin), 裸命令假阴性致每30分钟误报。
+if ! /usr/sbin/ss -tln 2>/dev/null | grep -q ':8901 '; then
     ISSUES="${ISSUES}• 🟡 Dashboard 端口未监听 (8901, socket unit 异常)\n"
 fi
 

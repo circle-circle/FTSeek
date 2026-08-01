@@ -1088,15 +1088,63 @@ class TradingScheduler:
             logger.warning("[调度器] 配置加载失败，使用类默认值: %s", e)
 
     def _get_subscription_codes(self) -> List[str]:
-        """订阅集合 = watchlist ∪ 主线 PositionStore 持仓 (每60s被自动订阅循环调用)。
+        """应订集合 (每60s被自动订阅循环调用)。
 
-        备注 (2026-07-23 校正): 当前统一管线为 playbook — 所有持仓均为 PLAYBOOK_SIM 仓,
-        由 monitor_playbook_sim_exits 自管 (自 2026-07-21 起已用 get_batch_quotes 批量取价,
-        Push缓存优先, 不逐个打 snapshot), 且不纳入主线 PositionStore。因此 position_store.all()
-        当前通常为空, 本方法实际只在"存在主线/legacy 持仓"时才会额外并入其标的 —
-        playbook-only 场景下通常不新增。保留作为前向安全网 (若未来恢复主线持仓, 自动让其
-        走 path 2.5 免配额取价), 无害且零额外订阅开销 (增量去重)。
+        P-2b (2026-08-01 订阅动态化, DEB-20260724 §7 用户裁决):
+          应订集合 = 基准(roles.benchmark) ∪ 当日有效指令标的 ∪ playbook 未平仓
+                     ∪ 主线 PositionStore 安全网; 静态 watchlist 降为可配置
+                     (subscription.static_watchlist_enabled, 默认 false — 其唯一真实消费者
+                      主线 scan_loop 已静默, DEB §7.5)。
+          指令盘前生成后 60s 内被增量订阅; 收盘由现有时段机制 unsubscribe_all 全退,
+          次日回调自然重建。回滚: subscription.dynamic_enabled=false。
         """
+        try:
+            from app.core.config_container import get_config as _gc_sub
+            _sub_cfg = _gc_sub().get_dotted("subscription", {}) or {}
+        except Exception:
+            _sub_cfg = {}
+        if not bool(_sub_cfg.get("dynamic_enabled", True)):
+            return self._legacy_subscription_codes()
+
+        codes = set()
+        # ① 基准 (P-1 真源: roles.benchmark; 兜底 SPY/QQQ)
+        try:
+            from app.utils.watchlist_manager import get_symbols_by_role as _by_role
+            _bench = _by_role("benchmark") or ["US.SPY", "US.QQQ"]
+        except Exception:
+            _bench = ["US.SPY", "US.QQQ"]
+        codes.update(_bench)
+        # ② 静态 watchlist (可配置, 默认关)
+        if bool(_sub_cfg.get("static_watchlist_enabled", False)):
+            codes.update(self.watchlist)
+        # ③ 当日有效指令标的 (真正在交易的, 取价从快照升级 push 缓存)
+        try:
+            codes.update(self._today_instruction_symbols())
+        except Exception as e:
+            logger.warning(f"[订阅·动态] 当日指令标的查询失败 (降级不并入): {e}")
+        # ④ playbook 未平仓 (退出监控高频取价)
+        try:
+            codes.update(self._playbook_open_symbols())
+        except Exception as e:
+            logger.warning(f"[订阅·动态] playbook 未平仓查询失败 (降级不并入): {e}")
+        # ⑤ 主线 PositionStore (既有安全网: playbook 仓不入此 store, 通常为空;
+        #    若未来恢复主线持仓, 自动让其走 path 2.5 免配额取价)
+        try:
+            if self.position_store:
+                for p in self.position_store.all():
+                    sym = p.symbol
+                    if sym and sym.startswith("US."):
+                        codes.add(sym)
+        except Exception as e:
+            logger.debug(f"[订阅] 合并持仓标的失败(降级): {e}")
+        # 可观测性: 集合变化时落一条组成日志 (60s 轮询, 不变不刷屏)
+        if codes != getattr(self, "_last_sub_set", None):
+            self._last_sub_set = set(codes)
+            logger.info(f"[订阅·动态] 应订集合 {len(codes)} 只 (基准{len(_bench)} + 指令/持仓/主线并集)")
+        return list(codes)
+
+    def _legacy_subscription_codes(self) -> List[str]:
+        """P-2b 回滚路径 = 2026-08-01 前实现: watchlist ∪ 主线 PositionStore。"""
         codes = set(self.watchlist)
         try:
             if self.position_store:
@@ -1107,6 +1155,36 @@ class TradingScheduler:
         except Exception as e:
             logger.debug(f"[订阅] 合并持仓标的失败(降级只用watchlist): {e}")
         return list(codes)
+
+    def _today_instruction_symbols(self) -> set:
+        """当日 (ET) 有效方向指令的去重标的 (BUY/SELL_SHORT, 只读)。"""
+        import sqlite3 as _sq
+        from app.core.paths import get_trade_records_db
+        from app.utils.timezone import now_et
+        today = now_et().strftime("%Y-%m-%d")
+        conn = _sq.connect(f"file:{get_trade_records_db()}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT symbol FROM playbook_instructions "
+                "WHERE date=? AND direction IN ('BUY','SELL_SHORT')", (today,)).fetchall()
+            return {r[0] for r in rows if r[0]}
+        finally:
+            conn.close()
+
+    def _playbook_open_symbols(self) -> set:
+        """playbook 未平仓标的 (只读, 与 is_playbook_open_position 同口径)。"""
+        import sqlite3 as _sq
+        from app.core.paths import get_trade_records_db
+        conn = _sq.connect(f"file:{get_trade_records_db()}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT symbol FROM trade_records "
+                "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+            ).fetchall()
+            return {r[0] for r in rows if r[0]}
+        finally:
+            conn.close()
 
     def _load_watchlist(self) -> List[str]:
         """从配置加载股票池 + 每日动态交易池 (P2 优化)"""
@@ -1618,10 +1696,10 @@ class TradingScheduler:
         if self._subscription_mgr:
             # 根据当前时段决定：立即订阅 / 等待自动循环激活
             if self._subscription_mgr.should_be_subscribed():
-                logger.info("[分时调度] 当前为美股盘前/交易时段，立即订阅 watchlist...")
+                logger.info("[分时调度] 当前为美股盘前/交易时段，立即订阅应订集合 (P-2b 动态)...")
                 from app.data.futu_lv3_provider import _configured_stock_sub_types
                 self._subscription_mgr.ensure_subscribed(
-                    self.watchlist,
+                    self._get_subscription_codes(),
                     sub_types=_configured_stock_sub_types(),
                 )
             else:

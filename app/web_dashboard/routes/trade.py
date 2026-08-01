@@ -626,6 +626,7 @@ def register(app, templates):
 
             # ── 4. Behavioral from diagnostic_results ──
             try:
+                # 2026-08-01: 模块已退役 (写入已停), 读数为历史最后一帧
                 diag = await ds.db_query_one("""
                     SELECT data FROM diagnostic_results
                     WHERE module_name = 'shadow_account_v2' AND status = 'success'

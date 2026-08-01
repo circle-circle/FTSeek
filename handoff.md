@@ -77,7 +77,7 @@
 5. **08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。X2 若启动须满足**四前置**（新增第 4 条"SHORT 不隔夜"，依据主文档 §13.1，叙事已由 §14.2 修正）。
 5a. **08-07 数据就绪审计 (Qoder, 07-29 夜, 用户令"先检查确认数据")** — 距裁决日 7 个交易日, 逐决定项盘点:
    - 🟢 **鲜活健康**: 路径湖 74 且 cron 04:35 日增 (→08-07 ~120+, dd 0.6/0.8+分层反事实主料); trigger_miss_telemetry (当日 22:38 仍写); trigger_gate_history 累计快照 (n=88/93 起, 逆向选择 gap 追踪); exit_param_shadow 114 行 (be/dd A/B 主料); scorecard 已平仓 512 (A1 切片 n≥100 可达)。
-   - 🔴 **X1 降频不可评 (双重)**: ①P0.2 conf 校准前置未落地 — 近 14 日成交 **108/108 全部 conf≥0.85** (指令分布双峰: 319 笔≥0.85 / 142 笔<0.7 / 0 笔在中间, 桶完全失效); ②实证方向反转 — 该高 conf 桶近 14 日 pnl **-$361**, 与 X1 假设"高 conf 右尾厚 (+111.8/32笔, 7月上)"相矛盾。建议 08-07 将 X1 移"只读"档并如实公布反转, 判据重设。
+   - 🔴 **X1 降频不可评 (双重)**: ①P0.2 conf 校准前置未落地; ②高 conf 供给近两周枯竭。**〔08-01 勘误 — 原 bullet 数字全部证伪, 以下为 DB 复核值〕** 原称"近 14 日成交 108/108 全部 conf≥0.85"❌ → 实测成交侧 `signal_confidence` (0-1 量纲): 109 笔仅 **3 笔 ≥0.85 / 103 笔 <0.7**; 原称"指令分布双峰 319≥0.85/142<0.7"❌ → 指令侧 `confidence` 实为 **0-100 量纲** (旧统计按 0-1 读数致全失真), 实测近 14 日 191 条仅 **3 条 ≥85 / 185 条 <70**, 全史 410 条 = 135≥85 / 234<70 / 37 中间, 取值仅六档 {35,50,70,72,88,90}。原称"高 conf 桶近 14 日 pnl -$361"不可复现 → 现口径该桶 **n=3, net -$160.87** (07-19→08-01, 样本饿死无统计意义); 真正装满样本的是 <0.7 桶 (n=103, net -$802.76)。**供给枯竭**: 07-20 起日产 ≥85 指令 ≈0 (07-30:1 / 07-31:2 / 其余 0) — 与 7月上"32 笔 ≥0.85"形成 regime 级落差。结论修正: X1 不可评的根因 = 高 conf 供给枯竭 + P0.2 未落地 (桶退化结论仍成立); "高 conf 反转"叙事降级为 n=3 方向性观察。建议不变: 08-07 将 X1 移"只读"档并如实公布, 判据重设。
    - 🔴→🟢 **L2/L3 落点已确认 + 单位 bug 已修 (08-01)**: 真实落点 = `scripts/entry_gate_replay.py`→`data/entry_gate_replay_latest.json` (L2) + `scripts/historical_robustness_check.py`→`data/historical_robustness_latest.json` (L3)。两者系**离线回放工具** (非每日自动 shadow)，handoff 原误认 `challenger_model_ab.jsonl` 为落点。**修复前 L2 门网格全拦 (bug)**: DB 存 fraction (0.038=3.8%) 而门阈值用 percentage (2.5/3.0/4.0) → 所有指令被所有门拦截。已修 (`entry_gate_replay.py` load_instructions ×100)。**修复后重跑 (n=119, since 07-24) 结果反转**: 低 ATR 门 live_lo2.5/lo2.8/lo3.0 从历史"拦对"变**拦错** (拦掉组均% +0.12/+0.07/+0.05 > 放行组 -0.31/-0.37/-0.44)；高 ATR 门 hi4.0/lo3.0_hi4.0 从历史"拦错"变**拦对**。时点变体均值全负 (-0.08%~-0.21%)。L3 复跑结论不变 (3-4桶 vs 2.5-3桶 1/6 年占优 → 非结构性)。**08-07 含义**: ATR 门参数近期市况失效，精调须用修复后口径重评；L2/L3 已更新至 08-01。
    - 🟡 **challenger_model_ab.jsonl 07-24 停更 (16 行)**: 系**手动脚本** (`scripts/challenger_model_ab.py`)，非 crontab 自动流。handoff 步骤 2 "第 2 轮"未执行，非断流。DEB-20260724-challenger-model-ab 状态仍"待决策 (等第 2 轮)"。08-07 前如不补跑，该案自动落"显式延期"。
    - 🟡 **time_exit_counterfactual.jsonl 07-24 停更 (25 行)**: 脚本已归档 `scripts/archive/`，crontab 已注释。系 **intentional retirement**，非断流。三门 TIME_EXIT 反事实评估由 `exit_param_shadow.jsonl` (114 行, 鲜活) 替代。
@@ -88,6 +88,128 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-01 (优先级批次·Qoder, 用户裁"按照建议优先级执行") · P0.2 校准标尺 + challenger A/B 终裁 + P-1/P-2 名单订阅重构
+**P0.2 conf 校准 (修尺子)**: direction_hit_scorecard 增逐 conf 值校准表+预注册分桶裁决 — 读数 **inverted 倒挂** (分歧≤40: 62.5% vs 高确认>75: 52.3%), conf 不能用于门控 (X1 前置未达成, 如实落盘); daily_invariant_check 增 I9 双侧量纲守卫 (trade 侧 [0,1] / 指令侧 [0,100], 47 笔全过)。
+**challenger A/B 第 2 轮 + 终裁 (DEB-20260724-challenger-model-ab §六)**: 07-31 正常日 n=15 补跑, 两日合并 n=31 — glm-5.2 机械判据全过 (成功 31/31, 延迟 12.4s 快 29%) 但**镜像退化坐实** (31/31 全 DISAGREE 零粒度 vs deepseek 2×PARTIAL), 反向供给无优势 (4:5), 成本 3×。**终裁: 不切, 维持 deepseek-v4-pro**; conf 合成链路校准前置未达成, 换模型=换秤砣不修秤。
+**P-1 名单合一 (DEB-20260724-da-chain-audit §7, 逾期项清零)**: watchlist 块升为唯一真源 — 57 条目注入 roles 标签 (benchmark=SPY/QQQ / liquidity_whitelist=53 / topup_eligible=24 与原静态池对账一致 / subscribe=46); SMCI/PLTR/MRVL/SNOW/SHOP/DELL/CRWD 7 只 topup 专属迁入 (enabled:false 不进扫描池); 静态 `playbook.topup.pool` 退役, pipeline 消费端改 `get_symbols_by_role("topup_eligible")` 派生。**防御股未进 topup_eligible** (§7.2 前置发现执行)。
+**P-2b 订阅动态化**: `_get_subscription_codes` 重写 = 基准 ∪ 当日有效指令标的 ∪ playbook 未平仓 ∪ 主线 PositionStore 安全网; 静态 watchlist 降可配置 (默认关); 回滚 `subscription.dynamic_enabled=false` 走保留 legacy 路径。LV3 额度对账: 动态峰值 ≤55 只 ≪ 原静态 44+ 规模, 历史无额度错误。周末实测应订集合=基准 2 只 (正确)。**周一盘中验收点: 指令标的 60s 内进订阅 / vol_gate·vwap 数据缺失率下降 / 无隐性消费者告警**。
+**验证**: pytest 1009 全过 (+9 新回归锁派生对账与回滚路径), 服务重启 0 ERROR, YAML 生产加载器验证通过。
+
+### 2026-08-01 (全链路体检批次·Qoder, 用户裁"整体完整的做好检查和配置以及验证") · 四路并行审计 → 8 项修复落地
+**审计方式**: 调度健康/数据链路/死代码残留/验收欠账 四路并行 + 尺子层自检 (不变量 47 笔全过, IC 回填 98.1%)。
+**修复落地** (全部修尺子/做减法类, pytest 1000 全过, 服务已重启生效):
+1. **health_check.sh Dashboard 探针假阴性 (P0)**: 裸 `ss` 在 cron PATH 不存在 (/usr/sbin/ss) → 07-31 起每 30 分钟假告警 (今日 68 条)。改绝对路径, 模拟 cron PATH 复跑 ✅。
+2. **symbol_performance_report 周报结构性失效 (P1)**: 三重失效 — ①周一 08:00 CST 跑, market_guard 目标日=周日恒非交易日静默退出 (days_back 周一改 3); ②更早三周 `No module named 'scripts'` (sys.path 顶部注入); ③口径化石: source_type 还在滤 MAIN_PIPELINE/ORB_ENGINE → 改 D3 白名单 + D1 净口径。实跑产出真实读数 (14 天 58 笔净 -$380, 保留 2/观察 10)。
+3. **7 月月报结构性漏跑 (P1)**: `_check_monthly_review` 要求 day==1 但 WEEKEND 分支先 continue — 1 日落周末/假日则整月永触不到。月报调用上移到静默分支之前 (只读库不需行情) + 哨兵文件幂等 (原内存标记重启即丢, 窗口内重启会重复推送)。手动验证 2026-07 月报可生成 (186 笔, 胜率 51.6%)。
+4. **复盘三处僵尸读数 (P1)**: ①review_orchestrator 决策漏斗 decisions.db 恒 0 → 改 playbook_instructions (含 _build_decision_funnel 重写, conf 按 0-100 量纲分桶); ②review_loop `voting_data_missing` 规则每日误报指向死管线 → 注销 (实现留墓碑); ③daily/weekly 拒绝分析读 rejections.db 停写 33 天恒 0 → 退役标注指向漏斗"未执行"。
+5. **僵尸开关×5 断线 (P2 做减法)**: yaml `diagnostics.schedule.post_market` (runner 零调用+statistical_validator 悬空) / `risk.pre_trade.battle_plan_bonus_enabled` (零代码读取) / `strategies.voting_llm` / `strategy_registry.voting_llm` / `strategy_registry.BATTLE_PLAN_FAST_PATH` (均仅门死路径消费) → false + ZOMBIE 注记。
+6. **五因子计算断线 (P2 做减法)**: daily_review Phase6 每日全量加载 30 天 trade_records 算无效读数 → 停用返回退役标记; dashboard 两读点 (analytics.py/trade.py) 加 retired 水印 (历史快照)。
+7. **陈旧 battle plan 喂 LLM 断线 (P2)**: EOD 复盘注入 (scheduler_triggers) + dashboard challenge_thesis bear_cases (无 stale 检查) + main.py 启动加载块 → 全部断线留墓碑。
+8. **G4 存活判据落盘 (P0 验收)**: 终裁 G4 (回撤<5% + 连亏<5笔) 原**无任何判分产物**, 08-29 将无据宣判。exit_scorecard 增 g4_survival 块: 回撤用 capital_state 权益曲线峰谷自算 (drawdown_pct 列实测全 ≤0 分数不可信) + 连亏峰值 (exit_time 序, 净口径) → 当前读数: 回撤 0.29% ✅ / 连亏 7 笔 ❌ → FAIL (since 07-24)。
+9. **测试污染生产修复 (P2)**: test_push_hub 全通道失败用例把 t/b 写进生产 `data/push_failures.jsonl` → autouse fixture 重定向 tmp_path, 复跑零污染。
+**审计发现但未动 (留裁决/排队)**:
+- **验收硬伤 (08-29)**: G1 按框架零容错条款, W29 已负 → **8 月 GO 数学上已不可能**, 终裁实为 PIVOT vs STOP; G2 PF=0.81; G3 55/150 (在途); G5 13.0% ✅ 唯一达标。三赛道仅"更长持有期"有望但隔夜四前置+T+5 口径+基线切分未补齐。
+- **已批准未执行**: ~~P0.2 conf 校准 / P-1 名单合一+P-2 订阅动态化 / challenger A/B 第 2 轮~~ → 当日优先级批次已全部清零 (见上条); 余: thinking D 前置 / G5 报表三列。
+- **数据缺口 (不修因属新采集/交易路径)**: trade_attribution 执行质量字段从未填充 (真实滑点在 metadata_json); fees 100% est 无实收; 报告族推送单通道无 fallback (建议切 PushHub); 历史闭环硬缺口 12 处 (07-21 前, 本周 47/47 干净); order_executor decisions.db 死写+post_trade_hook 哑弹 ImportError (交易路径, 未动); check_position_reconcile 死注册; hard_to_borrow/short_interest 无生产者 (已知挂账 93 天)。
+- **方向策略体检结论** (答用户"vs 抛硬币"): 整体 T+1 命中 58.3% (n=307, z≈2.9 显著), 但 conf 阶梯倒挂 (高确认 52.3% vs 分歧 62.5%) — 边缘来自事件质量 (rubric≥3 68.2%, critique DOWN/DROP 71.4%) 不来自 confidence。
+
+### 2026-08-01 (推送兜底·Qoder, 用户裁"4可做") · 日/周/月复盘推送切 PushHub 双通道
+报告族推送原走 `scheduler.notifier.send_text` — 单通道钉钉, 无重试/无 fallback/无失败落盘, webhook 故障=报告静默丢失 (全系统"每天最重要的一条消息"反成兜底最弱环)。新增 `_push_review_text` (scheduler_triggers.py): PushMessage(title=首行, body=其余) 经 PushHub 钉钉→飞书→FlagFile 逐级 fallback + 全失败落 push_failures.jsonl; hub 自身异常退化旧路径。日/周/月三调用点已切。端到端实测主通道成功 ✅, pytest 1000 全过, 服务已重启。
+
+### 2026-08-01 (复盘链路修复批次·Qoder, 用户裁"按照建议修复") · 日报/周报五组修复 — 渲染器致命 bug + D1 净口径推送 + 两死源切换 + 五因子退役标注
+**背景**: 核对 07-31 日报发现 1 致命 + 4 类失真 (见上一"核对"条目)。
+**① 渲染器变量覆盖 (致命)**: `_format_daily_review` 循环变量 `pnl` 遮蔽函数级 `pnl` — 头部"总盈亏"实为最后一笔逐笔盈亏 (07-31 报 -$0.48 系 ORCL 单笔, 真实毛 -$140.06)。两循环变量改名 `t_pnl`, 注释留档。
+**② 净口径三列推送 (D1 对齐)**: daily+weekly `_generate_summary` 增 `pnl_basis`/`fees_total`/`total_pnl_net`/`win_rate_net`/`fake_wins`; 渲染头部改 `胜率 毛(净, 假盈利n笔) / 总盈亏 毛|费|净 / 平均每笔 毛|净`, header emoji 由净驱动, 旧 JSON 回退毛。周报顺带补上**从未有过**的 source_type 白名单 (D3)。
+**③ 漏斗数据源**: decisions.db (07-12 停写, 日报"决策数 0"假象根因) → `playbook_instructions GROUP BY direction, executed`, 带 `source` 标记, 标签随源 ("指令数/周指令数")。
+**④ 计划基准**: `_get_plan_vs_actual` 从已退役 battle plan → 当日 playbook 指令集, 输出 已执行|未成交|计划外|执行率; **计划外>0=链路异常** 守卫 (07-31 实测 0 ✓)。
+**⑤ 五因子块退役标注 (做减法)**: daily 推送渲染为"⚠️ 基线已退役, 读数无效 — 模块待 08-07 后下线" (JSON 保留); 三处结构性死分支 (else 内含 hold<lo/hold>hi 恒不可达 → early/late 恒 $0) 选择退役而非修复。
+**附带**: 6维度块 `data_available=False` 原渲染 ❌ → 改 N/A (执行质量依赖未填充的 trade_attribution, 系"无数据"非"失败")。
+**验证**: 07-31 日报重生成 — 总盈亏 毛$-140.06|费$49.92|净$-189.98 ✓ / 胜率 58.3%(净33.3%,假盈利3) ✓ / 指令数23条(BUY:10,未执行8,SELL_SHORT:2,未执行3) ✓ / 计划执行 12|11|0|52% ✓ / 周报头部 净-109.03, 假盈利7 ✓。pytest 1000 passed (test_daily_review 夹具 source_type 对齐白名单)。
+
+### 2026-08-01 (尺子批次②·Qoder) · P0 裁决口径预注册 + P1 三把尺子 + P2 复验 (用户裁"按建议执行")
+**P0-① 终裁 G1/G2 净口径预注册**: `august-verdict-framework-20260831.md` G1/G2 补〔净口径〕脚注 + 变更记录条目 (按防挪门柱条款 §三.1) — 冻结文本原未声明毛/净, 08-07/08-29 裁决若按毛读 G1 将得虚假"正期望"信号 (实测毛+$1.9→净−$3.03/笔)。性质=口径澄清非阈值修改。
+**P0-② §5a X1 数字勘误** (见 §5a 原位勘误): 原"成交 108/108 conf≥0.85"❌ (实测 3/109, 量纲 0-1); 原"指令双峰 319/142"❌ (`confidence` 列实为 **0-100 量纲**, 旧统计按 0-1 读全失真; 实测近14日 3/191≥85, 全史 135/410≥85); 原"高 conf 桶 -$361"不可复现 (现口径 n=3 net -$160.87)。**新发现: 高 conf 供给 07-20 起枯竭** (日产≥85 指令≈0) — X1 不可评根因从"桶退化"精确化为"供给枯竭+P0.2 未落地"。
+**P0-③ exit_scorecard `pnl_basis` 戳记**: 无条件写入 JSON 输出 (history.jsonl 新旧行口径可分辨, 防跨窗口拼接事故第四课)。
+**P1a daily_invariant_check 两修**: I1 价格/数量 ≤0 原静默跳过 → 单独告警 `I1_price_qty_invalid` (近7日 47 笔零异常, 零噪音); I6 bar 峰物理检查补 SHORT 镜像 (`peak_price_bar`=min(lows) 按 pipeline.py:4933, ≤min(e,x)×1.005, 现库 7 笔 SHORT 有 bar 样本可守)。
+**P1b ic_health_check 对齐**: Pearson→**Spearman** (与 signal_ic_tracker/expectancy_ic_backtest 同口径, 原两尺 IC 值不可比); 最小样本 3→5 (n=3 的 Pearson |r|≈1 系假象); 修 falsy bug (IC=0.0 原误报"样本不足")。实跑: LONG +0.106 / SHORT -0.019 / signed +0.080 (n=544/135)。
+**P1c exit_scorecard 补 Profit Factor**: G2 裁决线 ≥1.3 直接读数 (原需手算)。**当前读数 (since 07-24, n=55, 净): PF=0.81 — G2 同样不达标**。另加 n<30 小样本警告行。
+**P2 复验结论**: 见 P0-②; 附带口径教训 — **同一库内 confidence 两量纲并存** (指令 0-100 / 成交 0-1), 已列入 P0.2 校准案的必须统一项。
+**验证**: exit_scorecard 实跑 PF=0.81 ✓ / invariant 编译+实跑 (I3×1 见下) ✓ / ic_health 实跑 ✓ / pytest -k "scorecard or invariant or ic_" 13 passed ✓。
+**I3 容差修复 (用户裁"修")**: I3 (quote 版 peak 语义) 容差 1e-6 → **0.5% 对齐 I6** — id=1189 PDD exit 88.37 vs quote-peak 88.36 差 1 tick (bar 版 88.4 证实物理合法, quote 采样时滞) 属误报。修后复跑 47 笔全过 ✓, 今晚 cron 起零噪音。真数据腐败 (错位$级) 仍远超 0.5% 必报警。
+**列账闭环**: 08-01 审计"未修列账"中 ic_health Pearson (105行) + invariant I6 SHORT (107行) 本批已修; trigger_gate source_type (103行) 前批已修; 余 exit_replay bars_cache autype 标记 (104行) 待办。
+
+### 2026-08-01 (尺子审计·Qoder) · 全面精度审计 → 3 项致命/高危修复 +  net 期望值翻负 (重大发现)
+**审计范围**: exit_scorecard / direction_hit_scorecard / trigger_gate_report / exit_replay_backtest / atr_gate_shadow / daily_invariant_check / ic_health_check / backfill_fee_net / expectancy_ic_backtest 共 9 把尺子，四路并行 adversarial 审计。
+**修复① (致命) direction_hit_scorecard.py SHORT 命中率反转**: `fwd_return_t1/t3` 写入时已方向调整 (`ic_tracker.py: sign*(close-entry)/entry`，正=方向对)，但 SQL 又 `CASE direction` 二次调整 → SHORT 命中率测的是亏损率。修法: 删二次 CASE，直接 `fwd_return_t1>0` 判命中。修复后 SHORT n=14 命中 71.4%/方向收益 +4.39% (原被反转)。36 passed。
+**修复② (高危) exit_scorecard.py 切 net PnL**: 原用毛 `realized_pnl`，违反 DEB-20260730 D1 (用户 08-01 裁"pnl_net 为唯一对外口径")。改 `COALESCE(pnl_net, realized_pnl)`。
+**修复③ (高危) exit_scorecard.py 基线警告**: 原默认 30 天窗口混入 07-24 三门上线前旧退出参数。加 stderr 警告: since<2026-07-24 时提示跨 regime。
+**🔴 重大发现 — net 期望值翻负**: 修复②后重跑 `--since 2026-07-24`:
+- **毛口径 (修复前)**: n=55, 胜率 69.1%, R:R=0.51, 期望 **+$1.9/笔**, 总盈亏 **+$104.63**
+- **净口径 (修复后)**: n=55, 胜率 54.5%, R:R=0.67, 期望 **-$3.03/笔**, 总盈亏 **-$166.6**
+- 费用把 14 笔假盈利翻亏 (胜率 69%→54%)，avg亏从 -$45.66 收窄至 -$35.01 (费也减亏)，但期望值整体翻负。
+- **08-07 含义**: G1 判据"每笔期望 ≥$0 连续 4 周"在净口径下**不达标**。此前 gross 口径给出的"正期望"信号系费用盲区所致。08-07 裁决矩阵必须以 net 为准。
+**其他审计结论 (未修，列账)**:
+- `trigger_gate_report.py` 无 source_type 过滤 (SHADOW/SIM/LIVE 混算) — 高危，08-07 后修
+- `exit_replay_backtest.py` bar 缓存无 autype 版本标记 (旧 QFQ 静默复用) — 中危，`--refresh-bars` 可规避
+- `ic_health_check.py` 用 Pearson vs `expectancy_ic_backtest.py` 用 Spearman，IC 值不可比 — 中危
+- `direction_hit_scorecard.py` 报告 n 为 T+1 样本，T+3 有效 n 不可见 — 中危
+- `daily_invariant_check.py` I6 只查 LONG 不查 SHORT — 低危
+- `atr_gate_shadow.py` / `exit_replay_backtest.py` 公式/方向/双序区间/Δbaseline 全部正确 ✓
+- `backfill_fee_net.py` 费率模型/SHORT 腿/SEC effective_from/幂等性全部正确 ✓
+**验证**: direction_hit 36 passed + exit_scorecard 基线警告触发正常 + net 口径实跑自洽。
+**trigger_gate_report.py 基线警告**: 同 exit_scorecard 加 since<2026-07-24 stderr 警告。注: playbook_instructions 无 source_type 列，实测 executed=1 的 win/loss 与 SIM/LIVE 一一对应，无 SHADOW 混入。
+
+**🔬 net 翻负深度解剖 (07-24 以来 n=55)**:
+
+*按来源*:
+| 来源 | n | 净总额 | 净均笔 | 毛总额 | 费总额 |
+|---|---|---|---|---|---|
+| UE | 17 | **+$91.05** | +$5.36 | +$202.97 | $111.92 |
+| DA | 34 | -$95.95 | -$2.82 | +$46.88 | $142.83 |
+| topup | 4 | -$161.70 | -$40.42 | -$145.22 | $16.48 |
+
+*按方向*:
+| 方向 | n | 净总额 | 净均笔 | 毛总额 | 费总额 |
+|---|---|---|---|---|---|
+| SELL_SHORT | 9 | **+$106.90** | +$11.88 | +$166.09 | $59.19 |
+| BUY | 46 | -$273.50 | -$5.95 | -$61.46 | $212.04 |
+
+*来源×方向交叉 (n≥3)*:
+| 切片 | n | 净均笔 | 净总额 |
+|---|---|---|---|
+| UE·SHORT | 7 | **+$24.21** | +$169.49 |
+| DA·BUY | 34 | -$2.82 | -$95.95 |
+| UE·BUY | 10 | -$7.84 | -$78.44 |
+
+*按 exit_reason*:
+| 出场原因 | n | 净总额 | 净均笔 | 毛总额 | 费总额 |
+|---|---|---|---|---|---|
+| MFE_STALL_EXIT | 17 | **-$746.33** | -$43.90 | -$674.91 | $71.42 |
+| SL_INITIAL | 1 | -$104.77 | -$104.77 | -$100.64 | $4.13 |
+| SL_BREAKEVEN | 12 | -$12.49 | -$1.04 | +$56.86 | $69.35 |
+| PRE_CLOSE_EXIT | 5 | +$151.96 | +$30.39 | +$173.15 | $21.19 |
+| SL_TRAIL_LOCK | 20 | **+$545.03** | +$27.25 | +$650.17 | $105.14 |
+
+*按周*:
+| 周 | n | 净总额 | 净均笔 | 毛总额 | 费总额 |
+|---|---|---|---|---|---|
+| W29 (07-24~27) | 8 | -$57.57 | -$7.20 | -$24.49 | $33.08 |
+| W30 (07-28~31) | 47 | -$109.03 | -$2.32 | **+$129.12** | $238.15 |
+
+**结构诊断**:
+1. **MFE_STALL 是最大出血点**: 17 笔净亏 -$746 (占全部净亏 4.5 倍)。零 MFE 即损 = 入场质量问题，非退出问题。
+2. **SL_BREAKEVEN 是费用陷阱**: 12 笔毛正 +$56.86 但费 $69.35 → 净 -$12.49。7/12 是假盈利 (gross>0 net≤0)。D4 费用感知保本 (07-30 已实弹) 应缓解。
+3. **BUY 侧系统性负期望**: 46 笔净 -$273.50，费 $212 (占毛损 3.5 倍)。DA·BUY 是最大负贡献 (n=34, -$95.95)。
+4. **UE·SHORT 是唯一正期望切片**: n=7, +$24.21/笔。样本小但信号强 (方向命中 71.4%, 修复后)。
+5. **费用结构**: avg $4.93/笔 (min $4.03, max $24.45)，占 avg |gross PnL| ($30.13) 的 16%。W30 费 $238 > 毛利 $129 → 净负。
+6. **W30 毛正净负**: 47 笔毛 +$129.12 但费 $238.15 → 净 -$109.03。交易频率 × 固定费 = 规模不经济。
+
+**08-07 裁决含义**:
+- **G1 (期望≥$0 连续 4 周) 净口径不达标**: W29 -$7.20/笔, W30 -$2.32/笔。
+- **赛道信号**: UE·SHORT 正期望但 n=7 不足 30 门槛；DA·BUY 负期望是主拖累。
+- **处方方向**: ①降频减费 (W30 日均 12 笔, 费 $238) ②MFE_STALL 入场质量门 (非退出调参) ③BUY 侧门槛上调或 conf 门 ④UE·SHORT 扩样本验证。
+- **08-07 矩阵必须以 net 为准**, gross 口径已失效。
 
 ### 2026-08-01 (数据侧·Qoder) · 5a 数据就绪审计行动项①②闭环 — L2/L3 落点确认 + ATR 单位 bug 修复 + 重跑
 **背景**: handoff 5a (07-29 夜) 行动项①"另一模型确认 L2/L3 落点+修断流" + ②"watchdog 是否盯 challenger/time_exit_cf"。

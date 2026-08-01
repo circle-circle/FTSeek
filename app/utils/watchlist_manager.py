@@ -152,6 +152,22 @@ class WatchlistManager:
         """获取启用的ETF列表"""
         etfs = self._watchlist_data.get("etfs", [])
         return [e for e in etfs if e.get("enabled", False)]
+
+    def get_symbols_by_role(self, role: str) -> List[str]:
+        """按角色标签取标的 (P-1 名单合一 2026-08-01, DEB-20260724 §7).
+
+        topup 补量池 / 订阅集合 / 基准 从 watchlist 块同一真源派生, 防双名单漂移.
+        角色: benchmark | liquidity_whitelist | topup_eligible | subscribe.
+        不过滤 enabled — NFLX/QCOM 暂停扫描但仍 topup_eligible; SPY/QQQ enabled=false 但是基准.
+        """
+        out = []
+        for entry in (self._watchlist_data.get("us_stocks", [])
+                      + self._watchlist_data.get("etfs", [])):
+            if role in (entry.get("roles") or []):
+                code = entry.get("code")
+                if code:
+                    out.append(code)
+        return out
     
     def get_stock_config(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
@@ -274,6 +290,11 @@ def get_stock_codes() -> List[str]:
 def get_stock_symbols() -> List[str]:
     """快捷函数: 获取纯股票代码"""
     return get_watchlist_manager().get_stock_symbols()
+
+
+def get_symbols_by_role(role: str) -> List[str]:
+    """快捷函数: 按角色标签取标的 (P-1 名单合一, 真源派生用)"""
+    return get_watchlist_manager().get_symbols_by_role(role)
 
 
 def get_order_qty(symbol: str, default_qty: int = 50) -> int:

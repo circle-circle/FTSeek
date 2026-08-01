@@ -70,12 +70,12 @@ class DailyReviewGenerator:
         
         logger.info(f"生成每日复盘报告 v2.0：{date}")
         
-        # 从 ftseek_us.db 读取交易记录 (排除已废弃的虚拟 shadow 和已禁用的 scalping, 保证复盘口径与 OKR/dashboard 一致)
-        # 2026-06-26: 排除 PHANTOM_RECONCILE_VOID (pnl=0 的幽灵对账记录, 不应计入交易统计)
-        # 2026-06-30: 排除 trade_mode='live' (实盘交易不混入 SIM 复盘)
+        # 从 ftseek_us.db 读取交易记录
+        # 2026-08-01: 黑名单改 D3 正向白名单 (DEB-20260730) — 黑名单会被未来新引擎静默穿透
+        # (跨引擎拼接事故第四课); 今日两者等价, 结构性防呆。
         trades = self._query(
             "SELECT * FROM trade_records WHERE trade_date = ? "
-            "AND source_type NOT IN ('PLAYBOOK_SHADOW', 'SCALPING') "
+            "AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
             "AND exit_reason != 'PHANTOM_RECONCILE_VOID' "
             "AND trade_mode != 'live' "
             "ORDER BY created_at",
@@ -638,11 +638,13 @@ class DailyReviewGenerator:
                             pass
 
             # ── Phase 6: 五因子归因融合 ──
-            try:
-                five_factor = self._get_five_factor_attribution(date)
-            except Exception as ff_err:
-                logger.debug(f"[五因子归因] 调用异常: {ff_err}")
-                five_factor = {'five_factor_available': False, 'error': str(ff_err)}
+            # 2026-08-01 断线 (做减法): 基线已退役 (旧持仓规则 vs 日内 playbook), 读数无效,
+            # 且每日全量加载 30 天 trade_records 空耗。模块本体留墓碑待 08-07 后下线。
+            five_factor = {
+                'five_factor_available': False,
+                'status': 'retired',
+                'note': '五因子归因已退役 (基线不匹配日内 playbook), 计算已停用, 模块待 08-07 后下线。',
+            }
             result['five_factor'] = five_factor
 
             # 统计摘要 (安全访问)
@@ -733,9 +735,11 @@ class DailyReviewGenerator:
     
     def _get_plan_vs_actual(self, date: str) -> Dict:
         """获取计划对比数据
-        
-        Phase 4 新增: 从 battle_plan_manager 获取当日作战计划，
-        对比实际执行。
+
+        2026-08-01 改基准: 当日"计划" = playbook 指令集 (BUY/SELL_SHORT)。
+        旧 battle plan 已退役 (标的多与 playbook 宇宙零交集 → "已执行0/计划外12"
+        系口径化石, 执行质量维度被系统性打零)。新口径下:
+          已执行 = 有成交的指令 | 错过 = 未成交指令 (门拦/未触发) | 计划外 = 无指令成交 (应恒0, >0 即链路 bug)
         """
         result = {
             'plan_available': False,
@@ -744,46 +748,43 @@ class DailyReviewGenerator:
             'missed_opportunities': [],
             'unplanned_trades': [],
         }
-        
+
         try:
-            from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-            mgr = USBattlePlanManager()
-            plan = mgr.get_plan() or {}
-            
-            if not plan:
+            instructions = self._query(
+                "SELECT symbol, direction FROM playbook_instructions "
+                "WHERE date = ? AND direction IN ('BUY','SELL_SHORT')",
+                (date,)
+            )
+            planned_symbols = sorted({r['symbol'] for r in instructions})
+            if not planned_symbols:
                 return result
-            
+
             result['plan_available'] = True
-            result['plan_date'] = plan.get('date', 'unknown')
-            result['planned_targets'] = plan.get('targets', []) or plan.get('watchlist', [])
-            
-            # 对比实际交易
+            result['plan_source'] = 'playbook_instructions'
+            result['plan_date'] = date
+            result['planned_targets'] = planned_symbols
+
+            # 对比实际交易 (D3 白名单, 与主查询同口径)
             trades = self._query(
-                "SELECT symbol, entry_reason, realized_pnl FROM trade_records WHERE trade_date = ?",
+                "SELECT symbol FROM trade_records WHERE trade_date = ? "
+                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') AND trade_mode != 'live'",
                 (date,)
             )
             actual_symbols = set(t.get('symbol', '') for t in trades)
-            planned_symbols = set()
-            for t in result.get('planned_targets', []):
-                if isinstance(t, dict):
-                    planned_symbols.add(t.get('symbol', t.get('code', '')))
-                elif isinstance(t, str):
-                    planned_symbols.add(t)
-            
+
             # 已执行的计划内交易
-            result['executed_targets'] = list(actual_symbols & planned_symbols)
+            result['executed_targets'] = sorted(actual_symbols & set(planned_symbols))
             # 错过的计划内交易
-            result['missed_opportunities'] = list(planned_symbols - actual_symbols)
+            result['missed_opportunities'] = sorted(set(planned_symbols) - actual_symbols)
             # 计划外交易
-            result['unplanned_trades'] = list(actual_symbols - planned_symbols)
-            
+            result['unplanned_trades'] = sorted(actual_symbols - set(planned_symbols))
+
             # 执行率
-            if planned_symbols:
-                result['execution_rate'] = round(len(result['executed_targets']) / len(planned_symbols), 4)
-            
+            result['execution_rate'] = round(len(result['executed_targets']) / len(planned_symbols), 4)
+
         except Exception as e:
             logger.debug(f"[plan_vs_actual] 获取失败: {e}")
-        
+
         return result
     
     # =========================================================================
@@ -810,6 +811,15 @@ class DailyReviewGenerator:
         total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in closed_trades)
         winning = [t for t in closed_trades if (t.get('realized_pnl', 0) or 0) > 0]
 
+        # 净口径 (2026-08-01, DEB-20260730 D1: pnl_net 为唯一对外口径)
+        # 旧行无 pnl_net → 回退 realized_pnl (与 exit_scorecard 同 COALESCE 语义)
+        net_pnls = [(t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0))
+                    for t in closed_trades]
+        fees_total = sum(t.get('fees_est', 0) or 0 for t in closed_trades)
+        winning_net = [p for p in net_pnls if p > 0]
+        fake_wins = sum(1 for t, p in zip(closed_trades, net_pnls)
+                        if (t.get('realized_pnl', 0) or 0) > 0 >= p)
+
         # MFE 捕获效率: 退出引擎是利润核心, 衡量实际落袋占最大有利波动的比例。
         #   单位对齐: pnl_pct 存小数(0.0174=1.74%), mfe_pct 存百分数(1.7383=1.74%) → pnl_pct*100。
         #   每笔 = clamp(pnl_pct*100 / mfe_pct, 0, 1) — 止损单(负pnl)记0, 不奖励 overshoot 伪影。
@@ -829,6 +839,12 @@ class DailyReviewGenerator:
             'total_pnl': round(total_pnl, 2),
             'win_rate': round(len(winning) / len(closed_trades), 4),
             'avg_pnl': round(total_pnl / len(closed_trades), 2),
+            'pnl_basis': 'net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)',
+            'fees_total': round(fees_total, 2),
+            'total_pnl_net': round(sum(net_pnls), 2),
+            'winning_trades_net': len(winning_net),
+            'win_rate_net': round(len(winning_net) / len(closed_trades), 4),
+            'fake_wins': fake_wins,
             'avg_holding_period': round(sum(t.get('holding_hours') or 0 for t in closed_trades) / len(closed_trades), 1) if closed_trades else 0,
             'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,
             'mfe_capture_n': len(_cap_ratios),
@@ -839,70 +855,44 @@ class DailyReviewGenerator:
     # =========================================================================
     
     def _get_signal_funnel(self, date: str) -> Dict:
-        """信号漏斗分析 (从 decisions.db)"""
+        """信号漏斗 (2026-08-01 改源: playbook_instructions)
+
+        decisions.db 随旧引擎 07-12 停写 (playbook 为唯一交易路径但不写该表),
+        total_decisions 恒 0 → 信号质量/漏斗诊断/综合评分全成伪读数。
+        真实决策源 = 当日 playbook 指令 (含 SKIP), 键保持兼容。
+        """
         try:
-            if not self.decisions_db.exists():
-                return {'total_decisions': 0, 'error': 'decisions.db not found'}
-            conn = sqlite3.connect(str(self.decisions_db))
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE date(created_at) = ?", (date,)
-            ).fetchone()[0]
-            
-            by_direction = {}
-            rows = conn.execute(
-                "SELECT direction, final_strength, COUNT(*) as cnt FROM decisions "
-                "WHERE date(created_at) = ? GROUP BY direction, final_strength",
+            rows = self._query(
+                "SELECT direction, executed, COUNT(*) as cnt FROM playbook_instructions "
+                "WHERE date = ? GROUP BY direction, executed",
                 (date,)
-            ).fetchall()
+            )
+            total = sum(r['cnt'] for r in rows)
+            by_direction = {}
             for r in rows:
-                key = f"{r[0]}(s={r[1]})"
-                by_direction[key] = r[2]
-            conn.close()
-            
+                suffix = '' if r['executed'] else '(未执行)'
+                key = f"{r['direction']}{suffix}"
+                by_direction[key] = by_direction.get(key, 0) + r['cnt']
             return {
                 'total_decisions': total,
                 'by_direction_strength': by_direction,
+                'source': 'playbook_instructions',
             }
         except Exception as e:
             return {'total_decisions': 0, 'error': str(e)}
     
     def _get_rejection_analysis(self, date: str) -> Dict:
-        """拒绝分析 (从 rejections.db)"""
-        try:
-            if not self.rejections_db.exists():
-                return {'total': 0, 'note': 'rejection_logger 未初始化'}
-            conn = sqlite3.connect(str(self.rejections_db))
-            total = conn.execute(
-                "SELECT COUNT(*) FROM rejections WHERE date(timestamp) = ?", (date,)
-            ).fetchone()[0]
-            
-            by_reason = {}
-            rows = conn.execute(
-                "SELECT reason_category, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) = ? GROUP BY reason_category ORDER BY cnt DESC",
-                (date,)
-            ).fetchall()
-            for r in rows:
-                by_reason[r[0]] = r[1]
-            
-            by_symbol = {}
-            rows = conn.execute(
-                "SELECT symbol, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) = ? GROUP BY symbol ORDER BY cnt DESC LIMIT 5",
-                (date,)
-            ).fetchall()
-            for r in rows:
-                by_symbol[r[0]] = r[1]
-            conn.close()
-            
-            return {
-                'total': total,
-                'by_reason': by_reason,
-                'by_symbol': by_symbol,
-                'top_rejector': max(by_reason, key=by_reason.get) if by_reason else 'none'
-            }
-        except Exception as e:
-            return {'total': 0, 'error': str(e)}
+        """拒绝分析 (从 rejections.db)
+        2026-08-01 退役标注: rejections.db 06-29 停写 (playbook 路径不接 rejection_logger),
+        此后每日 total 恒 0 且无告警 — 伪读数。playbook 时代的"拒绝"等价物 =
+        信号漏斗里的 未执行指令 (executed=0), 已在 funnel 维度呈现。
+        """
+        return {
+            'total': 0,
+            'status': 'retired',
+            'note': '拒绝分析已退役: rejections.db 停写于 2026-06-29 (playbook 路径不落拒绝)。'
+                    '未执行指令请看信号漏斗的 未执行 分布。',
+        }
     
     def _get_capital_state(self, date: str) -> Dict:
         """资金状态 (从 ftseek_us.db capital_state)"""

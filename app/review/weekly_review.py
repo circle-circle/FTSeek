@@ -60,9 +60,12 @@ class WeeklyReviewGenerator:
         
         logger.info(f"生成每周复盘报告：{week_start} 至 {week_end}")
         
-        # 从 ftseek_us.db 读取周内交易
+        # 从 ftseek_us.db 读取周内交易 (2026-08-01: 补 D3 正向白名单 — 原查询无任何
+        # source_type 过滤, SHADOW/退休引擎行会混入周度统计)
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date >= ? AND trade_date <= ? ORDER BY created_at",
+            "SELECT * FROM trade_records WHERE trade_date >= ? AND trade_date <= ? "
+            "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') AND trade_mode != 'live' "
+            "ORDER BY created_at",
             (week_start, week_end)
         )
         closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
@@ -155,110 +158,42 @@ class WeeklyReviewGenerator:
         }
     
     def _get_weekly_signal_funnel(self, week_start: str, week_end: str) -> Dict:
-        """周度信号漏斗聚合"""
+        """周度信号漏斗聚合 (2026-08-01 改源: playbook_instructions — decisions.db 随旧引擎
+        07-12 停写, 周决策数恒 0 系伪读数)"""
         try:
-            from app.core.paths import get_decisions_db
-            db = get_decisions_db()
-            if not db.exists():
-                return {'total_decisions': 0, 'error': 'decisions.db not found'}
-            conn = sqlite3.connect(str(db))
-            
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE date(created_at) >= ? AND date(created_at) <= ?",
+            rows = self._query(
+                "SELECT date, direction, executed, COUNT(*) as cnt FROM playbook_instructions "
+                "WHERE date >= ? AND date <= ? GROUP BY date, direction, executed",
                 (week_start, week_end)
-            ).fetchone()[0]
-            
+            )
+            total = sum(r['cnt'] for r in rows)
             by_day = {}
-            rows = conn.execute(
-                "SELECT date(created_at) as day, COUNT(*) as cnt FROM decisions "
-                "WHERE date(created_at) >= ? AND date(created_at) <= ? GROUP BY day",
-                (week_start, week_end)
-            ).fetchall()
-            for r in rows:
-                by_day[r[0]] = r[1]
-            
             by_direction = {}
-            rows = conn.execute(
-                "SELECT direction, final_strength, COUNT(*) as cnt FROM decisions "
-                "WHERE date(created_at) >= ? AND date(created_at) <= ? GROUP BY direction, final_strength",
-                (week_start, week_end)
-            ).fetchall()
             for r in rows:
-                key = f"{r[0]}(s={r[1]})"
-                by_direction[key] = r[2]
-            
-            conn.close()
-            
+                by_day[r['date']] = by_day.get(r['date'], 0) + r['cnt']
+                suffix = '' if r['executed'] else '(未执行)'
+                key = f"{r['direction']}{suffix}"
+                by_direction[key] = by_direction.get(key, 0) + r['cnt']
+
             return {
                 'total_decisions': total,
                 'by_day': by_day,
                 'by_direction_strength': by_direction,
+                'source': 'playbook_instructions',
             }
         except Exception as e:
             return {'total_decisions': 0, 'error': str(e)}
     
     def _get_weekly_rejection_trend(self, week_start: str, week_end: str) -> Dict:
-        """周度拒绝趋势"""
-        try:
-            from app.core.paths import get_rejections_db
-            db = get_rejections_db()
-            if not db.exists():
-                return {'total': 0, 'note': 'rejection_logger 未初始化'}
-            conn = sqlite3.connect(str(db))
-            
-            total = conn.execute(
-                "SELECT COUNT(*) FROM rejections WHERE date(timestamp) >= ? AND date(timestamp) <= ?",
-                (week_start, week_end)
-            ).fetchone()[0]
-            
-            by_day = {}
-            rows = conn.execute(
-                "SELECT date(timestamp) as day, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) >= ? AND date(timestamp) <= ? GROUP BY day",
-                (week_start, week_end)
-            ).fetchall()
-            for r in rows:
-                by_day[r[0]] = r[1]
-            
-            by_reason = {}
-            rows = conn.execute(
-                "SELECT reason_category, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) >= ? AND date(timestamp) <= ? GROUP BY reason_category ORDER BY cnt DESC",
-                (week_start, week_end)
-            ).fetchall()
-            for r in rows:
-                by_reason[r[0]] = r[1]
-            
-            by_symbol = {}
-            rows = conn.execute(
-                "SELECT symbol, COUNT(*) as cnt FROM rejections "
-                "WHERE date(timestamp) >= ? AND date(timestamp) <= ? GROUP BY symbol ORDER BY cnt DESC LIMIT 5",
-                (week_start, week_end)
-            ).fetchall()
-            for r in rows:
-                by_symbol[r[0]] = r[1]
-            
-            conn.close()
-            
-            # 计算趋势
-            day_values = list(by_day.values())
-            trend = "stable"
-            if len(day_values) >= 2:
-                if day_values[-1] > day_values[0] * 1.5:
-                    trend = "increasing"
-                elif day_values[-1] < day_values[0] * 0.5:
-                    trend = "decreasing"
-            
-            return {
-                'total': total,
-                'by_day': by_day,
-                'by_reason': by_reason,
-                'by_symbol': by_symbol,
-                'trend': trend,
-                'top_rejector': max(by_reason, key=by_reason.get) if by_reason else 'none',
-            }
-        except Exception as e:
-            return {'total': 0, 'error': str(e)}
+        """周度拒绝趋势
+        2026-08-01 退役标注: rejections.db 06-29 停写 (playbook 路径不接 rejection_logger),
+        此后每周 total 恒 0 — 伪读数。未执行指令分布见信号漏斗。
+        """
+        return {
+            'total': 0,
+            'status': 'retired',
+            'note': '拒绝趋势已退役: rejections.db 停写于 2026-06-29 (playbook 路径不落拒绝)。',
+        }
     
     def _get_weekly_capital_curve(self, week_start: str, week_end: str) -> Dict:
         """资金周曲线"""
@@ -350,7 +285,12 @@ class WeeklyReviewGenerator:
         
         total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in closed_trades)
         winning = [t for t in closed_trades if (t.get('realized_pnl', 0) or 0) > 0]
-        
+
+        # 净口径 (2026-08-01, DEB-20260730 D1)
+        net_pnls = [(t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0))
+                    for t in closed_trades]
+        winning_net = [p for p in net_pnls if p > 0]
+
         return {
             'total_trades': len(all_trades),
             'closed_trades': len(closed_trades),
@@ -358,6 +298,13 @@ class WeeklyReviewGenerator:
             'total_pnl': round(total_pnl, 2),
             'win_rate': round(len(winning) / len(closed_trades), 4) if closed_trades else 0.0,
             'avg_pnl_per_trade': round(total_pnl / len(closed_trades), 2),
+            'pnl_basis': 'net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)',
+            'fees_total': round(sum(t.get('fees_est', 0) or 0 for t in closed_trades), 2),
+            'total_pnl_net': round(sum(net_pnls), 2),
+            'winning_trades_net': len(winning_net),
+            'win_rate_net': round(len(winning_net) / len(closed_trades), 4) if closed_trades else 0.0,
+            'fake_wins': sum(1 for t, p in zip(closed_trades, net_pnls)
+                             if (t.get('realized_pnl', 0) or 0) > 0 >= p),
         }
     
     def _analyze_strategies(self, trades: List) -> Dict:
