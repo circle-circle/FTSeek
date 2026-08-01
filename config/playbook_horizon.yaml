@@ -367,11 +367,11 @@ short_horizon:
   fixed_stop_loss_pct: 2.0
   buy_fixed_stop_loss_pct: 2.5  # fallback only (vol_buckets未命中时); 7/7全部走vol_buckets路径
   sell_fixed_stop_loss_pct: 2.0
-  rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润(100%WR avg+$203). TP=3%从未触发且会截断SHORT EOD avg=5.66%
-                 # ⚠️ P1-2 (2026-07-20): 此 999 哨兵实际不生效 — instruction_generator L399 vol_bucket
-                 # 路径 rr_ratio=tp_multiplier(1.5~2.0) 覆写了此值, 每单仍生成 TP. 7/7 注释"全部走
-                 # vol_buckets 路径"→ 999 从未被消费. 真实行为=有TP(RR 1.5-2.0). 待裁决: 删999承认TP存在,
-                 # 或让 vol_bucket 尊重 999 哨兵(恢复无TP). 当前不动, 先观察 TP 触发对 SHORT EOD 的影响.
+  rr_ratio: 2.0  # 2026-08-01 裁决A (用户): 删除 999 死哨兵, 承认固定TP存在 — vol_buckets
+                 # tp_multiplier (low 2.0/medium 1.8/high 1.5) 是唯一真源, 本值仅 vol_buckets
+                 # 未命中的 fallback 路径消费, 对齐 long_horizon 07-08 决定 (2.0).
+                 # 历史: 06-30 DEB-20260630 曾设 999 意图"无固定TP", 但被 vol_bucket 覆写从未生效;
+                 # 若未来要做"无TP"实验, 须预注册 A/B 并实现真开关, 不得再用哨兵.
   max_hold_days: 1
   skip_pre_close_if_profit: false
   time_exit_hours: 2.0

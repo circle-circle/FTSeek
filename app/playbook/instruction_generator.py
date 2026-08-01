@@ -427,15 +427,12 @@ def compute_instruction_values(
     result["atr_source"] = _sl_source
 
     # ── 止盈 = entry + R:R × sl_distance ──
-    # 2026-06-30: rr_ratio=999 是"禁用固定止盈"哨兵 → TP=0, 让 trailing stop 管理退出
-    if rr_ratio >= 100:
-        take_profit = 0.0
-        result["risk_reward"] = 0.0  # 999哨兵不落DB, 避免下游误解
-    else:
-        tp_distance = sl_distance * rr_ratio
-        take_profit = entry_price + tp_distance if decision["direction"] == "BUY" else entry_price - tp_distance
-        result["take_profit"] = round(take_profit, 2)
-        result["risk_reward"] = rr_ratio
+    # 2026-08-01 裁决A (用户): 删除 rr_ratio>=100 死哨兵分支 — 999 配置已退役,
+    #   固定 TP 为诚实声明行为 (vol_buckets tp_multiplier 1.5-2.0 真源, fallback 2.0).
+    tp_distance = sl_distance * rr_ratio
+    take_profit = entry_price + tp_distance if decision["direction"] == "BUY" else entry_price - tp_distance
+    result["take_profit"] = round(take_profit, 2)
+    result["risk_reward"] = rr_ratio
 
     # ── Phase 4 (2026-06-30): 市场状态叠加 ──
     result = _apply_market_state_overlay(

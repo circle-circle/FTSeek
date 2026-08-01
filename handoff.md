@@ -90,6 +90,9 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (裁决A落地·Qoder, 用户裁"A") · rr_ratio 999 死哨兵删除 — 配置与行为合一
+**落地**: ①playbook_horizon.yaml short_horizon `rr_ratio: 999 → 2.0` (诚实值: vol_buckets tp_multiplier low2.0/medium1.8/high1.5/extreme1.5 为唯一真源, 本键仅 fallback 路径消费, 对齐 long_horizon 07-08 决定); ②instruction_generator 删除 `rr_ratio>=100` 死分支 (999 退役后永不触发=死代码, 做减法)。**行为变化仅限 fallback 路径** (vol_buckets 未命中时 TP=0 → TP=2R; 07-20 P1-2 挂账裁决清零); 主路径零变化 → 零样本污染。下游 TP>0 两守卫 (order/executor, trade_recorder) 不依赖哨兵语义已核。pytest 1014 全过, yaml 加载验证, systemctl restart 生效。"无固定TP"若要做 = 预注册 A/B + 真开关, 不得再用哨兵 (已写进 yaml 注释军规)。
+
 ### 2026-08-01 (终裁落地·第三模型执行, 用户拍板"去配额999+半码0.5") · DEB 结案 P2 + 服务托管纠正回 systemd
 **P2 落地**: `buy_daily_exec_quota 4→999`（去配额, 用户"美股市场没有单方向的 buy 或 sell, 回自然不受限"; P1 quota=4 仅存活 1h 即被终裁替代, **quota=2/4 均未在任何交易日生效过, 零样本污染**）; `buy_position_factor 0.5` 维持 (8 月验证月控 $ 敞口, 不影响笔数); R 分层判分纪律批准 (半码净期望给"半码等效全码"列=2×半码毛利−全码费, 禁与全码历史直比)。8 月 BUY 自然 ~140 笔 → 主桶 n≥30 ~08-14 可及。原 08-15 检查点失效 (skip_reason=buy_quota 永不产生属预期)。**附随运维纠正 (AGENT.md 军规)**: 在产服务原由 Qoder CLI 进程托管 (非 systemd, 会话结束服务即死=周一开盘风险; 且出现双实例 34071+36456) → 已强杀 34071 并 `systemctl start ftseek-us` (systemd PID 36456), **启动冒烟 7/7 全过**, 服务现由 systemd 单例托管。DEB 状态 ✅ 已终裁 P2/Q1/R。
 
