@@ -751,8 +751,44 @@ class PlaybookService:
         if not position_size or position_size <= 0:
             position_size = 1
 
+        # 议题二C (2026-08-01, 用户授权"授权你执行"): BUY 半码 — 已执行 BUY 实证负 edge
+        #   (-0.3~-0.5%/笔, n=134-157, p≈0.04; 对照 SHORT +1.5%/笔 p<0.01).
+        #   截断取整偏保守 (减风险方向). 一行回滚: buy_position_factor 改回 1.0.
+        if direction == "BUY":
+            try:
+                from app.core.config_container import get_config as _get_cfg_pf
+                _buy_pf = float(_get_cfg_pf().get_dotted("playbook.direction_gate.buy_position_factor", 1.0) or 1.0)
+            except Exception:
+                _buy_pf = 1.0
+            if 0 < _buy_pf < 1 and position_size > 1:
+                _ps_before = position_size
+                position_size = max(1, int(position_size * _buy_pf))
+                logger.info(f"[playbook] {symbol} BUY 仓位因子 (议题二C): {_ps_before} → {position_size} (factor={_buy_pf})")
+
         # 方向映射
         mos_direction = "LONG" if direction == "BUY" else "SHORT"
+
+        # 议题二C (2026-08-01, 用户授权): BUY 日执行配额 — 负 edge 方向限流
+        #   (基线 3.65 笔/日 → 配额 2 笔/日). 超出配额的 BUY 不置 executed,
+        #   记 skip_reason=buy_quota, 指令保留落库继续攒未执行 open 基样本.
+        #   一行回滚: buy_daily_exec_quota 改回 999.
+        if direction == "BUY":
+            try:
+                from app.core.config_container import get_config as _get_cfg_dg
+                _dg_quota = int(float(_get_cfg_dg().get_dotted("playbook.direction_gate.buy_daily_exec_quota", 999) or 999))
+            except Exception:
+                _dg_quota = 999
+            if _dg_quota < 999:
+                try:
+                    _dg_date = inst.get("date") or now_et().date().isoformat()
+                    _dg_done = self.db.count_executed_by_direction(_dg_date, "BUY")
+                    if _dg_done >= _dg_quota:
+                        _dg_reason = f"buy_quota: 今日BUY已执行{_dg_done}笔 ≥ 配额{_dg_quota} (议题二C 负edge限流)"
+                        logger.info(f"[playbook] {symbol} BUY 日配额拦截: {_dg_reason}")
+                        self.db.update_instruction_tracking(instruction_id, {"skip_reason": _dg_reason})
+                        return {"success": False, "message": _dg_reason, "skipped_buy_quota": True}
+                except Exception as _dg_e:
+                    logger.warning(f"[playbook] {symbol} BUY 配额检查异常 (fail-open 放行): {_dg_e}")
 
         # 关联投票决策 ID (用于 IC 追踪)
         # 优先用 playbook_instructions 表中已存储的 decision_id (由 VotingCoordinator 写入)

@@ -89,6 +89,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-01 (议题二C 实施·Qoder, 用户裁"授权你执行") · BUY 半码+日配额落地, 全绿重启
+**背景**: 议题二B (rubric 质量门) 已被回填数据否定 (≥3桶 34.3% 反向于 ≤2桶 49.1%), 按预注册路径落 C。
+**落地** (pytest 1014 全过 +5 新回归, 服务已重启加载):
+- ① **BUY 半码**: `playbook.direction_gate.buy_position_factor: 0.5` — execute_instruction 单一收口点对所有路径 (批量/手动/实盘) 生效, 截断取整偏保守; 回滚 = 改回 1.0。
+- ② **BUY 日执行配额**: `playbook.direction_gate.buy_daily_exec_quota: 2` (基线 3.65 笔/日) — 配额检查在幂等抢占**之前**, 超额 BUY 不置 executed, 写 `skip_reason=buy_quota:...` (shadow_tracker 不覆盖已有值), 指令保留继续攒未执行 open 基样本; 计数走新 db 方法 `count_executed_by_direction`, SHORT 不占额; 回滚 = 改回 999。
+- 数据依据: 已执行 BUY −0.3~−0.5%/笔 (n=134-157, p≈0.04) vs SHORT +1.5%/笔 (n=45-47, p<0.01)。
+**⚠️ 仍待用户手动**: rubric_shadow_daily 的 cron 注册本轮再试仍被沙箱边界拦截 — 行同上一条目 (22:30 周一至五)。**观测点**: 周一起 scorecard 应见 BUY 执行量降至 ≤2/日 + skip_reason=buy_quota 计数; G3 代价已亮 (~115/150 by 08-29)。
+
 ### 2026-08-01 (四议题实施·Qoder, 用户裁"同意") · 尺子固化落地 + 回填两轮 → 议题二B 被数据否定 → 落 C 待裁
 **议题四 尺子固化 (已落地, pytest 1009 全过, 服务已重启)**:
 ① open 基准三孪生列 (fwd_return_intraday/t1/t3_open) 入迁移+ic_tracker 同柱计算, 历史 333 行已用本地 replay 缓存回填 (自检: 已执行 BUY open 基准 −0.337%/43.3% vs 临时脚本 −0.32%/43% ✅); ② 新模块 app/review/direction_axes.py (方向×基准四象限/方向×regime 交叉/5周滚动方向稳定性/质量轴计数器) 单一口径源, scorecard 与周报共用; ③ scorecard 四新块+周报 🧭方向稳定性块 (_format_weekly_review); ④ **口径七律→八律**: 新增律8 "hit-rate 必须标注价格基准 (entry/open), 禁混基" (charter, 血案=基准幻觉二次勘误)。

@@ -1110,6 +1110,15 @@ playbook:
     config_path: config/playbook_horizon.yaml
     enabled: true
   live_trial: true
+  # 议题二C (2026-08-01, 用户裁"授权你执行"): BUY 方向限流 — 已执行 BUY 实证负 edge
+  #   (-0.3~-0.5%/笔, n=134-157, p≈0.04) vs SHORT +1.5%/笔 (n=45-47, p<0.01);
+  #   议题二B rubric 质量门证伪 (≥3桶 34.3% 反向于 ≤2桶 49.1%, n=35/55) → 落 C.
+  #   ① buy_position_factor: BUY 仓位乘数 (半码). 回滚 = 改回 1.0
+  #   ② buy_daily_exec_quota: BUY 日执行配额 (基线 3.65 笔/日 → 2). 超额 BUY 不执行,
+  #      记 skip_reason=buy_quota 继续攒未执行 open 基样本. 回滚 = 改回 999
+  direction_gate:
+    buy_position_factor: 0.5
+    buy_daily_exec_quota: 2
   cap_reduction_trigger:
     enabled: false
     min_closed_trades: 50

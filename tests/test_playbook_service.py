@@ -146,6 +146,99 @@ class TestExecuteInstruction:
         assert result["success"] is False
 
 
+class TestDirectionGateC:
+    """议题二C (2026-08-01): BUY 半码 + BUY 日执行配额."""
+
+    @staticmethod
+    def _patch_gates_ok():
+        """放行 OKR/ACB 两道熔断 ( equity=0 跳过 OKR; ACB 直接放行 )."""
+        p_cs = patch("app.risk.capital_safety.get_capital_safety_system")
+        p_acb = patch("app.risk.absolute_circuit_breaker.get_absolute_circuit_breaker")
+        mock_cs = p_cs.start()
+        mock_cs.return_value._state.current_equity = 0
+        mock_acb = p_acb.start()
+        mock_acb.return_value.can_open_new_position.return_value = (True, "")
+        return (p_cs, p_acb)
+
+    def teardown_method(self):
+        patch.stopall()
+
+    def _find(self, db, symbol):
+        return patch(
+            "app.playbook.playbook_service.PlaybookService._find_instruction_by_id",
+            return_value=db.get_instruction("2026-06-18", symbol),
+        )
+
+    def test_buy_quota_blocks_third(self, svc, db):
+        """配额=2 (unified_config), 当日已有 2 笔 executed BUY → 第 3 笔被拦且不置 executed."""
+        self._patch_gates_ok()
+        for sym in ("US.QA", "US.QB"):
+            iid = _save_inst(db, symbol=sym)
+            db.update_instruction_tracking(iid, {"executed": 1})
+        iid3 = _save_inst(db, symbol="US.QC")
+        with self._find(db, "US.QC"):
+            result = svc.execute_instruction(iid3)
+        assert result["success"] is False
+        assert result.get("skipped_buy_quota") is True
+        row = db.get_instruction("2026-06-18", "US.QC")
+        assert not row["executed"]
+        assert "buy_quota" in (row["skip_reason"] or "")
+
+    def test_buy_quota_rollback_999(self, svc, db):
+        """配额=999 (回滚态) → 第 3 笔 BUY 通过配额门."""
+        self._patch_gates_ok()
+        for sym in ("US.RA", "US.RB"):
+            iid = _save_inst(db, symbol=sym)
+            db.update_instruction_tracking(iid, {"executed": 1})
+        _save_inst(db, symbol="US.RC")
+        mock_cfg = MagicMock()
+        mock_cfg.get_dotted.side_effect = lambda k, d=None: (
+            999 if k == "playbook.direction_gate.buy_daily_exec_quota" else d
+        )
+        with patch("app.core.config_container.get_config", return_value=mock_cfg), \
+             self._find(db, "US.RC"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}) as mock_broker:
+            result = svc.execute_instruction(1)
+        assert result["success"] is True
+        assert mock_broker.called
+
+    def test_buy_position_factor_halves(self, svc, db):
+        """BUY position_size=50 → 半码 25 传入下单路径."""
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.PA", position_size=50)
+        with self._find(db, "US.PA"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}) as mock_broker:
+            svc.execute_instruction(1)
+        # _execute_via_dual_broker 第 8 个位置参数 = position_size
+        assert mock_broker.call_args[0][7] == 25
+
+    def test_short_size_untouched(self, svc, db):
+        """SHORT 不受方向门影响: size 50 原样通过, 配额门不计 SHORT."""
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.PS", direction="SHORT", position_size=50)
+        with self._find(db, "US.PS"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}) as mock_broker:
+            svc.execute_instruction(1)
+        assert mock_broker.call_args[0][7] == 50
+
+    def test_buy_quota_not_counting_short(self, svc, db):
+        """当日 executed SHORT 不占用 BUY 配额."""
+        self._patch_gates_ok()
+        for sym in ("US.SA", "US.SB", "US.SC"):
+            iid = _save_inst(db, symbol=sym, direction="SHORT")
+            db.update_instruction_tracking(iid, {"executed": 1})
+        _save_inst(db, symbol="US.SD", direction="BUY")
+        with self._find(db, "US.SD"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}) as mock_broker:
+            result = svc.execute_instruction(1)
+        assert result["success"] is True
+        assert mock_broker.called
+
+
 class TestInstructionDetail:
     def test_detail_with_feedback(self, svc, db):
         inst_id = _save_inst(db)

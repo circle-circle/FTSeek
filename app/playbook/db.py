@@ -224,6 +224,16 @@ class PlaybookDB:
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def count_executed_by_direction(self, date: str, direction: str) -> int:
+        """统计某日某方向已执行指令数 (议题二C 2026-08-01: BUY 日执行配额计数)."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM playbook_instructions "
+            "WHERE date = ? AND direction = ? AND executed = 1",
+            (date, direction),
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+
     def get_instruction(self, date: str, symbol: str) -> Optional[Dict]:
         """获取某日某标的指令"""
         conn = self._conn()
