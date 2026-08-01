@@ -1,0 +1,456 @@
+{
+ "generated_at": "2026-08-01T18:52:13.042749",
+ "since": "2026-07-01",
+ "benchmark": "命中=方向调整后 T+1 收益>0; 50%=掷硬币基线",
+ "sections": {
+  "total": {
+   "全部": {
+    "n": 307,
+    "hit_t1": 58.3,
+    "dir_ret_t1": 1.079,
+    "hit_t3": 56.2,
+    "dir_ret_t3": 0.662
+   }
+  },
+  "direction": {
+   "BUY": {
+    "n": 233,
+    "hit_t1": 57.9,
+    "dir_ret_t1": 1.043,
+    "hit_t3": 53.3,
+    "dir_ret_t3": 0.568
+   },
+   "SELL_SHORT": {
+    "n": 74,
+    "hit_t1": 59.5,
+    "dir_ret_t1": 1.192,
+    "hit_t3": 64.3,
+    "dir_ret_t3": 0.925
+   }
+  },
+  "source": {
+   "来源:DA": {
+    "n": 253,
+    "hit_t1": 59.3,
+    "dir_ret_t1": 0.92,
+    "hit_t3": 56.9,
+    "dir_ret_t3": 0.882
+   },
+   "来源:UE": {
+    "n": 53,
+    "hit_t1": 54.7,
+    "dir_ret_t1": 1.955,
+    "hit_t3": 52.5,
+    "dir_ret_t3": -0.573
+   },
+   "来源:topup": {
+    "n": 1,
+    "hit_t1": 0.0,
+    "dir_ret_t1": -5.318,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "topup·盘中": {
+    "n": 1,
+    "hit_t1": 0.0,
+    "dir_ret_t1": -5.318,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "topup·盘前": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   }
+  },
+  "debate": {
+   "分歧(conf<=40)": {
+    "n": 160,
+    "hit_t1": 62.5,
+    "dir_ret_t1": 1.315,
+    "hit_t3": 57.1,
+    "dir_ret_t3": 0.995
+   },
+   "部分一致(40-75]": {
+    "n": 82,
+    "hit_t1": 54.9,
+    "dir_ret_t1": 1.511,
+    "hit_t3": 58.8,
+    "dir_ret_t3": 0.477
+   },
+   "高确认(>75)": {
+    "n": 65,
+    "hit_t1": 52.3,
+    "dir_ret_t1": -0.05,
+    "hit_t3": 51.6,
+    "dir_ret_t3": 0.168
+   }
+  },
+  "calibration": {
+   "per_conf_value": [
+    {
+     "conf": 25,
+     "n": 5,
+     "hit_t1": 40.0,
+     "dir_ret_t1": 3.663,
+     "hit_t3": 80.0,
+     "dir_ret_t3": 5.179
+    },
+    {
+     "conf": 35,
+     "n": 155,
+     "hit_t1": 63.2,
+     "dir_ret_t1": 1.24,
+     "hit_t3": 56.3,
+     "dir_ret_t3": 0.831
+    },
+    {
+     "conf": 50,
+     "n": 49,
+     "hit_t1": 53.1,
+     "dir_ret_t1": 1.973,
+     "hit_t3": 50.0,
+     "dir_ret_t3": -0.848
+    },
+    {
+     "conf": 60,
+     "n": 2,
+     "hit_t1": 50.0,
+     "dir_ret_t1": 3.207,
+     "hit_t3": 100.0,
+     "dir_ret_t3": 10.587
+    },
+    {
+     "conf": 70,
+     "n": 11,
+     "hit_t1": 63.6,
+     "dir_ret_t1": 2.896,
+     "hit_t3": 80.0,
+     "dir_ret_t3": 3.894
+    },
+    {
+     "conf": 72,
+     "n": 20,
+     "hit_t1": 55.0,
+     "dir_ret_t1": -0.554,
+     "hit_t3": 60.0,
+     "dir_ret_t3": 0.142
+    },
+    {
+     "conf": 78,
+     "n": 1,
+     "hit_t1": 0.0,
+     "dir_ret_t1": -3.92,
+     "hit_t3": 0.0,
+     "dir_ret_t3": -2.548
+    },
+    {
+     "conf": 85,
+     "n": 2,
+     "hit_t1": 100.0,
+     "dir_ret_t1": 2.749,
+     "hit_t3": 100.0,
+     "dir_ret_t3": 7.257
+    },
+    {
+     "conf": 88,
+     "n": 13,
+     "hit_t1": 46.2,
+     "dir_ret_t1": -0.721,
+     "hit_t3": 38.5,
+     "dir_ret_t3": -0.351
+    },
+    {
+     "conf": 90,
+     "n": 48,
+     "hit_t1": 54.2,
+     "dir_ret_t1": 0.145,
+     "hit_t3": 53.2,
+     "dir_ret_t3": 0.07
+    },
+    {
+     "conf": 92,
+     "n": 1,
+     "hit_t1": 0.0,
+     "dir_ret_t1": -2.422,
+     "hit_t3": 100.0,
+     "dir_ret_t3": 0.032
+    }
+   ],
+   "low_bucket_conf_le40": {
+    "n": 160,
+    "hit_t1": 62.5,
+    "dir_ret_t1": 1.315,
+    "hit_t3": 57.1,
+    "dir_ret_t3": 0.995
+   },
+   "high_bucket_conf_gt75": {
+    "n": 65,
+    "hit_t1": 52.3,
+    "dir_ret_t1": -0.05,
+    "hit_t3": 51.6,
+    "dir_ret_t3": 0.168
+   },
+   "ladder_direction": "inverted(高确认<=分歧)",
+   "note": "P0.2 校准标尺: 每档 n>=5 才参与阶梯判定; 倒挂=conf 不能作入场门 (X1 前置未达标)"
+  },
+  "debate_outcome": {
+   "弃权(一方SKIP)": {
+    "n": 119,
+    "hit_t1": 63.9,
+    "dir_ret_t1": 1.018,
+    "hit_t3": 58.7,
+    "dir_ret_t3": 0.809
+   },
+   "方向分歧·BUY": {
+    "n": 32,
+    "hit_t1": 46.9,
+    "dir_ret_t1": 1.025,
+    "hit_t3": 50.0,
+    "dir_ret_t3": 1.206
+   },
+   "方向分歧·SHORT": {
+    "n": 8,
+    "hit_t1": 100.0,
+    "dir_ret_t1": 6.705,
+    "hit_t3": 87.5,
+    "dir_ret_t3": 5.036
+   },
+   "2模型一致": {
+    "n": 5,
+    "hit_t1": 60.0,
+    "dir_ret_t1": 3.791,
+    "hit_t3": 75.0,
+    "dir_ret_t3": 4.464
+   }
+  },
+  "debate_outcome_exec": {
+   "已执行·弃权": {
+    "n": 66,
+    "hit_t1": 45.5,
+    "dir_ret_t1": -0.58,
+    "hit_t3": 50.9,
+    "dir_ret_t3": 0.027
+   },
+   "已执行·分歧·BUY": {
+    "n": 24,
+    "hit_t1": 37.5,
+    "dir_ret_t1": -0.011,
+    "hit_t3": 41.7,
+    "dir_ret_t3": -0.573
+   },
+   "已执行·分歧·SHORT": {
+    "n": 3,
+    "hit_t1": 100.0,
+    "dir_ret_t1": 4.499,
+    "hit_t3": 66.7,
+    "dir_ret_t3": 1.427
+   },
+   "已执行·2模型一致": {
+    "n": 3,
+    "hit_t1": 33.3,
+    "dir_ret_t1": 0.69,
+    "hit_t3": 50.0,
+    "dir_ret_t3": 0.495
+   }
+  },
+  "ue_tier": {
+   "UE·HARD_EVENT": {
+    "n": 18,
+    "hit_t1": 55.6,
+    "dir_ret_t1": 2.174,
+    "hit_t3": 54.5,
+    "dir_ret_t3": -0.117
+   },
+   "UE·MARKET_CORROB": {
+    "n": 19,
+    "hit_t1": 52.6,
+    "dir_ret_t1": 3.453,
+    "hit_t3": 28.6,
+    "dir_ret_t3": -2.975
+   },
+   "UE·THESIS_ONLY": {
+    "n": 2,
+    "hit_t1": 0.0,
+    "dir_ret_t1": -2.517,
+    "hit_t3": 0.0,
+    "dir_ret_t3": -8.609
+   },
+   "UE·tier未落(旧)": {
+    "n": 14,
+    "hit_t1": 64.3,
+    "dir_ret_t1": 0.28,
+    "hit_t3": 78.6,
+    "dir_ret_t3": 2.045
+   }
+  },
+  "prompt_ver": {
+   "UE·v2.1": {
+    "n": 11,
+    "hit_t1": 18.2,
+    "dir_ret_t1": -0.878,
+    "hit_t3": 18.2,
+    "dir_ret_t3": -3.741
+   },
+   "UE·v2.2": {
+    "n": 27,
+    "hit_t1": 66.7,
+    "dir_ret_t1": 4.175,
+    "hit_t3": 57.1,
+    "dir_ret_t3": 0.086
+   }
+  },
+  "rubric": {
+   "UE·rubric≥3": {
+    "n": 22,
+    "hit_t1": 68.2,
+    "dir_ret_t1": 4.173,
+    "hit_t3": 63.6,
+    "dir_ret_t3": 1.418
+   },
+   "UE·rubric≤2": {
+    "n": 5,
+    "hit_t1": 60.0,
+    "dir_ret_t1": 4.186,
+    "hit_t3": 33.3,
+    "dir_ret_t3": -4.799
+   }
+  },
+  "critique": {
+   "UE·critique:KEEP": {
+    "n": 6,
+    "hit_t1": 50.0,
+    "dir_ret_t1": 4.062,
+    "hit_t3": 0.0,
+    "dir_ret_t3": -6.072
+   },
+   "UE·critique:DOWN/DROP": {
+    "n": 21,
+    "hit_t1": 71.4,
+    "dir_ret_t1": 4.208,
+    "hit_t3": 61.5,
+    "dir_ret_t3": 0.56
+   }
+  },
+  "info_channel": {
+   "UE·渠道:us_bloomberg": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "UE·渠道:us_cls": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "UE·渠道:us_cnbc_direct": {
+    "n": 2,
+    "hit_t1": 50.0,
+    "dir_ret_t1": 0.791,
+    "hit_t3": 50.0,
+    "dir_ret_t3": 0.836
+   },
+   "UE·渠道:us_seekingalpha_direct": {
+    "n": 3,
+    "hit_t1": 66.7,
+    "dir_ret_t1": 4.038,
+    "hit_t3": 100.0,
+    "dir_ret_t3": 2.084
+   },
+   "UE·渠道:us_wallstreetcn": {
+    "n": 4,
+    "hit_t1": 100.0,
+    "dir_ret_t1": 11.954,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "UE·渠道:finnhub_market": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "UE·渠道:sec_8k": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "UE·渠道:none_matched": {
+    "n": 18,
+    "hit_t1": 61.1,
+    "dir_ret_t1": 2.846,
+    "hit_t3": 54.5,
+    "dir_ret_t3": -0.232
+   }
+  },
+  "regime": {
+   "regime:cautious": {
+    "n": 0,
+    "hit_t1": null,
+    "dir_ret_t1": null,
+    "hit_t3": null,
+    "dir_ret_t3": null
+   },
+   "regime:risk_on": {
+    "n": 23,
+    "hit_t1": 47.8,
+    "dir_ret_t1": 0.035,
+    "hit_t3": 56.5,
+    "dir_ret_t3": 0.47
+   },
+   "regime:未记录": {
+    "n": 127,
+    "hit_t1": 55.9,
+    "dir_ret_t1": 0.92,
+    "hit_t3": 58.3,
+    "dir_ret_t3": 1.204
+   }
+  },
+  "weekly": {
+   "第26周": {
+    "n": 31,
+    "hit_t1": 54.8,
+    "dir_ret_t1": -0.67,
+    "hit_t3": 51.6,
+    "dir_ret_t3": -0.062
+   },
+   "第27周": {
+    "n": 63,
+    "hit_t1": 54.0,
+    "dir_ret_t1": 0.994,
+    "hit_t3": 58.7,
+    "dir_ret_t3": 1.382
+   },
+   "第28周": {
+    "n": 45,
+    "hit_t1": 60.0,
+    "dir_ret_t1": 1.333,
+    "hit_t3": 55.6,
+    "dir_ret_t3": 0.791
+   },
+   "第29周": {
+    "n": 89,
+    "hit_t1": 51.7,
+    "dir_ret_t1": 0.204,
+    "hit_t3": 55.1,
+    "dir_ret_t3": 0.276
+   },
+   "第30周": {
+    "n": 79,
+    "hit_t1": 69.6,
+    "dir_ret_t1": 2.672,
+    "hit_t3": 59.5,
+    "dir_ret_t3": 0.814
+   }
+  }
+ }
+}

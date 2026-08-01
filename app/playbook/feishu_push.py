@@ -144,10 +144,22 @@ class PlaybookPusher:
             horizon = inst.get("horizon") or "short"  # 2026-07-14: or guard for NULL horizon
             horizon_emoji = {"short": "⚡", "long": "🌙"}.get(horizon, "❓")
 
-            conf_icon = "✅" if (confidence or 0) >= 70 else "⚠️" if (confidence or 0) >= 50 else "❌"
+            # 2026-08-01 (显示层消误导): conf 阈值图标 (≥70✅/≥50⚠️/<50❌) 断供校准断言 —
+            #   成交口径 conf 无区分度 (弃权35: 45.5% vs 无标记50: 45.2% T+1), ❌ 满屏误导为"差信号".
+            #   改展示辩论语义标签 (conf 数值的来历, 事实), conf 值保留 (仓位加权事实).
+            _raw = inst.get("raw_instruction_json") or {}
+            _oc = _raw.get("debate_outcome", "") if isinstance(_raw, dict) else ""
+            if "2模型一致" in _oc:
+                conf_tag = "✅ 一致"
+            elif "一方弃权" in _oc:
+                conf_tag = "➖ 弃权"
+            elif "真反向" in _oc or "方向分歧" in _oc:
+                conf_tag = "⚠️ 分歧"
+            else:
+                conf_tag = "🎚"  # UE/topup 等非辩论源: 无语义, 只展示数值
             dir_text = "BUY LONG" if direction == "BUY" else "SELL SHORT"
 
-            lines.append(f"#{idx} {sym} {dir_text} {conf_icon} {confidence}% [{horizon_emoji} {horizon}]")
+            lines.append(f"#{idx} {sym} {dir_text} {conf_tag} conf {confidence}% [{horizon_emoji} {horizon}]")
             if entry:
                 lines.append(f"   入场 ${entry:.2f} → 止损 ${sl:.2f} → 止盈 ${tp:.2f}")
                 lines.append(f"   {pos}股 | R:R {rr:.1f}:1 | 风险 ${risk:.0f}")

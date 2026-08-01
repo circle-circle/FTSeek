@@ -122,6 +122,13 @@ def main() -> int:
     emit("debate_outcome", "方向分歧·BUY", "raw_instruction_json LIKE '%方向分歧(BUY%'")
     emit("debate_outcome", "方向分歧·SHORT", "raw_instruction_json LIKE '%方向分歧(SELL_SHOR%'")
     emit("debate_outcome", "2模型一致", "raw_instruction_json LIKE '%2模型一致%'")
+    # 2026-08-01 (Simpson 校正): 同四切片按 executed=1 重读 — 混合口径"弃权 63.9%"掩盖
+    #   已执行45.5%/未执行86.8% 的限价单逆选择结构 (未成交 BUY=价格已跑远的纸面对单).
+    #   成交口径才是交易相关读数; 上四行保留为信号口径对照, 两口径并排防再误读.
+    emit("debate_outcome_exec", "已执行·弃权", "executed=1 AND raw_instruction_json LIKE '%一方弃权%'")
+    emit("debate_outcome_exec", "已执行·分歧·BUY", "executed=1 AND raw_instruction_json LIKE '%方向分歧(BUY%'")
+    emit("debate_outcome_exec", "已执行·分歧·SHORT", "executed=1 AND raw_instruction_json LIKE '%方向分歧(SELL_SHOR%'")
+    emit("debate_outcome_exec", "已执行·2模型一致", "executed=1 AND raw_instruction_json LIKE '%2模型一致%'")
     # 2026-07-25 (信息源复盘): UE 按 self_tier 分层 — 八月终裁事件赛道 (HARD_EVENT 专营)
     #   判据消费端; 写侧 07-22 已落 origin.self_tier, 此处补读侧。n<30 不下结论。
     emit("ue_tier", "UE·HARD_EVENT", "raw_instruction_json LIKE '%universe_expansion%' AND raw_instruction_json LIKE '%HARD_EVENT%'")
