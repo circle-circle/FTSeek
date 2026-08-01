@@ -72,25 +72,28 @@ def _query_day(conn: sqlite3.Connection, day: str) -> dict:
     """聚合某一自然日 (localtime) 的 LLM 调用. 返回 {total, by_feature, by_model}."""
     where = "date(timestamp,'unixepoch','localtime')=?"
     rows = conn.execute(
-        f"SELECT feature, model, tokens_in, tokens_out, cost_usd, latency_ms, success "
+        f"SELECT feature, model, tokens_in, tokens_out, cost_usd, latency_ms, success, error_msg "
         f"FROM llm_calls WHERE {where}",
         (day,),
     ).fetchall()
 
-    total = {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cost": 0.0, "lat_sum": 0.0}
+    total = {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cost": 0.0, "lat_sum": 0.0, "trunc": 0}
     by_feature = defaultdict(lambda: {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0,
-                                      "cost": 0.0, "lat_sum": 0.0})
-    by_model = defaultdict(lambda: {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cost": 0.0})
+                                      "cost": 0.0, "lat_sum": 0.0, "trunc": 0})
+    by_model = defaultdict(lambda: {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cost": 0.0, "trunc": 0})
 
-    for feat, model, ti, to, cost, lat, ok in rows:
+    for feat, model, ti, to, cost, lat, ok, err in rows:
         ti = int(ti or 0); to = int(to or 0); cost = float(cost or 0)
         lat = float(lat or 0); ok = int(ok or 0)
+        # 2026-08-01 (failure DEB Q4 验收): 截断可查询 — B① 落审计的 error_msg 标记
+        trunc = 1 if "finish_reason=length" in (err or "") else 0
         for bucket in (total, by_feature[feat or "?"], by_model[model or "?"]):
             bucket["calls"] += 1
             bucket["ok"] += ok
             bucket["tok_in"] += ti
             bucket["tok_out"] += to
             bucket["cost"] += cost
+            bucket["trunc"] += trunc
         total["lat_sum"] += lat
         by_feature[feat or "?"]["lat_sum"] += lat
 
@@ -102,7 +105,23 @@ def _query_day(conn: sqlite3.Connection, day: str) -> dict:
     }
 
 
-def _build_message(today: dict, prev: dict) -> str:
+def _query_trunc_7d(conn: sqlite3.Connection, day: str) -> list:
+    """7 日窗口 per-feature 截断率 (failure DEB Q4 预注册验收: >5% 且 n≥10 → max_tokens 复核)."""
+    rows = conn.execute(
+        "SELECT feature, COUNT(*), SUM(CASE WHEN error_msg LIKE '%finish_reason=length%' THEN 1 ELSE 0 END) "
+        "FROM llm_calls WHERE date(timestamp,'unixepoch','localtime') BETWEEN date(?, '-6 days') AND date(?) "
+        "GROUP BY feature",
+        (day, day),
+    ).fetchall()
+    out = []
+    for feat, n, tr in rows:
+        n = int(n or 0); tr = int(tr or 0)
+        if n >= 10 and tr > 0:
+            out.append({"feature": feat or "?", "calls": n, "trunc": tr, "rate": tr / n})
+    return sorted(out, key=lambda x: x["rate"], reverse=True)
+
+
+def _build_message(today: dict, prev: dict, trunc_7d: list | None = None) -> str:
     t = today["total"]
     calls = t["calls"]
     if calls == 0:
@@ -147,7 +166,8 @@ def _build_message(today: dict, prev: dict) -> str:
         tok = s["tok_in"] + s["tok_out"]
         okr = (s["ok"] / s["calls"] * 100) if s["calls"] else 0
         flag = " ⚠️" if okr < 80 else ""
-        lines.append(f"{feat}: {s['calls']}次 {_fmt_tok(tok)}tok {_fmt_usd(s['cost'])} 成功{okr:.0f}%{flag}")
+        trunc_s = f" 截断{s['trunc']/s['calls']*100:.0f}%" if s["calls"] and s["trunc"] else ""
+        lines.append(f"{feat}: {s['calls']}次 {_fmt_tok(tok)}tok {_fmt_usd(s['cost'])} 成功{okr:.0f}%{trunc_s}{flag}")
 
     lines.append("")
     lines.append("── 按模型 ──")
@@ -155,6 +175,13 @@ def _build_message(today: dict, prev: dict) -> str:
     for model, s in models:
         tok = s["tok_in"] + s["tok_out"]
         lines.append(f"{model}: {s['calls']}次 {_fmt_tok(tok)}tok {_fmt_usd(s['cost'])}")
+
+    if trunc_7d:
+        lines.append("")
+        lines.append("── 截断率 (近7日, finish_reason=length) ──")
+        for r in trunc_7d:
+            mark = " 🔴>5% 复核 max_tokens" if r["rate"] > 0.05 else ""
+            lines.append(f"{r['feature']}: {r['trunc']}/{r['calls']} ({r['rate']*100:.1f}%){mark}")
 
     return "\n".join(lines)
 
@@ -174,10 +201,11 @@ def main(date=None, days_back=1, push=False, dry=False):
     try:
         today = _query_day(conn, target)
         prev = _query_day(conn, prev_day)
+        trunc_7d = _query_trunc_7d(conn, target)
     finally:
         conn.close()
 
-    msg = _build_message(today, prev)
+    msg = _build_message(today, prev, trunc_7d)
     print("=" * 60)
     print(msg)
     print("=" * 60)

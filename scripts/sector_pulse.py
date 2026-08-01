@@ -31,6 +31,7 @@ logger = logging.getLogger("sector_pulse")
 from app.utils.timezone import now_et  # noqa: E402
 
 OUT = REPO / "data" / "sector_pulse.json"
+HIST = REPO / "data" / "sector_pulse_history.jsonl"
 
 # SPDR 11 板块 + SMH 半导体 (07-27 教训: 芯片板块需独立粒度)
 SECTOR_ETFS = {
@@ -77,6 +78,14 @@ def main() -> int:
         with os.fdopen(fd, "w") as f:
             json.dump(result, f, ensure_ascii=False, indent=1)
         os.replace(tmp, str(OUT))
+        # 2026-08-01 (topup-veto DEB ④, 用户裁批准): 历史落盘 — 全量 12 板块读数每 30min
+        # append 一行, 纯记录侧零交易影响 (③板块 veto 阈值设计的攒料前提)。失败只告警,
+        # 历史可丢, 主文件不可假。
+        try:
+            with open(HIST, "a") as hf:
+                hf.write(json.dumps(result, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"pulse 历史落盘失败 (主文件不受影响): {e}")
         print(f"[sector_pulse] {result['asof_et']} ET | 弱: {', '.join(result['ranked'][:3])} "
               f"| 强: {', '.join(result['ranked'][-3:])}")
         return 0
