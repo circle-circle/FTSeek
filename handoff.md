@@ -89,6 +89,11 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-01 (复核之复核·Qoder, 用户令"另一模型更新了 请检查分析") · 855fd147 口径修复认账 + 一处勘误之勘误
+**认账 (核心修复正确且重要)**: direction_axes `triggered=1 → executed=1` ×5 处 — 我原口径选择有误: 全库两列不一致 34 行实测属实 (20 笔真成交漏算, 含 07-02~07-15 DA 批次 18 行有成交价+成交时间; 14 笔触发未成交反被混入"已执行"桶)。修后 fresh run 与落盘 scorecard JSON **逐键相等** (BUY n=136 entry 42.6%/−0.407, SHORT n=33 54.5%/+0.973)。pytest tests/ 1014 全过。**议题二B 证伪结论在新口径下复核依然成立**: rubric≥3 BUY n=40 35.0%/−1.1% vs ≤2 n=60 46.7%/−0.1% (JSON 解析复核, 区分力反向不变)。
+**勘误之勘误 (P2① 不成立)**: 其称"handoff 的 open 基准 hit 43.3% 任何口径不可复现 (实测35-37%)" — **我一次跑即精确复现 43.3%/−0.337%** (triggered=1, since 06-01, fwd_return_t1_open, n=127, 与原自检口径一致); 换 5 种口径也复现不出其 35-37% (intraday_open 47.0% / 全量 45.9% / executed 45.5% / 07-01窗口 44.3%/41.3%)。原句无水分, 是**旧口径下的正确算术**; 但权威读数应以新口径 scorecard 为准 (BUY open 44.3% n=106) 这一点其结论方向对。
+**列账 (未动)**: ①open 孪生回填缺口 68 行实测属实 (全在 07-24~07-30, replay_daily 缓存 07-24 后断更所致), 08-07 用 open 基准前须补; ②在产服务 (PID 28763, 21:23 启) 早于其提交 (22:22), 进程内仍是旧 direction_axes — 仅影响周五周报推送块, 周六 scorecard cron 起新进程自动吃新码, **下次例行重启前无需专程重启**; ③cron 注册仍待用户。
+
 ### 2026-08-01 (独立复核·第三模型, 用户令"检查最新变更是否合理") · 四提交复核 → P1-① 口径修复落地 + 两处数字勘正
 **复核对象**: 313002c7 (四议题 rulers) / a5d85cdf (Simpson 勘误) / a06cd36a (三批次) / 26c012cd (ATR 单位)。独立重跑数据，不引用作者数字。
 **修复 (P1-①, 已落地)**: `app/review/direction_axes.py` 三函数+质量轴共 **5 处 `COALESCE(triggered,0)=1` → `executed`**。实锤: executed=1 系 `try_claim_execution` 原子抢占 (db.py:281, 成交事实); triggered=1 系盘中条件穿越 (auto_execute), 两列全库不一致 34 行 (6月触发未成交 17 + **07-02~07-15 已真成交 DA 单 17 笔 triggered=0 被漏**)。修后 basis_quadrant_exec: BUY n 122→136 (hit 42.6%/-0.407) / SHORT 29→33 (54.5%/+0.973), 与 DB 对数一致。**此列混用恰是律1家族史重演, scorecard 孪生行 (executed=1) 与方向轴 (triggered=1) 此前永久错位**。1014 passed (tests/)。**附: 裸 `pytest` 收集会被 `scripts/archive/` 27 个退役 test_*.py 污染 (import 已删 voting 模块 → INTERNALERROR), 正式跑法必须 `pytest tests/`; pytest.ini ignore 建议留 08-07 后做减法时落**。
