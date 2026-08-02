@@ -55,7 +55,9 @@ MFE_STALL_LIVE_SINCE = "2026-07-24"  # 三门上线日 (entry ET date >= 此日 
 # ────────────────────────────────────────────────────────────
 
 def _load_configs() -> tuple[dict, dict]:
-    factor_rules = yaml.safe_load(HORIZON_YAML.read_text()).get("factor_exit_rules", {})
+    hz = yaml.safe_load(HORIZON_YAML.read_text())
+    factor_rules = hz.get("factor_exit_rules", {})
+    short_hz = hz.get("short_horizon", {}) or {}
     uni = yaml.safe_load(UNIFIED_YAML.read_text())
     pb = (uni or {}).get("playbook", {}).get("execution_parameters", {}) or {}
     params = {
@@ -66,6 +68,8 @@ def _load_configs() -> tuple[dict, dict]:
         "stall_mfe_pct": float(pb.get("mfe_stall_exit_mfe_pct", 0.5)),
         "profit_override_threshold": float(pb.get("profit_override_threshold_pct", 1.5)),
         "profit_override_dd": float(pb.get("profit_override_drawdown_pct", 0.5)),
+        # 方案 E: 隔夜跳空止损线 (生产 pipeline.py:5106 同款, short_horizon 未配置时默认 3.0)
+        "overnight_gap_stop_pct": float(short_hz.get("overnight_gap_stop_pct", 3.0)),
     }
     return factor_rules, params
 
@@ -87,6 +91,13 @@ def _variants() -> list[dict]:
             v.append({"name": f"early_tight_{win}m_mfe{gate}",
                       "early_tight": {"window": win, "sl_pct": 1.0, "mfe_gate": gate}})
     v.append({"name": "mfe_stall_off", "mfe_stall": False})
+    # ── 方案 E (DEB-20260802 §六 用户终裁 2026-08-02: 执行, max_hold=2, 周五平, 财报先接受) ──
+    # e_step1: 赢家隔夜 (生产 :5318 winners-only 语义), 输家 EOD 照砍, TIME_EXIT/MFE_STALL 保留
+    # e_full:  SHORT 时间退出全退役 (PRE_CLOSE/TIME_EXIT/MFE_STALL), 只留价格退出 + MAX_HOLD + 周五平
+    # 共同: MAX_HOLD deadline = 第 (1+max_hold_days) 个交易日盘初 (生产 nth_trading_day_after 语义),
+    #       隔夜 gap_stop 3%, 周末/长假不过夜 (下一交易日 >2 日历日 → 当周最后收盘平)
+    v.append({"name": "e_step1_winners_overnight", "e_mode": "step1", "max_hold_days": 2})
+    v.append({"name": "e_full_price_exits", "e_mode": "full", "max_hold_days": 2})
     return v
 
 
@@ -192,8 +203,10 @@ def fetch_bars(ctx, symbol: str, day: str, refresh: bool = False) -> list[dict] 
              "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in bars]
 
 
-def collect_bars(trades: list[dict], refresh: bool = False) -> dict[tuple[str, str], list[dict]]:
-    """按需抓取 (symbol, day) → bars; 覆盖 entry→exit 全部工作日."""
+def collect_bars(trades: list[dict], refresh: bool = False,
+                 e_days: int = 0) -> dict[tuple[str, str], list[dict]]:
+    """按需抓取 (symbol, day) → bars; 覆盖 entry→exit 全部工作日.
+    e_days>0: SHORT 加抓 entry 后 e_days 个日历日 (方案 E 隔夜回放需要 T+1/T+2 bars)."""
     need: set[tuple[str, str]] = set()
     for tr in trades:
         d = tr["entry_et"].date()
@@ -202,6 +215,13 @@ def collect_bars(trades: list[dict], refresh: bool = False) -> dict[tuple[str, s
             if d.weekday() < 5:
                 need.add((tr["symbol"], d.strftime("%Y-%m-%d")))
             d += timedelta(days=1)
+        if e_days > 0 and tr["direction"] == "SHORT":
+            d2 = tr["entry_et"].date()
+            fwd = d2 + timedelta(days=e_days)
+            while d2 <= fwd:
+                if d2.weekday() < 5:
+                    need.add((tr["symbol"], d2.strftime("%Y-%m-%d")))
+                d2 += timedelta(days=1)
     from futu import OpenQuoteContext
     host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
     port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
@@ -265,6 +285,10 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
     if stall_on is None:  # baseline: 按交易日期规则
         stall_on = tr["entry_et"].strftime("%Y-%m-%d") >= MFE_STALL_LIVE_SINCE
     et_cfg = var.get("early_tight")  # None=baseline (live 关闭中)
+    # 方案 E (DEB-20260802): 仅 SHORT 生效 (S12: BUY 显式不变); e_mode None=不改行为
+    e_mode = var.get("e_mode") if direction == "SHORT" else None
+    max_hold_days = int(var.get("max_hold_days", 2))
+    gap_stop_pct = float(var.get("gap_stop_pct") or params["overnight_gap_stop_pct"])
 
     # TP RR 门禁 (与实盘一致: RR<min_tp_rr 忽略 TP)
     tp_active = False
@@ -303,10 +327,33 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
             return "SL_TRAIL_LOCK"
         return "SL_BREAKEVEN"
 
-    for bar in bars:
+    prev_day = None
+    day_idx = 0  # 1-based 交易日序 (entry=1); 生产 MAX_HOLD deadline=T+max_hold → day_idx>max_hold 盘初起强平
+    n_bars = len(bars)
+    for i_bar, bar in enumerate(bars):
         t = bar["t"]
         held_min = (t - tr["entry_et"]).total_seconds() / 60
         mins_from_open = (t - t.replace(hour=9, minute=30, second=0)).total_seconds() / 60
+
+        if e_mode:
+            cur_day = t.date()
+            if prev_day is None:
+                day_idx = 1
+            elif cur_day != prev_day:
+                day_idx += 1
+                # ── 新交易日盘初链 (生产规则序: SL→TP→gap_stop; gap穿越 SL/TP 按开盘价成交,
+                #    轮询类退出按首 bar close ≈ 9:31 首次轮询市价单) ──
+                eff0 = _active_sl(peak_profit_pct, held_min, 0)
+                if eff0 > 0 and (bar["o"] - eff0) * sign <= 0:
+                    return {"exit_price": bar["o"] * (1 - slip * sign), "reason": _classify_sl(eff0),
+                            "held_min": held_min, "mfe_pct": peak_profit_pct}
+                if tp_active and (bar["o"] - tp) * sign >= 0:
+                    return {"exit_price": bar["o"] * (1 - slip * sign), "reason": "TAKE_PROFIT",
+                            "held_min": held_min, "mfe_pct": peak_profit_pct}
+                if _pct(bar["c"]) <= -gap_stop_pct:
+                    return {"exit_price": bar["c"] * (1 - slip * sign), "reason": "OVERNIGHT_GAP_STOP",
+                            "held_min": held_min, "mfe_pct": peak_profit_pct}
+            prev_day = cur_day
 
         fav_px = bar["h"] if direction == "LONG" else bar["l"]
         adv_px = bar["l"] if direction == "LONG" else bar["h"]
@@ -329,22 +376,45 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
                     exited = {"exit_price": eff * (1 - slip * sign),
                               "reason": _classify_sl(eff)}
                     break
+                # 方案 E: 隔夜仓 gap_stop 每轮询生效 (生产规则2, 序在 SL 后);
+                #   宽SL桶(SL>3%)次日起此线先于 SL 收敛
+                if e_mode and day_idx >= 2 and _pct(px) <= -gap_stop_pct:
+                    gap_line = entry * (1 - gap_stop_pct / 100 * sign)
+                    exited = {"exit_price": gap_line * (1 - slip * sign),
+                              "reason": "OVERNIGHT_GAP_STOP"}
+                    break
         if exited:
             exited["held_min"] = held_min
             exited["mfe_pct"] = peak_profit_pct
             return exited
 
         # ── bar close 时间类退出 (优先级: PRE_CLOSE > MFE_STALL > TIME_EXIT) ──
+        # 方案 E: e_full 对 SHORT 全退役; e_step1 保留但 PRE_CLOSE 赢家跳过 (生产 :5318)
         close_pct = _pct(bar["c"])
-        if t.hour > 15 or (t.hour == 15 and t.minute >= 52):
-            return {"exit_price": bar["c"], "reason": "PRE_CLOSE_EXIT",
-                    "held_min": held_min, "mfe_pct": peak_profit_pct}
-        if stall_on and held_min >= params["stall_minutes"] \
+        e_time_retired = (e_mode == "full")
+        if not e_time_retired and (t.hour > 15 or (t.hour == 15 and t.minute >= 52)):
+            if e_mode and close_pct > 0:
+                pass  # e_step1: 赢家持夜 (生产 winners-only 语义)
+            else:
+                return {"exit_price": bar["c"], "reason": "PRE_CLOSE_EXIT",
+                        "held_min": held_min, "mfe_pct": peak_profit_pct}
+        if not e_time_retired and stall_on and held_min >= params["stall_minutes"] \
                 and peak_profit_pct < params["stall_mfe_pct"] and close_pct < 0:
             return {"exit_price": bar["c"], "reason": "MFE_STALL_EXIT",
                     "held_min": held_min, "mfe_pct": peak_profit_pct}
-        if held_min > time_exit_min and (not time_exit_only_loss or close_pct < 0):
+        if not e_time_retired and held_min > time_exit_min \
+                and (not time_exit_only_loss or close_pct < 0):
             return {"exit_price": bar["c"], "reason": "TIME_EXIT",
+                    "held_min": held_min, "mfe_pct": peak_profit_pct}
+        # 方案 E: MAX_HOLD 兜底 — deadline 日首个 bar close 强平 (生产盘初轮询语义,
+        #   序在 TIME_EXIT 后: e_step1 隔夜输家在 T+2 盘初先被 TIME_EXIT 收编)
+        if e_mode and day_idx > max_hold_days:
+            return {"exit_price": bar["c"], "reason": "MAX_HOLD",
+                    "held_min": held_min, "mfe_pct": peak_profit_pct}
+        # 方案 E: 周末/长假护栏 (S5) — 下一交易日距今 >2 日历日 → 当周最后收盘平, 不过周末
+        if e_mode and i_bar + 1 < n_bars \
+                and (bars[i_bar + 1]["t"].date() - t.date()).days > 2:
+            return {"exit_price": bar["c"], "reason": "FRIDAY_FLAT",
                     "held_min": held_min, "mfe_pct": peak_profit_pct}
 
     last = bars[-1]
@@ -378,6 +448,11 @@ def aggregate(results: list[dict]) -> dict:
     losses = [p for p in pnls if p <= 0]
     avg_win = sum(wins) / len(wins) if wins else 0.0
     avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+    by_reason: dict = {}
+    for r in results:
+        d = by_reason.setdefault(r["reason"], {"n": 0, "sum_net": 0.0})
+        d["n"] += 1
+        d["sum_net"] = round(d["sum_net"] + r["net"], 2)
     return {
         "n": n,
         "sum_net": round(sum(pnls), 2),
@@ -386,6 +461,7 @@ def aggregate(results: list[dict]) -> dict:
         "avg_win": round(avg_win, 2),
         "avg_loss": round(avg_loss, 2),
         "rr": round(avg_win / avg_loss, 2) if avg_loss > 0 else None,
+        "by_reason": by_reason,
         "killed_winners": sum(1 for r in results if r["live_net"] > 0 and r["net"] <= 0),
         "rescued_losers": sum(1 for r in results if r["live_net"] <= 0 and r["net"] > 0),
         "small_n_warning": n < 30,
@@ -402,6 +478,8 @@ def main() -> None:
     ap.add_argument("--until", default=None)
     ap.add_argument("--slippage-bps", type=float, default=3.0)
     ap.add_argument("--refresh-bars", action="store_true")
+    ap.add_argument("--e-days", type=int, default=6,
+                    help="方案E: SHORT 加抓 entry 后 N 个日历日 bars (隔夜回放)")
     ap.add_argument("--out", default=str(REPO / "data" / "exit_replay_latest.json"))
     args = ap.parse_args()
 
@@ -411,24 +489,30 @@ def main() -> None:
     if not trades:
         return
 
-    bars_map = collect_bars(trades, args.refresh_bars)
+    bars_map = collect_bars(trades, args.refresh_bars, e_days=args.e_days)
 
-    # 组装每笔的 bar 序列 (entry→exit 跨日拼接) + 因子退出配置
+    # 组装每笔的 bar 序列 + 因子退出配置
+    # _bars: entry→live exit (baseline 保真, 口径与 07-25 版一致);
+    # _bars_ext: entry→entry+e_days (方案E隔夜回放用; baseline 不受 ext 影响 — PRE_CLOSE 日0先收编)
     runnable, skipped = [], 0
     for tr in trades:
-        seq: list[dict] = []
+        seq_ext: list[dict] = []
+        end_ext = max(tr["exit_et"].date(), tr["entry_et"].date() + timedelta(days=args.e_days))
         d = tr["entry_et"].date()
-        while d <= tr["exit_et"].date() and (d - tr["entry_et"].date()).days <= 6:
+        while d <= end_ext and (d - tr["entry_et"].date()).days <= max(6, args.e_days):
             day_bars = bars_map.get((tr["symbol"], d.strftime("%Y-%m-%d")))
             if day_bars:
-                seq.extend(day_bars)
+                seq_ext.extend(day_bars)
             d += timedelta(days=1)
         # 跳过入场 bar (含入场分钟): 从下一分钟开始 (实盘 ~60s 轮询等效)
-        seq = [b for b in seq if b["t"] > tr["entry_et"].replace(second=0, microsecond=0)]
+        seq_ext = [b for b in seq_ext if b["t"] > tr["entry_et"].replace(second=0, microsecond=0)]
+        exit_day = tr["exit_et"].date()
+        seq = [b for b in seq_ext if b["t"].date() <= exit_day]
         if len(seq) < 5:
             skipped += 1
             continue
         tr["_bars"] = seq
+        tr["_bars_ext"] = seq_ext if len(seq_ext) >= 5 else seq
         tr["_exit_cfg"] = _get_factor_exit_config(tr["conditions"], factor_rules,
                                                   direction=tr["direction"])
         tr["_fee"] = _fee_of(tr)
@@ -484,27 +568,78 @@ def main() -> None:
     }
 
     # ── 变体网格: 双序各跑 (含 07-20 分层 + pess 逐笔明细) ──
+    baseline_rows: dict = {}
+    e_rows: dict = {}
     for var in variants:
+        use_ext = bool(var.get("e_mode"))
         for ordering in ("pess", "opt"):
             results = []
             for tr in runnable:
-                rp = replay_trade(tr, tr["_bars"], tr["_exit_cfg"], var, params,
+                bars = tr["_bars_ext"] if use_ext else tr["_bars"]
+                rp = replay_trade(tr, bars, tr["_exit_cfg"], var, params,
                                   ordering, args.slippage_bps)
                 sign = 1.0 if tr["direction"] == "LONG" else -1.0
                 net = tr["qty"] * sign * (rp["exit_price"] - tr["entry"]) - tr["_fee"]
+                # 右删失: E变体SHORT仓 REPLAY_EOD = 前向 bars 尚未存在 (近2日入场),
+                #   非真实退出 — MAX_HOLD/FRIDAY_FLAT 本会在未来交易日收编
+                censored = use_ext and tr["direction"] == "SHORT" and rp["reason"] == "REPLAY_EOD"
                 results.append({"id": tr["id"], "day": tr["entry_et"].strftime("%Y-%m-%d"),
-                                "symbol": tr["symbol"], "net": round(net, 2),
+                                "symbol": tr["symbol"], "dir": tr["direction"], "net": round(net, 2),
                                 "live_net": tr["live_pnl"], "reason": rp["reason"],
-                                "held_min": round(rp["held_min"], 1)})
+                                "held_min": round(rp["held_min"], 1), "censored": censored})
             entry = report["variants"].setdefault(var["name"], {})
             entry[ordering] = aggregate(results)
             entry[f"{ordering}_recent"] = aggregate(
                 [r for r in results if r["day"] >= SPLIT_DATE])
+            entry[f"{ordering}_short"] = aggregate(
+                [r for r in results if r["dir"] == "SHORT" and not r["censored"]])
+            n_cens = sum(1 for r in results if r["censored"])
+            if n_cens:
+                entry["n_censored"] = n_cens
+            if var["name"] == "live_baseline":
+                baseline_rows[ordering] = results
+            if use_ext:
+                e_rows.setdefault(var["name"], {})[ordering] = results
             if ordering == "pess":
                 entry["per_trade"] = [
-                    {"id": r["id"], "sym": r["symbol"], "day": r["day"],
+                    {"id": r["id"], "sym": r["symbol"], "day": r["day"], "dir": r["dir"],
                      "net": r["net"], "live": r["live_net"], "reason": r["reason"],
                      "held": r["held_min"]} for r in results]
+
+    # ── 方案 E 闸门读数 (DEB-20260802 三道闸之门1: 期望>0 且非单尾驱动) ──
+    # 成对Δ: 同一批未删失 SHORT 上 E vs baseline 逐笔差 (删失交易两端同剔, 口径干净)
+    e_names = [v["name"] for v in variants if v.get("e_mode")]
+    if e_names:
+        gate: dict = {}
+        for nm in e_names:
+            row: dict = {}
+            for o in ("pess", "opt"):
+                bmap = {r["id"]: r for r in baseline_rows.get(o, [])}
+                pairs = [(r, bmap[r["id"]]) for r in e_rows[nm][o]
+                         if r["dir"] == "SHORT" and not r["censored"] and r["id"] in bmap]
+                n_cens = sum(1 for r in e_rows[nm][o] if r["dir"] == "SHORT" and r["censored"])
+                if not pairs:
+                    continue
+                n = len(pairs)
+                e_sum = sum(r["net"] for r, _ in pairs)
+                b_sum = sum(b["net"] for _, b in pairs)
+                e_wr = sum(1 for r, _ in pairs if r["net"] > 0) / n
+                b_wr = sum(1 for _, b in pairs if b["net"] > 0) / n
+                by_reason: dict = {}
+                for r, _ in pairs:
+                    d = by_reason.setdefault(r["reason"], {"n": 0, "sum_net": 0.0})
+                    d["n"] += 1
+                    d["sum_net"] = round(d["sum_net"] + r["net"], 2)
+                row[o] = {"n": n, "n_censored": n_cens,
+                          "sum_net": round(e_sum, 2), "base_sum": round(b_sum, 2),
+                          "d_sum": round(e_sum - b_sum, 2),
+                          "exp": round(e_sum / n, 2),
+                          "d_exp": round((e_sum - b_sum) / n, 2),
+                          "wr": round(e_wr, 3),
+                          "d_wr_pp": round((e_wr - b_wr) * 100, 1),
+                          "by_reason": by_reason}
+            gate[nm] = row
+        report["e_gate"] = gate
 
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1))
     print(f"\n产出: {args.out}")
@@ -542,6 +677,20 @@ def main() -> None:
               f"{p['killed_winners']:>3}/{o['killed_winners']:<2}"
               f"{p['rescued_losers']:>3}/{o['rescued_losers']:<2} "
               f"{r_d[0]:>+4.0f}~{r_d[1]:<+4.0f}{flag}")
+
+    if e_names:
+        print(f"\n[方案E·闸门1读数] SHORT-only 成对Δ (同批未删失交易上 E vs baseline, 两端同剔)")
+        for nm in e_names:
+            for o in ("pess", "opt"):
+                g = report["e_gate"][nm].get(o)
+                if not g:
+                    continue
+                rs = ", ".join(f"{k}×{v2['n']}(${v2['sum_net']:+.0f})"
+                               for k, v2 in sorted(g["by_reason"].items()))
+                cens = f" 剔删失×{g['n_censored']}" if g.get("n_censored") else ""
+                print(f"  {nm}[{o}] n={g['n']}{cens} net=${g['sum_net']:+.0f} (Δ{g['d_sum']:+.0f}) "
+                      f"exp=${g['exp']:+.2f}/笔 (Δ{g['d_exp']:+.2f}) "
+                      f"WR={g['wr']:.1%} (Δ{g['d_wr_pp']:+.1f}pp)\n    {rs}")
 
 
 if __name__ == "__main__":

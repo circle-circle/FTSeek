@@ -90,6 +90,9 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (终裁执行+门1·Qoder, 用户令"执行") · DEB-20260802 §六终裁+§五.十二 — E1 回放 FAIL, 试点不启动, E 归档
+**终裁落档**: E 批准走三道闸 (max_hold=2/周五EOD平/财报先接受+观察/Step2不预承诺/律5豁免/SIM上界口径)。**门1 E1 回放实施+执行**: exit_replay_backtest.py +E变体 (~120行: e_step1赢家隔夜/e_full时间退出全退役, 次日bars+6日, gap穿越开盘价成交, MAX_HOLD=T+2盘初镜像 nth_trading_day_after, 周五/长假护栏>2日 gap, 右删失剔除+成对Δ同批对照), 全史 183 笔 (SHORT 回放 n=39, ≥30 纪律线上)。**读数**: e_step1 Δ+$625/ΔWR −7.7pp vs e_full Δ+$526 — **但分布解剖证伪**: step1 改善1/恶化3/持平35 (全部增量=MSFT 06-24 单笔 +$694, "非单尾驱动"判据不满足); **≥07-20 当前配置时代 两变体改善 0 笔** (step1 −$16/full −$215); 机制触发率仅 3/39 (赢家盘内已被 trailing 收编, 活不到 EOD 决策点 → 真钱试点 n≈2-3 统计胎死腹中); e_full 隔夜仓 4/9 触发 OVERNIGHT_GAP_STOP −$529 (跳空尾部=常态非尾部)。**门1 裁决: FAIL → 按预承诺 Step1 真钱试点不启动, E 全案归档搁置维持 D (不动)**; 重启条件=SHORT 供给结构变化 (盘内 trailing 不再提前收编赢家) 时复跑门1 零成本。副产: 隔夜风险结构量化入库 + 回放器 E 变体/成对Δ/删失剔除可复用。生产零改动 (record-only)。
+
 ### 2026-08-02 (实施计划核验·Qoder, 用户令"确认不重复造轮子+Pareto检查实施计划") · DEB-20260802 §五.十一 — 轮子盘点通过 + Step1 缩至 35-50 行
 **轮子盘点 (9 组件源码锚点)**: 8 个有在产轮子 — E1 回放器=exit_replay_backtest.py 吸收变体 (_variants/_effective_sl/fee/bar缓存, 主体=次日bars ~50-80行); 隔夜开关+skip 双收口接线 ~5-10行; gap_stop 对 skip_allowed 自动激活零改动; MAX_HOLD=yaml 1→2 零代码; **在仓 guard=照搬 order_executor.py:3437 P0 持仓去重模式 (06-14, 根因与我们完全相同: 双重平仓竞态/幽灵复活/覆写, "有就跳过"+fail-close) ~15行**; 手动仓/订阅/翻转 guard 全零改动; **唯一新机制=周五 EOD 全平 ~8行** (全库周末概念仅在 UI/watchdog, 交易路径无); shadow_eod_replay 属旧 shadow mirror 域已排除勿误用。**Pareto 裁剪**: ①Step1 比原估更小 — EOD"盈利才跳过"语义现成=赢家隔夜零改动, 50-70→**35-50 行**; ②砍 C-shadow 与回放器合并 (exit_shadow 是另一套, scope creep); ③Step2/财报/参数全部推迟或观察。**20% 关键路径 = E1 变体 + skip 接线 + guard + 周五规则**, 核验结论: 不重复造轮子**通过**, 计划可执行。待用户终裁。
 
