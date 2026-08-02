@@ -62,6 +62,13 @@ def main() -> int:
         since = sys.argv[sys.argv.index("--since") + 1]
     conn = sqlite3.connect(str(DB))
 
+    # RFC-062 G1-1 (2026-08-02): 滑点折算假设 — 已执行口径附折算后读数 (round-trip = 2×)
+    try:
+        from app.core.config_container import get_config as _gc
+        _hc_bps = float(_gc().get_dotted("live_readiness.slippage_haircut_bps", 15))
+    except Exception:
+        _hc_bps = 15.0
+
     report = {"generated_at": datetime.now().isoformat(), "since": since,
               "benchmark": "命中=方向调整后 T+1 收益>0; 50%=掷硬币基线", "sections": {}}
 
@@ -71,10 +78,13 @@ def main() -> int:
 
     def emit(section, label, where, params=(), exec_only=False):
         d = q(conn, f"date>=? AND {where}", (since, *params), exec_only=exec_only)
+        if exec_only and d["dir_ret_t1"] is not None:
+            d["dir_ret_t1_slip_adj"] = round(d["dir_ret_t1"] - 2 * _hc_bps / 100.0, 3)
         report["sections"].setdefault(section, {})[label] = d
         if d["n"]:
+            _adj = f"  折算{_hc_bps:g}×2:{d['dir_ret_t1_slip_adj']:+.3f}" if "dir_ret_t1_slip_adj" in d else ""
             print(f"{label:<26} {d['n']:>5} {d['hit_t1']:>9} {d['dir_ret_t1']:>12} "
-                  f"{str(d['hit_t3'] or '-'):>9} {str(d['dir_ret_t3'] or '-'):>9}")
+                  f"{str(d['hit_t3'] or '-'):>9} {str(d['dir_ret_t3'] or '-'):>9}{_adj}")
 
     # ── R1 (2026-08-02): 头条=交易口径 (仅已执行) ──
     #   混合口径把未执行信号的 fwd 从"市场从未到过的计划价"起算 (触发条件化伪影:

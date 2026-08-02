@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-08-02T19:14:51.784203",
+ "generated_at": "2026-08-02T22:09:18.438046",
  "since": "2026-07-01",
  "benchmark": "命中=方向调整后 T+1 收益>0; 50%=掷硬币基线",
  "sections": {
@@ -9,42 +9,48 @@
     "hit_t1": 45.0,
     "dir_ret_t1": -0.137,
     "hit_t3": 50.7,
-    "dir_ret_t3": -0.019
+    "dir_ret_t3": -0.019,
+    "dir_ret_t1_slip_adj": -0.437
    },
    "已执行·BUY": {
     "n": 136,
     "hit_t1": 42.6,
     "dir_ret_t1": -0.406,
     "hit_t3": 47.5,
-    "dir_ret_t3": -0.245
+    "dir_ret_t3": -0.245,
+    "dir_ret_t1_slip_adj": -0.706
    },
    "已执行·SELL_SHORT": {
     "n": 33,
     "hit_t1": 54.5,
     "dir_ret_t1": 0.973,
     "hit_t3": 63.3,
-    "dir_ret_t3": 0.882
+    "dir_ret_t3": 0.882,
+    "dir_ret_t1_slip_adj": 0.673
    },
    "已执行·DA": {
     "n": 134,
     "hit_t1": 44.8,
     "dir_ret_t1": -0.121,
     "hit_t3": 49.2,
-    "dir_ret_t3": 0.049
+    "dir_ret_t3": 0.049,
+    "dir_ret_t1_slip_adj": -0.421
    },
    "已执行·UE": {
     "n": 34,
     "hit_t1": 47.1,
     "dir_ret_t1": -0.047,
     "hit_t3": 57.1,
-    "dir_ret_t3": -0.319
+    "dir_ret_t3": -0.319,
+    "dir_ret_t1_slip_adj": -0.347
    },
    "已执行·topup": {
     "n": 1,
     "hit_t1": 0.0,
     "dir_ret_t1": -5.318,
     "hit_t3": null,
-    "dir_ret_t3": null
+    "dir_ret_t3": null,
+    "dir_ret_t1_slip_adj": -5.618
    }
   },
   "total": {
@@ -801,6 +807,7 @@
   "dir_ret_t1": -0.137,
   "hit_t3": 50.7,
   "dir_ret_t3": -0.019,
+  "dir_ret_t1_slip_adj": -0.437,
   "mixed_caliber_hit_t1": 58.3,
   "artifact_inflation_pp": 13.3,
   "note": "混合口径虚高=触发条件化伪影 (未执行 fwd 从未到达的计划价起算)"

@@ -87,12 +87,12 @@
 
 ## 数据依赖 (在建清单, 验证期合规: 纯测量/影子, 零行为改动)
 
-1. arrival_mid 下单时刻落库 (`app/web_dashboard/order/executor.py` 挂钩) — **门 2 数据前提**
-2. scorecard 净滑点折算期望列 (`direction_hit_scorecard.py` / `exit_scorecard.py`) — 门 1 G1-1 读数
+1. arrival_mid 下单时刻落库 — **✅ 2026-08-02 核实已在产, 取消重建** (playbook_service.py:948-961/:1141-1157, 07-20 起 96% 覆盖)
+2. scorecard 净滑点折算期望列 — **✅ 2026-08-02 建成** (`dir_ret_t1_slip_adj` / `expectancy_slip_adj`)
 3. ~~PDT 滚动计数报表~~ **A1 取消** — PDT 不适用, 该报表不再支撑任何决策 (做减法纪律)
-4. SSR 影子标记 (昨收跌 ≥10% 的 SHORT 单标"实盘会被拒", 只记录不拦截)
-5. 对账脚本 `scripts/live_reconcile_check.py` + cron 盘中 30min — G2-3
-6. 配置骨架 `unified_config.yaml: live_readiness:` (slippage_haircut_bps / risk_pct_per_trade / scaling_ladder 占位)
+4. SSR 影子标记 — **✅ 2026-08-02 建成** (`scripts/ssr_shadow_daily.py`, 只记录不拦截; 首周 17 条 SHORT 标 16, 5 条日低触 −10%)
+5. 对账脚本 — **✅ 2026-08-02 建成** (`scripts/live_reconcile_check.py` + `data/audit/reconcile_live.jsonl`; cron 待用户注册)
+6. 配置骨架 `unified_config.yaml: live_readiness:` — **✅ 2026-08-02 建成** (haircut/risk_pct/pilot/gate2/ladder + reconcile_external_symbols 白名单)
 
 ## 留裁决清单 (不在本预注册授权内)
 

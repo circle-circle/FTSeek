@@ -1,0 +1,75 @@
+{
+  "since": "2026-07-03",
+  "pnl_basis": "net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)",
+  "confusion": {
+    "n": 163,
+    "held_to_close_wr": 46.0,
+    "executed_wr": 50.9,
+    "edge_leak_pts": -4.9,
+    "killed_winners": 16,
+    "saved_losers": 24,
+    "net_flipped": -8,
+    "killed_avg_ret_pct": 0.59,
+    "cm": {
+      "pos_win": 59,
+      "pos_loss": 16,
+      "neg_win": 24,
+      "neg_loss": 64
+    }
+  },
+  "by_buy": {
+    "n": 137,
+    "held_to_close_wr": 45.3,
+    "executed_wr": 51.8,
+    "edge_leak_pts": -6.6,
+    "killed_winners": 12,
+    "saved_losers": 21,
+    "net_flipped": -9,
+    "killed_avg_ret_pct": 0.54,
+    "cm": {
+      "pos_win": 50,
+      "pos_loss": 12,
+      "neg_win": 21,
+      "neg_loss": 54
+    }
+  },
+  "by_short": {
+    "n": 26,
+    "held_to_close_wr": 50.0,
+    "executed_wr": 46.2,
+    "edge_leak_pts": 3.8,
+    "killed_winners": 4,
+    "saved_losers": 3,
+    "net_flipped": 1,
+    "killed_avg_ret_pct": 0.75,
+    "cm": {
+      "pos_win": 9,
+      "pos_loss": 4,
+      "neg_win": 3,
+      "neg_loss": 10
+    }
+  },
+  "payoff": {
+    "n": 173,
+    "win_rate": 41.0,
+    "avg_win": 25.55,
+    "avg_loss": -28.36,
+    "rr": 0.9,
+    "breakeven_rr": 1.44,
+    "rr_gap": -0.54,
+    "expectancy_per_trade": -6.23,
+    "avg_notional": 3535.73,
+    "slip_haircut_bps": 15.0,
+    "expectancy_slip_adj": -16.84,
+    "total_pnl": -1078.52,
+    "profit_factor": 0.63
+  },
+  "g4_survival": {
+    "max_drawdown_pct": 1.23,
+    "max_drawdown_ok": true,
+    "max_consecutive_losses": 12,
+    "consecutive_losses_ok": false,
+    "verdict": "FAIL"
+  },
+  "timestamp": "2026-08-02T22:09:19.121539"
+}

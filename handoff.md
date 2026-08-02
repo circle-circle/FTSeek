@@ -90,6 +90,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (RFC-062 在建清单执行·Qoder, 用户令"继续 并说明") — ①⑥已在产取消 · ②折算列上岗 · ④SSR影子 · ⑤对账脚本+外部持仓发现
+- **①arrival_mid ⑥幂等 已在产, 取消重建**: playbook_service.py:948-961 下单前抓 bid/ask 中价, :1141-1157 方向调整 slippage_bps 落 `metadata_json.execution` (07-20 起 96% 覆盖, SIM 均值+3.1/|9.9|bps); :1024 `try_claim_execution` 已幂等。做减法: 不重复建设。
+- **②折算列上岗 (门1口径)**: direction_hit_scorecard 每行增 `dir_ret_t1_slip_adj` (折算15×2bps); exit_scorecard 增 `expectancy_slip_adj` (期望−avg名义×30bps)。配置 `live_readiness.slippage_haircut_bps: 15`。**门1读数**: SHORT +0.973%→折算+0.673% (活) · BUY −0.406%→−0.706% (不过) · 总体 −0.137%→−0.437% (不过) · 退出期望 −$6.23→−$16.84。
+- **④SSR 影子标记** (`scripts/ssr_shadow_daily.py`, 新建): EOD 给当日 SHORT 指令打 `ssr_shadow` {would_trigger, prev_close, day_low, caliber} 落 raw_instruction_json, 幂等, 自动选最近未标日。**首周读数**: 07-27~31 共 17 条 SHORT, 16 可查, **5 条日低触及 −10% (≈31%)** — 口径为"日低曾触线"保守上界 (非指令时刻状态), 实盘 G2-2 拒单率口径参考。
+- **⑤实盘对账** (`scripts/live_reconcile_check.py`, 新建): broker 持仓 (manual_order_service 在产连接) vs open_positions 三元组对比, 漂移/查询失败写 `data/audit/reconcile_live.jsonl` + PushHub (状态变化才告警)。**首跑发现**: broker 4 仓全部外部 (共享 SIM 账户) — HK.00700/00981 (本系统不交易港股); US.SNDK LONG 44 但系统史上全 SHORT 且笔笔已平 (数学上不可能残留); US.BABA 50 股不匹配任何系统手数 (33/21/23/22) 且 07-02 有 BROKER_GHOST_CLOSE。白名单 `live_readiness.reconcile_external_symbols` (config 可删行恢复告警) → 状态 ok, 漂移 0。
+- **futu SDK 退不出坑**: 两脚本均 `os._exit(rc)` 硬退出 (后台线程阻解释器, reconcile 曾 exit 124)。
+- **待用户注册 cron**: SSR `30 4 * * 2-6` (EOD 后) · 对账 `*/30 21-23,0-4 * * 2-6` (盘中, 建议行见脚本 docstring)。
+
 ### 2026-08-02 (PDT 守卫关闭·Qoder, 用户裁"按照建议关闭") — 单点开关 enabled=false, 5 调用点全覆盖, 解除日=样本分层标记
 - **实施**: `PDTGuard.check_trade_permission` 顶部短路放行 (开关 `risk.pdt_guard.enabled: false`, unified_config 带裁决注释) — 一处改动覆盖全部 5 调用点 (playbook_service / order_executor / pre_trade_check / validator / orb)。`get_status_report` 增 `enabled` 字段; `record_close` 保留 (日内计数仍可观测, 零行为影响)。
 - **样本分层**: 解除日 **2026-08-02** — 此前批次受 PDT 截断 (8月触线3次), 解除后回归自然供给, 读数分批 (照"配额批 vs 自然批"先例)。

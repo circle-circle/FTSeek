@@ -60,6 +60,19 @@ SIM 与实盘之间存在四个结构性差异 (撮合/合规/故障/费用), �
 
 下单收口点 (本次定位): `app/web_dashboard/order/executor.py` + `manual_order_service.py` (`_trd_env()`/`_is_live()`, SIMULATE/REAL_ACCOUNT_ID 环境分离已存在)。
 
+### §三补 在建状态 (2026-08-02 当日执行, 用户令"继续 并说明")
+
+| 项 | 状态 | 实证 |
+|---|---|---|
+| ① 成交质量 | **已在产, 取消重建** | playbook_service.py:948-961 arrival 中价抓取, :1141-1157 slippage_bps 方向调整落 `metadata_json.execution`; 07-20 起 96% 覆盖, SIM 均值 +3.1/|9.9|bps。折算列已上岗: direction_hit_scorecard `dir_ret_t1_slip_adj` + exit_scorecard `expectancy_slip_adj` |
+| ② PDT | **A1 取消** (§七: 富途香港不适用) | 开关 `risk.pdt_guard.enabled: false` 已实施 |
+| ③ SSR | **已建成** | `scripts/ssr_shadow_daily.py` (影子只记不拦); 首周 17 条 SHORT 标 16, 5 条日低触 −10% (≈31% 保守上界) |
+| ⑤ 对账 | **已建成** | `scripts/live_reconcile_check.py` + `data/audit/reconcile_live.jsonl`; 首跑发现共享 SIM 账户 4 外部持仓 → 白名单 `live_readiness.reconcile_external_symbols` |
+| ⑥ 幂等 | **已在产, 取消重建** | playbook_service.py:1024 `try_claim_execution` |
+| ⑧ 门径汇总 | 未建 | `scripts/live_readiness_report.py` 待办 |
+
+cron 待用户注册: SSR EOD + 对账盘中 30min (建议行见各脚本 docstring)。
+
 ---
 
 ## §四 留裁决清单 (RFC-062 未授权, 逐项需用户裁)

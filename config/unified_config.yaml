@@ -1198,6 +1198,23 @@ regime_adaptation:
     RANGE: 0.7
     TREND_DOWN: 0.8
     TREND_UP: 1.0
+# 实盘切换预注册参数 (RFC-062, 2026-08-02 冻结 — 修改需新 DEB + 用户裁决)
+live_readiness:
+  slippage_haircut_bps: 15         # 门1 G1-1 折算假设 (round-trip=2×); 门2 用实测中位替换
+  risk_pct_per_trade: 0.25         # 试点/L2 档单笔风险预算 (%净值)
+  pilot:
+    size_shares: 1                 # L1 最小仓位
+    weeks: [2, 4]                  # 试点窗口
+  gate2:
+    max_median_slippage_bps: 15    # G2-1
+    max_reject_rate: 0.02          # G2-2
+    reconcile_zero_drift_days: 5   # G2-3
+  scaling_ladder: [L1_1share, L2_risk025, L3_risk050, L4_full]  # 每档≥20笔实盘且期望≥0晋级, 转负降档
+  # 共享 SIM 账户已知外部持仓 (2026-08-02 对账实证, 报出不告警; 删除任一行即恢复告警):
+  #   HK.00700/00981 — 本系统不交易港股; US.SNDK broker LONG 44 但系统史上全 SHORT 且笔笔已平;
+  #   US.BABA 50 股不匹配任何系统手数 (33/21/23/22) 且 07-02 有 BROKER_GHOST_CLOSE 记录。
+  reconcile_external_symbols: [HK.00700, HK.00981, US.BABA, US.SNDK]
+
 risk:
   acb_fail_mode: closed
   preflight_fail_mode: open

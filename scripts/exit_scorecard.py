@@ -99,7 +99,7 @@ def compute(since: str) -> dict:
     src_filter = ", ".join(f"'{s}'" for s in PLAYBOOK_SOURCE_TYPES)
     tr_rows = conn.execute(
         f"""
-        SELECT COALESCE(pnl_net, realized_pnl) AS pnl
+        SELECT COALESCE(pnl_net, realized_pnl) AS pnl, entry_price * quantity AS notional
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({src_filter})
@@ -122,6 +122,16 @@ def compute(since: str) -> dict:
     gross_loss = sum(losses)
     profit_factor = (gross_win / gross_loss) if gross_loss > 0 else float("inf")
 
+    # RFC-062 G1-1 (2026-08-02): 滑点折算后期望 — round-trip = 2×haircut, 按 avg 名义本金折算
+    _notionals = [r["notional"] for r in tr_rows if r["notional"] and r["notional"] > 0]
+    avg_notional = _mean(_notionals)
+    try:
+        from app.core.config_container import get_config as _gc
+        _hc_bps = float(_gc().get_dotted("live_readiness.slippage_haircut_bps", 15))
+    except Exception:
+        _hc_bps = 15.0
+    expectancy_adj = expectancy - avg_notional * (2 * _hc_bps / 10000.0)
+
     payoff = {
         "n": nwl,
         "win_rate": round(wr * 100, 1),
@@ -131,6 +141,9 @@ def compute(since: str) -> dict:
         "breakeven_rr": round(breakeven_rr, 2) if breakeven_rr != float("inf") else None,
         "rr_gap": round(rr - breakeven_rr, 2) if (rr != float("inf") and breakeven_rr != float("inf")) else None,
         "expectancy_per_trade": round(expectancy, 2),
+        "avg_notional": round(avg_notional, 2),
+        "slip_haircut_bps": _hc_bps,
+        "expectancy_slip_adj": round(expectancy_adj, 2),
         "total_pnl": round(sum(pnls), 2),
         "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else None,
     }
@@ -218,6 +231,8 @@ def render(rep: dict) -> None:
         _be = pf["breakeven_rr"] if pf["breakeven_rr"] is not None else "∞"
         print(f"  R:R = {_rr}   盈亏平衡需 ≥ {_be}   缺口 {pf['rr_gap']}")
         print(f"  每笔期望值: ${pf['expectancy_per_trade']}   总盈亏: ${pf['total_pnl']}")
+        print(f"  每笔期望值(折滑点{pf['slip_haircut_bps']:g}bps×2): ${pf['expectancy_slip_adj']}  "
+              f"(avg名义 ${pf['avg_notional']:.0f}, RFC-062 门1口径)")
         _pfv = pf["profit_factor"] if pf["profit_factor"] is not None else "∞"
         print(f"  Profit Factor: {_pfv}   (G2 裁决线 ≥1.3, 终裁窗整体)")
         if pf["n"] < 30:
