@@ -942,6 +942,39 @@ def cmd_scan(manual_clue: str = "") -> int:
         except Exception as _cr_e:
             print(f"  [warn] self-critique 失败 (降级无批注): {_cr_e}")
 
+    # R5 (2026-08-02): UE 候选级快照接线 — 此前 signal_snapshots 仅 DA (UE 覆盖 0%).
+    #   全量 tradeable (含 critique DROP / 未过注入闸) 落快照, "质量分→结局"攒样不需成交;
+    #   fwd 回填链 run_signal_ic_backfill 按 trade_date 自动接. decision_id 与注入指令同键
+    #   (universe_expansion:{date}:{symbol}), UPSERT 幂等. 失败静默不阻断扫描.
+    try:
+        from app.analysis.signal_ic_tracker import record_signal_snapshot as _rec_snap
+        _snap_n = 0
+        for s in tradeable:
+            try:
+                _rec_snap(
+                    decision_id=f"{STRATEGY_ID}:{_today()}:{s['symbol']}",
+                    symbol=f"US.{s['symbol']}",
+                    direction=s["direction"],
+                    strength=int(round(float(s.get("confidence") or 0) * 100)),
+                    confidence=float(s.get("confidence") or 0),
+                    strategy_id=STRATEGY_ID,
+                    trade_date=_today(),
+                    factors={
+                        "rubric_score": s.get("rubric_score"),
+                        "evidence_checklist": s.get("evidence_checklist"),
+                        "self_tier": s.get("self_tier"),
+                        "verdict": (s.get("critique") or {}).get("verdict"),
+                        "info_channel": s.get("info_channel"),
+                        "scan_price": s.get("scan_price"),
+                    },
+                )
+                _snap_n += 1
+            except Exception:
+                pass
+        print(f"  [R5] UE 候选快照 {_snap_n}/{len(tradeable)} → signal_snapshots")
+    except Exception as _snap_e:
+        print(f"  [warn] UE 候选快照失败 (不影响扫描): {_snap_e}")
+
     rec = {
         "type": "scan",
         "date": _today(),

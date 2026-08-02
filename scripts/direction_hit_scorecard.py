@@ -255,22 +255,43 @@ def main() -> int:
         try:
             import sqlite3 as _sq2
             _snap = _sq2.connect(f"file:{ROOT/'data'/'signal_snapshots.db'}?mode=ro", uri=True)
-            _cand = {}
+            # 2026-08-02 (R5): UE 候选级接线后双源并读 — DA/UE 分开, 防跨策略污染.
+            for _sid in ("deep_analysis", "universe_expansion"):
+                _cand = {}
+                for _r in _snap.execute("""
+                    SELECT CASE WHEN factors_json LIKE '%"rubric_score": 4%'
+                                 OR factors_json LIKE '%"rubric_score": 3%' THEN 'rubric≥3'
+                                WHEN factors_json LIKE '%"rubric_score": 2%'
+                                  OR factors_json LIKE '%"rubric_score": 1%'
+                                  OR factors_json LIKE '%"rubric_score": 0%' THEN 'rubric≤2'
+                                ELSE '未落' END b,
+                           COUNT(*) n,
+                           ROUND(100.0*AVG(CASE WHEN fwd_ret_t1>0 THEN 1 ELSE 0 END),1) hit,
+                           ROUND(100.0*AVG(fwd_ret_t1),3) mean
+                    FROM signal_snapshots
+                    WHERE trade_date >= ? AND strategy_id=? AND fwd_ret_t1 IS NOT NULL
+                    GROUP BY 1""", (since, _sid)):
+                    _cand[_r[0]] = {"n": _r[1], "hit_t1": _r[2], "mean_t1": _r[3]}
+                    print(f"  候选级[{_sid[:6]}] {_r[0]:<12} n={_r[1]:>4} T+1 {_r[2]}%/均{_r[3]}%"
+                          + (" | ✅可设门" if _r[0] != "未落" and _r[1] >= 30 else ""))
+                report["sections"].setdefault("quality_axis_candidates", {})[_sid] = _cand
+            # UE critique verdict×结局 (R5 新增读数 — 影子判官区分度首读 2026-08-02 倒挂,
+            #   n<30 攒样中, 显著前不得实拦)
             for _r in _snap.execute("""
-                SELECT CASE WHEN factors_json LIKE '%"rubric_score": 4%'
-                             OR factors_json LIKE '%"rubric_score": 3%' THEN 'rubric≥3'
-                            WHEN factors_json LIKE '%rubric_score%' THEN 'rubric≤2'
-                            ELSE '未落' END b,
+                SELECT CASE WHEN factors_json LIKE '%"verdict": "KEEP"%' THEN 'KEEP'
+                            WHEN factors_json LIKE '%"verdict": "DROP"%'
+                              OR factors_json LIKE '%"verdict": "DOWNGRADE"%' THEN 'DOWN/DROP'
+                            ELSE '无critique' END b,
                        COUNT(*) n,
                        ROUND(100.0*AVG(CASE WHEN fwd_ret_t1>0 THEN 1 ELSE 0 END),1) hit,
                        ROUND(100.0*AVG(fwd_ret_t1),3) mean
                 FROM signal_snapshots
-                WHERE trade_date >= ? AND strategy_id='deep_analysis' AND fwd_ret_t1 IS NOT NULL
+                WHERE trade_date >= ? AND strategy_id='universe_expansion' AND fwd_ret_t1 IS NOT NULL
                 GROUP BY 1""", (since,)):
-                _cand[_r[0]] = {"n": _r[1], "hit_t1": _r[2], "mean_t1": _r[3]}
-                print(f"  候选级   {_r[0]:<12} n={_r[1]:>4} T+1 {_r[2]}%/均{_r[3]}%"
-                      + (" | ✅可设门" if _r[0] != "未落" and _r[1] >= 30 else ""))
-            report["sections"]["quality_axis_candidates"] = _cand
+                print(f"  UE批判[{_r[0]:<8}] n={_r[1]:>4} T+1 {_r[2]}%/均{_r[3]}%"
+                      + (" | ⚠️倒挂" if _r[0] == "DOWN/DROP" and (_r[2] or 0) > 50 else ""))
+                report["sections"].setdefault("ue_critique_candidates", {})[_r[0]] = \
+                    {"n": _r[1], "hit_t1": _r[2], "mean_t1": _r[3]}
             _snap.close()
         except Exception as _ce:
             print(f"  ⚠️ 候选级读取失败 (不影响): {_ce}")
