@@ -90,6 +90,12 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (PDT 守卫关闭·Qoder, 用户裁"按照建议关闭") — 单点开关 enabled=false, 5 调用点全覆盖, 解除日=样本分层标记
+- **实施**: `PDTGuard.check_trade_permission` 顶部短路放行 (开关 `risk.pdt_guard.enabled: false`, unified_config 带裁决注释) — 一处改动覆盖全部 5 调用点 (playbook_service / order_executor / pre_trade_check / validator / orb)。`get_status_report` 增 `enabled` 字段; `record_close` 保留 (日内计数仍可观测, 零行为影响)。
+- **样本分层**: 解除日 **2026-08-02** — 此前批次受 PDT 截断 (8月触线3次), 解除后回归自然供给, 读数分批 (照"配额批 vs 自然批"先例)。
+- **遗留**: `app/core/trade_guard.py` PDTComplianceManager 属冻结主链死路径 (必要性原则), 不动; 主链若复活需同步。若账户迁至 moomoo US 实体 → 开关改回 true。
+- **验证**: py_compile ✓ + 冒烟 (关闭→放行"PDT 守卫已关闭 (2026-08-02 裁决)"+SAFE) ✓ + YAML 解析 ✓。DEB §7.4 / RFC-062 A1 已更新为"已裁已实施"。
+
 ### 2026-08-02 (PDT 勘正 A1·Qoder, 用户提供富途官方规则) — RFC-062 修订 + 在产 pdt_guard 前提失效发现, 留裁决
 - **事实**: PDT 为 FINRA 对美国本土券商要求, 富途证券(香港)受香港证监会监管不适用 — 无日内次数/$25k 门槛 (moomoo US 实体除外)。SSR (SEC 市场级) 与借券 (做空实需) 保留。
 - **RFC-062 A1 修订**: G2-4 移除 · 合规缺口移除 PDT · PDT 报表取消 (做减法) · 资金决策与 PDT 解绑 (融资账户仍为 SHORT 前提)。DEB §七 落档。

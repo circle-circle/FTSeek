@@ -321,6 +321,19 @@ class PDTGuard:
             logger.debug(f"[PDT] {symbol} 隔夜仓平仓, 不计入 day trade (entry_et={_entry_et.date()})")
             return False
 
+    @staticmethod
+    def _is_enabled() -> bool:
+        """PDT 守卫总开关 (unified_config risk.pdt_guard.enabled)。
+
+        2026-08-02 用户裁决关闭: FINRA PDT 仅约束美国本土券商, 富途证券(香港)
+        账户不适用 (moomoo US 实体除外, 届时改回 true)。默认 False。
+        """
+        try:
+            from app.core.config_container import get_config
+            return bool(get_config().get_dotted("risk.pdt_guard.enabled", False))
+        except Exception:
+            return False
+
     def check_trade_permission(self, is_overnight: bool = False) -> Tuple[bool, str, PDTRiskLevel]:
         """
         检查是否允许交易
@@ -331,6 +344,12 @@ class PDTGuard:
         Returns:
             (允许交易, 原因, 风险等级)
         """
+        # 2026-08-02 (用户裁决"按照建议关闭"): 开关关闭即放行 — 富途证券(香港)账户不适用
+        # FINRA PDT。样本分层标记: 解除日 2026-08-02, 此前批次受 PDT 截断 (8月触线3次),
+        # 详见 docs/debates/DEB-20260802-live-cut-prereg.md §七。
+        if not self._is_enabled():
+            return True, "PDT 守卫已关闭 (2026-08-02 裁决: 富途香港不适用 FINRA PDT)", PDTRiskLevel.SAFE
+
         # 2026-06-24 (Phase 3, decision "sim 也守 PDT"): 移除模拟盘 blanket 豫免.
         # sim/live 统一走 is_pdt_account 判断 — 余额 <25k 守 PDT, ≥25k 豁免.
         # 这样 sim 验证的是 PDT 合规策略 (避免 sim 达标 live 跑不了的假达标).
@@ -357,6 +376,7 @@ class PDTGuard:
         """返回 PDT 状态报告"""
         count = self._get_day_trade_count()
         return {
+            "enabled": self._is_enabled(),
             "is_pdt_account": self._state.is_pdt_account,
             "account_equity": self._state.account_equity,
             "day_trade_count_5d": count,

@@ -1201,6 +1201,11 @@ regime_adaptation:
 risk:
   acb_fail_mode: closed
   preflight_fail_mode: open
+  # PDT 守卫 (2026-08-02 用户裁决"按照建议关闭"): FINRA PDT 仅约束美国本土券商,
+  # 富途证券(香港)账户不适用 — 无日内次数/$25k 门槛。(moomoo US 实体账户除外, 届时改回 true)
+  # 解除日 2026-08-02 = 样本分层标记: 此前批次受 PDT 截断 (8月触线3次), 读数需分批。
+  pdt_guard:
+    enabled: false
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08

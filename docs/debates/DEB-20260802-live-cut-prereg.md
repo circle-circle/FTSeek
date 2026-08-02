@@ -100,5 +100,5 @@ G2-4 移除 · 背景合规缺口移除 PDT · PDT 报表取消 (做减法: 无�
 3. **样本已被截断**: DEB-20260802-short-overnight-hold 记载"8 月 PDT 已触线 3 次" — 即验证样本的日内频率被一条实盘不存在的规则压制; 该 DEB 的"豁免 PDT/PDT 计数下降"论据同步降级 (其余论据独立成立)。
 4. **SSR/借券不受影响**: SSR 是 SEC 市场级规则 (交易所层执行, 与券商属地无关), 借券是做空的物理前提 — 两项保留。
 
-### 7.4 待裁决案 (本次不修任何在产行为)
-**pdt_guard 处置**: 建议开关化 (`risk.pdt_guard.enabled`, 默认对富途香港账户关闭) 并记录解除日期供样本分层 (解除前/后批次, 照"配额批 vs 自然批"先例)。备选: 维持到 8-29 保样本口径一致 — 但代价是 SIM 行为与实盘持续不一致。请用户裁。
+### 7.4 裁决落实 (2026-08-02, 用户裁"按照建议关闭")
+**pdt_guard 处置 — 已实施**: 开关化于单点收口 `PDTGuard.check_trade_permission` (`risk.pdt_guard.enabled: false`), 覆盖全部 5 个调用点 (playbook_service / order_executor / pre_trade_check / validator / orb)。放行理由串含裁决日期; `get_status_report` 增 `enabled` 字段供监控如实显示。`record_close` 保留运行 (日内计数仍可观测, 零行为影响)。**解除日 2026-08-02 = 样本分层标记**, 此前批次受 PDT 截断 (8月触线3次), 读数分批 (照"配额批 vs 自然批"先例)。遗留: `app/core/trade_guard.py` 的 PDTComplianceManager 属冻结主链死路径 (DEB-20260721 必要性原则), 不动; 若主链复活需同步开关。验证: py_compile ✓ + 冒烟 (关闭→放行+理由串) ✓ + YAML 解析 ✓。
