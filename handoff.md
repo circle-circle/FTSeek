@@ -90,6 +90,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (R6 监控做减法·Qoder, 用户令"同意做减法适用于监控体系 请基于指标目标进行执行") — KDJ 剪除 + 指标目标审计 + 一条自我勘正
+- **anchor_dev v2 补丁核验**: 用户执行一键后 grep 复核 — skill pipeline.py 三点命中 (v2 compute 块含 scan_price 兜底 :529 / cand 直写 :568 / _inst 直写 :604), v1 块已除。R3 最后一英里闭环。
+- **剪除 KDJ**: lv3 计算器 `_calc_kdj` 调用+方法删除 (router 注释同步)。全仓 grep 零消费 (仅自身定义+一条过时注释), 不支撑任何 8-29 决策 → 算而不用, 剪。行为零影响 (SymbolContext 无 kdj 字段)。
+- **指标目标审计 (每个指标须能回答"支撑 8-29 哪个决策")**:
+  - factor_ic 链 (factor_ic_backfill 日更 → screener `_load_factor_ic_adjustments` ±1 + pipeline 多空冲突 IC 加权) = **在产决策输入**, 非监控浪费 → 保留。
+  - **勘正本人前判**: 早前称"五因子退役却仍计算"不实 — 退役五因子库文件 (gdian/mfff/sss) 仅 tests/archive 引用, 在产链未见实例化 (#21 断线已生效); factor_ic 追踪的是信号条件因子, 非退役五因子。
+  - ADX (regime shadow) / VWAP gate (eval 脚本) = 影子/评估测量, 各支撑一个待定决策 → 保留。
+
 ### 2026-08-02 (清理减负·第三模型, 用户令"无意义任务不占资源/不耗tokens/不复发") · 4 cron 转 no_agent + 8 僵尸清理 + 防复发清扫
 **Hermes cron 减负 (token 大头归零)**: ①`ftseek-intraday-diagnose (36cc, */30 每30分钟)` LLM agent → **no_agent script** (`~/.hermes/scripts/intraday_diagnose.py`): 检查逻辑本全在脚本零推理, 原每次=完整 agent 会话×8/晚, 转后每 30min ≈0 token; ②`alpha-backfill (6af0)` → no_agent (`alpha_backfill_run.py`), 输出一行摘要; ③`insider monitor (1370)` → no_agent (`insider_monitor_check.py`, 正常静默/异常告警, 原 agent 版 --QUIET-- 语义保留); ④`signal-ic-backfill (3497)` **暂停** — 与系统 crontab 05:30 `backfill_forward_returns.py` 重复 (同名同脚本), alpha-backfill 06:30 接力不受影响。保留 6 个推理类 agent cron (盘前/盘后/周日复盘/DA扫描/记忆更新/Deepulse = 真 LLM 分析)。**验证**: 三脚本 py_compile OK + 周末静默试跑 ✓ + cronjob list 逐项确认 (no_agent=true/script 挂载)。**进程清理**: 8 个 Futu SDK 卡死僵尸 (23207/23296 _tmp_gap_adj 24h+ / 66934-69057 qoder futu 查询 0%CPU) kill -9, 实测清空; hermes_worker.py (37728) 确认为 main.py 拉起的**设计长驻协议进程** (PPID=37674, 等 stdin) 保留。**防复发**: `health_check.sh` 加 Futu 卡死进程自动清扫段 (匹配一次性 futu 查询特征 + >30min + CPU≈0 → kill, 每 10min cron 执行; 服务 main.py 不含特征零误杀, 实测通过)。
 

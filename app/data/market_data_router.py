@@ -8,7 +8,7 @@
   Auxiliary: Finnhub     — 新闻情绪分析
 
 调用策略（2026-04-20 升级）：
-  - 实时价格 + 技术指标 → Futu LV3 快照 + K线 → 本地计算 (MA/RSI/MACD/ATR/BOLL/KDJ)
+  - 实时价格 + 技术指标 → Futu LV3 快照 + K线 → 本地计算 (MA/RSI/MACD/ATR/VWAP/BOLL/SuperTrend)
   - SPY 大盘 → LV3 快照 → TwelveData → Alpha Vantage
   - VIX → Alpha Vantage（真实数据，缓存 10min）→ 默认 20.0
   - 新闻情绪 → Finnhub + RSS (USNewsProvider)

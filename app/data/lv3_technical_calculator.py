@@ -79,7 +79,6 @@ class LV3TechnicalCalculator:
             self._calc_vwap(df, result)
             self._calc_boll(df, result)
             self._calc_supertrend(df, result)
-            self._calc_kdj(df, result)
             self._calc_volume_ma(df, result)
             self._calc_trend(df, result)
             self._calc_volatility(df, result)
@@ -274,27 +273,6 @@ class LV3TechnicalCalculator:
 
         result["supertrend_direction"] = str(direction.iloc[-1])
         result["supertrend_value"] = round(float(supertrend.iloc[-1]), 2)
-
-    def _calc_kdj(self, df: pd.DataFrame, result: Dict, period: int = 9):
-        """计算 KDJ (随机指标)"""
-        if len(df) < period:
-            result["kdj_k"] = 50.0
-            result["kdj_d"] = 50.0
-            result["kdj_j"] = 50.0
-            return
-
-        low_min = df["low"].rolling(window=period).min()
-        high_max = df["high"].rolling(window=period).max()
-
-        rsv = (df["close"] - low_min) / (high_max - low_min) * 100
-
-        k = rsv.ewm(com=2, adjust=False).mean()
-        d = k.ewm(com=2, adjust=False).mean()
-        j = 3 * k - 2 * d
-
-        result["kdj_k"] = round(float(k.iloc[-1]), 2)
-        result["kdj_d"] = round(float(d.iloc[-1]), 2)
-        result["kdj_j"] = round(float(j.iloc[-1]), 2)
 
     def _calc_volume_ma(self, df: pd.DataFrame, result: Dict):
         """计算成交量均线"""
