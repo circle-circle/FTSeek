@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-08-02T17:48:17",
+ "generated_at": "2026-08-02T18:18:21",
  "scope": "trade_records PLAYBOOK_SIM 已平仓",
  "caliber_conclusion": {
   "sim_actual_fee": "不可得 — order_fee_query SIM 返空 (DEB-20260730 层1 已裁决)",
@@ -23,35 +23,14 @@
    "month": "2026-07",
    "n": 183,
    "gross": -26.02,
-   "realized_pnl_sum": -73.22,
+   "realized_pnl_sum": -26.03,
    "fees_est": 815.92,
-   "pnl_net_sum": -889.2,
-   "n_divergent": 2,
-   "gross_vs_rpnl_gap": 47.2
+   "pnl_net_sum": -842.01,
+   "n_divergent": 0,
+   "gross_vs_rpnl_gap": 0.01
   }
  ],
- "divergent_trades": [
-  {
-   "id": 977,
-   "symbol": "US.JD",
-   "direction": "LONG",
-   "date": "2026-07-02",
-   "exit_reason": "EXIT_MONITOR_CLOSE",
-   "gross": 239.94,
-   "realized_pnl": 24.18,
-   "gap": 215.76
-  },
-  {
-   "id": 983,
-   "symbol": "US.GOOG",
-   "direction": "SHORT",
-   "date": "2026-07-02",
-   "exit_reason": "EXIT_MONITOR_CLOSE",
-   "gross": -156.42,
-   "realized_pnl": 12.15,
-   "gap": -168.57
-  }
- ],
+ "divergent_trades": [],
  "divergent_note": "gross vs realized_pnl 分叉 100% 由 EXIT_MONITOR_CLOSE 损坏单解释 (partial/重复平仓) — 归 R4 幽灵/陈旧仓清理, 非费用模型问题",
  "fee_distribution": {
   "min": 4.01,
