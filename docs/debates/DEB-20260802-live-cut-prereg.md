@@ -69,7 +69,7 @@ SIM 与实盘之间存在四个结构性差异 (撮合/合规/故障/费用), �
 | ③ SSR | **已建成** | `scripts/ssr_shadow_daily.py` (影子只记不拦); 首周 17 条 SHORT 标 16, 5 条日低触 −10% (≈31% 保守上界) |
 | ⑤ 对账 | **已建成** | `scripts/live_reconcile_check.py` + `data/audit/reconcile_live.jsonl`; 首跑发现共享 SIM 账户 4 外部持仓 → 白名单 `live_readiness.reconcile_external_symbols` |
 | ⑥ 幂等 | **已在产, 取消重建** | playbook_service.py:1024 `try_claim_execution` |
-| ⑧ 门径汇总 | 未建 | `scripts/live_readiness_report.py` 待办 |
+| ⑧ 门径汇总 | **已建成** | `scripts/live_readiness_report.py` → `data/live_readiness_latest.json`; 首读: 门1 当前 1/4 达标 (仅 G1-2 样本量过), G2-3 对账 streak 0 (首日含白名单前漂移记录, 保守计) |
 
 cron 待用户注册: SSR EOD + 对账盘中 30min (建议行见各脚本 docstring)。
 

@@ -90,6 +90,11 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-03 (RFC-062 ⑧门径汇总·Qoder, 用户令"请修复") — 在建清单清零: 两门读数一页
+- **建成** `scripts/live_readiness_report.py` (只读, 不连券商) → `data/live_readiness_latest.json`: 门1 四判据 (G1-1 折算期望 / G1-2 n≥30 / G1-3 critique 倒挂 / G1-4 R:R) 自动标 ✅/❌ + 门2 数据源就绪度 (G2-1 SIM 滑点中位 3.06bps 参考 · G2-2 SSR 影子上界 31.2% · G2-3 对账 streak)。
+- **首读快照 (非裁决)**: 门1 当前 **1/4 达标** — 仅 G1-2 样本量过 (BUY 136 / SHORT 33 边缘); G1-1 −$16.84、G1-3 倒挂 n=25<30、G1-4 R:R 0.9<1.29 均未过。裁决以 8-29 实读为准。
+- DEB §三补 ⑧ 行已更新。RFC-062 在建清单 8 项全部清零 (2 项已在产取消 / 5 项建成 / 1 项 A1 取消)。
+
 ### 2026-08-02 (RFC-062 在建清单执行·Qoder, 用户令"继续 并说明") — ①⑥已在产取消 · ②折算列上岗 · ④SSR影子 · ⑤对账脚本+外部持仓发现
 - **①arrival_mid ⑥幂等 已在产, 取消重建**: playbook_service.py:948-961 下单前抓 bid/ask 中价, :1141-1157 方向调整 slippage_bps 落 `metadata_json.execution` (07-20 起 96% 覆盖, SIM 均值+3.1/|9.9|bps); :1024 `try_claim_execution` 已幂等。做减法: 不重复建设。
 - **②折算列上岗 (门1口径)**: direction_hit_scorecard 每行增 `dir_ret_t1_slip_adj` (折算15×2bps); exit_scorecard 增 `expectancy_slip_adj` (期望−avg名义×30bps)。配置 `live_readiness.slippage_haircut_bps: 15`。**门1读数**: SHORT +0.973%→折算+0.673% (活) · BUY −0.406%→−0.706% (不过) · 总体 −0.137%→−0.437% (不过) · 退出期望 −$6.23→−$16.84。
