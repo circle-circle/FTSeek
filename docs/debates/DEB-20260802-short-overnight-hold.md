@@ -457,6 +457,43 @@ replay_bars_daily 日 K 直算 `真隔夜 = (close_d0 − open_t1)/close_d0`(SHO
 
 ---
 
+## §五.十一 实施计划核验（Qoder, 2026-08-02, 用户令"修复之前先确认不要重复造轮子, 基于 Pareto 原则再检查实施计划"）
+
+### 5.11.1 轮子盘点（逐组件， 源码锚点）
+
+| 计划组件 | 现成轮子 | 结论 |
+|---|---|---|
+| E1 回放器 | `scripts/exit_replay_backtest.py`: _variants 变体结构 + _effective_sl(trailing/保本/分类全退出链） + _fee_of 费用 + (symbol,day) bar 缓存 | **吸收 E 变体**, 主体新增=次日 bars 扩展， ~50-80 行 scripts 侧 record-only, **不新建回放器** |
+| (排除项） shadow_eod_replay.py | 旧 shadow mirror 域（主线 8 variant EOD 关闭批）, 非 playbook 退出回放 | 不适用， 勿误用 |
+| 隔夜开关/skip 语义 | `overnight_hold_enabled` 总开关 + `_skip_allowed` 双收口（pipeline:5103/6185) + cohortB/long 先例 + OVERNIGHT_GAP_STOP 对 skip_allowed 自动激活 | **纯接线 ~5-10 行**(short_horizon 加 allow_overnight 标志）, gap_stop 零改动 |
+| MAX_HOLD | `_horizon_max_hold_hit` + nth_trading_day_after 交易日历 | **yaml 改 1→2, 零代码** |
+| 在仓 guard | **order_executor.py:3437-3456 (P0 持仓去重， 06-14)**: 主线同款 — "该标的已有持仓（不管方向/大小） → 跳过， fail-close", 根因与我们完全相同（双重平仓竞态/幽灵复活/覆写）; open_positions symbol+owner 读模式（executor.py:814) | **照搬模式 ~15 行**(playbook 侧查 open_positions owner='auto'), 机制不新建 |
+| 手动仓冲突 | ManualHoldRegistry (playbook_service:908) | 零改动 |
+| 报价不断流 | P-2b 应订集合已含 playbook 未平仓 | 零改动 |
+| 跨日方向翻转 | conf+15+降仓 50% (pipeline:1138/1262) | 零改动， 与 guard 互补 |
+| **周五 EOD 全平** | **无轮子**（全库周末概念仅在 UI/watchdog, 交易路径无） | **唯一新建机制， ~8 行**(ET date+weekday, ET 工具已在） |
+
+### 5.11.2 Pareto 裁剪（20% 关键路径）
+
+**裁剪发现 1 — Step1 比原估更小**: EOD 现有 skip 语义="盈利才跳过"(pipeline:6195-6210), 而 Step1（事实≈A=赢家隔夜）**恰好就是保留此语义** → EOD 盈利判定**零改动**。Step1 从估 50-70 行 → **实估 ~35-50 行**（接线 10 + guard 15 + 周五 8 + yaml 2 + 测试）。
+
+**裁剪发现 2 — 砍掉/推迟清单（全是装饰或非关键）**:
+- ❌ C-shadow 与回放器合并（S8 原设想）: exit_shadow 是 live 侧另一套 record-only 设施， 合并=scope creep → **不合并**, E1 回放器单跑
+- ⏸ TIME_EXIT/MFE_STALL 退役（Step2): 回放 gate 决定， 不预承诺
+- ⏸ 财报护栏： 探索接受+判分标注（S5 已定）
+- ⏸ SL/trailing/TP 参数： 观察项（S2/S3), 一次一变量不动
+- ⏸ 生成侧过滤（S11)/半码（S10)/monitor 启动延迟（→S7 smoke 一项）
+
+**20% 关键路径 = E1 回放变体 + skip 接线 + 在仓 guard + 周五规则** — 四项贡献全部价值的 80%+; 其中**唯一新机制是周五规则（8 行）, 其余全部是接线或照搬在产模式** → "不重复造轮子"核验**通过**。
+
+### 5.11.3 修订后实施计划（替代 §5.10.2 的估算）
+
+- **Phase 0 (E1, 先行， 零风险）**: exit_replay_backtest 加 E 变体（no_eod+max_hold=2+friday_flat, 次日 bars 扩展） → 全史 ~70 笔 SHORT 反事实： 四格表+逐退出归因+WR/期望/SL 率。产出即裁决依据
+- **Phase 1 (Step1, 回放 gate 通过后）**: ~35-50 行 — ①short_horizon `allow_overnight: true`+_skip_allowed 接线 ②max_hold yaml 1→2 ③在仓 guard（照搬 order_executor 模式， fail-close, skip_reason 落库） ④周五 EOD 全平 ⑤测试（复用 direction-gate _patch 模式）+S7 smoke（含 monitor 启动首轮确认）
+- **Phase 2 (Step2)**: 不存在于计划， 由 Phase 0 读数另起 DEB
+
+---
+
 ### 变更记录
 - 2026-08-02 v1: 起案（Qoder，用户令"先针对方案写成 DEBATE 文档，需要另外模型进一步分析辩论再定方案")。含起案方两处勘误（§1.5)。
 - 2026-08-02 v2: 独立复核（第三模型，用户令"核查新 DEB 提案"）— 隔夜段口径 bug 实锤（§五.五）: 代理公式 fwd_return_t1_open − fwd_return_intraday 量纲混合（open_d0 vs entry 基准），"输家桶 +0.83pp / 赢家桶≈0"系伪影；真日 K 重算 (~+0.2pp 全体, 两桶无差) → B 方案失去数据依据, 倾向 C+A 不变, 理由修正。
@@ -465,3 +502,4 @@ replay_bars_daily 日 K 直算 `真隔夜 = (close_d0 − open_t1)/close_d0`(SHO
 - 2026-08-02 v5: 补充与优化 12 项（§五.八， 用户令"还有没补充和优化") — 实测: TP 两日可达 4%（复活假设证伪， 保留纯天花板）, SL 两日触发 24%（机械上升属预期不调参， 预注册 >25% 开校准 DEB); 财报护栏成本下修（数据源已在产=纯接线 ~15行）; 护栏倾向明确（周末=周五 EOD 全平/财报=探索接受）; 7 月基线锁定 (+$303/34笔 剔除 ghost); 首日 smoke 5 项+C 影子升级全链回放+exit_reason 迁移作机制验证读数； 资金占用/全码/生成侧/BUY 不变 四项备查。
 - 2026-08-02 v6: 方案 E 复核+补充（第三模型, §五.九, 用户令"分析检查+补充, 实现盈利和胜率"）— 复现: S6 基线 (trade_date 口径 +$134.6 ✅ 口径注记 E4) / TP 6% SL 23% ✅ / MFE_STALL 2笔−$106 ✅。**新四格分解**: 输家桶 T+1 全段仍负 (−0.118/−0.142) → E 收益≈0~+0.3pp 上界更悲观; 胜率 −5~10pp 交换明示 (E3 判据)。**补充 E1-E6**: E1 先回放器量化 (现成 exit_replay_backtest 加 E 变体, ~3天全史反事实, 零风险, 天然逐退出归因) / E2 分步实施 (6变量同批违一次一变量) / E3 胜率交换判据 / E4 基线口径注记 / E5 财报日 gap 穿越市价平 / E6 BUY 隔离留档。
 - 2026-08-02 v7: 对齐落档（Qoder, §五.十， 用户令"给出方案说明和收益") — E1-E6 逐条立场： **E1 升级必经第一步**(可行性已核: _variants+次日 bars ~50行), E2 赞成且指出 **Step1≈A**(TIME_EXIT 未退役前输家活不到 EOD), E3/S2 互补双判据， E5 澄清已在产(SL+gap_stop 覆盖， 唯一真空=monitor 启动延迟→补 smoke), E4/E6 赞成。**合并终案三道闸**: E1 回放(3天零风险) → gate → Step1 真钱试点(≈A, ~50-70行) → E3+S2 判 → Step2 由回放 gate 不预承诺。**收益诚实口径**: 期望 0~+0.3pp/笔 SIM 上界(月 $0-560), 胜率 −5~10pp 确定交换， 副收益 PDT/费摊薄/删4规则做减法； 定位=机制验证非盈利引擎。待用户终裁。
+- 2026-08-02 v8: 实施计划核验（Qoder, §五.十一， 用户令"确认不重复造轮子+Pareto 检查") — **轮子盘点通过**: 9 组件中 8 个有在产轮子（回放器/总开关/gap_stop/MAX_HOLD/guard 模式 order_executor:3437 P0 持仓去重/手动仓/订阅/翻转 guard), **唯一新机制=周五 EOD 全平（8 行）**; shadow_eod_replay 属旧域排除。**Pareto 裁剪**: Step1 实估 35-50 行（EOD 盈利判定零改动=赢家语义现成）; 砍 C-shadow 合并（scope creep)/Step2 不预承诺/参数全观察。20% 关键路径=E1 变体+skip 接线+guard+周五规则。
