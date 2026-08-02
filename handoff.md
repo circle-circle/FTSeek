@@ -90,6 +90,9 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (收底执行·第三模型, 用户令"执行, 做好收底修复") · R3-1 v2 补丁确认已应用 + R4 注释诚实化/计数统一
+**R3-1 anchor_dev v2 补丁**: 核查发现目标文件 `/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py` **已完整应用** (v2 计算块@529 / scan 候选价回退@538 / cand dict 字段@568 / v1 重复块已删 / _inst 字段@604 保留双路径), py_compile OK, 幂等重跑 exit 0 — 无需重复执行, 状态确认。**收尾修复**: ①r4_bookkeeping_repair.py C 段注释诚实化 (实际仅存在性校验, 非声称的 symbol/date 匹配 — decision_id 编码 symbol+日期且实测 4/4 匹配, 风险已评估) ②孤儿计数统一 (commit 43 = 全库标记总数, D 段落标 41 = 43−2 已收养, docstring 已注明)。r4 DRY-RUN 复跑 50 项正常。
+
 ### 2026-08-02 (R5 修复·Qoder, 用户令"继续执行") — UE 候选级快照接线+历史回填, 覆盖 0%→100%; critique 首读倒挂 (n<30 攒样)
 **R5-1 接线**: "UE rubric 0%"真身=**signal_snapshots 候选级表 UE 零行** (指令级 UE 生成时自带 rubric 31/57, 近5日 100%, 不缺)。修复 llm_universe_scan.py: self-critique 块后全量 tradeable 候选 (含 DROP/未过注入闸) 落 signal_snapshots, factors 带 rubric_score/evidence_checklist/self_tier/verdict/info_channel/scan_price, decision_id 与注入指令同键 UPSERT 幂等, 失败静默不阻扫描; fwd 回填链按 trade_date 自动接 (复用 record_signal_snapshot 轮子, 零新机制)。编译+冒烟 (写入/清理) 通过。**R5-2 历史回填**: scripts/ue_snapshot_backfill.py 从 scan jsonl 重放 21 条 scan 记录 100 候选 (79 唯一 decision_id), 零 LLM 成本; fwd 已回填 72/79 (7 条=近2日 T+1 未到/缺 bar)。**R5-3 消费端**: scorecard 候选级块 DA/UE 双源并读 + 新增 UE批判 verdict×结局节 (⚠️倒挂标)。**首读 (全部 n<30, 预注册纪律: 不下结论只攒样)**: UE候选 rubric≥3 56.0%/+0.51 (n=25) vs ≤2 50.0%/+0.97 (n=6) — **候选级无反向区分** (与已执行DA指令级 35.1%vs49.2% 的倒挂不同层); **UE批判倒挂: DOWN/DROP 64.0%/+1.34 (n=25) vs KEEP 16.7%/−2.48 (n=6)** — 影子判官当前区分度为负, 若 n≥30 持续 → critique 不得实拦 (影子设计初衷=先量后闸, 机制按预期工作); fwd_ret 方向已调整 (LONG tN/t0−1, SHORT t0/tN−1) 读数有效。DA 候选级 49 影子行待 fwd (07-30/31 落分, 链在跑)。critique 不对称 (DA 无 critique) 留 9 月重校准议题。
 

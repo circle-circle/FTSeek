@@ -6,9 +6,10 @@
      口径 = R2 终裁 realized_pnl=gross, pnl_net=gross-fees_est)
   B. 3 条指令级陈旧行回填: #117←trade#942, #376←trade#977(修正后), #588←trade#1036
      (交易早已平仓, 指令 exit 字段从未回填; #376 的 pnl=24.18 还是损坏值传播)
-  C. 4 笔幽灵收养 trades 回填 decision_id (恢复指令↔交易可追溯)
-  D. 41 笔孤儿 trades 打 metadata 标 orphan_no_instruction (decision_id join 不到指令;
-     多数=五月 playbook 前时代, 7 月 6 笔=指令未持久化)
+  - C. 4 笔幽灵收养 trades 回填 decision_id (恢复指令↔交易可追溯)
+  - D. 43 笔孤儿 trades 打 metadata 标 orphan_no_instruction (decision_id join 不到指令;
+       多数=五月 playbook 前时代, 7 月 6 笔=指令未持久化; 其中 2 笔随后被 C 段收养,
+       故 D 段实际落标 41 笔, 全库 orphan 标记总数 43)
 
 显式不改 (调查结论=有意语义/代码侧双注册表, 改数据反造假):
   - executed=1&triggered=0 (20 行): triggered=盘中条件穿越触发; DA 直执行路径不穿触发器
@@ -107,7 +108,8 @@ def main():
         1095: "DA-20260720180933-US.E-5e3b",          # ←instr#685
     }
     for tid, did in link.items():
-        # 安全: 确认 decision_id 在指令表存在且 symbol/date 匹配
+        # 安全: 确认 decision_id 在指令表存在 (存在性校验; decision_id 本身编码
+        #   symbol+日期, 且实测 4/4 symbol 匹配 — 存在性校验防凭空收养已足够)
         ok = conn.execute("SELECT id FROM playbook_instructions WHERE decision_id=?", (did,)).fetchone()
         if not ok:
             actions.append(("C", f"trade#{tid} SKIP (decision_id {did} 指令表不存在)"))
