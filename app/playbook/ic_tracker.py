@@ -153,7 +153,13 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
             continue
 
         # 只处理 lookback 范围内的
-        if inst_date < lookback or inst_date >= today:
+        # 2026-08-02 (R3-3): >=today 改 >today — 允许当日指令当日回填.
+        #   旧守卫把周五指令推到下周二 (Sat 05:30 CST = 周五 17:30 ET 运行时 today=周五,
+        #   inst_date>=today 跳过) → 周日周报系统性缺周五样本 (每周丢 20%).
+        #   安全性: 每个写字段都有 bar 存在闸 (intraday 需当日日线 bar=收盘后才出现;
+        #   t+N 需未来交易日 bar), 盘中跑也写不出半成品; update_instruction_tracking
+        #   是全值覆盖, 偶发半成品下一跑自愈.
+        if inst_date < lookback or inst_date > today:
             continue
 
         direction = inst.get("direction", "")
