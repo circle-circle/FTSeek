@@ -1,0 +1,66 @@
+{
+ "generated_at": "2026-08-02T17:48:17",
+ "scope": "trade_records PLAYBOOK_SIM 已平仓",
+ "caliber_conclusion": {
+  "sim_actual_fee": "不可得 — order_fee_query SIM 返空 (DEB-20260730 层1 已裁决)",
+  "sim_only_caliber": "fees_est (参数=用户提供的富途美股费率表, app/execution/fee_model.py)",
+  "live_upgrade_path": "broker/reconciled 三态只升不降已预置 (pipeline.py:4469)",
+  "realized_pnl_semantics": "毛口径 (价格差), 实证: 逐月 implicit fee≈0",
+  "monthly_sign_dependency": "月度盈亏符号由 est 决定属模型选择, 非数据错误; 报告必须毛/净双列 (已在复盘三列)"
+ },
+ "monthly": [
+  {
+   "month": "2026-06",
+   "n": 9,
+   "gross": -1285.97,
+   "realized_pnl_sum": -1285.97,
+   "fees_est": 44.12,
+   "pnl_net_sum": -1330.1,
+   "n_divergent": 0,
+   "gross_vs_rpnl_gap": 0.0
+  },
+  {
+   "month": "2026-07",
+   "n": 183,
+   "gross": -26.02,
+   "realized_pnl_sum": -73.22,
+   "fees_est": 815.92,
+   "pnl_net_sum": -889.2,
+   "n_divergent": 2,
+   "gross_vs_rpnl_gap": 47.2
+  }
+ ],
+ "divergent_trades": [
+  {
+   "id": 977,
+   "symbol": "US.JD",
+   "direction": "LONG",
+   "date": "2026-07-02",
+   "exit_reason": "EXIT_MONITOR_CLOSE",
+   "gross": 239.94,
+   "realized_pnl": 24.18,
+   "gap": 215.76
+  },
+  {
+   "id": 983,
+   "symbol": "US.GOOG",
+   "direction": "SHORT",
+   "date": "2026-07-02",
+   "exit_reason": "EXIT_MONITOR_CLOSE",
+   "gross": -156.42,
+   "realized_pnl": 12.15,
+   "gap": -168.57
+  }
+ ],
+ "divergent_note": "gross vs realized_pnl 分叉 100% 由 EXIT_MONITOR_CLOSE 损坏单解释 (partial/重复平仓) — 归 R4 幽灵/陈旧仓清理, 非费用模型问题",
+ "fee_distribution": {
+  "min": 4.01,
+  "avg": 4.48,
+  "max": 24.45,
+  "avg_pct_of_notional": 0.14,
+  "max_pct_of_notional": 1.986,
+  "n_est": 192,
+  "n_broker_or_reconciled": 0,
+  "health": "min≈$4.01=地板 (min佣金$1.99×2+交收); max 1.99%名义=小单地板效应; 无异常"
+ }
+}

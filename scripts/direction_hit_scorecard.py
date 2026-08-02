@@ -26,12 +26,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def q(conn, where: str, params=()):
+def q(conn, where: str, params=(), exec_only: bool = False):
     """返回 (n, hit_pct_t1, dir_ret_t1_pct, hit_pct_t3, dir_ret_t3_pct).
 
     fwd_return_t1/t3 在写入时已方向调整 (ic_tracker.py: sign*(close-entry)/entry),
     正=方向对。直接 >0 判命中, 不再二次 CASE direction (原实现二次调整反转了 SHORT)。
+    exec_only=True: 交易口径 (仅已执行) — R1 (2026-08-02): 未执行行的 fwd 从
+    市场从未到过的计划价起算 (触发条件化伪影), 机械虚高, 不可作交易结论。
     """
+    ex = "AND executed=1" if exec_only else ""
     r = conn.execute(f"""
         SELECT COUNT(*) n,
           ROUND(AVG(CASE WHEN fwd_return_t1>0 THEN 1.0 ELSE 0 END)*100,1) hit1,
@@ -40,7 +43,7 @@ def q(conn, where: str, params=()):
                          WHEN fwd_return_t3>0 THEN 1.0 ELSE 0 END)*100,1) hit3,
           ROUND(AVG(fwd_return_t3)*100,3) ret3
         FROM playbook_instructions
-        WHERE fwd_return_t1 IS NOT NULL AND direction IN ('BUY','SELL_SHORT') AND {where}
+        WHERE fwd_return_t1 IS NOT NULL AND direction IN ('BUY','SELL_SHORT') AND {where} {ex}
     """, params).fetchone()
     return dict(n=r[0], hit_t1=r[1], dir_ret_t1=r[2], hit_t3=r[3], dir_ret_t3=r[4])
 
@@ -66,12 +69,35 @@ def main() -> int:
     print(f"{'切片':<26} {'n':>5} {'T+1命中%':>9} {'T+1方向收益%':>12} {'T+3命中%':>9} {'T+3收益%':>9}")
     print("-" * 78)
 
-    def emit(section, label, where, params=()):
-        d = q(conn, f"date>=? AND {where}", (since, *params))
+    def emit(section, label, where, params=(), exec_only=False):
+        d = q(conn, f"date>=? AND {where}", (since, *params), exec_only=exec_only)
         report["sections"].setdefault(section, {})[label] = d
         if d["n"]:
             print(f"{label:<26} {d['n']:>5} {d['hit_t1']:>9} {d['dir_ret_t1']:>12} "
                   f"{str(d['hit_t3'] or '-'):>9} {str(d['dir_ret_t3'] or '-'):>9}")
+
+    # ── R1 (2026-08-02): 头条=交易口径 (仅已执行) ──
+    #   混合口径把未执行信号的 fwd 从"市场从未到过的计划价"起算 (触发条件化伪影:
+    #   7月实测 未执行BUY T+1 +3.08%/命中79.4% vs 已执行 −0.41%/42.6%),
+    #   使头条虚高 ~13pp。交易结论只准引用本节; 下方混合口径仅作信号层对照。
+    print("【头条·交易口径 (仅已执行 executed=1) — 唯一可作交易结论的读数】")
+    emit("headline_exec", "已执行·全部", "1=1", exec_only=True)
+    emit("headline_exec", "已执行·BUY", "direction='BUY'", exec_only=True)
+    emit("headline_exec", "已执行·SELL_SHORT", "direction='SELL_SHORT'", exec_only=True)
+    for s in ("DA", "UE", "topup"):
+        emit("headline_exec", f"已执行·{s}", f"({src_expr()})=?", (s,), exec_only=True)
+    _mix = q(conn, "date>=? AND 1=1", (since,))
+    _exe = report["sections"]["headline_exec"]["已执行·全部"]
+    if _mix["n"] and _exe["n"] and _mix["hit_t1"] is not None and _exe["hit_t1"] is not None:
+        _gap = round(_mix["hit_t1"] - _exe["hit_t1"], 1)
+        report["headline"] = {"caliber": "executed_only", **_exe,
+                              "mixed_caliber_hit_t1": _mix["hit_t1"],
+                              "artifact_inflation_pp": _gap,
+                              "note": "混合口径虚高=触发条件化伪影 (未执行 fwd 从未到达的计划价起算)"}
+        print(f"  ⚠ 口径伪影: 混合口径 T+1命中 {_mix['hit_t1']}% vs 已执行 {_exe['hit_t1']}% "
+              f"→ 虚高 {_gap}pp (交易结论只用已执行口径)")
+    print("-" * 78)
+    print("【信号口径对照 (含未执行, 有触发条件化伪影, 不作交易结论)】")
 
     emit("total", "全部", "1=1")
     emit("direction", "BUY", "direction='BUY'")
@@ -253,8 +279,9 @@ def main() -> int:
         report.setdefault("warnings", []).append(f"direction_axes_error:{_ax_err}")
 
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=1))
-    print(f"\n解读指引: ①任何切片 n<30 不下结论 ②50%±5 视为无边缘 "
-          f"③关注'分歧vs高确认'差值与逐周稳定性, 而非单周绝对值")
+    print(f"\n解读指引: ①交易结论只引用'头条·交易口径(仅已执行)', 混合口径有触发条件化伪影 "
+          f"②任何切片 n<30 不下结论 ③50%±5 视为无边缘 "
+          f"④关注'分歧vs高确认'差值与逐周稳定性, 而非单周绝对值")
     print(f"已落盘 → {OUT.relative_to(ROOT)}")
     return 0
 
