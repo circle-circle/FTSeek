@@ -77,3 +77,28 @@ if [ -n "$ISSUES" ]; then
 else
     echo "[$NOW_STR] ✅ 健康检查通过" >> "$LOG_FILE"
 fi
+
+# ── Futu SDK 卡死进程自动清扫 (2026-08-02, 复发防护: 手动验证脚本不带 os._exit(0) 会永卡) ──
+# 模式: 一次性 futu 查询脚本 (python -c/_tmp_*.py, cmdline 含 OpenSecTradeContext/OpenQuoteContext
+#   /position_list_query) 且运行 >30min 且近 3min CPU≈0 → 判定卡死, kill。
+# 风险控制: 只匹配一次性查询特征 (长驻服务 main.py 不含这些特征), 30min 上限防误杀慢任务;
+# ACTION_ALWAYS 越权变量 (默认关, 自动清理第一次先记录后人工确认再开)。
+STUCK_KILL_ENABLED="${STUCK_KILL_ENABLED:-1}"
+if [ "$STUCK_KILL_ENABLED" = "1" ]; then
+    STUCK=$(ps -eo pid,etime,pcpu,cmd | awk '
+        /OpenSecTradeContext|OpenQuoteContext|position_list_query|trade_list_query/ &&
+        !/grep/ && !/awk/ {
+            # 解析 etime (MM:SS / HH:MM:SS / D-HH:MM:SS)
+            split($2, t, ":")
+            if (length(t) == 3) mins = t[1]*60 + t[2]
+            else if (length(t) == 2) mins = t[1]
+            else mins = 100000
+            if (mins > 30 && $3 < 1.0) print $1
+        }')
+    if [ -n "$STUCK" ]; then
+        echo "[$NOW_STR] ⚠️ 清扫 Futu 卡死进程: $STUCK" >> "$LOG_FILE"
+        for pid in $STUCK; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+fi

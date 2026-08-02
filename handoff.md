@@ -90,6 +90,9 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-02 (清理减负·第三模型, 用户令"无意义任务不占资源/不耗tokens/不复发") · 4 cron 转 no_agent + 8 僵尸清理 + 防复发清扫
+**Hermes cron 减负 (token 大头归零)**: ①`ftseek-intraday-diagnose (36cc, */30 每30分钟)` LLM agent → **no_agent script** (`~/.hermes/scripts/intraday_diagnose.py`): 检查逻辑本全在脚本零推理, 原每次=完整 agent 会话×8/晚, 转后每 30min ≈0 token; ②`alpha-backfill (6af0)` → no_agent (`alpha_backfill_run.py`), 输出一行摘要; ③`insider monitor (1370)` → no_agent (`insider_monitor_check.py`, 正常静默/异常告警, 原 agent 版 --QUIET-- 语义保留); ④`signal-ic-backfill (3497)` **暂停** — 与系统 crontab 05:30 `backfill_forward_returns.py` 重复 (同名同脚本), alpha-backfill 06:30 接力不受影响。保留 6 个推理类 agent cron (盘前/盘后/周日复盘/DA扫描/记忆更新/Deepulse = 真 LLM 分析)。**验证**: 三脚本 py_compile OK + 周末静默试跑 ✓ + cronjob list 逐项确认 (no_agent=true/script 挂载)。**进程清理**: 8 个 Futu SDK 卡死僵尸 (23207/23296 _tmp_gap_adj 24h+ / 66934-69057 qoder futu 查询 0%CPU) kill -9, 实测清空; hermes_worker.py (37728) 确认为 main.py 拉起的**设计长驻协议进程** (PPID=37674, 等 stdin) 保留。**防复发**: `health_check.sh` 加 Futu 卡死进程自动清扫段 (匹配一次性 futu 查询特征 + >30min + CPU≈0 → kill, 每 10min cron 执行; 服务 main.py 不含特征零误杀, 实测通过)。
+
 ### 2026-08-02 (收底执行·第三模型, 用户令"执行, 做好收底修复") · R3-1 v2 补丁确认已应用 + R4 注释诚实化/计数统一
 **R3-1 anchor_dev v2 补丁**: 核查发现目标文件 `/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py` **已完整应用** (v2 计算块@529 / scan 候选价回退@538 / cand dict 字段@568 / v1 重复块已删 / _inst 字段@604 保留双路径), py_compile OK, 幂等重跑 exit 0 — 无需重复执行, 状态确认。**收尾修复**: ①r4_bookkeeping_repair.py C 段注释诚实化 (实际仅存在性校验, 非声称的 symbol/date 匹配 — decision_id 编码 symbol+日期且实测 4/4 匹配, 风险已评估) ②孤儿计数统一 (commit 43 = 全库标记总数, D 段落标 41 = 43−2 已收养, docstring 已注明)。r4 DRY-RUN 复跑 50 项正常。
 
