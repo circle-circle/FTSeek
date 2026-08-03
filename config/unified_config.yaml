@@ -1459,6 +1459,8 @@ signal_stage:
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
 universe_expansion:
   entry_enabled: true         # 已启用(2026-07-14): scan→inject 后注入作战计划 → fast_lane 模拟盘下单 (仅 sim)
+  da_candidate_feed: true     # UE→DA 候选管道 (2026-08-03): UE 今晨 SHORT 候选进 DA 深度分析池;
+                              #   回滚开关=false 即停注入。溯源: raw_instruction.origin=ue_candidate
   prompt_version: v2
   clue_hard_events: true
   clue_earnings_events: true
