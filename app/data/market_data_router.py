@@ -894,7 +894,27 @@ class MarketDataRouter:
 
         RFC-060 (2026-06-22): market_regime 等对 VIX 敏感的场景需区分真实值与兜底,
         20.0 卡在 NORMAL/CAUTIOUS 边界, 兜底会误判 regime.
+
+        2026-08-03 修复 (regime 精准性验证, 见 obsidian 2026-08-03_regime_validation):
+        根因: 非交易时段 (盘前生成指令) 用 FRED VIXCLS 日频 — FRED 更新滞后 2-3 天
+        (8/3 仅到 7/30), 7/31 盘前生成 23 条指令全用 7/29 的 20.66 (与非交易时段
+        FRED 优先的 AlphaVantage 链一致), 与 SPY 实际波动 12.4% 脱节, 污染 regime.
+        修复: 盘前/交易时段优先用 Futu VIXY 实时报价 × 0.85 contango 校准 (与
+        AlphaVantage _fetch_finnhub_vixy 同系数; Futu 已连接且有 LV3 行情, US.VIXY
+        实测可取, 盘前亦有报价), 失败再走 AlphaVantage (Finnhub→FRED) 链.
         """
+        if self.futu:
+            try:
+                # 延迟导入避免循环依赖; 盘前/交易时段用实时代理 (OVERNIGHT/WEEKEND 用 FRED 日频可接受)
+                from app.core.scheduler_triggers import get_market_phase, MarketPhase
+                if get_market_phase() in (MarketPhase.TRADING, MarketPhase.PRE_MARKET):
+                    quote = self.futu.get_quote("US.VIXY")
+                    if quote and quote.get("price", 0) > 0:
+                        vix_est = round(quote["price"] * 0.85, 2)
+                        logger.info(f"[Router] VIX (Futu VIXY实时): VIXY=${quote['price']:.2f} → VIX≈{vix_est:.2f}")
+                        return vix_est
+            except Exception as e:
+                logger.warning(f"[Router] Futu VIXY 获取失败: {e}")
         if self.av:
             try:
                 return self.av.get_vix_or_none()

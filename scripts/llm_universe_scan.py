@@ -1064,6 +1064,7 @@ def cmd_inject(force_dry: bool = False) -> int:
         print(f"[inject] 今日({_today()})无 scan 结果, 先跑 scan")
         return 0
     surfaced = today_scans[-1].get("surfaced", [])
+    _scan_model = today_scans[-1].get("model_used")  # 2026-08-03 任务#3: 记录级模型归因 → 指令列
 
     today = _today()
     positions = _position_symbols()
@@ -1100,6 +1101,21 @@ def cmd_inject(force_dry: bool = False) -> int:
 
     router = _build_router()
     q = _batch_quotes(router, [s["symbol"] for s in cand])
+    # 2026-08-03 修复 (regime 精准性验证): 直写指令缺 market_regime/vix/spy_trend 三字段
+    #   → 7/9-7/23 指令级 regime 全 NULL, 归因/复盘无法按 regime 切片 (与 DA bridge 同口径).
+    #   复用 MarketRegimeGate (与 run_playbook_generate / DA bridge 同源); assess() 内部
+    #   已有数据源降级链 (VIX uncertain → 保守降级), 不会抛异常, best-effort 不阻塞注入.
+    _regime_fields = {}
+    try:
+        from app.playbook.market_regime import MarketRegimeGate as _MRG_ue
+        _rc_ue = _MRG_ue().assess()
+        _regime_fields = {
+            "market_regime": _rc_ue.regime.value,
+            "vix_at_generation": _rc_ue.vix,
+            "spy_trend_at_generation": "above_ma20" if _rc_ue.spy_ma20 >= _rc_ue.spy_ma50 else "below_ma20",
+        }
+    except Exception as _rg_ue_e:
+        print(f"  [warn] regime 补齐失败(非致命): {_rg_ue_e}")
     instructions = []
     for s in cand:
         px = _quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
@@ -1146,8 +1162,13 @@ def cmd_inject(force_dry: bool = False) -> int:
             "thesis": s.get("thesis", ""),
             "sector": s.get("sector", ""),
             "horizon": "short",
+            # 2026-08-03: regime 三字段 (与 DA bridge 同口径, 修复 7/9-7/23 直写缺失)
+            "market_regime": _regime_fields.get("market_regime"),
+            "vix_at_generation": _regime_fields.get("vix_at_generation"),
+            "spy_trend_at_generation": _regime_fields.get("spy_trend_at_generation"),
             # 归因 (轻量, 复用现有字段, 无需 schema 迁移):
             "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
+            "model_used": _scan_model,  # 2026-08-03 任务#3: UE 指令模型归因 (scan 记录级)
             "raw_instruction": {
                 "source": STRATEGY_ID,  # universe_expansion — 报表侧切分 DA vs 本源
                 "prompt_version": PROMPT_VERSION,
