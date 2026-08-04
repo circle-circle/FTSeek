@@ -149,6 +149,38 @@ def main():
             return 0.0, n
         return (num / math.sqrt(vx * vy)), n
     
+    # ── 2b. intraday horizon (F3, 2026-08-04): strength × signal→当日收盘 ──
+    # 数据源勘误自 DEB-20260804: playbook_instructions.fwd_return_intraday (entry 锚定)
+    #   + fwd_return_intraday_open (open 锚定, 诚实尺子 — entry 锚定含未成交限价纸面优势).
+    #   两列均已方向调整 (ic_tracker.py: sign=1 BUY / -1 SHORT). 回滚: 删除本段+输出列.
+    intraday_map = {}
+    for r in inst_db.execute(
+        "SELECT decision_id, fwd_return_intraday, fwd_return_intraday_open "
+        "FROM playbook_instructions WHERE fwd_return_intraday IS NOT NULL"
+    ).fetchall():
+        intraday_map[r["decision_id"]] = (r["fwd_return_intraday"], r["fwd_return_intraday_open"])
+
+    factor_signals_intraday = defaultdict(list)       # factor -> [(strength, ret_entry_anchor)]
+    factor_signals_intraday_open = defaultdict(list)  # factor -> [(strength, ret_open_anchor)]
+    n_intra = 0
+    for r in snap_db.execute(
+        "SELECT decision_id, direction, strength, factors_json FROM signal_snapshots "
+        "WHERE strength IS NOT NULL AND factors_json IS NOT NULL AND factors_json != 'null'"
+    ).fetchall():
+        if r["direction"] not in ("LONG", "SHORT"):
+            continue
+        pair = intraday_map.get(r["decision_id"])
+        if not pair:
+            continue
+        ret_entry, ret_open = pair
+        n_intra += 1
+        for f in _extract_factors(json.loads(r["factors_json"]) if r["factors_json"] else []):
+            if ret_entry is not None:
+                factor_signals_intraday[f].append((r["strength"], ret_entry))
+            if ret_open is not None:
+                factor_signals_intraday_open[f].append((r["strength"], ret_open))
+    print(f"  intraday配对记录 (有signal→close回填): {n_intra}条")
+
     print(f"\n  {'Factor':<30} {'N':>5} {'IC':>8} {'WR%':>6} {'avgRet':>8} {'avgAlpha':>8} {'Verdict'}")
     print("  " + "-" * 85)
     
@@ -166,7 +198,27 @@ def main():
         verdict = "✅正alpha" if ic > 0.05 else ("❌负alpha" if ic < -0.05 else "⚪无alpha")
         print(f"  {factor:<30} {n:>5} {ic:>+8.4f} {wins/n*100:>5.1f}% {mr:>+8.4f} {avg_alpha:>+8.4f} {verdict}")
         factor_ic_results[factor] = {"ic": ic, "n": n, "wr": wins/n, "avg_ret": mr, "avg_alpha": avg_alpha}
-    
+
+    # F3: intraday IC 表 (entry 锚定 vs open 锚定并列; open 为诚实尺子)
+    print(f"\n  === intraday IC (strength × signal→当日收盘, Spearman) ===")
+    print(f"  {'Factor':<30} {'N':>5} {'IC(entry)':>10} {'IC(open)':>10}")
+    print("  " + "-" * 60)
+    _all_intra_factors = set(factor_signals_intraday) | set(factor_signals_intraday_open)
+    for factor in sorted(_all_intra_factors, key=lambda f: -len(factor_signals_intraday.get(f, []))):
+        pairs_e = factor_signals_intraday.get(factor, [])
+        pairs_o = factor_signals_intraday_open.get(factor, [])
+        ic_e, n_e = calc_ic(pairs_e) if len(pairs_e) >= 3 else (None, len(pairs_e))
+        ic_o, n_o = calc_ic(pairs_o) if len(pairs_o) >= 3 else (None, len(pairs_o))
+        se = f"{ic_e:+.4f}" if ic_e is not None else "N/A"
+        so = f"{ic_o:+.4f}" if ic_o is not None else "N/A"
+        print(f"  {factor:<30} {max(n_e, n_o):>5} {se:>10} {so:>10}")
+        entry = factor_ic_results.setdefault(
+            factor, {"ic": 0, "n": 0, "wr": 0, "avg_ret": 0, "avg_alpha": 0})
+        entry["ic_intraday_entry"] = ic_e
+        entry["n_intraday_entry"] = n_e
+        entry["ic_intraday_open"] = ic_o
+        entry["n_intraday_open"] = n_o
+
     # ── 3. 交易IC: 因子 → 实际交易 P&L (7/7 新增) ──
     # 与 IC(预测能力) 互补: trade_ic 衡量因子的实际交易盈利能力
     # 用 trade_records.realized_pnl_pct 代替 fwd_ret_t1
@@ -265,6 +317,11 @@ def main():
                 "trade_avg_mfe_pct": trade_data["avg_mfe_pct"],
             }
 
+    # 2026-08-03 (改进批 任务#3): 内嵌生成时间戳 — 此前只能靠文件 mtime 判断新鲜度,
+    #   周末 cron 不跑时无法区分"计划内停跑" vs "失败". 消费端按因子名取值或 n>=30 守卫,
+    #   "_meta" 无 ic/n 字段被天然跳过, 零副作用.
+    from datetime import datetime as _dt_meta, timezone as _tz_meta
+    factor_ic_results["_meta"] = {"generated_at": _dt_meta.now(_tz_meta.utc).isoformat()}
     with open(output_path, "w") as f:
         json.dump(factor_ic_results, f, indent=2, default=str)
     print(f"  已保存到 {output_path}")

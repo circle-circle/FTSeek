@@ -1048,6 +1048,10 @@ pipeline:
 playbook:
   auto_execute: true
   direction_mode: llm_vote
+  # F1 (DEB-20260804, 2026-08-04 用户裁"先实施执行方案"): condition 级负期望黑名单注入 DA prompt
+  #   数据源 scripts/condition_expectancy_report.py → data/condition_expectancy_latest.json
+  #   软约束 (prompt 段), 只影响 DA 生成倾向不硬挡; 回滚: 改 false 即停注入
+  condition_expectancy_prompt_enabled: true
   fallback_when_no_bridge: technical
   enable_weekly: true
   enabled: true

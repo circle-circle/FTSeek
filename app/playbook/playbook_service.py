@@ -1231,6 +1231,20 @@ class PlaybookService:
                 except Exception:
                     _entry_vix = 0.0
 
+            # F2 (DEB-20260804, 2026-08-04 用户裁"先实施执行方案"): 触发时真数值因子快照落库
+            #   此前 Router 每周期算 RSI/MACD/ATR/VWAP偏离等数值但只进 DEBUG 日志, 从不落库 →
+            #   真数值 IC 无从计算。只加字段不改行为; fail-open; 回滚=删除本块
+            _ts_ctx_snap = {}
+            try:
+                from app.data.market_data_router import get_market_data_router as _get_mdr_f2
+                _ctx = _get_mdr_f2().get_full_market_context(symbol) or {}
+                for _k in ("rsi", "macd", "atr", "atr_percent", "vwap", "vwap_intraday",
+                           "volume_ratio", "order_flow_imbalance", "price"):
+                    if _ctx.get(_k) is not None:
+                        _ts_ctx_snap[_k] = round(float(_ctx[_k]), 6)
+            except Exception:
+                _ts_ctx_snap = {}
+
             # 2026-07-03 fix: 从 voting_predictions 表查投票数据, 写入 trade_records
             # 根因: save_trade 未传 voting_result/model_scores/consensus_level/final_strength
             _voting_data = None
@@ -1301,7 +1315,11 @@ class PlaybookService:
                 "f3_volume": 1.0 if any("volume" in c or "vol" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
                 "f4_orderflow": 1.0 if any("insider" in c or "msp" in c or "order_flow" in c or "net_sell" in c or "net_buy" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
                 "f5_lifecycle": 1.0 if any("lifecycle" in c or "breakout" in c or "support" in c or "resistance" in c or "pe_above" in c or "pe_below" in c or "news_positive" in c or "news_negative" in c for c in _parse_json_field(inst.get("conditions_json"), [])) else 0.0,
-                "factor_detail": inst.get("conditions_json", ""),
+                # F2 (DEB-20260804): 结构化因子快照 — conditions + ts_ctx 数值 (无下游消费旧格式)
+                "factor_detail": _json.dumps({
+                    "conditions": _parse_json_field(inst.get("conditions_json"), []),
+                    "ts_ctx": _ts_ctx_snap,
+                }, ensure_ascii=False),
                 "metadata_json": _json.dumps({
                     "playbook_instruction_id": instruction_id,
                     "stop_loss": float(stop_loss) if stop_loss else 0,
