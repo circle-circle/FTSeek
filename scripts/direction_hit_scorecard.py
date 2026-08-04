@@ -96,6 +96,26 @@ def main() -> int:
     emit("headline_exec", "已执行·SELL_SHORT", "direction='SELL_SHORT'", exec_only=True)
     for s in ("DA", "UE", "topup"):
         emit("headline_exec", f"已执行·{s}", f"({src_expr()})=?", (s,), exec_only=True)
+    # ── 2026-08-03 (用户裁 "direction scorecard 加 DA-SHORT"): 来源×方向交叉矩阵 ──
+    #   背景: DA SHORT 供给=0 (07-20以来 140 BUY / 0 SHORT), UE SHORT 是唯一在产正 edge;
+    #   单来源切片与单方向切片都掩盖交叉结构。n=0 也打印 —
+    #   "轴已接线但无样本"状态必须可见 (否则 DA-SHORT 管道供给后仍不可见)。
+    def _fmt(v):
+        return "-" if v is None else str(v)
+
+    for _s in ("DA", "UE"):
+        for _d, _dl in (("BUY", "BUY"), ("SELL_SHORT", "SHORT")):
+            _lab = f"已执行·{_s}·{_dl}"
+            _dd = q(conn, f"date>=? AND ({src_expr()})=? AND direction=?",
+                    (since, _s, _d), exec_only=True)
+            if _dd["dir_ret_t1"] is not None:
+                _dd["dir_ret_t1_slip_adj"] = round(_dd["dir_ret_t1"] - 2 * _hc_bps / 100.0, 3)
+            report["sections"]["headline_exec"][_lab] = _dd
+            _adj = (f"  折算{_hc_bps:g}×2:{_dd['dir_ret_t1_slip_adj']:+.3f}"
+                    if "dir_ret_t1_slip_adj" in _dd else "")
+            _tail = "  ← 无样本(轴已接线, 待供给)" if not _dd["n"] else ""
+            print(f"{_lab:<26} {_dd['n']:>5} {_fmt(_dd['hit_t1']):>9} {_fmt(_dd['dir_ret_t1']):>12} "
+                  f"{_fmt(_dd['hit_t3']):>9} {_fmt(_dd['dir_ret_t3']):>9}{_adj}{_tail}")
     _mix = q(conn, "date>=? AND 1=1", (since,))
     _exe = report["sections"]["headline_exec"]["已执行·全部"]
     if _mix["n"] and _exe["n"] and _mix["hit_t1"] is not None and _exe["hit_t1"] is not None:

@@ -97,6 +97,12 @@ class PlaybookDB:
             "fwd_return_intraday_open": "REAL",
             "fwd_return_t1_open": "REAL",
             "fwd_return_t3_open": "REAL",
+            # 2026-08-03 (改进批 任务#3): 模型归因 — deepseek A/B 污染复盘暴露"指令无模型字段",
+            #   scorecard 无法按模型分层. model_used=生成模型 (DA skill 写 config.LLM_MODEL);
+            #   is_ab_test=1 标记实验写入; metadata_json 通用标注 blob (如污染注记).
+            "model_used": "TEXT",
+            "is_ab_test": "INTEGER",
+            "metadata_json": "TEXT",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -142,8 +148,9 @@ class PlaybookDB:
                 matched_patterns_json, pattern_verdict,
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
-                created_at, updated_at, config_version, invalidation, anchor_dev_pct
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?)
+                created_at, updated_at, config_version, invalidation, anchor_dev_pct,
+                model_used, is_ab_test, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -171,6 +178,9 @@ class PlaybookDB:
                 horizon_reasoning=excluded.horizon_reasoning,
                 invalidation=excluded.invalidation,
                 anchor_dev_pct=COALESCE(excluded.anchor_dev_pct, anchor_dev_pct),
+                model_used=COALESCE(excluded.model_used, model_used),
+                is_ab_test=COALESCE(excluded.is_ab_test, is_ab_test),
+                metadata_json=COALESCE(excluded.metadata_json, metadata_json),
                 updated_at=excluded.updated_at
         """, (
             inst.get("date"),
@@ -206,6 +216,9 @@ class PlaybookDB:
             now,
             inst.get("invalidation", "") or "",
             inst.get("anchor_dev_pct"),
+            inst.get("model_used"),
+            inst.get("is_ab_test"),
+            _to_json(inst.get("metadata") if inst.get("metadata") is not None else inst.get("metadata_json")),
         ))
         conn.commit()
         # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询

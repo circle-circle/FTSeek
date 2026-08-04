@@ -38,7 +38,12 @@ logger = logging.getLogger("ftseek_us.db_pool")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Default DB paths — ftseek_us respects TRADE_ENV=0 (live isolation)
-_ftseek_us_db = "ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db"
+# 2026-08-03 (A/B 隔离修复): FTSEEK_DB_FILE 环境变量可显式覆盖 ftseek_us DB 文件路径,
+# 使 deep-stock-analysis skill 的 A/B 测试可将 PlaybookDB 指向临时库, 避免污染生产.
+_ftseek_us_db = os.getenv(
+    "FTSEEK_DB_FILE",
+    "ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db",
+)
 _DB_PATHS: Dict[str, Path] = {
     "ftseek_us": PROJECT_ROOT / "data" / _ftseek_us_db,
     "llm_audit": PROJECT_ROOT / "data" / "llm_audit.db",
