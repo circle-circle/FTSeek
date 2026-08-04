@@ -714,7 +714,7 @@ class IntradayScorer:
         ask = float(ctx.get("lv3_ask", 0))
         bid_vol = float(ctx.get("lv3_bid_vol", 0))
         ask_vol = float(ctx.get("lv3_ask_vol", 0))
-        imbalance = float(ctx.get("order_flow_imbalance", 0))
+        imbalance = float(ctx.get("order_flow_imbalance", 0) or 0)  # §7.5: None=盘口退化→0
         price = float(ctx.get("price", 0))
 
         # 如果没有任何 LV3 数据, 该因子退化为中性

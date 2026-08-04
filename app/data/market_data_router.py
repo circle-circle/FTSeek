@@ -560,8 +560,14 @@ class MarketDataRouter:
                             bid_vol = futu_quote.get("bid_vol", 0)
                             ask_vol = futu_quote.get("ask_vol", 0)
                             total_vol = bid_vol + ask_vol
+                            # DEB-ruler §7.5-C/D (2026-08-04): push 路径无真盘口 →
+                            # bid_vol=ask_vol=0 (futu_lv3_provider.py:791-795)。此时 ofi 无定义,
+                            # 置 None 让消费端按"不可用"跳过, 不再以 0.0 假装有数据
+                            # (0.0 曾使 D4 评分恒 +0.1/LONG、ensemble agree 恒 -1 偏压)。
+                            # 哨兵 lv3_book_is_proxy 供 S2 窄校准/遥测识别退化样本。
+                            ts_ctx["lv3_book_is_proxy"] = not (total_vol > 0)
                             ts_ctx["order_flow_imbalance"] = (
-                                (bid_vol - ask_vol) / total_vol if total_vol > 0 else 0.0
+                                (bid_vol - ask_vol) / total_vol if total_vol > 0 else None
                             )
                             # P1 2026-05-12 审计修复: 注入短期价格斜率 (替代日累计 change_percent)
                             # 计算最近 5 根 1-min K 线的价格变化率 (slope_5m)
@@ -815,13 +821,14 @@ class MarketDataRouter:
         ts_ctx.setdefault("volume_ratio", 1.0)
         ts_ctx.setdefault("high_distance_pct", 0.0)
         ts_ctx.setdefault("trend", "NEUTRAL")
-        ts_ctx.setdefault("order_flow_imbalance", 0.0)
+        # §7.5-C/D: None=盘口不可用 (与主路径退化语义一致), 不再以 0.0 假装有数据
+        ts_ctx.setdefault("order_flow_imbalance", None)
         ts_ctx.setdefault("ticker_buy_sell_ratio", 1.0)
 
         # 添加时间戳
         ts_ctx["timestamp"] = datetime.now().isoformat()
 
-        logger.info(
+        logger.debug(
             f"[Router] {symbol} price=${ts_ctx['price']:.2f} "
             f"sentiment={ts_ctx.get('news_sentiment', 0):.2f} "
             f"vix={ts_ctx.get('vix', 20.0):.2f} "

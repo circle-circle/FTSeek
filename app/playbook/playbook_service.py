@@ -985,10 +985,16 @@ class PlaybookService:
                         "price": float(_arr_ctx.get("price", 0) or _arr_ctx.get("last", 0) or 0),
                         "timestamp": _arr_ctx.get("timestamp"),
                     }
+                    # DEB-ruler §7.5-A (2026-08-04): push 报价路径无真盘口, 兜底 bid=ask=last
+                    # (futu_lv3_provider.py:426-431/791-795) → 真盘口恒有 ask>bid, 故
+                    # bid==ask 即"数据退化"信号: spread 维度不可检, 跳过该维度只留 staleness,
+                    # 不再假装校验流动性。行为中性 (该维度历史上从未触发过), 语义诚实化。
+                    _book_degenerate = abs(_g_bid - _g_ask) < 1e-9
                     _q_ok, _q_reason = check_quote_health(
                         _gate_quote,
                         max_age_seconds=float(_gate_cfg.get("pretrade_max_quote_age_sec", 60.0)),
-                        max_spread_pct=float(_gate_cfg.get("pretrade_max_spread_pct", 0.05)),
+                        max_spread_pct=(1.0 if _book_degenerate
+                                        else float(_gate_cfg.get("pretrade_max_spread_pct", 0.05))),
                     )
                     if not _q_ok:
                         logger.warning(f"[playbook] {_mode_label} {symbol} 报价健康门拒绝下单: {_q_reason}")
