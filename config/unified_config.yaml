@@ -1082,14 +1082,20 @@ playbook:
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
+    # ①b 浅亏持有 (2026-08-04, 用户裁"同意 先调整再观察"): 21笔全样本反事实 —
+    #   检查点恒落 12:05-12:15 午餐低谷, 持到收盘 +$158/21笔 (13/21改善, 10/15退出后
+    #   30min内反弹); 浅亏(cur>-1.0%)不市价卖, 转 SL/PRE_CLOSE 收尾; 深亏维持立即退。回滚: false
+    mfe_stall_exit_shallow_hold_enabled: true
+    mfe_stall_exit_shallow_pct: 1.0
     # ② 同标的低MFE连败封禁: 近7日连续≥2笔[亏损且MFE<0.5%] → 拒新触发 (CRM三连磨死类模式)
     symbol_streak_ban_enabled: true
     symbol_streak_ban_lookback_days: 7
     symbol_streak_ban_min_streak: 2
     symbol_streak_ban_mfe_pct: 0.5
-    # ③ 低ATR硬门: atr_pct<2.5% 低波票不做日内动量 (7月13笔 15%WR -$244)
+    # ③ 低ATR硬门: 低波票不做日内动量。2026-08-04 提阈 2.5→3.0%: 2.5-3.0%桶
+    #   21笔净-$105.6 (62%WR但avgMFE 0.56%跑不出费用); 3.0-3.8%桶唯一净正+$31.78
     low_atr_gate_enabled: true
-    low_atr_gate_min_atr_pct: 0.025
+    low_atr_gate_min_atr_pct: 0.030
     # ④ 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 低ATR门挡低波不挡高波小票 —
     #   仙股地板 $3 + 仓位名义额≤ADV$(5日均成交额)的0.5%; 只减不加/fail-open/回滚=关开关
     liquidity_gate_enabled: true

@@ -5369,21 +5369,34 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _stall_minutes = float(_pb_cfg.get("mfe_stall_exit_minutes", 150))
         _stall_mfe_pct = float(_pb_cfg.get("mfe_stall_exit_mfe_pct", 0.5))
         if held_minutes >= _stall_minutes and peak_profit_pct < _stall_mfe_pct and profit_pct < 0:
-            exit_reason = "MFE_STALL_EXIT"
-            exit_price = current_price
-            # 2026-07-25 (首夜验证遗留): 触发现场字段入 meta — 零附近边界单 (如 MRK
-            #   cur=-0.03% 触发、成交后落库 +$0.12) 事后归因不再翻日志。
-            #   调用方退出落盘处从内存 meta 搬运 (主路径 _meta_out 用的是开环旧行).
-            meta["stall_exit"] = {
-                "stall_minutes": round(held_minutes, 1),
-                "mfe_at_trigger": round(peak_profit_pct, 4),
-                "cur_at_trigger": round(profit_pct, 4),
-                "threshold": _stall_mfe_pct,
-            }
-            logger.info(
-                f"[规则3.4-MFE停滞] {_symbol} {direction} held={held_minutes:.0f}min "
-                f"peak={peak_profit_pct:.2f}%<{_stall_mfe_pct}% cur={profit_pct:.2f}% → 提前离场"
-            )
+            # 2026-08-04 (21笔反事实, 用户裁"同意 先调整再观察"): 检查点恒落午餐低谷,
+            #   浅亏单市价卖系统性劣于持收 (+$158/21笔) — 浅亏转持有, 深亏维持立即退。
+            _shallow_hold = bool(_pb_cfg.get("mfe_stall_exit_shallow_hold_enabled", False))
+            _shallow_pct = float(_pb_cfg.get("mfe_stall_exit_shallow_pct", 1.0))
+            if _shallow_hold and profit_pct > -_shallow_pct:
+                if not meta.get("_stall_shallow_held"):
+                    meta["_stall_shallow_held"] = True
+                    logger.info(
+                        f"[规则3.4-浅亏持有] {_symbol} {direction} held={held_minutes:.0f}min "
+                        f"peak={peak_profit_pct:.2f}% cur={profit_pct:.2f}%>-{_shallow_pct}% "
+                        f"— 不市价卖, 转 SL/PRE_CLOSE 收尾"
+                    )
+            else:
+                exit_reason = "MFE_STALL_EXIT"
+                exit_price = current_price
+                # 2026-07-25 (首夜验证遗留): 触发现场字段入 meta — 零附近边界单 (如 MRK
+                #   cur=-0.03% 触发、成交后落库 +$0.12) 事后归因不再翻日志。
+                #   调用方退出落盘处从内存 meta 搬运 (主路径 _meta_out 用的是开环旧行).
+                meta["stall_exit"] = {
+                    "stall_minutes": round(held_minutes, 1),
+                    "mfe_at_trigger": round(peak_profit_pct, 4),
+                    "cur_at_trigger": round(profit_pct, 4),
+                    "threshold": _stall_mfe_pct,
+                }
+                logger.info(
+                    f"[规则3.4-MFE停滞] {_symbol} {direction} held={held_minutes:.0f}min "
+                    f"peak={peak_profit_pct:.2f}%<{_stall_mfe_pct}% cur={profit_pct:.2f}% → 提前离场"
+                )
 
     # 规则3: 时间退出 — 7/7 fix: 恢复此规则, 由 factor_exit_rules.time_exit_hours 驱动
     # 原因: 6/30 DEB 禁用时把 time_exit 交给 exit_policy.yaml, 但 7/3 fix 后 ExitMonitor 不再管
