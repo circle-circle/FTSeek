@@ -20,6 +20,12 @@ notify_fail() {
         "$WEBHOOK" > /dev/null
 }
 
+# ── 0. hermes cron jobs.json 纳入版本跟踪 (2026-08-03 改进批 任务#5) ──
+#   jobs.json 在仓库外 (/root/.hermes/cron/), 此前漂移/改动作业定义无版本可追溯.
+#   每夜快照进 data/ops/, 随 runtime-snapshot 与常规提交留痕.
+mkdir -p data/ops
+cp -f /root/.hermes/cron/jobs.json data/ops/hermes_jobs.json 2>/dev/null || true
+
 # ── 1. 推送全部本地分支 (已提交工作) ──
 if ! git push origin --all --quiet 2>&1; then
     echo "$LOG_PREFIX 分支推送失败"

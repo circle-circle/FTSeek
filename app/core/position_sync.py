@@ -138,6 +138,10 @@ class USPositionSync:
         self._last_known_positions: Dict[str, Dict] = {}
         self._consecutive_empty_queries = 0
         self._max_consecutive_empty = 3  # 连续3次空查询才确认真实空仓
+        # 2026-08-03 (任务#6 降噪): 空仓期每 3 轮一轮告警 ≈14次/h 纯噪音 (07-27 修复后
+        #   计数器不再重置, 空仓期循环"跳过本轮→确认真空"永不停止). 改为每 streak 只告警
+        #   首轮 + 确认轮, 之后静默至出现非空查询.
+        self._empty_streak_warned = False
         # P0-2 修复 (2026-05-19): tombstone 防止刚平仓被 sync 反向恢复
         # 5/18 ARM 紊乱: 22:02:54 ghost 清理 → 22:03:25 又"从 DB 恢复" → 死循环
         # 根因: broker 异步确认延迟期间, sync 看到 broker 暂无该仓位 → 走 ghost 清理,
@@ -600,13 +604,13 @@ class USPositionSync:
                 if self._consecutive_empty_queries < self._max_consecutive_empty:
                     # 使用上次已知的持仓数据继续同步，不跳过
                     if self._last_known_positions:
-                        logger.warning(
+                        (logger.warning if self._consecutive_empty_queries == 1 else logger.debug)(
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
                             f"使用上次已知持仓({len(self._last_known_positions)}只)继续同步"
                         )
                         futu_positions = dict(self._last_known_positions)
                     else:
-                        logger.warning(
+                        (logger.warning if self._consecutive_empty_queries == 1 else logger.debug)(
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
                             f"无已知持仓缓存，跳过本轮"
                         )
@@ -618,16 +622,21 @@ class USPositionSync:
                         return
                 else:
                     # 连续多次空查询，认为真实空仓
-                    logger.warning(
-                        f"[US Sync] Futu 连续{self._max_consecutive_empty}次返回空持仓列表, "
-                        f"确认真实空仓，清理已知持仓缓存"
-                    )
+                    if not self._empty_streak_warned:
+                        logger.warning(
+                            f"[US Sync] Futu 连续{self._max_consecutive_empty}次返回空持仓列表, "
+                            f"确认真实空仓，清理已知持仓缓存 (本streak后续静默)"
+                        )
+                        self._empty_streak_warned = True
+                    else:
+                        logger.debug(f"[US Sync] 持续空仓 (streak已告警, 静默)")
                     self._last_known_positions = {}
                     self._consecutive_empty_queries = 0
                     # 继续执行: futu_positions 保持空，将清理所有幽灵仓
             else:
                 # 非空查询，重置计数器
                 self._consecutive_empty_queries = 0
+                self._empty_streak_warned = False
                 for _, row in data.iterrows():
                     qty = float(row.get('qty', 0))
                     if qty != 0:

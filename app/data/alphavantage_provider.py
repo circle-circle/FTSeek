@@ -351,7 +351,9 @@ class AlphaVantageProvider:
             series_data = data.get("Time Series (Daily)", {})
             
             if not series_data:
-                logger.warning(f"[AlphaVantage] 无时间序列数据：{symbol}")
+                # 2026-08-03 (任务#6 降噪): AV 免费额度日常耗尽 → 路由层有 fallback,
+                #   属预期降级, 非可行动告警 (昨日 SPY/QQQ 合计 30+ 条/天).
+                logger.info(f"[AlphaVantage] 无时间序列数据：{symbol}")
                 return None
             
             # 转换为列表格式 (按日期排序)
@@ -402,7 +404,7 @@ class AlphaVantageProvider:
             # 获取时间序列
             ts_data = self.get_time_series(symbol, outputsize="compact")
             if not ts_data or len(ts_data["timeseries"]) < 50:
-                logger.warning(f"[AlphaVantage] 历史数据不足 {symbol}")
+                logger.info(f"[AlphaVantage] 历史数据不足 {symbol}")  # 2026-08-03 降噪: 额度耗尽预期降级
                 return None
             
             timeseries = ts_data["timeseries"]
@@ -606,7 +608,7 @@ class AlphaVantageProvider:
             # SPY 直接使用代码 (Alpha Vantage 不需要 US.前缀)
             spy_ts = self.get_time_series("SPY", outputsize="compact")
             if not spy_ts or len(spy_ts["timeseries"]) < 20:
-                logger.warning("[AlphaVantage] SPY 数据不足")
+                logger.info("[AlphaVantage] SPY 数据不足")  # 2026-08-03 降噪: 额度耗尽预期降级
                 return {}
             
             spy_series = spy_ts["timeseries"]

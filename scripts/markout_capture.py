@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 DB = ROOT / "data" / "ftseek_us.db"
 OUT = ROOT / "data" / "shadow" / "markout.jsonl"
+SENTINEL = ROOT / "data" / ".markout_done"
 LOG = ROOT / "logs" / "markout_capture.log"
 HORIZONS = (60, 300, 900)  # 秒
 
@@ -89,6 +90,13 @@ def main() -> int:
     if not rows:
         logger.info("当日无入场记录")
         return 0
+    if SENTINEL.exists():
+        try:
+            d = json.loads(SENTINEL.read_text())
+            if d.get("date") == today and d.get("trades") == len(rows):
+                return 0  # 当日标记已采齐且无新入场 — 静默退出 (省 ~80 次/日空醒)
+        except Exception:
+            pass
     recorded = _load_recorded()
     # 计算待采标记: (trade_id, symbol, direction, entry, horizon)
     pending = []
@@ -106,7 +114,12 @@ def main() -> int:
                 pending.append((tid, sym, str(direction or "LONG").upper(),
                                 float(entry), h))
     if not pending:
-        logger.info(f"无待采标记 (当日 {len(rows)} 笔入场)")
+        all_keys = {(r[0], h) for r in rows for h in HORIZONS}
+        if all_keys and all_keys.issubset(recorded):
+            SENTINEL.write_text(json.dumps({"date": today, "trades": len(rows)}))
+            logger.info(f"当日 {len(rows)} 笔 ×{len(HORIZONS)} horizons 全部采齐 — 后续静默")
+        else:
+            logger.info(f"无待采标记 (当日 {len(rows)} 笔入场)")
         return 0
     host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
     port = int(os.getenv("FUTU_OPEND_PORT", "11111"))

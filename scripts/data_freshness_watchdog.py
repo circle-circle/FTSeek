@@ -33,7 +33,7 @@ except Exception:
 WATCHLIST = [
     ("data/llm_audit.db",                          30, "LLM 审计库 (成本观测地基)",        False),
     ("data/opportunity_scan_{today}.json",         30, "DA 指令生成 bridge",               True),
-    ("data/factor_ic_latest.json",                 30, "因子 IC 回填",                     True),
+    ("data/factor_ic_latest.json",                 50, "因子 IC 回填 (Tue-Sat cron, 周一 gap 49h 为计划内)", True),
     ("data/shadow/llm_universe_scan.jsonl",        30, "UE 宇宙扫描 shadow",               True),
     ("data/shadow/premarket_peer_shadow.jsonl",    30, "盘前 peer shadow",                 True),
     ("data/shadow/divergence_arbitration_shadow.jsonl", 48, "分歧仲裁 shadow",             True),

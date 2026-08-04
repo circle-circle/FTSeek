@@ -80,6 +80,9 @@ def _now_et():
     return ET
 
 
+_low_atr_logged: set = set()
+
+
 def _today_et_str() -> str:
     from datetime import datetime
     return datetime.now(_now_et()).date().isoformat()
@@ -3817,10 +3820,13 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         try:
             _inst_atr = inst.get("atr_pct")
             if _inst_atr is not None and 0 < float(_inst_atr) < _atr_gate_min:
-                logger.info(
-                    f"[playbook] 低ATR门拦截: {symbol} atr_pct={float(_inst_atr):.4f} "
-                    f"< {_atr_gate_min} (低波票不做日内动量)"
-                )
+                _k = (symbol, _today_et_str())
+                if _k not in _low_atr_logged:
+                    _low_atr_logged.add(_k)
+                    logger.info(
+                        f"[playbook] 低ATR门拦截: {symbol} atr_pct={float(_inst_atr):.4f} "
+                        f"< {_atr_gate_min} (低波票不做日内动量, 当日首记后静默)"
+                    )
                 _emit_trigger_miss("low_atr_block", current_price)
                 return False
         except Exception:

@@ -575,11 +575,17 @@ class TradeStore:
         if record.get("signal_strength") in (None, 0, ""):
             _missing_fields.append("signal_strength")
         if _missing_fields:
-            _logger.warning(
+            _dq_msg = (
                 f"[数据质量守卫] {_symbol} save_trade 缺少归因字段: {_missing_fields} | "
                 f"source={record.get('source_type', 'UNKNOWN')} | "
                 f"trace_id={record.get('trace_id', 'NONE')}"
             )
+            # 2026-08-03 (任务#6 降噪): PLAYBOOK 路径系统性缺 strategy_id/exit_reason
+            #   (已知缺口, 10+条/天无行动) → DEBUG; 其他来源保持 WARNING (可行动).
+            if (record.get("source_type") or "").upper().startswith("PLAYBOOK"):
+                _logger.debug(_dq_msg)
+            else:
+                _logger.warning(_dq_msg)
 
         # Task #36 (2026-06-16): signal_strength + signal_id 强制存在 (NOT NULL).
         # 手动单允许 signal_strength=0 + signal_id="manual:<id>"; 策略单必须含真值.
