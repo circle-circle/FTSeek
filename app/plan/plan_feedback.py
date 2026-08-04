@@ -46,11 +46,18 @@ def _load_plan(date_str: str = None) -> Optional[Dict]:
 
 
 def _load_factor_screen() -> Optional[Dict]:
-    """加载因子筛选结果"""
+    """加载因子筛选结果 (2026-08-03 任务#4: >2天陈旧视为不可用 — 死文件不产出假IC)"""
     if not FACTOR_PATH.exists():
         return None
     try:
-        return json.loads(FACTOR_PATH.read_text())
+        data = json.loads(FACTOR_PATH.read_text())
+        ts = str(data.get("timestamp", ""))
+        if ts:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if age > timedelta(days=2):
+                logger.warning(f"[plan_feedback] factor_screen 陈旧 ({age.days}天), 降级为空")
+                return None
+        return data
     except Exception:
         return None
 

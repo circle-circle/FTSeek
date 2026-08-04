@@ -230,6 +230,12 @@ class PlaybookService:
                     screen_map[sym] = c
         screen_scored = int(screen_data.get("scored_count") or screen_data.get("pool_size") or len(screen_map))
         screen_date = str(screen_data.get("timestamp", ""))[:10]
+        # 2026-08-03 (改进批 任务#4): factor_screen 自 2026-07-10 无生产者 (死文件).
+        #   陈旧文件的 per-symbol 因子分/composite 照常展示会被误读为当日评分 →
+        #   陈旧时清空 screen_map (item 侧 factor_scores/composite 归零), 但保留
+        #   screen_scored/screen_date/screen_stale 供漏斗层如实呈现"筛选非当日".
+        if screen_date and screen_date != trade_date:
+            screen_map = {}
 
         # ④ factor_ic_latest.json — 因子 IC
         factor_ic = self._load_json_file("data/factor_ic_latest.json") or {}
@@ -370,7 +376,9 @@ class PlaybookService:
             "candidates": screen_scored,
             "candidates_scored": screen_scored,
             "screen_date": screen_date,
-            "screen_stale": bool(screen_date and screen_date != trade_date),
+            # 2026-08-03 (任务#4): 文件缺失(已归档死文件)也视为 stale — 否则漏斗
+            #   会把"无筛选数据"显示为"筛选正常", 比陈旧更误导.
+            "screen_stale": (not screen_date) or screen_date != trade_date,
             "voted": len(vote_map),
             "vote_long": sum(1 for d in vote_directions if d == "LONG"),
             "vote_short": sum(1 for d in vote_directions if d == "SHORT"),

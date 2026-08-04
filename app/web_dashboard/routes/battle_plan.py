@@ -464,6 +464,13 @@ def register(app, templates):
         try:
             with open(_FACTOR_PATH) as f:
                 data = json.load(f)
+            # 2026-08-03 (任务#4): 死文件防呆 — >2天陈旧返回空 (前端对 {} 已有处理),
+            #   避免 watchlist 页面把数周前评分当当日值展示.
+            _ts = str(data.get("timestamp", ""))
+            if _ts:
+                from datetime import datetime as _dt_fs, timezone as _tz_fs, timedelta as _td_fs
+                if _dt_fs.now(_tz_fs.utc) - _dt_fs.fromisoformat(_ts.replace("Z", "+00:00")) > _td_fs(days=2):
+                    return api_ok({})
             scores = {}
             for c in data.get("candidates", []):
                 sym = c.get("symbol", "")
