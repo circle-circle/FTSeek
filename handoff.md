@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-01 (四提交独立复核+口径修正) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-04 (§7.5 失真复核+诚实化修复: B/C/E 降级 legacy 证伪 LLM 消费, A 盘口退化门/D ofi→None 坐实并修, 15:24 重启; 另: 费率套餐对比证伪换档收益≈0; S2 窄校准影子采集 08-04→08-18) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -39,6 +39,11 @@
 | `python scripts/exit_replay_backtest.py [--since D] [--refresh-bars]` | 离线退出回放器 (只读, 2026-07-25): PLAYBOOK_SIM 历史交易 × 1min bar 反事实回放 dd/be/tiered/early_tight 网格, 双序区间+Δbaseline 口径。落 `data/exit_replay_latest.json`, bar 缓存 `data/replay_bars/`。详见 `docs/debates/DEB-20260725-exit-replay-backtest.md` |
 | `python scripts/entry_gate_replay.py [--since D]` | 入场门/时点回放 L2 (只读, 2026-07-26): 全部方向指令 (含未成交) × 1min bar — ATR门网格拦对/拦错 + 入场时点变体 (09:35~11:00)。ATR 缺失用日K回算补齐 (无前视)。落 `data/entry_gate_replay_latest.json`。详见 `docs/debates/DEB-20260726-backtest-l2-l3.md` |
 | `python scripts/historical_robustness_check.py [--years 5]` | 跨期稳健性 L3 (只读, 2026-07-26): 78 标的 × 5 年日K, ATR 分桶机会结构逐年检验 — 防"6 周样本规律"当结构规律引用。日K缓存 `data/replay_bars_daily/` (与 L2 共享)。落 `data/historical_robustness_latest.json` |
+| `python scripts/preclose_counterfactual.py` | PRE_CLOSE VWAP 反事实尺子 (只读, 2026-08-04, DEB-20260804 任务#3): MFE_STALL 样本 × Futu 1-min K 15:52-16:00 ET 成交量加权 VWAP — 验证"持到收盘"反事实无尾盘折价 (实测 +4.79bps)。P2 观察期每周五复用。落 `data/preclose_counterfactual_latest.json`, 缓存 `data/preclose_cf_cache/` |
+| `python scripts/fee_structure_analysis.py` | F-S4 费用结构尺子 (只读, 2026-08-04, DEB-ruler §六): 费用%vs名义曲线 (佣金地板 qty<199) + era 实测 (fee_model 与 fees_est 分毫不差) + 三杠杆 paper (提名义/剔小单/费率档)。落 `data/fee_structure_latest.json` |
+| `python scripts/limit_entry_counterfactual.py [--since D]` | S6 限价入场反事实 (只读, 2026-08-04, DEB-ruler §六): 市价单 vs 限价@区间边/锚 × 1min bar 触价回放 (含市价化规则+触发bar双序界)。复用 `data/replay_bars/` 缓存。落 `data/limit_entry_counterfactual_latest.json` |
+| `python scripts/fee_plan_compare.py` | 富途三套餐逐笔重算 (只读, 2026-08-04, 决策一): 用户提供真实费率表后对 era 151 笔按 旧/套餐一/按股梯度 公式重算 round-trip 费用 — 结论换套餐≈零收益 (三套餐地板同为 $1.99/单)。落 `data/fee_plan_compare_latest.json` |
+| `python scripts/orderbook_s2_capture.py` | S2 窄校准影子采集 (record-only, cron 每30min盘中, 2026-08-04→08-18): NVDA/AMZN/ORCL/MRK 独立订阅 ORDER_BOOK, 10 档真值+真值因子+代理口径常量。零主链路影响。落 `data/shadow/orderbook_s2.jsonl`, 08-18 摘 cron+校准分析 |
 
 ## 🗺️ 退出旋钮地图 (`config/playbook_horizon.yaml`, DA 恒走 `short_horizon`)
 **A. 赢家被锁太小 (R:R 缺口主因) — `factor_exit_rules.default`**
@@ -58,6 +63,7 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
+3k. **S2 窄校准实验进行中 (08-04→08-18)**: `scripts/orderbook_s2_capture.py` cron 每 30min 盘中采 NVDA/AMZN/ORCL/MRK 十档盘口真值 → `data/shadow/orderbook_s2.jsonl`。**08-18 收尾**: 摘两条 cron + 跑校准分析 (①失真量级=真值 spread/深度失衡分布 vs 代理恒 0; ②真值 IC=depth_imbalance@t vs 5/15min 前瞻收益; IC≈0 合法关门 / IC 显著重开扩面议, 须带 MDE/功效标注)。
 3j. **✅ DEB-20260801-direction-gate-calibration 已终裁 P2** (08-01 深夜): BUY quota 2→4→999 去配额 + 半码 0.5 维持 + R 分层批准。8 月 BUY 自然成交 ~140 笔, 08-14 主桶 n≥30; 周一开盘首验: ①BUY 执行量回到自然水平 (不再有 skip_reason=buy_quota) ②半码日志 [playbook] BUY 仓位因子 出现 ③服务由 systemd 托管单例 (PID 36456)。
 0a. **07-25 04:20 CST (收盘后, 已排定时任务)**: 重启 `ftseek-us.service` 激活凌晨修复批 (5项, 见变更日志首节) + 启动验证三判据: ①[ConfigGov] 热重载/漂移检测启动 + [ConfigAudit] 审计通过 ②无启动期 stages Pipeline 扫描 ③Reconciler 无 playbook 仓 broker_only 补录。
 0. **八月终裁框架已预注册** (`docs/specs/august-verdict-framework-20260831.md`, 2026-07-24 冻结): 08-29 盘后按 G1~G5 判据出 GO(切实盘)/PIVOT(降频高信念或更长持有期或纯事件驱动)/STOP 结论。8月只允许"修尺子、攒样本、做减法"三类动作，禁新机制。前置：P0.2 conf修复(X1赛道前提) + UE tier透传(事件赛道前提, 周末补)。
@@ -89,6 +95,140 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-04 (§7.5 幽灵字段复核+诚实化修复·Qoder, 用户令"核实正常则修复") — 三处降级修正, A/D 坐实并修复
+- **复核修正**: 我上一轮 §7.5 的 B/C/E 影响面被高估 — VotingCoordinator 已死 (BridgeVotingAdapter 不消费 ctx, DA/UE skill 亦不消费 ofi/lv3 字段) → **"幽灵字段进 LLM"证伪**; D4 评分/adv_shares 只服务已退休 MAIN_PIPELINE (8月 0 笔) → 降级 legacy 只记录不动码。
+- **坐实并修复的两项活跃问题**: ①**A spread 门幻影** (playbook_service.py:976): bid=ask=last 兜底使 spread 维度结构上不可能触发 (8月日志 0 拦截) → 修复: bid==ask 判"盘口退化", 跳 spread 维度只留 staleness (行为中性, 语义诚实); ②**D agree 偏压** (topup raw.evidence → S1 记分牌主料): 根因修复 = router ofi 无真盘口时置 **None** + 哨兵 `lv3_book_is_proxy` (market_data_router.py:553-575/818) → agree 偏压自动消失; 连带: F2 因子快照不再落幻影 0.0 (IC 数据纯化)。
+- **防崩补丁**: intraday_scorer.py:717 float(None) 守卫 (legacy 路径行为不变)。消费端 None 安全普查 6 处全过, 冒烟通过, **15:24 CST 重启激活** (闭市安全窗, 服务 active)。
+- **S2 价值主张诚实化**: 期末真值受益方修正为 ①spread 门真值修复 (snapshot 有真 bid/ask) ②成本模型隐性 spread ③未来信号复活校准; 实验设计与判据不变。详见 DEB-ruler §7.6。
+
+### 2026-08-04 (两项待决策落地·Qoder, 用户提供富途真实费率表 + "决策二同意") — 换套餐证伪, S2 窄校准开跑
+- **决策一 (费率) 结案 — 诚实的坏消息**: 用户给真实三套餐公式, `scripts/fee_plan_compare.py` 逐笔重算 era 151 笔: 套餐一 675.78 (**Δ=-0.36**) / 按股梯度 681.39 (+5.25)。根因: 套餐一地板=佣金$0.99+平台费$1.00=$1.99/单, 与旧套餐分毫不差, 地板区命中仍 149/151。**+313 系假想档, 杠杆 C 关闭**; 费用地板=每单固定成本 → 唯一解药是"更少更大更准的单" (杠杆B/regime过滤/sizing 同一件事)。不切换套餐。DEB-ruler 7.1③/F-S4结论/§7.4 已回写。
+- **决策二 (S2 窄校准) 已实施**: `scripts/orderbook_s2_capture.py` — 独立 OpenQuoteContext 只订 NVDA/AMZN/ORCL/MRK 的 ORDER_BOOK (4槽/1000), 不动 `stock_sub_types`/主进程 (ob_* 不复活, 信号链零污染, 合 ADR-013)。盘中每 30min 落 10 档真值 + spread_bps_true/depth_imbalance_10 + snapshot 交叉核 + 代理口径常量 (主链路 push 兜底 bid=ask=last → 恒 0)。**闭市试跑 4/4 通过 (MRK 盘后真 spread 31.2bps vs 代理 0)**。cron 双段已注册 (备份 data/crontab.backup.*.s2.txt), 窗口 08-04→08-18, 期末校准: 失真量级 + 真值因子对 5/15min 前瞻收益 IC (IC≈0 合法关门 / IC 显著重开扩面议)。
+
+### 2026-08-04 (尺子DEB §六共识落地·Qoder, 用户令"请根据最新的共识结论请执行落地 并说明") — F-S4/S6 执行, S7/规范/hygiene 全落档
+- **F-S4 费用结构尺子** (`scripts/fee_structure_analysis.py` → `data/fee_structure_latest.json`): ①费用曲线 — 佣金地板 qty<199, 中价股名义 ~$8-10k 才松开; ②era 实测 fee_model 与 fees_est **分毫不差** (676.14), **99% 单在地板区**; ③杠杆: 提名义在全 era **反向** (毛为负放大亏损, k=2→-463), **剔暴跌毛正子集 k=3→+369** (尺寸杠杆前置条件=regime过滤); 费率档减半 +313 (唯一无痛, 待用户侧核实富途可行性); 剔小单≥$2500 +436 方向意外为正 — 列假设待 bootstrap+MDE 门径。
+- **S6 限价反事实** (`scripts/limit_entry_counterfactual.py` → `data/limit_entry_counterfactual_latest.json`): **先决发现瓦解议题前提 — 95% 成交已落区间内, 平均追价 +0.003%, 没有追价可避**。初版脚本抓到自身 bug (市价化限价按限价成交=物理不可能, +215 假改善) 修正后: 限价帽 Δ=+6 (零油水); 锚限价上界 +$210/+$1.44笔 (样本内零漏单) 登记为验证期后执行重设计候选; deep_far +820 是"不做92%交易"的信号过滤效应非订单类型效应, 归 S7。**判决维持市价, 理由改写**。
+- **S7+事实#7 移交**: factor-audit 任务单 #10 (触发条件有效性, 附 miss 原因码分层混杂警告) / #11 (三分版接收确认)。
+- **门径规范 5 条**入 `docs/debates/README.md` (双侧 null-pooled 统一 / MDE 功效强制标注 / 禁见数后放宽 / pnl 毛净双列 / 代理零结果不关高保真之门); gap 假说显式冻结回写 §三 (≥1,027 笔或结构变化再开)。
+- **hygiene 全结**: ①pnl 双列=规范#4; ②anchor_dev sentinel 已修 (DA pipeline: UE 构造性 0.0→None, 下次 cron 生效; 实证 3 行 0.0=UE SHORT 批); ③时区写入点=playbook_service.py:1146 现行已统一 tz-aware ET (era 151/151), 仅 3 行 pre-era 遗留, 无需改码。
+- **文档**: 尺子DEB §七 (执行结果全录), §二落地清单状态刷新; 零 live 交易变更。
+
+### 2026-08-04 (尺子DEB第5轮核查裁定·Qoder, 用户令"另外模型更新了deb…请核查确认") — §五诊断成立, 费用项 F-S4 升第一优先
+- **另一模型 §五 (方法论审计) 全部主张独立重算**: 量级数字 (名义$3,065/盈亏std$37.2/era净-1040.3/暴跌占81.5%)、功效需求 (~1,027笔/94交易日)、口径翻转 (剔暴跌open30 净-67.4→毛+310.2)、anchor_dev 0.0×3行、F-S1未动工 — **全部复现成立**。唯一数字修正: "n翻倍功效20%"实为~35-38% (正态近似+plug-in模拟双证), 不影响"≪80%该冻结"的裁定。
+- **bootstrap p 分歧根因落定**: 0.25~0.30 (我方 null-pooled 双侧, ≈置换检验) vs 0.14 (对方 two-sample 单边 percentile) = 方法选择非噪声; **规范统一为双侧 null-pooled**, 报告效应量+CI, B≥10,000。
+- **裁定**: 六议题判决无一推翻; gap假说**显式冻结** (总样本≥1,027再开, 见数后放宽判据=criteria-shopping 被否); S2门径顺序返修 (窄校准实验先行); S7触发条件有效性**移交 factor-audit** (附触发/未触发非随机分组的混杂警告); S6限价反事实回放列执行项。
+- **本轮最大发现 (对方也漏)**: **费用 $4.48/笔 = 名义14.6bps = era净亏的65%** (era 毛-364.1 vs 净-1040.3; 剔暴跌毛+272.5 被费用打成净-192.0) — 是滑点(3bps)的5倍, fee_reconcile 已验证 fees_est 可靠 ($1.99最低佣金×2 地板效应 → 小名义仓位的尺寸伪影)。新立 **F-S4 费用结构尺子+杠杆评估** (费用%vs名义曲线/提名义/降笔数/费率档, 零live变更), 取代 5.7 成第一优先。
+- **文档**: DEB-20260804-scan-subscribe-entry-ruler §六 (6.1复核表/6.2口径根因/6.3六项裁定/6.5新优先级), §四附三分版移交 (裸持edge≈0→信号侧/退出栈毛贡献为正/净亏=费用+regime), §〇事实#10 (pnl毛净双口径固化)。
+
+### 2026-08-04 (DEB 任务#3 完成·Qoder, 用户令"需要") — PRE_CLOSE VWAP 反事实尺子: C5/P2 结论无纸面水分
+- **产出**: `scripts/preclose_counterfactual.py` (只读, 已入工具表) — 对 21 笔 MFE_STALL_EXIT 从 Futu 拉退出日 1-min K (含 volume, autype=NONE), 算 15:52-16:00 ET 窗口 VWAP 作真实成交价。
+- **判决**: 实际 -732.42 / 反事实@日K收 -574.20 (+$158.22, 与旧口径完全复现) / **反事实@VWAP -569.75 (+$162.67)** — VWAP 比日K收盘还优 $4.45 (均值 +4.79bps, 区间 -28.8~+34.9bps)。担忧的尾盘流动性折价在样本内**不存在**, C5 "卖在午餐低谷"判决与 P2 浅亏持有政策经诚实尺子验证成立。残余误差仅市价冲击 (SIM 单笔 ~$3.5k 可忽略)。
+- **个股警示**: 2 笔 SHORT (GS 07-30 / GOOG 07-31) 尾盘走势不利, VWAP 反事实比实际还差 $25-34 — 空头持仓到尾盘的风险个案, 记入 C6 swing 轨道讨论素材。
+- **P2 观察期尺子就位**: 每周五同一脚本复核浅亏持有仓实际成交 vs VWAP (本周无 stall 浅亏样本, P1 提阈后待攒)。
+
+### 2026-08-04 (DEB-20260804 因子系统审计执行方案落地·Qoder, 用户令"先实施执行方案") — F1/F2/F3 落地, F4 撤销, F5 定性
+- **F1 条件级期望表+DA prompt 注入** (已上线): 新脚本 `scripts/condition_expectancy_report.py` (30d 滚动窗, n≥8, 双窗同号+跨 regime 同号+bootstrap 2000 三重门) → `data/condition_expectancy_latest.json` (hard/soft/watch + prompt_block); 当前 hard=1 (**insider_net_buy** n=38 -$12.4/笔 p=0.002, BH 唯一过校正)。注入侧改在**库外** `/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py` (`_load_condition_blacklist_for_prompt`, 3 天新鲜度守卫, 静默 fail-open); 回滚开关 `unified_config.yaml::playbook.condition_expectancy_prompt_enabled: true`→false。cron: 05:42 CST 周二-六 (05:30 backfill→05:40 factor_ic→**05:42**→05:50 slippage)。
+- **F2 触发时真因子值落库** (已上线, 08-04 08:10 重启激活): `playbook_service.py` 触发时抓 ts_ctx 快照 (rsi/macd/atr/vwap/volume_ratio/order_flow_imbalance/price) 写入 `trade_records.factor_detail` = `{"conditions":[...],"ts_ctx":{...}}` 结构化 JSON (已验证无 Python 消费端, 纯追加)。回滚: 停写 (历史数据无害)。为 C1 "真数值因子算了就扔" 修数路。
+- **F3 factor_ic 增 intraday horizon** (已上线): `scripts/factor_ic_backfill.py` 新增 IC(entry锚定)/IC(open锚定) 孪生列 (源: `playbook_instructions.fwd_return_intraday(+_open)`, 424 条), 输出进 `data/factor_ic_latest.json` (ic_intraday_entry/ic_intraday_open)。首跑即复现 DEB C2 纸面 edge: news_positive entry +0.124 vs **open -0.009**。回滚: 删列。
+- **F4 conf≥90 降权 — bootstrap 未过门, 提案撤销** (`/tmp/f4_bootstrap.py`): 70-90 减 90+ 差 +0.484%, B=10000 → **p=0.203 不显著**; 90+ CI95 [-0.54%,+0.48%] 横跨零; risk_on 段顶端反而更好 (+0.254% vs +0.119%) — "跨 regime 稳定倒挂"被部分推翻; 构成上 90+ 桶 above_ma20 追涨集中 (51% vs 20%) 但不足以支撑因果。**零代码改动**, min_conf=0.70 与 confidence 维持原样。
+- **F5 volume_expansion 清洗重判 — 只读定性** (`/tmp/f5_volume_expansion.py`): 剔除 ≤07-08 旧账后 era 仅 n=2 (07-09 CAT/META, PRE_CLOSE 快退, 合计 -$4.2); 全史 -$803 全部来自旧账 (含 BROKER_GHOST_CLOSE/隔夜)。**"0.5h time_exit 执行杀"不成立**, 不进黑名单, 攒样观察。
+- **DEB 文件**: `docs/debates/DEB-20260804-factor-system-audit.md` 已同步全部判决 (C4 收敛"门不动/顶端不降权/观察", 任务 #1-#9 除 #3/#5 外全清)。遗留: #3 PRE_CLOSE 反事实需 Futu 拉当日 1-min K (position_paths 截断), #5 挑战 C1 (F2 已修数路, 待样本)。
+- 08-04 08:10 CST 重启 `ftseek-us.service` 激活 F2 (F1/F3 走 cron+skill 无需重启)。
+
+### 2026-08-04 (盘后复盘+MFE_STALL调整·Qoder, 用户裁"同意 先调整再观察") — 21笔反事实实证 → 入场门提阈+浅亏持有
+- **当日战绩**: 10笔全平 EOD空仓, 毛+$100.10/净+$58.69, 胜率60%, 每笔净期望+$5.87 (北极星连续达标)。赢家 NVDA+70.8/AVGO+64.9/PDD+8.5 全 PRE_CLOSE 持尾; 输家 MRK/T/NTES/JNJ 全 MFE_STALL 午盘切出。
+- **MFE_STALL 21笔全样本反事实** (`/tmp/mfe_stall_analysis.py`, Futu日K+position_paths 1min):
+  - 实际 -$732.42; 持到当日收盘 **+$158.22更好 (13/21)**; T+1开盘 -$92.92更差; T+1收盘 +$519.44但肥尾(ORCL一笔+$252占半)+违隔夜纪律 → 不采纳隔夜。
+  - **退出后30min内10/15立即反弹** — 检查点150min恒落12:05-12:15午餐流动性低谷, 系统性卖在日内最差时点。
+  - **根因②入场门贴线**: MRK atr=2.54-2.60%/JNJ 2.57-2.61% 贴线过2.5%门, 但桶avgMFE仅0.56%结构性跑不出费用。
+  - **桶级判决** (07-24→08-03全部平仓): 2.5-3.0%桶21笔净**-$105.6** (62%WR白费); 3.0-3.8%桶唯一净正+$31.78; ≥3.8%桶净-$34.09 (费用拖累, 待08-07高ATR shadow裁决)。
+- **P1 落地** (`config/unified_config.yaml:1102`): `low_atr_gate_min_atr_pct` 0.025→**0.030** — 砍净负桶, 预期+$13/日。回滚=改回。
+- **P2 落地** (`pipeline.py` 规则3.4 + config ①b): stall触发时浅亏单(cur>-1.0%)**不市价卖**, meta `_stall_shallow_held` 记一次日志, 转SL/PRE_CLOSE收尾 (time_exit_hours=6.0不截断); 深亏维持立即退。stall_exit归因meta只入深亏分支(防浅亏仓后续PRE_CLOSE带陈旧归因)。开关 `mfe_stall_exit_shallow_hold_enabled/shallow_pct`, 回滚=false。
+- **已重启激活** (06:21): ConfigAudit✅ 池41只✅, 订阅重连一次性ERROR 60s自愈(与05:46同型, 已知启动竞态)。
+- **观察期口径**: P1效果看"2.5-3.0%桶是否零新仓"; P2效果看"浅亏持有仓的PRE_CLOSE vs 原 stall 反事实差额", 记入每周五记分牌。
+- **盘后链路**: 04:00复盘(6/7脚本)+05:00记忆更新均正常; 复盘新发现 **confidence 90+桶23笔仅26%胜率** (疑单因子过拟合) → 列入因子校准 backlog。
+
+#### 因子体系审计 (2026-08-04 深夜, 用户令"微观结构之外检查因子设置")
+- **三层断层**: ①定义层 — f1-f5 是 conditions 关键词0/1标记(伪因子), Router 每周期算的真数值(RSI/MACD/ATR/VWAPdev/volume_ratio/OFI)只进日志不落库不评估; ②评估层 — factor_ic 用 T+1 前瞻衡量日内系统(口径错配, 全负IC一半是真反转一半是尺子错), intraday 口径数据(close_t0/fwd_return_intraday)已有但没人算; ③反馈层 — DA prompt 只有 symbol 级记忆(strategy_memory), 从未拿到 condition 级盈亏反馈。
+- **条件级双窗口实证**: 全史IC+交易盈亏 × 07-14+ era 净额 — 唯一双窗口不亏=earnings_beat_streak (+$3.1全史/era≈0); 双窗口稳定亏=insider_net_buy (-$8.2/-$12.7), pe_below_industry (-$20.2全史+IC-0.023负alpha实锤); 最差=trend条件(above/below_ma20 era -$15~-20); news_positive n=122 微负(-$9.8全史) 是覆盖面最广的弱条件; volume_expansion IC+0.322强预测但-$66.9/笔(信号对执行杀, 样本被6月旧账污染需清洗重判)。
+- **置信度反向实锤**: strength IC-0.039 / confidence IC-0.045 / consensus IC-0.018 — 高分信号系统性更差; min_conf=0.70门可能在滤好留差, 需算被挡信号反事实。
+- **SHORT T+5 IC +0.1275**: 空头信号有多日预测力, 日内只吃到噪声 — 若未来开swing轨道SHORT优先 (仅记录)。
+- **建议清单 (待裁)**: 1) condition级期望表注入DA prompt(黑名单/偏好, 堵源头); 2) 触发时真因子值落库(factor_detail扩展, 2周后可算真IC); 3) factor_ic_backfill 增 intraday horizon 列; 4) min_conf门反事实审计; 5) volume_expansion 清洗6月污染后重判。
+
+### 2026-08-04 (运维空耗排查+清理·Qoder, 用户令"要") — 全链路空跑审计 + 5 项小清理落地
+- **审计结论**: 链路已相当干净 (07-25/26 僵尸清理+no_agent 化砍掉大头)。10 个启用 hermes 任务中 4 个已是 no_agent 纯脚本 (盘中诊断×2/insider/alpha-backfill, 零 LLM), 6 个 LLM agent 均有明确消费者; 系统 cron 无零产出任务; watchdog [疑墓地] 影子文件确认已不存在 (生产者早停); 内存 3.5GB 总量 1.7GB 可用, main.py 216MB/57线程/盘中~30%CPU 为合法 5 分钟执行循环, hermes gateway 415MB 有周日重启兜底。
+- **清理落地 (用户裁"要")**:
+  1. **markout_capture 当日完成哨兵** (`scripts/markout_capture.py`): 全部 (trade,horizon) 采齐后写 `data/.markout_done` (date+trades), 后续 */5 唤醒秒退无日志 — 省 ~80 次/日空醒; 新入场致 count 变化自动恢复采集。已实测: 首跑"10笔×3全部采齐", 二跑静默。
+  2. **低ATR门日志去重** (`app/playbook/pipeline.py`): `_low_atr_logged` (symbol, et_date) 集合, 同标的当日只记首次 — XOM/KO/JPM 原每 5 分钟周期复读 ~90 行/日 → ~3 行。拦截行为不变 (`_emit_trigger_miss` 照常)。
+  3. **Router 逐笔报价 INFO→DEBUG** (`app/data/market_data_router.py:824`): 原 ~476 行/日遥测降为 DEBUG, 失败 warning/error 不动。
+  4. **backups 保留核实无需改**: `db_backup.sh` 本就 7 天 (-mtime +7); 230MB = 7×27MB 日快照 (设计内) + 48MB 07-31 刻意归档, 磁盘 42% 无压力。
+  5. **死 DB 归档**: `ftseek_us.db.corrupted_20260601`/`ftseek_us.db.corrupted`/`ftseek_us.db.bak_r4_20260802` → `data/archive/` (24MB, 可恢复)。
+- **生效口径**: 1/5 即时 (cron 脚本/文件); 2/3 为 app 侧, **待收盘后重启 ftseek-us.service 生效** (与任务#4-#6 变更同批)。
+- **待验证**: 08-04 18:00 DA cron pin 后首跑 (job 已 pin qwen3.8-max); 05:00 deep-analysis 记忆更新 cron。
+- **小风险备忘**: finnhub 22:33 ReadTimeout ×7 为外部网络瞬断 (后续自愈); 未 pin 的 3 个 hermes 任务均为 no_agent 脚本无推理调用, 无 spend-protection 风险。
+
+### 2026-08-03 (DA 18:00 cron 失败排查·Qoder, 用户令"检查DA 18:00定时任务") — Hermes 模型漂移安全拦截致 DA 盘前扫描未产出
+- **状态**: 已执行, 待下次 cron 实测
+- **事实**: `~/.hermes/cron/jobs.json` job `e0d574cc1a3c` (`deep-stock-analysis 每日盘前扫描+分析`) `last_run_at=2026-08-03T18:00:52+08:00`, `last_status=error`; 错误 = global inference config 自 job 创建后漂移 (`glm-5.2` → `qwen3.8-max`), 该 job 未 pin, Hermes 为防意外支出跳过执行, **未调用任何推理**。
+- **后果**: 无 `data/opportunity_scan_2026-08-03.json` 产出 (最新为 2026-07-31); 今日盘前无 DA 候选/指令自动写入 DB。
+- **波及**: job `3a6c83bbd84c` (`deep-analysis 盘后复盘+记忆更新`, 05:00 Tue-Sat) 同为 `model_snapshot=glm-5.2` 且 active, 若不 pin, 明日 05:00 将同样失败, 次日 DA 记忆闭环断供。
+- **裁决**: 用户选 **B** (按宪章 §四.1 记录为"知情破例 + 归因影响评估"): 将两个 active job 显式 pin 到当前全局解析配置 `provider=custom model=qwen3.8-max`, 与 08-03 起交互式会话使用的模型一致; 信号源模型从 `glm-5.2` 切换为 `qwen3.8-max`, 后续 scorecard 需按 config_version/模型维度分层观察。
+- **已执行**: `~/.hermes/cron/jobs.json` 备份至 `jobs.json.bak.20260803_1800`; job `e0d574cc1a3c` 与 `3a6c83bbd84c` 的 `provider`/`model` 字段已设为 `custom`/`qwen3.8-max` (原 `null`)。Hermes scheduler 每 tick 重读 jobs.json, 无需额外 reload。
+- **验证**: `hermes cron status` 显示 scheduler 运行中; jobs.json 字段已确认; 漂移保护不会再因 model 变化而跳过。
+- **手动补跑已验证**: 用户令"手动补跑"后, 以 watchlist 44 标的手动执行 `pipeline.py --mode full --top 5 --format json` (约 30min, EXIT=0); 产出 `data/opportunity_scan_2026-08-03.json` (16 候选, 全 LONG, confidence 均为 0.35); DB 写入 15 条 DA 指令 (decision_id 前缀 `DA-20260803...`), 今日盘前供给已补齐。实际使用 skill 硬编码 `qwen3.7-max` (已勘误 handoff 前文"qwen3.8-max"之误)。
+- **A/B 对比 (用户令 deepseek-v4-flash-0731 重跑, 不落库)**: 临时改 skill `config.py` LLM_MODEL → `deepseek-v4-flash-0731`, FTSEEK_DB → `/tmp/ftseek_us_deepseek_ab.db`, 重跑 pipeline (EXIT=0, 约 31min)。产出另存为 `data/opportunity_scan_2026-08-03_deepseek.json`。
+  - **qwen3.7-max**: 16 候选, **全 LONG**, confidence 全 0.35
+  - **deepseek-v4-flash-0731**: 17 候选, **全 LONG**, confidence 全 0.35; 比 qwen 多 `US.UBER`; 分数微调: BABA/GOOG/PDD +0.5, JNJ -0.5
+  - **结论**: 两模型在今日数据上均未产生 **SHORT/SELL_SHORT** 候选; deepseek 未展现出方向上的空头分歧, 差异主要体现在候选覆盖度和分数微调。
+  - **副作用与生产污染 (重要)**: 临时 DB 无 `signal_snapshots` 表导致 IC 写入失败 (预期内)。但 `FTSEEK_DB` 覆盖仅影响 skill 内直接 sqlite3 连接; FTSeek 主服务 `PlaybookDB` 通过连接池名 `ftseek_us` 访问 `/opt/ftseek/FTSeek-US/data/ftseek_us.db`, 未受临时 DB 影响。 deepseek 重跑时 `pipeline.py` 仍通过 `PlaybookDB.save_instruction()` 将 `US.UBER` 写入了生产 `playbook_instructions` 表 (`created_at=2026-08-03T13:07:01Z`, `decision_id=DA-20260803190712-US.UBER-e0d0`, thesis 与 deepseek 桥文件一致), 并在开盘后被 auto_execute 执行且已平仓。这是本次 A/B 未完全隔离生产 DB 的副作用, 已在本日体检中发现并记录 (见下条)。
+  - **恢复**: `config.py` 与 `opportunity_scan_2026-08-03.json` 均已还原, deepseek 输出保留为 `_deepseek.json` 供后续切片; `data/da_gate_decisions.jsonl` 和 obsidian 无 deepseek/v4-flash 标记, 未污染。
+- **待实测**: 下一次自动触发为 08-04 05:00 记忆更新, 再下一次 DA 盘前为 08-04 18:00。若仍失败, 需检查 `OPENAI_API_KEY` 环境变量/模型可用性。
+- **回滚**: 将 jobs.json 中对应 job 的 `provider`/`model` 改回 `null` 即可恢复 unpinned 状态 (仍会受漂移保护拦截, 直到全局配置回归 glm-5.2); 或改为 `provider=custom model=glm-5.2` 固定旧模型。
+
+### 2026-08-03 (美股开盘后全链路体检·Qoder, 用户令"美股一开盘 请检查整个链路是否正常") — 链路正常, 模拟盘已开8笔平2笔
+- **状态**: 体检完成, 链路正常
+- **服务**: `ftseek-us.service` active (running) since 16:17:54 CST, PID 108093, 内存 ~222MB, 无 error-level 日志; `hermes_worker.py` 子进程存活。
+- **行情/数据**: OpenD/Futu LV3 实时连通; VIX≈17.2 NORMAL; SPY 752.96 / MA20=745.69 / MA50=744.99 / MA200=697.88, regime=`risk_on`。
+- **指令供给**: 今日 DB 共 19 条指令 — DA BUY 16 条 (其中 15 条来自 qwen3.7-max 手动补跑, 1 条 `US.UBER` 为 deepseek A/B 污染, 见上条), UE SELL_SHORT 3 条 (MU/RSSS/XOM)。
+- **触发/执行**: 开盘至 09:58 ET 共执行 8 笔 (7 DA LONG + 1 UE SHORT); 其中 2 笔已平仓:
+  - 已开仓 DA LONG: US.T, US.NVDA, US.TSM, US.MRK, US.NTES, US.JNJ (6 个仍持有)
+  - 已开仓并平仓: US.UBER (09:36 开, 09:57 SL_BREAKEVEN 平, 毛 +$3.92 / 净 -$0.27) ⚠️ 该笔为 deepseek-v4-flash-0731 A/B 污染, 已在 DB 用 `playbook_instructions.lesson` + `trade_records.metadata_json` 标注
+  - 已开仓 UE SHORT: US.MU (09:46 开, 09:56 SL_BREAKEVEN 平, 毛 +$1.92 / 净 -$2.16)
+- **未触发原因 (正常门拦截)**: 多只个股开盘价与 DA 建议入场价 gap >8% (AMZN/CRM/ORCL/BABA), 触发"极端 gap 跳过"; JPM/KO/XOM 因 ATR%<2.5% 被低 ATR 门拦截; AVGO/PDD 因 VWAP 逆侧被拦截; RSSS 因价格低于流动性地板 $3 被提示 (未触发)。这些均符合当前 playbook 门控规则。
+- **持仓一致性**: `trade_records` 未平仓 6 条, `open_positions` 6 条, Futu 持仓 6 条, position_sync 一致性 ✓。
+- **数据污染检查**: `da_gate_decisions.jsonl` 无 deepseek/v4-flash 标记 (771 条, 最后一条 2026-08-03 09:07 ET); A/B 产物 `data/opportunity_scan_2026-08-03_deepseek.json` 单独保留, 未进入生产 pipeline。**已确认污染**: `playbook_instructions` 与 `trade_records` 中 `US.UBER` 为 deepseek 输出, 已标注, 未删除 (模拟盘, 保留原始样本以便 scorecard 分层时剔除/标注); `daily_active_pool.json` 中也有 deepseek 写入的 `US.UBER` 条目, 已清理 (48→47)。
+- **根因**: skill 内 `FTSEEK_DB` 覆盖不能隔离 `PlaybookDB.save_instruction()` (其使用 FTSeek 主服务 DB 池 `ftseek_us`); 未来 A/B 若要不落库, 必须同时隔离 DB 池 (如独立 worktree/venv 或改 `get_db` 映射) 或在非交易时段运行。
+- **已知警告 (非故障)**: `AlphaVantage 无时间序列数据: QQQ` 周期性出现, 不影响 SPY/个股行情路由; `save_trade 缺少归因字段 strategy_id/exit_reason` 为 PLAYBOOK_SIM 路径已知提示, 不影响交易执行。
+- **后续观察**: 08-04 05:00 记忆更新 cron 与 08-04 18:00 DA 盘前扫描 cron 为首次自动触发验证; 若失败将收到告警。
+
+### 2026-08-03 (改进批执行·任务#2·Qoder, 用户令"按建议执行") — A/B 测试完全隔离生产环境 ✅
+- **背景**: 上午 deepseek A/B 污染生产 (UBER 指令+成交+pool), 根因 = skill 侧 `FTSEEK_DB` 覆盖只管直连 sqlite3, `PlaybookDB` 走 FTSeek db_pool 单例绕过了它; 且 bridge/pool/gate-jsonl 全部硬编码生产 `data/` 目录。
+- **落地 (4 文件)**:
+  - `app/storage/db_pool.py`: 新增 `FTSEEK_DB_FILE` 环境变量覆盖 ftseek_us 库路径 (绝对路径优先, `PROJECT_ROOT/"data"/<abs>` = abs)。
+  - skill `scripts/config.py`: `FTSEEK_DB` 支持同名环境变量覆盖 (默认不变)。
+  - skill `scripts/pipeline.py`: `Pipeline(..., output_dir=, db_write=, pool_write=)` + CLI `--output-dir / --no-db-write / --no-pool-write`; bridge、pool、blacklist、sector_rotation、da_gate_decisions.jsonl 全部走 `output_dir`; `db_write=False` 跳过 PlaybookDB 直写 + IC snapshot + 飞书推送 + Obsidian 归档。
+  - skill `scripts/ic_writer.py`: 显式 `FTSEEK_DB` 覆盖时禁用"回退生产 signal_snapshots.db"的兜底 (防写穿)。
+- **验证**: mock 候选 (US.XXXTEST) 跑 `_write_ftseek_data_channels + _write_bridge_file` — bridge/blacklist/sector 落 /tmp, pool 未写, DB 0 条, 飞书/Obsidian 跳过; 生产 4 文件 mtime/size + 今日指令数前后一致 (`ISOLATION_TEST_PASS`); 无参默认行为断言不变。
+- **标准 A/B 用法**: `FTSEEK_DB=/tmp/ab.db FTSEEK_DB_FILE=/tmp/ab.db python3.11 pipeline.py --mode full --output-dir /tmp/ab_out --no-db-write --no-pool-write`
+- **注意**: 上条"根因"所述隔离缺口已由本批关闭; hermes cron 调用路径不带这些参数 → 生产行为零变化。
+
+### 2026-08-03 (改进批执行·任务#3·Qoder, 用户令"按建议执行") — 模型口径统一与归因字段补齐 ✅
+- **schema**: `playbook_instructions` 新增 3 列 — `model_used TEXT` / `is_ab_test INTEGER` / `metadata_json TEXT` (迁移走既有 `_migrate_instruction_columns`, 已对生产库执行 ALTER, 备份 `/tmp/ftseek_us_premig_backup.db`); `save_instruction` INSERT/UPSERT 同步写入, UPDATE 侧 `COALESCE(excluded, 现有)` — 无模型信息的写入方不会覆盖已有归因。
+- **写入侧**: DA skill `_inst` 与 bridge JSON 顶层均落 `model_used=config.LLM_MODEL`; UE inject (`llm_universe_scan.py cmd_inject`) 从 scan 记录级 `model_used` 透传到指令列。
+- **覆盖能力**: skill `config.py` `LLM_MODEL`/`FTSEEK_DB` 支持同名环境变量覆盖; pipeline 新增 `--llm-model` CLI (同步补丁 `llm_synth.MODEL` 模块级绑定)。生产默认 `qwen3.7-max` 不变。
+- **factor_ic_latest.json**: 内嵌 `_meta.generated_at` (UTC) — 此前只能靠 mtime 判新鲜度, 周末停跑与失败不可分; `_meta` 无 ic/n 字段, 消费端 `n>=30` 守卫天然跳过 (screener/方向门/playbook_service 均已核实零副作用)。
+- **回填**: 今日 19 条指令全部可归因 — 18 条 `qwen3.7-max` (15 DA BUY + 3 UE SHORT), UBER 标 `deepseek-v4-flash-0731` + `is_ab_test=1` + metadata_json 污染注记 (与 lesson 标注并存)。
+- **意外发现 (已核实)**: UBER 指令 `created_at=21:07:01 CST` 确为 deepseek 运行写入, 但其 `decision_id` 指向 qwen 运行 07:07 ET 写的 IC snapshot — 推断 ic_writer 对 (date,symbol) 有去重返回既有 id 的行为; 且旧代码"临时库不存在→回退生产 signal_snapshots"兜底已在任务#2 封堵。
+- **验证**: 临时库 e2e — INSERT 落 3 列 / UPSERT 无模型字段时 COALESCE 保留 / 其他字段正常更新 (`E2E_SAVE_INSTRUCTION_OK`); env 覆盖与默认值均断言通过。
+- **留裁决 (策略层, 未动)**: skill DashScope 分析模型 `qwen3.7-max` vs hermes 全局 `qwen3.8-max` 口径差异 — 归因字段已就位, 是否升级 skill 默认模型待用户裁决 (A/B 框架已可随时跑)。
+
+### 2026-08-03 (改进批执行·任务#4/#5/#6·Qoder, 用户令"按建议执行") — 死文件治理 + 运维debt + 性能降噪 ✅
+- **#4 factor_screen 死文件**: 文件自 2026-07-10 无生产者 (内容 timestamp 佐证)。三消费端加陈旧降级 — `playbook_service` (漏斗: 陈旧/缺失时 per-symbol 因子分清零 + `screen_stale` 对缺失也置真)、`plan_feedback._load_factor_screen` (>2天→None 走既有 UNKNOWN 降级)、dashboard `/api/pipeline/factor-scores` (>2天→空)。文件已归档 `data/archive/factor_screen_latest.json.dead-20260710`。**评估结论: 不恢复 factor_engine cron** — 现役供给链是 DA bridge, 该文件无决策性消费者 (仅展示层), 恢复等于重引第二打分声音 (与单脑清理方向冲突), 留裁决可推翻。顺带修 watchdog 误报: factor_ic 阈值 30h→50h (cron Tue-Sat, 周一检查见 49h 为计划内, 此前每周一误报)。
+- **#5 运维debt**: ① hermes `jobs.json` 纳入版本跟踪 — 每夜 `git_backup_push.sh` 快照至 `data/ops/hermes_jobs.json` (此前漂移/改动无版本可查)。② **真 bug 修复**: skill 写 pool `expires_at` 为裸 ET 墙钟, 消费端 `is_expired()` 把 naive 当 UTC → SCAN 池条目提前 4h (12:30 ET) 过期; skill 侧已改带 `-04:00` 偏移, 今日池内 13 条存量已修。③ **真 bug 修复**: `main.py` 池初始化 `plan_path` 未定义 NameError → 每日启动报"降级运行"; 修复用 SSOT 路径 + 当日(ET)守卫 (冻结链陈旧 plan 不注入当日池 — NameError 此前反而起保护作用, 直接修会开始注入 07-31 陈旧计划)。④ 浮盈回填**评估后不建**: 所有离线报表一致过滤 `exit_time IS NOT NULL` (开仓不混入已实现聚合), dashboard 已有实时浮盈 (`unrealized_pnl`), DB 加列+定时写是冗余活动件。⑤ `daily_battle_plan_us.json` **不归档**: 08-01 有疑似盘前预检 job 再生成 (生产者未完全定位), dashboard `battle_plan_is_stale` 已正确处理非当日计划。
+- **#6 性能+降噪**: ① DA 并发 3→5 (`DA_MAX_WORKERS` env 可调), 15 候选 ~30min→~20min。② 日志降噪 (按今日频次实证): `[US Sync] Futu 空持仓` 71条/天 → 每 streak 只告警首轮+确认轮; AlphaVantage 无数据/不足 49条/天 (免费额度耗尽+路由有 fallback=预期降级) → INFO; `save_trade 缺少归因字段` PLAYBOOK 路径 (已知系统性缺口) → DEBUG, 其他来源保持 WARNING。极端 gap 跳过 (48条) 保留 WARNING — 门控命中是操作相关信息。
+- **验证**: 15 文件全量 py_compile ✅; `test_session_awareness` 42/42 ✅; pool tz 修复断言 (16:30 ET 前 is_expired=False) ✅; plan_feedback 陈旧降级实测 ✅。
+- **⚠️ 待生效**: app 侧改动 (main/position_sync/alphavantage/trade_store/playbook_service) 需**服务重启**才生效 — 当前盘中 (11:47 ET), 未重启; 建议今晚收盘后或下次自然重启。DB 迁移/回填/pool 文件修复已即时生效; skill 侧改动对下次 cron 新进程自动生效 (08-04 05:00 记忆更新 / 18:00 DA 盘前为首次验证)。
 
 ### 2026-08-03 (RFC-062 ⑧门径汇总·Qoder, 用户令"请修复") — 在建清单清零: 两门读数一页
 - **建成** `scripts/live_readiness_report.py` (只读, 不连券商) → `data/live_readiness_latest.json`: 门1 四判据 (G1-1 折算期望 / G1-2 n≥30 / G1-3 critique 倒挂 / G1-4 R:R) 自动标 ✅/❌ + 门2 数据源就绪度 (G2-1 SIM 滑点中位 3.06bps 参考 · G2-2 SSR 影子上界 31.2% · G2-3 对账 streak)。
