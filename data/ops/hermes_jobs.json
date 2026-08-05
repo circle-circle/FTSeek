@@ -1,0 +1,1214 @@
+{
+  "jobs": [
+    {
+      "id": "679eefeac75c",
+      "name": "FTSeek-US 盘前预检",
+      "prompt": "执行 FTSeek-US 盘前预检包装脚本。\n\n### Step 0: Futu 交易日检查 (必须先执行)\n运行以下命令检查今日是否为交易日:\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate && python3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\n```\n如果输出包含 \"NON_TRADING_DAY\"，直接回复 [SILENT] 并停止。不要执行后续步骤。\n\n### Step 1: 执行预检\n1. chmod +x /opt/ftseek/FTSeek-US/scripts/run_premarket.sh\n2. bash /opt/ftseek/FTSeek-US/scripts/run_premarket.sh 2>&1\n\n输出要求：\n- 如果预检通过（exit 0），简要报告\"盘前预检通过\"即可\n- 如果预检失败（exit 非0），详细报告所有发现的问题、严重等级、和建议修复措施\n- 报告格式清晰，便于飞书推送阅读\n- 最后用一句话总结是否可以正常开盘交易",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 20 * * 1-5",
+        "display": "0 20 * * 1-5"
+      },
+      "schedule_display": "0 20 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 555
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:31.852174+08:00",
+      "paused_reason": null,
+      "created_at": "2026-04-15T19:30:45.307600+08:00",
+      "next_run_at": "2026-07-01T20:00:00+08:00",
+      "last_run_at": "2026-06-30T20:01:16.972053+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": null,
+      "fire_claim": null
+    },
+    {
+      "id": "ada7f64aac2b",
+      "name": "FTSeek-US 盘后审计",
+      "prompt": "你是 FTSeek-US 盘后综合审计执行器。你必须真实执行脚本，禁止伪造输出。\n\n### Step 0: Futu 交易日检查 (必须先执行)\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果输出 `EXIT=1`（非交易日），直接回复 [SILENT] 并停止。\n\n### Step 1: 盘后审计脚本\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/post_market_audit.py 2>&1\n```\n\n### Step 2: 汇总\n将脚本输出整理为简洁的飞书报告格式。",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * 2-6",
+        "display": "0 4 * * 2-6"
+      },
+      "schedule_display": "0 4 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 557
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:28.475252+08:00",
+      "paused_reason": null,
+      "created_at": "2026-04-15T19:35:06.904230+08:00",
+      "next_run_at": "2026-07-02T04:00:00+08:00",
+      "last_run_at": "2026-07-01T04:01:33.373120+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": null,
+      "fire_claim": null
+    },
+    {
+      "id": "81002dff9b1d",
+      "name": "FTSeek-US Agent 请求处理",
+      "prompt": "你是 FTSeek-US 美股交易系统的 Agent 处理器。你的任务是扫描请求队列、深度分析、执行修复、更新记忆。\n\n### Step 0: 快速门控 (非交易日跳过)\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate && python3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\n```\n如果输出包含 \"NON_TRADING_DAY\"，检查请求队列是否有待处理请求:\n```bash\nls ~/.hermes/ftseek_requests/ 2>/dev/null | wc -l\n```\n如果请求数为 0，直接回复 [SILENT]。如果有待处理请求，继续处理。\n\n## 步骤\n\n### 1. 扫描请求目录\n```bash\nls ~/.hermes/ftseek_requests/ 2>/dev/null\n```\n如果目录为空或不存在，回复 [SILENT]。\n\n### 2. 逐个处理请求\n读取每个请求文件，分析请求类型和内容，执行相应操作。\n\n### 3. 处理完成后\n- 删除已处理的请求文件\n- 如有重要修复，输出摘要报告\n- 如无请求或全部静默处理，回复 [SILENT]",
+      "skills": [
+        "ftseek-troubleshooting-playbook"
+      ],
+      "skill": "ftseek-troubleshooting-playbook",
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/5 * * * *",
+        "display": "*/5 * * * *"
+      },
+      "schedule_display": "*/5 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 24489
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-25T22:26:37.576218+08:00",
+      "paused_reason": null,
+      "created_at": "2026-04-25T07:48:38.808815+08:00",
+      "next_run_at": "2026-07-25T22:30:00+08:00",
+      "last_run_at": "2026-07-25T22:25:17.413009+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "fire_claim": null
+    },
+    {
+      "id": "c09e8387406b",
+      "name": "FTSeek-US 盘后归因辩论",
+      "prompt": "你是 FTSeek-US 盘后多 Agent 归因辩论引擎。任务: 对今日交易进行全面审计，通过双 Agent 辩论发现遗漏问题。\n\n## 时间门控\n只在美东交易日收盘后 16:05-18:00 ET 执行。先检查交易日：\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate && python3 -c \"\nfrom app.utils.trading_calendar import is_us_trading_day\nfrom datetime import date\nimport sys\nif not is_us_trading_day(date.today()):\n    print('非交易日，跳过')\n    sys.exit(0)\nprint('交易日确认')\n\"\n```\n如果非交易日，输出\"非交易日，跳过\"并结束。\n\n## 步骤\n\n### 1. 运行方向自适应分析（新增）\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/daily_direction_attribution.py --days 1 --json\n```\n重点检查：\n- LONG盈亏比是否提升（分批止盈效果）\n- SHORT胜率是否稳定\n- 异常检测输出\n\n### 2. 运行信号归因分析\n```bash\ncd /opt/ftseek/FTSeek-US && python3 -c \"\nfrom app.analysis.signal_ic_tracker import get_ic_summary\nreport = get_ic_summary(min_signals=20, days_back=30)\nprint(report)\n\"\n```\n\n### 3. 检查持仓对账\n持仓对账已由 position_sync (每30秒运行) 自动完成，无需额外脚本。直接查 DB 确认状态：\n```bash\nsqlite3 /opt/ftseek/FTSeek-US/data/ftseek_us.db \"\nSELECT symbol, sync_status, account_type, size, avg_entry_price\nFROM open_positions ORDER BY symbol\n\"\n```\n检查点：\n- 不应有 #SIM 后缀的行（如有说明 auto_position_reconcile.py 幽灵仓残留）\n- stale_not_in_broker 行是正常的（broker已无仓但DB保留记录供审计）\n\n### 4. 综合归因分析\n结合以上数据，分析：\n- 今日信号质量：IC值、胜率、盈亏比\n- 方向差异：LONG vs SHORT 表现对比\n- 退出策略效果：分批止盈是否按预期执行\n- 异常信号：任何偏离预期的情况\n\n### 5. 辩论结论\n给出3个action items，按P0/P1/P2优先级排序。\n\n将完整分析作为最终输出发送到飞书。",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "5 4 * * 2-6",
+        "display": "5 4 * * 2-6"
+      },
+      "schedule_display": "5 4 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 43
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:29.230132+08:00",
+      "paused_reason": null,
+      "created_at": "2026-05-01T17:27:50.613353+08:00",
+      "next_run_at": "2026-07-02T04:05:00+08:00",
+      "last_run_at": "2026-07-01T04:11:44.725191+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file",
+        "delegation"
+      ],
+      "fire_claim": null
+    },
+    {
+      "id": "e277eef6a5e4",
+      "name": "FTSeek-US 美股每日告警汇总",
+      "prompt": "执行 FTSeek-US 美股每日告警汇总报告。\n\n### Step 0: 交易日检查\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate && python3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US\n```\n如果输出 NON_TRADING_DAY，直接回复\"今日非美股交易日，跳过告警汇总\"并结束。\n\n### Step 1: 运行告警汇总脚本\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/daily_alert_summary.py\n```\n\n### Step 2: 汇总输出\n将脚本输出整理为简洁的每日报告推送。",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 2-6",
+        "display": "0 5 * * 2-6"
+      },
+      "schedule_display": "0 5 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 39
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:29.844124+08:00",
+      "paused_reason": null,
+      "created_at": "2026-05-09T04:07:07.610140+08:00",
+      "next_run_at": "2026-07-02T05:00:00+08:00",
+      "last_run_at": "2026-07-01T05:01:21.418752+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_1a9bb37babcf5b87"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "36cc015242ee",
+      "name": "ftseek-intraday-diagnose",
+      "prompt": "盘中诊断 no_agent 脚本化 (2026-08-02): 原 LLM agent 每 30 分钟完整会话 = 高 token 浪费, 检查逻辑全在脚本, 零推理 → 转 no_agent script. 脚本输出即推送, 空输出静默.",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": "intraday_diagnose.py",
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 21-23 * * 1-5",
+        "display": "*/30 21-23 * * 1-5"
+      },
+      "schedule_display": "*/30 21-23 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 794
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-05-18T07:32:16.673573+08:00",
+      "next_run_at": "2026-08-05T21:00:00+08:00",
+      "last_run_at": "2026-08-04T23:30:22.104476+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_196c40b415cf1be5"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file",
+        "send_message"
+      ],
+      "workdir": null,
+      "fire_claim": null,
+      "no_agent": true,
+      "provider_snapshot": null,
+      "model_snapshot": null
+    },
+    {
+      "id": "e29e7fa29b44",
+      "name": "FTSeek 周末系统健康巡检",
+      "prompt": "你是 FTSeek-US 美股系统的周末健康巡检 Agent。每周日 10:00 执行全系统健康检查。\n\n## 检查项 (必须全部执行)\n\n### 1. 服务状态\n```bash\necho \"=== US Service ===\"\nsystemctl is-active ftseek-us\nsystemctl is-active ftseek-dashboard\n```\n\n### 2. 磁盘空间\n```bash\ndf -h / | tail -1\n```\n\n### 3. 内存使用\n```bash\nfree -h | head -2\n```\n\n### 4. 日志大小\n```bash\ndu -sh /opt/ftseek/FTSeek-US/logs/*.log | sort -rh | head -5\n```\n\n### 5. 数据库大小\n```bash\ndu -sh /opt/ftseek/FTSeek-US/data/*.db | sort -rh | head -5\n```\n\n### 6. 美股进程健康\n```bash\nps aux | grep \"FTSeek-US\" | grep -v grep\n```\n\n### 7. Futu 连接\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 -c \"\nfrom futu import OpenQuoteContext\nctx = OpenQuoteContext(host='127.0.0.1', port=11111)\nret, data = ctx.get_global_state()\nprint('Futu OK' if ret == 0 else 'Futu FAIL')\nctx.close()\n\"\n```\n\n## 输出格式\n汇总为一页健康报告，标注异常项（红色），正常项一行带过。",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 10 * * 0",
+        "display": "0 10 * * 0"
+      },
+      "schedule_display": "0 10 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 6
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:34.365748+08:00",
+      "paused_reason": null,
+      "created_at": "2026-05-25T22:01:54.998797+08:00",
+      "next_run_at": "2026-07-05T10:00:00+08:00",
+      "last_run_at": "2026-06-28T10:03:36.216111+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "3497b23b65d5",
+      "name": "signal-ic-backfill",
+      "prompt": "Run the FTSeek-US Signal IC forward returns backfill script.\n\n[IMPORTANT: You are running as a scheduled cron job. SILENT: If it is a non-trading day, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery.]\n\n### Step 0: 交易日检查 (必须先执行)\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果 EXIT=1（非交易日），回复 [SILENT] 并停止。\n\n### Step 1: Backfill\n```bash\ncd /opt/ftseek/FTSeek-US\nsource venv/bin/activate\npython3 scripts/backfill_forward_returns.py --forward\n```\n\n### Step 2: Stats\n```bash\npython3 scripts/backfill_forward_returns.py --stats\n```\n\n### Step 3: Report\nReport the results: how many snapshots were filled, any errors, and the current stats.\n\nThis script backfills T+1/T+5/T+20 forward returns for signal snapshots using TwelveData API (with yfinance fallback). It's safe to run repeatedly — already-filled records are skipped.\n\nThe cron runs at 06:00 CST (Tue-Sat) which corresponds to 17:00-18:00 ET (Mon-Fri), after US market close.",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * 2-6",
+        "display": "0 6 * * 2-6"
+      },
+      "schedule_display": "0 6 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 45
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-02T20:09:10.752223+08:00",
+      "paused_reason": null,
+      "created_at": "2026-05-31T12:14:20.876460+08:00",
+      "next_run_at": "2026-08-04T06:00:00+08:00",
+      "last_run_at": "2026-08-01T06:02:14.961462+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_197e1387064f1b98"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "profile": null,
+      "fire_claim": null
+    },
+    {
+      "id": "61d9e3e67ec6",
+      "name": "FTSeek-US 标的表现周报",
+      "prompt": "Run the FTSeek-US symbol performance report script and summarize the results:\n1. Execute: cd /opt/ftseek/FTSeek-US && python3 scripts/symbol_performance_report.py\n2. Read the output and the saved JSON at /opt/ftseek/FTSeek-US/data/symbol_performance.json\n3. Provide a concise summary: which symbols should be DISABLED (negative EV), which to KEEP (positive EV), which to WATCH\n4. Compare with last week's report if available\n5. Format as a clean report for Feishu delivery",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * 1",
+        "display": "0 8 * * 1"
+      },
+      "schedule_display": "0 8 * * 1",
+      "repeat": {
+        "times": null,
+        "completed": 4
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:36.378533+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-04T07:47:02.049136+08:00",
+      "next_run_at": "2026-07-06T08:00:00+08:00",
+      "last_run_at": "2026-06-29T08:01:06.018971+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19451ed679cf9b90"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null,
+      "fire_claim": null
+    },
+    {
+      "id": "fdc2592266b9",
+      "name": "FTSeek Daily IC Analysis",
+      "prompt": "Run the FTSeek-US daily IC analysis script and report key findings.\n\n1. Execute: cd /opt/ftseek/FTSeek-US && python3 scripts/daily_ic_analysis.py --notify\n2. Read the output and summarize key findings\n3. If any IC > 0.1 or < -0.1, highlight it\n4. If HIGH_VOL regime or voting_llm total_pnl < -50, flag as urgent\n5. Deliver the formatted report back to this chat\n\nKeep the report concise — 关键发现 + 行动建议 only.",
+      "skills": [
+        "signal-ic-analysis"
+      ],
+      "skill": "signal-ic-analysis",
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 20 * * 1-5",
+        "display": "30 20 * * 1-5"
+      },
+      "schedule_display": "30 20 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 12
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:32.511264+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-14T01:02:29.154994+08:00",
+      "next_run_at": "2026-07-01T20:30:00+08:00",
+      "last_run_at": "2026-06-30T20:31:27.927452+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_1948d17e360f5bb8"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "profile": null,
+      "fire_claim": null
+    },
+    {
+      "id": "1a0708b15b13",
+      "name": "OKR 每日盘后追踪",
+      "prompt": "执行 FTSeek-US OKR 每日盘后追踪和状态报告。\n\n## 步骤\n\n### 1. 运行 OKR 状态报告\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python scripts/okr_status.py 2>&1\n```\n\n### 2. 运行 Shadow Tracker（更新今日指令的触发/执行/结果）\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 << 'PYEOF'\nimport sys\nsys.path.insert(0, '.')\nfrom app.playbook.db import PlaybookDB\nfrom app.playbook.shadow_tracker import ShadowTracker\nfrom app.data.market_data_router import MarketDataRouter\nfrom datetime import date\n\ndb = PlaybookDB()\ndb.ensure_tables()\nrouter = MarketDataRouter()\ntracker = ShadowTracker(db, market_data=router)\ntoday = date.today().isoformat()\ntracker.daily_tracking(today)\nprint(f\"Shadow tracking completed for {today}\")\nPYEOF\n```\n\n### 3. 读取 OKR JSON 并生成飞书消息\n读取 /opt/ftseek/FTSeek-US/data/okr_latest.json，生成以下格式的飞书推送：\n\n```\n📊 OKR 日报 — [日期]\n进度: [overall_score]%\n\n关键指标:\n- 胜率: [win_rate]% (目标55%)\n- 周PnL: $[weekly_pnl] (目标$1000)\n- 样本数: [sample] (目标30)\n- IC(T+3): [ic] (目标>0.05)\n- 触发率: [trigger]% (目标50%)\n\n今日变化:\n- 新增指令: [delta]\n- 新增触发: [delta]\n- 新增执行: [delta]\n- 新增outcome: [delta]\n\n阻塞点: [如果有]\n下周行动: [基于数据的具体建议]\n```\n\n### 4. 与昨日对比\n如果 /opt/ftseek/FTSeek-US/data/okr_history.jsonl 存在，读取最后一行与今日对比，计算 delta。\n将今日数据追加到 okr_history.jsonl（每行一个JSON）。\n\n### 5. 输出要求\n- 使用中文\n- 简洁明了，突出变化和阻塞点\n- 如果进度低于昨日，标红并给出原因分析\n- 给出基于数据的下一步行动建议",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 2-6",
+        "display": "0 5 * * 2-6"
+      },
+      "schedule_display": "0 5 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 8
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:30.644163+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-19T10:54:12.975215+08:00",
+      "next_run_at": "2026-07-02T05:00:00+08:00",
+      "last_run_at": "2026-07-01T05:02:33.427279+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19511cb0468e1b93"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "4aeb0d03721d",
+      "name": "OKR 周报复盘 (周日)",
+      "prompt": "执行 FTSeek-US OKR 周报复盘，生成本周进展和下周行动计划。\n\n## 步骤\n\n### 1. 收集数据\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate\npython scripts/okr_status.py 2>&1\npython scripts/okr_query.py trend 2>&1\npython scripts/okr_query.py gap 2>&1\n```\n\n### 2. 读取历史数据\n```bash\ncd /opt/ftseek/FTSeek-US\ncat data/okr_history.jsonl | python3 -c \"\nimport sys, json\nlines = sys.stdin.readlines()\nif not lines:\n    print('No history')\n    sys.exit(0)\nfirst = json.loads(lines[0])\nlast = json.loads(lines[-1])\nprint(f'Period: {first[\\\"timestamp\\\"][:10]} → {last[\\\"timestamp\\\"][:10]}')\nprint(f'Progress: {first[\\\"overall_score\\\"]}% → {last[\\\"overall_score\\\"]}%')\np1, p2 = first['pipeline'], last['pipeline']\nprint(f'Trades: {p1[\\\"wins\\\"]+p1[\\\"losses\\\"]} → {p2[\\\"wins\\\"]+p2[\\\"losses\\\"]}')\nprint(f'Win rate: {p1[\\\"win_rate\\\"]}% → {p2[\\\"win_rate\\\"]}%')\nprint(f'PnL: \\${p1[\\\"total_pnl\\\"]:.2f} → \\${p2[\\\"total_pnl\\\"]:.2f}')\nprint(f'Triggered: {p1[\\\"triggered\\\"]} → {p2[\\\"triggered\\\"]}')\nprint(f'Executed: {p1[\\\"executed\\\"]} → {p2[\\\"executed\\\"]}')\n\"\n```\n\n### 3. 检查 OKR spec 进度\n读取 /opt/ftseek/FTSeek-US/docs/OKR-SPEC.md，对照当前是第几周，检查对应周的 checklist 完成情况。\n\n### 4. 生成周报 (中文)\n格式：\n```\n📊 OKR 周报 — Week N (日期范围)\n\n【本周进展】\n- 进度变化: X% → Y%\n- 新增交易: N 笔\n- 胜率: X%\n- 周PnL: $X\n- 完成的行动项: ...\n\n【阻塞点分析】\n- 主要阻塞: ...\n- 根因: ...\n\n【下周行动计划】(基于数据)\n- 优先级 1: ...\n- 优先级 2: ...\n- 优先级 3: ...\n\n【风险预警】\n- ...\n\n【OKR 目标倒计时】\n- 截止日: 2026-07-19\n- 剩余天数: N\n- 按当前速率能否达标: YES/NO + 原因\n```\n\n### 5. 推送\n将周报内容作为最终输出。",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 10 * * 0",
+        "display": "0 10 * * 0"
+      },
+      "schedule_display": "0 10 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:35.147261+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-19T10:57:41.130487+08:00",
+      "next_run_at": "2026-07-05T10:00:00+08:00",
+      "last_run_at": "2026-06-28T10:03:37.906153+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19511cb0468e1b93"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "e7e76cb1311f",
+      "name": "OKR 盘前验证 (16:30)",
+      "prompt": "验证今日 Playbook 盘前生成结果\n\n## 任务\n1. 检查今日 playbook_instructions 数量\n2. 统计触发率（triggered / total）\n3. 检查是否有 entry_price 缺失\n4. 如果触发率 < 30%，分析原因并建议调整\n5. 检查 auto_execute 是否正常触发\n\n## 执行步骤\n\n```bash\ncd /opt/ftseek/FTSeek-US\nsource venv/bin/activate\npython scripts/okr_status.py\n```\n\n```bash\ncd /opt/ftseek/FTSeek-US\nsource venv/bin/activate\npython << 'EOF'\nfrom app.playbook.db import PlaybookDB\nfrom datetime import datetime\n\ndb = PlaybookDB()\ntoday = datetime.now().strftime('%Y-%m-%d')\n\ninstructions = db.get_instructions_by_date(today)\ntotal = len(instructions)\ntriggered = sum(1 for i in instructions if i.get('triggered', 0) == 1)\nmissing_price = sum(1 for i in instructions if not i.get('entry_price'))\n\nprint(f\"今日 ({today}) 指令统计:\")\nprint(f\"  总数: {total}\")\nprint(f\"  触发: {triggered} ({triggered/total*100:.1f}%)\" if total > 0 else \"  触发: 0\")\nprint(f\"  entry_price 缺失: {missing_price}\")\n\nif total == 0:\n    print(\"\\n⚠️ 今日无指令生成！\")\nelif triggered / total < 0.3:\n    print(f\"\\n⚠️ 触发率 {triggered/total*100:.1f}% < 30%，建议进一步放宽触发窗口\")\nelse:\n    print(f\"\\n✅ 触发率 {triggered/total*100:.1f}% 正常\")\n\n# 检查 auto_execute 状态\nfrom app.core.config_container import get_config\ncfg = get_config()\nauto_execute = cfg.get_dotted('playbook.auto_execute', False)\nprint(f\"\\nauto_execute 配置: {auto_execute}\")\n\n# 检查执行状态\nexecuted = sum(1 for i in instructions if i.get('executed', 0) == 1)\nprint(f\"已执行: {executed}\")\nEOF\n```\n\n## 输出格式\n```\n📊 Playbook 盘前验证报告 (2026-06-19 16:30)\n\n【生成结果】\n- 今日指令数: X\n- 触发数: Y (触发率: Z%)\n- entry_price 缺失: W\n\n【执行状态】\n- auto_execute: enabled/disabled\n- 已执行: N\n\n【评估】\n- 触发率: ✅ 正常 / ⚠️ 偏低 (< 30%)\n- 数据质量: ✅ 完整 / ⚠️ 有缺失\n\n【建议】\n- ...\n```",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 21 * * 1-5",
+        "display": "0 21 * * 1-5"
+      },
+      "schedule_display": "0 21 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 8
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:33.706487+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-19T11:18:43.890256+08:00",
+      "next_run_at": "2026-07-01T21:00:00+08:00",
+      "last_run_at": "2026-06-30T21:02:41.578398+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19511cb0468e1b93"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "13705b524e2a",
+      "name": "FTSeek Insider Signal Monitor",
+      "prompt": "insider monitor no_agent 脚本化 (2026-08-02): 纯确定性检查 + --QUIET-- 语义 → 转 no_agent script. 正常静默, 异常输出告警.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "insider_monitor_check.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * 2-6",
+        "display": "0 6 * * 2-6"
+      },
+      "schedule_display": "0 6 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 33
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-19T16:51:29.593287+08:00",
+      "next_run_at": "2026-08-06T06:00:00+08:00",
+      "last_run_at": "2026-08-05T06:00:28.071473+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null,
+      "provider_snapshot": null,
+      "model_snapshot": null
+    },
+    {
+      "id": "599ef2dd9207",
+      "name": "LONG/SHORT 方向自适应分析 (每日)",
+      "prompt": "运行FTSeek-US方向自适应止盈每日分析，将结果发送到飞书。\n\n## 步骤\n\n### 1. 运行分析脚本\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/daily_direction_attribution.py --days 7 --json\n```\n\n### 2. 分析结果并给出建议\n根据输出数据，重点回答：\n- LONG盈亏比是否从0.87x提升？(新分层止盈是否生效)\n- SHORT胜率是否维持≥55%？(全平规则是否稳定)\n- 是否有新异常信号？\n\n### 3. 关键判断\n- 如果LONG盈亏比≥1.1x且胜率≥48% → Phase 1验证通过，建议切换Active\n- 如果LONG胜率<45% → 建议回滚分层止盈\n- 如果SHORT胜率<50% → 检查全平规则\n\n### 4. 对比趋势\n```bash\ncat /opt/ftseek/FTSeek-US/data/reports/direction_attribution_*.json | python3 -c \"\nimport sys, json\ndata = [json.loads(l) for l in sys.stdin if l.strip()]\nif data:\n    latest = max(data, key=lambda x: x['timestamp'])\n    print(f\\\"最新: {latest['timestamp']}\\\")\n    for d, s in latest.get('data',{}).get('by_direction',{}).items():\n        print(f\\\"{d}: WR={s.get('win_rate',0):.1%}, ret={s.get('avg_ret_t1',0):+.3f}%, ratio={s.get('pnl_ratio',0):.2f}x\\\")\n\"\n```\n\n将分析结果作为最终输出。",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 7 * * 2-6",
+        "display": "0 7 * * 2-6"
+      },
+      "schedule_display": "0 7 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 7
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:31.249783+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-20T17:13:01.027631+08:00",
+      "next_run_at": "2026-07-02T07:00:00+08:00",
+      "last_run_at": "2026-07-01T07:01:04.472232+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19538782b08f5bee"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "c56f14f37f0c",
+      "name": "FTSeek-US 数据源健康检查",
+      "prompt": "运行FTSeek-US数据源健康检查脚本，检查VIX缓存、Finnhub API、StockTwits API、DegradationMonitor、signal_snapshots、capital_state的健康状态。\n\n执行命令：\ncd /opt/ftseek/FTSeek-US && python3 scripts/data_health_check.py\n\n如果输出中有任何🔴标记，立即通过飞书推送告警。如果全是✅或🟡，不推送（静默）。\n\n推送方式：用terminal执行以下命令推送飞书\ncd /opt/ftseek/FTSeek-US && python3 -c \"\nfrom app.core.push_hub import PushHub\nhub = PushHub()\nhub.send_text('''脚本输出''')\n\"",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 20 * * 1-5",
+        "display": "30 20 * * 1-5"
+      },
+      "schedule_display": "30 20 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 7
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:33.107876+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-21T19:05:10.709728+08:00",
+      "next_run_at": "2026-07-01T20:30:00+08:00",
+      "last_run_at": "2026-06-30T20:31:47.617795+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19538782b08f5bee"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "bcab1353c03a",
+      "name": "FTSeek-US IC周报",
+      "prompt": "运行FTSeek-US IC周报脚本，生成策略IC分析+胜率+OKR进度报告并推送飞书。\n\n执行命令：\ncd /opt/ftseek/FTSeek-US && python3 scripts/ic_weekly_report.py\n\n脚本会自动完成：\n1. IC汇总（全局+按策略+按方向）\n2. 胜率统计（按策略×方向×强度）\n3. OKR进度检查\n4. 策略建议\n5. 飞书推送\n\n无需额外操作，脚本自带推送功能。",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 17 * * 0",
+        "display": "0 17 * * 0"
+      },
+      "schedule_display": "0 17 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-01T07:00:35.740936+08:00",
+      "paused_reason": null,
+      "created_at": "2026-06-21T21:31:02.575489+08:00",
+      "next_run_at": "2026-07-05T17:00:00+08:00",
+      "last_run_at": "2026-06-28T17:01:10.132718+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_19538782b08f5bee"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "7a40dd7c9e94",
+      "name": "FTSeek-US 盘后综合复盘",
+      "prompt": "你是 FTSeek-US 盘后综合复盘执行器。合并原盘后审计+归因辩论+告警汇总+OKR追踪+方向分析为一体。必须真实执行脚本，禁止伪造输出。\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If there is genuinely nothing new to report, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]\n\n### Step 0: 交易日检查\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果 EXIT=1（非交易日），回复 [SILENT] 并停止。\n\n### Step 1: 盘后审计（交易/PnL/趋势/策略/退出/风控/持仓）\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/post_market_audit.py 2>&1\n```\n\n### Step 2: 方向自适应分析（LONG vs SHORT）\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/daily_direction_attribution.py --days 1 --json 2>&1\n```\n\n### Step 3: 告警汇总\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/daily_alert_summary.py 2>&1\n```\n\n### Step 4: OKR 状态 + Shadow Tracker\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python scripts/okr_status.py 2>&1\n```\n然后运行 Shadow Tracker 更新今日指令：\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 << 'PYEOF'\nimport sys\nsys.path.insert(0, '.')\nfrom app.playbook.db import PlaybookDB\nfrom app.playbook.shadow_tracker import ShadowTracker\nfrom app.data.market_data_router import MarketDataRouter\ndb = PlaybookDB()\ndb.ensure_tables()\nrouter = MarketDataRouter()\ntracker = ShadowTracker(db, market_data=router)\n# 2026-07-28 修复 (CST×ET 家族): 04:00 CST 跑时 date.today()=CST 已跨日,\n# 但 ET 交易日还是昨天 → shadow tracking 一直 track 无指令的\"明天\"\nfrom app.utils.timezone import now_et\ntoday = now_et().date().isoformat()\ntracker.daily_tracking(today)\nprint(f\"Shadow tracking completed for {today}\")\nPYEOF\n```\n\n### Step 5: 信号 IC 归因\n```bash\ncd /opt/ftseek/FTSeek-US && python3 -c \"\nfrom app.analysis.signal_ic_tracker import get_ic_summary\nreport = get_ic_summary(min_signals=20, days_back=30)\nprint(report)\n\" 2>&1\n```\n\n### Step 6: 持仓对账\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/position_reconcile.py 2>&1 | tail -20\n```\n\n### Step 7: OKR 历史对比\n如果 /opt/ftseek/FTSeek-US/data/okr_history.jsonl 存在，读取最后一行与今日对比计算 delta。将今日数据追加到 okr_history.jsonl。\n\n### 输出格式（飞书 Markdown）\n\n将所有步骤的输出整合为一份结构化报告，按以下分区：\n\n```\n📊 FTSeek-US 盘后综合复盘 [日期]\n净值 $[equity] | 回撤 [drawdown]%\n\n---\n\n📈 交易概览\n- 笔数/胜率/PnL/持仓数\n- 近5日趋势表\n\n🧭 方向分析\n- LONG vs SHORT 胜率/PnL/盈亏比\n- 异常检测\n\n🚪 退出分析\n- 各退出类型笔数/胜率/PnL\n- 最大亏损源标注\n\n📊 信号质量\n- IC值/胜率/盈亏比\n\n💰 风控状态\n- 回撤/水位/现金/连续亏损\n- Ghost/orphan 占比\n\n📋 计划 vs 执行\n- 命中率/执行率/错失标的\n\n🚨 告警摘要\n- 盘中告警数/主要告警（去重）\n\n🎯 OKR 进度\n- overall_score%/胜率/PnL/IC/触发率\n- 与昨日 delta\n\n🔧 行动项\n- 3条 action items，按 P0/P1/P2 优先级\n```\n\n注意事项：\n- 告警去重，不逐条列出重复告警\n- OKR 进度低于昨日时标红并给原因\n- 行动项须基于数据，不泛泛而谈\n- 如果某步骤脚本失败，标注失败原因继续下一步，不要中断整个报告",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * 2-6",
+        "display": "0 4 * * 2-6"
+      },
+      "schedule_display": "0 4 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 26
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-01T06:59:22.104744+08:00",
+      "next_run_at": "2026-08-06T04:00:00+08:00",
+      "last_run_at": "2026-08-05T04:02:49.997827+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file",
+        "delegation"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "2d69370d5c91",
+      "name": "FTSeek-US 盘前综合预检",
+      "prompt": "你是 FTSeek-US 盘前综合预检执行器。合并原盘前预检+IC分析+数据源健康检查+OKR盘前验证为一体。必须真实执行脚本，禁止伪造输出。\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If there is genuinely nothing new to report, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]\n\n### Step 0: 交易日检查\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果 EXIT=1（非交易日），回复 [SILENT] 并停止。\n\n### Step 1: 盘前预检（系统状态/连接/数据就绪）\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/pre_market_check.py 2>&1\n```\n\n### Step 2: 数据源健康检查\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/data_health_check.py 2>&1\n```\n\n### Step 3: IC 分析（盘前信号质量）\n```bash\ncd /opt/ftseek/FTSeek-US && python3 scripts/daily_ic_analysis.py 2>&1\n```\n\n### Step 4: OKR 盘前验证（今日 Playbook 指令检查）\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 << 'PYEOF'\nimport sys, json\nsys.path.insert(0, '.')\nfrom app.playbook.db import PlaybookDB\nfrom datetime import date\n\ndb = PlaybookDB()\ntoday = date.today().isoformat()\ninstructions = db.get_instructions(today)\ntotal = len(instructions)\ntriggered = sum(1 for i in instructions if i.get('status') == 'triggered')\nenabled = sum(1 for i in instructions if i.get('enabled', True))\nprint(f\"今日 Playbook 指令: {total} 条, 触发: {triggered}, 启用: {enabled}\")\n\n# 检查是否有 enabled=false 的指令\ndisabled = [i for i in instructions if not i.get('enabled', True)]\nif disabled:\n    print(f\"⚠️ 被禁用的指令: {len(disabled)} 条\")\n    for d in disabled:\n        print(f\"  - {d.get('symbol')} {d.get('direction')} (策略: {d.get('strategy')})\")\nelse:\n    print(\"✅ 所有指令均启用\")\nPYEOF\n```\n\n### 输出格式（飞书 Markdown）\n\n```\n🔧 FTSeek-US 盘前综合预检 [日期]\n盘前 20:00 ET | 交易日 ✅\n\n---\n\n📡 系统状态\n- OpenD 连接: ✅/❌\n- 数据源: VIX/Finnhub/StockTwits 各自状态\n- DegradationMonitor: 正常/降级\n\n📊 信号质量\n- 昨日 IC: [值] (目标>0.05)\n- 信号快照: [条数]\n- capital_state: [状态]\n\n📋 今日 Playbook\n- 指令数: [N] | 触发率: [X]%\n- 禁用指令: [如有则列出]\n\n⚠️ 异常项\n- [如有异常逐条列出，无则写 ✅ 无异常]\n\n🎯 盘前 Ready 状态: [GO/NO-GO]\n```\n\n注意事项：\n- 数据源检查如果某项失败，标注 ❌ 并说明影响\n- IC 值如果 < 0.05 标注黄色警告\n- 如果有禁用指令，标注原因\n- 盘前 Ready 状态: 所有检查通过为 GO，任何关键项失败为 NO-GO",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 20 * * 1-5",
+        "display": "0 20 * * 1-5"
+      },
+      "schedule_display": "0 20 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 25
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-01T06:59:47.553229+08:00",
+      "next_run_at": "2026-08-05T20:00:00+08:00",
+      "last_run_at": "2026-08-04T20:02:21.374909+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "1e9c597b0262",
+      "name": "FTSeek-US 周日综合复盘",
+      "prompt": "你是 FTSeek-US 周日综合复盘执行器。合并原系统健康巡检+OKR周报+IC周报+标的表现在周报为一体。必须真实执行脚本，禁止伪造输出。\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If there is genuinely nothing new to report, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]\n\n### Step 1: 系统健康检查\n```bash\necho \"=== 服务状态 ===\"\nsystemctl is-active ftseek-us 2>/dev/null || echo \"ftseek-us: not found\"\nsystemctl is-active futu-opend 2>/dev/null || echo \"futu-opend: not found\"\n\necho \"=== 磁盘空间 ===\"\ndf -h /opt/ftseek/ | tail -1\n\necho \"=== 日志大小 ===\"\ndu -sh /opt/ftseek/FTSeek-US/logs/ 2>/dev/null\nls -lht /opt/ftseek/FTSeek-US/logs/*.log 2>/dev/null | head -5\n\necho \"=== 数据库大小 ===\"\nls -lh /opt/ftseek/FTSeek-US/data/ftseek_us.db 2>/dev/null\n\necho \"=== 进程状态 ===\"\nps aux | grep -E \"(ftseek|futu|opend)\" | grep -v grep | head -10\n\necho \"=== 僵尸进程检查 ===\"\nps aux | grep -E \"(defunct|zombie)\" | grep -v grep | head -5\n```\n\n### Step 2: OKR 周报\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 << 'PYEOF'\nimport sys, json\nsys.path.insert(0, '.')\nfrom app.okr.okr_tracker import OKRTracker\ntracker = OKRTracker()\nreport = tracker.generate_weekly_report()\nprint(report)\nPYEOF\n```\n\n### Step 3: IC 周报\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/ic_weekly_report.py 2>&1\n```\n\n### Step 4: 标的表现周报\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 scripts/symbol_performance_report.py --weeks 1 2>&1\n```\n\n### Step 5: 本周交易汇总\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 << 'PYEOF'\nimport sys, sqlite3\nfrom datetime import date, timedelta\nsys.path.insert(0, '.')\n\nconn = sqlite3.connect('data/ftseek_us.db')\nweek_ago = (date.today() - timedelta(days=7)).isoformat()\n\n# 本周交易汇总\nrows = conn.execute(\"\"\"\n    SELECT direction, exit_reason, \n           COUNT(*) as cnt,\n           SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,\n           ROUND(SUM(pnl), 2) as total_pnl\n    FROM trade_records \n    WHERE date(entry_time) >= ?\n    GROUP BY direction, exit_reason\n    ORDER BY total_pnl\n\"\"\", (week_ago,)).fetchall()\n\nprint(\"=== 本周交易汇总 ===\")\nprint(f\"{'方向':<8} {'退出':<20} {'笔数':<6} {'胜率':<8} {'PnL':<10}\")\nfor r in rows:\n    dir_name = r[0] or 'N/A'\n    exit_name = r[1] or 'N/A'\n    win_rate = f\"{r[3]}/{r[2]}\" if r[2] > 0 else \"0/0\"\n    pnl = f\"${r[4]}\"\n    print(f\"{dir_name:<8} {exit_name:<20} {r[2]:<6} {win_rate:<8} {pnl:<10}\")\n\n# 本周总览\ntotal = conn.execute(\"\"\"\n    SELECT COUNT(*), \n           SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END),\n           ROUND(SUM(pnl), 2)\n    FROM trade_records \n    WHERE date(entry_time) >= ?\n\"\"\", (week_ago,)).fetchone()\nprint(f\"\\n总计: {total[0]}笔, 胜{total[1]}笔, PnL ${total[2]}\")\n\nconn.close()\nPYEOF\n```\n\n### 输出格式（飞书 Markdown）\n\n```\n📊 FTSeek-US 周日综合复盘 [日期区间]\n\n---\n\n🖥️ 系统健康\n- 服务状态: ftseek-us / futu-opend\n- 磁盘: [已用/总量]\n- 日志: [大小]\n- DB: [大小]\n- 进程: [正常/异常]\n\n📈 本周交易总览\n- 总笔数/胜率/PnL\n- vs 上周对比\n\n🧭 方向 × 退出交叉表\n- LONG/SHORT × 各退出类型的笔数/胜率/PnL\n\n📊 IC 周报\n- 本周平均 IC\n- 信号有效性趋势\n\n🎯 OKR 周报\n- overall_score 进度\n- 胜率/PnL/样本数/IC/触发率 vs 目标\n- 本周 delta\n\n🏆 标的表现\n- 最佳/最差标的 Top 5\n\n📋 下周行动建议\n- 3条基于数据的建议\n```\n\n注意事项：\n- 如果某脚本失败，标注失败原因继续下一步\n- OKR 进度落后目标时标红\n- 标的表现按 PnL 排序，最佳和最差各列 Top 5\n- 行动建议须基于本周数据，不泛泛而谈",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 10 * * 0",
+        "display": "0 10 * * 0"
+      },
+      "schedule_display": "0 10 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 5
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-01T07:00:12.139132+08:00",
+      "next_run_at": "2026-08-09T10:00:00+08:00",
+      "last_run_at": "2026-08-02T10:03:01.872570+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "9ac3efd8c5e7",
+      "name": "Deepulse 科技情报日报",
+      "prompt": "你是 Deepulse 科技情报雷达执行器。执行每日科技主题雷达采集+LLM分析+推送。\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If it is a non-trading day, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]\n\n## 步骤\n\n### Step 1: 交易日检查 (必须先执行)\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果 EXIT=1（非交易日），回复 [SILENT] 并停止。\n\n### Step 2: 执行 Deepulse Theme Radar\n```bash\nsource /opt/ftseek/FTSeek-US/.env.us\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate\nexport DASHSCOPE_API_KEY\npython3 /root/.hermes/skills/research/deepulse/scripts/deepulse_radar.py --domains ai,semiconductor,ev 2>&1\n```\n\n### Step 3: 执行 Theme Injector (shadow模式)\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate\npython3 /root/.hermes/skills/research/deepulse/scripts/theme_inject.py 2>&1\n```\n\n### Step 4: 输出\n将 Step 2 的 stdout (Feishu brief) 原样输出给用户。\n这是用户看到的每日科技情报日报。\n\n## 重要规则\n- 必须真实执行脚本,禁止伪造输出\n- 如果脚本失败,输出错误信息,不要编造结果\n- DASHSCOPE_API_KEY 必须从 .env.us 加载,用于LLM调用\n- Shadow模式: 仅记录,不影响交易。IC验证期D1-D30。\n- 非交易日跳过执行",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.7-max",
+      "provider": "custom",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 20 * * 1-5",
+        "display": "30 20 * * 1-5"
+      },
+      "schedule_display": "30 20 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 24
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-02T17:47:15.827138+08:00",
+      "next_run_at": "2026-08-05T20:30:00+08:00",
+      "last_run_at": "2026-08-04T20:31:38.998783+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": null,
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/opt/ftseek/FTSeek-US",
+      "fire_claim": null
+    },
+    {
+      "id": "e0d574cc1a3c",
+      "name": "deep-stock-analysis 每日盘前扫描+分析",
+      "prompt": "你是FTSeek深度分析管线。自动执行以下步骤（全权委托，不需要确认）：\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response is auto-delivered to the target. Cron jobs run autonomously with no user present — cannot ask questions or request clarification. Cron-run sessions should not recursively schedule more cron jobs.]\n\n## Step 1: 获取 Playbook watchlist\n从 FTSeek 读取当前 watchlist（用于让 deep_analysis 覆盖 voting_llm 的标的集合）:\n```bash\ncd /opt/ftseek/FTSeek-US && source venv/bin/activate && python3 -c \"\nfrom app.utils.watchlist_manager import get_stock_codes\ncodes = get_stock_codes()\nprint(','.join(codes))\n\"\n```\n将输出的逗号分隔列表保存为 SYMBOLS 变量。\n\n## Step 2: 执行深度分析管线\n用 --symbols 传入 watchlist，确保 deep_analysis 覆盖与 voting_llm 相同的标的集合:\n```bash\ncd /root/.hermes/skills/deep-stock-analysis/scripts && python3 pipeline.py --mode full --top 5 --symbols \"$SYMBOLS\" --format json 2>>/opt/ftseek/FTSeek-US/logs/da_pipeline_stderr.log\n```\n注意: 该命令会同时分析市场扫描器选出的 top 涨跌标的 + watchlist 标的，总计约 30-40 只。LLM 深度分析每只需要 30-60 秒，总耗时约 20-40 分钟，这是正常的。\n\n## Step 3: 输出摘要\n从 JSON 结果中提取:\n- 扫描了多少只候选 (candidates_total)\n- 深度分析了多少只 (analyses_count)\n- 每只的 direction (BUY/SELL_SHORT/SKIP) 和 confidence\n- 标注哪些是 watchlist 标的 (_source=watchlist)\n- IC 写入情况 (decision_id)\n\n输出格式: 简洁文本摘要，不超过 20 行。重点标注 watchlist 标的的分析结果（这些将用于 voting_llm 方向门禁交叉验证）。",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.8-max",
+      "provider": "custom",
+      "provider_snapshot": "custom",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 18 * * 1-5",
+        "display": "0 18 * * 1-5"
+      },
+      "schedule_display": "0 18 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 22
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T10:56:42.509558+08:00",
+      "next_run_at": "2026-08-05T18:00:00+08:00",
+      "last_run_at": "2026-08-04T18:26:58.003209+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_1922e14fff4f9ba9",
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/root/.hermes/skills/deep-stock-analysis/scripts",
+      "fire_claim": null
+    },
+    {
+      "id": "3a6c83bbd84c",
+      "name": "deep-analysis 盘后复盘+记忆更新",
+      "prompt": "你是deep-analysis盘后复盘执行器。自动执行以下步骤：\n\n[IMPORTANT: You are running as a scheduled cron job. SILENT: If it is a non-trading day, respond with exactly \"[SILENT]\" (nothing else).]\n\n### Step 0: 交易日检查\n```bash\nsource /opt/ftseek/FTSeek-US/venv/bin/activate\npython3 /opt/ftseek/FTSeek-US/scripts/trading_day_check.py --market US 2>/dev/null\necho \"EXIT=$?\"\n```\n如果 EXIT=1（非交易日），回复 [SILENT] 并停止。\n\n### Step 1: 执行盘后复盘\n```bash\ncd /root/.hermes/skills/deep-stock-analysis/scripts\n/opt/ftseek/FTSeek-US/venv/bin/python3.11 feedback_loop.py 2>&1\n```\n\n### Step 2: 静默完成 (2026-07-28 三链复盘审计裁决: 推送去重)\nStep 1 的记忆更新是本任务的核心价值 (喂次日 DA 盘前扫描), 必须照常执行。\n但报告内容与 04:00 盘后综合复盘高度重叠 — 执行成功后最终回复 [SILENT] 不再重复推送。\n仅当 Step 1 脚本执行失败/报错时, 才输出错误摘要作为最终回复 (失败必须可见)。\n\n注意：\n- 必须用 /opt/ftseek/FTSeek-US/venv/bin/python3.11 运行\n- 报告包含：当日交易统计、赢亏pattern、策略教训、memory摘要\n- 如果当日无交易，输出\"无交易记录\"即可\n- 不需要额外总结，脚本输出已经是完整报告",
+      "skills": [],
+      "skill": null,
+      "model": "qwen3.8-max",
+      "provider": "custom",
+      "provider_snapshot": "custom",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 2-6",
+        "display": "0 5 * * 2-6"
+      },
+      "schedule_display": "0 5 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 22
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T13:23:28.311580+08:00",
+      "next_run_at": "2026-08-06T05:00:00+08:00",
+      "last_run_at": "2026-08-05T05:00:35.511343+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_1922e14fff4f9ba9",
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/root/.hermes/skills/deep-stock-analysis/scripts",
+      "fire_claim": null
+    },
+    {
+      "id": "6af0648e3eb3",
+      "name": "alpha-backfill (SPY alpha + 论据级IC)",
+      "prompt": "alpha-backfill no_agent 脚本化 (2026-08-02): 纯确定性执行 + 一行摘要 → 转 no_agent script. 输出即推送一行摘要, 失败输出错误.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "alpha_backfill_run.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 6 * * 2-6",
+        "display": "30 6 * * 2-6"
+      },
+      "schedule_display": "30 6 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 22
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T19:11:10.879411+08:00",
+      "next_run_at": "2026-08-06T06:30:00+08:00",
+      "last_run_at": "2026-08-05T06:40:29.468391+08:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstdout:\nalpha-backfill FAIL: backfill rc=124 | claim-ic rc=0\nTIMEOUT\n    N/A\ntheme_wind:-0.20             3     ⏳ 不足     ⏳ 不足  -0.0072      N/A\n\n======================================================================\n解读:\n  IC > 0.05: 该论据类型有预测力 (信号方向正确)\n  IC ≈ 0:    该论据是噪声 (方向随机)\n  IC < 0:    该论据反向 (信号方向错误, 需调整)\n  avg_alpha: 该论据出现时的平均超额收益 (正=跑赢大盘)\n/root/.hermes/skills/deep-stock-analysis/scripts/alpha_backfill.py:409: UserWarning: A NumPy version >=1.26.4 and <2.7.0 is required for this version of SciPy (detected version 1.24.4)\n  from scipy.stats import spearmanr",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_1922e14fff4f9ba9",
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/root/.hermes/skills/deep-stock-analysis/scripts",
+      "fire_claim": null
+    },
+    {
+      "id": "13dde1f65703",
+      "name": "deep-analysis-bridge-generation",
+      "prompt": "你是FTSeek-US盘前deep_analysis管线执行器。现在是盘前时间,需要生成今天的bridge文件供FTSeek运行时使用。\n\n[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user — do NOT use send_message or try to deliver the output yourself. Just produce your report/output as your final response and the system handles the rest. SILENT: If there is genuinely nothing new to report, respond with exactly \"[SILENT]\" (nothing else) to suppress delivery. Never combine [SILENT] with content — either report your findings normally, or say [SILENT] and nothing more.]\n\n动静结合执行: 先扫描动态股(top 5), 再分析静态熟股(已有交易记录或历史分析).\n\n执行命令:\ncd /root/.hermes/skills/deep-stock-analysis/scripts && /opt/ftseek/FTSeek-US/venv/bin/python3.11 pipeline.py --mode full --market US --limit 15 --top 5 --synth llm --symbols US.MSFT,US.AAPL,US.NVDA,US.META,US.AMZN,US.JPM,US.LMT,US.CRM,US.ORCL,US.LLY,US.UBER,US.COIN,US.TSLA,US.AVGO,US.MU --format text 2>&1\n\n说明: --top 5动态扫描选出5只新机会, --symbols 15只熟股(有交易记录或多次分析), pipeline自动去重, 合并后约18-20只深度分析.\n\n完成后:\n1. 检查bridge文件: ls -la /opt/ftseek/FTSeek-US/data/opportunity_scan_*.json\n2. 读bridge文件输出候选数量和symbols, 标注哪些是动态扫描发现的新股, 哪些是熟股\n3. 查DB确认instruction写入: sqlite3 /opt/ftseek/FTSeek-US/data/ftseek_us.db \"SELECT symbol,direction,confidence,decision_id FROM playbook_instructions WHERE date=date('now','start of day','-4 hours') ORDER BY created_at DESC\"\n4. 用以下命令推送钉钉通知(必须执行):\n   cd /opt/ftseek/FTSeek-US && /opt/ftseek/FTSeek-US/venv/bin/python3.11 -c \"\nfrom app.notifier.dingtalk import DingTalkNotifier\nimport json, urllib.request, os\nfrom dotenv import load_dotenv\nload_dotenv('.env.us')\nfh_key = os.getenv('FINNHUB_API_KEY','')\ndn = DingTalkNotifier()\n\nimport datetime, timezone, timedelta\n_et = timezone(timedelta(hours=-4))\n_today = datetime.datetime.now(_et).strftime('%Y-%m-%d')\nwith open(f'data/opportunity_scan_{_today}.json') as f:\n    bridge = json.load(f)\ncandidates = bridge.get('candidates',[])\n\nlines = [f'📊 盘前Bridge生成完成 ({_today})', f'候选: {len(candidates)}只(动态扫描+熟股)', '']\nfor c in candidates:\n    sym = c.get('symbol','').replace('US.','')\n    try:\n        url = f'https://finnhub.io/api/v1/quote?symbol={sym}&token={fh_key}'\n        req = urllib.request.Request(url)\n        with urllib.request.urlopen(req, timeout=10) as resp:\n            q = json.loads(resp.read())\n        current = q.get('c',0)\n    except:\n        current = 0\n    direction = c.get('direction','')\n    conf = c.get('confidence',0)\n    llm_entry = c.get('entry_price',0)\n    llm_sl = c.get('stop_loss',0)\n    debate = c.get('debate_outcome','')[:40]\n    price_str = f'现价\\${current:.2f}' if current else '现价N/A'\n    lines.append(f'{c[\\\"symbol\\\"]}: {direction} conf={conf} {price_str}')\n    lines.append(f'  LLM建议入场\\${llm_entry} SL\\${llm_sl} (实际以re-price为准)')\n    if debate:\n        lines.append(f'  辩论: {debate}')\nlines.append('')\nlines.append('instruction直写DB ✅  实际执行价=re-price实时bid/ask')\n\ndn.send_text('\\n'.join(lines))\nprint('钉钉推送完成')\n\"\n\n输出简洁的执行结果摘要(200字以内)。用中文。",
+      "skills": [
+        "deep-stock-analysis"
+      ],
+      "skill": "deep-stock-analysis",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "custom",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * 2-6",
+        "display": "0 4 * * 2-6"
+      },
+      "schedule_display": "0 4 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 4
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-13T00:32:18.113527+08:00",
+      "paused_reason": null,
+      "created_at": "2026-07-09T06:51:02.326956+08:00",
+      "next_run_at": "2026-07-14T04:00:00+08:00",
+      "last_run_at": "2026-07-11T04:35:19.548229+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "live adapter send failed: [99992402] field validation failed; live adapter delivery to feishu:oc_a093be36f56463ad424bfb1c4b437229 failed: [99992402] field validation failed; delivery error: Feishu send failed: [99992402] field validation failed",
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_192bf5ae1c0f5b93",
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "895169e95c50",
+      "name": "ftseek-eod-feedback-loop",
+      "prompt": "你是FTSeek-US盘后复盘执行器。现在是美国东部时间16:30(收盘后),需要跑feedback_loop生成今日复盘报告。\n\n执行命令:\ncd /root/.hermes/skills/deep-stock-analysis/scripts && /opt/ftseek/FTSeek-US/venv/bin/python3.11 feedback_loop.py 2>&1\n\n这个命令会:\n1. 查询今日trade_records\n2. 计算胜率/盈亏\n3. 分析exit_reason分布\n4. 提取pattern写入strategy_memory.db\n5. 生成复盘报告\n\n另外,跑claim IC分析(如果feedback_loop支持):\ncd /root/.hermes/skills/deep-stock-analysis/scripts && /opt/ftseek/FTSeek-US/venv/bin/python3.11 alpha_backfill.py --backfill 1 2>&1\n\n完成后输出简洁的复盘摘要:今日交易笔数、胜率、盈亏、最大盈亏、ATR止损情况。用中文。",
+      "skills": [
+        "deep-stock-analysis"
+      ],
+      "skill": "deep-stock-analysis",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "custom",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 5 * * 1-5",
+        "display": "30 5 * * 1-5"
+      },
+      "schedule_display": "30 5 * * 1-5",
+      "repeat": {
+        "times": null,
+        "completed": 11
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-25T22:52:59.598651+08:00",
+      "paused_reason": null,
+      "created_at": "2026-07-09T06:51:03.381685+08:00",
+      "next_run_at": "2026-07-27T05:30:00+08:00",
+      "last_run_at": "2026-07-24T05:36:46.273066+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": {
+        "platform": "feishu",
+        "chat_id": "oc_a093be36f56463ad424bfb1c4b437229",
+        "chat_name": "oc_a093be36f56463ad424bfb1c4b437229",
+        "thread_id": "omt_192bf5ae1c0f5b93",
+        "user_id": "fegb1a5g"
+      },
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "5513c8e94b06",
+      "name": "ftseek-intraday-diagnose-late",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "intraday_diagnose_late.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 0-4 * * 2-6",
+        "display": "*/30 0-4 * * 2-6"
+      },
+      "schedule_display": "*/30 0-4 * * 2-6",
+      "repeat": {
+        "times": null,
+        "completed": 70
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-27T16:44:02.509616+08:00",
+      "next_run_at": "2026-08-06T00:00:00+08:00",
+      "last_run_at": "2026-08-05T04:30:27.977615+08:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "feishu:oc_a093be36f56463ad424bfb1c4b437229",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-08-05T06:40:29.470892+08:00"
+}
