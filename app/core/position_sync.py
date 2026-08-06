@@ -21,6 +21,9 @@ from app.core.db_utils import safe_sqlite_connect
 
 logger = logging.getLogger("ftseek_us.position_sync")
 
+# 2026-08-05: 自管持仓跳过日志的进程内去重 (首条 INFO, 后续 debug)
+_SELF_MANAGED_SKIP_LOGGED: set = set()
+
 def _get_db_path():
     from app.core.db_utils import get_main_db
     return str(get_main_db())
@@ -1217,7 +1220,13 @@ class USPositionSync:
                 continue
             # 实盘隔离: 跳过自管持仓 (startup reconcile 也需检查)
             if _self_managed and symbol in _self_managed:
-                logger.info(f"[US Sync·隔离] 跳过自管持仓(startup): {symbol}")
+                # 2026-08-05: 自管标的永远停留在 "Futu有/内存无" → 每 30s 轮必刷 INFO.
+                #   首次 INFO 知会, 后续降 debug (噪音淹没真信号, 今日 BABA 实例).
+                if symbol not in _SELF_MANAGED_SKIP_LOGGED:
+                    _SELF_MANAGED_SKIP_LOGGED.add(symbol)
+                    logger.info(f"[US Sync·隔离] 跳过自管持仓(startup): {symbol}")
+                else:
+                    logger.debug(f"[US Sync·隔离] 跳过自管持仓(startup): {symbol}")
                 continue
             # H6 (2026-06-03): tombstone 检查 — 防止刚平仓的 position 被重新创建
             if self._is_tombstoned(symbol):

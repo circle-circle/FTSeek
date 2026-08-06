@@ -440,12 +440,21 @@ def _run_new_scheduler(args):
             logger.warning(f"💼 US 持仓注入失败 (源: open_positions): {_pe}")
 
         # 2. 注入盘前计划目标
+        # 2026-08-03 (任务#6): 原 plan_path 未定义 → NameError, 每次启动报"初始化失败 降级运行".
+        #   修复用 SSOT 路径 + 当日(ET)守卫 — 计划链已冻结 (07-13), 陈旧 plan 不得注入当日池.
+        from app.core.paths import get_battle_plan_path
+        plan_path = str(get_battle_plan_path())
         if os.path.exists(plan_path):
             with open(plan_path, 'r') as f:
                 plan = json.loads(f.read())
-            if plan and plan.get('targets'):
+            from datetime import timezone as _tz_bp, timedelta as _td_bp
+            _et_off_bp = _td_bp(hours=-4) if 3 <= datetime.now().month <= 11 else _td_bp(hours=-5)
+            _today_et_bp = datetime.now(_tz_bp(_et_off_bp)).strftime("%Y-%m-%d")
+            if plan and plan.get('targets') and plan.get('date') == _today_et_bp:
                 pool.inject_plan_targets(plan)
                 logger.info(f"📝 US 注入盘前计划: {len(plan['targets'])} 只")
+            elif plan and plan.get('targets'):
+                logger.info(f"📝 US 盘前计划非当日 (date={plan.get('date')} ≠ {_today_et_bp}), 跳过注入 (计划链已冻结)")
 
         summary = pool.get_summary()
         logger.info(f"✅ US 动态交易池 v2 就绪: {summary['total']} 只 | {summary['breakdown']}")

@@ -1222,10 +1222,39 @@ def cmd_inject(force_dry: bool = False) -> int:
     db = PlaybookDB()
     db.ensure_tables()
     saved = 0
+    # S0 影子开关 (DEB-20260805-supply 终裁②, 2026-08-06 用户裁"同意"): 只读一次.
+    try:
+        from app.core.config_container import get_config as _gc_sb
+        _sb_on = bool(_gc_sb().get_dotted("universe_expansion.short_boost_shadow", False))
+    except Exception:
+        _sb_on = False
     for it in instructions:
         try:
             db.save_instruction(it)
             saved += 1
+            # S0 影子: UE×SHORT 加码 record-only — 登记"若 ×1.25 加码"假设队列成员,
+            #   T+1 与未加码同池对照; 主门 n=60 单侧 α=0.025 δ=2pp, 敏感性 Bonferroni n=85,
+            #   毕业前不动真仓 (停止规则见 DEB §四.3). 回滚: 开关置 false.
+            if _sb_on and it.get("direction") == "SELL_SHORT":
+                try:
+                    import json as _sbj
+                    from pathlib import Path as _sbp
+                    _sb_row = {
+                        "date": it["date"], "symbol": it["symbol"],
+                        "direction": it["direction"],
+                        "decision_id": it.get("decision_id"),
+                        "entry_price": it.get("entry_price"),
+                        "stop_loss": it.get("stop_loss"),
+                        "take_profit": it.get("take_profit"),
+                        "confidence": it.get("confidence"),
+                        "hypo_boost": 1.25,
+                        "rule": "ue_short_boost_s0_shadow",
+                    }
+                    with _sbp("data/ue_short_boost_shadow.jsonl").open("a", encoding="utf-8") as _sbf:
+                        _sbf.write(_sbj.dumps(_sb_row, ensure_ascii=False) + "\n")
+                    print(f"  [S0影子] {it['symbol']} SELL_SHORT 加码影子已登记 (×1.25 假设)")
+                except Exception as _sbe:
+                    print(f"  [warn] S0 影子落盘失败(非致命): {_sbe}")
         except Exception as e:
             print(f"  [warn] {it['symbol']} 写库失败: {e}")
 
