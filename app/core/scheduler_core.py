@@ -2140,6 +2140,13 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] playbook 盘前指令推送异常 (已隔离): {_e}")
 
+                    # 盘前尾段影子观测 (DEB-20260805(二) C1): 09:00-09:30 ET 每 60s 快照, 函数内节流+窗口 guard
+                    try:
+                        from app.playbook.premarket_shadow import run_collect as _pm_shadow_collect
+                        _pm_shadow_collect(self)
+                    except Exception as _e:
+                        logger.debug(f"[LLM策略] 盘前影子行情采集异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
                     self._process_deferred_audit_queue()
@@ -2160,6 +2167,13 @@ class TradingScheduler:
                         # 2026-07-04: debug→warning — 原debug级别在INFO日志中不可见,
                         # 导致盘后追踪静默失败(AMD/BABA holding仓位未被EOD平仓)
                         logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
+
+                    # 盘后影子行情观测 (DEB-20260805 门E 数据基础): 仅观测零决策变更, 函数内 5min 节流
+                    try:
+                        from app.playbook.after_hours_shadow import run_collect as _ah_shadow_collect
+                        _ah_shadow_collect(self)
+                    except Exception as _e:
+                        logger.debug(f"[LLM策略] 盘后影子行情采集异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)

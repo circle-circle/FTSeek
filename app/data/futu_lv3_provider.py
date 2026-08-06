@@ -1480,6 +1480,43 @@ class FutuLV3Provider:
             logger.debug(f"[FutuLV3·历史] 盘后连接失败: {e}")
             return False
 
+    def get_snapshot(self, symbols: List[str]) -> List[Dict[str, Any]]:
+        """通用快照观测 (仅观测, 不服务任何交易/退出链路).
+
+        2026-08-05 (DEB-20260805(二) B1/C1): 走历史连接路径, 不占交易时段槽位。
+        返回原始快照行 (含 update_time — 判断成交/报价时点的依据)。
+        """
+        if not symbols:
+            return []
+        if not self._connect_for_historical():
+            return []
+        try:
+            futu_symbols = [self._to_futu_symbol(s) for s in symbols]
+            ret, data = self._quote_ctx.get_market_snapshot(futu_symbols)
+            if ret != 0 or data is None:
+                logger.debug(f"[FutuLV3·ETH] 快照查询失败: {data}")
+                return []
+            rows = []
+            for _, row in data.iterrows():
+                rows.append({
+                    "code": str(row.get("code", "")),
+                    "last_price": float(row.get("last_price", 0) or 0),
+                    "prev_close": float(row.get("prev_close_price", 0) or 0),
+                    "bid": float(row.get("bid_price", 0) or 0),
+                    "ask": float(row.get("ask_price", 0) or 0),
+                    "volume": float(row.get("volume", 0) or 0),
+                    "turnover": float(row.get("turnover", 0) or 0),
+                    "update_time": str(row.get("update_time", "")),
+                })
+            return rows
+        except Exception as e:
+            logger.debug(f"[FutuLV3·ETH] 快照查询异常: {e}")
+            return []
+
+    def get_snapshot_after_hours(self, symbols: List[str]) -> List[Dict[str, Any]]:
+        """盘后快照观测 (DEB-20260805 门E 数据基础). 通用快照的别名, 保持旧调用方兼容."""
+        return self.get_snapshot(symbols)
+
     def force_reconnect(self) -> bool:
         """带指数退避的强制重连，重连后会恢复之前的订阅集合。
 
