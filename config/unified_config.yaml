@@ -1070,7 +1070,7 @@ playbook:
     liquidity_gate_max_adv_pct: 0.5
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
-    breakeven_fee_cushion_pct: 0.15
+    breakeven_fee_cushion_pct: 0.4    # 2026-08-06: 0.15→0.4 — 覆盖真实双边费(实测$4.02/名义$1K≈0.4%), 保本出不再净亏 (GS 8/6 案例: 毛+$2.85/费$4.02/净-$1.17)
     breakeven_fee_aware_enabled: true
     overnight_hold_enabled: false
     profit_override_threshold_pct: 1.5
