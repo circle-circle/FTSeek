@@ -63,6 +63,14 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
+3m. **🔴 待用户终裁 + 待独立 Agent 复核**: `docs/debates/DEB-20260806-source-control.md` — 源头把控 (标的/指令质量/confidence 区分度)。
+  - **已落地 (验证期白名单内)**: ① `scripts/eval_vwap_gate.py` 修尺子 — 原实现把 144 个**不可测量**样本静默计为 +0.00% 并算进均值 (门放行后标的转持仓、影子停轮询 → 轨迹恒 1 点)。修后结论: **VWAP 门实盘拦 45.2% 入场, 且倾向「扼杀」** (被拦 n=55 均值 **+0.254%**, 其中 SHORT **+0.649%** → beta 解释不成立; 放行组已实现 **−0.166%**)。② 统一准入门 `app/playbook/admission.py` 接入 `db.save_instruction` (**record-only, 全阈值=0 不拦**) — 首次使 DA直写/UE/topup/generate 四路可统一施规。
+  - **关键事实**: confidence 门 (BUY 70) 只在 `_build_instructions_from_votes` 内, 而 **DA 219 条 BUY 均 conf=36 绕门直写并执行 123 笔** (pipeline.py:1523-1532 自述"已由 deep_analysis skill 直写DB")。事前特征 IC 全部 |t|<1 (n=242) → **重构 confidence 公式是伪工程**, 真正缺的是尚未记录的特征。
+  - **作者勘误 2 处**: ①「做大股数」方向反了 (佣金 $1.99/腿地板 → fee_bps 由**名义额**决定; 1000股@$3.4 = 77bps 反而最贵) ②「conf≥86 盈利」系 35 日窗口假象 (60 日 **−$1,938**; 21 日窗口 gated 路径 0 笔)。
+  - **负面结论 (重要)**: 准入门双窗回放 — **无任何一档阈值能在 35d/60d 同时改善单位经济** (须看「留存/笔」而非「Δ vs base」— 后者是从亏损账本删交易的算术假象)。故全阈值维持 0。另: 191/215 笔 pf_ratio>20 → 费用并未挤占 TP 空间, 费用效率门近乎空门。
+  - **影子盘点**: 24 个数据流; **4 个变体已过预注册门禁但未上线** (`dead_signal_60m_mfe0.3` 分离 +1.51pp / `early_tight_60m_mfe0.3` mean_saved +0.668% 一致性 70%); BE/DD 赛道 5 变体全 FAIL (一致性 25-48%<55%) → **停止投入**; `OPPOSITE→SKIP` (反向单实测 +0.34%/胜67%) 与 edge 门 (拦 78%) 应否决; 6 个影子停摆 (含 `premarket_shadow.jsonl` **0 字节**)。
+  - **待裁 3 点 (均涉验证期新机制, 需知情破例)**: ①`early_tight_sl` 实装为**纯时间窗 30min 无 MFE 条件**, 与已毕业变体 (60min + MFE<0.3%) 不同 — 作者补条件的改动**已被用户回退**, 故该开关目前永远不应翻 true (否则上线的是有误杀实证的未验证版本); ②`dead_signal` = 现有 `MFE_STALL_EXIT` 参数变体 (150→60min / 0.5→0.3% / 去掉水下要求), 机制已存在无需新规则; ③VWAP 门建议改 **A/B 双开实测**替代影子 (SIM 无真钱/无 PDT), 作者倾向归入「攒样本」白名单。
+  - **验证**: 新增单测 17 passed; 定向回归 201 passed; 真实 DB 写入→回读→清理 ✓。全量 pytest 超时未跑完 (含网络依赖用例)。回滚: `playbook.admission.enabled=false`。
 3k. **S2 窄校准实验进行中 (08-04→08-18)**: `scripts/orderbook_s2_capture.py` cron 每 30min 盘中采 NVDA/AMZN/ORCL/MRK 十档盘口真值 → `data/shadow/orderbook_s2.jsonl`。**08-18 收尾**: 摘两条 cron + 跑校准分析 (①失真量级=真值 spread/深度失衡分布 vs 代理恒 0; ②真值 IC=depth_imbalance@t vs 5/15min 前瞻收益; IC≈0 合法关门 / IC 显著重开扩面议, 须带 MDE/功效标注)。
 3j. **✅ DEB-20260801-direction-gate-calibration 已终裁 P2** (08-01 深夜): BUY quota 2→4→999 去配额 + 半码 0.5 维持 + R 分层批准。8 月 BUY 自然成交 ~140 笔, 08-14 主桶 n≥30; 周一开盘首验: ①BUY 执行量回到自然水平 (不再有 skip_reason=buy_quota) ②半码日志 [playbook] BUY 仓位因子 出现 ③服务由 systemd 托管单例 (PID 36456)。
 0a. **07-25 04:20 CST (收盘后, 已排定时任务)**: 重启 `ftseek-us.service` 激活凌晨修复批 (5项, 见变更日志首节) + 启动验证三判据: ①[ConfigGov] 热重载/漂移检测启动 + [ConfigAudit] 审计通过 ②无启动期 stages Pipeline 扫描 ③Reconciler 无 playbook 仓 broker_only 补录。
