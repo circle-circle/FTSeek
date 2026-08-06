@@ -430,6 +430,9 @@ class SubscriptionManager:
         watchdog 负责"主循环本身挂掉"的极端场景，兼容已有网络异常处理。
         """
         logger.info("[Watchdog] 美股订阅 watchdog 启动")
+        # 2026-08-07 启动竞态修复: 启动 90s 宽限 — OpenD/网关连接尚未建立时
+        #   健康判定必假阳性 (degraded ERROR → 60s 后自愈的噪音告警, 08-06/08-07 两连发).
+        _watchdog_started = time.time()
         while self._watchdog_running:
             try:
                 _now = now_et()
@@ -452,7 +455,8 @@ class SubscriptionManager:
                 # 2) OpenD ping 检查已移除 (2026-06-17): 不再实时探测 OpenD 健康状态
 
                 # 3) 连接健康 + 重连失败计数 (原 Task #32 逻辑)
-                if should_sub:
+                #   启动 90s 宽限内跳过 (见循环头注释) — 宽限内由主循环负责初始连接.
+                if should_sub and (time.time() - _watchdog_started) >= 90:
                     try:
                         healthy = self._gateway.is_healthy()
                     except Exception as e:
@@ -489,6 +493,7 @@ class SubscriptionManager:
                                 threshold=3,
                                 reason=f"reconnect_failed_x{self._reconnect_failures}",
                                 level="reconnect",
+                                current=self._reconnect_failures,
                             )
             except Exception as e:
                 logger.error(f"[Watchdog] 循环异常 (吞掉避免协程退出): {e}")
@@ -500,14 +505,22 @@ class SubscriptionManager:
     # ===== Task #38 (2026-06-16): OpenD ping 健康检查已移除 (2026-06-17) =====
     # 不再实时探测 OpenD 健康状态，由调用方 catch 异常处理
 
-    def _maybe_mark_degraded(self, threshold: int, reason: str, level: str) -> None:
+    def _maybe_mark_degraded(self, threshold: int, reason: str, level: str,
+                             current: Optional[int] = None) -> None:
         """设置 degraded=True 并记录起始时间。
 
         Args:
-            threshold: 仅识别用，以便日志体现阈值。
+            threshold: 连续失败达到该次数才真正标记 (2026-08-07 修复: 原仅日志装饰,
+                第一次失败 x1 即标记 degraded 推告警, 60s 后自愈 — 纯噪音).
             reason: 设置的原因标签 (degraded_reason)。
             level: "ping" / "reconnect" / "manual" — 仅仅为了日志表达。
+            current: 当前连续失败计数; 提供且 < threshold 时只告警不标记。
         """
+        if current is not None and current < threshold:
+            logger.warning(
+                f"[Watchdog] {level} 连续失败 {current}/{threshold} ({reason}) — 未达阈值, 暂不标记 degraded"
+            )
+            return
         # 首次标记 → 记录 _degraded_since
         if not self._degraded:
             self._degraded_since = time.time()
