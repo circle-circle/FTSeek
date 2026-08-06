@@ -1040,7 +1040,8 @@ playbook:
     min_confidence: 60
     daily_notional_cap_pct: 0.8
     max_daily_positions: 30
-    max_position_pct: 0.04
+    # max_position_pct 唯一真源在 risk_parameters (0.06) — 本段重复键会在
+    #   PlaybookConfig 扁平合并时覆盖它 (execution_parameters 后合并胜出), 2026-08-06 已剔除.
     entry_reanchor_enabled: false
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
