@@ -32,6 +32,45 @@ logger = logging.getLogger(__name__)
 _OUTPUT_PATH = Path("data/intraday_reentry_shadow.jsonl")
 _last_run_ts = 0.0
 
+# 前笔退出判据 (2026-08-07 精化, 替代纯 pnl 代理):
+#   硬止损/0-WR 类 = thesis 被证伪 → 不再入 (防报复性交易);
+#   良性类 (保本/锁利/止盈/移动止损/日终) = thesis 未证伪 → 可再入;
+#   未知 reason → 回退 pnl 代理 (max_prior_loss_pct 阈值)。
+#   分类数据依据 (2026-08-07 全量 trade_records, pnl_net 口径):
+#     MFE_STALL_EXIT 28笔 0%WR -$1169 / TIME_EXIT 33笔 0%WR -$1151 → 0胜率纯亏损,
+#     停滞=方向从未兑现, 再入=给失败 thesis 第二次机会 → 禁入;
+#     SL_TRAIL_LOCK 46笔 91.3%WR +$1015 / SL_BREAKEVEN 43笔 41.9%WR -$65 (中性) →
+#     保本/锁盈=thesis 未证伪 → 可入;
+#     PRE_CLOSE_EXIT 36笔 61.1%WR +$568 / EOD_FORCE_CLOSE 7笔 71.4%WR +$332 →
+#     日终全平偏健康 → 可入 (半日市防御; 常规日这些平仓发生在窗口后, 不构成候选);
+#     操作类 (GHOST/EXIT_MONITOR/OKR_AUDIT) = 非 thesis 信号 → 禁入 (fail-closed)。
+_HARD_STOP_REASONS = frozenset({
+    "SL_INITIAL", "SL_ATR_STOP", "SL_FIXED_PCT", "OVERNIGHT_GAP_STOP",
+    "MFE_STALL_EXIT", "TIME_EXIT",                # 0% WR 纯亏损 (n=61, -$2320)
+    "BROKER_GHOST_CLOSE", "EXIT_MONITOR_CLOSE", "FORCED_CLOSE_OKR_AUDIT",  # 操作类
+})
+_BENIGN_REASONS = frozenset({
+    "SL_BREAKEVEN", "SL_TRAIL_LOCK", "TAKE_PROFIT", "TRAILING_STOP",
+    "TRAILING_STOP_BY_MAIN", "PRE_CLOSE_EXIT", "EOD_FORCE_CLOSE",
+})
+
+
+def prior_exit_reenterable(exit_reason: Optional[str], pnl_pct: float,
+                           max_prior_loss_pct: float) -> bool:
+    """纯函数: 前笔退出是否允许再入场 (可单测, 零 IO).
+
+    pnl_pct 为小数口径 (0.0033=0.33%); max_prior_loss_pct 为百分数 (1.0=1%).
+    """
+    r = str(exit_reason or "").upper()
+    if r in _HARD_STOP_REASONS:
+        return False
+    if r in _BENIGN_REASONS:
+        return True
+    try:
+        return float(pnl_pct) > -float(max_prior_loss_pct) / 100.0
+    except Exception:
+        return False
+
 _DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "mode": "live",               # live=重武装走全门链; shadow=仅记录 (非 sim 环境强制 shadow)
@@ -74,6 +113,11 @@ def _cfg() -> Dict[str, Any]:
 def _today_et_str() -> str:
     from app.utils.timezone import now_et
     return now_et().strftime("%Y-%m-%d")
+
+
+def _now_iso_et() -> str:
+    from app.utils.timezone import now_et
+    return now_et().isoformat(timespec="seconds")
 
 
 def _now_hhmm_et() -> int:
@@ -125,7 +169,7 @@ def _load_closed_today() -> Dict[str, Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute("""
-            SELECT id, symbol, direction, entry_price, exit_price, pnl_pct
+            SELECT id, symbol, direction, entry_price, exit_price, pnl_pct, exit_reason
             FROM trade_records
             WHERE trade_date = ?
               AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
@@ -144,6 +188,7 @@ def _load_closed_today() -> Dict[str, Dict[str, Any]]:
             "entry_price": float(r["entry_price"] or 0),
             "exit_price": float(r["exit_price"] or 0),
             "pnl_pct": float(r["pnl_pct"] or 0),  # 小数口径 (0.0033=0.33%)
+            "exit_reason": r["exit_reason"],
         })
     return out
 
@@ -179,6 +224,31 @@ def _arms_today() -> int:
     except Exception:
         return 0
     return n
+
+
+def _armed_symbols_today() -> set:
+    """当日已武装锁定的标的集合 (armed 或 arm_failed — 锚点已刷新即锁定)。
+
+    2026-08-07 (用户接管审查#2): 一次性武装 — 武装后即使未触发也不再重刷锚点,
+    防止\"武装→拦→重武装\"循环让 entry 追着市价跑 (跟随重武装语义), 锚点锁定
+    在武装时刻的确认价, 符合\"回踩企稳再入\" thesis (price ≤ entry 才触发)。
+    """
+    if not _OUTPUT_PATH.exists():
+        return set()
+    today = _today_et_str()
+    out = set()
+    try:
+        with _OUTPUT_PATH.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if r.get("date") == today and r.get("action") in ("armed", "arm_failed"):
+                    out.add(r.get("symbol"))
+    except Exception:
+        return set()
+    return out
 
 
 def _shadow_write(row: Dict[str, Any]) -> None:
@@ -264,18 +334,31 @@ def run_scan(scheduler=None) -> int:
         return 0
 
     arms_so_far = _arms_today()
+    armed_syms = _armed_symbols_today()
     armed = 0
     today = _today_et_str()
 
     for sym, info in _load_closed_today().items():
+        if sym in armed_syms:
+            continue                      # 一次性武装锁定: 锚点不再跟随市价重刷 (防追价循环)
         if arms_so_far + armed >= int(cfg["max_arms_per_day"]):
             break
         if info["closed_count"] != 1:
             continue                      # 0 笔=未平, ≥2 笔=已再入场过 → 每标的日 1 次
         prior = info["trades"][0]
-        if prior["pnl_pct"] <= -float(cfg["max_prior_loss_pct"]) / 100.0:
-            continue                      # 硬止损/论破位 → 不报复性再入
         direction = "BUY" if str(prior["direction"]).upper() in ("LONG", "BUY") else "SELL_SHORT"
+        if not prior_exit_reenterable(prior.get("exit_reason"), prior["pnl_pct"],
+                                      float(cfg["max_prior_loss_pct"])):
+            base = {
+                "ts_et": _now_iso_et(), "date": today, "symbol": sym,
+                "direction": direction,
+                "prior_trade_id": prior["trade_id"], "prior_pnl_pct": prior["pnl_pct"],
+                "prior_exit_reason": prior.get("exit_reason"), "mode": mode,
+            }
+            base["action"] = "rejected"
+            base["reasons"] = [f"exit_reason({prior.get('exit_reason')})"]
+            _shadow_write(base)           # 可审计: 白名单拦截的候选落 shadow, 不静默丢弃
+            continue                      # 硬止损/0-WR/操作类 → 不报复性再入
         if _has_open_trade(sym):
             continue
         try:
@@ -287,8 +370,10 @@ def run_scan(scheduler=None) -> int:
             pass                          # streak 查询异常 → 不拦 (与门本体 fail-open 语义一致)
 
         base: Dict[str, Any] = {
+            "ts_et": _now_iso_et(),
             "date": today, "symbol": sym, "direction": direction,
             "prior_trade_id": prior["trade_id"], "prior_pnl_pct": prior["pnl_pct"],
+            "prior_exit_reason": prior.get("exit_reason"),
             "mode": mode,
         }
         try:

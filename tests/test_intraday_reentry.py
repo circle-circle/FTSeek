@@ -151,3 +151,40 @@ def test_overnight_naive_timestamp_treated_as_et(monkeypatch):
     from app.utils.timezone import now_et
     naive_today = now_et().replace(hour=11, minute=30, tzinfo=None).isoformat()
     assert ir.overnight_loser_exempt("AVGO", naive_today, -0.8, is_reentry=YES)
+
+
+# ── prior_exit_reenterable (2026-08-07: exit_reason 替代纯 pnl 代理) ──
+
+def test_prior_hard_stop_reasons_excluded():
+    for r in ("SL_INITIAL", "SL_ATR_STOP", "SL_FIXED_PCT", "OVERNIGHT_GAP_STOP"):
+        assert not ir.prior_exit_reenterable(r, -0.003, 1.0)   # 浅亏硬止损也排
+        assert not ir.prior_exit_reenterable(r, -0.05, 1.0)
+
+
+def test_prior_benign_reasons_allowed_regardless_of_pnl():
+    for r in ("SL_BREAKEVEN", "SL_TRAIL_LOCK", "TAKE_PROFIT", "TRAILING_STOP",
+              "TRAILING_STOP_BY_MAIN", "PRE_CLOSE_EXIT", "EOD_FORCE_CLOSE"):
+        assert ir.prior_exit_reenterable(r, 0.012, 1.0)
+        assert ir.prior_exit_reenterable(r, -0.015, 1.0)  # 良性深亏也放行 (如 BE 滑点)
+
+
+def test_prior_zero_wr_and_ops_reasons_excluded():
+    # 数据依据 (08-07 全量 trade_records, pnl_net): MFE_STALL 28笔 0%WR -$1169,
+    #   TIME_EXIT 33笔 0%WR -$1151 → 0胜率纯亏损禁入; 操作类 (GHOST/EXIT_MONITOR/
+    #   OKR_AUDIT) 非 thesis 信号 → 禁入 (fail-closed).
+    for r in ("MFE_STALL_EXIT", "TIME_EXIT", "BROKER_GHOST_CLOSE",
+              "EXIT_MONITOR_CLOSE", "FORCED_CLOSE_OKR_AUDIT"):
+        assert not ir.prior_exit_reenterable(r, -0.003, 1.0)
+        assert not ir.prior_exit_reenterable(r, 0.02, 1.0)  # 0-WR/操作类: 盈利也排
+
+
+def test_prior_unknown_reasons_fall_back_to_pnl():
+    # 真正未知 reason → pnl 代理: -1% 内放行, 超则排
+    for r in (None, "", "WEIRD_UNKNOWN_REASON"):
+        assert ir.prior_exit_reenterable(r, -0.008, 1.0)
+        assert not ir.prior_exit_reenterable(r, -0.012, 1.0)
+
+
+def test_prior_pnl_boundary():
+    assert ir.prior_exit_reenterable(None, -0.0099, 1.0)
+    assert not ir.prior_exit_reenterable(None, -0.01, 1.0)   # 恰好 -1% 排 (非严格大于)
