@@ -270,7 +270,7 @@
     }
     function _tcReasonTag(reason) {
         var m = {'SL_ATR_STOP':['止损','#f87171'],'TIME_EXIT':['时间','#8b949e'],'PRE_CLOSE_EXIT':['盘末','#60a5fa'],'EOD_FORCE_CLOSE':['EOD兜底','#fbbf24'],'MAX_HOLD_T5':['T+5到期','#c084fc'],'OVERNIGHT_GAP_STOP':['跳空止损','#fb7185'],'ORB_BREAKDOWN':['突破失败','#f87171'],'ORB_TAKE_PROF':['止盈','#4ade80'],'ORB_FLOOR_STOP':['底线止损','#f87171'],'ORB_EOD_EXIT':['ORB盘末','#fbbf24']};
-        return m[reason] || [reason || '', '#484f58'];
+        return m[reason] || [reason || '', '#7d8590'];
     }
     function _tcSortFn(a, b) {
         if (_tcSort === 'pnl_desc') return (b.pnl_usd||0) - (a.pnl_usd||0);
@@ -319,7 +319,7 @@
                     '<span style="font-size:10px;color:#8b949e">' + a.n + '笔</span>' +
                     '<span style="font-size:10px;color:' + wrColor + '">' + a.wins + '胜' + (a.n-a.wins) + '亏 ' + wr + '%</span>' +
                     '<span style="margin-left:auto;font-weight:600" class="' + cls + '">' + (a.pnl >= 0 ? '+$' : '-$') + fmt(Math.abs(a.pnl)) + '</span>' +
-                    '<span style="min-width:52px;text-align:right;font-size:11px;color:#484f58">avg ' + _tcFmtHold(a.holdSum/a.n) + '</span>' +
+                    '<span style="min-width:52px;text-align:right;font-size:11px;color:#7d8590">avg ' + _tcFmtHold(a.holdSum/a.n) + '</span>' +
                     '</div>');
             });
         } else {
@@ -336,7 +336,7 @@
                     (_srcLabel(t.source_type || '')) +
                     '<span style="margin-left:auto;font-weight:600" class="' + cls + '">' + (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct + '%</span>' +
                     '<span class="' + cls + '" style="min-width:62px;text-align:right">' + (t.pnl_usd >= 0 ? '+$' : '-$') + fmt(Math.abs(t.pnl_usd)) + '</span>' +
-                    '<span style="min-width:38px;text-align:right;font-size:11px;color:#484f58" title="持仓时长">' + _tcFmtHold(t.holding_hours) + '</span>' +
+                    '<span style="min-width:38px;text-align:right;font-size:11px;color:#7d8590" title="持仓时长">' + _tcFmtHold(t.holding_hours) + '</span>' +
                     '</div>');
             });
         }
@@ -365,7 +365,7 @@
                 '<button data-v="detail" style="background:' + (_tcView==='detail'?'#238636':'#21262d') + ';color:#e1e4e8;border:1px solid #30363d;padding:1px 8px;font-size:11px;border-radius:4px 0 0 4px;cursor:pointer">明细</button>' +
                 '<button data-v="aggregate" style="background:' + (_tcView==='aggregate'?'#238636':'#21262d') + ';color:#e1e4e8;border:1px solid #30363d;padding:1px 8px;font-size:11px;border-radius:0 4px 4px 0;cursor:pointer">按股票</button>' +
             '</span>' +
-            '<span style="margin-left:auto;color:#484f58">第 ' + _tcPage + '/' + totalPages + ' 页 · 共 ' + total + ' 笔</span>' +
+            '<span style="margin-left:auto;color:#7d8590">第 ' + _tcPage + '/' + totalPages + ' 页 · 共 ' + total + ' 笔</span>' +
             (_tcPage > 1 ? '<button id="tcPrev" style="background:#21262d;color:#8b949e;border:1px solid #30363d;padding:1px 8px;font-size:11px;border-radius:4px;cursor:pointer">‹</button>' : '') +
             (_tcPage < totalPages ? '<button id="tcNext" style="background:#21262d;color:#8b949e;border:1px solid #30363d;padding:1px 8px;font-size:11px;border-radius:4px;cursor:pointer">›</button>' : '') +
             '</div>';
@@ -529,7 +529,7 @@
             html += '<div class="dr-trade"><span class="tag best">最佳</span> <b>' + bestSym + '</b> ';
             html += '<span class="green">+$' + fmt(bestPnl) + ' (+' + bestPct.toFixed(1) + '%)</span></div>';
         } else {
-            html += '<div class="dr-trade" style="color:#484f58">无盈利持仓</div>';
+            html += '<div class="dr-trade" style="color:#7d8590">无盈利持仓</div>';
         }
         if (worst && (worst.unrealized_pnl||0) < 0) {
             var worstSym = (worst.symbol||'').replace('US.','');
@@ -538,7 +538,7 @@
             html += '<div class="dr-trade"><span class="tag worst">最差</span> <b>' + worstSym + '</b> ';
             html += '<span class="red">-$' + fmt(Math.abs(worstPnl)) + ' (' + worstPct.toFixed(1) + '%)</span></div>';
         } else {
-            html += '<div class="dr-trade" style="color:#484f58">无亏损持仓</div>';
+            html += '<div class="dr-trade" style="color:#7d8590">无亏损持仓</div>';
         }
         html += '</div>';
 
@@ -780,7 +780,7 @@
         var realBtn = document.getElementById('autoAccountReal');
         if (!grad) {
             verdictEl.textContent = 'N/A'; verdictEl.style.background = '#21262d'; verdictEl.style.color = '#8b949e';
-            checksEl.innerHTML = '<span style="color:#484f58">毕业数据未就绪</span>';
+            checksEl.innerHTML = '<span style="color:#7d8590">毕业数据未就绪</span>';
             return;
         }
         var graduated = grad.graduated;
@@ -811,7 +811,7 @@
         // auto_account 按钮 (real 未毕业灰色)
         function setBtn(btn, active, enabled) {
             btn.style.background = active ? '#238636' : '#21262d';
-            btn.style.color = enabled ? '#e1e4e8' : '#484f58';
+            btn.style.color = enabled ? '#e1e4e8' : '#7d8590';
             btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
             btn.style.opacity = enabled ? '1' : '0.5';
         }
@@ -837,12 +837,12 @@
         var list = document.getElementById('factorList');
         if (!list) return;
         var card = document.getElementById('factorCard');
-        if (!stats || !stats.length) { list.innerHTML = '<div style="font-size:11px;color:#484f58;padding:4px 0">暂无因子数据 (待 sim 积累)</div>'; return; }
+        if (!stats || !stats.length) { list.innerHTML = '<div style="font-size:11px;color:#7d8590;padding:4px 0">暂无因子数据 (待 sim 积累)</div>'; return; }
         // 信噪比: 只显示 ≥3 笔的因子 (少样本是噪声), 按笔数降序, 最多 10
         var rows = stats.filter(function(f){ return (f.total_trades || 0) >= 3; })
             .sort(function(a,b){ return (b.total_trades||0) - (a.total_trades||0); })
             .slice(0, 10);
-        if (!rows.length) { list.innerHTML = '<div style="font-size:11px;color:#484f58;padding:4px 0">因子样本不足 (需 ≥3 笔)</div>'; return; }
+        if (!rows.length) { list.innerHTML = '<div style="font-size:11px;color:#7d8590;padding:4px 0">因子样本不足 (需 ≥3 笔)</div>'; return; }
         var verdictMap = {positive: ['强','#4ade80'], negative: ['弱','#f87171'], observing: ['观察','#8b949e']};
         list.innerHTML = rows.map(function(f) {
             var v = verdictMap[f.verdict] || [f.verdict||'-', '#8b949e'];
@@ -853,7 +853,7 @@
                 '<span style="color:#8b949e;min-width:34px">' + (f.total_trades||0) + '笔</span>' +
                 '<span style="color:' + wrColor + ';min-width:42px">' + Math.round(wr*100) + '%</span>' +
                 '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:' + v[1] + '22;color:' + v[1] + ';border:1px solid ' + v[1] + '44">' + v[0] + '</span>' +
-                (f.bayesian_win_rate != null ? '<span style="color:#484f58;font-size:10px;margin-left:auto">贝叶斯' + Math.round(f.bayesian_win_rate*100) + '%</span>' : '') +
+                (f.bayesian_win_rate != null ? '<span style="color:#7d8590;font-size:10px;margin-left:auto">贝叶斯' + Math.round(f.bayesian_win_rate*100) + '%</span>' : '') +
                 '</div>';
         }).join('');
     }
@@ -916,7 +916,7 @@
                 '<span style="font-size:11px;color:#8b949e;min-width:32px;text-align:right" title="占权益比">' + eqPct.toFixed(0) + '%</span>' +
                 (holdStr ? '<span style="font-size:11px;color:#8b949e">' + holdStr + '</span>' : '') +
                 thesisDot +
-                '<span style="margin-left:auto;font-size:11px;color:#484f58">▶</span>' +
+                '<span style="margin-left:auto;font-size:11px;color:#7d8590">▶</span>' +
                 '</div>' +
                 '<div class="pos-expand-detail" id="posDetail_' + lc.symbol + '" style="display:none">' +
                     renderExpandedContent(lc) +
@@ -1151,7 +1151,7 @@
             var colorMap = {
                 'SUPPORT':'color:#4ade80', 'AGAINST':'color:#f87171', 'NEUTRAL':'color:#8b949e',
                 'OK':'color:#4ade80', 'POOR':'color:#f87171',
-                'POSITIVE':'color:#4ade80', 'NEGATIVE':'color:#f87171', 'NONE':'color:#484f58',
+                'POSITIVE':'color:#4ade80', 'NEGATIVE':'color:#f87171', 'NONE':'color:#7d8590',
                 'STRONG':'color:#4ade80', 'WEAK':'color:#fbbf24', 'EMPTY':'color:#f87171'
             };
             for (var dim in cr) {
@@ -1400,7 +1400,7 @@
                 });
                 html += '</tbody></table></div>';
             } else {
-                html += '<div style="text-align:center;color:#484f58;padding:16px;font-size:12px">暂无交易记录</div>';
+                html += '<div style="text-align:center;color:#7d8590;padding:16px;font-size:12px">暂无交易记录</div>';
             }
             
             document.getElementById('reviewContent').innerHTML = html;

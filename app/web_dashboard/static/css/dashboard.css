@@ -7,7 +7,7 @@
     --border-subtle: #21262d;
     --text-primary: #e1e4e8;
     --text-secondary: #8b949e;
-    --text-dim: #484f58;
+    --text-dim: #7d8590;
     --accent: #58a6ff;
     --green: #4ade80;
     --red: #f87171;
@@ -24,7 +24,7 @@ td, .v, .ts-value, .value, .metric .value, .lc-pnl { font-variant-numeric: tabul
 /* ── Level 0: Status Strip (双行: 账户 + 市场) ── */
 .status-strip { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; margin-bottom: 12px; }
 .status-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.status-row .row-label { font-size: 10px; color: #484f58; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-right: 4px; flex-shrink: 0; }
+.status-row .row-label { font-size: 10px; color: #7d8590; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-right: 4px; flex-shrink: 0; }
 .status-strip .pill { display: flex; align-items: center; gap: 6px; background: #161b22; border: 1px solid #30363d; border-radius: 20px; padding: 5px 12px; font-size: 13px; white-space: nowrap; }
 .status-strip .pill .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .status-strip .pill .dot.ok { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
@@ -94,7 +94,7 @@ td, .v, .ts-value, .value, .metric .value, .lc-pnl { font-variant-numeric: tabul
 .lc-meta .hold-warn { color: #fbbf24; }
 .lc-thesis { font-size: 12px; color: #8b949e; padding: 6px 8px; background: #161b22; border-radius: 4px; margin-bottom: 6px; cursor: pointer; border: 1px solid transparent; }
 .lc-thesis:hover { border-color: #30363d; }
-.lc-thesis.empty { color: #484f58; font-style: italic; }
+.lc-thesis.empty { color: #7d8590; font-style: italic; }
 .lc-recs { list-style: none; padding: 0; margin: 0; }
 .lc-recs li { font-size: 12px; color: #d1d5db; padding: 4px 0; border-bottom: 1px solid #21262d; }
 .lc-recs li:last-child { border-bottom: none; }
@@ -111,7 +111,7 @@ td, .v, .ts-value, .value, .metric .value, .lc-pnl { font-variant-numeric: tabul
 /* Peer chips */
 .lc-peers { margin-top: 8px; }
 .lc-peer-group { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
-.lc-peer-label { font-size: 11px; color: #484f58; min-width: 80px; text-transform: capitalize; }
+.lc-peer-label { font-size: 11px; color: #7d8590; min-width: 80px; text-transform: capitalize; }
 .lc-peer-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #161b22; border: 1px solid #30363d; color: #8b949e; text-decoration: none; }
 .lc-peer-chip:hover { border-color: #58a6ff; color: #58a6ff; }
 .lc-peer-chip.green { color: #4ade80; border-color: rgba(74,222,128,0.3); }
@@ -238,7 +238,7 @@ td { padding: 6px 4px; border-bottom: 1px solid #21262d; }
 .today-summary .ts-item { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; text-align: center; }
 .today-summary .ts-label { font-size: 10px; color: #8b949e; text-transform: uppercase; }
 .today-summary .ts-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
-.today-summary .ts-sub { font-size: 10px; color: #484f58; margin-top: 2px; }
+.today-summary .ts-sub { font-size: 10px; color: #7d8590; margin-top: 2px; }
 
 /* ── Position concentration bar ── */
 .conc-bar { width: 100%; height: 3px; background: #21262d; border-radius: 2px; margin-top: 4px; overflow: hidden; }
@@ -359,7 +359,7 @@ td { padding: 6px 4px; border-bottom: 1px solid #21262d; }
     border-radius: 8px; padding: 14px;
 }
 .tr-card-title { font-size: 13px; font-weight: 700; color: #e1e4e8; margin-bottom: 2px; }
-.tr-card-subtitle { font-size: 11px; color: #484f58; margin-bottom: 10px; }
+.tr-card-subtitle { font-size: 11px; color: #7d8590; margin-bottom: 10px; }
 
 /* Dimension Heatmap */
 .tr-dim-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }

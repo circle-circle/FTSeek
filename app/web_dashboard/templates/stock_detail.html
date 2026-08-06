@@ -29,7 +29,7 @@
         .ob-row .price { position: relative; z-index: 1; flex: 1; padding: 0 8px; }
         .ob-row .vol { position: relative; z-index: 1; width: 70px; text-align: right; padding-right: 8px; }
         .ob-row .cnt { position: relative; z-index: 1; width: 45px; text-align: right; color: #8b949e; }
-        .ob-header { display: flex; font-size: 10px; color: #484f58; padding: 4px 8px; text-transform: uppercase; }
+        .ob-header { display: flex; font-size: 10px; color: #7d8590; padding: 4px 8px; text-transform: uppercase; }
         .ob-header span:first-child { flex: 1; }
         .ob-header span:nth-child(2) { width: 70px; text-align: right; }
         .ob-header span:nth-child(3) { width: 45px; text-align: right; }
@@ -78,7 +78,7 @@
         .refresh-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; min-height: 36px; }
         .refresh-btn:hover { background: #30363d; color: #e6edf3; }
 
-        .empty { text-align: center; color: #484f58; padding: 40px; }
+        .empty { text-align: center; color: #7d8590; padding: 40px; }
 
         /* LLM analysis responsive grid */
         .llm-grid { display: grid; grid-template-columns: 200px 1fr; gap: 16px; }
@@ -144,7 +144,7 @@
             <!-- AI 深度分析 -->
             <div class="card card-full">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                    <h2>🧠 AI 深度分析 <span id="llmModelLabel" style="font-size:12px;color:#484f58"></span></h2>
+                    <h2>🧠 AI 深度分析 <span id="llmModelLabel" style="font-size:12px;color:#7d8590"></span></h2>
                     <button class="refresh-btn" onclick="loadLLM()">🔄 重新分析</button>
                 </div>
                 <div id="llmAnalysisBox">
@@ -385,7 +385,7 @@
                 const a = data.analysis || {};
                 const dirColor = a.direction === 'LONG' ? 'green' : a.direction === 'SHORT' ? 'red' : 'yellow';
                 const confPct = ((a.confidence || 0) * 100).toFixed(0);
-                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div>' + ((a.direction === 'LONG' || a.direction === 'SHORT') ? '<a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + a.direction + (a.entry_price ? '&entry=' + a.entry_price + '&price=' + a.entry_price : '') + (a.key_levels && a.key_levels.support ? '&sl=' + a.key_levels.support : '') + (a.key_levels && a.key_levels.resistance ? '&tp=' + a.key_levels.resistance : '') + '" class="btn-trade-bridge ' + (a.direction === 'LONG' ? 'long' : 'short') + '" style="margin-top:10px;display:block">📈 按此分析交易</a>' : '') + '</div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
+                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div>' + ((a.direction === 'LONG' || a.direction === 'SHORT') ? '<a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + a.direction + (a.entry_price ? '&entry=' + a.entry_price + '&price=' + a.entry_price : '') + (a.key_levels && a.key_levels.support ? '&sl=' + a.key_levels.support : '') + (a.key_levels && a.key_levels.resistance ? '&tp=' + a.key_levels.resistance : '') + '" class="btn-trade-bridge ' + (a.direction === 'LONG' ? 'long' : 'short') + '" style="margin-top:10px;display:block">📈 按此分析交易</a>' : '') + '</div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#7d8590">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
             } catch (e) { el.innerHTML = '<div class="empty">❌ 请求失败: ' + escHtml(e.message || String(e)) + '</div>'; }
         }
 

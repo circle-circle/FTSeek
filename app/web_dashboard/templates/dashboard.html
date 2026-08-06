@@ -42,7 +42,7 @@
                 </div>
                 <div class="pill pill-core">
                     <span class="v" id="pillPositions" style="font-size:15px">0</span><span style="font-size:12px;color:#8b949e">仓</span>
-                    <span style="color:#484f58;font-size:11px;margin-left:4px" id="pillExposureInline"></span>
+                    <span style="color:#7d8590;font-size:11px;margin-left:4px" id="pillExposureInline"></span>
                 </div>
             </div>
             <!-- Secondary Row: market context + alerts -->
@@ -73,7 +73,7 @@
                 <span style="font-weight:600;font-size:13px">🧠 决策脑</span>
                 <span id="bhAdapter" style="font-size:11px;padding:2px 8px;border-radius:8px"></span>
                 <span id="bhCandidates" style="font-size:12px;color:#8b949e"></span>
-                <span id="bhAge" style="font-size:11px;color:#484f58"></span>
+                <span id="bhAge" style="font-size:11px;color:#7d8590"></span>
                 <span id="bhWarn" style="margin-left:auto;font-size:11px;color:#fbbf24"></span>
             </div>
         </div>
@@ -129,7 +129,7 @@
                     <span style="font-weight:600;color:#e1e4e8;font-size:12px">OKR 进度</span>
                     <span id="okrOverallScore" style="font-size:11px;color:#8b949e"></span>
                 </div>
-                <span id="okrUpdatedAt" style="font-size:10px;color:#484f58"></span>
+                <span id="okrUpdatedAt" style="font-size:10px;color:#7d8590"></span>
             </div>
             <div id="okrBars" style="display:flex;gap:10px;flex-wrap:wrap"></div>
         </div>
@@ -185,7 +185,7 @@
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#8b949e">
                 <span>🧪</span>
                 <span style="font-weight:600;color:#e1e4e8">因子性能</span>
-                <span id="factorHint" style="font-size:10px;color:#484f58">— 调 playbook_screening.yaml 权重</span>
+                <span id="factorHint" style="font-size:10px;color:#7d8590">— 调 playbook_screening.yaml 权重</span>
             </div>
             <div id="factorList" style="margin-top:6px"></div>
         </div>
@@ -362,11 +362,11 @@
       document.getElementById('cfDate').textContent=d.date;
       document.getElementById('cfSkipped').textContent = d.skipped_count? (d.skipped_count+' 跳过'):'';
       document.getElementById('cfStages').innerHTML = d.stages.map(function(s){
-        var rate=(s.rate!=null && s.rate<=100)? ('<div style="font-size:9px;color:#484f58">'+s.rate+'%</div>'):'';
+        var rate=(s.rate!=null && s.rate<=100)? ('<div style="font-size:9px;color:#7d8590">'+s.rate+'%</div>'):'';
         return '<div style="flex:1;min-width:58px;text-align:center;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 4px">'+
           '<div style="font-size:10px;color:#8b949e">'+esc(s.label)+'</div>'+
           '<div style="font-size:20px;font-weight:700;color:#58a6ff">'+s.count+'</div>'+rate+'</div>';
-      }).join('<div style="display:flex;align-items:center;color:#484f58;padding:0 1px">→</div>');
+      }).join('<div style="display:flex;align-items:center;color:#7d8590;padding:0 1px">→</div>');
       var list=document.getElementById('cfList');
       if(!d.instructions.length){ list.innerHTML='<div class="empty-state">今日暂无指令</div>'; return; }
       list.innerHTML = d.instructions.map(function(r){
@@ -408,7 +408,7 @@
           '<div style="font-size:18px">'+esc(h.icon||'•')+'</div>'+
           '<div style="flex:1;border-left:2px solid '+(sc[h.status]||'#30363d')+';padding-left:10px">'+
           '<div style="font-weight:600;font-size:13px">'+esc(h.stage)+' · <span style="color:#8b949e;font-weight:normal">'+esc(h.title)+'</span></div>'+
-          (h.ts?'<div style="font-size:10px;color:#484f58">'+esc(h.ts)+'</div>':'')+rows+'</div></div>';
+          (h.ts?'<div style="font-size:10px;color:#7d8590">'+esc(h.ts)+'</div>':'')+rows+'</div></div>';
       }).join('') || '<div class="empty-state">未找到链路数据</div>';
     }catch(e){ document.getElementById('tmHops').innerHTML='<div class="empty-state">加载失败</div>'; }
   };
@@ -512,7 +512,7 @@
       function box(title, mtime, lines){
         return '<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:8px 10px;min-width:180px">'+
           '<div style="color:#8b949e;margin-bottom:4px">'+esc(title)+
-          (mtime?' <span style="color:#484f58">('+esc(mtime)+')</span>':'')+'</div>'+
+          (mtime?' <span style="color:#7d8590">('+esc(mtime)+')</span>':'')+'</div>'+
           lines.map(function(l){return '<div style="color:#c9d1d9">'+l+'</div>';}).join('')+'</div>';
       }
       var parts = [];

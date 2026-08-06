@@ -1298,7 +1298,7 @@ function render(d, actData) {
                     var freshCls = diffMin < 120 ? 'fresh' : (diffMin < 720 ? 'stale' : 'old');
                     html += '<span class="dr-da-fresh ' + freshCls + '" title="' + esc(fa) + '">🕐 ' + timeStr + '</span>';
                 } catch(e) {
-                    html += '<span style="color:#484f58;font-size:10px" title="' + esc(fa) + '">🕐 ' + esc(fa.slice(11,19)) + 'Z</span>';
+                    html += '<span style="color:#7d8590;font-size:10px" title="' + esc(fa) + '">🕐 ' + esc(fa.slice(11,19)) + 'Z</span>';
                 }
             }
             if (dataQuality.data_sources) {
@@ -1308,7 +1308,7 @@ function render(d, actData) {
                 if (ds.news === 'ok') srcParts.push('News');
                 if (ds.analyst === 'ok') srcParts.push('Analyst');
                 if (srcParts.length > 0) {
-                    html += '<span style="color:#484f58;font-size:9px;margin-left:4px" title="数据源: ' + esc(srcParts.join(', ')) + '">src:' + srcParts.length + '</span>';
+                    html += '<span style="color:#7d8590;font-size:9px;margin-left:4px" title="数据源: ' + esc(srcParts.join(', ')) + '">src:' + srcParts.length + '</span>';
                 }
             }
             html += '</div>';
@@ -1382,7 +1382,7 @@ function render(d, actData) {
             if (hasF) {
                 html += '<div style="margin-bottom:12px">';
                 html += '<div style="font:700 10px/1 IBM Plex Mono,monospace;color:#d29922;letter-spacing:0.16em;text-transform:uppercase;margin-bottom:6px">📊 基本面快照</div>';
-                if (fin.fetched_at) html += '<div style="font-size:10px;color:#484f58;margin-bottom:4px">数据源: ' + esc(fin.source || 'API') + ' @ ' + esc(fin.fetched_at) + '</div>';
+                if (fin.fetched_at) html += '<div style="font-size:10px;color:#7d8590;margin-bottom:4px">数据源: ' + esc(fin.source || 'API') + ' @ ' + esc(fin.fetched_at) + '</div>';
                 html += '<table class="da-table"><tbody>';
                 if (fin.market_cap) html += '<tr><td>市值</td><td>' + esc(String(fin.market_cap)) + '</td></tr>';
                 if (fin.pe_ttm) html += '<tr><td>PE (TTM)</td><td>' + esc(String(fin.pe_ttm)) + '</td></tr>';
@@ -1508,7 +1508,7 @@ function render(d, actData) {
     }
 
     // Footer
-    html += '<div style="text-align:center;padding:12px;font-size:11px;color:#484f58">';
+    html += '<div style="text-align:center;padding:12px;font-size:11px;color:#7d8590">';
     html += '更新于 ' + new Date().toLocaleTimeString('zh-CN',{hour12:false});
     var stats = d.pipeline_stats || {};
     if (stats.deep_research_count) html += ' · Deep Research: ' + stats.deep_research_count + ' targets';
