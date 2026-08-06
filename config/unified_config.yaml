@@ -1148,6 +1148,30 @@ playbook:
     min_profit_fee_ratio: 0.0 # 0=不拦; TP处毛利 ≥ K×往返费用 (建议 6~10)
     min_confidence_buy: 0     # 0=不拦 (IC 无证据, 勿在无证据下启用)
     min_confidence_short: 0
+  # 盘中再入场生成器 (2026-08-06, 用户指示"sim 直上线快速验真"): 盘中供给恢复 —
+  #   指令供给全部盘前生成 + topup 已停供 → 盘中零新增机会。本生成器扫"当日已平仓
+  #   且前笔非硬亏(>-1%)"标的, 盘中指标确认 thesis 延续 (回踩VWAP带内 + slope_5m
+  #   转正 + 量比≥0.8 + L1 spread≤25bps + ATR≥2%) 时重武装当日指令 (新锚点/SL1.5%/TP
+  #   RR1.6), 走完整既有门链 (13门+admission+熔断/PDT/报价门), 不绕过任何风控。
+  #   守卫: 每标的日1次(平仓笔数==1自然约束) / 日上限3次 / 10:00-13:55 ET 窗 /
+  #   非 futu_simulate 环境自动降级 record-only。全程落 data/intraday_reentry_shadow.jsonl。
+  #   回滚: enabled=false + 重启。
+  intraday_reentry:
+    enabled: true
+    mode: live                 # live=武装真指令(sim); 非sim环境强制 shadow
+    window_start_hhmm: 1000
+    window_end_hhmm: 1355
+    scan_interval_sec: 300
+    max_arms_per_day: 3
+    max_prior_loss_pct: 1.0    # 前笔亏损>1% = 硬止损/论破位, 不报复性再入
+    vwap_band_low_pct: 0.3     # LONG: 回踩区下沿 vwap×(1-0.3%)
+    vwap_band_high_pct: 1.0    # LONG: 不追高位上沿 vwap×(1+1.0%); SHORT 对称
+    min_slope_5m_pct: 0.0
+    min_vol_ratio: 0.8
+    max_spread_bps: 25
+    min_atr_pct: 2.0
+    sl_pct: 1.5                # 再入场止损比首入(2.0%)紧 — 二次入场错了快走
+    tp_rr: 1.6                 # 过 min_tp_rr=1.5 门
   topup:
     # 2026-08-06 (DEB-20260805-supply-reallocation 终裁①, 用户裁"同意"): 停供补量 —
     #   topup 机制(指令不足→流动性池补单)近期补入单持续净亏, 机制+minimax 悔值裁定停供.

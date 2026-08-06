@@ -2054,6 +2054,15 @@ class TradingScheduler:
                         except Exception as _e:
                             logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
 
+                    # 盘中再入场扫描 (2026-08-06 用户指示: sim 直上线快速验真):
+                    #   当日非硬亏平仓标的 回踩VWAP+slope转正+量比/spread 确认 → 重武装指令走全门链.
+                    #   函数内 300s 节流 + 10:00-13:55 ET 窗口 + sim-only 守卫. 回滚: intraday_reentry.enabled=false.
+                    try:
+                        from app.playbook.intraday_reentry import run_scan as _reentry_scan
+                        _reentry_scan(self)
+                    except Exception as _e:
+                        logger.warning(f"[Playbook] 盘中再入场扫描异常 (已隔离): {_e}")
+
                     # Phase 1 (2026-06-24): futu_simulate 真实模拟仓位退出监控 (broker 平仓)
                     # 2026-07-21: 独立快循环启用时跳过 (单宿主约束, 防双线程并发重复平仓;
                     #   DB outcome 幂等兜底仍在, 双保险). 回滚: 配置 enabled=false 即恢复此路径.
