@@ -45,43 +45,78 @@ _OB_PULL_WARNED: set = set()
 def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
     """触发时点 L1 盘口快照 (bid1/ask1/量/spread_bps)。失败/无数据返回 None。
 
-    走裸 ctx.get_order_book (dict: Bid/Ask=[(price,vol,n,{})...], S2 同款) — 不用
+    2026-08-07 终修 (用户接管): 弃用主进程共享 _quote_ctx 拉盘口 — 实盘观测其
+    ORDER_BOOK 订阅被 OpenD 拒 ("未知股票", diag 显示连接健康/push 新鲜/44 订阅,
+    多次重启+force_reconnect 均不恢复), 而独立 OpenQuoteContext 全天拉取成功
+    (S2 脚本 30min 一次持续落盘 + 独立进程 7/7 实测)。08-06 注释宣称 "S2 同款"
+    但实现实际用了共享 ctx, 与 S2 的独立连接不符 — 本次改为真正同款。
+
+    走独立临时连接 (scripts/orderbook_s2_capture.py 同款): 端口探测→建连→
+    get_global_state 验证→subscribe(ORDER_BOOK, pull)→get_order_book→退订→关闭。
+    零订阅槽位累积 (瞬态连接), 不依赖主连接状态, 不新增推送订阅 (ADR-013 约束
+    不动)。裸 ctx.get_order_book (dict: Bid/Ask=[(price,vol,n,{})...]) — 不用
     provider.get_order_book 包装: 其按 DataFrame 取值, 现 SDK 返回 dict → 恒 None
-    (2026-05 起无消费者的隐性损坏死代码, 本函数不依赖它)。"""
+    (2026-05 起无消费者的隐性损坏死代码, 本函数不依赖它)。
+
+    scheduler 参数保留兼容 (不再使用)。
+    """
     try:
-        _rtr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
-        _futu = getattr(_rtr, "futu", None)
-        if _futu is None or not _futu._ensure_connected():
-            return None
-        _ctx = getattr(_futu, "_quote_ctx", None)
-        if _ctx is None:
-            return None
-        from futu import SubType as _ST
-        _code = f"US.{symbol}"
-        _ret, _msg = _ctx.subscribe([_code], [_ST.ORDER_BOOK], subscribe_push=False)
-        if _ret != 0:
-            raise RuntimeError(f"ORDER_BOOK 订阅被拒: {_msg}")
+        import os as _os
+        import socket as _socket
         try:
-            _r2, _ob = _ctx.get_order_book(_code, num=1)
+            import futu.common.ft_logger as _ftl
+            _ftl.logger.file_level = logging.WARNING
+            _ftl.logger.console_level = logging.WARNING
+        except Exception:
+            pass
+        from futu import OpenQuoteContext as _OQC, SubType as _ST, SysConfig as _SC
+        _SC.enable_proto_encrypt(False)
+        _host = _os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        _port = int(_os.getenv("FUTU_OPEND_PORT", "11111"))
+        _code = f"US.{symbol}"
+
+        # 端口探测 (S2 同款): OpenD 不可达快速失败, 避免 OpenQuoteContext 无限阻塞
+        _sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        _sock.settimeout(2.0)
+        _port_ok = _sock.connect_ex((_host, _port)) == 0
+        _sock.close()
+        if not _port_ok:
+            return None
+
+        _ctx = _OQC(host=_host, port=_port)
+        try:
+            _r0, _ = _ctx.get_global_state()
+            if _r0 != 0:
+                return None
+            _ret, _msg = _ctx.subscribe([_code], [_ST.ORDER_BOOK], subscribe_push=False)
+            if _ret != 0:
+                raise RuntimeError(f"ORDER_BOOK 订阅被拒: {_msg}")
+            try:
+                _r2, _ob = _ctx.get_order_book(_code, num=1)
+            finally:
+                try:
+                    _ctx.unsubscribe([_code], [_ST.ORDER_BOOK])
+                except Exception:
+                    pass
+            if _r2 != 0 or not isinstance(_ob, dict):
+                return None
+            _bids, _asks = _ob.get("Bid") or [], _ob.get("Ask") or []
+            if not _bids or not _asks:
+                return None
+            _b1, _bv1 = float(_bids[0][0] or 0), float(_bids[0][1] or 0)
+            _a1, _av1 = float(_asks[0][0] or 0), float(_asks[0][1] or 0)
+            if _b1 <= 0 or _a1 <= 0:
+                return None
+            return {
+                "bid1": _b1, "ask1": _a1, "bid_vol1": _bv1, "ask_vol1": _av1,
+                "spread_bps": round((_a1 - _b1) / ((_a1 + _b1) / 2.0) * 10000.0, 2),
+                "quote_src": "futu_order_book_pull",
+            }
         finally:
             try:
-                _ctx.unsubscribe([_code], [_ST.ORDER_BOOK])
+                _ctx.close()
             except Exception:
                 pass
-        if _r2 != 0 or not isinstance(_ob, dict):
-            return None
-        _bids, _asks = _ob.get("Bid") or [], _ob.get("Ask") or []
-        if not _bids or not _asks:
-            return None
-        _b1, _bv1 = float(_bids[0][0] or 0), float(_bids[0][1] or 0)
-        _a1, _av1 = float(_asks[0][0] or 0), float(_asks[0][1] or 0)
-        if _b1 <= 0 or _a1 <= 0:
-            return None
-        return {
-            "bid1": _b1, "ask1": _a1, "bid_vol1": _bv1, "ask_vol1": _av1,
-            "spread_bps": round((_a1 - _b1) / ((_a1 + _b1) / 2.0) * 10000.0, 2),
-            "quote_src": "futu_order_book_pull",
-        }
     except Exception as _e:
         _wk = (symbol, _today_et_str())
         if _wk not in _OB_PULL_WARNED:
