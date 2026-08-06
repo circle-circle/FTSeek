@@ -133,6 +133,23 @@ class PlaybookDB:
         """
         # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG), 防数据割裂
         inst["symbol"] = normalize_symbol(inst.get("symbol"))
+
+        # 准入门 (2026-08-06): 全写入方唯一收口点 — DA 直写/UE/topup/generate 四路都过这里。
+        #   立项根因: confidence 门只写在 _build_instructions_from_votes 内 (pipeline.py:1264),
+        #   DA/UE 直写 DB 绕过全部质量门 (实测 35 日 DA 219 条 BUY 平均 conf=36 全入库)。
+        #   默认 record-only (playbook.admission.enforce=false) → 不改指令, 只落审计。
+        #   回滚: playbook.admission.enabled=false。异常一律不阻断写入 (审计降级优于丢指令)。
+        try:
+            from app.playbook.admission import apply as _admission_apply
+            inst, _adm = _admission_apply(inst)
+            if _adm.get("reasons"):
+                logger.info(
+                    f"[admission] {inst.get('symbol')} {_adm.get('verdict')} "
+                    f"reasons={_adm['reasons']} enforced={_adm.get('enforce')}"
+                )
+        except Exception as _adm_err:
+            logger.warning(f"[admission] 判定异常 (已忽略, 指令照常入库): {_adm_err}")
+
         conn = self._conn()
         now = now_utc().isoformat()
 

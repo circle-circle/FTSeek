@@ -773,6 +773,42 @@ class PlaybookService:
                 position_size = max(1, int(position_size * _buy_pf))
                 logger.info(f"[playbook] {symbol} BUY 仓位因子 (议题二C): {_ps_before} → {position_size} (factor={_buy_pf})")
 
+        # 准入门二次复核 (2026-08-06, 用户指示): 执行时 position_size 已确定 (F1 SSOT/factor),
+        #   弥补 save_instruction 入口 position_size=None → notional=0 → 费用类判据空转的问题.
+        #   enforce=true 且 REJECT → 拦截 (记 skip_reason 不落 executed); record-only 仅审计.
+        #   异常 fail-open 放行 (宁漏不误杀, 同 save_instruction 入口语义).
+        try:
+            from app.playbook.admission import evaluate as _adm_eval
+            _adm_result = _adm_eval({
+                "symbol": symbol, "direction": direction,
+                "entry_price": entry_price, "take_profit": take_profit,
+                "position_size": position_size,
+                "confidence": inst.get("confidence", 0) or 0,
+                "date": inst.get("date", ""),
+            })
+            _adm_verdict = _adm_result.get("verdict", "PASS")
+            _adm_reasons = _adm_result.get("reasons", []) or []
+            _adm_enforce = bool(_adm_result.get("enforce", False))
+            if _adm_verdict == "REJECT":
+                _adm_metrics = _adm_result.get("metrics", {}) or {}
+                logger.warning(
+                    f"[admission] {symbol} {direction} 执行时复核 REJECT "
+                    f"reasons={_adm_reasons} notional={_adm_metrics.get('notional')} "
+                    f"enforce={_adm_enforce}"
+                )
+                if _adm_enforce:
+                    _adm_why = "; ".join(_adm_reasons)
+                    try:
+                        self.db.update_instruction_tracking(
+                            instruction_id, {"skip_reason": f"admission: {_adm_why}"}
+                        )
+                    except Exception:
+                        pass
+                    return {"success": False, "message": f"admission 拦截: {_adm_why}",
+                            "admission_blocked": True}
+        except Exception as _adm_exec_err:
+            logger.warning(f"[admission] {symbol} 执行时复核异常 (fail-open 放行): {_adm_exec_err}")
+
         # 方向映射
         mos_direction = "LONG" if direction == "BUY" else "SHORT"
 

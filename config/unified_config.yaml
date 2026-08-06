@@ -15,8 +15,6 @@ COST_MODEL:
   option_exchange_fee_bps: 1.0
   option_max_spread_pct: 0.05
   pre_after_session_mult: 3.0
-# 2026-07-30 DEB-fee-net-pnl D2: 富途美股费率表 (fee_model.py 消费, 券商调价改这里留 ConfigGov 痕)
-#   SEC 费率是 effective_from 时间序列 — 回填/记账按成交日选档 (官网实证 2026-04-04 生效 $20.60/M)
 broker:
   futu_us:
     commission_per_share: 0.01
@@ -25,14 +23,16 @@ broker:
     platform_fee: 0.0
     settlement_per_share: 0.003
     sec_fee_schedule:
-    - {from: '1900-01-01', rate: 0.0}
-    - {from: '2026-04-04', rate: 0.0000206}
+    - from: '1900-01-01'
+      rate: 0.0
+    - from: '2026-04-04'
+      rate: 2.06e-05
     sec_fee_min: 0.01
     taf_per_share: 0.000195
     taf_min: 0.01
     taf_max: 9.79
-    cat_per_share_nms: 0.000003
-    cat_per_share_otc: 0.00000003
+    cat_per_share_nms: 3.0e-06
+    cat_per_share_otc: 3.0e-08
     borrow_day_basis: 365
 capital:
   description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
@@ -90,8 +90,6 @@ catalyst:
     min_severity: HIGH
     scan_news_hours: 12
   reverse_catalyst:
-    # 2026-07-31 全链清理批1 (用户裁): 盘中异动 3 次 LLM 调用 → 存内存零消费者,
-    #   重启即丢 (全链审计 V-类). 关停止血; 改 true 复活.
     enabled: false
     min_change_pct: 0.03
     quick_debate_rounds: 1
@@ -198,8 +196,6 @@ decision:
     price_break: 0.36
     rsi_rebound: 0.36
 deployment:
-  # 2026-07-26 减法R2: 删死flag event_driven_scan/ic_feedback_to_voting/signal_pipeline_lightweight_trading
-  # (零读取方) + shadow_mode整段 (is_shadow_mode/should_compare_legacy 零外部调用)。回滚: git revert。
   feature_flags:
     ic_feedback_to_screener: false
     ic_hard_blocking: true
@@ -219,7 +215,6 @@ diagnostics:
       modules:
       - geopolitical_reasoner
     post_market:
-      # 2026-08-01 ZOMBIE 断线: runner (run_all_diagnostics) 全仓零调用, statistical_validator 已从注册表删除(悬空引用)
       enabled: false
       modules:
       - shadow_account
@@ -435,7 +430,7 @@ llm:
       fallback: qwen-max
       primary: deepseek-pro
     daily_review:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      cache_on_fail: false
       fallback: qwen-max
       primary: deepseek-pro
     debate_arbiter:
@@ -451,19 +446,14 @@ llm:
       fallback: deepseek-pro
       primary: qwen-max
     deep_target_analysis:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      cache_on_fail: false
       fallback: deepseek-pro
       max_tokens: 3000
       primary: qwen-max
-      # 2026-07-25 显式前缀缓存 (用户指正后实锤, TTL 5min): dashboard 批量深析多标的连发
-      #   同固定 SYSTEM_PROMPT = 完美命中场景 (实测 99.4% 前缀命中)。回滚: 删本行。
       prompt_cache: true
       temperature: 0.4
     dr_debate:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
-      # 2026-07-25 thinking 首灰 (用户批, L1层单特征): 推理最重+零审计=增量可对照。
-      #   配套 max_tokens 2500→5000 在 deep_research_pipeline.py (防 reasoning 吃光预算)。
-      #   观察: empty_response 率/时延/截断率 (finish_reason 已落审计)。回滚: 删 extra_body 两行。
+      cache_on_fail: false
       extra_body:
         enable_thinking: true
       fallback: qwen-max
@@ -496,7 +486,7 @@ llm:
       fallback: deepseek-pro
       primary: qwen-max
     playbook_generator:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      cache_on_fail: false
       fallback: deepseek-pro
       max_tokens: 2048
       primary: qwen-max
@@ -506,7 +496,7 @@ llm:
       fallback: qwen-max
       primary: deepseek-pro
     premarket_planner:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      cache_on_fail: false
       fallback: deepseek-pro
       primary: qwen-max
     regime_classifier:
@@ -521,11 +511,9 @@ llm:
     universe_expansion_reasoning:
       fallback: deepseek-pro
       primary: qwen-max
-      # 2026-07-25 显式前缀缓存 (同 deep_target_analysis, 盘前批扫描连发场景)。回滚: 删本行。
       prompt_cache: true
-    # 2026-07-26 减法R2 (DEB-20260724-A2): voting_deepseek/voting_glm/voting_qwen 三路由代码零引用, 删。回滚: git revert。
     web_search_fundamental:
-      cache_on_fail: false  # 2026-07-25 cache DEB 裁决方案B: 跨标的污染消毒 (历史零命中, 回滚=改回true)
+      cache_on_fail: false
       fallback: deepseek-pro
       max_tokens: 1500
       primary: qwen-max
@@ -614,8 +602,6 @@ llm_budget:
     premarket: 1.0
     weekly_proposal: 2.0
 llm_features:
-  # 2026-07-26 减法R2-5e: 补 5 个隐身键显式化 — 此前靠代码 _DEFAULT_FLAGS 默认运行,
-  #   yaml 无迹可寻 (sltp_verify_shadow/exit_param_shadow 默认 True 在跑)。值=代码默认, 零行为变化。
   adaptive_tuner:
     enabled: false
   exit_param_shadow:
@@ -762,8 +748,6 @@ news_sources:
     - priority: 1
       url: https://rsshub.rssforever.com
       verify_ssl: false
-    # 2026-07-27 S2 (DEB-20260727): 消单点 — 备用公共实例, fetch 侧多实例回退早已实现
-    #   (rsshub_us_news._fetch_rsshub_source 按序尝试), 此前仅配 1 个 → 挂了就全断。回滚: 删两条。
     - priority: 2
       url: https://rsshub.app
       verify_ssl: false
@@ -795,8 +779,6 @@ news_sources:
         path: /cls/telegraph
         priority: 2
 news_v2:
-  # C2 退役 (DEB-feedback-loop 2026-07-31 用户裁): 产出零消费者 + 能力被 UE 自有
-  #   finnhub 链覆盖 → 关停. 保留 app.news_v2.models (UE 引用数据模型). 改 true 复活.
   enabled: false
   mode: observe
   observe:
@@ -838,10 +820,6 @@ news_v2:
     sec_edgar:
       enabled: false
       interval_seconds: 300
-# 2026-07-31 议题⑧ (DEB-cleanup-remaining, 用户裁"不看"): 人读型 LLM 推送关停 —
-#   WeeklyProposer (周五参数提议, 冻结期纯成本) + after_hours LLM 新闻推荐 (钉钉无人看).
-#   注: 起案清单里的 open_price_refresh 经复核非 LLM 非推送 (开盘价刷新主线逻辑), 不关.
-#   回滚: 各自改 true.
 llm_pushes:
   weekly_proposer_enabled: false
   after_hours_scan_enabled: false
@@ -954,8 +932,6 @@ options:
   stop_loss_ratio: 0.5
   take_profit_ratio: 2.0
   time_decay_warning: 0.1
-# 2026-07-26 减法R2 (DEB-20260724-A1): 顶层 orb 段标注 deprecated — enabled=false 引擎不初始化,
-# 仅 scheduler_core 读 orb.universe 做订阅白名单。段保留只为 universe 订阅清单, 勿新增参数。
 orb:
   breakout_buffer_pct: 0.1
   capital_pct: 0.2
@@ -1047,10 +1023,11 @@ pipeline:
   use_modular_stages: true
 playbook:
   auto_execute: true
+  after_hours_shadow:
+    observe: true
+  premarket_shadow:
+    observe: true
   direction_mode: llm_vote
-  # F1 (DEB-20260804, 2026-08-04 用户裁"先实施执行方案"): condition 级负期望黑名单注入 DA prompt
-  #   数据源 scripts/condition_expectancy_report.py → data/condition_expectancy_latest.json
-  #   软约束 (prompt 段), 只影响 DA 生成倾向不硬挡; 回滚: 改 false 即停注入
   condition_expectancy_prompt_enabled: true
   fallback_when_no_bridge: technical
   enable_weekly: true
@@ -1064,7 +1041,7 @@ playbook:
     daily_notional_cap_pct: 0.8
     max_daily_positions: 30
     max_position_pct: 0.04
-    entry_reanchor_enabled: false  # 2026-07-29 O1 关停 (DEB-reanchor: 真零实弹+E1反事实-5.09%+几何半残); 一周 G3 漏斗对照后代码退役; 回滚=重新启用本开关
+    entry_reanchor_enabled: false
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
@@ -1077,38 +1054,23 @@ playbook:
     early_tight_sl_enabled: false
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
-    # 2026-07-24 (DEB-20260723/24): 三项 live 优化 — 各自独立开关一键回滚
-    # ① MFE停滞退出: 持仓≥150min 且峰值浮盈<0.5% 且水下 → 提前离场 (历史 0/37 零例外)
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
-    # ①b 浅亏持有 (2026-08-04, 用户裁"同意 先调整再观察"): 21笔全样本反事实 —
-    #   检查点恒落 12:05-12:15 午餐低谷, 持到收盘 +$158/21笔 (13/21改善, 10/15退出后
-    #   30min内反弹); 浅亏(cur>-1.0%)不市价卖, 转 SL/PRE_CLOSE 收尾; 深亏维持立即退。回滚: false
     mfe_stall_exit_shallow_hold_enabled: true
     mfe_stall_exit_shallow_pct: 1.0
-    # ② 同标的低MFE连败封禁: 近7日连续≥2笔[亏损且MFE<0.5%] → 拒新触发 (CRM三连磨死类模式)
     symbol_streak_ban_enabled: true
     symbol_streak_ban_lookback_days: 7
     symbol_streak_ban_min_streak: 2
     symbol_streak_ban_mfe_pct: 0.5
-    # ③ 低ATR硬门: 低波票不做日内动量。2026-08-04 提阈 2.5→3.0%: 2.5-3.0%桶
-    #   21笔净-$105.6 (62%WR但avgMFE 0.56%跑不出费用); 3.0-3.8%桶唯一净正+$31.78
     low_atr_gate_enabled: true
-    low_atr_gate_min_atr_pct: 0.030
-    # ④ 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 低ATR门挡低波不挡高波小票 —
-    #   仙股地板 $3 + 仓位名义额≤ADV$(5日均成交额)的0.5%; 只减不加/fail-open/回滚=关开关
+    low_atr_gate_min_atr_pct: 0.03
     liquidity_gate_enabled: true
     liquidity_gate_min_price: 3.0
     liquidity_gate_max_adv_pct: 0.5
-    # ⑤ SHORT 借券池门 (2026-07-30, 用户裁"直接做"): is_short_permit=False 或
-    #   券池余量<计划股数×min_cover → 拦 (sim 假成交陷阱); 数据源 get_margin_ratio
-    #   日级缓存; fail-open; 回滚=关开关
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
     breakeven_fee_cushion_pct: 0.15
-    # 2026-07-30 D4 (DEB-fee-net-pnl, 用户裁"直接实现"): 保本线费用感知 — 用 fee_model
-    #   真实往返费用/名义额替换上行固定 cushion (上行降为回退值); 回滚=关本开关
     breakeven_fee_aware_enabled: true
     overnight_hold_enabled: false
     profit_override_threshold_pct: 1.5
@@ -1120,18 +1082,8 @@ playbook:
     config_path: config/playbook_horizon.yaml
     enabled: true
   live_trial: true
-  # 议题二C (2026-08-01, 用户裁"授权你执行"; 当晚 DEB-20260801 用户裁"保留quota但设更高上限" → P1: 2→4;
-  #   08-01 深夜终裁 → P2: 去配额 999 — 用户"美股市场没有单方向的 buy 或 sell, 回自然不受限",
-  #   数据量优先: 8 月 BUY 自然 ~140 笔主桶 n≥30 可及; 无人为选择偏差可归因):
-  #   BUY 方向限流已退役 — 已执行 BUY 实证负 edge (-0.3~-0.5%/笔, n=134-157, p≈0.04) 保留为判分观察,
-  #   不再硬限流 (选择偏差+样本饿死成本 > 失血保护收益); 信号侧修复排队 9 月。
-  #   ① buy_position_factor: BUY 仓位乘数 (半码 0.5, Q1 维持 — 8 月验证月控 $ 敞口, 不影响笔数/样本).
-  #      回滚 = 改回 1.0
-  #   ② buy_daily_exec_quota: BUY 日执行配额 → 999 (去配额, P2 终裁). 超额拦截段完全禁用.
-  #      回滚 = 改回 4 (P1) 或 2 (原值)
-  #   判分纪律 (DEB §2.3/§三R): 半码批净期望须给"半码等效全码"列 (= 2×半码毛利 − 全码费), 禁与全码历史直比
   direction_gate:
-    buy_position_factor: 0.5
+    buy_position_factor: 1.0
     buy_daily_exec_quota: 999
   cap_reduction_trigger:
     enabled: false
@@ -1153,38 +1105,57 @@ playbook:
     confidence_sizing_enabled: false
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    entry_reanchor_enabled: false  # 2026-07-29 O1 关停 (DEB-reanchor: 真零实弹+E1反事实-5.09%+几何半残); 一周 G3 漏斗对照后代码退役; 回滚=重新启用本开关
+    entry_reanchor_enabled: false
     entry_reanchor_max_drift_pct: 4.0
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
-  # 2026-07-24 (用户裁决): 扩容补量 — 加快样本收集但不降标准.
-  #   当日可执行指令 < target 时, 从 pool 走正式生成链补足 (质量门+technical确定性方向,
-  #   无方向不硬凑; 下游低ATR门/连败封禁/VWAP门/量能门照常适用). 归因 raw.source=topup_pool.
-  topup:
+  # 2026-08-06 (DEB-20260806 终裁"同意"): 锚限价影子 emit (record-only) —
+  #   触发时落 data/limit_entry_shadow.jsonl, 次日 crontab 重放判配对δ.
+  #   主门 n≥60 真被动 sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门. 回滚: false+重启.
+  limit_entry_shadow_observe: true
+  # 指令准入门 (2026-08-06, DEB-20260806-source-control): 全写入方唯一收口
+  #   根因: confidence 门只在 _build_instructions_from_votes 内 (pipeline.py:1264),
+  #   DA 候选由 deep_analysis skill 直写 DB、UE 由 llm_universe_scan.py 直写 →
+  #   两者绕过 confidence/负edge配对/价格偏离/跨日翻转全部门。实测 35 日:
+  #   DA 219 条 BUY 平均 conf=36 全部入库并执行 123 笔。
+  #   实装点: app/playbook/db.py save_instruction (唯一必经)。
+  #
+  #   费用类判据=算术确定 (fee_model 同源, 与预测无关):
+  #     commission = max(min($0.01×qty, 0.3%×amt), $1.99)/腿
+  #     → qty≤199 时恒付 $1.99 地板, fee_bps ≈ 2×1.99/notional
+  #     → 降 fee_bps 只能靠**抬名义额**, 不是抬股数 (1000股@$3.4 = 77bps 反而最贵)
+  #   confidence 类判据=无实证支持: 60日 n=242 实测 confidence IC=−0.021 (t=−0.33),
+  #     全部事前特征 |t|<1 → 阈值一律设 0 (不拦), 仅记录, 待 IC 转正再议。
+  #
+  #   2026-08-06 盘中 (用户指示): enforce=true + min_notional=3000 启用 —
+  #   费用类判据算术确定可硬拦; confidence 类阈值仍 0 (IC 无证据不拦).
+  #   执行时二次复核点: playbook_service.execute (position_size 确定后, 下单前),
+  #   弥补 save_instruction 入口 position_size=None → notional=0 判据空转的问题.
+  #   回滚: enabled=false 或 enforce=false + 重启。
+  admission:
     enabled: true
-    # 2026-07-30 (零产出真凶修复, 用户裁"启用"): strategies.technical.enabled:false
-    #   是主线遗留开关, 把 TechnicalFallbackAdapter 两条设计内路径 (topup/无bridge
-    #   兜底) 一起闷杀 — F1 band 从未被执行。本开关仅在 Adapter 局部覆写 enabled,
-    #   min_strength/quality 等参数仍从 strategies.technical 读。回滚: 改 false。
+    enforce: true            # 费用类判据硬拦 (转 SKIP); confidence 类阈值 0 不命中
+    min_notional_usd: 3000   # 名义 < $3K: fee_bps>13bps, 费用占比吃掉毛利 (2026-08-06 用户指示启用)
+    min_entry_price: 0.0      # 0=不拦; 低价股撞 0.3% 佣金上限 (建议 20~30)
+    max_shares_per_order: 0   # 0=不拦; $1.99 地板等价点在 199 股
+    min_profit_fee_ratio: 0.0 # 0=不拦; TP处毛利 ≥ K×往返费用 (建议 6~10)
+    min_confidence_buy: 0     # 0=不拦 (IC 无证据, 勿在无证据下启用)
+    min_confidence_short: 0
+  topup:
+    # 2026-08-06 (DEB-20260805-supply-reallocation 终裁①, 用户裁"同意"): 停供补量 —
+    #   topup 机制(指令不足→流动性池补单)近期补入单持续净亏, 机制+minimax 悔值裁定停供.
+    #   恢复: enabled 改回 true + 重启. 观察期: 停供后指令量与盈亏基线对照.
+    enabled: false
     technical_override_enabled: true
-    # 2026-07-25 (用户裁决"验证期提升每日交易量快速攒样本"): target 25→30 / max_add 12→18.
-    #   执行侧上限未触顶 (max_daily_positions=30, notional cap 昨日仅用 32%), 瓶颈在供给;
-    #   质量门/三门/无方向不硬凑 照常适用 — 只抬配额不降标准. 回滚: 25/12.
     target_min_instructions: 30
     max_add_per_day: 18
-    # D2 (2026-07-24 夜, 用户批): +0 退避 — 每窗口最多 N 次尝试/间隔 M 分钟. 回滚: 设 999/0.
     max_attempts_per_window: 2
     retry_interval_min: 15
     not_before_et_hhmm: 845
-    # 2026-07-24 (用户裁决, 验证期知情破例): 加盘中实时评估窗 — 盘前批用昨收价评
-    #   回调窗系统性偏陈旧 (07-24 首跑 +0 实证), 盘中窗以实时价重评同一正式链。
-    #   两窗共享 max_add_per_day; 分窗幂等; raw.timing=premarket/intraday 供效果切分。
     premarket_end_et_hhmm: 930
     intraday_start_et_hhmm: 1030
     intraday_end_et_hhmm: 1130
-    # pool 静态列表已退役 (P-1 名单合一 2026-08-01, DEB-20260724 §7): 真源 = watchlist roles.topup_eligible,
-    #   防双名单漂移 (原 24 只含 07-25 扩容 8 只, 全量迁入 roles). 消费端 pipeline.py 派生. 回滚 = git revert 本提交.
 pre_market_ranker:
   cache_ttl_seconds: 3600
   enabled: false
@@ -1208,29 +1179,31 @@ regime_adaptation:
     RANGE: 0.7
     TREND_DOWN: 0.8
     TREND_UP: 1.0
-# 实盘切换预注册参数 (RFC-062, 2026-08-02 冻结 — 修改需新 DEB + 用户裁决)
 live_readiness:
-  slippage_haircut_bps: 15         # 门1 G1-1 折算假设 (round-trip=2×); 门2 用实测中位替换
-  risk_pct_per_trade: 0.25         # 试点/L2 档单笔风险预算 (%净值)
+  slippage_haircut_bps: 15
+  risk_pct_per_trade: 0.25
   pilot:
-    size_shares: 1                 # L1 最小仓位
-    weeks: [2, 4]                  # 试点窗口
+    size_shares: 1
+    weeks:
+    - 2
+    - 4
   gate2:
-    max_median_slippage_bps: 15    # G2-1
-    max_reject_rate: 0.02          # G2-2
-    reconcile_zero_drift_days: 5   # G2-3
-  scaling_ladder: [L1_1share, L2_risk025, L3_risk050, L4_full]  # 每档≥20笔实盘且期望≥0晋级, 转负降档
-  # 共享 SIM 账户已知外部持仓 (2026-08-02 对账实证, 报出不告警; 删除任一行即恢复告警):
-  #   HK.00700/00981 — 本系统不交易港股; US.SNDK broker LONG 44 但系统史上全 SHORT 且笔笔已平;
-  #   US.BABA 50 股不匹配任何系统手数 (33/21/23/22) 且 07-02 有 BROKER_GHOST_CLOSE 记录。
-  reconcile_external_symbols: [HK.00700, HK.00981, US.BABA, US.SNDK]
-
+    max_median_slippage_bps: 15
+    max_reject_rate: 0.02
+    reconcile_zero_drift_days: 5
+  scaling_ladder:
+  - L1_1share
+  - L2_risk025
+  - L3_risk050
+  - L4_full
+  reconcile_external_symbols:
+  - HK.00700
+  - HK.00981
+  - US.BABA
+  - US.SNDK
 risk:
   acb_fail_mode: closed
   preflight_fail_mode: open
-  # PDT 守卫 (2026-08-02 用户裁决"按照建议关闭"): FINRA PDT 仅约束美国本土券商,
-  # 富途证券(香港)账户不适用 — 无日内次数/$25k 门槛。(moomoo US 实体账户除外, 届时改回 true)
-  # 解除日 2026-08-02 = 样本分层标记: 此前批次受 PDT 截断 (8月触线3次), 读数需分批。
   pdt_guard:
     enabled: false
   account:
@@ -1331,13 +1304,10 @@ risk:
     vwap_threshold: -0.001
   position:
     max_per_direction: 0.65
-    # 2026-07-26 减法R2: 补悬空键 (pre_trade_check.py 在读, 原吃代码默认 0.40;
-    # sandbox overrides 另有 0.55 覆盖, 值不变仅使 yaml 成为真源)
-    max_per_sector: 0.40
+    max_per_sector: 0.4
     max_per_symbol: 0.25
     max_position_pct: 0.15
     max_total: 0.8
-  # 2026-07-26 减法R2: 补悬空段 (position_exit_monitor.py:526-528 在读, 原吃代码默认值, 零行为变化)
   portfolio:
     warn_drawdown_pct: 0.02
     reduce_drawdown_pct: 0.025
@@ -1347,7 +1317,6 @@ risk:
     risk_per_trade_pct: 0.008
   pre_trade:
     battle_plan_bonus: 0.5
-    # 2026-08-01 ZOMBIE 断线: 全仓零代码读取 (battle plan 已冻结)
     battle_plan_bonus_enabled: false
     long_min_strength: 60
     min_effective_strength_floor: 50
@@ -1417,7 +1386,6 @@ scheduler:
     hermes_model: qwen3.6-plus
     max_rounds: 2
     max_total_timeout_seconds: 600
-  # ZOMBIE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): event_day_* 全仓零代码引用, 08-07 后删
   event_day_interval_minutes: 3
   event_day_symbols: []
   max_positions: 12
@@ -1425,7 +1393,7 @@ scheduler:
   min_signal_strength: 60
   monitor_interval_minutes: 0.25
   playbook_exit_fast_loop_enabled: true
-  playbook_exit_fast_loop_interval_sec: 20
+  playbook_exit_fast_loop_interval_sec: 10
   scan_interval_minutes: 5
 service:
   api:
@@ -1456,7 +1424,6 @@ signal_quality:
     order_flow: 0.15
     trend_quality: 0.25
     volume: 0.25
-# ZOMBIE 2026-07-31 (DEB-fullchain-cleanup 第5轮终裁): signal_scoring 全仓零代码引用, 08-07 后删
 signal_scoring:
   active_version: v1
   weights_v2: null
@@ -1468,9 +1435,12 @@ signal_stage:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
 universe_expansion:
-  entry_enabled: true         # 已启用(2026-07-14): scan→inject 后注入作战计划 → fast_lane 模拟盘下单 (仅 sim)
-  da_candidate_feed: true     # UE→DA 候选管道 (2026-08-03): UE 今晨 SHORT 候选进 DA 深度分析池;
-                              #   回滚开关=false 即停注入。溯源: raw_instruction.origin=ue_candidate
+  entry_enabled: true
+  da_candidate_feed: true
+  # 2026-08-06 (DEB-20260805-supply 终裁②, 用户裁"同意"): UE×SHORT 加码影子 S0 —
+  #   record-only 登记 ×1.25 假设队列 (data/ue_short_boost_shadow.jsonl),
+  #   n=60 T+1 主门毕业前不动真仓. 回滚: false.
+  short_boost_shadow: true
   prompt_version: v2
   clue_hard_events: true
   clue_earnings_events: true
@@ -1666,8 +1636,6 @@ strategies:
   main:
     capital_pct: 0.8
     priority: 5
-  # 2026-07-26 减法R2 (DEB-20260724-A1): strategies.orb 为死牌子 — 引擎读顶层 orb.enabled=false 早已不初始化,
-  # 本段只管订阅路径且 universe=0 实际零订阅。删段防误导。回滚: git revert。
   technical:
     enabled: false
     indicators:
@@ -1715,11 +1683,8 @@ strategies:
     trail_activation_atr: 1.0
     trail_atr_mult: 1.5
   voting_llm:
-    # 2026-08-01 ZOMBIE 断线: 仅已门死的 signal_stage 消费
     enabled: false
 strategy:
-  # 2026-07-24 (用户裁决, da-chain-audit DEB §7.5): 主线扫描本体静默 — 主线4日0交易纯空转.
-  #   只停扫描, scan_loop 寄宿任务(巡检/复盘/快照)保留. 回滚: 改 true.
   main_scan_enabled: false
   consensus_threshold: 0.4
   consensus_threshold_by_vix:
@@ -1789,7 +1754,6 @@ strategy_registry:
     direction_filter:
       BUY_min_confidence: 70
       SHORT_min_confidence: 70
-    # 2026-08-01 ZOMBIE 断线: fast_lane 仅门死 signal_stage 求值
     enabled: false
     ic_gate:
       hard_block_threshold: -0.15
@@ -1845,7 +1809,6 @@ strategy_registry:
       BUY_min_confidence: 70
       BUY_min_strength: 50
       SHORT_min_confidence: 70
-    # 2026-08-01 ZOMBIE 断线: 仅已门死的 signal_stage 消费
     enabled: false
     ic_gate:
       hard_block_threshold: -0.15
@@ -1860,24 +1823,23 @@ symbol_cooldown:
     direction: same_only
 updated: '2026-04-29'
 version: 3.0.0
-# 2026-08-01 P-2b 订阅动态化 (DEB-20260724 §7, 用户裁决): 应订集合 = 基准(roles.benchmark)
-#   ∪ 当日有效指令标的 ∪ playbook 未平仓 ∪ 主线 PositionStore 安全网; 静态 watchlist 降为
-#   可配置 (默认关 — 其唯一真实消费者主线 scan_loop 已静默, DEB §7.5). 收盘全退次日重建.
-#   回滚: dynamic_enabled=false (恢复 静态watchlist∪PositionStore).
 subscription:
   dynamic_enabled: true
   static_watchlist_enabled: false
-
 watchlist:
   etfs:
   - code: US.SPY
-    roles: [benchmark, subscribe]
+    roles:
+    - benchmark
+    - subscribe
     enabled: false
     name: SPDR S&P 500 ETF
     notes: → ORB 管理 | 主线仅用作市场方向参考
     tier: ETF
   - code: US.QQQ
-    roles: [benchmark, subscribe]
+    roles:
+    - benchmark
+    - subscribe
     enabled: false
     name: Invesco QQQ Trust
     notes: → ORB 管理 | 主线仅用作市场方向参考
@@ -1920,7 +1882,10 @@ watchlist:
     tier: ETF
   us_stocks:
   - code: US.TSLA
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: Tesla Inc
@@ -1928,7 +1893,10 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.COIN
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: Coinbase Global
@@ -1936,7 +1904,9 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.CAT
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Caterpillar Inc
@@ -1944,7 +1914,9 @@ watchlist:
     sector: Industrials
     tier: TIER1
   - code: US.GS
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Goldman Sachs
@@ -1952,7 +1924,9 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.CVX
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Chevron Corp
@@ -1960,7 +1934,10 @@ watchlist:
     sector: Energy
     tier: TIER1
   - code: US.NVDA
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: NVIDIA Corp
@@ -1968,7 +1945,10 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.RIVN
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: Rivian Automotive
@@ -1976,7 +1956,10 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.UBER
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Uber Technologies
@@ -1991,7 +1974,9 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER1
   - code: US.SNDK
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: SanDisk Corp
@@ -1999,7 +1984,10 @@ watchlist:
     sector: Technology
     tier: TIER1
   - code: US.ARM
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: Arm Holdings
@@ -2007,7 +1995,10 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.MU
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Micron Technology
@@ -2015,7 +2006,9 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.QCOM
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     enabled: false
     max_position_ratio: 0.15
     name: Qualcomm Inc
@@ -2023,7 +2016,9 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.BWXT
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: BWX Technologies
@@ -2031,7 +2026,9 @@ watchlist:
     sector: Industrials
     tier: TIER1
   - code: US.LLY
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Eli Lilly
@@ -2039,7 +2036,10 @@ watchlist:
     sector: Healthcare
     tier: TIER1
   - code: US.AAPL
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Apple Inc
@@ -2047,7 +2047,10 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.MSFT
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Microsoft Corp
@@ -2055,7 +2058,10 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.GOOG
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Alphabet Inc Class C
@@ -2063,7 +2069,10 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.AMZN
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Amazon.com Inc
@@ -2071,7 +2080,10 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.META
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Meta Platforms
@@ -2079,7 +2091,10 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.AVGO
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Broadcom Inc
@@ -2087,7 +2102,10 @@ watchlist:
     sector: Semiconductors
     tier: TIER2
   - code: US.TSM
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: TSMC
@@ -2095,7 +2113,10 @@ watchlist:
     sector: Semiconductors
     tier: TIER2
   - code: US.AMD
-    roles: [liquidity_whitelist, topup_eligible, subscribe]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Advanced Micro Devices
@@ -2103,7 +2124,9 @@ watchlist:
     sector: Semiconductors
     tier: TIER1
   - code: US.NFLX
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     enabled: false
     max_position_ratio: 0.12
     name: Netflix Inc
@@ -2111,7 +2134,9 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.BABA
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Alibaba Group
@@ -2119,7 +2144,9 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.PDD
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: PDD Holdings
@@ -2127,7 +2154,9 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.NIO
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.08
     name: NIO Inc
@@ -2135,7 +2164,9 @@ watchlist:
     sector: Consumer Cyclical
     tier: TIER2
   - code: US.NTES
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: NetEase Inc
@@ -2150,7 +2181,9 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.ORCL
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.06
     name: Oracle Corp
@@ -2158,7 +2191,9 @@ watchlist:
     sector: Technology
     tier: TIER1
   - code: US.CRM
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Salesforce Inc
@@ -2166,7 +2201,9 @@ watchlist:
     sector: Technology
     tier: TIER2
   - code: US.BA
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: Boeing Co
@@ -2174,7 +2211,9 @@ watchlist:
     sector: Industrials
     tier: TIER2
   - code: US.LMT
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.06
     name: Lockheed Martin
@@ -2182,7 +2221,9 @@ watchlist:
     sector: Industrials
     tier: TIER2
   - code: US.UNH
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.15
     name: UnitedHealth Group
@@ -2190,7 +2231,9 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.JPM
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: JPMorgan Chase
@@ -2198,7 +2241,9 @@ watchlist:
     sector: Financial Services
     tier: TIER2
   - code: US.XOM
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.06
     name: Exxon Mobil
@@ -2213,7 +2258,9 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.WMT
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Walmart Inc
@@ -2221,7 +2268,9 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER1
   - code: US.COST
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Costco Wholesale
@@ -2229,7 +2278,9 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER1
   - code: US.KO
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Coca-Cola Co
@@ -2237,7 +2288,9 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.PEP
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: PepsiCo Inc
@@ -2245,7 +2298,9 @@ watchlist:
     sector: Consumer Defensive
     tier: TIER2
   - code: US.DIS
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Walt Disney Co
@@ -2253,7 +2308,9 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.VZ
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Verizon Communications
@@ -2261,7 +2318,9 @@ watchlist:
     sector: Communication Services
     tier: TIER2
   - code: US.JNJ
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Johnson & Johnson
@@ -2269,7 +2328,9 @@ watchlist:
     sector: Healthcare
     tier: TIER1
   - code: US.ABBV
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: AbbVie Inc
@@ -2277,7 +2338,9 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.MRK
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Merck & Co
@@ -2285,7 +2348,9 @@ watchlist:
     sector: Healthcare
     tier: TIER2
   - code: US.V
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Visa Inc
@@ -2293,7 +2358,9 @@ watchlist:
     sector: Financial Services
     tier: TIER1
   - code: US.MA
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.12
     name: Mastercard Inc
@@ -2301,18 +2368,20 @@ watchlist:
     sector: Financial Services
     tier: TIER2
   - code: US.HON
-    roles: [liquidity_whitelist, subscribe]
+    roles:
+    - liquidity_whitelist
+    - subscribe
     enabled: true
     max_position_ratio: 0.1
     name: Honeywell International
     notes: 多元工业龙头 | 工业分散 (2026-07-17) | 进不进交易看DA+gate
     sector: Industrials
     tier: TIER2
-  # ── topup 补量池专属 (2026-08-01 P-1 名单合一迁入) — enabled:false 不进静态扫描池,
-  #    仅经 topup_eligible 角色进补量链 (Screener 质量门+三门照常). ──
   - code: US.SMCI
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Super Micro Computer
     notes: AI服务器 | 高波动高流动 | topup专属 (2026-08-01 合一迁入)
@@ -2320,7 +2389,9 @@ watchlist:
     tier: TIER1
   - code: US.PLTR
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Palantir Technologies
     notes: 大数据分析 | 高β事件驱动 | topup专属 (2026-08-01 合一迁入)
@@ -2328,7 +2399,9 @@ watchlist:
     tier: TIER1
   - code: US.MRVL
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Marvell Technology
     notes: 数据中心芯片 | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
@@ -2336,7 +2409,9 @@ watchlist:
     tier: TIER1
   - code: US.SNOW
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Snowflake Inc
     notes: 云数据仓库 | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
@@ -2344,7 +2419,9 @@ watchlist:
     tier: TIER1
   - code: US.SHOP
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Shopify Inc
     notes: 电商平台 | 高波动 | topup专属 (2026-08-01 合一迁入)
@@ -2352,7 +2429,9 @@ watchlist:
     tier: TIER1
   - code: US.DELL
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: Dell Technologies
     notes: AI服务器/PC | ATR甜蜜区补量 | topup专属 (2026-08-01 合一迁入)
@@ -2360,7 +2439,9 @@ watchlist:
     tier: TIER1
   - code: US.CRWD
     enabled: false
-    roles: [liquidity_whitelist, topup_eligible]
+    roles:
+    - liquidity_whitelist
+    - topup_eligible
     max_position_ratio: 0.08
     name: CrowdStrike Holdings
     notes: 网络安全 | 高波动事件驱动 | topup专属 (2026-08-01 合一迁入)
