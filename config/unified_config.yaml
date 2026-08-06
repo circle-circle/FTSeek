@@ -1172,6 +1172,12 @@ playbook:
     min_atr_pct: 2.0
     sl_pct: 1.5                # 再入场止损比首入(2.0%)紧 — 二次入场错了快走
     tp_rr: 1.6                 # 过 min_tp_rr=1.5 门
+    # 2026-08-06 用户裁决"再入场亏损可隔夜": 水下仓首夜豁免 PRE_CLOSE_EXIT/EOD 兜底 —
+    #   仅本生成器武装仓(decision_id 前缀) + 仅水下(盈利仍当日落袋) + 仅首夜(次日正常收).
+    #   注意: 总开关 overnight_hold_enabled=false 下 OVERNIGHT_GAP_STOP 不生效,
+    #   持夜风险由原 SL 1.5% 兜底 (跳空越 SL 有次日市价滑点风险, sim 期接受).
+    #   回滚: 本键置 false + 重启.
+    overnight_hold_loser_enabled: true
   topup:
     # 2026-08-06 (DEB-20260805-supply-reallocation 终裁①, 用户裁"同意"): 停供补量 —
     #   topup 机制(指令不足→流动性池补单)近期补入单持续净亏, 机制+minimax 悔值裁定停供.

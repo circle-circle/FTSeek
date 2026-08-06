@@ -48,6 +48,12 @@ _DEFAULTS: Dict[str, Any] = {
     "min_atr_pct": 2.0,           # 日 ATR% 下限 (低波不做动量, 比 low_atr_gate 3% 宽一档)
     "sl_pct": 1.5,                # 再入场止损 (比首入 2.0% 紧 — 二次入场错了要快走)
     "tp_rr": 1.6,                 # TP = SL×1.6 (过 min_tp_rr=1.5 门)
+    # 水下仓持夜豁免 (2026-08-06 用户裁决"再入场亏损可隔夜"):
+    #   仅首夜 (entry date == 当日 ET; 次日 PRE_CLOSE/EOD 正常平仓), 仅水下仓 (盈利仍当日落袋,
+    #   与 DEB-20260806-asymmetric ① 一致), 仅本生成器武装的仓 (decision_id 前缀判定).
+    #   注意: overnight_hold_enabled 总开关下 OVERNIGHT_GAP_STOP 不生效, 持夜风险由
+    #   原 SL 1.5% 兜底 (开盘跳空越 SL 有次日市价滑点风险, sim 期可接受, 影子记录对照).
+    "overnight_hold_loser_enabled": False,
 }
 
 
@@ -342,3 +348,56 @@ def run_scan(scheduler=None) -> int:
                 f"price=${price:.2f} vwap=${vwap:.2f} slope={slope_5m} vr={vol_ratio})"
             )
     return armed
+
+
+def _is_reentry_instruction(symbol: str, date_str: str) -> bool:
+    """该标的当日指令是否本生成器武装 (decision_id 前缀判定). 异常 → False (不豁免, 保守)."""
+    try:
+        from app.playbook.db import PlaybookDB
+        conn = PlaybookDB()._conn()
+        row = conn.execute(
+            "SELECT decision_id FROM playbook_instructions WHERE date = ? AND symbol = ?",
+            (date_str, symbol),
+        ).fetchone()
+        did = str(row[0] or "") if row else ""
+        return did.startswith("intraday_reentry-")
+    except Exception:
+        return False
+
+
+def overnight_loser_exempt(symbol: str, entry_time_str: str, profit_pct: float,
+                           is_reentry=None) -> bool:
+    """EOD 强平豁免判定 (2026-08-06 用户裁决"再入场亏损可隔夜").
+
+    全部满足才豁免 (任一不满足 → 正常当日平仓):
+      1. 配置开关 overnight_hold_loser_enabled;
+      2. 水下仓 (profit_pct < 0) — 盈利仓仍当日落袋;
+      3. 首夜 (entry 日期 == 今日 ET) — 次日起不再豁免, PRE_CLOSE/EOD 正常收;
+      4. 本生成器武装的仓 (decision_id 前缀) — 其他来源仓位不适用。
+
+    is_reentry: 可注入的 (symbol, date_str)->bool, 默认查库; 单测传桩。
+    """
+    cfg = _cfg()
+    if not cfg.get("overnight_hold_loser_enabled"):
+        return False
+    try:
+        if float(profit_pct) >= 0:
+            return False
+    except Exception:
+        return False
+    try:
+        from datetime import datetime as _dt
+        from app.utils.timezone import now_et as _now_et_fn
+        _et_now = _now_et_fn()
+        _entry = _dt.fromisoformat(str(entry_time_str))
+        _entry_date = (_entry.astimezone(_et_now.tzinfo).date()
+                       if _entry.tzinfo is not None else _entry.date())
+        if _entry_date != _et_now.date():
+            return False                     # 非首夜 → 不豁免
+    except Exception:
+        return False                         # 日期解析异常 → 不豁免 (保守)
+    checker = is_reentry or _is_reentry_instruction
+    try:
+        return bool(checker(symbol, _entry_date.isoformat()))
+    except Exception:
+        return False

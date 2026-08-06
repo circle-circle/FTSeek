@@ -86,3 +86,68 @@ def test_zero_price_or_vwap_reject():
     for price, vwap in ((0, VWAP), (100.0, 0)):
         ok, reasons = evaluate_candidate("BUY", price, vwap, cfg=_cfg(), **GOOD)
         assert not ok and reasons == ["no_price_or_vwap"]
+
+
+# ── overnight_loser_exempt (2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD) ──
+
+from datetime import timedelta
+
+import app.playbook.intraday_reentry as ir
+
+
+def _cfg_on(**over):
+    return _cfg(overnight_hold_loser_enabled=True, **over)
+
+
+def _today_entry():
+    from app.utils.timezone import now_et
+    return now_et().replace(hour=11, minute=30).isoformat()
+
+
+def _yesterday_entry():
+    from app.utils.timezone import now_et
+    return (now_et() - timedelta(days=1)).isoformat()
+
+
+YES = lambda sym, date: True   # noqa: E731
+NO = lambda sym, date: False   # noqa: E731
+
+
+def test_overnight_exempt_positive(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    assert ir.overnight_loser_exempt("AVGO", _today_entry(), -0.8, is_reentry=YES)
+
+
+def test_overnight_flag_disabled(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg)  # _DEFAULTS: False
+    assert not ir.overnight_loser_exempt("AVGO", _today_entry(), -0.8, is_reentry=YES)
+
+
+def test_overnight_profitable_not_exempt(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    for pnl in (0.0, 0.5, 2.3):
+        assert not ir.overnight_loser_exempt("AVGO", _today_entry(), pnl, is_reentry=YES)
+
+
+def test_overnight_second_night_not_exempt(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    assert not ir.overnight_loser_exempt("AVGO", _yesterday_entry(), -0.8, is_reentry=YES)
+
+
+def test_overnight_non_reentry_not_exempt(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    assert not ir.overnight_loser_exempt("AVGO", _today_entry(), -0.8, is_reentry=NO)
+
+
+def test_overnight_bad_timestamp_not_exempt(monkeypatch):
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    for bad in ("", "not-a-date", None):
+        assert not ir.overnight_loser_exempt("AVGO", bad, -0.8, is_reentry=YES)
+
+
+def test_overnight_naive_timestamp_treated_as_et(monkeypatch):
+    # trade_records 历史行为: entry_time 可能无时区 — 按 ET 当日处理不豁免错位
+    monkeypatch.setattr(ir, "_cfg", _cfg_on)
+    from app.utils.timezone import now_et
+    naive_today = now_et().replace(hour=11, minute=30, tzinfo=None).isoformat()
+    assert ir.overnight_loser_exempt("AVGO", naive_today, -0.8, is_reentry=YES)

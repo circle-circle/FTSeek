@@ -89,6 +89,19 @@ def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
             logger.warning(f"[playbook] {symbol} 盘口micro拉取失败 (本日不再告警, micro=None): {_e}")
         return None
 
+def _reentry_overnight_exempt(symbol: str, entry_time_str: str, profit_pct: float) -> bool:
+    """再入场水下仓 EOD 豁免 (2026-08-06 用户裁决"再入场亏损可隔夜").
+
+    判定本体在 app.playbook.intraday_reentry.overnight_loser_exempt
+    (开关/水下/首夜/decision_id 前缀四条件)。此处仅做异常收口:
+    任何异常 → False (不豁免, 照常当日平仓 — 保守方向)。
+    """
+    try:
+        from app.playbook.intraday_reentry import overnight_loser_exempt
+        return bool(overnight_loser_exempt(symbol, entry_time_str, profit_pct))
+    except Exception:
+        return False
+
 # ── ADR-008 (2026-06-28): Playbook 方向审计日志 ────────────────────────
 
 def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_direction: Optional[str], vote_result: Dict[str, Any]):
@@ -5454,6 +5467,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
         if _skip_allowed and profit_pct > 0:
             pass  # cohort B 盈利仓跳过, 持过夜
+        elif _reentry_overnight_exempt(_symbol, entry_time_str, profit_pct):
+            pass  # 2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD, 次日正常收
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
@@ -6415,6 +6430,22 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         f"[playbook sim] EOD 兜底 {symbol} cohort=B 报价缺失 → 强制平仓 (保守)"
                     )
                 # 报价缺失或亏损 → 不跳过, 走兜底平仓 (保守)
+
+            # 2026-08-06 (用户裁决"再入场亏损可隔夜"): 再入场水下仓首夜豁免 EOD 兜底.
+            #   报价缺失 → 不豁免 (保守平仓); 次日 entry_date≠当日 → 自动失效正常收.
+            try:
+                _rq = data_router.get_quote(symbol)
+                _rp = float((_rq or {}).get("last", 0) or (_rq or {}).get("price", 0) or 0) if _rq else 0.0
+                if _rp > 0:
+                    _rpnl = ((_rp - entry_price) / entry_price * 100) if direction == "LONG" \
+                        else ((entry_price - _rp) / entry_price * 100)
+                    if _reentry_overnight_exempt(symbol, r["entry_time"], _rpnl):
+                        logger.info(
+                            f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}% 持夜 (用户裁决)"
+                        )
+                        continue
+            except Exception as _rex:
+                logger.debug(f"[playbook sim] 再入场豁免判定异常 {symbol} (不豁免): {_rex}")
 
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
             # P1 fix (2026-06-25): 连续失败 3 次后放弃, 停止死循环日志刷屏
