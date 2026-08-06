@@ -26,6 +26,69 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# 2026-08-05: bar 覆盖冻结告警的模块级计时器 (symbol -> stall_since_ts).
+#   meta 每轮从 DB 重读且写回有条件门, 计时不可放 meta; 按 symbol 记 (同日重复开仓重置无害).
+_BAR_STALL_SINCE: Dict[str, float] = {}
+
+# 2026-08-06 (DEB-20260806 终裁): 锚限价影子幂等集 ((inst_id, date) — 每指令触发只落一行).
+_LIMIT_SHADOW_EMITTED: set = set()
+
+# 2026-08-06 (B1 二次修复): 盘口 micro 拉取的"已告警"集 ((symbol, date) 防刷屏).
+#   首修 (08-05) 用 get_push_orderbook 推送缓存 — 但 ADR-013 早已把 ORDER_BOOK 移出推送
+#   订阅集 (subscription_manager 默认 QUOTE+K_1M), 缓存恒空 → 08-05 全天 233 行 micro=null.
+#   改用 S2 实测可行的拉取路径 (scripts/orderbook_s2_capture.py 同款):
+#   无推送订阅 (subscribe_push=False) → get_order_book 拉取 → 即退订.
+#   零推送 CPU (ADR-013 结论不动), 零订阅槽位累积; 频次 ≈影子行数 (~233/日), 远低于限额.
+_OB_PULL_WARNED: set = set()
+
+
+def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
+    """触发时点 L1 盘口快照 (bid1/ask1/量/spread_bps)。失败/无数据返回 None。
+
+    走裸 ctx.get_order_book (dict: Bid/Ask=[(price,vol,n,{})...], S2 同款) — 不用
+    provider.get_order_book 包装: 其按 DataFrame 取值, 现 SDK 返回 dict → 恒 None
+    (2026-05 起无消费者的隐性损坏死代码, 本函数不依赖它)。"""
+    try:
+        _rtr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
+        _futu = getattr(_rtr, "futu", None)
+        if _futu is None or not _futu._ensure_connected():
+            return None
+        _ctx = getattr(_futu, "_quote_ctx", None)
+        if _ctx is None:
+            return None
+        from futu import SubType as _ST
+        _code = f"US.{symbol}"
+        _ret, _msg = _ctx.subscribe([_code], [_ST.ORDER_BOOK], subscribe_push=False)
+        if _ret != 0:
+            raise RuntimeError(f"ORDER_BOOK 订阅被拒: {_msg}")
+        try:
+            _r2, _ob = _ctx.get_order_book(_code, num=1)
+        finally:
+            try:
+                _ctx.unsubscribe([_code], [_ST.ORDER_BOOK])
+            except Exception:
+                pass
+        if _r2 != 0 or not isinstance(_ob, dict):
+            return None
+        _bids, _asks = _ob.get("Bid") or [], _ob.get("Ask") or []
+        if not _bids or not _asks:
+            return None
+        _b1, _bv1 = float(_bids[0][0] or 0), float(_bids[0][1] or 0)
+        _a1, _av1 = float(_asks[0][0] or 0), float(_asks[0][1] or 0)
+        if _b1 <= 0 or _a1 <= 0:
+            return None
+        return {
+            "bid1": _b1, "ask1": _a1, "bid_vol1": _bv1, "ask_vol1": _av1,
+            "spread_bps": round((_a1 - _b1) / ((_a1 + _b1) / 2.0) * 10000.0, 2),
+            "quote_src": "futu_order_book_pull",
+        }
+    except Exception as _e:
+        _wk = (symbol, _today_et_str())
+        if _wk not in _OB_PULL_WARNED:
+            _OB_PULL_WARNED.add(_wk)
+            logger.warning(f"[playbook] {symbol} 盘口micro拉取失败 (本日不再告警, micro=None): {_e}")
+        return None
+
 # ── ADR-008 (2026-06-28): Playbook 方向审计日志 ────────────────────────
 
 def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_direction: Optional[str], vote_result: Dict[str, Any]):
@@ -2193,6 +2256,10 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         "invalidation": getattr(inst, "invalidation", "") or "",
         # F1 (2026-07-31): 锚偏离度落库键 (save_instruction :202 读取, record-only)
         "anchor_dev_pct": getattr(inst, "anchor_dev_pct", None),
+        # 2026-08-05 (DEB-20260805 项C 终裁): model_used 归因补全 — 本映射走 TechnicalFallbackAdapter
+        #   确定性链 (无 LLM), 原恒 NULL (NVDA 08-04 topup_pool 缺口实例). UE 路径由
+        #   llm_universe_scan 记录级写真实模型名, DA skill 写 config.LLM_MODEL, 互不覆盖.
+        "model_used": getattr(inst, "model_used", None) or "deterministic",
         "horizon": getattr(inst, "horizon", "short"),
         "horizon_confidence": getattr(inst, "horizon_confidence", 0.0),
         "horizon_reasoning": getattr(inst, "horizon_reasoning", {}),
@@ -3093,6 +3160,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                 _regime_str_f1 = _normalize_regime_str(_MRG_f1().assess())
                                 _regime_str_b1 = _regime_str_f1
                                 _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
+                                # 2026-08-06 (用户指示, sim 采集期): cautious 不再降仓 — 数据采集优先.
+                                #   原 0.5 与 LONG分歧0.5 相乘 → 名义仅 25%, 大量单被 min_notional=3000 物理拦截.
+                                #   回滚: cautious_mult 改回 0.5 (或删本行恢复硬编码).
+                                try:
+                                    from app.core.config_container import get_config as _get_cfg_cm
+                                    _cautious_mult = float(_get_cfg_cm().get_dotted("playbook.risk_parameters.cautious_mult", 1.0) or 1.0)
+                                    if _regime_str_f1 == "CAUTIOUS" and _cautious_mult != 0.5:
+                                        _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": _cautious_mult, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
+                                        logger.info(f"[playbook] {inst['symbol']} CAUTIOUS 仓位乘数覆写: 0.5→{_cautious_mult} (sim采集期)")
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                             _conf = float(inst.get("confidence", 0) or 0)
@@ -3113,9 +3191,18 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             #   LONG 方向分歧系统性亏损. 修复: 降仓50% (不SKIP, 保留方向验证观测).
                             _model_disagreement = _conf < 50
                             if _dir == "BUY" and _model_disagreement:
-                                _conf_factor *= 0.5
+                                # 2026-08-06 (用户指示, sim 采集期): LONG 分歧降仓 0.5 → 配置化, 默认 1.0 不降.
+                                #   原 0.5 × CAUTIOUS 0.5 = 0.25 → 名义 < min_notional=3000 被物理拦截 → 交易量骤减.
+                                #   分歧单仍保留日志/观测 (不 SKIP 语义不变); 回滚: 改回 0.5 + 重启.
+                                try:
+                                    from app.core.config_container import get_config as _get_cfg_ds
+                                    _ds_factor = float(_get_cfg_ds().get_dotted(
+                                        "playbook.risk_parameters.model_disagreement_downsize_factor", 1.0) or 1.0)
+                                except Exception:
+                                    _ds_factor = 1.0
+                                _conf_factor *= _ds_factor
                                 logger.info(
-                                    f"[playbook] {inst['symbol']} LONG 模型分歧(conf={_conf}<50), 降仓50% "
+                                    f"[playbook] {inst['symbol']} LONG 模型分歧(conf={_conf}<50), 降仓{_ds_factor:.2f} "
                                     f"(conf_factor={_conf_factor:.2f})"
                                 )
                             # F1: sizing SSOT 公共函数 (含 water_mult×regime_mult×conf_factor + 截断)
@@ -3692,6 +3779,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             except Exception:
                 _sess = "unknown"
                 _ts = _dt.now().isoformat(timespec="seconds")
+            # 2026-08-05 (DEB-20260805(二) B1): 触发时点 L1 盘口快照入影子.
+            #   2026-08-06 二次修复: 推送缓存路径被 ADR-013 架空 (ORDER_BOOK 不在推送订阅集,
+            #   缓存恒空, 08-05 全天 233 行 micro=null) → 改 _fetch_l1_micro 拉取式 (S2 同款).
+            _micro = _fetch_l1_micro(scheduler, symbol)
             _row = {
                 "ts": _ts,
                 "session": _sess,
@@ -3713,6 +3804,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 "vol_gate_block": (bool(vol_gate_block) if vol_gate_block is not None else None),
                 "entry_path": entry_path,
                 "inst_confidence": inst_confidence,
+                "micro": _micro,
                 "features": _feat,
             }
             _tp = _Path(__file__).resolve().parents[2] / "data" / "entry_timing_shadow.jsonl"
@@ -4104,6 +4196,38 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             f"[playbook] 方向穿越触发: {symbol} price=${current_price:.2f} "
             f"entry=${entry_price:.2f} dir={'SHORT' if is_short else 'BUY'}"
         )
+        # 2026-08-06 (DEB-20260806 终裁"同意"): 锚限价影子 emit (record-only).
+        #   每指令触发只落一行 → data/limit_entry_shadow.jsonl, 次日 crontab 重放判
+        #   成交/延迟/改善 (配对δ完整定义: 追单可负/漏单=-净; 主门 sign-flip B=10000
+        #   单侧α=0.025 + 双条件 + 符号共门). 回滚: config 置 false + 重启.
+        try:
+            from app.core.config_container import get_config as _gc_le
+            if bool(_gc_le().get_dotted("playbook.limit_entry_shadow_observe", False)) \
+                    and "TEST" not in symbol.upper():
+                _lk = (inst.get("id"), _today_et_str())
+                if _lk not in _LIMIT_SHADOW_EMITTED:
+                    _LIMIT_SHADOW_EMITTED.add(_lk)
+                    _micro = _fetch_l1_micro(scheduler, symbol)
+                    import json as _json2
+                    from datetime import datetime as _dt2
+                    from pathlib import Path as _P2
+                    _row = {
+                        "ts": _dt2.now(_now_et()).isoformat(timespec="seconds"),
+                        "date": _today_et_str(), "schema": "v1",
+                        "inst_id": inst.get("id"), "decision_id": inst.get("decision_id"),
+                        "symbol": symbol, "direction": "SHORT" if is_short else "LONG",
+                        "anchor": round(float(entry_price), 4),
+                        "entry_low": inst.get("entry_low"), "entry_high": inst.get("entry_high"),
+                        "trigger_price": round(float(current_price), 4),
+                        "entry_path": _entry_path,
+                        "position_size": inst.get("position_size"),
+                        "micro": _micro,
+                    }
+                    with open(_P2(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl", "a", encoding="utf-8") as _f2:
+                        _f2.write(_json2.dumps(_row, ensure_ascii=False) + "\n")
+                    logger.info(f"[锚限价影子] {symbol} {'SHORT' if is_short else 'LONG'} 触发行已落盘 (anchor=${entry_price:.2f})")
+        except Exception:
+            pass
     else:
         logger.debug(
             f"[playbook] 未触发: {symbol} price=${current_price:.2f} "
@@ -4998,15 +5122,22 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
             _prev_covered = str(meta.get("bar_covered_until") or "")
             if _max_key > _prev_covered:
                 meta["bar_covered_until"] = _max_key
-                meta["_bar_stall_rounds"] = 0
+                _BAR_STALL_SINCE.pop(symbol, None)
             else:
-                _stall = int(meta.get("_bar_stall_rounds", 0) or 0) + 1
-                meta["_bar_stall_rounds"] = _stall
-                if _stall == 5:
+                # 2026-08-05 修复 (A1 轮询 10s 后误报): 原"5 轮"阈值与轮询间隔耦合 —
+                #   K_1M 持久缓存 60s TTL 下 bar 最快每 6 轮才前进一次, 5 轮阈值每 60s 必误报.
+                #   改时间制 (模块级计时, 不依赖 meta 写回): 覆盖 ≥180s 未前进才 WARNING.
+                import time as _btime
+                _since = _BAR_STALL_SINCE.get(symbol)
+                if not _since:
+                    _BAR_STALL_SINCE[symbol] = _btime.time()
+                elif _btime.time() - _since >= 180:
                     logger.warning(
-                        f"[bar遥测·冻结] {symbol} bar 覆盖停在 {_max_key} 已 {_stall} 轮未前进 "
+                        f"[bar遥测·冻结] {symbol} bar 覆盖停在 {_max_key} 已 "
+                        f"{int(_btime.time() - _since)}s 未前进 "
                         f"(缓存/配额/订阅链降级?) — bar 峰谷可能失真"
                     )
+                    _BAR_STALL_SINCE[symbol] = _btime.time()  # 告警后重计时, 防每轮刷屏
         _is_short = direction.upper() in ("SHORT", "SELL_SHORT")
         if not _is_short:
             # LONG: peak = max(highs) 最有利, trough = min(lows) 最不利
@@ -5335,26 +5466,80 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     try:
         _atr_val = float(meta.get("atr", 0) or 0)
         _atr_pct_live = (_atr_val / entry_price * 100.0) if (entry_price and _atr_val) else 0.0
-        if (_atr_pct_live >= 4.0 and held_minutes >= 60 and peak_profit_pct < 0.3
-                and profit_pct < 0 and not meta.get("_high_atr_stall_shadow")):
-            meta["_high_atr_stall_shadow"] = True  # 会话内防重 (每仓位只记首次触发点)
-            import json as _sj
-            from pathlib import Path as _SP
-            from app.utils.timezone import now_et as _shadow_now_et  # pipeline 无模块级 now_et
-            _srow = {
-                "ts": _shadow_now_et().isoformat(), "symbol": _symbol, "direction": direction,
-                "entry_price": entry_price, "shadow_exit_price": current_price,
-                "held_minutes": round(held_minutes, 1), "mfe_pct": round(peak_profit_pct, 4),
-                "cur_pct": round(profit_pct, 4), "atr_pct": round(_atr_pct_live, 2),
-                "rule": "high_atr_stall_60m_mfe0.3",
-            }
-            with open(_SP("data/high_atr_stall_shadow.jsonl"), "a") as _sf:
-                _sf.write(_sj.dumps(_srow, ensure_ascii=False) + "\n")
-            logger.info(
-                f"[影子·高ATR停滞] {_symbol} {direction} atr={_atr_pct_live:.1f}% "
-                f"held={held_minutes:.0f}min mfe={peak_profit_pct:.2f}% cur={profit_pct:.2f}% "
-                f"反事实退出点=${current_price} (record-only)"
-            )
+        # 2026-08-05 (DEB-20260805 门B 终裁): 单一 60min 记录点扩为 45/60/75/90min 多时点 —
+        #   原硬编码 held≥60 只记首次越线点, 时点选择零敏感性无法检验; 多时点同臂内对比.
+        #   寄生特征 slope_5m/vwap_dev (复用 K_1M 300s 缓存, 零新采集器); record-only,
+        #   见数前不得升级为判据 (预注册规范§3). 回滚: 删多时点/字段即恢复原行为.
+        if (_atr_pct_live >= 4.0 and peak_profit_pct < 0.3 and profit_pct < 0):
+            # 2026-08-05 修复: set 不可序列化且 meta 每轮 DB 重读 → 去重失效每 10s 重复发射.
+            #   改 list 落 meta (JSON-safe, 随 metadata_json 写回跨轮持久) — 水下单 mae>0 必触发写回.
+            _shadow_pts = meta.setdefault("_high_atr_stall_shadow_pts", [])
+            if not isinstance(_shadow_pts, list):
+                _shadow_pts = meta["_high_atr_stall_shadow_pts"] = []
+            if meta.get("_high_atr_stall_shadow") and 60 not in _shadow_pts:
+                _shadow_pts.append(60)  # 旧标志已在 60min 记录过, 防重复
+            _hit = None
+            for _pt in (45, 60, 75, 90):
+                if held_minutes >= _pt and _pt not in _shadow_pts:
+                    _hit = _pt
+                    break
+            if _hit is not None:
+                _shadow_pts.append(_hit)
+                if _hit == 60:
+                    meta["_high_atr_stall_shadow"] = True  # 保留旧标志语义 (会话内 60 点已记)
+                import json as _sj
+                from pathlib import Path as _SP
+                from app.utils.timezone import now_et as _shadow_now_et  # pipeline 无模块级 now_et
+                _slope_5m = None
+                _vwap_dev = None
+                try:
+                    from app.data.market_data_router import get_market_data_router as _get_rtr
+                    _futu = getattr(_get_rtr(), "futu", None)
+                    if _futu is not None and hasattr(_futu, "get_kline"):
+                        try:
+                            _sbars = _futu.get_kline(_symbol, ktype="K_1M", count=400, autype="NONE") or []
+                        except TypeError:
+                            _sbars = _futu.get_kline(_symbol, ktype="K_1M", count=400) or []
+                        _today = _shadow_now_et().strftime("%Y-%m-%d")
+                        _rows = []
+                        for _b in _sbars:
+                            _t = str(_b.get("time") or _b.get("time_key") or "")
+                            if not _t.startswith(_today):
+                                continue
+                            _c = float(_b.get("close", 0) or 0)
+                            _v = float(_b.get("volume", 0) or 0)
+                            _tv = float(_b.get("turnover", 0) or 0)
+                            if _c > 0:
+                                _rows.append((_c, _v, _tv))
+                        if _rows:
+                            _tv_sum = sum(r[2] for r in _rows)
+                            _v_sum = sum(r[1] for r in _rows)
+                            if _v_sum > 0 and _tv_sum > 0:
+                                _vwap_v = _tv_sum / _v_sum
+                                if _vwap_v > 0:
+                                    _vwap_dev = round((current_price - _vwap_v) / _vwap_v, 6)
+                            if len(_rows) >= 6:
+                                _c5 = _rows[-1][0]
+                                _c0 = _rows[-6][0]
+                                if _c0 > 0:
+                                    _slope_5m = round((_c5 - _c0) / _c0 * 100.0, 4)
+                except Exception:
+                    _slope_5m, _vwap_dev = None, None  # 寄生特征缺失不阻断影子行
+                _srow = {
+                    "ts": _shadow_now_et().isoformat(), "symbol": _symbol, "direction": direction,
+                    "entry_price": entry_price, "shadow_exit_price": current_price,
+                    "held_minutes": round(held_minutes, 1), "mfe_pct": round(peak_profit_pct, 4),
+                    "cur_pct": round(profit_pct, 4), "atr_pct": round(_atr_pct_live, 2),
+                    "rule": "high_atr_stall_60m_mfe0.3",
+                    "checkpoint": _hit, "slope_5m": _slope_5m, "vwap_dev": _vwap_dev,
+                }
+                with open(_SP("data/high_atr_stall_shadow.jsonl"), "a") as _sf:
+                    _sf.write(_sj.dumps(_srow, ensure_ascii=False) + "\n")
+                logger.info(
+                    f"[影子·高ATR停滞] {_symbol} {direction} atr={_atr_pct_live:.1f}% "
+                    f"checkpoint={_hit}min held={held_minutes:.0f}min mfe={peak_profit_pct:.2f}% "
+                    f"cur={profit_pct:.2f}% 反事实退出点=${current_price} (record-only)"
+                )
     except Exception:
         pass
 
@@ -5975,6 +6160,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
             # peak/trough/mfe/mae metadata 写回 (每一轮, 含退出轮 — 这是修复的核心)
             if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new or _bar_track_new:
+                # 2026-08-05: _high_atr_stall_shadow_pts 已改 JSON-safe list (门B跨轮去重需持久), 不再 pop
                 for _k in ("_log_tag", "_symbol", "_skip_allowed"):
                     meta.pop(_k, None)
                 meta["peak_price"] = peak_price

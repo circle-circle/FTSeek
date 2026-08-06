@@ -1098,7 +1098,12 @@ playbook:
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
-    max_position_pct: 0.04
+    max_position_pct: 0.06    # 2026-08-06: 0.04→0.06 — 单笔上限 $3914→$5872, 拓宽 min_notional=3000 可行区间 (sim 采集期)
+    # 2026-08-06 (sim 采集期, 用户指示: 足量交易数据): 两个降仓乘数放开到 1.0 —
+    #   原 CAUTIOUS 0.5 × LONG分歧 0.5 = 0.25 → 名义 < min_notional 被物理拦截, 交易量骤减.
+    #   回滚: cautious_mult 0.5 / model_disagreement_downsize_factor 0.5 + 重启.
+    cautious_mult: 1.0
+    model_disagreement_downsize_factor: 1.0
     risk_base_capital: 82000.0
     risk_pct: 0.5
     rr_ratio: 1.0
