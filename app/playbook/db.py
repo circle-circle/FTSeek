@@ -33,6 +33,31 @@ from app.utils.timezone import now_utc
 logger = logging.getLogger(__name__)
 
 
+def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
+    """估算指令仓位 (2026-08-07 grilling Q2, admission record-only 预判用).
+
+    生成时 position_size 未定 (None) → admission 判据 notional=0 全空转。
+    此函数用保守默认乘数估算 qty: risk_base×risk_pct / |entry−stop|,
+    与 instruction_generator.compute_position_size 同构 (regime/water=1.0)。
+    仅用于预判审计, 不参与任何真实 sizing; 估算失败 → None。
+    """
+    try:
+        entry = float(inst.get("entry_price") or 0)
+        stop = float(inst.get("stop_loss") or 0)
+        if entry <= 0 or stop <= 0:
+            return None
+        from app.playbook.config import get_playbook_config as _gpc_est
+        _est_pb = _gpc_est()
+        # risk 参数在 playbook.risk_parameters 段 (扁平合并后同键可取);
+        # risk_pct 为百分数 (0.5 = 0.5%), 与 instruction_generator 同口径 (/100)
+        _risk_pct = float(_est_pb.get("risk_pct", 0.02) or 0.02)
+        _risk_base = float(_est_pb.get("risk_base_capital", 82000.0) or 82000.0)
+        _qty = int(_risk_base * (_risk_pct / 100.0) / abs(entry - stop))
+        return max(_qty, 0)
+    except Exception:
+        return None
+
+
 class PlaybookDB:
     """Playbook 数据库操作"""
 
@@ -139,9 +164,36 @@ class PlaybookDB:
         #   DA/UE 直写 DB 绕过全部质量门 (实测 35 日 DA 219 条 BUY 平均 conf=36 全入库)。
         #   默认 record-only (playbook.admission.enforce=false) → 不改指令, 只落审计。
         #   回滚: playbook.admission.enabled=false。异常一律不阻断写入 (审计降级优于丢指令)。
+        # 2026-08-07 grilling Q2 (record-only 预判): 生成时 position_size=None →
+        #   notional=0 → 判据全空转 (8月 0 条生成时拦截)。用估算 size 预判,
+        #   结果挂 raw_instruction.admission.precheck (只审计, 不 enforce — 估算基于
+        #   评估时点乘数, 硬拦会误杀执行时乘数恢复的候选)。注意: 预判与执行时
+        #   二次复核结果可能不一致, 统计侧须按 estimated 标记区分口径。
         try:
             from app.playbook.admission import apply as _admission_apply
+            from app.playbook.admission import evaluate as _admission_eval
+            _inst_est = dict(inst)
+            if not _inst_est.get("position_size"):
+                _est_qty = _estimate_admission_qty(_inst_est)
+                if _est_qty and _est_qty > 0:
+                    _inst_est["position_size"] = _est_qty
             inst, _adm = _admission_apply(inst)
+            # 预判在 apply 之后写 (apply 会整体赋值 admission 键, 先写会被覆盖)
+            if _inst_est.get("position_size"):
+                try:
+                    _pre = _admission_eval(_inst_est)
+                    _raw_pre = inst.get("raw_instruction")
+                    if not isinstance(_raw_pre, dict):
+                        _raw_pre = ({"_original": _raw_pre}
+                                    if _raw_pre is not None else {})
+                        inst["raw_instruction"] = _raw_pre
+                    _raw_pre.setdefault("admission", {})["precheck"] = {
+                        "verdict": _pre["verdict"], "reasons": _pre["reasons"],
+                        "metrics": _pre["metrics"], "enforced": False,
+                        "estimated": True,
+                    }
+                except Exception:
+                    pass  # 预判失败不影响写入 (审计降级)
             if _adm.get("reasons"):
                 logger.info(
                     f"[admission] {inst.get('symbol')} {_adm.get('verdict')} "
@@ -748,6 +800,28 @@ class PlaybookDB:
         decided = wins + losses
         win_rate = (wins / decided * 100) if decided > 0 else 0
 
+        # 2026-08-07 grilling Q1: conf 分布统计 — DA 侧 confidence 恒 35 (8月 54 条
+        #   零方差, 实测) = 无信息列, 任何 conf 判据/分层在 DA 侧失效; 此统计让
+        #   恒值可观测, 下游切片/IC 分析时对零方差来源排除或单独标注。
+        try:
+            _conf_rows = conn.execute(
+                "SELECT CASE WHEN decision_id LIKE 'DA-%' THEN 'DA' "
+                "WHEN decision_id LIKE 'universe_expansion:%' THEN 'UE' "
+                "WHEN decision_id LIKE 'intraday_reentry-%' THEN 'REENTRY' "
+                "ELSE 'OTHER' END AS src, "
+                "COUNT(*) AS n, ROUND(AVG(confidence), 1) AS avg_conf, "
+                "MIN(confidence) AS mn, MAX(confidence) AS mx "
+                "FROM playbook_instructions "
+                "WHERE date >= date('now', '-30 day') "
+                "GROUP BY src"
+            ).fetchall()
+            conf_stats = [
+                {"src": r[0], "n": r[1], "avg_conf": r[2], "min": r[3], "max": r[4]}
+                for r in _conf_rows
+            ]
+        except Exception:
+            conf_stats = []
+
         return {
             "total_instructions": total,
             "executed": executed,
@@ -755,6 +829,7 @@ class PlaybookDB:
             "losses": losses,
             "win_rate": round(win_rate, 1),
             "total_pnl": round(total_pnl, 2),
+            "conf_stats": conf_stats,
         }
 
     # ========== Horizon 统计 ==========

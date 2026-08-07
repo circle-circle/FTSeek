@@ -392,6 +392,25 @@ def compute_instruction_values(
     # ATR 数据缺失 → 无法评估波动率, 跳过 (防 vol_buckets 误匹配 low桶)
     if atr_pct <= 0:
         logger.info(f"[Playbook] {decision.get('symbol','')} 跳过: ATR 数据缺失 (atr_14=0), 无法评估波动率")
+        # 2026-08-07 grilling Q3 (shadow): 量化 ATR 缺失丢失量 — 只记录不放行。
+        #   背景: 固定百分比 fallback 仅在 vol_buckets 未配置时生效, ATR=0 是硬丢弃
+        #   路径; 直接回退固定 SL 会给高波标的开噪声扫损侧门 (low_atr_gate 存在的
+        #   理由), 故先 shadow 攒数据裁决 (每日丢失几条/什么标的/盘前还是盘中)。
+        try:
+            from pathlib import Path as _PathQ3
+            _row_q3 = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "symbol": decision.get("symbol", ""),
+                "direction": decision.get("direction", ""),
+                "price": price,
+                "atr_14": atr_14,
+                "source": "instruction_generator",
+            }
+            _pq3 = _PathQ3(__file__).resolve().parents[2] / "data" / "atr_missing_shadow.jsonl"
+            with open(_pq3, "a", encoding="utf-8") as _fq3:
+                _fq3.write(json.dumps(_row_q3, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         return {}
 
     _vol_sl_info = _compute_volatility_based_sl_tp(
