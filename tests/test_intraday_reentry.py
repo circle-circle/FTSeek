@@ -134,6 +134,43 @@ def test_overnight_second_night_not_exempt(monkeypatch):
     assert not ir.overnight_loser_exempt("AVGO", _yesterday_entry(), -0.8, is_reentry=YES)
 
 
+# ── quick_sl_tp_pct (2026-08-07 用户裁决: SL放宽/TP降档/ATR相对按标的) ──
+
+def test_quick_mid_range_atr():
+    # TSM 类 ATR 3%: SL=0.6×3=1.8→floor 2.0, TP=0.35×3=1.05
+    sl, tp = ir.quick_sl_tp_pct(3.0, _cfg())
+    assert sl == 2.0 and tp == 1.05
+
+
+def test_quick_high_atr_scaling():
+    # AVGO 类 ATR 5%: SL=3.0, TP=1.75 (均在 clamp 内, 体现 ATR 相对)
+    sl, tp = ir.quick_sl_tp_pct(5.0, _cfg())
+    assert sl == 3.0 and tp == 1.75
+
+
+def test_quick_low_atr_floors():
+    # AAPL 类 ATR 1.8%: SL=1.08→floor 2.0, TP=0.63→floor 1.0
+    sl, tp = ir.quick_sl_tp_pct(1.8, _cfg())
+    assert sl == 2.0 and tp == 1.0
+
+
+def test_quick_extreme_atr_ceils():
+    sl, tp = ir.quick_sl_tp_pct(12.0, _cfg())
+    assert sl == 3.5 and tp == 2.0   # 双触顶
+
+
+def test_quick_missing_atr_fallback():
+    for bad in (None, 0, -1.5, "x"):
+        assert ir.quick_sl_tp_pct(bad, _cfg()) == (None, None)
+
+
+def test_quick_per_symbol_differentiation():
+    # 同一配置, 不同标的 ATR → 不同 SL/TP (用户要求"基于不同的标的股")
+    hi = ir.quick_sl_tp_pct(5.0, _cfg())
+    lo = ir.quick_sl_tp_pct(1.8, _cfg())
+    assert hi[0] > lo[0] and hi[1] > lo[1]
+
+
 def test_overnight_non_reentry_not_exempt(monkeypatch):
     monkeypatch.setattr(ir, "_cfg", _cfg_on)
     assert not ir.overnight_loser_exempt("AVGO", _today_entry(), -0.8, is_reentry=NO)

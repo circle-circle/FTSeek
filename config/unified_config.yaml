@@ -1181,8 +1181,18 @@ playbook:
     min_vol_ratio: 0.8
     max_spread_bps: 25
     min_atr_pct: 2.0
-    sl_pct: 1.5                # 再入场止损比首入(2.0%)紧 — 二次入场错了快走
-    tp_rr: 1.6                 # 过 min_tp_rr=1.5 门
+    sl_pct: 1.5                # 再入场止损回退值 (ATR 缺失时; 主口径见 quick_* 快收组)
+    tp_rr: 1.6                 # 回退口径 (过 min_tp_rr=1.5 门)
+    # 2026-08-07 (用户裁决: 再入场可跨夜 → SL 放宽给空间 / TP 降档快落袋, 退出栈不变):
+    #   ATR 相对化按标的自适应; 触发 re-price 用触发时 ATR 同式复算 (pipeline.py).
+    #   示例: AVGO(ATR5%)→SL3.0/TP1.75  AAPL(ATR1.8%)→SL2.0/TP1.0  TSM(ATR3%)→SL2.0/TP1.05
+    #   代价: RR≈0.5-0.6 倒置, 需净胜率>~62% — 由 eval_intraday_reentry 验证. 回滚: 删除本组键.
+    quick_sl_atr_mult: 0.6       # SL = clamp(0.6×ATR%, 2.0, 3.5)
+    quick_sl_floor_pct: 2.0      # 对齐 vol_bucket 噪声地板, 不入 <2% 扫损区
+    quick_sl_ceil_pct: 3.5
+    quick_tp_atr_mult: 0.35      # TP = clamp(0.35×ATR%, 1.0, 2.0)
+    quick_tp_floor_pct: 1.0
+    quick_tp_ceil_pct: 2.0
     # 2026-08-06 用户裁决"再入场亏损可隔夜": 水下仓首夜豁免 PRE_CLOSE_EXIT/EOD 兜底 —
     #   仅本生成器武装仓(decision_id 前缀) + 仅水下(盈利仍当日落袋) + 仅首夜(次日正常收).
     #   注意: 总开关 overnight_hold_enabled=false 下 OVERNIGHT_GAP_STOP 不生效,

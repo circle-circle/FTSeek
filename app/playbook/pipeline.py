@@ -3237,6 +3237,25 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                 _sl_pct = float(_hp.get("sell_fixed_stop_loss_pct", 2.0))
                             _tp_mult = float(_hp.get("rr_ratio", 1.5))
 
+                        # ── 2026-08-07 (用户裁决: 再入场快收结构) ──
+                        #   intraday_reentry- 前缀指令不走 vol_bucket: SL 放宽给跨夜空间 /
+                        #   TP 降档快速落袋, ATR 相对按标的自适应 (quick_sl_tp_pct).
+                        #   用触发时刻 ATR 复算 (atr_pct 此处为分数口径 → ×100 转百分数);
+                        #   异常/ATR缺失 → 不落本分支, 维持 vol_bucket 原逻辑 (保守).
+                        try:
+                            if str(inst.get("decision_id", "") or "").startswith("intraday_reentry-"):
+                                from app.playbook.intraday_reentry import quick_sl_tp_pct as _qstp
+                                _q_sl, _q_tp = _qstp(atr_pct * 100.0 if atr_pct else None)
+                                if _q_sl is not None and _q_tp is not None:
+                                    _sl_pct = _q_sl
+                                    _tp_mult = _q_tp / _q_sl
+                                    logger.info(
+                                        f"[playbook] {inst['symbol']} 再入场快收: "
+                                        f"SL={_q_sl:.2f}% TP={_q_tp:.2f}% (ATR相对, 替代vol_bucket)"
+                                    )
+                        except Exception:
+                            pass
+
                         # ── 2026-07-17: 出价前 SL 钳制不变量 (ATR 无关, 越界必钳) ──
                         # 根因: DA/UE 直写指令绕过 vol_bucket; ATR 缺失时 fallback 用来源原始 SL
                         #   反算 sl_pct → 可能越过桶天花板 (MCK 6% / ABT 7.3% > ceil 5.0%)。

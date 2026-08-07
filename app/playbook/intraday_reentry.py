@@ -72,6 +72,27 @@ def prior_exit_reenterable(exit_reason: Optional[str], pnl_pct: float,
         return False
 
 
+def quick_sl_tp_pct(atr_pct: Optional[float], cfg: Optional[Dict[str, Any]] = None):
+    """纯函数: ATR 相对快收 SL/TP 百分数 (2026-08-07 用户裁决: SL放宽/TP降档/按标的).
+
+    SL = clamp(quick_sl_atr_mult×atr_pct, floor, ceil) — 放宽给跨夜空间;
+    TP = clamp(quick_tp_atr_mult×atr_pct, floor, ceil) — 降档快速落袋.
+    atr_pct 为百分数口径 (5.0=5%); 缺失/<=0 → (None, None), 调用方回退 sl_pct/tp_rr.
+    """
+    cfg = cfg or _cfg()
+    try:
+        atr = float(atr_pct)
+    except Exception:
+        return None, None
+    if atr <= 0:
+        return None, None
+    sl = min(max(float(cfg["quick_sl_atr_mult"]) * atr,
+                 float(cfg["quick_sl_floor_pct"])), float(cfg["quick_sl_ceil_pct"]))
+    tp = min(max(float(cfg["quick_tp_atr_mult"]) * atr,
+                 float(cfg["quick_tp_floor_pct"])), float(cfg["quick_tp_ceil_pct"]))
+    return round(sl, 2), round(tp, 2)
+
+
 def cumulative_exposure_ok(prior_notional: float, max_pos_pct: float,
                            equity: float, mult: float) -> bool:
     """纯函数: 同标的当日累计暴露护栏 (可单测, 零 IO).
@@ -120,8 +141,19 @@ _DEFAULTS: Dict[str, Any] = {
     "min_vol_ratio": 0.8,         # 盘中实时量能比 (与 chase 门同档)
     "max_spread_bps": 25.0,       # L1 盘口 spread 上限
     "min_atr_pct": 2.0,           # 日 ATR% 下限 (低波不做动量, 比 low_atr_gate 3% 宽一档)
-    "sl_pct": 1.5,                # 再入场止损 (比首入 2.0% 紧 — 二次入场错了要快走)
-    "tp_rr": 1.6,                 # TP = SL×1.6 (过 min_tp_rr=1.5 门)
+    "sl_pct": 1.5,                # 再入场止损回退值 (ATR 缺失时; 主口径见 quick_* 快收组)
+    "tp_rr": 1.6,                 # TP = SL×1.6 (回退口径, 过 min_tp_rr=1.5 门)
+    # 2026-08-07 (用户裁决: 再入场可跨夜 → SL 放宽给空间 / TP 降档快落袋, 退出栈不变):
+    #   ATR 相对化 = 按标的自适应 (高波 AVGO 与低波 AAPL 不同档); 触发 re-price 同式复算.
+    #   SL = clamp(0.6×ATR%, 2.0, 3.5)  TP = clamp(0.35×ATR%, 1.0, 2.0)
+    #   示例: AVGO(ATR5%)→SL3.0/TP1.75  AAPL(ATR1.8%)→SL2.0/TP1.0  TSM(ATR3%)→SL2.0/TP1.05
+    #   代价明示: RR≈0.5-0.6 倒置, 需净胜率 >~62% 才正期望 — 由 eval_intraday_reentry 验证.
+    "quick_sl_atr_mult": 0.6,
+    "quick_sl_floor_pct": 2.0,    # 对齐 vol_bucket 低波噪声地板, 不入 <2% 扫损区
+    "quick_sl_ceil_pct": 3.5,
+    "quick_tp_atr_mult": 0.35,
+    "quick_tp_floor_pct": 1.0,
+    "quick_tp_ceil_pct": 2.0,
     # 水下仓持夜豁免 (2026-08-06 用户裁决"再入场亏损可隔夜"):
     #   仅首夜 (entry date == 当日 ET; 次日 PRE_CLOSE/EOD 正常平仓), 仅水下仓 (盈利仍当日落袋,
     #   与 DEB-20260806-asymmetric ① 一致), 仅本生成器武装的仓 (decision_id 前缀判定).
@@ -294,7 +326,8 @@ def _shadow_write(row: Dict[str, Any]) -> None:
 
 
 def _arm_instruction(symbol: str, direction: str, price: float,
-                     cfg: Dict[str, Any], trade_id: Any) -> Optional[int]:
+                     cfg: Dict[str, Any], trade_id: Any,
+                     atr_pct: Optional[float] = None) -> Optional[int]:
     """重武装当日指令: UPSERT 刷新锚点/SL/TP (过 admission 入口审计) + 触发状态复位。
 
     返回指令 id; 失败 None。
@@ -310,16 +343,23 @@ def _arm_instruction(symbol: str, direction: str, price: float,
       (触发未成交) 时不复位 → 13 门触发链不会重走, 指令变成永远等不到的触发;
       且 arm 前已确认该标的当日持仓已平 (closed_count==1 + _has_open_trade=False),
       无条件复位安全。修复: 去掉 WHERE executed=1, 无条件复位。
+
+    2026-08-07 (用户裁决快收结构): SL/TP 主口径改 quick_sl_tp_pct (ATR 相对,
+    SL放宽/TP降档); ATR 缺失回退 sl_pct/tp_rr 固定值。
     """
     from app.playbook.db import PlaybookDB
     db = PlaybookDB()
     today = _today_et_str()
-    sl_pct = float(cfg["sl_pct"]) / 100.0
-    rr = float(cfg["tp_rr"])
     is_long = direction.upper() == "BUY"
+    _q_sl, _q_tp = quick_sl_tp_pct(atr_pct, cfg)
+    if _q_sl is not None and _q_tp is not None:
+        sl_pct, tp_pct = _q_sl / 100.0, _q_tp / 100.0
+    else:
+        sl_pct = float(cfg["sl_pct"]) / 100.0
+        tp_pct = sl_pct * float(cfg["tp_rr"])
     stop_loss = round(price * (1 - sl_pct), 2) if is_long else round(price * (1 + sl_pct), 2)
-    take_profit = (round(price * (1 + sl_pct * rr), 2) if is_long
-                   else round(price * (1 - sl_pct * rr), 2))
+    take_profit = (round(price * (1 + tp_pct), 2) if is_long
+                   else round(price * (1 - tp_pct), 2))
     hhmm = _now_hhmm_et()
 
     # ── 盲区1修复: UPSERT 前先取原指令快照 (当日该标的唯一行) ──
@@ -508,11 +548,13 @@ def run_scan(scheduler=None) -> int:
             logger.info(f"[再入场·影子] {sym} {direction} 指标确认, shadow 模式不武装")
             continue
 
-        inst_id = _arm_instruction(sym, direction, price, cfg, prior["trade_id"])
+        inst_id = _arm_instruction(sym, direction, price, cfg, prior["trade_id"],
+                                   atr_pct=float(atr_pct) if atr_pct is not None else None)
         base["action"] = "armed" if inst_id else "arm_failed"
         base["instruction_id"] = inst_id
-        base["sl_pct"] = cfg["sl_pct"]
-        base["tp_rr"] = cfg["tp_rr"]
+        _f_sl, _f_tp = quick_sl_tp_pct(float(atr_pct) if atr_pct is not None else None, cfg)
+        base["sl_pct"] = _f_sl if _f_sl is not None else cfg["sl_pct"]
+        base["tp_pct"] = _f_tp if _f_tp is not None else round(cfg["sl_pct"] * cfg["tp_rr"], 2)
         _shadow_write(base)
         if inst_id:
             armed += 1
