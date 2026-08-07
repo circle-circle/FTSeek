@@ -162,15 +162,55 @@ def analyze_by_group(signals, key_fn, label):
 
 
 def analyze_factors(trades):
-    """Factor-level IC from trade records"""
+    """Factor-level IC from trade records (E1 修复 2026-08-07)
+
+    原实现直接读 trade_records.signal_strength — 该字段是 confidence 的镜像值
+    (见 playbook_service.py:1332 注释: DA 分歧=35/一致=70, "不应当质量分使用"),
+    区分度被压平 → 交易层 IC 失真 (E1 实证: 131笔中120笔=35)。
+
+    E1 修复: 通过 decision_id JOIN signal_snapshots.strength (真实信号强度,
+    132/132 命中), 缺失时 fallback 到镜像字段。并加链路分段 (DA- vs other),
+    避免旧链路 (voting_llm etc.) 污染 DA 的真实 IC。
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    # 加载 signal_snapshots decision_id → strength 映射 (真实信号强度)
+    _snap_map = {}
+    try:
+        _snap_db = _Path(__file__).parent.parent / "data" / "signal_snapshots.db"
+        if _snap_db.exists():
+            with _sqlite3.connect(str(_snap_db)) as _conn:
+                for _r in _conn.execute(
+                    "SELECT decision_id, strength FROM signal_snapshots "
+                    "WHERE strength IS NOT NULL"
+                ):
+                    _snap_map[_r[0]] = _r[1]
+    except Exception as _e:
+        logger.warning(f"[E1] 加载 signal_snapshots strength 失败, 回退镜像字段: {_e}")
+
     factors = ["signal_strength", "signal_confidence", "consensus_level",
                "f1_trend", "f2_momentum", "f3_volume", "f4_orderflow", "f5_lifecycle"]
     results = {}
     for f in factors:
-        vals = [t[f] for t in trades if t.get(f) is not None]
-        rets = [t["pnl_pct"] for t in trades if t.get(f) is not None and t.get("pnl_pct") is not None]
-        ic, wr, n = spearman_ic(vals, rets)
-        results[f] = {"ic": ic, "wr": wr, "n": n}
+        # 按链路分组: DA- (新链路) vs other (旧链路/其他)
+        groups = {"all": [], "da": [], "other": []}
+        for t in trades:
+            if t.get(f) is None:
+                continue
+            # signal_strength 用真实 snapshot 值 (E1), 其余字段保持原值
+            val = t[f]
+            if f == "signal_strength":
+                _did = t.get("decision_id") or ""
+                val = _snap_map.get(_did, t[f])
+            groups["all"].append((val, t["pnl_pct"]))
+            grp = "da" if (t.get("decision_id") or "").startswith("DA-") else "other"
+            groups[grp].append((val, t["pnl_pct"]))
+        row = {}
+        for g, pairs in groups.items():
+            ic, wr, n = spearman_ic([p[0] for p in pairs], [p[1] for p in pairs])
+            row[g] = {"ic": ic, "wr": wr, "n": n}
+        results[f] = row
     return results
 
 
@@ -311,12 +351,14 @@ def generate_report(days=90):
 
     # 3. Factor-level IC
     print(f"\n{'─'*60}")
-    print("3. Factor-Level IC (trades)")
+    print("3. Factor-Level IC (trades, E1 链路分段: all/DA-/other)")
     print(f"{'─'*60}")
     factor_ic = analyze_factors(trades)
     report["factor_ic"] = factor_ic
     for k, v in factor_ic.items():
-        print(f"  {k}: IC={v['ic']} WR={v['wr']} N={v['n']}")
+        _a, _d, _o = v.get("all", {}), v.get("da", {}), v.get("other", {})
+        _fmt = lambda d: f"IC={d.get('ic')} N={d.get('n')} WR={d.get('wr')}" if d.get("n") else "N/A"
+        print(f"  {k}\n    all  : {_fmt(_a)}\n    DA-  : {_fmt(_d)}\n    other: {_fmt(_o)}")
 
     # 4. LLM feature groups
     print(f"\n{'─'*60}")
