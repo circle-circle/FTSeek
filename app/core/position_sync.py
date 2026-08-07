@@ -782,9 +782,14 @@ class USPositionSync:
                 # (d) 建仓时间保护窗: 1 天内不清 (防抢跑成交/单环境查询误判)
                 if _oetime:
                     try:
-                        _oentry_dt = datetime.fromisoformat(str(_oetime).replace('Z', '+00:00'))
-                        if _oentry_dt.tzinfo is not None:
-                            _oentry_dt = _oentry_dt.replace(tzinfo=None)
+                        # 2026-08-07 修复 (主动审计 P1-1): 原实现 strip tzinfo 成 naive 后与
+                        #   _now(ET-aware) 相减必抛 TypeError → 被下层 except 吞 → 保护窗
+                        #   永远走不到清理分支, 孤儿 trade_records 永久残留。
+                        #   修法: 照抄 ghost 循环 L733 的 to_et 统一转 aware (naive 视为北京
+                        #   时间, 与 _to_et_ghost 同口径), aware-aware 相减正常。
+                        _oentry_dt = _to_et_ghost(
+                            datetime.fromisoformat(str(_oetime).replace('Z', '+00:00'))
+                        )
                         if (_now - _oentry_dt).total_seconds() < 86400:
                             continue
                     except (ValueError, TypeError):

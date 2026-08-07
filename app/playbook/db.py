@@ -737,9 +737,12 @@ class PlaybookDB:
             "SELECT COUNT(*) FROM playbook_instructions WHERE outcome = 'loss'"
         ).fetchone()[0]
 
-        # 总盈亏
+        # 总盈亏 (2026-08-07 修复: 排除 outcome='void' — 19 笔 void 中 10 笔 pnl 非零
+        #   (6/30-7/15 ghost 交易 BABA+63.5/COIN+77.2/AMZN-58.0), 合计 +$11.23 持续
+        #   污染 total_pnl; void 本就不计入 win_rate 分母, 口径应一致)
         total_pnl = conn.execute(
-            "SELECT COALESCE(SUM(pnl), 0) FROM playbook_instructions WHERE executed = 1"
+            "SELECT COALESCE(SUM(pnl), 0) FROM playbook_instructions "
+            "WHERE executed = 1 AND COALESCE(outcome, '') != 'void'"
         ).fetchone()[0]
 
         decided = wins + losses
