@@ -71,6 +71,40 @@ def prior_exit_reenterable(exit_reason: Optional[str], pnl_pct: float,
     except Exception:
         return False
 
+
+def cumulative_exposure_ok(prior_notional: float, max_pos_pct: float,
+                           equity: float, mult: float) -> bool:
+    """纯函数: 同标的当日累计暴露护栏 (可单测, 零 IO).
+
+    再入场估算名义按单笔上限满配 (max_pos_pct×equity, 保守 — 实际 sizing 受
+    regime/水位乘数只会更小, 估算不超则实际必不超; 估算超则宁拦勿放)。
+    条件: prior_notional + max_pos_pct×equity ≤ mult×max_pos_pct×equity
+        ⇔ prior_notional ≤ (mult−1)×max_pos_pct×equity。
+    equity/max_pos_pct 异常 → True (fail-open: 护栏是增量保护, 不阻断再入场)。
+    """
+    if equity <= 0 or max_pos_pct <= 0:
+        return True
+    return prior_notional <= (float(mult) - 1.0) * max_pos_pct * equity
+
+
+def _cumulative_exposure_ok(prior: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
+    """包装: 从 capital_safety 取实时净值 + playbook config 取单笔上限, 调纯函数."""
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        _cs = get_capital_safety_system()
+        _equity = float(getattr(_cs._state, "current_equity", 0) or 0)
+        if _equity <= 0:
+            return True
+        from app.playbook.config import get_playbook_config
+        _max_pos_pct = float(get_playbook_config().get("max_position_pct", 0.06) or 0.06)
+        _prior_notional = float(prior.get("entry_price") or 0) * float(prior.get("quantity") or 0)
+        return cumulative_exposure_ok(
+            _prior_notional, _max_pos_pct, _equity,
+            float(cfg.get("max_cumulative_pos_mult", 1.5) or 1.5),
+        )
+    except Exception:
+        return True
+
 _DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "mode": "live",               # live=重武装走全门链; shadow=仅记录 (非 sim 环境强制 shadow)
@@ -79,6 +113,7 @@ _DEFAULTS: Dict[str, Any] = {
     "scan_interval_sec": 300,
     "max_arms_per_day": 3,
     "max_prior_loss_pct": 1.0,    # 前笔亏损 >1% 视为硬止损/论破位 → 不再入场 (防报复性交易)
+    "max_cumulative_pos_mult": 1.5,  # 同标的当日累计名义 ≤ 1.5×单笔上限 (防再入场=加仓的标的集中暴露)
     "vwap_band_low_pct": 0.3,     # LONG: 允许跌破 VWAP 至多 0.3% (回踩区下沿)
     "vwap_band_high_pct": 1.0,    # LONG: price ≤ vwap×(1+1.0%) (不追高位); SHORT 对称
     "min_slope_5m_pct": 0.0,      # LONG 要求 >0 / SHORT 要求 <0 (方向转正)
@@ -169,7 +204,7 @@ def _load_closed_today() -> Dict[str, Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute("""
-            SELECT id, symbol, direction, entry_price, exit_price, pnl_pct, exit_reason
+            SELECT id, symbol, direction, entry_price, exit_price, pnl_pct, exit_reason, quantity
             FROM trade_records
             WHERE trade_date = ?
               AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
@@ -189,6 +224,7 @@ def _load_closed_today() -> Dict[str, Dict[str, Any]]:
             "exit_price": float(r["exit_price"] or 0),
             "pnl_pct": float(r["pnl_pct"] or 0),  # 小数口径 (0.0033=0.33%)
             "exit_reason": r["exit_reason"],
+            "quantity": float(r["quantity"] or 0),
         })
     return out
 
@@ -359,6 +395,18 @@ def run_scan(scheduler=None) -> int:
             base["reasons"] = [f"exit_reason({prior.get('exit_reason')})"]
             _shadow_write(base)           # 可审计: 白名单拦截的候选落 shadow, 不静默丢弃
             continue                      # 硬止损/0-WR/操作类 → 不报复性再入
+        if not _cumulative_exposure_ok(prior, cfg):
+            base = {
+                "ts_et": _now_iso_et(), "date": today, "symbol": sym,
+                "direction": direction,
+                "prior_trade_id": prior["trade_id"], "prior_pnl_pct": prior["pnl_pct"],
+                "prior_exit_reason": prior.get("exit_reason"), "mode": mode,
+            }
+            _pnot = float(prior.get("entry_price") or 0) * float(prior.get("quantity") or 0)
+            base["action"] = "rejected"
+            base["reasons"] = [f"cumulative_exposure(prior_notional=${_pnot:.0f})"]
+            _shadow_write(base)           # 可审计: 累计暴露拦截落 shadow
+            continue                      # 首笔名义已高 → 再入=标的集中暴露, 拦
         if _has_open_trade(sym):
             continue
         try:

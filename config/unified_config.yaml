@@ -1046,6 +1046,7 @@ playbook:
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
+    # (2026-08-07 VWAP A/B 实验键 vwap_gate_ab_enabled 由另一 agent 暂存, 审批前不随本提交入库)
     min_tp_rr: 1.5
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
@@ -1164,6 +1165,7 @@ playbook:
     scan_interval_sec: 300
     max_arms_per_day: 3
     max_prior_loss_pct: 1.0    # 前笔亏损>1% = 硬止损/论破位, 不报复性再入
+    max_cumulative_pos_mult: 1.5   # 同标的当日累计名义 ≤1.5×单笔上限 (防再入场=加仓的标的集中暴露; 08-07 审查#1)
     vwap_band_low_pct: 0.3     # LONG: 回踩区下沿 vwap×(1-0.3%)
     vwap_band_high_pct: 1.0    # LONG: 不追高位上沿 vwap×(1+1.0%); SHORT 对称
     min_slope_5m_pct: 0.0

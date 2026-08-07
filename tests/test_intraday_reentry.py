@@ -185,6 +185,24 @@ def test_prior_unknown_reasons_fall_back_to_pnl():
         assert not ir.prior_exit_reenterable(r, -0.012, 1.0)
 
 
+# ── cumulative_exposure_ok (2026-08-07 审查#1: 同标的当日累计暴露护栏) ──
+
+def test_cumulative_exposure_ok_basic():
+    # equity=100k, max_pos_pct=0.06, mult=1.5 → 护栏线 = 0.5×0.06×100k = $3,000
+    assert ir.cumulative_exposure_ok(2999, 0.06, 100_000, 1.5)
+    assert not ir.cumulative_exposure_ok(3001, 0.06, 100_000, 1.5)
+    assert ir.cumulative_exposure_ok(3000, 0.06, 100_000, 1.5)  # 边界: ≤
+
+
+def test_cumulative_exposure_ok_edge():
+    assert ir.cumulative_exposure_ok(0, 0.06, 100_000, 1.5)      # 首笔名义 0 → 放行
+    assert ir.cumulative_exposure_ok(999_999, 0.06, 0, 1.5)      # equity=0 → fail-open 放行
+    assert ir.cumulative_exposure_ok(999_999, 0.0, 100_000, 1.5)  # max_pos_pct=0 → fail-open
+    # mult 越大越宽: 2.0 允许首笔 ≤ 6%×equity
+    assert ir.cumulative_exposure_ok(5999, 0.06, 100_000, 2.0)
+    assert not ir.cumulative_exposure_ok(6001, 0.06, 100_000, 2.0)
+
+
 def test_prior_pnl_boundary():
     assert ir.prior_exit_reenterable(None, -0.0099, 1.0)
     assert not ir.prior_exit_reenterable(None, -0.01, 1.0)   # 恰好 -1% 排 (非严格大于)
