@@ -37,3 +37,19 @@ wrong_side 拦截 50/50 分流 (仅 sim 生效):
 - 分臂非对称影响样本量: 被拦候选供给有限, 毕业需约 2 周 (n≥30/臂)。
 - 与再入场生成器 (intraday_reentry) 叠加时, 同标的可能同时走 A/B 放行 + 再入场武装,
   统计切片需按 decision_id 前缀区分。
+
+## 复核修复记录 (2026-08-07, 跨 Agent 独立复核)
+
+入库同日经独立复核 (用户令"核查是否完整合理") 实证 3 缺陷并修复, 详见 handoff 变更日志 2026-08-07 首节:
+
+1. **开关读取层级错配**: 本 ADR 上文 "config: `playbook.vwap_gate_ab_enabled`" 描述不准确 —
+   yaml 键实际位于 `playbook.execution_parameters.vwap_gate_ab_enabled`, 而代码用
+   `get_dotted` 读原始嵌套路径 → 恒 False, **入库后实验空转 (无分流无台账)**。
+   修复: 改走 PlaybookConfig 扁平合并语义 (与 `entry_vwap_gate_enabled` 同款)。
+2. **台账 NameError**: `_vwap_gate_ab_bypass` 引用未定义名 `_vwap_val` (参数 `vwap_val`),
+   异常被静默吞 → 台账永不写入、bypass 臂首次误拦延迟一轮。修复: 改名 + 进程 set 移至写盘成功后。
+3. **B9 max_drawdown 双错**: `_mae_pct` 为正数口径 (DB 574 笔无一为负) 却判 `< 0` → 恒 0 退化;
+   公式缺 ×100 量纲错。修复: 抽纯函数 `_max_drawdown_from_mfe_mae = 100*(mfe+mae)/(100+mfe)`。
+
+验证期纪律归类: 用户 2026-08-07 批准, 归「攒样本」白名单 (非新机制破例)。
+**毕业计时自复核修复生效起算** (入库→复核为空转期, 无台账); 回归测试 10/10 + 定向 65 passed。

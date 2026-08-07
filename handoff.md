@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-04 (§7.5 失真复核+诚实化修复: B/C/E 降级 legacy 证伪 LLM 消费, A 盘口退化门/D ofi→None 坐实并修, 15:24 重启; 另: 费率套餐对比证伪换档收益≈0; S2 窄校准影子采集 08-04→08-18) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-07 (VWAP门A/B实验跨Agent复核: 揪出并修复入库提交 3 缺陷 — 开关层级错配/台账NameError/B9符号量纲, 实验正式生效) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -69,7 +69,7 @@
   - **作者勘误 2 处**: ①「做大股数」方向反了 (佣金 $1.99/腿地板 → fee_bps 由**名义额**决定; 1000股@$3.4 = 77bps 反而最贵) ②「conf≥86 盈利」系 35 日窗口假象 (60 日 **−$1,938**; 21 日窗口 gated 路径 0 笔)。
   - **负面结论 (重要)**: 准入门双窗回放 — **无任何一档阈值能在 35d/60d 同时改善单位经济** (须看「留存/笔」而非「Δ vs base」— 后者是从亏损账本删交易的算术假象)。故全阈值维持 0。另: 191/215 笔 pf_ratio>20 → 费用并未挤占 TP 空间, 费用效率门近乎空门。
   - **影子盘点**: 24 个数据流; **4 个变体已过预注册门禁但未上线** (`dead_signal_60m_mfe0.3` 分离 +1.51pp / `early_tight_60m_mfe0.3` mean_saved +0.668% 一致性 70%); BE/DD 赛道 5 变体全 FAIL (一致性 25-48%<55%) → **停止投入**; `OPPOSITE→SKIP` (反向单实测 +0.34%/胜67%) 与 edge 门 (拦 78%) 应否决; 6 个影子停摆 (含 `premarket_shadow.jsonl` **0 字节**)。
-  - **待裁 3 点 (均涉验证期新机制, 需知情破例)**: ①`early_tight_sl` 实装为**纯时间窗 30min 无 MFE 条件**, 与已毕业变体 (60min + MFE<0.3%) 不同 — 作者补条件的改动**已被用户回退**, 故该开关目前永远不应翻 true (否则上线的是有误杀实证的未验证版本); ②`dead_signal` = 现有 `MFE_STALL_EXIT` 参数变体 (150→60min / 0.5→0.3% / 去掉水下要求), 机制已存在无需新规则; ③VWAP 门建议改 **A/B 双开实测**替代影子 (SIM 无真钱/无 PDT), 作者倾向归入「攒样本」白名单。
+  - **待裁 2 点 (均涉验证期新机制, 需知情破例)**: ①`early_tight_sl` 实装为**纯时间窗 30min 无 MFE 条件**, 与已毕业变体 (60min + MFE<0.3%) 不同 — 作者补条件的改动**已被用户回退**, 故该开关目前永远不应翻 true (否则上线的是有误杀实证的未验证版本); ②`dead_signal` = 现有 `MFE_STALL_EXIT` 参数变体 (150→60min / 0.5→0.3% / 去掉水下要求), 机制已存在无需新规则。~~③VWAP 门 A/B 双开实测~~ → **✅ 已裁 2026-08-07: 批准入库 (ADR-021, 归「攒样本」白名单)**; 同日跨 Agent 复核修复 3 缺陷后实验正式生效 — 见变更日志首节。
   - **验证**: 新增单测 17 passed; 定向回归 201 passed; 真实 DB 写入→回读→清理 ✓。全量 pytest 超时未跑完 (含网络依赖用例)。回滚: `playbook.admission.enabled=false`。
 3k. **S2 窄校准实验进行中 (08-04→08-18)**: `scripts/orderbook_s2_capture.py` cron 每 30min 盘中采 NVDA/AMZN/ORCL/MRK 十档盘口真值 → `data/shadow/orderbook_s2.jsonl`。**08-18 收尾**: 摘两条 cron + 跑校准分析 (①失真量级=真值 spread/深度失衡分布 vs 代理恒 0; ②真值 IC=depth_imbalance@t vs 5/15min 前瞻收益; IC≈0 合法关门 / IC 显著重开扩面议, 须带 MDE/功效标注)。
 3j. **✅ DEB-20260801-direction-gate-calibration 已终裁 P2** (08-01 深夜): BUY quota 2→4→999 去配额 + 半码 0.5 维持 + R 分层批准。8 月 BUY 自然成交 ~140 笔, 08-14 主桶 n≥30; 周一开盘首验: ①BUY 执行量回到自然水平 (不再有 skip_reason=buy_quota) ②半码日志 [playbook] BUY 仓位因子 出现 ③服务由 systemd 托管单例 (PID 36456)。
@@ -103,6 +103,15 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-07 (VWAP门A/B实验复核修复·Qoder, 用户令"授权") — 揪出并修复入库提交 ef1f79be 的 3 缺陷
+- **背景**: 另一 Agent 提交 ef1f79be (VWAP门 wrong_side 拦截 A/B 双开, ADR-021, 用户 8/7 批准) + 主动审计修复 #3/#4/B9。跨 Agent 复核 (用户令"核查是否完整合理") 实证 3 缺陷, 全部位于集成路径 (原 4 个测试仅覆盖分臂纯函数故全漏):
+- **缺陷A (实验从未生效)**: yaml 键在 `playbook.execution_parameters.vwap_gate_ab_enabled`, 代码却用 `get_dotted("playbook.vwap_gate_ab_enabled")` 读原始嵌套 → 恒 False (实测)。修复: 改走 PlaybookConfig 扁平合并语义 (与 `entry_vwap_gate_enabled` 同款); execute_mode 在顶层保留 get_dotted。
+- **缺陷B (NameError 静默)**: `_vwap_gate_ab_bypass` 台账行引用未定义名 `_vwap_val` (参数为 `vwap_val`) → NameError 被 except 吞掉; 且 `_VWAP_AB_LOGGED.add` 在异常点之前 → bypass 臂首次误拦/延迟一轮放行, 台账永不写入 (实证: bypass 臂标的第1次 False 第2次 True)。修复: 改名 + add 移到写盘成功后。
+- **缺陷C (B9 反向退化)**: ①`_mae_pct` 是正数口径 (DB 574 笔 mae<0 共 0 笔), 原条件 `_mae_pct<0` 恒 False → max_drawdown 恒 0, 比修复前 (=mae) 更退化; ②公式 `(mfe-mae)/(100+mfe)` 输出比例量纲, 与 mfe/mae 百分比量纲差 100×。修复: 抽纯函数 `_max_drawdown_from_mfe_mae` = `100*(mfe+mae)/(100+mfe)`, 条件双 >0 (mfe/mae 已方向归一化, LONG/SHORT 通用)。
+- **验证**: 实证三修复 (开关读 True / bypass 首次即放行+台账1行字段完整 / 公式手工复算两例一致) + 补集成测试 6 例 (开关-yaml一致性/首次放行/开关关/live硬守卫/B9公式+边界), `tests/test_vwap_gate_ab.py` 随本批入库; pytest 10/10 + 定向回归 65 passed。回滚: `playbook.execution_parameters.vwap_gate_ab_enabled: false` + 重启。
+- **注意**: 实验 8/7 上午入库→复核前为空转期 (无台账无分流), 毕业计时 (每臂 n≥30) 自本修复生效后起算。
+- **生效**: 11:11 CST `systemctl restart ftseek-us` 优雅重启完成 (PID 59022, 启动以来 0 traceback/CRITICAL, Monitor/调度器/LLM引擎/PlaybookExit 快循环等全组件正常), 实验代码已装载 — 今晚盘中触发 VWAP 门即开始 50/50 分流采样; 盘中观察判据: 日志 `VWAP门A/B·放行臂` 或 `VWAP门拦截` + `data/vwap_gate_ab.jsonl` 首行落账。
 
 ### 2026-08-04 (§7.5 幽灵字段复核+诚实化修复·Qoder, 用户令"核实正常则修复") — 三处降级修正, A/D 坐实并修复
 - **复核修正**: 我上一轮 §7.5 的 B/C/E 影响面被高估 — VotingCoordinator 已死 (BridgeVotingAdapter 不消费 ctx, DA/UE skill 亦不消费 ofi/lv3 字段) → **"幽灵字段进 LLM"证伪**; D4 评分/adv_shares 只服务已退休 MAIN_PIPELINE (8月 0 笔) → 降级 legacy 只记录不动码。

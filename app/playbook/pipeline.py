@@ -186,9 +186,15 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
     任何异常 → False (维持拦截, 即现状, 保守方向)。
     """
     try:
-        from app.core.config_container import get_config as _gc_ab
-        if not bool(_gc_ab().get_dotted("playbook.vwap_gate_ab_enabled", False)):
+        # 2026-08-07 复核修复 (缺陷A): 开关读取改走 PlaybookConfig 扁平合并语义 —
+        #   yaml 键位于 playbook.execution_parameters.vwap_gate_ab_enabled,
+        #   get_dotted 读原始嵌套取不到 (恒 False → 实验从未生效, 实证).
+        #   与既有 pb_cfg.get("entry_vwap_gate_enabled") 同语义; execute_mode 在
+        #   playbook 顶层, 保留 get_dotted.
+        from app.playbook.config import get_playbook_config as _gpc_ab
+        if not bool(_gpc_ab().get("vwap_gate_ab_enabled", False)):
             return False
+        from app.core.config_container import get_config as _gc_ab
         if _gc_ab().get_dotted("playbook.execute_mode", "futu_simulate") != "futu_simulate":
             return False
         _d = _today_et_str()
@@ -196,20 +202,22 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
         arm = _vwap_ab_arm(symbol, _d, _dir)
         _lk = (symbol, _d, _dir)
         if _lk not in _VWAP_AB_LOGGED and not _vwap_ab_row_exists(_d, symbol, _dir):
-            _VWAP_AB_LOGGED.add(_lk)
             import json as _jab
             from datetime import datetime as _dtab
             from pathlib import Path as _Pab
             _row = {
                 "ts": _dtab.now(_now_et()).isoformat(timespec="seconds"),
                 "date": _d, "symbol": symbol, "direction": _dir, "arm": arm,
-                "price": current_price, "vwap": _vwap_val,
+                "price": current_price, "vwap": vwap_val,
                 "vwap_dev": round(vwap_dev, 6) if vwap_dev is not None else None,
                 "inst_id": inst_id, "rule": "vwap_gate_ab_50_50",
             }
             with open(_Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl",
                       "a", encoding="utf-8") as _fab:
                 _fab.write(_jab.dumps(_row, ensure_ascii=False) + "\n")
+            # 2026-08-07 复核修复 (缺陷B): 写盘成功后才入进程 set — 原顺序 add 在前,
+            #   NameError/写盘异常时 key 已标记 → 台账行永久丢失且 bypass 臂延迟一轮放行.
+            _VWAP_AB_LOGGED.add(_lk)
         return arm == "bypass"
     except Exception:
         return False
@@ -4451,6 +4459,22 @@ def _classify_ghost_cause(conn, symbol: str, self_trade_id: int) -> str:
         return "unknown"
 
 
+def _max_drawdown_from_mfe_mae(mfe_pct: float, mae_pct: float) -> float:
+    """peak-to-trough 回撤反算 (2026-08-07 B9 + 复核修复, 纯函数可单测).
+
+    mfe_pct/mae_pct 均为方向归一化正数百分比口径 (LONG/SHORT 通用):
+      peak = entry*(1+mfe/100), trough = entry*(1-mae/100)
+      回撤(%) = (peak-trough)/peak*100 = 100*(mfe+mae)/(100+mfe)
+    数据缺失 (mfe≤0 或 mae≤0, 含从未水下/采样缺失) → 0.0, 与历史一致不引入新值。
+    """
+    try:
+        if mfe_pct > 0 and mae_pct > 0:
+            return round(100.0 * (mfe_pct + mae_pct) / (100.0 + mfe_pct), 4)
+    except Exception:
+        pass
+    return 0.0
+
+
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
                         pnl: float, pnl_pct: float, holding_hours: float,
                         inst_id = None, symbol: str = None,
@@ -4721,15 +4745,15 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     # 2026-08-07 修复 (主动审计 B9): max_drawdown 原直接拷贝 mae_pct (入场→谷值),
     #   语义错 — 传统 max_drawdown = 峰值→谷值, 盈利单 MAE=0 时回撤被记 0, 系统性低估。
     #   改用 mfe/mae (均已含 peak/trough 反算+现实兜底) 反算 peak-to-trough 回撤:
-    #     LONG: peak=entry*(1+mfe/100), trough=entry*(1+mae/100) (mae≤0)
-    #     回撤 = (peak-trough)/peak = (mfe - mae) / (100 + mfe)  (百分比量纲, 与 mfe/mae 同)
-    #   数据缺失 (mfe≤0 或 mae≥0) → 0, 与历史一致不引入新值。
-    _max_dd_val = 0.0
-    try:
-        if _mfe_pct > 0 and _mae_pct < 0:
-            _max_dd_val = round((_mfe_pct - _mae_pct) / (100.0 + _mfe_pct), 4)
-    except Exception:
-        _max_dd_val = 0.0
+    #     peak=entry*(1+mfe/100), trough=entry*(1-mae/100)
+    #     回撤(%) = (peak-trough)/peak*100 = 100*(mfe + mae) / (100 + mfe)
+    #   数据缺失 (mfe≤0 或 mae≤0) → 0, 与历史一致不引入新值。
+    # 2026-08-07 复核修复 (缺陷C, 两处): ①_mae_pct 是正数口径 (calc>0 才赋值,
+    #   亏损兜底 -pnl*100 亦为正; DB 574 笔 mae<0 共 0 笔), 原条件 `_mae_pct < 0`
+    #   恒 False → max_drawdown 恒 0, 比修复前更退化; ②原公式 (mfe-mae)/(100+mfe)
+    #   输出比例量纲, 与 mfe/mae 的百分比量纲差 100 倍 (注释自述"同量纲"不成立)。
+    #   mfe/mae 均已方向归一化 (SHORT 对称), 本公式 LONG/SHORT 通用。
+    _max_dd_val = _max_drawdown_from_mfe_mae(_mfe_pct, _mae_pct)
     if close_futu_order_id:
         conn.execute("""
             UPDATE trade_records
