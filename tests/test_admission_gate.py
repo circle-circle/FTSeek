@@ -69,6 +69,42 @@ def test_dict_raw_instruction_keys_are_kept():
     assert out["raw_instruction"]["x"] == 1
 
 
+# ── 8. 止损宽度卫生 (2026-08-07 用户哲学"留空间": 替代静态 R:R 门) ──
+
+def test_sl_too_wide_rejected():
+    A._cfg_cache.update({"enforce": True, "max_sl_pct": 6.0})
+    _, res = A.apply(_inst(entry_price=100.0, stop_loss=92.0))   # -8% 宽止损
+    assert res["verdict"] == "REJECT"
+    assert any("SL_STOP_TOO_WIDE" in r for r in res["reasons"])
+
+
+def test_sl_within_band_passes():
+    A._cfg_cache.update({"enforce": True, "max_sl_pct": 6.0})
+    _, res = A.apply(_inst(entry_price=100.0, stop_loss=95.5))   # -4.5% OK
+    assert all("SL_STOP_TOO_WIDE" not in r for r in res["reasons"])
+
+
+def test_sl_gate_disabled_when_zero():
+    A._cfg_cache.update({"enforce": True})                       # max_sl_pct 缺省 0 = 不拦
+    _, res = A.apply(_inst(entry_price=100.0, stop_loss=80.0))   # -20% 也不拦
+    assert all("SL_STOP_TOO_WIDE" not in r for r in res["reasons"])
+
+
+# ── 9. 弱信号审计标记 (2026-08-07 用户哲学"不强不做": 弃权=弱信号, 只标记不拦) ──
+
+def test_weak_signal_marked_not_blocked():
+    A._cfg_cache.update({"enforce": True})
+    _, res = A.apply(_inst(raw_instruction={"debate_outcome": "➖ 一方弃权(BUY vs SKIP), 保持有观点方向, confidence不罚"}))
+    assert res["verdict"] == "PASS"          # 不拦 (sim 采集期供给优先)
+    assert res["metrics"].get("weak_signal") is True
+
+
+def test_consensus_not_marked_weak():
+    A._cfg_cache.update({"enforce": True})
+    _, res = A.apply(_inst(raw_instruction={"debate_outcome": "✅ 2模型一致(BUY)"}))
+    assert res["metrics"].get("weak_signal") is None
+
+
 # ── 4. 非可执行方向直接放行 ──
 @pytest.mark.parametrize("direction", ["SKIP", "", "UNKNOWN"])
 def test_non_actionable_direction_passes(direction):

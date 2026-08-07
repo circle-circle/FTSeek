@@ -1046,11 +1046,7 @@ playbook:
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # 2026-08-07 (用户指示 sim A/B 双开实测): VWAP 门 wrong_side 拦截 50/50 分流 —
-    #   分臂 sha1(date|symbol|direction) 奇偶, 日内稳定; 台账 data/vwap_gate_ab.jsonl;
-    #   仅 futu_simulate 生效 (代码内硬守卫). 毕业: 每臂 n≥30 对照净均值.
-    #   回滚: false + 重启. (2026-08-07 随审计修复提交入库, 用户批准)
-    vwap_gate_ab_enabled: true
+    # (VWAP A/B 实验键由另一 agent 暂存; 本会话未收到用户批准, 审批前不随本提交入库)
     min_tp_rr: 1.5
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
@@ -1153,6 +1149,7 @@ playbook:
     min_profit_fee_ratio: 0.0 # 0=不拦; TP处毛利 ≥ K×往返费用 (建议 6~10)
     min_confidence_buy: 0     # 0=不拦 (IC 无证据, 勿在无证据下启用)
     min_confidence_short: 0
+    max_sl_pct: 6.0        # 止损距入场 >6% = 单笔失控拦截 (用户哲学"留空间"; 0=不拦)
   # 盘中再入场生成器 (2026-08-06, 用户指示"sim 直上线快速验真"): 盘中供给恢复 —
   #   指令供给全部盘前生成 + topup 已停供 → 盘中零新增机会。本生成器扫"当日已平仓
   #   且前笔非硬亏(>-1%)"标的, 盘中指标确认 thesis 延续 (回踩VWAP带内 + slope_5m

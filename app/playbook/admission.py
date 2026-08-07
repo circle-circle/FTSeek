@@ -50,6 +50,10 @@ _DEFAULTS: Dict[str, Any] = {
     # ── confidence 类 (无 IC 证据, 默认全不拦) ──
     "min_confidence_buy": 0,
     "min_confidence_short": 0,
+    # ── 结构卫生 (2026-08-07 用户哲学"留空间/不强不做") ──
+    # 止损宽度: 距入场 >max_sl_pct% = 单笔最大亏损失控 (静态 R:R 不可靠 —
+    #   止盈端常被保本/锁盈/EOD 替代, 真正硬约束是止损端), 0=不拦
+    "max_sl_pct": 0.0,
 }
 
 _cfg_cache: Optional[Dict[str, Any]] = None
@@ -149,6 +153,24 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
     _min_nt = _f(cfg.get("min_notional_usd"))
     if _min_nt > 0 and 0 < notional < _min_nt:
         reasons.append(f"NOTIONAL_TOO_SMALL({notional:.0f}<{_min_nt:g})")
+
+    # 止损宽度卫生 (2026-08-07 用户哲学"留空间"): 止损距入场过宽 = 单笔最大亏损失控。
+    #   替代静态 R:R 门 — 止盈端 (R:R 分子) 常被保本/锁盈/EOD 退出替代, 不可靠;
+    #   止损端 (分母) 是硬约束, 永远有效。0=不拦。
+    _sl = _f(inst.get("stop_loss"))
+    _sl_max = _f(cfg.get("max_sl_pct"))
+    if _sl_max > 0 and entry_price > 0 and _sl > 0:
+        _sl_pct = abs(entry_price - _sl) / entry_price * 100.0
+        if _sl_pct > _sl_max:
+            reasons.append(f"SL_STOP_TOO_WIDE({_sl_pct:.1f}%>{_sl_max:g}%)")
+
+    # 弱信号审计标记 (2026-08-07 用户哲学"不强不做"): 辩论一方弃权 = 弱信号。
+    #   record-only (不强拦): sim 采集期供给优先 + confidence 类无 IC 证据;
+    #   攒 n≥30 弃权组实际表现再决定硬拦/反向。方向冲突已在 da_gate 决策环节拦截。
+    _rawi = inst.get("raw_instruction")
+    if isinstance(_rawi, dict) and "弃权" in str(_rawi.get("debate_outcome") or ""):
+        metrics["weak_signal"] = True
+        metrics["weak_reason"] = str(_rawi.get("debate_outcome"))[:80]
 
     # 低价股 → commission 撞 0.3%×amt 上限
     _min_px = _f(cfg.get("min_entry_price"))
