@@ -295,9 +295,21 @@ def _shadow_write(row: Dict[str, Any]) -> None:
 
 def _arm_instruction(symbol: str, direction: str, price: float,
                      cfg: Dict[str, Any], trade_id: Any) -> Optional[int]:
-    """重武装当日指令: UPSERT 刷新锚点/SL/TP (过 admission 入口审计) + executed 复位。
+    """重武装当日指令: UPSERT 刷新锚点/SL/TP (过 admission 入口审计) + 触发状态复位。
 
-    返回指令 id; 失败 None。复位与既有 release_execution_claim 同语义 (db.py:319)。
+    返回指令 id; 失败 None。
+    2026-08-07 修复 (审查盲区1/2):
+    - 盲区1: save_instruction 按 (date,symbol) UPSERT (db.py:171 ON CONFLICT DO UPDATE)
+      会原地覆盖当日原指令行 (decision_id/thesis/confidence/direction 全被改写) →
+      首笔成交的指令层归因断链 (review_orchestrator.py:100 按 decision_id JOIN,
+      首笔变孤儿; 原指令 thesis/confidence 记录被销毁)。
+      修复: 覆盖前先整行归档 original_instruction 快照到 metadata_json
+      (含原始 decision_id/thesis/confidence/SL/TP/raw/metadata), 事后可查,
+      不破坏 (date,symbol) 唯一约束。
+    - 盲区2: UPDATE 原带 WHERE executed=1 → 原指令处于 executed=0/triggered=1
+      (触发未成交) 时不复位 → 13 门触发链不会重走, 指令变成永远等不到的触发;
+      且 arm 前已确认该标的当日持仓已平 (closed_count==1 + _has_open_trade=False),
+      无条件复位安全。修复: 去掉 WHERE executed=1, 无条件复位。
     """
     from app.playbook.db import PlaybookDB
     db = PlaybookDB()
@@ -309,6 +321,26 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     take_profit = (round(price * (1 + sl_pct * rr), 2) if is_long
                    else round(price * (1 - sl_pct * rr), 2))
     hhmm = _now_hhmm_et()
+
+    # ── 盲区1修复: UPSERT 前先取原指令快照 (当日该标的唯一行) ──
+    orig_fields = None
+    try:
+        orig = db._conn().execute(
+            "SELECT id, decision_id, thesis, confidence, direction, entry_price, "
+            "       stop_loss, take_profit, raw_instruction_json, metadata_json "
+            "FROM playbook_instructions WHERE date = ? AND symbol = ?",
+            (today, symbol),
+        ).fetchone()
+        if orig is not None:
+            orig_fields = {
+                "instruction_id": orig[0], "decision_id": orig[1], "thesis": orig[2],
+                "confidence": orig[3], "direction": orig[4], "entry_price": orig[5],
+                "stop_loss": orig[6], "take_profit": orig[7],
+                "raw_instruction_json": orig[8], "metadata_json": orig[9],
+            }
+    except Exception:
+        orig_fields = None                    # 快照失败不阻断武装 (归档是增量审计)
+
     inst = {
         "date": today, "symbol": symbol, "direction": direction,
         "entry_price": round(price, 2),
@@ -320,6 +352,11 @@ def _arm_instruction(symbol: str, direction: str, price: float,
         "horizon": "short",
         "model_used": "intraday_reentry_v1",
         "raw_instruction": {"source": "intraday_reentry", "reentry_of_trade": trade_id},
+        "metadata_json": {
+            "source": "intraday_reentry",
+            "reentry_of_trade": trade_id,
+            "original_instruction": orig_fields,   # 首笔归因快照 (盲区1)
+        },
     }
     new_id = db.save_instruction(inst)   # UPSERT by (date,symbol) — executed 标志不动
     from app.utils.timezone import now_utc
@@ -328,13 +365,17 @@ def _arm_instruction(symbol: str, direction: str, price: float,
         UPDATE playbook_instructions
         SET executed = 0, triggered = 0, execution_price = NULL, execution_time = NULL,
             skip_reason = NULL, updated_at = ?
-        WHERE id = ? AND executed = 1
+        WHERE id = ?
     """, (now_utc().isoformat(), new_id))
     conn.commit()
     if cur.rowcount == 0:
-        # 原指令未执行 (仅触发未成交?) — 不复位, 避免状态机混乱; 刷新后的锚点仍生效
-        logger.warning(f"[再入场] {symbol} 指令#{new_id} 原未处于 executed=1, 跳过复位 (锚点已刷新)")
+        # 行缺失 (并发删除等极端情况) — 防御, 不视为武装成功
+        logger.warning(f"[再入场] {symbol} 指令#{new_id} 复位未命中 (行缺失), 记 arm_failed")
         return None
+    logger.info(
+        f"[再入场] {symbol} {direction} 重武装指令#{new_id} 完成 "
+        f"(原指令#{orig_fields['instruction_id'] if orig_fields else '?'} 已归档 metadata_json)"
+    )
     return new_id
 
 
