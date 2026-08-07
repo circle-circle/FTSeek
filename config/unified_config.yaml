@@ -1046,7 +1046,12 @@ playbook:
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # (VWAP A/B 实验键由另一 agent 暂存; 本会话未收到用户批准, 审批前不随本提交入库)
+    # 2026-08-07 (用户批准, sim A/B 双开实测): VWAP 门 wrong_side 拦截 50/50 分流 —
+    #   分臂 sha1(date|symbol|direction) 奇偶, 日内稳定; 台账 data/vwap_gate_ab.jsonl;
+    #   仅 futu_simulate 生效 (代码内硬守卫). 毕业: 每臂 n≥30 对照净均值.
+    #   首日运行: LLY/AVGO bypass 臂成交, TSM/ORCL gated 臂 (TSM 收复 VWAP 后正常成交).
+    #   回滚: false + 重启.
+    vwap_gate_ab_enabled: true
     min_tp_rr: 1.5
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
@@ -1166,7 +1171,10 @@ playbook:
     scan_interval_sec: 300
     max_arms_per_day: 3
     max_prior_loss_pct: 1.0    # 前笔亏损>1% = 硬止损/论破位, 不报复性再入
-    max_cumulative_pos_mult: 1.5   # 同标的当日累计名义 ≤1.5×单笔上限 (防再入场=加仓的标的集中暴露; 08-07 审查#1)
+    # 2026-08-07 修复死锁 (用户批准): 1.5→2.0 — mult=1.5 时阈值 (0.5×6%×净值$97K=$2,910)
+    #   低于 admission 首单下限 $3,000 → 任何合法首单都超阈值, 再入场数学上不可达 (首日 0 武装).
+    #   2.0 语义: 满配首单后恰可再入一次, 同标的当日累计 ≤2×单笔上限 (≈12% 净值).
+    max_cumulative_pos_mult: 2.0
     vwap_band_low_pct: 0.3     # LONG: 回踩区下沿 vwap×(1-0.3%)
     vwap_band_high_pct: 1.0    # LONG: 不追高位上沿 vwap×(1+1.0%); SHORT 对称
     min_slope_5m_pct: 0.0
