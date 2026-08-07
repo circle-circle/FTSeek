@@ -73,7 +73,14 @@ def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
         _SC.enable_proto_encrypt(False)
         _host = _os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
         _port = int(_os.getenv("FUTU_OPEND_PORT", "11111"))
-        _code = f"US.{symbol}"
+        # 2026-08-07 修复 (盘中实锤): 生产链路 symbol 恒带 US. 前缀 (trade_records/指令),
+        #   直接拼 f"US.{symbol}" → "US.US.ORCL" 被 OpenD 拒 "未知股票" → micro 恒 None
+        #   (昨日 233 行 + 今日全部路径的真根因; 此前独立进程测试用净码故通过).
+        #   折叠前导 US. 前缀后再拼 (与 normalize_symbol 同语义).
+        _sym = str(symbol)
+        while _sym.upper().startswith("US."):
+            _sym = _sym[3:]
+        _code = f"US.{_sym}"
 
         # 端口探测 (S2 同款): OpenD 不可达快速失败, 避免 OpenQuoteContext 无限阻塞
         _sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
@@ -106,6 +113,10 @@ def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
             _b1, _bv1 = float(_bids[0][0] or 0), float(_bids[0][1] or 0)
             _a1, _av1 = float(_asks[0][0] or 0), float(_asks[0][1] or 0)
             if _b1 <= 0 or _a1 <= 0:
+                return None
+            # 2026-08-07: 交叉盘/陈旧报价守卫 — ask≤bid 的负 spread (实测 AVGO -123.84bps)
+            #   不是流动性紧缩信号, 是快市瞬时交叉/数据毛刺; 喂给门会误判"极窄"放行 → 弃测.
+            if _a1 <= _b1:
                 return None
             return {
                 "bid1": _b1, "ask1": _a1, "bid_vol1": _bv1, "ask_vol1": _av1,
