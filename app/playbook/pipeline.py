@@ -4044,6 +4044,26 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         except Exception:
             pass  # 时间获取异常 → fail-open (与既有异常处理一致, 不拦)
 
+    # ── 2026-08-08 (DEB-20260807 复盘): 开盘禁触窗 — ET<10:00 不新触发 ──
+    #   数据依据: 9点档(开盘首小时)入场 7月 120笔 净-$931 (93%亏损) / 8月 35笔 净-$250,
+    #   10点档 7月 42笔 +$132 / 8月 7笔 +$42 — 开盘噪声期入场期望为负;
+    #   MFE_STALL 12/12 全部 9:35-9:53 入场 (温床). 与既有 14:00 cutoff 对称.
+    #   回滚: entry_open_blackout_enabled 改 false.
+    try:
+        _oob_enabled = bool(pb_cfg.get("entry_open_blackout_enabled", False))
+        _oob_hhmm = int(pb_cfg.get("entry_open_blackout_hhmm", 1000))
+    except Exception:
+        _oob_enabled, _oob_hhmm = False, 1000
+    if _oob_enabled:
+        try:
+            from datetime import datetime as _dt2
+            _now_oob = _dt2.now(_now_et())
+            if _now_oob.hour * 100 + _now_oob.minute < _oob_hhmm:
+                _emit_trigger_miss("before_open_blackout", None)
+                return False
+        except Exception:
+            pass  # 时间获取异常 → fail-open (不拦)
+
     # ── 2026-07-19 (DEB-round3 #2): 财报禁建门 — 触发时距财报<24h 不入场 ──
     #   bridge 盘前写入时距财报可能>1天, 盘中进入禁建窗后 thesis 面临事件风险重估.
     try:
@@ -5749,6 +5769,28 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 )
     except Exception:
         pass
+
+    # 规则3.3 (2026-08-08, exit_shadow dead_signal_60m_mfe0.2 毕业): 死信号退出 —
+    #   shadow 判分 PASS (全历史 171 笔: 触发组 mean -1.12% vs 未触发组 +0.37%,
+    #   分离度 1.49pp) → 60min 时峰值浮盈从未达 0.2% = 方向从未兑现 → 立即离场.
+    #   与规则3.4 区别: 不要求当前水下 (0%~-0.2% 也走), 更早承认信号失效.
+    #   MFE_STALL(150min) 保留兜底. 回滚: dead_signal_exit_enabled 改 false.
+    if not exit_reason and bool(_pb_cfg.get("dead_signal_exit_enabled", False)):
+        _ds_minutes = float(_pb_cfg.get("dead_signal_exit_minutes", 60))
+        _ds_mfe_pct = float(_pb_cfg.get("dead_signal_exit_mfe_pct", 0.2))
+        if held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
+            exit_reason = "DEAD_SIGNAL_EXIT"
+            exit_price = current_price
+            meta["dead_signal_exit"] = {
+                "check_minutes": round(held_minutes, 1),
+                "mfe_at_trigger": round(peak_profit_pct, 4),
+                "cur_at_trigger": round(profit_pct, 4),
+                "threshold": _ds_mfe_pct,
+            }
+            logger.info(
+                f"[规则3.3-死信号] {_symbol} {direction} held={held_minutes:.0f}min "
+                f"peak={peak_profit_pct:.2f}%<{_ds_mfe_pct}% → 离场"
+            )
 
     # 规则3.4 (2026-07-24, DEB-20260723 crash-day + DEB-20260724 rootcause): MFE停滞退出 —
     #   持仓≥stall_minutes 且 峰值浮盈从未达标 且 当前水下 → 立即离场, 不等 TIME_EXIT 磨满时间窗.

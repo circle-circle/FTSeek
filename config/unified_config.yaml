@@ -1061,6 +1061,18 @@ playbook:
     early_tight_sl_enabled: false
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
+    # 2026-08-08 (DEB-20260807 复盘): 开盘禁触窗 — ET<10:00 不新触发.
+    #   依据: 9点档入场 7月 120笔 净-$931 / 8月 35笔 净-$250 vs 10点档正期望;
+    #   MFE_STALL 12/12 全在 9:35-9:53 入场. 与 14:00 cutoff 对称.
+    #   回滚: false + 重启.
+    entry_open_blackout_enabled: true
+    entry_open_blackout_hhmm: 1000
+    # 2026-08-08 (exit_shadow dead_signal_60m_mfe0.2 毕业): 死信号退出 — 60min 峰值浮盈<0.2% 即离场.
+    #   依据: shadow 全历史 171 笔分离度 1.49pp (触发组 -1.12% vs 未触发组 +0.37%).
+    #   回滚: dead_signal_exit_enabled 改 false.
+    dead_signal_exit_enabled: true
+    dead_signal_exit_minutes: 60
+    dead_signal_exit_mfe_pct: 0.2
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5

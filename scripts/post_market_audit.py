@@ -115,9 +115,9 @@ def attribution_strategy(db, today, window_days=7):
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT strategy_id, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl,
-               AVG(realized_pnl) as avg_pnl,
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
+               AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl,
                AVG(holding_hours) as avg_hold
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL
@@ -126,8 +126,8 @@ def attribution_strategy(db, today, window_days=7):
 
     today_rows = db.execute("""
         SELECT strategy_id, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
         WHERE trade_date = ? AND realized_pnl IS NOT NULL
         GROUP BY strategy_id ORDER BY total_pnl DESC
@@ -169,9 +169,9 @@ def attribution_signal(db, today, window_days=30):
             END as strength_bucket,
             signal_strength,
             COUNT(*) as cnt,
-            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(realized_pnl) as total_pnl,
-            AVG(realized_pnl) as avg_pnl
+            SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
+            AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL
         GROUP BY strength_bucket
@@ -199,9 +199,9 @@ def attribution_exit(db, today, window_days=7):
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT exit_reason, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl,
-               AVG(realized_pnl) as avg_pnl,
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
+               AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl,
                AVG(holding_hours) as avg_hold
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_reason IS NOT NULL
@@ -258,9 +258,9 @@ def attribution_regime(db, today, window_days=7):
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT market_regime, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl,
-               AVG(realized_pnl) as avg_pnl
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
+               AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL
         GROUP BY market_regime ORDER BY cnt DESC
@@ -296,11 +296,11 @@ def attribution_trend(db, today):
     since_5d = (us_eastern_now() - timedelta(days=7)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT trade_date, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl,
-               AVG(realized_pnl) as avg_pnl,
-               MAX(realized_pnl) as best,
-               MIN(realized_pnl) as worst
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
+               AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl,
+               MAX(COALESCE(pnl_net, realized_pnl)) as best,
+               MIN(COALESCE(pnl_net, realized_pnl)) as worst
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL
         GROUP BY trade_date ORDER BY trade_date DESC
@@ -360,8 +360,8 @@ def attribution_execution(db, today, window_days=7):
     # 方向分布
     direction = db.execute("""
         SELECT direction, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl
+               SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL
         GROUP BY direction
@@ -389,8 +389,8 @@ def attribution_shadow(db, today, window_days=7):
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT strategy, COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl,
+               SUM(CASE WHEN (realized_pnl - COALESCE(commission, 0)) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(realized_pnl - COALESCE(commission, 0)) as total_pnl,
                AVG(pnl_pct) as avg_pnl_pct,
                AVG(holding_minutes) as avg_hold
         FROM shadow_trades
@@ -586,10 +586,10 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
         if avg_pnl < -500:
             consensus.append(
                 f"📉 近5日持续亏损: 日均PnL ${avg_pnl:,.0f}，"
-                f"日均胜率{avg_wr:.0f}%，需评估是否暂停交易收集更多数据"
+                f"日均净胜率{avg_wr:.0f}%，需评估是否暂停交易收集更多数据"
             )
         elif avg_pnl > 200:
-            consensus.append(f"📈 近5日盈利趋势: 日均PnL ${avg_pnl:+,.0f}，胜率{avg_wr:.0f}%")
+            consensus.append(f"📈 近5日盈利趋势: 日均PnL ${avg_pnl:+,.0f}，净胜率{avg_wr:.0f}%")
 
     # ── 分歧检测 ──
 
@@ -601,7 +601,7 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
             total_dir_loss = sum(d['total_pnl'] for d in dir_losses)
             disputes.append(
                 f"方向亏损集中: {worst_dir['dir']}({worst_dir['cnt']}笔 "
-                f"胜率{worst_dir['win_rate']:.0f}% ${worst_dir['total_pnl']:+,.0f}) "
+                f"净胜率{worst_dir['win_rate']:.0f}% ${worst_dir['total_pnl']:+,.0f}) "
                 f"占总亏损{abs(worst_dir['total_pnl']/total_dir_loss*100):.0f}%"
             )
             actions.append(
@@ -619,9 +619,9 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
             b = short_d if better == "SHORT" else long_d
             w = long_d if better == "SHORT" else short_d
             disputes.append(
-                f"方向偏好分歧: {better}({b['cnt']}笔 胜率{b['win_rate']:.0f}% "
+                f"方向偏好分歧: {better}({b['cnt']}笔 净胜率{b['win_rate']:.0f}% "
                 f"${b['total_pnl']:+,.0f}) 显著优于 "
-                f"{worse}({w['cnt']}笔 胜率{w['win_rate']:.0f}% "
+                f"{worse}({w['cnt']}笔 净胜率{w['win_rate']:.0f}% "
                 f"${w['total_pnl']:+,.0f})"
             )
 
@@ -630,7 +630,7 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
     if voting and voting['total_pnl'] < -200:
         disputes.append(
             f"策略-信号矛盾: voting_llm策略 近7日亏${voting['total_pnl']:,.0f} "
-            f"({voting['cnt']}笔 胜率{voting['win_rate']:.0f}%)，"
+            f"({voting['cnt']}笔 净胜率{voting['win_rate']:.0f}%)，"
             f"但其使用高信号强度入场——说明LLM投票逻辑可能需要审查"
         )
 
@@ -647,7 +647,7 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
         baseline = next((s for s in shadow if s['strategy'] == 'baseline'), None)
         if baseline and baseline['cnt'] > 0:
             shadow_insight = (
-                f"Shadow baseline: {baseline['cnt']}笔 胜率{baseline['win_rate']:.0f}% "
+                f"Shadow baseline: {baseline['cnt']}笔 净胜率{baseline['win_rate']:.0f}% "
                 f"PnL=${baseline['total_pnl']:+,.0f}"
             )
             # 找最优变种
@@ -655,7 +655,7 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
             if best['strategy'] != 'baseline' and best['total_pnl'] > baseline['total_pnl']:
                 shadow_insight += (
                     f"\n  最优变种 {best['strategy']}: "
-                    f"{best['cnt']}笔 胜率{best['win_rate']:.0f}% "
+                    f"{best['cnt']}笔 净胜率{best['win_rate']:.0f}% "
                     f"PnL=${best['total_pnl']:+,.0f}"
                 )
 
@@ -726,13 +726,13 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         marker = " ◀" if d['date'] == today else ""
         pnl_str = f"${d['total_pnl']:+,.0f}"
         L.append(
-            f"  {d['date']}: {d['cnt']}笔 胜率{d['win_rate']:.0f}% "
+            f"  {d['date']}: {d['cnt']}笔 净胜率{d['win_rate']:.0f}% "
             f"PnL={pnl_str} "
             f"best=${d['best']:+,.0f} worst=${d['worst']:+,.0f}{marker}"
         )
     if trend['avg5']:
         a = trend['avg5']
-        L.append(f"  **5日均值**: {a['trades']:.1f}笔/日 胜率{a['win_rate']:.0f}% 日均PnL=${a['pnl']:+,.0f}")
+        L.append(f"  **5日均值**: {a['trades']:.1f}笔/日 净胜率{a['win_rate']:.0f}% 日均PnL=${a['pnl']:+,.0f}")
     L.append("")
 
     # ─── 策略归因 ───
@@ -742,7 +742,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         today_str = f" | 今日: {s['today_cnt']}笔 ${s['today_pnl']:+,.0f}" if s['today_cnt'] > 0 else ""
         L.append(
             f"  {pnl_marker} **{s['strategy']}**: {s['cnt']}笔 "
-            f"胜率{s['win_rate']:.0f}% PnL=${s['total_pnl']:+,.0f} "
+            f"净胜率{s['win_rate']:.0f}% PnL=${s['total_pnl']:+,.0f} "
             f"均持{s['avg_hold']:.1f}h{today_str}"
         )
     L.append("")
@@ -753,7 +753,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         pnl_marker = "🟢" if s['total_pnl'] > 0 else ("🔴" if s['total_pnl'] < 0 else "⚪")
         L.append(
             f"  {pnl_marker} {s['bucket']}: {s['cnt']}笔 "
-            f"胜率{s['win_rate']:.0f}% PnL=${s['total_pnl']:+,.0f} "
+            f"净胜率{s['win_rate']:.0f}% PnL=${s['total_pnl']:+,.0f} "
             f"avg=${s['avg_pnl']:+,.0f}"
         )
     L.append("")
@@ -766,7 +766,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         pnl_marker = "🟢" if e['total_pnl'] > 0 else ("🔴" if e['total_pnl'] < 0 else "⚪")
         L.append(
             f"  {pnl_marker} {e['reason']}: {e['cnt']}笔 "
-            f"胜率{e['win_rate']:.0f}% PnL=${e['total_pnl']:+,.0f} "
+            f"净胜率{e['win_rate']:.0f}% PnL=${e['total_pnl']:+,.0f} "
             f"avg=${e['avg_pnl']:+,.0f}"
         )
         total_exit_pnl += e['total_pnl']
@@ -780,9 +780,9 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
     L.append("## 🌡️ 环境归因 (近7日)")
     for r in regime:
         L.append(
-            f"  {r['regime']}: {r['cnt']}笔 胜率{r['win_rate']:.0f}% "
+            f"  {r['regime']}: {r['cnt']}笔 净胜率{r['win_rate']:.0f}% "
             f"PnL=${r['total_pnl']:+,.0f} "
-            f"(信号层面: {r['signal_cnt']}条 胜率{r['signal_wr']:.0f}%)"
+            f"(信号层面: {r['signal_cnt']}条 净胜率{r['signal_wr']:.0f}%)"
         )
     L.append("")
 
@@ -791,7 +791,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         L.append("## 🧭 方向归因 (近7日)")
         for d in execution['direction']:
             L.append(
-                f"  {d['dir']}: {d['cnt']}笔 胜率{d['win_rate']:.0f}% "
+                f"  {d['dir']}: {d['cnt']}笔 净胜率{d['win_rate']:.0f}% "
                 f"PnL=${d['total_pnl']:+,.0f}"
             )
         L.append("")

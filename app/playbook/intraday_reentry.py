@@ -46,7 +46,7 @@ _last_run_ts = 0.0
 #     操作类 (GHOST/EXIT_MONITOR/OKR_AUDIT) = 非 thesis 信号 → 禁入 (fail-closed)。
 _HARD_STOP_REASONS = frozenset({
     "SL_INITIAL", "SL_ATR_STOP", "SL_FIXED_PCT", "OVERNIGHT_GAP_STOP",
-    "MFE_STALL_EXIT", "TIME_EXIT",                # 0% WR 纯亏损 (n=61, -$2320)
+    "DEAD_SIGNAL_EXIT", "MFE_STALL_EXIT", "TIME_EXIT",   # 0% WR 纯亏损 (n=61, -$2320)
     "BROKER_GHOST_CLOSE", "EXIT_MONITOR_CLOSE", "FORCED_CLOSE_OKR_AUDIT",  # 操作类
 })
 _BENIGN_REASONS = frozenset({

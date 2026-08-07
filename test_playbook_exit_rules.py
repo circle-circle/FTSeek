@@ -24,19 +24,29 @@ def test_exit_rules():
     # TIME_EXIT 已重新启用 (2026-07-07): PLAYBOOK 仓位由 Pipeline 自管 time_exit.
     # 2026-07-16: default time_exit_hours 已升到 6h, 且 time_exit_only_if_loss=True.
     # 2026-07-24 (规则3.4): 此场景 (持仓7h, peak浮盈仅-0.5%从未达0.5%, 当前水下)
-    #   现由 MFE_STALL_EXIT 在 150min 处接管, 优先于 TIME_EXIT.
+    #   原由 MFE_STALL_EXIT 在 150min 处接管.
+    # 2026-08-08 (规则3.3): DEAD_SIGNAL_EXIT (60min, peak<0.2%) 更早接管 —
+    #   死信号退出优先于 MFE_STALL, 语义一致 (方向从未兑现).
     reason, *_ = _check_playbook_exit_rules(
         direction="LONG", entry_price=100, current_price=99.5,
         initial_sl=90, peak_price=99.5, meta=meta,
         held_minutes=420, minutes_to_close=30, minutes_from_open=20, entry_time_str=""
     )
-    assert reason == "MFE_STALL_EXIT", f"低MFE水下死单应由停滞退出接管, got {reason}"
-    print(f"✅ MFE停滞退出接管低MFE死单: {reason}")
+    assert reason == "DEAD_SIGNAL_EXIT", f"低MFE死单应被死信号退出接管, got {reason}"
+    print(f"✅ 死信号退出接管低MFE死单: {reason}")
 
-    # 停滞退出不碰曾浮盈达标的仓: peak 1%≥0.5% → breakeven ratchet 接管 (SL=entry+0.15%费用垫),
-    #   current=100.2 在保本线上方 → 不触任何退出 (盈利仓继续持有, 零质量损失约束).
+    # 规则3.3 只抓 MFE<0.2% 极端死信号; peak 0.3% (≥0.2% 但 <0.5%) 时 60min 不触发,
+    #   150min 处 MFE_STALL 仍接管 — 但注意: 浅亏(>-1%) 单被 8/4 浅亏持有转 SL/PRE_CLOSE,
+    #   深亏(< -1%) 才立即退. 用深亏场景验证.
     reason, *_ = _check_playbook_exit_rules(
-        direction="LONG", entry_price=100, current_price=100.2,
+        direction="LONG", entry_price=100, current_price=98.5,
+        initial_sl=90, peak_price=100.3, meta=meta,
+        held_minutes=200, minutes_to_close=30, minutes_from_open=20, entry_time_str=""
+    )
+    assert reason == "MFE_STALL_EXIT", f"peak 0.3% 深亏死单应由停滞退出接管, got {reason}"
+    print(f"✅ MFE停滞退出接管 peak0.3% 深亏死单: {reason}")
+    reason, *_ = _check_playbook_exit_rules(
+        direction="LONG", entry_price=100, current_price=100.5,
         initial_sl=90, peak_price=101.0, meta=meta,
         held_minutes=420, minutes_to_close=30, minutes_from_open=20, entry_time_str=""
     )
