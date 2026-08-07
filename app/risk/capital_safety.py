@@ -764,7 +764,12 @@ class CapitalSafetySystem:
                 self._peak_initialized = False
                 logger.info(f"[资本安全] 无历史记录, 初始资金将在首次更新时同步")
         except Exception as e:
-            logger.warning(f"[资本安全] 加载状态失败: {e}")
+            # 2026-08-07 修复 (主动审计 P1-C4): load 失败与 save 失败同通道 fail-safe —
+            #   原实现只 warning, can_open_position 基于默认 GREEN/未锁状态放行,
+            #   回撤熔断静默失效。置 _save_failed=True 复用既有 fail-safe 拦截
+            #   (下次 _save_state 成功自动重置)。
+            self._save_failed = True
+            logger.warning(f"[资本安全] 加载状态失败 (fail-safe 将拦截新开仓): {e}")
     
     def _save_state(self):
         """保存状态到 DB
