@@ -137,6 +137,83 @@ def _reentry_overnight_exempt(symbol: str, entry_time_str: str, profit_pct: floa
     except Exception:
         return False
 
+
+# 2026-08-07 (用户指示, sim A/B 双开): VWAP 门 wrong_side 拦截实验分流.
+#   证据 (DEB-20260806-source-control 修尺子后): 被拦 n=55 均值 +0.254% (SHORT +0.649%),
+#   门倾向"扼杀"。影子反事实已可测 (gated 臂轨迹在 entry_timing_shadow 持续轮询),
+#   但"真实成交口径 (费用/滑点/真实退出) 下是否仍成立"只能 A/B 双开实测 (SIM 无真金/无 PDT).
+#   分臂纯函数日内稳定: 同标的当日恒定同臂, 不随 300s 轮询漂移, 进程重启不变.
+_VWAP_AB_LOGGED: set = set()
+
+
+def _vwap_ab_row_exists(date_str: str, symbol: str, direction: str) -> bool:
+    """台账文件级去重 (2026-08-07 主动审计 P1-4 修复): _VWAP_AB_LOGGED 是进程内
+    set, 进程重启(systemd 重启/cron 重跑)后清空 → 同 (symbol,date,direction) 重复
+    append, 破坏"每 symbol-day-direction 一行"的台账唯一性承诺, A/B 统计重复计数。
+    写前查文件历史行, 与进程 set 双保险。异常 → False (允许写, 审计降级优于丢行)."""
+    from pathlib import Path as _Pab
+    _f = _Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl"
+    try:
+        if not _f.exists():
+            return False
+        import json as _jab
+        with open(_f, "r", encoding="utf-8") as _fh:
+            for _line in _fh:
+                try:
+                    _j = _jab.loads(_line)
+                except Exception:
+                    continue
+                if (_j.get("date") == date_str and _j.get("symbol") == symbol
+                        and _j.get("direction") == direction):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _vwap_ab_arm(symbol: str, date_str: str, direction: str) -> str:
+    """确定性 50/50 分臂 (纯函数, 可单测): sha1 奇偶 → 'bypass' | 'gated'."""
+    import hashlib
+    h = hashlib.sha1(f"{date_str}|{symbol}|{direction}".encode()).hexdigest()
+    return "bypass" if int(h, 16) % 2 == 0 else "gated"
+
+
+def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
+                         current_price, inst_id) -> bool:
+    """VWAP 门 A/B 分流判定: 仅 sim + 开关开 + bypass 臂 → True (放行).
+
+    双臂首次判定即落实验台账 data/vwap_gate_ab.jsonl (每 symbol-day-direction 一行);
+    任何异常 → False (维持拦截, 即现状, 保守方向)。
+    """
+    try:
+        from app.core.config_container import get_config as _gc_ab
+        if not bool(_gc_ab().get_dotted("playbook.vwap_gate_ab_enabled", False)):
+            return False
+        if _gc_ab().get_dotted("playbook.execute_mode", "futu_simulate") != "futu_simulate":
+            return False
+        _d = _today_et_str()
+        _dir = "SHORT" if is_short else "BUY"
+        arm = _vwap_ab_arm(symbol, _d, _dir)
+        _lk = (symbol, _d, _dir)
+        if _lk not in _VWAP_AB_LOGGED and not _vwap_ab_row_exists(_d, symbol, _dir):
+            _VWAP_AB_LOGGED.add(_lk)
+            import json as _jab
+            from datetime import datetime as _dtab
+            from pathlib import Path as _Pab
+            _row = {
+                "ts": _dtab.now(_now_et()).isoformat(timespec="seconds"),
+                "date": _d, "symbol": symbol, "direction": _dir, "arm": arm,
+                "price": current_price, "vwap": _vwap_val,
+                "vwap_dev": round(vwap_dev, 6) if vwap_dev is not None else None,
+                "inst_id": inst_id, "rule": "vwap_gate_ab_50_50",
+            }
+            with open(_Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl",
+                      "a", encoding="utf-8") as _fab:
+                _fab.write(_jab.dumps(_row, ensure_ascii=False) + "\n")
+        return arm == "bypass"
+    except Exception:
+        return False
+
 # ── ADR-008 (2026-06-28): Playbook 方向审计日志 ────────────────────────
 
 def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_direction: Optional[str], vote_result: Dict[str, Any]):
@@ -4232,12 +4309,26 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         _gate_enabled = False
 
     if _gate_enabled and triggered and _gate_block:
-        triggered = False
-        logger.info(
-            f"[playbook] VWAP门拦截: {symbol} price=${current_price:.2f} vwap=${_vwap_val:.2f} "
-            f"dev={_vwap_dev:+.4f} dir={'SHORT' if is_short else 'BUY'} (当日VWAP逆侧)"
-        )
-        _emit_trigger_miss("vwap_gate_block", current_price)
+        # 2026-08-07 (用户指示, sim A/B 双开): wrong_side 拦截 50/50 分流 —
+        #   bypass 臂放行成交 (真实口径), gated 臂维持拦截 (影子反事实口径),
+        #   双臂落 data/vwap_gate_ab.jsonl 台账. 非 sim / 开关关 / 异常 → 维持拦截.
+        if _vwap_gate_ab_bypass(symbol, is_short, _vwap_dev, _vwap_val, current_price,
+                                inst.get("id")):
+            logger.info(
+                f"[playbook] VWAP门A/B·放行臂: {symbol} price=${current_price:.2f} "
+                f"vwap=${_vwap_val:.2f} dev={_vwap_dev:+.4f} "
+                f"dir={'SHORT' if is_short else 'BUY'} (实验放行, 台账已记)"
+            )
+            # 2026-08-07 修复 (主动审计 P1-3): 放行臂是真实成交路径 (triggered 保持 True),
+            #   不属于"未触发原因"漏斗 — 原 emit vwap_gate_ab_bypass 把成交单记入 miss 组,
+            #   放行臂效果被系统性低估。台账行由 _vwap_gate_ab_bypass 内部保证。
+        else:
+            triggered = False
+            logger.info(
+                f"[playbook] VWAP门拦截: {symbol} price=${current_price:.2f} vwap=${_vwap_val:.2f} "
+                f"dev={_vwap_dev:+.4f} dir={'SHORT' if is_short else 'BUY'} (当日VWAP逆侧)"
+            )
+            _emit_trigger_miss("vwap_gate_block", current_price)
 
     if triggered:
         logger.info(
@@ -4627,18 +4718,30 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             f"pnl_pct={pnl_pct:.4f} (|>1.0|), 疑似百分比量纲误写, 自动 /100 修正"
         )
         pnl_pct = pnl_pct / 100.0
+    # 2026-08-07 修复 (主动审计 B9): max_drawdown 原直接拷贝 mae_pct (入场→谷值),
+    #   语义错 — 传统 max_drawdown = 峰值→谷值, 盈利单 MAE=0 时回撤被记 0, 系统性低估。
+    #   改用 mfe/mae (均已含 peak/trough 反算+现实兜底) 反算 peak-to-trough 回撤:
+    #     LONG: peak=entry*(1+mfe/100), trough=entry*(1+mae/100) (mae≤0)
+    #     回撤 = (peak-trough)/peak = (mfe - mae) / (100 + mfe)  (百分比量纲, 与 mfe/mae 同)
+    #   数据缺失 (mfe≤0 或 mae≥0) → 0, 与历史一致不引入新值。
+    _max_dd_val = 0.0
+    try:
+        if _mfe_pct > 0 and _mae_pct < 0:
+            _max_dd_val = round((_mfe_pct - _mae_pct) / (100.0 + _mfe_pct), 4)
+    except Exception:
+        _max_dd_val = 0.0
     if close_futu_order_id:
         conn.execute("""
             UPDATE trade_records
             SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, close_futu_order_id=?, mfe_pct=?, mae_pct=?, max_drawdown=?
             WHERE id=?
-        """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), close_futu_order_id, round(_mfe_pct, 4), round(_mae_pct, 4), round(_mae_pct, 4), trade_id))
+        """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), close_futu_order_id, round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id))
     else:
         conn.execute("""
             UPDATE trade_records
             SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?
             WHERE id=?
-        """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), round(_mae_pct, 4), trade_id))
+        """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id))
     # 2026-07-30 (DEB-fee-net-pnl): 净额列跟随主 UPDATE 落库 — pnl_net = 毛 - 估算费;
     #   三态只升不降 (broker/reconciled 不被 est 覆盖); 旧库/测试库无列 → 静默跳过。
     if _fees_total is not None:

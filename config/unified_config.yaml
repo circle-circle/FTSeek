@@ -1046,7 +1046,11 @@ playbook:
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # (2026-08-07 VWAP A/B 实验键 vwap_gate_ab_enabled 由另一 agent 暂存, 审批前不随本提交入库)
+    # 2026-08-07 (用户指示 sim A/B 双开实测): VWAP 门 wrong_side 拦截 50/50 分流 —
+    #   分臂 sha1(date|symbol|direction) 奇偶, 日内稳定; 台账 data/vwap_gate_ab.jsonl;
+    #   仅 futu_simulate 生效 (代码内硬守卫). 毕业: 每臂 n≥30 对照净均值.
+    #   回滚: false + 重启. (2026-08-07 随审计修复提交入库, 用户批准)
+    vwap_gate_ab_enabled: true
     min_tp_rr: 1.5
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
