@@ -398,8 +398,9 @@ def compute_instruction_values(
         #   理由), 故先 shadow 攒数据裁决 (每日丢失几条/什么标的/盘前还是盘中)。
         try:
             from pathlib import Path as _PathQ3
+            from app.utils.timezone import now_et as _now_et_q3  # 2026-08-07 复核: 统一 ET 口径
             _row_q3 = {
-                "ts": datetime.now().isoformat(timespec="seconds"),
+                "ts": _now_et_q3().isoformat(timespec="seconds"),
                 "symbol": decision.get("symbol", ""),
                 "direction": decision.get("direction", ""),
                 "price": price,

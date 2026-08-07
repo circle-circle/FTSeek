@@ -26,6 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.e2_momentum_confirm_replay import parse_entry_et, load_bars  # noqa: E402
+from app.utils.timezone import now_et as _now_et  # noqa: E402  # 2026-08-07 复核: ts 统一 ET
 
 DB_TRADES = PROJECT_ROOT / "data" / "ftseek_us.db"
 DB_SNAPS = PROJECT_ROOT / "data" / "signal_snapshots.db"
@@ -120,7 +121,7 @@ def main():
         else:
             win_mfe = (entry - win_low) / entry * 100
         new_rows.append({
-            "ts": datetime.utcnow().isoformat(timespec="seconds"),
+            "ts": _now_et().isoformat(timespec="seconds"),
             "trade_date": r["trade_date"],
             "decision_id": did,
             "symbol": r["symbol"],

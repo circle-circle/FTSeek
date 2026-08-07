@@ -104,6 +104,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-07 (grilling五问+E1/E2复核·Qoder, 用户令"核查"+"执行") — 三提交核查通过, P2 修复 3 项并落档 DEB-20260807
+- **背景**: 另一 Agent 三提交 (均 record-only 零行为变化): `372d2ce8` grilling Q1/Q2/Q3 可观测性 + `75d93d44` E1 IC归因隔离 + `8335f554` E2 入场动能 shadow。跨 Agent 复核 (用户令"请再检查另外agent做的优化和调整") 逐点核实"零行为变化"声称属实、关键数字复现一致, 质量良好。
+- **三提交要点**: Q1 DA conf 恒35零方差现已可观测(conf_stats) / Q2 生成时 admission 判据空转→record-only 预判(estimated=True, enforced=False) / Q3 ATR=0丢弃→atr_missing_shadow / Q4 已关闭(执行序=ORDER BY id 伪冲突) / Q5 9点档29笔WR34%−277全亏; E1: 负IC是废弃链路污染假象(DA链路字段IC +0.11), 真实strength回填后交易层IC反转(strength=60 WR60%盈 vs 70 WR52%亏) → P0从'淘汰因子'改判'修观测口径'; E2: 15min mfe≥0.5%动能确认全历史回放 拦截86笔−963/放行43笔+97, 20组参数网格方向全一致 → shadow采集, 攒20-30笔再裁决硬门。
+- **复核修复 (P2×3)**: ① `_estimate_admission_qty` 补 `max_position_pct` 截断(与 compute_position_size 完全同构) + risk_pct 兜底 0.02→1.0 对齐 DEFAULTS (原: 缺截断→高价股紧止损估算偏大, 样例150/147: 136股→32股; 缺键时高估50倍); ② Q3 shadow ts 本地naive→ET; ③ E2 shadow ts utcnow→ET。
+- **验证**: 新增单测4例 + 相关回归85例全绿; E2手动回填42条历史(产物ts带ET offset实证), 累计 拦截n=28 net−168.2 WR36%/放行n=18 net+114.0 WR61% — 与全历史回放方向一致。
+- **落档**: `docs/debates/DEB-20260807-grilling-e1-e2.md` (五问结论+E1/E2证据+复核记录+观察点)。
+- **生效**: 16:01 CST `systemctl restart ftseek-us` 优雅重启完成 (PID 74567, 启动 0 traceback/CRITICAL, 调度器/PlaybookExit快循环/LLM引擎/动态订阅等全组件正常, 资本安全🟢净值$97,894) — 本批为观测口径修复不影响交易行为, 重启后盘中新指令的 admission precheck 即用截断后口径。
+
 ### 2026-08-07 (VWAP门A/B实验复核修复·Qoder, 用户令"授权") — 揪出并修复入库提交 ef1f79be 的 3 缺陷
 - **背景**: 另一 Agent 提交 ef1f79be (VWAP门 wrong_side 拦截 A/B 双开, ADR-021, 用户 8/7 批准) + 主动审计修复 #3/#4/B9。跨 Agent 复核 (用户令"核查是否完整合理") 实证 3 缺陷, 全部位于集成路径 (原 4 个测试仅覆盖分臂纯函数故全漏):
 - **缺陷A (实验从未生效)**: yaml 键在 `playbook.execution_parameters.vwap_gate_ab_enabled`, 代码却用 `get_dotted("playbook.vwap_gate_ab_enabled")` 读原始嵌套 → 恒 False (实测)。修复: 改走 PlaybookConfig 扁平合并语义 (与 `entry_vwap_gate_enabled` 同款); execute_mode 在顶层保留 get_dotted。

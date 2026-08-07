@@ -38,7 +38,8 @@ def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
 
     生成时 position_size 未定 (None) → admission 判据 notional=0 全空转。
     此函数用保守默认乘数估算 qty: risk_base×risk_pct / |entry−stop|,
-    与 instruction_generator.compute_position_size 同构 (regime/water=1.0)。
+    与 instruction_generator.compute_position_size 同构 (regime/water/conf=1.0,
+    含 max_position_pct 截断)。
     仅用于预判审计, 不参与任何真实 sizing; 估算失败 → None。
     """
     try:
@@ -50,9 +51,18 @@ def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
         _est_pb = _gpc_est()
         # risk 参数在 playbook.risk_parameters 段 (扁平合并后同键可取);
         # risk_pct 为百分数 (0.5 = 0.5%), 与 instruction_generator 同口径 (/100)
-        _risk_pct = float(_est_pb.get("risk_pct", 0.02) or 0.02)
+        # 2026-08-07 复核修复: 兑底默认 0.02 → 1.0 (与 PlaybookConfig.DEFAULTS 对齐;
+        #   原 0.02 在 yaml 缺键时会高估 qty 50 倍) + 补 max_position_pct 截断
+        #   (原缺失 → 高价股/紧止损场景 notional 系统性偏大, fee_bps 偏小, 预判偏宽松;
+        #   实测样例 entry=150/stop=147 估算 136 股 vs 截断后 32 股)。
+        _risk_pct = float(_est_pb.get("risk_pct", 1.0) or 1.0)
         _risk_base = float(_est_pb.get("risk_base_capital", 82000.0) or 82000.0)
         _qty = int(_risk_base * (_risk_pct / 100.0) / abs(entry - stop))
+        # max_position_pct 截断与 compute_position_size 完全同构:
+        #   默认对齐 DEFAULTS=0.08; 显式 0/None → 不截断 (or 0.0 而非 or 默认)
+        _max_pct = float(_est_pb.get("max_position_pct", 0.08) or 0.0)
+        if _max_pct > 0 and _qty * entry > _risk_base * _max_pct:
+            _qty = max(1, int(_risk_base * _max_pct / entry))
         return max(_qty, 0)
     except Exception:
         return None

@@ -493,3 +493,43 @@ class TestUpsertSourcePriority:
         assert _src_priority({"decision_id": "DA-20260731-x"}) == 1
         assert _src_priority({"decision_id": "topup_whatever"}) == 0
         assert _src_priority({}) == 0
+
+
+class TestEstimateAdmissionQty:
+    """_estimate_admission_qty (grilling Q2 生成时估算, 2026-08-07 复核补测) —
+    与 compute_position_size 同构: risk_base×risk_pct/100 / |entry-stop|,
+    含 max_position_pct 截断 (复核修复点); 失败 → None。"""
+
+    def test_basic_no_clip(self):
+        from app.playbook.db import _estimate_admission_qty
+        from app.playbook.config import get_playbook_config
+        pb = get_playbook_config()
+        risk_base = float(pb.get("risk_base_capital", 82000.0))
+        risk_pct = float(pb.get("risk_pct", 1.0))
+        max_pct = float(pb.get("max_position_pct", 0.08))
+        expect = int(risk_base * (risk_pct / 100.0) / 1.0)  # entry=10 stop=9
+        if expect * 10.0 > risk_base * max_pct:
+            pytest.skip("当前配置下本场景触发截断, 用例不适用")
+        assert _estimate_admission_qty({"entry_price": 10.0, "stop_loss": 9.0}) == expect
+
+    def test_max_position_clip(self):
+        # 高价股紧止损: 未截断 136 股 → 截断后 int(risk_base*max_pct/150) (复核修复实证样例)
+        from app.playbook.db import _estimate_admission_qty
+        from app.playbook.config import get_playbook_config
+        pb = get_playbook_config()
+        risk_base = float(pb.get("risk_base_capital", 82000.0))
+        max_pct = float(pb.get("max_position_pct", 0.08))
+        qty = _estimate_admission_qty({"entry_price": 150.0, "stop_loss": 147.0})
+        assert qty == max(1, int(risk_base * max_pct / 150.0))
+
+    def test_invalid_prices_return_none(self):
+        from app.playbook.db import _estimate_admission_qty
+        assert _estimate_admission_qty({"entry_price": 0, "stop_loss": 147.0}) is None
+        assert _estimate_admission_qty({"entry_price": 150.0, "stop_loss": 0}) is None
+        assert _estimate_admission_qty({}) is None
+        assert _estimate_admission_qty({"entry_price": None, "stop_loss": None}) is None
+
+    def test_result_non_negative(self):
+        from app.playbook.db import _estimate_admission_qty
+        qty = _estimate_admission_qty({"entry_price": 50.0, "stop_loss": 49.0})
+        assert qty is None or qty >= 0
