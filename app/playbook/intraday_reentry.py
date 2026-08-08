@@ -129,7 +129,7 @@ def _cumulative_exposure_ok(prior: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
 _DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "mode": "live",               # live=重武装走全门链; shadow=仅记录 (非 sim 环境强制 shadow)
-    "window_start_hhmm": 1000,    # 10:00 ET 起 (避开盘初噪声)
+    "window_start_hhmm": 1045,    # 2026-08-08: 禁触窗后首笔平仓≥10:30, 早于 10:45 候选池恒空
     "window_end_hhmm": 1355,      # 13:55 ET 止 (14:00 触发 cutoff 前)
     "scan_interval_sec": 300,
     "max_arms_per_day": 3,

@@ -1189,7 +1189,7 @@ playbook:
   intraday_reentry:
     enabled: true
     mode: live                 # live=武装真指令(sim); 非sim环境强制 shadow
-    window_start_hhmm: 1000
+    window_start_hhmm: 1045    # 2026-08-08: 1000→1045 — 禁触窗后首笔成交≥10:00/平仓≥10:30, 过早扫描候选池恒空
     window_end_hhmm: 1355
     scan_interval_sec: 300
     max_arms_per_day: 3
