@@ -1073,6 +1073,11 @@ playbook:
     dead_signal_exit_enabled: true
     dead_signal_exit_minutes: 60
     dead_signal_exit_mfe_pct: 0.2
+    # 2026-08-08 (DEB-20260808 §8.3 裁定①): SHORT 禁追涨 shadow — 硬门被禁触窗架空,
+    #   降级为观察: SHORT 且当日涨>3% 时落 shadow (不拦单), 攒样本评估规则复活条件.
+    #   回滚: false + 重启.
+    short_chase_ban_shadow_enabled: true
+    short_chase_ban_pct: 3.0
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5

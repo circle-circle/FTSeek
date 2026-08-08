@@ -4202,6 +4202,40 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             triggered = False
             _entry_path = "out_of_band"
 
+    # ── 2026-08-08 (DEB-20260808 §8.3 裁定①): SHORT 禁追涨 shadow — 观察 10:00+ 纯逆势队列 ──
+    #   背景: "SHORT 且当日涨>3% 禁入" 硬门在 post-blackout 基线上残存效应为负 (-$19.80,
+    #   被禁触窗架空: 8月逆势亏单全在 9点档), 故不落硬门, 仅 shadow 记录: SHORT 且
+    #   chg_pct>阈值 时落一行 (含是否触发/路径), 供攒样本后评估规则复活条件 (若禁触窗
+    #   缩短或 10:00+ 出现逆势追空亏损). 回滚: short_chase_ban_shadow_enabled 改 false.
+    try:
+        _scb_enabled = bool(pb_cfg.get("short_chase_ban_shadow_enabled", False))
+        if _scb_enabled and is_short:
+            _scb_pct = float(pb_cfg.get("short_chase_ban_pct", 3.0))
+            _chg_now = None
+            if ctx and isinstance(ctx, dict):
+                _chg_now = ctx.get("change_percent")
+            if _chg_now is not None and float(_chg_now) > _scb_pct:
+                import json as _scb_json
+                from pathlib import Path as _scb_path
+                from app.utils.timezone import now_et as _scb_now
+                _scb_row = {
+                    "ts": _scb_now().isoformat(timespec="seconds"),
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "chg_pct": round(float(_chg_now), 3),
+                    "threshold": _scb_pct,
+                    "entry_price": entry_price,
+                    "current_price": round(float(current_price or 0), 4),
+                    "triggered": bool(triggered),
+                    "entry_path": _entry_path,
+                    "inst_id": inst.get("id"),
+                }
+                _scb_fp = _scb_path(__file__).resolve().parents[2] / "data" / "short_chase_ban_shadow.jsonl"
+                with open(_scb_fp, "a", encoding="utf-8") as _f:
+                    _f.write(_scb_json.dumps(_scb_row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # shadow 纯记录, 绝不影响触发
+
     if not triggered and current_price > 0:
         # 区分量能门拦截 vs 其他原因 (供离线分析追入被拦频率)
         _miss_reason = "vol_gate_block" if (not _vol_ok and _intraday_vr is not None) else "price_band_miss"
