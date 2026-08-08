@@ -170,8 +170,12 @@ class TestDirectionGateC:
         )
 
     @staticmethod
-    def _patch_dg(quota=2, factor=0.5):
-        """钉死 direction_gate 配置 (与 yaml 现值解耦 — 裁决会把 quota 2→4)."""
+    def _patch_dg(quota=2, factor=1.0):
+        """钉死 direction_gate 配置 (与 yaml 现值解耦 — 裁决会把 quota 2→4).
+
+        2026-08-06 (8e281cd3, 用户指示): buy_position_factor 0.5→1.0 恢复全码 —
+        半码致名义 $2,500 < admission min_notional=3000 被物理拦截。默认 factor=1.0。
+        """
         mock_cfg = MagicMock()
         mock_cfg.get_dotted.side_effect = lambda k, d=None: {
             "playbook.direction_gate.buy_daily_exec_quota": quota,
@@ -209,8 +213,8 @@ class TestDirectionGateC:
         assert result["success"] is True
         assert mock_broker.called
 
-    def test_buy_position_factor_halves(self, svc, db):
-        """BUY position_size=50 → 半码 25 传入下单路径."""
+    def test_buy_position_factor_full_size(self, svc, db):
+        """2026-08-06 裁决 factor=1.0 恢复全码: BUY size=50 原样传入下单路径 (不再半码)."""
         self._patch_gates_ok()
         _save_inst(db, symbol="US.PA", position_size=50)
         with self._patch_dg(), self._find(db, "US.PA"), \
@@ -218,7 +222,7 @@ class TestDirectionGateC:
                    return_value={"success": True}) as mock_broker:
             svc.execute_instruction(1)
         # _execute_via_dual_broker 第 8 个位置参数 = position_size
-        assert mock_broker.call_args[0][7] == 25
+        assert mock_broker.call_args[0][7] == 50
 
     def test_short_size_untouched(self, svc, db):
         """SHORT 不受方向门影响: size 50 原样通过, 配额门不计 SHORT."""
