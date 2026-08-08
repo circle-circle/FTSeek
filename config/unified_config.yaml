@@ -1081,10 +1081,12 @@ playbook:
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
-    # 2026-08-08 (DEB-20260808 §17.3-2): SL 收紧系数 — 全体紧SL (臂1 内点最优 β=0.20).
-    #   136 笔模拟 +$1,555 改善, 真被杀赢家 4笔 +$47; E2 动能判别已取消 (边际 -$400).
-    #   SL = β×指令SL, min 0.3% 偏离. OOS 起点 8/10, 异常即回滚 (改 1.0).
-    sl_tighten_beta: 0.20
+    # 2026-08-08 (DEB-20260808 §17.3-2 + §22 审计修正): SL 收紧系数 — 全体紧SL.
+    #   初版 β=0.20 被审计否决 (落入 7/9 证伪的 <2% 噪声扫损区 WR47% 亏$1352);
+    #   修正 β=0.50 + 下限 1.5%: 收紧后 SL 1.5-2.5%, 贴近 7/9 最优区 (2-3% WR59%) 下沿.
+    #   OOS 起点 8/10, 异常即回滚 (改 1.0).
+    sl_tighten_beta: 0.50
+    sl_tighten_min_pct: 1.5
     mfe_stall_exit_shallow_hold_enabled: true
     mfe_stall_exit_shallow_pct: 1.0
     symbol_streak_ban_enabled: true
