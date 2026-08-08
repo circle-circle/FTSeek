@@ -1081,6 +1081,10 @@ playbook:
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
+    # 2026-08-08 (DEB-20260808 §17.3-2): SL 收紧系数 — 全体紧SL (臂1 内点最优 β=0.20).
+    #   136 笔模拟 +$1,555 改善, 真被杀赢家 4笔 +$47; E2 动能判别已取消 (边际 -$400).
+    #   SL = β×指令SL, min 0.3% 偏离. OOS 起点 8/10, 异常即回滚 (改 1.0).
+    sl_tighten_beta: 0.20
     mfe_stall_exit_shallow_hold_enabled: true
     mfe_stall_exit_shallow_pct: 1.0
     symbol_streak_ban_enabled: true

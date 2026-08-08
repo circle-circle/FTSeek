@@ -5160,6 +5160,25 @@ def _compute_dynamic_effective_sl(
     - 兼容: 若无drawdown_from_peak_pct配置, 回退原步进逻辑(最多3步).
     """
     breakeven_pct = float(exit_cfg.get("breakeven_at_pct", 0.5))
+    # 2026-08-08 (DEB-20260808 §17.3-2): SL 收紧系数 sl_tighten_beta (全体紧SL, 臂1 内点最优)
+    #   背景: E2 动能判别边际价值为负 (-$400, 双臂对照臂2-臂1), 问题本质是 SL 过宽非入场动能;
+    #   136 笔模拟 β=0.20 (SL=β×指令SL, min 0.3% 偏离) 改善 +$1,555, 真被杀赢家 4笔 +$47
+    #   (93% 赢家 MAE<1%, 收紧 SL 不伤大赢家). 模拟为 MAE 近似, 实盘滑点会打折 —
+    #   OOS 验证起点 2026-08-10, 异常即回滚 (sl_tighten_beta 改 1.0).
+    try:
+        from app.playbook.config import get_playbook_config as _get_pb_cfg_tb
+        _sl_tb = float(_get_pb_cfg_tb().get("sl_tighten_beta", 1.0))
+    except Exception:
+        _sl_tb = 1.0
+    if _sl_tb < 1.0 and initial_sl > 0:
+        if direction == "LONG":
+            # 收紧 = SL 上移向 entry; 但不得高于 -0.3% 线 (防过紧误扫正常回撤)
+            initial_sl = min(entry_price - (entry_price - initial_sl) * _sl_tb,
+                             entry_price * 0.997)
+        else:
+            # SHORT 对称: 收紧 = SL 下移向 entry; 不得低于 +0.3% 线
+            initial_sl = max(entry_price + (initial_sl - entry_price) * _sl_tb,
+                             entry_price * 1.003)
     effective_sl = initial_sl
 
     if peak_profit_pct < breakeven_pct:
