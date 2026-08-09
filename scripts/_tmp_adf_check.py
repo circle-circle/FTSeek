@@ -44,8 +44,15 @@ def adf(y, max_lag=1):
     sigma2 = float(resid @ resid) / dof
     cov = sigma2 * np.linalg.inv(X.T @ X)
     t_phi = float(beta[1] / np.sqrt(cov[1, 1]))
-    # MacKinnon 近似临界值 (含常数无趋势; n≈25-30 小样本):
-    crit = {"1%": -3.75, "5%": -3.00, "10%": -2.63}
+    # MacKinnon (1996) 响应面: C(p) = β_inf + β_1/n + β_2/n²  (含常数无趋势, n=回归样本量)
+    # 2026-08-09 修正: 原写死大样本近似值, 小样本下应更负/更宽; 按 n 动态计算.
+    mack = {
+        0.01: (-3.43035, -6.5393, -16.786),
+        0.05: (-2.86121, -2.8902, -4.0886),
+        0.10: (-2.56677, -1.5384, -2.8094),
+    }
+    crit = {f"{int(p*100)}%": b_inf + b1 / n + b2 / (n * n)
+            for p, (b_inf, b1, b2) in mack.items()}
     return t_phi, max_lag, n, crit, beta[0], float(resid @ resid)
 
 

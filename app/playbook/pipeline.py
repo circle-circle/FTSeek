@@ -275,6 +275,30 @@ def _shadow_portfolio_emit(inst, symbol, is_short, blocked_by, entry_path,
         _lk = (inst.get("id"), _d)
         if _lk in _SP_EMITTED:
             return
+        # 2026-08-09 性能/幂等预审: 进程内 set 重启即清空, 重启后同 (inst_id,date)
+        #   可能重记一行 → 结算端虽按 inst_id 去重, 但文件冗余行会污染「行数≈样本量」的
+        #   直观统计. 落盘前查文件兜底 (仅启动后首行触发, 每行一次 grep 成本可忽略),
+        #   文件已有同键 → 只入 set 不重写.
+        try:
+            import json as _jsp_dup
+            from pathlib import Path as _Pdup
+            _sp_file = _Pdup(__file__).resolve().parents[2] / "data" / "shadow_portfolio_entries.jsonl"
+            if _sp_file.exists():
+                _dup = False
+                with open(_sp_file, "r", encoding="utf-8") as _fdup:
+                    for _line in _fdup:
+                        try:
+                            _r = _jsp_dup.loads(_line)
+                            if _r.get("inst_id") == inst.get("id") and _r.get("date") == _d:
+                                _dup = True
+                                break
+                        except Exception:
+                            continue
+                if _dup:
+                    _SP_EMITTED.add(_lk)
+                    return
+        except Exception:
+            pass  # 文件不可读时退化为仅进程内 set 去重
         _SP_EMITTED.add(_lk)
         import json as _jsp
         from datetime import datetime as _dtsp
@@ -3137,6 +3161,18 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             x.get("confidence", 0) or 0
         ), reverse=True)
 
+        # 2026-08-09 性能预审: broker 持仓是轮级全局状态, 循环外查一次即可.
+        #   原实现每条未执行指令调 get_positions (OpenD 交易连接, 放量后 40+指令×78轮/日
+        #   = 数千次连接调用), 同轮内重复查询结果不变 → 提升到循环外, 一轮一次.
+        #   失败时降级为空列表 (与原先每条指令独立失败返回 [] 语义一致, 防误拦).
+        try:
+            from app.execution.dual_broker import get_dual_broker
+            _dual = get_dual_broker()
+            _broker_positions = _dual.get_positions(target_env="sim") or []
+        except Exception as _bp_err:
+            logger.warning(f"[playbook] 轮级 broker 持仓查询失败 (降级空表): {_bp_err}")
+            _broker_positions = []
+
         for inst in instructions:
             # 跳过已执行、SKIP 方向的指令
             if inst.get("executed"):
@@ -3154,11 +3190,9 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
 
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
             # 根因: fill=0时playbook拒绝记账但broker已成交, 下次auto_execute又下单 → 仓位叠加
+            # 2026-08-09 性能预审: 持仓已提到循环外查一次 (_broker_positions), 此处仅复用.
             _symbol = inst.get("symbol", "")
             try:
-                from app.execution.dual_broker import get_dual_broker
-                _dual = get_dual_broker()
-                _broker_positions = _dual.get_positions(target_env="sim")
                 # F1 (2026-07-21): 方向感知 — 持有 SHORT 不应拦截新 BUY (反之亦然),
                 #   否则合法反向再入被误标 already_held. qty>0=LONG, qty<0=SHORT.
                 _want_long = inst.get("direction", "").upper() == "BUY"
@@ -3166,7 +3200,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     p.get("code") == _symbol
                     and abs(float(p.get("qty", 0) or 0)) > 0
                     and ((float(p.get("qty", 0) or 0) > 0) == _want_long)
-                    for p in (_broker_positions or [])
+                    for p in _broker_positions
                 )
                 if _already_held:
                     # P0 (2026-07-21): already_held 不再一律标 $0 —
