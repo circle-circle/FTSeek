@@ -63,6 +63,11 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
+0. **🚪 实盘化转正门槛 (2026-08-09 用户裁定, 每周六 09:05 ADF 周检 cron 自动评估)**:
+   四项全满足才讨论实盘化 — ① OOS 样本 (08-10 起) ≥15 个交易日 ② 日净盈亏均值 >0
+   ③ 日毛利均值 t>1 (供给端有真实 edge, 8/9 基线: t=−0.10 统计为零) ④ ADF 平稳。
+   工具: `scripts/_tmp_adf_check.py` (纯 numpy 实现, 可复现)。当前基线 (7/2-8/7):
+   净日均 −$40.96 (t=−1.44), 毛日均 −$2.71 (t=−0.10) — 未达标, 差距在毛利端。
 3m. **🔴 待用户终裁 + 待独立 Agent 复核**: `docs/debates/DEB-20260806-source-control.md` — 源头把控 (标的/指令质量/confidence 区分度)。
   - **已落地 (验证期白名单内)**: ① `scripts/eval_vwap_gate.py` 修尺子 — 原实现把 144 个**不可测量**样本静默计为 +0.00% 并算进均值 (门放行后标的转持仓、影子停轮询 → 轨迹恒 1 点)。修后结论: **VWAP 门实盘拦 45.2% 入场, 且倾向「扼杀」** (被拦 n=55 均值 **+0.254%**, 其中 SHORT **+0.649%** → beta 解释不成立; 放行组已实现 **−0.166%**)。② 统一准入门 `app/playbook/admission.py` 接入 `db.save_instruction` (**record-only, 全阈值=0 不拦**) — 首次使 DA直写/UE/topup/generate 四路可统一施规。
   - **关键事实**: confidence 门 (BUY 70) 只在 `_build_instructions_from_votes` 内, 而 **DA 219 条 BUY 均 conf=36 绕门直写并执行 123 笔** (pipeline.py:1523-1532 自述"已由 deep_analysis skill 直写DB")。事前特征 IC 全部 |t|<1 (n=242) → **重构 confidence 公式是伪工程**, 真正缺的是尚未记录的特征。
