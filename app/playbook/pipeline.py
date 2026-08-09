@@ -1382,14 +1382,24 @@ def _build_instructions_from_votes(
         # 2026-06-30: confidence门槛从strategy_registry读取（原从playbook config读）
         # 数据修复后: LONG IC=+0.238(强), SHORT IC=-0.051(弱) → 不再需要方向不对称门槛
         # 默认 BUY=70, SHORT=70 (对称), 可在registry的direction_filter中覆盖
+        # 2026-08-09 (用户指示 sim 放量): 兜底 70→55 — 60日实测 conf IC≈-0.02 (无预测力,
+        #   DEB-20260806-source-control), 用死指标卡供给=纯浪费; VOTE 路径是当前最优
+        #   供给单元格 (60日 +$186/21笔), 放宽给它增量. config 覆盖键:
+        #   playbook.supply_conf_gate_buy / supply_conf_gate_short. 回滚: 恢复 70.
+        try:
+            from app.core.config_container import get_config as _gc_sc
+            _fb_buy = int(_gc_sc().get_dotted("playbook.supply_conf_gate_buy", 55))
+            _fb_short = int(_gc_sc().get_dotted("playbook.supply_conf_gate_short", 55))
+        except Exception:
+            _fb_buy, _fb_short = 55, 55
         try:
             from app.core.strategy_registry import get_strategy_config
             _sr_cfg = get_strategy_config(vote_result.get("strategy_id", ""))
-            _buy_min_conf = int(_sr_cfg["direction_filter"].get("BUY_min_confidence", 70))
-            _short_min_conf = int(_sr_cfg["direction_filter"].get("SHORT_min_confidence", 70))
+            _buy_min_conf = int(_sr_cfg["direction_filter"].get("BUY_min_confidence", _fb_buy))
+            _short_min_conf = int(_sr_cfg["direction_filter"].get("SHORT_min_confidence", _fb_short))
         except Exception:
-            _buy_min_conf = 70
-            _short_min_conf = 70
+            _buy_min_conf = _fb_buy
+            _short_min_conf = _fb_short
 
         _dir_conf_map = {"BUY": _buy_min_conf, "SELL_SHORT": _short_min_conf}
         _min_conf_for_dir = _dir_conf_map.get(direction, 65)
