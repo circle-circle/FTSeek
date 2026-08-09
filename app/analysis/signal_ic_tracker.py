@@ -494,7 +494,7 @@ def get_ic_summary(
             _excl_clause = f" AND strategy_id NOT IN ({_placeholders})"
         
         rows = conn.execute(f"""
-            SELECT strength, {forward_col}, strategy_id, direction, trade_date
+            SELECT strength, {forward_col}, strategy_id, direction, trade_date, symbol
             FROM signal_snapshots
             WHERE {forward_col} IS NOT NULL
               AND strength IS NOT NULL
@@ -553,6 +553,28 @@ def get_ic_summary(
             ic, pval = spearmanr(signed_strengths, fwd_rets_list)
         else:
             ic, pval = _spearman_fallback(signed_strengths, fwd_rets_list)
+
+        # 2026-08-09 (独立样本修正): 同一天同一标的的多个信号共享同一 fwd_ret
+        #   (T+1 是同一个收盘价) → 信号数≠独立样本数, n 虚高. 按 (trade_date, symbol,
+        #   direction) 聚合: strength 取组内均值, fwd_ret 取组内唯一值, 再算秩相关.
+        #   同时报告 n_independent (独立 日期×标的×方向 对数) 供周报对照信号数.
+        indep_map: dict = {}
+        for r in rows:
+            if r["direction"] == "NEUTRAL":
+                continue
+            _k = (r["trade_date"], r["symbol"], r["direction"])
+            indep_map.setdefault(_k, []).append((float(r["strength"]), float(r[forward_col])))
+        ic_independent = None
+        n_independent = len(indep_map)
+        if n_independent >= 5:
+            i_s = [sum(x[0] for x in v) / len(v) for v in indep_map.values()]
+            i_f = [v[0][1] for v in indep_map.values()]  # fwd_ret 组内同值, 取首
+            if spearmanr is not None:
+                _ic_ind, _ = spearmanr(i_s, i_f)
+            else:
+                _ic_ind, _ = _spearman_fallback(i_s, i_f)
+            if _ic_ind is not None and _ic_ind == _ic_ind:
+                ic_independent = round(float(_ic_ind), 4)
         
         # 按日计算 IC (用于 IC positive rate)
         from collections import defaultdict
@@ -627,6 +649,10 @@ def get_ic_summary(
         for r in rows:
             dir_groups[r["direction"]].append(r)
         for d, group in dir_groups.items():
+            if d == "NEUTRAL":
+                # 2026-08-09: NEUTRAL = "不交易" 信号, fwd_ret 是市场自然漂移,
+                #   strength 与它无因果 → IC 无意义, 排除出方向IC (与全局/按策略口径一致).
+                continue
             if len(group) < 5:
                 continue
             s = [r["strength"] for r in group]
@@ -645,6 +671,8 @@ def get_ic_summary(
             "status": "ok",
             "ic_mean": round(float(ic), 4) if ic is not None and ic == ic else None,
             "ic_p_value": round(float(pval), 4) if pval is not None and pval == pval else None,
+            "ic_independent": ic_independent,   # 2026-08-09: 按(日期×标的×方向)聚合IC
+            "n_independent": n_independent,     # 独立 (日期×标的×方向) 对数
             "ic_positive_rate": round(ic_positive_rate, 3),
             "n_signals": len(rows),
             "n_days": len(by_date),
