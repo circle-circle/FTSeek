@@ -1027,6 +1027,10 @@ playbook:
     observe: true
   premarket_shadow:
     observe: true
+  # 2026-08-09 (用户批准方案1, record-only): 盘前失效评估 — 09:35-09:59 ET 每日一次,
+  #   盘前涨跌幅 vs 指令方向打"若启用将失效"标记 (A逆势追空/B接飞刀/C追涨延伸),
+  #   落 data/premarket_invalidation_shadow.jsonl, 攒样后与成交对照定规则去留. 回滚: false+重启.
+  premarket_invalidation_observe: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
   fallback_when_no_bridge: technical
@@ -1178,6 +1182,15 @@ playbook:
     min_confidence_buy: 0     # 0=不拦 (IC 无证据, 勿在无证据下启用)
     min_confidence_short: 0
     max_sl_pct: 6.0        # 止损距入场 >6% = 单笔失控拦截 (用户哲学"留空间"; 0=不拦)
+  # 2026-08-09 (sim放量, Qoder 50809e7b): 生成路径 conf 门兜底 70→55 —
+  #   60日实测 conf IC≈-0.02 无预测力 (DEB-20260806), 死指标不卡供给.
+  #   阈值可覆盖: 此键 + 重启; 回滚: 恢复 70.
+  supply_conf_gate_buy: 55
+  supply_conf_gate_short: 55
+  # 2026-08-09 (sim放量②, Qoder 67612201): 影子组合 — 被门拦单反事实账本 (record-only).
+  #   三拦点 (vol_gate chase/out_of_band/vwap_gate) → shadow_portfolio_entries.jsonl,
+  #   盘后 scripts/settle_shadow_portfolio.py 结算. 回滚: false + 重启.
+  shadow_portfolio_enabled: true
   # 盘中再入场生成器 (2026-08-06, 用户指示"sim 直上线快速验真"): 盘中供给恢复 —
   #   指令供给全部盘前生成 + topup 已停供 → 盘中零新增机会。本生成器扫"当日已平仓
   #   且前笔非硬亏(>-1%)"标的, 盘中指标确认 thesis 延续 (回踩VWAP带内 + slope_5m
