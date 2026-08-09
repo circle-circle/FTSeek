@@ -3,9 +3,13 @@ from app.playbook.premarket_invalidation import evaluate_rules
 
 
 def test_short_chase_rule_A():
-    assert evaluate_rules("SELL_SHORT", 3.5) == ["A_short_chase"]
-    assert evaluate_rules("SELL_SHORT", 3.0) == []      # 边界不含
-    assert evaluate_rules("SELL_SHORT", -4.0) == []     # SHORT 顺向不打标
+    # 注意: 实际指令方向枚举是 "SHORT" (playbook_instructions/trade_records),
+    #       非 LLM 输出的 "SELL_SHORT" — 2026-08-09 边界验证抓出测试与实现同错.
+    assert evaluate_rules("SHORT", 3.5) == ["A_short_chase"]
+    assert evaluate_rules("SHORT", 3.0) == []      # 边界不含
+    assert evaluate_rules("SHORT", -4.0) == []     # SHORT 顺向不打标
+    # 兼容旧枚举 (LLM 输出层) 不应命中 — 防方向错配复发
+    assert evaluate_rules("SELL_SHORT", 3.5) == []
 
 
 def test_long_knife_rule_B():
