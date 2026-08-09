@@ -233,6 +233,51 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
     except Exception:
         return False
 
+
+# 2026-08-09 (用户指示 sim 放量①, 影子组合): 被门拦下的"本会触发"单落影子入场台账,
+#   盘后由 scripts/settle_shadow_portfolio.py 按生产退出栈结算 → 每道门贡献可测
+#   (真成交组 vs 被拦组的净结果对照), 零行为变更. 每指令每日只记首次.
+_SP_EMITTED: set = set()
+
+
+def _shadow_portfolio_emit(inst, symbol, is_short, blocked_by, entry_path,
+                           current_price, entry_price, vwap_dev=None):
+    """影子组合入场登记 (record-only). 任何异常静默."""
+    try:
+        from app.core.config_container import get_config as _gc_sp
+        if not bool(_gc_sp().get_dotted("playbook.shadow_portfolio_enabled", True)):
+            return
+        if "TEST" in str(symbol).upper():
+            return
+        _d = _today_et_str()
+        _lk = (inst.get("id"), _d)
+        if _lk in _SP_EMITTED:
+            return
+        _SP_EMITTED.add(_lk)
+        import json as _jsp
+        from datetime import datetime as _dtsp
+        from pathlib import Path as _Psp
+        _row = {
+            "ts": _dtsp.now(_now_et()).isoformat(timespec="seconds"),
+            "date": _d, "schema": "v1",
+            "inst_id": inst.get("id"), "decision_id": inst.get("decision_id"),
+            "symbol": symbol, "direction": "SHORT" if is_short else "LONG",
+            "blocked_by": blocked_by, "entry_path": entry_path,
+            "shadow_entry_price": round(float(current_price or 0), 4),
+            "anchor": round(float(entry_price or 0), 4),
+            "inst_stop_loss": inst.get("stop_loss"), "inst_take_profit": inst.get("take_profit"),
+            "position_size": inst.get("position_size"),
+            "confidence": inst.get("confidence"),
+            "vwap_dev": round(vwap_dev, 6) if vwap_dev is not None else None,
+        }
+        with open(_Psp(__file__).resolve().parents[2] / "data" / "shadow_portfolio_entries.jsonl",
+                  "a", encoding="utf-8") as _fsp:
+            _fsp.write(_jsp.dumps(_row, ensure_ascii=False) + "\n")
+        logger.info(f"[影子组合] {symbol} {'SHORT' if is_short else 'LONG'} "
+                    f"被拦入场已登记 (blocked_by={blocked_by}, px=${current_price:.2f})")
+    except Exception:
+        pass
+
 # ── ADR-008 (2026-06-28): Playbook 方向审计日志 ────────────────────────
 
 def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_direction: Optional[str], vote_result: Dict[str, Any]):
@@ -4334,6 +4379,13 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   量能门形同虚设. 修复: 仅"价格出带"(非质量门拦截)时才允许 reanchor.
     _reanchored = False
     _vol_gate_actively_blocked = (not _vol_ok and _intraday_vr is not None)
+    # 影子组合 (2026-08-09): 量能门拦下的 chase 单 / 跑出追入带的单 → 登记影子入场
+    if not triggered and _vol_gate_actively_blocked and _entry_path == "chase":
+        _shadow_portfolio_emit(inst, symbol, is_short, "vol_gate", _entry_path,
+                               current_price, entry_price)
+    elif not triggered and _entry_path == "out_of_band":
+        _shadow_portfolio_emit(inst, symbol, is_short, "band", _entry_path,
+                               current_price, entry_price)
     if not triggered and not _vol_gate_actively_blocked:
         try:
             _ra_enabled = bool(pb_cfg.get("entry_reanchor_enabled", False))
@@ -4431,6 +4483,9 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 f"dev={_vwap_dev:+.4f} dir={'SHORT' if is_short else 'BUY'} (当日VWAP逆侧)"
             )
             _emit_trigger_miss("vwap_gate_block", current_price)
+            # 影子组合 (2026-08-09): VWAP 门拦下的本会触发单 → 影子入场 (A/B gated 臂全覆盖)
+            _shadow_portfolio_emit(inst, symbol, is_short, "vwap_gate", _entry_path,
+                                   current_price, entry_price, _vwap_dev)
 
     if triggered:
         logger.info(
