@@ -41,8 +41,30 @@ _LIMIT_SHADOW_EMITTED: set = set()
 #   零推送 CPU (ADR-013 结论不动), 零订阅槽位累积; 频次 ≈影子行数 (~233/日), 远低于限额.
 _OB_PULL_WARNED: set = set()
 
+# 2026-08-09 (放量前性能预审): micro 拉取 60s/symbol 缓存 — 同一评估轮内
+#   entry_timing/limit_entry/再入场 多路径可能各拉一次 (每次=一次完整 OpenD 连接,
+#   实测 ~300ms), 缓存后同轮共享一次拉取, 且同轮数据一致. None 也短缓存 30s
+#   (OpenD 拒答时防每轮重锤). 触发轮间隔 300s ≫ TTL, 不牺牲新鲜度.
+_L1_MICRO_CACHE: Dict[str, tuple] = {}   # symbol -> (ts, value_or_None)
+_L1_MICRO_TTL = 60.0
+_L1_MICRO_NEG_TTL = 30.0
+
 
 def _fetch_l1_micro(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
+    """带 60s 缓存的 L1 盘口快照入口 (所有调用方共用)."""
+    import time as _t
+    _hit = _L1_MICRO_CACHE.get(symbol)
+    if _hit:
+        _ts, _val = _hit
+        _ttl = _L1_MICRO_TTL if _val is not None else _L1_MICRO_NEG_TTL
+        if _t.time() - _ts < _ttl:
+            return _val
+    _val = _fetch_l1_micro_uncached(scheduler, symbol)
+    _L1_MICRO_CACHE[symbol] = (_t.time(), _val)
+    return _val
+
+
+def _fetch_l1_micro_uncached(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
     """触发时点 L1 盘口快照 (bid1/ask1/量/spread_bps)。失败/无数据返回 None。
 
     2026-08-07 终修 (用户接管): 弃用主进程共享 _quote_ctx 拉盘口 — 实盘观测其
