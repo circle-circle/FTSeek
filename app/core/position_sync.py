@@ -1700,15 +1700,23 @@ class USPositionSync:
                     })
                 except Exception:
                     pass
-                # 飞书告警
+                # 飞书告警 (2026-08-09 风暴消除: 改走 PushHub + dedup_key,
+                #   同 key 60s 去重 (PushHub 默认 TTL), broker 抖动时防每轮重推.
+                #   Qoder 复核修正: level 必须 CRITICAL — 仅 CRITICAL 广播全通道,
+                #   HIGH 是"任一成功即停" (DingTalk 优先) → P0 告警会在飞书静默丢失)
                 try:
-                    from app.notifier.feishu import send_text
-                    send_text(
-                        f"🔴 [方向翻转·P0] {symbol}\n"
-                        f"内存={old_dir_str} → Broker={new_dir_str}\n"
-                        f"size={info['qty']}, cost=${info['cost']:.2f}\n"
-                        f"SL 已重算, DB 已同步"
-                    )
+                    from app.push import get_push_hub, PushMessage, Level, Category
+                    get_push_hub().push(PushMessage(
+                        title=f"🔴 [方向翻转·P0] {symbol}",
+                        body=(
+                            f"内存={old_dir_str} → Broker={new_dir_str}\n"
+                            f"size={info['qty']}, cost=${info['cost']:.2f}\n"
+                            f"SL 已重算, DB 已同步"
+                        ),
+                        level=Level.CRITICAL,
+                        category=Category.SYSTEM,
+                        dedup_key=f"pos_flip:{symbol}:{new_dir_str}",
+                    ))
                 except Exception:
                     pass
                 continue  # 方向已修正, 跳过后续 qty 逻辑

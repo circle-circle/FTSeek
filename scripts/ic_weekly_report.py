@@ -34,6 +34,20 @@ def get_ic_summary():
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+def _count_neutral_signals():
+    """30天内 NEUTRAL 信号数 (供占比展示; NEUTRAL 不计入IC)."""
+    try:
+        db = sqlite3.connect(str(BASE / "data" / "signal_snapshots.db"))
+        n = db.execute(
+            "SELECT COUNT(*) FROM signal_snapshots WHERE direction='NEUTRAL' "
+            "AND fwd_ret_t1 IS NOT NULL AND trade_date >= date('now','-30 days')"
+        ).fetchone()[0]
+        db.close()
+        return n
+    except Exception:
+        return None
+
+
 def get_signal_stats():
     """信号统计 (按策略×方向×强度)"""
     try:
@@ -91,6 +105,12 @@ def get_okr_progress():
         ).fetchone()["n"]
 
         db.close()
+        # 2026-08-09 (对抗性审查修正): "还需0笔" 是误导 — gap=0 实为已达标.
+        #   显示已达标+超出量; 仅未达标时显示差距.
+        if filled >= 30:
+            okr_gap_text = f"✅ 已达标 (超出{filled - 30}笔, 目标≥30)"
+        else:
+            okr_gap_text = f"还需{30 - filled}笔有outcome (目标≥30)"
         return {
             "total_signals": total_signals,
             "filled": filled,
@@ -98,10 +118,41 @@ def get_okr_progress():
             "week_signals": week_signals,
             "week_filled": week_filled,
             "okr_target_30": "KR1.3: 需≥30笔有outcome",
+            "okr_gap_text": okr_gap_text,
             "okr_gap": max(30 - filled, 0),
         }
     except Exception as e:
         return {"error": str(e)}
+
+def _read_shadow_portfolio_summary():
+    """读取影子组合结算 (shadow_portfolio_outcomes.jsonl), 按 blocked_by 聚合.
+
+    返回 [{gate, n, net, win_rate}] 或 [] (无数据/未采集). 2026-08-09 新增.
+    """
+    try:
+        from collections import defaultdict
+        p = BASE / "data" / "shadow_portfolio_outcomes.jsonl"
+        if not p.exists():
+            return []
+        agg = defaultdict(list)
+        for l in open(p, encoding="utf-8"):
+            try:
+                r = json.loads(l)
+                agg[r.get("blocked_by", "unknown")].append(float(r.get("net", 0)))
+            except Exception:
+                continue
+        out = []
+        for gate, nets in agg.items():
+            w = sum(1 for x in nets if x > 0)
+            out.append({
+                "gate": gate, "n": len(nets),
+                "net": round(sum(nets), 2),
+                "win_rate": w / len(nets) * 100,
+            })
+        return sorted(out, key=lambda g: g["net"])
+    except Exception:
+        return []
+
 
 def generate_report():
     """生成周报"""
@@ -116,7 +167,7 @@ def generate_report():
     if "error" not in okr:
         lines.append(f"  信号总量: {okr['total_signals']} (本周+{okr['week_signals']})")
         lines.append(f"  已回填: {okr['filled']} ({okr['fill_rate']}%) (本周+{okr['week_filled']})")
-        lines.append(f"  KR1.3差距: 还需{okr['okr_gap']}笔有outcome (目标≥30)")
+        lines.append(f"  KR1.3: {okr.get('okr_gap_text', okr.get('okr_target_30', ''))}")
     else:
         lines.append(f"  错误: {okr['error']}")
 
@@ -125,7 +176,14 @@ def generate_report():
     def _fnum(x, fmt="{:.4f}"):
         return fmt.format(x) if isinstance(x, (int, float)) else "?"
     if ic.get("status") == "ok" and ic.get("ic_mean") is not None:
-        lines.append(f"  全局IC: {_fnum(ic['ic_mean'])} (p={_fnum(ic.get('ic_p_value'))}) n={ic['n_signals']}")
+        _n_ind = ic.get("n_independent")
+        _ind_suffix = f" (独立样本={_n_ind})" if _n_ind else ""
+        lines.append(f"  全局IC: {_fnum(ic['ic_mean'])} (p={_fnum(ic.get('ic_p_value'))}) n={ic['n_signals']}{_ind_suffix}")
+        # 2026-08-09: 独立样本IC (同标的多信号共享T+1, n虚高 → 聚合后校验)
+        _ic_ind = ic.get("ic_independent")
+        if _ic_ind is not None:
+            _ind_flag = "⚠️ 聚合IC与信号IC分歧大" if abs(_ic_ind - float(ic["ic_mean"])) > 0.05 else ""
+            lines.append(f"  独立样本IC: {_fnum(_ic_ind)} (按日期×标的聚合) {_ind_flag}")
         lines.append(f"  按策略:")
         for s, v in ic.get("by_strategy", {}).items():
             _iv = v.get("ic") or 0
@@ -136,6 +194,10 @@ def generate_report():
             _iv = v.get("ic") or 0
             emoji = "✅" if _iv > 0 else "🔴"
             lines.append(f"    {emoji} {d}: IC={_fnum(v.get('ic'))} n={v['n']}")
+        # 2026-08-09: NEUTRAL 占比单独报告 (不伪装成IC)
+        _neu_n = _count_neutral_signals()
+        if _neu_n is not None:
+            lines.append(f"    ⚪ NEUTRAL: n={_neu_n} ({_neu_n / max(ic['n_signals'], 1) * 100:.0f}% 信号无方向 — 不计IC)")
     elif ic.get("status") == "insufficient_data" or ic.get("ic_mean") is None:
         lines.append(f"  数据不足: {ic.get('n_signals',0)}/{ic.get('min_required',30)}")
     else:
@@ -164,6 +226,16 @@ def generate_report():
                 suggestions.append(f"  🔴 {d}方向: IC={v['ic']:.4f} 负IC, 信号反指标")
     if not suggestions:
         suggestions.append("  (样本不足, 暂无建议)")
+
+    # 2026-08-09 (sim放量②影子组合进周报): 被门拦单的反事实账本 —
+    #   有结算数据时, 按 blocked_by 分组净贡献给出"该松哪道门"的实测依据.
+    _sp_gates = _read_shadow_portfolio_summary()
+    if _sp_gates:
+        suggestions.append("  ── 影子组合 (被门拦单反事实结算) ──")
+        for g in _sp_gates:
+            _net, _n, _win = g["net"], g["n"], g["win_rate"]
+            _car = "🔴 拦掉的是钱 (该松)" if _net > 0 else "✅ 拦掉的是亏 (保持)"
+            suggestions.append(f"    {g['gate']}: n={_n} 净={_net:+.2f} 胜率={_win:.0f}% {_car}")
     lines.extend(suggestions)
 
     return "\n".join(lines)

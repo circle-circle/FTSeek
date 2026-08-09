@@ -120,14 +120,42 @@ def main(push=False, dry=False):
 
     msg = _build_message(stale, missing)
     if msg and push and not dry:
+        # 2026-08-09 (告警风暴消除): 文件持久化冷却 — 30min 内同内容不重复推.
+        #   看门狗是 cron 独立进程, 进程内状态无效; 持久化到 data/watchdog_last_push.json.
+        #   若 OpenD/Futu 持续不可用, watchdog 每轮都检到停更 → 无冷却=每轮1条告警风暴.
+        import json as _json
+        _state_file = DATA / "watchdog_last_push.json"
+        _now = time.time()
+        _suppress = False
         try:
-            from app.notifier.feishu import send_text
-            send_text(msg)
-            print("[pushed] 飞书")
-        except Exception as e:
-            print(f"[warn] 推送失败: {e}")
+            if _state_file.exists():
+                with open(_state_file) as _f:
+                    _prev = _json.load(_f)
+                if _prev.get("msg_hash") == _hash_msg(msg) and _now - _prev.get("ts", 0) < 1800:
+                    _suppress = True
+        except Exception:
+            pass
+        if _suppress:
+            print("[cooldown] 30min 内同告警已推过, 跳过")
+        else:
+            try:
+                from app.notifier.feishu import send_text
+                send_text(msg)
+                print("[pushed] 飞书")
+                try:
+                    with open(_state_file, "w") as _f:
+                        _json.dump({"ts": _now, "msg_hash": _hash_msg(msg)}, _f)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[warn] 推送失败: {e}")
     elif not msg:
         print("[ok] 全部新鲜, 不推送")
+
+
+def _hash_msg(msg: str) -> str:
+    import hashlib
+    return hashlib.md5(msg.encode("utf-8")).hexdigest()[:16]
 
 
 if __name__ == "__main__":

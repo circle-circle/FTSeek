@@ -208,40 +208,32 @@ def format_postmarket_report(review_result: Dict) -> str:
 def notify(message: str) -> tuple:
     """双通道推送: 飞书(主) + 钉钉(备)
 
+    2026-08-09 (风暴消除): 改走 PushHub — 它内部按优先级串行尝试
+    DingTalk > Feishu > FlagFile, 天然实现"主+备"双通道, 且带全局去重/聚合.
+    原实现裸调 FeishuNotifier + DingTalkNotifier 绕过 PushHub.
+
     Returns:
-        (ok_feishu, ok_dingtalk)
+        (ok_feishu, ok_dingtalk) — PushHub 无法区分单通道结果, 返回 (ok, ok) 或 (False, False)
     """
     if not message:
         return False, False
 
-    ok_feishu = False
-    ok_dingtalk = False
-
-    # 飞书
     try:
-        from app.notifier.feishu import FeishuNotifier
-        feishu = FeishuNotifier()
-        if feishu.webhook_url:
-            ok_feishu = feishu.send_text(message)
-            logger.info("[CatalystNotify] 飞书推送%s", "✓" if ok_feishu else "✗")
-        else:
-            logger.debug("[CatalystNotify] FEISHU_WEBHOOK_URL_US 未配置")
+        from app.push import get_push_hub, PushMessage, Level, Category
+        # 2026-08-09 (Qoder 复核修正): 必须 CRITICAL — PushHub 仅 CRITICAL 广播全通道,
+        #   NORMAL/HIGH 是"任一成功即停" (DingTalk 优先) → 飞书会静默丢消息,
+        #   违背本函数"飞书(主)+钉钉(备)双通道"的原始语义. dedup 仍生效 (内容键).
+        ok = get_push_hub().push(PushMessage(
+            title=message[:60],
+            body=message[60:] if len(message) > 60 else "",
+            level=Level.CRITICAL,
+            category=Category.SYSTEM,
+        ))
+        logger.info("[CatalystNotify] PushHub 推送%s", "✓" if ok else "✗")
+        return (ok, ok)
     except Exception as e:
-        logger.warning("[CatalystNotify] 飞书推送异常: %s", e)
-
-    # 钉钉
-    try:
-        from app.notifier.dingtalk import DingTalkNotifier
-        dingtalk = DingTalkNotifier()
-        if dingtalk.enabled:
-            ok_dingtalk = dingtalk.send_text(message)
-            logger.info("[CatalystNotify] 钉钉推送%s", "✓" if ok_dingtalk else "✗")
-        else:
-            logger.debug("[CatalystNotify] DINGTALK_WEBHOOK_URL_US 未配置")
-    except Exception as e:
-        logger.warning("[CatalystNotify] 钉钉推送异常: %s", e)
-
-    return ok_feishu, ok_dingtalk
+        logger.warning("[CatalystNotify] PushHub 推送异常: %s", e)
+        return False, False
 
 
 def push_premarket_report(verdicts: List, market_ctx: Optional[Dict] = None):

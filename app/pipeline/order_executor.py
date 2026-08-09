@@ -861,20 +861,24 @@ def _close_short_for_long(scheduler, symbol: str, qty: float, current_price: flo
         scheduler._set_cooldown(symbol)
         logger.info(f"[空头转多头] {symbol} 空头已平仓, 下轮扫描将尝试开多头")
 
-        # 通知
+        # 通知 (2026-08-09 风暴消除: 改走 PushHub — 统一去重/聚合通道,
+        #   原实现直接 DingTalkNotifier.send_text 绕过 PushHub)
         try:
-            from app.notifier.dingtalk import DingTalkNotifier
-            notifier = DingTalkNotifier()
-            msg = (
-                f"🔄 FTSeek-US 持仓冲突自动处理\n\n"
-                f"📌 标的: {symbol}\n"
-                f"📉 操作: 平空仓 {int(qty)} 股 @ ${current_price:.2f}\n"
-                f"📈 原因: 新信号 LONG, 自动清理反向空头\n"
-                f"⏳ 下轮扫描将尝试开多头"
-            )
-            notifier.send_text(msg)
+            from app.push import get_push_hub, PushMessage, Level, Category
+            get_push_hub().push(PushMessage(
+                title=f"🔄 持仓冲突自动处理 ({symbol})",
+                body=(
+                    f"📌 标的: {symbol}\n"
+                    f"📉 操作: 平空仓 {int(qty)} 股 @ ${current_price:.2f}\n"
+                    f"📈 原因: 新信号 LONG, 自动清理反向空头\n"
+                    f"⏳ 下轮扫描将尝试开多头"
+                ),
+                level=Level.HIGH,
+                category=Category.SYSTEM,
+                dedup_key=f"pos_conflict:close_short:{symbol}",
+            ))
         except Exception as e:
-            logger.warning(f"[空头转多头] 钉钉通知失败: {e}")
+            logger.warning(f"[空头转多头] 通知失败: {e}")
         return True
 
     except Exception as e:
@@ -955,20 +959,23 @@ def _close_long_for_short(scheduler, symbol: str, qty: float, current_price: flo
         scheduler._set_cooldown(symbol)
         logger.info(f"[多头转空头] {symbol} 多头已平仓, 下轮扫描将尝试开空头(期权)")
 
-        # 通知
+        # 通知 (2026-08-09 风暴消除: 改走 PushHub 同上)
         try:
-            from app.notifier.dingtalk import DingTalkNotifier
-            notifier = DingTalkNotifier()
-            msg = (
-                f"🔄 FTSeek-US 持仓冲突自动处理\n\n"
-                f"📌 标的: {symbol}\n"
-                f"📈 操作: 平多仓 {int(qty)} 股 @ ${current_price:.2f}\n"
-                f"📉 原因: 新信号 SHORT, 自动清理反向多头\n"
-                f"⏳ 下轮扫描将尝试期权做空"
-            )
-            notifier.send_text(msg)
+            from app.push import get_push_hub, PushMessage, Level, Category
+            get_push_hub().push(PushMessage(
+                title=f"🔄 持仓冲突自动处理 ({symbol})",
+                body=(
+                    f"📌 标的: {symbol}\n"
+                    f"📈 操作: 平多仓 {int(qty)} 股 @ ${current_price:.2f}\n"
+                    f"📉 原因: 新信号 SHORT, 自动清理反向多头\n"
+                    f"⏳ 下轮扫描将尝试期权做空"
+                ),
+                level=Level.HIGH,
+                category=Category.SYSTEM,
+                dedup_key=f"pos_conflict:close_long:{symbol}",
+            ))
         except Exception as e:
-            logger.warning(f"[多头转空头] 钉钉通知失败: {e}")
+            logger.warning(f"[多头转空头] 通知失败: {e}")
         return True
 
     except Exception as e:

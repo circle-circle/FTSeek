@@ -887,32 +887,23 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
 # 推送
 # ════════════════════════════════════════════════════════════
 def notify(message: str):
-    ok_feishu = False
-    ok_dingtalk = False
-
+    # 2026-08-09 (风暴消除): 改走 PushHub 统一通道 (DingTalk>Feishu 串行备援 + 去重).
+    #   原实现裸调 FeishuNotifier + DingTalkNotifier.
+    #   Qoder 复核修正: ①level 必须 CRITICAL (仅 CRITICAL 广播全通道; NORMAL 是
+    #   任一成功即停 → 飞书静默丢消息) ②返回真实结果, 不恒 (True, True).
     try:
-        from app.notifier.feishu import FeishuNotifier
-        feishu = FeishuNotifier()
-        if feishu.webhook_url:
-            ok_feishu = feishu.send_text(message)
-            logger.info(f"[飞书] 推送{'成功' if ok_feishu else '失败'}")
-        else:
-            logger.warning("[飞书] FEISHU_WEBHOOK_URL_US 未配置")
+        from app.push import get_push_hub, PushMessage, Level, Category
+        ok = get_push_hub().push(PushMessage(
+            title=message[:60],
+            body=message[60:] if len(message) > 60 else "",
+            level=Level.CRITICAL,
+            category=Category.SYSTEM,
+        ))
+        logger.info(f"[push] PushHub 推送{'成功' if ok else '失败'}")
+        return ok, ok
     except Exception as e:
-        logger.error(f"[飞书] 推送异常: {e}")
-
-    try:
-        from app.notifier.dingtalk import DingTalkNotifier
-        dingtalk = DingTalkNotifier()
-        if dingtalk.enabled:
-            ok_dingtalk = dingtalk.send_text(message)
-            logger.info(f"[钉钉] 推送{'成功' if ok_dingtalk else '失败'}")
-        else:
-            logger.warning("[钉钉] DINGTALK_WEBHOOK_URL_US 未配置")
-    except Exception as e:
-        logger.error(f"[钉钉] 推送异常: {e}")
-
-    return ok_feishu, ok_dingtalk
+        logger.error(f"[push] PushHub 推送异常: {e}")
+        return False, False
 
 
 # ════════════════════════════════════════════════════════════
