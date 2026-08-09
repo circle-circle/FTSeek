@@ -356,3 +356,90 @@ regime 依赖, 而生产环境没有方向×regime 门。§4.3 提了 (risk_on �
 **这个系统现在最缺的不是更多规则, 而是更少的同时变化 + 一次对"供给端有没有
 真 edge"的诚实审判。** 退出工程已经做到测量能力的极限, 接下来两周的价值
 全部在测量纪律, 不在新机制。
+
+---
+
+## 十四、Prompt ↔ 指令 ↔ 复盘 联动闭环设计 (2026-08-09, Hermes 追加)
+
+### 14.1 现状联动图 (已存在的环节)
+
+```
+复盘层 ──→ ① strategy_memory ──→ trade_experience 文本 ──→ prompt 注入 (LLM 自行解读)
+复盘层 ──→ ② condition_expectancy.json ──→ 条件黑名单文本 ──→ prompt 注入 (软约束) ✓ 已结构化
+复盘层 ──→ ③ claim IC ──→ 论据有效性反馈 ──→ 已停用 (7/18, 跨 regime 污染)
+复盘层 ──→ ④ feedback_learner ──→ 用户反馈建议 ──→ 未自动回注 (人工决策)
+生成层 ──→ 19 字段 JSON ──→ signal_snapshots ──→ bridge ──→ playbook_instructions (只消费部分字段)
+```
+
+### 14.2 断裂点诊断
+
+| # | 断裂 | 后果 |
+|---|---|---|
+| 🔴 1 | trade_experience 是自由文本 (LLM 自行解读) | 复盘结论强度不可控 — 过度回应 (个股全亏→SKIP) 或忽略 (上下文过长) |
+| 🔴 2 | **score rubric 无回注** — 复盘发现 "7.0分 WR29%" 无法写回 prompt 评分定义 | score 永远是"分析师信心", 复盘的区分度发现无法闭环修正生成层 |
+| 🟠 3 | claim_type IC 停用 (7/18 跨 regime) — 但 8 月已是纯 DA 时代 | 论据类型预测力无反馈 |
+| 🟠 4 | 输出 19 字段 vs 消费端对不齐 — 复盘只归因 exit_reason/时段/方向 | 复盘看不到 "哪个 score 档/哪类论据赚钱" — 归因与生成维度脱节 |
+| 🟡 5 | feedback_learner 建议不自动回注 | 用户反馈停留在人工环节 |
+
+### 14.3 优化后的闭环 (4 条结构化回注通道)
+
+```
+┌─ 生成层: prompt + rubric(score定义) + 分析师/挑战者
+│    ↓ score/direction/claim_type/execution_plan
+├─ 指令层: signal_snapshots → bridge → playbook_instructions
+│    ↓ 触发/执行
+├─ 执行层: 入场(时段×方向×动量) → 退出(SL/死信号/trailing)
+│    ↓ trade_records (exit_reason/pnl_net/mfe/mae)
+├─ 复盘层: post_market_audit → 归因 (score档×WR / claim_type×alpha / 退出×期望)
+│    ↓ 结构化反馈 (4 通道)
+└─ 反馈层 → 回生成层 (下一轮)
+```
+
+**通道① score rubric 校准闭环 (P1)**
+- prompt 加显式 rubric: `7.0=挑战者完全确认+催化剂+数据完整; 6.0=有保留(挑战者质疑); ≤6 证据缺陷`
+- 复盘层每 2 周算 score 档 × WR/期望 → 自动收紧/放宽 rubric 文本
+- score 从"信心"变"可校准的证据强度" — 复盘数据直接改写生成规则
+
+**通道② claim_type IC 按 DA regime 重算 (P2)**
+- 7/18 停用是跨 regime; DA 时代已 2 个月 (n≈200+), 按 DA 子集重算
+- 输出: `product_catalyst α=+0.8% (n=45) 有效✅ / valuation_cheap α=-0.3% 无效⚠️`
+- 复用 _load_claim_ic_for_prompt 函数体, 改 regime 过滤后启用
+
+**通道③ 条件黑名单 (已启用 ✓ 保留)**
+- condition_expectancy 每日更新注入, 软约束
+
+**通道④ strategy_memory pattern 标签化 (P3)**
+- 文本 hint → pattern 标签: `LONG+回调日(chg-2%~0)+ATR 3-4% → WIN (n=12, WR 67%)`
+- prompt 按当前标的 setup 匹配注入 — 从"看文本自己判断"变"预设 pattern 先验"
+
+**通道⑤ 输出精简 + 归因对齐 (P2)**
+- 19 字段 → 消费端反推: 保留 score/direction/bull/bear/execution_plan/risks/data_quality_note
+- rating/confidence/constraints/causal_chain/key_levels 标记弃用
+- 复盘归因表增加 score 档列 + claim_type 列
+
+### 14.4 优先级路线图
+
+| 优先级 | 动作 | 依赖 | 预期 |
+|---|---|---|---|
+| P1 | prompt 加 score rubric + 复盘 2 周校准 | 挑战者强制表态数据 (采集中) | score 有区分度 + 可持续校准 |
+| P2 | claim IC 按 DA regime 重算回注 | 8 月 DA n≈200 已够 | 论据权重可学习 |
+| P2 | 输出精简 + 归因表加 score/claim 列 | 无 | 生成↔复盘维度对齐 |
+| P3 | strategy_memory pattern 标签化 | P1/P2 后 | 经验注入结构化 |
+| 持续 | condition_expectancy 黑名单 | 已启用 | 条件负期望规避 |
+
+### 14.5 辩论点 (供对抗性攻击)
+
+1. **score rubric 会否导致"评分通胀/通缩"**: LLM 为了满足 rubric 的"挑战者确认"条件而
+   让挑战者"配合" (挑战者确认率上升但确认无信息量)? 校准闭环的反馈延迟 (2 周) 是否太长?
+2. **复盘校准闭环是否过拟合风险**: 每 2 周调 rubric, 样本 30-50 笔, 噪声波动可能
+   导致 rubric 反复横跳 (本周收紧下周放宽)? 需要最小样本阈值 (n≥30) + 双窗口确认?
+3. **claim IC 按 DA regime 重算**: 8 月 n≈200 够吗? 论据类型粒度 (10 类) × regime 是否
+   过度切分? 与小样本的平衡?
+4. **输出精简**: 删 rating/confidence/constraints 等字段, 是否丢失未来可用的信息
+   (如 constraints 用于下游风险检查)? 精简 vs 完整性的边界?
+5. **pattern 标签化 (通道④)**: pattern 标签是否变成"新的 score" (同样无区分度)?
+   WIN pattern 的 n=12 样本是否又是噪声分类器?
+6. **闭环的循环依赖**: 复盘校准 rubric → rubric 改变生成 → 生成改变交易 → 交易改变
+   复盘 — 系统是否可能振荡 (每次校准过度反应)? 需要阻尼机制?
+7. **人工 vs 自动**: 校准闭环全自动 (每 2 周自动改 prompt) 还是半自动 (出建议人工审批)?
+   基线纪律 (post-blackout) 对 prompt 改动是否同样适用?
