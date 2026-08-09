@@ -51,7 +51,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
-PROMPT_VERSION = "v2.2"  # scan 落库归因戳; v2.2=可证伪字段+证据清单+负反馈注入 (2026-07-25 用户批, DEB-20260725-da-ue-pe-agent-optimization P1/P2/P3/P4)
+PROMPT_VERSION = "v2.4"  # scan 落库归因戳; v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -105,6 +105,12 @@ SYSTEM_PROMPT_V2 = (
     "不得只输出事件主体本身; [市场佐证] 中的轮出板块/盘中脆弱板块可作级联 SHORT 的 "
     "evidence_ref (self_tier=MARKET_CORROBORATED); 与轮出板块同向的 LONG 需在 thesis 中自证"
     "为何逆板块风仍成立。级联 SHORT 同受第 8 条高门槛约束。\n"
+    # v2.4 (2026-08-09, DEB-20260808-signal-source §17.1): 结构性约束前置 + 回调优先 —
+    #   下游 admission 硬拦 SL>6%, 追涨日 LONG 实证净负; 让 LLM 不产注定被拦/低质的单.
+    "10. 结构约束(下游硬规, 违反即废单): 论点对应的止损距离须在 2-5% (>6% 被准入硬拦); "
+    "不接当日跌>5% 且无企稳证据的接飞刀 LONG; 入场区贴近支撑/VWAP 的回踩企稳优先于新高追涨延伸。\n"
+    "11. 回调优先(8月实证): 做多论点优先选'回调日企稳'标的 (回调日 LONG 净正 / 追涨日 LONG 净负); "
+    "强势延伸日的 LONG 需在 thesis 自证为何不追高。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
     "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
