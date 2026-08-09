@@ -1,15 +1,23 @@
-"""premarket_invalidation.evaluate_rules 单测 (2026-08-09)."""
+"""premarket_invalidation.evaluate_rules 单测 (2026-08-09).
+
+枚举校准 (2026-08-09 DB 实查): playbook_instructions.direction = BUY/SELL_SHORT/SKIP;
+"SHORT" 仅存在于 trade_records。05b50d8f/af15897f 的"SHORT 化"系误改, 本文件恢复
+正确枚举并加归一化回归断言。
+"""
 from app.playbook.premarket_invalidation import evaluate_rules
 
 
-def test_short_chase_rule_A():
-    # 注意: 实际指令方向枚举是 "SHORT" (playbook_instructions/trade_records),
-    #       非 LLM 输出的 "SELL_SHORT" — 2026-08-09 边界验证抓出测试与实现同错.
+def test_short_chase_rule_A_canonical_enum():
+    # 指令表实际枚举 SELL_SHORT (DB: 122 行) — 必须命中
+    assert evaluate_rules("SELL_SHORT", 3.5) == ["A_short_chase"]
+    assert evaluate_rules("SELL_SHORT", 3.0) == []      # 边界不含
+    assert evaluate_rules("SELL_SHORT", -4.0) == []     # 顺向不打标
+
+
+def test_short_chase_rule_A_alias_normalized():
+    # trade_records 口径 SHORT 经归一化后同样命中 (防枚举漂移)
     assert evaluate_rules("SHORT", 3.5) == ["A_short_chase"]
-    assert evaluate_rules("SHORT", 3.0) == []      # 边界不含
-    assert evaluate_rules("SHORT", -4.0) == []     # SHORT 顺向不打标
-    # 兼容旧枚举 (LLM 输出层) 不应命中 — 防方向错配复发
-    assert evaluate_rules("SELL_SHORT", 3.5) == []
+    assert evaluate_rules("sell_short", 3.5) == ["A_short_chase"]  # 大小写不敏感
 
 
 def test_long_knife_rule_B():

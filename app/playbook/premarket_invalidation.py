@@ -28,16 +28,25 @@ _done_date = None             # 进程内每日一次
 
 _RULES = (
     # (rule_id, direction, chg阈值方向, 阈值, 说明)
-    # 注意: direction 用实际指令枚举 "SHORT" (playbook_instructions/trade_records),
-    #       非 LLM 输出枚举 "SELL_SHORT" — 2026-08-09 边界验证发现错写导致 A 规则永不命中.
-    ("A_short_chase", "SHORT", ">", 3.0, "逆势追空 (DEB-20260808 亏损桶)"),
+    # 枚举依据 (2026-08-09 DB 实查): playbook_instructions.direction 实际值为
+    #   BUY(382)/SELL_SHORT(122)/SKIP(164) — "SHORT" 枚举仅存在于 trade_records.
+    #   05b50d8f 把规则改成 "SHORT" 系误改 (其"实际指令枚举"说法与 DB 不符),
+    #   改回 SELL_SHORT 并由 evaluate_rules 做双向归一防漂移。
+    ("A_short_chase", "SELL_SHORT", ">", 3.0, "逆势追空 (DEB-20260808 亏损桶)"),
     ("B_long_knife", "BUY", "<", -5.0, "接飞刀区"),
     ("C_long_chase", "BUY", ">", 3.0, "追涨延伸日"),
 )
 
 
+def _canon_direction(direction: str) -> str:
+    """方向枚举归一: SHORT/SELL_SHORT/SELL → SELL_SHORT (指令表口径)."""
+    d = str(direction or "").upper()
+    return "SELL_SHORT" if d in ("SHORT", "SELL_SHORT", "SELL") else d
+
+
 def evaluate_rules(direction: str, chg_pct: float):
     """纯函数: 返回命中的 rule_id 列表 (可单测)."""
+    direction = _canon_direction(direction)
     hits = []
     for rid, d, op, th, _ in _RULES:
         if direction != d:
