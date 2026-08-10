@@ -78,9 +78,16 @@ def test_settle_long_both_calibers(tmp_path, monkeypatch):
     assert abs(row["gap_from_exit_pct"] - 3.0) < 0.01
     assert abs(row["fullday_from_exit_pct"] - 5.0) < 0.01
     assert row["cf_fullday_from_exit_pnl"] == 250.0
+    # from-exit gap 金额口径 (2026-08-10 补): gap 3.0% × $5000 = $150
+    assert row["cf_gap_from_exit_pnl"] == 150.0
     # 汇总含双口径
     summary = json.loads(out.read_text())
     assert summary["fullday_from_exit"]["n"] == 1
+    # by_symbol 主口径 = from_exit (隔夜裁决正确基准): +$250, caliber 标注
+    sym = summary["by_symbol"]["US.T"]
+    assert sym["total_pnl"] == 250.0          # from_exit, 非 close0 的 $198
+    assert sym["caliber"] == "from_exit"
+    assert sym["win_rate"] == 100.0
 
 
 def test_settle_short_sign():

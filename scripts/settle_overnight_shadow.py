@@ -116,6 +116,7 @@ def _settle_all(dry_run: bool = False) -> int:
         if _exit_px > 0:
             r["gap_from_exit_pct"] = round(sign * (open1 / _exit_px - 1) * 100, 4)
             r["fullday_from_exit_pct"] = round(sign * (close1 / _exit_px - 1) * 100, 4)
+            r["cf_gap_from_exit_pnl"] = round(r["gap_from_exit_pct"] / 100 * notional, 2)
             r["cf_fullday_from_exit_pnl"] = round(r["fullday_from_exit_pct"] / 100 * notional, 2)
         r["settled"] = True
         settled_ct += 1
@@ -149,14 +150,22 @@ def _settle_all(dry_run: bool = False) -> int:
             "win_rate": round(sum(1 for r in _fx if r["fullday_from_exit_pct"] > 0) / len(_fx) * 100, 1),
             "total_pnl": round(sum(r["cf_fullday_from_exit_pnl"] for r in _fx), 2),
         }
-    # 按标的
+    # 按标的 — 主口径 from-exit (隔夜裁决的正确基准: "退出点不平 vs 持夜");
+    #   无 from-exit 数据的行 (exit_price 缺失) 退回 close0 口径.
+    def _sym_pnl(x):
+        return x.get("cf_fullday_from_exit_pnl", x["cf_fullday_pnl"])
+
+    def _sym_win(x):
+        return (x["fullday_from_exit_pct"] if "fullday_from_exit_pct" in x else x["fullday_pct"]) > 0
+
     by_sym = defaultdict(list)
     for r in done:
         by_sym[r["symbol"]].append(r)
     summary["by_symbol"] = {
-        s: {"n": len(v), "win_rate": round(sum(1 for x in v if x["fullday_pct"] > 0) / len(v) * 100, 1),
-            "total_pnl": round(sum(x["cf_fullday_pnl"] for x in v), 2)}
-        for s, v in sorted(by_sym.items(), key=lambda kv: -sum(x["cf_fullday_pnl"] for x in kv[1]))
+        s: {"n": len(v), "win_rate": round(sum(1 for x in v if _sym_win(x)) / len(v) * 100, 1),
+            "total_pnl": round(sum(_sym_pnl(x) for x in v), 2),
+            "caliber": "from_exit" if all("cf_fullday_from_exit_pnl" in x for x in v) else "mixed"}
+        for s, v in sorted(by_sym.items(), key=lambda kv: -sum(_sym_pnl(x) for x in kv[1]))
     }
     OUT.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
