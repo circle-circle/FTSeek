@@ -2021,6 +2021,14 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[playbook] TRADING 盘前指令推送异常 (已隔离): {_e}")
 
+                    # 盘前失效评估 (record-only): 窗口 09:35-09:59 ET 在开盘之后,
+                    # 必须挂 TRADING 分支 (挂 PRE_MARKET 永不触发). 函数内窗口+每日幂等 guard.
+                    try:
+                        from app.playbook.premarket_invalidation import run_check as _pm_inv
+                        _pm_inv(self)
+                    except Exception as _e:
+                        logger.debug(f"[playbook] 盘前失效评估异常 (已隔离): {_e}")
+
                     # 2026-07-24 (用户裁决): topup 盘中窗 (默认 10:30-11:30 ET) — 实时价重评
                     #   回调窗, 捕捉当日跌进窗的标的; 盘前窗命中 PRE_MARKET 分支的同一调用。
                     #   函数自带双窗口时间门/分窗幂等/共享当日上限, 此处无条件调用安全。
@@ -2155,14 +2163,6 @@ class TradingScheduler:
                         _pm_shadow_collect(self)
                     except Exception as _e:
                         logger.debug(f"[LLM策略] 盘前影子行情采集异常 (已隔离): {_e}")
-
-                    # 盘前失效评估 (2026-08-09 用户批准方案1, record-only): 09:35-09:59 ET 每日一次,
-                    #   隔夜/盘前变化 vs 指令方向 打"若启用将失效"标记. 函数内窗口+幂等 guard.
-                    try:
-                        from app.playbook.premarket_invalidation import run_check as _pm_inv
-                        _pm_inv(self)
-                    except Exception as _e:
-                        logger.debug(f"[LLM策略] 盘前失效评估异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计

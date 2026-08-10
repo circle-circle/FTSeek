@@ -39,3 +39,36 @@ def test_double_impossible_and_unknown_direction():
     # BUY 不会命中 SHORT 规则; SKIP 方向永不命中
     assert evaluate_rules("BUY", 5.0) == ["C_long_chase"]  # 不叠加 A
     assert evaluate_rules("SKIP", 9.9) == []
+
+
+# ── 调度钩子放置回归 (2026-08-10) ─────────────────────────────
+# 缺陷: run_check 曾挂在 PRE_MARKET 分支, 但评估窗 09:35-09:59 ET 在开盘
+# (09:30) 之后, 此时 phase=TRADING — 该分支永远进不去, shadow 上线后零样本。
+# 修复: 钩子挪到 TRADING 分支; 以下两条防再挂错。
+
+
+def test_invalidation_window_lies_in_trading_phase(monkeypatch):
+    """09:35-09:59 ET 评估窗内 get_market_phase() 必须是 TRADING (挂 PRE_MARKET 永不触发)。"""
+    import app.core.scheduler_triggers as st
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            # 2026-08-11 周二 09:45 ET (窗内, 非节假日)
+            from datetime import datetime as _dt
+            return tz.localize(_dt(2026, 8, 11, 9, 45)) if tz else _dt(2026, 8, 11, 9, 45)
+
+    monkeypatch.setattr(st, "datetime", _FakeDatetime)
+    assert st.get_market_phase() is st.MarketPhase.TRADING
+
+
+def test_hook_placed_in_trading_branch():
+    """scheduler 源码守护: _pm_inv 调用须位于 TRADING 分支 (TRADING 标记之后、PRE_MARKET elif 之前)。"""
+    from pathlib import Path
+    src = Path("app/core/scheduler_core.py").read_text(encoding="utf-8")
+    i_trading = src.index("if phase == MarketPhase.TRADING:")
+    i_premarket = src.index("elif phase == MarketPhase.PRE_MARKET:")
+    i_hook = src.index("_pm_inv(self)")
+    assert i_trading < i_hook < i_premarket, (
+        "premarket_invalidation 钩子必须挂在 TRADING 分支 (评估窗 09:35-09:59 ET 在开盘后)"
+    )
