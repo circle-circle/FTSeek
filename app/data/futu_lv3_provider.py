@@ -55,6 +55,21 @@ def _configured_stock_sub_types() -> List[str]:
     return ['QUOTE', 'K_1M']
 
 
+def _map_ticker_direction(raw) -> str:
+    """逐笔方向归一: SDK 实发字符串枚举 (TickerDirect BUY/SELL/NEUTRAL),
+    兼容历史 int 约定 (1=BUY 2=SELL 4=NEUTRAL), 其余一律 NEUTRAL.
+
+    2026-08-10 修复: handler 曾拿字符串与 int 1/2 比较 → 恒 NEUTRAL;
+    若 TICKER 订阅开启, buy/sell 量全 0 → buy_sell_ratio 兜底 2.0 →
+    order_flow_imbalance 假多头 +0.333 注入择时上下文。
+    """
+    if raw in ("BUY", 1):
+        return "BUY"
+    if raw in ("SELL", 2):
+        return "SELL"
+    return "NEUTRAL"
+
+
 class FutuLV3Provider:
     """
     富途 LV3 美股实时行情提供商
@@ -409,11 +424,13 @@ class FutuLV3Provider:
             """轻量报价 Handler — 只更新缓存"""
             def on_recv_rsp(self, rsp_pb):
                 try:
-                    ret, data = super().on_recv_rsp(rsp_pb)
-                    if ret == 0 and data is not None and len(data) > 0:
+                    # 2026-08-10 性能: parse_rsp_pb 直接返回 dict 列表, 跳过 SDK 的
+                    # pd.DataFrame 构造 (占 push 线程 CPU ~75%) 与 iterrows (~12%).
+                    ret, data = StockQuoteHandlerBase.parse_rsp_pb(rsp_pb)
+                    if ret == 0 and data:
                         updated = 0
                         with provider._push_cache_lock:
-                            for _, row in data.iterrows():
+                            for row in data:
                                 sym = row.get("code", "")
                                 provider._push_quote_cache[sym] = {
                                     "price": row.get("last_price", 0),
@@ -436,7 +453,7 @@ class FutuLV3Provider:
                             provider._push_quote_count += updated
                             provider._last_push_time = time.time()
                             if provider._push_quote_count <= len(data):  # 首次接收
-                                syms = data["code"].tolist()[:5]
+                                syms = [r.get("code", "") for r in data][:5]
                                 logger.info(f"[FutuLV3] ✅ Push 数据到达: {len(data)} 条, 首批: {syms}")
                     return ret, data
                 except Exception as e:
@@ -447,10 +464,11 @@ class FutuLV3Provider:
             """轻量 K 线 Handler — 累积 K 线列表 (修复：之前存单条 dict 导致 get_kline 永远走 HTTP)"""
             def on_recv_rsp(self, rsp_pb):
                 try:
-                    ret, data = super().on_recv_rsp(rsp_pb)
-                    if ret == 0 and data is not None and len(data) > 0:
+                    # 2026-08-10 性能: parse_rsp_pb 直接返回 dict 列表, 跳过 DataFrame 构造.
+                    ret, data = CurKlineHandlerBase.parse_rsp_pb(rsp_pb)
+                    if ret == 0 and data:
                         with provider._push_cache_lock:
-                            for _, row in data.iterrows():
+                            for row in data:
                                 sym = row.get("code", "")
                                 kline_entry = {
                                     "time_key": row.get("time_key", ""),
@@ -485,24 +503,17 @@ class FutuLV3Provider:
 
             def on_recv_rsp(self, rsp_pb):
                 try:
-                    ret, data = super().on_recv_rsp(rsp_pb)
-                    if ret == 0 and data is not None and len(data) > 0:
+                    # 2026-08-10 性能: parse_rsp_pb 直接返回 dict 列表, 跳过 DataFrame 构造.
+                    ret, data = TickerHandlerBase.parse_rsp_pb(rsp_pb)
+                    if ret == 0 and data:
                         with provider._push_cache_lock:
-                            for _, row in data.iterrows():
+                            for row in data:
                                 sym = row.get("code", "")
-                                # 方向映射: ticker_direction 1=BUY 2=SELL 4=NEUTRAL
-                                raw_dir = row.get("ticker_direction", 4)
-                                if raw_dir == 1:
-                                    direction = "BUY"
-                                elif raw_dir == 2:
-                                    direction = "SELL"
-                                else:
-                                    direction = "NEUTRAL"
                                 ticker_entry = {
                                     "price": float(row.get("price", 0)),
                                     "volume": float(row.get("volume", 0)),
                                     "turnover": float(row.get("turnover", 0)),
-                                    "direction": direction,
+                                    "direction": _map_ticker_direction(row.get("ticker_direction")),
                                     "time": row.get("time", ""),
                                     "sequence": row.get("sequence", 0),
                                 }
@@ -516,7 +527,7 @@ class FutuLV3Provider:
                         provider._push_ticker_count += len(data)
                         provider._last_push_time = time.time()
                         if provider._push_ticker_count <= len(data):  # 首次接收
-                            syms = data["code"].tolist()[:5]
+                            syms = [r.get("code", "") for r in data][:5]
                             logger.info(f"[FutuLV3] ✅ Ticker 数据到达: {len(data)} 笔, 首批: {syms}")
                     return ret, data
                 except Exception as e:
@@ -528,30 +539,33 @@ class FutuLV3Provider:
 
             def on_recv_rsp(self, rsp_pb):
                 try:
-                    ret, data = super().on_recv_rsp(rsp_pb)
-                    if ret == 0 and data is not None and not data.empty:
+                    # 2026-08-10 修复: SDK 该基类本就返回 dict (无 DataFrame),
+                    # 旧代码按 DataFrame 用 (.empty/.iterrows) 每次推送必抛 AttributeError,
+                    # 推送缓存从未写入 → 消费端永远降级 pull. 现按 dict 解析最优买卖一档.
+                    # unpack 格式: {'code', 'Bid': [(price, vol, order_cnt, detail)], 'Ask': [...]}
+                    ret, data = OrderBookHandlerBase.parse_rsp_pb(rsp_pb)
+                    if ret == 0 and data:
+                        sym = data.get("code", "")
+                        bids = data.get("Bid") or []
+                        asks = data.get("Ask") or []
+                        best_bid = bids[0] if bids else (0, 0, 0, {})
+                        best_ask = asks[0] if asks else (0, 0, 0, {})
                         with provider._push_cache_lock:
-                            # data is DataFrame with columns: code, BidPrice, BidVol,
-                            # AskPrice, AskVol, BidNum, AskNum, BidOrderNum, AskOrderNum
-                            # (Futu SDK OrderBook push format)
-                            for _, row in data.iterrows():
-                                sym = row.get("code", "")
-                                provider._push_orderbook_cache[sym] = {
-                                    "BidPrice": float(row.get("BidPrice", 0)),
-                                    "BidVol": float(row.get("BidVol", 0)),
-                                    "AskPrice": float(row.get("AskPrice", 0)),
-                                    "AskVol": float(row.get("AskVol", 0)),
-                                    "BidNum": float(row.get("BidNum", 0)),
-                                    "AskNum": float(row.get("AskNum", 0)),
-                                    "BidOrderNum": float(row.get("BidOrderNum", 0)),
-                                    "AskOrderNum": float(row.get("AskOrderNum", 0)),
-                                    "timestamp": time.time(),
-                                }
+                            provider._push_orderbook_cache[sym] = {
+                                "BidPrice": float(best_bid[0]),
+                                "BidVol": float(best_bid[1]),
+                                "AskPrice": float(best_ask[0]),
+                                "AskVol": float(best_ask[1]),
+                                "BidNum": float(len(bids)),
+                                "AskNum": float(len(asks)),
+                                "BidOrderNum": float(best_bid[2]),
+                                "AskOrderNum": float(best_ask[2]),
+                                "timestamp": time.time(),
+                            }
                         provider._push_orderbook_count += 1
                         provider._last_push_time = time.time()
                         if provider._push_orderbook_count <= 1:  # 首次接收
-                            syms = data["code"].tolist()[:5]
-                            logger.info(f"[FutuLV3] ✅ OrderBook 数据到达: 首批: {syms}")
+                            logger.info(f"[FutuLV3] ✅ OrderBook 数据到达: 首批: ['{sym}']")
                     return ret, data
                 except Exception as e:
                     provider._record_push_error("orderbook", e)
