@@ -1697,10 +1697,10 @@ class TradingScheduler:
             # 根据当前时段决定：立即订阅 / 等待自动循环激活
             if self._subscription_mgr.should_be_subscribed():
                 logger.info("[分时调度] 当前为美股盘前/交易时段，立即订阅应订集合 (P-2b 动态)...")
-                from app.data.futu_lv3_provider import _configured_stock_sub_types
+                from app.data.futu_lv3_provider import _configured_active_set_sub_types
                 self._subscription_mgr.ensure_subscribed(
                     self._get_subscription_codes(),
-                    sub_types=_configured_stock_sub_types(),
+                    sub_types=_configured_active_set_sub_types(),
                 )
             else:
                 reason = "港股交易时段" if self._subscription_mgr.is_hk_trading() else "美股已收盘"

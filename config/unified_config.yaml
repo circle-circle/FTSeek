@@ -172,6 +172,9 @@ data_sources:
     stock_sub_types:
     - QUOTE
     - K_1M
+    # 动态活跃集 (指令/持仓/基准) 追加 ORDER_BOOK+TICKER push (2026-08-10 用户批准);
+    # 仅影响 subscription_manager 动态集路径, 44只扫描池不受影响. 回滚=false+重启.
+    active_set_orderflow_enabled: true
 database:
   backup_enabled: true
   backup_interval_hours: 24

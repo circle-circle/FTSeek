@@ -197,3 +197,54 @@ class TestTickerDirectionMapping:
 
         factors = analyze_tickers(tickers, current_price=100.0)
         assert factors["buy_sell_ratio_short"] == 2.0  # 兜底值, 即旧 bug 的恒定输出
+
+
+class TestActiveSetSubTypes:
+    """2026-08-10 (用户批准): 动态活跃集追加 ORDER_BOOK+TICKER, 扫描池不受影响."""
+
+    def _patch_config(self, monkeypatch, dotted_value):
+        import app.core.config_container as cc
+
+        class _Cfg:
+            def get_dotted(self, key, default=None):
+                if key == "data_sources.futu_lv3.active_set_orderflow_enabled":
+                    return dotted_value
+                if key == "data_sources.futu_lv3.stock_sub_types":
+                    return ["QUOTE", "K_1M"]
+                return default
+
+        monkeypatch.setattr(cc, "get_config", lambda: _Cfg())
+
+    def test_enabled_appends_orderflow_types(self, monkeypatch):
+        self._patch_config(monkeypatch, True)
+        from app.data.futu_lv3_provider import _configured_active_set_sub_types
+        st = _configured_active_set_sub_types()
+        assert st == ["QUOTE", "K_1M", "ORDER_BOOK", "TICKER"]
+
+    def test_disabled_returns_base_only(self, monkeypatch):
+        self._patch_config(monkeypatch, False)
+        from app.data.futu_lv3_provider import _configured_active_set_sub_types
+        assert _configured_active_set_sub_types() == ["QUOTE", "K_1M"]
+
+    def test_no_duplicate_when_base_already_has_extras(self, monkeypatch):
+        import app.core.config_container as cc
+
+        class _Cfg:
+            def get_dotted(self, key, default=None):
+                if key == "data_sources.futu_lv3.stock_sub_types":
+                    return ["QUOTE", "K_1M", "TICKER"]
+                if key == "data_sources.futu_lv3.active_set_orderflow_enabled":
+                    return True
+                return default
+
+        monkeypatch.setattr(cc, "get_config", lambda: _Cfg())
+        from app.data.futu_lv3_provider import _configured_active_set_sub_types
+        st = _configured_active_set_sub_types()
+        assert st == ["QUOTE", "K_1M", "TICKER", "ORDER_BOOK"]
+        assert len(st) == len(set(st))
+
+    def test_scan_pool_function_unaffected(self, monkeypatch):
+        """扫描池函数不追加订单流类型 (防误扩散到 44 只全池)."""
+        self._patch_config(monkeypatch, True)
+        from app.data.futu_lv3_provider import _configured_stock_sub_types
+        assert _configured_stock_sub_types() == ["QUOTE", "K_1M"]

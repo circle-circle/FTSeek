@@ -263,11 +263,12 @@ class SubscriptionManager:
             return {"success": False, "new_subs": 0, "already_subscribed": 0}
 
         if sub_types is None:
-            # [ADR-013] 默认改为可配置精简集 (QUOTE+K_1M), 不再默认 ORDER_BOOK+TICKER (无有效消费者).
-            #   覆盖 auto_loop 盘中重订阅路径 (ensure_subscribed(codes) 无参调用).
+            # [ADR-013] 扫描池精简集 (QUOTE+K_1M); 2026-08-10 起动态活跃集 (本方法全部
+            #   调用方: 启动订阅 + auto_loop 重订阅) 默认追加 ORDER_BOOK+TICKER —
+            #   消费者已就位且性能/方向映射缺陷已修复, 配置键可回滚.
             try:
-                from app.data.futu_lv3_provider import _configured_stock_sub_types
-                sub_types = _configured_stock_sub_types()
+                from app.data.futu_lv3_provider import _configured_active_set_sub_types
+                sub_types = _configured_active_set_sub_types()
             except Exception:
                 sub_types = ["QUOTE", "K_1M"]
 

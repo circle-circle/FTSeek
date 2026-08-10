@@ -55,6 +55,30 @@ def _configured_stock_sub_types() -> List[str]:
     return ['QUOTE', 'K_1M']
 
 
+def _configured_active_set_sub_types() -> List[str]:
+    """动态活跃集 (指令/持仓/基准) 推送订阅类型 = 精简集 + ORDER_BOOK + TICKER.
+
+    2026-08-10 (用户批准启用): 消费者已就位 — ORDER_BOOK 走微观结构快速路径
+    (spread/深度实时化, 替代 300ms pull), TICKER 走 record-only 订单流证据链
+    (order_flow_imbalance 恒 null → 真值, 攒样供 Phase2 裁决, 零行为变更);
+    障碍均已清除: SDK DataFrame 性能单点 (接收线程 ~40% 核 → ~10%) 与
+    ticker_direction 字符串映射 bug 已于同日修复。
+    仅作用于动态活跃集 (subscription_manager.ensure_subscribed 默认路径);
+    44 只扫描池仍走 _configured_stock_sub_types() 不受影响。
+    回滚: data_sources.futu_lv3.active_set_orderflow_enabled=false + 重启。
+    """
+    base = _configured_stock_sub_types()
+    try:
+        from app.core.config_container import get_config
+        enabled = bool(get_config().get_dotted(
+            "data_sources.futu_lv3.active_set_orderflow_enabled", True))
+    except Exception:
+        enabled = True
+    if not enabled:
+        return base
+    return base + [t for t in ('ORDER_BOOK', 'TICKER') if t not in base]
+
+
 def _map_ticker_direction(raw) -> str:
     """逐笔方向归一: SDK 实发字符串枚举 (TickerDirect BUY/SELL/NEUTRAL),
     兼容历史 int 约定 (1=BUY 2=SELL 4=NEUTRAL), 其余一律 NEUTRAL.
