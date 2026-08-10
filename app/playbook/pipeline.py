@@ -6710,6 +6710,21 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             pnl_pct = (exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - exit_price) / entry_price * 100
             holding_hours = round(held_minutes / 60, 1)
 
+            # ── 隔夜持仓 shadow (2026-08-10, record-only, 用户批准) ──
+            #   benign 退出 (SL_BREAKEVEN/SL_TRAIL_LOCK/PRE_CLOSE_EXIT) 落决策点,
+            #   次日 settle_overnight_shadow.py 结算"持仓过夜 vs 已退出"反事实.
+            #   历史反事实 (7/15-8/7, 73笔): 隔夜跳空胜率60% +0.36%, 但 COIN 单笔占78%,
+            #   剔除后≈打平, regime 未剥离 → 跨 regime 攒样本再裁. 回滚: 配置键置 false.
+            try:
+                from app.playbook.overnight_hold_shadow import emit as _overnight_emit
+                _overnight_emit(
+                    symbol, direction, exit_reason, exit_price, entry_price,
+                    pnl, notional=round(exit_price * qty, 2),
+                    decision_id=r.get("decision_id") or r.get("inst_decision_id"),
+                )
+            except Exception:
+                pass  # 影子埋点不阻断退出记账
+
             # 写入 exit_price_source 到 metadata
             try:
                 _meta_out = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}

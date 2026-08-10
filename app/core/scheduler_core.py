@@ -2192,6 +2192,21 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.debug(f"[LLM策略] 盘后影子行情采集异常 (已隔离): {_e}")
 
+                    # 隔夜持仓 shadow 结算 (2026-08-10, record-only, 用户批准):
+                    #   benign 退出决策点的次日反事实结算. 每日幂等 (settled 标记),
+                    #   需次日 replay_bars 已落 (position_path_collector 盘后采集), 缺则留待下次.
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_ov
+                        _sp = _ilu.spec_from_file_location(
+                            "settle_overnight_shadow",
+                            str(_P_ov(__file__).resolve().parents[2] / "scripts" / "settle_overnight_shadow.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.debug(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

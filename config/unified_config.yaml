@@ -1191,6 +1191,11 @@ playbook:
   #   三拦点 (vol_gate chase/out_of_band/vwap_gate) → shadow_portfolio_entries.jsonl,
   #   盘后 scripts/settle_shadow_portfolio.py 结算. 回滚: false + 重启.
   shadow_portfolio_enabled: true
+  # 2026-08-10 (隔夜讨论, 用户批准): 隔夜持仓 shadow — benign 退出 (SL_BREAKEVEN/
+  #   SL_TRAIL_LOCK/PRE_CLOSE_EXIT) 落决策点 → 次日结算"持仓过夜 vs 已退出"反事实.
+  #   历史反事实 (7/15-8/7, 73笔): 隔夜跳空胜率60% +0.36%, 但 COIN 单笔占78%,
+  #   剔除后≈打平, regime 未剥离 → 跨 regime 攒样本再裁. 回滚: false + 重启.
+  overnight_hold_shadow_enabled: true
   # 盘中再入场生成器 (2026-08-06, 用户指示"sim 直上线快速验真"): 盘中供给恢复 —
   #   指令供给全部盘前生成 + topup 已停供 → 盘中零新增机会。本生成器扫"当日已平仓
   #   且前笔非硬亏(>-1%)"标的, 盘中指标确认 thesis 延续 (回踩VWAP带内 + slope_5m
