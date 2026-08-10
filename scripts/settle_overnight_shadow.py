@@ -109,6 +109,14 @@ def _settle_all(dry_run: bool = False) -> int:
         r["worst_pct"] = round(sign * ((low1 if sign == 1 else high1) / close0 - 1) * 100, 4)
         r["cf_gap_pnl"] = round(r["gap_pct"] / 100 * notional, 2)
         r["cf_fullday_pnl"] = round(r["fullday_pct"] / 100 * notional, 2)
+        # 2026-08-10 (Qoder 复核建议): from-exit 口径 — 对盘中 benign 退出 (如 11:00 的
+        #   SL_BREAKEVEN), close0 基准丢弃了退出点→收盘的盘中路径. 补 exit_price 基准,
+        #   两口径并存: close0 回答"EOD平 vs 持夜", exit 回答"退出点不平 vs 持夜".
+        _exit_px = float(r.get("exit_price") or 0)
+        if _exit_px > 0:
+            r["gap_from_exit_pct"] = round(sign * (open1 / _exit_px - 1) * 100, 4)
+            r["fullday_from_exit_pct"] = round(sign * (close1 / _exit_px - 1) * 100, 4)
+            r["cf_fullday_from_exit_pnl"] = round(r["fullday_from_exit_pct"] / 100 * notional, 2)
         r["settled"] = True
         settled_ct += 1
 
@@ -133,6 +141,14 @@ def _settle_all(dry_run: bool = False) -> int:
         "gap": {"win_rate": round(gap_win / n * 100, 1), "avg_pct": round(sum(r["gap_pct"] for r in done) / n, 3), "total_pnl": round(gap_pnl, 2)},
         "fullday": {"win_rate": round(full_win / n * 100, 1), "avg_pct": round(sum(r["fullday_pct"] for r in done) / n, 3), "total_pnl": round(full_pnl, 2)},
     }
+    # 2026-08-10 (Qoder): from-exit 口径汇总 (仅含已算该口径的行)
+    _fx = [r for r in done if "cf_fullday_from_exit_pnl" in r]
+    if _fx:
+        summary["fullday_from_exit"] = {
+            "n": len(_fx),
+            "win_rate": round(sum(1 for r in _fx if r["fullday_from_exit_pct"] > 0) / len(_fx) * 100, 1),
+            "total_pnl": round(sum(r["cf_fullday_from_exit_pnl"] for r in _fx), 2),
+        }
     # 按标的
     by_sym = defaultdict(list)
     for r in done:
