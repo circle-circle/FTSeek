@@ -140,19 +140,21 @@ class MarketRegimeGate:
         spy_ma200 = 0.0
         spy_change_pct = 0.0
         
-        # 优先使用 MarketDataRouter
+        # 优先使用 MarketDataRouter (MA20/MA50/MA200 同源自 Futu 日K, 2026-07-03 起 Router 已返回)
         if self.router:
             try:
                 spy_ctx = self.router.get_spy_context()
                 if spy_ctx:
                     spy_price = spy_ctx.get("spy_price", 0.0)
                     spy_ma200 = spy_ctx.get("spy_ma200", 0.0)
+                    spy_ma20 = spy_ctx.get("spy_ma20", 0.0)
+                    spy_ma50 = spy_ctx.get("spy_ma50", 0.0)
                     spy_change_pct = spy_ctx.get("spx_change_percent", 0.0)
                     logger.info(f"[Regime] SPY from Router: price={spy_price:.2f}, MA200={spy_ma200:.2f}")
             except Exception as e:
                 logger.warning(f"[Regime] Failed to get SPY from Router: {e}")
         
-        # 补充 MA20/MA50 数据 (Router 可能没有)
+        # 补充 MA20/MA50 数据 (AV 仅作 fallback — 免费额度每日耗尽曾致 regime 静默降级)
         if self.av and (spy_ma20 == 0 or spy_ma50 == 0):
             try:
                 av_spy_ctx = self.av.get_spy_context()

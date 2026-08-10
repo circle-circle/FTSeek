@@ -312,3 +312,81 @@ class TestRegimeContext:
         assert MarketRegime.CAUTIOUS.value == "cautious"
         assert MarketRegime.RISK_OFF.value == "risk_off"
         assert MarketRegime.NO_TRADE.value == "no_trade"
+
+
+class TestRouterMAFallback:
+    """2026-08-10 回归: MA20/MA50 须优先取自 Router (与 MA200 同源 Futu 日K).
+
+    缺陷: 消费端此前只从 Router 读 spy_ma200, MA20/50 全靠 AlphaVantage —
+    AV 免费额度每日耗尽 → MA20/50=0.00 → 趋势分项归零, regime 静默降级
+    CAUTIOUS (×0.5)。Router 自 2026-07-03 起已返回 spy_ma20/spy_ma50。
+    """
+
+    def setup_method(self):
+        MarketRegimeGate._assess_cache = None  # 类级缓存, 跨用例隔离
+
+    def test_router_ma20_ma50_used_when_av_dead(self):
+        """AV 额度耗尽 (返回 {}) 时, Router 的 MA20/50 仍让趋势分项生效 → RISK_ON."""
+        router = Mock()
+        router.get_spy_context.return_value = {
+            "spy_price": 560.0,
+            "spy_ma20": 550.0,
+            "spy_ma50": 540.0,
+            "spy_ma200": 520.0,
+            "spx_change_percent": 0.8,
+        }
+        router.get_vix_or_none.return_value = 14.0
+        av = Mock()
+        av.get_spy_context.return_value = {}   # 额度耗尽的典型返回
+        av.get_vix_or_none.return_value = None
+
+        ctx = MarketRegimeGate(router, av).assess()
+
+        assert ctx.spy_ma20 == 550.0
+        assert ctx.spy_ma50 == 540.0
+        # +2 (SPY>MA20) +2 (MA20>MA50) +1 (SPY>MA200) +3 (VIX<15) = 8
+        assert ctx.score == 8
+        assert ctx.regime == MarketRegime.RISK_ON
+        assert ctx.position_multiplier == 1.0
+
+    def test_av_not_consulted_when_router_has_mas(self):
+        """Router 已提供 MA20/50 时不再调 AV (省免费额度)."""
+        router = Mock()
+        router.get_spy_context.return_value = {
+            "spy_price": 560.0,
+            "spy_ma20": 550.0,
+            "spy_ma50": 540.0,
+            "spy_ma200": 520.0,
+            "spx_change_percent": 0.8,
+        }
+        router.get_vix_or_none.return_value = 14.0
+        av = Mock()
+        av.get_vix_or_none.return_value = 14.0
+
+        MarketRegimeGate(router, av).assess()
+
+        av.get_spy_context.assert_not_called()
+
+    def test_av_still_fallback_when_router_lacks_mas(self):
+        """Router 缺 MA20/50 (如日K拉取失败) 时保留 AV fallback 语义."""
+        router = Mock()
+        router.get_spy_context.return_value = {
+            "spy_price": 560.0,
+            "spy_ma200": 520.0,
+            "spx_change_percent": 0.8,
+        }
+        router.get_vix_or_none.return_value = 14.0
+        av = Mock()
+        av.get_spy_context.return_value = {
+            "spy_price": 560.0,
+            "spy_ma20": 550.0,
+            "spy_ma50": 540.0,
+            "spx_change_percent": 0.8,
+        }
+        av.get_vix_or_none.return_value = 14.0
+
+        ctx = MarketRegimeGate(router, av).assess()
+
+        av.get_spy_context.assert_called_once()
+        assert ctx.spy_ma20 == 550.0
+        assert ctx.score == 8
