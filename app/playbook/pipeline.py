@@ -26,12 +26,6 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# 2026-08-10 (空耗审计, 用户批准): trigger_miss 遥测源头去重 —
-#   原埋点挂轮询路径, 同一 (inst_id,date,reason) 平均重复写 32.8 次 (20.7x 冗余,
-#   11062 行中真实独立 miss 仅 534 条). 进程内 set 守卫, 同键只写一次.
-#   遥测语义不变 (reason/gap_pct/价格一条不少), 每日 ~900 行 → ~40 行. 回滚: 删本 set + 守卫.
-_TRIGGER_MISS_SEEN = set()
-
 # 2026-08-05: bar 覆盖冻结告警的模块级计时器 (symbol -> stall_since_ts).
 #   meta 每轮从 DB 重读且写回有条件门, 计时不可放 meta; 按 symbol 记 (同日重复开仓重置无害).
 _BAR_STALL_SINCE: Dict[str, float] = {}
@@ -4013,11 +4007,6 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 "gap_pct": round(_gap, 3),
                 "reason": reason,
             }
-            # 2026-08-10 源头去重: 同一 (inst_id,date,reason) 轮询只写一次 (20.7x 冗余修复)
-            _dedup_key = (_row["inst_id"], _row["date"], reason)
-            if _dedup_key in _TRIGGER_MISS_SEEN:
-                return
-            _TRIGGER_MISS_SEEN.add(_dedup_key)
             _tp = _Path(__file__).resolve().parents[2] / "data" / "trigger_miss_telemetry.jsonl"
             with open(_tp, "a", encoding="utf-8") as _f:
                 _f.write(_json.dumps(_row, ensure_ascii=False) + "\n")
