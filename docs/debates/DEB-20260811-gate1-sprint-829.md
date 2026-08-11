@@ -138,3 +138,14 @@ vix 是唯一双窗口净收益为正的特征：
 - ~~O2：L2 回放输出~~ → **已完成**：仅 vix 双窗口方向一致且净收益为正；其余 8 特征否决；DA 分数零分离
 - O3：8-29 当日重跑 live_readiness_report，以实读裁决（SHORT 桶 n 是否仍 ≥30 边缘）
 - O4：TSM 隔夜仓（首次豁免样本）结局 → overnight shadow 裁决数据
+- **O5（2026-08-11 新增）：G2-3 对账 streak 真实计数起点 = 8/12**。reconcile 查询层根因修复（6e0df370）：
+  旧实现复用 manual_order_service（`_is_live()` 硬编码 True，Phase 0 手动交易固定 REAL），
+  对账自 8/2 起一直拿 **REAL 账户**比对 SIM 内部持仓——有持仓日必 drift，无持仓日假 ok，
+  G2-3 streak 全程无效。实锤：8/10 TSM internal_only 实为 SIM 账户真实持仓
+  （acc=19930823，成本 421.155/浮亏 -34.91 与内部账逐位吻合，**非幽灵仓**）；
+  白名单 HK.00981/US.SNDK 实为 REAL 账户持仓，被误标"共享 SIM 外部"一周。
+  修复后环境解析与 di_container 同源（AUTO_TRADE_ACCOUNT + ALLOW_REAL_TRADING 安全闸），
+  实测 SIM 对账 ok 漂移 0。**streak 从 0 重计的原因**：修复前我的人工验证跑（旧代码）
+  已在今日审计行留下 drift 记录，按日聚合"当日曾 drift 即 drift"的口径今日不可挽回——
+  不改审计行（RFC-062 纪律），接受损失一天。白名单现对 SIM 对账失效（REAL 持仓不再出现），
+  留待 SIM 账户出现真实外部持仓时重新裁决条目。
