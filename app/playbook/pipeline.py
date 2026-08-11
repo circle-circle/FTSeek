@@ -6190,7 +6190,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         conn.row_factory = sqlite3.Row
 
         rows = conn.execute("""
-            SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type
+            SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type,
+                   decision_id
             FROM trade_records
             WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
               AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)
@@ -6717,13 +6718,21 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             #   剔除后≈打平, regime 未剥离 → 跨 regime 攒样本再裁. 回滚: 配置键置 false.
             try:
                 from app.playbook.overnight_hold_shadow import emit as _overnight_emit
+                # 2026-08-11 修复: r 是 sqlite3.Row — 无 .get() 方法, 原 r.get(...)
+                #   抛 AttributeError 被下方 except 静默吞掉, emit 从未执行过 (8/10 首笔
+                #   benign 退出 TSM 决策点丢失). 改用索引访问 (SELECT 已补 decision_id 列).
+                #   异常改为 logger.warning 可见, 影子埋点故障不应无声.
+                try:
+                    _ov_decision_id = r["decision_id"]
+                except Exception:
+                    _ov_decision_id = None
                 _overnight_emit(
                     symbol, direction, exit_reason, exit_price, entry_price,
                     pnl, notional=round(exit_price * qty, 2),
-                    decision_id=r.get("decision_id") or r.get("inst_decision_id"),
+                    decision_id=_ov_decision_id,
                 )
-            except Exception:
-                pass  # 影子埋点不阻断退出记账
+            except Exception as _ov_e:
+                logger.warning(f"[隔夜shadow] emit 异常 (不阻断退出记账) {symbol}: {_ov_e}")
 
             # 写入 exit_price_source 到 metadata
             try:
