@@ -1057,7 +1057,11 @@ playbook:
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
     entry_open_blackout_enabled: true
-    entry_open_blackout_hhmm: 1000
+    entry_open_blackout_hhmm: 1015    # 2026-08-12: 1000→1015 — 入场同步影子回填实锤:
+    #   禁触窗终点10:00造"水坝", 指令在10:00-10:10弱区瞬间倾泻(齐射胜率22%, n=18,
+    #   8/11单日-$133), 完美错过10:15-10:45甜蜜区(同结构齐射胜率55% +$589, 8/8前自然
+    #   入场+$549 vs 8/8后甜蜜区n=1被饿死). 终点后移15min让第一波齐射落在甜蜜区起点.
+    #   8/8原依据(开盘噪声负期望)不受影响: open30桶-$910仍全禁. 回滚: 改回1000+重启.
     dead_signal_exit_enabled: true
     dead_signal_exit_minutes: 60
     dead_signal_exit_mfe_pct: 0.2
@@ -1145,6 +1149,11 @@ playbook:
   #   盘后给全部已平仓成交打三嫌疑特征标 (含非stall留分母) → data/stall_entry_shadow.jsonl.
   #   零执行路径改动 (盘后脚本). 回滚: false + 重启.
   stall_entry_shadow_enabled: true
+  # 2026-08-12 (时段策略分析①去同步化): 入场同步结构影子打标 — 8/11 实锤禁触窗解除
+  #   瞬间 21秒5笔齐射 4亏1赢 (独立信号变相关性=1篮子单); 历史自然分散入场同区间
+  #   +$487. 盘后打 volley 聚类(≤120s相邻) + 时段分区标签 → data/entry_sync_shadow.jsonl.
+  #   零执行路径改动 (盘后脚本). n≥30 再裁单轮限流门. 回滚: false + 重启.
+  entry_sync_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live

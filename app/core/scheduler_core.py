@@ -2222,6 +2222,22 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] stall影子打标异常 (已隔离): {_e}")
 
+                    # 入场去同步化影子打标 (2026-08-12, record-only): 8/11 实锤 21秒
+                    #   5笔齐射 (禁触窗解除瞬间同轮倾泻) 4亏1赢; 历史分散入场同区
+                    #   间 +$487. 打 volley 聚类 + 时段分区标签攒样, n≥30 再裁单轮
+                    #   限流/最小间隔门. 零执行路径改动. 回滚: 配置键 false + 重启.
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_es
+                        _sp = _ilu.spec_from_file_location(
+                            "entry_sync_shadow_tag",
+                            str(_P_es(__file__).resolve().parents[2] / "scripts" / "entry_sync_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:
