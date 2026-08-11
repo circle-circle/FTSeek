@@ -5960,7 +5960,13 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             if not isinstance(_ed_pts, list):
                 _ed_pts = []
             for _ed_pt in (15, 30):
-                if held_minutes >= _ed_pt and _ed_pt not in _ed_pts:
+                # 新鲜度守卫 (2026-08-11): 只在检查点窗口 [pt, pt+5min] 内穿越才记录。
+                #   MFE 是持仓期累计最大值 — 服务重启后对已远超检查点的存量仓
+                #   (如隔夜仓 held=796min) 若仍触发, 会把"整个持仓期的 MFE"误标为
+                #   30min 检查点, 系统性高估 MFE/漏计死单, 污染裁决数据。
+                #   快循环 10s 节奏下正常穿越落在 pt+~0.02min; +5min 容差覆盖轮询间隙,
+                #   同时拒绝重启后的穿越 (held≫pt+5)。错过窗口即不记录该检查点 (不伪造)。
+                if held_minutes >= _ed_pt and held_minutes <= _ed_pt + 5 and _ed_pt not in _ed_pts:
                     _ed_pts.append(_ed_pt)
                     import json as _edj
                     from pathlib import Path as _EDP
