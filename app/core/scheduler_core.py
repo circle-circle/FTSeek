@@ -2207,6 +2207,21 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.debug(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}")
 
+                    # MFE_STALL 入场侧影子打标 (2026-08-12, record-only): 8/11诊断
+                    #   发现 news_positive 触发 100%出现在 STALL 笔 (6/6) — 攒样验证
+                    #   (n≥30 再裁门禁), 零执行路径改动. 回滚: 配置键 false + 重启.
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_ss
+                        _sp = _ilu.spec_from_file_location(
+                            "stall_entry_shadow_tag",
+                            str(_P_ss(__file__).resolve().parents[2] / "scripts" / "stall_entry_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] stall影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

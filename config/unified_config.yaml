@@ -1139,6 +1139,12 @@ playbook:
   supply_conf_gate_short: 55
   shadow_portfolio_enabled: true
   overnight_hold_shadow_enabled: true
+  # 2026-08-12 (8/11盘后诊断, 挂起治理): MFE_STALL 入场侧影子打标 — 8/11 诊断发现
+  #   news_positive 触发 100% 出现在 STALL 笔 (6/6), insider_net_buy 2.3倍,
+  #   thesis"等回调"措辞 67% — 但 n=6 Fisher 不显著, 攒样 (n≥30) 再裁是否加门禁.
+  #   盘后给全部已平仓成交打三嫌疑特征标 (含非stall留分母) → data/stall_entry_shadow.jsonl.
+  #   零执行路径改动 (盘后脚本). 回滚: false + 重启.
+  stall_entry_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live
