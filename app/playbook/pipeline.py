@@ -5946,6 +5946,45 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     except Exception:
         pass
 
+    # 影子·死单早期识别 (2026-08-11, DEB-20260811-dead-order-early-detection, record-only):
+    #   回放实锤: 入场后 30min MFE<0.2% 双窗口死单率 69%/64% (W1 n=35 / W2 n=14,
+    #   命中组实际净 PnL 全负 -1218/-366, 误杀代价近零)。与已毕业 DEAD_SIGNAL_EXIT
+    #   (60min, MFE<0.2%) 同源不同参数 — 本影子验证"提前到 30min"的独立价值:
+    #   逐笔配对 30min 命中 vs 60min 命中的差集结局。15min 为辅助观测点 (回放
+    #   MFE<0.15 死单率 61-62%)。零行为变更; 回滚: early_dead_signal_shadow_enabled=false。
+    #   裁决预注册 (攒样≥30 命中): ①双窗口死单率均≥55% ②命中组实际净PnL<0
+    #   ③差集(30min命中但60min未命中)结局为负。scripts/early_dead_signal_report.py 结算。
+    try:
+        if bool(_pb_cfg.get("early_dead_signal_shadow_enabled", True)):
+            _ed_pts = meta.setdefault("_early_dead_shadow_pts", [])
+            if not isinstance(_ed_pts, list):
+                _ed_pts = []
+            for _ed_pt in (15, 30):
+                if held_minutes >= _ed_pt and _ed_pt not in _ed_pts:
+                    _ed_pts.append(_ed_pt)
+                    import json as _edj
+                    from pathlib import Path as _EDP
+                    from app.utils.timezone import now_et as _ed_now_et
+                    _ed_row = {
+                        "ts": _ed_now_et().isoformat(),
+                        "symbol": _symbol, "direction": direction,
+                        "entry_time": entry_time_str, "entry_price": entry_price,
+                        "checkpoint": _ed_pt,
+                        "held_minutes": round(held_minutes, 1),
+                        "mfe_pct": round(peak_profit_pct, 4),
+                        "cur_pct": round(profit_pct, 4),
+                        "rule": "early_dead_signal_shadow",
+                        "settled": False,
+                    }
+                    with open(_EDP("data/early_dead_signal_shadow.jsonl"), "a") as _edf:
+                        _edf.write(_edj.dumps(_ed_row, ensure_ascii=False) + "\n")
+                    logger.info(
+                        f"[影子·死单早期] {_symbol} {direction} checkpoint={_ed_pt}min "
+                        f"mfe={peak_profit_pct:.2f}% cur={profit_pct:.2f}% (record-only)"
+                    )
+    except Exception:
+        pass  # 影子埋点不阻断退出判断
+
     # 规则3.3 (2026-08-08, exit_shadow dead_signal_60m_mfe0.2 毕业): 死信号退出 —
     #   shadow 判分 PASS (全历史 171 笔: 触发组 mean -1.12% vs 未触发组 +0.37%,
     #   分离度 1.49pp) → 60min 时峰值浮盈从未达 0.2% = 方向从未兑现 → 立即离场.
