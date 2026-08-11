@@ -59,25 +59,51 @@ def _external_allowlist() -> set:
         return set()
 
 
-def _broker_positions() -> dict:
-    from app.web_dashboard.manual_order_service import get_manual_order_service
-    service = get_manual_order_service()
-    service.connect()
-    if service._broker_ctx is None:
-        raise RuntimeError("broker not connected")
-    trd_env, acc_id = service._trd_env(), service._acc_id()
-    ret, positions = service._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
-    if ret != 0:
-        raise RuntimeError(f"position_list_query failed: {positions}")
-    out = {}
-    for _, row in positions.iterrows():
-        qty = float(row.get("qty", 0) or 0)
-        if qty == 0:
-            continue
-        side = str(row.get("position_side", "")).upper()
-        direction = "SHORT" if (qty < 0 or side == "SHORT") else "LONG"
-        out[str(row["code"])] = (direction, abs(qty))
-    return out
+def _broker_positions() -> tuple:
+    """查询 broker 持仓 — 环境对齐自动交易账户 (AUTO_TRADE_ACCOUNT).
+
+    2026-08-11 根因修复: 旧实现复用 manual_order_service._trd_env(), 其 _is_live()
+    硬编码 True (Phase 0 三态共存: 手动交易固定 REAL) → 对账一直查 REAL 账户与 SIM
+    内部持仓比对, 有持仓日必 drift (8/10 TSM internal_only 实锤; 白名单项 HK.00981/
+    US.SNDK 实为 REAL 账户持仓, 被误标"共享SIM外部持仓"一周)。
+    环境解析与 di_container.py AUTO_TRADE_ACCOUNT 同源 (.env.us 实时读取, cron 无
+    EnvironmentFile 也能工作); real 需 ALLOW_REAL_TRADING=true 安全闸。
+    返回 (positions_dict, account_label)。
+    """
+    from app.core.trading_mode import _read_env_file
+    from futu import OpenSecTradeContext, TrdEnv, TrdMarket
+
+    account = _read_env_file("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+    if account == "real" and _read_env_file("ALLOW_REAL_TRADING", "").strip().lower() != "true":
+        account = "sim"  # 与 di_container 安全闸一致: 强制降级
+    trd_env = TrdEnv.REAL if account == "real" else TrdEnv.SIMULATE
+    acc_id = int(_read_env_file("REAL_ACCOUNT_ID" if account == "real" else "SIMULATE_ACCOUNT_ID", "0"))
+
+    host = _read_env_file("FUTU_OPEND_HOST", "127.0.0.1")
+    port = int(_read_env_file("FUTU_OPEND_PORT", "11111"))
+    ctx = OpenSecTradeContext(filter_trdmarket=TrdMarket.US, host=host, port=port, is_encrypt=False)
+    try:
+        if trd_env == TrdEnv.REAL:
+            pwd_md5 = _read_env_file("FUTU_UNLOCK_PWD_MD5", "")
+            if not pwd_md5:
+                raise RuntimeError("REAL 账户对账需 FUTU_UNLOCK_PWD_MD5")
+            ret, data = ctx.unlock_trade(password_md5=pwd_md5, is_unlock=True)
+            if ret != 0:
+                raise RuntimeError(f"unlock_trade failed: {data}")
+        ret, positions = ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+        if ret != 0:
+            raise RuntimeError(f"position_list_query failed: {positions}")
+        out = {}
+        for _, row in positions.iterrows():
+            qty = float(row.get("qty", 0) or 0)
+            if qty == 0:
+                continue
+            side = str(row.get("position_side", "")).upper()
+            direction = "SHORT" if (qty < 0 or side == "SHORT") else "LONG"
+            out[str(row["code"])] = (direction, abs(qty))
+        return out, f"{account}(acc={acc_id})"
+    finally:
+        ctx.close()
 
 
 def _diff(a: dict, b: dict, traded: set, allowlist: set) -> tuple:
@@ -129,7 +155,7 @@ def main() -> int:
     internal = _internal_open()
     prev = _last_status()
     try:
-        broker = _broker_positions()
+        broker, acct_label = _broker_positions()
     except Exception as e:
         rec = {"ts": ts, "status": "broker_query_failed", "error": str(e),
                "internal_n": len(internal)}
@@ -142,13 +168,13 @@ def main() -> int:
 
     drift, external = _diff(internal, broker, _traded_symbols(), _external_allowlist())
     status = "drift" if drift else "ok"
-    rec = {"ts": ts, "status": status, "broker_n": len(broker),
+    rec = {"ts": ts, "status": status, "account": acct_label, "broker_n": len(broker),
            "internal_n": len(internal), "external_n": len(external),
            "drift": drift, "external": external}
     with open(OUT, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-    print(f"[reconcile] {status}: broker {len(broker)} vs 内部 {len(internal)} "
+    print(f"[reconcile] {status} [{acct_label}]: broker {len(broker)} vs 内部 {len(internal)} "
           f"· 漂移 {len(drift)} · 外部持仓 {len(external)} (不告警)")
     if drift and not no_alert and prev != "drift":
         lines = "\n".join(f"  {d['symbol']}: {d['issue']}" for d in drift)
