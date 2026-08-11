@@ -326,10 +326,38 @@ def _sec_exec_gate():
     return lines
 
 
+# ── 段10: 死单早期识别影子 (2026-08-11, DEB-20260811) ────────────
+def _sec_early_dead():
+    recs = _read_jsonl(ROOT / "data" / "early_dead_signal_shadow.jsonl")
+    lines = ["【死单早期识别影子 (15/30min MFE快照, 30min<0.2%=候选死单)】"]
+    if not recs:
+        lines.append("  (尚无检查点样本)")
+        return lines
+
+    def blk(days):
+        sub = [r for r in recs if _within(r.get("ts"), days)]
+        c30 = [r for r in sub if r.get("checkpoint") == 30]
+        c15 = [r for r in sub if r.get("checkpoint") == 15]
+        h30 = [r for r in c30 if (r.get("mfe_pct") or 99) < 0.2]
+        h15 = [r for r in c15 if (r.get("mfe_pct") or 99) < 0.15]
+        # 已结算行带 final_pnl_net/is_dead (由结算脚本回填)
+        settled30 = [r for r in h30 if r.get("settled")]
+        dead30 = sum(1 for r in settled30 if r.get("is_dead"))
+        net30 = sum(r.get("final_pnl_net") or 0 for r in settled30)
+        s = (f"30min行{len(c30)} 命中{len(h30)}"
+             + (f" 已结算{len(settled30)} 死单率{100*dead30/len(settled30):.0f}% 净{net30:+.0f}$" if settled30 else " 待结算")
+             + f" | 15min命中{len(h15)}/{len(c15)}")
+        return s
+
+    lines.append(f"  今日 : {blk(1)}")
+    lines.append(f"  近7天: {blk(7)}")
+    return lines
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_technical, _sec_sltp, _sec_edge, _sec_verdict, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate):
+    for sec in (_sec_divergence, _sec_technical, _sec_sltp, _sec_edge, _sec_verdict, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead):
         try:
             body += sec() + [""]
         except Exception as e:
