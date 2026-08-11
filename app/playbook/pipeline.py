@@ -4366,6 +4366,30 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             f"current=${current_price:.2f} entry=${entry_price:.2f} gap={_price_gap:.1%}"
         )
         _emit_trigger_miss("extreme_gap", current_price)
+        # 2026-08-11 (LIF 盘前-20%实锤): 逆方向极端 gap → thesis 已死, 永久作废.
+        #   原设计"gap>8% 只拦不作废(保留回旋)"留洞: gap 门提前 return 导致下方
+        #   drift 作废门(5%)永不执行; 若盘中反弹回触发带 (knife floor 3%), BUY 走
+        #   pullback 路径无量能确认直接触发 = thesis 已死仍接飞刀
+        #   (LIF: entry 59 / 盘前 52 / 反弹带 57.23-59 恰在 5%作废线 56.05 之上).
+        #   仅逆方向 (BUY 价跌 / SHORT 价涨) 作废; 顺方向 gap 本就不触发, 不作废
+        #   (thesis 可能仍有效只是价格暂远). 复用 skip_reason='thesis_drift_invalidate'
+        #   → 下游守卫 (auto_execute 循环头检 + 本函数头检) 已全部消费该值, 零下游改动.
+        #   回滚: thesis_drift_invalidate_enabled 置 false (与 drift 作废门同开关).
+        _adverse_gap = ((not is_short and current_price < entry_price) or
+                        (is_short and current_price > entry_price))
+        if _adverse_gap and inst.get("id") is not None:
+            try:
+                if bool(pb_cfg.get("thesis_drift_invalidate_enabled", True)):
+                    from app.playbook.db import PlaybookDB as _PBDB
+                    _PBDB().update_instruction_tracking(
+                        inst["id"], {"skip_reason": "thesis_drift_invalidate"})
+                    logger.warning(
+                        f"[playbook] #2 thesis漂移作废(极端gap): {symbol} "
+                        f"dir={'SHORT' if is_short else 'BUY'} entry=${entry_price:.2f} "
+                        f"current=${current_price:.2f} gap={_price_gap:.1%} → 指令永久作废"
+                    )
+            except Exception as _gap_inv_e:
+                logger.warning(f"[playbook] 极端gap作废落库失败 {symbol}: {_gap_inv_e}")
         return False
 
     # ── 流动性门 (2026-07-30, 用户裁"小盘票补充限制"): 仙股地板 + 名义额/ADV$ 上限 ──
@@ -5587,7 +5611,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
       [2] OVERNIGHT_GAP_STOP: cohort B 隔夜仓跳空 >3%
       [3] PRE_CLOSE_EXIT: 收盘前 8min (cohort B 盈利可跳过)
       [3.4] MFE_STALL_EXIT: 持仓≥150min 且 峰值浮盈<0.5% 且 当前水下 → 提前离场 (2026-07-24)
-      [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific)
+      [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific;
+          隔夜仓按"今日开盘以来"计, 每日重置 — RFC-064)
       [5] MAX_HOLD_T5: cohort B 持仓≥5 交易日
 
     Args:
@@ -6061,7 +6086,15 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     _time_exit_enabled = True
     _time_exit_hours = float(_exit_cfg.get("time_exit_hours", 2.0))
     _time_exit_only_if_loss = bool(_exit_cfg.get("time_exit_only_if_loss", True))
-    if _time_exit_enabled and not exit_reason and held_minutes > (_time_exit_hours * 60):
+    # RFC-064 (2026-08-11, 语义B): 隔夜仓 TIME_EXIT 每日重置 — entry 在先前交易日时
+    #   用"今日开盘以来分钟数"(minutes_from_open) 替代 wall-clock held_minutes,
+    #   隔夜 ~17.5h 非交易时间不再计入, 防开盘第一轮检查超龄秒杀 (8/11 TSM 实锤).
+    #   盘前 minutes_from_open<0 → 天然不触发. 日内单 _is_overnight_position=False, 不变.
+    _te_held_minutes = held_minutes
+    if bool(_pb_cfg.get("time_exit_overnight_daily_reset_enabled", True)) \
+            and _is_overnight_position(entry_time_str):
+        _te_held_minutes = float(minutes_from_open or 0)
+    if _time_exit_enabled and not exit_reason and _te_held_minutes > (_time_exit_hours * 60):
         if not _time_exit_only_if_loss or profit_pct < 0:
             exit_reason = "TIME_EXIT"
             exit_price = current_price

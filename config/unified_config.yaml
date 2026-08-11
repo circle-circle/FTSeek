@@ -172,8 +172,6 @@ data_sources:
     stock_sub_types:
     - QUOTE
     - K_1M
-    # 动态活跃集 (指令/持仓/基准) 追加 ORDER_BOOK+TICKER push (2026-08-10 用户批准);
-    # 仅影响 subscription_manager 动态集路径, 44只扫描池不受影响. 回滚=false+重启.
     active_set_orderflow_enabled: true
 database:
   backup_enabled: true
@@ -1030,9 +1028,6 @@ playbook:
     observe: true
   premarket_shadow:
     observe: true
-  # 2026-08-09 (用户批准方案1, record-only): 盘前失效评估 — 09:35-09:59 ET 每日一次,
-  #   盘前涨跌幅 vs 指令方向打"若启用将失效"标记 (A逆势追空/B接飞刀/C追涨延伸),
-  #   落 data/premarket_invalidation_shadow.jsonl, 攒样后与成交对照定规则去留. 回滚: false+重启.
   premarket_invalidation_observe: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
@@ -1047,17 +1042,10 @@ playbook:
     min_confidence: 60
     daily_notional_cap_pct: 0.8
     max_daily_positions: 30
-    # max_position_pct 唯一真源在 risk_parameters (0.06) — 本段重复键会在
-    #   PlaybookConfig 扁平合并时覆盖它 (execution_parameters 后合并胜出), 2026-08-06 已剔除.
     entry_reanchor_enabled: false
     entry_reanchor_max_drift_pct: 4.0
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
-    # 2026-08-07 (用户批准, sim A/B 双开实测): VWAP 门 wrong_side 拦截 50/50 分流 —
-    #   分臂 sha1(date|symbol|direction) 奇偶, 日内稳定; 台账 data/vwap_gate_ab.jsonl;
-    #   仅 futu_simulate 生效 (代码内硬守卫). 毕业: 每臂 n≥30 对照净均值.
-    #   首日运行: LLY/AVGO bypass 臂成交, TSM/ORCL gated 臂 (TSM 收复 VWAP 后正常成交).
-    #   回滚: false + 重启.
     vwap_gate_ab_enabled: true
     min_tp_rr: 1.5
     intraday_vol_gate_enabled: true
@@ -1068,31 +1056,18 @@ playbook:
     early_tight_sl_enabled: false
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
-    # 2026-08-08 (DEB-20260807 复盘): 开盘禁触窗 — ET<10:00 不新触发.
-    #   依据: 9点档入场 7月 120笔 净-$931 / 8月 35笔 净-$250 vs 10点档正期望;
-    #   MFE_STALL 12/12 全在 9:35-9:53 入场. 与 14:00 cutoff 对称.
-    #   回滚: false + 重启.
     entry_open_blackout_enabled: true
     entry_open_blackout_hhmm: 1000
-    # 2026-08-08 (exit_shadow dead_signal_60m_mfe0.2 毕业): 死信号退出 — 60min 峰值浮盈<0.2% 即离场.
-    #   依据: shadow 全历史 171 笔分离度 1.49pp (触发组 -1.12% vs 未触发组 +0.37%).
-    #   回滚: dead_signal_exit_enabled 改 false.
     dead_signal_exit_enabled: true
     dead_signal_exit_minutes: 60
     dead_signal_exit_mfe_pct: 0.2
-    # 2026-08-08 (DEB-20260808 §8.3 裁定①): SHORT 禁追涨 shadow — 硬门被禁触窗架空,
-    #   降级为观察: SHORT 且当日涨>3% 时落 shadow (不拦单), 攒样本评估规则复活条件.
-    #   回滚: false + 重启.
     short_chase_ban_shadow_enabled: true
     short_chase_ban_pct: 3.0
     mfe_stall_exit_enabled: true
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
-    # 2026-08-08 (DEB-20260808 §17.3-2 + §22 审计修正): SL 收紧系数 — 全体紧SL.
-    #   初版 β=0.20 被审计否决 (落入 7/9 证伪的 <2% 噪声扫损区 WR47% 亏$1352);
-    #   修正 β=0.50 + 下限 1.5%: 收紧后 SL 1.5-2.5%, 贴近 7/9 最优区 (2-3% WR59%) 下沿.
-    #   OOS 起点 8/10, 异常即回滚 (改 1.0).
-    sl_tighten_beta: 0.50
+    time_exit_overnight_daily_reset_enabled: true
+    sl_tighten_beta: 0.5
     sl_tighten_min_pct: 1.5
     mfe_stall_exit_shallow_hold_enabled: true
     mfe_stall_exit_shallow_pct: 1.0
@@ -1107,7 +1082,7 @@ playbook:
     liquidity_gate_max_adv_pct: 0.5
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
-    breakeven_fee_cushion_pct: 0.4    # 2026-08-06: 0.15→0.4 — 覆盖真实双边费(实测$4.02/名义$1K≈0.4%), 保本出不再净亏 (GS 8/6 案例: 毛+$2.85/费$4.02/净-$1.17)
+    breakeven_fee_cushion_pct: 0.4
     breakeven_fee_aware_enabled: true
     overnight_hold_enabled: false
     profit_override_threshold_pct: 1.5
@@ -1135,10 +1110,7 @@ playbook:
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
-    max_position_pct: 0.06    # 2026-08-06: 0.04→0.06 — 单笔上限 $3914→$5872, 拓宽 min_notional=3000 可行区间 (sim 采集期)
-    # 2026-08-06 (sim 采集期, 用户指示: 足量交易数据): 两个降仓乘数放开到 1.0 —
-    #   原 CAUTIOUS 0.5 × LONG分歧 0.5 = 0.25 → 名义 < min_notional 被物理拦截, 交易量骤减.
-    #   回滚: cautious_mult 0.5 / model_disagreement_downsize_factor 0.5 + 重启.
+    max_position_pct: 0.06
     cautious_mult: 1.0
     model_disagreement_downsize_factor: 1.0
     risk_base_capital: 82000.0
@@ -1152,101 +1124,46 @@ playbook:
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
-  # 2026-08-06 (DEB-20260806 终裁"同意"): 锚限价影子 emit (record-only) —
-  #   触发时落 data/limit_entry_shadow.jsonl, 次日 crontab 重放判配对δ.
-  #   主门 n≥60 真被动 sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门. 回滚: false+重启.
   limit_entry_shadow_observe: true
-  # 指令准入门 (2026-08-06, DEB-20260806-source-control): 全写入方唯一收口
-  #   根因: confidence 门只在 _build_instructions_from_votes 内 (pipeline.py:1264),
-  #   DA 候选由 deep_analysis skill 直写 DB、UE 由 llm_universe_scan.py 直写 →
-  #   两者绕过 confidence/负edge配对/价格偏离/跨日翻转全部门。实测 35 日:
-  #   DA 219 条 BUY 平均 conf=36 全部入库并执行 123 笔。
-  #   实装点: app/playbook/db.py save_instruction (唯一必经)。
-  #
-  #   费用类判据=算术确定 (fee_model 同源, 与预测无关):
-  #     commission = max(min($0.01×qty, 0.3%×amt), $1.99)/腿
-  #     → qty≤199 时恒付 $1.99 地板, fee_bps ≈ 2×1.99/notional
-  #     → 降 fee_bps 只能靠**抬名义额**, 不是抬股数 (1000股@$3.4 = 77bps 反而最贵)
-  #   confidence 类判据=无实证支持: 60日 n=242 实测 confidence IC=−0.021 (t=−0.33),
-  #     全部事前特征 |t|<1 → 阈值一律设 0 (不拦), 仅记录, 待 IC 转正再议。
-  #
-  #   2026-08-06 盘中 (用户指示): enforce=true + min_notional=3000 启用 —
-  #   费用类判据算术确定可硬拦; confidence 类阈值仍 0 (IC 无证据不拦).
-  #   执行时二次复核点: playbook_service.execute (position_size 确定后, 下单前),
-  #   弥补 save_instruction 入口 position_size=None → notional=0 判据空转的问题.
-  #   回滚: enabled=false 或 enforce=false + 重启。
   admission:
     enabled: true
-    enforce: true            # 费用类判据硬拦 (转 SKIP); confidence 类阈值 0 不命中
-    min_notional_usd: 3000   # 名义 < $3K: fee_bps>13bps, 费用占比吃掉毛利 (2026-08-06 用户指示启用)
-    min_entry_price: 0.0      # 0=不拦; 低价股撞 0.3% 佣金上限 (建议 20~30)
-    max_shares_per_order: 0   # 0=不拦; $1.99 地板等价点在 199 股
-    min_profit_fee_ratio: 0.0 # 0=不拦; TP处毛利 ≥ K×往返费用 (建议 6~10)
-    min_confidence_buy: 0     # 0=不拦 (IC 无证据, 勿在无证据下启用)
+    enforce: true
+    min_notional_usd: 3000
+    min_entry_price: 0.0
+    max_shares_per_order: 0
+    min_profit_fee_ratio: 0.0
+    min_confidence_buy: 0
     min_confidence_short: 0
-    max_sl_pct: 6.0        # 止损距入场 >6% = 单笔失控拦截 (用户哲学"留空间"; 0=不拦)
-  # 2026-08-09 (sim放量, Qoder 50809e7b): 生成路径 conf 门兜底 70→55 —
-  #   60日实测 conf IC≈-0.02 无预测力 (DEB-20260806), 死指标不卡供给.
-  #   阈值可覆盖: 此键 + 重启; 回滚: 恢复 70.
+    max_sl_pct: 6.0
   supply_conf_gate_buy: 55
   supply_conf_gate_short: 55
-  # 2026-08-09 (sim放量②, Qoder 67612201): 影子组合 — 被门拦单反事实账本 (record-only).
-  #   三拦点 (vol_gate chase/out_of_band/vwap_gate) → shadow_portfolio_entries.jsonl,
-  #   盘后 scripts/settle_shadow_portfolio.py 结算. 回滚: false + 重启.
   shadow_portfolio_enabled: true
-  # 2026-08-10 (隔夜讨论, 用户批准): 隔夜持仓 shadow — benign 退出 (SL_BREAKEVEN/
-  #   SL_TRAIL_LOCK/PRE_CLOSE_EXIT) 落决策点 → 次日结算"持仓过夜 vs 已退出"反事实.
-  #   历史反事实 (7/15-8/7, 73笔): 隔夜跳空胜率60% +0.36%, 但 COIN 单笔占78%,
-  #   剔除后≈打平, regime 未剥离 → 跨 regime 攒样本再裁. 回滚: false + 重启.
   overnight_hold_shadow_enabled: true
-  # 盘中再入场生成器 (2026-08-06, 用户指示"sim 直上线快速验真"): 盘中供给恢复 —
-  #   指令供给全部盘前生成 + topup 已停供 → 盘中零新增机会。本生成器扫"当日已平仓
-  #   且前笔非硬亏(>-1%)"标的, 盘中指标确认 thesis 延续 (回踩VWAP带内 + slope_5m
-  #   转正 + 量比≥0.8 + L1 spread≤25bps + ATR≥2%) 时重武装当日指令 (新锚点/SL1.5%/TP
-  #   RR1.6), 走完整既有门链 (13门+admission+熔断/PDT/报价门), 不绕过任何风控。
-  #   守卫: 每标的日1次(平仓笔数==1自然约束) / 日上限3次 / 10:00-13:55 ET 窗 /
-  #   非 futu_simulate 环境自动降级 record-only。全程落 data/intraday_reentry_shadow.jsonl。
-  #   回滚: enabled=false + 重启。
   intraday_reentry:
     enabled: true
-    mode: live                 # live=武装真指令(sim); 非sim环境强制 shadow
-    window_start_hhmm: 1045    # 2026-08-08: 1000→1045 — 禁触窗后首笔成交≥10:00/平仓≥10:30, 过早扫描候选池恒空
+    mode: live
+    window_start_hhmm: 1045
     window_end_hhmm: 1355
     scan_interval_sec: 300
     max_arms_per_day: 3
-    max_prior_loss_pct: 1.0    # 前笔亏损>1% = 硬止损/论破位, 不报复性再入
-    # 2026-08-07 修复死锁 (用户批准): 1.5→2.0 — mult=1.5 时阈值 (0.5×6%×净值$97K=$2,910)
-    #   低于 admission 首单下限 $3,000 → 任何合法首单都超阈值, 再入场数学上不可达 (首日 0 武装).
-    #   2.0 语义: 满配首单后恰可再入一次, 同标的当日累计 ≤2×单笔上限 (≈12% 净值).
+    max_prior_loss_pct: 1.0
     max_cumulative_pos_mult: 2.0
-    vwap_band_low_pct: 0.3     # LONG: 回踩区下沿 vwap×(1-0.3%)
-    vwap_band_high_pct: 1.0    # LONG: 不追高位上沿 vwap×(1+1.0%); SHORT 对称
+    vwap_band_low_pct: 0.3
+    vwap_band_high_pct: 1.0
     min_slope_5m_pct: 0.0
     min_vol_ratio: 0.8
     max_spread_bps: 25
     min_atr_pct: 2.0
-    sl_pct: 1.5                # 再入场止损回退值 (ATR 缺失时; 主口径见 quick_* 快收组)
-    tp_rr: 1.6                 # 回退口径 (过 min_tp_rr=1.5 门)
-    # 2026-08-07 (用户裁决: 再入场可跨夜 → SL 放宽给空间 / TP 降档快落袋, 退出栈不变):
-    #   ATR 相对化按标的自适应; 触发 re-price 用触发时 ATR 同式复算 (pipeline.py).
-    #   示例: AVGO(ATR5%)→SL3.0/TP1.75  AAPL(ATR1.8%)→SL2.0/TP1.0  TSM(ATR3%)→SL2.0/TP1.05
-    #   代价: RR≈0.5-0.6 倒置, 需净胜率>~62% — 由 eval_intraday_reentry 验证. 回滚: 删除本组键.
-    quick_sl_atr_mult: 0.6       # SL = clamp(0.6×ATR%, 2.0, 3.5)
-    quick_sl_floor_pct: 2.0      # 对齐 vol_bucket 噪声地板, 不入 <2% 扫损区
+    sl_pct: 1.5
+    tp_rr: 1.6
+    quick_sl_atr_mult: 0.6
+    quick_sl_floor_pct: 2.0
     quick_sl_ceil_pct: 3.5
-    quick_tp_atr_mult: 0.35      # TP = clamp(0.35×ATR%, 1.0, 2.0)
+    quick_tp_atr_mult: 0.35
     quick_tp_floor_pct: 1.0
     quick_tp_ceil_pct: 2.0
-    # 2026-08-06 用户裁决"再入场亏损可隔夜": 水下仓首夜豁免 PRE_CLOSE_EXIT/EOD 兜底 —
-    #   仅本生成器武装仓(decision_id 前缀) + 仅水下(盈利仍当日落袋) + 仅首夜(次日正常收).
-    #   注意: 总开关 overnight_hold_enabled=false 下 OVERNIGHT_GAP_STOP 不生效,
-    #   持夜风险由原 SL 1.5% 兜底 (跳空越 SL 有次日市价滑点风险, sim 期接受).
-    #   回滚: 本键置 false + 重启.
     overnight_hold_loser_enabled: true
   topup:
-    # 2026-08-06 (DEB-20260805-supply-reallocation 终裁①, 用户裁"同意"): 停供补量 —
-    #   topup 机制(指令不足→流动性池补单)近期补入单持续净亏, 机制+minimax 悔值裁定停供.
-    #   恢复: enabled 改回 true + 重启. 观察期: 停供后指令量与盈亏基线对照.
     enabled: false
     technical_override_enabled: true
     target_min_instructions: 30
@@ -1538,9 +1455,7 @@ signal_stage:
 universe_expansion:
   entry_enabled: true
   da_candidate_feed: true
-  # 2026-08-06 (DEB-20260805-supply 终裁②, 用户裁"同意"): UE×SHORT 加码影子 S0 —
-  #   record-only 登记 ×1.25 假设队列 (data/ue_short_boost_shadow.jsonl),
-  #   n=60 T+1 主门毕业前不动真仓. 回滚: false.
+  premarket_anchor: true
   short_boost_shadow: true
   prompt_version: v2
   clue_hard_events: true

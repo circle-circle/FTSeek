@@ -239,3 +239,63 @@ class TestCheckIntradayTrigger:
             "stop_loss": 102.0,  # 当前价格 101 已低于 stop_loss, LONG 应被拦截
         }
         assert _check_intraday_trigger(scheduler, inst) is False
+
+    # ── 2026-08-11 (LIF 盘前-20%实锤): 极端gap逆方向作废 ──
+
+    def test_extreme_gap_adverse_invalidates_instruction(self, monkeypatch):
+        """BUY 逆向暴跌 (>8%) → 永久作废: 落库 skip_reason=thesis_drift_invalidate.
+        (防盘中反弹回触发带后 pullback 无量能确认误触发接飞刀)"""
+        recorded = {}
+        class _FakeDB:
+            def update_instruction_tracking(self, inst_id, updates):
+                recorded["id"] = inst_id
+                recorded["updates"] = updates
+        monkeypatch.setattr("app.playbook.db.PlaybookDB", _FakeDB)
+        scheduler = self._make_scheduler(price=91.0, day_high=100.0, day_low=90.0)
+        inst = {"id": 999, "symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is False
+        assert recorded.get("id") == 999
+        assert recorded["updates"]["skip_reason"] == "thesis_drift_invalidate"
+
+    def test_extreme_gap_short_adverse_invalidates(self, monkeypatch):
+        """SELL_SHORT 逆向暴涨 (>8%) → 同样作废."""
+        recorded = {}
+        class _FakeDB:
+            def update_instruction_tracking(self, inst_id, updates):
+                recorded["id"] = inst_id
+                recorded["updates"] = updates
+        monkeypatch.setattr("app.playbook.db.PlaybookDB", _FakeDB)
+        scheduler = self._make_scheduler(price=109.0, day_high=110.0, day_low=100.0)
+        inst = {"id": 998, "symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is False
+        assert recorded["updates"]["skip_reason"] == "thesis_drift_invalidate"
+
+    def test_extreme_gap_favorable_direction_not_invalidated(self, monkeypatch):
+        """顺方向 gap>8% (BUY 价远在 entry 上方) → 只拦不触发, 不作废
+        (thesis 可能仍有效, 只是价格暂远)."""
+        recorded = {}
+        class _FakeDB:
+            def update_instruction_tracking(self, inst_id, updates):
+                recorded["id"] = inst_id
+                recorded["updates"] = updates
+        monkeypatch.setattr("app.playbook.db.PlaybookDB", _FakeDB)
+        scheduler = self._make_scheduler(price=109.0, day_high=110.0, day_low=105.0)
+        inst = {"id": 997, "symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is False
+        assert recorded == {}
+
+    def test_extreme_gap_adverse_gate_disabled_not_invalidated(self, monkeypatch):
+        """thesis_drift_invalidate_enabled=False → 极端gap只拦不写作废 (回滚路径)."""
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config",
+            lambda: {**self.SEALED_CFG, "thesis_drift_invalidate_enabled": False},
+        )
+        recorded = {}
+        class _FakeDB:
+            def update_instruction_tracking(self, inst_id, updates):
+                recorded["id"] = inst_id
+        monkeypatch.setattr("app.playbook.db.PlaybookDB", _FakeDB)
+        scheduler = self._make_scheduler(price=91.0, day_high=100.0, day_low=90.0)
+        inst = {"id": 996, "symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is False
+        assert recorded == {}

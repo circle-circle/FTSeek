@@ -64,6 +64,44 @@ def test_exit_rules():
     assert reason == "SL_TRAIL_LOCK", f"breakeven ratchet 应上提 effective_sl 触发止损, got {reason}"
     print(f"✅ breakeven ratchet 已启用: {reason}")
 
+    # ── RFC-064 (2026-08-11): TIME_EXIT 隔夜每日重置 ──
+    # 隔离其他规则: peak 0.3% (≥0.2 避 DEAD_SIGNAL; <0.5 避 breakeven),
+    # 浅亏 -0.1% (>-1%, MFE_STALL 浅亏递延), initial_sl 远 (不触 SL).
+    from datetime import datetime, timedelta
+    from app.playbook.pipeline import _now_et as _et_tz
+    _yesterday_et = (datetime.now(_et_tz()) - timedelta(days=1)) \
+        .replace(hour=12, minute=41, second=0, microsecond=0).isoformat()
+
+    # ① 隔夜仓开盘 (8/11 TSM 复盘场景): wall-clock 已 1249min > 6h,
+    #    但重置钟仅 1min → 不得 TIME_EXIT; 其余规则均不命中 → 不退出.
+    reason, *_ = _check_playbook_exit_rules(
+        direction="LONG", entry_price=100, current_price=99.9,
+        initial_sl=90, peak_price=100.3, meta=dict(meta),
+        held_minutes=1249, minutes_to_close=300, minutes_from_open=1,
+        entry_time_str=_yesterday_et,
+    )
+    assert reason == "", f"RFC-064 隔夜仓开盘预算重置, 不应退出, got {reason}"
+    print("✅ RFC-064 隔夜仓开盘不秒杀 (重置钟 1min < 6h)")
+
+    # ② 隔夜仓当日预算耗尽: 开盘以来 400min > 6h 且水下 → TIME_EXIT.
+    reason, *_ = _check_playbook_exit_rules(
+        direction="LONG", entry_price=100, current_price=99.9,
+        initial_sl=90, peak_price=100.3, meta=dict(meta),
+        held_minutes=1249, minutes_to_close=90, minutes_from_open=400,
+        entry_time_str=_yesterday_et,
+    )
+    assert reason == "TIME_EXIT", f"RFC-064 隔夜仓当日预算耗尽应 TIME_EXIT, got {reason}"
+    print("✅ RFC-064 隔夜仓当日预算耗尽仍 TIME_EXIT")
+
+    # ③ 日内单对照: 非隔夜 → wall-clock 不变 (held 420min > 6h 水下 → TIME_EXIT).
+    reason, *_ = _check_playbook_exit_rules(
+        direction="LONG", entry_price=100, current_price=99.9,
+        initial_sl=90, peak_price=100.3, meta=dict(meta),
+        held_minutes=420, minutes_to_close=90, minutes_from_open=20, entry_time_str="",
+    )
+    assert reason == "TIME_EXIT", f"日内单 wall-clock 行为不变, got {reason}"
+    print("✅ RFC-064 日内单 wall-clock 行为不变")
+
     print("\n✅ Playbook 退出规则开关验证通过")
 
 

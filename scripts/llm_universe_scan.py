@@ -200,6 +200,39 @@ def _quote_price(q: Dict[str, Any]) -> Optional[float]:
     return q.get("price") or q.get("last_price")
 
 
+def _is_us_premarket() -> bool:
+    """美股盘前时段判定 (04:00-09:30 ET). pytz 处理夏令时; 失败回落 _now_et 硬编码偏移."""
+    try:
+        import pytz
+        now_et = datetime.now(pytz.timezone("America/New_York"))
+        hm = now_et.hour * 100 + now_et.minute
+        return 400 <= hm < 930
+    except Exception:
+        hm = _now_et().hour * 100 + _now_et().minute
+        return 400 <= hm < 930
+
+
+def _effective_quote_price(q: Dict[str, Any]) -> Optional[float]:
+    """盘前感知取价 (2026-08-11, LIF/UE 同款盘前盲点修复).
+
+    盘前时段 snapshot 的 last_price/price=昨收 (无当日成交), 真实可交易价在 pre_price。
+    实证: 8/11 UE inject XOM/CVX/JD entry 逐一精确=昨收; JD 实际盘前已 -3.76%, 锚错 3.8%。
+    与 DA skill v0.64 effective_price 同源同口径。
+    回落: 非盘前时段/pre_price 缺失/push缓存路径(无pre_price键但price=活价) → 原 _quote_price。
+    回滚: universe_expansion.premarket_anchor=false → 恒走旧口径。
+    """
+    if not q:
+        return None
+    if bool(_cfg("universe_expansion.premarket_anchor", True)):
+        try:
+            pre = float(q.get("pre_price") or 0)
+        except (TypeError, ValueError):
+            pre = 0.0
+        if pre > 0 and _is_us_premarket():
+            return pre
+    return _quote_price(q)
+
+
 # ── clue brief 组装 (信息获取) ────────────────────────────────
 def _gather_news(hours: int) -> List[Dict[str, Any]]:
     """近 N 小时新闻 (RSSHub, llm_pipeline 同源); 失败返回 [].
@@ -898,11 +931,12 @@ def cmd_scan(manual_clue: str = "") -> int:
         return 0
 
     # 为可评分, 抓 scan 时参考价
+    # 2026-08-11: effective 口径 — 盘前时段用 pre_price (last_price=昨收会污染 fwd 基线)
     router = _build_router()
     tradeable = [s for s in surfaced if s["direction"] in ("LONG", "SHORT")]
     q = _batch_quotes(router, [s["symbol"] for s in tradeable])
     for s in surfaced:
-        px = _quote_price(q.get(s["symbol"], {}))
+        px = _effective_quote_price(q.get(s["symbol"], {}))
         s["scan_price"] = round(px, 4) if px else None
 
     # [shadow] 浮现连续天数标注 (必须在 _append_jsonl 前: 只读历史日, 不含今日)
@@ -1124,7 +1158,9 @@ def cmd_inject(force_dry: bool = False) -> int:
         print(f"  [warn] regime 补齐失败(非致命): {_rg_ue_e}")
     instructions = []
     for s in cand:
-        px = _quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
+        # 2026-08-11: effective 口径 — 盘前时段用 pre_price 锚定 entry/SL/TP/band。
+        #   修复前 last_price=昨收 → 锚错 (8/11 JD 实盘锚 33.47 vs 真实盘前 32.21, 错 3.8%)。
+        px = _effective_quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
         if not px:
             print(f"  [skip] {s['symbol']} 无现价")
             continue

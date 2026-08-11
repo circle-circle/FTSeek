@@ -1020,6 +1020,11 @@ class FutuLV3Provider:
                             "volume": float(row.get("volume", 0)),
                             "turnover": float(row.get("turnover", 0)),
                             "change_percent": float(change_pct),
+                            # 2026-08-11 (LIF/UE 同款盘前盲点修复): 加法式补盘前字段 —
+                            #   盘前时段 last_price=昨收, 真实可交易价在 pre_price。
+                            #   现有读 price/last_price 的调用方零感知; 消费方按需读取。
+                            "pre_price": float(row.get("pre_price", 0) or 0),
+                            "pre_change_rate": float(row.get("pre_change_rate", 0) or 0),
                             "data_source": "futu_lv3",
                             "timestamp": time.time(),
                         }
