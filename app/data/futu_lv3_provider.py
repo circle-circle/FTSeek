@@ -36,6 +36,38 @@ from futu import CurKlineHandlerBase
 logger = logging.getLogger("ftseek_us.futu_lv3")
 
 
+def silence_futu_sdk_logs() -> None:
+    """SSOT 唯一入口: 静默 Futu SDK 的 DEBUG/INFO 日志 (2026-08-12 提取).
+
+    背景: SDK 用进程级单例 FTLog (logger 名 'FTFileLog'/'FTConsoleLog'),
+    默认 file_level=DEBUG 会把每个行情推送/协议包写盘并做昂贵的 findCaller
+    堆栈回溯, 直接吃满回调线程 CPU + 日志膨胀。调高单例 file_level/
+    console_level 到 WARNING 才能真正止血。
+    (2026-08-12 SDK 10.9.6908 升级后实测: file_level property setter 机制
+    与旧版一致, 本方法继续适用。)
+
+    历史: 此前 3 处 inline 拷贝 (provider connect 时 / playbook / dashboard),
+    provider 拷贝挂在连接事件上 → 盘后无 LV3 连接时抑制从未应用 →
+    trade context keepalive (proto=1004 心跳) 持续写盘 (实测 28min 1566 行)。
+    现统一调本函数; main.py import 本模块即触发模块级调用, 覆盖盘后场景。
+    """
+    try:
+        import futu.common.ft_logger as _ft_logger
+        _ft_logger.logger.file_level = logging.WARNING
+        _ft_logger.logger.console_level = logging.WARNING
+    except Exception as _e:
+        logger.warning(f"[FutuLog] 调整 Futu SDK 日志级别失败: {_e}")
+    _futu_logger = logging.getLogger("futu")
+    _futu_logger.setLevel(logging.CRITICAL)
+    _futu_logger.handlers = []
+    _futu_logger.propagate = False
+
+
+# import 即抑制: 任何 import 本模块的进程 (main / dashboard / cron 脚本)
+# 在建立第一个 Futu 连接前即完成静默, 不再依赖"连接时"时机。
+silence_futu_sdk_logs()
+
+
 def _configured_stock_sub_types() -> List[str]:
     """LV3 股票推送订阅类型 (单一可配置源, 默认精简集 QUOTE+K_1M).
 
@@ -335,12 +367,6 @@ class FutuLV3Provider:
                 self._connected = False
 
             try:
-                os_env_set = False
-                if "FUTU_LOG_LEVEL" not in os.environ:
-                    os.environ["FUTU_LOG_LEVEL"] = "ERROR"
-                    os.environ["FUTU_LOG_TO_FILE"] = "0"
-                    os_env_set = True
-
                 from futu import OpenQuoteContext, SysConfig, SubType
 
                 # 2026-06-26 修复: 连接 OpenD 前先做端口探测, 不可达时快速失败,
@@ -354,20 +380,9 @@ class FutuLV3Provider:
                     self._connected = False
                     return False
 
-                # 禁用 Futu SDK 日志
-                # 关键: SDK 通过单例 FTLog(logger 名 'FTFileLog'/'FTConsoleLog') 记录日志,
-                # 默认 file_level=DEBUG 会把每个行情推送包写盘并做昂贵的 findCaller 堆栈回溯,
-                # 直接吃满回调线程 CPU。必须调高单例的 file_level/console_level 才能真正止血。
-                try:
-                    import futu.common.ft_logger as _ft_logger
-                    _ft_logger.logger.file_level = logging.WARNING
-                    _ft_logger.logger.console_level = logging.WARNING
-                except Exception as _e:
-                    logger.warning(f"[FutuLV3] 调整 Futu SDK 日志级别失败: {_e}")
-                futu_logger = logging.getLogger("futu")
-                futu_logger.setLevel(logging.CRITICAL)
-                futu_logger.handlers = []
-                futu_logger.propagate = False
+                # 禁用 Futu SDK 日志 (SSOT: 模块级已调用一次, 此处幂等再确认,
+                # 覆盖本模块被绕过直接建连的边缘场景; 历史与原理见函数 docstring)
+                silence_futu_sdk_logs()
 
                 SysConfig.enable_proto_encrypt(False)
 

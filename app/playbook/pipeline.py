@@ -85,10 +85,10 @@ def _fetch_l1_micro_uncached(scheduler, symbol: str) -> Optional[Dict[str, Any]]
     try:
         import os as _os
         import socket as _socket
+        # Futu SDK 日志静默 — SSOT 统一入口 (2026-08-12 收敛 3 处 inline 拷贝)
+        from app.data.futu_lv3_provider import silence_futu_sdk_logs as _silence
         try:
-            import futu.common.ft_logger as _ftl
-            _ftl.logger.file_level = logging.WARNING
-            _ftl.logger.console_level = logging.WARNING
+            _silence()
         except Exception:
             pass
         from futu import OpenQuoteContext as _OQC, SubType as _ST, SysConfig as _SC
