@@ -10,6 +10,8 @@
 本脚本用 trigger_miss_telemetry (每轮观测价, 11k+条) 重建每笔指令当日价格路径,
 对【未触发】指令打陈旧度标签 (锚太保守/太乐观/在带内) + 结局, 攒样验证
 "陈旧锚是否与错过盈利/接破位亏损相关", n≥30 再裁是否加硬门或接 entry_reference.
+每行双标签: stale=价格空间(与方向无关), stale_dir_normalized=交易空间
+(BUY.too_low ≡ SELL_SHORT.too_high = conservative_miss; 2026-08-12 审查补).
 
 挂载: scheduler_core AFTER_HOURS, 异常隔离.
 输出: data/stale_anchor_shadow.jsonl, 按 (inst_id, date) 去重幂等.
@@ -30,6 +32,23 @@ _MISS = _BASE / "data" / "trigger_miss_telemetry.jsonl"
 
 _KNIFE = 0.03   # 与 entry_band.KNIFE_FLOOR_PCT 同源
 _CHASE = 0.05   # 与 entry_band.CHASE_ZONE_PCT 同源
+
+# 方向归一化 (价格空间标签 → 交易空间语义):
+# BUY.too_low ≡ SELL_SHORT.too_high = 锚太保守, 趋势错过; 镜像为太乐观.
+_DIR_NORM = {
+    ("BUY", "too_low"): "conservative_miss",
+    ("SELL_SHORT", "too_high"): "conservative_miss",
+    ("BUY", "too_high"): "optimistic_miss",
+    ("SELL_SHORT", "too_low"): "optimistic_miss",
+    ("BUY", "below_center"): "weak_conservative",
+    ("SELL_SHORT", "above_center"): "weak_conservative",
+    ("BUY", "above_center"): "weak_optimistic",
+    ("SELL_SHORT", "below_center"): "weak_optimistic",
+}
+
+
+def _dir_norm(stale: str, direction: str) -> str:
+    return _DIR_NORM.get((direction, stale), stale)
 
 
 def _enabled() -> bool:
@@ -57,11 +76,10 @@ def _seen_keys() -> set:
 
 
 def _load_price_paths() -> dict:
-    """trigger_miss → {inst_id: [观测价,...]} (含 entry_price 锚 + 每轮 current_price)."""
+    """trigger_miss → {inst_id: [观测价,...]} (每轮 current_price)."""
     paths = defaultdict(list)
-    anchors = {}
     if not _MISS.exists():
-        return {}, {}
+        return {}
     for line in _MISS.read_text().splitlines():
         line = line.strip()
         if not line:
@@ -75,13 +93,12 @@ def _load_price_paths() -> dict:
         if iid is None or cp is None:
             continue
         paths[iid].append(float(cp))
-        if d.get("entry_price"):
-            anchors[iid] = float(d["entry_price"])
-    return paths, anchors
+    return paths
 
 
-def _classify(anchor, prices, direction) -> dict:
-    """锚陈旧度分类. LONG: 锚低于观测带=太保守(错过上行); 高于=太乐观(追不上).
+def _classify(anchor, prices) -> dict:
+    """锚陈旧度分类 (价格空间, 与方向无关): 锚低于当日观测带=too_low, 高于=too_high.
+    交易空间语义 (谁被错过) 由 _dir_norm 按方向归一化推导.
     用观测中位数定'真实价格中枢', 锚相对中枢的偏离定陈旧方向."""
     if not prices or anchor <= 0:
         return {"stale": "no_data", "dev_pct": None}
@@ -113,7 +130,21 @@ def run_check(scheduler=None) -> None:
     if not _enabled():
         return
     seen = _seen_keys()
-    paths, miss_anchors = _load_price_paths()
+    paths = _load_price_paths()
+
+    # 防早产打标 (2026-08-12 独立复查补): 指令日期 D 只在 D 的美东收盘后 (≥16:05 ET)
+    # 才允许打标。盘前/盘中手动运行时当日遥测尚不完整, 若落盘 no_data 会被幂等键锁死,
+    # 盘后重跑跳过 → OOS 样本永久污染 (实锤: 8/12 盘前 run [08:11 ET] 把当日 6 条指令
+    # 落盘 no_data, 后续重跑含 09:00 ET 手动再生全被幂等键跳过; 其中 BWXT/GOOG/AVGO
+    # 随后 10:18 ET 实际成交, jsonl executed 字段永远冻结 False)。源头过滤, 零改下游。
+    try:
+        from datetime import datetime as _dt
+        import pytz as _pytz
+        _now_et = _dt.now(_pytz.timezone("America/New_York"))
+    except Exception:
+        _now_et = None
+    _today_et = _now_et.strftime("%Y-%m-%d") if _now_et else None
+    _day_over = _now_et is not None and (_now_et.hour * 60 + _now_et.minute) >= 965
 
     conn = sqlite3.connect(str(_DB))
     conn.row_factory = sqlite3.Row
@@ -135,22 +166,28 @@ def run_check(scheduler=None) -> None:
     conn.close()
 
     new_rows = []
+    n_deferred = 0
     for inst in insts:
         key = (inst["id"], inst["date"])
         if key in seen:
             continue
+        # 防早产: 当日指令等收盘后 (≥16:05 ET) 再打标
+        if inst["date"] == _today_et and not _day_over:
+            n_deferred += 1
+            continue
         iid = inst["id"]
         prices = paths.get(iid, [])
         anchor = inst["anchor"]
-        cls = _classify(anchor, prices, inst["direction"])
+        cls = _classify(anchor, prices)
         oc = outcomes.get(inst["decision_id"], (None, None))
         row = {
             "date": inst["date"], "inst_id": iid, "symbol": inst["symbol"],
             "direction": inst["direction"], "decision_id": inst["decision_id"],
             "anchor": anchor, "confidence": inst["confidence"],
             "atr_pct": inst["atr_pct"],
-            # 陈旧度
+            # 陈旧度 (价格空间 + 方向归一化交易空间)
             **cls,
+            "stale_dir_normalized": _dir_norm(cls["stale"], inst["direction"]),
             # 触发/执行结局
             "triggered": bool(inst["triggered"]), "executed": bool(inst["executed"]),
             "skip_reason": inst["skip_reason"],
@@ -165,10 +202,12 @@ def run_check(scheduler=None) -> None:
     with _OUT.open("a", encoding="utf-8") as f:
         for row in new_rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-            if row["stale"] in ("too_low", "too_high"):
+            if row["stale_dir_normalized"] in ("conservative_miss", "optimistic_miss"):
                 n_stale += 1
     logger.info(
-        f"[陈旧锚影子] 打标 {len(new_rows)} 笔 (强陈旧 {n_stale} 笔) → {_OUT.name}")
+        f"[陈旧锚影子] 打标 {len(new_rows)} 笔 (强陈旧 {n_stale} 笔"
+        + (f", 当日 {n_deferred} 笔延迟到收盘后" if n_deferred else "")
+        + f") → {_OUT.name}")
 
 
 if __name__ == "__main__":
