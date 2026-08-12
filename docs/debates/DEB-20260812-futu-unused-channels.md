@@ -206,3 +206,42 @@ derivative 事件 ts = OpenD 服务器本地时区 (CST) 原样存储, join 成�
 **裁决路径 (预注册维持)**: 采集至 8/24 (n 不足则顺延 9/2), 毕业检验=增量
 rank-IC (capital_flow 在 OFI 基线上; deriv 大单流领先假说按 §五 判据),
 禁裸边际 IC / 禁选样恒等式。
+
+### 6.3 消费方接线落地 (2026-08-12, 用户定性"修尺子, 不改行为")
+
+**用户裁决**: 盘前榜单/财报日历接线 = 修尺子 + 供给侧修正, 非行为变更 —
+现有 admission / signal_gate / 风控门禁一律不变, 直接落地不等 8/24 裁决窗
+(增加供给帮助 RFC-064 攒样)。
+
+**① 财报日历冗余源 (repo 侧, 零行为变更)**:
+- 落点: app/data/earnings_calendar.py `_fetch_futu_calendar_fallback()`
+- 逻辑: AV 抓取失败/空结果时 fallback 富途原生 get_earnings_calendar
+  (OpenD 本地, 无外部配额); 输出契约与 AV CSV 解析结果逐字段对齐
+  (symbol/reportDate/timeOfTheDay/estimate/currency), 下游
+  get_watchlist_earnings / earnings_risk_guard 零改动
+- 实测: 模拟 AV 失败 → 富途源 603 条 (8/12~8/18), pub_type 三态映射
+  BEFORE→pre-market / AFTER→post-market / REGULAR→"";
+  get_watchlist_earnings 正常吃到 US.BIDU 8/18 (days_until=5)
+- API 约束: 单次窗口 ≤7 天含端点 — 恰好覆盖全部消费方 (days_ahead=7)
+- 失败语义与 AV 一致: 返回 [] → 下游降级运行, 不阻断盘前流程
+
+**② 盘前榜单扩池 (skill 侧, 只扩供给)**:
+- 落点: futuapi skill 新脚本 quote/get_us_premarket_rank.py
+  (双向榜 ascend/descend, count≤200, JSON 契约与 get_stock_filter 一致)
+  + data_collector.py `collect_premarket_rank_codes()` 并入
+  `collect_premarket_movers` 候选池 (量榜+财报榜+盘前榜三源)
+- 零行为变更证明: 扩池函数仅返回 code/name, 后续仍走既有
+  collect_snapshot_batch + |涨跌幅|≥4% + 盘前量≥500 阈值门 — 门禁不变
+- 实测 (盘前时段端到端): movers 100 只, 其中 **79/100 不在旧池**
+  (量榜+财报榜之外) — LIF 型"榜外消息驱动盘前异动"盲区实测补上;
+  全链路耗时 102s (盘前扫描窗口内可接受)
+- 坑记录: get_us_pre_market_rank 返回 (all_count, DataFrame) 元组
+  非标准 (ret, data); sort_dir 必须传 RankSortDir.ASCENDING/DESCENDING
+  枚举, 传 SortDir/字符串/int 均报 "the type of sort_dir param is wrong"
+
+**验收**: py_compile 全过 + 1126 passed + 重启后零 ERROR。
+**回滚**: ① 删 fallback 调用行即恢复 AV 单源; ② 删 collect_premarket_movers
+内 try/except 扩池块即恢复双源池。
+
+**遗留观察 (不在本次范围)**: _load_key_us_symbols 读 config/watchlist_us.json
+但文件实际在 config/deprecated/ → 永远走静态 36 只 fallback (动态 53 只未生效)。

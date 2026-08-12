@@ -270,12 +270,112 @@ class EarningsCalendar:
         csv_text = self._fetch_raw_calendar(horizon)
         rows = self._parse_csv(csv_text)
         
+        # 2026-08-12 冗余源 (修尺子, 零行为变更):
+        # AV 失败/空结果时 fallback 富途原生日历 (OpenD 本地, 无外部配额)。
+        # 输出契约与 AV 解析结果完全一致 (symbol/reportDate/timeOfTheDay/estimate),
+        # 下游 get_watchlist_earnings / earnings_risk_guard 无需任何改动。
+        # 限制: 富途接口单次窗口 ≤7 天 — 恰好覆盖全部消费方 (days_ahead=7)。
+        if not rows:
+            rows = self._fetch_futu_calendar_fallback()
+        
         # 缓存结果
         self._cache = rows
         self._cache_time = now
         
         logger.info(f"获取到 {len(rows)} 条财报数据")
         return rows
+    
+    def _fetch_futu_calendar_fallback(self, days_ahead: int = 7) -> List[Dict]:
+        """
+        富途原生财报日历 fallback (AV 失败时的冗余源)
+        
+        数据源: OpenQuoteContext.get_earnings_calendar (OpenD 本地, 无配额限制)
+        窗口: API 限制单次 ≤7 天 (含端点), end = today + (days_ahead-1)
+        
+        Returns:
+            与 _parse_csv 输出同构的列表:
+            [{"symbol": "CSCO", "name": "思科", "reportDate": "2026-08-12",
+              "timeOfTheDay": "post-market", "estimate": "0.8643",
+              "currency": "USD", "source": "futu"}, ...]
+            失败返回 [] (与 AV 失败行为一致 → 日历为空, 下游降级运行)。
+        """
+        import socket
+        try:
+            from futu import OpenQuoteContext, RET_OK
+        except ImportError:
+            logger.warning("[财报日历] futu SDK 不可用, fallback 跳过")
+            return []
+        
+        host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
+        try:
+            port = int(os.environ.get("FUTU_OPEND_PORT", "11111"))
+        except (ValueError, TypeError):
+            port = 11111
+        
+        # 连通性预检 (2s): OpenD 不可达时快速失败, 不阻塞盘前流程
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect((host, port))
+        except (ConnectionRefusedError, OSError) as e:
+            logger.warning(f"[财报日历] OpenD 不可达 ({host}:{port}), fallback 跳过: {e}")
+            return []
+        finally:
+            sock.close()
+        
+        ctx = None
+        try:
+            today = datetime.now().date()
+            begin = str(today)
+            end = str(today + timedelta(days=max(days_ahead - 1, 1)))
+            
+            ctx = OpenQuoteContext(host=host, port=port)
+            ret, data = ctx.get_earnings_calendar(
+                market="US", begin_date=begin, end_date=end)
+            
+            if ret != RET_OK or data is None or len(data) == 0:
+                logger.warning(f"[财报日历] 富途日历返回空/失败 (ret={ret}), fallback 跳过")
+                return []
+            
+            # pub_type → AV timeOfTheDay 契约映射
+            _PUB_MAP = {"BEFORE": "pre-market", "AFTER": "post-market", "REGULAR": ""}
+            
+            rows = []
+            for _, r in data.iterrows():
+                try:
+                    security = str(r.get("security", ""))
+                    report_date = str(r.get("earnings_date", ""))
+                    if not security.startswith("US.") or not report_date:
+                        continue
+                    ticker = security[3:]
+                    
+                    eps = r.get("eps_predict")
+                    # 富途缺数据用字符串 'N/A' (与 AV CSV 契约对齐)
+                    estimate = "N/A" if (eps is None or str(eps) in ("N/A", "nan", "")) else str(eps)
+                    
+                    rows.append({
+                        "symbol": ticker,
+                        "name": str(r.get("name", ticker)),
+                        "reportDate": report_date,
+                        "timeOfTheDay": _PUB_MAP.get(str(r.get("pub_type", "")), ""),
+                        "estimate": estimate,
+                        "currency": "USD",
+                        "source": "futu",
+                    })
+                except Exception:
+                    continue
+            
+            logger.info(f"[财报日历] 富途冗余源生效: {len(rows)} 条 ({begin} ~ {end})")
+            return rows
+        except Exception as e:
+            logger.warning(f"[财报日历] 富途 fallback 异常: {e}")
+            return []
+        finally:
+            try:
+                if ctx is not None:
+                    ctx.close()
+            except Exception:
+                pass
     
     def get_this_week_earnings(self, force_refresh: bool = False) -> Dict[str, List[Dict]]:
         """
