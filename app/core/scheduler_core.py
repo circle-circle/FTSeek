@@ -2269,6 +2269,23 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}")
 
+                    # 陈旧锚影子打标 (2026-08-12 Plan B, record-only): DA锚价 vs 盘前价
+                    #   对照暴露陈旧 (AVGO锚低4.3%/HON锚高3.7%); drift门/extreme_gap/出带
+                    #   影子已覆盖深度场景, 真实缺口=趋势逃逸锚陈旧。用 trigger_miss 每轮
+                    #   观测价重建指令当日价格路径, 打陈旧度标签+结局, n≥30 再裁硬门或
+                    #   接 entry_reference。零执行路径改动。回滚: 配置键 false + 重启。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_sa
+                        _sp = _ilu.spec_from_file_location(
+                            "stale_anchor_shadow_tag",
+                            str(_P_sa(__file__).resolve().parents[2] / "scripts" / "stale_anchor_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 陈旧锚影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

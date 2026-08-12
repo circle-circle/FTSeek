@@ -1150,6 +1150,11 @@ playbook:
   #   +$487. 盘后打 volley 聚类(≤120s相邻) + 时段分区标签 → data/entry_sync_shadow.jsonl.
   #   零执行路径改动 (盘后脚本). n≥30 再裁单轮限流门. 回滚: false + 重启.
   entry_sync_shadow_enabled: true
+  # 2026-08-12 (入场价格机制 Plan B): 陈旧锚影子打标 — DA锚价盘前生成, 可能脱离当日
+  #   实际价格 (AVGO锚低4.3%错过上行/HON锚高3.7%破位悬空)。用trigger_miss每轮观测价
+  #   重建指令价格路径, 打陈旧度标签→data/stale_anchor_shadow.jsonl。零执行路径改动。
+  #   n≥30再裁硬门/接entry_reference。回滚: false + 重启。
+  stale_anchor_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live
