@@ -243,3 +243,31 @@ def test_cumulative_exposure_ok_edge():
 def test_prior_pnl_boundary():
     assert ir.prior_exit_reenterable(None, -0.0099, 1.0)
     assert not ir.prior_exit_reenterable(None, -0.01, 1.0)   # 恰好 -1% 排 (非严格大于)
+
+
+# ── choose_direction (2026-08-12 用户裁决: 方向 slope_5m 顺势裁决, 直接落地) ──
+
+def test_choose_direction_adaptive_flip():
+    # 前笔 LONG 但 slope 转负 → 顺势改空 (adaptive 标记)
+    assert ir.choose_direction("LONG", -0.15, True) == ("SELL_SHORT", "adaptive")
+    # 前笔 SHORT 但 slope 转正 → 顺势改多
+    assert ir.choose_direction("SHORT", 0.22, True) == ("BUY", "adaptive")
+
+
+def test_choose_direction_adaptive_same_as_prior():
+    # slope 与前笔同向 → 方向不变, 标记 inherited (无改向)
+    assert ir.choose_direction("LONG", 0.3, True) == ("BUY", "inherited")
+    assert ir.choose_direction("SHORT", -0.3, True) == ("SELL_SHORT", "inherited")
+    # 别名归一化
+    assert ir.choose_direction("BUY", 0.1, True)[0] == "BUY"
+    assert ir.choose_direction("SELL_SHORT", -0.1, True)[0] == "SELL_SHORT"
+
+
+def test_choose_direction_fallback_inherit():
+    # slope 缺失 / 为 0 / 开关关闭 → 继承前笔 (与改动前行为一致)
+    assert ir.choose_direction("LONG", None, True) == ("BUY", "inherited")
+    assert ir.choose_direction("SHORT", None, True) == ("SELL_SHORT", "inherited")
+    assert ir.choose_direction("LONG", 0.0, True) == ("BUY", "inherited")
+    assert ir.choose_direction("LONG", -0.5, False) == ("BUY", "inherited")
+    assert ir.choose_direction("SHORT", 0.5, False) == ("SELL_SHORT", "inherited")
+

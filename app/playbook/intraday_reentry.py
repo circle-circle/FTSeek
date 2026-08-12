@@ -134,6 +134,7 @@ _DEFAULTS: Dict[str, Any] = {
     "scan_interval_sec": 300,
     "max_arms_per_day": 3,
     "max_prior_loss_pct": 1.0,    # 前笔亏损 >1% 视为硬止损/论破位 → 不再入场 (防报复性交易)
+    "direction_adaptive_enabled": True,   # 2026-08-12 用户裁决直接落地: 方向由 slope_5m 顺势裁决, 缺失/0 回退继承
     "max_cumulative_pos_mult": 1.5,  # 同标的当日累计名义 ≤ 1.5×单笔上限 (防再入场=加仓的标的集中暴露)
     "vwap_band_low_pct": 0.3,     # LONG: 允许跌破 VWAP 至多 0.3% (回踩区下沿)
     "vwap_band_high_pct": 1.0,    # LONG: price ≤ vwap×(1+1.0%) (不追高位); SHORT 对称
@@ -226,6 +227,29 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
     if spread_bps is None or spread_bps > float(cfg["max_spread_bps"]):
         reasons.append(f"spread_bps({spread_bps}>{cfg['max_spread_bps']})")
     return (not reasons), reasons
+
+
+def choose_direction(prior_direction: str, slope_5m: Optional[float],
+                     adaptive_enabled: bool) -> Tuple[str, str]:
+    """纯函数: 再入场方向裁决 (可单测, 零 IO).
+
+    2026-08-12 用户裁决直接落地 (非影子对照): 方向不再硬继承前笔,
+    由 slope_5m 符号顺势裁决 — 顺势选择, 不持续偏多/偏空:
+      slope > 0  → BUY        (动量向上, 顺势做多)
+      slope < 0  → SELL_SHORT (动量向下, 顺势做空)
+      slope 缺失/==0 → 继承前笔方向 (与改动前行为完全一致, fail-safe)
+    返回 (direction, mode_tag): mode_tag ∈ {adaptive, inherited} 供影子审计。
+
+    历史证据披露 (skill ftseek-intraday-reentry 坑#2): 8/7 审计实测
+    "盲翻转/盲继承"对后续 1h 方向无区分力 (55.4% vs 44.6%, ≈随机)。
+    本改动与其不同: 不是盲翻, 是指标确认门 (evaluate_candidate 的
+    vwap_band+slope 双向对称分支) 按裁决方向二次过滤 — 方向错则门拒。
+    """
+    inherited = "BUY" if str(prior_direction).upper() in ("LONG", "BUY") else "SELL_SHORT"
+    if not adaptive_enabled or slope_5m is None or float(slope_5m) == 0.0:
+        return inherited, "inherited"
+    chosen = "BUY" if float(slope_5m) > 0 else "SELL_SHORT"
+    return chosen, ("inherited" if chosen == inherited else "adaptive")
 
 
 def _load_closed_today() -> Dict[str, Dict[str, Any]]:
@@ -388,7 +412,9 @@ def _arm_instruction(symbol: str, direction: str, price: float,
         "position_size": None,          # sizing SSOT 在执行期确定 (admission 执行复核兜底)
         "confidence": 55,               # >50 避开 LONG 分歧降仓分支; confidence 无 IC 证据, 仅占位
         "decision_id": f"intraday_reentry-{trade_id}-{hhmm}",
-        "thesis": f"盘中再入场: 前笔(#{trade_id})非硬亏平仓后回踩VWAP企稳, 指标二次确认",
+        "thesis": (f"盘中再入场: 前笔(#{trade_id})非硬亏平仓后"
+                   + ("反弹VWAP下方受阻, " if not is_long else "回踩VWAP企稳, ")
+                   + "指标二次确认(方向由slope_5m顺势裁决)"),
         "horizon": "short",
         "model_used": "intraday_reentry_v1",
         "raw_instruction": {"source": "intraday_reentry", "reentry_of_trade": trade_id},
@@ -526,6 +552,16 @@ def run_scan(scheduler=None) -> int:
                 spread_bps = micro.get("spread_bps")
         except Exception:
             micro = None
+
+        # ── 2026-08-12 方向顺势裁决 (用户裁决直接落地): slope_5m 符号定方向, 缺失/0 → 继承前笔 ──
+        direction, dir_mode = choose_direction(
+            prior["direction"],
+            float(slope_5m) if slope_5m is not None else None,
+            bool(cfg["direction_adaptive_enabled"]),
+        )
+        base["direction"] = direction                    # 裁决后方向覆盖审计行 (原为继承值)
+        base["direction_mode"] = dir_mode                # adaptive=顺势改向 / inherited=继承前笔
+        base["prior_direction"] = str(prior["direction"]).upper()
 
         ok, reasons = evaluate_candidate(
             direction, price, vwap,
