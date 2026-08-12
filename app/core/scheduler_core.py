@@ -2081,6 +2081,23 @@ class TradingScheduler:
                         except Exception as _e:
                             logger.warning(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
 
+                    # 富途未利用通道影子采集 (DEB-20260812 主张A/B, record-only):
+                    #   capital_flow 分钟资金流 + derivative_unusual 期权大单异动落库,
+                    #   攒样供 8/24 同窗裁决 (增量 IC / 大单流领先假说). 函数内节流
+                    #   300s + 按 (symbol, item_time)/事件哈希去重. 零执行路径改动.
+                    #   回滚: futu_channels.shadow_collect_enabled=false + 重启.
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_fc
+                        _sp = _ilu.spec_from_file_location(
+                            "futu_channel_shadow_collect",
+                            str(_P_fc(__file__).resolve().parents[2] / "scripts" / "futu_channel_shadow_collect.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_collect(self, phase="TRADING")
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] futu通道影子采集异常 (已隔离): {_e}")
+
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
                     for _ in range(60):
@@ -2167,6 +2184,20 @@ class TradingScheduler:
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
                     self._process_deferred_audit_queue()
+
+                    # 富途通道影子·盘后收尾采集 (DEB-20260812): 盘后序列才完整,
+                    # 每日 1 次全量拉取 (函数内按日幂等). 回滚同 TRADING 挂载.
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_fc2
+                        _sp = _ilu.spec_from_file_location(
+                            "futu_channel_shadow_collect",
+                            str(_P_fc2(__file__).resolve().parents[2] / "scripts" / "futu_channel_shadow_collect.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_collect(self, phase="AFTER_HOURS")
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] futu通道影子盘后采集异常 (已隔离): {_e}")
                     
                     # 盘后: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:

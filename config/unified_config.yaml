@@ -2474,3 +2474,12 @@ watchlist:
     notes: 网络安全 | 高波动事件驱动 | topup专属 (2026-08-01 合一迁入)
     sector: Technology
     tier: TIER1
+
+# 2026-08-12 (DEB-20260812-futu-unused-channels 主张A/B): 富途未利用通道影子采集.
+#   capital_flow 分钟资金流 + derivative_unusual 期权大单异动 → jsonl 落库攒样,
+#   8/24 同窗裁决 (增量IC/大单流领先假说). TRADING 节流300s + AFTER_HOURS 每日1次.
+#   零执行路径改动 (record-only). 回滚: shadow_collect_enabled=false + 重启.
+futu_channels:
+  shadow_collect_enabled: true
+  shadow_collect_interval_sec: 300
+  shadow_symbols_max: 20
