@@ -163,7 +163,7 @@ class DIContainer:
             try:
                 from app.core.config_container import ConfigContainer as _CC6a
                 _cc6a = _CC6a.get_instance()
-                _acb_fm = str(_cc6a.get_dotted("risk.acb_fail_mode", "open")).strip().lower()
+                _acb_fm = str(_cc6a.get_dotted("risk.acb_fail_mode", "closed")).strip().lower()
                 _pf_fm = str(_cc6a.get_dotted("risk.preflight_fail_mode", "open")).strip().lower()
             except Exception as _e6a:
                 _log6a.critical(f"[LIVE启动断言] 读取 fail_mode 配置失败, 拒绝以实盘启动: {_e6a}")

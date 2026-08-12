@@ -1384,7 +1384,7 @@ def _build_instructions_from_votes(
         # 数值计算 (确定性, LLM 不参与)
         # 2026-07-09: risk_pct从配置读取(原硬编码1.0)
         from app.playbook.config import get_playbook_config as _gpc
-        _risk_pct = float(_gpc().get("risk_pct", 1.0))
+        _risk_pct = float(_gpc().get("risk_pct", 0.5))
         values = compute_instruction_values(
             decision=decision,
             data=data,
@@ -3109,7 +3109,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         # 2026-07-18 (R4 SSOT): 日名义额度与单笔风险共用 _resolve_sizing_base (富途实时净值),
         #   消除双尺子; 净值取不到时兜底 config risk_base_capital。
         _risk_base_capital = _resolve_sizing_base(pb_cfg)
-        _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.20))
+        _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.80))
         _daily_notional_cap = _risk_base_capital * _daily_notional_cap_pct
         _max_daily_positions = int(pb_cfg.get("max_daily_positions", 5))
 
@@ -3415,7 +3415,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         if _inst_ps <= 0 and _new_sl > 0:
                             _risk_base = _resolve_sizing_base(pb_cfg)  # R4 SSOT: 富途实时净值
                             _risk_pct = float(pb_cfg.get("risk_pct", 0.5))
-                            _max_pos_pct = float(pb_cfg.get("max_position_pct", 0.04))
+                            _max_pos_pct = float(pb_cfg.get("max_position_pct", 0.06))
                             # F1 (2026-07-19): 补水位/regime 乘数, 与主路径 compute_position_size 对齐
                             #   (DEB-20260719-round2 Ω.3-4). 修复前兜底缺二者 → 回撤期仓位反向放大.
                             #   water_mult: capital_safety 水位减仓 (YELLOW/ORANGE), 单一真源同主路径.
@@ -3862,7 +3862,7 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
     Returns: (ok: bool, detail: str)
     """
     try:
-        if not pb_cfg.get("liquidity_gate_enabled", False):
+        if not pb_cfg.get("liquidity_gate_enabled", True):
             return True, "disabled"
         _min_px = float(pb_cfg.get("liquidity_gate_min_price", 3.0))
         if current_price and 0 < current_price < _min_px:
@@ -3898,7 +3898,7 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
                 _cap = float(_lq_gc().get_dotted("capital.fixed_amount", 82000) or 82000)
             except Exception:
                 _cap = 82000.0
-            _notional = _cap * float(pb_cfg.get("max_position_pct", 0.04) or 0.04)
+            _notional = _cap * float(pb_cfg.get("max_position_pct", 0.06) or 0.06)
         _max_pct = float(pb_cfg.get("liquidity_gate_max_adv_pct", 0.5))
         _ratio_pct = _notional / _adv_dollar * 100.0
         if _ratio_pct > _max_pct:
@@ -4524,7 +4524,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         _vwap_dev, _vwap_populated, _vwap_val = None, False, None
 
     try:
-        _gate_tol = float(pb_cfg.get("entry_vwap_gate_tolerance", 0.0) or 0.0)
+        _gate_tol = float(pb_cfg.get("entry_vwap_gate_tolerance", 0.003) or 0.003)
     except Exception:
         _gate_tol = 0.0
     _gate_block = False
@@ -4538,7 +4538,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         _gate_reason = "wrong_side" if _gate_block else "aligned"
 
     try:
-        _gate_enabled = bool(pb_cfg.get("entry_vwap_gate_enabled", False))
+        _gate_enabled = bool(pb_cfg.get("entry_vwap_gate_enabled", True))
     except Exception:
         _gate_enabled = False
 

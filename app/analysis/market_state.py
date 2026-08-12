@@ -46,11 +46,11 @@ def _load_vix_threshold() -> int:
         from app.core.config_container import get_config
         cfg = get_config()
         if cfg:
-            val = cfg.get_dotted("risk.vix_block_threshold", 22)
+            val = cfg.get_dotted("risk.vix_block_threshold", 28)
             return int(val)
     except Exception:
         pass
-    return 22
+    return 28
 
 VIX_THRESHOLD = _load_vix_threshold()
 

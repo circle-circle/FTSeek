@@ -4307,7 +4307,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     except Exception:
         pass
     # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
-    # ExitRuleDispatcher + legacy ExitMonitor 可能在同一监控周期对同一 position 各触发一次
+    # (原注释提及 ExitRuleDispatcher 双触发场景, 该路径已随架构体检 2026-08-12 删除;
+    #  保护本身保留, 防御多线程/多循环并发平仓仍必要)
     meta = getattr(position, "metadata", {}) or {}
 
     # P0 (2026-06-07): 从 open_positions.metadata_json 恢复丢失的归因数据

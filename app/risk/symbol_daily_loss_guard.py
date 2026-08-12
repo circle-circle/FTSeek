@@ -324,10 +324,10 @@ def get_symbol_daily_loss_guard() -> SymbolDailyLossGuard:
             from app.core.config_container import get_config
             cfg = get_config()
             _singleton = SymbolDailyLossGuard(
-                max_daily_loss_pct=float(cfg.get_dotted("risk.symbol_daily_loss_guard.max_daily_loss_pct", 0.01)),
-                max_consecutive_losses=int(cfg.get_dotted("risk.symbol_daily_loss_guard.max_consecutive_losses", 3)),
-                min_trades_for_winrate_check=int(cfg.get_dotted("risk.symbol_daily_loss_guard.min_trades_for_winrate_check", 5)),
-                max_loss_rate=float(cfg.get_dotted("risk.symbol_daily_loss_guard.max_loss_rate", 0.7)),
+                max_daily_loss_pct=float(cfg.get_dotted("risk.symbol_daily_loss_guard.max_daily_loss_pct", 0.005)),
+                max_consecutive_losses=int(cfg.get_dotted("risk.symbol_daily_loss_guard.max_consecutive_losses", 5)),
+                min_trades_for_winrate_check=int(cfg.get_dotted("risk.symbol_daily_loss_guard.min_trades_for_winrate_check", 3)),
+                max_loss_rate=float(cfg.get_dotted("risk.symbol_daily_loss_guard.max_loss_rate", 0.66)),
             )
             exempt = cfg.get_dotted("risk.symbol_daily_loss_guard.exempt_symbols", []) or []
             _singleton.set_exempt(exempt)

@@ -40,7 +40,6 @@ try:
     DATABASE_CONFIG = _loader.DATABASE_CONFIG
     LOGGING_CONFIG = _loader.LOGGING_CONFIG
     AGENT_CONFIG = _loader.AGENT_CONFIG
-    FEATURE_FLAGS = _loader.FEATURE_FLAGS
     
 except Exception as e:
     # P0-7 修复 2026-04-26: 统一配置加载失败时拒绝启动，避免硬编码 fallback 悄悄接管生产
@@ -197,7 +196,6 @@ WATCH_LIST_US = _load_watchlist_from_json()
 # ============================================================
 #  功能开关 - 已迁移至 unified_config.yaml
 # ============================================================
-# FEATURE_FLAGS 已从 config_loader 导出 (config_us.py:43)
 
 # ============================================================
 #  加载监控股票池配置

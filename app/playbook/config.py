@@ -25,15 +25,15 @@ class PlaybookConfig:
     DEFAULTS: Dict[str, Any] = {
         # risk_parameters
         "risk_base_capital": 82000.0,
-        "risk_pct": 1.0,
+        "risk_pct": 0.5,
         "rr_ratio": 1.0,
         "fixed_stop_loss_pct": 2.0,
-        "max_position_pct": 0.08,
+        "max_position_pct": 0.06,
         "atr_multiplier": 2.0,
         # execution_parameters
         "intraday_breakout_pct": 0.5,
         "intraday_volume_ratio": 1.5,
-        "min_confidence": 65,
+        "min_confidence": 60,
         "min_tp_rr": 1.5,
         "buying_power_fallback_alert": True,
         # 2026-07-19: 下单前报价健康门 (复用 data_health_guard.check_quote_health).
@@ -49,7 +49,7 @@ class PlaybookConfig:
         # 2026-07-06: 模拟交易期提升交易量 20%→40%, 5→10 (收集更多样本数据)
         # 2026-07-09: 40%→60% — bridge候选直写DB后, deep_analysis信号质量提升,
         #   更多资金给bridge候选执行, 积累更多交易数据验证方向+退出策略
-        "daily_notional_cap_pct": 0.60,
+        "daily_notional_cap_pct": 0.80,
         "max_daily_positions": 10,
         # horizon defaults
         "short_rr_ratio": 1.0,

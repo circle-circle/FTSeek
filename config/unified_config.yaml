@@ -381,12 +381,8 @@ execution:
   slippage:
     check_enabled: false
     max_ratio: 0.005
-exit_rules_controller:
-  dispatcher_enabled: false
-  fallback_on_error: false
-  log_suppressed_rules: true
-  monitor_comparison: false
-  shadow_mode: false
+# exit_rules_controller 节已删除 (2026-08-12): ExitRuleDispatcher 死路径随架构体检移除.
+#   现役退出权威 = ExitMonitor (Registry/Legacy路径); playbook 仓位自管退出.
 feature_flags:
   auto_trading_enabled: true
   auto_aggression: normal

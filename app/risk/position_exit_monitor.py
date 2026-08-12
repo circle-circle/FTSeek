@@ -1095,7 +1095,7 @@ class ExitMonitor:
                 # held_minutes 已在 L788 从 (now_ts - entry_time_ts) / 60.0 计算
 
                 # M3 (2026-06-03): Grace period 保护 — legacy 路径也需要
-                # 与 ExitRuleDispatcher._check_grace_period_block 对齐
+                # (原 ExitRuleDispatcher._check_grace_period_block 已于 2026-08-12 删除, 本块为现役实现)
                 _grace_minutes = 10.0
                 _grace_max_loss = 0.03
                 try:

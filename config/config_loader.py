@@ -268,8 +268,8 @@ class ConfigLoader:
             'MAX_TOTAL_POSITION': self.get('risk.position.max_total', 0.80),
             'MAX_DAILY_TRADES': self.get('risk.trading.max_daily_trades', 500),
             'MAX_ORDER_AMOUNT': self.get('risk.trading.max_order_amount', 120000),
-            'MIN_CONFIDENCE': self.get('risk.signal_quality.min_confidence', 0.70),
-            'MIN_CONSENSUS': self.get('risk.signal_quality.min_consensus', 0.3),
+            'MIN_CONFIDENCE': self.get('risk.signal_quality.min_confidence', 0.80),
+            'MIN_CONSENSUS': self.get('risk.signal_quality.min_consensus', 0.25),
             'SIGNAL_MIN_SCORE': self.get('risk.signal_quality.min_score', 60),
             'DEFAULT_STOP_LOSS': self.get('risk.stop_loss.default', -0.06),
             'DEFAULT_TAKE_PROFIT_1': self.get('risk.take_profit.tier1', 0.08),
@@ -293,7 +293,7 @@ class ConfigLoader:
             "RETRY_DELAY_SECONDS": self.get('execution.retry.delay_seconds', 5),
             # 滑点控制
             "MAX_SLIPPAGE_RATIO": self.get('execution.slippage.max_ratio', 0.005),
-            "SLIPPAGE_CHECK_ENABLED": self.get('execution.slippage.check_enabled', True),
+            "SLIPPAGE_CHECK_ENABLED": self.get('execution.slippage.check_enabled', False),
             # 订单状态追踪
             "ORDER_STATE_CHECK_INTERVAL": self.get('execution.order_tracking.check_interval', 2),
             "ORDER_TIMEOUT_SECONDS": self.get('execution.order_tracking.timeout_seconds', 300),
@@ -362,18 +362,9 @@ class ConfigLoader:
             "observability_agent": self.get('agents.observability_agent', {}),
         }
 
-    @property
-    def FEATURE_FLAGS(self) -> dict:
-        return {
-            "ENABLE_DECISION_ENGINE": self.get('features.decision_engine', True),
-            "ENABLE_RISK_ENGINE": self.get('features.risk_engine', True),
-            "ENABLE_EXECUTION_ENGINE": self.get('features.execution_engine', True),
-            "ENABLE_OBSERVABILITY_ENGINE": self.get('features.observability_engine', True),
-            "ENABLE_MULTI_AGENT": self.get('features.multi_agent', True),
-            "ENABLE_SIMULATION_MODE": self.get('features.simulation_mode', True),
-            "ENABLE_BACKTEST": self.get('features.backtest', True),
-            "ENABLE_PAPER_TRADING": self.get('features.paper_trading', True),
-        }
+    # FEATURE_FLAGS 属性已删除 (2026-08-12 架构体检): yaml features 节为空,
+    #   8个flag恒返回True且零消费者; config_us.FEATURE_FLAGS 导出同删.
+    #   现行开关走 unified_config.yaml feature_flags / deployment.feature_flags.
 
     def validate(self) -> list:
         """验证配置一致性"""

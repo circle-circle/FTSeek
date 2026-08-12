@@ -862,7 +862,7 @@ class TradingScheduler:
 
         enabled = bool(cfg.get_dotted("strategies.coordinator.enabled", False)) if cfg else False
         observe_only = bool(cfg.get_dotted("strategies.coordinator.observe_only", True)) if cfg else True
-        max_total = float(cfg.get_dotted("strategies.coordinator.max_total_pct", 0.90)) if cfg else 0.90
+        max_total = float(cfg.get_dotted("strategies.coordinator.max_total_pct", 0.80)) if cfg else 0.80
 
         # T4 (2026-05-16): sandbox 模式强制 SymbolLock + SignalArbitrator enforce
         # sandbox 是实验环境, 应该用更严的约束验证 enforce 行为, 而非沿用宽松 observe_only.
@@ -1586,7 +1586,7 @@ class TradingScheduler:
             _cfg_b3 = _get_cfg_b3()
             _acct_b3 = _os_b3.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
             _allow_b3 = _os_b3.getenv("ALLOW_REAL_TRADING", "false").lower() == "true"
-            _acb_b3 = _cfg_b3.get_dotted("risk.acb_fail_mode", "open")
+            _acb_b3 = _cfg_b3.get_dotted("risk.acb_fail_mode", "closed")
             _pf_b3 = _cfg_b3.get_dotted("risk.preflight_fail_mode", "open")
             _exec_b3 = _cfg_b3.get_dotted("playbook.execute_mode", "futu_simulate")
             _banner_log = logger.warning if _acct_b3 == "real" else logger.info

@@ -194,8 +194,8 @@ def run_llm_strategy_scan(scheduler):
             validator_cfg = {
                 "max_position_pct": risk_cfg.get('risk.position.max_per_symbol', 0.25),
                 "max_total_position": risk_cfg.get('risk.position.max_total', 0.80),
-                "max_daily_strategies": risk_cfg.get('risk.trading.max_daily_trades', 20),
-                "cooldown_seconds": risk_cfg.get('decision.signal_timing.cooldown_seconds', 3600),
+                "max_daily_strategies": risk_cfg.get('risk.trading.max_daily_trades', 500),
+                "cooldown_seconds": risk_cfg.get('decision.signal_timing.cooldown_seconds', 120),
                 # 2026-07-26 扫尾: 原键 risk.blacklist 不存在恒空, 真键 global_blacklist
                 "blacklist": risk_cfg.get('risk.global_blacklist', [])
             }

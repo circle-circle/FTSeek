@@ -707,9 +707,9 @@ class PlaybookService:
             #   失明的熔断器=没有熔断器). 回滚: acb_fail_mode 改回 open.
             try:
                 from app.core.config_container import get_config as _get_cfg_okr
-                _okr_fail_mode = _get_cfg_okr().get_dotted("risk.acb_fail_mode", "open")
+                _okr_fail_mode = _get_cfg_okr().get_dotted("risk.acb_fail_mode", "closed")
             except Exception:
-                _okr_fail_mode = "open"
+                _okr_fail_mode = "closed"
             if _okr_fail_mode == "closed":
                 logger.error(f"[playbook] OKR熔断检查异常 (fail-close 拒绝开仓): {_cb_err}")
                 return {"success": False, "message": f"OKR熔断检查异常 (fail-close): {_cb_err}"}
@@ -729,9 +729,9 @@ class PlaybookService:
             # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
             try:
                 from app.core.config_container import get_config as _get_cfg_acb
-                _acb_fail_mode = _get_cfg_acb().get_dotted("risk.acb_fail_mode", "open")
+                _acb_fail_mode = _get_cfg_acb().get_dotted("risk.acb_fail_mode", "closed")
             except Exception:
-                _acb_fail_mode = "open"
+                _acb_fail_mode = "closed"
             if _acb_fail_mode == "closed":
                 logger.error(f"[playbook] 绝对熔断检查异常 (fail-close 拒绝开仓): {_acb_err}")
                 return {"success": False, "message": f"绝对熔断检查异常 (fail-close): {_acb_err}"}
@@ -979,9 +979,9 @@ class PlaybookService:
             # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
             try:
                 from app.core.config_container import get_config as _get_cfg_pdt
-                _pdt_fail_mode = _get_cfg_pdt().get_dotted("risk.acb_fail_mode", "open")
+                _pdt_fail_mode = _get_cfg_pdt().get_dotted("risk.acb_fail_mode", "closed")
             except Exception:
-                _pdt_fail_mode = "open"
+                _pdt_fail_mode = "closed"
             if _pdt_fail_mode == "closed":
                 logger.error(f"[playbook] PDT 检查异常 (fail-close 拒绝开仓): {_pe}")
                 return {"success": False, "message": f"PDT 检查异常 (fail-close): {_pe}"}
