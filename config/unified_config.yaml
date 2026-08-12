@@ -2488,3 +2488,10 @@ futu_channels:
   shadow_collect_enabled: true
   shadow_collect_interval_sec: 300
   shadow_symbols_max: 20
+
+# 2026-08-12 (financial-data-query 数据源评估): 美国宏观日历影子采集 (record-only).
+#   蚂蚁金融数据API唯一独家缺口=宏观指标层 (regime识别目前只有SPY价格行为+VIX).
+#   盘前 06:00-09:29 ET 每日1次, 8个核心指标最新值/披露日 → jsonl 落库攒样,
+#   不进任何决策路径. 回滚: shadow_collect_enabled=false + 重启.
+macro_calendar:
+  shadow_collect_enabled: true

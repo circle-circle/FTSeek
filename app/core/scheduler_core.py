@@ -2181,6 +2181,22 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.debug(f"[LLM策略] 盘前影子行情采集异常 (已隔离): {_e}")
 
+                    # 宏观日历影子采集 (2026-08-12, financial-data-query 数据源接入):
+                    # 蚂蚁API盘前拉8个美国核心宏观指标最新值/披露日, jsonl落库.
+                    # 函数内自带时间窗口(06:00-09:29 ET)+每日幂等. record-only 不进决策.
+                    # 回滚: macro_calendar.shadow_collect_enabled=false + 重启.
+                    try:
+                        import importlib.util as _ilu_mc
+                        from pathlib import Path as _P_mc
+                        _sp_mc = _ilu_mc.spec_from_file_location(
+                            "macro_calendar_shadow_collect",
+                            str(_P_mc(__file__).resolve().parents[2] / "scripts" / "macro_calendar_shadow_collect.py"))
+                        _mod_mc = _ilu_mc.module_from_spec(_sp_mc)
+                        _sp_mc.loader.exec_module(_mod_mc)
+                        _mod_mc.run_collect(self, phase="PRE_MARKET")
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 宏观日历影子采集异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
                     self._process_deferred_audit_queue()
