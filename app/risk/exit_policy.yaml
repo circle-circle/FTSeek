@@ -2,8 +2,8 @@
 # FTSeek-US 退出策略 — 主线生产 SSOT (Single Source of Truth)
 # ============================================================
 # 适用范围: ExitMonitor + atr_stop_engine + trailing_stop.py
-# 读取者: app/risk/position_exit_monitor.py, app/risk/exit_rule_dispatcher.py
-#         app/pipeline/position_monitor.py
+# 读取者: app/risk/position_exit_monitor.py, app/pipeline/position_monitor.py
+#         (exit_rule_dispatcher.py 已于 2026-08-12 随架构体检删除)
 #
 # ⚠️ 不要与以下 yaml 混淆:
 #   - config/exit_profiles.yaml — harness/shadow_bridge 影子系统专用 (回测/辩论)

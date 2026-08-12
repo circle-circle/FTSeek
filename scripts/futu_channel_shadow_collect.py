@@ -14,7 +14,8 @@
     低于 30次/30s 限流); AFTER_HOURS: 每日 1 次全量收尾拉取 (盘后序列才完整).
   - capital_flow 按 (symbol, capital_flow_item_time) 合并去重 — API 每次返回全天
     序列, 只追加比已存最大时间戳新的行 (防轮询放大, 2026-08-10 教训).
-  - derivative_unusual 按事件行哈希去重 (API 返回滚动 7 天窗, 重复拉取会重放).
+  - derivative_unusual 按事件稳定键去重 (symbol|ts|action|opt|vol|strike|expiry,
+    剔除 OI/V-OI/amount 渲染抖动字段; API 返回滚动 7 天窗, 重复拉取会重放).
   - 时间口径: capital_flow_item_time 为美东市场时间 (原样存储); derivative 事件
     时间戳为 OpenD 服务器本地时区 (CST, 原样存储 raw_ts_str, 解析仅做结构提取).
 
@@ -54,6 +55,19 @@ _DERIV_LINE_RE = re.compile(
     r"V/OI值为(?P<voi>[\d.]+)，交易金额为(?P<amt>[\d,.]+)USD，"
     r"合约行权价是(?P<strike>[\d.]+)，到期日为(?P<expiry>[\d/]+)。"
 )
+
+
+def _deriv_event_key(symbol: str, ts: str, action: str, opt_type: str,
+                     volume: int, strike: float, expiry: str) -> str:
+    """事件稳定去重键 (2026-08-12 修复): 剔除 OI/V-OI/amount 易变字段.
+
+    原实现对整行原文取 MD5 — 富途多次渲染同一事件时 V/OI 存在舍入抖动
+    (实测 SPY 8.10 23:58 同行 v_oi 0.3/0.2 并存), 旧键会把同一事件判为
+    两条 → 逻辑重复 5/354. 稳定键只用事件中不变的身份字段.
+    代价: 同分钟同价同量的两笔真实独立交易会被合并 (概率极低, 接受).
+    """
+    raw = f"{symbol}|{ts}|{action}|{opt_type}|{volume}|{strike}|{expiry}"
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
 def _enabled() -> bool:
@@ -110,6 +124,11 @@ def _max_item_time_per_symbol() -> Dict[str, str]:
 
 
 def _seen_deriv_hashes() -> set:
+    """已存事件的稳定键集合.
+
+    存量行是旧键 (整行哈希) 写入的, 但结构化字段齐全 → 直接重算稳定键,
+    键制切换不会让 7 天滚动窗内的旧事件重放进库.
+    """
     seen = set()
     if not _DERIV_OUT.exists():
         return seen
@@ -117,9 +136,13 @@ def _seen_deriv_hashes() -> set:
         for line in _DERIV_OUT.read_text().splitlines():
             try:
                 r = json.loads(line)
-                h = r.get("event_hash")
-                if h:
-                    seen.add(h)
+                if r.get("event_ts_raw") and r.get("action"):
+                    seen.add(_deriv_event_key(
+                        r["symbol"], r["event_ts_raw"], r["action"],
+                        r.get("opt_type", ""), int(r.get("volume", 0)),
+                        float(r.get("strike", 0) or 0), r.get("expiry", "")))
+                elif r.get("event_hash"):
+                    seen.add(r["event_hash"])  # 结构字段缺失的旧行兜底
             except Exception:
                 continue
     except Exception:
@@ -204,17 +227,22 @@ def _collect_deriv_unusual(ctx, symbols: List[str]) -> int:
                 line = line.strip()
                 if not line or line.startswith("期权大单异动"):
                     continue  # 空行/标题行
-                h = hashlib.md5(f"{sym}|{line}".encode()).hexdigest()[:16]
-                if h in seen:
-                    continue
                 m = _DERIV_LINE_RE.search(line)
                 if m:
+                    # 先解析后去重: 稳定键剔除 OI/V-OI/amount (跨次渲染会抖动)
+                    _opt_type = "CALL" if m.group("opt") == "看涨" else "PUT"
+                    h = _deriv_event_key(
+                        sym, m.group("ts"), m.group("action"), _opt_type,
+                        int(m.group("vol").replace(",", "")),
+                        float(m.group("strike")), m.group("expiry"))
+                    if h in seen:
+                        continue
                     new_rows.append({
                         "symbol": sym,
                         "event_hash": h,
                         "event_ts_raw": m.group("ts"),
                         "action": m.group("action"),
-                        "opt_type": "CALL" if m.group("opt") == "看涨" else "PUT",
+                        "opt_type": _opt_type,
                         "volume": int(m.group("vol").replace(",", "")),
                         "open_interest": int(m.group("oi").replace(",", "")),
                         "v_oi": float(m.group("voi")),

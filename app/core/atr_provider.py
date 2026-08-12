@@ -12,7 +12,7 @@ ATRProvider 作为统一获取入口：
 - 底层数据由 MarketDataRouter 提供（get_full_market_context）
 - ATRProvider 持有内存缓存（默认 60s TTL）避免频繁重算
 - 上游异常时返回 5×TTL 内的过期缓存作为宽限期 fallback
-- TrendFirst / ATRStopEngine / ExitRuleDispatcher 均从 ATRProvider 取值
+- TrendFirst / ATRStopEngine / playbook 管线均从 ATRProvider 取值
 
 使用方式
 --------

@@ -15,7 +15,7 @@ ATR 来源说明 (Task #4 统一ATR计算)
 本模块为纯函数式止损计算器，本身不独立计算 ATR：atr 严格以参数形式传入。
 调用方（position_exit_monitor / exit_rules/* / risk pipeline 等）需从统一的
 ATRProvider（app.core.atr_provider）获取 ATR 后传入本模块，以保证与其他
-ATR 消费方（TrendFirst / ExitRuleDispatcher 等）同根同源、数据一致。
+ATR 消费方（TrendFirst / playbook 等）同根同源、数据一致。
 限 fallback：调用方如拿不到 ATR，可以 entry_price * 0.02 作为保底估计。
 
 模块严格无状态（无 I/O、无持久化），便于单元测试与回测重放。

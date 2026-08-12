@@ -121,20 +121,20 @@ KillSwitch → 参数 → $50K 上限 → 日 20 次 → ALLOW_REAL → PDT → 
 
 ---
 
-## 4. 退出监控 (三层级联，非竞争)
+## 4. 退出监控 (两层级联，非竞争)
 
 ```
 scheduler_core PositionMonitorLoop
   → app/pipeline/position_monitor.py::monitor_loop()    [编排: 循环/对账/broker同步]
     → _check_positions()
-      [1] ExitRuleDispatcher          ← 主路径 (dispatcher_enabled=true, shadow_mode=false)
-          app/risk/exit_rule_dispatcher.py  按 RULE_PRIORITIES 遍历
-          闭仓的仓位从列表移除
-      [2] ExitMonitor + ExitRuleRegistry  ← 处理剩余仓位
+      [1] ExitMonitor + ExitRuleRegistry  ← 唯一退出权威
           app/risk/position_exit_monitor.py
           内部 _check_exit_for_position() → registry 或 legacy
-      [3] _check_via_legacy           ← 仅 registry 出错时兜底
+      [2] _check_via_legacy           ← 仅 registry 出错时兜底
     → order_executor._close_position()  [执行: broker + DB + notify]
+
+  (2026-08-12: ExitRuleDispatcher 第三路径已删除 — 自 5/31 dispatcher_enabled=false
+   已接线未通电, 从未成为主路径; playbook 仓位由 monitor_playbook_sim_exits 自管退出)
 ```
 
 ### 三条 LIVE 退出规则
