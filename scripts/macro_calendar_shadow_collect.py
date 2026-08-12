@@ -1,36 +1,41 @@
 #!/usr/bin/env python3.11
-"""美国宏观日历影子采集 (financial-data-query 数据源接入, record-only).
+"""美国宏观日历影子采集 (record-only) — FRED 单源版 (2026-08-12 方案B).
 
-背景 (2026-08-12): 蚂蚁金融数据 API (financial-data-query skill) 评估结论 —
-  该源对美股行情/K线/资金流无优势 (LV3/Finnhub 已覆盖), 唯一独家缺口是
-  宏观指标层: 系统的 regime 识别目前只吃 SPY 价格行为 + VIX, 对"今天是否
-  宏观数据披露日"零感知. 本脚本盘前拉取 8 个美国核心宏观指标的最新值/
-  披露日, 落库供后续接 DA prompt regime context (本阶段纯采集, 不进决策).
+背景: 蚂蚁金融数据API (financial-data-query skill) 评估后确认宏观指标是其唯一
+  独家缺口, 但二次评估发现 FRED (美联储圣路易斯分行官方数据库) 公开 CSV 端点
+  覆盖 7/8 指标且数据更新 (2026-08-12 实测: FRED 已有 2026-07 CPI, 蚂蚁 API
+  停在 06), 无需 key 无限流. 用户裁决方案B: 全 FRED 单源, 砍 PMI (ISM 专有,
+  FRED 无), 移除蚂蚁 API 依赖.
 
 设计:
-  - 指标编码集已于 2026-08-12 经 meta-search 召回 + data-query 实弹验证锁定
-    (8/8 返回真实数据). 编码是服务端稳定 ID, 固化在下方注册表, 不再走召回层.
+  - 数据源: https://fred.stlouisfed.org/graph/fredgraph.csv (公开, 无 key).
+  - 7 个系列: CPI同比/核心CPI同比(季调)/核心PCE同比/PPI同比/非农新增/失业率/
+    联邦基金利率(日频 DFF). 同比类用 transformation=pc1, 非农用 chg (月环比变化量).
+  - 披露检测: FRED CSV 无披露日字段 → 用"最新期前移"判定: 本次 latest_period
+    晚于上一次快照 (history 末行) = 期间内新数据披露. 月频系列参与披露判定,
+    日频 DFF 仅跟踪水平值不算披露事件 (每天都有值, 无日历意义).
   - 每日最多 1 次 (ET 日期幂等), 窗口 06:00-09:29 ET (PRE_MARKET 阶段).
-  - 单次批量 data-query 拉全部 8 指标近 200 天序列 → 取最近 2 期算趋势,
-    disclosure_date 近 3 日内 → recently_released 标记 (日历信号本体).
+    FRED 更新通常在 ~08:00 ET, 盘前窗口正好捕获当日新披露.
   - 失败降级: 重试 2 次仍失败 → WARNING 日志, 不写状态文件 (下轮自动重试),
-    绝不触碰主流程. record-only, 无下游消费者, 静默失败仅损失当日快照.
+    绝不触碰主流程. record-only, 无下游消费者.
 
 输出:
-  data/macro_calendar_history.jsonl  — 每次运行 1 行全量快照 (历史积累)
+  data/macro_calendar_history.jsonl  — 每次运行 1 行全量快照 (历史积累,
+                                       后续可从序列反推各指标实际披露日分布)
   data/macro_calendar_latest.json    — 最新快照 (原子写, 未来消费者读此文件)
   data/.macro_calendar_shadow_state.json — 幂等状态
 
-挂载: scheduler_core._llm_strategy_loop PRE_MARKET 分支.
+挂载: scheduler_core._llm_strategy_loop PRE_MARKET 分支 (接口未变).
 回滚: config/unified_config.yaml macro_calendar.shadow_collect_enabled=false + 重启.
 """
+import csv
+import io
 import json
 import logging
-import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("ftseek.macro_calendar_shadow")
 
@@ -39,27 +44,25 @@ _HISTORY_OUT = _BASE / "data" / "macro_calendar_history.jsonl"
 _LATEST_OUT = _BASE / "data" / "macro_calendar_latest.json"
 _STATE = _BASE / "data" / ".macro_calendar_shadow_state.json"
 
-# ─── API 端点 (自包含客户端, 与 financial-data-query skill 协议 v1.5.3 对齐) ───
-_API_BASE = "https://dfdatamcpnexus-prod.antgroup-inc.cn"
-_API_VERSION = "1.5.3"
-_QUERY_PATH = "/api/v1/common_query"
-_TIMEOUT = 90
+# ─── FRED 端点 (公开 CSV, 无 key 无限流) ────────────────────────────────────
+_FRED_CSV_URL = ("https://fred.stlouisfed.org/graph/fredgraph.csv"
+                 "?id={series}&cosd={cosd}"
+                 "{trans}")
+_TIMEOUT = 30
 _MAX_ATTEMPTS = 2          # 首次 + 1 次重试
 _RETRY_BACKOFF_SEC = 2.0
-_LOOKBACK_DAYS = 200       # 拉取窗口: 月频指标足够取 6 期, 日频利率取近段
-_RECENT_RELEASE_DAYS = 3   # disclosure_date 距今 ≤3 天 → recently_released
+_LOOKBACK_DAYS = 400       # ~13 个月, 月频系列足够取 12 期 + 同比窗口
 
-# ─── 指标注册表: 编码经 meta-search 召回 + data-query 实弹验证 (2026-08-12) ───
-# (编码, 短名, 服务端指标全名, 频率)
-INDICATORS = [
-    ("500173772", "CPI同比", "美国:居民消费价格指数:当期同比增长率:月", "月"),
-    ("500133721", "核心CPI同比(季调)", "美国:核心居民消费价格指数:季调:1982-1984年=100:当期同比增长率:月", "月"),
-    ("500130235", "核心PCE同比", "美国:核心个人消费支出物价指数:当期同比增长率:月", "月"),
-    ("500130130", "PPI同比", "美国:生产者价格指数:当期同比增长率:月", "月"),
-    ("500000657", "非农新增就业(季调)", "美国:新增就业人数:季调:非农业部门:当期值:月", "月"),
-    ("500174133", "失业率(季调)", "美国:失业率:季调:当期值:月", "月"),
-    ("500128005", "联邦基金利率", "美国:利率:联邦基金:当期值:日", "日"),
-    ("500130222", "制造业PMI", "美国:制造业采购经理指数:当期值:月", "月"),
+# ─── 系列注册表: 2026-08-12 逐一实弹验证 (HTTP 200 + 数值与蚂蚁API交叉核对) ──
+# (series_id, 短名, transformation, 频率, 参与披露判定)
+SERIES = [
+    ("CPIAUCSL", "CPI同比", "pc1", "月", True),
+    ("CPILFESL", "核心CPI同比(季调)", "pc1", "月", True),
+    ("PCEPILFE", "核心PCE同比", "pc1", "月", True),
+    ("PPIACO", "PPI同比(全部商品)", "pc1", "月", True),
+    ("PAYEMS", "非农新增就业(季调,千人)", "chg", "月", True),
+    ("UNRATE", "失业率(季调)", "", "月", True),
+    ("DFF", "联邦基金利率", "", "日", False),
 ]
 
 
@@ -77,150 +80,148 @@ def _now_et() -> datetime:
     return now_et()
 
 
-def _api_key() -> str:
-    return os.environ.get("FINANCIAL_DATA_API_KEY", "").strip()
+def _make_session():
+    """保留接口 (curl 实现无需 session), 为未来扩展预留."""
+    return None
 
 
-def _post_common_query(mode: str, requests_list: List[Dict]) -> Dict:
-    """POST /api/v1/common_query, 仅对超时/网络/5xx 重试."""
-    import requests as _requests
+def _fetch_series_csv(session, series_id: str, cosd: str,
+                      transformation: str) -> List[Tuple[str, float]]:
+    """拉单个 FRED 系列 CSV → [(observation_date, value), ...] 升序.
 
-    key = _api_key()
-    if not key:
-        raise RuntimeError("FINANCIAL_DATA_API_KEY 未设置 (应经 .env.us 注入)")
+    用 curl 而非 requests: 2026-08-12 实测 FRED WAF 会拦截 python-requests 的
+    默认 UA (ReadTimeout 惩罚) 且拒绝自定义 UA 头 (HTTP 000), 但 curl 默认
+    UA 稳定秒回 (7 系列连拉 ~3s). 必须保留 --http1.1 (HTTP/2 偶发 rc=92
+    stream 错误). curl 缺失时抛错 → 上层降级.
+    缺失值 FRED 记为 '.', 跳过. 非 CSV 响应 (限流/系列不存在) 由表头校验拦截.
+    """
+    import shutil
+    import subprocess
 
-    headers = {
-        "X-API-Key": key,
-        "X-API-Version": _API_VERSION,
-        "Content-Type": "application/json",
-    }
-    body = json.dumps({"mode": mode, "requests": requests_list},
-                      ensure_ascii=False).encode("utf-8")
+    curl_bin = shutil.which("curl")
+    if not curl_bin:
+        raise RuntimeError("curl 不可用")
+
+    trans = f"&transformation={transformation}" if transformation else ""
+    url = _FRED_CSV_URL.format(series=series_id, cosd=cosd, trans=trans)
 
     last_err: Optional[Exception] = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            resp = _requests.post(
-                f"{_API_BASE}{_QUERY_PATH}", headers=headers, data=body,
-                timeout=_TIMEOUT, allow_redirects=False, verify=True)
-            if resp.status_code >= 500:
-                last_err = RuntimeError(f"HTTP {resp.status_code} 服务端错误")
-            elif not resp.ok:
-                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
-            else:
-                return resp.json()
-        except (_requests.exceptions.Timeout,
-                _requests.exceptions.ConnectionError) as e:
+            proc = subprocess.run(
+                [curl_bin, "-s", "--http1.1", "--max-time", str(_TIMEOUT), url],
+                capture_output=True, text=True, timeout=_TIMEOUT + 5)
+            if proc.returncode != 0:
+                raise RuntimeError(f"curl rc={proc.returncode}")
+            text = proc.stdout
+            first_line = text.splitlines()[0] if text else ""
+            if "observation_date" not in first_line:
+                raise RuntimeError(f"响应非CSV (可能被限流/系列不存在): "
+                                   f"{first_line[:80]}")
+            rows: List[Tuple[str, float]] = []
+            reader = csv.reader(io.StringIO(text))
+            header = next(reader, None)
+            if not header or len(header) < 2:
+                raise RuntimeError("CSV 缺少数值列")
+            for rec in reader:
+                if len(rec) < 2:
+                    continue
+                val_raw = rec[1].strip()
+                if val_raw in ("", "."):
+                    continue
+                try:
+                    rows.append((rec[0], float(val_raw)))
+                except ValueError:
+                    continue
+            rows.sort(key=lambda r: r[0])
+            return rows
+        except (RuntimeError, subprocess.TimeoutExpired,
+                subprocess.SubprocessError) as e:
             last_err = e
         if attempt < _MAX_ATTEMPTS:
             time.sleep(_RETRY_BACKOFF_SEC)
-    raise RuntimeError(f"宏观API调用失败 ({_MAX_ATTEMPTS}次): {last_err}")
+    raise RuntimeError(f"FRED {series_id} 拉取失败 ({_MAX_ATTEMPTS}次): {last_err}")
 
 
-def _fetch_series(now: datetime) -> Dict[str, List[Dict]]:
-    """批量拉全部指标近 _LOOKBACK_DAYS 天序列, 按编码分组并按期排序."""
-    start = (now - timedelta(days=_LOOKBACK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    codes = [c for c, _, _, _ in INDICATORS]
-    result = _post_common_query("data", [{
-        "url": "/api/v1/macro/data-query",
-        "params": {
-            "indicator_codes": codes,
-            "raw_question": "FTSeek-US 盘前宏观日历影子采集",
-            "start_date": start,
-        },
-    }])
-
-    if result.get("status") != "SUCCESS":
-        issues = result.get("issues") or [{}]
-        raise RuntimeError(f"宏观API返回FAILED: {issues[0].get('hint', issues)}")
-
-    sub = (result.get("results") or [{}])[0]
-    fields = (sub.get("meta") or {}).get("fields") or []
+def _load_prev_snapshot() -> Dict[str, Dict]:
+    """读 history 末行快照的 indicators 段 (披露检测基准). 无则空."""
     try:
-        i_code = fields.index("indicator_code")
-        i_end = fields.index("end_date")
-        i_val = fields.index("indicator_value")
-        i_pub = fields.index("disclosure_date")
-    except ValueError:
-        raise RuntimeError(f"宏观API字段结构异常: fields={fields}")
-
-    grouped: Dict[str, List[Dict]] = {c: [] for c in codes}
-    for row in sub.get("data") or []:
-        code = row[i_code]
-        if code not in grouped:
-            continue
-        grouped[code].append({
-            "end_date": str(row[i_end] or "")[:10],
-            "value": row[i_val],
-            "disclosure_date": str(row[i_pub] or "")[:10] if row[i_pub] else None,
-        })
-    for rows in grouped.values():
-        rows.sort(key=lambda r: r["end_date"])
-    return grouped
+        if _HISTORY_OUT.exists():
+            last_line = None
+            with open(_HISTORY_OUT, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        last_line = line
+            if last_line:
+                return (json.loads(last_line).get("indicators") or {})
+    except Exception as e:
+        logger.warning(f"[macro_shadow] 读取历史快照失败 (按首日处理): {e}")
+    return {}
 
 
 def _build_snapshot(now: datetime) -> Dict[str, Any]:
-    grouped = _fetch_series(now)
-    today = now.date()
-    indicators = {}
-    recent_releases = []
+    cosd = (now - timedelta(days=_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    prev_indicators = _load_prev_snapshot()
+    today = now.strftime("%Y-%m-%d")
 
-    for code, short_name, full_name, freq in INDICATORS:
-        rows = grouped.get(code) or []
-        if not rows:
-            indicators[code] = {
-                "name": short_name, "full_name": full_name, "frequency": freq,
-                "status": "no_data",
+    indicators: Dict[str, Dict[str, Any]] = {}
+    new_releases: List[str] = []
+    session = _make_session()
+
+    for series_id, short_name, trans, freq, detect_release in SERIES:
+        try:
+            rows = _fetch_series_csv(session, series_id, cosd, trans)
+        except Exception as e:
+            indicators[series_id] = {
+                "name": short_name, "frequency": freq, "status": "fetch_error",
+                "error": str(e)[:200],
             }
-            logger.warning(f"[macro_shadow] {short_name}({code}) 窗口内无数据")
+            logger.warning(f"[macro_shadow] {short_name}({series_id}) 拉取失败: {e}")
             continue
 
-        latest = rows[-1]
-        prev = rows[-2] if len(rows) >= 2 else None
-        end_date = latest["end_date"]
-        pub_date = latest["disclosure_date"]
+        if not rows:
+            indicators[series_id] = {
+                "name": short_name, "frequency": freq, "status": "no_data",
+            }
+            logger.warning(f"[macro_shadow] {short_name}({series_id}) 窗口内无数据")
+            continue
 
-        change = None
-        if prev is not None and latest["value"] is not None \
-                and prev["value"] is not None:
-            change = round(float(latest["value"]) - float(prev["value"]), 6)
+        latest_date, latest_val = rows[-1]
+        prev_date, prev_val = (rows[-2] if len(rows) >= 2
+                               else (None, None))
+        change = (round(latest_val - prev_val, 6)
+                  if prev_val is not None else None)
 
-        days_since_release = None
-        if pub_date:
-            try:
-                days_since_release = (
-                    today - datetime.strptime(pub_date, "%Y-%m-%d").date()).days
-            except ValueError:
-                pass
-        recently_released = (days_since_release is not None
-                             and 0 <= days_since_release <= _RECENT_RELEASE_DAYS)
+        # 披露检测: 月频系列最新期晚于上一次快照的最新期 = 新披露
+        period_advanced = False
+        prev_snap = prev_indicators.get(series_id) or {}
+        prev_snap_period = prev_snap.get("period_end")
+        if detect_release and prev_snap_period:
+            period_advanced = latest_date > prev_snap_period
 
-        entry = {
+        indicators[series_id] = {
             "name": short_name,
-            "full_name": full_name,
             "frequency": freq,
             "status": "ok",
-            "period_end": end_date,
-            "value": latest["value"],
-            "prev_value": prev["value"] if prev else None,
+            "period_end": latest_date,
+            "value": latest_val,
+            "prev_value": prev_val,
             "change_vs_prev": change,
-            "disclosure_date": pub_date,
-            "days_since_release": days_since_release,
-            "recently_released": recently_released,
             "n_periods": len(rows),
+            "period_advanced_since_last_run": period_advanced,
         }
-        indicators[code] = entry
-        if recently_released:
-            recent_releases.append(
-                f"{short_name}: {latest['value']} (期{end_date}, "
-                f"披露{pub_date}, 前值{prev['value'] if prev else 'N/A'})")
+        if period_advanced:
+            new_releases.append(
+                f"{short_name}: {latest_val} (期{latest_date}, "
+                f"前值{prev_val if prev_val is not None else 'N/A'})")
 
     return {
         "run_ts_et": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "as_of_date": today.strftime("%Y-%m-%d"),
-        "source": "ant-financial-data-api/macro (financial-data-query skill)",
+        "as_of_date": today,
+        "source": "FRED (fred.stlouisfed.org, 公开CSV无key)",
         "indicators": indicators,
-        "recent_releases": recent_releases,
+        "new_releases_this_run": new_releases,
+        "has_prev_snapshot": bool(prev_indicators),
     }
 
 
@@ -288,9 +289,8 @@ def run_collect(scheduler=None, phase: str = "PRE_MARKET",
     n_ok = sum(1 for v in snapshot["indicators"].values()
                if v.get("status") == "ok")
     logger.info(
-        f"[macro_shadow] 采集完成: {n_ok}/{len(INDICATORS)} 指标 | "
-        f"近{_RECENT_RELEASE_DAYS}日新披露: "
-        f"{'; '.join(snapshot['recent_releases']) or '无'}")
+        f"[macro_shadow] 采集完成: {n_ok}/{len(SERIES)} 指标 | "
+        f"本次新披露: {'; '.join(snapshot['new_releases_this_run']) or '无'}")
     return True
 
 
