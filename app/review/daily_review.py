@@ -100,6 +100,10 @@ class DailyReviewGenerator:
             'report_date': date,
             'generated_at': datetime.now().isoformat(),
             'summary': self._generate_summary(trades, closed_trades, capital_state),
+            # 2026-08-13: report 此前无 'trades' 键 → _save_report 取空列表 →
+            # Obsidian postmarket 笔记正文恒为"无交易"。补上已平仓交易行
+            # (_save_report 内会做 symbol→code / realized_pnl→pnl 映射)。
+            'trades': closed_trades,
             'signal_funnel': signal_funnel,
             'rejection_analysis': rejection_analysis,
             'capital_state': capital_state,
@@ -1267,14 +1271,20 @@ class DailyReviewGenerator:
             summary = report.get('summary', {})
             trades = report.get('trades', [])
             
+            # 2026-08-13 修复三处映射缺陷:
+            #   ① symbol 已含 US. 前缀, 旧写法 f"US.{symbol}" → US.US.CSCO
+            #   ② pnl 口径统一为净 (pnl_net = 毛-费): total/win_rate/明细行同口径,
+            #      否则明细加总 ≠ frontmatter 总数 (毛/费差可达 $30+/日)
             writer.write_daily_postmarket({
                 'date': date,
                 'market': 'US',
                 'total_trades': summary.get('total_trades', 0),
-                'win_rate': summary.get('win_rate', 0),
-                'total_pnl': summary.get('total_pnl', 0),
+                'win_rate': summary.get('win_rate_net', summary.get('win_rate', 0)),
+                'total_pnl': summary.get('total_pnl_net', summary.get('total_pnl', 0)),
                 'max_drawdown': summary.get('max_drawdown', 0),
-                'trades': [{'code': f"US.{t.get('symbol', '')}", 'pnl': t.get('realized_pnl', 0), 'id': str(i)}
+                'trades': [{'code': str(t.get('symbol', '') or ''),
+                            'pnl': t.get('pnl_net', t.get('realized_pnl', 0)),
+                            'id': str(t.get('id', i))}
                            for i, t in enumerate(trades)],
             })
             logger.info(f"[Obsidian] 美股盘后复盘已写入")

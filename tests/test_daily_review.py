@@ -21,9 +21,17 @@ class TestDailyReviewGenerator:
 
         密封: 构造临时 DB (含 generate() 查询引用的列) 并 monkeypatch 路径,
         不再经由 legacy TradeRecorder (那是另一个 DB, 复盘生成器已不读它).
+
+        输出隔离 (2026-08-13 修复): 原 fixture 只隔离 DB 读路径, 未隔离输出 —
+        generate() → _save_report() 会把假数据 (AAPL 175.5 组, 5笔/0.6/+250) 写进
+        生产 data/daily_reviews/*.json 与 Obsidian vault (write_daily_postmarket),
+        每次 pytest 跑到本文件即污染"当前日期"的生产报告。实锤: 14 篇 postmarket
+        笔记 + 7 个 JSON 带假签名 (指纹 total_pnl: 250.0)。修复 = 输出三路径
+        (reviews_dir/obsidian vault/writer 单例) 全部指向 tmp_path。
         """
         import sqlite3
         import app.review.daily_review as dr_mod
+        import app.core.obsidian_writer as ow_mod
 
         db_path = tmp_path / "ftseek_us_test.db"
         conn = sqlite3.connect(db_path)
@@ -66,6 +74,18 @@ class TestDailyReviewGenerator:
         conn.close()
 
         monkeypatch.setattr(dr_mod, "get_trade_records_db", lambda: db_path)
+
+        # ── 输出隔离: 生产 data/daily_reviews/ 与 Obsidian vault 一律不碰 ──
+        import app.core.paths as paths_mod
+        out_dir = tmp_path / "reviews"
+        out_dir.mkdir(exist_ok=True)
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(dr_mod, "get_reviews_dir", lambda: out_dir)
+        # get_obsidian_vault 在 _save_report 内 from app.core.paths 导入 → patch 源模块
+        monkeypatch.setattr(paths_mod, "get_obsidian_vault", lambda: vault_dir)
+        # obsidian_writer 单例缓存 vault_path → 清空, 强制按 tmp vault 重建
+        monkeypatch.setattr(ow_mod, "_writer_instances", {}, raising=False)
         yield db_path
     
     def test_generate(self, setup_data):
