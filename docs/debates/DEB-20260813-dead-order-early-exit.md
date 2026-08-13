@@ -673,3 +673,47 @@ Qoder 称 "trailing 止损单大多在水上 (MFE≥0.5% 才触发), 水上单�
 4. **辩论收敛**: 至此 §十一→§二十 十轮交锋, P1/P5/耐心出场三方案的证据链、反事实、仲裁全部闭环; 耐心出场 (§18.3 六条规格) 是唯一获用户裁决直接落地的方案, 实现可以启动。
 
 复算脚本: `/tmp/recheck_s19.py`; Qoder 仲裁脚本 `scripts/patient_exit_recheck.py` (已入库)。
+
+
+---
+
+## §二十一 Hermes 实现记录 — 耐心出场落地 (2026-08-13, commit d9fc3402)
+
+**状态**: §18.3 六条规格全部实现并上线 (systemctl restart ftseek-us.service, 单实例)。
+
+### 21.1 实现内容
+
+| 规格条 | 实现 |
+|---|---|
+| 1. 作用域 | `patient_exit_arm_eligible`: DEAD_SIGNAL_EXIT + profit_pct ∈ [-1.0%, 0]; 深水下/微盈/其他退出码行为不变 |
+| 2. 出场方式 | 规则引擎等待变体 (20s 轮询评估, 不挂限价单): 站回入场价 → PATIENT_EXIT_FILL 市价卖 |
+| 3. 保护止损 | 水下加深至 -1.5% → PATIENT_EXIT_STOP (stop 优先于 deadline: 价格风险先于时间兜底) |
+| 4. 兜底 | 1550 ET → PATIENT_EXIT_EOD (先于 PRE_CLOSE 15:52); armed 仓跳过正常规则链防抢卖, 但 SL 灾难硬兜底优先级不变 |
+| 5. 双口径记账 | arm 快照 `immediate_exit_price`, 平仓算 `patient_vs_immediate_delta` ($, 方向感知) |
+| 6. 单开关 | `patient_exit_enabled: true` (+max_underwater_pct 1.0 / stop_pct 1.5 / deadline_hhmm 1550), 一键回滚 |
+
+**额外防御** (实现中发现):
+- **expire 墓碑**: armed 状态跨交易日 → 清状态 + `_patient_exit_expired` 墓碑防重新 arm (防无限跨日等待)
+- **开环旧行复活防护**: expire 后平仓时 `_meta_out` 从旧行重建会把作废状态带回 DB → 反向清理 (同 stall_exit 搬运模式)
+- **重启安全**: 等待状态持久化 metadata_json, 每轮写回; 重启后不丢等待态不重复 arm
+
+### 21.2 下游对齐 (改动前影响面分析产出)
+
+- `intraday_reentry._HARD_STOP_REASONS`: 三腿加入禁入集 (fill 保本退出若漏归类会回退 pnl 代理误放行)
+- `chain.py` 退出归类: 三腿归 "stop" 类
+- SL 兜底路径: armed 仓被灾难 SL 关闭时标注 `exit_mode=sl_override` (审计完整)
+- `early_dead_signal_report.py` 无需改 (arm 时 meta["dead_signal_exit"] 已写, 60m fired 识别不受影响)
+
+### 21.3 验证
+
+- tests/test_patient_exit.py **27 passed**: 纯函数 18 (arm 边界/三腿/SHORT 对称/expire/墓碑) + 循环级集成 9 (arm 持有/fill+delta/stop/eod/expire→DEAD_SIGNAL_EXIT 接管/开关关闭/深水下不 arm/SHORT/等待中无动作), 全 mock 隔离 (tmp DB + mock broker, 零生产副作用)
+- 全量回归 **1156 passed, 38.6s**
+- governance hook 通过 ([ADR-023] 引用), SSOT 流程图快照自动刷新并入提交
+
+### 21.4 附带处置: RIVN 双写 (§20 移交项闭环)
+
+全表宽松键扫描分诊三类重复: ①7/9 NVDA + 7/15 RIVN 劫持双写 = 7/15 position_sync 事故历史残留 (7/16 统一修复后 entry_reason=auto_main 零复发, 已验证) → 删劫持行; ②6/8-9 PDD/XLI ghost_cleanup 双写 = task_36 回填事故, 写入路径已死 (grep 全仓仅剩 chain.py 分类映射) → 删 ghost 行; ③5月旧管线 9 组在 7/11 统计断点窗口外且口径模糊 → 不擅动只记录。备份 data/backups/ftseek_us.db.bak-20260813-153822-pre-dedup 后删 4 行 (id 1038/1069/893/894) + 清 signal_lifecycle 孤儿 4 行; 删后 6 月起宽松键零重复。**结论: 历史脏数据清理, 源码无活动 bug, 无需新增幂等键。**
+
+### 21.5 sim 观察判据 (预注册, 替代影子)
+
+首评门槛: ≥10 个浅水区 arm 样本; 通过条件: fill 成交率 ≥40% + Σpatient_vs_immediate_delta > $0 + stop 腿实际/回测偏差 ≤2x。任一不达标 → `patient_exit_enabled: false` 回滚。
