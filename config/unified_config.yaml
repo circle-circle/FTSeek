@@ -1061,6 +1061,19 @@ playbook:
     dead_signal_exit_enabled: true
     dead_signal_exit_minutes: 60
     dead_signal_exit_mfe_pct: 0.2
+    # 2026-08-13 (DEB-20260813 §十六/§18.3, 用户裁"跳过影子直接 sim 观察"): 耐心出场 —
+    #   DEAD_SIGNAL_EXIT 触发且信号时刻浅水下 (水下 ≤1.0%) 时不立即市价卖, 转为轮询
+    #   等待价格站回入场价再卖 (fill, 保本); 等待期水下加深至 stop_pct → 立即卖 (stop);
+    #   1550 ET (先于 PRE_CLOSE 15:52) 强制兜底 (eod). 状态持久化于 trade_records
+    #   metadata_json.patient_exit (重启安全), 双口径记账 patient_vs_immediate_delta.
+    #   证据: 51笔死单轮询级回放 +$107~112 ≈ +$6/日; δ扫描严格保本(δ=0)最优; 止损
+    #   1.0/1.5/2.0 三档稳健 (§19 仲裁后). sim 判据: 成交率≥40% + 净改善>$0 + ≥10样本首评.
+    #   不挂限价单 (Futu paper 无排队建模会复现回测乐观偏差), 用规则引擎等待变体.
+    #   回滚: patient_exit_enabled 改 false + 重启 (单开关门控整条路径).
+    patient_exit_enabled: true
+    patient_exit_max_underwater_pct: 1.0
+    patient_exit_stop_pct: 1.5
+    patient_exit_deadline_hhmm: 1550
     short_chase_ban_shadow_enabled: true
     short_chase_ban_pct: 3.0
     mfe_stall_exit_enabled: true

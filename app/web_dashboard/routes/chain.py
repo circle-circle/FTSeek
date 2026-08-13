@@ -374,6 +374,9 @@ def register(app, templates):
             "BREAKEVEN_STOP": "stop", "TRAILING_STOP": "stop", "ORB_TRAILING_STOP": "stop",
             "ORB_FLOOR_STOP": "stop", "ORB_BREAKDOWN": "stop", "FLASH_EXIT": "stop",
             "OVERNIGHT_GAP_STOP": "stop",
+            # 2026-08-13 (DEB-20260813): 耐心出场三腿 — DEAD_SIGNAL_EXIT 延迟执行变体.
+            #   fill=保本退出(意图锁利但源于死单, 归stop与DEAD_SIGNAL_EXIT同族); stop/eod=保护性.
+            "PATIENT_EXIT_FILL": "stop", "PATIENT_EXIT_STOP": "stop", "PATIENT_EXIT_EOD": "stop",
             # 逻辑类 (主动止盈 / 信号驱动)
             "TAKE_PROFIT": "logic", "DAY_TRADE_TP": "logic", "SCALE_OUT": "logic",
             "ORB_TAKE_PROFIT": "logic", "SIGNAL_EXIT": "logic",

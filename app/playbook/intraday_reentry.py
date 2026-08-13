@@ -47,6 +47,9 @@ _last_run_ts = 0.0
 _HARD_STOP_REASONS = frozenset({
     "SL_INITIAL", "SL_ATR_STOP", "SL_FIXED_PCT", "OVERNIGHT_GAP_STOP",
     "DEAD_SIGNAL_EXIT", "MFE_STALL_EXIT", "TIME_EXIT",   # 0% WR 纯亏损 (n=61, -$2320)
+    # 2026-08-13 (DEB-20260813): 耐心出场三腿 = DEAD_SIGNAL_EXIT 的延迟执行变体,
+    #   thesis 同样未兑现 → 禁入 (fill 保本退出若漏归类会回退 pnl 代理误放行).
+    "PATIENT_EXIT_FILL", "PATIENT_EXIT_STOP", "PATIENT_EXIT_EOD",
     "BROKER_GHOST_CLOSE", "EXIT_MONITOR_CLOSE", "FORCED_CLOSE_OKR_AUDIT",  # 操作类
 })
 _BENIGN_REASONS = frozenset({

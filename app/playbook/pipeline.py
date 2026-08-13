@@ -5597,6 +5597,80 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
         return False
 
 
+# ── 耐心出场 (2026-08-13, DEB-20260813 §十六/§18.3, 用户裁"直接实现 sim 观察") ──
+#   DEAD_SIGNAL_EXIT 触发且信号时刻浅水下 (0~max_underwater_pct) 时, 不立即市价卖,
+#   转为轮询等待: 价格站回入场价 → 市价卖 (fill, 保本退出); 水下加深至 stop_pct →
+#   立即市价卖 (stop); 到 deadline_hhmm (1550, 先于 PRE_CLOSE 15:52) → 强制卖 (eod).
+#   证据: 51笔死单轮询级回放 +$107~112 ≈ +$6/日, δ扫描严格保本(δ=0)最优 (让价单调劣化),
+#   止损 1.0/1.5/2.0 三档稳健 (§14/§19 仲裁后口径). 状态持久化于 meta["patient_exit"],
+#   重启安全. 整条路径由 patient_exit_enabled 单开关门控, 回滚: false + 重启.
+def patient_exit_arm_eligible(exit_reason, profit_pct, meta, pb_cfg) -> bool:
+    """纯函数: DEAD_SIGNAL_EXIT 是否应转入耐心等待而非立即市价卖.
+
+    作用域 (§18.3 六条规格之 1): 信号时刻水下 ∈ [0, max_underwater_pct] —
+      profit_pct ∈ [-max, 0]; profit_pct > 0 (微盈) 无"等回本"必要, 照常立即退出.
+    已 armed 的仓位不得重复 arm (守卫).
+    """
+    if not bool(pb_cfg.get("patient_exit_enabled", False)):
+        return False
+    if exit_reason != "DEAD_SIGNAL_EXIT":
+        return False
+    if meta.get("patient_exit"):
+        return False
+    # expire 墓碑: 跨日作废的等待态不得重新 arm (防无限跨日等待循环)
+    if meta.get("_patient_exit_expired"):
+        return False
+    try:
+        _max_uw = float(pb_cfg.get("patient_exit_max_underwater_pct", 1.0))
+        return -_max_uw <= float(profit_pct) <= 0.0
+    except Exception:
+        return False
+
+
+def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, pb_cfg):
+    """纯函数: 评估耐心等待中仓位的三条退出腿.
+
+    Returns: (mode, detail)
+      mode="":      继续等待
+      mode="fill":  价格站回入场价 (profit_pct >= 0) → 保本退出
+      mode="stop":  水下加深至 patient_exit_stop_pct → 保护止损
+      mode="eod":   到达 patient_exit_deadline_hhmm → 强制兜底
+      mode="expire": 等待状态跨交易日 → 作废 (隔夜仓次日水下是另一回事, 回正常规则链)
+    """
+    _pe = meta.get("patient_exit") or {}
+    if not _pe:
+        return "", ""
+    # 跨日守卫: 等待状态仅当日有效
+    try:
+        _armed_day = str(_pe.get("armed_day", ""))
+        _today = now_et.strftime("%Y-%m-%d")
+        if _armed_day and _armed_day != _today:
+            return "expire", "跨交易日, 等待状态作废"
+    except Exception:
+        pass
+    try:
+        _stop_pct = float(pb_cfg.get("patient_exit_stop_pct", 1.5))
+        _deadline = int(pb_cfg.get("patient_exit_deadline_hhmm", 1550))
+    except Exception:
+        _stop_pct, _deadline = 1.5, 1550
+    if entry_price and entry_price > 0 and current_price and current_price > 0:
+        if direction == "LONG":
+            _profit_pct = (current_price - entry_price) / entry_price * 100.0
+        else:
+            _profit_pct = (entry_price - current_price) / entry_price * 100.0
+        if _profit_pct <= -_stop_pct:
+            return "stop", f"水下 {_profit_pct:.2f}% ≤ -{_stop_pct:.1f}% 保护止损"
+        if _profit_pct >= 0:
+            return "fill", "价格站回入场价, 保本退出"
+    try:
+        _hhmm = now_et.hour * 100 + now_et.minute
+        if _hhmm >= _deadline:
+            return "eod", f"{_hhmm:04d} ≥ {_deadline:04d} 强制兜底"
+    except Exception:
+        pass
+    return "", ""
+
+
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
                                peak_price, meta, held_minutes, minutes_to_close,
                                minutes_from_open, entry_time_str):
@@ -6327,8 +6401,10 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         #   此处预取冷却参数 (循环不变量), 兜底处按 entry_price 逐仓放宽 SL floor.
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_m1
-            _cooldown_sl_pct = float(_get_pb_cfg_m1().get("cooldown_sl_pct", 4.0))
+            _pb_cfg_m = _get_pb_cfg_m1()
+            _cooldown_sl_pct = float(_pb_cfg_m.get("cooldown_sl_pct", 4.0))
         except Exception:
+            _pb_cfg_m = {}
             _cooldown_sl_pct = 4.0
         _in_open_cooldown = minutes_from_open is not None and minutes_from_open < 15
 
@@ -6499,6 +6575,10 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     _sl_meta["exit_price_source"] = _sl_src
                     _sl_meta["broker_qty_before"] = close_res.get("broker_qty_before")
                     _sl_meta["broker_qty_after"] = _sl_broker_after
+                    # 2026-08-13 (耐心出场): armed 仓被灾难 SL 兜底关闭 — 标注 exit_mode=sl_override
+                    #   (优先级正确: 灾难保护先于耐心等待), patient_exit dict 本身已随开环读保留.
+                    if isinstance(_sl_meta.get("patient_exit"), dict) and not _sl_meta["patient_exit"].get("exit_mode"):
+                        _sl_meta["patient_exit"]["exit_mode"] = "sl_override"
                     # C1 补测 (2026-07-24, DEB-20260724 §八): 出场滑点 — 决策参考价(current_price) vs 成交价.
                     #   入场侧已有 execution.slippage_bps (中位 4.6bps), 出场侧此前 0 记录 → 往返成本只测了一半.
                     #   正值=不利 (LONG 卖在参考价下方 / SHORT 回补在参考价上方). record-only.
@@ -6533,12 +6613,84 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             meta["_symbol"] = symbol
             meta["_qty"] = qty  # 2026-07-30 D4: 保本线费用感知需股数换算每股往返成本
 
-            # ── 共用退出规则判断 (与 shadow 完全对齐) ──
-            exit_reason, _exit_price_hint, peak_price, _be = _check_playbook_exit_rules(
-                direction, entry_price, current_price, stop_loss,
-                peak_price, meta, held_minutes, minutes_to_close,
-                minutes_from_open, r["entry_time"],
-            )
+            # ── 耐心出场 (2026-08-13, DEB-20260813 §18.3): armed 等待态评估 ──
+            #   armed 仓位跳过正常规则链 (防等待期被 TIME_EXIT/MFE_STALL/PRE_CLOSE
+            #   市价抢卖), 三条腿 fill/stop/eod 独立触发; expire (跨日) → 清状态回
+            #   正常规则链. SL 硬兜底 (上方) 优先级不变 (灾难保护先于耐心等待).
+            _pe_mode = ""
+            _pe_detail = ""
+            _pe_armed_now = False
+            _pe_state = meta.get("patient_exit")
+            if _pe_state:
+                _pe_mode, _pe_detail = patient_exit_eval_wait(
+                    meta, direction, entry_price, current_price, now_et, _pb_cfg_m)
+                if _pe_mode == "expire":
+                    meta.pop("patient_exit", None)
+                    meta["_patient_exit_expired"] = True  # 墓碑: 防重新 arm
+                    _pe_state = None
+                    _pe_mode = ""
+                    logger.info(f"[耐心出场·expire] {symbol} 跨交易日, 清等待态回正常规则链")
+
+            if _pe_state and _pe_mode == "":
+                # 等待中: 本轮不评估退出规则 (下方 MFE/MAE 采集与 metadata 写回照常)
+                exit_reason = ""
+                _exit_price_hint = current_price
+                _be = bool(meta.get("breakeven_triggered"))
+            elif _pe_state and _pe_mode:
+                # 等待腿触发 → 跳过正常规则, 直接退出
+                exit_reason = f"PATIENT_EXIT_{_pe_mode.upper()}"
+                _exit_price_hint = current_price
+                _be = bool(meta.get("breakeven_triggered"))
+                try:
+                    _pe_rec = meta["patient_exit"]
+                    _pe_rec["exit_mode"] = _pe_mode
+                    _pe_rec["exit_detail"] = _pe_detail
+                    _pe_rec["exit_at"] = now_et.isoformat()
+                    _armed_iso = str(_pe_rec.get("armed_at", ""))
+                    if _armed_iso:
+                        _armed_dt = datetime.fromisoformat(_armed_iso)
+                        _now_ref_pe = datetime.now(_armed_dt.tzinfo) if _armed_dt.tzinfo else now_et
+                        _pe_rec["waited_minutes"] = round(
+                            (_now_ref_pe - _armed_dt).total_seconds() / 60.0, 1)
+                except Exception:
+                    pass
+                logger.info(
+                    f"[耐心出场·{_pe_mode}] {symbol} {direction} {_pe_detail} "
+                    f"(等待态退出, 跳过正常规则链)"
+                )
+            else:
+                # ── 共用退出规则判断 (与 shadow 完全对齐) ──
+                exit_reason, _exit_price_hint, peak_price, _be = _check_playbook_exit_rules(
+                    direction, entry_price, current_price, stop_loss,
+                    peak_price, meta, held_minutes, minutes_to_close,
+                    minutes_from_open, r["entry_time"],
+                )
+                # ── 耐心出场 arm (§18.3-1): DEAD_SIGNAL_EXIT + 浅水下 → 转等待不立即平 ──
+                if exit_reason == "DEAD_SIGNAL_EXIT":
+                    if direction == "LONG":
+                        _pe_arm_profit = (current_price - entry_price) / entry_price * 100
+                    else:
+                        _pe_arm_profit = (entry_price - current_price) / entry_price * 100
+                    if patient_exit_arm_eligible(exit_reason, _pe_arm_profit, meta, _pb_cfg_m):
+                        meta["patient_exit"] = {
+                            "armed_at": now_et.isoformat(),
+                            "armed_day": now_et.strftime("%Y-%m-%d"),
+                            "armed_held_min": round(held_minutes, 1),
+                            "armed_profit_pct": round(_pe_arm_profit, 4),
+                            "mfe_at_arm": round(float(meta.get("mfe_pct", 0) or 0), 4),
+                            "stop_pct": float(_pb_cfg_m.get("patient_exit_stop_pct", 1.5)),
+                            "deadline_hhmm": int(_pb_cfg_m.get("patient_exit_deadline_hhmm", 1550)),
+                            # 双口径记账 (§18.3-5): 立即平反事实参考价, 平仓时算 delta
+                            "immediate_exit_price": round(float(current_price), 4),
+                        }
+                        _pe_armed_now = True
+                        exit_reason = ""  # 本轮不平仓, 转等待
+                        logger.info(
+                            f"[耐心出场·arm] {symbol} {direction} DEAD_SIGNAL_EXIT→等待: "
+                            f"水下={_pe_arm_profit:.2f}% stop="
+                            f"{float(_pb_cfg_m.get('patient_exit_stop_pct', 1.5)):.1f}% "
+                            f"deadline={int(_pb_cfg_m.get('patient_exit_deadline_hhmm', 1550)):04d}"
+                        )
 
             # 2026-07-16 P1 修复: MFE/MAE/peak/trough 在每一轮都采集 (含退出轮).
             #   旧逻辑: 这段代码在 `if not exit_reason:` 内, 退出轮跳过 →
@@ -6663,7 +6815,10 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     pass
 
             # peak/trough/mfe/mae metadata 写回 (每一轮, 含退出轮 — 这是修复的核心)
-            if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new or _bar_track_new:
+            # 2026-08-13: + _pe_armed_now/等待轮 — patient_exit 状态必须持久化 (重启安全,
+            #   否则重启后等待态丢失, 仓位回正常规则链被 DEAD_SIGNAL_EXIT 重复 arm).
+            _pe_state_changed = _pe_armed_now or bool(_pe_state)
+            if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new or _bar_track_new or _pe_state_changed:
                 # 2026-08-05: _high_atr_stall_shadow_pts 已改 JSON-safe list (门B跨轮去重需持久), 不再 pop
                 for _k in ("_log_tag", "_symbol", "_skip_allowed"):
                     meta.pop(_k, None)
@@ -6824,6 +6979,28 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             #   规则函数写进 meta 的字段不搬会丢)
             if meta.get("stall_exit"):
                 _meta_out["stall_exit"] = meta["stall_exit"]
+            # 2026-08-13 (耐心出场 §18.3-5 双口径记账): patient_exit 从内存 meta 搬运 +
+            #   双口径 delta — immediate_exit_price = arm 时刻若立即市价平的反事实参考价,
+            #   delta = 实际退出价相对立即平的改善 (LONG: exit-imm; SHORT: imm-exit, $/股×qty).
+            #   expire 路径反向清理: 内存 meta 已 pop 但开环旧行仍带 armed 状态 → 抹除,
+            #   否则作废状态复活 (墓碑同步搬运防重新 arm).
+            if meta.get("patient_exit"):
+                _pe_final = meta["patient_exit"]
+                try:
+                    _pe_imm = float(_pe_final.get("immediate_exit_price", 0) or 0)
+                    if _pe_imm > 0 and exit_price > 0 and qty:
+                        if direction == "LONG":
+                            _pe_delta = (exit_price - _pe_imm) * qty
+                        else:
+                            _pe_delta = (_pe_imm - exit_price) * qty
+                        _pe_final["patient_vs_immediate_delta"] = round(_pe_delta, 2)
+                except Exception:
+                    pass
+                _meta_out["patient_exit"] = _pe_final
+            else:
+                _meta_out.pop("patient_exit", None)  # expire/未 arm: 开环旧行的状态不复活
+            if meta.get("_patient_exit_expired"):
+                _meta_out["_patient_exit_expired"] = True
             # C1 补测 (2026-07-24, DEB-20260724 §八): 出场滑点 (主退出路径: TIME_EXIT/SL/TRAIL/
             #   PRE_CLOSE/MFE_STALL 全覆盖). 口径同 SL 路径: 决策参考价 vs 成交价, 正=不利.
             if current_price and current_price > 0 and exit_price > 0:
