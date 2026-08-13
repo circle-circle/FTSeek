@@ -1142,7 +1142,10 @@ playbook:
     enabled: true
     enforce: true
     min_notional_usd: 3000
-    min_entry_price: 0.0
+    min_entry_price: 5.0    # 2026-08-13: 0→5 启用PRICE_TOO_LOW判据 — OTC仙股(AETN $0.13,
+    #   Futu无OTC行情)撞$1.99/腿佣金地板≈100bps往返+执行端永远无法re-price=死指令.
+    #   与DA扫描器质量闸$5(market_scanner.py L229)+UE价格地板(min_price_floor)同源.
+    #   影响面: 历史<$5指令8条, 实际成交仅NIO/ZIP各1笔. 回滚: 改回0.0.
     max_shares_per_order: 0
     min_profit_fee_ratio: 0.0
     min_confidence_buy: 0
@@ -1483,6 +1486,9 @@ signal_stage:
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
 universe_expansion:
   entry_enabled: true
+  min_price_floor: 5.0    # 2026-08-13: UE注入价格地板 — 低于此价的浮现标的转SKIP行(可归因),
+    #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
+    #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.
   da_candidate_feed: true
   premarket_anchor: true
   short_boost_shadow: true

@@ -1164,6 +1164,24 @@ def cmd_inject(force_dry: bool = False) -> int:
         if not px:
             print(f"  [skip] {s['symbol']} 无现价")
             continue
+        # 2026-08-13: 价格地板 — OTC仙股源头拦截 (AETN $0.13案例: Futu无OTC行情,
+        #   执行端永远无法re-price=死指令+轮询噪音). 与DA扫描器$5闸+admission.min_entry_price同源.
+        #   落SKIP行保留可归因 (与admission REJECT同轨, 不丢样本). 回滚: min_price_floor=0.
+        _floor = float(_cfg("universe_expansion.min_price_floor", 0) or 0)
+        if _floor > 0 and float(px) < _floor:
+            instructions.append({
+                "date": today,
+                "symbol": f"US.{s['symbol']}",
+                "direction": "SKIP",
+                "skip_reason": f"price_floor({float(px):.2f}<{_floor:g}, OTC/仙股无富途行情)",
+                "entry_price": round(float(px), 4),
+                "confidence": min(int(round(float(s["confidence"]) * 100)), 50),
+                "thesis": s.get("thesis", ""),
+                "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
+                "model_used": _scan_model,
+            })
+            print(f"  [skip] {s['symbol']} 价格地板 ({float(px):.2f} < {_floor:g}) → SKIP行")
+            continue
         nums = _compute_numbers(float(px), s["direction"])
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
