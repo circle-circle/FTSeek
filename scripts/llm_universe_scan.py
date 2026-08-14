@@ -42,6 +42,10 @@ for _p in (str(_ROOT), str(_SCRIPTS)):
         sys.path.insert(0, _p)
 
 _SCAN_PATH = _ROOT / "data" / "shadow" / "llm_universe_scan.jsonl"
+# DEB-20260814 §十三 (2026-08-14, 用户裁): 午间影子扫描独立落盘 —
+#   主链路 (inject/push/score/DA供料 _load_ue_short_candidates) 全部只读 _SCAN_PATH,
+#   午间记录对它们不可见 = 零污染。判据: scripts/ue_midday_shadow_eval.py。
+_MIDDAY_PATH = _ROOT / "data" / "shadow" / "llm_universe_scan_midday.jsonl"
 _MECH_CAPTURE_PATH = _ROOT / "data" / "shadow" / "universe_expansion_shadow.jsonl"
 
 # 归因分类 (与 config/signal_stage 对齐)
@@ -888,9 +892,15 @@ def _annotate_emergence_streak(surfaced: List[Dict[str, Any]]) -> None:
             s.setdefault("emergence_streak_days", None)
 
 
-def cmd_scan(manual_clue: str = "") -> int:
+def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
+        return 0
+    # DEB-20260814 §十三: 午间影子扫描 (ET 12:30) — 只 scan 不 inject, 独立 jsonl。
+    #   填补 09:10→次日早间的事件真空带。回滚: universe_expansion.midday_shadow_enabled=false
+    #   或删 crontab 行。判据预注册于 DEB §13.3。
+    if midday and not bool(_cfg("universe_expansion.midday_shadow_enabled", True)):
+        print("[scan-midday] midday_shadow_enabled=false, 跳过")
         return 0
     brief = _build_clue_brief(manual_clue)
     print("=" * 64)
@@ -986,39 +996,43 @@ def cmd_scan(manual_clue: str = "") -> int:
     #   全量 tradeable (含 critique DROP / 未过注入闸) 落快照, "质量分→结局"攒样不需成交;
     #   fwd 回填链 run_signal_ic_backfill 按 trade_date 自动接. decision_id 与注入指令同键
     #   (universe_expansion:{date}:{symbol}), UPSERT 幂等. 失败静默不阻断扫描.
-    try:
-        from app.analysis.signal_ic_tracker import record_signal_snapshot as _rec_snap
-        _snap_n = 0
-        for s in tradeable:
-            try:
-                _rec_snap(
-                    decision_id=f"{STRATEGY_ID}:{_today()}:{s['symbol']}",
-                    symbol=f"US.{s['symbol']}",
-                    direction=s["direction"],
-                    strength=int(round(float(s.get("confidence") or 0) * 100)),
-                    confidence=float(s.get("confidence") or 0),
-                    strategy_id=STRATEGY_ID,
-                    trade_date=_today(),
-                    factors={
-                        "rubric_score": s.get("rubric_score"),
-                        "evidence_checklist": s.get("evidence_checklist"),
-                        "self_tier": s.get("self_tier"),
-                        "verdict": (s.get("critique") or {}).get("verdict"),
-                        "info_channel": s.get("info_channel"),
-                        "scan_price": s.get("scan_price"),
-                    },
-                )
-                _snap_n += 1
-            except Exception:
-                pass
-        print(f"  [R5] UE 候选快照 {_snap_n}/{len(tradeable)} → signal_snapshots")
-    except Exception as _snap_e:
-        print(f"  [warn] UE 候选快照失败 (不影响扫描): {_snap_e}")
+    #   §十三: 午间模式跳过 — decision_id 键与早间 scan/inject 相同, UPSERT 会覆盖
+    #   早间快照 (scan_price/factors 被午间值污染)。午间样本由独立 jsonl + 评估脚本自评分。
+    if not midday:
+        try:
+            from app.analysis.signal_ic_tracker import record_signal_snapshot as _rec_snap
+            _snap_n = 0
+            for s in tradeable:
+                try:
+                    _rec_snap(
+                        decision_id=f"{STRATEGY_ID}:{_today()}:{s['symbol']}",
+                        symbol=f"US.{s['symbol']}",
+                        direction=s["direction"],
+                        strength=int(round(float(s.get("confidence") or 0) * 100)),
+                        confidence=float(s.get("confidence") or 0),
+                        strategy_id=STRATEGY_ID,
+                        trade_date=_today(),
+                        factors={
+                            "rubric_score": s.get("rubric_score"),
+                            "evidence_checklist": s.get("evidence_checklist"),
+                            "self_tier": s.get("self_tier"),
+                            "verdict": (s.get("critique") or {}).get("verdict"),
+                            "info_channel": s.get("info_channel"),
+                            "scan_price": s.get("scan_price"),
+                        },
+                    )
+                    _snap_n += 1
+                except Exception:
+                    pass
+            print(f"  [R5] UE 候选快照 {_snap_n}/{len(tradeable)} → signal_snapshots")
+        except Exception as _snap_e:
+            print(f"  [warn] UE 候选快照失败 (不影响扫描): {_snap_e}")
 
     rec = {
         "type": "scan",
         "date": _today(),
         "scanned_at": _now_et().isoformat(),
+        "scan_window": "midday" if midday else "premarket",  # §十三: 评估脚本按窗口切片
         "source_type": SOURCE_TYPE,
         "strategy_id": STRATEGY_ID,
         "discovery_source": DISCOVERY_SOURCE,
@@ -1026,9 +1040,10 @@ def cmd_scan(manual_clue: str = "") -> int:
         "model_used": getattr(res, "model_used", None),
         "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
         "surfaced": surfaced,
-        "note": "record-only; 不驱动 live, inject 另需 entry_enabled=true",
+        "note": ("record-only midday shadow; 不进 inject/DA供料/push, 判据见 DEB §13.3"
+                 if midday else "record-only; 不驱动 live, inject 另需 entry_enabled=true"),
     }
-    _append_jsonl(_SCAN_PATH, rec)
+    _append_jsonl(_MIDDAY_PATH if midday else _SCAN_PATH, rec)
 
     print(f"[scan] {_today()} 模型={getattr(res,'model_used','?')} 浮现 {len(surfaced)} 标的:")
     # [2026-07-22] tier 分布计数: 解除数量压制后监控 THESIS_ONLY 是否洪泛 (配合输入源健康行)
@@ -1671,6 +1686,8 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_scan = sub.add_parser("scan", help="LLM 推理浮现标的 (落影子, 不下单)")
     p_scan.add_argument("--clue", default="", help="人工事件/线索文本 (dry-run 验证推理)")
+    p_scan.add_argument("--midday", action="store_true",
+                        help="午间影子模式: 独立jsonl, 跳过R5快照, 不进inject/DA供料 (DEB §13)")
     p_inj = sub.add_parser("inject", help="代码出数值→写作战计划 (仅 entry_enabled=true)")
     p_inj.add_argument("--dry-run", action="store_true", help="强制只打印不写盘")
     sub.add_parser("score", help="对已 scan 未评分标的算前瞻收益")
@@ -1687,7 +1704,7 @@ def main() -> int:
 
     try:
         if args.cmd == "scan":
-            return cmd_scan(manual_clue=args.clue)
+            return cmd_scan(manual_clue=args.clue, midday=args.midday)
         if args.cmd == "inject":
             return cmd_inject(force_dry=args.dry_run)
         if args.cmd == "score":
