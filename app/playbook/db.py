@@ -138,6 +138,12 @@ class PlaybookDB:
             "model_used": "TEXT",
             "is_ab_test": "INTEGER",
             "metadata_json": "TEXT",
+            # 2026-08-14 (DEB-20260814 P6 口径对齐): gate 校准后 decision_conf (0-1) 独立落库.
+            #   根因 (Qoder §9.1-修正2 实测): 顶层 confidence 列写的是 LLM 语义 conf 或被
+            #   WARN 降权后的值, 同 tier 落库 conf 不一致 → 下游按 confidence 分桶有测量误差.
+            #   新增独立列承接 gate decision_conf (辩论一致度校准值), confidence 列语义不动
+            #   (下游 conf<50=模型分歧代理等逻辑依赖), 消除测量误差且不破坏既有消费方.
+            "decision_conf": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -228,8 +234,8 @@ class PlaybookDB:
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
                 created_at, updated_at, config_version, invalidation, anchor_dev_pct,
-                model_used, is_ab_test, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?)
+                model_used, is_ab_test, metadata_json, decision_conf
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -260,6 +266,7 @@ class PlaybookDB:
                 model_used=COALESCE(excluded.model_used, model_used),
                 is_ab_test=COALESCE(excluded.is_ab_test, is_ab_test),
                 metadata_json=COALESCE(excluded.metadata_json, metadata_json),
+                decision_conf=COALESCE(excluded.decision_conf, decision_conf),
                 updated_at=excluded.updated_at
         """, (
             inst.get("date"),
@@ -298,6 +305,7 @@ class PlaybookDB:
             inst.get("model_used"),
             inst.get("is_ab_test"),
             _to_json(inst.get("metadata") if inst.get("metadata") is not None else inst.get("metadata_json")),
+            inst.get("decision_conf"),
         ))
         conn.commit()
         # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询
