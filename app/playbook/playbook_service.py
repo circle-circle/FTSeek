@@ -1492,6 +1492,18 @@ class PlaybookService:
                 _pb_sl = float(stop_loss) if stop_loss and float(stop_loss) > 0 else None
             except Exception:
                 _pb_sl = None
+            # 2026-08-14 止损可见性修复: 展示 β收紧后的有效止损 (与退出逻辑同源公式,
+            #   config.tighten_sl_by_beta SSOT)。UCTT 案: 推送-4.83% 实际生效-2.42%。
+            #   基于真实成交价 _fill 计算 (退出链同锚点); 失败保持 None 不影响原推送。
+            _pb_eff_sl = None
+            if _pb_sl is not None:
+                try:
+                    from app.playbook.config import tighten_sl_by_beta as _tsbb
+                    _eff = _tsbb(mos_direction, float(_fill), _pb_sl)
+                    if _eff and abs(_eff - _pb_sl) > 0.004:  # 有收紧才展示 (β<1且命中)
+                        _pb_eff_sl = round(_eff, 2)
+                except Exception:
+                    _pb_eff_sl = None
             try:
                 _pb_tp = [float(take_profit)] if take_profit and float(take_profit) > 0 else None
             except Exception:
@@ -1518,6 +1530,9 @@ class PlaybookService:
                 _conf = inst.get("confidence")
                 if _conf is not None:
                     _pb_extra["conf_note"] = f"conf {int(_conf)}"
+                # 2026-08-14 止损可见性: β收紧后有效止损注入 extra (渲染端展示)
+                if _pb_eff_sl is not None:
+                    _pb_extra["eff_sl"] = _pb_eff_sl
                 if _planned and float(_planned) > 0 and float(_fill) > 0:
                     _pb_extra["entry_dev_pct"] = round(
                         (float(_fill) - float(_planned)) / float(_planned) * 100, 1)

@@ -5331,22 +5331,10 @@ def _compute_dynamic_effective_sl(
     #   修正 β=0.50 + 下限 1.5%: 收紧后 SL 1.5-2.5%, 贴近 7/9 最优区 (2-3% WR59%) 下沿,
     #   保留 ~1/3 模拟改善 (双臂对照 β0.5 +$596 vs β0.2 +$1555), 风险大幅下降.
     #   回滚: sl_tighten_beta 改 1.0.
-    try:
-        from app.playbook.config import get_playbook_config as _get_pb_cfg_tb
-        _sl_tb = float(_get_pb_cfg_tb().get("sl_tighten_beta", 1.0))
-        _sl_tb_min = float(_get_pb_cfg_tb().get("sl_tighten_min_pct", 1.5))
-    except Exception:
-        _sl_tb = 1.0
-        _sl_tb_min = 1.5
-    if _sl_tb < 1.0 and initial_sl > 0:
-        if direction == "LONG":
-            # 收紧 = SL 上移向 entry; 但不得高于 -(min_pct) 线 (防过紧误扫正常回撤)
-            initial_sl = min(entry_price - (entry_price - initial_sl) * _sl_tb,
-                             entry_price * (1 - _sl_tb_min / 100))
-        else:
-            # SHORT 对称: 收紧 = SL 下移向 entry; 不得低于 +(min_pct) 线
-            initial_sl = max(entry_price + (initial_sl - entry_price) * _sl_tb,
-                             entry_price * (1 + _sl_tb_min / 100))
+    # 2026-08-14 (止损可见性修复): 公式收归 config.tighten_sl_by_beta 单一真源,
+    #   成交推送展示同一公式算有效止损 (此前展示价≠生效价, UCTT 案).
+    from app.playbook.config import tighten_sl_by_beta as _tighten_sl_by_beta
+    initial_sl = _tighten_sl_by_beta(direction, entry_price, initial_sl)
     effective_sl = initial_sl
 
     if peak_profit_pct < breakeven_pct:

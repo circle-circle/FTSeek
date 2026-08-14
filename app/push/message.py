@@ -149,6 +149,11 @@ class PushMessage:
             if _tp and _px > 0:
                 tp_s += f" ({(float(_tp[0]) - _px) / _px * 100:+.1f}%)"
             lines.append(f"🛡️ 止损: {sl_s}  🎯 止盈: {tp_s}")
+            # 2026-08-14 止损可见性: β收紧后的有效止损 (退出实际生效值, 与展示止损区分)
+            if p.get("eff_sl") is not None:
+                _eff = float(p["eff_sl"])
+                _eff_pct = f" ({(_eff - _px) / _px * 100:+.1f}%)" if _px > 0 else ""
+                lines.append(f"⚡ 有效止损(β收紧): ${_eff:.2f}{_eff_pct} ← 实际生效")
         if p.get("inv_price"):
             lines.append(f"🧯 论点证伪价: ${float(p['inv_price']):.2f} (A-lite shadow)")
         _prof = _profile_line(p)
@@ -227,6 +232,11 @@ class PushMessage:
                 tp_s += f" ({(float(_tp[0]) - _px) / _px * 100:+.1f}%)"
             lines.append("")
             lines.append(f"**🛡️ 止损**: {sl_s}  **🎯 止盈**: {tp_s}")
+            # 2026-08-14 止损可见性: β收紧后的有效止损 (退出实际生效值, 与展示止损区分)
+            if p.get("eff_sl") is not None:
+                _eff = float(p["eff_sl"])
+                _eff_pct = f" ({(_eff - _px) / _px * 100:+.1f}%)" if _px > 0 else ""
+                lines.append(f"**⚡ 有效止损(β收紧)**: ${_eff:.2f}{_eff_pct} ← 实际生效")
         if p.get("inv_price"):
             lines.append(f"**🧯 论点证伪价**: ${float(p['inv_price']):.2f} (A-lite shadow)")
         _prof = _profile_line(p)

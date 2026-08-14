@@ -161,3 +161,33 @@ def get_playbook_config() -> PlaybookConfig:
     if _playbook_config is None:
         _playbook_config = PlaybookConfig()
     return _playbook_config
+
+
+def tighten_sl_by_beta(direction: str, entry_price: float, initial_sl: float) -> float:
+    """SL β收紧公式的单一真源 (2026-08-14, 止损可见性修复).
+
+    退出评估 (pipeline._compute_dynamic_effective_sl) 与成交推送展示
+    (playbook_service) 必须用同一份公式 — 此前公式只内联在退出逻辑里,
+    推送展示的止损价 ≠ 实际生效的止损价 (UCTT 案: 展示-4.83% 实际-2.42%).
+    参数源 sl_tighten_beta / sl_tighten_min_pct 与退出逻辑同源 (config.get).
+    任一失败 → 原样返回 initial_sl (fail-open, 展示/记账增强不阻断执行).
+    """
+    try:
+        if not initial_sl or not entry_price or initial_sl <= 0 or entry_price <= 0:
+            return initial_sl
+        cfg = get_playbook_config()
+        beta = float(cfg.get("sl_tighten_beta", 1.0))
+        min_pct = float(cfg.get("sl_tighten_min_pct", 1.5))
+        if beta >= 1.0:
+            return initial_sl
+        # 方向兼容: pipeline 退出链用 LONG/SHORT, playbook_service 用 BUY/SELL_SHORT
+        _d = str(direction).upper()
+        if _d in ("LONG", "BUY"):
+            # 收紧 = SL 上移向 entry; 但不得高于 -(min_pct) 线 (防过紧误扫正常回撤)
+            return min(entry_price - (entry_price - initial_sl) * beta,
+                       entry_price * (1 - min_pct / 100))
+        # SHORT 对称: 收紧 = SL 下移向 entry; 不得低于 +(min_pct) 线
+        return max(entry_price + (initial_sl - entry_price) * beta,
+                   entry_price * (1 + min_pct / 100))
+    except Exception:
+        return initial_sl
