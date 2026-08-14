@@ -717,3 +717,42 @@ Qoder 称 "trailing 止损单大多在水上 (MFE≥0.5% 才触发), 水上单�
 ### 21.5 sim 观察判据 (预注册, 替代影子)
 
 首评门槛: ≥10 个浅水区 arm 样本; 通过条件: fill 成交率 ≥40% + Σpatient_vs_immediate_delta > $0 + stop 腿实际/回测偏差 ≤2x。任一不达标 → `patient_exit_enabled: false` 回滚。
+
+
+---
+
+## §二十二 对 §二十/§二十一 及实现 (d9fc3402) 的独立复查 (2026-08-14 Qoder, 代码逐行 + 实测)
+
+不信描述、独立验证: 实现 diff 逐行审 + 测试实跑 + DB 实测 + 仲裁脚本重跑。
+
+### 22.1 复核通过项
+
+| 项 | 独立验证 | verdict |
+|---|---|---|
+| §二十 复核全部内容 | 仲裁脚本 `scripts/patient_exit_recheck.py` 在 DB 删 4 行后重跑: n=46, 1.5% 档 +107.1 (16/5/18/7), 2.0% 档 +110.8 (17/7/12/10) 逐字不变 — DEDUP_IDS={1069} 成 no-op, 可复现性未受损 | ✅ 耐久实锤 |
+| §二十 Hermes 自勘 (§14 "51笔100%覆盖"→"50可定位/51文件存在") | 准确 (TSM 8/11 截断笔即 47→46 那笔) | ✅ |
+| arm 作用域 | `patient_exit_arm_eligible`: profit_pct∈[-1.0,0] + DEAD_SIGNAL_EXIT only + 防重 arm + expire 墓碑 | ✅ §18.3-1 |
+| 三腿与优先级 | `patient_exit_eval_wait`: stop > fill > eod (价格风险先于时间兜底, 互斥无歧义) | ✅ §18.3-2/4 |
+| 双平仓防护 | armed 仓跳正常规则链 (PRE_CLOSE/TIME_EXIT/MFE_STALL 结构上无法触发) + EOD 1550 < PRE_CLOSE 1552 + 灾难 SL 优先级不变且标 `sl_override` — **结构性消除**, 优于 §18.3-3 的"平仓前二次确认" (无需运行时确认, 竞争条件不存在) | ✅ 优于规格 |
+| 双口径记账 | `immediate_exit_price` arm 时刻快照 + `patient_vs_immediate_delta` 方向感知 (LONG/SHORT 对称) | ✅ §17.3 同刻对照要求 |
+| 重启安全 | 等待态逐轮写回 metadata_json (`_pe_state_changed` 强制持久化), 重启不丢态不重 arm | ✅ |
+| 下游对齐 | reentry 禁入集 + chain.py 归类 + SL 兜底标记三处, diff 逐行确认 | ✅ |
+| RIVN 双写闭环 | DB 实测: id 1038/1069/893/894 已删, 仅余 id 1060 (BROKER_GHOST_CLOSE 为 canonical); 6 月起零复发结论与行级证据一致 | ✅ |
+
+### 22.2 规格修订 (正式): 轮询等待变体替代 §18.3-6 的"挂限价单"
+
+实现未挂限价单, 改为规则引擎 20s 轮询 + 触发即市价。§18.3-6 原文"挂限价单/撤单/订单状态机"据此修订作废, 理由 (Qoder 背书):
+
+1. **避免乐观偏差**: Futu paper 无排队建模, 保本限价单触及即成交 = §17.3 标记的 touch-optimism 复现; 轮询变体 (20s 粒度) 比回测 (1min bar 峰值) 更保守, 实盘 fill 率将**低于**回测 73%, §21.5 的 ≥40% 成交率判据正好兜住该偏差。
+2. **回滚完整性**: 无残留挂单 → 无需撤单逻辑, 单开关回滚零遗留, 优于 §18.3-6 原设计。
+3. **诚实口径**: fill/stop 两腿均按实际成交价记 delta, 轮询粒度与滑点全部落账, 无隐藏假设。
+
+### 22.3 发现问题 (已修): `test_armed_waiting_no_action` 墙钟依赖
+
+**实锤**: §21.3 "27 passed / 全套 1156 passed" 仅在 00:00–15:49 ET 成立。集成测试继承 `monitor_playbook_sim_exits` 的真实 `now_et`; 该用例 armed 等待仓在 15:50 ET 后命中 EOD 腿 → `assert n==0` 失败。2026-08-13 20:05 ET 实测 **1 failed / 26 passed** (commit 时刻 05:23 ET 故当时全绿)。生产代码无缺陷 (EOD 行为本身正确), 纯测试隔离问题。
+**修复** (1 行, 本复查附带): 用例内 `patient_exit_deadline_hhmm=2359` (仿场景 4 的 deadline=0 模式), 修后 20:05 ET 实测 **27 passed**。**教训记录**: 涉及交易时段边界的集成测试必须注入时间或动态门槛, "全套绿"声明应带时刻限定。
+
+### 22.4 两个备注 (留痕, 不阻塞)
+
+1. **TRAILING_STOP 异常案证据保全**: §19.3 移交项 1 的三样本之一 RIVN id=1069 已在 §21.4 去重中删除 — 该异常案立案复查时须用 pre-dedup 备份 `data/backups/ftseek_us.db.bak-20260813-153822-pre-dedup`, 证据链未断但需知情。
+2. **首日 (8/13) 零样本**: 全天仅 1 笔 (NVDA PRE_CLOSE_EXIT -16.01), 无 DEAD_SIGNAL 触发, arm 计数 0/10, §21.5 首评门槛未达, 继续观察。

@@ -383,6 +383,9 @@ class TestMonitorPatientExitStateMachine:
 
     # ── 场景 9: armed 等待中 (未触发任何腿) → 不平仓, 状态保留 ──
     def test_armed_waiting_no_action(self, env):
+        # 墙钟无关: 集成路径用真实 now_et, 默认 deadline=1550 会在 15:50 ET 后命中
+        # EOD 腿 → 本断言 n==0 失败. 动态推迟兜底到当日末尾 (仿场景 4 的 deadline=0).
+        env["cfg"]._d["patient_exit_deadline_hhmm"] = 2359
         self._insert_open_position(env, held_min=80, extra_meta=self._armed_meta())
         self._set_quote(env, "US.TEST", 99.6)  # 水下 0.4%: 未回本/未止损/未到点
         n = monitor_playbook_sim_exits(env["scheduler"])
