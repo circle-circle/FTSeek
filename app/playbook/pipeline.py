@@ -3112,6 +3112,15 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.80))
         _daily_notional_cap = _risk_base_capital * _daily_notional_cap_pct
         _max_daily_positions = int(pb_cfg.get("max_daily_positions", 5))
+        # ── 2026-08-14 (水坝效应修复): 单轮新开仓上限 ──
+        # 根因: 10:15 禁触窗解禁后同一 auto_execute 轮把全部入带指令一次开完 —
+        #   实锤 8/14: 9笔LONG挤在87秒(10:16:03-10:17:30), UCTT/SNDK 15分钟内相继SL;
+        #   8/8以来水坝窗(10:15-10:20)入场 n=7 净-$330 均笔-$47 vs 其余时刻 n=17 均笔-$8.6 (5.5x)。
+        # 修复: 每轮最多新开 N 笔, 剩余 triggered 指令顺延下轮 (auto_execute 间隔300s
+        #   → 梯度入场每5分钟一档), 同源回撤不再同时止损。排序已按 source_priority+
+        #   confidence 降序, cap 天然保留最强信号。回滚: 配置改 999 即等同解除。
+        _max_new_per_cycle = int(pb_cfg.get("max_new_positions_per_cycle", 3))
+        _cycle_new_count = 0
 
         # 2026-07-09: 从DB查当日已开仓notional/count，替代每次调用从0开始 (P0修复)
         _today_opened_notional = 0.0
@@ -3626,6 +3635,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 skipped_count += 1
                 continue
 
+            # 2026-08-14 水坝效应修复: 单轮新开仓上限 (超出顺延下轮, triggered 状态不丢)
+            if _cycle_new_count >= _max_new_per_cycle:
+                logger.info(
+                    f"[playbook] {inst['symbol']} 顺延 — 单轮新开仓上限 "
+                    f"(本轮已开 {_cycle_new_count} 笔, 待下轮 auto_execute)"
+                )
+                _emit_exec_gate_audit(inst, action="deferred_cycle_cap", entry=_entry,
+                                      size=_size, notional=_new_notional)
+                skipped_count += 1
+                continue
+
             # 自动执行
             _audit_action = "error"
             try:
@@ -3636,6 +3656,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 )
                 if result.get("success"):
                     executed_count += 1
+                    _cycle_new_count += 1  # 2026-08-14 水坝效应修复: 单轮新开仓计数
                     _max_deploy += _new_notional  # 累加已用额度
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
