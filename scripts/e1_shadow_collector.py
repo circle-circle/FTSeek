@@ -17,6 +17,10 @@ REPO = Path("/opt/ftseek/FTSeek-US")
 SNAP_DB = REPO / "data" / "signal_snapshots.db"
 OUT = REPO / "data" / "e1_shadow_signals.jsonl"
 CACHE_DIR = REPO / "data" / "replay_bars"
+# P1-D (DEB-20260815 §25.3/§26.4, 2026-08-15): SHORT 借券费建模参数, 随信号记录落盘。
+#   保守常数: 年化 5%, 结算 = 名义 × 5% × 持仓天数/365 (GATE 1 裁决脚本消费, 此处只记参数)。
+#   SNDK 类波动空头真实借券费可达 20%+, 5% 是下限估计 → 判读时注明成本侧保守口径。
+BORROW_FEE_ANNUAL_PCT = 0.05
 
 
 def load_records():
@@ -120,6 +124,8 @@ def main():
             "direction": s["direction"], "strength": s["strength"],
             "strategy_id": s["strategy_id"], "signal_day_open": sig_open,
             "next_open_price": None, "next_open_date": None,
+            # P1-D: SHORT 借券费参数随信号落盘 (LONG 为 0)
+            "borrow_fee_annual_pct": BORROW_FEE_ANNUAL_PCT if s["direction"] == "SHORT" else 0.0,
             "collected_at": datetime.now().isoformat(timespec="seconds"),
         }
         added += 1
