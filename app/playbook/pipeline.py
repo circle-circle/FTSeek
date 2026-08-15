@@ -3108,10 +3108,14 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             from app.core.db_utils import safe_sqlite_connect
             from app.core.paths import get_trade_records_db as _get_trdb
             _bp_conn = safe_sqlite_connect(_get_trdb(), timeout=5)
+            # 2026-08-16 (DEB§37, Qoder §36.4 结构性关注实锤修复): 删除 entry_time
+            #   时间窗 (-1 day). 根因: W_WEEK 多夜持仓 (§34, 最长5交易日) 第3-5天仓位
+            #   漏出统计 → 预算门低估已用敞口; 且 date('now') 为 UTC, entry_time 为 ET,
+            #   时区边界毛刺. exit_time IS NULL 已保证只算未平仓, 时间窗冗余且有害.
+            #   方向: 多算不少算 (保守, 同 R1b fail-close); 若存在僵尸未平仓行, 宁拦新开.
             _row = _bp_conn.execute(
                 "SELECT COALESCE(SUM(entry_price * quantity), 0) FROM trade_records "
-                "WHERE source_type='PLAYBOOK_SIM' AND (exit_time IS NULL OR exit_time = '') "
-                "AND entry_time >= date('now','start of day','-1 day')"
+                "WHERE source_type='PLAYBOOK_SIM' AND (exit_time IS NULL OR exit_time = '')"
             ).fetchone()
             _bp_conn.close()
             _max_deploy = _row[0] if _row else 0.0
