@@ -1133,3 +1133,46 @@ vs 当日15:52平仓): V1次日开盘+$68 / V2次日收盘+$593 / V3 smart+$668,
 1. 9:35首批入场行为 (齐射是否被单轮cap=3梯度化).
 2. 水下仓首夜豁免触发次数 + 次日了结结局 (真实隔夜数据开始积累).
 3. cap=8下日均成交是否落在5-8区间.
+
+---
+
+## 三十四、水下仓隔夜放宽: 首夜 → 最多5交易日 (W_WEEK) (2026-08-15 深夜)
+
+> 用户对§33追加裁: "隔夜最长两日有点过少了, 需要调整 — 要么等SL, 要么留足时间, 比如之前一周等"。
+
+### 裁决过程 (回放先行, 不拍脑袋)
+
+样本: 同§33 (EOD水下强平仓, n=15可回放, 6/1起)。新增多日回放
+`scripts/overnight_loser_multiday_replay.py`, SL来源: metadata_json.stop_loss
+(16/18有真值, 缺失2笔按生产vol_bucket公式用entry-day ATR14现算)。
+
+| 变体 | 语义 | Σdelta | 均笔 | 修复率 |
+|---|---|---|---|---|
+| W_SL | 纯等SL, 5交易日上限 | +$463 | +$30.9 | 53.3% |
+| **W_WEEK** | **EOD转正落袋 + 等SL + 5日上限** | **+$629** | **+$42.0** | **73.3%** |
+
+- W_WEEK 胜出: 11/15 笔在 1-5 天内 EOD 转正落袋 (合计 +$1,120), 仅 3 笔触 SL (-$482)
+- 分方向: LONG n=13 +$448 / SHORT n=2 +$181, 双正
+- 逐笔明细落盘 data/overnight_loser_multiday_2026-08-15.json
+
+### 落地 (commit 9266c47d)
+
+1. `_loser_overnight_exempt`: 首夜检查 → `loser_overnight_max_hold_days=5` 交易日窗口
+   (交易日历计算, 到期自动失效 → PRE_CLOSE 正常收, 无扛单路径)
+2. **TIME_EXIT 豁免 (关键配套)**: 审计发现次日水下仓会在开盘后2h被 TIME_EXIT
+   秒杀 — 不豁免则多夜持有名存实亡。豁免与 EOD 同语义 (SIM+水下+未到期)
+3. config: `loser_overnight_max_hold_days: 5` (新增, 回滚=改1或关 enabled)
+4. "EOD 转正即走" 无需新代码 — cohort A 盈利仓走 PRE_CLOSE 平仓是天然路径
+
+### 安全边界 (未变)
+
+- SL 规则[1]优先级高于 TIME_EXIT[4]/PRE_CLOSE[3] — SL 每日硬兜底, 豁免不穿透
+- 仅 PLAYBOOK_SIM; LIVE 隔夜仍须另裁
+- 最长 5 交易日后强制收; OVERNIGHT_GAP_STOP 仍不覆盖本臂 (跳空越SL由SL兜底)
+
+### 已知局限
+
+- n=15 小样本; 日bar粒度 (SL触碰按当日极值近似, EOD转正在收盘近似)
+- bars_exhausted 1 笔 (NVDA 8/13, 缓存仅到8/14) 按最后一根收盘近似
+- sim 期攒真实多夜数据续验; 观察指标: 多夜仓修复率/触SL率/平均持有天数
+
