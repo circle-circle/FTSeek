@@ -172,26 +172,26 @@ def _reentry_overnight_exempt(symbol: str, entry_time_str: str, profit_pct: floa
 
 
 def _loser_overnight_exempt(source_type: str, entry_time_str: str, profit_pct: float) -> bool:
-    """水下仓首夜 EOD 豁免 (2026-08-15 用户三问 Q3, DEB-20260815 §33).
+    """SIM水下仓多夜 EOD/TIME_EXIT 豁免 (2026-08-15 用户三问Q3+追加裁决, DEB§33/§34).
 
-    用户裁: "盈利落袋为安, 未盈利的继续保持隔夜" — 盈利仓仍 EOD 落袋 (PRE_CLOSE
-    行为不变), 水下仓首夜豁免; 次日 PRE_CLOSE/EOD 正常收 (首夜检查自动失效,
-    最长两日生命周期, 无无限扛单路径)。
+    用户裁 (Q3): "盈利落袋为安, 未盈利的继续保持隔夜"。
+    用户追加裁 (§34): "隔夜最长两日太少 — 要么等SL, 要么留足时间(约一周)"。
 
-    裁决依据 (不拍脑袋): scripts/overnight_loser_replay.py 历史回放
-    (n=15, 6/1起, EOD水下仓隔夜 vs 当日15:52平仓):
-      V1 次日开盘平 +$68 / V2 次日收盘平 +$593 / V3 smart +$668,
-      修复率 53-67%, 三变体同向为正。样本小为已知局限, sim 期攒真实隔夜数据续验。
+    多日回放裁决 (scripts/overnight_loser_multiday_replay.py, n=15, 6/1起):
+      W_SL 纯等SL(5日上限) +$463 修复率53% < W_WEEK 落袋+等SL +$629 修复率73%
+      → 采用 W_WEEK 语义: EOD转正即落袋 (盈利仓走 PRE_CLOSE 平仓, 天然路径),
+        水下仓豁免持夜, 每日 SL 硬兜底, 到期强平 (无无限扛单路径)。
 
-    条件 (任一不满足 → 照常当日平仓, 保守):
+    条件 (任一不满足 → 照常退出, 保守):
       1. 配置开关 playbook.loser_overnight_enabled;
       2. 仅 PLAYBOOK_SIM (LIVE 隔夜是风险跃迁, 与 cohort B LIVE guard 同纪律, 须另裁);
       3. 水下 (profit_pct < 0) — 盈利仓仍当日落袋;
-      4. 首夜 (entry date == 今日 ET)。
+      4. 未达 loser_overnight_max_hold_days 交易日 (默认5≈一周, 交易日历计算);
+         到期 → False → PRE_CLOSE 正常收。
 
-    隔夜风险兜底: initial SL 硬兜底 (SIM循环规则链之前的灾难保护), 与再入场
-    隔夜豁免设计一致 (intraday_reentry.py:164-165)。OVERNIGHT_GAP_STOP 不覆盖
-    本臂 (需 _skip_allowed), 次日跳空越 SL 由 SL 兜底市价收 (sim 期滑点可接受)。
+    配套: 多夜水下仓同时豁免 TIME_EXIT (见 evaluate 规则3), 否则次日水下2h被砍,
+    W_WEEK 修复空间不复存在; SL 仍是最高优先级硬兜底。OVERNIGHT_GAP_STOP 不覆盖
+    本臂 (需 _skip_allowed), 跳空越 SL 由 SL 兜底市价收 (sim 期滑点可接受)。
     任何异常 → False (不豁免)。
     """
     try:
@@ -202,13 +202,11 @@ def _loser_overnight_exempt(source_type: str, entry_time_str: str, profit_pct: f
             return False
         if float(profit_pct) >= 0:
             return False
-        from datetime import datetime as _dt
-        from app.utils.timezone import now_et as _now_et_fn
-        _et_now = _now_et_fn()
-        _entry = _dt.fromisoformat(str(entry_time_str))
-        _entry_date = (_entry.astimezone(_et_now.tzinfo).date()
-                       if _entry.tzinfo is not None else _entry.date())
-        return _entry_date == _et_now.date()
+        _max_days = int(get_playbook_config().get("loser_overnight_max_hold_days", 5) or 5)
+        # 已达最大持有交易日 → 不豁免 (到期强平, 走 PRE_CLOSE 正常收)
+        if _horizon_max_hold_hit(entry_time_str, _max_days):
+            return False
+        return True
     except Exception:
         return False
 
@@ -6223,8 +6221,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _te_held_minutes = float(minutes_from_open or 0)
     if _time_exit_enabled and not exit_reason and _te_held_minutes > (_time_exit_hours * 60):
         if not _time_exit_only_if_loss or profit_pct < 0:
-            exit_reason = "TIME_EXIT"
-            exit_price = current_price
+            # 2026-08-15 (§34): SIM多夜水下仓豁免 TIME_EXIT — 与 EOD 豁免同语义:
+            #   W_WEEK 回放要求修复空间, 次日水下2h被砍则多夜持有名存实亡.
+            #   SL 仍最高优先级兜底; 到期由 loser_overnight_max_hold_days 强平.
+            if not _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+                exit_reason = "TIME_EXIT"
+                exit_price = current_price
 
     # 规则5: MAX_HOLD — long horizon 最大持有期检查 (short horizon 默认不持夜, _skip_allowed 控制)
     if not exit_reason and _skip_allowed and held_minutes > 0:

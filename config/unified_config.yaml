@@ -1109,8 +1109,13 @@ playbook:
     overnight_hold_enabled: false
     # 2026-08-15 (用户三问Q3, DEB§33): SIM水下仓首夜隔夜豁免 — 盈利落袋/水下隔夜.
     #   回放裁决(scripts/overnight_loser_replay.py, n=15): V1+$68/V2+$593/V3+$668同向正.
-    #   仅PLAYBOOK_SIM+水下+首夜; 隔夜风险由initial SL硬兜底. 回滚: false+重启.
+    #   仅PLAYBOOK_SIM+水下; 隔夜风险由initial SL硬兜底. 回滚: false+重启.
+    # 2026-08-15 (§34 用户追加裁): 首夜→最多5交易日(≈一周). 多日回放裁决
+    #   (overnight_loser_multiday_replay.py, n=15): W_SL+$463 < W_WEEK+$629(修复率73%)
+    #   → W_WEEK语义: EOD转正即落袋(天然PRE_CLOSE路径)+水下豁免持夜+SL每日兜底.
+    #   配套TIME_EXIT豁免(pipeline规则3), 否则次日水下2h被砍. 回滚: false或天数改1.
     loser_overnight_enabled: true
+    loser_overnight_max_hold_days: 5
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5
   exit_rules:
