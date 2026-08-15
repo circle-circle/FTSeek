@@ -1089,7 +1089,11 @@ playbook:
     mfe_stall_exit_minutes: 150
     mfe_stall_exit_mfe_pct: 0.5
     time_exit_overnight_daily_reset_enabled: true
-    sl_tighten_beta: 0.5
+    # 2026-08-15 (用户裁"SL/TP按标的分桶, 不要打折", DEB§35): 0.5→1.0 关闭SL打折.
+    #   β=0.5 把 vol_buckets 按标的ATR算好的SL距离统一砍半 (打折后1.5-2.5%落7/9
+    #   证伪的<2%噪声扫损区边缘). β=1.0 → tighten_sl_by_beta 短路原样返回分桶SL.
+    #   回滚: 改回0.5 (8/8审计值) + 重启.
+    sl_tighten_beta: 1.0
     sl_tighten_min_pct: 1.5
     mfe_stall_exit_shallow_hold_enabled: true
     mfe_stall_exit_shallow_pct: 1.0

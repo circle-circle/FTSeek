@@ -5,7 +5,7 @@
 按生产退出栈的轮询级近似走完当日, 回答"每道门拦掉的到底是钱还是坑"。
 
 退出栈 (与生产对齐, 2026-08-09 部署态):
-  初始 SL: dist = max(0.5 × 指令SL%, 1.5%)  (sl_tighten_beta=0.50 + 下限)
+  初始 SL: dist = max(β × 指令SL%, 1.5%)  (β=sl_tighten_beta, 2026-08-15起=1.0 不打折, DEB§35)
   保本:    mfe ≥ 0.5% 激活, 线 = 成本 ± 0.4% 费垫
   锁利:    激活后峰值回撤 0.8%
   死信号:  持仓 ≥60 bar(≈60min) 且峰值浮盈 <0.2% → 离场
@@ -35,7 +35,9 @@ _BAR_DIR = os.path.join(_ROOT, "data", "replay_bars")
 
 BE_PCT, CUSHION_PCT, TRAIL_PCT = 0.5, 0.4, 0.8
 DS_MINUTES, DS_MFE = 60, 0.2
-SL_BETA, SL_FLOOR = 0.50, 1.5
+# 2026-08-15 (DEB§35): 生产 sl_tighten_beta 0.5→1.0 (用户裁"按标的分桶不打折"),
+#   影子同步; SL_FLOOR 保留语义 (β=1.0 时 max() 仅对 <1.5% 的极窄SL兜底).
+SL_BETA, SL_FLOOR = 1.0, 1.5
 
 
 def load_bars(symbol, date):

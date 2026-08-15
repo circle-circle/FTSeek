@@ -346,11 +346,14 @@ market_state_overlay:
     high: 0.8
     extreme: 1.5
   # 止盈倍率调整 (乘在 tp_multiplier 上)
+  # 2026-08-15 (用户裁"按标的分桶, 不要打折", DEB§35): 0.9/0.7/0.5→全1.0.
+  #   TP 折扣是全局市场因子叠加在 per-symbol 分桶之上, 违背分桶原则; 8月0次触发(休眠),
+  #   关闭零行为变化, 纯消除未来打折隐患. 回滚: 恢复0.9/0.7/0.5.
   vix_tp_mult:
     low: 1.0
-    medium: 0.9
-    high: 0.7
-    extreme: 0.5
+    medium: 1.0
+    high: 1.0
+    extreme: 1.0
   # regime 仓位调整
   regime_position_mult:
     RISK_ON: 1.0
