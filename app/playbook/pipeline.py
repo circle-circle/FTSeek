@@ -171,6 +171,48 @@ def _reentry_overnight_exempt(symbol: str, entry_time_str: str, profit_pct: floa
         return False
 
 
+def _loser_overnight_exempt(source_type: str, entry_time_str: str, profit_pct: float) -> bool:
+    """水下仓首夜 EOD 豁免 (2026-08-15 用户三问 Q3, DEB-20260815 §33).
+
+    用户裁: "盈利落袋为安, 未盈利的继续保持隔夜" — 盈利仓仍 EOD 落袋 (PRE_CLOSE
+    行为不变), 水下仓首夜豁免; 次日 PRE_CLOSE/EOD 正常收 (首夜检查自动失效,
+    最长两日生命周期, 无无限扛单路径)。
+
+    裁决依据 (不拍脑袋): scripts/overnight_loser_replay.py 历史回放
+    (n=15, 6/1起, EOD水下仓隔夜 vs 当日15:52平仓):
+      V1 次日开盘平 +$68 / V2 次日收盘平 +$593 / V3 smart +$668,
+      修复率 53-67%, 三变体同向为正。样本小为已知局限, sim 期攒真实隔夜数据续验。
+
+    条件 (任一不满足 → 照常当日平仓, 保守):
+      1. 配置开关 playbook.loser_overnight_enabled;
+      2. 仅 PLAYBOOK_SIM (LIVE 隔夜是风险跃迁, 与 cohort B LIVE guard 同纪律, 须另裁);
+      3. 水下 (profit_pct < 0) — 盈利仓仍当日落袋;
+      4. 首夜 (entry date == 今日 ET)。
+
+    隔夜风险兜底: initial SL 硬兜底 (SIM循环规则链之前的灾难保护), 与再入场
+    隔夜豁免设计一致 (intraday_reentry.py:164-165)。OVERNIGHT_GAP_STOP 不覆盖
+    本臂 (需 _skip_allowed), 次日跳空越 SL 由 SL 兜底市价收 (sim 期滑点可接受)。
+    任何异常 → False (不豁免)。
+    """
+    try:
+        from app.playbook.config import get_playbook_config
+        if not get_playbook_config().get("loser_overnight_enabled", False):
+            return False
+        if source_type != "PLAYBOOK_SIM":
+            return False
+        if float(profit_pct) >= 0:
+            return False
+        from datetime import datetime as _dt
+        from app.utils.timezone import now_et as _now_et_fn
+        _et_now = _now_et_fn()
+        _entry = _dt.fromisoformat(str(entry_time_str))
+        _entry_date = (_entry.astimezone(_et_now.tzinfo).date()
+                       if _entry.tzinfo is not None else _entry.date())
+        return _entry_date == _et_now.date()
+    except Exception:
+        return False
+
+
 # 2026-08-07 (用户指示, sim A/B 双开): VWAP 门 wrong_side 拦截实验分流.
 #   证据 (DEB-20260806-source-control 修尺子后): 被拦 n=55 均值 +0.254% (SHORT +0.649%),
 #   门倾向"扼杀"。影子反事实已可测 (gated 臂轨迹在 entry_timing_shadow 持续轮询),
@@ -5965,6 +6007,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             pass  # cohort B 盈利仓跳过, 持过夜
         elif _reentry_overnight_exempt(_symbol, entry_time_str, profit_pct):
             pass  # 2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD, 次日正常收
+        elif _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+            pass  # 2026-08-15 用户三问Q3: SIM水下仓首夜豁免 EOD (盈利落袋/水下隔夜)
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
@@ -6618,6 +6662,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             peak_price = float(meta.get("peak_price", 0))
             # 注入共用函数所需字段
             meta["_skip_allowed"] = _skip_allowed
+            meta["_source_type"] = _src  # 2026-08-15 Q3: 水下仓隔夜豁免需SIM/LIVE判别
             meta["_log_tag"] = "playbook sim"
             meta["_symbol"] = symbol
             meta["_qty"] = qty  # 2026-07-30 D4: 保本线费用感知需股数换算每股往返成本
@@ -7144,6 +7189,18 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         continue
             except Exception as _rex:
                 logger.debug(f"[playbook sim] 再入场豁免判定异常 {symbol} (不豁免): {_rex}")
+
+            # 2026-08-15 (用户三问Q3, DEB§33): SIM水下仓首夜豁免 EOD 兜底.
+            #   与 PRE_CLOSE 分支同语义: 盈利落袋/水下隔夜, 次日正常收 (首夜检查失效).
+            #   报价缺失 → 不豁免 (保守平仓), 与再入场豁免同纪律.
+            try:
+                if _rp > 0 and _loser_overnight_exempt(r["source_type"], r["entry_time"], _rpnl):
+                    logger.info(
+                        f"[playbook sim] EOD 兜底豁免 {symbol} 水下仓 {_rpnl:.2f}% 持夜 (用户三问Q3)"
+                    )
+                    continue
+            except Exception as _lex:
+                logger.debug(f"[playbook sim] 水下仓隔夜豁免判定异常 {symbol} (不豁免): {_lex}")
 
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
             # P1 fix (2026-06-25): 连续失败 3 次后放弃, 停止死循环日志刷屏
