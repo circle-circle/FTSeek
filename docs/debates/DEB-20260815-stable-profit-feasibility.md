@@ -1176,3 +1176,46 @@ vs 当日15:52平仓): V1次日开盘+$68 / V2次日收盘+$593 / V3 smart+$668,
 - bars_exhausted 1 笔 (NVDA 8/13, 缓存仅到8/14) 按最后一根收盘近似
 - sim 期攒真实多夜数据续验; 观察指标: 多夜仓修复率/触SL率/平均持有天数
 
+
+---
+
+## 三十五、SL/TP 打折层关闭 — 按标的分桶不打折 (2026-08-15 深夜)
+
+> 用户裁: "SL/TR 请基于不同的标的和分桶 不要打折"。
+
+### 影响面分析 (读码定位, 不猜测)
+
+SL/TP 生成链 (instruction_generator vol_buckets → playbook_service → pipeline 退出评估)
+上发现两层全局折扣, 叠在 per-symbol 分桶之上:
+
+| 打折层 | 位置 | 效果 | 状态 |
+|---|---|---|---|
+| SL β打折 (主犯) | unified_config `sl_tighten_beta: 0.5` | 分桶SL距离统一砍半 (下限1.5%) | 活跃 |
+| TP VIX打折 | playbook_horizon `vix_tp_mult: 0.9/0.7/0.5` | 高VIX时TP乘折扣 | 休眠(8月0触发) |
+
+**实锤**: 8月指令分桶原值 SL 距离 2.13%~5.02% (LLY 2.13 / META 5.0 / AMZN 5.02),
+β=0.5 打折后实际生效仅 1.5%~2.5%, 落进 7/9 证伪的 <2% 噪声扫损区边缘
+(7/9 数据: <2% WR47% 亏$1352, 2-3% WR59% 最优)。用户"不要打折"直觉有数据支撑。
+
+非打折项确认: `vix_sl_widen` 是加宽 (留空间) 保留; TP 生成链 vol_buckets→tp_multiplier
+无其他乘数; breakeven/trailing 是锁利机制非打折 (0.5%/0.8% 已冻结)。
+
+### 落地 (ADR-029)
+
+1. `sl_tighten_beta: 0.5 → 1.0` — tighten_sl_by_beta 短路原样返回分桶 SL
+   (代码已有 beta>=1.0 短路, 零代码改动, 回滚路径现成)
+2. `vix_tp_mult: 0.9/0.7/0.5 → 全1.0` — 关闭 TP 市场折扣 (休眠态关闭零行为变化)
+3. `scripts/settle_shadow_portfolio.py` 硬编码 SL_BETA 0.50→1.0 同步 (影子不脱钩)
+
+### 验证
+
+- 实弹: tighten_sl_by_beta(LONG,100,95)=95.0 / (SHORT,100,105)=105.0 原样返回 ✓
+- PlaybookConfig 读值 β=1.0 / vix_tp_mult 全1.0 ✓
+- 服务重启干净, 零持仓窗口
+
+### 后续观察
+
+- SL 触发出局分布: 预期 SL_INITIAL 笔距从 1.5-2.5% 回到分桶原值 2-5%,
+  扫损率应下降 (7/9 最优区假设的复验机会)
+- 与 §34 W_WEEK 多夜持有协同: 宽 SL + 留足时间, 同源逻辑 (留空间不打折)
+
