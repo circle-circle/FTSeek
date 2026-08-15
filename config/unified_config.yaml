@@ -1039,9 +1039,12 @@ playbook:
     min_confidence: 60
     daily_notional_cap_pct: 0.8
     # 2026-08-15 (用户三问Q1, DEB§33): 5→8 — sim攒数据期保留率优先.
-    #   cap=5保留率仅54%(342笔→183), 8=77%; 全窗口反事实cap8 +$4177为谱系最优.
+    #   ⚠️ 2026-08-16 更正(DEB§37): 原注释引用"$4177谱系最优"基线污染已撤回
+    #   (342=269SIM+73不受控通道). 正确口径(scripts/cap_spectrum_replay.py,
+    #   PLAYBOOK_SIM/LIVE已了结n=269): PnL最优实为cap5(+$1,180>cap8 +$732),
+    #   cap=8 的正当性仅为攒数据保留率(80% vs 56%, 用户直裁). 回滚: 改5+重启.
     #   齐射防护不依赖此值: 单轮cap(下方=3)+排序按质(UE优先/conf降序)已隔离.
-    #   敞口由 daily_notional_cap_pct(0.8)+单名帽0.08 双兜底. 回滚: 改5+重启.
+    #   敞口由 daily_notional_cap_pct(0.8)+单名帽0.08 双兜底.
     max_daily_positions: 8
     # 2026-08-14 水坝效应修复: 单轮 auto_execute 新开仓上限 (剩余顺延下轮, 300s一档梯度).
     #   实锤: 8/14 十笔LONG挤87秒齐射, 水坝窗均笔亏损5.5x. 回滚: 改999+重启.
