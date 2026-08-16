@@ -1,8 +1,15 @@
 """
 全局交易模式管理器（单一真相源）
 
-统一封装 TRADE_ENV / LIVE_CONSERVATIVE 等环境变量判定逻辑，
+统一封装 AUTO_TRADE_ACCOUNT / LIVE_CONSERVATIVE 等环境变量判定逻辑，
 避免模式判定散落在 ConfigContainer / futu_trade_env 等多处。
+
+P0 修复 (2026-08-16, DEB-fullchain P0-1): 模式判定从 TRADE_ENV 迁到
+AUTO_TRADE_ACCOUNT — 6/24 重构后 broker 路由已迁 AUTO_TRADE_ACCOUNT, 但本文件
+仍读已废弃的 TRADE_ENV (恒=1) → 切实盘后风控三重失效 (日亏熔断/限额缩放/净值
+fail-close 全按 simulate 档)。现与 di_container.py broker 路由判定同源:
+AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true → LIVE, 否则 SIMULATE。
+TRADE_ENV 仅保留 DB 路由职责 (db_utils/paths/config_container), 本文件不再消费。
 
 热加载: 每次访问 mode 属性时从 .env.us 文件实时读取，无需重启进程。
 
@@ -72,17 +79,22 @@ class TradingMode:
     def _detect_mode(self) -> TradingModeEnum:
         """
         从 .env.us 实时检测当前模式 (热加载，无需重启)
-        - TRADE_ENV=1  -> SIMULATE
-        - TRADE_ENV=0 + LIVE_CONSERVATIVE=1 -> LIVE_CONSERVATIVE
-        - TRADE_ENV=0 + LIVE_CONSERVATIVE=0 -> LIVE_NORMAL
+        P0 修复 (2026-08-16, DEB-fullchain P0-1): 判定源 TRADE_ENV → AUTO_TRADE_ACCOUNT
+        (与 di_container.py broker 路由同源, 含 ALLOW_REAL_TRADING 安全门):
+        - AUTO_TRADE_ACCOUNT!=real            -> SIMULATE
+        - AUTO_TRADE_ACCOUNT=real 但 ALLOW_REAL_TRADING!=true -> SIMULATE (安全降级)
+        - AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true:
+            LIVE_CONSERVATIVE=1 -> LIVE_CONSERVATIVE; =0 -> LIVE_NORMAL
+        TRADE_ENV 不再消费 (仅 DB 路由职责)。
         """
-        trade_env = _read_env_file("TRADE_ENV", "1")
-        if trade_env == "0":
-            conservative = _read_env_file("LIVE_CONSERVATIVE", "1")
-            if conservative == "1":
-                return TradingModeEnum.LIVE_CONSERVATIVE
-            return TradingModeEnum.LIVE_NORMAL
-        return TradingModeEnum.SIMULATE
+        auto_account = _read_env_file("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        allow_real = _read_env_file("ALLOW_REAL_TRADING", "false").strip().lower() == "true"
+        if auto_account != "real" or not allow_real:
+            return TradingModeEnum.SIMULATE
+        conservative = _read_env_file("LIVE_CONSERVATIVE", "1")
+        if conservative == "1":
+            return TradingModeEnum.LIVE_CONSERVATIVE
+        return TradingModeEnum.LIVE_NORMAL
 
     # ------------------------------------------------------------------ #
     # 状态访问 (每次调用 _detect_mode，实时反映 .env.us 变更)
