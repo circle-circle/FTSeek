@@ -411,3 +411,70 @@ fallback 恒=开仓价 → pnl=0, 所有退出规则判"无风险", 监控空转
 P0×4 + #23 + P1-5/6/10 共 8 项全部落地且复核通过, 修复质量高 (契约测试先行、回放诚实声明、
 红线遵守)。**剩余清单**: P0 级清零; P1-7/8/9/11/12/13/14 + P2×13 待后续批次 (§五 顺序不变);
 #26 已被他方复验实锤并标记"max_sl_pct 重启用前必补" — 维持。
+
+---
+
+## 十四、批次A-F 落地记录 (Qoder, 2026-08-16, 用户指令"完成待办")
+
+§五 剩余清单全部执行完毕: P1-7/8/9/11/12/13/14 + P2-15/17 + #16/18/19/20/21/22/24/25/26/27
++ §13.3 残留 (P1-6 cap + 低优3)。红线①全程遵守 (无一生效阈值变更), 红线②每批契约测试先行。
+
+### 14.1 批次-commit 对照
+
+| 批次 | commit | 范围 | 验证 |
+|---|---|---|---|
+| §十三 回执 | 89c8a57d | 他方 8 项复核 | 契约31/31 + risk 48/48 + exit 82/82 |
+| A executor | 6b4b6758 | P1-7/8/9 + P2-15 | 契约11/11 + 回归21/21 |
+| B UE扫描 | 455a33f0 | P1-11/P1-14/#24 | 契约15/15 + 回归42/42 |
+| C 风控 | 04e375e7 | P1-12/P2-17/#26 | 契约7/7 + risk全量22 + 回归45/45 |
+| D 配置宣称 | e066abf5 | #16/#18/#19/#21 | 契约9/9 + 回归52过 |
+| E 管线 | ac97f824 | #20/#22/#27 | 契约9/9 + 回归71/71 |
+| F 杂项 | 3ae11d77 | #25/P1-13/P1-6cap/低优3 | 契约8/8 + 回归70/70 |
+
+新契约测试共 **59 个** (6 文件), 全量回归 **1254/1254** (含他方 8c43df49 W_WEEK方案B 后复跑)。
+
+### 14.2 语义要点 (回放/口径)
+
+- **P1-12**: update_assets 自动重置改单边判定 — 仅入金方向 (current > baseline×5) 自动重置基准;
+  亏损/出金方向维持基准偏严 (fail-safe)。阈值 5.0 未动 (红线①)
+- **P2-17**: record_manual_close 的 exit_time 改 ET (与主链路同源) **只影响新写入**;
+  历史北京时区行**刻意不回填** (避免批量重写审计数据, 历史日回撤口径留已知偏差)
+- **#22**: 生成幂等门改完成标记制 (新表 `playbook_generate_state`)。**行为变化**: UE 盘前 cron
+  先写行不再锁死当日 pipeline 生成 (原来"任意行存在即锁"→供给归零); 观察点 = 下个交易日供给量
+- **#20**: already_held 判据用 outcome 标记 (`COALESCE(outcome,'')`), 非价格口径 —
+  与写入方 (pipeline 对外部/手动/ORB已有持仓记 executed=1+price=0+outcome=already_held) 一致
+- **#16/#19**: 生产 yaml 均已显式声明生效值 → **线上零行为差** (仅对齐回退值/SSOT);
+  #16 的 VOTE 通道 8/9 起零流量
+- **P1-6cap**: 备用价无时间戳 (重启后旧 state) 或 >5min → 跳过本轮+钉钉 critical。
+  **重启后首条此类告警属预期**, 勿误判为故障
+- **#27**: decision_conf = confidence/100, 与 DA skill 现行口径一致 (列 2026-08-14 已建, 此前 pipeline 路径零写入)
+
+### 14.3 过程发现
+
+1. **陈旧回归测试修正**: `tests/regression/test_trading_mode.py::test_conservative_mode_restricts`
+   仍按 TRADE_ENV=0 断言 live — P0-1 后实盘判定契约已改为 AUTO_TRADE_ACCOUNT+ALLOW_REAL_TRADING
+   (他方落地时只跑自建契约, 未跑 regression 目录, 全量才暴露)。已按新契约修正, 随本案提交
+2. **flaky 记录**: `test_w_week_dead_signal_contract.py::test_max_hold_fires_when_profit` 全量跑
+   1 次失败; 孤立复跑 / worktree 干净 HEAD / 重跑全量均过 — 判时间依赖 flaky 非回归, 未改动。
+   (注: 他方 8c43df49 W_WEEK方案B 已动该域, 后续观察)
+3. **并发事故留档**: 批次D 编辑期间, 工作树被并发 Hermes 会话 `git reset` 回 HEAD
+   (reflog `HEAD@{0}: reset: moving to HEAD`), 未提交的批次D全部编辑静默丢失, 发现后重做。
+   教训: 多 agent 同仓作业 → **编辑→测试→commit 必须紧耦合**, 每批落地立即提交, 勿跨批囤改动
+4. **Bash 追加受限**: auto 权限模式下向 DEB 追加 (heredoc/重定向) 被边界拦截, 改用 Edit 工具锚定追加 (过程记录)
+
+### 14.4 生效与回滚
+
+- **生效**: 周日 ET 09:4x 窗口 (open_positions=0) `systemctl restart ftseek-us ftseek-dashboard`
+  → 双 active, TradingMode=SIMULATE 保持, 无启动错误
+- **回滚**: 每批次独立 commit, 可 `git revert <批次commit>` 单批回退; #26 (执行侧复核补 stop_loss 键)
+  已满足"max_sl_pct 重启前必补"前置 — 若需恢复 max_sl_pct 过滤, 现在两侧口径一致
+
+### 14.5 外部对齐项 (非本仓代码)
+
+1. **Futu 交易密码轮换**: close_all_options.py 旧硬编码 MD5 已进 git 历史 → 建议轮换;
+   新密经环境变量 `FUTU_TRADE_UNLOCK_MD5` 注入 (未设置则拒绝解锁)
+2. **DA skill 去重口径**: UE 排除 SKIP 行 vs DA 含入 — 仓内消费方已核一致
+   (premarket_invalidation/shadow_tracker 均过滤 SKIP), 分歧在仓外 DA skill, 待外部对齐
+3. **E1 (DEB-short-funnel UE召回实验)**: 混淆变量已清 (#23), 场地干净可开跑
+
+**状态**: §五 清单清零; P2 其余项不阻塞。全量回归 1254/1254 绿。

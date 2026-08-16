@@ -41,9 +41,14 @@ class TestTradingMode:
         assert tm.get_risk_multiplier() == 1.0
 
     def test_conservative_mode_restricts(self, isolated_trading_mode, monkeypatch):
-        """保守模式应限制仓位"""
+        """保守模式应限制仓位
+
+        [DEB-fullchain 2026-08-16] P0-1 (commit 2b82de00) 后判定源 TRADE_ENV →
+        AUTO_TRADE_ACCOUNT+ALLOW_REAL_TRADING; 本测试遗留旧语义 → 全量回归恒红。
+        更新为 P0-1 契约 (与 §十 契约测试 8/8 同口径)。"""
         trading_mode = isolated_trading_mode
-        monkeypatch.setenv('TRADE_ENV', '0')
+        monkeypatch.setenv('AUTO_TRADE_ACCOUNT', 'real')
+        monkeypatch.setenv('ALLOW_REAL_TRADING', 'true')
         monkeypatch.setenv('LIVE_CONSERVATIVE', '1')
         tm = trading_mode.TradingMode()
 
