@@ -207,6 +207,12 @@ def _quote_price(q: Dict[str, Any]) -> Optional[float]:
     return q.get("price") or q.get("last_price")
 
 
+def _is_da_priority_skip(existing_decision_id: Any) -> bool:
+    """P1-14 DA 优先判定: 已有行 decision_id 非空且非本源前缀 → UE 不得覆盖."""
+    did = str(existing_decision_id or "").strip()
+    return bool(did) and not did.startswith(f"{STRATEGY_ID}:")
+
+
 def _is_us_premarket() -> bool:
     """美股盘前时段判定 (04:00-09:30 ET). pytz 处理夏令时; 失败回落 _now_et 硬编码偏移."""
     try:
@@ -225,8 +231,11 @@ def _effective_quote_price(q: Dict[str, Any]) -> Optional[float]:
     盘前时段 snapshot 的 last_price/price=昨收 (无当日成交), 真实可交易价在 pre_price。
     实证: 8/11 UE inject XOM/CVX/JD entry 逐一精确=昨收; JD 实际盘前已 -3.76%, 锚错 3.8%。
     与 DA skill v0.64 effective_price 同源同口径。
-    回落: 非盘前时段/pre_price 缺失/push缓存路径(无pre_price键但price=活价) → 原 _quote_price。
-    回滚: universe_expansion.premarket_anchor=false → 恒走旧口径。
+    [DEB-fullchain P1-11 2026-08-16] 盘前+锚开启但 pre_price 缺失/无效时不再回落昨收
+      (回落源链 Finnhub/TwelveData 盘前 price 语义不明, 8/11 JD 锚错 3.8% 即该家族),
+      返回 None → 调用方按"无现价"跳过 (scan_price=None 被可交易过滤排除, inject 显式
+      [skip] 无现价), 宁可少一条指令不可锚错 SL/TP。非盘前时段/premarket_anchor=false
+      行为不变。回滚: universe_expansion.premarket_anchor=false → 恒走旧口径。
     """
     if not q:
         return None
@@ -235,8 +244,10 @@ def _effective_quote_price(q: Dict[str, Any]) -> Optional[float]:
             pre = float(q.get("pre_price") or 0)
         except (TypeError, ValueError):
             pre = 0.0
-        if pre > 0 and _is_us_premarket():
-            return pre
+        if _is_us_premarket():
+            if pre > 0:
+                return pre
+            return None
     return _quote_price(q)
 
 
@@ -735,6 +746,9 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             conf = float(it.get("confidence", 0) or 0)
         except (TypeError, ValueError):
             conf = 0.0
+        # [DEB-fullchain #24 2026-08-16] schema 契约夹逼 [0,1]: LLM 偶发输出 1.2/7 之类,
+        #   未夹逼时 cap50 仍放行 100、7 被当 700% 截成 50, 语义双错。夹逼后 cap 语义稳定。
+        conf = min(max(conf, 0.0), 1.0)
         wl = str(it.get("winner_loser", "")).upper().strip()
         item = {
             "symbol": sym,
@@ -1308,6 +1322,16 @@ def cmd_inject(force_dry: bool = False) -> int:
         _sb_on = False
     for it in instructions:
         try:
+            # [DEB-fullchain P1-14 2026-08-16] DA 优先防覆盖: save_instruction 的 UPSERT
+            #   按 (date,symbol) 无条件整行覆盖 — UE cron 复跑会把 DA 同日更深指令
+            #   (200字thesis+conditions+invalidation) 覆盖成 UE 浅指令 (1句thesis)。
+            #   写前查已有行: decision_id 非空且非本源前缀 (DA-/DEC-) → 跳过不覆盖。
+            #   UE 覆盖 UE 复跑仍允许 (自更新); 空 decision_id 旧行维持原覆盖行为。
+            _existing = db.get_instruction(it.get("date"), it.get("symbol"))
+            if _is_da_priority_skip((_existing or {}).get("decision_id")):
+                print(f"  [skip] {it.get('symbol')} 今日已有非UE指令 "
+                      f"(decision_id={(_existing or {}).get('decision_id')}) → DA优先不覆盖")
+                continue
             db.save_instruction(it)
             saved += 1
             # S0 影子: UE×SHORT 加码 record-only — 登记"若 ×1.25 加码"假设队列成员,
