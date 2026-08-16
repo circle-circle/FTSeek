@@ -1367,3 +1367,57 @@ n=15, max_days 谱系 [1,2,3,5,8,10,15,99(无限制)]:
 
 **裁决: 保持 loser_overnight_max_hold_days=5, 不改码不改配置。**
 
+
+---
+## 三十九、W_WEEK 交互缺口审计 + 方案B落地: SIM水下仓豁免 DEAD_SIGNAL/MAX_HOLD (Hermes, 2026-08-16)
+
+### 39.1 主动审计发现 (用户问"基于最新策略逻辑是否还有其他需要调整修复的问题")
+
+W_WEEK (§33/§34) 周六落地, **尚未跑过第一个交易日**。对退出链所有交接点逐一审计:
+
+✅ 无问题: EOD豁免(规则4) / TIME_EXIT豁免(规则3, 有每日重置) / SL兜底(规则1最高优先级) /
+patient_exit expire跨日守卫 / 5日上限强平(_horizon_max_hold_hit)
+
+🔴 **缺口A (活跃)**: DEAD_SIGNAL_EXIT (规则3.3) 会把 W_WEEK 的5日修复空间截断成2天:
+- DEAD_SIGNAL 触发条件 = `held_minutes(墙钟)≥60` + `peak_profit_pct(生命周期MFE)<0.2%`
+- TIME_EXIT 有每日重置(minutes_from_open), DEAD_SIGNAL **没有**
+- 水下仓入场日 MFE<0.2% → 次日开盘两条件**恒成立** → 第一轮巡检必触发
+- `_loser_overnight_exempt` 只豁免了 EOD/TIME_EXIT, DEAD_SIGNAL 块内无任何豁免调用
+- 触发后: 水下≤1%→patient arm→15:50 eod腿强平; 水下>1%→立即卖。**第2天必出局**
+- 量化 (overnight_loser_multiday_replay n=15 叠加 DEAD_SIGNAL 分支重算):
+  MFE<0.2% 子集 n=6 贡献 **+$698** (100%修复率), W_WEEK 总edge +$629 几乎全来自该子集
+  → 不修则 W_WEEK 名义5日、实际2日, +$629 生产期望被系统性高估
+
+🟡 **缺口B (潜伏)**: 规则5 MAX_HOLD 用 short_horizon max_hold_days=1, 被 _skip_allowed 守卫。
+当前 overnight_hold_enabled=false 安全; 将来打开隔夜开关 → 水下仓第2天被1日cap强平, W_WEEK作废。
+
+### 39.2 方案裁决 (用户裁"方案B", 宽豁免)
+
+方案A(窄): 仅隔夜仓豁免, 救尾盘入场3笔(+$422), 保留 DEAD_SIGNAL day-1盘中击杀。
+**方案B(宽, 已选)**: 对所有 PLAYBOOK_SIM 水下仓豁免 DEAD_SIGNAL (含day-1盘中), 救完整+$698。
+代价声明: DEAD_SIGNAL 对 SIM 水下的盘中击杀被整体禁用 — 政策级改动, 由用户明确批准。
+LIVE 零影响 (豁免函数强制 source_type==PLAYBOOK_SIM); SL 兜底优先级不变。
+
+### 39.3 落地内容
+
+1. 规则3.3 DEAD_SIGNAL: `_loser_overnight_exempt` 豁免 (仅SIM+水下+≤5交易日),
+   豁免仓转 SL/EOD转正/5日上限链; 豁免日志按 symbol:date 去重(_LOSER_DS_EXEMPT_LOGGED)
+2. 规则5 MAX_HOLD: 同款豁免排雷 (防 overnight_hold_enabled 打开后爆炸)
+3. 契约测试 `tests/playbook/test_w_week_dead_signal_contract.py` **8/8**:
+   SIM隔夜豁免/LIVE零影响/非水下不豁免/day-1豁免(方案B锁定)/5日窗口边界恢复/
+   SL兜底优先/MAX_HOLD双向(豁免+盈利仓触发)
+4. 回归: risk+regression+scale_out+sltp **71 passed**
+   (1预存失败 test_playbook_exit_rules: 8/15 mfe_stall_exit_enabled 配置回滚所致, 非本次引入)
+
+**提交归属说明**: 代码主体(DEAD_SIGNAL/MAX_HOLD豁免)被 Qoder 并行批次F提交 `3ae11d77`
+连带打包 (他们提交时工作树含我的改动); 契约测试在 `8c43df49`。两处内容均已逐行验证在
+HEAD 中完整无误 (reverse-apply 检查确认 stash 冗余)。
+
+**回滚**: 删两处 if 豁免包裹 (恢复无条件触发) 或 `loser_overnight_enabled=false` + 重启。
+
+### 39.4 遗留观察项 (明日开盘起)
+
+- 豁免仓实际结局跟踪: 被豁免的 DEAD_SIGNAL 仓最终走哪条腿 (SL/EOD转正/5日上限), 验证
+  +$698 回放edge在真实成交口径下是否成立 (sim 无真金, 但 exit_price 口径真实)
+- 若 DEAD_SIGNAL 豁免后水下仓持仓时间显著拉长且 SL 兜底占比过高 → 重新评估方案B
+  (回滚到方案A: 豁免加 `_is_overnight_position` 条件)
