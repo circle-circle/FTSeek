@@ -114,15 +114,21 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
     # 4.5 Task #55 (2026-05-29): Regime 自适应 atr_mult 调整
     # 在基础 atr_mult (Task #54 修复后的分支逻辑) 之上叠加 regime 乘数；
     # 取 max 以选择更宽松者，避免在 trending 行情中被噪声扫出，同时不破坏小盈利保护。
+    #
+    # P1-10 修复 (2026-08-16, DEB-fullchain): 硬编码缺省 {normal:2.5,...} 在
+    #   exit_policy.yaml 无 trailing_stop 键时恒生效, `atr_mult=max(atr_mult, regime_mult)`
+    #   把 guardian 波动桶 (low1.5/med2.0/high2.5/ext3.0) 与 SSOT initial 2.0 全部压到 ≥2.5 →
+    #   低波动股实际止损距离比设计 +67%, 而仓位按 2.0× 定尺寸 → 单笔风险超预算。
+    #   修复: 仅当 policy 显式配置 trailing_stop.regime_multipliers 时才叠加;
+    #   未配置 → 跳过本调整, atr_mult 保留 guardian/SSOT 值 (恢复设计)。
+    #   属"配置宣称与实际不符"家族 (#16/#18/#19/#21), 非参数改动。
     try:
         trailing_cfg = policy_dict.get("trailing_stop", {}) if isinstance(policy_dict, dict) else {}
-        regime_mults = trailing_cfg.get("regime_multipliers", {
-            "normal": 2.5,
-            "trending": 3.5,
-            "volatile": 3.0,
-        })
-        regime_mult = float(regime_mults.get(regime, regime_mults.get("normal", 2.5)))
-        atr_mult = max(float(atr_mult), regime_mult)
+        regime_mults = trailing_cfg.get("regime_multipliers")  # 无配置=None (不再硬编码缺省)
+        if regime_mults:
+            regime_mult = float(regime_mults.get(regime, regime_mults.get("normal", 2.5)))
+            atr_mult = max(float(atr_mult), regime_mult)
+        # else: trailing_stop 未配置 → 跳过 regime 调整, 保留 guardian/SSOT atr_mult
     except Exception as e:
         logger.debug(f"[regime_adjust] {position.symbol} regime={regime} (raw={_raw_regime}) 调整失败, 沿用基础 atr_mult: {e}")
 
@@ -175,12 +181,25 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
     )
 
     # ── SL 契约 (2026-06-06): initial_sl 是绝对地板, 退出永远不能放宽 ──
+    # P1-5 修复 (2026-08-16, DEB-fullchain): 抬线后必须重判 triggered —
+    #   旧实现用抬线前的 final_stop 判 triggered, 抬线后不重判 → 价格已跌破
+    #   initial_sl 地板但未越过更宽的旧线时 triggered=False 永不退出,
+    #   每次止损多亏 (initial_sl - 旧final_stop)。
     _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
     if _floor_sl > 0:
         if direction == "LONG" and r.final_stop < _floor_sl:
             r.final_stop = _floor_sl
         elif direction == "SHORT" and r.final_stop > _floor_sl:
             r.final_stop = _floor_sl
+        if not r.triggered:
+            _re_trigger = (current_price <= r.final_stop) if direction == "LONG" \
+                else (current_price >= r.final_stop)
+            if _re_trigger:
+                r.triggered = True
+                # reason 沿用引擎归因体系 (ATR_STOP 在 grace 白名单/registry
+                # hard_stop_reasons 内, 不发明新 reason 造成 P0-4 式失配)
+                r.reason_code = "ATR_STOP"
+                r.reason_cn = f"初始止损地板({r.final_stop:.2f}, SL契约抬线重判)"
 
     # 7. 幻方增强 (2026-04-29): 做空技术破位快速平仓
     if direction == "SHORT" and atr > 0:

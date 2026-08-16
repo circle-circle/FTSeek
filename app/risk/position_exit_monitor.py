@@ -1692,6 +1692,12 @@ class ExitMonitor:
             if current_price < lowest:
                 trail_state["lowest_price"] = current_price
 
+        # P1-6 修复 (2026-08-16, DEB-fullchain): 写入 prev_scan_price —
+        #   docstring 声称"即使未触发也需更新 peak/prev"但 prev 从未写入,
+        #   导致报价异常 fallback 永远是开仓价 (pnl=0, 所有退出规则判"无风险", 空转)。
+        #   补写后 fallback = 最后有效报价, 退出规则在报价中断期仍能基于最诚实的价格工作。
+        trail_state["prev_scan_price"] = current_price
+
         position.trail_state = trail_state
 
         if atr > 0:
