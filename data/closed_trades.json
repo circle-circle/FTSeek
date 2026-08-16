@@ -1,9 +1,0 @@
-{"symbol": "US.TSLA", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 383.43, "exit_price": 371.0, "realized_pl": 310.75, "timestamp": "2026-03-27T05:08:08.805046", "type": "partial_take_profit"}
-{"symbol": "US.NVDA", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 174.4, "exit_price": 171.24, "realized_pl": 79.0, "timestamp": "2026-03-27T05:08:08.805192", "type": "partial_take_profit"}
-{"symbol": "US.AAPL", "direction": "SHORT", "action": "CLOSE", "quantity": 50, "entry_price": 256.16, "exit_price": 248.0, "realized_pl": 408.0, "timestamp": "2026-03-27T05:08:08.805215", "type": "partial_take_profit"}
-{"symbol": "US.MSFT", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 367.67, "exit_price": 358.0, "realized_pl": 241.75, "timestamp": "2026-03-27T05:08:08.805232", "type": "partial_take_profit"}
-{"symbol": "US.GOOGL", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 284.28, "exit_price": 275.0, "realized_pl": 232.0, "timestamp": "2026-03-27T05:08:08.805257", "type": "partial_take_profit"}
-{"symbol": "US.META", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 556.63, "exit_price": 540.0, "realized_pl": 415.75, "timestamp": "2026-03-27T05:08:08.805282", "type": "partial_take_profit"}
-{"symbol": "US.AMZN", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 210.75, "exit_price": 204.0, "realized_pl": 168.75, "timestamp": "2026-03-27T05:08:08.805315", "type": "partial_take_profit"}
-{"symbol": "US.BABA", "direction": "SHORT", "action": "CLOSE", "quantity": 50, "entry_price": 125.05, "exit_price": 121.0, "realized_pl": 202.5, "timestamp": "2026-03-27T05:08:08.805334", "type": "partial_take_profit"}
-{"symbol": "US.PDD", "direction": "SHORT", "action": "CLOSE", "quantity": 25, "entry_price": 100.59, "exit_price": 97.0, "realized_pl": 89.75, "timestamp": "2026-03-27T05:08:08.805350", "type": "partial_take_profit"}

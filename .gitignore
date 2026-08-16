@@ -37,3 +37,8 @@ data/backups/
 # 工具运行时目录 (Qoder/Hermes plans/worktrees/settings) — 不应入库
 .qoder/
 .hermes/
+
+# 2026-08-16 做减法: data/ 是运行时输出目录 (缓存/遥测/审计jsonl/每日快照), 整体忽略
+# 白名单仅保留审计种子 (配置冻结快照)。新增需入库的 data 种子须在此加 ! 显式放行。
+data/*
+!data/config_freeze_v2.json
