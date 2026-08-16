@@ -1476,9 +1476,8 @@ def _build_instructions_from_votes(
         else:
             confidence = compute_confidence(data, decision["selected_conditions"], factors)
 
-        # 2026-07-02: 跨日方向翻转检查 — 同标的24h内方向翻转需更高confidence
+        # 2026-07-02: 跨日方向翻转检查 — 同标的24h内方向翻转降仓50% (原+15门槛方案已废弃)
         # 根因: LLM方向翻转率34%, ORCL 6/23 SHORT赚→6/24 LONG亏(conf=90但方向错)
-        # 方案: 查前一天同标的方向, 翻转时confidence门槛+15
         try:
             from datetime import timedelta as _td, datetime as _dt
             _today_date = _today_et_str()
@@ -1495,11 +1494,11 @@ def _build_instructions_from_votes(
             if _prev_inst and _prev_inst.get("direction") in ("BUY", "SELL_SHORT"):
                 _prev_dir = _prev_inst["direction"]
                 if _prev_dir != direction:
-                    # 方向翻转 — 标记, 在confidence门槛检查中提高门槛
+                    # 方向翻转 — 标记, 后续按"降仓50%"处理 (2026-07-11 起 conf门槛+15方案已废弃)
                     _filter_audit["direction_flip"] += 1
                     logger.info(
                         f"[playbook] {symbol} 跨日方向翻转: {_prev_dir}→{direction} "
-                        f"(prev={_prev_date}), confidence门槛+15"
+                        f"(prev={_prev_date}), 降仓50%"
                     )
                     _direction_flipped = True
                 else:

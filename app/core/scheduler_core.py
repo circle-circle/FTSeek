@@ -155,6 +155,23 @@ class PositionStore:
             return len(self._positions)
 
 
+def _warn_strength_key_divergence(cfg, effective_key: str, legacy_keys: tuple) -> None:
+    """[DEB-fullchain #18] 旧强度键若声明与生效键不同的值 → 启动告警 (不改变生效值)."""
+    try:
+        eff = cfg.get_dotted(effective_key, None)
+        if eff is None:
+            return
+        for key in legacy_keys:
+            val = cfg.get_dotted(key, None)
+            if val is not None and float(val) != float(eff):
+                logger.warning(
+                    f"[config-diff] {key}={val} 与生效键 {effective_key}={eff} 不一致 "
+                    f"(以生效键为准, 旧键为死键 — 配置宣称与实际不符家族 #18)"
+                )
+    except Exception as e:
+        logger.debug(f"[config-diff] 强度键分歧检查失败(忽略): {e}")
+
+
 class TradingScheduler:
     """
     交易调度器主类
@@ -1031,6 +1048,11 @@ class TradingScheduler:
                     ),
                 ),
             )
+            # [DEB-fullchain #18 2026-08-16] 死键分歧告警: 生效键恒为 SSOT, 但旧键若仍
+            #   声明不同值说明配置意图漂移 (宣称与实际不符家族), 启动时显性告警不静默。
+            _warn_strength_key_divergence(cfg, ConfigKeys.MIN_EFFECTIVE_STRENGTH.value,
+                                          ("strategies.defaults.min_strength",
+                                           "scheduler.min_signal_strength"))
             # F4 (2026-05-14): 收敛到 MinConfidenceResolver
             # 沙盒模式: 沙盒 overrides 优先于 resolver
             from app.core.min_confidence_resolver import get_min_confidence_resolver

@@ -31,7 +31,10 @@ _DEFAULTS: Dict[str, Any] = {
     "direction_filter": {
         "BUY_min_strength": 50,
         "BUY_max_std": 20,  # 2026-06-30: 15→20, 允许风险审查官有不同意见
-        "SHORT_min_confidence": 65,
+        # [DEB-fullchain #16 2026-08-16] 移除 SHORT_min_confidence:65 缺省 —
+        #   pipeline 消费方 .get(SHORT_min_confidence, yaml supply_conf_gate_short=55),
+        #   本缺省恒遮蔽 yaml → 实际 BUY 55 / SHORT 65 对空头更严 (VOTE 通道 8/9 后无行,
+        #   当前零流量影响)。移除后 SSOT=playbook.supply_conf_gate_short, 多空对称。
     },
     "ic_gate": {
         "hard_block_threshold": -0.15,
@@ -52,7 +55,7 @@ def get_strategy_config(strategy_id: str) -> Dict[str, Any]:
         {
             "enabled": bool,
             "config_name": str | None,
-            "direction_filter": {BUY_min_strength, BUY_max_std, SHORT_min_confidence},
+            "direction_filter": {BUY_min_strength, BUY_max_std, ...entry overrides},
             "ic_gate": {hard_block_threshold, warning_threshold, min_signals},
             "regime_filter": bool,
         }

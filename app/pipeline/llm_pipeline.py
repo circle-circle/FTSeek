@@ -192,7 +192,7 @@ def run_llm_strategy_scan(scheduler):
             from app.core.config_container import get_config
             risk_cfg = get_config()
             validator_cfg = {
-                "max_position_pct": risk_cfg.get('risk.position.max_per_symbol', 0.25),
+                "max_position_pct": risk_cfg.get('risk.position.max_per_symbol', 0.08),  # [DEB-fullchain #19] 回退值与 yaml SSOT 同步
                 "max_total_position": risk_cfg.get('risk.position.max_total', 0.80),
                 "max_daily_strategies": risk_cfg.get('risk.trading.max_daily_trades', 500),
                 "cooldown_seconds": risk_cfg.get('decision.signal_timing.cooldown_seconds', 120),

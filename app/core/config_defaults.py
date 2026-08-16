@@ -65,7 +65,7 @@ class ConfigDefaults:
     # ============================================================
     # 风控 — 仓位限制 (risk.position)
     # ============================================================
-    MAX_PER_SYMBOL = 0.25                   # risk.position.max_per_symbol
+    MAX_PER_SYMBOL = 0.08                   # risk.position.max_per_symbol [DEB-fullchain #19 与 yaml SSOT 同步]
     MAX_PER_DIRECTION = 0.65                # risk.position.max_per_direction
     MAX_TOTAL_POSITION = 0.8                # risk.position.max_total
 

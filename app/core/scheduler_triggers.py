@@ -503,12 +503,13 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                                 cfg.get_dotted(ConfigKeys.MIN_EFFECTIVE_STRENGTH.value, 50)
                             )
                             loop_context["MAX_POSITION_PER_SYMBOL"] = float(
-                                cfg.get_dotted("risk.position.max_per_symbol", 0.25)
+                                # [DEB-fullchain #19] 回退值与 yaml SSOT 0.08 同步 (原 0.25)
+                                cfg.get_dotted("risk.position.max_per_symbol", 0.08)
                             )
                         else:
                             loop_context["MIN_CONFIDENCE"] = 0.70
                             loop_context["SIGNAL_MIN_SCORE"] = 50
-                            loop_context["MAX_POSITION_PER_SYMBOL"] = 0.25
+                            loop_context["MAX_POSITION_PER_SYMBOL"] = 0.08
                     except Exception as e:
                         logger.debug(f"[ReviewLoop] 配置加载失败，使用默认值: {e}")
                         pass

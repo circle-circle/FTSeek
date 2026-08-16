@@ -5,7 +5,7 @@ Pre-Trade Safety Gate — SSOT for all position limit checks.
 inline 仓位校验逻辑。所有路径统一调用此函数，消除遗漏和漂移。
 
 三层检查:
-  1. 单品种名义 ≤ equity × max_per_symbol (default 0.25)
+  1. 单品种名义 ≤ equity × max_per_symbol (default 0.08, [DEB-fullchain #19] 与 yaml SSOT 同步)
   2. 同方向名义 ≤ equity × max_per_direction (default 0.65)
   3. 总敞口名义 ≤ equity × max_total (default 0.80)
 
@@ -22,8 +22,10 @@ from typing import Tuple, Optional, Any
 logger = logging.getLogger(__name__)
 
 # ── Default limits (overridden by unified_config.yaml) ──
+# [DEB-fullchain #19 2026-08-16] max_per_symbol 回退值 0.25→0.08 与 yaml SSOT 同步
+#   (yaml 2026-08-15 P0-A 已改 0.08, 回退值漂移会在 yaml 键丢失时静默放宽敞口 3x)。
 _DEFAULTS = {
-    "max_per_symbol": 0.25,
+    "max_per_symbol": 0.08,
     "max_per_direction": 0.65,
     "max_total": 0.80,
 }

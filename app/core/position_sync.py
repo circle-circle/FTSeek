@@ -968,9 +968,10 @@ class USPositionSync:
                     try:
                         from app.core.config_container import get_config
                         cfg = get_config()
-                        max_per_symbol = float(cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+                        # [DEB-fullchain #19] 回退值与 yaml SSOT 0.08 同步 (原 0.25)
+                        max_per_symbol = float(cfg.get_dotted("risk.position.max_per_symbol", 0.08))
                     except Exception:
-                        max_per_symbol = 0.25
+                        max_per_symbol = 0.08
                     
                     if position_pct > max_per_symbol:
                         # 根因修复 (2026-06-05): 超限仓位触发自动减仓
@@ -2164,9 +2165,10 @@ class USPositionSync:
             try:
                 from app.core.config_container import get_config
                 cfg = get_config()
-                max_per_symbol = float(cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+                # [DEB-fullchain #19] 回退值与 yaml SSOT 0.08 同步 (原 0.25)
+                max_per_symbol = float(cfg.get_dotted("risk.position.max_per_symbol", 0.08))
             except Exception:
-                max_per_symbol = 0.25
+                max_per_symbol = 0.08
             
             # 🔴 P0 (2026-06-13): 周期扫描必须过滤 self_managed, 防止对手动仓位触发减仓
             try:
