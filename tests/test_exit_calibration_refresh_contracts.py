@@ -99,3 +99,33 @@ class TestReportSchema:
         assert _bucket_conf(0.5) == "mid"
         assert _bucket_conf(0.9) == "high"
         assert _bucket_conf(0) == "unknown"
+
+
+class TestPostfixWatch:
+    """scripts/exit_geometry_postfix_watch.py — 聚合与止损/追踪族归并契约"""
+
+    def test_agg_units_and_capture_ratio(self):
+        from scripts.exit_geometry_postfix_watch import _agg
+        rows = [
+            {"exit_reason": "SL_TRAIL_LOCK", "direction": "LONG",
+             "realized_pnl": 300.0, "pnl_net": 290.0, "pnl_pct": 0.02, "mfe_pct": 4.0},
+            {"exit_reason": "SL_TRAIL_LOCK", "direction": "LONG",
+             "realized_pnl": 100.0, "pnl_net": 90.0, "pnl_pct": 0.01, "mfe_pct": 2.0},
+        ]
+        out = _agg(rows)["SL_TRAIL_LOCK|LONG"]
+        assert out["n"] == 2
+        assert out["gross"] == 400.0 and out["net"] == 380.0
+        assert out["avg_mfe_pct"] == 0.03  # 百分数列 3.0 → 分数 0.03
+        assert out["capture_ratio"] == 0.5  # avg pnl_pct 0.015 / avg mfe 0.03 = 捕获50%
+
+    def test_stop_trail_family_prefix_match(self):
+        from scripts.exit_geometry_postfix_watch import _family_stats
+        rules = {
+            "SL_TRAIL_LOCK|LONG": {"n": 10, "gross": 500.0},
+            "SL_BREAKEVEN|LONG": {"n": 5, "gross": 100.0},
+            "TRAILING_STOP|SHORT": {"n": 2, "gross": -400.0},
+            "TIME_EXIT|LONG": {"n": 30, "gross": -900.0},   # 非止损族, 不计入
+            "MFE_STALL_EXIT|LONG": {"n": 27, "gross": -941.0},
+        }
+        fam = _family_stats(rules)
+        assert fam["n"] == 17 and fam["gross"] == 200.0

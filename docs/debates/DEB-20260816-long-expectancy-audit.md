@@ -195,8 +195,29 @@ shadow×1 — 台账与一切裁决查询必须 `source_type='PLAYBOOK_SIM'` 过
 ## 七、待办
 
 1. L-E1 台账脚本落地 (`scripts/long_expectancy_ledger.py`, 只读) — **待用户批准后实施**
-2. exit_calibration.json 刷新 (2026-06-06 起 stale, 已 2.5 月)
+2. ~~exit_calibration.json 刷新~~ **已落地** (2026-08-16, `scripts/exit_calibration_refresh.py`,
+   commit 223754e8; 见 §八)
 3. conf 校准初版已出 (§2.7, 反向); decision_conf (8/16 起写入) 攒至 n≥100 做交叉验证,
    并按 source (DA vs UE) 分层复核反向是否稳定
-4. 8/17 起首周: 对照 §2.4 基线观察退出几何修复 (P1-5/P1-10/P1-6) 后 trailing/SL 桶读数
+4. 8/17 起首周术后观察 — **已接线** (`scripts/exit_geometry_postfix_watch.py` + crontab
+   Tue-Sat 06:32 CST, 见 §八)
 5. 双周复核回执 (首个: 2026-08-30)
+
+---
+
+## 八、落地快照 (Qoder, 2026-08-16 晚; 辩论人请勿重复落地)
+
+用户裁: 本案辩论分析交另一 agent; 以下非辩论依赖项已由 Qoder 执行落地 (commit 223754e8 + 本提交):
+
+1. **`scripts/exit_calibration_refresh.py`** (只读): 重建被删的校准分析器 (768e443f), 只恢复
+   分析侧, **不复活** ExitMonitor 自动调参环 (红线①)。分类阈值沿用旧版; 单位契约锁定
+   (mfe_pct/mae_pct 列存百分数, 加载归一分数 — 契约测试 11/11)。
+   77 天现役读数: profit_giveback **27%** (2026-06-06 快照为 0%) — 与 P2/P3"利润给回"诊断一致;
+   conf 反向第三次复证 (high 36%胜率/净-$1,490 vs mid 53%); TIME_EXIT n=33 **胜率 0%** (L-E3 重点对象)。
+   输出: `config/exit_calibration.json` (schema 兼容历史) + `data/exit_rule_expectancy_latest.json`
+2. **`scripts/exit_geometry_postfix_watch.py`** (只读): 基线 (7/1-8/16) vs 术后 (≥8/17) 分
+   exit_reason×方向 对照, 止损/追踪族均亏参考线 $600/笔 (非触发器); 输出
+   `data/exit_geometry_watch_latest.json`。8/17 首个交易日后自动出术后读数
+3. **crontab** (备份 `data/crontab.backup.20260816_222042.txt`): Tue-Sat 06:30/06:32 CST
+   每日自动跑上述两脚本
+4. **§零.1/§2.7 更正** (commit 3a8ae2b7): conf 链路完好 + 反向校准 — 辩论人请以更正版为准
