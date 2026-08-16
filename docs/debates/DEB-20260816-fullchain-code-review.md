@@ -523,3 +523,47 @@ P0×4 + #23 + P1-5/6/10 共 8 项全部落地且复核通过, 修复质量高 (�
 
 **结论**: §十四 "§五清单清零、59 契约测试、全量 1254 绿" 声明经独立复核全部属实。
 红线①(零阈值变更)/②(契约测试先行) 抽查合规。批次A-F 验收通过。
+
+---
+## 十六、Hermes 盲区补扫 (2026-08-16): DA skill 侧 + 动态竞态实弹验证
+
+§七承认的盲区: ①动态竞态 (P0-3/P1-7/P1-14) 为静态推理; ②skill 侧不在本案范围。
+本补扫逐项实弹验证。
+
+### 16.1 P0-3 幂等 — 动态压测 6/6 通过 (不再只是静态推理)
+
+真实函数 check_idempotency/record_idempotency + 10 线程并发双击压测:
+- 不预烧: 首次/未record二次 check 均不拒 ✓
+- record 后同 key 拒重 ✓
+- **10 线程同 key 并发 check→record 仅 1 个 winner** (_order_lock 串行化实锤) ✓
+- 指纹 key 同 30s 桶稳定 ✓
+- 持久层实锤: dyn key 落主库 idempotency_keys 表 (1218 行历史) ✓
+
+### 16.2 P1-14 — 修复窗口量化 + 残留竞态评估
+
+修复将读写窗口从"分钟级"(读排重→数分钟后写)压缩到**循环内逐条 check-then-write**
+(微秒级)。残留竞态: UE check 后 DA 恰好插入同标的 → UE 仍会覆盖。理论存在,
+但窗口微秒级且需 DA 恰在该指令处理间隙落库, 概率远低于修复前。**判定: 结构性
+改善成立, 残留风险留档观察 (无需二次修复)**。
+
+### 16.3 §14.5-2 "DA 含入 SKIP" 归因修正 (DB 实证)
+
+实锤 playbook_instructions 全表 direction×decision_id 分布:
+**DA-% 行 SKIP = 0** (DA 只写 BUY/SELL_SHORT, pipeline.py L793-796 continue 过滤)。
+DA skill 对 playbook_instructions **零读取** (唯一读者 dc_calibration_collector
+已按 decision_id LIKE 'DA-%' + direction 过滤)。
+"DA 含 SKIP"实际指向 **signal_snapshots** 库: DA 的 SKIP 以 NEUTRAL 落库 (817 行),
+这是 BLOCK 对照组的设计用途 (ic_writer 刻意保留), 与 UE 的 playbook_instructions
+排重是**两个不同存储、不同用途** — 非口径分歧, 无需对齐。§14.5-2 可关闭。
+
+### 16.4 DA skill 失败路径全扫 (9633 行, 铁律0方法)
+
+- except 吞咽 10 处: 全部 best-effort 路径 (版本戳/regime补齐/财报格式化/板块计算/
+  数字溯源提取), **无一处落在交易/状态写入路径** — 可接受。
+- R1 新代码 (deep_analyzer.py fetch_recent_outcomes): fail-open + 回滚开关 +
+  None 防护 + SQL 排除 manual/reconciler 源 ✓ 无缺陷。
+- 模型名硬编码: 仅 docstring 提及, config.py 契约 (env 覆盖 LLM_MODEL/CHALLENGER_MODEL)
+  未被违反 ✓。
+
+**结论**: 两个盲区补扫完毕 — P0-3 实弹证实修复有效; P1-14 结构性改善成立;
+DA skill 侧无需修复项; §14.5-2 归因修正后可关闭。DA skill 当前无已知高危项。
