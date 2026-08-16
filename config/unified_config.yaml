@@ -1173,7 +1173,13 @@ playbook:
     min_profit_fee_ratio: 0.0
     min_confidence_buy: 0
     min_confidence_short: 0
-    max_sl_pct: 6.0
+    max_sl_pct: 0.0
+    # ↑ 2026-08-16 禁用 (原6.0): 结构性全杀空头, 零判别力.
+    #   实证: UE生成器公式下 LONG SL宽恒5.91%(全过)/SHORT恒6.09%(全杀) —
+    #   8/7上线后UE SHORT执行15笔→0笔(8/8全拦), 阈值精确=方向性禁令而非过滤器.
+    #   判别力: 已成交n=294 spearman(SL宽,pnl)=-0.018 (BUY +0.013), >6% vs ≤6%
+    #   分桶结局无差; 被拦7笔反事实次日做空均值-0.64%(4胜3负), 证明不了拦得对.
+    #   用户指令: 不要机械性无识别力阈值阻碍拦截因素. 回滚: 改回6.0+重启.
   supply_conf_gate_buy: 55
   supply_conf_gate_short: 55
   shadow_portfolio_enabled: true
