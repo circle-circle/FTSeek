@@ -50,19 +50,76 @@ SQL_TAKEOVER = (
 # ─────────────────────────────────────────────────────────────
 
 def check_idempotency(service: "ManualOrderService", key: Optional[str]) -> bool:
-    """检查幂等 key 是否已使用. 返回 True = 重复请求应拒绝."""
+    """检查幂等 key 是否已使用. 返回 True = 重复请求应拒绝.
+
+    P0-3 修复 (2026-08-16, DEB-fullchain):
+      旧实现把 key 在下单**前**写入 (预烧): place_order 超时 (broker 可能已收单) 后
+      60s 内同 key 重试被拒"重复提交"而实际成交无 order_id/无保护单; 60s 后重试 →
+      第二笔真实下单; 且纯内存, 重启清空。
+      新语义: check 只查已**成功提交**时记录的 key (record_idempotency), 失败不烧 key;
+      持久层接 app/execution/idempotency.py (SQLite, 1h 窗口, 重启重载),
+      内存 60s 表仅作持久层不可用时的 fallback。
+    """
     if not key:
-        return False  # 无 key 时不做去重 (向后兼容)
+        return False
+    namespaced = f"manual:{key}"
+    mgr = _get_persistent_idempotency()
+    if mgr is not None:
+        try:
+            return mgr.is_duplicate(namespaced)
+        except Exception as e:
+            logger.warning(f"[幂等] 持久层查询失败, 回退内存表: {e}")
+    # Fallback: 内存 60s (旧路径, 仅持久层不可用时)
+    # 同样不预烧: 只查已记录 (record_idempotency 写入) 的 key
     now = time.time()
-    # 清理过期 key
     expired = [k for k, ts in service._recent_keys.items()
                if now - ts > service._idempotency_ttl]
     for k in expired:
         del service._recent_keys[k]
-    if key in service._recent_keys:
-        return True  # 重复
-    service._recent_keys[key] = now
-    return False
+    return key in service._recent_keys
+
+
+# ── 持久幂等层 (P0-3 修复 2026-08-16): SQLite 持久化 + 1h 窗口 + 重启重载 ──
+_persistent_idempotency = None
+
+
+def _get_persistent_idempotency():
+    """懒加载 IdempotencyManager (与主执行链同源组件); 不可用时返回 None (调用方回退内存)."""
+    global _persistent_idempotency
+    if _persistent_idempotency is not None:
+        return _persistent_idempotency
+    try:
+        from app.execution.idempotency import IdempotencyManager
+        _persistent_idempotency = IdempotencyManager(window_seconds=3600)
+    except Exception as e:
+        logger.warning(f"[幂等] 持久层初始化失败, 回退内存表: {e}")
+        return None
+    return _persistent_idempotency
+
+
+def record_idempotency(service: "ManualOrderService", key: str, order_id: str) -> None:
+    """下单**成功后**记录幂等 key (P0-3): key→order_id 持久化, 1h 窗口内去重 + 重启重载。
+
+    只在 place_order RET_OK 后调用 — 失败/超时不记录, 用户可用同 key 安全重试。
+    """
+    if not key:
+        return
+    service._recent_keys[key] = time.time()  # 进程内快路径
+    mgr = _get_persistent_idempotency()
+    if mgr is not None:
+        try:
+            mgr.record_order(f"manual:{key}", order_id or "")
+        except Exception as e:
+            logger.warning(f"[幂等] 持久层记录失败 (不影响下单): {e}")
+
+
+def synthesize_idem_key(order: "ManualOrder") -> str:
+    """P0-3: 前端未传 idempotency_key 时生成指纹 key —
+    30s 窗口内相同 symbol+方向+数量视为同一请求 (防双击/快速重试重复下单);
+    30s 后重新下单落不同桶, 不误拦合法重复操作。
+    """
+    bucket = int(time.time() // 30)
+    return f"auto:{order.symbol}:{order.action}:{order.quantity}:{bucket}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -74,9 +131,12 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
     """提交订单到 Futu broker (带锁 + 幂等保护)."""
 
     # 0. 幂等去重 (防止双击/网络重试)
+    # P0-3 修复 (2026-08-16): 前端不传 key 时用指纹 key 兜底; key 在提交成功后
+    #   才记录 (record_idempotency), 不再预烧 → 下单失败可用同 key 安全重试。
+    _idem_key = idempotency_key or synthesize_idem_key(order)
     with service._order_lock:
-        if check_idempotency(service, idempotency_key):
-            logger.warning(f"[手动下单] 重复请求被拒绝: key={idempotency_key}")
+        if check_idempotency(service, _idem_key):
+            logger.warning(f"[手动下单] 重复请求被拒绝: key={_idem_key}")
             return {"success": False, "error": "重复提交，请勿连续点击"}
 
         # 1. 风控校验
@@ -152,6 +212,9 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
                 logger.info(f"[手动下单] ✅ 订单提交成功: order_id={order.order_id}")
+                # P0-3 修复 (2026-08-16): 提交成功后才记录幂等 key (不再预烧) —
+                # 失败/超时不记录, 用户可用同 key 安全重试; 成功则 1h 窗口内去重 + 重启重载
+                record_idempotency(service, _idem_key, order.order_id)
                 # 标记为手动持仓, 避免被系统退出监控误平
                 service._mark_position_manual(order.symbol, order.direction)
                 # 注册到 ManualHoldRegistry: 自动管线扫描时跳过此标的 (实时, 无延迟)
@@ -1032,7 +1095,7 @@ def _register_pending_protection(service: "ManualOrderService", order: "ManualOr
 
     # 只有限价单才需要延迟 (市价单通常秒级成交)
     if order.order_type != "LIMIT":
-        # 市价单: 延迟 3 秒后直接挂
+        # 市价单: 延迟 3 秒后回填成交价再挂 (P0-2 修复, 见 _try_place_protection)
         import threading
         threading.Timer(3.0, _try_place_protection, args=[service, order]).start()
         return
@@ -1046,8 +1109,12 @@ def _register_pending_protection(service: "ManualOrderService", order: "ManualOr
         f"[延迟挂单] ✅ 注册 {order.symbol} {order.direction} "
         f"order_id={order_id} SL=${order.stop_loss} TP=${order.take_profit}"
     )
+    _ensure_monitor_started()
 
-    # 启动监控线程 (只启动一次)
+
+def _ensure_monitor_started() -> None:
+    """启动保护单监控线程 (只启动一次)."""
+    global _protection_monitor_started
     if not _protection_monitor_started:
         import threading
         _protection_monitor_started = True
@@ -1056,10 +1123,65 @@ def _register_pending_protection(service: "ManualOrderService", order: "ManualOr
         logger.info("[延迟挂单] 监控线程已启动 (30s 轮询)")
 
 
-def _try_place_protection(service: "ManualOrderService", order: "ManualOrder") -> None:
-    """尝试挂保护单 (市价单延迟调用)."""
+def _backfill_fill_price(service: "ManualOrderService", order: "ManualOrder") -> bool:
+    """查询 broker 订单成交均价/数量并回填 order 对象. 返回 True = 已成交且拿到价格.
+
+    P0-2 修复 (2026-08-16, DEB-fullchain): 与限价单 monitor loop 同源回填
+    (dealt_avg_price/dealt_qty)。市价单提交时 price=0, 不回填则 place_protective_stop
+    静默丢弃 SL/TP → 仓位裸奔。
+    """
     try:
-        place_protective_stop(service, order)
+        if not order.order_id or not service._broker_ctx or not service._connected:
+            return False
+        from futu import TrdEnv, RET_OK
+        trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+        ret, data = service._broker_ctx.order_list_query(
+            order_id=order.order_id,
+            trd_env=trd_env,
+        )
+        if ret != RET_OK or data.empty:
+            return False
+        row = data.iloc[0]
+        dealt_qty = int(row.get("dealt_qty", 0) or 0)
+        dealt_avg = float(row.get("dealt_avg_price", 0) or 0)
+        if dealt_qty > 0:
+            order.quantity = dealt_qty
+        if dealt_avg > 0:
+            order.price = dealt_avg
+            return True
+        return False
+    except Exception as e:
+        logger.warning(f"[延迟挂单] {order.symbol} 查询成交价失败: {e}")
+        return False
+
+
+def _try_place_protection(service: "ManualOrderService", order: "ManualOrder") -> None:
+    """尝试挂保护单 (市价单延迟调用).
+
+    P0-2 修复 (2026-08-16, DEB-fullchain): 市价单 price=0, 旧实现 3s 后直接调
+    place_protective_stop → _entry<=0 静默 return → SL/TP 永久丢失。
+    现: 先查 broker 成交价回填; 未成交/无价 → 转入 monitor 队列重试 (30s 轮询,
+    24h 超时保护已有) — 保护单绝不静默丢失。
+    """
+    try:
+        if _backfill_fill_price(service, order):
+            place_protective_stop(service, order)
+            return
+        # 未成交/无成交价 → 转入 monitor 队列重试
+        if order.order_id:
+            _pending_protections[order.order_id] = {
+                "order": order, "service": service, "registered_at": datetime.now(),
+            }
+            _ensure_monitor_started()
+            logger.warning(
+                f"[延迟挂单] {order.symbol} 市价单 3s 未成交, 转入监控队列等待成交后挂 SL/TP "
+                f"(order_id={order.order_id})"
+            )
+        else:
+            logger.error(
+                f"[延迟挂单] ⚠️ {order.symbol} 市价单无 order_id, 无法挂保护单 — "
+                f"仓位无 SL/TP 保护, 需人工检查!"
+            )
     except Exception as e:
         logger.warning(f"[延迟挂单] {order.symbol} 市价单保护挂单失败: {e}")
 
@@ -1156,6 +1278,13 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
         _entry = float(order.price or 0)
         _qty = int(order.quantity or 0)
         if _entry <= 0 or _qty <= 0:
+            # P0-2 修复 (2026-08-16): 原静默 return 导致市价单 SL/TP 丢失无任何痕迹。
+            # _backfill_fill_price 已保证正常路径有成交价; 走到这里=回填失败/数据异常,
+            # 显性告警, 仓位保护缺失必须可见。
+            logger.error(
+                f"[保护挂单] ⚠️ {order.symbol} 无有效成交价/数量 (entry={_entry}, qty={_qty}) — "
+                f"SL/TP 未挂出, 仓位无 broker 端保护, 需人工检查!"
+            )
             return
 
         # ── 止损价: 优先用作战计划的 SL，fallback 3% ──
