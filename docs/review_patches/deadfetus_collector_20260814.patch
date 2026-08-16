@@ -1,0 +1,32 @@
+--- a/deadfetus_collector.py
++++ b/deadfetus_collector.py
+@@ -6,7 +6,7 @@
+ 原则: 纯记账, 零实盘干预; 按 trade_records.id 去重 → 幂等可重跑, 漏跑自愈。
+ 回滚: 删本文件 + deadfetus_samples.jsonl + cron附录步骤, 零残留。
+ 
+-标签口径 (与 8/14 重放分析一致, mfe_pct 正数口径):
++标签口径 (mfe_pct 正数口径):
+   DEAD: MFE < 0.3% (入场后方向从未兑现)
+   WIN:  MFE >= 1.0%
+   MID:  其余
+@@ -15,6 +15,10 @@
+   n>=100 时按 volume_ratio/RSI/入场时段/来源 四维做死胎率分离度,
+   并做时间双窗验证 (前后各半, 双窗方向一致且死胎率差>=15pp 才列为门禁候选)。
+   n<100 只报进度 + 标注"初步勿用"的预览, 不给结论。
++
++口径警示 (2026-08-14 Qoder 复查): 仓内并存三个"死胎"阈值, 用途不同勿混用 —
++  本采集 0.3% (入场质量门禁攒样) / DEB-20260813 DEAD_SIGNAL_EXIT 0.2% (出场机制) /
++  exit_replay_shadow V2 0.1%+浮亏0.3% (更严早退变体)。
+ """
+ import json
+ import sqlite3
+@@ -63,7 +67,8 @@
+     rows = con.execute(
+         "SELECT id, symbol, trade_date, entry_time, direction, decision_id, "
+         "mfe_pct, pnl_net, exit_reason, factor_detail "
+-        "FROM trade_records WHERE entry_time >= ? ORDER BY id",
++        "FROM trade_records WHERE entry_time >= ? AND exit_time IS NOT NULL "
++        "AND exit_time != '' AND mfe_pct IS NOT NULL ORDER BY id",
+         (MIN_TRADE_DATE,)).fetchall()
+     added = 0
+     with OUT.open("a") as f:
