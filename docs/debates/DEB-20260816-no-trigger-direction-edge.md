@@ -348,7 +348,7 @@ Qoder §10.2 担心 "SKIP 行 direction 被覆写, 原方向不可考"——**�
 | R3 gate 反事实记分牌 | ✅ 已落地 (本周报 + 每周重跑) |
 | R7 ScoreConsistency 解析 | ✅ 已落地 (今晚 DA 轮生效) |
 | R6 pending_direction | ❌ 证伪关闭 (字段已存在); 8/8 全空头发现移交 short-funnel 案 |
-| R1 最近结局三元组 | 待裁决 (record-only, 工程量小) |
+| R1 最近结局三元组 | ✅ 已落地 (skill ad97aaf, record-only; 今晚 19:00 DA 轮生效; 回滚 DA_RECENT_OUTCOME_INJECT=0) |
 | R2 conf 轴降级 | 待裁决 |
 | R4 horizon 重测 | 预约 9 月初 |
 | R5 触发门方向分治 | 休眠 (复活判据: R3 子集 n≥30 + gap≥+1.0pp) |
