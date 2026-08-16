@@ -1021,10 +1021,8 @@ pipeline:
   use_modular_stages: true
 playbook:
   auto_execute: true
-  after_hours_shadow:
-    observe: true
-  premarket_shadow:
-    observe: true
+  # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
+  #   0产出+0消费方+DEB窗口过期(DEB-20260805 C1/门E), 见 obsidian 2026-08-16_change_review_audit.md
   premarket_invalidation_observe: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true

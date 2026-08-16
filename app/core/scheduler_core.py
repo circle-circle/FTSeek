@@ -2174,13 +2174,6 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] playbook 盘前指令推送异常 (已隔离): {_e}")
 
-                    # 盘前尾段影子观测 (DEB-20260805(二) C1): 09:00-09:30 ET 每 60s 快照, 函数内节流+窗口 guard
-                    try:
-                        from app.playbook.premarket_shadow import run_collect as _pm_shadow_collect
-                        _pm_shadow_collect(self)
-                    except Exception as _e:
-                        logger.debug(f"[LLM策略] 盘前影子行情采集异常 (已隔离): {_e}")
-
                     # 宏观日历影子采集 (2026-08-12, financial-data-query 数据源接入):
                     # 蚂蚁API盘前拉8个美国核心宏观指标最新值/披露日, jsonl落库.
                     # 函数内自带时间窗口(06:00-09:29 ET)+每日幂等. record-only 不进决策.
@@ -2231,13 +2224,6 @@ class TradingScheduler:
                         # 2026-07-04: debug→warning — 原debug级别在INFO日志中不可见,
                         # 导致盘后追踪静默失败(AMD/BABA holding仓位未被EOD平仓)
                         logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
-
-                    # 盘后影子行情观测 (DEB-20260805 门E 数据基础): 仅观测零决策变更, 函数内 5min 节流
-                    try:
-                        from app.playbook.after_hours_shadow import run_collect as _ah_shadow_collect
-                        _ah_shadow_collect(self)
-                    except Exception as _e:
-                        logger.debug(f"[LLM策略] 盘后影子行情采集异常 (已隔离): {_e}")
 
                     # 隔夜持仓 shadow 结算 (2026-08-10, record-only, 用户批准):
                     #   benign 退出决策点的次日反事实结算. 每日幂等 (settled 标记),
