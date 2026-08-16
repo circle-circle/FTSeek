@@ -325,14 +325,40 @@ class PlaybookDB:
         return [_row_to_dict(r) for r in rows]
 
     def count_executed_by_direction(self, date: str, direction: str) -> int:
-        """统计某日某方向已执行指令数 (议题二C 2026-08-01: BUY 日执行配额计数)."""
+        """统计某日某方向已执行指令数 (议题二C 2026-08-01: BUY 日执行配额计数).
+
+        [DEB-fullchain #20 2026-08-16] 排除 already_held 幻影行: broker 已有持仓
+        (外部/手动/ORB) 的指令被记 executed=1 + execution_price=0 + outcome='already_held'
+        (pipeline L3308), 未产生任何新订单却占用配额 → BUY 供给被无声扣减。"""
         conn = self._conn()
         row = conn.execute(
             "SELECT COUNT(*) FROM playbook_instructions "
-            "WHERE date = ? AND direction = ? AND executed = 1",
+            "WHERE date = ? AND direction = ? AND executed = 1 "
+            "AND COALESCE(outcome, '') != 'already_held'",
             (date, direction),
         ).fetchone()
         return int(row[0] or 0) if row else 0
+
+    def mark_generate_completed(self, date: str) -> None:
+        """[#22] 标记当日生成已完成 (幂等门依据; 异常中断不写, 允许重跑)."""
+        conn = self._conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO playbook_generate_state (date, completed_at) "
+            "VALUES (?, ?)",
+            (date, now_utc().isoformat()),
+        )
+        conn.commit()
+
+    def is_generate_completed(self, date: str) -> bool:
+        """[#22] 当日生成是否已完成 (完成标记, 与"是否有行"解耦)."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM playbook_generate_state WHERE date = ?", (date,)
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
 
     def get_instruction(self, date: str, symbol: str) -> Optional[Dict]:
         """获取某日某标的指令"""
@@ -1205,6 +1231,13 @@ CREATE TABLE IF NOT EXISTS playbook_regime_log (
     score INTEGER,
     notes TEXT,
     created_at TEXT NOT NULL
+);
+
+-- [DEB-fullchain #22 2026-08-16] 生成完成标记: 幂等门从"任意行存在"改为"生成完成",
+-- UE 盘前写入不再锁死 pipeline 生成 (中断的半成品也可重跑)。
+CREATE TABLE IF NOT EXISTS playbook_generate_state (
+    date TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_playbook_instructions_date

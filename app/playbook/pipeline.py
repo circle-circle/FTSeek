@@ -1772,6 +1772,15 @@ def _trim_majority_sector(valid: List[Any], sector: str, target_pct: float) -> i
 
 
 # ── 入口 1: 盘前生成 (regime → 收集 → 筛选 → VotingCoordinator → 入库 → 飞书) ──
+def _mark_generate_done(today: str) -> None:
+    """[#22] 写生成完成标记 (best-effort, 失败不阻断返回)."""
+    try:
+        from app.playbook.db import PlaybookDB
+        PlaybookDB().mark_generate_completed(today)
+    except Exception as e:
+        logger.warning(f"[playbook] 生成完成标记写入失败(不影响本次结果): {e}")
+
+
 def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """
     盘前生成今日交易指令 (Layer 0 + Layer 1)。
@@ -1816,16 +1825,29 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
                 return None
             # 根因修复 (2026-06-18): 幂等检查改为查询 DB，不再依赖内存属性
             # 内存属性在进程重启后丢失 → 重启后重新执行 → 覆盖当天数据
+            # [DEB-fullchain #22 2026-08-16] 幂等依据从"任意行存在"改为"生成完成标记":
+            #   原逻辑下 UE 盘前 cron 先写入任意一行 → pipeline 生成全天锁死 (供给归零);
+            #   半成品 (生成中途异常) 也永久锁死。完成标记在生成成功收尾时写入;
+            #   有行无标记 (UE 先写/上次中断) → 继续生成, UPSERT 幂等覆写。
             try:
                 from app.playbook.db import PlaybookDB
                 db = PlaybookDB()
-                existing = db.get_instructions_by_date(today)
-                if existing and len(existing) > 0:
-                    logger.debug(f"[playbook] {today} DB 已有 {len(existing)} 条指令，跳过生成 (幂等)")
+                if db.is_generate_completed(today):
+                    logger.debug(f"[playbook] {today} 生成完成标记存在，跳过生成 (幂等)")
                     scheduler._playbook_generated_date = today  # 同步内存标志
                     return None
+                _existing_cnt = 0
+                try:
+                    _existing_cnt = len(db.get_instructions_by_date(today))
+                except Exception:
+                    pass
+                if _existing_cnt:
+                    logger.info(
+                        f"[playbook] {today} 已有 {_existing_cnt} 行但无完成标记 "
+                        f"(UE 先写/上次中断), 继续生成"
+                    )
             except Exception as e:
-                logger.debug(f"[playbook] DB 幂等检查失败，降级为内存检查: {e}")
+                logger.debug(f"[playbook] 完成标记检查失败，降级为内存检查: {e}")
                 if getattr(scheduler, "_playbook_generated_date", None) == today:
                     logger.debug(f"[playbook] {today} 已生成 (内存标志), 跳过")
                     return None
@@ -1861,6 +1883,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
         if not watchlist:
             logger.warning("[playbook] watchlist 为空, 跳过生成")
             scheduler._playbook_generated_date = today  # 标记已尝试, 避免空跑循环
+            _mark_generate_done(today)  # [#22] 终态: 空表也是完成态, 不留锁死窗口
             return {"date": today, "instructions": 0, "reason": "empty_watchlist"}
 
         collector = _build_data_collector()
@@ -1876,6 +1899,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
         if not screen_results:
             logger.info("[playbook] 无候选通过质量门槛, 跳过生成")
             scheduler._playbook_generated_date = today
+            _mark_generate_done(today)  # [#22] 终态
             return {"date": today, "instructions": 0, "reason": "no_candidates_passed_filter"}
 
         # Layer 2: VotingCoordinator 统一方向决策
@@ -1909,6 +1933,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
         #       两条路径都发 → 用户收到两次。独立任务有持久化幂等+重试, 足以覆盖送达。
 
         scheduler._playbook_generated_date = today
+        _mark_generate_done(today)  # [#22] 成功收尾才写完成标记 (异常路径不写, 允许重跑)
         return {"date": today, "instructions": saved, "regime": regime_ctx.regime.value}
 
     except Exception as e:
@@ -2519,6 +2544,10 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         "risk_amount": getattr(inst, "risk_amount", 0.0),
         "risk_reward": getattr(inst, "risk_reward", 0.0),
         "confidence": inst.confidence,
+        # [DEB-fullchain #27 2026-08-16] decision_conf (0-1) 落库 — 列 2026-08-14 已加
+        #   (DEB-20260814 P6) 但 pipeline 路径零写入, 全库 18 个非空值全来自 DA skill
+        #   (口径=confidence/100)。本行补齐 pipeline 写入, 与 DA 同口径。
+        "decision_conf": round(float(inst.confidence) / 100.0, 4) if inst.confidence else None,
         "conditions": conditions,
         "thesis": getattr(inst, "thesis", "") or "",
         "sector": getattr(inst, "sector", "") or "",
