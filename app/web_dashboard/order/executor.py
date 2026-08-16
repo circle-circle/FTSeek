@@ -285,6 +285,32 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
 # 平仓
 # ─────────────────────────────────────────────────────────────
 
+def _release_close_locks(symbol: str) -> None:
+    """平仓尝试结束即释放竞态锁.
+
+    P1-7 修复 (2026-08-16, DEB-fullchain): 旧实现仅在平仓失败分支释放锁;
+    部分平仓成功后 _pending_close 永久残留 → position_exit_monitor 的
+    `if _meta.get('_pending_close'): continue` 使组合级止损 (FLAT_ALL/WARN/REDUCE)
+    永久跳过该标的, 直至重启。全平路径 position_store.remove 失败时同样需要兜底释放。
+    """
+    try:
+        import importlib as _il
+        _sched = getattr(_il.import_module("app.core.scheduler_core"), "_scheduler_instance", None)
+        if _sched and hasattr(_sched, 'position_store') and _sched.position_store.has(symbol):
+            _pos = _sched.position_store.get(symbol)
+            _meta = getattr(_pos, 'metadata', {}) or {}
+            _changed = False
+            for _k in ("_close_in_progress", "_close_in_progress_ts", "_pending_close"):
+                if _k in _meta:
+                    _meta.pop(_k, None)
+                    _changed = True
+            if _changed:
+                _pos.metadata = _meta
+                logger.info(f"[手动平仓] {symbol} 竞态锁已释放 (平仓尝试结束)")
+    except Exception as _e:
+        logger.debug(f"[手动平仓] {symbol} 竞态锁释放失败: {_e}")
+
+
 def close_position(service: "ManualOrderService", symbol: str, reason: str,
                    close_qty: int = 0, price: float = None,
                    fill_outside_rth: bool = False) -> Dict[str, Any]:
@@ -424,7 +450,73 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
                 logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股 RTH外={'是' if fill_outside_rth else '否'}")
-                service._mark_position_manual(symbol, position_dir)
+
+                # P1-8 修复 (2026-08-16, DEB-fullchain): 成交状态前置判定 —
+                # 未成交的平仓单不得执行清理/记账 (旧行为: 用 cur_price 写假
+                # exit_price/realized_pnl → 污染 pre_trade_gate 日回撤熔断)。
+                import time as _t
+                # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
+                _t.sleep(1.0)
+                _precise_exit = service._fetch_dealt_avg_price(
+                    order.order_id, trd_env, acc_id, retries=3, delay=1.0
+                )
+                _order_status = ""
+                _filled_qty = 0.0
+                try:
+                    _ret2, _data2 = service._broker_ctx.order_list_query(
+                        order_id=order.order_id, trd_env=trd_env, acc_id=acc_id
+                    )
+                    if _ret2 == RET_OK and not _data2.empty:
+                        _order_status = str(_data2.iloc[0].get("order_status", "") or "")
+                        _filled_qty = float(_data2.iloc[0].get("dealt_qty", 0) or 0)
+                except Exception:
+                    pass
+                if _filled_qty <= 0:
+                    if "CANCEL" in _order_status.upper():
+                        # 已取消: 不写 trade_records
+                        logger.warning(
+                            f"[手动平仓] {symbol} 订单已取消 ({_order_status}), 不写入 trade_records"
+                        )
+                        order.status = "cancelled"
+                        order.error_msg = f"订单已取消: {_order_status}"
+                    else:
+                        # 未成交 (限价挂单未到价/市价无回报): 撤单 + 不记账。
+                        # 残留挂单与 ExitMonitor 双通道平仓 = 双倍平仓风险, 必须撤单。
+                        try:
+                            service._cancel_broker_order(order.order_id)
+                        except Exception as _cx_err:
+                            logger.warning(
+                                f"[手动平仓] {symbol} 未成交单撤单失败 (请人工处理): {_cx_err}"
+                            )
+                        order.error_msg = "平仓单未成交, 已自动撤单"
+                        logger.warning(
+                            f"[手动平仓] {symbol} 平仓单未成交 (status={_order_status or 'unknown'}), "
+                            f"已撤单; 不写 trade_records, 仓位继续受退出监控保护"
+                        )
+                    _release_close_locks(symbol)
+                    service._write_audit(order)
+                    return {
+                        "success": False,
+                        "error": f"{symbol} 平仓未成交 (status={_order_status or 'unknown'}), "
+                                 f"已撤单/取消; 仓位仍受监控保护, 可改市价重试",
+                    }
+                # 成交: 按实际成交数量处理 (部分成交只记已成交部分)
+                _record_qty = int(_filled_qty)
+                if _record_qty < int(qty):
+                    logger.warning(
+                        f"[手动平仓] {symbol} 部分成交 {_record_qty}/{int(qty)}, "
+                        f"撤销剩余挂单, 仅按已成交部分处理"
+                    )
+                    try:
+                        service._cancel_broker_order(order.order_id)
+                    except Exception:
+                        pass
+                # P1-7 修复 (2026-08-16, DEB-fullchain): 仅"实际全部成交"时改判 manual
+                # 与执行全平清理。部分止盈后剩余仓位应继续受策略退出保护;
+                # 请求全平但部分成交 (剩余挂单已撤) 同样按部分处理。
+                _effective_full = (close_type == "全平") and (_record_qty >= total_qty)
+                if _effective_full:
+                    service._mark_position_manual(symbol, position_dir)
 
                 # Task #11: WebSocket 实时推送 — 平仓 order_update + position_update
                 try:
@@ -436,10 +528,10 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         "close": True, "close_type": close_type,
                     })
                     publish_event_sync("position_update", {
-                        "action": "exit" if close_type == "全平" else "partial_exit",
+                        "action": "exit" if _effective_full else "partial_exit",
                         "symbol": symbol,
                         "direction": position_dir,
-                        "qty": qty, "total_qty": total_qty,
+                        "qty": _record_qty, "total_qty": total_qty,
                         "reason": reason,
                         "source": "manual",
                     })
@@ -450,17 +542,19 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
 
                 # P1-5 (2026-06-14): 通知 ExitMonitor 清理 trail_state
                 # 防止: 手动平仓后 trail_state 残留 → 重启 ghost 恢复时带旧状态触发错误退出
-                try:
-                    from app.risk.trail_state_store import get_trail_state_store
-                    _ts_store = get_trail_state_store()
-                    _ts_store.delete(symbol)
-                    logger.info(f"[手动平仓] {symbol} trail_state 已清理")
-                except Exception as _ts_err:
-                    logger.debug(f"[手动平仓] trail_state 清理跳过: {_ts_err}")
+                # P1-7 (2026-08-16): 仅实际全平时清理 — 部分平仓剩余仓位仍需 trail 状态
+                if _effective_full:
+                    try:
+                        from app.risk.trail_state_store import get_trail_state_store
+                        _ts_store = get_trail_state_store()
+                        _ts_store.delete(symbol)
+                        logger.info(f"[手动平仓] {symbol} trail_state 已清理")
+                    except Exception as _ts_err:
+                        logger.debug(f"[手动平仓] trail_state 清理跳过: {_ts_err}")
 
                 # P1-5 (2026-06-14): 全平时从 position_store 移除
                 # 部分平仓时不移除 — position_sync 30s 内会更新 size
-                if close_type == "全平":
+                if _effective_full:
                     try:
                         import importlib
                         _sc_mod = importlib.import_module("app.core.scheduler_core")
@@ -491,35 +585,11 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
 
                 # 2026-06-10: 写入 trade_records 形成手动交易闭环
                 # P1-6 (2026-06-12): 优先用 broker dealt_avg_price 精确回填 exit_price
-                # 2026-06-13: 先验证订单是否真正成交 (防止 cancelled 订单写入虚假记录)
+                # P1-8 (2026-08-16): 成交状态已在 RET_OK 后前置判定 (_filled_qty>0 必到此处),
+                # 此处仅解析 exit_price; 记账数量 = 实际成交数量 _record_qty
                 try:
-                    import time as _t
-                    # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
-                    _t.sleep(1.0)
-                    _precise_exit = service._fetch_dealt_avg_price(
-                        order.order_id, trd_env, acc_id, retries=3, delay=1.0
-                    )
-                    if _precise_exit and _precise_exit > 0:
-                        _exit_px = _precise_exit
-                    else:
-                        # 检查订单状态: 如果已取消则不写入 trade_records
-                        try:
-                            _ret2, _data2 = service._broker_ctx.order_list_query(
-                                order_id=order.order_id, trd_env=trd_env, acc_id=acc_id
-                            )
-                            if _ret2 == RET_OK and not _data2.empty:
-                                _order_status = str(_data2.iloc[0].get("order_status", ""))
-                                _dealt_qty = float(_data2.iloc[0].get("dealt_qty", 0) or 0)
-                                if "CANCEL" in _order_status.upper() and _dealt_qty == 0:
-                                    logger.warning(
-                                        f"[手动平仓] {symbol} 订单已取消 ({_order_status}), "
-                                        f"不写入 trade_records"
-                                    )
-                                    raise ValueError(f"Order cancelled: {_order_status}")
-                        except ValueError:
-                            raise
-                        except Exception:
-                            pass
+                    _exit_px = float(_precise_exit) if (_precise_exit and _precise_exit > 0) else 0.0
+                    if _exit_px <= 0:
                         _exit_px = service._calc_exit_price(row, raw_qty)
                         if _exit_px <= 0:
                             # 最后兜底: 用 Futu 实时报价
@@ -567,7 +637,7 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         direction=position_dir,
                         entry_price=float(row.get("cost_price", 0)),
                         exit_price=_exit_px,
-                        quantity=int(qty),
+                        quantity=_record_qty,
                         reason=f"[{close_type}] {reason}",
                         order_id=order.order_id,
                         entry_reason=_entry_reason_text,
@@ -578,7 +648,7 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         attr = compute_attribution(
                             symbol=symbol, direction=position_dir,
                             entry_price=float(row.get("cost_price", 0)),
-                            exit_price=_exit_px, quantity=int(qty),
+                            exit_price=_exit_px, quantity=_record_qty,
                             entry_time=row.get("entry_time", row.get("updated_at", "")),
                             exit_time=datetime.now().isoformat(),
                         )
@@ -614,8 +684,14 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                                 meta["thesis"] = _thesis_data
                             meta["exit_context"] = _exit_ctx
                             meta_json = _json.dumps(meta, ensure_ascii=False)
+                            # P2-15 修复 (2026-08-16, DEB-fullchain): SQLite 不支持
+                            # UPDATE...ORDER BY...LIMIT — 旧语句必抛 syntax error 且被
+                            # debug 级静默吞 → 归因 metadata 从不落库。改为普通 UPDATE,
+                            # 仅更新尚无 metadata 的行 (幂等, 不覆盖已写行)。
                             conn.execute(
-                                "UPDATE trade_records SET metadata_json=? WHERE close_futu_order_id=? ORDER BY id DESC LIMIT 1",
+                                "UPDATE trade_records SET metadata_json=? "
+                                "WHERE close_futu_order_id=? "
+                                "AND (metadata_json IS NULL OR metadata_json='')",
                                 (meta_json, order.order_id),
                             )
                             conn.commit()
@@ -631,25 +707,15 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         logger.debug(f"[归因] 生成失败 (不影响平仓): {_attr_err}")
                 except Exception as _rec_err:
                     logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
+                # P1-7 修复: 平仓尝试结束即释放竞态锁 (部分平仓成功后也必须释放,
+                # 否则 _pending_close 残留 → 组合级止损永久跳过该标的)
+                if not _effective_full:
+                    _release_close_locks(symbol)
             else:
                 order.status = "error"
                 order.error_msg = str(data)
-                # 平仓失败 — 释放竞态锁，允许 ExitMonitor 重试
-                if _lock_acquired:
-                    try:
-                        import importlib as _il2
-                        _sc_mod2 = _il2.import_module("app.core.scheduler_core")
-                        _sched2 = getattr(_sc_mod2, "_scheduler_instance", None)
-                        if _sched2 and hasattr(_sched2, 'position_store') and _sched2.position_store.has(symbol):
-                            _pos2 = _sched2.position_store.get(symbol)
-                            _meta2 = getattr(_pos2, 'metadata', {}) or {}
-                            _meta2.pop('_close_in_progress', None)
-                            _meta2.pop('_close_in_progress_ts', None)
-                            _meta2.pop('_pending_close', None)
-                            _pos2.metadata = _meta2
-                            logger.info(f"[手动平仓] {symbol} 竞态锁已释放 (平仓失败)")
-                    except Exception:
-                        pass
+                # 平仓失败 — 释放竞态锁，允许 ExitMonitor 重试 (P1-7: 统一走 helper)
+                _release_close_locks(symbol)
 
             service._write_audit(order)
             return {
@@ -964,6 +1030,31 @@ def modify_stop_loss(service: "ManualOrderService", symbol: str,
                 f"[止损·替换] {symbol} 旧 STOP 单 {old_sl_oid} "
                 f"撤销{'成功' if cancelled else '失败 (可能已成交/不存在)'}"
             )
+            if not cancelled:
+                # P1-9 修复 (2026-08-16, DEB-fullchain): 撤单失败不得盲下新 STOP —
+                # 旧单若已成交 → 新 STOP 以旧 qty 挂出 = 触发时开出裸空头;
+                # 若仅网络失败 → 同仓位两张 STOP = 双倍平仓+反手。
+                # 复查旧单状态, 仅确认已撤才继续; 未知状态一律中止 (fail-safe)。
+                _old_status = ""
+                try:
+                    _r3, _d3 = service._broker_ctx.order_list_query(
+                        order_id=old_sl_oid, trd_env=trd_env, acc_id=acc_id
+                    )
+                    if _r3 == RET_OK and not _d3.empty:
+                        _old_status = str(_d3.iloc[0].get("order_status", "") or "")
+                except Exception:
+                    pass
+                if "CANCEL" not in _old_status.upper():
+                    logger.error(
+                        f"[止损·替换] {symbol} 旧 STOP {old_sl_oid} 撤单失败且状态="
+                        f"{_old_status or 'unknown'} — 中止新 STOP 下单 (防裸空头/双 STOP); "
+                        f"若旧单已成交请先核对持仓"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"旧止损单撤单失败 (status={_old_status or 'unknown'}), "
+                                 f"已中止新止损单; 请人工确认旧单状态后重试",
+                    }
 
         # 5. 下新 STOP 单
         new_oid = None
