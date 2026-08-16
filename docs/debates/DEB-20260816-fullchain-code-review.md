@@ -478,3 +478,48 @@ P0×4 + #23 + P1-5/6/10 共 8 项全部落地且复核通过, 修复质量高 (�
 3. **E1 (DEB-short-funnel UE召回实验)**: 混淆变量已清 (#23), 场地干净可开跑
 
 **状态**: §五 清单清零; P2 其余项不阻塞。全量回归 1254/1254 绿。
+
+---
+## 十五、Hermes 独立复核回执 (2026-08-16): 批次A-F 逐项验证 — 全部通过
+
+复核纪律: 不信任描述, 逐行读 diff + 实弹验证。复核范围: 6 批次全部关键 diff +
+全量回归独立复跑 + reflog 事故留档交叉验证 + flaky 复现 + 生产态实测。
+
+### 15.1 全量回归独立复跑
+
+`pytest tests/ -q` (Hermes 独立执行, 非转述): **1254 passed, 0 failed, 39.87s**。
+"全量 1254 绿"声明属实。
+
+### 15.2 逐批 diff 抽查裁定
+
+| 批次 | 抽查项 | 裁定 | 独立证据 |
+|---|---|---|---|
+| A | P1-7/8/9/P2-15 | **通过** | `_release_close_locks` 三路径统一释放 `_pending_close`; P1-8 成交状态前置判定 (sleep 1s + order_list_query 取 dealt_qty, 未成交→撤单+不记账); 逻辑与 §五 描述一致 |
+| B | P1-11/P1-14/#24 | **通过** | 盘前锚 pre_price 缺失→返回 None 不回落昨收; `_is_da_priority_skip` 按 decision_id 前缀保护 DA 深指令; conf 夹逼 `min(max(conf,0),1)` |
+| C | P1-12/P2-17/#26 | **通过** | P1-12 改单边 `current_assets > baseline × threshold` (入金方向才重置, 亏损方向维持基准 fail-safe); #26 admission 入参补 `"stop_loss": stop_loss` — max_sl_pct 重启前置满足 |
+| D | #16/#18/#19/#21 | **通过** | #16 `SHORT_min_confidence:65` 缺省从 _DEFAULTS 移除; #19 grep 确认 7 处回退值 0.25→0.08; 均为"回退值与 SSOT 同步"家族, 红线①合规 |
+| E | #20/#22/#27 | **通过** | #20 `COALESCE(outcome,'') != 'already_held'` 排除幻影行; #22 `mark_generate_completed` 3 个写入点全部在成功路径 (L1888 空表终态/L1904 终态/L1938 成功收尾), 异常路径不写 ✓; #27 `decision_conf=confidence/100` 与 DA 同口径 |
+| F | #25/P1-13/P1-6cap | **通过** | #25 `pkill -f "main.py --start"` 精确匹配; P1-13 硬编码 MD5 全仓 grep 已清出代码 (仅存于契约测试的"不得包含"断言); P1-6cap `prev_scan_ts` 随扫描写入, >300s 或无时间戳→跳过本轮+钉钉告警 |
+
+### 15.3 交叉验证项
+
+1. **reflog 14.3 事故留档属实**: reflog 显示两条 `reset: moving to HEAD` 记录
+   (21:01 批次C后、21:38 批次F后), 与 §14.3-3 "并发 Hermes 会话 git reset 吞批次D编辑"
+   时间线吻合。教训成立: 多 agent 同仓 → 编辑→测试→commit 紧耦合。
+2. **W_WEEK flaky 复现**: `test_w_week_dead_signal_contract.py` Hermes 孤立连跑 3 次
+   8/8 全过; flaky 仅在全量并发跑出现 1 次, "时间依赖 flaky 非回归"判定合理。
+3. **生产态实测**: `TradingMode().mode=SIMULATE, is_live=False, daily_loss=0.05` —
+   P0-1 后生产态零行为变化声明再次验证属实。
+4. **服务**: ftseek-us / ftseek-dashboard 双 active (21:47 重启窗口)。
+
+### 15.4 遗留观察 (供裁决)
+
+1. **#22 行为变化观察点**: 下个交易日 UE 盘前 cron 先写行后, pipeline 生成不再被
+   锁死 — 供给量恢复情况需盘后复核 (这是 #22 的正向收益验证窗口)。
+2. **P1-6cap 重启后首条告警属预期** (§14.2 已声明, 此处再次确认: 勿误判故障)。
+3. **P2-17 历史北京时区行不回填** (§14.2 声明): 历史日回撤口径留已知偏差, 同意该取舍
+   (审计数据批量重写风险 > 收益)。
+4. **Futu 密码轮换** (§14.5-1): 代码侧已就绪, 运维轮换动作待用户执行。
+
+**结论**: §十四 "§五清单清零、59 契约测试、全量 1254 绿" 声明经独立复核全部属实。
+红线①(零阈值变更)/②(契约测试先行) 抽查合规。批次A-F 验收通过。
