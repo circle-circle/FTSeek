@@ -34,6 +34,9 @@ done
 # 清理 7 天前的备份
 find "$DATA_DIR/backups/" -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null
 
+# 清理 30 天前的散文件 (手动一次性 .bak/.tar.gz 归档也纳入, 防止永久堆积)
+find "$DATA_DIR/backups/" -maxdepth 1 -type f -mtime +30 -exec rm -f {} + 2>/dev/null
+
 # 统计
 total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete: $total_size" >> "$LOG_FILE"
