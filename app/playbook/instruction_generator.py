@@ -412,7 +412,9 @@ def compute_instruction_values(
                 _fq3.write(json.dumps(_row_q3, ensure_ascii=False) + "\n")
         except Exception:
             pass
-        return {}
+        # [DEB-fullchain 低优 2026-08-16] 带因返回: 调用方原把本分支统一标
+        #   "价格缺失" — 归因口径失真 (真实原因是 ATR 缺失), 影响供给诊断。
+        return {"skip_reason": "ATR数据缺失(atr_14=0), 无法评估波动率"}
 
     _vol_sl_info = _compute_volatility_based_sl_tp(
         atr_pct, _direction, _horizon_params, pb_cfg

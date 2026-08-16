@@ -1437,8 +1437,10 @@ def _build_instructions_from_votes(
 
         if not values or not values.get("entry_price"):
             _filter_audit["no_entry_price"] += 1
+            # [DEB-fullchain 低优 2026-08-16] 透传生成器带因返回 (ATR缺失≠价格缺失)
+            _skip_why = (values or {}).get("skip_reason") or "价格缺失, 无法计算数值"
             instructions.append(Instruction(
-                symbol=symbol, direction="SKIP", skip_reason="价格缺失, 无法计算数值"
+                symbol=symbol, direction="SKIP", skip_reason=_skip_why
             ))
             continue
 
@@ -5532,6 +5534,10 @@ def is_playbook_open_position(symbol: str) -> bool:
 # 进程级, 每 symbol每日 只记一次紧SL生效事件, 防止 monitor 轮询刷屏.
 _EARLY_TIGHT_SL_LOGGED: set = set()
 
+# 规则3.3 W_WEEK 豁免日志去重集 (key: "symbol:date") — 见 DEAD_SIGNAL 块 (2026-08-16 方案B).
+# 进程级, 每 symbol每日 只记一次豁免事件, 防止 monitor 轮询刷屏.
+_LOSER_DS_EXEMPT_LOGGED: set = set()
+
 
 def _extract_invalidation_price(text: str, direction: str, entry_price: float):
     """A-lite shadow (DEB-20260723): 从 DA invalidation 自然语言提取首个方向合理的证伪价.
@@ -6178,22 +6184,42 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   分离度 1.49pp) → 60min 时峰值浮盈从未达 0.2% = 方向从未兑现 → 立即离场.
     #   与规则3.4 区别: 不要求当前水下 (0%~-0.2% 也走), 更早承认信号失效.
     #   MFE_STALL(150min) 保留兜底. 回滚: dead_signal_exit_enabled 改 false.
+    # 2026-08-16 (用户裁"方案B", DEB§34 后续审计): SIM水下仓豁免 DEAD_SIGNAL_EXIT.
+    #   根因: W_WEEK 水下隔夜仓的 MFE 是生命周期累计 (metadata 恢复, 只增不减) —
+    #   入场日 MFE<0.2% 的仓, 次日开盘 held(墙钟)≫60min 且 MFE 恒<0.2% → 第一轮巡检
+    #   必触发 DEAD_SIGNAL → patient_exit eod 腿/立即卖 → 第2天必出局, W_WEEK 的
+    #   5日修复空间被截断成2天。回放实锤 (overnight_loser_multiday_replay, n=15):
+    #   W_WEEK +$629 中 MFE<0.2% 子集 n=6 贡献 +$698 (100%修复), 全部会被本规则杀掉。
+    #   豁免范围 = _loser_overnight_exempt (仅 PLAYBOOK_SIM + 水下 + ≤5交易日);
+    #   LIVE 零影响; SL 仍最高优先级兜底; 豁免仓转入 SL/TIME_EXIT(已豁免)/EOD转正/5日上限链。
+    #   回滚: 删本 if 包裹 (恢复无条件触发) 或 loser_overnight_enabled=false。
     if not exit_reason and bool(_pb_cfg.get("dead_signal_exit_enabled", False)):
         _ds_minutes = float(_pb_cfg.get("dead_signal_exit_minutes", 60))
         _ds_mfe_pct = float(_pb_cfg.get("dead_signal_exit_mfe_pct", 0.2))
         if held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
-            exit_reason = "DEAD_SIGNAL_EXIT"
-            exit_price = current_price
-            meta["dead_signal_exit"] = {
-                "check_minutes": round(held_minutes, 1),
-                "mfe_at_trigger": round(peak_profit_pct, 4),
-                "cur_at_trigger": round(profit_pct, 4),
-                "threshold": _ds_mfe_pct,
-            }
-            logger.info(
-                f"[规则3.3-死信号] {_symbol} {direction} held={held_minutes:.0f}min "
-                f"peak={peak_profit_pct:.2f}%<{_ds_mfe_pct}% → 离场"
-            )
+            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+                # W_WEEK 豁免: 水下仓正在多日修复窗口内, 不因死信号提前出局.
+                _dsx_log_key = f"{_symbol}:{date.today().isoformat()}"
+                if _dsx_log_key not in _LOSER_DS_EXEMPT_LOGGED:
+                    _LOSER_DS_EXEMPT_LOGGED.add(_dsx_log_key)
+                    logger.info(
+                        f"[规则3.3-死信号·W_WEEK豁免] {_symbol} {direction} held={held_minutes:.0f}min "
+                        f"peak={peak_profit_pct:.2f}%<{_ds_mfe_pct}% — SIM水下仓多日持有豁免, "
+                        f"转 SL/EOD转正/{_pb_cfg.get('loser_overnight_max_hold_days', 5)}日上限链"
+                    )
+            else:
+                exit_reason = "DEAD_SIGNAL_EXIT"
+                exit_price = current_price
+                meta["dead_signal_exit"] = {
+                    "check_minutes": round(held_minutes, 1),
+                    "mfe_at_trigger": round(peak_profit_pct, 4),
+                    "cur_at_trigger": round(profit_pct, 4),
+                    "threshold": _ds_mfe_pct,
+                }
+                logger.info(
+                    f"[规则3.3-死信号] {_symbol} {direction} held={held_minutes:.0f}min "
+                    f"peak={peak_profit_pct:.2f}%<{_ds_mfe_pct}% → 离场"
+                )
 
     # 规则3.4 (2026-07-24, DEB-20260723 crash-day + DEB-20260724 rootcause): MFE停滞退出 —
     #   持仓≥stall_minutes 且 峰值浮盈从未达标 且 当前水下 → 立即离场, 不等 TIME_EXIT 磨满时间窗.
@@ -6261,10 +6287,22 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 exit_price = current_price
 
     # 规则5: MAX_HOLD — long horizon 最大持有期检查 (short horizon 默认不持夜, _skip_allowed 控制)
+    # 2026-08-16 (用户裁"方案B", DEB§34 后续审计): W_WEEK 水下仓豁免 MAX_HOLD.
+    #   根因: short_horizon max_hold_days=1, 若将来 overnight_hold_enabled 打开 →
+    #   _skip_allowed=True → 水下仓第2天被 1日 cap 强平, W_WEEK 的 5 日窗口作废。
+    #   豁免范围与 DEAD_SIGNAL/TIME_EXIT/EOD 同款 (_loser_overnight_exempt):
+    #   仅 PLAYBOOK_SIM + 水下 + ≤loser_overnight_max_hold_days(5)。回滚: 删本 if 包裹。
     if not exit_reason and _skip_allowed and held_minutes > 0:
         if _horizon_max_hold_hit(entry_time_str, _max_hold_days):
-            exit_reason = "MAX_HOLD"
-            exit_price = current_price
+            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+                logger.info(
+                    f"[规则5-MAX_HOLD·W_WEEK豁免] {_symbol} {direction} 达 horizon max_hold="
+                    f"{_max_hold_days}日 但 SIM水下仓在 "
+                    f"{_pb_cfg.get('loser_overnight_max_hold_days', 5)}日修复窗口内, 豁免"
+                )
+            else:
+                exit_reason = "MAX_HOLD"
+                exit_price = current_price
 
     return exit_reason, exit_price, peak_price, breakeven_triggered
 

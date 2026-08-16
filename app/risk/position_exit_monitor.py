@@ -965,7 +965,25 @@ class ExitMonitor:
                 # 之前: 仅记录日志并跳过，导致该持仓在监控周期内完全失去止损保护
                 if not isinstance(current_price, (int, float)):
                     _prev_price = trail_state.get("prev_scan_price", entry_price)
-                    _fallback_price = _prev_price if _prev_price > 0 else entry_price
+                    _prev_ts = float(trail_state.get("prev_scan_ts") or 0)
+                    # P1-6 补强 (2026-08-16, DEB-fullchain §13.3-2): fallback 陈旧度上限 —
+                    #   报价中断 >5min (或无时间戳, 含重启/旧 trail_state) 时备用价已失真,
+                    #   继续用它跑退出规则 = 假装在监控。改为跳过本轮 + 告警 (诚实路径)。
+                    if _prev_price <= 0 or _prev_ts <= 0 or (time.time() - _prev_ts) > 300:
+                        logger.critical(
+                            f"[退出监控·P1-6] {symbol} 价格异常且备用价不可用/过旧 "
+                            f"(prev_ts_age={time.time() - _prev_ts:.0f}s), 跳过本轮监控"
+                        )
+                        try:
+                            from app.notifier.dingtalk import DingTalkNotifier
+                            DingTalkNotifier().send_text(
+                                f"🚨 [紧急] {symbol} 无有效报价且备用价过旧, 本轮退出监控跳过 "
+                                f"(age={time.time() - _prev_ts:.0f}s)"
+                            )
+                        except Exception as _silent_e:
+                            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                        continue
+                    _fallback_price = _prev_price
                     logger.critical(
                         f"[退出监控·P0] {symbol} 价格类型异常: type={type(current_price).__name__}, "
                         f"value={current_price!r}, 使用备用价格 ${_fallback_price:.2f} 继续监控"
@@ -1696,7 +1714,9 @@ class ExitMonitor:
         #   docstring 声称"即使未触发也需更新 peak/prev"但 prev 从未写入,
         #   导致报价异常 fallback 永远是开仓价 (pnl=0, 所有退出规则判"无风险", 空转)。
         #   补写后 fallback = 最后有效报价, 退出规则在报价中断期仍能基于最诚实的价格工作。
+        #   prev_scan_ts 供 fallback 陈旧度上限判定 (>5min 视为不可用, 见监控主循环)。
         trail_state["prev_scan_price"] = current_price
+        trail_state["prev_scan_ts"] = time.time()
 
         position.trail_state = trail_state
 

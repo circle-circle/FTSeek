@@ -23,7 +23,10 @@ case "$ACTION" in
     
     stop)
         echo "停止 FTSeek-US..."
-        pkill -f "ftseek_us"
+        # [DEB-fullchain #25 2026-08-16] 原 pkill -f "ftseek_us" 会匹配任何含该串的
+        #   命令行 (本脚本自身/执行脚本的 shell/tail 日志/其他 agent 会话) → 自杀式误杀。
+        #   精确匹配主进程命令行: venv python main.py --start
+        pkill -f "main.py --start"
         echo "✅ FTSeek-US 已停止"
         ;;
     
@@ -34,8 +37,8 @@ case "$ACTION" in
         ;;
     
     status)
-        if pgrep -f "ftseek_us" > /dev/null; then
-            PID=$(pgrep -f "ftseek_us")
+        if pgrep -f "main.py --start" > /dev/null; then
+            PID=$(pgrep -f "main.py --start")
             echo "✅ FTSeek-US 运行中 (PID: $PID)"
             echo ""
             echo "最近日志:"

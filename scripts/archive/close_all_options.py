@@ -50,10 +50,13 @@ def get_account_list(ctx, trd_env=TrdEnv.SIMULATE):
 
 
 def unlock_trade(ctx, acc_id, trd_env=TrdEnv.SIMULATE):
-    """解锁交易 (使用已知正确的 MD5 密码)"""
-    # 使用用户提供的正确 MD5 密码
-    password = '21eab4e033c379d31c61a4e64419028c'
-    
+    """解锁交易 (MD5 密码从环境变量读取, [DEB-fullchain P1-13 2026-08-16] 移除硬编码)"""
+    import os
+    password = os.environ.get("FUTU_TRADE_UNLOCK_MD5", "")
+    if not password:
+        print("❌ 未设置 FUTU_TRADE_UNLOCK_MD5 环境变量 (交易密码 MD5), 拒绝解锁")
+        return False, "missing FUTU_TRADE_UNLOCK_MD5"
+
     print(f"🔐 解锁 {acc_id} (交易密码 MD5: {password[:8]}...)...")
     
     ret, data = ctx.unlock_trade(password=password)

@@ -189,9 +189,15 @@ class OptionRiskMonitor:
             检查结果字典
         """
         from datetime import datetime, date
-        
+
         if current_date is None:
-            current = date.today()
+            # [DEB-fullchain 低优 2026-08-16] DTE 用 ET 日期: 到期日按美东日历约定,
+            #   服务器本地(北京)日期在 ET 12:00-24:00 会领先一天 → DTE 偏小误告警。
+            try:
+                from app.utils.timezone import now_et
+                current = now_et().date()
+            except Exception:
+                current = date.today()
         else:
             current = datetime.strptime(current_date, "%Y-%m-%d").date()
         
