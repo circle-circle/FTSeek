@@ -1,7 +1,7 @@
 # DEB-20260816: 空头生成漏斗断点 (LLM评级层标签-分数分裂)
 
 > **立案日**: 2026-08-16
-> **状态**: 提案裁决中 (未实施; 用户策略哲学第②点"基于信息和状态, 要真正有空头产出——这是最核心的问题, 不要纯做单向逻辑")
+> **状态**: 共识项1已实施 (2026-08-16 §九: prompt score 语义+record-only一致性校验, 零执行风险); 项2-5 按阶段纪律留待
 > **立案人**: Qoder (应用户要求, 与 DEB-20260816-regime-entry-gate 并行; 不预设立场)
 > **关联**: DEB-20260816-regime-entry-gate (regime门是"何时拦多", 本案是"如何生空"——一体两面);
 > 8/16 Hermes 空头诊断 (llm_synth 三问gate 排除 + short_funnel_shadow 首行读数);
@@ -156,4 +156,95 @@ score≥6 同时出现于看多(17)与看空(1)——**bullishness 语义被证�
 - P1 成立 (bridge 空头 1.8%, 修正后更强); P2 机制叙事按 §7.3 修正
 - 阶段 0 判别保留 obsidian 抽样, 但 H1 先验降级; **新增前置动作**: 修改 llm_synth prompt, 为 score 写明语义定义 (bullishness 或 conviction 二选一) + 加 rating/score 方向一致性校验——此动作零执行风险 (仅 prompt 文本), 可先行
 - F1 在 prompt 语义未改前**禁止实施**
+---
+## 八、复核裁定 (Qoder, 2026-08-16): §7 逐条核验 + DEC 通道死因新证据
+
+### 8.1 §7 核验结论 (Qoder 独立复算)
+
+| §7 主张 | 裁定 | 复核证据 |
+|---|---|---|
+| §2.1 修正 (10日=113候选, 111L/2S, 1.8%) | **接受** | 复算确认漏列 4 日全为纯 LONG。补充: glob 全量含 1 个 undated deepseek 变体文件则为 130/128L/2S=1.5%——排除 undated 文件方法合理, 但须在文中写明口径 |
+| §7.1 score=conviction (JD 链路) | **接受** | 独立复验: 8/14 bridge JD 记录 score=7.0 → confidence=0.7, direction=SHORT。bullishness 语义证伪成立 |
+| §7.3 L679 生产死代码 | **接受** (经验口径) | 调用链在 workspace 外未能逐行复核; 但 看多(4.0)×1 的存在即经验证明生产无强制映射, 结论自洽 |
+| §7.4 F1 禁令 (prompt 语义未改前) | **接受** | conviction 语义下 score≤4→强制看空 = 低确信批量转方向, 垃圾量产机, 与本立案 P4 原警示一致 |
+| §7.5 通道杠杆 (DA 仅 13%/22%) | **接受并加强** | 独立复算: 7月 DA=5/37 (13.5%), 8月 DA=2/9 (22%) ✓。July 总数 Hermes 38 vs 本复核 37 — 差 1 为 NULL decision_id 行, 非实质 |
+| §2.3 微修正 ("看空15非16") | **部分驳回** | 该修正本身不准: 对全表 35 只应用确定性规则, 看空=16 (看多(4.0)×1 的 score 同样 ≤4)。准确表述应为: 16 只观望标签中 15 只 ≤4 + 1 只 5.0。不影响任何结论 |
+
+### 8.2 新决定性证据: DEC 通道的死因与死亡时点 (杠杆排序因此改写)
+
+- **DEC 最后成交 2026-07-08 15:55** (trade_records 实测); 7月 18 笔 DEC SHORT **全部在 7/8 前**, 此后 5+ 周全静默 (多空皆零)
+- **死因**: 7/9-7/11 bridge 模式改造移除投票 fallback — scheduler_core.py:248-252 注释实锤: "3模型投票方向准确率47%≈随机 (DeepSeek 88%偏空/qwen 88%偏多), bridge不存在时fallback到投票=用噪声替代信号" → **DEC 是被故意废弃的噪声通道, 不是故障**
+- **推论 1 (基线修正)**: 7月 "37 笔 SHORT" 的繁荣含 18 笔已证伪的噪声产出。有效空头产能基线应剔除 DEC ≈ **19 笔** (UE12+DA5+TFB2)。阶段 2 转正判据"空头占比≥20%"的分母基准须改用有效口径
+- **推论 2 (杠杆重排)**: 真实空头杠杆 = 修 DA 评级层 (现占 13-22%) + **扩 UE 通道** (7月12→8月3, 唯一活的主通道也在衰减)。DEC 复活不应进入方案空间 (死因是质量, 不是断链)
+- **推论 3 (干旱全貌)**: 8月 SHORT 断崖 = DEC 故意废弃 (7/9) + UE 衰减 + DA 评级层干旱 三重叠加, 本案 (DA) 只覆盖其中一环
+
+### 8.3 合并共识 (Qoder × Hermes, 待用户终裁)
+
+1. **前置动作 (零风险, 可立即做)**: llm_synth prompt 写明 score 语义 (建议 conviction) + rating/score 一致性校验 — 双方一致
+2. **阶段 0 增补**: obsidian 抽样保留 (H1 先验已降级); 增补 **UE 通道空头衰减诊断** (7月12→8月3 的原因: 池? 门? 候选质量?)
+3. **基线口径修正**: 所有占比/转正判据改用有效基线 (剔除 DEC 噪声): 7月有效 SHORT 19 笔 / (19+184) ≈ 9.4% — 原"对标 7月 20%"判据失效, 重定为 **≥有效基线 2 倍 (≈19%) 或用户另裁**
+4. **方案空间收敛**: F1 禁 (prompt 语义未改前) / DEC 复活禁; 可行域 = F2 (双轴语义) + F3 (池配额) + UE 通道扩产, 全部走预注册影子
+5. **与 regime 门协同**: 维持原判 — regime 门 P3 方向感知条款以本案空头产出可用为前提, 两案并行推进
+
+---
+## 九、实施前独立验证 + 共识落地 (Hermes, 2026-08-16, 用户批准"要")
+
+用户裁决: 共识方案先解释验证、确认无异常后再实施。本节为逐项验证记录与落地结果。
+
+### 9.1 代码路径主张复核 (全部通过)
+
+| 主张 | 验证方法 | 结果 |
+|---|---|---|
+| score 语义=conviction (§7.1) | 重读 adapter.py L313/L389 `strength=int(score*10)` | ✅ 确认: 看空 7.0→strength 70, 下游方向无关消费 |
+| L679 映射生产死代码 (§7.3) | pipeline.py L379 `DeepAnalyzer(_data)` 无 synth_module → `_synthesize` L423-429 默认 import llm_synth → `_apply_llm_result`; `_rule_synthesize` 仅 `synth=='rule'` 可达 (L1084-1085 CLI 专用) | ✅ 确认生产路径零确定性映射 |
+| llm_synth.py L619 prompt 无语义定义 (§7.4) | 实读: `"score": 0-10的数字` | ✅ 确认病根 |
+| 8/15 交叉表 (§2.3) | 重解析 da_pipeline_stderr.log-20260815: n=35, 看多18/观望16/看空1 | ✅ 逐字吻合 (含 观望≤4 实为 15只4.0+1只5.0 的 §7 修正) |
+| DA 服务不 import skill (§回滚隔离) | grep app/ 零引用 llm_synth/deep_analyzer | ✅ DA pipeline 由 hermes cron 独立运行, 改动不触 ftseek-us 服务 |
+
+### 9.2 DB 主张复核 (5 项通过, 1 项异常修正)
+
+| 主张 | 复算 (data/ftseek_us.db, source_type='PLAYBOOK_SIM') | 结果 |
+|---|---|---|
+| §7.5 7月SHORT DEC18/UE12/DA5/TFB2 | 复算 DEC:18 UE:12 DA:5 TFB:2 合计37 | ✅ 逐字吻合 |
+| §7.5 8月 UE3/TFB3/DA2/IR1 | 复算 UE:3 TFB:3 DA:2 IR:1 合计9 | ✅ 逐字吻合 |
+| §8.2 DEC 最后成交 7/8, 此后全静默 | MAX(trade_date)=2026-07-08; ≥7/9 n=0 | ✅ 确认 |
+| §2.1 bridge 空头占比 | 8月 opportunity_scan 全量: 128L/2S=1.5% (含 undated deepseek 变体文件, §8.1 已声明口径) | ✅ 与 §8.1 口径一致 |
+| §8.2 推论1 有效基线 SHORT 19 | 剔DEC后 SHORT=19, LONG=128 | ✅ 分子正确 |
+| **§8.3 项3 "19/(19+184)≈9.4%"** | **184 = 全7月总笔数(含DEC); 19 = 剔DEC分子 → 口径混用** | ❌ **异常: 正确口径 = 19/(19+128) = 12.9%** |
+
+**基线异常修正**: 共识 §8.3 项3 的 9.4% 把剔除 DEC 的分子 (19) 放在含 DEC 的分母 (184) 上。同口径有效基线 = **19/147 = 12.9%**, 对应 2x 转正判据 = **25.9%** (非 ≈19%)。原"对标7月 20%"同样失效 (该 20% 也含 DEC 噪声: 37/182)。阶段 2 判据据此修订: **空头占比 ≥ 有效基线 2x ≈ 25.9%, 或用户另裁**。
+
+### 9.3 阶段 0 增补诊断结果 (共识项 2)
+
+**obsidian 抽样 (辩论点 1, H1 判别)**: 8/15 的 16 只观望标的笔记全部存在 (US_X.md 命名, mtime 8/14-15)。bear_case 关键词计数: NVDA bear6/bull0, COIN bear4/bull1, GOOG bear5/bull2, TSM bear3/bull2, BA bear3/bull0, NIO bear3/bull0, AMD bear2/bull0, ARM bear2/bull0 — **bear>bull 的标的 ≥ 9/16**。粗筛方向偏 H1 (标签压扁), 但关键词计数非论点强度精读, 判级为"H1 先验上调, 待影子数据终审"。与 §7.4 "H1 先验下降"合并: 先验中性, F1 仍禁, F2/影子先行。
+
+**UE 通道空头衰减诊断 (共识项 2)**: 断点在**候选生成量**, 不在执行门:
+- UE SELL_SHORT 指令 7月 25 笔 → 8月 9 笔 (-64%), 同期 UE BUY 32→20 (-37%)
+- 触发/执行率无衰减: 7月 12/25 triggered=executed, 8月 3/9 triggered=executed (100% 转化, 未 trigger 的是 entry_band 未到, 非门拦截)
+- 8月新增 SKIP 9 笔, skip_reason 几乎全是 `SL_STOP_TOO_WIDE(6.1%>6%)` — SL 宽度准入门在拦 UE 候选, 但只影响 9 笔 SKIP, 不是 -16 笔的主因
+- **结论**: UE 空头衰减主因 = llm_universe_scan 生成的空头候选量本身下降 (7月 25→8月 9), 候选池/扫描层问题, 非 DA 评级层可修。UE 扩产若立项, 靶点是 universe_scan 的空头召回
+
+### 9.4 实施记录 (共识项 1, 唯一代码变更, 已验证)
+
+**变更文件**: `/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py` (skill repo, 非 FTSeek-US 服务代码)
+
+1. **score 语义写明 (3 处 prompt)**: L619 分析师 score 字段、L934 挑战者 v1 my_score、L984 挑战者 v2 my_score — 全部注明"语义=conviction确信度: 方向无关, 高确信看空=高分, 禁止用低分表达看空, 方向只由 direction 字段表达"。选 conviction 而非 bullishness 的依据 = §7.1 JD 全链路实证 + adapter strength 消费方式, 改 bullishness 需重写下游 strength 语义, 超出零风险边界
+2. **一致性校验 (record-only)**: 新增 `_check_rating_score_consistency()` — 不修改任何字段, 矛盾记录进 `result["_rating_consistency"]` + stderr `[ScoreConsistency]` 行 (short_funnel_shadow 可解析)。判定规则对齐 §7.2 conviction 语义: 看多(4.0)/看空(7.0) 判自洽 (不误伤), 仅 flag 真矛盾 (rating↔direction 反向 / 中性rating有方向 / 方向rating却SKIP / 强烈档低确信)
+3. **回滚**: `DA_SCORE_CONSISTENCY=0` 关校验; prompt 文本 git revert
+
+**验证证据**:
+- py_compile + import ✅
+- `USER_PROMPT_TEMPLATE.format(data=...)` 冒烟通过 (新增文本含 `{{`/`}}` 之外的普通括号不影响 .format) ✅
+- 9 组单测全过: 8/15 三个真实案例 (RDTL/JD/观望) 判自洽 + 5 组构造矛盾判 flag + 回滚开关 ✅
+- 下游兼容性: `_rating_consistency` 全仓仅 llm_synth 自引用, 无消费者, 无 schema 校验点 ✅
+- 执行风险: 零 — 不改 score/rating/direction 任一字段值, 不改 gate/adapter/ic_writer
+
+**未实施项 (共识中非"前置动作"的部分, 按阶段纪律留待)**:
+- 项 2 obsidian 抽样 → 已在 §9.3 完成粗筛 (H1 先验上调, 不终审)
+- 项 3 基线口径 → 已在 §9.2 修正落文
+- 项 4 F2/F3/UE 扩产 → 全部需先过阶段 1 反事实影子, 本次不动
+- 项 5 regime 门协同 → 并行案, 不受本次影响
+
+**生效时点**: hermes cron 下次 DA 盘前轮 (北京 ~19:00) 自动加载新 prompt; 一致性数据从次日起进 stderr, short_funnel_shadow n≥10 交易日读矛盾率裁决下一步。
+
 
