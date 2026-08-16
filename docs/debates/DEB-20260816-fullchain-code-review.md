@@ -371,3 +371,43 @@ fallback 恒=开仓价 → pnl=0, 所有退出规则判"无风险", 监控空转
   历史退出实际由早期规则主导, 未系统性宽于设计。
 
 **生效**: ftseek-us 服务已重启 (周日无持仓窗口)。回滚: git revert 88493d4f + 重启。
+
+---
+
+## 十三、落地复核回执 (Qoder, 2026-08-16): §九-§十二 逐项验证 — 全部通过
+
+复核方法: 4 个 hotfix commit diff 逐行审读 + di_container 同源比对 + 4 组新契约测试复跑
++ tests/risk 全量 + 全仓 `-k exit` + 退出测试全集 + 预存失败 worktree 验证 + 生产态实测。
+
+### 13.1 逐项裁定
+
+| 项 | commit | 裁定 | 复核证据 |
+|---|---|---|---|
+| P0-1 | 2b82de00 | **通过** | 新 `_detect_mode` 与 di_container.py:143-156 broker 路由判定**同源确认** (AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true → LIVE; 安全降级双向一致); 缺省 fail-safe 正确 (account 缺省 sim / allow 缺省 false); TRADE_ENV 的 DB 路由职责未触碰。**生产态实测**: `TradingMode().mode=SIMULATE, 日亏 5%` — "零行为变化"声明属实 |
+| P0-4 | b3a5b926 | **通过** | 白名单 `{"ATR_STOP","SL_HIT","HARD_STOP"}` 与引擎 reason (L403) 对齐; 注释同步更新 |
+| #23 | b3a5b926 | **通过** | 死规则分句删除, 接飞刀/回踩企稳约束保留; E1 混淆变量已清 (下个 UE cron 生效) |
+| P0-3 | b4d0bfa2 | **通过** (含并发疑虑解除) | check 只查不写 ✓ / record 仅 RET_OK 后 ✓ / `manual:` 命名空间接入 SQLite 持久层 ✓ / None key 指纹兜底 (30s 桶) ✓。**关键**: check→place→record 全程在 `service._order_lock` 内 (executor.py:137-217) → 双击竞态被锁串行化, 复核初始疑虑解除 |
+| P0-2 | b4d0bfa2 | **通过** | `_backfill_fill_price` 查 broker 成交均价回填 + 未成交转 `_pending_protections` monitor 队列 + 无 order_id 显性 error 告警 — 静默 return 路径消除 |
+| P1-5 | 88493d4f | **通过** | 抬线后重判 triggered, **双向符号正确** (LONG `<=` / SHORT `>=`); reason 用 ATR_STOP 沿用现有归因体系, 与 P0-4 修复呼应不引入新失配; floor 未生效时不重判 (原判定已用同线, 无害) |
+| P1-10 | 88493d4f | **通过** | 仅 `trailing_stop.regime_multipliers` 显式存在才叠加; 缺省不再硬编码 2.5; guardian/SSOT 值恢复生效。非参数改动 (红线①合规) |
+| P1-6 | 88493d4f | **通过** | `_update_trail_state` 每轮写 `prev_scan_price`; 报价异常轮次 current_price 已被 fallback 替换后才入 trail_state → prev 恒为最后有效报价, 时序自洽 |
+
+### 13.2 测试与声明真实性
+
+- 新契约测试 4 组 **31/31 通过** (grace×5 + trading_mode×8 + manual_order×10 + exit_geometry×8)
+- tests/risk/ 全量 **48/48**; `pytest tests/ -k exit` **82/82**; 退出测试全集 (含根级) 52 过 + 1 失败
+- **"预存失败"声明独立验证 ✓**: `test_playbook_exit_rules.py::test_exit_rules` (AssertionError: peak 0) 在 hotfix 前代码 (worktree @3f9e5be7) 复跑**同样失败** → 确系存量 bug 非本次回归。注: 该文件在仓库根目录, `pytest tests/` 不收集, 全量跑时易漏
+- 服务状态: ftseek-us / ftseek-dashboard 均 active (重启生效声明属实)
+
+### 13.3 残留观察 (非阻塞, 供后续裁决)
+
+1. **P0-3 语义 = at-least-once** (有意选择, §十一已声明): place_order 超时且 broker 实际已收单 + 人工同 key 重试 → 仍可能双仓。改善建议: 重试提示文案引导"先查持仓/委托列表再重试" (UX 级, 不动代码语义)
+2. **P1-6 fallback 无陈旧度上限**: 报价中断数小时时退出规则按最后有效价评估 (较旧的"恒开仓价"已是改善, 且有 critical+钉钉告警)。建议后续给 fallback 加年龄上限 (如 >5min 视为无价, 走"跳过+告警"路径), 归入下批
+3. **存量失败测试待立案**: `test_exit_rules` 的 peak 断言失败暴露退出规则存量缺陷或测试腐化, 建议立案 (非本案范围)
+4. 行号漂移: §十引 di_container "L138-152" 实为 **L143-156** (无实质影响, 更正留档)
+
+### 13.4 状态总结
+
+P0×4 + #23 + P1-5/6/10 共 8 项全部落地且复核通过, 修复质量高 (契约测试先行、回放诚实声明、
+红线遵守)。**剩余清单**: P0 级清零; P1-7/8/9/11/12/13/14 + P2×13 待后续批次 (§五 顺序不变);
+#26 已被他方复验实锤并标记"max_sl_pct 重启用前必补" — 维持。
