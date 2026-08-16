@@ -269,3 +269,20 @@ grep -rn "21eab4e0" scripts/
 ### 8.4 复验方法声明
 复验范围: P0×4 + P1-5/6/10 + #23/#26 + P2-15/16, 全部逐行读码或复跑命令; 其余 ◐/○ 项
 (P1-7/8/9/11/12/13/14, P2-17~27) 未逐行复验, 维持 Qoder 原等级, 修复前按 §七 纪律先复现。
+
+---
+## 九、P0-4 + #23 落地记录 (Hermes, 2026-08-16, 用户批准)
+
+**commit `b3a5b926`**, 两项零风险修复:
+1. **P0-4**: `position_exit_monitor.py` legacy grace 白名单 `{ATR_STOP, SL_HIT}` →
+   `{ATR_STOP, SL_HIT, HARD_STOP}`。registry 路径本就含 HARD_STOP (双路径行为统一)。
+   契约测试 `tests/risk/test_grace_hard_stop_contract.py` 5 组:
+   HARD_STOP/ATR_STOP grace 放行 ✓ + CHANDELIER/BREAKEVEN 仍压制 ✓ +
+   结构契约 (legacy 白名单 ⊇ registry 硬止损∩引擎 reason) 防双路径再分裂。
+   验证: 5/5 + 既有 exit 测试 21/21 全过。
+2. **#23**: `llm_universe_scan.py` prompt 删除死规则分句 "止损距离须在 2-5% (>6% 被准入硬拦)"
+   (门已禁 + SL 宽度由代码恒产 5.91/6.09% LLM 不控制, 该规则永不满足)。
+   保留接飞刀 LONG 约束与回踩企稳优先。**E1 诊断的混淆变量已清除, E1 可在干净场跑。**
+
+**生效**: #23 下次 UE scan cron 自动生效; P0-4 需服务重启 (systemctl, 周日无持仓窗口)。
+**剩余待裁**: P0-1 修复方向 (a)/(b) 用户终裁; P0-2/3 实盘前置; 退出几何三联 (P1-5/6/10) 合并 hotfix。
