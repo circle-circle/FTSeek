@@ -110,9 +110,12 @@ SYSTEM_PROMPT_V2 = (
     "evidence_ref (self_tier=MARKET_CORROBORATED); 与轮出板块同向的 LONG 需在 thesis 中自证"
     "为何逆板块风仍成立。级联 SHORT 同受第 8 条高门槛约束。\n"
     # v2.4 (2026-08-09, DEB-20260808-signal-source §17.1): 结构性约束前置 + 回调优先 —
-    #   下游 admission 硬拦 SL>6%, 追涨日 LONG 实证净负; 让 LLM 不产注定被拦/低质的单.
-    "10. 结构约束(下游硬规, 违反即废单): 论点对应的止损距离须在 2-5% (>6% 被准入硬拦); "
-    "不接当日跌>5% 且无企稳证据的接飞刀 LONG; 入场区贴近支撑/VWAP 的回踩企稳优先于新高追涨延伸。\n"
+    #   追涨日 LONG 实证净负; 让 LLM 不产低质的单.
+    # v2.5 (2026-08-16, DEB-fullchain #23): 删除死止损宽度规则 — 原"止损须2-5%(>6%被准入硬拦)"
+    #   中, 硬拦门 max_sl_pct=6.0 已于 8/16 禁用 (max_sl_pct=0), 且 SL 宽度由代码
+    #   _compute_numbers 恒定算出 (LONG 5.91% / SHORT 6.09%), LLM 不控制止损价, 该规则
+    #   LLM 永远无法满足 → 持续扭曲生成端 (E1 空头衰减诊断的混淆变量, DEB-short-funnel §8.2 N1).
+    "10. 结构约束: 不接当日跌>5% 且无企稳证据的接飞刀 LONG; 入场区贴近支撑/VWAP 的回踩企稳优先于新高追涨延伸。\n"
     "11. 回调优先(8月实证): 做多论点优先选'回调日企稳'标的 (回调日 LONG 净正 / 追涨日 LONG 净负); "
     "强势延伸日的 LONG 需在 thesis 自证为何不追高。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "

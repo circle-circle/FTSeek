@@ -1333,7 +1333,8 @@ class ExitMonitor:
           4. 多规则触发 → ExitQualityScorer 选最优
 
         P0 修复 (2026-06-14): _in_grace=True 时, trailing_stop 结果精确过滤:
-          - 保留 ATR_STOP / SL_HIT (硬止损, 必须始终评估)
+          - 保留 ATR_STOP / SL_HIT / HARD_STOP (硬止损, 必须始终评估;
+            HARD_STOP 于 2026-08-16 补入, DEB-fullchain P0-4)
           - 压制 CHANDELIER_TRAIL / BREAKEVEN_STOP / STOP_LOSS (非硬止损)
         """
         symbol = getattr(position, 'symbol', '?')
@@ -1372,8 +1373,12 @@ class ExitMonitor:
         )
         if stop_result:
             # P0 修复 (2026-06-14): Grace period 精确过滤 trailing_stop 结果
-            # 硬止损 (ATR_STOP / SL_HIT) 始终放行; 非硬止损 (CHANDELIER / BREAKEVEN) 被压制
-            _GRACE_HARD_STOP_REASONS = {"ATR_STOP", "SL_HIT"}
+            # 硬止损始终放行; 非硬止损 (CHANDELIER / BREAKEVEN) 被压制
+            # P0 修复 (2026-08-16, DEB-fullchain P0-4): 白名单补 HARD_STOP —
+            #   atr_stop_engine L403 实际发出 "HARD_STOP", 旧白名单 {ATR_STOP, SL_HIT}
+            #   失配 → grace 期 (min_hold 45min) 引擎硬止损被压制, 与 registry 路径
+            #   (exit_rule_registry.py hard_stop_reasons 含 HARD_STOP) 行为分裂。
+            _GRACE_HARD_STOP_REASONS = {"ATR_STOP", "SL_HIT", "HARD_STOP"}
             _stop_reason = stop_result.get("reason", "")
             if _in_grace:
                 if _stop_reason in _GRACE_HARD_STOP_REASONS:
