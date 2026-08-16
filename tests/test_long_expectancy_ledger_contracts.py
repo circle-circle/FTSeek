@@ -2,10 +2,11 @@
 
 锁定预注册判据的可计算性 (改判据参数=改实验, 必须过 DEB):
 1. 统计数学: t / 95%CI 上界 (样本标准差)
-2. 判据1: 供给辩论触发 = n≥300 **且** CI上界<0 (两条件缺一不可)
+2. 判据1 v2 (§十一A2, 触发前修订): 供给辩论触发 = n≥300 **且** 日级聚类t<-2.0
+   (日级=当日净额SUM; 交易级CI仅共报诊断 — 防伪重复偏窄触发)
 3. 判据2: 正桶保护 = n≥60 且 t≥1.5
 4. 单位: mfe_pct/mae_pct 列为百分数, cell 输出为分数
-5. 红线⑤: 多空同台账
+5. 红线⑤: 多空同台账; §十一A3: policy_period 维度; B1: conf×source; B3: 毛额指标
 """
 import math
 import sys
@@ -15,7 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.long_expectancy_ledger import (  # noqa: E402
-    CI_Z, N_TRIGGER, PROTECT_N, PROTECT_T, _cell, _stats, build_ledger,
+    CI_Z, DAY_T_TRIGGER, N_TRIGGER, PROTECT_N, PROTECT_T, _cell, _policy_period,
+    _stats, build_ledger,
 )
 
 
@@ -23,7 +25,23 @@ def _tr(direction="LONG", net=-10.0, gross=-10.0, exit_reason="TIME_EXIT",
         conf=0.5, session="regular", regime="RANGE", month="2026-08", n=1):
     return [{"trade_date": f"{month}-15", "direction": direction, "exit_reason": exit_reason,
              "entry_session": session, "market_regime": regime, "signal_confidence": conf,
+             "source": "deep_analysis",
              "gross": gross, "net": net, "mfe_pct": 100.0, "mae_pct": 100.0} for _ in range(n)]
+
+
+def _days_rows(day_sums):
+    """day_sums: [(date, 每笔net, 笔数)] — 构造跨日分布的交易行"""
+    rows = []
+    for date, net, cnt in day_sums:
+        rows += [{"trade_date": date, "direction": "LONG", "exit_reason": "TIME_EXIT",
+                  "entry_session": "regular", "market_regime": "RANGE",
+                  "signal_confidence": 0.5, "source": "deep_analysis",
+                  "gross": net, "net": net, "mfe_pct": 0, "mae_pct": 0} for _ in range(cnt)]
+    return rows
+
+
+def _clustered_days(per_day_sum, n_days=30, per_day=10):
+    return [(f"2026-08-{d + 1:02d}", per_day_sum / per_day, per_day) for d in range(n_days)]
 
 
 class TestStatsMath:
@@ -38,26 +56,47 @@ class TestStatsMath:
         assert _stats([5.0, 5.0])["t"] is None  # se=0 → None, 不除零
 
     def test_preregistered_constants_frozen(self):
-        """判据参数 = 预注册内容, 变更须过 DEB 辩论"""
-        assert (N_TRIGGER, CI_Z, PROTECT_N, PROTECT_T) == (300, 1.96, 60, 1.5)
+        """判据参数 = 预注册内容, 变更须过 DEB 辩论 (v2: §十一A2 日级聚类, 触发前修订)"""
+        assert (N_TRIGGER, DAY_T_TRIGGER, CI_Z, PROTECT_N, PROTECT_T) == (300, -2.0, 1.96, 60, 1.5)
 
 
 class TestSupplyDebateTrigger:
-    def test_both_conditions_required(self):
-        # 300 笔稳定小亏 (se 小 → CI 上界 < 0) → 触发
-        yes = build_ledger(_tr(net=-10.0, gross=-10.0, n=N_TRIGGER))
-        assert yes["supply_debate_trigger"]["triggered"] is True
-        # 299 笔同款 → n 未达 → 不触发
-        no_n = build_ledger(_tr(net=-10.0, gross=-10.0, n=N_TRIGGER - 1))
-        assert no_n["supply_debate_trigger"]["triggered"] is False
-        # 300 笔高波动 (mean -10 但 std≈90 → CI 上界 > 0) → 不触发
-        wide = [80.0 if i % 2 else -100.0 for i in range(N_TRIGGER)]
-        rows = _tr(n=0) + [{"trade_date": "2026-08-15", "direction": "LONG",
-                            "exit_reason": "TIME_EXIT", "entry_session": "regular",
-                            "market_regime": "RANGE", "signal_confidence": 0.5,
-                            "gross": v, "net": v, "mfe_pct": 0, "mae_pct": 0} for v in wide]
-        no_ci = build_ledger(rows)
-        assert no_ci["supply_debate_trigger"]["triggered"] is False
+    def test_trigger_requires_n_and_day_cluster_t(self):
+        # 30天×10笔, 日净额SUM -60/-80/-100/-120/-140 循环 (日级t≈-6.9) → 触发
+        days = []
+        pattern = [-60.0, -80.0, -100.0, -120.0, -140.0]
+        for d in range(30):
+            days.append((f"2026-08-{d + 1:02d}", pattern[d % 5] / 10, 10))
+        led = build_ledger(_days_rows(days))
+        assert led["supply_debate_trigger"]["day_cluster_t"] < DAY_T_TRIGGER
+        assert led["supply_debate_trigger"]["triggered"] is True
+
+    def test_n_below_threshold_blocks_trigger(self):
+        # 同上但总笔数 299 (最后一天 9 笔) → 不触发
+        days = _clustered_days(-100.0, n_days=30)
+        days[-1] = (days[-1][0], days[-1][1], 9)
+        led = build_ledger(_days_rows(days))
+        assert led["supply_debate_trigger"]["triggered"] is False
+
+    def test_pseudo_replication_guard(self):
+        """A2 核心: 交易级 CI 上界<0 但日级聚类 t≥-2.0 → 不触发 (防伪重复偏窄)"""
+        # 29天共亏 -100/天 + 1天大赚 +2000: 交易级净期望负且方差小, 日级 t≈-0.4
+        days = [(f"2026-08-{d + 1:02d}", -10.0, 10) for d in range(29)]
+        days.append(("2026-08-30", 200.0, 10))
+        led = build_ledger(_days_rows(days))
+        trig = led["supply_debate_trigger"]
+        assert trig["n"] == 300
+        assert trig["trade_level_ci_upper"] < 0 or trig["trade_level_t"] < 0
+        assert trig["day_cluster_t"] > DAY_T_TRIGGER
+        assert trig["triggered"] is False
+
+    def test_day_t_high_variance_not_triggered(self):
+        # 日净额SUM交替 -100/+60 (mean -20, t≈-1.4) → 不触发
+        days = []
+        for d in range(30):
+            days.append((f"2026-08-{d + 1:02d}", (-100.0 if d % 2 == 0 else 60.0) / 10, 10))
+        led = build_ledger(_days_rows(days))
+        assert led["supply_debate_trigger"]["day_t_met"] is False
 
     def test_short_never_triggers_supply_debate(self):
         """判据1 只判 LONG — SHORT 亏损再多也不在此路径触发 (另案辩论)"""
@@ -69,6 +108,7 @@ class TestBucketProtection:
     def _rows(self, nets, reason="SL_TRAIL_LOCK"):
         return [{"trade_date": "2026-08-15", "direction": "LONG", "exit_reason": reason,
                  "entry_session": "regular", "market_regime": "RANGE", "signal_confidence": 0.5,
+                 "source": "deep_analysis",
                  "gross": v + 1.0, "net": v, "mfe_pct": 0, "mae_pct": 0} for v in nets]
 
     def test_protected_bucket_flagged(self):
@@ -94,3 +134,38 @@ class TestUnitsAndSymmetry:
         led = build_ledger(_tr(net=-1.0, gross=-1.0, n=3) +
                            _tr(direction="SHORT", net=1.0, gross=1.0, n=3))
         assert set(led["overall"].keys()) == {"LONG", "SHORT"}
+
+    def test_gross_metric_present(self):
+        """B3: 桶级毛额指标 (判别读毛额, net 仅总账)"""
+        cell = _cell(_tr(net=-5.0, gross=3.0, n=4))
+        assert cell["avg_gross_per_trade"] == 3.0
+        assert cell["win_rate"] == 1.0  # 胜率按毛额>0
+
+
+class TestPolicyPeriodAndSource:
+    def test_policy_period_boundaries(self):
+        """A3: 三个政策断裂点 8/12 禁触窗 / 8/15 W_WEEK / 8/17 术后"""
+        assert _policy_period("2026-08-11") == "P0_base"
+        assert _policy_period("2026-08-12") == "P1_no_trigger_window"
+        assert _policy_period("2026-08-14") == "P1_no_trigger_window"
+        assert _policy_period("2026-08-15") == "P2_w_week"
+        assert _policy_period("2026-08-16") == "P2_w_week"
+        assert _policy_period("2026-08-17") == "P3_post_exit_fix"
+
+    def test_policy_period_dimension_in_ledger(self):
+        rows = _tr(net=-5.0, gross=-5.0, month="2026-08", n=1)
+        rows[0]["trade_date"] = "2026-08-13"
+        led = build_ledger(rows)
+        assert "policy_period" in led["dimensions"]["LONG"]
+        assert "P1_no_trigger_window" in led["dimensions"]["LONG"]["policy_period"]
+
+    def test_conf_x_source_dimension(self):
+        """B1: conf×source 交叉分桶 (反向校准的来源剥离)"""
+        rows = _tr(net=-5.0, gross=-5.0, conf=0.7, n=2)
+        led = build_ledger(rows)
+        keys = led["dimensions"]["LONG"]["conf_x_source"]
+        assert "0.7|deep_analysis" in keys
+
+    def test_overall_has_day_cluster_t(self):
+        led = build_ledger(_tr(net=-5.0, gross=-5.0, n=2))
+        assert led["overall"]["LONG"]["day_cluster_t"]["n"] == 1  # 同日聚为一天
