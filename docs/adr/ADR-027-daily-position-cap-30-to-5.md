@@ -60,8 +60,9 @@ open_positions=0, 无未平仓风险)。
   即"第二把日频锁"也是死的。playbook 路径的 DB 计数帽 (本 ADR 复活者) 是
   现役唯一有效的日频 SSOT。
 - Qoder 未提交的注释清理 diff 已从工作区隔离存档:
-  `docs/debates/qoder_comment_cleanup_unified_config.patch.pending-governance`
-  (与 ADR-024"误删证据块"裁决冲突, 待治理, 勿擅自应用)。
+  `docs/debates/qoder_comment_cleanup_unified_config.patch.deprecated-20260816`
+  (与 ADR-024"误删证据块"裁决冲突)。⛔ 2026-08-16 用户裁废弃, 禁止应用
+  (基线过期: cap=5/blackout=1015 会回退 8/15 生效的 cap=8/0935)。
 
 ## 验证
 

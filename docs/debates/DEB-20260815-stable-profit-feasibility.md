@@ -1070,8 +1070,9 @@ trade_records 持久化读取 (重启不丢/ET时区正确)。但 config 值被 
 ### 32.4 附带治理 (隔离未动)
 
 - Qoder 未提交的 unified_config.yaml 注释清理 diff 已从工作区隔离存档:
-  docs/debates/qoder_comment_cleanup_unified_config.patch.pending-governance
-  (与 ADR-024"误删证据块"裁决冲突, 待用户治理, 本轮未应用)。
+  docs/debates/qoder_comment_cleanup_unified_config.patch.deprecated-20260816
+  (与 ADR-024"误删证据块"裁决冲突)。⛔ 2026-08-16 用户裁废弃: 基线过期
+  (写入 cap=5/blackout=1015 会回退 §33 生效值), 已加横幅+改名, git apply 失效。
 - dual_mode 计数器死锁 (内存态+路径绕过) 已记录 ADR-027 关联发现, 不修 —
   playbook 路径 DB 计数帽是现役唯一有效日频 SSOT, 无需双锁。
 
