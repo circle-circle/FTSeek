@@ -2288,6 +2288,22 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 陈旧锚影子打标异常 (已隔离): {_e}")
 
+                    # 隔夜持仓×新指令冲突影子打标 (2026-08-16, record-only):
+                    # W_WEEK 引入多夜持仓后, 隔夜股次日可能被 DA/UE 再选中。执行段已有
+                    # 方向感知防御 (pipeline L3244: 同向拦截/反向放行), 本影子攒观测样本
+                    # (冲突频率/翻转结局/候选浪费率), n≥30 再裁是否加候选端排除。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_cf
+                        _sp = _ilu.spec_from_file_location(
+                            "conflict_shadow_tag",
+                            str(_P_cf(__file__).resolve().parents[2] / "scripts" / "conflict_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

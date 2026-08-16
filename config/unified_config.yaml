@@ -1194,6 +1194,10 @@ playbook:
   #   重建指令价格路径, 打陈旧度标签→data/stale_anchor_shadow.jsonl。零执行路径改动。
   #   n≥30再裁硬门/接entry_reference。回滚: false + 重启。
   stale_anchor_shadow_enabled: true
+  # 2026-08-16 (W_WEEK多夜持仓配套): 隔夜持仓×新指令冲突影子打标 — 执行段防御已有
+  #   (pipeline L3244 同向拦截/反向放行), 本影子攒观测样本→data/conflict_shadow.jsonl。
+  #   n≥30再裁候选端排除。回滚: false + 重启。
+  conflict_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live
