@@ -335,3 +335,39 @@ py_compile + facade 函数链完整。
 
 **生效**: web_dashboard 模块由 ftseek-dashboard.service 加载, 已重启。
 **回滚**: git revert b4d0bfa2 + 重启 dashboard 服务。
+
+---
+## 十二、退出几何三联 P1-5/6/10 落地记录 (Hermes, 2026-08-16, 用户批准)
+
+**commit `88493d4f`** (§五-2 承诺的合并 hotfix):
+
+### 12.1 P1-5 SL 契约抬线不重判 triggered
+根因: compute_stop_lines 用旧 final_stop 判 triggered → SL 契约随后抬线到 initial_sl 地板 → 不重判。
+价格跌破地板但未破更宽旧线时 triggered=False 永不退出, 每次止损多亏 (地板-旧线)。
+修复: 抬线后重判; reason 用 **ATR_STOP** (在 grace 白名单 + registry hard_stop_reasons 内,
+不发明新 reason 造成 P0-4 式失配)。
+
+### 12.2 P1-10 regime 乘数硬编码缺省压过设计
+根因: exit_policy.yaml 无 trailing_stop 键 → 硬编码缺省 {normal:2.5} 恒生效,
+`atr_mult=max(atr_mult, 2.5)` 把 guardian 波动桶 (low1.5/med2.0/high2.5/ext3.0) 与
+SSOT initial 2.0 全压到 ≥2.5。
+修复: 仅 policy 显式配置 regime_multipliers 才叠加; 未配置跳过, 恢复 guardian/SSOT 值。
+属"配置宣称与实际不符"家族 (#16/#18/#19/#21), 非参数改动 (红线①)。
+
+### 12.3 P1-6 报价异常 fallback 假数据
+根因: prev_scan_price 只开仓写、扫描从不更新 (docstring 自称"更新 peak/prev"但 prev 从未写),
+fallback 恒=开仓价 → pnl=0, 所有退出规则判"无风险", 监控空转。
+修复: _update_trail_state 每轮写入 prev_scan_price → fallback=最后有效报价。
+
+### 12.4 验证与诚实声明
+- 契约测试 8/8 (P1-5×3 双向+无地板不误伤; P1-10×3 未配置恢复设计值/高桶不压低/显式配置保留;
+  P1-6×2)。P1-10 测试首版期望值错 (未算 SSOT 地板 max 语义), 修正后通过。
+- 既有退出测试 68/69; 1 个失败经 **stash 验证为预存失败** (clean tree 同失败), 非本次回归。
+- 无其他 regime_multipliers 消费方 (grep 确认), 改动隔离。
+- **回放诚实声明**: 用真实 SL 类退出成交回放, 有效退出倍数中位仅 0.19-0.55 (大部分为
+  SL_BREAKEVEN/SL_TRAIL_LOCK 早期接管) → P1-10 的 2.5x 扭曲在历史上是**潜伏型**
+  (trailing 线很少成为约束退出), 修复消除的是几何扭曲风险而非已实现损失;
+  P1-5/P1-6 同理为正确性修复。§十三"§8.3 退出几何污染历史校准证据"的担忧据此降级:
+  历史退出实际由早期规则主导, 未系统性宽于设计。
+
+**生效**: ftseek-us 服务已重启 (周日无持仓窗口)。回滚: git revert 88493d4f + 重启。
