@@ -782,6 +782,10 @@ class PlaybookService:
             _adm_result = _adm_eval({
                 "symbol": symbol, "direction": direction,
                 "entry_price": entry_price, "take_profit": take_profit,
+                # [DEB-fullchain #26 2026-08-16] 补 stop_loss 键: admission max_sl_pct 判据
+                #   读 inst["stop_loss"], 此前缺键 → SL 宽度判据执行侧恒空转 (入口拦/执行放
+                #   双标)。当前 max_sl_pct=0 无行为差, 该门重启前置条件已满足。
+                "stop_loss": stop_loss,
                 "position_size": position_size,
                 "confidence": inst.get("confidence", 0) or 0,
                 "date": inst.get("date", ""),

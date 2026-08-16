@@ -215,12 +215,17 @@ class DrawdownController:
             return
 
         # P2 修复 (2026-05-11): 入金/出金检测 — 净值突变时自动重置基准
+        # [DEB-fullchain P1-12 2026-08-16] 修复方向性背门: 原 max(cur/base, base/cur)
+        #   对称判定 → 大亏损 (基准/当前 >5x, 即回撤 >80%) 同样触发 set_baseline →
+        #   total/daily dd 双清零 + 熔断复位, 恰在最需要熔断时拆熔断 (fail-open)。
+        #   现仅入金方向 (current > baseline×threshold) 自动重置; 出金/亏损方向
+        #   维持基准 → 回撤偏严 → 需人工 set_baseline (fail-safe 方向)。
+        #   阈值 5.0 不变 (红线①: 不动参数)。
         if current_assets > 0 and self.baseline > 0:
-            ratio = max(current_assets / self.baseline, self.baseline / current_assets)
-            if ratio > self.auto_reset_threshold:
+            if current_assets > self.baseline * self.auto_reset_threshold:
                 logger.warning(
-                    f"[回撤] 净值突变检测: 当前=${current_assets:,.0f} vs 基准=${self.baseline:,.0f} "
-                    f"(差异 {ratio:.1f}x > {self.auto_reset_threshold}x), 自动重置基准"
+                    f"[回撤] 入金检测: 当前=${current_assets:,.0f} vs 基准=${self.baseline:,.0f} "
+                    f"(>{self.auto_reset_threshold}x), 自动重置基准"
                 )
                 self.set_baseline(current_assets, reason="auto_reset_capital_change")
                 return

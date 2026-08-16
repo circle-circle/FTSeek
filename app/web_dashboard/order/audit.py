@@ -358,7 +358,11 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
                         mode=?, trade_mode=?
                        WHERE id=?""",
                     (
-                        now.isoformat(), exit_price, reason,
+                        # [DEB-fullchain P2-17 2026-08-16] exit_time 必须写 ET: 主链路
+                        #   (position_exit_monitor/order_executor) 均写 ET-aware ISO, 本处
+                        #   原写北京时间 → ET 12:00 后平仓 date(exit_time)=次日 ≠ ET 交易日,
+                        #   pre_trade_gate 日回撤 SUM(realized_pnl) 漏记 → 熔断迟钝。
+                        et_now.isoformat(), exit_price, reason,
                         round(pnl, 2), round(pnl_pct, 4), order_id,
                         trade_date, strategy_id,
                         _signal_id_manual,
@@ -414,7 +418,7 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    trade_date, symbol, direction, entry_time, now.isoformat(),
+                    trade_date, symbol, direction, entry_time, et_now.isoformat(),
                     entry_price, exit_price, quantity, round(pnl, 2), round(pnl_pct, 4),
                     reason, entry_reason, strategy_id, "MANUAL",
                     service._get_mode_label(),
