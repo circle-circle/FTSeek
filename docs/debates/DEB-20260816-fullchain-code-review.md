@@ -309,3 +309,29 @@ grep -rn "21eab4e0" scripts/
 equity≤0 fail-close 生效 (原回落 10万假值)。三重防护恢复。
 
 **回滚**: git revert 2b82de00 + systemctl restart ftseek-us。
+
+---
+## 十一、P0-2 + P0-3 落地记录 (Hermes, 2026-08-16, 用户批准)
+
+**commit `b4d0bfa2`**, 手动单链路 (web_dashboard/order/executor.py) 两项实盘前置修复:
+
+### 11.1 P0-2 市价单 SL/TP 静默丢弃
+- 根因: 市价单提交 price=0, 3s Timer 路径无成交价回填 (限价单 monitor loop 有) →
+  place_protective_stop `_entry<=0` 静默 return → 仓位无 STOP/DB止损/ExitMonitor 依据, 裸奔。
+- 修复: ① `_backfill_fill_price()` 查 broker 成交均价/数量回填 (与限价单 monitor 同源逻辑);
+  ② 未成交/无价 → 转 `_pending_protections` monitor 队列重试 (30s 轮询, 24h 超时已有), 保护单不丢;
+  ③ 无 order_id → 显性 error 告警 (原静默)。
+### 11.2 P0-3 幂等预烧 key → 重复下单
+- 根因: key 在下单**前**写入 (预烧) → place_order 超时后 60s 内重试被拒"重复提交"而实际已成交
+  (无 order_id/无保护单); 60s 后重试 → 第二笔; 纯内存重启清空; key=None 完全不去重。
+- 修复: ① check_idempotency 只查不写 (不再预烧); ② record_idempotency 仅在 place_order RET_OK
+  后记录; ③ 接入 app/execution/idempotency.py 既有 SQLite 持久层 (1h 窗口, 重启重载, 命名空间
+  `manual:` 隔离); ④ 前端不传 key → synthesize_idem_key 指纹兜底 (symbol+方向+数量+30s桶, 防双击)。
+- **测试抓到真 bug**: 首版 fallback 内存路径仍预烧, 契约测试 2 项失败 → 修复后 10/10 全过。
+### 11.3 验证
+契约测试 10/10 (P0-3×5: 不预烧/失败可重试/成功拒重/None兜底/指纹桶稳定;
+P0-2×5: 成交价回填/未成交不伪造/成交挂保护/未成交入队/无order_id显性告警)。
+py_compile + facade 函数链完整。
+
+**生效**: web_dashboard 模块由 ftseek-dashboard.service 加载, 已重启。
+**回滚**: git revert b4d0bfa2 + 重启 dashboard 服务。
