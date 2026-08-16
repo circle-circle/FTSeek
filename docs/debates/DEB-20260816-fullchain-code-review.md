@@ -286,3 +286,26 @@ grep -rn "21eab4e0" scripts/
 
 **生效**: #23 下次 UE scan cron 自动生效; P0-4 需服务重启 (systemctl, 周日无持仓窗口)。
 **剩余待裁**: P0-1 修复方向 (a)/(b) 用户终裁; P0-2/3 实盘前置; 退出几何三联 (P1-5/6/10) 合并 hotfix。
+
+---
+## 十、P0-1 落地记录 (Hermes, 2026-08-16, 用户批准方案a)
+
+**commit `2b82de00`**: `trading_mode.py` `_detect_mode` 判定源 TRADE_ENV → AUTO_TRADE_ACCOUNT。
+- 新判定 (与 di_container.py L138-152 broker 路由完全同源):
+  AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true → LIVE (LIVE_CONSERVATIVE=1→保守/0→正常);
+  其余一律 SIMULATE (含 real 但 ALLOW_REAL_TRADING≠true 的安全降级, 与 di_container 拦截一致)。
+- **DB 路由零触碰**: db_utils.is_live_mode / paths.py / config_container 仍读 TRADE_ENV
+  (OKR 数据留在 ftseek_us.db), 仅 broker/风控语义迁移。
+- **影响面审计**: TradingMode 消费方仅 4 处 (order_executor/drawdown_control/pre_trade_gate/
+  trading_mode 自身); db_mode_value 全仓零消费者 (无 DB 语义影响)。
+- **契约测试 8/8**: 四态判定矩阵 + 安全门降级 + TRADE_ENV=0 不再触发 LIVE (解耦回归保护) +
+  缺省 fail-safe + 实盘风控参数确实收紧 (live 日亏2%<sim 5%, 仓位乘数0.5<1.0) +
+  db_utils 仍读 TRADE_ENV (DB 路由职责保留)。
+- **当前生产态零行为变化**: AUTO_TRADE_ACCOUNT=sim → SIMULATE, 日亏熔断 5%, 仓位乘数 1.0 (实弹验证)。
+- drawdown_control/pre_trade_gate 回归 5/5。
+
+**修复后切实盘行为**: AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true →
+日亏熔断 live_conservative 2.0% (原失效取 5.0%) / pre_trade_gate 限额×0.5 (原失效×1.0) /
+equity≤0 fail-close 生效 (原回落 10万假值)。三重防护恢复。
+
+**回滚**: git revert 2b82de00 + systemctl restart ftseek-us。
