@@ -1198,6 +1198,10 @@ playbook:
   #   (pipeline L3244 同向拦截/反向放行), 本影子攒观测样本→data/conflict_shadow.jsonl。
   #   n≥30再裁候选端排除。回滚: false + 重启。
   conflict_shadow_enabled: true
+  # 2026-08-16 (空头供给断崖诊断): 空头转化漏斗影子打标 — SELL_SHORT 8/7后断崖,
+  #   真实断点=LLM分析层 (35只→看空仅1), 解析DA日志评级分布攒样→data/short_funnel_shadow.jsonl。
+  #   n≥10交易日再裁分层gate。回滚: false + 重启。
+  short_funnel_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live

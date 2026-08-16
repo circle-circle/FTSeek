@@ -2304,6 +2304,22 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}")
 
+                    # 空头转化漏斗影子打标 (2026-08-16, record-only): SELL_SHORT指令
+                    #   8/7后断崖, 真实断点=LLM分析层转化率低 (8/14轮35只→看空仅1)。
+                    #   解析DA stderr日志评级分布+当日指令对照→data/short_funnel_shadow.jsonl。
+                    #   n≥10交易日再裁分层gate。回滚: 配置键 false + 重启。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_sf
+                        _sp = _ilu.spec_from_file_location(
+                            "short_funnel_shadow_tag",
+                            str(_P_sf(__file__).resolve().parents[2] / "scripts" / "short_funnel_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 空头漏斗影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:
