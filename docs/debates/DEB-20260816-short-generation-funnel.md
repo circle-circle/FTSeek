@@ -248,3 +248,35 @@ score≥6 同时出现于看多(17)与看空(1)——**bullishness 语义被证�
 **生效时点**: hermes cron 下次 DA 盘前轮 (北京 ~19:00) 自动加载新 prompt; 一致性数据从次日起进 stderr, short_funnel_shadow n≥10 交易日读矛盾率裁决下一步。
 
 
+
+---
+## 十一、Hermes 补充 (2026-08-16): §10.2 的 pending_direction 证伪 + 8/8 全空头实锤
+
+### 11.1 R6 (pending_direction 增补) 前提证伪, 关闭
+
+§10.2 担心 admission SKIP 行 direction 被覆写后"原方向不可考"——**不成立**:
+`app/playbook/admission.py` L227 在覆写 `inst["direction"]="SKIP"` **之前**已落
+`raw["admission"]["original_direction"]`, 随 raw_instruction_json 持久化。无需改码, R6 关闭。
+
+### 11.2 实测实锤: 8 月 admission 拦截 8/8 全是空头
+
+```
+date        symbol   original_direction
+2026-08-07  US.INDA  SELL_SHORT
+2026-08-10  US.WERN  SELL_SHORT
+2026-08-10  US.DUOL  SELL_SHORT
+2026-08-11  US.JD    SELL_SHORT
+2026-08-12  US.HD    SELL_SHORT
+2026-08-12  US.RMNI  SELL_SHORT
+2026-08-13  US.JD    SELL_SHORT
+2026-08-14  US.LH    SELL_SHORT
+```
+
+**SL_STOP_TOO_WIDE(6.1%>6%) 门 8 月新增拦截的 8 笔, 8/8 全部是 SELL_SHORT。**
+机制: 空头天然 SL 更宽 (止损在入场价上方, 波动率高的标的更宽), 6% 统一上限对空头
+构成**不对称伤害**。这是"8 月空头断崖"的一个机械性凶手 (非 LLM 分析层), 与 §八
+UE 候选生成量衰减、LLM 转化率低共同构成空头供给的三重压缩。
+
+**处置归属本案裁决** (不并案 no-trigger): 候选方向感知 SL 宽度基线 (按方向×波动率分桶),
+或 8/29 验证期后再议。预注册纪律不变: 任何门参数调整先影子复算拦截集反事实
+(工具已就绪: `scripts/gate_block_counterfactual.py`, 同族口径)。

@@ -39,9 +39,10 @@ def run_check(scheduler=None):
 
 
 def _parse_da_log(path: Path):
-    """解析DA stderr日志 → {symbol: (rating, score)}"""
+    """解析DA stderr日志 → ({symbol: (rating, score)}, consistency计数)"""
     ratings = {}
     cur_sym = None
+    consistency_flagged = []  # [ScoreConsistency] 行 (DEB-20260816 §9.4, R7补缺口)
     for ln in open(path, errors="ignore"):
         m = re.search(r"深度分析 \d+/\d+: (US\.\w+)", ln)
         if m:
@@ -51,7 +52,11 @@ def _parse_da_log(path: Path):
         if m2 and cur_sym:
             ratings[cur_sym] = (m2.group(1), float(m2.group(2)))
             cur_sym = None
-    return ratings
+            continue
+        m3 = re.search(r"\[ScoreConsistency\] ⚠️ (US\.\w+): (.+)", ln)
+        if m3:
+            consistency_flagged.append({"symbol": m3.group(1), "issues": m3.group(2).strip()})
+    return ratings, consistency_flagged
 
 
 def main():
@@ -83,7 +88,7 @@ def main():
         if trade_date in existing_dates:
             continue
 
-        ratings = _parse_da_log(lf)
+        ratings, consistency_flagged = _parse_da_log(lf)
         if len(ratings) < 3:
             continue  # 日志不完整/非DA轮
 
@@ -119,6 +124,10 @@ def main():
             "short_executed": sum(1 for i in short_insts if i["executed"]),
             "gate_block_hints": gate_blocks,
             "total_instructions": len(insts),
+            # R7 (DEB-20260816 §10.3): [ScoreConsistency] 矛盾率判据的聚合数据
+            "consistency_flagged_n": len(consistency_flagged),
+            "consistency_flagged_syms": [c["symbol"] for c in consistency_flagged][:10],
+            "consistency_total_n": len(ratings),
         }
         with OUT.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
