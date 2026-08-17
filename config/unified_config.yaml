@@ -1043,7 +1043,12 @@ playbook:
     #   cap=8 的正当性仅为攒数据保留率(80% vs 56%, 用户直裁). 回滚: 改5+重启.
     #   齐射防护不依赖此值: 单轮cap(下方=3)+排序按质(UE优先/conf降序)已隔离.
     #   敞口由 daily_notional_cap_pct(0.8)+单名帽0.08 双兜底.
-    max_daily_positions: 8
+    # 2026-08-17 (用户批准"sim期放开每日上限攒数据, 靠门/风控自然拦截"):
+    #   8 → 12, 与 max_positions=12 对齐。真实约束是供给质量非日计数上限:
+    #   admission 门 + 单轮cap=3 + 敞口双兜底 = 自然拦截层, 日计数只放开。
+    #   触发背景: 8/17 DA 17条指令被generate覆盖事故(见_generate_da_priority_check)
+    #   + UE 5条, 日供给瓶颈在覆盖/触发率而非cap。回滚: 改回8+重启.
+    max_daily_positions: 12
     # 2026-08-14 水坝效应修复: 单轮 auto_execute 新开仓上限 (剩余顺延下轮, 300s一档梯度).
     #   实锤: 8/14 十笔LONG挤87秒齐射, 水坝窗均笔亏损5.5x. 回滚: 改999+重启.
     max_new_positions_per_cycle: 3
