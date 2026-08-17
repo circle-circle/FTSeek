@@ -25,7 +25,7 @@ def _tr(direction="LONG", net=-10.0, gross=-10.0, exit_reason="TIME_EXIT",
         conf=0.5, session="regular", regime="RANGE", month="2026-08", n=1):
     return [{"trade_date": f"{month}-15", "direction": direction, "exit_reason": exit_reason,
              "entry_session": session, "market_regime": regime, "signal_confidence": conf,
-             "source": "deep_analysis",
+             "source": "deep_analysis", "entry_time": f"{month}-15T09:40:00-04:00",
              "gross": gross, "net": net, "mfe_pct": 100.0, "mae_pct": 100.0} for _ in range(n)]
 
 
@@ -165,6 +165,18 @@ class TestPolicyPeriodAndSource:
         led = build_ledger(rows)
         keys = led["dimensions"]["LONG"]["conf_x_source"]
         assert "0.7|deep_analysis" in keys
+
+    def test_entry_hour_policy_dimension(self):
+        """§十四14.4: 入场时点维度必须带政策期前缀, 禁触窗两侧不合并"""
+        rows = _tr(net=-5.0, gross=-5.0, n=2)
+        rows[0]["trade_date"] = "2026-08-11"
+        rows[0]["entry_time"] = "2026-08-11T09:40:00-04:00"
+        rows[1]["trade_date"] = "2026-08-14"
+        rows[1]["entry_time"] = "2026-08-14T10:20:00-04:00"
+        led = build_ledger(rows)
+        keys = led["dimensions"]["LONG"]["entry_hour_policy"]
+        assert "P0_base|09h" in keys and "P1_no_trigger_window|10h" in keys
+        assert all(k.startswith(("P0_", "P1_", "P2_", "P3_")) for k in keys)
 
     def test_overall_has_day_cluster_t(self):
         led = build_ledger(_tr(net=-5.0, gross=-5.0, n=2))

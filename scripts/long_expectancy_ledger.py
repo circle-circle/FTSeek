@@ -103,6 +103,9 @@ def _bucket_key(trade, dim):
         return str(round(float(trade["signal_confidence"] or 0), 1))
     if dim == "conf_x_source":
         return f"{round(float(trade['signal_confidence'] or 0), 1)}|{trade.get('source') or 'unknown'}"
+    if dim == "entry_hour_policy":
+        # §十四14.4: 入场时点类指纹必须带政策期拆分 (8/12 禁触窗是强断点)
+        return f"{_policy_period(trade['trade_date'])}|{(trade.get('entry_time') or '????')[11:13]}h"
     if dim == "entry_session":
         return trade["entry_session"] or "unlabeled"
     if dim == "market_regime":
@@ -115,7 +118,7 @@ def load_trades(db_path=str(DB_PATH), since=ERA_START):
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT trade_date, direction, exit_reason, entry_session, market_regime, "
-        "signal_confidence, realized_pnl, pnl_net, mfe_pct, mae_pct, metadata_json "
+        "signal_confidence, realized_pnl, pnl_net, mfe_pct, mae_pct, metadata_json, entry_time "
         "FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND trade_date>=? "
         "AND exit_price>0", (since,)).fetchall()
     # B1: 信号源 (deep_analysis/universe_expansion/...) 经 instruction 关联取回
@@ -143,7 +146,7 @@ def load_trades(db_path=str(DB_PATH), since=ERA_START):
         trades.append({
             "trade_date": r["trade_date"], "direction": r["direction"] or "?",
             "exit_reason": r["exit_reason"], "entry_session": r["entry_session"],
-            "market_regime": r["market_regime"],
+            "market_regime": r["market_regime"], "entry_time": r["entry_time"] or "",
             "signal_confidence": float(r["signal_confidence"] or 0),
             "source": source or "unlinked",
             "gross": gross, "net": net,
@@ -178,7 +181,7 @@ def build_ledger(trades):
         ledger["overall"][direction] = cell
         dims = {}
         for dim in ("month", "policy_period", "exit_reason", "conf_bucket",
-                    "conf_x_source", "entry_session", "market_regime"):
+                    "conf_x_source", "entry_hour_policy", "entry_session", "market_regime"):
             groups = defaultdict(list)
             for t in dt:
                 groups[_bucket_key(t, dim)].append(t)
