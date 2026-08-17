@@ -30,15 +30,15 @@ REPO = Path(__file__).resolve().parents[1]
 DAILY_DIR = REPO / "data" / "replay_bars_daily"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--limit", type=int, default=0)
-    args = ap.parse_args()
+def run_check(scheduler=None) -> None:
+    """调度器入口 (AFTER_HOURS): 无参数全量增量刷新, 幂等。"""
+    do_refresh(limit=0, dry_run=False)
 
+
+def do_refresh(limit: int = 0, dry_run: bool = False) -> None:
     files = sorted(DAILY_DIR.glob("US_*.json"))
-    if args.limit:
-        files = files[:args.limit]
+    if limit:
+        files = files[:limit]
     print(f"扫描 {len(files)} 个日K缓存文件")
 
     from futu import KLType, RET_OK, AuType, OpenQuoteContext
@@ -58,7 +58,7 @@ def main() -> int:
                 continue
             last = rows[-1][0]
             start = last  # 含末日重拉, 防截断
-            if args.dry_run:
+            if dry_run:
                 print(f"  {sym}: last={last} → 将增量拉取 {start}~today")
                 continue
             new_rows: list[list] = []
@@ -99,6 +99,14 @@ def main() -> int:
     finally:
         ctx.close()
     print(f"完成: 刷新 {ok} | 已最新跳过 {skip} | 失败 {fail}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--limit", type=int, default=0)
+    args = ap.parse_args()
+    do_refresh(limit=args.limit, dry_run=args.dry_run)
     return 0
 
 

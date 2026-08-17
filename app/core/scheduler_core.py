@@ -2376,6 +2376,25 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}")
 
+                    # 日K缓存增量刷新 (2026-08-17, DEB-20260817第4轮根因治理):
+                    #   replay_bars_daily 曾停更3周→A2报告35%行gap被污染。A2的prev_close
+                    #   依赖该缓存是单点, 每日盘后增量刷新防复发 (幂等, 已最新即跳过,
+                    #   ~110票×1.2s限流)。回滚: 配置键 false + 重启。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_rb
+                        from app.core.config_container import ConfigContainer as _CC_rb
+                        if bool(_CC_rb.get_instance().get_dotted(
+                                "playbook.daily_bars_refresh_enabled", True)):
+                            _sp = _ilu.spec_from_file_location(
+                                "refresh_daily_bars",
+                                str(_P_rb(__file__).resolve().parents[2] / "scripts" / "refresh_daily_bars.py"))
+                            _mod = _ilu.module_from_spec(_sp)
+                            _sp.loader.exec_module(_mod)
+                            _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

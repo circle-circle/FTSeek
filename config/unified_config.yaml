@@ -1216,6 +1216,9 @@ playbook:
   #   成交价质量/死锚/时滞对照→data/band_vol_shadow.jsonl。回填补读: 成交中位偏离
   #   0.000ATR+两臂触达100%=band非入场约束, 病症暂不成立, 影子降级为漂移监控。回滚同上。
   band_vol_shadow_enabled: true
+  # 2026-08-17 (DEB-20260817第4轮根因治理): 日K缓存每日盘后增量刷新 — 曾停更3周
+  #   污染A2报告35%行gap。A2 prev_close单点依赖, 幂等刷新防复发。回滚同上。
+  daily_bars_refresh_enabled: true
   intraday_reentry:
     enabled: true
     mode: live
