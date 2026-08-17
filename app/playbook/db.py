@@ -170,7 +170,20 @@ class PlaybookDB:
             inst: 指令 dict, 必须包含 date, symbol, direction
 
         Returns:
-            row id
+            row id (覆盖被仲裁拒绝时返回现存行 id)
+
+        覆盖仲裁 (2026-08-17 DA覆盖事故根源修复, DEB-long-expectancy §十六):
+            ON CONFLICT DO UPDATE WHERE 原子优先级阶梯 — 覆盖现在与未来全部写入方
+            (取代散在 generate/topup 调用方的先读后写守卫, 消除 TOCTOU 窗口):
+              优先级: DA-/universe_expansion*/intraday_reentry- = 3 (深度供给/重武装),
+                      其他非空 decision_id (TFB-/SNAP-/DEC-) = 1, 空 (SKIP票) = 0。
+              规则: 新行优先级 >= 现存行才允许覆盖; 另加深度语义 — UE 浅指令永远
+              不得覆盖 DA 深度内容 (与 llm_universe_scan._is_da_priority_skip 同源,
+              该调用方守卫保留作快路径跳过+精确计数, 本 SQL 为权威兜底);
+              intraday_reentry- 重武装无条件放行 (合法重武装, 覆盖前自归档原行)。
+            8/17 事故回放: 64 条空 decision_id SKIP 票 (prio 0) 覆盖 17 条 DA 行
+            (prio 3) → 0>=3 拒绝, 事故在 SQL 层不可能再发生。
+            回滚: 删除 WHERE 块即恢复旧无条件 UPSERT。
         """
         # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG), 防数据割裂
         inst["symbol"] = normalize_symbol(inst.get("symbol"))
@@ -221,7 +234,7 @@ class PlaybookDB:
         conn = self._conn()
         now = now_utc().isoformat()
 
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO playbook_instructions (
                 date, symbol, direction, skip_reason,
                 entry_price, stop_loss, take_profit,
@@ -268,6 +281,27 @@ class PlaybookDB:
                 metadata_json=COALESCE(excluded.metadata_json, metadata_json),
                 decision_conf=COALESCE(excluded.decision_conf, decision_conf),
                 updated_at=excluded.updated_at
+            WHERE excluded.decision_id LIKE 'intraday_reentry-%'
+               OR (
+                 CASE
+                   WHEN excluded.decision_id LIKE 'DA-%'
+                        OR excluded.decision_id LIKE 'universe_expansion%' THEN 3
+                   WHEN COALESCE(excluded.decision_id, '') <> '' THEN 1
+                   ELSE 0
+                 END
+                 >=
+                 CASE
+                   WHEN playbook_instructions.decision_id LIKE 'DA-%'
+                        OR playbook_instructions.decision_id LIKE 'universe_expansion%'
+                        OR playbook_instructions.decision_id LIKE 'intraday_reentry-%' THEN 3
+                   WHEN COALESCE(playbook_instructions.decision_id, '') <> '' THEN 1
+                   ELSE 0
+                 END
+                 -- 深度语义: UE 浅指令不得覆盖 DA 深度内容 (P1-14 同源规则,
+                 -- 此前仅存调用方守卫; 下沉 SQL 后与 llm_universe_scan 守卫双保险)
+                 AND NOT (excluded.decision_id LIKE 'universe_expansion%'
+                          AND playbook_instructions.decision_id LIKE 'DA-%')
+               )
         """, (
             inst.get("date"),
             inst.get("symbol"),
@@ -307,6 +341,14 @@ class PlaybookDB:
             _to_json(inst.get("metadata") if inst.get("metadata") is not None else inst.get("metadata_json")),
             inst.get("decision_conf"),
         ))
+        # 覆盖仲裁可观测 (2026-08-17): rowcount=0 且行已存在 = 无源写入被拒覆盖
+        # (前置实弹验证: 拒绝时 rowcount=0, 现存行原样保留)。只记日志不阻断,
+        # 调用方拿到的返回值仍是现存行 id (下方 SELECT 兜底)。
+        if cur.rowcount == 0:
+            logger.info(
+                f"[save_instruction] 覆盖仲裁拒绝: {inst.get('symbol')} "
+                f"({inst.get('date')}) 现存行有源, 空 decision_id 写入不覆盖"
+            )
         conn.commit()
         # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询
         row = conn.execute(

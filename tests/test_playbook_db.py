@@ -446,7 +446,9 @@ class TestSummaryStats:
 # ═══════════════════════════════════════════════════════════════
 # 2026-07-31 议题⑬ L1 (DEB-cleanup-remaining): UPSERT source-priority 契约守卫
 #   约定只活在注释里 → 新源接入静默降级. 本测锁两层契约:
-#   ① UPSERT 后写者胜 (date,symbol 冲突时 UE 21:10 覆盖 DA 18:00 靠调度顺序)
+#   ① 覆盖仲裁优先级阶梯 (2026-08-17 根源修复后, 取代旧"后写者胜"契约):
+#      DA-/UE:/reentry- = 3, TFB-/SNAP-/DEC- = 1, 空 = 0; 新>=现存才覆盖,
+#      另 UE 浅指令永不覆盖 DA 深度内容 (旧"后写者胜"正是 8/17 事故根源哲学)
 #   ② _src_priority 预算排序: UE(2) > DA(1) > 其他(0)
 # ═══════════════════════════════════════════════════════════════
 class TestUpsertSourcePriority:
@@ -458,8 +460,8 @@ class TestUpsertSourcePriority:
         db.ensure_tables()
         return db, conn
 
-    def test_upsert_later_writer_wins(self):
-        """同 (date,symbol): 后写 (UE) 覆盖先写 (DA) — 调度顺序即优先级的物理实现"""
+    def test_ue_does_not_overwrite_da(self):
+        """同 (date,symbol): UE 浅指令不得覆盖先写 DA 深度内容 (根源修复契约)"""
         db, conn = self._mkdb()
         db.save_instruction({"date": "2026-07-31", "symbol": "US.PRIO", "direction": "BUY",
                              "entry_price": 100.0, "decision_id": "DA-20260731-PRIO-x1",
@@ -469,8 +471,8 @@ class TestUpsertSourcePriority:
                              "confidence": 50})
         row = conn.execute("SELECT direction, decision_id FROM playbook_instructions "
                            "WHERE date='2026-07-31' AND symbol='US.PRIO'").fetchone()
-        assert row[0] == "SELL_SHORT", "UE 后写未覆盖 DA"
-        assert row[1].startswith("universe_expansion"), row[1]
+        assert row[0] == "BUY", "UE 不应覆盖 DA 深度内容"
+        assert row[1].startswith("DA-"), f"现存行应保留 DA decision_id, 实际 {row[1]}"
         n = conn.execute("SELECT COUNT(*) FROM playbook_instructions "
                          "WHERE date='2026-07-31' AND symbol='US.PRIO'").fetchone()[0]
         assert n == 1, f"UPSERT 应保持单行, 实际 {n}"

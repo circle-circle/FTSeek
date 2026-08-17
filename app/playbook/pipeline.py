@@ -1923,11 +1923,9 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
         for inst in instructions:
             try:
                 inst_dict = _instruction_to_db_dict(inst, regime_ctx, today)
-                # [DEB-long-expectancy 2026-08-17] DA优先: 现存 DA-/UE 深度指令不被
-                # generate 的 SKIP 票 UPSERT 覆盖 (8/17 事故: 17条DA指令被64条SKIP覆盖)
-                if _generate_da_priority_check(db, today, getattr(inst, "symbol", "")):
-                    logger.info(f"[playbook] DA优先跳过: {getattr(inst, 'symbol', '?')} 现存外部指令不覆盖")
-                    continue
+                # [2026-08-17 根源修复] 覆盖仲裁已下沉 save_instruction SQL 层
+                # (db.py ON CONFLICT WHERE 优先级阶梯): DA-/UE 深度行原子地拒绝
+                # SKIP/TFB 票覆盖, 无需调用方守卫 (先读后写有 TOCTOU 窗口, 已删)。
                 db.save_instruction(inst_dict)
                 saved += 1
             except Exception as e:
@@ -2167,10 +2165,8 @@ def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
                 _ev = _gather_intraday_evidence(data_router, inst.symbol, inst.direction)
                 if _ev is not None:
                     inst_dict["raw_instruction"]["evidence"] = _ev
-                # [DEB-long-expectancy 2026-08-17] DA优先: topup 同样不覆盖外部深度指令
-                if _generate_da_priority_check(db, today, inst.symbol):
-                    logger.info(f"[playbook·topup] DA优先跳过: {inst.symbol} 现存外部指令不覆盖")
-                    continue
+                # [2026-08-17 根源修复] 覆盖仲裁已下沉 save_instruction SQL 层,
+                # topup 无需调用方守卫 (同 generate)。
                 db.save_instruction(inst_dict)
                 saved += 1
             except Exception as e:
@@ -2535,31 +2531,6 @@ def _persist_signal_context(
         db.save_signal_context(ctx)
     except Exception as e:
         logger.warning(f"[playbook] signal_context 持久化失败 {symbol}: {e}")
-
-
-def _generate_da_priority_check(db, today: str, symbol: str) -> bool:
-    """[DEB-long-expectancy 2026-08-17 DA覆盖事故修复] 写入前查现存行是否受保护.
-
-    根因 (8/17 实锤): DA skill 07:31 直写 17 条 gate-PASS BUY 指令 →
-    FTSeek generate 09:00 判"已有17行但无完成标记(#22)→继续生成" →
-    64 条 SKIP 票经 save_instruction UPSERT ON CONFLICT(date,symbol)
-    把 17 条 DA 指令原地覆盖成空 decision_id 的 SKIP 行 (created_at 保留
-    07:31 为铁证) → 当日 DA 供给归零, 只剩 UE 5 条可执行。
-
-    保护规则 (与 UE inject 侧 _is_da_priority_skip 对称, 批次B P1-14):
-    现存行 decision_id 以 DA- / universe_expansion: 开头 → 外部深度供给,
-    跳过不覆盖。generate 自身前缀 (TFB-/SNAP-/空) 不保护 → 幂等重跑不受影响。
-    返回 True = 应跳过 (现存行受保护)。
-    """
-    _PROTECTED_PREFIXES = ("DA-", "universe_expansion:")
-    try:
-        existing = db.get_instruction(today, symbol)
-        if existing:
-            did = str(existing.get("decision_id") or "").strip()
-            return did.startswith(_PROTECTED_PREFIXES)
-    except Exception as e:
-        logger.debug(f"[playbook] DA优先检查失败(降级放行) {symbol}: {e}")
-    return False
 
 
 def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
