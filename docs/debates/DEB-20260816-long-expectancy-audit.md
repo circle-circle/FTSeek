@@ -685,3 +685,44 @@ DA 0.35 早盘集中 (8/12前 100/124=81% 于ET9点) 复算成立, 该半句无�
 政策期污染已 2 例 (§2.10 时段指纹 / §2.11-2 DA-0.7迟到), 共同根因 = 8/12 禁触窗是
 强断点, 任何"入场时点"类指纹必须先按 policy_period 拆再引用。建议台账所有
 entry_hour 维度默认输出政策期拆分版, 混合版只作背景。
+
+---
+## 十五、DA覆盖事故 — 修复+cap放开落地记录 (Hermes, 2026-08-17, 用户批准)
+
+### 15.1 事故实锤 (盘中发现)
+
+用户报告"DA 17目标 UE 5目标为何未执行"。DB/日志铁证时间线 (ET):
+- 07:17-07:31 DA skill 分析 28 只: 17 LONG gate 全 PASS (quality_score 20-60),
+  bridge 文件 + playbook_instructions 写入成功 (created_at 11:31:54 UTC=ET07:31)
+- 09:00 FTSeek generate: "已有 17 行但无完成标记 (#22) → 继续生成"
+- 09:05 generate 投票: 64 候选 → instructions=0/skips=64 (vote_none=56+IC冲突8)
+  → 64 条 SKIP 票经 save_instruction UPSERT ON CONFLICT(date,symbol)
+  **把 17 条 DA BUY 指令原地覆盖成空 decision_id 的 SKIP 行**
+  (created_at 保留 07:31 = 覆盖铁证) → 当日 DA 供给归零, 仅 UE 5 条可执行
+- 09:10 UE inject 写入 5 条 (NVDA/AVGO SHORT + FCX/BBIO/XOM BUY)
+
+### 15.2 根因: 两处修复的交互盲区
+
+1. 批次B P1-14 的 DA 优先保护只加在 UE inject 侧 (llm_universe_scan.py),
+   FTSeek generate 侧 save_instruction (pipeline.py) 无同款保护
+2. 批次E #22 把幂等门从"有行即锁"改"完成标记制" — DA 先写行不写标记 →
+   generate 判"继续生成"。**旧"有行即锁"反而保护了 DA 行, #22 解锁同时解除保护**
+3. 反讽对照: 8/14 DA 17 条幸存正因旧幂等门锁住 generate
+
+### 15.3 修复 (用户批准"修复+cap放开")
+
+- `_generate_da_priority_check` (pipeline.py): generate/topup 写入前查现存行
+  decision_id, DA-/universe_expansion: 前缀受保护不覆盖; TFB-/SNAP-/空不保护
+  (保 generate 自身幂等重跑)。与 UE inject 侧 P1-14 对称。契约测试 10/10
+- `max_daily_positions` 8→12 (与 max_positions=12 对齐)。保留单轮 cap=3
+  (齐射防护实锤) + daily_notional_cap_pct 0.8 + 单名帽 0.08 = 自然拦截层,
+  只放开日计数上限。回滚: 改回8+重启
+- 已重启 + 从 bridge 重注入 17/17 (忠实还原 DA _inst 映射, 同 entry_band 真源)
+
+### 15.4 与本案的关联 (供给质量 vs 配额)
+
+事故暴露 §2.11 "配额倒挂"的执行侧前提: DA 指令**根本没进可执行轨道**,
+此前 DA 0.35 占 50% 的统计建立在 DA 指令成功入库的日子。供给断供日
+(如 8/17 上午) 实际只有 UE 0.5 档在执行 → §2.11 的"UE 最优仅占 17%"
+在断供日被放大。L-E6 UE 扩产影子判据须考虑此基线污染: DA 覆盖事故日
+UE 占比天然虚高。建议台账加 "supply_mode" 维度 (DA+UE 双活 vs UE 独活)。
