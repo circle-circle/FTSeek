@@ -251,3 +251,48 @@ LIVE 后 cron 每日对账调用即可。
 验证: 998 passed / 重启冒烟 7/7 / 运行时开关断言 True / 功能级四场景 ✓。
 
 **状态 → D1A/D2/D3/D5 已执行 + D4 已实弹 (本案全部落地); 遗留仅 G4 矩阵净口径化 + G5 报表三列**
+
+## 十三、净保本续章 — 限价平仓 + 豁免净口径 (2026-08-17 收盘后, 用户裁"真正净保本, 包含费用, 避免白跑")
+
+**背景**: D4 (7/30) 实现费用感知保本线后, 8/17 收盘复盘发现两个白跑缺口 —
+
+| 缺口 | 实弹证据 (D4 后) | 根因 |
+|---|---|---|
+| ① 保本单 fill 漂移 | 31 笔 SL_BREAKEVEN 中 **24 笔净亏 (77%)**; 中位超调 +0.066%, 最差 +0.42%; cushion 已写入 meta (31/31) 但 fill 落回保本线下方 | 退出用**市价单** (`close_position`), 20s 轮询检测 + 市价漂移, 越位≈费用本身被漂移精确吃掉 |
+| ② 豁免毛口径 | NVDA 8/17: 毛+0.013% → `_loser_overnight_exempt` 判"非水下"失去 W_WEEK 豁免 → DEAD_SIGNAL 出场, 净 **−$3.51** | 豁免"水下"判定用毛盈亏; 0<毛<费用 的微盈仓被误判"已落袋" |
+
+第三处白跑源头: **PATIENT_EXIT_FILL** "站回入场价保本退出" — 正好在入场价成交=白交一趟费 (8月已有 1 笔实弹)。
+
+**方案 (三处同根, 一次修尽)**:
+
+1. **限价平仓** (`dual_broker.close_position` + `limit_price`/`limit_timeout_s` 参数):
+   SL_BREAKEVEN/PATIENT_EXIT_FILL 触发时改挂 **限价单@净保本线** —
+   LONG→SELL LIMIT@entry×(1+费率), SHORT→BUY LIMIT@entry×(1−费率)。
+   成交价物理上 ≥(空:≤) 保本线 → **净保本由订单类型保证, 不靠轮询追价**。
+   30s 未成交 → 撤单降级市价 (最坏=现状, 无卡单); 撤单竞态复查 + 两腿部分成交加权均价记账。
+   仅这两条退出走限价: SL硬兜底/部分平仓/EOD/死信号退出价不是保本线, 限价会扭曲语义。
+2. **豁免净口径** (`_check_playbook_exit_rules`):
+   新增 `_profit_net_pct = profit_pct − 真实往返费率` (仅当 D4 fee-aware cushion 算出时启用,
+   算不出→毛口径原行为, 保守不回退), 5 处豁免调用点全部切净口径:
+   PRE_CLOSE(reentry+loser) / DEAD_SIGNAL / TIME_EXIT / MAX_HOLD / EOD兜底。
+   微盈仓 (0<毛<费用) = 净水下 → 保留豁免, 不被误判出场白跑。
+3. **净保本线落 meta** (`_be_net_line_price`): 供 monitor 平仓调用点挂限价单;
+   同一 `_profit_net_pct` 单一口径贯穿豁免/落袋/保本线。
+
+**方向对称性检查 (防新白跑)**: 只切豁免/落袋判定, **不切**"亏损才退出"的毛口径退出门 —
+TIME_EXIT 的 `profit_pct < 0` 退出门、PRE_CLOSE 的 cohort B `profit_pct > 0` 跳过门保留毛口径
+(切净口径反而把微盈仓市价卖=制造新白跑)。DEAD_SIGNAL 分支"真盈利不豁免"数学上不可构造
+(MFE<0.2% 窗口内 净=毛−0.407% 恒<0), 可测点在 PRE_CLOSE。
+
+**验证**: 契约测试 `tests/playbook/test_net_breakeven_contract.py` 16/16
+(净保本线 LONG/SHORT/无qty回退; DEAD_SIGNAL/PRE_CLOSE/TIME_EXIT/MAX_HOLD 豁免净口径+毛口径对照;
+breakeven 触发落净线); 全量回归 **1352 passed** (1336 基线 + 16 新增);
+patient_exit 桩签名兼容 71 passed。
+
+**预注册验收判据 (8/18 起)**:
+1. SL_BREAKEVEN 出场 fill ≥ 净保本线 (meta._be_net_line_price 可对照) — 假保本净亏归零;
+2. 限价腿超时降级市价笔数监控 (日志 "净保本限价平仓"; 降级率应 ≪50%, 否则说明保本线挂得太远);
+3. 豁免侧: 微盈仓不再出现在 DEAD_SIGNAL/PRE_CLOSE 出场名单;
+4. 回滚: 限价路径删调用点 `limit_price` 传参即回市价; 净口径回滚=yaml 关 `breakeven_fee_aware_enabled` (豁免/保本线同时回毛口径)。
+
+状态: 代码+测试已落地, 待重启生效; 8/18 首个实弹观察日。

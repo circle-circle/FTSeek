@@ -5724,7 +5724,7 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
 
     Returns: (mode, detail)
       mode="":      继续等待
-      mode="fill":  价格站回入场价 (profit_pct >= 0) → 保本退出
+      mode="fill":  价格站回净保本线 (profit_pct ≥ 往返费率, 8/17 净口径) → 净保本退出
       mode="stop":  水下加深至 patient_exit_stop_pct → 保护止损
       mode="eod":   到达 patient_exit_deadline_hhmm → 强制兜底
       mode="expire": 等待状态跨交易日 → 作废 (隔夜仓次日水下是另一回事, 回正常规则链)
@@ -5752,8 +5752,15 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
             _profit_pct = (entry_price - current_price) / entry_price * 100.0
         if _profit_pct <= -_stop_pct:
             return "stop", f"水下 {_profit_pct:.2f}% ≤ -{_stop_pct:.1f}% 保护止损"
-        if _profit_pct >= 0:
-            return "fill", "价格站回入场价, 保本退出"
+        # 8/17 净口径: fill 腿"站回保本"必须是净保本线 (entry×(1±费率)), 不是入场价 —
+        #   正好在入场价成交 = 毛利0, 白交一趟往返费 (8月已有 PATIENT_EXIT_FILL 实弹).
+        #   cushion 取自 meta._be_cushion_fee_aware (arm 轮规则链算出并写回); 算不出→0=原行为.
+        try:
+            _fill_cushion = float((meta or {}).get("_be_cushion_fee_aware", 0) or 0)
+        except Exception:
+            _fill_cushion = 0.0
+        if _profit_pct >= _fill_cushion:
+            return "fill", f"价格站回净保本线 ({_profit_pct:.2f}% ≥ {_fill_cushion:.2f}%), 净保本退出"
     try:
         _hhmm = now_et.hour * 100 + now_et.minute
         if _hhmm >= _deadline:
@@ -5876,6 +5883,21 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 meta["_be_cushion_fee_aware"] = round(_fee_cushion_pct, 4)  # 验收可观测
         except Exception:
             pass  # 回退旧 cushion (静默容错: 保本链路不得因记账增强而阻断)
+
+    # ── 净口径盈亏 (2026-08-17, 用户裁"保本单和豁免条件真正净保本, 包含费用") ──
+    # 旧口径全部用毛盈亏: ① 豁免条件 (水下判定 profit<0) 把 0<毛<费用 的"微盈仓"当盈利
+    #   → 失去 W_WEEK 豁免被 DEAD_SIGNAL/PRE_CLOSE 出场, 落袋变白跑 (NVDA 8/17 实弹:
+    #   毛+0.013% 失去豁免 → DEAD_SIGNAL 出场 净-$3.51)。② 保本单市价平仓 fill 漂移。
+    # 净口径 = 毛 − 真实往返费率 (仅当 D4 fee-aware cushion 算出时启用; 算不出 → 毛口径
+    #   原行为, 保守不回退)。豁免/落袋/保本线全部消费同一 _profit_net_pct, 单一口径。
+    _has_real_cushion = meta.get("_be_cushion_fee_aware") is not None
+    _profit_net_pct = profit_pct - _fee_cushion_pct if _has_real_cushion else profit_pct
+    # 净保本线价格 (monitor 平仓时挂限价单用): 成交价物理上 ≥(空:≤) 此线 = 净保本由订单类型保证
+    if _has_real_cushion and entry_price > 0:
+        meta["_be_net_line_price"] = round(
+            entry_price * (1 + _fee_cushion_pct / 100.0) if direction == "LONG"
+            else entry_price * (1 - _fee_cushion_pct / 100.0), 4)
+
     effective_sl = _compute_dynamic_effective_sl(
         direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct
     )
@@ -6045,11 +6067,11 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #        PLAYBOOK 仓位的 pre_close 必须由 Pipeline 自管, 否则收盘前8min 盈利落袋无人执行。
     if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
         if _skip_allowed and profit_pct > 0:
-            pass  # cohort B 盈利仓跳过, 持过夜
-        elif _reentry_overnight_exempt(_symbol, entry_time_str, profit_pct):
-            pass  # 2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD, 次日正常收
-        elif _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
-            pass  # 2026-08-15 用户三问Q3: SIM水下仓首夜豁免 EOD (盈利落袋/水下隔夜)
+            pass  # cohort B 盈利仓跳过, 持过夜 (毛口径: 此处若切净口径会把微盈仓市价卖=白跑)
+        elif _reentry_overnight_exempt(_symbol, entry_time_str, _profit_net_pct):
+            pass  # 2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD, 次日正常收 (8/17 净口径)
+        elif _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
+            pass  # 2026-08-15 用户三问Q3: SIM水下仓首夜豁免 EOD (8/17 净口径: 微盈仓=净水下→豁免)
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
@@ -6202,7 +6224,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _ds_minutes = float(_pb_cfg.get("dead_signal_exit_minutes", 60))
         _ds_mfe_pct = float(_pb_cfg.get("dead_signal_exit_mfe_pct", 0.2))
         if held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
-            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+            # 8/17 净口径: 豁免的"水下"判定用净盈亏 — 毛 0<毛<费用 的微盈仓是净水下,
+            #   同样在修复窗口内, 不该因"毛利>0"被误判失去豁免而出场白跑 (NVDA 8/17 实弹).
+            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
                 # W_WEEK 豁免: 水下仓正在多日修复窗口内, 不因死信号提前出局.
                 _dsx_log_key = f"{_symbol}:{date.today().isoformat()}"
                 if _dsx_log_key not in _LOSER_DS_EXEMPT_LOGGED:
@@ -6284,10 +6308,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _te_held_minutes = float(minutes_from_open or 0)
     if _time_exit_enabled and not exit_reason and _te_held_minutes > (_time_exit_hours * 60):
         if not _time_exit_only_if_loss or profit_pct < 0:
+            # (毛口径退出门保留: 切净口径会把微盈仓市价卖=白跑)
             # 2026-08-15 (§34): SIM多夜水下仓豁免 TIME_EXIT — 与 EOD 豁免同语义:
             #   W_WEEK 回放要求修复空间, 次日水下2h被砍则多夜持有名存实亡.
             #   SL 仍最高优先级兜底; 到期由 loser_overnight_max_hold_days 强平.
-            if not _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+            # 8/17 净口径: 豁免水下判定用净盈亏 (微盈仓=净水下→豁免, 同 DEAD_SIGNAL/EOD).
+            if not _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
                 exit_reason = "TIME_EXIT"
                 exit_price = current_price
 
@@ -6299,7 +6325,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   仅 PLAYBOOK_SIM + 水下 + ≤loser_overnight_max_hold_days(5)。回滚: 删本 if 包裹。
     if not exit_reason and _skip_allowed and held_minutes > 0:
         if _horizon_max_hold_hit(entry_time_str, _max_hold_days):
-            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, profit_pct):
+            # 8/17 净口径: 豁免水下判定用净盈亏 (微盈仓=净水下→豁免, 同 DEAD_SIGNAL/EOD).
+            if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
                 logger.info(
                     f"[规则5-MAX_HOLD·W_WEEK豁免] {_symbol} {direction} 达 horizon max_hold="
                     f"{_max_hold_days}日 但 SIM水下仓在 "
@@ -6967,10 +6994,25 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
             # 真实平仓 (broker) — target_env 按 source_type (PLAYBOOK_LIVE→real, 否则 sim)
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
+            # 净保本限价平仓 (2026-08-17, 用户裁"保本单真正净保本, 包含费用, 避免白跑"):
+            #   SL_BREAKEVEN 市价平仓 fill 系统性落回保本线下方 (D4后31笔24笔净亏, 越位≈费用
+            #   — 20s轮询间隙漂移吃掉 cushion)。挂限价单@净保本线 (meta._be_net_line_price,
+            #   _check_playbook_exit_rules 按真实往返费算出): 成交价物理上≥(空:≤)保本线。
+            #   30s 未成交 → 撤单降级市价 (最坏=现状, 无卡单)。仅 SL_BREAKEVEN 走此路径:
+            #   SL_INITIAL/TRAIL_LOCK 的退出价不是保本线, 限价会扭曲语义; EOD/死信号要确定性。
+            _close_limit_price = 0.0
+            if exit_reason in ("SL_BREAKEVEN", "PATIENT_EXIT_FILL"):
+                _close_limit_price = float(meta.get("_be_net_line_price", 0) or 0)
+                if _close_limit_price > 0:
+                    logger.info(
+                        f"[playbook sim] {symbol} {direction} {exit_reason} 净保本限价平仓 "
+                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion)"
+                    )
             try:
                 from app.execution.dual_broker import get_dual_broker
                 dual = get_dual_broker()
-                close_res = dual.close_position(symbol, qty, direction, target_env=_row_target)
+                close_res = dual.close_position(symbol, qty, direction, target_env=_row_target,
+                                                limit_price=_close_limit_price)
             except Exception as _e:
                 logger.error(f"[playbook dual] 平仓异常 {symbol} ({_row_target}): {_e}")
                 _alert_close_failure(symbol, _row_target, "BROKER_EXCEPTION", str(_e))
@@ -7253,15 +7295,27 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
 
             # 2026-08-06 (用户裁决"再入场亏损可隔夜"): 再入场水下仓首夜豁免 EOD 兜底.
             #   报价缺失 → 不豁免 (保守平仓); 次日 entry_date≠当日 → 自动失效正常收.
+            # 2026-08-17 净口径: 豁免水下判定用净盈亏 (毛 0<毛<费用 的微盈仓=净水下→豁免,
+            #   与盘中规则链同口径; 算不出费 → 毛口径原行为).
+            _rpnl_net = None
             try:
                 _rq = data_router.get_quote(symbol)
                 _rp = float((_rq or {}).get("last", 0) or (_rq or {}).get("price", 0) or 0) if _rq else 0.0
                 if _rp > 0:
                     _rpnl = ((_rp - entry_price) / entry_price * 100) if direction == "LONG" \
                         else ((entry_price - _rp) / entry_price * 100)
-                    if _reentry_overnight_exempt(symbol, r["entry_time"], _rpnl):
+                    # 净口径换算 (qty/entry 可得时): 往返费/名义额 → 毛-费率
+                    try:
+                        from app.execution.fee_model import estimate_round_trip as _eod_rt
+                        _eod_fee = _eod_rt(qty, entry_price, _rp, direction)["total"]
+                        _rpnl_net = _rpnl - _eod_fee / (qty * entry_price) * 100.0
+                    except Exception:
+                        _rpnl_net = None
+                    if _reentry_overnight_exempt(symbol, r["entry_time"],
+                                                 _rpnl_net if _rpnl_net is not None else _rpnl):
                         logger.info(
-                            f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}% 持夜 (用户裁决)"
+                            f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}%"
+                            f"(净{_rpnl_net if _rpnl_net is not None else _rpnl:.2f}%) 持夜 (用户裁决)"
                         )
                         continue
             except Exception as _rex:
@@ -7270,10 +7324,13 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             # 2026-08-15 (用户三问Q3, DEB§33): SIM水下仓首夜豁免 EOD 兜底.
             #   与 PRE_CLOSE 分支同语义: 盈利落袋/水下隔夜, 次日正常收 (首夜检查失效).
             #   报价缺失 → 不豁免 (保守平仓), 与再入场豁免同纪律.
+            #   8/17 净口径同上 (UBER 8/17 -1.39% 走本路径实弹).
             try:
-                if _rp > 0 and _loser_overnight_exempt(r["source_type"], r["entry_time"], _rpnl):
+                if _rp > 0 and _loser_overnight_exempt(r["source_type"], r["entry_time"],
+                                                       _rpnl_net if _rpnl_net is not None else _rpnl):
                     logger.info(
-                        f"[playbook sim] EOD 兜底豁免 {symbol} 水下仓 {_rpnl:.2f}% 持夜 (用户三问Q3)"
+                        f"[playbook sim] EOD 兜底豁免 {symbol} 水下仓 {_rpnl:.2f}%"
+                        f"(净{_rpnl_net if _rpnl_net is not None else _rpnl:.2f}%) 持夜 (用户三问Q3)"
                     )
                     continue
             except Exception as _lex:

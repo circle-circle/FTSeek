@@ -251,8 +251,10 @@ class DualBrokerAdapter:
             logger.exception(f"[DualBroker] submit_order 异常 {order.symbol}: {e}")
             return {"success": False, "error": str(e), "futu_order_id": ""}
 
-    def close_position(self, symbol: str, qty: float, direction_held: str, target_env: str = "sim") -> Dict[str, Any]:
-        """市价平仓 (持仓方向 → 反向市价单).
+    def close_position(self, symbol: str, qty: float, direction_held: str,
+                       target_env: str = "sim", limit_price: float = 0.0,
+                       limit_timeout_s: float = 30.0) -> Dict[str, Any]:
+        """平仓 (持仓方向 → 反向单). 默认市价; limit_price>0 时挂限价单.
 
         根因修复 (2026-07-07): 订单状态是成交的唯一真相来源.
         旧实现用 position_list_query (持仓列表) 验证平仓 — SIM 环境持仓列表更新延迟可达 29s,
@@ -260,8 +262,15 @@ class DualBrokerAdapter:
         现改为用 order_list_query 的 order_status 验证 (FILLED_ALL = 全部成交),
         与持仓列表更新延迟无关, 从源头消灭整类问题.
 
+        限价平仓 (2026-08-17, 用户裁"净保本包含费用"): SL_BREAKEVEN 市价平仓的 fill
+        系统性落回保本线下方 (D4 后 31 笔 24 笔净亏, 越位≈费用本身 — 轮询间隙漂移吃掉
+        cushion). 限价单@净保本线使成交价物理上 ≥ 保本线, 净保本由订单类型保证.
+        limit_timeout_s 内未成交 → 撤单降级市价 (最坏=现状, 无卡单风险).
+
         Args:
             direction_held: "LONG" | "SHORT" — 持仓方向; 平仓用反向.
+            limit_price: >0 时限价平仓 (LONG→SELL LIMIT, SHORT→BUY LIMIT); 0=市价.
+            limit_timeout_s: 限价单等待上限, 超时撤单转市价.
 
         Returns:
             {"success": bool, "futu_order_id": str, "filled_price": float,
@@ -293,6 +302,108 @@ class DualBrokerAdapter:
             close_qty = int(broker_qty_before)
             close_side = TrdSide.SELL if direction_held == "LONG" else TrdSide.BUY
 
+            # ── 净保本限价腿 (2026-08-17, 用户裁"保本单真正净保本包含费用") ──
+            # SL_BREAKEVEN 市价平仓的 fill 系统性落回保本线下方 (D4 后 31 笔 24 笔净亏,
+            #   越位≈费用本身: 20s 轮询间隙的价格漂移把 fee cushion 精确吃掉).
+            # 限价单@净保本线: LONG→SELL LIMIT@entry×(1+费率), SHORT→BUY LIMIT@entry×(1−费率),
+            #   成交价物理上 ≥(空: ≤) 保本线 → 净保本由订单类型保证, 不靠轮询追价.
+            # timeout 未成交 → 撤单降级市价 (最坏=现状, 无卡单风险). SIM 支持 LIMIT(NORMAL).
+            _limit_dealt = 0.0
+            _limit_fill_px = 0.0  # 限价腿已成交部分的均价 (部分成交降级时加权记账用)
+            if limit_price and float(limit_price) > 0 and close_qty > 0:
+                _limit_px = round(float(limit_price), 2)
+                with lock:
+                    ret_l, data_l = ctx.place_order(
+                        price=_limit_px, qty=close_qty, code=symbol,
+                        trd_side=close_side, order_type=FutuOrderType.NORMAL,  # LIMIT
+                        trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                        remark=f"pb_be_close_{symbol}_{target_env}",  # B4: 净保本平仓单留痕
+                    )
+                if ret_l == 0 and data_l is not None and not data_l.empty:
+                    _lid = str(data_l["order_id"].values[0])
+                    _n_polls = max(1, int(float(limit_timeout_s) / 0.5))
+                    _l_fill = 0.0
+                    for _lw in range(_n_polls):
+                        _t.sleep(0.5)
+                        try:
+                            with lock:
+                                _ret_lo, _lod = ctx.order_list_query(order_id=_lid, trd_env=trd_env)
+                            if _ret_lo == RET_OK and _lod is not None and not _lod.empty:
+                                _lrow = _lod.iloc[0]
+                                _lstatus = str(_lrow.get("order_status", ""))
+                                _limit_dealt = float(_lrow.get("dealt_qty", 0) or 0)
+                                if "FILLED_ALL" in _lstatus or _limit_dealt >= close_qty:
+                                    try:
+                                        _l_fill = float(_lrow.get("dealt_avg_price", 0) or 0)
+                                    except Exception:
+                                        _l_fill = 0.0
+                                    if _l_fill <= 0:
+                                        _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
+                                    _ba = broker_qty_before - _limit_dealt if _limit_dealt > 0 else broker_qty_before
+                                    logger.info(
+                                        f"[DualBroker] 平仓(限价@净保本): {symbol} qty={close_qty} env={target_env} "
+                                        f"limit={_limit_px} fill={_l_fill} src=broker_limit_deal "
+                                        f"broker_qty: {broker_qty_before}→{_ba}"
+                                    )
+                                    return {"success": True, "futu_order_id": _lid,
+                                            "filled_price": _l_fill, "price_source": "broker_limit_deal",
+                                            "broker_qty_before": broker_qty_before, "broker_qty_after": _ba,
+                                            "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
+                                if any(_x in _lstatus for _x in ("FAILED", "CANCELLED", "DELETED", "TIMEOUT", "REJECTED")):
+                                    logger.warning(f"[DualBroker] {symbol} 限价平仓订单失败: status={_lstatus}")
+                                    break
+                        except Exception as _le:
+                            logger.debug(f"[DualBroker] {symbol} 限价单查询异常: {_le}")
+                    # ── 未成交: 撤单 + 竞态复查 + 降级市价 ──
+                    try:
+                        from futu import ModifyOrderOp
+                        with lock:
+                            ctx.modify_order(modify_order_op=ModifyOrderOp.CANCEL, order_id=_lid,
+                                             qty=0, price=0, trd_env=trd_env,
+                                             acc_id=int(acc_id) if acc_id else 0)
+                    except Exception as _ce:
+                        logger.warning(f"[DualBroker] {symbol} 撤限价单异常 (继续降级): {_ce}")
+                    # 竞态复查: 撤单请求与成交之间的窗口 — 若已全部成交, 直接按限价成交返回
+                    try:
+                        with lock:
+                            _ret_lq, _lq = ctx.order_list_query(order_id=_lid, trd_env=trd_env)
+                        if _ret_lq == RET_OK and _lq is not None and not _lq.empty:
+                            _lqr = _lq.iloc[0]
+                            _limit_dealt = float(_lqr.get("dealt_qty", 0) or 0)
+                            if "FILLED_ALL" in str(_lqr.get("order_status", "")) or _limit_dealt >= close_qty:
+                                try:
+                                    _l_fill = float(_lqr.get("dealt_avg_price", 0) or 0)
+                                except Exception:
+                                    _l_fill = 0.0
+                                if _l_fill <= 0:
+                                    _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
+                                logger.info(
+                                    f"[DualBroker] 平仓(限价@净保本·撤单竞态全成): {symbol} fill={_l_fill}"
+                                )
+                                return {"success": True, "futu_order_id": _lid,
+                                        "filled_price": _l_fill, "price_source": "broker_limit_deal",
+                                        "broker_qty_before": broker_qty_before,
+                                        "broker_qty_after": broker_qty_before - _limit_dealt,
+                                        "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
+                    except Exception as _lqe:
+                        logger.debug(f"[DualBroker] {symbol} 撤单后复查异常: {_lqe}")
+                    logger.info(
+                        f"[DualBroker] {symbol} 限价平仓单 {limit_timeout_s:.0f}s 未成交 "
+                        f"(dealt={_limit_dealt}), 撤单降级市价 (净保本兜底路径)"
+                    )
+                    if _limit_dealt > 0:
+                        # 部分成交: 市价腿只平剩余 (持仓列表有延迟, 用订单 dealt 推算更准)
+                        _limit_fill_px = self._query_filled_price(ctx, _lid, trd_env, lock)
+                        close_qty = int(broker_qty_before - _limit_dealt)
+                        if close_qty <= 0:
+                            _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
+                            return {"success": True, "futu_order_id": _lid,
+                                    "filled_price": _l_fill, "price_source": "broker_limit_deal",
+                                    "broker_qty_before": broker_qty_before, "broker_qty_after": 0,
+                                    "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
+                else:
+                    logger.warning(f"[DualBroker] {symbol} 限价平仓下单失败, 降级市价: {data_l}")
+
             with lock:
                 ret, data = ctx.place_order(
                     price=0.0, qty=close_qty, code=symbol,
@@ -300,7 +411,6 @@ class DualBrokerAdapter:
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
                     remark=f"pb_close_{symbol}_{target_env}",  # B4: 平仓单留痕
                 )
-
             if ret != 0:
                 return {"success": False, "error": f"平仓下单失败: {data}",
                         "filled_price": 0, "price_source": "order_rejected",
@@ -353,6 +463,18 @@ class DualBrokerAdapter:
             # 订单成交后再查一次成交价 (确保拿到最终价)
             if order_filled and filled_price <= 0:
                 filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
+
+            # 限价腿部分成交 + 市价腿平剩余 → 按全部已成交量的加权均价记账 (2026-08-17).
+            #   dealt_qty 此处仅为市价腿成交; _limit_dealt/_limit_fill_px 是限价腿.
+            _total_dealt = dealt_qty + _limit_dealt
+            if order_filled and _limit_dealt > 0 and filled_price > 0 and _limit_fill_px > 0 and _total_dealt > 0:
+                _wavg = (_limit_fill_px * _limit_dealt + filled_price * dealt_qty) / _total_dealt
+                logger.info(
+                    f"[DualBroker] {symbol} 两腿平仓加权均价: limit腿 {_limit_dealt}@{_limit_fill_px} + "
+                    f"market腿 {dealt_qty}@{filled_price} → {_wavg:.4f}"
+                )
+                filled_price = round(_wavg, 4)
+                dealt_qty = _total_dealt
 
             # 计算剩余持仓 (仅用于日志/审计, 不作为成交判定依据)
             broker_qty_after = broker_qty_before - dealt_qty if dealt_qty > 0 else broker_qty_before

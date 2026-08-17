@@ -215,7 +215,8 @@ class TestMonitorPatientExitStateMachine:
         def _fake_get_dual_broker():
             dual = MagicMock()
 
-            def _close(symbol, qty, direction, target_env=None):
+            def _close(symbol, qty, direction, target_env=None,
+                       limit_price=0.0, limit_timeout_s=30.0):
                 return {
                     "success": True, "order_filled": True,
                     "filled_price": _last_quote.get("price", 0),
