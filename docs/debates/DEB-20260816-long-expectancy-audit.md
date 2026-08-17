@@ -726,3 +726,35 @@ entry_hour 维度默认输出政策期拆分版, 混合版只作背景。
 (如 8/17 上午) 实际只有 UE 0.5 档在执行 → §2.11 的"UE 最优仅占 17%"
 在断供日被放大。L-E6 UE 扩产影子判据须考虑此基线污染: DA 覆盖事故日
 UE 占比天然虚高。建议台账加 "supply_mode" 维度 (DA+UE 双活 vs UE 独活)。
+
+---
+## 十六、根源修复 — 覆盖仲裁下沉 SQL 收口点 (Hermes, 2026-08-17, 用户质疑驱动)
+
+用户质疑"是否完全修复、不引入新问题、要从根源解决" → 逐行读码自查后承认:
+§十五的晨间修复 **不是根源级**。三个结构性问题:
+
+1. `db.py` 注释自己写着 `save_instruction` 是"全写入方唯一收口点", 守卫却散在
+   generate/topup 两个调用方 + UE 侧自己一套 `_is_da_priority_skip` — 三处守卫
+2. 前缀清单两套且口径分叉 (UE 侧保护一切非本源前缀; generate 侧只认 DA-/UE:)
+3. 调用方"先读后写"有 TOCTOU 竞态窗口; 旧测试还锁着"后写者赢=调度顺序即优先级"
+   契约 — 正是 8/17 事故的根源哲学 (generate 排 DA 后面跑就把 DA 碾了)
+
+**根源方案 (commit 1f227f98)**: `ON CONFLICT DO UPDATE WHERE` 原子优先级阶梯,
+一处 SQL 规则覆盖现在与未来全部写入方:
+- 优先级: DA-/universe_expansion*/intraday_reentry- = 3, TFB-/SNAP-/DEC- = 1, 空 = 0
+- 新行 >= 现存行才覆盖; UE 浅指令永不覆盖 DA 深度内容; reentry 重武装无条件放行
+- 做减法: 删 generate/topup 两处调用方守卫 + `_generate_da_priority_check` 函数本体;
+  UE 侧 `_is_da_priority_skip` 保留作快路径+精确计数 (语义更严: 不覆盖任何非UE行)
+- 旧契约测试 `test_upsert_later_writer_wins` → `test_ue_does_not_overwrite_da`
+
+**验证 (五层)**:
+1. 前置实弹: UPSERT WHERE 拒绝 rowcount=0 / NULL 须 COALESCE / 历史 0 次同键碰撞
+2. 49 组成对矩阵 + 事故精确回放 + 幂等保持 = 87/87
+3. 生产库副本实弹 5/5: SKIP打DA行拒✅ / TFB打UE行拒✅ / DA幂等放✅ / reentry放✅ / SKIP幂等放✅
+4. 全量回归 1336 passed
+5. 计数器审计: topup 候选池源头排除当日有行标的 (只 INSERT 新行不撞仲裁);
+   generate 的 saved 仅日志不进控制流 → 无虚增风险
+
+回滚: 删 db.py WHERE 块即恢复旧无条件 UPSERT。
+教训 (对双方): 修复放错层次 = 没修根源; 收口点存在却不收口, 守卫散在调用方就是
+层层校验打补丁。用户质疑"要从根源解决"是本轮最高价值信号。
