@@ -2342,6 +2342,40 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 空头漏斗影子打标异常 (已隔离): {_e}")
 
+                    # 缺口语义影子打标 (2026-08-17, DEB-20260817, record-only):
+                    #   A3票型驱动冻结(gap_filler零区分度), 但gap-bucket级语义(市场级)
+                    #   有实证: 小缺口等回踩/big缺口别等。打 wait/chase 判定 + A1开盘
+                    #   5min中枢重锚反事实 → data/gap_semantics_shadow.jsonl, 按指令幂等。
+                    #   n≥60 再裁 gap 语义门。回滚: 配置键 false + 重启。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_gs
+                        _sp = _ilu.spec_from_file_location(
+                            "gap_semantics_shadow_tag",
+                            str(_P_gs(__file__).resolve().parents[2] / "scripts" / "gap_semantics_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 缺口语义影子打标异常 (已隔离): {_e}")
+
+                    # band波动率化影子打标 (2026-08-17, DEB-20260817, record-only):
+                    #   扁平band全池一套(entry_band.py自认不合理), 用SL同源atr分桶口径算
+                    #   反事实band, 对照成交价质量/死锚/时滞 → data/band_vol_shadow.jsonl。
+                    #   回填补读: 成交中位偏离0.000ATR, 病症暂不成立, 影子留作漂移监控。
+                    #   回滚: 配置键 false + 重启。
+                    try:
+                        import importlib.util as _ilu
+                        from pathlib import Path as _P_bv
+                        _sp = _ilu.spec_from_file_location(
+                            "band_vol_shadow_tag",
+                            str(_P_bv(__file__).resolve().parents[2] / "scripts" / "band_vol_shadow_tag.py"))
+                        _mod = _ilu.module_from_spec(_sp)
+                        _sp.loader.exec_module(_mod)
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

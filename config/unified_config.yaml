@@ -1208,6 +1208,14 @@ playbook:
   #   真实断点=LLM分析层 (35只→看空仅1), 解析DA日志评级分布攒样→data/short_funnel_shadow.jsonl。
   #   n≥10交易日再裁分层gate。回滚: false + 重启。
   short_funnel_shadow_enabled: true
+  # 2026-08-17 (DEB-20260817 画像系统, 建议①): 缺口语义影子 — gap-bucket级"等vs追"
+  #   判定 + A1开盘5min中枢重锚反事实→data/gap_semantics_shadow.jsonl。市场级规律不依赖
+  #   票型标签(A3冻结不受影响)。n≥60再裁gap语义门。回滚: false + 重启。
+  gap_semantics_shadow_enabled: true
+  # 2026-08-17 (DEB-20260817, 建议②): band波动率化影子 — 扁平band vs atr分桶反事实band
+  #   成交价质量/死锚/时滞对照→data/band_vol_shadow.jsonl。回填补读: 成交中位偏离
+  #   0.000ATR+两臂触达100%=band非入场约束, 病症暂不成立, 影子降级为漂移监控。回滚同上。
+  band_vol_shadow_enabled: true
   intraday_reentry:
     enabled: true
     mode: live
