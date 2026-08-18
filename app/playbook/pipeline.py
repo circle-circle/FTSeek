@@ -6998,15 +6998,22 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             #   SL_BREAKEVEN 市价平仓 fill 系统性落回保本线下方 (D4后31笔24笔净亏, 越位≈费用
             #   — 20s轮询间隙漂移吃掉 cushion)。挂限价单@净保本线 (meta._be_net_line_price,
             #   _check_playbook_exit_rules 按真实往返费算出): 成交价物理上≥(空:≤)保本线。
-            #   30s 未成交 → 撤单降级市价 (最坏=现状, 无卡单)。仅 SL_BREAKEVEN 走此路径:
-            #   SL_INITIAL/TRAIL_LOCK 的退出价不是保本线, 限价会扭曲语义; EOD/死信号要确定性。
+            #   30s 未成交 → 撤单降级市价 (最坏=现状, 无卡单)。
+            # 2026-08-18 (SNDK 实弹案, 用户裁"需要"): SL_TRAIL_LOCK 纳入限价保护。
+            #   SNDK: peak +1.05% → 锁利线 1693.07 已高于入场价, 市价单成交 1687.38
+            #   击穿入场价 (09:45-09:47 三分钟 1700→1663 急跌), 保本机制触发了但
+            #   执行层把锁住的利润全部吐回 (净 -$8.99)。原注释"TRAIL_LOCK 退出价
+            #   不是保本线, 限价扭曲语义"在急跌场景不成立: 限价是"地板"不是"目标价"
+            #   —— 限价=净保本线 < 检测时市价 → 立即按市价成交 (锁利利润保留),
+            #   仅急跌时成交价地板抬到净保本线; 30s 未成交降级市价=现状无卡单。
+            #   SL_INITIAL 仍市价 (亏损退出, 限价无意义); EOD/死信号要确定性不变。
             _close_limit_price = 0.0
-            if exit_reason in ("SL_BREAKEVEN", "PATIENT_EXIT_FILL"):
+            if exit_reason in ("SL_BREAKEVEN", "SL_TRAIL_LOCK", "PATIENT_EXIT_FILL"):
                 _close_limit_price = float(meta.get("_be_net_line_price", 0) or 0)
                 if _close_limit_price > 0:
                     logger.info(
                         f"[playbook sim] {symbol} {direction} {exit_reason} 净保本限价平仓 "
-                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion)"
+                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion, 地板保护)"
                     )
             try:
                 from app.execution.dual_broker import get_dual_broker
