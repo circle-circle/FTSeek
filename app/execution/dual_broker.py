@@ -253,7 +253,7 @@ class DualBrokerAdapter:
 
     def close_position(self, symbol: str, qty: float, direction_held: str,
                        target_env: str = "sim", limit_price: float = 0.0,
-                       limit_timeout_s: float = 30.0) -> Dict[str, Any]:
+                       limit_timeout_s: float = 8.0) -> Dict[str, Any]:
         """平仓 (持仓方向 → 反向单). 默认市价; limit_price>0 时挂限价单.
 
         根因修复 (2026-07-07): 订单状态是成交的唯一真相来源.
@@ -308,6 +308,13 @@ class DualBrokerAdapter:
             # 限价单@净保本线: LONG→SELL LIMIT@entry×(1+费率), SHORT→BUY LIMIT@entry×(1−费率),
             #   成交价物理上 ≥(空: ≤) 保本线 → 净保本由订单类型保证, 不靠轮询追价.
             # timeout 未成交 → 撤单降级市价 (最坏=现状, 无卡单风险). SIM 支持 LIMIT(NORMAL).
+            # 2026-08-18 (WDC/AMD 实弹案, 用户裁"要"): timeout 30s → 8s.
+            #   SL_BREAKEVEN 触发几何 = 价格已穿越保本线 → 限价单结构性站在被动侧,
+            #   只有价格 30s 内回摆才成交; 不回摆则等满 30s 撤单降级市价, 多漂一段:
+            #   WDC SHORT 限价@503.32 零成交 31s → 市价 505.02 (多亏 ~$17.8);
+            #   AMD LONG 限价@481.54 零成交 31s → 市价 480.77 (多亏 ~$8.0).
+            #   对照 BABA: 价格快速回摆 → 限价成交净 +$0.43 (博弈收益保留).
+            #   8s = 保留小幅回摆博弈, 逆向漂移上限砍 73%. 回滚: 改回 30.0.
             _limit_dealt = 0.0
             _limit_fill_px = 0.0  # 限价腿已成交部分的均价 (部分成交降级时加权记账用)
             if limit_price and float(limit_price) > 0 and close_qty > 0:

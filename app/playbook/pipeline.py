@@ -6584,12 +6584,16 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
             # 当前价 (2026-07-21: 批量快照优先, 缺失/无价的标的回落单原取价)
             current_price = None
+            _quote_src = ""  # 2026-08-18 报价源遥测 (WDC/AMD 案: 触发价与1分K线矛盾待对账)
             try:
                 quote = _batch_quotes.get(symbol)
                 if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
                     quote = data_router.get_quote(symbol)
+                    _quote_src = "single_fallback"
                 if quote and isinstance(quote, dict):
                     current_price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
+                    if not _quote_src:
+                        _quote_src = str(quote.get("data_source", "batch"))
             except Exception:
                 pass
             if not current_price or current_price <= 0:
@@ -7011,9 +7015,23 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             if exit_reason in ("SL_BREAKEVEN", "SL_TRAIL_LOCK", "PATIENT_EXIT_FILL"):
                 _close_limit_price = float(meta.get("_be_net_line_price", 0) or 0)
                 if _close_limit_price > 0:
+                    # 2026-08-18 遥测 (WDC/AMD 案): 限价单相对触发价 = 主动侧(可立即吃)/
+                    #   被动侧(等价格回摆). SL_BREAKEVEN 触发几何=价格已穿越保本线 → 结构性
+                    #   被动侧; TRAIL_LOCK 地板<锁利线<触发价 → 主动侧. 毕业判分按侧分组.
+                    if direction == "LONG":
+                        _be_side = "passive" if _close_limit_price > current_price else "active"
+                    else:
+                        _be_side = "passive" if _close_limit_price < current_price else "active"
+                    meta["_be_close_telemetry"] = {
+                        "trigger_price": current_price,
+                        "quote_src": _quote_src,
+                        "limit_px": _close_limit_price,
+                        "limit_side": _be_side,
+                    }
                     logger.info(
                         f"[playbook sim] {symbol} {direction} {exit_reason} 净保本限价平仓 "
-                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion, 地板保护)"
+                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion, 地板保护, "
+                        f"侧={_be_side} 触发价={current_price:.4f} src={_quote_src})"
                     )
             try:
                 from app.execution.dual_broker import get_dual_broker
@@ -7181,6 +7199,22 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 _meta_out.pop("patient_exit", None)  # expire/未 arm: 开环旧行的状态不复活
             if meta.get("_patient_exit_expired"):
                 _meta_out["_patient_exit_expired"] = True
+            # 2026-08-18 遥测搬运 (WDC/AMD 案): 限价保护退出的侧/触发价/报价源 +
+            #   成交结局 (limit_filled=限价成交; limit_fallback=30s→8s 未成交降级市价)
+            #   + 降级漂移 (fallback_fill 相对保本线的越位). 毕业判分按 limit_side 分组.
+            if meta.get("_be_close_telemetry"):
+                _be_tel = dict(meta["_be_close_telemetry"])
+                if _price_source == "broker_limit_deal":
+                    _be_tel["outcome"] = "limit_filled"
+                else:
+                    _be_tel["outcome"] = "limit_fallback_market"
+                    try:
+                        _be_tel["fallback_fill"] = exit_price
+                        _be_tel["drift_from_be_line"] = round(
+                            (exit_price - _be_tel["limit_px"]) / _be_tel["limit_px"] * 10000, 2)
+                    except Exception:
+                        pass
+                _meta_out["_be_close_telemetry"] = _be_tel
             # C1 补测 (2026-07-24, DEB-20260724 §八): 出场滑点 (主退出路径: TIME_EXIT/SL/TRAIL/
             #   PRE_CLOSE/MFE_STALL 全覆盖). 口径同 SL 路径: 决策参考价 vs 成交价, 正=不利.
             if current_price and current_price > 0 and exit_price > 0:
