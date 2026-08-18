@@ -48,3 +48,4 @@ total_pnl: 265.08
 1. 观察 be_0.4 首个实盘日: SL_BREAKEVEN 桶净期望与摩擦区成交情况
 2. UBER 1288 持仓跟踪 (SL 72.65 / TP 82.23, 盘前 Robotaxi 论点)
 3. fees est ($4.1-4.6/笔) 与券商实际费用核对, est 口径偏差会歪净胜率
+4. 链路复盘全档: [[DEB-20260818-us-chain-retrospective]] (事故响应价值量化 / 费用口径2x疑差 / UE逆势空 / 主题集中度)
