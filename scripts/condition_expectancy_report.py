@@ -80,6 +80,19 @@ def main():
 
     p30 = collect(lo30)
     p60 = collect(lo60)
+    # B1a (2026-08-19, Phase A 回放裁决): 读取当前 regime — 用于跨regime veto 的快通道.
+    #   实锤案例: pe_below_industry 近30日 n=89 均-$12.48, 但 RISK_OFF 小桶 +$4.73
+    #   触发"跨regime同号"veto 被压在观察档; 而我们只在 risk_on 交易, 该桶 n=28
+    #   均 -$25.28. 不交易的 regime 的小样本不应否决当前 regime 的充分证据.
+    cur_regime = "UNKNOWN"
+    try:
+        _row = con.execute(
+            "SELECT regime FROM playbook_regime_log ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if _row:
+            cur_regime = (_row["regime"] or "UNKNOWN").upper()
+    except Exception:
+        pass
     con.close()
 
     rnd = random.Random(42)
@@ -123,6 +136,24 @@ def main():
             "boot_p_ge0": round(p_val, 4),
             "net30": round(sum(v30), 2),
         }
+        # B1a 快通道 (2026-08-19, Phase A 回放裁决): 当前 regime 桶证据充分时,
+        #   不被"不交易的 regime"的小样本 veto 压在观察档。
+        #   限定 (四层, 缺一不升级):
+        #     ① 当前 regime 桶 n≥20 (比全局 MIN_N=8 更严)
+        #     ② 当前桶均值 ≤ -$10 (强负, 拒绝边缘案例)
+        #     ③ bootstrap p≤0.005 (与正常 hard 档同一显著性门槛)
+        #     ④ 60d 窗同号负 (行119已保证, 双窗纪律不破)
+        #   权限边界: 仍只是 prompt 软警示 (DA 可凭独立强逻辑保留+thesis说明),
+        #     不进 pipeline 硬拦截; regime 切换后次日 05:42 自动重评, 无永久禁令。
+        _cur_vals = by_reg.get(cur_regime, [])
+        if not all_neg and len(_cur_vals) >= 20:
+            _cur_mean = sum(_cur_vals) / len(_cur_vals)
+            if _cur_mean <= -10.0 and p_val <= 0.005:
+                hard.append({**entry, "note": (
+                    f"B1a当前regime快通道: {cur_regime} n={len(_cur_vals)} "
+                    f"mean={_cur_mean:.2f} (其余regime小样本不veto)"
+                )})
+                continue
         if not all_neg:
             watch.append({**entry, "note": "regime 不同号, 仅观察"})
         elif p_val <= 0.005:
