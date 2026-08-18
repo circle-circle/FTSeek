@@ -82,7 +82,7 @@ def _variants() -> list[dict]:
     v = [{"name": "live_baseline"}]
     for dd in (0.4, 0.5, 0.6, 1.0, 1.2):
         v.append({"name": f"dd_{dd}", "dd": dd})
-    for be in (0.3, 0.8):
+    for be in (0.3, 0.4, 0.8):
         v.append({"name": f"be_{be}", "be": be})
     v.append({"name": "tiered_dd0.4_tier1.2", "tier_dd_low": 0.4, "tier_at": 1.2})
     v.append({"name": "tiered_dd0.5_tier1.5", "tier_dd_low": 0.5, "tier_at": 1.5})

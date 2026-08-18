@@ -52,7 +52,7 @@ factor_exit_rules:
   #   回滚: 改回 0.4. 判分: 下周五 exit_scorecard R:R + avg_win 对比.
   default:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 更早保本, 影子数据验证 (不动)
+    breakeven_at_pct: 0.4           # 0.5→0.4 (2026-08-17 用户裁"直接落地be_0.4"): 触发线=费用线对齐, 真净保本. 回放n=265 pess+88/opt+161双序正, 零缺口带虚增(be_0.3有40笔物理不可成交被否). 生产fee-aware费用垫实弹avg0.147%≪0.4%→保本线恒在峰值下方可成交. 回滚: 改回0.5
     drawdown_from_peak_pct: 0.8     # 0.4→0.8: handoff处方回归, 释放赢家呼吸空间
     trailing_step_pct: 2.0          # 兼容回退(无drawdown时用)
     time_exit_hours: 6.0           # 4.0→6.0: TIME_EXIT 7笔0%WR-$238, 2h-4h死亡区间, 延长让趋势仓不被砍
@@ -69,7 +69,7 @@ factor_exit_rules:
   #   回滚: 全部改回 0.5. 判分: 与 default 同窗口, 下周五 exit_scorecard R:R + avg_win.
   insider_cluster_buy:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default: 释放赢家呼吸空间
     trailing_step_pct: 1.5
     time_exit_hours: 999       # 盈利仓不 time_exit
@@ -77,7 +77,7 @@ factor_exit_rules:
     max_hold_days: 5
   macd_golden_cross:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
+    breakeven_at_pct: 0.4           # 1.0→0.5: 与default对齐
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
@@ -85,7 +85,7 @@ factor_exit_rules:
     max_hold_days: 3
   above_ma20:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
+    breakeven_at_pct: 0.4           # 1.0→0.5: 与default对齐
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
@@ -93,7 +93,7 @@ factor_exit_rules:
     max_hold_days: 3
   news_positive:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 4
@@ -103,21 +103,21 @@ factor_exit_rules:
   # 波动/反转类: 快速证伪, 不恋战
   volume_expansion:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5       # 30 分钟内不盈利就砍
     time_exit_only_if_loss: true
     max_hold_days: 1
   rsi_oversold:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   pe_below_industry:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
@@ -128,7 +128,7 @@ factor_exit_rules:
   # 趋势/动量类 (与 above_ma20/macd_golden_cross 同组, 让利润奔跑)
   above_ma50:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
+    breakeven_at_pct: 0.4           # 1.0→0.5: 与default对齐
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
@@ -136,7 +136,7 @@ factor_exit_rules:
     max_hold_days: 3
   ma_golden_cross:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
+    breakeven_at_pct: 0.4           # 1.0→0.5: 与default对齐
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
@@ -144,7 +144,7 @@ factor_exit_rules:
     max_hold_days: 3
   bollinger_upper:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5: 与default对齐
+    breakeven_at_pct: 0.4           # 1.0→0.5: 与default对齐
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 4
@@ -152,7 +152,7 @@ factor_exit_rules:
     max_hold_days: 2
   bollinger_squeeze:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5
+    breakeven_at_pct: 0.4           # 1.0→0.5
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 6
@@ -160,7 +160,7 @@ factor_exit_rules:
     max_hold_days: 3
   near_52w_high:
     trailing_enabled: true
-    breakeven_at_pct: 0.5           # 1.0→0.5
+    breakeven_at_pct: 0.4           # 1.0→0.5
     drawdown_from_peak_pct: 0.8     # 7/19处方对齐default
     trailing_step_pct: 2.0
     time_exit_hours: 4
@@ -171,7 +171,7 @@ factor_exit_rules:
   # 2026-07-09: drawdown 0.6→0.5, 与趋势类对齐
   insider_net_buy:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
@@ -179,7 +179,7 @@ factor_exit_rules:
     max_hold_days: 5
   revenue_growth_high:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
@@ -187,7 +187,7 @@ factor_exit_rules:
     max_hold_days: 5
   roe_high:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 999
@@ -195,7 +195,7 @@ factor_exit_rules:
     max_hold_days: 5
   earnings_beat_streak:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 8
@@ -203,7 +203,7 @@ factor_exit_rules:
     max_hold_days: 3
   post_earnings_momentum:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 8
@@ -214,7 +214,7 @@ factor_exit_rules:
   # 2026-07-09: drawdown 0.6→0.5
   sentiment_bullish:
     trailing_enabled: true
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     drawdown_from_peak_pct: 0.8   # 7/19处方对齐default
     trailing_step_pct: 1.5
     time_exit_hours: 4
@@ -224,56 +224,56 @@ factor_exit_rules:
   # 做空/看跌类 (快速证伪, 不恋战)
   below_ma20:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   below_ma50:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   ma_dead_cross:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   macd_dead_cross:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   bollinger_lower:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   near_52w_low:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   rsi_overbought:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   rsi_neutral_low:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
@@ -282,21 +282,21 @@ factor_exit_rules:
   # 看跌情绪/新闻/内部人 (快速证伪)
   news_negative:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   sentiment_bearish:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
     time_exit_only_if_loss: true
     max_hold_days: 1
   insider_net_sell:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
@@ -305,21 +305,21 @@ factor_exit_rules:
   # 价值/其他 (保守, 快速证伪)
   pe_above_industry:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   volume_contraction:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
   earnings_approaching:
     trailing_enabled: false
-    breakeven_at_pct: 0.5
+    breakeven_at_pct: 0.4
     trailing_step_pct: 2.0
     time_exit_hours: 1.0
     time_exit_only_if_loss: true

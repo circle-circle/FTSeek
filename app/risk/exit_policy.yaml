@@ -140,7 +140,7 @@ exit_rules:
   # 2026-06-28 (ADR-008): 按辩论结论禁用 — 2% SL 下 ratchet 意义有限, 由 pre_close 替代利润保护
   # 2026-07-07 说明: 本文件规则仅适用于 ExitMonitor 管理的主线/ORB 仓位.
   #   PLAYBOOK_SIM/LIVE 仓位由 app/playbook/pipeline.py 的 factor_exit_rules 独立管理,
-  #   其中 breakeven 默认启用 (breakeven_at_pct=0.5), 二者 SSOT 分离.
+  #   其中 breakeven 默认启用 (breakeven_at_pct=0.4, 2026-08-17 be_0.4 落地), 二者 SSOT 分离.
   breakeven:
     enabled: false
     trigger_profit_pct: 1.5          # 保本触发: SL移至entry
