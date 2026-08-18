@@ -1124,9 +1124,14 @@ def _build_instructions_from_votes(
         if vote_result is None:
             # 2026-07-27 (topup 零产出诊断): 此分支原无审计桶 — 18 skip 而 breakdown 全 0
             #   的隐形路径实锤。补桶使过滤审计闭合。
+            # 2026-08-18 (标签勘误): 旧文案"投票返回 None"误导漏斗诊断 — 8/18 复盘据此
+            #   误判"DA 产出被静默丢弃 64%"。真相: BridgeVotingAdapter 对非 DA 候选查无
+            #   此人返回 None (设计如此, DA 14 候选当日 100% 被消费); Technical/Null 适配器
+            #   返回 None 分别是"technical 无方向"/"无 bridge"。改为语义准确文案。
+            #   零行为变更, 下游无字符串消费方 (8/18 grep 验证)。
             _filter_audit["vote_none"] = _filter_audit.get("vote_none", 0) + 1
             instructions.append(Instruction(
-                symbol=symbol, direction="SKIP", skip_reason="投票返回 None"
+                symbol=symbol, direction="SKIP", skip_reason="非当前通道候选(bridge未提名/无方向)"
             ))
             continue
         
