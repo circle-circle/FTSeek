@@ -32,9 +32,12 @@
 | derivative_unusual 采集器（§6.2） | ✅ 真在跑：data/futu_deriv_unusual.jsonl 953KB，最新事件 8/18 03:44（结构化字段齐全） |
 | 财报日历 Futu 冗余源（§6.3①） | ✅ 在位：app/data/earnings_calendar.py L288 `_fetch_futu_calendar_fallback`；本次实弹 get_earnings_calendar 返回 239 行（7 天窗口） |
 | 质量闸修复（§6.4 阈值 14e9→2e9） | ✅ 在位：skill 侧 market_scanner.py L236 `mcap < 2e9` + USD 单位纠错注释 |
-| **盘前榜单扩池接线（§6.3②）** | ❌ **声称-现实出入**：commit 6457639f 消息声称"data_collector 扩池并入 collect_premarket_movers"，但该 commit 实际只含 earnings_calendar.py + DEB 两个文件；`git log -S 'collect_premarket_rank_codes'` 证明此代码**从未存在于任何提交**；repo 侧零消费方，仅 skill 侧脚本 get_us_premarket_rank.py 存在 |
+| **盘前榜单扩池接线（§6.3②）** | ✅ 落地属实（8/18 P1 复核勘误）：代码在 **skill 侧** deep-stock-analysis/scripts/data_collector.py L418 定义 + L468 接入 collect_premarket_movers 池；本档初轮误报"从未入库"系**搜错仓**（只搜 repo 侧，未搜 DA 生产入口 skill 仓，即前案警告过的"先确认生产入口指向哪个目录"之反面教材）。skill 仓 git 不追踪 scripts/（untracked 设计），非遗漏 |
 
-**出入定性**：前案"实测 100 movers 中 79/100 为旧池之外新供给"的实验可能是真的（脚本侧可跑），但接线代码未提交，当前生产链路**不享受该扩池**。属落地遗漏非造假，修复成本低（§五 P1）。
+**出入定性（8/18 P1 复核后更正）**：初轮"声称-现实出入"判定**错误**，系审计搜错仓所致。
+扩池代码真实存在且已接线生产（skill 侧 data_collector.py L418/L468），实弹返回 20 条
+（双向榜各 10）。前案落地基本属实，无修复需求。教训：跨仓落地核查必须覆盖全部
+生产入口（repo + skill），git untracked ≠ 代码不存在。
 
 ---
 
@@ -47,7 +50,7 @@
 | get_rise_fall_distribution | 20ms | 2 rows | **市场广度**（regime 检测器现仅 VIX 轴，广度是文献支持的独立轴） |
 | get_top_movers_rank | 55ms | 2 rows | 盘中异动榜（候选供给） |
 | get_hot_list | 105ms | 2 rows | 热度榜 |
-| get_us_pre_market_rank | 58ms | 2 rows | **盘前榜单扩池**（补前案遗漏接线的原料） |
+| get_us_pre_market_rank | 58ms | 2 rows | 盘前榜单扩池（前案已接线 skill 侧，实弹 20 条验证通过） |
 | get_us_overnight_rank | 50ms | 2 rows | 隔夜榜 |
 | get_us_after_hours_rank | 49ms | 2 rows | 盘后榜 |
 | get_period_change_rank(1d) | 77ms | 2 rows | 周期涨跌榜 |
@@ -93,10 +96,15 @@
 
 ## 五、缺口清单与分级建议（全部待裁，record-only）
 
-### P1 — 补前案遗漏（供给侧，零行为变更，当日可做）
+### P1 — 前案遗漏复核（8/18 已收口：两项均无需修改）
 
-1. **盘前榜单扩池接线**：skill 侧 get_us_premarket_rank.py 已存在且实弹可用（58ms），缺 repo 侧 data_collector 消费方。按前案 §6.3② 原设计补上（只供 code/name，后续走既有快照 + |涨跌幅|≥4% + 盘前量≥500 阈值门，门禁不变）。
-2. **验证财报日历生产消费路径**：fallback 代码在位，但需确认 8/18 盘前实际走了哪条源（AV 还是 Futu），防止 fallback 从未被触发过（死代码风险，同 8/17 DA 盲窗教训：存在≠生效）。
+1. ~~盘前榜单扩池接线~~ → **核实属实，无遗漏**：skill 侧 data_collector.py L418/L468
+   已接线生产（collect_premarket_movers 池内，门禁不变：|涨跌幅|≥4% + 盘前量≥500）；
+   实弹返回 20 条（双向榜）。初轮误报系搜错仓，已勘误。
+2. ~~验证财报日历 fallback 触发~~ → **功能验证通过**：直调 `_fetch_futu_calendar_fallback`
+   返回 239 条，契约字段与 AV 解析结果零缺失，HD 8/18 pre-market 与富途日历外部锚点吻合。
+   生产日志显示从未触发 = AV 源一直成功，fallback 保持待命——**这是 fallback 的健康状态，
+   非死代码**。下次 AV 故障/空结果时自动接管，无需干预。
 
 ### P2 — 新通道影子先行（攒样后裁决，不接交易）
 
@@ -119,8 +127,8 @@
 
 ## 六、决策
 
-- 暂无（审计档，P1-P3 全部待裁）。
-- P1 两项性质 = 前案遗漏修复 + 死代码验证，建议当日落地（与前案"修尺子不改行为"同裁决口径）。
+- 暂无（审计档，P2/P3 待裁；P1 已收口无需落地）。
+- P1 复核结论：前案落地属实，两项均无需修改（详见 §五 P1 与讨论记录第 2 轮）。
 - P2/P3 走影子攒样 → 8/24 或 9/2 裁决窗（与 DEB-20260812 A/B 同窗）。
 
 ## 讨论记录
@@ -132,18 +140,44 @@
 **发现**：
 1. 权益充足（1000 席订阅 0 占用），瓶颈在消费方不在额度。
 2. 10.9 新接口 9/9 可用且全部零消费者 — 升级红利未兑现。
-3. 前案"盘前榜单扩池接线"声称与提交不符（代码从未入库）— 已如实记录，修复方案见 §五 P1。
+3. 前案"盘前榜单扩池接线"初轮误报"声称与提交不符"——系搜错仓（只搜 repo 未搜 skill 生产入口），
+   P1 复核已勘误：代码真实存在且已接线（讨论记录第 2 轮）。
 4. 真实性验证全过：价格 diff 0.0000%、财报日历/历史互证一致。
 5. 订阅机制健康：压测 0→10→0 精确，退订 60s 硬约束与 close 兜底均已实证。
 
 **自报局限**：
 - 榜单接口在盘后时段实弹，返回行数少（2 rows），盘中数据密度需开盘后复核。
 - F10 接口仅验证 NVDA 单标的，小票覆盖度未测。
-- 未测 get_earnings_calendar 在财报日历 fallback 生产路径的实际触发率（§五 P1-2 就是为此设的）。
+- 未测 get_earnings_calendar 在财报日历 fallback 生产路径的实际触发率——P1 复核已补：
+  直调验证功能可用，生产从未触发系 AV 一直成功（fallback 健康状态）。
+
+### 第 2 轮（P1 复核与自我勘误，2026-08-18）
+
+**背景**：用户批准 P1 两项落地。执行复核后发现**初轮审计的两处误判**，如实勘误：
+
+**误判 1：盘前榜单扩池"从未入库"**
+- 初轮只搜 repo 侧（FTSeek-US 仓）`git log -S collect_premarket_rank_codes` → 空 → 判定遗漏。
+- P1 复核扩搜 skill 生产入口（deep-stock-analysis/scripts/）→ 代码真实存在：
+  data_collector.py L418 定义（双向榜 descend/ascend 各取 50）+ L468 接入
+  collect_premarket_movers 池，门禁不变（|涨跌幅|≥4% + 盘前量≥500）。
+- 实弹验证：`collect_premarket_rank_codes('US', 10)` 返回 20 条（US.IPST/IVF/TRUG/EFSI/DEFI…）。
+- 误判根因：skill 仓 git 不追踪 scripts/ 目录（194 个 untracked 文件为设计），
+  untracked ≠ 不存在。这正是前案 §6.2 警告过的"先确认生产入口指向哪个目录"的反面教材。
+
+**误判 2：财报日历 fallback"死代码风险"**
+- P1 复核直调 `_fetch_futu_calendar_fallback(days_ahead=7)`：返回 **239 条**，
+  契约字段 {symbol, reportDate, timeOfTheDay, estimate, currency, name, source} 与
+  AV 解析结果零缺失对齐；HD 8/18 pre-market EPS 预估 4.6057 与富途日历审计锚点一致。
+- 生产日志证实从未触发（AV 一直成功）——fallback 待命是**健康状态**，非死代码。
+- 结论：无需任何修改，下次 AV 故障自动接管。
+
+**P1 收口判定**：前案 DEB-20260812 §6.3 落地基本属实，两项均无需修改。
+本档 §二/§五/§六 已同步更正；初轮结论中的"落地遗漏"定性撤回。
 
 ## 关联文档
 
 - docs/debates/DEB-20260812-futu-unused-channels.md（前案：升级 + 采集器 + 接线，本档复核其落地）
 - docs/debates/DEB-20260805-futu-unused-capabilities.md（期权链/IV 主张 5 否决，冻结条款仍有效）
 - config/unified_config.yaml futu_lv3.stock_sub_types（ADR-013 订阅收敛配置）
-- 提交：6457639f（前案接线，含声称-现实出入）
+- 提交：6457639f（前案 repo 侧接线：财报日历 fallback；skill 侧扩池在 untracked scripts/ 中，
+  P1 复核确认落地属实）
