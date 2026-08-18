@@ -142,7 +142,12 @@
       效应，est 无偏差；降级为 P2 名义档费率例行卫生
 - [ ] **P2**（第 3 轮新增）：低价股（约 <$10）BE 限价成交/回退率监控 — be_0.4 的
       "零缺口带"承诺在低价股有已知例外（8/14 PAL 费率 0.494% > 0.4% 触发线）
-- [ ] **P1**：DA 供给健康监控（产出数 vs 落库数告警，挂盘前检查槽位）
+- [x] **P1**：DA 供给健康监控（产出数 vs 落库数告警，挂盘前检查槽位）
+      → 8/18 落地：`scripts/da_supply_reconcile_check.py` + crontab 21:10 CST
+      （=09:10 ET，事故签名显形后/开盘前）。对账 bridge 文件候选数（上游A）×
+      signal_snapshots.db 决策数（上游B）× playbook_instructions 落库数（下游）；
+      落库=0 且 bridge>0 = 覆盖事故签名 → 钉钉 RED。三分支测试过（8/17 实日 OK /
+      伪造事故签名 RED+exit 1 / 交易日 gate 生效）。纯只读零执行路径改动。
 - [ ] **P1**：UE 逆势空月度动量过滤 shadow（先计数不拦截）
 - [ ] **P2**：主题集中度 shadow（DA 批次 sector 聚合）
 - [ ] **P2**：平价仓 EOD 处置 shadow
