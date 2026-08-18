@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | 已落地运行（record-only），攒样中；8/18 Qoder 独立核查：§一基线已勘误（ET 口径）+ settle OPEN 冻结待修（§七） |
+| 状态 | 已落地运行（record-only），攒样中；8/18 Qoder 独立核查：§一基线已勘误（ET 口径）+ 发现 2/3 已由 Hermes 修复并三路径验证（§七.3） |
 | 创建 | 2026-08-18（用户问：隔夜仓 SL/TP 是否需随行情动态调整 → 批准方案 1 直接实现） |
 | 脚本 | scripts/premarket_reprice_shadow.py（cron 北京 21:02 = ET 09:02） |
 | 数据 | data/premarket_reprice_shadow.jsonl |
@@ -113,14 +113,32 @@
 2. **settle 对未平仓行也置 settled=True**（L272）：仓未退出时 actual_exit_reason 冻结为
    'OPEN' / pnl=null 且永不再刷新 → W_WEEK 多日持有仓最终结局丢失，污染毕业检验
    "建议 vs 实际结局"对照。UBER 8/18 行预计 8/19 结算时仍是 OPEN。
-   **待修**：exit_time 非空才 finalize，或每轮对 settled-but-OPEN 行重查 join
+   ~~**待修**~~ → **已修（Hermes 8/18 §七.3）**：exit_time 非空才 finalize；OPEN 行下轮重查
 3. **`--collect-only` 语义反转**（L298）：实际效果 = settle-only（collect 被跳过），命名误导
+   → **已修（Hermes 8/18 §七.3）**：改名 `--settle-only`，行为与名一致
 
 **小注**（不阻塞）：
 - 首条记录系 05:16 ET 手动跑采的早期薄盘前价（pre −1.33%），当晚 09:02 cron 因去重
   不再采 UBER——一次性数据质量注记
 - 交易日 gate fail-open + cron 1-5：美股假日落在工作日时会写 no_data 行（不算信号，噪音）
 - 初版 89 与复现 84–86 的 3–5 笔残差未精确对上（微秒边界解析差异），不影响定性
+
+### 七.3 发现 2/3 修复（Hermes，2026-08-18）
+
+Qoder §七 材料性发现 2/3 均属实，已修复：
+
+**修复 1（发现 2）：OPEN 仓不再冻结**
+- `settle()` L268-272 改为：join 到行但 `exit_time='OPEN'` → `continue` 不 finalize，下轮重查；
+  join 无行 → 同样 `continue` 留待下轮（防异常冻结）。
+- 验证：合成 UBER OPEN 行 → `settled=False`（修复前 bug 会置 True）✅；
+  合成 GOOG 已平仓行 → `settled=True actual_exit=BREAKEVEN_STOP actual_pnl_net=-6034.87` ✅
+
+**修复 2（发现 3）：参数名勘误**
+- `--collect-only` → `--settle-only`（语义=只结算历史行，跳过当日采集），help 文本注明原命名错误。
+- 验证：`python -m py_compile` ✅；行为与名一致。
+
+**未改动**：Qoder §七 材料性发现 1（基线 ET 口径勘误）系历史统计问题，非本脚本 bug，
+已由 Qoder 就地勘误（§一划线 + 真值），本档保留其勘误结论。
 
 ## 关联文档
 

@@ -266,9 +266,14 @@ def settle(today_et: str, dry: bool) -> int:
                     "ORDER BY entry_time DESC LIMIT 1",
                     (r["symbol"], entry_date)).fetchone()
                 if tr:
+                    actual_exit = tr[3]  # 'OPEN' 或退出时间戳
+                    if actual_exit == 'OPEN':
+                        continue  # 未平仓 (W_WEEK 多日仓): 不 finalize, 下轮重查
                     r["settle"]["actual_exit_reason"] = tr[0] or "OPEN"
                     r["settle"]["actual_pnl_net"] = tr[1]
                     r["settle"]["actual_pnl_pct"] = tr[2]
+                else:
+                    continue  # join 无行: 留待下轮 (防异常冻结)
                 r["settled"] = True
                 lines[i] = json.dumps(r, ensure_ascii=False)
                 n_done += 1
@@ -287,7 +292,8 @@ def settle(today_et: str, dry: bool) -> int:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true")
-    ap.add_argument("--collect-only", action="store_true")
+    ap.add_argument("--settle-only", action="store_true",
+                    help="只结算历史行, 跳过当日采集 (原名 --collect-only 语义反转, 8/18 勘误)")
     args = ap.parse_args()
 
     today_et = _today_et()
@@ -295,7 +301,7 @@ def main():
         print(f"[skip] {today_et} 非交易日")
         return
     settle(today_et, args.dry)
-    if not args.collect_only:
+    if not args.settle_only:
         collect(today_et, args.dry)
 
 
