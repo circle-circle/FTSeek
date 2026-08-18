@@ -203,7 +203,7 @@ AND (executed=1 OR skip_reason LIKE '未触发%') GROUP BY 1"
 
 ### 第 1 轮
 
-- Qoder: (2026-08-16, 独立复算完成, 复算脚本 `scripts/_tmp_deb_no_trigger_prior_day_bucket.py`)
+- Qoder: (2026-08-16, 独立复算完成, 复算脚本 `scripts/deb_no_trigger_prior_day_bucket.py`, 原名 _tmp_ 前缀已于 8/18 收尾转正)
 
 **复算确认 (裸 SQL/回放 JSON 逐字吻合)**: no_trigger BUY +0.71%(n=168) / executed BUY −0.26%(n=225); SHORT 镜像 −0.68%/+0.55% ✓。双基准口径修正 (§零) 是教科书级自我纠错, P2 口径条款**全票支持**。
 
