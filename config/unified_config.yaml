@@ -1026,6 +1026,9 @@ playbook:
   premarket_invalidation_observe: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
+  # DEB-20260819 §十三: 股性卡 prompt 注入总开关 (L2软提示)
+  #   回滚: false 即关闭注入 (sim 期无存量伤害)
+  symbol_card_prompt_enabled: true
   fallback_when_no_bridge: technical
   enable_weekly: true
   enabled: true

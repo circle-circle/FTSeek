@@ -190,6 +190,14 @@ for rule in sorted(pass_by_rule):
     flag = "✅真信号" if ok else "❌噪声内"
     print(f"{rule:<16}{pass_by_rule[rule]:>8}{mean_exp:>10.1f}{thresh:>10.1f}{flag:>8}")
 
+# 2026-08-19 (DEB §14.2-1): verdict+明细落盘 data/ — build_symbol_rule_cards.py 的
+#   R5 名单从本文件派生, 废除 /tmp 依赖与硬编码名单 (cron 化地基).
+import pathlib as _pb
+_pb.Path("/opt/ftseek/FTSeek-US/data").mkdir(exist_ok=True)
+json.dump({"results": results, "rule_verdict": rule_verdict,
+           "generated": __import__("datetime").date.today().isoformat()},
+          open("/opt/ftseek/FTSeek-US/data/r18_replay_latest.json", "w"), ensure_ascii=False)
+
 print("\n注: 第四关衡量'该规则的PASS票数是否显著超出随机选日期望';")
 print("    未过第四关的规则其个股PASS可能是多重检验假阳, 不入股性卡。")
 

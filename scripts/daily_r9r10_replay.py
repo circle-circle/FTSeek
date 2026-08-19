@@ -129,6 +129,7 @@ for sym in WATCH:
         for rule, d in ps:
             print(f"{sym:<10} {rule:<22} n={d['n']:<4} 次日均{d['mean']:+6.2f}% t={d['t']:+5.2f} "
                   f"IS{d['is_mean']:+6.2f}% OOS{d['oos_mean']:+6.2f}%")
-json.dump({"results": {k: v for k, v in results.items()}, "verdict": verdict},
-          open("/tmp/daily_r9r10_replay.json", "w"), ensure_ascii=False)
-print("\n→ /tmp/daily_r9r10_replay.json")
+json.dump({"results": {k: v for k, v in results.items()}, "verdict": verdict,
+           "generated": __import__("datetime").date.today().isoformat()},
+          open("/opt/ftseek/FTSeek-US/data/r9r10_replay_latest.json", "w"), ensure_ascii=False)
+print("\n→ data/r9r10_replay_latest.json")

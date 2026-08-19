@@ -158,6 +158,7 @@ for rule in sorted(results):
         print(f"{sym:<10} {rule:<24} n={r['n']:<4} 次日均{r['mean']:+6.2f}% t={r['t']:+5.2f} "
               f"IS{r['is_mean']:+6.2f}% OOS{r['oos_mean']:+6.2f}%")
 
-json.dump({"results": results, "verdict": verdict},
-          open("/tmp/minute_rules_replay.json", "w"), ensure_ascii=False)
-print("\n→ /tmp/minute_rules_replay.json")
+json.dump({"results": results, "verdict": verdict,
+           "generated": __import__("datetime").date.today().isoformat()},
+          open("/opt/ftseek/FTSeek-US/data/minute_rules_replay_latest.json", "w"), ensure_ascii=False)
+print("\n→ data/minute_rules_replay_latest.json")
