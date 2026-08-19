@@ -56,6 +56,37 @@ def _finnhub_price(symbol):
         return 0.0
 
 
+def _pangan_section(candidates):
+    """DEB-20260819 §十五附加: 股性卡引用率统计 (盘后判分的第一手观测).
+
+    口径 (判分预注册同源):
+      注入组 = pangan_refs 非空的候选 (DA 分析时卡被注入了)
+      引用   = thesis/bull_case/bear_case 文本中出现卡规则关键词或"股性档案"
+    失败安全: bridge 无 pangan_refs 字段 (旧文件) → 返回空段, 不影响主消息。
+    """
+    with_card = [c for c in candidates if c.get("pangan_refs")]
+    if not with_card:
+        return []
+    _KW = ("贴日低", "贴日高", "跳空高开", "开盘30min", "开盘5min", "NR7", "窄幅日",
+           "股性档案", "股性", "上破开盘")
+    lines = ["", "🎯 股性卡引用 (DEB-20260819)",
+             f"带卡候选: {len(with_card)}/{len(candidates)}"]
+    cited_n = 0
+    for c in with_card:
+        refs = c.get("pangan_refs", [])
+        # 自引用防护: 扫描文本必须剔除 pangan_refs 字段本身
+        #   (规则名含"贴日低"等关键词, 否则注入组 100% 假阳性)
+        _c = {k: v for k, v in c.items() if k != "pangan_refs"}
+        text = json.dumps(_c, ensure_ascii=False)
+        cited = any(k in text for k in _KW)
+        cited_n += cited
+        mark = "✅引用" if cited else "➖注入未引用"
+        rules = "/".join(r.split("_", 1)[-1][:8] for r in refs[:3])
+        lines.append(f"  {c.get('symbol','?')}: {mark} [{rules}]")
+    lines.append(f"引用率: {cited_n}/{len(with_card)}")
+    return lines
+
+
 def _build_message(date, bridge):
     candidates = bridge.get("candidates", []) or []
     lines = [f"📊 盘前Bridge生成完成 ({date})",
@@ -73,7 +104,10 @@ def _build_message(date, bridge):
         lines.append(f"  LLM建议入场${entry} SL${sl} (实际以re-price为准)")
         if debate:
             lines.append(f"  辩论: {debate}")
-    lines.append("")
+    _pg = _pangan_section(candidates)
+    if _pg:
+        lines.extend(_pg)
+        lines.append("")
     lines.append("instruction直写DB ✅  实际执行价=re-price实时bid/ask")
     return "\n".join(lines)
 
