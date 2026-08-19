@@ -62,39 +62,58 @@ def _health_section(date):
     05:50 cron 中段失败 (富途断连等) 是静默降级 — 卡陈旧仍注入。
     推送加一行健康摘要: 卡重建状态/日K新鲜度/regime。失败安全: 全 try。
     """
+    # §二十四-N3: 基准从"calendar当日"改"全池日K数据末日" — 周一/节后不误报
+    #   (周六重建的卡含周五数据=周一DA的正确输入; 标签对数据, 不对日历)
+    #   顺带终局票(SKYT类)自然识别: 落后全池末日>1自然日=陈旧
     parts = []
-    try:
-        cards = list((DATA / "symbol_rule_cards").glob("*.json"))
-        if cards:
-            gens = set()
-            for fp in cards:
-                gens.add(json.loads(fp.read_text()).get("generated", "?"))
-            fresh = gens == {date}
-            n_fresh = sum(1 for fp in cards
-                          if json.loads(fp.read_text()).get("generated") == date)
-            mark = "✅全部今日" if fresh else f"⚠️{n_fresh}/{len(cards)}今日"
-            parts.append(f"股性卡{mark}")
-        else:
-            parts.append("股性卡⚠️缺失")
-    except Exception:
-        pass
+    pool_max_end = ""
     try:
         import glob as _glob
         files = sorted(_glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")))
-        if files:
+        ends = {}
+        for fp in files:
+            try:
+                ends[fp] = json.loads(open(fp).read())[-1][0][:10]
+            except Exception:
+                ends[fp] = ""
+        if ends:
+            pool_max_end = max(ends.values())
             from datetime import datetime as _dt
-            bad = []
-            for fp in files:
-                try:
-                    last = json.loads(open(fp).read())[-1][0][:10]
-                    days = (_dt.strptime(date, "%Y-%m-%d")
-                            - _dt.strptime(last, "%Y-%m-%d")).days
-                    if days > 1:
-                        bad.append(fp.split("/")[-1][:8])
-                except Exception:
-                    bad.append(fp.split("/")[-1][:8] + "?")
+            def _lag(e):
+                if not e:
+                    return 999
+                return (_dt.strptime(pool_max_end, "%Y-%m-%d")
+                        - _dt.strptime(e, "%Y-%m-%d")).days
+            # §二十四-N1: 终局票(落后>7天,同构建器判别)剔出分母, 防心跳永久⚠️报警疲劳
+            final_n = sum(1 for e in ends.values() if _lag(e) > 7)
+            active = {fp: e for fp, e in ends.items() if _lag(e) <= 7}
+            bad = [fp for fp, e in active.items() if _lag(e) > 1]
+            n_ok = len(active) - len(bad)
+            note = f"+{final_n}终局" if final_n else ""
             parts.append(f"日K{'✅' if not bad else '⚠️陈旧'}"
-                         f"({len(files)-len(bad)}/{len(files)})")
+                         f"({n_ok}/{len(active)}@{pool_max_end}{note})")
+    except Exception:
+        pass
+    try:
+        cards = list((DATA / "symbol_rule_cards").glob("*.json"))
+        if cards:
+            if pool_max_end:
+                # 卡新鲜 = generated >= 全池数据末日 (重建晚于数据即新鲜)
+                n_fresh = 0
+                for fp in cards:
+                    try:
+                        g = json.loads(fp.read_text()).get("generated", "")
+                        n_fresh += 1 if g >= pool_max_end else 0
+                    except Exception:
+                        pass
+            else:
+                n_fresh = sum(1 for fp in cards
+                              if json.loads(fp.read_text()).get("generated") == date)
+            mark = ("✅全部新鲜" if n_fresh == len(cards)
+                    else f"⚠️{n_fresh}/{len(cards)}新鲜")
+            parts.append(f"股性卡{mark}")
+        else:
+            parts.append("股性卡⚠️缺失")
     except Exception:
         pass
     try:

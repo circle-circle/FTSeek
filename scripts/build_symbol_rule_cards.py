@@ -60,14 +60,53 @@ def pool_median(sym_rule_map):
     n = len(vals)
     return round(vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2, 3)
 
+# ── §二十四-N1 终局守卫 + N2 数据末日真实性 (2026-08-19) ──
+# SKYT 实锤: 7/30 停止交易, 增量窗口永无新 bar → 卡级新鲜度守卫(>7d)永远绿灯,
+# 统计口径冻结在终局日。判别: bars 末日落后全池众数末日 >7 自然日 = 终局, 不写卡。
+import glob as _glob
+import os as _os
+from collections import Counter as _Counter
+_bar_ends = {}
+for _fp in _glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")):
+    _s = "US." + _os.path.basename(_fp).replace(".json", "").replace("US_", "")
+    try:
+        _b = json.loads(Path(_fp).read_text())
+        if _b:
+            _bar_ends[_s] = _b[-1][0][:10]
+    except Exception:
+        pass
+_pool_end = (_Counter(_bar_ends.values()).most_common(1)[0][0]
+             if _bar_ends else date.today().isoformat())
+FINAL_LAG_DAYS = 7
+
+def _is_final(sym):
+    e = _bar_ends.get(sym)
+    if not e:
+        return True
+    return (date.fromisoformat(_pool_end) - date.fromisoformat(e)).days > FINAL_LAG_DAYS
+
+# N2: sample_period 从数据末日动态生成, 废除硬编码字符串 (卡元数据不许撒谎)
+_minute_end = ""
+try:
+    _mfiles = sorted((DATA / "replay_bars_1m").glob("US_*.json"))
+    if _mfiles:
+        _mb = json.loads(_mfiles[0].read_text())
+        if _mb:
+            _minute_end = _mb[-1][0][:10]
+except Exception:
+    pass
+
 def fam_meta(rule):
     if rule.startswith("M"):
-        return {"family": "分钟级开盘性格", "sample_period": "2026-01-02~2026-08-18",
+        return {"family": "分钟级开盘性格",
+                "sample_period": f"2026-01-02~{_minute_end or '?'}",
                 "sample_regime": "RISK_ON(单段)", "evidence_tier": "marginal"}
     if rule.startswith("R9") or rule.startswith("R10"):
-        return {"family": "日K收盘位置/窄幅", "sample_period": "2021-02~2026-08-18(5年)",
+        return {"family": "日K收盘位置/窄幅",
+                "sample_period": f"2021-02~{_pool_end}(5年)",
                 "sample_regime": "混合(牛市段为主)", "evidence_tier": "standard"}
-    return {"family": "日K缺口性格", "sample_period": "2021-02~2026-08-18(5年)",
+    return {"family": "日K缺口性格",
+            "sample_period": f"2021-02~{_pool_end}(5年)",
             "sample_regime": "混合(牛市段为主)", "evidence_tier": "standard"}
 
 cards = {}  # sym -> [rule_entry]
@@ -120,7 +159,11 @@ for rule, rule_verdict in mm.get("verdict", {}).items():
             add(sym, rule, d, pb)
 
 n_cards = n_rules = 0
+final_skipped = []  # §二十四-N1: 终局票不写卡 (统计口径冻结在终局日, 注入是误导)
 for sym in sorted(cards):
+    if _is_final(sym):
+        final_skipped.append(sym)
+        continue
     rules = sorted(cards[sym], key=lambda x: -abs(x["t"]))[:TOP_N_PER_CARD]
     card = {
         "symbol": sym,
@@ -136,13 +179,15 @@ for sym in sorted(cards):
     n_cards += 1
     n_rules += len(rules)
 
-# 清理 v1 遗留卡 (全池重建, 防旧卡残留)
-keep = {f"{s.replace('.', '_')}.json" for s in cards}
+# 清理遗留卡 (全池重建, 防旧卡残留; 终局票不写卡→其旧卡一并清理)
+keep = {f"{s.replace('.', '_')}.json" for s in cards if s not in final_skipped}
 for fp in OUT_DIR.glob("*.json"):
     if fp.name not in keep:
         fp.unlink()
 
 print(f"股性卡重建: {n_cards} 只 × {n_rules} 条 (效应量地板剔除 {dropped_floor} 条)")
+if final_skipped:
+    print(f"终局票不写卡 (§二十四-N1): {final_skipped}")
 for sym in sorted(cards):
     rs = sorted(cards[sym], key=lambda x: -abs(x["t"]))[:TOP_N_PER_CARD]
     print(f"{sym}: " + " | ".join(f"{r['rule']}({r['next_day_mean_pct']:+.2f}%)" for r in rs))
