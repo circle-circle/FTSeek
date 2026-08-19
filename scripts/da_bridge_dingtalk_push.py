@@ -65,45 +65,56 @@ def _health_section(date):
     # §二十四-N3: 基准从"calendar当日"改"全池日K数据末日" — 周一/节后不误报
     #   (周六重建的卡含周五数据=周一DA的正确输入; 标签对数据, 不对日历)
     #   顺带终局票(SKYT类)自然识别: 落后全池末日>1自然日=陈旧
+    # §二十六-N5: 绝对地板守卫 — 全池相对判定在"重建cron连续多日挂掉"时假绿
+    #   (pool_max_end冻结→lag相对自身=0), 补绝对阈值: 落后推送日>5自然日→⚠️全池陈旧
+    # §二十六-N6: 基准用众数(与构建器一致), max对未来日期脏数据不稳健
     parts = []
-    pool_max_end = ""
+    pool_mode_end = ""
     try:
         import glob as _glob
+        from collections import Counter as _Cnt
         files = sorted(_glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")))
         ends = {}
+        corrupt = []
         for fp in files:
             try:
                 ends[fp] = json.loads(open(fp).read())[-1][0][:10]
             except Exception:
-                ends[fp] = ""
-        if ends:
-            pool_max_end = max(ends.values())
+                corrupt.append(fp)  # §二十六-N7: 解析失败=数据错误, 单列报警不归终局
+        valid = [e for e in ends.values() if e]
+        if valid:
+            pool_mode_end = _Cnt(valid).most_common(1)[0][0]
             from datetime import datetime as _dt
             def _lag(e):
-                if not e:
-                    return 999
-                return (_dt.strptime(pool_max_end, "%Y-%m-%d")
+                return (_dt.strptime(pool_mode_end, "%Y-%m-%d")
                         - _dt.strptime(e, "%Y-%m-%d")).days
-            # §二十四-N1: 终局票(落后>7天,同构建器判别)剔出分母, 防心跳永久⚠️报警疲劳
+            # §二十四-N1: 终局票(落后>7天,同构建器众数判别)剔出分母
             final_n = sum(1 for e in ends.values() if _lag(e) > 7)
             active = {fp: e for fp, e in ends.items() if _lag(e) <= 7}
             bad = [fp for fp, e in active.items() if _lag(e) > 1]
             n_ok = len(active) - len(bad)
             note = f"+{final_n}终局" if final_n else ""
-            parts.append(f"日K{'✅' if not bad else '⚠️陈旧'}"
-                         f"({n_ok}/{len(active)}@{pool_max_end}{note})")
+            note += f"+{len(corrupt)}损坏" if corrupt else ""
+            status = "⚠️陈旧" if (bad or corrupt) else "✅"
+            # N5 绝对地板: 全池末日落后推送日>5自然日 → 全池陈旧 (周一lag3/长周末lag4不触发)
+            pool_lag_abs = (_dt.strptime(date, "%Y-%m-%d")
+                            - _dt.strptime(pool_mode_end, "%Y-%m-%d")).days
+            if pool_lag_abs > 5:
+                status = "⚠️全池陈旧"
+            parts.append(f"日K{status}({n_ok}/{len(active)}@{pool_mode_end}{note})")
     except Exception:
         pass
     try:
         cards = list((DATA / "symbol_rule_cards").glob("*.json"))
         if cards:
-            if pool_max_end:
+            if pool_mode_end:
                 # 卡新鲜 = generated >= 全池数据末日 (重建晚于数据即新鲜)
+                # §二十六-N5: 绝对地板已在日K段报警, 此处保持相对判定
                 n_fresh = 0
                 for fp in cards:
                     try:
                         g = json.loads(fp.read_text()).get("generated", "")
-                        n_fresh += 1 if g >= pool_max_end else 0
+                        n_fresh += 1 if g >= pool_mode_end else 0
                     except Exception:
                         pass
             else:
