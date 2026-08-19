@@ -67,22 +67,34 @@ def _health_section(date):
         cards = list((DATA / "symbol_rule_cards").glob("*.json"))
         if cards:
             gens = set()
-            for fp in cards[:5]:
+            for fp in cards:
                 gens.add(json.loads(fp.read_text()).get("generated", "?"))
-            fresh = date in gens
-            parts.append(f"股性卡{'✅今日' if fresh else '⚠️陈旧'}({len(cards)}只)")
+            fresh = gens == {date}
+            n_fresh = sum(1 for fp in cards
+                          if json.loads(fp.read_text()).get("generated") == date)
+            mark = "✅全部今日" if fresh else f"⚠️{n_fresh}/{len(cards)}今日"
+            parts.append(f"股性卡{mark}")
         else:
             parts.append("股性卡⚠️缺失")
     except Exception:
         pass
     try:
         import glob as _glob
-        fp = sorted(_glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")))
-        if fp:
-            last = json.loads(open(fp[0]).read())[-1][0][:10]
+        files = sorted(_glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")))
+        if files:
             from datetime import datetime as _dt
-            days = (_dt.strptime(date, "%Y-%m-%d") - _dt.strptime(last, "%Y-%m-%d")).days
-            parts.append(f"日K{'✅' if days <= 1 else '⚠️'}({last})")
+            bad = []
+            for fp in files:
+                try:
+                    last = json.loads(open(fp).read())[-1][0][:10]
+                    days = (_dt.strptime(date, "%Y-%m-%d")
+                            - _dt.strptime(last, "%Y-%m-%d")).days
+                    if days > 1:
+                        bad.append(fp.split("/")[-1][:8])
+                except Exception:
+                    bad.append(fp.split("/")[-1][:8] + "?")
+            parts.append(f"日K{'✅' if not bad else '⚠️陈旧'}"
+                         f"({len(files)-len(bad)}/{len(files)})")
     except Exception:
         pass
     try:
@@ -95,7 +107,8 @@ def _health_section(date):
         con.close()
     except Exception:
         pass
-    return "🩺 链路健康: " + " | ".join(parts) if parts else ""
+    # H3 (§二十二): 三段全异常时兜底输出, 防静默降级上移一层
+    return "🩺 链路健康: " + " | ".join(parts) if parts else "🩺 链路健康: ⚠️检查异常"
 
 
 def _pangan_section(candidates):
@@ -110,23 +123,27 @@ def _pangan_section(candidates):
     with_card = [c for c in candidates if c.get("pangan_injected")]
     if not with_card:
         return []
-    _KW = ("贴日低", "贴日高", "跳空高开", "开盘30min", "开盘5min", "NR7", "窄幅日",
-           "股性档案", "股性", "上破开盘")
+    # §二十二-22.4: 两级计数 — 规则级关键词为准(cited), 宽词("股性")作参考列
+    _KW_RULE = ("贴日低", "贴日高", "跳空高开", "开盘30min", "开盘5min", "NR7", "窄幅日",
+                "上破开盘")
+    _KW_WIDE = ("股性档案", "股性")
     lines = ["", "🎯 股性卡引用 (DEB-20260819)",
              f"带卡候选: {len(with_card)}/{len(candidates)}"]
-    cited_n = 0
+    cited_n = wide_n = 0
     for c in with_card:
         refs = c.get("pangan_injected", [])
         # 自引用防护: 扫描文本必须剔除打标字段本身
         #   (规则名含"贴日低"等关键词, 否则注入组 100% 假阳性)
         _c = {k: v for k, v in c.items() if k != "pangan_injected"}
         text = json.dumps(_c, ensure_ascii=False)
-        cited = any(k in text for k in _KW)
+        cited = any(k in text for k in _KW_RULE)
+        wide = any(k in text for k in _KW_WIDE)
         cited_n += cited
-        mark = "✅引用" if cited else "➖注入未引用"
+        wide_n += wide
+        mark = "✅引用" if cited else ("🔸宽提" if wide else "➖注入未引用")
         rules = "/".join(r.split("_", 1)[-1][:8] for r in refs[:3])
         lines.append(f"  {c.get('symbol','?')}: {mark} [{rules}]")
-    lines.append(f"引用率: {cited_n}/{len(with_card)}")
+    lines.append(f"引用率(规则级): {cited_n}/{len(with_card)} | 宽词提及: {wide_n}")
     return lines
 
 
