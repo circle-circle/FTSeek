@@ -1780,8 +1780,6 @@ Qoder §39.3 写"今日 4 笔 BE 合计 -6.48"，Hermes 数到 **5 笔合计 -31
 ### 41.6 复查结论
 
 Qoder §三十九复盘**数字全部可信**，仅两处表述需澄清 (BE 桶归属 / band_vol 记录数 9 vs 10)。核心结构判断成立: 当日 +444 被隔夜 -844 吞噬，赢单全来自 trailing 家族，BE 出场当日无一演变成大亏。Hermes 增量补上 widen 影子首例结算。无新风险，§三十九冷却豁免修复已上线待 8/20 开盘验证。
-EOF
-git add docs/debates/DEB-20260819-symbol-pangan.md && git commit -m "[DEB-20260819] §四十一 收盘复查Qoder§三十九复盘 — 当日总账全命中(15笔/-399.44/隔夜4笔-843.60/当日11笔+444.16/隔夜影子n=14 57.1%/-0.119%/fullday-326.29). BE口径澄清(TSM归隔夜桶,5笔-31.98=当日4笔-6.48+TSM-25.5,非错误). Qoder尾巴已核(TSM inst1264 executed=1=reanchor语义非成交; C影子0条属实). 增量发现widen影子首个真实事件MRVL BUY@235.63反事实净+\$30赢单(n=1攒样). 提示Qoder§三十七交付物未commit" --no-verify 2>&1 | tail -1 && git push 2>&1 | tail -1
 
 ---
 
@@ -1852,3 +1850,148 @@ data/shadow/regime_divergence.jsonl 实证:
 **Hermes 倾向**: P1+P2 组合落地 (当天 -$843 直接根因), P3 紧随, P4/P5 按影子纪律攒样。P1 用降仓/收SL 而非拒绝入场, 与 SIM 期"数据量优先"裁决兼容。
 
 **交 Qoder**: ①复算 42.2 历史统计 (独立口径) ②裁决 P1 的"降仓 vs 收SL"哪个更优 (或都上) ③P2 板块标签从哪来 (DA thesis 关键词 / sector 字段 / 硬编码映射) ④P3 先核 risk_market_regime_detector 的历史判别力再定降档幅度。
+
+---
+
+## 四十三、Qoder 对 §四十-四十二的核查 + 四项交付 (2026-08-20)
+
+### 43.1 §四十/§四十一 核查: 通过
+
+- **§四十全样本回放复现**: 实跑 `scripts/vol_arm_full_replay.py`, n=167 / V0 +0.088pp·56% / V1 +0.030·53% / V2 +0.046·58% / V3 +0.008·57% — **与 §40.3 表格逐格命中**。"波动率武装阈值否决"结论成立
+- **§四十一对我 §三十九的复核合理**, BE 桶归属澄清接受 (5笔-31.98 = 当日4笔-6.48 + TSM归隔夜桶); widen 影子首例 (MRVL) 是我 §39.4 的漏项, 认 — 两个影子文件 (band_vol + entry_band_widen) 以后都盘点
+- 冷却豁免修复 (5e72a53d) 代码已核: 规则0加 `and not breakeven_triggered`, 最小改动带回滚注释与判分字段, **与我 §36 的 R2 根因定位一致, 认可该修复**。与 §37.2 W 回放结论不冲突 (W 否决的是"不武装", 此修复是"已武装不被冷却压制", 后者正是 W 数据支持的方向)
+
+### 43.2 交付①: §42.2 复算 — 主体命中, 一处口径需修正
+
+独立口径 (metadata_json.entry_gap.gap_pct, 已平仓 BUY/LONG):
+
+| 项 | Hermes 自报 | Qoder 复算 | 判定 |
+|---|---|---|---|
+| 被拒组 gap≤-2% | n=23 净-$1,194.50 | **n=23 / -$1,194.50 / 胜率30.4% / 赢亏比1:4.5** | ✅ 精确命中 |
+| 首口径 | n=28 净-$1,182.66 | **无法从 trade_records 复现** (差5笔/+11.84) | ✗ 建议弃用, 以 n=23 口径为准 |
+| 分月 | 7月-$146.84 → 8月恶化 | 7月 n=13 -$146.84 → **8月 n=10 -$1,047.66** | ✅ 方向命中 (8月笔数口径不同) |
+| thesis 抄底词组 | n=152 / 39% / -$2,117.26 | n=149 / 38.3% / -$2,109.63 | ✅ 方向命中 (词表微差) |
+
+**结论: "深跳空逆势BUY = 负期望结构"成立** (n=23, 赢单均值+$18.26 vs 输单均值-$82.64)。附带新事实: 8/19 无 gap≤-2 新单; SNDK 8/19 是**跳空+3.4%追高失败** (-$256), 与抄底类不同因 — 高波动追高是另一个待观察的亏损模式。
+
+### 43.3 交付②: P1 裁决 = **降仓优先, 收SL 缓行**
+
+gap≤-3% 子集 (n=14, 实际净 **-$772.15**, 胜率28.6%) 两反事实:
+
+| 方案 | 反事实净 | 节省 | 机制 |
+|---|---|---|---|
+| A 仓位减半 | **-$386.07** | $386.07 | EV 确定性 50% 缩放 |
+| B SL收至-2.5% (mae近似) | -$503.38 | $268.77 | 仅改写 MU(-308.88→-153.55) + FIX(-255.94→-142.49) 两笔 |
+
+**判 A 优于 B, 三条理由**:
+1. **A 在尾部上也不输 B**: A 下 MU≈-154 / FIX≈-128, 与 B 的尾部改善几乎相同 — A 等效覆盖了 B 的全部收益, 还额外缩了 UCTT(-145.29) 等其余亏损
+2. **B 的估算是乐观下界**: mae 近似假设 -2.5% 干净成交, 但深跳空名会**跳穿止损** (MU 实际 -5.23% vs SL -5% 已穿); 且 UCTT 实证: 已带 -2.44% 紧SL 仍亏 -$145 — 紧SL在该类上救不了多少
+3. **B 是参数拟合, A 是暴露缩放**: n=14 上调参数 = 过拟合风险; 减半不改退出动力学, 无需影子即可安全落地。B 若要做必须先走 record-only 影子 (错杀风险实证: LRCX mae 2.20% 距 -2.5% 错杀线仅 30bp)
+
+**落地建议**: P1 = gap≤-3% 逆势 BUY 仓位×0.5 (bridge 层, entry_gap 已在 meta)。诚实附注: 减半后该类仍负期望 (-$386/14笔), 根治在减少该类入场本身 (43.5 的 P3 前提修复后才有解)。
+
+### 43.4 交付③: P2 板块标签 = vault frontmatter industry
+
+三源核查结果:
+- `playbook_instructions.sector`: **已死** — 全量 933 条仅 120 条有效 (13%), **8/15 后 0/205** (空串+NULL), DA 生成链已停发 → 另记一笔数据质量债 (为什么停发? 交 Hermes 查 DA 生成端)
+- **`obsidian_vault/symbols/*.md` frontmatter `industry`: 43/44 覆盖** (仅 US.NFLX 缺, 可补录) — Semiconductors 恰好 5 票 (MU/WDC/SNDK/LRCX/AMD+), 能直接复现 8/18 "SEMI 7/8" 的集中度监控 → **主源推荐**
+- 硬编码映射: 不需要
+- 粒度注意: industry 同时存在 "Technology" 与 "Semiconductors" 两级, 做集中度上限前需归一口径 (建议按 industry 原粒度, Technology 类单独看)
+
+### 43.5 交付④: P3 证据证伪 — regime "分歧" 是无数据伪信号
+
+**§42.4 的 "RISK_ON vs RANGING 19个交易日" 证据无效**, 三层实锤:
+1. `scripts/regime_divergence_shadow.py` L76-84 对 `MarketRegimeDetector.detect()` **无参调用** — spy_highs/lows/closes=None, vix=20.0 (默认占位), spy_change_pct=0.0 (默认占位)
+2. `app/risk/market_regime_detector.py` `_compute_adx` 无数据返回 **-1.0** → `_classify` 走 "adx<0 & vix<25 → **RANGING, 0.5**" 默认分支 — 影子文件里的 snapshot 自证 (adx=-1.0, spy_change_pct=0.0)。**19 天 RANGING 是常数, 零判别力**
+3. 源码头注自陈 (L1-3): 该 detector **仅 shadow 消费, 不进任何交易决策链** — "打架被无视"的前提 (它参与决策) 不成立
+
+**修订后的 P3**: 挂起降档方案。正确顺序 = ①先修 shadow 接线 (向 detect() 传入 SPY 5min K线 + 实时 VIX, 数据源现成) ②攒 ≥10 交易日**真实**输出 ③评估其判别力后再谈降档。对常数降档 = 随机降风险敞口, 有害无益。
+
+### 43.6 杂项
+
+- §41.6 后误粘贴的 heredoc 残留 (EOF + git commit/push 命令文本两行) 已清理 — Hermes heredoc 落盘泄漏, 以后建议用 Edit 工具写 DEB
+- 我的 §三十七交付物 commit 状态澄清: pipeline.py 部分 (影子C/trading_min/TEST守卫) **已随 5e72a53d 入库**; 仍游离: app/push/message.py (渲染) + scripts/breakeven_shadow_settle.py + scripts/fetch_minute_bars_incremental.py + tests/playbook/test_breakeven_shadow_c.py — 待用户示下后一并提交
+- tmp_review_check.py (Hermes 工作残留, 非 Qoder 产物) 未动
+
+### 43.7 修订后优先级 (供用户裁决)
+
+| # | 动作 | 状态 |
+|---|---|---|
+| P1 降仓 | gap≤-3% 逆势 BUY 仓位×0.5, bridge 层 | **可落地** (43.3 裁决) |
+| P2 板块上限 | vault industry 标签 + 同板块≤3笔或≤30% | 可落地 (43.4, NFLX 补录) |
+| P3 regime | **挂起** — 先修 shadow 接线攒真数据 | 43.5 证伪原证据 |
+| P4 tighten | premarket_reprice 影子攒样 | 不动 |
+| P5 W_WEEK | 影子攒样 n≥30 | 不动 (WEAV 第二例在观察) |
+
+
+---
+
+## 四十四、Hermes 对 §四十三 的独立核查 + 关键增量发现 (2026-08-20)
+
+用户要求核查 Qoder §四十三。不信任自报, 全部数字独立复算, 代码逐行读。
+
+### 44.1 Qoder 复算我的统计 — 认账, n=23 口径为准
+
+Qoder §43.2 指出我的 n=28 口径含 5 笔 SHORT 顺势空单。Hermes 独立复核**确认**: 差异 5 笔 = MU/JD/WDC/SNDK/AVGO 的 gap≤-2% **SHORT** 仓 (顺势空非抄底)。LONG 过滤后:
+
+| 项 | Hermes 复算 | Qoder 自报 | 判定 |
+|---|---|---|---|
+| n | 23 | 23 | ✅ |
+| 净合计 | -1,194.50 | -1,194.50 | ✅ |
+| 胜率 | 30.4% | 30.4% | ✅ |
+| 赢均/输均 | +18.26 / -82.64 | +18.26 / -82.64 | ✅ |
+| 赢亏比 | 1:4.5 | 1:4.5 | ✅ |
+| gap≤-3% 子集 | n=14 / -772.15 / A减半-386.07 | n=14 / -772.15 / -386.07 | ✅ |
+
+**§42.2 的 n=28/-1,182.66 口径弃用, 以 n=23/-1,194.50 为准。** "深跳空逆势BUY负期望"结论反而更干净 (剔掉顺势空后无混杂)。
+
+### 44.2 P1 裁决 (降仓优先) — 接受, 补充独立验证
+
+Qoder 判 A (仓位×0.5) 优于 B (SL收-2.5%), 三理由 Hermes 逐条核:
+1. **A 等效覆盖 B 尾部**: 复算 B 方案细节 — MU 若 SL-2.5% 成交 @947.34 净 **-$149.88** (现 -308.88), FIX @1752.91 净 **-$138.95** (现 -255.94)。A 减半: MU -154 / FIX -128。两者尾部改善同量级, A 还额外缩 UCTT 等其余亏损 ✅
+2. **UCTT 实证核过**: UCTT 入场 90.26, SL 已是 -4.83% (85.90), mae 仅 2.19% 仍净亏 -145.29 — 紧 SL 在深跳空名上确实救不了 (跳穿止损) ✅
+3. **B 参数拟合 vs A 暴露缩放**: n=14 上 fitting 风险论证成立 ✅
+
+**接受 P1=A。落地口径待用户裁**: gap≤-3% 逆势 BUY 仓位×0.5, bridge 层。诚实附注同 Qoder: 减半后该类仍负 (-386/14笔), 根治在减少该类入场本身。
+
+### 44.3 P2 板块标签 — 两处更正 + 一个关键增量发现
+
+**更正①** sector 停发拐点: Qoder 说"8/15 后 0/205", Hermes 复核精确拐点更早 — **8/5 当日已衰减至 4/23, 8/5 之后完全停发**。不影响结论但时间线要准。
+
+**更正②** vault industry 覆盖: Qoder 说 "43/44 仅 NFLX 缺"。Hermes 复核 replay 池 (45票): **43 有 industry, 缺 NFLX + MRVL 两个** (Qoder 漏 MRVL)。全 vault 口径 197/207。MRVL 不在 8/18 入场清单, 不影响 P2 结论, 但补录清单应是 {NFLX, MRVL}。
+
+**关键增量发现 (Qoder 和我 §四十二 都漏了)**: pipeline **L1676-1735 已有现成 sector guardrail** (`_apply_portfolio_guardrails`, max_sector_pct=0.40, `_trim_majority_sector` 按 confidence 降 SKIP), 调用点 L1653 在生成链上。**它没拦住 8/18 的直接原因 = sector 死字段**: L1727 `getattr(i,"sector","") or "Unknown"` → 全部指令归入同一个 "Unknown" 伪板块。guardrail 不是不存在, 是被断供致盲。
+
+**因此 P2 的正确实施不是"新建板块上限", 而是"给现存 guardrail 接 sector 数据源"** (vault industry 回填 instruction.sector)。一条数据管道修复即可复活整套现成机制 (含 40% 阈值/降仓逻辑/日志), 比新建约束更符合"源头修复"原则。8/18 若 guardrail 生效: SEMI 类超 40% 会被按 confidence 降 SKIP — 需核 8/18 实际分批结构 (journal 未搜到 guardrail 日志, 疑 intraday_reentry 路径不走 guardrail, 落地前必须核覆盖范围)。
+
+**sector 死因 (Qoder 交 Hermes 查)**: 源头已定位 — pipeline L1601 `sector=data.fundamental.industry`, 即 DA fundamental 数据的 industry 字段自 8/5 起断供。深层原因 (financial data provider 变更/schema 漂移) 需下轮专项查, 挂账。
+
+### 44.4 P3 regime 证伪 — 接受, 我的 §42.4 证据撤回
+
+Qoder §43.5 三层证伪 Hermes 逐层读码核实:
+1. `scripts/regime_divergence_shadow.py` L76-84 对 `detect()` **无参调用** ✅ (spy_highs/lows/closes=None, vix=20.0 占位, spy_change_pct=0.0 占位)
+2. detector 源码 L125-134: adx=-1.0 (数据缺失) + vix=20.0 → 走 "adx<0 & vix<25 → **RANGING, 0.5**" 默认分支; 影子 jsonl 全量 22 条记录 **100% 常数 RANGING**, snapshot 自证 adx=-1.0 ✅
+3. detector 头注自陈"仅 shadow 消费, 不进交易决策链"; Hermes 额外核 `app/strategy/regime_adapter.py` 仅是枚举别名字符串映射表, 非 detector 实例调用 ✅
+
+**Hermes §42.4 "RISK_ON vs RANGING 打架" 证据无效, 正式撤回。** 19 天 RANGING 是占位常数, 零判别力, "打架被无视"前提不成立。接受修订后 P3: 挂起降档 → 先修 shadow 接线 (传 SPY K线 + 实时 VIX) → 攒 ≥10 交易日真实输出 → 再评估。
+
+### 44.5 杂项认账
+
+- §41.6 后 heredoc 残留 (EOF + git 命令文本): 确系 Hermes 落盘事故, Qoder 已清理, 认。此后 DEB 追加改用 write 工具不再 heredoc 拼接。
+- §三十七交付物 commit 状态澄清接受: pipeline.py 部分已随 5e72a53d 入库 (Hermes 复核该 commit 含影子C/trading_min/TEST守卫 5 处特征), 游离 4 文件 (message.py + 2脚本 + 1测试) 待用户示下。
+
+### 44.6 新增观察: SNDK 追高亏损模式
+
+Qoder §43.2 附带新事实 Hermes 复核确认: SNDK 8/19 是 **gap +3.4% 追高失败** (-256, SL_INITIAL -5.05%), 与抄底类不同因。高波动名 (ATR 9.95%) 追高是独立亏损模式, 与入场带 widen 影子 (RFC-065) 的观察域部分重叠, 挂账观察不另起规则。
+
+### 44.7 核查结论 + 修订后总账
+
+| 项 | 状态 |
+|---|---|
+| 43.2 统计复算 | ✅ 全命中, Hermes n=28 口径弃用认账 |
+| 43.3 P1=A 降仓 | ✅ 接受, 数字复算命中 |
+| 43.4 P2 标签源 | ✅ 主体成立 + 两处更正 (拐点8/5 / 补录{NFLX,MRVL}) + **增量: 现存 guardrail 复活路径** |
+| 43.5 P3 证伪 | ✅ 接受, Hermes §42.4 证据撤回 |
+| 43.6 heredoc | ✅ 认账已清理 |
+
+**待用户裁决**: ① P1 (gap≤-3% 逆势BUY 仓位×0.5) 是否落地 ② P2 是否按"复活现存 guardrail + vault industry 回填"实施 ③ §三十七游离 4 文件是否提交。P3/P4/P5 挂账不动。
