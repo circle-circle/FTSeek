@@ -56,6 +56,48 @@ def _finnhub_price(symbol):
         return 0.0
 
 
+def _health_section(date):
+    """DEB-20260819 §十九-P0-2: 全链健康心跳 (静默降级可见化).
+
+    05:50 cron 中段失败 (富途断连等) 是静默降级 — 卡陈旧仍注入。
+    推送加一行健康摘要: 卡重建状态/日K新鲜度/regime。失败安全: 全 try。
+    """
+    parts = []
+    try:
+        cards = list((DATA / "symbol_rule_cards").glob("*.json"))
+        if cards:
+            gens = set()
+            for fp in cards[:5]:
+                gens.add(json.loads(fp.read_text()).get("generated", "?"))
+            fresh = date in gens
+            parts.append(f"股性卡{'✅今日' if fresh else '⚠️陈旧'}({len(cards)}只)")
+        else:
+            parts.append("股性卡⚠️缺失")
+    except Exception:
+        pass
+    try:
+        import glob as _glob
+        fp = sorted(_glob.glob(str(DATA / "replay_bars_daily" / "US_*.json")))
+        if fp:
+            last = json.loads(open(fp[0]).read())[-1][0][:10]
+            from datetime import datetime as _dt
+            days = (_dt.strptime(date, "%Y-%m-%d") - _dt.strptime(last, "%Y-%m-%d")).days
+            parts.append(f"日K{'✅' if days <= 1 else '⚠️'}({last})")
+    except Exception:
+        pass
+    try:
+        import sqlite3 as _sq
+        con = _sq.connect(str(DATA / "ftseek_us.db"))
+        r = con.execute("SELECT date, regime FROM playbook_regime_log "
+                        "ORDER BY date DESC LIMIT 1").fetchone()
+        if r:
+            parts.append(f"regime={r[1]}({r[0]})")
+        con.close()
+    except Exception:
+        pass
+    return "🩺 链路健康: " + " | ".join(parts) if parts else ""
+
+
 def _pangan_section(candidates):
     """DEB-20260819 §十五附加 + §十七-L1: 股性卡注入/引用统计 (盘后判分的第一手观测).
 
@@ -108,6 +150,10 @@ def _build_message(date, bridge):
     _pg = _pangan_section(candidates)
     if _pg:
         lines.extend(_pg)
+        lines.append("")
+    _hs = _health_section(date)
+    if _hs:
+        lines.append(_hs)
         lines.append("")
     lines.append("instruction直写DB ✅  实际执行价=re-price实时bid/ask")
     return "\n".join(lines)
