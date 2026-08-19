@@ -1,6 +1,6 @@
 {
  "meta": {
-  "date": "2026-08-19 18:42",
+  "date": "2026-08-19 19:14",
   "universe": "288 指令 (1分K覆盖票, 2026-07-14起)",
   "skipped_no_bars": 0,
   "flat": "knife=3%/chase=5% (线上常量)",
@@ -305,8 +305,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-14"
   },
@@ -855,8 +855,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-15"
   },
@@ -4763,8 +4763,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-23"
   },
@@ -7781,8 +7781,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-30"
   },
@@ -7885,8 +7885,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 6.0,
+    "band_chase_pct": 9.0
    },
    "inst_date": "2026-07-30"
   },
@@ -7922,8 +7922,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.58245,
+    "band_chase_pct": 5.970750000000001
    },
    "inst_date": "2026-07-30"
   },
@@ -8130,8 +8130,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-31"
   },
@@ -8903,8 +8903,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-31"
   },
@@ -8997,8 +8997,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0687300000000004,
+    "band_chase_pct": 5.11455
    },
    "inst_date": "2026-08-03"
   },
@@ -9257,8 +9257,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-08-03"
   },
@@ -9408,8 +9408,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 4.33809,
+    "band_chase_pct": 7.23015
    },
    "inst_date": "2026-08-03"
   },
@@ -10699,8 +10699,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.749310000000001,
+    "band_chase_pct": 6.248850000000001
    },
    "inst_date": "2026-08-05"
   },
@@ -10860,8 +10860,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 4.668570000000001,
+    "band_chase_pct": 7.780950000000001
    },
    "inst_date": "2026-08-05"
   },
@@ -12488,8 +12488,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.93588,
+    "band_chase_pct": 6.559799999999999
    },
    "inst_date": "2026-08-10"
   },
@@ -12535,8 +12535,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.14469,
+    "band_chase_pct": 5.24115
    },
    "inst_date": "2026-08-10"
   },
@@ -16393,8 +16393,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-14"
   },
@@ -16943,8 +16943,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-15"
   },
@@ -19374,8 +19374,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-23"
   },
@@ -20831,8 +20831,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-07-30"
   },
@@ -20878,8 +20878,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 6.0,
+    "band_chase_pct": 9.0
    },
    "inst_date": "2026-07-30"
   },
@@ -20915,8 +20915,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.58245,
+    "band_chase_pct": 5.970750000000001
    },
    "inst_date": "2026-07-30"
   },
@@ -21579,8 +21579,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0687300000000004,
+    "band_chase_pct": 5.11455
    },
    "inst_date": "2026-08-03"
   },
@@ -21839,8 +21839,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.0,
+    "band_chase_pct": 5.0
    },
    "inst_date": "2026-08-03"
   },
@@ -22669,8 +22669,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.749310000000001,
+    "band_chase_pct": 6.248850000000001
    },
    "inst_date": "2026-08-05"
   },
@@ -23898,8 +23898,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.93588,
+    "band_chase_pct": 6.559799999999999
    },
    "inst_date": "2026-08-10"
   },
@@ -23945,8 +23945,8 @@
     "triggered": false,
     "path": null,
     "trigger_price": null,
-    "band_knife_pct": null,
-    "band_chase_pct": null
+    "band_knife_pct": 3.14469,
+    "band_chase_pct": 5.24115
    },
    "inst_date": "2026-08-10"
   },

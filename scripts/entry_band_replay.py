@@ -169,8 +169,8 @@ def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True,
                 trig = (i, path, cur)
                 break
         rec = {"triggered": trig is not None, "path": None, "trigger_price": None,
-               "band_knife_pct": _bd["knife"] if trig else bd and bd["knife"],
-               "band_chase_pct": _bd["chase"] if trig else bd and bd["chase"]}
+               "band_knife_pct": _bd["knife"], "band_chase_pct": _bd["chase"]}
+        # (§三十三外观瑕疵修复: 未触发行记录窗内最后一次生效带, 不再为None)
         if trig:
             ti, path, tprice = trig
             rec["path"] = path
