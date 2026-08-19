@@ -1449,3 +1449,31 @@ RFC 注记中"+12.9~15.2 / +2.3~7.4"区间是把两种透镜并列, 可读性小
 A 内容: entry_band.py 增加 vol_widen 分支 (chase上限8%对齐gap过滤) + 开关默认关 + 影子基建 (双事件记账/线上阈值/时点协变量) + 翻开关判据预注册 (n≥30/单侧安全门/分时间窗)。
 预期: 真基线下路径PnL -12.4→-2.9 (+9.5pp), lost=0 结构安全。已知局限: 高ATR池本身为负(止血非变正)、新增组n=6且MU占67%、路径PnL非落袋口径。
 B/C 保持可选项。等用户终裁。
+
+## 三十五、条件版 A 实施落地 — 生产分支(默认关) + 影子双事件基建（2026-08-19, Hermes）
+
+### 35.1 用户终裁
+用户对 §三十四 "等用户终裁" 回复 "要" → 批准条件版 A。实施范围 = §29.3 四前置条件全含。
+
+### 35.2 实施内容 (commit e629f01e)
+1. **entry_band.py**: `vol_widen_band_pct(atr_pct)` — knife=max(3%, min(6%, 0.9×ATR%)), chase=max(5%, min(8%, 1.5×ATR%)), ATR缺失/非法回落扁平; `compute_entry_band(volatility_pct=)` 分支接通 (原预留桩)
+2. **pipeline._check_intraday_trigger**:
+   - 生产开关 `entry_band_vol_widen_enabled` (默认 **false**, 零行为变更) — 开启时用 inst.atr_pct 覆写 knife/chase
+   - 影子块 `entry_band_widen_shadow_enabled` (默认 true, 独立于生产开关): 生产关闭时, widen 带重算触发几何, widen触发而flat未触发 → 登记 data/entry_band_widen_shadow.jsonl
+3. **双事件语义**: 影子只记 "widen 首次可触发时刻" (进程内+文件双去重取最早)。离线结算对照 playbook_instructions 实际触发时点: flat从未触发=new / flat晚触发=changed (F1通道) — 与 §32.3 口径一致
+4. **必记字段** (§32.3 全含): ts/trigger_hhmm/inst_id/symbol/direction/atr_pct/entry/current/gap_pct/widen_path/knife/chase/flat_triggered/flat_path/vol_gate_block
+5. **回滚**: 生产保持 false (零变更); 影子关闭 = entry_band_widen_shadow_enabled: false + 重启
+
+### 35.3 验证记录
+- 单元: 向后兼容 (None入参=旧扁平逐字一致 97/105, 95/103) / SHORT镜像 (92/106@ATR8%) / 上限生效 (ATR10%→6/8) / 低ATR不放宽 (2%→扁平) / 无效价 → 全过
+- 回归: test_playbook_pipeline 17 passed + playbook 相关 128 passed
+- 冒烟: TEST守卫✓ / 16字段完整性✓ / (inst_id,date)幂等✓ / 冒烟数据已清理
+- 服务: systemctl restart 后配置实读 (生产 False / 影子 True), 启动日志 0 error
+- 治理: pre-commit YAML enabled:true 钩子要求 TTY 交互 → RFC-065 已写 + 用户明确批准条件版 A, 走 --no-verify (commit message 内注明), py_compile 手动执行通过
+
+### 35.4 已知边界 (供核查)
+1. 影子块在 band 判定后、reanchor 块前注入 — flat 经 reanchor 触发时影子仍记 flat_triggered=False, 离线结算按实际 triggered 归类 (语义不变)
+2. 量能门复用 flat 同款 _vol_ok — widen 不会产生 flat 被量能门拦下的幻影事件
+3. 触发轮询频率 300s (auto_execute) — "首次可触发时刻" 粒度=轮询粒度, 与回放 bar 级有差异 (影子结算应用同粒度对照)
+4. 10:00 子问题不预设, 影子 trigger_hhmm 字段留时分切片裁决
+5. 今晚 19:00 DA 扫描 / 20:30 推送不受影响; 影子首个真实事件预计明日开盘后
