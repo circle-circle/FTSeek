@@ -1157,3 +1157,46 @@ push 侧 ends[fp]=""→lag=999→计入 final_n（`+N终局` 注解）。损坏/
 - 本议题交叉审查至此六轮，修复链闭环；今晚 19:00 DA 首跑 + 20:30 推送按最新代码执行
 - 挂账：N4 conf 分时间窗（8/29 判分）/ 分钟族起始日硬编码（低优）/ L4 pool_baseline
   幸存者偏置 / L6 分钟族确认期 / 口径C（真拆选股/方向/出场）
+
+## 二十八、入场带波动率化 A/B 回放 + RFC-065 提案（2026-08-19, Hermes）
+
+### 28.0 议题来源
+用户问"盘前规划→盘中执行如何保证" → Hermes 建议验证 entry_band.py 注释自述的"band 波动率化"待评估项 → 用户批准 ("要")。回放脚本+RFC-065 已提交 (commit 16c6ae57)。本节供另一 agent 独立核查。
+
+### 28.1 回放设计 (scripts/entry_band_replay.py)
+- **样本**: 288 条 BUY/SELL_SHORT 指令 (1分K 覆盖 36 票, 2026-07-14~08-18), 262 条有 atr_pct
+- **触发判定**: 逐字复刻 pipeline.py `_check_intraday_trigger` L4396-4419 — pullback/chase/out_of_band 三分支 + 盘中量能门 (cum_vol/(avg5d×elapsed_frac)≥1.5, 开盘15min豁免 fail-open, 1分K自聚合5日均量) + 触发窗 ET[09:35,14:00) (与线上 config 实测一致: entry_open_blackout 0935 / cutoff 默认1400)
+- **路径口径**: 触发 bar 收盘价=入场基准, 当日剩余 1分K 的 MFE/MAE/路径PnL (方向感知), 不隔夜
+- **三臂**: flat(knife3%/chase5%, 线上常量) / vol(对称: knife=clamp(0.9×ATR%,2,6), chase=clamp(1.5×ATR%,3,9), 中位ATR3.36%处与扁平重合) / vol_widen(只放宽: max(扁平, ATR式))
+- **已知近似**: ①触发价=bar收盘价 (线上bid/ask) ②路径PnL=bar级非成交口径 ③量能基准用1分K自聚合 (线上用日K avg_daily_vol_5d, 日K缓存无volume列故替代)
+
+### 28.2 结果 (data/entry_band_replay_latest.json)
+
+| 指标 | flat | vol对称 | vol_widen |
+|---|---|---|---|
+| 触发数/触发率 | 271 (94.1%) | 266 (92.4%) | 276 (95.8%) |
+| 路径PnL合计% | +4.9 | +11.8 | **+15.8** |
+| 中位PnL% | +0.13 | +0.14 | +0.19 |
+| 胜率 | 53.1% | 53.4% | 53.6% |
+| SL触及率 | 2.2% | 2.3% | 2.2% |
+| pullback/chase 占比 | 42/58 | 43/57 | 41/59 |
+
+### 28.3 配对分解 (裁决核心)
+1. **收窄有害**: vol 拒掉 10 条 (全 BUY chase, ATR 2.0-2.9%: MA×3/CVX×2/LLY/PDD/KO/ABBV/MRK), 其中 6 条是赢家 (合计+5.8%, 胜率60%) → 低波票扁平 5% chase 带不宽, 收窄杀机会
+2. **放宽有真价值**: vol 新增 5 条 (MU SHORT +1.46% ATR8.19 / MU BUY +9.86% ATR10.65 / GOOG +1.39% / ORCL +0.82% / LLY +3.03%, 全 chase 路径), **5/5 全赢合计+16.6%** → 扁平带把高波票正常波动挡出带
+3. **vol_widen = flat 严格超集**: lost=0, added=5; 低波票带与扁平逐字重合 (零行为变更面)
+
+### 28.4 提案 (RFC-065, docs/decisions/RFC-065-entry-band-vol-widen.md)
+`compute_entry_band(volatility_pct=atr_pct)` 分支: knife=max(3%, 0.9×ATR), chase=max(5%, 1.5×ATR), ATR缺失回落扁平; 配置开关默认 false。显式排除收窄侧。
+
+### 28.5 自查盲区 (供核查方优先打击)
+1. **n=5 新增组**: 5/5 全赢置信区间宽 (二项 95% CI ≈ [48%,100%]), 可能含运气 — 是否应影子攒样而非直接落地
+2. **bar 收盘价近似**: 触发判定用 close 非 tick/bid-ask, chase 场景实际触发点更优或更劣均可能
+3. **量能门替代基准**: 1分K自聚合 5日均量 vs 线上 Futu 日K avg_daily_vol_5d — 两基准差异未量化 (日K无volume列是被迫替代)
+4. **路径PnL ≠ 成交PnL**: 未过 SL/TP/退出规则链, 只测"触发当日剩余路径", 不测最终落袋
+5. **样本期单一 regime**: 7-14~8-18 近全 risk_on, 高波票放宽在 risk_off 下是否同样安全未验证
+6. **指令池选择偏误**: 只含有 1分K 的 36 票 (DA 重点池), 非全指令池
+7. **chase 上限放宽到 9%**: RR 劣化 — 触发价离 entry 越远, 对 SL 距离越近, 盈亏比结构性变差 (本回放路径PnL正但未见 RR 分解)
+
+### 28.6 用户裁决选项
+A. 批准落地 (开关默认关+影子对照) / B. 影子观察 2 周攒 n≥30 / C. 维持现状。Hermes 建议 A。
