@@ -67,15 +67,17 @@ def run_symbol(sym, seq):
         ma20[i] = sum(closes[i - 19:i + 1]) / 20
 
     events = defaultdict(list)  # rule -> [fwd1%]
-    for i in range(2, n - 1):
-        # R1/R2 连涨连跌 (N=2 起算: i-1,i 两天同向 → 看 i+1)
-        if up[i] and up[i - 1]:
+    for i in range(3, n - 1):
+        # R1/R2 连涨/连跌 — 2026-08-19 循环bug修复 (DEB-20260819 §9.0, Qoder 发现):
+        #   原条件 up[i] 把结果日 i 包进了事件条件 → R1 结果 100% 为正 (代数必然,
+        #   非动量)。修正: 条件只用两根已完结K线 (i-1, i-2), 结果仍是 ret1[i]。
+        if up[i - 1] and up[i - 2]:
             events["R1_连涨2+"].append(ret1[i])
-        if dn[i] and dn[i - 1]:
+        if dn[i - 1] and dn[i - 2]:
             events["R2_连跌2+"].append(ret1[i])
-        if i >= 3 and up[i] and up[i - 1] and up[i - 2]:
+        if up[i - 1] and up[i - 2] and up[i - 3]:
             events["R1b_连涨3+"].append(ret1[i])
-        if i >= 3 and dn[i] and dn[i - 1] and dn[i - 2]:
+        if dn[i - 1] and dn[i - 2] and dn[i - 3]:
             events["R2b_连跌3+"].append(ret1[i])
         # R3/R4 MA20 位置
         if ma20[i]:
@@ -98,7 +100,7 @@ def run_symbol(sym, seq):
     out = {}
     for rule, fwd in events.items():
         r = eval_rule(fwd)
-        r["PASS"] = (r["n"] >= 30 and abs(r["t"]) > 1.5 and r["oos_same_sign"])
+        r["PASS"] = (r["n"] >= 30 and abs(r["t"]) >= 2.0 and r["oos_same_sign"])
         out[rule] = r
     return out
 
@@ -109,31 +111,100 @@ for sym, seq in bars.items():
         results[sym] = r
 print(f"回放完成: {len(results)} 只\n")
 
-# ── 汇总 ──
+# ── 第四关: 规则级安慰剂校准 (DEB-20260819 §9.0 发现二, Qoder 提出) ──
+#   三关门 (n>=30 / |t|>1.5 / IS-OOS同号) 在肥尾+牛市漂移下假阳率高达 14-24%,
+#   观察 PASS 数与随机选日不可区分。第四关: 对每条规则, 按实际事件规模随机重抽样
+#   过同样三门 100 次 → 得零假设期望假PASS 数 (mean_exp) 与标准差 (sd_exp);
+#   观察 PASS 数须 > mean_exp + 2*sd_exp 才判"真信号"。
+import random as _rnd
+_rnd = _rnd.Random(20260819)
+
+def _gate_pass(vals):
+    n = len(vals)
+    if n < 30:
+        return False
+    m = sum(vals) / n
+    var = sum((v - m) ** 2 for v in vals) / (n - 1)
+    sd = math.sqrt(var) if var > 0 else 1e-9
+    t = m / (sd / math.sqrt(n))
+    h = n // 2
+    def _tm(vv):
+        nn = len(vv)
+        if nn < 2: return 0.0
+        mm = sum(vv) / nn
+        vv2 = sum((x - mm) ** 2 for x in vv) / (nn - 1)
+        ssd = math.sqrt(vv2) if vv2 > 0 else 1e-9
+        return mm / (ssd / math.sqrt(nn))
+    im, om = _tm(vals[:h]), _tm(vals[h:])
+    same = (im < 0 and om < 0) or (im > 0 and om > 0)
+    return abs(t) >= 2.0 and same
+
+# 收集每票的日收益序列 (供安慰剂抽样)
+_sym_rets = {}
+for sym, seq in bars.items():
+    closes = [x[2] for x in seq]
+    if len(closes) >= 60:
+        _sym_rets[sym] = [(closes[i + 1] - closes[i]) / closes[i] * 100 for i in range(len(closes) - 1)]
+
+def _placebo_rule(obs_n_per_sym, iters=100):
+    """obs_n_per_sym: {sym: 该规则观察到的事件数}. 返回 (mean_exp, sd_exp) 假PASS计数."""
+    counts = []
+    for _ in range(iters):
+        passed = 0
+        for sym, sz in obs_n_per_sym.items():
+            rets = _sym_rets.get(sym)
+            if not rets or sz < 30:
+                continue
+            idx = _rnd.sample(range(len(rets)), min(sz, len(rets)))
+            vals = [rets[i] for i in idx]
+            if _gate_pass(vals):
+                passed += 1
+        counts.append(passed)
+    m = sum(counts) / len(counts)
+    sd = math.sqrt(sum((c - m) ** 2 for c in counts) / (len(counts) - 1))
+    return m, sd
+
+# 汇总每条规则的观察 PASS 数
+pass_by_rule = defaultdict(int)
+pass_syms_by_rule = defaultdict(list)
+for sym in results:
+    for rule, r in results[sym].items():
+        if r["PASS"]:
+            pass_by_rule[rule] += 1
+            pass_syms_by_rule[rule].append(sym)
+
+print(f"=== 全池 {len(results)} 只: 四关门(n>=30,|t|>=2.0,IS/OOS同号,安慰剂)通过 + 第四关安慰剂校准 ===")
+print(f"{'规则':<16}{'观察PASS':>8}{'安慰剂期望':>10}{'阈值(+2σ)':>10}{'第四关':>8}")
+rule_verdict = {}
+for rule in sorted(pass_by_rule):
+    obs_n = {sym: results[sym][rule]["n"] for sym in pass_syms_by_rule[rule]}
+    # 安慰剂也要在未PASS的票上抽样以得全池期望——这里简化为对全池按规则事件数抽样
+    all_obs_n = {}
+    for sym in results:
+        if rule in results[sym]:
+            all_obs_n[sym] = results[sym][rule]["n"]
+    mean_exp, sd_exp = _placebo_rule(all_obs_n)
+    thresh = mean_exp + 2 * sd_exp
+    ok = pass_by_rule[rule] > thresh
+    rule_verdict[rule] = ok
+    flag = "✅真信号" if ok else "❌噪声内"
+    print(f"{rule:<16}{pass_by_rule[rule]:>8}{mean_exp:>10.1f}{thresh:>10.1f}{flag:>8}")
+
+print("\n注: 第四关衡量'该规则的PASS票数是否显著超出随机选日期望';")
+print("    未过第四关的规则其个股PASS可能是多重检验假阳, 不入股性卡。")
+
+print(f"\n=== Watchlist 44 只逐股 PASS 规则 (仅展示过第四关的规则) ===")
 WATCH = ["US.TSLA","US.COIN","US.CAT","US.GS","US.CVX","US.NVDA","US.RIVN","US.UBER","US.SNDK",
          "US.ARM","US.MU","US.BWXT","US.LLY","US.AAPL","US.MSFT","US.GOOG","US.AMZN","US.META",
          "US.AVGO","US.TSM","US.BABA","US.PDD","US.NIO","US.NFLX","US.CRM","US.ORCL","US.JPM",
          "US.BA","US.LMT","US.UNH","US.JNJ","US.V","US.ABBV","US.MRK","US.MA","US.HON","US.KO",
          "US.PEP","US.DIS","US.VZ","US.COST","US.WMT","US.SPOT","US.XOM"]
-
-total_pass = 0
-pass_by_rule = defaultdict(int)
-for sym in results:
-    for rule, r in results[sym].items():
-        if r["PASS"]:
-            total_pass += 1
-            pass_by_rule[rule] += 1
-
-print(f"=== 全池 {len(results)} 只: 通过三关(n>=30,|t|>1.5,IS/OOS同号)的规则 {total_pass} 条 ===")
-for rule, cnt in sorted(pass_by_rule.items(), key=lambda x: -x[1]):
-    print(f"  {rule:<16} {cnt} 只")
-
-print(f"\n=== Watchlist 44 只逐股 PASS 规则 ===")
 n_syms_with_pass = 0
 for sym in WATCH:
     if sym not in results:
         continue
-    passes = [(rule, r) for rule, r in results[sym].items() if r["PASS"]]
+    passes = [(rule, r) for rule, r in results[sym].items()
+              if r["PASS"] and rule_verdict.get(rule)]
     if passes:
         n_syms_with_pass += 1
         print(f"\n{sym} (bars={len(bars[sym])}):")
@@ -141,7 +212,7 @@ for sym in WATCH:
             sign = "续势↑" if r["mean"] > 0 else "回归↓"
             print(f"  {rule:<16} n={r['n']:<3} 次日均{r['mean']:+6.2f}% t={r['t']:+5.2f} | "
                   f"IS{r['is_mean']:+6.2f}% OOS{r['oos_mean']:+6.2f}% {sign}")
-print(f"\n有可信规则的 watchlist 标的: {n_syms_with_pass}/44")
+print(f"\n有可信规则(过四关)的 watchlist 标的: {n_syms_with_pass}/44")
 
 json.dump(results, open("/tmp/symbol_rule_replay.json", "w"), ensure_ascii=False)
 print("→ /tmp/symbol_rule_replay.json")
