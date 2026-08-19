@@ -73,11 +73,20 @@ def step3_build():
     line = (r.stdout or "").splitlines()
     print(f"[step3] 卡重建: {line[0] if line else 'FAIL'}")
 
+# ── Step 0: 日K缓存增量 (DEB §十六: 触发判定依赖最新日K; refresh_daily_bars 此前无 cron) ──
+def step0_daily_increment():
+    r = subprocess.run([PY, str(ROOT / "scripts" / "refresh_daily_bars.py")],
+                       capture_output=True, text=True)
+    tail = (r.stdout or "").strip().splitlines()[-1:]
+    print(f"[step0] 日K增量: {'OK' if r.returncode == 0 else 'FAIL'} {tail[0] if tail else ''}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--skip-minute":
         print("[skip] step1 分钟K增量")
     else:
         step1_minute_increment()
+    step0_daily_increment()
     step2_replays()
     step3_build()
     print("[done] 股性卡全链重建完成")
