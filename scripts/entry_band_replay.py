@@ -123,19 +123,22 @@ def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True,
 
     band_vol = vol_band(atr_pct) if (atr_pct and atr_pct > 0) else dict(FLAT)
     band_widen = vol_widen_band(atr_pct) if (atr_pct and atr_pct > 0) else dict(FLAT)
-    strategies = {"flat": FLAT, "vol": band_vol, "vol_widen": band_widen}
+    strategies = {"flat": FLAT, "vol": band_vol, "vol_widen": band_widen,
+                  "widen10": None}  # None = 时变带: 10:00前扁平/10:00后widen (§三十一G1)
     out = {"symbol": sym, "date": date, "direction": direction,
            "entry": entry, "atr_pct": atr_pct, "stop_loss": sl}
     for name, bd in strategies.items():
-        knife, chase = bd["knife"] / 100.0, bd["chase"] / 100.0
         trig = None  # (bar_idx, path, trigger_price)
         cum_vol = 0.0
+        _bd = bd if bd is not None else FLAT  # 默认值, 循环内按时点覆写(widen10)
         _vol_th = 0.8 if online_gates else 1.5  # F2: 线上 unified_config.yaml:1065
         for i, b in enumerate(day_bars):
             hhmm = int(b[0][11:13]) * 100 + int(b[0][14:16])
             cum_vol += b[5]
             if hhmm < 935 or hhmm >= 1400:
                 continue  # 触发窗 [09:35, 14:00)
+            _bd = bd if bd is not None else (FLAT if hhmm < 1000 else band_widen)
+            knife, chase = _bd["knife"] / 100.0, _bd["chase"] / 100.0
             cur = b[4]  # bar 收盘价 = 该轮实时价
             # F4: extreme_gap 过滤 |cur-entry|/entry > 8% (pipeline L4466-4468)
             if online_gates and entry > 0 and abs(cur - entry) / entry > 0.08:
@@ -166,7 +169,8 @@ def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True,
                 trig = (i, path, cur)
                 break
         rec = {"triggered": trig is not None, "path": None, "trigger_price": None,
-               "band_knife_pct": bd["knife"], "band_chase_pct": bd["chase"]}
+               "band_knife_pct": _bd["knife"] if trig else bd and bd["knife"],
+               "band_chase_pct": _bd["chase"] if trig else bd and bd["chase"]}
         if trig:
             ti, path, tprice = trig
             rec["path"] = path
@@ -298,6 +302,7 @@ def main():
         "flat": stats("flat", results),
         "vol": stats("vol", results),
         "vol_widen": stats("vol_widen", results),
+        "widen10": stats("widen10", results),
         "diff": {
             "rejected_by_vol": {
                 "n": len(rejected),
@@ -322,6 +327,7 @@ def main():
             "universe": f"{len(results_online)} 指令 (剔除低ATR<3%)",
             "flat": stats("flat", results_online),
             "vol_widen": stats("vol_widen", results_online),
+            "widen10": stats("widen10", results_online),
             "widen_vs_flat": {
                 "added": {"n": len(on_added),
                           "quality": group_quality(on_added, "vol_widen")},
@@ -331,6 +337,7 @@ def main():
             },
         },
         "per_instruction": results,
+        "per_instruction_online": results_online,
     }
     outp = DATA / "entry_band_replay_latest.json"
     with open(outp, "w", encoding="utf-8") as f:
