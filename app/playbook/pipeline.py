@@ -5412,6 +5412,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "mfe_pct": _mfe if _meta.get("mfe_pct") is not None else None,
                     "mae_pct": float(_meta.get("mae_pct", 0) or 0),
                     "time_to_mfe": _meta.get("time_to_mfe"),
+                    "time_to_mfe_trading_min": _meta.get("time_to_mfe_trading_min"),
                     "cohort": _meta.get("cohort"),
                     "horizon": _meta.get("horizon"),
                     "inv_price": _meta.get("alite_inv_price"),
@@ -6031,7 +6032,15 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     _cooldown_pct = float(_pb_cfg.get("cooldown_sl_pct", 4.0))  # 2026-07-16: 从 config 读取, 默认 4%
     _cooldown_sl = entry_price * (1 - _cooldown_pct / 100.0) if direction == "LONG" else entry_price * (1 + _cooldown_pct / 100.0)
     _in_cooldown = minutes_from_open is not None and minutes_from_open < 15
-    if _in_cooldown:
+    # 2026-08-20 (DEB §三十九, 用户裁"要"): 已武装保本仓豁免冷却放宽.
+    #   TSM 8/19 实弹: 隔夜仓开盘 09:31 冲高武装 (be线416.46), 09:32 价格穿线,
+    #   但冷却窗 min(be线, 冷却SL399.5) 把保本线锁进保险柜 → 压到 09:45 冷却到期
+    #   才出场, 期间价格 416→413, 净亏 -$25.5 (1分K回放: 09:32 出场可净$0~+$11, 挽回$25-37).
+    #   冷却窗原始保护对象 = MFE=0% 未武装新仓 (防开盘秒杀), 它们本就不触发本豁免.
+    #   已武装 = 价格已证明过浮盈, 保本线是"防赚变亏"的承诺, 开盘瞬间假跌破也应尊重.
+    #   回滚: 删 `and not breakeven_triggered` (恢复无差别放宽). 判分: 开盘15min内
+    #   SL_BREAKEVEN 出场笔数 + 其净结局 (回放基准 09:32 出场).
+    if _in_cooldown and not breakeven_triggered:
         _active_sl = min(effective_sl, _cooldown_sl) if direction == "LONG" else max(effective_sl, _cooldown_sl)
     else:
         _active_sl = effective_sl
@@ -6116,8 +6125,18 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   B 锚更高→更早触发: 真实仓未出场但 B 锚已被碰到时记录反事实出场点。
     #   真实仓继续持有, 后续真实结局与 B 出场点可直接对比 (无需离线回放)。
     #   仅当 B 锚严于当前生效 SL (真实不会同点出) 才是真差异点。回滚: 删本块。
-    if (not exit_reason and breakeven_triggered and not meta.get("_be_shadow_b")
-            and _active_sl > 0):
+    # ── shadow 方案C (2026-08-19, DEB-20260819 §三十七, record-only): 时间门控缓冲出场 —
+    #   B 结算(n=49): 触碰≥60min 组 14例13胜 +$76 (死单特征), <60min 组被7笔错过赢单
+    #   拖成 -$88 (动量未走完)。C = 只对 held≥60min 的首次锚触碰记录反事实出场。
+    #   预注册翻开关判据 (§三十七): C 专属事件 n≥30 + 单侧符号检验 p<0.05 +
+    #   均值>0 (B 教训: 胜率高≠均值正) ; gate=60 为事后选定切点, 结算时按
+    #   held_minutes 协变量做稳健性检查。回滚: 删 C 分支。
+    _c_gate_min = 60
+    # 测试卫生守卫: _symbol=="TEST" 是单测约定标记 (实证: 8/18-19 生产 jsonl 已被
+    # test_net_breakeven_contract 调用写入 4×N 条 TEST 记录) — 影子写盘跳过.
+    if (_symbol != "TEST" and not exit_reason and breakeven_triggered and _active_sl > 0
+            and (not meta.get("_be_shadow_b")
+                 or (held_minutes >= _c_gate_min and not meta.get("_be_shadow_c")))):
         try:
             _b_buffer = 0.15
             # 块内自算净保本线 (规则1 内的 _be_line/_be_tol 在本路径未定义 — NameError
@@ -6132,20 +6151,35 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             _b_differs = (direction == "LONG" and _b_anchor > _active_sl + _b_be_tol) or \
                          (direction == "SHORT" and _b_anchor < _active_sl - _b_be_tol)
             if _b_hit and _b_differs:
-                meta["_be_shadow_b"] = True
                 import json as _bj
                 from app.utils.timezone import now_et as _be_now
-                with open("data/breakeven_shadow.jsonl", "a") as _bf:
-                    _bf.write(_bj.dumps({
-                        "variant": "B_buffer_exit", "ts": _be_now().isoformat(),
-                        "symbol": _symbol, "direction": direction,
-                        "entry_price": entry_price, "shadow_exit_price": current_price,
-                        "b_anchor": round(_b_anchor, 4),
-                        "mfe_pct": round(peak_profit_pct, 4),
-                        "held_minutes": round(held_minutes, 1),
-                    }, ensure_ascii=False) + "\n")
-                logger.info(f"[影子·保本谷B] {_symbol} B锚({_b_anchor:.4f})被碰到 "
-                            f"反事实出@{current_price}, 真实仓继续 (record-only)")
+                if not meta.get("_be_shadow_b"):
+                    meta["_be_shadow_b"] = True
+                    with open("data/breakeven_shadow.jsonl", "a") as _bf:
+                        _bf.write(_bj.dumps({
+                            "variant": "B_buffer_exit", "ts": _be_now().isoformat(),
+                            "symbol": _symbol, "direction": direction,
+                            "entry_price": entry_price, "shadow_exit_price": current_price,
+                            "b_anchor": round(_b_anchor, 4),
+                            "mfe_pct": round(peak_profit_pct, 4),
+                            "held_minutes": round(held_minutes, 1),
+                        }, ensure_ascii=False) + "\n")
+                    logger.info(f"[影子·保本谷B] {_symbol} B锚({_b_anchor:.4f})被碰到 "
+                                f"反事实出@{current_price}, 真实仓继续 (record-only)")
+                if (held_minutes >= _c_gate_min and not meta.get("_be_shadow_c")):
+                    meta["_be_shadow_c"] = True
+                    with open("data/breakeven_shadow.jsonl", "a") as _bf:
+                        _bf.write(_bj.dumps({
+                            "variant": "C_late_buffer_touch", "ts": _be_now().isoformat(),
+                            "symbol": _symbol, "direction": direction,
+                            "entry_price": entry_price, "shadow_exit_price": current_price,
+                            "b_anchor": round(_b_anchor, 4),
+                            "mfe_pct": round(peak_profit_pct, 4),
+                            "held_minutes": round(held_minutes, 1),
+                            "gate_min": _c_gate_min,
+                        }, ensure_ascii=False) + "\n")
+                    logger.info(f"[影子·保本谷C] {_symbol} 锚触碰@held{held_minutes:.0f}min≥{_c_gate_min} "
+                                f"反事实出@{current_price}, 真实仓继续 (record-only)")
         except Exception:
             pass
 
@@ -6990,6 +7024,16 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 # 2026-07-22: 记录浮盈峰值到达时点 (分钟) — 解锁路径依赖退出验证.
                 #   record-only, 与 mfe_pct 同步刷新: 每次创新高即覆盖为当时 held.
                 meta["time_to_mfe"] = round(held_minutes, 1)
+                # 2026-08-19 (§三十七 P2-b): 交易分钟口径并行字段 — 墙钟 time_to_mfe
+                #   (隔夜仓 1421min) 与交易时 holding_hours (6.4h) 同一推送自相矛盾。
+                #   原字段语义不动 (口径漂移教训), 推送端优先读本字段。
+                try:
+                    from app.risk.position_exit_monitor import get_market_hours_us as _gmh
+                    _t2m_e = datetime.fromisoformat(r["entry_time"])
+                    _t2m_n = datetime.now(_t2m_e.tzinfo) if _t2m_e.tzinfo else datetime.now()
+                    meta["time_to_mfe_trading_min"] = round(_gmh(_t2m_e, _t2m_n) * 60, 1)
+                except Exception:
+                    pass
             if 0 < _cur_mae <= _MFE_MAE_SANE_MAX and _cur_mae > float(meta.get("mae_pct", 0) or 0):
                 meta["mae_pct"] = round(_cur_mae, 4)
                 # 2026-07-22: 记录最大回撤到达时点 (分钟), 同上.
