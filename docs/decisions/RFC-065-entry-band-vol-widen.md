@@ -1,9 +1,16 @@
 # RFC-065: 入场带波动率化 — 只放宽变体 (vol_widen)
 
-> **状态**: 待裁决 (回放证据已就绪)
+> **状态**: 已实施 (2026-08-19 用户裁"要", 条件版A) — 生产开关默认关 + 影子常开攒样
 > **日期**: 2026-08-19
 > **作者**: Hermes
-> **审批人**: 待定
+> **审批人**: 项目所有者 (用户裁决条件版A)
+
+### 实施记录 (2026-08-19)
+- `entry_band.py`: vol_widen_band_pct() + compute_entry_band(volatility_pct) 分支, ATR缺失回落扁平
+- `pipeline._check_intraday_trigger`: 生产开关 entry_band_vol_widen_enabled (默认false) + 影子块 (entry_band_widen_shadow_enabled 默认true, widen触发而flat未触发→登记, 离线结算分 new/changed)
+- 影子文件: data/entry_band_widen_shadow.jsonl, §32.3 必记字段全含 (时点/gap/path/ATR/双事件标签)
+- 验证: 向后兼容 (None入参=旧扁平逐字一致) / SHORT镜像 / 上限生效 / TEST守卫 / 幂等 / playbook 128 tests passed / 服务重启后配置生效 (生产关/影子开)
+- 翻开关路径: 影子事件 n≥30 + 单侧安全门 + 分时间窗 → entry_band_vol_widen_enabled: true + 重启
 
 ---
 

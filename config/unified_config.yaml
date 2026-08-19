@@ -1073,6 +1073,9 @@ playbook:
     entry_open_blackout_hhmm: 0935    # 2026-08-15 (用户三问Q2, DEB§33): 1015→0935 — 与实盘标准看齐.
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
     #   auto_execute 本已内置开盘5min延迟(9:30+5=9:35), 本值收口触发门同刻.
+    # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
+    entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065
+    entry_band_widen_shadow_enabled: true    # 影子开关: record-only常开攒样(new/changed双事件)
     #   风险声明: 9:30-10:15窗历史期望为负(7/1起n=181净-$1111), 此为基建保真裁决非PnL最优.
     #   历史: 1000→1015(8/12水坝修复). 回滚: 改回1015+重启.
     dead_signal_exit_enabled: true

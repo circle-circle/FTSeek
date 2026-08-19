@@ -3944,6 +3944,74 @@ def _symbol_streak_banned(symbol: str, pb_cfg) -> bool:
 
 _CUTOFF_LOGGED: set = set()  # 2026-07-28 降噪: 触发窗截止日志 每标的每日一次 (重启清零无害)
 
+# RFC-065 widen 影子 (DEB-20260819 §三十四): (inst_id, date) 去重 — 只记最早一次 widen_eligible.
+#   重启清零 + 文件兜底查重 (同 _shadow_portfolio_emit 模式), 冗余行由结算端按 inst_id 去重.
+_WIDEN_SHADOW_EMITTED: set = set()
+
+
+def _emit_widen_shadow(inst, symbol: str, is_short: bool, widen_path: str,
+                       current_price: float, entry_price: float,
+                       knife_pct: float, chase_pct: float,
+                       flat_triggered: bool, flat_path: str, vol_gate_block: bool):
+    """RFC-065 widen 影子登记 (record-only, 零执行影响). §32.3 必记字段全含.
+
+    结算口径 (离线): 对照指令实际触发时点 —
+      flat 从未触发            → 事件类型 = new (widen 新增)
+      flat 触发但晚于本记录时点 → 事件类型 = changed (变更触发, F1 通道)
+    任何异常静默 — 影子绝不影响触发判定.
+    """
+    try:
+        if "TEST" in str(symbol).upper():
+            return
+        _d = _today_et_str()
+        _lk = (inst.get("id"), _d)
+        if _lk in _WIDEN_SHADOW_EMITTED:
+            return
+        import json as _jws
+        from datetime import datetime as _dtws
+        from pathlib import Path as _Pws
+        _fp = _Pws(__file__).resolve().parents[2] / "data" / "entry_band_widen_shadow.jsonl"
+        # 文件兜底查重 (重启后 set 清空, 启动后首次落盘前查一次)
+        if _fp.exists():
+            try:
+                with open(_fp, "r", encoding="utf-8") as _fchk:
+                    for _ln in _fchk:
+                        try:
+                            _r = _jws.loads(_ln)
+                            if _r.get("inst_id") == inst.get("id") and _r.get("date") == _d:
+                                _WIDEN_SHADOW_EMITTED.add(_lk)
+                                return
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+        _WIDEN_SHADOW_EMITTED.add(_lk)
+        _now = _dtws.now(_now_et())
+        _e = float(entry_price or 0)
+        _c = float(current_price or 0)
+        _row = {
+            "ts": _now.isoformat(timespec="seconds"),
+            "date": _d,
+            "trigger_hhmm": _now.strftime("%H:%M"),   # §32.3: 触发时点 (第一协变量)
+            "inst_id": inst.get("id"),
+            "symbol": symbol,
+            "direction": "SHORT" if is_short else "BUY",
+            "atr_pct": inst.get("atr_pct"),            # §32.3: ATR
+            "entry_price": round(_e, 4),
+            "current_price": round(_c, 4),
+            "gap_pct": round(abs(_c - _e) / _e * 100.0, 3) if _e > 0 else None,  # 触发gap
+            "widen_path": widen_path,                  # pullback/chase
+            "widen_knife_pct": round(knife_pct * 100, 2),
+            "widen_chase_pct": round(chase_pct * 100, 2),
+            "flat_triggered": bool(flat_triggered),    # 结算分类依据 (new vs changed)
+            "flat_path": flat_path,
+            "vol_gate_block": bool(vol_gate_block),
+        }
+        with open(_fp, "a", encoding="utf-8") as _f:
+            _f.write(_jws.dumps(_row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # 影子纯记录, 绝不影响触发
+
 # 2026-07-30 流动性门: (symbol, date) → (adv_dollar, avg_vol) 日级缓存 — ADV 盘中不变,
 #   每标的每日只算一次, 不给触发循环增加 K 线配额压力 (bar-ruler 冻结教训)
 _LIQUIDITY_CACHE: dict = {}
@@ -4349,6 +4417,16 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #
     # 单一真源 app/playbook/entry_band.py — 执行端与 DA 直写共用同一 band 定义, 防百分比漂移/记录冲突.
     from app.playbook.entry_band import CHASE_ZONE_PCT as _chase_zone, KNIFE_FLOOR_PCT as _knife_floor
+    # RFC-065 (DEB-20260819 §三十四, 条件版A): vol_widen 生产开关 — 默认 false 零行为变更.
+    #   开启后 band 按 ATR 只放宽不收窄 (chase上限8%=extreme_gap线); ATR缺失自动回落扁平.
+    #   影子记录 (widen_eligible) 与本开关无关, 常开攒样 (§32.3).
+    try:
+        _widen_prod_enabled = bool(pb_cfg.get("entry_band_vol_widen_enabled", False))
+    except Exception:
+        _widen_prod_enabled = False
+    if _widen_prod_enabled:
+        from app.playbook.entry_band import vol_widen_band_pct as _wb_prod
+        _knife_floor, _chase_zone = _wb_prod(inst.get("atr_pct"))
     # 2026-07-20 重建: 盘中实时量能门 (替代原日级 volume_ratio).
     #   公式: today_cum_vol / (avg_daily_vol_5d × elapsed_fraction) ≥ threshold.
     #   数据源: Futu LV3 K_1M (300s缓存, 基本不额外耗配额) + 日K线 (5min缓存).
@@ -4417,6 +4495,40 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         else:
             triggered = False
             _entry_path = "out_of_band"
+
+    # ── RFC-065 widen 影子 (DEB-20260819 §三十四, record-only 常开攒样) ──
+    #   生产开关关闭时: 用 widen 带重算触发几何 — widen 能触发而 flat 不能 → 登记影子.
+    #   widen 带是 flat 严格超集 (只放宽) + 量能门同款 → flat触发⟹widen同轮必触发,
+    #   故只需记 "widen触发且flat未触发" 事件; 离线结算对照实际触发时点分 new/changed.
+    #   回滚: playbook.entry_band_widen_shadow_enabled 置 false (影子独立于生产开关).
+    if not _widen_prod_enabled and not triggered:
+        try:
+            if bool(pb_cfg.get("entry_band_widen_shadow_enabled", True)):
+                from app.playbook.entry_band import vol_widen_band_pct as _wb_shadow
+                _wk, _wc = _wb_shadow(inst.get("atr_pct"))
+                if (_wk, _wc) != (_knife_floor, _chase_zone):
+                    if is_short:
+                        if current_price >= entry_price:
+                            _w_hit, _w_path = current_price <= entry_price * (1 + _wk), "pullback"
+                        elif current_price >= entry_price * (1 - _wc):
+                            _w_hit, _w_path = _vol_ok, "chase"
+                        else:
+                            _w_hit, _w_path = False, "out_of_band"
+                    else:
+                        if current_price <= entry_price:
+                            _w_hit, _w_path = current_price >= entry_price * (1 - _wk), "pullback"
+                        elif current_price <= entry_price * (1 + _wc):
+                            _w_hit, _w_path = _vol_ok, "chase"
+                        else:
+                            _w_hit, _w_path = False, "out_of_band"
+                    if _w_hit:
+                        _emit_widen_shadow(inst, symbol, is_short, _w_path,
+                                           current_price, entry_price, _wk, _wc,
+                                           flat_triggered=False,
+                                           flat_path=_entry_path,
+                                           vol_gate_block=not _vol_ok)
+        except Exception:
+            pass  # 影子异常绝不影响触发判定
 
     # ── 2026-08-08 (DEB-20260808 §8.3 裁定①): SHORT 禁追涨 shadow — 观察 10:00+ 纯逆势队列 ──
     #   背景: "SHORT 且当日涨>3% 禁入" 硬门在 post-blackout 基线上残存效应为负 (-$19.80,
