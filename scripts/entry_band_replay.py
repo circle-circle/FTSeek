@@ -91,8 +91,15 @@ def elapsed_fraction(bars_so_far):
     return max(len(bars_so_far), 1) / 390.0
 
 
-def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True):
-    """对单条指令在两种 band 下模拟触发. 返回 dict 或 None (无当日数据)."""
+def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True,
+                         online_gates=False):
+    """对单条指令在两种 band 下模拟触发. 返回 dict 或 None (无当日数据).
+
+    online_gates=True (§二十九 Qoder F2/F3/F4, 真基线):
+      - 量能门阈值 0.8 (unified_config.yaml:1065, 非代码默认1.5)
+      - 低ATR门: atr_pct<3% 不触发 (low_atr_gate_min_atr_pct=0.03, RFC-060 d7f51c4d)
+      - extreme_gap: |cur-entry|/entry>8% 不触发 (pipeline L4466-4468)
+    """
     sym, date, direction, entry, atr_pct, sl = (
         inst["symbol"], inst["date"][:10], inst["direction"],
         float(inst["entry_price"]), inst["atr_pct"], inst["stop_loss"])
@@ -103,6 +110,11 @@ def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True):
     idx = sorted_dates.index(date) if date in sorted_dates else -1
     if idx < 5:
         return None  # 前5日均量算不出 → 量能门无基准, 跳过
+    # 低ATR门 (线上 3%, RFC-060): 整个指令不可触发
+    if online_gates and atr_pct is not None and 0 < atr_pct < 0.03:
+        return {"symbol": sym, "date": date, "direction": direction,
+                "entry": entry, "atr_pct": atr_pct, "stop_loss": sl,
+                "online_gate_skip": "low_atr<3%"}
     # 前5交易日全天累计量 (1分K自聚合)
     prev_vols = []
     for pd in sorted_dates[idx - 5:idx]:
@@ -118,18 +130,22 @@ def simulate_instruction(inst, bars_by_date, sorted_dates, vol_gate=True):
         knife, chase = bd["knife"] / 100.0, bd["chase"] / 100.0
         trig = None  # (bar_idx, path, trigger_price)
         cum_vol = 0.0
+        _vol_th = 0.8 if online_gates else 1.5  # F2: 线上 unified_config.yaml:1065
         for i, b in enumerate(day_bars):
             hhmm = int(b[0][11:13]) * 100 + int(b[0][14:16])
             cum_vol += b[5]
             if hhmm < 935 or hhmm >= 1400:
                 continue  # 触发窗 [09:35, 14:00)
             cur = b[4]  # bar 收盘价 = 该轮实时价
+            # F4: extreme_gap 过滤 |cur-entry|/entry > 8% (pipeline L4466-4468)
+            if online_gates and entry > 0 and abs(cur - entry) / entry > 0.08:
+                continue
             # 量能门 (pipeline L4371-4381 复刻): 开盘15min豁免; 数据缺失fail-open
             mins_since_open = (int(b[0][11:13]) * 60 + int(b[0][14:16])) - (9 * 60 + 30)
             in_grace = 0 <= mins_since_open < 15
             if vol_gate and not in_grace and avg5d > 0:
                 vr = cum_vol / (avg5d * elapsed_fraction(day_bars[:i + 1]))
-                vol_ok = vr >= 1.5
+                vol_ok = vr >= _vol_th
             else:
                 vol_ok = True
             if is_short:
@@ -194,6 +210,7 @@ def main():
 
     bars_cache = {}
     results = []
+    results_online = []  # §二十九条件4: 线上真门基线 (量能0.8/低ATR3%/gap8%)
     skipped_no_bars = 0
     for inst in insts:
         sym = inst["symbol"]
@@ -210,10 +227,15 @@ def main():
             continue
         r["inst_date"] = inst["date"][:10]
         results.append(r)
+        ro = simulate_instruction(inst, by_date, sorted(by_date.keys()),
+                                  online_gates=True)
+        if ro is not None and "online_gate_skip" not in ro:
+            ro["inst_date"] = inst["date"][:10]
+            results_online.append(ro)
 
     # ── 汇总 ──
-    def stats(key):
-        rows = [r[key] for r in results if r[key]["triggered"]]
+    def stats(key, pool):
+        rows = [r[key] for r in pool if r[key]["triggered"]]
         n = len(rows)
         if not n:
             return {"n": 0}
@@ -223,7 +245,7 @@ def main():
         slt = [x["sl_touch"] for x in rows if x["sl_touch"] is not None]
         return {
             "n": n,
-            "trigger_rate_pct": pct(n / len(results)),
+            "trigger_rate_pct": pct(n / len(pool)),
             "pullback_pct": pct(sum(1 for x in rows if x["path"] == "pullback") / n),
             "chase_pct": pct(sum(1 for x in rows if x["path"] == "chase") / n),
             "mfe_med_pct": round(mfe[n // 2], 2),
@@ -239,6 +261,11 @@ def main():
     added = [r for r in results if r["vol"]["triggered"] and not r["flat"]["triggered"]]
     widen_added = [r for r in results if r["vol_widen"]["triggered"] and not r["flat"]["triggered"]]
     widen_lost = [r for r in results if r["flat"]["triggered"] and not r["vol_widen"]["triggered"]]
+    # 真基线 (线上门) 的配对分解
+    on_added = [r for r in results_online if r["vol_widen"]["triggered"] and not r["flat"]["triggered"]]
+    on_lost = [r for r in results_online if r["flat"]["triggered"] and not r["vol_widen"]["triggered"]]
+    on_changed = [r for r in results_online if r["flat"]["triggered"] and r["vol_widen"]["triggered"]
+                  and r["flat"]["trigger_price"] != r["vol_widen"]["trigger_price"]]
 
     def group_quality(rows, key):
         pnl = [r[key]["path_pnl_pct"] for r in rows if r[key]["triggered"]]
@@ -247,6 +274,16 @@ def main():
         return {"n": len(pnl), "sum_pct": round(sum(pnl), 1),
                 "med_pct": round(sorted(pnl)[len(pnl) // 2], 2),
                 "win_rate_pct": pct(sum(1 for x in pnl if x > 0) / len(pnl))}
+
+    def changed_quality(rows):
+        """变更触发通道 (F1): flat与widen都触发但触发价不同."""
+        fp = [r["flat"]["path_pnl_pct"] for r in rows]
+        wp = [r["vol_widen"]["path_pnl_pct"] for r in rows]
+        if not fp:
+            return None
+        return {"n": len(rows), "flat_sum_pct": round(sum(fp), 1),
+                "widen_sum_pct": round(sum(wp), 1),
+                "net_change_pct": round(sum(wp) - sum(fp), 1)}
 
     out = {
         "meta": {
@@ -258,9 +295,9 @@ def main():
             "trigger_window": "ET 09:35-14:00",
             "note": "触发价=bar收盘价近似(线上用bid/ask); 路径=当日剩余不隔夜; 量能用1分K自聚合5日均量",
         },
-        "flat": stats("flat"),
-        "vol": stats("vol"),
-        "vol_widen": stats("vol_widen"),
+        "flat": stats("flat", results),
+        "vol": stats("vol", results),
+        "vol_widen": stats("vol_widen", results),
         "diff": {
             "rejected_by_vol": {
                 "n": len(rejected),
@@ -275,6 +312,22 @@ def main():
                           "quality": group_quality(widen_added, "vol_widen")},
                 "lost": {"n": len(widen_lost),
                          "quality": group_quality(widen_lost, "flat")},
+                "changed_trigger": changed_quality(
+                    [r for r in results if r["flat"]["triggered"] and r["vol_widen"]["triggered"]
+                     and r["flat"]["trigger_price"] != r["vol_widen"]["trigger_price"]]),
+            },
+        },
+        "online_gates_baseline": {
+            "note": "§二十九条件4真基线: 量能门0.8(unified_config:1065)+低ATR门3%(RFC-060)+extreme_gap8%(pipeline L4466)",
+            "universe": f"{len(results_online)} 指令 (剔除低ATR<3%)",
+            "flat": stats("flat", results_online),
+            "vol_widen": stats("vol_widen", results_online),
+            "widen_vs_flat": {
+                "added": {"n": len(on_added),
+                          "quality": group_quality(on_added, "vol_widen")},
+                "lost": {"n": len(on_lost),
+                         "quality": group_quality(on_lost, "flat")},
+                "changed_trigger": changed_quality(on_changed),
             },
         },
         "per_instruction": results,
