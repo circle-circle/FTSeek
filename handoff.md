@@ -114,6 +114,10 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-20 (DEB-20260820 第5-6轮裁决) — 终裁预承诺已签 / max_positions 核查证伪
+- **用户裁"只签1和3"**: ①P0-1 终裁预承诺已签 → `docs/specs/august-verdict-framework-20260831.md` 防挪门柱第5条(G1-G5判据一字未动) ②P1-1 DA生成层SHORT供给侧批准排队第一顺位(终裁后, bearish保底席位+ATR prefilter对称豁免) ③P0-2 名义下限+降频**不批**(费用证据由P0-3继续积累, 9月重提须附新证据)。
+- **max_positions 核查(用户主张"UE未计入上限"→证伪)**: 闸口SQL无通道过滤+UE成交同口径PLAYBOOK_SIM+UE无独立执行器, 8/19 cap=12被DA11+UE1=12压住实锤UE占坑。维持16不动(提20无拒因证据)。新立**P1-6 并发持仓总数闸**(现只有单日新开仓数闸, 隔夜+新开叠加无上限, 终裁后"更长持有期"赛道前置必补)。详见 DEB-20260820 第6轮。
+
 ### 2026-08-20 (方向偏向证据轮·外部审计Agent, 用户问"批量做多如何找准方向不偏向"→裁"需要") — 落档 DEB-20260816 §19 + DEB-20260820 A4 交叉引用
 - 新尺子: `scripts/direction_counterfactual_ruler.py` (只读, mode=ro) — A节 方向×周期矩阵(intraday/T+1/T+3/T+5, 已执行口径); B节 候选级反事实对侧视图(signal_snapshots 全候选含NEUTRAL对照, T+1/T+5/T+20, raw+α扣SPY); 预注册判读内嵌(n<30⏳/45-55掷币带/<45反指/>55正指)。cron 06:50 CST 周二-六 (回滚=删行)。输出 data/direction_counterfactual_ruler_latest.json+history。
 - 关键读数: BUY T+1 41.4%(n=203, 5周连<50%=反指) vs **T+5 57.5%正指(n=174,+1.167%)**; UE SHORT 池首日亏五日赚(T+5费后+2.369%,n=45); DA LONG池反事实做空费后-0.035% → §13.4"DA无空头edge"在 n=440(vs原n=74)维持; NEUTRAL对照α-0.002%≈0 → 尺子自洽。
