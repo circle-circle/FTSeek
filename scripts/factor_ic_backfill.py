@@ -197,7 +197,22 @@ def main():
         avg_alpha = sum(p[3] for p in pairs) / n
         verdict = "✅正alpha" if ic > 0.05 else ("❌负alpha" if ic < -0.05 else "⚪无alpha")
         print(f"  {factor:<30} {n:>5} {ic:>+8.4f} {wins/n*100:>5.1f}% {mr:>+8.4f} {avg_alpha:>+8.4f} {verdict}")
-        factor_ic_results[factor] = {"ic": ic, "n": n, "wr": wins/n, "avg_ret": mr, "avg_alpha": avg_alpha}
+        # ── 2026-08-20 (DEB §五十四): 分方向 IC 拆分 ──
+        #   pooled IC 样本 ~91% LONG (news_positive 474:45), 用 LONG 样本 IC 否决
+        #   SHORT 候选 = 样本污染 (AVGO 案: pooled +0.09 拦空, 当日 -5.2% 方向正确).
+        #   fwd_ret_t1 已方向调整: ic_short>0 = 该因子在 SHORT 信号上触发时做空赚钱.
+        #   消费方: pipeline.py IC 门按候选方向取 ic_<side> (n_<side>≥30 参与,
+        #   不足者不计分, 不用 pooled 顶替). 回滚: 删本段 + 4 个输出字段 (消费方
+        #   对缺失字段 fail-open, 无过渡风险).
+        _pairs_long = [p for p in pairs if p[2] == "LONG"]
+        _pairs_short = [p for p in pairs if p[2] == "SHORT"]
+        _ic_long, _n_long = calc_ic(_pairs_long) if _pairs_long else (None, 0)
+        _ic_short, _n_short = calc_ic(_pairs_short) if _pairs_short else (None, 0)
+        factor_ic_results[factor] = {
+            "ic": ic, "n": n, "wr": wins / n, "avg_ret": mr, "avg_alpha": avg_alpha,
+            "ic_long": _ic_long, "n_long": _n_long,
+            "ic_short": _ic_short, "n_short": _n_short,
+        }
 
     # F3: intraday IC 表 (entry 锚定 vs open 锚定并列; open 为诚实尺子)
     print(f"\n  === intraday IC (strength × signal→当日收盘, Spearman) ===")

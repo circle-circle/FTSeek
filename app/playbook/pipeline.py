@@ -986,6 +986,36 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     return BridgeVotingAdapter(by_symbol, data.get("trade_date", _today_str))
 
 
+def _direction_conditioned_ic_net(direction: str, bearish_hits, bullish_hits,
+                                  factor_ic: dict):
+    """方向条件化 IC 净分 (DEB §五十四, 2026-08-20)。
+
+    旧法用 pooled IC (样本 ~91% LONG) 对 SHORT 候选投反对票 = 样本污染:
+    AVGO 8/19 被 pooled net_ic=+0.09 拦空, 当日 -5.2% 方向正确 (空单未丢,
+    但再评估被污染分否决; §五十三修正定性)。
+    新法: 候选方向取同侧 IC (fwd_ret_t1 已方向调整, ic_short>0 = 该因子在
+    SHORT 信号上做空赚钱)。n_<side>≥30 才计分, 不足者不参与 (不用 pooled
+    顶替 — 宁缺毋滥)。bearish/bullish 分类不再参与计分: 方向信息已在
+    ic_<side> 内, 双重方向化会翻转符号 (§五十四语义推演实锤)。
+
+    Returns: (net_score, scored_factors) — net<-0.05 = 因子整体反对此方向。
+    """
+    side = "short" if direction == "SELL_SHORT" else "long"
+    ic_key = "ic_" + side
+    n_key = "n_" + side
+    net_score = 0.0
+    scored_factors = []
+    for c in list(bearish_hits) + list(bullish_hits):
+        fdata = factor_ic.get(c) or {}
+        ic_val = fdata.get(ic_key)
+        n_val = int(fdata.get(n_key) or 0)
+        if ic_val is None or n_val < 30:
+            continue  # ponytail: 该方向样本不足 → 不计分
+        net_score += float(ic_val)
+        scored_factors.append(c)
+    return net_score, scored_factors
+
+
 def _normalize_regime_str(regime_context) -> str:
     """统一 regime 字符串为 RISK_ON/CAUTIOUS/RISK_OFF/NO_TRADE (大写枚举名).
 
@@ -1328,43 +1358,24 @@ def _build_instructions_from_votes(
             except Exception:
                 _factor_ic = {}
 
-            # 计算因子IC加权的净方向分
-            _net_score = 0.0
-            for c in _bullish_hits:
-                _ic_val = float(_factor_ic.get(c, {}).get("ic", 0))
-                _n_val = int(_factor_ic.get(c, {}).get("n", 0))
-                if _n_val >= 30:  # 只有统计显著的因子才参与
-                    _net_score += _ic_val
-            for c in _bearish_hits:
-                _ic_val = float(_factor_ic.get(c, {}).get("ic", 0))
-                _n_val = int(_factor_ic.get(c, {}).get("n", 0))
-                if _n_val >= 30:
-                    _net_score -= _ic_val
+            # ── 2026-08-20 (DEB §五十四): 方向条件化 IC 净分, 取代 pooled 加权 ──
+            if direction in ("BUY", "SELL_SHORT"):
+                _net_score, _scored_factors = _direction_conditioned_ic_net(
+                    direction, _bearish_hits, _bullish_hits, _factor_ic)
 
-            # 2026-07-04: IC加权方向与LLM方向冲突时→SKIP (原"记录但放行"导致insider_net_sell出现在BUY中)
-            # Karpathy做减法: 已有IC加权逻辑算出了正确冲突信号, 只需把"放行"改"拦截"
-            if _net_score > 0.05 and direction == "SELL_SHORT":
-                _filter_audit["direction_flip"] += 1
-                logger.info(
-                    f"[playbook] {symbol} IC加权方向(LONG)与LLM方向(SELL_SHORT)冲突 "
-                    f"(net_ic={_net_score:+.2f}) → SKIP"
-                )
-                instructions.append(Instruction(
-                    symbol=symbol, direction="SKIP",
-                    skip_reason=f"IC方向冲突: 因子净IC={_net_score:+.2f}指向LONG但LLM=SHORT"
-                ))
-                continue
-            elif _net_score < -0.05 and direction == "BUY":
-                _filter_audit["direction_flip"] += 1
-                logger.info(
-                    f"[playbook] {symbol} IC加权方向(SHORT)与LLM方向(BUY)冲突 "
-                    f"(net_ic={_net_score:+.2f}) → SKIP"
-                )
-                instructions.append(Instruction(
-                    symbol=symbol, direction="SKIP",
-                    skip_reason=f"IC方向冲突: 因子净IC={_net_score:+.2f}指向SHORT但LLM=BUY"
-                ))
-                continue
+                # 2026-07-04 门语义保留: 净IC为负 = 命中因子整体反对此方向 → SKIP
+                if _net_score < -0.05:
+                    _side = "short" if direction == "SELL_SHORT" else "long"
+                    _filter_audit["direction_flip"] += 1
+                    logger.info(
+                        f"[playbook] {symbol} 方向条件化IC冲突 ({_side}侧净IC={_net_score:+.2f}, "
+                        f"计分因子={_scored_factors}) 与LLM方向({direction})相悖 → SKIP"
+                    )
+                    instructions.append(Instruction(
+                        symbol=symbol, direction="SKIP",
+                        skip_reason=f"IC方向冲突: {direction}候选{_side}侧净IC={_net_score:+.2f}(方向条件化)"
+                    ))
+                    continue
         
         # ── 2026-07-10: 负 edge 因子硬拦截 (数据驱动, OKR factor 表) ──
         # 2026-07-11 停用 (audit 结论, 见 _FACTOR_BLACKLIST_ENABLED):

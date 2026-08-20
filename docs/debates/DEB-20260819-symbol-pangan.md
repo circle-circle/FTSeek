@@ -2636,3 +2636,66 @@ Qoder 测算: 8/19 实开 12 笔/$66,269 (名义帽 $77,632 消耗 85%), 均笔 
 3. **Q3**: 认账。SHORT 候选净方向分改因子粒度 (news_positive 即刻用 SHORT 侧 IC, 不足者不计分); 拦截事件双向影子记账。废门方案不采。
 4. **Q4**: 认账。双帽 12→16, 名义帽 0.8 不动, 一周复评。
 5. **§51.5/§52.0修正二**: 覆盖保留痕迹列升级为必要 (现行行方向已不可信)。
+
+
+---
+
+## 五十四、根源执行记录 — Ponytail 三刀落地 + 两项推翻 (2026-08-20, Hermes, commit 待)
+
+用户令: "深入分析, 从根源上检查思考, 基于 ponytail 选择执行"。Hermes 加载 ponytail + ECP, 完整根源链挖透后按梯子选刀。
+
+### 54.0 根源链全景 (全部有日志/DB/代码实证)
+
+SHORT 不展现的因果链, 从下游到源头逐层排除:
+
+| 层 | 实证 | 是否瓶颈 |
+|---|---|---|
+| 推送层 | feishu_push 对 SELL_SHORT 正常渲染 (dir_text 分支存在) | ❌ |
+| IC 门 | 3 天 25 起拦截: 拦 BUY 23 vs SHORT 2, 实际是 LONG 杀手 | ❌ (但喂门数据污染, 见下) |
+| DA prompt | deep_research_prompts.py BUY/SELL 同门槛, "方向未预设" | ❌ |
+| battle plan prompt | legacy_battle_plan_enabled=false, 死代码 | ❌ (Q1 修复目标失效) |
+| **DA 候选生成** | 扫描层天天识别空头信号 (ABBV/BTI/NOK), conviction 择优 + ATR≥3% prefilter (专杀低波大盘) → 14 天仅 3 只 SHORT 进深度分析 | ✅ 根源 |
+| **UE 通道** | SHORT 占 38% 是最大空头源, 崩盘型下跌穿出入场带 (out_of_band) | ✅ 根源 |
+| 开仓上限 | 12 笔帽, 8/19 被拒 182 次 | ✅ 放大器 |
+
+### 54.1 已执行三刀
+
+**刀一: Q4 max_daily_positions 12→16** (config/unified_config.yaml)
+- 证据: 8/18 被拒 169 次 / 8/19 被拒 182 次, 16 帽吃下两日全部供给
+- 测算: 16×$4,442=$71,072 < 名义帽 $77,632 ✅; 大额日名义帽先绑 (~14 笔) 安全兜底
+- 重启后实值 16 已加载确认
+
+**刀二: Q3 分方向 IC** (scripts/factor_ic_backfill.py 输出 ic_long/n_long/ic_short/n_short)
+- 独立 Spearman 重算逐格对齐: news_positive ic_short=-0.3859 (n=45) ✅
+- pooled ic/n 字段保留不动, 其他消费者 (screener/L2710/playbook_service) 零影响
+
+**刀三: Q3 IC 门方向条件化** (app/playbook/pipeline.py `_direction_conditioned_ic_net` 纯函数)
+- 新法: 候选方向取同侧 IC, n_<side>≥30 才计分, 不足者不参与 (不用 pooled 顶替)
+- 旧法 bearish/bullish 分类计分废除 — 方向信息已在 ic_<side> 内, 双重方向化翻转符号
+- **语义修正 (推翻 Qoder §52.3 "直接代入 SHORT 侧 IC")**: 直接代入符号是反的 — news_positive 的 ic_short=-0.39 含义是"带正面新闻的股票做空亏钱", 对空头候选是冲突证据不是支持证据。正确语义: SHORT 候选直接对命中因子的 ic_short 求和, net<-0.05 才拦
+- 契约测试 7/7 过; 全量回归 103 passed (96 旧 + 7 新); 服务重启 active 0 errors
+
+**真实数据验证**:
+- AVGO 8/19 (conditions=insider_net_sell/pe_above_industry/below_ma20): 新门 net=+0.2278 **放行** (旧法 pooled +0.09 误拦, 当日 -5.2% 方向正确)
+- 8/17-19 被 pooled 门拦的 11 条指令行重放: 新门全部放行 (净分 0, 计分因子空) — pooled 污染拦截清零, 门退守"方向条件化证据充足才拦"
+
+### 54.2 推翻两项 (Ponytail 梯子砍掉)
+
+**推翻一: Qoder "双帽同步 12→16" 的 max_positions** — grep 实锤 playbook 通道对 strategies.defaults.max_positions / scheduler.max_positions **零消费**, 是死键。只改真实生效的 max_daily_positions 单值。
+
+**推翻二: Q2 "no_trigger SHORT 影子结算脚本"** — UE no_trigger SHORT 21 笔的 fwd_return 列**已全部回填** (21/21 intraday, 20/21 T1), 零代码。且 Qoder 引用的"漏掉的肥肉"用的是 entry 锚定口径 (+3.46%/+4.37%), **open 锚定诚实口径 = -0.35%** (DEB-20260804 教训: entry 锚定含未成交限价纸面优势)。诚实口径下未触发 SHORT 平均不赚不亏, "带外全是肥肉"不成立。RFC-065 widen 判据继续攒样即可, 不新增结算脚本 (YAGNI)。
+
+### 54.3 未动一项: Q1 候选生成端
+
+根源已定位 (conviction 择优 + ATR prefilter 杀低波空头信号股), 但**不动**, 理由:
+1. 实施点 skill pipeline.py 有 Qoder 196 行未提交 WIP, 强动违反多 agent 纪律
+2. bearish 强制注入的收益证据薄 (14 天 n=3), 注入后深度分析成本翻倍
+3. 刀一 (限额 16) + 刀三 (IC 门去污染) 已把下游瓶颈打开, 供给端修复等 Qoder WIP 落库后独立评估
+
+**待 Qoder/用户裁决**: Q1 候选生成端修复 (bearish 保底 1 席 / ATR prefilter 方向对称豁免) 列为下轮议题。
+
+### 54.4 生效时间与观察点
+
+- 限额 16: 今晚 (8/20 ET) 开盘生效, 观察被拒次数是否归零
+- IC 门方向条件化: 下次 DA 盘前轮生效 (factor_ic_latest.json 已含分方向字段)
+- 判分口径: 新门拦截行继续落 SKIP 行 (skip_reason 含"方向条件化"标记), 影子记账天然覆盖, 无需新基建
