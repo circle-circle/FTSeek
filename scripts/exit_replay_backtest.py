@@ -250,8 +250,12 @@ def collect_bars(trades: list[dict], refresh: bool = False,
 def _effective_sl(direction: str, entry: float, initial_sl: float, peak_profit_pct: float,
                   exit_cfg: dict, var: dict, fee_cushion: float,
                   po_threshold: float, po_dd: float) -> float:
-    """变体参数覆盖后调用实盘同函数. trailing=true 因子覆盖 be/dd; tiered 用 dd_low."""
+    """变体参数覆盖后调用实盘同函数. trailing=true 因子覆盖 be/dd; tiered 用 dd_low.
+    ponytail: be override 也应用到 trailing=false 因子 (原脚本只覆盖 trailing=true,
+    导致 noBE 对照对快速证伪类因子失效)."""
     cfg = dict(exit_cfg)
+    if var.get("be") is not None:
+        cfg["breakeven_at_pct"] = var["be"]
     if cfg.get("trailing_enabled", False):
         if var.get("be") is not None:
             cfg["breakeven_at_pct"] = var["be"]

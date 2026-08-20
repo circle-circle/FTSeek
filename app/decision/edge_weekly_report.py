@@ -244,9 +244,10 @@ def build_loop_health(days: int = 7) -> Dict[str, Any]:
         def _wk(lo: int, hi: int) -> Dict[str, Any]:
             los = (datetime.now() - timedelta(days=hi)).strftime("%Y-%m-%d")
             his = (datetime.now() - timedelta(days=lo)).strftime("%Y-%m-%d")
+            # 2026-08-20 净口径切换 (用户裁"切"): COALESCE(pnl_net, realized_pnl)
             r = conn.execute(
-                "SELECT COUNT(*), SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), "
-                "COALESCE(SUM(realized_pnl), 0) FROM trade_records "
+                "SELECT COUNT(*), SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END), "
+                "COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records "
                 "WHERE trade_date > ? AND trade_date <= ?", (los, his)
             ).fetchone()
             n = r[0] or 0
@@ -364,7 +365,7 @@ def build_exit_telemetry_text(days: int = 7) -> str:
         conn = _sq.connect(str(_MAIN_DB))
         conn.row_factory = _sq.Row
         rows = conn.execute(
-            "SELECT config_version, realized_pnl, pnl_pct, mfe_pct, entry_time "
+            "SELECT config_version, COALESCE(pnl_net, realized_pnl) AS pnl_net, pnl_pct, mfe_pct, entry_time "
             "FROM trade_records WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
             "AND exit_time IS NOT NULL AND exit_time != ''"
         ).fetchall()
@@ -381,7 +382,7 @@ def build_exit_telemetry_text(days: int = 7) -> str:
             pass
         cv = r["config_version"] or "v1"
         a = agg[cv]
-        pnl = r["realized_pnl"] or 0
+        pnl = r["pnl_net"] or 0  # 2026-08-20 净口径 (COALESCE 别名, 见上方 SELECT)
         pp = float(r["pnl_pct"] or 0) * 100.0
         mfe = float(r["mfe_pct"] or 0)
         a["n"] += 1

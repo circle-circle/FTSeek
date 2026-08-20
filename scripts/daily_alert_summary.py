@@ -227,8 +227,9 @@ def get_us_trade_summary(trade_date: str) -> Dict:
             return summary
         conn = sqlite3.connect(str(db_path))
         # 交易记录
+        # 2026-08-20 净口径切换 (用户裁"切"): COALESCE(pnl_net, realized_pnl)
         row = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0) FROM trade_records WHERE trade_date = ?",
+            "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records WHERE trade_date = ?",
             (trade_date,)
         ).fetchone()
         summary["trades"] = row[0]

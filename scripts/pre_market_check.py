@@ -227,7 +227,7 @@ def run_premarket_check() -> dict:
             "SELECT COUNT(*), "
             "COALESCE(SUM(CASE WHEN direction='LONG' THEN 1 ELSE 0 END),0), "
             "COALESCE(SUM(CASE WHEN direction LIKE 'SHORT%' THEN 1 ELSE 0 END),0), "
-            "COALESCE(ROUND(SUM(realized_pnl),2),0) "
+            "COALESCE(ROUND(SUM(COALESCE(pnl_net, realized_pnl)),2),0) "  # 2026-08-20 净口径切换
             "FROM trade_records WHERE trade_date=?", (yesterday,)).fetchone()
         _con3.close()
         results["checks"].append({

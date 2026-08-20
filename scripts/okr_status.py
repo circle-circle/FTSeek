@@ -69,13 +69,16 @@ except Exception:
     _cutoff_30d = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
 
 _source_filter = ", ".join(f"'{s}'" for s in PLAYBOOK_SOURCE_TYPES)
+# 2026-08-20 (用户裁"切"): PnL/胜率统一净口径 — pnl_net=毛-费; 旧行无 pnl_net 回退毛.
+#   毛口径把"毛>0但≤费用"的假盈利计为胜, 8/1-8/20 实测虚高胜率 18pp.
+_NET = "COALESCE(pnl_net, realized_pnl)"
 trade_stats = {}
 try:
     cursor = conn.execute(f"""
         SELECT COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-               SUM(realized_pnl) as total_pnl
+               SUM(CASE WHEN {_NET} > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN {_NET} < 0 THEN 1 ELSE 0 END) as losses,
+               SUM({_NET}) as total_pnl
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({_source_filter})
@@ -92,8 +95,8 @@ try:
     cursor2 = conn.execute(f"""
         SELECT strategy_id,
                COUNT(*) as cnt,
-               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl) as total_pnl
+               SUM(CASE WHEN {_NET} > 0 THEN 1 ELSE 0 END) as wins,
+               SUM({_NET}) as total_pnl
         FROM trade_records
         WHERE trade_date >= ?
           AND strategy_id IS NOT NULL
@@ -110,7 +113,7 @@ except:
 # 且部分真实成交未回写到 pi. trade_records 是成交的唯一真实记录.
 try:
     _tr_real = conn.execute(f"""
-        SELECT realized_pnl
+        SELECT {_NET}
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({_source_filter})
@@ -139,7 +142,7 @@ try:
     from app.playbook.config import get_playbook_config as _get_pb_cfg
     _cur_ver = _get_pb_cfg().get_exit_config_version()
     _vrows = conn.execute(f"""
-        SELECT realized_pnl
+        SELECT {_NET}
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({_source_filter})
@@ -374,9 +377,9 @@ try:
     _attr_rows = conn.execute(f"""
         SELECT ss.strategy_id as signal_source,
                COUNT(*) as cnt,
-               SUM(CASE WHEN tr.realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(CASE WHEN tr.realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-               SUM(tr.realized_pnl) as total_pnl
+               SUM(CASE WHEN COALESCE(tr.pnl_net, tr.realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN COALESCE(tr.pnl_net, tr.realized_pnl) < 0 THEN 1 ELSE 0 END) as losses,
+               SUM(COALESCE(tr.pnl_net, tr.realized_pnl)) as total_pnl
         FROM trade_records tr
         LEFT JOIN snap.signal_snapshots ss ON tr.decision_id = ss.decision_id
         WHERE tr.trade_date >= ?

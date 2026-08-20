@@ -3327,7 +3327,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         _conn_ah = _sql3_ah.connect("/opt/ftseek/FTSeek-US/data/ftseek_us.db", timeout=10.0)
                         _conn_ah.row_factory = _sql3_ah.Row
                         _pb_rec = _conn_ah.execute(
-                            "SELECT entry_price, exit_price, exit_time, exit_reason, realized_pnl, pnl_pct, quantity "
+                            "SELECT entry_price, exit_price, exit_time, exit_reason, realized_pnl, pnl_pct, quantity, "
+                            "pnl_net "
                             "FROM trade_records WHERE symbol = ? AND substr(entry_time,1,10) = ? "
                             "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
                             "AND UPPER(direction) = ? ORDER BY id DESC LIMIT 1",
@@ -3348,13 +3349,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         }
                         if _exit > 0:
                             _pnl = float(_pb_rec["realized_pnl"] or 0)
+                            # 2026-08-20 净口径切换 (用户裁"切"): 对账回填同样用净PnL/净判定,
+                            #   与 _close_trade_record 的 outcome 契约一致. pnl_net 缺→回退毛.
+                            _pnl_net_ah = _pb_rec["pnl_net"]
+                            _inst_pnl_ah = round(float(_pnl_net_ah), 2) if _pnl_net_ah is not None else round(_pnl, 2)
                             _upd.update({
                                 "exit_price": _exit,
                                 "exit_time": _pb_rec["exit_time"] or "",
                                 "exit_reason": _pb_rec["exit_reason"] or "unknown",
-                                "pnl": round(_pnl, 2),
+                                "pnl": _inst_pnl_ah,
                                 "pnl_pct": round(float(_pb_rec["pnl_pct"] or 0), 2),
-                                "outcome": "win" if _pnl > 0 else "loss",
+                                "outcome": "win" if _inst_pnl_ah > 0 else "loss",
                             })
                         else:
                             _upd["outcome"] = "holding"
@@ -4940,6 +4945,27 @@ def _max_drawdown_from_mfe_mae(mfe_pct: float, mae_pct: float) -> float:
     return 0.0
 
 
+def _net_pnl_pair(pnl: float, pnl_pct: float, fees_total, tr_row):
+    """毛PnL→净 (pnl, pnl_pct) 对; 费用缺失回退毛值 (fail-open).
+
+    tr_row: trade_records 行快照, [2]=entry_price [4]=quantity (与 _close_trade_record 同序).
+    pnl_pct 为 ratio 口径; 净 ratio = 毛 ratio - fees/notional. 2026-08-20 净口径切换 (用户裁"切").
+    """
+    _net = round(float(pnl), 2)
+    _net_pct = round(float(pnl_pct), 4)
+    try:
+        _f = float(fees_total) if fees_total is not None else 0.0
+        if _f > 0:
+            _net = round(float(pnl) - _f, 2)
+            if tr_row is not None:
+                _notional = float(tr_row[2] or 0) * float(tr_row[4] or 0)
+                if _notional > 0:
+                    _net_pct = round(float(pnl_pct) - _f / _notional, 4)
+    except Exception:
+        pass
+    return _net, _net_pct
+
+
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
                         pnl: float, pnl_pct: float, holding_hours: float,
                         inst_id = None, symbol: str = None,
@@ -5262,7 +5288,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         #   outcome IN (win,loss), void 被排除, 故无报价 ghost 不污染胜率/净PnL. trade_records 无 outcome
         #   列, 基于它的统计须过滤 exit_reason NOT LIKE '%GHOST%'.
         _is_ghost = "ORPHAN" in exit_reason.upper() or "PHANTOM" in exit_reason.upper() or "GHOST" in exit_reason.upper()
-        _outcome = "void" if _is_ghost else ("win" if pnl > 0 else "loss")
+        # 2026-08-20 (用户裁"切"): outcome/pnl/pnl_pct 全净口径 — 毛>0但≤费用的单=假盈利,
+        #   8/1-8/20 实测 125 笔中 23 笔假盈利, 毛胜率虚高 18pp. pnl_net 已在本函数算出
+        #   (_fees_total); 费用估算失败→回退毛判定 (fail-open, 不阻断). instruction.pnl 语义
+        #   从此=净, 下游周报/推送/因子分析/Obsidian 自动继承, 无需逐处改.
+        _inst_pnl, _inst_pnl_pct = _net_pnl_pair(pnl, pnl_pct, _fees_total, _tr)
+        _outcome = "void" if _is_ghost else ("win" if _inst_pnl > 0 else "loss")
         # 2026-07-16 P0 修复: 幂等条件加入 'void', 防止已标 void 的幽灵仓被重复处理.
         #   旧逻辑 WHERE outcome NOT IN ('win','loss') — void 不在排除列表 →
         #   幽灵仓可被重复平仓写入. 修复: 排除 'void' 终态.
@@ -5270,8 +5301,8 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
             "holding_period_hours=?, max_favorable_excursion=?, max_adverse_excursion=? "
             "WHERE id=? AND outcome NOT IN ('win','loss','void')",
-            (_outcome, exit_price, exit_reason, round(pnl, 2),
-             round(pnl_pct, 4), round(holding_hours, 1),
+            (_outcome, exit_price, exit_reason, _inst_pnl,
+             _inst_pnl_pct, round(holding_hours, 1),
              _mfe_usd, _mae_usd, inst_id),
         )
 
