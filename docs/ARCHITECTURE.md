@@ -1,205 +1,184 @@
 # FTSeek-US 架构总览
 
-> 本文档描述**实际在跑的代码链路**，不是 yaml 声称的链路。
-> 大量"已禁用"的规则/模块只是 `enabled: false`，代码仍存在；本文只讲 LIVE 部分，死代码见末尾清单。
-> 最后更新: 2026-06-20
+> 本文档描述**实际在跑的代码链路**，不是 yaml 声称的链路。每条论断带 file:line，可复核。
+> 大量"已禁用"的规则/模块只是 `enabled: false`，代码仍存在；本文只讲 LIVE 部分，死代码/债务见 §8。
+> 最后更新: 2026-08-20（全文逐条 code-verified 重写；上一版 2026-06-20 描述的"双线实盘"已被 Playbook 单管线 + 主管线双锁冻结取代）
 
 ---
 
 ## 0. 一句话现状
 
-实盘跑的是 **两条入场线 + 一套退出监控**，共享风控层。信号 IC≈0.02（无预测力），唯一 alpha 是 `SHORT + closing_drive`。自动交易可由 Dashboard 总闸开关，手动线实盘运行。
+**三态共存（shadow / futu_simulate / live）架构已就位，当前运行在 futu_simulate（富途模拟盘）。**
+Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只扫描研究、禁止下单）。
+8/31 终裁（`docs/specs/august-verdict-framework-20260831.md`）决定 GO/PIVOT/STOP。
 
 | 维度 | 状态 |
 |------|------|
-| 交易环境 | 实盘 (TRADE_ENV=0) |
-| 自动交易 | 受 `feature_flags.auto_trading_enabled` 总闸控制 |
-| 手动交易 | 实盘运行 (Dashboard → Futu) |
-| 账户 | ~$82K equity |
+| 交易环境 | futu_simulate（`AUTO_TRADE_ACCOUNT=sim`，.env.us:29） |
+| 下单管线 | 仅 Playbook（`playbook.enabled=true, execute_mode=futu_simulate`，unified_config.yaml:1034-1035） |
+| 主信号管线 | 冻结（双锁，§1）——扫描/研究仍跑，下单被拦 |
+| ORB 辅线 | `orb.enabled=false`（unified_config.yaml:936），引擎不启动（scheduler_core.py:709） |
+| topup 补仓 | 冻结（`topup.enabled=false`，unified_config.yaml:1278-1279，DEB-20260805 终裁） |
+| 账户 | ~$97K equity，DD 水位 GREEN |
 
 ---
 
-## 1. 双线路总图
+## 1. 主管线冻结：双锁 + 一层配置静默
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  AUTO 线  (app/pipeline/signal_pipeline.py)                      │
-├──────────────────────────────────────────────────────────────────┤
-│ scan_loop()  [每 5min, 时段自适应]                                │
-│  ├─ ModeSwitchService.is_auto_enabled()  ← 总闸, 关则跳过扫描      │
-│  ├─ 市场相位 / 熔断 / 数据健康 / KillSwitch 门禁                   │
-│  └─ _run_signal_scan_body()                                       │
-│      ├─ [POLLING 路径] per-symbol → _process_symbol_new_pipeline  │
-│      │     └─ 3-stage pipeline:                                  │
-│      │        market_data_stage → signal_stage → risk_stage      │
-│      │        → _submit_order()                                  │
-│      └─ [CRA 路径] 收集所有 candidate                            │
-│            → PortfolioConstructor.score_candidates()             │
-│            → allocate_risk_budget() → _submit_order()            │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  _submit_order_inner()  [app/pipeline/order_executor.py:3188]    │
-│  ~25 道内联风控门 (顺序见 §3) → _execute_long/_execute_short      │
-│  → Futu broker (TWAP if notional > $5K)                          │
-└──────────────────────────────────────────────────────────────────┘
+锁 1 (扫描侧): signal_pipeline.py:182-183
+  scan_loop() 入口: _skip_execution_in_trading = True  (局部 + scheduler 双写, 硬编码非配置)
+  消费点: signal_pipeline.py:616 / 1267, stages/signal_stage.py:616
+  → 信号照算(研究/IC 积累), 但候选不带下单资格
+  注意: scan_loop 线程本身不 gate 掉 — 还驱动日/周复盘、快照、watchdog 心跳 (:180 注释自述)
 
-┌──────────────────────────────────────────────────────────────────┐
-│  MANUAL 线  (app/web_dashboard/)                                  │
-├──────────────────────────────────────────────────────────────────┤
-│ Dashboard UI → ManualOrderService.submit_order()                 │
-│  → order/validator.validate_order()  [11 道校验, 见 §3]            │
-│  → Futu place_order()  ← 直达 broker, 不走 _submit_order          │
-│  → ManualHoldRegistry  ← 标记 PROTECTED, ExitMonitor 不碰         │
-└──────────────────────────────────────────────────────────────────┘
+锁 2 (执行侧): order_executor.py:3128-3139  [_submit_order 白名单, 硬编码]
+  if source_type not in (PLAYBOOK_SIM, PLAYBOOK_LIVE, ORB_ENGINE): 拦截
+  → 即使锁1被绕过(如盘前信号路径), 新仓也出不了 order_executor
+
+配置层 (第三道): strategy.main_scan_enabled=false (unified_config.yaml:1825, 2026-07-24 减法R2)
+  → 静默 _run_signal_scan_impl 扫描本体; scan_loop 线程仍跑非交易 housekeeping
 ```
 
-**关键差异**：手动线**不经过** `_submit_order_inner` 的 25 道门，用自己的轻量 validator。两条线共享的只有：Kill Switch、PDT、pre_trade_safety_check、capital_safety、drawdown。手动线**没有** VIX guard / IC gate / circuit breaker / battle_plan gate / 反向仓位硬拦截。
+`signal_pipeline.py:179` 注释自述锁1+锁2 为有意冗余：**两锁同时失效才会漏单**；
+配置层再独立兜一层（三层各自足以冻结下单）。
+冻结范围 = 下单；扫描/信号/IC 遥测按配置保留运行（为终裁与因子研究攒数据）。
 
 ---
 
-## 2. 信号生成 (signal_stage)
+## 2. Playbook 唯一入场链（实际 LIVE 路径）
 
-`app/pipeline/stages/signal_stage.py:process()` 按序尝试策略，collect-all 模型：
+```
+指令生成 (盘前 LLM + 通道):
+  DA-* (Daily Analyst) / universe_expansion-* (UE) / intraday_reentry-* /
+  TFB-* (topup bridge, 已冻结) / generate(空 decision_id)
+    → 直写 playbook_instructions 表   ⚠️ 旁路风险见 §8
 
-| # | 策略 | 配置门 | 状态 | 说明 |
-|---|------|--------|------|------|
-| 1 | fast_lane | 无 (battle plan match) | LIVE | 计划标的 ACTIVE 时 |
-| 2 | orb_pipeline | regime 门 | LIVE | ETF 开盘突破 |
-| 3 | trend_first | `strategies.trend_first.enabled` | ❌ false (IC=-0.24) | |
-| 4 | technical | `strategies.technical.enabled` | ✅ LIVE | **唯一正 IC (+0.23)**, 动量+回撤入场 |
-| 5 | voting_llm | `strategies.voting_llm.enabled` | ❌ false (40.8%WR) | |
-| 6 | insider | `strategies.insider.enabled` | ✅ LIVE | SEC Form4 集群买入 |
-| 7 | earnings_revision | `strategies.earnings_revision.enabled` | ❌ false (IC=-0.19) | |
+执行 (唯一执行口):
+  app/playbook/playbook_service.py
+    execute_instruction() :678
+      → _execute_via_dual_broker() :923        ← 注释 :1034 自述:
+                                                  "DA直写/reentry/投票 全部 writer 的唯一执行路径"
+        → _dual.submit_order(_order, target_env=target_env) :1128
+          → order_executor._submit_order (过 §1 锁2 白名单: PLAYBOOK_SIM)
+            → ~25 道内联风控门 → Futu SIMULATE broker
 
-收集后：regime 质量门槛 → 方向门禁 → SPY 方向过滤 → 多候选融合(confluence bonus) / 冲突取最强。
+退出: 不走主线 ExitMonitor → monitor_playbook_sim_exits 自管 (§3)
+```
 
-**Portfolio 打分** (`portfolio_constructor.py`)：5 维加权
-`strength×0.30 + confidence×0.20 + session×0.20 + direction×0.15 + plan×0.15`
-ATR 止损定价 → `capital_safety.calc_position_size()` 仓位。
-
-> ⚠️ 4 个权重 map 硬编码在 `portfolio_constructor.py` (SESSION_STRATEGY_ALIGNMENT / REGIME_NET_EXPOSURE_TARGET / SCORE_WEIGHTS / SESSION_EXPOSURE_TARGET_MODIFIER)，未外部化到 yaml。
+- 配置：`playbook.auto_execute=true`（unified_config.yaml:1023）
+- 通道判别用 `decision_id` 前缀；分通道漏斗观测见 `scripts/short_supply_funnel_report.py`
 
 ---
 
-## 3. 风控门序列
-
-### Auto 线 `_submit_order_inner` (order_executor.py:3188) — 25 道内联门
-
-| # | 行 | 门 | 失败行为 |
-|---|----|----|---------|
-| 1 | 3196 | AbsoluteCircuitBreaker (日/时/连亏) | fail-close |
-| 2 | 3217 | VIX 数据新鲜度 | fail-close |
-| 3 | 3233 | VIX>28 硬阻 (滞回解封<25) | block |
-| 4 | 3253 | auto_trading_enabled 总闸 | block |
-| 5 | 3264 | 日 auto 交易数上限 | block |
-| 6 | 3283 | auto 预算 (capital_safety) | block |
-| 7 | 3296 | IC 质量门 (策略/方向级) | block |
-| 8 | 3377 | Kill Switch | fail-close |
-| 9 | 3391 | Broker 持仓 dedup | skip |
-| 10 | 3411 | opening_drive 时段门禁 | block |
-| 11 | 3424 | 退出屏障 (防闪退重入死循环) | block |
-| 12 | 3438 | FLASH_EXIT 熔断 | block |
-| 13 | 3443 | 信号冷却复检 | block |
-| 14 | 3452 | 标的日亏限额 ($500) | block |
-| 15 | 3460 | pre_trade_safety_check | block |
-| 16 | 3497 | 市场广度信号 | 调整 |
-| 17 | 3536 | PDT guard (实盘) | block |
-| 18 | 3558 | 标的+方向冷却 | block |
-| 19 | 3564 | 反向冷却 (whipsaw) | block |
-| 20 | 3577 | SymbolLock 互斥 | block |
-| 21 | 3598 | Coordinator 多源仲裁 | block |
-| 22 | 3671 | _check_gates_and_conflicts (子门 ~15 道) | block |
-| 23 | 3685 | 同向重复仓位拦截 | block |
-| 24 | 3703 | CapitalAllocator.try_reserve | block |
-| 25 | 3731 | 方向路由 → _execute_short/_execute_long | — |
-
-### Manual 线 `validate_order` (order/validator.py:20) — 11 道
-
-KillSwitch → 参数 → $50K 上限 → 日 20 次 → ALLOW_REAL → PDT → 集中度(pre_trade_safety) → buying power → 日回撤 → capital_safety 水位 → 双路预算 → 限价偏离。
-
----
-
-## 4. 退出监控 (两层级联，非竞争)
+## 3. 退出监控：两套宿主，各管各的仓
 
 ```
-scheduler_core PositionMonitorLoop
-  → app/pipeline/position_monitor.py::monitor_loop()    [编排: 循环/对账/broker同步]
-    → _check_positions()
-      [1] ExitMonitor + ExitRuleRegistry  ← 唯一退出权威
-          app/risk/position_exit_monitor.py
-          内部 _check_exit_for_position() → registry 或 legacy
-      [2] _check_via_legacy           ← 仅 registry 出错时兜底
-    → order_executor._close_position()  [执行: broker + DB + notify]
+[主线仓] scheduler_core _monitor_loop (1652)
+  → app/pipeline/position_monitor.py::monitor_loop()
+    → ExitMonitor + ExitRuleRegistry (app/risk/position_exit_monitor.py)
+      registry 或 legacy 兜底 → order_executor._close_position()
+  playbook 仓被显式排除: position_monitor.py:348-355
+    "由 monitor_playbook_sim_exits 自管, 不纳入主线 PositionStore"
 
-  (2026-08-12: ExitRuleDispatcher 第三路径已删除 — 自 5/31 dispatcher_enabled=false
-   已接线未通电, 从未成为主路径; playbook 仓位由 monitor_playbook_sim_exits 自管退出)
+[Playbook 仓] scheduler_core _playbook_exit_fast_loop (1696, 2026-07-21 独立成环)
+  → app/playbook/pipeline.py::monitor_playbook_sim_exits
+    市场开放时每 20s (PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC) 跑一次
+    端到端退出延迟 ~25s; 旧宿主 llm_strategy_loop 调用点已让位 (scheduler_core.py:2681-2707)
+  order_executor 旧管线平仓路径对 playbook 仓关闭: order_executor.py:4304
 ```
 
-### 三条 LIVE 退出规则
+### Playbook 退出规则族（`_check_playbook_exit_rules`，pipeline.py:5910）
 
-| 规则 | 触发 | 动作 |
-|------|------|------|
-| **atr_stop** | entry ± 4.0×ATR, max 3% (SHORT max 10%) | 全平 |
-| **scale_out** | profit ≥ 1.0 ATR, 按 `{direction}_{strategy}` 分层 | 分批平 + ratchet 收紧剩余止损 |
-| **pre_close** | 收盘前 8min | 盈利落袋 / 亏损保留过夜(带 -3% 隔夜硬止损) |
+配置在 `config/playbook_horizon.yaml::factor_exit_rules`（**≠ exit_policy.yaml**），按序：
+[0] 开盘冷却 15min SL 放宽 4% → [0.5] 30min 无盈利收紧 SL 1% → [1] SL_INITIAL/BREAKEVEN/TRAIL_LOCK →
+[1.5] TAKE_PROFIT (RR≥1.5) → [2] 隔夜跳空 >3% → [3] PRE_CLOSE 收盘前 8min →
+[3.4] MFE_STALL（当前 disabled）→ [4] TIME_EXIT (>6h+亏损) → [5] MAX_HOLD_T5 (Cohort B ≥5 交易日)。
 
-**保护**：
-- Grace Period：入场后 45min 仅允许硬止损（浮亏≥3% 立即解除）
-- 退出冷却：120s
-- 手动仓位：PROTECTED，ExitMonitor 不干预
-
-### scale_out ↔ atr_stop ratchet 接线
-`scale_out.py` 返回 `stop_price`/`new_stop_pct` → `_execute_exit` 单调推 `trail_state` SL →
-`atr_stop_engine.compute_stop_lines()` 读 `trail_state["scale_out_stop_floor"]` 作下限 clamp →
-剩余仓位止损从 entry±4×ATR 收紧到 ratchet 水位。
-`trail_state_store` 持久化 `triggered_tiers` 到 SQLite，跨重启去重。
-
-> ⚠️ **已知不一致 (landmine)**：`trailing_stop` 规则（即 ATR 硬止损）在 `exit_policy.yaml::exit_rules` **无对应 key**。
+> ⚠️ **已知不一致（landmine，未修复）**：`trailing_stop` 规则（即 ATR 硬止损）在 `exit_policy.yaml::exit_rules` **无对应 key**（position_exit_monitor.py:271-285 注释自述）：
 > - Dispatcher 主路径要求显式 `enabled`（缺省=禁用）→ **跳过** trailing_stop
 > - Registry 内层路径缺省=不禁用 → trailing_stop **仅靠此路径存活**
-> - 故 `position_exit_monitor.py` 的 registry 禁用逻辑**保持"缺省=启用"**，切勿改为 fail-close，否则会关掉实盘 ATR 止损。
-> - 根因修复（让 dispatcher 也跑 trailing_stop）属架构变更，待后续灰度。
+> - 故 registry 禁用逻辑**保持"缺省=启用"**，切勿改 fail-close，否则关掉实盘 ATR 止损。
+> - 根因修复 = DEB-20260820 执行项 P1-2（排队，终审后）。
+> - （2026-08-12：ExitRuleDispatcher 第三路径已删除——自 5/31 dispatcher_enabled=false 已接线未通电，从未成为主路径。）
 
 ---
 
-## 5. Scheduler 后台线程
+## 4. 风控体系
 
-`scheduler_core.py::run_forever()` 启动 8 线程：
+### 熔断器族（无统一 L0-L4 编号，实际模块如下）
 
-| 线程 | 目标 | 作用 |
-|------|------|------|
-| SignalScanLoop | signal_pipeline.scan_loop() | 信号生成 (主) |
-| PositionMonitorLoop | position_monitor.monitor_loop() | 退出监控 (主) |
-| LLMStrategyLoop | phase-adaptive | 盘前计划/盘后 LLM/playbook |
-| NewsV2Loop | news_pipeline_v2 (180s) | 新闻采集 (observe) |
-| VIXMonitorLoop | (300s) | VIX 告警 |
-| ManualGuardLoop | manual_guard_loop | 手动仓风控 |
-| InsiderScanLoop | SEC Form4 日扫 | 内部人信号 |
-| ORB Engine | orb_engine.start() | ETF 独立突破辅线 |
+| 模块 | 位置 |
+|------|------|
+| AbsoluteCircuitBreaker（_submit_order_inner 第一道，不受任何 flag 控制） | app/risk/absolute_circuit_breaker.py:37；order_executor.py:3163-3182 |
+| StrategyCircuitBreaker（连亏3/日-3%/时-2% → 暂停30min） | app/risk/circuit_breaker.py:28；unified_config.yaml:1374-1378 |
+| SymbolCircuitBreaker / SystemCircuitBreaker | app/risk/circuit_breaker.py:88 / :179 |
+| AccountCircuitBreaker / MarketCircuitBreaker | app/risk/account_circuit_breaker.py:41 / market_circuit_breaker.py:25 |
 
-启动前：`_restore_positions_from_db()` + `startup_reconcile()` (内存↔DB 双向同步)。
+### 资金安全水位（capital_safety.py:42-77；yaml risk.capital_safety.water_levels :1356-1372）
+
+| 水位 | 回撤区间 | pos_mult / risk_mult |
+|------|---------|----------------------|
+| GREEN | 0% ~ -5% | 1.0 / 1.0 |
+| YELLOW | -5% ~ -10% | 0.5 / 0.5 |
+| ORANGE | -10% ~ -20% | 0.25 / 0.25 |
+| RED | -20% ~ -35% | 0.0 / 0.0 |
+| BLACKOUT | > -35% | 熔断锁仓（capital_safety.py:165） |
+
+恢复逻辑：水位回 GREEN/YELLOW 且回撤脱离熔断线自动解锁（capital_safety.py:231-233）。
+回撤熔断曾静默失效（双路径查不同账户），已修 + 突变检测后门已删除（fail-safe，见 memory capital-safety-drawdown-fix）。
+
+### 执行门（order_executor._submit_order 内联 ~25 道）
+
+AbsoluteCircuitBreaker(日/时/连亏) → VIX 新鲜度 → VIX>28 硬阻 → auto 总闸 →
+日交易数 → 预算 → IC 质量门 → KillSwitch → broker dedup → 时段门 → 退出屏障 →
+FLASH_EXIT 熔断 → 冷却复检 → 标的日亏限额($500) → pre_trade_safety → 广度 →
+PDT → 标的/方向/反向冷却 → SymbolLock → Coordinator 仲裁 → 子门组 → 同向重复拦截 →
+CapitalAllocator.try_reserve → 方向路由。
+（行号随版本漂移，以 `_submit_order_inner` 内顺序为准。）
 
 ---
 
-## 6. Battle Plan 生成→消费链
+## 5. Scheduler 后台线程（scheduler_core.py:1646-1709 实际 spawn 清单）
+
+| 线程 | spawn 行 | 目标 | 状态 |
+|------|---------|------|------|
+| SignalScan | 1646 | signal_pipeline.scan_loop() | LIVE（只扫描不下单，§1；扫描本体被 main_scan_enabled=false 静默，线程跑 housekeeping） |
+| PositionMonitor | 1652 | position_monitor.monitor_loop() | LIVE |
+| LLMStrategy | 1658 | 盘前计划/盘后复盘/playbook 生成+auto_execute(300s) | LIVE |
+| NewsV2 | 1665 | news_pipeline_v2 | ❌ 已退役（news_v2.enabled=false，yaml:780；scheduler_core.py:433-434 "C2 退役"） |
+| VIXMonitor | 1673 | VIX 告警 | 条件启动 |
+| ManualGuard | 1680 | 手动仓风控（ManualOrderService 固定 REAL 路由，di_container.py:141） | LIVE |
+| InsiderScan | 1687 | SEC Form4 日扫 | LIVE |
+| PlaybookExitFast | 1696 | monitor_playbook_sim_exits（20s，yaml:1527 enabled） | LIVE（§3） |
+| ORB Engine | 703 | orb_engine.start() | ❌ 未启动（enabled=false；注意 yaml:949 mode=active，若误开会直接主动交易） |
+
+启动前：`_restore_positions_from_db()` + `startup_reconcile()`（内存↔DB 双向同步）。
+
+---
+
+## 6. 三态共存与环境路由
 
 ```
-生成 (盘前 LLM):
-  app/pipeline/llm_pipeline.py:run_premarket_planning()
-  app/plan/pipeline.py / app/llm/agent_bridge.py
-    → 写 data/daily_battle_plan_us.json
+环境 SSOT = AUTO_TRADE_ACCOUNT (sim|real)   .env.us:29
+  ├─ broker 路由: position_sync.py:495-497  TrdEnv.SIMULATE if "sim" else REAL
+  ├─ 仓位同步只查当前 env 一侧: position_sync.py:576-577  _envs_to_query 单元素
+  │    (同文件 :566 注释"三态融合: 同时查询 SIMULATE+REAL"已过期, 代码实为单 env)
+  ├─ ModeSwitchService 只认它 (mode_switch_service.py:158/250)
+  └─ 已废弃: TRADE_ENV/FUTU_TRADE_ENV 不再控制 broker
+       TRADE_ENV=1 残留语义 = DB 路由 (1→ftseek_us.db; 写 0 会切库丢 OKR 数据, .env.us:21-24)
 
-消费 (运行时):
-  app/us_pipeline/battle_plan_manager.py  ← Singleton, 加载 JSON
-    ├─ signal_stage.py:289   fast_lane 策略匹配 (target ACTIVE)
-    ├─ portfolio_constructor.py:808  plan_alignment 打分维度
-    ├─ order_executor.py:1782  _check_gates_and_conflicts 门 J: check_trade()
-    └─ scheduler_core.py:1053  注入 daily_active_pool
+live 额外硬门: ALLOW_REAL_TRADING=false (.env.us:116)
+
+三态:
+  shadow        = 影子/重放模块 (不碰 broker): exit_shadow/limit_entry_shadow/short_boost_shadow…
+                  (纯 simulate 执行模式已废弃: playbook_service.py:762-775 强制降级 futu_simulate)
+  futu_simulate = 当前运行态 (Playbook → Futu SIMULATE)
+  live          = 毕业后 AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true
 ```
 
-> ⚠️ `app/playbook/` 是**独立**的 advisory 系统（Layer 0-3：regime→screener→LLM指令→shadow追踪），`playbook.enabled=true` 但 `execute_mode=simulate`。它**不写** daily_battle_plan_us.json，**不进**实时入场路径。USBattlePlanManager 才是 consumer。
+> ⚠️ 三态靠 env var + 约定维持，**无显式状态机**；切态未演练。
+> 风险与修复 = DEB-20260820 执行项 P1-4（排队，毕业通道最高测试优先级）。
 
 ---
 
@@ -208,38 +187,27 @@ scheduler_core PositionMonitorLoop
 | 参数类 | 位置 |
 |--------|------|
 | 全局配置 | `config/unified_config.yaml` |
-| 退出策略 (LIVE 规则) | `app/risk/exit_policy.yaml` |
-| Portfolio 权重 map | `portfolio_constructor.py` 硬编码 (待外部化) |
+| 退出策略（LIVE 规则） | `app/risk/exit_policy.yaml` |
+| 环境路由 | `.env.us::AUTO_TRADE_ACCOUNT`（非 TRADE_ENV） |
+| Playbook 执行参数 | `unified_config.yaml::playbook` (:1022+) |
+| 影子系统（回测/辩论） | `config/exit_profiles.yaml`（≠主线 exit_policy.yaml） |
 | LLM 路由 | `unified_config.yaml::llm.models` + `llm.features` |
-| 影子系统 (回测/辩论) | `config/exit_profiles.yaml` (≠主线 exit_policy.yaml) |
+| 决策过程记录 | `docs/debates/`（索引: index_generated.md + README.md） |
+| 进度队列 | `handoff.md`（唯一交接真源） |
 
 ---
 
-## 8. 已删 / Dormant 清单 (2026-06-20 清理)
+## 8. 已知债务与 landmine（DEB-20260820 全系统审计建档）
 
-### 本轮删除（零消费者，实盘行为零改变）
-- `app/risk/us_risk_pipeline.py` + `app/risk/checks/` — 实例化后 `.run()` 从不调用，实际风控走 order_executor 内联门
-- `app/core/position_monitor.py` — re-export stub，零 importer
-- `app/risk/options_quality_gate.py` — 零外部 import
-- (Phase B) disabled 退出规则的代码+接线：flash_exit / velocity_exit / time_stop / day_trade_mode
+| # | 债务 | 锚点 | 修复项 |
+|---|------|------|--------|
+| D1 | god module：pipeline.py 7,687 行 / order_executor.py 5,396 行（无专属测试文件）；pipeline.py 237 处 `except Exception` | app/pipeline/ | P1-3（排队） |
+| D2 | 指令写入方（DA pipeline.py:1953/2194、reentry intraday_reentry.py:430、UE scripts/llm_universe_scan.py:1335）直写 playbook_instructions：收口点在 `PlaybookDB.save_instruction` 内的 admission（db.py:208-232），但**判分在下单前很远**，与 order_executor 门序列脱节 | app/playbook/ | P1-5（排队） |
+| D3 | trailing_stop 双路径不一致（§3 landmine） | position_exit_monitor.py:271-285 | P1-2（排队） |
+| D4 | 三态无状态机（§6） | position_sync.py env 读取 | P1-4（排队） |
+| D5 | sector_limits 未知标的放行（pass-through） | app/risk/sector_limits.py:139-141 | P2-4（排队） |
+| D6 | regime 乘数表硬编码 3×、两套 IC 系统并存、SL 计算多源 | 多处 | P2-5（排队） |
+| D7 | 时区混用：裸 `datetime.now()` 与 `now_et()` 并存 | 多处 | P2-7（排队） |
 
-### Dormant（嵌在 live 路径，标 fail-safe 后保留，待后续灰度移除）
-- `chandelier_trail` / `breakeven` / `cost_buffer` — 嵌在 `atr_stop_engine.compute_stop_lines()`，被 live `trailing_stop` 调用。
-  yaml `enabled: false`，且 `atr_stop_engine.py` 默认值已改为 fail-safe（缺省=禁用）。拆数学属工作代码变更，留后续单独灰度。
-- `progressive_trailing` 的 6 个子 key（session_blend / effective_atr_floor / fallback_sl 等）仍被 live 消费，块名具有误导性。
-
-### 保持不动（探索证明 LIVE，勿删）
-`dynamic_exit` (regime-aware SL/TP) / `pipeline.master_switch` (StrategyRouter shadow 路由) / `llm.strategy_engine` / `legacy_aliases` / catalyst (reverse_catalyst active) / orb 引擎 / `time_stop_hours` (Position 字段，≠退出规则 time_stop)。
-
----
-
-## 9. 数据驱动结论（策略层）
-
-- 信号 IC≈0.02，无预测力
-- **SHORT + closing_drive**：77.1% WR, +46.2% — 唯一 alpha
-- LONG (any)：20.9% WR, -$2.9K — 系统性亏损
-- opening_drive 入场：136 笔 -366.6% — 已硬拦
-- HIGH_VOL (VIX>25)：141 笔 -154K (占亏 71%) — VIX>28 硬阻
-
-> 真正驱动 PnL 的只有 3 个开关：方向(SHORT)、时段(禁 opening_drive)、波动率(VIX 门禁)。
-> config 里大量"收紧/放宽/分层"参数是在无 alpha 系统上微调，是"越调越乱"的根因。
+> 全部机制类修复排队至 8/31 终裁后（验证期白名单 = 修尺子/攒样本/做减法）。
+> 量化侧现状（无方向 alpha / 费用 12bps 结构性出血 / SHORT 供给枯竭）见 DEB-20260820 §四。

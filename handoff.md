@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-12 (禁触窗10:00→10:15 OOS判据预注册 DEB-20260812, 裁决日8/26; RFC-064 TIME_EXIT隔夜每日重置已上线) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-20 (DEB-20260816 §19 方向偏向证据轮: 用户问"批量做多偏向如何找准方向"→ 无偏向方向尺子落地 direction_counterfactual_ruler.py+cron 06:50; BUY T+1 41.4%反指(n=203,5周连<50%)但T+5 57.5%正指(n=174) → 核心病灶=周期错配(日级收割周级alpha), 非方向配额; DA池反事实做空费后-0.035% → §13.4维持; 方向再权重排队终裁后M1-M3 · 前次: DEB-20260820 R2执行白名单四项落地) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -68,6 +68,11 @@
    ③ 日毛利均值 t>1 (供给端有真实 edge, 8/9 基线: t=−0.10 统计为零) ④ ADF 平稳。
    工具: `scripts/_tmp_adf_check.py` (纯 numpy 实现, 可复现)。当前基线 (7/2-8/7):
    净日均 −$40.96 (t=−1.44), 毛日均 −$2.71 (t=−0.10) — 未达标, 差距在毛利端。
+0b. **🔎 全系统双维审计已起案 (2026-08-20, 外部审计 Agent, 用户令"分析+写入DEB")**: `docs/debates/DEB-20260820-architecture-quant-dual-audit.md` — 架构×量化双维冷读 (4路深读+DB直查, 全部数字附SQL可复现)。三结构性发现: ①费用判决书: 干净窗口(7/11起)n=257 毛−1211/费−1143/净−2354, 客单$3,717→12bps往返, **毛edge修到0仍净亏12bps** ②方向无alpha三方证据链闭合, 唯一验证优势=gate负筛+退出锁利(SL_TRAIL_LOCK n=61 +$2,110 WR91.8%) ③SHORT供给仅12.8%(33/257)且供给侧结构性枯竭(DEB§51同判)。另: 每笔期望 Jul −7.35→Aug −11.4/笔 与320 commits/月迭代强度并读(归因假设级,跨config_version已自认)。执行项全部按验证期白名单打标: 现在可做=只读记分牌(fee_unit_economics)+SHORT供给影子观测, 机制变更(名义下限/SHORT prompt对称/双路径统一/god module拆分/三态状态机)全排队终审后。待: 辩论方指派攻击(建议8/22前) + 用户终裁。**零 live 改动, 零重启。**
+0c. **✅ R2执行完成 (2026-08-20, 用户裁"先做收益大、风险相对低的方面")**: 白名单四项全部落地, 零 live 行为变更: ①`scripts/fee_unit_economics_scorecard.py` (只读, cron 06:41 CST Tue-Sat) — 复算与账本逐位一致; 新增: **名义Q5(≥~$5K)是唯一毛利正分位(+4.0bps), Q1 fee高达23.3bps**, 59.4%单笔毛利跑不赢自身费用 ②`scripts/short_supply_funnel_report.py` (record-only, cron 06:44) — **SHORT占比漏斗各层平坦(13.3%→12.3%)→枯竭在生成层非门禁层**; UE=SHORT主供给(18/33)且唯一净正(+$30.71) ③ARCHITECTURE.md 全文按 file:line 复核重写(主管线三锁冻结/playbook_service唯一执行口/退出双宿主/8线程清单/AUTO_TRADE_ACCOUNT三态路由/债务清单) ④`scripts/build_debate_index.py`→index_generated.md: 101份DEB全量索引, **发现README手工索引漏登92份**(已清单化)。crontab已备份(data/crontab.backup.20260820-*)。机制类继续排队终审后。
+0d. **🔎 DA SHORT 瓶颈深析完成 (2026-08-20, 用户令), 落档 DEB-20260816 §17**: 结论=瓶颈在上游供给三层乘法收缩(prefilter ATR≥3%把低波空头候选群杀在评级前[新建档, skills pipeline.py:63/296] × bridge提名仅3.6% SHORT × LLM看空倾向~4-7%/日), 下游gate不歧视(SHORT PASS 33%>BUY 22%, n=1256)。**§13.4 已裁维持**: DA层观望=经济正确(反事实t=-0.05), 不修DA; 靶点=UE bearish召回。⚠️新风险信号: UE SHORT 8月净额-$122.92 vs 7月+$153.63 (n=6<30不下结论), §16.4 E1 诊断需先判此转负再谈扩产。待(白名单内): M1 prefilter剔除群前向收益影子(record-only)。
+0e. **📋 行动分析方案已落档 (DEB-20260816 §18, 2026-08-20), 待用户批准后执行 A/B 轨**: 四轨结构 — **A**: `scripts/prefilter_atr_shadow.py` 补测全链唯一空白(ATR剔除群反事实空头期望, 判据预注册: ≤-0.05%/笔且t≤-2=滤漏edge, 否则结案互证§13.4), cron 06:47 **B**: UE 8月转负一次性诊断(6笔逐笔解剖 vs 7月12笔 + E1 universe_scan 7vs8月对比), 8/21-22 出报告 **C**: 已上线双记分牌继续积累, 8/29-31终裁读数 **D**: 终裁后机制决策树(GO/PIVOT/STOP 分波, 现不动)。时间线: 8/21 实施 A+B → 8/26-28 A 轨 n≥30 → 终裁输入。全部白名单内, 零机制变更。
+0f. **📐 方向反事实尺子已落地 (DEB-20260816 §19, 2026-08-20, 用户裁"需要")**: `scripts/direction_counterfactual_ruler.py` (只读) + cron 06:50 CST 周二-六。读数: **A 指令级·已执行**: BUY T+1 命中41.4%(n=203, 连续5周<50%, 反指)/T+3 掷币带/**T+5 57.5%正指(n=174,+1.167%)**; SELL_SHORT T+1 56.7%(n=30脆)。**B 候选级反事实(signal_snapshots 全候选)**: DA LONG n=440 T+1 α-0.233%, 对侧做空费后-0.035% → **§13.4 DA无空头edge在n=440维持**; DA SHORT n=32 全周期方向错(DA无空头技能); **NEUTRAL对照 n=740 α-0.002%≈0 = 尺子自洽**; UE SHORT 池首日亏五日赚(T+5费后+2.369%, n=45)。统一定性: **病灶=周期错配(日级收割周级alpha)+方向压在反指侧**, 非"空太少要配平"; 方向中性≠50/50配额。机制项 M1方向-周期对齐/M2闸门对称化/M3提名方向无关化 全部排队终裁后(§19.6)。零机制变更、零重启。
 3m. **🔴 待用户终裁 + 待独立 Agent 复核**: `docs/debates/DEB-20260806-source-control.md` — 源头把控 (标的/指令质量/confidence 区分度)。
   - **已落地 (验证期白名单内)**: ① `scripts/eval_vwap_gate.py` 修尺子 — 原实现把 144 个**不可测量**样本静默计为 +0.00% 并算进均值 (门放行后标的转持仓、影子停轮询 → 轨迹恒 1 点)。修后结论: **VWAP 门实盘拦 45.2% 入场, 且倾向「扼杀」** (被拦 n=55 均值 **+0.254%**, 其中 SHORT **+0.649%** → beta 解释不成立; 放行组已实现 **−0.166%**)。② 统一准入门 `app/playbook/admission.py` 接入 `db.save_instruction` (**record-only, 全阈值=0 不拦**) — 首次使 DA直写/UE/topup/generate 四路可统一施规。
   - **关键事实**: confidence 门 (BUY 70) 只在 `_build_instructions_from_votes` 内, 而 **DA 219 条 BUY 均 conf=36 绕门直写并执行 123 笔** (pipeline.py:1523-1532 自述"已由 deep_analysis skill 直写DB")。事前特征 IC 全部 |t|<1 (n=242) → **重构 confidence 公式是伪工程**, 真正缺的是尚未记录的特征。
@@ -108,6 +113,37 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-20 (方向偏向证据轮·外部审计Agent, 用户问"批量做多如何找准方向不偏向"→裁"需要") — 落档 DEB-20260816 §19 + DEB-20260820 A4 交叉引用
+- 新尺子: `scripts/direction_counterfactual_ruler.py` (只读, mode=ro) — A节 方向×周期矩阵(intraday/T+1/T+3/T+5, 已执行口径); B节 候选级反事实对侧视图(signal_snapshots 全候选含NEUTRAL对照, T+1/T+5/T+20, raw+α扣SPY); 预注册判读内嵌(n<30⏳/45-55掷币带/<45反指/>55正指)。cron 06:50 CST 周二-六 (回滚=删行)。输出 data/direction_counterfactual_ruler_latest.json+history。
+- 关键读数: BUY T+1 41.4%(n=203, 5周连<50%=反指) vs **T+5 57.5%正指(n=174,+1.167%)**; UE SHORT 池首日亏五日赚(T+5费后+2.369%,n=45); DA LONG池反事实做空费后-0.035% → §13.4"DA无空头edge"在 n=440(vs原n=74)维持; NEUTRAL对照α-0.002%≈0 → 尺子自洽。
+- 统一定性: 病灶 = **周期错配**(退出规则族日级收割周级alpha, 恰收割在反指侧) + 方向压在反指侧; 非"空太少要配平"。方向中性≠50/50配额(配额=新偏向); 去偏=拆非对称障碍(SHORT三问/提名端预贴方向/LLM多头先验)。
+- 机制项排队终裁后: M1 方向-周期对齐(最大杠杆,影子先行) → M2 闸门对称化(§18.4波2既有) → M3 提名方向无关化(改动面大最后)。
+- 合规: 白名单·修尺子/攒样本; 尺子只产读数不设门不下单; 零live改动零重启; 全部数字可脚本复现。
+
+### 2026-08-20 (DA SHORT 瓶颈深析·外部审计Agent, 用户令"深入分析瓶颈点") — 落档 DEB-20260816 §17
+- 方法: 4路数据直查(bridge池32天构成/debate_outcome全量/gate分方向n=1256/skip归因) + skills代码取证 + 8/19-20 DA日志逐层追踪; 与 DEB-20260814/0816/0819 交叉校验不翻已裁项。
+- 新建档: ❶prefilter「ATR<3%低波不做日内动量」层(skills/deep-stock-analysis/scripts/pipeline.py:63/296) — 8/19扫描器点名空头信号ABBV/BTI/NOK后ABBV即被此规则剔除; 低波空头候选群在LLM评级前出局, 且该群从未被§13.3反事实回放覆盖 ❷bridge弃权保护不对称(LONG 219 vs SHORT 1) ❸gate量化排除(SHORT PASS 33%>BUY 22%) ❹8/16修复后影子读数(转化率无提升=符合§13.4预期; 8/19 AVGO完整happy-path孤例成交win)。
+- ⚠️ 新风险信号: UE SHORT 8月净额-$122.92 vs 7月+$153.63 (n=6<30仅跟踪不下结论) — §14/§16 UE扩产靶点的前置诊断项。
+- 结论: DA SHORT稀缺=上游供给三层乘法收缩+经济正确的观望(§13.4已裁), 非故障; 不修DA, 靶点维持UE召回+入场时机。白名单待办: M1 prefilter剔除群前向收益影子(record-only)。零live改动。
+
+### 2026-08-20 (DEB-20260820 R2执行·白名单四项落地, 用户裁"先做收益大、风险相对低的方面")
+- **背景**: 另一 Agent 检查 DEB-20260820 后, 用户令先执行高收益低风险项 = 白名单内 P0-3/P0-4/P2-1/P2-2; 机制类(名义下限/SHORT prompt对称/退出双路径统一/god module拆分/三态状态机/guardrail上收)维持排队 8/31 终裁后。
+- **P0-3 费用记分牌** `scripts/fee_unit_economics_scorecard.py` (只读 mode=ro): 全窗口复算逐位一致(n=256已平仓+1未平仓WEAV; 毛-1210.92/费-1142.71/净-2353.63; 费用占净亏48.6%)。**新证据: 名义Q5(≥~$5K)唯一毛利正分位(+4.0bps vs fee 8.4bps); Q1(~$1.9K) fee 23.3bps; 59.4%单笔毛利<自身费用** → 为终审后"名义下限≥$5K"提供分位级尺子。
+- **P0-4 SHORT漏斗** `scripts/short_supply_funnel_report.py` (record-only): SHORT占比 instructions 13.3%→triggered 13.1%→executed 12.3%→closed 12.9% **全程平坦 → 枯竭在生成层(DA仅产11 SHORT指令 vs 303 BUY), 非门禁/执行层不对称** → P1-1 修复应指向 DA prompt 供给侧。UE=SHORT主供给(成交18/33)且唯一净正(+$30.71, W13/L3)。
+- **P2-1 ARCHITECTURE.md 重写**: 逐条 file:line 复核(Explore深读+主控抽检, 修正了若干过期行号与路径): 主管线**三锁**冻结(main_scan_enabled=false + _skip_execution_in_trading + order_executor source_type白名单:3128-3139) / playbook_service._execute_via_dual_broker(:923)=唯一执行口 / 退出双宿主(主线ExitMonitor vs monitor_playbook_sim_exits 20s快循环) / 8线程清单(NewsV2已退役, ORB未启动但mode=active需防误开) / AUTO_TRADE_ACCOUNT=sim 三态路由(position_sync单env查询, "三态融合"注释已过期) / 债务清单D1-D7对齐DEB执行项。
+- **P2-2 辩论索引** `scripts/build_debate_index.py` → `docs/debates/index_generated.md`: 101份DEB全量清单; **README手工索引漏登92份**(8/04后基本停登)已清单化, 逐份补摘要不在本轮。
+- **cron**: 2条 Tue-Sat 06:41/06:44 CST (错峰于06:34台账后), 带DEB引用+单行回滚注释; 备份 data/crontab.backup.20260820-153632。
+- **纪律自检**: 全部产出=修尺子×1+攒样本×1+做减法×2, 白名单内; 脚本均 mode=ro 只读连接; 零配置变更/零live代码改动/零重启; 未触碰终裁判据。DEB-20260820 已更新执行项状态+第2轮讨论记录。
+- 待: P0-3/P0-4 两周后按 DEB 验证项复验; 辩论方对R1五分歧点的攻击仍开放。
+
+### 2026-08-20 (全系统双维审计起案·外部审计Agent, 用户令"分析+写入DEB") — DEB-20260820-architecture-quant-dual-audit
+- **背景**: 用户要求以"顶级代码架构师+成熟量化交易员"双视角审计全系统。方法: 4 个独立 Agent 并行深读 (Playbook管线/风控执行/数据信号层/工程卫生) + 主控直查 `data/ftseek_us.db` 与权威文档交叉验证。**零 live 改动, 零配置变更, 零重启** — 纯落档。
+- **量化核心读数** (干净窗口 trade_date≥2026-07-11, source_type PLAYBOOK 白名单, SQL 全部落 DEB §三可复现): n=257 | 毛 **−$1,211** (−12.7bps) | 费 **−$1,143** ($4.46/笔≈12.0bps, 客单 $3,717) | 净 **−$2,354** (−24.7bps/往返)。LONG n=224 −2198 / SHORT n=33 −155 (供给占比 12.8%)。退出账本: SL_TRAIL_LOCK n=61 +$2,110 WR91.8% (唯一利润源) vs SL_INITIAL/MFE_STALL/TIME_EXIT 合计 n=70 −$3,835。每笔期望 Jul −7.35 → Aug −11.4/笔 (跨config_version, 归因假设级已自认)。
+- **三结构性结论**: ①**费用判决书** — 毛 edge 即使修到 0 仍净亏 12bps, 唯一杠杆=提名义+降笔数 (与 max_daily_positions 12→16 的攒样本目标在现客单价下不可兼得, 终裁后须二选一或改客单价); ②**方向无 alpha** — 二项检验 p=0.42 / DEB-20260815 信号层弱正+执行层负 alpha / E2 剥 beta 全归 SPY, 三方闭合; 唯一验证优势 = gate 负筛 + 退出锁利 (皆为减法); ③**SHORT 供给结构性枯竭** — 与 DEB-20260819 §51 同判, 修复入口 = DA prompt 对称规则 + IC 门分方向喂数据。
+- **架构债务清单** (按严重度): god module (pipeline.py 7687行/237个except Exception; order_executor.py 5396行**无专属测试**) / DA·UE 直写绕过 guardrail 旁路 / 退出双路径地雷 (trailing_stop 无 yaml key 靠"缺省=启用"存活) / 三态靠 env 变量非状态机 / regime 表硬编码3份+两套IC系统 SSOT 重复 / ARCHITECTURE.md 停 6/20 与 AGENT.md 矛盾。
+- **执行项纪律**: 全部按验证期白名单打标 — 现在可做 = 只读记分牌 `fee_unit_economics_scorecard.py` (修尺子) + SHORT 供给影子观测 (攒样本); 机制类 (名义下限/SHORT prompt对称/双路径统一/拆分/三态状态机/guardrail上收admission) **全排队终审后**。建议 8/29 终裁提前书面承诺接受 GO/PIVOT/STOP 任一输出 (当前 G 判据读数全不达标, 诚实预判 PIVOT/STOP)。
+- **下一步**: 辩论方指派 (建议换模型, 8/22 前首轮攻击, 合格标准=独立重跑 §三 R1-R6 + ≥1 攻击点); DEB 已注册 README 索引。
 
 ### 2026-08-12 (禁触窗10:15 OOS判据预注册·Qoder, 用户令"按照建议执行") — 5821f254 纪律补位
 - **背景**: 另一 Agent 三提交 (c74661f3 盘后落盘包含 RFC-064+极端gap作废+JD盘前锚价修复 / ba0e48ba STALL入场侧影子 / 5821f254 禁触窗10:00→10:15)。跨 Agent 复核 (用户令"复盘+分析"): 前两笔核验通过 (JD修复加法式零影响、回滚键齐全; STALL打标"显著但不设闸"纪律正确); 5821f254 引用数字全部精确复现 (post_blackout齐射n=18 WR22% -$133 / sweet齐射n=20 WR55% +$589 / open30 -$910), 但系**直接上线无预注册判据** — 三点保留: ①n=18/20 未达5%显著线 ②"需求平移至10:15"是未证的因果跳跃 (价格触发型过时不候) ③post_blackout孤立单 n=3 +$127 被一刀切误伤。
