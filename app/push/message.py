@@ -127,7 +127,7 @@ class PushMessage:
                 _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
                 lines.append(f"📈 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
             if p.get("mfe_pct") is not None:
-                _t2m = p.get("time_to_mfe")
+                _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
                 _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
                 _cap = p.get("capture_pct")
                 _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
@@ -209,7 +209,7 @@ class PushMessage:
                 _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
                 lines.append(f"**📈 路径**: 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
             if p.get("mfe_pct") is not None:
-                _t2m = p.get("time_to_mfe")
+                _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
                 _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
                 _cap = p.get("capture_pct")
                 _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
