@@ -272,6 +272,24 @@ def settle(today_et: str, dry: bool) -> int:
                     r["settle"]["actual_exit_reason"] = tr[0] or "OPEN"
                     r["settle"]["actual_pnl_net"] = tr[1]
                     r["settle"]["actual_pnl_pct"] = tr[2]
+                    # ── 反事实字段 (2026-08-21, 8/20复盘行动项P3 用户批准) ──
+                    # record-only shadow: 标签不构成因果。tighten/hold 组亏钱是因为
+                    # 盘前价已示警 (gap-down), 不是因为"贴了标签"。裁决必须看:
+                    # "若按盘前价离场 vs 实际结局" 的差额 → 累计为正 = 盘前重定价有正期望。
+                    try:
+                        _pre = float(r.get("pre_price") or 0)
+                        _q = float(r.get("qty") or 0)
+                        _sgn = _dir_sign(r.get("direction", ""))
+                        _act_exit = conn.execute(
+                            "SELECT exit_price FROM trade_records WHERE symbol=? AND date(entry_time)=? "
+                            "ORDER BY entry_time DESC LIMIT 1",
+                            (r["symbol"], entry_date)).fetchone()
+                        if _pre > 0 and _q > 0 and _act_exit and _act_exit[0]:
+                            # LONG: (pre-actual_exit)×qty; SHORT 反向
+                            r["settle"]["cf_exit_at_pre_delta"] = round(
+                                (_pre - float(_act_exit[0])) * _q * _sgn, 2)
+                    except Exception:
+                        pass  # 反事实缺失不阻断结算
                 else:
                     continue  # join 无行: 留待下轮 (防异常冻结)
                 r["settled"] = True
