@@ -193,12 +193,16 @@ class TestNetCaliberPreCloseExempt:
             f"毛口径下微盈仓不豁免, got {reason}"
 
     def test_truly_profitable_not_exempt_pre_close(self):
-        """真正盈利 (毛+0.5% > 费用0.407%): 净+0.093% > 0 → 不豁免 → PRE_CLOSE_EXIT.
-        (DEAD_SIGNAL 分支此场景数学不可构造, PRE_CLOSE 是"真盈利不豁免"的可测点.)"""
-        entry = now_et().isoformat()
+        """真正盈利 (毛+0.62% > 费用0.407%): 净+0.213% > 0 → 不豁免 → PRE_CLOSE_EXIT.
+        (DEAD_SIGNAL 分支此场景数学不可构造, PRE_CLOSE 是"真盈利不豁免"的可测点.)
+        2026-08-20 (方案A) 场景重锚: 原 current=100.5/peak=100.6 在 slip 垫线
+        (fee 0.407 + slip 0.2 → 100.607) 下方, 会先触发 SL_BREAKEVEN (方案A 预期行为,
+        见 TestSlipCushionContract) — 本测试目的不变 (真盈利仓不豁免 PRE_CLOSE),
+        场景上移到垫线上方: current=100.62 > 100.607+1bp容差, SL 不触发."""
+        entry_time = now_et().isoformat()
         reason, *_ = _run(
-            current_price=100.5, peak_price=100.6,
-            held_minutes=300, entry_time_str=entry,
+            current_price=100.62, peak_price=100.7,
+            held_minutes=300, entry_time_str=entry_time,
             direction="LONG", entry_price=100.0, qty=10,
             minutes_to_close=5, minutes_from_open=385,
         )
@@ -364,6 +368,93 @@ class TestSLBreakevenLimitPriceContract:
         # net_line 仍写入 (D4 cushion 算出即写, 不依赖 breakeven_triggered)
         assert meta.get("_be_net_line_price") is not None, \
             "D4 cushion算出时应写入净保本线"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. 方案A 滑点垫契约 (2026-08-20, 用户裁"同意先方案A")
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _FakeCfgSlip:
+    """Fake config: 注入 breakeven_slip_cushion_pct (其余键透传真 config)."""
+
+    def __init__(self, slip=0.2):
+        from app.playbook.config import get_playbook_config as _real_get
+        self._real = _real_get()
+        self._slip = slip
+
+    def get(self, key, default=None):
+        if key == "breakeven_slip_cushion_pct":
+            return self._slip
+        return self._real.get(key, default)
+
+    def get_horizon_top(self, key, default=None):
+        return self._real.get_horizon_top(key, default)
+
+
+class TestSlipCushionContract:
+    """方案A: 触发线=费用线+滑点垫; 限价地板仍=纯费用线 (翻主动侧几何).
+
+    实弹依据 8/20: 限价成交3笔全净正 / 8s超时降级市价3笔全净负(-40.36).
+    """
+
+    @pytest.fixture()
+    def slip_cfg(self, monkeypatch):
+        fake = _FakeCfgSlip(slip=0.2)
+        monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: fake)
+        return fake
+
+    def test_trigger_line_raises_by_slip_long(self, slip_cfg):
+        """LONG: 回踩到 (fee+slip) 垫线 → SL_BREAKEVEN. 无垫时该价位不触发."""
+        entry_time = now_et().isoformat()
+        # entry=100, fee≈0.40706%, slip=0.2% → 触发线≈100.607; current=100.60 < 线 → 触发
+        reason, _, _, be_trig, _ = _run(
+            current_price=100.60, peak_price=101.0,
+            held_minutes=30, entry_time_str=entry_time,
+            direction="LONG", entry_price=100.0, qty=10,
+        )
+        assert be_trig, "peak=1.0% 应已武装"
+        assert reason == "SL_BREAKEVEN", f"回踩垫线应触发, got {reason}"
+
+    def test_trigger_line_raises_by_slip_short(self, slip_cfg):
+        """SHORT 方向对称: 回踩到 (fee+slip) 垫线 → SL_BREAKEVEN."""
+        entry_time = now_et().isoformat()
+        # SHORT entry=100, peak=99 (盈1%); 垫线=100×(1−0.607%)≈99.393
+        # current=99.40 ≥ 99.393 → 触发. initial_sl=105 (SHORT 止损在上方)
+        reason, _, _, be_trig, _ = _run(
+            current_price=99.40, peak_price=99.0,
+            held_minutes=30, entry_time_str=entry_time,
+            direction="SHORT", entry_price=100.0, initial_sl=105.0, qty=10,
+        )
+        assert be_trig
+        assert reason == "SL_BREAKEVEN", f"SHORT 回踩垫线应触发, got {reason}"
+
+    def test_limit_floor_stays_fee_only(self, slip_cfg):
+        """限价地板 _be_net_line_price 只含 fee 不含 slip — 翻主动侧几何的前提."""
+        entry_time = now_et().isoformat()
+        _, _, _, _, meta = _run(
+            current_price=100.60, peak_price=101.0,
+            held_minutes=30, entry_time_str=entry_time,
+            direction="LONG", entry_price=100.0, qty=10,
+        )
+        net_line = meta.get("_be_net_line_price")
+        expected_fee_line = round(100.0 * (1 + _FEE_CUSHION_PCT / 100.0), 4)
+        assert net_line is not None
+        assert abs(net_line - expected_fee_line) < 0.0001, \
+            f"限价地板应为纯费用线 {expected_fee_line}, got {net_line} (slip 不得混入)"
+
+    def test_no_slip_default_unchanged(self, monkeypatch):
+        """slip=0 (回滚态) → 行为与改动前一致: 100.60 高于费用线 → 不出场.
+        (显式注入 0: yaml 生产值已是 0.2, 直读真配置会测到垫线触发.
+        fake 必须在 monkeypatch 之前构造 — 否则 __init__ 回调已 patch 的函数, 无限递归.)"""
+        fake = _FakeCfgSlip(slip=0.0)
+        monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: fake)
+        entry_time = now_et().isoformat()
+        reason, *_ = _run(
+            current_price=100.60, peak_price=101.0,
+            held_minutes=30, entry_time_str=entry_time,
+            direction="LONG", entry_price=100.0, qty=10,
+        )
+        assert reason == "", f"slip=0 时 100.60 不应触发, got {reason}"
 
 
 if __name__ == "__main__":

@@ -5531,6 +5531,7 @@ def _compute_dynamic_effective_sl(
     peak_profit_pct: float,
     exit_cfg: dict,
     fee_cushion_pct: float = 0.0,
+    slip_cushion_pct: float = 0.0,
 ) -> float:
     """根据因子退出规则计算动态 effective stop loss.
 
@@ -5558,11 +5559,19 @@ def _compute_dynamic_effective_sl(
 
     # 浮盈超过 breakeven: 先保本
     # 2026-07-17: 净保本 — 保本线含手续费缓冲 (成本价 ± fee_cushion), 确保被保本SL打掉时不亏双边费用.
+    # 2026-08-20 (方案A, 用户裁"同意先方案A"): + slip_cushion 滑点垫 — 触发线在费用线之上再垫一截.
+    #   8/20 开盘实弹 6 笔 BE 出场 3:3: 限价成交 3 笔全净正 / 8s 超时降级市价 3 笔全净负
+    #   (MU −24.42 / WPM −12.14 / AU −3.80) — cushion 只垫费用(~7.5bps), 降级滑点 21-43bps 兜不住.
+    #   几何: 触发线抬高后, 触发时现价 > 限价单(纯费用线, 见 _be_net_line_price) →
+    #   限价卖单从被动等回摆翻转为主动穿越立即成交, 成交地板仍=费用线(订单类型保证).
+    #   代价: 提前 0.2% 出场 (换确定性). 约束: slip < breakeven_at_pct 否则武装即触发.
+    #   回滚: breakeven_slip_cushion_pct 改 0.
+    _be_pad = fee_cushion_pct + slip_cushion_pct
     if direction == "LONG":
-        _be_line = entry_price * (1 + fee_cushion_pct / 100.0)
+        _be_line = entry_price * (1 + _be_pad / 100.0)
         effective_sl = max(effective_sl, _be_line)
     else:
-        _be_line = entry_price * (1 - fee_cushion_pct / 100.0)
+        _be_line = entry_price * (1 - _be_pad / 100.0)
         effective_sl = min(effective_sl if effective_sl > 0 else _be_line, _be_line)
 
     if not exit_cfg.get("trailing_enabled", False):
@@ -6030,13 +6039,21 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     _has_real_cushion = meta.get("_be_cushion_fee_aware") is not None
     _profit_net_pct = profit_pct - _fee_cushion_pct if _has_real_cushion else profit_pct
     # 净保本线价格 (monitor 平仓时挂限价单用): 成交价物理上 ≥(空:≤) 此线 = 净保本由订单类型保证
+    # 2026-08-20 (方案A): 此线刻意只含 fee 不含 slip 垫 — 限价单是"地板", 触发线才垫 slip:
+    #   触发线(费用+滑点) > 限价线(仅费用) → 触发时限价单大概率在主动侧立即成交, 地板不动.
+    #   误把 slip 垫进此线会把限价单推得更被动(降低成交率), 与本意相反.
     if _has_real_cushion and entry_price > 0:
         meta["_be_net_line_price"] = round(
             entry_price * (1 + _fee_cushion_pct / 100.0) if direction == "LONG"
             else entry_price * (1 - _fee_cushion_pct / 100.0), 4)
 
+    # ── 滑点垫 (2026-08-20 方案A): 触发线 = 费用线 + slip_cushion. 见 _compute_dynamic_effective_sl.
+    #   校准: 8/20 实弹降级市价滑点 21/6.6/43bps → 0.2% 覆盖; 约束 < breakeven_at_pct(0.4).
+    _slip_cushion_pct = float(_pb_cfg.get("breakeven_slip_cushion_pct", 0.0))
+
     effective_sl = _compute_dynamic_effective_sl(
-        direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct
+        direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct,
+        _slip_cushion_pct
     )
     breakeven_triggered = peak_profit_pct >= float(_exit_cfg.get("breakeven_at_pct", 0.5))
 
@@ -6108,8 +6125,11 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         #   最终退出价在调用方 (monitor_playbook_sim_exits) 用 broker filled_price 覆盖.
         exit_price = current_price
         # 2026-07-17: 分类阈值用"净保本线"(成本±fee_cushion), 否则纯净保本会被误标 SL_TRAIL_LOCK.
-        _be_line = entry_price * (1 + _fee_cushion_pct / 100.0) if direction == "LONG" \
-            else entry_price * (1 - _fee_cushion_pct / 100.0)
+        # 2026-08-20 (方案A): 分类线 = 费用线 + 滑点垫, 与 ratchet 触发线同口径 —
+        #   否则纯保本出场 (effective_sl 恰在垫线) 会被误标 SL_TRAIL_LOCK, 污染退出账本归因.
+        _cls_pad = _fee_cushion_pct + _slip_cushion_pct
+        _be_line = entry_price * (1 + _cls_pad / 100.0) if direction == "LONG" \
+            else entry_price * (1 - _cls_pad / 100.0)
         _be_tol = entry_price * 1e-4  # 1bp 容差, 吸收浮点/取整
         if not breakeven_triggered:
             exit_reason = "SL_INITIAL"        # 浮盈未达 breakeven → 初始固定止损被打掉
@@ -6144,6 +6164,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   B 锚更高→更早触发: 真实仓未出场但 B 锚已被碰到时记录反事实出场点。
     #   真实仓继续持有, 后续真实结局与 B 出场点可直接对比 (无需离线回放)。
     #   仅当 B 锚严于当前生效 SL (真实不会同点出) 才是真差异点。回滚: 删本块。
+    # 2026-08-20 (方案A) 取代标注: 真实保本触发线已抬至 fee+slip(0.2%) = 100.607,
+    #   高于 B 锚 (fee+0.15% = 100.5575) → 生产上真实 SL_BREAKEVEN 先于 B 锚触发,
+    #   _b_differs 恒 False → 生产不再产生 B/C 记录。方案 A 即本影子验证的"缓冲出场"
+    #   的实弹落地 (0.2% > 0.15%, 且更早)。测试用 slip=0 保留本契约语义。
     # ── shadow 方案C (2026-08-19, DEB-20260819 §三十七, record-only): 时间门控缓冲出场 —
     #   B 结算(n=49): 触碰≥60min 组 14例13胜 +$76 (死单特征), <60min 组被7笔错过赢单
     #   拖成 -$88 (动量未走完)。C = 只对 held≥60min 的首次锚触碰记录反事实出场。
@@ -7216,8 +7240,18 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             try:
                 from app.execution.dual_broker import get_dual_broker
                 dual = get_dual_broker()
+                # 2026-08-20 (方案A): 限价超时 8s→3s 配置化. 8/20 实弹: MU 限价悬空等满 8s,
+                #   期间价格续跌 0.43% → 降级市价砸在 940.16 (净-$24.42). 等待本身就是出血.
+                #   配合滑点垫 (触发线抬高→限价翻主动侧), 3s 足够吃价; 超时仍降级市价无卡单.
+                #   回滚: breakeven_limit_timeout_s 改回 8.
+                try:
+                    from app.playbook.config import get_playbook_config as _get_pb_cfg_be
+                    _be_timeout = float(_get_pb_cfg_be().get("breakeven_limit_timeout_s", 8.0))
+                except Exception:
+                    _be_timeout = 8.0
                 close_res = dual.close_position(symbol, qty, direction, target_env=_row_target,
-                                                limit_price=_close_limit_price)
+                                                limit_price=_close_limit_price,
+                                                limit_timeout_s=_be_timeout)
             except Exception as _e:
                 logger.error(f"[playbook dual] 平仓异常 {symbol} ({_row_target}): {_e}")
                 _alert_close_failure(symbol, _row_target, "BROKER_EXCEPTION", str(_e))
