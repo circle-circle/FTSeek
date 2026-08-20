@@ -1132,6 +1132,20 @@ playbook:
     #   配套TIME_EXIT豁免(pipeline规则3), 否则次日水下2h被砍. 回滚: false或天数改1.
     loser_overnight_enabled: true
     loser_overnight_max_hold_days: 5
+    # 2026-08-20 (DEB §47 P1, 用户裁决): 深跳空逆势 BUY 降仓 — gap≤-3% 逆势 BUY
+    #   全历史 n=14 净 -772 胜率 21% (8/18 MU/FIX/CAT 隔夜 SL_INITIAL -818);
+    #   gap-through 跳穿止损, 紧 SL 救不了, 仅仓位端可缓解. 顺势 SHORT 同条件 n=5
+    #   净 +11.84 → 只拦 BUY. 执行层单点覆盖全 writer (§45.2 guardrail 绕行教训).
+    #   回滚: false + 重启.
+    gap_dive_halve_enabled: true
+    gap_dive_halve_pct: -3.0
+    # 2026-08-20 (DEB §47 W_WEEK 重裁方案a, 用户裁决): W_WEEK 水深上限 — 水下超 2%
+    #   的仓属"入场即错"非修复窗口, 撤销豁免 (EOD/DEAD_SIGNAL/TIME_EXIT/MAX_HOLD
+    #   唯一入口 _loser_overnight_exempt 单点继承, SL 仍硬兜底).
+    #   证据: n=20 EV 曲线, 决策时刻水深>2% 样本 (MU/FIX -3.1%) 0修复2灾难;
+    #   1.5% 是刀尖拟合 (CAT -1.62 死 / UBER -1.51 活仅差0.12pp) 弃用.
+    #   回滚: 99 (=禁用) + 重启.
+    loser_overnight_max_depth_pct: 2.0
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5
   exit_rules:

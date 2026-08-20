@@ -34,6 +34,28 @@ _service_instance = None
 _PV_TTL = 30
 
 
+def _gap_dive_should_halve(direction: str, prev_close: float, today_open: float,
+                           position_size: int, *, halve_pct: float = -3.0) -> bool:
+    """深跳空逆势 BUY 降仓判定 (2026-08-20, DEB §44/§47 P1, 用户裁决).
+
+    证据: gap≤-3% 逆势 BUY 全历史 n=14 净 -772 (胜率 21%), 8/18 MU/FIX/CAT 三笔
+    隔夜 SL_INITIAL -818; gap-through 会跳穿止损, 紧 SL 救不了, 仅仓位端可缓解.
+    顺势 SHORT 同条件 n=5 净 +11.84 → 只拦 BUY. 纯函数便于测试; 任一输入缺失
+    → False (fail-open 不降仓, 与 entry_gap 探针同纪律). 回滚: YAML 置 false.
+    """
+    try:
+        if direction != "BUY":
+            return False
+        if not position_size or position_size <= 1:
+            return False
+        if not prev_close or prev_close <= 0 or not today_open or today_open <= 0:
+            return False
+        gap_pct = (today_open - prev_close) / prev_close * 100.0
+        return gap_pct <= halve_pct
+    except Exception:
+        return False
+
+
 def _parse_json_field(val: Any, default: Any) -> Any:
     """安全解析 JSON 字段 (conditions_json / data_quality_json 可能是 str 或已解析)."""
     if val is None:
@@ -1007,6 +1029,27 @@ class PlaybookService:
                     _arrival_price = float(_arr_ctx.get("price", 0) or 0)
         except Exception as _arr_e:
             logger.debug(f"[playbook] {symbol} arrival price 抓取失败 (不阻塞下单): {_arr_e}")
+
+        # P1 深跳空逆势 BUY 降仓 (2026-08-20, DEB §44/§47, 用户裁决).
+        #   _execute_via_dual_broker 是 DA直写/reentry/投票 全部 writer 的唯一执行路径
+        #   → 单点覆盖 (guardrail 只在投票路径的教训, 见 §45.2). 复用已抓 _arr_ctx 零额外 API.
+        #   异常/缺价 → fail-open 不降仓 (与 entry_gap 探针同纪律). 回滚: YAML gap_dive_halve_enabled=false+重启.
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_gap
+            _gap_cfg = _get_pb_cfg_gap()
+            if _gap_cfg.get("gap_dive_halve_enabled", False) and _arr_ctx and position_size:
+                _gd_prev = float(_arr_ctx.get("prev_close", 0) or 0)
+                _gd_open = float(_arr_ctx.get("open", 0) or 0)
+                _gd_thr = float(_gap_cfg.get("gap_dive_halve_pct", -3.0))
+                if _gap_dive_should_halve(direction, _gd_prev, _gd_open, position_size, halve_pct=_gd_thr):
+                    _gd_orig = int(position_size)
+                    position_size = max(1, int(position_size * 0.5))
+                    logger.info(
+                        f"[playbook] P1深跳空降仓: {_mode_label} {symbol} BUY gap≤{_gd_thr}% "
+                        f"仓位 {_gd_orig}→{position_size} (DEB §47)"
+                    )
+        except Exception as _gd_e:
+            logger.warning(f"[playbook] P1 gap 降仓判定异常 (fail-open 放行): {_gd_e}")
 
         # 下单前报价健康门 (Tier B 2026-07-19): 复用 check_quote_health 拦截过宽 spread / 过期报价.
         #   复用上面已抓的 _arr_ctx (不额外调 API). 取价失败/无报价 → fail-open (下游另有兜底).

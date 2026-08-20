@@ -202,6 +202,14 @@ def _loser_overnight_exempt(source_type: str, entry_time_str: str, profit_pct: f
             return False
         if float(profit_pct) >= 0:
             return False
+        # 2026-08-20 (DEB §47 方案a, 用户裁决): 水深上限 — 水下超阈值的仓属"入场即错"
+        #   非修复窗口, 撤销豁免转 EOD/DEAD_SIGNAL/TIME_EXIT 链. 本函数是 EOD/DEAD_SIGNAL/
+        #   TIME_EXIT/MAX_HOLD 四处豁免唯一入口 → 单点生效全链 (SL 仍最高优先级硬兜底).
+        #   证据: n=20 EV 曲线, 决策时刻水深>2% (MU/FIX -3.1%) 0修复2灾难 vs <2% 带
+        #   修复臂占优; 1.5% 刀尖拟合弃用. 回滚: YAML 置 99 (=禁用).
+        _max_depth = float(get_playbook_config().get("loser_overnight_max_depth_pct", 99) or 99)
+        if float(profit_pct) < -_max_depth:
+            return False
         _max_days = int(get_playbook_config().get("loser_overnight_max_hold_days", 5) or 5)
         # 已达最大持有交易日 → 不豁免 (到期强平, 走 PRE_CLOSE 正常收)
         if _horizon_max_hold_hit(entry_time_str, _max_days):
