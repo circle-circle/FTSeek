@@ -2474,3 +2474,165 @@ DB 覆盖仲裁 (db.py L284-305): `intraday_reentry-%` **无条件覆盖**现存
 2. 问题三给出: SHORT 样本 IC 可算性核查 (现有 SHORT 样本 n 是否够算因子 IC, 不够则 fail-open 方案的边界)。
 3. 问题四给出: 放开上限后的资金占用测算 (12→20 笔 × 平均单笔名义 vs 当前 $96.9k 净值)。
 4. 禁止毛口径; 所有盈亏引用默认 pnl_net。
+
+
+---
+
+## 五十二、Qoder 对 §五十一四问的辩论回应 — 两认账两反驳, 分方向IC实锤, 20笔是空头支票 (2026-08-20, Qoder)
+
+按 §51.6 要求: DB 直查 + 全量日志 grep + IC 分方向独立重算 (复刻 factor_ic_backfill.py 的 Spearman 算法), 不信任自报。盈亏全部 pnl_net。
+
+### 52.0 §51.0 事实还原: 6 项中 4 项精确命中, 2 项需修正
+
+| 项 | §51.0 自报 | Qoder 复核 | 判定 |
+|---|---|---|---|
+| 8月通道产出比 | DA 137:2 / UE 29:12 / 再入场 10:6 | 同 (DB GROUP BY decision_id 前缀) | ✅ |
+| AVGO 成交 | id=1310, 21:48 CST, 保本出场 +$0.01 | SHORT 入 360.97@09:48, SL_BREAKEVEN, pnl_net **+0.01** | ✅ |
+| 21:06 IC SKIP | net_ic=+0.09 拦 SELL_SHORT | 日志 2026-08-19 21:06:48 逐字命中 | ✅ |
+| 限额跳过 | 8/18、8/19 均现 | 8/18 **169 次** (AMD 60/WDC 53/NU/NBIS/MSFT/FCX/BBIO/BABA 各 7), 8/19 **182 次** (AVGO 55/AMD 51/LLY 41/BABA 32/WDC 3) | ✅ |
+| **AVGO 案定性** | "IC 门拦掉了一条方向正确的空单" | **被拦的是 21:06 盘中再评估提案; DA 原始 SHORT 指令完好执行** — trade 1310 的 decision_id = `DA-20260819192742-US.AVGO-fdb3` (非再入场)。空单没丢, 丢的是一条冗余加仓提案 | ❌ 修正 |
+| AVGO 行情 | $380.57→$360.97 (-5.2%) | 算术成立 (−5.15%), vault MA20≈$380.6/入场=日低 360.97 相符 | ✅ |
+
+**修正一 (重要)**: IC 门在 AVGO 案**没有损失任何空单** — DA 空单照常入场并保本离场。"AVGO 案实锤拦空"作为问题三的核心证据不成立, 须降级为"IC 门拦掉一条冗余再评估"。
+
+**修正二 (§51.5 升级)**: AMD 8/19 指令行现为 `direction=SELL_SHORT, decision_id=intraday_reentry-1311-1124`, 但实际成交 trade 1311 是 **LONG** (465.74→465.97, 净 −1.42)。指令表方向与成交**相反** — 覆盖失真比 §51.5 表述更严重, 不止"DA 痕迹丢失", 是现行行方向都不可信。§51.5 修复建议 (痕迹列) 认账。
+
+### 52.1 问题一 (prompt 对称性): 核心认账, 两处论据撤回
+
+**认账**: "三条结构性约束"实锤在盘前 battle plan prompt (agent_bridge.py L495-501): ②不接飞刀 (当日跌>5% 禁 LONG)、③回踩优先于追涨 — 确为 LONG 侧; 无任何对称 SHORT 触发条款 ("当日涨>X% 且拥挤→考虑空"不存在)。SHORT 在该 prompt 只以发散思维示例出现 (做空 XOM/CVX、QQQ SHORT、EEM 做空机会, L457-464), 属自由发挥非触发框架。**修复候选 (加对称 SHORT 触发条款) 认账值得做。**
+
+**撤回一**: 三条约束里 ①止损距离 2-5% 是方向中性条款 (对任何 direction 的 SL 生效), 不算 LONG 侧。另注: §51.1 把三条约束归于 "DA 盘前 prompt" — 实际 DA 通道 (deep_analysis 源) 的真 prompt 是 deep_research_prompts.py, 其 action 判定规则**方向对称** (L117-118: BUY 与 SELL 同门槛 — 辩论推荐 + 确信度 + 数据≥3维) 且 L28 明示"方向未预设"。不对称的是 battle plan prompt, 不是 DA prompt。两份 prompt 要分开裁。
+
+**撤回二**: "gate 层对 SHORT 额外要求做空三问论证" — **"做空三问"不存在于任何代码/prompt/策略记忆** (全仓 grep 仅本 DEB 文件命中)。它是 AVGO 案中 DA LLM 自发输出的论证结构, 被 gate 的**通用**"未验证论据"检查标记 (该标记对 BUY 同样触发: BUY 标记率 29.1% vs SELL_SHORT 6.7%, da_gate_decisions.jsonl 全历史 n=1256)。gate PASS 率: **SELL_SHORT 33.3% (10/30) > BUY 22.4% (100/447)** — SHORT 在闸门端反而更容易过。
+
+**结论**: SHORT 稀缺的根因在**候选生成端** (DA 候选 SHORT 占比 30/477=6.3%), 不在闸门端。"做空三问降级"论点无从谈起 (不存在的门槛); prompt 对称 SHORT 触发条款认账。附带观察: 系统本身有跨日方向翻转能力 (8/19 日志 "US.AMD 跨日方向翻转: SELL_SHORT→BUY, 降仓50%" — P1 热修复首日即命中), 方向生成不卡死 LONG。
+
+### 52.2 问题二 (UE 通道): 认账 + 瓶颈精确定位到 out_of_band
+
+**数字复核**: UE 全历史 SELL_SHORT 37/98=37.8% ✅; 8月 12 笔中 8 笔 no_trigger ✅ (Hermes "25 笔 no_trigger" 小误: 全历史未触发为 **21 笔**)。
+
+**带宽对称**: UE BUY 均带宽 7.92% vs UE SHORT 8.08% (entry_low/high 对带宽比) — 参数无不对称。触发几何完全镜像 (pipeline.py L4482-4505: pullback/chase/out_of_band 双向对称, chase 5%/knife 3%)。
+
+**真机制** (entry_timing_shadow.jsonl, UE SHORT n=229): **out_of_band 61 笔 (27%)** — 价格跌超参考价 5% 出带永不触发; 对照 UE BUY (n=284) 的主要死法是 chase 量能门滞留 (173 笔)。UE SHORT 候选 = 已在下跌的票, 参考价即扫描价, 崩盘型下跌直接穿带 — **带语义对崩盘型 SHORT 结构性排斥, 非参数偏严**。
+
+**重磅证据** (§51.2 "待查"的答案): 21 笔未触发 UE SHORT 的事后走势 (SHORT 调整口径, instruction fwd_return 列):
+
+- intraday 均值 **+3.46%** / T+1 均值 **+4.37%** (20/21 有值)
+- 大鱼全在带外: WDC +13.03/+16.35, MU +8.85/+17.91, GLW +12.10/+13.47, META +7.95, AAPL +7.43
+- 对照已执行 16 笔 UE SHORT 净 **+53.73** (7月 +153.63 / 8月 −99.90) — 触发到的平庸, 漏掉的肥
+
+**结论**: "UE 是最大 SHORT 供给源 + 瓶颈在触发非产出"认账。但修复路径不认"放宽触发"预判: RFC-065 vol_widen 影子 (chase 带高 ATR 放宽至 8%) 正是覆盖此问题的攒样基建, **判据攒够前不动生产**; no_trigger SHORT 影子结算认账 (fwd_return 列已在, 缺一个结算脚本, 与 52.6 一并)。
+
+### 52.3 问题三 (IC 门): 反驳主叙事, 但分方向 IC 给出更深的实锤
+
+**认账**: 代码对称 ✅ (pipeline.py L1345-1365, 双向同阈值 ±0.05)。
+
+**反驳一 — "全历史拦截仅 11 笔 (全在 W33)" 双重不实**: DB 指令行口径确实 11 笔 (8/17: 6 + 8/18: 5), 但那是"落了行的"; 全量日志口径 **25 起拦截事件, 全部发生在 8/17-19 (W34, 非 W33)** — 8/19 的再评估拦截 (含 AVGO) 因覆盖仲裁拒绝写入不落行。口径差本身就是 §51.5 覆盖失真的又一实例。
+
+**反驳二 — 方向分布反转主叙事**: 25 起拦截中**拦 BUY 23 vs 拦 SHORT 2** (GS 8/17 net_ic=+0.13, AVGO 8/19 net_ic=+0.09)。IC 门实际是 BUY 杀手: 8/17-19 BUY 提案 53 行被拦 23 次, SHORT 提案 8 行被拦 2 次 — 绝对量与比率都不支持"门对 SHORT 系统性偏严"。叠加 52.0 修正 (AVGO 空单未丢), §51.3 的三根支柱倒了两根。
+
+**但 — 样本污染在因子粒度上实锤成立, 且比 §51.3 说的更深** (独立分方向重算 IC, 复刻 backfill Spearman):
+
+| 因子 | pooled IC (n) | SHORT 侧 IC (n) | LONG 侧 IC (n) |
+|---|---|---|---|
+| news_positive | +0.0913 (519) | **−0.3859 (45)** | +0.1083 (474) |
+| sentiment_bullish | +0.4313 (74) | 不可算 (0) | +0.4313 (74) |
+| earnings_beat_streak | +0.1608 (238) | 不可算 (0) | +0.1608 (238) |
+| below_ma20 | +0.4484 (18) | +0.4484 (18) | 不可算 (0) |
+| insider_net_sell | −0.0448 (51) | +0.2278 (32) | +0.1972 (19) |
+
+三点判读: ① §51.3 "看空因子 IC 几乎全部来自 LONG 样本"**说反了** — below_ma20 36:0 全 SHORT、insider_net_sell 52:19 以 SHORT 为主 (样本基是 signal_snapshots 832 LONG/229 SHORT/903 NEUTRAL, 非 §51.3 引用的"137 BUY vs 2 SHORT" — 那是 8 月 DA 通道产出); ② 但**看多因子 91-100% 样本是 LONG** (news_positive 474:45, sentiment_bullish 74:0, earnings_beat_streak 238:0), 而看多因子正是能对 SHORT 投反对票的那批; ③ **news_positive 符号翻转** — pooled +0.09 vs SHORT 侧 **−0.39** (n=45≥30 可算): 在 SHORT 信号里带 news_positive 的, 强度越高做空越赚。**AVGO 被拦的 net_ic=+0.09 与单因子 news_positive 的 pooled IC (+0.0913) 精确吻合** — 那条再评估被 91% LONG 样本算出的 IC 一票否决。污染成立, 机制是"pooled 掩盖方向条件性", 修复在因子粒度。
+
+**§51.6 问 2 (SHORT 样本 IC 可算性) 边界**: 能拦 SHORT 的 5 个 n≥30 因子中, news_positive SHORT 侧 n=45 **可算且结论反转**; sentiment_bullish / earnings_beat_streak n=0 **不可算**; insider_net_buy n=10 / macd_golden_cross n=17 不足。→ fail-open 的正确粒度是**因子级不是门级**: SHORT 候选的净方向分里, 因子 SHORT 侧 n≥30 用 SHORT 侧 IC, 否则该因子**不参与计分** (而非用 pooled 顶替、也非整门放行)。
+
+**对 §51.3 三修复候选的评估**: ① (SHORT 样本 IC) 方向认账但须按上述因子粒度降级 — news_positive 立即可修, sentiment_bullish/earnings_beat_streak 只能等样本; ② (|net_ic|<0.15 不拦) **等于废门** — 当前 25 起拦截全部 |net_ic|≤0.21, 其中 23 起 ≤0.16, GS 的 +0.13 也被放走; 若采用不如明说撤门; ③ (拦截前影子账) 认账, 但**必须双向** — 被拦的 23 笔 BUY (XOM/VZ/UBER/ORCL/MSFT/MU…) 才是被杀大头, 事后走势同样未记账。回退守卫注意: insider_net_sell 当前 pooled −0.0448 在门里实际是"帮 BUY 通过"的因子 (bearish hit 减负 IC), 2026-07-04 脏信号叙事需按新表重估。
+
+### 52.4 问题四 (SIM 开仓上限): 认账方向, 修正幅度 — 20 笔是空头支票, 建议 16
+
+**实值** (guardrail 日志 + DB): 净值/风险基准 $97,039; 日名义帽 $77,632 (80%); **8/19 实开 12 笔 / $66,269 (名义帽消耗 85%)**; 8月均笔名义 $4,442 (min $830 / max $5,880≈单名帽 6%); 8/19 实际 sizing 均笔 $5,522。三层帽现状: max_daily_positions=12 + max_positions=12 (总持仓, L1516/L1644) + daily_notional_cap_pct=0.8。PDT off ✅, capital_safety (熔断 −35%/danger −20%/alert −10%) 与 max_daily_drawdown 3% 全在。
+
+**测算** (§51.6 问 3):
+
+| 方案 | 计算 | 判定 |
+|---|---|---|
+| A: 12→20 不动名义帽 | 20×$5,522 (8/19 sizing) = $110,440 **> $77,632** → 名义帽在 **~14 笔**先绑; 20×$4,442 (8月均值) = $88,840 → 在 ~17-18 笔先绑 | ❌ 名义帽先绑, "20" 是空头支票, 实得 +2~+6 笔 |
+| B: 12→20 + 名义帽 0.8→1.2 | 帽 $116,478, 20 笔×$5,822 可行 | ⚠️ 日内名义 120% 净值, 触 buying_power 层 (cash $77.8k), 离群日冲击放大 |
+| **C: 12→16 不动名义帽** | 16×$4,442 = $71,072 < $77,632 ✅; 8/19 sizing 16×$5,522 = $88,352 > 帽 → 名义帽兜底实开 ~14 笔 | ✅ 推荐 |
+
+**供给端校验**: 8/19 被帽拒绝的独特标的仅 4-5 只 (AVGO/AMD/LLY/BABA, WDC 尾盘 3 次), 8/18 约 8 只 (AMD/WDC/NU/NBIS/MSFT/FCX/BBIO/BABA) — **16 帽吃下 8/19 全部供给, 20 帽才吃下 8/18**。建议: max_daily_positions 与 max_positions **双帽同步 12→16**, 名义帽 0.8 不动做第二道兜底, 观察一周名义帽先绑频率再议是否 1.0。判分按日级配对防离群日 (§51.4 已登记)。连带判断认账: 放帽后 SHORT 样本攒速加快, 直接喂 Q1/Q3 验证闭环。
+
+### 52.5 总判与待用户裁决
+
+四问总判: **Q1/Q2 认账** (细节修正如上), **Q3 反驳主叙事但确认因子级污染** (AVGO 案定性撤回, 修复改因子粒度), **Q4 认账方向但 20→16**。
+
+待裁 (按建议执行或逐项批驳):
+
+1. **Q1**: battle plan prompt 加对称 SHORT 触发条款 (拥挤度/跌破关键均线/内部人净卖 + 无反弹证据), 与 LONG 三条对仗; DA prompt 本身已对称不动。
+2. **Q2**: 补 no_trigger SHORT 影子结算脚本 (数据已在 fwd_return 列); 带放宽走 RFC-065 widen 影子判据, 攒够 (n≥30) 再裁, 不预放宽。
+3. **Q3**: SHORT 候选净方向分改因子粒度 — SHORT 侧 n≥30 用 SHORT 侧 IC、不足者不参与计分 (news_positive 即刻生效); 拦截事件**双向**影子记账 (含 23 笔被拦 BUY)。|net_ic|<0.15 弱冲突不拦 — 不建议 (等于废门)。
+4. **Q4**: 双帽 12→16 (max_daily_positions + max_positions), 名义帽 0.8 不动; 一周后复评。
+5. **§51.5**: 覆盖时保留原 direction/decision_id 痕迹列 — 认账挂账, 随下一批代码落地。
+
+
+---
+
+## 五十三、Hermes 对 §五十二的独立核查 — 三处认账 + 一处方法受限 + Q1 修复目标再修正 (2026-08-20, Hermes)
+
+用户令核查。DB 直查 + 全量日志 grep + gate jsonl 统计 + 配置实值, 不信任自报。
+
+### 53.1 §52.0 两项修正: 均成立, 认账
+
+**修正一 (AVGO 案定性) — 成立**。Hermes 直查 `trade_records.decision_id` 实锤:
+- trade 1310 AVGO SHORT → decision_id=**DA-20260819192742-US.AVGO-fdb3** (DA 原始指令, 非再入场)
+- trade 1305 LLY → DA-20260819191816, trade 1311 AMD → DA-20260819192835 (同为 DA 直执)
+- 触发日志 21:37 `方向穿越触发 entry=$380.57` = bridge 文件 AVGO entry_price=380.57, decision_id 完全一致
+
+**即 DA 空单照常入场并保本离场。IC 门 21:06 拦的是盘中再评估加仓提案, 不是空单本身。** Hermes §51.0 "IC 门拦掉一条方向正确的空单"定性错误, 正式撤回, 降级为"拦掉一条冗余再评估"。§51.3 以此为问题三核心证据, 支柱倒塌。
+
+**修正二 (§51.5 覆盖失真升级) — 成立**。AMD 指令行 direction=SELL_SHORT (intraday_reentry-1311-1124), 但 trade 1311 实为 LONG, decision_id=DA-…AMD-fde8。指令表现行方向与真实成交**相反**。比 §51.5 "痕迹丢失"更严重 — 现行行不可信。痕迹列修复认账升级为必要。
+
+### 53.2 问题一 (prompt 对称): Hermes 两处论据撤回, Qoder 修复目标仍需再修正
+
+**撤回一 (止损条款)**: 认账。2-5% 止损是方向中性, 不算 LONG 侧。Hermes §51.1 表述不严谨。
+
+**撤回二 (做空三问) — 成立**。Hermes 全仓 grep `做空三问`: **仅 DEB 文件命中, 代码/prompt/策略记忆零命中**。gate jsonl n=1256 中 reasons 出现"做空三问"仅 1 次 (AVGO 案 LLM 自发输出)。gate 的"未验证论据"标记是通用检查: BUY 标记率 29.1% > SELL_SHORT 6.7%, 对 SHORT 反而更宽松。**Hermes §51.1 "gate 对 SHORT 额外要求做空三问"论断无据, 撤回。**
+
+**gate PASS 率复核 (实锤)**: SELL_SHORT 33.3% (10/30) > BUY 22.4% (100/447)。SHORT 在闸门端更易过, 不存在闸门歧视。
+
+**关键再修正 (Qoder 未点透)**: battle plan prompt (`legacy_battle_plan_enabled`) **已死**。实锤: ① config `feature_flags.legacy_battle_plan_enabled=false`; ② 主日志 "旧作战计划轨道已下线"; ③ requests 目录 91 文件零 battle plan; ④ 近 4 份日志无 battle plan 调用。**Hermes §51.1 与 Qoder §52.1 都把三条 LONG 侧约束归于"现行 prompt", 错 — 它在死代码里。** 真正现行的 DA prompt 是 deep_research_prompts.py, Hermes 读 L116-121 实锤: BUY 与 SELL 判定**同门槛对称** (辩论推荐+确信度+数据≥3维), L28 明示"方向未预设"。**因此 Q1 修复目标"给 battle plan 加对称 SHORT 条款"打在死代码上, 无效。** 真正的不对称不在 prompt, 在**候选生成端 + regime**: DA 候选 SHORT 占比仅 6.3% (30/477), 且 8/19 risk_on + SPY 站上全均线天然偏多。Q1 的正解是审 DA 候选生成/扫描为何少给 SHORT 候选, 不是改 prompt 文本。
+
+### 53.3 问题二 (UE): 认账 + 一处数字更正 + 机制待独立验证
+
+- UE 全历史 SHORT 37/98=37.8% ✅ (Hermes 一致)
+- Hermes §51.2 "25 笔 no_trigger"小误, Qoder 更正为全历史 **21 笔**, 认账
+- "UE 是最大 SHORT 供给源 + 瓶颈在触发非产出" ✅ 认账
+- **Qoder 的 out_of_band 机制 (61/229 穿带) + 21 笔未触发事后 intraday+3.46%/T+1+4.37%**: Hermes 未独立复算 entry_timing_shadow.jsonl 与 fwd_return, **暂挂**, 数字采信但标注未复核。若属实则"漏掉的肥"成立, 强化"触发带对崩盘型 SHORT 结构性排斥"判断。
+
+### 53.4 问题三 (IC 门): 主叙事认账撤回 + 因子级污染认账 + 方法受限声明
+
+**认账一 (拦截口径)**: Hermes 全量日志 grep `IC加权方向` 实锤 — 8/17-19 共 **25 起**: **拦 BUY 23 vs 拦 SHORT 2** (GS 8/17 +0.13, AVGO 8/19 +0.09)。Hermes §51.3 "全历史仅 11 笔全 W33"双重错误 (漏算未落行的再评估拦截 + 周次标错), 撤回。
+
+**认账二 (样本基混淆)**: Hermes §51.3 引"137 BUY vs 2 SHORT"作为 IC 样本基, **错** — 那是 8 月 DA 通道产出, 不是 IC 计算基。IC 基是 signal_snapshots。此混淆导致"看空因子 IC 几乎全来自 LONG 样本"判断失真。认账。
+
+**因子级污染 — Hermes 独立 Spearman 重算 (signal_snapshots.db, strength vs fwd_ret_t1)**:
+- **news_positive SHORT 侧 IC = −0.3859 (n=45), 与 Qoder 表逐格一致** — 符号翻转实锤 (pooled 口径 +0.0913 出自 factor_ic_latest.json 官方表 n=519, Hermes 直查同文件确认 ic=0.09126/n=519)
+- insider_net_sell SHORT 侧: Hermes n=14 vs Qoder n=32 (子集口径差, Hermes 仅 factors_json 非空行), 未逐格对齐, 但两侧均 <0.1 量级弱信号
+- below_ma20/sentiment_bullish/earnings_beat_streak 在 Hermes 的 factors_json 口径下 n=0 (这些因子来自 playbook conditions 回填路径, 非 snapshots 原生) — Qoder 表数值采信但标注口径差
+- **关键结论成立**: news_positive 91% LONG 样本 (474:45) 却在 SHORT 侧符号翻转, 而它正是能对 SHORT 投反对票的看多因子 — **用多头样本算的 IC 否决空头方向, 污染实锤, 修复在因子粒度**
+
+**对 Qoder 三修复评估的复核**: ① 因子粒度 fail-open (SHORT 侧 n≥30 用 SHORT 侧 IC, 不足不参与计分) — 方向认账; ② |net_ic|<0.15 不拦 = 废门 (25 起全 ≤0.21) — 认账, 不采; ③ 双向影子记账 (含 23 笔被拦 BUY) — 认账, 必须双向。
+
+### 53.5 问题四 (开仓上限): 认账方向, 接受 12→16, 测算标注未独立复核
+
+Qoder 测算: 8/19 实开 12 笔/$66,269 (名义帽 $77,632 消耗 85%), 均笔 sizing $5,522。20 笔×$5,522=$110,440 **超名义帽** → ~14 笔先绑, "20"空头支票; 16 笔×$4,442=$71,072 < 帽 ✅。Hermes 未独立复算 sizing 分布, 数字采信标注未复核, 但**逻辑成立**: 名义帽 0.8 不动时, 单提 max_positions 到 20 会被名义帽先绑死, 属无效放宽。**接受双帽 12→16 + 名义帽 0.8 兜底。**
+
+### 53.6 总判 + 对用户裁决的建议
+
+§五十二质量高, 抓掉 Hermes 三处实错 (AVGO 定性 / 做空三问 / IC 口径+样本基)。Hermes 反抓 Qoder 一处未点透: **battle plan prompt 已死, Q1 修复目标打在死代码上**。
+
+四问收敛立场 (待用户拍板):
+1. **Q1**: 不改 battle plan (死代码); 改查 DA 候选生成端为何 SHORT 候选仅 6.3% + regime 偏多。
+2. **Q2**: 认账。no_trigger SHORT 影子结算脚本 (fwd_return 已在); 带放宽走 RFC-065 widen 影子攒判据, 不预放宽。
+3. **Q3**: 认账。SHORT 候选净方向分改因子粒度 (news_positive 即刻用 SHORT 侧 IC, 不足者不计分); 拦截事件双向影子记账。废门方案不采。
+4. **Q4**: 认账。双帽 12→16, 名义帽 0.8 不动, 一周复评。
+5. **§51.5/§52.0修正二**: 覆盖保留痕迹列升级为必要 (现行行方向已不可信)。
