@@ -133,7 +133,6 @@ class PlaybookPusher:
         for idx, inst in enumerate(active, 1):
             sym = inst.get("symbol", "?")
             direction = inst.get("direction", "?")
-            confidence = inst.get("confidence") or 0  # 2026-07-13: NULL 值(键存在但为None)会显示 'None%', 与兄弟字段统一 or 0
             entry = inst.get("entry_price", 0) or 0
             sl = inst.get("stop_loss", 0) or 0
             tp = inst.get("take_profit", 0) or 0
@@ -147,6 +146,9 @@ class PlaybookPusher:
             # 2026-08-01 (显示层消误导): conf 阈值图标 (≥70✅/≥50⚠️/<50❌) 断供校准断言 —
             #   成交口径 conf 无区分度 (弃权35: 45.5% vs 无标记50: 45.2% T+1), ❌ 满屏误导为"差信号".
             #   改展示辩论语义标签 (conf 数值的来历, 事实), conf 值保留 (仓位加权事实).
+            # 2026-08-21 (A方案): conf 伪概率数字一并移除 — 回放实锤 (data/conf_divergence_replay_20260821.json):
+            #   同日截面市场调整后 conf 各桶超额归零 (±0.05~0.09%, t<0.2), 且 conf 不参与 sizing/admission
+            #   (零决策权重), 唯一危害=误导阅读者把'一致0.7'读成'高置信'. 只留辩论语义标签.
             _raw = inst.get("raw_instruction_json") or {}
             _oc = _raw.get("debate_outcome", "") if isinstance(_raw, dict) else ""
             if "2模型一致" in _oc:
@@ -159,7 +161,7 @@ class PlaybookPusher:
                 conf_tag = "🎚"  # UE/topup 等非辩论源: 无语义, 只展示数值
             dir_text = "BUY LONG" if direction == "BUY" else "SELL SHORT"
 
-            lines.append(f"#{idx} {sym} {dir_text} {conf_tag} conf {confidence}% [{horizon_emoji} {horizon}]")
+            lines.append(f"#{idx} {sym} {dir_text} {conf_tag} [{horizon_emoji} {horizon}]")
             if entry:
                 lines.append(f"   入场 ${entry:.2f} → 止损 ${sl:.2f} → 止盈 ${tp:.2f}")
                 lines.append(f"   {pos}股 | R:R {rr:.1f}:1 | 风险 ${risk:.0f}")
