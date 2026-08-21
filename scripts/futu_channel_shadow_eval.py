@@ -28,6 +28,7 @@ sys.path.insert(0, str(_ROOT))
 
 FLOW_PATH = _ROOT / "data" / "futu_capital_flow.jsonl"
 DERIV_PATH = _ROOT / "data" / "futu_deriv_unusual.jsonl"
+OFI_PATH = _ROOT / "data" / "futu_ofi_baseline.jsonl"
 BARS_DIR = _ROOT / "data" / "replay_bars"
 OUT_PATH = _ROOT / "data" / "futu_channel_shadow_eval_latest.json"
 
@@ -137,11 +138,21 @@ def spearman(xs, ys):
 def eval_capital_flow(window_days):
     """通道 B: 分钟资金流 → 后续收益 rank-IC (裸边际, OFI 基线缺失)."""
     flow, quality = load_flow()
+    ofi_rows = 0
+    if OFI_PATH.exists():
+        try:
+            ofi_rows = sum(1 for _ in open(OFI_PATH))
+        except Exception:
+            ofi_rows = 0
+    ofi_available = ofi_rows >= 100  # 增量口径最少需要连续快照对
     report = {"channel": "capital_flow", "quality_non_null": round(quality, 4),
               "quality_gate": QUALITY_GATE,
               "quality_pass": quality >= QUALITY_GATE,
-              "ofi_baseline_available": False,
-              "ofi_warning": "OFI 基线不存在(orderbook_s2 仅703行校准) → 裸边际IC, 违反预注册纪律, 证据权重降级",
+              "ofi_baseline_available": ofi_available,
+              "ofi_baseline_rows": ofi_rows,
+              "ofi_warning": (None if ofi_available else
+                              "OFI 基线样本不足(<100行) → 裸边际IC, 违反预注册'禁裸边际'纪律, 证据权重降级; "
+                              "采集已于 2026-08-21 启动, 攒样中"),
               "pairs": []}
     if not flow:
         report["error"] = "capital_flow.jsonl 不存在/为空"

@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | 审计完成 + P1 收口 + **交叉审查完成**（8/18 第 3 轮离线核验 6/6 过、零勘误；补充建议 7 项待裁，盘中补测列为 P2 裁决窗前置条件）(record-only，零执行路径改动) |
+| 状态 | 审计完成 + P1 收口 + 交叉审查完成（8/18 第 3 轮）+ **第 4 轮能力补接与落地（2026-08-21）：analyst_consensus 复活、影子判官补齐、capital_flow 首轮 IC +0.119、deriv 假说暂否、OFI 基线采集与宏观事件日程接入** (record-only，零执行路径改动) |
 | 创建 | 2026-08-18（用户令：评估权益都利用起来，确保性能和真实性可用，产出落 DEB） |
 | 前案 | DEB-20260812-futu-unused-channels（8/12 升级 OpenD/SDK 10.9 + 采集器落地） |
 | 纪律 | 本档纯审计：19 接口逐一实弹（可用性/延迟/真实性），订阅压测退订归零，零交易行为变更 |
@@ -229,6 +229,60 @@
 **连带记录**：审查方本人第一步也搜了 repo 侧 `deep-stock-analysis/` 落空——
 与初轮审计同坑。该路径只存在于 `~/.hermes/skills/`，跨仓 manifest 的必要性
 由两方独立翻车实证（非假设性流程建议）。
+
+### 第 4 轮（能力补接盘点与落地，2026-08-21，Hermes）
+
+**触发**：用户令"是否还有富途存在且有用的能力但并没有启用接入的，历史上有检查过，
+请确认是否都有效接入并真正有效，并请明确说明收益"。随后批准按建议执行。
+
+**方法**：SDK 10.09.6908 全量方法 vs 代码库调用点 diff → 已接线项逐一查产物/消费方
+实证 → 零消费候选 14 项实弹（可用性/延迟/字段/小票覆盖）。
+
+**盘点结论**：
+1. 已接线 6 通道全部存活实证：capital_flow（49,987 行/56 票/8/11-8/20 连续）、
+   deriv_unusual（2,952 事件）、财报日历（生产启动 147 票）、空头/内部人
+   （8 条指令引用）、盘前榜单（skill 侧）、核心交易链。LV3 逐笔仍显式闲置
+   （ADR-013，非遗漏）。
+2. 14 项零消费候选实测 9 可用：analyst_consensus/rating_change/经济日历/广度/
+   快讯/期权IV概览/技术资金异动/热力图/卖空榜等。
+3. **真问题实锤**：`futu_extended_provider.py` L57 死 stub —— "get_research_analyst_consensus
+   不存在于 SDK"是 **SDK 10.03 时代的过时判断**，10.09.6908 已有且实测全覆盖
+   （MU 30 家/目标价、连 WEAV/BULL 小票都有）。这是全场唯一"接线被误拆"的能力。
+
+**落地（commit 0bca5129 + 本轮）**：
+1. **analyst_consensus 复活**：恢复 get_data() 调用 + 实现方法体（rating/目标价/
+   buy-hold-sell%，1h 缓存，失败优雅降级）。消费链已就绪：data_collector 情绪混合
+   （缺失时替代/共存时 0.6 权重）+ premarket_enrichment DA 注入。e2e 实弹通过。
+   收益=补 Finnhub free-tier target-price 403 缺口 + 指令情绪特征质量。
+2. **影子判官补齐**：scripts/futu_channel_shadow_eval.py（DEB-20260812 §五预注册判据
+   照抄）。首轮实算（8 交易日）：
+   - 通道 B capital_flow：质量门 100% 过，n=136 对（≥30），rank-IC **+0.119**，
+     双窗口 +0.203/+0.095 同号 → verdict=PASS 候选。**带星号**：OFI 基线缺失
+     只能算裸边际 IC，违反预注册"禁裸边际"纪律，8/24 裁决证据权重降级。
+   - 通道 A derivative：2,890 配对（≥30），事件后 30min 均值 +0.03%、胜率 48.5%
+     → **大单流领先假说暂被数据否定**。若 8/24 仍如此，按 DEB-20260812 §五对称
+     清单应同日下线 DA prompt 衍生品异动段。
+3. **OFI 基线通道 C**：`futu_channel_shadow_collect.py` 新增 `_collect_ofi_baseline`
+   （level-1 快照 {bid1/ask1 价量}，ΔOFI 评估侧算）。**实弹纠错**：get_order_book
+   在 SDK 10.09 已要求先订阅 ORDER_BOOK（8/5 DEB-20260805 探针"免订阅"结论过时，
+   若照搬将违反 ADR-013）→ 改 get_market_snapshot 批量 HTTP 免订阅（实测闭市有盘口，
+   4 票实弹落盘）。独立开关 `futu_channels.ofi_collect_enabled`。
+4. **宏观事件日程**：`macro_calendar_shadow_collect.py` 新增 `_fetch_futu_event_schedule`
+   （未来 7 天美国 HIGH/MEDIUM 事件，FRED 段=已公布值滞后、本段=未来日程表，互补
+   同源一次采齐）。实弹 22 事件/字段全/时间已转 ET。fail-open 不影响 FRED 主链。
+   顺手修 CLI 直跑缺 sys.path 的 latent bug。独立开关 `macro_calendar.event_schedule_enabled`。
+
+**验证**：全量 1383 passed · 宏观 e2e FRED 7/7 + 日程 ok · OFI 4 票实弹落盘 ·
+重启零 traceback · reconcile broker 2 vs 内部 2 零漂移。
+
+**纪律记录**：
+- "历史结论不永恒"第二次实证（第一次：F10 API 不可用→10.9 可用）：本次
+  get_order_book 订阅要求变更。审计结论带 SDK 版本戳，跨版本须复测。
+- 只提交自己文件，未碰 sibling agent 的 vault/exit_calibration 并行改动。
+- 回滚：`ofi_collect_enabled=false` / `event_schedule_enabled=false` + 重启。
+
+**8/24 裁决窗前置状态**：判官已就位；capital_flow 续采 + OFI 攒样中（增量口径
+需 OFI ≥100 行快照对）；deriv 通道若无新证据按预注册走关门+prompt 对称下线。
 
 ---
 

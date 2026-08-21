@@ -212,6 +212,64 @@ def _collect_capital_flow(ctx, symbols: List[str]) -> int:
     return len(new_rows)
 
 
+_OFI_OUT = _BASE / "data" / "futu_ofi_baseline.jsonl"
+
+
+def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
+    """通道 C: OFI 基线快照 (DEB-20260818 P2 重排, 2026-08-21 接入).
+
+    Cont-Kukanov-Stoikov (2014) 增量定义需要连续时点的 bid1/ask1 量,
+    本采集按轮存 level-1 快照 {bid1, bid1_qty, ask1, ask1_qty, last},
+    增量 ΔOFI 在评估侧 (futu_channel_shadow_eval) 对相邻快照计算.
+    数据源: get_market_snapshot 批量 HTTP 免订阅 (实测闭市也有盘口) —
+    2026-08-21 实弹发现 get_order_book 在 SDK 10.09 已要求先订阅
+    (8/5 探针'免订阅'结论过时, 若照搬将违反 ADR-013 订阅纪律).
+    用途: capital_flow 增量 IC 的 OFI 基线口径
+    (预注册纪律'禁裸边际'的解法). 独立开关可单独回滚.
+    """
+    from futu import RET_OK
+    try:
+        from app.core.config_container import get_config
+        if not bool(get_config().get_dotted(
+                "futu_channels.ofi_collect_enabled", True)):
+            return 0
+    except Exception:
+        pass
+    rows = []
+    from datetime import timezone
+    from app.utils.timezone import ET
+    now_et = datetime.now(timezone.utc).astimezone(ET)
+    ts_et = now_et.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        ret, data = ctx.get_market_snapshot(symbols[:400])
+        if ret != RET_OK or data is None or not len(data):
+            return 0
+        for _, row in data.iterrows():
+            try:
+                bid1 = float(row.get("bid_price", 0) or 0)
+                ask1 = float(row.get("ask_price", 0) or 0)
+                bid1_qty = float(row.get("bid_vol", 0) or 0)
+                ask1_qty = float(row.get("ask_vol", 0) or 0)
+                if bid1 <= 0 or ask1 <= 0:
+                    continue
+                rows.append({
+                    "symbol": str(row.get("code", "")), "ts_et": ts_et,
+                    "bid1": bid1, "bid1_qty": bid1_qty,
+                    "ask1": ask1, "ask1_qty": ask1_qty,
+                    "last": float(row.get("last_price", 0) or 0),
+                })
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning(f"[futu通道影子] ofi_baseline snapshot 异常: {e}")
+    if rows:
+        _OFI_OUT.parent.mkdir(parents=True, exist_ok=True)
+        with _OFI_OUT.open("a", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return len(rows)
+
+
 def _collect_deriv_unusual(ctx, symbols: List[str]) -> int:
     from futu import RET_OK
     seen = _seen_deriv_hashes()
@@ -296,6 +354,9 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     try:
         n_flow = _collect_capital_flow(ctx, symbols)
         n_deriv = _collect_deriv_unusual(ctx, symbols)
+        # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
+        # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
+        n_ofi = _collect_ofi_baseline(ctx, symbols)
     finally:
         try:
             ctx.close()
@@ -305,7 +366,8 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     if is_after_hours:
         st["last_afterhours_date"] = str(date.today())
     _save_state(st)
-    if n_flow or n_deriv:
+    if n_flow or n_deriv or n_ofi:
         logger.info(
             f"[futu通道影子] 采集完成 ({phase}): capital_flow +{n_flow} 行, "
-            f"deriv_unusual +{n_deriv} 事件, 标的 {len(symbols)} 只")
+            f"deriv_unusual +{n_deriv} 事件, ofi_baseline +{n_ofi} 快照, "
+            f"标的 {len(symbols)} 只")
