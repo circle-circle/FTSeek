@@ -120,7 +120,19 @@ class PushMessage:
         else:
             _pnl = float(p.get("pnl", 0) or 0)
             _psign = "+" if _pnl >= 0 else "-"
-            lines.append(f"💰 实现盈亏: {_psign}${abs(_pnl):.2f}  原因: {p.get('exit_reason', '?')}")
+            # 2026-08-21 (用户裁"落"): BE 出场分类后缀 — 消除"保本名义亏损"歧义.
+            #   GAP=触发时已坠穿保本线≥5bp(瀑布截停, 亏损=坠落本身); SLIP=门口成交滑点残差; OK=净正.
+            _er = str(p.get("exit_reason", "?") or "?")
+            _bec = p.get("be_exit_class")
+            if _bec == "GAP":
+                _bd = p.get("be_drift_bps")
+                _bd_s = f"(坠{abs(float(_bd)):.0f}bp)" if _bd is not None else ""
+                _er += f" 🪂瀑布止损{_bd_s}"
+            elif _bec == "SLIP":
+                _er += " ·滑点残差"
+            elif _bec == "OK":
+                _er += " ✓"
+            lines.append(f"💰 实现盈亏: {_psign}${abs(_pnl):.2f}  原因: {_er}")
             # 2026-07-23: 平仓路径画像显性化 (MFE/MAE/表态时点/capture — E shadow 同源口径)
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
@@ -203,7 +215,18 @@ class PushMessage:
         else:
             _pnl = float(p.get("pnl", 0) or 0)
             _psign = "+" if _pnl >= 0 else "-"
-            lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {p.get('exit_reason', '?')}")
+            # 2026-08-21 (用户裁"落"): BE 出场分类后缀 (同飞书口径): GAP/SLIP/OK.
+            _er = str(p.get("exit_reason", "?") or "?")
+            _bec = p.get("be_exit_class")
+            if _bec == "GAP":
+                _bd = p.get("be_drift_bps")
+                _bd_s = f"(坠{abs(float(_bd)):.0f}bp)" if _bd is not None else ""
+                _er += f" 🪂瀑布止损{_bd_s}"
+            elif _bec == "SLIP":
+                _er += " ·滑点残差"
+            elif _bec == "OK":
+                _er += " ✓"
+            lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {_er}")
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
                 _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""

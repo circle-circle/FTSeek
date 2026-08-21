@@ -5017,6 +5017,21 @@ def _net_pnl_pair(pnl: float, pnl_pct: float, fees_total, tr_row):
     return _net, _net_pct
 
 
+def classify_be_exit(be_net: Optional[float], be_drift: Optional[float]) -> str:
+    """BE 出场分类纯函数 (2026-08-21, Qoder §56.3 判序修复后口径).
+
+    判序: OK 先 (净额正即名实相符) → GAP (坠穿≥5bp) → SLIP (其余).
+    旧序 GAP 先判致 BWXT drift=-15.44bp 但净+8.82 被标瀑布自相矛盾.
+    telemetry 缺失 (None) → 按净额回退 OK/SLIP (fail-open). 契约测试见
+    tests/test_be_exit_class.py.
+    """
+    if be_net is not None and be_net > 0:
+        return "OK"
+    if be_drift is not None and float(be_drift) <= -5.0:
+        return "GAP"
+    return "SLIP"
+
+
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
                         pnl: float, pnl_pct: float, holding_hours: float,
                         inst_id = None, symbol: str = None,
@@ -5257,6 +5272,24 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 _meta_dirty = True
     except Exception as _fee_err:
         logger.debug(f"[_close_trade_record] 费用估算失败 trade_id={trade_id}: {_fee_err}")
+
+    # 2026-08-21 (用户裁"落"): BE 出场分类标签 be_exit_class — 解决"保本名义亏损"歧义.
+    #   8/1-8/21 47 笔 SL_BREAKEVEN 实证三分: 净正 17 / 瀑布坠穿 6 (-$85) / 贴线滑点残差 24.
+    #   GAP = 触发时价格已坠穿保本线 ≥5bp (两次轮询缝里的瀑布, 砍掉的是坠落本身, 机制无误);
+    #   OK  = 净正, 名实相符; SLIP = 其余 (门口成交只付几 bp 滑点/费用残差, 小额).
+    #   drift 来自 monitor 路径先落库的 _be_close_telemetry.drift_from_be_line (fallback 才有);
+    #   telemetry 缺失 → 按净额回退 OK/SLIP (fail-open). 消费方: 平仓推送文案 + 周报分组.
+    try:
+        if (exit_reason or "") == "SL_BREAKEVEN" and _meta_parse_ok:
+            _be_drift = (_meta.get("_be_close_telemetry") or {}).get("drift_from_be_line")
+            _be_net = (round(round(pnl, 2) - _fees_total, 2)
+                       if _fees_total is not None else None)
+            # 2026-08-21 (Qoder §56.3): 判序逻辑收口到 classify_be_exit 纯函数
+            # (OK 先判, 契约测试 tests/test_be_exit_class.py).
+            _meta["be_exit_class"] = classify_be_exit(_be_net, _be_drift)
+            _meta_dirty = True
+    except Exception as _bec_err:
+        logger.debug(f"[_close_trade_record] be_exit_class 分类失败 trade_id={trade_id}: {_bec_err}")
 
     # #6: telemetry/ghost_cause 对 metadata 的读改写合并为一次写回 (仍在主 UPDATE 之前,
     #   内容与旧逻辑两次独立写的最终状态完全一致)
@@ -5517,6 +5550,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "cohort": _meta.get("cohort"),
                     "horizon": _meta.get("horizon"),
                     "inv_price": _meta.get("alite_inv_price"),
+                    # 2026-08-21 (用户裁"落"): BE 出场分类 — 通知直接区分"真保本/贴线残差/瀑布坠穿",
+                    #   消除"保本名义亏损"歧义. drift 仅 GAP 路径有意义 (bps, 负=坠穿).
+                    "be_exit_class": _meta.get("be_exit_class"),
+                    "be_drift_bps": (_meta.get("_be_close_telemetry") or {}).get("drift_from_be_line"),
                 }
                 if _mfe > 0:
                     _px_extra["capture_pct"] = round(
