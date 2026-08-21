@@ -206,6 +206,7 @@ def _fetch_futu_event_schedule(now: datetime) -> Dict[str, Any]:
                 out["status"] = f"empty ret={ret}"
                 return out
             events = []
+            _now_et = now
             for _, row in df.iterrows():
                 country = str(row.get("country", ""))
                 star = str(row.get("star", ""))
@@ -217,6 +218,11 @@ def _fetch_futu_event_schedule(now: datetime) -> Dict[str, Any]:
                     ts = datetime.fromtimestamp(
                         float(row.get("timestamp", 0)), tz=_tz.utc)
                     ts_et = ts.astimezone(ET)
+                    # 2026-08-21 (Qoder 第5轮 #6): 过滤已发布事件 —
+                    # Futu 日期边界按北京时间解释, 窗口会含 ET 前一日已发布
+                    # 事件 (带 actual 值); 消费侧需要的是未来日程.
+                    if ts_et.replace(tzinfo=None) < _now_et.replace(tzinfo=None):
+                        continue
                     events.append({
                         "title": str(row.get("title", "")),
                         "ts_et": ts_et.strftime("%Y-%m-%d %H:%M"),

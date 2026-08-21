@@ -222,8 +222,8 @@ def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
     本采集按轮存 level-1 快照 {bid1, bid1_qty, ask1, ask1_qty, last},
     增量 ΔOFI 在评估侧 (futu_channel_shadow_eval) 对相邻快照计算.
     数据源: get_market_snapshot 批量 HTTP 免订阅 (实测闭市也有盘口) —
-    2026-08-21 实弹发现 get_order_book 在 SDK 10.09 已要求先订阅
-    (8/5 探针'免订阅'结论过时, 若照搬将违反 ADR-013 订阅纪律).
+    get_order_book 需 ORDER_BOOK 订阅 (SDK 10.3 时代 8/5 即被拒, 非新变化);
+    snapshot 批量方案复用 spread_depth_capture.py 已验证设计 (Qoder 第5轮勘误).
     用途: capital_flow 增量 IC 的 OFI 基线口径
     (预注册纪律'禁裸边际'的解法). 独立开关可单独回滚.
     """
