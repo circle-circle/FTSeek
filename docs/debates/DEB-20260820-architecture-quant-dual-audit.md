@@ -328,15 +328,22 @@ handoff 基线：日净均值 -$40.96（t=-1.44）、日毛均值 -$2.71（t=-0.
       （max_daily_positions=16），无"当前持仓总数"闸——隔夜仓+今日新开可叠加无上限。
       2026-08-20 用户裁 A 立项。触发条件：终裁后若走"更长持有期"赛道，此闸为前置必补项；
       建议形态 = admission 唯一写入口处 `len(open_positions) + 今日已开 ≥ N` 只读先影子后施规。
-- [ ] **P1-7 [排队]** 决策侧个股盘感通道修复（第 7 轮盘感专题审计新立，用户裁"要"立项）：
+- [x] **P1-7 [已落地 2026-08-21]** 决策侧个股盘感通道修复（第 7 轮盘感专题审计新立，用户裁"要"立项）：
       `llm_validator.py:493 _get_trade_history` 过滤器 `trade_mode != 'simulate'` 把
       PLAYBOOK_SIM 全部 313 笔挡在门外（sim 期决策侧逐股历史输入恒为"无历史交易数据"），
       存活行仅 4 笔且喂的是毛口径 realized_pnl。修复范围 = ①放行 simulate/sim/live 三值
       ②净口径 `COALESCE(pnl_net, realized_pnl)`（口径切换 7d9a800f 后 SSOT 对齐）
       ③同源喂 DA 合成 conviction 校准（deep_research_pipeline.py:216-250）。
-      **纪律前置**：属信号源改动 → 宪章 §四.3 scan-eval 离线 A/B 先行（对照"无历史"基线），
+      **落地补充（8/21 实弹）**：另查得第三层死点 — DB_PATH 硬编码 ftseek_us_live.db，
+      sim 环境该库停在 7/19 的 17 笔 → 改走 db_utils.get_main_db() SSOT。
+      修复后实弹：MU n=5 wr=20% pnl=-494.77 / AMD n=5 wr=20% / BULL n=3 wr=67% +258.88
+      真实历史进入 DA 校准输入。
+      **关键实证（为何不发明新公式填 confidence）**：8 月 scan 候选 join 同向成交 107 笔，
+      challenger_score vs pnl_net IC=-0.0008（无预测力）、quality score IC=-0.14（反向非单调）
+      → 所有候选替代信号均被数据否决，正确修法就是恢复真实历史输入（P1-7 原案），
+      decision_conf 三档阶跃的退化根因 = conviction 校准输入恒为空。
+      **红线**：属信号源改动 → 宪章 §四.3 scan-eval 离线 A/B 先行（对照"无历史"基线），
       红线 = 个股 n<30 读数永不硬拦入场（七律⑤，与 P1-6 同款"只读先影子后施规"路径）。
-      排队顺位在 P1-1 之后（SHORT 供给侧第一顺位不动）。
 
 ### P2 — 卫生（低风险，可与 P1 并行，但 live 行为相关项仍终审后）
 - [x] **P2-1 [白名单·减法]** ARCHITECTURE.md 重写到当前事实（Playbook 唯一管线 + 主管线冻结 + 三态现状），

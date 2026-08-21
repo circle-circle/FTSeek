@@ -91,7 +91,30 @@ STOP 单定位为**断连保险丝**，不是主退出通道：
 - 回滚总开关：`playbook.live_stop_sync_enabled: false`（三阶段共用，一键回退到
   "仅入场初始 STOP"现状）。
 
-## 七、关联
+## 七、断连演练只读预演记录（2026-08-21，验证期白名单动作）
+
+**方法**：kill -9 主进程（模拟崩溃，非正常停止）→ 观察 systemd 自愈 + 恢复后对账。
+
+| 步骤 | 结果 |
+|---|---|
+| kill -9 前状态 | active, Main PID 834656, 运行 32min |
+| systemd 自愈 | Restart=on-failure + 30s → 17:06:52 自动拉起（kill 于 17:06:22，实际 ~30s） |
+| 恢复后 traceback | 0（journalctl + ftseek_us.log 双源核验） |
+| 恢复后对账 | broker 2 vs 内部 2 · 漂移 0 · 外部持仓 0 ✅ |
+| 订阅恢复 | QUOTE/K_1M/ORDER_BOOK/TICKER 4 只自动重订阅，Ticker/OrderBook/Push 数据到达 ✅ |
+| 恢复后巡检 | 盘前检查通过 + 盘后检查通过（Signal IC 0.1116, N=1102）✅ |
+
+**结论**：G5 对账链的前置条件（崩溃自愈 + 持仓对账）实弹验证通过。
+**新发现（设计稿补充风险点）**：`Restart=on-failure` 意味着 **SIGTERM 正常停止
+（systemctl stop）不会自动重启**——若运维误操作 stop 后忘记 start，服务静默缺席。
+建议毕业前评估改 `Restart=always` 或加独立 watchdog 进程（排队，不在验证期动）。
+
+**演练边界（如实标注）**：
+- sim 环境无 STOP 单，无法预演"STOP 触发 → position_sync 外部平仓三件套"全链；
+  该链只能 live 小额真单验证（风险登记第 2 行已预注册）。
+- G2/G3 代码缺口未动（设计稿纪律：验证期零代码改动，排队 8/29 终裁后）。
+
+## 八、关联
 
 - 方案 A commit 90f5a230（规则引擎侧净保本：触发线+滑点垫+限价超时）
 - `DEB-20260820-architecture-quant-dual-audit.md` B2.4（三态状态机=毕业通道最脆环节）

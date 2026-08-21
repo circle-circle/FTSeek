@@ -25,7 +25,12 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("ftseek_us.plan_validator")
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "ftseek_us_live.db"
+# 2026-08-21 (DEB-20260820 P1-7): DB_PATH 原硬编码 ftseek_us_live.db —
+# sim 环境 (TRADE_ENV=1) 下该库停在 7/19 的 17 笔, 决策侧历史输入恒为空.
+# 改走 db_utils.get_main_db() SSOT (按 TRADE_ENV 自动选 live/sim 库).
+def _get_db_path():
+    from app.core.db_utils import get_main_db
+    return get_main_db()
 
 SYSTEM_PROMPT = """你是一个严苛的量化交易审计师。量化系统选出了一只候选股并给出了5因子评分。
 你的任务不是预测涨跌，而是:
@@ -491,28 +496,37 @@ def _get_peer_changes(candidates: List[Dict]) -> Dict[str, Dict]:
 
 
 def _get_trade_history(symbols: List[str]) -> Dict[str, Dict]:
-    """获取候选股的历史交易表现"""
+    """获取候选股的历史交易表现.
+
+    2026-08-21 (DEB-20260820 P1-7): 修复决策侧个股历史输入恒为空的根因 —
+    原 `trade_mode != 'simulate'` 把 PLAYBOOK_SIM 全部 313 笔挡在门外,
+    DA conviction 校准恒为"无历史交易数据" → confidence 退化为常数 0.7.
+    修复: ①放行 simulate/sim/live 三值 (去掉 trade_mode 过滤, sim 期全部
+    交易都是有效决策反馈) ②净口径 COALESCE(pnl_net, realized_pnl)
+    (口径切换 7d9a800f 后 SSOT 对齐).
+    红线 (七律⑤): 本函数只供 prompt 输入, n<30 读数永不硬拦入场.
+    """
     result = {}
     try:
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(_get_db_path()))
         conn.row_factory = sqlite3.Row
         for sym in symbols:
             rows = conn.execute(
-                "SELECT direction, realized_pnl, entry_time, exit_time "
-                "FROM trade_records WHERE symbol=? AND trade_mode != 'simulate' "
+                "SELECT direction, COALESCE(pnl_net, realized_pnl) AS pnl, entry_time, exit_time "
+                "FROM trade_records WHERE symbol=? AND exit_time IS NOT NULL "
                 "ORDER BY exit_time DESC LIMIT 5",
                 (sym,)
             ).fetchall()
             if rows:
-                wins = sum(1 for r in rows if float(r["realized_pnl"] or 0) > 0)
-                total_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+                wins = sum(1 for r in rows if float(r["pnl"] or 0) > 0)
+                total_pnl = sum(float(r["pnl"] or 0) for r in rows)
                 result[sym] = {
                     "count": len(rows),
                     "wins": wins,
                     "win_rate": round(wins / len(rows) * 100, 0),
                     "total_pnl": round(total_pnl, 2),
                     "last_trades": [
-                        {"direction": r["direction"], "pnl": round(float(r["realized_pnl"] or 0), 2),
+                        {"direction": r["direction"], "pnl": round(float(r["pnl"] or 0), 2),
                          "date": (r["exit_time"] or "")[:10]}
                         for r in rows
                     ],
