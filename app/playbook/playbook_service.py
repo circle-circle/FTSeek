@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # Singleton
 _service_instance = None
 
+# 2026-08-21 (盲区A): 重复开仓守卫审计去重 — 每 (instruction_id, symbol) 首次拦截才写审计行,
+#   监控循环每轮重试不重复记账. 进程重启清空无害 (审计行非关键路径).
+_DUP_GUARD_AUDITED: set = set()
+
 # pipeline_view TTL 缓存 (秒). 盘中数据每 5min 才变, 30s 缓存挡住高频轮询打 DB.
 _PV_TTL = 30
 
@@ -990,6 +994,9 @@ class PlaybookService:
         #   playbook 持仓 (size>0). W_WEEK 水下仓持满5交易日后, DA 每日重新提名同标的会
         #   二次开仓 (7/2 GOOG SHORT×2 实锤重叠). 单点收口: 本函数是全部 writer 的唯一
         #   执行路径. 回滚: duplicate_position_guard_enabled=false + 重启.
+        # 2026-08-21 (Qoder §56.2-3 建议③): 拦截不落 skip_reason — 被拦指令保持 pending
+        #   是 live-eval 正确语义 (持仓平掉后当日指令应可再入); 每指令首次拦截补一条
+        #   去重审计行 (exec_gate_audit), 解决"每轮重复查询无痕迹"问题.
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_dup
             if bool(_get_pb_cfg_dup().get("duplicate_position_guard_enabled", False)):
@@ -1005,6 +1012,21 @@ class PlaybookService:
                 finally:
                     _dup_conn.close()
                 if _dup_row is not None:
+                    try:
+                        _dup_audit_key = (instruction_id, symbol)
+                        if _dup_audit_key not in _DUP_GUARD_AUDITED:
+                            _DUP_GUARD_AUDITED.add(_dup_audit_key)
+                            from app.playbook.pipeline import _emit_exec_gate_audit
+                            _emit_exec_gate_audit(
+                                {"id": instruction_id, "symbol": symbol,
+                                 "direction": direction, "date": None},
+                                action="blocked_duplicate_position",
+                                entry=entry_price, size=position_size, notional=None,
+                                extra={"held_size": _dup_row["size"],
+                                       "held_owner": _dup_row["owner_strategy"]},
+                            )
+                    except Exception:
+                        pass  # 审计行失败不阻断拦截返回
                     logger.info(
                         f"[playbook] {symbol} {_mode_label} 重复开仓拦截: 已有持仓 "
                         f"size={_dup_row['size']} owner={_dup_row['owner_strategy']} → 跳过"

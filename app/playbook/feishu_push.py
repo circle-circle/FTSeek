@@ -143,6 +143,22 @@ class PlaybookPusher:
             finally:
                 _on_conn.close()
             _overnight = []
+            # 2026-08-21 (Qoder §56.2-4): 持仓天数改交易日计数 — 日历天口径周五→周一
+            # 显示"3天"与 W_WEEK 5交易日豁免倒数脱节. fail-open: 日历异常回退日历天.
+            try:
+                from app.utils.holiday_calendar import HolidayCalendar as _HC
+                _hc = _HC()
+                def _tdays(d0, d1):
+                    n = 0
+                    d = d0
+                    from datetime import timedelta as _td
+                    while d < d1:
+                        d = d + _td(days=1)
+                        if _hc.is_trading_day("US", d):
+                            n += 1
+                    return n
+            except Exception:
+                _hc = None
             for _r in _on_rows:
                 _et_str = str(_r["entry_time"] or "")[:10]
                 if not _et_str or _et_str >= trade_date:
@@ -150,7 +166,7 @@ class PlaybookPusher:
                 try:
                     _d0 = _on_date.fromisoformat(_et_str)
                     _d1 = _on_date.fromisoformat(trade_date)
-                    _held = (_d1 - _d0).days
+                    _held = _tdays(_d0, _d1) if _hc else (_d1 - _d0).days
                 except ValueError:
                     _held = 0
                 _notional = float(_r["size"]) * float(_r["avg_entry_price"] or 0)

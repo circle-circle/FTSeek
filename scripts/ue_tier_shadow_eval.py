@@ -45,10 +45,13 @@ def main():
     db = sqlite3.connect(str(DB_PATH))
     db.row_factory = sqlite3.Row
 
-    # 市场代理: 当日全部已结算非SKIP指令 fwd_t1 均值 (同日截面基准)
+    # 市场代理: 当日全部已结算非SKIP指令 fwd_t1 均值 (同日截面基准).
+    # 2026-08-21 (Qoder §56.4-①): 排除 UE 自身行, 消除自包含偏差
+    # (UE 占比小影响微, 但纯度上代理不应含被评估对象).
     allrows = db.execute(
         "SELECT date, fwd_return_t1 FROM playbook_instructions "
-        "WHERE direction != 'SKIP' AND fwd_return_t1 IS NOT NULL"
+        "WHERE direction != 'SKIP' AND fwd_return_t1 IS NOT NULL "
+        "AND (decision_id IS NULL OR decision_id NOT LIKE 'universe_expansion%')"
     ).fetchall()
     by_date = defaultdict(list)
     for r in allrows:
@@ -104,6 +107,11 @@ def main():
         "prereg": "tier PASS (四关门全过) → 提案升级UE该tier优先级/权重; "
                   "THESIS_ONLY 持续负 → 提案 inject 端过滤",
         "settled_total": len(rows),
+        # 2026-08-21 (Qoder §56.4-②): UNKNOWN 桶占比跟踪 — origin.self_tier 落库
+        # (2026-07-22 起) 后新行应有 tier; 占比不收敛 = 字段写丢信号.
+        "unknown_ratio": round(
+            len(dated.get("UNKNOWN", [])) / len(rows), 3
+        ) if rows else 0.0,
         "tiers": tiers,
     }
     OUT_PATH.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
