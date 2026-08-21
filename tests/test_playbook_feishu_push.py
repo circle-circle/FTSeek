@@ -55,7 +55,11 @@ class TestMorningPush:
         assert "RISK_ON" in message
         assert "US.NTES" in message
         assert "BUY LONG" in message
-        assert "72%" in message
+        # 2026-08-21 (A方案): conf 伪概率数字已移除 (回放实锤零残余信号+零决策权重),
+        # 只展示辩论语义标签. 本 fixture 无 debate_outcome → 无语义标签 🎚.
+        assert "72%" not in message
+        assert "conf" not in message
+        assert "🎚" in message
         assert "META" in message
         assert "财报" in message
 
