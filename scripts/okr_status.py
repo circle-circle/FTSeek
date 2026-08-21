@@ -15,7 +15,7 @@ from app.playbook.db import PlaybookDB
 db = PlaybookDB()
 db.ensure_tables()
 
-instructions = db.get_recent_instructions(limit=500)
+instructions = db.get_recent_instructions(limit=500, include_skip=True)
 total = len(instructions)
 skip_count = sum(1 for i in instructions if i.get('direction') == 'SKIP')
 non_skip = total - skip_count

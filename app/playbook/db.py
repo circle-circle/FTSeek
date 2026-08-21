@@ -475,11 +475,19 @@ class PlaybookDB:
         """, (days_back * 10,)).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    def get_recent_instructions(self, limit: int = 50) -> List[Dict]:
-        """获取最近的指令"""
+    def get_recent_instructions(self, limit: int = 50, include_skip: bool = False) -> List[Dict]:
+        """获取最近的指令
+
+        2026-08-21: 口径过滤 — 表中自 6/14 起混入反事实审计基线占位行
+        (direction='SKIP', skip_reason='非当前通道候选', model_used='deterministic',
+        无 entry_price, 永不结算), 8/17 后约 50 条/日, 会吃掉 LIMIT 窗口并污染
+        指令数/IC 统计. 默认过滤; 需要统计 SKIP 数的消费方传 include_skip=True.
+        反事实脚本走 raw SQL 不受影响.
+        """
         conn = self._conn()
+        where = "" if include_skip else " WHERE direction != 'SKIP'"
         rows = conn.execute(
-            "SELECT * FROM playbook_instructions ORDER BY date DESC, id LIMIT ?",
+            f"SELECT * FROM playbook_instructions{where} ORDER BY date DESC, id LIMIT ?",
             (limit,)
         ).fetchall()
         return [_row_to_dict(r) for r in rows]

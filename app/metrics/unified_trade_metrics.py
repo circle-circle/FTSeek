@@ -135,7 +135,7 @@ class UnifiedMetrics:
     # ── playbook_instructions 查询 ─────────────────────────────────
     def get_playbook_instruction_stats(self, limit: int = 500) -> Dict[str, Any]:
         """Playbook 指令级统计"""
-        instructions = self._playbook_db.get_recent_instructions(limit=limit)
+        instructions = self._playbook_db.get_recent_instructions(limit=limit, include_skip=True)
         total = len(instructions)
         skip_count = sum(1 for i in instructions if i.get('direction') == 'SKIP')
         non_skip = total - skip_count
