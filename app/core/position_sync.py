@@ -1519,6 +1519,7 @@ class USPositionSync:
                     )
                     
                     # 写入 trade_records (使用真实数据)
+                    _dup_skip = False  # 查重守卫命中标记 (2026-08-21): try 前初始化防 NameError
                     try:
                         import sqlite3 as _sqlite3
                         _db_path = _get_db_path()
@@ -1527,53 +1528,92 @@ class USPositionSync:
                         _et_now = _now_et()
                         _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
                         _entry_time_str = _entry_time.isoformat() if hasattr(_entry_time, 'isoformat') else str(_entry_time)
-                        _cursor = _conn.execute(
-                            "INSERT INTO trade_records "
-                            "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
-                            "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
-                            "trace_id, signal_id, futu_order_id) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (_et_now.strftime('%Y-%m-%d'), symbol, _dir_name,
-                             _entry_time_str, _et_now.isoformat(),
-                             _entry, _exit_price, int(_size),
-                             round(_pnl, 2), round(_pnl_pct, 4),
-                             'external_close', 'POSITION_SYNC', 'manual', 'live',
-                             _et_now.isoformat(),
-                             getattr(existing_pos, 'trace_id', None),
-                             getattr(existing_pos, 'signal_id', None),
-                             getattr(existing_pos, 'futu_order_id', None))
-                        )
-                        _trade_id = _cursor.lastrowid
-                        _conn.commit()
-                        _conn.close()
 
-                        # ── 归因分析: 为外部平仓生成5维度归因 ──
+                        # ── 查重守卫 (2026-08-21, BULL 1327 实锤): executor 平仓与 position_sync
+                        #    external_close 可能对同一仓位双重记账。entry_time 时区写法可不同
+                        #    (+08:00 vs -04:00), 字符串比对会漏 → 归一化为 epoch 秒后比对。
+                        #    命中已有记录(realized_pnl 非 NULL)则跳过 INSERT, 只留日志。
+                        def _to_epoch_sec(_ts):
+                            try:
+                                from datetime import datetime as _dt
+                                if isinstance(_ts, _dt):
+                                    _d = _ts
+                                else:
+                                    _d = _dt.fromisoformat(str(_ts).replace('Z', '+00:00'))
+                                if _d.tzinfo is None:  # naive=ET
+                                    from datetime import timezone as _tz, timedelta as _td
+                                    _d = _d.replace(tzinfo=_tz(_td(hours=-4)))
+                                return int(_d.timestamp())
+                            except Exception:
+                                return None
+                        _dup_skip = False
                         try:
-                            from app.analysis.trade_attribution import attribute_from_db
-                            import json as _attribution_json
-                            _trade_row = {
-                                "symbol": symbol,
-                                "direction": _dir_name,
-                                "entry_price": _entry,
-                                "exit_price": _exit_price,
-                                "quantity": int(_size),
-                                "entry_time": _entry_time_str,
-                                "exit_time": _et_now.isoformat(),
-                            }
-                            _attr_result = attribute_from_db(_trade_row)
-                            if _attr_result is not None:
-                                _meta = {"attribution": _attr_result.to_dict()}
-                                _meta_json = _attribution_json.dumps(_meta, ensure_ascii=False)
-                                _conn2 = _sqlite3.connect(_db_path)
-                                _conn2.execute(
-                                    "UPDATE trade_records SET metadata_json=? WHERE id=?",
-                                    (_meta_json, _trade_id),
-                                )
-                                _conn2.commit()
-                                _conn2.close()
-                                logger.info(f"📊 [US Sync] 归因已生成: {symbol} {_attr_result.summary}")
-                        except Exception as _attr_e:
-                            logger.warning(f"[US Sync] 归因生成失败 {symbol}: {_attr_e}")
+                            _this_epoch = _to_epoch_sec(_entry_time_str)
+                            if _this_epoch is not None:
+                                _exist = _conn.execute(
+                                    "SELECT id, entry_time FROM trade_records WHERE symbol=? AND direction=? "
+                                    "AND realized_pnl IS NOT NULL", (symbol, _dir_name)).fetchall()
+                                for _er in _exist:
+                                    if _to_epoch_sec(_er[1]) == _this_epoch:
+                                        logger.warning(
+                                            f"🛑 [US Sync] 外部平仓查重命中, 跳过重复记账: {symbol} {_dir_name} "
+                                            f"入场{_entry_time_str} 已由 trade_records.id={_er[0]} 记录 (entry_time={_er[1]})")
+                                        _dup_skip = True
+                                        break
+                        except Exception as _de:
+                            logger.warning(f"[US Sync] 外部平仓查重异常(不阻断写入) {symbol}: {_de}")
+                        if _dup_skip:
+                            _conn.close()
+                            _trade_id = None
+                        else:
+                            _cursor = _conn.execute(
+                                "INSERT INTO trade_records "
+                                "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
+                                "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
+                                "trace_id, signal_id, futu_order_id) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                (_et_now.strftime('%Y-%m-%d'), symbol, _dir_name,
+                                 _entry_time_str, _et_now.isoformat(),
+                                 _entry, _exit_price, int(_size),
+                                 round(_pnl, 2), round(_pnl_pct, 4),
+                                 'external_close', 'POSITION_SYNC', 'manual', 'live',
+                                 _et_now.isoformat(),
+                                 getattr(existing_pos, 'trace_id', None),
+                                 getattr(existing_pos, 'signal_id', None),
+                                 getattr(existing_pos, 'futu_order_id', None))
+                            )
+                            _trade_id = _cursor.lastrowid
+                            _conn.commit()
+                            _conn.close()
+
+                        # ── 归因分析: 为外部平仓生成5维度归因 (查重命中时跳过) ──
+                        if not _dup_skip:
+                            try:
+                                from app.analysis.trade_attribution import attribute_from_db
+                                import json as _attribution_json
+                                _trade_row = {
+                                    "symbol": symbol,
+                                    "direction": _dir_name,
+                                    "entry_price": _entry,
+                                    "exit_price": _exit_price,
+                                    "quantity": int(_size),
+                                    "entry_time": _entry_time_str,
+                                    "exit_time": _et_now.isoformat(),
+                                }
+                                _attr_result = attribute_from_db(_trade_row)
+                                if _attr_result is not None:
+                                    _meta = {"attribution": _attr_result.to_dict()}
+                                    _meta_json = _attribution_json.dumps(_meta, ensure_ascii=False)
+                                    _conn2 = _sqlite3.connect(_db_path)
+                                    _conn2.execute(
+                                        "UPDATE trade_records SET metadata_json=? WHERE id=?",
+                                        (_meta_json, _trade_id),
+                                    )
+                                    _conn2.commit()
+                                    _conn2.close()
+                                    logger.info(f"📊 [US Sync] 归因已生成: {symbol} {_attr_result.summary}")
+                            except Exception as _attr_e:
+                                logger.warning(f"[US Sync] 归因生成失败 {symbol}: {_attr_e}")
                     except Exception as _e:
                         logger.warning(f"[US Sync] trade_record 写入失败 {symbol}: {_e}")
                     
@@ -1588,23 +1628,24 @@ class USPositionSync:
                     except Exception:
                         pass
                     
-                    # 发送正确的飞书通知 (有真实 PnL)
-                    try:
-                        from app.notifier.feishu import notify_exit
-                        notify_exit(
-                            symbol=symbol,
-                            direction="SELL" if _dir_name == "LONG" else "BUY",
-                            entry_price=_entry,
-                            exit_price=_exit_price,
-                            quantity=int(_size),
-                            pnl=round(_pnl, 2),
-                            pnl_pct=round(_pnl_pct * 100, 2),
-                            exit_reason="external_close",
-                            holding_hours=0,
-                            source_type="POSITION_SYNC",
-                        )
-                    except Exception as _e:
-                        logger.warning(f"[US Sync] 外部平仓通知发送失败 {symbol}: {_e}")
+                    # 发送正确的飞书通知 (有真实 PnL) — 查重命中时跳过(executor 已通知过)
+                    if not _dup_skip:
+                        try:
+                            from app.notifier.feishu import notify_exit
+                            notify_exit(
+                                symbol=symbol,
+                                direction="SELL" if _dir_name == "LONG" else "BUY",
+                                entry_price=_entry,
+                                exit_price=_exit_price,
+                                quantity=int(_size),
+                                pnl=round(_pnl, 2),
+                                pnl_pct=round(_pnl_pct * 100, 2),
+                                exit_reason="external_close",
+                                holding_hours=0,
+                                source_type="POSITION_SYNC",
+                            )
+                        except Exception as _e:
+                            logger.warning(f"[US Sync] 外部平仓通知发送失败 {symbol}: {_e}")
                 
                 else:
                     # ── 真幽灵仓: 静默移除，不发通知，不写 trade_record ──

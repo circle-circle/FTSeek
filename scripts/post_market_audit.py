@@ -86,7 +86,7 @@ def attribution_fee_net(db, today, window_days=7):
                        THEN 1 ELSE 0 END) as fake_wins,
                    SUM(CASE WHEN fees_est IS NOT NULL THEN 1 ELSE 0 END) as fee_rows
             FROM trade_records
-            WHERE {where_date} AND realized_pnl IS NOT NULL
+            WHERE {where_date} AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         """, (param,)).fetchone()
 
     t = _q("trade_date = ?", today)
@@ -120,7 +120,7 @@ def attribution_strategy(db, today, window_days=7):
                AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl,
                AVG(holding_hours) as avg_hold
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY strategy_id ORDER BY total_pnl DESC
     """, (since,)).fetchall()
 
@@ -129,7 +129,7 @@ def attribution_strategy(db, today, window_days=7):
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
-        WHERE trade_date = ? AND realized_pnl IS NOT NULL
+        WHERE trade_date = ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY strategy_id ORDER BY total_pnl DESC
     """, (today,)).fetchall()
     today_map = {r['strategy_id']: dict(r) for r in today_rows}
@@ -173,7 +173,7 @@ def attribution_signal(db, today, window_days=30):
             SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
             AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY strength_bucket
         ORDER BY COALESCE(signal_strength, -1) DESC
     """, (since,)).fetchall()
@@ -204,7 +204,7 @@ def attribution_exit(db, today, window_days=7):
                AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl,
                AVG(holding_hours) as avg_hold
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_reason IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL AND exit_reason IS NOT NULL
         GROUP BY exit_reason ORDER BY total_pnl DESC
     """, (since,)).fetchall()
 
@@ -262,7 +262,7 @@ def attribution_regime(db, today, window_days=7):
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
                AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY market_regime ORDER BY cnt DESC
     """, (since,)).fetchall()
 
@@ -302,7 +302,7 @@ def attribution_trend(db, today):
                MAX(COALESCE(pnl_net, realized_pnl)) as best,
                MIN(COALESCE(pnl_net, realized_pnl)) as worst
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY trade_date ORDER BY trade_date DESC
     """, (since_5d,)).fetchall()
 
@@ -347,7 +347,7 @@ def attribution_execution(db, today, window_days=7):
     # ghost/orphan 占比
     total_trades = db.execute("""
         SELECT COUNT(*) FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
     """, (since,)).fetchone()[0]
 
     ghost_orphan = db.execute("""
@@ -363,7 +363,7 @@ def attribution_execution(db, today, window_days=7):
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
-        WHERE trade_date >= ? AND realized_pnl IS NOT NULL
+        WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY direction
     """, (since,)).fetchall()
 
@@ -442,7 +442,7 @@ def attribution_risk(db, today):
     # 最大连续亏损
     recent_trades = db.execute("""
         SELECT realized_pnl FROM trade_records
-        WHERE trade_date >= date(?, '-7 days') AND realized_pnl IS NOT NULL
+        WHERE trade_date >= date(?, '-7 days') AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         ORDER BY entry_time
     """, (today,)).fetchall()
 
@@ -697,7 +697,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
             )
         if ft["cnt"] == 0 and fw["cnt"] == 0:
             L.append("  窗口内无已平仓记录")
-        L.append(f"  (费用覆盖率: 今日{ft['fee_coverage']:.0f}%/窗口{fw['fee_coverage']:.0f}%, est口径)")
+        L.append(f"  (费用字段覆盖率: 今日{ft['fee_coverage']:.0f}%/窗口{fw['fee_coverage']:.0f}% — fees_est非缺失占比, 非利润覆盖费用)")
         L.append("")
 
     # ─── 辩论结论 (最重要，放最前面) ───
