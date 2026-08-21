@@ -1678,16 +1678,19 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     for s in sorted(tradeable, key=lambda x: x.get("confidence", 0) or 0, reverse=True):
         sym = s.get("symbol", "")
         d = s.get("direction", "")
-        conf = s.get("confidence", 0) or 0
         wl = s.get("winner_loser", "")
         ext = "🌍外 " if s.get("is_universe_external") else ""
         tier = s.get("self_tier", "")
-        tier_str = f" [{tier}]" if tier else ""
+        # 2026-08-21 (A方案 UE版): conf 是单模型自评, 非共识 (UE 无双模型设计).
+        #   真正的置信度锚点是 self_tier 证据层级, 不是 conf 数值 — 已有 Track A 夹逼
+        #   (无证据→THESIS_ONLY且≤0.60) + 入库 cap=50 两道闸. 移除 conf 伪概率数字,
+        #   改显示 tier 语义标签, 避免误读成"高置信".
+        tier_sem = {"HARD_EVENT": "📌硬事件", "MARKET_CORROBORATED": "📊板块证", "THESIS_ONLY": "💭纯推断"}.get(tier, "❓无层级")
         px = s.get("scan_price")
         px_str = f" 参考${px:.2f}" if px else ""
         chain = (s.get("causal_chain", "") or "")[:60]
         thesis = (s.get("thesis", "") or "")[:50]
-        lines.append(f"{d} {sym} conf={conf:.2f} {ext}{wl}{tier_str}{px_str}")
+        lines.append(f"{d} {sym} {ext}{wl} {tier_sem}{px_str}")
         if chain:
             lines.append(f"  链: {chain}")
         if thesis:
