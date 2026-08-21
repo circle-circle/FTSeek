@@ -450,25 +450,32 @@ class EarningsCalendar:
                         tickers_to_watch.add(sym[3:])
             watchlist_futu_map = {v[0]: k for k, v in KEY_US_SYMBOLS.items()}
         else:
-            tickers_to_watch = set(ticker for ticker, _, _ in KEY_US_SYMBOLS.values())
+            # 2026-08-21 修复覆盖缺口: None=监控日历全量 (生产调用路径)。
+            #   此前只盯 KEY_US_SYMBOLS 静态 37 票, 动态池标的 (WEAV/BULL 类)
+            #   财报零保护。全量覆盖后 earnings_risk_guard 按 symbol 精确匹配,
+            #   不会误伤无财报标的。
+            tickers_to_watch = None  # None = 不过滤
             watchlist_futu_map = {v[0]: k for k, v in KEY_US_SYMBOLS.items()}
         
         today = datetime.now()
+        today_d = today.date()
         cutoff = today + timedelta(days=days_ahead)
-        
+
         result = []
         for entry in calendar:
             ticker = entry.get("symbol", "")
-            if ticker not in tickers_to_watch:
+            if tickers_to_watch is not None and ticker not in tickers_to_watch:
                 continue
-            
+
             try:
                 report_date = entry.get("reportDate", "")
                 if not report_date:
                     continue
                 entry_date = datetime.strptime(report_date, "%Y-%m-%d")
-                
-                if today <= entry_date <= cutoff:
+
+                # 2026-08-21 修复: 同日边界 — today 带时分秒 vs entry_date 零点,
+                #   当天发财报的票被 `today <= entry_date` 漏掉 (BJ 案)。按日期比较。
+                if today_d <= entry_date.date() <= cutoff.date():
                     futu_sym = watchlist_futu_map.get(ticker, f"US.{ticker}")
                     sector = KEY_US_SYMBOLS.get(futu_sym, ("", "", "Unknown"))[2]
                     

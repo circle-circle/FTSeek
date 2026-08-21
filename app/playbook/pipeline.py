@@ -1691,6 +1691,42 @@ def _select_thesis_template(factors: Dict[str, Any], direction: str) -> str:
     return "momentum_continuation" if direction == "BUY" else "mean_reversion"
 
 
+# ── Vault industry 缓存 (2026-08-21 sector guardrail 复活, DEB §44 定案修法) ──
+# data.fundamental.industry 填充率仅 2% (8月 298/300 指令 sector 为空) →
+# _apply_portfolio_guardrails 的 sector 集中度检查实质致盲。
+# 修法: 空 sector 从 obsidian_vault/symbols/*.md frontmatter industry 回填
+# (覆盖 197/213=92%), 不新建数据源。进程级缓存 1h, 读失败 fail-open (空 dict)。
+_VAULT_INDUSTRY_CACHE: Optional[Dict[str, str]] = None
+_VAULT_INDUSTRY_CACHE_TS: float = 0.0
+
+
+def _get_vault_industry_map(max_age_s: float = 3600.0) -> Dict[str, str]:
+    """obsidian_vault/symbols/*.md frontmatter industry → {US.MU: Semiconductors}"""
+    global _VAULT_INDUSTRY_CACHE, _VAULT_INDUSTRY_CACHE_TS
+    _now = time.time()
+    if _VAULT_INDUSTRY_CACHE is not None and (_now - _VAULT_INDUSTRY_CACHE_TS) < max_age_s:
+        return _VAULT_INDUSTRY_CACHE
+    import re
+    _m: Dict[str, str] = {}
+    try:
+        _vault_dir = Path(__file__).resolve().parent.parent.parent / "obsidian_vault" / "symbols"
+        _pat = re.compile(r'^industry:\s*"?([^"\n]+)"?', re.M)
+        if _vault_dir.is_dir():
+            for _f in _vault_dir.glob("*.md"):
+                try:
+                    _head = _f.read_text(encoding="utf-8", errors="ignore")[:2000]
+                except Exception:
+                    continue
+                _mm = _pat.search(_head)
+                if _mm and _mm.group(1).strip():
+                    _m[_f.stem.replace("_", ".")] = _mm.group(1).strip()  # US_MU → US.MU
+    except Exception as _e:
+        logger.warning(f"[playbook] vault industry 读取失败 (fail-open, sector 维持原值): {_e}")
+    _VAULT_INDUSTRY_CACHE = _m
+    _VAULT_INDUSTRY_CACHE_TS = _now
+    return _m
+
+
 def _apply_portfolio_guardrails(
     instructions: List[Any],
     *,
@@ -1724,6 +1760,18 @@ def _apply_portfolio_guardrails(
 
     # 只统计非 SKIP 的有效指令
     valid = [i for i in active if i.direction in ("BUY", "SELL_SHORT")]
+
+    # 2026-08-21 sector 复活 (DEB §44 定案修法): 空 sector 回填 vault industry。
+    #   data.fundamental.industry 填充率仅 2% → sector 集中度检查实质致盲。
+    #   原地回填同一对象: guardrail 判定与后续 save_instruction 落库同值。
+    if valid:
+        _ind_map = _get_vault_industry_map()
+        for _i in valid:
+            if not (getattr(_i, "sector", "") or ""):
+                _vs = _ind_map.get(getattr(_i, "symbol", ""), "")
+                if _vs:
+                    _i.sector = _vs
+
     if len(valid) <= 1:
         return active
 
@@ -1743,8 +1791,11 @@ def _apply_portfolio_guardrails(
         )
 
     # Sector 集中度 (仅当有 sector 信息时)
-    sectors = Counter(getattr(i, "sector", "") or "Unknown" for i in valid)
+    # 2026-08-21: Unknown = 缺信息 ≠ 行业相关, 不参与集中度判定 (防 vault 未覆盖票被误降级)
+    sectors = Counter(getattr(i, "sector", "") or "" for i in valid)
     for sector, count in sectors.items():
+        if not sector or sector == "Unknown":
+            continue
         if count / total > max_sector_pct:
             logger.warning(
                 f"[playbook guardrail] sector {sector} 占比 {count/total:.0%} 超限, "
