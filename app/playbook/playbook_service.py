@@ -986,6 +986,37 @@ class PlaybookService:
         except Exception as _mhe:
             logger.warning(f"[playbook] ManualHoldRegistry 检查异常 (放行): {_mhe}")
 
+        # 2026-08-21 (盲区A): 重复开仓守卫 — 下单前查 open_positions 该 symbol 是否已有
+        #   playbook 持仓 (size>0). W_WEEK 水下仓持满5交易日后, DA 每日重新提名同标的会
+        #   二次开仓 (7/2 GOOG SHORT×2 实锤重叠). 单点收口: 本函数是全部 writer 的唯一
+        #   执行路径. 回滚: duplicate_position_guard_enabled=false + 重启.
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_dup
+            if bool(_get_pb_cfg_dup().get("duplicate_position_guard_enabled", False)):
+                import sqlite3 as _dup_sql
+                from app.core.db_utils import get_main_db as _dup_main_db
+                _dup_conn = _dup_sql.connect(str(_dup_main_db()), timeout=3)
+                try:
+                    _dup_conn.row_factory = _dup_sql.Row
+                    _dup_row = _dup_conn.execute(
+                        "SELECT size, owner_strategy FROM open_positions WHERE symbol=? AND size>0 LIMIT 1",
+                        (symbol,),
+                    ).fetchone()
+                finally:
+                    _dup_conn.close()
+                if _dup_row is not None:
+                    logger.info(
+                        f"[playbook] {symbol} {_mode_label} 重复开仓拦截: 已有持仓 "
+                        f"size={_dup_row['size']} owner={_dup_row['owner_strategy']} → 跳过"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"{symbol} 已有持仓(size={_dup_row['size']}), 重复开仓拦截",
+                        "skipped_duplicate_position": True,
+                    }
+        except Exception as _dup_err:
+            logger.warning(f"[playbook] 重复开仓守卫检查异常 (放行): {_dup_err}")
+
         # Phase 3 (2026-06-24, decision "sim 也守 PDT"): 下单前查 PDT 权限.
         # sim/live 统一查 (is_pdt_account: equity≥25k 豁免, <25k 守 ≤3/5日).
         # 确保 sim 验证的是 PDT 合规策略, 避免 sim 达标 live(<25k) 跑不了的假达标.

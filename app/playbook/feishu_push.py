@@ -126,6 +126,44 @@ class PlaybookPusher:
             "",
         ]
 
+        # 2026-08-21 (盲区B最小版): 隔夜敞口清单 — W_WEEK 水下仓持满5交易日后,
+        # 隔夜跳空暴露×5, 风险必须可见. 盘前推送列出跨夜持仓 (entry 早于今日),
+        # 含名义敞口与已持仓天数. 异常静默降级 (不阻断推送).
+        try:
+            import sqlite3 as _on_sql
+            from datetime import date as _on_date
+            from app.core.db_utils import get_main_db as _on_main_db
+            _on_conn = _on_sql.connect(str(_on_main_db()), timeout=3)
+            try:
+                _on_conn.row_factory = _on_sql.Row
+                _on_rows = _on_conn.execute(
+                    "SELECT symbol, direction, size, avg_entry_price, entry_time "
+                    "FROM open_positions WHERE size > 0"
+                ).fetchall()
+            finally:
+                _on_conn.close()
+            _overnight = []
+            for _r in _on_rows:
+                _et_str = str(_r["entry_time"] or "")[:10]
+                if not _et_str or _et_str >= trade_date:
+                    continue  # 当日入场, 非隔夜
+                try:
+                    _d0 = _on_date.fromisoformat(_et_str)
+                    _d1 = _on_date.fromisoformat(trade_date)
+                    _held = (_d1 - _d0).days
+                except ValueError:
+                    _held = 0
+                _notional = float(_r["size"]) * float(_r["avg_entry_price"] or 0)
+                _overnight.append(
+                    f"{_r['symbol']}({'空' if _r['direction'] == 'SHORT' else '多'}) "
+                    f"{_held}天 ${_notional:,.0f}"
+                )
+            if _overnight:
+                lines.append(f"🌙 隔夜敞口 ({len(_overnight)}仓): " + " | ".join(_overnight))
+                lines.append("")
+        except Exception:
+            pass  # 敞口清单缺失不阻断盘前推送
+
         # 活跃指令 (非 SKIP)
         active = [i for i in instructions if i.get("direction") != "SKIP"]
         skipped = [i for i in instructions if i.get("direction") == "SKIP"]

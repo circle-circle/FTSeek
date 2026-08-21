@@ -1158,7 +1158,16 @@ playbook:
     #   证据: n=20 EV 曲线, 决策时刻水深>2% 样本 (MU/FIX -3.1%) 0修复2灾难;
     #   1.5% 是刀尖拟合 (CAT -1.62 死 / UBER -1.51 活仅差0.12pp) 弃用.
     #   回滚: 99 (=禁用) + 重启.
-    loser_overnight_max_depth_pct: 2.0
+    # 2026-08-21 (用户裁决撤销): 99=禁用. 证据基仅 n=2 (MU/FIX, 远低于 n≥30 纪律) 且
+    #   与 8/16 "SL兜底+留空间" 哲学冲突: 盘中实时水深被开盘噪声打穿 → 8/21 AMZN 误杀
+    #   (-2.04% 越线即清, 30min后价格回到+1.1%, SL -5% 从未参与). 恢复 W_WEEK 原语义:
+    #   水下仓豁免持满 loser_overnight_max_hold_days 交易日, SL 唯一盘中杀手.
+    #   观测工具保留 scripts/w_week_depth_cap_ev.py, 攒 n≥30 可重裁.
+    loser_overnight_max_depth_pct: 99
+    # 2026-08-21 (盲区A): 重复开仓守卫 — W_WEEK 延长后水下仓存活期×2.5, DA 每日重新提名
+    #   同标的会二次开仓 (7/2 GOOG 实锤重叠). _execute_via_dual_broker 单点查
+    #   open_positions size>0 → 拒开. 回滚: false + 重启.
+    duplicate_position_guard_enabled: true
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5
   exit_rules:
