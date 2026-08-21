@@ -13,6 +13,9 @@ Fee Unit-Economics Scorecard — 费用单位经济学记分牌 (只读)
   2. 名义分位与单位经济学的关系 (客单价越小 fee_bps 越高)?
   3. 有多少笔的毛利 bps 跑不过费用 bps (单笔层面即注定亏)?
   4. 费用占净亏损的比例趋势 (本周 vs 窗口基线 49%)?
+  5. 个股盘感台账 (DEB-20260820 第 7 轮): 每标的净口径 n/胜率/费用强度,
+     红线 = 全部 n<30 只观察不结论 (个股级样本天然不足, 算术盘感可读,
+     统计盘感必须攒到 n≥30 才允许进门柱)。
 
 口径 (与 exit_scorecard.py 对齐):
   - source_type 白名单 IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE','PLAYBOOK_SHADOW','MANUAL_PLAYBOOK')
@@ -68,7 +71,7 @@ def main():
     conn = sqlite3.connect(uri, uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        f"""SELECT realized_pnl, pnl_net, entry_price, quantity
+        f"""SELECT symbol, realized_pnl, pnl_net, entry_price, quantity
             FROM trade_records
             WHERE source_type IN ({ph})
               AND trade_date >= ?
@@ -96,6 +99,7 @@ def main():
         net = float(r["pnl_net"] if r["pnl_net"] is not None else r["realized_pnl"])
         fee = gross - net
         trades.append({
+            "symbol": r["symbol"],
             "notional": notional,
             "gross": gross,
             "net": net,
@@ -166,6 +170,29 @@ def main():
         for k, v in bands.items()
     }
 
+    # 个股盘感台账 (DEB-20260820 第 7 轮立项): 每标的净口径单位经济学。
+    # 红线: 个股级样本天然稀薄 (87 标的/268 笔, 均 3.1 笔), 全部 n_lt_30_flag=true,
+    # 读数只作观察与攒样本, 不得驱动任何参数变更 (七律⑤)。
+    by_symbol_map = {}
+    for t in trades:
+        by_symbol_map.setdefault(t["symbol"], []).append(t)
+    symbol_rows = []
+    for sym, seg in by_symbol_map.items():
+        seg_net = sum(t["net"] for t in seg)
+        wins = sum(1 for t in seg if t["net"] > 0)
+        symbol_rows.append({
+            "symbol": sym,
+            "n": len(seg),
+            "win_rate_net_pct": round(100.0 * wins / len(seg), 1),
+            "avg_notional": round(_mean([t["notional"] for t in seg]), 0),
+            "avg_fee_bps": round(_mean([t["fee_bps"] for t in seg]), 1),
+            "avg_net_per_trade": round(_mean([t["net"] for t in seg]), 2),
+            "net_total": round(seg_net, 2),
+            "net_total_excl_max_trade": round(seg_net - max(t["net"] for t in seg), 2),
+            "n_lt_30_flag": len(seg) < 30,
+        })
+    symbol_rows.sort(key=lambda r: (-r["n"], r["net_total"]))
+
     rep = {
         "window_since": args.since,
         "n": n,
@@ -187,6 +214,16 @@ def main():
         },
         "by_notional_quintile": quintiles,
         "by_fee_band": band_rows,
+        "by_symbol": {
+            "symbols_total": len(symbol_rows),
+            "trades_per_symbol_avg": round(n / len(symbol_rows), 1),
+            "top_by_n": symbol_rows,
+            "interpretation": (
+                "个股盘感台账: 全部标的 n<30, 读数只观察不结论 (七律⑤); "
+                "win_rate_net_pct 为净口径; avg_fee_bps 是该标的的算术盘感 "
+                "(确定性费用结构, 可直接读); net_total_excl_max_trade 防单笔驱动的伪盘感。"
+            ),
+        },
         "interpretation": (
             "fee_bps_avg = 每笔往返费用占名义 bps; 若 gross_bps_avg 的绝对值 < fee_bps_avg, "
             "则即使方向预测打平也必亏。名义分位表展示客单价与费用强度的反比关系, "
@@ -227,6 +264,15 @@ def main():
     for k, v in band_rows.items():
         print(f"    {k:>8}: n={v['n']:>3} ({v['share_pct']:>5.1f}%) 净 ${v['net_total']:>9.2f} "
               f"均毛利 {v['avg_gross_bps']}bps")
+    print("-" * 72)
+    print(f"  个股盘感台账 ({len(symbol_rows)} 标的, 均 {n / len(symbol_rows):.1f} 笔/标的, "
+          f"全部 n<30 只观察 — 按 n 排序前 15):")
+    for s in symbol_rows[:15]:
+        flag = " ⚠️n<30只观察" if s["n_lt_30_flag"] else ""
+        excl_s = f" [去最大单笔 ${s['net_total_excl_max_trade']:>8.2f}]"
+        print(f"    {s['symbol']:>8} n={s['n']:>3} 胜率(净) {s['win_rate_net_pct']:>5.1f}% "
+              f"名义~${s['avg_notional']:>7,.0f} fee {s['avg_fee_bps']:>5.1f}bps "
+              f"净/笔 ${s['avg_net_per_trade']:>7.2f} (合计 ${s['net_total']:>9.2f}){excl_s}{flag}")
     print(f"  → {OUT_LATEST}")
     print("=" * 72)
 
