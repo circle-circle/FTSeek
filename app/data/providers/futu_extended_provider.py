@@ -54,8 +54,9 @@ class FutuExtendedProvider(BaseDataProvider):
         }
 
         result["data"]["short_interest"] = self.get_short_interest(symbol)
-        # 2026-06-29: get_research_analyst_consensus 不存在于 futu SDK, 删除调用
-        # result["data"]["analyst_consensus"] = self.get_analyst_consensus(symbol)
+        # 2026-08-21: 复活调用 — 6/29 删除是 SDK 10.03 时代判断, 10.09.6908 已提供
+        # get_research_analyst_consensus (实测 MU/WEAV/BULL/AAPL 全覆盖, 含目标价)
+        result["data"]["analyst_consensus"] = self.get_analyst_consensus(symbol)
         result["data"]["insider_trades"] = self.get_insider_trades(symbol)
 
         # 如果全部子项都失败，标记整体失败
@@ -153,11 +154,58 @@ class FutuExtendedProvider(BaseDataProvider):
         """
         获取分析师评级共识（近3个月）
 
-        2026-07-02: Futu SDK 10.03 无 get_research_analyst_consensus 方法, 删除调用。
-        调用方应检查 status=="ok", 失败时优雅降级。
+        2026-08-21: 复活 — 6/29/7/2 删除系 SDK 10.03 时代判断;
+        SDK 10.09.6908 提供 get_research_analyst_consensus, 实测返回 dict:
+          highest/average/lowest (目标价), rating (1-5), total (分析师数),
+          update_time_str, buy/hold/sell (百分比)
+        失败时优雅降级 (status=failed), 调用方已按此契约处理。
         """
         now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
-        return {"status": "failed", "error": "Futu SDK does not support analyst consensus", "fetched_at": now_iso}
+        cache_key = f"ac_{symbol}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+
+        ctx = self._get_ctx()
+        if not ctx:
+            return {"status": "failed", "error": "Futu context unavailable", "fetched_at": now_iso}
+
+        try:
+            if not hasattr(ctx, "get_research_analyst_consensus"):
+                return {"status": "failed",
+                        "error": "SDK lacks get_research_analyst_consensus",
+                        "fetched_at": now_iso}
+            result = ctx.get_research_analyst_consensus(symbol)
+            ret = result[0]
+            d = result[1] if len(result) > 1 else None
+            err = result[2] if len(result) > 2 else ""
+            if ret != 0:
+                return {"status": "failed",
+                        "error": f"analyst_consensus failed: {str(d)[:120]} {err}",
+                        "fetched_at": now_iso}
+            if not isinstance(d, dict) or d.get("total") in (None, 0):
+                return {"status": "ok", "data": {}, "data_source": "futu_opend", "fetched_at": now_iso}
+
+            rating = d.get("rating")
+            rating_label = {5: "strong_buy", 4: "buy", 3: "hold", 2: "underperform", 1: "sell"}.get(rating, "unknown")
+            data = {
+                "rating": rating,
+                "rating_label": rating_label,
+                "total_analysts": int(d.get("total") or 0),
+                "target_avg": float(d.get("average") or 0),
+                "target_high": float(d.get("highest") or 0),
+                "target_low": float(d.get("lowest") or 0),
+                "buy_pct": float(d.get("buy") or 0),
+                "hold_pct": float(d.get("hold") or 0),
+                "sell_pct": float(d.get("sell") or 0),
+                "update_date": str(d.get("update_time_str") or ""),
+            }
+            result = {"status": "ok", "data": data, "data_source": "futu_opend", "fetched_at": now_iso}
+            self._set_cache(cache_key, result)
+            logger.debug(f"[FutuExtended] {symbol} consensus: rating={rating} avg_target={data['target_avg']} n={data['total_analysts']}")
+            return result
+        except Exception as e:
+            logger.warning(f"[FutuExtended] get_analyst_consensus error {symbol}: {e}")
+            return {"status": "failed", "error": str(e), "fetched_at": now_iso}
 
     def get_insider_trades(self, symbol: str, num: int = 20) -> Dict[str, Any]:
         """
