@@ -1,0 +1,141 @@
+{
+  "generated_at": "2026-08-20T18:30:01-04:00",
+  "period_days": 77,
+  "source_filter": "PLAYBOOK_SIM",
+  "total_trades": 316,
+  "analyzed_trades": 316,
+  "noise_shakeout_count": 1,
+  "profit_giveback_count": 92,
+  "well_calibrated_count": 223,
+  "unclassified_count": 0,
+  "avg_mae_pct": 0.0086,
+  "avg_mfe_pct": 0.0087,
+  "avg_pnl_pct": -0.0004,
+  "win_rate": 0.5316,
+  "noise_shakeout_pct": 0.32,
+  "profit_giveback_pct": 29.11,
+  "well_calibrated_pct": 70.57,
+  "recommendations": {
+    "exit_reason_review": {
+      "action": "review",
+      "bad_reasons": [
+        {
+          "reason": "SL_ATR_STOP",
+          "direction": "LONG",
+          "n": 3,
+          "net": -2416.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "SL_INITIAL",
+          "direction": "LONG",
+          "n": 8,
+          "net": -1542.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "TIME_EXIT",
+          "direction": "LONG",
+          "n": 33,
+          "net": -1071.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "MFE_STALL_EXIT",
+          "direction": "LONG",
+          "n": 27,
+          "net": -1054.0,
+          "win_rate": 0.04
+        },
+        {
+          "reason": "MFE_STALL_EXIT",
+          "direction": "SHORT",
+          "n": 4,
+          "net": -298.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "PATIENT_EXIT_STOP",
+          "direction": "LONG",
+          "n": 3,
+          "net": -287.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "BROKER_GHOST_CLOSE",
+          "direction": "SHORT",
+          "n": 5,
+          "net": -252.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "DEAD_SIGNAL_EXIT",
+          "direction": "LONG",
+          "n": 12,
+          "net": -221.0,
+          "win_rate": 0.17
+        },
+        {
+          "reason": "PATIENT_EXIT_EOD",
+          "direction": "LONG",
+          "n": 4,
+          "net": -198.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "SL_BREAKEVEN",
+          "direction": "LONG",
+          "n": 62,
+          "net": -178.0,
+          "win_rate": 0.84
+        },
+        {
+          "reason": "TIME_EXIT",
+          "direction": "SHORT",
+          "n": 3,
+          "net": -124.0,
+          "win_rate": 0.0
+        },
+        {
+          "reason": "SL_BREAKEVEN",
+          "direction": "SHORT",
+          "n": 11,
+          "net": -47.0,
+          "win_rate": 0.64
+        },
+        {
+          "reason": "SL_FIXED_PCT",
+          "direction": "SHORT",
+          "n": 4,
+          "net": -25.0,
+          "win_rate": 0.25
+        },
+        {
+          "reason": "SL_FIXED_PCT",
+          "direction": "LONG",
+          "n": 5,
+          "net": -18.0,
+          "win_rate": 0.4
+        }
+      ],
+      "reason": "净期望为负且 n≥3 的退出规则 (L-E3 复查候选, 仅分析不调参)"
+    },
+    "confidence_tier_stats": {
+      "high": {
+        "count": 47,
+        "win_rate": 0.36,
+        "net_pnl": -1490.0
+      },
+      "low": {
+        "count": 135,
+        "win_rate": 0.53,
+        "net_pnl": -780.0
+      },
+      "mid": {
+        "count": 134,
+        "win_rate": 0.6,
+        "net_pnl": -742.0
+      }
+    }
+  }
+}
