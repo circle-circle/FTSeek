@@ -183,6 +183,15 @@ _DEFAULTS: Dict[str, Any] = {
     # 2026-08-22 (用户裁决): 情绪极端检查 — DA方向与社交情绪极端背离时拒绝.
     #   证伪机制: 情绪极端不预测方向, 但告诉你可能是拥挤交易.
     "sentiment_extreme_check_enabled": True,
+    # 2026-08-22 (用户裁决): 重大事件背离检查 — 8-K/13D-G 披露重大负面时拒绝.
+    #   证伪机制: 重大事件不预测方向, 但告诉你基本面可能已变.
+    "sec_event_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 多源情绪验证 — social_sentiment 与 finnhub 情绪分数背离时拒绝.
+    #   证伪机制: 多源情绪背离不预测方向, 但告诉你情绪数据可能不可靠.
+    "social_sentiment_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
+    #   证伪机制: 逐笔情绪不预测方向, 但告诉你盘中实时情绪已变.
+    "ticker_sentiment_divergence_check_enabled": True,
 }
 
 
@@ -224,7 +233,10 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                        insider_signal: Optional[str] = None,
                        analyst_trend: Optional[str] = None,
                        days_to_earnings: Optional[int] = None,
-                       sentiment_score: Optional[float] = None) -> Tuple[bool, List[str]]:
+                       sentiment_score: Optional[float] = None,
+                       sec_event_negative: Optional[bool] = None,
+                       social_sentiment_score: Optional[float] = None,
+                       ticker_sentiment: Optional[str] = None) -> Tuple[bool, List[str]]:
     """纯函数: 盘中指标是否确认 thesis 延续 (可单测, 零 IO).
 
     LONG: 回踩区 [vwap×(1−low), vwap×(1+high)] 内 + slope>min + 量比/ATR/spread 达标.
@@ -290,6 +302,23 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"sentiment_extreme(LONG vs extreme_bullish={sentiment_score:.2f})")
             elif not is_long and sentiment_score < -0.8:
                 reasons.append(f"sentiment_extreme(SHORT vs extreme_bearish={sentiment_score:.2f})")
+    # 2026-08-22 (用户裁决): 重大事件背离检查 — 8-K/13D-G 披露重大负面时拒绝.
+    if cfg.get("sec_event_divergence_check_enabled", True):
+        if sec_event_negative:
+            reasons.append(f"sec_event_divergence(negative_8k_or_13dg)")
+    # 2026-08-22 (用户裁决): 多源情绪验证 — social_sentiment 与 finnhub 情绪分数背离时拒绝.
+    if cfg.get("social_sentiment_divergence_check_enabled", True):
+        if sentiment_score is not None and social_sentiment_score is not None:
+            # 多源背离: finnhub 看多(>0.3) 但 social 看空(<-0.3), 或反之
+            if (sentiment_score > 0.3 and social_sentiment_score < -0.3) or                (sentiment_score < -0.3 and social_sentiment_score > 0.3):
+                reasons.append(f"social_sentiment_divergence(finnhub={sentiment_score:.2f} vs social={social_sentiment_score:.2f})")
+    # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
+    if cfg.get("ticker_sentiment_divergence_check_enabled", True):
+        if ticker_sentiment:
+            if is_long and ticker_sentiment == "bearish":
+                reasons.append(f"ticker_sentiment_divergence(LONG vs bearish_tick)")
+            elif not is_long and ticker_sentiment == "bullish":
+                reasons.append(f"ticker_sentiment_divergence(SHORT vs bullish_tick)")
     return (not reasons), reasons
 
 
@@ -702,6 +731,51 @@ def run_scan(scheduler=None) -> int:
             except Exception:
                 pass  # 情绪数据读取失败 → None → 不拦 (fail-open)
 
+        # 2026-08-22 (用户裁决): 重大事件背离检查 — 读该标的 8-K/13D-G 重大事件.
+        sec_event_negative = None
+        if cfg.get("sec_event_divergence_check_enabled", True):
+            try:
+                from app.data.sec_8k_provider import fetch_recent_8k, fetch_recent_13dg
+                # 简化: 检查是否有负面关键词 (高管离职/诉讼/资产减值/大股东减持)
+                _8k = fetch_recent_8k({sym})
+                _13dg = fetch_recent_13dg({sym})
+                _negative_keywords = ["resignation", "litigation", "impairment", "sell", "减持", "离职", "诉讼"]
+                sec_event_negative = any(
+                    any(kw in str(e).lower() for kw in _negative_keywords)
+                    for e in (_8k + _13dg)
+                )
+            except Exception:
+                pass  # 重大事件读取失败 → None → 不拦 (fail-open)
+
+        # 2026-08-22 (用户裁决): 多源情绪验证 — 读 social_sentiment.
+        social_sentiment_score = None
+        if cfg.get("social_sentiment_divergence_check_enabled", True):
+            try:
+                from app.data.social_sentiment import collect_sentiment
+                _ss = collect_sentiment(sym)
+                if _ss and isinstance(_ss, dict):
+                    social_sentiment_score = _ss.get("score")
+            except Exception:
+                pass  # 社交情绪读取失败 → None → 不拦 (fail-open)
+
+        # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — 读逐笔成交情绪.
+        ticker_sentiment = None
+        if cfg.get("ticker_sentiment_divergence_check_enabled", True):
+            try:
+                from app.data.futu_lv3_provider import get_futu_lv3_provider
+                _lv3 = get_futu_lv3_provider()
+                _ts = _lv3.get_ticker_sentiment(sym, window=30)
+                if _ts and isinstance(_ts, dict):
+                    # 简化: buy_strength > sell_strength → bullish, 反之 bearish
+                    buy_str = _ts.get("buy_strength", 0)
+                    sell_str = _ts.get("sell_strength", 0)
+                    if buy_str > sell_str:
+                        ticker_sentiment = "bullish"
+                    elif sell_str > buy_str:
+                        ticker_sentiment = "bearish"
+            except Exception:
+                pass  # 逐笔情绪读取失败 → None → 不拦 (fail-open)
+
         # ── 2026-08-12 方向顺势裁决 (用户裁决直接落地): slope_5m 符号定方向, 缺失/0 → 继承前笔 ──
         direction, dir_mode = choose_direction(
             prior["direction"],
@@ -723,6 +797,9 @@ def run_scan(scheduler=None) -> int:
             analyst_trend=analyst_trend,
             days_to_earnings=days_to_earnings,
             sentiment_score=sentiment_score,
+            sec_event_negative=sec_event_negative,
+            social_sentiment_score=social_sentiment_score,
+            ticker_sentiment=ticker_sentiment,
         )
         base.update({"price": price, "vwap": vwap, "slope_5m": slope_5m,
                      "atr_pct": atr_pct, "vol_ratio": vol_ratio,
