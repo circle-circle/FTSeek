@@ -17,7 +17,7 @@ def test_short_squeeze_reject():
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "short_squeeze_check_enabled": True,
-           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
+           "short_squeeze_threshold_pct": 30.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -32,7 +32,7 @@ def test_short_squeeze_pass():
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "short_squeeze_check_enabled": True,
-           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
+           "short_squeeze_threshold_pct": 30.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -46,7 +46,7 @@ def test_insider_divergence_long_reject():
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "insider_divergence_check_enabled": True,
-           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
+           "short_squeeze_threshold_pct": 30.0}
     ok, reasons = evaluate_candidate(
         "LONG", price=100.0, vwap=99.5,
         slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -61,7 +61,7 @@ def test_insider_divergence_short_reject():
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "insider_divergence_check_enabled": True,
-           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
+           "short_squeeze_threshold_pct": 30.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -76,10 +76,30 @@ def test_insider_aligned_pass():
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "insider_divergence_check_enabled": True,
-           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
+           "short_squeeze_threshold_pct": 30.0}
     ok, reasons = evaluate_candidate(
         "LONG", price=100.0, vwap=99.5,
         slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
         cfg=cfg, insider_signal="buy"
     )
     assert ok, f"应通过但被拒: {reasons}"
+
+
+def test_long_high_short_percent_not_rejected():
+    """LONG + short_percent>40% → 通过 (ADR-032b 删除 392f018e 的 LONG 对称分支).
+
+    本门族语义是"方向与证据背离才拒": 高空头仓位不构成 LONG 反证(常规读法反而是
+    squeeze 燃料), 原分支注释自述"底部确认"却用于拒绝做多、尾句"拒绝追空"又与
+    is_long 分支矛盾。本测试钉死删除, 防矛盾逻辑静默回归; 若确要"激战名波动率
+    风控", 按验证期纪律另立机制带数据裁决。
+    """
+    cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
+           "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
+           "short_squeeze_check_enabled": True, "short_squeeze_threshold_pct": 30.0}
+    ok, reasons = evaluate_candidate(
+        "LONG", price=100.0, vwap=99.5,
+        slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
+        cfg=cfg, short_percent=50.0
+    )
+    assert ok, f"高空头仓位不应拒绝 LONG: {reasons}"
+    assert not any("short_squeeze" in r for r in reasons)

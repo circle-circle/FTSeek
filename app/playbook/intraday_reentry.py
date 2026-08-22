@@ -198,7 +198,6 @@ _DEFAULTS: Dict[str, Any] = {
     "ticker_sentiment_divergence_check_enabled": True,
     # 2026-08-22 (用户裁决): 阈值配置 — 证伪门阈值统一放 config, 不硬编码.
     "short_squeeze_threshold_pct": 30.0,  # SHORT 拥挤阈值
-    "short_squeeze_long_threshold_pct": 40.0,  # LONG 底部确认阈值 (对称)
     "sentiment_extreme_threshold": 0.8,  # 情绪极端阈值
     "social_sentiment_divergence_threshold": 0.3,  # 多源情绪背离阈值
     "earnings_proximity_days": 3,  # 财报临近阈值
@@ -355,13 +354,17 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"capital_flow_divergence(LONG vs OUTFLOW)")
             elif not is_long and capital_flow_direction == "INFLOW":
                 reasons.append(f"capital_flow_divergence(SHORT vs INFLOW)")
-    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>threshold)=拥挤交易, squeeze 风险高;
-    #   LONG 方向时 short_percent 极高(>long_threshold)但价格不再跌=底部确认, 拒绝追空.
+    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>threshold)=拥挤交易,
+    #   squeeze 风险与做空方向背离 → 拒.
+    #   2026-08-22b (ADR-032, 用户裁"请修复"): 删除 392f018e 加的 LONG 对称分支
+    #   (LONG+short_percent>40% 拒) — 本门族语义是"方向与证据背离才拒", 而高空头仓位
+    #   不构成 LONG 的反证(常规读法反而是 squeeze 燃料=利多); 原注释自述"底部确认"
+    #   (多头证据)却用于拒绝做多、尾句"拒绝追空"又与 is_long 分支自相矛盾。
+    #   若本意是"多空激战名波动过大不宜再入场", 那是波动率风控门非证伪门, 应按验证期
+    #   纪律另立机制带数据裁决, 不以矛盾形式混入本门族。
     if cfg.get("short_squeeze_check_enabled", True):
         if not is_long and short_percent is not None and short_percent > float(cfg.get("short_squeeze_threshold_pct", 30.0)):
             reasons.append(f"short_squeeze_risk(short_percent={short_percent:.1f}%>{cfg['short_squeeze_threshold_pct']}%)")
-        elif is_long and short_percent is not None and short_percent > float(cfg.get("short_squeeze_long_threshold_pct", 40.0)):
-            reasons.append(f"short_squeeze_bottom(short_percent={short_percent:.1f}%>{cfg['short_squeeze_long_threshold_pct']}%)")
     # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
     if cfg.get("insider_divergence_check_enabled", True):
         if insider_signal:
