@@ -1110,6 +1110,9 @@ def _reconcile_position_store(scheduler):
 
     # 3a. Broker 有但内存无 → 未知新持仓
     new_symbols = broker_symbols - mem_symbols
+    # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐 symbol 一连接 = N+1)
+    from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_pm
+    _pb_open_syms = load_playbook_open_symbols()
     for symbol in new_symbols:
         # P0 修复 (2026-05-23): 跳过 PRICE_FAIL 已关闭的期权，与 position_sync 保持一致
         if symbol in _pf_closed:
@@ -1135,8 +1138,7 @@ def _reconcile_position_store(scheduler):
 
         # 2026-07-16: 跳过 Playbook 管理的仓位 — 防止 broker 对账将 Playbook 仓
         # 重新纳管为 broker_reconcile → 主线 DEM 接管 → 双重平仓.
-        from app.playbook.pipeline import is_playbook_open_position
-        if is_playbook_open_position(symbol):
+        if _pb_check_pm(symbol, _pb_open_syms):
             logger.debug(f"[持仓对账·playbook] 跳过 {symbol} (未平 PLAYBOOK_SIM 仓, 由 monitor_playbook_sim_exits 自管)")
             continue
 

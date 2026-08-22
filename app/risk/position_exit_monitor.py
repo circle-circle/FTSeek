@@ -860,6 +860,10 @@ class ExitMonitor:
         except Exception:
             _strict_owner = False
 
+        # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐仓一连接 = N+1)
+        from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_em
+        _pb_open_syms = load_playbook_open_symbols()
+
         for position in main_positions:
             try:
                 symbol = position.symbol
@@ -875,8 +879,7 @@ class ExitMonitor:
                 #   无论 owner_strategy 是空/unknown/main/auto_main, 只要 trade_records
                 #   有未平 PLAYBOOK_SIM 仓, 一律跳过主线退出 (monitor_playbook_sim_exits 自管).
                 #   消灭 position_sync 漏判 → auto_main → 主线退出误平的整类问题.
-                from app.playbook.pipeline import is_playbook_open_position
-                if is_playbook_open_position(symbol):
+                if _pb_check_em(symbol, _pb_open_syms):
                     logger.info(
                         f"[策略隔离·playbook护栏] {symbol} trade_records 有未平 PLAYBOOK_SIM 仓, "
                         f"跳过主线退出 (monitor_playbook_sim_exits 自管)"

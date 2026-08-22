@@ -3347,6 +3347,9 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             logger.warning(f"[playbook] 轮级 broker 持仓查询失败 (降级空表): {_bp_err}")
             _broker_positions = []
 
+        # 2026-08-22 audit: already_held 对账查询的共享连接 — 原每条命中指令新开
+        #   sqlite3.connect (N+1), 现循环级懒建一次、循环尾关闭; 查询失败自动回退逐条建连.
+        _ah_conn = None
         for inst in instructions:
             # 跳过已执行、SKIP 方向的指令
             if inst.get("executed"):
@@ -3386,9 +3389,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     try:
                         import sqlite3 as _sql3_ah
                         _dir_norm = "LONG" if inst.get("direction", "").upper() == "BUY" else "SHORT"
-                        _conn_ah = _sql3_ah.connect("/opt/ftseek/FTSeek-US/data/ftseek_us.db", timeout=10.0)
-                        _conn_ah.row_factory = _sql3_ah.Row
-                        _pb_rec = _conn_ah.execute(
+                        if _ah_conn is None:
+                            _ah_conn = _sql3_ah.connect("/opt/ftseek/FTSeek-US/data/ftseek_us.db", timeout=10.0)
+                            _ah_conn.row_factory = _sql3_ah.Row
+                        _pb_rec = _ah_conn.execute(
                             "SELECT entry_price, exit_price, exit_time, exit_reason, realized_pnl, pnl_pct, quantity, "
                             "pnl_net "
                             "FROM trade_records WHERE symbol = ? AND substr(entry_time,1,10) = ? "
@@ -3396,9 +3400,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             "AND UPPER(direction) = ? ORDER BY id DESC LIMIT 1",
                             (_symbol, today, _dir_norm)
                         ).fetchone()
-                        _conn_ah.close()
                     except Exception as _ah_q_err:
                         logger.debug(f"[playbook] {_symbol} already_held 对账查询失败: {_ah_q_err}")
+                        # 连接级故障 (锁忙/schema) → 弃用共享连接, 下次重试重建
+                        _ah_conn = None
 
                     _now_et_iso = datetime.now(_now_et()).isoformat()
                     if _pb_rec and float(_pb_rec["entry_price"] or 0) > 0:
@@ -3851,6 +3856,12 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                   })
 
         logger.info(f"[playbook] 自动执行完成: {executed_count} 成功, {skipped_count} 跳过")
+        # 2026-08-22 audit: 关闭 already_held 对账共享连接
+        if _ah_conn is not None:
+            try:
+                _ah_conn.close()
+            except Exception:
+                pass
         # 盘中实时化: 广播轻量 nudge, 已连 dashboard 收到后自拉缓存接口刷新. 没人连时 broadcast 直接 return.
         try:
             from app.web_dashboard.routes.ws import publish_event_sync
@@ -5811,6 +5822,51 @@ def is_playbook_open_position(symbol: str) -> bool:
                 pass
 
 
+def load_playbook_open_symbols():
+    """一次查询返回全部未平 Playbook 标的集合 (与 is_playbook_open_position 同口径).
+
+    2026-08-22 audit: 循环内逐 symbol 调 is_playbook_open_position 是 N+1 连接
+    (ghost清理/新仓同步/对账/主线退出扫描 每30-300s一轮 × 每仓一连接).
+    调用方应在循环外预载本函数, 循环内用 playbook_open_check() 判定.
+
+    Returns:
+        set[str] 未平 Playbook 标的集合; None = 查询失败 —
+        调用方必须回退逐 symbol 的 is_playbook_open_position 以保留其
+        分层 fail-closed/fail-open 语义 (bulk 层不代行语义决策).
+    """
+    import sqlite3 as _pb_sql_bulk
+    from app.core.paths import get_trade_records_db
+    _c = None
+    try:
+        _c = _pb_sql_bulk.connect(str(get_trade_records_db()), timeout=5)
+        _rows = _c.execute(
+            "SELECT DISTINCT symbol FROM trade_records "
+            "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+        ).fetchall()
+        return {r[0] for r in _rows if r[0]}
+    except Exception as e:
+        logger.warning(f"[playbook护栏] load_playbook_open_symbols 查询失败, 调用方回退逐symbol判定: {e}")
+        return None
+    finally:
+        if _c is not None:
+            try:
+                _c.close()
+            except Exception:
+                pass
+
+
+def playbook_open_check(symbol: str, preloaded) -> bool:
+    """配合 load_playbook_open_symbols 使用的循环内判定.
+
+    preloaded 为 None (预载失败) 时回退逐 symbol 判定, 保留原 fail-closed 语义;
+    否则纯内存集合命中测试.
+    """
+    if preloaded is None:
+        return is_playbook_open_position(symbol)
+    return symbol in preloaded
+
+
 # 规则0.5 审计日志去重集 (key: "symbol:date") — 见 _check_playbook_exit_rules 规则0.5 段.
 # 进程级, 每 symbol每日 只记一次紧SL生效事件, 防止 monitor 轮询刷屏.
 _EARLY_TIGHT_SL_LOGGED: set = set()
@@ -7682,7 +7738,11 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             #   报价缺失 → 不豁免 (保守平仓); 次日 entry_date≠当日 → 自动失效正常收.
             # 2026-08-17 净口径: 豁免水下判定用净盈亏 (毛 0<毛<费用 的微盈仓=净水下→豁免,
             #   与盘中规则链同口径; 算不出费 → 毛口径原行为).
-            _rpnl_net = None
+            # 2026-08-22 audit fix: _rp/_rpnl 每轮重置 — 此前仅 _rpnl_net 重置,
+            #   若上一标的报价成功而当前标的 get_quote 抛异常, 下方第二 try 块会拿
+            #   上一标的的价格/盈亏判定本标的的隔夜豁免 (跨持仓污染).
+            #   重置后报价失败 → None → 不豁免 (保守平仓), 与注释纪律一致.
+            _rp = _rpnl = _rpnl_net = None
             try:
                 _rq = data_router.get_quote(symbol)
                 _rp = float((_rq or {}).get("last", 0) or (_rq or {}).get("price", 0) or 0) if _rq else 0.0
@@ -7711,8 +7771,9 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             #   报价缺失 → 不豁免 (保守平仓), 与再入场豁免同纪律.
             #   8/17 净口径同上 (UBER 8/17 -1.39% 走本路径实弹).
             try:
-                if _rp > 0 and _loser_overnight_exempt(r["source_type"], r["entry_time"],
-                                                       _rpnl_net if _rpnl_net is not None else _rpnl):
+                if _rp is not None and _rp > 0 and _loser_overnight_exempt(
+                        r["source_type"], r["entry_time"],
+                        _rpnl_net if _rpnl_net is not None else _rpnl):
                     logger.info(
                         f"[playbook sim] EOD 兜底豁免 {symbol} 水下仓 {_rpnl:.2f}%"
                         f"(净{_rpnl_net if _rpnl_net is not None else _rpnl:.2f}%) 持夜 (用户三问Q3)"

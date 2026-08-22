@@ -705,11 +705,13 @@ class USPositionSync:
         #   被静默吞掉 → 180s 保护窗失效 → 误删刚开、待成交的仓.
         from app.utils.timezone import now_et as _now_et_ghost, to_et as _to_et_ghost
         _now = _now_et_ghost()
+        # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐 symbol 一连接 = N+1)
+        from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check
+        _pb_open_syms = load_playbook_open_symbols()
         for symbol in db_symbols - futu_symbols:
             # P0 修复 2026-07-06: Playbook SIM 仓位由 playbook exit monitor 独占管理,
             # position_sync 不应将其标记为 ghost. 2026-07-16: 统一用 is_playbook_open_position.
-            from app.playbook.pipeline import is_playbook_open_position
-            if is_playbook_open_position(symbol):
+            if playbook_open_check(symbol, _pb_open_syms):
                 logger.info(f"[US Sync] 跳过 Playbook SIM 仓位 ghost 清理: {symbol} (由 playbook exit monitor 管理)")
                 continue
 
@@ -1202,6 +1204,10 @@ class USPositionSync:
 
         # Broker-first (2026-06-03): 不再预读 DB，所有仓位以 Futu 为准
 
+        # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐 symbol 一连接 = N+1)
+        from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check
+        _pb_open_syms_new = load_playbook_open_symbols()
+
         # 1. 新增持仓 (Futu 有，内存没有) → 手动开仓检测
         # P0 fix (2026-05-21): Skip re-importing options that were force-closed via PRICE_FAIL.
         # These positions still exist in Futu (user opened manually, SELL may have failed),
@@ -1242,8 +1248,7 @@ class USPositionSync:
             # 2026-07-16: 统一用 is_playbook_open_position 替代时间窗口检查 (旧逻辑用
             #   2-day/1-day 窗口导致跨日/跨窗口漏判, position_sync 标记 auto_main →
             #   旧管线 exit_monitor 接管 → 双重平仓, 7/15 RIVN/NVDA/XOM 各亏 $37-52).
-            from app.playbook.pipeline import is_playbook_open_position
-            if is_playbook_open_position(symbol):
+            if playbook_open_check(symbol, _pb_open_syms_new):
                 logger.debug(f"[US Sync·playbook] 跳过 playbook 仓位 {symbol} (由 monitor_playbook_sim_exits 自管)")
                 continue
             # Broker-first (2026-06-03): 不再从 DB 恢复，新发现的仓位统一用全新计算的 SL/TP
