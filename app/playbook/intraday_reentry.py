@@ -174,6 +174,15 @@ _DEFAULTS: Dict[str, Any] = {
     # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
     #   证伪机制: 内部人交易不预测方向, 但告诉你内部人可能知道坏消息.
     "insider_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 分析师背离检查 — DA方向与分析师评级趋势背离时拒绝.
+    #   证伪机制: 分析师评级下调不预测方向, 但告诉你基本面支撑减弱.
+    "analyst_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 财报临近检查 — 持仓标的财报临近(<3天)时收紧, 波动加剧.
+    #   证伪机制: 财报临近不预测方向, 但告诉你波动风险上升.
+    "earnings_proximity_check_enabled": True,
+    # 2026-08-22 (用户裁决): 情绪极端检查 — DA方向与社交情绪极端背离时拒绝.
+    #   证伪机制: 情绪极端不预测方向, 但告诉你可能是拥挤交易.
+    "sentiment_extreme_check_enabled": True,
 }
 
 
@@ -212,7 +221,10 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                        vol_ratio: Optional[float], spread_bps: Optional[float],
                        cfg: Dict[str, Any], capital_flow_direction: Optional[str] = None,
                        short_percent: Optional[float] = None,
-                       insider_signal: Optional[str] = None) -> Tuple[bool, List[str]]:
+                       insider_signal: Optional[str] = None,
+                       analyst_trend: Optional[str] = None,
+                       days_to_earnings: Optional[int] = None,
+                       sentiment_score: Optional[float] = None) -> Tuple[bool, List[str]]:
     """纯函数: 盘中指标是否确认 thesis 延续 (可单测, 零 IO).
 
     LONG: 回踩区 [vwap×(1−low), vwap×(1+high)] 内 + slope>min + 量比/ATR/spread 达标.
@@ -260,6 +272,24 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"insider_divergence(LONG vs insider_sell)")
             elif not is_long and insider_signal == "buy":
                 reasons.append(f"insider_divergence(SHORT vs insider_buy)")
+    # 2026-08-22 (用户裁决): 分析师背离检查 — DA方向与分析师评级趋势背离时拒绝.
+    if cfg.get("analyst_divergence_check_enabled", True):
+        if analyst_trend:
+            if is_long and analyst_trend == "downgrade":
+                reasons.append(f"analyst_divergence(LONG vs downgrade_trend)")
+            elif not is_long and analyst_trend == "upgrade":
+                reasons.append(f"analyst_divergence(SHORT vs upgrade_trend)")
+    # 2026-08-22 (用户裁决): 财报临近检查 — 持仓标的财报临近(<3天)时收紧.
+    if cfg.get("earnings_proximity_check_enabled", True):
+        if days_to_earnings is not None and days_to_earnings < 3:
+            reasons.append(f"earnings_proximity({days_to_earnings}d<3d)")
+    # 2026-08-22 (用户裁决): 情绪极端检查 — DA方向与社交情绪极端背离时拒绝.
+    if cfg.get("sentiment_extreme_check_enabled", True):
+        if sentiment_score is not None:
+            if is_long and sentiment_score > 0.8:
+                reasons.append(f"sentiment_extreme(LONG vs extreme_bullish={sentiment_score:.2f})")
+            elif not is_long and sentiment_score < -0.8:
+                reasons.append(f"sentiment_extreme(SHORT vs extreme_bearish={sentiment_score:.2f})")
     return (not reasons), reasons
 
 
@@ -630,6 +660,48 @@ def run_scan(scheduler=None) -> int:
             except Exception:
                 pass  # 内部人数据读取失败 → None → 不拦 (fail-open)
 
+        # 2026-08-22 (用户裁决): 分析师背离检查 — 读该标的分析师评级趋势.
+        analyst_trend = None
+        if cfg.get("analyst_divergence_check_enabled", True):
+            try:
+                from app.data.analyst_revision_provider import get_analyst_provider
+                _ap = get_analyst_provider()
+                _rt = _ap.get_recommendation_trend(sym)
+                if _rt and isinstance(_rt, dict):
+                    # 简化: buy_pct > sell_pct → upgrade, 反之 downgrade
+                    buy_pct = _rt.get("buy_pct", 0)
+                    sell_pct = _rt.get("sell_pct", 0)
+                    if buy_pct > sell_pct:
+                        analyst_trend = "upgrade"
+                    elif sell_pct > buy_pct:
+                        analyst_trend = "downgrade"
+            except Exception:
+                pass  # 分析师数据读取失败 → None → 不拦 (fail-open)
+
+        # 2026-08-22 (用户裁决): 财报临近检查 — 读该标的财报日期.
+        days_to_earnings = None
+        if cfg.get("earnings_proximity_check_enabled", True):
+            try:
+                from app.data.earnings_calendar import get_earnings_calendar
+                _ec = get_earnings_calendar()
+                _earn = _ec.get_watchlist_earnings(watchlist_symbols=[sym])
+                if _earn and sym in _earn:
+                    _e = _earn[sym]
+                    if _e and isinstance(_e, list) and len(_e) > 0:
+                        days_to_earnings = _e[0].get("days_until")
+            except Exception:
+                pass  # 财报数据读取失败 → None → 不拦 (fail-open)
+
+        # 2026-08-22 (用户裁决): 情绪极端检查 — 读该标的社交情绪分数.
+        sentiment_score = None
+        if cfg.get("sentiment_extreme_check_enabled", True):
+            try:
+                from app.data.finnhub_provider import FinnhubProvider
+                _fp = FinnhubProvider()
+                sentiment_score = _fp.get_sentiment_score(sym)
+            except Exception:
+                pass  # 情绪数据读取失败 → None → 不拦 (fail-open)
+
         # ── 2026-08-12 方向顺势裁决 (用户裁决直接落地): slope_5m 符号定方向, 缺失/0 → 继承前笔 ──
         direction, dir_mode = choose_direction(
             prior["direction"],
@@ -648,6 +720,9 @@ def run_scan(scheduler=None) -> int:
             capital_flow_direction=capital_flow_direction,
             short_percent=short_percent,
             insider_signal=insider_signal,
+            analyst_trend=analyst_trend,
+            days_to_earnings=days_to_earnings,
+            sentiment_score=sentiment_score,
         )
         base.update({"price": price, "vwap": vwap, "slope_5m": slope_5m,
                      "atr_pct": atr_pct, "vol_ratio": vol_ratio,
