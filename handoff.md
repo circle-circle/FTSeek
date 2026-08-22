@@ -115,6 +115,13 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-22f (配置层探针落地 — Qoder, 用户裁"按建议执行": ①config键消费普查 ②数据成色例行体检)
+- **`scripts/config_key_census.py` + cron 周日 07:40 (备份 data/crontab.backup.20260822-census)**: 配置层的"活性探针" — 全量扫 config/*.yaml 展平叶子键 → 在 app/+scripts/ 运行时代码 (排除 archive/自身/tests) 按叶子名 word-boundary 找消费点。三分类: referenced / definition_only (仅注册表形态如 PlaybookConfig.DEFAULTS 的 "k": default — 注册≠消费) / orphan (零出现)。**自验证 4/4**: C批人工核定的死键 (buying_power_fallback_alert/intraday_breakout_pct→definition_only, breakeven_ratchet_enabled/time_exit_enabled→orphan) 全部命中非 referenced, 口径与人工审计一致。已知局限内嵌报告: 同名影子键漏报 (安全向)、factor_profiles/strategy_variants 泛型迭代消费文件带 caveat、f-string 动态键无法静态发现。输出 data/config_key_census_latest.json。
+- **首跑读数 (候选清单, 非删除依据)**: unified_config 743 叶子键 → 107 orphan + 7 definition_only; playbook_horizon 41→5 orphan (risk_budget 整块 long_pct/short_pct/rebalance_weekly/weekly_deep_update + vol_buckets position_mult); position_protection 7→4 orphan (stop_loss.long/short_pct + trailing_stop 块); exit_profiles 18→6。抽查精度佳: `risk.p1_regime_gate.vwap_threshold` — 段活 (enabled/spy_long_block/vwap_filter_enabled 被 get_dotted) 但该叶死; `llm_features.emergency_review.*`×3 独立重发现 2026-05-19 已弃用特性; `opend.login_password` 段活叶死。死键从此周更自动暴露, 不靠人肉审计。
+- **`scripts/data_quality_census.py` (C批产出) 加 cron 周日 07:30**: 数据成色例行体检 (名义离群/时间异常/回补嫌疑/盈亏不自洽/词表基线), 只读, 输出 data/trade_quality_census_latest.json。回滚=删两行 cron。
+- **钉死测试**: tests/test_config_key_census.py ×8 — 分类规则 (get 消费/注册表定义/快照行双出现算消费/注释行跳过/词边界 `_time_exit_enabled`≠`time_exit_enabled`/flatten 嵌套+list) + 真实语料上 C批死键必须保持非 referenced (口径漂移即红)。
+- **回归**: 1453 passed (1445+8)。零交易路径改动, 两脚本均只读。
+
 ### 2026-08-22e (审计修复轮 — Claude Code, 用户裁"同意修复": e79656db 审计的 A/B/C 批落地)
 - **B批·交易路径**: ①EOD 豁免跨持仓污染修复 (pipeline.py ~7685) — `_rp/_rpnl/_rpnl_net` 循环内不重置, 前一标的的盈利单记录会污染后一标的的豁免判定; 每迭代重置 + 第二 try 块加 `if _rp is not None` 守卫。②VIX fail-close 接线 (order_executor.py:3209 + market_state.py 新增 `get_vix_cached()`) — 原每单绕过 30min 缓存直拉; 新 getter 失败返 None (fail-close, 与 `vix_below_25()` 的 fail-open 语义刻意不同)。③order_executor.py:1343 死分支移除 (`_fetch_vix` 方法不存在 → AttributeError 恒被吞 → 分支从未生效, 删=零行为变化)。
 - **A批·读侧性能**: ①N+1×4 收口 — 新增 `load_playbook_open_symbols()`(DISTINCT 批量查询, 异常→None)+`playbook_open_check(symbol, preloaded)`(None→回落逐仓原语义), pipeline 自动执行环/position_sync ghost+新仓两环/position_monitor reconcile/position_exit_monitor 主扫全部改批量预取。②already_held 对账共享连接 (pipeline.py ~3353) — 惰性建连+异常弃用重建, 连接级故障不再逐仓重付。③manual_position_guard 批量快照优先 (A4) — `get_batch_quotes` 一次拉全保护仓, 缺失回落 `_get_current_price`, 告警语义不变。④broker_adapter FX 死分支删除 (A5) — 原 HKD 分支建 OpenQuoteContext 拉 FX.USDCNH 但 ret/data 从未使用, rate 恒 0 必走固定汇率兜底, 白建白关连接。
