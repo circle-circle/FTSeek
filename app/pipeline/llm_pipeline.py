@@ -728,78 +728,78 @@ VIX: {market_state.get('vix', 20):.1f}
 # REMAINING FUNCTIONS appended below
 
 
-def _build_signal_quality_context() -> str:
+def _build_signal_quality_context(path=None) -> str:
     """
     构建信号质量历史反馈上下文，注入辩论引擎。
-    
+
     根因 (2026-06-19): 辩论引擎给出 VALID 但 Deep Research 全部 AVOID，
     因为辩论引擎不知道历史胜率/IC 数据。
-    修复: 从 signal_quality/latest.json 和 ic_audit 报告加载历史表现，
-    让辩论引擎在做决策时看到真实数据。
+    修复: 从 signal_quality/latest.json 加载历史表现，让辩论引擎在做决策时看到真实数据。
+
+    2026-08-22 重写 (用户裁"prompt修改不影响交易链路逻辑, 基于发现修复", DEB-20260822 §九)。
+    旧版三处坏损:
+      ① 读 confidence_map 但文件键为 confidence_winrate_map → 置信度桶段恒空;
+      ② 依赖已删除的 ic_audit_report_2026-06-19.md → fallback 到硬编码 6/19 旧引擎数字;
+      ③ 硬编码结论"优先推荐manual方向"每日注入辩论引擎 (误导)。
+    新版纪律: 内容全部来自 data/signal_quality/latest.json 实时数据, 无硬编码结论;
+    文件缺失/解析失败时输出"反馈不可用", 不编造。胜率旁必列期望值 (桶期望非单调时
+    胜率单独呈现有误导, 见 anomalies 自述)。
+    回滚: git revert 本函数 (调用方 :982 签名不变)。
     """
-    import json
-    import os
-    from pathlib import Path
+    sq_path = Path(path) if path else (
+        Path(__file__).resolve().parent.parent.parent / "data" / "signal_quality" / "latest.json")
 
-    project_root = Path(__file__).resolve().parent.parent.parent
-    sq_path = project_root / "data" / "signal_quality" / "latest.json"
-    ic_path = project_root / "data" / "ic_audit_report_2026-06-19.md"
+    if not sq_path.exists():
+        return ("【⚠️ 历史信号质量反馈不可用】(data/signal_quality/latest.json 缺失) — "
+                "本次判断无历史校准数据可参考, 请按保守口径输出。")
 
-    lines = ["【⚠️ 历史信号质量反馈 — 辩论必须参考】\n"]
+    try:
+        with open(sq_path) as f:
+            sq = json.load(f)
+    except Exception as e:
+        logger.warning(f"[signal_quality_context] 解析失败: {e}")
+        return ("【⚠️ 历史信号质量反馈不可用】(latest.json 解析失败) — "
+                "本次判断无历史校准数据可参考, 请按保守口径输出。")
 
-    # 1. Confidence bucket 胜率
-    if sq_path.exists():
-        try:
-            with open(sq_path) as f:
-                sq = json.load(f)
-            buckets = sq.get("confidence_map", {}).get("buckets", {})
-            if buckets:
-                lines.append("置信度桶 vs 实际胜率:")
-                for label in ["0-0.3", "0.3-0.5", "0.5-0.7", "0.7-1.0"]:
-                    b = buckets.get(label, {})
-                    n = b.get("total", 0)
-                    wr = b.get("win_rate", 0)
-                    if n > 0:
-                        flag = "🔴" if wr < 0.35 else "🟡" if wr < 0.5 else "🟢"
-                        lines.append(f"  {flag} {label}: 胜率={wr:.1%} (n={n})")
+    lines = [f"【⚠️ 历史信号质量反馈 — 辩论必须参考】(数据截至 {sq.get('as_of', '未知')}, "
+             f"近{sq.get('history_days', '?')}天, 已平仓 {sq.get('total_closed_trades', '?')} 笔)\n"]
 
-            # 策略表现 (30天)
-            sp = sq.get("strategy_performance", {}).get("rolling", {}).get("30d", {})
-            if sp:
-                lines.append("\n30天各策略表现:")
-                for cat, s in sorted(sp.items(), key=lambda x: -x[1].get("total", 0)):
-                    n = s.get("total", 0)
-                    if n >= 3:
-                        wr = s.get("win_rate", 0)
-                        pnl = s.get("total_pnl", 0)
-                        flag = "🔴" if wr < 0.35 else "🟡" if wr < 0.5 else "🟢"
-                        lines.append(f"  {flag} {cat}: 胜率={wr:.1%} PnL=${pnl:+,.0f} (n={n})")
+    # 1. Confidence bucket: 胜率 + 期望值 (键为 confidence_winrate_map, 旧代码错读 confidence_map)
+    buckets = (sq.get("confidence_winrate_map") or {}).get("buckets", {})
+    if buckets:
+        lines.append("置信度桶 vs 实际表现 (胜率 | 期望值/笔 — 期望非单调时置信度不可作权重):")
+        for label in ["0-0.3", "0.3-0.5", "0.5-0.7", "0.7-1.0"]:
+            b = buckets.get(label, {})
+            n = b.get("total", 0)
+            if n <= 0:
+                continue
+            wr = b.get("win_rate", 0)
+            exp_pct = b.get("avg_pnl_pct", 0) or 0
+            flag = "🔴" if exp_pct < 0 else "🟢"
+            lines.append(f"  {flag} conf {label}: 胜率={wr:.1%} | 期望={exp_pct:+.2%} (n={n})")
 
-            # 异常
-            anomalies = sq.get("threshold_recommendations", {}).get("anomalies", [])
-            if anomalies:
-                lines.append(f"\n⚠️ 异常: {'; '.join(anomalies)}")
-        except Exception:
-            pass
+    # 2. 策略/来源表现 (优先近30日, 无则全史)
+    sp = (sq.get("strategy_performance") or {}).get("rolling", {}).get("30d", {}) \
+        or (sq.get("strategy_performance") or {}).get("all_time", {})
+    if sp:
+        lines.append("\n各策略/来源表现:")
+        for cat, s in sorted(sp.items(), key=lambda x: -x[1].get("total", 0)):
+            n = s.get("total", 0)
+            if n < 3:
+                continue
+            wr = s.get("win_rate", 0)
+            pnl = s.get("total_pnl", 0)
+            flag = "🔴" if pnl < 0 else "🟢"
+            lines.append(f"  {flag} {cat}: 胜率={wr:.1%} PnL=${pnl:+,.0f} (n={n})")
 
-    # 2. IC 审计摘要
-    if ic_path.exists():
-        try:
-            with open(ic_path) as f:
-                ic_text = f.read()
-            # Extract key findings
-            lines.append("\n策略预测力 (IC, >0.05为有预测力):")
-            lines.append("  🔴 EARNINGS_REVISION_MOMENTUM: IC=-0.19 (显著反向)")
-            lines.append("  🔴 TECHNICAL_MULTI_FACTOR: IC=-0.07")
-            lines.append("  🔴 trend_first: IC=-0.10")
-            lines.append("  ⚠️ 系统整体 IC=-0.01 (无预测能力)")
-            lines.append("  🟢 manual_sync: 8笔 87.5%胜率 +$3,655")
-        except Exception:
-            pass
+    # 3. 异常 (来自 threshold_recommendations, 系统计自产, 原样透传)
+    anomalies = (sq.get("threshold_recommendations") or {}).get("anomalies", [])
+    if anomalies:
+        lines.append(f"\n⚠️ 异常: {'; '.join(anomalies)}")
 
-    lines.append("\n结论: 自动信号管线IC均为负，无预测力。")
-    lines.append("建议: 对历史胜率<30%的标的标注AVOID，优先推荐manual方向。")
-
+    # 收尾 = 使用指令 (非数据结论): 要求差异化理由, 不替模型下方向判断
+    lines.append("\n使用要求: 以上为系统实测统计。若本次判断与上方历史模式一致"
+                 "（如同桶期望为负仍给同方向），必须在推理中给出差异化理由，否则降级 NO_TRADE。")
     return "\n".join(lines)
 
 

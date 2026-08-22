@@ -124,6 +124,11 @@
 - **待批/知悉 (DEB §六)**: P2-OPS 盘中禁重启约定 (21:30-05:00 CST 非必要不重启; 近36h重启5次其中2次落盘中) / 9月流程硬化三条 (变更日历/单飞原则/落档当日清零) / 费用侧 P0-2 九月重提证据已足 (fee 占净亏 76.6%)。
 - **边界**: 与当日并行会话"T+N 影子字段"工作 (app/playbook/db.py + ic_tracker.py 未提交 WIP) 互补不重叠, 本轮未触碰; handoff.md 中 8/21 Qoder 追溯条目随本批一并入库 (自包含文档防遗失)。
 
+### 2026-08-22b (反馈注入链路修复 + prompt 校准 — Claude Code, 用户裁"prompt修改不影响交易链路逻辑, 基于发现做修复调整", ADR-031)
+- **"盘感"假设查证引出的架构事实**: LLM 权重冻结/无自身历史检索 → 反馈注入是模型经验唯一通道; 而该通道 (`_build_signal_quality_context` → unified_debate_engine:159/:238 每日活体注入) 三处坏损: 键名错配(读 confidence_map 真键 confidence_winrate_map→置信度段恒空) / 依赖已删的 ic_audit_report_2026-06-19.md→fallback 硬编码 6/19 数字 / 每日注入"优先推荐manual方向"误导结论。
+- **修复三件 (全部纯增量, schema 零改动)**: ①重写 `_build_signal_quality_context`(真键渲染+期望值列+缺数据报"不可用"不编造) ②strategy.py 规则块修订("突发事件特权 conf≥0.7"→置信度校准锚/"防御只做SHORT"→对称证据门槛/周期对齐 T+5/Livermore 止损10%行去执行器冲突) ③DA SYSTEM_PROMPT 增补自我认知原则11-13条(校准/空头对称/差异化理由)。修复后辩论引擎每日可见 conf-期望倒挂实况 (0-0.3桶期望+0.85%最高)。
+- **验证**: tests/core/test_signal_quality_context.py 6例全过, 含真实 latest.json 活体哨兵(防硬编码谎言复发)。落档 DEB-20260822 §九 + ADR-031。回滚=revert hunk 无迁移。变更日期在案, 8/29 终裁如需可切窗对照。
+
 ### 2026-08-21 (Hermes 晚间批核查 — Qoder, 用户令"核查, 确认合理性以及是否还有更好的方案")
 - **核查对象**: Hermes 晚间 6 提交 (62179874 SKIP过滤 / ab9874d2+1f96122f+e2348028 conf伪概率移除 / 5a8a3237 UE self_tier评估器 / 06432156 AMZN误杀三件套) + 未提交 be_exit_class。审查轮落 **DEB-20260819 §五十六**。
 - **定性: 六项全部合理, 无一建议回滚**。证据独立复现: GOOG 7/2 重复实锤 (id 978/983, 净 -96.84)、SKIP 占位 417 条 ~49/日、UE self_tier 首跑逐位复现 (98 结算, 无 tier 过四关门)、conf 零残余信号且比自述更强 (三桶单调反向, 全 |t|<1)、BE 三分 17/6/24 (瀑布 -$85.35)。定向测试 110 passed。
