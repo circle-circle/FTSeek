@@ -192,6 +192,12 @@ _DEFAULTS: Dict[str, Any] = {
     # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
     #   证伪机制: 逐笔情绪不预测方向, 但告诉你盘中实时情绪已变.
     "ticker_sentiment_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 阈值配置 — 证伪门阈值统一放 config, 不硬编码.
+    "short_squeeze_threshold_pct": 30.0,  # SHORT 拥挤阈值
+    "short_squeeze_long_threshold_pct": 40.0,  # LONG 底部确认阈值 (对称)
+    "sentiment_extreme_threshold": 0.8,  # 情绪极端阈值
+    "social_sentiment_divergence_threshold": 0.3,  # 多源情绪背离阈值
+    "earnings_proximity_days": 3,  # 财报临近阈值
 }
 
 
@@ -241,7 +247,11 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
 
     LONG: 回踩区 [vwap×(1−low), vwap×(1+high)] 内 + slope>min + 量比/ATR/spread 达标.
     SHORT 对称 (price 在 [vwap×(1−high), vwap×(1+low)], slope<−min).
-    指标缺失 (None) → 拒 (再入场是增量机会, 宁缺毋滥, 不适用 fail-open).
+
+    两类门语义:
+      - 技术指标门 (vwap/slope/atr/vol/spread): 缺失→拒 (宁缺毋滥, 指标是入场必要条件)
+      - 证伪门 (capital_flow/short/insider/analyst/earnings/sentiment/sec/social/ticker):
+        缺失→不拦 (fail-open, 证伪是额外保险非必要条件; 数据读取失败时不应阻止交易)
     """
     reasons: List[str] = []
     is_long = direction.upper() in ("BUY", "LONG")
@@ -273,10 +283,13 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"capital_flow_divergence(LONG vs OUTFLOW)")
             elif not is_long and capital_flow_direction == "INFLOW":
                 reasons.append(f"capital_flow_divergence(SHORT vs INFLOW)")
-    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>30%)=拥挤交易, squeeze 风险高.
+    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>threshold)=拥挤交易, squeeze 风险高;
+    #   LONG 方向时 short_percent 极高(>long_threshold)但价格不再跌=底部确认, 拒绝追空.
     if cfg.get("short_squeeze_check_enabled", True):
-        if not is_long and short_percent is not None and short_percent > 30.0:
-            reasons.append(f"short_squeeze_risk(short_percent={short_percent:.1f}%>30%)")
+        if not is_long and short_percent is not None and short_percent > float(cfg.get("short_squeeze_threshold_pct", 30.0)):
+            reasons.append(f"short_squeeze_risk(short_percent={short_percent:.1f}%>{cfg['short_squeeze_threshold_pct']}%)")
+        elif is_long and short_percent is not None and short_percent > float(cfg.get("short_squeeze_long_threshold_pct", 40.0)):
+            reasons.append(f"short_squeeze_bottom(short_percent={short_percent:.1f}%>{cfg['short_squeeze_long_threshold_pct']}%)")
     # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
     if cfg.get("insider_divergence_check_enabled", True):
         if insider_signal:
@@ -293,15 +306,17 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"analyst_divergence(SHORT vs upgrade_trend)")
     # 2026-08-22 (用户裁决): 财报临近检查 — 持仓标的财报临近(<3天)时收紧.
     if cfg.get("earnings_proximity_check_enabled", True):
-        if days_to_earnings is not None and days_to_earnings < 3:
-            reasons.append(f"earnings_proximity({days_to_earnings}d<3d)")
+        _days = int(cfg.get("earnings_proximity_days", 3))
+        if days_to_earnings is not None and days_to_earnings < _days:
+            reasons.append(f"earnings_proximity({days_to_earnings}d<{_days}d)")
     # 2026-08-22 (用户裁决): 情绪极端检查 — DA方向与社交情绪极端背离时拒绝.
     if cfg.get("sentiment_extreme_check_enabled", True):
         if sentiment_score is not None:
-            if is_long and sentiment_score > 0.8:
-                reasons.append(f"sentiment_extreme(LONG vs extreme_bullish={sentiment_score:.2f})")
-            elif not is_long and sentiment_score < -0.8:
-                reasons.append(f"sentiment_extreme(SHORT vs extreme_bearish={sentiment_score:.2f})")
+            _threshold = float(cfg.get("sentiment_extreme_threshold", 0.8))
+            if is_long and sentiment_score > _threshold:
+                reasons.append(f"sentiment_extreme(LONG vs extreme_bullish={sentiment_score:.2f}>{_threshold})")
+            elif not is_long and sentiment_score < -_threshold:
+                reasons.append(f"sentiment_extreme(SHORT vs extreme_bearish={sentiment_score:.2f}<-{_threshold})")
     # 2026-08-22 (用户裁决): 重大事件背离检查 — 8-K/13D-G 披露重大负面时拒绝.
     if cfg.get("sec_event_divergence_check_enabled", True):
         if sec_event_negative:
@@ -309,9 +324,10 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
     # 2026-08-22 (用户裁决): 多源情绪验证 — social_sentiment 与 finnhub 情绪分数背离时拒绝.
     if cfg.get("social_sentiment_divergence_check_enabled", True):
         if sentiment_score is not None and social_sentiment_score is not None:
-            # 多源背离: finnhub 看多(>0.3) 但 social 看空(<-0.3), 或反之
-            if (sentiment_score > 0.3 and social_sentiment_score < -0.3) or                (sentiment_score < -0.3 and social_sentiment_score > 0.3):
-                reasons.append(f"social_sentiment_divergence(finnhub={sentiment_score:.2f} vs social={social_sentiment_score:.2f})")
+            _threshold = float(cfg.get("social_sentiment_divergence_threshold", 0.3))
+            # 多源背离: finnhub 看多(>threshold) 但 social 看空(<-threshold), 或反之
+            if (sentiment_score > _threshold and social_sentiment_score < -_threshold) or                (sentiment_score < -_threshold and social_sentiment_score > _threshold):
+                reasons.append(f"social_sentiment_divergence(finnhub={sentiment_score:.2f} vs social={social_sentiment_score:.2f}, threshold={_threshold})")
     # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
     if cfg.get("ticker_sentiment_divergence_check_enabled", True):
         if ticker_sentiment:

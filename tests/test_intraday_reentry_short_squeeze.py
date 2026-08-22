@@ -16,7 +16,8 @@ def test_short_squeeze_reject():
     """SHORT + short_percent>30% → 拒绝"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
-           "short_squeeze_check_enabled": True}
+           "short_squeeze_check_enabled": True,
+           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -30,7 +31,8 @@ def test_short_squeeze_pass():
     """SHORT + short_percent<30% → 通过"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
-           "short_squeeze_check_enabled": True}
+           "short_squeeze_check_enabled": True,
+           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -43,7 +45,8 @@ def test_insider_divergence_long_reject():
     """LONG + insider_sell → 拒绝"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
-           "insider_divergence_check_enabled": True}
+           "insider_divergence_check_enabled": True,
+           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
     ok, reasons = evaluate_candidate(
         "LONG", price=100.0, vwap=99.5,
         slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -57,7 +60,8 @@ def test_insider_divergence_short_reject():
     """SHORT + insider_buy → 拒绝"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
-           "insider_divergence_check_enabled": True}
+           "insider_divergence_check_enabled": True,
+           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
     ok, reasons = evaluate_candidate(
         "SHORT", price=99.0, vwap=99.5,
         slope_5m=-0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
@@ -71,7 +75,8 @@ def test_insider_aligned_pass():
     """方向与内部人一致 → 通过"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
-           "insider_divergence_check_enabled": True}
+           "insider_divergence_check_enabled": True,
+           "short_squeeze_threshold_pct": 30.0, "short_squeeze_long_threshold_pct": 40.0}
     ok, reasons = evaluate_candidate(
         "LONG", price=100.0, vwap=99.5,
         slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
