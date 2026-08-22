@@ -56,31 +56,47 @@ class FundamentalProvider(BaseDataProvider):
             logger.debug(f"[FundamentalProvider] Finnhub {endpoint} error: {e}")
             return None
 
+    # 2026-08-22 (P1-3): 基本面数据 1h 缓存 — 降级链每次全量跑是浪费
+    _fundamental_cache = {}
+    _FUNDAMENTAL_CACHE_TTL = 3600  # 1 小时
+
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """获取基本面数据（自动降级: Futu → Finnhub → Yahoo → AlphaVantage）"""
+        # 2026-08-22 (P1-3): 先查缓存
+        import time as _time
+        now_ts = _time.time()
+        if symbol in self._fundamental_cache:
+            cached_result, cached_ts = self._fundamental_cache[symbol]
+            if now_ts - cached_ts < self._FUNDAMENTAL_CACHE_TTL:
+                return cached_result
+
         now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # 尝试数据源 0: Futu (主数据源 — 真实数据，无需API key)
         result = self._fetch_futu(symbol)
         if result and result.get("status") == "ok":
+            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
             return result
 
         # 降级 1: Finnhub
         logger.debug(f"[FundamentalProvider] Futu failed, trying Finnhub: {symbol}")
         result = self._fetch_finnhub(symbol)
         if result and result.get("status") == "ok":
+            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
             return result
 
         # 降级 2: Yahoo Finance
         logger.info(f"[FundamentalProvider] Finnhub failed, trying Yahoo: {symbol}")
         result = self._fetch_yahoo(symbol)
         if result and result.get("status") == "ok":
+            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
             return result
 
         # 降级 3: Alpha Vantage
         logger.info(f"[FundamentalProvider] Yahoo failed, trying AlphaVantage: {symbol}")
         result = self._fetch_alphavantage(symbol)
         if result and result.get("status") == "ok":
+            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
             return result
 
         # 全部失败

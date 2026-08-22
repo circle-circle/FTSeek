@@ -195,6 +195,28 @@ class PlaybookDataCollector:
         self.earnings = earnings_calendar
         self.futu_ext = futu_extended
 
+    # 2026-08-22 (P1-2): VIX 全市场指标单次拉取缓存 — 逐标的实例化是浪费
+    _vix_cache = {"value": None, "ts": 0}
+    _VIX_CACHE_TTL = 300  # 5 分钟
+
+    def _get_vix_cached(self):
+        """VIX 全市场指标, 5分钟缓存, 避免逐标的重复实例化 AlphaVantageProvider"""
+        import time as _time
+        now = _time.time()
+        if (self._vix_cache["value"] is not None and
+            now - self._vix_cache["ts"] < self._VIX_CACHE_TTL):
+            return self._vix_cache["value"]
+        try:
+            from app.data.alphavantage_provider import AlphaVantageProvider
+            av = AlphaVantageProvider()
+            vix = av.get_vix()
+            self._vix_cache["value"] = vix
+            self._vix_cache["ts"] = now
+            return vix
+        except Exception as e:
+            logger.debug(f"Failed to get VIX: {e}")
+            return 20.0
+
     def collect(self, symbol: str) -> PlaybookData:
         """收集单只股票的 6 维度数据"""
         return PlaybookData(
@@ -732,16 +754,9 @@ class PlaybookDataCollector:
             except Exception as e:
                 logger.debug(f"Futu analyst consensus failed for {symbol}: {e}")
 
-            # 3. VIX
-            vix = 20.0
-            vix_quality = "missing"
-            try:
-                from app.data.alphavantage_provider import AlphaVantageProvider
-                av = AlphaVantageProvider()
-                vix = av.get_vix()
-                vix_quality = "ok"
-            except Exception as e:
-                logger.debug(f"Failed to get VIX: {e}")
+            # 3. VIX (2026-08-22 P1-2: 全市场指标走缓存, 不逐标的实例化)
+            vix = self._get_vix_cached()
+            vix_quality = "ok" if vix != 20.0 else "missing"
 
             # 综合质量
             if sentiment_quality == "ok" and vix_quality == "ok":

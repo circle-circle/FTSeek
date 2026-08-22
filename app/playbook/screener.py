@@ -82,17 +82,31 @@ class PlaybookScreener:
         candidates = []
         held_symbols = {p.get('symbol') for p in positions}
         
+        # 2026-08-22 (P1-1): 批量并行收集替代逐标的串行 — 已有 collect_batch 未用,
+        #   15+ 标的 × 6 维度串行 → ThreadPoolExecutor 并行 (max_workers=5).
+        collected_map = {}
+        try:
+            batch_results = self.data_collector.collect_batch(watchlist)
+            for data in batch_results:
+                collected_map[data.symbol] = data
+        except Exception as e:
+            logger.warning(f"[SCREENER] batch collect failed, fallback to serial: {e}")
+            # 回退串行
+            for symbol in watchlist:
+                try:
+                    collected_map[symbol] = self.data_collector.collect(symbol)
+                except Exception as e2:
+                    logger.warning(f"[SCREENER] {symbol} data collection failed: {e2}")
+
         for symbol in watchlist:
             # 1. 排除已有持仓
             if symbol in held_symbols:
                 logger.debug(f"[SCREENER] {symbol} excluded: already held")
                 continue
             
-            # 2. 收集 6 维度数据
-            try:
-                data = self.data_collector.collect(symbol)
-            except Exception as e:
-                logger.warning(f"[SCREENER] {symbol} data collection failed: {e}")
+            # 2. 取并行收集结果 (可能失败为空)
+            data = collected_map.get(symbol)
+            if data is None:
                 continue
             
             # 3. 新鲜度硬过滤 (核心反幻觉逻辑)
