@@ -665,6 +665,37 @@ def run_scan(scheduler=None) -> int:
     armed = 0
     today = _today_et_str()
 
+    # ── 2026-08-22 (性能修复): 证伪门数据循环外批量预读 ──
+    # 修复: ①capital_flow 原循环内全文件读取(58812行×候选数) → 循环外一次读取建索引
+    #       ②FutuExtendedProvider 原循环内每候选新建连接(资源泄漏) → 循环外单实例复用
+    _cf_last_flow: Dict[str, str] = {}  # symbol → INFLOW/OUTFLOW (最后一条)
+    if cfg.get("capital_flow_divergence_check_enabled", True):
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _cf_path = _Path("data/futu_capital_flow.jsonl")
+            if _cf_path.exists():
+                for _line in _cf_path.read_text().strip().split("\n"):
+                    try:
+                        _d = _json.loads(_line)
+                    except Exception:
+                        continue
+                    _s = _d.get("symbol")
+                    if not _s:
+                        continue
+                    _large = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
+                    _cf_last_flow[_s] = "INFLOW" if _large > 0 else "OUTFLOW"  # 后写覆盖=最新一条
+        except Exception:
+            pass  # 读取失败 → 空索引 → 不拦 (fail-open)
+
+    _futu_ext_shared = None  # FutuExtendedProvider 循环外单实例 (懒初始化, 连接复用)
+    if cfg.get("short_squeeze_check_enabled", True) or cfg.get("insider_divergence_check_enabled", True):
+        try:
+            from app.data.providers.futu_extended_provider import FutuExtendedProvider
+            _futu_ext_shared = FutuExtendedProvider()
+        except Exception:
+            pass
+
     for sym, info in _load_closed_today().items():
         if sym in armed_syms:
             continue                      # 一次性武装锁定: 锚点不再跟随市价重刷 (防追价循环)
@@ -737,46 +768,32 @@ def run_scan(scheduler=None) -> int:
         except Exception:
             micro = None
 
-        # 2026-08-22 (用户裁决): 资金流背离检查 — 读最近一条该标的大单净流入方向.
-        #   数据源: futu_capital_flow.jsonl 盘中300s节流采集, 读最后一条.
-        capital_flow_direction = None
-        if cfg.get("capital_flow_divergence_check_enabled", True):
-            try:
-                import json as _json
-                from pathlib import Path as _Path
-                _cf_path = _Path("data/futu_capital_flow.jsonl")
-                if _cf_path.exists():
-                    _cf_lines = _cf_path.read_text().strip().split("\n")
-                    for _line in reversed(_cf_lines):
-                        _d = _json.loads(_line)
-                        if _d.get("symbol") == sym:
-                            _large_flow = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
-                            capital_flow_direction = "INFLOW" if _large_flow > 0 else "OUTFLOW"
-                            break
-            except Exception:
-                pass  # 资金流读取失败 → None → 不拦 (fail-open)
+        # 2026-08-22 (用户裁决): 资金流背离检查 — 消费循环外预读的最后一条方向索引.
+        capital_flow_direction = _cf_last_flow.get(sym)
 
-        # 2026-08-22 (用户裁决): 卖空压力检查 — 读该标的每日卖空成交量.
+        # 2026-08-22 (用户裁决): 卖空压力检查 — 读该标的每日卖空成交量 (共享连接).
         short_percent = None
-        if cfg.get("short_squeeze_check_enabled", True):
+        if cfg.get("short_squeeze_check_enabled", True) and _futu_ext_shared is not None:
             try:
-                from app.data.providers.futu_extended_provider import FutuExtendedProvider
-                _futu_ext = FutuExtendedProvider()
-                _dsv = _futu_ext.get_daily_short_volume(sym)
+                _dsv = _futu_ext_shared.get_daily_short_volume(sym)
                 if _dsv.get("status") == "ok" and _dsv.get("data"):
                     short_percent = _dsv["data"].get("short_percent")
             except Exception:
                 pass  # 卖空数据读取失败 → None → 不拦 (fail-open)
 
-        # 2026-08-22 (用户裁决): 内部人背离检查 — 读该标的内部人净买卖方向.
+        # 2026-08-22 (用户裁决): 内部人背离检查 — 读该标的内部人净买卖方向 (共享连接).
+        #   实测字段: data.signal ∈ {strong_buy, buy, sell, neutral}
         insider_signal = None
-        if cfg.get("insider_divergence_check_enabled", True):
+        if cfg.get("insider_divergence_check_enabled", True) and _futu_ext_shared is not None:
             try:
-                from app.data.providers.futu_extended_provider import FutuExtendedProvider
-                _futu_ext = FutuExtendedProvider()
-                _it = _futu_ext.get_insider_trades(sym)
+                _it = _futu_ext_shared.get_insider_trades(sym)
                 if _it.get("status") == "ok" and _it.get("data"):
-                    insider_signal = _it["data"].get("signal")  # "buy" / "sell" / "neutral"
+                    _raw_signal = _it["data"].get("signal")
+                    # strong_buy/buy → buy; sell → sell; neutral → None
+                    if _raw_signal in ("buy", "strong_buy"):
+                        insider_signal = "buy"
+                    elif _raw_signal == "sell":
+                        insider_signal = "sell"
             except Exception:
                 pass  # 内部人数据读取失败 → None → 不拦 (fail-open)
 

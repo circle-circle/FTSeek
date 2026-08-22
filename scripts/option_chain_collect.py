@@ -3,83 +3,90 @@
 """
 期权链数据采集 (2026-08-22)
 ============================
-采集 Futu 期权链数据 (put/call ratio, IV skew, unusual flow), 攒样供方向确认.
+采集富途期权市场统计数据 (市场级 Put/Call Ratio), 攒样供方向确认.
 
-数据源: Futu OpenD get_option_chain / get_option_events / get_option_rank
-输出: data/option_chain.jsonl
+数据源: Futu OpenD get_option_market_statistic(OptionMarket.US_SECURITY, OptionStatisticDataType.VOLUME/OPEN_INTEREST)
+  实测返回列: time, timestamp, call_value, put_value, total_value, ratio
+  (ratio = Put/Call 比值, 市场级情绪指标)
+
+注: 2026-08-22 复查发现原脚本假设的 get_option_chain 返回列含
+    implied_volatility/option_type='P'/'C' 字段不存在 (死数据), 已改用真实
+    get_option_market_statistic API.
+
+输出: data/option_market_stat.jsonl
 """
 
 import json
-import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 BASE = Path("/opt/ftseek/FTSeek-US")
-OUT = BASE / "data" / "option_chain.jsonl"
-LATEST = BASE / "data" / "option_chain_latest.json"
-
-# 采集标的 (watchlist + 高流动性)
-SYMBOLS = ["US.SPY", "US.QQQ", "US.AAPL", "US.TSLA", "US.NVDA", "US.AMD", "US.MU"]
+OUT = BASE / "data" / "option_market_stat.jsonl"
+LATEST = BASE / "data" / "option_market_stat_latest.json"
 
 
-def collect_option_chain():
-    """采集期权链数据"""
+def collect_option_market_stat():
+    """采集期权市场统计 (市场级 Put/Call Ratio)"""
     try:
-        from app.data.providers.futu_extended_provider import FutuExtendedProvider
-        futu_ext = FutuExtendedProvider()
-        if not futu_ext._get_ctx():
-            print("[option] Futu context unavailable")
-            return 0
+        from futu import OpenQuoteContext, RET_OK, OptionMarket, OptionStatisticDataType
+    except Exception as e:
+        print(f"[option] futu import 失败: {e}")
+        return 0
 
-        ctx = futu_ext._get_ctx()
+    ctx = None
+    try:
+        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+
+        # 最近 7 个交易日的成交量/持仓量统计
+        end = datetime.now().strftime("%Y-%m-%d")
+        begin = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         records = []
 
-        for symbol in SYMBOLS:
+        for data_type, type_name in [
+            (OptionStatisticDataType.VOLUME, "volume"),
+            (OptionStatisticDataType.OPEN_INTEREST, "open_interest"),
+        ]:
             try:
-                # 获取期权链 (最近到期日)
-                ret, chain = ctx.get_option_chain(symbol)
-                if ret != 0 or chain is None or len(chain) == 0:
-                    print(f"[option] {symbol} 期权链拉取失败或无数据")
+                ret, data, page_req_key = ctx.get_option_market_statistic(
+                    OptionMarket.US_SECURITY, data_type, begin_time=begin, end_time=end)
+                if ret != RET_OK or data is None or len(data) == 0:
+                    print(f"[option] {type_name} 拉取失败: {data}")
                     continue
-
-                # 聚合: put/call ratio, IV skew
-                puts = chain[chain["option_type"] == "P"]
-                calls = chain[chain["option_type"] == "C"]
-
-                if len(puts) > 0 and len(calls) > 0:
-                    pc_ratio = len(puts) / len(calls)
-                    avg_iv_put = puts["implied_volatility"].mean() if "implied_volatility" in puts else None
-                    avg_iv_call = calls["implied_volatility"].mean() if "implied_volatility" in calls else None
-                    iv_skew = (avg_iv_put - avg_iv_call) if (avg_iv_put and avg_iv_call) else None
-
+                for _, row in data.iterrows():
                     records.append({
-                        "symbol": symbol,
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "pc_ratio": round(pc_ratio, 3),
-                        "avg_iv_put": round(avg_iv_put, 4) if avg_iv_put else None,
-                        "avg_iv_call": round(avg_iv_call, 4) if avg_iv_call else None,
-                        "iv_skew": round(iv_skew, 4) if iv_skew else None,
-                        "n_puts": len(puts),
-                        "n_calls": len(calls),
+                        "date": str(row.get("time", "")),
+                        "type": type_name,
+                        "call_value": int(row.get("call_value", 0)),
+                        "put_value": int(row.get("put_value", 0)),
+                        "total_value": int(row.get("total_value", 0)),
+                        "pc_ratio": float(row.get("ratio", 0)) if row.get("ratio") else None,
+                        "market": "US_SECURITY",
                         "fetched_at": datetime.now().isoformat(),
                     })
-                    print(f"[option] {symbol}: pc_ratio={pc_ratio:.2f} iv_skew={iv_skew:.4f if iv_skew else 'N/A'}")
+                print(f"[option] {type_name}: {len(data)} 条")
             except Exception as e:
-                print(f"[option] {symbol} 异常: {e}")
+                print(f"[option] {type_name} 异常: {e}")
 
-        # 追加写入
+        # 追加写入 (去重: 同 date+type 覆盖)
         if records:
-            with open(OUT, "a") as f:
-                for r in records:
+            existing = {}
+            if OUT.exists():
+                for line in open(OUT):
+                    try:
+                        r = json.loads(line)
+                        existing[(r["date"], r["type"])] = r
+                    except json.JSONDecodeError:
+                        continue
+            for r in records:
+                existing[(r["date"], r["type"])] = r
+            with open(OUT, "w") as f:
+                for r in sorted(existing.values(), key=lambda x: (x["date"], x["type"])):
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-            # 写 latest 摘要
-            latest = {
+            LATEST.write_text(json.dumps({
                 "generated_at": datetime.now().isoformat(),
-                "n_records": len(records),
-                "symbols": SYMBOLS,
-            }
-            LATEST.write_text(json.dumps(latest, ensure_ascii=False, indent=2))
+                "n_records": len(existing),
+            }, ensure_ascii=False, indent=2))
 
         print(f"[option] 采集完成: {len(records)} 条")
         return len(records)
@@ -87,7 +94,13 @@ def collect_option_chain():
     except Exception as e:
         print(f"[option] 采集失败: {e}")
         return 0
+    finally:
+        if ctx:
+            try:
+                ctx.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
-    collect_option_chain()
+    collect_option_market_stat()
