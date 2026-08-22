@@ -1292,7 +1292,7 @@ playbook:
     overnight_hold_loser_enabled: true
   topup:
     enabled: false
-    technical_override_enabled: true
+    technical_fallback_override_enabled: true  # 2026-08-22: 键名修正(原 topup.technical_override_enabled), 控制 no-bridge 兜底链覆写
     target_min_instructions: 30
     max_add_per_day: 18
     max_attempts_per_window: 2

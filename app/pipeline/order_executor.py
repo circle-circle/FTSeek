@@ -4664,6 +4664,16 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                     status = str(data_q.iloc[0].get('order_status', ''))
                     if 'FILLED' in status or 'DEALT' in status:
                         order_confirmed = True
+                        # 2026-08-22 (P0-a): 成交确认时提取 dealt_avg_price 作为真实成交价,
+                        # 修正 exit_price=current_price(监控价) 的系统性偏差.
+                        _dealt_avg = None
+                        try:
+                            _dealt_avg = float(data_q.iloc[0].get('dealt_avg_price') or 0)
+                        except Exception:
+                            _dealt_avg = None
+                        if _dealt_avg and _dealt_avg > 0:
+                            meta['_close_fill_price'] = _dealt_avg
+                            position.metadata = meta
                         logger.info(f"[平仓·确认] {position.symbol} futu_order_id={close_futu_id} 状态={status} ✓")
                         tracker.update_order_state(close_futu_id, OrderState.FILLED)
                         break
@@ -4778,8 +4788,15 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
 
     # 更新持仓 (标记为已平仓)
     # P0 修复 (2026-05-31): exit_time 统一用美东时间, 避免 CST 导致日期错位
+    # 2026-08-22 (P0-a): exit_price 优先用确认循环带回的真实成交价 (_close_fill_price),
+    #   修正监控价≠成交价的系统性偏差 (快市 0.3-0.5%, SL_BREAKEVEN 保本判定失真).
+    _exit_meta = getattr(position, "metadata", {}) or {}
+    _real_fill = _exit_meta.get("_close_fill_price")
+    if _real_fill and isinstance(_real_fill, (int, float)) and _real_fill > 0:
+        position.exit_price = float(_real_fill)
+    else:
+        position.exit_price = current_price
     position.exit_time = now_et()
-    position.exit_price = current_price
     position.exit_reason = exit_reason
     position.realized_pnl = pnl
     meta = getattr(position, "metadata", {}) or {}

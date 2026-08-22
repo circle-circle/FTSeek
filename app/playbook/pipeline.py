@@ -706,11 +706,15 @@ class TechnicalFallbackAdapter:
             #   F1 修的 band 从未被执行 (07-29 带 F1 跑 4 轮仍 +0, 手算三只 strength=65
             #   本应过)。本 Adapter 两个消费方 (topup / 无 bridge 兜底) 设计上就该出
             #   方向 — 局部覆写 enabled, 其余参数 (min_strength 等) 仍从 yaml 读,
-            #   调参保持单一真相源。回滚 = 关 playbook.topup.technical_override_enabled。
+            #   调参保持单一真相源。
+            # 2026-08-22 (topup孤儿开关修复): 键名从 playbook.topup.technical_override_enabled
+            #   改为 playbook.technical_fallback_override_enabled — topup 已于 8/6 停供,
+            #   该开关实际控制的是 no-bridge 兜底链(TFA)是否覆写 strategies.technical.enabled=false,
+            #   与 topup 无关. 语义修正, 调参者不再误以为控制已停供的 topup.
             _t_cfg = None
             try:
                 from app.core.config_container import get_config as _tf_gc
-                if bool(_tf_gc().get_dotted("playbook.topup.technical_override_enabled", False)):
+                if bool(_tf_gc().get_dotted("playbook.technical_fallback_override_enabled", False)):
                     from app.strategy.pure import _load_yaml_config as _tf_lyc
                     _t_cfg = dict(_tf_lyc("technical") or {})
                     _t_cfg["enabled"] = True

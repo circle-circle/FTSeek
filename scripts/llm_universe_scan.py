@@ -763,8 +763,10 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
         if with_tier:
             ev = str(it.get("evidence_ref", ""))[:200].strip()
             tier = str(it.get("self_tier", "")).upper().strip()
+            _tier_fallback = False  # 2026-08-22 (UE P1): 非法 tier 静默替换留痕, 攒样数据可区分
             if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
                 tier = "THESIS_ONLY"
+                _tier_fallback = True
             raw_conf = conf
             clamped = False
             if not ev:  # Track A 夹逼: 无证据 → 强制降级 (兜底 LLM 不守自律约束)
@@ -776,6 +778,8 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["self_tier"] = tier
             item["raw_confidence"] = round(raw_conf, 3)
             item["clamped"] = clamped
+            if _tier_fallback:
+                item["_tier_fallback"] = True  # LLM 输出非法 tier, 被代码兜底替换
             item["confidence"] = round(conf, 3)
             # v2.2 (2026-07-25, P1 可证伪字段): 纯落库供判分, 不进任何执行逻辑
             item["invalidation"] = str(it.get("invalidation", ""))[:120]

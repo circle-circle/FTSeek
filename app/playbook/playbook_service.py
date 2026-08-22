@@ -1542,6 +1542,9 @@ class PlaybookService:
                     f"[playbook] {_mode_label} 回滚平仓异常 {symbol}: {_rbe} "
                     f"— ⚠️ 需手动处理 sim 账户孤儿仓"
                 )
+            # 2026-08-22 (P0-b 幂等锁泄漏修复): 回滚平仓后必须释放幂等锁,
+            # 否则该指令永久 stuck executed=1, 后续再也不会被执行 (审计发现).
+            self.db.release_execution_claim(instruction_id)
             return {"success": False, "message": f"{_mode_label} trade_record 写入失败已回滚平仓: {_tre}"}
 
         # 注册 ManualHoldRegistry (防 auto pipeline 干扰)
