@@ -1984,7 +1984,28 @@ class TradingScheduler:
         """每月 1 日 10:00 ET 触发月报推送 - 在 scheduler_triggers.py 中实现"""
         from .scheduler_triggers import check_monthly_review
         check_monthly_review(self)
-    
+
+    # 2026-08-22 audit-fix A3: 影子脚本模块缓存. 原先 _llm_strategy_loop 每轮循环
+    # (TRADING 60s / 盘后各分支) 对 ~12 个 scripts/*_shadow*.py 全量重执行
+    # spec_from_file_location+exec_module — 脚本的节流/幂等全在磁盘状态文件或 DB,
+    # 重执行只重复付出 import+模块级初始化成本, 零收益. 改为进程内缓存: 首次加载
+    # 成功后复用同一 module 对象. 注意: 运行期修改 scripts/*.py 不再热生效, 需重启
+    # (与主链路 import 语义一致); 加载失败不缓存, 下轮自动重试 (与原行为相同).
+    def _load_script_module(self, mod_name: str):
+        cache = getattr(self, "_script_mod_cache", None)
+        if cache is None:
+            cache = self._script_mod_cache = {}
+        if mod_name in cache:
+            return cache[mod_name]
+        import importlib.util
+        from pathlib import Path as _Path
+        _script_path = _Path(__file__).resolve().parents[2] / "scripts" / f"{mod_name}.py"
+        _spec = importlib.util.spec_from_file_location(mod_name, str(_script_path))
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        cache[mod_name] = _mod
+        return _mod
+
     def _llm_strategy_loop(self):
         """LLM 策略引擎循环 - 按市场阶段自适应调度"""
         from app.pipeline.llm_pipeline import run_after_hours_llm_scan, run_open_checker, run_open_price_refresh
@@ -2109,13 +2130,7 @@ class TradingScheduler:
                     #   300s + 按 (symbol, item_time)/事件哈希去重. 零执行路径改动.
                     #   回滚: futu_channels.shadow_collect_enabled=false + 重启.
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_fc
-                        _sp = _ilu.spec_from_file_location(
-                            "futu_channel_shadow_collect",
-                            str(_P_fc(__file__).resolve().parents[2] / "scripts" / "futu_channel_shadow_collect.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("futu_channel_shadow_collect")
                         _mod.run_collect(self, phase="TRADING")
                     except Exception as _e:
                         logger.warning(f"[LLM策略] futu通道影子采集异常 (已隔离): {_e}")
@@ -2201,13 +2216,7 @@ class TradingScheduler:
                     # 函数内自带时间窗口(06:00-09:29 ET)+每日幂等. record-only 不进决策.
                     # 回滚: macro_calendar.shadow_collect_enabled=false + 重启.
                     try:
-                        import importlib.util as _ilu_mc
-                        from pathlib import Path as _P_mc
-                        _sp_mc = _ilu_mc.spec_from_file_location(
-                            "macro_calendar_shadow_collect",
-                            str(_P_mc(__file__).resolve().parents[2] / "scripts" / "macro_calendar_shadow_collect.py"))
-                        _mod_mc = _ilu_mc.module_from_spec(_sp_mc)
-                        _sp_mc.loader.exec_module(_mod_mc)
+                        _mod_mc = self._load_script_module("macro_calendar_shadow_collect")
                         _mod_mc.run_collect(self, phase="PRE_MARKET")
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 宏观日历影子采集异常 (已隔离): {_e}")
@@ -2219,13 +2228,7 @@ class TradingScheduler:
                     # 富途通道影子·盘后收尾采集 (DEB-20260812): 盘后序列才完整,
                     # 每日 1 次全量拉取 (函数内按日幂等). 回滚同 TRADING 挂载.
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_fc2
-                        _sp = _ilu.spec_from_file_location(
-                            "futu_channel_shadow_collect",
-                            str(_P_fc2(__file__).resolve().parents[2] / "scripts" / "futu_channel_shadow_collect.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("futu_channel_shadow_collect")
                         _mod.run_collect(self, phase="AFTER_HOURS")
                     except Exception as _e:
                         logger.warning(f"[LLM策略] futu通道影子盘后采集异常 (已隔离): {_e}")
@@ -2251,13 +2254,7 @@ class TradingScheduler:
                     #   benign 退出决策点的次日反事实结算. 每日幂等 (settled 标记),
                     #   需次日 replay_bars 已落 (position_path_collector 盘后采集), 缺则留待下次.
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_ov
-                        _sp = _ilu.spec_from_file_location(
-                            "settle_overnight_shadow",
-                            str(_P_ov(__file__).resolve().parents[2] / "scripts" / "settle_overnight_shadow.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("settle_overnight_shadow")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.debug(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}")
@@ -2266,13 +2263,7 @@ class TradingScheduler:
                     #   发现 news_positive 触发 100%出现在 STALL 笔 (6/6) — 攒样验证
                     #   (n≥30 再裁门禁), 零执行路径改动. 回滚: 配置键 false + 重启.
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_ss
-                        _sp = _ilu.spec_from_file_location(
-                            "stall_entry_shadow_tag",
-                            str(_P_ss(__file__).resolve().parents[2] / "scripts" / "stall_entry_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("stall_entry_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] stall影子打标异常 (已隔离): {_e}")
@@ -2282,13 +2273,7 @@ class TradingScheduler:
                     #   间 +$487. 打 volley 聚类 + 时段分区标签攒样, n≥30 再裁单轮
                     #   限流/最小间隔门. 零执行路径改动. 回滚: 配置键 false + 重启.
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_es
-                        _sp = _ilu.spec_from_file_location(
-                            "entry_sync_shadow_tag",
-                            str(_P_es(__file__).resolve().parents[2] / "scripts" / "entry_sync_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("entry_sync_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}")
@@ -2299,13 +2284,7 @@ class TradingScheduler:
                     #   观测价重建指令当日价格路径, 打陈旧度标签+结局, n≥30 再裁硬门或
                     #   接 entry_reference。零执行路径改动。回滚: 配置键 false + 重启。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_sa
-                        _sp = _ilu.spec_from_file_location(
-                            "stale_anchor_shadow_tag",
-                            str(_P_sa(__file__).resolve().parents[2] / "scripts" / "stale_anchor_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("stale_anchor_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 陈旧锚影子打标异常 (已隔离): {_e}")
@@ -2315,13 +2294,7 @@ class TradingScheduler:
                     # 方向感知防御 (pipeline L3244: 同向拦截/反向放行), 本影子攒观测样本
                     # (冲突频率/翻转结局/候选浪费率), n≥30 再裁是否加候选端排除。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_cf
-                        _sp = _ilu.spec_from_file_location(
-                            "conflict_shadow_tag",
-                            str(_P_cf(__file__).resolve().parents[2] / "scripts" / "conflict_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("conflict_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}")
@@ -2331,13 +2304,7 @@ class TradingScheduler:
                     #   解析DA stderr日志评级分布+当日指令对照→data/short_funnel_shadow.jsonl。
                     #   n≥10交易日再裁分层gate。回滚: 配置键 false + 重启。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_sf
-                        _sp = _ilu.spec_from_file_location(
-                            "short_funnel_shadow_tag",
-                            str(_P_sf(__file__).resolve().parents[2] / "scripts" / "short_funnel_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("short_funnel_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 空头漏斗影子打标异常 (已隔离): {_e}")
@@ -2348,13 +2315,7 @@ class TradingScheduler:
                     #   5min中枢重锚反事实 → data/gap_semantics_shadow.jsonl, 按指令幂等。
                     #   n≥60 再裁 gap 语义门。回滚: 配置键 false + 重启。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_gs
-                        _sp = _ilu.spec_from_file_location(
-                            "gap_semantics_shadow_tag",
-                            str(_P_gs(__file__).resolve().parents[2] / "scripts" / "gap_semantics_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("gap_semantics_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 缺口语义影子打标异常 (已隔离): {_e}")
@@ -2365,13 +2326,7 @@ class TradingScheduler:
                     #   回填补读: 成交中位偏离0.000ATR, 病症暂不成立, 影子留作漂移监控。
                     #   回滚: 配置键 false + 重启。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_bv
-                        _sp = _ilu.spec_from_file_location(
-                            "band_vol_shadow_tag",
-                            str(_P_bv(__file__).resolve().parents[2] / "scripts" / "band_vol_shadow_tag.py"))
-                        _mod = _ilu.module_from_spec(_sp)
-                        _sp.loader.exec_module(_mod)
+                        _mod = self._load_script_module("band_vol_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}")
@@ -2381,17 +2336,10 @@ class TradingScheduler:
                     #   依赖该缓存是单点, 每日盘后增量刷新防复发 (幂等, 已最新即跳过,
                     #   ~110票×1.2s限流)。回滚: 配置键 false + 重启。
                     try:
-                        import importlib.util as _ilu
-                        from pathlib import Path as _P_rb
                         from app.core.config_container import ConfigContainer as _CC_rb
                         if bool(_CC_rb.get_instance().get_dotted(
                                 "playbook.daily_bars_refresh_enabled", True)):
-                            _sp = _ilu.spec_from_file_location(
-                                "refresh_daily_bars",
-                                str(_P_rb(__file__).resolve().parents[2] / "scripts" / "refresh_daily_bars.py"))
-                            _mod = _ilu.module_from_spec(_sp)
-                            _sp.loader.exec_module(_mod)
-                            _mod.run_check(self)
+                            self._load_script_module("refresh_daily_bars").run_check(self)
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}")
 
