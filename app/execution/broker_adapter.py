@@ -778,20 +778,9 @@ class FutuBrokerAdapter:
 
         rate = 0.0
 
-        # Try Futu market data for real-time rate
-        if from_currency == "HKD" and to_currency == "USD":
-            try:
-                from futu import OpenQuoteContext, RET_OK
-                quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
-                try:
-                    # USDHKD forex pair
-                    ret, data = quote_ctx.get_market_snapshot(["FX.USDCNH"])
-                    # Fallback: use fixed peg rate
-                    rate = 1.0 / 7.80  # HKD→USD
-                finally:
-                    quote_ctx.close()
-            except Exception:
-                pass
+        # 2026-08-22 audit-fix A5: 移除死分支 — 原此处创建 OpenQuoteContext 拉 FX.USDCNH
+        # 快照, 但 ret/data 从未使用, rate 恒 0.0 后必走下方固定汇率兜底; 每次缓存失效
+        # 白建/白关一条行情连接. 美股账户 HKD 分支本就不可达, 直接用联系汇率固定值.
 
         # Fallback: fixed rates for known pegs
         if rate <= 0:

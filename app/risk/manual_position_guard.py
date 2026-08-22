@@ -187,6 +187,28 @@ def manual_guard_loop(scheduler):
             total_cost = 0.0
             total_unrealized_pnl = 0.0
 
+            # 2026-08-22 audit-fix A4: 批量快照优先, 逐仓串行取价降为兜底 (N次网络调用→1次)
+            _batch_quotes = {}
+            try:
+                _bq = scheduler.data_router.get_batch_quotes([p.symbol for p in manual_positions])
+                if isinstance(_bq, dict):
+                    _batch_quotes = _bq
+            except Exception as e:
+                logger.debug(f"[ManualGuard] 批量报价失败, 回落逐仓取价: {e}")
+
+            def _batch_price(symbol: str) -> float:
+                q = _batch_quotes.get(symbol)
+                if not isinstance(q, dict):
+                    return 0.0
+                try:
+                    bid = float(q.get("bid", 0) or 0)
+                    ask = float(q.get("ask", 0) or 0)
+                    if bid > 0 and ask > 0:
+                        return round((bid + ask) / 2.0, 2)
+                    return float(q.get("last", 0) or q.get("price", 0) or 0)
+                except Exception:
+                    return 0.0
+
             for pos in manual_positions:
                 symbol = pos.symbol
                 entry_price = float(getattr(pos, "avg_entry_price", 0) or 0)
@@ -197,8 +219,8 @@ def manual_guard_loop(scheduler):
                 if entry_price <= 0 or size <= 0:
                     continue
 
-                # 获取当前价格
-                current_price = _get_current_price(scheduler, symbol)
+                # 获取当前价格 (批量快照优先, 缺失回落单仓取价 — 语义不变)
+                current_price = _batch_price(symbol) or _get_current_price(scheduler, symbol)
                 if not isinstance(current_price, (int, float)) or current_price <= 0:
                     continue
 

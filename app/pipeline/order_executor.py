@@ -1337,15 +1337,11 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
             except Exception as _silent_e:
                 logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             if not _regime:
-                # 以 VIX 作为 fallback (与 pre_trade_check 同逻辑)
-                try:
-                    from app.analysis.market_state import MarketStateChecker
-                    _vix_data = MarketStateChecker()._fetch_vix()
-                    _vix = _vix_data[0] if isinstance(_vix_data, tuple) else _vix_data
-                    if isinstance(_vix, (int, float)) and _vix >= 25:
-                        _regime = "HIGH_VOL"
-                except Exception as _silent_e:
-                    logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+                # 2026-08-22 audit: 原 VIX fallback 分支已删除 — 其调用的
+                #   `MarketStateChecker()._fetch_vix()` 方法自始不存在 (恒 AttributeError
+                #   被吞), 该分支从未生效过, 删除为零行为变化. 若将来要接 VIX→HIGH_VOL
+                #   减仓, 属验证期机制变更, 应走 get_checker().get_vix_cached() + 影子先行.
+                pass
             if _regime and size > 0:
                 from app.strategy.regime_adapter import apply_regime_position_scale
                 _adj_size, _scale, _note = apply_regime_position_scale(size, _regime)
@@ -3204,10 +3200,12 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
 
     # ── P0: VIX 数据新鲜度 fail-close (Task #1) ──
     # VIX 数据不可用时拒绝新仓 (宁可错过, 不可放错)
+    # 2026-08-22 audit fix: 改走 get_checker() 单例 + get_vix_cached() (30min 缓存) —
+    #   此前每单新建实例直调 _fetch_vix_data 绕过缓存, 每单实时 requests.get FRED.
+    #   语义不变: None 仍拒新仓; 与其他调用方共享同一缓存口径.
     try:
-        from app.analysis.market_state import MarketStateChecker
-        _vix_checker = MarketStateChecker()
-        _vix_val = _vix_checker._fetch_vix_data()
+        from app.analysis.market_state import get_checker
+        _vix_val = get_checker().get_vix_cached()
         if _vix_val is None:
             logger.warning(
                 f"🔒 [VIX_FAILCLOSE] {symbol} VIX数据不可用，拒绝新仓"

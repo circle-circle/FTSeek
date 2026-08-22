@@ -120,6 +120,27 @@ class MarketStateChecker:
         # HTTP API 全部不可用 (key=***), 静默跳过
         return None
 
+    def get_vix_cached(self) -> Optional[float]:
+        """带 30min 缓存的 VIX 读取, 取不到返回 None (fail-close 友好).
+
+        与 vix_below_25() 的 fail-open 语义 (失败默认放行) 相反 —
+        供 order_executor 下单前 VIX 新鲜度检查使用.
+        2026-08-22 audit: 此前 order_executor 每单新建实例直调 _fetch_vix_data,
+        绕过缓存 → 每单实时打 FRED (timeout=10). 抽出共用走单例缓存.
+
+        Returns:
+            VIX 值, 数据不可用时 None
+        """
+        now = datetime.now()
+        if self._vix_cache:
+            vix, cached_at = self._vix_cache
+            if now - cached_at < self._cache_ttl:
+                return vix
+        vix = self._fetch_vix_data()
+        if vix is not None:
+            self._vix_cache = (vix, now)
+        return vix
+
     def _fetch_vix_data(self) -> Optional[float]:
         """
         获取 VIX 恐慌指数
