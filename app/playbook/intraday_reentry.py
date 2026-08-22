@@ -168,6 +168,12 @@ _DEFAULTS: Dict[str, Any] = {
     #   数据源: futu_capital_flow.jsonl 盘中300s节流采集, 读最近一条该标的大单净流入方向.
     #   证伪机制非预测机制: 资金流不告诉你该做什么, 但告诉你不该做什么(方向背离时别重入场).
     "capital_flow_divergence_check_enabled": True,
+    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>30%)=拥挤交易, squeeze 风险高.
+    #   证伪机制: 卖空量激增不预测方向, 但告诉你 SHORT 可能被挤压.
+    "short_squeeze_check_enabled": True,
+    # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
+    #   证伪机制: 内部人交易不预测方向, 但告诉你内部人可能知道坏消息.
+    "insider_divergence_check_enabled": True,
 }
 
 
@@ -204,7 +210,9 @@ def _now_hhmm_et() -> int:
 def evaluate_candidate(direction: str, price: float, vwap: float,
                        slope_5m: Optional[float], atr_pct: Optional[float],
                        vol_ratio: Optional[float], spread_bps: Optional[float],
-                       cfg: Dict[str, Any], capital_flow_direction: Optional[str] = None) -> Tuple[bool, List[str]]:
+                       cfg: Dict[str, Any], capital_flow_direction: Optional[str] = None,
+                       short_percent: Optional[float] = None,
+                       insider_signal: Optional[str] = None) -> Tuple[bool, List[str]]:
     """纯函数: 盘中指标是否确认 thesis 延续 (可单测, 零 IO).
 
     LONG: 回踩区 [vwap×(1−low), vwap×(1+high)] 内 + slope>min + 量比/ATR/spread 达标.
@@ -241,6 +249,17 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                 reasons.append(f"capital_flow_divergence(LONG vs OUTFLOW)")
             elif not is_long and capital_flow_direction == "INFLOW":
                 reasons.append(f"capital_flow_divergence(SHORT vs INFLOW)")
+    # 2026-08-22 (用户裁决): 卖空压力检查 — SHORT 方向时 short_percent 飙升(>30%)=拥挤交易, squeeze 风险高.
+    if cfg.get("short_squeeze_check_enabled", True):
+        if not is_long and short_percent is not None and short_percent > 30.0:
+            reasons.append(f"short_squeeze_risk(short_percent={short_percent:.1f}%>30%)")
+    # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
+    if cfg.get("insider_divergence_check_enabled", True):
+        if insider_signal:
+            if is_long and insider_signal == "sell":
+                reasons.append(f"insider_divergence(LONG vs insider_sell)")
+            elif not is_long and insider_signal == "buy":
+                reasons.append(f"insider_divergence(SHORT vs insider_buy)")
     return (not reasons), reasons
 
 
@@ -587,6 +606,30 @@ def run_scan(scheduler=None) -> int:
             except Exception:
                 pass  # 资金流读取失败 → None → 不拦 (fail-open)
 
+        # 2026-08-22 (用户裁决): 卖空压力检查 — 读该标的每日卖空成交量.
+        short_percent = None
+        if cfg.get("short_squeeze_check_enabled", True):
+            try:
+                from app.data.providers.futu_extended_provider import FutuExtendedProvider
+                _futu_ext = FutuExtendedProvider()
+                _dsv = _futu_ext.get_daily_short_volume(sym)
+                if _dsv.get("status") == "ok" and _dsv.get("data"):
+                    short_percent = _dsv["data"].get("short_percent")
+            except Exception:
+                pass  # 卖空数据读取失败 → None → 不拦 (fail-open)
+
+        # 2026-08-22 (用户裁决): 内部人背离检查 — 读该标的内部人净买卖方向.
+        insider_signal = None
+        if cfg.get("insider_divergence_check_enabled", True):
+            try:
+                from app.data.providers.futu_extended_provider import FutuExtendedProvider
+                _futu_ext = FutuExtendedProvider()
+                _it = _futu_ext.get_insider_trades(sym)
+                if _it.get("status") == "ok" and _it.get("data"):
+                    insider_signal = _it["data"].get("signal")  # "buy" / "sell" / "neutral"
+            except Exception:
+                pass  # 内部人数据读取失败 → None → 不拦 (fail-open)
+
         # ── 2026-08-12 方向顺势裁决 (用户裁决直接落地): slope_5m 符号定方向, 缺失/0 → 继承前笔 ──
         direction, dir_mode = choose_direction(
             prior["direction"],
@@ -603,6 +646,8 @@ def run_scan(scheduler=None) -> int:
             float(atr_pct) if atr_pct is not None else None,
             vol_ratio, spread_bps, cfg,
             capital_flow_direction=capital_flow_direction,
+            short_percent=short_percent,
+            insider_signal=insider_signal,
         )
         base.update({"price": price, "vwap": vwap, "slope_5m": slope_5m,
                      "atr_pct": atr_pct, "vol_ratio": vol_ratio,
