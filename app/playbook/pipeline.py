@@ -1108,6 +1108,19 @@ def _build_instructions_from_votes(
     # §2.7 修复: 统一用 _normalize_regime_str, 与 regime_mults 键空间对齐 (原 str(enum) 恒命中默认 0.5)
     regime_str = _normalize_regime_str(regime_context)
 
+    # 2026-08-22 (P2): factor_ic_latest.json 循环外一次读取 — 原循环内逐候选 open+json.load,
+    #   20-50 候选重复读同一文件. 提到循环外, 函数级一次读取.
+    _factor_ic_global = {}
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        _ic_path = _Path("data/factor_ic_latest.json")
+        if _ic_path.exists():
+            with open(_ic_path) as _f:
+                _factor_ic_global = _json.load(_f)
+    except Exception:
+        _factor_ic_global = {}
+
     # Regime 仓位乘数
     regime_mults = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}
     regime_mult = regime_mults.get(regime_str, 0.5)
@@ -1352,15 +1365,9 @@ def _build_instructions_from_votes(
         if _bear_count > 0 or _bull_count > 0:
             # 用因子IC加权判断净方向（如果有IC数据）
             try:
-                import json as _json
-                from pathlib import Path as _Path
-                _ic_path = _Path("data/factor_ic_latest.json")
-                _factor_ic = {}
-                if _ic_path.exists():
-                    with open(_ic_path) as _f:
-                        _factor_ic = _json.load(_f)
+                _factor_ic = _factor_ic_global  # P2: 循环外已读, 复用
             except Exception:
-                _factor_ic = {}
+                _factor_ic = _factor_ic_global
 
             # ── 2026-08-20 (DEB §五十四): 方向条件化 IC 净分, 取代 pooled 加权 ──
             if direction in ("BUY", "SELL_SHORT"):

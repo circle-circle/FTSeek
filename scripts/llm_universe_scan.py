@@ -180,13 +180,20 @@ def _cfg(dotted: str, default=None):
         return default
 
 
+# 2026-08-22 (P2): _build_router 模块级缓存 — scan→inject→push 链 2-3 次重复构造
+_ROUTER_CACHE = None
+
 def _build_router():
+    global _ROUTER_CACHE
+    if _ROUTER_CACHE is not None:
+        return _ROUTER_CACHE
     from app.data.market_data_router import MarketDataRouter
-    return MarketDataRouter(
+    _ROUTER_CACHE = MarketDataRouter(
         twelvedata_api_key=os.getenv("TWELVEDATA_API_KEY"),
         finnhub_api_key=os.getenv("FINNHUB_API_KEY"),
         alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY"),
     )
+    return _ROUTER_CACHE
 
 
 def _batch_quotes(router, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
