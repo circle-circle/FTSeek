@@ -385,26 +385,14 @@ def attribution_execution(db, today, window_days=7):
 # 归因视角 7: 影子归因
 # ════════════════════════════════════════════════════════════
 def attribution_shadow(db, today, window_days=7):
-    """shadow策略对比: baseline vs 变种"""
-    since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-    rows = db.execute("""
-        SELECT strategy, COUNT(*) as cnt,
-               SUM(CASE WHEN (realized_pnl - COALESCE(commission, 0)) > 0 THEN 1 ELSE 0 END) as wins,
-               SUM(realized_pnl - COALESCE(commission, 0)) as total_pnl,
-               AVG(pnl_pct) as avg_pnl_pct,
-               AVG(holding_minutes) as avg_hold
-        FROM shadow_trades
-        WHERE DATE(entry_time) >= ? AND closed = 1
-        GROUP BY strategy ORDER BY total_pnl DESC
-    """, (since,)).fetchall()
-    return [{
-        "strategy": r['strategy'],
-        "cnt": r['cnt'], "wins": r['wins'],
-        "win_rate": r['wins'] / r['cnt'] * 100 if r['cnt'] > 0 else 0,
-        "total_pnl": r['total_pnl'] or 0,
-        "avg_pnl_pct": r['avg_pnl_pct'] or 0,
-        "avg_hold": r['avg_hold'] or 0,
-    } for r in rows]
+    """shadow策略对比: baseline vs 变种.
+
+    2026-08-22 (结案A2): shadow_trades 表已死 — 全库无 INSERT 写入方,
+    最后记录 2026-06-23 (策略改走 playbook_sim 通道). 原实现 7 天窗口恒空
+    属死查询. 保留签名 (synthesize_debate 消费), 直接返回空列表.
+    历史 22 行留档作影子期证据.
+    """
+    return []
 
 
 # ════════════════════════════════════════════════════════════

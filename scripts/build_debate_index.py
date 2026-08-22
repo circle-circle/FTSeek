@@ -71,11 +71,23 @@ def main():
     entries.sort(key=lambda e: (e["date"], e["id"]))
 
     # README 手工索引对账
+    # 2026-08-22 (结案A4): 漏登警告加 14 天窗口 — 手工索引定位"重要 DEB 才登
+    # (承载决策摘要)", 历史执行记录类本不该登. 原实现对全部 101 个文件对账,
+    # 92 条"需补登"警告失去判别力. 改: 仅近 14 天新文件警告需补登, 历史归档.
     readme_text = README.read_text(encoding="utf-8", errors="replace") if README.exists() else ""
     indexed_in_readme = set(re.findall(r"\[(DEB-\d{8}-[^\]]+)\]", readme_text))
     file_ids = {e["id"] for e in entries}
     missing_from_readme = sorted(file_ids - indexed_in_readme)
     stale_readme_links = sorted(indexed_in_readme - file_ids)
+    today_d = dt.date.today()
+    def _deb_date(mid: str):
+        try:
+            return dt.date(int(mid[4:8]), int(mid[8:10]), int(mid[10:12]))
+        except Exception:
+            return today_d
+    recent_missing = [m for m in missing_from_readme
+                      if (today_d - _deb_date(m)).days <= 14]
+    archived_missing = [m for m in missing_from_readme if m not in recent_missing]
 
     today = dt.date.today().isoformat()
     out = []
@@ -88,14 +100,20 @@ def main():
     out.append("")
     out.append("## 漏登对账")
     out.append("")
-    if missing_from_readme:
-        out.append(f"⚠️ 以下 **{len(missing_from_readme)}** 个文件存在但 README 索引未收录 (需补登):")
+    if recent_missing:
+        out.append(f"⚠️ 以下 **{len(recent_missing)}** 个近 14 天新文件未在 README 索引收录 (需补登):")
         out.append("")
-        for mid in missing_from_readme:
+        for mid in recent_missing:
             out.append(f"- `{mid}.md`")
     else:
-        out.append("✅ 所有 DEB 文件均已在 README 索引中收录。")
+        out.append("✅ 近 14 天新 DEB 均已在 README 索引中收录。")
     out.append("")
+    if archived_missing:
+        out.append(f"📦 历史归档 **{len(archived_missing)}** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):")
+        out.append("")
+        for mid in archived_missing:
+            out.append(f"- `{mid}.md`")
+        out.append("")
     if stale_readme_links:
         out.append(f"⚠️ README 引用了 **{len(stale_readme_links)}** 个不存在的文件 (死链):")
         out.append("")
@@ -113,12 +131,14 @@ def main():
     OUT.write_text("\n".join(out), encoding="utf-8")
 
     print(f"[debate_index] {len(entries)} 个 DEB 文件 → {OUT}")
-    if missing_from_readme:
-        print(f"  ⚠️ README 漏登 {len(missing_from_readme)} 个:")
-        for mid in missing_from_readme:
+    if recent_missing:
+        print(f"  ⚠️ README 漏登 {len(recent_missing)} 个 (近14天):")
+        for mid in recent_missing:
             print(f"    - {mid}")
     else:
-        print("  ✅ README 索引无漏登")
+        print("  ✅ README 索引无漏登 (近14天)")
+    if archived_missing:
+        print(f"  📦 历史归档未登 {len(archived_missing)} 个 (不强制)")
     if stale_readme_links:
         print(f"  ⚠️ README 死链 {len(stale_readme_links)} 个: {stale_readme_links}")
 

@@ -1,13 +1,38 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-20), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-22), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
 共 **101** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **92** 个文件存在但 README 索引未收录 (需补登):
+⚠️ 以下 **22** 个近 14 天新文件未在 README 索引收录 (需补登):
+
+- `DEB-20260808-premarket-intraday-verification.md`
+- `DEB-20260808-signal-source-strategy.md`
+- `DEB-20260811-dead-order-early-detection.md`
+- `DEB-20260811-direction-momentum-gate.md`
+- `DEB-20260811-gate1-sprint-829.md`
+- `DEB-20260811-quality-gate-calibration.md`
+- `DEB-20260812-blackout-1015-oos.md`
+- `DEB-20260812-entry-reference-dynamic-anchor.md`
+- `DEB-20260812-futu-unused-channels.md`
+- `DEB-20260813-dead-order-early-exit.md`
+- `DEB-20260814-da-prompt-gate-bottleneck.md`
+- `DEB-20260815-stable-profit-feasibility.md`
+- `DEB-20260816-fullchain-code-review.md`
+- `DEB-20260816-long-expectancy-audit.md`
+- `DEB-20260816-no-trigger-direction-edge.md`
+- `DEB-20260816-regime-entry-gate.md`
+- `DEB-20260816-short-generation-funnel.md`
+- `DEB-20260817-symbol-profile-market-sense.md`
+- `DEB-20260818-futu-capability-audit.md`
+- `DEB-20260818-overnight-reprice-shadow.md`
+- `DEB-20260818-us-chain-retrospective.md`
+- `DEB-20260819-symbol-pangan.md`
+
+📦 历史归档 **70** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -79,28 +104,6 @@
 - `DEB-20260802-short-overnight-hold.md`
 - `DEB-20260806-source-control.md`
 - `DEB-20260807-grilling-e1-e2.md`
-- `DEB-20260808-premarket-intraday-verification.md`
-- `DEB-20260808-signal-source-strategy.md`
-- `DEB-20260811-dead-order-early-detection.md`
-- `DEB-20260811-direction-momentum-gate.md`
-- `DEB-20260811-gate1-sprint-829.md`
-- `DEB-20260811-quality-gate-calibration.md`
-- `DEB-20260812-blackout-1015-oos.md`
-- `DEB-20260812-entry-reference-dynamic-anchor.md`
-- `DEB-20260812-futu-unused-channels.md`
-- `DEB-20260813-dead-order-early-exit.md`
-- `DEB-20260814-da-prompt-gate-bottleneck.md`
-- `DEB-20260815-stable-profit-feasibility.md`
-- `DEB-20260816-fullchain-code-review.md`
-- `DEB-20260816-long-expectancy-audit.md`
-- `DEB-20260816-no-trigger-direction-edge.md`
-- `DEB-20260816-regime-entry-gate.md`
-- `DEB-20260816-short-generation-funnel.md`
-- `DEB-20260817-symbol-profile-market-sense.md`
-- `DEB-20260818-futu-capability-audit.md`
-- `DEB-20260818-overnight-reprice-shadow.md`
-- `DEB-20260818-us-chain-retrospective.md`
-- `DEB-20260819-symbol-pangan.md`
 
 ## 全量清单 (按日期)
 
@@ -202,8 +205,8 @@
 | [DEB-20260816-regime-entry-gate](DEB-20260816-regime-entry-gate.md) | 2026-08-16 | 提案裁决中 (未实施; 用户策略哲学第①点"入场选择做好接线") | - | 108 |
 | [DEB-20260816-short-generation-funnel](DEB-20260816-short-generation-funnel.md) | 2026-08-16 | 共识项1已实施 (2026-08-16 §九: prompt score 语义+record-only一致性校验, 零执行风险); 项2-5 按阶段纪律留待 | - | 777 |
 | [DEB-20260817-symbol-profile-market-sense](DEB-20260817-symbol-profile-market-sense.md) | 2026-08-17 | (未标注) | 6 | 543 |
-| [DEB-20260818-futu-capability-audit](DEB-20260818-futu-capability-audit.md) | 2026-08-18 | 审计完成 + P1 收口 + **交叉审查完成**（8/18 第 3 轮离线核验 6/6 过、零勘误；补充建议 7 项待裁，盘中补测列为 P2 裁决窗前置条件）(record-only，零执行路径改动) | 3 | 280 |
+| [DEB-20260818-futu-capability-audit](DEB-20260818-futu-capability-audit.md) | 2026-08-18 | 审计完成 + P1 收口 + 交叉审查完成（8/18 第 3 轮）+ 第 4 轮能力补接与落地（2026-08-21）：analyst_consensus 复活、影子判官补齐、capital_flow 首轮 IC +0.119、deriv 假说暂否、OFI 基线采集与宏观事件日程接入 + 第 5 轮交叉审查（2026-… | 6 | 451 |
 | [DEB-20260818-overnight-reprice-shadow](DEB-20260818-overnight-reprice-shadow.md) | 2026-08-18 | 已落地运行（record-only），攒样中；8/18 Qoder 独立核查：§一基线已勘误（ET 口径）+ 发现 2/3 已由 Hermes 修复并三路径验证（§七.3） | - | 150 |
 | [DEB-20260818-us-chain-retrospective](DEB-20260818-us-chain-retrospective.md) | 2026-08-18 | (未标注) | 3 | 242 |
-| [DEB-20260819-symbol-pangan](DEB-20260819-symbol-pangan.md) | 2026-08-19 | 全链已落地运行：§九 Qoder 发现 R1/R2 循环 bug + 门槛未校准 → §十 Hermes 坐实+修复重跑（仅 R5 过四关）→ §十一 分钟数据勘误禁令解除 → §十二 第一版卡 29×37 → §十三 用户裁 SIM 直接应用 → §十五 六项修订全落地（27×34，cron 05:50）+ §十六 … | - | 2702 |
-| [DEB-20260820-architecture-quant-dual-audit](DEB-20260820-architecture-quant-dual-audit.md) | 2026-08-20 | (未标注) | 4 | 439 |
+| [DEB-20260819-symbol-pangan](DEB-20260819-symbol-pangan.md) | 2026-08-19 | 全链已落地运行：§九 Qoder 发现 R1/R2 循环 bug + 门槛未校准 → §十 Hermes 坐实+修复重跑（仅 R5 过四关）→ §十一 分钟数据勘误禁令解除 → §十二 第一版卡 29×37 → §十三 用户裁 SIM 直接应用 → §十五 六项修订全落地（27×34，cron 05:50）+ §十六 … | 1 | 2900 |
+| [DEB-20260820-architecture-quant-dual-audit](DEB-20260820-architecture-quant-dual-audit.md) | 2026-08-20 | (未标注) | 7 | 539 |

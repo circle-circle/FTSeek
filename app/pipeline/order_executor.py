@@ -4191,34 +4191,10 @@ def _update_trade_attribution(
             conn.commit()
             logger.debug(f"✅ 归因更新：{trace_id} | PnL={pnl:.2f} | Score={final_score}")
 
-            # 2026-06-01: 修复 voting_predictions outcome 回填断裂
-            # 原问题: VotingAccuracyTracker.update_outcome 从未被调用,
-            # 导致 39 笔 voting_predictions 记录 outcome_match 全 NULL, 模型校准盲飞
-            try:
-                # 从 trade_records 查 direction (trade_attribution 没存 direction)
-                row = cursor.execute(
-                    "SELECT direction, trade_date FROM trade_records WHERE trace_id = ? LIMIT 1",
-                    (trace_id,)
-                ).fetchone()
-                if row:
-                    _direction, _trade_date = row[0], row[1]
-                    # 归一化方向: SHORT_PROXY_OPTION / SHORT_PROXY 等 → SHORT
-                    _direction_clean = str(_direction).upper()
-                    if _direction_clean.startswith("SHORT"):
-                        _direction_clean = "SHORT"
-                    elif _direction_clean.startswith("LONG"):
-                        _direction_clean = "LONG"
-                    from app.analysis.voting_accuracy_tracker import get_voting_accuracy_tracker
-                    _tracker = get_voting_accuracy_tracker()
-                    _tracker.update_outcome(
-                        symbol=symbol,
-                        actual_pnl=float(pnl),
-                        actual_direction=_direction_clean,
-                        trade_date=str(_trade_date),
-                    )
-                    logger.debug(f"[VotingAccuracy] 回填 {symbol} direction={_direction_clean} pnl={pnl:.2f}")
-            except Exception as _e_voting:
-                logger.debug(f"[VotingAccuracy] 回填失败 (不影响主流程): {_e_voting}")
+            # 2026-08-22 (结案A1): voting_predictions 回填块删除 —
+            # 三模型投票架构 2026-07-12 已废 (表最后写入 7/12), 此块是唯一活写入方.
+            # 旧信号链接线 (scan_loop) 保持配置静默不动 (稳定性边界), 仅断死表写入.
+            # 历史 1943 行留档作投票期校准证据, 不再回填.
 
     except Exception as e:
         logger.warning(f"更新归因记录失败：{e}")
