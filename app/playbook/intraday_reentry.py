@@ -188,7 +188,11 @@ _DEFAULTS: Dict[str, Any] = {
     "sec_event_divergence_check_enabled": True,
     # 2026-08-22 (用户裁决): 多源情绪验证 — social_sentiment 与 finnhub 情绪分数背离时拒绝.
     #   证伪机制: 多源情绪背离不预测方向, 但告诉你情绪数据可能不可靠.
-    "social_sentiment_divergence_check_enabled": True,
+    #   2026-08-22 接线修复 (ADR-032): 默认改 False — 实测 social_sentiment.collect_sentiment
+    #   返回结构 {symbol, reddit[], hackernews[], polymarket[], summary{计数}, fetched_at}
+    #   全程无极性分数 (只有点赞数与标题文本), 本门需要的带符号 score 无从取得;
+    #   与其留着恒不触发的死门伪装保护, 不如诚实关断, 待接入有符号分数的源再启用.
+    "social_sentiment_divergence_check_enabled": False,
     # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
     #   证伪机制: 逐笔情绪不预测方向, 但告诉你盘中实时情绪已变.
     "ticker_sentiment_divergence_check_enabled": True,
@@ -229,6 +233,74 @@ def _now_hhmm_et() -> int:
     from app.utils.timezone import now_et
     n = now_et()
     return n.hour * 100 + n.minute
+
+
+# ── 2026-08-22 证伪门接线修复 (ADR-032, 用户裁"请修复") ──────────────────────
+# 修复前四个门按想象 schema 读 provider (buy_pct/sell_pct、dict键财报、social score、
+# buy_strength/sell_strength 均不存在) → 恒 None → 永不触发。以下 helper 按真实
+# 签名适配, 纯函数可单测; run_scan 接线只调 helper 不再自读键名。
+
+def _derive_analyst_trend(rt: Optional[dict]) -> Optional[str]:
+    """从 get_recommendation_trend 真实输出 {periods: [{strong_buy,buy,hold,sell,
+    strong_sell}, ...]} (periods[0]=当月, [1]=上月) 推导修订动量方向。
+
+    语义 = 净多头占比 (bull-bear)/total 的环比变化: ≥+5pp → upgrade, ≤−5pp →
+    downgrade, 其余 (含样本<2期/无覆盖) → None。±5pp 死区防月度噪声误触。
+    """
+    periods = (rt or {}).get("periods") or []
+    if len(periods) < 2:
+        return None
+
+    def _net(p: dict) -> Optional[float]:
+        bull = (p.get("strong_buy") or 0) + (p.get("buy") or 0)
+        bear = (p.get("sell") or 0) + (p.get("strong_sell") or 0)
+        total = bull + bear + (p.get("hold") or 0)
+        return (bull - bear) / total if total > 0 else None
+
+    now, prev = _net(periods[0]), _net(periods[1])
+    if now is None or prev is None:
+        return None
+    delta = now - prev
+    if delta >= 0.05:
+        return "upgrade"
+    if delta <= -0.05:
+        return "downgrade"
+    return None
+
+
+def _find_days_to_earnings(earnings: Optional[list], symbol: str) -> Optional[int]:
+    """从 get_watchlist_earnings 真实输出 List[Dict] (行含 Futu 格式 symbol /
+    days_until) 中找该标的的距财报天数。未覆盖/字段缺失 → None。"""
+    for row in earnings or []:
+        if isinstance(row, dict) and row.get("symbol") == symbol:
+            du = row.get("days_until")
+            if du is None:
+                return None
+            try:
+                return int(du)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _derive_ticker_direction(ts: Optional[dict]) -> Optional[str]:
+    """从 get_ticker_sentiment 真实输出 {sentiment: [-1,1], buy_ratio,
+    volume_weighted, confidence} 推导盘中逐笔情绪方向。
+
+    confidence<=0 (无成交数据时的 default 返回) → None; sentiment ±0.15 死区外
+    才给方向, 防近零流量噪声。
+    """
+    if not ts or float(ts.get("confidence") or 0) <= 0:
+        return None
+    s = ts.get("sentiment")
+    if s is None:
+        return None
+    s = float(s)
+    if s >= 0.15:
+        return "bullish"
+    if s <= -0.15:
+        return "bearish"
+    return None
 
 
 def evaluate_candidate(direction: str, price: float, vwap: float,
@@ -706,34 +778,30 @@ def run_scan(scheduler=None) -> int:
                 pass  # 内部人数据读取失败 → None → 不拦 (fail-open)
 
         # 2026-08-22 (用户裁决): 分析师背离检查 — 读该标的分析师评级趋势.
+        # 2026-08-22 接线修复 (ADR-032): 原读不存在的 buy_pct/sell_pct 键恒死;
+        # 改 _derive_analyst_trend 按真实 {periods:[...]} schema 推修订动量.
         analyst_trend = None
         if cfg.get("analyst_divergence_check_enabled", True):
             try:
                 from app.data.analyst_revision_provider import get_analyst_provider
                 _ap = get_analyst_provider()
                 _rt = _ap.get_recommendation_trend(sym)
-                if _rt and isinstance(_rt, dict):
-                    # 简化: buy_pct > sell_pct → upgrade, 反之 downgrade
-                    buy_pct = _rt.get("buy_pct", 0)
-                    sell_pct = _rt.get("sell_pct", 0)
-                    if buy_pct > sell_pct:
-                        analyst_trend = "upgrade"
-                    elif sell_pct > buy_pct:
-                        analyst_trend = "downgrade"
+                analyst_trend = _derive_analyst_trend(_rt if isinstance(_rt, dict) else None)
             except Exception:
                 pass  # 分析师数据读取失败 → None → 不拦 (fail-open)
 
         # 2026-08-22 (用户裁决): 财报临近检查 — 读该标的财报日期.
+        # 2026-08-22 接线修复 (ADR-032): 原对 List[Dict] 做 `sym in _earn` 恒 False;
+        # 改 _find_days_to_earnings 遍历行匹配 Futu 格式 symbol.
         days_to_earnings = None
         if cfg.get("earnings_proximity_check_enabled", True):
             try:
-                from app.data.earnings_calendar import get_earnings_calendar
-                _ec = get_earnings_calendar()
+                # ADR-032: 原导入名 get_earnings_calendar 不存在(ImportError 被 fail-open
+                # 吞掉, 系该门第三重死因); 全库规范用法为直接实例化 EarningsCalendar.
+                from app.data.earnings_calendar import EarningsCalendar
+                _ec = EarningsCalendar()
                 _earn = _ec.get_watchlist_earnings(watchlist_symbols=[sym])
-                if _earn and sym in _earn:
-                    _e = _earn[sym]
-                    if _e and isinstance(_e, list) and len(_e) > 0:
-                        days_to_earnings = _e[0].get("days_until")
+                days_to_earnings = _find_days_to_earnings(_earn, sym)
             except Exception:
                 pass  # 财报数据读取失败 → None → 不拦 (fail-open)
 
@@ -764,6 +832,9 @@ def run_scan(scheduler=None) -> int:
                 pass  # 重大事件读取失败 → None → 不拦 (fail-open)
 
         # 2026-08-22 (用户裁决): 多源情绪验证 — 读 social_sentiment.
+        # 2026-08-22 接线修复 (ADR-032): 该源返回结构无极性分数 (仅计数/点赞/标题),
+        # 本门默认关断 (_DEFAULTS False); 下方 .get("score") 在现源下恒 None, 属已知
+        # 不可实现, 留作接入带符号分数源后的接线占位.
         social_sentiment_score = None
         if cfg.get("social_sentiment_divergence_check_enabled", True):
             try:
@@ -775,20 +846,15 @@ def run_scan(scheduler=None) -> int:
                 pass  # 社交情绪读取失败 → None → 不拦 (fail-open)
 
         # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — 读逐笔成交情绪.
+        # 2026-08-22 接线修复 (ADR-032): 原读不存在的 buy_strength/sell_strength 键恒死;
+        # 改 _derive_ticker_direction 按真实 {sentiment, confidence} schema 推方向.
         ticker_sentiment = None
         if cfg.get("ticker_sentiment_divergence_check_enabled", True):
             try:
                 from app.data.futu_lv3_provider import get_futu_lv3_provider
                 _lv3 = get_futu_lv3_provider()
                 _ts = _lv3.get_ticker_sentiment(sym, window=30)
-                if _ts and isinstance(_ts, dict):
-                    # 简化: buy_strength > sell_strength → bullish, 反之 bearish
-                    buy_str = _ts.get("buy_strength", 0)
-                    sell_str = _ts.get("sell_strength", 0)
-                    if buy_str > sell_str:
-                        ticker_sentiment = "bullish"
-                    elif sell_str > buy_str:
-                        ticker_sentiment = "bearish"
+                ticker_sentiment = _derive_ticker_direction(_ts if isinstance(_ts, dict) else None)
             except Exception:
                 pass  # 逐笔情绪读取失败 → None → 不拦 (fail-open)
 
