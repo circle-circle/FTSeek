@@ -164,6 +164,10 @@ _DEFAULTS: Dict[str, Any] = {
     #   注意: overnight_hold_enabled 总开关下 OVERNIGHT_GAP_STOP 不生效, 持夜风险由
     #   原 SL 1.5% 兜底 (开盘跳空越 SL 有次日市价滑点风险, sim 期可接受, 影子记录对照).
     "overnight_hold_loser_enabled": False,
+    # 2026-08-22 (用户裁决): 资金流背离检查 — DA方向与实时大单资金流背离时拒绝重武装.
+    #   数据源: futu_capital_flow.jsonl 盘中300s节流采集, 读最近一条该标的大单净流入方向.
+    #   证伪机制非预测机制: 资金流不告诉你该做什么, 但告诉你不该做什么(方向背离时别重入场).
+    "capital_flow_divergence_check_enabled": True,
 }
 
 
@@ -200,7 +204,7 @@ def _now_hhmm_et() -> int:
 def evaluate_candidate(direction: str, price: float, vwap: float,
                        slope_5m: Optional[float], atr_pct: Optional[float],
                        vol_ratio: Optional[float], spread_bps: Optional[float],
-                       cfg: Dict[str, Any]) -> Tuple[bool, List[str]]:
+                       cfg: Dict[str, Any], capital_flow_direction: Optional[str] = None) -> Tuple[bool, List[str]]:
     """纯函数: 盘中指标是否确认 thesis 延续 (可单测, 零 IO).
 
     LONG: 回踩区 [vwap×(1−low), vwap×(1+high)] 内 + slope>min + 量比/ATR/spread 达标.
@@ -229,6 +233,14 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
         reasons.append(f"vol_ratio({vol_ratio}<{cfg['min_vol_ratio']})")
     if spread_bps is None or spread_bps > float(cfg["max_spread_bps"]):
         reasons.append(f"spread_bps({spread_bps}>{cfg['max_spread_bps']})")
+    # 2026-08-22 (用户裁决): 资金流背离检查 — DA方向与实时大单资金流背离时拒绝.
+    #   证伪机制非预测机制: 资金流不告诉你该做什么, 但告诉你不该做什么(方向背离时别重入场).
+    if cfg.get("capital_flow_divergence_check_enabled", True):
+        if capital_flow_direction:
+            if is_long and capital_flow_direction == "OUTFLOW":
+                reasons.append(f"capital_flow_divergence(LONG vs OUTFLOW)")
+            elif not is_long and capital_flow_direction == "INFLOW":
+                reasons.append(f"capital_flow_divergence(SHORT vs INFLOW)")
     return (not reasons), reasons
 
 
@@ -556,6 +568,25 @@ def run_scan(scheduler=None) -> int:
         except Exception:
             micro = None
 
+        # 2026-08-22 (用户裁决): 资金流背离检查 — 读最近一条该标的大单净流入方向.
+        #   数据源: futu_capital_flow.jsonl 盘中300s节流采集, 读最后一条.
+        capital_flow_direction = None
+        if cfg.get("capital_flow_divergence_check_enabled", True):
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                _cf_path = _Path("data/futu_capital_flow.jsonl")
+                if _cf_path.exists():
+                    _cf_lines = _cf_path.read_text().strip().split("\n")
+                    for _line in reversed(_cf_lines):
+                        _d = _json.loads(_line)
+                        if _d.get("symbol") == sym:
+                            _large_flow = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
+                            capital_flow_direction = "INFLOW" if _large_flow > 0 else "OUTFLOW"
+                            break
+            except Exception:
+                pass  # 资金流读取失败 → None → 不拦 (fail-open)
+
         # ── 2026-08-12 方向顺势裁决 (用户裁决直接落地): slope_5m 符号定方向, 缺失/0 → 继承前笔 ──
         direction, dir_mode = choose_direction(
             prior["direction"],
@@ -571,6 +602,7 @@ def run_scan(scheduler=None) -> int:
             float(slope_5m) if slope_5m is not None else None,
             float(atr_pct) if atr_pct is not None else None,
             vol_ratio, spread_bps, cfg,
+            capital_flow_direction=capital_flow_direction,
         )
         base.update({"price": price, "vwap": vwap, "slope_5m": slope_5m,
                      "atr_pct": atr_pct, "vol_ratio": vol_ratio,
