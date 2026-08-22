@@ -827,50 +827,64 @@ def _build_track_record_context(db_path=None, limit: int = 25, days: int = 30) -
     cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
     try:
         conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
-        rows = conn.execute(
-            """
+        base = """
             SELECT date, symbol, direction, confidence, fwd_return_t1, fwd_return_t5
             FROM playbook_instructions
             WHERE direction IN ('BUY', 'SELL_SHORT')
-              AND date >= ?
-              AND fwd_return_t5 IS NOT NULL
+              AND date >= ? AND {cond}
             ORDER BY date DESC, id DESC
             LIMIT ?
-            """,
-            (cutoff, limit),
+            """
+        settled = conn.execute(base.format(cond="fwd_return_t5 IS NOT NULL"),
+                               (cutoff, limit)).fetchall()
+        # 2026-08-22b 新鲜度修正: 旧版只看已结算(T+5非空) → 最近一周的判断整批不可见
+        # (实测105笔被丢), 成绩单恒滞后一周。追加"待定"段: T+1 已回填、T+5 未到期的近周判断。
+        pending = conn.execute(
+            base.format(cond="fwd_return_t5 IS NULL AND fwd_return_t1 IS NOT NULL"),
+            (cutoff, 10),
         ).fetchall()
         conn.close()
     except Exception as e:
         logger.warning(f"[track_record_context] 查询失败: {e}")
         return "【⚠️ 个体级自战绩不可用】(查询失败) — 无历史判断记录可对齐。"
 
-    if not rows:
+    if not settled and not pending:
         return ("【⚠️ 个体级自战绩不可用】(近%d日无已回填的方向性判断) — "
                 "无历史判断记录可对齐。" % days)
 
     lines = [f"【⚠️ 你的最近判断与实际结果 (个体级, 近{days}日, 新→旧) — 出新判断前必须逐条对齐】"]
-    hit5 = hit1 = n1 = 0
-    for d, sym, direc, conf, f1, f5 in rows:
-        mark5 = "✓" if f5 > 0 else "✗"
-        s5 = f"{f5 * 100:+.1f}%"
+    hit5 = hit1 = 0
+    by_dir = {}
+    for d, sym, direc, conf, f1, f5 in settled:
         s1 = f"{f1 * 100:+.1f}%" if f1 is not None else "—"
-        lines.append(f"  {d[5:]} | {sym:<9} | {direc:<10} | conf={conf} | T+1 {s1:>7} | T+5 {s5:>7} {mark5}")
+        lines.append(f"  {d[5:]} | {sym:<9} | {direc:<10} | conf={conf}"
+                     f" | T+1 {s1:>7} | T+5 {f5 * 100:+.1f}% {'✓' if f5 > 0 else '✗'}")
         hit5 += 1 if f5 > 0 else 0
         if f1 is not None:
-            n1 += 1
             hit1 += 1 if f1 > 0 else 0
-
-    n = len(rows)
-    by_dir = {}
-    for _, _, direc, _, _, f5 in rows:
         c = by_dir.setdefault(direc, [0, 0])
         c[0] += 1 if f5 > 0 else 0
         c[1] += 1
-    summary = [f"小结: T+5 命中 {hit5}/{n} ({hit5 / n:.0%})"
-               + (f", T+1 命中 {hit1}/{n1} ({hit1 / n1:.0%})" if n1 else "")]
+
+    if pending:
+        lines.append("  ── 近期未结算 (T+5未到期, 先看T+1方向) ──")
+        for d, sym, direc, conf, f1, _ in pending:
+            s1 = f"{f1 * 100:+.1f}%" if f1 is not None else "—"
+            lines.append(f"  {d[5:]} | {sym:<9} | {direc:<10} | conf={conf} | T+1 {s1:>7} | 待定")
+            if f1 is not None:
+                hit1 += 1 if f1 > 0 else 0
+
+    n5 = len(settled)
+    summary = []
+    if n5:
+        summary.append(f"T+5 命中 {hit5}/{n5} ({hit5 / n5:.0%})")
+    if hit1 or pending:
+        n1 = sum(1 for r in settled if r[4] is not None) + len(pending)
+        summary.append(f"T+1 命中 {hit1}/{n1} ({hit1 / n1:.0%})")
     for direc, (h, t) in sorted(by_dir.items()):
-        summary.append(f"{direc} {h}/{t}")
-    lines.append("  " + " | ".join(summary))
+        summary.append(f"{direc} T+5 {h}/{t}")
+    lines.append("  小结: " + (" | ".join(summary) if summary else "暂无可结算样本"))
+    lines.append("  注: 同日同板块样本走势相关, 命中数≠独立试验数; '待定'=T+5未到结算日。")
     lines.append("使用要求: 若本次新判断与上述个体历史模式一致（如同方向连续✗仍同向出手），"
                  "必须给出本次的具体差异化证据，否则降级为 watch_only/NO_TRADE。")
     return "\n".join(lines)

@@ -52,7 +52,7 @@ def test_short_signed_convention_positive_signed_value_is_win(tmp_path):
         ("2026-08-14", "US.JD", "SELL_SHORT", 70, None, 0.05),
     ])
     out = _build_track_record_context(db_path=db)
-    assert "✓" in out and "T+5 命中 1/1" in out and "SELL_SHORT 1/1" in out
+    assert "✓" in out and "T+5 命中 1/1" in out and "SELL_SHORT T+5 1/1" in out
 
 
 def test_null_t1_renders_dash_not_crash(tmp_path):
@@ -60,6 +60,24 @@ def test_null_t1_renders_dash_not_crash(tmp_path):
     out = _build_track_record_context(db_path=db)
     assert "T+1" in out and "—" in out       # 缺 T+1 显示占位不崩
     assert "T+5 命中 1/1" in out
+
+
+def test_t5_pending_row_visible_but_excluded_from_t5_stats(tmp_path):
+    """2026-08-22b 新鲜度修正: 双段渲染 — 已结算段保住 T+5 判决记录,
+    待定段让近一周(T+5未到期, 实测105笔曾被静默丢掉)的判断可见。"""
+    db = _make_db(tmp_path, [
+        ("2026-08-21", "US.AMD", "BUY", 60, 0.010, None),   # 仅 T+1 已回填 → 待定段
+        ("2026-08-14", "US.CVX", "BUY", 50, 0.023, 0.036),  # 已结算段
+    ])
+    out = _build_track_record_context(db_path=db)
+    i_amd = out.index("US.AMD")
+    line_amd = out[out.rfind("\n", 0, i_amd) + 1: out.index("\n", i_amd)]
+    assert "待定" in line_amd                 # 行内可见但明确标注未结算
+    assert "未结算" in out                    # 分段标题
+    assert "T+5 命中 1/1" in out              # 小结只统计已结算子集
+    assert "独立试验数" in out                # 独立性脚注
+    # T+1 统计覆盖两段 (待定行的 T+1 计入)
+    assert "T+1 命中 2/2" in out
 
 
 # ── 缺数据不编造 ─────────────────────────────────────────────────────────
