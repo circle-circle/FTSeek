@@ -128,6 +128,7 @@
 - **"盘感"假设查证引出的架构事实**: LLM 权重冻结/无自身历史检索 → 反馈注入是模型经验唯一通道; 而该通道 (`_build_signal_quality_context` → unified_debate_engine:159/:238 每日活体注入) 三处坏损: 键名错配(读 confidence_map 真键 confidence_winrate_map→置信度段恒空) / 依赖已删的 ic_audit_report_2026-06-19.md→fallback 硬编码 6/19 数字 / 每日注入"优先推荐manual方向"误导结论。
 - **修复三件 (全部纯增量, schema 零改动)**: ①重写 `_build_signal_quality_context`(真键渲染+期望值列+缺数据报"不可用"不编造) ②strategy.py 规则块修订("突发事件特权 conf≥0.7"→置信度校准锚/"防御只做SHORT"→对称证据门槛/周期对齐 T+5/Livermore 止损10%行去执行器冲突) ③DA SYSTEM_PROMPT 增补自我认知原则11-13条(校准/空头对称/差异化理由)。修复后辩论引擎每日可见 conf-期望倒挂实况 (0-0.3桶期望+0.85%最高)。
 - **验证**: tests/core/test_signal_quality_context.py 6例全过, 含真实 latest.json 活体哨兵(防硬编码谎言复发)。落档 DEB-20260822 §九 + ADR-031。回滚=revert hunk 无迁移。变更日期在案, 8/29 终裁如需可切窗对照。
+- **追加(同日用户令"继续")**: 个体级自战绩注入 `_build_track_record_context` — 近30日方向判断逐行`日期|标的|方向|conf|T+1|T+5 ✓✗`+小结拼入 signal_quality 块尾(模板零改动全下游兼容), 数据源 fwd_return_t{N} 方向带符号, ~700token/日; 首跑实况: 近25笔 T+5 命中仅 **28%**(BUY 7/23, SHORT 0/2) — 模型首次看见自己逐笔成绩单。DEB §十; 测试7例(方向符号约定/真库冒烟)合计13例全过。9月影子臂A/B注入端基建就绪。
 
 ### 2026-08-21 (Hermes 晚间批核查 — Qoder, 用户令"核查, 确认合理性以及是否还有更好的方案")
 - **核查对象**: Hermes 晚间 6 提交 (62179874 SKIP过滤 / ab9874d2+1f96122f+e2348028 conf伪概率移除 / 5a8a3237 UE self_tier评估器 / 06432156 AMZN误杀三件套) + 未提交 be_exit_class。审查轮落 **DEB-20260819 §五十六**。

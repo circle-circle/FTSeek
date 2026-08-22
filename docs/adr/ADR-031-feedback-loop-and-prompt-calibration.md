@@ -14,6 +14,7 @@
 2. strategy.py 规则块修订: 置信度校准锚替代 0.7+ 特权; SHORT/LONG 同等证据门槛; 周期对齐 (T+5 正指, time_horizon 建议 120h); 职责边界声明 (SL/仓位以执行引擎为准)。Livermore 铁律行去执行器冲突。
 3. deep_target_analysis.py 增补【自我认知原则】11-13 条: 校准 / 空头对称门槛 / 与历史模式一致须给差异化理由。
 4. **全部纯增量**: 不改任何输出 JSON schema, 不碰执行器/风控/消费端解析。
+5. **(同日追加, 用户令"继续") 个体级自战绩注入** `_build_track_record_context`: 近30日方向性判断逐行 `日期|标的|方向|conf|T+1|T+5 ✓✗` + 小结, 数据源 playbook_instructions.fwd_return_t{N} (方向带符号), 拼入 signal_quality 字符串尾部 → 辩论模板零改动全下游兼容; ~700 token/日; 缺数据报"不可用"不编造。详见 DEB-20260822 §十。
 
 ## 影响
 

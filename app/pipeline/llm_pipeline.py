@@ -803,6 +803,79 @@ def _build_signal_quality_context(path=None) -> str:
     return "\n".join(lines)
 
 
+def _build_track_record_context(db_path=None, limit: int = 25, days: int = 30) -> str:
+    """
+    个体级自战绩注入 — "盘感"载体 (DEB-20260822 §十, 用户裁继续)。
+
+    聚合桶统计 (_build_signal_quality_context 块) 之外, 给模型看"最近 N 次
+    同类判断 + 各自实际结果"的可对齐经验 — LLM 权重冻结/无自身历史检索,
+    这是 in-context 学习的唯一素材形态。
+
+    数据源: playbook_instructions.fwd_return_t{1,5} (ic_tracker 每日回填,
+    方向带符号 — 正值=该笔判断赚钱, 见 ic_tracker.py:289 sign 约定)。
+    只读 mode=ro; 表缺失/无样本时输出"不可用", 不编造。
+
+    接线: 拼入 _build_debate_context 的 "signal_quality" 字符串尾部
+    (模板零改动, 全部下游消费方自动兼容)。
+    回滚: 还原本函数拼接处即可, 无其他消费方。
+    """
+    p = Path(db_path) if db_path else (
+        Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+    if not p.exists():
+        return "【⚠️ 个体级自战绩不可用】(DB 缺失) — 无历史判断记录可对齐。"
+
+    cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+    try:
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        rows = conn.execute(
+            """
+            SELECT date, symbol, direction, confidence, fwd_return_t1, fwd_return_t5
+            FROM playbook_instructions
+            WHERE direction IN ('BUY', 'SELL_SHORT')
+              AND date >= ?
+              AND fwd_return_t5 IS NOT NULL
+            ORDER BY date DESC, id DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[track_record_context] 查询失败: {e}")
+        return "【⚠️ 个体级自战绩不可用】(查询失败) — 无历史判断记录可对齐。"
+
+    if not rows:
+        return ("【⚠️ 个体级自战绩不可用】(近%d日无已回填的方向性判断) — "
+                "无历史判断记录可对齐。" % days)
+
+    lines = [f"【⚠️ 你的最近判断与实际结果 (个体级, 近{days}日, 新→旧) — 出新判断前必须逐条对齐】"]
+    hit5 = hit1 = n1 = 0
+    for d, sym, direc, conf, f1, f5 in rows:
+        mark5 = "✓" if f5 > 0 else "✗"
+        s5 = f"{f5 * 100:+.1f}%"
+        s1 = f"{f1 * 100:+.1f}%" if f1 is not None else "—"
+        lines.append(f"  {d[5:]} | {sym:<9} | {direc:<10} | conf={conf} | T+1 {s1:>7} | T+5 {s5:>7} {mark5}")
+        hit5 += 1 if f5 > 0 else 0
+        if f1 is not None:
+            n1 += 1
+            hit1 += 1 if f1 > 0 else 0
+
+    n = len(rows)
+    by_dir = {}
+    for _, _, direc, _, _, f5 in rows:
+        c = by_dir.setdefault(direc, [0, 0])
+        c[0] += 1 if f5 > 0 else 0
+        c[1] += 1
+    summary = [f"小结: T+5 命中 {hit5}/{n} ({hit5 / n:.0%})"
+               + (f", T+1 命中 {hit1}/{n1} ({hit1 / n1:.0%})" if n1 else "")]
+    for direc, (h, t) in sorted(by_dir.items()):
+        summary.append(f"{direc} {h}/{t}")
+    lines.append("  " + " | ".join(summary))
+    lines.append("使用要求: 若本次新判断与上述个体历史模式一致（如同方向连续✗仍同向出手），"
+                 "必须给出本次的具体差异化证据，否则降级为 watch_only/NO_TRADE。")
+    return "\n".join(lines)
+
+
 def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=None) -> dict:
     """构建 DebatePlanner 所需的上下文"""
     from app.core.scheduler_triggers import ET
@@ -979,7 +1052,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
         "exposure_context": exposure_context or {},
         "price_calibration": price_calibration,
         "premarket_enrichment": premarket_enrichment,
-        "signal_quality": _build_signal_quality_context(),
+        "signal_quality": _build_signal_quality_context() + "\n\n" + _build_track_record_context(),
     }
 
 
