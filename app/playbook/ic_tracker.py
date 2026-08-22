@@ -107,6 +107,85 @@ def _spearman_rank_correlation(
 from app.utils.holiday_calendar import nth_trading_day_after
 
 
+
+
+def _sim_mechanism_adjusted_return(
+    direction: str,
+    entry_price: float,
+    bars: list,
+    exit_cfg: dict,
+) -> float:
+    """模拟"若按当前锁利/净保本/SL机制逐日盯市"的 T+N 实际收益 (日K OHLC 回放).
+
+    统一坐标系: 所有量都是"相对 entry 的浮盈%"(正=赚, 负=亏), LONG/SHORT 完全对称.
+      profit(px) = sign * (px - entry)/entry*100,  sign = +1 (LONG) / -1 (SHORT)
+      - 峰值 peak = max over days of profit(day high 对 LONG / day low 对 SHORT)
+      - 当日最不利点 adverse = profit(day low 对 LONG / day high 对 SHORT)
+
+    机制 (参数读 config 实值, 与 _compute_dynamic_effective_sl 同源):
+      1. 浮盈 >= breakeven_at_pct(0.4) → 保本武装, SL 抬到 fee_pad(0.4+0.2)
+      2. trailing: SL = peak*(1-dd/100)  (dd=0.8), 不低于保本线
+      3. 无 trailing 且浮盈 >= profit_override_threshold(1.5) → SL = peak*(1-po_dd/100)
+      4. 初始 SL = -initial_sl_pct (默认 -5)
+      5. 每日 adverse <= effective_sl → 按 effective_sl 成交 (保守无滑点)
+      6. 无触发 → T+N 收盘价兜底
+
+    返回: (exit_price - entry)/entry 的小数收益 (与 fwd_return_t{N} 同单位).
+    """
+    if not bars or entry_price <= 0:
+        return 0.0
+    is_long = direction == "BUY"
+    sign = 1.0 if is_long else -1.0
+
+    def profit(px):
+        return sign * (px - entry_price) / entry_price * 100.0
+
+    be_pct = float(exit_cfg.get("breakeven_at_pct", 0.4))
+    dd_pct = float(exit_cfg.get("drawdown_from_peak_pct", 0.8))
+    fee_pad = float(exit_cfg.get("breakeven_fee_cushion_pct", 0.4)) + \
+              float(exit_cfg.get("breakeven_slip_cushion_pct", 0.2))
+    po_thresh = float(exit_cfg.get("profit_override_threshold_pct", 1.5))
+    po_dd = float(exit_cfg.get("profit_override_drawdown_pct", 0.5))
+    trailing_en = bool(exit_cfg.get("trailing_enabled", True))
+    init_sl_pct = float(exit_cfg.get("initial_sl_pct", 5.0))
+
+    peak_pct = 0.0
+    effective_sl_pct = -init_sl_pct
+
+    for bar in bars:
+        h = float(bar.get("high", 0) or 0)
+        l = float(bar.get("low", 0) or 0)
+        cl = float(bar.get("close", 0) or 0)
+        if h <= 0 or l <= 0 or cl <= 0:
+            continue
+
+        # 当日最有利点(更新峰值)与最不利点(判 SL)
+        favorable = profit(h) if is_long else profit(l)
+        adverse = profit(l) if is_long else profit(h)
+        if favorable > peak_pct:
+            peak_pct = favorable
+
+        # 保本武装后更新 effective SL
+        if peak_pct >= be_pct:
+            cur_sl = fee_pad
+            if trailing_en and dd_pct > 0:
+                lock = peak_pct * (1.0 - dd_pct / 100.0)
+                cur_sl = max(cur_sl, lock)
+            elif not trailing_en and peak_pct >= po_thresh:
+                lock = peak_pct * (1.0 - po_dd / 100.0)
+                cur_sl = max(cur_sl, lock)
+            effective_sl_pct = max(effective_sl_pct, cur_sl)
+
+        # 最不利点击穿 SL → 按 SL 成交
+        if adverse <= effective_sl_pct:
+            return round(effective_sl_pct / 100.0, 6)
+
+    last_close = float(bars[-1].get("close", 0) or 0)
+    if last_close > 0:
+        return round(profit(last_close) / 100.0, 6)
+    return 0.0
+
+
 def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
     """
     回填前瞻收益: 对历史指令计算 T+1/T+3/T+5 收益率
@@ -225,6 +304,44 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
                     #   +1.65%→open 基准 +0.04%). t5 暂无消费端, 不落 open 孪生.
                     if _open0 > 0 and field_name in ("fwd_return_t1", "fwd_return_t3"):
                         updates[field_name + "_open"] = round(sign * (close - _open0) / _open0, 6)
+
+        # 2026-08-22 (用户裁"落 T+N 影子字段"): 机制调整前瞻收益影子口径 —
+        #   与上方 T+N 纯收盘价口径并行, 模拟"若按当前锁利/净保本/SL机制逐日盯市"
+        #   在 T+N 收盘前实际能拿到的收益. 影子(record-only): 不动 fwd_return_t{N} 主口径,
+        #   方向 IC 仍用主口径; 收益类报告/锁利参数优化裁决用 _adj 口径.
+        #   参数读 config 实值 (与 _compute_dynamic_effective_sl 同源), 日K OHLC 回放.
+        try:
+            from app.playbook.config import get_playbook_config as _gpc_adj
+            _pb_adj = _gpc_adj()
+            _exit_cfg = {
+                "breakeven_at_pct": float(_pb_adj.get("breakeven_at_pct", 0.4)),
+                "drawdown_from_peak_pct": float(_pb_adj.get("drawdown_from_peak_pct", 0.8)),
+                "trailing_enabled": bool(_pb_adj.get("trailing_enabled", True)),
+                "trailing_step_pct": float(_pb_adj.get("trailing_step_pct", 2.0)),
+                "breakeven_fee_cushion_pct": float(_pb_adj.get("breakeven_fee_cushion_pct", 0.4)),
+                "breakeven_slip_cushion_pct": float(_pb_adj.get("breakeven_slip_cushion_pct", 0.2)),
+                "profit_override_threshold_pct": float(_pb_adj.get("profit_override_threshold_pct", 1.5)),
+                "profit_override_drawdown_pct": float(_pb_adj.get("profit_override_drawdown_pct", 0.5)),
+                "initial_sl_pct": float(_pb_adj.get("initial_sl_pct", 5.0)),
+            }
+            for _hz, _fld in [(1, "fwd_return_t1_adj"), (3, "fwd_return_t3_adj"), (5, "fwd_return_t5_adj")]:
+                _td = nth_trading_day_after("US", inst_date, _hz)
+                if _td is None:
+                    continue
+                _cs = _td.isoformat()
+                if _cs not in bars_by_date:
+                    continue
+                # 收集 entry 当日到 T+_hz 的日K序列 (含 entry 日)
+                _seq = []
+                for _d in sorted(bars_by_date.keys()):
+                    if inst_date_str <= _d <= _cs:
+                        _seq.append(bars_by_date[_d])
+                if not _seq:
+                    continue
+                _adj = _sim_mechanism_adjusted_return(direction, entry_price, _seq, _exit_cfg)
+                updates[_fld] = _adj
+        except Exception as _e_adj:
+            logger.debug(f"[PlaybookIC] 机制调整影子回填失败 (不影响主口径): {_e_adj}")
 
         # 2026-07-12: 日内 IC — entry → 当日收盘 (纯日内系统真正收割的 horizon).
         #   与 t+N 同口径 (用收盘价), 但 horizon=当日. DA horizon 几乎恒 short (当天平),

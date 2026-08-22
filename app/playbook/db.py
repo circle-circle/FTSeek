@@ -144,6 +144,15 @@ class PlaybookDB:
             #   新增独立列承接 gate decision_conf (辩论一致度校准值), confidence 列语义不动
             #   (下游 conf<50=模型分歧代理等逻辑依赖), 消除测量误差且不破坏既有消费方.
             "decision_conf": "REAL",
+            # 2026-08-22 (用户裁"落 T+N 影子字段"): 机制调整前瞻收益影子口径 —
+            #   现有 fwd_return_t{N} 用纯 T+N 收盘价, 是"傻等到收盘"的悲观下界;
+            #   本组影子列模拟"若按当前锁利(peak回撤0.8%)/净保本(+0.4%)/SL(-5%)机制
+            #   逐日盯市, T+N 收盘前实际能拿到的收益". 日K OHLC 回放, 参数读 config 实值.
+            #   用途: 收益类报告/锁利参数优化裁决用 _adj 口径; 方向 IC 仍用 fwd_return_t{N}.
+            #   影子(record-only): 零消费方, 不动任何现有统计. 单位与 fwd_return_t{N} 一致(小数).
+            "fwd_return_t1_adj": "REAL",
+            "fwd_return_t3_adj": "REAL",
+            "fwd_return_t5_adj": "REAL",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -999,6 +1008,7 @@ _TRACKING_FIELDS = {
     "decision_id",
     # Phase 1: IC 追踪
     "fwd_return_intraday", "fwd_return_t1", "fwd_return_t3", "fwd_return_t5",
+    "fwd_return_t1_adj", "fwd_return_t3_adj", "fwd_return_t5_adj",
     # Horizon 决策追踪
     "horizon", "horizon_confidence", "horizon_reasoning",
     # 2026-06-29: re-price 审计 — 记录触发时重新定价后的 entry/stop
