@@ -4201,17 +4201,20 @@ def _update_trade_attribution(
 
 
 def _is_option_contract(symbol: str) -> bool:
-    """判断是否为美股期权合约 (OCC 格式: US.XXXXXXP/CCCCCCCC)"""
-    # 期权格式示例: US.CRM260515P180000, US.AAPL260515C180000
+    """判断是否为美股期权合约 (OCC 格式: US.ROOT+6位到期日YYMMDD+P/C+行权价)
+
+    修复 (DEB-20260822): 旧实现 `"P" in ticker_part[6:10]` 只对 root≤3字符 的代码成立 —
+    AAPL260515C180000 (root=4) 的 P/C 落在 index 10, 被误判为股票 → 合约乘数取 1 (应 100),
+    PnL 计算错百倍。现改用 OCC 结构正则 (root字母 + 6位日期 + P/C + 纯数字行权价, 行权价宽度不限)。
+    爆炸半径: 三消费方 (_get_contract_multiplier ×3 路径) 均为 PnL 计算; 全库 trade_records
+    零期权代码 → 现网行为零变化, 仅钉死休眠路径的已知错误。
+    """
+    import re
     parts = symbol.split(".")
-    if len(parts) < 2:
+    if len(parts) != 2:
         return False
-    ticker_part = parts[-1]  # e.g. "CRM260515P180000"
-    # 期权 OCC 格式: 6位到期日(YYMMDD) + P/C + 8位行权价
-    # 最小长度: "AAPL260515P180000" = 17 chars
-    if len(ticker_part) < 15:
-        return False
-    return "P" in ticker_part[6:10] or "C" in ticker_part[6:10]
+    # OCC: 字母root + 恰6位日期 + P/C + 至少1位数字行权价
+    return bool(re.fullmatch(r"[A-Z]{1,6}\d{6}[PC]\d+", parts[-1]))
 
 
 def _get_contract_multiplier(symbol: str) -> int:

@@ -3,11 +3,11 @@
 > **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-22), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **101** 个 DEB 文件。
+共 **103** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **22** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **24** 个近 14 天新文件未在 README 索引收录 (需补登):
 
 - `DEB-20260808-premarket-intraday-verification.md`
 - `DEB-20260808-signal-source-strategy.md`
@@ -31,6 +31,8 @@
 - `DEB-20260818-overnight-reprice-shadow.md`
 - `DEB-20260818-us-chain-retrospective.md`
 - `DEB-20260819-symbol-pangan.md`
+- `DEB-20260822-health-check-t5-counterfactual.md`
+- `DEB-20260822-tn-mechanism-shadow.md`
 
 📦 历史归档 **70** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
@@ -210,3 +212,5 @@
 | [DEB-20260818-us-chain-retrospective](DEB-20260818-us-chain-retrospective.md) | 2026-08-18 | (未标注) | 3 | 242 |
 | [DEB-20260819-symbol-pangan](DEB-20260819-symbol-pangan.md) | 2026-08-19 | 全链已落地运行：§九 Qoder 发现 R1/R2 循环 bug + 门槛未校准 → §十 Hermes 坐实+修复重跑（仅 R5 过四关）→ §十一 分钟数据勘误禁令解除 → §十二 第一版卡 29×37 → §十三 用户裁 SIM 直接应用 → §十五 六项修订全落地（27×34，cron 05:50）+ §十六 … | 1 | 2900 |
 | [DEB-20260820-architecture-quant-dual-audit](DEB-20260820-architecture-quant-dual-audit.md) | 2026-08-20 | (未标注) | 7 | 539 |
+| [DEB-20260822-health-check-t5-counterfactual](DEB-20260822-health-check-t5-counterfactual.md) | 2026-08-22 | ✅ 已执行 (零实弹行为变更, 一处休眠纯函数正确性修复) | - | 178 |
+| [DEB-20260822-tn-mechanism-shadow](DEB-20260822-tn-mechanism-shadow.md) | 2026-08-22 | (未标注) | - | 142 |
