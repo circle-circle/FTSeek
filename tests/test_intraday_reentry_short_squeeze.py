@@ -41,8 +41,8 @@ def test_short_squeeze_pass():
     assert ok, f"应通过但被拒: {reasons}"
 
 
-def test_insider_divergence_long_reject():
-    """LONG + insider_sell → 拒绝"""
+def test_insider_sell_not_long_counterevidence():
+    """LONG + insider_sell → 通过 (2026-08-22c 收窄: 10b5-1 例行减持是常态噪音, 不构成 LONG 反证)"""
     cfg = {"vwap_band_low_pct": 0.3, "vwap_band_high_pct": 1.0, "min_slope_5m_pct": 0.0,
            "min_atr_pct": 2.0, "min_vol_ratio": 0.8, "max_spread_bps": 25.0,
            "insider_divergence_check_enabled": True,
@@ -52,8 +52,7 @@ def test_insider_divergence_long_reject():
         slope_5m=0.1, atr_pct=3.0, vol_ratio=1.0, spread_bps=10.0,
         cfg=cfg, insider_signal="sell"
     )
-    assert not ok, "应拒绝但通过"
-    assert any("insider_divergence" in r for r in reasons), f"缺背离原因: {reasons}"
+    assert ok, f"insider_sell 例行噪音应放行但被拒: {reasons}"
 
 
 def test_insider_divergence_short_reject():

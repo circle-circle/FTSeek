@@ -16,7 +16,6 @@ capital_flow 日级聚合 (2026-08-22)
 """
 
 import json
-import sqlite3
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -125,15 +124,16 @@ def aggregate_daily():
 
 
 def trigger_replay():
-    """触发回放验证 (四关门+安慰剂)"""
-    replay_script = BASE / "scripts" / "capital_flow_replay.py"
-    if not replay_script.exists():
-        print(f"[capital_flow] ⚠️ 回放脚本不存在: {replay_script}, 先写回放脚本")
-        write_replay_script()
+    """触发回放验证 (四关门+安慰剂).
 
+    2026-08-22b 复查修复: 原实现在此运行时生成回放脚本 (write_replay_script) —
+    生成的脚本查错 db (signal_snapshots 在独立 db 不在 ftseek_us.db) 且误用
+    方向调整收益 fwd_ret_t1, 到点触发必然崩/结论无效, 属"声称有验证实无验证"。
+    现改为调用真实落盘的 scripts/capital_flow_replay.py (可单独运行/测试)。
+    """
     import subprocess
     result = subprocess.run(
-        ["python3", str(replay_script)],
+        ["python3", str(BASE / "scripts" / "capital_flow_replay.py")],
         capture_output=True, text=True, cwd=str(BASE)
     )
     print(result.stdout)
@@ -141,123 +141,7 @@ def trigger_replay():
         print(f"[capital_flow] 回放脚本错误: {result.stderr}")
 
 
-def write_replay_script():
-    """写回放验证脚本 (四关门+安慰剂)"""
-    script = '''#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-capital_flow 日级信号回放验证 (四关门+安慰剂)
-==============================================
-验证日级净流入信号是否有预测力:
-  - 事件: 日级 large_in_flow > 0 (大单净流入) 或 < 0 (大单净流出)
-  - 结果: 次日收益 (fwd_ret_t1)
-  - 四关门: n≥30, |t|≥2.0, IS/OOS 对半同号, 安慰剂
-  - 效应量地板: |次日均值| ≥ 0.3%
-"""
 
-import json
-import sqlite3
-import numpy as np
-from pathlib import Path
-from scipy import stats
-
-BASE = Path("/opt/ftseek/FTSeek-US")
-FLOW_DAILY = BASE / "data" / "capital_flow_daily.jsonl"
-DB = BASE / "data" / "ftseek_us.db"
-VERDICT_OUT = BASE / "data" / "capital_flow_replay_verdict.json"
-
-# 四关门参数
-MIN_N = 30
-MIN_T = 2.0
-MIN_EFFECT = 0.003  # 0.3%
-PLACEBO_ROUNDS = 100
-SEED = 42
-
-
-def load_data():
-    """加载日级聚合 + 前瞻收益"""
-    # 日级净流入
-    flow = {}
-    for line in open(FLOW_DAILY):
-        r = json.loads(line)
-        flow[(r["symbol"], r["date"])] = r
-
-    # 前瞻收益 (从 trade_records 或 signal_snapshots)
-    db = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
-    # 用 signal_snapshots 的 fwd_ret_t1 (已方向调整)
-    fwd = {}
-    for row in db.execute("""
-        SELECT symbol, trade_date, fwd_ret_t1
-        FROM signal_snapshots
-        WHERE fwd_ret_t1 IS NOT NULL
-    """):
-        sym, date, ret = row
-        fwd[(sym, date)] = ret
-
-    return flow, fwd
-
-
-def replay():
-    flow, fwd = load_data()
-
-    # 事件: 大单净流入/流出
-    events = []
-    for (sym, date), r in flow.items():
-        if (sym, date) not in fwd:
-            continue
-        large_flow = r["large_in_flow"]
-        # 事件定义: 大单净流入 > 0 或 < 0
-        if large_flow > 0:
-            events.append({"symbol": sym, "date": date, "signal": "INFLOW", "fwd_ret": fwd[(sym, date)]})
-        elif large_flow < 0:
-            events.append({"symbol": sym, "date": date, "signal": "OUTFLOW", "fwd_ret": fwd[(sym, date)]})
-
-    # 分信号统计
-    inflow_rets = [e["fwd_ret"] for e in events if e["signal"] == "INFLOW"]
-    outflow_rets = [e["fwd_ret"] for e in events if e["signal"] == "OUTFLOW"]
-
-    verdict = {
-        "generated_at": str(Path(__file__).stat().st_mtime),
-        "n_events": len(events),
-        "inflow": {"n": len(inflow_rets), "mean": np.mean(inflow_rets) if inflow_rets else 0, "t": 0},
-        "outflow": {"n": len(outflow_rets), "mean": np.mean(outflow_rets) if outflow_rets else 0, "t": 0},
-        "gates": {},
-    }
-
-    # Gate1: n≥30
-    verdict["gates"]["n_inflow"] = len(inflow_rets) >= MIN_N
-    verdict["gates"]["n_outflow"] = len(outflow_rets) >= MIN_N
-
-    # Gate2: |t|≥2.0
-    if len(inflow_rets) >= 2:
-        t_stat, _ = stats.ttest_1samp(inflow_rets, 0)
-        verdict["inflow"]["t"] = t_stat
-        verdict["gates"]["t_inflow"] = abs(t_stat) >= MIN_T
-    if len(outflow_rets) >= 2:
-        t_stat, _ = stats.ttest_1samp(outflow_rets, 0)
-        verdict["outflow"]["t"] = t_stat
-        verdict["gates"]["t_outflow"] = abs(t_stat) >= MIN_T
-
-    # Gate5: 效应量地板
-    verdict["gates"]["effect_inflow"] = abs(verdict["inflow"]["mean"]) >= MIN_EFFECT
-    verdict["gates"]["effect_outflow"] = abs(verdict["outflow"]["mean"]) >= MIN_EFFECT
-
-    # 判定
-    verdict["verdict"] = {
-        "inflow_pass": all([verdict["gates"].get(f"{g}_inflow", False) for g in ["n", "t", "effect"]]),
-        "outflow_pass": all([verdict["gates"].get(f"{g}_outflow", False) for g in ["n", "t", "effect"]]),
-    }
-
-    VERDICT_OUT.write_text(json.dumps(verdict, ensure_ascii=False, indent=2))
-    print(json.dumps(verdict, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    replay()
-'''
-    replay_script = BASE / "scripts" / "capital_flow_replay.py"
-    replay_script.write_text(script)
-    print(f"[capital_flow] 回放脚本已写: {replay_script}")
 
 
 if __name__ == "__main__":

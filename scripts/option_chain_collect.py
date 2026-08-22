@@ -47,23 +47,31 @@ def collect_option_market_stat():
             (OptionStatisticDataType.OPEN_INTEREST, "open_interest"),
         ]:
             try:
-                ret, data, page_req_key = ctx.get_option_market_statistic(
-                    OptionMarket.US_SECURITY, data_type, begin_time=begin, end_time=end)
-                if ret != RET_OK or data is None or len(data) == 0:
-                    print(f"[option] {type_name} 拉取失败: {data}")
-                    continue
-                for _, row in data.iterrows():
-                    records.append({
-                        "date": str(row.get("time", "")),
-                        "type": type_name,
-                        "call_value": int(row.get("call_value", 0)),
-                        "put_value": int(row.get("put_value", 0)),
-                        "total_value": int(row.get("total_value", 0)),
-                        "pc_ratio": float(row.get("ratio", 0)) if row.get("ratio") else None,
-                        "market": "US_SECURITY",
-                        "fetched_at": datetime.now().isoformat(),
-                    })
-                print(f"[option] {type_name}: {len(data)} 条")
+                # 分页拉全 (2026-08-22b 复查修复: 原只取第一页, page_req_key 被丢弃,
+                # 数据量超一页时静默截断; SDK: get_option_market_statistic(market,
+                # data_type, begin_time, end_time, page_req_key) → (ret, df, next_key))
+                page_key = None
+                while True:
+                    ret, data, page_key = ctx.get_option_market_statistic(
+                        OptionMarket.US_SECURITY, data_type, begin_time=begin,
+                        end_time=end, page_req_key=page_key)
+                    if ret != RET_OK or data is None or len(data) == 0:
+                        print(f"[option] {type_name} 拉取失败或无数据: {data}")
+                        break
+                    for _, row in data.iterrows():
+                        records.append({
+                            "date": str(row.get("time", "")),
+                            "type": type_name,
+                            "call_value": int(row.get("call_value", 0)),
+                            "put_value": int(row.get("put_value", 0)),
+                            "total_value": int(row.get("total_value", 0)),
+                            "pc_ratio": float(row.get("ratio", 0)) if row.get("ratio") else None,
+                            "market": "US_SECURITY",
+                            "fetched_at": datetime.now().isoformat(),
+                        })
+                    if not page_key:
+                        break
+                print(f"[option] {type_name}: 本类累计 {len(records)} 条(已翻页拉全)")
             except Exception as e:
                 print(f"[option] {type_name} 异常: {e}")
 

@@ -33,6 +33,33 @@ def test_sec_event_none_pass():
     assert ok, f"应通过但被拒: {reasons}"
 
 
+def test_sec_bearish_8k_not_short_counterevidence():
+    """2026-08-22b 方向语义: 利空 8-K 只构成 LONG 反证, 对 SHORT 不拦 (非背离)"""
+    cfg = {**_BASE_CFG, "sec_event_divergence_check_enabled": True}
+    ok, reasons = evaluate_candidate(
+        "SELL_SHORT", 100.0, 100.5, -0.1, 3.0, 1.0, 10.0, cfg, sec_event_negative=True
+    )
+    assert ok, f"利空8-K对SHORT应放行但被拒: {reasons}"
+
+
+def test_sec_13d_accumulation_blocks_short():
+    """2026-08-22b: SC 13D 主动举牌=做多证据, 只拦 SHORT"""
+    cfg = {**_BASE_CFG, "sec_event_divergence_check_enabled": True}
+    ok, reasons = evaluate_candidate(
+        "SELL_SHORT", 100.0, 100.5, -0.1, 3.0, 1.0, 10.0, cfg, sec_event_13dg=True
+    )
+    assert not ok and any("SC13D" in r for r in reasons)
+
+
+def test_sec_13d_accumulation_not_long_counterevidence():
+    """2026-08-22b: 13D 举牌与 LONG 同向, 不拦"""
+    cfg = {**_BASE_CFG, "sec_event_divergence_check_enabled": True}
+    ok, reasons = evaluate_candidate(
+        "LONG", 100.0, 99.5, 0.1, 3.0, 1.0, 10.0, cfg, sec_event_13dg=True
+    )
+    assert ok, f"13D举牌对LONG应放行但被拒: {reasons}"
+
+
 def test_social_sentiment_divergence_reject():
     """多源情绪背离 → 拒绝"""
     cfg = {**_BASE_CFG, "sentiment_extreme_check_enabled": False,

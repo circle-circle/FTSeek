@@ -32,6 +32,48 @@ logger = logging.getLogger(__name__)
 _OUTPUT_PATH = Path("data/intraday_reentry_shadow.jsonl")
 _last_run_ts = 0.0
 
+# ── 2026-08-22b 复查修复: 证伪门数据源进程级单例 ──
+# 原实现在 run_scan 内 (或候选循环内) 新建实例: FutuExtendedProvider 每 scan 一条
+# OpenD 连接只建不关 (慢泄漏); EarningsCalendar/FinnhubProvider 每候选新建使
+# 实例级缓存 (日历 1h / 情绪 1h) 形同虚设 → 每候选一次全量拉取。
+# 惰性单例 + False 哨兵: 初始化失败不逐 scan 重试。
+_futu_ext_singleton = None
+_earnings_cal_singleton = None
+_finnhub_singleton = None
+
+
+def _futu_ext():
+    global _futu_ext_singleton
+    if _futu_ext_singleton is None:
+        try:
+            from app.data.providers.futu_extended_provider import FutuExtendedProvider
+            _futu_ext_singleton = FutuExtendedProvider()
+        except Exception:
+            _futu_ext_singleton = False
+    return _futu_ext_singleton or None
+
+
+def _earnings_cal():
+    global _earnings_cal_singleton
+    if _earnings_cal_singleton is None:
+        try:
+            from app.data.earnings_calendar import EarningsCalendar
+            _earnings_cal_singleton = EarningsCalendar()
+        except Exception:
+            _earnings_cal_singleton = False
+    return _earnings_cal_singleton or None
+
+
+def _finnhub():
+    global _finnhub_singleton
+    if _finnhub_singleton is None:
+        try:
+            from app.data.finnhub_provider import FinnhubProvider
+            _finnhub_singleton = FinnhubProvider()
+        except Exception:
+            _finnhub_singleton = False
+    return _finnhub_singleton or None
+
 # 前笔退出判据 (2026-08-07 精化, 替代纯 pnl 代理):
 #   硬止损/0-WR 类 = thesis 被证伪 → 不再入 (防报复性交易);
 #   良性类 (保本/锁利/止盈/移动止损/日终) = thesis 未证伪 → 可再入;
@@ -172,7 +214,7 @@ _DEFAULTS: Dict[str, Any] = {
     #   证伪机制: 卖空量激增不预测方向, 但告诉你 SHORT 可能被挤压.
     "short_squeeze_check_enabled": True,
     # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
-    #   证伪机制: 内部人交易不预测方向, 但告诉你内部人可能知道坏消息.
+    #   2026-08-22c 收窄: 只留 buy 侧 (异常买入拦 SHORT); sell 侧例行减持是噪音不拦 (见 evaluate_candidate).
     "insider_divergence_check_enabled": True,
     # 2026-08-22 (用户裁决): 分析师背离检查 — DA方向与分析师评级趋势背离时拒绝.
     #   证伪机制: 分析师评级下调不预测方向, 但告诉你基本面支撑减弱.
@@ -312,6 +354,7 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
                        days_to_earnings: Optional[int] = None,
                        sentiment_score: Optional[float] = None,
                        sec_event_negative: Optional[bool] = None,
+                       sec_event_13dg: Optional[bool] = None,
                        social_sentiment_score: Optional[float] = None,
                        ticker_sentiment: Optional[str] = None) -> Tuple[bool, List[str]]:
     """纯函数: 盘中指标是否确认 thesis 延续 (可单测, 零 IO).
@@ -366,11 +409,14 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
         if not is_long and short_percent is not None and short_percent > float(cfg.get("short_squeeze_threshold_pct", 30.0)):
             reasons.append(f"short_squeeze_risk(short_percent={short_percent:.1f}%>{cfg['short_squeeze_threshold_pct']}%)")
     # 2026-08-22 (用户裁决): 内部人背离检查 — DA方向与内部人净买卖背离时拒绝.
+    #   2026-08-22c 收窄 (用户裁"按建议执行"): 只留 buy 侧 — 内部人异常买入
+    #   (非例行行为) 有真实信息量, 作 SHORT 反证; 删 sell 侧拦 LONG: 大公司
+    #   10b5-1 例行减持常年存在, sell_count>buy_count 是常态而非背离信号,
+    #   拿它拦 LONG = 用噪音系统性误杀多头再入场 (共识: 内部人买入有预测力,
+    #   例行卖出几乎没有)。sell 信号仍采集落 shadow 供数据侧后续裁决。
     if cfg.get("insider_divergence_check_enabled", True):
         if insider_signal:
-            if is_long and insider_signal == "sell":
-                reasons.append(f"insider_divergence(LONG vs insider_sell)")
-            elif not is_long and insider_signal == "buy":
+            if not is_long and insider_signal == "buy":
                 reasons.append(f"insider_divergence(SHORT vs insider_buy)")
     # 2026-08-22 (用户裁决): 分析师背离检查 — DA方向与分析师评级趋势背离时拒绝.
     if cfg.get("analyst_divergence_check_enabled", True):
@@ -393,15 +439,22 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
             elif not is_long and sentiment_score < -_threshold:
                 reasons.append(f"sentiment_extreme(SHORT vs extreme_bearish={sentiment_score:.2f}<-{_threshold})")
     # 2026-08-22 (用户裁决): 重大事件背离检查 — 8-K/13D-G 披露重大负面时拒绝.
+    #   2026-08-22b 复查修复: 对齐本门族"方向与证据背离才拒"语义 —
+    #   利空 8-K item (协议终止/破产/减值/财报重述/高管变动/重组成本) 只构成 LONG
+    #   反证; SC 13D 主动举牌 (增持=利多) 只构成 SHORT 反证。原实现无方向区分,
+    #   且把 13D/G 举牌一律当"负面"属语义颠倒 (举牌是做多证据)。
     if cfg.get("sec_event_divergence_check_enabled", True):
-        if sec_event_negative:
-            reasons.append(f"sec_event_divergence(negative_8k_or_13dg)")
+        if is_long and sec_event_negative:
+            reasons.append("sec_event_divergence(LONG vs bearish_8k_items)")
+        elif not is_long and sec_event_13dg:
+            reasons.append("sec_event_divergence(SHORT vs SC13D_accumulation)")
     # 2026-08-22 (用户裁决): 多源情绪验证 — social_sentiment 与 finnhub 情绪分数背离时拒绝.
     if cfg.get("social_sentiment_divergence_check_enabled", True):
         if sentiment_score is not None and social_sentiment_score is not None:
             _threshold = float(cfg.get("social_sentiment_divergence_threshold", 0.3))
             # 多源背离: finnhub 看多(>threshold) 但 social 看空(<-threshold), 或反之
-            if (sentiment_score > _threshold and social_sentiment_score < -_threshold) or                (sentiment_score < -_threshold and social_sentiment_score > _threshold):
+            if ((sentiment_score > _threshold and social_sentiment_score < -_threshold)
+                    or (sentiment_score < -_threshold and social_sentiment_score > _threshold)):
                 reasons.append(f"social_sentiment_divergence(finnhub={sentiment_score:.2f} vs social={social_sentiment_score:.2f}, threshold={_threshold})")
     # 2026-08-22 (用户裁决): 盘中逐笔情绪背离检查 — DA方向与逐笔成交情绪背离时拒绝.
     if cfg.get("ticker_sentiment_divergence_check_enabled", True):
@@ -667,13 +720,18 @@ def run_scan(scheduler=None) -> int:
 
     # ── 2026-08-22 (性能修复): 证伪门数据循环外批量预读 ──
     # 修复: ①capital_flow 原循环内全文件读取(58812行×候选数) → 循环外一次读取建索引
-    #       ②FutuExtendedProvider 原循环内每候选新建连接(资源泄漏) → 循环外单实例复用
-    _cf_last_flow: Dict[str, str] = {}  # symbol → INFLOW/OUTFLOW (最后一条)
+    #       ②FutuExtendedProvider 原循环内每候选新建连接(资源泄漏) → 进程级单例复用
+    # 2026-08-22b 复查修复: ③新鲜度 — 原索引取"该标的最后一条"无日期过滤, 实测 62
+    #   标的最后记录全部来自历史交易日 (采集有订阅上限, 标的掉出订阅后旧记录永驻),
+    #   拿数日前的收盘资金流方向拒当日单 = 伪证伪 → 只认当日记录;
+    #   ④大单净流==0 原归 OUTFLOW 拦 LONG, 属无信息误伤 → 不给方向。
+    _cf_last_flow: Dict[str, str] = {}  # symbol → INFLOW/OUTFLOW (当日最后一条)
     if cfg.get("capital_flow_divergence_check_enabled", True):
         try:
             import json as _json
             from pathlib import Path as _Path
             _cf_path = _Path("data/futu_capital_flow.jsonl")
+            _today_prefix = _today_et_str()
             if _cf_path.exists():
                 for _line in _cf_path.read_text().strip().split("\n"):
                     try:
@@ -683,18 +741,19 @@ def run_scan(scheduler=None) -> int:
                     _s = _d.get("symbol")
                     if not _s:
                         continue
+                    if not str(_d.get("item_time") or "").startswith(_today_prefix):
+                        continue  # 非当日记录 → 陈旧方向不可作证
                     _large = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
-                    _cf_last_flow[_s] = "INFLOW" if _large > 0 else "OUTFLOW"  # 后写覆盖=最新一条
+                    if _large > 0:
+                        _cf_last_flow[_s] = "INFLOW"   # 后写覆盖=最新一条
+                    elif _large < 0:
+                        _cf_last_flow[_s] = "OUTFLOW"
         except Exception:
             pass  # 读取失败 → 空索引 → 不拦 (fail-open)
 
-    _futu_ext_shared = None  # FutuExtendedProvider 循环外单实例 (懒初始化, 连接复用)
+    _futu_ext_shared = None  # 进程级单例 (见 _futu_ext), 证伪门共用的 OpenD 连接
     if cfg.get("short_squeeze_check_enabled", True) or cfg.get("insider_divergence_check_enabled", True):
-        try:
-            from app.data.providers.futu_extended_provider import FutuExtendedProvider
-            _futu_ext_shared = FutuExtendedProvider()
-        except Exception:
-            pass
+        _futu_ext_shared = _futu_ext()
 
     for sym, info in _load_closed_today().items():
         if sym in armed_syms:
@@ -817,11 +876,12 @@ def run_scan(scheduler=None) -> int:
         if cfg.get("earnings_proximity_check_enabled", True):
             try:
                 # ADR-032: 原导入名 get_earnings_calendar 不存在(ImportError 被 fail-open
-                # 吞掉, 系该门第三重死因); 全库规范用法为直接实例化 EarningsCalendar.
-                from app.data.earnings_calendar import EarningsCalendar
-                _ec = EarningsCalendar()
-                _earn = _ec.get_watchlist_earnings(watchlist_symbols=[sym])
-                days_to_earnings = _find_days_to_earnings(_earn, sym)
+                # 吞掉, 系该门第三重死因); 日历实例进程级复用 (实例缓存 1h, 原每候选
+                # 新建使缓存失效=每候选一次全量拉取)。
+                _ec = _earnings_cal()
+                if _ec is not None:
+                    _earn = _ec.get_watchlist_earnings(watchlist_symbols=[sym])
+                    days_to_earnings = _find_days_to_earnings(_earn, sym)
             except Exception:
                 pass  # 财报数据读取失败 → None → 不拦 (fail-open)
 
@@ -829,25 +889,31 @@ def run_scan(scheduler=None) -> int:
         sentiment_score = None
         if cfg.get("sentiment_extreme_check_enabled", True):
             try:
-                from app.data.finnhub_provider import FinnhubProvider
-                _fp = FinnhubProvider()
-                sentiment_score = _fp.get_sentiment_score(sym)
+                _fp = _finnhub()
+                if _fp is not None:
+                    sentiment_score = _fp.get_sentiment_score(sym)
             except Exception:
                 pass  # 情绪数据读取失败 → None → 不拦 (fail-open)
 
         # 2026-08-22 (用户裁决): 重大事件背离检查 — 读该标的 8-K/13D-G 重大事件.
+        # 2026-08-22b 复查修复 (三重死因): ①原 universe 传 Futu 格式 "US.X", 而
+        #   provider 按 CIK 映射的裸 ticker 过滤 → 恒空列表 (死门); ②英文关键词
+        #   (resignation/sell...) 对 str(dict) 匹配, 而条目文本是中文 item_labels
+        #   → 即便修①也近零命中; ③13D/G=举牌(利多)被当负面。改: 裸 ticker 过滤 +
+        #   ITEM_SEMANTICS 利空 item 代码集 + 13D 只作 SHORT 反证 (见 evaluate_candidate)。
         sec_event_negative = None
+        sec_event_13dg = None
         if cfg.get("sec_event_divergence_check_enabled", True):
             try:
                 from app.data.sec_8k_provider import fetch_recent_8k, fetch_recent_13dg
-                # 简化: 检查是否有负面关键词 (高管离职/诉讼/资产减值/大股东减持)
-                _8k = fetch_recent_8k({sym})
-                _13dg = fetch_recent_13dg({sym})
-                _negative_keywords = ["resignation", "litigation", "impairment", "sell", "减持", "离职", "诉讼"]
+                _tk = sym[3:] if sym.startswith("US.") else sym
+                _bearish_items = {"1.02", "1.03", "2.05", "2.06", "4.02", "5.02"}
+                _8k = fetch_recent_8k({_tk})
+                _13dg = fetch_recent_13dg({_tk})
                 sec_event_negative = any(
-                    any(kw in str(e).lower() for kw in _negative_keywords)
-                    for e in (_8k + _13dg)
-                )
+                    _bearish_items.intersection(e.get("items") or []) for e in _8k)
+                sec_event_13dg = any(
+                    str(e.get("form") or "").startswith("SC 13D") for e in _13dg)
             except Exception:
                 pass  # 重大事件读取失败 → None → 不拦 (fail-open)
 
@@ -900,6 +966,7 @@ def run_scan(scheduler=None) -> int:
             days_to_earnings=days_to_earnings,
             sentiment_score=sentiment_score,
             sec_event_negative=sec_event_negative,
+            sec_event_13dg=sec_event_13dg,
             social_sentiment_score=social_sentiment_score,
             ticker_sentiment=ticker_sentiment,
         )

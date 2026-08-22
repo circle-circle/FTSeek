@@ -101,3 +101,16 @@ def test_social_gate_disabled_by_default_source_has_no_polarity():
     summary{计数}, fetched_at} 全程无带符号 score → 本门在现源下不可诚实实现,
     默认 False。若有人改回 True 且源仍无分数, 此测试拦截。"""
     assert _DEFAULTS.get("social_sentiment_divergence_check_enabled") is False
+
+
+# ── 2026-08-22c: provider 缓存调用签名死门回归钉 (门活性探针首跑抓出) ──
+
+def test_futu_ext_no_invalid_cache_kwargs():
+    """BaseDataProvider._is_cache_valid(symbol) 只收单参; 原代码传 ttl_override=3600
+    → 每次 TypeError → 调用方 fail-open 吞掉 → 卖空拥挤门自上线恒死。
+    钉死 provider 源码内不得再出现该臆造参数。"""
+    import inspect
+    from app.data.providers import futu_extended_provider as mod
+    for line in inspect.getsource(mod).splitlines():
+        if "_is_cache_valid(" in line:
+            assert "ttl_override" not in line, f"死门回归: {line.strip()}"

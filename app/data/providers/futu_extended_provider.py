@@ -120,7 +120,11 @@ class FutuExtendedProvider(BaseDataProvider):
         """获取每日卖空成交量"""
         now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         cache_key = f"dsv_{symbol}"
-        if self._is_cache_valid(cache_key, ttl_override=3600):
+        # 2026-08-22c 死门修复 (门活性探针首跑抓出): 原传 ttl_override=3600, 但
+        # BaseDataProvider._is_cache_valid 不接受该参数 → 每次 TypeError → 调用方
+        # fail-open 吞掉 → 卖空拥挤门 (short_squeeze) 自上线起恒不触发。
+        # 实例 TTL 本就是 3600s, 该参数纯冗余, 删除即修复。
+        if self._is_cache_valid(cache_key):
             return self._cache.get(cache_key, {"status": "failed", "error": "cache miss"})
 
         ctx = self._get_ctx()
