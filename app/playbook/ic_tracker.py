@@ -107,6 +107,58 @@ def _spearman_rank_correlation(
 from app.utils.holiday_calendar import nth_trading_day_after
 
 
+def _day_clustered_ic(valid_rows: List[Tuple]) -> Dict[str, Any]:
+    """按日聚类 IC 检验 (2026-08-24, OKR-2026-09 KR1 修尺子 / 宪章第 9 律).
+
+    背景 (DEB-20260823): pooled Spearman 对同日聚集的信号 (峰值 67 信号/日)
+    把伪重复当独立样本, 显著性系统性夸大约 8 倍. 按日聚类: 每日算一个日内
+    Spearman IC (≥5 样本的日才计), 再对日序列做单样本 t 检验 (H0: 日均 IC=0).
+
+    判据 (宪章第 9 律, 预注册):
+        可分辨 = |日均IC| > MDE 且 |t| >= 2
+        MDE = 2.8 × sd_daymean / sqrt(n_days)   (单样本版; 配对版为 ×sqrt(2/n))
+
+    Args:
+        valid_rows: [(conf, fwd_return, ..., date), ...] date 为元组末位
+
+    Returns:
+        {"n_days", "day_ic_mean", "t", "mde", "distinguishable"} 或样本不足空态
+    """
+    by_day = defaultdict(list)
+    for row in valid_rows:
+        d = row[-1]
+        if d:
+            by_day[d].append((row[0], row[1]))
+
+    day_ics = []
+    for d in sorted(by_day):
+        pairs = by_day[d]
+        if len(pairs) < 5:  # 日内样本太少, 秩相关不稳定, 不计入
+            continue
+        ic, _p = _spearman_rank_correlation([p[0] for p in pairs], [p[1] for p in pairs])
+        if ic is not None:
+            day_ics.append(ic)
+
+    n_days = len(day_ics)
+    if n_days < 3:
+        return {"n_days": n_days, "day_ic_mean": None, "t": None,
+                "mde": None, "distinguishable": False}
+
+    mean_ic = sum(day_ics) / n_days
+    var = sum((x - mean_ic) ** 2 for x in day_ics) / (n_days - 1)
+    sd = math.sqrt(var)
+    if sd == 0:
+        return {"n_days": n_days, "day_ic_mean": round(mean_ic, 4), "t": None,
+                "mde": 0.0, "distinguishable": False}
+    t = mean_ic / (sd / math.sqrt(n_days))
+    mde = 2.8 * sd / math.sqrt(n_days)
+    return {
+        "n_days": n_days,
+        "day_ic_mean": round(mean_ic, 4),
+        "t": round(t, 3),
+        "mde": round(mde, 4),
+        "distinguishable": bool(abs(mean_ic) > mde and abs(t) >= 2),
+    }
 
 
 def _sim_mechanism_adjusted_return(
@@ -404,8 +456,9 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         return {"overall_ic": None, "sample_count": 0}
 
     # 过滤有前瞻收益的指令
-    valid_intraday = []  # (confidence, fwd_return, conditions, regime, horizon) — 日内 horizon (主 edge 尺子)
-    valid_t1 = []  # (confidence, fwd_return, conditions, regime, horizon)
+    # 元组末位 = date (指令日期, ET) —— 2026-08-24 KR1 修尺子: 按日聚类需要
+    valid_intraday = []  # (confidence, fwd_return, conditions, regime, horizon, date) — 日内 horizon (主 edge 尺子)
+    valid_t1 = []  # (confidence, fwd_return, conditions, regime, horizon, date)
     valid_t3 = []
     valid_t5 = []
 
@@ -418,6 +471,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         fwd_t1 = inst.get("fwd_return_t1")
         fwd_t3 = inst.get("fwd_return_t3")
         fwd_t5 = inst.get("fwd_return_t5")
+        _date = str(inst.get("date") or "")[:10]
 
         conditions = []
         try:
@@ -432,13 +486,13 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         horizon = inst.get("horizon", "short") or "short"
 
         if fwd_intraday is not None:
-            valid_intraday.append((conf, fwd_intraday, conditions, regime, horizon))
+            valid_intraday.append((conf, fwd_intraday, conditions, regime, horizon, _date))
         if fwd_t1 is not None:
-            valid_t1.append((conf, fwd_t1, conditions, regime, horizon))
+            valid_t1.append((conf, fwd_t1, conditions, regime, horizon, _date))
         if fwd_t3 is not None:
-            valid_t3.append((conf, fwd_t3, conditions, regime, horizon))
+            valid_t3.append((conf, fwd_t3, conditions, regime, horizon, _date))
         if fwd_t5 is not None:
-            valid_t5.append((conf, fwd_t5, conditions, regime, horizon))
+            valid_t5.append((conf, fwd_t5, conditions, regime, horizon, _date))
 
     # 计算整体 IC
     overall_intraday, overall_intraday_p = _spearman_rank_correlation(
@@ -461,7 +515,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_factor = {}
     if valid_t3:
         factor_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, conditions, _, _ in valid_t3:
+        for conf, ret, conditions, _, _, _ in valid_t3:
             for cond in conditions:
                 factor_data[cond]["confs"].append(conf)
                 factor_data[cond]["returns"].append(ret)
@@ -480,7 +534,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_regime = {}
     if valid_t3:
         regime_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, _, regime, _ in valid_t3:
+        for conf, ret, _, regime, _, _ in valid_t3:
             regime_data[regime]["confs"].append(conf)
             regime_data[regime]["returns"].append(ret)
 
@@ -526,7 +580,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_direction = {}
     if valid_t3:
         direction_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, _, _, _ in valid_t3:
+        for conf, ret, _, _, _, _ in valid_t3:
             # direction 字段从 instruction 中读取 (BUY/SELL_SHORT)
             # 这里 conf 是元组第0个, 没有 direction; 需要从 instructions 中关联
             pass
@@ -550,7 +604,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_horizon = {}
     if valid_t3:
         horizon_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, _, _, horizon in valid_t3:
+        for conf, ret, _, _, horizon, _ in valid_t3:
             horizon_data[horizon]["confs"].append(conf)
             horizon_data[horizon]["returns"].append(ret)
 
@@ -577,6 +631,14 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         "sample_t1": len(valid_t1),
         "sample_t3": len(valid_t3),
         "sample_t5": len(valid_t5),
+        # 按日聚类成对输出 (2026-08-24, OKR-2026-09 KR1): pooled 值与日聚类值必须成对呈现,
+        # 无日聚类+MDE 的 IC 结论不予采信 (宪章第 9 律). 采信判据见 _day_clustered_ic().
+        "day_clustered": {
+            "intraday": _day_clustered_ic(valid_intraday),
+            "t1": _day_clustered_ic(valid_t1),
+            "t3": _day_clustered_ic(valid_t3),
+            "t5": _day_clustered_ic(valid_t5),
+        },
         "by_factor": by_factor,
         "by_regime": by_regime,
         "by_source_type": by_source_type,
@@ -593,6 +655,13 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
 def _check_graduation(ic_report: Dict[str, Any]) -> Dict[str, Any]:
     """
     毕业门禁检查
+
+    ⚠️ DEPRECATED (2026-08-24, OKR-2026-09 KR1/KR4 裁决): 本判据
+    (confidence-based IC > 0.05) 已停用为毕业依据 —— confidence 自 08-14 起
+    恒=70 (辩论离散标签), 对常量做 Spearman 无意义, 现值纯属并列值处理
+    artifact (DEB-20260823 §KR1-d). 门禁本体保持现状不动 (fail-close=安全),
+    新毕业判据按日聚类尺子预注册 + 用户批准后才替换. 在此之前任何
+    "graduated" 输出不得作为切实盘依据.
 
     条件 (全部满足):
     - Playbook IC (T+3) > 0.05
@@ -650,9 +719,25 @@ def format_ic_report(report: Dict[str, Any]) -> str:
             return f"🟡 {ic:+.4f}"
         return f"🔴 {ic:+.4f}"
 
+    # 按日聚类成对呈现 (2026-08-24, KR1 修尺子): 只报 pooled 值 = 无 MDE 不予采信
+    _dc = report.get("day_clustered", {})
+
+    def _dc_str(key):
+        d = _dc.get(key) or {}
+        if d.get("day_ic_mean") is None:
+            return f"日聚类: ⏳ 不足({d.get('n_days', 0)}日)"
+        flag = "✅可分辨" if d.get("distinguishable") else "❌不可分辨"
+        return (f"日聚类: {d['day_ic_mean']:+.4f} (t={d['t']}, MDE={d['mde']}, "
+                f"n={d['n_days']}日) {flag}")
+
     lines.append(f"T+1 IC: {_ic_emoji(ic_t1)} (n={report.get('sample_t1', 0)})")
+    lines.append(f"  └ {_dc_str('t1')}")
     lines.append(f"T+3 IC: {_ic_emoji(ic_t3)} (n={report.get('sample_t3', 0)})")
+    lines.append(f"  └ {_dc_str('t3')}")
     lines.append(f"T+5 IC: {_ic_emoji(ic_t5)} (n={report.get('sample_t5', 0)})")
+    lines.append(f"  └ {_dc_str('t5')}")
+    lines.append("")
+    lines.append("📏 口径: pooled 与日聚类成对呈现; 无日聚类+MDE 的结论不予采信 (宪章第 9 律)")
     lines.append("")
 
     # 按因子分解
@@ -680,10 +765,12 @@ def format_ic_report(report: Dict[str, Any]) -> str:
     # 毕业门禁
     grad = report.get("graduation_check", {})
     verdict = grad.get("verdict", "UNKNOWN")
+    lines.append("⚠️ 毕业门禁判据已停用 (DEPRECATED, 2026-08-24): confidence-based IC 测常量无意义,")
+    lines.append("   新判据待按日聚类尺子预注册+用户批准; 在此之前不产生切实盘效力 (fail-close)")
     if verdict == "READY":
-        lines.append("🎓 **毕业门禁: 通过** — 可考虑切换到 live 模式")
+        lines.append(f"🎓 毕业门禁(旧判据): 通过 — ⚠️ 该结果不再作为切实盘依据")
     else:
-        lines.append(f"⏳ **毕业门禁: 积累中** (verdict={verdict})")
+        lines.append(f"⏳ 毕业门禁(旧判据): 积累中 (verdict={verdict})")
         checks = grad.get("checks", {})
         for check_name, passed in checks.items():
             status = "✅" if passed else "❌"

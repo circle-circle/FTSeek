@@ -222,8 +222,14 @@ try:
         "sample_t1": _pb_ic_report.get("sample_t1", 0),
         "sample_t3": _pb_ic_report.get("sample_t3", 0),
         "sample_t5": _pb_ic_report.get("sample_t5", 0),
+        # KR1 修尺子 (2026-08-24): 按日聚类成对输出 (宪章第 9 律).
+        # 头条采信口径 = 日聚类值; pooled 值仅诊断参考 (DEB-20260823: pooled 显著性夸大~8倍).
+        "day_clustered": _pb_ic_report.get("day_clustered", {}),
         "graduation": _pb_grad.get("verdict", "UNKNOWN"),
         "graduation_checks": _pb_grad.get("checks", {}),
+        # ⚠️ DEPRECATED (2026-08-24): confidence-based 毕业判据已停用 (测常量无意义),
+        # 门禁本体保持现状; 新判据待按日聚类尺子预注册+用户批准.
+        "graduation_deprecated": True,
     }
 except Exception as e:
     ic_data["playbook"]["error"] = str(e)
@@ -327,14 +333,23 @@ if has_outcome > 0:
             s = weekly_pnl[wk]
             print(f"  {wk}: ${s['pnl']:.2f} ({s['wins']}W/{s['losses']}L)")
 
-print(f"\n📈 IC METRICS")
-print(f"  [Playbook SSOT] IC(T+1): {ic_data['playbook'].get('ic_t1', 'N/A')} (n={ic_data['playbook'].get('sample_t1', 0)})")
-print(f"  [Playbook SSOT] IC(T+3): {ic_data['playbook'].get('ic_t3', 'N/A')} (n={ic_data['playbook'].get('sample_t3', 0)})")
-print(f"  [Playbook SSOT] IC(T+5): {ic_data['playbook'].get('ic_t5', 'N/A')} (n={ic_data['playbook'].get('sample_t5', 0)})")
-print(f"  Graduation: {ic_data['playbook'].get('graduation', 'UNKNOWN')}")
+def _fmt_dc(dc):
+    """日聚类值格式化: 日均IC (t=X, MDE=Y, n日) 可分辨标记"""
+    if not dc or dc.get("day_ic_mean") is None:
+        return f"日聚类: ⏳ 不足({(dc or {}).get('n_days', 0)}日)"
+    flag = "可分辨✅" if dc.get("distinguishable") else "不可分辨"
+    return f"日聚类: {dc['day_ic_mean']:+.4f} (t={dc['t']}, MDE={dc['mde']}, {dc['n_days']}日) {flag}"
+
+print(f"\n📈 IC METRICS (pooled | 按日聚类成对, 宪章第9律: 无日聚类+MDE不予采信)")
+_pb = ic_data['playbook']
+_dc = _pb.get('day_clustered', {})
+print(f"  [Playbook SSOT] IC(T+1): {_pb.get('ic_t1', 'N/A')} (n={_pb.get('sample_t1', 0)})  └ {_fmt_dc(_dc.get('t1'))}")
+print(f"  [Playbook SSOT] IC(T+3): {_pb.get('ic_t3', 'N/A')} (n={_pb.get('sample_t3', 0)})  └ {_fmt_dc(_dc.get('t3'))}")
+print(f"  [Playbook SSOT] IC(T+5): {_pb.get('ic_t5', 'N/A')} (n={_pb.get('sample_t5', 0)})  └ {_fmt_dc(_dc.get('t5'))}")
+print(f"  Graduation: {_pb.get('graduation', 'UNKNOWN')} ⚠️旧判据已停用(测常量), 新判据待预注册")
 print(f"  [Signal diag] IC(T+1): {ic_data['signal'].get('ic_t1', 'N/A')} (n={ic_data['signal'].get('sample_t1', 0)})")
 print(f"  [Signal diag] IC(T+5): {ic_data['signal'].get('ic_t5', 'N/A')} (n={ic_data['signal'].get('sample_t5', 0)})")
-if ic_data["playbook"].get("sample_t3", 0) < 30:
+if _pb.get("sample_t3", 0) < 30:
     print(f"  ⚠️ Playbook IC(T+3) 样本不足, 毕业门禁暂不可用; 待 backfill 积累")
 
 if factor_stats:
