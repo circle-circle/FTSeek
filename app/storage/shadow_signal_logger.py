@@ -36,6 +36,9 @@ class ShadowSignalLogger:
             candidate: SignalCandidate 对象
             context: 额外上下文信息（price, volume, regime 等）
         """
+        # 测试卫生守卫 (DEB-20260823 X3, 对齐 pipeline 同款约定): 单测 TEST 标记不落生产影子
+        if "TEST" in str(getattr(candidate, "symbol", "") or "").upper():
+            return
         try:
             record = {
                 "timestamp": datetime.now().isoformat(),

@@ -116,6 +116,11 @@ class ShadowTracker:
         symbol = inst["symbol"]
         direction = inst["direction"]
 
+        # 测试卫生守卫 (DEB-20260823 X3, 对齐 pipeline 同款约定): 单测 TEST 标记指令
+        # 不进影子台账 (不写 tracking, 不计 shadow_pnl)
+        if "TEST" in str(symbol or "").upper():
+            return
+
         # 2026-06-24 防御守卫 (OKR): 已终态 outcome (win/loss/skipped/missed) 不再重处理.
         # 防止 daily_tracking 在 trade_store 不可用 / exit 查询失败时把已终态的 win/loss
         # 覆盖回 'holding' (曾因 stub 无 trade_store 导致 21 条 win/loss 被误覆盖).

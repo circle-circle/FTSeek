@@ -37,6 +37,9 @@ def emit(symbol: str, direction: str, exit_reason: str, exit_price: float,
          entry_price: float, pnl_net: float, notional: float = None,
          decision_id: str = None) -> bool:
     """PRE_CLOSE/保本/锁利退出时调用, 落一行隔夜决策点. 返回是否落盘."""
+    # 测试卫生守卫 (DEB-20260823 X3, 对齐 pipeline 同款约定): 单测 TEST 标记不落生产影子
+    if "TEST" in str(symbol or "").upper():
+        return False
     if not _enabled():
         return False
     if exit_reason not in _BENIGN:

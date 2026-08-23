@@ -297,6 +297,10 @@ def finalize_exit_shadow(*, symbol: str, direction: str, entry_price: float,
 
     2026-07-18: 新增 dead_signal 变体结果 + 60min-MFE 打点写入 JSONL。
     """
+    # 测试卫生守卫 (DEB-20260823 X3, 对齐 pipeline._emit_trigger_miss 同款约定):
+    # 单测约定 _symbol=="TEST" 标记, 不得落入生产影子 jsonl (8/18-19 曾有污染前科)
+    if "TEST" in str(symbol or "").upper():
+        return None
     try:
         from app.utils.timezone import now_utc
         if not is_enabled("exit_param_shadow"):

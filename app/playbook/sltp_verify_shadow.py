@@ -69,6 +69,9 @@ def record_sltp_shadow(*, inst_id=None, symbol="", direction="", entry=0.0,
 
     返回落盘的 record dict; 未启用或异常时返回 None。
     """
+    # 测试卫生守卫 (DEB-20260823 X3, 对齐 pipeline 同款约定): 单测 TEST 标记不落生产影子
+    if "TEST" in str(symbol or "").upper():
+        return None
     try:
         from app.utils.timezone import now_utc
         if not force and not is_enabled("sltp_verify_shadow"):
