@@ -43,9 +43,10 @@ class FundamentalProvider(BaseDataProvider):
             return None
         headers = {"X-Finnhub-Token": self.api_key}
         try:
+            # C3 (2026-08-24, 体检 E2): verify=True 收口 (实测握手正常)
             resp = requests.get(
                 f"{self.base_url}/{endpoint}",
-                params=params, headers=headers, timeout=timeout, verify=False,
+                params=params, headers=headers, timeout=timeout, verify=True,
             )
             if resp.status_code == 429:
                 logger.warning(f"[FundamentalProvider] Finnhub 429 on {endpoint}")

@@ -235,7 +235,9 @@ class TwelveDataProvider:
         if hasattr(self, '_rate_limited_until') and _now < self._rate_limited_until:
             return None
         try:
-            resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=15, verify=False)
+            # C3 (2026-08-24, 体检 E2): verify=True 收口 — 实测 api.twelvedata.com
+            # TLS 握手 verify=True 正常 (该数据被 position_sync 对账链消费).
+            resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=15, verify=True)
             resp.raise_for_status()
             data = resp.json()
             if data.get("status") == "error" or data.get("code") in (400, 401, 429):

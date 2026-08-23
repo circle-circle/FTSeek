@@ -457,7 +457,11 @@ class RSSHubUSNewsFetcher:
             try:
                 resp = requests.get(url, timeout=15, headers={
                     'User-Agent': 'FTSeek-US/1.0'
-                }, verify=False)  # 公共 RSSHub 实例常有 SSL 证书问题
+                # C3 (2026-08-24, 体检 E2): verify=True 收口 — 实测主实例
+                # rsshub.rssforever.com TLS 握手 verify=True 正常 (原"公共实例常有
+                # SSL 证书问题"注释已过时). 若未来某实例证书异常, 由多实例
+                # fallback 机制自然跳过, 无需全局降级.
+                }, verify=True)
                 resp.raise_for_status()
                 feed_failed_all = False  # 至少一个实例连接成功
                 feed = feedparser.parse(resp.content)

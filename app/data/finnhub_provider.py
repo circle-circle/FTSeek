@@ -22,6 +22,7 @@ import requests
 from app.utils.timezone import now_utc
 
 # P1 (2026-05-02): 抑制 urllib3 TLS 警告 (verify=False 是 Finnhub 免费 API 的已知问题)
+# C3 (2026-08-24): 已切 verify=True 收口 (实测握手正常), 本抑制保留为无害兜底.
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from pathlib import Path
@@ -179,7 +180,9 @@ class FinnhubProvider:
         # P1-8 修复 (2026-05-03): 使用 Header 传递 API Key，避免 token 出现在 URL 日志中
         headers = {"X-Finnhub-Token": self.api_key}
         try:
-            resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, headers=headers, timeout=30, verify=False)
+            # C3 (2026-08-24, 体检 E2): verify=True 收口 — 2026-08-24 实测
+            # finnhub.io TLS 握手 verify=True 正常 (原 5/2 "免费 API 已知问题" 已不成立).
+            resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, headers=headers, timeout=30, verify=True)
             if resp.status_code == 429:
                 logger.warning("[Finnhub] 触发 429 限速，等待 5s")
                 time.sleep(5)
