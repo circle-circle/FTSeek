@@ -3969,7 +3969,8 @@ def _intraday_vol_curve_p50(symbol: str, days: int = 20) -> Optional[List[float]
 
 
 def _calc_intraday_vol_ratio(data_router, symbol: str,
-                             realtime_cum_vol: Optional[float] = None) -> Optional[float]:
+                             realtime_cum_vol: Optional[float] = None,
+                             use_p50_curve: Optional[bool] = None) -> Optional[float]:
     """计算盘中实时量能比 (intraday volume ratio).
 
     分母两条路径 (P1-3, 2026-08-23):
@@ -3977,6 +3978,9 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
       回落: today_cumulative_vol / (avg_daily_vol_5d × elapsed_fraction)  ← 原线性模型
       - today_cumulative_vol: 今日开盘至当前的累计成交量
       - elapsed_fraction: 已过交易时间占全天比例 (9:30-16:00 ET = 390min)
+
+    Args:
+        use_p50_curve: True=强制走 p50, False=强制走线性, None=从 config 读开关。
 
     Returns:
         float > 0: 盘中量能比 (1.0=与历史同时段持平, >1.5=放量)
@@ -4046,12 +4050,15 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
         #   ⚠️ 本分支会实质改变量能门行为 (阈值 0.8 从"几乎恒过"变为真实过滤), 这是修门的
         #   目的而非副作用。覆盖外标的 (~45 票之外) 自动回落线性, 故行为变化仅限有曲线的票。
         #   回滚: volume_gate_vwap_relative 改 false。
-        try:
-            from app.core.config_container import get_config as _gc_vc
-            _use_curve = bool(_gc_vc().get_dotted(
-                "playbook.execution_parameters.volume_gate_vwap_relative", True))
-        except Exception:
-            _use_curve = False
+        if use_p50_curve is not None:
+            _use_curve = use_p50_curve
+        else:
+            try:
+                from app.core.config_container import get_config as _gc_vc
+                _use_curve = bool(_gc_vc().get_dotted(
+                    "playbook.execution_parameters.volume_gate_vwap_relative", True))
+            except Exception:
+                _use_curve = False
         if _use_curve:
             _curve = _intraday_vol_curve_p50(symbol)
             # bar i (09:31) 覆盖开盘后第 1 分钟 → 开盘后 _elapsed 分钟对应 index _elapsed-1
@@ -4766,7 +4773,11 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         # 分子由 _calc_intraday_vol_ratio 内部经 get_quote() 取 Futu LV3 快照当日累计量
         #   (真实盘中累计, <100ms). 不用 ctx["volume"] — 主链路 ctx 来自日K线技术指标,
         #   其 volume 是最近日线 bar(可能昨日), 非今日盘中累计, 混用会污染分子.
-        _intraday_vr = _calc_intraday_vol_ratio(data_router, symbol)
+        # P1-3 源分流 (2026-08-23 用户裁): DA 走线性(对比组), reentry/UE 走 p50 曲线
+        _did_vol = str(inst.get("decision_id") or "")
+        _vol_da_enforce = bool(pb_cfg.get("volume_gate_vwap_relative_da_enforce", False))
+        _vol_use_p50 = None if (not _did_vol.startswith("DA-") or _vol_da_enforce) else False
+        _intraday_vr = _calc_intraday_vol_ratio(data_router, symbol, use_p50_curve=_vol_use_p50)
     else:
         _intraday_vr = None
     if _intraday_vr is None:
@@ -5122,15 +5133,24 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             if _fals_slope is not None:
                 _slope_against = (_fals_slope > _slope_tol) if is_short else (_fals_slope < -_slope_tol)
                 if _slope_against:
-                    triggered = False
-                    _fals_blocked = True
+                    # 按源分流 (2026-08-23 用户裁): DA 大头先不动作对比组, reentry+UE 拦截
+                    _did = str(inst.get("decision_id") or "")
+                    _is_da = _did.startswith("DA-")
+                    _da_enforce = bool(pb_cfg.get("falsification_gate_vwap_slope_da_enforce", False))
+                    _do_block = not _is_da or _da_enforce
+                    if _do_block:
+                        triggered = False
+                        _fals_blocked = True
                     logger.info(
                         f"[playbook] 证伪门·VWAP斜率: {symbol} slope={_fals_slope:+.4f} "
-                        f"逆 {'SHORT' if is_short else 'BUY'} (tol={_slope_tol}) → 拦截"
+                        f"逆 {'SHORT' if is_short else 'BUY'} (tol={_slope_tol}) "
+                        f"src={'DA' if _is_da else 'non-DA'} → "
+                        f"{'拦截' if _do_block else '记录不拦(DA对比组)'}"
                     )
                     _emit_trigger_miss("falsification_vwap_slope", current_price)
-                    _shadow_portfolio_emit(inst, symbol, is_short, "falsification_vwap_slope",
-                                           _entry_path, current_price, entry_price)
+                    if _do_block:
+                        _shadow_portfolio_emit(inst, symbol, is_short, "falsification_vwap_slope",
+                                               _entry_path, current_price, entry_price)
         # ② 资金流背离门 (record-only 影子, 用户 2026-08-23 裁决): 该信号回放四关门全不过
         #   (placebo p=0.85), 不得拦单 — 只落"若拦会怎样"供攒样后按同一判据重裁。
         if bool(pb_cfg.get("falsification_gate_capital_flow_shadow", True)):

@@ -1146,10 +1146,13 @@ playbook:
     #   入场信号质量。三项均只做减法 (减少无效信号, 不增加信号数), 各带独立开关。
     # ── P1-1 证伪门子集 (pipeline.py:_check_intraday_trigger, VWAP 方向门之后) ──
     falsification_gates_enabled: true
-    #   VWAP 斜率门 (生产拦截): 近5min volume-weighted 价逆方向 → 动量反驳该方向.
-    #   与 entry_vwap_gate (价在当日VWAP哪侧) 正交. 证据方向: e2_momentum_replay_latest
-    #   blocked n=90 净-$1026 WR33% vs passed n=46 净+$184 WR52%. fail-open.
+    #   VWAP 斜率门: reentry/UE 启用拦截, DA 只记遥测 (2026-08-23 用户裁"DA 先不动
+    #   作为对比组; reentry+UE 样本质量有 E2 证据 n=136 支持, 先启用看效果")。
+    #   遥测全源照常落 trigger_miss_telemetry (reason=falsification_vwap_slope),
+    #   DA 源额外标 would_block=true 供对比分析。周检照常按全源计算。
+    #   翻全源启用判据: reentry+UE 组 n≥30 + 日聚类 t≤-2 + DA 对比组方向一致。
     falsification_gate_vwap_slope_enabled: true
+    falsification_gate_vwap_slope_da_enforce: false   # DA 源: false=只记不拦(对比组), true=拦
     falsification_gate_vwap_slope_tol: 0.001   # 0.1% — 模块噪声底, 低于此视为无斜率
     #   资金流背离门: record-only 影子, 不拦单. 用户 2026-08-23 裁决 —
     #   该信号回放四关门全不过 (capital_flow_replay_verdict.json: inflow t=-0.48 /
@@ -1169,13 +1172,10 @@ playbook:
     #   回滚: 改 0.
     dead_signal_reentry_extension_min: 60
     # ── P1-3 量能门换 VWAP-relative (pipeline.py:_calc_intraday_vol_ratio) ──
-    #   原线性折算 (日均量×elapsed/390) 忽略成交量 U 型分布, 开盘时段分母系统性偏小 →
-    #   ratio 虚高 → 门在最该确认的时段恒开. 实测 8/21 44票: 开盘后15min 线性 ratio
-    #   中位1.44 过门率84% vs p50 中位0.70 过门率45%; 30min 64%→41%; 60min 52%→34%.
-    #   ⚠️ 这是实质行为变化 (阈值0.8 从"几乎恒过"变为真实过滤), 仅影响 chase 路径
-    #   (pullback 不过量能门) 且仅覆盖 replay_bars_1m 的 ~45 票, 其余自动回落线性.
-    #   回滚: 改 false + 重启.
+    #   reentry/UE 启用 p50 曲线, DA 走线性 (2026-08-23 用户裁同 P1-1 分流逻辑)。
+    #   翻全源启用判据: reentry+UE 组 n≥30 chase + 日聚类 t + DA 对比组方向一致。
     volume_gate_vwap_relative: true
+    volume_gate_vwap_relative_da_enforce: false   # DA 源: false=走线性(对比组), true=走p50
     breakeven_fee_cushion_pct: 0.4
     breakeven_fee_aware_enabled: true
     # 2026-08-20 (方案A, 用户裁"同意先方案A"): 保本触发线滑点垫 + 限价超时缩短.
