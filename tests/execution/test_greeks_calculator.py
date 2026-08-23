@@ -65,8 +65,7 @@ def test_bs_greeks_calculation():
     print(f"  Vega 验证：{'✅ PASS' if vega_valid else '❌ FAIL'} (Vega 应为正)")
     
     all_passed = delta_valid and gamma_valid and theta_valid and vega_valid
-    return all_passed
-
+    assert all_passed, "test_bs_greeks_calculation 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_delta_target_range():
     """测试 2: Delta 目标范围监控 (0.4-0.6)"""
@@ -138,8 +137,7 @@ def test_delta_target_range():
     for alert in alerts:
         print(f"  - {alert['type']}: {alert['option_code']}")
     
-    return in_range and it_out_of_range and otm_out_of_range
-
+    assert in_range and it_out_of_range and otm_out_of_range, "test_delta_target_range 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_gamma_theta_vega():
     """测试 3: Gamma/Theta/Vega 计算验证"""
@@ -177,8 +175,7 @@ def test_gamma_theta_vega():
     print(f"  Theta 合理性：{'✅ PASS' if theta_valid else '❌ FAIL'}")
     print(f"  Vega 合理性：{'✅ PASS' if vega_valid else '❌ FAIL'}")
     
-    return gamma_valid and theta_valid and vega_valid
-
+    assert gamma_valid and theta_valid and vega_valid, "test_gamma_theta_vega 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_position_greeks():
     """测试 4: 持仓组合 Greeks 计算"""
@@ -217,8 +214,7 @@ def test_position_greeks():
     
     print(f"\n  Delta 验证：{'✅ PASS' if delta_valid else '❌ FAIL'} (期望≈{delta_expected:.0f})")
     
-    return delta_valid
-
+    assert delta_valid, "test_position_greeks 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_real_time_update():
     """测试 5: 实时更新 Greeks"""
@@ -259,8 +255,7 @@ def test_real_time_update():
     
     print(f"\n  Delta 变化方向：{'✅ PASS' if delta_increased else '❌ FAIL'}")
     
-    return delta_increased
-
+    assert delta_increased, "test_real_time_update 验证失败 (B1 测试卫生: return True→assert)"
 
 def main():
     """运行所有测试"""
@@ -271,19 +266,39 @@ def main():
     results = []
     
     print("\n[1/5] Black-Scholes 计算...")
-    results.append(("BS 计算", test_bs_greeks_calculation()))
+    try:
+        test_bs_greeks_calculation()
+        results.append(("BS 计算", True))
+    except AssertionError:
+        results.append(("BS 计算", False))
     
     print("\n[2/5] Delta 目标范围监控...")
-    results.append(("Delta 监控", test_delta_target_range()))
+    try:
+        test_delta_target_range()
+        results.append(("Delta 监控", True))
+    except AssertionError:
+        results.append(("Delta 监控", False))
     
     print("\n[3/5] Gamma/Theta/Vega 验证...")
-    results.append(("Gamma/Theta/Vega", test_gamma_theta_vega()))
+    try:
+        test_gamma_theta_vega()
+        results.append(("Gamma/Theta/Vega", True))
+    except AssertionError:
+        results.append(("Gamma/Theta/Vega", False))
     
     print("\n[4/5] 持仓组合 Greeks...")
-    results.append(("组合 Greeks", test_position_greeks()))
+    try:
+        test_position_greeks()
+        results.append(("组合 Greeks", True))
+    except AssertionError:
+        results.append(("组合 Greeks", False))
     
     print("\n[5/5] 实时更新 Greeks...")
-    results.append(("实时更新", test_real_time_update()))
+    try:
+        test_real_time_update()
+        results.append(("实时更新", True))
+    except AssertionError:
+        results.append(("实时更新", False))
     
     # 汇总结果
     print("\n" + "=" * 70)

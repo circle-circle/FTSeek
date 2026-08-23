@@ -169,7 +169,11 @@ class TestDirectionVocabularySSOT:
         assert is_short(bad) is None
 
     def test_trade_records_only_stores_trade_vocab(self):
-        """DB 实弹: trade_records.direction 只有 LONG/SHORT, 指令词汇直查恒 0 命中."""
+        """DB 实弹: trade_records.direction 只有 LONG/SHORT, 指令词汇直查恒 0 命中.
+
+        ⚠️ 有意连真主库 (B1 测试卫生 2026-08-24 注): 本测试的验证对象就是生产
+        词汇表契约本身, 换内存库即失去意义; 只读 (单条 SELECT), 无写入/无隔离需求.
+        """
         import sqlite3
         from app.core.db_utils import get_main_db
         conn = sqlite3.connect(str(get_main_db()))

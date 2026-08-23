@@ -211,7 +211,9 @@ def test_gate_hard_timeout_protects_main_thread():
     reset_cache()
 
     def slow_llm(*args, **kwargs):
-        _time.sleep(10)  # 模拟 LLM 长时间卡住 (远超 timeout_sec)
+        # B1 测试卫生 (2026-08-24): 10s→4s. 只需超过硬超时 (timeout_sec+1=3s) 即可
+        # 证明保护生效; 原 10s 在 executor 线程里空耗并拖慢 pytest 会话退出.
+        _time.sleep(4)  # 模拟 LLM 长时间卡住 (超过硬超时 3s)
         from app.llm.model_call import CallResult
         return CallResult(success=True, response={"go": False, "reason": "should not reach", "confidence": 1.0})
 

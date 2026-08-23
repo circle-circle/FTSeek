@@ -48,8 +48,7 @@ def test_margin_sufficiency():
     print(f"  账户余额：${result2['account_balance']:.2f}")
     print(f"  结果：{'✅ PASS' if not result2['passed'] else '❌ FAIL'} (应失败)")
     
-    return result1['passed'] and not result2['passed']
-
+    assert result1['passed'] and not result2['passed'], "test_margin_sufficiency 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_stop_loss():
     """测试 2: 期权价值止损 (-50% 权利金)"""
@@ -95,8 +94,7 @@ def test_stop_loss():
     print(f"\n用例 3: 亏损{loss_pct3:.1%} (阈值 50%)")
     print(f"  结果：{'✅ PASS' if result3['triggered'] else '❌ FAIL'} (应触发)")
     
-    return not result1['triggered'] and result2['triggered'] and result3['triggered']
-
+    assert not result1['triggered'] and result2['triggered'] and result3['triggered'], "test_stop_loss 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_dte_monitoring():
     """测试 3: 到期日监控 (DTE≥7 天)"""
@@ -105,34 +103,34 @@ def test_dte_monitoring():
     print("=" * 70)
     
     monitor = OptionRiskMonitor()
-    
+
+    # B1 测试卫生 (2026-08-24): 用固定日期替代 date.today() — check_dte 内部用
+    # now_et() 取当前日期 (DEB-fullchain 低优 8/16), 而原测试用服务器本地日期构造
+    # 到期日, 北京上午时段 (ET 还在前一天) 产生 12h 偏移 → dte 多算 1 天,
+    # 告警用例时过时不过. 显式传 current_date 使测试完全确定, 不依赖运行时刻.
+
     # 测试用例 1: DTE 充足 (16 天)
-    expiry1 = (date.today() + timedelta(days=16)).strftime("%Y-%m-%d")
-    result1 = monitor.check_dte(expiry_date=expiry1)
+    result1 = monitor.check_dte(expiry_date="2026-09-05", current_date="2026-08-20")
     
     print(f"\n用例 1: DTE={result1['dte']}天 (要求≥{result1['min_required']}天)")
-    print(f"  到期日：{expiry1}")
     print(f"  结果：{'✅ PASS' if result1['passed'] else '❌ FAIL'}")
     
     # 测试用例 2: DTE 不足 (5 天)
     monitor.clear_alerts()
-    expiry2 = (date.today() + timedelta(days=5)).strftime("%Y-%m-%d")
-    result2 = monitor.check_dte(expiry_date=expiry2)
+    result2 = monitor.check_dte(expiry_date="2026-08-25", current_date="2026-08-20")
     
     print(f"\n用例 2: DTE={result2['dte']}天 (要求≥{result2['min_required']}天)")
-    print(f"  到期日：{expiry2}")
     print(f"  结果：{'✅ PASS' if not result2['passed'] else '❌ FAIL'} (应失败)")
     
     # 测试用例 3: DTE 告警 (5 天，在告警阈值内)
     monitor.clear_alerts()
-    result3 = monitor.check_dte(expiry_date=expiry2)
+    result3 = monitor.check_dte(expiry_date="2026-08-25", current_date="2026-08-20")
     
     print(f"\n用例 3: DTE 告警测试")
     print(f"  告警阈值：≤{result3['alert_threshold']}天")
     print(f"  是否告警：{'✅ PASS' if result3['is_alert'] else '❌ FAIL'}")
     
-    return result1['passed'] and not result2['passed'] and result3['is_alert']
-
+    assert result1['passed'] and not result2['passed'] and result3['is_alert'], "test_dte_monitoring 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_greeks_risk():
     """测试 4: Greeks 风险监控"""
@@ -196,8 +194,7 @@ def test_greeks_risk():
     print(f"  Gamma 正常：{result4['gamma']['ok']}")
     print(f"  结果：{'✅ PASS' if not result4['passed'] else '❌ FAIL'} (应失败)")
     
-    return result1['passed'] and not result2['passed'] and not result3['passed'] and not result4['passed']
-
+    assert result1['passed'] and not result2['passed'] and not result3['passed'] and not result4['passed'], "test_greeks_risk 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_liquidity_check():
     """测试 5: 流动性检查"""
@@ -249,8 +246,7 @@ def test_liquidity_check():
     print(f"  价差正常：{result3['bid_ask_spread']['ok']}")
     print(f"  结果：{'✅ PASS' if not result3['passed'] else '❌ FAIL'} (应失败)")
     
-    return result1['passed'] and not result2['passed'] and not result3['passed']
-
+    assert result1['passed'] and not result2['passed'] and not result3['passed'], "test_liquidity_check 验证失败 (B1 测试卫生: return True→assert)"
 
 def test_custom_config():
     """测试 6: 自定义配置"""
@@ -288,8 +284,7 @@ def test_custom_config():
     print(f"  实际 DTE: {result2['dte']}天")
     print(f"  结果：{'✅ PASS' if not result2['passed'] else '❌ FAIL'} (应失败)")
     
-    return result1['triggered'] and not result2['passed']
-
+    assert result1['triggered'] and not result2['passed'], "test_custom_config 验证失败 (B1 测试卫生: return True→assert)"
 
 def main():
     """运行所有测试"""
@@ -300,22 +295,46 @@ def main():
     results = []
     
     print("\n[1/6] 保证金充足性检查...")
-    results.append(("保证金检查", test_margin_sufficiency()))
+    try:
+        test_margin_sufficiency()
+        results.append(("保证金检查", True))
+    except AssertionError:
+        results.append(("保证金检查", False))
     
     print("\n[2/6] 期权价值止损...")
-    results.append(("止损检查", test_stop_loss()))
+    try:
+        test_stop_loss()
+        results.append(("止损检查", True))
+    except AssertionError:
+        results.append(("止损检查", False))
     
     print("\n[3/6] 到期日监控...")
-    results.append(("DTE 监控", test_dte_monitoring()))
+    try:
+        test_dte_monitoring()
+        results.append(("DTE 监控", True))
+    except AssertionError:
+        results.append(("DTE 监控", False))
     
     print("\n[4/6] Greeks 风险监控...")
-    results.append(("Greeks 监控", test_greeks_risk()))
+    try:
+        test_greeks_risk()
+        results.append(("Greeks 监控", True))
+    except AssertionError:
+        results.append(("Greeks 监控", False))
     
     print("\n[5/6] 流动性检查...")
-    results.append(("流动性检查", test_liquidity_check()))
+    try:
+        test_liquidity_check()
+        results.append(("流动性检查", True))
+    except AssertionError:
+        results.append(("流动性检查", False))
     
     print("\n[6/6] 自定义配置...")
-    results.append(("自定义配置", test_custom_config()))
+    try:
+        test_custom_config()
+        results.append(("自定义配置", True))
+    except AssertionError:
+        results.append(("自定义配置", False))
     
     # 汇总结果
     print("\n" + "=" * 70)

@@ -126,6 +126,7 @@ class TestPriceCalibrator:
 
     def test_calibrate_missing_price(self):
         """测试行情缺失时的容错"""
+        from unittest.mock import patch
         from app.recommendations.price_calibrator import PriceCalibrator
 
         calibrator = PriceCalibrator(config={"enabled": True})
@@ -140,10 +141,15 @@ class TestPriceCalibrator:
             ]
         }
 
-        # 不提供 market_data，且 router 获取会失败
-        result = calibrator.calibrate(recommendations, market_data={})
-        # 不应抛异常
+        # B1 测试卫生 (2026-08-24): _fetch_quote 回退会真实调用外部行情源
+        # (finnhub/twelvedata). 测试本意即"行情获取失败", 直接 mock 为 None,
+        # 不触网、确定性.
+        with patch.object(PriceCalibrator, "_fetch_quote", return_value=None):
+            result = calibrator.calibrate(recommendations, market_data={})
+        # 不应抛异常, 且标记行情不可用
         assert result is not None
+        item = result["recommendations"][0]
+        assert item.get("entry_zone_calibrated", {}).get("calibration_failed") is True
 
     def test_calibrate_disabled(self):
         """测试禁用状态"""
