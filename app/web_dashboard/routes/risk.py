@@ -337,8 +337,47 @@ def register(app, templates):
         if not pos_raw:
             return api_ok({"message": "无持仓需要平仓", "closed": 0})
 
+        # ── R-9 (2026-08-23 DEB-20260823): playbook 仓感知 ──
+        # 原实现直接迭代券商原始持仓平仓, 零 playbook 感知 → 一按即穿透 R-7 建立的
+        # 全部排他性护栏, 与 monitor_playbook_sim_exits 争抢同一批仓 (双线平仓)。
+        # 修法不是简单拦掉 (真紧急时人就是要全平), 而是消除最危险的语义 ——
+        # "静默部分平仓": 人以为账户已全平, 实际 playbook 仓还在裸奔。
+        #   默认: 跳过 playbook 自管仓, 但在响应里显著报出 (fully_flat=false), 由人再决策;
+        #   include_playbook=true: 连 playbook 仓一起平, 并先关 auto_execute,
+        #   否则平完当日指令可能立刻重新入场。
+        _include_pb = bool(body.get("include_playbook", False))
+        _pb_symbols = set()
+        try:
+            from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check
+            _pre = load_playbook_open_symbols()
+            for _p in pos_raw:
+                _s = str(_p.get("code", ""))
+                if _s and playbook_open_check(_s, _pre):
+                    _pb_symbols.add(_s)
+        except Exception as _pb_err:
+            # fail-safe: 判不出来就当全是 playbook 仓 —— 宁可要求人显式确认,
+            # 不可静默双线平仓。
+            logger.error(f"[RiskCmd] playbook 仓判定异常, 保守要求显式确认: {_pb_err}")
+            _pb_symbols = {str(p.get("code", "")) for p in pos_raw if p.get("code")}
+
+        if _pb_symbols and _include_pb:
+            # 先激活 Kill Switch 再平 playbook 仓, 否则平完当日指令可能立刻重新入场。
+            # 用 Kill Switch 而非改 yaml: 它是本项目设计的紧急机制, 且 playbook
+            # auto_execute 路径对它 fail-close (pipeline.py:3177-3179), 已接线可靠。
+            # (ConfigWriter.update_param 有 PARAM_MAP 白名单, playbook.auto_execute 不在其中。)
+            try:
+                from app.us_pipeline.emergency_interceptor import activate_kill_switch
+                activate_kill_switch("R-9 紧急全平含 Playbook 仓, 阻断重新入场")
+                logger.critical(
+                    "🚨 [RiskCmd] 紧急全平含 Playbook 仓 → Kill Switch 已激活 "
+                    "(平仓后需 /api/risk/resume-trading 手动恢复)"
+                )
+            except Exception as _ae:
+                logger.error(f"[RiskCmd] 激活 Kill Switch 失败 (仍继续平仓): {_ae}")
+
         closed = 0
         errors = []
+        skipped_playbook = []
         from app.web_dashboard.manual_order_service import get_manual_order_service
         svc = get_manual_order_service()
 
@@ -346,6 +385,13 @@ def register(app, templates):
             symbol = str(pos.get("code", ""))
             qty = int(abs(float(pos.get("qty", 0))))
             if qty <= 0:
+                continue
+            if symbol in _pb_symbols and not _include_pb:
+                skipped_playbook.append(symbol)
+                logger.warning(
+                    f"[RiskCmd] 紧急全平跳过 Playbook 自管仓 {symbol} "
+                    f"(由 monitor_playbook_sim_exits 管理; 需 include_playbook=true 才一并平)"
+                )
                 continue
             try:
                 result = svc.close_position(symbol=symbol, reason="紧急平仓(Dashboard)", close_qty=qty)
@@ -358,7 +404,19 @@ def register(app, templates):
 
         ds.invalidate_cache()
         msg = f"平仓 {closed} 只" + (f", {len(errors)} 只失败" if errors else "")
+        if skipped_playbook:
+            msg += (
+                f"; ⚠️ 跳过 {len(skipped_playbook)} 只 Playbook 自管仓 "
+                f"({', '.join(skipped_playbook)}) — 账户未完全平仓, "
+                f"如需一并平请带 include_playbook=true 重发"
+            )
         logger.warning(f"[RiskCmd] 紧急平仓: {msg}")
-        return api_ok({"message": msg, "closed": closed, "errors": errors})
+        return api_ok({
+            "message": msg,
+            "closed": closed,
+            "errors": errors,
+            "skipped_playbook": skipped_playbook,
+            "fully_flat": (not skipped_playbook and not errors),
+        })
 
     app.include_router(router)

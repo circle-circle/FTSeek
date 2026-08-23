@@ -947,7 +947,18 @@ class TradeStore:
         source_type 不存入 open_positions (仅在 trade_records 中保留).
         """
         from datetime import datetime as _dt
-        _now = _dt.now().isoformat()
+        # ── R-12 (2026-08-23 DEB-20260823): entry_time 统一 ET 口径 ──
+        # 原用裸 _dt.now() = 宿主 Asia/Shanghai (CST), 而同一笔仓写进 trade_records 的
+        # entry_time 是 ET (playbook_service 侧用 now_et()) → 两表相差恰好 12h。
+        # 实证: US.WEAV open_positions=2026-08-19T21:36:54 vs
+        #       trade_records=2026-08-19T09:36:54。
+        # 同一逻辑事件两种时间约定 = 任何跨表 JOIN、或把 open_positions.entry_time 喂给
+        # 按 ET 判断的函数 (如 _is_overnight_position) 都会立刻出错的口径地雷。统一为 ET。
+        try:
+            from app.utils.timezone import now_et as _now_et_ts
+            _now = _now_et_ts().isoformat()
+        except Exception:
+            _now = _dt.now().isoformat()
         conn = self._get_conn()
         try:
             conn.execute("""
