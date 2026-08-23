@@ -680,6 +680,27 @@ class ExitMonitor:
             is_protected = lambda p: True
         managed_positions = []
 
+        # ── R-7c (2026-08-23 DEB-20260823): Playbook 仓在源头剔除 ──
+        # 组合层止损 FLAT_ALL(:719)/REDUCE_50(:750) 直接迭代 managed_positions 调
+        # execute_close_fn, 而 playbook 排他性闸门 _pb_check_em 在 :882 的逐仓循环里 ——
+        # 位于组合层之后, 故那两条路径结构性绕过闸门, 只剩 order_executor._close_position
+        # 的兜底 (R-7b 前该兜底还是 fail-open). 此处在源头过滤, 使组合层与逐仓层共享
+        # 同一份已剔除 playbook 的集合, 从结构上消除双线管理可能, 而非再加一道拦截.
+        _pb_filter_ok = True
+        try:
+            from app.playbook.pipeline import (
+                load_playbook_open_symbols as _pb_load_r7,
+                playbook_open_check as _pb_chk_r7,
+            )
+            _pb_syms_r7 = _pb_load_r7()
+        except Exception as _pb_imp_err:
+            # 与上方 is_strategy_managed 导入失败的安全降级同构: 宁可整段跳过, 不误杀
+            _pb_filter_ok = False
+            logger.error(
+                f"[组合止损·安全降级] playbook 护栏导入失败 ({_pb_imp_err}), "
+                f"为防误平 Playbook 仓, 本轮 portfolio_drawdown 跳过"
+            )
+
         for p in positions:
             try:
                 # 显式排除 ghost (Reconciler 标记的 metadata.is_ghost)
@@ -688,6 +709,9 @@ class ExitMonitor:
                     continue
                 # 显式排除待平仓的位置 (避免重复触发)
                 if _meta.get('_pending_close'):
+                    continue
+                # R-7c: Playbook 自管仓不进 managed_positions (组合层/逐仓层统一口径)
+                if _pb_filter_ok and _pb_chk_r7(p.symbol, _pb_syms_r7):
                     continue
                 # 幽灵仓过滤已由 PositionStore.managed() SSOT 网关统一处理 (2026-06-16)
                 # 消费者无需各自过滤 stale_not_in_broker / is_anomalous
@@ -700,7 +724,9 @@ class ExitMonitor:
 
         # ── F17 (2026-05-12): 组合层面止损 ──
         # 在单仓位扫描之前, 先检查组合整体亏损
-        portfolio_action = self._check_portfolio_drawdown(managed_positions, get_price_fn)
+        # R-7c: 护栏导入失败时整段跳过 (managed_positions 未剔 playbook, 不可交给组合层)
+        portfolio_action = self._check_portfolio_drawdown(managed_positions, get_price_fn) \
+            if _pb_filter_ok else None
         if portfolio_action == "FLAT_ALL":
             # P0 (2026-06-16): FLAT_ALL 锁存 — 30 分钟内不重复触发
             # 根因: 6/15 实盘 FLAT_ALL 触发 95 次, 平仓失败后每 tick 重触发形成死循环

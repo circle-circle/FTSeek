@@ -2946,16 +2946,26 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
 
         if row:
             _, exit_time_str, src = row
+            # ── R-13 (2026-08-23 DEB-20260823): 拦截决策不再依赖 gap 计算 ──
+            # 原实现把 `return False` 写在 try 内、gap 计算之后。而 trade_records.exit_time
+            # 格式混用 (ET-aware 347 行 / naive 327 行, naive 全为 ≤2026-07-20 的 legacy 行),
+            # 命中 naive 行时 `now_et() - exit_dt` = aware 减 naive → TypeError → 被下方
+            # except 吞成 debug → 落到函数末尾 `return True` = **放行入场**, 冷却门形同虚设。
+            # 关键认识: 是否拦截取决于 SQL 是否查到行 (SQL 已按 cutoff_iso 过滤), gap 仅用于日志。
+            _gap_desc = "未知"
             try:
                 exit_dt = datetime.fromisoformat(exit_time_str)
-                gap = (now_et() - exit_dt).total_seconds()
-                logger.warning(
-                    f"🚫 [F1·反向冷却] {symbol} {direction_str} 拒入场: "
-                    f"{opposite} 在 {gap:.0f}s 前刚平仓 (源={src}, 冷却={cooldown_sec}s)"
-                )
-                return False
-            except Exception as _silent_e:
-                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+                if exit_dt.tzinfo is None:
+                    # 该列语义是 ET (playbook/主线均写 ET), naive legacy 行按 ET 补全
+                    exit_dt = exit_dt.replace(tzinfo=now_et().tzinfo)
+                _gap_desc = f"{(now_et() - exit_dt).total_seconds():.0f}s"
+            except Exception as _gap_err:
+                logger.debug(f"[F1·反向冷却] gap 计算失败 (不影响拦截): {_gap_err}")
+            logger.warning(
+                f"🚫 [F1·反向冷却] {symbol} {direction_str} 拒入场: "
+                f"{opposite} 在 {_gap_desc} 前刚平仓 (源={src}, 冷却={cooldown_sec}s)"
+            )
+            return False
     except Exception as e:
         logger.debug(f"[F1·反向冷却] 查询失败 (放行): {e}")
     return True
@@ -4273,6 +4283,11 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     # 2026-07-16 P0: 纵深防御 — 即使上游所有护栏被绕过, _close_position 也不平 Playbook 仓位.
     #   上游: position_sync/restore/reconcile/ExitDispatcher/DEM 全部跳过 Playbook.
     #   此处: 最后一道防线, 万一仓位漏网到此, 直接 return 不平仓.
+    # 2026-08-23 R-7b: 原实现整块 `except Exception: pass` → 护栏自身 fail-open.
+    #   纵深防御的最后一层不能静默失效: DEM 的 FLAT_ALL/REDUCE_50 在
+    #   position_exit_monitor.py:719/:750 直接迭代 managed_positions 调 execute_close_fn,
+    #   绕过了 :882 的 playbook 闸门 → 此处是那两条路径的唯一拦截点.
+    #   回滚: risk.playbook_guard_fail_mode=open.
     try:
         from app.playbook.pipeline import is_playbook_open_position
         if is_playbook_open_position(position.symbol):
@@ -4281,8 +4296,23 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 f"跳过旧管线平仓 (由 monitor_playbook_sim_exits 自管)"
             )
             return
-    except Exception:
-        pass
+    except Exception as _pbg_err:
+        try:
+            from app.core.config_container import get_config as _get_cfg_pbg2
+            _pbg_mode2 = str(_get_cfg_pbg2().get_dotted("risk.playbook_guard_fail_mode", "closed")).lower()
+        except Exception:
+            _pbg_mode2 = "closed"
+        if _pbg_mode2 != "open":
+            logger.critical(
+                f"🚨 [平仓·playbook护栏·fail-close] {position.symbol} 护栏检查异常: {_pbg_err} "
+                f"→ 拒绝主线平仓 (宁可不平, 不可双线管理). "
+                f"若该仓确属遗留/手动仓且需平仓, 请从 Dashboard 人工处置。"
+            )
+            return
+        logger.error(
+            f"[平仓·playbook护栏] {position.symbol} 护栏检查异常: {_pbg_err} "
+            f"→ fail-OPEN 继续平仓 — 由 risk.playbook_guard_fail_mode=open 指定"
+        )
     # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
     # (原注释提及 ExitRuleDispatcher 双触发场景, 该路径已随架构体检 2026-08-12 删除;
     #  保护本身保留, 防御多线程/多循环并发平仓仍必要)

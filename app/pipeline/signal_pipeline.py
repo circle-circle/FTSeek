@@ -248,12 +248,18 @@ def scan_loop(scheduler):
                 #   主线扫描本体静默化 — 近4日成交 100% PLAYBOOK、主线 0 笔, 扫描仅空转烧配额/CPU。
                 #   只停 _run_signal_scan_impl 本体; 寄宿任务 (盘前/盘后巡检、日周月度复盘、
                 #   持仓快照、watchdog) 全部保留。回滚: strategy.main_scan_enabled 改 true。
-                _main_scan_on = True
+                # 2026-08-23 R-7d: 缺省由 True 改 False (fail-close).
+                #   主线冻结的意图是"默认不扫", 而原缺省 True + except:pass 使配置读取
+                #   失败时主线扫描自动开启 — 这是入场侧三锁中唯一 fail-open 的一道.
+                #   回滚: strategy.main_scan_enabled 改 true (显式开启, 语义不变).
+                _main_scan_on = False
                 try:
                     from app.core.config_container import get_config as _get_cfg_ms
-                    _main_scan_on = bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", True))
-                except Exception:
-                    pass
+                    _main_scan_on = bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", False))
+                except Exception as _ms_err:
+                    logger.warning(
+                        f"[扫描] main_scan_enabled 读取失败 ({_ms_err}) → fail-close 保持静默"
+                    )
                 if not _main_scan_on:
                     logger.debug("[扫描] 主线扫描已静默 (strategy.main_scan_enabled=false), 寄宿任务照常")
                 else:
@@ -768,11 +774,15 @@ def run_signal_scan(scheduler):
     #   回滚: 删本块。
     try:
         from app.core.config_container import get_config as _get_cfg_ms
-        if not bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", True)):
+        # 2026-08-23 R-7d: 缺省 True→False (fail-close), 与 scan_loop 内同款门对齐.
+        if not bool(_get_cfg_ms().get_dotted("strategy.main_scan_enabled", False)):
             logger.info("[扫描] 主线扫描已静默 (strategy.main_scan_enabled=false), 跳过外部入口扫描 (预热/force_scan)")
             return
-    except Exception:
-        pass
+    except Exception as _ms_err2:
+        logger.warning(
+            f"[扫描] main_scan_enabled 读取失败 ({_ms_err2}) → fail-close 跳过外部入口扫描"
+        )
+        return
     _run_signal_scan_impl(scheduler)
 
 

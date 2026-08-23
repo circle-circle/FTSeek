@@ -772,6 +772,7 @@ class USPositionSync:
             )
             _orphan_rows = cursor.fetchall()
             _orphan_cleaned = 0
+            _orphan_pending = 0
             for _orow in _orphan_rows:
                 _oid, _osym = _orow[0], _orow[1]
                 _oentry, _oetime = _orow[2], _orow[3]
@@ -801,6 +802,46 @@ class USPositionSync:
                     # 无 entry_time → 无法判定保护窗 → 保守跳过
                     continue
                 _oexit = datetime.now().isoformat()
+                # ── R-2 (2026-08-23 DEB-20260823): 默认不再自动伪造平仓 ──
+                # 原实现直接 UPDATE exit_price=entry_price, realized_pnl=0。三个前置判据
+                # (broker 无 / open_positions 无 / 非 playbook 仓) 全是单点判断, 且 broker
+                # 侧只查当前单一 env (:577 _envs_to_query 单元素)。任一误判后果不可逆:
+                # 券商真实持仓被写上 exit_time → monitor_playbook_sim_exits 的
+                # WHERE exit_time IS NULL 永久查不到 → 裸仓无止损、不自愈; 同时向毕业统计
+                # 注入伪造的 pnl=0 样本, 污染终裁口径。
+                # 现默认只告警 + 落盘待人工 adopt。回滚: reconcile.orphan_autoclose_enabled=true
+                try:
+                    from app.core.config_container import get_config as _get_cfg_orph
+                    _orph_autoclose = bool(
+                        _get_cfg_orph().get_dotted("reconcile.orphan_autoclose_enabled", False)
+                    )
+                except Exception:
+                    _orph_autoclose = False
+
+                if not _orph_autoclose:
+                    _orphan_pending += 1
+                    logger.error(
+                        f"🚨 [US Sync] 疑似孤儿 trade_records (未自动平仓, 待人工确认): "
+                        f"id={_oid} {_osym} entry={_oentry} entry_time={_oetime} "
+                        f"— broker/open_positions 均无且建仓>1天。若券商实有此仓则为误判, "
+                        f"自动平仓会使该仓永久失去止损监控, 故仅告警。"
+                    )
+                    try:
+                        import json as _oj
+                        _oa_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'audit')
+                        os.makedirs(_oa_dir, exist_ok=True)
+                        with open(os.path.join(_oa_dir, 'orphan_trade_records.jsonl'),
+                                  'a', encoding='utf-8') as _of:
+                            _of.write(_oj.dumps({
+                                "detected_at": _oexit, "trade_record_id": _oid,
+                                "symbol": _osym, "entry_price": _oentry,
+                                "entry_time": _oetime,
+                                "action": "ALERT_ONLY_PENDING_MANUAL_ADOPT",
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
+                    continue
+
                 cursor.execute(
                     "UPDATE trade_records SET exit_time=?, exit_price=entry_price, "
                     "realized_pnl=0, pnl_pct=0, holding_hours=0, exit_reason=? "
@@ -815,6 +856,11 @@ class USPositionSync:
                     )
             if _orphan_cleaned:
                 logger.warning(f"[US Sync] 孤儿 trade_records 清理完成: {_orphan_cleaned} 笔")
+            if _orphan_pending:
+                logger.error(
+                    f"🚨 [US Sync] 疑似孤儿 trade_records 待人工处理: {_orphan_pending} 笔 "
+                    f"(详见 data/audit/orphan_trade_records.jsonl)"
+                )
         except Exception as _orphan_err:
             logger.warning(f"[US Sync] 孤儿 trade_records 扫描异常 (已隔离, 不影响 sync): {_orphan_err}")
 
