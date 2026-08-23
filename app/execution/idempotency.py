@@ -1,11 +1,15 @@
 """
 幂等机制 - P0 修复 2026-04-26: 引入 SQLite 持久化，防止重启后重复下单
 """
+import logging
 import sqlite3
 import os
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
+
+# B3 (2026-08-24, 体检 O1): print→logger 收口 — 幂等持久化失败必须可见
+logger = logging.getLogger("ftseek_us.idempotency")
 
 
 # Critical #3 修复 (2026-06-02): 统一 SQLite 连接配置
@@ -50,7 +54,7 @@ class IdempotencyManager:
                 """)
                 conn.commit()
         except Exception as e:
-            print(f"[Idempotency] DB init failed: {e}")
+            logger.error(f"[Idempotency] DB init failed: {e}")
 
     def _load_from_db(self):
         """启动时加载最近窗口内的记录"""
@@ -66,9 +70,9 @@ class IdempotencyManager:
                     cid, oid, ts = row
                     self.orders[cid] = (oid, datetime.fromtimestamp(ts))
                     count += 1
-            print(f"[Idempotency] Loaded {count} records from DB")
+            logger.info(f"[Idempotency] Loaded {count} records from DB")
         except Exception as e:
-            print(f"[Idempotency] Load from DB failed: {e}")
+            logger.error(f"[Idempotency] Load from DB failed: {e}")
 
     def _save_to_db(self, client_order_id: str, order_id: str):
         """保存记录到数据库"""
@@ -80,7 +84,7 @@ class IdempotencyManager:
                 )
                 conn.commit()
         except Exception as e:
-            print(f"[Idempotency] Save to DB failed: {e}")
+            logger.error(f"[Idempotency] Save to DB failed: {e}")
     
     def is_duplicate(self, client_order_id: str, bypass: bool = False) -> bool:
         """检查是否是重复订单

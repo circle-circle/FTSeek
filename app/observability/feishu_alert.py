@@ -3,6 +3,7 @@
 
 使用飞书机器人发送告警消息
 """
+import logging
 import os
 import requests
 import hashlib
@@ -10,6 +11,10 @@ import hmac
 import base64
 import time
 from typing import Dict, Any, Optional
+
+# B3 (2026-08-24, 体检 O1): print→logger 收口 — error_alert 按 ERROR 日志计数,
+# print 行在推送通道失败时静默漏报.
+logger = logging.getLogger("ftseek_us.feishu_alert")
 
 
 class FeishuAlerter:
@@ -41,10 +46,10 @@ class FeishuAlerter:
                 self.token_expire_time = time.time() + (7200 - 600)
                 return self.access_token
             else:
-                print(f"获取飞书令牌失败：{result}")
+                logger.error(f"获取飞书令牌失败：{result}")
                 return None
         except Exception as e:
-            print(f"获取飞书令牌异常：{e}")
+            logger.error(f"获取飞书令牌异常：{e}")
             return None
     
     def send_alert(self, level: str, title: str, content: str, **kwargs) -> bool:
@@ -97,13 +102,13 @@ class FeishuAlerter:
             result = response.json()
             
             if result.get("code") == 0:
-                print(f"✅ 飞书推送成功：{title}")
+                logger.info(f"✅ 飞书推送成功：{title}")
                 return True
             else:
-                print(f"❌ 飞书推送失败：{result}")
+                logger.error(f"❌ 飞书推送失败：{result}")
                 return False
         except Exception as e:
-            print(f"飞书推送异常：{e}")
+            logger.error(f"飞书推送异常：{e}")
             return False
 
     def format_alert(self, level: str, title: str, content: str, **kwargs) -> Dict[str, Any]:

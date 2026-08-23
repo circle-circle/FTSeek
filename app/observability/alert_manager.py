@@ -1,6 +1,10 @@
 """告警管理器 (统一接口)"""
+import logging
 from typing import Dict, Any, Optional
 from .dingtalk_alert import DingTalkAlerter
+
+# B3 (2026-08-24, 体检 O1): print→logger 收口 — 告警通道自身失败必须有日志可查
+logger = logging.getLogger("ftseek_us.alert_manager")
 
 # P0 2026-04-20: 飞书模块可选导入，未安装时 HAS_FEISHU = False
 try:
@@ -39,7 +43,7 @@ class AlertManager:
             if HAS_FEISHU and feishu_app_id and feishu_app_secret:  # noqa: F821 -- HAS_FEISHU defined by try/except below
                 self.alerter = FeishuAlerter(feishu_app_id, feishu_app_secret)
             else:
-                print("⚠️  飞书模块未安装或配置不完整，降级为钉钉")
+                logger.warning("⚠️  飞书模块未安装或配置不完整，降级为钉钉")
                 self.alerter = DingTalkAlerter(dingtalk_webhook or "", dingtalk_secret or "")
         else:
             raise ValueError(f"不支持的告警提供商：{provider}")
@@ -116,14 +120,14 @@ class AlertManager:
         try:
             result["dingtalk"] = self.alerter.send_alert(level, title, content, **kwargs)
         except Exception as e:
-            print(f"[双推] 钉钉失败: {e}")
+            logger.error(f"[双推] 钉钉失败: {e}")
 
         # 备用通道 (飞书)
         if self._feishu_alerter:
             try:
                 result["feishu"] = self._feishu_alerter.send_alert(level, title, content, **kwargs)
             except Exception as e:
-                print(f"[双推] 飞书失败: {e}")
+                logger.error(f"[双推] 飞书失败: {e}")
 
         return result
     

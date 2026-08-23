@@ -2,10 +2,14 @@
 import hmac
 import hashlib
 import base64
+import logging
 import requests
 import time
 from typing import Dict, Any, Optional
 from urllib.parse import quote_plus
+
+# B3 (2026-08-24, 体检 O1): print→logger 收口
+logger = logging.getLogger("ftseek_us.dingtalk_alert")
 
 
 class DingTalkAlerter:
@@ -87,5 +91,5 @@ class DingTalkAlerter:
             result = response.json()
             return result.get("errcode") == 0
         except Exception as e:
-            print(f"发送钉钉告警失败：{e}")
+            logger.error(f"发送钉钉告警失败：{e}")
             return False

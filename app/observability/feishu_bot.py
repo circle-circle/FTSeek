@@ -3,12 +3,16 @@
 
 使用机器人 Webhook 发送告警消息（不需要用户 ID）
 """
+import logging
 import requests
 import hashlib
 import hmac
 import base64
 import time
 from typing import Dict, Any, Optional
+
+# B3 (2026-08-24, 体检 O1): print→logger 收口
+logger = logging.getLogger("ftseek_us.feishu_bot")
 
 
 class FeishuBotAlerter:
@@ -75,13 +79,13 @@ class FeishuBotAlerter:
             
             # 飞书 webhook 返回 code 为 0 表示成功
             if result.get("code") == 0 or result.get("StatusCode") == 0:
-                print(f"✅ 飞书推送成功：{title}")
+                logger.info(f"✅ 飞书推送成功：{title}")
                 return True
             else:
-                print(f"❌ 飞书推送失败：{result}")
+                logger.error(f"❌ 飞书推送失败：{result}")
                 return False
         except Exception as e:
-            print(f"飞书推送异常：{e}")
+            logger.error(f"飞书推送异常：{e}")
             return False
     
     def send_info(self, title: str, content: str, **kwargs) -> bool:

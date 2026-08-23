@@ -218,7 +218,7 @@ def push_attribution_to_feishu(service: "ManualOrderService", attr) -> bool:
         return alerter.send_info(title=title, content=content)
 
     except Exception as e:
-        print(f"飞书归因推送失败: {e}")
+        logger.error(f"飞书归因推送失败: {e}")
         return False
 
 
