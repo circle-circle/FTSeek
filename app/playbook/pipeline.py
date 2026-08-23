@@ -312,7 +312,17 @@ _SP_EMITTED: set = set()
 
 def _shadow_portfolio_emit(inst, symbol, is_short, blocked_by, entry_path,
                            current_price, entry_price, vwap_dev=None):
-    """影子组合入场登记 (record-only). 任何异常静默."""
+    """影子组合入场登记 (record-only). 任何异常静默.
+
+    ⚠️ 去重语义 (消费方必读): 键是 (inst_id, date), **跨全部 blocked_by 原因**,
+    每指令每日只落一行, 先到先占 —— 同一指令当日先因 band 落行, 晚轮被 vwap_gate
+    或证伪门拦截时不再落行。这对本台账的用途是正确的: 它回答"若把被拦的单都做了,
+    影子组合赚多少钱", 同一指令入场两次会重复计钱 (settle_shadow_portfolio.py
+    亦按 (inst_id,date) 去重结算)。
+    但**不能用作单门归因源** —— 按 blocked_by 分组统计会系统性漏计后发原因
+    (同构实测: 既有 vwap_gate 捕获率 87%)。需要"某门到底拦了哪些单"请用
+    data/trigger_miss_telemetry.jsonl (逐轮 append, 按 reason 区分, 无跨原因去重)。
+    """
     try:
         from app.core.config_container import get_config as _gc_sp
         if not bool(_gc_sp().get_dotted("playbook.shadow_portfolio_enabled", True)):

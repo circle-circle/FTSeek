@@ -5,14 +5,17 @@ VWAP 斜率证伪门周检 (2026-08-23 预注册, 门加载当日立判据 — �
 ====================================================================
 门: falsification_gate_vwap_slope (DEB-20260823-phase1, P1-1, 生产拦截,
     2026-08-23 12:55 随服务重启加载)。拦截时落两处:
-      - data/shadow_portfolio_entries.jsonl (blocked_by='falsification_vwap_slope')
-      - data/trigger_miss_telemetry.jsonl (reason='falsification_vwap_slope')
+      - data/trigger_miss_telemetry.jsonl (reason='falsification_vwap_slope')  ← 本脚本主源
+      - data/shadow_portfolio_entries.jsonl (blocked_by=...)  ← 影子组合 P&L 台账,
+        按 (inst_id,date) 跨全部原因去重、每指令每日仅一行, **不作单门归因源**
+        (会漏计, 见 load_blocked 注释)
 
 问题 (预注册): 被拦的单是否真的更烂? 守宪章第 9 律 — 按日聚类 + MDE,
     n<30 只报方向不下结论 (与 reentry_gate_effect_tracker 同纪律)。
 
 口径 (预注册, 见数前定):
-  - 真被拦组: shadow 文件里 blocked_by='falsification_vwap_slope' 的行。
+  - 真被拦组: trigger_miss_telemetry 中 reason='falsification_vwap_slope' 的
+    (inst_id, date) 去重集合 (逐轮 append, 无跨原因去重 = 完整总体)。
     ⚠️ 拦截是逐轮的 (该轮 triggered=False, 指令未作废) — 同指令下一轮
     可能重新触发并成交。查 playbook_instructions.executed 剔除"延迟成交"
     (计入独立桶, 不污染被拦组)。
@@ -45,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
-SHADOW = BASE / "data" / "shadow_portfolio_entries.jsonl"
+TELEMETRY = BASE / "data" / "trigger_miss_telemetry.jsonl"
 DB = BASE / "data" / "ftseek_us.db"
 BARS_DIR = BASE / "data" / "replay_bars"
 BARS_1M_DIR = BASE / "data" / "replay_bars_1m"
@@ -57,15 +60,30 @@ MIN_N = 30
 
 
 def load_blocked():
+    """全量被本门拦截的 (inst_id, date) 候选。
+
+    [Qoder 源头修复 2026-08-23] 数据源从 shadow_portfolio_entries.jsonl 改为
+    trigger_miss_telemetry.jsonl:
+      · shadow 台账按 (inst_id, date) 跨【全部】拦截原因去重, 每指令每日只落一行,
+        先到先占 (_shadow_portfolio_emit, pipeline.py:323) —— 这是影子组合 P&L
+        台账的正确设计 (同一指令入场两次会重复计钱), 但用作【单门归因】源会系统性
+        漏计: 同一指令当日早轮已因 band/vol_gate 落行, 晚轮被本门拦截就落不进去。
+        同构实测 (既有 vwap_gate, 影子上线后): 捕获 13/15 = 87%, 漏 2。
+      · trigger_miss_telemetry 是逐轮 append、按 reason 区分、无跨原因去重的漏斗
+        遥测 (_emit_trigger_miss), 字段含 inst_id/symbol/date/direction/current_price
+        —— 正是归因所需的完整总体。
+    口径变更时点: 本门 n_真被拦 = 0 (门 2026-08-23 12:55 上线, 当日休市),
+      即"见数前"改口径, 无窥数风险, 预注册效力不受影响。
+    """
     out, seen = [], set()
-    if not SHADOW.exists():
+    if not TELEMETRY.exists():
         return out
-    for line in open(SHADOW, encoding="utf-8"):
+    for line in open(TELEMETRY, encoding="utf-8"):
         try:
             d = json.loads(line)
         except Exception:
             continue
-        if d.get("blocked_by") != GATE:
+        if d.get("reason") != GATE:
             continue
         k = (d.get("inst_id"), d.get("date"))
         if k in seen:
@@ -118,15 +136,18 @@ def next_trade_date(closes, day):
 def load_passed(date_str):
     """同日放行组: 全部已平仓 PLAYBOOK_SIM 成交, 净收益率。"""
     cc = sqlite3.connect(str(DB), timeout=5)
+    # [Qoder 复核 2026-08-23] 列名修正: trade_records 无 position_size (是
+    #   playbook_instructions 的列), 实际数量列为 quantity — 原查询抛
+    #   OperationalError。零被拦样本时本函数不被调用, 故首跑未暴露。
     rows = cc.execute(
-        "SELECT symbol, direction, entry_price, position_size, "
+        "SELECT symbol, direction, entry_price, quantity, "
         "COALESCE(pnl_net, realized_pnl) AS net "
         "FROM trade_records WHERE source_type='PLAYBOOK_SIM' "
         "AND exit_time IS NOT NULL AND trade_date=?", (date_str,)).fetchall()
     cc.close()
     out = []
     for sym, direction, ep, size, net in rows:
-        if not ep or not size or ep <= 0 or size <= 0:
+        if not ep or not size or ep <= 0 or size <= 0 or net is None:
             continue
         out.append({"symbol": sym, "direction": direction,
                     "net_ret": float(net) / (float(ep) * float(size))})
@@ -150,7 +171,7 @@ def main():
     history, by_day_blocked = [], defaultdict(list)
     for d in true_blocked:
         sym, day = d.get("symbol"), d.get("date")
-        entry = float(d.get("shadow_entry_price") or d.get("current_price") or 0)
+        entry = float(d.get("current_price") or d.get("shadow_entry_price") or 0)
         is_short = str(d.get("direction") or "").upper() == "SHORT"
         day_close = closes.get(sym, {}).get(day)
         t1_day = next_trade_date(closes.get(sym, {}), day) if sym in closes else None
@@ -220,7 +241,8 @@ def main():
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "gate": GATE, "pre_registered": "2026-08-23 (门加载当日, 见数前)",
-        "n_shadow_rows": len(blocked),
+        "source": "trigger_miss_telemetry.jsonl (reason=%s, 逐轮全量, 按 inst_id+date 去重)" % GATE,
+        "n_telemetry_blocks": len(blocked),
         "n_delayed_executed": len(delayed_exec),
         "n_true_blocked": len(true_blocked),
         "n_with_counterfactual": n_b,

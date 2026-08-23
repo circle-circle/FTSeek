@@ -1358,15 +1358,21 @@ def cmd_inject(force_dry: bool = False) -> int:
                 try:
                     import sqlite3 as _cdb
                     from app.core.db_utils import get_main_db as _gmdb
+                    from app.utils.direction_utils import to_trade_direction
                     from datetime import datetime as _cdt, timedelta as _ctd
                     # [Hermes 复核 2026-08-23] 词表修正: 指令侧词汇是 BUY/SELL_SHORT
                     # (pb_direction, :1235), trade_records.direction 只存 LONG/SHORT —
                     # 原查询用指令词汇恒 0 命中, 冷却门是死门 (DB 实弹:
-                    # direction='BUY' 全表 0 行). 映射后语义不变.
-                    _cool_dir = {"BUY": "LONG", "SELL_SHORT": "SHORT"}.get(
-                        str(it.get("direction", "")).upper())
+                    # direction='BUY' 全表 0 行)。
+                    # [Qoder 源头修复 2026-08-23] 映射改走 app/utils/direction_utils
+                    # 单一真源 (该 dict 此前在 5+ 站点就地重写, 缺真源正是本 bug 的根);
+                    # 方向不可识别时必须告警 —— 静默 no-op 就是死门本身。
+                    _cool_dir = to_trade_direction(it.get("direction"))
                     _cutoff_d = (_cdt.now() - _ctd(days=_cool_days)).strftime("%Y-%m-%d")
-                    if _cool_dir:
+                    if not _cool_dir:
+                        print(f"  [warn] cooldown 未生效: {it.get('symbol')} 方向 "
+                              f"{it.get('direction')!r} 无法映射到成交词表")
+                    else:
                         _cc = _cdb.connect(str(_gmdb()), timeout=3)
                         _cr = _cc.execute(
                             "SELECT 1 FROM trade_records WHERE symbol=? AND direction=? "

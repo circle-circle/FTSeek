@@ -4,6 +4,7 @@
   P1-1 VWAP 斜率证伪门: 逆向斜率拦截 / 顺向放行 / 数据缺失 fail-open
   P1-2 invalidation 核销: 析取-合取语义 + 时间限定词守卫 (真实 DA 文本样本)
   P1-3 量能门 p50 曲线: 覆盖外标的回落 / 曲线单调 / U 型偏差方向
+  方向词表 SSOT: 指令词汇→成交词汇映射 (冷却门死门根因回归)
 """
 import importlib.util
 import json
@@ -17,6 +18,7 @@ from app.playbook.pipeline import (
     _capital_flow_divergence,
     _intraday_vol_curve_p50,
 )
+from app.utils.direction_utils import is_short, to_trade_direction
 from app.utils.timezone import now_et
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -143,3 +145,42 @@ class TestCapitalFlowShadow:
         buy = _capital_flow_divergence(sym, False)
         short = _capital_flow_divergence(sym, True)
         assert buy is None or buy is not short
+
+
+class TestDirectionVocabularySSOT:
+    """方向词表单一真源 (app/utils/direction_utils).
+
+    根因回归: 2026-08-23 UE 冷却门用指令词汇 'BUY' 查只存 'LONG' 的 trade_records,
+    全表 0 命中 → 门上线即死且静默。锁住"指令词汇必须先归一化到成交词汇"。
+    """
+
+    def test_instruction_vocab_maps_to_trade_vocab(self):
+        assert to_trade_direction("BUY") == "LONG"
+        assert to_trade_direction("SELL_SHORT") == "SHORT"
+
+    def test_trade_vocab_is_idempotent(self):
+        assert to_trade_direction("LONG") == "LONG"
+        assert to_trade_direction("SHORT") == "SHORT"
+
+    @pytest.mark.parametrize("bad", ["SKIP", "", None, "NEUTRAL", "xyz"])
+    def test_unrecognized_returns_none_not_silent_default(self, bad):
+        """不可识别必须 None — 返回默认值会把未知方向静默当多头 (死门失效模式)."""
+        assert to_trade_direction(bad) is None
+        assert is_short(bad) is None
+
+    def test_trade_records_only_stores_trade_vocab(self):
+        """DB 实弹: trade_records.direction 只有 LONG/SHORT, 指令词汇直查恒 0 命中."""
+        import sqlite3
+        from app.core.db_utils import get_main_db
+        conn = sqlite3.connect(str(get_main_db()))
+        try:
+            stored = {r[0] for r in conn.execute(
+                "SELECT DISTINCT direction FROM trade_records")}
+            if not stored:
+                pytest.skip("trade_records 为空")
+            assert stored <= {"LONG", "SHORT"}, f"出现新词汇, 需同步 SSOT: {stored}"
+            for instr in ("BUY", "SELL_SHORT"):
+                assert instr not in stored
+                assert to_trade_direction(instr) in stored
+        finally:
+            conn.close()
