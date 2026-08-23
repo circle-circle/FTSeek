@@ -79,17 +79,33 @@ def get_market_phase() -> MarketPhase:
 
     hour = now_et.hour
     minute = now_et.minute
+    _mins = hour * 60 + minute
 
-    # 盘中: 09:30 - 16:00
-    if (hour > 9 or (hour == 9 and minute >= 30)) and hour < 16:
+    # ── R-8b (2026-08-23 DEB-20260823): 半日市动态收盘 ──
+    # 原实现硬编码 `hour < 16`, 不处理提前收盘日。holiday_calendar 已有
+    # US_EARLY_CLOSE_DATES (含 2026-11-27 感恩节次日 13:00 收) + get_us_close_minutes_et,
+    # 但本函数 —— 主调度的市场时段 SSOT (消费方: signal_pipeline:161 / llm_pipeline:172 /
+    # scheduler_core._is_market_open / position_monitor / market_data_stage / signal_stage)
+    # —— 从未使用它。后果: 半日市当天 ET 13:00-16:00 被判 TRADING, 3 小时向已闭市市场
+    # 生成信号并提交单 (playbook 入场触发窗截止 14:00, 故 13:00-14:00 真会下单)。
+    # 取值失败兜底 960 (16:00), 与 get_us_close_minutes_et docstring 约定一致。
+    _close_mins = 16 * 60
+    try:
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        _close_mins = int(get_us_close_minutes_et(now_et.date()))
+    except Exception as _ec_err:
+        logger.debug(f"[market_phase] 收盘时刻取值失败, 兜底 16:00: {_ec_err}")
+
+    # 盘中: 09:30 - 当日收盘 (常规 16:00 / 半日市 13:00)
+    if 570 <= _mins < _close_mins:
         return MarketPhase.TRADING
 
     # 盘前: 04:00 - 09:30
-    if 4 <= hour < 9 or (hour == 9 and minute < 30):
+    if 240 <= _mins < 570:
         return MarketPhase.PRE_MARKET
 
-    # 盘后夜盘: 16:00 - 20:00
-    if 16 <= hour < 20:
+    # 盘后夜盘: 当日收盘 - 20:00 (半日市从 13:00 起即为盘后)
+    if _close_mins <= _mins < 20 * 60:
         return MarketPhase.AFTER_HOURS
 
     # 深夜休市: 20:00 - 04:00

@@ -20,7 +20,7 @@ try:
 except ImportError:
     _HAS_PYTZ = False
     logger = logging.getLogger(__name__)
-    logger.warning("[TimezoneUtils] pytz 未安装，使用 fallback 实现")
+    logger.warning("[TimezoneUtils] pytz 未安装，尝试 zoneinfo fallback")
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +28,49 @@ logger = logging.getLogger(__name__)
 #  时区常量
 # ═══════════════════════════════════════════════════════════════════
 
+# R-13 (2026-08-23 DEB-20260823): fallback 链改 pytz → zoneinfo → 固定偏移.
+#   原实现 pytz 缺失时的两个真缺陷:
+#     ① ET_OFFSET 在 **import 时** 由 time.localtime().tm_isdst 决定, 而宿主
+#        Asia/Shanghai 无 DST 恒为 0 → 永久固定 EST(-5), 夏令时全部慢 1 小时;
+#     ② fallback 版 to_et() 直接 `return dt` 不做任何转换 (实测返回 CST 墙钟)。
+#   zoneinfo 是 Python 3.9+ 标准库, 无外部依赖且正确处理 DST, 优先于固定偏移。
+_HAS_ZONEINFO = False
+if not _HAS_PYTZ:
+    try:
+        from zoneinfo import ZoneInfo
+        _HAS_ZONEINFO = True
+        logger.warning("[TimezoneUtils] 使用 zoneinfo fallback (DST 正确)")
+    except ImportError:
+        logger.error(
+            "[TimezoneUtils] pytz 与 zoneinfo 均不可用 → 回落固定偏移, "
+            "DST 期间 ET 时间将偏 1 小时, 请安装 pytz"
+        )
+
 # 美东时区 (交易时间基准)
 if _HAS_PYTZ:
     ET = pytz.timezone("America/New_York")
+elif _HAS_ZONEINFO:
+    ET = ZoneInfo("America/New_York")
 else:
-    # Fallback: 固定偏移 (EST=-5, EDT=-4)
-    # 美国夏令时: 3 月第二个周日 ~ 11 月第一个周日
-    import time
-    _is_dst = time.localtime().tm_isdst
-    ET_OFFSET = timedelta(hours=-4 if _is_dst else -5)
-    ET = timezone(ET_OFFSET)
+    # 最后兜底: 固定偏移 (无 DST 感知, 夏令时会偏 1 小时)
+    ET = timezone(timedelta(hours=-5))
 
 # 中国时区 (服务器时间)
 if _HAS_PYTZ:
     CST = pytz.timezone("Asia/Shanghai")
+elif _HAS_ZONEINFO:
+    CST = ZoneInfo("Asia/Shanghai")
 else:
     CST = timezone(timedelta(hours=8))
+
+
+def _localize(dt: datetime, tz) -> datetime:
+    """给 naive datetime 附上时区 (统一 pytz/.localize 与 zoneinfo/.replace 的差异)."""
+    if dt.tzinfo is not None:
+        return dt
+    if _HAS_PYTZ and hasattr(tz, "localize"):
+        return tz.localize(dt)
+    return dt.replace(tzinfo=tz)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -52,34 +79,33 @@ else:
 
 def now_et() -> datetime:
     """获取当前美东时间"""
-    if _HAS_PYTZ:
-        return datetime.now(ET)
     return datetime.now(ET)
 
 
 def now_cst() -> datetime:
     """获取当前北京时间"""
-    if _HAS_PYTZ:
-        return datetime.now(CST)
     return datetime.now(CST)
 
 
 def to_et(dt: datetime) -> datetime:
-    """将任意时区时间转换为美东时间"""
-    if _HAS_PYTZ:
-        if dt.tzinfo is None:
-            dt = CST.localize(dt)  # 假设是北京时间
-        return dt.astimezone(ET)
-    return dt
+    """将任意时区时间转换为美东时间. naive 视为北京时间.
+
+    R-13: 原 fallback 分支直接 `return dt` 不做转换 (实测返回 CST 墙钟且丢 tzinfo)。
+    现三条 fallback 链行为一致。
+    """
+    if dt is None:
+        return None
+    return _localize(dt, CST).astimezone(ET)
 
 
 def to_cst(dt: datetime) -> datetime:
-    """将任意时区时间转换为北京时间"""
-    if _HAS_PYTZ:
-        if dt.tzinfo is None:
-            dt = ET.localize(dt)  # 假设是美东时间
-        return dt.astimezone(CST)
-    return dt
+    """将任意时区时间转换为北京时间. naive 视为美东时间.
+
+    R-13: 同 to_et, 原 fallback 分支不做转换。
+    """
+    if dt is None:
+        return None
+    return _localize(dt, ET).astimezone(CST)
 
 
 def _et_trade_date(entry_time) -> str:
@@ -87,15 +113,26 @@ def _et_trade_date(entry_time) -> str:
 
     P2' 修复 (2026-05-26): trade_date 原用 CST 日期，导致美东下午交易
     (CST 次日凌晨) 被标记到下一天，审计计数偏差。
-    CST(UTC+8) → ET(UTC-4/5): 减 12h 对日期边界始终正确。
 
     2026-07-24 修复: tz-aware 输入 (如 now_et()) 直接按 ET 日历日 — 原一律 -12h
     把 ET 时间当 CST 二次转换, ET 中午前读侧"今天"=昨天 (07-24 实锤: 账户熔断器
-    日亏读到前一交易日)。naive 输入维持 CST-12h 契约不变。
+    日亏读到前一交易日)。
+
+    2026-08-23 R-8c 修复 (DEB-20260823): naive 输入原用固定 `-timedelta(hours=12)`,
+    注释断言"减 12h 对日期边界始终正确"**不成立** —— CST(UTC+8)→EDT(UTC-4) 差 12h,
+    但 →EST(UTC-5) 差 **13h**。实测冬令时 naive CST 2026-01-15 12:30 得 2026-01-15,
+    真值 2026-01-14。错位窗口 = CST 12:00-12:59 (对应 ET 前一日 23:00-23:59, 美股
+    完全闭市, 故历史实际血量≈0), 但本函数是全仓交易日口径 SSOT, 不应留错误偏移。
+    现改为按 CST 时区正确换算; pytz 不可用时回落原 -12h 行为 (至少夏令时正确)。
     """
     from datetime import timedelta
     if getattr(entry_time, "tzinfo", None) is not None:
         return entry_time.astimezone(ET).strftime("%Y-%m-%d")
+    if _HAS_PYTZ or _HAS_ZONEINFO:
+        try:
+            return _localize(entry_time, CST).astimezone(ET).strftime("%Y-%m-%d")
+        except Exception:
+            pass
     return (entry_time - timedelta(hours=12)).strftime("%Y-%m-%d")
 
 
@@ -113,11 +150,9 @@ def is_market_open(dt: Optional[datetime] = None) -> bool:
     """
     if dt is None:
         dt = now_et()
-    elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = CST.localize(dt)
-        dt = dt.astimezone(ET)
-    elif _HAS_PYTZ and dt.tzinfo != ET:
-        dt = dt.astimezone(ET)
+    else:
+        # R-13: 统一走 _localize (naive 视为 CST), 三条 fallback 链行为一致
+        dt = _localize(dt, CST).astimezone(ET)
 
     # 周末
     if dt.weekday() >= 5:
@@ -131,18 +166,28 @@ def is_market_open(dt: Optional[datetime] = None) -> bool:
     except Exception:
         pass
 
-    # 时间
-    hour_min = dt.hour + dt.minute / 60.0
-    return 9.5 <= hour_min <= 16.0
+    # ── R-8b 配套 (2026-08-23 DEB-20260823): 半日市动态收盘 ──
+    # 原实现固定 `9.5 <= hour_min <= 16.0`。节假日已查, 但**提前收盘日不是节假日**
+    # (2026-11-27 感恩节次日 13:00 收), 故半日市 13:00-16:00 仍被判开盘。
+    # 另: 原上界用 `<=` 使 16:00 整被判开盘, 改 `<`。
+    _close_mins = 16 * 60
+    try:
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        _close_mins = int(get_us_close_minutes_et(dt.date()))
+    except Exception:
+        pass
+
+    _mins = dt.hour * 60 + dt.minute
+    return 570 <= _mins < _close_mins
 
 
 def is_pre_market(dt: Optional[datetime] = None) -> bool:
     """判断是否为盘前 (美东 4:00 - 9:30)"""
     if dt is None:
         dt = now_et()
-    elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = CST.localize(dt)
-        dt = dt.astimezone(ET)
+    else:
+        # R-13: 统一走 _localize (naive 视为 CST)
+        dt = _localize(dt, CST).astimezone(ET)
 
     if dt.weekday() >= 5:
         return False
@@ -155,9 +200,9 @@ def is_after_hours(dt: Optional[datetime] = None) -> bool:
     """判断是否为盘后 (美东 16:00 - 20:00)"""
     if dt is None:
         dt = now_et()
-    elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = CST.localize(dt)
-        dt = dt.astimezone(ET)
+    else:
+        # R-13: 统一走 _localize (naive 视为 CST)
+        dt = _localize(dt, CST).astimezone(ET)
 
     if dt.weekday() >= 5:
         return False
@@ -175,9 +220,9 @@ def get_market_session(dt: Optional[datetime] = None) -> str:
     """
     if dt is None:
         dt = now_et()
-    elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = CST.localize(dt)
-        dt = dt.astimezone(ET)
+    else:
+        # R-13: 统一走 _localize (naive 视为 CST)
+        dt = _localize(dt, CST).astimezone(ET)
 
     if dt.weekday() >= 5:
         return "closed"
@@ -200,9 +245,9 @@ def get_trade_date(dt: Optional[datetime] = None) -> str:
     """
     if dt is None:
         dt = now_et()
-    elif _HAS_PYTZ and dt.tzinfo is None:
-        dt = CST.localize(dt)
-        dt = dt.astimezone(ET)
+    else:
+        # R-13: 统一走 _localize (naive 视为 CST)
+        dt = _localize(dt, CST).astimezone(ET)
 
     return dt.strftime("%Y-%m-%d")
 

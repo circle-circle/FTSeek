@@ -298,12 +298,21 @@ def _save_review_result(verdicts, actual_returns, hits, misses, accuracy, lesson
         from datetime import datetime
         result_path = PROJECT_ROOT / "data" / "catalyst_review"
         result_path.mkdir(exist_ok=True)
-        
-        filename = f"review_{datetime.now().strftime('%Y%m%d')}.json"
+
+        # ── R-8a (2026-08-23 DEB-20260823): 复盘日期改 ET ──
+        # 盘后复盘在 ET 收盘后跑 (ET 16:00+ = CST 次日 04:00+), 原用裸 datetime.now()
+        # (宿主 Asia/Shanghai) → ET 交易日 D 的复盘被标成 D+1, 文件名同样错一天。
+        try:
+            from app.utils.timezone import now_et as _now_et_pm
+            _review_dt = _now_et_pm()
+        except Exception:
+            _review_dt = datetime.now()
+
+        filename = f"review_{_review_dt.strftime('%Y%m%d')}.json"
         filepath = result_path / filename
-        
+
         data = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": _review_dt.strftime("%Y-%m-%d"),
             "total_verdicts": len(verdicts),
             "hits": len(hits),
             "misses": len(misses),

@@ -22,6 +22,7 @@ Global Safety Hook (2026-06-16):
 import os
 import sqlite3
 import logging
+import threading
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional
@@ -58,15 +59,65 @@ def _safe_connect(*args, **kwargs):
 sqlite3.connect = _safe_connect
 
 
-def is_live_mode() -> bool:
-    """判断是否为实盘模式 (从 .env.us 实时读取, 无需重启进程)"""
+def _parse_trade_env_from_file() -> bool:
+    """从 .env.us 解析 TRADE_ENV (0=live 库, 1=sim 库). 无文件则回落环境变量."""
     env_file = _PROJECT_ROOT / ".env.us"
     if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                if line.strip().startswith("TRADE_ENV="):
-                    return line.strip().split("=", 1)[1].strip() == "0"
+        try:
+            with open(env_file) as f:
+                for line in f:
+                    if line.strip().startswith("TRADE_ENV="):
+                        return line.strip().split("=", 1)[1].strip() == "0"
+        except OSError:
+            pass
     return os.getenv("TRADE_ENV", "1").strip() == "0"
+
+
+# ── R-3 (2026-08-23 DEB-20260823): 进程内固化 ──
+# 原实现每次调用重读 .env.us (docstring 自述"无需重启进程"), 而 broker 路由用
+# os.getenv("AUTO_TRADE_ACCOUNT") (position_sync.py:576) 需重启 → 两者不同源。
+# 后果: 运行期把 .env.us 的 TRADE_ENV 改成 0, get_trade_records_db() 立刻指向
+# ftseek_us_live.db 而 broker 仍是 SIMULATE; 此时 monitor_playbook_sim_exits
+# 查到 rows=[] 直接 return 0 (pipeline.py:6890) → 全部在仓静默失去止损监控, 零告警。
+# 这是"三态无状态机"最短的一条自毁路径, 且此前零测试覆盖。现固化为启动值。
+_LIVE_MODE_CACHE: Optional[bool] = None
+_LIVE_MODE_LOCK = threading.Lock()
+
+
+def _assert_env_routing_consistent(is_live_db: bool) -> None:
+    """DB 路由与 broker 路由一致性断言.
+
+    只告警不抛异常 — 大量只读脚本/测试会 import 本模块, 启动期硬失败会误伤它们;
+    真正的硬阻断放在下单路径 (playbook_service 的三态门) 更合适。
+    """
+    _acct = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+    _broker_is_real = (_acct == "real")
+    if is_live_db != _broker_is_real:
+        logger.critical(
+            "🚨 [ENV_ROUTING_MISMATCH] DB 路由与 broker 路由不一致: "
+            "TRADE_ENV→%s 库, AUTO_TRADE_ACCOUNT=%s→%s 账户。"
+            "此状态下账本与实际成交账户分离, 退出监控可能查不到在仓持仓 (裸仓风险)。"
+            "请统一 .env.us 两处后重启 ftseek-us。",
+            "live" if is_live_db else "sim", _acct,
+            "REAL" if _broker_is_real else "SIMULATE",
+        )
+
+
+def is_live_mode() -> bool:
+    """判断是否为实盘模式 (R-3: 进程内固化, 首次调用后不再重读文件).
+
+    如确需运行时切换 (仅测试/迁移场景), 设 FTSEEK_ALLOW_RUNTIME_TRADE_ENV_SWITCH=1。
+    """
+    global _LIVE_MODE_CACHE
+    if os.getenv("FTSEEK_ALLOW_RUNTIME_TRADE_ENV_SWITCH", "").strip() == "1":
+        return _parse_trade_env_from_file()
+    if _LIVE_MODE_CACHE is None:
+        with _LIVE_MODE_LOCK:
+            if _LIVE_MODE_CACHE is None:
+                _resolved = _parse_trade_env_from_file()
+                _assert_env_routing_consistent(_resolved)
+                _LIVE_MODE_CACHE = _resolved
+    return _LIVE_MODE_CACHE
 
 
 def get_main_db() -> Path:
