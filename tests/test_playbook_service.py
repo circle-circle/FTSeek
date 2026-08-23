@@ -151,14 +151,28 @@ class TestDirectionGateC:
 
     @staticmethod
     def _patch_gates_ok():
-        """放行 OKR/ACB 两道熔断 ( equity=0 跳过 OKR; ACB 直接放行 )."""
+        """放行 execute_instruction 内 direction_gate 之前的全部硬门.
+
+        equity=0 跳过 OKR 熔断; ACB 直接放行;
+        2026-08-23 (R-1/R-5, DEB-20260823) 新增两道前置 fail-close 门, 必须一并放行,
+        否则这批只关心 BUY 配额的用例会被前置门拦下:
+          - capital_safety.can_open_position() 水位硬门 (返回值必须是 2-tuple, 否则解包失败 → fail-close)
+          - VIX 新鲜度 fail-close + VIXGuard 阈值硬拒
+        """
         p_cs = patch("app.risk.capital_safety.get_capital_safety_system")
         p_acb = patch("app.risk.absolute_circuit_breaker.get_absolute_circuit_breaker")
+        p_vix = patch("app.analysis.market_state.get_checker")
+        p_vg = patch("app.risk.vix_guard.VIXGuard")
         mock_cs = p_cs.start()
         mock_cs.return_value._state.current_equity = 0
+        mock_cs.return_value.can_open_position.return_value = (True, "")
         mock_acb = p_acb.start()
         mock_acb.return_value.can_open_new_position.return_value = (True, "")
-        return (p_cs, p_acb)
+        mock_vix = p_vix.start()
+        mock_vix.return_value.get_vix_cached.return_value = 18.0
+        mock_vg = p_vg.start()
+        mock_vg.return_value.should_block.return_value = (False, "")
+        return (p_cs, p_acb, p_vix, p_vg)
 
     def teardown_method(self):
         patch.stopall()

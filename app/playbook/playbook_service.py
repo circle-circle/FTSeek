@@ -18,6 +18,7 @@ Usage:
 """
 import logging
 import json
+import threading
 import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
@@ -763,6 +764,60 @@ class PlaybookService:
                 return {"success": False, "message": f"绝对熔断检查异常 (fail-close): {_acb_err}"}
             logger.warning("[playbook] 绝对熔断检查异常 (放行): %s", _acb_err)
 
+        # ── R-5 (2026-08-23 DEB-20260823): 资本安全水位硬门 ──
+        # can_open_position() 此前全仓唯一消费者是 web_dashboard/order/validator.py:162,
+        # Playbook 路径从未调用 → RED(-10~-20%)/BLACKOUT(>-35%)/系统锁定/状态保存失败
+        # 全部拦不住。sizing 侧 pos_mult=0 又被 instruction_generator max(1,size) 兜成 1 股,
+        # 故回撤 -20% 仍能开仓。此门是唯一能真正拒单的位置。
+        try:
+            from app.core.config_container import get_config as _get_cfg_ws
+            _ws_gate_on = bool(_get_cfg_ws().get_dotted("risk.capital_safety.playbook_hard_gate", True))
+        except Exception:
+            _ws_gate_on = True
+        if _ws_gate_on:
+            try:
+                from app.risk.capital_safety import get_capital_safety_system as _get_cs_gate
+                _cs_ok, _cs_msg = _get_cs_gate().can_open_position()
+                if not _cs_ok:
+                    logger.warning(f"🛑 [资本安全水位] {inst.get('symbol','')} 拒绝开仓: {_cs_msg}")
+                    return {"success": False, "message": f"[资本安全水位] {_cs_msg}"}
+            except Exception as _cs_err:
+                # fail-close: 水位查不到 = 不知道自己在哪个回撤档 → 不开新仓
+                logger.error(f"🛑 [资本安全水位·fail-close] 检查异常, 拒绝开仓: {_cs_err}")
+                return {"success": False, "message": f"资本安全水位检查异常 (fail-close): {_cs_err}"}
+
+        # ── R-1 (2026-08-23 DEB-20260823): VIX 门 ──
+        # order_executor._submit_order_inner 有「VIX 新鲜度 fail-close + VIX>28 硬拒」两道门,
+        # 但 Playbook 不经 order_executor (dual_broker 直连 ctx.place_order), 全链路 grep
+        # app/playbook/ 零 VIX 拦截 — entry_vix 仅被记账不被消费。此处补齐, 语义照抄主线。
+        try:
+            from app.core.config_container import get_config as _get_cfg_vix
+            _vix_gate_on = bool(_get_cfg_vix().get_dotted("risk.playbook_vix_gate_enabled", True))
+        except Exception:
+            _vix_gate_on = True
+        if _vix_gate_on:
+            _vix_val = None
+            try:
+                from app.analysis.market_state import get_checker as _get_vix_checker
+                _vix_val = _get_vix_checker().get_vix_cached()
+            except Exception as _vix_err:
+                logger.error(f"🔒 [VIX·fail-close] VIX 获取异常, 拒绝开仓: {_vix_err}")
+                return {"success": False, "message": f"VIX 获取异常 (fail-close): {_vix_err}"}
+            if _vix_val is None:
+                logger.warning("🔒 [VIX·fail-close] VIX 数据不可用, 拒绝开仓 (宁可错过不可放错)")
+                return {"success": False, "message": "VIX 数据不可用 (fail-close)"}
+            try:
+                from app.risk.vix_guard import VIXGuard as _VIXGuard
+                _vix_blocked, _vix_reason = _VIXGuard().should_block(float(_vix_val))
+            except Exception as _vg_err:
+                # VIXGuard 内部逻辑异常不升级为拒单 (与主线 :3232 同口径);
+                # 新鲜度门已在上方 fail-close 兜住"取不到数"这一真风险。
+                logger.warning(f"⚠️ [VIX_GUARD_ERR] VIXGuard 异常, 不拦截: {_vg_err}")
+                _vix_blocked, _vix_reason = False, ""
+            if _vix_blocked:
+                logger.warning(f"🚫 [VIX_HARD_BLOCK] {inst.get('symbol','')} {_vix_reason} (VIX={_vix_val})")
+                return {"success": False, "message": f"[VIX硬拒] {_vix_reason}"}
+
         # 读取下单模式: 统一走 broker 真实下单 (futu_simulate / live), 禁止纯虚拟 shadow.
         # simulate (shadow) 模式已废弃, 如果配置误设为 simulate, 强制降级为 futu_simulate.
         try:
@@ -924,7 +979,48 @@ class PlaybookService:
             target_env="sim",
         )
 
+    # ── R-1 (2026-08-23 DEB-20260823): per-symbol 下单互斥 ──
+    # duplicate_position_guard 读 open_positions (:1056), 而该表在下单成功之后才写 (:1556)
+    # → TOCTOU 窗口。不同 instruction_id 的同标的指令从 LLMStrategy 线程与 Dashboard 线程
+    # 并发进入即可双开 (代码注释自述 7/2 GOOG SHORT×2 实锤)。try_claim_execution 只对同一
+    # instruction_id 原子, 挡不住这个。此处把「查重→下单→写库」整段圈成 per-symbol 临界区。
+    _SYMBOL_ORDER_LOCKS: Dict[str, threading.Lock] = {}
+    _SYMBOL_ORDER_LOCKS_GUARD = threading.Lock()
+
+    @classmethod
+    def _get_symbol_order_lock(cls, symbol: str) -> threading.Lock:
+        with cls._SYMBOL_ORDER_LOCKS_GUARD:
+            _lk = cls._SYMBOL_ORDER_LOCKS.get(symbol)
+            if _lk is None:
+                _lk = threading.Lock()
+                cls._SYMBOL_ORDER_LOCKS[symbol] = _lk
+            return _lk
+
     def _execute_via_dual_broker(
+        self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
+        take_profit, position_size, mos_direction, matched_decision_id, target_env,
+    ):
+        """per-symbol 互斥包装层 (R-1). 真实逻辑在 _execute_via_dual_broker_inner.
+
+        非阻塞获取: 抢不到锁 = 同标的另有下单在途 → 直接拒绝, 指令保持 pending 下轮再试。
+        刻意不阻塞等待, 因为持锁方可能正在等 broker 成交查询 (秒级), 阻塞会拖住整个
+        auto_execute 循环。
+        """
+        _lock = self._get_symbol_order_lock(symbol)
+        if not _lock.acquire(blocking=False):
+            logger.warning(
+                f"🔒 [SymbolLock] {symbol} 同标的下单在途, 本次拒绝 (instruction_id={instruction_id})"
+            )
+            return {"success": False, "message": f"[SymbolLock] {symbol} 同标的下单在途, 稍后重试"}
+        try:
+            return self._execute_via_dual_broker_inner(
+                inst, instruction_id, symbol, direction, entry_price, stop_loss,
+                take_profit, position_size, mos_direction, matched_decision_id, target_env,
+            )
+        finally:
+            _lock.release()
+
+    def _execute_via_dual_broker_inner(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
     ):

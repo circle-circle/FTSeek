@@ -3094,9 +3094,18 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
         except Exception:
             _edge = {}
 
+        # ── R-8a (2026-08-23 DEB-20260823): ts/date 改 ET ──
+        # 与 _emit_trigger_miss 同款错位。本 emitter 是"每个到达执行漏斗的候选单"的统一
+        # 审计真源 (data/shadow/exec_gate_audit.jsonl, 消费方 scripts/shadow_board.py /
+        # scripts/data_freshness_watchdog.py), 比 trigger_miss 更核心 —— 执行漏斗归因、
+        # 拦截率分层全靠它。原用裸 _dt.now() = 宿主 Asia/Shanghai, ET 下午的
+        # executed/skipped 事件被记到 +1 天, 与 playbook_instructions.date (ET) 关联即错位。
+        _now_et_audit = _now_et()
         _row = {
-            "ts": _dt.now().isoformat(timespec="seconds"),
-            "date": _dt.now().strftime("%Y-%m-%d"),
+            "ts": _now_et_audit.isoformat(timespec="seconds"),
+            "date": _now_et_audit.strftime("%Y-%m-%d"),
+            "ts_cst": _dt.now().isoformat(timespec="seconds"),
+            "tz": "ET",
             "inst_id": inst.get("id"),
             "symbol": inst.get("symbol", ""),
             "direction": _direction,
@@ -4266,9 +4275,24 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             _e = float(entry_price or 0)
             _cur = float(cur or 0)
             _gap = (abs(_cur - _e) / _e * 100.0) if (_e > 0 and _cur > 0) else 0.0
+            # ── R-8a (2026-08-23 DEB-20260823): ts/date 改 ET ──
+            # 原用裸 _dt.now() = 宿主 Asia/Shanghai。ET 12:00-15:59 的事件在北京是次日
+            # 00:00-03:59 → date 被记成 +1 天。实测 15,150 行中 9,049 行 (59.7%) 错位,
+            # 文件内出现 `2026-08-22 Sat` 这类非交易日即铁证。
+            # 下游全部按此 date 分组或与 playbook_instructions.date (ET) 关联:
+            #   scripts/early_acceptance_check.py:168 / first_night_gate_report.py:101 /
+            #   stale_anchor_shadow_tag.py:175 (inst["date"]==today_et 对 ET 下午行恒不成立) /
+            #   gate_block_counterfactual.py:79,101 / gate_cost_report.py:48 /
+            #   trigger_miss_analysis.py:57
+            # → 门效果"尺子"被污染, 参数裁决基于错日样本。
+            # 同文件 _emit_entry_shadow (:4319) 已用 ET, 本处是漏网单点。
+            # 新增 ts_cst 保留原口径, 便于与 08-23 之前的历史行对齐排查。
+            _now_et_row = _now_et()
             _row = {
-                "ts": _dt.now().isoformat(timespec="seconds"),
-                "date": _dt.now().strftime("%Y-%m-%d"),
+                "ts": _now_et_row.isoformat(timespec="seconds"),
+                "date": _now_et_row.strftime("%Y-%m-%d"),
+                "ts_cst": _dt.now().isoformat(timespec="seconds"),
+                "tz": "ET",
                 "inst_id": inst.get("id"),
                 "symbol": symbol,
                 "direction": "SHORT" if is_short else "BUY",
@@ -5787,8 +5811,13 @@ def is_playbook_open_position(symbol: str) -> bool:
     异常处理 (分层 fail-closed):
       - sqlite3.OperationalError (锁超时/DB busy): return True (fail-closed) — 宁可让主线跳过,
         由 sim_exits 自管, 避免 DB 异常时护栏失效导致主线双重平仓.
-      - 其他未知异常: return False + warning — 不无条件 fail-closed, 否则结构性错误 (schema/路径)
-        会让主线对所有 symbol 永久失管、漏平真实风险仓.
+      - 其他未知异常 (2026-08-23 R-7a 改为同样 fail-closed): 原实现 return False = 主线接管,
+        但本函数返回 False 的语义就是"主线可以平这个仓", 故一个 schema/路径级结构性错误
+        即可让主线对全部标的接管 → 双线管理 (2026-06-24 三笔 SL_ATR_STOP -$2,416 即护栏
+        缺位期实证). 原注释顾虑"fail-close 会让主线对所有 symbol 永久失管、漏平真实风险仓",
+        该顾虑今已弱化: Playbook 有独立退出宿主 monitor_playbook_sim_exits, 闸门失效时
+        "主线接管" 严格劣于 "主线跳过 + 大声告警". 遗留/手动仓的代价由 CRITICAL 告警承接.
+        回滚: risk.playbook_guard_fail_mode=open.
     """
     import sqlite3 as _pb_sql
     from app.core.paths import get_trade_records_db
@@ -5809,11 +5838,23 @@ def is_playbook_open_position(symbol: str) -> bool:
         )
         return True
     except Exception as e:
-        logger.warning(
-            f"[playbook护栏] is_playbook_open_position({symbol}) 未知异常: {e} "
-            f"→ return False (主线接管). 请排查 DB schema/路径."
+        try:
+            from app.core.config_container import get_config as _get_cfg_pbg
+            _pbg_mode = str(_get_cfg_pbg().get_dotted("risk.playbook_guard_fail_mode", "closed")).lower()
+        except Exception:
+            _pbg_mode = "closed"
+        if _pbg_mode == "open":
+            logger.error(
+                f"[playbook护栏] is_playbook_open_position({symbol}) 未知异常: {e} "
+                f"→ fail-OPEN (return False, 主线接管) — 由 risk.playbook_guard_fail_mode=open 指定"
+            )
+            return False
+        logger.critical(
+            f"🚨 [playbook护栏·fail-close] is_playbook_open_position({symbol}) 未知异常: {e} "
+            f"→ return True (主线跳过). 排他性闸门已失效, 遗留/手动仓本轮不受主线管理, "
+            f"请立即排查 DB schema/路径。"
         )
-        return False
+        return True
     finally:
         if _c is not None:
             try:

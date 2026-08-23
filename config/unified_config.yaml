@@ -1380,12 +1380,33 @@ live_readiness:
 risk:
   acb_fail_mode: closed
   preflight_fail_mode: open
+  # R-1 (2026-08-23, DEB-20260823): Playbook 路径 VIX 门总闸.
+  #   order_executor 有「VIX新鲜度 fail-close + VIX>28 硬拒」两道门, 但 Playbook 不经
+  #   order_executor (dual_broker 直连 ctx.place_order), 此前 app/playbook/ 全链路零 VIX
+  #   拦截 — entry_vix 只被记账不被消费。阈值仍复用 vix_thresholds/vix_guard.
+  #   回滚: 改 false (退回补丁前行为 = 无 VIX 门).
+  playbook_vix_gate_enabled: true
+  # R-7a/R-7b (2026-08-23, DEB-20260823): Playbook 排他性闸门的 fail 语义.
+  #   is_playbook_open_position() 返回 False 的语义 = "主线可以平这个仓", 故其通用异常分支
+  #   原先 return False 是 fail-OPEN: 一个 schema/路径级结构性错误即可让主线对全部标的
+  #   接管并双重平仓 (2026-06-24 三笔 SL_ATR_STOP -$2,416 = 护栏缺位期实证).
+  #   order_executor._close_position 的兜底护栏原亦被 `except: pass` 包裹, 同为 fail-open.
+  #   closed = 闸门异常时主线跳过 + CRITICAL 告警 (Playbook 有独立退出宿主, 跳过是安全侧);
+  #   代价 = 遗留/手动仓在闸门故障期不受主线管理, 由告警承接。
+  #   回滚: 改 open (退回补丁前行为).
+  playbook_guard_fail_mode: closed
   pdt_guard:
     enabled: false
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08
   capital_safety:
+    # R-5 (2026-08-23, DEB-20260823): can_open_position() 硬门接入 Playbook 路径.
+    #   此前全仓唯一消费者是 web_dashboard/order/validator.py:162, Playbook 从不调用 →
+    #   RED(-10~-20%)/BLACKOUT(>-35%)/系统锁定/状态保存失败全部拦不住; 且 sizing 侧
+    #   pos_mult=0 被 instruction_generator.py:510 的 max(1,size) 兜成 1 股 → 回撤 -20%
+    #   仍开仓。回滚: 改 false.
+    playbook_hard_gate: true
     account_refresh:
       cache_ttl_seconds: 30
       enabled: true
@@ -1549,6 +1570,15 @@ risk_limits:
     no_new_entry_after_et: '15:50'
     overnight_threshold_atr: 1.0
   max_total_position: 0.8
+reconcile:
+  # R-2 (2026-08-23, DEB-20260823): 孤儿 trade_records 自动伪造平仓开关.
+  #   原行为 (true 等价): position_sync.py 对"broker无+open_positions无+非playbook仓+
+  #   建仓>1天"的记录直接 UPDATE exit_price=entry_price, realized_pnl=0。三个判据全是
+  #   单点判断且 broker 只查单一 env → 误判即把券商真实持仓写上 exit_time, 退出监控的
+  #   WHERE exit_time IS NULL 永久查不到 → 裸仓无止损不可自愈; 并向毕业统计注入伪造
+  #   pnl=0 样本污染终裁。默认 false = 仅告警 + 落 data/audit/orphan_trade_records.jsonl
+  #   待人工 adopt。回滚: 改 true.
+  orphan_autoclose_enabled: false
 scheduler:
   adaptive_scan_enabled: true
   debate:

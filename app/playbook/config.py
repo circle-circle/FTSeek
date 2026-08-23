@@ -11,6 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
+import time
+from pathlib import Path
 from typing import Any, Dict
 
 import yaml
@@ -154,12 +157,74 @@ class PlaybookConfig:
 # 全局懒加载实例
 _playbook_config: PlaybookConfig | None = None
 
+# ── R-4 (2026-08-23 DEB-20260823): 退出 SSOT 失效检测 ──
+# 原实现: 单例一旦构造全仓无任何重置点 (已 grep 确认), 而 ConfigHotReloader
+# (main.py:377) 只监控 unified_config.yaml 且回调只同步 ConfigContainer。
+# config/playbook_horizon.yaml 是 LIVE 退出规则的真源 (factor_exit_rules /
+# vol_buckets / time_exit_hours), 完全不在监控内。后果双重:
+#   ① 改 yaml 后 ConfigContainer 更新而 playbook 退出逻辑仍用旧值 → 半个系统看新值;
+#   ② _exit_config_version 哈希同样冻结 → trade_records 打旧 hash, "毕业统计只在同一
+#      config_version 窗口取样"这条护栏 (07-20 军规) 静默失效, 直接污染终裁口径。
+# 现按 mtime 自动失效重建。节流 5s: get_playbook_config() 在退出循环里每仓每轮都调,
+# 不能每次 os.stat。
+_HORIZON_MTIME_CHECK_INTERVAL_SEC = 5.0
+_horizon_mtime: float | None = None
+_horizon_mtime_checked_at: float = 0.0
+_config_lock = threading.Lock()
+
+
+def _horizon_yaml_path() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "config" / "playbook_horizon.yaml"
+
+
+def _current_horizon_mtime() -> float | None:
+    try:
+        return _horizon_yaml_path().stat().st_mtime
+    except OSError:
+        return None
+
+
+def reset_playbook_config() -> None:
+    """强制丢弃 PlaybookConfig 单例 (供热重载回调/测试显式调用).
+
+    下次 get_playbook_config() 会重新读 unified_config.yaml + playbook_horizon.yaml,
+    并重算 exit_config_version。
+    """
+    global _playbook_config, _horizon_mtime, _horizon_mtime_checked_at
+    with _config_lock:
+        _playbook_config = None
+        _horizon_mtime = None
+        _horizon_mtime_checked_at = 0.0
+    logger.info("[PlaybookConfig] 单例已重置, 下次读取将重新加载配置")
+
 
 def get_playbook_config() -> PlaybookConfig:
-    """获取 PlaybookConfig 单例."""
-    global _playbook_config
+    """获取 PlaybookConfig 单例 (R-4: playbook_horizon.yaml 变更时自动失效重建)."""
+    global _playbook_config, _horizon_mtime, _horizon_mtime_checked_at
+
     if _playbook_config is None:
-        _playbook_config = PlaybookConfig()
+        with _config_lock:
+            if _playbook_config is None:
+                _playbook_config = PlaybookConfig()
+                _horizon_mtime = _current_horizon_mtime()
+                _horizon_mtime_checked_at = time.time()
+        return _playbook_config
+
+    _now = time.time()
+    if _now - _horizon_mtime_checked_at >= _HORIZON_MTIME_CHECK_INTERVAL_SEC:
+        with _config_lock:
+            _horizon_mtime_checked_at = _now
+            _mt = _current_horizon_mtime()
+            if _mt is not None and _horizon_mtime is not None and _mt != _horizon_mtime:
+                _old_ver = getattr(_playbook_config, "_exit_config_version", None)
+                _playbook_config = PlaybookConfig()
+                _horizon_mtime = _mt
+                _new_ver = _playbook_config.get_exit_config_version()
+                logger.warning(
+                    "[PlaybookConfig] 检测到 playbook_horizon.yaml 变更, 已重载退出配置 | "
+                    "exit_config_version: %s → %s (跨版本样本不可混算)",
+                    _old_ver or "unknown", _new_ver,
+                )
     return _playbook_config
 
 
