@@ -4496,6 +4496,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 "ts_cst": _dt.now().isoformat(timespec="seconds"),
                 "tz": "ET",
                 "inst_id": inst.get("id"),
+                # 2026-08-23 (用户裁 DA/UE+reentry 分流对比): 源标识入遥测 —
+                #   无此字段则毕业判据"DA 对比组方向一致"不可计算 (分流可测性缺口)。
+                #   DA 源的 falsification_vwap_slope 行 = would-block 对比样本 (记录不拦)。
+                "decision_id": str(inst.get("decision_id") or ""),
                 "symbol": symbol,
                 "direction": "SHORT" if is_short else "BUY",
                 "entry_price": round(_e, 4),
@@ -4758,6 +4762,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #           pb_cfg["chase_vol_ratio_threshold"] (默认1.5).
     _vol_gate_enabled = bool(pb_cfg.get("intraday_vol_gate_enabled", True))
     _vol_threshold = float(pb_cfg.get("chase_vol_ratio_threshold", 1.5))
+    # 2026-08-23 (分流对比影子): 默认值前置 — 门关闭/豁免窗分支不定义这两个变量,
+    #   后置影子发射块引用会 NameError。
+    _vol_use_p50 = None
+    _vol_p50_shadow_ratio = None
     # 2026-07-20: 开盘豁免窗 — 盘初 N 分钟量能数据最不可靠 (累计量小 + 推送/K线尚未铺满),
     #   此窗内不拦, 避免开盘系统性误拦. 默认 15min. 可配置 intraday_vol_gate_grace_min.
     _vol_grace_min = float(pb_cfg.get("intraday_vol_gate_grace_min", 15))
@@ -4778,6 +4786,18 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         _vol_da_enforce = bool(pb_cfg.get("volume_gate_vwap_relative_da_enforce", False))
         _vol_use_p50 = None if (not _did_vol.startswith("DA-") or _vol_da_enforce) else False
         _intraday_vr = _calc_intraday_vol_ratio(data_router, symbol, use_p50_curve=_vol_use_p50)
+        # 2026-08-23 (用户裁分流对比可测性): DA 源走线性, 但同时记录 p50 影子比 —
+        #   毕业判据"DA 对比组方向一致"需要知道每次 DA 评估"p50 会怎么判",
+        #   否则对比组不可测。record-only 不影响触发; 二次调用成本 = get_quote
+        #   (推送缓存 <100ms) + 曲线缓存, 每指令每轮一次, 可忽略。
+        if _vol_use_p50 is False:
+            try:
+                _vol_p50_shadow_ratio = _calc_intraday_vol_ratio(
+                    data_router, symbol, use_p50_curve=True)
+            except Exception:
+                _vol_p50_shadow_ratio = None
+        else:
+            _vol_p50_shadow_ratio = None
     else:
         _intraday_vr = None
     if _intraday_vr is None:
@@ -4822,6 +4842,34 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         else:
             triggered = False
             _entry_path = "out_of_band"
+
+    # ── 2026-08-23 (用户裁分流对比): DA 源量能门线性 vs p50 影子对照 ──
+    #   DA 走线性(不拦), 同轮记录"p50 会怎么判" — 毕业判据"DA 对比组方向一致"的
+    #   唯一数据源。仅记 chase 路径 (量能门语义范围), record-only 不影响触发。
+    #   回滚: volume_gate_vwap_relative_da_enforce 改 true 后本分支自动停写。
+    if _vol_use_p50 is False and _entry_path == "chase" and _intraday_vr is not None:
+        try:
+            import json as _vps_json
+            from pathlib import Path as _vps_path
+            _vps_row = {
+                "ts": _now_et().isoformat(timespec="seconds"),
+                "date": _now_et().strftime("%Y-%m-%d"),
+                "inst_id": inst.get("id"),
+                "decision_id": str(inst.get("decision_id") or ""),
+                "symbol": symbol,
+                "direction": "SHORT" if is_short else "BUY",
+                "linear_ratio": _intraday_vr,
+                "p50_ratio": _vol_p50_shadow_ratio,
+                "threshold": _vol_threshold,
+                "linear_pass": bool(_intraday_vr >= _vol_threshold),
+                "p50_would_pass": (None if _vol_p50_shadow_ratio is None
+                                   else bool(_vol_p50_shadow_ratio >= _vol_threshold)),
+            }
+            _vps_fp = _vps_path(__file__).resolve().parents[2] / "data" / "vol_gate_da_p50_shadow.jsonl"
+            with open(_vps_fp, "a", encoding="utf-8") as _f:
+                _f.write(_vps_json.dumps(_vps_row, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # shadow 纯记录, 绝不影响触发
 
     # ── RFC-065 widen 影子 (DEB-20260819 §三十四, record-only 常开攒样) ──
     #   生产开关关闭时: 用 widen 带重算触发几何 — widen 能触发而 flat 不能 → 登记影子.

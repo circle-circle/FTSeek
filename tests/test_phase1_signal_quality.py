@@ -184,3 +184,41 @@ class TestDirectionVocabularySSOT:
                 assert to_trade_direction(instr) in stored
         finally:
             conn.close()
+
+
+class TestSourceSplitTelemetry:
+    """分流对比组可测性契约 (2026-08-23 用户裁: DA对比组不拦, UE+reentry拦截).
+
+    毕业判据"DA 对比组方向一致"依赖遥测行带源标识 + DA 影子对照文件存在。
+    """
+
+    @staticmethod
+    def _src():
+        return (ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+
+    def test_telemetry_row_has_decision_id(self):
+        """trigger_miss 遥测必须带 decision_id — 无此字段对比组不可拆分."""
+        src = self._src()
+        # 在 _emit_trigger_miss 的 _row dict 中
+        assert '"decision_id": str(inst.get("decision_id") or "")' in src
+
+    def test_vol_da_p50_shadow_emit_exists(self):
+        """DA 源量能门必须落 p50 影子对照行 (毕业判据数据源)."""
+        src = self._src()
+        assert "vol_gate_da_p50_shadow.jsonl" in src
+        assert '"p50_would_pass"' in src
+
+    def test_vol_split_vars_predefaulted(self):
+        """_vol_use_p50/_vol_p50_shadow_ratio 必须在 if 分支前预置默认值 (防 NameError)."""
+        src = self._src()
+        # 预置行必须在 "if _vol_gate_enabled and not _in_open_grace:" 之前出现
+        pre_idx = src.find("_vol_use_p50 = None")
+        branch_idx = src.find("if _vol_gate_enabled and not _in_open_grace:")
+        assert pre_idx != -1 and branch_idx != -1 and pre_idx < branch_idx
+
+    def test_registry_data_path_points_to_real_shadow_file(self):
+        """registry p1_3 项的 data_path 必须是实际影子文件 (非描述性文本)."""
+        from app.playbook.shadow_registry import REGISTRY
+        item = next(s for s in REGISTRY if s.id == "p1_3_vol_p50")
+        assert item.data_path == "data/vol_gate_da_p50_shadow.jsonl"
+        assert "(" not in item.data_path  # 无括号说明文本, _count_samples 可直接解析

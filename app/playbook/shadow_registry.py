@@ -73,7 +73,7 @@ REGISTRY: list[ShadowItem] = [
         name="量能门 p50 曲线",
         status=ShadowStatus.OBSERVING,
         description="chase 路径分母改历史同分钟 p50。reentry+UE 启用, DA 走线性(对比组)。",
-        data_path="data/trigger_miss_telemetry.jsonl (结合 pipeline log 对比线性 vs p50 ratio)",
+        data_path="data/vol_gate_da_p50_shadow.jsonl",
         config_key="playbook.execution_parameters.volume_gate_vwap_relative",
         min_n=30,
         graduation_criteria="reentry+UE 组 n≥30 chase + 重标定阈值 + DA 对比组方向一致 → 翻 da_enforce=true",
