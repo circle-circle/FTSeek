@@ -13,6 +13,14 @@ if ! pgrep -f "main.py --start" >/dev/null 2>&1; then
     ISSUES="${ISSUES}• 🔴 main.py 进程不存在\n"
 fi
 
+# 1.5 systemd 单元状态 (C6, 2026-08-24, 体检 O3): StartLimitBurst=5/300s 触发后
+#     systemd 静默放弃拉起 → 服务卡 failed 态, 不人工 reset-failed 永不恢复.
+#     仅"进程不存在"告警无法区分"正在重试"与"已放弃", 此处显式点出放弃态.
+UNIT_STATE=$(systemctl is-failed ftseek-us 2>/dev/null || echo "unknown")
+if [ "$UNIT_STATE" = "failed" ]; then
+    ISSUES="${ISSUES}• 🔴 ftseek-us systemd=failed — 5次/300s 启动限制已触发, 系统已放弃自动拉起, 需人工介入 (systemctl reset-failed ftseek-us && systemctl restart ftseek-us)\n"
+fi
+
 # 2. Dashboard 检查 (port 8901)
 # 2026-07-31: dashboard 改按需激活 (socket unit 持有监听, 闲置进程自退)。
 # 不能再 curl HTTP (会把服务唤醒, 按需激活失效) — 改为被动检查端口在听。
