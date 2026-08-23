@@ -2,9 +2,26 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-23 (全项目五维体检+P0三执行 — Claude Code, 用户令"先落档再执行, 执行前核验为真": 五路并行深探(安全语义/架构/测试/配置密钥/运维)+P0逐条实读复核, 报告落档 `DEB-20260823-system-health-check.md`; 核验勘误两处=preflight_fail_mode非地雷(di_container.py:159 LIVE启动断言强制closed)/lock缺口夸大(107vs84, 运行时真缺loguru/prometheus_client/rich/aiosqlite); 执行X1删scripts/archive/get_feishu_chat_id.py(**实锤泄露的正是.env.us生产飞书凭据**, 轮换须用户后台操作)/X2 equity≤0三处熔断旁路补fail-close(order_executor:3267/playbook_service:725/orb:1216)/X3六影子模块TEST守卫收口(pipeline有9处约定此6处零守卫); 全量1564 passed实测复现 · 前次: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
+
+## 🩺 2026-08-23 全项目五维体检 + P0 执行（Claude Code，用户令"先落档再执行，执行前核验为真"）
+
+**报告**: `docs/debates/DEB-20260823-system-health-check.md`（5 路并行深探：交易安全语义/架构/测试体系/配置密钥/运维可观测；P0 全部逐条实读源码复核后才执行）。
+
+**核验后执行（X1-X3）**:
+| 项 | 内容 | 回滚 |
+|---|---|---|
+| X1 | 删 `scripts/archive/get_feishu_chat_id.py` —— **核验升级：泄露的 app_id/app_secret 与 `.env.us:59-60` 生产飞书推送凭据完全一致**，且在 git 历史(6dafd2a0) | git revert；⚠️ **凭据轮换必须用户在飞书后台做**（不轮换=没修），轮换后更新 .env.us 并重启 |
+| X2 | equity≤0 熔断旁路 ×3 补 fail-close（order_executor.py:3267 / playbook_service.py:725 / orb/engine.py:1216 原均 `if _equity>0:` 无 else——equity 缺失窗口静默跳过账户熔断）；异常路径本就 fail-close(acb_fail_mode=closed)，仅补 equity 缺失分支 | git revert |
+| X3 | 六影子模块 TEST 守卫收口（exit_shadow/invalidation_shadow/overnight_hold_shadow/sltp_verify_shadow/shadow_tracker/shadow_signal_logger，对齐 pipeline.py 九处既有约定+契约测试）——KR2 样本纯度前置 | git revert |
+
+**核验勘误（探查报告两处不准，已纠）**: ①`preflight_fail_mode=open` 非隐藏地雷——R1a/R1c 文档化设计+`di_container.py:159-176` LIVE 启动断言强制 closed，冻结期不动 ②"lock 缺 aiohttp/websockets 等"夸大——实测 venv107 vs lock84，运行时真缺 loguru/prometheus_client/rich/aiosqlite。
+
+**待用户裁决**: ①飞书凭据轮换（必做）②main 快进合并（现落后 632 提交+16 提交未推）③做空门接数据源 vs 诚实 disabled（数据文件 4/29 起空转，DEB-20260726 已知缺口）④DrawdownControl 死门接线 vs 删除 ⑤filter-repo 历史清洗。
+
+**P1 排队（9 月冻结期，零行为变更类）**: 见 DEB 第三节 M/E/O 清单——资金路径测试盲区(broker_adapter 仅 1 测试)/verify=False 四数据源/配置默认值三层打架(max_daily_positions fallback 5 vs SSOT 16)/CI 吞 pip 失败/print 漏报/cron 无失败告警/jsonl 零轮转。
 
 ## 🔴 2026-08-23 全链路复盘 + R-1~R-13 安全补丁（Qoder，落档 `DEB-20260823-full-chain-review-and-safety-patches.md`）
 
