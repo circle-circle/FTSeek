@@ -1221,6 +1221,12 @@ class ORBEngine:
                         "[ORB] %s 新仓被拒: %s", symbol, _cb.reason
                     )
                     return
+            else:
+                # DEB-20260823 X2: equity≤0 时熔断失明——原实现静默跳过, 补 fail-close
+                # 拒单(与 order_executor/playbook_service 同款). 注: 本模块当前
+                # orb.enabled=false 休眠, 此改动零运行时影响, 仅语义对齐.
+                logger.error("[ORB·fail-close] %s 账户权益不可用(%s), 熔断无法评估, 拒绝新仓", symbol, _equity)
+                return
         except Exception as _cb_err:
             logger.warning("[ORB] 熔断检查异常 (放行): %s", _cb_err)
 

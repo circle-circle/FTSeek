@@ -3271,6 +3271,15 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
                     f"🚨 [AccountCircuitBreaker] {symbol} 新仓被拒: {_cb.reason}"
                 )
                 return
+        else:
+            # DEB-20260823 X2: equity≤0(启动首查前/断供窗口)时熔断失明——原实现静默跳过,
+            # 与本块异常路径 fail-close 哲学矛盾("失明的熔断器=没有熔断器"). 改为拒单;
+            # update_account 刷新出真实权益后自动恢复.
+            logger.error(
+                f"🚨 [AccountCircuitBreaker·fail-close] {symbol} 账户权益不可用({_equity}), "
+                f"熔断无法评估, 拒绝新仓"
+            )
+            return
     except Exception as _cb_err:
         logger.warning(f"🚨 [AccountCircuitBreaker·fail-close] {symbol} 检查异常, 跳过下单: {_cb_err}")
         return

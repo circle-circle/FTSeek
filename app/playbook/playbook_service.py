@@ -728,6 +728,13 @@ class PlaybookService:
                     _msg = f"[OKR熔断] {_cb.reason}, 暂停 Playbook 执行"
                     logger.warning(_msg)
                     return {"success": False, "message": _msg}
+            else:
+                # DEB-20260823 X2: equity≤0(启动首查前/断供窗口)时熔断失明——原实现静默
+                # 跳过检查, 与下方异常路径 acb_fail_mode=closed 哲学矛盾. 改为拒单,
+                # update_account 刷新出真实权益后自动恢复.
+                _msg = f"[OKR熔断·fail-close] 账户权益不可用({_equity}), 熔断无法评估, 拒绝开仓"
+                logger.error(_msg)
+                return {"success": False, "message": _msg}
         except Exception as _cb_err:
             # DEB-20260721 R4 GATE-1: 纳入 risk.acb_fail_mode 统一 fail 语义 (C-7 的第三份拷贝).
             #   当前 mode=closed → 检查失明即拒绝开仓 (行为变更, 与批次② C-7 裁决同向:
