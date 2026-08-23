@@ -53,7 +53,9 @@ class PlaybookConfig:
         # 2026-07-09: 40%→60% — bridge候选直写DB后, deep_analysis信号质量提升,
         #   更多资金给bridge候选执行, 积累更多交易数据验证方向+退出策略
         "daily_notional_cap_pct": 0.80,
-        "max_daily_positions": 10,
+        # C4 (2026-08-24): 10→16 对齐 yaml SSOT (execution_parameters.max_daily_positions).
+        # 本默认仅在 unified_config.yaml 读取失败时使用; 三层默认漂移曾达 5/10/16.
+        "max_daily_positions": 16,
         # horizon defaults
         "short_rr_ratio": 1.0,
         "long_rr_ratio": 2.5,

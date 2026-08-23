@@ -3295,7 +3295,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         _risk_base_capital = _resolve_sizing_base(pb_cfg)
         _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.80))
         _daily_notional_cap = _risk_base_capital * _daily_notional_cap_pct
-        _max_daily_positions = int(pb_cfg.get("max_daily_positions", 5))
+        # C4 (2026-08-24, 体检 E3): fallback 5→16 对齐 yaml SSOT (unified_config.yaml
+        # playbook.execution_parameters.max_daily_positions=16). 原 fallback=5 与 config.py
+        # 默认 10 均落后于 8/20 升帽裁决 — 键误删时日开仓帽会静默缩到 5, 是最危险的漂移.
+        _max_daily_positions = int(pb_cfg.get("max_daily_positions", 16))
         # ── 2026-08-14 (水坝效应修复): 单轮新开仓上限 ──
         # 根因: 10:15 禁触窗解禁后同一 auto_execute 轮把全部入带指令一次开完 —
         #   实锤 8/14: 9笔LONG挤在87秒(10:16:03-10:17:30), UCTT/SNDK 15分钟内相继SL;
