@@ -104,7 +104,12 @@ def judge(row, trade, bars, chase_n):
     long = row["direction"] == "LONG"
     sign = 1.0 if long else -1.0
     anchor = float(row["anchor"])
-    band_edge = float(row["entry_high"]) if long else float(row["entry_low"])
+    # 2026-08-23 (Hermes 修复): DA 直写指令无 entry_low/entry_high (DB NULL),
+    #   原 float(None) 一行炸掉整个重放 (一崩全崩)。band_edge 仅作 bar open
+    #   缺失时的兜底, 回退 anchor 语义不变 (追单价≈锚位); 标记可审计。
+    _be_raw = row["entry_high"] if long else row["entry_low"]
+    _be_fallback = _be_raw is None
+    band_edge = float(_be_raw) if _be_raw is not None else anchor
     trigger_dt = _parse_dt_et(row["ts"])
     qty = int(trade["qty"]) if trade else int(row.get("position_size") or 1)
 
@@ -151,7 +156,8 @@ def judge(row, trade, bars, chase_n):
         delay = (b["t"] - ref_dt).total_seconds() / 60.0
         return {"filled": True, "bucket": "chase_fill", "delay_min": round(delay, 2),
                 "improvement": round(delta, 4), "delta": round(delta, 4),
-                "chase_px": chase_px, "reason": f"chase_{chase_n}m"}
+                "chase_px": chase_px, "band_edge_fallback": _be_fallback,
+                "reason": f"chase_{chase_n}m"}
     # 阶段3: 漏单
     delta = -actual_net if trade else 0.0
     return {"filled": False, "bucket": "missed", "delay_min": None,
