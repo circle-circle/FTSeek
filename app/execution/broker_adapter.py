@@ -924,15 +924,7 @@ class FutuBrokerAdapter:
             logger.warning(f"[卖空] {symbol} 未连接富途，降级到 Put 期权")
             return {"success": False, "error": "not_connected"}
 
-        # ── 预检: 借券可用性 ──
-        try:
-            from app.risk.short_specific_checks import check_borrow_cost
-            borrow_ok, borrow_reason = check_borrow_cost(symbol)
-            if not borrow_ok:
-                logger.warning(f"[卖空] {symbol} 借券预检失败: {borrow_reason}")
-                return {"success": False, "error": f"borrow_check_failed: {borrow_reason}"}
-        except ImportError:
-            pass
+        # (借券预检已删 — DEB-20260823 用户裁"不值得": 数据源恒空, 检查恒放行=死门)
 
         # ── 执行卖空 (含重试) ──
         max_attempts = 2

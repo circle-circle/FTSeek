@@ -144,23 +144,7 @@ class StockShortStrategy:
         if not self.enabled:
             return False, "正股做空未启用 (stock_short.enabled=false)"
 
-        # 幻方 Principle 1: 借券成本门控
-        try:
-            from app.risk.short_specific_checks import check_borrow_cost
-            ok, reason = check_borrow_cost(symbol, self.borrow_cost_gate)
-            if not ok:
-                return False, reason
-        except ImportError:
-            pass
-
-        # 幻方 Principle 2: 轧空检测
-        try:
-            from app.risk.short_specific_checks import check_short_squeeze
-            ok, reason = check_short_squeeze(symbol, self.squeeze_detector)
-            if not ok:
-                return False, reason
-        except ImportError:
-            pass
+        # (借券成本/轧空两门已删 — DEB-20260823 用户裁"不值得": 数据源恒空=死门)
 
         # 幻方 Principle 3: 市况适配
         try:

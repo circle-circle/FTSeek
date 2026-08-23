@@ -39,10 +39,9 @@ class RiskEngine(BaseRiskEngine):
         # 初始化时假设行情正常
         self.system_breaker.update_market_data_status(True)
         
-        # 回撤控制
+        # 回撤控制 (总回撤门已删 — DEB-20260823: update_assets 零调用=死门, 总回撤由 capital_safety 水位承担)
         self.drawdown_controller = DrawdownController(
             max_daily_drawdown=risk_config.get("MAX_DAILY_DRAWDOWN", 0.03),
-            max_total_drawdown=risk_config.get("MAX_TOTAL_DRAWDOWN", 0.08),
         )
         
         # 仓位限制
@@ -399,9 +398,8 @@ class RiskEngine(BaseRiskEngine):
                         f"[风控] {order.symbol} 滑点过大: {slippage_ratio:.2%} "
                         f"期望={order.price:.2f} 实际={order.avg_fill_price:.2f}"
                     )
-            # 记录回撤基准
-            if hasattr(self, "drawdown_controller"):
-                self.drawdown_controller.record_trade(order)
+            # (record_trade(order) 已删 — DEB-20260823: 该方法不存在于 DrawdownController,
+            #  每笔交易后检查都会 AttributeError 进 except 吞掉; 实际记账走 record_trade_pnl(C4))
         except Exception as e:
             import logging as _log
             import traceback as _tb

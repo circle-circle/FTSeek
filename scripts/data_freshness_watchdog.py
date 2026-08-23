@@ -45,10 +45,9 @@ WATCHLIST = [
     ("data/shadow/playbook_direction_audit.jsonl", 72, "[疑墓地] playbook 方向审计",      True),
     ("data/shadow/edge_gate_shadow.jsonl",         72, "[疑墓地] edge gate shadow",        True),
     # 2026-07-26 减法R2-Q6 (裁决: 不建新注册表, 高危文件入现有 watchdog): "生产者死了消费者不知道"
-    #   三文件 — SHORT 门控两件 (88天空文件静默 fail-open 实案, 责任 DEB-20260726-subtraction-R2 Q1)
-    #   + price_fail_closed (责任同 DEB Q2, 已清空保留机制)。生产者待接线前持续告警=设计意图。
-    ("data/hard_to_borrow.json",                  168, "[SHORT门控] 借券成本数据 (生产者待裁)", False),
-    ("data/short_interest.json",                  168, "[SHORT门控] 轧空数据 (生产者待裁)",     False),
+    #   price_fail_closed (责任 DEB-20260726 Q2, 已清空保留机制)。
+    #   [2026-08-23] SHORT 门控两件 (hard_to_borrow/short_interest.json) 已随死门删除移出清单 —
+    #   用户裁"不值得" (88天空文件静默 fail-open 实案, 责任同 R2 Q1), 消费门已删, 文件不再需要。
     ("data/price_fail_closed.json",               999, "[人工名单] 期权跳过集 (仅人工维护, 静止正常)", False),
 ]
 

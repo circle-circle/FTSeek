@@ -1697,28 +1697,13 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
 
     if is_short:
         # 信号质量已在 SSOT 门禁统一检查 (LONG≥35, SHORT≥30)
-        # 此处仅保留做空特有检查: 借券成本 + 轧空风险 + 市况适配
+        # 此处仅保留做空特有检查: 市况适配
+        # (借券成本/轧空两门已删 — DEB-20260823 用户裁"不值得": 数据源 4/29 起恒空,
+        #  两门自上线恒放行=死门; 接数据源与否随毕业门禁 checklist 再议)
 
-        # 幻方强化门禁
+        # 幻方 Principle 3: 市况适配 (牛市提高门槛)
         try:
-            from app.risk.short_specific_checks import (
-                check_borrow_cost_with_conviction,
-                check_short_squeeze,
-                check_regime_for_short,
-            )
-            # Principle 1: 借券成本门控 (含高置信度豁免)
-            # P0 修复 (2026-04-30): 传 signal.strength 而非 short_effective
-            # check_borrow_cost_with_conviction 内部用 raw strength 判断豁免阈值
-            ok, reason = check_borrow_cost_with_conviction(symbol, signal.strength)
-            if not ok:
-                logger.warning(f"🚫 [借券成本] {symbol} {reason}")
-                return False
-            # Principle 2: 轧空检测
-            ok, reason = check_short_squeeze(symbol)
-            if not ok:
-                logger.warning(f"🚫 [轧空风险] {symbol} {reason}")
-                return False
-            # Principle 3: 市况适配 (牛市提高门槛)
+            from app.risk.short_specific_checks import check_regime_for_short
             regime = context.get("market_regime", "")
             ok, reason = check_regime_for_short(regime, signal.strength)
             if not ok:

@@ -1,15 +1,19 @@
-"""回撤控制器
+"""回撤控制器 (日内日亏限额)
 
-P0 修复 (2026-04-17):
-- 支持动态资产基准（启动时查询真实资产）
-- 支持入金/出金后的基准更新
-- 保存基准变更历史，用于复盘审计
+P0 修复 (2026-04-17): 支持动态资产基准
+P0-fix (2026-06-15): 日内回撤状态持久化到 SQLite, 防止重启归零绕过 3% 日限
 
-P0-fix (2026-06-15):
-- 日内回撤状态持久化到 SQLite, 防止重启归零绕过 3% 日限
+历史注记 (DEB-20260823-system-health-check, 用户裁"不值得, 删除"):
+- 原 8% 总回撤门 (max_total_drawdown / update_assets / TOTAL_DRAWDOWN 分支) 已删除:
+  update_assets() 全仓零调用, 该门自诞生从未被评估过 = 死门; 总回撤防护由
+  capital_safety 水位体系承担 (-20% RED 清仓 / -35% BLACKOUT 锁死, 已接线实测).
+- 原 set_baseline/reset_daily_baseline/update_drawdown/get_status/
+  get_baseline_history/DrawdownBaselineRecord 同批删除 (全仓零调用).
+- 已知残留缺口 (未修, 见 DEB P1-M3): playbook 平仓 pnl 未喂入本控制器,
+  日回撤池当前仅主线平仓在喂 (order_executor C4 点).
 """
-from datetime import datetime, date
-from typing import Optional, List, Dict, Any
+from datetime import datetime
+from typing import Optional
 import logging
 import os
 import sqlite3
@@ -22,73 +26,32 @@ logger = logging.getLogger(__name__)
 _DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'drawdown_state.db')
 
 
-class DrawdownBaselineRecord:
-    """基准变更历史记录"""
-    def __init__(
-        self,
-        old_baseline: float,
-        new_baseline: float,
-        reason: str,
-        timestamp: Optional[datetime] = None,
-    ):
-        self.old_baseline = old_baseline
-        self.new_baseline = new_baseline
-        self.reason = reason
-        self.timestamp = timestamp or datetime.now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "old_baseline": self.old_baseline,
-            "new_baseline": self.new_baseline,
-            "change_pct": (self.new_baseline - self.old_baseline) / max(0.01, self.old_baseline) * 100,
-            "reason": self.reason,
-            "timestamp": self.timestamp.isoformat(),
-        }
-
-
 class DrawdownController:
-    """回撤控制器
+    """日内回撤控制器 (日亏限额)
 
     计算逻辑：
-        current_total_dd = (baseline - current_assets) / baseline
-
-    baseline 来源（优先级从高到低）：
-        1. 用户/系统手动更新（入金/出金后）
-        2. 每日开盘前自动更新（取前一日收盘总资产）
-        3. 启动时通过 broker.get_account_info() 查询
-        4. config 中的初始值（兜底）
+        current_daily_dd_abs 累加每笔已实现亏损 (record_trade_pnl)
+        current_daily_dd = current_daily_dd_abs / daily_start_assets
     """
 
     def __init__(
         self,
         max_daily_drawdown: float = 0.03,
-        max_total_drawdown: float = 0.08,
         initial_baseline: float = 0.0,
     ):
         self.max_daily = max_daily_drawdown
-        self.max_total = max_total_drawdown
 
-        # 资产基准
+        # 资产基准 (baseline/current_assets 仅作持久化往返保留, 无总回撤语义)
         self.baseline = initial_baseline
         self.current_assets = initial_baseline
         self.daily_start_assets = initial_baseline
 
-        # 回撤值（绝对金额）
+        # 日内回撤 (绝对金额 + 百分比)
         self.current_daily_dd_abs = 0.0
-        self.current_total_dd_abs = 0.0
-
-        # 回撤百分比（由 update_assets 自动计算）
         self.current_daily_dd = 0.0
-        self.current_total_dd = 0.0
 
-        self.last_reset_date: Optional[date] = None
+        self.last_reset_date: Optional[datetime.date] = None
         self.block_reason: Optional[str] = None
-
-        # 基准变更历史
-        self.baseline_history: List[DrawdownBaselineRecord] = []
-
-        # P2 修复 (2026-05-11): 入金/出金自动检测阈值 (净值突变倍数)
-        self.auto_reset_threshold = 5.0  # 当前资产 vs 基准差异 >5x 时自动重置
 
         # P0-fix (2026-06-15): 从 SQLite 恢复日内状态
         self._ensure_table()
@@ -163,85 +126,8 @@ class DrawdownController:
             logger.debug(f"[回撤持久化] 保存失败: {e}")
 
     # ------------------------------------------------------------------
-    # 基准管理
+    # 日内回撤记账
     # ------------------------------------------------------------------
-
-    def set_baseline(self, new_baseline: float, reason: str = "manual"):
-        """设置/更新资产基准（如入金/出金后）"""
-        old = self.baseline
-        if old > 0:
-            record = DrawdownBaselineRecord(old, new_baseline, reason)
-            self.baseline_history.append(record)
-            logger.info(
-                f"[回撤基准] 更新: {old:.2f} -> {new_baseline:.2f} "
-                f"({reason}, 变更 {record.to_dict()['change_pct']:.2f}%)"
-            )
-        else:
-            logger.info(f"[回撤基准] 初始设置: {new_baseline:.2f} ({reason})")
-
-        self.baseline = new_baseline
-        self.current_assets = new_baseline
-        self.daily_start_assets = new_baseline
-        self.current_daily_dd = 0.0
-        self.current_total_dd = 0.0
-        self._check_limits()
-        self._save_state()
-
-    def reset_daily_baseline(self, reason: str = "daily_open"):
-        """每日开盘前重置日内基准"""
-        old = self.daily_start_assets
-        self.daily_start_assets = self.current_assets
-        self.current_daily_dd_abs = 0.0
-        self.current_daily_dd = 0.0
-        self.last_reset_date = now_et().date()
-        logger.info(
-            f"[回撤基准] 日内基准重置: {old:.2f} -> {self.daily_start_assets:.2f} ({reason})"
-        )
-        self._save_state()
-
-    # ------------------------------------------------------------------
-    # 资产更新
-    # ------------------------------------------------------------------
-
-    def update_assets(self, current_assets: float):
-        """
-        更新当前总资产，自动计算回撤百分比。
-        P2 修复 (2026-05-11): 检测入金/出金导致的净值突变，自动重置基准
-
-        调用方通常通过 broker.get_account_info()["total_assets"] 获取后传入。
-        """
-        if self.baseline <= 0:
-            logger.warning("[回撤] 基准未设置，无法计算回撤")
-            return
-
-        # P2 修复 (2026-05-11): 入金/出金检测 — 净值突变时自动重置基准
-        # [DEB-fullchain P1-12 2026-08-16] 修复方向性背门: 原 max(cur/base, base/cur)
-        #   对称判定 → 大亏损 (基准/当前 >5x, 即回撤 >80%) 同样触发 set_baseline →
-        #   total/daily dd 双清零 + 熔断复位, 恰在最需要熔断时拆熔断 (fail-open)。
-        #   现仅入金方向 (current > baseline×threshold) 自动重置; 出金/亏损方向
-        #   维持基准 → 回撤偏严 → 需人工 set_baseline (fail-safe 方向)。
-        #   阈值 5.0 不变 (红线①: 不动参数)。
-        if current_assets > 0 and self.baseline > 0:
-            if current_assets > self.baseline * self.auto_reset_threshold:
-                logger.warning(
-                    f"[回撤] 入金检测: 当前=${current_assets:,.0f} vs 基准=${self.baseline:,.0f} "
-                    f"(>{self.auto_reset_threshold}x), 自动重置基准"
-                )
-                self.set_baseline(current_assets, reason="auto_reset_capital_change")
-                return
-
-        self.current_assets = current_assets
-
-        # 计算总回撤
-        self.current_total_dd_abs = max(0, self.baseline - current_assets)
-        self.current_total_dd = self.current_total_dd_abs / self.baseline
-
-        # 计算日内回撤
-        self.current_daily_dd_abs = max(0, self.daily_start_assets - current_assets)
-        self.current_daily_dd = self.current_daily_dd_abs / self.daily_start_assets
-
-        self._check_limits()
-        self._save_state()
 
     def record_trade_pnl(self, pnl: float, source: str = "unknown"):
         """C4 fix (2026-05-31): 记录单笔交易 P&L, 累加到日内回撤
@@ -274,27 +160,18 @@ class DrawdownController:
         self._check_limits()
         self._save_state()
 
-    def update_drawdown(self, daily_dd: float, total_dd: float):
-        """兼容旧接口：直接传入回撤百分比"""
-        self.current_daily_dd = daily_dd
-        self.current_total_dd = total_dd
-        self._check_limits()
-
     # ------------------------------------------------------------------
     # 限制检查
     # ------------------------------------------------------------------
 
     def _check_limits(self):
-        """检查回撤限制 (动态应用模式感知限额)"""
+        """检查日内回撤限制 (动态应用模式感知限额)"""
         self.block_reason = None
 
-        # 模式感知日亏损限额: 从 TradingMode 读取 YAML mode_adaptation 配置
         effective_daily = self._get_effective_max_daily()
 
         if self.current_daily_dd > effective_daily:
             self.block_reason = "DAILY_DRAWDOWN"
-        elif self.current_total_dd > self.max_total:
-            self.block_reason = "TOTAL_DRAWDOWN"
 
     def _get_effective_max_daily(self) -> float:
         """获取模式感知的日亏损限额 (热加载)"""
@@ -315,37 +192,3 @@ class DrawdownController:
     def get_block_reason(self) -> Optional[str]:
         """获取阻止原因"""
         return self.block_reason
-
-    def reset(self):
-        """重置控制器"""
-        self.current_daily_dd = 0.0
-        self.current_total_dd = 0.0
-        self.current_daily_dd_abs = 0.0
-        self.current_total_dd_abs = 0.0
-        self.block_reason = None
-
-    # ------------------------------------------------------------------
-    # 状态查询
-    # ------------------------------------------------------------------
-
-    def get_status(self) -> Dict[str, Any]:
-        """获取完整回撤状态"""
-        return {
-            "baseline": self.baseline,
-            "current_assets": self.current_assets,
-            "daily_start_assets": self.daily_start_assets,
-            "daily_drawdown_abs": round(self.current_daily_dd_abs, 2),
-            "daily_drawdown_pct": round(self.current_daily_dd * 100, 2),
-            "total_drawdown_abs": round(self.current_total_dd_abs, 2),
-            "total_drawdown_pct": round(self.current_total_dd * 100, 2),
-            "max_daily_allowed": round(self._get_effective_max_daily() * 100, 2),
-            "max_daily_configured": round(self.max_daily * 100, 2),
-            "max_total_allowed": round(self.max_total * 100, 2),
-            "blocked": self.block_reason is not None,
-            "block_reason": self.block_reason,
-            "baseline_changes": len(self.baseline_history),
-        }
-
-    def get_baseline_history(self) -> List[Dict[str, Any]]:
-        """获取基准变更历史"""
-        return [r.to_dict() for r in self.baseline_history]
