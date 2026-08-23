@@ -1343,6 +1343,45 @@ def cmd_inject(force_dry: bool = False) -> int:
                 print(f"  [skip] {it.get('symbol')} 今日已有非UE指令 "
                       f"(decision_id={(_existing or {}).get('decision_id')}) → DA优先不覆盖")
                 continue
+            # ── Phase 0 (2026-08-23): 同标的同方向 3 交易日冷却 ──
+            # LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计回吐
+            # -$100)。前笔亏了它不知道 (绩效反馈已加入 prompt, 但冷却作硬兜底)。
+            # 查 trade_records 近 N 天同标的同方向的已执行/已平仓记录, 有则跳过。
+            # 回滚: universe_expansion.same_symbol_cooldown_days 改 0。
+            try:
+                from app.core.config_container import get_config as _gc_cool
+                _cool_days = int(_gc_cool().get_dotted(
+                    "universe_expansion.same_symbol_cooldown_days", 3))
+            except Exception:
+                _cool_days = 3
+            if _cool_days > 0:
+                try:
+                    import sqlite3 as _cdb
+                    from app.core.db_utils import get_main_db as _gmdb
+                    from datetime import datetime as _cdt, timedelta as _ctd
+                    # [Hermes 复核 2026-08-23] 词表修正: 指令侧词汇是 BUY/SELL_SHORT
+                    # (pb_direction, :1235), trade_records.direction 只存 LONG/SHORT —
+                    # 原查询用指令词汇恒 0 命中, 冷却门是死门 (DB 实弹:
+                    # direction='BUY' 全表 0 行). 映射后语义不变.
+                    _cool_dir = {"BUY": "LONG", "SELL_SHORT": "SHORT"}.get(
+                        str(it.get("direction", "")).upper())
+                    _cutoff_d = (_cdt.now() - _ctd(days=_cool_days)).strftime("%Y-%m-%d")
+                    if _cool_dir:
+                        _cc = _cdb.connect(str(_gmdb()), timeout=3)
+                        _cr = _cc.execute(
+                            "SELECT 1 FROM trade_records WHERE symbol=? AND direction=? "
+                            "AND trade_date>=? AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                            "LIMIT 1",
+                            (it.get("symbol"), _cool_dir, _cutoff_d)
+                        ).fetchone()
+                        _cc.close()
+                        if _cr:
+                            print(f"  [cooldown] {it.get('symbol')} {it.get('direction')} "
+                                  f"近{_cool_days}日已有同方向执行记录 → 冷却跳过")
+                            continue
+                except Exception as _cool_err:
+                    # 冷却查询失败不阻断主流程, 但禁静默 (死门教训: 静默吞 = 门死了没人知道)
+                    print(f"  [warn] cooldown 查询失败 ({it.get('symbol')}): {_cool_err}")
             db.save_instruction(it)
             saved += 1
             # S0 影子: UE×SHORT 加码 record-only — 登记"若 ×1.25 加码"假设队列成员,

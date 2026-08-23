@@ -156,6 +156,7 @@ class TestCheckIntradayTrigger:
         "entry_reanchor_enabled": True,          # 与 unified_config.yaml 对齐 (Lever A)
         "entry_reanchor_max_drift_pct": 4.0,
         "thesis_drift_invalidate_enabled": True,
+        "falsification_gates_enabled": False,     # P1-1 证伪门密封 (依赖 1min bar)
     }
 
     @pytest.fixture(autouse=True)

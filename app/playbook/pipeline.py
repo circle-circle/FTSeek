@@ -3366,7 +3366,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             if inst.get("direction") == "SKIP":
                 continue
             # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
-            if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
+            #   P1-2 (2026-08-23): 取值集合化 — 含 tripwire 核销 (见 INVALIDATED_SKIP_REASONS)
+            if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
                 continue
             # 2026-07-19 (DEB-round3 #3-B 消费端): expires_at 过期指令跳过 (SCAN 24h 失效)
             if _is_instruction_expired(inst):
@@ -3894,13 +3895,77 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         return {"error": str(e)}
 
 
+# P1-3 (2026-08-23): 逐分钟 p50 累积量曲线缓存 {symbol: (day, [cum_p50...])} —
+#   源文件 5-6MB/票, 只在当日首次访问时解析一次。
+_VOL_CURVE_CACHE: Dict[str, Any] = {}
+
+
+def _intraday_vol_curve_p50(symbol: str, days: int = 20) -> Optional[List[float]]:
+    """P1-3: 该标的近 days 个交易日"开盘后第 i+1 分钟累积成交量"的中位数曲线。
+
+    替代线性折算 (elapsed/390) 的依据: 真实日内成交量呈 U 型 (开盘/收盘高、午间低),
+    线性折算在开盘时段系统性【低估】期望量 (分母 = 日均量 × elapsed/390, 开盘 20min
+    只给 5% 配额, 而真实成交常已达 15-20%) → ratio 被系统性高估, 量能门在成交最集中、
+    最该做确认的开盘时段恒开, 等于没门。
+
+    数据源 data/replay_bars_1m/US_<SYM>.json ([time,o,h,l,c,volume], 由
+    scripts/pangan_daily_rebuild.py 每日 cron 增量维护, 覆盖 ~45 票)。
+    覆盖外标的返回 None → 调用方回落线性模型。
+    """
+    try:
+        _day = datetime.now(_now_et()).strftime("%Y-%m-%d")
+        _hit = _VOL_CURVE_CACHE.get(symbol)
+        if _hit is not None and _hit[0] == _day:
+            return _hit[1]
+        _p = (Path(__file__).resolve().parents[2] / "data" / "replay_bars_1m"
+              / f"{symbol.replace('.', '_')}.json")
+        if not _p.exists():
+            _VOL_CURVE_CACHE[symbol] = (_day, None)
+            return None
+        with open(_p, encoding="utf-8") as _f:
+            _bars = json.load(_f)
+        _by_day: Dict[str, List[float]] = {}
+        for _b in _bars:
+            try:
+                _by_day.setdefault(str(_b[0])[:10], []).append(float(_b[5]))
+            except (IndexError, TypeError, ValueError):
+                continue
+        # 只取历史已完成交易日 (排除今日, 当日曲线不完整会污染中位数)
+        _dates = sorted(d for d in _by_day if d < _day)[-days:]
+        if len(_dates) < 10:  # 少于 10 日样本的中位数不稳, 回落线性
+            _VOL_CURVE_CACHE[symbol] = (_day, None)
+            return None
+        _cums = []
+        for _d in _dates:
+            _run, _acc = 0.0, []
+            for _v in _by_day[_d]:
+                _run += _v
+                _acc.append(_run)
+            _cums.append(_acc)
+        _curve = []
+        for _i in range(max(len(c) for c in _cums)):
+            # 半日市等短日在该 index 无值 → 只用有值的日 (不补零, 否则中位数被拉低)
+            _vals = sorted(c[_i] for c in _cums if _i < len(c))
+            if not _vals:
+                break
+            _n = len(_vals)
+            _curve.append(_vals[_n // 2] if _n % 2 else
+                          (_vals[_n // 2 - 1] + _vals[_n // 2]) / 2.0)
+        _VOL_CURVE_CACHE[symbol] = (_day, _curve or None)
+        return _curve or None
+    except Exception:
+        _VOL_CURVE_CACHE[symbol] = (datetime.now(_now_et()).strftime("%Y-%m-%d"), None)
+        return None
+
+
 def _calc_intraday_vol_ratio(data_router, symbol: str,
                              realtime_cum_vol: Optional[float] = None) -> Optional[float]:
     """计算盘中实时量能比 (intraday volume ratio).
 
-    公式: today_cumulative_vol / (avg_daily_vol_5d × elapsed_fraction)
+    分母两条路径 (P1-3, 2026-08-23):
+      主: today_cumulative_vol / 历史同分钟累积量 p50 (_intraday_vol_curve_p50, ~45票)
+      回落: today_cumulative_vol / (avg_daily_vol_5d × elapsed_fraction)  ← 原线性模型
       - today_cumulative_vol: 今日开盘至当前的累计成交量
-      - avg_daily_vol_5d: 最近5个已完成交易日日均成交量
       - elapsed_fraction: 已过交易时间占全天比例 (9:30-16:00 ET = 390min)
 
     Returns:
@@ -3952,7 +4017,39 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
                 return None
             today_cum_vol = sum(today_vols)
 
-        # ── 2. 最近5日日均成交量 (日K线) ──
+        # ── 2. 分母: 已过交易时间 ──
+        # 美股常规交易时段: 9:30 - 16:00 ET = 390 min (半日市 13:00 收 = 210 min)
+        _market_open_min = 9 * 60 + 30  # 570
+        # 2026-07-25 (隐患扫描修复): 半日市支持 — 否则提前收盘日 elapsed_fraction 分母偏大, 量能门误判
+        try:
+            from app.utils.holiday_calendar import get_us_close_minutes_et
+            _market_close_min = get_us_close_minutes_et(_now_et_dt.date())
+        except Exception:
+            _market_close_min = 16 * 60      # 960
+        _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
+        _elapsed = max(_now_min - _market_open_min, 1)
+        _total = _market_close_min - _market_open_min  # 390
+
+        # ── 2a. P1-3 (2026-08-23): VWAP-relative — 分母改用历史同分钟累积量 p50 ──
+        #   原线性折算 (日均量 × elapsed/390) 忽略 U 型分布, 开盘时段分母系统性偏小 →
+        #   ratio 虚高 → 门在最该确认的时段恒开 (见 _intraday_vol_curve_p50 docstring)。
+        #   ⚠️ 本分支会实质改变量能门行为 (阈值 0.8 从"几乎恒过"变为真实过滤), 这是修门的
+        #   目的而非副作用。覆盖外标的 (~45 票之外) 自动回落线性, 故行为变化仅限有曲线的票。
+        #   回滚: volume_gate_vwap_relative 改 false。
+        try:
+            from app.core.config_container import get_config as _gc_vc
+            _use_curve = bool(_gc_vc().get_dotted(
+                "playbook.execution_parameters.volume_gate_vwap_relative", True))
+        except Exception:
+            _use_curve = False
+        if _use_curve:
+            _curve = _intraday_vol_curve_p50(symbol)
+            # bar i (09:31) 覆盖开盘后第 1 分钟 → 开盘后 _elapsed 分钟对应 index _elapsed-1
+            _idx = min(max(_elapsed - 1, 0), (len(_curve) - 1) if _curve else 0)
+            if _curve and _curve[_idx] > 0:
+                return round(today_cum_vol / _curve[_idx], 3)
+
+        # ── 2b. 回落: 最近5日日均成交量 × 时间占比 (线性模型) ──
         daily_bars = data_router.get_daily_bars(symbol, count=10) or []
         # 排除今日 (可能不完整), 取最近5个已完成交易日
         hist_vols = []
@@ -3970,21 +4067,9 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
         if avg_daily_vol <= 0:
             return None
 
-        # ── 3. 已过交易时间占比 ──
-        # 美股常规交易时段: 9:30 - 16:00 ET = 390 min (半日市 13:00 收 = 210 min)
-        _market_open_min = 9 * 60 + 30  # 570
-        # 2026-07-25 (隐患扫描修复): 半日市支持 — 否则提前收盘日 elapsed_fraction 分母偏大, 量能门误判
-        try:
-            from app.utils.holiday_calendar import get_us_close_minutes_et
-            _market_close_min = get_us_close_minutes_et(_now_et_dt.date())
-        except Exception:
-            _market_close_min = 16 * 60      # 960
-        _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
-        _elapsed = max(_now_min - _market_open_min, 1)
-        _total = _market_close_min - _market_open_min  # 390
         elapsed_fraction = min(max(_elapsed / _total, 0.02), 1.0)
 
-        # ── 4. 计算比值 ──
+        # ── 3. 计算比值 ──
         expected_vol = avg_daily_vol * elapsed_fraction
         if expected_vol <= 0:
             return None
@@ -3992,6 +4077,106 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
         return round(ratio, 3)
     except Exception:
         return None
+
+
+# P1-2 (2026-08-23, DEB-20260823-phase1): 永久作废指令的 skip_reason 取值集合 —
+#   原先只有 'thesis_drift_invalidate' 一个值, 硬编码在 auto_execute 头检与
+#   _check_intraday_trigger 头检两处; 新增 tripwire 核销 (scripts/tripwire_checker.py)
+#   后需要第二个可归因的值, 集中定义避免两处守卫漏更新。
+INVALIDATED_SKIP_REASONS = frozenset({"thesis_drift_invalidate", "TRIPWIRE_INVALIDATED"})
+
+
+def _calc_vwap_slope(data_router, symbol: str, window: int = 5) -> Optional[float]:
+    """P1-1 证伪门: 滚动窗 VWAP 斜率 (最近 window 根 1min bar 相对前 window 根的变化率)。
+
+    与既有 VWAP 方向门 (:4837 当日累计 VWAP 的哪一侧) 正交 — 后者问"价在均价哪侧",
+    本函数问"volume-weighted 价近 5min 在往哪走"。用当日累计 VWAP 算斜率是错的:
+    d(累计VWAP)/dt 的符号恒等于 sign(近期价 - 累计VWAP), 与方向门同信息量。
+
+    VWAP 优先用 turnover/volume (Futu 原生成交额, 真 VWAP); 缺 turnover 回落
+    典型价 (h+l+c)/3 × volume。
+
+    Returns: float 变化率 (BUY 期望 >0) / None 数据不足 → 调用方 fail-open。
+    """
+    try:
+        _futu = getattr(data_router, "futu", None)
+        if _futu is None or not hasattr(_futu, "get_kline"):
+            return None
+        # count=800 与 _calc_intraday_vol_ratio 同源理由: HTTP 冷路径 start=T-1 返回
+        #   "最旧N根", count 小于范围总数会拿到纯 T-1 bar。
+        bars = _futu.get_kline(symbol, ktype="K_1M", count=800) or []
+        _today = datetime.now(_now_et()).strftime("%Y-%m-%d")
+        today_bars = [b for b in bars
+                      if str(b.get("time") or b.get("time_key") or "")[:10] == _today]
+        if len(today_bars) < window * 2:
+            return None
+
+        def _vwap(seg):
+            _num = _den = 0.0
+            for b in seg:
+                _v = float(b.get("volume", 0) or 0)
+                if _v <= 0:
+                    continue
+                _to = float(b.get("turnover", 0) or 0)
+                _num += _to if _to > 0 else ((float(b.get("high", 0) or 0)
+                                              + float(b.get("low", 0) or 0)
+                                              + float(b.get("close", 0) or 0)) / 3.0) * _v
+                _den += _v
+            return (_num / _den) if _den > 0 else None
+
+        _recent = _vwap(today_bars[-window:])
+        _prior = _vwap(today_bars[-window * 2:-window])
+        if not _recent or not _prior or _prior <= 0:
+            return None
+        return (_recent - _prior) / _prior
+    except Exception:
+        return None
+
+
+def _capital_flow_divergence(symbol: str, is_short: bool) -> Optional[bool]:
+    """P1-1 资金流背离判定 (record-only 影子专用, 不参与拦截)。
+
+    用户裁决 (2026-08-23): 本信号已有回放判定且四关门全不过
+    (data/capital_flow_replay_verdict.json: inflow t=-0.48 / outflow t=-0.70 /
+    placebo p=0.85 / IS-OOS 符号翻转) → 不得作为硬拦门, 先 record-only 攒样,
+    够样本后按同一四关门判据重裁是否转生产。
+
+    背离定义: BUY 但大单净流为负 / SHORT 但大单净流为正 (大单 = super + big)。
+    Returns: True 背离 / False 同向 / None 无数据。
+    """
+    try:
+        _day = datetime.now(_now_et()).strftime("%Y-%m-%d")
+        if _CAPITAL_FLOW_CACHE.get("day") != _day:
+            import json as _cfj
+            _by_symbol: Dict[str, Any] = {}
+            _p = Path(__file__).resolve().parents[2] / "data" / "capital_flow_daily.jsonl"
+            if _p.exists():
+                with open(_p, encoding="utf-8") as _f:
+                    for _line in _f:
+                        try:
+                            _r = _cfj.loads(_line)
+                        except Exception:
+                            continue
+                        _sym, _d = _r.get("symbol"), str(_r.get("date", ""))
+                        if not _sym:
+                            continue
+                        _prev = _by_symbol.get(_sym)
+                        if _prev is None or _d >= _prev[0]:
+                            _by_symbol[_sym] = (_d, float(_r.get("super_in_flow", 0) or 0)
+                                                + float(_r.get("big_in_flow", 0) or 0))
+            _CAPITAL_FLOW_CACHE.clear()
+            _CAPITAL_FLOW_CACHE.update({"day": _day, "by_symbol": _by_symbol})
+        _hit = (_CAPITAL_FLOW_CACHE.get("by_symbol") or {}).get(symbol)
+        if _hit is None or _hit[1] == 0:
+            return None
+        return (_hit[1] > 0) if is_short else (_hit[1] < 0)
+    except Exception:
+        return None
+
+
+# 资金流影子: capital_flow_daily.jsonl 的日级解析缓存 {day, by_symbol:{sym:(date,net)}} —
+#   盘中每标的每轮调用, 不缓存则每轮重复全文件扫描.
+_CAPITAL_FLOW_CACHE: Dict[str, Any] = {}
 
 
 # 2026-07-24 (DEB-20260723 缺陷D 修正版): 同标的低MFE连败封禁 — 触发侧查询缓存 (5min TTL,
@@ -4252,8 +4437,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     is_short = "SHORT" in direction.upper()
 
     # 2026-07-19 (DEB-round3 #2): 已作废指令直接拒 — 与 auto_execute 头检双保险.
-    #   特异性匹配 'thesis_drift_invalidate', 不误伤其他 skip_reason 语义.
-    if (inst.get("skip_reason") or "") == "thesis_drift_invalidate":
+    #   特异性匹配作废语义取值 (P1-2 起集合化), 不误伤其他 skip_reason 语义.
+    if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
         return False
     # 2026-07-19 (DEB-round3 #3-B 消费端): 过期指令不再触发 — 与 auto_execute 双保险.
     if _is_instruction_expired(inst):
@@ -4905,6 +5090,59 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             _shadow_portfolio_emit(inst, symbol, is_short, "vwap_gate", _entry_path,
                                    current_price, entry_price, _vwap_dev)
 
+    # ── P1-1 证伪门子集 (2026-08-23, DEB-20260823-phase1 知情破例) ──────────────
+    #   把 reentry 已有的"证伪前置"思路下沉到 DA/UE 主链: 入场前先问"有什么在反驳这笔",
+    #   而非只问"价格到了没"。四门中 ATR 地板已在 :4490 生产运行 (low_atr_gate_enabled),
+    #   信息新鲜度门因 FTSeek 侧无新闻时间戳数据源而未实现 (见 DEB 设计文档 §P1-1 偏差)。
+    #   全部 fail-open (数据缺失不拦), 逐门独立开关, 整体开关 falsification_gates_enabled。
+    _fals_slope = None
+    _fals_flow_diverged = None
+    _fals_blocked = False
+    if triggered and bool(pb_cfg.get("falsification_gates_enabled", True)):
+        # ① VWAP 斜率门 (生产拦截): 近 5min volume-weighted 价在往反方向走 → 动量反驳该方向。
+        #   与方向门正交 (方向门=价在均价哪侧, 本门=均价在往哪走)。证据方向支持:
+        #   data/e2_momentum_replay_latest.json 入场动量确认反事实 blocked n=90 净-$1026
+        #   WR 33% vs passed n=46 净+$184 WR 52%。回滚: falsification_gate_vwap_slope_enabled=false。
+        if bool(pb_cfg.get("falsification_gate_vwap_slope_enabled", True)):
+            try:
+                _slope_tol = float(pb_cfg.get("falsification_gate_vwap_slope_tol", 0.001))
+            except Exception:
+                _slope_tol = 0.001
+            _fals_slope = _calc_vwap_slope(data_router, symbol)
+            if _fals_slope is not None:
+                _slope_against = (_fals_slope > _slope_tol) if is_short else (_fals_slope < -_slope_tol)
+                if _slope_against:
+                    triggered = False
+                    _fals_blocked = True
+                    logger.info(
+                        f"[playbook] 证伪门·VWAP斜率: {symbol} slope={_fals_slope:+.4f} "
+                        f"逆 {'SHORT' if is_short else 'BUY'} (tol={_slope_tol}) → 拦截"
+                    )
+                    _emit_trigger_miss("falsification_vwap_slope", current_price)
+                    _shadow_portfolio_emit(inst, symbol, is_short, "falsification_vwap_slope",
+                                           _entry_path, current_price, entry_price)
+        # ② 资金流背离门 (record-only 影子, 用户 2026-08-23 裁决): 该信号回放四关门全不过
+        #   (placebo p=0.85), 不得拦单 — 只落"若拦会怎样"供攒样后按同一判据重裁。
+        if bool(pb_cfg.get("falsification_gate_capital_flow_shadow", True)):
+            _fals_flow_diverged = _capital_flow_divergence(symbol, is_short)
+            if _fals_flow_diverged is not None and "TEST" not in symbol.upper():
+                try:
+                    with open(Path(__file__).resolve().parents[2] / "data"
+                              / "falsification_gate_shadow.jsonl", "a", encoding="utf-8") as _ff:
+                        _ff.write(json.dumps({
+                            "ts": datetime.now(_now_et()).isoformat(timespec="seconds"),
+                            "date": _today_et_str(), "tz": "ET", "gate": "capital_flow",
+                            "inst_id": inst.get("id"), "symbol": symbol,
+                            "direction": "SHORT" if is_short else "BUY",
+                            "price": round(float(current_price), 4),
+                            "diverged": _fals_flow_diverged,
+                            "would_block": _fals_flow_diverged,
+                            "vwap_slope": _fals_slope,
+                            "triggered": bool(triggered),
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+
     if triggered:
         logger.info(
             f"[playbook] 方向穿越触发: {symbol} price=${current_price:.2f} "
@@ -4949,7 +5187,9 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         )
         # 2026-07-20 修复: 已有特异性 miss 原因 (vol_gate_block/vwap_gate_block) 时不重复发射,
         #   避免同一轮产生两条 trigger_miss 记录污染漏斗统计.
-        if not _vol_gate_actively_blocked and not (_gate_enabled and _gate_block):
+        #   P1-1 (2026-08-23): 证伪门拦截同属特异性原因, 一并纳入守卫.
+        if not _vol_gate_actively_blocked and not (_gate_enabled and _gate_block) \
+                and not _fals_blocked:
             # 2026-07-11: 带内未触发 — 分类追高/接飞刀 (BUY: >+5%追 / <-3%刀; SHORT 对称)
             if is_short:
                 _miss_reason = "knife_above" if current_price > entry_price else "runaway_down"
@@ -6644,6 +6884,18 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     if not exit_reason and bool(_pb_cfg.get("dead_signal_exit_enabled", False)):
         _ds_minutes = float(_pb_cfg.get("dead_signal_exit_minutes", 60))
         _ds_mfe_pct = float(_pb_cfg.get("dead_signal_exit_mfe_pct", 0.2))
+        # ── Phase 0 (2026-08-23): Reentry 仓延长 DEAD_SIGNAL 呼吸窗 ──
+        # VWAP 回归策略需 1-3 小时发酵, 而 DEAD_SIGNAL 在 60min+MFE<0.2% 即出场 →
+        # 实测 reentry 前 6 笔中 4 笔被 DEAD_SIGNAL 杀掉 (CRM/TSM/AVGO/CSCO, 全部
+        # 在入场后 1-2h 内)。reentry 不满足既有 W_WEEK 水下隔夜豁免 (日内新入场非隔夜)。
+        # 修法: reentry 仓额外加宽 extension_min (默认 60, 即 120min 呼吸空间);
+        # 120min 后仍 MFE<0.2% 一样出场 — 不是无限豁免, 只是让时间尺度匹配。
+        # 回滚: dead_signal_reentry_extension_min 改 0。
+        _ds_reentry_ext = float(_pb_cfg.get("dead_signal_reentry_extension_min", 60))
+        if _ds_reentry_ext > 0:
+            _did_str = str(meta.get("decision_id", "") or "")
+            if _did_str.startswith("intraday_reentry"):
+                _ds_minutes += _ds_reentry_ext
         if held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
             # 8/17 净口径: 豁免的"水下"判定用净盈亏 — 毛 0<毛<费用 的微盈仓是净水下,
             #   同样在修复窗口内, 不该因"毛利>0"被误判失去豁免而出场白跑 (NVDA 8/17 实弹).

@@ -1141,6 +1141,41 @@ playbook:
     liquidity_gate_max_adv_pct: 0.5
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
+    # ══ Phase 1 信号质量治理 (2026-08-23, DEB-20260823-phase1, 用户知情破例) ══
+    #   前提: DEB-20260823 已证毛期望=0 且退出侧调优数学上无效 → 唯一未开采的杠杆是
+    #   入场信号质量。三项均只做减法 (减少无效信号, 不增加信号数), 各带独立开关。
+    # ── P1-1 证伪门子集 (pipeline.py:_check_intraday_trigger, VWAP 方向门之后) ──
+    falsification_gates_enabled: true
+    #   VWAP 斜率门 (生产拦截): 近5min volume-weighted 价逆方向 → 动量反驳该方向.
+    #   与 entry_vwap_gate (价在当日VWAP哪侧) 正交. 证据方向: e2_momentum_replay_latest
+    #   blocked n=90 净-$1026 WR33% vs passed n=46 净+$184 WR52%. fail-open.
+    falsification_gate_vwap_slope_enabled: true
+    falsification_gate_vwap_slope_tol: 0.001   # 0.1% — 模块噪声底, 低于此视为无斜率
+    #   资金流背离门: record-only 影子, 不拦单. 用户 2026-08-23 裁决 —
+    #   该信号回放四关门全不过 (capital_flow_replay_verdict.json: inflow t=-0.48 /
+    #   outflow t=-0.70 / placebo p=0.85 / IS-OOS符号翻转), 硬拦=按已证伪信号随机拦单.
+    #   落 data/falsification_gate_shadow.jsonl, 攒样后按同一四关门判据重裁是否转生产.
+    falsification_gate_capital_flow_shadow: true
+    #   (四门中 ATR 地板已由 low_atr_gate_enabled 生产运行; 信息新鲜度门未实现 —
+    #    FTSeek 侧无新闻时间戳数据源, 新闻在 Hermes DA skill 内, 见 DEB 文档偏差记录)
+    # ── P1-2 tripwire 核销 (scripts/tripwire_checker.py, 盘中 cron) ──
+    #   DA 的 invalidation 失效条件此前入场侧零消费 → thesis 已死但价格回到触发带的单
+    #   照样成交. 核销后写 skip_reason='TRIPWIRE_INVALIDATED' (INVALIDATED_SKIP_REASONS).
+    #   false = 只落审计 jsonl 不写库. 回滚: 改 false 或删 crontab 行.
+    tripwire_checker_enforce: true
+    # ── Phase 0 reentry DEAD_SIGNAL 呼吸窗 (pipeline._check_playbook_exit_rules) ──
+    #   reentry 仓额外加宽 DEAD_SIGNAL 出场宽限 (分钟). 120min 后仍 MFE<0.2% 照常出场.
+    #   显式落键 (DEB 文档回滚路径依赖此键, 缺键则代码默认 60 无回滚入口).
+    #   回滚: 改 0.
+    dead_signal_reentry_extension_min: 60
+    # ── P1-3 量能门换 VWAP-relative (pipeline.py:_calc_intraday_vol_ratio) ──
+    #   原线性折算 (日均量×elapsed/390) 忽略成交量 U 型分布, 开盘时段分母系统性偏小 →
+    #   ratio 虚高 → 门在最该确认的时段恒开. 实测 8/21 44票: 开盘后15min 线性 ratio
+    #   中位1.44 过门率84% vs p50 中位0.70 过门率45%; 30min 64%→41%; 60min 52%→34%.
+    #   ⚠️ 这是实质行为变化 (阈值0.8 从"几乎恒过"变为真实过滤), 仅影响 chase 路径
+    #   (pullback 不过量能门) 且仅覆盖 replay_bars_1m 的 ~45 票, 其余自动回落线性.
+    #   回滚: 改 false + 重启.
+    volume_gate_vwap_relative: true
     breakeven_fee_cushion_pct: 0.4
     breakeven_fee_aware_enabled: true
     # 2026-08-20 (方案A, 用户裁"同意先方案A"): 保本触发线滑点垫 + 限价超时缩短.
@@ -1648,6 +1683,10 @@ universe_expansion:
   #   判据: scripts/ue_midday_shadow_eval.py (≥10日+n≥30, 命中率≥55%且均值≥0.5%→开inject)。
   #   回滚: false 或删 crontab 行。
   midday_shadow_enabled: true
+  # Phase 0 (2026-08-23, DEB-20260823 策略侧): 同标的同方向冷却天数.
+  #   LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计 -$100)。
+  #   查 trade_records 近 N 天同标的同方向记录, 有则跳过不写入。0=禁用。回滚: 改 0。
+  same_symbol_cooldown_days: 3
   min_price_floor: 5.0    # 2026-08-13: UE注入价格地板 — 低于此价的浮现标的转SKIP行(可归因),
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.
