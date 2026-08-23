@@ -8,7 +8,9 @@
   人群:   真被动 = bucket != marketable (市价化恒等零不得池入)
   双条件: mean δ ≥ $1/笔 且 bootstrap CI95 下界 > 0
   共门:   符号检验 (防 top5 振幅集中) — 双门同过才毕业
-  主口径: chase_5m (功效分析 §4.2 与二阶段保真闸均以 5min 口径锁定)
+  主口径: judge_5m (= 预注册 §4.2 "5min 追单口径"; replay 字段实名 judge_5m,
+          与 §4.2 功效分析和二阶段保真闸的 5min 口径同源。历史文案曾写 "chase_5m"
+          系描述性别名, 系统内唯一真名是 judge_5m, 勿再引入 chase_5m 造成口径歧义)
   hedge:  只用裁决后数据 (影子 8/6 裁决, 数据 8/7 起, out-of-time 满足)
 
 输入: data/limit_entry_shadow_replay.jsonl (由 limit_entry_shadow_replay.py 产出)

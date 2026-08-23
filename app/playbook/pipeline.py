@@ -4847,7 +4847,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   DA 走线性(不拦), 同轮记录"p50 会怎么判" — 毕业判据"DA 对比组方向一致"的
     #   唯一数据源。仅记 chase 路径 (量能门语义范围), record-only 不影响触发。
     #   回滚: volume_gate_vwap_relative_da_enforce 改 true 后本分支自动停写。
-    if _vol_use_p50 is False and _entry_path == "chase" and _intraday_vr is not None:
+    if (_vol_use_p50 is False and _entry_path == "chase" and _intraday_vr is not None
+            and "TEST" not in symbol.upper()):
         try:
             import json as _vps_json
             from pathlib import Path as _vps_path
