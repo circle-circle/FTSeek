@@ -6,6 +6,58 @@
 
 ---
 
+## 🔴 2026-08-23 全链路复盘 + R-1~R-13 安全补丁（Qoder，落档 `DEB-20260823-full-chain-review-and-safety-patches.md`）
+
+**用户令**：全链路检查复盘（框架/逻辑/策略/代码/风险/合理性，重点交易策略逻辑）→ 出 R1-R6 补丁 → 查主线/playbook 冲突 → 时区深查 → 全修复。
+
+### 三条量化判决（独立 SQL 复核，非引用既有文档）
+1. **毛期望精确为零**：干净窗口 n=321（07-02→08-21）毛 **+$0.10/笔（t=+0.03，95%CI [−6.51,+6.70]）**，费 −$4.54/笔，净 −$4.44。**全部净亏损 = 手续费账单**。7月胜率 51.6%→8月 59.0%（+7.4pp）而毛利 +$15.8→+$15.3（变化 −$0.5）= 最优停止定理实证：**退出调参只在胜率与 R:R 间搬运，不改变乘积**。
+   → **`handoff.md` §核心诊断"信号不是问题、漏血在退出"需反转**：信号精确是掷硬币，退出既没杀赢家也没救亏损，漏血 100% 是费用。
+2. **换参频率使七周内所有退出结论不可得**（对应用户"历史多为调整期"）：`metadata_json.$.config_version` 分布 = **7 周 7 个退出参数版本，平均窗口 46 笔 / 7.1 天**。跨版本净额极差 $43.85/笔 vs 零期望假设下预期极差 $34.8/笔（比值 1.26）→ **"全部版本真实期望相同且为零"无法被拒绝**。要测出 +$10/笔需 n=283，实际窗口 46 → **功效缺口 6.2×**；当前参数集 MDE **±$40/笔**，而要战胜的费用只有 $4.54。**每周迭代循环的输出与掷硬币不可区分，且"变好保留"带选择方向 = 过拟合机器。**
+3. **尺子失效**：`okr_latest.json` 的 `signal.ic_t1=+0.1265(n=1813)` **不可复现** —— 全表 4,057 行重算 pooled IC=−0.0369、**按日聚类 daily-mean IC=+0.0136(t=+0.62)=零**，strength 五分桶完全非单调；`playbook.ic_t1=−0.32` 在测量常量（confidence 直方图 `{35:242,70:92,...}`，8/14-8/21 恒=70）却被接成毕业门禁；**所有 pooled t 忽略同日聚类，显著性夸大约 8×**。
+
+**→ 8/31 终裁建议 STOP（针对当前策略前提），而非 GO 或靠调参 PIVOT** —— 理由不是亏了 $1,426（无意义），而是 G2/G3 判据在现有样本下**不可能被可靠判定**，且测量装置本身在产假阳性。详见 DEB §六/§8.3 四杠杆（降频 / 冻结退出参数≥283 笔 / 几何二选一 / 入场找真漂移）。
+
+### 主线 vs Playbook 排他性（用户追问）
+**结论：今天成立。** 真实机制**不是逐平仓点拦截，而是 playbook 仓永不进主线 `position_store`**（"断粮"非"断电"），`is_playbook_open_position` 是边界看门人（恢复/对账/补录三入口）。
+- 历史事故已确证：`SL_ATR_STOP` 平 playbook 仓 3 笔（全 06-24，净 **−$2,416**）成因 = **护栏 07-16 才落地，事故早 3 周**；主线来源 exit_reason 最后一笔 = 07-15，此后 **252 笔零污染**。
+- R-7 修掉四处残余：①闸门通用异常 fail-open→fail-close ②`_close_position` 兜底护栏 `except:pass`→fail-close ③**DEM `FLAT_ALL`/`REDUCE_50` 在闸门之前迭代**→源头剔除 playbook 仓 ④`main_scan_enabled` 代码缺省 True→False（入场三锁唯一 fail-open）。
+
+### 已落地补丁（全部重启激活 + 启动冒烟七条断言通过，**1532 passed / 1 skipped**）
+| 项 | 内容 |
+|---|---|
+| R-1 | Playbook 路径补 VIX 门（此前 `app/playbook/` 全链路零 VIX 拦截）+ per-symbol 互斥（修 duplicate_guard 的 TOCTOU） |
+| R-2 | `RECONCILE_ORPHAN_CLOSE` 不再自动伪造 pnl=0 平仓（误判即致活仓永久失止损），改告警 + audit jsonl |
+| R-3 | `is_live_mode()` 进程内固化 + `ENV_ROUTING_MISMATCH` 断言（原改一字符即切库而 broker 不变 → 全仓静默失去止损） |
+| R-4 | `playbook_horizon.yaml`（退出真源）按 mtime 失效重建 + `reset_playbook_config()`（原单例无重置点致 exit_config_version 冻结） |
+| R-5 | `can_open_position()` 硬门接入（原 RED 水位被 `max(1,size)` 兜成 1 股仍开仓） |
+| R-6 | 新增下单路径契约测试（原 `grep _submit_order tests/` = 0） |
+| R-7 | Playbook 排他性四项 fail-close（见上） |
+| R-8 | 时区：3 处遥测/复盘日期错位（`_emit_trigger_miss` 60% 行 +1 天、**`_emit_exec_gate_audit` 系测试抓出**、postmarket_review）+ 2 处半日市盲区（**2026-11-27 不在假日表**却 13:00 收盘，修前 13:00-14:00 会真下单）+ `_et_trade_date` DST（冬令时应 −13h 非 −12h） |
+| R-9 | Dashboard 紧急全平 playbook 感知 —— 消除"静默部分平仓"，`include_playbook` 显式 opt-in + 先激活 Kill Switch |
+| R-12 | 两表 `entry_time` 口径统一（`open_positions` 存 CST vs `trade_records` 存 ET，同仓差 12h）+ 存量 2 行迁移（取 trade_records 真源，幂等已验证） |
+| R-13 | timezone fallback 改 `pytz→zoneinfo→固定偏移`（原 import 时快照 `tm_isdst`，宿主无 DST 恒 0 → 永久 EST）+ 反向冷却门 fail-open（naive 行致 TypeError 被吞 → 放行入场） |
+
+### ✅ R-10 / R-11 已由用户手工执行并核验（2026-08-23）
+- **R-10**：hermes 硬止损监控 `*/30 21-23,0-4 * * 2-6` —— 两个 CST 段对应**不同 ET 交易日**不可共用 DoW ⇒ 原 **ET 周一 09:30-11:59 每周固定无监控**（该脚本负责触线时关 `auto_execute`）。已按仓内正确范式（`intraday-diagnose` 拆两 job）拆为「上午段 `*/30 21-23 * * 1-5`」+「下午段 `*/30 0-4 * * 2-6`」。
+- **R-11**：3 个 CST 04:xx 盘后任务在 EST 下落进 ET 15:xx **盘中**，已移至 CST 05:1x（`live_reconcile_check` 05:10 / `position_path_collector` 05:15 / `e2_momentum_shadow_daily` 05:20）⇒ **EDT→ET 17:1x / EST→ET 16:1x，两季均盘后且不需换季维护**；原相对顺序保留（均早于 05:30 backfill）。
+- **覆盖度实测**（30min 槽枚举 08-24 周一→08-28 周五）：ET 周一至周五 09:30-16:00 **73 槽全覆盖零缺口**；ET 周末空跑 **6 槽/周 → 0**；其余 17 个非盘中槽全为 ET 盘前 09:xx 预警(5) + 盘后 16:xx 收盘核对(12)，均有用途。
+- 脚本留仓可复用：`scripts/fix_hermes_stoploss_cron_r10.py`、`scripts/fix_crontab_dst_r11.py`（幂等、默认预演、自动备份）。
+
+### 勘误（本轮纠正的既有文档/子代理误判）
+| 项 | 纠正 |
+|---|---|
+| `ARCHITECTURE.md §2` "→ order_executor → ~25 道内联风控门" | **错**。`dual_broker.py:223/415/660` 直连 `ctx.place_order`，全文零 `order_executor` 引用 |
+| handoff "admission record-only 全阈值 0" | **错**。实为 `enforce:true / min_notional_usd:3000 / min_entry_price:5.0` |
+| handoff "`breakeven_at_pct`=0.5、`rr_ratio`=999" | **错**。实为 **0.4** 与 **2.0**，固定 TP 是通电的 |
+| 子代理称 `_is_overnight_position` 读 CST 致隔夜跳空止损失效（列 P0） | **我判定错误**：退出链读 `trade_records`（存 ET），子代理证据取自 `open_positions`（存 CST）而该表不被退出链消费；且 `OVERNIGHT_GAP_STOP` 本就是配置层死规则（历史触发 0 次）。**未修** |
+| 作者自己中途的"SHORT 是唯一正向切片(+$19/笔)" | **自我证伪**：全期口径被 6 月 4 笔（含一笔 +$802 outlier）撑起；干净窗口 SHORT n=56 毛 +$6.51(t=+0.82)=零。同理 LONG "t=−2.27 显著负"亦由 6 月 5 笔撑出 |
+
+**备份**：`data/backups_r9_r13/`（crontab / hermes jobs / 主库，操作前各一份）。
+**回滚**：见 DEB「回滚」节（5 个 yaml 开关 + `git revert`）。
+
+---
+
 ## 🎯 当前北极星 (换过 KPI)
 - **只追"每笔期望值 ≥ $0"**, 不追胜率/周收益数字。收益是期望转正后的自然结果, 直接追会逼出"加仓凑收益"的自杀行为。
 - 活跃 OKR: **`docs/OKR-2026-08.md`** (2026-07-14→08-31)。上一轮 `docs/OKR-2026-07.md` 已结算 **MISSED**。
@@ -114,6 +166,13 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-22f (配置层探针落地 — Qoder, 用户裁"按建议执行": ①config键消费普查 ②数据成色例行体检)
+- **`scripts/config_key_census.py` + cron 周日 07:40 (备份 data/crontab.backup.20260822-census)**: 配置层的"活性探针" — 全量扫 config/*.yaml 展平叶子键 → 在 app/+scripts/ 运行时代码 (排除 archive/自身/tests) 按叶子名 word-boundary 找消费点。三分类: referenced / definition_only (仅注册表形态如 PlaybookConfig.DEFAULTS 的 "k": default — 注册≠消费) / orphan (零出现)。**自验证 4/4**: C批人工核定的死键 (buying_power_fallback_alert/intraday_breakout_pct→definition_only, breakeven_ratchet_enabled/time_exit_enabled→orphan) 全部命中非 referenced, 口径与人工审计一致。已知局限内嵌报告: 同名影子键漏报 (安全向)、factor_profiles/strategy_variants 泛型迭代消费文件带 caveat、f-string 动态键无法静态发现。输出 data/config_key_census_latest.json。
+- **首跑读数 (候选清单, 非删除依据)**: unified_config 743 叶子键 → 107 orphan + 7 definition_only; playbook_horizon 41→5 orphan (risk_budget 整块 long_pct/short_pct/rebalance_weekly/weekly_deep_update + vol_buckets position_mult); position_protection 7→4 orphan (stop_loss.long/short_pct + trailing_stop 块); exit_profiles 18→6。抽查精度佳: `risk.p1_regime_gate.vwap_threshold` — 段活 (enabled/spy_long_block/vwap_filter_enabled 被 get_dotted) 但该叶死; `llm_features.emergency_review.*`×3 独立重发现 2026-05-19 已弃用特性; `opend.login_password` 段活叶死。死键从此周更自动暴露, 不靠人肉审计。
+- **`scripts/data_quality_census.py` (C批产出) 加 cron 周日 07:30**: 数据成色例行体检 (名义离群/时间异常/回补嫌疑/盈亏不自洽/词表基线), 只读, 输出 data/trade_quality_census_latest.json。回滚=删两行 cron。
+- **钉死测试**: tests/test_config_key_census.py ×8 — 分类规则 (get 消费/注册表定义/快照行双出现算消费/注释行跳过/词边界 `_time_exit_enabled`≠`time_exit_enabled`/flatten 嵌套+list) + 真实语料上 C批死键必须保持非 referenced (口径漂移即红)。
+- **回归**: 1453 passed (1445+8)。零交易路径改动, 两脚本均只读。
 
 ### 2026-08-22e (审计修复轮 — Claude Code, 用户裁"同意修复": e79656db 审计的 A/B/C 批落地)
 - **B批·交易路径**: ①EOD 豁免跨持仓污染修复 (pipeline.py ~7685) — `_rp/_rpnl/_rpnl_net` 循环内不重置, 前一标的的盈利单记录会污染后一标的的豁免判定; 每迭代重置 + 第二 try 块加 `if _rp is not None` 守卫。②VIX fail-close 接线 (order_executor.py:3209 + market_state.py 新增 `get_vix_cached()`) — 原每单绕过 30min 缓存直拉; 新 getter 失败返 None (fail-close, 与 `vix_below_25()` 的 fail-open 语义刻意不同)。③order_executor.py:1343 死分支移除 (`_fetch_vix` 方法不存在 → AttributeError 恒被吞 → 分支从未生效, 删=零行为变化)。
