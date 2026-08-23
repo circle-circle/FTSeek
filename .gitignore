@@ -11,6 +11,9 @@ data/*.db
 .env.*
 *.env
 .env.backup.*
+# 2026-08-24 (C5 体检 E5): .env.us.example 是脱敏模板, 必须入库供新环境复制;
+# 上面 .env.* 规则会误伤它, 加显式例外 (真实密钥仍在 .env.us, 不受影响).
+!.env.us.example
 .backups/
 
 # 2026-07-26 迁移备份区 (含 env 明文副本+旧历史镜像) — 永不入库
