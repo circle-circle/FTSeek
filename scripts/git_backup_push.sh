@@ -41,6 +41,20 @@ trap 'rm -f "$TMP_INDEX"' EXIT
 export GIT_INDEX_FILE="$TMP_INDEX"
 git read-tree HEAD
 git add -A -- . ':!.backup_premigration' 2>/dev/null
+
+# ── 2.5 DB 异机副本 (B4, 2026-08-24, 体检 O4) ──
+#   data/*.db 与 data/backups 均被 gitignore → 此前 GitHub 侧无任何 DB 副本,
+#   机器损毁即全丢. db_backup.sh 03:00 已产出当日一致性副本 (sqlite3 .backup,
+#   WAL-safe), 本脚本 03:30 强加该目录进快照 = 每晚一份异机 DB 副本.
+#   单文件 18MB < GitHub 100MB 限制; force-push 覆盖, 不累积.
+TODAY_BAK="data/backups/$(date +%Y-%m-%d)"
+if [ -d "$TODAY_BAK" ] && [ -s "$TODAY_BAK/ftseek_us.db" ]; then
+    git add -f -- "$TODAY_BAK/" 2>/dev/null && \
+        echo "$LOG_PREFIX 当日 DB 备份已纳入异机快照: $(du -sh "$TODAY_BAK" | cut -f1)"
+else
+    echo "$LOG_PREFIX ⚠️ 当日 DB 备份缺失 ($TODAY_BAK), 异机快照不含 DB — 检查 db_backup.sh"
+fi
+
 TREE=$(git write-tree)
 unset GIT_INDEX_FILE
 
