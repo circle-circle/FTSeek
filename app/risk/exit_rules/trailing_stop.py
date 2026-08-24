@@ -133,6 +133,10 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         logger.debug(f"[regime_adjust] {position.symbol} regime={regime} (raw={_raw_regime}) 调整失败, 沿用基础 atr_mult: {e}")
 
     # 5. cost_bps 估算 (可选, 失败退化为 0)
+    # 2026-08-24 调用签名修复: 原调用把整个 dict 塞进 symbol 参数位且缺 qty/price
+    #   必填参 → TypeError 被 except 吞成 cost_bps=0, 成本缓冲自上线从未真正参与过
+    #   trail 计算. 现按 CostModel.estimate(symbol, side, qty, price, market_ctx,
+    #   asset) 正确传参 (契约测试 TestTrailingStopCallSiteFixed 锚定).
     cost_bps = 0.0
     cost_model = getattr(monitor, "_cost_model", None) if monitor is not None else None
     if cost_model is not None:
@@ -140,19 +144,15 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
             if not isinstance(current_price, (int, float)):
                 logger.error(f"[_check_trailing_stop] {position.symbol} current_price type={type(current_price).__name__}, value={current_price!r}")
             asset_class = "option" if (len(position.symbol) > 12 and any(c in position.symbol for c in ("P0", "C0"))) else "stock"
-            fake_signal = {
-                "symbol": position.symbol,
-                "asset_class": asset_class,
-                "direction": direction,
-                "quantity": int(getattr(position, "size", 0) or 0),
-                "price": float(current_price),
-            }
             market_context = {
                 "spread_bps": 3.0,
-                "adv_usd": 0.0,
                 "session": "RTH",
             }
-            cost = cost_model.estimate(fake_signal, market_context)
+            cost = cost_model.estimate(
+                position.symbol, str(direction),
+                int(getattr(position, "size", 0) or 0), float(current_price),
+                market_ctx=market_context, asset=asset_class,
+            )
             if cost is not None and not getattr(cost, "rejected", False):
                 cost_bps = float(getattr(cost, "total_bps", 0.0))
         except Exception as e:

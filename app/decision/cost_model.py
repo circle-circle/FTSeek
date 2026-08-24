@@ -16,8 +16,10 @@
   half_spread_bps = 0.5 * spread_bps
   impact_bps      = k_impact * sqrt(qty / ADV)
   session_mult    = 1.0 (RTH) | 3.0 (pre/after)
+  fee_usd         = fee_model.estimate_round_trip(...)   # A2 2026-08-24: 金标准统一,
+                    # $0.01/股 + $1.99 地板 + 0.3% 上限 + SEC/TAF 仅卖出腿
   total_bps       = session_mult * (half_spread_bps + impact_bps) * 2   # 双边
-                  + fixed_fee_bps + commission_bps + borrow_bps
+                  + commission_bps + fixed_fee_bps(监管费) + borrow_bps
 
 期权
 ----
@@ -56,8 +58,10 @@ class CostModelConfig:
     default_stock_spread_bps: float = 3.0
     impact_coef_bps: float = 12.0
     default_adv_shares: float = 5_000_000.0
-    commission_per_share: float = 0.0
-    fixed_fee_bps: float = 0.3
+    # A2 (2026-08-24): commission_per_share/fixed_fee_bps 两参数已删除 —— 原值
+    #   (0.0 / 0.3bps) 是幻想参数, 完全缺席富途 $1.99 佣金地板, 对 <$10k 订单低估
+    #   费用一个数量级。股票侧佣金+监管费现统一走 app/execution/fee_model 金标准
+    #   (实盘 order_fee_query 逐位验证), 本类不再持有费率参数。
     pre_after_session_mult: float = 3.0
     default_borrow_rate: float = 0.02
     assumed_holding_days: float = 5.0
@@ -154,8 +158,17 @@ class CostModel:
             "PRE", "POST", "PRE_MARKET", "AFTER_HOURS"
         ) else 1.0
 
-        commission_usd = qty * cfg.commission_per_share
+        # A2 (2026-08-24): 佣金+监管费统一走 fee_model 金标准。往返双腿口径 (与
+        #   流动性项的双边一致): LONG=BUY入/SELL出, SHORT=SELL入(BUY出) — 卖空开仓
+        #   腿 SEC/TAF 照收 (§31 惯例)。出场价决策时未知, 双腿同价保守估。
+        from app.execution.fee_model import estimate_round_trip
+        _rt = estimate_round_trip(qty=float(qty), entry_price=float(price),
+                                  exit_price=float(price), direction=str(side))
+        fee_usd = float(_rt["total"])
+        commission_usd = float(_rt["entry"]["commission"] + _rt["exit"]["commission"])
+        regulatory_usd = fee_usd - commission_usd      # settlement+SEC+TAF+CAT
         commission_bps = (commission_usd / notional * 1e4) if notional > 0 else 0.0
+        fixed_fee_bps = (regulatory_usd / notional * 1e4) if notional > 0 else 0.0
 
         borrow_bps = 0.0
         if side.upper() == "SHORT":
@@ -165,13 +178,14 @@ class CostModel:
 
         half_spread_bps = 0.5 * spread_bps
         liquidity_bps = mult * (half_spread_bps + impact_bps) * 2.0  # 双边
-        total_bps = liquidity_bps + cfg.fixed_fee_bps + commission_bps + borrow_bps
-        total_usd = total_bps * notional / 1e4 + commission_usd
+        total_bps = liquidity_bps + fixed_fee_bps + commission_bps + borrow_bps
+        # 单一真源换算 (修复原 total_usd 在 bps 与 usd 两处各计一次佣金的双计 bug)
+        total_usd = total_bps * notional / 1e4
 
         return CostBreakdown(
             symbol=symbol, asset="stock", side=side, qty=qty, price=price,
             notional_usd=notional, spread_bps=spread_bps, impact_bps=impact_bps,
-            fixed_fee_bps=cfg.fixed_fee_bps, borrow_bps=borrow_bps,
+            fixed_fee_bps=fixed_fee_bps, borrow_bps=borrow_bps,
             commission_bps=commission_bps, total_bps=total_bps, total_usd=total_usd,
             participation_rate=part, session=session,
         )
