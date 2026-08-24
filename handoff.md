@@ -19,7 +19,7 @@
 
 **核验勘误（探查报告两处不准，已纠）**: ①`preflight_fail_mode=open` 非隐藏地雷——R1a/R1c 文档化设计+`di_container.py:159-176` LIVE 启动断言强制 closed，冻结期不动 ②"lock 缺 aiohttp/websockets 等"夸大——实测 venv107 vs lock84，运行时真缺 loguru/prometheus_client/rich/aiosqlite。
 
-**待用户裁决**: ①飞书凭据轮换（必做）②main 快进合并（现落后 632 提交+16 提交未推）③做空门接数据源 vs 诚实 disabled（数据文件 4/29 起空转，DEB-20260726 已知缺口）④DrawdownControl 死门接线 vs 删除 ⑤filter-repo 历史清洗。
+**待用户裁决**: ~~①飞书凭据轮换~~ **用户裁不轮换, 接受残余风险** ~~②main 快进合并~~ **✅ 8/24 已快进同步** ~~③做空门接数据源 vs 诚实 disabled~~ **✅ 8/23 已随死门删除 (ffafea48), 只留 check_regime_for_short** ~~④DrawdownControl 死门接线 vs 删除~~ **✅ 8/23 已删除 (总回撤门由 capital_safety 水位承担)** ⑤filter-repo 历史清洗 (仍待确认)。
 
 **P1 排队（9 月冻结期，零行为变更类）**: 见 DEB 第三节 M/E/O 清单——资金路径测试盲区(broker_adapter 仅 1 测试)/verify=False 四数据源/配置默认值三层打架(max_daily_positions fallback 5 vs SSOT 16)/CI 吞 pip 失败/print 漏报/cron 无失败告警/jsonl 零轮转。
 
@@ -116,13 +116,13 @@
 ## 🗺️ 退出旋钮地图 (`config/playbook_horizon.yaml`, DA 恒走 `short_horizon`)
 **A. 赢家被锁太小 (R:R 缺口主因) — `factor_exit_rules.default`**
 - `drawdown_from_peak_pct` = **0.8** (L49) ← 07-19 从 0.4 回归到 0.8 (handoff 处方)。给赢家 0.8% 呼吸空间, 不再 0.4% 就锁。
-- `breakeven_at_pct` = 0.5 (L48) ← 不动, 仍早保本 (亏不了)。
+- `breakeven_at_pct` = **0.4** (2026-08-17 用户裁"直接落地be_0.4", 8/24 审计同步: 原记 0.5 过期) ← 触发线=费用线对齐, 真净保本。
 
 **B. 赢家被噪声扫损 (杀赢家) — `short_horizon.vol_buckets`**
 - low `sl_floor_pct`=2.0 (L370), medium=2.5 (L378) ← 多数标的落此, 实际止损≈2-2.5%
 - ⚠️ 07-09 基于**日线回测**收紧过(“2-3%最优”); 与 live scorecard 冲突时**信 scorecard**。
 
-**C. 已核实**: `short_horizon.rr_ratio=999` (L353) → 固定止盈**关闭**, 靠 trailing+EOD。所以封顶赢家的是 A 的 drawdown 锁, **不是** rr_ratio。
+**C. 已核实**: `short_horizon.rr_ratio=2.0` (8/24 审计同步: 原记 999 过期 — 8/1 裁决A已删 999 死哨兵, 固定止盈**通电**)。封顶赢家的是 A 的 drawdown 锁与 2.0 rr 上限的组合。
 
 **D. 早期紧SL (方向全错快速脱身) — `unified_config.yaml::playbook.execution_parameters`**
 - `early_tight_sl_enabled` = **false** ← 07-20 修复M 从 true 降级为 **shadow-only** (积累期实单退出参数冻结)。

@@ -178,7 +178,13 @@ def generate_report():
     if ic.get("status") == "ok" and ic.get("ic_mean") is not None:
         _n_ind = ic.get("n_independent")
         _ind_suffix = f" (独立样本={_n_ind})" if _n_ind else ""
-        lines.append(f"  全局IC: {_fnum(ic['ic_mean'])} (p={_fnum(ic.get('ic_p_value'))}) n={ic['n_signals']}{_ind_suffix}")
+        lines.append(f"  全局IC: {_fnum(ic['ic_mean'])} (p={_fnum(ic.get('ic_p_value'))}) n={ic['n_signals']}{_ind_suffix} ← pooled, 仅诊断参考")
+        # 2026-08-24 (宪章第9律): 日聚类成对输出 — 头条采信口径,
+        # pooled 显著性被同日聚集信号系统性夸大 (DEB-20260823 实锤~4倍).
+        _dc = ic.get("day_clustered")
+        if _dc:
+            _flag = "✅ 可分辨" if _dc.get("distinguishable") else "⚪ 不可分辨(噪声级)"
+            lines.append(f"  ★ 信号IC(日聚类)={_fnum(_dc.get('day_ic_mean'))} | t={_fnum(_dc.get('t'), '{:.2f}')} | MDE={_fnum(_dc.get('mde'))} | {_flag} ({_dc.get('n_days')}日) ← 头条采信")
         # 2026-08-09: 独立样本IC (同标的多信号共享T+1, n虚高 → 聚合后校验)
         _ic_ind = ic.get("ic_independent")
         if _ic_ind is not None:
