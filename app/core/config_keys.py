@@ -20,7 +20,8 @@ class ConfigKeys(str, Enum):
     # DEB-20260721 A-1: 原路径少 "_floor" 后缀 → YAML 声明值永不生效, 恒回退 50.
     MIN_EFFECTIVE_STRENGTH = "risk.pre_trade.min_effective_strength_floor"
     SHORT_MIN_STRENGTH = "risk.pre_trade.short_min_strength"
-    BATTLE_PLAN_BONUS = "risk.pre_trade.battle_plan_bonus"
+    # BATTLE_PLAN_BONUS 已删除 (2026-08-24): 旧作战计划轨道 7/13 废弃冻结 (ADR-012),
+    # bonus 键零消费 (battle_plan_bonus_enabled=false 永不启用).
 
     # ── 资金预算 ────────────────────────────────────────────
     MAIN_BUDGET_PCT = "strategies.main.capital_pct"

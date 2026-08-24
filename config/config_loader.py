@@ -81,7 +81,7 @@ class DecisionConfig:
 @dataclass
 class AccountRisk:
     max_daily_drawdown: float = 0.03
-    max_total_drawdown: float = 0.08
+    # max_total_drawdown 已删除 (2026-08-24): 总回撤门 8/23 随死门删除, 死链清除
     # max_leverage / min_margin_ratio 已删除 (2026-06-20): 零代码消费
 
 
@@ -262,7 +262,7 @@ class ConfigLoader:
     def RISK_CONFIG(self) -> dict:
         return {
             'MAX_DAILY_DRAWDOWN': self.get('risk.account.max_daily_drawdown', 0.03),
-            'MAX_TOTAL_DRAWDOWN': self.get('risk.account.max_total_drawdown', 0.08),
+            # MAX_TOTAL_DRAWDOWN 已删除 (2026-08-24): 总回撤门 8/23 随死门删除
             'MAX_POSITION_PER_SYMBOL': self.get('risk.position.max_per_symbol', 0.25),
             'MAX_POSITION_PER_DIRECTION': self.get('risk.position.max_per_direction', 0.65),
             'MAX_TOTAL_POSITION': self.get('risk.position.max_total', 0.80),

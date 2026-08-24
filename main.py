@@ -604,8 +604,11 @@ def _run_new_scheduler(args):
         from app.risk.order_tracker import get_order_tracker
         from futu import TrdEnv as _TrdEnv
         _broker = getattr(scheduler.execution_engine, 'broker_adapter', None) if scheduler.execution_engine else None
-        _trd_env = _TrdEnv.SIMULATE if int(os.getenv("TRADE_ENV", "1")) == 1 else _TrdEnv.REAL
         if _broker is not None:
+            # 审计 (2026-08-24): 判定源与 order_executor.py:263 对齐 — 直接取
+            # broker_adapter.trade_env (8/16 SoT 迁移后为权威环境), 不再读
+            # 已废弃的 TRADE_ENV。原写法切实盘且 TRADE_ENV 未同步时会查错环境。
+            _trd_env = _TrdEnv.REAL if getattr(_broker, "trade_env", 1) != 1 else _TrdEnv.SIMULATE
             _restore_stat = get_order_tracker().restore_pending_on_startup(_broker, _trd_env)
             logger.info(f"[启动·OrderTracker] 恢复完成: {_restore_stat}")
         else:

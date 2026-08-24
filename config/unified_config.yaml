@@ -1434,7 +1434,9 @@ risk:
     enabled: false
   account:
     max_daily_drawdown: 0.03
-    max_total_drawdown: 0.08
+    # max_total_drawdown 已删除 (2026-08-24 全仓清理): 总回撤门 8/23 随死门删除
+    # (DEB-20260823, ffafea48), 此键仅剩日志输出消费 = 死链. 总回撤防护现由
+    # capital_safety 水位承担.
   capital_safety:
     # R-5 (2026-08-23, DEB-20260823): can_open_position() 硬门接入 Playbook 路径.
     #   此前全仓唯一消费者是 web_dashboard/order/validator.py:162, Playbook 从不调用 →

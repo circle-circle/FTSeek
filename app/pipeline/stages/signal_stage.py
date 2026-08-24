@@ -485,10 +485,12 @@ def process(ctx: SymbolContext,
     # independent_entry_enabled=false 时, 盘中只保留 fast_lane (执行 DA 计划)
     # + 持仓管理/退出, 关掉 ORB/technical/voting_llm/insider/earnings_revision
     # 的独立入场, 消除第二入场脑的并行冲突。
-    _independent_entry_enabled = True
+    _independent_entry_enabled = False
     try:
         from app.core.config_container import get_config as _gc_ie
-        _independent_entry_enabled = bool(_gc_ie().get_dotted("signal_stage.independent_entry_enabled", True))
+        # 审计 (2026-08-24): 默认值对齐 yaml 真值 (signal_stage.independent_entry_enabled=false),
+        # 降级路径中性 = 关独立入场 (安全方向). 原默认 True 在 yaml 读取失败时会静默开第二入场脑.
+        _independent_entry_enabled = bool(_gc_ie().get_dotted("signal_stage.independent_entry_enabled", False))
     except Exception:
         pass
     if not _independent_entry_enabled:
@@ -574,11 +576,12 @@ def process(ctx: SymbolContext,
             logger.debug(f"[Signal] TrendFirst异常 (放行): {e}")
 
     # ── 策略 4: Technical (多因子动量) — regime 准入门控 ──
-    _technical_enabled = True
+    _technical_enabled = False
     try:
         from app.core.config_container import get_config
         _cfg = get_config()
-        _technical_enabled = bool(_cfg.get_dotted("strategies.technical.enabled", True))
+        # 审计 (2026-08-24): 默认值对齐 yaml 真值 (strategies.technical.enabled=false)
+        _technical_enabled = bool(_cfg.get_dotted("strategies.technical.enabled", False))
     except Exception:
         pass
     _technical_regime_ok = True
@@ -600,11 +603,12 @@ def process(ctx: SymbolContext,
             logger.debug(f"[Signal] 技术面异常 (放行): {e}")
 
     # ── 策略 5: LLM 投票 (无持仓时, regime 准许时) ──
-    _voting_llm_enabled = True
+    _voting_llm_enabled = False
     try:
         from app.core.config_container import get_config
         _cfg = get_config()
-        _voting_llm_enabled = bool(_cfg.get_dotted("strategies.voting_llm.enabled", True))
+        # 审计 (2026-08-24): 默认值对齐 yaml 真值 (strategies.voting_llm.enabled=false)
+        _voting_llm_enabled = bool(_cfg.get_dotted("strategies.voting_llm.enabled", False))
     except Exception:
         pass
     _llm_regime_ok = True
@@ -664,11 +668,12 @@ def process(ctx: SymbolContext,
             logger.debug(f"[Signal] 内部人信号异常 (放行): {e}")
 
     # ── 策略 7: 分析师修正动量 (ADR-007, Yahoo Finance) ──
-    _erev_enabled = True
+    _erev_enabled = False
     try:
         from app.core.config_container import get_config
         _cfg = get_config()
-        _erev_enabled = bool(_cfg.get_dotted("strategies.earnings_revision.enabled", True))
+        # 审计 (2026-08-24): 默认值对齐 yaml 真值 (strategies.earnings_revision.enabled=false)
+        _erev_enabled = bool(_cfg.get_dotted("strategies.earnings_revision.enabled", False))
     except Exception:
         pass
     if _erev_enabled and not has_position and not _non_trading_block_auto and _independent_entry_enabled:

@@ -285,7 +285,7 @@ def _log_config_change():
         "MIN_CONSENSUS": RISK_CONFIG.get("MIN_CONSENSUS"),
         "SIGNAL_MIN_SCORE": RISK_CONFIG.get("SIGNAL_MIN_SCORE"),
         "MAX_DAILY_DRAWDOWN": RISK_CONFIG.get("MAX_DAILY_DRAWDOWN"),
-        "MAX_TOTAL_DRAWDOWN": RISK_CONFIG.get("MAX_TOTAL_DRAWDOWN"),
+        # MAX_TOTAL_DRAWDOWN 已删除 (2026-08-24): 总回撤门 8/23 随死门删除, 死链清除
     }
     
     logger.info(f"[配置加载] 关键参数：{config_summary}")

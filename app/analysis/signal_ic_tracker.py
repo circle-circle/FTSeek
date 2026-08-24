@@ -458,7 +458,9 @@ def get_ic_summary(
     
     Returns:
         {
-            'ic_mean': float,      # IC 均值
+            'ic_mean': float,      # pooled IC 均值 (仅诊断参考, 显著性夸大)
+            'day_clustered': dict, # 头条采信口径 (宪章第9律): 按日聚类
+                                   #   {n_days, day_ic_mean, t, mde, distinguishable}
             'ic_positive_rate': float,  # IC > 0 的天数占比
             'n_signals': int,      # 总信号数
             'n_days': int,         # 覆盖天数
@@ -609,6 +611,27 @@ def get_ic_summary(
             sum(1 for v in daily_ic.values() if v is not None and v > 0) / len(daily_ic)
             if daily_ic else 0.0
         )
+
+        # 审计 (2026-08-24, 全仓过时/冲突清理): 日聚类成对输出 (宪章第 9 律,
+        # 与 playbook ic_tracker._day_clustered_ic 同口径). 头条采信口径=日聚类:
+        # 同日聚集信号共享相关结构, pooled Spearman 显著性系统性夸大
+        # (DEB-20260823 实锤: pooled 夸大 ~4 倍). pooled ic_mean 仅诊断参考.
+        day_clustered = None
+        _day_vals = [v for v in daily_ic.values() if v is not None and v == v]
+        if len(_day_vals) >= 3:
+            import math as _math
+            _n = len(_day_vals)
+            _mean = sum(_day_vals) / _n
+            _sd = _math.sqrt(sum((v - _mean) ** 2 for v in _day_vals) / (_n - 1))
+            _t = (_mean / (_sd / _math.sqrt(_n))) if _sd > 0 else 0.0
+            _mde = 2.8 * _sd / _math.sqrt(_n)
+            day_clustered = {
+                "n_days": _n,
+                "day_ic_mean": round(_mean, 4),
+                "t": round(_t, 3),
+                "mde": round(_mde, 4),
+                "distinguishable": abs(_mean) > _mde and abs(_t) >= 2.0,
+            }
         
         # 按策略分组 IC
         by_strategy = {}
@@ -673,6 +696,9 @@ def get_ic_summary(
             "ic_p_value": round(float(pval), 4) if pval is not None and pval == pval else None,
             "ic_independent": ic_independent,   # 2026-08-09: 按(日期×标的×方向)聚合IC
             "n_independent": n_independent,     # 独立 (日期×标的×方向) 对数
+            # 2026-08-24: 日聚类成对输出 (宪章第 9 律) — 头条采信口径,
+            # ic_mean(pooled) 仅诊断参考. 详见 day_clustered 块.
+            "day_clustered": day_clustered,
             "ic_positive_rate": round(ic_positive_rate, 3),
             "n_signals": len(rows),
             "n_days": len(by_date),
