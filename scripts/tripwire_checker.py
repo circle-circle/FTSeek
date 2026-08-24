@@ -42,6 +42,8 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+from app.utils.direction_utils import to_trade_direction  # noqa: E402
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
@@ -106,7 +108,10 @@ def evaluate_invalidation_text(*, invalidation, direction, entry_price,
     text = (invalidation or "").strip()
     if not text:
         return False, "no_invalidation"
-    dir_norm = "SHORT" if str(direction or "").upper() == "SHORT" else "LONG"
+    # 2026-08-24 词表修复: 库内指令词表是 BUY/SELL_SHORT/SKIP (无裸 "SHORT"),
+    #   原 == "SHORT" 判定使 SELL_SHORT 全部落 LONG → 空头失效条件被反号评估.
+    #   方向归一走 direction_utils SSOT (2026-08-23 UE 冷却门死门同款教训).
+    dir_norm = to_trade_direction(direction) or "LONG"
 
     details = []
     for group in [g for g in _OR_SPLIT.split(text) if g and g.strip()]:
@@ -151,7 +156,10 @@ def main() -> int:
     db = PlaybookDB()
     pending = [
         i for i in db.get_instructions_by_date(today)
-        if str(i.get("direction") or "").upper() in ("BUY", "SHORT")
+        # 2026-08-24 词表修复: 原过滤 ("BUY","SHORT") 里 "SHORT" 在库内不存在
+        #   (真实做空方向是 SELL_SHORT) → 全部空头指令被静默排除,
+        #   做空侧失效核销从未执行. 改走 direction_utils SSOT 判定可交易方向.
+        if to_trade_direction(i.get("direction")) is not None
         and not i.get("executed")
         and (i.get("skip_reason") or "") not in INVALIDATED_SKIP_REASONS
         and (i.get("invalidation") or "").strip()

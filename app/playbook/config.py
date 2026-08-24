@@ -127,11 +127,15 @@ class PlaybookConfig:
             return self._exit_config_version
         try:
             _snapshot = {
-                "factor_exit_rules": self._horizon_config.get("factor_exit_rules", {}),
-                "short_vol_buckets": self._horizon_config.get("short_horizon", {}).get("vol_buckets", {}),
-                "long_vol_buckets": self._horizon_config.get("long_horizon", {}).get("vol_buckets", {}),
-                "short_time_exit_hours": self._horizon_config.get("short_horizon", {}).get("time_exit_hours"),
-                "long_time_exit_hours": self._horizon_config.get("long_horizon", {}).get("time_exit_hours"),
+                # R-4b (2026-08-24, KR2 参数冻结前尺子盲区修复): 整本 playbook_horizon.yaml
+                #   入哈希, 取代原三处手工枚举 (factor_exit_rules / short+long vol_buckets /
+                #   short+long time_exit_hours)。手工枚举漏掉同文件内同样改变已实现 PnL 的
+                #   键 (market_state_overlay.vix_sl_widen/vix_tp_mult、max_hold_days、
+                #   overnight_gap_stop_pct、skip_pre_close_if_profit、rr_ratio fallback),
+                #   且未来新增退出键还会再漏 —— 整文件哈希让覆盖问题永久闭合。
+                #   过宽的代价仅是无关键变更多打一次版本号 (冻结期本就不该改任何键);
+                #   漏键的代价是 KR2 判分假绿。入场/仓位参数仍不纳入 (unified_config 侧)。
+                "horizon_config": self._horizon_config,
                 "cooldown_sl_pct": self.get("cooldown_sl_pct", 4.0),
                 "early_tight_sl_enabled": self.get("early_tight_sl_enabled", False),
                 "early_tight_sl_minutes": self.get("early_tight_sl_minutes", 30),
@@ -144,6 +148,29 @@ class PlaybookConfig:
                 "mfe_stall_exit_enabled": self.get("mfe_stall_exit_enabled", False),
                 "mfe_stall_exit_minutes": self.get("mfe_stall_exit_minutes", 150),
                 "mfe_stall_exit_mfe_pct": self.get("mfe_stall_exit_mfe_pct", 0.5),
+                # R-4c (2026-08-24): 补齐其余活跃退出行为键 — 此前均不在哈希内, 冻结期内
+                #   改动会改变实现盈亏而 KR2 判分保持绿色 (与 R-4 同类的第三层: 覆盖盲区)。
+                "sl_tighten_beta": self.get("sl_tighten_beta", 1.0),
+                "sl_tighten_min_pct": self.get("sl_tighten_min_pct", 1.5),
+                "dead_signal_exit_enabled": self.get("dead_signal_exit_enabled", True),
+                "dead_signal_exit_minutes": self.get("dead_signal_exit_minutes", 60),
+                "dead_signal_exit_mfe_pct": self.get("dead_signal_exit_mfe_pct", 0.2),
+                "dead_signal_reentry_extension_min": self.get("dead_signal_reentry_extension_min", 60),
+                "patient_exit_enabled": self.get("patient_exit_enabled", True),
+                "patient_exit_max_underwater_pct": self.get("patient_exit_max_underwater_pct", 1.0),
+                "patient_exit_stop_pct": self.get("patient_exit_stop_pct", 1.5),
+                "patient_exit_deadline_hhmm": self.get("patient_exit_deadline_hhmm", 1550),
+                "mfe_stall_exit_shallow_hold_enabled": self.get("mfe_stall_exit_shallow_hold_enabled", True),
+                "mfe_stall_exit_shallow_pct": self.get("mfe_stall_exit_shallow_pct", 1.0),
+                "time_exit_overnight_daily_reset_enabled": self.get(
+                    "time_exit_overnight_daily_reset_enabled", True),
+                "breakeven_slip_cushion_pct": self.get("breakeven_slip_cushion_pct", 0.0),
+                "breakeven_limit_timeout_s": self.get("breakeven_limit_timeout_s", 8),
+                "profit_override_threshold_pct": self.get("profit_override_threshold_pct", 1.5),
+                "profit_override_drawdown_pct": self.get("profit_override_drawdown_pct", 0.5),
+                "loser_overnight_enabled": self.get("loser_overnight_enabled", True),
+                "loser_overnight_max_hold_days": self.get("loser_overnight_max_hold_days", 5),
+                "loser_overnight_max_depth_pct": self.get("loser_overnight_max_depth_pct", 99),
             }
             _blob = json.dumps(_snapshot, sort_keys=True, ensure_ascii=False, default=str)
             self._exit_config_version = "exit-" + hashlib.sha1(_blob.encode("utf-8")).hexdigest()[:12]

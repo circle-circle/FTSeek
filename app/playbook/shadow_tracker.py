@@ -175,8 +175,10 @@ class ShadowTracker:
             vol_confirmed = vol_ratio >= _vol_gate if vol_ratio else False
             updates["triggered"] = 1 if (breakout and vol_confirmed) else 0
 
-        # 2. 检查是否执行了 (匹配 trade_records)
-        executed_trade = self._find_executed_trade(symbol, direction, trade_date)
+        # 2. 检查是否执行了 (匹配 trade_records; P2b: 带 decision_id 轮次级联接,
+        #    防重武装后新轮行认领上一轮成交 — 夜间复燃污染路径)
+        executed_trade = self._find_executed_trade(
+            symbol, direction, trade_date, decision_id=inst.get("decision_id"))
         if executed_trade:
             updates["executed"] = 1
             updates["execution_price"] = executed_trade.get("entry_price", 0)
@@ -193,8 +195,9 @@ class ShadowTracker:
                 updates["max_favorable_excursion"] = mfe
                 updates["max_adverse_excursion"] = mae
 
-                # 检查是否已平仓
-                exit_trade = self._find_exit_trade(symbol, trade_date)
+                # 检查是否已平仓 (P2b: 同款轮次联接)
+                exit_trade = self._find_exit_trade(
+                    symbol, trade_date, decision_id=inst.get("decision_id"))
                 if exit_trade:
                     exit_price = exit_trade.get("exit_price", 0) or 0
                     position_size = inst.get("position_size") or 0
@@ -443,12 +446,19 @@ class ShadowTracker:
         return []
 
     def _find_executed_trade(
-        self, symbol: str, direction: str, trade_date: str
+        self, symbol: str, direction: str, trade_date: str, decision_id: str = None
     ) -> Optional[Dict]:
         """在 trade_records 中查找匹配的执行记录
 
         2026-06-23: 修复方向映射 — playbook_instructions.direction 是 BUY/SELL_SHORT,
         trade_records.direction 是 LONG/SHORT. 需要归一化比较.
+
+        P2b (2026-08-24 复查): 同日同标的同方向可能存在多轮成交 (intraday_reentry 重武装),
+        原 symbol+direction+date 启发式会把【上一轮】成交认领到重武装后未成交的新轮指令行
+        (盖章 executed=1 + 第一轮盈亏) — 复位 SQL 清掉的 outcome 当晚即被重新写脏.
+        有 decision_id 上下文时改为轮次级精确联接: ①优先取 decision_id 完全一致的记录;
+        ②否则只接受无归属 (decision_id 空) 的记录 — 带其他 decision_id 的成交证明属于
+        别的指令/轮次, 不得认领. 无上下文 (旧调用方) 维持原启发式不变.
         """
         if self.trade_store is None:
             return None
@@ -459,37 +469,72 @@ class ShadowTracker:
 
         try:
             trades = self.trade_store.query_by_date(trade_date)
-            for t in trades:
+            candidates = [
+                t for t in trades
                 if (t.get("symbol") == symbol and
-                        t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
-                        t.get("direction", "").upper() == _normalized):
-                    return t
+                    t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
+                    t.get("direction", "").upper() == _normalized)
+            ]
+            if not candidates:
+                return None
+            if decision_id:
+                linked = [t for t in candidates
+                          if (t.get("decision_id") or "") == decision_id]
+                if linked:
+                    return linked[0]
+                unattributed = [t for t in candidates
+                                if not (t.get("decision_id") or "")]
+                return unattributed[0] if unattributed else None
+            return candidates[0]
         except Exception as e:
             logger.warning(f"Failed to find executed trade for {symbol}: {e}")
 
         return None
 
-    def _find_exit_trade(self, symbol: str, trade_date: str) -> Optional[Dict]:
+    def _find_exit_trade(self, symbol: str, trade_date: str,
+                         decision_id: str = None) -> Optional[Dict]:
         """查找平仓记录 — monitor_playbook_shadow_exits 直接更新 trade_records 的 exit 字段
 
         2026-06-23: 修复 — shadow 退出不是单独的 trade record, 而是同一条 record 的
         exit_price/exit_reason/exit_time 字段被 UPDATE。查找 source_type='PLAYBOOK_SHADOW'
         且 exit_price > 0 的记录。
+
+        P2b (2026-08-24): 与 _find_executed_trade 同款轮次联接 — 原 symbol+date 扫描
+        在多轮场景会把上一轮的平仓价盖到本轮 (本轮已成交未平仓时尤其致命).
+        匹配语义与 _find_executed_trade 一致: 精确联接 > 无归属 > (无上下文)原启发式.
         """
         if self.trade_store is None:
             return None
 
+        def _is_candidate(t):
+            return (t.get("symbol") == symbol and
+                    t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW",
+                                             "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
+                    float(t.get("exit_price", 0) or 0) > 0)
+
         try:
             trades = self.trade_store.query_by_date(trade_date)
-            for t in trades:
-                if (t.get("symbol") == symbol and
-                        t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
-                        float(t.get("exit_price", 0) or 0) > 0):
-                    return {
-                        "exit_price": float(t.get("exit_price", 0)),
-                        "exit_time": t.get("exit_time", ""),
-                        "exit_reason": t.get("exit_reason", "unknown"),
-                    }
+            candidates = [t for t in trades if _is_candidate(t)]
+            if not candidates:
+                return None
+            picked = None
+            if decision_id:
+                linked = [t for t in candidates
+                          if (t.get("decision_id") or "") == decision_id]
+                if linked:
+                    picked = linked[0]
+                else:
+                    unattributed = [t for t in candidates
+                                    if not (t.get("decision_id") or "")]
+                    picked = unattributed[0] if unattributed else None
+            else:
+                picked = candidates[0]
+            if picked:
+                return {
+                    "exit_price": float(picked.get("exit_price", 0)),
+                    "exit_time": picked.get("exit_time", ""),
+                    "exit_reason": picked.get("exit_reason", "unknown"),
+                }
         except Exception as e:
             logger.warning(f"Failed to find exit trade for {symbol}: {e}")
 

@@ -295,6 +295,97 @@ class TestExecutionMatching:
         # pnl = (108 - 100) * 50 = 400
         assert result["pnl"] == 400.0
 
+    def test_rearmed_row_does_not_claim_previous_round_trade(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """P2b 回归 (2026-08-24): 重武装后未成交的新轮指令不得认领上一轮成交.
+
+        根因: intraday_reentry 重武装 UPSERT 同行并复位 outcome/executed 后,
+        EOD 影子链用 symbol+direction+date 启发式把第一轮 trade_record 认领回来
+        (盖章 executed=1 + 第一轮盈亏) — 复位当晚即被重新写脏 (夜间复燃).
+        实锤: 指令#991 US.TSM execution_time(10:02) 早于武装时刻(12:36) 却带 loss.
+        """
+        _save_instruction(db, entry_price=100.0, position_size=50)
+        inst = db.get_instruction("2026-06-18", "US.NTES")
+        conn = db._conn()
+        conn.execute("UPDATE playbook_instructions SET decision_id=? WHERE id=?",
+                     ("intraday_reentry-999-1230", inst["id"]))
+        conn.commit()
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {   # 上一轮成交: 挂旧轮 decision_id, 已平仓盈利
+                "symbol": "US.NTES", "direction": "LONG",
+                "source_type": "PLAYBOOK_SIM",
+                "decision_id": "intraday_reentry-888-1046",
+                "entry_price": 100.5, "entry_time": "2026-06-18T10:49:00",
+                "exit_price": 103.0, "exit_time": "2026-06-18T11:30:00",
+                "exit_reason": "SL_BREAKEVEN",
+            }
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] == 0           # 不再被盖章已执行
+        assert result["outcome"] != "win"        # 不再认领上一轮盈亏
+
+    def test_same_round_trade_linked_by_decision_id(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """P2b 正向联接: 成交记录挂与本指令一致的 decision_id 时正常认领."""
+        _save_instruction(db, entry_price=100.0, position_size=50)
+        inst = db.get_instruction("2026-06-18", "US.NTES")
+        conn = db._conn()
+        conn.execute("UPDATE playbook_instructions SET decision_id=? WHERE id=?",
+                     ("intraday_reentry-999-1230", inst["id"]))
+        conn.commit()
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG",
+             "source_type": "PLAYBOOK_SIM",
+             "decision_id": "intraday_reentry-999-1230",   # 本轮
+             "entry_price": 100.5, "entry_time": "2026-06-18T13:30:00"},
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] == 1
+        assert result["execution_price"] == 100.5
+
+    def test_unattributed_trade_still_matched_as_fallback(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """P2b 兼容: 无归属 (decision_id 空) 的历史成交仍按原启发式认领."""
+        _save_instruction(db, entry_price=100.0, position_size=50)
+        inst = db.get_instruction("2026-06-18", "US.NTES")
+        conn = db._conn()
+        conn.execute("UPDATE playbook_instructions SET decision_id=? WHERE id=?",
+                     ("DA-20260618-US.NTES-a1", inst["id"]))
+        conn.commit()
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG",
+             "source_type": "MANUAL_PLAYBOOK",
+             # 无 decision_id 键 (旧数据形态)
+             "entry_price": 100.5, "entry_time": "2026-06-18T09:35:00"},
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] == 1
+        assert result["execution_price"] == 100.5
+
 
 # ========== MFE/MAE 计算测试 ==========
 

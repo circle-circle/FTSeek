@@ -114,6 +114,23 @@ class TestTripwireInvalidation:
             current_price=51, now_et_dt=at(11, 0))
         assert got is True
 
+    def test_sell_short_vocab_reaches_short_semantics(self, mod, at):
+        """词表回归 (2026-08-24): 库内指令做空方向是 SELL_SHORT (无裸 "SHORT"),
+        原 dir_norm == "SHORT" 判定把 SELL_SHORT 全部落 LONG → 空头失效条件被
+        反号评估. SELL_SHORT 必须与 SHORT 完全同语义."""
+        kw = dict(invalidation="跌破$50", entry_price=45, current_price=51,
+                  now_et_dt=at(11, 0))
+        assert mod.evaluate_invalidation_text(direction="SHORT", **kw)[0] is True
+        assert mod.evaluate_invalidation_text(direction="SELL_SHORT", **kw)[0] is True
+
+    def test_pending_filter_uses_ssot_not_stale_vocab(self, mod):
+        """源码锚点: 待检过滤必须走 direction_utils SSOT, 不得再出现库内不存在
+        的 ("BUY","SHORT") 字面过滤 (2026-08-23 冷却门同款死门失效模式)."""
+        import inspect
+        src = inspect.getsource(mod.main)
+        assert '("BUY", "SHORT")' not in src
+        assert "to_trade_direction" in src
+
     def test_skip_reason_is_consumed_by_trigger_guards(self, mod):
         assert mod.SKIP_REASON in INVALIDATED_SKIP_REASONS
 

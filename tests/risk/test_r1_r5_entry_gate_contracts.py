@@ -303,3 +303,53 @@ class TestR4ExitConfigInvalidation:
         c = pc.get_playbook_config()
         assert c.get_exit_config_version() == c.get_exit_config_version()
         assert c.get_exit_config_version().startswith("exit-")
+
+    def test_exit_config_version_covers_previously_unhashed_pnl_keys(self):
+        """R-4b/R-4c (2026-08-24, KR2 冻结前尺子盲区修复): 改任一影响已实现 PnL 的
+        退出键都必须改变版本哈希.
+
+        回归背景: 原快照只手工枚举 factor_exit_rules/vol_buckets/time_exit_hours +
+        8 个零散键, 而 unified_config.execution_parameters 里 dead_signal_* /
+        patient_exit_* / sl_tighten_* / mfe_stall shallow / breakeven_slip_cushion /
+        profit_override_* / loser_overnight_* 等活跃退出键均不在内, playbook_horizon.yaml
+        的 market_state_overlay.vix_sl_widen/vix_tp_mult、max_hold_days 等同样漏 —
+        冻结期内改它们会改变实现盈亏而 KR2 判分保持绿色 (07-20 军规失效).
+        """
+        import app.playbook.config as pc
+        pc.reset_playbook_config()
+        c = pc.get_playbook_config()
+
+        def _recompute():
+            c._exit_config_version = None          # 打破惰性缓存强制重算
+            return c.get_exit_config_version()
+
+        base = _recompute()
+
+        # execution_parameters 侧: 抽样此前不在白名单的活跃退出键家族
+        for key, new in [("patient_exit_stop_pct", 9.9),
+                         ("dead_signal_exit_minutes", 61),
+                         ("breakeven_slip_cushion_pct", 0.7),
+                         ("sl_tighten_beta", 0.5),
+                         ("loser_overnight_max_hold_days", 3),
+                         ("profit_override_drawdown_pct", 9.0)]:
+            orig = c._config.get(key)
+            c._config[key] = new
+            try:
+                assert _recompute() != base, f"{key} 变更未反映到 exit_config_version"
+            finally:
+                if orig is None:
+                    c._config.pop(key, None)
+                else:
+                    c._config[key] = orig
+
+        # playbook_horizon.yaml 侧: 整本入哈希 — 抽样原手工枚举漏掉的深层退出键
+        _node = c._horizon_config.setdefault("market_state_overlay", {})
+        _widen = _node.setdefault("vix_sl_widen", {})
+        orig_widen = _widen.get("medium")
+        _widen["medium"] = (orig_widen or 0.3) + 0.1
+        try:
+            assert _recompute() != base, \
+                "playbook_horizon 深层退出键变更未反映到 exit_config_version"
+        finally:
+            _widen["medium"] = orig_widen
+        pc.reset_playbook_config()

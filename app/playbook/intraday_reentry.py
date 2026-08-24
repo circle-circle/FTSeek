@@ -669,6 +669,9 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     #   原复位只清 executed/triggered/execution_price/execution_time/skip_reason,
     #   残留的 outcome=win/loss 与本轮"未成交"状态矛盾 → 执行漏斗统计污染
     #   ("未执行指令却有盈亏结果"). 本轮若再成交, 正常路径会重写这些字段, 清空安全.
+    # P2b 补遗 (2026-08-24 复查): max_favorable_excursion/max_adverse_excursion 同为
+    #   结算写入列 (shadow_tracker._track_instruction / pipeline 回填), 漏清则重武装行
+    #   带上一轮 MFE/MAE (实测修复当日仍有 12 行残留), MFE 分析与推送展示同被污染.
     cur = conn.execute("""
         UPDATE playbook_instructions
         SET executed = 0, triggered = 0, execution_price = NULL, execution_time = NULL,
@@ -676,6 +679,7 @@ def _arm_instruction(symbol: str, direction: str, price: float,
             outcome = NULL, pnl = NULL, pnl_pct = NULL,
             exit_price = NULL, exit_time = NULL, exit_reason = NULL,
             holding_period_hours = NULL,
+            max_favorable_excursion = NULL, max_adverse_excursion = NULL,
             updated_at = ?
         WHERE id = ?
     """, (now_utc().isoformat(), new_id))
