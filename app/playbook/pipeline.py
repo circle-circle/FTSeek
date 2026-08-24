@@ -5222,8 +5222,13 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                             "vwap_slope": _fals_slope,
                             "triggered": bool(triggered),
                         }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
+                except Exception as _shadow_err:
+                    # A6 fail-loud (2026-08-24, 复查): 影子样本是十月重裁判据的
+                    #   数据底座, 静默丢行 = 攒样进度虚高 + 故障不可见。降级为
+                    #   warning 不抛 — 记录失败不得拦单 (fail-open 只属于交易路径)。
+                    logger.warning(
+                        f"[playbook] 证伪门·资金流影子落盘失败 {symbol}: "
+                        f"{_shadow_err} (影子样本丢失, 十月攒样受影响)")
 
     if triggered:
         logger.info(
@@ -5260,8 +5265,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                     with open(_P2(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl", "a", encoding="utf-8") as _f2:
                         _f2.write(_json2.dumps(_row, ensure_ascii=False) + "\n")
                     logger.info(f"[锚限价影子] {symbol} {'SHORT' if is_short else 'LONG'} 触发行已落盘 (anchor=${entry_price:.2f})")
-        except Exception:
-            pass
+        except Exception as _anchor_err:
+            # A6 fail-loud (2026-08-24): 锚限价影子行是次日重放判成交/延迟的输入,
+            #   静默丢行会让配对δ样本悄悄缩水。warning 可见, 不抛不拦单。
+            logger.warning(
+                f"[playbook] 锚限价影子落盘失败 {symbol}: {_anchor_err} "
+                f"(影子样本丢失, 重放判样本受影响)")
     else:
         logger.debug(
             f"[playbook] 未触发: {symbol} price=${current_price:.2f} "
