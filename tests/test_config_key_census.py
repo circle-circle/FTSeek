@@ -75,3 +75,59 @@ def test_known_dead_keys_still_non_referenced():
         assert status in ("orphan", "definition_only"), (
             f"{leaf} 变成 {status} — 普查口径漂移或死键被复活, 先查清再动"
         )
+
+
+# ── A3 死键门禁 (2026-08-24): 存量基线冻结, 只堵新增 ─────────────────────── #
+
+def test_gate_no_new_dead_keys():
+    """全量普查门禁: 非 referenced 叶子必须 ⊆ 基线 ∪ 豁免注册表.
+
+    新增配置键而不消费 (或不登记) → 本测试红。存量死键以
+    tests/fixtures/config_key_census_baseline.json 冻结, 十月解冻后清理时用
+    --update-baseline 缩基线 (随清理 commit 一起进 diff)。
+    """
+    result = _MOD.run_census()
+    violations = _MOD.gate_violations(result)
+    assert not violations, (
+        f"发现 {len(violations)} 个新增未登记死键: "
+        + "; ".join(f"{f}:{k}" for f, k, _ in violations[:10])
+        + " … 处置: 消费该键, 或在 config_key_census.py 豁免注册表登记实证理由"
+    )
+
+
+def test_gate_baseline_exists_and_shape():
+    """基线必须存在且形态正确 ({file: {leaf: status}}), 否则门禁形同虚设."""
+    import json
+    assert _MOD.BASELINE.exists(), "死键基线缺失 — 门禁无冻结参照, 先跑 --update-baseline"
+    snap = json.loads(_MOD.BASELINE.read_text(encoding="utf-8"))
+    nr = snap.get("non_referenced")
+    assert isinstance(nr, dict) and nr, "基线 non_referenced 为空或形态错误"
+    for fname, leaves in nr.items():
+        assert isinstance(leaves, dict) and leaves, f"基线 {fname} 形态错误"
+        for leaf, status in leaves.items():
+            assert status in ("orphan", "definition_only"), (
+                f"基线 {fname}:{leaf} 状态非法: {status}")
+
+
+def test_gate_exempt_entries_require_evidence():
+    """豁免注册表纪律: 每项豁免都必须带非空实证理由 (防橡皮图章)."""
+    for fname, reason in _MOD.FILE_EXEMPT.items():
+        assert isinstance(reason, str) and len(reason) >= 10, (
+            f"FILE_EXEMPT[{fname}] 理由缺失/过短")
+    for key, reason in _MOD.LEAF_EXEMPT.items():
+        assert isinstance(reason, str) and len(reason) >= 6, (
+            f"LEAF_EXEMPT[{key}] 理由缺失/过短")
+        assert ":" in key, f"LEAF_EXEMPT 键必须是 '文件名:叶子名' 形态: {key}"
+
+
+def test_gate_sentinels_covered_by_exempt_or_dead():
+    """哨兵死键必须同时落在 LEAF_EXEMPT (显式豁免) 且保持非 referenced."""
+    for entry in _MOD.SELF_CHECK_DEAD:
+        assert entry in _MOD.LEAF_EXEMPT, f"哨兵 {entry} 未落 LEAF_EXEMPT"
+
+
+def test_gate_iteration_consumed_files_auto_excused():
+    """泛型迭代消费文件的非 referenced 叶子必须被 exemption_for 自动豁免."""
+    for fname in _MOD.ITERATION_CONSUMED:
+        ok, why = _MOD.exemption_for(fname, "任意不存在键xyz")
+        assert ok, f"{fname} 属迭代消费文件却未被自动豁免: {why}"
