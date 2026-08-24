@@ -664,10 +664,19 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     new_id = db.save_instruction(inst)   # UPSERT by (date,symbol) — executed 标志不动
     from app.utils.timezone import now_utc
     conn = db._conn()
+    # P2 修复 (2026-08-24 全链路审计): 重武装时同步清空上一轮结算字段
+    #   (outcome/pnl/pnl_pct/exit_price/exit_time/exit_reason/holding_period_hours).
+    #   原复位只清 executed/triggered/execution_price/execution_time/skip_reason,
+    #   残留的 outcome=win/loss 与本轮"未成交"状态矛盾 → 执行漏斗统计污染
+    #   ("未执行指令却有盈亏结果"). 本轮若再成交, 正常路径会重写这些字段, 清空安全.
     cur = conn.execute("""
         UPDATE playbook_instructions
         SET executed = 0, triggered = 0, execution_price = NULL, execution_time = NULL,
-            skip_reason = NULL, updated_at = ?
+            skip_reason = NULL,
+            outcome = NULL, pnl = NULL, pnl_pct = NULL,
+            exit_price = NULL, exit_time = NULL, exit_reason = NULL,
+            holding_period_hours = NULL,
+            updated_at = ?
         WHERE id = ?
     """, (now_utc().isoformat(), new_id))
     conn.commit()
