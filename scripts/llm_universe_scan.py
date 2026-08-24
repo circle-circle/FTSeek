@@ -1306,9 +1306,16 @@ def cmd_inject(force_dry: bool = False) -> int:
 
     print(f"[inject] entry_enabled={enabled} → {'DRY-RUN (不写库)' if dry else '写入 playbook_instructions'}")
     for it in instructions:
-        print(f"  {it['direction']:10} {it['symbol']:8} entry={it['entry_price']} "
-              f"zone=[{it['entry_low']},{it['entry_high']}] SL={it['stop_loss']} TP={it['take_profit']} "
-              f"conf={it['confidence']} src={STRATEGY_ID}")
+        # 2026-08-24: 防御性 .get — 价格地板 SKIP 行无 entry_low/SL/TP 键,
+        #   裸键 KeyError 在打印循环炸掉整个 inject (连正常指令都没写库).
+        #   与 DA pipeline Stage4 同款失效类. 8/24 实弹: USBC $0.41 SKIP 行引爆.
+        if it.get("direction") == "SKIP":
+            print(f"  {'SKIP':10} {it['symbol']:8} entry={it['entry_price']} "
+                  f"skip={it.get('skip_reason','')} conf={it['confidence']} src={STRATEGY_ID}")
+        else:
+            print(f"  {it['direction']:10} {it['symbol']:8} entry={it['entry_price']} "
+                  f"zone=[{it['entry_low']},{it['entry_high']}] SL={it['stop_loss']} TP={it['take_profit']} "
+                  f"conf={it['confidence']} src={STRATEGY_ID}")
 
     if dry:
         if not enabled:
