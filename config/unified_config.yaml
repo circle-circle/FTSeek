@@ -1689,6 +1689,12 @@ universe_expansion:
   #   LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计 -$100)。
   #   查 trade_records 近 N 天同标的同方向记录, 有则跳过不写入。0=禁用。回滚: 改 0。
   same_symbol_cooldown_days: 3
+  # U7 (2026-08-25, REVIEW-20260824 裁决GO, 用户批): 浮现续期硬闸。
+  #   streak>此值的续期候选不注入 (≤2放行, ≥3拦): OOS 8/12-8/24 streak≥3 桶
+  #   方向性前瞻均值 −0.28%≤0, 预注册判据机械执行; n=4 弱证据, 见裁决报告诚实声明。
+  #   99=全放行(回滚); 消费端二处: FTSeek cmd_inject + skill _load_ue_short_candidates。
+  #   撤闸认错判据: 续期组前瞻 > +0.5% 且 n≥10 → 改回 99。
+  max_emergence_streak: 2
   min_price_floor: 5.0    # 2026-08-13: UE注入价格地板 — 低于此价的浮现标的转SKIP行(可归因),
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.

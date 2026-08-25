@@ -226,6 +226,16 @@ def _is_da_priority_skip(existing_decision_id: Any) -> bool:
     return bool(did) and not did.startswith(f"{STRATEGY_ID}:")
 
 
+def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
+    """[U7 2026-08-25 REVIEW-20260824 裁决GO] 续期硬闸谓词 (可单测)。
+
+    streak>max_streak 拦; None/0→视作首日=1 (埋点失败保守按新浮现处理, 不误杀)。
+    max_streak=99 默认=全放行 (缺键零行为, 防配置未读到静默启闸)。
+    """
+    _stk = s.get("emergence_streak_days") or 1
+    return _stk <= max_streak
+
+
 def _is_us_premarket() -> bool:
     """美股盘前时段判定 (04:00-09:30 ET). pytz 处理夏令时; 失败回落 _now_et 硬编码偏移."""
     try:
@@ -1178,11 +1188,17 @@ def cmd_inject(force_dry: bool = False) -> int:
         print(f"  [warn] 读取 playbook_instructions 排重失败 (继续): {e}")
 
     # 候选筛选: 可交易方向 + 置信度达标 + 非持仓 + 非DA已写
+    # [U7 2026-08-25, DEB-ue-audit r5 / REVIEW-20260824 裁决GO] streak 硬闸:
+    #   续期≥max 的浮现不再注入 (8/12-8/24 OOS: streak≥3 桶方向性前瞻均值 −0.28%≤0,
+    #   预注册判据机械执行). 默认99=缺键零行为(防配置未读到静默启闸), 显式配2才起闸.
+    #   回滚: yaml max_emergence_streak 改 99 或删键。
+    _max_streak = int(_cfg("universe_expansion.max_emergence_streak", 99) or 99)
     cand = [s for s in surfaced
             if s["direction"] in ("LONG", "SHORT")
             and s["confidence"] >= min_conf
             and s["symbol"] not in positions
-            and s["symbol"] not in existing_pb]
+            and s["symbol"] not in existing_pb
+            and _streak_passes(s, _max_streak)]
     cand.sort(key=lambda s: s["confidence"], reverse=True)
     cand = cand[:max_n]
 

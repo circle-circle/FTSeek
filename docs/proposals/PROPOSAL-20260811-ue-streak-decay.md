@@ -1,11 +1,15 @@
 ---
 title: UE 陈旧证据衰减(streak 硬闸) + UE→DA 供料管道 go/no-go 判据
 date: 2026-08-11
-status: 已裁决 GO (2026-08-25 裁决 cron, 报告 docs/reviews/REVIEW-20260824-ue-streak-verdict.md)。
-  判据1 (OOS 8/12-8/24, T+0 口径): streak≥3 桶 n=4 (全 XOM LONG), 方向性均值 -0.277% ≤ 0 → go 分支。
-  判据2: 窗口内无 streak≥3 执行笔 (XOM 链全部 no_trigger), 零增量。诚实声明: n=4<10 单标的, 方向性结论成立、幅度不下强结论。
-  实施 (§八.6, 行号锚点勘误见报告 §五) 留待 8/25 周二 ET09:10 inject 前人工确认; 未确认则键缺省=全放行, 不抢。
-  前史: 方案A 2026-08-11 用户裁定, 8/12-8/24 纯 shadow 零代码。
+status: 已实施 (2026-08-25 夜, 用户批"其他决策同意"; DEB-ue-audit r6)。
+  裁决 GO: 判据1 (OOS 8/12-8/24, T+0 口径): streak≥3 桶 n=4 (全 XOM LONG), 方向性均值 -0.277% ≤ 0 → go 分支。
+  判据2: 窗口内无 streak≥3 执行笔, 零增量。诚实声明: n=4<10 单标的, 方向性结论成立、幅度不下强结论。
+  实施清单 (§八.6): ①FTSeek cmd_inject 过滤 (谓词 _streak_passes, 可单测) ②skill
+  _load_ue_short_candidates 同规则过滤 (ue_streak_days 透传已在 8/14 §12 落地)
+  ③yaml max_emergence_streak: 2 ④tests/test_ue_streak_gate.py 10例全过
+  ⑤本档+裁决报告落档。时序: 落地晚于 8/25 21:10 inject → 首个生效窗口 = 8/26 21:10。
+  回滚 = yaml 改 99。撤闸认错判据: 续期组前瞻 > +0.5% 且 n≥10。
+  前史: 方案A 2026-08-11 用户裁定, 8/12-8/24 纯 shadow 零代码; 8/25 裁决 GO。
 type: L1 (~40 行代码 + 1 配置键)
 related_code: scripts/llm_universe_scan.py, ~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py
 related_deb: DEB-20260808-signal-source-strategy
