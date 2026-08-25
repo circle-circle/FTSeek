@@ -26,7 +26,7 @@
 |---|---|---|---|
 | G1-1 | SIM 已执行净期望 (净费用) − 滑点折算 ≥ $0/笔 | exit_scorecard 净口径; 折算=成交均价×haircut | **haircut = 15 bps** (大盘股流动性典型 5-15bps 取上限; 门 2 用实测替换) |
 | G1-2 | BUY / SHORT 已执行分桶样本 n≥30 | 已执行口径 (executed=1) | 当前 BUY n≈136-164 ✓ / SHORT n=33 ✓边缘; 以 8-29 实读为准 |
-| G1-3 | 尺子健康: rubric/critique 无未解释倒挂 | direction_hit_scorecard 候选级断面 | UE critique 倒挂 (n=25) 已在案, 8-29 前需 n≥30 复读 |
+| G1-3 | 尺子健康: rubric/critique 无未解释倒挂 | direction_hit_scorecard 候选级断面 | **2026-08-25 裁决退役** (DEB-20260825-g1-3-retirement): 判据口径达成 (n=103≥30) 且尺子本身证伪 — T+1 倒挂确认+置换检验不显著+实际账本 DROP 桶反而盈利 $85 → critique 调用按预注册删除, 判据失去指涉物。门 1 其余三判据不受影响。 |
 | G1-4 | 退出侧: R:R ≥ 1.29 或有已登记改善轨迹 | exit_scorecard 周五迭代读数 | 北极星: 每笔期望 ≥ $0 |
 
 **ALL-pass → 进门 2 试点。任一不过 → 维持 SIM 验证, 下一裁决窗口 = 9 月周五迭代。** 门 1 不通过 ≠ 失败, = 继续攒样。
