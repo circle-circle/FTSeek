@@ -236,8 +236,13 @@ class ShadowTracker:
                         updates["pnl"] = round(pnl, 2)
                         updates["outcome"] = "holding"
 
-        elif updates.get("triggered"):
+        elif updates.get("triggered") or _already_triggered:
             # 触发了但没执行 → 计算 missed PnL
+            # 2026-08-26 修复 (RFC-066 漏斗审计): 原条件只看影子自己回填的 triggered,
+            #   漏看 auto_execute 盘中已写的 inst.triggered=1 → "盘中真触发但被资金帽/
+            #   护栏拦截"的行落进 else 分支被误标 '未触发 (no_trigger)', 污染漏斗归因.
+            #   实锤: 8/24 US.AU/AVGO/NTES 三笔再入场均被单日notional帽拦截,
+            #   日志有 '方向穿越触发' 实据, DB 却标 no_trigger.
             shadow_pnl = self._calc_shadow_pnl(
                 symbol, entry_price, direction, trade_date,
                 position_size=inst.get("position_size"),

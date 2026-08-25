@@ -215,6 +215,91 @@ class TestTriggerDetection:
         assert result["outcome"] == "missed"
 
 
+# ========== 盘中已触发 + 未成交的归因测试 (2026-08-26, RFC-066 漏斗审计) ==========
+
+class TestIntradayTriggeredMissedAttribution:
+    """auto_execute 盘中已写 triggered=1, EOD 影子追踪必须归因为'已触发未执行',
+    不得落进'未触发'分支 — 8/24 实锤: US.AU/AVGO/NTES 三笔再入场被单日notional帽
+    拦截, 日志有'方向穿越触发'实据, 但 EOD 误标 no_trigger 污染漏斗."""
+
+    def test_intraday_triggered_no_exec_gets_trigger_no_execution_label(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """核心契约: 盘中 triggered=1 + 无成交 → skip_reason 标'已触发未执行'."""
+        inst_id = _save_instruction(db, entry_price=100.0, position_size=50)
+        # auto_execute 盘中已确认触发 (未成交)
+        db.update_instruction_tracking(inst_id, {"triggered": 1})
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 105, "high": 110, "low": 105,
+             "close": 108, "ma20": 110, "volume_ratio": 2.0}  # 影子自身判定不会触发
+        ]
+        mock_trade_store.query_by_date.return_value = []
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["triggered"] == 1               # 盘中状态不被覆盖
+        assert result["outcome"] == "missed"
+        assert "trigger_no_execution" in (result["skip_reason"] or "")
+        assert "no_trigger" not in (result["skip_reason"] or "")
+
+    def test_never_triggered_still_gets_no_trigger_label(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """回归: 从未触发 → 仍标'未触发' (防过度翻转)."""
+        _save_instruction(db, entry_price=100.0)
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 105, "high": 110, "low": 105,
+             "close": 108, "ma20": 110, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = []
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["outcome"] == "missed"
+        assert "no_trigger" in (result["skip_reason"] or "")
+
+    def test_shadow_backfill_trigger_path_unchanged(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """回归: 影子自身判定触发 (无盘中先验) → 仍走'已触发未执行'分支."""
+        _save_instruction(db, entry_price=100.0)
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 99, "high": 102, "low": 98,
+             "close": 105, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = []
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["triggered"] == 1
+        assert result["outcome"] == "missed"
+        assert "trigger_no_execution" in (result["skip_reason"] or "")
+
+    def test_existing_skip_reason_not_overwritten(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """回归: auto_execute 已写入具体拒因时不被补标覆盖."""
+        inst_id = _save_instruction(db, entry_price=100.0, position_size=50)
+        db.update_instruction_tracking(inst_id, {
+            "triggered": 1,
+            "skip_reason": "跳过 — 单日notional上限 (具体拒因)",
+        })
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = []
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert "notional上限" in (result["skip_reason"] or "")
+        assert "trigger_no_execution" not in (result["skip_reason"] or "")
+
+
 # ========== 执行匹配测试 ==========
 
 class TestExecutionMatching:
