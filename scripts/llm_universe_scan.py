@@ -28,6 +28,7 @@ LLM 事件推理驱动的选股宇宙扩张 (LLM Universe Scan)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -55,7 +56,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
-PROMPT_VERSION = "v2.4"  # scan 落库归因戳; v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.5"  # scan 落库归因戳; v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-20260825-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -87,7 +88,7 @@ SYSTEM_PROMPT_V2 = (
     "THESIS_ONLY=无 evidence_ref, 仅逻辑或板块联想。\n"
     "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60; "
     "THESIS_ONLY 标的的 thesis 必须以'板块联想:'或'逻辑推演:'开头, 明示推演性质。\n"
-    "4. 充分浮现: 凡具备【可核验因果路径 + 真实可执行机会】的标的都要浮现(多空对等), 不设人为数量上限, "
+    "4. 充分浮现: 凡具备【可核验因果路径 + 真实可执行机会】的标的都要浮现(多空机会对等浮现, 质量门槛各自对称), 不设人为数量上限, "
     "也不为控量而漏报——质量由 self_tier/evidence_ref 标签与模拟交易结果在下游度量, 而非在浮现端压制。"
     "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY)。\n"
     "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
@@ -116,7 +117,7 @@ SYSTEM_PROMPT_V2 = (
     #   _compute_numbers 恒定算出 (LONG 5.91% / SHORT 6.09%), LLM 不控制止损价, 该规则
     #   LLM 永远无法满足 → 持续扭曲生成端 (E1 空头衰减诊断的混淆变量, DEB-short-funnel §8.2 N1).
     "10. 结构约束: 不接当日跌>5% 且无企稳证据的接飞刀 LONG; 入场区贴近支撑/VWAP 的回踩企稳优先于新高追涨延伸。\n"
-    "11. 回调优先(8月实证): 做多论点优先选'回调日企稳'标的 (回调日 LONG 净正 / 追涨日 LONG 净负); "
+    "11. 回调优先: 做多论点优先选'回调日企稳'标的; "
     "强势延伸日的 LONG 需在 thesis 自证为何不追高。\n"
     "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
     "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
@@ -126,6 +127,11 @@ SYSTEM_PROMPT_V2 = (
     "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk})。\n"
     "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
 )
+
+# [DEB-20260825-ue-audit U1] SYSTEM_PROMPT_V2 指纹 — 落库归因戳 (与 DA r13
+#   _prompt_fingerprint 同模式)。病灶1版本戳失真: PROMPT_VERSION 常量可在 prompt
+#   已改时忘记升 (8/16 v2.5 改动落库仍标 v2.4), hash 随内容自动变 → 新旧基线可切分。
+PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 
 
 # ── 通用工具 ──────────────────────────────────────────────────
@@ -1067,6 +1073,8 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         "info_source": INFO_SOURCE,
         "model_used": getattr(res, "model_used", None),
         "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
+        # [U1] 内容指纹 — 版本戳失真防护 (旧记录无此字段, 按日期切分)
+        "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
         "surfaced": surfaced,
         "note": ("record-only midday shadow; 不进 inject/DA供料/push, 判据见 DEB §13.3"
                  if midday else "record-only; 不驱动 live, inject 另需 entry_enabled=true"),
@@ -1263,6 +1271,13 @@ def cmd_inject(force_dry: bool = False) -> int:
             "take_profit": nums["take_profit"],
             "confidence": _capped_conf,
             "thesis": s.get("thesis", ""),
+            # [DEB-20260825-ue-audit U2] invalidation 顶层透传 — 此前只进 origin blob
+            #   (invalidation_ue), save_instruction 只认顶层键 (db.py) → 列恒空,
+            #   tripwire_checker 文本轨对 UE 指令 100% 双盲。接上后 UE 即刻进入
+            #   盘中失效核销 (宁漏不误杀: checker 自带解析守卫, 非数字子句不命中)。
+            #   诚实预期: 现有 invalidation 多为自然语言 (非数字), 首期命中率≈0,
+            #   价值=审计覆盖; 30 天判据不达标再提案结构化 (见 deb §预注册)。
+            "invalidation": s.get("invalidation", "") or "",
             "sector": s.get("sector", ""),
             "horizon": "short",
             # 2026-08-03: regime 三字段 (与 DA bridge 同口径, 修复 7/9-7/23 直写缺失)
@@ -1275,6 +1290,8 @@ def cmd_inject(force_dry: bool = False) -> int:
             "raw_instruction": {
                 "source": STRATEGY_ID,  # universe_expansion — 报表侧切分 DA vs 本源
                 "prompt_version": PROMPT_VERSION,
+                # [U1] 内容指纹随指令落库 (raw_instruction_json 内)
+                "prompt_hash": PROMPT_HASH_V2,
                 "origin": {
                     "info_source": INFO_SOURCE,
                     # S0 (2026-07-27): 真实首报渠道 + 新闻 id (机械归因, 见 _annotate_news_channel)
@@ -1624,6 +1641,7 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
     _append_jsonl(_PROMPT_EVAL_PATH, {
         "type": "prompt_eval", "date": _today(), "evaluated_at": _now_et().isoformat(),
         "prompt_version": PROMPT_VERSION,
+        "prompt_hash": PROMPT_HASH_V2,  # [U1]
         "clue": manual_clue, "v1": {"model": m1, "surfaced": v1},
         "v2": {"model": m2, "surfaced": v2},
     })
@@ -1735,6 +1753,22 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
         tier_cnt[t] = tier_cnt.get(t, 0) + 1
 
     mode = "已注入DB→执行轨道" if entry_enabled else "record-only(未下单)"
+    # [DEB-20260825-ue-audit 复核新增] push 文案说真话 — 病灶: mode 只看 entry_enabled
+    #   开关, 不看实际落库数。8/25 实弹: 8只浮现, 7只无现价+1只DA排重 → 实际写0条,
+    #   但推送仍打"已注入DB→执行轨道" = 对外宣称与实际相反。改查当日真实落库行数。
+    _ue_injected_n = 0
+    if entry_enabled:
+        try:
+            from app.playbook.db import PlaybookDB
+            _conn_pb = PlaybookDB()._conn()
+            _row_n = _conn_pb.execute(
+                "SELECT COUNT(*) FROM playbook_instructions WHERE date=? "
+                "AND decision_id LIKE ?", (target, f"{STRATEGY_ID}:%")).fetchone()
+            _ue_injected_n = int(_row_n[0] or 0) if _row_n else 0
+            mode = f"已注入DB→执行轨道 (实际{_ue_injected_n}条)" if _ue_injected_n else \
+                f"注入0条 (候选{len(tradeable)}只被现价缺失/排重/冷却等过滤, 见universe_scan.log)"
+        except Exception as _pe2:
+            mode = "已注入DB→执行轨道 (落库数查询失败)"
     lines = [
         f"🌌 Universe选股扫描完成 ({target})",
         f"模型={rec.get('model_used','?')} prompt={rec.get('prompt_version','?')} · {mode}",
