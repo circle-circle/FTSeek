@@ -566,3 +566,57 @@ T+0 显著性不推翻判据 (判据口径 = T+1 执行口径)。且实际账本
 
 **判据 (预注册)**: 攒样 5 交易日 → short_check provided 率与 skip_reason/invalidation
 非空率修复后升至 100% 且 direction_patch_rejected 恒 0 → 裁是否开强制 (schema_enforce=true)。
+
+---
+
+## r10 — U11 开盘+10min 确认门 (两段式: 盘前假设→开盘后代码裁决) 落地 (2026-08-26)
+
+**用户裁**: "执行 确认时间点×10min"。两段式落地——保留 21:10 CST scan (假设生成, DA供料不断),
+新增 21:40 CST (09:40 ET=开盘+10min) 代码裁决门, 用真实盘中价判"信息是否已被价格反映"。
+
+**时点依据 (回测 17票×20交易日 7/28-8/22, 5min K线, 配对检验)**:
+- +10min(09:40) vs +30min(10:00) 确认: 92% 信号同向 (等待无新信息),
+  等待成本 +0.50%/笔 (t=5.67, permutation p<0.001)
+- 翻转笔 (8%): 等到 +30 按新方向也是亏 (−0.60%), 翻转笔等也救不回
+- 每候选日 EV: +10min=+0.57% vs +30min=+0.16%
+- 结论: **+10min 确认更优** — 隔夜信息在开盘前 10 分钟最浓 (首根5min bar 量能≈后续7倍),
+  等 20 分钟 = 付确定性成本换救不回的尾部。
+
+**阈值校准 (7/14-8/25 浮现回放, Futu K_DAY, n=159, 2 拉取失败)**:
+盘前同向动量 → 开盘→收盘方向调整前瞻收益分桶:
+| 桶 | n | 命中率≥0.5% | 均值 |
+|---|---|---|---|
+| ≤0% 未反映 | 52 | 50% | +0.33% |
+| 0~+1% | 41 | 44% | +0.40% |
+| +1~+2% | 25 | 40% | **+1.21%** ← 最优 |
+| +2~+4% | 14 | 43% | −0.14% |
+| >+4% 大幅反映 | 27 | 41% | −0.67% |
+
+**拐点 = +2%**: <2% 组前瞻均值 +0.54% (n=118) vs ≥2% 组 −0.49% (n=41), 差 1.03pp。
+适度反映 (+1~2%) 反而是最优确认信号; 大幅反映 (>+4%) edge 已耗尽。
+两组差置换检验 p=0.127 — 功率受限 (n 小), 不显著但方向稳定, 影子先行攒样续证。
+阈值默认 `confirm_gate.price_in_threshold: 0.02`。
+
+**实现 (scripts/llm_universe_scan.py)**:
+- `_price_in_verdict(direction, prev_close, price, threshold)` 纯谓词 →
+  (PRICE_IN / REVERSED / CONFIRM / NO_QUOTE, signed_pre_move)。可单测。
+- `cmd_confirm(force, dry_run)`: 读今日盘前 scan → `_batch_quotes` 取 prev_close/price
+  → 裁决 → 落 `data/shadow/ue_confirm_gate.jsonl`。`--dry-run` 防测试污染攒样。
+- 时点守卫: 09:32-10:30 ET 窗口外拒绝运行 (语义漂移防护), `--force` 覆盖。
+- Phase 1 = 影子: **不拦** 既有 21:10 inject 链, 只裁决留痕。
+
+**测试**: `tests/test_ue_confirm_gate.py` 16 例 (四裁决×方向×边界±阈值×缺价×撤闸语义) 全过。
+全套回归 55 passed (confirm 16 + grounding 10 + contract 15 + streak 10 + 余)。
+
+**配置**: `universe_expansion.confirm_gate.price_in_threshold: 0.02`。撤闸: 改 99 (=永不判)。
+
+**cron**: `40 21 * * 1-5` (21:40 CST=09:40 ET, 在 21:10 scan→inject→push 链后 30min)。
+DST 提示: 11/1 后 09:40ET=22:40CST, 时点守卫会拒绝漂移执行, 届时整表统一换算。
+
+**预注册判据 (Phase 2 接线条件)**: ≥10 交易日且被裁决 n≥30 后,
+若 PRICE_IN 桶前瞻均值≤0 且 CONFIRM 桶>0 → inject 挪到确认门后 (接线为前置闸)。
+
+**盘后测试时点假象说明**: dry-run 实跑在 18:09 ET (收盘后), `get_market_snapshot`
+挂起超时→回落源不带 prev_close→全候选判 NO_QUOTE。这是测试时点所致, 非生产问题
+(确认门生产运行在 09:40 ET 开盘后, 与 inject 走同一快照路径, 届时必有昨收)。
+NO_QUOTE 分支已兜底 (缺价留痕不误杀)。影子日志监控 NO_QUOTE 计数。

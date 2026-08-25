@@ -1708,6 +1708,16 @@ universe_expansion:
   evidence_grounding_enforce: false
   # U9 (2026-08-25 建议②): 扫描时注入当日 regime 摘要 (与执行端同源)。回滚: false。
   scan_regime_brief: true
+  # U11 (2026-08-26, 用户裁"确认时间点×10min"): 开盘+10min 确认门 (两段式第二段)。
+  #   21:10 CST scan 生成假设; 21:40 CST (09:40 ET) 用真实盘中价裁决信息是否已被价格反映。
+  #   Phase 1 = 影子 (data/shadow/ue_confirm_gate.jsonl), 不拦既有 21:10 inject 链。
+  #   阈值校准 (7/14-8/25 浮现回放 n=159): 盘前同向动量 <2% 组前瞻均值 +0.54% (命中50%),
+  #     ≥2% 组 −0.49% (n=41); 两组差 1.03pp, permutation p=0.127 (功率受限, 影子攒样续证)。
+  #     拐点桶: +1~2% 反而最优 (+1.21%), >+4% 最差 (−0.67%) → 适度反映=确认, 大幅反映=price-in。
+  #   Phase 2 接线判据 (预注册): ≥10交易日且被裁决n≥30, PRICE_IN 桶前瞻≤0 且 CONFIRM 桶>0
+  #     → inject 挪到确认门后。撤闸: price_in_threshold 改 99 (=永不判 PRICE_IN)。
+  confirm_gate:
+    price_in_threshold: 0.02
   min_price_floor: 5.0    # 2026-08-13: UE注入价格地板 — 低于此价的浮现标的转SKIP行(可归因),
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.

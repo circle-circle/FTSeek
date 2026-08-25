@@ -35,7 +35,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SCRIPTS = Path(__file__).resolve().parent
@@ -245,6 +245,43 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
     """
     _stk = s.get("emergence_streak_days") or 1
     return _stk <= max_streak
+
+
+# ── [U11 2026-08-26] 开盘确认门 (两段式: 盘前假设→开盘+10min代码裁决) ──
+# 设计: 21:10 CST scan 生成假设 (照旧, DA供料不断); 21:40 CST (09:40 ET=开盘+10min)
+#   用真实盘中价做 price-in 裁决。用户 8/25 裁"信息是否已被价格反映"判据第一次
+#   有真实盘中数据可执行 (盘前只能用盘前代理)。
+# 时点依据 (回测 17票×20交易日 7/28-8/22, 配对 n=194):
+#   +10min vs +30min: 92%同向(等待无新信息, 等待成本+0.50%/笔, t=5.67, p<0.001);
+#   翻转笔(8%)等到+30按新方向也是亏(-0.60%); 每候选日EV +10=+0.57% vs +30=+0.16%。
+# Phase 1 = 影子: 只裁决留痕 (ue_confirm_gate.jsonl), 不拦既有 21:10 inject 链。
+#   预注册判据: ≥10个交易日且被裁决n≥30后, 若 PRICE_IN 桶前瞻均值显著≤0 而
+#   CONFIRM 桶>0 → 接线为 inject 前置闸 (inject 挪到确认门后)。
+_CONFIRM_PATH = _ROOT / "data" / "shadow" / "ue_confirm_gate.jsonl"
+
+
+def _price_in_verdict(direction: str, prev_close: Optional[float],
+                      price: Optional[float], threshold: float) -> Tuple[str, Optional[float]]:
+    """确认门裁决谓词 (纯函数, 可单测)。返回 (verdict, signed_pre_move)。
+
+    signed_pre_move = 开盘后价格相对昨收的方向化变动:
+      LONG: (price-prev)/prev ; SHORT: -(price-prev)/prev
+    verdict:
+      PRICE_IN  : signed ≥ threshold → 信息已同向大幅反映, 无增量 (拦)
+      REVERSED  : signed ≤ -threshold → 开盘反向, 市场不认同方向 (留痕, Phase1不拦)
+      CONFIRM   : 其余 → 假设未被充分反映, 保留
+      NO_QUOTE  : 无价可裁 (缺昨收/现价)
+    """
+    if not prev_close or prev_close <= 0 or not price or price <= 0:
+        return "NO_QUOTE", None
+    signed = (price - prev_close) / prev_close
+    if direction == "SHORT":
+        signed = -signed
+    if signed >= threshold:
+        return "PRICE_IN", signed
+    if signed <= -threshold:
+        return "REVERSED", signed
+    return "CONFIRM", signed
 
 
 def _is_us_premarket() -> bool:
@@ -2040,6 +2077,107 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     return 0
 
 
+# ── [U11] confirm: 开盘+10min 确认门 (Phase 1 影子裁决) ───────────
+def cmd_confirm(force: bool = False, dry_run: bool = False) -> int:
+    """两段式第二段: 读今日盘前 scan 假设 → 真实盘中价 price-in 裁决 → 落影子。
+
+    Phase 1 = 影子: 只裁决留痕 (_CONFIRM_PATH), 不拦既有 21:10 inject 链。
+    时点语义: 09:32-10:30 ET 窗口外拒绝运行 (开盘+10min 语义漂移防护), --force 可覆盖。
+    预注册判据 (Phase 2 接线条件): ≥10交易日且被裁决 n≥30 后, 若 PRICE_IN 桶
+      前瞻均值≤0 且 CONFIRM 桶>0 → 接线为 inject 前置闸。
+    """
+    if not _is_us_trading_day_today():
+        print(f"[confirm] {_today()} 非美股交易日, 跳过")
+        return 0
+    # 时点守卫: 确认门的语义锚在开盘+10min, 窗口外运行=语义漂移 (数据污染裁决样本)
+    _hm = _now_et().hour * 100 + _now_et().minute
+    if not (932 <= _hm <= 1030) and not force:
+        print(f"[confirm] 当前 ET 时刻 {_hm} 在确认窗口(0932-1030)外, 拒绝运行 (--force 覆盖)")
+        return 0
+
+    threshold = float(_cfg("universe_expansion.confirm_gate.price_in_threshold", 0.02) or 0.02)
+    scans = [r for r in _read_jsonl(_SCAN_PATH) if r.get("type") == "scan"]
+    today_scans = [r for r in scans if r.get("date") == _today()
+                   and r.get("scan_window", "premarket") == "premarket"]
+    if not today_scans:
+        print(f"[confirm] 今日({_today()})无盘前 scan 结果")
+        return 0
+    surfaced = today_scans[-1].get("surfaced", [])
+    tradeable = [s for s in surfaced
+                 if s.get("direction") in ("LONG", "SHORT") and s.get("scan_price")]
+    if not tradeable:
+        print("[confirm] 无可裁决候选 (无 tradeable 浮现)")
+        return 0
+
+    # inject 同口径资格判定 (供后续按 inject 人群切片裁决)
+    min_conf = float(_cfg("universe_expansion.min_confidence", 0.70))
+    _max_streak = int(_cfg("universe_expansion.max_emergence_streak", 99) or 99)
+    positions = _position_symbols()
+    existing_pb = set()
+    try:
+        from app.playbook.db import PlaybookDB
+        for _inst in PlaybookDB().get_instructions_by_date(_today()):
+            if str(_inst.get("direction", "")).upper() == "SKIP":
+                continue
+            _s = str(_inst.get("symbol", "")).replace("US.", "").upper()
+            if _s:
+                existing_pb.add(_s)
+    except Exception as e:
+        print(f"  [warn] 读取 playbook_instructions 排重失败 (继续): {e}")
+
+    router = _build_router()
+    q = _batch_quotes(router, [s["symbol"] for s in tradeable])
+
+    verdicts = []
+    counts = {"PRICE_IN": 0, "REVERSED": 0, "CONFIRM": 0, "NO_QUOTE": 0}
+    for s in tradeable:
+        quote = q.get(s["symbol"], {})
+        prev_close = float(quote.get("prev_close") or 0) or None
+        price = _quote_price(quote)
+        verdict, signed = _price_in_verdict(s["direction"], prev_close, price, threshold)
+        counts[verdict] += 1
+        _eligible = (s.get("confidence", 0) >= min_conf
+                     and s["symbol"] not in positions
+                     and s["symbol"] not in existing_pb
+                     and _streak_passes(s, _max_streak))
+        verdicts.append({
+            "symbol": s["symbol"],
+            "direction": s["direction"],
+            "confidence": s.get("confidence"),
+            "emergence_streak_days": s.get("emergence_streak_days") or 1,
+            "inject_eligible": bool(_eligible),
+            "prev_close": prev_close,
+            "price": price,
+            "signed_pre_move": round(signed, 6) if signed is not None else None,
+            "verdict": verdict,
+        })
+        print(f"  {verdict:9} {s['symbol']:6} {s['direction']:5} "
+              f"signed={signed:+.2%}" if signed is not None else
+              f"  {verdict:9} {s['symbol']:6} {s['direction']:5} (无价)")
+
+    rec = {
+        "type": "confirm",
+        "date": _today(),
+        "confirmed_at": _now_et().isoformat(),
+        "scan_window": "post_open_confirm",
+        "phase": "shadow",
+        "threshold": threshold,
+        "strategy_id": STRATEGY_ID,
+        "verdicts": verdicts,
+        "counts": counts,
+        "note": ("Phase1 影子裁决: 不拦 21:10 inject 链。判据: PRICE_IN桶前瞻≤0 且 "
+                 "CONFIRM桶>0 (≥10交易日且n≥30) → Phase2 接线为 inject 前置闸。"),
+    }
+    if not dry_run:
+        _append_jsonl(_CONFIRM_PATH, rec)
+    _tail = " [dry-run 不落盘]" if dry_run else ""
+    print(f"[confirm] {_today()} 裁决 {len(verdicts)} 候选 → "
+          f"PRICE_IN {counts['PRICE_IN']} / REVERSED {counts['REVERSED']} / "
+          f"CONFIRM {counts['CONFIRM']} / NO_QUOTE {counts['NO_QUOTE']} "
+          f"(阈值 ±{threshold:.1%}){_tail}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="LLM 事件推理驱动的选股宇宙扩张")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2059,6 +2197,11 @@ def main() -> int:
     p_push = sub.add_parser("push", help="读今日最新一轮 scan → 钉钉整体汇总 (新鲜度守卫)")
     p_push.add_argument("--dry", action="store_true", help="只打印不推送")
     p_push.add_argument("--date", help="scan 日期 YYYY-MM-DD (默认今日 ET)")
+    p_cfm = sub.add_parser("confirm", help="开盘+10min 确认门: 真实盘中价 price-in 裁决 (U11)")
+    p_cfm.add_argument("--force", action="store_true",
+                       help="忽略 0932-1030 ET 时点窗口守卫 (测试用)")
+    p_cfm.add_argument("--dry-run", action="store_true",
+                       help="只打印裁决不落影子样本 (防测试污染攒样)")
     args = ap.parse_args()
 
     try:
@@ -2076,6 +2219,8 @@ def main() -> int:
             return cmd_eval_report(days=args.days)
         if args.cmd == "push":
             return cmd_push(dry=args.dry, date=args.date)
+        if args.cmd == "confirm":
+            return cmd_confirm(force=args.force, dry_run=args.dry_run)
     except Exception as e:
         import traceback
         print(f"⚠️ 执行异常 ({args.cmd}): {e}")
