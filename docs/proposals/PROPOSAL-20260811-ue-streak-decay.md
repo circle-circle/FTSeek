@@ -1,8 +1,11 @@
 ---
 title: UE 陈旧证据衰减(streak 硬闸) + UE→DA 供料管道 go/no-go 判据
 date: 2026-08-11
-status: 方案A已裁定 (2026-08-11 用户裁): 本窗口 8/12-8/24 纯 shadow 零代码,
-  硬闸实施清单冻结于 §八.6, 8/24 与毛利记分卡同窗裁决后翻配置 (99→2) 即生效
+status: 已裁决 GO (2026-08-25 裁决 cron, 报告 docs/reviews/REVIEW-20260824-ue-streak-verdict.md)。
+  判据1 (OOS 8/12-8/24, T+0 口径): streak≥3 桶 n=4 (全 XOM LONG), 方向性均值 -0.277% ≤ 0 → go 分支。
+  判据2: 窗口内无 streak≥3 执行笔 (XOM 链全部 no_trigger), 零增量。诚实声明: n=4<10 单标的, 方向性结论成立、幅度不下强结论。
+  实施 (§八.6, 行号锚点勘误见报告 §五) 留待 8/25 周二 ET09:10 inject 前人工确认; 未确认则键缺省=全放行, 不抢。
+  前史: 方案A 2026-08-11 用户裁定, 8/12-8/24 纯 shadow 零代码。
 type: L1 (~40 行代码 + 1 配置键)
 related_code: scripts/llm_universe_scan.py, ~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py
 related_deb: DEB-20260808-signal-source-strategy
