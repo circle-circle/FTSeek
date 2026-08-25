@@ -1002,39 +1002,12 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
     #   无匹配 → none_matched (市场佐证/纯推理浮现)。S1 切片两周后判 Q1。
     _annotate_news_channel(surfaced, _gather_news(48))
 
-    # v2.2 (2026-07-25, A2 self-critique shadow, 用户批"不改流程可执行"): 同模型二次调用
-    #   逐条攻击因果链最弱环, verdict(KEEP/DOWNGRADE/DROP) 只落库不拦截 — 注入集合零变化。
-    #   判分: 攒样本后切 DROP vs KEEP 的 fwd 对比, 显著则再裁是否实拦。
-    #   回滚: universe_expansion.self_critique=false。显式缓存已开 → 二次调用前缀命中成本低。
-    if bool(_cfg("universe_expansion.self_critique", True)) and tradeable:
-        try:
-            _cr_prompt = ("以下是你刚浮现的标的列表(JSON)。现在切换为独立审查官角色: 逐条攻击其因果链最薄弱的一环 "
-                          "(传导断点/已price-in/拥挤/证据不足), 如实输出。严格 JSON: "
-                          "{\"critiques\": [{\"symbol\": str, \"weakest_link\": 一句话, "
-                          "\"verdict\": \"KEEP/DOWNGRADE/DROP\"}]}\n\n"
-                          + json.dumps([{k: s.get(k) for k in ("symbol", "direction", "causal_chain", "thesis", "self_tier")}
-                                        for s in tradeable], ensure_ascii=False))
-            _cr = call_llm(feature="universe_expansion_reasoning", prompt=_cr_prompt,
-                           system=_system, json_mode=True, max_tokens=1500)
-            if _cr and _cr.success:
-                _crp = _cr.response if isinstance(_cr.response, dict) else json.loads(_cr.response)
-                _cmap = {str(c.get("symbol", "")).replace("US.", "").upper(): c
-                         for c in (_crp.get("critiques") or []) if isinstance(c, dict)}
-                _n_drop = 0
-                for s in surfaced:
-                    c = _cmap.get(s["symbol"])
-                    if c:
-                        _v = str(c.get("verdict", "")).upper()
-                        s["critique"] = {
-                            "weakest_link": str(c.get("weakest_link", ""))[:120],
-                            "verdict": _v if _v in ("KEEP", "DOWNGRADE", "DROP") else "KEEP",
-                        }
-                        if _v in ("DOWNGRADE", "DROP"):
-                            _n_drop += 1
-                print(f"  [self-critique shadow] 覆盖 {len(_cmap)}/{len(tradeable)}, "
-                      f"DOWNGRADE/DROP {_n_drop} (只落库不拦截)")
-        except Exception as _cr_e:
-            print(f"  [warn] self-critique 失败 (降级无批注): {_cr_e}")
+    # [U3 2026-08-25 结案删除, DEB-ue-audit r7] self-critique 影子调用已删除 (省 1 次 LLM/日)。
+    #   预注册判据 (审计 §判据表): T+1 倒挂持续 — DOWN/DROP 命中 59.2% > KEEP 42.9% (n=103≥30);
+    #   实际执行账本 DROP 桶 +$85 / DOWNGRADE 桶 −$286 (verdict 与盈亏无指导性);
+    #   T+0/T+1 口径互斥且置换检验均不显著 (p=0.82/0.12)。
+    #   同步动作: skill DA feed DROP filter 移除 + G1-3 门退役 (双端一致)。
+    #   恢复: git show 2fd79ab3:scripts/llm_universe_scan.py (v2.2 块)。
 
     # R5 (2026-08-02): UE 候选级快照接线 — 此前 signal_snapshots 仅 DA (UE 覆盖 0%).
     #   全量 tradeable (含 critique DROP / 未过注入闸) 落快照, "质量分→结局"攒样不需成交;

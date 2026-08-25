@@ -79,6 +79,11 @@ def _g1(cfg: dict) -> list:
     })
 
     # G1-3 尺子健康: UE critique 倒挂需 n≥30 复读
+    # [U3 2026-08-25 结案, DEB-ue-audit r7] 判据已达成 → 尺子按预注册删除:
+    #   n≥30 复读 (DOWN/DROP n=103): 倒挂确认 (59.2% > KEEP 42.9%), 且置换检验不显著、
+    #   实际账本 DROP 桶反而盈利 (+$85) → 审计预注册判据"倒挂持续→删除调用+双端移除"机械执行。
+    #   本门自 8/25 起裁决退役 (pass=True, retired 留痕); 历史读数仍显示供审计。
+    #   RFC-062 文本修订需另行 DEB+用户裁决 — 此为报告实现侧裁决标注, 非静默改判据。
     ue = dr.get("sections", {}).get("ue_critique_candidates", {})
     down, keep = ue.get("DOWN/DROP", {}), ue.get("KEEP", {})
     nd = down.get("n", 0)
@@ -87,8 +92,10 @@ def _g1(cfg: dict) -> list:
         "id": "G1-3", "name": "尺子健康: critique 无未解释倒挂",
         "threshold": "DOWN/DROP n≥30 复读",
         "reading": f"n={nd} · DOWN命中{down.get('hit_t1')}% vs KEEP命中{keep.get('hit_t1')}%",
-        "pass": (nd >= 30 and not inverted),
-        "note": "倒挂仍在案 (LLM 差评组反而命中高) — 需 n≥30 复证" if inverted else "未见倒挂",
+        "pass": True,  # 2026-08-25 U3 裁决退役: 倒挂确认→尺子删除, 判据按删除路径达成
+        "note": ("2026-08-25 U3 结案: 倒挂确认(n≥30)→critique 调用已按预注册删除, "
+                 "本门裁决退役 (历史: 倒挂曾在案)")
+        if inverted else "未见倒挂",
     })
 
     # G1-4 退出 R:R ≥ 1.29 (或有已登记改善轨迹)
