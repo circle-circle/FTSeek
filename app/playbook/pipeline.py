@@ -5758,10 +5758,14 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         # 2026-07-16 P0 修复: 幂等条件加入 'void', 防止已标 void 的幽灵仓被重复处理.
         #   旧逻辑 WHERE outcome NOT IN ('win','loss') — void 不在排除列表 →
         #   幽灵仓可被重复平仓写入. 修复: 排除 'void' 终态.
+        # 2026-08-25 RFC-066: NULL 陷阱修复 — `outcome NOT IN (...)` 对 outcome=NULL
+        #   行恒为 NULL (falsy) → 结算 UPDATE 静默不触发。新轮次行经 save_instruction
+        #   INSERT 时 outcome 初始为 NULL, 若不显式放行会永远无法结算 (8/17-8/21 15 行
+        #   out=NULL 实锤)。改为 (outcome IS NULL OR outcome NOT IN (...))。
         conn.execute(
             "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
             "holding_period_hours=?, max_favorable_excursion=?, max_adverse_excursion=? "
-            "WHERE id=? AND outcome NOT IN ('win','loss','void')",
+            "WHERE id=? AND (outcome IS NULL OR outcome NOT IN ('win','loss','void'))",
             (_outcome, exit_price, exit_reason, _inst_pnl,
              _inst_pnl_pct, round(holding_hours, 1),
              _mfe_usd, _mae_usd, inst_id),

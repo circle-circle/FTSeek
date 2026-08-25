@@ -535,3 +535,109 @@ class TestEstimateAdmissionQty:
         from app.playbook.db import _estimate_admission_qty
         qty = _estimate_admission_qty({"entry_price": 50.0, "stop_loss": 49.0})
         assert qty is None or qty >= 0
+
+
+class TestRFC066MultiRoundLedger:
+    """RFC-066 (2026-08-25): 多轮指令共存契约.
+
+    根因: 旧版 UNIQUE(date, symbol) + save_instruction UPSERT + 重武装复位 SQL
+    把第一轮已结算台账物理抹除 (8/7-8/24 25 行实锤)。修复后:
+      ① 同 (date, symbol) 可多行共存 (各自独立 decision_id);
+      ② intraday_reentry- 前缀恒 INSERT 新轮次行;
+      ③ 已结算行 (executed=1 且 outcome 终态) 永不被重写;
+      ④ 同 decision_id 幂等原地更新;
+      ⑤ 旧优先级阶梯保留 (UE 不碰 DA)。
+    """
+
+    def test_schema_no_unique_date_symbol(self, db):
+        """新表 schema 无 UNIQUE(date, symbol) 约束"""
+        conn = db._conn()
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbook_instructions'"
+        ).fetchone()[0]
+        assert "UNIQUE(date, symbol)" not in sql
+
+    def test_reentry_inserts_new_row(self, db):
+        """intraday_reentry- 前缀 → INSERT 新轮次行, 第一轮不动"""
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.AU", "direction": "BUY",
+            "decision_id": "DA-20260825-US.AU-test", "thesis": "round1",
+        })
+        db.update_instruction_tracking(r1, {
+            "executed": 1, "outcome": "win", "pnl": 10.0})
+        r2 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.AU", "direction": "BUY",
+            "decision_id": "intraday_reentry-123-1046", "thesis": "round2",
+        })
+        assert r2 != r1
+        rows = db.get_instructions_by_date("2026-08-25")
+        assert len(rows) == 2
+        r1row = next(r for r in rows if r["id"] == r1)
+        assert r1row["outcome"] == "win" and r1row["pnl"] == 10.0
+        assert r1row["thesis"] == "round1"
+
+    def test_settled_row_never_overwritten(self, db):
+        """已结算行 (executed=1 终态) 永不被任何来源重写"""
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.TSLA", "direction": "BUY",
+            "decision_id": "DA-20260825-US.TSLA-x", "thesis": "orig",
+        })
+        db.update_instruction_tracking(r1, {
+            "executed": 1, "outcome": "loss", "pnl": -5.0})
+        # 同 decision_id 重跑 → 返回原行, 结算不丢
+        again = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.TSLA", "direction": "BUY",
+            "decision_id": "DA-20260825-US.TSLA-x", "thesis": "rerun",
+        })
+        assert again == r1
+        row = next(r for r in db.get_instructions_by_date("2026-08-25") if r["id"] == r1)
+        assert row["outcome"] == "loss" and row["pnl"] == -5.0
+        # 不同 (更高) 源覆盖 → 同样拒绝 (已结算)
+        db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.TSLA", "direction": "SELL_SHORT",
+            "decision_id": "universe_expansion:2026-08-25:TSLA", "thesis": "ue",
+        })
+        rows = db.get_instructions_by_date("2026-08-25")
+        assert len(rows) == 1 and rows[0]["outcome"] == "loss"
+
+    def test_same_decision_id_idempotent_update(self, db):
+        """同 decision_id 未结算行 → 原地更新 (幂等重跑)"""
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.COIN", "direction": "BUY",
+            "decision_id": "DA-20260825-US.COIN-y", "thesis": "v1",
+        })
+        r2 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.COIN", "direction": "BUY",
+            "decision_id": "DA-20260825-US.COIN-y", "thesis": "v2",
+        })
+        assert r2 == r1
+        rows = db.get_instructions_by_date("2026-08-25")
+        assert len(rows) == 1 and rows[0]["thesis"] == "v2"
+
+    def test_ue_does_not_touch_da(self, db):
+        """UE 浅指令不得覆盖/并存 DA 深度指令 (旧优先级阶梯保留)"""
+        db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.ORCL", "direction": "SELL_SHORT",
+            "decision_id": "DA-20260825-US.ORCL-z", "thesis": "deep",
+        })
+        db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.ORCL", "direction": "SELL_SHORT",
+            "decision_id": "universe_expansion:2026-08-25:ORCL", "thesis": "shallow",
+        })
+        rows = db.get_instructions_by_date("2026-08-25")
+        assert len(rows) == 1
+        assert rows[0]["decision_id"] == "DA-20260825-US.ORCL-z"
+        assert rows[0]["thesis"] == "deep"
+
+    def test_get_instruction_returns_first_round(self, db):
+        """get_instruction 多行下返回第一轮 (最小 id, 保持旧语义)"""
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.NVDA", "direction": "BUY",
+            "decision_id": "DA-20260825-US.NVDA-w", "thesis": "first",
+        })
+        db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.NVDA", "direction": "BUY",
+            "decision_id": "intraday_reentry-999-1100", "thesis": "second",
+        })
+        got = db.get_instruction("2026-08-25", "US.NVDA")
+        assert got["id"] == r1 and got["thesis"] == "first"

@@ -589,21 +589,23 @@ def _shadow_write(row: Dict[str, Any]) -> None:
 def _arm_instruction(symbol: str, direction: str, price: float,
                      cfg: Dict[str, Any], trade_id: Any,
                      atr_pct: Optional[float] = None) -> Optional[int]:
-    """重武装当日指令: UPSERT 刷新锚点/SL/TP (过 admission 入口审计) + 触发状态复位。
+    """重武装当日指令: 为新一轮入场武装一条**独立指令行** (过 admission 入口审计)。
 
     返回指令 id; 失败 None。
-    2026-08-07 修复 (审查盲区1/2):
-    - 盲区1: save_instruction 按 (date,symbol) UPSERT (db.py:171 ON CONFLICT DO UPDATE)
-      会原地覆盖当日原指令行 (decision_id/thesis/confidence/direction 全被改写) →
-      首笔成交的指令层归因断链 (review_orchestrator.py:100 按 decision_id JOIN,
-      首笔变孤儿; 原指令 thesis/confidence 记录被销毁)。
-      修复: 覆盖前先整行归档 original_instruction 快照到 metadata_json
-      (含原始 decision_id/thesis/confidence/SL/TP/raw/metadata), 事后可查,
-      不破坏 (date,symbol) 唯一约束。
-    - 盲区2: UPDATE 原带 WHERE executed=1 → 原指令处于 executed=0/triggered=1
-      (触发未成交) 时不复位 → 13 门触发链不会重走, 指令变成永远等不到的触发;
-      且 arm 前已确认该标的当日持仓已平 (closed_count==1 + _has_open_trade=False),
-      无条件复位安全。修复: 去掉 WHERE executed=1, 无条件复位。
+
+    RFC-066 (2026-08-25, 根因修复): 多行台账下, 再入场走 save_instruction 的
+    `intraday_reentry-` 分支 → **INSERT 新轮次行**, 与第一轮已结算行共存,
+    不再覆盖/复位第一轮 (旧版 UPSERT 整行覆盖 + 复位 executed/outcome/pnl
+    曾把第一轮结算物理抹除, 8/7-8/24 25 行实锤)。
+    original_instruction 快照仍归档到 metadata_json (首笔归因审计), 但
+    不再是"防覆盖"的唯一手段 — 第一轮行本身不再被触碰。
+
+    2026-08-07 修复 (审查盲区1/2) 历史背景:
+    - 盲区1: 旧 save_instruction 按 (date,symbol) UPSERT 会原地覆盖当日原指令行
+      (decision_id/thesis/confidence/direction 全被改写) → 首笔成交的指令层
+      归因断链。当时修复 = 覆盖前归档快照; RFC-066 起根因已消除 (不覆盖)。
+    - 盲区2: 旧复位 UPDATE 带 WHERE executed=1 → 触发未成交时不复位。RFC-066
+      起复位逻辑整体删除 (新轮次行天然 executed=0/triggered=0)。
 
     2026-08-07 (用户裁决快收结构): SL/TP 主口径改 quick_sl_tp_pct (ATR 相对,
     SL放宽/TP降档); ATR 缺失回退 sl_pct/tp_rr 固定值。
@@ -623,13 +625,14 @@ def _arm_instruction(symbol: str, direction: str, price: float,
                    else round(price * (1 - tp_pct), 2))
     hhmm = _now_hhmm_et()
 
-    # ── 盲区1修复: UPSERT 前先取原指令快照 (当日该标的唯一行) ──
+    # ── RFC-066: 快照取当日第一轮指令 (多行台账下 = 最小 id 行; 旧时代是唯一行) ──
     orig_fields = None
     try:
         orig = db._conn().execute(
             "SELECT id, decision_id, thesis, confidence, direction, entry_price, "
             "       stop_loss, take_profit, raw_instruction_json, metadata_json "
-            "FROM playbook_instructions WHERE date = ? AND symbol = ?",
+            "FROM playbook_instructions WHERE date = ? AND symbol = ? "
+            "ORDER BY id ASC LIMIT 1",
             (today, symbol),
         ).fetchone()
         if orig is not None:
@@ -661,32 +664,10 @@ def _arm_instruction(symbol: str, direction: str, price: float,
             "original_instruction": orig_fields,   # 首笔归因快照 (盲区1)
         },
     }
-    new_id = db.save_instruction(inst)   # UPSERT by (date,symbol) — executed 标志不动
-    from app.utils.timezone import now_utc
-    conn = db._conn()
-    # P2 修复 (2026-08-24 全链路审计): 重武装时同步清空上一轮结算字段
-    #   (outcome/pnl/pnl_pct/exit_price/exit_time/exit_reason/holding_period_hours).
-    #   原复位只清 executed/triggered/execution_price/execution_time/skip_reason,
-    #   残留的 outcome=win/loss 与本轮"未成交"状态矛盾 → 执行漏斗统计污染
-    #   ("未执行指令却有盈亏结果"). 本轮若再成交, 正常路径会重写这些字段, 清空安全.
-    # P2b 补遗 (2026-08-24 复查): max_favorable_excursion/max_adverse_excursion 同为
-    #   结算写入列 (shadow_tracker._track_instruction / pipeline 回填), 漏清则重武装行
-    #   带上一轮 MFE/MAE (实测修复当日仍有 12 行残留), MFE 分析与推送展示同被污染.
-    cur = conn.execute("""
-        UPDATE playbook_instructions
-        SET executed = 0, triggered = 0, execution_price = NULL, execution_time = NULL,
-            skip_reason = NULL,
-            outcome = NULL, pnl = NULL, pnl_pct = NULL,
-            exit_price = NULL, exit_time = NULL, exit_reason = NULL,
-            holding_period_hours = NULL,
-            max_favorable_excursion = NULL, max_adverse_excursion = NULL,
-            updated_at = ?
-        WHERE id = ?
-    """, (now_utc().isoformat(), new_id))
-    conn.commit()
-    if cur.rowcount == 0:
-        # 行缺失 (并发删除等极端情况) — 防御, 不视为武装成功
-        logger.warning(f"[再入场] {symbol} 指令#{new_id} 复位未命中 (行缺失), 记 arm_failed")
+    new_id = db.save_instruction(inst)   # RFC-066: 新轮次 INSERT 独立行, 第一轮结算行不动
+    if not new_id:
+        # save_instruction 仲裁拒绝 (理论不可达: reentry 前缀恒走 INSERT) — 防御
+        logger.warning(f"[再入场] {symbol} 指令武装被仲裁拒绝, 记 arm_failed")
         return None
     logger.info(
         f"[再入场] {symbol} {direction} 重武装指令#{new_id} 完成 "
@@ -1017,12 +998,16 @@ def run_scan(scheduler=None) -> int:
 
 
 def _is_reentry_instruction(symbol: str, date_str: str) -> bool:
-    """该标的当日指令是否本生成器武装 (decision_id 前缀判定). 异常 → False (不豁免, 保守)."""
+    """该标的当日最新指令是否本生成器武装 (decision_id 前缀判定). 异常 → False (不豁免, 保守).
+
+    RFC-066 多行台账: 同一 (date, symbol) 可有多轮, 取最大 id 行 = 最新一轮。
+    """
     try:
         from app.playbook.db import PlaybookDB
         conn = PlaybookDB()._conn()
         row = conn.execute(
-            "SELECT decision_id FROM playbook_instructions WHERE date = ? AND symbol = ?",
+            "SELECT decision_id FROM playbook_instructions "
+            "WHERE date = ? AND symbol = ? ORDER BY id DESC LIMIT 1",
             (date_str, symbol),
         ).fetchone()
         did = str(row[0] or "") if row else ""

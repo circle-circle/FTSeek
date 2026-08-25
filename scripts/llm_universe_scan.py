@@ -1340,15 +1340,20 @@ def cmd_inject(force_dry: bool = False) -> int:
         _sb_on = False
     for it in instructions:
         try:
-            # [DEB-fullchain P1-14 2026-08-16] DA 优先防覆盖: save_instruction 的 UPSERT
-            #   按 (date,symbol) 无条件整行覆盖 — UE cron 复跑会把 DA 同日更深指令
-            #   (200字thesis+conditions+invalidation) 覆盖成 UE 浅指令 (1句thesis)。
+            # [DEB-fullchain P1-14 2026-08-16] DA 优先防覆盖: 旧版 save_instruction 的
+            #   UPSERT 按 (date,symbol) 无条件整行覆盖 — UE cron 复跑会把 DA 同日更深
+            #   指令 (200字thesis+conditions+invalidation) 覆盖成 UE 浅指令 (1句thesis)。
             #   写前查已有行: decision_id 非空且非本源前缀 (DA-/DEC-) → 跳过不覆盖。
             #   UE 覆盖 UE 复跑仍允许 (自更新); 空 decision_id 旧行维持原覆盖行为。
-            _existing = db.get_instruction(it.get("date"), it.get("symbol"))
-            if _is_da_priority_skip((_existing or {}).get("decision_id")):
+            #   RFC-066 (2026-08-25): 多行台账 — 需扫描该 (date, symbol) 的**全部轮次行**,
+            #   任一行是 DA/DEC 优先级即跳过 (旧版只看单行)。
+            _all_rows = [r for r in db.get_instructions_by_date(it.get("date"))
+                         if r.get("symbol") == it.get("symbol")]
+            _da_hit = next((r for r in _all_rows
+                            if _is_da_priority_skip(r.get("decision_id"))), None)
+            if _da_hit:
                 print(f"  [skip] {it.get('symbol')} 今日已有非UE指令 "
-                      f"(decision_id={(_existing or {}).get('decision_id')}) → DA优先不覆盖")
+                      f"(decision_id={_da_hit.get('decision_id')}) → DA优先不覆盖")
                 continue
             # ── Phase 0 (2026-08-23): 同标的同方向 3 交易日冷却 ──
             # LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计回吐

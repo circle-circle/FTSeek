@@ -97,11 +97,151 @@ class PlaybookDB:
             # fwd_return_t1/t3/t5 在 schema 里定义但旧 DB 未迁移, 导致 ic_tracker 写入
             # 因列不存在而失败 (被 except 吞 → IC 永远 0). 显式 ALTER 补列.
             self._migrate_instruction_columns(conn)
+            # RFC-066 (2026-08-25): 存量表移除 UNIQUE(date, symbol) — 多轮指令共存前提.
+            self._migrate_drop_date_symbol_unique(conn)
             self._tables_created = True
             logger.debug("Playbook tables ensured")  # 2026-07-31 降噪: INFO→DEBUG (每 ensure 都打, 23条/11h)
         except Exception as e:
             logger.error(f"Failed to create playbook tables: {e}")
             raise
+
+    def _migrate_drop_date_symbol_unique(self, conn):
+        """RFC-066: 移除存量表的 UNIQUE(date, symbol) 约束 (SQLite 无 DROP CONSTRAINT → 重建).
+
+        幂等: 表 sql 已无该约束则跳过。行 id 保持 (id 是 trade_records 的
+        外键关联键, 绝不能变)。
+
+        事务性 (Python 3.8 陷阱): 池连接是 legacy 隔离级别, DDL 会被隐式
+        COMMIT → "INSERT 拷贝→DROP→RENAME" 无法原子化, 崩溃窗口可能留下
+        孤儿表。故迁移用**专用连接** (isolation_level=None + 显式
+        BEGIN IMMEDIATE/COMMIT), 全程单事务, 失败即整体回滚。
+        另做崩溃恢复: 上次迁移半途崩溃留下的 __rfc066 孤儿表, 主表在则
+        丢弃孤儿, 主表不在则孤儿转正 (数据不丢)。
+        """
+        def _exists(name):
+            return conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+            ).fetchone() is not None
+
+        TMP = "playbook_instructions__rfc066"
+        # ── 崩溃恢复 (上次迁移半途崩溃的残留处理) ──
+        if _exists(TMP):
+            if _exists("playbook_instructions"):
+                conn.execute(f"DROP TABLE {TMP}")
+                conn.commit()
+                logger.warning("[playbook] RFC-066 迁移残留: 孤儿表已清理, 重新迁移")
+            else:
+                conn.execute(f"ALTER TABLE {TMP} RENAME TO playbook_instructions")
+                conn.commit()
+                logger.warning("[playbook] RFC-066 迁移崩溃恢复: 孤儿表转正为主表")
+
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbook_instructions'"
+        ).fetchone()
+        if row is None:
+            return  # 表不存在 (刚建的新库无约束)
+        if "UNIQUE(date, symbol)" not in (row[0] or ""):
+            return  # 已迁移或新建表, 无需处理
+
+        # 专用连接 + 显式事务 (见函数 docstring 的 Python 3.8 说明)
+        _main_path = None
+        for _r in conn.execute("PRAGMA database_list").fetchall():
+            if _r[1] == "main":
+                _main_path = _r[2]
+                break
+        _in_memory = not _main_path  # :memory: 测试库 — 回退到同连接直执 (无崩溃原子性需求)
+        if _in_memory:
+            mig = conn
+        else:
+            mig = sqlite3.connect(_main_path, isolation_level=None, timeout=30.0)
+        _own_conn = not _in_memory
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()]
+        col_list = ", ".join(cols)
+
+        try:
+            mig.execute("BEGIN IMMEDIATE")
+            mig.execute("""
+                CREATE TABLE playbook_instructions__rfc066 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    skip_reason TEXT,
+                    entry_price REAL, stop_loss REAL, take_profit REAL,
+                    position_size INTEGER, risk_amount REAL, risk_reward REAL, confidence INTEGER,
+                    conditions_json TEXT, thesis TEXT, sector TEXT, risks_json TEXT,
+                    market_regime TEXT, vix_at_generation REAL, spy_trend_at_generation TEXT,
+                    data_quality_json TEXT, ok_dimensions INTEGER,
+                    matched_patterns_json TEXT, pattern_verdict TEXT,
+                    triggered INTEGER DEFAULT 0, executed INTEGER DEFAULT 0,
+                    execution_price REAL, execution_time TEXT,
+                    exit_price REAL, exit_time TEXT, exit_reason TEXT, holding_period_hours REAL,
+                    pnl REAL DEFAULT 0, pnl_pct REAL DEFAULT 0,
+                    max_favorable_excursion REAL, max_adverse_excursion REAL, mfe_analysis TEXT,
+                    horizon TEXT DEFAULT 'short', horizon_confidence REAL, horizon_reasoning TEXT,
+                    vol_bucket TEXT, atr_pct REAL,
+                    outcome TEXT, shadow_pnl REAL,
+                    fwd_return_intraday REAL, fwd_return_t1 REAL, fwd_return_t3 REAL, fwd_return_t5 REAL,
+                    lesson TEXT,
+                    raw_instruction_json TEXT,
+                    decision_id TEXT DEFAULT '',
+                    created_at TEXT NOT NULL, updated_at TEXT,
+                    config_version TEXT DEFAULT 'v1', invalidation TEXT,
+                    fwd_return_intraday_open REAL, fwd_return_t1_open REAL, fwd_return_t3_open REAL,
+                    entry_low REAL, entry_high REAL, fwd_proxy INTEGER, anchor_dev_pct REAL,
+                    model_used TEXT, is_ab_test INTEGER, metadata_json TEXT, decision_conf REAL,
+                    fwd_return_t1_adj REAL, fwd_return_t3_adj REAL, fwd_return_t5_adj REAL
+                )
+            """)
+            # 列集合校验: 现有表列必须全部在新表中 (缺列 → 中止, 防数据丢失)
+            _new_cols = {r[1] for r in mig.execute(
+                "PRAGMA table_info(playbook_instructions__rfc066)").fetchall()}
+            missing = [c for c in cols if c not in _new_cols]
+            if missing:
+                raise RuntimeError(f"RFC-066 迁移中止: 新表缺列 {missing} (防数据丢失)")
+            mig.execute(
+                f"INSERT INTO playbook_instructions__rfc066 ({col_list}) "
+                f"SELECT {col_list} FROM playbook_instructions"
+            )
+            n_old = mig.execute("SELECT COUNT(*) FROM playbook_instructions").fetchone()[0]
+            n_new = mig.execute(
+                "SELECT COUNT(*) FROM playbook_instructions__rfc066").fetchone()[0]
+            if n_old != n_new:
+                raise RuntimeError(f"RFC-066 迁移中止: 行数不一致 old={n_old} new={n_new}")
+            mig.execute("DROP TABLE playbook_instructions")
+            mig.execute(
+                "ALTER TABLE playbook_instructions__rfc066 RENAME TO playbook_instructions")
+            mig.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_date "
+                "ON playbook_instructions(date)"
+            )
+            mig.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_outcome "
+                "ON playbook_instructions(outcome)"
+            )
+            mig.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_date_symbol "
+                "ON playbook_instructions(date, symbol)"
+            )
+            mig.execute("COMMIT")
+            logger.info(
+                f"[playbook] RFC-066 迁移完成: playbook_instructions 移除 UNIQUE(date,symbol), "
+                f"{n_new} 行无损迁移, 多轮指令共存已启用"
+            )
+        except Exception:
+            try:
+                mig.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            if _own_conn:
+                mig.close()
+        # 池连接清缓存: 迁移后主表已被替换 (rootpage 变化), 避免陈旧句柄问题
+        try:
+            conn.commit()  # 结束池连接上任何遗留事务
+        except Exception:
+            pass
 
     def _migrate_instruction_columns(self, conn):
         """为已存在的 playbook_instructions 表补缺失列 (SQLite 无 ADD COLUMN IF NOT EXISTS)."""
@@ -243,75 +383,90 @@ class PlaybookDB:
         conn = self._conn()
         now = now_utc().isoformat()
 
-        cur = conn.execute("""
-            INSERT INTO playbook_instructions (
-                date, symbol, direction, skip_reason,
-                entry_price, stop_loss, take_profit,
-                entry_low, entry_high,
-                position_size, risk_amount, risk_reward, confidence,
-                conditions_json, thesis, sector, risks_json,
-                market_regime, vix_at_generation, spy_trend_at_generation,
-                data_quality_json, ok_dimensions,
-                matched_patterns_json, pattern_verdict,
-                raw_instruction_json, decision_id,
-                horizon, horizon_confidence, horizon_reasoning,
-                created_at, updated_at, config_version, invalidation, anchor_dev_pct,
-                model_used, is_ab_test, metadata_json, decision_conf
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date, symbol) DO UPDATE SET
-                direction=excluded.direction,
-                skip_reason=excluded.skip_reason,
-                entry_price=excluded.entry_price,
-                stop_loss=excluded.stop_loss,
-                take_profit=excluded.take_profit,
-                entry_low=excluded.entry_low,
-                entry_high=excluded.entry_high,
-                position_size=excluded.position_size,
-                risk_amount=excluded.risk_amount,
-                risk_reward=excluded.risk_reward,
-                confidence=excluded.confidence,
-                conditions_json=excluded.conditions_json,
-                thesis=excluded.thesis,
-                sector=excluded.sector,
-                risks_json=excluded.risks_json,
-                market_regime=excluded.market_regime,
-                vix_at_generation=excluded.vix_at_generation,
-                data_quality_json=excluded.data_quality_json,
-                ok_dimensions=excluded.ok_dimensions,
-                raw_instruction_json=excluded.raw_instruction_json,
-                decision_id=excluded.decision_id,
-                horizon=excluded.horizon,
-                horizon_confidence=excluded.horizon_confidence,
-                horizon_reasoning=excluded.horizon_reasoning,
-                invalidation=excluded.invalidation,
-                anchor_dev_pct=COALESCE(excluded.anchor_dev_pct, anchor_dev_pct),
-                model_used=COALESCE(excluded.model_used, model_used),
-                is_ab_test=COALESCE(excluded.is_ab_test, is_ab_test),
-                metadata_json=COALESCE(excluded.metadata_json, metadata_json),
-                decision_conf=COALESCE(excluded.decision_conf, decision_conf),
-                updated_at=excluded.updated_at
-            WHERE excluded.decision_id LIKE 'intraday_reentry-%'
-               OR (
-                 CASE
-                   WHEN excluded.decision_id LIKE 'DA-%'
-                        OR excluded.decision_id LIKE 'universe_expansion%' THEN 3
-                   WHEN COALESCE(excluded.decision_id, '') <> '' THEN 1
-                   ELSE 0
-                 END
-                 >=
-                 CASE
-                   WHEN playbook_instructions.decision_id LIKE 'DA-%'
-                        OR playbook_instructions.decision_id LIKE 'universe_expansion%'
-                        OR playbook_instructions.decision_id LIKE 'intraday_reentry-%' THEN 3
-                   WHEN COALESCE(playbook_instructions.decision_id, '') <> '' THEN 1
-                   ELSE 0
-                 END
-                 -- 深度语义: UE 浅指令不得覆盖 DA 深度内容 (P1-14 同源规则,
-                 -- 此前仅存调用方守卫; 下沉 SQL 后与 llm_universe_scan 守卫双保险)
-                 AND NOT (excluded.decision_id LIKE 'universe_expansion%'
-                          AND playbook_instructions.decision_id LIKE 'DA-%')
-               )
-        """, (
+        # ── RFC-066 (2026-08-25): Python 层覆盖仲裁 (取代旧 ON CONFLICT(date,symbol) SQL) ──
+        # 根因: 旧表 UNIQUE(date, symbol) 强制每标的每日单行, 盘中再入场重武装的
+        #   UPSERT 整行覆盖并复位 executed/outcome/pnl → 第一轮已结算台账被抹除
+        #   (8/7-8/24 25 行实锤, 下游 executed=1/outcome IN(win,loss) 统计全部漏计)。
+        # 新语义: 约束已移除 (迁移见 _migrate_drop_date_symbol_unique), 同一 (date,
+        #   symbol) 允许多轮共存, 仲裁规则 (保留旧优先级阶梯的可观察语义):
+        #   ① 同 decision_id (非空) → 原地更新该行 (幂等重跑); 但已结算行
+        #      (executed=1 且 outcome 终态) 永不被重写 — 结算是神圣的。
+        #   ② 空 decision_id (SKIP 票) → 已有空 did 行则原地更新; 只有带源行 → 拒绝
+        #      (8/17 SKIP 覆盖 DA 事故防护, 且避免 SKIP 与源行并存)。
+        #   ③ intraday_reentry- → INSERT 新轮次行 (多轮共存, RFC-066 根因修复)。
+        #   ④ 其他源: UE 遇组内 DA 行 → 拒绝; 新优先级 < 组内最高 → 拒绝; 否则原地
+        #      更新最高优先级行 (同源类替换/高优先级覆盖, 与旧语义一致); 目标行已
+        #      结算 → 拒绝 (不插入、不覆盖)。
+        _did_new = str(inst.get("decision_id", "") or "")
+        _date = inst.get("date")
+        _symbol = inst.get("symbol")
+
+        def _prio(did):
+            d = str(did or "")
+            if (d.startswith("DA-") or d.startswith("universe_expansion")
+                    or d.startswith("intraday_reentry-")):
+                return 3
+            return 1 if d else 0
+
+        _TERMINAL = ("win", "loss", "void")
+        _existing = conn.execute(
+            "SELECT id, decision_id, executed, outcome FROM playbook_instructions "
+            "WHERE date = ? AND symbol = ? ORDER BY id",
+            (_date, _symbol),
+        ).fetchall()
+
+        _target_id = None   # 原地更新目标行
+        _do_insert = False
+        if not _existing:
+            _do_insert = True
+        elif _did_new:
+            _same = [r for r in _existing if (r[1] or "") == _did_new]
+            if _same:
+                _t = _same[-1]
+                if _t[2] == 1 and (_t[3] or "") in _TERMINAL:
+                    logger.info(
+                        f"[save_instruction] RFC-066 拒绝重写: {_symbol} ({_date}) did={_did_new} "
+                        f"行#{_t[0]} 已结算 (outcome={_t[3]}), 生成字段不重写"
+                    )
+                    return _t[0]
+                _target_id = _t[0]
+            elif _did_new.startswith("intraday_reentry-"):
+                _do_insert = True  # 新轮次行与第一轮共存 (RFC-066)
+            elif (_did_new.startswith("universe_expansion")
+                    and any((r[1] or "").startswith("DA-") for r in _existing)):
+                logger.info(
+                    f"[save_instruction] 覆盖仲裁拒绝: {_symbol} ({_date}) "
+                    f"UE 浅指令不得覆盖/并存 DA 深度内容 (did={_did_new})"
+                )
+                return _existing[-1][0]
+            else:
+                _max_prio = max(_prio(r[1]) for r in _existing)
+                if _prio(_did_new) < _max_prio:
+                    logger.info(
+                        f"[save_instruction] 覆盖仲裁拒绝: {_symbol} ({_date}) "
+                        f"新 did={_did_new} 优先级 {_prio(_did_new)} < 现存 {_max_prio}, 不写入"
+                    )
+                    return _existing[-1][0]
+                _best = [r for r in _existing if _prio(r[1]) == _max_prio][-1]
+                if _best[2] == 1 and (_best[3] or "") in _TERMINAL:
+                    logger.info(
+                        f"[save_instruction] RFC-066 拒绝覆盖: {_symbol} ({_date}) 目标行#{_best[0]} "
+                        f"已结算 (outcome={_best[3]}), 新 did={_did_new} 不写入"
+                    )
+                    return _best[0]
+                _target_id = _best[0]
+        else:
+            _empties = [r for r in _existing if not (r[1] or "")]
+            if _empties:
+                _target_id = _empties[-1][0]
+            else:
+                logger.info(
+                    f"[save_instruction] 覆盖仲裁拒绝: {_symbol} "
+                    f"({_date}) 现存行有源, 空 decision_id 写入不覆盖"
+                )
+                return _existing[-1][0]
+
+        _params = (
             inst.get("date"),
             inst.get("symbol"),
             inst.get("direction"),
@@ -349,22 +504,58 @@ class PlaybookDB:
             inst.get("is_ab_test"),
             _to_json(inst.get("metadata") if inst.get("metadata") is not None else inst.get("metadata_json")),
             inst.get("decision_conf"),
+        )
+
+        if _do_insert:
+            cur = conn.execute("""
+                INSERT INTO playbook_instructions (
+                    date, symbol, direction, skip_reason,
+                    entry_price, stop_loss, take_profit,
+                    entry_low, entry_high,
+                    position_size, risk_amount, risk_reward, confidence,
+                    conditions_json, thesis, sector, risks_json,
+                    market_regime, vix_at_generation, spy_trend_at_generation,
+                    data_quality_json, ok_dimensions,
+                    matched_patterns_json, pattern_verdict,
+                    raw_instruction_json, decision_id,
+                    horizon, horizon_confidence, horizon_reasoning,
+                    created_at, updated_at, config_version, invalidation, anchor_dev_pct,
+                    model_used, is_ab_test, metadata_json, decision_conf
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?, ?)
+            """, _params)
+            conn.commit()
+            return cur.lastrowid
+
+        # 原地更新生成字段 (结算列不在列表内 — 与旧 ON CONFLICT SET 列表一致)
+        conn.execute("""
+            UPDATE playbook_instructions SET
+                direction=?, skip_reason=?, entry_price=?, stop_loss=?, take_profit=?,
+                entry_low=?, entry_high=?, position_size=?, risk_amount=?, risk_reward=?,
+                confidence=?, conditions_json=?, thesis=?, sector=?, risks_json=?,
+                market_regime=?, vix_at_generation=?, data_quality_json=?, ok_dimensions=?,
+                raw_instruction_json=?, decision_id=?,
+                horizon=?, horizon_confidence=?, horizon_reasoning=?,
+                invalidation=?,
+                anchor_dev_pct=COALESCE(?, anchor_dev_pct),
+                model_used=COALESCE(?, model_used),
+                is_ab_test=COALESCE(?, is_ab_test),
+                metadata_json=COALESCE(?, metadata_json),
+                decision_conf=COALESCE(?, decision_conf),
+                updated_at=?
+            WHERE id=?
+        """, (
+            _params[2], _params[3], _params[4], _params[5], _params[6],
+            _params[7], _params[8], _params[9], _params[10], _params[11],
+            _params[12], _params[13], _params[14], _params[15], _params[16],
+            _params[17], _params[18], _params[20], _params[21],
+            _params[24], _params[25],
+            _params[26], _params[27], _params[28],
+            _params[31],
+            _params[32], _params[33], _params[34], _params[35], _params[36],
+            now, _target_id,
         ))
-        # 覆盖仲裁可观测 (2026-08-17): rowcount=0 且行已存在 = 无源写入被拒覆盖
-        # (前置实弹验证: 拒绝时 rowcount=0, 现存行原样保留)。只记日志不阻断,
-        # 调用方拿到的返回值仍是现存行 id (下方 SELECT 兜底)。
-        if cur.rowcount == 0:
-            logger.info(
-                f"[save_instruction] 覆盖仲裁拒绝: {inst.get('symbol')} "
-                f"({inst.get('date')}) 现存行有源, 空 decision_id 写入不覆盖"
-            )
         conn.commit()
-        # UPSERT: last_insert_rowid() 在 UPDATE 时返回 0, 需要显式查询
-        row = conn.execute(
-            "SELECT id FROM playbook_instructions WHERE date = ? AND symbol = ?",
-            (inst.get("date"), inst.get("symbol"))
-        ).fetchone()
-        return row[0] if row else 0
+        return _target_id
 
     def get_instructions_by_date(self, date: str) -> List[Dict]:
         """获取某日所有指令"""
@@ -412,10 +603,16 @@ class PlaybookDB:
             return False
 
     def get_instruction(self, date: str, symbol: str) -> Optional[Dict]:
-        """获取某日某标的指令"""
+        """获取某日某标的指令.
+
+        RFC-066: 多行台账下同一 (date, symbol) 可有多轮 — 本方法返回
+        **第一轮** (最小 id, 即盘前计划行), 保持旧单行时代的可观察语义。
+        需要全部轮次用 get_instructions_by_date 后按 symbol 过滤。
+        """
         conn = self._conn()
         row = conn.execute(
-            "SELECT * FROM playbook_instructions WHERE date = ? AND symbol = ?",
+            "SELECT * FROM playbook_instructions "
+            "WHERE date = ? AND symbol = ? ORDER BY id ASC LIMIT 1",
             (date, symbol)
         ).fetchone()
         return _row_to_dict(row) if row else None
@@ -1187,9 +1384,15 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     decision_id TEXT DEFAULT '',
 
     created_at TEXT NOT NULL,
-    updated_at TEXT,
+    updated_at TEXT
 
-    UNIQUE(date, symbol)
+    -- RFC-066 (2026-08-25): 移除 UNIQUE(date, symbol)。
+    --   旧约束强制每标的每日单行: 盘中再入场重武装的 UPSERT 整行覆盖并复位
+    --   executed/outcome/pnl → 第一轮已结算台账被抹除 (8/7-8/24 25 行实锤,
+    --   下游 executed=1/outcome IN(win,loss) 统计全部漏计)。多轮共存后同一
+    --   (date, symbol) 每轮一行 (各自独立 decision_id), 覆盖仲裁下沉到
+    --   save_instruction Python 层, "已执行/已终态行永不覆盖"为硬规则。
+    --   存量表迁移见 ensure_tables → _migrate_drop_date_symbol_unique。
 );
 
 CREATE TABLE IF NOT EXISTS playbook_factor_stats (

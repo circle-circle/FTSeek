@@ -148,11 +148,24 @@ def _da_instructions(date, symbols):
     try:
         con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
         codes = [f"US.{s}" for s in symbols]
-        q = f"SELECT symbol,direction,pnl_pct,outcome,triggered,executed FROM playbook_instructions WHERE date=? AND symbol IN ({','.join('?' * len(codes))})"
+        q = (f"SELECT symbol,direction,pnl_pct,outcome,triggered,executed "
+             f"FROM playbook_instructions WHERE date=? AND symbol IN "
+             f"({','.join('?' * len(codes))}) ORDER BY id ASC")
+        # RFC-066 多行台账: 同一 (date,symbol) 可有多轮 (第一轮计划 + 再入场轮).
+        # 归因口径: direction 取**第一轮** (DA/UE 计划方向, 峰群一致性语义),
+        # pnl_pct/outcome/triggered/executed 取**最接近终态**的行 (优先有结算的轮),
+        # 无结算则退回第一轮。确定性: 按 id ASC 遍历, 覆盖规则显式。
+        _rows = {}
         for r in con.execute(q, [date] + codes).fetchall():
-            out[str(r[0]).replace("US.", "")] = {
-                "direction": r[1], "pnl_pct": r[2], "outcome": r[3],
-                "triggered": r[4], "executed": r[5],
+            _rows.setdefault(str(r[0]).replace("US.", ""), []).append(r)
+        for sym, rs in _rows.items():
+            first = rs[0]
+            settled = next((x for x in reversed(rs) if x[3] in ("win", "loss", "skipped")), None)
+            pick = settled if settled is not None else first
+            out[sym] = {
+                "direction": first[1],          # 计划方向 (第一轮)
+                "pnl_pct": pick[2], "outcome": pick[3],
+                "triggered": pick[4], "executed": pick[5],
             }
         con.close()
     except Exception as e:
