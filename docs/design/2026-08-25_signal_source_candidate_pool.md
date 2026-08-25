@@ -38,6 +38,13 @@
 
 ### ② 盘中资金流失衡 — 前向攒样候选
 
+> **[2026-08-25 执行核验] 攒样已在跑, 且远早于本文档认知**: `scripts/futu_channel_shadow_collect.py`
+> (DEB-20260812 通道影子采集, 随 main.py scheduler 常驻) 自 **2026-08-11** 起持续落库
+> `data/futu_capital_flow.jsonl` — 现状 **68 标的 × 10 个交易日** 分钟级 (TRADING 节流 300s,
+> 按 (symbol, item_time) 幂等去重); 日级聚合 cron (`capital_flow_daily_aggregate.py`, 每日 07:00)
+> → `data/capital_flow_daily.jsonl` 184 行; 回放验证脚本 `capital_flow_replay.py` 四关门+安慰剂
+> 已预注册。**攒样进度 10/30 交易日, 无需新建任何组件**, 只需等样本期满触发回放。
+
 - **数据**: `get_capital_flow` 返回当日分钟级大/中/小/超大单净流入 (391 行/天实测),
   大单方向与散户方向背离是经典订单流信号。
 - **限制**: 仅当日数据, 无历史 → 只能攒样。按 8/14 预注册攒样器纪律: 幂等采集器按
