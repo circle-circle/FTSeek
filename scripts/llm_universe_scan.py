@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,6 +57,10 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
+
+# [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
+#   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
+_LAST_BRIEF_MATERIALS: List[str] = []
 PROMPT_VERSION = "v2.6"  # scan 落库归因戳; v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-20260825-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
@@ -94,6 +99,10 @@ SYSTEM_PROMPT_V2 = (
     "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
     # v2.2 (2026-07-25, P1 可证伪字段 + P2 证据清单): 预测与叙事分离
     "6. 可证伪性(强制): 每个非 SKIP 标的额外输出 — invalidation(一句话失效条件, ≤40字), "
+    # [U10 2026-08-25 建议④] 结构化失效触发器 — 照抄 DA r15 schema (tripwire_checker 白名单),
+    #   让盘中失效核销器真正可响 (自然语言首期命中率≈0)。与 DA 同契约, 同一消费方。
+    "invalidation_triggers(本股、代码可判定的失效条件数组, ≥1条, 每条 {metric, operator, value}: "
+    "metric 限 收盘价/成交量/5日涨跌/盘前涨跌幅, operator 限 < 或 >, value 纯数字), "
     "horizon_hours(论点预期兑现时效, 整数小时, 日内动量 4-8), expected_move_pct(预期方向幅度%, 小数)。\n"
     "7. 证据清单(强制, 如实勾选不得美化): evidence_checklist 四项布尔 — "
     "catalyst_specific(存在具体催化事件非泛情绪), catalyst_within_24h(催化发生在24h内), "
@@ -613,6 +622,10 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
     health: List[str] = []  # [新鲜度 2026-07-22] 各输入源健康摘要 (日志可观测, 区分"无事件"与"链路断")
+    # [U8 2026-08-25 evidence grounding] 材料行缓存 — 供 _ground_evidence_refs 做
+    #   "引证是否真实存在于今日输入"的代码核验。每次构建重置。
+    global _LAST_BRIEF_MATERIALS
+    _LAST_BRIEF_MATERIALS = []
 
     if manual_clue:
         parts.append(f"\n[人工线索]\n{manual_clue.strip()}")
@@ -749,6 +762,27 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                          "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。")
 
     print(f"  [输入源健康] " + " | ".join(health))
+    # [U9 2026-08-25 建议②] 扫描时注入当日 regime 摘要 — 与注入端同源 (MarketRegimeGate),
+    #   让模型带着市场状态做因果推理 (此前注入端才算, 模型扫描时看不见)。
+    #   失败降级空, 不阻断。回滚: universe_expansion.scan_regime_brief=false。
+    if bool(_cfg("universe_expansion.scan_regime_brief", True)):
+        try:
+            from app.playbook.market_regime import MarketRegimeGate as _MRG_scan
+            _rc_scan = _MRG_scan().assess()
+            _spy_trend = "above_ma20" if _rc_scan.spy_ma20 >= _rc_scan.spy_ma50 else "below_ma20"
+            _regime_line = (f"regime={_rc_scan.regime.value} · VIX={_rc_scan.vix} · "
+                            f"SPY {_spy_trend} (MA20 {_rc_scan.spy_ma20:.1f} / MA50 {_rc_scan.spy_ma50:.1f})")
+            parts.append("\n[当日市场环境 (与执行端同源口径, 因果推理须考虑)]")
+            parts.append(_regime_line)
+        except Exception as _rg_scan_e:
+            print(f"  [warn] regime 摘要注入失败 (降级, 不阻断): {_rg_scan_e}")
+    # [U8 2026-08-25 evidence grounding] 收集全部材料行 — 供引证真实性核验。
+    #   拆行保留 (人工线索段是头+内容单元素); 排除节标题与日期行。
+    for _p in parts:
+        for _line in str(_p).split("\n"):
+            _line = _line.strip()
+            if _line and not _line.startswith("[") and not _line.startswith("日期"):
+                _LAST_BRIEF_MATERIALS.append(_line)
     return "\n".join(parts)
 
 
@@ -794,6 +828,18 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
                 tier = "THESIS_ONLY"
                 _tier_fallback = True
+            # [U8 2026-08-25 evidence grounding] 引证真实性核验 — 防伪造引证骗过夹逼。
+            #   enforce=false(默认, 观测): 只留痕 evidence_grounded, 不改判定;
+            #   enforce=true: 未过核验的引证视同无引证 → 落 Track A 夹逼。
+            #   判据: 攒样 5 交易日, 人工抽检匹配误杀率 <10% → 裁开强制。回滚=删键。
+            _ev_grounded = True
+            if ev and bool(_cfg("universe_expansion.evidence_grounding", True)):
+                try:
+                    _ev_grounded = _evidence_grounded(ev, _LAST_BRIEF_MATERIALS)
+                except Exception:
+                    _ev_grounded = True  # 核验器自身故障 → 不误杀
+                if not _ev_grounded and bool(_cfg("universe_expansion.evidence_grounding_enforce", False)):
+                    ev = ""  # 视同无引证 → 下方 Track A 夹逼接管
             raw_conf = conf
             clamped = False
             if not ev:  # Track A 夹逼: 无证据 → 强制降级 (兜底 LLM 不守自律约束)
@@ -803,6 +849,8 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                 conf = min(conf, 0.60)
             item["evidence_ref"] = ev
             item["self_tier"] = tier
+            # [U8] 引证真实性留痕 — 供攒样判误杀率; 未过核验且未开强制时不改变判定
+            item["evidence_grounded"] = _ev_grounded
             item["raw_confidence"] = round(raw_conf, 3)
             item["clamped"] = clamped
             if _tier_fallback:
@@ -810,6 +858,28 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["confidence"] = round(conf, 3)
             # v2.2 (2026-07-25, P1 可证伪字段): 纯落库供判分, 不进任何执行逻辑
             item["invalidation"] = str(it.get("invalidation", ""))[:120]
+            # [U10 2026-08-25 建议④] 结构化失效触发器解析 — 白名单与
+            #   tripwire_checker._get_structured_triggers 同契约 (同一消费方):
+            #   metric∈{收盘价,成交量,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
+            #   非法条目静默丢弃 (宁漏语义, 与消费端一致)。
+            _it_metrics = ("收盘价", "成交量", "5日涨跌", "盘前涨跌幅")
+            _it_raw = it.get("invalidation_triggers") or []
+            if not isinstance(_it_raw, list):
+                _it_raw = []
+            _it_ok = []
+            for _t in _it_raw[:4]:  # 上限4条, 防异常输出膨胀
+                if not isinstance(_t, dict):
+                    continue
+                _tm = str(_t.get("metric") or "").strip()
+                _to = str(_t.get("operator") or "").strip()
+                if _tm not in _it_metrics or _to not in ("<", ">"):
+                    continue
+                try:
+                    _tv = float(_t.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                _it_ok.append({"metric": _tm, "operator": _to, "value": _tv})
+            item["invalidation_triggers"] = _it_ok
             try:
                 item["horizon_hours"] = int(it.get("horizon_hours", 0) or 0)
             except (TypeError, ValueError):
@@ -847,6 +917,33 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                 }
         out.append(item)
     return out
+
+
+def _norm_text(s: str) -> str:
+    """[U8] 归一化文本用于匹配: 小写, 只留字母数字与汉字."""
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(s).lower())
+
+
+def _evidence_grounded(ev: str, materials: List[str], k: int = 6, ratio: float = 0.5) -> bool:
+    """[U8 2026-08-25] 引证真实性核验 (纯代码): 模型引用的证据片段是否出自今日输入材料。
+
+    方法: 双方归一化后取 k 字符滑窗, 证据窗口命中材料库的比例 ≥ ratio → 判为真实引证。
+    短引证 (<k) 退化为整串包含匹配。防"编一句像材料的话"骗过 Track A 夹逼。
+    """
+    ev_n = _norm_text(ev)
+    if not ev_n or not materials:
+        return False
+    if len(ev_n) < k:
+        return any(ev_n in _norm_text(m) for m in materials)
+    grams = set()
+    for m in materials:
+        mn = _norm_text(m)
+        grams.update(mn[i:i + k] for i in range(max(len(mn) - k + 1, 0)))
+    ev_grams = [ev_n[i:i + k] for i in range(len(ev_n) - k + 1)]
+    if not ev_grams:
+        return False
+    hit = sum(1 for g in ev_grams if g in grams)
+    return hit / len(ev_grams) >= ratio
 
 
 def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1419,6 +1516,9 @@ def cmd_inject(force_dry: bool = False) -> int:
                 "prompt_version": PROMPT_VERSION,
                 # [U1] 内容指纹随指令落库 (raw_instruction_json 内)
                 "prompt_hash": PROMPT_HASH_V2,
+                # [U10 2026-08-25 建议④] 结构化失效触发器 → tripwire_checker 结构化轨
+                #   (与 DA r15 同契约同消费方; 消费端 _get_structured_triggers 再验一次白名单)
+                "invalidation_triggers": s.get("invalidation_triggers") or [],
                 "origin": {
                     "info_source": INFO_SOURCE,
                     # S0 (2026-07-27): 真实首报渠道 + 新闻 id (机械归因, 见 _annotate_news_channel)
