@@ -894,6 +894,12 @@ class FutuLV3Provider:
                             "ask": float(ask) if ask > 0 else float(last_price),
                             "bid_vol": float(bid_vol),
                             "ask_vol": float(ask_vol),
+                            # 2026-08-25 (DEB-ue-audit r5): 单只快照路径补盘前字段,
+                            #   与批量快照路径 (get_batch_quote, 8/11 修复) 同源同口径。
+                            #   此前漏补 → 批量失败逐只降级后盘前锚定门拿不到 pre_price,
+                            #   UE inject 盘前仍全判"无现价"。加法式补字段, 现有消费方零感知。
+                            "pre_price": float(row.get("pre_price", 0) or 0),
+                            "pre_change_rate": float(row.get("pre_change_rate", 0) or 0),
                             "data_source": "futu_lv3",
                             "timestamp": time.time(),
                             "delay_ms": "<10",  # LV3 延迟 < 10ms
@@ -1052,8 +1058,16 @@ class FutuLV3Provider:
                 results.update(snapshot_results)
                 return results
             else:
-                logger.warning(f"[FutuLV3] 批量快照失败: ret={ret}")
-                return results  # 返回已有的 Push 缓存数据
+                # 2026-08-25 根因修复 (DEB-ue-audit r5): 原实现在此直接返回 Push 缓存,
+                #   但 Futu get_market_snapshot 对"批内任一标的不支持"整批拒绝 (ret=-1):
+                #   8/25 21:10 UE inject 批内 2 只 OTC 票 (NUMD/LGMK, "暂不提供美股 OTC 市场行情")
+                #   毒死整批 8 只 → 主板票失去 LV3 pre_price → 盘前锚定门全判"无现价" → 0 条注入。
+                #   修复: 不再提前返回, 落入下方逐只降级 (与 except 路径同语义),
+                #   毒票只杀自己, 主板票逐只快照仍带 pre_price。
+                logger.warning(
+                    f"[FutuLV3] 批量快照失败: ret={ret}, msg={getattr(data, 'msg', None)} "
+                    f"→ 逐只降级 (防单票毒死整批)"
+                )
 
         except Exception as e:
             self._fail_count += 1
