@@ -183,24 +183,16 @@ async def _fetch_real_fundamental(symbol: str, company_name: str = "") -> Dict:
         
         if result.get("status") == "ok":
             data = result["data"]
-            # 2026-08-22 (基建接线): 注入空头数据 — get_short_interest 已实现但从未消费,
-            #   DA prompt 多空辩论需要做空压力信号 (用户 8/16 要求"真正有空头产出").
-            short_data = {}
-            try:
-                from app.data.providers.futu_extended_provider import FutuExtendedProvider
-                _futu_ext = FutuExtendedProvider()
-                _si = _futu_ext.get_short_interest(symbol)
-                if _si.get("status") == "ok" and _si.get("data"):
-                    short_data = _si["data"]
-            except Exception as _e:
-                logger.debug(f"[deep_analysis] short_interest 拉取失败 {symbol}: {_e}")
-            # 保持旧的返回格式 + 新增 short_interest
+            # 2026-08-25 (DEB-20260825 第11轮): 移除 short_interest 死源接线 —
+            #   2026-08-25 活体探针实锤: Futu 美股 snapshot 的卖空字段全返回 NaN
+            #   (卖空数据仅港股实体可用, 见 docs/design/2026-08-25_signal_source_candidate_pool.md
+            #   候选⑦出局)。此前的注入只会在 prompt 里产生空壳/NaN 字段, 属误导性信息。
+            #   若未来接通真实空头数据源 (如 Finnhub SI), 另行走活体探针→门禁流程。
             return {
                 "financials": data.get("financials", {}),
                 "analyst": data.get("analyst", {}),
                 "recent_news": data.get("recent_news", []),
                 "next_catalyst": data.get("next_catalyst", {}),
-                "short_interest": short_data,  # 新增: 空头压力数据
                 "_sources": data.get("_sources", {}),
             }
     except Exception as e:
@@ -378,22 +370,9 @@ def _format_real_fundamental_text(real: Dict) -> str:
     else:
         lines.append("【分析师评级 — ❌ API调用失败，无数据】")
 
-    # 空头数据 (2026-08-22 基建接线: 做空压力信号供多空辩论)
-    si = real.get("short_interest", {})
-    if si:
-        lines.append(f"【空头数据 — futu_opend】")
-        parts = []
-        if si.get("short_percent"):
-            parts.append(f"做空比例={si['short_percent']:.2f}%")
-        if si.get("days_to_cover"):
-            parts.append(f"回补天数={si['days_to_cover']:.1f}天")
-        if si.get("shares_short"):
-            parts.append(f"做空股数={si['shares_short']:,}")
-        if si.get("latest_date"):
-            parts.append(f"数据日期={si['latest_date']}")
-        lines.append("  " + " | ".join(parts) if parts else "  (字段均为N/A)")
-    else:
-        lines.append("【空头数据 — ❌ 无数据】")
+    # 2026-08-25 (DEB-20260825 第11轮): 移除【空头数据】prompt 段 —
+    #   数据源已死 (Futu 美股卖空字段全 NaN, 探针实锤), 旧段只会输出
+    #   "❌ 无数据" 或空壳字段, 对多空辩论零信息量且误导数据质量审计计数。
 
     # 新闻
     news = real.get("recent_news", [])

@@ -2,7 +2,10 @@
 Thesis Challenge — LLM深度审视用户的进场理由，给出绝对判断。
 
 设计原则:
-- 输入深度: 技术指标(MA/RSI/MACD/ATR) + 板块联动 + 近期K线 + 战前计划bear case
+- 输入深度: 技术指标(MA/RSI/MACD/ATR) + 近期K线 + 战前计划bear case
+  (2026-08-25 DEB-20260825 第11轮: 移除板块联动与标的历史胜率输入 —
+   前者前提已被预注册检验证伪 [data/peer_momentum_premise_report.json 全轴 |t|<1.3],
+   后者标的级反持续 pearson=-0.40 对下一笔无预测力)
 - 推理深度: System prompt强制step-by-step多维度检查
 - 输出精简: json_mode=True, temperature=0, max_tokens=500
 - 每symbol 4h缓存，不重复调用
@@ -202,45 +205,6 @@ def _collect_technicals_reuse(svc, symbol: str) -> Dict:
     return result
 
 
-def _collect_sector_reuse(svc, symbol: str) -> Dict:
-    """从已连接的svc获取板块联动数据"""
-    SECTOR_MAP = {
-        'Technology': ['US.AAPL', 'US.MSFT', 'US.GOOG', 'US.META', 'US.AMZN'],
-        'Semiconductors': ['US.NVDA', 'US.AMD', 'US.INTC', 'US.TSM', 'US.MU', 'US.AVGO'],
-        'Consumer': ['US.TSLA', 'US.NFLX', 'US.NKE', 'US.SBUX'],
-        'Financials': ['US.JPM', 'US.GS', 'US.BAC', 'US.MS'],
-        'China_ADR': ['US.BABA', 'US.PDD', 'US.JD', 'US.NIO', 'US.BIDU', 'US.LI'],
-    }
-
-    result = {"sector": "Unknown", "peer_changes": {}}
-
-    for sec, tickers in SECTOR_MAP.items():
-        if symbol in tickers:
-            result["sector"] = sec
-            break
-
-    from futu import RET_OK
-    peers = [t for sec, tickers in SECTOR_MAP.items()
-             for t in tickers if t != symbol and sec == result["sector"]]
-    if not peers:
-        return result
-
-    # Subscribe peers for snapshot
-    svc._quote_ctx.subscribe(peers[:6], [])
-    import time; time.sleep(0.3)
-
-    ret, snap = svc._quote_ctx.get_market_snapshot(peers[:6])
-    if ret == RET_OK and not snap.empty:
-        for _, row in snap.iterrows():
-            code = row.get("code", "")
-            prev = float(row.get("prev_close_price", 0) or 0)
-            cur = float(row.get("cur_price", 0) or 0)
-            if prev > 0 and cur > 0:
-                result["peer_changes"][code.replace("US.", "")] = round((cur - prev) / prev * 100, 2)
-
-    return result
-
-
 def _collect_technicals(symbol: str) -> Dict:
     """从Futu获取技术指标 (MA/RSI/MACD/ATR/量比)"""
     try:
@@ -347,131 +311,43 @@ def _collect_technicals(symbol: str) -> Dict:
         return {"error": str(e)}
 
 
-def _collect_sector_context(symbol: str) -> Dict:
-    """获取板块联动数据"""
-    SECTOR_MAP = {
-        'Technology': ['US.AAPL', 'US.MSFT', 'US.GOOG', 'US.META', 'US.AMZN'],
-        'Semiconductors': ['US.NVDA', 'US.AMD', 'US.INTC', 'US.TSM', 'US.MU', 'US.AVGO'],
-        'Consumer': ['US.TSLA', 'US.NFLX', 'US.NKE', 'US.SBUX'],
-        'Financials': ['US.JPM', 'US.GS', 'US.BAC', 'US.MS'],
-        'China_ADR': ['US.BABA', 'US.PDD', 'US.JD', 'US.NIO', 'US.BIDU', 'US.LI'],
-    }
-
-    result = {"sector": "Unknown", "peer_changes": {}}
-
-    # Find sector
-    for sec, tickers in SECTOR_MAP.items():
-        if symbol in tickers:
-            result["sector"] = sec
-            break
-
-    # Get peer quotes
-    try:
-        # 2026-07-25: 同上, 改单例 + 不 disconnect
-        from app.web_dashboard.manual_order_service import get_manual_order_service
-        svc = get_manual_order_service()
-        if not svc.connect():
-            return result
-
-        from futu import RET_OK
-        peers = [t for sec, tickers in SECTOR_MAP.items()
-                 for t in tickers if t != symbol and sec == result["sector"]]
-        if not peers:
-            return result
-
-        # Must subscribe before snapshot
-        svc._quote_ctx.subscribe(peers[:6], [])
-        import time; time.sleep(0.3)
-
-        ret, snap = svc._quote_ctx.get_market_snapshot(peers[:6])
-        if ret == RET_OK and not snap.empty:
-            for _, row in snap.iterrows():
-                code = row.get("code", "")
-                prev = float(row.get("prev_close_price", 0) or 0)
-                cur = float(row.get("cur_price", 0) or 0)
-                if prev > 0 and cur > 0:
-                    result["peer_changes"][code.replace("US.", "")] = round((cur - prev) / prev * 100, 2)
-
-    except Exception:
-        pass
-
-    return result
-
-
-def _collect_trade_history(symbol: str) -> Dict:
-    """获取该symbol的历史交易表现"""
-    try:
-        conn = sqlite3.connect(_get_db())
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT direction, realized_pnl, entry_time, exit_time "
-            "FROM trade_records WHERE symbol=? AND trade_mode != 'simulate' "
-            "ORDER BY exit_time DESC LIMIT 5",
-            (symbol,)
-        ).fetchall()
-        conn.close()
-
-        if not rows:
-            return {"count": 0}
-
-        wins = sum(1 for r in rows if float(r["realized_pnl"] or 0) > 0)
-        total_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
-        return {
-            "count": len(rows),
-            "wins": wins,
-            "win_rate": round(wins / len(rows) * 100, 0) if rows else 0,
-            "total_pnl": round(total_pnl, 2),
-            "last_trades": [
-                {
-                    "direction": r["direction"],
-                    "pnl": round(float(r["realized_pnl"] or 0), 2),
-                    "date": (r["exit_time"] or "")[:10],
-                }
-                for r in rows
-            ],
-        }
-    except Exception:
-        return {"count": 0}
-
-
-# ──────────────────────────────────────────────────
-#  System Prompt: 强制step-by-step多维度推理
-# ──────────────────────────────────────────────────
-
 SYSTEM_PROMPT = """你是一个严苛的量化交易审计师。你的任务是判断用户的进场理由(thesis)在当前市场条件下是否成立。
 
 你必须按以下步骤逐一检查(内部推理,不输出):
 
-## 检查清单 (5个维度,逐一过)
+## 检查清单 (4个维度,逐一过)
+(2026-08-25 DEB-20260825 第11轮修订: 原"板块联动"维删除 — 同族动量一致性前提已被
+ 预注册检验证伪 [peer_momentum_premise_report.json: 全部 |t|<1.3 无分离]; 原"历史表现"
+ 维删除 — 标的级历史胜负反持续 pearson=-0.40 对下一笔无预测力。两者均属把噪声当证据,
+ 且多空不对称地惩罚既往亏损方向)
 
 ### 1. 技术面一致性
 - thesis方向与均线排列(MA alignment)是否一致?
 - RSI是否处于极端区域(>70超买做多=危险, <30超卖做空=危险)?
 - MACD信号与thesis方向是否矛盾?
 - 价格在20日区间的位置(高位做多=追高, 低位做空=追空)?
+- 多空对称: 追高风险对 BUY/SELL_SHORT 同等对待 (高位做空=追空 与 高位做多=追高 同权重)
 
-### 2. 板块联动
-- 同板块peers今日涨跌是否与thesis方向一致?
-- 如果peers普遍下跌但用户做多,这是逆板块趋势
-
-### 3. 风险收益比
+### 2. 风险收益比
 - 从当前价格到thesis的止损/失效价,空间多大?
 - ATR波动率相对于预期收益是否合理?
 - 持仓已亏损时,thesis是否只是"不愿认错"的借口?
 
-### 4. 历史表现
-- 该symbol过去的交易胜率和盈亏比
-- 是否反复在同一只股票上亏损
-
-### 5. Thesis实质内容
+### 3. Thesis实质内容
 - thesis是否包含具体的逻辑链(因为A所以B)?
 - 还是空泛的"看好"/"盘感"/"跟风"?
 - 如果thesis是情绪化的("觉得跌多了该反弹"),直接INVALID
+- 多空对称: "跌多了该反弹"与"涨多了该跌"同为不合格论据, 标准完全一致
+
+### 4. 催化剂与时效
+- thesis依赖的催化是否有明确日期或可观测触发条件(财报/事件/价位)?
+- 催化是否已在价格中反映? 旧新闻不构成增量证据
+- 若催化时效无法回答, confidence 不得高于50
 
 ## 判定规则
-- 5个维度中≥3个支持thesis → VALID
-- 5个维度中≥3个反对thesis → INVALID
-- 技术面+板块联动都反对 → INVALID (不管其他维度)
+- ≥3个维度支持thesis → VALID
+- ≥3个维度反对thesis → INVALID
+- 技术面+风险收益比都反对 → INVALID (不管其他维度)
 - thesis无实质内容 → 直接INVALID
 
 ## 输出格式 (严格JSON,不输出推理过程)
@@ -482,17 +358,16 @@ SYSTEM_PROMPT = """你是一个严苛的量化交易审计师。你的任务是�
   "confidence": 0-100,
   "check_results": {
     "technical": "SUPPORT" 或 "AGAINST" 或 "NEUTRAL",
-    "sector": "SUPPORT" 或 "AGAINST" 或 "NEUTRAL",
     "risk_reward": "OK" 或 "POOR",
-    "history": "POSITIVE" 或 "NEGATIVE" 或 "NONE",
-    "thesis_quality": "STRONG" 或 "WEAK" 或 "EMPTY"
+    "thesis_quality": "STRONG" 或 "WEAK" 或 "EMPTY",
+    "catalyst": "SUPPORT" 或 "AGAINST" 或 "NEUTRAL"
   }
 }
 
 要求:
 - weakness必须引用具体数字(如"RSI=72超买区做多"而非"技术指标不利")
 - fatal_if必须是可验证的条件(如"跌破$140"或"TSM财报下调指引")
-- check_results的5个维度必须全部填写
+- check_results的4个维度必须全部填写
 - 不要输出推理过程,不要给建议,只输出JSON"""
 
 
@@ -521,9 +396,11 @@ def challenge_thesis(
         return cached
 
     # 2. Collect deep context (single broker connection for efficiency)
-    tech, sector, trade_hist = {}, {}, {}
+    # 2026-08-25: 不再采集板块联动与标的历史交易 — 对应维度已从 SYSTEM_PROMPT 删除
+    #   (前提证伪, 见文件头注释), 继续采集只会诱导模型使用已被否定的证据。
+    tech = {}
     try:
-        # 2026-07-25: 同上, 改单例 + 不 disconnect (复用连接采集 tech/sector)
+        # 2026-07-25: 同上, 改单例 + 不 disconnect (复用连接采集 tech)
         from app.web_dashboard.manual_order_service import get_manual_order_service as _get_svc
         _svc = _get_svc()
         _connected = _svc.connect()
@@ -535,15 +412,6 @@ def challenge_thesis(
             tech = _collect_technicals_reuse(_svc, symbol)
         except Exception as e:
             tech = {"error": str(e)}
-        try:
-            sector = _collect_sector_reuse(_svc, symbol)
-        except Exception as e:
-            sector = {"sector": "Unknown", "peer_changes": {}}
-
-    try:
-        trade_hist = _collect_trade_history(symbol)
-    except Exception:
-        trade_hist = {"count": 0}
 
     # 3. Build rich prompt
     user_prompt = f"""## 标的: {symbol}
@@ -564,21 +432,7 @@ def challenge_thesis(
     else:
         user_prompt += f"\n\n## 技术指标: 不可用 ({tech['error']})"
 
-    # Sector context
-    if sector.get("peer_changes"):
-        user_prompt += f"\n\n## 板块联动 ({sector['sector']})"
-        for peer, chg in sector["peer_changes"].items():
-            user_prompt += f"\n- {peer}: {chg:+.1f}%"
-
-    # Trade history
-    if trade_hist.get("count", 0) > 0:
-        user_prompt += f"\n\n## 该symbol历史交易"
-        user_prompt += f"\n- 总交易次数: {trade_hist['count']}"
-        user_prompt += f"\n- 胜率: {trade_hist['win_rate']:.0f}%"
-        user_prompt += f"\n- 总盈亏: ${trade_hist['total_pnl']:.2f}"
-        if trade_hist.get("last_trades"):
-            for t in trade_hist["last_trades"][:3]:
-                user_prompt += f"\n- {t['date']} {t['direction']}: ${t['pnl']:+.2f}"
+    # 2026-08-25: 板块联动/历史交易注入已删除 (维度证伪, 见 SYSTEM_PROMPT 头注释)
 
     # Bear cases from battle plan
     if bear_cases:

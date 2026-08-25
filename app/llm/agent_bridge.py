@@ -763,9 +763,40 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
         for rule in self._memory.get("market_specific_rules", []):
             lines.append(f"  {rule}")
         
-        perf = self._memory.get("performance_tracking", {})
+        # 2026-08-25 (DEB-20260825 第11轮): 全局性能行从"胜率叙事"换为费用后净期望.
+        #   根因: ①胜率已被证伪为分水岭 — 死胎回放 死/活组 WR 27% vs 95% 但均笔
+        #   -$26.7 vs +$48.6, LLM 方向命中率≈50% (DEB-20260823), 胜率数字对下一笔
+        #   决策零信息量; ②performance_tracking 内存自 init 后零更新
+        #   (update_performance 无调用方) — 旧行显示的是初始占位值, 是死数据。
+        #   新口径: 近30日已结算交易的费用后净期望 ($/笔, realized_pnl 已含佣金),
+        #   与 DEB 第4/5轮费用审计同口径。查询失败时降级为不显示 (不回退到胜率)。
         lines.append(f"")
-        lines.append(f"美股性能: 交易{perf.get('total_trades', 0)}笔, 胜率{perf.get('win_rate', 0)*100:.0f}%")
+        try:
+            _trade_db = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "..", "..", "data", "ftseek_us.db")
+            _cut = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            _conn = sqlite3.connect(_trade_db, timeout=3)
+            # 净值口径与 DEB 第4轮费用审计/daily_loss_halt_calibration.py 金标准一致:
+            #   net = pnl_net (优先), 否则 realized_pnl - fees_est (realized_pnl 是毛盈亏, 不含费)
+            _row = _conn.execute(
+                "SELECT COUNT(*) AS n, "
+                "COALESCE(SUM(COALESCE(pnl_net, realized_pnl - COALESCE(fees_est,0))),0) AS pnl "
+                "FROM trade_records WHERE exit_time IS NOT NULL AND trade_date >= ? "
+                "AND strategy_id NOT IN ('manual','manual_sync','reconciler','futu_sync','broker_reconcile')",
+                (_cut,),
+            ).fetchone()
+            _conn.close()
+            _n, _pnl = int(_row["n"]), float(_row["pnl"])
+            if _n > 0:
+                lines.append(
+                    f"美股净期望(费用后, 近30日): {_n}笔 合计${_pnl:+.0f} "
+                    f"均{_pnl / _n:+.2f}$/笔 — 这是唯一真实的盈亏度量; "
+                    f"胜率不是分水岭(死胎组WR27%/存活组WR95%), 勿用胜率叙事推断方向"
+                )
+            else:
+                lines.append("美股净期望(费用后, 近30日): 暂无已结算交易样本")
+        except Exception as _perf_e:
+            logger.debug(f"[Agent-US] 净期望统计失败(不阻断): {_perf_e}")
         
         lessons = self._memory.get("historical_lessons", [])
         if lessons:

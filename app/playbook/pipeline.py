@@ -1509,12 +1509,14 @@ def _build_instructions_from_votes(
                 ))
                 continue
         
-        # 2026-07-10: bridge候选用LLM分析confidence, 非bridge用数据质量confidence
+        # 2026-07-10: bridge候选用辩论合成confidence, 非bridge用数据质量confidence
         # 根因: compute_confidence()是纯数据质量分(数据维度ok数×12+条件验证×28,封顶90)
         #   → 数据完整时永远=90, 与分析确信度无关
         #   → confidence=90但胜率31%, 因为"90"是数据完整度不是确信度
-        # 修复: bridge候选(deep_analysis)用vote_result.final_confidence(已含LLM定性+辩论调整)
-        #       非bridge保持compute_confidence不变
+        # 口径勘误 (2026-08-25, DEB-20260825 第11轮): final_confidence 并非"已含LLM定性" —
+        #   BridgeVotingAdapter.vote() 明确不用 LLM 定性 confidence (IC 反指 r=-0.211),
+        #   而是从辩论结果合成: 中性0.50 + 挑战者同向确认+0.20 / 方向分歧-0.15
+        #   (唯一正信号: 辩论一致 r=+0.102)。非bridge保持compute_confidence不变
         _is_bridge = (vote_result.get("strategy_id", "") == "deep_analysis" 
                       or str(vote_result.get("decision_id", "")).startswith("DA"))
         if _is_bridge:

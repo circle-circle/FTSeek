@@ -388,3 +388,33 @@ verdict=WEAK_EVIDENCE); ④期权IV (周频快照限制, 攒样降级); ⑤⑥�
 
 **C. 十月信号源验收标准已预注册**: docs/design/2026-08-25_signal_source_acceptance_bar.md
 (唯一口径 = 费用后毛 bps/名义·暴露日; 含止损几何→盈亏线联动表; 时间盒与防虚高条款)。
+
+### 第 11 轮 — DA prompt 链路去偏修复 (2026-08-25, 用户批"按照建议执行",
+目标原话: "prompt专业/无误导和冲突/多空皆可无偏向/链路打通")
+
+**生产链路定位实锤**: DA 生产路径在 Hermes skill (`~/.hermes/skills/deep-stock-analysis/
+llm_synth.py` v0.65 → opportunity_scan json → BridgeVotingAdapter), 非 repo 内
+deep_analysis_engine (平行遗留链)。链路方向接线已验证打通: skill BUY/SELL_SHORT →
+bridge json LONG/SHORT → adapter → playbook_instructions; challenger_independent_direction
+等字段落 bridge json (record-only 可供十月分析)。
+
+**修复清单 (纯信息层, 零规则/门禁变更)**:
+
+| # | 病灶 | 修复 | 证据 |
+|---|---|---|---|
+| 1 | 校准原则(50%命中率纪律)只写在 synthesize() docstring 里 — 从未进入任何模型输入, 死链路 | 移入 SYSTEM_PROMPT 正式生效 | DEB-20260823 n=321 |
+| 2 | 【交易经验参考】指示"本股历史全亏→同方向需更强理由" — 把噪声当先验且抑制盈利再入场 | 重写为三类可用信息(失败模式事实/退出机制参考/防惯性), 明确历史胜负对下一笔无预测力 | 第2轮 pearson=−0.40 反持续 + 第10轮熔断回放 |
+| 3 | SHORT 高门槛引用过时统计"近14日命中29%全线负"(7/25硬编码)作偏空理由 | 删除胜率论据, 改结构性理由(空头理论亏损无上限故挤空必答); 新增 BUY 镜像义务(上行催化剂+时效同等具体) | 近30日实绩 SHORT 均+$6.88/笔 vs LONG −$5.32/笔 — 旧统计对当前窗口反向 |
+| 4 | 注入段标签"近期交易经验(方向先验)"误导 | 改"背景事实, 非方向先验" | 同#2 |
+| 5 | agent_bridge 战前计划性能行喂"交易N笔胜率X%" — 且 performance_tracking 内存零更新(update_performance 无调用方), 显示的是初始占位死数据 | 换近30日费用后净期望($/笔, pnl_net 金标准口径, 实测 −$3.62/笔 与第4轮逐位吻合), 查询失败不回退胜率 | 第2轮 死/活组 WR27%/95% 但均笔反差 |
+| 6 | deep_analysis_engine short_interest 接线 — Futu 美股卖空字段全 NaN (候选⑦死源), prompt 只会产出空壳/NaN 段 | 摘除采集+格式段, 注明若接真源另走探针流程 | 候选池文档 ⑦出局 |
+| 7 | thesis_challenge 五维含"板块联动"(前提已证伪)与"历史表现"(标的级反持续) | 删两维及对应数据采集/注入, 换入"催化剂与时效"维(多空对称); check_results schema 同步 (无外部消费方, 已核) | peer_momentum_premise_report.json 全轴 \|t\|<1.3 |
+| 8 | deep_target_analysis 硬编码"T+1 41%(n=203, 截至2026-08-21)" — 过时校准比没有更误导 | 动态计算近30日分方向净期望注入(带中性兜底), 50%掷硬币基准保留 | 实测渲染 LONG −$5.32 / SHORT +$6.88 |
+| 9 | pipeline.py:1516 注释称 final_confidence "已含LLM定性" — 与 adapter 实现矛盾(adapter 明确弃用 LLM 定性 conf 因 IC 反指) | 注释勘误为真实口径(辩论合成 0.50±0.20/0.15) | pipeline.py :792 |
+
+**skill 版本**: v0.65 → v0.66 (SKILL.md changelog 记录, 变更可按版本戳在 IC 分析中切分前后)。
+
+**诚实边界**: #1/#2/#4 直接改变模型所见信息 = DA 输出行为会变 (这正是用户要求的目的),
+但未动任何门禁/阈值/合并规则 (_merge_debate_results 与 conf gate 分文未动);
+challenger 方向仅在 score 差>3 时经既有规则改判 SKIP, 本次未新增任何方向改写逻辑。
+验证项: 影子观测修复后 SHORT 候选占比与 SKIP 理由分布是否变化 (record-only, n≥30 再评估)。

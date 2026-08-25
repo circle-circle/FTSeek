@@ -13,6 +13,47 @@ v3 改进 (2026-06-17):
   - 禁止 LLM 在分析中生成模板式免责废话
 """
 
+# ─── 动态校准块 ───
+def _calibration_block() -> str:
+    """动态计算校准数据行 (2026-08-25, DEB-20260825 第11轮).
+
+    根因: 原 SYSTEM_PROMPT 硬编码 "T+1 命中率 41%(n=203, 截至2026-08-21)" —
+    校准数字不刷新会从"诚实校准"退化为"过时误导"(用户要求链路无误导).
+    口径: 近30日已结算交易的费用后净期望 (net = pnl_net 优先, 否则 realized_pnl-fees_est;
+    与 daily_loss_halt_calibration.py / DEB 第4轮费用审计金标准一致), 多空分列对称呈现.
+    查询失败或无样本 → 返回中性表述 (不硬编码任何具体历史数字).
+    """
+    try:
+        import sqlite3 as _sq
+        from datetime import datetime as _dt, timedelta as _td
+        from pathlib import Path as _Path
+        _db = _Path(__file__).resolve().parent.parent.parent.parent / "data" / "ftseek_us.db"
+        _cut = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
+        _conn = _sq.connect(str(_db), timeout=2)
+        _rows = _conn.execute(
+            "SELECT UPPER(direction), COUNT(*), "
+            "COALESCE(SUM(COALESCE(pnl_net, realized_pnl - COALESCE(fees_est,0))),0) "
+            "FROM trade_records WHERE exit_time IS NOT NULL AND trade_date >= ? "
+            "AND strategy_id NOT IN ('manual','manual_sync','reconciler','futu_sync','broker_reconcile') "
+            "GROUP BY UPPER(direction)",
+            (_cut,),
+        ).fetchall()
+        _conn.close()
+        _by_dir = {str(d): (int(n), float(p)) for d, n, p in _rows if d}
+        _total_n = sum(n for n, _ in _by_dir.values())
+        if not _total_n:
+            return ("近期无已结算样本 — 按掷硬币基准(50%)校准确信度, 不允许因叙事生动性上调")
+        _parts = []
+        for _d in sorted(_by_dir):
+            _n, _p = _by_dir[_d]
+            _parts.append(f"{_d}: {_n}笔 净{_p:+.0f}$ 均{_p / _n:+.2f}$/笔")
+        return (f"近30日已结算{_total_n}笔费用后实绩 — {'; '.join(_parts)}。"
+                f"这是唯一真实的盈亏度量(胜率不是分水岭)")
+    except Exception:
+        return ("实时校准统计暂不可用 — 按掷硬币基准(50%)校准确信度, "
+                "不允许因叙事生动性上调")
+
+
 # ─── 系统角色 ───
 SYSTEM_PROMPT = """你是一位专业的美股投资研究分析师，擅长多空辩论和结构化投资论证。
 你的分析必须遵循以下原则：
@@ -36,15 +77,20 @@ SYSTEM_PROMPT = """你是一位专业的美股投资研究分析师，擅长多�
 9. 如果某维度数据缺失（标注❌），直接说明"该维度无数据"并量化对结论的影响
 10. 结论确信度必须与数据完整性挂钩——数据缺失越多，确信度越低
 
-【自我认知原则 (系统实测, 截至2026-08-21, 每月复核; DEB-20260822 §九)】
-11. 校准: 本系统历史 BUY 判断 T+1 命中率 41%(n=203, 连续5周低于掷币), T+5 正指 57.5%。
+【自我认知原则 (动态校准, 2026-08-25 改造; 原"截至2026-08-21"硬编码已删除 —
+ 过时的校准数字比没有更误导; DEB-20260822 §九 → DEB-20260825 第11轮)】
+11. 校准: 你的方向判断历史命中率约50%(≈掷硬币, 干净窗口 n=321 实测)。
+    实时盈亏校准: __DYNAMIC_CALIBRATION__。
     direction_confidence 必须当作校准概率使用, 数据缺失越多越向中性收敛,
     不允许因叙事生动性上调。
-12. 对称: 系统存在实测看空倾向(看空判断占比系统性偏高)。bear_case 与 bull_case 的
-    证据强度门槛必须一致——每条空头论点须满足与多头论点完全相同的数据引证标准。
+12. 对称: bear_case 与 bull_case 的证据强度门槛必须一致——每条空头论点须满足与
+    多头论点完全相同的数据引证标准, 反之亦然 (多空对称, 无方向偏见)。
 13. 差异化: 若你的结论与上述历史模式一致(如再次给出弱证据的日级方向判断),
     必须在 verdict.key_disagreement 中说明本次与历史失败模式的具体差异, 否则降级确信度。
 """
+
+# 组装: 占位符在模块加载时替换为动态校准数据 (查询失败有中性兜底, 不阻断导入)
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__DYNAMIC_CALIBRATION__", _calibration_block())
 
 
 # ─── User prompt 模板（用 .format() 填充） ───
