@@ -23,6 +23,15 @@ _check_intraday_trigger 头检自动跳过。
   - "收盘跌破 X": 收盘价口径, 仅在 ET ≥ CLOSE_QUALIFIER_HHMM 时才评估
   - "开盘后 N 分钟/小时 跌破 X": 窗口条件, 仅在 [开盘, 开盘+N] 内评估
 
+[2026-08-25 DEB-20260825 r15 P10接线] 结构化失效条件消费:
+  DA v0.68+ 指令除自然语言 `invalidation` 外, raw_instruction_json 还带
+  `invalidation_triggers` = [{metric, operator, value, deadline}], metric 限
+  收盘价/成交量/5日涨跌/盘前涨跌幅, operator 限 </>, value 纯数字 (模型侧
+  契约见 skill llm_synth.py 校验器)。语义 = thesis 失效条件, 各条 **OR**:
+  任一命中 → 指令失效。同样宁漏不误杀: 不可评估 (字段非法/行情缺字段) 不计,
+  deadline 可解析且已过期 → 该条跳过 (防陈旧条件误杀), 收盘价口径与文本侧
+  同守卫 (ET ≥ 15:50 才评估)。
+
 用法:
     PYTHONPATH=. venv/bin/python scripts/tripwire_checker.py          # 实际核销
     PYTHONPATH=. venv/bin/python scripts/tripwire_checker.py --dry    # 只报不写
@@ -37,6 +46,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Dict, List
 
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
@@ -136,6 +146,120 @@ def evaluate_invalidation_text(*, invalidation, direction, entry_price,
     return False, " | ".join(details) or "unparseable"
 
 
+# ── [DEB-20260825 r15 P10接线] 结构化失效条件 (invalidation_triggers) ──
+_IT_METRICS = ("收盘价", "成交量", "5日涨跌", "盘前涨跌幅")
+_IT_OPS = ("<", ">")
+
+
+def _get_structured_triggers(inst: Dict) -> List[Dict]:
+    """从指令行提取合法结构化失效条件 (与模型侧契约同白名单).
+
+    合法 = metric∈{收盘价,成交量,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
+    非法条目静默丢弃 (与文本侧'未解析子句不命中'同宁漏语义)。
+    """
+    raw = inst.get("raw_instruction_json") or {}
+    if not isinstance(raw, dict):
+        return []
+    out = []
+    for t in raw.get("invalidation_triggers") or []:
+        if not isinstance(t, dict):
+            continue
+        m = str(t.get("metric") or "").strip()
+        op = str(t.get("operator") or "").strip()
+        if m not in _IT_METRICS or op not in _IT_OPS:
+            continue
+        try:
+            v = float(t.get("value"))
+        except (TypeError, ValueError):
+            continue
+        out.append({"metric": m, "operator": op, "value": v,
+                    "deadline": str(t.get("deadline") or "").strip()})
+    return out
+
+
+def _deadline_expired(deadline: str, now_et_dt) -> bool:
+    """deadline 可解析为日期且已过 → True (陈旧条件跳过, 防误杀)。不可解析 → False (保守: 仍评估)。"""
+    m = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})", deadline or "")
+    if not m:
+        return False
+    try:
+        from datetime import date
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3))) < now_et_dt.date()
+    except ValueError:
+        return False
+
+
+def evaluate_invalidation_triggers(*, triggers, quote, prev_close_5d=None,
+                                   now_et_dt) -> tuple:
+    """判定结构化失效条件 (各条 OR, 任一命中即失效). 返回 (invalidated, detail)。
+
+    行情取值 (宁漏不误杀, 缺字段该条跳过):
+      收盘价   = quote.price, 但仅 ET ≥ CLOSE_QUALIFIER_HHMM 才评估 (与文本侧同守卫,
+                 盘中现价非收盘价, 早评估会误杀);
+      成交量   = quote.volume (当日累计);
+      盘前涨跌幅 = quote.pre_change_rate (百分比, 当日定值);
+      5日涨跌  = (现价 - prev_close_5d)/prev_close_5d×100, prev_close_5d 由调用方
+                 从日K算好传入 (避免本纯函数拉网络), 缺失则该条跳过。
+    """
+    if not triggers or not isinstance(quote, dict):
+        return False, "no_triggers"
+    price = quote.get("price") or quote.get("last_price")
+    try:
+        price = float(price) if price else None
+    except (TypeError, ValueError):
+        price = None
+
+    notes = []
+    for t in triggers:
+        label = f"{t['metric']}{t['operator']}{t['value']}"
+        if t["deadline"] and _deadline_expired(t["deadline"], now_et_dt):
+            notes.append(f"[stale]{label}")
+            continue
+        m = t["metric"]
+        obs = None
+        if m == "收盘价":
+            if now_et_dt.hour * 100 + now_et_dt.minute < CLOSE_QUALIFIER_HHMM:
+                notes.append(f"[close_gated]{label}")
+                continue
+            obs = price
+        elif m == "成交量":
+            obs = quote.get("volume")
+            try:
+                obs = float(obs) if obs is not None else None
+            except (TypeError, ValueError):
+                obs = None
+        elif m == "盘前涨跌幅":
+            obs = quote.get("pre_change_rate")
+            try:
+                obs = float(obs) if obs is not None else None
+            except (TypeError, ValueError):
+                obs = None
+        elif m == "5日涨跌":
+            if prev_close_5d and price:
+                obs = (price - prev_close_5d) / prev_close_5d * 100.0
+            else:
+                obs = None
+        if obs is None:
+            notes.append(f"[no_quote]{label}")
+            continue
+        hit = obs < t["value"] if t["operator"] == "<" else obs > t["value"]
+        notes.append(f"[{'HIT' if hit else 'miss'}]{label}(obs={obs:.4g})")
+        if hit:
+            return True, " ".join(notes)
+    return False, " ".join(notes) or "all_unevaluable"
+
+
+def _prev_close_5d(router, symbol: str, today: str):
+    """5个交易日前收盘价 (不含今日)。日K缺失/不足5根 → None。router 内部有5分钟缓存。"""
+    try:
+        bars = router.get_daily_bars(symbol, count=12) or []
+        closes = [float(b.get("close")) for b in bars
+                  if str(b.get("time", ""))[:10] < today and b.get("close")]
+        return closes[-5] if len(closes) >= 5 else None
+    except Exception:
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="只报不写库")
@@ -162,7 +286,10 @@ def main() -> int:
         if to_trade_direction(i.get("direction")) is not None
         and not i.get("executed")
         and (i.get("skip_reason") or "") not in INVALIDATED_SKIP_REASONS
-        and (i.get("invalidation") or "").strip()
+        # [r15 P10接线] 原过滤只留有自然语言 invalidation 的指令 → 结构化
+        #   invalidation_triggers 再合法也进不了判定。改为任一条件存在即检。
+        and ((i.get("invalidation") or "").strip()
+             or _get_structured_triggers(i))
     ]
     print(f"=== tripwire 核销 {today} {now_et_dt.strftime('%H:%M')} ET · "
           f"待检 {len(pending)} 条 · enforce={enforce} ===")
@@ -170,7 +297,8 @@ def main() -> int:
         return 0
 
     from scripts.llm_universe_scan import _batch_quotes, _build_router, _quote_price
-    quotes = _batch_quotes(_build_router(), [i["symbol"] for i in pending])
+    router = _build_router()
+    quotes = _batch_quotes(router, [i["symbol"] for i in pending])
 
     rows, n_inv = [], 0
     for inst in pending:
@@ -179,6 +307,7 @@ def main() -> int:
         if not price or float(price) <= 0:
             print(f"  [skip] {symbol} 无实时价")
             continue
+        # 轨道1: 自然语言 invalidation (既有逻辑, 不动)
         invalidated, detail = evaluate_invalidation_text(
             invalidation=inst.get("invalidation"),
             direction=inst.get("direction"),
@@ -186,12 +315,30 @@ def main() -> int:
             current_price=float(price),
             now_et_dt=now_et_dt,
         )
+        # 轨道2: [r15 P10接线] 结构化条件 — 任一轨道命中即失效 (语义同为
+        #   thesis失效条件, OR合并). 文本侧已命中时结构化侧照常评估留痕
+        #   (审计行记两轨各自结论, 供核销归因), 无额外行为差异.
+        s_triggers = _get_structured_triggers(inst)
+        s_detail = ""
+        if s_triggers:
+            quote = quotes.get(symbol.replace("US.", "").upper()) or {}
+            # 5日涨跌需前收: 仅当存在该metric条件时才拉日K (router缓存5分钟)
+            pc5 = None
+            if any(t["metric"] == "5日涨跌" for t in s_triggers):
+                pc5 = _prev_close_5d(router, symbol, today)
+            s_inv, s_detail = evaluate_invalidation_triggers(
+                triggers=s_triggers, quote=quote,
+                prev_close_5d=pc5, now_et_dt=now_et_dt)
+            if s_inv:
+                invalidated = True
+                detail = (detail + " ‖ " if detail else "") + "structured: " + s_detail
         rows.append({
             "ts": now_et_dt.isoformat(timespec="seconds"), "date": today, "tz": "ET",
             "inst_id": inst.get("id"), "symbol": symbol,
             "direction": inst.get("direction"),
             "entry_price": inst.get("entry_price"), "price": round(float(price), 4),
             "invalidation": inst.get("invalidation"),
+            "structured_detail": s_detail or None,
             "invalidated": invalidated, "detail": detail, "enforced": bool(enforce and invalidated),
         })
         if not invalidated:

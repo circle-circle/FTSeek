@@ -157,6 +157,8 @@ regime: cautious 46% vs risk_on 74% (t=-3.19, eta²=0.068) — 37 笔 cautious �
 - 选择方案: **待用户裁决** (第 2 轮更新: 方案 A 已按自设判据判死 — 标的死胎率半程自相关 pearson=−0.40 不显著且方向反持续。剩余候选: B 影子 / C 假设种群 / D 减法)
 - 决策依据: 待定
 - 保留空间: 所有剩余方案与 9 月冻结纪律 (不切实盘/不动退出参数) 无冲突 — B 纯记录, C 只动记忆层, D 纯删除
+- **第 12 轮追加正交轨 (prompt 工程轨 P1–P7)**: 与 B/C/D 互不依赖 — 修的是"模型看见什么/输出契约是否被执行/埋点是否有消费方",
+  不动任何门禁阈值与退出参数。其中 P7 (影子登记簿) 是方案 C 的最小成本实例化, 可先于 C 单独裁决。
 - 负责人: Hermes (执行), 用户 (裁决)
 - 截止时间: 2026-08-31 (用户 8/31 终裁节点前给出结论)
 
@@ -167,6 +169,9 @@ regime: cautious 46% vs risk_on 74% (t=-3.19, eta²=0.068) — 37 笔 cautious �
 - [ ] 方案 B: 每笔交易落 `entry_day_cum_pnl_at_entry` 协变量 (trade_records.metadata_json), 预注册判据写入本议题
 - [ ] 方案 C (若批): 假设登记簿设计文档 → 单独 DEB 细化
 - [ ] 无论裁决: lesson_log 停写叙事体或改造 (不再积累零消费数据)
+- [ ] **第 12 轮 prompt 工程轨 (全部待批)**: P1 输出契约执行化 / P2 score 锚定量表(影子) / P3a 砍 H5 双采样(纯减法) /
+  P3b 真盲审 record-only / P4 五维验证判别式化 / P5 多空对称化+prompt 瘦身 / P6 DA 决策落盘(含 SKIP) / P7 影子登记簿。
+  逐项成本-风险-回滚-判据见第 12 轮 §D。
 
 ## 验证项
 
@@ -418,3 +423,300 @@ bridge json LONG/SHORT → adapter → playbook_instructions; challenger_indepen
 但未动任何门禁/阈值/合并规则 (_merge_debate_results 与 conf gate 分文未动);
 challenger 方向仅在 score 差>3 时经既有规则改判 SKIP, 本次未新增任何方向改写逻辑。
 验证项: 影子观测修复后 SHORT 候选占比与 SKIP 理由分布是否变化 (record-only, n≥30 再评估)。
+
+### 第 12 轮 — DA prompt 工程实测审计 + 优化方案 P1–P7 (2026-08-25, 用户令"基于优秀 prompt 工程样例与合理高效方案给出调整优化建议并更新")
+
+**定位**: 第 11 轮修的是 prompt **内容的正确性**(死链路/证伪论据/过时统计)。本轮换一个层面:
+不问"写得对不对", 只问 **"写的东西有没有被执行、输出还有没有信息量、每一份 token 有没有消费方"** —
+即把本议题主线的诊断方法(病灶1 = 只写不读的死内存)反过来照到 DA prompt 链路自身上。**本轮零代码变更、零 prompt 变更, 全部待裁决。**
+
+#### §A 编号勘误 (先修账本)
+
+本文档 **无第 8 轮** — git 实证: `2ab4b48a` 原提交标题为"第8轮熔断定标…", 其后 `0bbb9fe0` (盘前全史回测) 插入为第 7 轮
+并把后续段落顺次改号, 遗留 9/10 跳号。**无内容丢失**, 现有编号不回改 (外部引用已按现号), 本轮编号顺延为 12。
+教训: 插入轮次时改号 = 引用面破坏, 后续新增一律只在尾部追加。
+
+#### §B 方法与口径 (口径七律: 新旧基线必须切分)
+
+- 数据源: `data/opportunity_scan_YYYY-MM-DD.json` (bridge 落库, 每候选带完整 `debate` 字段) + 源码实读, 全程只读。
+- **切分点 8/14 (challenger v2 上线日)**, 这一步不做会得出错误结论:
+  - v1 窗 (8/3–8/13, n=95): 挑战者返回 `SKIP` **68 次 (71.6%)** → prompt 的"强制表态"当时形同废纸;
+  - v2 窗 (8/14–8/24, 7 个交易日, **n=107**): 挑战者 `SKIP` **0 次** → 第 11 轮之前的 v2 改造确实生效。
+  - 若按全 8 月混算会得到"38% 弃权"的假象并误导为"当前 prompt 有弃权病" — 混窗即错案, 此处存档为反面样本。
+- 本轮全部统计基于 **v2 窗 n=107** (现行 prompt 形态), 第 11 轮修复 (8/25 晚) 之后尚无样本, 故本轮结论描述的是**第 11 轮修复前的现行基线**, 正是 P1–P7 的对照起点。
+
+#### §C 实测台账 — 六个病灶 (全部可复现)
+
+| # | 现象 (v2 窗 n=107 实测) | prompt 工程病根 | 后果 |
+|---|---|---|---|
+| 1 | **score 塌缩**: 分析师 score 仅取 {6.0×16, 7.0×**90**, 8.0×1} → 84% 是同一个 7.0; 挑战者 {6×22, 7×84, 8×1}; 两者 \|差\| = 0 (99 例) 或 1 (8 例), **上界 1.0** | "score: 0-10 conviction" 只有语义定义、**无锚定量表(anchored rubric)**, 无"什么情况给 4 / 什么情况给 8"的可判定锚点 → 模型退化到安全中值 | 下游 `_merge_debate_results` 的 `abs(orig−chall) > 3 → SKIP` (llm_synth.py:1353) 在观测上界 1.0 下 **结构上不可能触发**; conf 升档几乎恒发生 (AGREE 104/107) → score 与 conf 都不再携带区分信息 |
+| 2 | **伪独立**: `independent_direction == my_direction` **107/107**, `challenger_anchor_divergence` 恒 0 | v2 prompt 写"第一步先忽略分析师结论", 但分析师 JSON 与该指令**在同一条消息里** → 无信息屏障, "独立"只是一句自我暗示 | 防锚定设计 (DEB-20260814 §十一 的立项目的) 未实现; `challenger_anchor_divergence` 埋点结构性恒 0, 观测无意义 |
+| 3 | **采样影子只写不读**: `challenge_direction_samples` **107/107 全部落库**, 全代码库**零消费方** (`grep app/ scripts/` 仅命中 archive 补丁与 DEB 文档); flip = **0/107** | DEB-20260723 H5 立项时写"一周后翻转率高再议", **逾期一个月无裁决**, 到期机制缺失 | 每候选多打 **2 次** LLM 调用, v2 窗 = **214 次纯浪费**; 与本议题**病灶1 (lesson_log 写391读0) 完全同构** — 死内存在 prompt 层复现 |
+| 4 | **五维验证三维恒过**: `data`/`logic`/`market` 三维 **107/107 全"通过"**, 仅 `risk` 19 次、`levels` 1 次判"不通过"; 且 **AGREE 104 例中有 16 例携带"不通过"维度** | 不可能失败的检查 = 噪声 (三维缺"必须引用具体数值比对, 否则判不通过"的强制); verdict 与 validation 之间**无一致性约束**, 违反 prompt 自设的 AGREE 判据("无实质硬伤") | 五维审查的信息量集中在 2 维; verdict 字段装饰化 → 以 verdict 为条件的任何下游统计都被污染 |
+| 5 | **硬要求无执行器**: "tripwires 必须≥2条" → 实测 **0 条 18/107 (17%)**, 2 条 74, 3 条 15; `_call_llm` (llm_synth.py:32) 不读 `finish_reason`、不记 `usage`、无重试; `daily_llm_token_report` 的 `by_feature` **无 DA 条目** (8/19–8/24 实测仅 universe_expansion_reasoning / agent_bridge / test_*) | 把"必须"写进 prompt 却没有**代码侧校验-修补(validate & repair)** 环节 — 唯一执行器是模型的自觉 | 17% 指令缺可证伪条件仍照常下发; 截断 (JSON 解析失败→静默 fallback) 与 token 成本**双盲**, 任何"省钱/省 token"主张都不可验证 |
+| 6 | **多空不对称在 prompt 层, 但瓶颈在供给层**: prompt 结构性约束 #2 不接飞刀 / #3 回踩优先 **只约束 LONG 无 SHORT 镜像**, SHORT 三问是常设加严且带 `my_score ≤ 4` 上限 (LONG 无常设上限); 实测方向 **LONG 102 / SHORT 5 (4.7%)**。但同窗 `strategy_type` 分布 = quality_breakout 32 / **空 75** → scanner `trend_short` 桶贡献 **0 条**, `avoid`(falling knife) 桶按设计从不进 DA (market_scanner.py:646-702, pipeline.py:298-308) | prompt 侧: 单侧硬规 + 单侧分数上限 = 结构性偏多; 供给侧: 空头桶入桶条件 `score≤4 且 空头排列` 极窄, 且下跌最猛的票被 avoid 桶吸走 | SHORT 占比 4.7% 与近 30 日实绩 (SHORT +$6.88/笔 vs LONG −$5.32/笔, 第 11 轮 #8) 反向。**归因混杂: prompt 对称化是必要不充分** — 供给端 0 供给时改 prompt 也无票可空 |
+
+补充计量: 指令体量 SYSTEM 2,535 字符 + USER 模板 4,468 字符 + challenger v2 1,987 字符;
+其中 `challenger_system_v1` (1,345 字符, 8/14 起未再命中) 与 `_load_claim_ic_for_prompt` (7/18 起停用) 为**死路径**。
+挑战者 `missed_risks` **107/107 非空** (均 4.0 条) → 全部回灌 `risks`, 候选平均 **7.3 条风险 (max 11)**: "永远能找到被忽视风险"= 与病灶4 同构的仪式化输出。
+
+**语义冲突一处 (第 11 轮新引入, 本轮发现)**: SYSTEM【校准原则】同时写
+①"全部论据来自 24h 内新闻且无盘前异动确认 → 给低分(≤5)" 与 ②"真正的 edge 来源是市场还不知道的信息(如刚发布的 8-K/盘前突发)" —
+**"刚发布且价格尚未反应的 8-K"在①判低分、在②判 edge, 同一情形两条规则判定相反**。需收敛为单一可判定测试 (见 P5)。
+
+#### §D 优化方案 P1–P7 (按 信息增益/成本 排序)
+
+设计准则 (取自本项目既有优秀样例, 非外部教条): ①`references/llm-prompt-ko-pattern.md` 的"少示例但高标准 + 数据质量审计自动统计";
+②DEB-20260814 P2 的"空结果纪律"(数据不足即路由 SKIP, 不编造); ③`_load_symbol_card_for_prompt` 的**确定性预计算**范式
+(§十六实锤: LLM 目测边界会错, 判定结果由代码算好再喂) — **能由代码判定的, 一律不交给模型**, 这是本轮所有方案的共同骨架。
+
+| # | 方案 | 动作 (最小实现) | 修病灶 | 成本 | 风险/回滚 |
+|---|---|---|---|---|---|
+| **P1** | **输出契约执行化** | 代码侧 schema 校验器 + **单次定向 repair 调用** (只回喂缺失/违约字段, 不重跑全分析): tripwires≥2、价位齐全且与方向自洽、rating↔direction 一致、claim_type 枚举合法; 同时 `_call_llm` 记录 `finish_reason`/`usage` 并对 `length` 截断计数 | 5 | 半天; 违约率 17% × 1 次小 repair ≈ +0.2 次调用/候选 | 低。`DA_SCHEMA_ENFORCE=0` 回滚; repair 只补结构不改方向 |
+| **P3a** | **砍 H5 双采样 (纯减法, 建议立即)** | 删 llm_synth.py:1204-1212 的 2 次重采样, 保留 `_direction_samples` 字段写单元素 (下游兼容) | 3 | 10 分钟, **省 2 次调用/候选 (v2 窗口口径 −214 次/11 天)** | 极低。flip 0/107 已给出裁决所需证据, 影子到期即结案; 回滚=还原两行 |
+| **P6** | **DA 决策落盘 (含 SKIP)** | append-only `data/da_decision_log.jsonl`: 每分析标的一行 = symbol/direction/score/skip_reason/verdict/validation 不通过维度/tripwire 数/skill 版本 + **prompt_hash** | — (补测量地基) | 半天 | 无行为变更。**没有它第 11 轮的验证项无法完成**: SKIP 决策目前零落盘 — 仅 `score<3` 才进 dynamic_blacklist (pipeline.py:804) 而实测 score 最低 6.0, `da_checkpoint` 只留 3 天 (`_CKPT_KEEP_DAYS=3`) 且当前目录为空 |
+| **P4** | **五维验证判别式化** | ①三恒过维度改硬格式: "通过" 必须附**原始数据里的具体数值比对**, 写不出即判不通过; ②代码强制一致性: 存在"不通过"维度 → verdict 自动降 PARTIAL_AGREE (不由模型自述) | 4 | 2 小时 | 低。会提高 PARTIAL 占比 → 影响 conf 升档比例, 故**先 record-only 两周**(双写 `verdict_strict`), 达标再切 live |
+| **P5** | **多空对称化 + prompt 瘦身 (减法为主)** | ①镜像硬规: "不接飞刀"↔"不追空已崩票(当日跌>5%无反弹证据的追空同样降级)"、"回踩优先"↔"反弹至阻力做空优先"; ②`my_score≤4` 上限改为**方向中性的"三问不全即封顶"**(LONG 三问 = 上行催化剂/时效/拥挤多头与财报跳空尾部风险); ③合并重复段 (KO 要求 2 处、多空对称 3 处、数据缺失处理 3 处、溯源 2 处 → 各留 1 处); ④删死路径 challenger_system_v1 与 claim_ic 注入; ⑤修 §C 语义冲突: 统一为**可判定测试** — "该信息是否已被价格反映"(以盘前涨跌/量比/成交额判定, 已反映→无增量 edge 给低分; 未反映且可核实→允许高分), 不再按"新闻年龄"判罚 | 6(prompt侧)、指令冗余 | 半天 | 中低。会改变模型所见 = 输出分布会变 (与第 11 轮同性质), 但不动任何门禁/阈值; 回滚 = git revert skill 文件 + 版本戳切分 |
+| **P2** | **score 锚定量表 (影子)** | ①prompt 给出可判定锚点 (例: 8-10 = 有公司独有事件且未被价格反映且盘前同向确认; 6-7 = 仅技术/资金面同向; 4-5 = 证据互斥或数据≥6维缺失; ≤3 = 只剩叙事) ; ②同时由**代码派生** `score_v2` = f(HIGH 强度论据数, 独有事件有无, 数据覆盖维数, 挑战者不通过维度数), **record-only 双写, live score 不动** | 1 | 1 天 | 低 (影子)。判据不达标即删除, 不接线 |
+| **P3b** | **真盲审 (拆两调用)** | 挑战者拆为 (a) **盲审调用**: 只给数据视图, 不给分析师 JSON, 输出方向+最强论据; (b) 验证调用: 给分析师结论 + 自己的盲审结果做五维验证。配合 P3a **净 −1 次调用/候选** | 2 | 半天 | 中低。先 record-only 两周 (盲审方向只落库不参与合并), 达标再让其进 `anchor_divergence` 与 verdict 判定; `DA_BLIND_PASS=0` 回滚 |
+| **P7** | **影子登记簿 (方案 C 的最小实例)** | `docs/specs/shadow_registry.yaml`: 每个 record-only 埋点登记 {字段名, 预注册判据, 样本目标 n, 创建日, **到期日**, 消费脚本路径}; 周六 09:05 既有 OOS 周检钩子读表 — 到期未裁决 → 告警并**自动停写**。首批登记: `challenge_direction_samples`(已到期→按 P3a 结案)、`carried_underwater_at_close`(第 9 轮)、`entry_day_cum_pnl_at_entry`(方案 B)、`_rating_consistency`、`_semantic_confidence`、`score_v2`/`verdict_strict`(本轮新增) | 3 的**根因** | 半天 | 低。纯治理层。**这是方案 C"有选择压力的假设种群"在埋点层的低成本落地**: 假设=埋点, 选择压力=到期自动下线 |
+
+**不建议做的 (对抗性自审, 明确列出以防后续 Agent 重复提案)**:
+1. ❌ **不加新论据维度/新数据段** — 第 3/7 轮已证价格形态信息类七切片全零分离, 加维只摊薄注意力并抬 token;
+2. ❌ **不靠 prompt 去调多空配比** — §C#6 实测供给端 SHORT 桶 0 供给, 先改 prompt 是无标可空 (供给端另立议题, 不在本轮);
+3. ❌ **不开 CoT/thinking** — 现为 `enable_thinking=False` + JSON 模式, 开启抬成本与延迟且收益无本地证据;
+4. ❌ **不扩 few-shot** — KO 单例已足; 多示例会强化模板化, 与"论据必须该股独有"的目标直接冲突 (KO pattern 文档的原始教训);
+5. ❌ **不新增任何门禁/阈值/方向改写逻辑** — 9 月冻结纪律, 本轮全部方案止于"信息层 + 测量层 + 减法"。
+
+#### §E 预注册验证判据 (挪门柱防护)
+
+| 方案 | 判据 (预注册) | 窗口/样本 | 不达标动作 |
+|---|---|---|---|
+| P1 | schema 违约率从 17% (tripwire=0) 降至 ≤5%, 且 repair 调用未改变任何 direction | n≥30 候选 | 违约率不降 → 判定为模型能力上限, 改为"缺 tripwire 即自动降 conf 一档"提案另议 |
+| P2 | `score_v2` 方差 > live score 方差 (live 实测 84% 单点), **且** 与 T+1 alpha 的 rank IC 双窗同号且 \|t\|≥2 | n≥30/层, 双窗 | 任一不满足 → `score_v2` **删除**, 不接线 (承认 conviction 无法量化) |
+| P3a | 无需验证 (flip 0/107 即结案) | — | — |
+| P3b | 真盲审后 `anchor_divergence` 出现率 > 0 | n≥30 | 仍为 0/30 → **结论是挑战者对方向零独立信息, 应直接砍掉挑战者调用 (更大的减法)**, 而不是继续养 |
+| P4 | `verdict_strict` 与自述 verdict 的不一致率 (基线预期 ≈15%, 16/104) 被消除, 且 PARTIAL 占比上升后 conf 分布不再单点 | n≥30 | 若 PARTIAL 升至 >60% 且无区分度 → 回退, 判定五维审查无法产出可用信号 |
+| P5 | SHORT 候选占比与 SKIP 理由分布变化 (**继承第 11 轮验证项, 依赖 P6 落盘才可测**) | n≥30 | 占比无变化 → 归因于供给端, prompt 侧对称化保留 (它本身是消除已知偏差, 不以占比为成败) |
+| P6 | 连续 10 个交易日无缺行, 且能直接算出 SKIP 率/理由分布 | 10 交易日 | 缺行 → 修落盘点 |
+| P7 | 30 天内至少 1 个到期埋点被自动结案 (裁决或停写) | 30 天 | 零结案 → 机制空转, 按方案 D 精神删除登记簿 |
+
+#### §F 与冻结纪律 / 主线结论的关系 (诚实边界)
+
+- **零行为变更类**: P1(结构补全, 不改方向)、P6、P7 — 可在冻结期直接执行;
+- **纯减法类**: P3a、P5 的③④ (删死路径与重复段) — 符合"做减法>打补丁";
+- **影子类 (先 record-only 两周)**: P2、P3b、P4;
+- **会改变模型所见 = 输出分布会变**: P5 的①②⑤ (与第 11 轮 #1/#2/#4 同性质, 当时用户已批同类变更); 但**未动任何门禁/阈值/合并规则/仓位逻辑**。
+- **本轮不改变第 5 轮终判**: 净转正只剩换信号源/换券商两条外部路径。P1–P7 **不承诺提升期望** — 它们做的是
+  ①让"识别层是否在正确执行"从不可观测变为可观测 (P1/P4/P6), ②消除写而不读的浪费 (P3a/P7), ③消除已证伪的方向偏差 (P5)。
+  在毛期望≈0 的世界里, 这三件事的价值是**让十月换信号源时的测量装置是可信的**, 而不是从当前信号源里再挤出 alpha。
+- **样本边界**: n=107 仅 7 个交易日单窗口, opportunity_scan **只含最终候选 → SKIP 侧完全不可见** (故 P6 是其余验证项的前置);
+  §C#6 的 prompt 偏差与供给端偏差未分离, 不可据此宣称"改 prompt 即可提升 SHORT 占比"。
+- **第 11 轮修复后无样本**: 本轮所有实测均为第 11 轮修复前基线, 修复后的对照需按 skill 版本戳 (v0.66) 与 P6 落盘的 prompt_hash 切分。
+
+---
+
+### 第 13 轮 — P1/P3a/P6 落地 + 对第 12 轮两处误判的勘误 (2026-08-25, 用户批"按照建议执行")
+
+**范围**: 只执行第 12 轮建议的第一批 = **P3a (纯减法) + P6 (测量地基) + P1 (输出契约执行化)**。
+P5 (会改模型所见)、P2/P3b/P4 (影子类)、P7 (治理类) **本轮未动**, 仍待裁决。
+skill 版本 v0.66 → **v0.67**。
+
+#### §A 勘误 — 落地前实读核验推翻了第 12 轮两条论断
+
+写方案时靠"结构推断"得出的结论, 在动手前逐条实测, 两条被推翻。**原文不回改** (第 12 轮存档为当时认知), 以本节为准:
+
+| 第 12 轮原话 | 实测 | 结论 |
+|---|---|---|
+| §D P6 "**SKIP 决策目前零落盘**" (据此提议新建 `data/da_decision_log.jsonl`) | `data/da_gate_decisions.jsonl` **共 1333 行**, v2 窗 (≥8/14) **195 行 = BUY 106 / SKIP 84 / SELL_SHORT 5**, 按日 24–35 行。pipeline.py:591 在**逐候选循环内**写, `direction` 取 `analysis.action`, SKIP 一直在落 | **误判**。落盘点早已存在, 只是**字段不全**(缺 DA 自身 score/skip_reason/tripwire 数)。P6 因此**从"新建组件"降级为"给现有 jsonl 扩字段"** — 少一个组件, 且复用已有消费方 `dc_calibration_collector.py:38` |
+| §C#1 "score 仅取 {6,7,8} 三值, **84% 是同一个 7.0**" | 从 `reasons` 正则 `score=([0-9.]+)/10` 解析 **v2 窗全量 195 行**: {3.0:2, 4.0:26, 5.0:2, 6.0:30, 7.0:131, 8.0:2, 9.0:2} = **7 个取值, 方差 1.268**; 其中 BUY 侧 {4:3, 6:16, 7:86, 8:1} 方差 0.364 | **被选择效应夸大**。第 12 轮统计的是 `opportunity_scan` 里的**存活候选**(已过门禁), 低分票被筛掉了。塌缩现象真实存在但强度被高估 → **P2 的论证强度相应下调**, 其判据 §E "score_v2 方差 > live 方差" 的对照基线应改用 **1.268 (全量)** 而非 §C#1 隐含的近零方差 |
+
+第三条教训 (本轮新踩, 非第 12 轮遗留): 回放验证时 `_validate_output_contract` 对 107 个真实候选报出 **"零 tripwire 违约"**,
+一度被当作通过。实因 bridge 落库的 `direction` 是 **LONG/SHORT** 词表, 而校验器只认 `BUY/SELL_SHORT` →
+未知词表落进 `else` 分支 = **校验器对该候选退化为空操作, 对外表现却是"零违约"的假通过**。
+这与本议题主线病灶 (看似在执行, 实则没有执行) 同构, 已在校验器内加词表归一并加 4 条断言锁死。
+**诚实边界**: llm_synth 内部 schema 本就是 `BUY/SELL_SHORT/SKIP` (llm_synth.py:652), 所以 **live 路径原本就会走有向分支** —
+归一是**防御性的** (保回放与未来下游复用不静默失效), 不是 live 缺陷修复, 不可记为"修了一个生产 bug"。
+
+#### §B 实际落地内容 (9 处外科编辑, 全成或全不成)
+
+**P3a — 砍 H5 双采样** (`llm_synth.py` `_run_challenger` 尾部): 删 2 次重采样 for 循环, `_direction_samples` 保留单元素。
+结案依据 = 其自设判据已被否证 (v2 窗 n=107 **flip 0/107**) + 零消费方 + 逾期一月。
+**挑战者调用 3 → 1 次/候选** (v2 窗口径 −214 次 / 11 天)。下游 `challenge_direction_samples` 契约不变。
+
+**P1 — 输出契约执行化** (三段):
+- `_validate_output_contract()` — **只报告不修改** (零行为风险): 有向时校验 tripwires≥2 (metric+threshold 均非空)、
+  三价位齐全、**价位方向自洽** (LONG 需 sl<entry<tp, SHORT 需 tp<entry<sl)、bull/bear 各≥2、`claim_type` 在 11 项枚举内;
+  SKIP 时只校验 `skip_reason` 非空。
+- `_repair_output_contract()` — **单次**定向补全 (temperature=0.2, max_tokens=800), 只回喂缺失字段不重跑全分析。
+  **零方向变更是结构性的, 不靠模型配合**: 补丁白名单仅 `execution_plan.tripwires` / 三价位 / `skip_reason`,
+  `direction`/`rating`/`score`/`bull_case`/`bear_case` **一律不接受补丁**。改方向属门禁范畴, 冻结期明文禁止, 故也不列入 `repairable`。
+- 接入点在 `synthesize` **辩论合并之后** (挑战者可能改写 direction, 契约须按最终方向判定), 违约与修复结果写 `result["_contract"]`。
+
+**P6 — 观测补齐** (三段):
+- `_call_llm` 成功/失败路径均带回 `_finish_reason` + `_usage`。截断与成本此前**双盲**:
+  ① max_tokens 截断 → JSON 解析失败 → 落 `_error` 静默 fallback, 无法区分"模型不听话"与"字数不够"(处置相反);
+  ② `daily_llm_token_report.by_feature` 无 DA 条目 → 任何"省 token"主张不可验证。判别式 = `finish_reason == "length"`。
+- `_prompt_fingerprint()` (12 位 sha1) + 模块常量 `PROMPT_HASH` (实测 = `38ebb7f3693a`), 挑战者侧另算指纹随 `_debate` 落盘。
+  作用: 满足数据口径七律#2 (新旧基线必须切分) — 此前唯一版本标记是人工 changelog, 而 prompt 常在未升版本号时被改。
+- `da_gate_decisions.jsonl` **补 14 字段**: `rating`/`da_score`/`skip_reason`/`tripwire_count`/`challenger_score`/
+  `challenger_validation_failed`(不通过维度名列表)/`debate_outcome`/`contract_violations`/`contract_violations_after`/
+  `contract_repaired`/`finish_reason`/`usage`/`prompt_hash`/`challenger_prompt_hash`。
+  **已知缺口 (诚实标注)**: checkpoint 命中的标的在 pipeline.py:486-490 `continue`, 不写该行 → 仅同日重跑时发生, 会使 P6 判据"连续 10 日无缺行"在重跑日出现假缺行。
+
+#### §C 验证结果 — 55 项断言全 PASS, 零真实 API 调用
+
+方法: 打桩 `_call_llm` / `urlopen` + **真实历史候选回放** (v2 窗 7 个文件 n=107) + **端到端 `synthesize` 打桩**。
+
+- **修前基线 (P1 判据的对照起点)**: `tripwires<2` = **18/107 = 17%** — 与第 12 轮独立统计一致 (交叉验证通过)。
+  方向分布 LONG 102 / SHORT 5, 归一后全部走有向分支。
+  *回放伪影须剔除*: `bull_case_lt2`/`bear_case_lt2` 各 107/107 是因 **bridge 不落 bull_case/bear_case** →
+  这两类检查**无法由本回放覆盖**, 其真实违约率未知, 不得计入 17% 或用作达标依据。
+- **方向不变量 (最关键的一项)**: 打桩令 repair 返回恶意响应 (夹带 `direction:SELL_SHORT` / `rating:强烈看空` / `score:1` / `bull_case:[]`
+  + 合法 tripwires) → 实测 `('BUY','看多',7,2)` **前后完全一致**, 仅 tripwires 被补齐。repair 失败时安全降级 `{ok:False}`。
+- P3a: 挑战者调用次数 **1** (原 3), `_direction_samples == ['BUY']`, 指纹已写入 `_debate`。
+- P1a: 截断路径返回 `{_error:'Unterminated string…', _finish_reason:'length', _usage:{total_tokens:3000}}` → **截断从此可诊断**。
+- 鲁棒性: 6 组空/异常输入 (`{}`/`direction:None`/`execution_plan:None`/`tripwires:"notalist"`/`tripwires:[None,5]`) 零崩溃;
+  校验器整体包在 `try/except`, 异常只写 `validator_error` 不影响主流程。
+
+**端到端 (21 项, 最后补做 — 前 34 项全是单元级, 未证明接入点会被走到, 而"写了但没执行"正是本议题主线病灶)**:
+打桩 `_call_llm` 按调用序派发 (1=分析师 / 2=挑战者 / 3=repair), 跑完整 `synthesize`:
+
+| 场景 | 实测调用序列 | 结论 |
+|---|---|---|
+| 违约输入 + `DA_SCHEMA_ENFORCE=1` | `[analyst, challenger, repair]` | 接入点确实执行; `_contract` 四键齐全; tripwires 补到 2 条; **`('BUY','看多',7)` 端到端未被恶意夹带污染**; `_prompt_hash`/`challenger_prompt_hash` 均落盘 |
+| 同输入 + `DA_SCHEMA_ENFORCE=0` | `[analyst, challenger]` | **回滚开关双向有效**: 无 repair 调用、不写 `_contract`、tripwires 保持原样 1 条; 但 `_prompt_hash` 仍落盘 (P6 独立于该开关, 关 P1 不影响基线切分) |
+| 合规输入 | 2 次调用 | 零违约、不产生 `repair` 键 → **合规候选不额外花调用** (成本上界即 17% × 1 次) |
+| repair 调用超时 | 3 次 (第 3 次 `_error`) | 主流程完整返回, `repair.ok=False` 被记录, 且 `violations_after` **仍留有违约** — 失败不伪装成修好 |
+
+- 双文件 `py_compile` 通过。
+
+**验证已资产化 (不留一次性脚本)**: 25 个用例固化为 `tests/test_da_output_contract.py` (pytest, 25 passed)。
+被测对象在 skill 仓 (本仓之外), 故整文件以 `skill 不可用即 skip` 保护, 不让 CI 因外部依赖缺失变红。
+临时补丁与验证脚本已全部删除。**§E 的 P1 达标复核直接重跑该文件即可** — `test_replay_baseline_if_data_present` 就是基线复算入口。
+
+**第四条教训 (在写这个测试时踩到, 属口径七律#2 的又一实例)**: 基线复算若**不按 8/14 切窗**,
+跑全史得 `tripwires<2` = **299/388 = 77.1%**, 而 v2 窗是 **18/107 = 16.8%** — 差 4.6 倍。
+原因: 早期 `opportunity_scan` 的 bridge 格式**根本不落 `tripwires` 字段**, 缺字段被计为违约,
+这与"模型没写 tripwire"是两回事。切窗要求已写进测试 docstring 并硬编码 `V2_START="2026-08-14"`,
+防止后续 Agent 拿 77% 当基线从而"轻松达标"。
+
+#### §D 回滚方式 (与冻结纪律)
+
+- **功能开关**: `DA_SCHEMA_ENFORCE=0` → 契约校验与 repair 一起关闭 (P1 完全静默)。
+- **代码回滚**: `scripts/llm_synth.py.bak-deb20260825r13`、`scripts/pipeline.py.bak-deb20260825r13`、`SKILL.md.bak-deb20260825r13`。
+  ⚠️ **git 不可用于本次回滚** — 该 skill 仓在本轮之前已有 ~300 insertions 未提交变更 (8/14 与 8/25 的既有改动), `git checkout` 会连带丢弃它们。
+- 冻结纪律核对: 本批**未动任何门禁/阈值/合并规则/仓位逻辑/方向改写**。行为面唯一变化是
+  ①少 2 次挑战者调用 (减法), ②对结构缺失多 1 次小 repair 调用 (17% 候选 ≈ +0.17 次/候选, 净仍为负)。
+
+#### §E 生效时点与下一步
+
+- **生效**: 下一次 DA 盘前轮 (19:00 CST) 起, `da_gate_decisions.jsonl` 出现新字段, `_contract` 开始落盘。
+- **P1 达标复核** (预注册, 不得挪门柱): n≥30 候选后, `contract_violations` 中 `tripwires_lt2` 占比应从 **17%** 降至 **≤5%**,
+  且 `ERROR_direction_changed` 字段**从不出现** (出现即为严重缺陷, 立即 `DA_SCHEMA_ENFORCE=0`)。不达标 → 按第 12 轮 §E 判定为模型能力上限, 另议。
+- **P6 达标复核**: 连续 10 交易日无缺行 (重跑日的 checkpoint 缺行需人工排除, 见 §B 已知缺口)。
+- 待裁决余项: P5 (需批准, 会改模型所见)、P2/P3b/P4 (影子, 各需两周 record-only)、P7 (治理)。
+  其中 **P2 的论证强度已按 §A 勘误下调**, 建议排在 P5 之后。
+
+### 第 14 轮 — prompt 结构性去塌缩 P8/P9/P12 (+P10/P11) 落地 (2026-08-25, 用户批"全部执行")
+
+**定位**: 第 11/13 轮修的是 prompt **单点病灶**(死链路/证伪论据/词表归一), 本轮修**系统层结构矛盾** —
+prompt 让模型做两件它做不到的事 (给出有区分度的 score、做真正独立的辩论), 并用这两个输出驱动下游逻辑。
+全部改动为**信息层+测量层**, 零门禁/阈值/合并规则/仓位逻辑变更 (遵守 9 月冻结纪律)。
+skill 版本 v0.67 → **v0.68**, prompt 指纹 `5c51939285bc → c9cc35bfa345` (基线可切分)。
+
+#### §A 落地清单 (5 项, 全部实弹验证)
+
+| # | 方案 | 修的病根 (实测实锤) | 动作 | 验证 |
+|---|---|---|---|---|
+| **P8** | **score 契约: 点估值→三档可判定枚举+代码映射** | v2 窗 score 塌缩 {7.0×131/195=67%}, 方差1.268; merge `|orig-chall|>3→SKIP` 实测 **0/107 触发**(观测上界1.0) = 结构性死亡 | prompt `score`→`score_band`(HIGH/MEDIUM/LOW), 锚定判据可判定(HIGH需①product_catalyst/earnings_beat类独有事件②信息未被价格反映(盘前同向<2%或量比<1.5)③数据≥12/18维, 逐条数); 代码 `_apply_score_band` 映射 HIGH→8/MEDIUM→6/LOW→3, 原 score 保留 `score_legacy`; 挑战者 `my_score_band` 同表映射 | 打桩: 分析师HIGH(8) vs 挑战者证伪LOW(3)反向 → 档间差5>3 → **SKIP 真正触发**(修复前不可能); 回滚 `DA_SCORE_BAND=0` |
+| **P9** | **挑战者: "独立复现"→"证伪官"** | `independent_direction==my_direction` **107/107**, verdict AGREE 104/107 = 伪独立(同份证据二次阅读必然趋同); 且 107/107 都能凑 4 条 missed_risks = 仪式化 | system 重写为"假设候选方向会亏, 找有数据出处的具体反证; **找不到≥2条就诚实 AGREE+写'无实质反证', 禁止为显得严格编造**"; user 三步改证伪流程; schema 不变(下游零破坏) | 端到端打桩验证 DISAGREE/反证/AGREE逃逸门三路径; `anchor_divergence` 语义保持(独立倾向≠最终方向) |
+| **P12** | **merge 同向取低** | AGREE(104/107)时 `initial["score"]` 原样保留, challenger_score 只落盘不进合成 → "挑战者更保守"信号**完全丢失** | 同向时挑战者分更低 → `initial["score"]` 取低 + 标 `_score_lowered_by_challenger` | 打桩: 挑战者5<7→取5; 8>7→不取低; band=LOW→3.0 取低 |
+| **P10** | **invalidation_triggers 字段 (机器可核销)** | tripwires 修好了"≥2条"但 metric 常为外部标的(SOX/金价)、threshold 自由文本、极性未编码 → tripwire_checker **零消费**, "写tripwires"是仪式 | schema 加 `invalidation_triggers`(本股可判定: metric限收盘价/成交量/5日涨跌/盘前涨跌幅 + operator限</>+ value纯数字); 校验器判定+合规旧tripwires回填; **只报告不repair**(tripwire_checker 实际消费自然语言 invalidation, 为它花 repair token 价值低) | 回放107候选零崩溃; 校验器三场景(合规/回填/外部标的)全对 |
+| **P11** | **prompt 瘦身 (纯减法)** | `challenger_system_v1`(1345字符, 8/14起DA_CHALLENGER_V2默认1永不命中)+`_load_claim_ic_for_prompt`(7/18起停用)死代码; USER模板KO分级制与SYSTEM重复 | 删 v1 分支+`DA_CHALLENGER_V2`开关; claim_ic 改空壳(兼容归档脚本import); USER重复段合并 | 挑战者侧 **-974字符**, 分析师侧+821(新契约判据的必要成本), 净减法在死代码 |
+
+#### §B 连带修复 (实弹中踩到)
+
+- **merge 改判 SKIP 后无 skip_reason → 触发新违约**: 代码改判 SKIP 时补默认 `skip_reason`(说明改判原因), 避免制造 `skip_reason_missing`。
+- **`re` 模块缺失**: 校验器回填正则用 `re.match` 但模块级未 import (原 `re` 只在函数内) → 补模块级 import。
+
+#### §C 验证结果 (55→35 测试全绿 + 打桩 + 回放)
+
+- `tests/test_da_output_contract.py` **25 → 35 passed** (新增 10 个 TestRound14 覆盖 P8/P9/P12/P10)。
+- **打桩端到端**: score_band 映射 / 档间差复活 SKIP 改判 / 同向取低 / 挑战者 band 映射 / 契约校验全通。
+- **107 候选回放**: 校验器零崩溃; `tripwires_lt2`=16.8%(与第13轮基线一致, 交叉验证); `invalidation_triggers_lt2`=100%(预期 — 旧候选无该字段, 模型需适配新 prompt, 且只报告不repair零成本)。
+
+#### §D 预注册判据 (达标复核, 不得挪门柱)
+
+| 方案 | 判据 | 窗口 | 不达标动作 |
+|---|---|---|---|
+| P8 | score 分布方差从 1.268 升至 >3, 且 merge `>3→SKIP` 出现率 0%→>3% | n≥30 候选(按 prompt_hash=c9cc35bfa345 切分) | 方差不升 → 承认 conviction 无法量化, 删 score 改纯 rating(更大减法) |
+| P9 | `anchor_divergence` 出现率 0%→>5%; 且挑战者 AGREE 中"无实质反证"占比上升(仪式化下降) | n≥30 | 仍<5% → 挑战者对方向零独立信息, 直接砍挑战者调用(P3b 已预埋的更大减法) |
+| P10 | 30 天后 tripwire_checker 实际核销率(TRIPWIRE_INVALIDATED 占比) >0 | 30 天 | 仍 0 → invalidation_triggers 也无法被消费, 重新评估字段存在意义 |
+| P12 | 随 P8 观察 (score 方差是否因取低进一步分散) | 同 P8 | — |
+
+#### §E 诚实边界 (不承诺提升期望)
+
+- 本轮全部修复是**测量层+信息层**: 让"识别层是否在正确执行"从不可观测变为可观测、消除仪式化计算、复活已死的辩论改判规则。**不改变第 5 轮终判** (净转正只剩换信号源/换券商两条外部路径)。
+- **模型适配期**: 新 prompt 上线后第一周 `invalidation_triggers_lt2` 会近 100% (模型未学过该字段), 只报告不 repair 故零成本; score_band 同理, 模型可能初期不给合法 band → `_apply_score_band` 不动旧 score (向后兼容, 不惩罚)。
+- **观测切分**: 一切新旧对照必须按 `prompt_hash=c9cc35bfa345` (v0.68) 与 `5c51939285bc` (v0.67 前) 切分, 混窗即错案 (口径七律#2)。
+- 代码回滚: `scripts/llm_synth.py.bak-deb20260825r14` / `pipeline.py.bak-deb20260825r14` / `SKILL.md.bak-deb20260825r14` (该仓有未提交变更, git 不可用于回滚); 功能开关 `DA_SCORE_BAND=0` 单独回滚 P8 映射。
+
+**待裁决余项** (本轮未动): P5 (多空对称化会改模型所见)、P2/P3b/P4 (影子各两周)、P7 (影子登记簿治理)。
+
+### 第 15 轮 — P10 消费接线 + P8 锚点代码化 + 独立复核三发现修复 (2026-08-25 夜, 用户批"需要")
+
+**触发**: Hermes 对第 14 轮落地做独立复核 (不信任自报, 逐行读码 + 查 DB), 发现三处文档不兑现:
+1. **P10 核销宣称是虚报** — `tripwire_checker.py` 只读 `playbook_instructions.invalidation` 自然语言列; `adapter.py` 透传了 tripwires 与 invalidation 但**漏了 `invalidation_triggers`**; 且 `main()` 的 pending 过滤 `and (invalidation).strip()` 把无文本失效条件的指令整条排除 → 结构化字段再合法也进不了判定。**这正是本议题病灶 1 (只写不读) 的第三次复现**。预注册 30 天判据"核销率>0"在接线前必然判死。
+2. **P8 锚点③模型不可数** — "数据覆盖≥12/18维"有两个硬伤: 采集器实际 **19 维** (数了 19 个 lambda, "18"是错的); 模型看不到采集维度清单, 实操退化为感觉档, 违反本轮自己的准则"能由代码判定的一律不交给模型"。
+3. **挑战者名义独立** — user 第一步在同一调用里既证伪又填 independent_direction, 分析师 JSON 就在同一条消息后半段, 信息屏障不存在 (真盲审属 P3b, 本轮不动, 记录在案)。
+
+**用户裁决 "需要"** = 接线 P10 + 修 P8 锚点, 执行如下。
+
+#### §A P10 消费接线 (双仓 4 点, 全部实弹验证)
+
+| # | 点 | 文件 | 动作 |
+|---|---|---|---|
+| 1 | adapter 透传 | skill `adapter.py` to_voting_result | 加 `"invalidation_triggers": plan.get(...)` (与 tripwires 并列) |
+| 2 | bridge cand 块 | skill `pipeline.py` ~L1012 | 加 `"invalidation_triggers"` (与 8/14 tripwires 漏拷同款断点预防) |
+| 3 | DB 落库 | skill `pipeline.py` ~L1096 raw_instruction 块 | 加 `"invalidation_triggers"` → 存 `raw_instruction_json` (零 schema 改动, blob 加键) |
+| 4 | 消费端 | FTSeek `scripts/tripwire_checker.py` | 新增 `evaluate_invalidation_triggers` (纯函数) + `_get_structured_triggers` (白名单过滤, 与模型侧校验器同口径) + `_deadline_expired` (过期条件跳过防陈旧误杀) + `_prev_close_5d` (日K算前收, 复用既有 `_build_router` 缓存); **修 pending 过滤**: `invalidation 非空 OR 有合法结构化条件` 才进判定 |
+
+判定语义 (与文本侧同宁漏原则, 各条 OR):
+- `收盘价` = quote.price, 但仅 ET ≥ 15:50 才评估 (与文本侧收盘限定词同守卫, 盘中现价≠收盘价早评估会误杀);
+- `成交量` = 当日累计量; `盘前涨跌幅` = quote.pre_change_rate (百分比, 当日定值);
+- `5日涨跌` = (现价 − 5交易日前收)/前收×100, 日K缺失该条跳过;
+- 缺行情字段/字段非法 → 该条跳过不计 (审计行留 `[no_quote]`/`[stale]` 痕)。
+- 双轨合并: 文本侧与结构化侧**任一命中即失效**, 审计行 `structured_detail` 独立留痕供归因。
+
+**口径诚实声明**: `5日涨跌` 与 DA 技术面数据段的 `chg5` (盘前生成时 = 昨收 vs 5根前) 差一根 (本侧 = 现价/昨收口径), 同为"5日变化"概念, 失效阈值带裕量 (-8% 级) 下不构成判定翻转; 已记入边界。
+
+#### §B P8 锚点③代码化 (单一真源对齐)
+
+- skill `llm_synth.py` 数据头注入: 代码按 `_quality` 算好 `- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)` / `不充分 ✗`, 模型只读标记不数维度。
+- 阈值 = 缺失<6 维, 与【数据充分性路由】"≥6缺失优先 SKIP"单一真源镜像对齐, 且与 LOW 条件②边界互斥自洽 (原"≥12/18"与"缺失≥6"在 19 维下 13 维边界互斥矛盾一并消除)。
+- prompt 锚点文本同步改为"读数据头部标记, 禁止自行估计维度数"; 过时引用 "(X/18)" 改 "(X/N, N=本次采集总维度数)"。
+- **PROMPT_HASH: c9cc35bfa345 → 15c13f7cb3f3** (新基线, 口径七律#2: 后续对照按此切分)。
+
+#### §C 实弹验证 (全部本机重跑, 非引用)
+
+- **结构化判定纯函数 9 场景全过**: 收盘价盘中守卫 (10:30 拦截) / 收盘命中 / 成交量 miss / 盘前跌幅 OR 命中 / 5日涨跌缺前收跳过 / 5日涨跌命中 / deadline 过期跳过 / 空触发器 / 坏 quote。
+- **提取器过滤**: 非法 metric (SOX指数) / 非法 op+value (跌破/两千万) / 非 dict / 字符串 value 可 float 保留 — 白名单与模型侧校验器逐字一致。
+- **口径复算**: US.META 真实日K+实时报价双口径对算通过 (pc5=543.67 对应 8/18 收盘, 5d=+2.8%)。
+- **端到端 dry-run** (`--dry --force`): 当日 12 条未执行指令全进判定、0 失效、`structured_detail: None` (当日指令系 19:00 旧码生成无结构化字段 → 文本轨照常, 向后兼容确认)。
+- **35 契约测试全过** + 四文件 py_compile + 锚点双向渲染冒烟 (15有效→充分✓ / 12有效→不充分✗)。
+- **c9cc35bfa345 首日实盘观测** (19:00 轮, 12 行): band 分布 HIGH (LLY/AVGO) / LOW (BWXT) / MEDIUM 其余 — score 塌缩修复生效; `invalidation_trigger_count` **12/12 = 2 条** (模型无需适配期, 直接遵守契约, 好于第 14 轮 §E 的悲观预期); SKIP 候选 5/5 `skip_reason_missing` 均被 repair 补齐 (`after: []` + 补出的 skip_reason 含实据) — **r13 的 P1 repair 链端到端生效实锤**。
+
+#### §D 判据更新 (不得挪门柱, 只更新切分锚点)
+
+| 方案 | 原判据 | 更新 |
+|---|---|---|
+| P8 | 方差 1.268→>3, merge SKIP 出现率 0→>3%, 按 c9cc35bfa345 切分 | **按 ≥c9cc35bfa345 (c9cc35 与 15c13f7c 均为 band 契约, 可合并计; 跨 hash 须分列呈现)** |
+| P10 | 30 天核销率>0 | 不变, 但**计时起点改为本轮接线上架日 (此前字段无消费方, 计时无意义)** |
+
+#### §E 诚实边界
+
+- 结构化核销**首次命中将是新行为路径** (把"已失效未执行指令"标跳过): 生效面 = 仅未执行指令, 不碰已成交仓, 与 9 月冻结纪律无冲突; 但首日命中须人工复核一次再信任 (审计行在 `data/tripwire_checker.jsonl` 的 `structured_detail` 字段)。
+- 挑战者名义独立未修 (属 P3b 拆调用范畴); P9 的 anchor_divergence 判据解读时须记得此折扣。
+- 回滚: FTSeek 侧 `git revert` tripwire_checker.py (或删结构化轨道块); skill 侧 `DA_SCORE_BAND=0` 不影响本轮 (锚点是注入不是映射), 完整回滚用 `git revert` skill 仓本提交; 双仓均已有提交, git 回滚通道完整。
+- 生效时点: skill 侧下一轮 DA (明日 19:00 北京) 起新字段开始落库; checker cron (每 30 分钟盘中) 即刻具备消费能力, 等首个带结构化字段的指令出现。
