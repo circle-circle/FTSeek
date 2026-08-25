@@ -550,3 +550,19 @@ T+0 显著性不推翻判据 (判据口径 = T+1 执行口径)。且实际账本
 
 **下游悬空核查**: 快照 factors.verdict → None (自然降级); skill ue_critique → 空串
 (条件注入跳过, DA prompt 零污染); scorecard 历史桶冻结在删除前读数。
+
+### 第 8 轮 — U4 输出契约观测模式落地 (2026-08-25 夜)
+
+**实施 (审计 §U4 裁剪版, 全部验证)**:
+1. **校验器** `_validate_and_repair_surfaced`: per-item 契约 (SHORT short_check 必填+
+   时效>0 / SKIP skip_reason 非空 / 非SKIP invalidation 非空) → 违约单次 LLM repair,
+   白名单仅 short_check/skip_reason/invalidation, direction/confidence/thesis 拒收留痕。
+2. **开关** `universe_expansion.schema_enforce: false` (观测模式, 只记录不丢标的)。
+3. **prompt 加字段**: SKIP 必输出 skip_reason (拒绝可归因, 病灶7) — 版本戳按 U1 纪律
+   同步升 **v2.5→v2.6**, hash 88d88fd315d4 (旧 3c501d513c47, 归因可切分)。
+4. **落库**: scan jsonl 新增 `contract_stats` (违约/修复/仍违约/方向补丁拒收), 攒样判据数据源。
+5. **测试**: `tests/test_ue_contract_validator.py` 15 例全过 (检测四态+白名单拒收+
+   强制/观测模式裁剪行为), 与 streak 测试合计 25 passed。
+
+**判据 (预注册)**: 攒样 5 交易日 → short_check provided 率与 skip_reason/invalidation
+非空率修复后升至 100% 且 direction_patch_rejected 恒 0 → 裁是否开强制 (schema_enforce=true)。

@@ -1695,6 +1695,12 @@ universe_expansion:
   #   99=全放行(回滚); 消费端二处: FTSeek cmd_inject + skill _load_ue_short_candidates。
   #   撤闸认错判据: 续期组前瞻 > +0.5% 且 n≥10 → 改回 99。
   max_emergence_streak: 2
+  # U4 (2026-08-25, DEB-ue-audit r7): per-item 输出契约观测模式。
+  #   false=只记录违约与白名单修复(不丢标的); true=修复后仍违约的标的丢弃。
+  #   判据: 攒样 5 交易日, short_check provided 率与 skip_reason/invalidation 非空率
+  #   修复后升至 100% 且 direction_patch_rejected 恒 0 → 才裁是否开强制。
+  #   数据源: scan jsonl contract_stats 字段。回滚: 改 false。
+  schema_enforce: false
   min_price_floor: 5.0    # 2026-08-13: UE注入价格地板 — 低于此价的浮现标的转SKIP行(可归因),
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.

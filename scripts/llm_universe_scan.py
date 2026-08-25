@@ -56,7 +56,7 @@ STRATEGY_ID = "universe_expansion"        # → trade_records.strategy_id (物�
 INFO_SOURCE = "LLM_EVENT_REASONING"
 
 HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
-PROMPT_VERSION = "v2.5"  # scan 落库归因戳; v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-20260825-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.6"  # scan 落库归因戳; v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-20260825-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -124,7 +124,9 @@ SYSTEM_PROMPT_V2 = (
     "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
     "corroborated_by_market(bool), invalidation(str), horizon_hours(int), expected_move_pct(float), "
     "evidence_checklist({catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low} 均bool), "
-    "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk})。\n"
+    "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk}), "
+    # [U4 2026-08-25 DEB-ue-audit] SKIP 必须给理由 — 可归因"为什么不浮现" (审计病灶: 拒绝不可归因)。
+    "skip_reason(仅SKIP: 一句话, 如'已充分反映/无具体催化/流动性不足')。\n"
     "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
 )
 
@@ -782,6 +784,8 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             "is_universe_external": bool(it.get("is_universe_external", False)),
             "winner_loser": wl if wl in ("WINNER", "LOSER") else "",
             "corroborated_by_market": bool(it.get("corroborated_by_market", False)),
+            # [U4 2026-08-25] SKIP 理由透传 — 拒绝可归因 (审计病灶: 拒绝不可归因)
+            "skip_reason": str(it.get("skip_reason", ""))[:120].strip() if direction == "SKIP" else "",
         }
         if with_tier:
             ev = str(it.get("evidence_ref", ""))[:200].strip()
@@ -843,6 +847,123 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                 }
         out.append(item)
     return out
+
+
+def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """[U4 2026-08-25, DEB-ue-audit r7] per-item 输出契约校验 + 单次白名单修复。
+
+    契约 (SYSTEM_PROMPT_V2 已要求的字段):
+      - SHORT   : short_check 必填且 downside_catalyst_expiry_hours > 0
+      - SKIP    : skip_reason 非空
+      - 非SKIP  : invalidation 非空
+    违约 → 单次 LLM repair 调用, 白名单仅接受 short_check / skip_reason / invalidation;
+    direction / confidence / thesis 一律拒收 (r13 零方向变更的结构性保障照抄)。
+    开关: universe_expansion.schema_enforce (config) — False/缺省 = 只记录违约与修复
+    (观测模式, 不丢标的); True = 修复后仍违约的标的丢弃。
+    """
+    stats: Dict[str, Any] = {"violations": [], "repaired": 0, "still_bad": 0,
+                             "dropped": 0, "direction_patch_rejected": 0,
+                             "enforce": bool(_cfg("universe_expansion.schema_enforce", False))}
+
+    def _missing(s: Dict[str, Any]) -> List[str]:
+        m = []
+        d = s.get("direction")
+        if d == "SHORT":
+            sc = s.get("short_check") or {}
+            if not sc.get("provided"):
+                m.append("short_check")
+            elif int(sc.get("downside_catalyst_expiry_hours") or 0) <= 0:
+                m.append("short_check.downside_catalyst_expiry_hours")
+        elif d == "SKIP":
+            if not str(s.get("skip_reason") or "").strip():
+                m.append("skip_reason")
+        if d in ("LONG", "SHORT"):
+            if not str(s.get("invalidation") or "").strip():
+                m.append("invalidation")
+        return m
+
+    bad = [(i, s, _missing(s)) for i, s in enumerate(surfaced)]
+    bad = [(i, s, m) for i, s, m in bad if m]
+    stats["violations"] = [{"symbol": s.get("symbol"), "direction": s.get("direction"),
+                            "missing": m} for _, s, m in bad]
+    if not bad:
+        stats["clean"] = True
+        return stats
+
+    from app.llm.model_call import call_llm
+    # 单次 repair 调用: 只问违约项, 只收白名单字段
+    try:
+        _rep_prompt = ("以下浮现标的缺少必填字段。只补齐方括号内列出的缺失字段, 逐条输出该标的的"
+                       "完整补齐值。禁止改动任何其他字段。严格 JSON: "
+                       "{\"repairs\": [{\"symbol\": str, \"invalidation\": str(缺失时), "
+                       "\"skip_reason\": str(缺失时), \"short_check\": {\"borrow_feasible\": bool, "
+                       "\"downside_catalyst_expiry_hours\": int, \"squeeze_risk\": int}(缺失时)}]}\n\n"
+                       + json.dumps([{"symbol": s.get("symbol"), "direction": s.get("direction"),
+                                      "thesis": s.get("thesis"), "causal_chain": s.get("causal_chain"),
+                                      "missing": m} for _, s, m in bad], ensure_ascii=False))
+        _rep = call_llm(feature="universe_expansion_reasoning", prompt=_rep_prompt,
+                        json_mode=True, max_tokens=1200)
+        if _rep and _rep.success:
+            _rp = _rep.response if isinstance(_rep.response, dict) else json.loads(_rep.response)
+            _rmap = {str(r.get("symbol", "")).replace("US.", "").upper(): r
+                     for r in (_rp.get("repairs") or []) if isinstance(r, dict)}
+            for i, s, m in bad:
+                r = _rmap.get(str(s.get("symbol", "")).upper())
+                if not r:
+                    continue
+                fixed = []
+                # 白名单逐字段回填 — direction/confidence/thesis 永不接受补丁
+                if "invalidation" in m:
+                    v = str(r.get("invalidation") or "").strip()
+                    if v:
+                        s["invalidation"] = v[:120]
+                        fixed.append("invalidation")
+                if "skip_reason" in m:
+                    v = str(r.get("skip_reason") or "").strip()
+                    if v:
+                        s["skip_reason"] = v[:120]
+                        fixed.append("skip_reason")
+                if m and m[0].startswith("short_check"):
+                    rsc = r.get("short_check") or {}
+                    if isinstance(rsc, dict) and rsc:
+                        try:
+                            _dce = int(rsc.get("downside_catalyst_expiry_hours", 0) or 0)
+                        except (TypeError, ValueError):
+                            _dce = 0
+                        try:
+                            _sqz = int(rsc.get("squeeze_risk", 0) or 0)
+                        except (TypeError, ValueError):
+                            _sqz = 0
+                        s["short_check"] = {
+                            "borrow_feasible": bool(rsc.get("borrow_feasible", False)),
+                            "downside_catalyst_expiry_hours": _dce,
+                            "squeeze_risk": _sqz,
+                            "provided": True,
+                            "repaired": True,
+                        }
+                        fixed.append("short_check")
+                # repair 若附带 direction 改动 → 拒收 (结构保障留痕)
+                if "direction" in r and str(r.get("direction", "")).upper() != s.get("direction"):
+                    stats["direction_patch_rejected"] += 1
+                if fixed:
+                    stats["repaired"] += 1
+                    s["_contract_repaired"] = fixed
+        else:
+            print(f"  [contract] repair 调用失败 (不阻断): {getattr(_rep, 'error', '?') if _rep else 'no_result'}")
+    except Exception as _ce:
+        print(f"  [contract] repair 异常 (不阻断): {_ce}")
+
+    # 复检: 修复后仍违约的计数; 强制模式才丢弃
+    drop_idx = set()
+    for i, s, _m in bad:
+        if _missing(s):
+            stats["still_bad"] += 1
+            if stats["enforce"]:
+                drop_idx.add(i)
+                stats["dropped"] += 1
+    if drop_idx:
+        surfaced[:] = [s for i, s in enumerate(surfaced) if i not in drop_idx]
+    return stats
 
 
 def _annotate_news_channel(surfaced: List[Dict[str, Any]], news: List[Dict[str, Any]]) -> None:
@@ -984,6 +1105,21 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         print("[scan] LLM 未浮现有效标的 (schema 通过但 surfaced 空)")
         return 0
 
+    # [U4 2026-08-25, DEB-ue-audit r7] per-item 输出契约校验 + 白名单修复。
+    #   观测模式 (schema_enforce 缺省 False): 只记录违约与修复, 不丢标的, 零方向变更。
+    #   判据: short_check provided 率与 skip_reason/invalidation 非空率升至 100% (repair 后),
+    #   repair 未改变任何 direction (direction_patch_rejected 恒 0), 攒样 5 交易日后裁是否开强制。
+    try:
+        _contract_stats = _validate_and_repair_surfaced(surfaced)
+        _nv = len(_contract_stats.get("violations", []))
+        print(f"  [contract] 违约 {_nv} / 修复 {_contract_stats.get('repaired')} / "
+              f"仍违约 {_contract_stats.get('still_bad')} / 方向补丁拒收 "
+              f"{_contract_stats.get('direction_patch_rejected')}"
+              + (f" / 丢弃 {_contract_stats.get('dropped')} (强制模式)" if _contract_stats.get("enforce") else " (观测模式)"))
+    except Exception as _u4_e:
+        print(f"  [warn] 契约校验异常 (不阻断): {_u4_e}")
+        _contract_stats = {"error": str(_u4_e)}
+
     # 为可评分, 抓 scan 时参考价
     # 2026-08-11: effective 口径 — 盘前时段用 pre_price (last_price=昨收会污染 fwd 基线)
     router = _build_router()
@@ -1058,6 +1194,8 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
         # [U1] 内容指纹 — 版本戳失真防护 (旧记录无此字段, 按日期切分)
         "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
+        # [U4] 契约校验统计 — 攒样判据数据源 (违约率/修复率/方向补丁拒收)
+        "contract_stats": _contract_stats,
         "surfaced": surfaced,
         "note": ("record-only midday shadow; 不进 inject/DA供料/push, 判据见 DEB §13.3"
                  if midday else "record-only; 不驱动 live, inject 另需 entry_enabled=true"),
