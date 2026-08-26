@@ -38,37 +38,17 @@ class FeishuBotAlerter:
     def send_alert(self, level: str, title: str, content: str, **kwargs) -> bool:
         """发送告警消息"""
         try:
-            # 根据级别设置颜色
-            colors = {
-                "INFO": "blue",
-                "WARN": "orange",
-                "CRITICAL": "red",
-            }
-            color = colors.get(level, "gray")
-            
-            # 构建消息内容
-            # 2026-08-26: 飞书 webhook 关键词安全设置要求消息体含 [FTSeek-US]
-            #   (与 app/notifier/feishu.py send_text L169 同款约定)。此前 post 富文本
-            #   仅在 title 含 FTSeek-US, 关键词匹配不扫 title → 19024 Key Words Not
-            #   Found (EdgeWeekly 周报 8/26 实锤)。修法: 首行注入关键词。
-            text_lines = [
-                {"tag": "text", "text": f"[FTSeek-US] 级别：{level}\n"},
-                {"tag": "text", "text": f"{content}\n"}
-            ]
-            
-            # 添加额外信息
+            # 2026-08-26 实弹证伪+真修: 飞书自定义机器人"关键词"安全设置只扫描
+            #   text 型消息 — post 富文本的 title 与 body 均不参与关键词匹配
+            #   (首轮修在 post body 注入 [FTSeek-US] 实测仍 19024; text 型探针
+            #   实测 code:0 放行)。改 text 型, 与 app/notifier/feishu.py send_text
+            #   L169 五月以来工作正常的同款约定。排版: 首行级别+标题, 余下正文。
+            lines = [f"[FTSeek-US] [{level}] {title}", content]
             for key, value in kwargs.items():
-                text_lines.append({"tag": "text", "text": f"{key}: {value}\n"})
-            
-            # 构建富文本消息
-            content_obj = {
-                "title": title,
-                "content": [text_lines]
-            }
-            
+                lines.append(f"{key}: {value}")
             payload = {
-                "msg_type": "post",
-                "content": content_obj
+                "msg_type": "text",
+                "content": {"text": "\n".join(lines)},
             }
             
             # 如果有签名，添加时间戳和签名
