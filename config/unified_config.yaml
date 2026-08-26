@@ -1356,9 +1356,13 @@ playbook:
     # (隔夜三轨之③, 见 playbook.overnight_hold_enabled 处互参标注 — 本键只管
     #   再入场生成器武装仓的首夜 EOD 豁免, intraday_reentry.py:1034)
     overnight_hold_loser_enabled: true
+  # 2026-08-26 审计加固: 键从 topup. 移到 playbook. 顶层 — 8/22 改名只改了代码读取路径
+  #   (pipeline.py:727 读 playbook.technical_fallback_override_enabled), yaml 键却留在
+  #   topup. 下 → 代码恒读 MISSING, no-bridge 兜底覆写静默失效。topup 已 8/6 停供,
+  #   本键与 topup 无关, 归位到 playbook 顶层 (消费方唯一: pipeline.py:727)。
+  technical_fallback_override_enabled: true
   topup:
     enabled: false
-    technical_fallback_override_enabled: true  # 2026-08-22: 键名修正(原 topup.technical_override_enabled), 控制 no-bridge 兜底链覆写
     target_min_instructions: 30
     max_add_per_day: 18
     max_attempts_per_window: 2

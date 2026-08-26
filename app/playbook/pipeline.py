@@ -7956,10 +7956,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 logger.warning(f"[隔夜shadow] emit 异常 (不阻断退出记账) {symbol}: {_ov_e}")
 
             # 写入 exit_price_source 到 metadata
-            try:
-                _meta_out = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
-            except Exception:
-                _meta_out = {}
+            # 2026-08-26 审计加固: 基底从轮初旧行 r["metadata_json"] 改为内存 meta 快照。
+            #   根因: L7763 每轮(含退出轮)已把完整 meta 写回 DB, 但此处用轮初旧行重建
+            #   _meta_out 再写回 → 退出轮的 peak/mfe/e_shadow 等末轮增量被旧行覆盖丢失
+            #   (30笔实测核心字段在, 丢的是退出轮最后一跳 + 仅退出轮新产生的字段)。
+            #   dict(meta) == 当前 DB 行内容 (L7763 写回前已 pop 同 3 个临时键), 严格等价
+            #   + 本轮增量; 下方手工搬运块保留为安全网 (覆写同值, 幂等)。
+            _meta_out = dict(meta)
+            for _k in ("_log_tag", "_symbol", "_skip_allowed"):
+                _meta_out.pop(_k, None)
             _meta_out["exit_price_source"] = _price_source
             _meta_out["broker_qty_before"] = close_res.get("broker_qty_before")
             _meta_out["broker_qty_after"] = _broker_qty_after
