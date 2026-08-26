@@ -122,7 +122,10 @@ def run_premarket_catalyst_scan(scheduler) -> List[CatalystVerdict]:
     if verdicts:
         try:
             from app.catalyst.notifier import push_premarket_report
-            push_premarket_report(verdicts, market_context=market_ctx)
+            # [2026-08-26 静默病灶扫描] 原 market_context= 为旧形参名 (已改名
+            #   market_ctx), TypeError 被"不影响主流程"except 吞掉 → 一旦启用
+            #   catalyst, 推送将从未执行且日志只有一句 warning。
+            push_premarket_report(verdicts, market_ctx)
         except Exception as e:
             logger.warning("[Catalyst] 盘前推送失败 (不影响主流程): %s", e)
     
