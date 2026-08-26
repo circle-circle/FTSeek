@@ -40,8 +40,10 @@ WATCHLIST = [
     ("data/shadow/exec_gate_audit.jsonl",          30, "执行闸门审计",                     True),
     ("data/shadow/sltp_verify_shadow.jsonl",       30, "止盈止损校验 shadow",             True),
     # 2026-08-26 复查加固: U11 确认门兜底告警 (主防线=双季cron+当日幂等+窗口守卫日志)。
-    #   阈值 74h 容忍美国假日连休不误报 (最坏 Thu+Fri 假日: 周六检查时距周三写入 57h);
-    #   代价是全静默死亡最坏 ~5 天检出 — 可接受, 本条只是兜底中的兜底。
+    #   74h 实测口径 (8/26 独立复核修正原"假日不误报"注释, 证伪见 DEB-20260825 复核段):
+    #   美国假日后第一个交易日 06:25 检查必误报一次 (周一假日→周二 80.75h; 连休两天→104.75h),
+    #   当晚 confirm 跑后自恢复, 零数据污染 — 误报本身证明链路活着, 接受为已知噪音。
+    #   代价: 真静默死亡最坏 ~5 天检出 — 可接受, 本条只是兜底中的兜底。
     ("data/shadow/ue_confirm_gate.jsonl",         74, "UE 开盘确认门 shadow (U11)",       True),
     # 已知墓地 (DEB-20260723 time-exit-censoring 实证6): 若已裁决停用应从清单移除, 否则持续告警提醒清理
     # 2026-08-26: prompt_eval + shadow_technical_direction 已归档至
