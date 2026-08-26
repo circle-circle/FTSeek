@@ -5,7 +5,7 @@
 从 playbook_instructions.conditions_json 回填因子到 signal_snapshots.factors_json
 然后计算每个因子的IC
 
-Crontab: 35 5 * * 2-6 (在backfill_forward_returns后运行)
+Crontab: 40 5 * * 2-6 (在backfill_forward_returns后运行)
 """
 import sys, os, sqlite3, json, math
 from collections import defaultdict
@@ -43,6 +43,7 @@ def main():
     print(f"  待回填: {len(pending)}条")
     
     updated = 0
+    parse_fail = 0
     for row in pending:
         # 从playbook_instructions查conditions_json
         inst = inst_db.execute(
@@ -59,10 +60,14 @@ def main():
                     )
                     updated += 1
             except Exception:
-                pass
-    
+                # [v0.70 P0-3] 解析失败不再静默 — 静默失败会让 factors_json 永久 NULL,
+                #   且无任何日志可查 (审计发现: 失败量此前完全不可观测)
+                parse_fail += 1
+
     snap_db.commit()
     print(f"  已回填: {updated}/{len(pending)}条")
+    if parse_fail:
+        print(f"  ⚠️ conditions_json解析失败: {parse_fail}条 (factors_json保持NULL, 可查本日志)")
     
     # 2. 计算因子级IC
     print("\n=== 2. 因子级IC计算 ===")
@@ -80,6 +85,18 @@ def main():
     #   - dict{claims,conditions,...}   : deep_analysis 完整输出, 取 conditions(str)+claims 的 claim_type
     #   - dict{condition: bool}         : 条件映射, 取值为真的键
     # 2026-07-10: 修复原 `for f in factors` 在 dict 元素上崩溃(unhashable), 且让 claim_type 进入 factor IC
+    # [v0.70 P0-3 2026-08-26] 结构键污染过滤 — 实测 173 行 factors_json 被评分器整包写入
+    #   {rubric_score, evidence_checklist, self_tier, verdict, info_channel, scan_price},
+    #   无 claims/conditions 键 → 落入 else 分支被当因子名; 每条记录恒出现 → n≥173
+    #   轻松过消费端 n≥30 门 → 假因子混进 factor_ic_latest.json 被 pipeline IC 门计分。
+    #   双保险: ①已知结构键黑名单 ②非标量值 (dict/list) 不算因子命中。
+    _STRUCT_KEYS = {
+        "rubric_score", "rubric_shadow", "evidence_checklist", "self_tier",
+        "verdict", "info_channel", "scan_price", "backfilled",
+        "bucket_reason", "debate_outcome", "gate_decision",
+        "position_size_hint", "quality_score", "signal_scores", "strategy_type",
+    }
+
     def _extract_factors(raw):
         out = []
         if isinstance(raw, list):
@@ -106,7 +123,10 @@ def main():
                             out.append(ct)
             else:
                 for k, v in raw.items():
-                    if v and isinstance(k, str):
+                    if not isinstance(k, str) or k in _STRUCT_KEYS:
+                        continue
+                    # 非标量值 (dict/list) 是结构字段不是因子命中 (如 evidence_checklist dict)
+                    if isinstance(v, (str, bool, int, float)) and v:
                         out.append(k)
         return list(dict.fromkeys(out))  # 每条记录内去重(因子命中与否, 不重复计数)
 
@@ -249,17 +269,22 @@ def main():
     # 与 IC(预测能力) 互补: trade_ic 衡量因子的实际交易盈利能力
     # 用 trade_records.realized_pnl_pct 代替 fwd_ret_t1
     # 用 trade_records.metadata_json.conditions 代替 factors_json
-    print("\n=== 3. 交易IC (因子→实际P&L) ===")
+    # [v0.70 P0-3] 口径统一: realized_pnl 是毛盈亏 (项目约定, 见 memory trade-records-net-pnl),
+    #   净值 = pnl_net 优先, 否则 realized_pnl - fees_est. 原口径低估亏损 ~65% (费用占比实测).
+    #   实测验证行: realized=3.96 fees=4.18 → pnl_net=-0.22 ✓
+    print("\n=== 3. 交易IC (因子→实际P&L, 净值口径) ===")
     trade_rows = inst_db.execute("""
-        SELECT direction, pnl_pct, realized_pnl,
+        SELECT direction, pnl_pct,
+               COALESCE(pnl_net, realized_pnl - COALESCE(fees_est, 0)) as pnl_net_eff,
                json_extract(metadata_json, '$.conditions') as conditions_str,
                exit_reason, holding_hours,
                json_extract(metadata_json, '$.peak_price') as peak_price,
-               entry_price
+               entry_time, entry_price
         FROM trade_records
         WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
           AND exit_price IS NOT NULL AND exit_price > 0
           AND exit_reason IS NOT NULL AND exit_reason != ''
+          AND entry_time >= '2026-06-01'
     """).fetchall()
     print(f"  闭环交易: {len(trade_rows)}条")
 
@@ -275,13 +300,16 @@ def main():
         else:
             return (entry - peak) / entry * 100
 
-    # 按因子拆分: factor -> [(signed_pnl_pct, pnl, direction, exit_reason, realized_pnl, mfe_pct)]
+    # 按因子拆分: factor -> [(signed_pnl_pct, pnl, direction, exit_reason, pnl_net_eff, mfe_pct)]
     factor_trades = defaultdict(list)
+    conds_parse_fail = 0
     for r in trade_rows:
         conds_str = r["conditions_str"] or '[]'
         try:
             conds = json.loads(conds_str)
         except Exception:
+            # [v0.70 P0-3] 静默吞掉→计数上报 (此前损坏 conditions 行直接消失不可观测)
+            conds_parse_fail += 1
             conds = []
         if not conds:
             continue
@@ -290,7 +318,9 @@ def main():
         signed = pnl_pct
         mfe_pct = _mfe_pct(r)
         for c in conds:
-            factor_trades[c].append((signed, pnl_pct, r["direction"], r["exit_reason"], float(r["realized_pnl"] or 0), mfe_pct))
+            factor_trades[c].append((signed, pnl_pct, r["direction"], r["exit_reason"], float(r["pnl_net_eff"] or 0), mfe_pct))
+    if conds_parse_fail:
+        print(f"  ⚠️ metadata_json.conditions解析失败: {conds_parse_fail}条 (该批交易未计入因子拆分)")
 
     factor_trade_ic = {}
     # 2026-07-10 修复: 原 trade_ic = corr(pnl_pct, pnl_pct) 恒等于 ±1

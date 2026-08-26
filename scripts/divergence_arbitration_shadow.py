@@ -139,6 +139,11 @@ def _upsert(records):
             except Exception:
                 pass
     for rec in records:
+        # 2026-08-26: 原 upsert 整条覆盖, recorded_at 每次被刷新, 首次捕获时间丢失;
+        # 改为仅新记录写 recorded_at, 更新时保留原值。
+        old = existing.get(rec["id"])
+        if old and old.get("recorded_at"):
+            rec["recorded_at"] = old["recorded_at"]
         existing[rec["id"]] = rec
     with SHADOW.open("w") as f:
         for o in existing.values():

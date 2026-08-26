@@ -58,8 +58,26 @@ WATCHLIST = [
 ]
 
 
+def _now_et():
+    """[v0.70 审计修复 2026-08-26] {today} 占位符必须按 ET 日期解析.
+
+    主机是 CST: 06:25 CST 运行时 ET 还是前一天 (17:25 ET), bridge 文件由生产端
+    按 ET 日期命名 → 用 CST 日期会找"今天"的文件 (19:00CST 后才产出) → 每天必报
+    一次假 MISS (实测 8/26 06:25 告警实锤, 当时昨日文件仅 11h 新鲜).
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        try:
+            import pytz
+            return datetime.now(pytz.timezone("America/New_York"))
+        except Exception:
+            return datetime.now()  # 最后兜底: 维持旧行为 (已知有每日假MISS)
+
+
 def _resolve(rel: str) -> Path:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _now_et().strftime("%Y-%m-%d")
     return ROOT / rel.format(today=today)
 
 
@@ -106,7 +124,12 @@ def _build_message(stale, missing) -> str:
     if missing:
         lines.append("── 文件缺失 ──")
         for rel, desc in missing:
-            lines.append(f"❓ {desc}: {rel}")
+            # [v0.70] 显示解析后的真实路径 (原样输出 rel 会把 {today} 占位符直接暴露在告警里)
+            try:
+                shown = str(_resolve(rel))
+            except Exception:
+                shown = rel
+            lines.append(f"❓ {desc}: {shown}")
     return "\n".join(lines)
 
 
@@ -118,7 +141,11 @@ def main(push=False, dry=False):
     for rel, desc, age, max_age in stale:
         print(f"  [STALE] {desc}: {age:.0f}h > {max_age}h")
     for rel, desc in missing:
-        print(f"  [MISS ] {desc}: {rel}")
+        try:
+            _shown = str(_resolve(rel))
+        except Exception:
+            _shown = rel
+        print(f"  [MISS ] {desc}: {_shown}")
     for rel, age in ok:
         print(f"  [ok   ] {rel}: {age:.1f}h")
     print("=" * 60)

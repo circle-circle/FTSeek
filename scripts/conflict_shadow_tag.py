@@ -77,6 +77,15 @@ def main():
     added = 0
     rows_out = []
 
+    # [v0.70 审计修复 2026-08-26] 增量日期守卫: 本脚本由 scheduler AFTER_HOURS 挂载,
+    #   盘后每30min触发一次; 原实现每次全量回扫 2026-06-01 以来所有日期
+    #   (实测 ~60 日期 × 每日期2查询 ≈ 120查询/tick, 一晚上 ~20 tick 全是重复劳动)。
+    #   历史日期的输入 (指令/持仓/scan文件) 当日结束后即冻结, 且命中项已有幂等键
+    #   落盘 → 只需保留最近已标记日期 (兜底当日晚到指令) 及其后的新日期。
+    _latest_tagged = max((k[0] for k in existing), default="")
+    if _latest_tagged:
+        all_dates = [d for d in all_dates if d >= _latest_tagged]
+
     for d in all_dates:
         # ── 1. 当日隔夜持仓: entry < d AND (exit >= d OR 未平仓) ──
         held = conn.execute(

@@ -19,7 +19,8 @@ from pathlib import Path
 
 from app.storage.db_pool import get_db
 from app.utils.timezone import ET
-OPEN_ET_H = 9  # 开盘 ET 09:30; created_at(UTC) 的 ET 小时 < 9(或=9且分<30) 视为盘前
+# 2026-08-26: 盘前判定改分钟级 (小时==9 时须比分钟), 常量由"小时"改为"开盘分钟数"
+OPEN_ET_MIN = 9 * 60 + 30  # 开盘 ET 09:30; created_at(UTC) 换算的 ET 时刻早于该值视为盘前
 SNAP_DB = Path(__file__).resolve().parents[1] / "data" / "signal_snapshots.db"
 
 
@@ -27,12 +28,24 @@ def _today_et():
     return datetime.now(ET).strftime("%Y-%m-%d")
 
 
-def _et_hour(utc_ts):
-    """created_at 形如 'YYYY-MM-DDTHH:MM:...'(UTC) → ET 小时(int) 或 None。"""
+def _et_min(utc_ts):
+    """created_at 形如 'YYYY-MM-DDTHH:MM'(UTC 字符串) → 当日 ET 分钟数 (0-1439) 或 None。
+    2026-08-26: 新增分钟精度辅助, 盘前判定需区分 09:00-09:29 与 09:30 后;
+    换算按真实 ET 偏移 (pytz/zoneinfo localize 后 astimezone), 不再硬编码 -4。"""
     try:
-        return (int(utc_ts[11:13]) - 4) % 24
+        dt = datetime.fromisoformat(str(utc_ts)[:19]).replace(tzinfo=timezone.utc)
+        et = dt.astimezone(ET)
+        return et.hour * 60 + et.minute
     except Exception:
         return None
+
+
+def _et_hour(utc_ts):
+    """created_at 形如 'YYYY-MM-DDTHH:MM:...'(UTC) → ET 小时(int) 或 None。
+    2026-08-26: 原 (h-4)%24 硬编码只对 EDT 成立, 冬令时(EST,-5)全部偏 1 小时;
+    改为按该 UTC 时间戳对应日期的真实 ET 偏移换算 (复用 _et_min)。"""
+    m = _et_min(utc_ts)
+    return None if m is None else m // 60
 
 
 def _gate_stats(date):
@@ -73,7 +86,9 @@ def _report_date(c, date):
     actionable = dir_cnt.get("BUY", 0) + dir_cnt.get("SELL_SHORT", 0)
     et_hours = sorted({_et_hour(r[1]) for r in rows if r[1] and _et_hour(r[1]) is not None})
     # 盘前判定: 可执行指令是否都在开盘前生成
-    premarket = all((_et_hour(r[1]) is not None and _et_hour(r[1]) < OPEN_ET_H)
+    # 2026-08-26: 原只比较小时(<9), 09:00-09:29 生成的可执行单被误判盘前;
+    # 改为分钟级 (小时<9 或 小时==9 且分<30 ⇔ ET 分钟 < 09:30), 与注释语义对齐。
+    premarket = all((_et_min(r[1]) is not None and _et_min(r[1]) < OPEN_ET_MIN)
                     for r in rows if r[0] in ("BUY", "SELL_SHORT") and r[1]) if actionable else False
 
     # 2) 执行 (trade_records 按 entry_time 当日)
@@ -90,6 +105,10 @@ def _report_date(c, date):
         verdict = f"🔧 FALLBACK — 走了 technical 兜底 ({fb_fills} 笔)"
     elif da_fills > 0:
         verdict = f"✅ DA_ACTIVE — DA 指令已执行 ({da_fills} 笔 playbook_sim)"
+        # 2026-08-26: DA 成交当日兜底链也在成交, 说明部分单走了 TFB (bridge 可能未接上),
+        # 不能纯 ✅ 掩盖 — 附警告保留线索。
+        if fb_fills > 0:
+            verdict += f" ⚠️ 兜底链(TFB)同日也有成交({fb_fills} 笔), 疑似 bridge 未接上"
     else:
         verdict = "⏳ GENERATED_NOT_FILLED — 有 DA 指令但当日无成交 (未触发入场?)"
 

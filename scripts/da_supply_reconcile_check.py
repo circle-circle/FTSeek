@@ -19,7 +19,12 @@ UPSERT 覆盖导致落库归零, 1.6h 盲窗靠人工察觉, 10:37 重注入才�
 
 纯只读 + 告警推送, 零执行路径改动。回滚 = 删本文件 + 删 crontab 行。
 
-运行: PYTHONPATH=. venv/bin/python scripts/da_supply_reconcile_check.py [--dry]
+运行守卫 (2026-08-26): ① 仅 ET 09:02-10:30 窗口执行, 窗外打印原因静默退出 rc=0
+  (cron 固定 21:10 CST, 冬令时错位成 08:10 ET 会失去监测意义); ② 当日已跑幂等
+  跳过 (data/.da_supply_reconcile_state.json), 为双季双发 cron 去重做准备;
+  --force 可同时越过两道守卫 (测试用)。
+
+运行: PYTHONPATH=. venv/bin/python scripts/da_supply_reconcile_check.py [--dry] [--force]
 退出码: 1=RED (cron-catchable), 0=其他。
 """
 import argparse
@@ -48,6 +53,38 @@ DB_MAIN = PROJECT_DIR / "data" / "ftseek_us.db"
 DB_SNAP = PROJECT_DIR / "data" / "signal_snapshots.db"
 YELLOW_GAP = 3      # 落库 vs bridge 差额 ≤3 = gate/dedup 自然损耗 (历史基准 0-3)
 RED_RATIO = 0.5     # 落库 < bridge×0.5 且 bridge≥4 = 大规模丢失
+# 2026-08-26: 守卫常量 — ET 监测窗口锚定设计时点 09:10 (DA 07:17 产出+09:00 generate 之后);
+# 幂等状态文件仿 macro_calendar_shadow_collect 的 data/.xxx_state.json 惯例。
+ET_WINDOW = ("09:02", "10:30")
+STATE_FILE = PROJECT_DIR / "data" / ".da_supply_reconcile_state.json"
+
+
+def _in_et_window() -> bool:
+    """当前真实 ET 时钟是否落在监测窗口内 (按分钟比较)。"""
+    now = datetime.now(ET)
+    m = now.hour * 60 + now.minute
+    lo = int(ET_WINDOW[0][:2]) * 60 + int(ET_WINDOW[0][3:])
+    hi = int(ET_WINDOW[1][:2]) * 60 + int(ET_WINDOW[1][3:])
+    return lo <= m <= hi
+
+
+def _already_ran_today(date: str) -> bool:
+    """当日幂等: 状态文件记录的上次成功运行日 == 今天 则视为已跑。"""
+    try:
+        return json.loads(STATE_FILE.read_text()).get("last_run_date_et") == date
+    except Exception:
+        return False
+
+
+def _mark_done(date: str):
+    """记录当日成功运行标记 (写失败仅告警不阻断, 下次 cron 会重跑)。"""
+    try:
+        STATE_FILE.write_text(json.dumps({
+            "last_run_date_et": date,
+            "last_run_ts": datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S"),
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"[warn] 幂等状态写入失败 ({STATE_FILE.name}): {e}")
 
 
 def _today_et() -> str:
@@ -106,9 +143,25 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="只打印不推送")
     ap.add_argument("--date", help="覆盖 ET 日期 (回测用)")
+    ap.add_argument("--force", action="store_true", help="跳过 ET 窗口/当日幂等守卫 (测试用)")
     args = ap.parse_args()
 
     date = args.date or _today_et()
+
+    # ── 2026-08-26 守卫1: ET 时点窗口 [09:02, 10:30] ──
+    # 脚本锚定 09:10 ET 设计, 却被固定 21:10 CST cron 调用, 冬令时错位成 08:10 ET
+    # (bridge 未产出) 失去监测意义。改按真实 ET 时钟判窗, 窗外打印原因退出 rc=0。
+    if not args.force and not _in_et_window():
+        print(f"[skip] 当前 ET {datetime.now(ET).strftime('%H:%M')} 不在 "
+              f"{ET_WINDOW[0]}-{ET_WINDOW[1]} 监测窗口内 (cron 与 ET 错位或重复触发), 不执行")
+        sys.exit(0)
+
+    # ── 2026-08-26 守卫2: 当日幂等, 为双季双发 cron 去重做准备 (--force 可覆盖) ──
+    # 仅对真实运行生效; --date 回测/补跑不查也不写状态。
+    if not args.force and args.date is None and _already_ran_today(date):
+        print(f"[skip] {date} 今日已成功跑过 ({STATE_FILE.name}), 幂等跳过")
+        sys.exit(0)
+
     if not args.date and not _is_trading_day():
         print(f"[skip] {date} 非交易日")
         return
@@ -145,6 +198,11 @@ def main():
         msg = f"⚠️ DA 落库 {db_n} < bridge {bridge_n} (差 {gap} > {YELLOW_GAP}), 疑似部分丢失"
 
     print(f"[判定] {status} {msg}".rstrip())
+
+    # 2026-08-26: 对账已完整执行 (含 RED 告警路径), 此处记当日幂等标记,
+    # 防双发 cron 短间隔内重复对账/重复告警; 仅真实运行写入, 回测不污染状态。
+    if args.date is None:
+        _mark_done(date)
 
     if status == "RED":
         if args.dry:

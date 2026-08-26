@@ -635,7 +635,9 @@ class PlaybookService:
             rows = conn.execute(
                 "SELECT decision_id, symbol, direction, strength, confidence, "
                 "consensus_level, strategy_id, factors_json "
-                "FROM signal_snapshots WHERE date(trade_date) = ? "
+                # 2026-08-26: trade_date 实测为纯 'YYYY-MM-DD' 文本 (signal_snapshots 全表
+                # 4118 行无时间成分), date() 包裹使 idx_snap_date 失效; 改等值比较, 等价且走索引。
+                "FROM signal_snapshots WHERE trade_date = ? "
                 "ORDER BY strength DESC",
                 (trade_date,),
             ).fetchall()
@@ -938,7 +940,9 @@ class PlaybookService:
                 _snap_conn.row_factory = _sqlite3.Row
                 _trade_date = inst.get("date", "")
                 _row = _snap_conn.execute(
-                    "SELECT decision_id FROM signal_snapshots WHERE symbol = ? AND date(trade_date) = ? ORDER BY strength DESC LIMIT 1",
+                    # 2026-08-26: 同 _get_vote_map — trade_date 实测纯 'YYYY-MM-DD',
+                    # date() 包裹废掉 idx_snap_date + idx_snap_symbol 选择度; 改等值走索引。
+                    "SELECT decision_id FROM signal_snapshots WHERE symbol = ? AND trade_date = ? ORDER BY strength DESC LIMIT 1",
                     (symbol, _trade_date),
                 ).fetchone()
                 if _row:

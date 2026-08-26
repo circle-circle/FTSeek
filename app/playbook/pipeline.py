@@ -922,6 +922,47 @@ def _check_bridge_health_and_alert(context: str) -> None:
         logger.warning(f"[playbook] #1 bridge健康检查异常 (不阻断): {_bh_e}")
 
 
+# [v0.70 P0-2 2026-08-26] 运行期 bridge 重载 — 治 L845 所述盲区的"接不上"半边:
+#   服务启动早于 DA 产出 (hermes cron 19:00CST=07:00ET) 时, __init__ 里
+#   _try_load_bridge 找不到当日文件 → 内存恒为 TechnicalFallbackAdapter,
+#   当晚 bridge 落盘后也永远接不上, 全天技术面降级且四路监控均不可见
+#   (健康检查读的是文件态, 不是内存态). 修复: run_generate 入口探测重载.
+_bridge_reloaded_date = None
+
+
+def _reload_bridge_if_landed(scheduler) -> None:
+    """运行期 bridge 重载: 非 Bridge adapter + 当日文件已产出(ok) → 重挂 BridgeVotingAdapter.
+
+    条件全满足才动作 (幂等, 一天最多一次成功重载):
+      ① 当前 scheduler.voting_coordinator 非 BridgeVotingAdapter (Bridge 无需重载);
+      ② 今日未重载过 (_bridge_reloaded_date 守卫 — 文件一日一产, 失败也不反复试);
+      ③ 当日 bridge 文件 state==ok 且内部 trade_date==今日 (复用 _bridge_file_state).
+    成功 → 替换 scheduler.voting_coordinator (该属性仅 __init__ 写入, 运行期无其他写者);
+    失败/未就绪 → 静默返回 (缺失告警由 _check_bridge_health_and_alert #1 兜底).
+    """
+    global _bridge_reloaded_date
+    try:
+        _today = _today_et_str()
+        if _bridge_reloaded_date == _today:
+            return
+        vc = getattr(scheduler, "voting_coordinator", None)
+        if vc is not None and type(vc).__name__ == "BridgeVotingAdapter":
+            return
+        if _bridge_file_state(_today) != "ok":
+            return
+        bridge = _try_load_bridge()
+        if bridge is None or type(bridge).__name__ != "BridgeVotingAdapter":
+            return
+        scheduler.voting_coordinator = bridge
+        _bridge_reloaded_date = _today
+        logger.info(
+            f"[playbook] P0-2 运行期bridge重载成功: {_today} "
+            f"{type(vc).__name__} → BridgeVotingAdapter ({len(bridge._candidates)} candidates)"
+        )
+    except Exception as _rl_e:
+        logger.warning(f"[playbook] P0-2 bridge重载探测异常(不阻断): {_rl_e}")
+
+
 def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     """加载今日 bridge 文件。不存在 → None (调用方 fallback 到 VotingCoordinator)。"""
     import json as _json
@@ -952,6 +993,18 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
         logger.error(
             f"[playbook] bridge文件schema非法 (缺symbol/direction/decision_id), "
             f"fail-safe视作缺失, fallback到VotingCoordinator"
+        )
+        return None
+
+    # [v0.70 P0-2 2026-08-26] 文件内 trade_date 与今日不一致 → 过期视作缺失.
+    #   场景: 服务在 DA 产出前重启, 文件名日期由 get_trade_date() 决定本应自洽,
+    #   但跨日边界/生产端写错日期时, 旧候选会被当成今日信号消费 (错价决策源).
+    #   实测口径: 文件名与内部 trade_date 均为 YYYY-MM-DD 纯文本, 直接比对安全.
+    _inner_date = str(data.get("trade_date", "") or "")
+    if _inner_date and _inner_date != _today_str:
+        logger.error(
+            f"[playbook] bridge文件trade_date={_inner_date} ≠ 今日{_today_str}, "
+            f"过期数据fail-safe视作缺失, fallback到VotingCoordinator"
         )
         return None
 
@@ -1155,6 +1208,18 @@ def _build_instructions_from_votes(
         "final_instructions": 0,
     }
 
+    # [v0.70 P1] ADR-008 仲裁配置 — 循环外一次读取 (原每候选 get_config+2次get_dotted)
+    _direction_mode = "llm_vote"
+    _llm_conflict_threshold = 0.70
+    try:
+        from app.core.config_container import get_config as _get_config_hoisted
+        _cfg_hoisted = _get_config_hoisted()
+        _direction_mode = str(_cfg_hoisted.get_dotted("playbook.direction_mode", "llm_vote")).lower()
+        _llm_conflict_threshold = float(_cfg_hoisted.get_dotted(
+            "playbook.technical_arbitration.llm_conflict_confidence_threshold", 0.70))
+    except Exception:
+        pass
+
     for sr in screen_results:
         symbol = sr.symbol
         data = sr.data
@@ -1220,8 +1285,14 @@ def _build_instructions_from_votes(
                 factors=list(factors.keys()) if factors else [],
                 market_context=factors if factors else None,  # P1: 持久化触发因子数值详情(非仅keys)
             )
-        except Exception:
-            pass  # 非关键路径
+        except Exception as _snap_e:
+            # [v0.70 P1 2026-08-26] 静默 pass → 告警日志。快照断更是本项目"影子墓地"
+            #   的根因模式 (LLM审计库空转两个月无人知同类): IC 管线会静默饿死。
+            #   保持非阻断语义 (不 raise), 但必须可观测。
+            logger.warning(
+                f"[playbook] {symbol} 信号快照记录失败(非阻断, IC管线将缺此样本): "
+                f"decision_id={_snap_decision_id}, err={_snap_e}"
+            )
 
         if is_neutral:
             _filter_audit["vote_neutral"] += 1
@@ -1231,16 +1302,9 @@ def _build_instructions_from_votes(
             continue
 
         # ── ADR-008 (2026-06-28): 盘中技术方向仲裁 ──
-        # 读取配置
-        _direction_mode = "llm_vote"
-        _llm_conflict_threshold = 0.70
-        try:
-            from app.core.config_container import get_config
-            _cfg = get_config()
-            _direction_mode = str(_cfg.get_dotted("playbook.direction_mode", "llm_vote")).lower()
-            _llm_conflict_threshold = float(_cfg.get_dotted("playbook.technical_arbitration.llm_conflict_confidence_threshold", 0.70))
-        except Exception:
-            pass
+        # [v0.70 P1] 配置读取已提到循环外 (_direction_cfg_init) — 原每候选重复
+        #   get_config()+两次 get_dotted, 50候选=150次冗余调用。
+        technical_candidate = None
 
         # 计算技术方向 (best-effort, 用于影子日志与技术仲裁)
         technical_candidate = None
@@ -1913,6 +1977,10 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
                     f"等待盘前数据成熟后生成 (目标: ET 09:00+)"
                 )
                 return None
+            # [v0.70 P0-2 2026-08-26] 运行期bridge重载探测 — 服务启动早于19:00CST产出时,
+            #   内存恒为 TechnicalFallback; 此处(ET≥09:00 已过闸)文件应已就绪, 补挂 Bridge.
+            #   一天一次幂等, 失败静默 (缺失告警由 _check_bridge_health_and_alert 兜底).
+            _reload_bridge_if_landed(scheduler)
             # 2026-07-09: 如果voting_coordinator是NullVotingAdapter, 跳过生成
             # 根因: NullVotingAdapter.vote()返回None → 所有候选SKIP → save_instruction
             # 会UPSERT覆盖bridge已写的BUY/SELL_SHORT instruction为SKIP, 破坏bridge候选
@@ -2484,6 +2552,31 @@ def _compute_key_levels(data: Any) -> Dict[str, Any]:
         return {"support": [], "resistance": []}
 
 
+# [v0.70 P1 2026-08-26] theme_context.json mtime 缓存 — 原实现每候选重新 open+parse
+#   同一文件 (50候选=50次冗余IO+解析)。按 mtime 失效, 文件更新自动重载。
+_tc_cache = {"mtime": None, "data": None}
+
+
+def _load_theme_context_cached(tc_path):
+    """读 theme_context.json, 进程内按 mtime 缓存。失败返回 None (与原 try/except 等价)。"""
+    import json as _json_tc
+    from pathlib import Path as _Path_tc
+    _p = _Path_tc(tc_path)
+    try:
+        mt = _p.stat().st_mtime
+    except Exception:
+        return None
+    if _tc_cache["mtime"] == mt and _tc_cache["data"] is not None:
+        return _tc_cache["data"]
+    try:
+        with open(_p, encoding="utf-8") as f:
+            _tc_cache["data"] = _json_tc.load(f)
+        _tc_cache["mtime"] = mt
+        return _tc_cache["data"]
+    except Exception:
+        return None
+
+
 def _persist_signal_context(
     date: str, symbol: str, data: Any, vote_result: Optional[Dict] = None,
 ) -> None:
@@ -2540,9 +2633,9 @@ def _persist_signal_context(
             from pathlib import Path
             root = Path(__file__).resolve().parent.parent.parent
             tc_path = root / "data" / "theme_context.json"
-            if tc_path.exists():
-                with open(tc_path, encoding="utf-8") as f:
-                    tc = _json.load(f)
+            # [v0.70 P1] mtime 缓存: 同一 generate 轮内 50 候选只 parse 一次
+            tc = _load_theme_context_cached(tc_path)
+            if tc is not None:
                 # 2026-07-03 fix: theme_context.json 的 symbols 在顶层, 不在 domains[*].per_symbol
                 bare_sym = symbol.replace("US.", "")
                 tc_symbols = tc.get("symbols") or {}
