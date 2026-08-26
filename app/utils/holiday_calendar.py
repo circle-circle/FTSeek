@@ -50,7 +50,7 @@ _MARKET_MAP = {
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  硬编码节假日 (2026-2027) — 离线降级用
+#  硬编码节假日 (2026-2028) — 离线降级用
 # ═══════════════════════════════════════════════════════════════════
 
 HK_HOLIDAYS: Set[date] = {
@@ -72,9 +72,18 @@ US_HOLIDAYS: Set[date] = {
     date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
     date(2026, 11, 26), date(2026, 12, 24), date(2026, 12, 25),
     # 2027
-    date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15), date(2027, 4, 2),
+    # [2026-08-26 勘误·用户批准] 原 2027-04-02 为误标 (复活节2027=3/28 → 耶稣受难日
+    #   =3/26, 算法核验+公开历表双确认); 原 2027-12-27 为误标 (圣诞2027=周六 →
+    #   NYSE观察日=12/24周五, 12/27周一正常开市)。
+    date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15), date(2027, 3, 26),
     date(2027, 5, 31), date(2027, 6, 18), date(2027, 7, 5), date(2027, 9, 6),
-    date(2027, 11, 25), date(2027, 12, 24), date(2027, 12, 27),
+    date(2027, 11, 25), date(2027, 12, 24),
+    # 2028 [2026-08-26 续编] 注意: 元旦2028=周六 → NYSE不观察 (先例: 2021-12-31
+    #   周五为完整交易日), 故无 2027-12-31 / 2028-01-03 条目。复活节2028=4/16
+    #   (算法核验) → 受难日 4/14。
+    date(2028, 1, 17), date(2028, 2, 21), date(2028, 4, 14),
+    date(2028, 5, 29), date(2028, 6, 19), date(2028, 7, 4), date(2028, 9, 4),
+    date(2028, 11, 23), date(2028, 12, 25),
 }
 
 _HOLIDAYS_BY_MARKET: Dict[str, Set[date]] = {
@@ -91,6 +100,7 @@ US_EARLY_CLOSE_DATES: Set[date] = {
     date(2026, 11, 27),   # 感恩节次日 (周五)
     date(2026, 12, 24),   # 平安夜 (周四, 若开市)
     date(2027, 11, 26),   # 感恩节次日 (周五)
+    date(2028, 11, 24),   # 感恩节次日 (周五)
 }
 
 _US_EARLY_CLOSE_MINUTES = 13 * 60   # 13:00 ET
@@ -174,6 +184,22 @@ def _futu_get_market_state(code: str) -> Optional[str]:
 #  主类: TradingHolidayCalendar (SSOT)
 # ═══════════════════════════════════════════════════════════════════
 
+def _merge_ranges(existing: List[tuple], new: tuple) -> List[tuple]:
+    """合并闭区间列表 (ISO日期字符串可直接比大小)。
+
+    [2026-08-26] 防跨段 union 虚构中间覆盖: 多次不连续抓取 (如1月窗+10月窗)
+    若合成单一 (min,max), 中间无数据日期会被误判"已覆盖→非交易日"。
+    """
+    allr = sorted([*existing, new])
+    merged = [list(allr[0])]
+    for lo, hi in allr[1:]:
+        if lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    return [(a, b) for a, b in merged]
+
+
 class TradingHolidayCalendar:
     """
     统一交易日历 (单例).
@@ -198,8 +224,10 @@ class TradingHolidayCalendar:
         # 交易日缓存: {"US": {"2026-05-26", "2026-05-27", ...}, "HK": {...}}
         self._trading_days_cache: Dict[str, Set[str]] = {}
 
-        # 缓存覆盖范围: {"US": ("2026-05-01", "2026-07-30"), ...}
-        self._cache_range: Dict[str, tuple] = {}
+        # 缓存覆盖区间列表: {"US": [("2026-05-01","2026-07-30"), ...], ...}
+        # [2026-08-26 勘误·用户批准] 原单一 (lo,hi) 按请求边界记账 + 跨段union会虚构
+        #   中间覆盖 → 不在集合内的日期被判假日。改为"实际返回边界"+可合并区间列表。
+        self._cache_ranges: Dict[str, List[tuple]] = {}
 
         # Futu API 可用标记 (失败后短时间内不重试)
         self._api_available: bool = True
@@ -226,14 +254,20 @@ class TradingHolidayCalendar:
             if market in self._trading_days_cache and date_str in self._trading_days_cache[market]:
                 return True
 
-            # 在缓存范围内但不是交易日 → 也是命中 (不在集合中 = 非交易日)
-            if market in self._cache_range:
-                lo, hi = self._cache_range[market]
+            # 在任一已覆盖区间内但不是交易日 → 也是命中 (不在集合中 = 非交易日)
+            for lo, hi in self._cache_ranges.get(market, []):
                 if lo <= date_str <= hi:
                     return True
 
         # 缓存 miss → 查询 Futu API
-        return self._refresh_cache(market, d)
+        # [P0 勘误 2026-08-26·用户批准] 刷新"成功"≠覆盖目标日期: Futu 截断返回时
+        #   实际边界可能不含 d, 此时必须回落硬编码层而非让上层按"已覆盖"判假日。
+        if self._refresh_cache(market, d):
+            with self._lock:
+                if any(lo <= date_str <= hi
+                       for lo, hi in self._cache_ranges.get(market, [])):
+                    return True
+        return False
 
     def _refresh_cache(self, market: str, center: date) -> bool:
         """从 Futu API 批量查询交易日并缓存."""
@@ -248,33 +282,35 @@ class TradingHolidayCalendar:
 
         result = _futu_request_trading_days(market, start, end)
 
-        if result is not None:
-            with self._lock:
-                trading_set = set(result)
-                if market in self._trading_days_cache:
-                    self._trading_days_cache[market].update(trading_set)
-                else:
-                    self._trading_days_cache[market] = trading_set
-
-                # 更新缓存范围
-                old_lo, old_hi = self._cache_range.get(market, ("9999-12-31", "0000-01-01"))
-                self._cache_range[market] = (
-                    min(old_lo, start),
-                    max(old_hi, end),
-                )
-
-            self._api_available = True
-            logger.info(
-                f"[TradingCalendar] Futu 缓存刷新: {market} "
-                f"[{start}~{end}] = {len(result)} 交易日"
-            )
-            return True
-        else:
-            # API 失败 → 进入冷却期
+        # [2026-08-26 勘误·用户批准] 空列表 ≠ 成功: 视作失败走降级,
+        #   防止把整段请求区间判成"全部非交易日"。
+        if result is None or not result:
             self._api_disabled_until = time.time() + 60.0
             self._api_available = False
-            logger.debug(f"[TradingCalendar] Futu API 失败, 降级到硬编码 (冷却 60s)")
+            logger.debug(f"[TradingCalendar] Futu API 失败/空返回, 降级到硬编码 (冷却 60s)")
             return False
+
+        # [P0 勘误 2026-08-26·用户批准] 记账用"实际返回边界"而非请求边界。
+        #   实测 request_trading_days("US", 2026-12-01~2027-03-31) 只返回到
+        #   2026-12-31, 旧代码却把覆盖记到 2027-03-31 → 2027 年日期落进"声称已
+        #   覆盖"区间 → 不在集合内=判假日 (2027 定时炸弹的真正机制; 日志显示
+        #   "缓存刷新成功"完全正常)。超出实际边界的日期回落硬编码降级层。
+        _act_lo, _act_hi = min(result), max(result)
+        with self._lock:
+            trading_set = set(result)
+            if market in self._trading_days_cache:
+                self._trading_days_cache[market].update(trading_set)
+            else:
+                self._trading_days_cache[market] = trading_set
+            self._cache_ranges[market] = _merge_ranges(
+                self._cache_ranges.get(market, []), (_act_lo, _act_hi))
+
+        self._api_available = True
+        logger.info(
+            f"[TradingCalendar] Futu 缓存刷新: {market} "
+            f"请求[{start}~{end}] 实际覆盖[{_act_lo}~{_act_hi}] = {len(result)} 交易日"
+        )
+        return True
 
     # ─── 核心公开 API ────────────────────────────────────────────
 
@@ -419,7 +455,7 @@ class TradingHolidayCalendar:
                 "trading_days_count": {
                     m: len(days) for m, days in self._trading_days_cache.items()
                 },
-                "cache_ranges": dict(self._cache_range),
+                "cache_ranges": {m: list(rs) for m, rs in self._cache_ranges.items()},
             }
 
     def get_summary(self) -> Dict:
