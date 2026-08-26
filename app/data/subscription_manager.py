@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Set, Callable
 
 # ── 共享时段定义 (FTSeek 和 FTSeek-US 共用) ──
 # Via symlink: app/shared → ../../FTSeek/app/shared
-from app.shared.market_hours import MarketHours
+from app.shared.market_hours import MarketHours, MarketType, get_market_phase
 
 # ── 项目统一 ET 时区工具 (Task #32, 2026-06-16) ──
 # 用于 stop_auto_loop 时段保护 / watchdog 时间判断 — 必须使用 ET，
@@ -554,16 +554,28 @@ class SubscriptionManager:
 
         while self._auto_running:
             try:
-                now = datetime.now()
+                # [2026-08-26 修复·用户批准] 原 datetime.now() 返回服务器本地 CST naive
+                #   时间, 被 MarketHours 契约按 ET 解释 → 北京挂钟对 ET 边界, 有效订阅
+                #   窗口反转为 CST[04:00,20:00], 每晚美股整个常规盘中(21:30-04:00CST)
+                #   被误退订且拒绝重订 (LV3推送消费者盘中全盲, 仅REST轮询兜底)。
+                #   2026-08-10 已修 MarketHours 默认路径但本调用方显式传参绕过了修复。
+                #   改用本模块统一 now_et() (Task #32, 与 watchdog/stop 保护同源)。
+                now = now_et()
 
                 # P1 (2026-05-02): 周末完全静默 — 不检查订阅状态
+                # [2026-08-26 修复] 原实现 get_market_phase(now) 对零参函数传参
+                #   (scheduler_triggers 版自带正确ET钟+假日历) → 每tick TypeError
+                #   被 except 吞掉, 特性静默死亡多时。改无参调用; 别名防遮蔽本模块
+                #   顶部 market_hours 同名共享导入。复活安全性: 周五盘后释放发生在
+                #   ET 周五 (weekday仍=4), 不落入周末静默窗。
                 try:
                     import sys, os
                     _us_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
                     if _us_root not in sys.path:
                         sys.path.insert(0, _us_root)
-                    from app.core.scheduler_triggers import get_market_phase, MarketPhase
-                    phase = get_market_phase(now)
+                    from app.core.scheduler_triggers import (
+                        get_market_phase as _st_phase, MarketPhase)
+                    phase = _st_phase()
                     if phase == MarketPhase.WEEKEND:
                         time.sleep(self._check_interval * 5)  # 周末延长检查间隔到 5min
                         continue
@@ -625,7 +637,11 @@ class SubscriptionManager:
                             )
                             self.ensure_subscribed(codes)
                     elif not should_sub and self._subscribed_codes:
-                        reason = "港股交易" if self.is_hk_trading(now) else "美股收盘"
+                        # [2026-08-26 修复·用户批准] 文案诚实化: 原恒称"美股收盘"
+                        #   (盘前退订也打"收盘"); 改输出真实 ET phase。now 已是 aware ET。
+                        _ph = get_market_phase(MarketType.US, now).value
+                        reason = ("港股交易" if self.is_hk_trading(now)
+                                  else f"美股非订阅时段(phase={_ph})")
                         logger.info(
                             f"[US] {reason}，退订 {len(self._subscribed_codes)} 只释放..."
                         )
