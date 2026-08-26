@@ -90,24 +90,10 @@ def _sec_divergence():
     return lines
 
 
-# ── 段2: 技术 vs LLM 方向 ─────────────────────────────────────
-def _sec_technical():
-    recs = _read_jsonl(SHADOW_DIR / "shadow_technical_direction.jsonl")
-
-    def blk(sub):
-        n = len(sub)
-        if not n:
-            return "无样本"
-        agree = sum(1 for r in sub
-                    if (r.get("technical_direction") or "").upper() == (r.get("llm_direction") or "").upper())
-        oc = Counter(r.get("outcome") for r in sub if r.get("outcome"))
-        oc_s = " ".join(f"{k}:{v}" for k, v in oc.most_common(3)) or "outcome未回填"
-        return f"n={n} 方向一致{agree}/{n}({agree/n*100:.0f}%) | {oc_s}"
-
-    lines = ["【技术 vs LLM 方向】"]
-    lines.append(f"  今日 : {blk([r for r in recs if _within(r.get('timestamp'), 1)])}")
-    lines.append(f"  近7天: {blk([r for r in recs if _within(r.get('timestamp'), 7)])}")
-    return lines
+# ── 段2/段5 已摘除 (2026-08-26 用户批准): ──
+#   _sec_technical (技术vsLLM) 与 _sec_verdict (挑战者判决) 的上游是 3 模型投票制,
+#   投票制已废 → 产出停更在 7/11, 每天空转显示"无样本"。jsonl/db 留档不删,
+#   消费方零影响。若未来恢复投票制再重新挂段。
 
 
 # ── 段3: SL/TP 影子 (复用 sltp_shadow_pnl_report) ─────────────
@@ -143,33 +129,7 @@ def _sec_edge():
     return lines
 
 
-# ── 段5: 挑战者判决 (shadow_verdicts.db) ──────────────────────
-def _sec_verdict():
-    lines = ["【挑战者判决 (DA 计划埋点)】"]
-    try:
-        p = ROOT / "data" / "shadow_verdicts.db"
-        if not p.exists():
-            lines.append("  无库")
-            return lines
-        c = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
-        rows = c.execute("SELECT plan_date, verdict, model_used FROM shadow_verdicts").fetchall()
-        c.close()
-
-        def blk(days):
-            sub = [r for r in rows if _within(r[0], days)]
-            if not sub:
-                return "无样本"
-            vd = Counter(r[1] for r in sub)
-            md = Counter(r[2] for r in sub if r[2])
-            vd_s = " ".join(f"{k}:{v}" for k, v in vd.most_common())
-            md_s = " ".join(f"{k}:{v}" for k, v in md.most_common(2))
-            return f"n={len(sub)} [{vd_s}]" + (f" | 模型 {md_s}" if md_s else "")
-
-        lines.append(f"  今日 : {blk(1)}")
-        lines.append(f"  近7天: {blk(7)}")
-    except Exception as e:
-        lines.append(f"  ⚠️ 段异常: {e}")
-    return lines
+# ── 段5 已摘除 (见上方注释, 上游投票制已废) ──
 
 
 # ── 段6: 盘前存储峰群 (premarket_peer_shadow) ───────────
@@ -304,6 +264,24 @@ def _sec_exec_gate():
         lines.append("  暂无样本 (盘中未执行 / 刚上线) — 产出后自动显示")
         return lines
 
+    # 2026-08-26: 结局回填 — exec_gate 在下单前埋点, 天然无 pnl 字段。
+    #   join trade_records (symbol + 入场日期) 回填真实结局, 量化
+    #   "edge 门拦的单到底该不该拦"。已验证口径 (8/26 独立复核):
+    #   BLOCK 笔均 -$5.2 < PASS -$12.3 → 拦截方向正确 (筛掉更差的)。
+    _pnl_by_key = {}
+    try:
+        _db = ROOT / "data" / "ftseek_us.db"
+        if _db.exists():
+            _c = sqlite3.connect(f"file:{_db}?mode=ro", uri=True)
+            for _sym, _d, _n, _pnl in _c.execute(
+                "SELECT symbol, date(entry_time), COUNT(*), "
+                "SUM(COALESCE(pnl_net, realized_pnl, 0)) FROM trade_records "
+                "WHERE entry_time IS NOT NULL GROUP BY symbol, date(entry_time)"):
+                _pnl_by_key[(_sym, _d)] = (_n, _pnl)
+            _c.close()
+    except Exception:
+        pass
+
     def blk(days):
         sub = [r for r in recs if _within(r.get("date"), days)]
         n = len(sub)
@@ -321,8 +299,32 @@ def _sec_exec_gate():
                   f"({len(edge_block_exec)/len(execed)*100:.0f}%)")
         return s
 
-    lines.append(f"  今日 : {blk(1)}")
+    def outcome_blk(days):
+        """BLOCK vs PASS 已执行单的真实结局 (反事实裁决依据)。"""
+        sub = [r for r in recs if _within(r.get("date"), days)
+               and r.get("action") == "executed"]
+        if not sub or not _pnl_by_key:
+            return ""
+        parts = []
+        for verdict in ("BLOCK", "PASS"):
+            vs = [r for r in sub if r.get("edge_verdict") == verdict]
+            if not vs:
+                continue
+            matched = [_pnl_by_key[(r.get("symbol"), str(r.get("date", ""))[:10])]
+                       for r in vs]
+            matched = [m for m in matched if m]
+            if not matched:
+                continue
+            n_tr = sum(m[0] for m in matched)
+            pnl = sum(m[1] for m in matched)
+            parts.append(f"{verdict}实际笔均{pnl/n_tr:+.2f}$")
+        return " | ".join(parts)
+
     lines.append(f"  近7天: {blk(7)}")
+    lines.append(f"  (今日 : {blk(1)})")
+    _ob7 = outcome_blk(7)
+    if _ob7:
+        lines.append(f"          结局回填: {_ob7} (BLOCK笔均≥PASS=门在筛更差的单)")
     return lines
 
 
@@ -357,7 +359,7 @@ def _sec_early_dead():
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_technical, _sec_sltp, _sec_edge, _sec_verdict, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead):
+    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead):
         try:
             body += sec() + [""]
         except Exception as e:

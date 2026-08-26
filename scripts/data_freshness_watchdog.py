@@ -40,9 +40,9 @@ WATCHLIST = [
     ("data/shadow/exec_gate_audit.jsonl",          30, "执行闸门审计",                     True),
     ("data/shadow/sltp_verify_shadow.jsonl",       30, "止盈止损校验 shadow",             True),
     # 已知墓地 (DEB-20260723 time-exit-censoring 实证6): 若已裁决停用应从清单移除, 否则持续告警提醒清理
-    ("data/shadow/prompt_eval.jsonl",              72, "[疑墓地] prompt A/B 评估",         True),
-    ("data/shadow/shadow_technical_direction.jsonl", 72, "[疑墓地] 技术方向 shadow",       True),
-    ("data/shadow/playbook_direction_audit.jsonl", 72, "[疑墓地] playbook 方向审计",      True),
+    # 2026-08-26: prompt_eval + shadow_technical_direction 已归档至
+    #   data/shadow/archive_20260826/ (上游停产实锤, 全影子普查裁决), 条目移除。
+    ("data/shadow/playbook_direction_audit.jsonl", 72, "playbook 方向审计 (活跃, 8/26普查4消费方)", True),
     ("data/shadow/edge_gate_shadow.jsonl",         72, "[疑墓地] edge gate shadow",        True),
     # 2026-07-26 减法R2-Q6 (裁决: 不建新注册表, 高危文件入现有 watchdog): "生产者死了消费者不知道"
     #   price_fail_closed (责任 DEB-20260726 Q2, 已清空保留机制)。
