@@ -161,7 +161,37 @@ def compute_daily_structure(bars: list[list]) -> str:
     return "flat"
 
 
+def _has_consumer() -> bool:
+    """除本脚本外是否有代码消费 trend_states 数据 (P1 门落地 → 守卫自动失效)。"""
+    try:
+        roots = [PROJECT_ROOT / "app", PROJECT_ROOT / "scripts"]
+        for root in roots:
+            if not root.exists():
+                continue
+            for py in root.rglob("*.py"):
+                if py.resolve() == Path(__file__).resolve():
+                    continue
+                try:
+                    if "trend_states" in py.read_text(encoding="utf-8", errors="ignore"):
+                        print(f"[trend_state] 检测到消费方: {py}")
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        return True  # 检测失败时保守继续攒样 (视为可能有消费方, 守卫仅在能确认无消费方时生效)
+    return False
+
+
 def main(allow_fetch: bool = True) -> int:
+    # 2026-08-26 审计加固 (用户裁): 攒样期限守卫。trend_states.jsonl 当前零消费方
+    #   (全库仅本脚本读写, 审计实锤) — P1 趋势一致性门 9/30 前不落地则停止攒样止损。
+    #   自动豁免: 消费方出现 (app/ 或 scripts/ 其他文件读取 trend_states.jsonl) →
+    #   守卫失效继续攒样, 无需回改代码。回滚: 删本段。
+    _SUNSET_DATE = "2026-09-30"
+    if _today_et() > _SUNSET_DATE and not _has_consumer():
+        print(f"[trend_state] ⏸ 期限守卫: 已过 {_SUNSET_DATE} 且 trend_states.jsonl "
+              f"仍无消费方 → 停止攒样 (落地 P1 门或删除本 cron 行)。")
+        return 0
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     today = _today_et()
     done: set[tuple[str, str]] = set()
