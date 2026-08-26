@@ -3112,7 +3112,7 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
         # scripts/data_freshness_watchdog.py), 比 trigger_miss 更核心 —— 执行漏斗归因、
         # 拦截率分层全靠它。原用裸 _dt.now() = 宿主 Asia/Shanghai, ET 下午的
         # executed/skipped 事件被记到 +1 天, 与 playbook_instructions.date (ET) 关联即错位。
-        _now_et_audit = _now_et()
+        _now_et_audit = _dt.now(_now_et())
         _row = {
             "ts": _now_et_audit.isoformat(timespec="seconds"),
             "date": _now_et_audit.strftime("%Y-%m-%d"),
@@ -4494,7 +4494,11 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             # → 门效果"尺子"被污染, 参数裁决基于错日样本。
             # 同文件 _emit_entry_shadow (:4319) 已用 ET, 本处是漏网单点。
             # 新增 ts_cst 保留原口径, 便于与 08-23 之前的历史行对齐排查。
-            _now_et_row = _now_et()
+            # 2026-08-26 修复: _now_et() 返回的是时区对象 (America/New_York) 而非
+            #   datetime — 直接 .isoformat() 抛 AttributeError 被下方 except:pass 静默
+            #   吞掉, 8/23 起本遥测 (及 _emit_exec_gate_audit) 全部静默死亡, 收口审计
+            #   停更在 8/22。改为 _dt.now(_now_et()) 取真实 ET 当前时间。
+            _now_et_row = _dt.now(_now_et())
             _row = {
                 "ts": _now_et_row.isoformat(timespec="seconds"),
                 "date": _now_et_row.strftime("%Y-%m-%d"),
@@ -4857,9 +4861,14 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         try:
             import json as _vps_json
             from pathlib import Path as _vps_path
+            from datetime import datetime as _dt  # 显式绑定: 外层 _dt 是条件导入 (L4651
+            #   cutoff_enabled 才绑定), 依赖它会重蹈 NameError 被静默吞的覆辙
+            # 2026-08-26 修复: _now_et() 返回时区对象非 datetime (同 _emit_exec_gate_audit
+            #   / _emit_trigger_miss 静默死亡根因) — 改 _dt.now(_now_et())。
+            _vps_now = _dt.now(_now_et())
             _vps_row = {
-                "ts": _now_et().isoformat(timespec="seconds"),
-                "date": _now_et().strftime("%Y-%m-%d"),
+                "ts": _vps_now.isoformat(timespec="seconds"),
+                "date": _vps_now.strftime("%Y-%m-%d"),
                 "inst_id": inst.get("id"),
                 "decision_id": str(inst.get("decision_id") or ""),
                 "symbol": symbol,

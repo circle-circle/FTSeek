@@ -278,7 +278,11 @@ def cmd_score() -> int:
     records = _read_jsonl(_SHADOW_PATH)
     captures = [r for r in records if r.get("type") == "capture"]
     scored_dates = {r.get("capture_date") for r in records if r.get("type") == "score"}
-    todo = [c for c in captures if c.get("date") not in scored_dates and c.get("surfaced")]
+    # 2026-08-26: 同日评分守卫 — capture 当日 scored_price≈captured_price, fwd≈0 无前瞻
+    #   意义且污染命中率 (8/26 首跑实锤 3 标的全 0)。只评至少隔一个自然日的 capture。
+    _today_str = _today_et_str()
+    todo = [c for c in captures if c.get("date") not in scored_dates and c.get("surfaced")
+            and str(c.get("date", "")) < _today_str]
     if not todo:
         print("[score] 无待评分的 capture (需先有 capture 且未评分过)")
         return 0
