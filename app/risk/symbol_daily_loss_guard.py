@@ -86,10 +86,14 @@ class SymbolDailyLossGuard:
 
     def __init__(
         self,
-        max_daily_loss_pct: float = 0.01,    # 1% 净值
-        max_consecutive_losses: int = 3,
-        min_trades_for_winrate_check: int = 5,
-        max_loss_rate: float = 0.7,           # 5+ 笔且亏损率 > 70% 触发
+        # 2026-08-26 默认值对齐 yaml 真值 (config/unified_config.yaml
+        #   risk.symbol_daily_loss_guard): 此前 0.01/3/5/0.7 与活性值 0.005/5/3/0.66
+        #   不一致 — get_symbol_daily_loss_guard() 配置加载失败降级到裸构造时
+        #   护栏阈值静默放宽一倍 (亏损 1% 才触发而非 0.5%)。对齐后降级路径中性。
+        max_daily_loss_pct: float = 0.005,   # 0.5% 净值 (对齐 yaml)
+        max_consecutive_losses: int = 5,
+        min_trades_for_winrate_check: int = 3,
+        max_loss_rate: float = 0.66,          # 3+ 笔且亏损率 > 66% 触发
         cooldown_until_eod: bool = True,
     ):
         self._states: Dict[str, _SymbolState] = {}

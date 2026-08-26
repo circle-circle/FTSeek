@@ -47,8 +47,12 @@ class FeishuBotAlerter:
             color = colors.get(level, "gray")
             
             # 构建消息内容
+            # 2026-08-26: 飞书 webhook 关键词安全设置要求消息体含 [FTSeek-US]
+            #   (与 app/notifier/feishu.py send_text L169 同款约定)。此前 post 富文本
+            #   仅在 title 含 FTSeek-US, 关键词匹配不扫 title → 19024 Key Words Not
+            #   Found (EdgeWeekly 周报 8/26 实锤)。修法: 首行注入关键词。
             text_lines = [
-                {"tag": "text", "text": f"级别：{level}\n"},
+                {"tag": "text", "text": f"[FTSeek-US] 级别：{level}\n"},
                 {"tag": "text", "text": f"{content}\n"}
             ]
             

@@ -29,10 +29,17 @@ def main():
     inst_db.row_factory = sqlite3.Row
     
     # 找signal_snapshots中factors_json为NULL但有decision_id的记录
-    pending = snap_db.execute("""
+    # 2026-08-26 收敛修复: 早期DA信号(6月)的 decision_id 在 playbook_instructions
+    #   无对应行 (实测 1974 pending 中仅 ~1% 可匹配) → pending 永不收敛, 每天
+    #   白跑 1974 次跨库查询 + 日志重复打印。源头过滤: 只保留可匹配的。
+    _valid_ids = {r[0] for r in inst_db.execute(
+        "SELECT DISTINCT decision_id FROM playbook_instructions "
+        "WHERE decision_id IS NOT NULL AND decision_id != ''"
+    )}
+    pending = [r for r in snap_db.execute("""
         SELECT id, decision_id FROM signal_snapshots
         WHERE factors_json IS NULL AND decision_id IS NOT NULL AND decision_id != ''
-    """).fetchall()
+    """).fetchall() if r["decision_id"] in _valid_ids]
     print(f"  待回填: {len(pending)}条")
     
     updated = 0
@@ -78,7 +85,11 @@ def main():
         if isinstance(raw, list):
             for f in raw:
                 if isinstance(f, str):
-                    out.append(f)
+                    # 2026-08-26 污染过滤: 362 行历史快照的 factors_json 混入
+                    #   字符串化的完整 claims blob (len>200), 被当因子名打进报告,
+                    #   日志膨胀到 537KB/天。真因子名均 <40 字符。
+                    if len(f) <= 80:
+                        out.append(f)
                 elif isinstance(f, dict):
                     ct = f.get("claim_type") or f.get("source_type")
                     if ct:
