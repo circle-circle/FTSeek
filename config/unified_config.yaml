@@ -1713,7 +1713,8 @@ universe_expansion:
   # U9 (2026-08-25 建议②): 扫描时注入当日 regime 摘要 (与执行端同源)。回滚: false。
   scan_regime_brief: true
   # U11 (2026-08-26, 用户裁"确认时间点×10min"): 开盘+10min 确认门 (两段式第二段)。
-  #   21:10 CST scan 生成假设; 21:40 CST (09:40 ET) 用真实盘中价裁决信息是否已被价格反映。
+  #   21:10 CST scan 生成假设; 开盘+10min 用真实盘中价裁决信息是否已被价格反映
+  #   (双季 cron 双挂: EDT 21:40 / EST 22:40 CST = 09:40 ET, 见 crontab 注释)。
   #   Phase 1 = 影子 (data/shadow/ue_confirm_gate.jsonl), 不拦既有 21:10 inject 链。
   #   阈值校准 (7/14-8/25 浮现回放 n=159): 盘前同向动量 <2% 组前瞻均值 +0.54% (命中50%),
   #     ≥2% 组 −0.49% (n=41); 两组差 1.03pp, permutation p=0.127 (功率受限, 影子攒样续证)。

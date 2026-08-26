@@ -248,9 +248,13 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
 
 
 # ── [U11 2026-08-26] 开盘确认门 (两段式: 盘前假设→开盘+10min代码裁决) ──
-# 设计: 21:10 CST scan 生成假设 (照旧, DA供料不断); 21:40 CST (09:40 ET=开盘+10min)
-#   用真实盘中价做 price-in 裁决。用户 8/25 裁"信息是否已被价格反映"判据第一次
-#   有真实盘中数据可执行 (盘前只能用盘前代理)。
+# 设计: 21:10 CST scan 生成假设 (照旧, DA供料不断); 开盘+10min (EDT=21:40 / EST=22:40
+#   CST, 双季 cron 双挂) 用真实盘中价做 price-in 裁决。用户 8/25 裁"信息是否已被价格
+#   反映"判据第一次有真实盘中数据可执行 (盘前只能用盘前代理)。
+#   调度防漂移 (2026-08-26 复查加固): 锚定 ET 的时点无法用单一 CST cron 表达 — 美国 DST
+#   切换后 21:40 CST 会落 08:40 ET 窗外 → 静默拒跑断粮数月。故 EDT/EST 各挂一发
+#   (恒差 1h > 窗宽 58min), 任一季节恰一发落在窗口内, 另一发被守卫拒绝; 配合
+#   cmd_confirm 当日幂等守卫保证一天最多一条裁决样本。watchdog 挂 ue_confirm_gate.jsonl 兜底。
 # 时点依据 (回测 17票×20交易日 7/28-8/22, 配对 n=194):
 #   +10min vs +30min: 92%同向(等待无新信息, 等待成本+0.50%/笔, t=5.67, p<0.001);
 #   翻转笔(8%)等到+30按新方向也是亏(-0.60%); 每候选日EV +10=+0.57% vs +30=+0.16%。
@@ -2083,6 +2087,7 @@ def cmd_confirm(force: bool = False, dry_run: bool = False) -> int:
 
     Phase 1 = 影子: 只裁决留痕 (_CONFIRM_PATH), 不拦既有 21:10 inject 链。
     时点语义: 09:32-10:30 ET 窗口外拒绝运行 (开盘+10min 语义漂移防护), --force 可覆盖。
+    幂等: 当日已有裁决记录则跳过 (--force 也不绕过, 防双季 cron/重跑重复落样)。
     预注册判据 (Phase 2 接线条件): ≥10交易日且被裁决 n≥30 后, 若 PRICE_IN 桶
       前瞻均值≤0 且 CONFIRM 桶>0 → 接线为 inject 前置闸。
     """
@@ -2094,6 +2099,15 @@ def cmd_confirm(force: bool = False, dry_run: bool = False) -> int:
     if not (932 <= _hm <= 1030) and not force:
         print(f"[confirm] 当前 ET 时刻 {_hm} 在确认窗口(0932-1030)外, 拒绝运行 (--force 覆盖)")
         return 0
+    # 当日幂等守卫 (2026-08-26 复查加固): 双季 cron (EDT 21:40 / EST 22:40 CST) 恒差
+    #   1h > 窗宽 58min, 常规下任一季节恰一发落窗内 — 但若未来 cron/窗口被改动致两发
+    #   同窗, 或手工重跑, 此处保证一天最多落一条裁决样本 (重复落样污染预注册 n)。
+    #   --force 不绕过本守卫 (样本纯度优先); 测试重写当日样本: 删 jsonl 对应行再跑。
+    for _prev in _read_jsonl(_CONFIRM_PATH):
+        if _prev.get("type") == "confirm" and _prev.get("date") == _today():
+            print(f"[confirm] 今日({_today()})已有裁决记录, 幂等跳过 "
+                  f"(重写请删 {_CONFIRM_PATH.name} 对应行)")
+            return 0
 
     threshold = float(_cfg("universe_expansion.confirm_gate.price_in_threshold", 0.02) or 0.02)
     scans = [r for r in _read_jsonl(_SCAN_PATH) if r.get("type") == "scan"]

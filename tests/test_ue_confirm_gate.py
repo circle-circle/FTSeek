@@ -120,3 +120,54 @@ def test_zero_threshold_any_move_splits():
     """threshold=0: 任何同向动量都判 PRICE_IN."""
     v, _ = V("LONG", 100.0, 100.001, 0.0)
     assert v == "PRICE_IN"
+
+
+# ── cmd_confirm 当日幂等守卫 (2026-08-26 复查加固: 双季 cron 防重复落样) ──
+def test_confirm_dedup_same_day_skips(monkeypatch, tmp_path, capsys):
+    """当日已有 confirm 记录 → 幂等跳过, 不再触达配置/行情链路 (--force 同样不绕过)."""
+    import datetime as _dtmod
+    import json as _jsonmod
+    cpath = tmp_path / "ue_confirm_gate.jsonl"
+    rec = {"type": "confirm", "date": "2026-08-26", "verdicts": [{"symbol": "X"}]}
+    cpath.write_text(_jsonmod.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(_mod, "_CONFIRM_PATH", cpath)
+    monkeypatch.setattr(_mod, "_is_us_trading_day_today", lambda: True)
+    monkeypatch.setattr(_mod, "_now_et",
+                        lambda: _dtmod.datetime(2026, 8, 26, 9, 40,
+                                                tzinfo=_dtmod.timezone.utc))
+    # 哨兵: 若守卫失效继续往下走 (读配置), 立即炸出 — 证明早退
+    def _boom(*a, **k):
+        raise AssertionError("幂等守卫未生效: 已越过 dedup 进入裁决链路")
+    monkeypatch.setattr(_mod, "_cfg", _boom)
+
+    for force in (False, True):
+        rc = _mod.cmd_confirm(force=force)
+        assert rc == 0
+        assert "幂等跳过" in capsys.readouterr().out
+        assert len(cpath.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_confirm_no_prior_record_proceeds_past_dedup(monkeypatch, tmp_path):
+    """无当日记录 → 越过 dedup 正常进入后续链路 (以 _cfg 被调用为信号)."""
+    import datetime as _dtmod
+    monkeypatch.setattr(_mod, "_CONFIRM_PATH", tmp_path / "absent.jsonl")
+    monkeypatch.setattr(_mod, "_is_us_trading_day_today", lambda: True)
+    monkeypatch.setattr(_mod, "_now_et",
+                        lambda: _dtmod.datetime(2026, 8, 26, 9, 40,
+                                                tzinfo=_dtmod.timezone.utc))
+    calls = []
+    monkeypatch.setattr(_mod, "_cfg", lambda *a, **k: calls.append(a) or 0.02)
+
+    class _Stop(Exception):
+        pass
+    monkeypatch.setattr(_mod, "_read_jsonl",
+                        lambda p: (_raise(_Stop) if p == _mod._SCAN_PATH else []))
+    try:
+        _mod.cmd_confirm(force=True)
+    except _Stop:
+        pass
+    assert calls, "dedup 误拦了无记录日: 未进入裁决链路"
+
+
+def _raise(exc):
+    raise exc
