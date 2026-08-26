@@ -147,6 +147,22 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 
 # ── 通用工具 ──────────────────────────────────────────────────
 def _now_et() -> datetime:
+    # [2026-08-26 UE审计P0·用户批准] 原硬编码 `utc - 4h` = 永久EDT假钟: cmd_confirm
+    #   窗口守卫(:2098)在EST季节把 22:40CST 正确发车(真09:40 EST)读成10:40→拒跑,
+    #   把 21:40CST 错误发车(真08:40盘前)读成09:40→放行落污染样本, 幂等守卫再锁死
+    #   当日 → 整冬静默错样+缺样。夏令时正确时钟, 与 _is_us_premarket 同款;
+    #   附带修正时间戳假标(+00:00实为ET读数) → skill侧 age 计算不再恒虚高4h。
+    #   测试经 monkeypatch._now_et 注入, 不受实现切换影响。
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        pass
+    try:
+        import pytz
+        return datetime.now(pytz.timezone("America/New_York"))
+    except Exception:
+        pass
     return datetime.now(timezone.utc) - timedelta(hours=4)
 
 
@@ -1395,7 +1411,10 @@ def _position_symbols() -> set:
         p.load()
         return {e.code.replace("US.", "").upper()
                 for e in p.get_entries() if e.source == SOURCE_POSITION}
-    except Exception:
+    except Exception as e:
+        # [2026-08-26 UE审计随批] 静默返回空集=持仓排重静默失效 (可能对已持仓标的
+        #   重复注入); 执行层有方向感知冲突检查兜底但不应无声。禁静默与冷却门同纪律。
+        print(f"  [warn] 持仓读取失败, 持仓排重失效 (继续): {e}")
         return set()
 
 
@@ -2036,7 +2055,8 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
             mode = f"已注入DB→执行轨道 (实际{_ue_injected_n}条)" if _ue_injected_n else \
                 f"注入0条 (候选{len(tradeable)}只被现价缺失/排重/冷却等过滤, 见universe_scan.log)"
         except Exception as _pe2:
-            mode = "已注入DB→执行轨道 (落库数查询失败)"
+            print(f"  [warn] 落库数查询失败: {_pe2}")
+            mode = f"注入数未知 (entry_enabled=true 但DB查询失败)"
     lines = [
         f"🌌 Universe选股扫描完成 ({target})",
         f"模型={rec.get('model_used','?')} prompt={rec.get('prompt_version','?')} · {mode}",
@@ -2090,6 +2110,9 @@ def cmd_confirm(force: bool = False, dry_run: bool = False) -> int:
     幂等: 当日已有裁决记录则跳过 (--force 也不绕过, 防双季 cron/重跑重复落样)。
     预注册判据 (Phase 2 接线条件): ≥10交易日且被裁决 n≥30 后, 若 PRICE_IN 桶
       前瞻均值≤0 且 CONFIRM 桶>0 → 接线为 inject 前置闸。
+    [2026-08-26 UE审计留记] inject_eligible 是近似切片: 未含冷却/价格地板/无现价
+      过滤 (那些在 inject 写库循环内才判) → eligible=True 人群 ⊇ 实际注入人群。
+      Phase 2 接线时应改为对当日实际注入人群裁决, 避免门槛标定在超集上。
     """
     if not _is_us_trading_day_today():
         print(f"[confirm] {_today()} 非美股交易日, 跳过")
