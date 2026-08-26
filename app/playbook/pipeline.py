@@ -8140,6 +8140,35 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         return 0
 
 
+def _mark_overnight_arm(conn, row_id: int, meta: dict, source: str,
+                        pnl_net_pct: float) -> None:
+    """RFC-067 方案A (2026-08-27, 用户裁): 隔夜臂台账标记 — 精准统计多夜水下仓.
+
+    在 EOD 兜底的豁免点 (再入场首夜 / W_WEEK) 调用: 把"这一夜为何持夜、第几夜、
+    决策时刻净水深"写进 metadata_json.overnight_arm。零行为变化 (纯记录),
+    供 scripts/overnight_arm_report.py 按臂分组复盘 (来源 × 夜数 × 最终结局)。
+
+    night_n 单调递增 (每次豁免 +1); source 覆盖为最近一次豁免来源
+    (再入场仓第2夜起由 W_WEEK 接管 → source 自然从 reentry 变 w_week, 如实反映)。
+    异常不阻断豁免 (统计降级优于丢失豁免)。
+    """
+    try:
+        _ov = meta.setdefault("overnight_arm", {})
+        if not isinstance(_ov, dict):
+            _ov = meta["overnight_arm"] = {}
+        _ov["night_n"] = int(_ov.get("night_n") or 0) + 1
+        _ov["source"] = source
+        _ov["underwater_pct_net"] = round(float(pnl_net_pct), 4)
+        from app.utils.timezone import now_et as _oa_now_et
+        _ov["marked_at_et"] = _oa_now_et().isoformat(timespec="seconds")
+        import json as _oa_json
+        conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
+                     (_oa_json.dumps(meta), row_id))
+        conn.commit()
+    except Exception as _oa_ex:
+        logger.debug(f"[playbook sim] overnight_arm 标记异常 (不阻断豁免): {_oa_ex}")
+
+
 def _force_close_orphaned_sim_positions(scheduler) -> int:
     """EOD 兜底: 强制平仓所有未平仓的 PLAYBOOK_SIM/ORB_ENGINE 真实仓位 (via broker).
 
@@ -8255,6 +8284,8 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         _rpnl_net = None
                     if _reentry_overnight_exempt(symbol, r["entry_time"],
                                                  _rpnl_net if _rpnl_net is not None else _rpnl):
+                        _mark_overnight_arm(conn, r["id"], _meta, "reentry_first_night",
+                                            _rpnl_net if _rpnl_net is not None else _rpnl)
                         logger.info(
                             f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}%"
                             f"(净{_rpnl_net if _rpnl_net is not None else _rpnl:.2f}%) 持夜 (用户裁决)"
@@ -8271,6 +8302,8 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                 if _rp is not None and _rp > 0 and _loser_overnight_exempt(
                         r["source_type"], r["entry_time"],
                         _rpnl_net if _rpnl_net is not None else _rpnl):
+                    _mark_overnight_arm(conn, r["id"], _meta, "w_week",
+                                        _rpnl_net if _rpnl_net is not None else _rpnl)
                     logger.info(
                         f"[playbook sim] EOD 兜底豁免 {symbol} 水下仓 {_rpnl:.2f}%"
                         f"(净{_rpnl_net if _rpnl_net is not None else _rpnl:.2f}%) 持夜 (用户三问Q3)"

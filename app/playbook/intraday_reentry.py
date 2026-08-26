@@ -201,8 +201,11 @@ _DEFAULTS: Dict[str, Any] = {
     "quick_tp_floor_pct": 1.0,
     "quick_tp_ceil_pct": 2.0,
     # 水下仓持夜豁免 (2026-08-06 用户裁决"再入场亏损可隔夜"):
-    #   仅首夜 (entry date == 当日 ET; 次日 PRE_CLOSE/EOD 正常平仓), 仅水下仓 (盈利仍当日落袋,
+    #   本开关管"首夜豁免" (entry date == 当日 ET), 仅水下仓 (盈利仍当日落袋,
     #   与 DEB-20260806-asymmetric ① 一致), 仅本生成器武装的仓 (decision_id 前缀判定).
+    #   ⚠️ 2026-08-27 勘误 (RFC-067): "次日强平"语义已不存在 — 首夜豁免后次日起
+    #   由 W_WEEK (_loser_overnight_exempt, 不查 decision_id) 接管, 再入场仓与
+    #   DA 仓同权享受最多 5 交易日修复窗口 (时间mock实弹验证).
     #   注意: overnight_hold_enabled 总开关下 OVERNIGHT_GAP_STOP 不生效, 持夜风险由
     #   原 SL 1.5% 兜底 (开盘跳空越 SL 有次日市价滑点风险, sim 期可接受, 影子记录对照).
     "overnight_hold_loser_enabled": False,

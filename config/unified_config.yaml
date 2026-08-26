@@ -1185,9 +1185,14 @@ playbook:
     breakeven_slip_cushion_pct: 0.2
     breakeven_limit_timeout_s: 3
     # 🔀 隔夜三轨之一 (2026-08-22 audit A7 互参标注, 三轨语义不同勿混改):
-    #   ① 本键 overnight_hold_enabled: 一般性隔夜持有总闸 (pipeline.py:6171/7708), 当前 OFF;
-    #   ② loser_overnight_enabled(+max_hold_days): PLAYBOOK 水下仓多夜豁免 W_WEEK, 当前 ON;
-    #   ③ topup 区 overnight_hold_loser_enabled: 盘中再入场仓首夜 EOD 豁免 (2026-08-06 裁), ON.
+    #   ① 本键 overnight_hold_enabled: 一般性隔夜持有总闸 (盈利仓过夜, RFC-061 cohort B), 当前 OFF;
+    #   ② loser_overnight_enabled(+max_hold_days): PLAYBOOK_SIM 水下仓 W_WEEK 多夜豁免, 当前 ON.
+    #      ⚠️ 判定不查 decision_id 来源 — 再入场(重武装)仓落库即 PLAYBOOK_SIM, 自动同权
+    #      享受 5 交易日修复窗口 (2026-08-27 核查+时间mock实弹验证, 见 RFC-067);
+    #   ③ topup 区 overnight_hold_loser_enabled: 再入场仓首夜豁免 (8/6 裁决, 早于②).
+    #      语义已被②覆盖 — 首夜豁免后次日起由②接管继续持夜 (非"次日强平", 旧注释已勘误),
+    #      仅在 EOD 日志里先命中. 保留作再入场臂的可观测单点.
+    #   隔夜臂精准统计: metadata_json.overnight_arm 台账 (RFC-067 方案A, pipeline._mark_overnight_arm).
     overnight_hold_enabled: false
     # 2026-08-15 (用户三问Q3, DEB§33): SIM水下仓首夜隔夜豁免 — 盈利落袋/水下隔夜.
     #   回放裁决(scripts/overnight_loser_replay.py, n=15): V1+$68/V2+$593/V3+$668同向正.
