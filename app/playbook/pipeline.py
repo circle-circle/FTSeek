@@ -260,11 +260,17 @@ def _vwap_ab_arm(symbol: str, date_str: str, direction: str) -> str:
 
 
 def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
-                         current_price, inst_id) -> bool:
+                         current_price, inst_id, data_router=None) -> bool:
     """VWAP 门 A/B 分流判定: 仅 sim + 开关开 + bypass 臂 → True (放行).
 
     双臂首次判定即落实验台账 data/vwap_gate_ab.jsonl (每 symbol-day-direction 一行);
     任何异常 → False (维持拦截, 即现状, 保守方向)。
+
+    2026-08-27 (A/B 污染修复): 台账行补记决策时刻 vwap_slope — 下游证伪门·
+    VWAP斜率 (生产拦截) 与方向门 wrong_side 同现率高 (下跌晨 dev<0 ∧ slope<0),
+    bypass 臂放行后常被斜率门二次拦截 → 双臂非同权, VWAP 门边际效应测不出
+    (8/27 BWXT 实录: 放行 3ms 后被斜率门拦). 记录决策时刻斜率供分析层
+    分层恢复同权对比; data_router 缺失/计算失败 → None (不阻断). 零行为改动.
     """
     try:
         # 2026-08-07 复核修复 (缺陷A): 开关读取改走 PlaybookConfig 扁平合并语义 —
@@ -286,11 +292,18 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
             import json as _jab
             from datetime import datetime as _dtab
             from pathlib import Path as _Pab
+            _slope = None
+            try:
+                if data_router is not None:
+                    _slope = _calc_vwap_slope(data_router, symbol)
+            except Exception:
+                _slope = None
             _row = {
                 "ts": _dtab.now(_now_et()).isoformat(timespec="seconds"),
                 "date": _d, "symbol": symbol, "direction": _dir, "arm": arm,
                 "price": current_price, "vwap": vwap_val,
                 "vwap_dev": round(vwap_dev, 6) if vwap_dev is not None else None,
+                "vwap_slope": round(_slope, 6) if isinstance(_slope, (int, float)) else None,
                 "inst_id": inst_id, "rule": "vwap_gate_ab_50_50",
             }
             with open(_Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl",
@@ -5319,7 +5332,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         #   bypass 臂放行成交 (真实口径), gated 臂维持拦截 (影子反事实口径),
         #   双臂落 data/vwap_gate_ab.jsonl 台账. 非 sim / 开关关 / 异常 → 维持拦截.
         if _vwap_gate_ab_bypass(symbol, is_short, _vwap_dev, _vwap_val, current_price,
-                                inst.get("id")):
+                                inst.get("id"), data_router=data_router):
             logger.info(
                 f"[playbook] VWAP门A/B·放行臂: {symbol} price=${current_price:.2f} "
                 f"vwap=${_vwap_val:.2f} dev={_vwap_dev:+.4f} "

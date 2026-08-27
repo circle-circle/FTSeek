@@ -315,29 +315,14 @@ class TradeStore:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sle_time ON stoploss_events(event_time DESC)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sle_symbol ON stoploss_events(symbol)")
 
-                # ── Daemon 心跳表 (UPSERT 单行, 2026-04-24) ──
-                # 兼容旧版 id 主键的结构: 检测到则 DROP 重建为 daemon_name 主键
+                # ── Daemon 心跳表退役 (2026-08-27): 表 2026-04-24 建立后全仓
+                #    零写入零读取 (0 行, grep 实证), 运行时心跳实际走
+                #    app/observability/intraday_heartbeat (钉钉推送链) — 死表
+                #    只会伪装"有监控". 幂等 DROP. 回滚: 恢复原 CREATE 块. ──
                 try:
-                    row = conn.execute(
-                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='daemon_heartbeat'"
-                    ).fetchone()
-                    if row and row[0] and 'daemon_name' in row[0] and 'PRIMARY KEY' in row[0] \
-                            and 'daemon_name     TEXT PRIMARY KEY' not in row[0] \
-                            and 'daemon_name TEXT PRIMARY KEY' not in row[0]:
-                        conn.execute("DROP TABLE daemon_heartbeat")
-                        logger.info("[TradeStore] 迁移 daemon_heartbeat 到 daemon_name 主键结构")
-                except Exception as _e:
+                    conn.execute("DROP TABLE IF EXISTS daemon_heartbeat")
+                except Exception:
                     pass
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS daemon_heartbeat (
-                        daemon_name     TEXT PRIMARY KEY,
-                        pid             INTEGER,
-                        last_heartbeat  TEXT NOT NULL,
-                        status          TEXT,
-                        position_count  INTEGER,
-                        uptime_seconds  REAL
-                    )
-                """)
 
                 # F19 (2026-05-12): 归因表完整 schema
                 self._ensure_trade_attribution_schema(conn)

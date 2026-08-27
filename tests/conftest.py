@@ -7,6 +7,18 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
+# futu SDK 线程退出挂死修复 (2026-08-27, 根因定位): callback_executor 线程
+# 默认非 daemon (SysConfig.get_all_thread_daemon()=False) 且 queue.get() 永久
+# 等待; 测试触达 lazy 连接路径后, 解释器退出时 threading._shutdown 逐锁等它
+# — 全量套件 141s 跑完但退出挂死 1h+ 实证 (07-30/31 同症的最久 11h)。
+# 必须在任何测试创建 futu 连接之前设置 (network_manager 主循环本就 setDaemon)。
+try:
+    from futu.common.sys_config import SysConfig
+    SysConfig.set_all_thread_daemon(True)
+except Exception:
+    pass
+
+
 import pytest
 
 
@@ -24,10 +36,11 @@ def _reset_market_regime_gate_cache():
 
 
 def pytest_sessionfinish(session, exitstatus):
-    # futu SDK 线程非 daemon: 测试触达 lazy 连接的 app 代码路径后,
-    # network_manager/callback_executor 会永久卡住解释器退出
-    # (07-30/31 三具挂死 pytest 实证, 最久 11h 白占 170MB)。
-    # 线程已 start 无法改 daemon 属性, 直接置私有标记绕过 join。
+    # futu SDK 线程退出兜底 (2026-08-27 修正): 事后置 t._daemonic 对 3.8+ 无效 —
+    # threading._shutdown 按线程【启动时】注册的 _shutdown_locks 逐锁 acquire 等
+    # 线程退出, 不复查 t.daemon (机制实证: 旧 hack 挂死/清锁干净退出)。
+    # 清空 _shutdown_locks = 把已启动的非 daemon 线程事后 daemon 化: 解释器
+    # finalize 阶段照常击杀这些空闲循环线程, 正常退出路径不受影响。
     import threading
     for t in threading.enumerate():
         if t is not threading.main_thread():
@@ -35,3 +48,8 @@ def pytest_sessionfinish(session, exitstatus):
                 t._daemonic = True
             except Exception:
                 pass
+    try:
+        with threading._shutdown_locks_lock:
+            threading._shutdown_locks.clear()
+    except Exception:
+        pass

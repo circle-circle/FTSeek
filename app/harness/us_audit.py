@@ -181,19 +181,27 @@ def run_post_market_audit(scheduler) -> Dict[str, Any]:
     }
     
     try:
-        # 1. 检查持仓
-        if hasattr(scheduler, 'position_store'):
-            positions = scheduler.position_store.all()
-            audit_result["open_positions"] = len(positions)
-            
-            for p in positions:
-                # 检查是否有接近止损的持仓
-                if hasattr(p, 'current_sl') and hasattr(p, 'avg_entry_price'):
-                    # 简单逻辑：如果现价接近 SL (这里需要获取现价，暂时跳过)
-                    pass
-            
-            logger.info(f"   当前持仓数: {audit_result['open_positions']}")
-            
+        # 1. 检查持仓 (2026-08-27 修复: 改读 open_positions SSOT — 原读内存
+        #    position_store, 而巡检常在进程重启后的闭市段首跑, 内存 store 尚未
+        #    broker_sync 必为空 (8/27 实录: SSOT 注入 3 只后 6s 巡检仍报"持仓数: 0"),
+        #    持仓检查结构性空转. SSOT 由 position_sync 持续对齐 broker, 与
+        #    main.py 启动注入同源.)
+        try:
+            import sqlite3 as _sq
+            from app.core.position_sync import _get_db_path as _gdp
+            _conn = _sq.connect(_gdp(), timeout=10)
+            _n_pos = _conn.execute(
+                "SELECT COUNT(*) FROM open_positions WHERE symbol LIKE 'US.%'"
+            ).fetchone()[0]
+            _conn.close()
+            audit_result["open_positions"] = int(_n_pos or 0)
+            logger.info(f"   当前持仓数: {audit_result['open_positions']} (源: open_positions SSOT)")
+        except Exception as _pe:
+            logger.warning(f"   持仓 SSOT 读取失败, 退回内存 store: {_pe}")
+            if hasattr(scheduler, 'position_store'):
+                audit_result["open_positions"] = len(scheduler.position_store.all())
+                logger.info(f"   当前持仓数: {audit_result['open_positions']} (源: 内存 store, 可能不完整)")
+
         # 2. 检查 Trade Store
         if hasattr(scheduler, 'trade_store'):
             # 这里可以检查最近是否有未平仓的交易记录等

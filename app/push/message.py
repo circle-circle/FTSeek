@@ -132,7 +132,16 @@ class PushMessage:
                 _er += " ·滑点残差"
             elif _bec == "OK":
                 _er += " ✓"
-            lines.append(f"💰 实现盈亏: {_psign}${abs(_pnl):.2f}  原因: {_er}")
+            # 2026-08-27 同markdown渲染器: 净额主口径 (飞书文本版).
+            _pn = p.get("pnl_net")
+            if _pn is not None:
+                _pn = float(_pn)
+                _nsg = "+" if _pn >= 0 else "-"
+                _fee = p.get("fees")
+                _fee_s = f"/费${float(_fee):.2f}" if _fee is not None else ""
+                lines.append(f"💰 实现盈亏: {_nsg}${abs(_pn):.2f} (毛{_psign}${abs(_pnl):.2f}{_fee_s})  原因: {_er}")
+            else:
+                lines.append(f"💰 实现盈亏: {_psign}${abs(_pnl):.2f}  原因: {_er}")
             # 2026-07-23: 平仓路径画像显性化 (MFE/MAE/表态时点/capture — E shadow 同源口径)
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
@@ -201,8 +210,13 @@ class PushMessage:
         is_long = direction.upper() in ("BUY", "LONG")
         dir_cn = "买入/做多" if is_long else "卖出/做空"
         src = _source_cn(p.get("source_type"))
-        head = "✅ 成交通知" if self.category == Category.TRADE_ENTRY else (
-            "🟢 平仓通知" if float(p.get("pnl", 0) or 0) >= 0 else "🔴 平仓通知")
+        head = "✅ 成交通知" if self.category == Category.TRADE_ENTRY else None
+        if head is None:
+            # 2026-08-27 (用户核查RIVN净亏显示🟢): 图标按净额着色 — 毛正净负的保本单
+            #   (SLIP/GAP残差) 不再显示🟢. 无pnl_net时退回毛口径.
+            _judge = p.get("pnl_net")
+            _judge = float(_judge) if _judge is not None else float(p.get("pnl", 0) or 0)
+            head = "🟢 平仓通知" if _judge >= 0 else "🔴 平仓通知"
         lines = [f"### [FTSeek-US] {head} | 🇺🇸 美股", "",
                  f"**📍 标的**: {symbol}  **📊 方向**: {dir_cn}"]
         if self.category == Category.TRADE_ENTRY:
@@ -226,7 +240,17 @@ class PushMessage:
                 _er += " ·滑点残差"
             elif _bec == "OK":
                 _er += " ✓"
-            lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {_er}")
+            # 2026-08-27 (用户核查RIVN): 净额主口径 — 毛正净负的保本单显示真净亏,
+            #   毛值/费用降为附注; 无pnl_net退回毛口径 (与标题同源逻辑).
+            _pn = p.get("pnl_net")
+            if _pn is not None:
+                _pn = float(_pn)
+                _nsg = "+" if _pn >= 0 else "-"
+                _fee = p.get("fees")
+                _fee_s = f"/费${float(_fee):.2f}" if _fee is not None else ""
+                lines.append(f"**💰 实现盈亏**: {_nsg}${abs(_pn):.2f} (毛{_psign}${abs(_pnl):.2f}{_fee_s})  **📉 原因**: {_er}")
+            else:
+                lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {_er}")
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
                 _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""

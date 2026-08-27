@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import sqlite3
+import sys
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -19,6 +21,17 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
+
+
+def _is_test_context() -> bool:
+    """pytest 会话内调用 (测试流量标记, 2026-08-27): 测试无数据目录隔离,
+    历史上 fallback/cache/simple/test_xyz 四个测试 feature 已写 ~3.7k 行进
+    生产审计库 (占 72%), 污染 token 日报与 intraday_heartbeat 的 LLM 存活
+    检测 (30min 窗口内测试行可掩盖真实断流). 生产进程 (main.py) 不满足任一条件."""
+    try:
+        return bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in sys.modules
+    except Exception:
+        return False
 
 
 def _get_db_path() -> str:
@@ -48,9 +61,14 @@ def _ensure_schema(conn: sqlite3.Connection):
             tokens_out      INTEGER,
             result_summary  TEXT,
             error_msg       TEXT,
-            created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+            is_test         INTEGER DEFAULT 0
         )
     """)
+    # 旧库迁移: is_test 列 (2026-08-27 测试流量隔离)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(llm_calls)")}
+    if "is_test" not in cols:
+        conn.execute("ALTER TABLE llm_calls ADD COLUMN is_test INTEGER DEFAULT 0")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_feature ON llm_calls(feature)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_time ON llm_calls(timestamp)")
 
@@ -84,8 +102,8 @@ def record_call(
             conn.execute(
                 "INSERT INTO llm_calls "
                 "(feature, model, timestamp, prompt_hash, prompt_len, response_hash, response_len, "
-                " success, cost_usd, latency_ms, tokens_in, tokens_out, result_summary, error_msg) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " success, cost_usd, latency_ms, tokens_in, tokens_out, result_summary, error_msg, is_test) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     feature, model, time.time(),
                     ph, len(prompt or ""),
@@ -97,6 +115,7 @@ def record_call(
                     int(tokens_out or 0),
                     summary,
                     (error_msg or "")[:500],
+                    1 if _is_test_context() else 0,
                 ),
             )
             conn.commit()
@@ -106,14 +125,15 @@ def record_call(
 
 
 def get_feature_cost_today(feature: str) -> float:
-    """该 feature 当日累计成本 (USD)"""
+    """该 feature 当日累计成本 (USD, 仅生产流量)"""
     try:
         with _lock:
             conn = sqlite3.connect(_get_db_path())
             _ensure_schema(conn)
             cursor = conn.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls "
-                "WHERE feature = ? AND date(timestamp,'unixepoch','localtime')=date('now','localtime')",
+                "WHERE feature = ? AND COALESCE(is_test, 0) = 0 "
+                "AND date(timestamp,'unixepoch','localtime')=date('now','localtime')",
                 (feature,),
             )
             row = cursor.fetchone()
@@ -131,7 +151,7 @@ def get_feature_call_count(feature: str, hours: int = 24) -> int:
             _ensure_schema(conn)
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM llm_calls "
-                "WHERE feature = ? AND timestamp > ?",
+                "WHERE feature = ? AND COALESCE(is_test, 0) = 0 AND timestamp > ?",
                 (feature, time.time() - hours * 3600),
             )
             row = cursor.fetchone()

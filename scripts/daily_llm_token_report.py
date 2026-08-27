@@ -69,8 +69,10 @@ def _load_budget() -> dict:
 
 
 def _query_day(conn: sqlite3.Connection, day: str) -> dict:
-    """聚合某一自然日 (localtime) 的 LLM 调用. 返回 {total, by_feature, by_model}."""
-    where = "date(timestamp,'unixepoch','localtime')=?"
+    """聚合某一自然日 (localtime) 的 LLM 调用. 返回 {total, by_feature, by_model}.
+
+    仅生产流量: 排除 is_test=1 测试行 (2026-08-27 测试流量隔离)."""
+    where = "date(timestamp,'unixepoch','localtime')=? AND COALESCE(is_test,0)=0"
     rows = conn.execute(
         f"SELECT feature, model, tokens_in, tokens_out, cost_usd, latency_ms, success, error_msg "
         f"FROM llm_calls WHERE {where}",
@@ -110,6 +112,7 @@ def _query_trunc_7d(conn: sqlite3.Connection, day: str) -> list:
     rows = conn.execute(
         "SELECT feature, COUNT(*), SUM(CASE WHEN error_msg LIKE '%finish_reason=length%' THEN 1 ELSE 0 END) "
         "FROM llm_calls WHERE date(timestamp,'unixepoch','localtime') BETWEEN date(?, '-6 days') AND date(?) "
+        "AND COALESCE(is_test,0)=0 "
         "GROUP BY feature",
         (day, day),
     ).fetchall()

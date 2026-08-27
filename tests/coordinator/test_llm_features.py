@@ -89,11 +89,15 @@ def test_json_schema_guard_clamp_numeric():
     assert clamp_numeric("invalid", 0.0, 1.0) == 0.0
 
 
-def test_audit_db_schema():
-    """audit_db 写入 + 读取"""
-    import sqlite3
-    from app.llm.features.audit_db import record_call, get_feature_call_count
-    record_call(
+def test_audit_db_schema(tmp_path, monkeypatch):
+    """audit_db 写入 + 读取 (2026-08-27 改造: 隔离到 tmp 库 + 生产上下文 —
+    原直写生产 llm_audit.db, 是测试流量污染源之一; is_test 标记后读者
+    过滤生产行, 需模拟生产上下文才能测通写入-读取回路)"""
+    import app.llm.features.audit_db as audit_db
+    db = tmp_path / "llm_audit.db"
+    monkeypatch.setattr(audit_db, "_get_db_path", lambda: str(db))
+    monkeypatch.setattr(audit_db, "_is_test_context", lambda: False)
+    audit_db.record_call(
         feature="test_feature_xyz",
         model="qwen",
         prompt="test prompt",
@@ -102,7 +106,7 @@ def test_audit_db_schema():
         cost_usd=0.001,
         latency_ms=100,
     )
-    n = get_feature_call_count("test_feature_xyz", hours=1)
+    n = audit_db.get_feature_call_count("test_feature_xyz", hours=1)
     assert n >= 1
 
 

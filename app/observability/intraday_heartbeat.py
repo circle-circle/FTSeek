@@ -181,13 +181,14 @@ def _query_llm_health(window_min: int = 30) -> Dict:
         cur.execute(
             "SELECT COUNT(*), SUM(success), "
             "  SUM(CASE WHEN feature='pre_entry_gate' THEN 1 ELSE 0 END) "
-            "FROM llm_calls WHERE timestamp > ?", (cutoff,)
+            "FROM llm_calls WHERE timestamp > ? AND COALESCE(is_test, 0) = 0", (cutoff,)
         )
         n, ok, pre_gate_n = cur.fetchone()
         # Pre-Gate 拦截数: 真正解析 response JSON, 而非 LIKE 字符串
         cur.execute(
             "SELECT result_summary FROM llm_calls "
-            "WHERE feature='pre_entry_gate' AND timestamp > ? AND success=1",
+            "WHERE feature='pre_entry_gate' AND timestamp > ? AND success=1 "
+            "AND COALESCE(is_test, 0) = 0",
             (cutoff,)
         )
         pre_gate_blocked = 0

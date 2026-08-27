@@ -155,6 +155,53 @@ def test_non_sim_hard_guard(monkeypatch, _clean_ab_state):
     assert _ledger_rows() == []
 
 
+# ── 2026-08-27 (A/B 污染修复): 台账行补记决策时刻 vwap_slope ──
+
+
+def test_ledger_records_decision_time_slope(monkeypatch, _clean_ab_state):
+    """污染修复回归: 台账行带决策时刻 vwap_slope — 下游证伪门·VWAP斜率与方向门
+    同现率高 (bypass 臂常被二次拦截 → 双臂非同权), 分析层需按斜率分层."""
+    import app.playbook.pipeline as _p
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _FakePB(True))
+    monkeypatch.setattr("app.core.config_container.get_config", lambda: _FakeCC())
+    monkeypatch.setattr(_p, "_calc_vwap_slope", lambda router, sym, window=5: -0.003012)
+    _p._vwap_gate_ab_bypass(_TEST_SYM, False, -0.007, 156.6, 155.5, "inst-s",
+                            data_router=object())
+    rows = _ledger_rows()
+    assert len(rows) == 1
+    assert rows[0]["vwap_slope"] == -0.003012
+
+
+def test_ledger_slope_none_without_router(monkeypatch, _clean_ab_state):
+    """data_router 缺失 → vwap_slope=None (不阻断, 行照落)."""
+    import app.playbook.pipeline as _p
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _FakePB(True))
+    monkeypatch.setattr("app.core.config_container.get_config", lambda: _FakeCC())
+    _p._vwap_gate_ab_bypass(_TEST_SYM, False, -0.007, 156.6, 155.5, "inst-s")
+    rows = _ledger_rows()
+    assert len(rows) == 1
+    assert rows[0]["vwap_slope"] is None
+
+
+def test_ledger_slope_calc_failure_falls_back_to_none(monkeypatch, _clean_ab_state):
+    """斜率计算抛异常 → None 落行, 分流判定不受影响."""
+    import app.playbook.pipeline as _p
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _FakePB(True))
+    monkeypatch.setattr("app.core.config_container.get_config", lambda: _FakeCC())
+
+    def _boom(router, sym, window=5):
+        raise RuntimeError("router down")
+
+    monkeypatch.setattr(_p, "_calc_vwap_slope", _boom)
+    arm = _vwap_ab_arm(_TEST_SYM, _p._today_et_str(), "BUY")
+    r = _p._vwap_gate_ab_bypass(_TEST_SYM, False, -0.007, 156.6, 155.5, "inst-s",
+                                data_router=object())
+    assert r == (arm == "bypass")
+    rows = _ledger_rows()
+    assert len(rows) == 1
+    assert rows[0]["vwap_slope"] is None
+
+
 # ── 2026-08-07 复核补: B9 max_drawdown 公式 (正数口径, 百分比量纲) ──
 
 

@@ -18,10 +18,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from pathlib import Path
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 from app.core.paths import get_trade_records_db
 from app.utils.timezone import _et_trade_date, now_et
@@ -51,10 +49,6 @@ class AccountCircuitBreaker:
         self.halt_threshold = halt_threshold
         self.liquidate_threshold = liquidate_threshold
 
-        # 内存缓存, 避免频繁查询 DB
-        self._cache: Dict[str, any] = {}
-        self._cache_ttl_seconds = 10
-
     def check(self, current_equity: float) -> CircuitResult:
         """
         检查账户风控状态。
@@ -75,7 +69,7 @@ class AccountCircuitBreaker:
             )
 
         today = _et_trade_date(now_et())
-        daily_pnl, _ = self._get_daily_pnl_and_peak(today, current_equity)
+        daily_pnl = self._get_daily_pnl(today)
         # 2026-06-26: peak_equity 不用 trade_records 的 max(notional) — ETF 大批量交易
         # (如 XLF 22404股=$1.14M) 会产生虚假 peak, 导致回撤 91% 误判熔断.
         # 改用 capital_safety 的 peak_equity (真实账户历史峰值).
@@ -123,39 +117,31 @@ class AccountCircuitBreaker:
             current_equity=current_equity,
         )
 
-    def _get_daily_pnl_and_peak(self, today: str, current_equity: float) -> tuple:
-        """从 trade_records 读取今日已实现盈亏和峰值权益"""
+    def _get_daily_pnl(self, today: str) -> float:
+        """当日已实现净盈亏 (2026-08-27 口径修复): 按出场日 exit_time 归集,
+        净额 pnl_net 优先 (费用可见), 旧行 NULL 回退毛额 realized_pnl.
+
+        原实现 WHERE trade_date = today (入场日) — 隔夜仓按入场日记账,
+        开盘跳空亏损在熔断口径中消失 (8/27 实证: UBER 净 -$307 记 8/26,
+        老口径报日盈亏 +0.18% 而净值口径 -0.18%, -1%/-2% 减仓/停新仓
+        两档在隔夜跳空日全失效). exit_time 全库 ET ISO 前缀一致 (0 例混时区),
+        substr(exit_time,1,10)=当日 ET 即当日已实现. fail-close: 查询异常
+        返回 -inf (无法确认状态 → 按最坏处理).
+        """
         try:
             db_path = str(get_trade_records_db())
             conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-
-            # 今日已实现盈亏 (已平仓)
-            row = c.execute(
-                "SELECT COALESCE(SUM(realized_pnl), 0) FROM trade_records "
-                "WHERE trade_date = ? AND exit_price > 0",
+            row = conn.execute(
+                "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
+                "FROM trade_records "
+                "WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
                 (today,),
             ).fetchone()
-            daily_pnl = float(row[0]) if row and row[0] else 0.0
-
-            # 历史峰值权益: 用 current_equity - 历史最大回撤近似
-            # 简化: 取最近 30 天 trade_records 中最大的 (entry_price * quantity + cash)
-            # 更精确的做法是维护 equity 时间序列, 这里先用 current_equity + |daily_pnl| 兜底
-            row = c.execute(
-                "SELECT MAX(entry_price * quantity) FROM trade_records "
-                "WHERE trade_date <= ?",
-                (today,),
-            ).fetchone()
-            max_notional = float(row[0]) if row and row[0] else 0.0
-            peak_equity = max(current_equity, max_notional)
-
             conn.close()
-            return daily_pnl, peak_equity
+            return float(row[0]) if row and row[0] else 0.0
         except Exception as e:
             logger.error("[AccountCircuitBreaker] DB 查询失败 (fail-close): %s", e)
-            # fail-close: 无法确认状态时假设亏损最大
-            return -float('inf'), current_equity
+            return -float('inf')
 
 
 # 模块级单例
