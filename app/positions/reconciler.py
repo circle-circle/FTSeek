@@ -64,6 +64,7 @@ def _signature_for(
 class ReconcileResult:
     matched: int = 0
     broker_only_added: int = 0   # 新发现 → 智能推断 source
+    playbook_skipped: int = 0    # 2026-08-27 审计⑤: playbook 自管仓跳过补录 (不进 store 不计数)
     local_only_ghosted: int = 0  # 幽灵 → 标记
     tagged_legacy: int = 0       # matched 但缺 source 标 → 补
     adopted_strategy: int = 0    # M1.1: 识别为策略孤儿 → MANAGED 续命
@@ -210,8 +211,14 @@ class StartupReconciler:
         for sym in (broker_syms - local_syms):
             try:
                 info = broker_positions[sym]
-                self._add_legacy_position(sym, info)
-                result.broker_only_added += 1
+                # 2026-08-27 审计⑤: 计数以实际补录为准 — playbook 守卫在 _add_legacy_position
+                #   内部 return, 旧写法照样 broker_only_added += 1 → 汇总谎报 "N 笔 LEGACY
+                #   受保护" 并建议 takeover, 诱导人工把 playbook 自管仓接进主线造成双管理。
+                outcome = self._add_legacy_position(sym, info)
+                if outcome == "added":
+                    result.broker_only_added += 1
+                elif outcome == "playbook":
+                    result.playbook_skipped += 1
             except Exception as e:
                 logger.warning(f"[Reconciler·broker_only] {sym}: {e}")
                 result.errors += 1
@@ -421,8 +428,11 @@ class StartupReconciler:
 
         return False
 
-    def _add_legacy_position(self, symbol: str, info: Dict):
-        """broker_only — 启动期补录. M1.1: 多线索推断, 不一刀切."""
+    def _add_legacy_position(self, symbol: str, info: Dict) -> str:
+        """broker_only — 启动期补录. M1.1: 多线索推断, 不一刀切.
+
+        返回 (2026-08-27 审计⑤): "added"=已补录进 store | "playbook"=playbook 自管跳过
+        | "invalid"=size/cost 非法跳过。调用方据此计数, 防汇总谎报 legacy。"""
         from app.core.models import Position, Direction, MarketRegime
         from app.utils.timezone import now_et as _now_et
         # 2026-07-25 修复 (handoff 07-24 深夜巡检 异常②): 收养路径 (_infer_source) 有
@@ -436,7 +446,7 @@ class StartupReconciler:
                     f"[Reconciler·playbook] {symbol}: trade_records 有未平 PLAYBOOK_SIM 仓 "
                     f"→ 跳过 broker_only 补录 (playbook 自管退出, 不进主线 store)"
                 )
-                return
+                return "playbook"
         except Exception as e:
             logger.debug(f"[Reconciler·broker_only·playbook_guard] {symbol}: {e}")
         size = float(info.get("qty", 0) or 0)
@@ -444,7 +454,7 @@ class StartupReconciler:
         direction = info.get("direction", "LONG")
         if size <= 0 or cost <= 0:
             logger.debug(f"[Reconciler] {symbol} 跳过 (size/cost 非法 size={size} cost={cost})")
-            return
+            return "invalid"
 
         # Task #36: 先用 broker 信息算 "轻签名" 判断是否真正 "新发现";
         # 完整 source/owner 在 _infer_source 后才确定 → 用于本轮签名持久化.
@@ -491,7 +501,7 @@ class StartupReconciler:
                 f"[Reconciler·idempotent] {symbol} {direction} qty={size} "
                 f"签名未变 (sig={sig_basic}), 跳过 broker_only 告警"
             )
-            return
+            return "added"
 
         if inferred_src.is_auto():
             logger.warning(
@@ -506,6 +516,7 @@ class StartupReconciler:
                 f"→ {inferred_src.value} + {inferred_protection.value} "
                 f"(策略不自动操作; 如需接管: scripts/position_takeover.py takeover {symbol})"
             )
+        return "added"
 
     def _mark_ghost(self, position: Any):
         """local_only — broker 无, 内存有 → 标记 ghost (幂等: 签名未变则静默)"""
@@ -545,19 +556,27 @@ class StartupReconciler:
         logger.warning("[Reconciler] 启动对账完成")
         logger.warning(f"  Broker 持仓: {len(broker_positions)} | 本地内存: {len(local_positions)}")
         logger.warning(f"  matched         : {result.matched}")
-        logger.warning(f"  broker_only     : {result.broker_only_added} (智能推断)")
+        logger.warning(f"  broker_only     : {result.broker_only_added} (智能推断补录)"
+                       + (f" | playbook自管跳过: {result.playbook_skipped}" if result.playbook_skipped else ""))
         logger.warning(f"  ↳ adopted       : {result.adopted_strategy} (策略孤儿 → MANAGED, ExitMonitor 续命)")
-        logger.warning(f"  ↳ legacy        : {result.broker_only_added + result.tagged_legacy - result.adopted_strategy} (LEGACY/MANUAL → PROTECTED)")
+        _n_legacy = result.broker_only_added + result.tagged_legacy - result.adopted_strategy
+        logger.warning(f"  ↳ legacy        : {_n_legacy} (LEGACY/MANUAL → PROTECTED)")
+        if result.playbook_skipped > 0:
+            # 2026-08-27 审计⑤: 明确区分 — 这些仓由 monitor_playbook_sim_exits 自管退出,
+            #   勿 takeover 接管 (会与 playbook 退出链双管理)。
+            logger.warning(
+                f"  ↳ playbook      : {result.playbook_skipped} (未平 PLAYBOOK 仓, 自管退出 — "
+                "禁止 takeover, 否则双管理)"
+            )
         logger.warning(f"  local_only      : {result.local_only_ghosted} (标 ghost)")
         logger.warning(f"  errors          : {result.errors}")
         if result.adopted_strategy > 0:
             logger.warning(
                 "  🤖 adopted 仓位 (识别为策略孤儿): ExitMonitor 续命监控, 已有 trail/SL 不变."
             )
-        legacy_count = result.broker_only_added + result.tagged_legacy - result.adopted_strategy
-        if legacy_count > 0:
+        if _n_legacy > 0:
             logger.warning(
-                f"  ⚠ {legacy_count} 笔 LEGACY 受保护 — 策略不操作; 如需接管: "
+                f"  ⚠ {_n_legacy} 笔 LEGACY 受保护 — 策略不操作; 如需接管: "
                 "python scripts/position_takeover.py takeover <symbol>"
             )
         logger.warning("=" * 70)

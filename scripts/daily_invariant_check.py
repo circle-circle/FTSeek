@@ -40,6 +40,23 @@ DB = REPO / "data" / "ftseek_us.db"
 OUT = REPO / "data" / "invariant_check_latest.json"
 
 
+def _i7_time_violated(entry_s, exit_s) -> bool:
+    """I7 时间序判据 (2026-08-27 收盘审计③ 修复): 旧实现用字符串比较混合时区时间戳 —
+    id=1320 假阳性 ('...T10:14...-04:00' < '...T21:47...+08:00' 按字典序成立, 绝对时间
+    出场在入场 27 分钟后); 且 DST 边界日 -04/-05 混排可反向掩盖真违反 (假阴性)。
+    改 fromisoformat 解析后按绝对时间比较; naive = 服务器本地挂钟 (历史 naive 均为
+    CST 写入); 不可解析退回旧字符串比较 (保守多报不漏报)。"""
+    from datetime import datetime
+
+    def _p(s):
+        d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.astimezone()  # naive → 系统本地时区
+    try:
+        return _p(exit_s) <= _p(entry_s)
+    except (ValueError, TypeError):
+        return str(exit_s) <= str(entry_s)
+
+
 def main() -> int:
     since = (now_et().date() - timedelta(days=7)).isoformat()
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
@@ -93,7 +110,7 @@ def main() -> int:
         # SHORT 镜像: peak_price_bar = min(lows) (pipeline.py:4933), 物理上 ≤ min(e,x)
         if pkb and short and float(pkb) > min(e, x) * 1.005:
             rec("I6_bar_peak_impossible", r["id"], sym, f"SHORT bar_peak={pkb} e={e} x={x}")
-        if r["entry_time"] and r["exit_time"] and str(r["exit_time"]) <= str(r["entry_time"]):
+        if r["entry_time"] and r["exit_time"] and _i7_time_violated(r["entry_time"], r["exit_time"]):
             rec("I7_time_order", r["id"], sym, f"{r['entry_time']} → {r['exit_time']}")
         # I8 (2026-07-30 DEB-fee-net-pnl): 净额三字段自洽 — 毛−费=净 (列可空, 有值才查)
         try:

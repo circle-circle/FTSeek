@@ -1941,21 +1941,8 @@ class ExitMonitor:
             except Exception as e:
                 logger.debug("[退出质量] 记录失败 (不影响主流程): %s", e)
 
-        # C5 归因 (2026-05-13): 记录主线交易盈亏供跨策略归因
-        try:
-            from app.analysis.strategy_attribution import get_attribution
-            get_attribution().record_trade_pnl(
-                strategy="main",
-                symbol=position.symbol,
-                direction=direction_str,
-                pnl_pct=pnl_pct,
-                pnl_amount=0.0,
-                exit_reason=reason.get("reason", "UNKNOWN"),
-                entry_time=getattr(position, 'entry_time', None),
-                exit_time=_now_et(),
-            )
-        except Exception as _silent_e:
-            logger.critical(f"[退出监控·P0] 交易记录保存异常，可能产生幽灵交易: {_silent_e}", exc_info=True)
+        # 2026-08-27 退役⑦: C5 归因记账已删 (attribution_daily.jsonl 死管线, 见 scheduler_core 同批注释).
+        # 顺带修正: 原 except 把归因记账失败误标为"幽灵交易 CRITICAL" — 该记账与交易持久化无关.
 
         # ── P3 G14: 退出时写入标签化记忆 ──
         try:

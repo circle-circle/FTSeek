@@ -1793,13 +1793,9 @@ class TradingScheduler:
             self.orb_engine.stop()
             logger.info("[ORB] 引擎已停止")
 
-        # C5 归因 (2026-05-13): 确保归因数据在关闭时刷新
-        try:
-            from app.analysis.strategy_attribution import get_attribution
-            get_attribution()._flush_daily_attribution()
-            logger.info("[调度器] 归因数据已刷新")
-        except Exception as _silent_e:
-            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
+        # 2026-08-27 退役⑦: C5 跨策略归因 jsonl (attribution_daily.jsonl) 已删 —
+        # 主线/ORB 仅 sim 研究 (策略隔离 2026-07-15) 后 main_total_trades 恒 0,
+        # 全仓无消费方 (仅 .hermes 审计文档提及). 回放历史保留在 jsonl 文件本身.
         logger.info("[调度器] 服务停止")
 
     def trigger_immediate_scan(self, symbol: str, reason: str = "event"):

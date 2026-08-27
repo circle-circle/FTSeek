@@ -8162,8 +8162,12 @@ def _mark_overnight_arm(conn, row_id: int, meta: dict, source: str,
         # holding 非终态 → 每日重跑), 且盘后窗口内重启会整段重跑 EOD 兜底 —
         # 若无守卫, 同一夜被多次标记 → night_n 虚增 (8/27 复核推演实锤).
         _same_night = str(_ov.get("marked_at_et", ""))[:10] == _oa_now.strftime("%Y-%m-%d")
-        if not _same_night:
-            _ov["night_n"] = int(_ov.get("night_n") or 0) + 1
+        if _same_night:
+            # 2026-08-27 收盘审计⑥: 旧实现同日只防夜数虚增, 但仍覆盖 source/水深快照 —
+            #   部署重启补跑 EOD 兜底时, 16:01 收盘首标被 17:24 盘后实时价覆盖 (口径漂移).
+            #   改为首标即定稿: 同 ET 日直接保留当日快照, 跨日才追加夜数与更新快照.
+            return
+        _ov["night_n"] = int(_ov.get("night_n") or 0) + 1
         _ov["source"] = source
         _ov["underwater_pct_net"] = round(float(pnl_net_pct), 4)
         _ov["marked_at_et"] = _oa_now.isoformat(timespec="seconds")
@@ -8172,6 +8176,12 @@ def _mark_overnight_arm(conn, row_id: int, meta: dict, source: str,
                      (_oa_json.dumps(meta), row_id))
         conn.commit()
     except Exception as _oa_ex:
+        # 2026-08-27 审计⑥: commit 失败 (DB lock/IO) 时回滚, 防未提交 UPDATE 残留
+        #   叠进同 conn 后续写 (EOD fail_count/ghost close) 的事务里连带提交.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         logger.debug(f"[playbook sim] overnight_arm 标记异常 (不阻断豁免): {_oa_ex}")
 
 

@@ -147,13 +147,17 @@ class IssueDetector:
                 "auto_fix": False,
                 "enabled": False,
             },
-            # 归因规则
+            # 归因规则 — 2026-08-27 退役⑦ 停用: trade_attribution 表自 2026-07-15 策略隔离后
+            # 无新写入 (末行 07-14, 仅主线成交侧写入), 本规则必然 3 天连发 → IssueRegistry
+            # 自动升 P0 (08-27 04:30 实测 seen=21), 属结构性误报而非可修故障.
+            # 恢复条件: playbook 链重接归因写入 (success/failure_factors 或 five_factor) 后再启用.
             {
                 "name": "attribution_data_empty",
                 "category": "attribution",
                 "severity": IssueSeverity.P2,
                 "check": self._check_attribution_empty,
                 "auto_fix": False,
+                "enabled": False,
             },
             # 市场状态规则 (P1-fix 2026-05-02)
             {

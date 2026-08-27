@@ -55,6 +55,9 @@ class ConfigHotReloader:
         self._last_reload_time = 0.0
         self._reload_count = 0
         self._error_count = 0
+        # 2026-08-27 审计⑧: 检测/动作解耦 — 冷却期变更挂起补载, 变更文件名暂存去噪
+        self._pending_reload = False
+        self._changed_files = set()
 
         # 初始化 mtime
         for f in self.watch_files:
@@ -86,26 +89,42 @@ class ConfigHotReloader:
         )
 
     def _check_files(self) -> bool:
-        """检查是否有文件变化"""
+        """检查是否有文件变化 (2026-08-27 审计⑧ 重构: 纯检测, 不打日志).
+
+        旧实现每检测到 mtime 变化就打一行 INFO —— 但 _reload 冷却期内会提前 return
+        且不更新 _last_mtime, 于是同一变化在 60s 冷却窗内每秒重复触发 + 刷屏
+        (08-27 部署时 05:20→05:23 实测 30+ 行). 检测与日志/动作解耦: 这里只判"变了没"."""
+        changed = False
         for f in self.watch_files:
             try:
                 mtime = os.path.getmtime(f)
+                # 写入防抖: 忽略 mtime 距现在 <2s 的变化, 避免读到编辑器/cp/rsync 半写文件
                 if mtime != self._last_mtime.get(f, 0):
-                    logger.info(
-                        "[HotReloader] 检测到文件变化: %s",
-                        os.path.basename(f)
-                    )
-                    return True
+                    if time.time() - mtime < 2.0:
+                        continue
+                    self._changed_files.add(os.path.basename(f))
+                    changed = True
             except OSError:
                 continue
-        return False
+        return changed
 
     def _reload(self):
-        """重新加载配置"""
+        """重新加载配置 (带冷却; 冷却期内到达的变更挂起, 冷却结束补载, 不丢不刷)"""
         now = time.time()
-        # 冷却检查
+        names = ", ".join(sorted(self._changed_files)) or "config"
+        # 冷却检查: 不丢弃变更 — 标记挂起并消费本次检测, 冷却结束后由 _loop 补触发
         if now - self._last_reload_time < self.cooldown_seconds:
+            self._pending_reload = True
+            self._consume_detected()
+            logger.debug(
+                "[HotReloader] 检测到变化 %s 但在冷却期 (剩 %.0fs), 挂起补载",
+                names, self.cooldown_seconds - (now - self._last_reload_time)
+            )
             return
+
+        logger.info("[HotReloader] 检测到文件变化: %s", names)
+        self._pending_reload = False
+        self._consume_detected()
 
         try:
             # 保存旧配置用于回退
@@ -114,7 +133,7 @@ class ConfigHotReloader:
             # 重新加载
             self.config._load()
 
-            # 更新 mtime
+            # 更新 mtime (成功才推进冷却基准)
             for f in self.watch_files:
                 try:
                     self._last_mtime[f] = os.path.getmtime(f)
@@ -139,12 +158,26 @@ class ConfigHotReloader:
             if hasattr(self.config, '_raw_config') and old_config:
                 self.config._raw_config = old_config
                 logger.warning("[HotReloader] 已回退到旧配置")
+            # 失败不丢变更: 挂起等下一冷却窗重试; 同时推进冷却基准防每秒 ERROR 刷屏
+            self._pending_reload = True
+            self._last_reload_time = now
+
+    def _consume_detected(self):
+        """把本轮已检测的变化记账: 刷新 mtime 基准 + 清空暂存名 (消费检测防重报)."""
+        for f in self.watch_files:
+            try:
+                self._last_mtime[f] = os.path.getmtime(f)
+            except OSError:
+                pass
+        self._changed_files.clear()
 
     def _loop(self):
         """监控循环"""
         while self._running:
             try:
-                if self._check_files():
+                # 检测 OR 挂起 (冷却期变更 / 失败重试) — 冷却判断在 _reload 内部,
+                # 挂起期间每秒进来会被冷却分支挡回 (DEBUG 级, 不刷屏)
+                if self._check_files() or self._pending_reload:
                     self._reload()
             except Exception as e:
                 logger.error("[HotReloader] 监控异常: %s", e)

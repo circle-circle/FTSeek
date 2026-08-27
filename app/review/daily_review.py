@@ -104,6 +104,10 @@ class DailyReviewGenerator:
             # Obsidian postmarket 笔记正文恒为"无交易"。补上已平仓交易行
             # (_save_report 内会做 symbol→code / realized_pnl→pnl 映射)。
             'trades': closed_trades,
+            # 2026-08-27 收盘审计④: 当日进场但未平仓 (持夜) 的交易 — 供 postmarket
+            #   笔记渲染"过夜持仓"段, 消除 total_trades(按进场计) 与明细(按已平计) 口径差。
+            'open_trades': [t for t in trades
+                            if not (t.get('exit_price') and t.get('exit_price') > 0)],
             'signal_funnel': signal_funnel,
             'rejection_analysis': rejection_analysis,
             'capital_state': capital_state,
@@ -1275,6 +1279,18 @@ class DailyReviewGenerator:
             #   ① symbol 已含 US. 前缀, 旧写法 f"US.{symbol}" → US.US.CSCO
             #   ② pnl 口径统一为净 (pnl_net = 毛-费): total/win_rate/明细行同口径,
             #      否则明细加总 ≠ frontmatter 总数 (毛/费差可达 $30+/日)
+            # 2026-08-27 收盘审计④: 补过夜仓行 (进场时间 + 隔夜臂台账水深, 若有)。
+            _open_rows = []
+            for t in report.get('open_trades', []) or []:
+                _arm = {}
+                try:
+                    _arm = (json.loads(t.get('metadata_json') or '{}') or {}).get('overnight_arm') or {}
+                except Exception:
+                    _arm = {}
+                _open_rows.append({'code': str(t.get('symbol', '') or ''),
+                                   'id': str(t.get('id', '') or ''),
+                                   'entry': str(t.get('entry_time', '') or ''),
+                                   'underwater': _arm.get('underwater_pct_net')})
             writer.write_daily_postmarket({
                 'date': date,
                 'market': 'US',
@@ -1282,6 +1298,7 @@ class DailyReviewGenerator:
                 'win_rate': summary.get('win_rate_net', summary.get('win_rate', 0)),
                 'total_pnl': summary.get('total_pnl_net', summary.get('total_pnl', 0)),
                 'max_drawdown': summary.get('max_drawdown', 0),
+                'open_trades': _open_rows,
                 'trades': [{'code': str(t.get('symbol', '') or ''),
                             'pnl': t.get('pnl_net', t.get('realized_pnl', 0)),
                             'id': str(t.get('id', i))}

@@ -21,24 +21,30 @@ DB = REPO / "data" / "ftseek_us.db"
 
 def norm_et_date(ts: str) -> str:
     """trade_records 时间戳三格式混存 (记忆坑): 统一规范化到 ET 日期.
-    naive=CST(UTC+8) → -12h 近似转 ET 日期; 带 -04:00/-05:00 后缀直接取日期; +00:00 → -4h."""
+
+    2026-08-27 修复 (审计 F1): 旧实现 ET 分支判据 `"-" == s[10:11]` 对 ISO "T" 分隔
+    格式 (now_et().isoformat() 产出的 "2026-08-27T10:30:00-04:00") 永远 False
+    (s[10]=='T'), 致所有 R-12 后 ET-aware 时间戳掉进 naive 分支被当 CST 再减 12h,
+    ET 日期错前一天 (夜数 +1, 同日仓误判隔夜). 改为 fromisoformat 真解析:
+    aware → astimezone(ET) 取日期; naive → 视作服务器本地 CST 再转 ET."""
     if not ts:
         return ""
     s = str(ts)
     try:
-        if s.endswith("+00:00") or s.endswith("Z"):
-            from datetime import datetime, timedelta
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00")) - timedelta(hours=4)
-            return dt.date().isoformat()
-        if "-" == s[10:11] and (s.endswith("-04:00") or s.endswith("-05:00")):
-            return s[:10]
-        if s[10:11] in ("T", " "):
-            # naive = CST → -12h
-            from datetime import datetime, timedelta
-            dt = datetime.fromisoformat(s) - timedelta(hours=12)
-            return dt.date().isoformat()
-        return s[:10]
+        from datetime import datetime, timezone, timedelta
+        _ET = timezone(timedelta(hours=-4))  # 兜底固定 EDT 近似
+        try:
+            from zoneinfo import ZoneInfo
+            _ET = ZoneInfo("America/New_York")
+        except Exception:
+            pass  # zoneinfo 不可用时保留上行近似 (DST 边界日 ±1h, 仅 00:00-01:00 ET 窗日期归属受影响)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            # naive = 服务器本地 CST(UTC+8)
+            dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        return dt.astimezone(_ET).date().isoformat()
     except Exception:
+        # 兜底: 纯日期前缀 (无法解析时不误伤)
         return s[:10]
 
 

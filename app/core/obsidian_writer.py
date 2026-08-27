@@ -869,6 +869,17 @@ class ObsidianWriter:
         trades = data.get('trades', [])
         trade_list = "\n".join(f"- [[{date_str}_{t['code'].replace('.', '_')}_{t.get('id', '')}]] | {t.get('pnl', 0):+.2f}" for t in trades) if trades else "- 无交易"
 
+        # 2026-08-27 收盘审计④: total_trades 历史上按"当日进场笔数"计, 明细却只列已平仓 —
+        #   13 进场/10 已平时 3 笔水下过夜仓对复盘者隐形, "胜率 100%" 成幸存者口径。
+        #   补过夜持仓段 + 概览三数口径标注。open_trades 缺省空 → 行为向后兼容。
+        opens = data.get('open_trades') or []
+        open_list = "\n".join(
+            f"- [[{date_str}_{o['code'].replace('.', '_')}_{o.get('id', '')}]] | 未平 "
+            f"进场 {str(o.get('entry', ''))[:19]} ET"
+            + (f" | 台账水深 {float(o['underwater']):+.2f}%" if o.get('underwater') is not None else "")
+            for o in opens
+        ) if opens else ""
+
         fm = self._fm(
             type="daily",
             market=market,
@@ -876,22 +887,29 @@ class ObsidianWriter:
             session="postmarket",
             tags=["daily", "postmarket", market.lower()],
             total_trades=data.get('total_trades', 0),
+            closed_trades=len(trades),
+            overnight_count=len(opens),
             win_rate=round(data.get('win_rate', 0), 2),
             total_pnl=round(data.get('total_pnl', 0), 2),
         )
 
+        _ov_line = f"- **总交易**: {data.get('total_trades', 0)} (已平 {len(trades)} | 过夜 {len(opens)})"
+        # py3.11: f-string 表达式部分不许反斜杠, 过夜段先拼好再插值
+        _overnight_block = (
+            "\n\n## 过夜持仓 (未平, 盈亏未落袋)\n" + open_list if open_list else ""
+        )
         content = f"""{fm}
 
 # 盘后复盘: {market} ({date_str})
 
 ## 概览
-- **总交易**: {data.get('total_trades', 0)}
-- **胜率**: {data.get('win_rate', 0):.1%}
-- **总盈亏**: {data.get('total_pnl', 0):+.2f}
+{_ov_line}
+- **胜率 (已平口径)**: {data.get('win_rate', 0):.1%}
+- **总盈亏 (已平口径)**: {data.get('total_pnl', 0):+.2f}
 - **最大回撤**: {data.get('max_drawdown', 0):.2%}
 
-## 交易明细
-{trade_list}
+## 交易明细 (仅已平仓)
+{trade_list}{_overnight_block}
 
 ## 归因总结
 <!-- Agent 自动生成 -->

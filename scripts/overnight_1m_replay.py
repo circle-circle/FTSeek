@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """RFC-067 后续裁决回放: 1分K粒度重放"隔夜水下仓多日持有" — 解决日K同日内序歧义.
 
-样本: 同前序回放 (6/1起 EOD水下强平仓, PRE_CLOSE_EXIT pnl_net<=0, n=15).
+样本: 同前序回放 (6/1起 EOD水下强平仓, PRE_CLOSE_EXIT pnl_net<=0; 无SL旧仓排除后 n=18).
 臂 (基线=当日15:52平仓):
   W_WEEK_1M : 转正EOD(15:52 bar)落袋 / SL / 5日上限 (1分K精化现行口径)
   W_DD08    : + peak回撤0.8%锁利 (因子default drawdown_from_peak_pct)
-  W_DD05    : + profit_override档 (peak≥1.5%强制0.5%回撤锁利, 与0.8取紧者)
-  W_DD08_BE : DD08 + 保本地板 (peak>0.4%武装后锁利线不低于 entry+0.1%费垫)
+  W_DD05    : + peak回撤0.5%锁利 (反事实: 收紧回撤线; 生产PO档只给非trailing因子, 此处不启用)
+  W_DD08_BE : DD08 + 保本地板 (peak≥0.4%武装后锁利线不低于 entry+0.6% 费+滑垫, 生产同款口径;
+              2026-08-27 重放参数对齐: 旧0.1%漏了slip_cushion, 旧<=误杀恰武装样本, PO误挂trailing臂)
 1分K内序约定: 每根1M bar 用"截至上一bar的peak"算锁利线先判退出, 再更新peak
   (bar内先后序仍不可知, 但歧义从"整日"缩到"1分钟", 忽略不计).
 数据: Futu request_history_kline K_1M autype=NONE, 缓存 data/replay_1m/.
@@ -26,9 +27,11 @@ CACHE1M = REPO / "data" / "replay_1m"
 CACHE1M.mkdir(exist_ok=True)
 MIN = "2026-06-01"
 MAX_HOLD_DAYS = 5
-BE_AT = 0.4
-PO_AT = 1.5
-BE_PAD = 0.1
+BE_AT = 0.4          # 武装阈值 (exit_cfg.breakeven_at_pct, 生产严格 < 比较见 pipeline.py:6161)
+PO_AT = 1.5          # profit_override 武装阈值 — 仅非trailing因子 (本回放默认不启用, 见 effective_lock.po)
+# 保本地板费垫 = 生产 _be_pad = fee_cushion_pct 0.4 + slip_cushion_pct 0.2 (unified_config.yaml:1179/1185)
+# 旧值0.1系漂移: 只算了部分费用, 生产地板线高5倍 → 回放结论会低估保本锁利的退出价
+BE_PAD = 0.6
 PRE_CLOSE_HHMM = "15:52"
 
 VOL_BUCKETS = {
@@ -120,18 +123,26 @@ def trail_lock(entry_price, peak_profit_pct, direction, dd_pct, be_floor=False):
     return lock
 
 
-def effective_lock(entry_price, peak_profit_pct, direction, dd_pct, be_floor):
-    """实盘同款: 因子0.8% + profit_override 0.5%≥1.5% 取紧者; 未武装返回 None."""
-    if peak_profit_pct <= BE_AT:
+def effective_lock(entry_price, peak_profit_pct, direction, dd_pct, be_floor, po=False):
+    """实盘同款锁利线 (pipeline.py:6131 _compute_dynamic_effective_sl 对齐).
+
+    三处对齐修正 (2026-08-27 审计②):
+      武装判据 生产为严格 < (peak==BE_AT 即武装), 旧 <= 会误杀恰卡在武装线的样本;
+      PO 覆盖 生产的 profit_override 仅作用于 trailing_enabled=false 的因子
+        (pipeline.py:6181), 本回放四个臂都是 trailing 语义 → 默认 po=False, 需模拟
+        非trailing因子时显式传 po=True;
+      费垫 BE_PAD=0.6 (见常量处引用)."""
+    if peak_profit_pct < BE_AT:
         return None
     lock = trail_lock(entry_price, peak_profit_pct, direction, dd_pct, be_floor)
-    if peak_profit_pct >= PO_AT:
+    if po and peak_profit_pct >= PO_AT:
         lock_po = trail_lock(entry_price, peak_profit_pct, direction, 0.5, be_floor)
         lock = max(lock, lock_po) if direction == "LONG" else min(lock, lock_po)
     return lock
 
 
-def replay_1m(day_bars_list, direction, entry_price, sl_price, max_days, dd_pct=None, be_floor=False):
+def replay_1m(day_bars_list, direction, entry_price, sl_price, max_days, dd_pct=None,
+              be_floor=False, po=False):
     """day_bars_list: 按交易日顺序的 bar 列表 (第1个=退出次日). 返回 (exit_price, day_offset, tag)."""
     s = 1.0 if direction == "LONG" else -1.0
     peak_price = entry_price
@@ -141,7 +152,8 @@ def replay_1m(day_bars_list, direction, entry_price, sl_price, max_days, dd_pct=
         for bi, b in enumerate(bars):
             o, h, l, c = b["o"], b["h"], b["l"], b["c"]
             peak_profit_prev = s * (peak_price - entry_price) / entry_price * 100
-            lock = effective_lock(entry_price, peak_profit_prev, direction, dd_pct, be_floor) if dd_pct else None
+            lock = effective_lock(entry_price, peak_profit_prev, direction, dd_pct, be_floor,
+                                  po=po) if dd_pct else None
             refs = [x for x in (sl_price, lock) if x is not None]
             ref = max(refs) if direction == "LONG" else min(refs)
             # gap / 开盘即越线
@@ -240,16 +252,12 @@ def main():
             print(f"  [skip] {sym} SL元数据缺失 (旧仓时代), 排除出样本")
             continue
         variants = {"W_WEEK_1M": dict(), "W_DD08": dict(dd_pct=0.8),
-                    "W_DD05": dict(dd_pct=0.8),  # DD05语义=PO档0.5, 在effective_lock里取紧
+                    "W_DD05": dict(dd_pct=0.5),  # 反事实: 回撤线整体收紧到0.5% (PO档不启用, 见docstring)
                     "W_DD08_BE": dict(dd_pct=0.8, be_floor=True)}
         tags = {}
         for k, kw in variants.items():
-            if k == "W_DD05":
-                ex, off, tg = replay_1m(day_bars_list, direction, entry_price, sl_price,
-                                        MAX_HOLD_DAYS, dd_pct=0.5)
-            else:
-                ex, off, tg = replay_1m(day_bars_list, direction, entry_price, sl_price,
-                                        MAX_HOLD_DAYS, **kw)
+            ex, off, tg = replay_1m(day_bars_list, direction, entry_price, sl_price,
+                                    MAX_HOLD_DAYS, **kw)
             d = s * (ex - baseline_close) * qty
             arms[k].append(d)
             tags[k] = (round(d, 1), tg, off, round(ex, 2))
