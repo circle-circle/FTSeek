@@ -2308,6 +2308,17 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}")
 
+                    # 簇浓度影子打标 (2026-08-27, 组合风控P2, record-only): 日开仓帽16/
+                    #   并发帽12全是笔数维度无结构维度。手工簇映射+占位区间重放, 每笔开仓
+                    #   记同簇并发数 (任意cap可离线重切) → data/cluster_concentration_shadow.jsonl.
+                    #   首跑18日: 最大单簇并发仅5, cap敏感性 3/4/5/6 全部无正收益证据
+                    #   (cap3拦10笔合计+$39=拦了反亏) — 攒n≥30日再裁. 回滚: 配置键 false + 重启.
+                    try:
+                        _mod = self._load_script_module("cluster_concentration_shadow")
+                        _mod.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 簇浓度影子打标异常 (已隔离): {_e}")
+
                     # 空头转化漏斗影子打标 (2026-08-16, record-only): SELL_SHORT指令
                     #   8/7后断崖, 真实断点=LLM分析层转化率低 (8/14轮35只→看空仅1)。
                     #   解析DA stderr日志评级分布+当日指令对照→data/short_funnel_shadow.jsonl。

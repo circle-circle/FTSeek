@@ -3085,6 +3085,63 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
 
 # ── 入口 4: 盘中自动执行 Paper Trade (Phase 1: 2026-06-19) ──────────
 
+# 日亏熔断基线快照 (2026-08-27 组合风控P1): 每交易日首评估时落盘, 当日后续轮次比较
+_DAILY_LOSS_BASELINE = Path(__file__).resolve().parents[2] / "data" / "daily_loss_baseline.json"
+
+
+def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
+    """日亏熔断 (2026-08-27, 死键接线): 当日账户净值跌幅超
+    risk.circuit_breaker.strategy.daily_loss_threshold (yaml 2026-05-21 起零消费)
+    → auto_execute 停新开 (平仓路径不受影响, monitor 独立).
+
+    口径: 富途实时净值 (capital_safety.current_equity, 30s 刷新, 与
+    _resolve_sizing_base 同尺) vs 当日首评基线快照. 已实现+未实现+全部交易来源
+    天然包含 (账户级亏损无漏项); 基线与现值强制同源, 取不到净值时本轮跳过
+    (fail-open + 日志) — 混用 config 兜底尺子会制造 ±15% 级假触发.
+    触发自恢复: 净值回升过阈即放行 (基线固定, 无 pause 状态机).
+    """
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        _cs = get_capital_safety_system()
+        _eq = float(_cs._state.current_equity or 0) if _cs._state else 0.0
+    except Exception as _e:
+        logger.warning(f"[playbook] 日亏熔断: 净值读取失败, 本轮跳过 (fail-open): {_e}")
+        return None
+    if _eq <= 0:
+        return None
+    try:
+        base = json.loads(_DAILY_LOSS_BASELINE.read_text()) if _DAILY_LOSS_BASELINE.exists() else {}
+        if not isinstance(base, dict):
+            base = {}
+    except Exception:
+        base = {}
+    if base.get("date") != today:
+        # 新交易日首评: 落基线, 下一轮起可比 (隔夜跳空计入当日 = 账户口径)
+        try:
+            _DAILY_LOSS_BASELINE.parent.mkdir(parents=True, exist_ok=True)
+            _DAILY_LOSS_BASELINE.write_text(json.dumps(
+                {"date": today, "equity": _eq, "ts": datetime.now().isoformat()}))
+        except Exception as _e:
+            logger.warning(f"[playbook] 日亏熔断: 基线落盘失败: {_e}")
+        return None
+    _base_eq = float(base.get("equity") or 0)
+    if _base_eq <= 0:
+        return None
+    try:
+        from app.core.config_container import get_config as _gc
+        _thr = float(_gc().get_dotted(
+            "risk.circuit_breaker.strategy.daily_loss_threshold", -0.03))
+    except Exception:
+        _thr = -0.03
+    _pct = _eq / _base_eq - 1
+    return {
+        "triggered": _pct <= _thr,
+        "equity": round(_eq, 2),
+        "baseline": round(_base_eq, 2),
+        "loss_pct": round(_pct * 100, 2),
+        "threshold_pct": round(_thr * 100, 2),
+    }
+
 
 def _has_consecutive_losses(n: int = 5) -> bool:
     """检查最近是否有连续 n 笔亏损 (按时间倒序, 仅看终态 win/loss).
@@ -3320,6 +3377,21 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 logger.error(f"[playbook] 风险状态检查异常 (fail-close 跳过本轮): {e}")
                 return {"date": today, "executed": 0, "skipped": 0, "reason": "preflight_fail_close"}
             logger.warning(f"[playbook] 风险状态检查异常 (放行): {e}")
+
+        # 2026-08-27 (组合风控P1): 日亏熔断 — risk.circuit_breaker.strategy.
+        #   daily_loss_threshold 死键接线 (该键 2026-05-21 起全仓零消费, 组合级
+        #   日亏熔断从未存在, ADR-032 死门同款). 净值基线口径见
+        #   _check_daily_loss_circuit docstring; 触发停新开, 平仓照常 (monitor
+        #   路径不经过此门). 回滚: 阈值改 -1.0 + 重启 (等效失效, 无需改码).
+        try:
+            _dl = _check_daily_loss_circuit(today)
+        except Exception as _dl_e:
+            logger.warning(f"[playbook] 日亏熔断检查异常 (fail-open): {_dl_e}")
+            _dl = None
+        if _dl and _dl.get("triggered"):
+            logger.warning(f"[playbook] 日亏熔断触发, 本轮停新开: {_dl}")
+            return {"date": today, "executed": 0, "skipped": 0,
+                    "reason": "daily_loss_circuit", "detail": _dl}
 
         db = PlaybookDB()
         service = PlaybookService(db)

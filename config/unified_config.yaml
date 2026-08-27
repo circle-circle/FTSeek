@@ -1316,6 +1316,16 @@ playbook:
   #   回放基线: scripts/ah_exit_replay.py (静态TP/SL挂盘后 0/12 死单已排除).
   #   回滚: false + 重启.
   ah_exit_shadow_enabled: true
+  # 2026-08-27 (组合风控P2·簇浓度影子): 日开仓帽16/并发帽12全是笔数维度无结构维度。
+  #   手工簇映射(semis/software_cloud/high_beta/china_adr/gold_miners/pharma/
+  #   financial/consumer/industrial_energy/other)+占位区间[entry,exit)重放, 每笔
+  #   开仓记同簇并发数(含自身,任意cap可离线重切) → data/cluster_concentration_shadow.jsonl。
+  #   首跑18日实证: 最大单簇并发仅5(8/18 semis), cap敏感性 3/4/5/6 全部无正收益
+  #   证据(cap3拦10笔被拦合计+$39=拦了反亏) — 日内churn把同刻浓度压得很低,
+  #   "12并发仓=3-4个相关赌注"假设被证伪(那是日累计开仓非同刻在场)。
+  #   record-only零执行改动。判据 n≥30日+blocked≥30笔+净差>0+p<0.05才议真簇帽。
+  #   回滚: false + 重启。
+  cluster_concentration_shadow_enabled: true
   # 2026-08-12 (时段策略分析①去同步化): 入场同步结构影子打标 — 8/11 实锤禁触窗解除
   #   瞬间 21秒5笔齐射 4亏1赢 (独立信号变相关性=1篮子单); 历史自然分散入场同区间
   #   +$487. 盘后打 volley 聚类(≤120s相邻) + 时段分区标签 → data/entry_sync_shadow.jsonl.
@@ -1496,7 +1506,16 @@ risk:
   circuit_breaker:
     strategy:
       consecutive_losses: 3
+      # 2026-08-27 (组合风控P1·死键接线): 本键自 2026-05-21 写入起全仓零消费 (死键),
+      #   组合级日亏熔断从未存在. 已接 pipeline.auto_execute 开仓门
+      #   (_check_daily_loss_circuit): 当日净值跌幅 (富途实时净值 vs 当日首评基线
+      #   data/daily_loss_baseline.json, 已实现+未实现+全部来源) ≤ -3% → 停新开,
+      #   平仓照常, 净值回升自恢复. 历史最差实盘日 8/14 -794$ ≈ -0.8% 未及阈 =
+      #   纯尾部保护不伤 sim 数据产量. 回滚: 改 -1.0 + 重启 (等效失效, 无需改码).
       daily_loss_threshold: -0.03
+      # ⚠️ 仍为死键 (2026-08-27 审计): 小时亏损熔断无消费方. 未随 P1 接线 —
+      #   需净值滚动窗口基线 (当前仅日基线), 且 pause_duration 恢复状态机超 P1 范围.
+      #   需要时另立批次接线, 或按死键清理惯例删除.
       hourly_loss_threshold: -0.02
       pause_duration: 1800
   exit_routing:
