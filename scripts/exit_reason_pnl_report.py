@@ -33,7 +33,11 @@ def _load_trades(db_path: str, days: int) -> List[Dict]:
     """读取最近 N 天有 exit_reason 的成交记录"""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    # 2026-08-28 口径统一: 窗起止一律 ET (原 datetime.now()=服务器 CST 日),
+    # 归集用 substr(exit_time,1,10) 而非 date(exit_time) — 后者把行内 -04:00
+    # 归一到 UTC (+4h), 与本脚本后文按 ET 墙钟划 session 相互矛盾。
+    from app.utils.timezone import now_et
+    cutoff = (now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     rows = conn.execute(
         """
@@ -42,7 +46,7 @@ def _load_trades(db_path: str, days: int) -> List[Dict]:
         FROM trade_records
         WHERE exit_reason IS NOT NULL
           AND exit_time IS NOT NULL
-          AND date(exit_time) >= ?
+          AND substr(exit_time, 1, 10) >= ?
         """,
         (cutoff,),
     ).fetchall()

@@ -89,7 +89,9 @@ def attribution_fee_net(db, today, window_days=7):
             WHERE {where_date} AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         """, (param,)).fetchone()
 
-    t = _q("trade_date = ?", today)
+    # 2026-08-28 出场日记账 (同 AccountCircuitBreaker): "今日"须按出场日归集, 否则
+    # 隔夜仓今日了结的盈亏 (含跳空) 整笔漏记; 7 日窗口按入场日分桶属边界语义, 不动。
+    t = _q("substr(exit_time, 1, 10) = ?", today)
     w = _q("trade_date >= ?", since)
 
     def _pack(r):
@@ -129,7 +131,7 @@ def attribution_strategy(db, today, window_days=7):
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
-        WHERE trade_date = ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+        WHERE substr(exit_time, 1, 10) = ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
         GROUP BY strategy_id ORDER BY total_pnl DESC
     """, (today,)).fetchall()
     today_map = {r['strategy_id']: dict(r) for r in today_rows}

@@ -142,6 +142,24 @@ def main() -> int:
     except Exception:
         pass
 
+    # I10 (2026-08-28): 已了结行必须有 exit_time — 全仓"当日"口径自本日起一律按
+    #   substr(exit_time,1,10) 归集 (熔断/日亏损门/日报/复盘验证/面板/心跳),
+    #   exit_time 缺失的行不再是"归错日"而是从所有当日数字里静默消失。
+    #   上方主循环 SELECT 带 exit_time IS NOT NULL, 故必须独立查询。
+    try:
+        _c10 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        _c10.row_factory = sqlite3.Row
+        _no_exit = _c10.execute(
+            "SELECT id, symbol, trade_date FROM trade_records "
+            "WHERE exit_price > 0 AND (exit_time IS NULL OR exit_time = '') "
+            "ORDER BY id").fetchall()
+        _c10.close()
+        for _r in _no_exit:
+            rec("I10_closed_missing_exit_time", _r["id"], _r["symbol"],
+                f"exit_price>0 但 exit_time 空 (入场日={_r['trade_date']}) → 出场日口径下整笔消失")
+    except Exception:
+        pass
+
     # F: 字段健康度 — 非空率骤降即测量链断线 (常量退化族预警)
     field_health = {}
     if rows:

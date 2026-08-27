@@ -181,12 +181,17 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
                 conn.execute("PRAGMA journal_mode=WAL")
                 c = conn.cursor()
                 # P0 (2026-06-19): 移除 MANUAL/MANUAL_CLOSE 排除 — 手动仓亏损必须计入回撤
+                # 2026-08-28 口径统一 (同 AccountCircuitBreaker):
+                #   ① 净额 — 毛额每笔少计 ~$5 费 (13 笔日 = $62), 3% 门比兄弟门晚触发;
+                #   ② substr(exit_time,1,10) 而非 date(exit_time) — SQLite 的 date()
+                #      会把行内 -04:00 偏移归一到 UTC, 与全仓"ET 墙钟日前 10 位"约定
+                #      是两种日语义 (20:00 ET 后出场会差一天)。
                 c.execute(
-                    "SELECT COALESCE(SUM(realized_pnl), 0) "
+                    "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
                     "FROM trade_records "
                     "WHERE exit_time IS NOT NULL "
                     "AND exit_price > 0 "
-                    "AND date(exit_time) = ?",
+                    "AND substr(exit_time, 1, 10) = ?",
                     (today,)
                 )
                 row = c.fetchone()

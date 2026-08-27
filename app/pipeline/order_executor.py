@@ -2856,10 +2856,14 @@ def _check_symbol_cooldown(symbol: str, direction) -> bool:
             direction_str = direction.name if hasattr(direction, "name") else str(direction)
 
             rows = conn.execute(
+                # 2026-08-28 出场日记账 (同 _check_symbol_daily_loss 修复): 原
+                # trade_date >= ? 是入场日 — 前日入场今日出场 (隔夜跳空割) 的亏损不计入
+                # 连续亏损计数, 冷却门对隔夜跳空日失明。亏损判据同步切净额
+                # (pnl_net 缺→回退毛额), 与本文件日亏损门同尺。
                 "SELECT exit_price, pnl_pct, exit_reason FROM trade_records "
                 "WHERE symbol = ? AND direction = ? "
-                "AND exit_price > 0 AND pnl_pct < 0 "
-                "AND trade_date >= ? "
+                "AND exit_price > 0 AND COALESCE(pnl_net, realized_pnl) < 0 "
+                "AND substr(exit_time, 1, 10) >= ? "
                 "ORDER BY id DESC LIMIT ?",
                 (symbol, direction_str, cutoff, consecutive_threshold + 5)
             ).fetchall()
@@ -3115,7 +3119,9 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
             return False
         return True
     except Exception as e:
-        logger.debug(f"[日亏损限额] DB 查询失败 (放行): {e}")
+        # 放行策略不变, 但 2026-08-28 TTL 后本查询从 1次/日/标的 升到 ~12次/日/标的,
+        # 持续 DB 故障会整天静默解除这道防线 — 必须留 WARNING 证据。
+        logger.warning(f"[日亏损限额] DB 查询失败 (放行): {e}")
         return True
 
 
@@ -5194,6 +5200,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             logger.debug(f"[signal_lifecycle] 写入失败 (不影响平仓): {_sl_e}")
 
         # Y5 (2026-05-15): PnL 异常值监控 + 标的护栏 (主线路径)
+        # 注 (2026-08-28): 护栏 restore 已切净额 (COALESCE(pnl_net, realized_pnl)),
+        # 但此处的实时增量只能喂毛额 — 主线平仓写行时不含费用, pnl_net 靠离线
+        # backfill 后补。此处另起一套费用估算会与行内实际值分叉, 故保留毛口径
+        # (代价: 主线平仓当日亏损低估 ~$5/笔, 重启后由 restore 归正)。
         try:
             from app.risk.symbol_daily_loss_guard import get_symbol_daily_loss_guard
             get_symbol_daily_loss_guard().record_trade(position.symbol, float(pnl))

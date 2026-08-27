@@ -124,9 +124,15 @@ class AccountCircuitBreaker:
         原实现 WHERE trade_date = today (入场日) — 隔夜仓按入场日记账,
         开盘跳空亏损在熔断口径中消失 (8/27 实证: UBER 净 -$307 记 8/26,
         老口径报日盈亏 +0.18% 而净值口径 -0.18%, -1%/-2% 减仓/停新仓
-        两档在隔夜跳空日全失效). exit_time 全库 ET ISO 前缀一致 (0 例混时区),
-        substr(exit_time,1,10)=当日 ET 即当日已实现. fail-close: 查询异常
-        返回 -inf (无法确认状态 → 按最坏处理).
+        两档在隔夜跳空日全失效).
+
+        归集前提 (2026-08-28 实测 723 平仓行, 并非"全库一致"): 394 行 ET-aware
+        (-04:00) / 327 行 naive 无偏移 (全部 ≤2026-07-20 遗留) / 1 行 +00:00
+        (id=942 US.MSFT 2026-06-25)。本门只查"当日", 现役窗口 (07-21 起) 全
+        ET-aware → substr(exit_time,1,10)=出场 ET 日成立; 回溯到 07-20 以前的
+        全期聚合不可照搬本前提, 须先归一 naive 行。
+
+        fail-close: 查询异常返回 -inf (无法确认状态 → 按最坏处理).
         """
         try:
             db_path = str(get_trade_records_db())

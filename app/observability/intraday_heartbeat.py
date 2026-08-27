@@ -90,11 +90,16 @@ def _query_today_trades() -> Dict:
         from app.utils.timezone import _et_trade_date, now_et
         conn = get_pool().connection("ftseek_us")
         cur = conn.cursor()
+        # 2026-08-28 出场日记账 + 净额 (同 AccountCircuitBreaker 口径): 原
+        # WHERE trade_date=? (入场日) + SUM(realized_pnl) (毛额) — 隔夜仓今日
+        # 了结不计入且费用不可见 (8/27 实证: 该推送口径 10 笔/+381.15,
+        # 出场日净额实为 13 笔/+119.37)。
         cur.execute(
-            "SELECT COUNT(*), SUM(realized_pnl), "
-            "  SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) "
+            "SELECT COUNT(*), SUM(COALESCE(pnl_net, realized_pnl)), "
+            "  SUM(CASE WHEN COALESCE(pnl_net, realized_pnl)>0 THEN 1 ELSE 0 END) "
             "FROM trade_records "
-            "WHERE trade_date=? AND realized_pnl IS NOT NULL "
+            "WHERE substr(exit_time, 1, 10)=? "
+            "AND COALESCE(pnl_net, realized_pnl) IS NOT NULL "
             "AND exit_price > 0",
             (_et_trade_date(now_et()),),
         )

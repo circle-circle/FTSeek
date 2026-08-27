@@ -229,8 +229,10 @@ def get_us_trade_summary(trade_date: str) -> Dict:
         # 2026-08-27 出场日记账修复 (同 AccountCircuitBreaker 口径): 原
         # WHERE trade_date = ? 按入场日归集 — 隔夜仓当日出场 (含跳空亏损) 记在
         # 入场日, 当日盈亏失真 (8/27 实证: 报 +332.78 vs 出场日净 +119.37,
-        # 隔夜 UBER -307/ORCL +91/HOOD +3 三笔全部漏记)。exit_time 全库 ET ISO,
-        # substr 前 10 位 = 出场 ET 日期。净口径 2026-08-20 用户裁"切" (pnl_net 优先)。
+        # 隔夜 UBER -307/ORCL +91/HOOD +3 三笔全部漏记)。净口径 2026-08-20 用户裁"切"
+        # (pnl_net 优先)。substr(exit_time,1,10)=出场 ET 日的前提仅对现役窗口成立
+        # (调用方传 ET 最后交易日), 遗留 naive/+00:00 行分布见
+        # account_circuit_breaker._get_daily_pnl 注释。
         row = conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
             "FROM trade_records "

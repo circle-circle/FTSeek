@@ -172,6 +172,9 @@ def register(app, templates, dashboard):
         exposure["equity_ratio"] = round(gross / equity * 100, 1) if equity > 0 else 0
 
         # ── 14. Today's closed trades ──
+        # 2026-08-28 出场日记账 + 净额: 原按 trade_date (入场日) 归集而本段语义是
+        # "closed today" (隔夜仓今日了结漏列), 且 pnl_usd 取毛额 — 该字段同时喂
+        # 下方 OKR today 胜/负/合计 (_load_okr_summary)。
         today_closed = []
         today_closed_total = 0
         try:
@@ -179,15 +182,16 @@ def register(app, templates, dashboard):
             _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
             _cnt_row = await ds.db_query(
                 f"SELECT COUNT(*) AS c FROM trade_records "
-                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND trade_date = ? "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND substr(exit_time, 1, 10) = ? "
                 f"AND source_type NOT IN ({_excluded})",
                 (_today_et,),
             )
             today_closed_total = (_cnt_row[0].get("c", 0) if _cnt_row else 0)
             rows = await ds.db_query(
-                f"SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
+                f"SELECT symbol, direction, entry_price, exit_price, pnl_pct, "
+                f"COALESCE(pnl_net, realized_pnl) AS pnl_net_val, "
                 f"exit_reason, exit_time, holding_hours, source_type FROM trade_records "
-                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND trade_date = ? "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND substr(exit_time, 1, 10) = ? "
                 f"AND source_type NOT IN ({_excluded}) "
                 f"ORDER BY exit_time DESC LIMIT 200",
                 (_today_et,),
@@ -200,7 +204,7 @@ def register(app, templates, dashboard):
                     "symbol": (r.get("symbol") or "").replace("US.", ""),
                     "direction": r.get("direction", ""),
                     "pnl_pct": round(float(r.get("pnl_pct", 0) or 0) * 100, 1),
-                    "pnl_usd": round(float(r.get("realized_pnl", 0) or 0), 2),
+                    "pnl_usd": round(float(r.get("pnl_net_val", 0) or 0), 2),
                     "exit_reason": r.get("exit_reason", ""),
                     "exit_time": _hhmm,
                     "holding_hours": round(float(r.get("holding_hours") or 0), 2),
@@ -791,10 +795,13 @@ async def _calc_pnl(ds, positions: list) -> dict:
     # 今日已实现盈亏 (按 trade_mode 拆分模拟/实盘)
     try:
         _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
+        # 2026-08-28 出场日记账 + 净额 (同 AccountCircuitBreaker 口径): 原
+        # trade_date (入场日) + realized_pnl (毛额) — 隔夜仓今日了结不计入且费用
+        # 不可见 (8/27 实证: 面板 10 笔/+381.15 vs 出场日净额 13 笔/+119.37)。
         rows = await ds.db_query(
-            f"SELECT trade_mode, COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt "
+            f"SELECT trade_mode, COALESCE(SUM(COALESCE(pnl_net, realized_pnl)),0) as pnl, COUNT(*) as cnt "
             f"FROM trade_records "
-            f"WHERE trade_date = ? AND exit_price > 0 "
+            f"WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0 "
             f"AND source_type NOT IN ({_excluded}) "
             f"GROUP BY trade_mode",
             (today_et,),

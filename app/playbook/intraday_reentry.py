@@ -527,10 +527,14 @@ def _load_closed_today() -> Dict[str, Dict[str, Any]]:
     conn = sqlite3.connect(str(get_trade_records_db()))
     conn.row_factory = sqlite3.Row
     try:
+        # 2026-08-28 出场日记账 (同 AccountCircuitBreaker / _check_symbol_daily_loss
+        # 口径): 原 WHERE trade_date = ? 是入场日 — 隔夜仓今日出场 (跳空了结) 不计入,
+        # "当日已平仓"与 closed_count 的"每标的日 1 次"约束都失真 (8/27 实证:
+        # UBER/HOOD 0↔1, ORCL 1↔2 → 该标的整日不进入再入场裁决)。
         rows = conn.execute("""
             SELECT id, symbol, direction, entry_price, exit_price, pnl_pct, exit_reason, quantity
             FROM trade_records
-            WHERE trade_date = ?
+            WHERE substr(exit_time, 1, 10) = ?
               AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
               AND exit_price > 0 AND exit_time != '' AND exit_time IS NOT NULL
             ORDER BY id

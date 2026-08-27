@@ -45,9 +45,14 @@ def cmd_owner_summary():
             print(f"  {o:15s} {n} 笔")
     print()
     print("=== 今日 trade_records 的 owner_strategy 分布 ===")
+    # 2026-08-28 口径统一: 原 date(exit_time)=date('now') 两侧同按 UTC 归一 →
+    # 实际打印的是 UTC 日, 与 daily_review._summarize_coordinator_state 的
+    # "今日"(ET 交易日) 对不上账。改 substr(exit_time,1,10)=ET 今日 (全仓约定)。
+    from app.utils.timezone import get_trade_date
     rows = conn.execute(
         "SELECT COALESCE(owner_strategy, '<NULL>') as o, COUNT(*) as n "
-        "FROM trade_records WHERE date(exit_time) = date('now') GROUP BY o"
+        "FROM trade_records WHERE substr(exit_time, 1, 10) = ? GROUP BY o",
+        (get_trade_date(),)
     ).fetchall()
     if not rows:
         print("  (今日无成交)")

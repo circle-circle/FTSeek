@@ -157,10 +157,13 @@ def _get_actual_returns(verdicts: List[Dict], scheduler=None) -> Dict[str, float
                 conn = sqlite3.connect(str(db_path))
                 # 2026-07-27 修复 (时区批同款): date('now')=UTC 日 vs exit_time=ET/CST 墙钟时间 —
                 #   盘后复盘跑在 CST 早晨 (UTC 前一日晚间) 时错位。改 ET 交易日参数。
+                # 2026-08-28 续修: 参数是 ET 日而 date(exit_time) 按 UTC 归一 (行内
+                #   -04:00 → UTC +4h), 20:00 ET 后出场的行被算到次日 → 静默取不到。
+                #   改 substr = 全仓"ET 墙钟日前 10 位"约定。
                 from app.utils.timezone import get_trade_date
                 row = conn.execute(
                     "SELECT pnl_pct FROM trade_records "
-                    "WHERE symbol = ? AND date(exit_time) = ? "
+                    "WHERE symbol = ? AND substr(exit_time, 1, 10) = ? "
                     "ORDER BY exit_time DESC LIMIT 1",
                     (symbol, get_trade_date())
                 ).fetchone()

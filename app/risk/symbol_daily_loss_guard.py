@@ -146,10 +146,13 @@ class SymbolDailyLossGuard:
             conn = sqlite3.connect(str(get_trade_records_db()))
             # 2026-07-25 修复: DB 主路径存 ET-aware ISO (带 -04:00 后缀),
             # 遗留路径存 naive. 用 48h 宽窗口 + Python 侧 _et_trade_date 精确过滤.
+            # 2026-08-28 净额口径 (同 _check_symbol_daily_loss): 毛额低估每笔亏损
+            # (费 ~$5/笔) → max_daily_loss_pct / 胜率两触发都比兄弟门晚; pnl_net
+            # 缺 (旧行) 回退毛额。日归属本已是出场日, 不动。
             cutoff_et = now_et() - timedelta(hours=48)
             rows = conn.execute(
-                "SELECT symbol, realized_pnl, exit_time FROM trade_records "
-                "WHERE exit_time >= ? AND realized_pnl IS NOT NULL "
+                "SELECT symbol, COALESCE(pnl_net, realized_pnl) AS pnl, exit_time FROM trade_records "
+                "WHERE exit_time >= ? AND COALESCE(pnl_net, realized_pnl) IS NOT NULL "
                 "ORDER BY exit_time",
                 (cutoff_et.strftime("%Y-%m-%dT%H:%M:%S"),),
             ).fetchall()

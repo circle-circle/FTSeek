@@ -7,7 +7,7 @@
   - 但 8/25 熔断定标回放证明"人为降速"会误伤盈利的亏损后再入场 → 不提前降速,
     攒满 §55 预注册 n≥30 后**精确停新开仓**, 引擎转纯采集模式 (资金流/盘前K线等
     攒样器均不需要成交, 停交易不影响十月管线进度)。
-  - BE 家族定义 (方案A 落地起): exit_reason='SL_BREAKEVEN' AND date(exit_time)>='2026-08-20'。
+  - BE 家族定义 (方案A 落地起): exit_reason='SL_BREAKEVEN' AND substr(exit_time,1,10)>='2026-08-20'。
 
 行为: 只读计数 + 写状态文件。达到 n≥30 时置 flag 并打印停机建议 —
   实际停开仓开关由人工/晨会确认后执行 (本脚本不直接改任何引擎配置)。
@@ -28,11 +28,14 @@ N_TARGET = 30  # §55 预注册判据
 
 def main():
     conn = sqlite3.connect(DB)
+    # 2026-08-28 口径统一: substr 而非 date() (后者把 -04:00 归一到 UTC,
+    # 08-20 落地首日晚出场会被挪日) — 全仓"当日"=ET 墙钟日前 10 位。
     row = conn.execute(
         """SELECT COUNT(*), COALESCE(SUM(pnl_net),0),
                   SUM(CASE WHEN pnl_net>0 THEN 1 ELSE 0 END)
            FROM trade_records
-           WHERE exit_reason='SL_BREAKEVEN' AND date(exit_time)>='2026-08-20'"""
+           WHERE exit_reason='SL_BREAKEVEN'
+             AND substr(exit_time,1,10)>='2026-08-20'"""
     ).fetchone()
     conn.close()
     n, net, wins = int(row[0]), round(float(row[1]), 2), int(row[2] or 0)

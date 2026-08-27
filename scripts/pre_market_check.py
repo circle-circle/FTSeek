@@ -223,12 +223,16 @@ def run_premarket_check() -> dict:
         #      按 trade_date 统计 (与补录记录口径一致).
         yesterday = get_last_trade_date(now_et() - _td(days=1))
         _con3 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        # 2026-08-28 出场日记账 + 已了结过滤 (同 daily_alert_summary): 原
+        #   WHERE trade_date=? 按入场日归集 → 隔夜仓昨日了结的盈亏整笔漏记;
+        #   且无 exit_price>0 → 未平仓行计入"总交易/做多/做空"却对同行 PnL 无贡献。
         _r3 = _con3.execute(
             "SELECT COUNT(*), "
             "COALESCE(SUM(CASE WHEN direction='LONG' THEN 1 ELSE 0 END),0), "
             "COALESCE(SUM(CASE WHEN direction LIKE 'SHORT%' THEN 1 ELSE 0 END),0), "
             "COALESCE(ROUND(SUM(COALESCE(pnl_net, realized_pnl)),2),0) "  # 2026-08-20 净口径切换
-            "FROM trade_records WHERE trade_date=?", (yesterday,)).fetchone()
+            "FROM trade_records WHERE substr(exit_time,1,10)=? AND exit_price > 0",
+            (yesterday,)).fetchone()
         _con3.close()
         results["checks"].append({
             "name": "昨日交易回顾",

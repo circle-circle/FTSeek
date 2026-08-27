@@ -66,7 +66,10 @@ def load_samples():
                exit_price, quantity, pnl_net, exit_reason, metadata_json
         FROM trade_records
         WHERE exit_time IS NOT NULL AND pnl_net IS NOT NULL
-          AND date(exit_time) > date(entry_time) AND trade_date >= '2026-07-01'
+          -- 过夜判据用 ET 墙钟日 (substr) 而非 date(): 后者把 -04:00 归一到
+          -- UTC (+4h), 当日 20:00 ET 后出场的日内单 UTC 已是次日 → 误判为过夜。
+          AND substr(exit_time, 1, 10) > substr(entry_time, 1, 10)
+          AND trade_date >= '2026-07-01'
           AND exit_reason NOT IN ('BROKER_GHOST_CLOSE', 'RECONCILE_GHOST_CLEANUP')
         ORDER BY entry_time
     """).fetchall()

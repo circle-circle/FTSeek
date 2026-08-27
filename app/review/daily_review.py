@@ -1090,9 +1090,15 @@ class DailyReviewGenerator:
             from app.core.paths import get_trade_records_db
             conn = _s.connect(str(get_trade_records_db()))
             real_today = conn.execute(
-                "SELECT COUNT(*), COALESCE(SUM(realized_pnl),0), "
-                "COALESCE(AVG(CASE WHEN realized_pnl>0 THEN 1.0 ELSE 0.0 END),0) "
-                "FROM trade_records WHERE date(exit_time)=? AND realized_pnl IS NOT NULL",
+                # 2026-08-28 口径统一 (同 intraday_heartbeat._query_today_trades):
+                # ① substr 而非 date() — date() 把行内 -04:00 归一到 UTC, 20:00 ET
+                #    后的出场会被挪一天 (全仓约定 = ET 墙钟日前 10 位);
+                # ② 净额 COALESCE(pnl_net, realized_pnl) — 毛额每笔少计 ~$5 费。
+                "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)),0), "
+                "COALESCE(AVG(CASE WHEN COALESCE(pnl_net, realized_pnl)>0 "
+                "THEN 1.0 ELSE 0.0 END),0) "
+                "FROM trade_records WHERE substr(exit_time,1,10)=? "
+                "AND exit_price > 0 AND COALESCE(pnl_net, realized_pnl) IS NOT NULL",
                 (date,)
             ).fetchone()
             # REMOVED (2026-06-19): shadow_trades 变体测试不再使用
@@ -1174,8 +1180,10 @@ class DailyReviewGenerator:
             tr_conn = _s.connect(str(get_trade_records_db()))
             owner_dist = {}
             for r in tr_conn.execute(
+                # 2026-08-28: substr 而非 date() — 后者把 -04:00 归一到 UTC,
+                # 20:00 ET 后的出场被挪一天 (全仓"当日"=ET 墙钟日)
                 "SELECT COALESCE(owner_strategy, '<NULL>'), COUNT(*) "
-                "FROM trade_records WHERE date(exit_time)=? GROUP BY 1", (date,)
+                "FROM trade_records WHERE substr(exit_time,1,10)=? GROUP BY 1", (date,)
             ).fetchall():
                 owner_dist[r[0]] = r[1]
             out["owner_strategy_distribution"] = owner_dist
