@@ -226,10 +226,15 @@ def get_us_trade_summary(trade_date: str) -> Dict:
         if not db_path.exists():
             return summary
         conn = sqlite3.connect(str(db_path))
-        # 交易记录
-        # 2026-08-20 净口径切换 (用户裁"切"): COALESCE(pnl_net, realized_pnl)
+        # 2026-08-27 出场日记账修复 (同 AccountCircuitBreaker 口径): 原
+        # WHERE trade_date = ? 按入场日归集 — 隔夜仓当日出场 (含跳空亏损) 记在
+        # 入场日, 当日盈亏失真 (8/27 实证: 报 +332.78 vs 出场日净 +119.37,
+        # 隔夜 UBER -307/ORCL +91/HOOD +3 三笔全部漏记)。exit_time 全库 ET ISO,
+        # substr 前 10 位 = 出场 ET 日期。净口径 2026-08-20 用户裁"切" (pnl_net 优先)。
         row = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records WHERE trade_date = ?",
+            "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
+            "FROM trade_records "
+            "WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
             (trade_date,)
         ).fetchone()
         summary["trades"] = row[0]

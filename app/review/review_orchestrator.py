@@ -2129,9 +2129,11 @@ class ValidationAgent:
     def _validate_general(self, claim: str, date: str, category: str) -> Dict:
         """通用验证 — 检查交易数据是否支持 claim"""
         if date:
+            # 2026-08-27 出场日记账 (同 AccountCircuitBreaker 口径): 当日总盈亏须按
+            # 出场日归集, 否则隔夜仓当日出场盈亏漏记会错判 claim 真伪。
             trades = self._query(
-                "SELECT COUNT(*) as total, SUM(realized_pnl) as pnl "
-                "FROM trade_records WHERE trade_date = ? AND exit_price > 0",
+                "SELECT COUNT(*) as total, SUM(COALESCE(pnl_net, realized_pnl)) as pnl "
+                "FROM trade_records WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
                 (date,)
             )
             if trades and trades[0]["total"] > 0:

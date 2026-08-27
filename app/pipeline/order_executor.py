@@ -3047,9 +3047,14 @@ def _check_flash_exit_circuit_breaker(symbol: str) -> bool:
 
 # ── P0 (2026-06-02): 标的日亏损限额 — 防死亡螺旋 ──
 _symbol_daily_loss_cache: Dict[str, float] = {}  # symbol → cached daily loss (resets on date change)
+_symbol_daily_loss_ts: Dict[str, float] = {}  # symbol → cache 写入时刻 (TTL 判定)
 _symbol_daily_loss_date: str = ""  # 缓存日期
 
 _DAILY_LOSS_LIMIT = 500.0  # 单标的日亏损限额 $500
+# 2026-08-28: 缓存 TTL — 增量 _update_symbol_daily_loss 只由 position_monitor
+# 平仓路径调用, playbook 路径平仓不增量, 缓存会系统性滞后于 DB (亏损低估→
+# 该拦不拦)。TTL 到期强制重查 DB (SSOT); TTL 内增量仍即时生效。
+_SYMBOL_DAILY_LOSS_TTL = 300.0  # 秒
 
 
 def _check_symbol_daily_loss(symbol: str) -> bool:
@@ -3061,24 +3066,28 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
     Returns: True = 允许 / False = 亏损超限禁止入场
     """
     global _symbol_daily_loss_cache, _symbol_daily_loss_date
+    import time as _time
     from datetime import date as _date
     today = _et_trade_date(now_et())
 
     # 日期变更时清空缓存
     if today != _symbol_daily_loss_date:
         _symbol_daily_loss_cache.clear()
+        _symbol_daily_loss_ts.clear()
         _symbol_daily_loss_date = today
 
-    # 优先用缓存 (同一进程内)
+    # 优先用缓存 (同一进程内, TTL 内有效)
     if symbol in _symbol_daily_loss_cache:
-        loss = _symbol_daily_loss_cache[symbol]
-        if loss <= -_DAILY_LOSS_LIMIT:
-            logger.warning(
-                f"🚫 [日亏损限额] {symbol} 当日累计亏损 ${loss:.2f} "
-                f"已超限 (-${_DAILY_LOSS_LIMIT:.0f})，当日禁入"
-            )
-            return False
-        return True
+        if _time.time() - _symbol_daily_loss_ts.get(symbol, 0.0) < _SYMBOL_DAILY_LOSS_TTL:
+            loss = _symbol_daily_loss_cache[symbol]
+            if loss <= -_DAILY_LOSS_LIMIT:
+                logger.warning(
+                    f"🚫 [日亏损限额] {symbol} 当日累计亏损 ${loss:.2f} "
+                    f"已超限 (-${_DAILY_LOSS_LIMIT:.0f})，当日禁入"
+                )
+                return False
+            return True
+        # TTL 过期 → 落到下方 DB 重查 (增量只作 TTL 内的即时刷新)
 
     # 查询 DB
     try:
@@ -3086,13 +3095,18 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
         from app.core.db_utils import get_main_db
         db_path = get_main_db()
         with sqlite3.connect(str(db_path)) as conn:
+            # 2026-08-27 出场日记账 (同 AccountCircuitBreaker 修复): 原
+            # WHERE trade_date = ? 入场日记账 — 隔夜仓当日出场亏损 (跳空) 记在
+            # 入场日, 死亡螺旋防线的"当日累计亏损"对隔夜跳空失效。净口径:
+            # pnl_net 优先, 旧行 NULL 回退毛额 realized_pnl。
             row = conn.execute(
-                "SELECT COALESCE(SUM(realized_pnl), 0) FROM trade_records "
-                "WHERE symbol = ? AND trade_date = ? AND exit_price > 0",
+                "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records "
+                "WHERE symbol = ? AND substr(exit_time, 1, 10) = ? AND exit_price > 0",
                 (symbol, today)
             ).fetchone()
         daily_pnl = float(row[0]) if row else 0.0
         _symbol_daily_loss_cache[symbol] = daily_pnl
+        _symbol_daily_loss_ts[symbol] = _time.time()
         if daily_pnl <= -_DAILY_LOSS_LIMIT:
             logger.warning(
                 f"🚫 [日亏损限额·激活] {symbol} 当日累计亏损 ${daily_pnl:.2f} "
@@ -3107,9 +3121,11 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
 
 def _update_symbol_daily_loss(symbol: str, pnl: float):
     """更新标的日亏损缓存 (由 position_monitor 在平仓后调用)"""
-    global _symbol_daily_loss_cache
+    global _symbol_daily_loss_cache, _symbol_daily_loss_ts
+    import time as _time
     current = _symbol_daily_loss_cache.get(symbol, 0.0)
     _symbol_daily_loss_cache[symbol] = current + pnl
+    _symbol_daily_loss_ts[symbol] = _time.time()
 
 
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
