@@ -2274,6 +2274,19 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}")
 
+                    # 盘后出场影子监控 (2026-08-27, 用户动议·record-only): 水下隔夜仓
+                    #   盘后延续修复观测 (touch_entry/touch_be/touch_tp) + red_cut_1pct
+                    #   唯一决策臂 (深红≥1%收盘割), 19:50+ 实时预评, 触发构造限价+
+                    #   fill_outside_rth 载荷验证链路不发单, 实际平仓后配对结算 delta.
+                    #   回放裁决 scripts/ah_exit_replay.py (n=12: 静态TP/SL臂 0/12 死单;
+                    #   水下入夜盘后触及净盈利垫 0/11 — 修复引擎=次日RTH非盘后).
+                    #   回滚: playbook.ah_exit_shadow_enabled=false + 重启.
+                    try:
+                        _mod_ah = self._load_script_module("ah_exit_shadow")
+                        _mod_ah.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] AH出场影子异常 (已隔离): {_e}")
+
                     # 陈旧锚影子打标 (2026-08-12 Plan B, record-only): DA锚价 vs 盘前价
                     #   对照暴露陈旧 (AVGO锚低4.3%/HON锚高3.7%); drift门/extreme_gap/出带
                     #   影子已覆盖深度场景, 真实缺口=趋势逃逸锚陈旧。用 trigger_miss 每轮
@@ -2340,6 +2353,15 @@ class TradingScheduler:
                         logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.OVERNIGHT:
+                    # 盘后出场影子终评 (2026-08-27, record-only): AH 20:00 收后用完结
+                    #   数据把 live_preliminary 行升级 final + 补漏评 + 结算.
+                    #   回滚同 AFTER_HOURS 挂载 (playbook.ah_exit_shadow_enabled=false).
+                    try:
+                        _mod_ah = self._load_script_module("ah_exit_shadow")
+                        _mod_ah.run_check(self)
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] AH出场影子(夜)异常 (已隔离): {_e}")
+
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:
                         logger.info("[LLM策略] 深夜 → 低频新闻 + LLM 推荐")
