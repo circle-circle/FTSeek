@@ -105,8 +105,14 @@ class TestR12EntryTimeConvention:
             "upsert_position_simple 仍用裸 datetime.now() 写 entry_time"
 
     def test_live_rows_aligned_with_trade_records(self):
-        """在仓行的 entry_time 必须与 trade_records 一致 (迁移已完成)."""
+        """在仓行 entry_time 与 trade_records 口径一致 (ET ISO aware, 时刻差 <2s).
+
+        R-12 管的是口径统一而非字节相等: 两表写路径各自取 now_et(), 同一笔开仓
+        恒有毫秒级漂移 (8/26 HOOD/UBER/ORCL 实测 42-74ms), 严格字符串比较必红。
+        容差 2s 只放行捕获抖动; 时区错位/未迁移行/naive 行/格式漂移 (小时级或
+        不可解析) 仍必须被抓出。"""
         from app.core.db_utils import get_main_db
+        from app.utils.timezone import parse_iso_safe
         db = get_main_db()
         if not db.exists():
             pytest.skip("主库不存在")
@@ -123,11 +129,23 @@ class TestR12EntryTimeConvention:
                     "AND (exit_time IS NULL OR exit_time='') ORDER BY id DESC LIMIT 1",
                     (r["symbol"],),
                 ).fetchone()
-                if tr and str(tr["entry_time"]) != str(r["entry_time"]):
-                    mismatched.append((r["symbol"], r["entry_time"], tr["entry_time"]))
+                if not tr:
+                    continue
+                a, b = str(r["entry_time"]), str(tr["entry_time"])
+                if a == b:
+                    continue
+                _da, _db = parse_iso_safe(a), parse_iso_safe(b)
+                if _da is None or _db is None:
+                    mismatched.append((r["symbol"], a, b, "不可解析 (R-12 ET ISO 口径违规)"))
+                    continue
+                if _da.tzinfo is None or _db.tzinfo is None:
+                    mismatched.append((r["symbol"], a, b, "naive 时间戳 (R-12 要求 ET ISO aware)"))
+                    continue
+                if abs((_da - _db).total_seconds()) > 2.0:
+                    mismatched.append((r["symbol"], a, b, "时刻差 >2s"))
         finally:
             conn.close()
-        assert not mismatched, f"两表 entry_time 仍不一致: {mismatched}"
+        assert not mismatched, f"两表 entry_time 口径/时刻不一致: {mismatched}"
 
     def test_migration_script_is_idempotent(self):
         """迁移脚本必须可重复执行 (存在且带幂等判据)."""

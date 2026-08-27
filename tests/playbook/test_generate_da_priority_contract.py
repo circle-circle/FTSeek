@@ -7,10 +7,14 @@ ON CONFLICT DO UPDATE WHERE 优先级阶梯 — 一处规则原子覆盖现在�
   3 = DA- / universe_expansion* / intraday_reentry-  (深度供给/重武装)
   1 = 其他非空 decision_id (TFB-/SNAP-/DEC-)          (内部有源)
   0 = 空 decision_id (SKIP票)                         (内部无源)
-规则: 新行 >= 现存行才覆盖; UE 浅指令永不覆盖 DA 深度内容; reentry 无条件放行。
+规则: 新行 >= 现存行才覆盖; UE 浅指令永不覆盖 DA 深度内容。
 
 8/17 事故回放断言: 空 decision_id SKIP 票 (0) 覆盖 DA 行 (3) → 拒绝。
 取代晨间版 _generate_da_priority_check 契约测试 (该函数已随根源修复删除)。
+
+RFC-066 (2026-08-25) 语义更新: intraday_reentry- 不同 did 不再覆盖/归档原行,
+而是 INSERT 新轮次行与现存行共存 (多轮台账, 见 db.save_instruction Python 层
+仲裁) — 对应组合移入 MULTI_ROUND_INSERT; 同 did (幂等重跑) 仍原地更新。
 """
 import sqlite3
 import pytest
@@ -27,7 +31,8 @@ FAMS = {
     "EMPTY":   "",
 }
 
-# (现存, 写入) → True=允许覆盖 / False=拒绝覆盖 — 完整 7×7 期望矩阵
+# (现存, 写入) → True=允许覆盖 / False=拒绝覆盖 — 单行仲裁期望矩阵 (43 组合)。
+# RFC-066 后 (X≠REENTRY, REENTRY) 6 组合不走覆盖, 见 MULTI_ROUND_INSERT。
 EXPECTED = {
     # 写入 DA (3): 除 reentry 同级放行外全部允许 (DA 最深, 可刷新一切)
     ("DA", "DA"): True,      ("UE", "DA"): True,      ("REENTRY", "DA"): True,
@@ -37,10 +42,10 @@ EXPECTED = {
     ("DA", "UE"): False,     ("UE", "UE"): True,      ("REENTRY", "UE"): True,
     ("TFB", "UE"): True,     ("SNAP", "UE"): True,    ("DEC", "UE"): True,
     ("EMPTY", "UE"): True,
-    # 写入 REENTRY: 无条件放行 (合法重武装, 覆盖前自归档原行)
-    ("DA", "REENTRY"): True, ("UE", "REENTRY"): True, ("REENTRY", "REENTRY"): True,
-    ("TFB", "REENTRY"): True, ("SNAP", "REENTRY"): True, ("DEC", "REENTRY"): True,
-    ("EMPTY", "REENTRY"): True,
+    # 写入 REENTRY 同 did (矩阵共用 FAMS did = 幂等重跑): 原地更新;
+    # 不同 did 新轮次 → MULTI_ROUND_INSERT; reentry 行上的重武装/结算保护
+    # 完整场景见 tests/test_playbook_db.py::TestRFC066MultiRoundLedger
+    ("REENTRY", "REENTRY"): True,
     # 写入 TFB/SNAP/DEC (1): 深度行(3)拒绝, 同级(1)放行, 空行(0)放行
     ("DA", "TFB"): False,    ("UE", "TFB"): False,    ("REENTRY", "TFB"): False,
     ("TFB", "TFB"): True,    ("SNAP", "TFB"): True,   ("DEC", "TFB"): True,
@@ -55,6 +60,13 @@ EXPECTED = {
     ("DA", "EMPTY"): False,  ("UE", "EMPTY"): False,  ("REENTRY", "EMPTY"): False,
     ("TFB", "EMPTY"): False, ("SNAP", "EMPTY"): False, ("DEC", "EMPTY"): False,
     ("EMPTY", "EMPTY"): True,
+}
+
+# RFC-066 (2026-08-25) 多轮台账: intraday_reentry- 新轮次 (did 与现存不同) →
+# INSERT 新行与现存行共存, 现存行一字不动 — 取代旧"无条件放行覆盖"语义。
+MULTI_ROUND_INSERT = {
+    ("DA", "REENTRY"), ("UE", "REENTRY"), ("TFB", "REENTRY"),
+    ("SNAP", "REENTRY"), ("DEC", "REENTRY"), ("EMPTY", "REENTRY"),
 }
 
 
@@ -77,24 +89,34 @@ def _write(db, fam, tag):
 
 
 class TestUpsertArbitrationMatrix:
-    """7 家族 × 7 家族 = 49 种 (现存, 写入) 组合的完整覆盖仲裁矩阵。"""
+    """7 家族 × 7 家族 = 49 种 (现存, 写入) 组合的完整覆盖仲裁矩阵。
 
-    @pytest.mark.parametrize("key", sorted(EXPECTED.keys()))
+    43 组合为单行仲裁 (覆盖/拒绝), 6 组合 (X, REENTRY) 为 RFC-066 多轮共存。
+    """
+
+    @pytest.mark.parametrize("key", sorted(set(EXPECTED) | MULTI_ROUND_INSERT))
     def test_pair(self, key):
         existing, incoming = key
-        allowed = EXPECTED[key]
         db, conn = _mkdb()
         _write(db, existing, "existing")
         _write(db, incoming, "incoming")
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT thesis, decision_id FROM playbook_instructions "
             "WHERE date='2026-08-17' AND symbol='US.TEST'"
-        ).fetchone()
-        n = conn.execute(
-            "SELECT COUNT(*) FROM playbook_instructions "
-            "WHERE date='2026-08-17' AND symbol='US.TEST'"
-        ).fetchone()[0]
-        assert n == 1, f"UPSERT 必须保持单行, 实际 {n}"
+        ).fetchall()
+        if key in MULTI_ROUND_INSERT:
+            assert len(rows) == 2, \
+                f"{existing}→{incoming} 期望多轮共存 2 行, 实际 {len(rows)}"
+            got = {(r[0], r[1]) for r in rows}
+            assert (f"existing-{existing}", FAMS[existing]) in got, \
+                f"{existing}→{incoming} 现存行必须原样保留 (多轮共存不动第一轮)"
+            assert (f"incoming-{incoming}", FAMS[incoming]) in got, \
+                f"{existing}→{incoming} 新轮次行必须存在"
+            return
+        allowed = EXPECTED[key]
+        assert len(rows) == 1, \
+            f"{existing}→{incoming} 单行仲裁必须保持单行, 实际 {len(rows)}"
+        row = rows[0]
         if allowed:
             assert row[0] == f"incoming-{incoming}", \
                 f"{existing}→{incoming} 期望允许覆盖, 实际现存行未被替换"

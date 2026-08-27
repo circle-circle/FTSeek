@@ -1592,8 +1592,14 @@ class USPositionSync:
                                 else:
                                     _d = _dt.fromisoformat(str(_ts).replace('Z', '+00:00'))
                                 if _d.tzinfo is None:  # naive=ET
-                                    from datetime import timezone as _tz, timedelta as _td
-                                    _d = _d.replace(tzinfo=_tz(_td(hours=-4)))
+                                    # 8/27 时钟统一: zoneinfo 真实 ET (DST 自适),
+                                    # 极端环境落固定偏移兜底
+                                    try:
+                                        from zoneinfo import ZoneInfo
+                                        _d = _d.replace(tzinfo=ZoneInfo("America/New_York"))
+                                    except Exception:
+                                        from datetime import timezone as _tz, timedelta as _td
+                                        _d = _d.replace(tzinfo=_tz(_td(hours=-4)))
                                 return int(_d.timestamp())
                             except Exception:
                                 return None

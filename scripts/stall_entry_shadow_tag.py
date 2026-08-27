@@ -54,6 +54,28 @@ def _seen_ids() -> set:
     return seen
 
 
+def _et_date(exit_time: str) -> str:
+    """exit_time → ET 日期.
+
+    8/27 时钟统一: aware 时间戳 (任意偏移, 含 Z/+00:00/+08:00) → zoneinfo
+    真实 ET (DST 自适, 取代旧 SQL CASE 只认 -04:00/-05:00 + 其余一律
+    date(·,'-4 hours') 的近似); naive 遗留行 (2026-07-20 前, CST/ET 混写
+    不可逐行判别) → 沿用旧 '-4 hours' 启发式口径, 不重算已打标历史。
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        d = datetime.fromisoformat(str(exit_time).replace("Z", "+00:00"))
+    except Exception:
+        return str(exit_time)[:10]
+    if d.tzinfo is None:
+        return (d - timedelta(hours=4)).date().isoformat()
+    try:
+        from zoneinfo import ZoneInfo
+        return d.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    except Exception:
+        return d.astimezone(timezone(timedelta(hours=-4))).date().isoformat()
+
+
 def _tag_row(r) -> dict:
     """单条成交 → 特征标签 + 结局."""
     thesis = r["thesis"] or ""
@@ -65,7 +87,7 @@ def _tag_row(r) -> dict:
         conds = []
     return {
         "ts": r["exit_time"],
-        "trade_date": r["d"],
+        "trade_date": _et_date(r["exit_time"]),
         "symbol": r["symbol"],
         "direction": r["direction"],
         "decision_id": r["decision_id"],
@@ -98,9 +120,6 @@ def run_check(scheduler=None) -> None:
     rows = conn.execute("""
         SELECT t.decision_id, t.symbol, t.direction, t.exit_reason,
                t.exit_time, t.mfe_pct, t.realized_pnl, t.pnl_net,
-               CASE WHEN t.exit_time LIKE '%-04:00%' OR t.exit_time LIKE '%-05:00%'
-                    THEN substr(t.exit_time, 1, 10)
-                    ELSE date(t.exit_time, '-4 hours') END d,
                CASE WHEN t.decision_id LIKE 'DA-%' THEN 'DA'
                     WHEN t.decision_id LIKE 'TFB-%' THEN 'TFB'
                     WHEN t.decision_id LIKE 'intraday_reentry%' THEN 'REENTRY'
