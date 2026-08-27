@@ -27,7 +27,11 @@ def norm_et(s):
     dt = datetime.datetime.fromisoformat(s)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
-    return dt.astimezone(datetime.timezone(datetime.timedelta(hours=-4)))
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.astimezone(ZoneInfo("America/New_York"))
+    except Exception:
+        return dt.astimezone(datetime.timezone(datetime.timedelta(hours=-4)))
 
 rows = con.execute(
     "SELECT id, symbol, direction, entry_price, entry_time, exit_time, exit_reason, "

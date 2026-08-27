@@ -78,10 +78,14 @@ def agg(diffs, label):
 
 
 def to_aware(dt):
-    """部分历史记录 entry/exit_time 无时区 → 按 ET (8月=EDT -04:00) 补."""
+    """部分历史记录 entry/exit_time 无时区 → 按 ET 补 (zoneinfo DST 自适)."""
     if dt is not None and dt.tzinfo is None:
-        from datetime import timezone
-        return dt.replace(tzinfo=timezone(timedelta(hours=-4)))
+        try:
+            from zoneinfo import ZoneInfo
+            return dt.replace(tzinfo=ZoneInfo("America/New_York"))
+        except Exception:
+            from datetime import timezone
+            return dt.replace(tzinfo=timezone(timedelta(hours=-4)))
     return dt
 
 
