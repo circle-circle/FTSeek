@@ -18,7 +18,13 @@ LOG = f'{REPO}/logs/ftseek_us.log'
 SENTINEL = f'{REPO}/data/.insider_scanned_today'
 
 # ET 周末守卫: 周六/周日直接静默 (schedule 2-6 CST 覆盖交易周, 防御性)
-et_weekday = datetime.now(timezone(timedelta(hours=-4))).weekday()
+# 8/27 时钟统一: 硬编码 -4 → zoneinfo 真实 ET (DST 自适); 极端环境落固定偏移兜底
+try:
+    from zoneinfo import ZoneInfo
+    _ET_TZ = ZoneInfo("America/New_York")
+except Exception:
+    _ET_TZ = timezone(timedelta(hours=-4))  # 兜底: 无 DST 感知
+et_weekday = datetime.now(_ET_TZ).weekday()
 if et_weekday >= 5:
     sys.exit(0)
 

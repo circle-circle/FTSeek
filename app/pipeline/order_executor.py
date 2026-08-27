@@ -2545,9 +2545,9 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     # P0 修复 (2026-05-07): trade_date 使用 ET 日期，date('now') 是 UTC 日期
     try:
         import sqlite3 as _sql3
-        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         from app.core.paths import get_trade_records_db
-        _et_now = _dt.now(_tz(_td(hours=-4))).strftime("%Y-%m-%d")
+        # 8/27 时钟统一: 硬编码 -4 → SSOT now_et() (顶部已 import, DST 自适)
+        _et_now = now_et().strftime("%Y-%m-%d")
         _db = str(get_trade_records_db())
         _conn = _sql3.connect(_db)
         _cur = _conn.cursor()

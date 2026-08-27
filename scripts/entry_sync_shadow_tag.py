@@ -121,9 +121,9 @@ def run_check(scheduler=None) -> None:
         SELECT decision_id, symbol, direction, entry_time, exit_time,
                exit_reason, realized_pnl, pnl_net, mfe_pct, mae_pct,
                holding_hours, quantity, entry_price,
-               date(entry_time, '-4 hours') d
+               substr(entry_time, 1, 10) d
         FROM trade_records
-        WHERE entry_time LIKE '%-04:00%'
+        WHERE (entry_time LIKE '%-04:00%' OR entry_time LIKE '%-05:00%')
           AND exit_time IS NOT NULL AND exit_time != ''
           AND decision_id IS NOT NULL AND decision_id != ''
           AND decision_id NOT LIKE 'TFB-%'

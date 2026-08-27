@@ -98,7 +98,9 @@ def run_check(scheduler=None) -> None:
     rows = conn.execute("""
         SELECT t.decision_id, t.symbol, t.direction, t.exit_reason,
                t.exit_time, t.mfe_pct, t.realized_pnl, t.pnl_net,
-               date(t.exit_time, '-4 hours') d,
+               CASE WHEN t.exit_time LIKE '%-04:00%' OR t.exit_time LIKE '%-05:00%'
+                    THEN substr(t.exit_time, 1, 10)
+                    ELSE date(t.exit_time, '-4 hours') END d,
                CASE WHEN t.decision_id LIKE 'DA-%' THEN 'DA'
                     WHEN t.decision_id LIKE 'TFB-%' THEN 'TFB'
                     WHEN t.decision_id LIKE 'intraday_reentry%' THEN 'REENTRY'

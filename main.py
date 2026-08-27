@@ -447,9 +447,9 @@ def _run_new_scheduler(args):
         if os.path.exists(plan_path):
             with open(plan_path, 'r') as f:
                 plan = json.loads(f.read())
-            from datetime import timezone as _tz_bp, timedelta as _td_bp
-            _et_off_bp = _td_bp(hours=-4) if 3 <= datetime.now().month <= 11 else _td_bp(hours=-5)
-            _today_et_bp = datetime.now(_tz_bp(_et_off_bp)).strftime("%Y-%m-%d")
+            # 8/27 时钟统一: 月份 DST 猜测 → SSOT get_trade_date() (pytz/zoneinfo 真实切换)
+            from app.utils.timezone import get_trade_date as _get_td_bp
+            _today_et_bp = _get_td_bp()
             if plan and plan.get('targets') and plan.get('date') == _today_et_bp:
                 pool.inject_plan_targets(plan)
                 logger.info(f"📝 US 注入盘前计划: {len(plan['targets'])} 只")

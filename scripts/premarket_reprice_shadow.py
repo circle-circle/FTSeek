@@ -56,8 +56,13 @@ def _today_et() -> str:
         from app.utils.timezone import now_et
         return now_et().strftime("%Y-%m-%d")
     except Exception:
-        from datetime import timezone, timedelta
-        return datetime.now(timezone(timedelta(hours=-4))).strftime("%Y-%m-%d")
+        # 8/27 时钟统一: 兜底也走 DST 真实时区 (zoneinfo 标准库); 极端环境落固定偏移
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        except Exception:
+            from datetime import timezone, timedelta
+            return datetime.now(timezone(timedelta(hours=-4))).strftime("%Y-%m-%d")
 
 
 def _is_trading_day() -> bool:

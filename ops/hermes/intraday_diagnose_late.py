@@ -23,7 +23,12 @@ HEALTHCHECK_LOG = '/opt/ftseek/FTSeek-US/logs/healthcheck.log'
 VENV_PYTHON = '/opt/ftseek/FTSeek-US/venv/bin/python3'
 TRADING_DAY_CHECK = '/opt/ftseek/FTSeek-US/scripts/trading_day_check.py'
 
-et = timezone(timedelta(hours=-4))  # EDT
+# 8/27 时钟统一: 硬编码 -4 → zoneinfo 真实 ET (DST 自适); 极端环境落固定偏移兜底
+try:
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+except Exception:
+    et = timezone(timedelta(hours=-4))  # 兜底: 无 DST 感知
 now_et = datetime.now(et)
 today = now_et.strftime('%Y-%m-%d')
 weekday = now_et.weekday()

@@ -33,13 +33,17 @@ TRADING_DAY_CHECK = f'{FTSEEK}/scripts/trading_day_check.py'
 KNIFE = 0.03   # 与 app/playbook/entry_band.py 同源
 CHASE = 0.05
 
-ET = timezone(timedelta(hours=-4))  # 7-11月 EDT; 冬令时自动修正见 main()
+# 8/27 时钟统一: 硬编码 -4/月份DST猜测 → zoneinfo 真实 ET (DST 边界精确);
+# 极端环境落固定偏移兜底 (无 DST 感知, 与旧行为一致)
+try:
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
+except Exception:
+    ET = timezone(timedelta(hours=-4))  # 兜底
 
 
 def et_now():
-    month = datetime.now(timezone.utc).month
-    off = -4 if 3 <= month <= 11 else -5
-    return datetime.now(timezone(timedelta(hours=off)))
+    return datetime.now(ET)
 
 
 def is_trading_day(date_str):

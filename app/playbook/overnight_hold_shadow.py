@@ -48,8 +48,14 @@ def emit(symbol: str, direction: str, exit_reason: str, exit_price: float,
         from app.utils.timezone import now_et
         _now = now_et()
     except Exception:
-        from datetime import timezone, timedelta
-        _now = datetime.now(timezone(timedelta(hours=-4)))
+        # 8/27 时钟统一: 兜底也走 DST 真实时区 (zoneinfo 为 3.9+ 标准库);
+        # 极端环境再落固定偏移 — 至少夏令时正确
+        try:
+            from zoneinfo import ZoneInfo
+            _now = datetime.now(ZoneInfo("America/New_York"))
+        except Exception:
+            from datetime import timezone, timedelta
+            _now = datetime.now(timezone(timedelta(hours=-4)))
     row = {
         "ts": _now.isoformat(),
         "trade_date": _now.strftime("%Y-%m-%d"),

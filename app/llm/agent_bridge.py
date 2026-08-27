@@ -557,8 +557,9 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
         logger.info("[Agent-US] 开始生成盘后归因报告...")
         
         # B1 修复 (2026-05-13): _et_date 在 prompt 模板中使用但未定义
-        from datetime import timezone as _tz, timedelta as _td
-        _et_date = datetime.now(_tz(_td(hours=-4))).strftime("%Y-%m-%d")
+        # 8/27 时钟统一: 硬编码 -4 → SSOT get_trade_date() (DST 自适, 冬季不偏 1h)
+        from app.utils.timezone import get_trade_date as _et_trade_date
+        _et_date = _et_trade_date()
         
         request_id = f"eod_us_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         

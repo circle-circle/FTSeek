@@ -1104,12 +1104,12 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
 
     # ── 构建 SignalScore (桥接新契约 → 现有 _submit_order) ──
     # P0 修复 (2026-05-07): 添加 trace_id 供 trade_attribution 使用
-    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
     import uuid as _uuid
     # R8 修复 (2026-05-17): 优先用 candidate 已有的 trace_id (来自 strategy/pure._enrich_candidate)
     # 防止双重生成 trace_id 导致 attribution 行不匹配
     _trace = getattr(candidate, "trace_id", "") or (
-        f"US-{_dt.now(_tz(_td(hours=-4))).strftime('%Y%m%d')}-{_uuid.uuid4().hex[:6].upper()}"
+        # 8/27 时钟统一: 硬编码 -4 → SSOT now_et() (顶部已 import, DST 自适)
+        f"US-{now_et().strftime('%Y%m%d')}-{_uuid.uuid4().hex[:6].upper()}"
     )
     direction = SignalDirection.LONG if candidate.is_long else SignalDirection.SHORT
     signal = SignalScore(
