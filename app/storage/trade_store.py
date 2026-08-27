@@ -817,17 +817,22 @@ class TradeStore:
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, source_type, created_at
+                               futu_order_id, source_type, decision_id, created_at
                         FROM trade_records
                         WHERE trade_date = ? AND trade_mode = ?
                         ORDER BY entry_time ASC
                     """, (trade_date, trade_mode)).fetchall()
                 else:
+                    # 2026-08-27 (P1 幻影回填根修): SELECT 曾缺 decision_id —
+                    #   shadow_tracker P2b "轮次级联接" (2026-08-24) 读 t.get("decision_id")
+                    #   恒 None → 全部成交被视为"无归属" → intraday_reentry 新轮行认领
+                    #   上一轮成交 (实锤 8/26 #1777 被盖 #1370 的 executed/pnl/outcome)。
+                    #   补列即恢复 P2b 守卫; 纯增量字段, 其余消费者不受影响。
                     rows = conn.execute("""
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, source_type, created_at
+                               futu_order_id, source_type, decision_id, created_at
                         FROM trade_records
                         WHERE trade_date = ?
                         ORDER BY entry_time ASC

@@ -271,3 +271,49 @@ def test_choose_direction_fallback_inherit():
     assert ir.choose_direction("LONG", -0.5, False) == ("BUY", "inherited")
     assert ir.choose_direction("SHORT", 0.5, False) == ("SELL_SHORT", "inherited")
 
+
+
+# ── _day_first_direction (2026-08-27 当日反手硬闸数据源, 8/26 LLY 教训) ──
+
+class _FakeRowResult:
+    def __init__(self, row): self._row = row
+    def fetchone(self): return self._row
+
+
+class _FakeConn:
+    def __init__(self, row): self._row = row
+    def execute(self, sql, params): return _FakeRowResult(self._row)
+
+
+class _FakePDB:
+    def __init__(self, row=None, raise_err=False):
+        self._row, self._raise = row, raise_err
+    def _conn(self):
+        if self._raise:
+            raise RuntimeError("db down")
+        return _FakeConn(self._row)
+
+
+def _patch_pdb(monkeypatch, fake):
+    import app.playbook.db as pdb_mod
+    monkeypatch.setattr(pdb_mod, "PlaybookDB", fake)
+
+
+def test_day_first_direction_returns_non_reentry_first(monkeypatch):
+    # 第一轮是 DA 指令 (model_used≠reentry) → 返回其方向, 供反手闸比对
+    _patch_pdb(monkeypatch, lambda: _FakePDB(row=("BUY", "qwen3.7-max")))
+    assert ir._day_first_direction("2026-08-27", "US.LLY") == "BUY"
+
+
+def test_day_first_direction_ignores_reentry_rows(monkeypatch):
+    # ORDER BY id ASC 取到的若是 reentry 行自身族 → None (不拿再入场当第一轮基准)
+    _patch_pdb(monkeypatch, lambda: _FakePDB(row=("SELL_SHORT", "intraday_reentry_v1")))
+    assert ir._day_first_direction("2026-08-27", "US.LLY") is None
+
+
+def test_day_first_direction_fail_open(monkeypatch):
+    # DB 异常 / 当日无第一轮 → None → 不拦 (fail-open, 对齐其他证伪门约定)
+    _patch_pdb(monkeypatch, lambda: _FakePDB(raise_err=True))
+    assert ir._day_first_direction("2026-08-27", "US.LLY") is None
+    _patch_pdb(monkeypatch, lambda: _FakePDB(row=None))
+    assert ir._day_first_direction("2026-08-27", "US.LLY") is None

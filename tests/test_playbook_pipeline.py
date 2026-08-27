@@ -47,6 +47,7 @@ class TestCloseTradeRecord:
                 id INTEGER PRIMARY KEY,
                 outcome TEXT,
                 exit_price REAL,
+                exit_time TEXT,
                 exit_reason TEXT,
                 pnl REAL,
                 pnl_pct REAL,

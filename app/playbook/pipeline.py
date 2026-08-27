@@ -5867,10 +5867,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         #   INSERT 时 outcome 初始为 NULL, 若不显式放行会永远无法结算 (8/17-8/21 15 行
         #   out=NULL 实锤)。改为 (outcome IS NULL OR outcome NOT IN (...))。
         conn.execute(
-            "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
+            "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_time=?, exit_reason=?, "
+            "pnl=?, pnl_pct=?, "
             "holding_period_hours=?, max_favorable_excursion=?, max_adverse_excursion=? "
             "WHERE id=? AND (outcome IS NULL OR outcome NOT IN ('win','loss','void'))",
-            (_outcome, exit_price, exit_reason, _inst_pnl,
+            (_outcome, exit_price, now_iso, exit_reason, _inst_pnl,
              _inst_pnl_pct, round(holding_hours, 1),
              _mfe_usd, _mae_usd, inst_id),
         )

@@ -246,6 +246,10 @@ _DEFAULTS: Dict[str, Any] = {
     "sentiment_extreme_threshold": 0.8,  # 情绪极端阈值
     "social_sentiment_divergence_threshold": 0.3,  # 多源情绪背离阈值
     "earnings_proximity_days": 3,  # 财报临近阈值
+    # 2026-08-27 (8/26 LLY 复盘, 用户批准落地): 当日反手硬闸 — 再入场方向与当日
+    #   第一轮 DA/UE 指令相反 → 拒绝武装 (同向多轮如 AMD/RIVN 不受影响)。
+    #   回滚: unified_config.yaml playbook.intraday_reentry.same_day_reversal_block_enabled=false
+    "same_day_reversal_block_enabled": True,
 }
 
 
@@ -344,6 +348,30 @@ def _derive_ticker_direction(ts: Optional[dict]) -> Optional[str]:
         return "bullish"
     if s <= -0.15:
         return "bearish"
+    return None
+
+
+def _day_first_direction(date_str: str, symbol: str) -> Optional[str]:
+    """当日第一轮 DA/UE 指令方向 (最小 id 行); None = 无反手判定依据, 不拦。
+
+    2026-08-27 (8/26 LLY 反手复盘): 盘前 DA BUY #1714 止盈后, reentry 于 #1776
+    反手 SELL_SHORT — 仅被资金护栏拦在下单前, shadow_pnl=-73.06 证明反手方向本身
+    错误。当日第一轮论据未失效时, 反手再入场 = 对当日论据的自我否定, 拒之。
+    仅认 DA/UE 轮 (当日首行本就是再入场的历史多轮场景不作依据); SKIP 行不构成
+    方向依据 (查询已限定 BUY/SELL_SHORT)。fail-open: 查询失败返回 None。
+    """
+    try:
+        from app.playbook.db import PlaybookDB
+        row = PlaybookDB()._conn().execute(
+            "SELECT direction, model_used FROM playbook_instructions "
+            "WHERE date=? AND symbol=? AND direction IN ('BUY','SELL_SHORT') "
+            "ORDER BY id ASC LIMIT 1",
+            (date_str, symbol),
+        ).fetchone()
+        if row and (row[1] or "") != "intraday_reentry_v1":
+            return row[0]
+    except Exception:
+        pass
     return None
 
 
@@ -950,6 +978,22 @@ def run_scan(scheduler=None) -> int:
         base["direction"] = direction                    # 裁决后方向覆盖审计行 (原为继承值)
         base["direction_mode"] = dir_mode                # adaptive=顺势改向 / inherited=继承前笔
         base["prior_direction"] = str(prior["direction"]).upper()
+
+        # ── 2026-08-27 (8/26 LLY 反手, 用户批准): 当日反手硬闸 — 与当日第一轮
+        #    DA/UE 方向相反 → 拒绝 (不进入证伪门评估, shadow 记 rejected 可审计)。
+        base["day_first_direction"] = None
+        if cfg.get("same_day_reversal_block_enabled", True):
+            _fd = _day_first_direction(today, sym)
+            base["day_first_direction"] = _fd
+            if _fd and _fd != direction:
+                base["action"] = "rejected"
+                base["reasons"] = [f"same_day_reversal: 当日第一轮指令{_fd}, 禁止反手{direction}"]
+                _shadow_write(base)
+                logger.info(
+                    f"[再入场] {sym} 反手拦截: 当日第一轮{_fd} → 拒绝{direction} "
+                    f"(前笔#{prior['trade_id']}, 8/26 LLY 教训闸)"
+                )
+                continue
 
         ok, reasons = evaluate_candidate(
             direction, price, vwap,

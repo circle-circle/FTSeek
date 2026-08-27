@@ -55,6 +55,9 @@ def _save_instruction(db, **kwargs):
         "stop_loss": 95.0,
         "take_profit": 110.0,
         "position_size": 50,
+        # 2026-08-27: 显式 created_at (早于全部 mock entry_time) — 默认 now_utc() 是
+        # 真实当前时间, 会被幻影回填守卫 (成交早于创建→丢弃) 把合成数据误判为幻影。
+        "created_at": "2026-06-18T08:00:00",
     }
     defaults.update(kwargs)
     return db.save_instruction(defaults)
@@ -470,6 +473,80 @@ class TestExecutionMatching:
         result = db.get_instruction("2026-06-18", "US.NTES")
         assert result["executed"] == 1
         assert result["execution_price"] == 100.5
+
+
+# ========== 幻影回填时刻守卫 (2026-08-27, 8/26 #1777 认领 #1370 成交实锤) ==========
+
+class TestPhantomTemporalGuard:
+    """成交 entry_time 早于指令 created_at (>30s) → 物理上不可能属于本指令, 丢弃匹配.
+
+    纵深防御B: 即使 P2b decision_id 联接键再被削弱 (如列缺失/空值), 时刻不变量
+    也能拦住跨轮误联。30s 容差覆盖 auto_execute 先 claim 后写行的时钟偏斜。
+    """
+
+    def test_fill_before_creation_is_dropped(self, tracker, db, mock_market_data, mock_trade_store):
+        """生产形态复现: created_at(UTC) 晚于 entry_time(ET-aware) 数小时 → 丢弃."""
+        _save_instruction(db, entry_price=100.0, position_size=50,
+                          created_at="2026-06-18T19:00:00+00:00")  # 15:00 ET
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG",
+             "source_type": "PLAYBOOK_SIM",
+             # 无 decision_id (联接键最弱形态) + 成交在指令创建前 ~9h → 必须丢弃
+             "entry_price": 100.5, "entry_time": "2026-06-18T09:43:03-04:00"},
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] != 1
+        assert not result["execution_price"]
+
+    def test_fill_after_creation_kept(self, tracker, db, mock_market_data, mock_trade_store):
+        """正向: 成交在指令创建之后 (正常时序) → 正常认领 executed=1."""
+        _save_instruction(db, entry_price=100.0, position_size=50,
+                          created_at="2026-06-18T13:00:00+00:00")  # 09:00 ET
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG",
+             "source_type": "PLAYBOOK_SIM",
+             "entry_price": 100.5, "entry_time": "2026-06-18T09:35:00-04:00"},  # 13:35Z
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] == 1
+        assert result["execution_price"] == 100.5
+
+    def test_small_clock_skew_within_tolerance_kept(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """容差: 成交仅早于创建 20s (claim→写行偏斜) → 不触发守卫."""
+        _save_instruction(db, entry_price=100.0, position_size=50,
+                          created_at="2026-06-18T09:35:20")  # naive → 按 ET 解释
+
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99,
+             "close": 106, "ma20": 100, "volume_ratio": 2.0}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG",
+             "source_type": "PLAYBOOK_SIM",
+             "entry_price": 100.5, "entry_time": "2026-06-18T09:35:00"},  # 早 20s
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["executed"] == 1
 
 
 # ========== MFE/MAE 计算测试 ==========
