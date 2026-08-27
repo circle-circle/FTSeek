@@ -507,8 +507,23 @@ llm:
     thesis_challenge: qwen-max
     thesis_inferer: qwen-max
     universe_expansion_reasoning:
+      # 2026-08-27 (用户裁决): UE 主模型 qwen-max(qwen3.7-max) → qwen3.8-flash.
+      #   降档切换 (max→flash): 成本 0.008/0.024 → 0.0003/0.0006 (输入/输出 $/K tok,
+      #   约 27x/40x 降幅), UE 每轮 30-40 候选 brief + repair 调用是全链最高频 LLM
+      #   路径 (570 次调用累计). 风险: flash 推理能力弱于 max, UE 指令生成质量
+      #   (tier 判定/thesis 引证/short_check) 可能退化 → 兜底链 fallback=deepseek-pro
+      #   不变 (schema 失败/空响应自动降级), 且 UE 指令行落 model_used 字段
+      #   (llm_universe_scan 记录级归因), 新旧模型样本天然可切分归因 — 3.8-flash
+      #   时代盈亏 vs 3.7-max 时代 (8/3-8/27) 可对比裁决. 模型可达性已实测
+      #   (2026-08-27 DashScope 实弹, 返回 model=qwen3.8-flash; json_mode+schema
+      #   校验链也实测通过).
+      #   ⚠️ 实测延迟特性: 3.8-flash 输出带 reasoning_content (思考 token 计费),
+      #   实弹简单调用 32s~180s vs 3.7-max ~1s 直答 — UE scan 单轮等待变长属预期,
+      #   timeout=300 已配足 (实体定义处); 若 21:10 轮超时频发, 先看 llm_audit
+      #   latency_ms 分布再裁 (勿直接改 timeout 掩盖问题).
+      #   回滚: primary 改回 qwen-max + 重启.
       fallback: deepseek-pro
-      primary: qwen-max
+      primary: qwen3.8-flash
       prompt_cache: true
     web_search_fundamental:
       cache_on_fail: false
@@ -565,6 +580,20 @@ llm:
       model_name: qwen3.6-flash
       provider: dashscope
       timeout: 8
+    # 2026-08-27 (UE 主模型切换配套): qwen3.8-flash 实体定义 — DashScope 实测可达
+    #   (2026-08-27 实弹返回 model=qwen3.8-flash, 带 reasoning_content 非流式可关).
+    #   cost 按 qwen flash 档公开价与 qwen-flash 同价 (0.0003/0.0006), 实际账单
+    #   以 DashScope 为准 — 若 DashScope 后续调整, 从 llm_audit.cost_usd 偏差可发现.
+    #   timeout 300 对齐 qwen-max (UE brief 输入大, 8s 会截断长输出; flash 实测
+    #   reasoning token 占用, 需给足生成时间).
+    qwen3.8-flash:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.0003
+      cost_out: 0.0006
+      model_name: qwen3.8-flash
+      provider: dashscope
+      timeout: 300
     qwen-max:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
