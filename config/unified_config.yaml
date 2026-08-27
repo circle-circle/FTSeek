@@ -534,6 +534,14 @@ llm:
     weekly_proposer:
       fallback: qwen
       primary: deepseek
+  # ── 模型替换 SSOT 指南 (2026-08-27 收敛后) ──────────────────────────────
+  # 同档换底层模型: 改本段实体 model_name 一处 → 全部引用该别名的 feature 自动跟随.
+  # 单 feature 换档: 改 llm.features.<feature>.primary 一行. 均零代码+热重载生效.
+  # 平行直连域 (用真实模型名, 非本段别名 — 有意独立, 勿混):
+  #   · scheduler.debate.claude_api_models / claude_cli_model / hermes_model (Claude runner)
+  #   · hermes 侧 DA skill env (LLM_MODEL/CHALLENGER_MODEL, ~/.hermes)
+  # 已清理死键 (勿再造): llm.legacy_aliases / llm_features.*.model /
+  #   llm.strategy_engine 的 model·api_key 系 / config.BAILIAN_MODEL 常量.
   # 2026-08-27 (用户裁决·别名去规格化): 实体 qwen-max → qwen, deepseek-pro → deepseek.
   #   纯键名重命名 — model_name (qwen3.7-max / deepseek-v4-pro) 与全部参数/路由不变,
   #   llm.features 引用已同步. 歧义源=旧别名与 DashScope 真实模型名 qwen-max 同名不同物
@@ -612,15 +620,13 @@ llm:
       model_name: qwen3.6-plus
       provider: dashscope
       timeout: 30
+  # 2026-08-27 (SSOT收敛·A类清理): 删除本块 model/api_key/api_key_env/base_url/
+  #   provider/thinking_level/timeout_seconds 7 死键 — LLMStrategyEngine 的真实 LLM
+  #   调用走 call_llm("llm_strategy_engine") → llm.features 路由 (qwen→deepseek),
+  #   api_key 等在 llm.models 实体统一管理; 本块仅 enabled 被消费 (引擎总开关,
+  #   llm_strategy_engine.py:169). 死键残留会伪装成"这里能配模型"的错觉.
   strategy_engine:
-    api_key: ''
-    api_key_env: BAILIAN_API_KEY
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     enabled: true
-    model: qwen-max
-    provider: bailian
-    thinking_level: high
-    timeout_seconds: 300
 llm_budget:
   cost_alerts:
     halt_pct: 1.0
@@ -644,13 +650,11 @@ llm_features:
   daily_auto_tuner:
     daily_max_usd: 0.5
     enabled: false
-    model: deepseek
     timeout_sec: 60
   emergency_review:
     cooldown_sec: 3600
     daily_max_usd: 0.3
     enabled: false
-    model: qwen
     negative_news_threshold: 0.6
     price_drop_5m_threshold: 0.03
     timeout_sec: 30
@@ -658,7 +662,6 @@ llm_features:
   news_classifier:
     daily_max_usd: 0.5
     enabled: true
-    model: minimax
     timeout_sec: 20
   news_multilang:
     enabled: false
@@ -674,13 +677,11 @@ llm_features:
     daily_max_usd: 1.5
     enabled: false
     min_history_trades: 5
-    model: deepseek
     timeout_sec: 5
   regime_classifier:
     daily_max_usd: 0.3
     enabled: false
     interval_minutes: 30
-    model: qwen
     timeout_sec: 20
   replay_dialog:
     daily_max_usd: 1.0
@@ -688,7 +689,6 @@ llm_features:
   thesis_inferer:
     daily_max_usd: 0.4
     enabled: true
-    model: qwen-plus
     timeout_sec: 15
 mode:
   sandbox:

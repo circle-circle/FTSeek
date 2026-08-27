@@ -92,9 +92,8 @@ if not BAILIAN_API_KEY or BAILIAN_API_KEY.startswith("***") or len(BAILIAN_API_K
     except Exception:
         pass
 BAILIAN_BASE_URL = os.getenv("BAILIAN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-BAILIAN_MODEL = os.getenv("BAILIAN_MODEL", "qwen-max")
-BAILIAN_MODEL_MAIN = os.getenv("BAILIAN_MODEL_MAIN", "qwen-max")
-BAILIAN_MODEL_RISK = os.getenv("BAILIAN_MODEL_RISK", "glm-5")
+# 2026-08-27 (SSOT收敛·A类清理): 删除 BAILIAN_MODEL/_MAIN/_RISK 三死常量 (全仓零 import;
+#   模型选择唯一入口 = unified_config.yaml llm.models/llm.features).
 BAILIAN_TIMEOUT = _safe_int("BAILIAN_TIMEOUT", 30)
 
 # ============================================================
