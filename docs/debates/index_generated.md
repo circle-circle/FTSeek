@@ -1,13 +1,13 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-23), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-25), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **104** 个 DEB 文件。
+共 **109** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **23** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **27** 个近 14 天新文件未在 README 索引收录 (需补登):
 
 - `DEB-20260811-dead-order-early-detection.md`
 - `DEB-20260811-direction-momentum-gate.md`
@@ -32,6 +32,10 @@
 - `DEB-20260822-health-check-t5-counterfactual.md`
 - `DEB-20260822-tn-mechanism-shadow.md`
 - `DEB-20260823-full-chain-review-and-safety-patches.md`
+- `DEB-20260823-phase1-signal-quality-design.md`
+- `DEB-20260823-system-health-check.md`
+- `DEB-20260825-outcome-feedback-loop-revival.md`
+- `DEB-20260825-ue-prompt-chain-audit.md`
 
 📦 历史归档 **72** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
@@ -215,4 +219,9 @@
 | [DEB-20260820-architecture-quant-dual-audit](DEB-20260820-architecture-quant-dual-audit.md) | 2026-08-20 | (未标注) | 7 | 539 |
 | [DEB-20260822-health-check-t5-counterfactual](DEB-20260822-health-check-t5-counterfactual.md) | 2026-08-22 | ✅ 已执行 (零实弹行为变更, 一处休眠纯函数正确性修复) | - | 230 |
 | [DEB-20260822-tn-mechanism-shadow](DEB-20260822-tn-mechanism-shadow.md) | 2026-08-22 | (未标注) | - | 252 |
-| [DEB-20260823-full-chain-review-and-safety-patches](DEB-20260823-full-chain-review-and-safety-patches.md) | 2026-08-23 | (未标注) | - | 369 |
+| [DEB-20260823-full-chain-review-and-safety-patches](DEB-20260823-full-chain-review-and-safety-patches.md) | 2026-08-23 | (未标注) | - | 775 |
+| [DEB-20260823-phase1-signal-quality-design](DEB-20260823-phase1-signal-quality-design.md) | 2026-08-23 | (未标注) | - | 134 |
+| [DEB-20260823-system-health-check](DEB-20260823-system-health-check.md) | 2026-08-23 | (未标注) | - | 119 |
+| [DEB-20260823-zero-gross-edge-five-rejections](DEB-20260823-zero-gross-edge-five-rejections.md) | 2026-08-23 | (未标注) | - | 715 |
+| [DEB-20260825-outcome-feedback-loop-revival](DEB-20260825-outcome-feedback-loop-revival.md) | 2026-08-25 | (未标注) | 15 | 723 |
+| [DEB-20260825-ue-prompt-chain-audit](DEB-20260825-ue-prompt-chain-audit.md) | 2026-08-25 | (未标注) | 2 | 207 |

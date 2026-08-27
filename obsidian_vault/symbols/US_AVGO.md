@@ -2,12 +2,12 @@
 type: "symbol"
 symbol: "US.AVGO"
 name: ""
-latest_date: "2026-08-25"
+latest_date: "2026-08-26"
 latest_direction: "SELL_SHORT"
 latest_score: 8.0
 latest_rating: "看空"
-total_trades: 7
-win_rate: 0.86
+total_trades: 8
+win_rate: 0.88
 tags: [symbol, backfill]
 industry: "Semiconductors"
 ---
@@ -2124,6 +2124,56 @@ Google-Marvell定制芯片合作深化→AVGO ASIC独家供应地位被稀释→
 
 ### 论据IC验证
 - 基于1575条历史信号alpha IC验证 (overall_t1=-0.0306)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ARM]]
+- [[US_ASML]]
+- [[US_CRDO]]
+- [[US_INTC]]
+- [[US_LRCX]]
+- [[US_MRVL]]
+- [[US_MU]]
+---
+
+## 2026-08-26 | 看空 | 信心高 | SELL_SHORT
+<!-- id:2026-08-26-36c6 -->
+
+> Google转单Marvell动摇定制芯片护城河+Third Point清仓确认机构派发，盘前+0.71%属下跌中继非反转，锚定$359.28分2批做空
+
+- **标的**: 博通 (US.AVGO) | 现价: 359.2782 | 评分: 8.0/10
+- **IC ID**: `DA-20260826192127-US.AVGO-36c6`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.03n=1116] OpenAI Jalapeño芯片合作验证AI定制硅片需求韧性，对冲单一客户依赖风险 (news)
+  2. [MEDIUM][IC=+0.00n=823] 基本面仍具韧性：营收YoY +32.29%、净利润率38.85%、ROE 36.4%，且拟融资$1000亿All in AI验证Hyperscaler资本开支意愿未退潮 (fundamental)
+
+### 看空论据
+  1. [HIGH][IC=-0.03n=1116] 核心客户流失：Google扩大与Marvell AI芯片合作，直接冲击博通定制ASIC垄断地位（SHORT三问①：具体下跌催化剂） (news)
+  2. [HIGH][IC=+0.01n=791] 聪明钱离场：Third Point Q2清仓AVGO，内部人6个月MSPR=-88.69净卖出，与91.1%分析师买入评级形成极端背离（SHORT三问②：催化剂时效持续至Q3财报验证客户集中度） (sentiment)
+  3. [MEDIUM][IC=-0.01n=876] 估值泡沫化：PE(TTM) 59.36、PB 19.35显著高于半导体行业中枢（SMTC PE=77但营收增速仅个位数，AVGO溢价缺乏边际支撑） (fundamental)
+  4. [HIGH][IC=-0.01n=711] 逼空风险自评（SHORT三问③）：空头拥挤度低（买盘/卖盘比-40.845显示卖压主导）、流通市值$1.7T极高、期权未平仓212万张但Put/Call比未极端偏多，逼空燃料不足 (technical)
+
+### 交易计划
+- 入场: 分批做空：第1批@盘前现价$359.28（占比50%），条件：开盘后15分钟量能<50万股且价格未突破$362.09(MA5)；第2批@$362.00-$363.00区间（占比50%），条件：触及MA5后出现5分钟K线放量长上影或分时VWAP下方运行
+- 止损: $368.50
+- 止盈: $345.00
+- 支撑: 355.31, 345.0, 285.08 | 阻力: 362.09, 380.98, 393.63
+
+### 风险
+  - NVIDIA财报(即将公布)若超预期可能带动整个AI芯片板块情绪性反弹，AVGO Beta=1.46放大涨幅
+  - OpenAI Jalapeño芯片量产进度提前或获其他Hyperscaler采纳，抵消Google转单负面影响
+  - 卖方91.1%买入评级集中度高，若UBS等机构重新上调目标价可能触发被动买盘
+  - [挑战者] 无实质反证: 当前SELL_SHORT方向的数据支撑成立。OpenAI Jalapeño合作虽为利好但已反映在盘前+0.71%中，不足以逆转Google转单Marvell的核心利空。
+
+### 因果链
+Google转单Marvell→定制ASIC收入预期下修→Third Point等机构提前清仓锁定利润→卖方91.1%买入评级滞后于聪明钱行动→盘前+0.71%为技术性反抽非基本面修复→MA5压制下继续寻底
+
+### 论据IC验证
+- 基于1601条历史信号alpha IC验证 (overall_t1=-0.0170)
 
 ## 同行业 (Semiconductors)
 - [[US_ALAB]]
