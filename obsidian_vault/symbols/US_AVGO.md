@@ -2,12 +2,12 @@
 type: "symbol"
 symbol: "US.AVGO"
 name: ""
-latest_date: "2026-08-26"
+latest_date: "2026-08-27"
 latest_direction: "SELL_SHORT"
-latest_score: 8.0
+latest_score: 6.0
 latest_rating: "看空"
-total_trades: 8
-win_rate: 0.88
+total_trades: 9
+win_rate: 0.89
 tags: [symbol, backfill]
 industry: "Semiconductors"
 ---
@@ -2174,6 +2174,56 @@ Google转单Marvell→定制ASIC收入预期下修→Third Point等机构提前�
 
 ### 论据IC验证
 - 基于1601条历史信号alpha IC验证 (overall_t1=-0.0170)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ARM]]
+- [[US_ASML]]
+- [[US_CRDO]]
+- [[US_INTC]]
+- [[US_LRCX]]
+- [[US_MRVL]]
+- [[US_MU]]
+---
+
+## 2026-08-27 | 看空 | 信心高 | SELL_SHORT
+<!-- id:2026-08-27-8891 -->
+
+> 盘前+1.63%属Google-Marvell利空消化后的技术性反抽而非趋势反转，核心客户流失+内部人MSPR -88.69净卖出构成双重压制，锚定盘前现价$361.39分2批做空，止损$372.50(3.07%)
+
+- **标的**: 博通 (US.AVGO) | 现价: 361.3877 | 评分: 6.0/10
+- **IC ID**: `DA-20260827192241-US.AVGO-8891`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.03n=1126] OpenAI定制芯片Jalapeno合作验证AI ASIC需求韧性，对冲单一客户依赖风险 (news)
+  2. [LOW][IC=-0.00n=832] 基本面仍具韧性：营收YoY +32.29%、净利润率38.85%、ROE 36.4%支撑估值下限 (fundamental)
+
+### 看空论据
+  1. [HIGH][IC=-0.03n=1126] Google扩大与Marvell AI芯片合作，动摇博通定制ASIC护城河——核心客户流失为独有硬利空 (news)
+  2. [HIGH][IC=+0.01n=798] 内部人6个月MSPR -88.69深度净卖出，Third Point Q2清仓确认机构派发 (sentiment)
+  3. [MEDIUM][IC=-0.01n=717] 分析师91.1%买入评级+散户社区看多情绪拥挤，反向警示信号触发 (sentiment)
+
+### 交易计划
+- 入场: 分2批做空锚定盘前现价$361.39：①首批50%仓位在$361.00-$362.00区间挂限价单，条件为开盘后15分钟量能<昨日同期均量且价格未站稳MA5 $360.71上方；②剩余50%仓位在价格反弹至$365-$367(MA10附近)且RSI>60时追加，确认反抽衰竭
+- 止损: 372.5
+- 止盈: 345.0
+- 支撑: 355.59, 350.06, 285.08 | 阻力: 360.71, 374.93, 392.9
+
+### 风险
+  - SHORT风险三问：①下跌催化剂=Google转单Marvell+MSPR -88.69净卖出(独有硬利空)；②催化剂时效=72小时内(08-21新闻发酵期+08-27 MRVL财报验证窗口)；③逼空
+  - 财报日历缺失：earnings_calendar维度降级为空壳，无法确认AVGO下次财报具体日期，若财报临近(<3日)则做空风险骤增——当前按'无近期财报'处理但需盘中监控8-K公告
+  - 大盘QQQ趋势DOWN(-0.7% 5日)但Technology板块盘中+0.8%分化，若科技股午后集体拉升可能带动AVGO被动上涨脱离基本面逻辑
+  - [挑战者] 无实质反证: 当前方向的数据支撑成立
+  - [挑战者] 补充风险(非反证): Cathie Wood在财报前买入$2000万AVGO(新闻事实流)，若财报超预期可能引发逼空；AVGO已从52周高点$494.22回撤约28%，利空可能已大部分定价
+
+### 因果链
+Google转单Marvell(08-21新闻事实) → AVGO定制ASIC护城河受损+Third Point/MSPR -88.69确认机构派发 → 盘前+1.63%无量反抽提供做空窗口 → 若MA5 $360.71承压回落则开启二次探底至$350支撑测试
+
+### 论据IC验证
+- 基于1623条历史信号alpha IC验证 (overall_t1=-0.0186)
 
 ## 同行业 (Semiconductors)
 - [[US_ALAB]]
