@@ -8156,11 +8156,17 @@ def _mark_overnight_arm(conn, row_id: int, meta: dict, source: str,
         _ov = meta.setdefault("overnight_arm", {})
         if not isinstance(_ov, dict):
             _ov = meta["overnight_arm"] = {}
-        _ov["night_n"] = int(_ov.get("night_n") or 0) + 1
+        from app.utils.timezone import now_et as _oa_now_et
+        _oa_now = _oa_now_et()
+        # 同 ET 日重跑不重复计夜: run_playbook_track 的幂等对持夜仓无效 (outcome=
+        # holding 非终态 → 每日重跑), 且盘后窗口内重启会整段重跑 EOD 兜底 —
+        # 若无守卫, 同一夜被多次标记 → night_n 虚增 (8/27 复核推演实锤).
+        _same_night = str(_ov.get("marked_at_et", ""))[:10] == _oa_now.strftime("%Y-%m-%d")
+        if not _same_night:
+            _ov["night_n"] = int(_ov.get("night_n") or 0) + 1
         _ov["source"] = source
         _ov["underwater_pct_net"] = round(float(pnl_net_pct), 4)
-        from app.utils.timezone import now_et as _oa_now_et
-        _ov["marked_at_et"] = _oa_now_et().isoformat(timespec="seconds")
+        _ov["marked_at_et"] = _oa_now.isoformat(timespec="seconds")
         import json as _oa_json
         conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                      (_oa_json.dumps(meta), row_id))

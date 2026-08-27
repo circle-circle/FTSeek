@@ -56,15 +56,24 @@ try:
     rows = db.execute("SELECT * FROM playbook_instructions WHERE date = ? AND direction != 'SKIP'", (today,)).fetchall()
     add(f"今日指令: {len(rows)}条")
     trig = exec_ = 0
+    re_n = re_trig = re_exec = 0
     for r in rows:
         if r['triggered']:
             trig += 1
         if r['executed']:
             exec_ += 1
+        tag = ''
+        if (r['decision_id'] or '').startswith('intraday_reentry'):
+            re_n += 1
+            if r['triggered']: re_trig += 1
+            if r['executed']: re_exec += 1
+            tag = ' [再入场]'
         add(f"  {r['symbol']:8s} {r['direction']:10s} conf={r['confidence'] or 0}% "
             f"trig={'Y' if r['triggered'] else 'N'} exec={'Y' if r['executed'] else 'N'} "
-            f"outcome={r['outcome'] or '-'} pnl={r['pnl'] or 0}")
+            f"outcome={r['outcome'] or '-'} pnl={r['pnl'] or 0}{tag}")
     add(f"触发={trig} 执行={exec_}")
+    if re_n:
+        add(f"其中盘中再入场: {re_n}条 (触发{re_trig}/执行{re_exec})")
 except Exception as e:
     add(f"指令查询失败: {e}")
 

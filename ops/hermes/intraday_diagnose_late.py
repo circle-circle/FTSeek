@@ -120,9 +120,10 @@ instr_total = 0
 instr_trig = 0
 instr_exec = 0
 instr_rows = []
+reentry_instr = []
 try:
     instr_rows = db.execute('''
-        SELECT symbol, direction, confidence, triggered, executed, outcome, pnl
+        SELECT symbol, direction, confidence, triggered, executed, outcome, pnl, decision_id
         FROM playbook_instructions WHERE date = ? AND direction != 'SKIP'
         ORDER BY rowid
     ''', (today,)).fetchall()
@@ -131,27 +132,36 @@ try:
         d = dict(r)
         if d.get('triggered'): instr_trig += 1
         if d.get('executed'): instr_exec += 1
+        if (d.get('decision_id') or '').startswith('intraday_reentry'):
+            reentry_instr.append(d)
 except Exception as e:
     add(f"[playbook_instructions查询失败] {e}")
 
-# 4. Today's trade records
+# 4. Today's trade records (净口径 pnl_net — 8/20 裁决)
 trades = []
 total_pnl = 0.0
 wins = 0
 losses = 0
+reentry_trades = []
 try:
     trades = db.execute('''
-        SELECT symbol, direction, realized_pnl, pnl_pct, exit_reason, entry_session,
-               entry_price, exit_price
+        SELECT symbol, direction, realized_pnl, pnl_net, pnl_pct, exit_reason, entry_session,
+               entry_price, exit_price, decision_id
         FROM trade_records WHERE trade_date LIKE ?
         ORDER BY rowid
     ''', (f'{today}%',)).fetchall()
     for r in trades:
         d = dict(r)
-        pnl = d.get('realized_pnl', 0) or 0
+        # COALESCE(pnl_net, realized_pnl) 净口径
+        pnl = d.get('pnl_net')
+        if pnl is None:
+            pnl = d.get('realized_pnl', 0) or 0
+        d['pnl_report'] = pnl
         total_pnl += pnl
         if pnl > 0: wins += 1
         elif pnl < 0: losses += 1
+        if (d.get('decision_id') or '').startswith('intraday_reentry'):
+            reentry_trades.append(d)
 except Exception as e:
     add(f"[trade_records查询失败] {e}")
 
@@ -266,13 +276,33 @@ if positions:
         add(f"  {d['symbol']:8s} size={d['size']} dir={d.get('direction','?')} entry=${d.get('avg_entry_price','?')} SL={d.get('current_sl','?')} TP={d.get('initial_tp','?')}")
 
 add(f"• 今日指令: {instr_total}条 → 触发{instr_trig}条✅, 执行{instr_exec}条✅, {instr_total - instr_trig}条未触发")
+if reentry_instr:
+    re_trig = sum(1 for d in reentry_instr if d.get('triggered'))
+    re_exec = sum(1 for d in reentry_instr if d.get('executed'))
+    add(f"  └ 其中盘中再入场: {len(reentry_instr)}条 (触发{re_trig}/执行{re_exec})")
+    for d in reentry_instr:
+        add(f"    {d['symbol']:8s} {d.get('direction','?'):9s} trig={'✅' if d.get('triggered') else '—'} exec={'✅' if d.get('executed') else '—'}")
 
 if trades:
-    add(f"• 今日交易: {len(trades)}笔 → {wins}胜{losses}负, 已实现PnL = ${total_pnl:.2f}")
+    add(f"• 今日交易: {len(trades)}笔 → {wins}胜{losses}负, 已实现净PnL = ${total_pnl:.2f}")
     for t in trades:
         d = dict(t)
-        pnl = d.get('realized_pnl', 0) or 0
-        add(f"  {d['symbol']:8s} {d.get('direction','?'):8s} pnl=${pnl:>8.2f} reason={d.get('exit_reason','-')}")
+        pnl = d.get('pnl_net')
+        if pnl is None:
+            pnl = d.get('realized_pnl', 0) or 0
+        mark = ' [再入场]' if (d.get('decision_id') or '').startswith('intraday_reentry') else ''
+        add(f"  {d['symbol']:8s} {d.get('direction','?'):8s} pnl=${pnl:>8.2f} reason={d.get('exit_reason','-')}{mark}")
+    if reentry_trades:
+        re_pnl = 0.0
+        re_w = re_l = 0
+        for d in reentry_trades:
+            p = d.get('pnl_net')
+            if p is None:
+                p = d.get('realized_pnl', 0) or 0
+            re_pnl += p
+            if p > 0: re_w += 1
+            elif p < 0: re_l += 1
+        add(f"  └ 再入场小计: {len(reentry_trades)}笔 {re_w}胜{re_l}负 净${re_pnl:.2f}")
 else:
     add(f"• 今日交易: 0笔")
 

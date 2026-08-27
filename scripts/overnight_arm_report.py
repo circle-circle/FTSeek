@@ -51,7 +51,6 @@ def main():
                metadata_json
         FROM trade_records
         WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
-          AND exit_time != '' AND exit_time IS NOT NULL
           AND entry_time >= '2026-06-01'
         ORDER BY entry_time
     """).fetchall()
@@ -82,11 +81,13 @@ def main():
     print(f"\n【新台账 overnight_arm】(8/27 部署起累计) n={len(marked)}")
     for r, arm, src in marked:
         d = dict(r)
+        _holding = not d.get("exit_time")
+        _tail = "持仓中" if _holding else f"结局={d['exit_reason']} ${d['pnl']}"
         print(f"  {d['symbol']:<9} {d['direction']:<5} src={arm.get('source'):<20} "
               f"night={arm.get('night_n')} 水深net={arm.get('underwater_pct_net')}% "
-              f"归源={src} 结局={d['exit_reason']} ${d['pnl']}")
+              f"归源={src} {_tail}")
 
-    print(f"\n【历史回填】隔夜仓 (entry日<exit日) n={len(hist)}")
+    print(f"\n【历史回填】隔夜仓 (entry日<exit日, 仅已平仓) n={len(hist)}")
     grp = defaultdict(lambda: [0, 0.0, 0])
     for r, src, n in hist:
         d = dict(r)
