@@ -2005,10 +2005,12 @@ class ValidationAgent:
     def _validate_signal_quality(self, claim: str, date: str, category: str) -> Dict:
         """验证信号质量相关 claim — 检查 DB 中信号命中率"""
         if date:
+            # 2026-08-28 出场日记账 (同 _validate_general 口径): 按出场日归集 +
+            # 净额 — 隔夜仓当日出场不计入会错判胜率 → severity 错判。
             hits = self._query(
                 "SELECT COUNT(*) as total, "
-                "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
-                "FROM trade_records WHERE trade_date = ? AND exit_price > 0",
+                "SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins "
+                "FROM trade_records WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
                 (date,)
             )
             if hits and hits[0]["total"] > 0:
@@ -2199,11 +2201,13 @@ class ValidationAgent:
             if "trade_records" in hint.lower() or "trade" in hint.lower():
                 # 通用交易查询
                 if date:
+                    # 2026-08-28 出场日记账 (同 _validate_general 口径): 按出场日
+                    # 归集 + 净额 + exit_price>0 (原缺, 未出场行也进 COUNT/SUM)。
                     result = self._query(
                         "SELECT COUNT(*) as total, "
-                        "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins, "
-                        "SUM(realized_pnl) as total_pnl "
-                        "FROM trade_records WHERE trade_date = ?",
+                        "SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins, "
+                        "COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) as total_pnl "
+                        "FROM trade_records WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
                         (date,)
                     )
                     if result and result[0]["total"] > 0:
