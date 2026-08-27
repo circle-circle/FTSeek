@@ -102,3 +102,41 @@ class TestBackfillForwardReturns:
         market_data = self._make_market_data(close_price=105.0)
         updated = backfill_forward_returns(db, market_data, trade_date="2026-06-26")
         assert updated == 0
+
+    def test_backfill_fetches_each_symbol_once(self, db):
+        """2026-08-27 ret=-1根因修: 同 symbol 多条指令应只拉一次日线 (按 symbol 去重)."""
+        self._insert_instruction(db, symbol="US.AAA", trade_date="2026-06-19")
+        self._insert_instruction(db, symbol="US.AAA", trade_date="2026-06-20")
+        self._insert_instruction(db, symbol="US.BBB", trade_date="2026-06-20")
+
+        calls = []
+        inner = self._make_market_data(close_price=105.0)
+
+        def _counting_get_daily_bars(symbol, count=30):
+            calls.append(symbol)
+            return inner.get_daily_bars(symbol, count=count)
+
+        market_data = MagicMock()
+        market_data.get_daily_bars = _counting_get_daily_bars
+        updated = backfill_forward_returns(market_data=market_data, db=db, trade_date="2026-06-26")
+
+        assert updated == 3  # 三条指令都完成回填
+        assert sorted(calls) == ["US.AAA", "US.BBB"]  # 但只拉 2 次
+
+    def test_backfill_caches_failed_symbol_within_run(self, db):
+        """拉取抛异常的 symbol 在同一轮 backfill 内不重试 (失败也记忆, 下一跑自愈)."""
+        self._insert_instruction(db, symbol="US.CCC", trade_date="2026-06-19")
+        self._insert_instruction(db, symbol="US.CCC", trade_date="2026-06-20")
+
+        calls = []
+
+        def _raise(symbol, count=30):
+            calls.append(symbol)
+            raise RuntimeError("all sources failed")
+
+        market_data = MagicMock()
+        market_data.get_daily_bars = _raise
+        updated = backfill_forward_returns(market_data=market_data, db=db, trade_date="2026-06-26")
+
+        assert updated == 0
+        assert calls == ["US.CCC"]  # 只敲一次门

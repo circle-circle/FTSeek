@@ -1113,6 +1113,22 @@ class FutuLV3Provider:
                     del self._kline_symbol_cooldown[s]
             return True
 
+    def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 10.0) -> bool:
+        """日K配额门闸 (2026-08-27 ret=-1根因修): 复用 _wait_kline_quota 的全局60/30s窗口+单标的冷却.
+
+        get_kline (分钟K) 走非阻塞拒绝, 但日线主要消费方是 EOD 批量回填 (ic_tracker/shadow_tracker/
+        factor_analyzer) — 有界等待比拒绝更合理: 让富途新数据在批次内自然流完, 而不是成批溢到
+        TwelveData 打爆免费版 8次/分钟 → 10分钟熔断 → "所有数据源均失败".
+        symbol_key 带 "D::" 前缀, 与分钟K冷却分键空间, 避免日线拉取把同标的分钟K挡进30s冷却.
+        """
+        deadline = time.time() + max_wait
+        while True:
+            if self._wait_kline_quota(symbol_key):
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.5)
+
     def _get_cached_kline(self, symbol: str) -> Optional[list]:
         """从持久化缓存获取K线数据 (不消耗配额)"""
         futu_sym = self._to_futu_symbol(symbol)
@@ -1225,7 +1241,7 @@ class FutuLV3Provider:
                 hist_kwargs["start"] = prev_trading_day
                 hist_kwargs["end"] = today_et
 
-            ret, data, _ = self._quote_ctx.request_history_kline(**hist_kwargs)
+            ret, data, _err = self._quote_ctx.request_history_kline(**hist_kwargs)
 
             if ret == 0 and data is not None and len(data) > 0:
                 klines = []
@@ -1259,7 +1275,7 @@ class FutuLV3Provider:
                 self._set_cached_kline(_cache_sym, klines)
                 return klines
             else:
-                logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret}")
+                logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret} msg={_err}")
                 # ── P0 (2026-06-04): K 线失败触发重连 — 检测 Push 断连 ──
                 # 根因: K_1M Push 订阅可能在盘中断连(Disconnect), 历史 K 线请求也失败
                 # 修复: 连续失败时触发 force_reconnect 恢复 Push 订阅
@@ -1336,6 +1352,18 @@ class FutuLV3Provider:
         if _cache_valid:
             return cached[-count:]
 
+        # 2026-08-27 ret=-1 根因修: DailyK 路径此前未接 K 线配额门闸 — EOD 批量恰在 24h 整点
+        # 撞上日K缓存 TTL 集体过期, 45 symbol 在 6s 内连发打穿 OpenD 账户级频控 (60次/30s),
+        # 其后全部 ret=-1 ("获取历史K线频率太高") → TwelveData fallback 风暴 → 429 熔断.
+        # 现在有界等待配额窗口; 超时才降级 (缓存 → None 触发 Router fallback).
+        if not self._acquire_daily_kline_quota(f"D::{futu_symbol}"):
+            cached = self._daily_kline_cache.get(futu_symbol)
+            logger.warning(
+                f"[FutuLV3·DailyK] {symbol} K线配额窗口满 (60次/30s) 等待超时, "
+                + (f"降级返回缓存 ({len(cached)} bars)" if cached else "返回 None 触发 Router fallback")
+            )
+            return cached[-count:] if cached else None
+
         try:
             from futu import KLType
             from datetime import date as _date, timedelta as _td
@@ -1345,7 +1373,7 @@ class FutuLV3Provider:
             _end = _date.today().isoformat()
             _start = (_date.today() - _td(days=400)).isoformat()
 
-            ret, data, _ = self._quote_ctx.request_history_kline(
+            ret, data, _err = self._quote_ctx.request_history_kline(
                 code=futu_symbol,
                 ktype=KLType.K_DAY,
                 max_count=max(count + 10, 320),
@@ -1401,7 +1429,8 @@ class FutuLV3Provider:
                 self._daily_kline_cache_time[futu_symbol] = time.time()
                 return klines[-count:]
             else:
-                logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线获取失败: ret={ret}")
+                # 2026-08-27: 透出 OpenD retMsg (此前 `_` 吞掉 → 频控/权限/无数据都只见 "ret=-1", 病灶查了10天)
+                logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线获取失败: ret={ret} msg={_err}")
                 # 降级返回缓存
                 cached = self._daily_kline_cache.get(futu_symbol)
                 if cached:

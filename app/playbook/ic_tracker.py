@@ -256,6 +256,11 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
     today = date.fromisoformat(trade_date)
     updated = 0
 
+    # 2026-08-27 ret=-1 根因修: 旧循环逐"指令"拉日线 (427 指令 ≈ 50 唯一 symbol, 8倍重复敲门),
+    # 24h 缓存过期日 miss 叠打撞 OpenD 60次/30s 频控, 且失败结果不缓存 → 同 symbol 每条指令重试一次.
+    # 现在每个 symbol 每次运行只拉一遍 (失败/异常也记忆, 同跑内不重试; bars 下游只读, 共享安全).
+    _bars_memo = {}
+
     # 查最近 30 天的指令 (T+5 最多需要 5 个交易日 ≈ 7 个自然日，
     # 但历史数据可能因 10 天窗口被永久截断，扩到 30 天以回填积压数据)
     lookback = today - timedelta(days=30)
@@ -302,16 +307,21 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         if direction == "SKIP" or not symbol:
             continue
 
-        # 获取日线数据
-        try:
-            bars = market_data.get_daily_bars(symbol, count=30)
-        except Exception as e:
-            logger.info(f"[PlaybookIC] Failed to get bars for {symbol}: {e}")
-            continue
-
-        if not bars:
-            logger.info(f"[PlaybookIC] No bars returned for {symbol} (get_daily_bars failed/empty)")
-            continue
+        # 获取日线数据 (按 symbol 去重, 见上方 _bars_memo 注释)
+        if symbol in _bars_memo:
+            if not _bars_memo[symbol]:
+                continue
+            bars = _bars_memo[symbol]
+        else:
+            try:
+                bars = market_data.get_daily_bars(symbol, count=30)
+            except Exception as e:
+                logger.info(f"[PlaybookIC] Failed to get bars for {symbol}: {e}")
+                bars = None
+            _bars_memo[symbol] = bars
+            if not bars:
+                logger.info(f"[PlaybookIC] No bars returned for {symbol} (get_daily_bars failed/empty)")
+                continue
 
         # 按日期排序
         bars_by_date = {}
