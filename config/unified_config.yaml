@@ -395,117 +395,117 @@ llm:
     voting_timeout_seconds: 60
   features:
     adaptive_tuner:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     agent_bridge:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     attribution_engine:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     catalyst_breaking:
-      fallback: qwen-max
+      fallback: qwen
       primary: qwen-flash
     catalyst_classifier:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     catalyst_macro:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     catalyst_review:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     catalyst_risk:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     catalyst_sentiment:
-      fallback: qwen-max
+      fallback: qwen
       primary: kimi-k2
     claude_code:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     daily_auto_tuner:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     daily_review:
       cache_on_fail: false
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     debate_arbiter:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     debate_bear:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     debate_bull:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     debate_engine:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     deep_target_analysis:
       cache_on_fail: false
-      fallback: deepseek-pro
+      fallback: deepseek
       max_tokens: 3000
-      primary: qwen-max
+      primary: qwen
       prompt_cache: true
       temperature: 0.4
     dr_debate:
       cache_on_fail: false
       extra_body:
         enable_thinking: true
-      fallback: qwen-max
+      fallback: qwen
       max_tokens: 2500
-      primary: deepseek-pro
+      primary: deepseek
       temperature: 0.3
     dr_risk_debate:
       cache_on_fail: false
-      fallback: qwen-max
+      fallback: qwen
       max_tokens: 800
-      primary: deepseek-pro
+      primary: deepseek
       temperature: 0.4
     emergency_interceptor:
-      fallback: qwen-max
+      fallback: qwen
       primary: qwen-flash
     emergency_review:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     failure_mode_miner:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     llm_strategy_engine:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     model_agent:
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     news_classifier: qwen-flash
     plan_validator:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     playbook_generator:
       cache_on_fail: false
-      fallback: deepseek-pro
+      fallback: deepseek
       max_tokens: 2048
-      primary: qwen-max
+      primary: qwen
       temperature: 0
     pre_entry_gate:
       cache_on_fail: false
-      fallback: qwen-max
-      primary: deepseek-pro
+      fallback: qwen
+      primary: deepseek
     premarket_planner:
       cache_on_fail: false
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     regime_classifier:
-      fallback: deepseek-pro
-      primary: qwen-max
+      fallback: deepseek
+      primary: qwen
     sentiment: qwen-flash
     stock_analyst:
-      fallback: qwen-max
+      fallback: qwen
       primary: glm-5
-    thesis_challenge: qwen-max
-    thesis_inferer: qwen-max
+    thesis_challenge: qwen
+    thesis_inferer: qwen
     universe_expansion_reasoning:
       # 2026-08-27 (用户裁决): UE 主模型 qwen-max(qwen3.7-max) → qwen3.8-flash.
       #   降档切换 (max→flash): 成本 0.008/0.024 → 0.0003/0.0006 (输入/输出 $/K tok,
@@ -521,24 +521,26 @@ llm:
       #   实弹简单调用 32s~180s vs 3.7-max ~1s 直答 — UE scan 单轮等待变长属预期,
       #   timeout=300 已配足 (实体定义处); 若 21:10 轮超时频发, 先看 llm_audit
       #   latency_ms 分布再裁 (勿直接改 timeout 掩盖问题).
-      #   回滚: primary 改回 qwen-max + 重启.
-      fallback: deepseek-pro
+      #   回滚: primary 改回 qwen (原 qwen-max, 2026-08-27 同日别名去规格化) + 重启.
+      fallback: deepseek
       primary: qwen3.8-flash
       prompt_cache: true
     web_search_fundamental:
       cache_on_fail: false
-      fallback: deepseek-pro
+      fallback: deepseek
       max_tokens: 1500
-      primary: qwen-max
+      primary: qwen
       temperature: 0.2
     weekly_proposer:
-      fallback: qwen-max
-      primary: deepseek-pro
-  legacy_aliases:
-    deepseek: deepseek-pro
-    fallback: qwen-plus
-    minimax: qwen-flash
-    qwen: qwen-plus
+      fallback: qwen
+      primary: deepseek
+  # 2026-08-27 (用户裁决·别名去规格化): 实体 qwen-max → qwen, deepseek-pro → deepseek.
+  #   纯键名重命名 — model_name (qwen3.7-max / deepseek-v4-pro) 与全部参数/路由不变,
+  #   llm.features 引用已同步. 歧义源=旧别名与 DashScope 真实模型名 qwen-max 同名不同物
+  #   (config/__init__.py BAILIAN_MODEL 等直连场景用的是真模型). 归因无断点: model_used
+  #   落的是 model_name 真实名, 非别名. 同日删除 llm.legacy_aliases 段 — 唯一消费方
+  #   call_llm_compat 为零调用死桥接 (multi_model_client.py 已删), 且 qwen/deepseek
+  #   两键与新实体名冲突. 回滚: 键名与 llm.features 引用同步改回 + 恢复 legacy_aliases.
   models:
     deepseek-flash:
       api_key_env: DEEPSEEK_API_KEY
@@ -548,7 +550,7 @@ llm:
       model_name: deepseek-v4-flash
       provider: deepseek
       timeout: 8
-    deepseek-pro:
+    deepseek:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       cost_in: 0.002
@@ -584,7 +586,7 @@ llm:
     #   (2026-08-27 实弹返回 model=qwen3.8-flash, 带 reasoning_content 非流式可关).
     #   cost 按 qwen flash 档公开价与 qwen-flash 同价 (0.0003/0.0006), 实际账单
     #   以 DashScope 为准 — 若 DashScope 后续调整, 从 llm_audit.cost_usd 偏差可发现.
-    #   timeout 300 对齐 qwen-max (UE brief 输入大, 8s 会截断长输出; flash 实测
+    #   timeout 300 对齐 qwen (原 qwen-max; UE brief 输入大, 8s 会截断长输出; flash 实测
     #   reasoning token 占用, 需给足生成时间).
     qwen3.8-flash:
       api_key_env: DASHSCOPE_API_KEY
@@ -594,7 +596,7 @@ llm:
       model_name: qwen3.8-flash
       provider: dashscope
       timeout: 300
-    qwen-max:
+    qwen:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       cost_in: 0.008
@@ -672,7 +674,7 @@ llm_features:
     daily_max_usd: 1.5
     enabled: false
     min_history_trades: 5
-    model: deepseek-pro
+    model: deepseek
     timeout_sec: 5
   regime_classifier:
     daily_max_usd: 0.3

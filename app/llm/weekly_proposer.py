@@ -118,7 +118,7 @@ class WeeklyProposer:
         proposals = []
 
         # 2026-05-17: 迁移到 model_call 统一入口 (盘后, 不影响盘中)
-        # 路由: yaml `llm.features.weekly_proposer` = {primary: deepseek-pro, fallback: qwen-plus}
+        # 路由: yaml `llm.features.weekly_proposer` = {primary: deepseek, fallback: qwen}
         # llm_client 旧参数已不再使用 (model_call 自走 yaml 路由)
         try:
             from app.llm.model_call import call_llm as _call_llm

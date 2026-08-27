@@ -62,7 +62,7 @@ def _infer_sync(symbol: str, signal: Dict[str, Any], context: Dict[str, Any]) ->
     变化:
       - 旧：llm_helper.call_llm(feature, model="deepseek") + 二次 parse_and_validate
       - 新：model_call.call_llm(feature, schema_required=...) 内置校验，dict 直接返回
-      - model 由 yaml `llm.features.thesis_inferer` 决定 (默认 deepseek-flash)
+      - model 由 yaml `llm.features.thesis_inferer` 决定 (当前 qwen)
     
     2026-05-21 增强：补充资金流/历史胜率/市场环境/持仓信息上下文
     """

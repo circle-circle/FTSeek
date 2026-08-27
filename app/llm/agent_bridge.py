@@ -1054,7 +1054,7 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
         v2.0升级: 直接调用 LLM — 2026-05-21 迁移到 UnifiedLLMService
 
         旧: 手动重试 + 模型降级 + 指数退避 (130+ 行)
-        新: YAML llm.features.agent_bridge 路由 (primary: deepseek-pro, fallback: qwen-plus)
+        新: YAML llm.features.agent_bridge 路由 (primary: deepseek, fallback: qwen)
             model_call 已内置: 重试 + 降级 + 审计 + cache
 
         Args:

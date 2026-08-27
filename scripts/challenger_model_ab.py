@@ -12,7 +12,7 @@
   1. glm-5.2 JSON 成功率 ≥ deepseek 且无空响应 (model_call.py:137 已知 glm reasoning 吃配额风险)
   2. verdict 分布不退化为全 AGREE (挑战者失去独立性 = conf 合成失真)
   3. 平均延迟 < 120s (盘前 DA 单轮已 28min, 不能更慢)
-  4. 单次成本可接受 (glm-5 注册价为 deepseek-pro 3 倍)
+  4. 单次成本可接受 (glm-5 注册价为 deepseek 3 倍)
 
 用法: ./venv/bin/python scripts/challenger_model_ab.py [date] [max_n]
 """

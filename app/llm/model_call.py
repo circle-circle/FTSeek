@@ -8,12 +8,12 @@
   5. 多模型验证 — 关键场景串行 critique (1 个出方案 + 1 个评审), 默认 off
 
 向后兼容:
-  - 旧 multi_model_client.chat(model="qwen") 不动 (走 bailian 网关)
   - 新代码用 call_llm(feature="premarket_planner") (走 yaml routing 直连 provider)
   - 旧 audit_db.record_call 复用
+  - 2026-08-27: multi_model_client.py 已删, 其桥接 call_llm_compat(零调用方)同步移除
 
 降级链 (2 层):
-  primary (qwen-plus) → fallback (deepseek-pro) → cache (data/llm_cache/<feature>.json) → None
+  primary (qwen) → fallback (deepseek) → cache (data/llm_cache/<feature>.json) → None
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def _resolve_feature_route(feature: str, cfg: Dict) -> Optional[Dict]:
 
     支持 2 种格式:
       简单: 'feature: qwen-flash'  → {primary: qwen-flash, fallback: None}
-      完整: 'feature: {primary: qwen-plus, fallback: deepseek-pro, cache_on_fail: true}'
+      完整: 'feature: {primary: qwen, fallback: deepseek, cache_on_fail: true}'
     """
     features = cfg.get("features", {}) or {}
     raw = features.get(feature)
@@ -646,38 +646,3 @@ def prompt_hash(system: str, user: str) -> str:
     """生成 prompt 内容 hash, 供 audit_db 追溯 '今天 plan 用的是哪版 prompt'"""
     combined = (system or "") + "\n---\n" + (user or "")
     return hashlib.md5(combined.encode("utf-8")).hexdigest()[:12]
-
-
-# ─── 兼容旧调用 (临时桥接, 不破坏 multi_model_client) ───
-def call_llm_compat(legacy_model_alias: str, prompt: str, **kw) -> str:
-    """旧代码 multi_model_client.chat(model="qwen") 的等价桥接
-
-    使用场景：渐进迁移期，旧代码不动，但希望走新 yaml 路由.
-    Map: qwen → qwen-plus, deepseek → deepseek-pro, minimax → qwen-flash
-    
-    2026-05-21: 别名映射从硬编码迁移到 YAML (llm.legacy_aliases)
-    """
-    cfg = _get_llm_config()
-    
-    # 从 YAML 读取别名映射 (llm.legacy_aliases)，若不存在则用默认值
-    legacy_aliases = cfg.get("legacy_aliases", {})
-    if not legacy_aliases:
-        # 默认映射 (YAML 未配置时的 fallback)
-        legacy_aliases = {
-            "qwen": "qwen-plus",
-            "deepseek": "deepseek-pro",
-            "minimax": "qwen-flash",
-            "fallback": "qwen-plus",
-        }
-    
-    new_alias = legacy_aliases.get(legacy_model_alias, legacy_model_alias)
-    
-    # 临时 feature 名："legacy_<alias>"
-    models = cfg.get("models", {}) or {}
-    if new_alias not in models:
-        return ""  # 新模型未配置，让调用方走旧路径
-    res = _try_single_model(new_alias, cfg, kw.get("system", ""), prompt,
-                             temperature=kw.get("temperature", 0.1),
-                             max_tokens=kw.get("max_tokens", 1000),
-                             timeout_override=kw.get("timeout"))
-    return res.response or "" if res.success else ""

@@ -523,7 +523,7 @@ class MultiModelDebateRunner:
     
     # 模型角色配置
     # 2026-07-28 诚实化注记: model 字段自 2026-05-21 迁移 UnifiedLLMService 后不再生效 —
-    #   _call_llm_direct 忽略 model, 恒走 YAML agent_bridge 路由 (primary=deepseek-pro)。
+    #   _call_llm_direct 忽略 model, 恒走 YAML agent_bridge 路由 (primary=deepseek)。
     #   llm_audit 实锤: 全部调用同一模型, "三模型辩论"实为单模型分饰三角 (仅角色 prompt 差异)。
     #   model 字段保留作设计意图存照; 恢复真三模型属成本/provider 变更, 待裁决。
     MODEL_ROLES = [

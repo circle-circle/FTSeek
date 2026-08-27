@@ -11,15 +11,15 @@
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
 │  Role 1: BullAnalyst (多头策略师)                             │
-│    feature: debate_bull (qwen-max → deepseek-pro)            │
+│    feature: debate_bull (qwen → deepseek)                     │
 │    职责: 识别做多机会、构建因果链、引用数据                      │
 │                                                              │
 │  Role 2: BearAnalyst (空头审计师)                             │
-│    feature: debate_bear (deepseek-pro → qwen-max)            │
+│    feature: debate_bear (deepseek → qwen)                     │
 │    职责: 发现风险、质疑逻辑、做空分析                           │
 │                                                              │
 │  Role 3: Arbiter (仲裁综合)                                   │
-│    feature: debate_arbiter (qwen-max → deepseek-pro)         │
+│    feature: debate_arbiter (qwen → deepseek)                  │
 │    职责: 综合双方观点、生成分歧摘要、输出最终计划               │
 │                                                              │
 │  Message Flow:                                               │

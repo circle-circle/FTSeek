@@ -217,7 +217,7 @@ class DebatePlanner:
         运行 Hermes (多头策略师)
         
         2026-06-14 修复: 直接调用 UnifiedLLMService，不再依赖 agent_bridge。
-        路由: debate_engine feature (primary: qwen3.7-max, fallback: deepseek-pro)
+        路由: debate_engine feature (primary: qwen3.7-max, fallback: deepseek)
         """
         try:
             from app.agents.debate.agent_roles import (
@@ -327,7 +327,7 @@ class DebatePlanner:
             except Exception as api_err:
                 logger.warning(f"[DebatePlanner] API Runner 失败: {api_err}")
             
-            # ── Level 3: 直调 UnifiedLLMService (deepseek-pro) ──
+            # ── Level 3: 直调 UnifiedLLMService (deepseek) ──
             logger.warning("[DebatePlanner] API Runner 不可用，降级到直调 LLM (claude_code feature)")
             from app.llm.unified_service import UnifiedLLMService
             res = UnifiedLLMService.call(
@@ -409,7 +409,7 @@ class DebatePlanner:
             except Exception as api_err:
                 logger.warning(f"[DebatePlanner] API Runner 验证失败: {api_err}")
             
-            # ── Level 3: 直调 UnifiedLLMService (deepseek-pro) ──
+            # ── Level 3: 直调 UnifiedLLMService (deepseek) ──
             logger.warning("[DebatePlanner] API Runner 不可用，降级到直调 LLM (claude_code feature)")
             from app.llm.unified_service import UnifiedLLMService
             res = UnifiedLLMService.call(
