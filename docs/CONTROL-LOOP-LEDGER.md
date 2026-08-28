@@ -135,6 +135,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | scripts/daily_invariant_check.py `I11~I14` (cron 5 5 * * 2-6) | **全部 source_type** 的了结行字段级守卫: realized_pnl NULL / 0 占位伪装盈亏 / 费用上线日后缺净额回落毛口径 / 缺 exit_reason | 字段级消失 | 出场日记账后, 缺字段不再是"算错"而是从当日数字里静默消失; I1~I10 只见 PLAYBOOK% 行 (实测了结面 64 行 vs 主样本 62)。豁免词表 duplicate/outlier/invalid/void/excluded, 首版"data_quality 非空即豁免"实测 62/62 全命中=守卫零覆盖 |
 | scripts/config_key_reverse_census.py `D3` (cron 40 7 * * 0 与正向普查同班) | 反向: 代码里的 `get_dotted(...)` 读点 → 配置里是否真有该键, 字面量默认值即"隐形开关" | 声明与执行分叉 | 正向普查 (零消费配置键) 与反向是两件事: `capital.initial` 型默认值扛行为而配置无声明; 门 `--gate` 走基线棘轮。本轮已揪出 `strategies.orb` 错命名空间读 (真实键在 `orb:`), 风险门按代码默认 3 而非声明 2 放行 |
 | tests/test_dead_db_literal_gate.py | 代码级引用废弃同名单 `ftseek_us_live.db` 的站点必须逐文件声明理由; 名单内文件不再引用=陈旧豁免同样报警 | 死库伪装 | sim 模式下该库零写入且"读得到、长得像真库" (实测冻结 2026-07-19), thesis_challenge/battle_plan/watchlist/plan_feedback 均硬编码过; 单向普查本身即缺陷故双向 |
+| scripts/daily_alert_summary.py 权益对账行 (随 Hermes `0 4 * * 2-6` 盘后综合复盘) | 恒等式 **C ≈ G + U**: C=capital_state 收盘印权益变动, G=当日已了结毛利 (出场日记账), U=券商未平仓仓当日波动 (`today_pl_val`, 毛额); 残差 R 超 $50 标 ⚠️ | 两口径间不可归因差额 | **纯观测, 不进任何判据**。立起理由: 2026-08-29 用户拷问"富途 App 今日盈亏 +5百 vs 日报 −338.76" — 两数本就不同口径 (App=账户全口径含未平仓波动, 且模拟盘 `today_pl_val` 是毛额; 真账户另有用户自有 SNDK/MU 仓 Σ+480.59), 差异必须每晚机器摊开而非等人问。失效模式两则: ①首版"取最接近 boundary 的样本"选中收盘前 13.5s 的盘中共价 (单项 $40.75 直接灌进残差) → 改取收盘**后**首样本, 窗内无样本即不判; ②任一输入缺失/异常/跨账户 → `not_judgeable` + 原因, 严禁以 0 冒充已对账 (§6 规则5/6 同源), 券商侧 `qty==0` 行必须排除否则与 G 双计→桥接假闭合 |
 
 ---
 
@@ -180,6 +181,7 @@ config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug +
 | G4 | 台账漂移: 环路新增/下线后本文件不同步 | 由守卫测试闭合 | tests/test_control_loop_ledger.py |
 | G5 | 自调器 (自动改参) | **用户已裁不做** | 小样本+非平稳+大延迟 → 自动适应是噪声放大器; 现形态"自动观测+人工裁决+门控生效"即小样本控制正确解 |
 | G6 | 元环只闭合"失明", 不闭合"该链是否该存在": earnings_calendar 永久零行 ⇒ 财报 ATR 上限门从未生效 | 观测已闭合, 裁决开环 | `D1` 常驻看守该类 + `_calendar_empty` WARNING (2026-08-28); "回填日历并重接" vs "显式下线"属风险面变更 → 人工保留, 不在授权范围 |
+| G7 | `CapitalSafety._save_state` 的 2026-06-21 "P0 修复: INSERT OR REPLACE 用 trade_env 作唯一键 UPSERT, 保持 1 行/env" **从未成立** — 该列无 UNIQUE/无冲突可触发 ⇒ 纯 INSERT, 实测 capital_state 42146 行仍在涨 (注释声称要止的"无清理机制"原样存在) | 日志正常但逻辑失效 (注释与行为分叉) | 本轮**不修**: §2.5 权益对账行恰依赖这张表是时间序列 (要取 16:00 收盘印与前收印)。真要收敛增长必须与对账行同批处理 — 单行 UPSERT 前先把历史挪到保留表, 否则桥接静默退化成"样本缺失"。属清理类非风险面变更, 待排期 |
 
 ---
 

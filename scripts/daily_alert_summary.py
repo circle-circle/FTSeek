@@ -250,6 +250,216 @@ def get_us_trade_summary(trade_date: str) -> Dict:
     return summary
 
 
+# ================== 账户权益对账 (观测层, 不进任何判据) ==================
+# 背景 (2026-08-29 用户拷问"富途显示今日盈亏5百多, 与你统计 −338.76 有出入"):
+#   日报值是"机器人当日已了结净额", 富途 App 是"账户全口径" — 后者含未平仓仓的当日
+#   市值变动, 且富途模拟盘的 pl_val/today_pl_val 是**毛额** (NTES 富途 6.24 == 我方毛利,
+#   我方净额 1.84)。两数本就不该相等, 但差异必须每晚摊开而不是等人问。
+# 桥接恒等式: 权益变动 C ≈ 已了结毛利 G + 未平仓当日市值变动 U
+#   残差 R = C − (G + U) 的成分 = 富途实际费用 vs 我方 fees_est 模型 + 成交价 vs 撮合价
+#   + U 按**调用时刻**读 (盘后重跑几小时后再跑, 券商侧已是盘后共价 → R 会真变大;
+#   调度窗口恰在 16:00 ET, 该项≈0)。R 只在超容差时标 ⚠️ (观测, 不触发任何风控)。
+# 关键纪律: 任一输入取不到 → verdict=not_judgeable 并写明原因, 严禁用 0 冒充"已对账"
+#   (本日已三次踩到"只能报健康的守卫": journalctl 数 ERROR / /proc mtime / '/ ERROR ' 模式)。
+EQUITY_RECON_TOLERANCE_USD = float(os.getenv("EQUITY_RECON_TOLERANCE_USD", "50"))
+# 收盘样本容许偏移 15min — 只用作"没样本就报不可判"的守卫, 不是安全边际。近 20 个交易日
+# 收盘后首样本 19 个都在 +35s 内 (唯一例外 8/20 重启段 +11min), 所以正常路径下这个宽度
+# 不参与任何取值; 真出问题时 (采样断流/重启) 它把"静默拿一个错时刻的样本"换成 not_judgeable。
+# 8/28 首次实测残差 $57.06 的来源已定位并修掉: 旧"取最接近 boundary 的样本"选中了收盘前
+# 13.5s 的盘中共价 (见 _equity_at), 单项偏差 $40.75。改收盘印后同一交易日残差降到 $4~22
+# (随读表时刻浮动 — U 是盘后实时字段: 16:41/16:49/16:59 三次读分别给 −300.17/−288.08/
+#  −282.64, 对应残差 21.60/9.51/4.07; 调度恰在 16:00 ET, 取到的是收盘值)。
+_EQUITY_SAMPLE_WINDOW_MIN = 15
+
+
+def _cst_close_boundary(trade_date: str) -> str:
+    """ET 收盘 16:00 → 服务器本地 (CST) 时间戳字符串.
+
+    capital_state.last_update 落的是 CST naive ISO (带 'T'), 零填充 ⇒ 字符串序==时间序。
+    注: 不可再 +1 天 —— 16:00 加 12/13h 本身就跨过 CST 午夜 (实测 8/28 16:00 ET →
+    8/29 04:00 CST); 首版多算一天把边界推到未来, 判据立即退化成"样本缺失"。
+    """
+    et_dt = datetime.strptime(trade_date, "%Y-%m-%d").replace(hour=16)
+    cst_dt = et_dt + timedelta(hours=8 + _get_edt_offset(et_dt))
+    return cst_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _prev_us_trade_date(trade_date: str) -> str:
+    """前一交易日 (跳周末; 跳假日内权益不变, 取最近样本即正确前收)."""
+    d = datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d.strftime("%Y-%m-%d")
+
+
+def _equity_at(conn, boundary_cst: str):
+    """取收盘后第一个权益样本 (收盘印) — boundary 起 +_EQUITY_SAMPLE_WINDOW_MIN 内, 无 → None.
+
+    只取 boundary **之后**的样本: ET 收盘 16:00:00 的收盘价才是当日权益的定价基准, 边界前
+    十几秒的样本还是盘中共价。实测 8/28 边界: 03:59:46 → 98377.696 与 04:00:17 → 98336.941
+    相差 $40.75 — 旧实现"取最接近 boundary 的样本"会选中边界前那个, 偏差直接灌进残差。
+    窗内无样本一律 None (→ not_judgeable), 不做"再往前找个最近的"兜底: 放宽到盘中样本
+    量级的漂移远大于费用模型误差, 宁可报不可判也不给一个看着闭合、实则假数拼出来的桥。
+    """
+    row = conn.execute(
+        "SELECT last_update, current_equity FROM capital_state "
+        "WHERE last_update >= ? AND last_update <= ? ORDER BY last_update LIMIT 1",
+        (
+            boundary_cst,
+            (datetime.strptime(boundary_cst, "%Y-%m-%dT%H:%M:%S")
+             + timedelta(minutes=_EQUITY_SAMPLE_WINDOW_MIN)).strftime("%Y-%m-%dT%H:%M:%S"),
+        ),
+    ).fetchone()
+    return None if row is None else float(row[1])
+
+
+def _fetch_broker_open_mv_change():
+    """只读拉富途持仓, 返回 (未平仓仓当日市值变动合计[毛], None) 或 (None, 不可判原因).
+
+    qty==0 的行是"当日已平"的剩余列表项, 其 today_pl_val 属已实现部分, 已由 trade_records
+    侧计入 G ⇒ 这里必须排除, 否则与 G 双计 (桥接会假闭合)。
+    账户/环境解析与 scripts/live_reconcile_check.py::_broker_positions 同源 (含 8/11 教训:
+    解析错环境 ⇒ 拿真实账户持仓补模拟盘账, 有仓日必假漂移), 故同样走 _read_env_file 实时读
+    .env.us 而非 os.environ (cron 无 EnvironmentFile 也能工作), 并同样尊重
+    ALLOW_REAL_TRADING 安全闸。今日盈亏 today_pl_val 为富途 App 同源字段 (毛额, 见上注)。
+    """
+    try:
+        from futu import OpenSecTradeContext, TrdEnv, TrdMarket
+    except Exception as e:
+        return None, f"futu SDK 不可用 ({type(e).__name__})"
+    ctx = None
+    try:
+        from app.core.trading_mode import _read_env_file
+        account = _read_env_file("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        if account == "real" and _read_env_file("ALLOW_REAL_TRADING", "").strip().lower() != "true":
+            account = "sim"  # 与 di_container/对账脚本一致的安全闸: 强制降级
+        trd_env = TrdEnv.REAL if account == "real" else TrdEnv.SIMULATE
+        acc_id = int(_read_env_file("REAL_ACCOUNT_ID" if account == "real" else "SIMULATE_ACCOUNT_ID", "0"))
+        if not acc_id:
+            return None, f"缺 {account} 账户 ID 配置"
+        ctx = OpenSecTradeContext(
+            filter_trdmarket=TrdMarket.US,
+            host=_read_env_file("FUTU_OPEND_HOST", "127.0.0.1"),
+            port=int(_read_env_file("FUTU_OPEND_PORT", "11111")),
+            is_encrypt=False,
+        )
+        ret, pos = ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+        if ret != 0:
+            return None, f"position_list_query 失败 (acc={acc_id} env={trd_env}): {pos}"
+        total = 0.0
+        for _, p in pos.iterrows():
+            if abs(float(p.get("qty") or 0)) < 1e-9:
+                continue  # 当日已平行 → 计入 G, 不在此双计
+            v = p.get("today_pl_val")
+            try:
+                total += float(v)
+            except (TypeError, ValueError):
+                return None, f"{p.get('code')} today_pl_val 非数值 ({v!r}) → 拒绝部分求和"
+        return round(total, 2), None
+    except Exception as e:
+        return None, f"券商查询异常 {type(e).__name__}: {e}"
+    finally:
+        try:
+            if ctx is not None:
+                ctx.close()
+        except Exception:
+            pass
+
+
+def get_us_equity_reconciliation(trade_date: str, db_path: Path = None, broker_fetch=None,
+                                 session_date: str = None) -> Dict:
+    """桥接当日: 权益变动 vs (已了结毛利 + 未平仓当日波动). 观测用, 失败即声明不可判."""
+    out = {"verdict": "not_judgeable", "reason": None, "trade_date": trade_date,
+           "realized_net": None, "realized_gross": None, "fees": None,
+           "equity_change": None, "open_mv_change": None,
+           "residual": None, "within_tolerance": None}
+    # 会话守卫: 券商 today_pl_val 只描述"当前会话"的当日波动, 无法回填历史日 —— 拿今天的
+    # 未平仓波动去补前天的账, 桥接会"闭合得更好看"而全是假的。回填场景一律不判。
+    _sess = session_date or get_last_trade_date(now_et())
+    if trade_date != _sess:
+        out["reason"] = f"非当前会话 (券商当日波动只对 {_sess} 有效, 请求 {trade_date}) → 不判"
+        return out
+    db_path = Path(db_path) if db_path else US_ROOT / "data" / "ftseek_us.db"
+    fetch = broker_fetch or _fetch_broker_open_mv_change
+    conn = None
+    try:
+        if not db_path.exists():
+            out["reason"] = f"库不可读 ({db_path.name})"
+            return out
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0), "
+            "COALESCE(SUM(realized_pnl), 0), COALESCE(SUM(fees_est), 0) "
+            "FROM trade_records WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0",
+            (trade_date,),
+        ).fetchone()
+        gross, fees, net = float(row[2]), float(row[3]), float(row[1])
+        out.update(realized_net=round(net, 2), realized_gross=round(gross, 2), fees=round(fees, 2))
+        try:
+            has_table = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='capital_state'").fetchone()[0]
+        except Exception:
+            has_table = 0
+        if not has_table:
+            out["reason"] = "capital_state 表不存在 → 权益侧无载体"
+            return out
+        # 账户归属守卫: 权益载体带 trade_env 标签 (CapitalSafety._save_state 写入), 券商侧
+        # 则按 .env.us 解析账户。AUTO_TRADE_ACCOUNT 一旦翻 real 而库里仍有 sim 历史行,
+        # 权益序列就是两个账户混在一起 — C 与 U 不同源, 桥接必然假闭合/假超差 (8/11 对账
+        # 拿错账户的同一课)。多于一个 env → 不判, 不去猜哪个是"当前"。
+        if conn.execute("SELECT COUNT(DISTINCT COALESCE(trade_env, -1)) FROM capital_state").fetchone()[0] > 1:
+            out["reason"] = "capital_state 含多个 trade_env → 权益序列跨账户, 不可归因"
+            return out
+        # 依赖注: 本对账需要 capital_state 是**时间序列**。capital_safety.py:_save_state 的
+        # "INSERT OR REPLACE 保持 1 行/env" P0 注释从未成立 (trade_env 无 UNIQUE, 实测 42k 行),
+        # 正因如此才有收盘样本可查。若将来真去实现单行 UPSERT, 必须同时保留历史表, 否则
+        # 本桥接静默退化为"样本缺失"。
+        today_close = _equity_at(conn, _cst_close_boundary(trade_date))
+        prev_close = _equity_at(conn, _cst_close_boundary(_prev_us_trade_date(trade_date)))
+        if today_close is None or prev_close is None:
+            miss = []
+            if prev_close is None:
+                # 美股假日后的周一必然走到这里 (实证 7/3 独立日观察日全天仅 86 样本且末条在
+                # 22:44 CST, 7/4 仅 16 条 — 休市日采样本就停摆), 明示这是预期而非探针坏了。
+                miss.append("前收 (休市/采样停摆时属预期)")
+            if today_close is None:
+                miss.append("今收")
+            out["reason"] = f"权益样本缺失 ({'/'.join(miss)}, 收盘后 {_EQUITY_SAMPLE_WINDOW_MIN}min 窗内无 capital_state)"
+            return out
+        equity_change = round(today_close - prev_close, 2)
+        out["equity_change"] = equity_change
+        open_mv, why = fetch()
+        if open_mv is None:
+            out["reason"] = f"未平仓当日波动不可得 ({why})"
+            return out
+        out["open_mv_change"] = open_mv
+        residual = round(equity_change - (gross + open_mv), 2)
+        out.update(residual=residual,
+                   within_tolerance=abs(residual) <= EQUITY_RECON_TOLERANCE_USD,
+                   verdict="ok")
+        return out
+    except Exception as e:
+        # 检测器自身异常不得读成"已对账/无差异" (§6 规则5 同课)
+        out["reason"] = f"对账异常 {type(e).__name__}: {e}"
+        return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _format_equity_recon_line(r: Dict) -> str:
+    if r.get("verdict") != "ok":
+        return f"- **权益对账**: 不可判 — {r.get('reason')} (不以 0 冒充已对账)"
+    flag = "" if r.get("within_tolerance") else f" ⚠️超容差 ${EQUITY_RECON_TOLERANCE_USD:.0f}"
+    return (f"- **权益对账** (观测, 不进判据): 账户权益 ${r['equity_change']:+.2f} ≈ "
+            f"已了结毛利 ${r['realized_gross']:+.2f} + 未平仓当日 ${r['open_mv_change']:+.2f}"
+            f" | 残差 ${r['residual']:+.2f}{flag} (日报净额 ${r['realized_net']:+.2f} = 毛利 − 费用 "
+            f"${r['fees']:.2f})")
+
+
 def get_hk_trade_summary(trade_date: str) -> Dict:
     """获取港股当日交易数据"""
     summary = {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0}
@@ -332,6 +542,7 @@ def build_summary_report(
     us_summary: Dict,
     hk_summary: Dict,
     report_date: str,
+    us_equity_recon: Dict = None,
 ) -> str:
     """构建 Markdown 格式汇总报告
     
@@ -365,6 +576,9 @@ def build_summary_report(
         f"- **持仓**: {us_summary['positions']} 只",
         f"- **盘中告警**: {us_error} 错误 + {us_warn} 警告 (共 {len(us_trading)} 条)",
     ]
+
+    if us_equity_recon is not None:
+        lines.append(_format_equity_recon_line(us_equity_recon))
 
     if us_offhours_count > 0:
         lines.append(f"- 🔇 非盘中静默: {us_offhours_count} 条 (已过滤)")
@@ -574,10 +788,12 @@ def main():
 
     # 2. 交易数据 (US 用 ET 交易日, HK 用 CST 日期)
     us_summary = get_us_trade_summary(us_trade_date)
+    us_equity_recon = get_us_equity_reconciliation(us_trade_date)
     hk_summary = get_hk_trade_summary(hk_trade_date)
 
     # 3. 构建报告
-    report = build_summary_report(us_alerts, hk_alerts, us_summary, hk_summary, report_date)
+    report = build_summary_report(us_alerts, hk_alerts, us_summary, hk_summary,
+                                  report_date, us_equity_recon=us_equity_recon)
 
     # 4. 推送 (钉钉 + 飞书)
     title = f"📊 FTSeek 每日告警汇总 — {report_date}"
