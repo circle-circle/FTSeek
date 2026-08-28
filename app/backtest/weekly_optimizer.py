@@ -58,9 +58,12 @@ _DATA_DIR = _PROJECT_ROOT / "data"
 _REPORT_DIR = _DATA_DIR / "optimization_reports"
 _REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
+# 候选兜底顺序: 主库优先. 历史教训 (2026-08-29): trade_records.db 排首位,
+# 该文件是 4 月遗留空壳 (0 行/28KB) 却因"存在且非零字节"永远赢得选择,
+# 导致 LiveBacktestCompare + 周参数优化器全部读到 0 笔.
 DEFAULT_TRADE_DB_CANDIDATES = [
-    _DATA_DIR / "trade_records.db",
     _DATA_DIR / "ftseek_us.db",
+    _DATA_DIR / "trade_records.db",
 ]
 
 # 当前实盘默认值 (与 unified_config.yaml 对齐, 仅用于对比展示)
@@ -156,6 +159,16 @@ class OptimizationReport:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _resolve_trade_db() -> Optional[Path]:
+    # SSOT 优先: db_utils.get_trade_records_db() 带 TRADE_ENV 感知
+    # (1→ftseek_us.db 模拟盘, 0→ftseek_us_live.db 实盘), 是全仓中央路由.
+    try:
+        from app.core.db_utils import get_trade_records_db
+        p = get_trade_records_db()
+        if p.exists() and p.stat().st_size > 0:
+            return p
+    except Exception:
+        pass
+    # 兜底: 按候选顺序 (主库已前置)
     for p in DEFAULT_TRADE_DB_CANDIDATES:
         if p.exists() and p.stat().st_size > 0:
             return p
