@@ -127,20 +127,39 @@ def get_okr_progress():
 def _read_shadow_portfolio_summary():
     """读取影子组合结算 (shadow_portfolio_outcomes.jsonl), 按 blocked_by 聚合.
 
-    返回 [{gate, n, net, win_rate}] 或 [] (无数据/未采集). 2026-08-09 新增.
+    返回 (rows, notes): rows = [{gate, n, net, win_rate}] (可空); notes = 缺口说明。
+    2026-08-09 新增; 2026-08-28 改为**缺失必出声** — 原实现文件不存在/为空/读失败一律
+    静默 return [], 于是"结算采集器随其宿主会话死亡而永不触发"藏了 12 个交易日 (30 条
+    入场全可结算而 outcomes 文件从未存在), 周报该段落每周安静消失且无人知晓。
     """
+    from collections import defaultdict
+    notes = []
     try:
-        from collections import defaultdict
         p = BASE / "data" / "shadow_portfolio_outcomes.jsonl"
         if not p.exists():
-            return []
+            return [], ["结算文件不存在 → 影子采集/结算链疑似从未跑过 (查 Hermes 影子结算作业)"]
         agg = defaultdict(list)
+        _latest = ""
         for l in open(p, encoding="utf-8"):
             try:
                 r = json.loads(l)
-                agg[r.get("blocked_by", "unknown")].append(float(r.get("net", 0)))
             except Exception:
                 continue
+            agg[r.get("blocked_by", "unknown")].append(float(r.get("net", 0)))
+            _latest = max(_latest, str(r.get("date") or ""))
+        if not agg:
+            return [], ["结算文件为空 → 结算作业未产出 (查 Hermes 影子结算作业)"]
+        # 陈旧判定: 结算作业每日跑, 末次结算日期落后 >5 天 = 采集器中途死亡
+        #   (只判"文件在但没新数据", 上一种失败是文件根本不存在)。
+        if _latest and len(_latest) >= 10:
+            try:
+                _age = (datetime.strptime(_latest[:10], "%Y-%m-%d")
+                        - datetime.strptime(TODAY, "%Y-%m-%d")).days
+                if _age < -5:
+                    notes.append(f"⚠️ 结算末次日期 {_latest[:10]} 落后当前交易日 {-_age} 天"
+                                 " → 影子结算作业疑似已停摆")
+            except ValueError:
+                pass
         out = []
         for gate, nets in agg.items():
             w = sum(1 for x in nets if x > 0)
@@ -149,9 +168,9 @@ def _read_shadow_portfolio_summary():
                 "net": round(sum(nets), 2),
                 "win_rate": w / len(nets) * 100,
             })
-        return sorted(out, key=lambda g: g["net"])
-    except Exception:
-        return []
+        return sorted(out, key=lambda g: g["net"]), notes
+    except Exception as e:
+        return [], [f"结算文件读取失败: {e}"]
 
 
 def generate_report():
@@ -235,13 +254,15 @@ def generate_report():
 
     # 2026-08-09 (sim放量②影子组合进周报): 被门拦单的反事实账本 —
     #   有结算数据时, 按 blocked_by 分组净贡献给出"该松哪道门"的实测依据.
-    _sp_gates = _read_shadow_portfolio_summary()
+    _sp_gates, _sp_notes = _read_shadow_portfolio_summary()
     if _sp_gates:
         suggestions.append("  ── 影子组合 (被门拦单反事实结算) ──")
         for g in _sp_gates:
             _net, _n, _win = g["net"], g["n"], g["win_rate"]
             _car = "🔴 拦掉的是钱 (该松)" if _net > 0 else "✅ 拦掉的是亏 (保持)"
             suggestions.append(f"    {g['gate']}: n={_n} 净={_net:+.2f} 胜率={_win:.0f}% {_car}")
+    for _msg in _sp_notes:
+        suggestions.append(f"  ⚠️ 影子组合段不完整 — {_msg}")
     lines.extend(suggestions)
 
     return "\n".join(lines)
