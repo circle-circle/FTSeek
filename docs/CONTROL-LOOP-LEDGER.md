@@ -194,3 +194,10 @@ config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug +
    naive/aware 时间比较抛异常被吞, 整段从此恒报"全健康"。基线棘轮
    (`watchdog_liveness_baseline.json` / 普查 baseline) 只能由脚本 `--update-*` 重生成,
    不手工加宽 (手工加宽=把墓地重新藏起来)。
+6. 生效/自验脚本的每条判据必须**可证伪** (能报坏) 且**与生产告警链同源同形** —
+   2026-08-29 盘中重启实跑证伪三例: ①`journalctl` 数 ERROR 恒 0 (本服务 stdout 几乎不进
+   journal, 真通道是 `logs/ftseek_us.log`); ②`stat -c %Y /proc/PID` 是该目录实时 mtime,
+   拿它比 commit 时刻恒真 (进程年龄须 `ps -o etimes` 反推); ③awk 模式 `/ ERROR /` 永不对上
+   本日志 `] ERROR:` 形态 (LEVEL 后随冒号非空格) ⇒ ERROR 硬判恒 0, 而告警链
+   `scripts/error_alert.sh` 用的是 `/ERROR|CRITICAL/` ⇒ **判据模式必须逐字与告警判据一致**,
+   且改动后要注一行错样本反证 (旧=0 / 新=2) 才算立起。
