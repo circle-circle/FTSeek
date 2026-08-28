@@ -141,7 +141,17 @@ class ManualHoldRegistry:
                 ).fetchall()
             symbols = {r[0] for r in rows}
         except Exception as e:
-            logger.warning(f"[ManualHoldRegistry] open_positions 回落查询失败: {e}")
+            # fail-open (与本族 risk 门不同: 本门是协调门非亏损门, DB 瞬时锁死时
+            # 全量停自动交易代价大于偶发双管一只标的) — 但盲区必须可见:
+            # 此窗口内跨进程手动单不可见, 自动管线可能碰手动标的.
+            logger.error(
+                f"[ManualHoldRegistry] 🚨 open_positions SSOT 回落查询失败 (fail-open, "
+                f"跨进程手动单在接下来 TTL {self._SSOT_TTL_SEC:.0f}s 内不可见): {e}")
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("manual_hold_ssot_fallback", str(e))
+            except Exception:
+                pass
             return set()
         with self._lock:
             ManualHoldRegistry._ssot_cache.update(

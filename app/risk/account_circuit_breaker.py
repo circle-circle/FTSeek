@@ -5,15 +5,38 @@
 触发阈值时采取递减式风控：
   - 单日亏损 ≥1%: 减仓 50%
   - 单日亏损 ≥2%: 停止新开仓
-  - 单日亏损 ≥3% 或 最大回撤 ≥3%: 强制全平
+  - 单日亏损 ≥3% 或 最大回撤 ≥3%: LIQUIDATE 档
+
+2026-08-28 声明纠偏 (行为零改动): LIQUIDATE 档自建立起从未接线强制平仓 —
+四个消费方 (order_executor/playbook_service/orb.engine/本文件用法示例) 全部
+`action in ("HALT", "LIQUIDATE")` 仅拒新仓, 与 ≥2% 档实际同效; 存量仓的平仓
+始终由各自 SL/trailing/EOD 退出规则执行。"文档宣称有防线而实际没有" 与
+DEB-20260823 daemon_heartbeat 死表同族。是否真接线账户级全平属人工风险裁决
+(等于给机器一键清仓的权限), 本文件只把声明改真。
 
 使用:
   from app.risk.account_circuit_breaker import get_account_circuit_breaker, CircuitAction
   breaker = get_account_circuit_breaker()
   result = breaker.check(equity)
   if result.action in ("HALT", "LIQUIDATE"):
-      # 拒绝开仓
+      # 拒绝开仓 (LIQUIDATE 亦仅此效果, 不平存量)
 """
+# ── 日亏损防线登记 (2026-08-28 冲突显性化): "当日亏损"事实六套权威并存 ──
+#   1. AccountCircuitBreaker  app/risk/account_circuit_breaker.py
+#      净值 -1%/-2%/-3% 三档 (减半/停新仓/停新仓 — 全平从未接线)
+#   2. AbsoluteCircuitBreaker app/risk/absolute_circuit_breaker.py
+#      -$2000/日 + -$1000/时 + 连亏5笔 (类常量, 不受开关控制)
+#   3. symbol_day_loss        app/risk/symbol_day_loss.py
+#      -$500/标的/日 (出场日+净额, 主线/playbook 共用)
+#   4. SymbolDailyLossGuard   app/risk/symbol_daily_loss_guard.py
+#      净值0.5%/标的/日 + 连亏N笔 + 低胜率 (yaml risk.symbol_daily_loss_guard.*)
+#   5. RiskCircuitBreaker     app/playbook/risk_circuit_breaker.py
+#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域, 禁执行按钮+飞书)
+#   6. DrawdownController     app/risk/drawdown_control.py
+#      日3% (risk.account.max_daily_drawdown, 持久化防重启归零; 仅主线平仓在喂)
+# 六套独立查询/独立状态互不感知; 口径 % 与 $ 混杂, 触发先后交错, 合并/裁剪属
+# 人工风险裁决 (每套有各自历史语义与恢复机制)。本登记保证读任一防线时看得见
+# 全景; 已统一项: 1/3 出场日+净额 (2026-08-27/28), 其余各口径见各自头注。
 from __future__ import annotations
 
 import logging
@@ -62,7 +85,7 @@ class AccountCircuitBreaker:
         if current_equity <= 0:
             return CircuitResult(
                 action="LIQUIDATE",
-                reason="当前权益 <= 0, 强制全平",
+                reason="当前权益 <= 0 (LIQUIDATE 档, 同 HALT 仅拒新仓)",
                 daily_pnl_pct=0.0,
                 peak_equity=0.0,
                 current_equity=current_equity,

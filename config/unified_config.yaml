@@ -308,6 +308,12 @@ execution:
 # exit_rules_controller 节已删除 (2026-08-12): ExitRuleDispatcher 死路径随架构体检移除.
 #   现役退出权威 = ExitMonitor (Registry/Legacy路径); playbook 仓位自管退出.
 feature_flags:
+  # auto_trading_enabled 作用域声明 (2026-08-28 冲突显性化): 只拦 ORB/MAIN 引擎入场
+  #   (app/execution/engine.py AutoGate, 手动单 manual_* 前缀豁免) — 两引擎现均休眠
+  #   (orb.enabled=false / MAIN_PIPELINE 2026-07-02 冻结), 且 playbook 直连下单不经
+  #   该门 → 本开关置 false 并不停 playbook (唯一活体执行链)。停 playbook 用下方
+  #   playbook.auto_execute; 全路径急停 (含 playbook, fail-close) 用 KILL_SWITCH.flag
+  #   (emergency_interceptor)。三开关三作用域, 误当总闸 = 关了没关。
   auto_trading_enabled: true
   auto_aggression: normal
   legacy_battle_plan_enabled: false
@@ -965,6 +971,11 @@ pipeline:
     timeout_sec: 30.0
   use_modular_stages: true
 playbook:
+  # auto_execute 作用域 (2026-08-28 冲突显性化): 只停 playbook 新开仓循环
+  #   (run_playbook_auto_execute 入口, 平仓/monitor 路径不受影响) — 与上方
+  #   feature_flags.auto_trading_enabled (只拦 ORB/MAIN, 均休眠) 互不感知;
+  #   DEB-20260815 §11.4 硬止损监控的仓外写手(hermes deb0815_stoploss_monitor)
+  #   触线即把本键写 false。全路径急停请用 KILL_SWITCH.flag。
   auto_execute: true
   # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
   #   0产出+0消费方+DEB窗口过期(DEB-20260805 C1/门E), 见 obsidian 2026-08-16_change_review_audit.md

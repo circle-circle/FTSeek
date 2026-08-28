@@ -15,7 +15,7 @@ web_dashboard/order/executor.py:222 的 register() 只写进面板进程自己�
   4. owner=auto 行不拦
   5. 内存命中仍是首选 (不等 TTL)
   6. 空结果也被缓存 (每 60s 一次查询, 不随仓位轮询打库)
-  7. 查询失败 → 不拦 (维持原 fail-open 语义) 但 WARNING 留痕
+  7. 查询失败 → 不拦 (维持原 fail-open 语义) 但 ERROR+degradation_monitor 留痕 (2026-08-28 升级)
   8. is_manual_held 纯内存语义未被改动 (面板/预检读方口径不变)
 
 回滚: 删本文件 + 还原 manual_hold_registry.is_auto_blocked 为单行 return 即可。
@@ -144,7 +144,17 @@ def test_query_failure_fails_open_with_warning(tmp_path, monkeypatch, caplog):
                         {"ts": 0.0, "account": "", "symbols": set()})
     monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "sim")
 
+    # 2026-08-28 升级: warning → ERROR + degradation_monitor 记录 (盲区可见性,
+    #   pre_trade_gate fail-open 可见性同款): 协调门保持 fail-open 不变.
+    _recorded = []
+    import app.core.degradation_monitor as _dm
+    monkeypatch.setattr(_dm, "get_degradation_monitor",
+                        lambda: type("M", (), {"record": staticmethod(
+                            lambda mod, msg="": _recorded.append((mod, msg)))})())
     import logging
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.ERROR):
         assert manual_hold_registry.is_auto_blocked("US.MU") is False
     assert "回落查询失败" in caplog.text
+    assert "fail-open" in caplog.text, "盲区性质 (fail-open) 必须在 ERROR 里言明"
+    assert _recorded and _recorded[0][0] == "manual_hold_ssot_fallback", \
+        f"degradation_monitor 未记录: {_recorded}"

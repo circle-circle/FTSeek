@@ -7,6 +7,22 @@ Task #1 (2026-06-17): 系统级安全基础设施
 - 恢复: 人工确认 OR 下一交易日自动重置
 - 审计日志持久化到 data/audit/circuit_breaker.jsonl (不可删除)
 """
+# ── 日亏损防线登记 (2026-08-28 冲突显性化): "当日亏损"事实六套权威并存 ──
+#   1. AccountCircuitBreaker  app/risk/account_circuit_breaker.py
+#      净值 -1%/-2%/-3% 三档 (减半/停新仓/停新仓 — 全平从未接线)
+#   2. AbsoluteCircuitBreaker app/risk/absolute_circuit_breaker.py
+#      -$2000/日 + -$1000/时 + 连亏5笔 (类常量, 不受开关控制)
+#   3. symbol_day_loss        app/risk/symbol_day_loss.py
+#      -$500/标的/日 (出场日+净额, 主线/playbook 共用)
+#   4. SymbolDailyLossGuard   app/risk/symbol_daily_loss_guard.py
+#      净值0.5%/标的/日 + 连亏N笔 + 低胜率 (yaml risk.symbol_daily_loss_guard.*)
+#   5. RiskCircuitBreaker     app/playbook/risk_circuit_breaker.py
+#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域, 禁执行按钮+飞书)
+#   6. DrawdownController     app/risk/drawdown_control.py
+#      日3% (risk.account.max_daily_drawdown, 持久化防重启归零; 仅主线平仓在喂)
+# 六套独立查询/独立状态互不感知; 口径 % 与 $ 混杂, 触发先后交错, 合并/裁剪属
+# 人工风险裁决 (每套有各自历史语义与恢复机制)。本登记保证读任一防线时看得见
+# 全景; 已统一项: 1/3 出场日+净额 (2026-08-27/28), 其余各口径见各自头注。
 import json
 import logging
 import threading

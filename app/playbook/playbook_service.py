@@ -718,7 +718,8 @@ class PlaybookService:
             return {"success": False, "message": "SKIP 指令不可执行"}
 
         # 2026-06-25: 账户级熔断 guard (OKR)
-        # 若当日亏损 ≥2% 停止新仓, ≥3% 强制全平.
+        # 若当日亏损 ≥2% 停止新仓, ≥3% LIQUIDATE 档 (强制全平从未接线, 实际与
+        # 停新仓同效 — 见 account_circuit_breaker.py 头注 2026-08-28 纠偏).
         try:
             from app.risk.account_circuit_breaker import check_circuit_breaker
             from app.risk.capital_safety import get_capital_safety_system

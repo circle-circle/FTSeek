@@ -132,3 +132,32 @@ def test_db_failure_fail_close(breaker, monkeypatch):
         "app.risk.account_circuit_breaker.get_trade_records_db",
         lambda: "/nonexistent_dir_xyz/trade_records.db")
     assert breaker._get_daily_pnl("2026-08-27") == float("-inf")
+
+
+# ── LIQUIDATE 档声明契约 (2026-08-28 纠偏) ─────────────────────────────── #
+
+def test_liquidate_tier_claims_match_wired_behavior():
+    """-3% LIQUIDATE 档自建立起从未接线强制平仓 — 四个消费方全部
+    `action in ("HALT", "LIQUIDATE")` 仅拒新仓. 声明必须说真话:
+
+    ① 四文件内"强制全平"字样必须带"从未接线"免责标记 (含 equity<=0 的
+       reason 运行时字符串 — 不得裸声明);
+    ② 头注必须带"从未接线"免责声明 (防声明悄悄漂回);
+    ③ 消费方注释不得再宣称"3% 强制全平" (orb/exits.py 的 15:55 EOD 全平是
+       真实行为, 不在此列; 纠偏免责行带"从未接线"标记亦豁免).
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    acb = (root / "app" / "risk" / "account_circuit_breaker.py").read_text(encoding="utf-8")
+    assert "从未接线" in acb, "ACB 头注缺 LIQUIDATE 未接线免责声明"
+    offenders = []
+    for rel in ("app/risk/account_circuit_breaker.py",
+                "app/pipeline/order_executor.py",
+                "app/playbook/playbook_service.py",
+                "app/orb/engine.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            s = line.strip()
+            if "强制全平" in s and "从未接线" not in s and "15:55" not in s and "盘末" not in s:
+                offenders.append(f"{rel}: {s[:80]}")
+    assert not offenders, f"'强制全平'声明但全平从未接线 (实际仅拒新仓): {offenders}"

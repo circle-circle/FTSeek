@@ -3255,7 +3255,9 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         return
 
 
-    # ── 账户级熔断 (2026-06-25 OKR): 单日亏损 ≥2% 停止新仓, ≥3% 强制全平 ──
+    # ── 账户级熔断 (2026-06-25 OKR): 单日亏损 ≥2% 停止新仓, ≥3% LIQUIDATE 档 ──
+    #   (2026-08-28 纠偏: LIQUIDATE 与停新仓同效 — 强制全平从未接线, 存量仓
+    #    仍由各自 SL/trailing/EOD 管理, 详见 account_circuit_breaker.py 头注)
     try:
         from app.risk.account_circuit_breaker import check_circuit_breaker
         from app.risk.capital_safety import get_capital_safety_system
