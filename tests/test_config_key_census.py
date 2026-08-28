@@ -1,8 +1,9 @@
-"""config_key_census 分类规则测试 (2026-08-22)
+"""config_key_census 分类规则测试 (2026-08-22, 哨兵双向化改于 2026-08-28)
 
-钉死普查口径防静默漂移 — 自验证锚点: C批人工核定的 4 个死键在真实语料上
-必须落 orphan/definition_only (与 scripts/config_key_census.py 的
-KNOWN_DEAD 自检同一契约, 但在 CI 里强制).
+钉死普查口径防静默漂移 — 自验证锚点: 豁免注册表 (LEAF_EXEMPT 人工核定死键 +
+EXTERNAL_CONSUMED 仓外真读开关) 派生的哨兵, 在真实语料上必须"键仍在且非
+referenced"。两个方向都算漂移: 被判 referenced=规则坏了; 键整个消失=名单与配置
+脱节 (原 KNOWN_DEAD 四键 8/28 清理后正是后者, 哨兵静默常绿, 故改派生+双向)。
 """
 import importlib.util
 import sys
@@ -67,14 +68,64 @@ def test_flatten_nested_and_list():
     assert leaves == {"b", "d"}
 
 
-def test_known_dead_keys_still_non_referenced():
-    """真实语料上 C批死键必须保持非 referenced (口径漂移即报警)."""
-    corpus = _MOD.load_corpus()
-    for leaf in _MOD.KNOWN_DEAD:
-        status, _ = _MOD.classify_leaf(leaf, corpus)
-        assert status in ("orphan", "definition_only"), (
-            f"{leaf} 变成 {status} — 普查口径漂移或死键被复活, 先查清再动"
-        )
+def test_sentinel_missing_is_a_gate_violation():
+    """哨兵必须双向: 键从 yaml 消失也要响 (2026-08-28 修前是静默常绿).
+
+    旧行为只判"键在且被判 referenced", 哨兵键被删后永不再命中 → 自验证形同
+    虚设。当天 4 个 KNOWN_DEAD 哨兵被清理, 恰好落进这个盲区。
+    """
+    fake = {
+        "files": {},
+        "self_check": {
+            "self_check_dead_expected": [],
+            "external_switch_expected": [],
+            "unexpected_referenced": {},
+            "sentinel_missing": ["unified_config.yaml:ghost_key"],
+        },
+    }
+    vios = _MOD.gate_violations(fake)
+    assert any(k == "unified_config.yaml:ghost_key" for _, k, _ in vios), (
+        "哨兵键消失未被门禁拦住 → 注册表与配置可无限脱节")
+
+
+def test_flipped_sentinel_is_a_gate_violation():
+    fake = {
+        "files": {},
+        "self_check": {
+            "self_check_dead_expected": [],
+            "external_switch_expected": [],
+            "unexpected_referenced": {"unified_config.yaml:login_password": "referenced"},
+            "sentinel_missing": [],
+        },
+    }
+    vios = _MOD.gate_violations(fake)
+    assert vios and "口径漂移" in vios[0][2]
+
+
+def test_sentinels_derive_from_registries():
+    """哨兵名单派生自注册表, 不再手写 (手写名单会随清理静默失效)."""
+    assert _MOD.SELF_CHECK_DEAD == sorted(_MOD.LEAF_EXEMPT)
+    assert _MOD.SELF_CHECK_EXTERNAL == sorted(_MOD.EXTERNAL_CONSUMED)
+
+
+def test_external_consumed_keys_are_exempt_and_still_present():
+    """仓外开关: 语料判 orphan 但 Hermes 真读 → 必须豁免, 且键必须仍在配置里.
+
+    键消失 = 仓外消费方 (不在本仓 review 视野内) 的总开关被误删。
+    """
+    import yaml
+    cfg = yaml.safe_load(
+        (_MOD.BASE / "config" / "unified_config.yaml").read_text(encoding="utf-8"))
+    paths = []
+    _MOD.flatten(cfg, "", paths)
+    present = {l for _, l in paths}
+    for key, reason in _MOD.EXTERNAL_CONSUMED.items():
+        fname, leaf = key.split(":", 1)
+        assert fname == "unified_config.yaml"
+        ok, why = _MOD.exemption_for(fname, leaf)
+        assert ok and "仓外" in why, f"{key} 未走仓外豁免 → 会被当死键清掉"
+        assert len(reason) >= 20, f"{key} 缺实证路径证据"
+        assert leaf in present, f"{key} 已从 yaml 消失, 仓外消费方只能读到缺省值"
 
 
 # ── A3 死键门禁 (2026-08-24): 存量基线冻结, 只堵新增 ─────────────────────── #

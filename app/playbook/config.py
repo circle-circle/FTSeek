@@ -34,11 +34,9 @@ class PlaybookConfig:
         "max_position_pct": 0.06,
         "atr_multiplier": 2.0,
         # execution_parameters
-        "intraday_breakout_pct": 0.5,
         "intraday_volume_ratio": 1.5,
         "min_confidence": 60,
         "min_tp_rr": 1.5,
-        "buying_power_fallback_alert": True,
         # 2026-07-19: 下单前报价健康门 (复用 data_health_guard.check_quote_health).
         #   拦截过宽 spread / 过期报价 → 阻止市价单打在坏价上. gate 失败时 fail-open (取价异常不阻塞).
         "pretrade_quote_gate_enabled": True,

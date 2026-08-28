@@ -32,25 +32,7 @@ configs:
     status: active
   
   # 已弃用的配置文件 (保留 30 天)
-  app_config:
-    file: app_config.yaml
-    version: 4.3.0
-    description: "应用配置 (已合并至 unified_config.yaml)"
-    updated: 2026-03-31
-    status: deprecated
-    deprecated_date: 2026-03-31
-    remove_after: 2026-04-30
-    replaced_by: unified_config.yaml
   
-  risk_config:
-    file: risk_config.yaml
-    version: 3.0.0
-    description: "风控配置 (已合并至 unified_config.yaml)"
-    updated: 2026-03-31
-    status: deprecated
-    deprecated_date: 2026-03-31
-    remove_after: 2026-04-30
-    replaced_by: unified_config.yaml
 
 # ============================================================================
 # FTSeek-US 版本映射

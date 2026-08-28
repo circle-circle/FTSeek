@@ -261,99 +261,22 @@ dual_mode:
     global_max_per_direction: 0.4
     global_max_per_symbol: 0.25
     global_max_total: 0.8
-  manual_safety_net:
-    force_close_on_red: true
-    loss_alert_threshold: -0.08
-    pre_close_alert_time: '15:50'
 dynamic_exit:
   default:
-    atr_stop:
-      enabled: false
-      multiplier: 2.5
-    breakeven_stop:
-      enabled: false
-      stop_profit: 0.01
-      trigger_profit: 0.03
-    intraday_stop:
-      enabled: false
-      stop_percent: 0.02
-    partial_take_profit:
-      enabled: false
-      levels:
-      - ratio: 0.5
-        trigger: 0.025
-      - ratio: 0.5
-        trigger: 0.05
     stop_loss: -0.02
     take_profit: 0.05
-    time_stop:
-      enabled: false
-      max_holding_days: 10
-    trailing_stop:
-      enabled: false
-      trail_percent: 0.005
-      trigger_profit: 0.01
   high_volatility:
-    atr_stop:
-      enabled: false
-      multiplier: 3.2
     stop_loss: -0.07
     take_profit: 0.09
-    time_stop:
-      enabled: false
-      max_holding_days: 96
-    trailing_stop:
-      enabled: false
-      trail_percent: 0.045
-      trigger_profit: 0.05
   range_bound:
-    atr_stop:
-      enabled: false
-      multiplier: 1.6
     stop_loss: -0.035
     take_profit: 0.05
-    time_stop:
-      enabled: false
-      max_holding_days: 3
-    trailing_stop:
-      enabled: false
-      trail_percent: 0.018
-      trigger_profit: 0.025
   strong_trend_down:
-    atr_stop:
-      enabled: false
-      multiplier: 1.4
     stop_loss: -0.03
     take_profit: 0.045
-    time_stop:
-      enabled: false
-      max_holding_days: 24
-    trailing_stop:
-      enabled: false
-      trail_percent: 0.015
-      trigger_profit: 0.02
   strong_trend_up:
-    atr_stop:
-      enabled: false
-      multiplier: 3.0
-    partial_take_profit:
-      enabled: false
-      levels:
-      - ratio: 0.25
-        trigger: 0.1
-      - ratio: 0.25
-        trigger: 0.18
-      - ratio: 0.3
-        trigger: 0.25
     stop_loss: -0.08
     take_profit: 0.25
-    time_stop:
-      enabled: false
-      max_holding_days: 25
-    trailing_stop:
-      enabled: false
-      trail_percent: 0.05
-      trigger_profit: 0.08
 execution:
   idempotency:
     window_seconds: 3600
@@ -853,15 +776,6 @@ llm_pushes:
   weekly_proposer_enabled: false
   after_hours_scan_enabled: false
 observability:
-  alert_thresholds:
-    api_failure_rate_critical: 50
-    api_failure_rate_warning: 20
-    cpu_critical: 90
-    cpu_warning: 70
-    disk_critical: 95
-    disk_warning: 80
-    memory_critical: 90
-    memory_warning: 70
   audit_log:
     enabled: true
     retention_days: 90
@@ -1065,12 +979,6 @@ playbook:
   enabled: true
   execute_mode: futu_simulate
   execution_parameters:
-    # ⚠️ 死键×1 (2026-08-22 audit A7): buying_power_fallback_alert 全仓零消费
-    #   (仅 config.py:38 默认表登记), 改它没有任何效果. 留位防配置校验报缺失.
-    buying_power_fallback_alert: true
-    # ⚠️ 死键×1 (2026-08-22 audit A7): intraday_breakout_pct 零消费
-    #   (同上仅默认表). 注意 intraday_volume_ratio 是活键 (shadow_tracker.py:169), 勿混淆.
-    intraday_breakout_pct: 0.5
     intraday_volume_ratio: 1.5
     min_confidence: 60
     daily_notional_cap_pct: 0.8
@@ -1260,13 +1168,6 @@ playbook:
     duplicate_position_guard_enabled: true
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5
-  exit_rules:
-    # ⚠️ 死键×2 (2026-08-22 audit A7, 全仓零消费):
-    #   · breakeven_ratchet_enabled — 保本棘轮实际由 pipeline 退出链其他参数驱动, 本开关无效果;
-    #   · time_exit_enabled — TIME_EXIT 实际恒启用 (pipeline.py:6678 硬编码 True),
-    #     由 factor_exit_rules.time_exit_hours (playbook_horizon.yaml) 驱动时长.
-    breakeven_ratchet_enabled: true
-    time_exit_enabled: true
   # ⚠️ 死块×2 (2026-08-22 audit A7): horizon_selector._is_enabled() 读的是
   #   "horizon_selector.enabled" 而非本块; playbook_horizon.yaml 的路径在
   #   app/playbook/config.py:87 硬编码解析. 改本块两键均无效果.
@@ -1277,16 +1178,6 @@ playbook:
   direction_gate:
     buy_position_factor: 1.0
     buy_daily_exec_quota: 999
-  cap_reduction_trigger:
-    enabled: false
-    min_closed_trades: 50
-    min_win_rate: 0.45
-    require_positive_net_pnl: true
-    min_global_ic: 0.03
-    max_drawdown_pct: 0.08
-    data_window_days: 7
-    target_cap_pct: 0.3
-    current_cap_pct: 0.8
   risk_parameters:
     atr_multiplier: 2.0
     fixed_stop_loss_pct: 2.0
@@ -1549,10 +1440,6 @@ risk:
       #   需要时另立批次接线, 或按死键清理惯例删除.
       hourly_loss_threshold: -0.02
       pause_duration: 1800
-  exit_routing:
-    log_comparison_mode: true
-    log_diff_only: true
-    use_unified_dispatcher: false
   global_blacklist:
   - US.QCOM
   - US.LCID
@@ -1663,12 +1550,6 @@ risk:
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   vix_block_threshold: 28
-  vix_thresholds:
-    blocked: 28
-    normal: 22
-    relaxed: 18
-    tightened: 28
-    unblock: 25
 risk_limits:
   end_of_day:
     force_close_loss_at_et: '15:55'
@@ -1738,9 +1619,6 @@ signal_quality:
     order_flow: 0.15
     trend_quality: 0.25
     volume: 0.25
-signal_scoring:
-  active_version: v1
-  weights_v2: null
 signal_stage:
   mode: technical_direction_arbitration
   independent_entry_enabled: false
@@ -1956,12 +1834,6 @@ strategies:
         min_price: 5
         min_score: 10
         require_catalyst: false
-  dynamic_position_sizing:
-    consecutive_loss_threshold: 3
-    enabled: true
-    max_drawdown_pause: 0.05
-    position_reduction: 0.5
-    reset_after_win: true
   earnings_revision:
     enabled: false
     min_analysts: 15

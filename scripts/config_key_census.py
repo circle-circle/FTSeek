@@ -65,12 +65,17 @@ EXCLUDE_FILES = {Path(__file__).resolve()}
 # 已确认走泛型迭代消费的文件 (零命名出现≠死)
 ITERATION_CONSUMED = {"factor_profiles.yaml", "strategy_variants.yaml"}
 
-# C批人工已核的死键 (unified_config.yaml) — 口径漂移哨兵兼 LEAF_EXEMPT 数据源
-KNOWN_DEAD = {
-    "buying_power_fallback_alert",
-    "intraday_breakout_pct",
-    "breakeven_ratchet_enabled",
-    "time_exit_enabled",
+# 仓外运行时消费键 (2026-08-28): 普查语料只有仓内 *.py, 这些键按语料判 orphan,
+# 但仓外活体脚本真读它们 → 不是死键, 而是"本仓 grep 看不见的开关"。逐个实证见值。
+EXTERNAL_CONSUMED = {
+    "unified_config.yaml:da_candidate_feed": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:168 读 "
+        "universe_expansion.da_candidate_feed 作 UE→DA 注入总开关 (false 即跳过)"
+    ),
+    "unified_config.yaml:symbol_card_prompt_enabled": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py:1169 读 "
+        "playbook.symbol_card_prompt_enabled 作股性卡进 prompt 开关"
+    ),
 }
 
 # ── 门禁豁免注册表 (A3, 2026-08-24) ────────────────────────────────────── #
@@ -87,19 +92,10 @@ FILE_EXEMPT = {
     "version.yaml": (
         "纯文档元数据 (升级指南/deprecation 标注), 无运行时消费方, 非配置"
     ),
-    "position_protection.yaml": (
-        "整文件无加载点 (2026-08-24 实证: 全仓唯一同名命中是 DB 表 "
-        "position_protection_log) — 叶子全部为死键, 十月解冻后整文件删除"
-    ),
 }
 
 # 键级豁免: "文件名:叶子名" → 实证理由 (只收编需特别标注的项, 其余走基线)
 LEAF_EXEMPT = {
-    # C批人工核定 (原 KNOWN_DEAD, 兼口径漂移哨兵数据源)
-    "unified_config.yaml:buying_power_fallback_alert": "C批核定死键",
-    "unified_config.yaml:intraday_breakout_pct": "C批核定死键",
-    "unified_config.yaml:breakeven_ratchet_enabled": "C批核定死键",
-    "unified_config.yaml:time_exit_enabled": "C批核定死键",
     # 2026-08-24 A3 分诊实证 (grep 零命中 + 消费方改道证据)
     "unified_config.yaml:battle_plan_bonus": (
         "8/23 审计 BATTLE_PLAN_BONUS 常量已删 (commit 0e8990a8), 配置键残留"
@@ -109,12 +105,20 @@ LEAF_EXEMPT = {
     ),
     "unified_config.yaml:login_password": (
         "解锁密码实际走环境变量 FUTU_UNLOCK_PWD_MD5 (dual_broker.py:53), "
-        "yaml 字段死 — 含敏感形字段, 十月解冻后优先清除"
+        "yaml 字段死 — 含敏感形字段, 建议随下批死键清除"
     ),
 }
 
-# 自验证集 (普查口径漂移哨兵): 哨兵死键必须落非 referenced, 否则规则坏了
-SELF_CHECK_DEAD = sorted(f"unified_config.yaml:{k}" for k in KNOWN_DEAD)
+# 自验证集 (普查口径漂移哨兵):
+#   哨兵必须"仍在 yaml 且仍非 referenced"。两个方向都会响:
+#     referenced → 普查规则漂了 (死键被判活), 先查规则再信结论;
+#     整个键消失 → 注册表与配置脱节 (豁免还挂着, 键已被删/改名)。
+#   派生自注册表本身, 不再手写名单: 2026-08-28 前是硬编码 KNOWN_DEAD 四键,
+#   那四键当天被删后哨兵永不再命中 (= 静默常绿), 故改为派生。
+SELF_CHECK_DEAD = sorted(LEAF_EXEMPT)
+# 仓外开关哨兵: 语料看不见→必然判 orphan (口径已知盲区), 但键必须还在,
+# 消失 = 仓外消费方读的配置被误删。
+SELF_CHECK_EXTERNAL = sorted(EXTERNAL_CONSUMED)
 
 _DEF_TEMPLATE = r'^\s*["\']{}["\']\s*:'
 
@@ -126,6 +130,8 @@ def exemption_for(fname: str, leaf: str):
     if fname in ITERATION_CONSUMED:
         return True, "泛型迭代消费文件 (零命名出现≠死)"
     key = f"{fname}:{leaf}"
+    if key in EXTERNAL_CONSUMED:
+        return True, f"仓外运行时消费: {EXTERNAL_CONSUMED[key]}"
     if key in LEAF_EXEMPT:
         return True, LEAF_EXEMPT[key]
     return False, ""
@@ -165,11 +171,18 @@ def gate_violations(census: dict):
             if ok:
                 continue
             if leaf in baseline.get(fname, {}):
-                continue  # 存量死键: 基线冻结, 十月解冻后清理
+                continue  # 存量死键: 基线冻结, 随各批"清理"逐步缩 (无固定解冻日)
             violations.append(
                 (fname, leaf,
                  f"{v['status']} ← {(v.get('dotted_paths') or ['?'])[0]}")
             )
+    # 注册表脱节也算违规: 豁免/仓外开关名单必须与配置实际键集一致
+    sc = census.get("self_check", {})
+    for key, status in sorted((sc.get("unexpected_referenced") or {}).items()):
+        violations.append(("<self_check>", key, f"哨兵死键被判 {status} — 普查口径漂移"))
+    for key in sorted(sc.get("sentinel_missing") or []):
+        violations.append(
+            ("<self_check>", key, "注册表挂豁免/仓外开关, 但键已从 yaml 消失 — 名单脱节"))
     return violations
 
 
@@ -295,17 +308,23 @@ def run_census():
         "corpus_lines": len(corpus),
         "classification_rule": (
             "referenced=运行时代码出现且非纯字典定义行; definition_only=仅注册表形态定义"
-            "(注册≠消费); orphan=零出现. 注释行跳过, 同名影子键会漏报(安全向)."
+            "(注册≠消费); orphan=零出现. 注释行跳过, 同名影子键会漏报(安全向). "
+            "⚠️语料=仓内 *.py 单一载体: orphan 只证明\"仓内 py 不读\", 不证明\"无人读\" "
+            "— .sh/.service/html/js 与仓外 /root/.hermes/** 运行时脚本均在盲区 "
+            "(2026-08-28 实证: da_candidate_feed / symbol_card_prompt_enabled 判 orphan "
+            "却被 Hermes 脚本当真开关读). 删除前必须跨载体+仓外复核, 见 external_consumed."
         ),
         "files": {},
         "self_check": {},
         "gate_registries": {
             "file_exempt": dict(FILE_EXEMPT),
             "leaf_exempt": sorted(LEAF_EXEMPT),
+            "external_consumed": dict(EXTERNAL_CONSUMED),
         },
     }
 
     self_check_hits = {}
+    seen_sentinels = set()
     for yf_name, info in all_files.items():
         if "error" in info:
             result["files"][yf_name] = info
@@ -327,8 +346,13 @@ def run_census():
                 if shadow_in:
                     entry["shadow_in_other_yaml"] = shadow_in
             leaf_status[leaf] = entry
-            if f"{yf_name}:{leaf}" in SELF_CHECK_DEAD and status == "referenced":
-                self_check_hits[f"{yf_name}:{leaf}"] = status
+            leaf_key = f"{yf_name}:{leaf}"
+            if leaf_key in SELF_CHECK_DEAD:
+                seen_sentinels.add(leaf_key)
+                if status == "referenced":
+                    self_check_hits[leaf_key] = status
+            if leaf_key in SELF_CHECK_EXTERNAL:
+                seen_sentinels.add(leaf_key)
 
         fresult = {
             "leaf_total": len(info["leaves"]),
@@ -346,9 +370,13 @@ def run_census():
 
     result["self_check"] = {
         "self_check_dead_expected": sorted(SELF_CHECK_DEAD),
+        "external_switch_expected": sorted(SELF_CHECK_EXTERNAL),
         "unexpected_referenced": self_check_hits,
-        "note": "哨兵死键应全部落非referenced; 若出现 referenced, 说明普查口径"
-                "漂移, 先查规则再信结论.",
+        "sentinel_missing": sorted(
+            (set(SELF_CHECK_DEAD) | set(SELF_CHECK_EXTERNAL)) - seen_sentinels
+        ),
+        "note": "哨兵双向: 键在且被判 referenced=普查口径漂移 (先查规则再信结论); "
+                "键整个消失=注册表与配置脱节 (豁免/仓外开关悬空, 必须同步清理或还原)。",
     }
     return result
 
@@ -373,8 +401,15 @@ def print_summary(result):
             print(f"   [{v['status']}] {leaf}{shadow} ← {v['dotted_paths'][:3]}")
     sc = result["self_check"]
     bad = sc.get("unexpected_referenced") or {}
-    print(f"\n自验证: 哨兵死键异常翻活 {len(bad)}/{len(sc.get('self_check_dead_expected', []))}"
-          + (f" ({', '.join(sorted(bad))})" if bad else " (口径正常)"))
+    missing = sc.get("sentinel_missing") or []
+    n_exp = len(sc.get("self_check_dead_expected", [])) + len(
+        sc.get("external_switch_expected", []))
+    verdict = " (口径正常)" if not bad and not missing else ""
+    print(f"\n自验证: 哨兵 {n_exp} 键 → 异常翻活 {len(bad)}"
+          + (f" ({', '.join(sorted(bad))})" if bad else "")
+          + f" / 注册表悬空(键已消失) {len(missing)}"
+          + (f" ({', '.join(missing)})" if missing else "")
+          + verdict)
 
 
 def main():
