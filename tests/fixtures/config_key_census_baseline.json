@@ -1,6 +1,6 @@
 {
   "_note": "存量非referenced叶子冻结基线 (A3门禁): 只许减少不许新增; 缩基线须随十月清理 commit 一起改",
-  "generated_at": "2026-08-28T13:47:30+08:00",
+  "generated_at": "2026-08-28T15:38:42+08:00",
   "non_referenced": {
     "exit_profiles.yaml": {
       "max_holding_minutes": "orphan",
@@ -106,6 +106,14 @@
     "version.yaml": {
       "breaking_changes": "orphan",
       "migration_required": "orphan"
+    },
+    "exit_policy.yaml": {
+      "atr_floor_pct": "orphan",
+      "design_rationale": "orphan",
+      "log_each_block": "orphan",
+      "max_daily_drawdown_pct": "orphan",
+      "max_total_positions": "orphan",
+      "overnight_loss_stop_pct": "orphan"
     }
   }
 }

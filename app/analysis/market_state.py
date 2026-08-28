@@ -38,10 +38,12 @@ VIX_REGIMES = {
 }
 
 # VIX 交易门禁阈值 (市场情绪过滤)
-# RFC-055 (2026-06-01): 25→22, 数据驱动: HIGH_VOL regime SHORT 22.4%WR -$6,554
-# 可配置: risk.vix_block_threshold in unified_config.yaml (默认 22)
+# 现值 28: unified_config.yaml risk.vix_block_threshold=28, 代码回退同为 28 (2026-08-28 核对)。
+#   原注释"默认 22"是 RFC-055 (2026-06-01, 25→22 数据驱动: HIGH_VOL regime SHORT 22.4%WR -$6,554)
+#   的历史值, 早已不是任何一处的默认 — 保留此注释仅为溯源, 若按"恢复默认 22"理解会把门槛
+#   收紧成 22 (VIX≥22 即拦 SHORT), 属风险偏好变更需人工裁决, 不可由注释纠偏顺带做。
 def _load_vix_threshold() -> int:
-    """从 unified_config.yaml 加载 VIX 门槛, 失败回退 22"""
+    """从 unified_config.yaml 加载 VIX 门槛, 失败回退 28 (与 yaml 现值一致)."""
     try:
         from app.core.config_container import get_config
         cfg = get_config()

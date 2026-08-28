@@ -1384,7 +1384,12 @@ risk:
   # R-1 (2026-08-23, DEB-20260823): Playbook 路径 VIX 门总闸.
   #   order_executor 有「VIX新鲜度 fail-close + VIX>28 硬拒」两道门, 但 Playbook 不经
   #   order_executor (dual_broker 直连 ctx.place_order), 此前 app/playbook/ 全链路零 VIX
-  #   拦截 — entry_vix 只被记账不被消费。阈值仍复用 vix_thresholds/vix_guard.
+  #   拦截 — entry_vix 只被记账不被消费。阈值复用 app/risk/vix_guard.py 的 VIXGuard
+  #   (BLOCK_THRESHOLD=28.0 硬编码常量 + 25 解封迟滞, 改动需重启)。
+  #   2026-08-28 注释纠偏: 原文"复用 vix_thresholds"指向 risk.vix_thresholds, 该键同日已删
+  #   (零消费方)。另注意仓内有**两个互不相干**的 VIX 门槛: 本门走 VIXGuard 常量, 而
+  #   risk.vix_block_threshold=28 只被 app/analysis/market_state.py 导入期读一次 — 今日两值
+  #   恰好都是 28 属巧合, 改 yaml 只动后者, 别当成同一个旋钮 (双头权威待人工裁决合并)。
   #   回滚: 改 false (退回补丁前行为 = 无 VIX 门).
   playbook_vix_gate_enabled: true
   # R-7a/R-7b (2026-08-23, DEB-20260823): Playbook 排他性闸门的 fail 语义.

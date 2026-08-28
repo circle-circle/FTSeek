@@ -2,8 +2,9 @@
 """配置键消费普查 + 死键门禁 (2026-08-22 普查 / 2026-08-24 A3 门禁化, 只读).
 
 背景: C批人工 grep 出 unified_config.yaml 9 个死键/影子键。本工具把该排查
-固化为可重跑的普查: 全量扫 config/*.yaml → 展平叶子键 → 在运行时代码里找
-消费点, 死键从此自动暴露, 不靠人肉审计。
+固化为可重跑的普查: 全量扫 config/*.yaml + EXTRA_YAML 登记的仓外活体配置
+(app/risk/exit_policy.yaml 等, ConfigWriter 有写盘通道故必须在内) → 展平叶子键
+→ 在运行时代码里找消费点, 死键从此自动暴露, 不靠人肉审计。
 
 分类 (按叶子键名 word-boundary 匹配, 与 C批人工审计同一口径):
   referenced      — 叶子名出现在运行时代码且非纯字典字面量定义行 (.get("k") /
@@ -61,6 +62,12 @@ SCAN_DIRS = [BASE / "app", BASE / "scripts"]
 ROOT_PY = sorted(BASE.glob("*.py"))
 EXCLUDE_PARTS = {"archive"}
 EXCLUDE_FILES = {Path(__file__).resolve()}
+
+# config/ 之外的**活体** yaml (2026-08-28): 普查原先只 glob config/*.yaml, 于是这个文件
+# 全程裸奔 — 而它是 exit_policy_guardian 的出场参数 SSOT, 且 ConfigWriter 有条目
+# ("yaml_file": "exit_policy") 直接往里写。写盘通道有、死键门禁无 = 只进不出没人查。
+# 新增此类仓外活体配置时往这里加, 不要靠"它在 config/ 下"的假设。
+EXTRA_YAML = [BASE / "app" / "risk" / "exit_policy.yaml"]
 
 # 已确认走泛型迭代消费的文件 (零命名出现≠死)
 ITERATION_CONSUMED = {"factor_profiles.yaml", "strategy_variants.yaml"}
@@ -283,14 +290,15 @@ def _flatten_index(idx):
 
 
 def run_census():
-    """全量普查. 返回 (result_dict, corpus_lines_count)."""
+    """全量普查. 返回 result_dict (corpus_files/corpus_lines 均在 dict 内)."""
     corpus = load_corpus()
     index = build_index(corpus)
 
     # 其他 yaml 的叶子集 (影子键互参提示)
     yaml_leaves_by_file = {}
     all_files = {}
-    for yf in sorted(CONFIG_DIR.glob("*.yaml")):
+    sweep = sorted(CONFIG_DIR.glob("*.yaml")) + [p for p in EXTRA_YAML if p.exists()]
+    for yf in sweep:
         try:
             tree = yaml.safe_load(yf.read_text(encoding="utf-8"))
         except Exception as e:

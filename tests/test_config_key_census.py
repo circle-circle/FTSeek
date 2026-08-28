@@ -128,6 +128,23 @@ def test_external_consumed_keys_are_exempt_and_still_present():
         assert leaf in present, f"{key} 已从 yaml 消失, 仓外消费方只能读到缺省值"
 
 
+def test_extra_yaml_outside_config_dir_are_swept():
+    """仓外活体配置必须进普查 (2026-08-28 补裸奔面).
+
+    ConfigWriter 有 ("yaml_file": "exit_policy") 条目直接写 app/risk/exit_policy.yaml
+    (出场参数 SSOT), 而普查原先只 glob config/*.yaml → 写盘通道有、死键门禁无。
+    登记进 EXTRA_YAML 的文件若消失或未被扫到, 本测试即红 (防盲区静默重开)。
+    """
+    result = _MOD.run_census()
+    files = result["files"]
+    for p in _MOD.EXTRA_YAML:
+        assert p.exists(), f"EXTRA_YAML 登记的 {p.name} 已不存在 — 名单需随之清理"
+        assert p.name in files, f"{p.name} 未进普查 (sweep 漏掉仓外文件)"
+    ep = files.get("app/risk/exit_policy.yaml") or files.get("exit_policy.yaml")
+    assert ep and ep.get("leaves") and len(ep["leaves"]) > 20, \
+        "exit_policy.yaml 叶子集异常小 → 解析失败被当成'无死键'"
+
+
 # ── A3 死键门禁 (2026-08-24): 存量基线冻结, 只堵新增 ─────────────────────── #
 
 def test_gate_no_new_dead_keys():

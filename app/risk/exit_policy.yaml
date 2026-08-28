@@ -73,6 +73,17 @@ exit_rules_exclusivity:
 
 # ── 全局风控 ──
 global:
+  # ⚠️ 本文件按**具名键**被消费 (exit_policy_guardian 逐键 .get(), 无泛型遍历) → "写了不代表生效"。
+  #   2026-08-28 普查 (仓内 *.py + 仓外 /root/.hermes/scripts) 逐键核对 4 键:
+  #     max_consecutive_losses → app/risk/absolute_circuit_breaker.py + symbol_daily_loss_guard.py ✅
+  #     max_position_pct       → app/pipeline/llm_pipeline.py + position_monitor.py ✅
+  #     max_daily_drawdown_pct ← ❌ 零消费方。日亏损防线实际在 absolute_circuit_breaker 按
+  #         净值百分比档位 (减仓/停新仓两档) 执行, 与本键无关, 本键改了也无人读。
+  #     max_total_positions    ← ❌ 零消费方。并发/日开仓帽实际在 unified_config
+  #         playbook.execution_parameters.max_daily_positions / max_new_positions_per_cycle。
+  #   两个 ❌ 是"装饰性风险旋钮": 读这份 SSOT 的人会以为此处守着 3% 日回撤帽 + 8 只并发帽,
+  #   而真实防线在别处且数值不同 — 比缺失更危险 (与 ACB"强制全平"虚假声明同族)。
+  #   接线还是删除属风险口径变更, 留人工裁决; 今日只标注。回滚: 删本段注释。
   max_daily_drawdown_pct: 3.0
   max_consecutive_losses: 3
   max_total_positions: 8
