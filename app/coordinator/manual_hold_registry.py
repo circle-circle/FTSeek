@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import threading
 import logging
-from typing import Dict, Set, Optional
+from typing import Any, Dict, Set, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -109,6 +109,46 @@ class ManualHoldRegistry:
                 return True
             return info.account == account
 
+    # SSOT 回落缓存 (60s TTL) — 见 is_auto_blocked
+    _SSOT_TTL_SEC = 60.0
+    _ssot_cache: Dict[str, Any] = {"ts": 0.0, "account": "", "symbols": set()}
+    # AUTO_TRADE_ACCOUNT (env) ↔ open_positions.account_type 取值
+    _ACCOUNT_TYPES = {"sim": ("simulate", "sim"), "real": ("real",)}
+
+    def _ssot_manual_symbols(self, account: str) -> Set[str]:
+        """从 open_positions (SSOT) 读手动归属标的, 60s TTL.
+
+        必要性: 本注册表是进程内单例, 面板 (web_dashboard 进程) 下手动单时 register()
+        只写进那个进程的 dict, 而闸门读方在主交易进程 → 此前只有重启才 sync。
+        """
+        import time as _t
+        _now = _t.time()
+        with self._lock:
+            c = ManualHoldRegistry._ssot_cache
+            if c["account"] == account and (_now - c["ts"]) < ManualHoldRegistry._SSOT_TTL_SEC:
+                return set(c["symbols"])
+        symbols: Set[str] = set()
+        try:
+            import sqlite3
+            from app.core import paths as _paths
+            db = str(_paths.get_trade_records_db())
+            acc_types = ManualHoldRegistry._ACCOUNT_TYPES.get(account, (account,))
+            with sqlite3.connect(db) as conn:
+                rows = conn.execute(
+                    "SELECT symbol FROM open_positions WHERE owner = 'manual' "
+                    f"AND account_type IN ({','.join('?' * len(acc_types))})",
+                    acc_types,
+                ).fetchall()
+            symbols = {r[0] for r in rows}
+        except Exception as e:
+            logger.warning(f"[ManualHoldRegistry] open_positions 回落查询失败: {e}")
+            return set()
+        with self._lock:
+            ManualHoldRegistry._ssot_cache.update(
+                {"ts": _now, "account": account, "symbols": set(symbols)}
+            )
+        return symbols
+
     def is_auto_blocked(self, symbol: str) -> bool:
         """自动交易闸门: 该标的是否在 *当前自动交易账户* 中被手动占用.
 
@@ -118,9 +158,14 @@ class ManualHoldRegistry:
 
         解决: 同标的在 SIM(auto) + REAL(manual) 共存时,
         REAL 的 manual 不应阻止 SIM 的 auto 交易.
+
+        2026-08-28 (全链路复查): 内存 dict 未命中时回落 open_positions SSOT — 手动单由
+        dashboard 进程注册, 主交易进程此前当日永不感知 (见 _ssot_manual_symbols)。
         """
         _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-        return self.is_manual_held(symbol, account=_auto_acc)
+        if self.is_manual_held(symbol, account=_auto_acc):
+            return True
+        return symbol in self._ssot_manual_symbols(_auto_acc)
 
     def get_all_manual_symbols(self) -> Set[str]:
         """获取所有手动占用的标的列表"""

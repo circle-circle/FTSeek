@@ -94,6 +94,88 @@ class AbsoluteCircuitBreaker:
             f"MAX_CONSECUTIVE_LOSSES={self.MAX_CONSECUTIVE_LOSSES}"
         )
 
+        # P0 (2026-08-28 全链路复查): 启动即从台账重建当日计数.
+        #   本类此前纯内存态, 而 ftseek-us.service 配 Restart=on-failure/RestartSec=30 →
+        #   盘中一次崩溃自愈就把"当日已触发停新仓"清零且零告警: 自称"最后防线、不受任何
+        #   feature flag 控制", 实际一次重启即可解除。
+        self._restore_from_db()
+
+    def _restore_from_db(self) -> None:
+        """从 trade_records 重建当日 日亏/时亏/连亏 (出场日记账 + 净额口径).
+
+        总体对齐: 实盘只有 playbook 一个喂数方
+        (app/playbook/pipeline.py: record_trade_result("playbook", ...)), 故重建范围取
+        source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') — 新增喂数策略时需同步扩该映射,
+        否则恢复值会低于实时累计值。
+
+        已知代价 (fail-closed, 有意): manual_reset 的 _manual_override 只存内存,
+        故人工放行不跨重启 — 崩溃自愈后若当日亏损仍超线, 熔断会重新触发。此前重启
+        连"触发"本身都一起清零 (即本修复要堵的洞), 所以净效果是变严不变松。
+        人工放行需持久化时应另建 override 存储, 不是跳过重建。
+        """
+        try:
+            import sqlite3
+            from app.core import paths as _paths
+            db_path = str(_paths.get_trade_records_db())
+            today = _et_trade_date(now_et())
+            hour_prefix = now_et().strftime("%Y-%m-%dT%H")
+            _src_filter = "source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')"
+
+            with sqlite3.connect(db_path) as conn:
+                day_row = conn.execute(
+                    f"SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0), COUNT(*) "
+                    f"FROM trade_records WHERE substr(exit_time, 1, 10) = ? "
+                    f"AND exit_price > 0 AND {_src_filter}",
+                    (today,),
+                ).fetchone()
+                hour_row = conn.execute(
+                    f"SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
+                    f"FROM trade_records WHERE substr(exit_time, 1, 13) = ? "
+                    f"AND exit_price > 0 AND {_src_filter}",
+                    (hour_prefix,),
+                ).fetchone()
+                # 净额缺失行不参与连亏链 (避免一行 NULL 被当成"非亏"把连亏清零)
+                pnl_rows = conn.execute(
+                    f"SELECT COALESCE(pnl_net, realized_pnl) AS net FROM trade_records "
+                    f"WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0 "
+                    f"AND COALESCE(pnl_net, realized_pnl) IS NOT NULL AND {_src_filter} "
+                    f"ORDER BY exit_time DESC",
+                    (today,),
+                ).fetchall()
+
+            self._trade_date = today
+            self._daily_pnl = float(day_row[0] or 0.0)
+            self._hourly_pnl = float(hour_row[0] or 0.0)
+
+            consecutive = 0
+            for _r in pnl_rows:
+                if float(_r[0]) < 0:
+                    consecutive += 1
+                else:
+                    break
+            if consecutive:
+                self._consecutive_losses["playbook"] = consecutive
+
+            if self._daily_pnl <= self.DAILY_MAX_LOSS:
+                self._daily_paused = True
+            if self._hourly_pnl <= self.HOURLY_MAX_LOSS:
+                self._hourly_paused_until = now_et() + timedelta(hours=1)
+            if consecutive >= self.MAX_CONSECUTIVE_LOSSES:
+                self._strategy_paused["playbook"] = True
+
+            logger.info(
+                f"[AbsoluteCircuitBreaker·restore] ET 今日({today}) 已了结 "
+                f"{int(day_row[1] or 0)} 笔 净额=${self._daily_pnl:.2f} "
+                f"(本小时=${self._hourly_pnl:.2f}, 连亏={consecutive}) | "
+                f"daily_paused={self._daily_paused} "
+                f"strategy_paused={self._strategy_paused.get('playbook', False)}"
+            )
+        except Exception as e:
+            # 重建失败不阻断启动 (保留零值), 但留 WARNING — 失明的防线不该静默
+            logger.warning(
+                f"[AbsoluteCircuitBreaker·restore] 当日计数重建失败, 保留零值: {e}"
+            )
+
     def _check_new_day(self) -> None:
         """新交易日自动重置日计数"""
         today = _et_trade_date(now_et())

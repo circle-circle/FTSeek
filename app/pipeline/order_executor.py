@@ -3054,7 +3054,9 @@ _symbol_daily_loss_cache: Dict[str, float] = {}  # symbol → cached daily loss 
 _symbol_daily_loss_ts: Dict[str, float] = {}  # symbol → cache 写入时刻 (TTL 判定)
 _symbol_daily_loss_date: str = ""  # 缓存日期
 
-_DAILY_LOSS_LIMIT = 500.0  # 单标的日亏损限额 $500
+# 2026-08-28 全链路复查: 限额单一来源移到 app/risk/symbol_day_loss — playbook 执行链
+# (不经本文件 _submit_order_inner) 与主线共用同一把尺, 不再各写一份 500/一份 SQL。
+from app.risk.symbol_day_loss import DAILY_LOSS_LIMIT_USD as _DAILY_LOSS_LIMIT  # $500/标的/日
 # 2026-08-28: 缓存 TTL — 增量 _update_symbol_daily_loss 只由 position_monitor
 # 平仓路径调用, playbook 路径平仓不增量, 缓存会系统性滞后于 DB (亏损低估→
 # 该拦不拦)。TTL 到期强制重查 DB (SSOT); TTL 内增量仍即时生效。
@@ -3093,22 +3095,10 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
             return True
         # TTL 过期 → 落到下方 DB 重查 (增量只作 TTL 内的即时刷新)
 
-    # 查询 DB
+    # 查询 DB (口径 SSOT = app/risk/symbol_day_loss, 与 playbook 执行链同尺)
     try:
-        import sqlite3
-        from app.core.db_utils import get_main_db
-        db_path = get_main_db()
-        with sqlite3.connect(str(db_path)) as conn:
-            # 2026-08-27 出场日记账 (同 AccountCircuitBreaker 修复): 原
-            # WHERE trade_date = ? 入场日记账 — 隔夜仓当日出场亏损 (跳空) 记在
-            # 入场日, 死亡螺旋防线的"当日累计亏损"对隔夜跳空失效。净口径:
-            # pnl_net 优先, 旧行 NULL 回退毛额 realized_pnl。
-            row = conn.execute(
-                "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records "
-                "WHERE symbol = ? AND substr(exit_time, 1, 10) = ? AND exit_price > 0",
-                (symbol, today)
-            ).fetchone()
-        daily_pnl = float(row[0]) if row else 0.0
+        from app.risk.symbol_day_loss import symbol_day_net_pnl
+        daily_pnl = symbol_day_net_pnl(symbol, et_date=today)
         _symbol_daily_loss_cache[symbol] = daily_pnl
         _symbol_daily_loss_ts[symbol] = _time.time()
         if daily_pnl <= -_DAILY_LOSS_LIMIT:

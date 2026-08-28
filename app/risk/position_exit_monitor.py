@@ -106,6 +106,35 @@ except ImportError:
 # P0 修复 (2026-05-31): 统一使用 timezone.py 的 now_et() 作为时间 SSOT
 from app.utils.timezone import now_et as _now_et
 
+# ============================================================
+#  财报退出链接线状态 (2026-08-28 全链路复查, 一次性探测)
+# ============================================================
+# None = 未探测 / True = API 在位 / False = API 缺失 (规则结构性空转)
+_EARNINGS_EXIT_WIRED: Optional[bool] = None
+_EARNINGS_EXIT_LAST_ERR_TS: float = 0.0
+
+
+def _probe_earnings_exit_api() -> bool:
+    """探测 check_earnings_exit_required 是否可导入, 缺失时显性告警 (每进程一次).
+
+    此前该 ImportError 被 logger.debug 吞掉: 日志形态"正常"但 P0 财报强平规则
+    自 2026-05-27 起一行判断都没跑过。这里只负责让失效可见 —— 不擅自改接
+    EarningsRiskGuard (强制平仓是 P0 资金动作, 且建单侧 blackout 门已在生效),
+    真实接线待用户裁决。
+    """
+    try:
+        from app.risk.pre_trade_check import check_earnings_exit_required  # noqa: F401
+        return True
+    except ImportError as e:
+        logger.error(
+            "[财报退出] ⚠️ 财报强制退出链未接线: "
+            "app.risk.pre_trade_check 无 check_earnings_exit_required "
+            f"({e}) — 持仓跨财报日不会被强制平仓 (P0 规则结构性空转, 非偶发失败)。"
+            "仍生效的是建单侧 EarningsRiskGuard 财报 blackout 门; 若要接通出场强平, "
+            "需先裁决数据源与平仓授权。"
+        )
+        return False
+
 
 # ============================================================
 #  市场时间工具
@@ -1588,7 +1617,17 @@ class ExitMonitor:
         - 仅在开盘后30分钟内主动触发 (09:30-10:00 ET, 给足出场时间)
         - P0 退出会跳过 ExitQualityScorer 评分直接执行
         - P1 优先级仅记录警告不强制执行
+
+        接线状态 (2026-08-28 全链路复查): 依赖的 check_earnings_exit_required 在
+        app.risk.pre_trade_check 中不存在, 原 ImportError 被 logger.debug 吞掉 →
+        本规则自 2026-05-27 起从未执行过一行判断。现改为一次性显性告警。
         """
+        global _EARNINGS_EXIT_WIRED, _EARNINGS_EXIT_LAST_ERR_TS
+        if _EARNINGS_EXIT_WIRED is None:
+            _EARNINGS_EXIT_WIRED = _probe_earnings_exit_api()
+        if not _EARNINGS_EXIT_WIRED:
+            return None
+
         try:
             from app.risk.pre_trade_check import check_earnings_exit_required
             from app.core.scheduler_triggers import ET as _ET
@@ -1629,7 +1668,15 @@ class ExitMonitor:
                 )
                 return None
         except Exception as e:
-            logger.debug(f"[财报退出] 检查异常: {e}")
+            # 2026-08-28: 原 logger.debug → 300s 节流 WARNING. 财报退出是 P0 硬约束,
+            # 检查失败 (=不退出) 必须在日志可见, 否则再次伪装成"规则在跑"。
+            _now = time.time()
+            if _now - _EARNINGS_EXIT_LAST_ERR_TS >= 300.0:
+                _EARNINGS_EXIT_LAST_ERR_TS = _now
+                logger.warning(
+                    f"[财报退出] ⚠️ 检查异常, 本轮不强制退出 (fail-open): {e}",
+                    exc_info=True,
+                )
         return None
 
     # ============================================================

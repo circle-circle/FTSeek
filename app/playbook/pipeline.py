@@ -5969,7 +5969,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
     if symbol and not _rc_is_ghost:
         try:
             from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
-            get_absolute_circuit_breaker().record_trade_result("playbook", float(pnl), symbol)
+            # 2026-08-28 全链路复查: 毛→净, 与 ACB 启动重建 (_restore_from_db 读
+            # COALESCE(pnl_net, realized_pnl)) 同尺。此前喂毛值 → 8/20 用户裁"切"点名的
+            # "假盈利"行 (毛>0 净<0, 8/1-8/20 实测 23/125) 在熔断侧被当赢单清零连亏计数,
+            # 且日亏累计少计费用。费用估算缺失时 _net_pnl_pair 自回退毛值 (fail-open)。
+            _acb_pnl = _net_pnl_pair(pnl, pnl_pct, _fees_total, _tr)[0]
+            get_absolute_circuit_breaker().record_trade_result("playbook", float(_acb_pnl), symbol)
         except Exception as _acb_e:
             logger.debug(f"[风控接线] ACB record 跳过 {symbol}: {_acb_e}")
         # #6: 复用 _tr (原此处独立 SELECT entry_time)

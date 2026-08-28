@@ -1097,6 +1097,38 @@ class PlaybookService:
         except Exception as _mhe:
             logger.warning(f"[playbook] ManualHoldRegistry 检查异常 (放行): {_mhe}")
 
+        # P0 (2026-08-28 全链路复查): 单标的当日亏损限额 — 死亡螺旋防线接进实盘执行链.
+        #   根因: 该防线 ($500/标的/日) 此前只写在 order_executor._check_symbol_daily_loss,
+        #   位于 2026-07-02 起冻结的 MAIN_PIPELINE 开仓路径 (本函数经 dual_broker 直连下单,
+        #   不经 order_executor) → 实盘链路上没有任何单标的日亏损门, MU 当日连亏 5 笔仍可
+        #   续开 MU。口径与阈值共用 app/risk/symbol_day_loss (出场日记账 + 净额 + 已了结)。
+        #   fail 语义沿用主线同名门 (fail-open + WARNING, 盲区不拦但留痕)。
+        #   回滚: unified_config 的 playbook.execution_parameters 增
+        #   symbol_daily_loss_gate_enabled: false + 重启 (缺键=默认开; 声明 true 会撞
+        #   pre-commit 治理门"启用 disabled 策略需 ADR", 故此处只留说明不落键)。
+        if direction in ("BUY", "SELL_SHORT"):
+            try:
+                from app.playbook.config import get_playbook_config as _get_pb_cfg_dl
+                _dl_gate_on = bool(_get_pb_cfg_dl().get("symbol_daily_loss_gate_enabled", True))
+            except Exception:
+                _dl_gate_on = True
+            if _dl_gate_on:
+                try:
+                    from app.risk.symbol_day_loss import is_symbol_day_loss_exceeded
+                    _blocked, _day_net = is_symbol_day_loss_exceeded(symbol)
+                    if _blocked:
+                        logger.warning(
+                            f"🚫 [playbook·单标的日亏损] {symbol} 当日已了结净额 "
+                            f"${_day_net:.2f} 超限, 跳过 {_mode_label} 开仓"
+                        )
+                        return {
+                            "success": False,
+                            "message": f"{symbol} 当日累计亏损 ${_day_net:.2f} 超限额, 当日禁入",
+                            "skipped_symbol_daily_loss": True,
+                        }
+                except Exception as _dle:
+                    logger.warning(f"[playbook] 单标的日亏损门查询失败 (放行): {_dle}")
+
         # 2026-08-21 (盲区A): 重复开仓守卫 — 下单前查 open_positions 该 symbol 是否已有
         #   playbook 持仓 (size>0). W_WEEK 水下仓持满5交易日后, DA 每日重新提名同标的会
         #   二次开仓 (7/2 GOOG SHORT×2 实锤重叠). 单点收口: 本函数是全部 writer 的唯一
