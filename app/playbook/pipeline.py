@@ -36,7 +36,8 @@ _LIMIT_SHADOW_EMITTED: set = set()
 # 2026-08-06 (B1 二次修复): 盘口 micro 拉取的"已告警"集 ((symbol, date) 防刷屏).
 #   首修 (08-05) 用 get_push_orderbook 推送缓存 — 但 ADR-013 早已把 ORDER_BOOK 移出推送
 #   订阅集 (subscription_manager 默认 QUOTE+K_1M), 缓存恒空 → 08-05 全天 233 行 micro=null.
-#   改用 S2 实测可行的拉取路径 (scripts/orderbook_s2_capture.py 同款):
+#   改用 S2 实测可行的拉取路径 (scripts/archive/orderbook_s2_capture.py 同款;
+#   S2 实验 08-18 已收官归档, 但其拉取路径是本函数的参考实现):
 #   无推送订阅 (subscribe_push=False) → get_order_book 拉取 → 即退订.
 #   零推送 CPU (ADR-013 结论不动), 零订阅槽位累积; 频次 ≈影子行数 (~233/日), 远低于限额.
 _OB_PULL_WARNED: set = set()
@@ -73,7 +74,7 @@ def _fetch_l1_micro_uncached(scheduler, symbol: str) -> Optional[Dict[str, Any]]
     (S2 脚本 30min 一次持续落盘 + 独立进程 7/7 实测)。08-06 注释宣称 "S2 同款"
     但实现实际用了共享 ctx, 与 S2 的独立连接不符 — 本次改为真正同款。
 
-    走独立临时连接 (scripts/orderbook_s2_capture.py 同款): 端口探测→建连→
+    走独立临时连接 (同 S2 采集脚本 orderbook_s2_capture.py, 已归档): 端口探测→建连→
     get_global_state 验证→subscribe(ORDER_BOOK, pull)→get_order_book→退订→关闭。
     零订阅槽位累积 (瞬态连接), 不依赖主连接状态, 不新增推送订阅 (ADR-013 约束
     不动)。裸 ctx.get_order_book (dict: Bid/Ask=[(price,vol,n,{})...]) — 不用
