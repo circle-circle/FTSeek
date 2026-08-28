@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO = Path("/opt/ftseek/FTSeek-US")
+sys.path.insert(0, str(REPO))  # wrapper 以 scripts/ 为 sys.path[0], app.* 需仓根可导
 SNAP_DB = REPO / "data" / "signal_snapshots.db"
 OUT = REPO / "data" / "e1_shadow_signals.jsonl"
 CACHE_DIR = REPO / "data" / "replay_bars"
@@ -99,7 +100,12 @@ def main():
     # 阶段2: 采集当日信号
     con = sqlite3.connect(f"file:{SNAP_DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
-    today = datetime.now().strftime("%Y-%m-%d")
+    # 2026-08-28 修复 (建线以来结构性 0 采集): 原用 datetime.now() = 服务器 CST 墙钟,
+    #   而 signal_snapshots.trade_date 是 ET 交易日。本 job 排 04:45 CST = 16:45 ET,
+    #   那一刻 CST 日历日已比 ET 大 1 天 → WHERE trade_date='CST今日' 恒 0 行,
+    #   9 次运行"last_status=ok"而文件 0 字节 (13 天空转)。改走仓内 ET 交易日 SSOT。
+    from app.utils.timezone import get_trade_date, now_et
+    today = get_trade_date()
     sigs = con.execute(f"""
         SELECT symbol, trade_date, direction, strength, strategy_id
         FROM signal_snapshots
@@ -126,7 +132,9 @@ def main():
             "next_open_price": None, "next_open_date": None,
             # P1-D: SHORT 借券费参数随信号落盘 (LONG 为 0)
             "borrow_fee_annual_pct": BORROW_FEE_ANNUAL_PCT if s["direction"] == "SHORT" else 0.0,
-            "collected_at": datetime.now().isoformat(timespec="seconds"),
+            # 8/27 时钟统一: 本文件其余日期均为 ET, 采集戳同用 tz-aware ET
+            #   (原 naive CST 墙钟混写 → 与 id=1320 同类混合时区陷阱)
+            "collected_at": now_et().isoformat(timespec="seconds"),
         }
         added += 1
 

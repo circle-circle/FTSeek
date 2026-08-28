@@ -1421,3 +1421,67 @@ HEAD 中完整无误 (reverse-apply 检查确认 stash 冗余)。
   +$698 回放edge在真实成交口径下是否成立 (sim 无真金, 但 exit_price 口径真实)
 - 若 DEAD_SIGNAL 豁免后水下仓持仓时间显著拉长且 SL 兜底占比过高 → 重新评估方案B
   (回滚到方案A: 豁免加 `_is_overnight_position` 条件)
+
+---
+
+## 四十、GATE 1 前夕核查: E1 前瞻臂采集器 13 天空转 (缺陷已修, 裁决口径留人工) (2026-08-28)
+
+> 缘起: 用户指令"基于是否过期/冲突/有无价值请做处理", 影子族逐个数样本时核查 §16.4 W0
+> 交付项 E1 (`scripts/e1_shadow_collector.py` + cron 04:45 CST), 发现该臂**建线以来从未采到
+> 一条信号**。本节目的: 把事实钉清, 使今夜的 GATE 1 不在"仪器故障造成的 0"上作出终审裁决。
+
+### 40.1 事实链 (全部实测, 非推断)
+
+1. `data/e1_shadow_signals.jsonl` 自 2026-08-15 建线起 **0 字节**; Hermes job `27c495f96fd5`
+   `completed=9 / last_status=ok / last_error=null` — 输出为空而状态恒"ok", 属本周反复出现的
+   **"日志正常但逻辑失效"** 同族 (对照: 熔断口径/ us_audit 巡检 / daemon_heartbeat 死表)。
+2. 根因 (代码级): 阶段2 `WHERE trade_date='{datetime.now():%Y-%m-%d}'` 用**服务器 CST 墙钟日期**,
+   而 `signal_snapshots.trade_date` 是 **ET 交易日**。job 排 04:45 CST = **16:45 ET**, 那一刻 CST
+   日历日已比 ET 大 1 天 → 查询恒 0 行。仓内早有 ET 交易日 SSOT (`app.utils.timezone.get_trade_date`),
+   本脚本绕开了它。
+3. 该臂在全仓**零消费方**: `e1_shadow_signals.jsonl` 无任何读者 (仓内 grep 仅命中采集器自身与
+   wrapper; 仓外 `/root/.hermes/**` 亦仅命中 wrapper 与 jobs.json), 且 §16.4 承诺的"GATE 1 由
+   裁决脚本统一结算"那个结算脚本**不存在** — 即"只记价不结算"的下游一半从未落地。
+
+### 40.2 已做 (缺陷修复, 不改裁决)
+
+- 改 `today = get_trade_date()` (ET 交易日 SSOT) + `collected_at` 落 tz-aware ET
+  (原 naive CST 墙钟与本文件 ET 字段混写, 与 prod 异常行 id=1320 同类)。
+- 新增 `tests/test_e1_shadow_date.py` **3 例**: 按 ET 日采集 (去重/排除 NEUTRAL/排除非 DA-UE/
+  SHORT 借券费 0.05·LONG 0)、幂等重跑、次日开盘回填、**旧口径对照例** (钉住病症)。
+  已验"能红": 临时回退旧口径 → 2 failed; 恢复 → 3 passed。全量 1938 过/37 跳。
+- wrapper 通道实测: `venv/bin/python3.11 scripts/e1_shadow_collector.py` 按 no_agent 同款
+  cwd/env 直跑 EXIT=0 (仓根 `sys.path` 引导生效)。
+- 明夜 04:45 CST 起该臂开始真实攒样 (修复不追溯历史)。
+
+### 40.3 留给用户的裁决 (我不自决)
+
+今夜 GATE 1 按 §16.4 记法, E1 将是 **n=0 → "样本不足, 不参与排名也不救活"**; 而 §16.5/§11.3
+预注册分支是"前瞻臂全败 → 提前终审, 直接执行止损路径 (不等 W6)"。**用仪器故障的 0 去触发
+实盘止损分支, 与 §十一 预注册的本意 (用真实前瞻样本判定) 相反**; 但两种读法都撞预注册条文:
+
+| 读法 | 依据 | 后果 |
+|---|---|---|
+| A 记"样本不足"不排名 | §16.4 字面 ("不救活/不许延期补样") | 前瞻臂缺席 → 极易判"全败" → 触发止损路径 |
+| B 从存量恢复该臂 | 见 40.4: 恢复**不是**"延期补样", 而是补回本该存在的记录 | E1 真正参与排名, 裁决基于真实 n |
+
+**"延期补样"禁止的是延长时间窗换显著性, 不是禁止修好一个坏掉的计数器** — 但这层区分由谁裁定
+不该由执行修复的一方裁定, 故只陈不裁。
+
+### 40.4 若选 B: 可恢复样本与口径洁净度 (实测)
+
+- 可恢复唯一信号 **184 条** (去重键 = 采集器自身的 `(symbol, trade_date, direction)`), 覆盖
+  **9 个 ET 交易日** (08-17..08-27), 是臂自身判据 n≥30 的 **6 倍**。
+- **无前视污染** (逐条写路径核查): `signal_snapshots` 的 INSERT 走
+  `ON CONFLICT(decision_id) DO UPDATE`, 被更新的只有 `factors_json`/`market_context_json`
+  (COALESCE 富化); 后续 UPDATE 只填 `price_at_signal/close_t*/fwd_ret_t*/realized` 等**结算富化**列 —
+  `direction / strength / trade_date / strategy_id` 一经写入**永不改写**。结算价 (次一交易日开盘)
+  取自历史日线, 与当时可得一致 → 逐夜重跑与今日补跑同解。
+- 若要 B, 需另写一次性重建 (复用 `load_records/get_daily` 语义, 不新增口径), 且**结算与判读仍归
+  GATE 1 裁决方** (防中途改口径, §16.4 原意)。此脚本我未写, 等裁决。
+- 未核查/存疑: 若某些 08-17..08-27 的 DA 行是在**盘后复盘/重跑**中被覆盖 (decision_id 不变而
+  direction 变), B 的前瞻性即破 — 上述 UPSERT 条文排除了这种可能, 但我未逐行 diff 过历史快照,
+  严格性以"写路径不可变"为限。
+
+**回滚**: `git revert` 本 commit — 采集器回到 CST 日期口径 (等价于回到恒 0 空转, 无副作用);
+DEB 追加段不影响运行。
