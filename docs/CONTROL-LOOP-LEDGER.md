@@ -180,8 +180,8 @@ config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug +
 | G3 | regime 传感器未独立验证: regime 条件化规则 (盘前失效 A/B/C, LONG 回调日) 的分类器本身 IC 无人测 | 半开环 | 与现有 record-only 攒样线合并, 不另起炉灶 |
 | G4 | 台账漂移: 环路新增/下线后本文件不同步 | 由守卫测试闭合 | tests/test_control_loop_ledger.py |
 | G5 | 自调器 (自动改参) | **用户已裁不做** | 小样本+非平稳+大延迟 → 自动适应是噪声放大器; 现形态"自动观测+人工裁决+门控生效"即小样本控制正确解 |
-| G6 | 元环只闭合"失明", 不闭合"该链是否该存在": earnings_calendar 永久零行 ⇒ 财报 ATR 上限门从未生效 | 观测已闭合, 裁决开环 | `D1` 常驻看守该类 + `_calendar_empty` WARNING (2026-08-28); "回填日历并重接" vs "显式下线"属风险面变更 → 人工保留, 不在授权范围 |
-| G7 | `CapitalSafety._save_state` 的 2026-06-21 "P0 修复: INSERT OR REPLACE 用 trade_env 作唯一键 UPSERT, 保持 1 行/env" **从未成立** — 该列无 UNIQUE/无冲突可触发 ⇒ 纯 INSERT, 实测 capital_state 42146 行仍在涨 (注释声称要止的"无清理机制"原样存在) | 日志正常但逻辑失效 (注释与行为分叉) | 本轮**不修**: §2.5 权益对账行恰依赖这张表是时间序列 (要取 16:00 收盘印与前收印)。真要收敛增长必须与对账行同批处理 — 单行 UPSERT 前先把历史挪到保留表, 否则桥接静默退化成"样本缺失"。属清理类非风险面变更, 待排期 |
+| G6 | 元环只闭合"失明", 不闭合"该链是否该存在": earnings_calendar 永久零行 ⇒ 财报 ATR 上限门从未生效 | 观测已闭合, 裁决开环 | **已裁决下线 (2026-08-29, 用户裁"按建议执行")**: `playbook.execution_parameters.earnings_blackout_gate_enabled: false` 显式置 false (代码缺省 true, 删键会复活 — 守卫测试 test_g6_earnings_blackout_gate_stays_offline 钉住)。重启接线前置条件: ①可靠财报日历数据源+断流自动告警 ②真实财报期重仓亏损案例作证据。D1 继续看守该表 |
+| G7 | `CapitalSafety._save_state` 的 2026-06-21 "P0 修复: INSERT OR REPLACE 用 trade_env 作唯一键 UPSERT, 保持 1 行/env" **从未成立** — 该列无 UNIQUE/无冲突可触发 ⇒ 纯 INSERT, 实测 capital_state 42146 行仍在涨 (注释声称要止的"无清理机制"原样存在) | 日志正常但逻辑失效 (注释与行为分叉) | **已裁决排期 (2026-08-29, 用户裁"按建议执行")**: 下个维护批三步一批做 — ①历史 4.2 万行挪归档表 ②建 UNIQUE + 改 UPSERT ③对账行查询改"归档+活表"合看; 拆开任何一步都会让权益对账行静默退化"样本缺失"。表小无性能压力, 不急修 |
 
 ---
 

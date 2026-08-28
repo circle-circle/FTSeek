@@ -75,3 +75,27 @@ def test_adaptation_law_intact():
         assert section in text, f"适应律缺段: {section} (转移函数不完整)"
     # 增益上限的硬约束必须钉住, 否则适应律退化为噪声放大器 (DEB-20260823)
     assert "一次一变量" in text, "适应律丢了'一次一变量'增益上界"
+
+
+def test_g6_earnings_blackout_gate_stays_offline():
+    """G6 裁决契约 (2026-08-29 用户裁"按建议执行"): 财报禁建门显式下线.
+
+    背景门从未拦截过任何一笔 (earnings_calendar 表 0 行, 恒空转)。下线方式 =
+    unified_config 显式置 false — 代码缺省是 true (pipeline.py pb_cfg.get),
+    删键会静默复活, 故必须钉住键存在且为 false; 恢复需满足台账 G6 行的
+    重启前置条件并回 true。
+
+    键位: playbook.execution_parameters.* (PlaybookConfig._load 只合并
+    risk_parameters + execution_parameters 两个子节, 放别处读不到)。
+    """
+    import yaml
+    cfg = yaml.safe_load((REPO / "config" / "unified_config.yaml").read_text(encoding="utf-8"))
+    pb = cfg.get("playbook", {})
+    for section in ("execution_parameters", "risk_parameters"):
+        val = (pb.get(section) or {}).get("earnings_blackout_gate_enabled", "MISSING")
+        if val != "MISSING":
+            break
+    assert val is False, (
+        f"playbook.execution_parameters.earnings_blackout_gate_enabled 应为 false (G6 已裁决下线), "
+        f"实际={val!r} — 删键或移位会让代码缺省 true 静默复活一个无数据源的空转门; "
+        "恢复须先满足台账 G6 前置条件")
