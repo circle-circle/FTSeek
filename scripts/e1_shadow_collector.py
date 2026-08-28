@@ -42,17 +42,28 @@ def save_records(recs):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def get_daily(sym, date):
-    """拉某symbol覆盖date的日线缓存."""
-    for p in CACHE_DIR.glob(f"daily_{sym.replace('.', '_')}_*.json"):
-        try:
-            bars = json.loads(p.read_text())
-            days = {b[0]: b for b in bars}
-            if date in days:
-                return days, [b[0] for b in bars]
-        except Exception:
-            continue
-    # 未命中缓存 → 现拉
+def get_daily(sym, date, refresh=False):
+    """拉某symbol覆盖date的日线缓存.
+
+    2026-08-29 修复两处缓存缺陷 (实测: 8/28 采集成功但 8/27 的 19 条 next_open 回填 0/19):
+      ①多缓存文件命中时原取 glob 首个 (文件系统顺序, 任意) — 陈旧文件(截止信号日)与
+        新鲜文件(含次日)并存时可能命中陈旧 → 改取末根 bar 日期最新者;
+      ②refresh=True 跳过缓存直接现拉 — 阶段1回填遇"缓存截止于信号日本身"时,
+        次日 bar 可能已在行情源存在而缓存不知, 须现拉一次.
+    """
+    if not refresh:
+        best = None
+        for p in CACHE_DIR.glob(f"daily_{sym.replace('.', '_')}_*.json"):
+            try:
+                bars = json.loads(p.read_text())
+                days = {b[0]: b for b in bars}
+                if date in days and (best is None or bars[-1][0] > best[2]):
+                    best = (days, [b[0] for b in bars], bars[-1][0])
+            except Exception:
+                continue
+        if best is not None:
+            return best[0], best[1]
+    # 未命中缓存 (或 refresh) → 现拉
     start = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=15)).strftime("%Y-%m-%d")
     end = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=15)).strftime("%Y-%m-%d")
     cache = CACHE_DIR / f"daily_{sym.replace('.', '_')}_{start}_{end}.json"
@@ -88,14 +99,19 @@ def main():
         if r.get("next_open_price") is not None:
             continue
         days, day_list = get_daily(r["symbol"], r["trade_date"])
-        if not days or r["trade_date"] not in day_list:
+        idx = day_list.index(r["trade_date"]) if days and r["trade_date"] in day_list else -1
+        # 2026-08-29: 缓存截止于信号日本身 → 次日 bar 可能已在行情源存在 (缓存是 ±15 天窗口
+        #   的一次性快照, 不随日历推进), 现拉一次再判 — 否则回填要等第 3 次运行才轮到
+        if idx >= 0 and idx == len(day_list) - 1:
+            days2, day_list2 = get_daily(r["symbol"], r["trade_date"], refresh=True)
+            if days2 and r["trade_date"] in day_list2:
+                days, day_list, idx = days2, day_list2, day_list2.index(r["trade_date"])
+        if idx < 0 or idx + 1 >= len(day_list or []):
             continue
-        idx = day_list.index(r["trade_date"])
-        if idx + 1 < len(day_list):
-            next_day = day_list[idx + 1]
-            r["next_open_price"] = days[next_day][1]
-            r["next_open_date"] = next_day
-            filled += 1
+        next_day = day_list[idx + 1]
+        r["next_open_price"] = days[next_day][1]
+        r["next_open_date"] = next_day
+        filled += 1
 
     # 阶段2: 采集当日信号
     con = sqlite3.connect(f"file:{SNAP_DB}?mode=ro", uri=True)

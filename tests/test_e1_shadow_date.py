@@ -37,7 +37,7 @@ def _mk_db(path: Path):
     con.close()
 
 
-def _patch(monkeypatch, tmp_path):
+def _patch(monkeypatch, tmp_path, bars=None):
     db = tmp_path / "signal_snapshots.db"
     _mk_db(db)
     out = tmp_path / "e1.jsonl"
@@ -45,10 +45,11 @@ def _patch(monkeypatch, tmp_path):
     monkeypatch.setattr(e1, "OUT", out)
     monkeypatch.setattr(e1, "CACHE_DIR", tmp_path / "bars")
     # 免实盘 Futu: 合成日线 (08-27 open=100, 次日 open=103)
-    bars = {"2026-08-27": ["2026-08-27", 100.0, 101.0, 99.0, 100.5],
-            "2026-08-28": ["2026-08-28", 103.0, 104.0, 102.0, 103.5]}
+    if bars is None:
+        bars = {"2026-08-27": ["2026-08-27", 100.0, 101.0, 99.0, 100.5],
+                "2026-08-28": ["2026-08-28", 103.0, 104.0, 102.0, 103.5]}
     monkeypatch.setattr(e1, "get_daily",
-                        lambda sym, date: (bars, list(bars.keys())))
+                        lambda sym, date, refresh=False: (bars, list(bars.keys())))
     return out
 
 
@@ -91,3 +92,36 @@ def test_backfill_fills_next_open(monkeypatch, tmp_path):
     assert len(rows) == 2, "重跑必须幂等 (不重复追加)"
     assert all(r["next_open_price"] == 103.0 and r["next_open_date"] == "2026-08-28"
                for r in rows)
+
+
+def test_backfill_refreshes_when_cache_ends_at_signal_day(monkeypatch, tmp_path):
+    """2026-08-29 缺陷回归: 缓存截止于信号日本身 → 必须现拉一次, 不等第 3 次运行.
+
+    实测: 8/28 首次真实采集 24 条成功, 但 8/27 的 19 条回填 0/19 — 阶段1先跑,
+    当时仅有截止 8/27 的重建缓存, 命中即返 (无次日 bar) → 不回填; 阶段2才拉回含
+    8/28 的新缓存。结构上每天的新记录都会晚一轮。
+    """
+    # 首次调用 (缓存) 只含信号日; refresh=True (现拉) 返回含次日的全量
+    stale = {"2026-08-27": ["2026-08-27", 100.0, 101.0, 99.0, 100.5]}
+    fresh = dict(stale, **{"2026-08-28": ["2026-08-28", 103.0, 104.0, 102.0, 103.5]})
+    calls = {"refresh": 0}
+
+    def fake(sym, date, refresh=False):
+        if refresh:
+            calls["refresh"] += 1
+            return fresh, list(fresh.keys())
+        return stale, list(stale.keys())
+
+    db = tmp_path / "signal_snapshots.db"
+    _mk_db(db)
+    out = tmp_path / "e1.jsonl"
+    monkeypatch.setattr(e1, "SNAP_DB", db)
+    monkeypatch.setattr(e1, "OUT", out)
+    monkeypatch.setattr(e1, "CACHE_DIR", tmp_path / "bars")
+    monkeypatch.setattr(e1, "get_daily", fake)
+    _run_as(monkeypatch, ET_DAY)
+    e1.main()   # 首轮: 采集 2 条 (next_open=None)
+    e1.main()   # 次轮: 阶段1回填 — 缓存截止信号日, 须现拉
+    rows = [json.loads(l) for l in out.read_text().splitlines()]
+    assert calls["refresh"] >= 2, "缓存截止信号日必须触发现拉 (每条未回填记录一次)"
+    assert all(r["next_open_price"] == 103.0 for r in rows), "现拉后必须完成回填"
