@@ -105,12 +105,43 @@ class EarningsGuard:
                     (*candidates, window_start.isoformat(), window_end.isoformat()),
                 )
                 count = cursor.fetchone()[0]
+                if count == 0:
+                    # 0 命中有两种可能: 该标的确实不临近财报 (正常) / 整表为空 (数据载体死)。
+                    # 后者此前与前者在日志上完全同形 ⇒ 门永久放行而无人知 (2026-08-28 核查)。
+                    self._calendar_empty(conn)
                 return count > 0
             finally:
                 conn.close()
         except Exception as e:
-            logger.debug("[EarningsGuard] is_near_earnings(%s) 查询异常: %s", symbol, e)
+            # warning (非 debug): LOG_LEVEL=INFO 下 debug 不可见, 而这里的异常同样意味着
+            # 财报门直接返回 False (放行) —— 放行必须留痕。
+            logger.warning("[EarningsGuard] is_near_earnings(%s) 查询异常, 按不临近处理: %s", symbol, e)
             return False
+
+    def _calendar_empty(self, conn) -> bool:
+        """财报日历是否整表为空 (进程内只判一次, 只告警不改行为)。
+
+        实案 (2026-08-28 D1 反向核查): earnings_calendar 在跑的主库里 0 行, 唯一写方
+        是本类 update_earnings_calendar, 而日志中 "[Earnings] 财报日历已刷新" 0 命中
+        ⇒ is_near_earnings 恒 False ⇒ atr_stop_engine 的财报期 ATR 上限从未生效过一次。
+        真实财报数据走 app/data/earnings_calendar.py 喂另一个 EarningsRiskGuard —— 两套
+        财报门, DB 这套的载体从未被喂。是否接线属人工裁决, 本方法只负责让它可见。
+        """
+        if getattr(self, "_cal_empty_checked", False):
+            return self._cal_empty
+        self._cal_empty_checked = True
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM earnings_calendar").fetchone()[0]
+        except Exception:
+            n = -1
+        self._cal_empty = (n == 0)
+        if self._cal_empty:
+            logger.warning(
+                "[EarningsGuard] earnings_calendar 整表为空 (db=%s) → 财报期 ATR 上限恒不生效; "
+                "写入方 update_earnings_calendar 未被喂数, 需人工裁决接线或下线。",
+                self.db_path,
+            )
+        return self._cal_empty
 
     def get_atr_cap(
         self,

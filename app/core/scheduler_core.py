@@ -1404,7 +1404,10 @@ class TradingScheduler:
         try:
             from app.core.config_container import get_config as _gc_orb
             _cfg_orb = _gc_orb()
-            orb_cfg = _cfg_orb.get_dotted("strategies.orb", {}) or {} if _cfg_orb else {}
+            orb_cfg = _cfg_orb.get_dotted("orb", {}) or {} if _cfg_orb else {}
+            # 2026-08-28 (D3 反向普查): 原点号路径 'strategies.orb' 配置面不存在 → enabled 恒 False,
+            #   ORB ETF 订阅块静默不跑 (真因是读错命名空间, 不是配置关掉)。改读 orb 节后语义与
+            #   app/orb/config.py / 本文件 :2752 (orb.universe) 一致; 今日 orb.enabled=false 行为不变。
             if orb_cfg.get("enabled", False):
                 orb_symbols = orb_cfg.get("universe", [])
                 # 过滤已订阅标的 (SPY/QQQ 可能已在 etfs 中)

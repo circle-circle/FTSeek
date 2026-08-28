@@ -657,32 +657,19 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     logger.debug(f"[计划效果] 评估失败: {pe}")
                 # ── 盘前计划命中率追踪结束 ──
 
-                # ── Factor Pipeline 收盘反馈闭环 ──
-                try:
-                    from app.plan.plan_feedback import run_feedback
-                    fb = run_feedback(now_et.date().isoformat())
-                    if fb:
-                        eff = fb.get("plan_effectiveness", {})
-                        ic = fb.get("factor_ic", {})
-                        if eff.get("count", 0) > 0:
-                            msg = (
-                                f"🔄 [Plan Feedback] 胜率={eff.get('win_rate',0):.1f}% "
-                                f"(n={eff['count']}) | "
-                                f"avg_pnl={eff.get('avg_pnl_pct',0):+.2f}%"
-                            )
-                            if ic:
-                                top_factors = sorted(
-                                    [(k, v) for k, v in ic.items() if v is not None],
-                                    key=lambda x: abs(x[1]), reverse=True
-                                )[:3]
-                                ic_str = ", ".join(f"{k}={v:+.3f}" for k, v in top_factors)
-                                msg += f" | IC: {ic_str}"
-                            logger.info(msg)
-                            if scheduler.notifier and eff.get("count", 0) >= 3:
-                                scheduler.notifier.send_text(msg)
-                except Exception as fb_err:
-                    logger.debug(f"[PlanFeedback] 收盘反馈失败 (不影响主流程): {fb_err}")
-                # ── Factor Pipeline 收盘反馈闭环结束 ──
+                # ── Factor Pipeline 收盘反馈闭环 — 已下线 (2026-08-28 过期链路清理) ──
+                # 原每日调用 app.plan/plan_feedback.py:run_feedback, 三条输入全部已死:
+                #   ① data/factor_screen_latest.json 文件不存在 (f4abf2c0 已定性为死文件,
+                #      _load_factor_screen 缺失→降级, factor_ic 恒 {});
+                #   ② data/daily_battle_plan_us.json 冻结在 date=2026-07-31 (ADR-012 旧作战
+                #      计划轨道下线) → _load_plan 日期不匹配恒 None, plan_effectiveness 恒 {'count': 0};
+                #   ③ match_plan_trades 一旦可达必崩: SQL 引用不存在的列 close_time/strategy,
+                #      且 DB_PATH 指向废弃同名单库 ftseek_us_live.db, trade_mode!='simulate'
+                #      又排除 718/726 行 (当前轨道全部 simulate)。
+                # 产物实锤: feedback_2026-08-06…27 恒 186 字节全空 → 推送分支 (count>0) 从未触发,
+                # 失败仅 logger.debug (LOG_LEVEL=INFO 不可见) — 典型"降级不报警"。
+                # 指令命中率反馈由上方 PlanEffectivenessTracker (playbook_instructions 轨道) 承担。
+                # 恢复: git revert 本块 + 先修 plan_feedback 三条输入。
 
                 # Phase 5: 通过 Agent 桥接触发盘后全链路归因
                 if hasattr(scheduler, 'agent_bridge') and scheduler.agent_bridge:

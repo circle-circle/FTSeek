@@ -17,7 +17,6 @@ import logging
 import sqlite3
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("ftseek_us.thesis_challenge")
@@ -28,13 +27,28 @@ _DB_PATH = None
 
 
 def _get_db() -> str:
+    """主库路径 (mode-aware)。
+
+    2026-08-28 (C类·死库伪装): 原 except 兜底硬编码 data/ftseek_us_live.db —— 该文件在
+    当前 TRADE_ENV=1 下是**陈旧同名件** (mtime 停在 07-19, 里面还挂着 8 个 open_positions
+    幽灵), 解析一旦异常就静默读写死库: thesis_challenges 缓存永远 miss ⇒ 白烧 LLM,
+    且写进去的记录无人能查到, 全程零告警。与同日已修的面板 _get_trade_stats 同型。
+    ⇒ 兜底只准用 mode-aware 解析器, 全失败就抛错, 不再猜文件名。
+    """
     global _DB_PATH
     if _DB_PATH is None:
-        try:
-            from app.core.paths import get_trade_records_db
-            _DB_PATH = str(get_trade_records_db())
-        except Exception:
-            _DB_PATH = str(Path(__file__).parent.parent.parent / "data" / "ftseek_us_live.db")
+        errors = []
+        for _mod, _fn in (("app.core.paths", "get_trade_records_db"),
+                          ("app.core.db_utils", "get_main_db")):
+            try:
+                _DB_PATH = str(getattr(__import__(_mod, fromlist=[_fn]), _fn)())
+                return _DB_PATH
+            except Exception as e:
+                errors.append(f"{_mod}.{_fn}: {e}")
+        raise RuntimeError(
+            "[thesis_challenge] 主库路径解析失败, 拒绝回退到硬编码文件名 "
+            "(防止静默读写陈旧同名库): " + " | ".join(errors)
+        )
     return _DB_PATH
 
 

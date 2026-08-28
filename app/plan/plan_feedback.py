@@ -1,6 +1,20 @@
 """
 Plan Feedback — 收盘后反馈脚本 (Stage 闭环)
 
+[已冻结 · 2026-08-28] 唯一生产调用方 (app/core/scheduler_triggers.py 盘后
+"Factor Pipeline 收盘反馈闭环" 块) 已下线 — 三条输入全部已死, 产物恒空
+(见该处注释的实锤清单)。本模块保留仅作历史参考, 重启前必修:
+  1. DB_PATH 指向废弃同名单库 data/ftseek_us_live.db → 应改走
+     app.core.paths.get_trade_records_db() (TRADE_ENV 决定权威库);
+  2. match_plan_trades SQL 引用不存在的列 close_time / strategy
+     (真实列: exit_time / strategy_id) → 可达即 OperationalError;
+  3. 归集口径 trade_date = ? 是入场日记账 → 隔夜仓当日出场全部漏记,
+     应改 substr(exit_time,1,10) = ? AND exit_price > 0;
+  4. trade_mode != 'simulate' 排除 718/726 行 (当前 AUTO_TRADE_ACCOUNT=sim,
+     轨道行全部 simulate) → 匹配集恒空。
+输入端: factor_screen_latest.json 不存在, daily_battle_plan_us.json 冻结于
+2026-07-31 (ADR-012 旧作战计划轨道下线) — 两者需先复活才有非空输出。
+
 每日收盘后执行:
 1. Plan Win Rate — target触及TP的比例
 2. Plan Alpha — target累积收益 vs SPY

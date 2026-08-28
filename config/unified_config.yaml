@@ -37,6 +37,10 @@ broker:
 capital:
   description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
     reads from broker.'
+  # D3 反向普查 (2026-08-28): app/orb/engine.py:1998 读此键但配置面从无声明 → 显式化,
+  #   值=代码默认值逐字相等 (零行为变更)。注意与同段 fixed_amount(82000) 量级不一致:
+  #   ORB 用它做出资金规模换算, 差异是否有意需人工裁决, 本次不动数值。
+  initial: 1000000.0
   fixed_amount: 82000
   tiers: &id001
     inst:
@@ -797,6 +801,10 @@ observability:
 opend:
   host: ${FUTU_OPEND_HOST}
   port: 11111
+  # D3 反向普查 (2026-08-28): scheduler_core.py:232 读此键但配置面无声明 → 显式化
+  #   (值=代码默认 True, 零行为变更)。注意 .env.us 另有 ENABLE_FUTU_LV3=true,
+  #   两处同义声明谁最终生效需人工裁决, 本次只补可见性不动行为。
+  enable_lv3: true
 options:
   delta_range:
   - -0.4
@@ -1355,6 +1363,38 @@ push:
   dedup_ttl_sec: 60
   enabled: true
   health_check: true
+  # D3 反向普查 (2026-08-28): app/push/hub.py:268 读此键但配置面无声明 → 显式化
+  #   (值=代码默认 1, 零行为变更)
+  send_retries: 1
+# ── D3 反向普查补入的显式声明 (2026-08-28, scripts/config_key_reverse_census.py) ──
+# 这四个命名空间此前在配置面**完全不存在**, 但运行时代码在 get_dotted 读它们 ——
+# 行为整个扛在代码默认值上, 配置面/人工审计/死键普查 (只查 yaml→代码 方向) 都看不见。
+# 本块声明值一律等于代码默认值 ⇒ 零行为变更; 此后换档只需改这里, 不必再读代码。
+exit_policy:
+  # 注意命名空间分工: 本节只放"退出引擎选择位"; 退出**参数** SSOT 是
+  #   app/risk/exit_policy.yaml (由 ExitPolicyGuardian 直读文件, 不经 get_dotted)。
+  #   两处不可互换 — 把参数写进这里代码读不到 (position_exit_monitor.py:345-357 是唯一读者)。
+  # use_exit_registry=false 或 Registry 抛异常 ⇒ 全部持仓改用 legacy 逐条检查
+  #   (legacy 含 Registry 没有的 time_exit, 出场价与记账口径整体改变)。
+  # 降级路径原为 logger.debug 而 LOG_LEVEL=INFO ⇒ 已于同日提级 WARNING。
+  use_exit_registry: true
+  registry_fallback_on_error: true
+market_events:
+  # 拆股/合股人工事件表 (split_event_guard.py 读; 默认 {} = 无事件)。
+  # 此前无声明 ⇒ 出拆股只能改代码, 现可按 "US.XXX: '2026-09-01'" 形态登记。
+  known_splits: {}
+recommendations:
+  accuracy_tracking:
+    # scheduler_triggers.py:273 读; 默认 False ⇒ 准确率追踪此前从未开启
+    enabled: false
+  price_calibration:
+    # price_calibrator.py:62 整节读取, 缺省 {} = 全部走模块内 DEFAULTS (含 enabled 默认)
+    # 保持空节仅作锚点; 需要调参时在此覆写 price_calibrator.DEFAULTS 同名键
+    {}
+dynamic_pool:
+  # dynamic_pool.py:257 整节读取。子键经 _cfg(dotted_key) 动态拼接, 属静态普查盲区
+  # (见本脚本"已知局限"), 故只声明锚点不猜键名 — 猜错键会凭空造出一个假配置面。
+  {}
 regime_adaptation:
   enabled: true
   high_vol_position_scale: 0.3
@@ -1534,6 +1574,10 @@ risk:
   position_sizing:
     max_position_pct: 0.12
     risk_per_trade_pct: 0.008
+    # D3 反向普查 (2026-08-28): position_sizer.py:328 用此键选"算仓位的方法", 配置面
+    #   从来没有它 → 算法选择整个挂在代码默认值上。显式化, 值=代码默认 "fixed_risk"
+    #   (零行为变更)。改动此处即改变下单手数算法, 须人工裁决。
+    method: fixed_risk
   pre_trade:
     long_min_strength: 60
     min_effective_strength_floor: 50
@@ -1870,6 +1914,9 @@ strategies:
     capital_pct: 0.2
     capital_pct_of_main: 0.25
     capital_source: main
+    # D3 反向普查 (2026-08-28): adapters/fast_lane.py:15 读此键但配置面无声明 → 显式化
+    #   (值=代码默认 8, 零行为变更; 仅决定适配器调度次序)
+    priority: 8
   insider:
     enabled: true
     min_buy_amount: 100000

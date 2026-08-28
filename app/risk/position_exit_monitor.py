@@ -353,7 +353,11 @@ class ExitMonitor:
                 use_registry = bool(cfg.get_dotted("exit_policy.use_exit_registry", True))
                 fallback = bool(cfg.get_dotted("exit_policy.registry_fallback_on_error", True))
         except Exception as e:
-            logger.debug(f"[ExitMonitor] 读取 Registry Feature Flag 失败, 使用默认: {e}")
+            # WARNING 而非 DEBUG (2026-08-28 D3): 这两个开关决定全部持仓用哪套退出引擎
+            # (Registry vs legacy 逐条, 后者含 Registry 没有的 time_exit)。LOG_LEVEL=INFO
+            # 下 debug 永久不可见 ⇒ 配置读取坏掉时会静默按默认值跑, 事后无从判断哪套在生效。
+            # 键已于 2026-08-28 在 unified_config.yaml::exit_policy 显式声明 (值=此处默认)。
+            logger.warning(f"[ExitMonitor] 读取 Registry Feature Flag 失败, 使用默认: {e}")
         return use_registry, fallback
 
     # ============================================================

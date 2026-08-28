@@ -1002,7 +1002,12 @@ def register(app, templates):
         ghost_symbols = set()
         try:
             import sqlite3
-            db_path = Path(__file__).parent.parent.parent.parent / "data" / "ftseek_us_live.db"
+            # 2026-08-28 (C类·死库伪装): 原硬编码 data/ftseek_us_live.db — sim 模式下该文件
+            #   是 2026-07-19 起零写入的陈旧同名单 (实测今日本库 anomalous=0, 该死库=1 笔
+            #   US.MU @06-25), 过滤器一边过滤幽灵标的、一边对今天的真实异常完全失明。
+            #   改走模式感知解析器 (TRADE_ENV=0 时它本身就返回 live 库)。
+            from app.core.db_utils import get_main_db
+            db_path = Path(get_main_db())
             if db_path.exists():
                 conn = sqlite3.connect(str(db_path))
                 cur = conn.cursor()

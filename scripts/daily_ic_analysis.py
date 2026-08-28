@@ -23,6 +23,7 @@ Daily IC Analysis — 按 LLM 特征分组统计信号质量
 
 import json
 import logging
+import os
 import sqlite3
 import sys
 from collections import defaultdict
@@ -35,9 +36,25 @@ logger = logging.getLogger("daily_ic_analysis")
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DB_SIGNALS = PROJECT_ROOT / "data" / "signal_snapshots.db"
-DB_TRADES = PROJECT_ROOT / "data" / "ftseek_us.db"
-DB_LIVE = PROJECT_ROOT / "data" / "ftseek_us_live.db"
 OUTPUT_PATH = PROJECT_ROOT / "data" / "ic_analysis_latest.json"
+
+
+def _resolve_main_db() -> Path:
+    """交易库必须按 TRADE_ENV 解析 — 硬编码 sim 文件名会在切实盘那一刻起继续给
+    旧臂打 IC 分 (与 2026-08-28 排查出的 ftseek_us_live.db 死库同族, 只是方向相反)。
+    解析器不可用时按 TRADE_ENV 判, 绝不无条件锁死任一文件名。"""
+    for mod, fn in (("app.core.db_utils", "get_main_db"),
+                    ("app.core.paths", "get_trade_records_db")):
+        try:
+            import importlib
+            return Path(str(getattr(importlib.import_module(mod), fn)()))
+        except Exception:
+            continue
+    live = os.getenv("TRADE_ENV", "1").strip() == "0"
+    return PROJECT_ROOT / "data" / ("ftseek_us_live.db" if live else "ftseek_us.db")
+
+
+DB_TRADES = _resolve_main_db()
 
 # ═══════════════════════════════════════════════════════════════
 # IC Calculation
