@@ -58,6 +58,22 @@ OBS_ARMS = ("touch_entry", "touch_be", "touch_tp")  # 观测臂 (每夜独立反
 
 logger = logging.getLogger("ftseek.ah_exit_shadow")
 
+# 回声抑制 (2026-08-28): 调度器 2min tick 每轮都调 run_check, 数据静止时同一组
+#   汇总/观测行会整夜重放 (实测 8/28 晨 99 轮 × 3 行完全相同), 把真事件 (⚡/结算)
+#   埋进噪声. 按 tag 缓存上次渲染结果: 内容未变 → debug, 变化 → INFO. 变数 (价格/
+#   计数) 进 line 本身, 移动即自然重打, 无需状态机. 调度器 _load_script_module 缓存
+#   模块 → 常驻进程 tick 间共享本 dict; CLI 单进程首打必 INFO, 人工跑行为零变化.
+#   回滚: 删 _echo 并把调用点还原 logger.info.
+_ECHO_CACHE: dict = {}
+
+
+def _echo(tag: str, line: str) -> None:
+    if _ECHO_CACHE.get(tag) == line:
+        logger.debug("[AH影子] %s (回声抑制)", line)
+        return
+    _ECHO_CACHE[tag] = line
+    logger.info("[AH影子] %s", line)
+
 
 def _enabled() -> bool:
     try:
@@ -286,16 +302,15 @@ def run_pass(live: bool = False, evaluate: bool = True) -> dict:
                     row["would_be_order"] = would_be_order(pos, trig_rule,
                                                            rules[trig_rule]["would_price"])
                     stats["triggered"] += 1
-                    logger.info("[AH影子] ⚡ %s %s夜 触发 %s @ ah_close=%.2f "
-                                "(载荷已构造, record-only)",
-                                pos["symbol"], night, trig_rule, ah_close)
+                    _echo(f"arm:{pos['symbol']}:{night}:{trig_rule}",
+                          f"⚡ {pos['symbol']} {night}夜 触发 {trig_rule} "
+                          f"@ ah_close={ah_close:.2f} (载荷已构造, record-only)")
                 for arm in OBS_ARMS:
                     if rules.get(arm, {}).get("hit"):
-                        logger.info("[AH影子] 👁 %s %s夜 观测臂 %s 触及 "
-                                    "(best=%+.2f%%, in_water=%s)",
-                                    pos["symbol"], night, arm,
-                                    rules.get("ah_best_fav_pct", 0),
-                                    rules.get("in_water_at_open"))
+                        _echo(f"obs:{pos['symbol']}:{night}:{arm}",
+                              f"👁 {pos['symbol']} {night}夜 观测臂 {arm} 触及 "
+                              f"(best={rules.get('ah_best_fav_pct', 0):+.2f}%, "
+                              f"in_water={rules.get('in_water_at_open')})")
                 if existing:
                     rows[rows.index(existing)] = row
                     stats["updated"] += 1
@@ -394,17 +409,18 @@ def _write_summary(rows: list[dict]) -> None:
     SUMMARY.write_text(json.dumps(summary, ensure_ascii=False, indent=1))
     for rule in RULES:
         s = summary["rules"][rule]
-        logger.info("[AH影子] %s: 触发%d/%d Σdelta=%+.0f p=%s", rule, s["triggered"],
-                    summary["n_settled"], s["sum_delta"], s["p_sign"])
+        _echo(f"summary:{rule}",
+              f"{rule}: 触发{s['triggered']}/{summary['n_settled']} "
+              f"Σdelta={s['sum_delta']:+.0f} p={s['p_sign']}")
     for key, s in summary["obs_arms"].items():
         if s["touched"]:
-            logger.info("[AH影子] 观测 %s: 触及%d/%d夜(%.0f%%) 锁vs持=%+.0f",
-                        key, s["touched"], s["nights"], s["touch_rate"] or 0,
-                        s["lock_vs_hold"][0])
+            _echo(f"summary:obs:{key}",
+                  f"观测 {key}: 触及{s['touched']}/{s['nights']}夜"
+                  f"({s['touch_rate'] or 0:.0f}%) 锁vs持={s['lock_vs_hold'][0]:+.0f}")
 
 
 def run_check(scheduler=None) -> int:
-    """调度器钩子 (AFTER_HOURS / OVERNIGHT, 每分钟tick内自幂等)."""
+    """调度器钩子 (AFTER_HOURS / OVERNIGHT, 2min tick 内自幂等)."""
     if not _enabled():
         return 0
     try:
@@ -413,9 +429,9 @@ def run_check(scheduler=None) -> int:
         live = LIVE_GATE <= hhmm < COMPLETE_GATE  # AFTER_HOURS 实时预评窗
         stats = run_pass(live=live)
         if stats["evaluated"] or stats["settled"] or stats["triggered"]:
-            logger.info("[AH影子] 评估%d 更新%d 结算%d 触发%d",
-                        stats["evaluated"], stats["updated"], stats["settled"],
-                        stats["triggered"])
+            _echo("stats",
+                  f"评估{stats['evaluated']} 更新{stats['updated']} "
+                  f"结算{stats['settled']} 触发{stats['triggered']}")
         return stats["settled"]
     except Exception as e:
         logger.warning("[AH影子] 异常 (已隔离): %s", e)

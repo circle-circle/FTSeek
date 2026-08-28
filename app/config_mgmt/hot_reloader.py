@@ -197,3 +197,39 @@ class ConfigHotReloader:
             "watch_files": [os.path.basename(f) for f in self.watch_files],
             "running": self._running,
         }
+
+
+def invalidate_config_snapshots() -> list:
+    """热重载后失效「把 unified_config.yaml 抄进进程内字典」的下游快照.
+
+    背景 (2026-08-28 全链路复查): ConfigHotReloader 只重载 loader, main.py 的回调
+    只同步 ConfigContainer, 而下面两个消费者在构造时就把 yaml 快照进内存, 之后
+    只在**别的文件**变化时才重建 → 改配置后日志报"✅ 配置已热重载"而实盘链路仍读
+    旧值 (「日志正常但逻辑失效」):
+      · PlaybookConfig._config —— 仅随 config/playbook_horizon.yaml mtime 重建 (R-4),
+        playbook.execution_parameters.* (日名义上限/各类开仓门) 改后不生效
+      · FeatureFlags._flags/_shadow_mode —— reload() 存在但全仓零调用方
+
+    不区分变更文件: 两者重建只是一次 yaml 读 + 版本哈希, 无脑失效比"猜哪个键变了"稳。
+    各自 try/except: 一个失效失败不拖累另一个, 更不阻断主配置重载 (调用方已再包一层)。
+
+    Returns:
+        成功失效的消费者名列表 (供日志/测试断言)。
+    """
+    done: list = []
+
+    try:
+        from app.playbook.config import reset_playbook_config
+        reset_playbook_config()
+        done.append("PlaybookConfig")
+    except Exception as e:
+        logger.warning("[HotReloader] PlaybookConfig 失效失败 (沿用旧快照): %s", e)
+
+    try:
+        from app.core.feature_flags import get_feature_flags
+        get_feature_flags().reload()
+        done.append("FeatureFlags")
+    except Exception as e:
+        logger.warning("[HotReloader] FeatureFlags 重载失败 (沿用旧快照): %s", e)
+
+    return done

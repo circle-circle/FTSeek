@@ -367,12 +367,21 @@ def _run_new_scheduler(args):
         drift_detector.start()
         logger.info("[ConfigGov] ✅ 漂移检测已启动 (interval=4h)")
 
-        # Layer 3: 热重载 (60s 冷却) — 同步 ConfigContainer
+        # Layer 3: 热重载 (60s 冷却) — 同步 ConfigContainer + 失效下游快照缓存
         def _on_config_reload():
-            """热重载后同步 ConfigContainer._config_dict"""
+            """热重载后同步 ConfigContainer._config_dict, 并失效读同一 yaml 的进程内快照.
+
+            快照失效为何必需 (PlaybookConfig / FeatureFlags 两个"日志说重载了但链路仍读旧值"
+            的消费者) 见 app/config_mgmt/hot_reloader.py::invalidate_config_snapshots。
+            """
             from app.core.config_container import ConfigContainer
             ConfigContainer().reload()
             logger.info("[HotReloader] ✅ ConfigContainer 已同步")
+
+            from app.config_mgmt.hot_reloader import invalidate_config_snapshots
+            _invalidated = invalidate_config_snapshots()
+            if _invalidated:
+                logger.info("[HotReloader] ✅ 已失效进程内快照: %s", ", ".join(_invalidated))
 
         hot_reloader = ConfigHotReloader(loader, cooldown_seconds=60, post_reload_callback=_on_config_reload)
         hot_reloader.start()

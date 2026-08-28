@@ -7313,6 +7313,27 @@ def _load_horizon_config(horizon: str) -> Dict[str, Any]:
         return {}
 
 
+def _sl_fallback_exit_reason(pnl_pct: float, entry_time_str: str, horizon: str) -> str:
+    """止损兜底平仓的 exit_reason 归因 (2026-08-28 全链路复查).
+
+    SL 兜底跑在 _check_playbook_exit_rules 规则2 之前, 跳空打穿 SL 的隔夜仓因此全部
+    被记成 SL_INITIAL, OVERNIGHT_GAP_STOP 桶全史 0 笔 → 持夜风险被归因给"止损纪律",
+    并沿 pattern-mining 变成标的档案里的 "LONG+SL_INITIAL 亏钱模式" 教训。
+    这里用与规则2 相同的尺子重贴标签: 隔夜仓 且 亏损幅度已达该 horizon 的
+    overnight_gap_stop_pct → OVERNIGHT_GAP_STOP; 其余 (含任何异常) 保持 SL_INITIAL。
+
+    只影响记账归因, 不影响平仓动作; 两值同在 intraday_reentry._HARD_STOP_REASONS,
+    再入场门行为中性。
+    """
+    try:
+        _gap_stop_pct = float(_load_horizon_config(horizon).get("overnight_gap_stop_pct", 3.0))
+        if float(pnl_pct) <= -_gap_stop_pct and _is_overnight_position(entry_time_str):
+            return "OVERNIGHT_GAP_STOP"
+    except Exception as e:
+        logger.debug(f"[playbook sim] 跳空归因判定失败 (按 SL_INITIAL 记账): {e}")
+    return "SL_INITIAL"
+
+
 # 2026-07-11 (audit 结论): 因子黑名单(单因子 + 配对级) 暂停用.
 #   审计证明其 99.5% 证据来自旧 config v1(v2 下这些组合几乎不交易/打平,
 #   news_positive 单因子 v2 反而 +$70/35笔). 基于旧策略数据给新策略(v2)硬编码黑名单 = 打影子.
@@ -7713,11 +7734,14 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                                  (_json.dumps(_sl_meta), r["id"]))
                     conn.commit()
                     # 2026-07-14: 兜底用原始 initial stop_loss(L3361 判定) → 归为 SL_INITIAL.
-                    _close_trade_record(conn, r["id"], _exit_price, "SL_INITIAL",
+                    # 2026-08-28: 隔夜跳空打穿 SL 改归 OVERNIGHT_GAP_STOP (根因见
+                    #   _sl_fallback_exit_reason docstring) — 只改归因, 平仓动作不变.
+                    _sl_reason = _sl_fallback_exit_reason(_pnl_pct, r["entry_time"], meta.get("horizon", "short"))
+                    _close_trade_record(conn, r["id"], _exit_price, _sl_reason,
                                         _pnl, _pnl_pct / 100, _hh, inst_id=inst_id, symbol=symbol,
                                         close_futu_order_id=_sl_close_futu_id)
                     exited += 1
-                    logger.info(f"[playbook sim] ✅ {symbol} SL_INITIAL 兜底: exit=${_exit_price:.2f} src={_sl_src} pnl=${_pnl:.2f}")
+                    logger.info(f"[playbook sim] ✅ {symbol} {_sl_reason} 兜底: exit=${_exit_price:.2f} src={_sl_src} pnl=${_pnl:.2f}")
                     continue
 
             if abs(current_price - entry_price) / entry_price > 0.15:
