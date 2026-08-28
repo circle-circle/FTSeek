@@ -8,7 +8,8 @@ docs/CONTROL-LOOP-LEDGER.md 是台账本体。本文件钉住最小不变量
 (仅在装有 hermes 的生产机生效, 其他环境整组 skip):
   1. 每个 enabled cron job 的 id 必须出现在台账里 (新环路必须入账);
   2. 台账里引用的 job_id 必须真实存在于 jobs.json (防台账记载幽灵环路);
-  3. 台账必须存在且含造型陈述与包络/准入两节 (防台账被删空)。
+  3. 台账必须存在且含造型陈述与包络/准入两节 (防台账被删空);
+  4. 适应律文档存在且五段齐全 (改参数转移函数的单一真源, 防散回三处)。
 
 回滚: 删本文件 + 删 docs/CONTROL-LOOP-LEDGER.md 即可, 零生产代码依赖。
 """
@@ -21,6 +22,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 JOBS_JSON = Path("/root/.hermes/cron/jobs.json")
 LEDGER = REPO / "docs" / "CONTROL-LOOP-LEDGER.md"
+ADAPT_LAW = REPO / "docs" / "ADAPTATION-CONTROL-LAW.md"
 
 pytestmark = pytest.mark.skipif(
     not JOBS_JSON.exists(), reason="非生产机 (无 /root/.hermes/cron/jobs.json)")
@@ -62,3 +64,14 @@ def test_ledger_job_ids_are_real(jobs, ledger_text):
 def test_ledger_has_core_sections(ledger_text):
     for section in ("造型陈述", "稳定包络", "统计准入条件", "开环缺口"):
         assert section in ledger_text, f"台账缺核心节: {section} (台账被删空了?)"
+
+
+def test_adaptation_law_intact():
+    assert ADAPT_LAW.exists(), (
+        "适应律文档被删了 (docs/ADAPTATION-CONTROL-LAW.md) — "
+        "改参数转移函数将散回宪章/OKR/DEB 三处, 无单一真源")
+    text = ADAPT_LAW.read_text(encoding="utf-8")
+    for section in ("触发段", "证据段", "增益上限段", "验证段", "回滚段"):
+        assert section in text, f"适应律缺段: {section} (转移函数不完整)"
+    # 增益上限的硬约束必须钉住, 否则适应律退化为噪声放大器 (DEB-20260823)
+    assert "一次一变量" in text, "适应律丢了'一次一变量'增益上界"
