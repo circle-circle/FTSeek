@@ -258,8 +258,6 @@ dual_mode:
     stop_loss_tighten_factor: 1.0
   default_aggression: conservative
   exposure_control:
-    global_max_per_direction: 0.4
-    global_max_per_symbol: 0.25
     global_max_total: 0.8
 dynamic_exit:
   default:
@@ -798,8 +796,6 @@ observability:
       start: '22:00'
 opend:
   host: ${FUTU_OPEND_HOST}
-  login_account: ${FUTU_LOGIN_ACCOUNT}
-  login_password: ${FUTU_LOGIN_PWD}
   port: 11111
 options:
   delta_range:
@@ -1539,8 +1535,6 @@ risk:
     max_position_pct: 0.12
     risk_per_trade_pct: 0.008
   pre_trade:
-    battle_plan_bonus: 0.5
-    battle_plan_bonus_enabled: false
     long_min_strength: 60
     min_effective_strength_floor: 50
     short_min_strength: 45
@@ -1962,21 +1956,17 @@ strategy_enhancements:
   capital_flow:
     enabled: true
     large_order_ratio: 0.3
-    min_net_inflow_threshold: 0
     pv_correlation_window: 5
     volume_surge_factor: 2.0
   leader_pool:
     enabled: true
     exhaustion_ma_days: 5
-    min_volume_threshold: 1000000
-    refresh_interval_minutes: 60
     sectors_to_watch:
     - Technology
     - Semiconductors
     - Consumer Discretionary
     - Automotive
     - Energy
-    top_n_count: 5
   pivotal_points:
     atr_period: 14
     breakout_buffer: 0.005
@@ -2000,10 +1990,8 @@ strategy_enhancements:
     spy_trend_ma: 50
   smart_execution:
     enabled: true
-    limit_order_buffer_ticks: 2
     liquidity_min_score: 0.4
     max_slippage_bps: 50
-    order_book_depth: 5
 strategy_registry:
   BATTLE_PLAN_FAST_PATH:
     config_name: fast_lane

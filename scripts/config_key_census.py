@@ -102,18 +102,11 @@ FILE_EXEMPT = {
 }
 
 # 键级豁免: "文件名:叶子名" → 实证理由 (只收编需特别标注的项, 其余走基线)
+# 2026-08-28: battle_plan_bonus / battle_plan_bonus_enabled / login_password
+#   三键已按各自豁免理由的处方清除 (前两键"配置键残留"→删; login_password
+#   "含敏感形字段, 建议随下批死键清除"→删), 豁免条目随之注销 — 哨兵口径:
+#   键消失而豁免还挂着 = 注册表与配置脱节, 必须同步。
 LEAF_EXEMPT = {
-    # 2026-08-24 A3 分诊实证 (grep 零命中 + 消费方改道证据)
-    "unified_config.yaml:battle_plan_bonus": (
-        "8/23 审计 BATTLE_PLAN_BONUS 常量已删 (commit 0e8990a8), 配置键残留"
-    ),
-    "unified_config.yaml:battle_plan_bonus_enabled": (
-        "8/23 审计 BATTLE_PLAN_BONUS 常量已删, 配置键残留"
-    ),
-    "unified_config.yaml:login_password": (
-        "解锁密码实际走环境变量 FUTU_UNLOCK_PWD_MD5 (dual_broker.py:53), "
-        "yaml 字段死 — 含敏感形字段, 建议随下批死键清除"
-    ),
 }
 
 # 自验证集 (普查口径漂移哨兵):
