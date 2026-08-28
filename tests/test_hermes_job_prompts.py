@@ -85,3 +85,13 @@ def test_weekly_review_step5_uses_repo_script(jobs):
     pr = job[0]["prompt"]
     assert "scripts/weekly_trade_summary.py" in pr
     assert "trade_records" not in pr, "Step 5 又把表名写回 prompt 了"
+
+
+def test_weekly_review_sections_do_not_self_push(jobs):
+    """本 job 的最终消息即交付物; 章节脚本若自己再推一次飞书 = 同一内容每周两遍."""
+    pr = next(j for j in jobs if j["id"] == WEEKLY_JOB_ID)["prompt"]
+    for name in ("ic_weekly_report.py", "symbol_performance_report.py"):
+        calls = [l for l in pr.splitlines() if name in l and "python3" in l]
+        assert calls, f"prompt 里找不到 {name} 的调用 (章节被删? 同步本测试)"
+        for line in calls:
+            assert "--no-push" in line, f"{name} 缺 --no-push, 会与本消息重复推送: {line.strip()}"

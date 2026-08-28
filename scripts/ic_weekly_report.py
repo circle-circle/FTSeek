@@ -246,9 +246,20 @@ def generate_report():
 
     return "\n".join(lines)
 
-def main():
+def main(argv=None):
+    # 2026-08-28: 本脚本有两个调用方 —— crontab (周日 17:00 CST 独立推送) 与 Hermes
+    # 「周日综合复盘」Step 3 (周日 10:00 CST, 其汇总消息本身会推一次)。无开关时同一份
+    # IC 周报每周推两遍, 故给合并路径加 --no-push: 只打印供 agent 取文, 不自己发。
+    import argparse
+    ap = argparse.ArgumentParser(description="IC 周报 (打印 + 可选飞书推送)")
+    ap.add_argument("--no-push", action="store_true",
+                    help="只打印, 不推飞书 (供合并周报调用, 避免同内容重复推送)")
+    args = ap.parse_args(argv)
+
     report = generate_report()
     print(report)
+    if args.no_push:
+        return
 
     # 飞书推送
     try:
