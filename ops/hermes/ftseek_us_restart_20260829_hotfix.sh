@@ -1,6 +1,9 @@
 #!/bin/bash
 # 一次性: 收盘后重启加载 2026-08-28 hotfix (f06464c2, 7 处 app/* + 台账元环) + 自验证.
-# 触发: at 04:35 (CST) = 16:35 ET 盘后; 与 8/27 重启同时段 (16:30 ET)。
+# 【已作废·勿再跑】实际生效于 2026-08-29 03:50 CST (=15:50 ET, 收盘前 10min): 用户改裁
+#   "趁还在盘中, 直接重启 观察", 由本人按本脚本同判据手工执行 (at job 04:35 随之撤销)。
+#   时间守卫 (<4 点拒绝) 保持原样未放宽 —— 盘中重启是人工授权的一次例外, 不写进代码策略。
+#   本文件保留作"重启+机械自验"判据模板 (其 ERROR 模式曾恒 0, 见下方注释)。
 # 与 ops/hermes/ftseek_us_restart_macro_calendar.sh 同法, 但把"人肉看日志"换成机械判据:
 #   active/MainPID/重启后零 ERROR/进程年龄晚于 commit 四项硬判 (任一失败 exit≠0),
 #   持仓 SSOT (含 sl_broker_order_id) 前后各拍一次快照逐行留档 —— 盘后平仓可致合理差异,
@@ -58,7 +61,10 @@ fi
 # ERROR 判据必须读 logs/ftseek_us.log (应用自身 logging 落此, scripts/error_alert.sh 扫的也是它);
 # 用 journalctl 会恒 0 —— 本服务 stdout 几乎不进 journal (8/21 至今仅 283 行), 那是
 # "只能报健康的守卫", 与本日修掉的 D1/D2/D4 静默失明同型。
-ERRS=$(awk -v s="$RESTART_STAMP" '/ ERROR /{ ts=substr($0,1,19); if (ts >= s) n++ } END{print n+0}' \
+# 模式同样踩过"只能报健康": 首版写 '/ ERROR /', 而本日志形态是 "] ERROR:" (后随冒号非空格),
+# 该模式永不匹配 → 恒 0 (2026-08-29 盘中重启实跑才被证伪, 当日真 0 侥幸未掩盖故障)。
+# 现与生产告警链 scripts/error_alert.sh 同形 (ERROR|CRITICAL) —— 判据必须与告警判据一致。
+ERRS=$(awk -v s="$RESTART_STAMP" '/ERROR|CRITICAL/{ ts=substr($0,1,19); if (ts >= s) n++ } END{print n+0}' \
         "$REPO/logs/ftseek_us.log" 2>/dev/null || echo 0)
 echo "ERROR 行数 (重启后, logs/ftseek_us.log): $ERRS"
 [ "$ERRS" = "0" ] || FAIL="$FAIL errors:$ERRS"
