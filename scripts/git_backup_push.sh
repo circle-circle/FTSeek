@@ -55,6 +55,20 @@ else
     echo "$LOG_PREFIX ⚠️ 当日 DB 备份缺失 ($TODAY_BAK), 异机快照不含 DB — 检查 db_backup.sh"
 fi
 
+# ── 2.6 hermes cron 定义入库 (2026-08-28 修 08-03 静默空转) ──
+#   上方 0 段已 cp jobs.json → data/ops/hermes_jobs.json, 但 .gitignore 有 data/*
+#   且 git add -A 遵守忽略规则 → 该快照从未进过任何 commit (实测
+#   origin/backup/runtime-snapshot 无此文件), "cron 定义可追溯" 一直是空承诺.
+#   cron prompt 里内嵌可执行内容 (SQL/bash), 改动必须可回滚, 故与 DB 同款 -f 强加.
+#   (已核 jobs.json 全文无密钥值, 只有 DASHSCOPE_API_KEY 等环境变量名)
+if [ -s data/ops/hermes_jobs.json ]; then
+    git add -f -- data/ops/hermes_jobs.json 2>/dev/null && \
+        echo "$LOG_PREFIX hermes cron 定义已纳入异机快照" || \
+        echo "$LOG_PREFIX ⚠️ hermes_jobs.json add -f 失败, 本次快照不含 cron 定义"
+else
+    echo "$LOG_PREFIX ⚠️ data/ops/hermes_jobs.json 缺失/为空 (cp 失败?), 本次快照不含 cron 定义"
+fi
+
 TREE=$(git write-tree)
 unset GIT_INDEX_FILE
 
