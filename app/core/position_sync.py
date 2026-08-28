@@ -24,6 +24,16 @@ logger = logging.getLogger("ftseek_us.position_sync")
 # 2026-08-05: 自管持仓跳过日志的进程内去重 (首条 INFO, 后续 debug)
 _SELF_MANAGED_SKIP_LOGGED: set = set()
 
+# external_close 查重判据 (2026-08-21 建立, 2026-08-28 收紧): 只有"已了结的记账行"才算重复。
+# 旧判据 realized_pnl IS NOT NULL 会把同一仓位的**开仓行**也当作已记账平仓 (未平仓行历史上带
+# realized_pnl=0.0 占位) → 真实券商平仓被跳过 INSERT 与通知, 而 open_positions 的 DELETE 照常
+# 执行 → 该笔平仓在系统里彻底消失。改按全仓统一的已平仓口径 exit_price > 0 判定。
+# 抽为模块常量: 守卫本体深在 ~500 行同步方法内不可单测, 由 tests 直接对该 SQL 钉不变量。
+EXTERNAL_CLOSE_DUP_SQL = (
+    "SELECT id, entry_time FROM trade_records WHERE symbol=? AND direction=? "
+    "AND exit_price > 0"
+)
+
 def _get_db_path():
     from app.core.db_utils import get_main_db
     return str(get_main_db())
@@ -1580,10 +1590,14 @@ class USPositionSync:
                         _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
                         _entry_time_str = _entry_time.isoformat() if hasattr(_entry_time, 'isoformat') else str(_entry_time)
 
-                        # ── 查重守卫 (2026-08-21, BULL 1327 实锤): executor 平仓与 position_sync
-                        #    external_close 可能对同一仓位双重记账。entry_time 时区写法可不同
-                        #    (+08:00 vs -04:00), 字符串比对会漏 → 归一化为 epoch 秒后比对。
-                        #    命中已有记录(realized_pnl 非 NULL)则跳过 INSERT, 只留日志。
+                        # ── 查重守卫 (2026-08-21, BULL 1327 实锤; 2026-08-28 收紧判据) ──
+                        #    executor 平仓与 position_sync external_close 可能对同一仓位双重记账。
+                        #    entry_time 时区写法可不同 (+08:00 vs -04:00), 字符串比对会漏
+                        #    → 归一化为 epoch 秒后比对。
+                        #    判据必须是"已了结的记账行"(exit_price>0, 全仓统一口径), 不能只看
+                        #    realized_pnl IS NOT NULL: 未平仓行也带 realized_pnl 占位值, 且其
+                        #    entry_time 与本仓位同源 → 守卫会命中该仓位的开仓行, 把真实的外部平仓
+                        #    整条跳过 (不 INSERT、不通知), 而下方 DELETE 照常执行 → 平仓凭空消失。
                         def _to_epoch_sec(_ts):
                             try:
                                 from datetime import datetime as _dt
@@ -1591,7 +1605,10 @@ class USPositionSync:
                                     _d = _ts
                                 else:
                                     _d = _dt.fromisoformat(str(_ts).replace('Z', '+00:00'))
-                                if _d.tzinfo is None:  # naive=ET
+                                if _d.tzinfo is None:
+                                    # 注: 2026-07-20 前的历史 naive 行实测是服务器 CST (按 ET 解释偏 12h),
+                                    # 但守卫只比对已了结行 (相隔数月不会误命中) 且新写入 entry_time 均 aware ET,
+                                    # 故此处不加启发式纠偏。
                                     # 8/27 时钟统一: zoneinfo 真实 ET (DST 自适),
                                     # 极端环境落固定偏移兜底
                                     try:
@@ -1608,8 +1625,7 @@ class USPositionSync:
                             _this_epoch = _to_epoch_sec(_entry_time_str)
                             if _this_epoch is not None:
                                 _exist = _conn.execute(
-                                    "SELECT id, entry_time FROM trade_records WHERE symbol=? AND direction=? "
-                                    "AND realized_pnl IS NOT NULL", (symbol, _dir_name)).fetchall()
+                                    EXTERNAL_CLOSE_DUP_SQL, (symbol, _dir_name)).fetchall()
                                 for _er in _exist:
                                     if _to_epoch_sec(_er[1]) == _this_epoch:
                                         logger.warning(

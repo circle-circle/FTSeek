@@ -719,6 +719,13 @@ class TradeStore:
                     _f4_orderflow = float((_fd_raw.get("orderflow") or {}).get("raw", 0))
                     _f5_lifecycle = float((_fd_raw.get("lifecycle") or {}).get("raw", 0))
 
+                # 未了结行 realized_pnl 写 NULL 不写 0.0: 下游以 "realized_pnl IS NOT NULL" 作已平仓代理
+                # (position_sync external_close 查重 / pre_entry_gate 历史), 0.0 占位让在途仓伪装成保本平仓
+                # → 真实平仓被误判重复而连通知一起丢弃, 胜率分母也掺 0 笔.
+                # 判据取"有任何出场痕迹"而非仅 exit_price: 平仓时行情坏到 0 价也必须保留真实盈亏.
+                _has_exit = bool(record.get("exit_price") or record.get("exit_time"))
+                _realized_pnl_val = record.get("realized_pnl") if _has_exit else None
+
                 cursor = conn.execute("""
                     INSERT INTO trade_records (
                         trade_date, symbol, direction, entry_time, exit_time,
@@ -742,7 +749,7 @@ class TradeStore:
                     # ponytail: 开仓时 exit_price=0 → 写 NULL (与 exit_time IS NULL 语义对齐)
                     record.get("exit_price") if record.get("exit_price") else None,
                     record.get("quantity", 0),
-                    record.get("realized_pnl", 0.0),
+                    _realized_pnl_val,
                     record.get("pnl_pct", 0.0),
                     record.get("exit_reason", ""),
                     record.get("holding_hours", 0.0),
@@ -885,6 +892,9 @@ class TradeStore:
 
         # 2026-06-26: 过滤 PHANTOM_RECONCILE_VOID (pnl=0 的幽灵对账记录, 不应计入交易统计)
         records = [r for r in records if r.get("exit_reason") != "PHANTOM_RECONCILE_VOID"]
+        # 日绩效只统计已了结行: 未平仓行 realized_pnl=NULL (旧数据为 0.0 占位), 既不可参与
+        # sum/比较, 也不该按 <=0 被算作亏损。
+        records = [r for r in records if r.get("realized_pnl") is not None]
         if not records:
             return {"total_trades": 0, "total_pnl": 0.0}
 

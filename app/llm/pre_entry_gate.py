@@ -102,7 +102,8 @@ def _query_history(symbol: str, direction: str, days: int = 7) -> Dict[str, Any]
             """
             SELECT realized_pnl, exit_reason, holding_hours, trade_date
             FROM trade_records
-            WHERE symbol = ? AND direction = ? AND realized_pnl IS NOT NULL
+            WHERE symbol = ? AND direction = ?
+              AND realized_pnl IS NOT NULL AND exit_price > 0
               AND date(entry_time) >= date('now', ?)
             ORDER BY id DESC
             LIMIT 30

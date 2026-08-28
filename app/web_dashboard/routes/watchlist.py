@@ -55,9 +55,12 @@ def _get_latest_signals(symbols: list) -> dict:
 def _get_trade_stats(symbols: list) -> dict:
     """从 trade_records 获取每只股票历史交易统计"""
     result = {}
-    for db_name in ["ftseek_us_live.db"]:
+    # 2026-08-28: 原硬编码 "ftseek_us_live.db" — 与运行模式无关地读实盘库文件, 而 sim 模式下
+    #   该库自 2026-07-19 起零写入 (仅 17 行旧数据), 面板胜率/笔数恒停在 40 天前且不含真实成交。
+    #   改读模式感知主库 (get_main_db: TRADE_ENV=0 时自动即 live 库), 合并结构保留。
+    for db_path in [_get_db()]:
         import os
-        db_path = os.path.join(os.path.dirname(_get_db()), db_name)
+        db_name = os.path.basename(db_path)
         if not os.path.exists(db_path):
             continue
         try:
@@ -73,6 +76,7 @@ def _get_trade_stats(symbols: list) -> dict:
                 FROM trade_records
                 WHERE symbol IN ({placeholders})
                   AND realized_pnl IS NOT NULL
+                  AND exit_price > 0
                 GROUP BY symbol
             """, symbols).fetchall()
             for r in rows:
