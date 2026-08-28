@@ -57,32 +57,49 @@ def is_trading_day(date_str):
 
 
 def fetch_daily_bars(symbols, date_str):
-    """单日日K (open/high/low/close/volume) — venv futu, 单进程批量."""
+    """单日日K (open/high/low/close/volume) + 真昨收 — venv futu, 单进程批量.
+
+    [口径修复 2026-08-29] 不再信 scan 文件的 prev_close (62% 是两天前收盘, 见
+    2026-08-29 审计): 拉 date 前 14 天窗口, 取 date 之前最后一根日K收盘作真昨收。
+    """
     if not symbols:
         return {}
+    try:
+        _dt = datetime.strptime(date_str, '%Y-%m-%d')
+        _start = (_dt - timedelta(days=14)).strftime('%Y-%m-%d')
+    except Exception:
+        _start = date_str
     code = f"""
-import json, sys
+import json, sys, time
 from futu import OpenQuoteContext, KLType, RET_OK
 syms = sys.argv[1].split(',')
 date = sys.argv[2]
+start = sys.argv[3]
 ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
 out = {{}}
-for s in syms:
+for i, s in enumerate(syms):
+    if i > 0:
+        time.sleep(1.2)  # [2026-08-29] 历史K线配额限流 (~30次/30s), 批量回填必加
     try:
-        ret, data, _ = ctx.request_history_kline(s, start=date, end=date, ktype=KLType.K_DAY, max_count=5)
+        ret, data, _ = ctx.request_history_kline(s, start=start, end=date, ktype=KLType.K_DAY, max_count=12)
         if ret == RET_OK and data is not None and len(data) > 0:
             row = data.iloc[-1]
+            prev = 0.0
+            for i in range(len(data) - 2, -1, -1):
+                if str(data.iloc[i]['time_key'])[:10] < date:
+                    prev = float(data.iloc[i]['close'])
+                    break
             out[s] = {{'open': float(row['open']), 'high': float(row['high']),
                        'low': float(row['low']), 'close': float(row['close']),
-                       'volume': float(row.get('volume', 0))}}
+                       'volume': float(row.get('volume', 0)), 'prev_close': prev}}
     except Exception:
         pass
 ctx.close()
 print(json.dumps(out))
 """
     try:
-        r = subprocess.run([VENV_PYTHON, '-c', code, ','.join(symbols), date_str],
-                           capture_output=True, text=True, timeout=180)
+        r = subprocess.run([VENV_PYTHON, '-c', code, ','.join(symbols), date_str, _start],
+                           capture_output=True, text=True, timeout=300)
         if r.returncode == 0 and r.stdout.strip():
             # futu 断连日志可能在 JSON 之后打到 stdout — 逐行找可解析的 JSON
             for ln in reversed(r.stdout.strip().splitlines()):
@@ -205,10 +222,16 @@ def main():
     for m in movers:
         sym = m.get('symbol')
         bar = bars.get(sym)
-        prev_close = m.get('prev_close') or 0
+        # [口径修复 2026-08-29] 真昨收优先取日K自算值 (bar['prev_close']);
+        #   scan 文件的 m['prev_close'] 仅作兜底 (历史 62% stale)。
+        prev_close = (bar or {}).get('prev_close') or m.get('prev_close') or 0
         if not bar or prev_close <= 0:
             continue
         pm_chg = m.get('premarket_chg_pct') or 0
+        # [口径修复 2026-08-29] 有盘前价时按真昨收重算涨跌幅 (双保险; 历史审计
+        #   显示 chg 字段本身对真昨收计算正确, 但源头字段已证伪 62% 不可信)。
+        if m.get('premarket_price'):
+            pm_chg = (m['premarket_price'] / prev_close - 1) * 100
         day_chg = (bar['close'] - prev_close) / prev_close * 100
         cont = (pm_chg > 0) == (day_chg > 0)
         direction = 1 if pm_chg > 0 else -1
