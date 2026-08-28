@@ -1221,13 +1221,21 @@ playbook:
   supply_conf_gate_buy: 55
   supply_conf_gate_short: 55
   shadow_portfolio_enabled: true
-  overnight_hold_shadow_enabled: true
+  # 2026-08-28 取消采集 (过期): shadow_registry 已判 GRADUATED (last_evaluated=2026-08-15,
+  #   n=15/15, W_WEEK +$629) — 毕业后再打的是同一个结论, 且与在跑的 loser_overnight_*
+  #   特性重复; 唯一读者 scripts/settle_overnight_shadow.py 在 crontab/Hermes 均无排班,
+  #   文件只增不给读者 (data/overnight_hold_shadow_latest.json 靠手工跑)。判据已满足,
+  #   裁决本身另议。回滚: true (+pipeline.py:8156 "攒样本再裁" 注释同步纠偏)。
+  overnight_hold_shadow_enabled: false
   # 2026-08-12 (8/11盘后诊断, 挂起治理): MFE_STALL 入场侧影子打标 — 8/11 诊断发现
   #   news_positive 触发 100% 出现在 STALL 笔 (6/6), insider_net_buy 2.3倍,
   #   thesis"等回调"措辞 67% — 但 n=6 Fisher 不显著, 攒样 (n≥30) 再裁是否加门禁.
   #   盘后给全部已平仓成交打三嫌疑特征标 (含非stall留分母) → data/stall_entry_shadow.jsonl.
   #   零执行路径改动 (盘后脚本). 回滚: false + 重启.
-  stall_entry_shadow_enabled: true
+  #   2026-08-28 取消采集: 自订判据 n≥30 已 438 笔 (14倍) 达标, 但全仓无任何路径执行"再裁"
+  #     (shadow_board 段1-10 不读/shadow_registry 未登记/data_freshness_watchdog 不含),
+  #     样本早已齐而采集仍每 tick 跑。门禁裁决本身留给人工 (见本提交说明)。
+  stall_entry_shadow_enabled: false
   # 2026-08-27 (用户动议·盘后出场影子监控): 水下隔夜仓盘后(16:00-20:00 ET)延续修复
   #   观测 — touch_entry(触及entry=修复)/touch_be(净盈利垫±0.6%)/touch_tp(提前TP)
   #   三观测臂每夜独立反事实 + red_cut_1pct 唯一决策臂 (深红≥1%收盘割, 回放n=12
@@ -1252,12 +1260,16 @@ playbook:
   #   瞬间 21秒5笔齐射 4亏1赢 (独立信号变相关性=1篮子单); 历史自然分散入场同区间
   #   +$487. 盘后打 volley 聚类(≤120s相邻) + 时段分区标签 → data/entry_sync_shadow.jsonl.
   #   零执行路径改动 (盘后脚本). n≥30 再裁单轮限流门. 回滚: false + 重启.
-  entry_sync_shadow_enabled: true
+  #   2026-08-28 取消采集: 判据 n≥30 已 356 笔达标, 无任何路径执行"再裁" (与 stall_entry
+  #     同族: 采集器有排班、裁决者零排班)。限流门裁决留人工。
+  entry_sync_shadow_enabled: false
   # 2026-08-12 (入场价格机制 Plan B): 陈旧锚影子打标 — DA锚价盘前生成, 可能脱离当日
   #   实际价格 (AVGO锚低4.3%错过上行/HON锚高3.7%破位悬空)。用trigger_miss每轮观测价
   #   重建指令价格路径, 打陈旧度标签→data/stale_anchor_shadow.jsonl。零执行路径改动。
   #   n≥30再裁硬门/接entry_reference。回滚: false + 重启。
-  stale_anchor_shadow_enabled: true
+  #   2026-08-28 取消采集: 判据 n≥30 已 779 笔达标 (八倍, 全影子族最大样本), 而"再裁"无
+  #     任何执行路径 (无读者排班)。陈旧锚硬门裁决留人工。
+  stale_anchor_shadow_enabled: false
   # 2026-08-16 (W_WEEK多夜持仓配套): 隔夜持仓×新指令冲突影子打标 — 执行段防御已有
   #   (pipeline L3244 同向拦截/反向放行), 本影子攒观测样本→data/conflict_shadow.jsonl。
   #   n≥30再裁候选端排除。回滚: false + 重启。
@@ -1269,11 +1281,14 @@ playbook:
   # 2026-08-17 (DEB-20260817 画像系统, 建议①): 缺口语义影子 — gap-bucket级"等vs追"
   #   判定 + A1开盘5min中枢重锚反事实→data/gap_semantics_shadow.jsonl。市场级规律不依赖
   #   票型标签(A3冻结不受影响)。n≥60再裁gap语义门。回滚: false + 重启。
-  gap_semantics_shadow_enabled: true
+  #   2026-08-28 取消采集: 判据 n≥60 已 286 笔达标, "再裁"无执行路径 (采集有排班/裁决无)。
+  gap_semantics_shadow_enabled: false
   # 2026-08-17 (DEB-20260817, 建议②): band波动率化影子 — 扁平band vs atr分桶反事实band
   #   成交价质量/死锚/时滞对照→data/band_vol_shadow.jsonl。回填补读: 成交中位偏离
   #   0.000ATR+两臂触达100%=band非入场约束, 病症暂不成立, 影子降级为漂移监控。回滚同上。
-  band_vol_shadow_enabled: true
+  #   2026-08-28 取消采集: 本影子已自判"病症暂不成立"(结论已出=自我废止), 且 n≥30 判据
+  #     早已 256 笔达标、无读者无排班监控 (所谓"降级为漂移监控"并无监控方)。
+  band_vol_shadow_enabled: false
   # 2026-08-17 (DEB-20260817第4轮根因治理): 日K缓存每日盘后增量刷新 — 曾停更3周
   #   污染A2报告35%行gap。A2 prev_close单点依赖, 幂等刷新防复发。回滚同上。
   daily_bars_refresh_enabled: true

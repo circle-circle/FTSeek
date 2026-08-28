@@ -9,6 +9,10 @@ import scripts.settle_overnight_shadow as sos
 
 def _patch_output(tmp_path, monkeypatch):
     monkeypatch.setattr(ohs, "_OUTPUT", tmp_path / "ov.jsonl")
+    # 2026-08-28: 生产开关已置 false (影子族取消采集), 本夹具必须显式钉住"开" —
+    #   否则 emit 用例的红绿取决于 unified_config 的策略值而非被测逻辑 (良性退出过滤)。
+    #   test_emit_disabled 自行覆盖为 False。
+    monkeypatch.setattr(ohs, "_enabled", lambda: True)
 
 
 def test_emit_accepts_benign(tmp_path, monkeypatch):
