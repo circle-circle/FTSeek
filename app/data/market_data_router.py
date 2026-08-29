@@ -853,6 +853,10 @@ class MarketDataRouter:
         # §7.5-C/D: None=盘口不可用 (与主路径退化语义一致), 不再以 0.0 假装有数据
         ts_ctx.setdefault("order_flow_imbalance", None)
         ts_ctx.setdefault("ticker_buy_sell_ratio", 1.0)
+        # RFC-068 审计修复补全: TD 降级路径的昨收键名是 previous_close → 归一为
+        # prev_close (LV3 全挂时门仍有数据; TD 缺该字段回落现价 → chg=0 自然放行)。
+        if not ts_ctx.get("prev_close") and float(ts_ctx.get("previous_close", 0) or 0) > 0:
+            ts_ctx["prev_close"] = float(ts_ctx["previous_close"])
 
         # 添加时间戳
         ts_ctx["timestamp"] = datetime.now().isoformat()
