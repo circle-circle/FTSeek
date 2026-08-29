@@ -1,5 +1,11 @@
 """深度目标分析 Prompt 模板 (v3)
 
+⚠️ [DEB-20260829 X1 2026-08-29] 死代码标注: 本模块自 2026-07-25 起零调用
+   (llm_audit feature=deep_target_analysis 最后记录 2026-07-25; 仅
+   web_dashboard battle_plan.py:637 有引用路径但无实际流量)。
+   生产 DA 在 skill 仓: /root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py
+   请勿在此修改生产行为 — 改这里不会生效。
+
 用途：为作战计划中每个 target 生成 MU_research-deep.md 级别的专业多空辩论分析。
 
 包含三套模板：

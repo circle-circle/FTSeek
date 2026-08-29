@@ -263,6 +263,163 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
     return _stk <= max_streak
 
 
+# ── [UE-B2 2026-08-29, DEB-20260829 第3轮批准] inject 拒绝落盘 ──
+# 根因 (D3 病灶台账 U3): inject 各拒绝分支只留 stdout — "SHORT 27→9 衰减黑箱"
+#   无法归因。每个被拒候选落一行结构化记录, 连续10交易日后首次成表分解衰减漏斗。
+#   纯观测, 零行为影响。回滚: 配置设 universe_expansion.inject_reject_log: false。
+_INJECT_REJECT_PATH = _ROOT / "data" / "shadow" / "llm_universe_inject.jsonl"
+
+
+def _log_inject_reject(surfaced: List[Dict[str, Any]], min_conf: float,
+                       positions: set, existing_pb: set, max_streak: int,
+                       max_n: int) -> None:
+    """对每个未进入 inject 的浮现候选记录唯一拒绝原因 (优先级序与候选筛选一致)。"""
+    if not bool(_cfg("universe_expansion.inject_reject_log", True)):
+        return
+    try:
+        # 候选筛选链 (与 cmd_inject 的 cand 列表推导同序): 方向 → 置信 → 持仓 → DA已写 → streak
+        kept: List[Dict[str, Any]] = []
+        rows: List[Dict[str, Any]] = []
+        for s in surfaced:
+            sym = s.get("symbol", "")
+            conf = float(s.get("confidence", 0) or 0)
+            stk = s.get("emergence_streak_days") or 1
+            tier = s.get("tier", "")
+            if s.get("direction") not in ("LONG", "SHORT"):
+                reason = f"direction({s.get('direction','')})"
+            elif conf < min_conf:
+                reason = f"conf({conf:.2f}<{min_conf:g})"
+            elif sym in positions:
+                reason = "already_in_position"
+            elif sym in existing_pb:
+                reason = "da_or_other_already_written"
+            elif stk > max_streak:
+                reason = f"streak_gate({stk}>{max_streak})"
+            else:
+                kept.append(s)
+                continue
+            rows.append({"date": _today(), "symbol": sym, "direction": s.get("direction", ""),
+                         "reject_reason": reason, "raw_conf": conf, "tier": tier,
+                         "streak": stk, "stage": "filter"})
+        # 配额截断: 置信排序后超出 max_n 的候选
+        kept.sort(key=lambda s: s.get("confidence", 0), reverse=True)
+        for s in kept[max_n:]:
+            rows.append({"date": _today(), "symbol": s.get("symbol", ""),
+                         "direction": s.get("direction", ""),
+                         "reject_reason": "quota_cap(max_targets_per_day)",
+                         "raw_conf": float(s.get("confidence", 0) or 0),
+                         "tier": s.get("tier", ""),
+                         "streak": s.get("emergence_streak_days") or 1, "stage": "filter"})
+        if not rows:
+            return
+        _INJECT_REJECT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _INJECT_REJECT_PATH.open("a") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"  [inject-reject-log] {len(rows)} 条拒绝记录 → {_INJECT_REJECT_PATH.name}")
+    except Exception as e:
+        print(f"  [warn] inject 拒绝落盘失败 (不阻塞): {e}")
+
+
+def _log_inject_loop_reject(s: Dict[str, Any], reason: str) -> None:
+    """[UE-B2] inject 指令构造循环内的拒绝分支 (无现价/entry_zone 无效) 落盘。"""
+    if not bool(_cfg("universe_expansion.inject_reject_log", True)):
+        return
+    try:
+        row = {"date": _today(), "symbol": s.get("symbol", ""),
+               "direction": s.get("direction", ""), "reject_reason": reason,
+               "raw_conf": float(s.get("confidence", 0) or 0), "tier": s.get("tier", ""),
+               "streak": s.get("emergence_streak_days") or 1, "stage": "build"}
+        _INJECT_REJECT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _INJECT_REJECT_PATH.open("a") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# ── [UE-A3 2026-08-29, DEB-20260829 第3轮批准] 8-K/13DG clue 噪声过滤 ──
+# 病灶 (U1): 8/28 实测 15 条 8-K 中 7 条为商品 ETF 每日例行 7.01 Reg FD
+#   (CPER/BNO/UNL/UGA/USL/UNG/USO — 无事件性) + 1 条权证 (OSRHW) → 真股权事件被稀释。
+#   对照: RFC-061 已给盘前榜做了同等过滤, 8-K/13DG 无。
+# 规则: ①商品信托名单 (每日例行文件) ②权证 (名称含 WARRANT/WTS — 名称权威,
+#   不用裸 W 后缀猜测: 8/29 实弹发现 FWFW=Flywheel 真实公司被后缀规则误杀)
+#   ③连字符权证 (IONQ-WT 式, 无歧义) ④ETF 例行 7.01 (items 仅 7.01 + 名称含 ETF 关键词)。
+# 13DG 侧: 权证/优先股举牌无普通股事件意义, 同样剔除。
+# 回滚: 配置 universe_expansion.clue_sec_noise_filter: false。
+_COMMODITY_TRUST_TICKERS = frozenset(
+    {"CPER", "BNO", "UNL", "UGA", "USL", "UNG", "USO"})  # United States Commodity Funds 族
+_8K_ETF_NAME_KEYWORDS = ("ETF", "SPDR", "ISHARES", "ULTRA", "PROSHARES", "DIREXION",
+                         "INVESCO", "VANGUARD", "SELECT SECTOR", "EXCHANGE TRADED")
+
+
+def _sec_clue_noise_filter_enabled() -> bool:
+    return bool(_cfg("universe_expansion.clue_sec_noise_filter", True))
+
+
+def _is_warrant_ticker(ticker: str, company: str) -> bool:
+    """权证判定 (保守: 宁可漏过权证, 不可误伤普通股 — 预注册判据"真事件不减少")。"""
+    t = (ticker or "").upper().replace("US.", "")
+    name = (company or "").upper()
+    if "WARRANT" in name or "WTS" in name:
+        return True
+    if "-WT" in t or "-W" in t:  # 连字符权证 (IONQ-WT 式, 无歧义)
+        return True
+    return False
+
+
+def _filter_8k_noise(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """[UE-A3] 8-K 噪声过滤主入口: 静态规则 + 同批交叉判据。
+
+    同批交叉判据 (8/29 实弹): 裸 W 后缀不可靠 (FWFW=Flywheel 真实公司被误杀),
+    改判"同公司名在本批有无 W 后缀的基础 ticker" → 该 W 后缀者=权证
+    (如 MOBIX LABS 同批既有 MOBX 又有 MOBXW → MOBXW 判定权证)。
+    保守方向: 判据不满足则保留 (漏过权证 < 误伤普通股)。
+    """
+    kept_static = [r for r in rows
+                   if not _is_8k_noise(r.get("ticker", ""), r.get("company", ""),
+                                       [str(i).split()[0] for i in (r.get("items") or [])])]
+    # 同批基础 ticker 公司名集合 (非 W 形态结尾)
+    base_names = set()
+    for r in kept_static:
+        t = str(r.get("ticker", "")).upper().replace("US.", "")
+        if not (t.endswith("W") and len(t) >= 4):
+            base_names.add(str(r.get("company", "")).upper().strip())
+    out = []
+    for r in kept_static:
+        t = str(r.get("ticker", "")).upper().replace("US.", "")
+        cname = str(r.get("company", "")).upper().strip()
+        if t.endswith("W") and len(t) >= 4 and cname in base_names:
+            continue  # 同批有基础公司 → 权证
+        out.append(r)
+    return out
+
+
+def _is_8k_noise(ticker: str, company: str, items: List[str]) -> bool:
+    """True = 例行文件/权证噪声, 应剔除。"""
+    if not _sec_clue_noise_filter_enabled():
+        return False
+    t = (ticker or "").upper().replace("US.", "")
+    name = (company or "").upper()
+    if t in _COMMODITY_TRUST_TICKERS:
+        return True
+    if _is_warrant_ticker(ticker, company):
+        return True
+    # ETF 例行 7.01 Reg FD: item 仅 7.01 且名称带 ETF 关键词
+    if items == ["7.01"] and any(k in name for k in _8K_ETF_NAME_KEYWORDS):
+        return True
+    return False
+
+
+def _is_13dg_noise(ticker: str, company: str) -> bool:
+    """True = 权证/优先股举牌 (对普通股发现无事件意义), 应剔除。"""
+    if not _sec_clue_noise_filter_enabled():
+        return False
+    name = (company or "").upper()
+    if any(k in name for k in ("PREFERRED", "PFD", "DEPOSITORY")):
+        return True
+    return _is_warrant_ticker(ticker, company)
+
+
 # ── [U11 2026-08-26] 开盘确认门 (两段式: 盘前假设→开盘+10min代码裁决) ──
 # 设计: 21:10 CST scan 生成假设 (照旧, DA供料不断); 开盘+10min (EDT=21:40 / EST=22:40
 #   CST, 双季 cron 双挂) 用真实盘中价做 price-in 裁决。用户 8/25 裁"信息是否已被价格
@@ -537,6 +694,69 @@ def _gather_earnings_events() -> List[str]:
     return out
 
 
+# ── [UE-B1影子版 2026-08-29, DEB-20260829 第3轮重新设计] 全市场财报影子 ──
+# 病灶 (U2): get_recently_reported/get_watchlist_earnings 内部均过滤到 watchlist,
+#   宇宙外财报一条进不了发现层 (8/28 实测 clue "财报:0" 而同日全市场 8 家)。
+# 第3轮查清: EarningsCalendar 无表级持久化 (ca1b4748 "147条入库"=进程内返回列表,
+#   措辞误导), 消费方式就是进程内 get_earnings_calendar() 活体拉取 (富途主源)。
+# 影子首版"只记不喂": 全市场当日+次日财报 → 排序键=与其他 clue 源交叉命中优先
+#   (8-K/盘前榜/事件标的任一源出现者排前, 其余按报告时距升序) → 前8行落
+#   data/shadow/ue_earnings_clue_shadow.jsonl, 不进 clue brief。
+#   5交易日后看"影子行被其他源交叉印证比例"裁决是否转正 (分歧3排序键天然解)。
+# 回滚: 配置 universe_expansion.clue_earnings_shadow: false。
+_EARNINGS_SHADOW_PATH = _ROOT / "data" / "shadow" / "ue_earnings_clue_shadow.jsonl"
+
+
+def _gather_earnings_shadow(corroboration_syms: set) -> None:
+    """全市场财报日历 → 影子落盘 (不返回, 不喂模型)。失败静默降级。"""
+    if not bool(_cfg("universe_expansion.clue_earnings_shadow", True)):
+        return
+    try:
+        from app.data.earnings_calendar import EarningsCalendar
+        ec = EarningsCalendar()
+        cal = ec.get_earnings_calendar()  # 富途主源, 进程内缓存 TTL 1h
+        if not cal:
+            return
+        today = _today()
+        try:
+            from datetime import datetime as _dt
+            _t = _dt.strptime(today, "%Y-%m-%d")
+
+            def _days_until(rd: str) -> int:
+                try:
+                    return (_dt.strptime(str(rd)[:10], "%Y-%m-%d") - _t).days
+                except Exception:
+                    return 999
+            # 只取当日+次日 (时点风险窗口), 其余历史段不采
+            cal = [r for r in cal if 0 <= _days_until(r.get("reportDate", "")) <= 1]
+        except Exception:
+            return
+        rows = []
+        for r in cal:
+            sym = str(r.get("symbol", "")).upper().replace("US.", "")
+            if not sym:
+                continue
+            rows.append({
+                "date": today, "symbol": sym,
+                "name": r.get("name", ""),
+                "report_date": str(r.get("reportDate", ""))[:10],
+                "days_until": _days_until(r.get("reportDate", "")),
+                "cross_hit": sym in corroboration_syms,
+                "fetched_at": _now_et().isoformat(),
+            })
+        # 排序: 交叉命中优先 → 报告时距升序; 取前8
+        rows.sort(key=lambda x: (not x["cross_hit"], x["days_until"], x["symbol"]))
+        rows = rows[:8]
+        _EARNINGS_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _EARNINGS_SHADOW_PATH.open("a") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"  [earnings-shadow] {len(rows)} 行全市场财报影子 "
+              f"(交叉命中{sum(1 for r in rows if r['cross_hit'])}) → {_EARNINGS_SHADOW_PATH.name}")
+    except Exception as e:
+        print(f"  [warn] 财报影子落盘失败 (降级): {e}")
+
+
 def _gather_insider_clusters() -> List[str]:
     """[ADR-018] 读今日已持久化的内部人集群报告 (insider_daily_{date}.json, 无网络).
     集群买入=看多硬事件。无今日文件/无信号 → []。"""
@@ -733,6 +953,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
 
     # [ADR-017/018] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
     hard: List[str] = []
+    _corro_syms: set = set()  # [UE-B1影子] 财报影子交叉印证符号集 (8-K/13DG ticker)
     if bool(_cfg("universe_expansion.clue_hard_events", False)):
         _he = _gather_hard_events(news)            # 新闻分类 (关键词, 零成本)
         hard += _he
@@ -754,10 +975,14 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             from app.data.sec_8k_provider import fetch_recent_8k
             _8k = fetch_recent_8k(lookback_hours=int(_cfg(
                 "universe_expansion.news_lookback_hours", 24)))
+            # [UE-A3 2026-08-29] ETF/权证/商品信托例行文件剔除 (先过滤再取15, 不足不补凑)
+            _8k = _filter_8k_noise(_8k)
             _8k_lines = [f"8-K {r['ticker']}: {'; '.join(r['item_labels'])} "
                          f"(filed {r['updated'][:16]})" for r in _8k[:15]]
             hard += _8k_lines
             health.append(f"8-K:{len(_8k_lines)}")
+            _corro_syms.update(str(r.get("ticker", "")).upper().replace("US.", "")
+                               for r in _8k)  # [UE-B1影子] 交叉印证源①
         except Exception as _8k_e:
             print(f"  [warn] 8-K 直连失败 (降级): {_8k_e}")
             health.append("8-K:err")
@@ -767,11 +992,16 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         try:
             from app.data.sec_8k_provider import fetch_recent_13dg
             _dg = fetch_recent_13dg(lookback_hours=96)
+            # [UE-A3 2026-08-29] 权证/优先股举牌剔除 (对普通股发现无事件意义)
+            _dg = [r for r in _dg
+                   if not _is_13dg_noise(r.get("ticker", ""), r.get("company", ""))]
             _dg_lines = [f"举牌 {r['ticker']}: {r['form']}"
                          f"{' (主动举牌, 看多先验强)' if r['form'].startswith('SC 13D') else ' (被动持仓)'} "
                          f"(filed {r['updated'][:16]})" for r in _dg[:10]]
             hard += _dg_lines
             health.append(f"13DG:{len(_dg_lines)}")
+            _corro_syms.update(str(r.get("ticker", "")).upper().replace("US.", "")
+                               for r in _dg)  # [UE-B1影子] 交叉印证源②
         except Exception as _dg_e:
             print(f"  [warn] 13D/G 直连失败 (降级): {_dg_e}")
             health.append("13DG:err")
@@ -868,6 +1098,23 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             parts.extend(fb)
             parts.append("规则: 对上表中连续推错(连续负收益)的 同标的+同方向, 除非今日材料中出现"
                          "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。")
+
+    # [UE-B1影子 2026-08-29] 全市场财报影子落盘 (只记不喂) — 交叉印证源③事件标的文件 ④盘前榜
+    try:
+        _es_path = _ROOT / "data" / f"event_symbols_{_today()}.json"
+        if _es_path.exists():
+            _esd = json.loads(_es_path.read_text())
+            _corro_syms.update(str(e.get("symbol", "")).upper().replace("US.", "")
+                               for e in (_esd.get("event_symbols") or []))
+        _pm_path = _ROOT / "data" / f"premarket_rank_candidates_{_today()}.json"
+        if _pm_path.exists():
+            _pmd = json.loads(_pm_path.read_text())
+            for _side in ("gainers", "losers"):
+                for _c in ((_pmd.get(_side) or {}).get("candidates") or []):
+                    _corro_syms.add(str(_c.get("symbol", "")).upper().replace("US.", ""))
+    except Exception:
+        pass
+    _gather_earnings_shadow(_corro_syms)
 
     print(f"  [输入源健康] " + " | ".join(health))
     # [U9 2026-08-25 建议②] 扫描时注入当日 regime 摘要 — 与注入端同源 (MarketRegimeGate),
@@ -1521,6 +1768,9 @@ def cmd_inject(force_dry: bool = False) -> int:
     cand.sort(key=lambda s: s["confidence"], reverse=True)
     cand = cand[:max_n]
 
+    # [UE-B2 2026-08-29] 拒绝归因落盘 — 筛选链每个落选候选一行结构化记录 (纯观测)。
+    _log_inject_reject(surfaced, min_conf, positions, existing_pb, _max_streak, max_n)
+
     if not cand:
         print(f"[inject] 无合格候选 (min_conf={min_conf}, 已排除持仓/DA已写)")
         return 0
@@ -1549,6 +1799,7 @@ def cmd_inject(force_dry: bool = False) -> int:
         px = _effective_quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
         if not px:
             print(f"  [skip] {s['symbol']} 无现价")
+            _log_inject_loop_reject(s, "no_quote(无现价)")
             continue
         # 2026-08-13: 价格地板 — OTC仙股源头拦截 (AETN $0.13案例: Futu无OTC行情,
         #   执行端永远无法re-price=死指令+轮询噪音). 与DA扫描器$5闸+admission.min_entry_price同源.
@@ -1571,6 +1822,7 @@ def cmd_inject(force_dry: bool = False) -> int:
         nums = _compute_numbers(float(px), s["direction"])
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
+            _log_inject_loop_reject(s, "entry_zone_invalid")
             continue
         # entry_zone 即 compute_entry_band 输出 (执行端同源, band 一致)
         entry_low, entry_high = nums["entry_zone"][0], nums["entry_zone"][1]
