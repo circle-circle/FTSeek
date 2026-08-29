@@ -165,8 +165,8 @@
 - [x] UE-B1: 财报 clue 全市场化 → 影子首版"只记不喂" (交叉命中排序) — 520133a3
 - [x] UE-B2: inject 拒绝落盘 jsonl — 520133a3
 - [x] DA-B3: ok_dimensions/data_quality 列透传 (断点在 skill 直写处补齐) — c6e53ba
-- [ ] DA-C1: 方向结构测量落盘 — 未实施 (第3轮3.4未列入实施批, 观察项待下批)
-- [ ] UE-C2: streak 闸反事实跟踪 — 未实施 (同上)
+- [x] DA-C1: 方向结构测量落盘 — 已实施 (第5轮用户裁"要 完成后提交", 提交号见第5轮)
+- [x] UE-C2: streak 闸反事实跟踪 — 已实施 (同上)
 - [x] DA-X1: 本仓死 DA 标注 (选标注不删除) — 520133a3
 - [x] M3: flagged 去重 (随批) — c6e53ba
 
@@ -177,6 +177,27 @@
 - [ ] 关闭条件: A/B 级全部实施或明文否决; C 级攒样判据到期有裁决动作
 
 ## 讨论记录
+
+### 第 6 轮 (2026-08-30, Hermes 执行 C 系列观察项 — 用户裁"要 完成后提交")
+
+**范围**: DA-C1 (方向结构测量) + UE-C2 (streak 闸反事实跟踪) — 第2轮列为观察项、第3轮"维持攒样但未列入实施批"的两项, 本轮用户单独批准落地。纯测量层, 零行为变更。
+
+**实施**:
+| 项 | 位置 | 口径 |
+|---|---|---|
+| DA-C1 | `_log_direction_structure` → `data/shadow/ue_direction_structure.jsonl` | 每日 inject 时一行两节: 候选池 (surfaced) LONG/SHORT/OTHER + tier 分布 + 分向平均 conf; DA 输出 (decision_id 前缀 DA-*) BUY/SELL_SHORT/SKIP 分布。UE 前缀排除不互相污染 |
+| UE-C2 | `_blocked_by_streak` + `_log_streak_counterfactual` → `data/shadow/ue_streak_counterfactual.jsonl` | "除 streak 外全部门都过"的候选逐笔记档 (symbol/方向/streak/raw_conf/tier/scan_price)。收益口径零额外行情: cmd_score 评分链不受 streak 闸影响, 裁决时按 (scan_date, symbol) join score results 即得反事实 fwd_pct, 与 D 系列判分完全同口径 |
+
+**预注册判据 (照抄执行项, 攒满即裁)**:
+- DA-C1: ≥10 交易日; 供给对称而输出 BUY 占比仍 >75% → 立案 prompt 级诊断; 否则归档为 regime 产物
+- UE-C2: n≥20 被拦信号; 反事实均值显著>0 → 提案放宽 max_emergence_streak 对 HARD_EVENT 的豁免
+
+**配套 (沿第5轮惯例)**:
+- 两开关显式入 `unified_config.yaml` (`direction_structure_log` / `streak_counterfactual_log`, 值=true=代码默认, 零行为变更, 回滚路径从"加键"变"改 false"); YAML 解析验证通过
+- 测试入库: `tests/test_ue_deb20260829_ruler_fixes.py` 追加 6 用例 (C1 分布/非DA前缀排除/回滚门; C2 拦截谓词/streak=99零拦截/落盘/回滚门), 全文件 19 用例通过
+- 实弹修正留痕: 首轮自测断言写错 (existing_pb 未含 INPB 却期望其被排除), 函数逻辑本身正确, 修正断言后全绿
+
+**观察起点**: DA-C1 从下一交易日 (8/31) 起攒 10 交易日; UE-C2 从首个被拦信号起攒 (max_emergence_streak=2 已生效, 8/28 BABA 式案例为导火索样本)。
 
 ### 第 5 轮 (2026-08-30 凌晨, 本仓 agent 独立复核第4轮执行 — 用户令"确认有效无误后作为修尺子手段执行")
 

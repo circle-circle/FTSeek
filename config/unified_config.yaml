@@ -1788,6 +1788,12 @@ universe_expansion:
   clue_sec_noise_filter: true
   # UE-B1影子: 全市场财报 clue 只记不喂 (ue_earnings_clue_shadow.jsonl)。回滚: false。
   clue_earnings_shadow: true
+  # 2026-08-30 (DEB-20260829 第6轮, 用户裁"要 完成后提交"): C 系列观察项两开关。
+  #   代码内 default=true, 显式声明使回滚路径可发现 (值与默认一致=零行为变更)。
+  # DA-C1: 方向结构测量 (候选池方向分布 vs DA 输出方向分布) → ue_direction_structure.jsonl。回滚: false。
+  direction_structure_log: true
+  # UE-C2: streak 闸反事实跟踪 (被拦信号逐笔记档, 裁决时 join score results)。回滚: false。
+  streak_counterfactual_log: true
   peer_surge_groups:
     存储:
     - MU

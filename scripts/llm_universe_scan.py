@@ -358,6 +358,103 @@ def _log_inject_save_reject(it: Dict[str, Any], reason: str) -> None:
         pass
 
 
+# ── [DA-C1 2026-08-30, DEB-20260829 第4轮用户批准] 方向结构测量 ──
+# 病灶 (D3): 单周 DA 输出 BUY:SELL_SHORT = 67:6, 账本方向倒挂。归因二分未决:
+#   供给偏斜 (scanner 候选池本来就偏多) vs 判断偏斜 (供给对称但 DA 只挑多)。
+# 预注册判据 (DEB §执行项): 攒 ≥10 交易日; 若供给对称而输出 BUY 占比仍 >75%
+#   → 立案 prompt 级诊断; 否则归档为 regime 产物 (8月反弹期混杂)。
+# 实现: 每日 inject 时落一行 — 候选池 (surfaced, 含双桶 tier 结构) 方向分布
+#   + 当日 DA 输出 (decision_id 前缀 DA-*) 方向分布。纯观测零行为。
+# 回滚: 配置 universe_expansion.direction_structure_log: false。
+_DIRECTION_STRUCTURE_PATH = _ROOT / "data" / "shadow" / "ue_direction_structure.jsonl"
+
+
+def _log_direction_structure(surfaced: List[Dict[str, Any]],
+                             today_instructions: List[Dict[str, Any]],
+                             min_conf: float, max_streak: int) -> None:
+    """每日两行合一: 候选池方向结构 + DA 输出方向结构 (一行两节)。"""
+    if not bool(_cfg("universe_expansion.direction_structure_log", True)):
+        return
+    try:
+        pool_dist = {"LONG": 0, "SHORT": 0, "OTHER": 0}
+        tier_dist = {"HARD_EVENT": 0, "MARKET_CORROBORATED": 0, "THESIS_ONLY": 0}
+        pool_conf = {"LONG": [], "SHORT": []}
+        for s in surfaced:
+            d = s.get("direction", "")
+            pool_dist[d if d in pool_dist else "OTHER"] += 1
+            tier_dist[str(s.get("self_tier") or s.get("tier") or "UNKNOWN")] = \
+                tier_dist.get(str(s.get("self_tier") or s.get("tier") or "UNKNOWN"), 0) + 1
+            if d in pool_conf:
+                pool_conf[d].append(float(s.get("confidence", 0) or 0))
+        da_dist = {"BUY": 0, "SELL_SHORT": 0, "SKIP": 0, "OTHER": 0}
+        for inst in today_instructions:
+            did = str(inst.get("decision_id") or "")
+            if not did.startswith("DA-"):
+                continue  # 只统计 DA 输出; UE 自身写入同批落盘, 不互相污染
+            d = str(inst.get("direction", "")).upper()
+            da_dist[d if d in da_dist else "OTHER"] += 1
+        _avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+        row = {
+            "date": _today(), "stage": "direction_structure",
+            "pool": {"n": len(surfaced), "dist": pool_dist, "tier_dist": tier_dist,
+                     "avg_conf_long": _avg(pool_conf["LONG"]),
+                     "avg_conf_short": _avg(pool_conf["SHORT"]),
+                     "min_conf_gate": min_conf, "max_streak_gate": max_streak},
+            "da_output": {"n": sum(da_dist.values()), "dist": da_dist},
+        }
+        _append_jsonl(_DIRECTION_STRUCTURE_PATH, row)
+        print(f"  [direction-structure] 池 LONG/SHORT/OTHER="
+              f"{pool_dist['LONG']}/{pool_dist['SHORT']}/{pool_dist['OTHER']} | "
+              f"DA BUY/SHORT/SKIP={da_dist['BUY']}/{da_dist['SELL_SHORT']}/{da_dist['SKIP']}")
+    except Exception as e:
+        print(f"  [warn] 方向结构测量落盘失败 (不阻塞): {e}")
+
+
+# ── [UE-C2 2026-08-30, DEB-20260829 第4轮用户批准] streak 闸反事实跟踪 ──
+# 目的: 评估 streak 硬闸的机会成本 (8/28 BABA conf0.85 被拦但次日 +1.93% 命中案例)。
+# 预注册判据 (DEB §执行项): 攒 n≥20 被拦信号; 反事实均值显著>0 → 提案放宽
+#   max_emergence_streak 对 HARD_EVENT 的豁免。
+# 收益口径: 不另拉行情 — cmd_score 的评分链不受 streak 闸影响 (tradeable 只滤
+#   方向+现价), 被拦标的的 fwd_pct 照常产出; 裁决时按 (scan_date, symbol) join
+#   score results 即得反事实收益, 与 D 系列判分完全同口径。
+# 回滚: 配置 universe_expansion.streak_counterfactual_log: false。
+_STREAK_CF_PATH = _ROOT / "data" / "shadow" / "ue_streak_counterfactual.jsonl"
+
+
+def _blocked_by_streak(surfaced: List[Dict[str, Any]], min_conf: float,
+                       positions: set, existing_pb: set,
+                       max_streak: int) -> List[Dict[str, Any]]:
+    """除 streak 外全部门都通过的候选 (与 _log_inject_reject 的 streak_gate 分支等价)。"""
+    return [s for s in surfaced
+            if s.get("direction") in ("LONG", "SHORT")
+            and float(s.get("confidence", 0) or 0) >= min_conf
+            and s.get("symbol") not in positions
+            and s.get("symbol") not in existing_pb
+            and not _streak_passes(s, max_streak)]
+
+
+def _log_streak_counterfactual(surfaced: List[Dict[str, Any]], min_conf: float,
+                               positions: set, existing_pb: set,
+                               max_streak: int) -> None:
+    if not bool(_cfg("universe_expansion.streak_counterfactual_log", True)):
+        return
+    try:
+        blocked = _blocked_by_streak(surfaced, min_conf, positions, existing_pb, max_streak)
+        if not blocked:
+            return
+        rows = [{"date": _today(), "symbol": s.get("symbol", ""),
+                 "direction": s.get("direction", ""), "streak": s.get("emergence_streak_days") or 1,
+                 "raw_conf": float(s.get("confidence", 0) or 0),
+                 "tier": str(s.get("self_tier") or s.get("tier") or ""),
+                 "scan_price": s.get("scan_price"),
+                 "note": "join score results by (date,symbol) for counterfactual fwd_pct"}
+                for s in blocked]
+        _append_jsonl(_STREAK_CF_PATH, {"date": _today(), "n_blocked": len(rows), "rows": rows})
+        print(f"  [streak-counterfactual] {len(rows)} 个被 streak 闸拦截信号已登记反事实跟踪")
+    except Exception as e:
+        print(f"  [warn] streak 反事实落盘失败 (不阻塞): {e}")
+
+
 # ── [UE-A3 2026-08-29, DEB-20260829 第3轮批准] 8-K/13DG clue 噪声过滤 ──
 # 病灶 (U1): 8/28 实测 15 条 8-K 中 7 条为商品 ETF 每日例行 7.01 Reg FD
 #   (CPER/BNO/UNL/UGA/USL/UNG/USO — 无事件性) + 1 条权证 (OSRHW) → 真股权事件被稀释。
@@ -1763,9 +1860,11 @@ def cmd_inject(force_dry: bool = False) -> int:
     #   根因: get_instructions_by_date 不过滤 SKIP, 而 SKIP 是 DB 最大类 (163 vs BUY 112),
     #   若一律纳入排重 → DA/投票拒绝(SKIP)的标的会连带封杀 universe 浮现同一标的.
     existing_pb = set()
+    _today_pb: List[Dict[str, Any]] = []  # [DA-C1] 当日全量指令行 (含SKIP), 供方向结构测量
     try:
         from app.playbook.db import PlaybookDB
-        for _inst in PlaybookDB().get_instructions_by_date(today):
+        _today_pb = PlaybookDB().get_instructions_by_date(today) or []
+        for _inst in _today_pb:
             if str(_inst.get("direction", "")).upper() == "SKIP":
                 continue
             _s = str(_inst.get("symbol", "")).replace("US.", "").upper()
@@ -1791,6 +1890,9 @@ def cmd_inject(force_dry: bool = False) -> int:
 
     # [UE-B2 2026-08-29] 拒绝归因落盘 — 筛选链每个落选候选一行结构化记录 (纯观测)。
     _log_inject_reject(surfaced, min_conf, positions, existing_pb, _max_streak, max_n)
+    # [DA-C1 / UE-C2 2026-08-30] 方向结构 + streak 反事实测量 (纯观测零行为)。
+    _log_direction_structure(surfaced, _today_pb, min_conf, _max_streak)
+    _log_streak_counterfactual(surfaced, min_conf, positions, existing_pb, _max_streak)
 
     if not cand:
         print(f"[inject] 无合格候选 (min_conf={min_conf}, 已排除持仓/DA已写)")

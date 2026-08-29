@@ -204,3 +204,84 @@ class TestEarningsShadow:
                            lambda: FakeEC([])):
             ue._gather_earnings_shadow(set())
         assert not p.exists()
+
+
+# ── DA-C1: 方向结构测量 (供给偏斜 vs 判断偏斜二分) ──────────────────
+
+class TestDirectionStructure:
+    def _read(self, path):
+        return [json.loads(l) for l in path.read_text().splitlines()]
+
+    def test_pool_and_da_dist(self, tmp_path):
+        p = tmp_path / "ds.jsonl"
+        surfaced = [_surf("A1"), _surf("A2"), _surf("S1", direction="SHORT"),
+                    _surf("N1", direction="NEUTRAL")]
+        today_pb = [
+            {"decision_id": "DA-20260830-US.A1-x1", "direction": "BUY"},
+            {"decision_id": "DA-20260830-US.S1-x2", "direction": "SELL_SHORT"},
+            {"decision_id": "DA-20260830-US.SK-x3", "direction": "SKIP"},
+            {"decision_id": "UE:should-be-excluded", "direction": "BUY"},  # 非DA前缀
+        ]
+        with mock.patch.object(ue, "_DIRECTION_STRUCTURE_PATH", p), \
+                mock.patch.object(ue, "_today", lambda: "2026-08-30"):
+            ue._log_direction_structure(surfaced, today_pb, min_conf=0.7, max_streak=2)
+        row = self._read(p)[0]
+        assert row["stage"] == "direction_structure"
+        assert row["pool"]["dist"] == {"LONG": 2, "SHORT": 1, "OTHER": 1}
+        assert row["da_output"]["dist"]["BUY"] == 1
+        assert row["da_output"]["dist"]["SELL_SHORT"] == 1
+        assert row["da_output"]["dist"]["SKIP"] == 1
+        assert row["da_output"]["n"] == 3  # UE 前缀不计入
+
+    def test_kill_switch_no_write(self, tmp_path):
+        p = tmp_path / "ds.jsonl"
+        with mock.patch.object(ue, "_DIRECTION_STRUCTURE_PATH", p), \
+                mock.patch.object(ue, "_cfg", lambda k, d=None: False):
+            ue._log_direction_structure([_surf("X")], [], 0.7, 2)
+        assert not p.exists()
+
+
+# ── UE-C2: streak 闸反事实跟踪 ──────────────────────────────
+
+class TestStreakCounterfactual:
+    def _read(self, path):
+        return [json.loads(l) for l in path.read_text().splitlines()]
+
+    def test_blocked_by_streak_only_all_other_gates_pass(self):
+        surfaced = [
+            _surf("BABA", conf=0.85, streak=3),      # streak>2 拦
+            _surf("GOOD", direction="SHORT", conf=0.75, streak=1),  # 过闸
+            _surf("LOWC", conf=0.60, streak=5),       # conf 不足
+            _surf("INPB", conf=0.90, streak=4),       # 在 existing_pb
+        ]
+        blocked = ue._blocked_by_streak(surfaced, min_conf=0.7,
+                                        positions=set(), existing_pb={"INPB"},
+                                        max_streak=2)
+        assert {b["symbol"] for b in blocked} == {"BABA"}
+
+    def test_max_streak_99_zero_block(self):
+        surfaced = [_surf("X", conf=0.9, streak=10)]
+        assert ue._blocked_by_streak(surfaced, 0.7, set(), set(), 99) == []
+
+    def test_counterfactual_log_writes_rows(self, tmp_path):
+        p = tmp_path / "cf.jsonl"
+        surfaced = [_surf("BABA", conf=0.85, streak=3, tier="HARD_EVENT"),
+                    _surf("GOOD", conf=0.75, streak=1)]
+        with mock.patch.object(ue, "_STREAK_CF_PATH", p), \
+                mock.patch.object(ue, "_today", lambda: "2026-08-30"):
+            ue._log_streak_counterfactual(surfaced, min_conf=0.7,
+                                          positions=set(), existing_pb=set(),
+                                          max_streak=2)
+        rec = self._read(p)[0]
+        assert rec["n_blocked"] == 1
+        assert rec["rows"][0]["symbol"] == "BABA"
+        assert rec["rows"][0]["streak"] == 3
+        assert rec["rows"][0]["scan_price"] is None  # _surf 无现价, 裁决时 join score
+
+    def test_kill_switch_no_write(self, tmp_path):
+        p = tmp_path / "cf.jsonl"
+        with mock.patch.object(ue, "_STREAK_CF_PATH", p), \
+                mock.patch.object(ue, "_cfg", lambda k, d=None: False):
+            ue._log_streak_counterfactual([_surf("X", conf=0.9, streak=5)],
+                                          0.7, set(), set(), 2)
+        assert not p.exists()
