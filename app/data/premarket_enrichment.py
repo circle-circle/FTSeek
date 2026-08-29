@@ -11,11 +11,14 @@ Pre-Market Data Enrichment — 盘前高质量数据采集 (v2 Finnhub)
 数据源: Finnhub (FREE tier, 已安装, API key 已配置)
 调用频率: 每日盘前 1 次, ~30 API calls (远低于 60/min 限制)
 """
+import json
 import logging
+import math
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +312,15 @@ def _collect_futu_premarket_rank(top_n: int = 15) -> Optional[Dict[str, Any]]:
     本维度一次调用覆盖全市场 (~18000 只) 盘前涨跌幅排名。
     record-only 增量维度, 不替换既有 MOVER_POOL 检测 (保留指数/观察池口径)。
     回滚: futu_channels.premarket_rank_enabled=false + 重启。
+
+    2026-08-29 (用户裁"按建议执行" 盘前榜过滤规则):
+      ① 修复 losers 恒空 bug — 接口默认降序只返涨幅榜 (探针实锤: count=50
+         返回 50 行全是 +6.8%~+77.9%), 领跌榜须显式 RankSortDir.ASCENDING。
+      ② 质量门候选持久化 — 全榜单仅保留涨幅>±2%者进质量漏斗:
+         盘前成交额≥$5M → 价格≥$5 → 市值≥$2B (ETF total_market_val=NaN 顺带剔除)
+         → |涨幅|>25% 影子打标不入围 → 每向≤5 候选, 写
+         data/premarket_rank_candidates_{ET}.json 供 UE 线索源消费。
+         探针依据: 默认榜 33/50 盘前成交额<$1M (BESS $515), 混 5 只杠杆 ETF。
     """
     try:
         from app.core.config_container import get_config
@@ -321,38 +333,23 @@ def _collect_futu_premarket_rank(top_n: int = 15) -> Optional[Dict[str, Any]]:
     ctx = None
     try:
         ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
-        ret, out = ctx.get_us_pre_market_rank(count=50)
-        if ret != RET_OK or not isinstance(out, tuple) or len(out) < 2:
-            logger.warning(f"[PreMarket] Futu 盘前榜失败: ret={ret}")
+        gainers_all, universe = _fetch_rank_rows(ctx, ascending=False)
+        losers_all, _ = _fetch_rank_rows(ctx, ascending=True)
+        if not gainers_all and not losers_all:
+            logger.warning("[PreMarket] Futu 盘前榜双向均为空")
             return None
-        total, df = out
-        if df is None or not len(df):
-            return None
-        gainers, losers = [], []
-        for _, r in df.iterrows():
-            try:
-                sym = str(r.get("security", "")).replace("US.", "")
-                chg = float(r.get("pre_market_change_ratio", 0) or 0)
-                px = float(r.get("pre_market_price", 0) or 0)
-                to = float(r.get("pre_market_turnover", 0) or 0)
-                if not sym or px <= 0:
-                    continue
-                entry = {"symbol": sym, "price": round(px, 2),
-                         "change_pct": round(chg, 2),
-                         "turnover_usd": round(to)}
-                if chg > 2.0:
-                    gainers.append(entry)
-                elif chg < -2.0:
-                    losers.append(entry)
-            except Exception:
-                continue
-        gainers.sort(key=lambda x: x["change_pct"], reverse=True)
-        losers.sort(key=lambda x: x["change_pct"])
+        gainers_all.sort(key=lambda x: x["change_pct"], reverse=True)
+        losers_all.sort(key=lambda x: x["change_pct"])
+        # 质量门候选持久化 (失败不影响展示维度)
+        try:
+            _persist_premarket_rank_candidates(ctx, gainers_all, losers_all)
+        except Exception as e:
+            logger.warning(f"[PreMarket] 盘前榜质量门候选持久化失败 (降级): {e}")
         return {
             "source": "futu_us_pre_market_rank",
-            "universe": int(total or 0),
-            "gainers": gainers[:top_n],
-            "losers": losers[:top_n],
+            "universe": universe,
+            "gainers": gainers_all[:top_n],
+            "losers": losers_all[:top_n],
         }
     except Exception as e:
         logger.warning(f"[PreMarket] Futu 盘前榜异常: {e}")
@@ -363,6 +360,271 @@ def _collect_futu_premarket_rank(top_n: int = 15) -> Optional[Dict[str, Any]]:
                 ctx.close()
             except Exception:
                 pass
+
+
+# ── 盘前榜质量门参数 (2026-08-29, 探针实锤依据见 _collect_futu_premarket_rank) ──
+_PM_MIN_TURNOVER_USD = 5_000_000.0   # 层1 流动性: 盘前成交额下限
+_PM_MIN_PRICE = 5.0                  # 层2 仙股门 (对齐 factor_engine._QUALITY_GATE_MIN_PRICE)
+_PM_MIN_MCAP_USD = 2_000_000_000.0   # 层3 市值门 (对齐 factor_engine._QUALITY_GATE_MIN_MCAP)
+_PM_EXTREME_PCT = 25.0               # 层4 极端涨幅带: 影子打标不入围 (预注册攒样, 非硬禁)
+_PM_MAX_CANDIDATES = 5               # 层6 每方向每日候选上限 (防稀释下游注意力)
+_PM_ETF_NAME_KEYWORDS = ("ETF", "SPDR", "ISHARES", "ULTRA", "PROSHARES", "DIREXION",
+                         "T-REX", "TRADR", "INDEX", "FUND", "TRUST")
+_RANK_CANDIDATES_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+class _RankMcapFilter:
+    """盘前榜服务端市值预过滤 (2026-08-29 探针实锤).
+
+    根因修复: 默认涨跌幅榜 top50 天然全是小票 (实弹: 质量门后候选 0,
+    35/50 盘前成交额<$1M)。服务端按市值≥$2B 预过滤后榜单即标的池
+    (实弹: 领跌榜直接出 PYPL -13%/$328M, IREN -7.7%/$187M)。
+    ⚠️ 服务端市值过滤不排除 ETF (实弹混入 IYH/PFFD), 客户端 name/mcap 门保留。
+    """
+    min_val = 2_000_000_000.0  # 与 _PM_MIN_MCAP_USD 同源, 避免循环引用提前绑定
+
+    def fill_request_pb(self, filter_pb):
+        from futu.common.pb import Qot_GetUSPreMarketRank_pb2 as _pb
+        filter_pb.indicatorType = _pb.IndicatorType_MarketCap
+        filter_pb.indicatorValue.filterMin.value = self.min_val
+        filter_pb.indicatorValue.filterMin.includes = True
+        filter_pb.indicatorValue.filterMax.value = 1e15
+        filter_pb.indicatorValue.filterMax.includes = True
+        from futu import RET_OK
+        return RET_OK, ""
+
+
+def _fetch_rank_rows(ctx, ascending: bool) -> Tuple[List[Dict[str, Any]], int]:
+    """拉取盘前榜一侧 (降序=领涨, 升序=领跌), 只保留 |涨跌|>2% 且价格>0 的行。
+
+    服务端市值预过滤 ≥$2B (治"涨跌幅榜全是小票"根因), 客户端再精过滤。
+    Returns: (rows, universe_total)
+    """
+    from futu import RET_OK
+    try:
+        from futu.common.constant import RankSortDir
+        sort_dir = RankSortDir.ASCENDING if ascending else RankSortDir.DESCENDING
+        ret, out = ctx.get_us_pre_market_rank(
+            sort_dir=sort_dir, count=50, filter_list=[_RankMcapFilter()])
+    except ImportError:
+        if ascending:
+            return [], 0  # SDK 无 RankSortDir: 领跌榜降级为空
+        ret, out = ctx.get_us_pre_market_rank(count=50)
+    if ret != RET_OK or not isinstance(out, tuple) or len(out) < 2:
+        logger.warning(f"[PreMarket] Futu 盘前榜拉取失败 (ascending={ascending}): ret={ret}")
+        return [], 0
+    _total, df = out
+    if df is None or not len(df):
+        return [], int(_total or 0)
+    rows: List[Dict[str, Any]] = []
+    for _, r in df.iterrows():
+        try:
+            sym = str(r.get("security", "")).replace("US.", "")
+            chg = float(r.get("pre_market_change_ratio", 0) or 0)
+            px = float(r.get("pre_market_price", 0) or 0)
+            to = float(r.get("pre_market_turnover", 0) or 0)
+            if not sym or px <= 0:
+                continue
+            if ascending and chg >= -2.0:
+                continue
+            if not ascending and chg <= 2.0:
+                continue
+            rows.append({"symbol": sym, "price": round(px, 2),
+                         "change_pct": round(chg, 2),
+                         "turnover_usd": round(to)})
+        except Exception:
+            continue
+    return rows, int(_total or 0)
+
+
+def _fetch_mcap_map(ctx, codes: List[str]) -> Dict[str, float]:
+    """code -> total_market_val (USD 单位, 探针实锤)。
+    ETF/无效标的市值为 NaN 或 name 命中关键词 → 哨兵值 -1 (剔除)。
+
+    ⚠️ 批次隔离 (2026-08-29 实弹根因): 快照接口遇单只无效标的 (如 OTC 票 LGFRY
+    "暂不提供美股 OTC 市场行情") 会整批失败 ret=-1, 曾致 28 只候选全部被当无市值
+    剔除 (候选=0)。失败批次二分递归隔离坏票, 单只失败 → -1 剔除 (fail-close)。
+    """
+    from futu import RET_OK
+    mcap: Dict[str, float] = {}
+
+    def _snapshot_batch(batch: List[str], depth: int = 0) -> None:
+        if not batch:
+            return
+        try:
+            ret, df = ctx.get_market_snapshot(batch)
+        except Exception as e:
+            ret, df = -1, str(e)
+        if ret == RET_OK and df is not None:
+            for _, r in df.iterrows():
+                code = str(r.get("code", ""))
+                name = str(r.get("name", "")).upper()
+                try:
+                    mv = float(r.get("total_market_val"))
+                except (TypeError, ValueError):
+                    mv = float("nan")
+                if math.isnan(mv) or any(k in name for k in _PM_ETF_NAME_KEYWORDS):
+                    mcap[code] = -1.0
+                else:
+                    mcap[code] = mv
+            return
+        # 失败: 单只 → 限流可能误杀, 延迟重试 1 次仍失败才剔除; 多只 → 二分隔离 (上限 8 层防退化)
+        if len(batch) == 1 or depth > 8:
+            if depth <= 12:  # 给递归最深处的单只一次重试机会
+                time.sleep(0.5)
+                try:
+                    ret2, df2 = ctx.get_market_snapshot(batch)
+                    if ret2 == RET_OK and df2 is not None and len(df2):
+                        r = df2.iloc[0]
+                        code = str(r.get("code", ""))
+                        name = str(r.get("name", "")).upper()
+                        try:
+                            mv = float(r.get("total_market_val"))
+                        except (TypeError, ValueError):
+                            mv = float("nan")
+                        mcap[code] = -1.0 if (math.isnan(mv) or
+                                              any(k in name for k in _PM_ETF_NAME_KEYWORDS)) else mv
+                        return
+                except Exception:
+                    pass
+            logger.warning(f"[PreMarket] 市值快照单只失败 (ret={ret}): "
+                           f"{batch[0] if batch else ''} — 剔除")
+            for c in batch:
+                mcap[c] = -1.0
+            return
+        mid = len(batch) // 2
+        _snapshot_batch(batch[:mid], depth + 1)
+        _snapshot_batch(batch[mid:], depth + 1)
+
+    for i in range(0, len(codes), 200):
+        if i > 0:
+            time.sleep(0.3)  # 批次间限流保护
+        _snapshot_batch(codes[i:i + 200])
+    return mcap
+
+
+def apply_rank_quality_gates(gainers: List[Dict], losers: List[Dict],
+                             mcap_map: Dict[str, float],
+                             earnings_set: set) -> Dict[str, Any]:
+    """纯函数质量门 (可测): 成交额→价格→市值/ETF→极端带→事件标记→上限。
+
+    Args:
+        gainers/losers: _fetch_rank_rows 输出 (已排序)
+        mcap_map: _fetch_mcap_map 输出 (缺失=按剔除处理)
+        earnings_set: 未来3日财报标的集合 (裸 ticker 大写)
+    Returns:
+        {gainers: {candidates, extreme, rejected}, losers: {...}, stats: {...}}
+    """
+    def _side(rows: List[Dict]) -> Dict[str, Any]:
+        candidates, extreme, rejected = [], [], []
+        rank = 0
+        for e in rows:
+            if e["turnover_usd"] < _PM_MIN_TURNOVER_USD:
+                rejected.append({"symbol": e["symbol"], "reason": "turnover"})
+                continue
+            if e["price"] < _PM_MIN_PRICE:
+                rejected.append({"symbol": e["symbol"], "reason": "price"})
+                continue
+            rank += 1
+            mv = mcap_map.get(f"US.{e['symbol']}", -1.0)
+            if mv < _PM_MIN_MCAP_USD:
+                rejected.append({"symbol": e["symbol"],
+                                 "reason": "etf_or_smallcap" if mv < 0 else "mcap"})
+                continue
+            entry = dict(e)
+            entry.update({"rank": rank, "market_cap_usd": int(mv), "tags": []})
+            if e["symbol"].upper() in earnings_set:
+                entry["tags"].append("EVENT_RISK")
+            if abs(e["change_pct"]) > _PM_EXTREME_PCT:
+                entry["tags"].append("EXTREME")
+                extreme.append(entry)
+            else:
+                candidates.append(entry)
+        return {"candidates": candidates[:_PM_MAX_CANDIDATES],
+                "extreme": extreme, "rejected": rejected}
+
+    return {"gainers": _side(gainers), "losers": _side(losers),
+            "stats": {"raw_gainers": len(gainers), "raw_losers": len(losers)}}
+
+
+def _earnings_risk_set(symbols: List[str]) -> set:
+    """未来3日财报标的集合 (裸 ticker 大写)。失败降级空集 (不标记)。"""
+    if not symbols:
+        return set()
+    try:
+        from app.data.earnings_calendar import EarningsCalendar
+        futu_syms = [f"US.{s}" for s in symbols]
+        ups = EarningsCalendar().get_watchlist_earnings(
+            watchlist_symbols=futu_syms, days_ahead=3)
+        return {str(u.get("ticker", "")).upper() for u in ups if u.get("ticker")}
+    except Exception as e:
+        logger.warning(f"[PreMarket] 财报交叉标记失败 (降级不标记): {e}")
+        return set()
+
+
+def _persist_premarket_rank_candidates(ctx, gainers_all: List[Dict],
+                                       losers_all: List[Dict]) -> Optional[Path]:
+    """质量门过滤 + 原子写 data/premarket_rank_candidates_{ET}.json (重跑幂等覆盖)。
+
+    两遍式 (2026-08-29 实弹优化): 先用零 API 的 成交额+价格门 收缩快照目标
+    (100只→约25只), 再只对幸存者查市值快照 — 既避开大量低成交额小票/OTC 垃圾,
+    也把快照调用量压到富途限流安全区 (此前全量快照触发限流级联误杀真标的)。
+    """
+    def _cheap_pass(rows: List[Dict]) -> List[Dict]:
+        return [e for e in rows
+                if e["turnover_usd"] >= _PM_MIN_TURNOVER_USD and e["price"] >= _PM_MIN_PRICE]
+
+    surv_symbols = [e["symbol"] for e in _cheap_pass(gainers_all) + _cheap_pass(losers_all)]
+    mcap_map = _fetch_mcap_map(ctx, [f"US.{s}" for s in surv_symbols]) if surv_symbols else {}
+    earnings_set = _earnings_risk_set(surv_symbols)
+    gated = apply_rank_quality_gates(gainers_all, losers_all, mcap_map, earnings_set)
+    try:
+        from app.utils.timezone import now_et
+        date_str = now_et().strftime("%Y-%m-%d")
+    except Exception:
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    payload = {
+        "date": date_str,
+        "collected_at": datetime.utcnow().isoformat() + "Z",
+        "gates": {"min_turnover_usd": _PM_MIN_TURNOVER_USD, "min_price": _PM_MIN_PRICE,
+                  "min_mcap_usd": _PM_MIN_MCAP_USD, "extreme_pct": _PM_EXTREME_PCT,
+                  "max_per_side": _PM_MAX_CANDIDATES},
+        "gainers": gated["gainers"],
+        "losers": gated["losers"],
+        "stats": gated["stats"],
+    }
+    _RANK_CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = _RANK_CANDIDATES_DIR / f"premarket_rank_candidates_{date_str}.json"
+    tmp = out_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(out_path)
+    n_g = len(gated["gainers"]["candidates"])
+    n_l = len(gated["losers"]["candidates"])
+    logger.info(f"[PreMarket] 盘前榜质量门: 候选 LONG {n_g} / SHORT {n_l} "
+                f"(原始 {gated['stats']['raw_gainers']}/{gated['stats']['raw_losers']}) → {out_path.name}")
+    return out_path
+
+
+def ensure_premarket_rank_candidates(date_str: Optional[str] = None) -> Optional[Path]:
+    """幂等保证当日盘前榜质量门候选文件存在 (供跨进程消费者调用)。
+
+    文件已存在 → 直接返回; 不存在 → 触发一次采集 (内部持久化)。失败返回 None。
+    """
+    try:
+        from app.utils.timezone import now_et
+        d = date_str or now_et().strftime("%Y-%m-%d")
+    except Exception:
+        d = date_str or datetime.utcnow().strftime("%Y-%m-%d")
+    path = _RANK_CANDIDATES_DIR / f"premarket_rank_candidates_{d}.json"
+    if path.exists():
+        return path
+    try:
+        rank = _collect_futu_premarket_rank()
+        if rank and path.exists():
+            return path
+    except Exception as e:
+        logger.warning(f"[PreMarket] ensure_premarket_rank_candidates 失败: {e}")
+    return None
 
 
 def _collect_premarket_movers(client, watchlist_symbols: Optional[List[str]] = None) -> Dict[str, Any]:

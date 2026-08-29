@@ -1772,6 +1772,11 @@ universe_expansion:
   clue_insider_clusters: true
   clue_event_symbols: true
   clue_peer_surge: true
+  # 2026-08-29 (盘前榜过滤规则, 用户裁"按建议执行"): 富途全市场盘前榜质量门候选线索。
+  #   采集端过质量门(成交额≥$5M/价格≥$5/市值≥$2B/ETF剔除/极端带剔除), 每向≤5 候选,
+  #   持久化 data/premarket_rank_candidates_{ET}.json 后本线索源消费。候选非信号。
+  #   回滚: 置 false。
+  clue_premarket_rank: true
   peer_surge_groups:
     存储:
     - MU

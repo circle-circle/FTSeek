@@ -631,6 +631,48 @@ def _gather_peer_surge() -> List[str]:
         return []
 
 
+def _gather_premarket_rank_clues() -> List[str]:
+    """[2026-08-29 盘前榜过滤规则, 用户裁"按建议执行"] 富途全市场盘前榜质量门候选 → 线索。
+
+    数据链: premarket_enrichment.ensure_premarket_rank_candidates() 幂等保证当日文件
+      (data/premarket_rank_candidates_{ET}.json) 存在 — 盘前榜原始 50 只/向已过
+      质量门 (盘前成交额≥$5M / 价格≥$5 / 市值≥$2B / ETF剔除 / |涨幅|>25% 打标不入围),
+      每向 ≤5 候选。本函数只负责把过滤结果渲染成 clue 行。
+    定位: 输入端扩容 (同 peer_surge), 非放行信号 — 候选进分析池, gate 照常把关。
+      涨幅带影子打标: EXTREME 候选不入围只展示, 预注册判据攒样 (>25% vs 带内配对) 待裁决。
+    文件缺失/当日无候选 → 触发一次采集兜底 (盘前 21:10 CST 首跑即产文件);
+      采集失败降级 []。回滚: 配置 universe_expansion.clue_premarket_rank: false。"""
+    try:
+        from app.data.premarket_enrichment import ensure_premarket_rank_candidates
+        path = ensure_premarket_rank_candidates(_today())
+        if not path or not path.exists():
+            return []
+        d = json.loads(path.read_text(encoding="utf-8"))
+        if d.get("date") != _today():
+            return []  # 陈旧文件 (跨日残留) 不消费
+        out: List[str] = []
+
+        def _fmt_side(side: Dict, label: str) -> None:
+            for c in (side.get("candidates") or []):
+                tags = ",".join(c.get("tags") or [])
+                tag_s = f" [{tags}]" if tags else ""
+                mcap_b = round(float(c.get("market_cap_usd", 0)) / 1e9, 1)
+                out.append(f"- {c['symbol']} 盘前{label}#{c.get('rank', '?')} "
+                           f"{c['change_pct']:+.1f}% 盘前成交${float(c.get('turnover_usd', 0)) / 1e6:.1f}M "
+                           f"市值${mcap_b}B{tag_s}")
+            for c in (side.get("extreme") or []):
+                # 极端带: 展示但不入围 (影子攒样), 显式告知模型别当候选
+                out.append(f"- {c['symbol']} 盘前{label}极端涨幅带({c['change_pct']:+.1f}%) "
+                           f"[仅记录不入围: 追高=买顶风险, 预注册攒样中]")
+
+        _fmt_side(d.get("gainers") or {}, "涨")
+        _fmt_side(d.get("losers") or {}, "跌")
+        return out
+    except Exception as e:
+        print(f"  [warn] 盘前榜线索读取失败 (降级): {e}")
+        return []
+
+
 def _latest_insider_report_age() -> Optional[int]:
     """最近一份 insider_daily 报告距今天数 (0=今日); 无任何报告返回 None."""
     try:
@@ -753,6 +795,15 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         if ps:
             parts.append("\n[盘前板块峰群 (影子实测, 热度参考非跟随信号)]")
             parts.extend(ps)
+
+    # [2026-08-29 盘前榜过滤规则] 富途全市场盘前榜质量门候选 (成交额/价格/市值/ETF门后每向≤5)。
+    #   定位同峰群: 输入端扩容非放行信号; 极端涨幅带已剔除只展示。回滚: 配置设 false。
+    if bool(_cfg("universe_expansion.clue_premarket_rank", True)):
+        pr = _gather_premarket_rank_clues()
+        health.append(f"盘前榜:{len(pr)}条")
+        if pr:
+            parts.append("\n[盘前全市场榜质量门候选 (已过成交额≥$5M/价格≥$5/市值≥$2B门, 候选非信号)]")
+            parts.extend(pr)
 
     mkt = _gather_market_corroboration()
     health.append(f"佐证:{mkt.get('date') or '无/陈旧'}")
