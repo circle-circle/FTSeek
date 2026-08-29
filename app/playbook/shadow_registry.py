@@ -250,6 +250,28 @@ REGISTRY: list[ShadowItem] = [
         created="2026-08-07",
     ),
     ShadowItem(
+        id="gap_chase_gate",
+        name="追涨极端缺口门 (aligned_gap≥5%)",
+        status=ShadowStatus.OBSERVING,
+        description="2026-08-29 用户裁决注册 (MFE漏斗审计①队列): 顺向 aligned_gap≥5% 追缺口入场的"
+                    "反事实拦截影子。回溯基线(7/1起): n=10, 笔均PnL -$28.3 (全场最差档); 导火索=GAP 8/28 "
+                    "+18.95% gap 追入(thesis自注'严禁追涨'仍成交), MFE+5.9%→当日-3.6%过夜。"
+                    "数据源=trade_records.metadata_json.entry_gap (入场时已采集, 零新采集线)。",
+        data_path="data/ftseek_us.db (trade_records.metadata_json.entry_gap)",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="预注册 (2026-08-29): n≥30 且 拦截组(aligned_gap≥5%)笔均PnL<0 且 "
+                            "单侧符号检验 p≤0.05 → 毕业转硬门; 否则继续攒样不重置, 随周检机械判定。",
+        eval_script="scripts/gap_chase_gate_eval.py",
+        created="2026-08-29",
+        last_evaluated="2026-08-29",
+        verdict_history=[{"date": "2026-08-29", "verdict": "BASELINE_KEEP_SAMPLING",
+                         "evidence": "注册基线(7/1起): 拦截组 n=10 WR=50% 笔均-$28.3 累计-$283; "
+                                     "对照组 gap<2% n=252 笔均-$3.6。n<30 且亏损笔数5/10未达显著 → 攒样中"}],
+        notes="计数口径=拦截组交易笔数 (eval 脚本从 DB 现算); 与 gap_dive_halve (逆势深跌减半) 互补不对称: "
+              "本项管顺向追极端缺口。",
+    ),
+    ShadowItem(
         id="e2_momentum",
         name="E2 入场动量确认",
         status=ShadowStatus.READY_TO_EVALUATE,
