@@ -72,3 +72,40 @@ def test_hook_placed_in_trading_branch():
     assert i_trading < i_hook < i_premarket, (
         "premarket_invalidation 钩子必须挂在 TRADING 分支 (评估窗 09:35-09:59 ET 在开盘后)"
     )
+
+
+# ── RFC-068: B门硬门 (2026-08-29 用户批准, 接飞刀拒入场) ─────────────
+# 影子规则 B 转正: BUY 执行时刻现价/昨收 < -5% 拒入场。挂载在
+# run_playbook_auto_execute 的触发判定之后、execute_instruction 之前。
+# 判定逻辑复用 evaluate_rules (SSOT), 不另写阈值。
+
+
+def test_knife_gate_uses_ssot_rule_definition():
+    """硬门判定必须复用 evaluate_rules (阈值唯一定义源), 不得在 pipeline 内联 -5.0。"""
+    from pathlib import Path
+    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    i_gate = src.index("RFC-068")
+    i_reprice = src.index("2026-06-29: 触发后重新定价")
+    seg = src[i_gate:i_reprice]
+    assert "evaluate_rules" in seg, "B门硬门必须复用 evaluate_rules (SSOT), 禁止内联阈值"
+    assert '"B_long_knife" in' in seg, "硬门只取 B_long_knife 命中转正"
+
+
+def test_knife_gate_wired_before_execution():
+    """挂载顺序守护: 硬门拦截块必须位于触发判定之后、execute_instruction 之前。"""
+    from pathlib import Path
+    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    i_trigger = src.index("盘中触发")
+    i_gate = src.index("RFC-068")
+    i_exec = src.index("result = service.execute_instruction")
+    assert i_trigger < i_gate < i_exec, "B门硬门必须挂在触发判定后、下单前"
+    # 拦截须记入统一收口审计并计入 skipped (可追溯)
+    seg = src[i_gate:i_exec]
+    assert "skipped_knife_gate" in seg and "skipped_count += 1" in seg
+
+
+def test_knife_gate_config_key_present():
+    """配置键须落盘且默认启用 (回滚 = 置 false + 重启)。"""
+    from pathlib import Path
+    yml = Path("config/unified_config.yaml").read_text(encoding="utf-8")
+    assert "premarket_invalidation_hard_gate: true" in yml

@@ -3669,6 +3669,46 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 db.update_instruction_tracking(inst["id"], {"triggered": 1})
                 logger.info(f"[playbook] 盘中触发: {inst['symbol']} {inst['direction']}")
 
+            # ── RFC-068 (2026-08-29, 用户批准): B门硬门 — 接飞刀拒入场 ──
+            # 证据 (8/10-8/28 影子×成交对账): BUY 且盘前/现价 ≤-5% 成交 3 笔 —
+            #   UCTT -6.0%→SL -$145, BABA -5.6%→SL -$138, LRCX -5.5%→+$3 = 净 +$280;
+            #   8/28 RBRK pm-5.6% 触发成交 → 26分钟后 SL -$159 (本门会拦).
+            # 语义: 执行时刻实时价 vs 昨收 < -5% → 拒入场; 若价格回升出飞刀区, 下轮自然复评.
+            #   规则判定复用 premarket_invalidation.evaluate_rules (SSOT, 阈值唯一),
+            #   影子版 record-only 继续采集对照, 本门只取 B_long_knife 命中转正为硬拦.
+            # 数据缺失 (价/昨收≤0, 取数异常) → 放行 (质量门非安全门, 下游仍有 SL 兜底).
+            # 回滚: playbook.premarket_invalidation_hard_gate 置 false + restart ftseek-us.
+            if str(inst.get("direction", "")).upper() in ("BUY", "LONG") and _playbook_cfg(
+                    "premarket_invalidation_hard_gate", True):
+                _kg_block = False
+                _chg_kg = None
+                try:
+                    _dr_kg = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
+                    _ctx_kg = _dr_kg.get_full_market_context(inst["symbol"]) if _dr_kg is not None else None
+                    if _ctx_kg:
+                        _px_kg = float(_ctx_kg.get("price") or 0)
+                        _pc_kg = float(_ctx_kg.get("prev_close") or 0)
+                        if _px_kg > 0 and _pc_kg > 0:
+                            _chg_kg = (_px_kg - _pc_kg) / _pc_kg * 100.0
+                            from app.playbook.premarket_invalidation import evaluate_rules as _kg_eval
+                            if "B_long_knife" in _kg_eval(inst.get("direction"), _chg_kg):
+                                _kg_block = True
+                                logger.info(
+                                    f"[playbook] 🚫 {inst['symbol']} B门硬门拦截: 现价{_px_kg:.2f} vs "
+                                    f"昨收{_pc_kg:.2f} ({_chg_kg:+.1f}% < -5%) 接飞刀拒入场 (下轮复评)"
+                                )
+                except Exception as _kg_err:
+                    logger.warning(f"[playbook] {inst['symbol']} B门硬门评估异常 (放行): {_kg_err}")
+                if _kg_block:
+                    _emit_exec_gate_audit(inst, action="skipped_knife_gate",
+                                          entry=float(inst.get("entry_price") or 0),
+                                          size=float(inst.get("position_size") or 0),
+                                          notional=0.0,
+                                          extra={"gate": "B_long_knife",
+                                                 "chg_pct": (round(_chg_kg, 2) if _chg_kg is not None else None)})
+                    skipped_count += 1
+                    continue
+
             # ── 2026-06-29: 触发后重新定价 (re-price at trigger) ──
             # 根因: 盘前生成的 entry_price 用的是盘前 bid/ask, 开盘后 gap 导致 entry/stop 失准
             # 修复: 触发瞬间取实时 bid/ask, 重算 entry_price + stop_loss, 传 custom_params 给 executor

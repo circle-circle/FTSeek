@@ -984,6 +984,11 @@ playbook:
   # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
   #   0产出+0消费方+DEB窗口过期(DEB-20260805 C1/门E), 见 obsidian 2026-08-16_change_review_audit.md
   premarket_invalidation_observe: true
+  # RFC-068 (2026-08-29 用户批准): B门硬门 — BUY 执行时刻现价/昨收 < -5% 拒入场.
+  #   影子版 (observe) 继续 record-only 采集对照; 本门只拦接飞刀, 价格回升出区下轮自然复评.
+  #   证据: 8/10-8/28 飞刀区成交3笔净-$280 (2笔SL+1笔+$3), 8/28 RBRK 实锤-$159.
+  #   回滚: 置 false + systemctl restart ftseek-us.
+  premarket_invalidation_hard_gate: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
   # DEB-20260819 §十三: 股性卡 prompt 注入总开关 (L2软提示)
