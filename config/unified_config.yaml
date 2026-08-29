@@ -1045,9 +1045,15 @@ playbook:
     intraday_vol_gate_grace_min: 15
     entry_confirm_max_wait_s: 30
     cooldown_sl_pct: 4.0
-    early_tight_sl_enabled: false
+    # 2026-08-29 影子毕业 (用户裁决"1批"): 胜出变体 early_tight_30m_mfe0.3 —
+    #   影子290样本/5.5周净反事实+27.58pp, 误杀最少(20/47), 救回死单avg+1.2pp/笔.
+    #   语义: 入场30min内峰值浮盈从未达0.3%(方向全错) → SL收紧到1%, 快速认赔;
+    #   方向对的仓 breakeven 激活后本规则自动失效。直攻 SL_INITIAL 主漏(30天11笔-$2315,
+    #   该批 avg_MFE 仅0.068% = 从入场就错)。回滚: 本键改回 false.
+    early_tight_sl_enabled: true
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
+    early_tight_sl_mfe_gate: 0.3
     entry_open_blackout_enabled: true
     entry_open_blackout_hhmm: 0935    # 2026-08-15 (用户三问Q2, DEB§33): 1015→0935 — 与实盘标准看齐.
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
@@ -2766,6 +2772,11 @@ futu_channels:
   shadow_collect_enabled: true
   shadow_collect_interval_sec: 300
   shadow_symbols_max: 20
+  # 2026-08-29 (用户裁"3批"): 通道A 期权大单异动裁决 KILLED — 两次独立评估超额均负
+  #   (8/24 n=3207 -0.006%; 8/29 n_paired=3556 excess=-0.014% WR47.8%),
+  #   预注册判据(事件后窗口>同票无事件基线)不达 → 停采省API额度。
+  #   仅影响通道A; 通道B资金流(攒样中258/540)继续。回滚: 置 true。
+  deriv_collect_enabled: false
   # 2026-08-29 (能力利用率审计, 用户裁'全做'): 富途盘前榜/异动榜接入开关 —
   # premarket_rank=全市场盘前涨跌榜入 premarket_enrichment (20只池→全市场);
   # movers_shadow=盘中异动榜影子采集 (先攒样不进门禁)。独立回滚: 置 false+重启。

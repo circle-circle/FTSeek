@@ -127,12 +127,12 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="futu_channel_deriv_unusual",
         name="富途期权大单异动 (领先假说)",
-        status=ShadowStatus.READY_TO_EVALUATE,
+        status=ShadowStatus.KILLED,
         description="通道 A: get_derivative_unusual 期权大单事件 → 事件后窗口超额收益配对基线 "
                     "(Cremers-Weinbaum 知情资金先进期权假说)。8/12 已上线, 8/29 补登记。"
                     "8/24 初评: 超额均收益 -0.006%, 超额胜率 47.5% — 暂无领先证据。",
         data_path="data/futu_deriv_unusual.jsonl",
-        config_key="futu_channels.shadow_collect_enabled",
+        config_key="futu_channels.deriv_collect_enabled",
         min_n=3000,
         current_n=4634,
         graduation_criteria="DEB-20260812 §五预注册: 事件后窗口收益 > 同票无事件基线 (配对) "
@@ -145,9 +145,11 @@ REGISTRY: list[ShadowItem] = [
              "evidence": "excess_mean_ret=-0.00006 excess_win_rate=0.475 n_paired=3207"},
             {"date": "2026-08-29", "verdict": "NO_EDGE_CONFIRMED",
              "evidence": "n_paired=3556 excess_mean_ret=-0.00014 excess_win_rate=0.478 "
-                         "(post+0.008% vs baseline+0.022%)。连续两次独立评估超额均为负, "
-                         "n 已远超判据 → 建议裁决 KILLED 停采 (省富途API额度), 待用户裁决"}],
-        notes="8/29 已达 min_n 且两连否 → READY_TO_EVALUATE 待 KILL 裁决; 事件按稳定键去重 (剔除OI渲染抖动)",
+                         "(post+0.008% vs baseline+0.022%)。连续两次独立评估超额均为负"},
+            {"date": "2026-08-29", "verdict": "KILLED",
+             "evidence": "用户裁'3批': 预注册判据不达且两连否 → 停采 (deriv_collect_enabled=false), "
+                         "历史数据 4634 事件保留备查, 通道B/C/D 不受影响"}],
+        notes="8/29 用户裁决 KILLED, 停采生效; 回滚: deriv_collect_enabled 置 true",
     ),
     ShadowItem(
         id="futu_channel_ofi_baseline",
@@ -273,11 +275,17 @@ REGISTRY: list[ShadowItem] = [
         config_key="playbook.overnight_hold_shadow_enabled",
         min_n=15,
         graduation_criteria="回放净正 (V1/V2/V3 全正)",
-        eval_script=None,
+        eval_script="scripts/overnight_arm_report.py",
         created="2026-08-15",
-        last_evaluated="2026-08-15",
-        verdict_history=[{"date": "2026-08-15", "verdict": "GRADUATED",
-                         "evidence": "W_WEEK +$629 (n=15, 修复率73%)"}],
+        last_evaluated="2026-08-29",
+        verdict_history=[
+            {"date": "2026-08-15", "verdict": "GRADUATED",
+             "evidence": "W_WEEK +$629 (n=15, 修复率73%)"},
+            {"date": "2026-08-29", "verdict": "PROD_KILL_CRITERION_REGISTERED",
+             "evidence": "用户裁'5批': 生产判罪线预注册 — w_week 臂已平 n≥20 且修复率<40% "
+                         "→ 裁排除 loser_overnight_enabled。跟踪: overnight_arm_report "
+                         "预注册判据段 (当前 n=4, 修复率75%, 净PnL -$207, 攒样中)"}],
+        notes="毕业后生产表现由 RFC-067 台账 + overnight_arm_report 预注册判据跟踪",
     ),
     ShadowItem(
         id="mfe_stall_exit",

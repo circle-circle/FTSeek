@@ -102,6 +102,21 @@ class EarningsRiskGuard:
             }
         self._last_update = now_et()
         logger.info(f"财报日历已更新: {len(self._earnings_symbols)} 只股票")
+
+        # 活性探针留痕 (2026-08-29, G6 教训): 本守卫的活载体是内存态, 表级审计看不见它
+        # (死表 earnings_calendar 曾导致"门从未拦截"的误判下线)。写状态文件供
+        # scripts/liveness_probe.py 核查喂数链路是否存活。best-effort, 失败不影响守卫。
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _lv = _Path(__file__).resolve().parents[2] / "data" / "liveness"
+            _lv.mkdir(parents=True, exist_ok=True)
+            (_lv / "earnings_guard_feed.json").write_text(_json.dumps({
+                "last_update": self._last_update.isoformat(),
+                "n_symbols": len(self._earnings_symbols),
+            }), encoding="utf-8")
+        except Exception:
+            pass
     
     def is_earnings_period(self, symbol: str) -> bool:
         """

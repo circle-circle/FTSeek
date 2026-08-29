@@ -479,7 +479,19 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         return
     try:
         n_flow = _collect_capital_flow(ctx, symbols)
-        n_deriv = _collect_deriv_unusual(ctx, symbols)
+        # 2026-08-29: 通道 A 裁决 KILLED (用户裁"3批") — 两次独立评估超额均为负
+        #   (8/24 n=3207 -0.006%; 8/29 n_paired=3556 excess=-0.014% WR47.8%),
+        #   Cremers-Weinbaum 假说在本标的不成立。独立开关 deriv_collect_enabled
+        #   (缺省 true 零变更; 本批 config 置 false 停采省额度, 通道 B 继续攒样)。
+        #   回滚: config 删键或置 true.
+        n_deriv = 0
+        try:
+            from app.core.config_container import get_config as _gc
+            _deriv_on = bool(_gc().get_dotted("futu_channels.deriv_collect_enabled", True))
+        except Exception:
+            _deriv_on = True
+        if _deriv_on:
+            n_deriv = _collect_deriv_unusual(ctx, symbols)
         # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
         # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
         n_ofi = _collect_ofi_baseline(ctx, symbols)

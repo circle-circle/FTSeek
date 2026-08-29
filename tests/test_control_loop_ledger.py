@@ -106,3 +106,23 @@ def test_g6_earnings_blackout_gate_stays_online():
         f"(G6 活门在线, 8/19-8/26 拦截 85 次实证), 实际={val!r} — "
         "再下线须先验证活载体 (earnings_risk_guard._earnings_symbols) 拦截历史"
         "与生产日志行为级证据, 不能只看 SQLite 死表")
+
+
+def test_early_tight_sl_graduated_variant_stays_on():
+    """early_tight_sl 影子毕业契约 (2026-08-29 用户裁决"1批").
+
+    胜出变体 early_tight_30m_mfe0.3: 影子 290 样本/5.5 周净反事实 +27.58pp,
+    误杀最少 (20/47)。直攻 SL_INITIAL 主漏 (30 天 11 笔 -$2315, 该批 avg_MFE
+    仅 0.068% = 方向从入场即错)。钉住: enabled=true + mfe_gate=0.3 显式在位。
+    再下线须先看毕业后的 exit_scorecard 判分 (SL_INITIAL 早期笔数/损失 vs
+    基线), 不能凭单日体感。回滚路径: 配置改 false 即恢复, 本测试随之改判。
+    """
+    import yaml
+    cfg = yaml.safe_load((REPO / "config" / "unified_config.yaml").read_text(encoding="utf-8"))
+    ep = (cfg.get("playbook", {}).get("execution_parameters") or {})
+    assert ep.get("early_tight_sl_enabled") is True, (
+        f"early_tight_sl_enabled 应为 true (影子 290 样本净+27.58pp 毕业), "
+        f"实际={ep.get('early_tight_sl_enabled')!r}")
+    assert ep.get("early_tight_sl_mfe_gate") == 0.3, (
+        f"early_tight_sl_mfe_gate 应为 0.3 (胜出变体口径, 无门变体误杀更多), "
+        f"实际={ep.get('early_tight_sl_mfe_gate')!r}")

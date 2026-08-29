@@ -109,6 +109,24 @@ def main():
     re_multi = [(r, n) for (r, src, n) in hist if src == "reentry" and n > 1]
     print(f"\n【预注册判据跟踪】再入场多夜样本 n={len(re_multi)} (判据: n≥10 且修复率<40% → 裁排除)")
 
+    # 预注册判据跟踪 (2026-08-29, 用户裁"5批"): w_week 臂生产判罪线 —
+    #   已平仓 n≥20 且修复率(结局 pnl>0)<40% → 裁排除 loser_overnight_enabled。
+    #   用途: 检验 8/6 裁决依据 (回放 n=15, 修复率73%, W_WEEK +$629) 是否 OOS 成立;
+    #   未满 n=20 前只报数不动作 (防小样本冲动裁决, 与再入场臂判据同法)。
+    ww = [(r, a) for (r, a, src) in marked if "w_week" in str(a.get("source", ""))]
+    ww_closed = [r for (r, a) in ww if r["exit_time"]]
+    ww_rec = sum(1 for r in ww_closed if (r["pnl"] or 0) > 0)
+    ww_pnl = sum((r["pnl"] or 0) for r in ww_closed)
+    if ww_closed:
+        _rate = ww_rec / len(ww_closed) * 100
+        _verdict = ("⚠️ 已达判罪线, 提请裁决" if len(ww_closed) >= 20 and _rate < 40
+                    else "攒样中" if len(ww_closed) < 20 else "修复率达标")
+        print(f"【预注册判据跟踪】w_week 臂已平 n={len(ww_closed)} 修复率={_rate:.0f}% "
+              f"净PnL=${ww_pnl:+.1f} → {_verdict} (判据: n≥20 且修复率<40% → 裁排除)")
+    else:
+        print(f"【预注册判据跟踪】w_week 臂已平 n=0 (台账 {len(ww)} 笔持仓中) "
+              f"(判据: n≥20 且修复率<40% → 裁排除)")
+
 
 if __name__ == "__main__":
     main()

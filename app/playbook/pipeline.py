@@ -6897,7 +6897,11 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     if _early_tight_enabled and not _in_cooldown and not breakeven_triggered:
         _et_minutes = float(_pb_cfg.get("early_tight_sl_minutes", 30))
         _et_sl_pct = float(_pb_cfg.get("early_tight_sl_pct", 1.0))
-        if held_minutes <= _et_minutes:
+        # 2026-08-29 影子毕业提案: mfe_gate>0 时仅"方向全错"仓收紧 (窗口内峰值浮盈
+        #   从未达 gate 才收紧), 对齐影子胜出变体 early_tight_30m_mfe0.3 ——
+        #   290样本/5.5周净反事实+27.58pp, 误杀最少(20/47)。默认0=现行行为不变。
+        _et_mfe_gate = float(_pb_cfg.get("early_tight_sl_mfe_gate", 0.0) or 0.0)
+        if held_minutes <= _et_minutes and (_et_mfe_gate <= 0 or peak_profit_pct < _et_mfe_gate):
             _et_sl = entry_price * (1 - _et_sl_pct / 100.0) if direction == "LONG" \
                 else entry_price * (1 + _et_sl_pct / 100.0)
             # 紧SL = 更靠近入场价 = LONG取max, SHORT取min
