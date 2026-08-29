@@ -119,6 +119,20 @@ def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dic
     except Exception as e:
         logger.warning(f"[PreMarket] Futu premarket rank failed: {e}")
 
+    # ── 2c. 借券拥挤度 (2026-08-29 RFC-062: record-only 决策参考) ──
+    try:
+        from app.data.borrow_crowding import scan as _borrow_scan
+        _bc_syms = None
+        if watchlist_symbols:
+            _bc_syms = sorted({
+                (s if str(s).startswith("US.") else f"US.{s}").upper()
+                for s in watchlist_symbols})
+        _bs = _borrow_scan(symbols=_bc_syms)
+        if _bs.get("flagged"):
+            result["borrow_crowding"] = _bs
+    except Exception as e:
+        logger.warning(f"[PreMarket] borrow crowding failed: {e}")
+
     # ── 3. Analyst Sentiment (Finnhub + Futu) ──
     if watchlist_symbols:
         try:
@@ -1072,5 +1086,14 @@ def format_for_debate(enrichment: Dict[str, Any]) -> str:
         for n in it.get("notable", [])[:5]:
             lines.append(f"    {n['ticker']}: {n['value']}")
         lines.append("")
+
+    # 借券拥挤度 (2026-08-29 RFC-062, record-only 决策参考)
+    bc = enrichment.get("borrow_crowding", {})
+    if bc.get("flagged"):
+        from app.data.borrow_crowding import format_for_context
+        _bc_txt = format_for_context(bc)
+        if _bc_txt:
+            lines.append(_bc_txt)
+            lines.append("")
 
     return "\n".join(lines)
