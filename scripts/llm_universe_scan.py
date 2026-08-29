@@ -61,7 +61,7 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.6"  # scan 落库归因戳; v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-20260825-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.7"  # scan 落库归因戳; v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -101,7 +101,10 @@ SYSTEM_PROMPT_V2 = (
     "6. 可证伪性(强制): 每个非 SKIP 标的额外输出 — invalidation(一句话失效条件, ≤40字), "
     # [U10 2026-08-25 建议④] 结构化失效触发器 — 照抄 DA r15 schema (tripwire_checker 白名单),
     #   让盘中失效核销器真正可响 (自然语言首期命中率≈0)。与 DA 同契约, 同一消费方。
-    "invalidation_triggers(本股、代码可判定的失效条件数组, ≥1条, 每条 {metric, operator, value}: "
+    # [DEB-20260829 第7轮 2026-08-30] 强制"≥1条"降级为"可空数组": 8/19-8/28 实测 0/208
+    #   填充 — flash 档模型对结构化数组零依从, 恒空强制字段=白耗token+假承诺 (模型不交作业)。
+    #   降级后模型交不交都合法, 填充率成为真实依从度测量; tripwire 消费端空数组本就不拦。
+    "invalidation_triggers(本股、代码可判定的失效条件数组, 能判定则输出, 可为空数组 []; 每条 {metric, operator, value}: "
     "metric 限 收盘价/成交量/5日涨跌/盘前涨跌幅, operator 限 < 或 >, value 纯数字), "
     "horizon_hours(论点预期兑现时效, 整数小时, 日内动量 4-8), expected_move_pct(预期方向幅度%, 小数)。\n"
     "7. 证据清单(强制, 如实勾选不得美化): evidence_checklist 四项布尔 — "
