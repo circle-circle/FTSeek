@@ -213,6 +213,7 @@ def _collect_capital_flow(ctx, symbols: List[str]) -> int:
 
 
 _OFI_OUT = _BASE / "data" / "futu_ofi_baseline.jsonl"
+_IV_OUT = _BASE / "data" / "futu_iv_hv_shadow.jsonl"
 
 
 def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
@@ -268,6 +269,79 @@ def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
     return len(rows)
+
+
+def _collect_iv_hv(ctx, symbols: List[str]) -> int:
+    """通道 D: 期权 IV/HV 日序列影子 (2026-08-29 用户裁"4也做", record-only).
+
+    用途: 现 SL/TP vol_buckets 只按 atr_pct 分桶 (playbook_horizon.yaml,
+    后视已实现波动率); 富途 get_option_underlying_his_volatility 提供
+    股票级 IV (前瞻) + HV 250 日序列 (实测 2026-08-29: US.AAPL ret=0,
+    250 行, 无需期权合约代码). 影子攒样验证 "IV/HV 在 atr_pct 分桶上
+    有无桶内残存效应" (基线纪律: 在已落地分桶上算残存, 不另起炉灶).
+
+    设计: 日级数据, 仅 AFTER_HOURS 每日 1 次 (盘中轮询纯浪费);
+    按 (symbol, time) 去重防轮询放大 (2026-08-10 教训); 接口限流未知,
+    标的间 0.3s 缓冲 (活跃集 ≤20 只, 每日 ≤20 次调用).
+    独立开关 futu_channels.iv_collect_enabled, 回滚: 置 false + 重启.
+    """
+    from futu import RET_OK
+    try:
+        from app.core.config_container import get_config
+        if not bool(get_config().get_dotted(
+                "futu_channels.iv_collect_enabled", True)):
+            return 0
+    except Exception:
+        pass
+
+    # 已存 (symbol, time) 集合 — 增量合并基准 (API 返回全量 250 日序列)
+    seen = set()
+    if _IV_OUT.exists():
+        try:
+            for line in _IV_OUT.read_text().splitlines()[-8000:]:
+                try:
+                    r = json.loads(line)
+                    seen.add((r.get("symbol"), r.get("time")))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    rows_buf = []
+    for sym in symbols:
+        try:
+            ret, data, _pk = ctx.get_option_underlying_his_volatility(sym)
+            if ret != RET_OK or data is None or not len(data):
+                continue
+            for _, row in data.iterrows():
+                t = str(row.get("time", ""))
+                if not t or (sym, t) in seen:
+                    continue
+                seen.add((sym, t))
+                try:
+                    rows_buf.append({
+                        "symbol": sym,
+                        "time": t,
+                        "iv": float(row.get("iv", 0) or 0),
+                        "hv": float(row.get("hv", 0) or 0),
+                        "underlying_price": float(
+                            row.get("underlying_price", 0) or 0),
+                        "collected_at": datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"),
+                    })
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"[futu通道影子] iv_hv 采集异常 {sym}: {e}")
+            continue
+        time.sleep(0.3)
+
+    if rows_buf:
+        _IV_OUT.parent.mkdir(parents=True, exist_ok=True)
+        with _IV_OUT.open("a", encoding="utf-8") as f:
+            for r in rows_buf:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return len(rows_buf)
 
 
 def _collect_deriv_unusual(ctx, symbols: List[str]) -> int:
@@ -357,6 +431,9 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
         # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
         n_ofi = _collect_ofi_baseline(ctx, symbols)
+        # 2026-08-29: 通道 D IV/HV 日序列 (用户裁"4也做"). 日级数据仅盘后
+        # 每日 1 次; 独立开关 futu_channels.iv_collect_enabled.
+        n_iv = _collect_iv_hv(ctx, symbols) if is_after_hours else 0
     finally:
         try:
             ctx.close()
@@ -366,8 +443,8 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     if is_after_hours:
         st["last_afterhours_date"] = str(date.today())
     _save_state(st)
-    if n_flow or n_deriv or n_ofi:
+    if n_flow or n_deriv or n_ofi or n_iv:
         logger.info(
             f"[futu通道影子] 采集完成 ({phase}): capital_flow +{n_flow} 行, "
             f"deriv_unusual +{n_deriv} 事件, ofi_baseline +{n_ofi} 快照, "
-            f"标的 {len(symbols)} 只")
+            f"iv_hv +{n_iv} 行, 标的 {len(symbols)} 只")

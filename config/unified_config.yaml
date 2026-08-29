@@ -2770,6 +2770,12 @@ futu_channels:
   # IC 裁决需 OFI 基线口径 (预注册'禁裸边际'的解法). HTTP get_order_book 免订阅,
   # 不碰 ADR-013 CPU 红线. 独立回滚: ofi_collect_enabled=false + 重启.
   ofi_collect_enabled: true
+  # 2026-08-29 (用户裁"4也做"): 通道 D IV/HV 日序列影子 — 富途
+  # get_option_underlying_his_volatility (股票级 IV+HV 250日序列, 无需期权合约).
+  # 目的: 影子攒样验证 IV/HV 在已落地 atr_pct vol_buckets 上有无桶内残存效应
+  # (前瞻波动率补后视). 仅 AFTER_HOURS 每日1次, 按 (symbol, time) 去重防轮询放大.
+  # 独立回滚: iv_collect_enabled=false + 重启.
+  iv_collect_enabled: true
 
 # 2026-08-12 (financial-data-query 数据源评估): 美国宏观日历影子采集 (record-only).
 #   regime识别目前只有SPY价格行为+VIX, 对宏观披露日零感知 → 本采集攒样.

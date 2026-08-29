@@ -51,6 +51,10 @@ class ShadowItem:
     last_evaluated: Optional[str] = None
     verdict_history: list = field(default_factory=list)
     notes: str = ""
+    # 计数口径: "lines" (默认, jsonl 行数) | "distinct:<field>" (按字段去重计数,
+    # 用于首日回补大量历史数据的事项 — 回补行只算 1 个样本, 防立即超 min_n
+    # 触发永久 READY 通知风暴; 2026-08-29 futu_channel_iv_hv 落地时引入)
+    count_mode: str = "lines"
 
 
 REGISTRY: list[ShadowItem] = [
@@ -93,6 +97,66 @@ REGISTRY: list[ShadowItem] = [
         eval_script=None,
         created="2026-08-23",
         notes="capital_flow_replay_verdict: 四关全不过, 用户裁决不得拦单",
+    ),
+
+    # ── 富途通道影子 (采集 8/12 已上线, 2026-08-29 补登记 — 未登记=无人跟踪) ──
+    ShadowItem(
+        id="futu_channel_capital_flow",
+        name="富途真资金流 (增量IC)",
+        status=ShadowStatus.OBSERVING,
+        description="通道 B: get_capital_flow 分钟级大小单净流入 (真主力资金, 非量价合成代理)。"
+                    "8/12 已上线采集, 8/29 复核发现未登记补录。8/24 初评: "
+                    "rank_ic_marginal=0.1188, t=1.49, n_pairs=157 → WEAK_EVIDENCE (未显著)。",
+        data_path="data/capital_flow_daily.jsonl",
+        config_key="futu_channels.shadow_collect_enabled",
+        min_n=540,
+        graduation_criteria="DEB-20260812 §五预注册: 增量 rank-IC (OFI 基线上) 双窗口 OOS ≥40% "
+                            "或 ρ≥0.15 + 非空率 ≥95% + n≥30 交易日。评估: scripts/futu_channel_shadow_eval.py",
+        eval_script="scripts/futu_channel_shadow_eval.py",
+        created="2026-08-12",
+        last_evaluated="2026-08-24",
+        verdict_history=[{"date": "2026-08-24", "verdict": "WEAK_EVIDENCE",
+                         "evidence": "ic=0.1188 t=1.49 n_pairs=157 oos同号(0.194/0.086) 未显著"}],
+        notes="行数口径: ~18标的×30交易日≈540行; 分钟级原料 data/futu_capital_flow.jsonl",
+    ),
+    ShadowItem(
+        id="futu_channel_deriv_unusual",
+        name="富途期权大单异动 (领先假说)",
+        status=ShadowStatus.OBSERVING,
+        description="通道 A: get_derivative_unusual 期权大单事件 → 事件后窗口超额收益配对基线 "
+                    "(Cremers-Weinbaum 知情资金先进期权假说)。8/12 已上线, 8/29 补登记。"
+                    "8/24 初评: 超额均收益 -0.006%, 超额胜率 47.5% — 暂无领先证据。",
+        data_path="data/futu_deriv_unusual.jsonl",
+        config_key="futu_channels.shadow_collect_enabled",
+        min_n=3000,
+        graduation_criteria="DEB-20260812 §五预注册: 事件后窗口收益 > 同票无事件基线 (配对) "
+                            "+ 非空率 ≥95% + n≥30。评估: scripts/futu_channel_shadow_eval.py",
+        eval_script="scripts/futu_channel_shadow_eval.py",
+        created="2026-08-12",
+        last_evaluated="2026-08-24",
+        verdict_history=[{"date": "2026-08-24", "verdict": "NO_EDGE_YET",
+                         "evidence": "excess_mean_ret=-0.00006 excess_win_rate=0.475 n_paired=3207"}],
+        notes="事件按稳定键去重 (剔除OI渲染抖动); 已达 min_n → 下次周检转待裁决",
+    ),
+    ShadowItem(
+        id="futu_channel_iv_hv",
+        name="IV/HV 前瞻波动率影子",
+        status=ShadowStatus.OBSERVING,
+        description="通道 D (8/29 新增, 用户裁'4也做'): get_option_underlying_his_volatility "
+                    "股票级 IV (前瞻) + HV 250 日序列, 无需期权合约。用途: 影子攒样验证 "
+                    "IV/HV 在已落地 atr_pct vol_buckets 上有无桶内残存效应 (前瞻补后视)。"
+                    "AFTER_HOURS 每日1次, 按 (symbol, time) 去重防轮询放大。",
+        data_path="data/futu_iv_hv_shadow.jsonl",
+        config_key="futu_channels.iv_collect_enabled",
+        min_n=30,
+        graduation_criteria="残存效应分析 (基线纪律: 在已落地 atr_pct 分桶上算残存, 不另起炉灶): "
+                            "IV/HV 于交易日 join trade_records, 桶内增量显著才毕业。"
+                            "首日回补 250 日历史 → 历史残存效应立即可跑。",
+        eval_script=None,
+        created="2026-08-29",
+        notes="count_mode=distinct:collected_at — 首日回补 250 日历史 (~5000 行) 只算 1 个攒样日, "
+              "回补行保留供历史残存效应分析; min_n=30 攒样日",
+        count_mode="distinct:collected_at",
     ),
 
     # ── 既有影子 (Phase 0 / 7月) — 代表性事项, 非穷举 ──
@@ -248,6 +312,18 @@ def _count_samples(s: ShadowItem, base) -> int | None:
         return None
     if path_str.endswith(".jsonl"):
         try:
+            if s.count_mode.startswith("distinct:"):
+                fld = s.count_mode.split(":", 1)[1]
+                seen = set()
+                for _line in open(p, encoding="utf-8"):
+                    if not _line.strip():
+                        continue
+                    try:
+                        seen.add(_j.loads(_line).get(fld))
+                    except Exception:
+                        continue
+                seen.discard(None)
+                return len(seen)
             return sum(1 for _ in open(p, encoding="utf-8") if _.strip())
         except Exception:
             return None
