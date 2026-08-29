@@ -64,14 +64,103 @@ class ComparisonReport:
 # 滑点 / 延迟估算
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _estimate_slippage(rows: List[TradeRow]) -> Dict[str, float]:
+def load_slippage_samples(
+    db_path: Optional[Path] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page_size: int = 2000,
+) -> List[float]:
+    """真实滑点样本 (方向感知成本视角, 单位: 百分点).
+
+    数据源: playbook_instructions.entry_price (DA 计划价)
+            → execution_price (真实成交价).
+    cost = LONG: (成交-计划)/计划; SHORT: (计划-成交)/计划. 正值=不利滑点.
+
+    历史教训 (2026-08-29): 旧实现用 trade_records.max_drawdown_during_trade
+    作代理, 但该列在 trade_records 表中不存在 → pick() 静默补 NULL →
+    滑点恒报 0.0. 现改读真实成交对.
     """
-    粗估滑点: 用 (entry_price - 信号参考价) / 信号参考价 的绝对值平均。
-    若无 signal price 字段, 使用历史 max_drawdown_during_trade 作为下行滑点上界代理。
+    import sqlite3 as _sqlite3
+
+    from app.backtest.weekly_optimizer import (
+        _has_table, _resolve_trade_db, _table_columns,
+    )
+
+    db_path = db_path or _resolve_trade_db()
+    if db_path is None:
+        return []
+    conn = _sqlite3.connect(str(db_path))
+    try:
+        if not _has_table(conn, "playbook_instructions"):
+            return []
+        cols = set(_table_columns(conn, "playbook_instructions"))
+        if not {"decision_id", "direction", "entry_price", "execution_price",
+                "execution_time"} <= cols:
+            return []
+        where = ["execution_price > 0", "entry_price > 0",
+                 "decision_id IS NOT NULL", "decision_id != ''"]
+        params: List[Any] = []
+        if start_date:
+            where.append("substr(execution_time, 1, 10) >= ?")
+            params.append(start_date)
+        if end_date:
+            where.append("substr(execution_time, 1, 10) <= ?")
+            params.append(end_date)
+        sql = (
+            "SELECT decision_id, direction, entry_price, execution_price "
+            f"FROM playbook_instructions WHERE {' AND '.join(where)} "
+            "ORDER BY execution_time ASC LIMIT ? OFFSET ?"
+        )
+        seen: Dict[str, float] = {}  # decision_id 去重 (tr 侧存在少量重复行)
+        offset = 0
+        while True:
+            cur = conn.execute(sql, (*params, page_size, offset))
+            batch = cur.fetchall()
+            if not batch:
+                break
+            for did, direction, plan, actual in batch:
+                if did in seen or not plan:
+                    continue
+                plan = float(plan)
+                actual = float(actual)
+                if str(direction or "").upper() == "SHORT":
+                    seen[did] = (plan - actual) / plan * 100.0
+                else:
+                    seen[did] = (actual - plan) / plan * 100.0
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        return list(seen.values())
+    except _sqlite3.Error:
+        logger.warning("[LiveBacktestCompare] 滑点样本读取失败", exc_info=True)
+        return []
+    finally:
+        conn.close()
+
+
+def _estimate_slippage(
+    rows: List[TradeRow],
+    real_samples: Optional[List[float]] = None,
+) -> Dict[str, float]:
     """
+    滑点估算: 优先真实成交对 (计划价→成交价, 方向感知成本),
+    无真实样本时回落到回撤代理 (旧库兼容兜底).
+    """
+    if real_samples is None:
+        real_samples = load_slippage_samples()
+    if real_samples:
+        s = sorted(real_samples)
+        avg = sum(s) / len(s)
+        p95 = s[int(0.95 * (len(s) - 1))]
+        return {
+            "avg_slippage_pct": round(avg / 100.0, 6),
+            "p95_slippage_pct": round(p95 / 100.0, 6),
+            "samples": len(s),
+            "source": "playbook_instructions.execution_price",
+        }
     if not rows:
         return {"avg_slippage_pct": 0.0, "p95_slippage_pct": 0.0, "samples": 0}
-    # 没有信号价字段 → 用持仓最大回撤的 5% 作为滑点上限代理 (保守估计)
+    # 代理兜底: 持仓最大回撤的 5% 作为滑点上限代理 (保守估计)
     proxies = [r.max_drawdown_during_trade * 0.05 for r in rows
                if r.max_drawdown_during_trade > 0]
     if not proxies:
@@ -83,6 +172,7 @@ def _estimate_slippage(rows: List[TradeRow]) -> Dict[str, float]:
         "avg_slippage_pct": round(avg, 6),
         "p95_slippage_pct": round(p95, 6),
         "samples": len(proxies),
+        "source": "max_drawdown_proxy",
     }
 
 
@@ -130,6 +220,11 @@ class LiveBacktestComparator:
 
         if not rows:
             notes.append("窗口内无已平仓成交, 报告为空。")
+            slip_empty = _estimate_slippage(
+                [], real_samples=load_slippage_samples(
+                    start_date=start_dt.isoformat(), end_date=end_dt.isoformat(),
+                ),
+            )
             return ComparisonReport(
                 generated_at=now_utc().isoformat(timespec="seconds"),
                 window=(start_dt.isoformat(), end_dt.isoformat()),
@@ -137,7 +232,7 @@ class LiveBacktestComparator:
                 n_live=0, n_backtest=0,
                 live_stats=_stats([]), backtest_stats=_stats([]),
                 diffs={},
-                slippage_estimate=_estimate_slippage([]),
+                slippage_estimate=slip_empty,
                 latency_impact=_estimate_latency_impact([]),
                 notes=notes,
             )
@@ -163,7 +258,12 @@ class LiveBacktestComparator:
             ),
         }
 
-        slip = _estimate_slippage(rows)
+        slip = _estimate_slippage(
+            rows,
+            real_samples=load_slippage_samples(
+                start_date=start_dt.isoformat(), end_date=end_dt.isoformat(),
+            ),
+        )
         latency = _estimate_latency_impact(rows)
 
         # ── 启发式备注 ──
