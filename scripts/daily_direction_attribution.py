@@ -11,7 +11,7 @@
 """
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import sys
@@ -28,17 +28,25 @@ def analyze_direction(days: int = 7) -> dict:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     
-    # 2026-06-30: 用 ET 日期计算 cutoff (date('now') 是 UTC)
-    try:
-        from app.utils.timezone import now_et as _now_et
-        from datetime import timedelta as _td
-        cutoff = (_now_et() - _td(days=days)).strftime("%Y-%m-%d")
-    except Exception:
-        from datetime import datetime as _dt, timedelta as _td
-        cutoff = (_dt.now() - _td(days=days)).strftime("%Y-%m-%d")
-    
-    # 获取最近N天有T1回填的信号
-    rows = conn.execute(f"""
+    # 2026-08-29 竞态修复 ("日志正常但逻辑失效"族): 本报告 04:00 CST 随盘后复盘跑,
+    # fwd_ret_t1 回填 05:30 CST 才填昨天的 T1 → 旧墙钟 cutoff (now_et - days) 恒指向
+    # 未回填的交易日, 44 份归档报告自 7/4 起每晚恒空而 job 状态恒 ok.
+    # 改锚定"最新已回填交易日": 窗口 = 最近 N 个已结算交易日, 与调用时刻解耦
+    # (周末缺口下周五信号要等周二 CST 晨回填, 前沿自动退到周四, 不再空转).
+    n_days = max(int(days), 1)
+    filled_dates = [r["trade_date"] for r in conn.execute(
+        """SELECT DISTINCT trade_date FROM signal_snapshots
+           WHERE fwd_ret_t1 IS NOT NULL AND direction != 'NEUTRAL'
+           ORDER BY trade_date DESC LIMIT ?""", (n_days,)).fetchall()]
+
+    if not filled_dates:
+        conn.close()
+        return {"error": "No data found", "period": f"{n_days} days", "total": 0}
+
+    cutoff = filled_dates[-1]
+
+    # 获取最近N个已结算交易日的信号
+    rows = conn.execute("""
         SELECT direction, strategy_id, fwd_ret_t1, fwd_ret_t5, strength, confidence,
                symbol, trade_date, created_at_snap
         FROM signal_snapshots
@@ -47,10 +55,6 @@ def analyze_direction(days: int = 7) -> dict:
           AND trade_date >= ?
         ORDER BY trade_date DESC
     """, (cutoff,)).fetchall()
-    
-    if not rows:
-        conn.close()
-        return {"error": "No data found", "period": f"{days} days", "total": 0}
     
     # 按方向+策略分组
     groups = defaultdict(list)
@@ -140,7 +144,8 @@ def analyze_direction(days: int = 7) -> dict:
     conn.close()
     
     return {
-        "period": f"{days} days",
+        "period": f"{n_days} 个已结算交易日",
+        "covered_dates": sorted(filled_dates),
         "total": len(rows),
         "by_strategy": results,
         "by_direction": dir_summary,
@@ -154,7 +159,9 @@ def format_report(data: dict) -> str:
     
     lines = []
     lines.append("📊 LONG/SHORT 方向自适应止盈 — 每日分析报告")
-    lines.append(f"分析周期: 最近{data['period']} | 总信号: {data['total']}")
+    covered = ", ".join(data.get("covered_dates", [])) or "—"
+    lines.append(
+        f"分析周期: {data['period']} (已结算日: {covered}) | 总信号: {data['total']}")
     lines.append("")
     
     # 方向汇总
