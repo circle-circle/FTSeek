@@ -77,13 +77,19 @@ def test_adaptation_law_intact():
     assert "一次一变量" in text, "适应律丢了'一次一变量'增益上界"
 
 
-def test_g6_earnings_blackout_gate_stays_offline():
-    """G6 裁决契约 (2026-08-29 用户裁"按建议执行"): 财报禁建门显式下线.
+def test_g6_earnings_blackout_gate_stays_online():
+    """G6 契约 (2026-08-29 复核纠错后): 财报禁建门必须显式在线.
 
-    背景门从未拦截过任何一笔 (earnings_calendar 表 0 行, 恒空转)。下线方式 =
-    unified_config 显式置 false — 代码缺省是 true (pipeline.py pb_cfg.get),
-    删键会静默复活, 故必须钉住键存在且为 false; 恢复需满足台账 G6 行的
-    重启前置条件并回 true。
+    原裁决 (下线) 依据"earnings_calendar 表 0 行 ⇒ 门从未拦截" — 该证据是死表
+    (app/risk/earnings_guard.py SQLite 载体), 与本门实际读的活载体
+    (earnings_risk_guard.py 内存态, AV 喂数) 同名不同物。生产日志实锤 8/19-8/26
+    拦截 85 次 (BABA 36 / CRM 49) ⇒ 裁决撤销, 门恢复在线。
+
+    本测试钉住"键存在且为 true": 代码缺省也是 true, 但显式声明防止 ①移位到
+    PlaybookConfig 读不到的节 (只合并 execution_parameters + risk_parameters);
+    ②未来再下线时绕过证据审查 (须先验活载体拦截历史 + 行为级日志证据,
+    不能只看死表)。删键虽不改变行为 (缺省 true), 但删键 = 删除在线声明,
+    同样红。
 
     键位: playbook.execution_parameters.* (PlaybookConfig._load 只合并
     risk_parameters + execution_parameters 两个子节, 放别处读不到)。
@@ -95,7 +101,8 @@ def test_g6_earnings_blackout_gate_stays_offline():
         val = (pb.get(section) or {}).get("earnings_blackout_gate_enabled", "MISSING")
         if val != "MISSING":
             break
-    assert val is False, (
-        f"playbook.execution_parameters.earnings_blackout_gate_enabled 应为 false (G6 已裁决下线), "
-        f"实际={val!r} — 删键或移位会让代码缺省 true 静默复活一个无数据源的空转门; "
-        "恢复须先满足台账 G6 前置条件")
+    assert val is True, (
+        f"playbook.execution_parameters.earnings_blackout_gate_enabled 应为 true "
+        f"(G6 活门在线, 8/19-8/26 拦截 85 次实证), 实际={val!r} — "
+        "再下线须先验证活载体 (earnings_risk_guard._earnings_symbols) 拦截历史"
+        "与生产日志行为级证据, 不能只看 SQLite 死表")

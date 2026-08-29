@@ -1103,14 +1103,17 @@ playbook:
     liquidity_gate_max_adv_pct: 0.5
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
-    # ── G6 显式下线 (2026-08-29, 用户裁决"按建议执行"; 台账 CONTROL-LOOP-LEDGER §5) ──
-    #   财报禁建门自 2026-07-19 接线以来从未拦截过任何一笔 — 其唯一数据源
-    #   earnings_calendar 表自建库起 0 行 (D1 已看守), 恒空转 = "日志宣称有防线
-    #   实际从未存在"家族。处置: 显式置 false 下线 (非删键, 代码缺省 true 删了会复活;
-    #   本键归 execution_parameters 子节 — PlaybookConfig 只合并该节与 risk_parameters);
-    #   重启接线前置条件 = 引入可靠财报日历数据源 + 断流自动告警 + 真实财报期
-    #   重仓亏损案例作证据。回滚: 置回 true 即恢复"空转但接线"原状。
-    earnings_blackout_gate_enabled: false
+    # ── G6 恢复在线 (2026-08-29 复核纠错: 原下线裁决前提错误) ──
+    #   8/29 上午依据"earnings_calendar 表 0 行 ⇒ 门从未拦截"置 false。复核实锤:
+    #   该证据是死表 (app/risk/earnings_guard.py 的 SQLite 载体), 而本门实际读的是
+    #   earnings_risk_guard.py 内存态载体 — 由 Alpha Vantage 经
+    #   scheduler_core→get_watchlist_earnings(days_ahead=7)→update_earnings_calendar
+    #   每日喂数 (103~109 只)。生产日志: 8/19-8/26 共拦截 85 次
+    #   (BABA 36 / CRM 49, "[playbook] #2 财报门拦截"), 是正在工作的活门。
+    #   前提与事实相反 ⇒ 下线裁决撤销, 键置回 true (原状态)。
+    #   未来再议下线须先验证: ①活载体 (earnings_risk_guard._earnings_symbols) 的
+    #   拦截历史与数据源活性, 不是只看 SQLite 死表; ②行为级证据 (生产日志拦截计数)。
+    earnings_blackout_gate_enabled: true
     # ══ Phase 1 信号质量治理 (2026-08-23, DEB-20260823-phase1, 用户知情破例) ══
     #   前提: DEB-20260823 已证毛期望=0 且退出侧调优数学上无效 → 唯一未开采的杠杆是
     #   入场信号质量。三项均只做减法 (减少无效信号, 不增加信号数), 各带独立开关。
