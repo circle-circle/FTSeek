@@ -267,75 +267,101 @@ class EarningsCalendar:
             return self._cache
         
         logger.info(f"获取财报日历 (horizon={horizon})...")
-        csv_text = self._fetch_raw_calendar(horizon)
-        rows = self._parse_csv(csv_text)
-        
-        # 2026-08-12 冗余源 (修尺子, 零行为变更):
-        # AV 失败/空结果时 fallback 富途原生日历 (OpenD 本地, 无外部配额)。
-        # 输出契约与 AV 解析结果完全一致 (symbol/reportDate/timeOfTheDay/estimate),
-        # 下游 get_watchlist_earnings / earnings_risk_guard 无需任何改动。
-        # 限制: 富途接口单次窗口 ≤7 天 — 恰好覆盖全部消费方 (days_ahead=7)。
+        # 2026-08-29 源序反转 (用户裁"2直接做"): 富途原生升主源, AV 降备源。
+        #   根因: G6 复核确认活门数据源是 AV 单点外部依赖 (配额/断流/付费墙风险),
+        #   而富途原生 get_earnings_calendar (OpenD 本地, 无配额) 8/12 写成
+        #   "AV 空才触发"的 fallback —— 恰最需要冗余时它不在。反转后:
+        #   富途窗口 7 天恰好覆盖全部生产消费方 (days_ahead=7); AV 3month 保留为
+        #   备源兼历史段补充。输出契约不变 (下游按 reportDate 自行过滤)。
+        #   断流告警: 双源皆空 → WARNING 显式标记 (此前静默返回空列表, 门空转无人知
+        #   —— 正是 G6 死表误判的同族失明)。
+        rows = self._fetch_futu_calendar_primary()
         if not rows:
-            rows = self._fetch_futu_calendar_fallback()
-        
+            csv_text = self._fetch_raw_calendar(horizon)
+            rows = self._parse_csv(csv_text)
+
+        if not rows:
+            logger.warning(
+                "[财报日历] ⚠️ 断流告警: 富途主源与 AV 备源均返回空 — "
+                "财报禁建门/财报期风控将空转 (is_earnings_blackout 恒放行)。"
+                "连续出现请查 OpenD 连通性与 AV key。")
+
         # 缓存结果
         self._cache = rows
         self._cache_time = now
-        
+
         logger.info(f"获取到 {len(rows)} 条财报数据")
         return rows
     
-    def _fetch_futu_calendar_fallback(self, days_ahead: int = 7) -> List[Dict]:
+    def _fetch_futu_calendar_primary(self, days_ahead: int = 7, days_back: int = 2) -> List[Dict]:
         """
-        富途原生财报日历 fallback (AV 失败时的冗余源)
-        
+        富途原生财报日历 — 主源 (2026-08-29 由 fallback 升为主源)
+
         数据源: OpenQuoteContext.get_earnings_calendar (OpenD 本地, 无配额限制)
-        窗口: API 限制单次 ≤7 天 (含端点), end = today + (days_ahead-1)
-        
+        窗口: API 硬限制单次 ≤7 天含端点 (实测 2026-08-29: 8 天即报
+          "日期范围不能超过7天")。故拆两次调用并合并去重:
+            过去段 [today-days_back, today] (覆盖 get_recently_reported(days_back≤2))
+            未来段 [today, today+days_ahead-1] (覆盖全部生产消费方 days_ahead=7)
+          主源非空时备源不触发, 窗口缺过去段会静默丢失"已发布"日历。
+
         Returns:
             与 _parse_csv 输出同构的列表:
             [{"symbol": "CSCO", "name": "思科", "reportDate": "2026-08-12",
               "timeOfTheDay": "post-market", "estimate": "0.8643",
               "currency": "USD", "source": "futu"}, ...]
-            失败返回 [] (与 AV 失败行为一致 → 日历为空, 下游降级运行)。
+            失败返回 [] (触发 AV 备源)。
         """
         import socket
         try:
             from futu import OpenQuoteContext, RET_OK
         except ImportError:
-            logger.warning("[财报日历] futu SDK 不可用, fallback 跳过")
+            logger.warning("[财报日历] futu SDK 不可用, 主源跳过")
             return []
-        
+
         host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
         try:
             port = int(os.environ.get("FUTU_OPEND_PORT", "11111"))
         except (ValueError, TypeError):
             port = 11111
-        
+
         # 连通性预检 (2s): OpenD 不可达时快速失败, 不阻塞盘前流程
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
         try:
             sock.connect((host, port))
         except (ConnectionRefusedError, OSError) as e:
-            logger.warning(f"[财报日历] OpenD 不可达 ({host}:{port}), fallback 跳过: {e}")
+            logger.warning(f"[财报日历] OpenD 不可达 ({host}:{port}), 主源跳过: {e}")
             return []
         finally:
             sock.close()
-        
+
         ctx = None
         try:
             today = datetime.now().date()
-            begin = str(today)
-            end = str(today + timedelta(days=max(days_ahead - 1, 1)))
-            
+            # 两段窗口, 每段 ≤7 天含端点 (API 硬限制)
+            windows = [
+                (str(today - timedelta(days=max(days_back, 0))), str(today)),
+                (str(today), str(today + timedelta(days=max(days_ahead - 1, 1)))),
+            ]
+
             ctx = OpenQuoteContext(host=host, port=port)
-            ret, data = ctx.get_earnings_calendar(
-                market="US", begin_date=begin, end_date=end)
-            
-            if ret != RET_OK or data is None or len(data) == 0:
-                logger.warning(f"[财报日历] 富途日历返回空/失败 (ret={ret}), fallback 跳过")
+            frames = []
+            for begin, end in windows:
+                ret, data = ctx.get_earnings_calendar(
+                    market="US", begin_date=begin, end_date=end)
+                if ret == RET_OK and data is not None and len(data) > 0:
+                    frames.append(data)
+                else:
+                    logger.warning(
+                        f"[财报日历] 富途主源窗口 {begin}~{end} 返回空/失败 (ret={ret})")
+
+            if not frames:
+                logger.warning("[财报日历] 富途主源全窗口无数据, 转 AV 备源")
                 return []
+            import pandas as pd
+            data = pd.concat(frames, ignore_index=True)
+            # 两窗口在 today 重叠 → 按 (security, earnings_date) 去重
+            data = data.drop_duplicates(subset=["security", "earnings_date"])
             
             # pub_type → AV timeOfTheDay 契约映射
             _PUB_MAP = {"BEFORE": "pre-market", "AFTER": "post-market", "REGULAR": ""}
@@ -365,10 +391,12 @@ class EarningsCalendar:
                 except Exception:
                     continue
             
-            logger.info(f"[财报日历] 富途冗余源生效: {len(rows)} 条 ({begin} ~ {end})")
+            logger.info(
+                f"[财报日历] 富途主源生效: {len(rows)} 条 "
+                f"({len(frames)} 窗口合并去重)")
             return rows
         except Exception as e:
-            logger.warning(f"[财报日历] 富途 fallback 异常: {e}")
+            logger.warning(f"[财报日历] 富途主源异常: {e}")
             return []
         finally:
             try:
