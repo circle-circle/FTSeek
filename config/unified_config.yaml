@@ -986,7 +986,10 @@ playbook:
   premarket_invalidation_observe: true
   # RFC-068 (2026-08-29 用户批准): B门硬门 — BUY 执行时刻现价/昨收 < -5% 拒入场.
   #   影子版 (observe) 继续 record-only 采集对照; 本门只拦接飞刀, 价格回升出区下轮自然复评.
-  #   证据: 8/10-8/28 飞刀区成交3笔净-$280 (2笔SL+1笔+$3), 8/28 RBRK 实锤-$159.
+  #   证据: 8/10-8/28 飞刀区成交4笔净-$439 (3笔SL+1笔+$3); 执行时刻口径反事实
+  #   (8/29 独立重算) 拦4笔 避损$305.48 误杀$2.51 净+$302.97. 8/28 RBRK 实锤-$159.
+  #   ⚠️ 2026-08-29 审计修复: 本门读的 ctx['prev_close'] 键此前从未注入, 门结构性
+  #   不触发; 已修 (market_data_router 注入日K真昨收), 见 RFC-068 勘误节.
   #   回滚: 置 false + systemctl restart ftseek-us.
   premarket_invalidation_hard_gate: true
   direction_mode: llm_vote

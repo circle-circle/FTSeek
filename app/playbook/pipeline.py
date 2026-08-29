@@ -3670,9 +3670,15 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 logger.info(f"[playbook] 盘中触发: {inst['symbol']} {inst['direction']}")
 
             # ── RFC-068 (2026-08-29, 用户批准): B门硬门 — 接飞刀拒入场 ──
-            # 证据 (8/10-8/28 影子×成交对账): BUY 且盘前/现价 ≤-5% 成交 3 笔 —
-            #   UCTT -6.0%→SL -$145, BABA -5.6%→SL -$138, LRCX -5.5%→+$3 = 净 +$280;
-            #   8/28 RBRK pm-5.6% 触发成交 → 26分钟后 SL -$159 (本门会拦).
+            # 证据 (8/10-8/28 影子×成交对账, RFC-068文档+8/29勘误节为准):
+            #   飞刀区成交 4 笔净 -$439:
+            #   UCTT pm-6.0%→SL -$145, BABA pm-5.6%→SL -$138, LRCX pm-5.5%→+$3,
+            #   RBRK pm-3.4%→SL(26分钟) -$159.
+            #   本门执行时刻口径(实时价/真昨收)反事实独立重算(139笔全窗口, 8/29):
+            #   拦 4 笔 = BABA -6.20%/LRCX -5.58%/RBRK -5.41%/SNDK -5.48%,
+            #   避损 $305.48, 误杀 LRCX +$2.51 → 净收益 +$302.97.
+            #   注: UCTT 执行时刻已回升至 -2.85% 放行(其后盘中跌穿止损, 非缺口风险);
+            #   RFC 初版表用盘前快照口径记"拦3省283", 与执行时刻口径不同, 见勘误节.
             # 语义: 执行时刻实时价 vs 昨收 < -5% → 拒入场; 若价格回升出飞刀区, 下轮自然复评.
             #   规则判定复用 premarket_invalidation.evaluate_rules (SSOT, 阈值唯一),
             #   影子版 record-only 继续采集对照, 本门只取 B_long_knife 命中转正为硬拦.

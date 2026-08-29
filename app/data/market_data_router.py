@@ -502,7 +502,36 @@ class MarketDataRouter:
                                     ts_ctx["atr_percent"] = 2.0
                                     logger.debug(f"[Router] {symbol} ATR兜底: {_atr_val:.2f}({_atr_pct_check:.2f}%) → {_floor_atr:.2f}(2.0%)")
                         except Exception as _atr_err:
-                            logger.debug(f"[Router] {symbol} 日ATR覆盖失败 (用1分钟ATR): {_atr_err}")
+                            logger.debug(f"[Router] 日ATR覆盖失败 (用1分钟ATR): {_atr_err}")
+
+                        # ── RFC-068 审计修复 (2026-08-29): prev_close 注入 ──
+                        # 本函数此前从不输出 prev_close 键 → pipeline.py B门硬门读取恒 0
+                        # → "px>0 and pc>0" 第一步即短路 → 门结构性永不触发 (8/29 复查实测;
+                        # RFC-068 文档曾声称该键存在, 为错误声称, 见其勘误节)。
+                        # 昨收口径: 日K自算真昨收 (承 de13b8d0 教训; 不用快照 prev_close_price —
+                        # 盘前概率性返回两天前收盘, 62% 实测)。优先复用主路径已拉的
+                        # daily_klines/count=60 (零新增API调用), 缺失时才走缓存的
+                        # get_daily_bars; 日K全不可得回落 quote.prev_close。
+                        # 异常 fail-open (缺键 = B门按其"数据缺失放行"语义放行)。
+                        try:
+                            if not ts_ctx.get("prev_close"):
+                                import pytz as _pz_pc
+                                from datetime import datetime as _dt_pc
+                                _today_pc = _dt_pc.now(_pz_pc.timezone("US/Eastern")).strftime("%Y-%m-%d")
+                                # daily_klines 仅在非期权主路径赋值 (期权/报价路径无此局部) → locals 守卫
+                                _bars_pc = locals().get("daily_klines") or self.get_daily_bars(symbol, count=60)
+                                _closes_pc = [
+                                    (str(b.get("time_key") or b.get("time") or "")[:10],
+                                     float(b.get("close", 0) or 0))
+                                    for b in (_bars_pc or [])
+                                ]
+                                _prior_pc = [c for d, c in _closes_pc if d and d < _today_pc and c > 0]
+                                if _prior_pc:
+                                    ts_ctx["prev_close"] = _prior_pc[-1]
+                                elif futu_quote and float(futu_quote.get("prev_close", 0) or 0) > 0:
+                                    ts_ctx["prev_close"] = float(futu_quote["prev_close"])
+                        except Exception as _pc_err:
+                            logger.debug(f"[Router] prev_close注入跳过 {symbol}: {_pc_err}")
 
                         # ★★★ FIX 2026-07-11: 富因子注入原被误缩进进 except 分支, 移回正常路径
                         # 用此 if 承载块内 28 缩进 (恒真: 外层已判 ts_ctx 非 None), 避免大范围重排
