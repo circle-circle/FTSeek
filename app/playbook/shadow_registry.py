@@ -225,8 +225,8 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="limit_entry",
         name="锚限价影子",
-        status=ShadowStatus.READY_TO_EVALUATE,
-        description="触发时记录锚限价入场 vs 实际市价入场的改善量。毕业主门每周五机械判定 (周六09:05周检)。",
+        status=ShadowStatus.KILLED,
+        description="触发时记录锚限价入场 vs 实际市价入场的改善量。2026-08-29 用户裁决 KILL 停采。",
         data_path="data/limit_entry_shadow.jsonl",
         config_key="playbook.limit_entry_shadow_observe",
         min_n=60,
@@ -235,7 +235,10 @@ REGISTRY: list[ShadowItem] = [
         created="2026-08-06",
         last_evaluated="2026-08-23",
         verdict_history=[{"date": "2026-08-23", "verdict": "NOT_GRADUATED",
-                         "evidence": "n=69配对真被动: δ̄=$3.03但σ=$28(功效预估σ=$4.29的6.5倍) → 置换p=0.19>0.025, CI95[-2.97,+10.31]含0, 符号检验37/69 p=0.32。三关全未过。按停止规则只降级不重置, 继续攒样, 每周五机械判定。"}],
+                         "evidence": "n=69配对真被动: δ̄=$3.03但σ=$28(功效预估σ=$4.29的6.5倍) → 置换p=0.19>0.025, CI95[-2.97,+10.31]含0, 符号检验37/69 p=0.32。三关全未过。按停止规则只降级不重置, 继续攒样, 每周五机械判定。"},
+                        {"date": "2026-08-29", "verdict": "KILLED",
+                         "evidence": "用户知情推翻预注册'只降级不重置'规则强杀 (提案方曾误述规则为应KILL, 更正后用户仍裁决杀)。"
+                                     "依据: 8/23三关全败且σ超功效预估6.5倍=信号噪声比绝望; 停采 limit_entry_shadow_observe=false。回滚: 开关翻true+状态revert。"}],
     ),
     ShadowItem(
         id="vwap_gate_ab",

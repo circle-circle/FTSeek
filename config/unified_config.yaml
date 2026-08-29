@@ -1238,7 +1238,10 @@ playbook:
   technical_arbitration:
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/playbook_direction_audit.jsonl
-  limit_entry_shadow_observe: true
+  # 2026-08-29 用户裁决 KILL (知情推翻预注册"只降级不重置"规则): 8/23 评估三关全败
+  #   (置换p=0.19/CI95含0/符号检验p=0.32, n=69; σ超功效预估6.5倍) → 停采。注册表 limit_entry=KILLED 留痕。
+  #   回滚: 改回 true + 注册表状态 revert。
+  limit_entry_shadow_observe: false
   admission:
     enabled: true
     enforce: true
