@@ -644,6 +644,9 @@ class EarningsCalendar:
         
         Phase 2 核心: 盘后检测已发布财报的股票，
         分析超预期程度 + 市场反应，生成次日交易计划。
+
+        2026-08-29 增强: 叠加富途 earnings_beat_rank (EPS beat_ratio/actual/estimate)
+        补充超预期幅度, 供盘后动量分析与次日交易计划使用。
         
         Args:
             days_back: 查询过去几天的数据 (默认 1 = 今天)
@@ -655,6 +658,8 @@ class EarningsCalendar:
             - name: 公司名
             - report_date: 财报日期
             - estimate: 预期 EPS
+            - actual: 实际 EPS (来自富途, 可能为 None)
+            - beat_ratio: 超预期幅度 (actual-estimate)/|estimate|, 可能为 None
             - time_of_day: 盘前/盘后
             - sector: 行业
             - atr_multiplier: 行业 ATR 倍数配置
@@ -666,6 +671,9 @@ class EarningsCalendar:
         
         # 构建 Futu 映射
         watchlist_futu_map = {v[0]: k for k, v in KEY_US_SYMBOLS.items()}
+
+        # 富途超预期数据 (EPS)
+        beat_map = self._fetch_futu_beat_rank()
         
         result = []
         for entry in calendar:
@@ -684,6 +692,8 @@ class EarningsCalendar:
                 # 过去 N 天内发布的
                 if start_date <= entry_date <= today:
                     atr_config = SECTOR_ATR_MULTIPLIERS.get(sector, SECTOR_ATR_MULTIPLIERS["Unknown"])
+
+                    beat_info = beat_map.get(futu_sym, {})
                     
                     result.append({
                         "symbol": futu_sym,
@@ -691,6 +701,8 @@ class EarningsCalendar:
                         "name": entry.get("name", ticker),
                         "report_date": report_date,
                         "estimate": entry.get("estimate", "N/A"),
+                        "actual": beat_info.get("actual"),
+                        "beat_ratio": beat_info.get("beat_ratio"),
                         "currency": entry.get("currency", "USD"),
                         "time_of_day": entry.get("timeOfTheDay", "N/A"),
                         "sector": sector,
@@ -703,6 +715,53 @@ class EarningsCalendar:
         # 按日期倒序 (最近的在前)
         result.sort(key=lambda x: x["report_date"], reverse=True)
         return result
+
+    def _fetch_futu_beat_rank(self) -> Dict[str, Dict]:
+        """富途 EPS 超预期榜 → {futu_symbol: {actual, estimate, beat_ratio}} (2026-08-29).
+
+        一次调用覆盖全市场近期已发布财报标的, 弥补 AV 日历只有 estimate 无 actual 的盲区。
+        失败静默返回空 (不影响主链路)。
+        """
+        try:
+            from app.core.config_container import get_config
+            if not bool(get_config().get_dotted(
+                    "futu_channels.earnings_beat_enabled", True)):
+                return {}
+        except Exception:
+            pass
+        try:
+            from futu import OpenQuoteContext, RET_OK, Market, BeatType
+            ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+            try:
+                ret, out = ctx.get_earnings_beat_rank(Market.US, BeatType.EPS, count=100)
+                if ret != RET_OK or not isinstance(out, tuple) or len(out) < 2:
+                    return {}
+                _, df = out
+                if df is None or not len(df):
+                    return {}
+                result = {}
+                for _, r in df.iterrows():
+                    try:
+                        sym = str(r.get("security", ""))
+                        if not sym:
+                            continue
+                        actual = float(r.get("actual", 0) or 0)
+                        est = float(r.get("estimate", 0) or 0)
+                        beat = float(r.get("beat_ratio", 0) or 0)
+                        result[sym] = {
+                            "actual": actual if actual else None,
+                            "estimate": est if est else None,
+                            "beat_ratio": beat if beat else None,
+                        }
+                    except Exception:
+                        continue
+                logger.info(f"[财报日历] 富途 beat 榜: {len(result)} 条")
+                return result
+            finally:
+                ctx.close()
+        except Exception as e:
+            logger.debug(f"[财报日历] 富途 beat 榜获取失败 (非致命): {e}")
+            return {}
 
     def analyze_post_earnings_opportunity(self, ticker: str) -> Dict:
         """

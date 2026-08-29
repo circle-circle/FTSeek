@@ -114,29 +114,77 @@ REGISTRY: list[ShadowItem] = [
                             "或 ρ≥0.15 + 非空率 ≥95% + n≥30 交易日。评估: scripts/futu_channel_shadow_eval.py",
         eval_script="scripts/futu_channel_shadow_eval.py",
         created="2026-08-12",
-        last_evaluated="2026-08-24",
-        verdict_history=[{"date": "2026-08-24", "verdict": "WEAK_EVIDENCE",
-                         "evidence": "ic=0.1188 t=1.49 n_pairs=157 oos同号(0.194/0.086) 未显著"}],
-        notes="行数口径: ~18标的×30交易日≈540行; 分钟级原料 data/futu_capital_flow.jsonl",
+        last_evaluated="2026-08-29",
+        verdict_history=[
+            {"date": "2026-08-24", "verdict": "WEAK_EVIDENCE",
+             "evidence": "ic=0.1188 t=1.49 n_pairs=157 oos同号(0.194/0.086) 未显著"},
+            {"date": "2026-08-29", "verdict": "FAIL_INTERIM",
+             "evidence": "ic=0.0511 t=0.595 n_pairs=137 较8/24衰减; OOS双窗异号(+0.134/-0.051) "
+                         "→ 毕业判据FAIL; 未达min_n=540继续攒样, 但若下次IC继续衰减/OOS仍异号 → 建议提前裁KILLED"}],
+        notes="行数口径: ~18标的×30交易日≈540行 (当前258); 分钟级原料 data/futu_capital_flow.jsonl; "
+              "OFI基线已就位(7817行, overlap 91对, flow_ofi_rank_corr=0.089 低共线)",
     ),
     ShadowItem(
         id="futu_channel_deriv_unusual",
         name="富途期权大单异动 (领先假说)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.READY_TO_EVALUATE,
         description="通道 A: get_derivative_unusual 期权大单事件 → 事件后窗口超额收益配对基线 "
                     "(Cremers-Weinbaum 知情资金先进期权假说)。8/12 已上线, 8/29 补登记。"
                     "8/24 初评: 超额均收益 -0.006%, 超额胜率 47.5% — 暂无领先证据。",
         data_path="data/futu_deriv_unusual.jsonl",
         config_key="futu_channels.shadow_collect_enabled",
         min_n=3000,
+        current_n=4634,
         graduation_criteria="DEB-20260812 §五预注册: 事件后窗口收益 > 同票无事件基线 (配对) "
                             "+ 非空率 ≥95% + n≥30。评估: scripts/futu_channel_shadow_eval.py",
         eval_script="scripts/futu_channel_shadow_eval.py",
         created="2026-08-12",
-        last_evaluated="2026-08-24",
-        verdict_history=[{"date": "2026-08-24", "verdict": "NO_EDGE_YET",
-                         "evidence": "excess_mean_ret=-0.00006 excess_win_rate=0.475 n_paired=3207"}],
-        notes="事件按稳定键去重 (剔除OI渲染抖动); 已达 min_n → 下次周检转待裁决",
+        last_evaluated="2026-08-29",
+        verdict_history=[
+            {"date": "2026-08-24", "verdict": "NO_EDGE_YET",
+             "evidence": "excess_mean_ret=-0.00006 excess_win_rate=0.475 n_paired=3207"},
+            {"date": "2026-08-29", "verdict": "NO_EDGE_CONFIRMED",
+             "evidence": "n_paired=3556 excess_mean_ret=-0.00014 excess_win_rate=0.478 "
+                         "(post+0.008% vs baseline+0.022%)。连续两次独立评估超额均为负, "
+                         "n 已远超判据 → 建议裁决 KILLED 停采 (省富途API额度), 待用户裁决"}],
+        notes="8/29 已达 min_n 且两连否 → READY_TO_EVALUATE 待 KILL 裁决; 事件按稳定键去重 (剔除OI渲染抖动)",
+    ),
+    ShadowItem(
+        id="futu_channel_ofi_baseline",
+        name="富途 OFI 订单流失衡基线 (通道 C)",
+        status=ShadowStatus.OBSERVING,
+        description="通道 C (8/21 上线, 8/29 补登记): get_market_snapshot level-1 盘口快照 "
+                    "{bid1/ask1 量价} → 评估侧对相邻快照算 Cont-Kukanov-Stoikov 增量 ΔOFI。"
+                    "用途: capital_flow 增量 IC 的 OFI 基线口径 (预注册纪律'禁裸边际'解法)。"
+                    "独立开关可单独回滚。",
+        data_path="data/futu_ofi_baseline.jsonl",
+        config_key="futu_channels.ofi_collect_enabled",
+        min_n=600,
+        graduation_criteria="OFI 增量与后续窗口收益的 IC 显著 (基线口径) 才毕业; "
+                            "评估: scripts/futu_channel_shadow_eval.py (与通道 B 联动)。",
+        eval_script="scripts/futu_channel_shadow_eval.py",
+        created="2026-08-21",
+        notes="count_mode=distinct:ts_et — 按快照时刻去重计数 (每轮采集多标的共享同一 ts); "
+              "8/21-8/28 已攒 428 快照 / 7817 行",
+        count_mode="distinct:ts_et",
+    ),
+    ShadowItem(
+        id="futu_channel_top_movers",
+        name="富途全市场盘中异动榜 (通道 E)",
+        status=ShadowStatus.OBSERVING,
+        description="通道 E (8/29 新增, 能力利用率审计用户裁'全做'): get_top_movers_rank(Market.US) "
+                    "全市场实时异动榜快照 (~1832标的, 每轮1行含Top100涨幅/换手/量比)。"
+                    "此前系统盘中无异动发现通道 — 影子先行攒样评估 "
+                    "'盘中异动 → 后续窗口收益' 有无信号, 不进门禁。",
+        data_path="data/futu_top_movers_shadow.jsonl",
+        config_key="futu_channels.movers_shadow_enabled",
+        min_n=540,
+        graduation_criteria="预注册: 异动榜Top100入选 → 后续30min/日内窗口超额收益配对基线, "
+                            "IC 显著才评估接候选池发现通道; 评估脚本待建 (先攒样)。",
+        eval_script=None,
+        created="2026-08-29",
+        notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
+              "与盘前榜(premarket_enrichment futu_premarket_rank)互补: 盘前榜接决策上下文, 本通道纯影子",
     ),
     ShadowItem(
         id="futu_channel_iv_hv",

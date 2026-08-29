@@ -108,6 +108,14 @@ def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dic
     except Exception as e:
         logger.warning(f"[PreMarket] premarket movers failed: {e}")
 
+    # ── 2b. Futu 全市场盘前涨跌榜 (2026-08-29: 覆盖 20只池→全市场) ──
+    try:
+        rank = _collect_futu_premarket_rank()
+        if rank:
+            result["futu_premarket_rank"] = rank
+    except Exception as e:
+        logger.warning(f"[PreMarket] Futu premarket rank failed: {e}")
+
     # ── 3. Analyst Sentiment (Finnhub + Futu) ──
     if watchlist_symbols:
         try:
@@ -292,6 +300,69 @@ def _collect_sector_rotation(client) -> Dict[str, Any]:
         "laggards": laggards,
         "summary": f"Leading: {', '.join(leaders)} | Lagging: {', '.join(laggards)}" if leaders else "",
     }
+
+
+def _collect_futu_premarket_rank(top_n: int = 15) -> Optional[Dict[str, Any]]:
+    """富途全市场盘前涨跌榜 (2026-08-29 能力利用率审计接线).
+
+    此前盘前异动仅扫硬编码 20 只 MOVER_POOL (Finnhub quote 轮询),
+    本维度一次调用覆盖全市场 (~18000 只) 盘前涨跌幅排名。
+    record-only 增量维度, 不替换既有 MOVER_POOL 检测 (保留指数/观察池口径)。
+    回滚: futu_channels.premarket_rank_enabled=false + 重启。
+    """
+    try:
+        from app.core.config_container import get_config
+        if not bool(get_config().get_dotted(
+                "futu_channels.premarket_rank_enabled", True)):
+            return None
+    except Exception:
+        pass
+    from futu import OpenQuoteContext, RET_OK
+    ctx = None
+    try:
+        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+        ret, out = ctx.get_us_pre_market_rank(count=50)
+        if ret != RET_OK or not isinstance(out, tuple) or len(out) < 2:
+            logger.warning(f"[PreMarket] Futu 盘前榜失败: ret={ret}")
+            return None
+        total, df = out
+        if df is None or not len(df):
+            return None
+        gainers, losers = [], []
+        for _, r in df.iterrows():
+            try:
+                sym = str(r.get("security", "")).replace("US.", "")
+                chg = float(r.get("pre_market_change_ratio", 0) or 0)
+                px = float(r.get("pre_market_price", 0) or 0)
+                to = float(r.get("pre_market_turnover", 0) or 0)
+                if not sym or px <= 0:
+                    continue
+                entry = {"symbol": sym, "price": round(px, 2),
+                         "change_pct": round(chg, 2),
+                         "turnover_usd": round(to)}
+                if chg > 2.0:
+                    gainers.append(entry)
+                elif chg < -2.0:
+                    losers.append(entry)
+            except Exception:
+                continue
+        gainers.sort(key=lambda x: x["change_pct"], reverse=True)
+        losers.sort(key=lambda x: x["change_pct"])
+        return {
+            "source": "futu_us_pre_market_rank",
+            "universe": int(total or 0),
+            "gainers": gainers[:top_n],
+            "losers": losers[:top_n],
+        }
+    except Exception as e:
+        logger.warning(f"[PreMarket] Futu 盘前榜异常: {e}")
+        return None
+    finally:
+        if ctx is not None:
+            try:
+                ctx.close()
+            except Exception:
+                pass
 
 
 def _collect_premarket_movers(client, watchlist_symbols: Optional[List[str]] = None) -> Dict[str, Any]:

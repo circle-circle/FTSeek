@@ -214,6 +214,7 @@ def _collect_capital_flow(ctx, symbols: List[str]) -> int:
 
 _OFI_OUT = _BASE / "data" / "futu_ofi_baseline.jsonl"
 _IV_OUT = _BASE / "data" / "futu_iv_hv_shadow.jsonl"
+_MOVERS_OUT = _BASE / "data" / "futu_top_movers_shadow.jsonl"
 
 
 def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
@@ -402,6 +403,57 @@ def _collect_deriv_unusual(ctx, symbols: List[str]) -> int:
     return len(new_rows)
 
 
+def _collect_top_movers(ctx) -> int:
+    """通道 E: 全市场盘中异动榜快照 (2026-08-29 能力利用率审计, record-only).
+
+    get_top_movers_rank(Market.US) 一次调用返回全市场实时异动榜 (当日涨幅/换手),
+    此前系统盘中无任何异动发现通道 (盘中新冒出的标的进不了候选池)。
+    影子先行: 每轮存一行快照, 攒样评估 "盘中异动 → 后续窗口收益" 是否有信号,
+    不进任何门禁。独立开关: futu_channels.movers_shadow_enabled.
+    """
+    from futu import RET_OK
+    try:
+        from app.core.config_container import get_config
+        if not bool(get_config().get_dotted(
+                "futu_channels.movers_shadow_enabled", True)):
+            return 0
+    except Exception:
+        pass
+    try:
+        from futu import Market
+        ret, out = ctx.get_top_movers_rank(Market.US, count=100)
+        if ret != RET_OK or not isinstance(out, tuple) or len(out) < 2:
+            return 0
+        _, df = out
+        if df is None or not len(df):
+            return 0
+        movers = []
+        for _, r in df.iterrows():
+            try:
+                movers.append({
+                    "symbol": str(r.get("security", "")),
+                    "change_pct": round(float(r.get("change_ratio", 0) or 0), 2),
+                    "turnover_ratio": round(float(r.get("turnover_ratio", 0) or 0), 2),
+                    "volume_ratio": round(float(r.get("volume_ratio", 0) or 0), 2),
+                })
+            except Exception:
+                continue
+        if not movers:
+            return 0
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "universe": int(out[0] or 0),
+            "movers": movers,
+        }
+        _MOVERS_OUT.parent.mkdir(parents=True, exist_ok=True)
+        with _MOVERS_OUT.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return 1
+    except Exception as e:
+        logger.warning(f"[futu通道影子] top_movers 异常: {e}")
+        return 0
+
+
 def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     """入口 (挂载点显式传 phase). TRADING 节流 300s; AFTER_HOURS 每日 1 次
     (盘后序列才完整)."""
@@ -434,6 +486,10 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         # 2026-08-29: 通道 D IV/HV 日序列 (用户裁"4也做"). 日级数据仅盘后
         # 每日 1 次; 独立开关 futu_channels.iv_collect_enabled.
         n_iv = _collect_iv_hv(ctx, symbols) if is_after_hours else 0
+        # 2026-08-29: 通道 E 全市场盘中异动榜 (能力利用率审计, 用户裁'全做').
+        # 市场级快照不依赖 watchlist; 盘中每轮 1 行. 独立开关
+        # futu_channels.movers_shadow_enabled.
+        n_movers = _collect_top_movers(ctx) if not is_after_hours else 0
     finally:
         try:
             ctx.close()
@@ -443,8 +499,8 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     if is_after_hours:
         st["last_afterhours_date"] = str(date.today())
     _save_state(st)
-    if n_flow or n_deriv or n_ofi or n_iv:
+    if n_flow or n_deriv or n_ofi or n_iv or n_movers:
         logger.info(
             f"[futu通道影子] 采集完成 ({phase}): capital_flow +{n_flow} 行, "
             f"deriv_unusual +{n_deriv} 事件, ofi_baseline +{n_ofi} 快照, "
-            f"iv_hv +{n_iv} 行, 标的 {len(symbols)} 只")
+            f"iv_hv +{n_iv} 行, movers +{n_movers} 快照, 标的 {len(symbols)} 只")

@@ -2771,6 +2771,7 @@ futu_channels:
   # movers_shadow=盘中异动榜影子采集 (先攒样不进门禁)。独立回滚: 置 false+重启。
   premarket_rank_enabled: true
   movers_shadow_enabled: true
+  earnings_beat_enabled: true  # 财报日历 beat 榜 enrichment (get_recently_reported 叠加实际EPS/超预期幅度)
   # 2026-08-21 (DEB-20260818 P2 重排): 通道 C OFI 基线快照 — capital_flow 增量
   # IC 裁决需 OFI 基线口径 (预注册'禁裸边际'的解法). HTTP get_order_book 免订阅,
   # 不碰 ADR-013 CPU 红线. 独立回滚: ofi_collect_enabled=false + 重启.
