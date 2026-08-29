@@ -1036,81 +1036,9 @@ class MarketDataRouter:
         # TwelveData key 无效，跳过
         return result
 
-    def get_technical_indicators(
-        self,
-        symbol: str,
-        indicators: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        获取技术指标
-
-        P0 修复 (2026-05-02): 原方法不存在导致信号链路完全断裂。
-        内部复用 get_full_market_context() 的 LV3 K 线→技术指标计算链路。
-
-        Args:
-            symbol: 股票代码 (US.AAPL 格式)
-            indicators: 请求的指标列表 ["rsi", "vwap", "bollinger", ...]
-
-        Returns:
-            技术指标字典，包含:
-              rsi_14, vwap, bb_upper, bb_lower, macd, atr, volume, avg_volume 等
-        """
-        result = {}
-
-        ctx = self.get_full_market_context(symbol)
-        if not ctx:
-            logger.warning(f"[Router] {symbol} 技术指标获取失败: 无行情数据")
-            return result
-
-        # 映射: full context 字段
-        field_map = {
-            "rsi": "rsi_14",
-            "vwap": "vwap",
-            "bb_upper": "bb_upper",
-            "bb_lower": "bb_lower",
-            "bb_middle": "bb_middle",
-            # 兼容旧字段名 (LV3 calculator 同时输出 boll_* 和 bb_*)
-            "boll_upper": "bb_upper",
-            "boll_lower": "bb_lower",
-            "boll_middle": "bb_middle",
-            "macd": "macd",
-            "macd_signal": "macd_signal",
-            "macd_hist": "macd_hist",
-            "atr": "atr",
-            "volume": "volume",
-            "avg_volume": "avg_volume",
-            "ma5": "ma5",
-            "ma10": "ma10",
-            "ma20": "ma20",
-        }
-
-        for src_key, dst_key in field_map.items():
-            if src_key in ctx:
-                result[dst_key] = ctx[src_key]
-
-        # 如果 indicators 列表指定了，只返回请求的
-        if indicators:
-            filtered = {}
-            for ind in indicators:
-                ind_map = {
-                    "rsi": "rsi_14",
-                    "vwap": "vwap",
-                    "bollinger": ["bb_upper", "bb_lower", "bb_middle"],
-                    "macd": ["macd", "macd_signal", "macd_hist"],
-                    "atr": "atr",
-                    "volume": ["volume", "avg_volume"],
-                    "ma": ["ma5", "ma10", "ma20"],
-                }
-                keys = ind_map.get(ind, [ind])
-                if isinstance(keys, list):
-                    for k in keys:
-                        if k in result:
-                            filtered[k] = result[k]
-                elif keys in result:
-                    filtered[keys] = result[keys]
-            return filtered
-
-        return result
+    # 2026-08-29 减法: get_technical_indicators() 已删除 —
+    # 2026-05-02 为信号链断裂补的 LV3 指标桥, 后调用方迁走, 全仓零调用
+    # (rg 验证仅定义处自引用). 键对齐职责归消费者 (如 sss.py 双键读取模式).
 
     # ── 统计 ──────────────────────────────────────────────────────
 

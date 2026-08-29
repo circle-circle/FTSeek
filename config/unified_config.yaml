@@ -2766,6 +2766,11 @@ futu_channels:
   shadow_collect_enabled: true
   shadow_collect_interval_sec: 300
   shadow_symbols_max: 20
+  # 2026-08-29 (能力利用率审计, 用户裁'全做'): 富途盘前榜/异动榜接入开关 —
+  # premarket_rank=全市场盘前涨跌榜入 premarket_enrichment (20只池→全市场);
+  # movers_shadow=盘中异动榜影子采集 (先攒样不进门禁)。独立回滚: 置 false+重启。
+  premarket_rank_enabled: true
+  movers_shadow_enabled: true
   # 2026-08-21 (DEB-20260818 P2 重排): 通道 C OFI 基线快照 — capital_flow 增量
   # IC 裁决需 OFI 基线口径 (预注册'禁裸边际'的解法). HTTP get_order_book 免订阅,
   # 不碰 ADR-013 CPU 红线. 独立回滚: ofi_collect_enabled=false + 重启.
@@ -2785,7 +2790,9 @@ futu_channels:
 #   失业率/联储利率)最新值+披露检测(最新期前移=新披露) → jsonl 落库, 不进决策.
 #   回滚: shadow_collect_enabled=false + 重启.
 macro_calendar:
-  shadow_collect_enabled: true
+  shadow_collect_enabled: false
+  # 2026-08-29 停采: 采集活但全仓零消费方 (能力利用率审计实锤).
+  # 回滚: 置 true + 重启 (脚本内建开关读取, 重启生效).
   # 2026-08-21: 未来7天美国HIGH/MEDIUM宏观事件日程 (Futu get_economic_calendar,
   # 实测17事件/2天字段全). FRED段=已公布值(滞后), 本段=未来日程表(事件避让影子
   # 的前提), 互补同源脚本一次采齐. fail-open不影响FRED主链.
