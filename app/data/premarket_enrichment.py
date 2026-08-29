@@ -641,6 +641,38 @@ def ensure_premarket_rank_candidates(date_str: Optional[str] = None) -> Optional
     return None
 
 
+def get_premarket_rank_entries() -> Dict[str, List[Dict[str, Any]]]:
+    """当日盘前榜 entries (发现链消费口径): 进程内缓存优先, 冷缓存回退当日持久化文件。
+
+    2026-08-29 复查加固: factor_engine Source 1b 此前直读模块 _cache — 主服务盘中
+    重启后缓存清空, 该源当日静默零贡献 (仅 debug 日志, "日志正常但逻辑失效"族)。
+    本函数封装"缓存→文件"两级口径, 消费者不再触碰私有 _cache。
+    口径差异: 缓存=原始榜 top15/向; 文件=质量门后候选 ≤5/向 (对发现池均可用)。
+    永不读非当日文件 (旧文件=陈旧语义, 宁缺毋滥)。统一返回 {"gainers": [...], "losers": [...]}。
+    """
+    try:
+        cached = _cache.get("futu_premarket_rank") if isinstance(_cache, dict) else None
+        if isinstance(cached, dict) and (cached.get("gainers") or cached.get("losers")):
+            return {"gainers": cached.get("gainers") or [],
+                    "losers": cached.get("losers") or []}
+    except Exception:
+        pass
+    try:
+        from app.utils.timezone import now_et
+        d = now_et().strftime("%Y-%m-%d")
+    except Exception:
+        d = datetime.utcnow().strftime("%Y-%m-%d")
+    path = _RANK_CANDIDATES_DIR / f"premarket_rank_candidates_{d}.json"
+    try:
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return {"gainers": (payload.get("gainers") or {}).get("candidates") or [],
+                    "losers": (payload.get("losers") or {}).get("candidates") or []}
+    except Exception as e:
+        logger.debug(f"[PreMarket] 盘前榜回退读文件失败: {e}")
+    return {"gainers": [], "losers": []}
+
+
 def _collect_premarket_movers(client, watchlist_symbols: Optional[List[str]] = None) -> Dict[str, Any]:
     """Pre-market movers: 从 MOVER_POOL + watchlist 中检测异动"""
     # Merge pools

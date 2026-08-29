@@ -132,12 +132,15 @@ def _discover_finnhub_movers() -> List[str]:
     except Exception as e:
         logger.debug(f"[FactorEngine] premarket cache read error: {e}")
 
-    # ── Source 1b: 富途全市场盘前榜缓存 (2026-08-29, 零API消耗) ──
+    # ── Source 1b: 富途全市场盘前榜 (2026-08-29, 零API消耗) ──
     #   与 premarket_movers (20只硬编码池) 互补: 全市场 18064 只的涨跌幅榜,
     #   让盘中新异动标的进候选池 (此前盘中冒出的票进不了发现链)。
+    #   2026-08-29 复查加固: 直读模块 _cache 在主服务盘中重启后当日静默零贡献
+    #   (仅 debug 日志, "日志正常但逻辑失效"族) → 改走 get_premarket_rank_entries
+    #   (进程内缓存优先, 冷缓存回退当日持久化文件)。
     try:
-        from app.data.premarket_enrichment import _cache as _pm_cache2
-        _fpr = _pm_cache2.get("futu_premarket_rank", {})
+        from app.data.premarket_enrichment import get_premarket_rank_entries
+        _fpr = get_premarket_rank_entries()
         if _fpr and isinstance(_fpr, dict):
             _added = 0
             for entry in _fpr.get("gainers", []) + _fpr.get("losers", []):
@@ -150,7 +153,7 @@ def _discover_finnhub_movers() -> List[str]:
             if _added:
                 sources_hit.append(f"futu_premarket_rank({_added})")
     except Exception as e:
-        logger.debug(f"[FactorEngine] futu premarket rank cache read error: {e}")
+        logger.debug(f"[FactorEngine] futu premarket rank read error: {e}")
     
     # ── Source 2: Finnhub quote 异动扫描 (MOVER_POOL + dragonhead_pool) ──
     try:
