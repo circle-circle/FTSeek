@@ -197,6 +197,7 @@ def main():
         so = shadow_outcome(i, bar)
         rec = {'date': date_str, 'type': 'instruction', 'symbol': i['symbol'],
                'direction': i['direction'], 'skip_reason': i.get('skip_reason'),
+               'decision_id': i.get('decision_id'),
                'shadow': so, 'bar': bar}
         inst_rows.append(rec)
         if i.get('skip_reason'):
