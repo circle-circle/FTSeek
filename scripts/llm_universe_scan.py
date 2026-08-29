@@ -337,6 +337,27 @@ def _log_inject_loop_reject(s: Dict[str, Any], reason: str) -> None:
         pass
 
 
+def _log_inject_save_reject(it: Dict[str, Any], reason: str) -> None:
+    """[UE-B2 2026-08-30 复核补漏] 入库循环 (stage=save) 的拒绝分支落盘:
+    DA优先不覆盖 / 同标的同方向冷却跳过。第4轮首批只接了筛选链+构造循环,
+    漏掉入库循环这两支 → "每笔reject可归因"判据不满足, 补上。
+    tier/streak/raw_conf 从指令 raw_instruction.origin 回填 (构造期已埋)。"""
+    if not bool(_cfg("universe_expansion.inject_reject_log", True)):
+        return
+    try:
+        origin = ((it.get("raw_instruction") or {}).get("origin") or {})
+        row = {"date": _today(), "symbol": str(it.get("symbol", "")).replace("US.", ""),
+               "direction": it.get("direction", ""), "reject_reason": reason,
+               "raw_conf": float(origin.get("raw_confidence") or it.get("confidence") or 0),
+               "tier": origin.get("self_tier") or "",
+               "streak": origin.get("emergence_streak_days") or 1, "stage": "save"}
+        _INJECT_REJECT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _INJECT_REJECT_PATH.open("a") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 # ── [UE-A3 2026-08-29, DEB-20260829 第3轮批准] 8-K/13DG clue 噪声过滤 ──
 # 病灶 (U1): 8/28 实测 15 条 8-K 中 7 条为商品 ETF 每日例行 7.01 Reg FD
 #   (CPER/BNO/UNL/UGA/USL/UNG/USO — 无事件性) + 1 条权证 (OSRHW) → 真股权事件被稀释。
@@ -1961,6 +1982,8 @@ def cmd_inject(force_dry: bool = False) -> int:
             if _da_hit:
                 print(f"  [skip] {it.get('symbol')} 今日已有非UE指令 "
                       f"(decision_id={_da_hit.get('decision_id')}) → DA优先不覆盖")
+                _log_inject_save_reject(
+                    it, f"da_priority_skip({_da_hit.get('decision_id', '')})")
                 continue
             # ── Phase 0 (2026-08-23): 同标的同方向 3 交易日冷却 ──
             # LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计回吐
@@ -2003,6 +2026,8 @@ def cmd_inject(force_dry: bool = False) -> int:
                         if _cr:
                             print(f"  [cooldown] {it.get('symbol')} {it.get('direction')} "
                                   f"近{_cool_days}日已有同方向执行记录 → 冷却跳过")
+                            _log_inject_save_reject(
+                                it, f"cooldown({_cool_days}d同方向已执行)")
                             continue
                 except Exception as _cool_err:
                     # 冷却查询失败不阻断主流程, 但禁静默 (死门教训: 静默吞 = 门死了没人知道)

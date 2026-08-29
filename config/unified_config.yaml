@@ -1780,6 +1780,14 @@ universe_expansion:
   #   持久化 data/premarket_rank_candidates_{ET}.json 后本线索源消费。候选非信号。
   #   回滚: 置 false。
   clue_premarket_rank: true
+  # 2026-08-29 (DEB-20260829 第3轮, 用户裁"同意执行"): 修尺子批次三开关。
+  #   代码内 default=true, 此处显式声明仅使回滚路径可发现 (值与默认一致=零行为变更)。
+  # UE-B2: inject 拒绝归因落盘 data/shadow/llm_universe_inject.jsonl (纯观测)。回滚: false。
+  inject_reject_log: true
+  # UE-A3: 8-K/13DG clue 噪声过滤 (商品信托/权证/优先股, 保守向宁漏不误杀)。回滚: false。
+  clue_sec_noise_filter: true
+  # UE-B1影子: 全市场财报 clue 只记不喂 (ue_earnings_clue_shadow.jsonl)。回滚: false。
+  clue_earnings_shadow: true
   peer_surge_groups:
     存储:
     - MU
