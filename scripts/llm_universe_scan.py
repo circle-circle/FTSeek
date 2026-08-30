@@ -1849,8 +1849,11 @@ def cmd_inject(force_dry: bool = False) -> int:
         return 0
     enabled = bool(_cfg("universe_expansion.entry_enabled", False))
     dry = force_dry or not enabled
-    min_conf = float(_cfg("universe_expansion.min_confidence", 0.70))
-    max_n = int(_cfg("universe_expansion.max_targets_per_day", 5))
+    min_conf = float(_cfg("universe_expansion.min_confidence", 0.5))
+    max_n = int(_cfg("universe_expansion.max_targets_per_day", 30))
+    # [DEB-20260830第13轮·审计默认值对齐] 回退默认值对齐 yaml 真值 (0.70→0.5, 5→30):
+    # 活性值经实弹探针确认=0.5/30 (yaml SSOT), 本改动零活性行为变更,
+    # 仅消除 config 容器降级路径下阈值静默漂移 (浮现标的被比预期多丢/少放)。
 
     scans = [r for r in _read_jsonl(_SCAN_PATH) if r.get("type") == "scan"]
     today_scans = [r for r in scans if r.get("date") == _today()]
