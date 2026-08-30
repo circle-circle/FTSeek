@@ -711,6 +711,64 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     return new_id
 
 
+# ── futu_capital_flow 当日方向索引 (2026-08-30 性能修复) ──────────────
+# 原实现每次 run_scan (盘中 300s 节流, 78次/日) 全量 read_text 95k 行 jsonl
+# 并逐行 json.loads — O(文件总行数) 增长炸弹。现改尾部增量:
+#   冷启动从文件尾部 _CF_COLD_TAIL 字节向后取整行解析 (当日记录必在尾部);
+#   热路径记住 (offset, size), 只解析新增字节。文件轮转/缩小自动回冷启动。
+_CF_PATH = Path("data/futu_capital_flow.jsonl")
+_CF_COLD_TAIL = 1024 * 1024  # 1MB ≈ 4600行; 单日采集约78轮×18标的≈1400行, 3倍余量防早停标的漏扫
+_cf_cache: Dict[str, Any] = {}
+
+
+def _cf_apply_line(line: str, today_prefix: str, out: Dict[str, str]) -> None:
+    try:
+        _d = json.loads(line)
+    except Exception:
+        return
+    _s = _d.get("symbol")
+    if not _s or not str(_d.get("item_time") or "").startswith(today_prefix):
+        return  # 非当日记录 → 陈旧方向不可作证
+    _large = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
+    if _large > 0:
+        out[_s] = "INFLOW"   # 后写覆盖=最新一条
+    elif _large < 0:
+        out[_s] = "OUTFLOW"
+
+
+def _capital_flow_today_index() -> Dict[str, str]:
+    """symbol → 当日最后一条大单净流方向 (INFLOW/OUTFLOW), ==0 不给方向。"""
+    today = _today_et_str()
+    size = _CF_PATH.stat().st_size if _CF_PATH.exists() else 0
+    if size == 0:
+        return {}
+    cached = _cf_cache.get(today)
+    if cached and cached["size"] <= size:
+        # 热路径: 只读新增
+        out = dict(cached["index"])
+        if size > cached["size"]:
+            with open(_CF_PATH, "rb") as f:
+                f.seek(cached["size"])
+                chunk = f.read(size - cached["size"]).decode("utf-8", errors="replace")
+            for line in chunk.splitlines():
+                _cf_apply_line(line, today, out)
+        _cf_cache[today] = {"size": size, "index": out}
+        return out
+    # 冷启动 (首日/跨日/轮转/缩小): 尾部窗口起扫, 避免全量解析历史
+    with open(_CF_PATH, "rb") as f:
+        if size > _CF_COLD_TAIL:
+            f.seek(size - _CF_COLD_TAIL)
+            f.readline()  # 丢弃可能不完整的半行
+        chunk = f.read().decode("utf-8", errors="replace")
+        end = f.tell()
+    out: Dict[str, str] = {}
+    for line in chunk.splitlines():
+        _cf_apply_line(line, today, out)
+    _cf_cache.clear()
+    _cf_cache[today] = {"size": end, "index": out}
+    return out
+
+
 def run_scan(scheduler=None) -> int:
     """调度器钩子: TRADING 相位每 300s 扫一轮, 返回武装指令数。全程异常隔离由调用方兜底。"""
     global _last_run_ts
@@ -757,26 +815,7 @@ def run_scan(scheduler=None) -> int:
     _cf_last_flow: Dict[str, str] = {}  # symbol → INFLOW/OUTFLOW (当日最后一条)
     if cfg.get("capital_flow_divergence_check_enabled", True):
         try:
-            import json as _json
-            from pathlib import Path as _Path
-            _cf_path = _Path("data/futu_capital_flow.jsonl")
-            _today_prefix = _today_et_str()
-            if _cf_path.exists():
-                for _line in _cf_path.read_text().strip().split("\n"):
-                    try:
-                        _d = _json.loads(_line)
-                    except Exception:
-                        continue
-                    _s = _d.get("symbol")
-                    if not _s:
-                        continue
-                    if not str(_d.get("item_time") or "").startswith(_today_prefix):
-                        continue  # 非当日记录 → 陈旧方向不可作证
-                    _large = float(_d.get("super_in_flow", 0) or 0) + float(_d.get("big_in_flow", 0) or 0)
-                    if _large > 0:
-                        _cf_last_flow[_s] = "INFLOW"   # 后写覆盖=最新一条
-                    elif _large < 0:
-                        _cf_last_flow[_s] = "OUTFLOW"
+            _cf_last_flow = _capital_flow_today_index()
         except Exception:
             pass  # 读取失败 → 空索引 → 不拦 (fail-open)
 
