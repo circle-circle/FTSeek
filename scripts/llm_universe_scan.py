@@ -1663,7 +1663,10 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         brief,
         system=_system,
         temperature=0.2,
-        max_tokens=4000,
+        # [DEB-20260829 第8轮 2026-08-30] 4000→8000: 主模型切 glm-5 配套 —
+        #   glm 实测输出 5448-6070 tok, 4000 下 finish_reason=length 截断 → JSON 解析
+        #   失败 → 静默回退 (已实弹验证). 8000 对 flash 档无害 (输出仅 1400-1930).
+        max_tokens=8000,
         schema_required={"surfaced": list},
         json_mode=True,
     )

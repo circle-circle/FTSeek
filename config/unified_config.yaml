@@ -454,7 +454,19 @@ llm:
       #   latency_ms 分布再裁 (勿直接改 timeout 掩盖问题).
       #   回滚: primary 改回 qwen (原 qwen-max, 2026-08-27 同日别名去规格化) + 重启.
       fallback: deepseek
-      primary: qwen3.8-flash
+      # 2026-08-30 (用户裁决, DEB-20260829 第8轮, 方案A): UE 主模型 qwen3.8-flash → glm-5 (glm-5.2).
+      #   依据: 6模型×3轮同材料同参数 bakeoff 实测 (8/30) — invalidation_triggers 填充
+      #   (盘中失效核销器唯一结构化输入, 生产 0/208 病灶本身) 是 GLM 独占能力:
+      #   glm-5.2 45/47=96% 且全部过白名单校验; qwen 全系(含3.8-max)+deepseek 全 0 填充.
+      #   推理质量 glm 与 3.8-max 并列第一梯队 (引证伪造 0 例; 唯一正确识别"仅记录不入围"票).
+      #   生产同构风险已实测排除: json_mode ✓ / 数组格式system+cache_control ✓ /
+      #   parse_json_strict 解 fenced ✓ / 延迟 63-69s 在 timeout=300 内 ✓.
+      #   配套: llm_universe_scan.py 主调用点 max_tokens 4000→8000 (glm 实测输出 5448-6070
+      #   tok, 4000 必截断 → JSON 解析失败 → 静默回退 = 切换空操作, 已实测实锤).
+      #   成本: ¥0.13/轮 → ¥7.8/月 (77x 但绝对值小); 归因: model_used 落库, 8/31 起
+      #   glm 时代 vs flash 时代样本可切分对比 (预注册: 10交易日观察延迟/截断/填充率).
+      #   回滚: primary 改回 qwen3.8-flash + max_tokens 可保留 8000 (对 flash 无害).
+      primary: glm-5
       prompt_cache: true
     web_search_fundamental:
       cache_on_fail: false
