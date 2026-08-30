@@ -1475,7 +1475,10 @@ def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, A
                                       "thesis": s.get("thesis"), "causal_chain": s.get("causal_chain"),
                                       "missing": m} for _, s, m in bad], ensure_ascii=False))
         _rep = call_llm(feature="universe_expansion_reasoning", prompt=_rep_prompt,
-                        json_mode=True, max_tokens=1200)
+                        json_mode=True, max_tokens=8000)
+        # [DEB-20260829 第10轮 9.4 修复] 1200→8000: glm-5.2 实测输出 5448-6070 tok,
+        # 1200 必截断且本调用无 schema_required → 降档自救链不可达 (has_schema=False)。
+        # 抬到与主调用点同限, 截断时 finish_reason=length 可观测。
         if _rep and _rep.success:
             _rp = _rep.response if isinstance(_rep.response, dict) else json.loads(_rep.response)
             _rmap = {str(r.get("symbol", "")).replace("US.", "").upper(): r
@@ -2317,8 +2320,11 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
 
     def _run(system: str, tag: str, with_tier: bool):
         res = call_llm("universe_expansion_reasoning", brief, system=system,
-                       temperature=0.2, max_tokens=2500,
+                       temperature=0.2, max_tokens=8000,
                        schema_required={"surfaced": list}, json_mode=True)
+        # [DEB-20260829 第10轮 9.4 修复] 2500→8000: glm-5.2 实测输出 5448-6070 tok。
+        # 原 2500 下自救降档到 max(1024, 2500*0.5)=1250 只会更糟 (A/B 仪器在 glm 下实质死亡);
+        # 抬到 8000 后即便降档仍保 max(1024, 8000*0.5)=4000 底线。
         if not res or not res.success:
             print(f"[{tag}] LLM 调用失败: {getattr(res, 'error', '?') if res else 'no_result'}")
             return [], None

@@ -275,6 +275,34 @@ REGISTRY: list[ShadowItem] = [
               "本项管顺向追极端缺口。",
     ),
     ShadowItem(
+        id="da_glm_shadow",
+        name="DA glm-5.2 影子攒样 (SHORT 产出意愿)",
+        status=ShadowStatus.OBSERVING,
+        description="2026-08-30 用户裁'1要' (05a69c43 落地), 2026-08-30 第9轮 9.1 补注册。"
+                    "检验 8/30 多模型对比中 glm-5.2 的唯一显著分歧: 生产 4/4 里唯一给 SELL_SHORT 的是 glm。"
+                    "架构纯旁路: 读生产 bridge 候选池 → 独立 collect_all (输入同构) → "
+                    "glm-5.2 分析师 Pass1 (生产同款 SYSTEM_PROMPT, temp=0.3) → append jsonl。"
+                    "零落库/零 bridge 写/零指令触碰。9.6: 材料漂移>1.0pp 标 tainted 剔除分歧归因。",
+        data_path="data/shadow/da_glm_shadow.jsonl",
+        config_key=None,
+        min_n=10,
+        graduation_criteria="预注册 (窗口 8/31-9/14, 10 交易日): "
+                            "①JSON 成功率≥90% ②glm SELL_SHORT 提案≥5 笔 → PROMOTE_PROPOSAL 另立 DEB; "
+                            "任一不过 → ARCHIVE 结案。③SHORT 提案 T+1 方向均值>0 仅当 n≥20 出结论 "
+                            "(9.5 修正: 原 n≥5 ≈ 抛硬币), n<20 只作立项参考不作证据读。"
+                            "9/14 由 eval 脚本机械裁决, 周检可见。",
+        eval_script="scripts/da_glm_shadow_eval.py",
+        created="2026-08-30",
+        last_evaluated=None,
+        verdict_history=[{"date": "2026-08-30", "verdict": "BASELINE_NO_DATA",
+                         "evidence": "补注册基线: 现仅 1 行 run_mode=test (COIN 干跑复现分歧 "
+                                     "prod=LONG vs glm=SELL_SHORT, trig=2, finish_reason=stop), "
+                                     "无 live 样本; 8/31 起攒样"}],
+        notes="计数口径=live 行数 (count_mode lines); cron '30 20 * * 1-5' (timeout 9000, "
+              "9.2 修正自 3000) 是唯一采集线也是唯一 kill switch; "
+              "判据③降级记录见 scripts/da_glm_shadow.py docstring (9.5)。",
+    ),
+    ShadowItem(
         id="e2_momentum",
         name="E2 入场动量确认",
         status=ShadowStatus.READY_TO_EVALUATE,

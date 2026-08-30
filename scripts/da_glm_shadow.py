@@ -15,10 +15,13 @@
   ① JSON 成功率 ≥90% (glm 在 DA 格式下的可靠性底线)
   ② glm SELL_SHORT 提案 ≥5 笔 (供给意愿真实性)
   ③ SHORT 提案的 T+1 方向性收益均值 >0 (提案有效性)
+     (9.5 修正 2026-08-30: 原门在 n≥5 ≈ 抛硬币, 与本仓 Rule 9 冲突 —
+      现降级: n≥20 才出方向性结论, n<20 时③仅作立项参考不作证据读)
   全过 → 升级为正式提案另立 DEB 裁决; 任一不过 → 结案归档。
 
-成本: ~¥0.08/标的 × 17 × 21 交易日 ≈ ¥24/窗口。
-回滚: 删 crontab 一行 (15 20 * * 1-5 ... da_glm_shadow.py) + 删本文件。
+成本: ~¥0.08/标的 × 17 × 10 交易日 ≈ ¥13.6/窗口 (9.7 修正: 原判据窗口 8/31-9/14 = 10 交易日)。
+回滚: 删 crontab 一行 (30 20 * * 1-5 ... da_glm_shadow.py) + 删本文件。
+      (9.3 修正: 实挂是 30 20, 原文误写 15 20; 该 cron 行是本项唯一 kill switch)
 """
 
 import json
@@ -57,6 +60,29 @@ def _read_existing_dates(path):
     return dates
 
 
+def _alert_bridge_timeout(trade_date):
+    """9.2 修复: '本日放弃'分支此前永不执行 (timeout 3000 先杀进程) —
+    现 timeout 已抬到 9000, 本分支可达; 真到达时推钉钉, 防静默漏采。"""
+    try:
+        env_path = os.path.join(FTSEEK_ROOT, ".env.us")
+        webhook = ""
+        if os.path.exists(env_path):
+            for line in open(env_path, encoding="utf-8"):
+                if line.startswith("DINGTALK_WEBHOOK_URL_US="):
+                    webhook = line.split("=", 1)[1].strip()
+        if not webhook:
+            return
+        import urllib.request
+        body = json.dumps({"msgtype": "text", "text": {"content": (
+            f"[FTSeek-US告警] da_glm_shadow: bridge {trade_date} 未在 "
+            f"{POLL_UNTIL_ET} ET 前就绪, 本日放弃 (静默漏采防护)")}}).encode()
+        req = urllib.request.Request(
+            webhook, data=body, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"[da-glm-shadow] 告警推送失败(不阻断): {e!r}")
+
+
 def _wait_for_bridge(trade_date):
     path = os.path.join(BRIDGE_DIR, f"opportunity_scan_{trade_date}.json")
     while True:
@@ -64,6 +90,7 @@ def _wait_for_bridge(trade_date):
             return path
         if _now_et().strftime("%H:%M") >= POLL_UNTIL_ET:
             print(f"[da-glm-shadow] bridge 未在 {POLL_UNTIL_ET} ET 前就绪, 本日放弃")
+            _alert_bridge_timeout(trade_date)
             return None
         print(f"[da-glm-shadow] bridge 未就绪, 10min 后重试 ...")
         time.sleep(600)
@@ -135,8 +162,10 @@ def main():
                 q = collected.get("_quality") or {}
                 row["input_quality"] = f'{q.get("ok")}/{q.get("total")}'
                 # 材料漂移诊断: 影子采集比生产分析晚 ~1h, 盘前价格可能已变 —
-                # 记录影子侧快照价, 判据结算时与生产 checkpoint._snapshot 对比,
-                # 漂移超阈的样本标记 tainted (材料不同构, 分歧不可归因于模型)
+                # 记录影子侧快照价; 结算时由 scripts/da_glm_shadow_eval.py 的
+                # is_tainted() 与生产 checkpoint snapshot.change_pct 对比 (真实键名
+                # 'snapshot' 非 '_snapshot'), 漂移>1.0pp 标 tainted 剔除分歧归因
+                # (9.6 修复 2026-08-30: 原注释承诺无代码承接, 现归口到 eval 脚本)
                 _snap = collected.get("snapshot") or {}
                 row["shadow_price"] = _snap.get("last_price")
                 # collect_all snapshot 无 change_pct 键, 从 prev_close 推导

@@ -179,8 +179,87 @@
 - [ ] **UE-D1 上线后 (8/31起): invalidation_triggers 填充率成为真实依从度测量 — 预注册: 若 10 交易日内填充率仍=0, 字段从 prompt 删除 (连"可空"都不留); 若>0, 按填充样本评消费端价值**
 - [ ] **UE-D2 上线后 (8/31周一 21:10 CST 首发): 预注册 10 交易日观察 — ①延迟分布 (300s timeout 内); ②无 finish_reason=length 截断; ③trig 填充率≥50% (bakeoff 76-96%); ④glm 时代盈亏 vs flash 时代切分对比 (model_used 落库)**
 - [ ] 关闭条件: A/B 级全部实施或明文否决; C 级攒样判据到期有裁决动作
+- [x] **DA-E1 (第9轮开列→第10轮落地): da_glm_shadow 治理补齐** — 注册表条目 + `scripts/da_glm_shadow_eval.py` (三判据机械裁决) + 5 测试钉子, 9/14 窗口到期有机械裁决触发器
+- [x] **UE-D2 补审 (第9轮开列→第10轮落地)**: `:1478` repair 1200→8000 (截断可观测) + `:2320` scan-eval 2500→8000 (自救降档底线 4000); 两处均为测量层 max_tokens 抬限, 零行为变更
 
 ## 讨论记录
+
+### 第 10 轮 (2026-08-30, Hermes — 用户"确认无问题请执行修复": 第9轮 7 项缺陷修复落地)
+
+**方法**: 用户裁决执行第9轮建议方案。修复前先独立核查第9轮全部声称 (7/7 实弹复现成立); 并行改动隔离 — 另一 agent 未提交的第9轮文档回写保留不动, 本批只提交自己的路径。
+
+**修复清单 (全部实测验证)**:
+
+| # | 缺陷 | 修复 | 验证 |
+|---|---|---|---|
+| 9.1 | da_glm_shadow 脱治理 | ①`shadow_registry.py` 补 `da_glm_shadow` 条目 (OBSERVING, min_n=10, 预注册判据全文入档) ②新写 `scripts/da_glm_shadow_eval.py` — 三判据机械化: ①JSON成功率≥90% ②SHORT提案≥5 → PROMOTE_PROPOSAL/ARCHIVE; ③T+1方向均值仅 n≥20 出结论 (从 `replay_bars_daily` 取价) ③`tests/test_da_glm_shadow.py` 5 用例 (eval 行为×4 + 注册表钉子) | 5/5 过; eval 实弹基线 `NO_DATA` (无 live 样本, 正确); gap_chase_gate 回归 39 过 |
+| 9.2 | `timeout 3000` 杀死轮询 | crontab `timeout 3000→9000` (备份 `/tmp/crontab_bak_1203.txt`, diff 仅目标行) + `_wait_for_bridge` 放弃分支新增 `_alert_bridge_timeout()` 钉钉推送 (读 `.env.us` webhook, 失败不阻断) | crontab 实挂确认; 编译过 |
+| 9.3 | 回滚指令指错行 | docstring `15 20`→`30 20` + 注明"唯一 kill switch" | 编译过 |
+| 9.4 | 两调用点漏审 | `:1478` repair `max_tokens 1200→8000` (无 schema_required 自救不可达→抬限使截断可观测); `:2320` scan-eval `2500→8000` (降档底线 1250→4000) | 编译过; 均为测量层, 零交易行为 |
+| 9.5 | 判据③功效不足 | docstring + 注册表双处钉住: ③降级为"n≥20 才出方向性结论, n<20 仅立项参考不作证据读" | 测试钉 `n≥20` 字样 |
+| 9.6 | tainted 注释无承接 | 实现归口 `da_glm_shadow_eval.py::is_tainted()`: 影子 `shadow_change_pct` vs 生产 checkpoint `snapshot.change_pct` (实测真实键名 `snapshot`, 第9轮文档误写 `_snapshot` 一并修正), 偏差>1.0pp 标污剔除分歧归因; 采集路径零改动 (结算时才可读快照) | 边界测试 3 例过 |
+| 9.7 | 成本算式不自洽 | 21日→10交易日, ¥24→¥13.6/窗口; ET 首发口径以 DEB 为准 (21:10 CST = 09:10 ET) | docstring 已改 |
+
+**第9轮声称的核查留痕**: 7 项全部实弹复现成立 (注册表 0 命中/无 eval/无测试; POLL_UNTIL_ET L36 vs timeout 50min; 回滚行号不符; 两调用点 token 实值; tainted 仅注释 1 处; 成本算式)。另发现第9轮自身一处小误: `_snapshot` 实为 `snapshot` (不影响其缺陷判定)。
+
+**诚实边界**:
+- 9.4 两处抬限未实测 glm 真实调用 (明日 21:10 CST 首发才可观测 `contract_stats`/`finish_reason`), 属推理修复非实测修复。
+- 9.2 告警分支未实弹触发 (需 bridge 真迟到), 干跑路径已编译验证。
+- 未推送提交问题维持第9轮结论: 明日 03:30 自动推, 未手动提前 (共享状态变更待用户裁)。
+
+### 第 9 轮 (2026-08-30, 本仓 agent 独立审计当日全量变更 — 用户令"检查今日 deb 文件以及变更, 给出分析和建议更新" → "更新到 DEB 供另一 agent 分析")
+
+**范围**: 8/30 当日 9 个提交全量 (工作树干净, 落后 main 0, **未推送 origin 8 个**), 含第6/7/8轮落地物 + 第8轮后新增的 DA glm 影子。审计方法: 读码 + crontab 实况 + 文件 mtime + git blame 四证并置, 不采信提交信息自述。
+
+**当日变更清单**
+
+| 类别 | 提交 | 触碰面 |
+|---|---|---|
+| 生产 | `2a082f22` UE-D1 triggers 强制→可空 (v2.6→v2.7) | prompt |
+| 生产 | `4e0c5a25` UE 主模型→glm-5.2 + 主调用点 max_tokens 4000→8000 | 路由+调用点 |
+| 测量 | `eb4aeb4a` DA-C1/UE-C2 落盘 · `b6de0c03` 第4轮补漏 | 零行为 |
+| 旁路 | `05a69c43`+`96f7f1d1` da_glm_shadow.py + crontab 挂载 | 零生产 |
+| 文档 | `cd536298` `28ab60e2` `4ffcbeb1` `e7db76c3` | docs |
+
+**① 已核实缺陷 (7 项, 全部本机复现)**
+
+| # | 缺陷 | 证据 | 严重度 |
+|---|---|---|---|
+| **9.1** | **da_glm_shadow 脱离本仓影子治理范式** | `app/playbook/shadow_registry.py` 无条目 / 无 eval 脚本 / 无测试 / **本 DEB 全文零提及** (grep `da_glm|glm_shadow` = 0 命中; 第8轮成文 08:13, 影子 09:44 落地, 未回写)。后果: `shadow_board.py --push` (cron `15 6 * * 2-6`) 遍历 SHADOWS 列表, 该影子在周检板**不可见**, 9/14 窗口到期无机械裁决触发器。同批 `gap_chase_gate` (f2a91d31) 配齐了注册项+eval+5测试 — 范式已存在, 本项单独绕过 | **高**。与本仓已记录的"43天积压根因: 只挂 capture 未挂 score"完全同族 (攒了样没人判) |
+| **9.2** | **`timeout 3000` 使 `POLL_UNTIL_ET="10:30"` 逻辑不可达** | crontab `30 20 * * 1-5` CST = 08:30 ET; timeout 3000 = 50min → 09:20 ET 被杀。脚本自身 17 标的 × 85s ≈ 24min 工作量 → 真实轮询预算仅 ~26min (到 ~08:56 ET), 非 docstring 所述到 10:30 ET。实测 bridge mtime 19:23–20:14 CST (07:23–08:14 ET) 通常够用, 但 8/24 的 20:14 只剩 16min 余量。bridge 迟到时进程被 SIGTERM, **`本日放弃` 分支永不执行** | **高**。"日志正常但逻辑失效"族 (承 direction_attribution/G6/Source1b 同族), 静默漏采无告警 |
+| **9.3** | **回滚指令指向不存在的 crontab 行** | `scripts/da_glm_shadow.py:21` 写 `15 20 * * 1-5`, 实际挂载 `30 20 * * 1-5`。该 cron 行是**唯一 kill switch** (本项无配置开关) | 中。回滚保真度 |
+| **9.4** | **glm 切换漏审两个同角色调用点** | 同走 `feature="universe_expansion_reasoning"` 现已路由 glm-5.2: ①`scripts/llm_universe_scan.py:1478` 契约 repair, `max_tokens=1200` 且**无 `schema_required`** → `has_schema=False` → `app/llm/model_call.py:419-423` 的"截断+parse失败降档自救"**不可能触发**; ②`scripts/llm_universe_scan.py:2320` `cmd_scan_eval`, `max_tokens=2500`, 有 schema 故自救触发, 但降档到 `max(1024, 2500*0.5)=1250` **只会更糟**。glm 实测输出 5448–6070 tok | 中。①失败不阻断且计入 `contract_stats.still_bad` (非静默, 可观测); ②该 A/B 仪器在 glm 下实质死亡 (仅手动, 未挂 cron) — 又一例仪器塌缩 |
+| **9.5** | **判据③功效不足, 与本仓自身纪律冲突** | da_glm_shadow 判据③ "SHORT 提案 T+1 方向性收益均值>0" 门在 **n≥5**。同一 DEB 别处明文拒绝同量级裁决: 第7轮"拦5笔不足裁决"、"UE链 n=15 不单独评估 (Rule 9 不足)"。n=5 的均值>0 ≈ 抛硬币 | 中。后果仅"另立 DEB"故不致命, 但③不应被当证据读 |
+| **9.6** | **注释承诺代码未做 (tainted 无主)** | `96f7f1d1` 注释称"漂移超阈的样本标记 tainted", 代码 (`da_glm_shadow.py:138-149`) 只记 `shadow_price`/`shadow_change_pct`: **无阈值 / 无 `tainted` 字段 / 无与生产 checkpoint `_snapshot` 比对**。注释推给"判据结算时", 但结算脚本不存在 (见 9.1) | 中。同族: 第3轮"扣分存在≠扣分有效"、第7轮"字段存在≠字段有值" → 本项 = "诊断字段存在≠诊断成立" |
+| **9.7** | **ET/CST 标注互斥 + 成本算式不自洽** | ①`4e0c5a25` 提交信息"8/31周一21:10**ET**首发" vs 本 DEB 第8轮"21:10 **CST**"。服务器 `Asia/Shanghai (CST,+0800)`, cron `10 21 * * 1-5` → **21:10 CST = 09:10 ET** (开盘前 20min)。**DEB 对, 提交信息错**; 10日观察窗起点被两处同时引用 ②`da_glm_shadow.py:20` "¥0.08×17×21交易日≈¥24" — 判据窗口是 8/31–9/14 = **10 交易日**, 10日应为 ¥13.6; ¥24 需 ~18 日, 两数皆不落在 21 日算式上 | 低。口径纪律 (承第5/6轮"口径钉死") |
+
+**② 已排除的非问题 (不采信即误报, 逐项复核)**
+
+| 疑点 | 复核结果 |
+|---|---|
+| glm 切换是否撑爆 LLM 预算 | ❌无风险。`llm_budget.daily_max_usd: 5.0` + `cost_alerts {warn_pct 0.7, halt_pct 1.0}` **仅告警不拦截**; glm 增量 ≈ ¥0.13/轮 ≈ $0.018/日 = 日限额 0.36% |
+| `stock_analyst: primary: glm-5` 是否被今日顺带改动 | ❌否。`git blame` = `77852d50f` (2026-07-03), 早于今日 4 周; `glm-5 → model_name: glm-5.2` 别名同为 77852d50f。**今日未静默升级其他角色** (仅 `universe_expansion_reasoning` 一处) |
+| 影子读 checkpoint 路径是否对得上 | ✅对。`data/da_checkpoint/{ET日期}/US.{SYM}.json` 与实际布局一致 (实测 `2026-08-28/US.AFRM.json`) |
+| 影子 crontab 是否漏挂 (提交信息只说"回滚删行") | ✅已挂。`30 20 * * 1-5 ... timeout 3000 ... da_glm_shadow.py` 在册 (但见 9.2/9.3) |
+| 干跑样本是否真的复现了分歧 | ✅复现。`data/shadow/da_glm_shadow.jsonl` 现 1 行 `run_mode=test`: COIN 8/28 `prod=LONG → glm=SELL_SHORT` `divergence=glm_SHORT_prod_not_SHORT` `trig=2` `finish_reason=stop` (未截断) |
+
+**③ 呈报待裁选项 (本轮零代码变更, 全部待裁)**
+
+| 项 | 选项 | 本审计倾向 |
+|---|---|---|
+| 9.1 | a=补注册表条目+`scripts/da_glm_shadow_eval.py` (三判据机械化, 沿 gap_chase_gate 模板) / b=维持脚本裸跑, 9/14 人工记得裁 / c=撤回影子 | **a**。b 是已知失效模式 (43天积压), c 浪费已验证的干跑资产 |
+| 9.2 | a=`timeout 3000→9000` (覆盖到 10:30 ET) / b=`POLL_UNTIL_ET` 收到 `09:00` 与 timeout 自洽 / c=a+b 且放弃分支加钉钉告警 | **c**。单改任一仍留静默漏采 |
+| 9.4 | a=`:1478` 加 `schema_required={"repairs": list}` + max_tokens→2500 (让自救可触发), `:2320`→8000 / b=只修 `:1478` (`:2320` 是手动工具, 标注已死) / c=维持, 靠 `still_bad` 观测 | **a**。成本 ~4 行; 但属"改 glm 时代调用面", 需与冻结纪律对齐后裁 |
+| 9.5 | a=③改 record-only, 另立"n≥20 才出方向性结论"预注册 / b=维持 n≥5 但结论文字降级为"仅供立项参考" / c=维持原判据 | **a 或 b**。不可维持 c 的同时声称遵守 Rule 9 |
+| 9.6 | a=eval 脚本内实现漂移阈值+tainted (随 9.1a 一起) / b=删该注释承诺, 只留原始字段 | **a**。b 会丢掉分歧可归因性 |
+| 9.7 | 修 docstring 行号/成本/天数; DEB 与提交口径统一 CST 并标 ET 等价值 | 随批 |
+| — | **未推送 8 个提交**: `git_backup_push.sh` 每日 03:30 自动推, 今日 03:30 已过 → 下次 8/31 03:30。是否手动提前推? | 待用户裁 (推送属共享状态变更) |
+
+**④ 本轮诚实边界**
+
+- 9.2 的"漏采"是**推演未实测**: bridge 迟到 >26min 的情形在观测到的 6 个交易日 (8/21–8/28) 内**未发生过** (最迟 8/24 的 20:14 CST 留 16min 余量)。故 9.2 是尾部风险而非现行故障。
+- 9.4① 的"repair 在 glm 下退化"同为**推演**: glm 主调用 trig 填充 96% → 契约违约本就更少 → repair 触发频次可能下降到不重要。**8/31 首个 glm 交易日的 `contract_stats` 是该推演的第一手判据**, 建议列入 UE-D2 的 10 日观察项。
+- 本轮零代码变更, 未触碰任何生产路径; 全部为文档留痕 + 待裁呈报。
 
 ### 第 8 轮 (2026-08-30, Hermes — 用户裁"方案A": UE 主模型切 glm-5.2)
 
