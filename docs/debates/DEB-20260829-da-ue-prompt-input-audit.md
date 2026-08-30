@@ -170,15 +170,52 @@
 - [x] DA-X1: 本仓死 DA 标注 (选标注不删除) — 520133a3
 - [x] M3: flagged 去重 (随批) — c6e53ba
 - [x] **UE-D1: invalidation_triggers 强制≥1条→可空数组降级** — 2a082f22 (第7轮用户裁"核实并解决发现的问题")
+- [x] **UE-D2: UE 主模型 qwen3.8-flash → glm-5 (glm-5.2) + max_tokens 4000→8000** — 4e0c5a25 (第8轮用户裁"方案A", 6模型×3轮 bakeoff 实测)
 
 ## 验证项
 
 - [ ] DA-A1/A2 上线后首批 DA 指令的"中枢"引证可溯源 + unverified 率下降
 - [ ] UE-A3 上线后首个交易日 clue brief 8-K 段无 ETF 例行文件
 - [ ] **UE-D1 上线后 (8/31起): invalidation_triggers 填充率成为真实依从度测量 — 预注册: 若 10 交易日内填充率仍=0, 字段从 prompt 删除 (连"可空"都不留); 若>0, 按填充样本评消费端价值**
+- [ ] **UE-D2 上线后 (8/31周一 21:10 CST 首发): 预注册 10 交易日观察 — ①延迟分布 (300s timeout 内); ②无 finish_reason=length 截断; ③trig 填充率≥50% (bakeoff 76-96%); ④glm 时代盈亏 vs flash 时代切分对比 (model_used 落库)**
 - [ ] 关闭条件: A/B 级全部实施或明文否决; C 级攒样判据到期有裁决动作
 
 ## 讨论记录
+
+### 第 8 轮 (2026-08-30, Hermes — 用户裁"方案A": UE 主模型切 glm-5.2)
+
+**起因**: 用户问"flash 档无法输出结果，能否对比 glm-5.3/qwen3.8-max/qwen3.7-max 等 dashscope 多模型的输出，充分对比"。
+
+**① 型号核实**: 用户点的 **glm-5.3 在 DashScope 不存在** (/models 实测 246 个, GLM 系最新 = **glm-5.2**)。测试台: 生产同款 brief (8/29 真实输入 2996 字符, `_build_clue_brief` 烤制, 6 模型吃同一份) + 生产同款 SYSTEM_PROMPT_V2 (v2.7) + temp=0.2 + enable_thinking=False, 每模型 3 轮。
+
+**② 总评分表 (3轮合计)**:
+
+| 模型 | 浮现/轮 | 延迟 | **trig填充** ★ | trig全合法 | 引证精确 | SHORT门 | 月成本 |
+|---|---|---|---|---|---|---|---|
+| **glm-5.2** | ~19 | 65s | **45/47=96%** | 45/45 | 35 | 28/28 | ¥7.8 |
+| qwen3.8-flash(现产) | ~5 | 14s | 3/15=20% | 3/3 | 2 | 9/9 | ¥0.1 |
+| qwen3.8-max | ~6 | 24s | 0/19 | — | 15 | 8/8 | ¥4.0 |
+| qwen3.7-max | ~8 | 26s | 0/23 | — | 10 | 9/9 | ¥4.4 |
+| qwen3.7-flash | ~10 | 18s | 0/30 | — | 3 | 13/13 | ¥0.2 |
+| deepseek-v4-pro(fallback) | ~18 | 77s | 0/55 | — | 27 | 24/24 | ¥2.8 |
+
+★ trig 填充 = 本轮决定性维度 (生产 0/208 病灶本身, 盘中失效核销器唯一结构化输入)。非SKIP 核心字段依从: 6 模型全部 100% (此前 84/64% 的粗算含 SKIP 空 thesis 合理情形)。
+
+**③ 关键发现**:
+1. **触发器填充是 GLM 独占能力** — 6 模型仅 glm-5.2 交结构化触发器且全部过白名单校验; qwen 全系 (含 3.8-max) + deepseek 全 0。不是档位问题, 是家族特性。
+2. **交叉验证生产病灶** — 现产 flash 在 v2.6 强制"≥1条"下 0/208; v2.7 改"可空"后升到 20% (降级本身有效, 但天花板太低)。
+3. **推理质量 glm ≈ 3.8-max 并列第一梯队** (引证伪造 0 例; glm 唯一正确识别输入里"仅记录不入围"的极端涨幅票并给 SKIP+理由; qwen3.7-flash 幻觉出假代码 `SKIP_UMC`)。
+4. **glm metric 分布**: 5日涨跌 25 / 收盘价 11 / 盘前涨跌幅 11 / 成交量 10。收盘价类锚点输入材料无价格→无依据 (11/45), 但方向逻辑全部自洽 (LONG 给下破阈值, SHORT 给上穿阈值), 消费端 tripwire 可判。
+
+**④ 切换前必排陷阱 (实弹验证)**: 生产主调用点 `max_tokens=4000` < glm 实测输出 5448-6070 tok → `finish_reason=length` 截断 → JSON 在第 13 个标的处中断解析失败 → 只切路由 = 静默回退空操作。配套修复 4000→8000 (对 flash 档无害)。
+
+**⑤ 生产同构风险排除**: json_mode ✓ / 数组格式 system+cache_control (prompt_cache 分支) ✓ / `parse_json_strict` 解 ``` fenced ✓ / 延迟 63-69s 在 timeout=300 内 ✓。
+
+**⑥ 落地 (4e0c5a25)**: `config/unified_config.yaml` primary: qwen3.8-flash→glm-5 + `scripts/llm_universe_scan.py` max_tokens 4000→8000。Gate 5 生产链路干跑 (真实 `call_llm` 路由, 不落库): success / model_used=glm-5.2 / schema_passed / 无 fallback / 64s / **trig 13/17=76%**。UE scan 为独立系统 crontab 进程 (`10 21 * * 1-5`), 无主服务重启需求, **8/31 周一 21:10 CST 首发**。49 项 UE 测试全过。
+
+**成本账**: ¥0.0017→¥0.13/轮, ¥7.8/月 (77x 但绝对值小)。用户已裁接受。归因: model_used 落库, 8/31 起 glm 时代 vs flash 时代样本天然可切分。
+
+**回滚**: `primary: qwen3.8-flash` (max_tokens 8000 可保留, 对 flash 无害) + 无需重启 (cron 独立进程)。
 
 ### 第 7 轮 (2026-08-30, Hermes — 用户裁"需要，请核实并解决发现的问题 更新DEB 也包括reentry的策略和逻辑")
 
