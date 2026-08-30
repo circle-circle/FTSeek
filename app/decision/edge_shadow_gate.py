@@ -94,6 +94,7 @@ class EdgeShadowGate:
         confidence_0_100: float,
         live_pass: bool,
         log: bool = True,
+        decision_id: str = "",
     ) -> Dict[str, Any]:
         """
         返回 edge 判定 (影子), 并落 jsonl 供事后与实盘判定对照.
@@ -103,6 +104,10 @@ class EdgeShadowGate:
             live_pass: 实盘闸门此刻是否放行 (confidence >= 门槛)
             log: 是否写 edge_gate_shadow.jsonl. 统一收口审计 (exec_gate_audit) 已落库
                  edge 判定时传 False, 避免同一场景双写 (2026-07-17).
+            decision_id: 2026-08-30 (DEB-20260830 F4): 透传指令 decision_id 落影子.
+                 原字段缺失 (0/120) 导致无法按 decision_id join 结算
+                 (只能退到 (symbol, date), 同符号同日有歧义). 旧调用方不传 → 空串,
+                 向后兼容. 回滚: 删除该参数与 _log 中的字段.
 
         Returns dict:
             edge_verdict: "PASS" / "BLOCK"
@@ -136,7 +141,8 @@ class EdgeShadowGate:
                 (result["edge_verdict"] == "PASS") == bool(live_pass)
             )
             if log:
-                self._log(symbol, direction, confidence_0_100, live_pass, result)
+                self._log(symbol, direction, confidence_0_100, live_pass, result,
+                          decision_id=decision_id)
         except Exception as e:
             logger.debug(f"[EdgeShadowGate] 判定失败 (忽略, 返回 PASS): {e}")
         return result
@@ -148,6 +154,7 @@ class EdgeShadowGate:
         confidence: float,
         live_pass: bool,
         result: Dict[str, Any],
+        decision_id: str = "",
     ) -> None:
         try:
             _SHADOW_DIR.mkdir(parents=True, exist_ok=True)
@@ -162,6 +169,9 @@ class EdgeShadowGate:
                 "live_verdict": "PASS" if live_pass else "BLOCK",
                 "reason": result.get("reason"),
                 "agree_with_live": result.get("agree_with_live"),
+                # 2026-08-30 F4: decision_id 落影子 — 按 decision_id join 结算的前提
+                # (见 evaluate docstring; 旧行为 0/120 行无此字段, 空串向后兼容)
+                "decision_id": decision_id or "",
             }
             with open(_SHADOW_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

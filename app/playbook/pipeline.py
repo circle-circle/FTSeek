@@ -815,8 +815,13 @@ class BridgeVotingAdapter:
         # 2026-08-30 第6轮F修复: `or 0.5` 会把合法 0.0 静默改写成中性放行, 与教训③(SSOT)矛盾.
         # 生成端契约值域 [0.10, 0.95], 但消费端不再二次解释语义 — None/非数 → 中性兜底,
         # 数值 → 原样透传 (含 0.0, 虽然当前生成端不可能产出).
+        # 第8轮F边界: isinstance(True, (int, float)) 为真, JSON true 会被当真数 1.0 →
+        # 钳到 0.95 满信心. bool 显式排除, 走中性兜底.
         _raw_conf = cand.get("confidence")
-        confidence = float(_raw_conf) if isinstance(_raw_conf, (int, float)) else 0.5
+        if isinstance(_raw_conf, bool) or not isinstance(_raw_conf, (int, float)):
+            confidence = 0.5
+        else:
+            confidence = float(_raw_conf)
         confidence = max(0.10, min(0.95, confidence))
 
         return {
@@ -1671,6 +1676,8 @@ def _build_instructions_from_votes(
             get_edge_shadow_gate().evaluate(
                 symbol, direction, float(confidence),
                 live_pass=(confidence >= _min_conf_for_dir),
+                # 2026-08-30 F4: 透传 decision_id, 结算可按指令唯一键 join
+                decision_id=str(vote_result.get("decision_id", "") or ""),
             )
         except Exception:
             pass  # 非关键路径
@@ -3269,6 +3276,7 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
             from app.decision.edge_shadow_gate import get_edge_shadow_gate
             _edge = get_edge_shadow_gate().evaluate(
                 inst.get("symbol", ""), _direction, _conf, live_pass=True, log=False,
+                decision_id=str(inst.get("decision_id", "") or ""),
             ) or {}
         except Exception:
             _edge = {}

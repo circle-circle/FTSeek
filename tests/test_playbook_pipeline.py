@@ -18,6 +18,11 @@ class TestBridgeVotingAdapterConfidence:
     病根回归钉: 旧代码用 `chall_dir == direction` 字面比较 (BUY/SELL_SHORT vs
     LONG/SHORT 恒不等) 把全候选误判分歧恒扣至 0.35, 与生成端权威值及落库真值矛盾。
     任何把"辩论标签比较"加回 vote() 的改动必须先打碎这些钉子。
+
+    区分度分级 (第8轮变异测试实证): 真能捕获病根回填的是 1/3/5/7 号
+    (一致读0.7 / 衰减0.64透传 / 0.0钳制 / bool排除); 2 号 (真分歧0.35) 与
+    4 号 (缺字段0.5) 在病根下照过 (旧病输出恰等于断言值), 它们钉的是
+    "透传语义不回退", 非病根回归钉, 分级留痕防误读。
     """
 
     def _adapter(self, cand):
@@ -59,11 +64,17 @@ class TestBridgeVotingAdapterConfidence:
         v = self._adapter(cand).vote("US.TEST", None)
         assert v["final_confidence"] == 0.5
 
-    def test_zero_confidence_not_rewritten_to_neutral(self):
-        """第6轮F钉: 合法 0.0 不得被静默改写成中性 0.5 — 钳到下限 0.10."""
+    def test_zero_confidence_clamped_to_floor(self):
+        """第6轮F钉: 合法 0.0 原样透传后被下限钳制改写成 0.10 (命名按第8轮纠正: 非'不改写')."""
         cand = self._base(confidence=0.0)
         v = self._adapter(cand).vote("US.TEST", None)
-        assert v["final_confidence"] == 0.10  # 下限钳制, 不是 0.5
+        assert v["final_confidence"] == 0.10  # 下限钳制, 不是中性 0.5
+
+    def test_bool_confidence_not_treated_as_number(self):
+        """第8轮F钉: isinstance(True, (int,float)) 为真, JSON true 不得当成 1.0 → 中性兜底."""
+        cand = self._base(confidence=True)
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.5  # 不是 0.95
 
     def test_confidence_stays_01_scale_for_downstream_x100(self):
         """0-1→0-100 换算钉: 输出恒在 [0.10, 0.95] (下游 :1596 乘 100 落库)."""
