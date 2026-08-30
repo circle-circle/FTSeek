@@ -803,23 +803,16 @@ class BridgeVotingAdapter:
             return None
 
         score = float(cand.get("score", 5.0))
-        # 2026-07-10: confidence 从辩论结果合成 (唯一有预测力的信号, r=+0.102)
-        # 不用 LLM 定性 confidence (r=-0.211, 负相关)
-        # 不用 score/10 (同义反复, 无区分度)
-        confidence = 0.50  # 中性基准
-
-        debate = cand.get("debate", {})
-        if debate:
-            agreed = debate.get("challenger_agreed", False)
-            chall_dir = str(debate.get("challenger_direction", "")).upper()
-            outcome = cand.get("debate_outcome", "")
-
-            if chall_dir == direction:
-                if agreed or "AGREE" in outcome.upper():
-                    confidence += 0.20  # 2模型一致确认
-            else:
-                confidence -= 0.15  # 方向分歧
-
+        # 2026-08-30 (DEB-20260830 E11 修复): 删除消费端重复合成, 直读生成端权威值.
+        # 根因: 原处用 `chall_dir == direction` 字面比较, 但挑战者方向是 BUY/SELL_SHORT
+        # 标签体系而 direction 是 LONG/SHORT → 恒不等 → 全候选被误判"方向分歧"恒扣 0.35,
+        # 与生成端权威合成 (DA skill adapter._compute_confidence: 同标签体系比较+弃权
+        # 中性处理+score差值衰减+fallback独立性检测) 及落库真值 (8/28 全候选 70) 矛盾。
+        # 双合成漂移实测泄漏: 8/18-8/25 六条 "BUY confidence 35 < 55" SKIP 行 +
+        # :1347 方向冲突门 (阈值0.70) 恒死。生成端是权威: 39 个历史 bridge 文件
+        # 全候选带 confidence 字段 (含 WARN 降档后的值), 消费端重合成多余且错 — 删除。
+        # 回滚: revert 本提交 (回到双合成漂移态, 不比现在更坏)。
+        confidence = float(cand.get("confidence", 0.5) or 0.5)
         confidence = max(0.10, min(0.95, confidence))
 
         return {
@@ -1591,10 +1584,11 @@ def _build_instructions_from_votes(
         # 根因: compute_confidence()是纯数据质量分(数据维度ok数×12+条件验证×28,封顶90)
         #   → 数据完整时永远=90, 与分析确信度无关
         #   → confidence=90但胜率31%, 因为"90"是数据完整度不是确信度
-        # 口径勘误 (2026-08-25, DEB-20260825 第11轮): final_confidence 并非"已含LLM定性" —
-        #   BridgeVotingAdapter.vote() 明确不用 LLM 定性 confidence (IC 反指 r=-0.211),
-        #   而是从辩论结果合成: 中性0.50 + 挑战者同向确认+0.20 / 方向分歧-0.15
-        #   (唯一正信号: 辩论一致 r=+0.102)。非bridge保持compute_confidence不变
+        # 口径勘误 (2026-08-30, DEB-20260830 E11): BridgeVotingAdapter.vote() 的
+        #   final_confidence 现直读生成端权威值 (DA skill adapter._compute_confidence,
+        #   同标签体系比较+弃权中性+score差值衰减), 不再是消费端字面重合成
+        #   (旧重合成用 LONG==BUY 恒不等全候选误判分歧恒=0.35, 与落库真值矛盾)。
+        #   非bridge保持compute_confidence不变
         _is_bridge = (vote_result.get("strategy_id", "") == "deep_analysis" 
                       or str(vote_result.get("decision_id", "")).startswith("DA"))
         if _is_bridge:
