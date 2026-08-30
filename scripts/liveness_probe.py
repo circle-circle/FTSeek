@@ -96,7 +96,12 @@ PROBES = [
         path="data/.futu_channel_shadow_state.json",
         ts_field="last_collect_ts",
         max_age_hours=26,
-        trading_day_only=False,   # AFTER_HOURS 每日采集(含周末)
+        # 2026-08-31 误报修正 (8/31 06:00 CST 告警实锤): 采集器仅挂 _llm_strategy_loop
+        #   的 TRADING/AFTER_HOURS 分支, 周末调度器 WEEKEND phase 完全休眠不请求 API
+        #   (scheduler_core.py:2386) — 周末本就不采集。原注释"含周末"与调度器行为矛盾,
+        #   周五盘后→周一开盘 ~65h 天然空窗必然撞 26h 阈值。最后采集=周五 16:00 ET
+        #   盘后收尾且五通道数据完整 = 健康。交易日探针运行时采集 300s/次, 真断流仍会报。
+        trading_day_only=True,
     ),
     Probe(
         name="direction_attribution_report",
