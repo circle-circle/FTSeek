@@ -602,6 +602,31 @@ class PlaybookDB:
         except Exception:
             return False
 
+    def get_risk_state(self, key: str) -> Optional[str]:
+        """[TZ-1] 读熔断锁存态 (无行/表未建 → None, 调用方按未熔断处理)."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM playbook_risk_state WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row else None
+        except Exception:
+            return None
+
+    def set_risk_state(self, key: str, value: Optional[str]) -> None:
+        """[TZ-1] 写/清熔断锁存态 (value=None → 删行, 即 reset 语义)."""
+        conn = self._conn()
+        if value is None:
+            conn.execute("DELETE FROM playbook_risk_state WHERE key = ?", (key,))
+        else:
+            conn.execute(
+                "INSERT INTO playbook_risk_state (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (key, value, now_utc().isoformat()),
+            )
+        conn.commit()
+
     def get_instruction(self, date: str, symbol: str) -> Optional[Dict]:
         """获取某日某标的指令.
 
@@ -1501,6 +1526,16 @@ CREATE TABLE IF NOT EXISTS playbook_regime_log (
 CREATE TABLE IF NOT EXISTS playbook_generate_state (
     date TEXT PRIMARY KEY,
     completed_at TEXT NOT NULL
+);
+
+-- [TZ-1 2026-08-30 DEB-timezone-duplication-audit] 熔断器锁存持久化:
+-- RiskCircuitBreaker._stop_until 原为纯内存实例字段, 唯一调用方 (pipeline 周报) 每轮
+-- 新建实例 → "连亏5停开仓1日"的窗口从未跨调用生效 (实测 2026-08-30)。
+-- 本表存熔断锁存态; value=None 语义用 DELETE 行表达 (reset)。
+CREATE TABLE IF NOT EXISTS playbook_risk_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_playbook_instructions_date

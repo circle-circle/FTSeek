@@ -13,6 +13,12 @@ Usage:
   breaker = RiskCircuitBreaker(playbook_db)
   status = breaker.check_status(total_equity=100000)
   # status = {"daily_loss_ok": True, "consecutive_ok": True, "position_multiplier": 1.0, ...}
+
+TZ-1 (DEB-20260830-timezone-duplication-audit, 2026-08-30):
+  ① 窗口判定/赋值原用服务器 CST date.today() (CST 午夜 = ET 正午, 窗口盘中翻日) → 改 ET 日历日;
+  ② _stop_until 原为纯内存字段, 唯一调用方 (pipeline 周报) 每轮新建实例 → "连亏5停1日"
+     锁存从未跨调用生效 → 落盘 playbook_risk_state (锁存跨进程/跨调用)。
+  落盘失败 → 退化为进程内锁存 (仅告警不阻断; 本组件在周报路径仅记录告警, spec 5.4)。
 """
 # ── 日亏损防线登记 (2026-08-28 冲突显性化): "当日亏损"事实六套权威并存 ──
 #   1. AccountCircuitBreaker  app/risk/account_circuit_breaker.py
@@ -39,6 +45,13 @@ from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
 
+_STOP_UNTIL_KEY = "stop_until"
+
+
+def _et_today() -> date:
+    """ET 日历日 (锁存窗口判定口径; 服务器 CST 的 date.today() 在 ET 正午翻日, TZ-1)。"""
+    return now_et().date()
+
 
 class RiskCircuitBreaker:
     """风控熔断器"""
@@ -61,7 +74,7 @@ class RiskCircuitBreaker:
         self.daily_loss_limit_pct = daily_loss_limit_pct
         self.consecutive_loss_reduce = consecutive_loss_reduce
         self.consecutive_loss_stop = consecutive_loss_stop
-        self._stop_until: Optional[date] = None  # 停止开仓到何时
+        self._stop_until: Optional[date] = self._load_stop_until()  # 停止开仓到何时 (TZ-1: 落盘恢复)
 
     def check_status(self, total_equity: float = 100000) -> Dict[str, Any]:
         """
@@ -107,8 +120,9 @@ class RiskCircuitBreaker:
         # 3. 停止期检查
         trading_allowed = daily_loss_ok and consecutive_ok
         stop_reason = ""
+        today = _et_today()  # TZ-1: ET 日历日 (原 date.today() 为服务器 CST, ET 正午翻日)
 
-        if self._stop_until and date.today() < self._stop_until:
+        if self._stop_until and today < self._stop_until:
             trading_allowed = False
             stop_reason = f"连续亏损熔断中, 恢复时间: {self._stop_until}"
             alerts.append(f"⛔ {stop_reason}")
@@ -116,9 +130,10 @@ class RiskCircuitBreaker:
             stop_reason = "日内亏损超限"
         elif not consecutive_ok:
             stop_reason = "连续亏损超限"
-            # 设置停止期
-            if self._stop_until is None or self._stop_until < date.today():
-                self._stop_until = date.today() + timedelta(days=1)
+            # 设置停止期 (TZ-1: 落盘, 跨调用/跨进程锁存)
+            if self._stop_until is None or self._stop_until < today:
+                self._stop_until = today + timedelta(days=1)
+                self._save_stop_until()
 
         return {
             "daily_loss_ok": daily_loss_ok,
@@ -136,6 +151,32 @@ class RiskCircuitBreaker:
     def reset(self):
         """重置熔断器 (新交易日开始)"""
         self._stop_until = None
+        self._save_stop_until()
+
+    def _load_stop_until(self) -> Optional[date]:
+        """从 playbook_risk_state 恢复锁存窗口 (无行/不可解析 → None = 未熔断)"""
+        try:
+            raw = self.db.get_risk_state(_STOP_UNTIL_KEY)
+        except Exception as e:
+            logger.warning(f"[RiskCircuitBreaker] stop_until 读取失败, 按未熔断处理: {e}")
+            return None
+        if not raw:
+            return None
+        try:
+            return date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            logger.warning(f"[RiskCircuitBreaker] stop_until 落盘值不可解析, 忽略: {raw!r}")
+            return None
+
+    def _save_stop_until(self) -> None:
+        """锁存窗口落盘/清除 (失败 → 退化为进程内锁存, 不阻断调用方)"""
+        try:
+            self.db.set_risk_state(
+                _STOP_UNTIL_KEY,
+                self._stop_until.isoformat() if self._stop_until else None,
+            )
+        except Exception as e:
+            logger.warning(f"[RiskCircuitBreaker] stop_until 落盘失败, 锁存退化为进程内: {e}")
 
     def _get_daily_realized_loss(self) -> float:
         """获取当日已实现亏损 (负数)"""

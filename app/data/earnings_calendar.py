@@ -23,6 +23,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 
+from app.utils.timezone import now_et
+
 logger = logging.getLogger("ftseek.us_pipeline.earnings_calendar")
 
 
@@ -337,7 +339,9 @@ class EarningsCalendar:
 
         ctx = None
         try:
-            today = datetime.now().date()
+            # TZ-2 (2026-08-30): 富途取数窗口锚 ET 日历日 — 原服务器 CST 日期在 ET 午后
+            #   领先一天, 拉取窗口边界整体偏移 (下游 "财报前3天"门随之漂移)。
+            today = now_et().date()
             # 两段窗口, 每段 ≤7 天含端点 (API 硬限制)
             windows = [
                 (str(today - timedelta(days=max(days_back, 0))), str(today)),
@@ -417,8 +421,9 @@ class EarningsCalendar:
             }
         """
         calendar = self.get_earnings_calendar(force_refresh=force_refresh)
-        
-        # 计算本周日期范围
+
+        # ⚠️ TZ-2 钩子 (2026-08-30, 复活前必修): 本方法零消费方; 下方日期锚仍为服务器
+        #   CST datetime.now(), 复活时须改 now_et().date() 并按 ET 口径重验窗口边界。
         today = datetime.now()
         week_start = today  # 从今天开始
         week_end = today + timedelta(days=7)
@@ -485,9 +490,12 @@ class EarningsCalendar:
             tickers_to_watch = None  # None = 不过滤
             watchlist_futu_map = {v[0]: k for k, v in KEY_US_SYMBOLS.items()}
         
-        today = datetime.now()
-        today_d = today.date()
-        cutoff = today + timedelta(days=days_ahead)
+        # TZ-2 (2026-08-30): 窗口锚 ET 日历日 — 原服务器 CST datetime.now() 在 ET 午后
+        #   领先一天, "财报前N天"门 (screener/reentry/持仓建议消费 days_until) 整体偏移。
+        #   days_until 同步改为 ET 日历日差 (原 (零点-带时分秒) 向下取整, 同一财报
+        #   一天内早晚报数不同)。
+        today_d = now_et().date()
+        cutoff_d = today_d + timedelta(days=days_ahead)
 
         result = []
         for entry in calendar:
@@ -501,12 +509,11 @@ class EarningsCalendar:
                     continue
                 entry_date = datetime.strptime(report_date, "%Y-%m-%d")
 
-                # 2026-08-21 修复: 同日边界 — today 带时分秒 vs entry_date 零点,
-                #   当天发财报的票被 `today <= entry_date` 漏掉 (BJ 案)。按日期比较。
-                if today_d <= entry_date.date() <= cutoff.date():
+                # 2026-08-21 修复: 同日边界 — 按日期比较 (BJ 案), 不与带时分秒的 now 混比。
+                if today_d <= entry_date.date() <= cutoff_d:
                     futu_sym = watchlist_futu_map.get(ticker, f"US.{ticker}")
                     sector = KEY_US_SYMBOLS.get(futu_sym, ("", "", "Unknown"))[2]
-                    
+
                     result.append({
                         "symbol": futu_sym,
                         "ticker": ticker,
@@ -516,7 +523,7 @@ class EarningsCalendar:
                         "currency": entry.get("currency", "USD"),
                         "time_of_day": entry.get("timeOfTheDay", "N/A"),
                         "sector": sector,
-                        "days_until": (entry_date - today).days,
+                        "days_until": (entry_date.date() - today_d).days,
                     })
             except (ValueError, TypeError):
                 continue
@@ -665,7 +672,9 @@ class EarningsCalendar:
             - atr_multiplier: 行业 ATR 倍数配置
         """
         calendar = self.get_earnings_calendar()
-        
+
+        # ⚠️ TZ-2 钩子 (2026-08-30, 复活前必修): 本方法零消费方; 下方日期锚仍为服务器
+        #   CST datetime.now(), 复活时须改 now_et().date() 并按 ET 口径重验窗口边界。
         today = datetime.now()
         start_date = today - timedelta(days=days_back)
         

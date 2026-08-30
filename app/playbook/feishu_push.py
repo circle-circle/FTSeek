@@ -314,11 +314,15 @@ class PlaybookPusher:
         #   口径: 已平仓单中, 峰值浮盈(MFE$) 连来回手续费都没覆盖 → 建仓后几乎从未浮盈,
         #   说明入场时机差(追在高点/做反方向). 与退出质量互补: 退出段看"锁没锁住利润",
         #   本段看"入场后有没有过利润". MCK(7/17)即典型: peak=entry, MFE≈0, 死扛4h亏损。
+        # TZ-3 (DEB-20260830-timezone-duplication-audit): 三处兜底 0.15→0.4 对齐
+        #   yaml 真值 (unified_config.yaml playbook.execution_parameters)。0.15 是
+        #   2026-08 前 yaml 旧值的过期拷贝; 生产读到 yaml 时无行为变化, 修的是
+        #   yaml 缺键降级路径的阈值漂移 (与第13轮前批 UE 默认值对齐同款病)。
         try:
             from app.playbook.config import get_playbook_config
-            _cushion_pct = float(get_playbook_config().get("breakeven_fee_cushion_pct", 0.15) or 0.15)
+            _cushion_pct = float(get_playbook_config().get("breakeven_fee_cushion_pct", 0.4) or 0.4)
         except Exception:
-            _cushion_pct = 0.15
+            _cushion_pct = 0.4
         _trapped = []
         for i in instructions:
             if i.get("direction") == "SKIP" or not i.get("executed"):

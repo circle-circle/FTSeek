@@ -1,6 +1,10 @@
 """
 attribution_scheduler.py - LLM 逐笔归因调度器
 
+⚠️ T5 钩子 (TZ 审计 2026-08-30, 复活前必修): 本模块零消费方 (死码)。调度用服务器
+    CST date.today() (get_unattributed_trades / run_daily_attribution) 对比 ET 平仓日
+    — ET 午后平仓系统性漏扫。复活时须改 app/utils/timezone 的 ET 口径并重验扫描窗口。
+
 Phase 2 (2026-05-31): 完整交易链路归因
 
 职责:

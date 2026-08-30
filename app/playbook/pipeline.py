@@ -3056,10 +3056,12 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
             logger.debug(f"[playbook] edge 周报推送失败 (不影响分析): {e}")
 
         # 周五风控熔断状态检查 (spec 5.4) — 仅记录告警, 不阻断
+        # TZ-1 附带修复 (2026-08-30): 原条件读 status["action"] (check_status 从不返回
+        # 该键) → 告警日志从未触发过。改读真实键 trading_allowed / position_multiplier。
         try:
             from app.playbook.risk_circuit_breaker import RiskCircuitBreaker
             status = RiskCircuitBreaker(db).check_status(_get_total_equity(scheduler))
-            if status.get("action") in ("reduce", "stop"):
+            if not status.get("trading_allowed") or float(status.get("position_multiplier", 1.0)) < 1.0:
                 logger.warning(f"[playbook] 风控熔断触发: {status}")
         except Exception as e:
             logger.debug(f"[playbook] 风控检查失败 (不影响周报): {e}")

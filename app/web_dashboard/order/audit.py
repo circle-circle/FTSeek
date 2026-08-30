@@ -1,4 +1,10 @@
-"""审计日志/DB 写入/WebSocket 事件/手动持仓标记.
+"""审计日志/DB 写入/Websocket 事件/手动持仓标记.
+
+⚠️ T4 钩子 (TZ 审计 2026-08-30, 复活前必修): 手动单写 trade_records 的时间戳是
+    naive 服务器 CST datetime.now() (record_manual_open / record_manual_close /
+    mark_position_manual, executor.py 同病), 与主路径 aware ET 同表口径分裂 —
+    下游按"entry_time 前 10 位=ET 日"约定 (pre_trade_gate.py 等) 会差一天。
+    历史手动单仅 1 笔 (2026-07-10); 手动单再启用时须统一走 now_et() 口径。
 
 公开函数 (供 ManualOrderService facade 委派):
     - ensure_audit_table(service)

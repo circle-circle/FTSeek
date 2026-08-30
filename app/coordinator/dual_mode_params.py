@@ -11,6 +11,11 @@
 同时提供:
     - get_today_auto_trade_count(): 当日自动交易计数 (内存计数 + 跨日自动重置)
     - increment_today_auto_trade_count(): 提交订单成功后递增
+
+⚠️ T3 钩子 (TZ 审计 2026-08-30, 复活前必修): 计数器跨日重置用服务器 CST date.today()
+    (_maybe_reset_counter / reset_today_auto_trade_count) — CST 午夜 = ET 正午, ET 盘中
+    后半段额度翻倍。主线链 2026-06-30 起休眠未触发; 复活主线执行时须改
+    now_et().date() (app/utils/timezone SSOT)。
 """
 
 from __future__ import annotations

@@ -620,8 +620,11 @@ class PlaybookDataCollector:
 
             try:
                 # 用 Finnhub calendar/earnings 查该标的未来财报
+                # TZ-2 (2026-08-30): 锚 ET 日历日 — 原服务器 CST date.today() 在 ET 午后
+                #   领先一天, days_until 整体偏移 → screener "财报前3天"排除门边界漂移。
+                from app.utils.timezone import now_et as _now_et
                 import datetime as _dt
-                today = _dt.date.today()
+                today = _now_et().date()
                 end = today + _dt.timedelta(days=90)
                 fh_data = self.finnhub._get("calendar/earnings", {
                     "symbol": bare,

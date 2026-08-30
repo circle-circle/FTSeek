@@ -124,6 +124,53 @@ class TestEveningPush:
         assert "❌ 触发未执行" in message
 
 
+class TestTrappedEntryCushionDefault:
+    """TZ-3 (DEB-20260830-timezone-duplication-audit): cushion 三处兜底 0.15→0.4 对齐 yaml 真值。
+
+    病根: get 默认 / or 兜底 / except 兜底三处 0.15 是 2026-08 前 yaml 旧值的过期拷贝,
+    yaml 真值已 0.4 (playbook.execution_parameters.breakeven_fee_cushion_pct) → 降级路径
+    阈值漂移。判别式: notional $5000 的单, MFE=$15 — 旧线 0.15%=$7.5 放行, 新线 0.4%=$20 拦截。
+    """
+
+    @staticmethod
+    def _closed_inst(mfe=15.0):
+        return {
+            "symbol": "US.TEST", "direction": "BUY", "executed": 1, "outcome": "loss",
+            "execution_price": 100.0, "position_size": 50,
+            "max_favorable_excursion": mfe, "max_adverse_excursion": -30.0,
+            "pnl": -50.0, "horizon": "short",
+        }
+
+    def test_missing_key_falls_back_to_yaml_truth_04(self, pusher):
+        """yaml 缺键/配置读成空 → 阈值 0.4, MFE=$15 被拦截 (旧默认 0.15 时放行 → 钉死旧值)"""
+        with patch("app.playbook.config.get_playbook_config", return_value={}):
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=15.0)])
+        assert "入场即套牢" in msg
+        assert "阈值 0.40%" in msg
+
+    def test_config_exception_falls_back_to_04(self, pusher):
+        """get_playbook_config 抛异常 → except 兜底同样 0.4 (三处默认一致)"""
+        with patch("app.playbook.config.get_playbook_config", side_effect=RuntimeError("boom")):
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=15.0)])
+        assert "入场即套牢" in msg
+        assert "阈值 0.40%" in msg
+
+    def test_above_floor_not_trapped(self, pusher):
+        """MFE=$25 > 新线 $20 → 不报套牢 (防'永远拦截'反向变异)"""
+        with patch("app.playbook.config.get_playbook_config", return_value={}):
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=25.0)])
+        assert "入场即套牢" not in msg
+
+    def test_yaml_truth_unchanged_04(self):
+        """生产口径自证: 活配置读到 0.4 == yaml 真值 → 生产/降级同阈值 (零行为变化的前提)"""
+        from app.playbook.config import get_playbook_config
+        import yaml as _yaml
+        from pathlib import Path as _Path
+        raw = _yaml.safe_load(open(_Path(__file__).resolve().parent.parent / "config" / "unified_config.yaml"))
+        assert raw["playbook"]["execution_parameters"]["breakeven_fee_cushion_pct"] == 0.4
+        assert get_playbook_config().get("breakeven_fee_cushion_pct", 0.4) == 0.4
+
+
 class TestHelpers:
     def test_parse_conditions_list(self):
         result = PlaybookPusher._parse_conditions(["a", "b"])

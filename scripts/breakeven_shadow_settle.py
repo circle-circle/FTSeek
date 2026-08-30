@@ -14,6 +14,10 @@
 
 用法: PYTHONPATH=. venv/bin/python scripts/breakeven_shadow_settle.py
 落盘: data/breakeven_shadow_settlement.json
+
+⚠️ T6 钩子 (TZ 审计 2026-08-30, 复活前必修, 不在 cron 零调度): partial_day 判定
+    `exit_dt.date() == datetime.now().date()` (A/B 两处) — exit_dt 是 ET 口径,
+    右侧是服务器 CST 墙钟, 跨 ET 午夜错分日。再启用前须统一 ET 口径并重跑结算。
 """
 import json
 import math
