@@ -1075,15 +1075,15 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     # [ADR-017/018] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
     hard: List[str] = []
     _corro_syms: set = set()  # [UE-B1影子] 财报影子交叉印证符号集 (8-K/13DG ticker)
-    if bool(_cfg("universe_expansion.clue_hard_events", False)):
+    if bool(_cfg("universe_expansion.clue_hard_events", True)):
         _he = _gather_hard_events(news)            # 新闻分类 (关键词, 零成本)
         hard += _he
         health.append(f"硬事件:{len(_he)}")
-    if bool(_cfg("universe_expansion.clue_earnings_events", False)):
+    if bool(_cfg("universe_expansion.clue_earnings_events", True)):
         _ee = _gather_earnings_events()            # 财报日历 (Alpha Vantage)
         hard += _ee
         health.append(f"财报:{len(_ee)}")
-    if bool(_cfg("universe_expansion.clue_insider_clusters", False)):
+    if bool(_cfg("universe_expansion.clue_insider_clusters", True)):
         _ic = _gather_insider_clusters()           # 内部人集群 (已持久化文件)
         hard += _ic
         _age = _latest_insider_report_age()
@@ -1140,7 +1140,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             parts.extend(es)
 
     # [P3 2026-07-22] 盘前板块峰群 (影子测量转 clue 输入; 仅热度参考, 跟随策略已回测否决).
-    if bool(_cfg("universe_expansion.clue_peer_surge", False)):
+    if bool(_cfg("universe_expansion.clue_peer_surge", True)):
         ps = _gather_peer_surge()
         health.append(f"峰群:{len(ps)}组")
         if ps:
@@ -1754,8 +1754,10 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
                         },
                     )
                     _snap_n += 1
-                except Exception:
-                    pass
+                except Exception as _snap_e:
+                    # [审计 2026-08-30] 原 except:pass 静默吞 — 快照缺失对
+                    # signal_ic_tracker 是该 decision_id 的盲区, 不可静默。
+                    print(f"  [warn] UE 快照单标的失败 {s.get('symbol')}: {_snap_e}")
             print(f"  [R5] UE 候选快照 {_snap_n}/{len(tradeable)} → signal_snapshots")
         except Exception as _snap_e:
             print(f"  [warn] UE 候选快照失败 (不影响扫描): {_snap_e}")
