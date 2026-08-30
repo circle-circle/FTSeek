@@ -134,6 +134,19 @@ def main():
                     f"US.{sym}", kline_days=60, anomaly_days=7)
                 q = collected.get("_quality") or {}
                 row["input_quality"] = f'{q.get("ok")}/{q.get("total")}'
+                # 材料漂移诊断: 影子采集比生产分析晚 ~1h, 盘前价格可能已变 —
+                # 记录影子侧快照价, 判据结算时与生产 checkpoint._snapshot 对比,
+                # 漂移超阈的样本标记 tainted (材料不同构, 分歧不可归因于模型)
+                _snap = collected.get("snapshot") or {}
+                row["shadow_price"] = _snap.get("last_price")
+                # collect_all snapshot 无 change_pct 键, 从 prev_close 推导
+                try:
+                    _lp = float(_snap.get("last_price") or 0)
+                    _pc = float(_snap.get("prev_close") or 0)
+                    if _lp > 0 and _pc > 0:
+                        row["shadow_change_pct"] = round((_lp - _pc) / _pc * 100, 2)
+                except Exception:
+                    pass
                 data_text = llm_synth._format_data_for_prompt(collected)
                 user_prompt = llm_synth.USER_PROMPT_TEMPLATE.format(data=data_text)
 
@@ -177,6 +190,17 @@ def main():
                 row["divergence"] = (
                     "glm_SHORT_prod_not_SHORT" if gd == "SHORT" and pd != "SHORT"
                     else "agree" if pd == gd else f"{gd}_vs_{pd}")
+                # 生产 DA 实际输出方向 (checkpoint _llm_output.direction, BUY/SELL_SHORT 标签)
+                # — 与 bridge 的 LONG/SHORT 是两套标签体系, 结算时双基准核对
+                try:
+                    _ck_p = os.path.join(FTSEEK_ROOT, "data/da_checkpoint",
+                                         et_date, row["symbol"] + ".json")
+                    if os.path.exists(_ck_p):
+                        _ck = json.load(open(_ck_p, encoding="utf-8"))
+                        row["prod_ckpt_direction"] = (_ck.get("_llm_output") or {}).get("direction")
+                        row["prod_ckpt_model"] = _ck.get("_ckpt_model")
+                except Exception:
+                    pass
             except Exception as e:
                 row["glm_error"] = f"exception: {e!r}"[:300]
                 n_fail += 1
