@@ -812,7 +812,11 @@ class BridgeVotingAdapter:
         # :1347 方向冲突门 (阈值0.70) 恒死。生成端是权威: 39 个历史 bridge 文件
         # 全候选带 confidence 字段 (含 WARN 降档后的值), 消费端重合成多余且错 — 删除。
         # 回滚: revert 本提交 (回到双合成漂移态, 不比现在更坏)。
-        confidence = float(cand.get("confidence", 0.5) or 0.5)
+        # 2026-08-30 第6轮F修复: `or 0.5` 会把合法 0.0 静默改写成中性放行, 与教训③(SSOT)矛盾.
+        # 生成端契约值域 [0.10, 0.95], 但消费端不再二次解释语义 — None/非数 → 中性兜底,
+        # 数值 → 原样透传 (含 0.0, 虽然当前生成端不可能产出).
+        _raw_conf = cand.get("confidence")
+        confidence = float(_raw_conf) if isinstance(_raw_conf, (int, float)) else 0.5
         confidence = max(0.10, min(0.95, confidence))
 
         return {
@@ -1328,6 +1332,11 @@ def _build_instructions_from_votes(
         _log_playbook_direction_audit(symbol, vote_direction, technical_direction, vote_result)
 
         # 技术仲裁模式: 无技术方向则 SKIP; LLM 强反向冲突则 SKIP; 否则 technical 获胜
+        # [E12 登记·2026-08-30 第6轮] 休眠门语义漂移陷阱: 本块当前 100% 不可达
+        # (生产 direction_mode=llm_vote), 但修复 04150669 后若切到 technical_arbitration:
+        # 生成端主路径输出精确 0.70, `>= _llm_conflict_threshold(0.70)` 在浮点刀刃上恒真
+        # → 门在 100% 方向冲突上触发 SKIP, 技术覆盖分支永不执行 (修复前是技术永远赢)。
+        # 切 direction_mode 前必须先复核本门语义。
         if _direction_mode == "technical_arbitration":
             if not technical_direction:
                 _filter_audit["technical_no_signal"] = _filter_audit.get("technical_no_signal", 0) + 1

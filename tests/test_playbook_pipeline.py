@@ -5,7 +5,71 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.playbook.pipeline import _close_trade_record, _check_intraday_trigger
+from app.playbook.pipeline import (
+    BridgeVotingAdapter,
+    _close_trade_record,
+    _check_intraday_trigger,
+)
+
+
+class TestBridgeVotingAdapterConfidence:
+    """DEB-20260830 E11/E 测试钉子 — 消费端禁止重算生成端权威 confidence.
+
+    病根回归钉: 旧代码用 `chall_dir == direction` 字面比较 (BUY/SELL_SHORT vs
+    LONG/SHORT 恒不等) 把全候选误判分歧恒扣至 0.35, 与生成端权威值及落库真值矛盾。
+    任何把"辩论标签比较"加回 vote() 的改动必须先打碎这些钉子。
+    """
+
+    def _adapter(self, cand):
+        return BridgeVotingAdapter({cand["symbol"]: cand}, "2026-08-28")
+
+    def _base(self, **over):
+        cand = {
+            "symbol": "US.TEST", "direction": "LONG", "score": 7.0,
+            "confidence": 0.7, "decision_id": "DA-test",
+        }
+        cand.update(over)
+        return cand
+
+    def test_agreement_reads_generator_value_not_literal_recompute(self):
+        """挑战者 BUY + agreed + 生成端 0.7 → 必须 0.7 (旧病: 字面比较扣成 0.35)."""
+        cand = self._base(debate={
+            "challenger_direction": "BUY", "challenger_agreed": True},
+            debate_outcome="AGREE")
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.7
+
+    def test_true_disagreement_passes_generator_value_through(self):
+        """真分歧候选: 生成端已判 0.35, 消费端原样透传不再二次扣分."""
+        cand = self._base(confidence=0.35, debate={
+            "challenger_direction": "SELL_SHORT", "challenger_agreed": False})
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.35
+
+    def test_score_decay_value_passthrough(self):
+        """score 差值衰减值 (生成端 0.64) 原样透传 — 保留真方差."""
+        cand = self._base(confidence=0.64)
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.64
+
+    def test_missing_confidence_falls_to_neutral(self):
+        """无 confidence 字段 → 中性 0.5 (非崩溃)."""
+        cand = self._base()
+        cand.pop("confidence")
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.5
+
+    def test_zero_confidence_not_rewritten_to_neutral(self):
+        """第6轮F钉: 合法 0.0 不得被静默改写成中性 0.5 — 钳到下限 0.10."""
+        cand = self._base(confidence=0.0)
+        v = self._adapter(cand).vote("US.TEST", None)
+        assert v["final_confidence"] == 0.10  # 下限钳制, 不是 0.5
+
+    def test_confidence_stays_01_scale_for_downstream_x100(self):
+        """0-1→0-100 换算钉: 输出恒在 [0.10, 0.95] (下游 :1596 乘 100 落库)."""
+        for conf in (0.25, 0.35, 0.5, 0.64, 0.7, 0.99, 1.5):
+            v = self._adapter(self._base(confidence=conf)).vote("US.TEST", None)
+            assert 0.10 <= v["final_confidence"] <= 0.95, conf
 
 
 class TestCloseTradeRecord:
