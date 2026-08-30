@@ -3274,6 +3274,9 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
         _edge = {}
         try:
             from app.decision.edge_shadow_gate import get_edge_shadow_gate
+            # 注 (第10轮口径修正): 本调用点 log=False 永不写影子行, 上面的
+            # decision_id 为备用透传 (该路径审计另有落库); 能产出带键影子行的
+            # 只有 :1676 一处。
             _edge = get_edge_shadow_gate().evaluate(
                 inst.get("symbol", ""), _direction, _conf, live_pass=True, log=False,
                 decision_id=str(inst.get("decision_id", "") or ""),
