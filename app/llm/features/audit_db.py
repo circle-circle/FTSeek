@@ -35,9 +35,12 @@ def _is_test_context() -> bool:
 
 
 def _get_db_path() -> str:
+    # R-3 (2026-08-30, DEB-timezone-duplication-audit): 收敛到 db_pool 单一定义。
+    # 原三处平行定义 (db_pool._DB_PATHS / db_utils.get_llm_audit_db / 本函数) 同值收敛;
+    # 本函数原主路的 yaml paths.data_dir 覆写对 llm_audit 退役 (yaml 现值=默认值, 零行为变化)。
     try:
-        from app.core.paths import get_data_dir
-        return str(get_data_dir() / "llm_audit.db")
+        from app.storage.db_pool import get_db_path
+        return str(get_db_path("llm_audit"))
     except Exception:
         from pathlib import Path
         return str(Path(__file__).resolve().parent.parent.parent.parent / "data" / "llm_audit.db")

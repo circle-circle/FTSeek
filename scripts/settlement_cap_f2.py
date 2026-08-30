@@ -35,6 +35,23 @@ ARM_FILTER = "executed=1 AND pnl != 0"
 ARM_FILTER_SHORT = "executed=1"
 CAP3_REF_NOTIONAL = 75000.0            # CAP-3 参考: 名义帽$77,632的~97% (净值浮动取近似)
 CAP3_CONSECUTIVE_LIMIT = 3             # 连续3+日触顶 → 议质量分配
+# F2 ⑤ 覆盖率前置闸 (DEB-20260830 第10轮预注册, 第15/16轮实现口径冻结):
+#   分母 = 窗口内 data/opportunity_scan_*.json 存在日 (不得从影子文件自身数, 防循环论证);
+#   分子 = 分母日子集中有影子行的日数。<闸 → "无法结算" (仪器缺陷), 非"不过"。
+COVERAGE_GATE = 0.80
+
+
+def coverage_gate(start, end, shadow_rows):
+    """返回 (覆盖日数, bridge 扫描日数, 覆盖率)。口径见 COVERAGE_GATE 注释。"""
+    prefix = "opportunity_scan_"
+    bridge_days = set()
+    for p in (ROOT / "data").glob(f"{prefix}*.json"):
+        d = p.name[len(prefix):len(prefix) + 10]
+        if start <= d <= end:
+            bridge_days.add(d)
+    shadow_days = {str(r.get("ts", ""))[:10] for r in shadow_rows}
+    covered = bridge_days & shadow_days
+    return len(covered), len(bridge_days), (len(covered) / len(bridge_days)) if bridge_days else 0.0
 
 
 def load_shadow(start, end):
@@ -77,8 +94,16 @@ def main():
     start, end = args.start, args.end
     print(f"═══ CAP/F2 结算窗口: {start} ~ {end} (DEB-20260830 第12轮判据) ═══\n")
 
-    # ── CAP-1: BUY 臂放行量 (影子带 decision_id 行) ──
+    # ── F2 ⑤ 覆盖率前置闸 (先于一切结论) ──
     rows = load_shadow(start, end)
+    n_cov, n_scan, cov = coverage_gate(start, end, rows)
+    gate_ok = cov >= COVERAGE_GATE
+    print(f"覆盖率前置闸 (F2⑤): 影子写入日 {n_cov} / bridge 扫描日 {n_scan} = {cov:.0%}")
+    if not gate_ok:
+        print(f"🔴 无法结算: 覆盖率 {cov:.0%} < {COVERAGE_GATE:.0%} 前置闸 — "
+              "CAP-1/F2 结论无效 (仪器缺陷, 不得读成判据不过)\n")
+
+    # ── CAP-1: BUY 臂放行量 (影子带 decision_id 行) ──
     da_rows = [r for r in rows if str(r.get("decision_id", "")).startswith("DA")]
     buy_pass = [r for r in da_rows
                 if r.get("direction") == "BUY" and r.get("live_verdict") == "PASS"]
@@ -92,7 +117,9 @@ def main():
     print(f"CAP-1 BUY放行量: {len(pairs)} (日期,标的)对 / {n_days} 影子日 = {avg:.1f} 笔/日")
     print(f"   基线: 9.0 笔/日 (释放部分) | 影子行带decision_id: {has_did}/{len(rows)} "
           f"(0 = F4未生效或窗口早于8/31)")
-    if has_did == 0:
+    if not gate_ok:
+        print("   ⛔ 覆盖率前置闸未过 — CAP-1 判 '无法结算' (非'不过'), 上述数字仅作参考")
+    elif has_did == 0:
         print("   ⚠️ 无 decision_id 行 — 结算不可执行, 按 DEB 通用条款 '到期无数据' 上报")
     elif avg > BASELINE_RELEASED_PER_DAY + 6.0:
         print("   ⚠️ 显著偏高 → 按判据先排除采样偏差 (第10轮D项) 再查上游")
@@ -148,6 +175,9 @@ def main():
     if r["n"]:
         print(f"\n附带 SHORT腿: ${r['s']:.2f} / n={r['n']} = ${r['s']/r['n']:.2f}/笔")
 
+    if not gate_ok:
+        print("\n⛔ F2 判据整体: 覆盖率前置闸未过 → 判 '无法结算' (放行量侧无有效数据); "
+              "CAP-2/3/4 直读 DB 不受闸约束, 可作信息参考但不构成 F2 裁决")
     print("\n═══ 结算完毕 — 判据冻结自 DEB-20260830 第12轮, 改判据须先改 DEB ═══")
 
 

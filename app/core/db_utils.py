@@ -140,8 +140,9 @@ def get_rejections_db() -> Path:
 
 
 def get_llm_audit_db() -> Path:
-    """Get path to llm_audit.db"""
-    return _DATA_DIR / "llm_audit.db"
+    """Get path to llm_audit.db (R-3 2026-08-30: 收敛到 db_pool 单一定义)"""
+    from app.storage.db_pool import get_db_path
+    return get_db_path("llm_audit")
 
 
 @contextmanager

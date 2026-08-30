@@ -1,11 +1,17 @@
 """
 Playbook Risk Circuit Breaker — 风控熔断 (spec 5.3)
 
-熔断规则:
+熔断规则 (以下为 spec 5.3 设计意图; 实际接线 ≠ 设计 — 见文末 DEB-timezone 第4轮登记):
   1. 日内亏损熔断: 当日亏损 > 总资金 1% → 禁用执行按钮 + 飞书告警
   2. 连续亏损熔断:
      - 连续 3 笔亏损 → 仓位减半
      - 连续 5 笔亏损 → 停止开仓 1 天
+
+实际接线 (2026-08-30 DEB-timezone-duplication-audit 第4轮登记, 文档-实现对齐):
+  上述"禁用执行按钮"/"飞书告警"/"停止开仓"/"仓位减半"均为 spec 设计意图,
+  **从未接线** — 本模块无飞书调用, 全仓无任何执行门消费 check_status 的
+  trading_allowed / position_multiplier; 唯一调用方是 pipeline 周五周报路径
+  (logger.warning, 仅记录不阻断)。若未来接线为真实拦截, 属新增行为, 须用户明令。
 
 Usage:
   from app.playbook.risk_circuit_breaker import RiskCircuitBreaker
@@ -30,7 +36,8 @@ TZ-1 (DEB-20260830-timezone-duplication-audit, 2026-08-30):
 #   4. SymbolDailyLossGuard   app/risk/symbol_daily_loss_guard.py
 #      净值0.5%/标的/日 + 连亏N笔 + 低胜率 (yaml risk.symbol_daily_loss_guard.*)
 #   5. RiskCircuitBreaker     app/playbook/risk_circuit_breaker.py
-#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域, 禁执行按钮+飞书)
+#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域; 周报告警组件 — "禁执行按钮+飞书"
+#      从未接线, 全仓唯一调用方=周五周报 logger.warning, 仅记录不阻断; 2026-08-30 DEB-timezone 第4轮)
 #   6. DrawdownController     app/risk/drawdown_control.py
 #      日3% (risk.account.max_daily_drawdown, 持久化防重启归零; 仅主线平仓在喂)
 # 六套独立查询/独立状态互不感知; 口径 % 与 $ 混杂, 触发先后交错, 合并/裁剪属

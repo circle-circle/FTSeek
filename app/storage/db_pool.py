@@ -226,6 +226,16 @@ def get_pool() -> DatabasePool:
     return _pool
 
 
+def get_db_path(name: str) -> Path:
+    """命名库文件路径的公开 SSOT 读取口 (2026-08-30 R-3 收敛).
+
+    llm_audit 等库路径原有三处平行定义 (db_pool._DB_PATHS / db_utils.get_llm_audit_db /
+    audit_db._get_db_path), 此处为唯一定义的公开出口; 消费方一律 import 本函数,
+    不得再行内拼 "data/xxx.db"。含 register_path 自定义覆盖 (经池单例解析)。
+    """
+    return get_pool()._get_path(name)
+
+
 def get_db(name: str = "ftseek_us") -> DatabasePool:
     """Convenience: returns pool for chaining.
 

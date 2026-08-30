@@ -24,7 +24,8 @@ dual_broker 直连下单不经 order_executor) → **实盘唯一执行链路上
 #   4. SymbolDailyLossGuard   app/risk/symbol_daily_loss_guard.py
 #      净值0.5%/标的/日 + 连亏N笔 + 低胜率 (yaml risk.symbol_daily_loss_guard.*)
 #   5. RiskCircuitBreaker     app/playbook/risk_circuit_breaker.py
-#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域, 禁执行按钮+飞书)
+#      总资金1% + 连亏3减半/连亏5停1日 (playbook 域; 周报告警组件 — "禁执行按钮+飞书"
+#      从未接线, 全仓唯一调用方=周五周报 logger.warning, 仅记录不阻断; 2026-08-30 DEB-timezone 第4轮)
 #   6. DrawdownController     app/risk/drawdown_control.py
 #      日3% (risk.account.max_daily_drawdown, 持久化防重启归零; 仅主线平仓在喂)
 # 六套独立查询/独立状态互不感知; 口径 % 与 $ 混杂, 触发先后交错, 合并/裁剪属
