@@ -50,15 +50,14 @@ def et_date(ts):
       b) 无偏移的裸时间戳 (旧数据) → 实为 CST (UTC+8), 减 12h 得 ET。
     直接对裸时间戳做字符串日期比较会把 'CST 清晨结算' 的同日仓误判成隔夜仓
     (2026-08-25 审计中发现: #976-986 八笔假隔夜, exit 04:01x CST = 前日 ET 收盘)。
-    """
-    ts = str(ts)
-    has_offset = ts[-6] in "+-" and ts[-3] == ":"
-    if has_offset:
-        return ts[:10]
-    import datetime as dt
 
-    d = dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S") - dt.timedelta(hours=12)
-    return d.date().isoformat()
+    [RFC-070] 2026-08-30 收编到 scripts/utils/et_time (SSOT: app.utils.timezone, DST 正确):
+      旧实现 aware 取字符串前 10 位 (仅 -04:00 正确), naive 手写 -12h (EST 差 13h, 冬令时炸弹)。
+      全库 1475 个时间戳新旧逐行等值验证通过 (当前数据全在 EDT 期)。
+    """
+    from utils.et_time import parse_et_date
+
+    return parse_et_date(ts)
 
 
 def load_overnight_trades():

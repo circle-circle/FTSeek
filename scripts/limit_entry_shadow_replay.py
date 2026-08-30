@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import pytz  # noqa: E402
 import limit_entry_counterfactual as lec  # noqa: E402  (复用 try_fill/get_bars, 一字不改)
+from utils.et_time import naive_cst_to_et  # noqa: E402  [RFC-070] 时间尺子公共层
 
 ET = pytz.timezone("America/New_York")
 SHADOW_PATH = REPO / "data" / "limit_entry_shadow.jsonl"
@@ -53,7 +54,7 @@ def _parse_dt_et(raw):
         return dt.astimezone(ET)
     if 4 <= dt.hour < 20:
         return ET.localize(dt)
-    return ET.localize(dt - timedelta(hours=12))
+    return naive_cst_to_et(dt, keep_aware=True)  # [RFC-070] CST→ET DST 正确 (EST -13h, 原手写 -12h 收编)
 
 
 def _trigger_bar_end(dt):

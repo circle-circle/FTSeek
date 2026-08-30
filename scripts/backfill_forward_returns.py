@@ -120,20 +120,10 @@ def mirror_historical_decisions() -> int:
         created_at = row["created_at"]
         try:
             dt = datetime.fromisoformat(created_at)
-            # created_at 可能是 CST(UTC+8) 或带时区后缀
-            # 2026-06-30: 用 pytz 动态转换 (DST=12h, EST=13h)
-            try:
-                import pytz
-                from datetime import timezone, timedelta
-                et_tz = pytz.timezone('US/Eastern')
-                if dt.tzinfo is None:
-                    # naive: 假设服务器时间 CST(UTC+8)
-                    cst_tz = timezone(timedelta(hours=8))
-                    dt = dt.replace(tzinfo=cst_tz)
-                et_dt = dt.astimezone(et_tz)
-            except ImportError:
-                # fallback: 硬编码 12h (DST期间)
-                et_dt = dt - timedelta(hours=12)
+            # [RFC-070] 收编到 app.utils.timezone.to_et (naive 视为 CST, DST 正确):
+            # 原 8 行 pytz try/except 平行实现 (+ -12h 硬编码 fallback) 删除。
+            from app.utils.timezone import to_et
+            et_dt = to_et(dt)
             trade_date = et_dt.strftime("%Y-%m-%d")
         except Exception:
             # fallback: 直接取日期部分

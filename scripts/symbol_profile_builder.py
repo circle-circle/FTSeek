@@ -22,10 +22,12 @@ import json
 import re
 import sqlite3
 import statistics as st
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))  # [RFC-070] utils.et_time
 DB = REPO / "data" / "ftseek_us.db"
 PATH_DIR = REPO / "data" / "position_paths"
 OUT_DIR = REPO / "data" / "symbol_profiles"
@@ -53,7 +55,9 @@ LEGACY_BEIJING = {"MAIN_PIPELINE", "SCALPING"}
 def _entry_time_et(r) -> datetime | None:
     t = _parse_et(r.get("entry_time"))
     if t and (r.get("source_type") or "") in LEGACY_BEIJING:
-        return t - timedelta(hours=12)  # 北京→ET 夏令时差 12h (样本期 5-8 月全为 EDT)
+        # [RFC-070] 北京→ET DST 正确 (EST -13h, 原手写 -12h 收编; "样本期全 EDT" 注释即冬令时炸弹)
+        from utils.et_time import naive_cst_to_et
+        return naive_cst_to_et(t)
     return t
 
 

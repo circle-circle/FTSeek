@@ -29,8 +29,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # [RFC-070] utils.et_time
 
 import pytz
+
+from utils.et_time import naive_cst_to_et  # noqa: E402  [RFC-070] 时间尺子公共层
 
 ET = pytz.timezone("America/New_York")
 BACKUP_DIR = Path("data/backups")
@@ -47,7 +50,7 @@ def _parse_dt_et(raw: str):
         return dt.astimezone(ET).replace(tzinfo=None), False
     if 4 <= dt.hour < 20:  # naive 且落在 ET 延展时段 → 视为 ET
         return dt, False
-    return dt - timedelta(hours=12), True  # 服务器 UTC+8 → ET (-12h)
+    return naive_cst_to_et(dt), True  # [RFC-070] 服务器 UTC+8 → ET, DST 正确 (EST -13h)
 
 
 def _fetch_bars_1m(qctx, futu_symbol: str, start_date: str, end_date: str):

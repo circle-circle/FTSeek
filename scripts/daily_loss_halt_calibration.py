@@ -32,6 +32,7 @@ from pathlib import Path
 BASE = Path("/opt/ftseek/FTSeek-US")
 sys.path.insert(0, str(BASE / "scripts"))
 from overnight_gap_carry_audit import et_date  # noqa: E402
+from utils.et_time import naive_cst_to_et  # noqa: E402  [RFC-070] 时间尺子公共层
 
 DB = BASE / "data" / "ftseek_us.db"
 OUT = BASE / "data" / "daily_loss_halt_calibration.json"
@@ -66,7 +67,7 @@ def load_events(lo, hi):
             delta = dt.timedelta(hours=h, minutes=m)
             d = d - delta if off[0] == "+" else d + delta
         else:
-            d = d - dt.timedelta(hours=12)  # 裸戳按 CST 处理 (审计脚本同款)
+            d = naive_cst_to_et(d)  # [RFC-070] 裸戳按 CST → ET, DST 正确 (EST -13h, 原手写 -12h 收编)
         return d.replace(tzinfo=dt.timezone.utc).timestamp(), d.strftime("%Y-%m-%d")
 
     events = []
