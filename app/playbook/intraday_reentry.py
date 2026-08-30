@@ -713,11 +713,20 @@ def _arm_instruction(symbol: str, direction: str, price: float,
 
 # ── futu_capital_flow 当日方向索引 (2026-08-30 性能修复) ──────────────
 # 原实现每次 run_scan (盘中 300s 节流, 78次/日) 全量 read_text 95k 行 jsonl
-# 并逐行 json.loads — O(文件总行数) 增长炸弹。现改尾部增量:
-#   冷启动从文件尾部 _CF_COLD_TAIL 字节向后取整行解析 (当日记录必在尾部);
+# 并逐行 json.loads — O(文件总行数) 增长炸弹 (该文件无轮转, 持续累积)。现改尾部增量:
+#   冷启动从文件尾部 _CF_COLD_TAIL 字节向后取整行解析;
 #   热路径记住 (offset, size), 只解析新增字节。文件轮转/缩小自动回冷启动。
 _CF_PATH = Path("data/futu_capital_flow.jsonl")
-_CF_COLD_TAIL = 1024 * 1024  # 1MB ≈ 4600行; 单日采集约78轮×18标的≈1400行, 3倍余量防早停标的漏扫
+# 窗口定标 (2026-08-30 实测勘误, 原注释"78轮×18标的≈1400行, 3倍余量"把消费方
+# run_scan 频率错当采集方频率 — 采集器高频写、单日全量远超原估算):
+#   实测近12个交易日单日 1.15-1.88MB / 5474-8963 行, 最大日 8/28=1.88MB。
+#   4MB = 最大日全量覆盖 + 2.1倍余量, 冷启动即与旧全量读行为完全等价。
+#   残余边界: 若未来单日写入超 4MB (标的数/频率翻倍以上), 窗口外的当日早段
+#   记录会被漏扫 — 采集器每轮写全部标的, 活跃标的最后一条恒在尾部, 受影响的
+#   只有"当日早段有记录、之后超窗口时长未再采集"的早停标的, 其方向丢失 →
+#   资金流背离门对该标的 fail-open (只拦不推, 不会误拦)。超窗日由窗口内
+#   行数异常升高自然暴露, 复核本常量即可。
+_CF_COLD_TAIL = 4 * 1024 * 1024  # 4MB
 _cf_cache: Dict[str, Any] = {}
 
 
@@ -736,36 +745,70 @@ def _cf_apply_line(line: str, today_prefix: str, out: Dict[str, str]) -> None:
         out[_s] = "OUTFLOW"
 
 
+def _cf_trim_complete(raw: bytes) -> bytes:
+    """截到完整行边界: 末尾半行 (写入方尚未写完) 不入缓存, 留给下轮重读, 不丢不重。"""
+    if not raw or raw.endswith(b"\n"):
+        return raw
+    cut = raw.rfind(b"\n")
+    return raw[: cut + 1] if cut >= 0 else b""
+
+
+def _cf_last_line(raw: bytes) -> bytes:
+    """完整行区间的最后一行 (含换行), 作缓存边界指纹。"""
+    if not raw:
+        return b""
+    start = raw.rfind(b"\n", 0, len(raw) - 1) + 1
+    return raw[start:]
+
+
 def _capital_flow_today_index() -> Dict[str, str]:
-    """symbol → 当日最后一条大单净流方向 (INFLOW/OUTFLOW), ==0 不给方向。"""
+    """symbol → 当日最后一条大单净流方向 (INFLOW/OUTFLOW), ==0 不给方向。
+
+    读取失败由调用方 run_scan 的 try/except 兜底 (fail-open)。缓存推进只到完整
+    行边界; 轮转检测 = 缓存边界最后一行指纹校验 (单看 size 会漏"轮转后回长到
+    旧 offset 之上"的别名, 2026-08-30 测试钉子抓出)。
+    """
     today = _today_et_str()
-    size = _CF_PATH.stat().st_size if _CF_PATH.exists() else 0
+    try:
+        size = _CF_PATH.stat().st_size
+    except OSError:
+        return {}
     if size == 0:
+        _cf_cache.clear()  # 截断为 0 = 轮转, 旧缓存全部作废
         return {}
     cached = _cf_cache.get(today)
     if cached and cached["size"] <= size:
-        # 热路径: 只读新增
-        out = dict(cached["index"])
-        if size > cached["size"]:
-            with open(_CF_PATH, "rb") as f:
+        intact = True
+        raw = b""
+        with open(_CF_PATH, "rb") as f:
+            tail = cached.get("tail") or b""
+            if tail:
+                f.seek(cached["size"] - len(tail))
+                intact = f.read(len(tail)) == tail
+            if intact:
                 f.seek(cached["size"])
-                chunk = f.read(size - cached["size"]).decode("utf-8", errors="replace")
-            for line in chunk.splitlines():
+                raw = _cf_trim_complete(f.read(size - cached["size"]))
+        if intact:
+            out = dict(cached["index"])
+            for line in raw.decode("utf-8", errors="replace").splitlines():
                 _cf_apply_line(line, today, out)
-        _cf_cache[today] = {"size": size, "index": out}
-        return out
-    # 冷启动 (首日/跨日/轮转/缩小): 尾部窗口起扫, 避免全量解析历史
+            _cf_cache[today] = {"size": cached["size"] + len(raw),
+                                "index": out,
+                                "tail": _cf_last_line(raw) or tail}
+            return out
+        # 指纹失配 → 轮转/重写, 落到冷启动
+    # 冷启动 (首日/跨日/轮转/缩小/指纹失配): 尾部窗口起扫
     with open(_CF_PATH, "rb") as f:
         if size > _CF_COLD_TAIL:
             f.seek(size - _CF_COLD_TAIL)
-            f.readline()  # 丢弃可能不完整的半行
-        chunk = f.read().decode("utf-8", errors="replace")
-        end = f.tell()
+            f.readline()  # 丢弃窗口头部可能不完整的半行
+        raw_full = f.read()
+        end = size - (len(raw_full) - len(_cf_trim_complete(raw_full)))
     out: Dict[str, str] = {}
-    for line in chunk.splitlines():
+    for line in _cf_trim_complete(raw_full).decode("utf-8", errors="replace").splitlines():
         _cf_apply_line(line, today, out)
     _cf_cache.clear()
-    _cf_cache[today] = {"size": end, "index": out}
+    _cf_cache[today] = {"size": end, "index": out, "tail": _cf_last_line(_cf_trim_complete(raw_full))}
     return out
 
 

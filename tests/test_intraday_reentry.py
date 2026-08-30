@@ -317,3 +317,102 @@ def test_day_first_direction_fail_open(monkeypatch):
     assert ir._day_first_direction("2026-08-27", "US.LLY") is None
     _patch_pdb(monkeypatch, lambda: _FakePDB(row=None))
     assert ir._day_first_direction("2026-08-27", "US.LLY") is None
+
+
+# ── _capital_flow_today_index 尾部增量缓存 (2026-08-30 性能修复的回归钉) ──
+# fdbfcc78 引入。钉四个分支: 冷启动 / 热路径增量 / 轮转缩小回冷启动 / 跨日缓存重置,
+# 外加与旧全量读算法的行为等价钉。钉子动机: 该函数在盘中热路径 (78次/日),
+# 2026-08-30 复核发现原 commit 注释的容量测算错 6 倍 (窗口 1MB < 实测单日 1.88MB),
+# 已改 4MB 并以本组钉子锁行为。
+
+import json as _json
+
+
+def _cf_row(symbol, item_time, large):
+    # large>0 → INFLOW (super+big 同号写入); large<0 → OUTFLOW; ==0 不给方向
+    v = large / 2.0
+    return _json.dumps({"symbol": symbol, "item_time": item_time,
+                        "super_in_flow": v, "big_in_flow": v})
+
+
+def _cf_setup(monkeypatch, tmp_path, lines, today="2026-08-28"):
+    p = tmp_path / "futu_capital_flow.jsonl"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(ir, "_CF_PATH", p)
+    monkeypatch.setattr(ir, "_today_et_str", lambda: today)
+    ir._cf_cache.clear()
+    return p
+
+
+def test_cf_index_cold_start_full_day(monkeypatch, tmp_path):
+    # 冷启动: 当日多条同标的, 后写覆盖 (最新一条定方向); 非当日/==0 不给方向
+    _cf_setup(monkeypatch, tmp_path, [
+        _cf_row("US.AAPL", "2026-08-27T10:00:00", 100),   # 昨日 → 忽略
+        _cf_row("US.AAPL", "2026-08-28T10:00:00", 100),   # 早段 IN
+        _cf_row("US.AAPL", "2026-08-28T11:00:00", -50),   # 覆盖为 OUT
+        _cf_row("US.MSFT", "2026-08-28T10:30:00", 0),     # ==0 → 无方向
+        _cf_row("US.BAD", "{not json", 1),                # 坏行 → 忽略
+    ])
+    assert ir._capital_flow_today_index() == {"US.AAPL": "OUTFLOW"}
+
+
+def test_cf_index_hot_path_incremental(monkeypatch, tmp_path):
+    # 热路径: 首调冷启动, 追加新行后二调只解析增量, 新旧合并正确
+    p = _cf_setup(monkeypatch, tmp_path, [_cf_row("US.AAPL", "2026-08-28T10:00:00", 100)])
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW"}
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(_cf_row("US.NBIS", "2026-08-28T11:00:00", -80) + "\n")
+        f.write(_cf_row("US.AAPL", "2026-08-28T12:00:00", -30) + "\n")
+    out = ir._capital_flow_today_index()
+    assert out == {"US.AAPL": "OUTFLOW", "US.NBIS": "OUTFLOW"}
+
+
+def test_cf_index_rotation_shrink_falls_back_to_cold(monkeypatch, tmp_path):
+    # 轮转/缩小: 文件变小 → 缓存 size > 实际 size → 回冷启动重扫, 不残留旧索引
+    p = _cf_setup(monkeypatch, tmp_path, [_cf_row("US.AAPL", "2026-08-28T10:00:00", 100)])
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW"}
+    p.write_text(_cf_row("US.TSLA", "2026-08-28T13:00:00", -70) + "\n", encoding="utf-8")
+    assert ir._capital_flow_today_index() == {"US.TSLA": "OUTFLOW"}
+
+
+def test_cf_index_cross_day_cache_reset(monkeypatch, tmp_path):
+    # 跨日: 换日后缓存 miss → 冷启动, 只采信新当日记录 (防昨日方向串场)
+    p = _cf_setup(monkeypatch, tmp_path, [_cf_row("US.AAPL", "2026-08-28T10:00:00", 100)])
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW"}
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(_cf_row("US.AAPL", "2026-08-31T10:00:00", -40) + "\n")
+    monkeypatch.setattr(ir, "_today_et_str", lambda: "2026-08-31")
+    assert ir._capital_flow_today_index() == {"US.AAPL": "OUTFLOW"}
+
+
+def test_cf_index_equivalence_with_full_read(monkeypatch, tmp_path):
+    # 行为等价钉: 窗口 ≥ 当日全量时, 与旧全量读算法逐符号一致 (2026-08-30 已用
+    # 生产 95k 行文件独立复现 23/23 一致, 本钉用合成数据把该性质固化进回归)
+    import random
+    rng = random.Random(20260830)
+    syms = [f"US.S{i:02d}" for i in range(20)]
+    lines = []
+    for day in ("2026-08-27", "2026-08-28"):
+        for hour in range(9, 16):
+            for s in syms:
+                lines.append(_cf_row(s, f"{day}T{hour:02d}:30:00", rng.choice([0, 10, -10, 40, -40, 0.0])))
+    _cf_setup(monkeypatch, tmp_path, lines, today="2026-08-28")
+
+    ref = {}
+    for l in lines:
+        ir._cf_apply_line(l, "2026-08-28", ref)
+    assert ir._capital_flow_today_index() == ref
+
+
+def test_cf_index_partial_line_not_lost(monkeypatch, tmp_path):
+    # 写入方写到一半时读取: 半行不入缓存不误解析; 写完后下一轮必须能补读到完整行
+    # (旧实现把半行字节也计入缓存 offset, 写完后从 offset 续读 → 该行永久丢失)
+    p = _cf_setup(monkeypatch, tmp_path, [_cf_row("US.AAPL", "2026-08-28T10:00:00", 100)])
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW"}
+    full_line = _cf_row("US.LLY", "2026-08-28T11:00:00", -60)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(full_line[:20])           # 写到一半
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW"}   # 半行不可见
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(full_line[20:] + "\n")    # 写完剩余部分
+    assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW", "US.LLY": "OUTFLOW"}
