@@ -24,9 +24,11 @@ STATUS = BASE / "data" / "be_family_gate_status.json"
 FLAG = BASE / "data" / "be_family_gate.flag"
 
 N_TARGET = 30  # §55 预注册判据
+EXEMPT = BASE / "data" / "be_family_gate_exempt.json"  # 人工豁免: 达标后不停开仓
 
 
 def main():
+    exempt = EXEMPT.exists()
     conn = sqlite3.connect(DB)
     # 2026-08-28 口径统一: substr 而非 date() (后者把 -04:00 归一到 UTC,
     # 08-20 落地首日晚出场会被挪日) — 全仓"当日"=ET 墙钟日前 10 位。
@@ -47,6 +49,7 @@ def main():
         "n": n, "target": N_TARGET, "remaining": remaining,
         "net": net, "wins": wins,
         "gate_reached": reached,
+        "exempt": exempt,
         "action_if_reached": (
             "n>=30 已达标: 按 DEB-20260825 第8轮决议, 下个交易日 DA 计划不再产生新开仓指令 "
             "(引擎转纯采集模式); 本脚本只报状态, 开关须人工/晨会确认后执行"
@@ -54,11 +57,17 @@ def main():
     }
     STATUS.write_text(json.dumps(status, ensure_ascii=False, indent=1))
     if reached:
-        FLAG.write_text(json.dumps(status, ensure_ascii=False))
+        if exempt:
+            FLAG.unlink(missing_ok=True)  # 豁免后不留停机flag
+        else:
+            FLAG.write_text(json.dumps(status, ensure_ascii=False))
 
     print(f"[be-gate] n={n}/{N_TARGET} (还差 {remaining}) 净 {net} 胜 {wins}")
     if reached:
-        print("[be-gate] 🛑 达标 → 建议停新开仓 (转纯采集), 待人工确认")
+        if exempt:
+            print("[be-gate] ✅ 达标但已人工豁免 (8/31用户裁: 不停开仓, sim继续攒样, 目标转正切实盘)")
+        else:
+            print("[be-gate] 🛑 达标 → 建议停新开仓 (转纯采集), 待人工确认")
     else:
         print(f"[be-gate] 继续正常节奏攒样 (~{remaining} 笔)")
 
