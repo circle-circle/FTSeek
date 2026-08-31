@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-26 (U11 确认门 `9e7e39e4` DST 防漂移三件套独立复核 — Hermes, 用户令"按建议推进": 三件套全部实测兑现[双季双挂数学逐字节验证/幂等守卫+2契约测试实跑22 passed/watchdog挂载]; 唯一瑕疵=声称"74h假日不误报"被证伪(_is_weekend用CST周六跳过, 真实行为=美国假日后首交易日06:25必误报一次80.75~104.75h, 当晚自恢复零污染), 裁决保持74h不改(误报=链路活着证据, 改110h反拖慢真死亡检出), watchdog注释已修正为真实行为; 落档 DEB-20260825 复核段 · 前次: 2026-08-23 (全项目五维体检+P0三执行 — Claude Code, 用户令"先落档再执行, 执行前核验为真": 五路并行深探(安全语义/架构/测试/配置密钥/运维)+P0逐条实读复核, 报告落档 `DEB-20260823-system-health-check.md`; 核验勘误两处=preflight_fail_mode非地雷(di_container.py:159 LIVE启动断言强制closed)/lock缺口夸大(107vs84, 运行时真缺loguru/prometheus_client/rich/aiosqlite); 执行X1删scripts/archive/get_feishu_chat_id.py(**实锤泄露的正是.env.us生产飞书凭据**, 轮换须用户后台操作)/X2 equity≤0三处熔断旁路补fail-close(order_executor:3267/playbook_service:725/orb:1216)/X3六影子模块TEST守卫收口(pipeline有9处约定此6处零守卫); 全量1564 passed实测复现 · 前次: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-31 (8/26→8/31 批次补档 — handoff 断更 5 天(违宪章三.3), 本行与下方变更日志 2026-08-31 条按 git 史(119 提交)回溯重建: RFC-审计加固0826 / 8-27 SSOT收敛+减法 / ADR-032~034 / DEB-20260829 UE链十轮 / DEB-20260830×3[E11共识漂移修 04150669 + llm-chain九轮 UE模板v2.8 + 时区TZ-1~3] / RFC-070 时间尺子归口 / perf 热路径 / 治理四台账(控制环路·回放·判据字典·方法论索引) / 9-14 一次性结算 job 9ab9f1812dc4 · 前次: 2026-08-26 (U11 确认门 `9e7e39e4` DST 防漂移三件套独立复核 — Hermes, 用户令"按建议推进": 三件套全部实测兑现[双季双挂数学逐字节验证/幂等守卫+2契约测试实跑22 passed/watchdog挂载]; 唯一瑕疵=声称"74h假日不误报"被证伪(_is_weekend用CST周六跳过, 真实行为=美国假日后首交易日06:25必误报一次80.75~104.75h, 当晚自恢复零污染), 裁决保持74h不改(误报=链路活着证据, 改110h反拖慢真死亡检出), watchdog注释已修正为真实行为; 落档 DEB-20260825 复核段 · 前次: 2026-08-23 (全项目五维体检+P0三执行 — Claude Code, 用户令"先落档再执行, 执行前核验为真": 五路并行深探(安全语义/架构/测试/配置密钥/运维)+P0逐条实读复核, 报告落档 `DEB-20260823-system-health-check.md`; 核验勘误两处=preflight_fail_mode非地雷(di_container.py:159 LIVE启动断言强制closed)/lock缺口夸大(107vs84, 运行时真缺loguru/prometheus_client/rich/aiosqlite); 执行X1删scripts/archive/get_feishu_chat_id.py(**实锤泄露的正是.env.us生产飞书凭据**, 轮换须用户后台操作)/X2 equity≤0三处熔断旁路补fail-close(order_executor:3267/playbook_service:725/orb:1216)/X3六影子模块TEST守卫收口(pipeline有9处约定此6处零守卫); 全量1564 passed实测复现 · 前次: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -131,6 +131,9 @@
 - 回滚/实单化: `early_tight_sl_enabled` 改 true (哈希变化会自然开新 config_version 窗口)。
 
 ## ➡️ 下一步 (按时间顺序)
+0A. **📅 9/14 (周一) 09:00 CST 一次性结算 (cron `9ab9f1812dc4`, 结算后不留任)**: CAP-1~4 + F2 (`scripts/settlement_cap_f2.py --start 2026-08-31 --end 2026-09-14`, 阈值冻结自 DEB-20260830 第 12 轮, 改判据须先改 DEB) + UE-D2 四判据: ①延迟<300s ②无 length 截断 ③trig 填充率≥50% 且白名单过 (验 v2.8 模板+模型供料稳定性, 非模型切换本身) ④时代盈亏切分 (UE 指令<10 笔报"样本不足无法裁决"); 判据③不过先回滚 v2.8 模板 `5175e42b` 再归因, 不直接归罪模型。出处: 判据字典 B6/B7, DEB-20260830 第 9 轮用户裁"1"。
+0B. **🔭 进行中观察窗 (8/31→9/14, 全 record-only 零行为变更)**: UE-D2 glm-5.2 首发窗 (B6) / da_glm_shadow (B3: JSON 成功率≥90% ∧ SHORT 提案≥5 → PROMOTE) / DA-C1 方向结构 (B9) / UE-C2 streak 反事实 (B10) / TZ-2 生产观察 `58e3ce8b`。9 月退出参数冻结 (C1/C7), 例外通道仅 P0 bug + DEB 落档 + 用户知会。
+0C. **⏳ 待用户裁决**: ①DEB-20260830-llm-chain-utilization 剩余分歧 1-4 (见该档状态节) ②回放脚本台账 7 个候选退役零引用脚本处置 (`docs/REPLAY-SCRIPT-LEDGER.md`)。
 0. **🚪 实盘化转正门槛 (2026-08-09 用户裁定, 每周六 09:05 ADF 周检 cron 自动评估)**:
    四项全满足才讨论实盘化 — ① OOS 样本 (08-10 起) ≥15 个交易日 ② 日净盈亏均值 >0
    ③ 日毛利均值 t>1 (供给端有真实 edge, 8/9 基线: t=−0.10 统计为零) ④ ADF 平稳。
@@ -168,7 +171,8 @@
 3h. **已裁 O1 · 步骤1 已执行 · G3 观察期至 08-05**: `docs/debates/DEB-20260729-reanchor-knife-window.md` — 辩论方全线支持删除: E2 去重=7 独立事件 (NVDA 22 次实为 2 事件轮询重复), E1 反事实 6 可算 4 亏合计 -5.09% (MU -3.41 典型接飞刀), 埋点链路验证=真零实弹, T2 无意图证据 (双向救援设计落空半成品)。`entry_reanchor_enabled: false` 双处已关停+重启。Qoder 复核全复现 (§十, 含 MU 独立重算 -3.23%/-3.41% 双口径吻合)。**08-05 G3 漏斗对照通过 → 步骤3 代码退役**。
 3i. ~~**辩论闭环, 待用户裁决 D1-D5 (用户命题"否则白干")**~~ → **✅ 已裁 2026-08-01: D1-D5 全批 (实为追认 — 全部已于 07-30 落地/实弹, 见变更日志首节勘误; 余 G4 08-07 矩阵净口径化+G5 报表三列按原排期)**: `docs/debates/DEB-20260730-fee-net-pnl.md` — 全库 PnL 系毛盈亏零扣费。**两轮口径修正后终版 (SIM-only 白名单, §九)**: 07-29 毛+49.8→净+19.3 (三方一致) / **07月 毛−91→净−815** (费724) / **全史 168笔 毛−1365→净−2124**; 假盈利14 / SL_BREAKEVEN 桶毛+89→净−48 (假保本14笔)。⚠️口径教训: 作者首版 515 笔混入已退休引擎 (MAIN_PIPELINE +23298), 辩论方揪出但其"191 笔"自身混入 SHADOW — **跨引擎拼接系口径事故#1 第三次重演, D3 前置定为正向白名单 `IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')` 而非黑名单**。**双方一致**: D1 净额SSOT / D2 fee_model+yaml费率表+三态 / D3 回填+08-07矩阵净口径重算 / D4 保本线费用感知 (挂矩阵, 实弹排 F1 验收后) / D5 门槛 record-only 且永不作入场硬拦。~~待用户: D1-D5 拍板 + TAF/SEC 对 SHORT 入场腿照收的终确认~~ → 已随 D1-D5 一揽子批准 (TAF/SEC 对 SHORT 入场腿照收, 按 §九 监管惯例)。**§十 动态源实测 (用户问"更全面动态")**: ①`order_fee_query` = broker 实收落地接口但 SIM 订单历史为空 (实测), LIVE 专属 ②`get_margin_ratio.short_fee_rate` SIM 即可动态拿 (SNDR 3.0%/年) → SHORT 借券费盲区可补 ③SEC $20.60/M 自 2026-04-04 (此前 $0) → 费率表须 effective_from 时间序列, 回填按成交日分段。
 4. **周五盘后**: 老动作不变 — `scripts/exit_scorecard.py --since 2026-07-21` 看 R:R。另数 trigger_miss 新两门计数: `liquidity_gate` (07-30 盘前上线) + `borrow_pool_gate` (07-30 盘中上线, SHORT 专属) — 零计数合法 (现宇宙本不该拦), 有计数则逐笔复核拦截正确性。
-5. **08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。X2 若启动须满足**四前置**（新增第 4 条"SHORT 不隔夜"，依据主文档 §13.1，叙事已由 §14.2 修正）。
+5. ~~**08-07 裁决点**: P0 shadow + 三门 go-forward 数据 → 阈值精调 / X1 降频是否启动。~~ **✅ 已过时 (2026-08-31 标注): 08-07 裁决点已消费 (见变更日志 2026-08-07 各条); 8/31 终裁已于 8/23 作废, 由预注册毕业判据取代 (OKR-2026-09 KR4 + 判据字典 A8/C2), 本条留作历史参考。**
+> ✅ **2026-08-31 标注: 5a 为 08-07 裁决点前盘点, 时点已过, 留作历史参考, 非当前"下一步"。**
 5a. **08-07 数据就绪审计 (Qoder, 07-29 夜, 用户令"先检查确认数据")** — 距裁决日 7 个交易日, 逐决定项盘点:
    - 🟢 **鲜活健康**: 路径湖 74 且 cron 04:35 日增 (→08-07 ~120+, dd 0.6/0.8+分层反事实主料); trigger_miss_telemetry (当日 22:38 仍写); trigger_gate_history 累计快照 (n=88/93 起, 逆向选择 gap 追踪); exit_param_shadow 114 行 (be/dd A/B 主料); scorecard 已平仓 512 (A1 切片 n≥100 可达)。
    - 🔴 **X1 降频不可评 (双重)**: ①P0.2 conf 校准前置未落地; ②高 conf 供给近两周枯竭。**〔08-01 勘误 — 原 bullet 数字全部证伪, 以下为 DB 复核值〕** 原称"近 14 日成交 108/108 全部 conf≥0.85"❌ → 实测成交侧 `signal_confidence` (0-1 量纲): 109 笔仅 **3 笔 ≥0.85 / 103 笔 <0.7**; 原称"指令分布双峰 319≥0.85/142<0.7"❌ → 指令侧 `confidence` 实为 **0-100 量纲** (旧统计按 0-1 读数致全失真), 实测近 14 日 191 条仅 **3 条 ≥85 / 185 条 <70**, 全史 410 条 = 135≥85 / 234<70 / 37 中间, 取值仅六档 {35,50,70,72,88,90}。原称"高 conf 桶近 14 日 pnl -$361"不可复现 → 现口径该桶 **n=3, net -$160.87** (07-19→08-01, 样本饿死无统计意义); 真正装满样本的是 <0.7 桶 (n=103, net -$802.76)。**供给枯竭**: 07-20 起日产 ≥85 指令 ≈0 (07-30:1 / 07-31:2 / 其余 0) — 与 7月上"32 笔 ≥0.85"形成 regime 级落差。结论修正: X1 不可评的根因 = 高 conf 供给枯竭 + P0.2 未落地 (桶退化结论仍成立); "高 conf 反转"叙事降级为 n=3 方向性观察。建议不变: 08-07 将 X1 移"只读"档并如实公布, 判据重设。
@@ -182,6 +186,31 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-31 (8/26→8/31 批次补档 — Codex, 用户令"核查整体框架, 过期文档/记忆更新至最新状态")
+> ⚠️ **补档声明**: handoff 自 8/26 起断更 (最后触档提交 `9898660e`), 期间 git 累积 119 提交, 违宪章三.3 (handoff 是唯一进度队列)。本条按 git 史回溯重建, 逐项附提交哈希; 即日起恢复随事落档纪律。
+
+**A. 尺子/时钟 SSOT (修尺子)**:
+- RFC-审计加固0826 批 (用户批准): UE 链 `_now_et` 永久 EDT 假钟 DST 化 `112adcb6` / 假日历 P0 — Futu 截断返回被按请求边界记账, 2027 起普通交易日将误判假日 `e86f24d4` / 订阅管理器时钟 `8c1ea2c5` / DA 全链路审计修复 (bridge 重载+IC 去污染+DST 四连) `fbfe7037` + 基本面键契约测试 `249c7095`
+- 8/27: 残余 UTC-4 硬编码时钟全量清剿→SSOT 11 处 `85397474` + 同族离线脚本 3 处 `bcde57ed`; RFC-070 scripts 6 处手写 -12h 收编 `scripts/utils/et_time` `352e9443` (+对账哨兵 `09c3d6932372`)
+- 8/28 "当日"口径全仓统一 (用户裁决): 入场日记账+毛额 → 出场日记账+净额, 三批 15 处 `4784ee8b`/`bea61d86`/`c214a772` + "防线接错线"四处修复 — 唯一实盘执行链 playbook→dual_broker 补单标的日亏损门 (同批)
+
+**B. SSOT 收敛/减法 (用户裁决)**: 模型配置死键全删 `b6b42628` / LLM 别名去规格化 `c92a8339` / UE 主模型 qwen3.7-max→qwen3.8-flash `51b6376d` (8/30 再切 glm-5.2, 见 D) / `strategy_attribution.py` 1134 行死模块删除+收盘审计 9 项 (HotReloader 防抖解耦 / norm_et_date ET 死分支修 / 隔夜臂台账口径漂移修) `618e7cdd` / 隔夜臂精准统计+1分K重放 ("胜率与盈利互斥"系口径假象实证) `a885a191`+`b915fb70`
+
+**C. ADR 批**: ADR-032 幻影回填三层根修+反手方向闸+结算 exit_time `67e8f026` / ADR-033 水下隔夜仓盘后延续修复影子 (record-only) `d5cb949e` / ADR-034 日亏熔断死键接线 (2026-05-21 起零消费, 组合级日亏熔断从未存在) + 簇浓度影子 `10837607` / OpenD 频控闸根因修 (04:01 ret=-1, 日K TTL 整点集体过期打穿账户频控) `1995ffd6` + 7 条确定性失败测试清零 `4fb77af7`
+
+**D. DEB-20260829 (UE 链, 十轮)**: UE-B2/A3/B1 零行为测量层 `520133a3` / triggers 强制字段→可空数组 v2.7 (实测 0/208 填充, 恒空强制字段=白耗 token+假承诺) `2a082f22` / 6 模型×3 轮 bakeoff → UE 主模型切 glm-5.2 (77x 成本, 含 4000→8000 截断陷阱修复) `4e0c5a25`+`cd536298` / da_glm_shadow 纯旁路攒样立项 `05a69c43` + 治理补齐 `6c5ddf46` / 入场区间 DEB 事实修正+T5 三问裁决+双轨契约钉死 `7340a244` / 口径钉死 `9efa7bd1` / UE-B2 入库循环两分支落盘 `b6de0c03`
+
+**E. DEB-20260830×3**:
+- **exit-reentry-chain-audit**: E11 共识合成标签错配 (挑战者 BUY/SELL_SHORT vs LONG/SHORT 字面比较恒 False → 0/459, 方向冲突门恒死) — 修复=删消费端重合成直读生成端权威 confidence `04150669` (17/17 不匹配→0, 六条被坏值拒入场的好共识候选复活); E13 42% 覆盖结项 — 影子写入从未挂生产链 (DA armed 系 Hermes skill 直写 DB), 结算脚本补 F2⑤ 覆盖率前置闸 `126ae55a`; perf: 盘中热路径 95k 行 jsonl 全量读→尾部增量缓存 (~1 万 x) `fdbfcc78` + 第 13 轮复查修正 (窗口 1MB→4MB/轮转别名/半行丢行三 bug + 6 钉) `1f809645`, 两次重启生效, 5 笔隔周末持仓高水位逐笔核实无损
+- **llm-chain-utilization (1-9 轮)**: E3 决定性发现 — UE triggers 0% 根因 = JSON 模板字段缺位, 非模型家族 (v2.8 显式字段后 flash 56% / glm 78%, "GLM 独占"系模板伪影证伪) `5175e42b`+`aaf8d15c`+`f81600da`; 第 9 轮用户裁"1"维持观察: glm-5.2 跑完 10 交易日窗口, 9/14 用判据④时代盈亏切分再裁 `f7e524f9`; 立 P11 纪律 (依据失效必须回灌到它支撑的决定); E1 全局记忆解个股历史挟持 + 一.3 装桶口径修正 (缺失哨兵单列)
+- **timezone-duplication-audit**: TZ-1 熔断器 date.today()→ET + `playbook_risk_state` 落盘 ("连亏5停1日"锁存此前从未跨调用生效) / TZ-2 财报窗口锚 ET / TZ-3 feishu cushion 0.15→0.4 对齐 yaml 真值 `58e3ce8b`; R-2 空壳库实为 10 个, 可逆移 `data/archive_dead_db/` (预注册: 10 交易日无重现可删) `126ae55a`
+
+**F. 主动审计批**: UE clue 默认值族对齐 (四键 False→True, 消降级路径静默关闭) + R5 快照 except:pass→warn `126ae224` / 台账补登+UE inject 默认值对齐 yaml 真值 `d643fc8b` / 活性探针误报修正 (futu_shadow_collect trading_day_only=True, 周五盘后→周一开盘 ~65h 天然空窗非断流) `a4db8970`
+
+**G. 治理基建 (四新台账)**: 控制环路台账 (8/28, 守卫测试 `tests/test_control_loop_ledger.py` 强制入账) / 回放脚本台账+官方引擎归口公约 `05111b2f` / 判据字典 (A 通用门槛 8 + B 影子毕业 10 + C 纪律红线 7) `7bd8d172` / 方法论总索引 `d12c0b88`; 立"一次性 job 当场入账"纪律 `22790e7d`
+
+**H. 在途**: 9/14 一次性结算 job `9ab9f1812dc4` (CAP-1~4+F2+UE-D2 四判据, 见"下一步"0A); DEB-20260830-llm-chain-utilization 剩余分歧 1-4 待用户裁。
 
 ### 2026-08-22f (配置层探针落地 — Qoder, 用户裁"按建议执行": ①config键消费普查 ②数据成色例行体检)
 - **`scripts/config_key_census.py` + cron 周日 07:40 (备份 data/crontab.backup.20260822-census)**: 配置层的"活性探针" — 全量扫 config/*.yaml 展平叶子键 → 在 app/+scripts/ 运行时代码 (排除 archive/自身/tests) 按叶子名 word-boundary 找消费点。三分类: referenced / definition_only (仅注册表形态如 PlaybookConfig.DEFAULTS 的 "k": default — 注册≠消费) / orphan (零出现)。**自验证 4/4**: C批人工核定的死键 (buying_power_fallback_alert/intraday_breakout_pct→definition_only, breakeven_ratchet_enabled/time_exit_enabled→orphan) 全部命中非 referenced, 口径与人工审计一致。已知局限内嵌报告: 同名影子键漏报 (安全向)、factor_profiles/strategy_variants 泛型迭代消费文件带 caveat、f-string 动态键无法静态发现。输出 data/config_key_census_latest.json。
