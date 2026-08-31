@@ -16,6 +16,9 @@ C2 命中率判据 (DEB-20260830-exit-reentry-chain-audit E5, 2026-08-31 用户�
   源可读 且 影子遥测 (intraday_reentry_shadow.jsonl 拒因) 窗口内命中>0, 否则翻 dead。
   social_sentiment 设计性关断豁免; 影子窗口<10 交易日不作 dead 判 (窗口不足)。
   预注册验收 (DEB C2): 上线后 6 道零命中闸中至少 5 道状态翻 dead。
+  口径修正 (2026-08-31 第二轮死闸核查, DEB-20260831 §六): 证伪门 8/22 上线 →
+  有效窗口自 _GATE_LIVE_DATE (8/24) 起算, 首个合法判点 = 9/9 探针 (≥10 活日)。
+  原"16 交易日"分母含门不存在的 11 天, 已废。
   回滚: revert 本文件 C2 段 (_gate_hit_stats/_apply_c2_hit_rate + run_probe 两行)。
 
 状态语义:
@@ -50,15 +53,21 @@ _MIN_WINDOW_DAYS = 10  # 影子窗口不足 → 保持旧判据, 不作 dead 判
 # probe 门名 → 影子拒因前缀家族 (2026-08-31 实测归一化: 前缀截断 ( 与 : 与中文冒号)
 _GATE_REASON_FAMILY = {
     "capital_flow": "capital_flow_divergence",
-    "short_squeeze": "short_squeeze",
+    "short_squeeze": "short_squeeze_risk",          # 拒因串: short_squeeze_risk(...)
     "insider_divergence": "insider_divergence",
     "analyst_divergence": "analyst_divergence",
     "earnings_proximity": "earnings_proximity",
     "sentiment_extreme": "sentiment_extreme",
-    "sec_event": "sec_event",
-    "ticker_sentiment": "ticker_sentiment",
+    "sec_event": "sec_event_divergence",            # 拒因串: sec_event_divergence(...)
+    "ticker_sentiment": "ticker_sentiment_divergence",  # 拒因串: ticker_sentiment_divergence(...)
     # social_sentiment: 设计性关断 (off), 不参与命中率判
 }
+
+# 窗口分母修正 (2026-08-31 死闸核查实证): 9 道证伪门 2026-08-22 上线 (73c853b9/
+# 6e0e09ea/0379a90d) + 当晚 22b/c 修复 (581142dc), 8/22-23 为周末 → 首个全活交易日
+# = 8/24。此前影子记录里这些门根本不存在, 计入分母 = 用门不存在的天数证明门死,
+# 证据无效。命中率判只统计该日起的交易日。
+_GATE_LIVE_DATE = "2026-08-24"
 
 
 def _gate_hit_stats() -> dict:
@@ -79,8 +88,9 @@ def _gate_hit_stats() -> dict:
             except Exception:
                 continue
             day = str(d.get("date") or "")
-            if day:
-                dates.add(day)
+            if not day or day < _GATE_LIVE_DATE:
+                continue  # 门上线前的记录不构成门活性证据 (分母修正)
+            dates.add(day)
             for r in (d.get("reasons") or []):
                 name = re.split(r"[(:(：]", str(r), 1)[0].strip()
                 fam_hits[name] = fam_hits.get(name, 0) + 1
@@ -89,6 +99,7 @@ def _gate_hit_stats() -> dict:
         stats["error"] = f"{type(e).__name__}: {e}"
         return stats
     stats["trading_days"] = len(dates)
+    stats["live_date"] = _GATE_LIVE_DATE
     stats["window"] = [min(dates), max(dates)] if dates else None
     stats["families"] = {k: {"hits": v, "days_with_hit": len(fam_dates.get(k, ()))}
                          for k, v in fam_hits.items()}
