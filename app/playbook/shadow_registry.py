@@ -365,7 +365,7 @@ REGISTRY: list[ShadowItem] = [
                     "13 笔实弹 0 笔 TAKE_PROFIT。影子记'价格触及被吞TP'反事实 + 平仓结算差, "
                     "回答'恢复快TP还是废quick_tp参数'。两次裁决互杀, 2026-08-31 退出核查发现。",
         data_path="data/shadow/reentry_quick_tp_shadow.jsonl",
-        config_key="playbook.reentry_quick_tp_shadow_enabled",
+        config_key="playbook.execution_parameters.reentry_quick_tp_shadow_enabled",
         min_n=10,
         graduation_criteria="窗口 9/1-9/30: n≥10 笔 TP 触达结算行 → tp_vs_actual_pct 均值>"
                             "费用线(~0.15%) ∧ ≥70%方向为正 → 提案恢复快TP(门禁按 decision_id "

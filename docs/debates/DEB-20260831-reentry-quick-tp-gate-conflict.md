@@ -68,10 +68,12 @@
   (键 `_reentry_tp_shadow_touch`, JSON-safe 跨轮持久, 键存在即去重)。
 - 挂点2: `_close_trade_record` conn.commit() 之后 → 再入场臂 (或带触达记录的仓)
   落一行结算 (触达信息 + 实际出场 + 反事实差)。
-- 开关: `playbook.reentry_quick_tp_shadow_enabled: true` (yaml 显式声明)。
+- 开关: `playbook.execution_parameters.reentry_quick_tp_shadow_enabled: true`
+  (必须在 execution_parameters 内 — get_playbook_config() 只合并该两段,
+  放 playbook 顶层=死键; 2026-08-31 重启后自查发现并归位)。
 - 登记: `shadow_registry.py` id=`reentry_quick_tp_gate` (min_n=10) + 判据字典 B13。
 - 测试: `tests/test_reentry_quick_tp_shadow.py` (触达/去重/结算差/门禁行为不变)。
-- 回滚: yaml 改 false (或删两处 try 块), 无需重启。
+- 回滚: yaml 改 false + 重启 (PlaybookConfig 单例缓存; 或删两处 try 块则无需重启)。
 
 ## 六、诚实边界
 

@@ -204,7 +204,7 @@
   在档 DEB 无既往讨论。落档: `docs/debates/DEB-20260831-reentry-quick-tp-gate-conflict.md`。
 - **影子落地 (用户裁选项2)**: `app/playbook/reentry_tp_shadow.py` + pipeline 两挂点
   (规则1.5门禁分支记触达入meta / `_close_trade_record` commit后落结算行) →
-  `data/shadow/reentry_quick_tp_shadow.jsonl`。开关 `playbook.reentry_quick_tp_shadow_enabled: true`。
+  `data/shadow/reentry_quick_tp_shadow.jsonl`。开关 `playbook.execution_parameters.reentry_quick_tp_shadow_enabled: true` (归位修正: 首发误放 playbook 顶层=死键 — get_playbook_config() 只合并 risk/execution_parameters 两段, 重启后自查发现并归位)。
   登记: shadow_registry `reentry_quick_tp_gate` (min_n=10) + 判据字典 **B13** (窗口 9/1-9/30,
   预注册: n≥10 触达结算 ∧ delta均值>费用线0.15% ∧ ≥70%为正 → 提案恢复快TP另立DEB;
   否则维持门禁+废 quick_tp 参数; 窗内禁改门禁/快收参数)。测试: `tests/test_reentry_quick_tp_shadow.py` 9 钉。
@@ -213,7 +213,7 @@
   ③根级 `test_playbook_exit_rules.py` 系 8/15 前陈旧测试 (期望已被裁决禁用的
   MFE_STALL_EXIT), 非本轮引入, 不修。
 - 验证: 新 9 钉 + 定向套件 218 过 (含 playbook/patient_exit/be_exit_class/sltp/ah_tp_link)。
-  回滚: yaml 开关 false 或删 pipeline 两处 try 块, 无需重启。
+  回滚: yaml 开关 false + 重启 (PlaybookConfig 单例缓存), 或删 pipeline 两处 try 块 (无需重启)。
 
 ### 2026-08-31f (DA/UE 首批晨间核对布防 — Codex, 续 2026-08-31d/e, 用户确认"要")
 > 零生产行为变更轮: 为今晚 (8/31) DA v0.72 + UE v2.8/glm-5 双首轮布一次性晨间核对。新增 `scripts/verify_da_ue_batch_20260831.py` (只读) + crontab 一次性行 (9/1 07:30 CST, 标记 `ONESHOT-20260901-da-ue-verify`, 跑完自删) + 台账 §2.4 行 `crontab-oneshot-0831f`。
