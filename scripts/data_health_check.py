@@ -144,7 +144,7 @@ def check_capital_state():
             rows = db.execute("SELECT * FROM capital_state ORDER BY rowid DESC LIMIT 1").fetchall()
             if rows:
                 r = dict(rows[0])
-                results.append(f"{db_name}: {len(rows)}行, updated={r.get('updated_at','?')}")
+                results.append(f"{db_name}: {len(rows)}行, updated={r.get('last_update') or r.get('updated_at','?')}")
             else:
                 results.append(f"{db_name}: 0行")
             db.close()
