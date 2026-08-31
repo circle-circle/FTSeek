@@ -1017,6 +1017,11 @@ playbook:
   # DEB-20260819 §十三: 股性卡 prompt 注入总开关 (L2软提示)
   #   回滚: false 即关闭注入 (sim 期无存量伤害)
   symbol_card_prompt_enabled: true
+  # DEB-20260831 §四 (2026-09-01): 成交口径股性档案注入开关 — 本系统实际成交结果+
+  #   盘前行为+动量留存, 由 scripts/build_symbol_trading_cards.py 生成 (n<30 不读倾向).
+  #   消费方: /root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py
+  #   _load_trading_card_for_prompt. 回滚: false 即停注.
+  trading_card_prompt_enabled: true
   fallback_when_no_bridge: technical
   enable_weekly: true
   enabled: true

@@ -73,6 +73,14 @@ def step3_build():
     line = (r.stdout or "").splitlines()
     print(f"[step3] 卡重建: {line[0] if line else 'FAIL'}")
 
+
+# ── Step 3b: 成交口径股性档案重建 (DEB-20260831 §四, 2026-09-01) ──
+def step3b_trading_cards():
+    r = subprocess.run([PY, str(ROOT / "scripts" / "build_symbol_trading_cards.py")],
+                       capture_output=True, text=True)
+    line = (r.stdout or "").splitlines()
+    print(f"[step3b] 成交口径卡重建: {line[0] if line else 'FAIL'}")
+
 # ── Step 0: 日K缓存增量 (DEB §十六: 触发判定依赖最新日K; refresh_daily_bars 此前无 cron) ──
 def step0_daily_increment():
     r = subprocess.run([PY, str(ROOT / "scripts" / "refresh_daily_bars.py")],
@@ -89,4 +97,5 @@ if __name__ == "__main__":
     step0_daily_increment()
     step2_replays()
     step3_build()
+    step3b_trading_cards()
     print("[done] 股性卡全链重建完成")

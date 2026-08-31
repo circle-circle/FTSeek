@@ -83,6 +83,12 @@ EXTERNAL_CONSUMED = {
         "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py:1169 读 "
         "playbook.symbol_card_prompt_enabled 作股性卡进 prompt 开关"
     ),
+    # DEB-20260831 §四 (2026-09-01): 成交口径股性档案注入开关
+    "unified_config.yaml:trading_card_prompt_enabled": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py "
+        "_load_trading_card_for_prompt 读 playbook.trading_card_prompt_enabled "
+        "作成交口径档案进 prompt 开关 (false 即停注)"
+    ),
 }
 
 # ── 门禁豁免注册表 (A3, 2026-08-24) ────────────────────────────────────── #
