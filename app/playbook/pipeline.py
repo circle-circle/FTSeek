@@ -6100,6 +6100,14 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         )
     conn.commit()
 
+    # ── 再入场快TP门禁吞掉影子·结算 (2026-08-31, record-only, 见 app/playbook/reentry_tp_shadow.py) ──
+    #   放 commit 之后: 只读 SELECT + append-only jsonl, 零平仓事务影响; 异常仅 warn 不阻断。
+    try:
+        from app.playbook.reentry_tp_shadow import settle_on_close as _rqtp_settle
+        _rqtp_settle(conn, trade_id, exit_price, exit_reason)
+    except Exception as _rqtp_se:
+        logger.warning(f"[shadow·reentry_tp] 结算挂点跳过 trade_id={trade_id}: {_rqtp_se}")
+
     # 2026-07-21 修复: 平仓落库后同步注销 ManualHoldRegistry.
     #   根因: 开仓时注册 (playbook_service "防 auto pipeline 干扰") 但平仓路径从不注销,
     #   进程内残留 → position_monitor 对账把已平仓标的一直报"跳过手动持仓",
@@ -7067,6 +7075,16 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         if _tp_rr < _MIN_TP_RR:
             logger.debug(f"[TP-RR门禁] {_symbol} {direction} TP RR={_tp_rr:.2f}<{_MIN_TP_RR}, "
                          f"忽略指令TP(交给trailing/EOD锁利)")
+            # ── 再入场快TP门禁吞掉影子 (2026-08-31, DEB-20260831-reentry-quick-tp-gate-conflict, record-only) ──
+            # 8/7 裁决的再入场快收 TP (几何 RR≈0.58) 恰被本门禁吞掉 — 13 笔实弹 0 笔
+            # TAKE_PROFIT 出场, 两次裁决互杀。本块只在价格触及被吞 TP 时把反事实触达
+            # 记入 meta (跨轮持久); 结算对比在 _close_trade_record → settle_on_close。
+            # 零退出行为变更。回滚: playbook.reentry_quick_tp_shadow_enabled=false 或删本块。
+            try:
+                from app.playbook.reentry_tp_shadow import note_gate_swallowed_touch as _rqtp_note
+                _rqtp_note(meta, direction, current_price, _tp, peak_profit_pct, held_minutes)
+            except Exception as _rqtp_e:
+                logger.debug(f"[shadow·reentry_tp] 触达记录跳过: {_rqtp_e}")
         elif direction == "LONG" and current_price >= _tp:
             exit_reason = "TAKE_PROFIT"
             exit_price = current_price

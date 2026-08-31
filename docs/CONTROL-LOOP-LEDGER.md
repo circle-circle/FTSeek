@@ -112,6 +112,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | e282a7667ae2 | 每周 ADF 平稳性 + 转正四判据 | 20 9 * * 6 | 实盘化门槛机械判定 (OOS≥15日∧净均值>0∧毛均值t>1∧ADF平稳) | 随机游走伪装成有期望的策略 |
 | 9ab9f1812dc4 | DEB-20260830 CAP/F2 容量结算 + UE-D2 观察结算 (一次性) | once 2026-09-14 09:00 CST | 方案A (帽不动+三层护栏自然限流) 10交易日结算: CAP-1影子放行量 / CAP-2单净额劣化→方案B预案 / CAP-3名义帽连续3日触顶 / CAP-4 UE执行率 + F2质量分配; **[8/31第9轮用户裁"1"追加]** UE-D2 四判据: ①延迟300s内 ②无length截断 ③填充率≥50%白名单(验模板+模型供料稳定性非模型切换) ④时代盈亏切分(样本<10笔报无法裁决) | DEB-20260830 第12轮预注册判据 (阈值冻结自该轮); 只读脚本不写文件; 2026-08-30 补登 (守卫测试抓出漏登); 2026-08-31 追加 UE-D2 段 (jobs.json.bak_20260831_deb20260830_ue_d2) |
 | 09c3d6932372 | RFC-070 cron对账哨兵 (一次性) | once 2026-09-01 06:15 CST | RFC-070 时间尺子归口上线后首次自然 cron 复跑对账: ①两脚本 (backfill/limit_entry_shadow_replay) 正常跑完无 Traceback ②数据制品新鲜 | RFC-070 (352e9443); 只读检查; 2026-08-30 补登 (守卫测试抓出漏登) |
+| crontab-oneshot-0831f | DA/UE 8-31 首批晨间核对 (一次性, 系统 crontab 非 Hermes) | once 2026-09-01 07:30 CST | v0.72 DA 首轮 (指纹 BD93AF5B0570 (大写防守卫误判): skip_reason_missing 违约→0 / finish 全 stop / 挑战者 verdict 分布=B11 前哨) + v2.8 UE+glm-5 首轮 (hash EB75D45A72C2 / IT 填充率报数 / 延迟 B6①<300s) + playbook decision_conf 分布 (B12 观察); 只读脚本 `scripts/verify_da_ue_batch_20260831.py`, 跑完自删本行 (失败也删+HIGH 推送, 防 9/1 固定日期行年度复燃; 手动重跑 `--date`) | 判据字典 B6/B11/B12 + DEB-20260831-da-debate-quality-and-decision-conf + handoff 2026-08-31f; 挂行当场登记 (入账提醒纪律) |
 
 迁移留痕 (2026-08-28): `1a4a63fd3dae` / `e282a7667ae2` 的前身是 agent-session 定时任务
 (e68ae9ad / b460b9c5, permanent)。**该载体绑定创建会话进程** — 进程一死, 任务在注册表里

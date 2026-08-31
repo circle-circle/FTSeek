@@ -355,6 +355,27 @@ REGISTRY: list[ShadowItem] = [
         verdict_history=[{"date": "2026-08-15", "verdict": "KILLED",
                          "evidence": "p=0.17 捕获率14% n=31 否决; 7/1起实跑-$1353"}],
     ),
+
+    # ── 退出策略核查批 (2026-08-31, 用户裁"影子先行") ──
+    ShadowItem(
+        id="reentry_quick_tp_gate",
+        name="再入场快TP门禁吞掉",
+        status=ShadowStatus.OBSERVING,
+        description="8/7 裁决的再入场快收 TP (RR≈0.58) 被 7/10 min_tp_rr=1.5 门禁静默吞掉, "
+                    "13 笔实弹 0 笔 TAKE_PROFIT。影子记'价格触及被吞TP'反事实 + 平仓结算差, "
+                    "回答'恢复快TP还是废quick_tp参数'。两次裁决互杀, 2026-08-31 退出核查发现。",
+        data_path="data/shadow/reentry_quick_tp_shadow.jsonl",
+        config_key="playbook.reentry_quick_tp_shadow_enabled",
+        min_n=10,
+        graduation_criteria="窗口 9/1-9/30: n≥10 笔 TP 触达结算行 → tp_vs_actual_pct 均值>"
+                            "费用线(~0.15%) ∧ ≥70%方向为正 → 提案恢复快TP(门禁按 decision_id "
+                            "前缀豁免, 另立DEB+用户裁); 否则维持门禁+提案废 quick_tp 参数。"
+                            "窗内禁改门禁/快收参数。",
+        eval_script=None,
+        created="2026-08-31",
+        notes="count_mode=lines; 结算行含 is_reentry/touch/tp_vs_actual_pct; "
+              "DEB-20260831-reentry-quick-tp-gate-conflict §四; 判据字典 B13",
+    ),
 ]
 
 

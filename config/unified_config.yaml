@@ -1309,6 +1309,17 @@ playbook:
   #   回放基线: scripts/ah_exit_replay.py (静态TP/SL挂盘后 0/12 死单已排除).
   #   回滚: false + 重启.
   ah_exit_shadow_enabled: true
+  # 2026-08-31 (退出策略核查发现·两次裁决互杀, 用户裁"影子先行"): 再入场快TP门禁
+  #   吞掉影子 — 8/7 裁决的再入场快收结构 (quick_tp=0.35×ATR clamp[1,2]% vs
+  #   quick_sl=0.6×ATR clamp[2,3.5]%, RR≈0.58) 与 7/10 min_tp_rr=1.5 门禁相撞,
+  #   全部再入场臂 TP 被门禁当畸形几何忽略 (13 笔实弹 0 笔 TAKE_PROFIT)。
+  #   record-only: 规则1.5 门禁分支记"价格触及被吞TP"入仓位 meta, 平仓时
+  #   _close_trade_record 落反事实结算行 → data/shadow/reentry_quick_tp_shadow.jsonl。
+  #   预注册判据 (判据字典 B13): 窗口 9/1-9/30, n≥10 笔触达结算 →
+  #   delta均值>费用线(~0.15%) ∧ ≥70%为正 → 提案恢复快TP(门禁豁免, 另立DEB);
+  #   否则维持门禁+废 quick_tp 参数。窗内禁改门禁/快收参数。
+  #   回滚: false (或删 pipeline.py 两处 try 块)。
+  reentry_quick_tp_shadow_enabled: true
   # 2026-08-27 (组合风控P2·簇浓度影子): 日开仓帽16/并发帽12全是笔数维度无结构维度。
   #   手工簇映射(semis/software_cloud/high_beta/china_adr/gold_miners/pharma/
   #   financial/consumer/industrial_energy/other)+占位区间[entry,exit)重放, 每笔

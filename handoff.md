@@ -188,6 +188,61 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-08-31g (退出策略核查 + 再入场快TP门禁互杀·影子先行 — Codex, 用户裁"核查是否合理"+三选一案选2)
+> 零行为变更轮。核查结论: 当前止损止盈退出策略**总体合理** (分层/证据/冻结纪律完好,
+> 冻结窗 8/24-31 58 笔净 +$979.6, 详见下方), 但发现 1 个实质性缺陷, 用户裁影子先行。
+
+- **核查通过项**: ①止损三层 (vol_buckets 钳制 1.5-5.0%+开盘冷却 4%+早期紧 SL mfe_gate0.3)
+  生产实证全部落在几何内; ②止盈阶梯 (保本0.4费感知→回撤锁0.8→profit_override 1.5/0.5→
+  固定TP带RR门) 冻结窗实证: SL_TRAIL_LOCK 16笔+$870 利润主力 / SL_BREAKEVEN 28笔均值+$7.6
+  真保本; ③config_version v2 唯一值 n=63, KR2 冻结未破; ④DA/UE 本轮筛选+指令生成改动
+  与退出零冲突 (UE 常数SL指令 8/8 no_trigger 自然隔离)。
+- **实质发现 (两次裁决互杀)**: 8/7 用户裁的再入场快收结构 (quick_tp=0.35×ATR clamp[1,2]%
+  vs quick_sl=0.6×ATR clamp[2,3.5]%, RR≈0.58) 被 7/10 的 min_tp_rr=1.5 门禁当畸形几何
+  **静默吞掉** — 13 笔实弹再入场臂 0 笔 TAKE_PROFIT, 出场全落 DEAD_SIGNAL/保本/EOD。
+  后果: 不失控 (止损照常) 但快收设计落空, 赢家每次回吐 ~0.5-0.8% (目标利润的 25-50%)。
+  在档 DEB 无既往讨论。落档: `docs/debates/DEB-20260831-reentry-quick-tp-gate-conflict.md`。
+- **影子落地 (用户裁选项2)**: `app/playbook/reentry_tp_shadow.py` + pipeline 两挂点
+  (规则1.5门禁分支记触达入meta / `_close_trade_record` commit后落结算行) →
+  `data/shadow/reentry_quick_tp_shadow.jsonl`。开关 `playbook.reentry_quick_tp_shadow_enabled: true`。
+  登记: shadow_registry `reentry_quick_tp_gate` (min_n=10) + 判据字典 **B13** (窗口 9/1-9/30,
+  预注册: n≥10 触达结算 ∧ delta均值>费用线0.15% ∧ ≥70%为正 → 提案恢复快TP另立DEB;
+  否则维持门禁+废 quick_tp 参数; 窗内禁改门禁/快收参数)。测试: `tests/test_reentry_quick_tp_shadow.py` 9 钉。
+- **次要观察 (不行动)**: ①DA LLM 原始 SL 无宽度钳制 (XRP 8/24 11.72% 未执行;
+  risk_pct sizing 自动吸收, 挂账); ②固定 TP 近乎休眠 (1/58) 与 8/1 裁决一致非病;
+  ③根级 `test_playbook_exit_rules.py` 系 8/15 前陈旧测试 (期望已被裁决禁用的
+  MFE_STALL_EXIT), 非本轮引入, 不修。
+- 验证: 新 9 钉 + 定向套件 218 过 (含 playbook/patient_exit/be_exit_class/sltp/ah_tp_link)。
+  回滚: yaml 开关 false 或删 pipeline 两处 try 块, 无需重启。
+
+### 2026-08-31f (DA/UE 首批晨间核对布防 — Codex, 续 2026-08-31d/e, 用户确认"要")
+> 零生产行为变更轮: 为今晚 (8/31) DA v0.72 + UE v2.8/glm-5 双首轮布一次性晨间核对。新增 `scripts/verify_da_ue_batch_20260831.py` (只读) + crontab 一次性行 (9/1 07:30 CST, 标记 `ONESHOT-20260901-da-ue-verify`, 跑完自删) + 台账 §2.4 行 `crontab-oneshot-0831f`。
+
+- **核对内容 (明早会话跟进清单)**: ①DA `data/da_checkpoint/2026-08-31/`: `_prompt_hash` 应全 `bd93af5b0570`、`skip_reason_missing` 违约应→0 (基线 8.5/天)、`_finish_reason` 全 stop、verdict 分布 (新挑战者 0813 第 3 生产日, B11 前哨; 8/27-28 为 AGREE 48/49)。②UE `data/shadow/llm_universe_scan.jsonl`: date=2026-08-31、hash `eb75d45a72c2` (v2.8)、model_used=glm-5* (否则=降级链触发)、IT 填充率 (非SKIP 中 trig≥1 占比; bakeoff 实测 glm 78%/qwen 56%, B6③ 目标≥50%, 10 交易日窗第 1 天仅报数)、contract_stats。③llm_audit 延迟 (B6①<300s; 窗口当日 20:00-23:59 CST, is_test=0)。④`ftseek_us.db` playbook_instructions: DA 全指令行 decision_conf 分布 (B12 观察) + UE 行数。
+- **预期与异常路径**: 全过 → INFO 推送 + 自删 cron 行; 任一未过 → HIGH 推送 + 同样删行 (防 9/1 固定日期行年度复燃) + 手动重跑 `--date`; 脚本崩溃 → 尝试删行 + exit 2。日志 `logs/da_ue_morning_check.log`。
+- **测试实证 (8/28 历史日回放)**: 旧版本数据被正确判失败 (hash/模型/违约检出路径均活)。新发现澄清 2026-08-31e "恒 0.70" 口径: `decision_conf` 仅 DA **全指令行**写 (17 行/天, 恒 0.70), 其余 ~50 行/天为 intraday_reentry 等最小写路径 (不写 conf, NULL) — 常量退化结论不变, 危害面更精确。
+- **台账守卫兼容**: 12 位小写 hex prompt 指纹会被 `test_control_loop_ledger` 幽灵 job 正则 (`[0-9a-f]{12}`) 误判 (实测抓到两个) → 台账行内指纹改大写书写规避; 守卫测试本身未动 (不削弱)。
+
+### 2026-08-31e (decision_conf 根因定案 + 挑战者有效性预注册 + UE 链复查 — Codex, 用户令"预注册判据裁决 + 根因理清 + UE 复查")
+> 零代码变更轮 (纯落档): 新档 `docs/debates/DEB-20260831-da-debate-quality-and-decision-conf.md` + 判据字典 B11/B12 登记。
+
+- **decision_conf 根因完全理清 (三环叠加)**: ①新挑战者 AGREE 饱和 (8/27-28 = 48/49) → "+0.20" 恒生效 → 0.70; ②**Phase-0 score 差值衰减被 r14 score_band 量化杀死** — 量化后 Δ∈{0,2,3,3,5} 仅 HIGH-vs-LOW 可触发 (衰减 0.03) 且实测零触发, 即 8/23 为"打破恒0.70"设计的机制在 8/25 band 化后重新失效 (设计互斥, 此前无人察觉); ③真反向分支 (0.35) 因 DISAGREE≈0 不可达。
+- **消费端审计定界危害**: `decision_conf` 列零 live 消费; `confidence` 列唯一 live 消费 = 执行排序次键 (恒 70 → 并列退化, 无实际扭曲); admission conf 门=0 刻意禁用 / direction_filter 仅 technical_intraday enabled 且 DA 直写绕过 / Kelly sizing 禁用 → **常量退化当前不扭曲任何 live 行为**, 危害限于分析切片。**它是温度计不是病灶** — 修公式≠修区分度, 病根在辩论层信息量塌缩。
+- **预注册判据 (新)**: B11 挑战者有效性 — 观察窗 9/1-9/12, AGREE≥95%∧切片PnL无区分度→仪式化成立 (三选一案另立 DEB+影子先行), 窗内禁改挑战者防污染; B12 decision_conf 通道处置条件于 B11, 裁决前禁止 conf 接入任何新 live 门 (常量接门=方向性禁令, 8/16 max_sl_pct 事故同构)。
+- **UE 链复查结论 (无急修缺陷)**: prompt v2.8 (E3-fix 显式模板) / 输入侧 (_build_clue_brief 带源健康摘要+时效标注+负反馈表+引证 grounding 核验) / 归一化夹逼 / inject 门控 (排重/streak/价格地板/拒绝归因) / 午间影子独立写 `_MIDDAY_PATH` 不污染供料池 — 全链经三轮深审计, 明显优于 DA 侧。生产实证 8/26-28: 契约违约 0, 浮现 5-6/日, 注入 2-4/日, 8/28 执行链健康。**观测件**: ①invalidation_triggers 生产填充 v2.6 时代 0/14 — E3-fix (v2.8) + glm-5 首轮今晚 21:10 CST, 按 B6 判据 (10交易日填充率≥50%) 观察; ②UE 模型选型 glm-5 依据已被 E6 部分更正, 配置注释明示"重裁待用户"。
+
+### 2026-08-31d (DA 链复查修复批 — Codex, 用户裁"明确有问题可修正的做修复"; 主战场=外部 skill 仓 ~/.hermes/skills/deep-stock-analysis v0.71→v0.72)
+> 复查范围 = DA prompt(SYSTEM/USER/挑战者) + 数据注入 + 关联模块, 用 8/25-28 四天生产产出 (da_checkpoint/opportunity_scan/playbook_instructions/hermes 日志) 实证。五项缺陷修复 + 三项留观测。零门禁/阈值/仓位变更。
+
+- **修复① 挑战者分析视图重构 (实证最重)**: 旧 `json.dumps(分析师输出)[:3000]` 盲目截断 — 实测 n=50: execution_plan 起始 1500-3338 字符, **key_levels 被切 48/50 (96%)、invalidation_triggers 被切 41/50 (82%)、止损/止盈价被切 ~30%** → 挑战者核验维度 e"价位合理性"与失效条件审查结构性失明。新 `_challenger_analysis_view`: 剥 `_` 前缀噪声字段 + execution_plan/key_levels 前置 + 上限 3000→6000; 50/50 回归关键字段全保留。回滚 `DA_CHALLENGER_ANALYSIS_CAP=3000`。
+- **修复② 挑战者数据视图白名单补 4 段**: 行业对比 (含 8/29 DA-A1 注入的行业 PE 中位数, 分析师引用后挑战者原无法核验)、财报日历 (核验维度 d 硬日期风险职责所需)、数据质量审计、前序回吐率。
+- **修复③ 覆盖统计单一真源**: 原头部 `_quality` 宽松口径 (空壳也算 ok, 实测恒 19/19=100%) 与审计段严格口径 (16 源) 矛盾并存, 生产实证模型自行计数输出矛盾 ("15完整/1降级/3缺失" 把 EPS/股息率字段当维度)。新 `_classify_data_sources` (19 维) 头部+审计同源, 充分性标记改严格口径 (缺失+空壳), data_quality_note 从"模型自行清点"改"照抄审计段数字"。注: 源降级≥6 时标记将如实翻"不充分✗"触发既有路由, 系契约本意。回滚 `DA_COVERAGE_STRICT=0` 精确复现旧双口径。
+- **修复④ USER_PROMPT schema 补 skip_reason**: 原三处规则要求+校验器检查但 schema 未列该字段 → 稳定 6-12 违约/天, 实测三天 26 次额外 repair LLM 调用 (约 9 次/天白烧)。⑤ 盘前时段"当前价格"行标注昨收 (与 LIF 盲区同病灶)。
+- **PROMPT_HASH**: 15c13f7cb3f3→bd93af5b0570 (④⑤动模板文本; ①②③为数据段/接线不改指纹; 挑战者 system prompt 未动)。今晚 (周一) 19:00 CST DA 轮起生效, 新旧基线按 `_prompt_hash` 可切分。
+- **仓内配套**: `scripts/da_chain_health_report.py` NO_PLAN 判定加非交易日分支 — 手动 --date 周末原误报 ⚠️NO_PLAN, 现显示"✅ 非交易日" (8/29 周六/8/28 周五双路径实测); 回滚 `.bak-20260831`。
+- **验证**: 合成数据双口径对照 + 50 例 checkpoint 回归 + AAPL 真实采集端到端 (无 LLM 调用, 头部 14/19 与审计一致) + py_compile。备份: skill 仓 `scripts/llm_synth.py.bak-deb20260831-dareview` + `SKILL.md.bak-deb20260831dareview`。
+- **留观测不裁决 (复查发现, 属裁决件)**: ①新挑战者 (0813) AGREE 率 96-100% (8/27-28) vs 旧 73-85% (8/25-26), 样本 2 天, 建议挂预注册判据观察 5-10 交易日 ②decision_conf 恒 0.70 (8/24-28 全部, 第四例"常量退化": Phase-0 score 差值衰减在 score_band {8,6,3} 量化后重新失效) ③gate BLOCK 率 71-73% 持续。另核查澄清: 疑似"周五 DA 缺失"系误报 — 8/29-30 为周末, cron `1-5` 休跑正确。
+
 ### 2026-08-31c (死闸核查执行第二轮 — Codex, 用户裁"明确是死闸需要废的，请核查无误后执行", 落档 DEB-20260831 §六)
 > 授权条件是"核查无误后执行" — 核查结果是废除前置。结论: **不满足废除条件, 一道未废**。
 
