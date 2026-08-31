@@ -61,7 +61,7 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.7"  # scan 落库归因戳; v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.8"  # scan 落库归因戳; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -139,7 +139,25 @@ SYSTEM_PROMPT_V2 = (
     "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk}), "
     # [U4 2026-08-25 DEB-ue-audit] SKIP 必须给理由 — 可归因"为什么不浮现" (审计病灶: 拒绝不可归因)。
     "skip_reason(仅SKIP: 一句话, 如'已充分反映/无具体催化/流动性不足')。\n"
-    "严格只输出 JSON, 格式: {\"surfaced\": [ {字段...}, ... ]}。"
+    # [E3-fix 2026-08-31, DEB-20260830第5轮·用户裁"按建议先执行"] 模板占位 {字段...} →
+    #   显式字段列表。E3 8臂实弹 (data/shadow/e3_contract_bakeoff.jsonl): 措辞强度
+    #   0%→0%, 字段写进 JSON 模板即 83-100% 填充 — 模型照 JSON 模板示例填空, 示例里
+    #   没有的字段≈不存在 (DA 侧 45/45=100% 的同构真因)。字段集与 _normalize_surfaced
+    #   解析白名单逐项对齐; V1 SYSTEM_PROMPT 不动 (scan-eval A/B 基线仪器)。
+    "严格只输出 JSON, 格式: {\"surfaced\": [ {\"symbol\": \"AAPL\", \"direction\": \"LONG\", "
+    "\"causal_chain\": \"事件→传导→标的(一句话)\", \"evidence_ref\": \"引用的具体证据原文, 无则留空字符串\", "
+    "\"self_tier\": \"HARD_EVENT或MARKET_CORROBORATED或THESIS_ONLY\", \"thesis\": \"交易论点≤60字\", "
+    "\"confidence\": 0.72, \"is_universe_external\": false, \"winner_loser\": \"WINNER\", "
+    "\"corroborated_by_market\": true, \"invalidation\": \"一句话失效条件≤40字\", "
+    "\"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], "
+    "\"horizon_hours\": 6, \"expected_move_pct\": 2.5, "
+    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, "
+    "\"price_volume_confirmed\": false, \"crowding_low\": true}, "
+    "\"short_check\": {\"borrow_feasible\": true, \"downside_catalyst_expiry_hours\": 24, \"squeeze_risk\": 2}, "
+    "\"skip_reason\": \"仅SKIP时填, 一句话\"}, ... ]}。"
+    "每个标的必须列全上述全部字段: invalidation_triggers 每条限白名单 (metric∈收盘价/成交量/5日涨跌/盘前涨跌幅, "
+    "operator∈<或>, value 纯数字), 能判定则填, 确实无可判定条件才可为空数组 []; "
+    "short_check 仅 SHORT 标的填对象, 非 SHORT 填 null; skip_reason 仅 SKIP 标的填字符串, 非 SKIP 填 null。"
 )
 
 # [DEB-20260825-ue-audit U1] SYSTEM_PROMPT_V2 指纹 — 落库归因戳 (与 DA r13
