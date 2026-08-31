@@ -20,6 +20,7 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   I12 realized_pnl=0 而 价差×数量 明显非零 → 占位符伪装盈亏 (8/28 占位链常驻守卫)
   I13 费用上线日后缺 fees_est/pnl_net → COALESCE 静默回落毛口径
   I14 了结行缺 exit_reason (空串或 NULL) → 出场归因分类丢行
+  W1 参数冻结窗 config_version 唯一性 (OKR-2026-09 KR2, 2026-08-31 用户裁"按建议执行")
   豁免: data_quality 前缀命中 duplicate/outlier/invalid/void/excluded 的行 (写入方
         声明"非真实了结", 如 id=1327 duplicate_external_close 故意留 NULL 使净额求和
         自动排除) 不告; 数量落 JSON (settled_exempt_marked) 防豁免面无声扩大。
@@ -71,6 +72,61 @@ _FEE_ROLLOUT_DATE = "2026-07-30"
 #   real 457 / clean 265 / outlier_external 1 / manual 1 / duplicate_external_close 1 /
 #   direction_mismatch 1) — 只有前缀命中本表才豁免, 'real'/'clean'/'manual' 一律照判。
 _DQ_NEUTRAL_PREFIXES = ("duplicate", "outlier", "invalid", "void", "excluded")
+
+
+# ── W1 参数冻结窗守卫 (2026-08-31): KR2 判分公式原为周六周检人工 SQL — 换版只能等
+#    月底结算才作废整月; 现每晚机器对账, 版本分裂当天告警 (损失封顶当天)。
+#    豁免通道 (KR2 例外): P0 bug + DEB 落档 + 用户知会 → 人工把新版本加入
+#    data/config_freeze_baseline.json 的 versions 并附 deb_ref, 本检查即放行。
+_FREEZE_WINDOW_START = "2026-08-24"  # OKR-2026-09 KR2 判分窗口起点 (判据冻结, 改须先改 OKR)
+_FREEZE_BASELINE = REPO / "data" / "config_freeze_baseline.json"
+
+
+def _check_config_freeze(rec) -> dict:
+    """W1: 冻结窗内 PLAYBOOK_SIM config_version 唯一性。只读; 内部异常显性化。"""
+    info = {"window_start": _FREEZE_WINDOW_START}
+    try:
+        conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        try:
+            pairs = conn.execute(
+                "SELECT config_version, COUNT(*) FROM trade_records "
+                "WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' GROUP BY 1",
+                (_FREEZE_WINDOW_START,)).fetchall()
+        finally:
+            conn.close()
+        versions = {str(v): n for v, n in pairs}
+        info["versions"] = versions
+        if not versions:
+            info["status"] = "no_rows_in_window"
+            return info
+        if _FREEZE_BASELINE.exists():
+            baseline = json.loads(_FREEZE_BASELINE.read_text(encoding="utf-8"))
+        else:
+            # 首跑自建基线: 当下唯一版本即冻结基线 (诚实声明: 基线日之后才可判漂移)
+            baseline = {"versions": sorted(versions),
+                        "established_at": now_et().isoformat(timespec="seconds"),
+                        "note": "OKR-2026-09 KR2 冻结基线; 豁免=本文件 versions 追加新版本+deb_ref"}
+            _FREEZE_BASELINE.write_text(json.dumps(baseline, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+            info["status"] = "baseline_established"
+            return info
+        extra = sorted(set(versions) - set(baseline.get("versions", [])))
+        if extra:
+            for v in extra:
+                rec("W1_config_version_drift", "-", v,
+                    f"冻结窗版本分裂: 基线={baseline.get('versions')} 新增={extra}; "
+                    f"若属批准的 P0 修复, 更新 {_FREEZE_BASELINE.name} 并补 DEB 落档 (KR2 例外通道)")
+            info["status"] = "drift"
+        else:
+            info["status"] = "ok"
+        return info
+    except Exception as e:
+        if _is_structural_error(e):
+            info["status"] = "skipped_old_schema"
+            return info
+        rec("W1_detector_error", "-", type(e).__name__, f"W1 检测器自身异常: {e}")
+        info["status"] = "detector_error"
+        return info
 
 
 def _col(row, name, default=None):
@@ -324,10 +380,14 @@ def main() -> int:
     except Exception as _cd_e:
         caliber_diff = {"error": type(_cd_e).__name__}
 
+    # ── W1 参数冻结窗守卫 (2026-08-31, 用户裁"按建议执行"): 版本分裂当天告警 ──
+    config_freeze = _check_config_freeze(rec)
+
     result = {
         "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
         "caliber_diff": caliber_diff,
+        "config_freeze": config_freeze,
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
     }

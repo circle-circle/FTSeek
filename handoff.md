@@ -2,7 +2,7 @@
 
 > **这是什么**: DA-FTSeek 链路迭代的**活文档**。每次调整/计划都追加到这里, 避免跨会话/跨 Agent 从头开始。
 > **怎么用**: 每次改动后更新"变更日志"(最新在最上) + "下一步"。其他 Agent 先读本文件再动手。**多模型协作规范见 `docs/specs/multi-agent-collaboration-charter.md`（角色协议/数据口径七律/落档强制/验证期变更纪律，含用户在内人人遵守）。**
-> **最后更新**: 2026-08-31 (8/26→8/31 批次补档 — handoff 断更 5 天(违宪章三.3), 本行与下方变更日志 2026-08-31 条按 git 史(119 提交)回溯重建: RFC-审计加固0826 / 8-27 SSOT收敛+减法 / ADR-032~034 / DEB-20260829 UE链十轮 / DEB-20260830×3[E11共识漂移修 04150669 + llm-chain九轮 UE模板v2.8 + 时区TZ-1~3] / RFC-070 时间尺子归口 / perf 热路径 / 治理四台账(控制环路·回放·判据字典·方法论索引) / 9-14 一次性结算 job 9ab9f1812dc4 · 前次: 2026-08-26 (U11 确认门 `9e7e39e4` DST 防漂移三件套独立复核 — Hermes, 用户令"按建议推进": 三件套全部实测兑现[双季双挂数学逐字节验证/幂等守卫+2契约测试实跑22 passed/watchdog挂载]; 唯一瑕疵=声称"74h假日不误报"被证伪(_is_weekend用CST周六跳过, 真实行为=美国假日后首交易日06:25必误报一次80.75~104.75h, 当晚自恢复零污染), 裁决保持74h不改(误报=链路活着证据, 改110h反拖慢真死亡检出), watchdog注释已修正为真实行为; 落档 DEB-20260825 复核段 · 前次: 2026-08-23 (全项目五维体检+P0三执行 — Claude Code, 用户令"先落档再执行, 执行前核验为真": 五路并行深探(安全语义/架构/测试/配置密钥/运维)+P0逐条实读复核, 报告落档 `DEB-20260823-system-health-check.md`; 核验勘误两处=preflight_fail_mode非地雷(di_container.py:159 LIVE启动断言强制closed)/lock缺口夸大(107vs84, 运行时真缺loguru/prometheus_client/rich/aiosqlite); 执行X1删scripts/archive/get_feishu_chat_id.py(**实锤泄露的正是.env.us生产飞书凭据**, 轮换须用户后台操作)/X2 equity≤0三处熔断旁路补fail-close(order_executor:3267/playbook_service:725/orb:1216)/X3六影子模块TEST守卫收口(pipeline有9处约定此6处零守卫); 全量1564 passed实测复现 · 前次: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
+> **最后更新**: 2026-08-31 (静默死亡族根源加固批落地 — 用户裁"按照建议执行": W1 config_version 冻结守卫 (KR2 判分每晚机器对账, 版本分裂当天告警) + C2 门命中率判据 (5 道零命中闸翻 dead, 预注册≥5 达标, 9/1 线上确认) + 影子覆盖心跳 (E13 族断流监测, 实测近10桥日覆盖 0.8) + except:pass 棘轮 (基线 957) + DB 字面连接 chokepoint 棘轮 (app/ 实测全净) + 幽灵 job 5401548b2034 闭合。**零行为变更**, 全量 2185 过 (3 失败系沙箱网络限制), 落档 `DEB-20260831-silent-death-hardening-batch.md` · 前次: 2026-08-31 (8/26→8/31 批次补档 — handoff 断更 5 天(违宪章三.3), 本行与下方变更日志 2026-08-31 条按 git 史(119 提交)回溯重建: RFC-审计加固0826 / 8-27 SSOT收敛+减法 / ADR-032~034 / DEB-20260829 UE链十轮 / DEB-20260830×3[E11共识漂移修 04150669 + llm-chain九轮 UE模板v2.8 + 时区TZ-1~3] / RFC-070 时间尺子归口 / perf 热路径 / 治理四台账(控制环路·回放·判据字典·方法论索引) / 9-14 一次性结算 job 9ab9f1812dc4 · 前次: 2026-08-26 (U11 确认门 `9e7e39e4` DST 防漂移三件套独立复核 — Hermes, 用户令"按建议推进": 三件套全部实测兑现[双季双挂数学逐字节验证/幂等守卫+2契约测试实跑22 passed/watchdog挂载]; 唯一瑕疵=声称"74h假日不误报"被证伪(_is_weekend用CST周六跳过, 真实行为=美国假日后首交易日06:25必误报一次80.75~104.75h, 当晚自恢复零污染), 裁决保持74h不改(误报=链路活着证据, 改110h反拖慢真死亡检出), watchdog注释已修正为真实行为; 落档 DEB-20260825 复核段 · 前次: 2026-08-23 (全项目五维体检+P0三执行 — Claude Code, 用户令"先落档再执行, 执行前核验为真": 五路并行深探(安全语义/架构/测试/配置密钥/运维)+P0逐条实读复核, 报告落档 `DEB-20260823-system-health-check.md`; 核验勘误两处=preflight_fail_mode非地雷(di_container.py:159 LIVE启动断言强制closed)/lock缺口夸大(107vs84, 运行时真缺loguru/prometheus_client/rich/aiosqlite); 执行X1删scripts/archive/get_feishu_chat_id.py(**实锤泄露的正是.env.us生产飞书凭据**, 轮换须用户后台操作)/X2 equity≤0三处熔断旁路补fail-close(order_executor:3267/playbook_service:725/orb:1216)/X3六影子模块TEST守卫收口(pipeline有9处约定此6处零守卫); 全量1564 passed实测复现 · 前次: 2026-08-22 (全系统体检执行轮 + T+5 反事实尺子 — Claude Code, 用户令"按照建议执行+落档deb": BABA跨环境仓位碰撞根因闭合(用户实盘手动单与sim仓共用symbol-PK行翻转manual/real, 无资金损失已修复回auto/simulate)+生成物出库(exit_calibration.json入gitignore)+order_executor最小测试13例抓出_is_option_contract root≥4误判真bug(OCC正则修复, 现网零期权代码零行为变化)+**T+5摆动反事实首跑: Δ+$5.72/笔中性偏正但α-vs-SPY仍-$11.29, 出血点精确点名=TIME_EXIT/MFE_STALL两放弃桶各Δ≈+$50且32笔零反向翻转, 保护性出场(BE/SL/DEAD_SIGNAL)全部负Δ="杀耐心非杀赢家", SHORT禁拉长** · 落档 DEB-20260822 · 前次: DEB-20260819 §五十六 Hermes 晚间批核查 — Qoder, 用户令"核查确认合理性+更优方案": 6提交+be_exit_class 定性全合理无一回滚, GOOG重复/SKIP 417条/UE self_tier 98结算/conf单调反向 均独立复现; 瑕疵2处=AMZN"+1.1%"虚高(实测+0.41%)+be_exit_class GAP判序bug(BWXT盈利单配瀑布标签, 修=OK先判); 更优方案3点待Hermes小修; 整批追溯补档) · 环境: 富途**模拟盘** (v2 sim, 无真实资金) · venv: `./venv/bin/python`
 
 ---
 
@@ -133,7 +133,8 @@
 ## ➡️ 下一步 (按时间顺序)
 0A. **📅 9/14 (周一) 09:00 CST 一次性结算 (cron `9ab9f1812dc4`, 结算后不留任)**: CAP-1~4 + F2 (`scripts/settlement_cap_f2.py --start 2026-08-31 --end 2026-09-14`, 阈值冻结自 DEB-20260830 第 12 轮, 改判据须先改 DEB) + UE-D2 四判据: ①延迟<300s ②无 length 截断 ③trig 填充率≥50% 且白名单过 (验 v2.8 模板+模型供料稳定性, 非模型切换本身) ④时代盈亏切分 (UE 指令<10 笔报"样本不足无法裁决"); 判据③不过先回滚 v2.8 模板 `5175e42b` 再归因, 不直接归罪模型。出处: 判据字典 B6/B7, DEB-20260830 第 9 轮用户裁"1"。
 0B. **🔭 进行中观察窗 (8/31→9/14, 全 record-only 零行为变更)**: UE-D2 glm-5.2 首发窗 (B6) / da_glm_shadow (B3: JSON 成功率≥90% ∧ SHORT 提案≥5 → PROMOTE) / DA-C1 方向结构 (B9) / UE-C2 streak 反事实 (B10) / TZ-2 生产观察 `58e3ce8b`。9 月退出参数冻结 (C1/C7), 例外通道仅 P0 bug + DEB 落档 + 用户知会。
-0C. **⏳ 待用户裁决**: ①DEB-20260830-llm-chain-utilization 剩余分歧 1-4 (见该档状态节) ②回放脚本台账 7 个候选退役零引用脚本处置 (`docs/REPLAY-SCRIPT-LEDGER.md`)。
+0C. **⏳ 待用户裁决**: ①DEB-20260830-llm-chain-utilization 剩余分歧 1-4 (见该档状态节) ②回放脚本台账 7 个候选退役零引用脚本处置 (`docs/REPLAY-SCRIPT-LEDGER.md`) ③C2 探针新报 5 道疑似死闸存废 (short_squeeze/analyst_divergence/earnings_proximity/sec_event/ticker_sentiment — 只报不删, 零命中≠该删, 参照 liquidity_gate 合法零命中先例)。
+0D. **🔍 9/1 (周一) C2 线上确认**: cron 07:15 CST `gate_liveness_probe` 实跑, `data/gate_liveness_latest.json` 应见 `c2` 段 + 5 道 dead (离线已验收, 线上为确认点; 不符则查探针判据实现, 回滚=revert C2 段)。
 0. **🚪 实盘化转正门槛 (2026-08-09 用户裁定, 每周六 09:05 ADF 周检 cron 自动评估)**:
    四项全满足才讨论实盘化 — ① OOS 样本 (08-10 起) ≥15 个交易日 ② 日净盈亏均值 >0
    ③ 日毛利均值 t>1 (供给端有真实 edge, 8/9 基线: t=−0.10 统计为零) ④ ADF 平稳。
@@ -186,6 +187,18 @@
 ---
 
 ## 📝 变更日志 (最新在上)
+
+### 2026-08-31b (静默死亡族根源加固批 — Codex, 用户裁"按照建议执行", 落档 DEB-20260831-silent-death-hardening-batch)
+> 零行为变更批 (仪器/守卫/留痕), 符合 9 月冻结白名单。全量 2185 过 / 37 跳 / 3 失败系沙箱网络限制 (与本批零关联)。
+
+- **P0 W1 config_version 冻结守卫**: `scripts/daily_invariant_check.py` 新增 W1 — KR2 判分 (2026-08-24→ PLAYBOOK_SIM config_version 唯一) 从周六人工 SQL → 每晚机器对账, 版本分裂当天告警 (旧: 月底才知作废整月); 豁免=更新 `data/config_freeze_baseline.json` (基线 v2, n=63 实测) + DEB 落档。实跑全过。
+- **P1② C2 门命中率判据**: `scripts/gate_liveness_probe.py` — 源可读且影子窗 (16 交易日) 命中>0 否则翻 dead; **5 道零命中闸精确翻转** (预注册≥5 达标), 3 有命中门保持 ok, social 保持 off; 9/1 线上确认。裁决面移交用户 (只报不删)。
+- **P1③ 影子覆盖心跳**: `scripts/business_heartbeat.py` — 最近已完结 bridge 扫描日无 `edge_gate_shadow` 写入 → 告警 (抓新增断流; 存量 42% 已知债归结算 F2⑤); 实测近 10 桥日覆盖 **0.8 恰压 F2⑤ 线** (8/17+8/24 缺); 产物 `data/shadow_coverage_latest.json`。
+- **P1④⑤ except:pass**: 批#1 两处测量/学习链改 warn 留痕 (`ic_tracker` conditions 解析 / `feedback_learner` 修改样本解析, R5 同款); 棘轮守卫基线 **957** (只降不升)。范围更正: 原"批量清剿"实测 957 处不可单批, 降级为分批+棘轮; `intraday_reentry` 8 处 fail-open (带设计注释, 78 次/日热路径) 登记批#2。
+- **P2① DB chokepoint 棘轮**: `tests/test_db_connection_chokepoint.py` — 字面路径 `sqlite3.connect` 新增即 FAIL; 祖父名单 10 个全在 scripts/, **app/ 层实测已全净** (RFC-070 归口剧本: 先堵增量再收编)。
+- **补**: 幽灵 job `5401548b2034` 闭合 — 台账"留痕不入守卫"意图机器化 (守卫按行标记豁免, 其余检查面不放松), `test_control_loop_ledger` 6 例全过 (原第 7 轮登记的既有失败)。
+- **核查结论**: 桥接产出带已有 (`_check_bridge_health_and_alert` + v0.70 P0-2 重载)、表级活性已有 (watchdog D1/D2) — 本批只补真缺口, 未重复造轮子。
+
 
 ### 2026-08-31 (8/26→8/31 批次补档 — Codex, 用户令"核查整体框架, 过期文档/记忆更新至最新状态")
 > ⚠️ **补档声明**: handoff 自 8/26 起断更 (最后触档提交 `9898660e`), 期间 git 累积 119 提交, 违宪章三.3 (handoff 是唯一进度队列)。本条按 git 史回溯重建, 逐项附提交哈希; 即日起恢复随事落档纪律。

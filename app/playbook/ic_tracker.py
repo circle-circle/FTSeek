@@ -489,8 +489,11 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
             if cond_json:
                 import json
                 conditions = json.loads(cond_json) if isinstance(cond_json, str) else cond_json
-        except Exception:
-            pass
+        except Exception as _ce:
+            # R5 同款纪律 (2026-08-31 DEB-20260831 P1③): 测量链异常不得静默 —
+            # 解析失败=该行退出 conditions 切片, 吞错会让 IC 尺子无声丢样本。
+            logger.warning(f"[ic_tracker] conditions_json 解析失败, 该行退出条件切片: "
+                           f"id={inst.get('id', '?')} err={_ce}")
 
         regime = inst.get("market_regime", "UNKNOWN")
         horizon = inst.get("horizon", "short") or "short"

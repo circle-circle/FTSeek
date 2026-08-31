@@ -917,3 +917,13 @@ Run B 能否产出影子行取决于进程**启动时刻**挂载的 voting_coord
 **E. 本轮顺带否掉的假设 (留痕防复读)**: ①代码版本来回翻 (git log -S 仅 4de5b585 引入+8c5048b7 触碰, 盘上写入器 7/17 后连续存在) — 否; ②影子文件多副本/被轮转删除 (全盘仅一份, 无轮转) — 否; ③`evaluate()` 条件记日志 (log=True 恒写, 异常静默但无系统性触发面) — 否; ④ts(CST) 与 bridge 文件名 (ET) off-by-one — 否 (影子 ts 20-22 CST = 08-10 ET 同日, 与 bridge 同日对齐, 原 42% 口径无需修正)。
 
 **挂账更新**: E13 成因定位 **结项** (本轮回填执行项)。残留观察项: 9月窗口 TFA 路径影子行的口径分离 (D.3), 随 9/14 结算一并看。
+
+---
+
+## C2 实施记录 (2026-08-31, 用户裁"按照建议执行" — DEB-20260831-silent-death-hardening-batch)
+
+- **落地**: `scripts/gate_liveness_probe.py` 判据叠加命中率 — 源可读 且 `intraday_reentry_shadow.jsonl` 拒因窗口内命中>0, 否则翻 `dead` (留 `prior_status` 痕); social 设计关断豁免; 影子窗<10 交易日不判。
+- **离线验收 (当日)**: 影子窗 2026-08-06~08-28 共 16 交易日, **5 道零命中闸精确翻 dead** (short_squeeze/analyst_divergence/earnings_proximity/sec_event/ticker_sentiment), 3 有命中门 (capital_flow/insider_divergence/sentiment_extreme) 保持 ok, social 保持 off — 满足本文 C2 预注册"至少 5 道翻 dead"。
+- **线上确认点**: 9/1 (周一) cron 07:15 CST 实跑, `data/gate_liveness_latest.json` 应见 `c2` 段 + 5 道 dead。
+- **裁决面移交**: 5 道疑似死闸**只报不删** — 存废由用户按探针证据裁决 (零命中≠该删: 可能系宇宙结构合法零命中, 参照 liquidity_gate 先例; 也可能系死门, 参照 E5)。
+- 回滚: revert gate_liveness_probe.py C2 段。详见 `DEB-20260831-silent-death-hardening-batch.md`。

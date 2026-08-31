@@ -11,6 +11,13 @@
 恒不触发但无异常" 这类失败**没有系统性检测**, 只能靠人翻代码.
 本探针把检测自动化: 门侧消费链跑通了才算 alive, 否则当场暴露.
 
+C2 命中率判据 (DEB-20260830-exit-reentry-chain-audit E5, 2026-08-31 用户裁"按建议执行"):
+  旧判据只证"源可读" → 9 闸中 5 闸 16 交易日零命中仍判健康 (E5)。现叠加:
+  源可读 且 影子遥测 (intraday_reentry_shadow.jsonl 拒因) 窗口内命中>0, 否则翻 dead。
+  social_sentiment 设计性关断豁免; 影子窗口<10 交易日不作 dead 判 (窗口不足)。
+  预注册验收 (DEB C2): 上线后 6 道零命中闸中至少 5 道状态翻 dead。
+  回滚: revert 本文件 C2 段 (_gate_hit_stats/_apply_c2_hit_rate + run_probe 两行)。
+
 状态语义:
   ok     = 采集路径通 + 门侧消费函数吃得到合法 schema
   empty  = 路径通但无数据 (可能是合法空: 无财报/无近期8-K/盘外无逐笔)
@@ -35,6 +42,83 @@ LATEST = BASE / "data" / "gate_liveness_latest.json"
 HISTORY = BASE / "data" / "gate_liveness_history.jsonl"
 
 SAMPLE_SYMBOLS = ["US.NVDA", "US.AAPL"]  # 高流动性, 所有 provider 都覆盖
+
+
+# ── C2 命中率判据 (2026-08-31) ─────────────────────────────────────────
+_SHADOW_PATH = BASE / "data" / "intraday_reentry_shadow.jsonl"
+_MIN_WINDOW_DAYS = 10  # 影子窗口不足 → 保持旧判据, 不作 dead 判
+# probe 门名 → 影子拒因前缀家族 (2026-08-31 实测归一化: 前缀截断 ( 与 : 与中文冒号)
+_GATE_REASON_FAMILY = {
+    "capital_flow": "capital_flow_divergence",
+    "short_squeeze": "short_squeeze",
+    "insider_divergence": "insider_divergence",
+    "analyst_divergence": "analyst_divergence",
+    "earnings_proximity": "earnings_proximity",
+    "sentiment_extreme": "sentiment_extreme",
+    "sec_event": "sec_event",
+    "ticker_sentiment": "ticker_sentiment",
+    # social_sentiment: 设计性关断 (off), 不参与命中率判
+}
+
+
+def _gate_hit_stats() -> dict:
+    """影子文件拒因家族命中统计 (只读): {家族: {hits, days_with_hit}} + 窗口交易日数."""
+    import re
+    stats = {"file_exists": _SHADOW_PATH.exists(), "families": {},
+             "trading_days": 0, "window": None}
+    if not stats["file_exists"]:
+        return stats
+    fam_hits, fam_dates, dates = {}, {}, set()
+    try:
+        for line in _SHADOW_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            day = str(d.get("date") or "")
+            if day:
+                dates.add(day)
+            for r in (d.get("reasons") or []):
+                name = re.split(r"[(:(：]", str(r), 1)[0].strip()
+                fam_hits[name] = fam_hits.get(name, 0) + 1
+                fam_dates.setdefault(name, set()).add(day)
+    except Exception as e:
+        stats["error"] = f"{type(e).__name__}: {e}"
+        return stats
+    stats["trading_days"] = len(dates)
+    stats["window"] = [min(dates), max(dates)] if dates else None
+    stats["families"] = {k: {"hits": v, "days_with_hit": len(fam_dates.get(k, ()))}
+                         for k, v in fam_hits.items()}
+    return stats
+
+
+def _apply_c2_hit_rate(gates: dict, hit_stats: dict) -> int:
+    """C2: 源可读 (ok/empty) 但窗口内零命中的门翻 dead。返回翻转数。
+
+    原状态保留在 prior_status; 原 detail 附加在判据说明之后 (留痕不覆盖)。
+    """
+    if hit_stats.get("trading_days", 0) < _MIN_WINDOW_DAYS or hit_stats.get("error"):
+        return 0
+    flipped = 0
+    fams = hit_stats.get("families", {})
+    win = hit_stats.get("window") or ["?", "?"]
+    for name, g in gates.items():
+        family = _GATE_REASON_FAMILY.get(name)
+        if family is None or g.get("status") not in ("ok", "empty"):
+            continue
+        hits = (fams.get(family) or {}).get("hits", 0)
+        if hits == 0:
+            g["prior_status"] = g["status"]
+            g["status"] = "dead"
+            g["detail"] = (f"C2 命中率判据: 源可读但 {hit_stats['trading_days']} 交易日 "
+                           f"({win[0]}~{win[1]}) 零命中 — 疑似死闸待裁 (E5) | 原detail: {g['detail']}")
+            flipped += 1
+        else:
+            g["detail"] = f"{g['detail']} | C2: 窗口命中 {hits} 次"
+    return flipped
 
 
 def _most_recent_et_trading_day():
@@ -221,6 +305,10 @@ def run_probe() -> dict:
         "detail": "设计性关断 (ADR-032): 数据源无极性分数, 诚实降级待有符号源",
     }
 
+    # C2: 叠加命中率判据 — 源可读但零命中的门翻 dead (E5 病灶族)
+    hit_stats = _gate_hit_stats()
+    c2_flipped = _apply_c2_hit_rate(gates, hit_stats)
+
     from app.utils.timezone import now_et
     result = {
         "generated_at_et": now_et().isoformat(timespec="seconds"),
@@ -229,6 +317,10 @@ def run_probe() -> dict:
         "gates": gates,
         "n_dead": sum(1 for g in gates.values() if g["status"] == "dead"),
         "n_stale": sum(1 for g in gates.values() if g["status"] == "stale"),
+        "c2": {"flipped_to_dead": c2_flipped,
+               "shadow_trading_days": hit_stats.get("trading_days"),
+               "shadow_window": hit_stats.get("window"),
+               "shadow_error": hit_stats.get("error")},
     }
     LATEST.write_text(json.dumps(result, ensure_ascii=False, indent=2))
     with HISTORY.open("a", encoding="utf-8") as f:
@@ -237,7 +329,8 @@ def run_probe() -> dict:
     for name, g in gates.items():
         print(f"[gate_probe] {name:<22} {g['status']:<6} {g['detail']}", flush=True)
     print(f"[gate_probe] 汇总: dead={result['n_dead']} stale={result['n_stale']} "
-          f"(交易日基准 {trade_day})", flush=True)
+          f"(交易日基准 {trade_day}) | C2 命中率判据翻转 {c2_flipped} 道 "
+          f"(影子窗 {hit_stats.get('trading_days')} 交易日)", flush=True)
     return result
 
 

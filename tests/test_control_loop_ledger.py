@@ -55,7 +55,10 @@ def test_enabled_job_is_in_ledger(jobs, ledger_text):
 
 def test_ledger_job_ids_are_real(jobs, ledger_text):
     real = {j["id"] for j in jobs}
-    phantom = sorted({tok for tok in _JOB_ID.findall(ledger_text) if tok not in real})
+    # 台账显式声明的"留痕不入守卫"行豁免 (一次性已销 job 的历史留痕, 非活体环路)。
+    # 豁免以行标记为准, 活体环路写入豁免行 = 人工审计面 (同台账 §2.4 入账提醒纪律)。
+    guarded = "\n".join(l for l in ledger_text.splitlines() if "留痕不入守卫" not in l)
+    phantom = sorted({tok for tok in _JOB_ID.findall(guarded) if tok not in real})
     assert not phantom, (
         "台账引用了不存在的 job_id (幽灵环路, 记载与活体调度脱钩):\n  "
         + "\n  ".join(phantom))

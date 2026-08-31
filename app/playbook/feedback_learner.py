@@ -148,8 +148,11 @@ class FeedbackLearner:
                         else:  # position_size
                             direction = "increase" if mod_val > orig_val else "decrease"
                         modify_count[field]["directions"][direction] += 1
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as _me:
+                        # R5 同款纪律 (2026-08-31 DEB-20260831 P1③): 反馈学习链异常留痕 —
+                        # 吞错=用户修改样本无声消失, 学习环效力测量 (L3) 永远攒不起料。
+                        logger.warning(f"[feedback_learner] 修改样本解析失败: field={field} "
+                                       f"original={original!r} modified={modified!r} err={_me}")
 
         patterns = []
         for field, data in modify_count.items():
