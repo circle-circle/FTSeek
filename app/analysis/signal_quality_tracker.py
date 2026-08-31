@@ -62,6 +62,16 @@ CONFIDENCE_BUCKETS: List[Tuple[float, float, str]] = [
     (0.7, 1.0001, "0.7-1.0"),
 ]
 
+# 无置信度语义的成交 (signal_confidence 缺失) 曾被装进最低桶, 使"0-0.3 桶"不再代表
+# 低置信 LLM 信号 (DEB-20260830-llm-chain-utilization 一.3)。缺失有两种形态, 实测 90d
+# 最低桶 32 行构成: NULL 2 行 (POSITION_SYNC) + 显式 0.0 共 23 行 (manual_sync/orb_engine/
+# broker_reconcile/futu_sync/manual/auto_main 等非 LLM 写入路径, 及主链 `or 0.0` 折叠的
+# voting_llm 10 行) + 真实低置信度值 7 行 (0.206~0.298)。
+# 判据: 置信度为 0 的信号不可能通过任何置信度门被放行, 故"已平仓且 conf=0.0"只能是
+# 缺失哨兵而非真实自评 → 与 NULL 同等对待。
+# 单列此桶: 不参与单调性判定、阈值建议, 也不进入每日 prompt 注入 (消费端按四桶标签遍历)。
+UNLABELED_BUCKET = "unlabeled"
+
 # 策略类别归一化 (entry_reason / owner_strategy / source_type 联合分类)
 KNOWN_CATEGORIES = (
     "technical",
@@ -142,7 +152,10 @@ def _classify_strategy(
     return "其他"
 
 
-def _bucket_for_confidence(c: float) -> str:
+def _bucket_for_confidence(c: Optional[float]) -> str:
+    # None 与 0.0 同为缺失哨兵 (见 UNLABELED_BUCKET 注释)
+    if c is None or c == 0.0:
+        return UNLABELED_BUCKET
     for lo, hi, label in CONFIDENCE_BUCKETS:
         if lo <= c < hi:
             return label
@@ -282,7 +295,9 @@ class SignalQualityTracker:
             )
             r["_pnl"] = _safe_float(r.get("realized_pnl"))
             r["_pnl_pct"] = _safe_float(r.get("pnl_pct"))  # P2: 风险归一原料
-            r["_confidence"] = _safe_float(r.get("signal_confidence"))
+            # NULL 保持 None (不折叠成 0.0), 交由 _bucket_for_confidence 路由到 unlabeled
+            _conf_raw = r.get("signal_confidence")
+            r["_confidence"] = None if _conf_raw is None else _safe_float(_conf_raw)
         return rows
 
     # ── (a) confidence -> 胜率映射 ──────────────────────────────
@@ -294,6 +309,7 @@ class SignalQualityTracker:
         buckets: Dict[str, Dict[str, Any]] = {
             label: _empty_stats() for _, _, label in CONFIDENCE_BUCKETS
         }
+        buckets[UNLABELED_BUCKET] = _empty_stats()
         for t in trades:
             label = _bucket_for_confidence(t["_confidence"])
             _accumulate(buckets[label], t["_pnl"], t["_pnl_pct"])
@@ -433,6 +449,7 @@ class SignalQualityTracker:
         recent_buckets: Dict[str, Dict[str, Any]] = {
             label: _empty_stats() for _, _, label in CONFIDENCE_BUCKETS
         }
+        recent_buckets[UNLABELED_BUCKET] = _empty_stats()
         for t in recent_30d:
             _accumulate(
                 recent_buckets[_bucket_for_confidence(t["_confidence"])],
@@ -495,8 +512,16 @@ class SignalQualityTracker:
             )
 
         # P2 (2026-07-11): edge 视角 — 基于风险归一期望 (avg_pnl_pct), 与胜率视角并列
+        # 注意窗口: 本表是近 30 天, 而 confidence_winrate_map 的桶是全 history_days 窗口。
+        # 两者不可并列比较 (DEB-20260830-llm-chain-utilization 一.3 的误读源) → 随值输出
+        # 窗口天数与各桶 n, 使口径自描述。
         expectancy_by_bucket = {
             label: recent_buckets[label]["avg_pnl_pct"]
+            for _, _, label in CONFIDENCE_BUCKETS
+        }
+        expectancy_window_days = 30
+        expectancy_sample_sizes = {
+            label: recent_buckets[label]["total"]
             for _, _, label in CONFIDENCE_BUCKETS
         }
         suggested_by_expectancy: Optional[float] = None
@@ -529,6 +554,8 @@ class SignalQualityTracker:
             "anomalies": anomalies,
             # P2: edge 视角输出 (风险归一), 供 P0 影子闸门消费
             "expectancy_by_bucket": expectancy_by_bucket,
+            "expectancy_window_days": expectancy_window_days,
+            "expectancy_sample_sizes": expectancy_sample_sizes,
             "suggested_by_expectancy": suggested_by_expectancy,
             "expectancy_monotonic": expectancy_monotonic,
             "applied": False,  # 安全起见不自动落地
