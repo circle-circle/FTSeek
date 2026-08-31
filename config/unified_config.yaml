@@ -455,9 +455,17 @@ llm:
       #   回滚: primary 改回 qwen (原 qwen-max, 2026-08-27 同日别名去规格化) + 重启.
       fallback: deepseek
       # 2026-08-30 (用户裁决, DEB-20260829 第8轮, 方案A): UE 主模型 qwen3.8-flash → glm-5 (glm-5.2).
-      #   依据: 6模型×3轮同材料同参数 bakeoff 实测 (8/30) — invalidation_triggers 填充
-      #   (盘中失效核销器唯一结构化输入, 生产 0/208 病灶本身) 是 GLM 独占能力:
-      #   glm-5.2 45/47=96% 且全部过白名单校验; qwen 全系(含3.8-max)+deepseek 全 0 填充.
+      #   [E6 更正 2026-08-31, DEB-20260830 第7轮派生·用户批准] 原依据"invalidation_triggers
+      #   填充是 GLM 独占能力 (96% vs qwen 全系 0)"已被 E3/Q1 证为模板伪影: 当时台面是
+      #   漏字段的 v2.7 模板, v2.8 (字段显式) 下 qwen3.8-flash 即填充 10/18=56% (含 1 轮 0/6
+      #   波动), glm-5.2 14/18=78% (data/shadow/q1_v28_model_bakeoff.jsonl)。"独占"不成立。
+      #   剩余在档依据 (非本次更正对象): 推理质量并列第一梯队 / 浮现数与引证精度优势
+      #   (DEB-20260830 第4轮 B-4) / 绝对成本 ¥7.8/月。选型是否重裁待用户 (见该档第 8 轮);
+      #   本注释只更正已证伪的依据, 不动 primary (回滚=本注释段还原)。
+      #   原依据全文留档: 6模型×3轮同材料同参数 bakeoff 实测 (8/30) — invalidation_triggers
+      #   填充 (盘中失效核销器唯一结构化输入, 生产 0/208 病灶本身) ~~是 GLM 独占能力~~:
+      #   ~~glm-5.2 45/47=96% 且全部过白名单校验; qwen 全系(含3.8-max)+deepseek 全 0 填充~~
+      #   (模板伪影, 见上)。
       #   推理质量 glm 与 3.8-max 并列第一梯队 (引证伪造 0 例; 唯一正确识别"仅记录不入围"票).
       #   生产同构风险已实测排除: json_mode ✓ / 数组格式system+cache_control ✓ /
       #   parse_json_strict 解 fenced ✓ / 延迟 63-69s 在 timeout=300 内 ✓.
