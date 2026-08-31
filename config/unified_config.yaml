@@ -1277,7 +1277,10 @@ playbook:
   admission:
     enabled: true
     enforce: true
-    min_notional_usd: 3000
+    min_notional_usd: 2500    # 2026-09-01 RFC-071: 3000→2500 — 6%帽≈$5,900 砍半≈$2,950 结构性穿地板
+    #   (8/31实证: 4只高置信单100% BUY偏斜被砍半, 全部死于NOTIONAL_TOO_SMALL, 真实死因被掩盖).
+    #   2500给砍半类残存路径(跨日翻转降仓)幸存带; 代价13.5-16bps往返, SIM采集期数据量优先可接受.
+    #   历史参照: 已了结单[2500,3000)区间26笔净-$99.18近盈亏平衡. 回滚: 改回3000+重启.
     min_entry_price: 5.0    # 2026-08-13: 0→5 启用PRICE_TOO_LOW判据 — OTC仙股(AETN $0.13,
     #   Futu无OTC行情)撞$1.99/腿佣金地板≈100bps往返+执行端永远无法re-price=死指令.
     #   与DA扫描器质量闸$5(market_scanner.py L229)+UE价格地板(min_price_floor)同源.

@@ -1917,22 +1917,34 @@ def _apply_portfolio_guardrails(
 
 
 def _trim_majority_direction(valid: List[Any], majority_dir: str, target_skew: float) -> int:
-    """多数方信号降仓, 控制方向风险.
-    
-    2026-06-30 根因修复: SKIP → position_size *= 0.5
-    原则: guardrail 是安全网, 不是信号杀手. 方向风险由仓位管理控制.
-    多数方信号全部降仓50%, 保留信号产出率.
+    """多数方信号降级为 SKIP 直到偏斜 ≤ 阈值 (控制方向风险).
+
+    2026-09-01 RFC-071 根因修复 (砍半 → SKIP):
+      旧实现砍 position_size *= 0.5, 但 6% 单名帽下满仓≈$5,900 砍半≈$2,950 结构性
+      穿破 admission min_notional 地板 → 砍半产物在执行前必死于地板, 且死因被覆写为
+      NOTIONAL_TOO_SMALL (8/31 实证: 4 只高置信单 100% BUY 偏斜被砍半, 全灭, 真实
+      死因被掩盖; 与日志文案"被降级为SKIP"亦不符)。
+      直接 SKIP: 死因如实留痕, position_size 保留原值供审计。循环"SKIP 最低
+      confidence 的多数方直到达标"与 docstring 原意("砍掉低 conv 的多数方信号直到
+      平衡")及 sector 集中度孪生实现 (_trim_majority_sector) 对齐。
     """
-    majority = [i for i in valid if i.direction == majority_dir]
-    if not majority:
-        return 0
     trimmed = 0
-    for inst in majority:
-        _orig = getattr(inst, "position_size", 0) or 0
-        if _orig > 0:
-            inst.position_size = max(1, int(_orig * 0.5))
-            inst.skip_reason = f"方向偏斜 guardrail 降仓50% (原{_orig}→{inst.position_size})"
-            trimmed += 1
+    while True:
+        active_valid = [i for i in valid if i.direction in ("BUY", "SELL_SHORT")]
+        total = len(active_valid)
+        if total <= 1:
+            break
+        majority = [i for i in active_valid if i.direction == majority_dir]
+        if not majority or len(majority) / total <= target_skew:
+            break
+        majority.sort(key=lambda x: getattr(x, "confidence", 0) or 0)
+        victim = majority[0]
+        victim.direction = "SKIP"
+        victim.skip_reason = (
+            f"方向偏斜超限 guardrail 降级 (多数方 {majority_dir}, "
+            f"原size={getattr(victim, 'position_size', 0) or 0})"
+        )
+        trimmed += 1
     return trimmed
 
 
