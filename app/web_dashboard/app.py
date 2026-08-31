@@ -102,10 +102,19 @@ def create_app() -> FastAPI:
     # ── 按需激活: 闲置自动退出 (2026-07-31, 用户裁) ──
     # dashboard 使用频率低, 配合 systemd socket 激活: 无访问时进程整体退出,
     # 不占内存/OpenD 连接; 下次访问由 socket 瞬时拉起 (冷启动数秒)。
-    # ASGI 层记录 http+websocket 任何入站报文为活动时间; watchdog 每 60s 检查,
+    # ASGI 层记录 http+websocket 任何入站报文为活动时间; 看门狗每 60s 检查,
     # 闲置超 DASHBOARD_IDLE_MINUTES (默认 15) 即 os._exit(0)。
     # 注意: service 必须 Restart=on-failure, 正常退出不被复活。
+    #
+    # 2026-09-01 修复 (8/29 实例连续 75h+ 不自退事故核查):
+    #  ① 看门狗改守护线程 — 原 asyncio.create_task 版在长跑进程中任务静默死亡
+    #     (实测: 事件循环正常、请求 2ms 响应, 但 3h+ 零流量仍不自退; 新启实例
+    #     同代码均正常自退)。线程版不依赖事件循环/任务存活, 免疫同型故障。
+    #  ② 生命周期日志改 print(stderr) — 原 logger.info 在 uvicorn 下无 handler
+    #     (INFO 低于 lastResort 的 WARNING 阈值), 退出零痕迹, 故障潜伏 3 天。
     import os as _os
+    import sys as _sys
+    import threading as _threading
     _idle_sec = float(_os.getenv("DASHBOARD_IDLE_MINUTES", "15")) * 60
     _act = {"last": time.monotonic()}
 
@@ -128,18 +137,28 @@ def create_app() -> FastAPI:
 
     app.add_middleware(_ActivityMiddleware)
 
-    @app.on_event("startup")
-    async def _idle_watchdog():
-        import asyncio
-
-        async def _loop():
-            while True:
-                await asyncio.sleep(60)
-                if time.monotonic() - _act["last"] > _idle_sec:
-                    logger.info(f"[dashboard] 闲置 {_idle_sec / 60:.0f}min 无活动, 按需激活模式退出")
+    def _idle_watchdog_loop():
+        while True:
+            time.sleep(60)
+            try:
+                idle_sec = time.monotonic() - _act["last"]
+                if idle_sec > _idle_sec:
+                    print(
+                        f"[dashboard] 闲置 {idle_sec / 60:.0f}min 无活动, 按需激活模式退出",
+                        file=_sys.stderr, flush=True,
+                    )
                     _os._exit(0)
+            except Exception as _e:
+                print(f"[dashboard] 闲置看门狗异常: {_e}", file=_sys.stderr, flush=True)
 
-        asyncio.create_task(_loop())
+    _idle_watchdog_thread = _threading.Thread(
+        target=_idle_watchdog_loop, daemon=True, name="dashboard-idle-watchdog",
+    )
+    _idle_watchdog_thread.start()
+    print(
+        f"[dashboard] 闲置看门狗已启动 (阈值 {_idle_sec / 60:.0f}min)",
+        file=_sys.stderr, flush=True,
+    )
 
     # ── 关闭 Futu SDK 日志 (SSOT: app.data.futu_lv3_provider.silence_futu_sdk_logs) ──
     # dashboard 自建 OpenQuoteContext/OpenSecTradeContext, FTLog 为进程级单例;
