@@ -59,10 +59,12 @@ def premarket_behavior():
     if not p.exists():
         return {}
     acc = defaultdict(lambda: {"n": 0, "triggered": 0, "sum_pnl": 0.0})
+    _bad = 0
     for line in p.read_text().splitlines():
         try:
             rec = json.loads(line)
         except Exception:
+            _bad += 1
             continue
         if rec.get("type") != "instruction":
             continue
@@ -80,6 +82,8 @@ def premarket_behavior():
         out[sym] = {"n": a["n"], "trigger_rate": round(a["triggered"] / a["n"], 2),
                     "avg_shadow_pnl_pct": round(a["sum_pnl"] / max(a["triggered"], 1), 2),
                     "tier": "rated" if a["triggered"] >= MIN_SAMPLE else f"insufficient(triggered={a['triggered']})"}
+    if _bad:
+        print(f"WARNING: premarket_trend_outcomes.jsonl 有 {_bad} 行解析失败已跳过")
     return out
 
 
@@ -91,7 +95,8 @@ def momentum_retention():
         sym = "US." + fp.stem.replace("US_", "")
         try:
             data = json.loads(fp.read_text())
-        except Exception:
+        except Exception as _e:
+            print(f"WARNING: 盘前动量留存解析失败 {fp.name}: {_e} (跳过)")
             continue
         days = defaultdict(list)
         for row in data:

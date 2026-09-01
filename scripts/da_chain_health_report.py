@@ -100,7 +100,20 @@ def _report_date(c, date):
 
     # 3) 判定
     if actionable == 0:
-        verdict = "⚠️ NO_PLAN — 当日无可执行 DA 指令 (应触发 technical 兜底)"
+        # [2026-08-31 DA链复查] 非交易日(周末/节假日)无指令是预期, 不报警 —
+        #   实测手动 --date 周末误报 ⚠️NO_PLAN。holiday_calendar 失败退回旧措辞。
+        _nontrading = False
+        try:
+            from datetime import date as _date_cls
+            from app.utils.holiday_calendar import get_holiday_calendar
+            _y, _m, _dd = (int(x) for x in date.split("-"))
+            _nontrading = not get_holiday_calendar().is_trading_day("US", _date_cls(_y, _m, _dd))
+        except Exception as _e:
+            print(f"WARNING: 假日历判定失败, 按交易日处理: {_e}")
+        if _nontrading:
+            verdict = "✅ 非交易日 — 无 DA 指令属预期 (周末/节假日)"
+        else:
+            verdict = "⚠️ NO_PLAN — 当日无可执行 DA 指令 (应触发 technical 兜底)"
     elif fb_fills > 0 and da_fills == 0:
         verdict = f"🔧 FALLBACK — 走了 technical 兜底 ({fb_fills} 笔)"
     elif da_fills > 0:
@@ -160,8 +173,8 @@ def main(date=None, days=1, push=False):
         try:
             from app.notifier.feishu import send_text
             send_text("📋 DA链路日检 " + _fmt(last))
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"WARNING: DA链路日检飞书推送失败 (报告已打印未推送): {_e}")
 
 
 if __name__ == "__main__":
