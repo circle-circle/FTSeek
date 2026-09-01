@@ -138,6 +138,13 @@ class PlaybookConfig:
                 "early_tight_sl_enabled": self.get("early_tight_sl_enabled", False),
                 "early_tight_sl_minutes": self.get("early_tight_sl_minutes", 30),
                 "early_tight_sl_pct": self.get("early_tight_sl_pct", 1.0),
+                # R-4b 收尾 (2026-09-02): rule 0.5 的 mfe_gate 与 ATR 比例键全部住在
+                #   unified_config.yaml, horizon 整文件哈希覆盖不到, 此前均漏 —
+                #   改变已实现 PnL 而 KR2 判分假绿 (漏键代价, 见上方 R-4b 注)。
+                "early_tight_sl_mfe_gate": self.get("early_tight_sl_mfe_gate", None),
+                "early_tight_sl_atr_enabled": self.get("early_tight_sl_atr_enabled", False),
+                "early_tight_sl_atr_mult": self.get("early_tight_sl_atr_mult", 0.5),
+                "early_tight_sl_pct_max": self.get("early_tight_sl_pct_max", 2.5),
                 "breakeven_fee_cushion_pct": self.get("breakeven_fee_cushion_pct", 0.0),
                 # 2026-07-30 D4: 费用感知保本线改变保本锚位置 (已实现 PnL) — 必须入版本哈希,
                 #   否则毕业统计跨参数窗口混样 (07-20 军规)

@@ -146,3 +146,9 @@
 ### 8.5 判分口径（毕业后再评纪律）
 
 下线/再调整前必看 `exit_scorecard`：SL_INITIAL 早期笔数/损失 vs 基线（毕业口径同款纪律，见 `tests/test_control_loop_ledger.py::test_early_tight_sl_graduated_variant_stays_on`），不能凭单日体感。V 型日回收样本（本日 3 笔）自动进入该记分。
+
+### 8.6 KR2 版本哈希缺口收尾（2026-09-02 复盘发现，同日修复）
+
+9/2 盘后复盘坐实：`get_exit_config_version()` 快照含 `early_tight_sl_enabled/_minutes/_pct` 但**不含** `mfe_gate`（8/29 起漏）与 ATR 三键（e32d376f 起漏）——四个键全住 unified_config.yaml，horizon 整文件哈希（R-4b）覆盖不到。ATR 变更改变已实现 PnL 而版本哈希不动 = KR2 判分假绿，正是 R-4b 注释预言的"漏键的代价"。
+
+修复：四键入快照 → 新版本 `exit-d1120a105711`（旧 `exit-2623be9c8879` 哈希不回填，8/31-9/1 交易按豁免清单读）。豁免清单（`config_freeze_baseline.json` exit_versions）+ 钉子测试（`tests/test_kr2_freeze_exemption.py` KNOWN_EXEMPT 三版本）同步，服务重启后 9/2 起生效。
