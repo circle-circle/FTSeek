@@ -149,6 +149,13 @@ class Instruction:
     # F1 (2026-07-31, DEB-feedback-loop): DA 入场锚偏离度 (LLM entry vs 分析时快照价, 有符号 %).
     # record-only 归因字段, 量化"入场区与市价脱节"规模; bridge 缺失时为 None.
     anchor_dev_pct: Optional[float] = None
+    # [DEB-20260901] 结构化入场语义 (双轨新增, record-only, 零行为变更):
+    #   entry_archetype ∈ {BREAKOUT, PULLBACK_LIMIT, FADE_SHORT} | None(=现状默认)
+    #   confirmation = {"price_level", "side", "ttl_min"} | None
+    #   chase_cap_price = 禁追上限 | None。消费方: Phase B 影子 (pullback_limit_shadow)。
+    entry_archetype: Optional[str] = None
+    confirmation: Optional[Dict[str, Any]] = None
+    chase_cap_price: Optional[float] = None
 
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========

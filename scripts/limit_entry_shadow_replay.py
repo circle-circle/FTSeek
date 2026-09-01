@@ -243,6 +243,8 @@ def main():
             recon.setdefault(r["date"], {"shadow": 0, "entry_timing": 0})
             recon[r["date"]]["shadow"] += 1
         if ENTRY_TIMING_PATH.exists():
+            _seen_et = set()  # [DEB-20260901 §六.4] 与影子侧同口径: 按 (inst_id, 日)
+            #   去重 — 服务重启会让两侧各落重复行, 哨兵数"触发过的指令数"而非"行数"。
             with ENTRY_TIMING_PATH.open(encoding="utf-8") as f:
                 for line in f:
                     try:
@@ -251,6 +253,10 @@ def main():
                         continue
                     d = (e.get("ts") or "")[:10]
                     if d in recon and e.get("live_triggered"):
+                        _k = (e.get("inst_id"), d)
+                        if _k in _seen_et:
+                            continue
+                        _seen_et.add(_k)
                         recon[d]["entry_timing"] += 1
         summary["reconciliation"] = {d: v for d, v in recon.items() if v["shadow"] != v["entry_timing"]}
         summary["reconciliation_ok"] = not summary["reconciliation"]

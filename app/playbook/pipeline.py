@@ -33,6 +33,46 @@ _BAR_STALL_SINCE: Dict[str, float] = {}
 # 2026-08-06 (DEB-20260806 终裁): 锚限价影子幂等集 ((inst_id, date) — 每指令触发只落一行).
 _LIMIT_SHADOW_EMITTED: set = set()
 
+
+# ── [DEB-20260901 §六.4] 影子行文件级防重 (修复重启重复) ─────────────────
+# 根因: 纯内存幂等集被服务重启清零 → 同一指令重复 emit (8/17 实证 3 指令各 2 行,
+#   reconciliation_ok 恒 false)。改为文件级: 进程首次接触该文件时读入已有键,
+#   之后内存为准 (文件只追加)。键 = (inst_id, type), type 缺省 "row"。
+_SHADOW_SEEN: Dict[str, set] = {}
+
+
+def _shadow_dedup_ok(path, inst_id, kind: str = "row") -> bool:
+    """返回 True = 首次, 允许写入; 已存在返回 False。异常时放行 (影子宁多勿漏)。"""
+    try:
+        key = str(path)
+        seen = _SHADOW_SEEN.get(key)
+        if seen is None:
+            seen = set()
+            _bad = 0
+            try:
+                if path.exists():
+                    with open(path, encoding="utf-8") as _fsd:
+                        for _ln in _fsd:
+                            try:
+                                _r = json.loads(_ln)
+                                seen.add((_r.get("inst_id"), _r.get("type", "row")))
+                            except Exception:
+                                _bad += 1
+                    if _bad:
+                        logger.warning(
+                            f"[shadow dedup] {path.name} 有 {_bad} 行解析失败已跳过 "
+                            f"(防重可能不完整, DEB-20260901)")
+            except Exception as _e:
+                logger.warning(f"[shadow dedup] 读取 {path} 失败, 退化为纯内存防重: {_e}")
+            _SHADOW_SEEN[key] = seen
+        _k = (inst_id, kind)
+        if _k in seen:
+            return False
+        seen.add(_k)
+        return True
+    except Exception:
+        return True
+
 # 2026-08-06 (B1 二次修复): 盘口 micro 拉取的"已告警"集 ((symbol, date) 防刷屏).
 #   首修 (08-05) 用 get_push_orderbook 推送缓存 — 但 ADR-013 早已把 ORDER_BOOK 移出推送
 #   订阅集 (subscription_manager 默认 QUOTE+K_1M), 缓存恒空 → 08-05 全天 233 行 micro=null.
@@ -842,6 +882,10 @@ class BridgeVotingAdapter:
             "stop_loss": cand.get("stop_loss", 0),
             "take_profit": cand.get("take_profit", 0),
             "entry_strategy": cand.get("entry_strategy", ""),
+            # [DEB-20260901] 结构化入场语义透传 (bridge 有则带, 无则 None; record-only)
+            "entry_archetype": cand.get("entry_archetype"),
+            "confirmation": cand.get("confirmation"),
+            "chase_cap_price": cand.get("chase_cap_price"),
             # F1 (2026-07-31): 透传 DA 锚偏离度 — 桥接 json 有则带上, 无则 None (record-only)
             "anchor_dev_pct": cand.get("anchor_dev_pct"),
             "invalidation": cand.get("invalidation", ""),
@@ -1740,6 +1784,10 @@ def _build_instructions_from_votes(
             da_thesis=vote_result.get("thesis", "") or "",
             # F1 (2026-07-31): DA 锚偏离度透传 (非 bridge 候选为 None, record-only)
             anchor_dev_pct=vote_result.get("anchor_dev_pct"),
+            # [DEB-20260901] 结构化入场语义透传 (record-only, 零行为变更)
+            entry_archetype=vote_result.get("entry_archetype"),
+            confirmation=vote_result.get("confirmation"),
+            chase_cap_price=vote_result.get("chase_cap_price"),
         )
         # 方向翻转时降仓50% — 同guardrail方式, 不SKIP信号只降风险敞口
         if _direction_flipped:
@@ -2798,6 +2846,10 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
             "atr_source": getattr(inst, "atr_source", ""),
             # 2026-07-11 Stage 1: DA 真实论点存入 raw json (不占独立列, 不覆盖模板 thesis)
             "da_thesis": getattr(inst, "da_thesis", "") or "",
+            # [DEB-20260901] 结构化入场语义落库 (消费方: Phase B 影子; 缺失=旧指令, 按现状行为)
+            "entry_archetype": getattr(inst, "entry_archetype", None),
+            "confirmation": getattr(inst, "confirmation", None),
+            "chase_cap_price": getattr(inst, "chase_cap_price", None),
         },
         "decision_id": getattr(inst, "decision_id", "") or "",
         "invalidation": getattr(inst, "invalidation", "") or "",
@@ -4024,6 +4076,39 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             f"盘前=${inst.get('entry_price', 0):.2f} → 实时=${_new_entry:.2f} "
                             f"SL={_new_sl:.2f} ({_sl_pct:.2f}%) TP={_new_tp:.2f}"
                         )
+                        # ── [DEB-20260901 Phase B] chase_cap 违例遥测 (record-only) ──
+                        # DA 写明"禁止在$X以上追涨"但 re-price 把入场位顶过禁追线 →
+                        #   语义倒挂实锤采样。Phase B 仅记录不拦截; Phase C 才谈阻断。
+                        try:
+                            _raw_cc = json.loads(inst.get("raw_instruction_json") or "{}")
+                            _cc = _raw_cc.get("chase_cap_price")
+                            if _cc:
+                                _cc_f = float(_cc)
+                                _viol = (_new_entry > _cc_f) if _dir == "BUY" else (_new_entry < _cc_f)
+                                if _viol:
+                                    from pathlib import Path as _Pcc
+                                    from datetime import datetime as _dtcc
+                                    _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+                                    if _shadow_dedup_ok(_cc_path, inst.get("id"), "chase_cap_violation"):
+                                        _row_cc = {
+                                            "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
+                                            "date": _today_et_str(), "schema": "v1",
+                                            "type": "chase_cap_violation",
+                                            "inst_id": inst.get("id"),
+                                            "decision_id": inst.get("decision_id"),
+                                            "symbol": inst.get("symbol"), "direction": _dir,
+                                            "entry_archetype": _raw_cc.get("entry_archetype"),
+                                            "chase_cap_price": _cc_f,
+                                            "repriced_entry": round(_new_entry, 4),
+                                        }
+                                        _cc_path.parent.mkdir(parents=True, exist_ok=True)
+                                        with open(_cc_path, "a", encoding="utf-8") as _f_cc:
+                                            _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
+                                        logger.warning(
+                                            f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
+                                            f"越过禁追线 ${_cc_f:.2f} (DEB-20260901 Phase B record-only, 不拦截)")
+                        except Exception as _cc_err:
+                            logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
 
                         # 2026-07-12 L1: SL/TP 验证影子 (record-only, 不改任何交易动作)。
                         #   记录 LLM 原始 SL/TP vs 代码波动率桶 SL/TP 的分歧, 供日后与 pnl 联合校准。
@@ -5508,7 +5593,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             if bool(_gc_le().get_dotted("playbook.limit_entry_shadow_observe", False)) \
                     and "TEST" not in symbol.upper():
                 _lk = (inst.get("id"), _today_et_str())
-                if _lk not in _LIMIT_SHADOW_EMITTED:
+                # [DEB-20260901 §六.4] 内存集 + 文件级双防重 (重启后内存集清零,
+                #   文件级兜住; 历史旧行无 type 字段按 "row" 归一, 键不冲突)。
+                _le_path = _Path(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl"
+                if _lk not in _LIMIT_SHADOW_EMITTED and _shadow_dedup_ok(_le_path, inst.get("id")):
                     _LIMIT_SHADOW_EMITTED.add(_lk)
                     _micro = _fetch_l1_micro(scheduler, symbol)
                     import json as _json2
@@ -5535,6 +5623,50 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             logger.warning(
                 f"[playbook] 锚限价影子落盘失败 {symbol}: {_anchor_err} "
                 f"(影子样本丢失, 重放判样本受影响)")
+        # ── [DEB-20260901 Phase B] 结构化入场语义影子 (record-only, 零行为变更) ──
+        # 仅对带 entry_archetype 的指令落触发上下文; 次日 cf_pullback_limit_replay.py
+        # 判 would-fill / CF-PnL。无 archetype 的旧指令不进池。回滚: 配置开关置 false。
+        try:
+            from app.core.config_container import get_config as _gc_pb
+            if bool(_gc_pb().get_dotted("playbook.pullback_limit_shadow_enabled", True)) \
+                    and "TEST" not in symbol.upper():
+                from pathlib import Path as _Ppb
+                _pb_path = _Ppb(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+                if _shadow_dedup_ok(_pb_path, inst.get("id"), "trigger"):
+                    _raw_pb = {}
+                    try:
+                        _raw_pb = json.loads(inst.get("raw_instruction_json") or "{}")
+                    except Exception:
+                        _raw_pb = {}
+                    _arch_pb = _raw_pb.get("entry_archetype")
+                    if _arch_pb:
+                        import json as _json_pb
+                        from datetime import datetime as _dt_pb
+                        _row_pb = {
+                            "ts": _dt_pb.now(_now_et()).isoformat(timespec="seconds"),
+                            "date": _today_et_str(), "schema": "v1", "type": "trigger",
+                            "inst_id": inst.get("id"), "decision_id": inst.get("decision_id"),
+                            "symbol": symbol, "direction": "SHORT" if is_short else "LONG",
+                            "entry_archetype": _arch_pb,
+                            "confirmation": _raw_pb.get("confirmation"),
+                            "chase_cap_price": _raw_pb.get("chase_cap_price"),
+                            "entry_price": round(float(entry_price), 4),
+                            "trigger_price": round(float(current_price), 4),
+                            "entry_path": _entry_path,
+                            "position_size": inst.get("position_size"),
+                            "stop_loss": inst.get("stop_loss"),
+                            "take_profit": inst.get("take_profit"),
+                        }
+                        _pb_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_pb_path, "a", encoding="utf-8") as _f_pb:
+                            _f_pb.write(_json_pb.dumps(_row_pb, ensure_ascii=False) + "\n")
+                        logger.info(
+                            f"[archetype影子] {symbol} {_arch_pb} 触发行落盘 "
+                            f"(确认位={(_raw_pb.get('confirmation') or {}).get('price_level')})")
+        except Exception as _pb_err:
+            logger.warning(
+                f"[playbook] archetype影子落盘失败 {symbol}: {_pb_err} "
+                f"(影子样本丢失, DEB-20260901 攒样受影响)")
     else:
         logger.debug(
             f"[playbook] 未触发: {symbol} price=${current_price:.2f} "

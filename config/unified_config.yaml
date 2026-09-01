@@ -1279,6 +1279,11 @@ playbook:
   #   (置换p=0.19/CI95含0/符号检验p=0.32, n=69; σ超功效预估6.5倍) → 停采。注册表 limit_entry=KILLED 留痕。
   #   回滚: 改回 true + 注册表状态 revert。
   limit_entry_shadow_observe: false
+  # [DEB-20260901 Phase B] 结构化入场语义影子开关 (record-only, 零行为变更)。
+  #   true=带 entry_archetype 的指令触发时落 data/shadow/pullback_limit_shadow.jsonl,
+  #   次日由 scripts/cf_pullback_limit_replay.py 重放判 would-fill/CF-PnL;
+  #   chase_cap 违例 (re-price 越过禁追线) 同文件分行遥测。回滚: 置 false + 重启。
+  pullback_limit_shadow_enabled: true
   admission:
     enabled: true
     enforce: true
