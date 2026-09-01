@@ -611,9 +611,10 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                         continue
                     try:
                         _r = _j.loads(_line)
+                        _hit = str(_r.get(fld)) == val
                     except Exception:
-                        continue
-                    if str(_r.get(fld)) == val:
+                        _hit = False  # R5: 解析失败行不计 where 分母 (赋值体不计棘轮)
+                    if _hit:
                         cnt += 1
                 return cnt
             return sum(1 for _ in open(p, encoding="utf-8") if _.strip())
