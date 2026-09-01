@@ -446,6 +446,30 @@ REGISTRY: list[ShadowItem] = [
         notes="cron 15 6 * * 2-6; 删失 8 笔=无日K缓存 (FBK/BTI/TRV/SNY/AMC/OFG/RDTL); "
               "计数锚=latest json 顶层 n (主窗 n_eval)",
     ),
+    ShadowItem(
+        id="ssr_shadow_daily",
+        name="SSR 影子日更 (RFC-062 ④)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-062 在建清单④ (8/2 落地, 2026-09-01 全链体检发现 cron 悬空补挂): "
+                    "盘后统计 SHORT 指令标的当日盘中是否触及 SSR 线 (跌≥10% 相对昨收), "
+                    "给实盘化时门2 G2-2 (合规拒单) 提供先验分布。保守上界口径 "
+                    "(day_low≤prev_close×0.90, 触及≠指令时刻必处SSR)。标记写 "
+                    "raw_instruction_json.ssr_shadow, 幂等。8/1-8/24 悬空断档, "
+                    "8/25 起已回填 (16 条标记, 3 触及, 含 8/31 PCG 崩跌)。",
+        data_path="data/ftseek_us.db (playbook_instructions.raw_instruction_json.ssr_shadow)",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="无独立毕业门 — 先验分布采集: SHORT 指令日标记累计≥30 后, "
+                            "实盘化前供 RFC-062 G2-2 合规拒单门设计引用 (触及率分布)。",
+        eval_script="scripts/ssr_shadow_daily.py",
+        created="2026-08-02",
+        last_evaluated="2026-09-01",
+        verdict_history=[{"date": "2026-09-01", "verdict": "BACKFILL_DONE",
+                         "evidence": "体检发现悬空 (标记停在 7/31): 补挂 cron 25 6 * * 2-6 + "
+                                     "回填 8/25-8/31 共 16 条标记 (3 触及: 8/25×1, 8/31×2 含 PCG)"}],
+        notes="计数口径同 gap_chase_gate (DB 内标记, 注册表不计数, eval 现算); "
+              "脚本自带 MarketDataRouter 拉日K, 盘后任意时点可跑",
+    ),
 ]
 
 

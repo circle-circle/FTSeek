@@ -260,6 +260,14 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-09-01d (全链体检审计批 — Codex, 用户问"除交易结果外全链是否正常")
+
+**体检结论**: 七维扫描 (运行/调度/数据/业务/影子/工程/记录) 总体健康 — 近6小时零 Traceback/CRITICAL; 58 个 cron 脚本全存在; scheduler 零失败; DB integrity ok; 配置就绪 (路由关/影子开/RFC-071 地板 2500 生效); 全量 2227 passed。
+
+**修复**: 发现第二处悬空观察 `ssr_shadow_daily` (RFC-062 ④, 8/2 落地但**从未挂载**, 标记停在 7/31) → 补挂 cron `25 6 * * 2-6` + 回填 8/25-8/31 共 16 条标记 (3 触及 SSR, 含 8/31 PCG 崩跌) + 注册表登记 (防散落, 继昨日本批 B1 悬空修复后第二例)。
+
+**遗留 (不修, 仅记录)**: ①`playbook_user_feedback` 9 行 FK 孤儿 (6/18+7月遗留, 无害) ②两个已知存量测试失败 (hermes_job_prompts/ops_scripts_sync) ③`data/backups` 360M 为最大占用 (磁盘 49% 余量充足, 可择期轮转) ④0C 待裁项不变。
+
 ### 2026-09-01c (DEB-20260901 Phase C 三观察点立项: 防散落全注册 — Codex, 用户裁"要")
 
 **变更**: ①`scripts/gap_alignment_shadow.py` +source/mfe_pct 字段 +by_source 切片 +trade_id 幂等去重 (390 存量回填)。②`scripts/da_blocked_signal_cf_eval.py` 新建 (B14: DA 被拦方向性信号前瞻, 日K缓存只读, 基线 n=126 KEEP_SAMPLING, T+3/T+5 负向显著=拦得对方向)。③`shadow_registry.py` +3 注册 (pullback_limit_shadow/gap_alignment/da_blocked_cf)。④cron +2 (06:10 gap_chase_gate_eval 补 B1 悬空; 06:15 da_blocked_cf)。⑤落档: 判据字典 B14+B1 补注 / 回放台账 4 脚本 / DEB §十一 / handoff。
