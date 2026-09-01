@@ -3818,6 +3818,37 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         else:
                             _new_entry = _bid
 
+                        # [DEB-20260901 选项1② · ADR-035] archetype 路由 (默认关闭, 零行为变更):
+                        #   PULLBACK_LIMIT/FADE_SHORT 指令 entry 锚定确认位, 下单走限价+TTL。
+                        #   SL/TP/sizing 随之锚确认位 (与 DA thesis 语义一致)。
+                        _arch_route = None
+                        try:
+                            from app.playbook.entry_routing import resolve_route
+                            _arch_route = resolve_route(
+                                inst.get("raw_instruction_json"), _dir, _new_entry, pb_cfg)
+                        except Exception as _ar_err:
+                            logger.warning(
+                                f"[playbook] {inst['symbol']} archetype 路由解析异常 (回退市价现状): {_ar_err}")
+                            _arch_route = None
+                        if _arch_route and _arch_route.get("action") == "skip":
+                            db.update_instruction_tracking(inst["id"], {
+                                "skip_reason": _arch_route.get("reason", "archetype_level_conflict")})
+                            _emit_exec_gate_audit(inst, action="skipped_archetype_conflict",
+                                                  entry=_new_entry, size=inst.get("position_size") or 0,
+                                                  notional=0.0, extra={"route": _arch_route})
+                            logger.warning(
+                                f"[playbook] {inst['symbol']} archetype 价位矛盾: "
+                                f"确认位 {_arch_route.get('limit_price')} vs 禁追线 "
+                                f"{_arch_route.get('chase_cap_price')}, 终态跳过")
+                            skipped_count += 1
+                            continue
+                        if _arch_route and _arch_route.get("action") == "limit":
+                            logger.info(
+                                f"[playbook] {inst['symbol']} archetype 路由: {_arch_route['archetype']} "
+                                f"市价 ${_new_entry:.2f} → 确认位限价 ${_arch_route['limit_price']:.2f} "
+                                f"TTL={_arch_route['ttl_seconds']:.0f}s")
+                            _new_entry = float(_arch_route["limit_price"])
+
                         # 优先用真实 ATR 计算 atr_pct, 未取到则回退到 ctx 中的 atr_percent
                         # 2026-07-16 P1 修复: ATR=0 时保留 instruction 原始 SL/TP, 不用固定 fallback 覆盖.
                         #   根因: 盘前生成 instruction 时 ATR 可用 (vol_bucket 正确匹配),
@@ -4059,6 +4090,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             "reprice_to": round(_new_entry, 2),
                             "reprice_original_sl": round(float(inst.get("stop_loss", 0) or 0), 2),
                         }
+                        # [DEB-20260901 选项1②] 路由随下单参数透传 (update_instruction_tracking
+                        #   白名单外键自动忽略, 仅 execute_instruction 消费)。
+                        if _arch_route and _arch_route.get("action") == "limit":
+                            _reprice_params["archetype_route"] = _arch_route
                         # 更新 DB 记录 re-priced 值 (审计可追溯)
                         db.update_instruction_tracking(inst["id"], _reprice_params)
                         # 2026-07-16: 盘中数据质量护栏 — 记录 re-price 时的数据完整性
@@ -4202,8 +4237,13 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
                 else:
                     skipped_count += 1
-                    _audit_action = "skipped_fail"
-                    errors.append(f"{inst['symbol']}: {result.get('message', 'unknown')}")
+                    if result.get("ttl_expired"):
+                        # [DEB-20260901 选项1②] 路由限价 TTL 到期放弃 = 设计内终态, 非执行失败
+                        _audit_action = "skipped_ttl_expired"
+                        logger.info(f"[playbook] ⏳ {inst['symbol']} 路由限价 TTL 到期放弃 (影子遥测已落)")
+                    else:
+                        _audit_action = "skipped_fail"
+                        errors.append(f"{inst['symbol']}: {result.get('message', 'unknown')}")
             except Exception as e:
                 skipped_count += 1
                 _audit_action = "error"
@@ -4443,7 +4483,12 @@ def _calc_intraday_vol_ratio(data_router, symbol: str,
 #   原先只有 'thesis_drift_invalidate' 一个值, 硬编码在 auto_execute 头检与
 #   _check_intraday_trigger 头检两处; 新增 tripwire 核销 (scripts/tripwire_checker.py)
 #   后需要第二个可归因的值, 集中定义避免两处守卫漏更新。
-INVALIDATED_SKIP_REASONS = frozenset({"thesis_drift_invalidate", "TRIPWIRE_INVALIDATED"})
+# [DEB-20260901 选项1②] archetype 路由三种终态跳过并入集合 —
+#   TTL 过期放弃的指令不得下轮重触发重挂 (thesis 首腿窗口已过)。
+INVALIDATED_SKIP_REASONS = frozenset({
+    "thesis_drift_invalidate", "TRIPWIRE_INVALIDATED",
+    "archetype_ttl_expired", "archetype_level_conflict", "archetype_order_dead",
+})
 
 
 def _calc_vwap_slope(data_router, symbol: str, window: int = 5) -> Optional[float]:

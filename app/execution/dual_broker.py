@@ -251,6 +251,30 @@ class DualBrokerAdapter:
             logger.exception(f"[DualBroker] submit_order 异常 {order.symbol}: {e}")
             return {"success": False, "error": str(e), "futu_order_id": ""}
 
+    def cancel_order(self, futu_order_id: str, target_env: str = "sim") -> Dict[str, Any]:
+        """撤单 (尽力而为) — [DEB-20260901 选项1②] 入场限价路由 TTL 到期撤单用。
+
+        与 close_position 限价腿同款 modify_order(CANCEL) 语义。撤单请求与成交
+        之间存在竞态窗 — 调用方须在撤单后复查订单状态 (可能已成交)。
+
+        Returns: {"success": bool, "error": str}
+        """
+        try:
+            from futu import ModifyOrderOp, RET_OK
+            ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.modify_order(
+                    modify_order_op=ModifyOrderOp.CANCEL, order_id=str(futu_order_id),
+                    qty=0, price=0, trd_env=trd_env,
+                    acc_id=int(acc_id) if acc_id else 0,
+                )
+            if ret != RET_OK:
+                return {"success": False, "error": f"modify_order CANCEL 失败: {data}"}
+            return {"success": True, "error": ""}
+        except Exception as e:
+            logger.warning(f"[DualBroker] cancel_order 异常 {futu_order_id}: {e}")
+            return {"success": False, "error": str(e)}
+
     def close_position(self, symbol: str, qty: float, direction_held: str,
                        target_env: str = "sim", limit_price: float = 0.0,
                        limit_timeout_s: float = 8.0) -> Dict[str, Any]:

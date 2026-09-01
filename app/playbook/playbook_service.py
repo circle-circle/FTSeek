@@ -953,6 +953,12 @@ class PlaybookService:
             except Exception as _e:
                 logger.debug(f"[playbook] decision_id lookup failed: {_e}")
 
+        # [DEB-20260901 选项1②] archetype 路由提取 (pipeline 经 custom_params 携带;
+        #   默认关闭/未携带 = None, 下单走市价现状, 零行为变更)。
+        _route_exec = custom_params.get("archetype_route") if isinstance(custom_params, dict) else None
+        if not (isinstance(_route_exec, dict) and _route_exec.get("action") == "limit"):
+            _route_exec = None
+
         # ── broker 路径 (futu_simulate / live 统一): target_env 由 AUTO_TRADE_ACCOUNT 决定 ──
         # 2026-06-24 修复: 之前 futu_simulate/live 各写死 target_env, 与 switch_mode (写 AUTO_TRADE_ACCOUNT)
         # 不通 → 系统页切实盘时 playbook 仍在 sim. 现统一: target_env = AUTO_TRADE_ACCOUNT (sim|real).
@@ -969,26 +975,26 @@ class PlaybookService:
                 return self._execute_via_dual_broker(
                     inst, instruction_id, symbol, direction, entry_price, stop_loss,
                     take_profit, position_size, mos_direction, _matched_decision_id,
-                    target_env="sim",
+                    target_env="sim", archetype_route=_route_exec,
                 )
             if not _gate.get("graduated"):
                 logger.warning(f"[playbook] AUTO_TRADE_ACCOUNT=real 但未毕业, 降级 sim: {_gate.get('reason')}")
                 return self._execute_via_dual_broker(
                     inst, instruction_id, symbol, direction, entry_price, stop_loss,
                     take_profit, position_size, mos_direction, _matched_decision_id,
-                    target_env="sim",
+                    target_env="sim", archetype_route=_route_exec,
                 )
             return self._execute_via_dual_broker(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, _matched_decision_id,
-                target_env="real",
+                target_env="real", archetype_route=_route_exec,
             )
 
         # AUTO_TRADE_ACCOUNT=sim → 模拟盘真实下单 (futu_simulate, OKR 验证)
         return self._execute_via_dual_broker(
             inst, instruction_id, symbol, direction, entry_price, stop_loss,
             take_profit, position_size, mos_direction, _matched_decision_id,
-            target_env="sim",
+            target_env="sim", archetype_route=_route_exec,
         )
 
     # ── R-1 (2026-08-23 DEB-20260823): per-symbol 下单互斥 ──
@@ -1011,6 +1017,7 @@ class PlaybookService:
     def _execute_via_dual_broker(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
+        archetype_route=None,
     ):
         """per-symbol 互斥包装层 (R-1). 真实逻辑在 _execute_via_dual_broker_inner.
 
@@ -1028,6 +1035,7 @@ class PlaybookService:
             return self._execute_via_dual_broker_inner(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, matched_decision_id, target_env,
+                archetype_route=archetype_route,
             )
         finally:
             _lock.release()
@@ -1035,6 +1043,7 @@ class PlaybookService:
     def _execute_via_dual_broker_inner(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
+        archetype_route=None,
     ):
         """sim/live 共用执行路径 (Phase 2 无缝统一, 2026-06-24).
 
@@ -1299,13 +1308,27 @@ class PlaybookService:
             # DEB-20260721 R4: debug→warning — fail-open 失明必须可观测可计数 (grep "新鲜度门异常").
             logger.warning(f"[playbook] {symbol} 数据新鲜度门异常 (fail-open 放行): {_fresh_e}")
 
-        _order = Order(
-            symbol=symbol,
-            direction=Direction.LONG if direction == "BUY" else Direction.SHORT,
-            order_type=OrderType.MARKET,
-            quantity=int(position_size) if position_size else 1,
-            price=0.0,  # 市价单
-        )
+        # [DEB-20260901 选项1② · ADR-035] archetype 路由: execute_instruction 从
+        #   custom_params 提取后经参数透传 (本作用域无 custom_params)。默认关闭/
+        #   未携带 = None → 市价现状, 零行为变更。
+        _route = archetype_route if (isinstance(archetype_route, dict)
+                                     and archetype_route.get("action") == "limit") else None
+        if _route:
+            _order = Order(
+                symbol=symbol,
+                direction=Direction.LONG if direction == "BUY" else Direction.SHORT,
+                order_type=OrderType.LIMIT,
+                quantity=int(position_size) if position_size else 1,
+                price=float(_route["limit_price"]),  # 确认位限价
+            )
+        else:
+            _order = Order(
+                symbol=symbol,
+                direction=Direction.LONG if direction == "BUY" else Direction.SHORT,
+                order_type=OrderType.MARKET,
+                quantity=int(position_size) if position_size else 1,
+                price=0.0,  # 市价单
+            )
         _order.metadata = {"playbook_instruction_id": instruction_id, "source": f"playbook_{_mode_label}"}
         _order.client_order_id = f"pb_{instruction_id}_{target_env}"
 
@@ -1330,11 +1353,24 @@ class PlaybookService:
             return {"success": False, "message": f"{_mode_label} 下单失败: {_result.get('error')}"}
 
         _futu_id = _result.get("futu_order_id", "")
+        # [DEB-20260901 选项1② · ADR-035] 路由限价单: TTL 内等待成交, 到期撤单放弃
+        #   (绝不市价追)。成交真相源与市价路径确认窗同源 (order_list_query.dealt_*)。
+        #   proceed=True → _fill>0, 下方兜底链自然空转; 终态失败 → 记 skip 返回。
         # 2026-06-27 辩论DEB-20260627: _fill=0时不fallback到entry_price
         # ponytail: 1次查询, 失败则warning+拒绝(不sleep阻塞批量路径)
-        _fill = _result.get("filled_price", 0) or 0
-        _confirm_dqty = 0.0  # 2026-07-27: 确认窗带回的真成交量 (未走确认分支时为 0)
-        _entry_price_source = "broker_deal" if _fill > 0 else "unknown"
+        if _route:
+            _rt = self._handle_routed_fill_wait(
+                _futu_id, target_env, _route, instruction_id, symbol,
+                int(position_size) if position_size else 1, _mode_label, direction)
+            if not _rt.get("proceed"):
+                return _rt["result"]
+            _fill = _rt["fill_price"]
+            _confirm_dqty = _rt["dealt_qty"]
+            _entry_price_source = _rt["price_source"]
+        else:
+            _fill = _result.get("filled_price", 0) or 0
+            _confirm_dqty = 0.0  # 2026-07-27: 确认窗带回的真成交量 (未走确认分支时为 0)
+            _entry_price_source = "broker_deal" if _fill > 0 else "unknown"
         if not _fill or _fill <= 0:
             _fill = self._query_filled_price_for_order(_futu_id, target_env)
             if _fill > 0:
@@ -1820,6 +1856,171 @@ class PlaybookService:
         except Exception as e:
             logger.warning(f"[playbook] 查成交价失败 {futu_order_id}: {e}")
         return 0.0
+
+    def _append_routed_shadow(self, row: Dict[str, Any]) -> None:
+        """[DEB-20260901 选项1②] 路由结果遥测落 pullback_limit_shadow.jsonl。
+
+        与 Phase B 影子同文件同 schema 版本 (type 区分), 次日重放脚本按 type 取行,
+        新增 type 不影响 trigger 行消费。写失败仅 warning (遥测不阻塞执行)。
+        """
+        try:
+            if "TEST" in str(row.get("symbol", "")).upper():
+                return  # 测试标的守卫 (遥测污染案军规)
+            from pathlib import Path as _Prt
+            import json as _json_rt
+            from datetime import datetime as _dt_rt
+            from app.utils.timezone import now_et as _now_et_rt
+            _prt_path = _Prt(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+            _prt_path.parent.mkdir(parents=True, exist_ok=True)
+            row = {"ts": _dt_rt.now(_now_et_rt()).isoformat(timespec="seconds"),
+                   "schema": "v1", **row}
+            with open(_prt_path, "a", encoding="utf-8") as _f_rt:
+                _f_rt.write(_json_rt.dumps(row, ensure_ascii=False) + "\n")
+        except Exception as _rt_err:
+            logger.warning(f"[archetype路由] 影子遥测落盘失败: {_rt_err}")
+
+    def _handle_routed_fill_wait(self, futu_order_id: str, target_env: str,
+                                  route: Dict, instruction_id: int, symbol: str,
+                                  req_qty: int, mode_label: str,
+                                  direction: str = "BUY") -> Dict[str, Any]:
+        """[DEB-20260901 选项1② · ADR-035] 路由限价单 TTL 等待 → 成交或撤单放弃。
+
+        语义 (绝不降级市价, 消除"低吸变追高"的机制性根因):
+          - TTL 内 FILLED_ALL      → proceed, 按 dealt_avg_price 真价记账。
+          - TTL 到期部分成交       → 撤余单, 按已成交量记账 (与市价路径部分成交同口径)。
+          - TTL 到期零成交         → 撤单 + 竞态复查 → skip_reason=archetype_ttl_expired 终态。
+          - 等待中 FAILED/CANCELLED/REJECTED → skip_reason=archetype_order_dead 终态。
+        真相源 = order_list_query.order_status/dealt_qty (与 _confirm_order_filled、
+        close_position 平仓侧同源)。阻塞上限 = route.ttl_seconds (默认 300s,
+        与 auto_execute 5 分钟节拍同量级; 退出监控有独立快循环不受牵连)。
+        """
+        from futu import RET_OK
+        from app.execution.dual_broker import get_dual_broker
+        _dual = get_dual_broker()
+        ctx, acc_id, trd_env, lock = _dual._ctx_and_acc(target_env)
+        _ttl = float(route.get("ttl_seconds", 300.0))
+        _limit_px = float(route.get("limit_price", 0))
+        _arch = route.get("archetype", "")
+        _deadline = time.time() + _ttl
+        _last_status = "UNKNOWN"
+
+        def _skip_terminal(reason: str, message: str, extra: Dict = None) -> Dict[str, Any]:
+            """终态跳过: 释放执行占位 + 落 skip_reason + 遥测 + 返回失败结果。"""
+            try:
+                self.db.release_execution_claim(instruction_id)
+            except Exception as _rel_err:
+                logger.warning(f"[archetype路由] {symbol} 释放执行占位失败: {_rel_err}")
+            try:
+                self.db.update_instruction_tracking(instruction_id, {"skip_reason": reason})
+            except Exception as _sk_err:
+                logger.warning(f"[archetype路由] {symbol} skip_reason 落库失败: {_sk_err}")
+            _row = {"date": (inst_date or ""), "type": reason, "inst_id": instruction_id,
+                    "symbol": symbol, "direction": ("SHORT" if str(direction).upper() in ("SHORT", "SELL_SHORT")
+                                                     else "LONG"),
+                    "entry_archetype": _arch, "limit_price": _limit_px,
+                    "ttl_seconds": _ttl, "futu_order_id": str(futu_order_id),
+                    "order_status": _last_status}
+            if extra:
+                _row.update(extra)
+            self._append_routed_shadow(_row)
+            logger.info(f"[archetype路由] {symbol} {_arch} 限价@{_limit_px} 终态={reason} "
+                        f"(status={_last_status}, ttl={_ttl:.0f}s, futu={futu_order_id})")
+            _res = {"success": False, "message": message}
+            if reason == "archetype_ttl_expired":
+                _res["ttl_expired"] = True
+            return {"proceed": False, "result": _res}
+
+        # 指令日期 (遥测用; 取不到留空)
+        inst_date = ""
+        try:
+            _inst_row = self._find_instruction_by_id(instruction_id)
+            inst_date = str((_inst_row or {}).get("date", "") or "")
+        except Exception:
+            pass
+
+        def _query_once():
+            """→ (status, dealt_qty, dealt_avg_price); 查询异常返回 (None, 0, 0)。"""
+            try:
+                with lock:
+                    ret_od, od_data = ctx.order_list_query(
+                        order_id=str(futu_order_id), trd_env=trd_env)
+                if ret_od == RET_OK and od_data is not None and not od_data.empty:
+                    _r = od_data.iloc[0]
+                    _dq = float(_r.get("dealt_qty", 0) or 0)
+                    try:
+                        _da = float(_r.get("dealt_avg_price", 0) or 0)
+                    except Exception:
+                        _da = 0.0
+                    return str(_r.get("order_status", "")), _dq, _da
+            except Exception as _q_err:
+                logger.debug(f"[archetype路由] {symbol} 订单查询异常: {_q_err}")
+            return None, 0.0, 0.0
+
+        # ── TTL 窗口轮询 (2s 间隔, 对 broker API 温和) ──
+        while time.time() < _deadline:
+            _status, _dealt, _davg = _query_once()
+            if _status is not None:
+                _last_status = _status
+                if "FILLED_ALL" in _status:
+                    _fill_px = _davg if _davg > 0 else _limit_px
+                    logger.info(f"[archetype路由] {symbol} {_arch} 限价@{_limit_px} 全部成交 "
+                                f"@{_fill_px} qty={_dealt} (futu={futu_order_id})")
+                    self._append_routed_shadow(
+                        {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
+                         "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
+                         "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
+                         "wait_seconds": round(_ttl - max(0.0, _deadline - time.time()), 1),
+                         "futu_order_id": str(futu_order_id)})
+                    return {"proceed": True, "fill_price": _fill_px,
+                            "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
+                if any(_k in _status for _k in
+                       ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
+                    return _skip_terminal(
+                        "archetype_order_dead",
+                        f"{mode_label} {symbol} 路由限价单被拒/已撤 (status={_status}), 放弃不追单")
+            time.sleep(2.0)
+
+        # ── TTL 到期: 撤单 + 竞态复查 ──
+        _status, _dealt, _davg = _query_once()
+        if _status is not None:
+            _last_status = _status
+        if _dealt >= req_qty or "FILLED_ALL" in (_last_status or ""):
+            # 到期瞬间恰好全成 — 无需撤单
+            _fill_px = _davg if _davg > 0 else _limit_px
+            self._append_routed_shadow(
+                {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
+                 "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
+                 "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
+                 "wait_seconds": _ttl, "futu_order_id": str(futu_order_id)})
+            return {"proceed": True, "fill_price": _fill_px,
+                    "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
+
+        _cancel_res = _dual.cancel_order(str(futu_order_id), target_env)
+        if not _cancel_res.get("success"):
+            logger.warning(f"[archetype路由] {symbol} 撤单失败 (继续按放弃处理): {_cancel_res.get('error')}")
+        time.sleep(2.0)  # 等撤单传播, 随后竞态复查
+
+        # 竞态复查: 撤单请求与成交之间可能交叉 — 复查到成交则按成交记账
+        _status2, _dealt2, _davg2 = _query_once()
+        if _status2 is not None:
+            _last_status = _status2
+        _fin_dealt = max(_dealt, _dealt2)
+        if _fin_dealt > 0 and (_davg2 > 0 or _davg > 0):
+            _fill_px = _davg2 if _davg2 > 0 else _davg
+            logger.info(f"[archetype路由] {symbol} TTL 到期部分成交 {_fin_dealt}/{req_qty}, "
+                        f"撤余单后按已成交量记账 @{_fill_px}")
+            self._append_routed_shadow(
+                {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
+                 "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
+                 "fill_price": _fill_px, "filled_qty": _fin_dealt, "ttl_seconds": _ttl,
+                 "wait_seconds": _ttl, "partial": True,
+                 "futu_order_id": str(futu_order_id)})
+            return {"proceed": True, "fill_price": _fill_px,
+                    "dealt_qty": _fin_dealt, "price_source": "routed_limit_deal"}
+
+        return _skip_terminal(
+            "archetype_ttl_expired",
+            f"{mode_label} {symbol} 路由限价@{_limit_px} {_ttl:.0f}s 未成交, 已撤单放弃 (绝不市价追)")
 
     def _confirm_order_filled(self, futu_order_id: str, target_env: str,
                               max_wait_s: float = 5.0) -> tuple:

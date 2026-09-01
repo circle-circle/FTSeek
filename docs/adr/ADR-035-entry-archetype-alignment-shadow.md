@@ -49,3 +49,30 @@ dataclass +3 字段, bridge→vote→Instruction→raw_instruction_json 全链�
 
 全量 2206 passed / 2 failed (两失败均为存量: Hermes job 内嵌 SQL 哨兵 +
 ops 脚本同步哨兵, 非本批引入)。重启冒烟 7 条断言全绿零 Traceback。
+
+## 追加 (2026-09-01, 用户裁"同意"): 选项1② 弹药先行 — 执行路由代码默认关闭入库
+
+用户追问"是否可直接应用进 sim", 裁决讨论结论: **不盲切, 但把等待成本降到零** —
+执行层路由代码先写好藏在默认关闭开关后, 影子判据一过即 `true`+重启进 sim, 零再开发延迟。
+
+**新增 (开关 `playbook.entry_archetype_routing_enabled: false`, 默认关闭)**:
+- `app/playbook/entry_routing.py` — 纯函数路由解析: `PULLBACK_LIMIT`/`FADE_SHORT`
+  + 有效 `confirmation.price_level` → 确认位限价路由; `BREAKOUT`/无字段/偏离现价
+  >25%/价位与禁追线矛盾 → 现状或终态跳过。TTL = min(配置 300s, DA ttl_min×60)。
+- `app/playbook/playbook_service.py` — 路由指令以 `OrderType.LIMIT@确认位` 入场;
+  `_handle_routed_fill_wait` TTL 状态机: 全成→按 dealt_avg_price 真价记账 /
+  到期部分成交→撤余单按已成交量记账 / 到期零成交→撤单+竞态复查+
+  `skip_reason=archetype_ttl_expired` 终态 / 订单被拒→`archetype_order_dead` 终态。
+  **绝不降级市价** (消除"低吸变追高"机制根因)。真相源=order_list_query,
+  与入场确认窗/平仓限价腿同源。
+- `app/execution/dual_broker.py::cancel_order` — 撤单 API (尽力而为, 竞态由调用方复查)。
+- `app/playbook/pipeline.py` — re-price 处路由决策 (SL/TP/sizing 锚确认位);
+  三种终态跳过并入 `INVALIDATED_SKIP_REASONS` 防重触发; TTL 过期不计执行失败。
+- 阻塞边界声明: 路由单同步等待上限 = TTL (300s, 与 auto_execute 5min 节拍同量级);
+  退出监控为独立 20s 快循环, 不受牵连。
+
+**验证**: 契约测试 21 例 (`tests/test_entry_archetype_routing.py`: 路由判定 11 +
+下单构造 2 + 状态机 5 + 默认值 3) + 定向回归 191 过 + 全量 2227 passed/2 存量失败。
+
+**启用门**: 影子判据 (首批判读 9/2 05:47) 三条全过 → 用户裁决 → 开关翻 `true`。
+未过之前任何翻 true 均违反本 ADR 预注册。

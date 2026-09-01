@@ -1284,6 +1284,14 @@ playbook:
   #   次日由 scripts/cf_pullback_limit_replay.py 重放判 would-fill/CF-PnL;
   #   chase_cap 违例 (re-price 越过禁追线) 同文件分行遥测。回滚: 置 false + 重启。
   pullback_limit_shadow_enabled: true
+  # [DEB-20260901 选项1② 弹药先行 · ADR-035] 入场 archetype 路由开关 (默认关闭)。
+  #   true = PULLBACK_LIMIT/FADE_SHORT 指令以确认位限价单+TTL撤单入场 (不成交=放弃,
+  #   零市价追单, 消除"低吸变追高"机制根因); BREAKOUT/无 archetype 指令不受影响。
+  #   启用前提 = ADR-035 预注册判据全过 (影子判读, 首批 9/2 05:47)。回滚: 置 false + 重启。
+  entry_archetype_routing_enabled: false
+  # 路由限价单 TTL 上限 (秒); 实际 TTL = min(本值, confirmation.ttl_min×60)。
+  #   证据 = DEB-20260806 锚限价影子: 5分钟 TTL Δ+416.8/108对 vs 30分钟 TTL -224.4。
+  entry_archetype_ttl_seconds: 300
   admission:
     enabled: true
     enforce: true
