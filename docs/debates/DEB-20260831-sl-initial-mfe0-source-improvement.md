@@ -180,3 +180,9 @@
 - **修复**：`_extract_atr_from_instruction` 按 "atr_pct=" 键名识别百分比 → ×入场价转绝对价入库；旧格式/代理路径/历史行零变更；docstring 同步更正"承重声明"（原"退出逻辑不读此值"自 e32d376f 起失效）+ fail-safe：entry 缺失 → 0.0 → 规则0.5 回退固定 1%。契约测试 `tests/test_atr_source_unit_extraction.py` 9 例（新格式转绝对 str|dict 双入参 / 旧三格式不动 / vix_widen 后缀 / 代理零回归 / fail-safe / 端到端：LLY 修复后 -1.3% 存活 vs bug 形态 1% 地板被杀）。实数据干跑：4 笔修复后 tight 1.57–1.94%，ORCL/SAIC/8/28 历史代理逐值不变。
 - **KR2 口径**：yaml 键未动 → `exit-d1120a105711` 不变；代码级行为变更由本提交+本档追踪。exit_scorecard 切片以本提交为界——此前 real-ATR 行 meta.atr 为百分比口径，不可与修复后混切（全为已平仓行，切片影响仅限 4 笔）。
 - §8.7 可选增强 `atr_basis` 标记维持未实施（本批不扩，防 scope 蔓延；下次触及退出遥测的批次再议）。
+
+**[2026-09-02 §8.8 勘误 · Codex 复查批]**（原文保留；零影响结论不变，仅数字与机制表述更正）
+
+1. **"51/77 条带新格式（47 条 pending）"数字勘误**：以 `playbook_instructions.raw_instruction_json.atr_source` 含 "atr_pct=" 为准复现 = **5/77，且全部已执行（executed/triggered），新格式 pending = 0**；放宽到顶层 `atr_pct` 列非空亦仅 30 条；全量 pending 按口径为 62（未 executed）/59（未 triggered），均复现不出 51/47。"零前瞻暴露"结论在任何口径下成立（新格式 pending = 0；且解析发生在入场时，本修复先于任何 pending 指令的首次入场），仅数字更正。
+2. **"4 笔均规则部署前平仓"机制勘误**：部署完成 = 9/2 00:12:08 CST（= 9/1 12:12:08 ET）。LLY（10:03 ET）/BABA（10:17 ET）确在部署前平仓；**META（12:15:10 ET）/BWXT（12:13:34 ET）在部署后 1–3 分钟才平仓**——但两笔 mfe 2.88%/3.20% ≥ breakeven 门 0.5% 已武装，走 SL_TRAIL_LOCK 路径，规则 0.5 因 `not breakeven_triggered` 门从不参与，零已实现影响仍成立。精确表述 = 2 笔部署前平仓 + 2 笔部署后经规则 0.5 不参与的路径平仓。
+3. **测试计数**：`tests/test_atr_source_unit_extraction.py` 实为 **10 例**（上文"9 例"误计；19 passed = 10 + test_early_tight_sl_atr 7 + test_kr2_freeze_exemption 2）。
