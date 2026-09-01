@@ -300,6 +300,65 @@ def test_prompt_hash_differs_on_change():
     assert h1 != h2
 
 
+# ─── truncat_downshift (DEB-20260829 第12轮: 默认停用 + 失败入审计) ───
+
+_TRUNCATED = {"text": '{"surfaced": [{"symbol": "AA', "finish_reason": "length",
+              "tokens_in": 4538, "tokens_out": 8000, "raw": {}}
+_VALID = {"text": '{"valid": true}', "tokens_in": 5, "tokens_out": 5, "raw": {}}
+
+
+def test_length_truncation_skips_retry_by_default(mock_yaml, env_keys):
+    """9/1 UE 事故行为契约: length 截断 + schema 失败 → 默认不发同模型降档重试,
+    直接换 fallback (旧默认 ×0.5 重试对内容真超限数学上必死, 历史成功 0 次)。"""
+    calls = []
+
+    def mock_http(base_url, api_key, model_name, system, user, **kw):
+        calls.append((model_name, kw.get("max_tokens")))
+        return _TRUNCATED if model_name == "qwen3.6-plus" else _VALID
+
+    with patch("app.llm.model_call._http_call", side_effect=mock_http), \
+         patch("app.llm.model_call.time.sleep"):
+        res = call_llm("fallback_feature", "x", schema_required={"valid": bool})
+    assert res.success is True
+    assert res.fallback_used is True
+    # primary 恰 1 次调用 (无降档重试), fallback 1 次
+    assert calls.count(("qwen3.6-plus", 2000)) == 1
+    assert calls.count(("deepseek-v4-pro", 2000)) == 1
+
+
+def test_downshift_retry_failure_audited(mock_cfg, monkeypatch, env_keys):
+    """显式回滚开启 retry_downshift_enabled: 重试失败必须入 audit 且带可辨识标记
+    (原仅成功路径记录 — 9/1 双臂各 ~59s 白费完全不可观测)。"""
+    import app.llm.model_call as mc
+    cfg2 = dict(mock_cfg)
+    cfg2["retry_downshift_enabled"] = True
+    monkeypatch.setattr(mc, "_get_llm_config", lambda: cfg2)
+
+    audits = []
+    monkeypatch.setattr(mc, "_record_audit",
+                        lambda feature, res, prompt: audits.append((feature, res.error)))
+
+    calls = []
+
+    def mock_http(base_url, api_key, model_name, system, user, **kw):
+        calls.append((model_name, kw.get("max_tokens")))
+        return _TRUNCATED if model_name == "qwen3.6-plus" else _VALID
+
+    with patch("app.llm.model_call._http_call", side_effect=mock_http), \
+         patch("app.llm.model_call.time.sleep"):
+        res = call_llm("fallback_feature", "x", max_tokens=8000,
+                       schema_required={"valid": bool})
+    assert res.success is True
+    assert res.fallback_used is True
+    # primary 首调 8000 + 降档重试 4000 + fallback
+    assert calls.count(("qwen3.6-plus", 8000)) == 1
+    assert calls.count(("qwen3.6-plus", 4000)) == 1
+    # 首调 schema 失败 + 降档重试失败 均入 audit
+    errs = [a[1] for a in audits]
+    assert any(e and e.startswith("schema_failed_on_") for e in errs)
+    assert any(e and e.startswith("downshift_retry_schema_failed_on_") for e in errs)
+
+
 # ─── CallResult ___bool__ ───
 def test_callresult_truthy():
     assert bool(CallResult(success=True)) is True

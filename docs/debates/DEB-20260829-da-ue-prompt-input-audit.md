@@ -205,10 +205,17 @@
 - 依据: DashScope live probe 实收 12000/16000 (均 finish=stop); 实测速率 ~77 tok/s → 满载 16000 ≈210s (glm) / ~230s (deepseek) 仍在实体 timeout=300 内; 截断降档底线 `16000*0.5=8000` 恰为旧上限 (降档不再劣于修复前)。
 - **当夜恢复**: 21:42 手动复刻 cron 链补跑 `scan && inject && push` (与 10 21 定时任务逐字同命令; 当晚链在 scan 即断, inject/push 零执行 → 无重复推送风险), 结果见本轮末尾。
 
-**暴露 (不修, 如实披露, 待用户裁决)**:
-1. **truncat_downshift 对"真超长输出"是反向操作**: `model_call.py:423-452` 在 schema_failed+length 时先同模型 `max_tokens*0.5` 重试再走 fallback — 对"JSON 烂了重写更短"有效, 对"内容本来就需要 >8000 tok"是必死 (预算减半截断更早)。**本次实弹确认双臂各触发一次**: glm 审计失败 21:12:49 → deepseek 开跑 21:13:48, 间隔 59s ≈ 4000 tok @77tok/s = 降档重试耗时且失败; 该重试失败**不入 audit** (仅成功降档 :449 记录), 浪费 ~110s 且不可观测。留待裁决 (候选: 降档重试失败也记 audit + length 时改为升档或直接换模型)。
-2. **scan 失败无告警**: 失败仅打印日志 + exit 1, `&&` 链静默断, 无人知晓直到次日人工发现 (本次即如此)。候选方案: scan 失败分支接飞书告警 (与 DEB-20260901 判读报告同通道), 未实施。
+**暴露 (当夜如实披露, 用户裁"1.同意 2.同意"后同夜执行, 见下节)**:
+1. **truncat_downshift 对"真超长输出"是反向操作**: `model_call.py:423-452` 在 schema_failed+length 时先同模型 `max_tokens*0.5` 重试再走 fallback — 对"JSON 烂了重写更短"有效, 对"内容本来就需要 >8000 tok"是必死 (预算减半截断更早)。**本次实弹确认双臂各触发一次**: glm 审计失败 21:12:49 → deepseek 开跑 21:13:48, 间隔 59s ≈ 4000 tok @77tok/s = 降档重试耗时且失败; 该重试失败**不入 audit** (仅成功降档 :449 记录), 浪费 ~110s 且不可观测。
+2. **scan 失败无告警**: 失败仅打印日志 + exit 1, `&&` 链静默断, 无人知晓直到次日人工发现 (本次即如此)。
 3. **UE 无 cache_on_fail** — 保持现状即正确 (24h 缓存兜底会推昨日信号), 仅记录设计意图。
+
+**裁决执行 (2026-09-01 深夜, 用户裁"1.同意 2.同意")**:
+1. **truncat_downshift 默认停用** (`app/llm/model_call.py`): 决策补两线硬证据 — ㊀机制历史成功 **0 次**: audit 全库 join (同 feature+prompt_hash, 先 length 截断失败行、后 success 行, 15min 窗) = 0 对, 触发面全历史仅 9/1 UE 双臂 2 次; ㊁升档方案架构性不可行: 唯一触发场景 UE 满载 16000 tok ≈210-230s, 再升必越实体 timeout=300。执行: `retry_downshift_enabled` 代码默认 **True→False** — length 截断不再同模型降档重试, 直接走 fallback 换模型; 代码路径保留, 回滚 = yaml `llm.retry_downshift_enabled: true`。**失败入 audit**: 降档重试失败 (API 失败/schema 仍败两态) 现均记录, 标记 `downshift_retry_failed_on_*` (保留底层错误) / `downshift_retry_schema_failed_on_*` — 原仅成功路径记录, 失败的 token 花费与耗时全不可观测, 真实成本现入账。
+2. **scan 失败飞书告警** (`scripts/llm_universe_scan.py` 新增 `_scan_fail_alert`): best-effort 接线三分支 — ①cmd_scan LLM 调用失败 ②call_llm 导入失败 ③main() scan 意外异常; 消息区分晚间 ("cron && 链已断: inject/push 未跑") 与午间影子 ("独立运行, 无下游 && 链", 不谎报); 告警自身失败只打印绝不改主链返回码; live 探针实发验证通道连通 (带测试标记)。
+3. cache_on_fail 维持不设 (设计正确, 仅记录)。
+
+**测试**: 新增 `tests/test_ue_scan_fail_alert.py` 6 例 (三分支告警触发+返回 1/best-effort 发送失败不抛/午间不误报链断) + `test_model_call.py` 2 例 (默认跳过降档直切 fallback 的调用数契约 / 显式回滚开启时重试失败入 audit 带标记); `test_llm_chain_fixes.py` L2-B 源码契约搜索串精确化 (模糊 find 首个命中被新审计标记 `downshift_retry_schema_failed_on_` 抢占 — 契约原意不变, 搜索 `res.error = f"schema_failed_on_` 精确锚点)。触及套件 356 passed (coordinator 254 + UE 102)。
 
 **验证**: UE 契约测试 99 passed (scan_batch_b/ruler_fixes/confirm_gate/streak_gate/contract_validator/evidence_grounding/now_et_dst/e1_shadow_date); py_compile 过。
 

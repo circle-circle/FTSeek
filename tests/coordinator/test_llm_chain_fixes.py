@@ -47,8 +47,9 @@ def test_l2b_schema_failure_records_audit():
     src = _read_src("app/llm/model_call.py")
 
     # schema 失败 continue 之前必须 _record_audit
-    # 找 schema_failed_on_ 上下文
-    idx = src.find("schema_failed_on_")
+    # 找 schema_failed_on_ 上下文 (精确到 res.error 赋值 — 第12轮 downshift_retry_schema_failed_on_
+    # 审计标记含同子串, 模糊 find 会误命中它, 见 DEB-20260829 第12轮)
+    idx = src.find('res.error = f"schema_failed_on_')
     assert idx > 0, "L2-B: schema 失败标记必须存在"
     # 同一函数内 schema_failed_on_ 后必须有 _record_audit (检查后续 200 字符)
     nearby = src[idx:idx + 500]

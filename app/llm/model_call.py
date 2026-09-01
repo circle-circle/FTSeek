@@ -419,9 +419,14 @@ def call_llm(
                 # 2026-07-25 (failure DEB B②, 双信号触发): schema 失败 且 finish_reason=length
                 #   → 同模型降 max_tokens 自救一次 (agent_bridge L1059 自救模式上提标准链).
                 #   仅双信号: 只 parse 失败=模型能力问题降无益; 只 length=输出可能完整可解。
-                #   降幅比例制 ×0.5 下限 1024 (非一刀切)。flag 回滚: llm.retry_downshift_enabled=false。
+                # [DEB-20260829 第12轮 2026-09-01, 用户裁"同意"] 默认翻 False 停用:
+                #   历史触发面仅 2 次 (均 9/1 UE 双臂, llm_audit 实证) 成功 0 次; ×0.5 对
+                #   "内容真超限"数学上必死 (输出 >C 则必 >C/2), 当晚双臂各耗 ~59s 全部白费;
+                #   升档方案同弃 — 唯一触发场景 UE 满载 16000 tok ≈210-230s, 再升必越实体
+                #   timeout=300。length 截断 → 直接走 fallback 换模型 (本分支自然落空)。
+                #   回滚: yaml llm.retry_downshift_enabled=true (代码路径保留, 失败现已入 audit)。
                 if (res.finish_reason == "length"
-                        and bool(cfg.get("retry_downshift_enabled", True))
+                        and bool(cfg.get("retry_downshift_enabled", False))
                         and (max_tokens or 0) > 1024):
                     _ds_tokens = max(1024, int((max_tokens or 2048) * 0.5))
                     logger.warning(
@@ -450,6 +455,15 @@ def call_llm(
                             if cache_on_fail and _ds_res.success:
                                 _save_cache(feature, _ds_res.response)
                             return _ds_res
+                        # 重试 API 成功但 schema 仍败 → 标记后入 audit
+                        _ds_res.error = f"downshift_retry_schema_failed_on_{alias}"
+                    else:
+                        # 重试 API 失败 → 保留底层错误 (timeout/network) 但打上重试标记
+                        _ds_res.error = f"downshift_retry_failed_on_{alias}: {_ds_res.error}"
+                    # [第12轮] 降档重试失败入 audit — 原仅成功路径记录, 失败的 token 花费
+                    #   与耗时完全不可观测 (9/1 双臂各 ~59s 白费即靠时间差推断)。真实成本
+                    #   应入账: 这些 token 确实花了。
+                    _record_audit(feature, _ds_res, prompt)
                 # schema 失败 → 视为本模型失败, 走 fallback
                 # L2-B 修复 (2026-05-19): schema 失败时记 audit 保留 raw response.
                 # 5/15 thesis_inferer 5 笔 100% 失败 (response_len=0), 但 raw 没保留 → 无法诊断.

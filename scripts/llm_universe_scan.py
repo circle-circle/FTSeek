@@ -1651,6 +1651,21 @@ def _annotate_emergence_streak(surfaced: List[Dict[str, Any]]) -> None:
             s.setdefault("emergence_streak_days", None)
 
 
+def _scan_fail_alert(reason: str, midday: bool = False) -> None:
+    """[DEB-20260829 第12轮·用户裁"同意"] scan 失败飞书告警 — cron && 链断的可见性补丁.
+
+    9/1 事故: 双臂 8000 tok 截断 → scan exit 1 → && 链静默断, inject/push 未跑,
+    直到人工次日发现。失败即推飞书 (与 DEB-20260901 判读报告同通道)。
+    best-effort: 告警自身失败只打印, 绝不影响主链返回码。"""
+    try:
+        from app.notifier.feishu import send_text
+        _chain = ("午间影子 scan (独立运行, 无下游 && 链)" if midday
+                  else "晚间 scan — cron && 链已断: inject/push 未跑, 当晚无 UE 指令")
+        send_text(f"⚠️ UE scan 失败 [{_today()}]: {reason}\n{_chain}\n排查: logs/universe_scan.log")
+    except Exception as e:
+        print(f"  [warn] scan 失败告警发送失败 (不阻断): {e}")
+
+
 def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
@@ -1671,6 +1686,7 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         from app.llm.model_call import call_llm
     except Exception as e:
         print(f"[scan] 无法导入 call_llm: {e}")
+        _scan_fail_alert(f"无法导入 call_llm: {e}", midday=midday)
         return 1
 
     # [ADR-016] live scan prompt 版本 config 驱动 (v1|v2); 默认 v1 安全回退,
@@ -1698,6 +1714,7 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
     if not res or not res.success:
         err = getattr(res, "error", "unknown") if res else "no_result"
         print(f"[scan] LLM 调用失败 (不落库, 不下单): {err}")
+        _scan_fail_alert(f"LLM 调用失败: {err}", midday=midday)
         return 1
 
     parsed = res.response if isinstance(res.response, dict) else {}
@@ -2732,6 +2749,9 @@ def main() -> int:
         import traceback
         print(f"⚠️ 执行异常 ({args.cmd}): {e}")
         traceback.print_exc()
+        # [DEB-20260829 第12轮] scan 的意外异常同样断 && 链 — 与 LLM 失败分支同告警
+        if args.cmd == "scan":
+            _scan_fail_alert(f"执行异常: {e}", midday=bool(getattr(args, "midday", False)))
         return 1
     return 0
 
