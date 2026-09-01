@@ -320,6 +320,15 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-09-01i (PE 卫生批 — Codex, 用户裁"核查确认无误后清理")
+
+**清理**: 删两个零引用模型别名 — ①`deepseek-flash` (features 零消费+全库零引用, DEEPSEEK_API_KEY 生产侧唯一消费方) ②`qwen-plus` (疑似引用逐一证伪: review_orchestrator 的 model 系 _call_llm_direct 死参数"忽略由 YAML 路由"/测试系自含 fixture/archive 用模型名字符串)。`qwen3.8-flash` 保留 (UE 文档化回滚目标)。
+
+**纪律边界**: 休眠但有接线的 ~25 个 feature 路由与仓内休眠 DA 路径不动 (8/31 死闸核查先例: 休眠≠死); census 存量 orphan 键 (65 项) 走其自身治理流程不并批 — 本次只清"证据确凿零引用"件。
+
+**验证**: 删后 features 消费全覆盖断言 + 全量 2267 passed/2 存量 + 仓外 skills 零运行时引用。提交 `d15f8a6f`。回滚: 恢复两实体块。
+
+
 ### 2026-09-01f (p1_3_vol_p50 裁杀 — Codex, 用户裁"按建议执行"=选项1)
 
 **裁决**: 挂载核对哨兵首跑捕获项处置 — p1_3_vol_p50 (量能门 p50 A/B, 8/23 立) 裁杀: 5 天仅 3 样本 + 8/28 后断流 + eval 从未挂载 = 触发条件生产中实际不存在, 攒样无意义。注册表翻 KILLED + verdict 留痕; 台账 phase1_gate_backtest.py 转候选退役。
