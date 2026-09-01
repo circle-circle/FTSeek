@@ -8,15 +8,20 @@
      (intraday_reentry-* = 再入场臂; 其余 = DA/其他臂)
 
 输出: 来源 × 夜数 × 最终结局 分组统计 + 修复率对比。只读, 幂等, 零副作用。
-挂载: 人工按需 / 可加入盘后复盘链 (待数据积累后)。
+挂载: cron 20 6 * * 2-6 (2026-09-01 复查收口补挂 — 判罪线此前只在 stdout 里,
+对周检/哨兵等一切自动化不可见; 注册表 overnight_kill_criterion / 判据字典 B15)。
+判罪线进度同步落盘 data/shadow/overnight_arm_report_latest.json (顶层 n=已平仓数,
+注册表计数锚; n≥20 时周检自动翻 READY_TO_EVALUATE 提请裁决)。
 """
 import json
 import sqlite3
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DB = REPO / "data" / "ftseek_us.db"
+OUT_JSON = REPO / "data" / "shadow" / "overnight_arm_report_latest.json"
 
 
 def norm_et_date(ts: str) -> str:
@@ -46,6 +51,17 @@ def norm_et_date(ts: str) -> str:
     except Exception:
         # 兜底: 纯日期前缀 (无法解析时不误伤)
         return s[:10]
+
+
+def kill_criterion_state(closed_n: int, repair_rate_pct: float | None) -> str:
+    """w_week 臂判罪线机械判定 (2026-08-29 用户裁"5批" 预注册, 判据字典 B15):
+
+    已平仓 n≥20 且修复率(结局 pnl>0)<40% → KILL_LINE_HIT (提请裁排除
+    loser_overnight_enabled); n≥20 且≥40% → REPAIR_RATE_OK (维持); 其余攒样。
+    未满 n=20 前只报数不动作 (防小样本冲动裁决, 与再入场臂判据同法)。"""
+    if closed_n < 20 or repair_rate_pct is None:
+        return "KEEP_SAMPLING"
+    return "KILL_LINE_HIT" if repair_rate_pct < 40 else "REPAIR_RATE_OK"
 
 
 def main():
@@ -117,15 +133,36 @@ def main():
     ww_closed = [r for (r, a) in ww if r["exit_time"]]
     ww_rec = sum(1 for r in ww_closed if (r["pnl"] or 0) > 0)
     ww_pnl = sum((r["pnl"] or 0) for r in ww_closed)
+    _rate = (ww_rec / len(ww_closed) * 100) if ww_closed else None
+    state = kill_criterion_state(len(ww_closed), _rate)
     if ww_closed:
-        _rate = ww_rec / len(ww_closed) * 100
-        _verdict = ("⚠️ 已达判罪线, 提请裁决" if len(ww_closed) >= 20 and _rate < 40
+        _verdict = ("⚠️ 已达判罪线, 提请裁决" if state == "KILL_LINE_HIT"
                     else "攒样中" if len(ww_closed) < 20 else "修复率达标")
         print(f"【预注册判据跟踪】w_week 臂已平 n={len(ww_closed)} 修复率={_rate:.0f}% "
               f"净PnL=${ww_pnl:+.1f} → {_verdict} (判据: n≥20 且修复率<40% → 裁排除)")
     else:
         print(f"【预注册判据跟踪】w_week 臂已平 n=0 (台账 {len(ww)} 笔持仓中) "
               f"(判据: n≥20 且修复率<40% → 裁排除)")
+
+    report = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "n": len(ww_closed),  # 注册表计数锚 (min_n=20)
+        "w_week": {"holding": len(ww) - len(ww_closed), "closed": len(ww_closed),
+                   "repaired": ww_rec,
+                   "repair_rate_pct": round(_rate, 1) if _rate is not None else None,
+                   "net_pnl": round(ww_pnl, 2)},
+        "criterion": "w_week 臂已平 n≥20 且修复率<40% → 裁排除 loser_overnight_enabled "
+                     "(2026-08-29 用户裁'5批' 预注册; 判据字典 B15)",
+        "verdict": state,
+        "marked_total": len(marked), "hist_total": len(hist),
+        "reentry_multi_n": len(re_multi),
+    }
+    OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+    OUT_JSON.write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    print(f"\n[overnight-arm] 判罪线进度已落盘 {OUT_JSON.relative_to(REPO)}: "
+          f"n={report['n']}/20 修复率={report['w_week']['repair_rate_pct']}% "
+          f"verdict={state}")
 
 
 if __name__ == "__main__":

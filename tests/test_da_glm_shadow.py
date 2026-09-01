@@ -5,12 +5,13 @@
 """
 import json
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.da_glm_shadow_eval import (  # noqa: E402
-    MIN_N_SHORT, evaluate, is_tainted, load_rows)
+    CRON_MARKER, MIN_N_SHORT, _self_remove_cron, evaluate, is_tainted, load_rows)
 from app.playbook.shadow_registry import REGISTRY, ShadowStatus  # noqa: E402
 
 
@@ -79,4 +80,39 @@ def test_registry_pin():
     assert it.eval_script == "scripts/da_glm_shadow_eval.py"
     assert "PROMOTE_PROPOSAL" in it.graduation_criteria
     assert "n≥20" in it.graduation_criteria  # 9.5 判据③降级钉住
+    # 2026-09-01 复查收口: live-only 计数口径钉住 (原 lines 把 test 行计入)
+    assert it.count_mode == "where:run_mode=live"
     assert (Path(__file__).resolve().parents[1] / it.eval_script).exists()
+
+
+# ── 一次性裁决 cron 自删 (2026-09-01 复查收口: eval 补挂 9/15 一次性机械裁决) ──
+
+def _fake_crontab(monkeypatch, cur_text):
+    installed = {}
+
+    def fake_run(cmd, **kw):
+        if cmd[:2] == ["crontab", "-l"]:
+            return types.SimpleNamespace(stdout=cur_text)
+        if cmd[:1] == ["crontab"]:
+            installed["text"] = kw.get("input")
+            return types.SimpleNamespace(stdout="")
+        raise AssertionError(f"unexpected cmd: {cmd}")
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return installed
+
+
+def test_self_remove_cron_removes_marker_line(monkeypatch):
+    cur = ("0 5 * * 1 job_stays\n"
+           f"35 6 15 9 * ... scripts/da_glm_shadow_eval.py ... # {CRON_MARKER}\n")
+    installed = _fake_crontab(monkeypatch, cur)
+    msg = _self_remove_cron()
+    assert "已自删" in msg
+    assert installed["text"] == "0 5 * * 1 job_stays\n"
+    assert CRON_MARKER not in installed["text"]
+
+
+def test_self_remove_cron_noop_when_absent(monkeypatch):
+    _fake_crontab(monkeypatch, "0 5 * * 1 job_stays\n")
+    assert "未找到" in _self_remove_cron()

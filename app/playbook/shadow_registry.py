@@ -23,8 +23,15 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 from enum import Enum
+
+# 挂载核对哨兵的 cron 解析面 (2026-09-01 复查收口): /etc/cron.d 内含点号文件名同样被
+# Alinux8 cronie 执行 (401bedcb 僵尸 cron 38 天教训), 核对面必须覆盖目录内全部文件,
+# 不能只看 crontab -l。测试可 monkeypatch 这两个常量注入临时目录。
+_ETC_CRONTAB = Path("/etc/crontab")
+_ETC_CRON_D = Path("/etc/cron.d")
 
 
 class ShadowStatus(str, Enum):
@@ -125,6 +132,10 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/futu_channel_shadow_eval.py",
         created="2026-08-12",
         last_evaluated="2026-08-29",
+        # eval=裁点手动触发 (runner ops/hermes/futu_channel_adjudication_run.py 自身无
+        # cron, 8/24 与 8/29 两轮均为手动) — 2026-09-01 复查收口显式定性, 不再靠
+        # 源码文本碰巧豁免挂载核对; 样本到量由周检 READY 通知触发裁决。
+        eval_on_demand=True,
         verdict_history=[
             {"date": "2026-08-24", "verdict": "WEAK_EVIDENCE",
              "evidence": "ic=0.1188 t=1.49 n_pairs=157 oos同号(0.194/0.086) 未显著"},
@@ -176,6 +187,8 @@ REGISTRY: list[ShadowItem] = [
                             "评估: scripts/futu_channel_shadow_eval.py (与通道 B 联动)。",
         eval_script="scripts/futu_channel_shadow_eval.py",
         created="2026-08-21",
+        # eval 与通道B联动=裁点手动触发 (同 futu_channel_capital_flow, 2026-09-01 定性)
+        eval_on_demand=True,
         notes="count_mode=distinct:ts_et — 按快照时刻去重计数 (每轮采集多标的共享同一 ts); "
               "8/21-8/28 已攒 428 快照 / 7817 行",
         count_mode="distinct:ts_et",
@@ -297,11 +310,15 @@ REGISTRY: list[ShadowItem] = [
         data_path="data/shadow/da_glm_shadow.jsonl",
         config_key=None,
         min_n=10,
+        count_mode="where:run_mode=live",
         graduation_criteria="预注册 (窗口 8/31-9/14, 10 交易日): "
                             "①JSON 成功率≥90% ②glm SELL_SHORT 提案≥5 笔 → PROMOTE_PROPOSAL 另立 DEB; "
                             "任一不过 → ARCHIVE 结案。③SHORT 提案 T+1 方向均值>0 仅当 n≥20 出结论 "
                             "(9.5 修正: 原 n≥5 ≈ 抛硬币), n<20 只作立项参考不作证据读。"
-                            "9/14 由 eval 脚本机械裁决, 周检可见。",
+                            "窗口 9/14 第 10 采集夜收口后, 9/15 06:35 一次性机械裁决 "
+                            "(cron DA-GLM-ONE-SHOT 跑完自删行, 产物 latest json + 飞书推送; "
+                            "2026-09-01 复查收口补挂 — 原注册'9/14 裁决'措辞勘误: 裁决须在窗口"
+                            "最后一夜采集之后, 且此前 eval 悬空无任何挂载), 周检可见。",
         eval_script="scripts/da_glm_shadow_eval.py",
         created="2026-08-30",
         last_evaluated=None,
@@ -309,9 +326,12 @@ REGISTRY: list[ShadowItem] = [
                          "evidence": "补注册基线: 现仅 1 行 run_mode=test (COIN 干跑复现分歧 "
                                      "prod=LONG vs glm=SELL_SHORT, trig=2, finish_reason=stop), "
                                      "无 live 样本; 8/31 起攒样"}],
-        notes="计数口径=live 行数 (count_mode lines); cron '30 20 * * 1-5' (timeout 9000, "
+        notes="计数口径=live 行数 (count_mode=where:run_mode=live — 2026-09-01 复查收口修正, "
+              "原 lines 口径把 test 行也计入); cron '30 20 * * 1-5' (timeout 9000, "
               "9.2 修正自 3000) 是唯一采集线也是唯一 kill switch; "
-              "判据③降级记录见 scripts/da_glm_shadow.py docstring (9.5)。",
+              "判据③降级记录见 scripts/da_glm_shadow.py docstring (9.5)。"
+              "一次性裁决行自删后 (9/15), 注册表待用户裁决翻终态 — 翻终态前哨兵周检会"
+              "再提示一次悬空 (设计内提醒, 非故障)。",
     ),
     ShadowItem(
         id="e2_momentum",
@@ -350,6 +370,28 @@ REGISTRY: list[ShadowItem] = [
                          "→ 裁排除 loser_overnight_enabled。跟踪: overnight_arm_report "
                          "预注册判据段 (当前 n=4, 修复率75%, 净PnL -$207, 攒样中)"}],
         notes="毕业后生产表现由 RFC-067 台账 + overnight_arm_report 预注册判据跟踪",
+    ),
+    ShadowItem(
+        id="overnight_kill_criterion",
+        name="隔夜臂判罪线 (w_week 生产跟踪)",
+        status=ShadowStatus.OBSERVING,
+        description="overnight_hold 毕业后的生产判罪线 (2026-08-29 用户裁'5批' 预注册): "
+                    "w_week 臂已平仓 n≥20 且修复率(结局 pnl>0)<40% → 裁排除 "
+                    "loser_overnight_enabled。2026-09-01 复查收口立项: 此前判据只在 "
+                    "overnight_arm_report 的 stdout 里, 无 cron 挂载无文件落盘, 对周检/"
+                    "哨兵等一切自动化不可见 (GRADUATED 项被哨兵跳过) — 现单独注册为 "
+                    "OBSERVING 项接管跟踪 (判据字典 B15)。",
+        data_path="data/shadow/overnight_arm_report_latest.json",
+        config_key=None,
+        min_n=20,
+        graduation_criteria="B15: n≥20 且修复率<40% → 提请裁排除 loser_overnight_enabled "
+                            "(回滚=开关翻回 true); n≥20 且修复率≥40% → 维持, 翻 "
+                            "SUPERSEDED 留痕; n<20 攒样, 周检机械跟踪不重置。",
+        eval_script="scripts/overnight_arm_report.py",
+        created="2026-09-01",
+        notes="2026-08-29 注册表 verdict 'PROD_KILL_CRITERION_REGISTERED' 的执行落地; "
+              "cron 20 6 * * 2-6 判罪线进度 JSON 落盘 (顶层 n=已平仓数, 注册表计数锚); "
+              "原 overnight_hold 项保持 GRADUATED (毕业案历史), 本项只管毕业后生产表现。",
     ),
     ShadowItem(
         id="mfe_stall_exit",
@@ -559,6 +601,21 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                         continue
                 seen.discard(None)
                 return len(seen)
+            if s.count_mode.startswith("where:"):
+                # "where:field=value" — 仅计满足字段条件的行 (2026-09-01 复查收口:
+                # da_glm_shadow live-only 口径落地, 原 lines 把 test 行也计入)
+                fld, _, val = s.count_mode.split(":", 1)[1].partition("=")
+                cnt = 0
+                for _line in open(p, encoding="utf-8"):
+                    if not _line.strip():
+                        continue
+                    try:
+                        _r = _j.loads(_line)
+                    except Exception:
+                        continue
+                    if str(_r.get(fld)) == val:
+                        cnt += 1
+                return cnt
             return sum(1 for _ in open(p, encoding="utf-8") if _.strip())
         except Exception:
             return None
@@ -599,21 +656,77 @@ def summary() -> str:
 # ── 挂载核对哨兵 (2026-09-01 全链体检后用户裁"按建议执行" 建议①) ──
 # 两例实锤驱动: gap_chase_gate (B1, 8/29注册) 与 ssr_shadow_daily (RFC-062④, 8/2落地)
 # 均"已登记/已注册但从未挂载", 观察悬空至体检才发现。哨兵每周机械核对:
-#   ① eval 挂载: eval_script 是否在 crontab / scheduler / ops / 采集脚本引用中
+#   ① eval 挂载: eval_script 是否在 cron 解析面 / scheduler / ops / 采集脚本引用中
 #   ② 数据产出: data_path 文件是否超龄 (14天无更新) 或缺失 (非初生期)
+# 2026-09-01 复查收口收紧两处盲区 (复查实锤: da_glm_shadow.py:165 的注释提及掩盖
+# eval 悬空; pipeline.py:8538 的 docstring 提及掩盖判罪线无挂载):
+#   ③ 引用判定收紧: 源码引用须落在代码位 (字符串字面量/调用) — # 注释与行首
+#      docstring 提及不算挂载 (_code_only tokenize 剥离)
+#   ④ cron 解析面扩至 /etc/crontab + /etc/cron.d 全部文件 (含点号名, 401bedcb
+#      教训), 且注释行不计挂载
 _STALE_DAYS = 14      # 产出超龄阈值 (日更影子两周无产出 = 疑似断流)
 _GRACE_DAYS = 10      # 初生豁免: 新注册事项等首夜产出, 不报文件缺失
 
 
-def _mounted_sources() -> tuple[str, dict]:
-    """返回 (crontab文本, {路径: 源码} 引用源字典), 只读。"""
-    from pathlib import Path as _P
-    import subprocess as _sp
+def _code_only(text: str) -> str:
+    """挂载核对用: 剥离 # 注释与行首 docstring 后的代码文本 (token 级)。
+
+    真引用 (cron 参数 / subprocess 路径参数 / runner 常量) 都在字符串字面量里;
+    注释与 docstring 提及不算挂载。tokenize 失败退回原文 (宁可多算挂载, 不漏报
+    真引用)。token 无分隔拼接: 点分文件名 (a.b.py) 在 token 流中被拆散,
+    拼回才能匹配 basename。
+    """
+    import io
+    import tokenize as _tk
+    kept: list[str] = []
+    code_on_line = False
     try:
-        ct = _sp.run(["crontab", "-l"], capture_output=True, text=True, timeout=10).stdout
+        for tok in _tk.generate_tokens(io.StringIO(text).readline):
+            if tok.type == _tk.COMMENT:
+                continue
+            if tok.type == _tk.NEWLINE:  # 逻辑行界; NL(括号内换行)不重置 — 跨行调用参数仍算代码
+                code_on_line = False
+                continue
+            if tok.type == _tk.STRING and not code_on_line:
+                continue  # 行首独立字符串 = docstring
+            if tok.type in (_tk.NL, _tk.INDENT, _tk.DEDENT, _tk.ENDMARKER):
+                continue
+            code_on_line = True
+            kept.append(tok.string)
     except Exception:
-        ct = ""
-    base = _P(__file__).resolve().parents[2]
+        return text
+    return "".join(kept)
+
+
+def _cron_surface_texts() -> list[str]:
+    """cron 全解析面原始文本: 用户 crontab + /etc/crontab + /etc/cron.d 全部文件 (含点号名)。
+
+    401bedcb 教训: Alinux8 cronie 不忽略含点文件名, .bak 克隆同样被执行 —
+    核对面必须覆盖目录内全部文件, 不能只看 crontab -l。注释行的剥离由调用方做。
+    """
+    import subprocess as _sp
+    parts: list[str] = []
+    try:
+        parts.append(_sp.run(["crontab", "-l"], capture_output=True,
+                             text=True, timeout=10).stdout or "")
+    except Exception:
+        parts.append("")
+    etc_files = [_ETC_CRONTAB] + (
+        sorted(_ETC_CRON_D.iterdir()) if _ETC_CRON_D.is_dir() else [])
+    for cp in etc_files:
+        if not cp.is_file():
+            continue
+        try:
+            parts.append(cp.read_text(encoding="utf-8", errors="ignore"))
+        except Exception as e:
+            # R5 留痕: cron 面文件不可读必须显性 (可能漏判挂载)
+            print(f"[mount-sentinel] cron 面文件读取失败跳过: {cp}: {e}")
+    return parts
+
+
+def _source_files() -> dict:
+    """引用源 (scheduler/ops/采集脚本) 的 {路径: 源码原文}, 只读。"""
+    base = Path(__file__).resolve().parents[2]
     sources = {}
     cand = [base / "app" / "core" / "scheduler_core.py"]
     cand += list((base / "ops" / "hermes").glob("*.py"))
@@ -626,15 +739,25 @@ def _mounted_sources() -> tuple[str, dict]:
             print(f"[mount-sentinel] 源文件读取失败跳过: {pth}: {e}")
         if _text is not None:
             sources[str(pth)] = _text
-    return ct, sources
+    return sources
+
+
+def _mounted_sources() -> tuple[str, dict]:
+    """返回 (cron 解析面文本, {路径: 源码} 引用源字典), 只读。"""
+    return "\n".join(_cron_surface_texts()), _source_files()
 
 
 def check_mounting() -> list[str]:
-    """挂载核对: 返回告警行列表 (供周检推送), 空列表=全部在挂。"""
-    from pathlib import Path as _P
+    """挂载核对: 返回告警行列表 (供周检推送), 空列表=全部在挂。
+
+    判定口径 (2026-09-01 复查收口): cron 面取非注释行; 源码引用取 _code_only
+    剥离注释/docstring 后的代码位 — 纯注释/docstring 提及不算挂载。
+    """
     from datetime import date as _date, datetime as _dt
-    base = _P(__file__).resolve().parents[2]
-    crontab_text, sources = _mounted_sources()
+    base = Path(__file__).resolve().parents[2]
+    cron_text, sources = _mounted_sources()
+    cron_active = "\n".join(
+        l for l in cron_text.splitlines() if not l.lstrip().startswith("#"))
     today = _date.today()
     warnings = []
 
@@ -650,18 +773,18 @@ def check_mounting() -> list[str]:
         # ① eval 挂载核对
         if s.eval_script and not s.eval_on_demand:
             bn = s.eval_script.split("/")[-1]
-            mounted = bn in crontab_text
+            mounted = bn in cron_active
             if not mounted:
                 for path, text in sources.items():
                     if path.endswith(("shadow_registry.py", bn)):
                         continue  # 注册表自身引用与脚本自身不算挂载
-                    if bn in text:
+                    if bn in _code_only(text):
                         mounted = True
                         break
             if not mounted:
                 warnings.append(
                     f"🪝 悬空观察 [{s.id}] {s.name}: eval_script={s.eval_script} "
-                    f"不在 crontab/scheduler/ops/采集引用中 (B1 与 ssr_shadow_daily 同型病灶, "
+                    f"不在 cron解析面/scheduler/ops/采集引用中 (B1 与 ssr_shadow_daily 同型病灶, "
                     f"请补挂或改判 eval_on_demand/状态)")
 
         # ② 数据产出核对 (DB 内口径跳过 — 由各自 eval 现算)

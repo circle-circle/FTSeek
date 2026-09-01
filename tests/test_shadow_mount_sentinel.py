@@ -87,3 +87,106 @@ def test_killed_items_ignored(monkeypatch):
                         [_item("t1", eval_script="scripts/no_such_eval.py",
                                status=sr.ShadowStatus.KILLED)])
     assert sr.check_mounting() == []
+
+
+# ── 2026-09-01 复查收口: 引用判定收紧 (注释/docstring 提及不算挂载) ──
+
+def test_code_only_strips_comments_and_docstrings():
+    src = ('# see scripts/x.py\n'
+           'MODULE = "scripts/x.py"\n'
+           '\n'
+           'def f():\n'
+           '    """mentions scripts/x.py in doc"""\n'
+           '    return MODULE\n')
+    out = sr._code_only(src)
+    assert "scripts/x.py" in out          # 字符串字面量 (真引用形态) 保留
+    assert "see" not in out               # # 注释剥离
+    assert "mentions" not in out          # docstring 剥离
+
+
+def test_code_only_keeps_multiline_call_args():
+    # 跨行调用的路径参数仍算代码 (NL 不重置逻辑行)
+    src = 'r = subprocess.run(\n    [str(REPO / "scripts/x.py")],\n    capture_output=True,\n)\n'
+    assert "scripts/x.py" in sr._code_only(src)
+
+
+def test_comment_mention_is_not_mounting(monkeypatch):
+    # 复查实锤同型: da_glm_shadow.py:165 的注释提及曾掩盖 eval 悬空
+    src = "import os\n# 结算时由 scripts/no_such_eval.py 的 is_tainted() 对比\nX = 1\n"
+    monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {"/repo/scripts/a.py": src}))
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert any("悬空观察" in w for w in sr.check_mounting())
+
+
+def test_docstring_mention_is_not_mounting(monkeypatch):
+    # 复查实锤同型: pipeline.py:8538 的 docstring 提及曾掩盖判罪线无挂载
+    src = ('def _mark():\n'
+           '    """供 scripts/no_such_eval.py 按臂分组复盘。"""\n'
+           '    return 1\n')
+    monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {"/repo/app/playbook/p.py": src}))
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert any("悬空观察" in w for w in sr.check_mounting())
+
+
+def test_subprocess_string_arg_is_mounting(monkeypatch):
+    src = ('import subprocess\n'
+           'r = subprocess.run(\n'
+           '    [str(REPO / "scripts/no_such_eval.py")], capture_output=True)\n')
+    monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {"/repo/ops/hermes/x.py": src}))
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert sr.check_mounting() == []
+
+
+def test_runner_constant_is_mounting(monkeypatch):
+    src = 'EVAL = REPO / "scripts" / "no_such_eval.py"\n'
+    monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {"/repo/ops/hermes/r.py": src}))
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert sr.check_mounting() == []
+
+
+# ── 2026-09-01 复查收口: cron 解析面收紧 (注释行不计 / /etc/cron.d 含点号名并入) ──
+
+def test_crontab_comment_line_is_not_mounting(monkeypatch):
+    monkeypatch.setattr(sr, "_mounted_sources",
+                        lambda: ("# 35 6 15 9 * ... scripts/no_such_eval.py ...\n", {}))
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert any("悬空观察" in w for w in sr.check_mounting())
+
+
+def test_cron_surface_includes_dotfiles(tmp_path, monkeypatch):
+    # 401bedcb 教训: cronie 不忽略含点文件名 — .bak 克隆同样被执行, 必须在解析面内
+    monkeypatch.setattr(sr, "_ETC_CRON_D", tmp_path / "cron.d")
+    monkeypatch.setattr(sr, "_ETC_CRONTAB", tmp_path / "crontab")
+    d = tmp_path / "cron.d"
+    d.mkdir()
+    (d / "ftseek-tasks.bak_zombie").write_text(
+        "* * * * * root venv/bin/python scripts/no_such_eval.py\n")
+    (d / "ftseek-tasks").write_text("# only comments\n")
+    (tmp_path / "crontab").write_text("")
+    texts = sr._cron_surface_texts()
+    assert any("no_such_eval.py" in t for t in texts)
+
+
+def test_etc_cron_d_dotfile_counts_as_mounting(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr, "_ETC_CRON_D", tmp_path / "cron.d")
+    monkeypatch.setattr(sr, "_ETC_CRONTAB", tmp_path / "crontab")
+    d = tmp_path / "cron.d"
+    d.mkdir()
+    (d / "ftseek-tasks.bak_zombie").write_text(
+        "* * * * * root venv/bin/python scripts/no_such_eval.py\n")
+    (tmp_path / "crontab").write_text("# empty\n")
+    monkeypatch.setattr(sr, "_source_files", lambda: {})
+    monkeypatch.setattr(sr, "REGISTRY", [_item("t1", eval_script="scripts/no_such_eval.py")])
+    assert sr.check_mounting() == []
+
+
+# ── 2026-09-01 复查收口: where: 计数口径 ──
+
+def test_count_mode_where_filters_rows(tmp_path):
+    import json
+    p = tmp_path / "x.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in [
+        {"run_mode": "live"}, {"run_mode": "live"}, {"run_mode": "test"}]) + "\n")
+    it = _item("t1", data_path=str(p))
+    it.count_mode = "where:run_mode=live"
+    assert sr._count_samples(it, tmp_path) == 2

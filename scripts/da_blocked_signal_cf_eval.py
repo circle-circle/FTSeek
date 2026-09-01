@@ -116,7 +116,7 @@ def load_blocked_signals() -> list[dict]:
 def evaluate(signals: list[dict]) -> dict:
     stats = {h: {"n_eval": 0, "wins": 0, "signed": []} for h in HORIZONS}
     censored = {"no_bars": 0, "no_anchor": 0, "window": {h: 0 for h in HORIZONS}}
-    by_quality = {"le30": [], "31to60": [], "gt60": []}
+    by_quality = {"le30": [], "31to60": [], "gt60": [], "unknown": []}
     by_direction = {"BUY": [], "SELL_SHORT": []}
     detail = []
 
@@ -155,7 +155,10 @@ def evaluate(signals: list[dict]) -> dict:
         if any_eval:
             detail.append(row_cf)
             q = r.get("quality_score")
-            qb = ("le30" if (q or 0) <= 30 else "31to60" if (q or 0) <= 60 else "gt60")
+            # quality 缺失单列 unknown 桶 — (q or 0) 会把 None 全归 le30 扭曲分桶读数
+            # (2026-09-01 复查收口修正)
+            qb = ("unknown" if q is None
+                  else "le30" if q <= 30 else "31to60" if q <= 60 else "gt60")
             by_quality[qb].append(row_cf.get(f"cf_t{PRIMARY_HORIZON}_pct"))
             by_direction[direction].append(row_cf.get(f"cf_t{PRIMARY_HORIZON}_pct"))
 
