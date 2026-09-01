@@ -7121,6 +7121,24 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         #   从未达 gate 才收紧), 对齐影子胜出变体 early_tight_30m_mfe0.3 ——
         #   290样本/5.5周净反事实+27.58pp, 误杀最少(20/47)。默认0=现行行为不变。
         _et_mfe_gate = float(_pb_cfg.get("early_tight_sl_mfe_gate", 0.0) or 0.0)
+        # [2026-09-01 用户裁"A"·C1 冻结显式豁免] ATR 比例紧 SL:
+        #   tight = clamp(0.5×ATR%, 下限=early_tight_sl_pct, 上限=pct_max)。
+        #   缘起 9/1 V 型日: AMD/LLY/SAIC 三笔 MFE=0 + ATR 3-5%, 固定 1% ≈ 0.25×ATR
+        #   低于噪声 → 回踩即扫 (SAIC 场后 +1.96% 误杀 $186)。修噪声错配不放宽纪律:
+        #   高 ATR 桶收 2-2.5% 仍 < 代码 SL(5%) 一半, 慢性失血单 (跌穿-3~-5%) 照杀。
+        #   meta.atr = 入场时持久化的 ATR 绝对价 (playbook_service._extract_atr_from_instruction);
+        #   缺失/0 → 回退固定 1% (=毕业行为, fail-safe)。回滚: atr_enabled=false 单键。
+        _et_basis = "fixed"
+        _et_atr_abs = float(meta.get("atr") or 0)
+        if (bool(_pb_cfg.get("early_tight_sl_atr_enabled", False))
+                and _et_atr_abs > 0 and entry_price > 0):
+            _et_atr_pct = _et_atr_abs / entry_price * 100.0
+            _et_mult = float(_pb_cfg.get("early_tight_sl_atr_mult", 0.5))
+            _et_ceiling = float(_pb_cfg.get("early_tight_sl_pct_max", 2.5))
+            _et_cand = max(_et_sl_pct, min(_et_ceiling, _et_mult * _et_atr_pct))
+            if _et_cand > _et_sl_pct:
+                _et_sl_pct = _et_cand
+                _et_basis = f"atr={_et_atr_pct:.1f}%×{_et_mult:g}"
         if held_minutes <= _et_minutes and (_et_mfe_gate <= 0 or peak_profit_pct < _et_mfe_gate):
             _et_sl = entry_price * (1 - _et_sl_pct / 100.0) if direction == "LONG" \
                 else entry_price * (1 + _et_sl_pct / 100.0)
@@ -7137,7 +7155,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                     logger.info(
                         f"[规则0.5-早期紧SL] {_symbol} {direction} held={held_minutes:.1f}min "
                         f"SL {_sl_before_tight:.4f}→{_active_sl:.4f} "
-                        f"(entry={entry_price:.4f}, tight={_et_sl_pct}%)"
+                        f"(entry={entry_price:.4f}, tight={_et_sl_pct:.2f}% basis={_et_basis})"
                     )
 
     # 规则1: SL止损 (最高优先级 — 亏损仓位必须先检查止损)

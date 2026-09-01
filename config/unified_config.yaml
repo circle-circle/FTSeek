@@ -1085,6 +1085,16 @@ playbook:
     early_tight_sl_minutes: 30
     early_tight_sl_pct: 1.0
     early_tight_sl_mfe_gate: 0.3
+    # [2026-09-01 用户裁"A"·C1 冻结显式豁免] ATR 比例紧 SL: tight=clamp(0.5×ATR%,
+    #   下限=early_tight_sl_pct, 上限=pct_max)。缘起 9/1 V 型日: AMD/LLY/SAIC 三笔
+    #   SL_INITIAL 全部 MFE=0 + ATR 3-5% 桶, 固定 1% ≈ 0.25×ATR 低于噪声水平 →
+    #   开盘下探底部被扫后大盘 V 回 (SAIC 场后 +1.96% 误杀 $186)。ATR 比例修的是
+    #   噪声错配而非放宽纪律: 高 ATR 桶收到 2-2.5% 仍 < 代码 SL(5%) 一半, 历史
+    #   慢性失血单 (跌穿 -3~-5%) 照杀。ATR 缺失 → 回退固定 1% (=毕业行为, fail-safe)。
+    #   回滚: atr_enabled 改 false 单键即恢复毕业行为。
+    early_tight_sl_atr_enabled: true
+    early_tight_sl_atr_mult: 0.5
+    early_tight_sl_pct_max: 2.5
     entry_open_blackout_enabled: true
     entry_open_blackout_hhmm: 0935    # 2026-08-15 (用户三问Q2, DEB§33): 1015→0935 — 与实盘标准看齐.
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
