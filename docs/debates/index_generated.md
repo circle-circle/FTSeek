@@ -1,30 +1,14 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-08-25), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-09-01), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **109** 个 DEB 文件。
+共 **125** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **27** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **25** 个近 14 天新文件未在 README 索引收录 (需补登):
 
-- `DEB-20260811-dead-order-early-detection.md`
-- `DEB-20260811-direction-momentum-gate.md`
-- `DEB-20260811-gate1-sprint-829.md`
-- `DEB-20260811-quality-gate-calibration.md`
-- `DEB-20260812-blackout-1015-oos.md`
-- `DEB-20260812-entry-reference-dynamic-anchor.md`
-- `DEB-20260812-futu-unused-channels.md`
-- `DEB-20260813-dead-order-early-exit.md`
-- `DEB-20260814-da-prompt-gate-bottleneck.md`
-- `DEB-20260815-stable-profit-feasibility.md`
-- `DEB-20260816-fullchain-code-review.md`
-- `DEB-20260816-long-expectancy-audit.md`
-- `DEB-20260816-no-trigger-direction-edge.md`
-- `DEB-20260816-regime-entry-gate.md`
-- `DEB-20260816-short-generation-funnel.md`
-- `DEB-20260817-symbol-profile-market-sense.md`
 - `DEB-20260818-futu-capability-audit.md`
 - `DEB-20260818-overnight-reprice-shadow.md`
 - `DEB-20260818-us-chain-retrospective.md`
@@ -34,10 +18,24 @@
 - `DEB-20260823-full-chain-review-and-safety-patches.md`
 - `DEB-20260823-phase1-signal-quality-design.md`
 - `DEB-20260823-system-health-check.md`
+- `DEB-20260825-g1-3-retirement.md`
 - `DEB-20260825-outcome-feedback-loop-revival.md`
 - `DEB-20260825-ue-prompt-chain-audit.md`
+- `DEB-20260826-audit-hardening-review.md`
+- `DEB-20260826-crash-risk-gate-audit.md`
+- `DEB-20260826-da-chainaudit-review.md`
+- `DEB-20260829-da-ue-prompt-input-audit.md`
+- `DEB-20260829-entry-zone-design.md`
+- `DEB-20260830-exit-reentry-chain-audit.md`
+- `DEB-20260830-llm-chain-utilization.md`
+- `DEB-20260830-timezone-duplication-audit.md`
+- `DEB-20260831-da-debate-quality-and-decision-conf.md`
+- `DEB-20260831-reentry-quick-tp-gate-conflict.md`
+- `DEB-20260831-silent-death-hardening-batch.md`
+- `DEB-20260831-sl-initial-mfe0-source-improvement.md`
+- `DEB-20260901-entry-archetype-alignment.md`
 
-📦 历史归档 **72** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
+📦 历史归档 **88** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -111,6 +109,22 @@
 - `DEB-20260807-grilling-e1-e2.md`
 - `DEB-20260808-premarket-intraday-verification.md`
 - `DEB-20260808-signal-source-strategy.md`
+- `DEB-20260811-dead-order-early-detection.md`
+- `DEB-20260811-direction-momentum-gate.md`
+- `DEB-20260811-gate1-sprint-829.md`
+- `DEB-20260811-quality-gate-calibration.md`
+- `DEB-20260812-blackout-1015-oos.md`
+- `DEB-20260812-entry-reference-dynamic-anchor.md`
+- `DEB-20260812-futu-unused-channels.md`
+- `DEB-20260813-dead-order-early-exit.md`
+- `DEB-20260814-da-prompt-gate-bottleneck.md`
+- `DEB-20260815-stable-profit-feasibility.md`
+- `DEB-20260816-fullchain-code-review.md`
+- `DEB-20260816-long-expectancy-audit.md`
+- `DEB-20260816-no-trigger-direction-edge.md`
+- `DEB-20260816-regime-entry-gate.md`
+- `DEB-20260816-short-generation-funnel.md`
+- `DEB-20260817-symbol-profile-market-sense.md`
 
 ## 全量清单 (按日期)
 
@@ -205,13 +219,13 @@
 | [DEB-20260812-futu-unused-channels](DEB-20260812-futu-unused-channels.md) | 2026-08-12 | 立案待辩 (record-only 提案, 零行为变更) | - | 302 |
 | [DEB-20260813-dead-order-early-exit](DEB-20260813-dead-order-early-exit.md) | 2026-08-13 | 提案裁决中 (未实施; 纯影子判据预注册) | - | 813 |
 | [DEB-20260814-da-prompt-gate-bottleneck](DEB-20260814-da-prompt-gate-bottleneck.md) | 2026-08-14 | 提案裁决中 (未实施; 证据全量实测, 供跨模型辩论) | - | 425 |
-| [DEB-20260815-stable-profit-feasibility](DEB-20260815-stable-profit-feasibility.md) | 2026-08-15 | 提案裁决中 (实验预注册; Phase 0 冻结基线即刻生效) | - | 1424 |
+| [DEB-20260815-stable-profit-feasibility](DEB-20260815-stable-profit-feasibility.md) | 2026-08-15 | 提案裁决中 (实验预注册; Phase 0 冻结基线即刻生效) | - | 1531 |
 | [DEB-20260816-fullchain-code-review](DEB-20260816-fullchain-code-review.md) | 2026-08-16 | 审查完成 (只读, 零代码变更); P0/P1 待裁决修复顺序 | - | 570 |
 | [DEB-20260816-long-expectancy-audit](DEB-20260816-long-expectancy-audit.md) | 2026-08-16 | 已立案 (纯只读分析; L-E1 台账脚本待批落地; 任何供给/门变更需预注册判据触发) | - | 761 |
 | [DEB-20260816-no-trigger-direction-edge](DEB-20260816-no-trigger-direction-edge.md) | 2026-08-16 | 提案裁决中 (未实施; 回放脚本已落地, 纯只读) | 3 | 362 |
 | [DEB-20260816-regime-entry-gate](DEB-20260816-regime-entry-gate.md) | 2026-08-16 | 提案裁决中 (未实施; 用户策略哲学第①点"入场选择做好接线") | - | 108 |
 | [DEB-20260816-short-generation-funnel](DEB-20260816-short-generation-funnel.md) | 2026-08-16 | 共识项1已实施 (2026-08-16 §九: prompt score 语义+record-only一致性校验, 零执行风险); 项2-5 按阶段纪律留待 | - | 777 |
-| [DEB-20260817-symbol-profile-market-sense](DEB-20260817-symbol-profile-market-sense.md) | 2026-08-17 | (未标注) | 6 | 543 |
+| [DEB-20260817-symbol-profile-market-sense](DEB-20260817-symbol-profile-market-sense.md) | 2026-08-17 | (未标注) | 7 | 610 |
 | [DEB-20260818-futu-capability-audit](DEB-20260818-futu-capability-audit.md) | 2026-08-18 | 审计完成 + P1 收口 + 交叉审查完成（8/18 第 3 轮）+ 第 4 轮能力补接与落地（2026-08-21）：analyst_consensus 复活、影子判官补齐、capital_flow 首轮 IC +0.119、deriv 假说暂否、OFI 基线采集与宏观事件日程接入 + 第 5 轮交叉审查（2026-… | 6 | 451 |
 | [DEB-20260818-overnight-reprice-shadow](DEB-20260818-overnight-reprice-shadow.md) | 2026-08-18 | 已落地运行（record-only），攒样中；8/18 Qoder 独立核查：§一基线已勘误（ET 口径）+ 发现 2/3 已由 Hermes 修复并三路径验证（§七.3） | - | 150 |
 | [DEB-20260818-us-chain-retrospective](DEB-20260818-us-chain-retrospective.md) | 2026-08-18 | (未标注) | 3 | 242 |
@@ -220,8 +234,24 @@
 | [DEB-20260822-health-check-t5-counterfactual](DEB-20260822-health-check-t5-counterfactual.md) | 2026-08-22 | ✅ 已执行 (零实弹行为变更, 一处休眠纯函数正确性修复) | - | 230 |
 | [DEB-20260822-tn-mechanism-shadow](DEB-20260822-tn-mechanism-shadow.md) | 2026-08-22 | (未标注) | - | 252 |
 | [DEB-20260823-full-chain-review-and-safety-patches](DEB-20260823-full-chain-review-and-safety-patches.md) | 2026-08-23 | (未标注) | - | 775 |
-| [DEB-20260823-phase1-signal-quality-design](DEB-20260823-phase1-signal-quality-design.md) | 2026-08-23 | (未标注) | - | 134 |
+| [DEB-20260823-phase1-signal-quality-design](DEB-20260823-phase1-signal-quality-design.md) | 2026-08-23 | (未标注) | 1 | 201 |
 | [DEB-20260823-system-health-check](DEB-20260823-system-health-check.md) | 2026-08-23 | (未标注) | - | 119 |
 | [DEB-20260823-zero-gross-edge-five-rejections](DEB-20260823-zero-gross-edge-five-rejections.md) | 2026-08-23 | (未标注) | - | 715 |
+| [DEB-20260825-g1-3-retirement](DEB-20260825-g1-3-retirement.md) | 2026-08-25 | (未标注) | 1 | 42 |
 | [DEB-20260825-outcome-feedback-loop-revival](DEB-20260825-outcome-feedback-loop-revival.md) | 2026-08-25 | (未标注) | 15 | 723 |
-| [DEB-20260825-ue-prompt-chain-audit](DEB-20260825-ue-prompt-chain-audit.md) | 2026-08-25 | (未标注) | 2 | 207 |
+| [DEB-20260825-ue-prompt-chain-audit](DEB-20260825-ue-prompt-chain-audit.md) | 2026-08-25 | 今晚 21:40 CST 首跑; 明早 watchdog 检查时文件已存在不误报。 | 8 | 656 |
+| [DEB-20260826-audit-hardening-review](DEB-20260826-audit-hardening-review.md) | 2026-08-26 | (未标注) | - | 51 |
+| [DEB-20260826-crash-risk-gate-audit](DEB-20260826-crash-risk-gate-audit.md) | 2026-08-26 | 压力门否决（不上线）；组合级缺口登记为预注册观察项，转实盘前必须裁决**（用户 8/26 批准"同意建议"） | - | 105 |
+| [DEB-20260826-da-chainaudit-review](DEB-20260826-da-chainaudit-review.md) | 2026-08-26 | (未标注) | - | 48 |
+| [DEB-20260829-da-ue-prompt-input-audit](DEB-20260829-da-ue-prompt-input-audit.md) | 2026-08-29 | (未标注) | 10 | 530 |
+| [DEB-20260829-entry-zone-design](DEB-20260829-entry-zone-design.md) | 2026-08-29 | (未标注) | 7 | 475 |
+| [DEB-20260830-exit-reentry-chain-audit](DEB-20260830-exit-reentry-chain-audit.md) | 2026-08-30 | (未标注) | 17 | 930 |
+| [DEB-20260830-llm-chain-utilization](DEB-20260830-llm-chain-utilization.md) | 2026-08-30 | (未标注) | 11 | 508 |
+| [DEB-20260830-timezone-duplication-audit](DEB-20260830-timezone-duplication-audit.md) | 2026-08-30 | (未标注) | 12 | 273 |
+| [DEB-20260831-da-debate-quality-and-decision-conf](DEB-20260831-da-debate-quality-and-decision-conf.md) | 2026-08-31 | (未标注) | - | 99 |
+| [DEB-20260831-reentry-quick-tp-gate-conflict](DEB-20260831-reentry-quick-tp-gate-conflict.md) | 2026-08-31 | (未标注) | - | 84 |
+| [DEB-20260831-silent-death-hardening-batch](DEB-20260831-silent-death-hardening-batch.md) | 2026-08-31 | (未标注) | 1 | 91 |
+| [DEB-20260831-sl-initial-mfe0-source-improvement](DEB-20260831-sl-initial-mfe0-source-improvement.md) | 2026-08-31 | ①③ 落地；② 原方案证伪（降级为证据记录）；⑤ 证伪撤回 | - | 109 |
+| [DEB-20260901-da-prompt-distillation-shadow](DEB-20260901-da-prompt-distillation-shadow.md) | 2026-09-01 | 提案（零代码零配置零行为变更） | 1 | 73 |
+| [DEB-20260901-da-thinking-budget-shadow](DEB-20260901-da-thinking-budget-shadow.md) | 2026-09-01 | 提案（零代码零配置零行为变更） | - | 77 |
+| [DEB-20260901-entry-archetype-alignment](DEB-20260901-entry-archetype-alignment.md) | 2026-09-01 | Phase A/B + P1 已落地（影子态，零交易行为变更）**；等影子攒样到预注册判据（§五）再裁 Phase C。 | - | 220 |
