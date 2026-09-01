@@ -177,6 +177,24 @@ DA 昨晚 7 个候选中 **每一个**都已在 `entry_strategy` 自由文本里
 
 **今晚（9/1 盘）起自动生效**: DA 盘前 bridge 将携带结构化字段（双轨：自由文本照旧）；FTSeek 侧仅记录不改变任何执行动作。首批影子判读在 9/2 05:47 CST 重放。
 
+### 10.1 首日遥测全灭事故与修复（2026-09-01 夜，用户裁"立即修复"）
+
+**病症**: 部署后首个交易日即实弹暴露 —
+1. `logs/ftseek_us.log` 每 ~5min（re-price 循环）刷 `[playbook] US.EIX archetype 路由解析异常 (回退市价现状): argument of type 'PlaybookConfig' is not iterable` 与 `[playbook] chase_cap遥测异常 US.EIX: the JSON object must be str, bytes or bytearray, not dict`；
+2. `data/shadow/pullback_limit_shadow.jsonl` **零行、文件从未创建** → 次日 05:47 replay 无样本，§五预注册判据的 n≥20 攒样实际未开始。
+
+**根因（一处数据契约错配 + 一处类型错配）**:
+- `db.py::_row_to_dict` 自动把 `raw_instruction_json` 解析成 **dict** 进入 pipeline，而 Phase B 新代码一律假设 str：①trigger 影子行 `json.loads(dict)` 抛 TypeError 被 except **静默吞** → archetype 恒 None → 零落盘（最重，静默失败）；②chase_cap 遥测同型 TypeError → 刷屏；③触发特性影子 source 兜底同型（fail-soft 仅字段丢失）。
+- `entry_routing.py::routing_enabled/_read_ttl_seconds` 对 pipeline 传入的 **PlaybookConfig 对象**做 `"key" in cfg` → TypeError。当前路由默认关、回退市价=正确行为故零交易影响；**但 Phase 2 翻 true 时 resolve_route 将永远异常回退 = 开关形同虚设**，启用前必须修。
+
+**修复（一行级 ×4 + 守卫 ×2，22:50-23:10 CST）**:
+- `pipeline.py` 三处解析统一改走 `entry_routing.parse_raw_semantics`（原生兼容 str|dict，Phase A 既有纯函数复用）；
+- `entry_routing.py` 两函数加 `isinstance(cfg, dict)` 守卫，非 dict 落 config_container。
+
+**测试**: `tests/test_entry_archetype_routing.py` +4（dict 输入路由/守卫不抛/dict cfg 优先）；新建 `tests/test_pullback_limit_shadow_telemetry.py` 4 例契约（禁止再对 raw_instruction_json 直接 json.loads / 两遥测块必须用 parse_raw_semantics / source 兜底必须 isinstance 判）。触及 29 passed；全量 2284 passed / 2 failed（均存量外部状态：hermes 死任务 SQL + live 脚本漂移，与本批无关）。
+
+**不可回补披露**: 今晚已触发的 EIX（触发未成交，撞单日 notional 闸）trigger 影子行因旧 bug 未落盘，事后不可恢复 — 影子攒样从修复重启后的下一个触发开始计。明晨 05:47 首批判读将如实反映 n=0。
+
 ## 十一、Phase C 三观察点总纲（2026-09-01，用户裁"要"立项）
 
 > 缘起：8/31 全链复查（分源：DA +466/14天健康，UE -122 出血点，重武装 83% 胜率最优）后，

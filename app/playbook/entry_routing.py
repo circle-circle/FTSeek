@@ -40,8 +40,13 @@ _DEFAULT_TTL_SECONDS = 300.0
 
 
 def routing_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
-    """路由总开关 (默认 false)。cfg 缺省时从 config_container 读。"""
-    if cfg is not None and "entry_archetype_routing_enabled" in cfg:
+    """路由总开关 (默认 false)。cfg 缺省/非 dict 时从 config_container 读。
+
+    2026-09-01 修复: pipeline 实际传入的是 PlaybookConfig 对象 (非 dict),
+    `"key" in cfg` 对其抛 TypeError → 路由永远异常回退市价, 开关形同虚设
+    (首日 EIX 每 5min 刷屏实证)。非 dict 一律走 config_container。
+    """
+    if isinstance(cfg, dict) and "entry_archetype_routing_enabled" in cfg:
         return bool(cfg.get("entry_archetype_routing_enabled", False))
     try:
         from app.core.config_container import get_config
@@ -52,7 +57,8 @@ def routing_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def _read_ttl_seconds(cfg: Optional[Dict[str, Any]] = None) -> float:
-    if cfg is not None and "entry_archetype_ttl_seconds" in cfg:
+    # 2026-09-01: 同 routing_enabled — cfg 可能是 PlaybookConfig (非 dict)。
+    if isinstance(cfg, dict) and "entry_archetype_ttl_seconds" in cfg:
         try:
             return max(30.0, float(cfg.get("entry_archetype_ttl_seconds") or _DEFAULT_TTL_SECONDS))
         except Exception:

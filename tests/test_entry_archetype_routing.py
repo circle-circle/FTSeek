@@ -143,6 +143,16 @@ class TestResolveRoute:
         assert resolve_route("{not json", "BUY", 145.0, _ROUTE_CFG) is None
         assert parse_raw_semantics(None)["entry_archetype"] is None
 
+    def test_dict_input_from_row_to_dict(self):
+        # 2026-09-01 修复回归: db._row_to_dict 把 raw_instruction_json 自动解析成
+        # dict 后进入 pipeline, 解析/路由必须原生兼容 dict 输入 (首日 json.loads(dict)
+        # TypeError → trigger 影子零落盘 + chase_cap 遥测刷屏)。
+        r = resolve_route(dict(_PB_RAW), "BUY", 145.0, _ROUTE_CFG)
+        assert r and r["action"] == "limit" and r["limit_price"] == 140.5
+        sem = parse_raw_semantics(dict(_PB_RAW))
+        assert sem["entry_archetype"] == "PULLBACK_LIMIT"
+        assert sem["confirmation"]["price_level"] == 140.5
+
     def test_fade_short_routes_limit(self):
         raw = {"entry_archetype": "FADE_SHORT",
                "confirmation": {"price_level": 63.27, "side": "above"}}
@@ -284,6 +294,27 @@ class TestFillWaitStateMachine:
         row = svc._find_instruction_by_id(iid)
         assert row["skip_reason"] == "archetype_order_dead"
         assert not row["executed"]
+
+
+class TestNonDictCfgGuard:
+    """2026-09-01 修复回归: pipeline 实际传 PlaybookConfig 对象 (非 dict), 旧实现
+    `"key" in cfg` 抛 TypeError → 路由永远异常回退市价 (开关形同虚设, Phase 2 启用
+    前必须修)。非 dict cfg 一律落 config_container。"""
+
+    def test_routing_enabled_non_dict_cfg_no_raise(self):
+        class _FakeCfg:  # 模拟 PlaybookConfig: 无 __contains__/__iter__
+            pass
+        assert routing_enabled(_FakeCfg()) is False  # config_container 默认关
+
+    def test_read_ttl_seconds_non_dict_cfg_no_raise(self):
+        from app.playbook.entry_routing import _read_ttl_seconds
+
+        class _FakeCfg:
+            pass
+        assert _read_ttl_seconds(_FakeCfg()) == 300.0  # config/yaml 默认
+
+    def test_routing_enabled_dict_cfg_still_wins(self):
+        assert routing_enabled({"entry_archetype_routing_enabled": True}) is True
 
 
 # ── R8: 配置与终态集合默认值 ──────────────────────────────────────────────

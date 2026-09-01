@@ -4115,10 +4115,13 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         # DA 写明"禁止在$X以上追涨"但 re-price 把入场位顶过禁追线 →
                         #   语义倒挂实锤采样。Phase B 仅记录不拦截; Phase C 才谈阻断。
                         try:
-                            _raw_cc = json.loads(inst.get("raw_instruction_json") or "{}")
-                            _cc = _raw_cc.get("chase_cap_price")
-                            if _cc:
-                                _cc_f = float(_cc)
+                            # 2026-09-01 修复: raw_instruction_json 经 db._row_to_dict
+                            #   已是 dict, json.loads(dict) 抛 TypeError (当日每轮刷屏)。
+                            #   parse_raw_semantics 天然兼容 str|dict。
+                            from app.playbook.entry_routing import parse_raw_semantics
+                            _sem_cc = parse_raw_semantics(inst.get("raw_instruction_json"))
+                            _cc_f = _sem_cc["chase_cap_price"]
+                            if _cc_f:
                                 _viol = (_new_entry > _cc_f) if _dir == "BUY" else (_new_entry < _cc_f)
                                 if _viol:
                                     from pathlib import Path as _Pcc
@@ -4132,7 +4135,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                             "inst_id": inst.get("id"),
                                             "decision_id": inst.get("decision_id"),
                                             "symbol": inst.get("symbol"), "direction": _dir,
-                                            "entry_archetype": _raw_cc.get("entry_archetype"),
+                                            "entry_archetype": _sem_cc["entry_archetype"],
                                             "chase_cap_price": _cc_f,
                                             "repriced_entry": round(_new_entry, 4),
                                         }
@@ -4933,8 +4936,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             _src = _did.split(":")[0] if ":" in _did else ""
             if not _src:
                 try:
-                    _raw = _json.loads(inst.get("raw_instruction_json") or "{}")
-                    _src = str(_raw.get("source") or "")
+                    # 2026-09-01 修复: raw 可能已是 dict (_row_to_dict 自动解析),
+                    #   旧 json.loads 抛 TypeError → source 字段静默丢失。
+                    _raw = inst.get("raw_instruction_json")
+                    if isinstance(_raw, str):
+                        _raw = _json.loads(_raw or "{}")
+                    _src = str((_raw or {}).get("source") or "")
                 except Exception:
                     _src = ""
             try:
@@ -5678,12 +5685,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 from pathlib import Path as _Ppb
                 _pb_path = _Ppb(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
                 if _shadow_dedup_ok(_pb_path, inst.get("id"), "trigger"):
-                    _raw_pb = {}
-                    try:
-                        _raw_pb = json.loads(inst.get("raw_instruction_json") or "{}")
-                    except Exception:
-                        _raw_pb = {}
-                    _arch_pb = _raw_pb.get("entry_archetype")
+                    # 2026-09-01 修复: raw_instruction_json 经 _row_to_dict 已是 dict,
+                    #   旧 json.loads 抛 TypeError 被 except 静默吞 → archetype 恒 None
+                    #   → 触发行零落盘 (首日全灭, 影子攒样实际未开始)。
+                    from app.playbook.entry_routing import parse_raw_semantics
+                    _sem_pb = parse_raw_semantics(inst.get("raw_instruction_json"))
+                    _arch_pb = _sem_pb["entry_archetype"]
                     if _arch_pb:
                         import json as _json_pb
                         from datetime import datetime as _dt_pb
@@ -5693,8 +5700,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                             "inst_id": inst.get("id"), "decision_id": inst.get("decision_id"),
                             "symbol": symbol, "direction": "SHORT" if is_short else "LONG",
                             "entry_archetype": _arch_pb,
-                            "confirmation": _raw_pb.get("confirmation"),
-                            "chase_cap_price": _raw_pb.get("chase_cap_price"),
+                            "confirmation": _sem_pb["confirmation"],
+                            "chase_cap_price": _sem_pb["chase_cap_price"],
                             "entry_price": round(float(entry_price), 4),
                             "trigger_price": round(float(current_price), 4),
                             "entry_path": _entry_path,
