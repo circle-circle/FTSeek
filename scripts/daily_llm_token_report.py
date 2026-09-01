@@ -18,6 +18,7 @@
 import argparse
 import json
 import sqlite3
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -49,6 +50,74 @@ def _fmt_tok(n: int) -> str:
     if n >= 1_000:
         return f"{n/1_000:.1f}k"
     return str(n)
+
+
+def _llm_model_costs() -> dict:
+    """yaml llm.models → {model_name: (cost_in, cost_out)} ($/1k tok). 失败返回空."""
+    try:
+        import yaml
+        cfg = yaml.safe_load((ROOT / "config" / "unified_config.yaml").read_text(encoding="utf-8"))
+        out = {}
+        for _alias, m in ((cfg or {}).get("llm", {}).get("models", {}) or {}).items():
+            name = (m or {}).get("model_name", "")
+            if name:
+                out[name] = (float(m.get("cost_in", 0) or 0), float(m.get("cost_out", 0) or 0))
+        return out
+    except Exception:
+        return {}
+
+
+def _query_da_direct(day: str) -> dict:
+    """DA skill 直连调用汇总 (不经网关, 不在 llm_audit) — 读 da_checkpoint/{day}/*.json.
+
+    背景 (2026-09-01 PE 审阅): DA 是全链最大 LLM 消费方 (分析师+挑战者 ~14 次/日),
+    但 skill 用 urllib 直连 DashScope, 调用不落 llm_audit.db → 本日报此前完全看不到
+    DA 成本 (8/25 P1 已把 _usage 落 checkpoint, 此函数完成最后一公里归集)。
+    口径: 分析师侧 token/成本来自 checkpoint _llm_output._usage (含缓存命中);
+    挑战者 token 不落 checkpoint, 只计次数。只读, 失败安全 (异常返回空段)。"""
+    out = {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cached": 0,
+           "cost": 0.0, "trunc": 0, "challenger_calls": 0}
+    try:
+        d = DATA / "da_checkpoint" / day
+        if not d.is_dir():
+            return out
+        costs = _llm_model_costs()
+        for f in sorted(d.glob("*.json")):
+            if f.name.endswith(".raw.json"):
+                continue  # 生料档 (da_raw_inputs/v1), 非分析产出
+            try:
+                doc = json.loads(f.read_text(encoding="utf-8"))
+            except Exception as e:
+                # R5 留痕: 单文件损坏跳过, 但必须可查 (棘轮纪律, 禁静默吞)
+                print(f"[warn] DA checkpoint 解析失败 {f.name}: {e}", file=sys.stderr)
+                continue
+            lo = doc.get("_llm_output") or {}
+            if not isinstance(lo, dict) or not lo:
+                continue
+            u = lo.get("_usage") or {}
+            if not u:
+                continue
+            ti = int(u.get("prompt_tokens", 0) or 0)
+            to = int(u.get("completion_tokens", 0) or 0)
+            cached = int((u.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0)
+            model = str(lo.get("_model_reported") or "qwen3.7-max")
+            cin, cout = costs.get(model, (0.0, 0.0))
+            out["calls"] += 1
+            out["ok"] += 1  # 有 checkpoint = 该候选分析成功
+            out["tok_in"] += ti
+            out["tok_out"] += to
+            out["cached"] += cached
+            out["cost"] += ti / 1000.0 * cin + to / 1000.0 * cout
+            if str(lo.get("_finish_reason") or "") == "length":
+                out["trunc"] += 1
+            if ((lo.get("_debate") or {}).get("challenger_verdict")):
+                out["challenger_calls"] += 1
+    except Exception as e:
+        # R5 留痕: 失败安全 (本段置空不阻断日报), 但 warn 留痕禁静默吞
+        print(f"[warn] DA 直连段归集异常, 本段按空输出: {e}", file=sys.stderr)
+        return {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cached": 0,
+                "cost": 0.0, "trunc": 0, "challenger_calls": 0}
+    return out
 
 
 def _load_budget() -> dict:
@@ -124,21 +193,27 @@ def _query_trunc_7d(conn: sqlite3.Connection, day: str) -> list:
     return sorted(out, key=lambda x: x["rate"], reverse=True)
 
 
-def _build_message(today: dict, prev: dict, trunc_7d: list | None = None) -> str:
+def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
+                   da_direct: dict | None = None, da_prev: dict | None = None) -> str:
     t = today["total"]
     calls = t["calls"]
-    if calls == 0:
+    da = da_direct or {}
+    da_cost = float(da.get("cost", 0) or 0)
+    # 2026-09-01 (PE 审阅): 全链路口径 = 网关 + DA 直连 — 此前 DA (全链最大 LLM
+    #   消费方) 完全不在日报内, 预算告警/环比皆失真。
+    full_cost = t["cost"] + da_cost
+    if calls == 0 and not da.get("calls"):
         return f"🪙 LLM 消耗日报 {today['date']}\n(当日无 LLM 调用记录)"
 
     tok_total = t["tok_in"] + t["tok_out"]
     ok_rate = (t["ok"] / calls * 100) if calls else 0
     avg_lat = (t["lat_sum"] / calls / 1000) if calls else 0  # 秒
 
-    # 环比昨日成本
-    pv = prev["total"]["cost"] if prev else 0
+    # 环比昨日成本 (全链路口径)
+    pv = (prev["total"]["cost"] if prev else 0) + float((da_prev or {}).get("cost", 0) or 0)
     delta = ""
     if pv > 0:
-        pct = (t["cost"] - pv) / pv * 100
+        pct = (full_cost - pv) / pv * 100
         arrow = "▲" if pct >= 0 else "▼"
         delta = f" ({arrow}{abs(pct):.0f}% vs 昨)"
 
@@ -147,19 +222,22 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None) -> str
     cap = budget["daily_max_usd"]
     alert_line = None
     if cap > 0:
-        used_pct = t["cost"] / cap
+        used_pct = full_cost / cap
         if used_pct >= budget["halt_pct"]:
-            alert_line = f"🔴 超预算! 当日 {_fmt_usd(t['cost'])} / 上限 {_fmt_usd(cap)} ({used_pct*100:.0f}%)"
+            alert_line = f"🔴 超预算! 当日 {_fmt_usd(full_cost)} / 上限 {_fmt_usd(cap)} ({used_pct*100:.0f}%)"
         elif used_pct >= budget["warn_pct"]:
-            alert_line = f"🟡 接近预算 当日 {_fmt_usd(t['cost'])} / 上限 {_fmt_usd(cap)} ({used_pct*100:.0f}%)"
+            alert_line = f"🟡 接近预算 当日 {_fmt_usd(full_cost)} / 上限 {_fmt_usd(cap)} ({used_pct*100:.0f}%)"
 
     lines = []
     if alert_line:
         lines.append(alert_line)
+    _total_line = f"总计: {calls} 次调用 | {_fmt_tok(tok_total)} tok | {_fmt_usd(full_cost)}{delta}"
+    if da.get("calls"):
+        _total_line += f" (含 DA 直连 {da['calls']} 次 {_fmt_usd(da_cost)})"
     lines += [
         f"🪙 LLM 消耗日报 {today['date']}",
-        f"总计: {calls} 次调用 | {_fmt_tok(tok_total)} tok | {_fmt_usd(t['cost'])}{delta}",
-        f"成功率 {ok_rate:.0f}% | 均延迟 {avg_lat:.1f}s",
+        _total_line,
+        f"成功率 {ok_rate:.0f}% | 均延迟 {avg_lat:.1f}s (网关口径)",
         "",
         "── 按任务 (Top 成本) ──",
     ]
@@ -178,6 +256,15 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None) -> str
     for model, s in models:
         tok = s["tok_in"] + s["tok_out"]
         lines.append(f"{model}: {s['calls']}次 {_fmt_tok(tok)}tok {_fmt_usd(s['cost'])}")
+
+    if da.get("calls"):
+        lines.append("")
+        lines.append("── DA 直连 (skill 直连 DashScope, 不经网关) ──")
+        _da_tok = int(da.get("tok_in", 0)) + int(da.get("tok_out", 0))
+        _cache_s = f" 缓存命中{_fmt_tok(int(da.get('cached', 0)))}tok" if da.get("cached") else ""
+        lines.append(f"分析师: {da['calls']}次 {_fmt_tok(_da_tok)}tok {_fmt_usd(da_cost)}{_cache_s} 截断{da.get('trunc', 0)}")
+        if da.get("challenger_calls"):
+            lines.append(f"挑战者: {da['challenger_calls']}次 (token 不落 checkpoint, 成本未含)")
 
     if trunc_7d:
         lines.append("")
@@ -208,13 +295,18 @@ def main(date=None, days_back=1, push=False, dry=False):
     finally:
         conn.close()
 
-    msg = _build_message(today, prev, trunc_7d)
+    # DA 直连段 (不经网关, 独立归集; 前一日同口径供环比)
+    da_direct = _query_da_direct(target)
+    da_prev = _query_da_direct(prev_day)
+
+    msg = _build_message(today, prev, trunc_7d, da_direct, da_prev)
     print("=" * 60)
     print(msg)
     print("=" * 60)
 
     # 落盘单日档
     try:
+        today["da_direct"] = da_direct
         out = DATA / f"llm_token_daily_{target}.json"
         out.write_text(json.dumps(today, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[saved] {out}")

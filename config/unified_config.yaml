@@ -1014,6 +1014,9 @@ playbook:
   premarket_invalidation_hard_gate: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
+  # 2026-09-01 信息供应链审计建议②: 负向论据警示前置注入开关 (窄口径: 只负向/只语义论据/
+  #   alpha口径/声明参考性; 非复活 7/18 裁关的旧 IC 注入)。回滚: false 即停注入。
+  claim_negative_prompt_enabled: true
   # DEB-20260819 §十三: 股性卡 prompt 注入总开关 (L2软提示)
   #   回滚: false 即关闭注入 (sim 期无存量伤害)
   symbol_card_prompt_enabled: true

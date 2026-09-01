@@ -89,6 +89,12 @@ EXTERNAL_CONSUMED = {
         "_load_trading_card_for_prompt 读 playbook.trading_card_prompt_enabled "
         "作成交口径档案进 prompt 开关 (false 即停注)"
     ),
+    # 2026-09-01 信息供应链审计建议② (PE 审阅执行批): 负向论据警示前置注入开关
+    "unified_config.yaml:claim_negative_prompt_enabled": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py:1307 "
+        "_load_negative_claims_warning_for_prompt 读 playbook.claim_negative_prompt_enabled "
+        "作负向论据警示进 prompt 开关 (false 即停注; 代码默认 True, 键为纯回滚开关)"
+    ),
 }
 
 # ── 门禁豁免注册表 (A3, 2026-08-24) ────────────────────────────────────── #
