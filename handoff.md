@@ -39,6 +39,8 @@
 
 **启用门 (硬)**: 影子判据三条全过 (n≥20 对/改善≥30%/成交率≥50%) + mfe=0 占比降 → 用户裁决 → 开关翻 true。首批影子判读 **9/2 05:47**。
 
+**首批判读晨间流水线 (9/2, 用户令"需要"报告端上来)**: 05:15 position_path_collector (平仓笔 bar) → **05:35 archetype_bars_ensure (新, 补盲: 结构化指令标的的全天 bar, 修 collector 只采平仓笔致未成交指令 no_bars 的样本静默丢失)** → 05:47 cf_pullback_limit_replay (CF 重放) → 05:52 gap_alignment_shadow → **06:05 deb20260901_shadow_first_report (新, 一次性: 六节判读报告落 data/shadow/DEB20260901_shadow_report_<date>.md + 飞书推送 + 自删 cron 行)**。8/31 空跑验证全链路通过 (当日零字段属预期)。
+
 ## 📋 2026-09-01 (晨·Codex) · dashboard 按需激活 38 天失效根因定案并闭环 — .bak 僵尸 cron 保活（用户令核查"休眠未实现"）
 
 **根因（实证）**: `/etc/cron.d/ftseek-tasks.bak_20260725_zombie` 保留未注释行 `*/5 curl -sf http://localhost:8901/health` — Alinux8 cronie **不忽略含点文件名**，自 7/25 起每 5 分钟执行 38 天；`/health` ∈ PUBLIC_PATHS，每次命中经 ASGI 活动中间件刷新时间戳 → 15min 闲置阈值永不到达，进程永驻。7/25"注释+已验证"（见下 07-31 ③）只查了主文件 `ftseek-tasks`，漏掉 .bak 克隆。三盲区致潜伏：直连 127.0.0.1 不经 nginx / `--no-access-log` 致 dashboard.log 无痕 / 退出日志 `logger.info` 在 uvicorn 下无 handler（INFO<lastResort WARNING 阈值）→ 退出零痕迹。
