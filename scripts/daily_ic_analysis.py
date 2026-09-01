@@ -299,6 +299,36 @@ def analyze_llm_features(signals, trades):
     return results
 
 
+def analyze_monthly_trend(signals, min_n=30):
+    """按月维度 IC 趋势 (2026-09-01 用户裁: 历史早期链路混杂信号稀释窗口IC,
+    需按月观察改善趋势)。口径与全局一致: Spearman(strength, fwd_ret_t1)。
+    每月样本 < min_n 不出 IC 只记 n (防小样本噪声当结论, 与 OKR ≥30 门槛同标尺)。"""
+    from collections import defaultdict as _dd
+    months = _dd(list)
+    for s in signals:
+        td = s.get("trade_date") or ""
+        if len(td) >= 7:
+            months[td[:7]].append(s)
+    trend = []
+    for m in sorted(months):
+        g = months[m]
+        row = {"month": m, "n": len(g),
+               "ic_t1": None, "wr_t1": None,
+               "ic_long": None, "ic_short": None}
+        if len(g) >= min_n:
+            ic, wr, _ = spearman_ic([x["strength"] for x in g],
+                                    [x["fwd_ret_t1"] for x in g])
+            row["ic_t1"], row["wr_t1"] = ic, wr
+            for d, key in (("LONG", "ic_long"), ("SHORT", "ic_short")):
+                sub = [x for x in g if x.get("direction") == d]
+                if len(sub) >= min_n:
+                    ic_d, _, _ = spearman_ic([x["strength"] for x in sub],
+                                             [x["fwd_ret_t1"] for x in sub])
+                    row[key] = ic_d
+        trend.append(row)
+    return trend
+
+
 def analyze_regime(trades):
     """PnL by market regime"""
     by_regime = defaultdict(list)
@@ -398,6 +428,24 @@ def generate_report(days=90):
     for k, v in regime_pnl.items():
         print(f"  {k}: N={v['n']} WR={v['wr']:.1%} AvgPnL={v['avg_pnl']:.2%} Total={v['total_pnl']:.2%}")
 
+    # 5b. Monthly IC trend (历史早期链路混杂, 按月看改善趋势 — 2026-09-01 用户裁)
+    monthly = analyze_monthly_trend(signals)
+    report["monthly_ic_trend"] = monthly
+    print(f"\n{'─'*60}")
+    print("5b. Monthly IC Trend (n<30 只记样本数)")
+    print(f"{'─'*60}")
+    for r in monthly:
+        if r["ic_t1"] is None:
+            print(f"  {r['month']}: n={r['n']} (样本不足30)")
+        else:
+            extra = []
+            if r["ic_long"] is not None:
+                extra.append(f"LONG={r['ic_long']:+.3f}")
+            if r["ic_short"] is not None:
+                extra.append(f"SHORT={r['ic_short']:+.3f}")
+            print(f"  {r['month']}: IC_t1={r['ic_t1']:+.3f} WR={r['wr_t1']:.2f} "
+                  f"n={r['n']}{' ' + '/'.join(extra) if extra else ''}")
+
     # 6. Key findings
     findings = []
     for k, v in llm_ic.items():
@@ -410,6 +458,17 @@ def generate_report(days=90):
             findings.append(f"Regime {k}: profitable (+{v['total_pnl']:.1f}%)")
         elif v["total_pnl"] < -10:
             findings.append(f"Regime {k}: LOSING ({v['total_pnl']:.1f}%)")
+
+    # Monthly trend 发现: 最近完整月 IC 明显优于窗口均值 = 早期历史在稀释 (用户 2026-09-01 关注点)
+    _valid_months = [r for r in monthly if r["ic_t1"] is not None and r["n"] >= 100]
+    if _valid_months:
+        _last_m = _valid_months[-1]
+        _win_ic = mode_ic.get("simulate", {}).get("ic_t1")
+        if (_win_ic is not None and _last_m["ic_t1"] is not None
+                and _last_m["ic_t1"] - _win_ic > 0.02):
+            findings.append(
+                f"📈 最近完整月 {_last_m['month']} IC={_last_m['ic_t1']:+.3f} "
+                f"优于窗口均值 {_win_ic:+.3f} — 早期链路历史在稀释窗口IC, 看 5b 月度趋势")
 
     report["key_findings"] = findings
     print(f"\n{'─'*60}")
