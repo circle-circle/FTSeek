@@ -1684,10 +1684,14 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         brief,
         system=_system,
         temperature=0.2,
-        # [DEB-20260829 第8轮 2026-08-30] 4000→8000: 主模型切 glm-5 配套 —
-        #   glm 实测输出 5448-6070 tok, 4000 下 finish_reason=length 截断 → JSON 解析
-        #   失败 → 静默回退 (已实弹验证). 8000 对 flash 档无害 (输出仅 1400-1930).
-        max_tokens=8000,
+        # [DEB-20260829 第8轮 2026-08-30] 4000→8000: 主模型切 glm-5 配套 (glm 实测输出
+        #   5448-6070 tok, 4000 下 finish_reason=length 截断已实弹验证).
+        # [2026-09-01] 8000→16000: 当晚 glm-5.2 与 deepseek 双臂均 out=8000 恰触顶
+        #   finish_reason=length → schema_failed → all_models_failed, scan exit 1 断
+        #   && 链, inject/push 未跑 (llm_audit 实证; 输出需求内容驱动波动大 3008→>8000).
+        #   16000 DashScope probe 实收; 满载 ~210-230s 仍在实体 timeout=300 内;
+        #   截断降档底线 16000*0.5=8000 恰为旧上限.
+        max_tokens=16000,
         schema_required={"surfaced": list},
         json_mode=True,
     )
@@ -2343,11 +2347,12 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
 
     def _run(system: str, tag: str, with_tier: bool):
         res = call_llm("universe_expansion_reasoning", brief, system=system,
-                       temperature=0.2, max_tokens=8000,
+                       temperature=0.2, max_tokens=16000,
                        schema_required={"surfaced": list}, json_mode=True)
         # [DEB-20260829 第10轮 9.4 修复] 2500→8000: glm-5.2 实测输出 5448-6070 tok。
         # 原 2500 下自救降档到 max(1024, 2500*0.5)=1250 只会更糟 (A/B 仪器在 glm 下实质死亡);
-        # 抬到 8000 后即便降档仍保 max(1024, 8000*0.5)=4000 底线。
+        # [2026-09-01] 8000→16000: 与主调用点同晚双臂触顶事故同步 (同 brief 同输出形态
+        # 共死亡模式), 降档底线 16000*0.5=8000=旧上限。
         if not res or not res.success:
             print(f"[{tag}] LLM 调用失败: {getattr(res, 'error', '?') if res else 'no_result'}")
             return [], None

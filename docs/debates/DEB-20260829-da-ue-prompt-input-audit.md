@@ -184,6 +184,40 @@
 
 ## 讨论记录
 
+### 第 12 轮 (2026-09-01, Qoder — 用户问"请检查ue没有产出推送指令的信息原因": 9/1 夜 UE 断链事故根因=双臂 8000 tok 输出触顶)
+
+**缘起**: 9/1 夜 DA 链正常但 UE 无指令推送。逐层排查 (cron 挂载 → 日志 → llm_audit) 定位根因并修复。
+
+**根因链 (llm_audit 实证)**:
+
+```
+21:10 scan cron 启动 → 输入源全部健康 (8-K 103条/新闻/quote 正常)
+21:12:49 glm-5.2      in=4538 out=8000(恰触顶) lat=104s  finish_reason=length → schema_failed
+21:15:43 deepseek-v4  in=4651 out=8000(恰触顶) lat=115s  finish_reason=length → schema_failed
+         ↓ 双臂同死 → all_models_failed → scan exit 1
+         ↓ cron && 链断 → inject/push 未跑 → 21:40/22:40 confirm 空转 → 无 UE 指令推送
+```
+
+**关键判断**: 输出需求是**内容驱动波动**而非输入驱动 — live 趋势 out: 8/30=5538 → 8/31=3008 → 9/1 午=5647 → 9/1 晚=>8000; 当晚 in≈4.5k 与午间 (4561) 几乎相同, 午间 5647 正常、晚间触顶 → 非 brief 尺寸问题, 是当晚新闻内容让模型写得更长。第8轮设的 8000 上限 (当时实测 5448-6070 留 ~30% 余量) 被单日 2.7× 波动击穿。
+
+**修复 (8000→16000)**:
+- 主调用点 `scripts/llm_universe_scan.py` cmd_scan: `max_tokens=16000`; scan_eval A/B 仪器同步 (同 brief 同输出形态共死亡模式); repair 调用点**不动** (输出为缺失字段补丁, 有界小, 8000 余量 3×+)。
+- 依据: DashScope live probe 实收 12000/16000 (均 finish=stop); 实测速率 ~77 tok/s → 满载 16000 ≈210s (glm) / ~230s (deepseek) 仍在实体 timeout=300 内; 截断降档底线 `16000*0.5=8000` 恰为旧上限 (降档不再劣于修复前)。
+- **当夜恢复**: 21:42 手动复刻 cron 链补跑 `scan && inject && push` (与 10 21 定时任务逐字同命令; 当晚链在 scan 即断, inject/push 零执行 → 无重复推送风险), 结果见本轮末尾。
+
+**暴露 (不修, 如实披露, 待用户裁决)**:
+1. **truncat_downshift 对"真超长输出"是反向操作**: `model_call.py:423-452` 在 schema_failed+length 时先同模型 `max_tokens*0.5` 重试再走 fallback — 对"JSON 烂了重写更短"有效, 对"内容本来就需要 >8000 tok"是必死 (预算减半截断更早)。**本次实弹确认双臂各触发一次**: glm 审计失败 21:12:49 → deepseek 开跑 21:13:48, 间隔 59s ≈ 4000 tok @77tok/s = 降档重试耗时且失败; 该重试失败**不入 audit** (仅成功降档 :449 记录), 浪费 ~110s 且不可观测。留待裁决 (候选: 降档重试失败也记 audit + length 时改为升档或直接换模型)。
+2. **scan 失败无告警**: 失败仅打印日志 + exit 1, `&&` 链静默断, 无人知晓直到次日人工发现 (本次即如此)。候选方案: scan 失败分支接飞书告警 (与 DEB-20260901 判读报告同通道), 未实施。
+3. **UE 无 cache_on_fail** — 保持现状即正确 (24h 缓存兜底会推昨日信号), 仅记录设计意图。
+
+**验证**: UE 契约测试 99 passed (scan_batch_b/ruler_fixes/confirm_gate/streak_gate/contract_validator/evidence_grounding/now_et_dst/e1_shadow_date); py_compile 过。
+
+**当夜恢复结果 (21:42-21:47, 全链 rc=0)**:
+- scan: glm-5.2 **out=13237 tok** (lat=153s, schema 过) — **若抬到 12000 当晚仍会截断失败, 16000 恰为正确上限** (13237/16000 余量 17%); 浮现 53 标的 (LONG/SHORT/OTHER=7/7/39), 输出比午间 (5647) 再增 2.3×, 证实"内容驱动波动"判断。
+- inject: 12 条写入 playbook_instructions (11 可执行 + KUST 仙股价地板 SKIP); BABA 被 streak 闸拦 (续期D7≥max 2, 闸设计行为); S0 加码影子 8 条同步登记。
+- push: 钉钉已推送; 22:40 confirm cron 可正常确认。
+- 事故净损失 = UE 指令晚发 ~35min (21:10→21:47), 当晚指令内容完整恢复, 零样本丢失。
+
 ### 第 11 轮 (2026-09-01, Qoder — 用户令"核查红队批, 也从你的角度检查是否存在其他类似问题": 9.6 同类问题双缺陷修复)
 
 **缘起**: 复查 Codex 红队批 (FTSeek `0f97709e` + skill `f9add74`) 时, 按用户令做同类问题扫描 — 红队批 fix① 修的是"蒸馏影子 eval 重读已过期检查点", 扫描发现 **da_glm_shadow 的 9.6 taint 过滤犯的是同族病且更重 (双缺陷叠加)**:
