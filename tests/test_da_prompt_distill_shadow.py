@@ -39,6 +39,8 @@ def fake_skill(monkeypatch):
                 "executive_summary": "v2 摘要", "_finish_reason": "stop",
                 "_llm_latency_ms": 12345, "_thinking_enabled": True,
                 "_usage": {"prompt_tokens": 5000, "completion_tokens": 2500},
+                "_contract": {"violations": [], "repairable": []},
+                "execution_plan": {"entry_price": 12.99},
             }}
 
     fake_da.DeepAnalyzer = _FakeDA
@@ -75,7 +77,11 @@ def test_pairs_and_writes_row(tmp_paths, fake_skill, monkeypatch):
     (d / "US.AAA.json").write_text(json.dumps({
         "_llm_output": {"direction": "LONG", "score_band": "MEDIUM", "rating": "看多",
                           "_prompt_hash": "1f53d632452b",
-                          "_usage": {"prompt_tokens": 8000}}}), encoding="utf-8")
+                          "_finish_reason": "stop", "_thinking_enabled": True,
+                          "_contract": {"violations": [], "repairable": []},
+                          "execution_plan": {"entry_price": 12.34},
+                          "_usage": {"prompt_tokens": 8000, "completion_tokens": 3000}}}),
+        encoding="utf-8")
     # 候选 B: 只有 raw 无生产对照 → 跳过
     (d / "US.BBB.raw.json").write_text(json.dumps({
         "symbol": "US.BBB", "collected": {}}), encoding="utf-8")
@@ -89,6 +95,12 @@ def test_pairs_and_writes_row(tmp_paths, fake_skill, monkeypatch):
     assert r["prompt_v1_hash"] == "1f53d632452b"
     assert r["v2_tokens_in"] == 5000 and r["v1_tokens_in"] == 8000
     assert r["v2_finish_reason"] == "stop"
+    # 归因三元随采集捕获 (红队复查修复: 检查点 3 天自删, 窗口末评估无法重读)
+    assert r["v1_finish_reason"] == "stop"
+    assert r["v1_contract_violations"] == []
+    assert r["v1_entry_price"] == 12.34
+    assert r["v1_tokens_out"] == 3000 and r["v1_thinking_enabled"] is True
+    assert r["v2_contract_violations"] == [] and r["v2_entry_price"] == 12.99
 
 
 def test_corrupt_raw_skipped_not_crash(tmp_paths, fake_skill, monkeypatch, capsys):
@@ -108,4 +120,4 @@ def test_registry_entry():
     assert item is not None
     assert item.count_mode == "where:run_mode=live"
     assert item.min_n == 10
-    assert "9/2-9/15" in item.graduation_criteria
+    assert "9/1-9/15" in item.graduation_criteria

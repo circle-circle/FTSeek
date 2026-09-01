@@ -349,22 +349,35 @@ REGISTRY: list[ShadowItem] = [
         config_key=None,
         min_n=10,
         count_mode="where:run_mode=live",
-        graduation_criteria="预注册 (窗口 9/2-9/15, 10 交易日): "
+        graduation_criteria="预注册 (窗口 9/1-9/15, 10 交易日, 不含 9/7 劳动节): "
                             "①JSON 有效+契约违约率≤V1 ②direction 比例与 HIGH 档比例漂移≤10pp "
                             "③T+1 配对 alpha 非劣 (差值下界≥-0.10%) ④token 降幅≥15%。"
                             "⓪行为等价 checklist 已于阶段一通过 (一票否决线, 前置)。"
                             "全过 → 另立执行 DEB 换生产 SYSTEM_PROMPT+换 PROMPT_HASH 锚点; "
-                            "任一不过 → ARCHIVE。9/16 一次性评估 (评估脚本随窗口收口批落地)。",
+                            "任一不过 → ARCHIVE (仅④不过且③正向 → 按③改善另议, 不自动结案)。"
+                            "9/16 一次性评估 (评估脚本已落地: "
+                            "scripts/da_prompt_distill_shadow_eval.py, cron 35 6 16 9 * "
+                            "自删行, 2026-09-01 红队复查批)。",
         eval_script="scripts/da_prompt_distill_shadow_eval.py",
         created="2026-09-01",
         last_evaluated=None,
         verdict_history=[{"date": "2026-09-01", "verdict": "BASELINE_NO_DATA",
                           "evidence": "注册基线: 影子脚本落地, 首个采集夜 9/1 (raw.json "
-                                      "首产夜), 评估脚本与一次性裁决 cron 随窗口收口批落地"}],
+                                      "首产夜), 评估脚本与一次性裁决 cron 随窗口收口批落地"},
+                         {"date": "2026-09-01", "verdict": "MAINTENANCE",
+                          "evidence": "红队复查批: ①窗口措辞勘误 9/2-9/15→9/1-9/15 "
+                                      "(首采夜=9/1 ET — 21:40 CST 影子读当晚 checkpoint "
+                                      "目录; 原口径实为 9 交易日与'10 交易日'自相矛盾); "
+                                      "②eval 脚本 da_prompt_distill_shadow_eval.py + "
+                                      "一次性 cron 35 6 16 9 * "
+                                      "(DA-DISTILL-ONE-SHOT-ADJUDICATION) 落地, 悬空清零; "
+                                      "③采集同批起捕获 V1 归因三元 (finish_reason/契约违约/"
+                                      "entry_price) + 双臂 tokens_out — 生产检查点 "
+                                      "_CKPT_KEEP_DAYS=3 自删, 判据①③评估不再依赖窗口末重读"}],
         notes="计数口径=live 行数; cron '40 21 * * 1-5' 是唯一采集线也是唯一 kill switch "
-              "(思考模式下 DA 全轮延后, 21:40 发车留足完成余量)。eval 脚本窗口收口前落地, "
-              "落地前哨兵若报悬空属设计内提醒。DEB-20260901b (思考模式) 已直切生产, "
-              "与本影子不构成变量纠缠 (双臂同思考态, 单变量=system 文本)。",
+              "(思考模式下 DA 全轮延后, 21:40 发车留足完成余量)。eval 脚本与一次性裁决 "
+              "cron 已于 2026-09-01 红队复查批落地 (悬空清零)。DEB-20260901b (思考模式) "
+              "已直切生产, 与本影子不构成变量纠缠 (双臂同思考态, 单变量=system 文本)。",
     ),
     ShadowItem(
         id="e2_momentum",
