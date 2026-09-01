@@ -500,15 +500,14 @@ llm:
   #   落的是 model_name 真实名, 非别名. 同日删除 llm.legacy_aliases 段 — 唯一消费方
   #   call_llm_compat 为零调用死桥接 (multi_model_client.py 已删), 且 qwen/deepseek
   #   两键与新实体名冲突. 回滚: 键名与 llm.features 引用同步改回 + 恢复 legacy_aliases.
+  # 2026-09-01 (PE 审阅卫生批·用户裁"核查确认无误后清理"): 删两个零引用别名 —
+  #   ①deepseek-flash (deepseek-v4-flash 直连): features/代码/测试全库零引用,
+  #     DEEPSEEK_API_KEY 仅剩 archive 脚本消费; ②qwen-plus (qwen3.6-plus):
+  #     features 零引用, review_orchestrator 的 model="qwen3.6-plus" 系
+  #     _call_llm_direct 死参数 (该函数明文"忽略, 由 YAML 路由"), 测试引用系
+  #     自含 fixture 不读本 yaml。qwen3.8-flash 保留 — UE 8/30 切 glm-5 的
+  #     文档化回滚目标 (见该实体注释)。回滚: 恢复两实体块即可, 无消费方依赖。
   models:
-    deepseek-flash:
-      api_key_env: DEEPSEEK_API_KEY
-      base_url: https://api.deepseek.com
-      cost_in: 0.0002
-      cost_out: 0.0008
-      model_name: deepseek-v4-flash
-      provider: deepseek
-      timeout: 8
     deepseek:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -563,14 +562,6 @@ llm:
       model_name: qwen3.7-max
       provider: dashscope
       timeout: 300
-    qwen-plus:
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.004
-      cost_out: 0.012
-      model_name: qwen3.6-plus
-      provider: dashscope
-      timeout: 30
   # 2026-08-27 (SSOT收敛·A类清理): 删除本块 model/api_key/api_key_env/base_url/
   #   provider/thinking_level/timeout_seconds 7 死键 — LLMStrategyEngine 的真实 LLM
   #   调用走 call_llm("llm_strategy_engine") → llm.features 路由 (qwen→deepseek),
