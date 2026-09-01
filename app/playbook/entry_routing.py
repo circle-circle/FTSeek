@@ -21,7 +21,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 # 可路由 archetype: 带"等回踩/等反抽"限价语义的入场类型。
 # BREAKOUT 不路由 (追突破=市价语义本身, DA 提案缺失→BREAKOUT=现状)。
@@ -146,8 +149,9 @@ def resolve_route(raw_instruction_json: Any, direction: str,
         _ttl_min = conf.get("ttl_min")
         if _ttl_min:
             ttl = min(ttl, float(_ttl_min) * 60.0)
-    except Exception:
-        pass
+    except (TypeError, ValueError):
+        # R5 纪律留痕: 异常不吞 — ttl_min 畸形时退回配置 TTL 并 warn (DEB-20260901 Phase C)
+        logger.warning("[entry_routing] ttl_min 解析失败, 退回配置 TTL: %r", conf.get("ttl_min"))
 
     return {"action": "limit", "limit_price": round(level, 4),
             "ttl_seconds": ttl, "archetype": arch, "chase_cap_price": cap}

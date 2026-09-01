@@ -664,6 +664,7 @@ class PlaybookService:
             if not log_path.exists():
                 return {}
             result = {}
+            bad_lines = 0
             with open(log_path, encoding="utf-8") as f:
                 for line in f:
                     try:
@@ -674,7 +675,12 @@ class PlaybookService:
                             if sym:
                                 result[sym] = rec
                     except (json.JSONDecodeError, TypeError):
+                        bad_lines += 1
                         continue
+            if bad_lines:
+                # R5 纪律留痕: 解析失败行不静默 (DEB-20260901 Phase C 棘轮修复)
+                logger.warning("[playbook] 方向审计 jsonl 解析失败 %d 行已跳过: %s",
+                               bad_lines, log_path)
             return result
         except Exception as e:
             logger.debug(f"[playbook] 方向审计加载失败: {e}")

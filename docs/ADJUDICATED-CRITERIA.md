@@ -23,7 +23,7 @@
 
 | # | 影子 | 毕业判据 | 出处 |
 |---|---|---|---|
-| B1 | gap_chase_gate | n≥30 ∧ 拦截组笔均<0 ∧ 单侧符号检验 p≤0.05 | f2a91d31 (8/29) |
+| B1 | gap_chase_gate | n≥30 ∧ 拦截组笔均<0 ∧ 单侧符号检验 p≤0.05。〔9/1 补注: eval cron 补挂 06:10 CST (8/29 注册后悬空勘误); 8/31 PCG -19.8% 崩跌追空实为 aligned 口径逆追族入列 (前"缺口上沿做空"误读已勘误: prev_close 16.6→open 13.31); fade/chase 同族均归 aligned_gap≥5% 口径〕 | f2a91d31 (8/29) + DEB-20260901 Phase C (9/1) |
 | B2 | BE 门 | n≥30 达标即停新开仓转纯采集; 不提前降速 | 用户 8/25 批准 |
 | B3 | da_glm_shadow | ①JSON成功率≥90% ②SHORT提案≥5 → PROMOTE; ③T+1方向仅n≥20参考; 窗口 8/31-9/14 | 05a69c43 + 第9/10轮 |
 | B4 | DA-A2 白名单 | 前向 5 交易日 unverified 率 85%→<20% | DEB-20260829 第2/3轮 |
@@ -36,6 +36,7 @@
 | B11 | 挑战者有效性 (AGREE 饱和) | 观察窗 9/1-9/12: AGREE≥95% ∧ 切片PnL无区分度 → 仪式化成立, 三选一案另立DEB; AGREE<95% ∨ PnL有区分 → 维持。窗内禁改挑战者 | DEB-20260831-da-debate-quality-and-decision-conf §三 |
 | B12 | decision_conf 通道处置 | 条件于 B11; 裁决前禁止 conf 接入任何新 live 门 (常量接门=方向性禁令, 参照8/16 max_sl_pct事故) | 同上 |
 | B13 | 再入场快TP门禁吞掉影子 | 窗口 9/1-9/30, n≥10 笔 TP 触达结算: tp_vs_actual 均值>费用线(~0.15%) ∧ ≥70%为正 → 提案恢复快TP(门禁豁免, 另立DEB+用户裁); 否则维持门禁+废 quick_tp 参数。窗内禁改门禁/快收参数 | DEB-20260831-reentry-quick-tp-gate-conflict §四 |
+| B14 | DA 门被拦方向性信号前瞻 (da_blocked_cf) | 主窗 T+1, n_eval≥50: mean_signed≤-0.15%(费用线) ∧ p_under≤0.05 → GATE_EFFECTIVE (拦得对, 维持); mean_signed≥+0.15% ∧ p_over≤0.05 → OVER_BLOCKING_SUSPECT (误杀, 提案另立DEB); 否则 KEEP_SAMPLING。T+3/T+5 仅一致性披露不参裁 (防多窗拣选)。基线首跑 9/1: n=126, T+1 mean=-0.088% 不显著; T+3/T+5 负且 p_under≤0.05 | DEB-20260901 Phase C 观察点③ (用户裁"要", 9/1) |
 
 ## C. 纪律红线 (冻结/不可动, 改需重新裁决)
 

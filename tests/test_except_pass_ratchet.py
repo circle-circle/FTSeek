@@ -14,7 +14,7 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 957  # 2026-08-31 普查值 — 清剿批次落地后只允许调低
+BASELINE = 955  # 2026-09-01 DEB-20260901 Phase C 批清剿 4 处后调低 (957→955) — 只降不升
 _EXCLUDE_PARTS = {"venv", "node_modules", ".git", "tests", "archive",
                   "__pycache__", ".backup_premigration", "obsidian_vault"}
 _PATTERN = re.compile(r"except[^:\n]*:\s*\n\s*(pass|continue)\s*(?:#.*)?$", re.MULTILINE)

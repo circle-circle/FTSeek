@@ -77,8 +77,9 @@ def main():
     finally:
         try:
             ctx.close()
-        except Exception:
-            pass
+        except Exception as e:
+            # R5 纪律留痕: 收尾异常不吞 (连接已用尽, 无副作用, 仅留痕)
+            print(f"[archetype-bars] ctx.close 异常(无副作用): {e}")
     print(f"[archetype-bars] 完成: 补拉成功 {ok}, 失败/空 {fail}")
     return 0
 

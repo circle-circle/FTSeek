@@ -176,3 +176,44 @@ DA 昨晚 7 个候选中 **每一个**都已在 `entry_strategy` 自由文本里
 **验证实录**: 确定性兜底对 8/31 全部 7 候选解析正确（NOW=140.5/AVGO cap=370/BABA cap=118/EIX=FADE_SHORT 63.27/BWXT 试多句式识别/AFRM 回归=83.5）；`_shadow_dedup_ok` 跨重启防重单测通过；全量测试通过（基线一致）；重放脚本 8/31 空跑正常（当日指令无结构化字段，n=0 合预期）。
 
 **今晚（9/1 盘）起自动生效**: DA 盘前 bridge 将携带结构化字段（双轨：自由文本照旧）；FTSeek 侧仅记录不改变任何执行动作。首批影子判读在 9/2 05:47 CST 重放。
+
+## 十一、Phase C 三观察点总纲（2026-09-01，用户裁"要"立项）
+
+> 缘起：8/31 全链复查（分源：DA +466/14天健康，UE -122 出血点，重武装 83% 胜率最优）后，
+> 用户裁"要"立三个观察点，并严令：**不要零散散落、避免遗忘丢失、充分检查设计、不重复造轮子**。
+> 防散落三登记：全部注册 `app/playbook/shadow_registry.py`（单一真源）+ 判据字典（B14 + B1 补注）
+> + 回放台账；周检 `check_shadow_registry()` 自动可见，不存在游离观察。
+
+### ① 缺口反向门 → 归并 B1，不新建（盘点结论：轮子已存在）
+
+- `gap_chase_gate`（B1，8/29 注册）的 aligned_gap≥5% 口径已含顺向追 + 逆势追两族，无需新门。
+- 勘误：8/31 PCG 实为 **-19.8% 崩跌追空**（prev_close 16.6→open 13.31），非"缺口上沿做空"，
+  正落入 B1 拦截队列。
+- 缺口发现：B1 注册后 **eval 脚本无 cron 挂载（悬空观察）** → 本轮补挂 `10 6 * * 2-6`。
+
+### ② DA/UE/重武装分源切片 → `gap_alignment` 扩展（原料已存在，只加切片）
+
+- `scripts/gap_alignment_shadow.py` 扩展：+`source`（DA/UE/REENTRY/OTHER，按 decision_id 前缀）
+  +`mfe_pct` 字段；summary +`by_source` 切片（mfe0_rate 分母仅计带 mfe_pct 的行）；
+  +trade_id 幂等去重（重跑不重复累加）；已追溯回填 390 存量行。
+- 基线（6/27-8/31）：DA n=271 净 -770 mfe0_rate=9.2% / OTHER n=50 / REENTRY n=13（UE 笔数少，逐日累计）。
+- 消费：9/2 首批判读报告六节之一 + 周检 by_source 可见。注册表 `gap_alignment`（count_mode=distinct:trade_id）。
+
+### ③ DA 被拦信号前瞻 → 新脚本 `da_blocked_signal_cf_eval.py`（唯一新建，判据 B14）
+
+- 回答："拦太狠"自警 + BABA/BWXT $3000 地板误杀案需要系统性证据 — 被 DA 门拦掉的方向性候选
+  （direction∈BUY/SELL_SHORT，SKIP 行排除）若放行，前瞻是赚是亏。
+- 数据源全部已存在：`data/da_gate_decisions.jsonl`（7/13 起）+ `data/replay_bars_daily/` 日K
+  （AFTER_HOURS 增量刷新）；锚=锚日开盘价；方向带符号收益；删失显式计数（口径对齐
+  `gate_counterfactual_ruler.py`，不新造约定）。
+- 基线首跑（9/1）：n=139（去重）可评估 126；T+1 mean=-0.088% WR=46.0% 费用线内不显著；
+  T+3 mean=-0.155%（p_under=0.043）/ T+5 mean=-0.778%（p_under=0.022）→ 方向上"拦得对"，
+  无过度拦截证据；预注册裁决=KEEP_SAMPLING（主窗 T+1 未越线不显著）。
+- 挂载：`15 6 * * 2-6`；注册表 `da_blocked_cf`（min_n=50，计数锚=latest 顶层 n）。
+
+### 裁决日与联动
+
+- 9/2 05:47 首批判读（一次性报告 `deb20260901_shadow_first_report.py`）覆盖 ①② 进度。
+- ③ 每日机械评估，B14 判据自动出裁决；两连 OVER_BLOCKING_SUSPECT 才提案另立 DEB。
+- 与既有窗口关系：不触碰 9 月退出参数冻结（C1/C7）；不翻 `entry_archetype_routing_enabled`
+  （判据三条全过 + 用户裁决前）；与 B13（再入场快TP）观察窗并行互不干扰。

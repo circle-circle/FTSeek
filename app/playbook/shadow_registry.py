@@ -376,6 +376,76 @@ REGISTRY: list[ShadowItem] = [
         notes="count_mode=lines; 结算行含 is_reentry/touch/tp_vs_actual_pct; "
               "DEB-20260831-reentry-quick-tp-gate-conflict §四; 判据字典 B13",
     ),
+
+    # ── DEB-20260901 Phase C 三观察点 (2026-09-01 用户裁"要"立项; 防散落: 全部注册于此,
+    #    判据落字典 B14, 脚本落回放台账 — 不允许散落游离观察) ──
+    ShadowItem(
+        id="pullback_limit_shadow",
+        name="确认位限价入场影子 (PULLBACK_LIMIT)",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20260901 Phase C 观察点①: 带确认位的 PULLBACK_LIMIT/FADE_SHORT 指令, "
+                    "执行层按现状执行 (零行为变更) 同时落触发上下文影子 "
+                    "(type=trigger/chase_cap_violation, _shadow_dedup_ok 文件级防重), "
+                    "次日 cf_pullback_limit_replay.py 重放 would-fill/CF-PnL。"
+                    "路由弹药已备好默认关 (eefba165, entry_archetype_routing_enabled=false)。",
+        data_path="data/shadow/pullback_limit_shadow.jsonl",
+        config_key="playbook.pullback_limit_shadow_enabled",
+        min_n=20,
+        graduation_criteria="DEB-20260901 §五 P0 预注册 (Phase C go/no-go): n≥20 可配对样本且三条全过: "
+                            "①净期望改善≥30% ②成交率≥50% ③mfe=0 占比下降 → 提案执行层路由接线 "
+                            "(翻 entry_archetype_routing_enabled=true, 需用户裁决); 任一条显著劣化 → 撤回, 证据留档。",
+        eval_script="scripts/cf_pullback_limit_replay.py",
+        created="2026-09-01",
+        notes="首个生产夜=9/1 盘 (结构化字段首夜); 8/31 指令无结构化字段重放 n=0 合预期; "
+              "首批判读 9/2 05:47; count_mode=lines",
+    ),
+    ShadowItem(
+        id="gap_alignment",
+        name="缺口对齐影子 (分源切片)",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20260901 Phase C 观察点②: 每笔 playbook 入场落 "
+                    "aligned_gap_pct×archetype×窗口×fwd_return 影子; Phase C 扩展 "
+                    "source=DA/UE/REENTRY/OTHER 分源切片 + mfe_pct 字段 (UE 左尾/mfe=0 监控)。"
+                    "历史 390 笔已回填 (6/27-8/31, 与 DEB §0.3 逐格一致)。纯影子不拦截; "
+                    "执行侧归 gap_chase_gate (B1), 本项不另立门。",
+        data_path="data/shadow/gap_alignment_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="DEB-20260901 §五 P1: 各格 n≥30 后用 gate_cost_report.py 方法算拦截成本 "
+                            "(被拦单 fwd_return_intraday 均值), 仅当拦截成本<保留收益才进入门禁立项; "
+                            "执行侧毕业判据见 gap_chase_gate (B1)。",
+        eval_script="scripts/gap_alignment_shadow.py",
+        created="2026-09-01",
+        notes="count_mode=distinct:trade_id — 重跑/回填不重复计数, 每笔交易只算 1 样本 "
+              "(390 回填系合法历史样本=§0.3 证据基线, 非刷样); by_source 切片读 latest summary",
+        count_mode="distinct:trade_id",
+    ),
+    ShadowItem(
+        id="da_blocked_cf",
+        name="DA 门被拦方向性信号前瞻评估",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20260901 Phase C 观察点③: DA 质量门拦掉的方向性候选 "
+                    "(direction∈BUY/SELL_SHORT, SKIP 行排除) 若放行会怎样 — '拦太狠'自警 "
+                    "+ BABA/BWXT $3000 地板误杀案的系统性反事实证据 (非个案叙事)。"
+                    "数据源=da_gate_decisions.jsonl (7/13起) + replay_bars_daily 日K; "
+                    "锚=锚日开盘价, 方向带符号收益, 右缘删失显式计数。只读幂等。",
+        data_path="data/shadow/da_blocked_cf_latest.json",
+        config_key=None,
+        min_n=50,
+        graduation_criteria="判据字典 B14 (2026-09-01 预注册): 主窗 T+1, n_eval≥50: "
+                            "mean_signed≤-0.15% ∧ p_under≤0.05 → GATE_EFFECTIVE (拦得对, 维持); "
+                            "mean_signed≥+0.15% ∧ p_over≤0.05 → OVER_BLOCKING_SUSPECT (误杀, 提案另立DEB); "
+                            "否则 KEEP_SAMPLING。T+3/T+5 仅一致性披露, 不参与裁决 (防多窗拣选)。",
+        eval_script="scripts/da_blocked_signal_cf_eval.py",
+        created="2026-09-01",
+        last_evaluated="2026-09-01",
+        verdict_history=[{"date": "2026-09-01", "verdict": "KEEP_SAMPLING",
+                         "evidence": "基线首跑: n=139(去重) 可评估126, T+1 mean=-0.088% WR=46.0% "
+                                     "费用线内且不显著; T+3/T+5 方向为负且 p_under≤0.05 (一致性披露) "
+                                     "→ 门方向上'拦得对', 无过度拦截证据"}],
+        notes="cron 15 6 * * 2-6; 删失 8 笔=无日K缓存 (FBK/BTI/TRV/SNY/AMC/OFG/RDTL); "
+              "计数锚=latest json 顶层 n (主窗 n_eval)",
+    ),
 ]
 
 

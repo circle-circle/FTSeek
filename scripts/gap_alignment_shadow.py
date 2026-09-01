@@ -58,7 +58,7 @@ def main():
     db.row_factory = sqlite3.Row
     trades = db.execute(
         """SELECT t.id, t.symbol, t.direction, t.entry_time, t.decision_id,
-                  t.pnl_net, t.realized_pnl, t.exit_reason, t.metadata_json,
+                  t.pnl_net, t.realized_pnl, t.exit_reason, t.metadata_json, t.mfe_pct,
                   i.fwd_return_intraday, i.fwd_return_t1, i.raw_instruction_json
            FROM trade_records t
            LEFT JOIN playbook_instructions i
@@ -81,7 +81,14 @@ def main():
             raw = {}
         et_hm = (t["entry_time"] or "")[11:16]
         window = "open_0930_1000" if et_hm and et_hm < "10:00" else "after_1000"
+        # [DEB-20260901 Phase C·观察点②] 源归属 — DA/UE/重武装分源监控 (UE 左尾/mfe=0)
+        _did = t["decision_id"] or ""
+        _src = ("DA" if _did.startswith("DA-")
+                else "UE" if "universe_expansion" in _did
+                else "REENTRY" if "intraday_reentry" in _did else "OTHER")
         rows.append({
+            "source": _src,
+            "mfe_pct": t["mfe_pct"],
             "date": date, "schema": "v1", "trade_id": t["id"], "symbol": t["symbol"],
             "direction": t["direction"], "entry_time_et": t["entry_time"],
             "aligned_gap_pct": ag, "gap_bucket": bucket_gap(ag, t["direction"]),
@@ -92,6 +99,15 @@ def main():
             "fwd_return_intraday": t["fwd_return_intraday"],
             "fwd_return_t1": t["fwd_return_t1"],
         })
+
+    # 幂等: 按 trade_id 去重 (重跑/补数不重复累加, 2026-09-01 Phase C 加固)
+    _seen_tids = set()
+    if OUT_JSONL.exists():
+        for _l in OUT_JSONL.read_text(encoding="utf-8").splitlines():
+            _r = _loads(_l)
+            if _r and _r.get("trade_id") is not None:
+                _seen_tids.add(_r["trade_id"])
+    rows = [r for r in rows if r["trade_id"] not in _seen_tids]
 
     OUT_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with OUT_JSONL.open("a", encoding="utf-8") as f:
@@ -119,9 +135,27 @@ def main():
         if r.get("fwd_return_intraday") is not None:
             a["fwd_intraday_sum"] += float(r["fwd_return_intraday"])
             a["fwd_n"] += 1
+    # [DEB-20260901 Phase C·观察点②] 分源累计: n/净/胜率/mfe=0 占比 (UE 左尾监控)
+    src_agg = {}
+    for r in all_rows:
+        sa = src_agg.setdefault(r.get("source", "OTHER"),
+                                {"n": 0, "net": 0.0, "wins": 0, "mfe0": 0, "mfe_n": 0})
+        sa["n"] += 1
+        sa["net"] += float(r["pnl_net"] or 0)
+        sa["wins"] += 1 if (r["pnl_net"] or 0) > 0 else 0
+        # mfe0 仅对带 mfe_pct 字段的行统计 (缺字段=旧回填行, 不进分母防误计)
+        if r.get("mfe_pct") is not None:
+            sa["mfe_n"] += 1
+            if float(r["mfe_pct"]) == 0.0:
+                sa["mfe0"] += 1
     summary = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "date_added": date, "rows_added": len(rows),
+        "by_source": {k: {"n": v["n"], "net": round(v["net"], 2),
+                          "win_rate": round(v["wins"] / v["n"], 3) if v["n"] else None,
+                          "mfe0": v["mfe0"],
+                          "mfe0_rate": round(v["mfe0"] / v["mfe_n"], 3) if v["mfe_n"] else None}
+                      for k, v in sorted(src_agg.items())},
         "cumulative": {f"{k[0]}|{k[1]}|{k[2]}": {
             "n": v["n"], "net": round(v["net"], 2),
             "win_rate": round(v["wins"] / v["n"], 3) if v["n"] else None,
