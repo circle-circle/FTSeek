@@ -334,6 +334,39 @@ REGISTRY: list[ShadowItem] = [
               "再提示一次悬空 (设计内提醒, 非故障)。",
     ),
     ShadowItem(
+        id="da_prompt_distill_shadow",
+        name="DA 系统提示词蒸馏影子 (DEB-20260901c 阶段二)",
+        status=ShadowStatus.OBSERVING,
+        description="2026-09-01 用户裁'批准两阶段方案'。阶段一 (行为等价审计) 已过: "
+                    "37/37 行为标记全保留, 减重 19.0% (2867→2323 字符), 产物=仓外 "
+                    "skills/deep-stock-analysis/scripts/prompt_distill_v2.py。"
+                    "阶段二架构纯旁路: 读当晚 da_checkpoint raw.json 生料 → "
+                    "DeepAnalyzer+V2垫片 (llm_synth.synthesize system_override, "
+                    "组装链路与生产逐字节同源, 唯一变量=system 文本; 思考模式双臂同开) → "
+                    "append jsonl; V1 对照=当晚生产 checkpoint 不重跑。"
+                    "零落库/零 bridge/零指令。",
+        data_path="data/shadow/da_prompt_distill_shadow.jsonl",
+        config_key=None,
+        min_n=10,
+        count_mode="where:run_mode=live",
+        graduation_criteria="预注册 (窗口 9/2-9/15, 10 交易日): "
+                            "①JSON 有效+契约违约率≤V1 ②direction 比例与 HIGH 档比例漂移≤10pp "
+                            "③T+1 配对 alpha 非劣 (差值下界≥-0.10%) ④token 降幅≥15%。"
+                            "⓪行为等价 checklist 已于阶段一通过 (一票否决线, 前置)。"
+                            "全过 → 另立执行 DEB 换生产 SYSTEM_PROMPT+换 PROMPT_HASH 锚点; "
+                            "任一不过 → ARCHIVE。9/16 一次性评估 (评估脚本随窗口收口批落地)。",
+        eval_script="scripts/da_prompt_distill_shadow_eval.py",
+        created="2026-09-01",
+        last_evaluated=None,
+        verdict_history=[{"date": "2026-09-01", "verdict": "BASELINE_NO_DATA",
+                          "evidence": "注册基线: 影子脚本落地, 首个采集夜 9/1 (raw.json "
+                                      "首产夜), 评估脚本与一次性裁决 cron 随窗口收口批落地"}],
+        notes="计数口径=live 行数; cron '40 21 * * 1-5' 是唯一采集线也是唯一 kill switch "
+              "(思考模式下 DA 全轮延后, 21:40 发车留足完成余量)。eval 脚本窗口收口前落地, "
+              "落地前哨兵若报悬空属设计内提醒。DEB-20260901b (思考模式) 已直切生产, "
+              "与本影子不构成变量纠缠 (双臂同思考态, 单变量=system 文本)。",
+    ),
+    ShadowItem(
         id="e2_momentum",
         name="E2 入场动量确认",
         status=ShadowStatus.READY_TO_EVALUATE,

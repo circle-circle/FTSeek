@@ -1,8 +1,10 @@
 # DEB-20260901b: DA 思考预算影子实验 — qwen3.7-max enable_thinking 对分析质量的影响（提请裁决）
 
 - **立案日**: 2026-09-01（2026-09-01 PE 审阅执行批衍生；用户令立正式提案"需要"）
-- **裁决**: 待裁决
-- **状态**: 提案（零代码零配置零行为变更）
+- **裁决**: 2026-09-01 用户终裁**选项 3 变体——直接切生产**（原提案自评否决项，用户裁量覆盖；
+  裁决理由:"从修尺子提升质量的角度"——以生产 go-forward 数据为证据, 配套观测与回滚开关,
+  不再先跑影子）。
+- **状态**: 已执行（2026-09-01 夜生效, skill v0.74 / 提交见仓外 a08251f→df 后续批）
 - **纪律引用**: 影子先行（C4）；预注册单假设（KR3）；一次一个变量；防散落（裁决后注册 shadow_registry + 判据字典）；退出参数冻结不触碰
 - **关联**: 2026-09-01 PE 审阅执行批（handoff 2026-09-01g）、DEB-20260831-da-debate-quality（挑战者质量，不同议题勿混）、DEB-20260901（同日，结构化入场语义）
 
@@ -74,3 +76,18 @@
 
 - 影子期: 删 cron 一行 + 删 `scripts/da_thinking_shadow.py`（kill switch 唯一性同 da_glm_shadow 先例）。
 - 生产零触碰，无其他回滚面。
+
+---
+
+## 八、执行记录（2026-09-01，用户裁"直接切生产"）
+
+**实施（仓外 skill，备份 `*.bak-thinking-20260901`）**:
+1. `_call_llm` 增 `extra_body` 透传参数（默认 None = 逐字节原行为）。
+2. 分析师调用开 `enable_thinking=True` + `thinking_budget=2048`，`max_tokens` 3000→6000（防推理 token 吃预算 → empty_response，网关 7/6 P0 教训）。
+3. 观测落盘: `_llm_latency_ms` / `_thinking_enabled` 随 `_llm_output` 进 checkpoint → 每日日报全链路口径可核（延迟/成本/截断三指标）。
+4. 开关: `config.py DA_THINKING_ENABLED`（默认开；`.env.us` 设 `DA_THINKING_ENABLED=0` 即回滚逐字节原行为）+ `DA_THINKING_BUDGET`。
+5. 冒烟实弹: `thinking_budget` 参数 DashScope 可达 + json_mode 共存 + `finish=stop`；空壳候选端到端（DeepAnalyzer+思考）62.7s/候选, SKIP/LOW 路由正常。
+
+**原预注册判据的命运（诚实留痕）**: §四四判据随直切生产不再作为"转正门"，转为 **go-forward 观测指标**——明日日报起逐日核: ①JSON 成功率（`_finish_reason` 分布）②延迟（`_llm_latency_ms` p90，预估全轮 35-45min，桥接惰性加载无硬截止）③方向质量以 DEB-20260901c 影子 V1 臂数据为对照间接度量 + 常规 IC/alpha 审计按 `_thinking_enabled` 切分 ④成本（日报 DA 直连段）。任一指标恶化 → 回滚开关即复。
+
+**与 20260901c 的关系**: b 直切后不再是实验变量，c 影子双臂同思考态并跑，互斥条款自然解除（留痕于 c 档附一）。
