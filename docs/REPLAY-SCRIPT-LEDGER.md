@@ -18,7 +18,7 @@
 |---|---|---|---|
 | exit_replay_backtest.py | 701 | **活体·官方引擎** | 10 份 DEB 引用的回放基线 |
 | limit_entry_shadow_replay.py | 267 | **活体** | cron 挂载 + 注册表 eval + 近30天有日志 |
-| phase1_gate_backtest.py | 267 | **活体** | 影子注册表 eval 脚本 |
+| phase1_gate_backtest.py | 267 | 候选退役 | 原影子注册表 p1_3_vol_p50 eval; 2026-09-01 p1_3 裁杀 (5天3样本, 用户裁) 后零活体引用, 删除前需人工确认内容无未落档价值 |
 | entry_gate_replay.py | 215 | 证据冻结 | 3 份 DEB |
 | gate_a_mfe_replay.py | 426 | 证据冻结 | 2 份 DEB (复用官方引擎×3) |
 | overnight_loser_multiday_replay.py | 238 | 证据冻结 | 2 份 DEB |
@@ -36,4 +36,5 @@
 
 - 2026-08-30: 台账建立 + 官方引擎公约写入。实测复用率 4/29 → 目标: 新增脚本 100% 复用。
 - 2026-09-01: DEB-20260901 Phase C 补登记 4 脚本 (前三个 8/31-9/1 上线时漏登记, 本轮勘误入册)。日K缓存 CF 评估族 (gate_counterfactual_ruler / da_blocked_signal_cf_eval / t5_hold_counterfactual) 均只读 replay_bars_daily 缓存、零网络拉取, 与官方引擎 1 分钟回放分工明确, 不视为公约违例。
+- 2026-09-01: p1_3_vol_p50 用户裁杀 → phase1_gate_backtest.py 转候选退役 (零活体引用; 脚本保留备查, 其历史读数未被他档引用为证据基线)。
 - 不做的事: 不重写证据冻结脚本 (可复现性 > 整洁); 不建回放框架抽象层 (脚本即一次性证据, 框架化是过度设计)。

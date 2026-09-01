@@ -78,7 +78,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="p1_3_vol_p50",
         name="量能门 p50 曲线",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="chase 路径分母改历史同分钟 p50。reentry+UE 启用, DA 走线性(对比组)。",
         data_path="data/vol_gate_da_p50_shadow.jsonl",
         config_key="playbook.execution_parameters.volume_gate_vwap_relative",
@@ -86,7 +86,14 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="reentry+UE 组 n≥30 chase + 重标定阈值 + DA 对比组方向一致 → 翻 da_enforce=true",
         eval_script="scripts/phase1_gate_backtest.py",
         created="2026-08-23",
-        notes="按源分流: reentry+UE 走 p50, DA 走线性; 核心桶 [0.6,0.8) WR 20% 方向强",
+        last_evaluated="2026-09-01",
+        verdict_history=[{"date": "2026-09-01", "verdict": "KILLED",
+                         "evidence": "挂载核对哨兵首跑捕获: eval 从未挂载 + 数据停滞 (8/23-8/28 仅 3 行, "
+                                     "8/28 后断流) → 触发条件在生产中实际不存在。用户裁'按建议执行'(选项1裁杀)。"
+                                     "在跑行为不受影响: volume_gate_vwap_relative=true 系 reentry+UE 侧 "
+                                     "既有行为, 本裁杀仅停观察跟踪; DA 对比组写盘随 da_enforce 现状。"}],
+        notes="按源分流: reentry+UE 走 p50, DA 走线性; 核心桶 [0.6,0.8) WR 20% 方向强。"
+              "2026-09-01 裁杀: 5 天 3 样本=触发近乎不存在, 攒样无意义",
     ),
     ShadowItem(
         id="p1_1_capital_flow",

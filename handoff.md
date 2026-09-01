@@ -260,6 +260,12 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-09-01f (p1_3_vol_p50 裁杀 — Codex, 用户裁"按建议执行"=选项1)
+
+**裁决**: 挂载核对哨兵首跑捕获项处置 — p1_3_vol_p50 (量能门 p50 A/B, 8/23 立) 裁杀: 5 天仅 3 样本 + 8/28 后断流 + eval 从未挂载 = 触发条件生产中实际不存在, 攒样无意义。注册表翻 KILLED + verdict 留痕; 台账 phase1_gate_backtest.py 转候选退役。
+
+**边界**: 在跑行为零变更 — `volume_gate_vwap_relative=true` 系 reentry+UE 侧既有行为不动, 裁杀仅停观察跟踪; DA 对比组写盘随 da_enforce 现状。哨兵告警清零 (0 项)。
+
 ### 2026-09-01e (体检建议执行批: 挂载哨兵+冻结豁免+备份轮转 — Codex, 用户裁"按建议执行")
 
 **①周检挂载核对哨兵**: `shadow_registry.check_mounting()` — 注册表在册事项双向核对: eval_script 是否在 crontab/scheduler/ops/采集引用中 (未挂载=悬空告警🪝) + data_path 产出是否超龄(>14天)/缺失(非初生豁免<10天)。周检接入推送。**首跑即捕获**: p1_3_vol_p50 (eval 未挂+数据停在 8/28 仅3行, 留告警待周检裁) ; vwap_gate_ab 定性为裁点触发型 eval (eval_on_demand=True 豁免)。契约测试 9 例。
