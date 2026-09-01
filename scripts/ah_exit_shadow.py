@@ -105,16 +105,26 @@ def load_open_positions() -> list[dict]:
 
 def find_tp(pos_key) -> float | None:
     """持仓的 TP (playbook_instructions 最新行). open_positions 无 TP 元数据,
-    经 trade_records(在仓行).decision_id 关联; 缺失则 touch_tp 臂记 None 不阻塞."""
+    经 trade_records(在仓行).decision_id 关联; 缺失则 touch_tp 臂记 None 不阻塞.
+    2026-08-31 加固: open_positions 与 trade_records 的 entry_time 偶有秒级错位
+    (实测 8/27 US.AVGO :34 vs :33) 致精确秒匹配漏关联, touch_tp 臂失明 →
+    首选"该标的方向在仓行"语义关联 (在仓评估语义下恒成立), 秒级匹配降为兜底."""
     sym, drn, et19 = pos_key
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     row = con.execute(
         "SELECT p.take_profit FROM playbook_instructions p "
         "JOIN trade_records t ON t.decision_id = p.decision_id "
-        "WHERE t.symbol=? AND t.direction=? AND substr(t.entry_time,1,19)=? "
+        "WHERE t.symbol=? AND t.direction=? AND t.exit_time IS NULL "
         "AND p.take_profit > 0 ORDER BY p.updated_at DESC LIMIT 1",
-        (sym, drn, et19)).fetchone()
+        (sym, drn)).fetchone()
+    if row is None:
+        row = con.execute(
+            "SELECT p.take_profit FROM playbook_instructions p "
+            "JOIN trade_records t ON t.decision_id = p.decision_id "
+            "WHERE t.symbol=? AND t.direction=? AND substr(t.entry_time,1,19)=? "
+            "AND p.take_profit > 0 ORDER BY p.updated_at DESC LIMIT 1",
+            (sym, drn, et19)).fetchone()
     con.close()
     return float(row["take_profit"]) if row else None
 
