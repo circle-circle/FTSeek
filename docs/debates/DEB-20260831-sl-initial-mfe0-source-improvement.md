@@ -152,3 +152,31 @@
 9/2 盘后复盘坐实：`get_exit_config_version()` 快照含 `early_tight_sl_enabled/_minutes/_pct` 但**不含** `mfe_gate`（8/29 起漏）与 ATR 三键（e32d376f 起漏）——四个键全住 unified_config.yaml，horizon 整文件哈希（R-4b）覆盖不到。ATR 变更改变已实现 PnL 而版本哈希不动 = KR2 判分假绿，正是 R-4b 注释预言的"漏键的代价"。
 
 修复：四键入快照 → 新版本 `exit-d1120a105711`（旧 `exit-2623be9c8879` 哈希不回填，8/31-9/1 交易按豁免清单读）。豁免清单（`config_freeze_baseline.json` exit_versions）+ 钉子测试（`tests/test_kr2_freeze_exemption.py` KNOWN_EXEMPT 三版本）同步，服务重启后 9/2 起生效。
+
+### 8.7 DA bridge 隐式 ATR 路径（2026-09-02 独立复查补记 · 另 agent (Codex)）
+
+实证（独立复查批，近 40 笔 8/24–9/1）：`meta.atr` 除"真 ATR / 缺失"外还有第三来源——指令无 `atr_source`（DA bridge 直写）时，`_extract_atr_from_instruction`（`app/playbook/playbook_service.py`，2026-07-16 修复注）从 SL 距离反算，返回 `entry × sl_dist%` 作为隐式 ATR 绝对值。该路径非零，**不走** §8.3"缺失/0 → 固定 1%"回退。
+
+- 人口：33 笔真 ATR（atr_source 解析）/ 7 笔代理（RIVN/UBER/SAIC/NTES/BWXT/GAP/RBRK）/ 0 笔缺失为零 → 固定 1% 回退目前生产无实流。
+- 行为：代理仓 tight = clamp(0.5×SL距离%, 1%, 2.5%)；SL 距离常见 4.4–5.5% → tight ≈ 2.2–2.5%（贴近上限）。仍有界（< 初始 SL 一半），无纪律风险，但与提交信息暗示的口径不同。
+- 口径注意：① 代理仓日志 `basis=atr=X%` 的 X 基于 SL 距离非真 ATR，日志字段暂不能区分两来源；KR2 / exit_scorecard 切片时需知此混样（代理可反查：atr ≈ entry×sl_dist 精确到分位）。② 触发样本 SAIC 本身即代理仓（atr=6.3 = 125.98×5.0%）：无论取代理 5% 还是 §8.3 原口径 4%，0.5×ATR ≥ 2% > MAE 1.53%，存活判定不变——结论稳，但证据基留痕。③ `_extract_atr_from_instruction` docstring"退出逻辑本身不读此值"自 e32d376f 起已失效，下次触及该文件的代码批顺手更正。
+- 可选增强（未实施，待裁决）：入场时给 metadata_json 加 `atr_basis: real|proxy|missing` 标记并透传至退出日志 basis 字段，切片自明；每仓一行，零行为变更。
+
+### 8.8 §8.7 复核勘误 + 单位混装 bug 修复（2026-09-02 · Qoder，用户裁"同意执行"·C1 冻结显式豁免）
+
+**复核结论（对 Codex §8.7）**：定性全对——代理路径存在且不走 1% 回退 ✓、固定 1% 回退生产无实流 ✓、SAIC 即代理仓（atr=6.3=125.98×5.0%）✓、代理 tight 有界无纪律风险 ✓、docstring 失效 ✓。但**人口数字错**：定义性口径（以 `_extract_atr_from_instruction` 唯一读取的 `atr_source` 子串 join 指令表）实测 79 笔已平仓（8/24–9/1）= **4 真 ATR / 75 代理 / 0 缺失**（非 33/7/0）。代理主导远强于 §8.7 表述——生产 rule 0.5 实际语义 ≈ "0.5×SL 距离"（95% 流），§8.3 框架只覆盖 ~5% 的流；KR2/exit_scorecard 切片混样警示据此升级。4 笔真 ATR 全在 9/1（LLY/META/BABA/BWXT，instruction_generator 新格式），8/24–8/31 全代理。
+
+**新发现（比统计错更重要）：单位混装 bug**。4 笔真 ATR 全把**百分比存进绝对值槽**（LLY 9/1 meta.atr=3.13 vs 同股 8/28 代理 52.54，量纲自证）：
+
+| 标的 | entry | meta.atr(存的是%) | 规则0.5 算出 atr% | tight 实际 | 应为 |
+|---|---|---|---|---|---|
+| LLY | 1177.50 | 3.13 | 0.27% | 1.0%（地板） | 1.57% |
+| META | 567.02 | 3.20 | 0.56% | 1.0%（地板） | 1.60% |
+| BWXT | 154.70 | 3.60 | 2.33% | 1.16% | 1.80% |
+| BABA | 113.32 | 3.88 | 3.42% | 1.71%（碰巧近对） | 1.94% |
+
+- **根因**：instruction_generator 9/1 起的 `atr_source` 新格式 "VOL_medium: atr_pct=3.13% sl=…" 是百分比（旧格式 "technical.atr_14=8.35" 是绝对价），解析器 `float("3.13%".rstrip("%"))` 不分单位直落绝对槽；读取端（pipeline 规则0.5）除以 entry。高价股静默回 1% 地板 = V 型日误杀行为复活；低价股偏松（2.5% 上限封顶）。日志 `basis=atr=0.3%×0.5` 量纲上说谎。
+- **零已实现影响**：4 笔均 9/1 10:03–12:15 ET 规则部署前平仓（LLY 正是 V 型日误杀笔，若当时规则在线反而带病）；修复部署时唯一持仓 ORCL 走代理路径。前瞻暴露实况：9/1 起指令 51/77 条带新格式（47 条 pending）→ 修复赶在下一指令链成交前 = 零前瞻暴露。
+- **修复**：`_extract_atr_from_instruction` 按 "atr_pct=" 键名识别百分比 → ×入场价转绝对价入库；旧格式/代理路径/历史行零变更；docstring 同步更正"承重声明"（原"退出逻辑不读此值"自 e32d376f 起失效）+ fail-safe：entry 缺失 → 0.0 → 规则0.5 回退固定 1%。契约测试 `tests/test_atr_source_unit_extraction.py` 9 例（新格式转绝对 str|dict 双入参 / 旧三格式不动 / vix_widen 后缀 / 代理零回归 / fail-safe / 端到端：LLY 修复后 -1.3% 存活 vs bug 形态 1% 地板被杀）。实数据干跑：4 笔修复后 tight 1.57–1.94%，ORCL/SAIC/8/28 历史代理逐值不变。
+- **KR2 口径**：yaml 键未动 → `exit-d1120a105711` 不变；代码级行为变更由本提交+本档追踪。exit_scorecard 切片以本提交为界——此前 real-ATR 行 meta.atr 为百分比口径，不可与修复后混切（全为已平仓行，切片影响仅限 4 笔）。
+- §8.7 可选增强 `atr_basis` 标记维持未实施（本批不扩，防 scope 蔓延；下次触及退出遥测的批次再议）。

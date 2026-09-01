@@ -72,7 +72,7 @@ futu SDK 10.09.6908 的同步查询路径（`venv/.../futu/common/open_context_b
 |---|---|---|---|---|
 | 1 | futu 同步调用无超时（全仓 14+ context 创建点；热区：退出快循环取价、持仓对账、VIX 线程、dual_broker 下单、LV3 重连） | `set_sync_query_connect_timeout` 全仓零调用 | OpenD 再瘫 | 全进程冻结，同本次 |
 | 2 | watchdog 检测链含 futu 调用（日历缓存 miss 时新建 ctx） | holiday_calendar.py:142 | 冻结恰好跨日界/缓存边界且 OpenD 已瘫 | 检测器与被检者同死（本次**非**此因，见 §2.3） |
-| 3 | 7 处 `requests.*` 无 timeout：vix_monitor.py:223,429、sentiment_analyst.py:145、factor_engine.py:594、eastmoney_us_source.py:112、alphavantage_provider.py:556、fundamental_provider.py:47 | grep 逐条核实 | 对应外部端点 hang | 同类冻结，换触发源 |
+| 3 | ~~9 处 `requests.*` 无 timeout~~ **已闭环（2026-09-02 勘误）**：全仓解析扫描缺 timeout = 0 处 — 原 7 处清单为首稿未重验的旧审计快照（timeout 早在 `6dafd2a0` 已补），Codex 复查补入的 data_health_check.py:54,69 亦实带 timeout=8；详见 E2 撤销说明 | 全仓扫描 + 逐行亲核 | ~~对应外部端点 hang~~ | ~~同类冻结，换触发源~~ |
 | 4 | 进程外无 hang 检测（Type=simple 无 WatchdogSec；进程内 watchdog 共命运） | unit 文件 | 任何全进程冻结 | 只能等自愈或人工 |
 | 5 | OpenD 是无监控单点（本次实锤其"半瘫"形态：连接层活、API 层死、能自愈） | GTWLog 零请求窗口 | OpenD 内部故障 | 上游所有保护的第一依赖 |
 
@@ -109,25 +109,27 @@ futu SDK 10.09.6908 的同步查询路径（`venv/.../futu/common/open_context_b
 ### E0 — 外部心跳监督 + 事故时自动取证（keystone，~30 行零热路径风险）
 
 - 退出快循环内顺手 `Path("/run/ftseek-heartbeat").touch()`（一行，每 20s）。
-- systemd timer 或 cron 每分钟检查：mtime > 300s 停滞 → **先 `venv/bin/py-spy dump --pid <ftseek主进程>` 全线程栈落 `logs/freeze_stacks/`（py-spy 0.4.2 已在 venv，零新依赖），再 `systemctl restart ftseek-us`**，并发告警。
+- systemd timer 或 cron 每分钟检查：mtime > 420s 停滞（2026-09-02 裁决值，见下） → **先 `venv/bin/py-spy dump --pid <ftseek主进程>` 全线程栈落 `logs/freeze_stacks/`（py-spy 0.4.2 已在 venv，零新依赖），再 `systemctl restart ftseek-us`**，并发告警。
 - 为什么是它：
   - GIL 免疫、进程免疫 — 对"冻结原因不可枚举"构造性免疫；
   - 检测+取证+恢复在一次开火里同时完成 — 下次事故直接拿到冻结瞬间全线程栈，§2.3 的死因悬案即解；
-  - 分层无冲突：进程内 watchdog（120s 告警/360s heal）只在"内部活着"时起作用；外部 300s 恰好只接管"内部也死了"的格子，且以心跳文件停滞为唯一触发条件 — 内部活着就永不触发；
+  - 分层无冲突：进程内 watchdog（120s 告警/360s heal）只在"内部活着"时起作用；外部 420s（>360s heal 线）只接管"内部也死了"的格子，且以心跳文件停滞为唯一触发条件 — 内部活着就永不触发；
   - 复用仓库既有 cron 词汇，无 NotifyAccess/main-PID 泥潭。
 - 阈值理由：内部 heal 阈值 = 120×3 = 360s；外部若 <360s 会与内部 heal 竞速（内部 heal 优先，它有 1/3 额度节流；外部是兜底）。300s 落在内部告警(120s)之后、内部 heal(360s) 之前，语义 = "内部 watchdog 已死"才接管。**此阈值为预注册值，另一 agent 可复议。**
+- **[2026-09-02 独立复审议 · 另 agent (Codex)] 阈值异议 300s → 420s**：原文语义为"内部 watchdog 已死才接管"，但心跳由退出快循环 touch，300s 阈值区分不了"watchdog 已死"与"watchdog 活着、内部 heal 尚未到点（120–360s 窗口）"——退出循环冻而 watchdog 存活时，外部会在 300s 先开火，抢走内部 heal 本应在 360s 执行的那次重启，与同段"内部 heal 优先（1/3 额度节流）"语义相悖，且外部重启不走内部额度记账。建议阈值改 **420s（=360s+60s 余量）**：内部活着时内部必先出手；仅内部同死（本次事故形态）外部才兜底，代价仅 +60s 检测延迟。若坚持 300s，须把语义改写为"外部可抢跑内部"并接受为设计行为。异议不触及 E0 结构（心跳+py-spy 取证+重启），仅预注册阈值；采纳与否由用户裁决。
+- **[2026-09-02 裁决 · 用户裁"同意执行"] 采纳 420s**：异议成立 — 内部 heal 阈值 120×3=360s（`scheduler_core.py:2670` 注册 120s × heal_multiplier 3）已独立核实，300s 确实落在"watchdog 活着、heal 未到点"窗口内，外部会抢跑且绕过 1/3 每日额度记账。**E0 预注册阈值定为 420s**（=360+60s 余量），本节上文 300s 表述按此读。E0-E3 整体实施仍待裁决。
 - 风险与注意：py-spy dump 需要 ptrace 权限（root 下 OK，需实弹验证一次）；心跳写 /run/（tmpfs，零 IO 顾虑）；市场关闭时段退出快循环休眠在 `sleep_if_market_closed` — **该函数返回前不 touch 心跳，会积累 mtime 停滞** → 心跳 touch 必须放在循环顶部 ping watchdog 的同一位置（与内部 ping 同点，市场关闭时内部 watchdog 也因 WEEKEND 检查跳过告警 — 外部监督器需同判市场相位，或接受盘后/周末的假阳性并靠监督器读市场相位跳过。**此细节是 E0 实施的第一坑，留给实施者处理**）。
 
 ### E1 — 资金路径 bounded IO（收缩版 P1）
 
 只改退出快循环取价：共享有界 executor + `future.result(timeout=20)`，超时=跳过本轮+一次性告警，绝不允许退出监控挂起。其余 13 处 futu 调用点**不动**（E0 已兜底）。二期可选熔断（连续 N 超时 → OpenD 标 down → fail-fast + 探测恢复）。
 
-- 已知残留：弃单后 SDK 自旋线程泄漏（见 §四.2）— 接受：E0 在 300s 级兜底重启清场，且事故频率低。
+- 已知残留：弃单后 SDK 自旋线程泄漏（见 §四.2）— 接受：E0 在 420s 级兜底重启清场，且事故频率低。
 - 备选强化（不推荐现在做）：给 14 个 context 创建点统一补 `set_sync_query_connect_timeout(15)`（一行/处）— 若另一 agent 认为值得一次做全，此为机械安全改动，但回归面 14 处。
 
-### E2 — 7 处 HTTP 补 timeout（机械，~30min）
+### E2 — ~~9 处 HTTP 补 timeout~~ 【2026-09-02 勘误撤销 · Qoder】
 
-`requests.*` 全部加 `timeout=(5, 15)`。
+**撤销，无实施必要**：全仓解析扫描（多行调用完整解析，排除 venv/archive）= `requests.*` 缺 timeout **0 处**。原 7 处清单（风险#3）是本档首稿写作时未重验的旧审计快照 — timeout 早在 `6dafd2a0`（Karpathy audit 批）已补，抽查 vix_monitor:223,429 / sentiment_analyst:145 / factor_engine:594 均带 timeout=8~10；Codex 复查补入的 scripts/data_health_check.py:54,69 两处同样**实际带 timeout=8**（逐行亲核）。双盲互查双双失手于同一根因（grep 旧清单不重验），如实留痕；风险#3 同步改"已闭环"。
 
 ### E3 — OpenD 外部探针（观察项，不急）
 
@@ -155,7 +157,7 @@ TRADING 时段每 5 分钟探测 OpenD（`get_global_state` 带 10s 超时），
 | 心跳 touch | `app/core/scheduler_core.py` 退出快循环（一行） | 删行 |
 | 外部监督器 | `scripts/freeze_sentinel.py`（新） + cron/timer 每分钟 | 删 cron 行 + 脚本 |
 | 退出取价硬墙 | `app/playbook/pipeline.py`（有界 executor + timeout） | git revert |
-| HTTP timeout ×7 | 见风险#3 清单 | git revert |
+| ~~HTTP timeout ×9~~ | ~~见风险#3 清单~~ **已撤销（E2 勘误）** | — |
 | 本档 | `docs/debates/DEB-20260902-process-freeze-root-cause.md` | — |
 
 ## 附：晨间判读旁证（同会话顺手记录）

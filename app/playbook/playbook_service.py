@@ -79,17 +79,27 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
     2026-06-24 修复: playbook_instructions 表无 atr_source 顶层列 (schema 见 db.py),
     atr_source 嵌在 raw_instruction_json blob 里 (instruction_generator 产出). 此前
     inst.get("atr_source","") 永远返回 "" → "=" not in "" → metadata.atr 恒为 0,
-    导致事后复盘"SL 距离是否合理"无法诊断. 注意: 退出逻辑本身不读此值 (退出用实时
-    market_data.atr), 故此前 bug 仅影响可观测性, 不影响执行.
+    导致事后复盘"SL 距离是否合理"无法诊断.
+
+    ⚠ 本值自 e32d376f (2026-09-01 ATR 比例紧 SL) 起**承重退出行为**: pipeline 规则0.5
+    读 metadata.atr 为**绝对价** (atr% = atr/entry×100). 原注释"退出逻辑本身不读此值"
+    已失效, 入库必须统一绝对价口径.
+
+    2026-09-02 单位修复 (DEB-20260831 §8.8): instruction_generator 新格式是百分比
+    ("VOL_medium: atr_pct=3.13% sl=4.50%"), 旧格式是绝对价 ("technical.atr_14=8.35").
+    此前解析器不分单位 → 百分比直落绝对值槽, LLY(entry≈1178) 被规则0.5 算成
+    atr%=0.27% → tight 落 1% 地板, V 型日误杀行为复活. 现按 "atr_pct=" 键名识别
+    百分比并乘入场价转绝对值.
 
     2026-07-16 修复: DA bridge 直写 instruction 时无 atr_source 字段 → metadata.atr=0.
     修复: atr_source 缺失时, 从 entry_price 和 stop_loss 反算隐含 ATR% (SL 距离 / vol_bucket 倍数).
     虽然不是真实 ATR, 但反映了 vol_bucket 级别, 供事后诊断 SL 合理性.
 
     atr_source 格式 (来自 instruction_generator):
-      "technical.atr_14=8.35 (quality=good)"
-      "daily_kline.atr_14=8.35 (quality=good)"
-      "FALLBACK: price×2%=8.35 (ATR missing)"
+      "technical.atr_14=8.35 (quality=good)"          ← 绝对价 (旧)
+      "daily_kline.atr_14=8.35 (quality=good)"        ← 绝对价 (旧)
+      "FALLBACK: price×2%=8.35 (ATR missing)"         ← 绝对价 (旧)
+      "VOL_medium: atr_pct=3.13% sl=4.50% rr=1.80"    ← 百分比 (2026-09-01 起, 可能追加 vix_widen= 后缀)
     """
     # 1. 顶层 atr_source (前向兼容: 若未来加列可直接命中)
     src = inst.get("atr_source") or ""
@@ -104,7 +114,15 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
     if src and "=" in src:
         try:
             raw_val = src.split("=", 1)[1].split(" ")[0]
-            return float(raw_val.rstrip("%"))
+            _val = float(raw_val.rstrip("%"))
+            # 2026-09-02 单位修复 (docstring 详见上): "atr_pct=" 键名 = 百分比格式,
+            #   乘入场价转绝对价入库; 旧格式键名 (atr_14= / price×2%=) 本就是绝对价.
+            if "atr_pct=" in src:
+                _entry = float(inst.get("entry_price", 0) or 0)
+                if _entry > 0:
+                    return round(_entry * _val / 100.0, 2)
+            else:
+                return _val
         except (ValueError, IndexError):
             pass
     
