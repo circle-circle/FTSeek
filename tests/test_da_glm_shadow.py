@@ -11,15 +11,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.da_glm_shadow_eval import (  # noqa: E402
-    CRON_MARKER, MIN_N_SHORT, _self_remove_cron, evaluate, is_tainted, load_rows)
+    CRON_MARKER, MIN_N_SHORT, _self_remove_cron, evaluate, is_tainted,
+    load_rows, taint_diff)
 from app.playbook.shadow_registry import REGISTRY, ShadowStatus  # noqa: E402
 
 
 def _row(date="2026-09-01", sym="US.TEST", direction="SELL_SHORT",
-         err=None, change=None, mode="live"):
-    return {"type": "da_glm_shadow", "run_mode": mode, "date": date,
-            "symbol": sym, "glm_direction": direction,
-            "glm_error": err, "shadow_change_pct": change}
+         err=None, eff=None, prod_chg=None, mode="live"):
+    r = {"type": "da_glm_shadow", "run_mode": mode, "date": date,
+         "symbol": sym, "glm_direction": direction,
+         "glm_error": err}
+    if eff is not None:
+        r["shadow_effective_chg_pct"] = eff
+    if prod_chg is not None:
+        r["prod_snapshot_change_pct"] = prod_chg
+    return r
 
 
 def _mk_jsonl(tmp_path: Path, rows: list) -> str:
@@ -51,17 +57,40 @@ def test_verdict_promote_and_archive():
     assert evaluate(rows3)["verdict"] == "ARCHIVE"
 
 
-def test_tainted_excluded_from_short_count():
-    # 9.6: 漂移样本剔除 — is_tainted 与生产快照偏差>1.0pp
-    assert is_tainted({"date": "x", "symbol": "x", "shadow_change_pct": 3.0},
-                      {"change_pct": 1.0}) is True      # 2.0pp > 1.0
-    assert is_tainted({"date": "x", "symbol": "x", "shadow_change_pct": 1.5},
-                      {"change_pct": 1.0}) is False     # 0.5pp ≤ 1.0
-    assert is_tainted({"shadow_change_pct": None}, {"change_pct": 1.0}) is False  # 缺一不判
-    # 5 SHORT 里 1 条被快照判污 (ckpt 读不到→不判污, 用注入快照口径另测):
-    # evaluate 内部 _ckpt_snapshot 对不存在文件返 {} → 不判污, SHORT 计数不缩
-    e = evaluate([_row() for _ in range(MIN_N_SHORT)])
-    assert e["n_tainted"] == 0 and e["n_short"] == MIN_N_SHORT
+def test_tainted_effective_pairing():
+    # 9.6 修复①(口径配对): 双侧 effective 口径 — 异基比较是旧版误杀源头
+    # EIX 型: 两臂同见盘前大跌, 90min 间漂移 0.33pp → 材料 同构, 不污
+    assert is_tainted({"shadow_effective_chg_pct": -9.5,
+                       "prod_snapshot_change_pct": -9.83}) is False
+    # 盘中窗口内新息: 07:00 -1.5% → 08:30 -3.0%, 漂移 1.5pp > 1.0 → 污
+    assert is_tainted({"shadow_effective_chg_pct": -3.0,
+                       "prod_snapshot_change_pct": -1.5}) is True
+    # 生产值行内优先: 检查点过期 (无文件) 不影响判污 (修复②过期免疫)
+    assert is_tainted({"date": "2099-01-01", "symbol": "US.NOFIle",
+                       "shadow_effective_chg_pct": -3.0,
+                       "prod_snapshot_change_pct": -1.5}) is True
+    # 兜底: 行内缺生产值但检查点在 (snap 注入) → 重读判污
+    assert is_tainted({"shadow_effective_chg_pct": 3.0},
+                      {"change_pct": 1.0}) is True
+    # 旧行 (修复前采集): 无 effective 字段 → 缺一不判, 不再走 stale 推导
+    assert is_tainted({"shadow_change_pct": 3.0,
+                       "prod_snapshot_change_pct": 1.0}) is False
+    assert taint_diff({"shadow_change_pct": 3.0}) is None
+
+
+def test_taint_unevaluable_counted_transparent():
+    # 9.6 修复: 不可判行单列计数 (n_taint_unevaluable), 全部保守保留不剔除
+    rows = [_row(direction="SELL_SHORT") for _ in range(MIN_N_SHORT)]
+    e = evaluate(rows)
+    assert e["n_tainted"] == 0
+    assert e["n_taint_unevaluable"] == MIN_N_SHORT
+    assert e["n_short"] == MIN_N_SHORT  # SHORT 计数不缩
+    # 新行混合: 1 污 1 不可判 → 仅污行剔除
+    rows2 = ([_row(direction="SELL_SHORT") for _ in range(MIN_N_SHORT - 1)]
+             + [_row(direction="SELL_SHORT", eff=-3.0, prod_chg=-1.5)])
+    e2 = evaluate(rows2)
+    assert e2["n_tainted"] == 1 and e2["n_taint_unevaluable"] == MIN_N_SHORT - 1
+    assert e2["n_short"] == MIN_N_SHORT - 1
 
 
 def test_dir_criterion_needs_n20():

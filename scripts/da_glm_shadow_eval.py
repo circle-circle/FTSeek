@@ -12,9 +12,18 @@
   ①②全过 → PROMOTE_PROPOSAL (另立 DEB 裁决); 任一不过 → ARCHIVE。
   ③ 不作为毕业门票, 但 n≥20 时输出方向性参考值。
 
-9.6: 材料漂移过滤 — 影子采集比生产晚 ~1h, 盘前价可能已变;
-  |shadow_change_pct - 生产ckpt snapshot.change_pct| > TAINT_PCT (1.0pp)
+9.6: 材料漂移过滤 — 影子采集比生产晚 ~1.5h, 盘前价可能已变;
+  |shadow_effective_chg_pct - prod_snapshot_change_pct| > TAINT_PCT (1.0pp)
   → tainted=1, 从 ②③ 分歧归因中剔除单列 (分歧不可归因于模型)。
+  (2026-09-01 同类问题双修复:
+   ①口径配对 — 旧版影子侧从 last_price/prev_close 推导, 盘前 last_price=昨收
+    → 推导恒≈0, 与生产 checkpoint effective 口径 change_pct 异基比较 → 盘前
+    异动>1pp 标的全部误杀 (8/31 实测 EIX/NOW/BABA 3/7; 两臂 prompt 基本面
+    视图 _snapshot 逐字节一致 = 材料实同构)。现双侧均 effective 口径。
+   ②检查点过期免疫 — 生产值采集时随行捕获 (prod_snapshot_change_pct, 20:30
+    检查点在时), eval 不再依赖 _CKPT_KEEP_DAYS=3 的检查点存活; 行内缺失时
+    检查点重读仅作兜底。修复前旧行 (无 effective 字段) → 缺一不判, 计数
+    n_taint_unevaluable 单列透明, 宁漏勿错杀。)
 
 只读, 幂等, 零副作用。挂载: 一次性 cron 9/15 06:35 CST (窗口 8/31-9/14 第 10 采集夜
 收口后裁决 — 2026-09-01 复查收口补挂; 原注册措辞"9/14 裁决"勘误: 裁决须在窗口最后一夜
@@ -66,15 +75,34 @@ def _ckpt_snapshot(date: str, symbol: str) -> dict:
         return {}
 
 
+def taint_diff(row: dict, snap: dict = None):
+    """两臂 effective 口径盘前涨跌差 (pp); 任一侧缺失 → None (不可判).
+
+    影子侧: 行内 shadow_effective_chg_pct (采集时捕获)。
+    生产侧: 行内 prod_snapshot_change_pct (采集时随 checkpoint 捕获, 过期免疫)
+    优先; 缺失时兜底重读检查点 (仅近期夜存活)。旧字段 shadow_change_pct
+    (盘前恒≈0 的 stale 推导) 不再参与 — 异基比较即误杀源头。
+    """
+    mine = row.get("shadow_effective_chg_pct")
+    if mine is None:
+        return None
+    prod = row.get("prod_snapshot_change_pct")
+    if prod is None:
+        if snap is None:
+            snap = _ckpt_snapshot(row.get("date", ""), row.get("symbol", ""))
+        prod = snap.get("change_pct") if isinstance(snap, dict) else None
+    if prod is None:
+        return None
+    try:
+        return abs(float(mine) - float(prod))
+    except (TypeError, ValueError):
+        return None
+
+
 def is_tainted(row: dict, snap: dict = None) -> bool:
-    """9.6: 影子侧盘前涨跌与生产快照偏差超阈 → 材料不同构, 分歧不可归因于模型."""
-    if snap is None:
-        snap = _ckpt_snapshot(row.get("date", ""), row.get("symbol", ""))
-    mine = row.get("shadow_change_pct")
-    prod = snap.get("change_pct") if isinstance(snap, dict) else None
-    if mine is None or prod is None:
-        return False  # 缺一不判 (宁漏勿错杀, 与全仓保守口径一致)
-    return abs(float(mine) - float(prod)) > TAINT_PCT
+    """9.6: 两臂 effective 口径盘前涨跌偏差超阈 → 材料不同构, 分歧不可归因于模型."""
+    d = taint_diff(row, snap)
+    return d is not None and d > TAINT_PCT
 
 
 def t1_return_short(row: dict) -> float | None:
@@ -103,6 +131,7 @@ def evaluate(rows: list) -> dict:
     ok = [r for r in rows if not r.get("glm_error") and r.get("glm_direction")]
     json_rate = len(ok) / n if n else 0.0
     tainted = [r for r in ok if is_tainted(r)]
+    n_uneval = sum(1 for r in ok if taint_diff(r) is None)
     clean = [r for r in ok if r not in tainted]
     shorts = [r for r in clean if str(r.get("glm_direction")) in ("SELL_SHORT", "SHORT")]
     t1 = [x for x in (t1_return_short(r) for r in shorts) if x is not None]
@@ -114,7 +143,7 @@ def evaluate(rows: list) -> dict:
     verdict = "PROMOTE_PROPOSAL" if (c1 and c2) else ("ARCHIVE" if n else "NO_DATA")
     return {
         "n_live": n, "n_ok": len(ok), "json_rate": round(json_rate, 4),
-        "n_tainted": len(tainted), "n_short": len(shorts),
+        "n_tainted": len(tainted), "n_taint_unevaluable": n_uneval, "n_short": len(shorts),
         "n_t1": len(t1), "dir_mean": round(dir_mean, 6) if dir_mean is not None else None,
         "c1_json": c1, "c2_short": c2,
         "c3_direction": c3_actionable, "c3_reference_only": c3_reference and not c3_actionable,
@@ -130,7 +159,8 @@ def main() -> int:
     e = evaluate(rows)
     print("═══ da_glm_shadow 影子评估 (窗口 8/31-9/14) ═══")
     print(f"live 样本: n={e['n_live']}  解析成功: {e['n_ok']} ({e['json_rate']*100:.1f}%)")
-    print(f"tainted (材料漂移>{TAINT_PCT}pp): {e['n_tainted']}  SHORT提案(去污后): {e['n_short']}")
+    print(f"tainted (材料漂移>{TAINT_PCT}pp): {e['n_tainted']}  不可判(缺effective对照): {e['n_taint_unevaluable']}"
+          f"  SHORT提案(去污后): {e['n_short']}")
     print(f"T+1 可结算: {e['n_t1']}  方向均值: {e['dir_mean']}")
     print("判据① 成功率≥%.0f%%: %s" % (MIN_N_JSON * 100, "✓" if e["c1_json"] else "✗"))
     print("判据② SHORT提案≥%d: %s" % (MIN_N_SHORT, "✓" if e["c2_short"] else f"✗({e['n_short']})"))

@@ -330,6 +330,11 @@ REGISTRY: list[ShadowItem] = [
               "原 lines 口径把 test 行也计入); cron '30 20 * * 1-5' (timeout 9000, "
               "9.2 修正自 3000) 是唯一采集线也是唯一 kill switch; "
               "判据③降级记录见 scripts/da_glm_shadow.py docstring (9.5)。"
+              "2026-09-01 第11轮 taint 双修复留痕: 判污改双侧 effective 口径配对 "
+              "(旧影子侧 last/prev 推导盘前恒≈0 与生产 effective 口径异基 → 8/31 "
+              "误污 3/7 含 BABA SHORT 误杀) + 生产值采集时随行捕获 prod_snapshot_"
+              "change_pct (检查点 _CKPT_KEEP_DAYS=3 过期免疫); 旧行缺一不判, "
+              "n_taint_unevaluable 单列。见 DEB-20260829 第11轮。"
               "一次性裁决行自删后 (9/15), 注册表待用户裁决翻终态 — 翻终态前哨兵周检会"
               "再提示一次悬空 (设计内提醒, 非故障)。",
     ),

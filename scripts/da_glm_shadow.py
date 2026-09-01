@@ -161,21 +161,18 @@ def main():
                     f"US.{sym}", kline_days=60, anomaly_days=7)
                 q = collected.get("_quality") or {}
                 row["input_quality"] = f'{q.get("ok")}/{q.get("total")}'
-                # 材料漂移诊断: 影子采集比生产分析晚 ~1h, 盘前价格可能已变 —
-                # 记录影子侧快照价; 结算时由 scripts/da_glm_shadow_eval.py 的
-                # is_tainted() 与生产 checkpoint snapshot.change_pct 对比 (真实键名
-                # 'snapshot' 非 '_snapshot'), 漂移>1.0pp 标 tainted 剔除分歧归因
-                # (9.6 修复 2026-08-30: 原注释承诺无代码承接, 现归口到 eval 脚本)
+                # 材料漂移诊断: 影子采集比生产分析晚 ~1.5h, 盘前价可能已变。
+                # [2026-09-01 同类问题修复·口径配对] 捕 effective_chg_pct (盘前真实
+                # 涨跌, 与生产 checkpoint snapshot.change_pct 同 effective 口径 —
+                # premarket 下 deep_analyzer 把 change_pct 重写为 effective_chg_pct)。
+                # 旧 shadow_change_pct 从 last_price/prev_close 推导: 盘前
+                # last_price=昨收 (data_collector.py LIF 盲区注释实锤), 推导恒≈0,
+                # 与生产 effective 口径异基不可比 → is_tainted 误杀盘前异动>1pp 标的
+                # (8/31 实测 EIX/NOW/BABA 3/7 误杀; 而两臂 prompt 基本面视图
+                # _snapshot 实为逐字节一致 = 材料同构, 漂移≈0)。
                 _snap = collected.get("snapshot") or {}
                 row["shadow_price"] = _snap.get("last_price")
-                # collect_all snapshot 无 change_pct 键, 从 prev_close 推导
-                try:
-                    _lp = float(_snap.get("last_price") or 0)
-                    _pc = float(_snap.get("prev_close") or 0)
-                    if _lp > 0 and _pc > 0:
-                        row["shadow_change_pct"] = round((_lp - _pc) / _pc * 100, 2)
-                except Exception:
-                    pass
+                row["shadow_effective_chg_pct"] = _snap.get("effective_chg_pct")
                 data_text = llm_synth._format_data_for_prompt(collected)
                 user_prompt = llm_synth.USER_PROMPT_TEMPLATE.format(data=data_text)
 
@@ -221,6 +218,9 @@ def main():
                     else "agree" if pd == gd else f"{gd}_vs_{pd}")
                 # 生产 DA 实际输出方向 (checkpoint _llm_output.direction, BUY/SELL_SHORT 标签)
                 # — 与 bridge 的 LONG/SHORT 是两套标签体系, 结算时双基准核对
+                # [2026-09-01 同类问题修复·过期免疫] 生产盘前涨跌随行捕获: 检查点
+                #   _CKPT_KEEP_DAYS=3 自删, 9/15 评估时 8/31-9/10 已不存在, eval
+                #   重读将静默失去 taint 对照 (同蒸馏影子 fix① 采集时捕获模式)。
                 try:
                     _ck_p = os.path.join(FTSEEK_ROOT, "data/da_checkpoint",
                                          et_date, row["symbol"] + ".json")
@@ -228,6 +228,7 @@ def main():
                         _ck = json.load(open(_ck_p, encoding="utf-8"))
                         row["prod_ckpt_direction"] = (_ck.get("_llm_output") or {}).get("direction")
                         row["prod_ckpt_model"] = _ck.get("_ckpt_model")
+                        row["prod_snapshot_change_pct"] = (_ck.get("snapshot") or {}).get("change_pct")
                 except Exception:
                     pass
             except Exception as e:

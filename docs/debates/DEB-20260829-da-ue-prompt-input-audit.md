@@ -184,6 +184,23 @@
 
 ## 讨论记录
 
+### 第 11 轮 (2026-09-01, Qoder — 用户令"核查红队批, 也从你的角度检查是否存在其他类似问题": 9.6 同类问题双缺陷修复)
+
+**缘起**: 复查 Codex 红队批 (FTSeek `0f97709e` + skill `f9add74`) 时, 按用户令做同类问题扫描 — 红队批 fix① 修的是"蒸馏影子 eval 重读已过期检查点", 扫描发现 **da_glm_shadow 的 9.6 taint 过滤犯的是同族病且更重 (双缺陷叠加)**:
+
+| # | 缺陷 | 证据 (全部本机实弹) |
+|---|---|---|
+| ① 口径异基 (误杀) | 9.6 影子侧 `shadow_change_pct` 从 `last_price/prev_close` 推导, 但**盘前 `last_price`=昨收** (skill `data_collector.py` LIF 盲区注释实锤: "盘前时段 last_price=昨收") → 推导恒≈0; 而生产侧 checkpoint `snapshot.change_pct` 在 premarket 被 `deep_analyzer.py:146-148` 重写为 **effective 口径** (真实盘前涨跌)。异基相减 = 度量"该股盘前动了多少"而非"两臂材料漂移多少" → **盘前异动>1pp 的标的全部误污** | 8/31 实测 7 live 行: EIX\|0.0−(−9.83)\|=9.83pp / NOW 1.75pp / BABA 1.80pp 三行误污; 而两臂 LLM 实际所见基本面视图 (`_llm_output._snapshot`, 同为 last/prev 口径) **逐字节一致** (EIX 双臂均 70.17/0.0%) = 材料同构, 真实漂移≈0。旧实现 7 行误污 3 行, 且误污直接从判据② SHORT 计数剔除 (BABA 的 glm SELL_SHORT 被误杀, ② 首夜 3→1) — **裁决级失真** |
+| ② 检查点过期 (静默失效) | eval 9/15 一次性裁决时重读生产检查点取对照, 但 `_CKPT_KEEP_DAYS=3` (skill `pipeline.py:170`) → 8/31-9/10 检查点届时已删, `is_tainted` 走"缺一不判"分支静默放行 → 窗口前 ~7 夜失去 taint 过滤, 后 3 夜继续误污① — 同一夜同一标的的判污结果取决于检查点存活与否, 非确定性 | 与红队批 fix① (蒸馏影子) 同根; 本仓红线"归因数据不依赖评估日重读检查点" |
+
+**修复 (采集时捕获, 同红队批 fix① 模式; 18:06 CST 落地, 赶在当晚 20:30 采集前)**:
+- `scripts/da_glm_shadow.py`: ①删 stale 推导, 改捕 `collected["snapshot"]["effective_chg_pct"]` → `shadow_effective_chg_pct` (盘前真实涨跌, 与生产同 effective 口径 — live 探针验证: EIX 盘前 effective=+0.5% 而 last/prev 推导≈0.0002%, artifact 再现实证); ②既有 20:30 检查点读取处增捕 `prod_snapshot_change_pct` (过期免疫)。
+- `scripts/da_glm_shadow_eval.py`: `taint_diff()` 双侧 effective 口径配对 (行内字段优先, 检查点重读仅兜底); 旧行 (修复前采集, 无 effective 字段) → 缺一不判, 新增 `n_taint_unevaluable` 计数单列透明 (宁漏勿错杀)。
+- **8/31 旧行不回填**: 影子侧 effective 值采集时未存, 事后不可恢复; 但已人工核实该 7 行两臂 prompt 视图逐字节一致 → "不可判→保留"即事实正确结论 (EIX/BABA 的 SHORT 计数不缩)。
+- 注册表 `da_glm_shadow` notes 追加留痕; 测试 `tests/test_da_glm_shadow.py` 重写 taint 用例 (effective 配对/行内优先过期免疫/旧行不可判/混合计数) +2 例。
+
+**验证**: 触及测试 31 passed (含 distill 影子+挂载哨兵); 实数据干跑: 7 live 行 n_tainted 3→0, n_short 1→3, n_taint_unevaluable=7 (旧行); 采集脚本 py_compile + live 探针字段可达。**判据①②③④本身零变更, 判污口径修正后才第一次真正度量设计意图 (材料漂移)**。
+
 ### 第 10 轮 (2026-08-30, Hermes — 用户"确认无问题请执行修复": 第9轮 7 项缺陷修复落地)
 
 **方法**: 用户裁决执行第9轮建议方案。修复前先独立核查第9轮全部声称 (7/7 实弹复现成立); 并行改动隔离 — 另一 agent 未提交的第9轮文档回写保留不动, 本批只提交自己的路径。
