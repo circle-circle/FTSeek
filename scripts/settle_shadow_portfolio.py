@@ -51,6 +51,11 @@ def fetch_bars(symbol, date):
     """连 OpenD 拉 1-min 日 K (gate_a_mfe_replay 同款), 落缓存。"""
     try:
         from futu import KLType, RET_OK, AuType, OpenQuoteContext, SysConfig
+        import logging
+        # futu SDK 的 FTConsoleLog 默认打 stdout (非 stderr): 连接/断开 (reason=CallClose
+        # 是 ctx.close() 的正常收尾) 会混进结算输出并被 cron 投递 (2026-09-01 实锤),
+        # 压到 WARNING 级别。
+        logging.getLogger("FTConsoleLog").setLevel(logging.WARNING)
         SysConfig.enable_proto_encrypt(False)
         ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
         data = None
