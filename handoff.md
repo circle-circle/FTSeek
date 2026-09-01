@@ -260,6 +260,18 @@
 
 ## 📝 变更日志 (最新在上)
 
+### 2026-09-01e (体检建议执行批: 挂载哨兵+冻结豁免+备份轮转 — Codex, 用户裁"按建议执行")
+
+**①周检挂载核对哨兵**: `shadow_registry.check_mounting()` — 注册表在册事项双向核对: eval_script 是否在 crontab/scheduler/ops/采集引用中 (未挂载=悬空告警🪝) + data_path 产出是否超龄(>14天)/缺失(非初生豁免<10天)。周检接入推送。**首跑即捕获**: p1_3_vol_p50 (eval 未挂+数据停在 8/28 仅3行, 留告警待周检裁) ; vwap_gate_ab 定性为裁点触发型 eval (eval_on_demand=True 豁免)。契约测试 9 例。
+
+**②冻结告警定性+豁免**: 周检"参数冻结已破2版本"根因查实 = `45e62f0f` (8/29 用户裁"盈利三漏治理": early_tight_sl 影子毕业, 先于 9/1 C1 冻结) 翻转 `early_tight_sl_enabled` false→true, 新版本 5 笔交易全部 8/31 09:30-09:56 ET 退出时间线吻合 — **已裁决变更非违规**。按 KR2 例外通道落豁免: `data/config_freeze_baseline.json` +exit_versions 清单 + 周检 check_freeze 读豁免清单 (未豁免版本才告警)。复跑周检: ✓ 2 版本均在豁免清单。
+
+**③首批判读覆盖核验**: `deb20260901_shadow_first_report.py` 已含 §一结构化字段填充率 + §二触发影子 (pullback_limit 首行), 建议②两项天然覆盖, 无需改动。
+
+**④备份轮转**: `scripts/rotate_data_backups.py` (cron 周日 08:00): 日期目录留 14 个, 超龄/散落(>30天) → archive/*.tar.gz 只归档不删证, 幂等。当前 359M 无超龄项 (策略生效前正常空转, 增长 ~1.2G/月 已闭合)。
+
+**纪律**: 零交易路径行为变更; 豁免=改判据已按例外通道留痕。回滚: 删哨兵两段+豁免清单键+轮转 cron 行。
+
 ### 2026-09-01d (全链体检审计批 — Codex, 用户问"除交易结果外全链是否正常")
 
 **体检结论**: 七维扫描 (运行/调度/数据/业务/影子/工程/记录) 总体健康 — 近6小时零 Traceback/CRITICAL; 58 个 cron 脚本全存在; scheduler 零失败; DB integrity ok; 配置就绪 (路由关/影子开/RFC-071 地板 2500 生效); 全量 2227 passed。

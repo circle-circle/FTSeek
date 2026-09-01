@@ -119,9 +119,10 @@ def check_e2_gate():
 
 def check_shadow_registry():
     """影子注册表汇总 (2026-08-23 接入, 原模块零引用): 各影子攒样进度 + 状态变迁."""
-    code = ("from app.playbook.shadow_registry import refresh_counts, summary; "
+    code = ("from app.playbook.shadow_registry import refresh_counts, summary, check_mounting; "
             "import json; notifs = refresh_counts(); "
-            "print(json.dumps({'notifs': notifs, 'summary': summary()}))")
+            "print(json.dumps({'notifs': notifs, 'summary': summary(), "
+            "'mounts': check_mounting()}, ensure_ascii=False))")
     r = subprocess.run([str(REPO / "venv/bin/python"), "-c", code],
                        capture_output=True, text=True, timeout=90,
                        cwd=str(REPO))
@@ -155,8 +156,27 @@ def main():
     elif len(rows) == 1:
         out.append(f"✓ 参数冻结: config_version 唯一 ({rows[0][0][:16]}…, n={total})")
     else:
-        desc = " / ".join(f"{v[:16]}…:{n}" for v, n in rows)
-        out.append(f"⚠️ 参数冻结已破: {len(rows)} 个版本 — {desc} (KR2 破, 需复盘)")
+        # KR2 例外通道: config_freeze_baseline.json exit_versions 豁免清单
+        # (已裁决版本分裂不重复告警; 2026-09-01 体检定性 8/29 early_tight_sl 毕业案后加)
+        exempt = {}
+        _exempt_err = None
+        try:
+            _bl = json.loads((REPO / "data" / "config_freeze_baseline.json")
+                             .read_text(encoding="utf-8"))
+            exempt = _bl.get("exit_versions", {})
+        except Exception as e:
+            # R5 留痕: 豁免清单不可读必须显性 (否则退回全告警, 不静默)
+            _exempt_err = str(e)[:80]
+        unknown = [(v, n) for v, n in rows if v not in exempt]
+        if not unknown:
+            desc = " / ".join(f"{v[:16]}…:{n}" for v, n in rows)
+            out.append(f"✓ 参数冻结: {len(rows)} 个版本均在豁免清单 (KR2 例外通道, "
+                       f"见 config_freeze_baseline.json) — {desc}")
+        else:
+            desc = " / ".join(f"{v[:16]}…:{n}" for v, n in unknown)
+            out.append(f"⚠️ 参数冻结已破: {len(unknown)} 个未豁免版本 — {desc} (KR2 破, 需复盘)")
+        if _exempt_err:
+            out.append(f"⚠️ 豁免清单读取失败 (按未豁免告警口径处理): {_exempt_err}")
 
     # 3. 证伪门
     g = check_gate()
@@ -209,6 +229,9 @@ def main():
     if reg is None:
         out.append("⚠️ 影子注册表读取失败")
     else:
+        # 挂载核对哨兵 (2026-09-01): 悬空观察/产出断流告警优先于进度汇总
+        for m in reg.get("mounts", []):
+            out.append(m)
         for n in reg.get("notifs", []):
             out.append(f"🔔 {n}")
         out.append(reg.get("summary", ""))

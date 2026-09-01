@@ -55,6 +55,9 @@ class ShadowItem:
     # 用于首日回补大量历史数据的事项 — 回补行只算 1 个样本, 防立即超 min_n
     # 触发永久 READY 通知风暴; 2026-08-29 futu_channel_iv_hv 落地时引入)
     count_mode: str = "lines"
+    # eval 执行方式: False=应有 cron/调度挂载 (挂载核对话语权); True=按需手工/
+    # 裁决日触发 (哨兵跳过挂载核对, 2026-09-01 挂载核对哨兵引入)
+    eval_on_demand: bool = False
 
 
 REGISTRY: list[ShadowItem] = [
@@ -251,6 +254,7 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="双臂净差 t-test + 按日聚类 MDE",
         eval_script="scripts/eval_vwap_gate.py",
         created="2026-08-07",
+        eval_on_demand=True,  # eval=裁点触发 (样本到量才跑双臂t检验), 非周期挂载; 挂载哨兵豁免 (2026-09-01)
     ),
     ShadowItem(
         id="gap_chase_gate",
@@ -583,3 +587,94 @@ def summary() -> str:
             progress = f"n={s.current_n}/{s.min_n}" if s.min_n else ""
             lines.append(f"  {s.id:25} {s.name:20} {progress:12} {s.notes[:60]}")
     return "\n".join(lines)
+
+
+# ── 挂载核对哨兵 (2026-09-01 全链体检后用户裁"按建议执行" 建议①) ──
+# 两例实锤驱动: gap_chase_gate (B1, 8/29注册) 与 ssr_shadow_daily (RFC-062④, 8/2落地)
+# 均"已登记/已注册但从未挂载", 观察悬空至体检才发现。哨兵每周机械核对:
+#   ① eval 挂载: eval_script 是否在 crontab / scheduler / ops / 采集脚本引用中
+#   ② 数据产出: data_path 文件是否超龄 (14天无更新) 或缺失 (非初生期)
+_STALE_DAYS = 14      # 产出超龄阈值 (日更影子两周无产出 = 疑似断流)
+_GRACE_DAYS = 10      # 初生豁免: 新注册事项等首夜产出, 不报文件缺失
+
+
+def _mounted_sources() -> tuple[str, dict]:
+    """返回 (crontab文本, {路径: 源码} 引用源字典), 只读。"""
+    from pathlib import Path as _P
+    import subprocess as _sp
+    try:
+        ct = _sp.run(["crontab", "-l"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        ct = ""
+    base = _P(__file__).resolve().parents[2]
+    sources = {}
+    cand = [base / "app" / "core" / "scheduler_core.py"]
+    cand += list((base / "ops" / "hermes").glob("*.py"))
+    cand += list((base / "scripts").glob("*.py"))
+    for pth in cand:
+        try:
+            _text = pth.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            _text = None  # R5 留痕: 不可读源文件不计引用源 (权限/编码异常, 罕见)
+            print(f"[mount-sentinel] 源文件读取失败跳过: {pth}: {e}")
+        if _text is not None:
+            sources[str(pth)] = _text
+    return ct, sources
+
+
+def check_mounting() -> list[str]:
+    """挂载核对: 返回告警行列表 (供周检推送), 空列表=全部在挂。"""
+    from pathlib import Path as _P
+    from datetime import date as _date, datetime as _dt
+    base = _P(__file__).resolve().parents[2]
+    crontab_text, sources = _mounted_sources()
+    today = _date.today()
+    warnings = []
+
+    for s in REGISTRY:
+        if s.status not in (ShadowStatus.OBSERVING, ShadowStatus.READY_TO_EVALUATE):
+            continue
+        created_recent = False
+        try:
+            created_recent = (today - _dt.strptime(s.created, "%Y-%m-%d").date()).days < _GRACE_DAYS
+        except Exception:
+            created_recent = False  # 保守: 日期不可解析不给初生豁免 (宁可多报不漏报)
+
+        # ① eval 挂载核对
+        if s.eval_script and not s.eval_on_demand:
+            bn = s.eval_script.split("/")[-1]
+            mounted = bn in crontab_text
+            if not mounted:
+                for path, text in sources.items():
+                    if path.endswith(("shadow_registry.py", bn)):
+                        continue  # 注册表自身引用与脚本自身不算挂载
+                    if bn in text:
+                        mounted = True
+                        break
+            if not mounted:
+                warnings.append(
+                    f"🪝 悬空观察 [{s.id}] {s.name}: eval_script={s.eval_script} "
+                    f"不在 crontab/scheduler/ops/采集引用中 (B1 与 ssr_shadow_daily 同型病灶, "
+                    f"请补挂或改判 eval_on_demand/状态)")
+
+        # ② 数据产出核对 (DB 内口径跳过 — 由各自 eval 现算)
+        p = base / s.data_path.split(" (")[0].strip()
+        if str(p).endswith(".db"):
+            continue
+        if not p.exists():
+            if not created_recent:
+                warnings.append(
+                    f"🪝 产出缺失 [{s.id}] {s.name}: data_path={s.data_path} 不存在 "
+                    f"(创建于 {s.created}, 已过初生豁免期 {_GRACE_DAYS} 天)")
+            continue
+        try:
+            _mtime = p.stat().st_mtime
+        except Exception as e:
+            print(f"[mount-sentinel] stat 失败跳过超龄判定: {p}: {e}")
+            continue  # 注: 本行在 except 多行体内, 不计棘轮
+        age = (today - _dt.fromtimestamp(_mtime).date()).days
+        if age > _STALE_DAYS:
+            warnings.append(
+                f"🪝 产出超龄 [{s.id}] {s.name}: {p.name} 已 {age} 天未更新 "
+                f"(阈值 {_STALE_DAYS} 天, 疑似采集断流)")
+    return warnings
