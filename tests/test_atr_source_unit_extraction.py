@@ -16,6 +16,7 @@ V 型日误杀行为复活 (9/1 4 笔实流: LLY/META/BABA/BWXT, 均在规则部
       直落绝对槽) 同一笔回退 1% 地板被杀
 """
 import json
+from datetime import date as _date
 from pathlib import Path
 
 import app.playbook.config as pb_config_mod
@@ -126,7 +127,9 @@ class _CfgOverride:
 
 
 def _run_rule(meta, current_price, entry=1178.0):
-    """LLY 9/1 场景: VOL_medium (sl 4.5%), MFE=0, 开盘后 100min (过冷却窗)."""
+    """LLY 9/1 场景: VOL_medium (sl 4.5%), MFE=0, 开盘后 100min (过冷却窗).
+    2026-09-02: entry_time 动态当日 (硬编码 2026-09-01 跨日后被 RFC-073 判隔夜,
+    DEAD_SIGNAL 生效口径切 minutes_from_open=100≥60 触发, 与本契约被测面无关)."""
     _orig = pb_config_mod.get_playbook_config
     pb_config_mod.get_playbook_config = lambda: _CfgOverride(_orig())
     try:
@@ -134,7 +137,7 @@ def _run_rule(meta, current_price, entry=1178.0):
             direction="LONG", entry_price=entry, current_price=current_price,
             initial_sl=entry * 0.955, peak_price=entry, meta=dict(meta),
             held_minutes=10, minutes_to_close=300, minutes_from_open=100,
-            entry_time_str="2026-09-01T10:00:00",
+            entry_time_str=f"{_date.today().isoformat()}T10:00:00",
         )
     finally:
         pb_config_mod.get_playbook_config = _orig

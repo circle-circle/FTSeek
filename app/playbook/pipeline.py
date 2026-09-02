@@ -546,7 +546,6 @@ def _is_overnight_position(entry_time_str: str) -> bool:
     if not entry_time_str:
         return False
     try:
-        from datetime import datetime
         _et = _now_et()
         _entry = datetime.fromisoformat(entry_time_str)
         if hasattr(_entry, "tzinfo") and _entry.tzinfo is not None:
@@ -7819,8 +7818,9 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         import sqlite3
         import json as _json
         from app.core.paths import get_trade_records_db
-        from datetime import datetime
         from app.core.scheduler_triggers import ET as _et
+        # 注: datetime 用模块级 import (顶部 L23) — 局部 import 会遮蔽模块名,
+        #     使测试无法经 pipeline_mod.datetime 冻结时钟 (2026-09-02 钉修复配套).
 
         # 2026-07-22: 交易时段门 — 仅盘中执行退出监控.
         #   根因: 旧宿主调用点在 llm_strategy_loop 的 `phase == TRADING` 分支内 (仅盘中);

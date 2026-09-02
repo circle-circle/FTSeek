@@ -12,6 +12,7 @@
   A5  毕业契约键 (enabled/mfe_gate) 不被本变更触碰
   A6  yaml SSOT 三新键在位
 """
+from datetime import date as _date
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,9 @@ class _CfgOverride:
 
 
 def _run(meta, current_price, cfg_over=None):
-    """entry=100, 5% 初始SL, 开盘后100min (非冷却), 持仓10min, 峰值=入场 (MFE=0)."""
+    """entry=100, 5% 初始SL, 开盘后100min (非冷却), 持仓10min, 峰值=入场 (MFE=0).
+    2026-09-02: entry_time 动态当日 (原硬编码 2026-09-01 跨日后被 RFC-073 判隔夜,
+    DEAD_SIGNAL 生效口径切 minutes_from_open=100≥60 触发, 与本契约被测面无关)."""
     _orig = pb_config_mod.get_playbook_config
     real = _orig()
     pb_config_mod.get_playbook_config = lambda: _CfgOverride(real, **(cfg_over or {}))
@@ -65,7 +68,7 @@ def _run(meta, current_price, cfg_over=None):
             direction="LONG", entry_price=100.0, current_price=current_price,
             initial_sl=95.0, peak_price=100.0, meta=dict(meta),
             held_minutes=10, minutes_to_close=300, minutes_from_open=100,
-            entry_time_str="2026-09-01T10:00:00",
+            entry_time_str=f"{_date.today().isoformat()}T10:00:00",
         )
     finally:
         pb_config_mod.get_playbook_config = _orig

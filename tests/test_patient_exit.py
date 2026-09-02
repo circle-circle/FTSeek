@@ -234,6 +234,21 @@ class TestMonitorPatientExitStateMachine:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "data").mkdir(exist_ok=True)
 
+        # ── 冻结时钟: 当日正午 ET (2026-09-02, RFC-073 第二批日期漂移钉修复) ──
+        # 病灶: entry=now-120min 在 ET 凌晨/盘前跨午夜 → 判隔夜 → RFC-073 生效口径
+        #   minutes_from_open<0 → DEAD_SIGNAL 时间门挡住 → 本批用例 (依赖盘中时间窗)
+        #   非盘中时段全红. 冻结 pipeline 模块级 datetime 后测试与墙钟解耦.
+        fixed_now = datetime.now(_ET).replace(hour=12, minute=0, second=0, microsecond=0)
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                if tz is None:
+                    return fixed_now.replace(tzinfo=None)
+                return fixed_now.astimezone(tz)
+
+        monkeypatch.setattr(pipeline_mod, "datetime", _FrozenDateTime)
+
         scheduler = MagicMock()
         scheduler.data_router.get_batch_quotes.return_value = {}
         scheduler.data_router.get_bars.side_effect = RuntimeError("no bars in test")
@@ -243,13 +258,13 @@ class TestMonitorPatientExitStateMachine:
         return {
             "conn": conn, "db_path": db_path, "cfg": cfg,
             "close_calls": close_calls, "scheduler": scheduler,
-            "last_quote": _last_quote,
+            "last_quote": _last_quote, "fixed_now": fixed_now,
         }
 
     def _insert_open_position(self, env, symbol="US.TEST", direction="LONG",
                               entry_price=100.0, held_min=120, stop_loss=96.0,
                               extra_meta=None):
-        now = datetime.now(_ET)
+        now = env["fixed_now"]  # 冻结时钟, 与 pipeline 内 datetime.now 同源
         entry = (now - timedelta(minutes=held_min)).isoformat()
         meta = {"stop_loss": stop_loss, "cohort": "A", "horizon": "short",
                 "peak_price": entry_price}
@@ -272,8 +287,8 @@ class TestMonitorPatientExitStateMachine:
             "SELECT metadata_json FROM trade_records ORDER BY id DESC LIMIT 1").fetchone()
         return json.loads(row["metadata_json"] or "{}")
 
-    def _armed_meta(self, minutes_ago=20, **over):
-        now = datetime.now(_ET)
+    def _armed_meta(self, minutes_ago=20, _now=None, **over):
+        now = _now or datetime.now(_ET)
         d = {
             "armed_at": (now - timedelta(minutes=minutes_ago)).isoformat(),
             "armed_day": now.strftime("%Y-%m-%d"),
@@ -300,7 +315,8 @@ class TestMonitorPatientExitStateMachine:
     # ── 场景 2: armed 仓价格回入场价上方 → PATIENT_EXIT_FILL + 双口径 delta ──
     def test_armed_position_fills_at_entry_price(self, env):
         self._insert_open_position(env, held_min=80,
-                                   extra_meta=self._armed_meta(immediate_exit_price=99.3))
+                                   extra_meta=self._armed_meta(_now=env["fixed_now"],
+                                                               immediate_exit_price=99.3))
         self._set_quote(env, "US.TEST", 100.2)
         n = monitor_playbook_sim_exits(env["scheduler"])
         assert n == 1
@@ -316,7 +332,8 @@ class TestMonitorPatientExitStateMachine:
     # ── 场景 3: armed 仓水下加深至 1.5% → PATIENT_EXIT_STOP ──
     def test_armed_position_stops_on_deep_loss(self, env):
         self._insert_open_position(env, held_min=80,
-                                   extra_meta=self._armed_meta(minutes_ago=10))
+                                   extra_meta=self._armed_meta(minutes_ago=10,
+                                                               _now=env["fixed_now"]))
         self._set_quote(env, "US.TEST", 98.4)  # 水下 1.6%
         n = monitor_playbook_sim_exits(env["scheduler"])
         assert n == 1
@@ -329,7 +346,8 @@ class TestMonitorPatientExitStateMachine:
         env["cfg"]._d["patient_exit_deadline_hhmm"] = 0
         self._insert_open_position(
             env, held_min=260,
-            extra_meta=self._armed_meta(minutes_ago=200, deadline_hhmm=0))
+            extra_meta=self._armed_meta(minutes_ago=200, deadline_hhmm=0,
+                                        _now=env["fixed_now"]))
         self._set_quote(env, "US.TEST", 99.5)
         n = monitor_playbook_sim_exits(env["scheduler"])
         assert n == 1
@@ -337,8 +355,8 @@ class TestMonitorPatientExitStateMachine:
 
     # ── 场景 5: armed 状态跨交易日 → expire 清状态 + 墓碑防重 arm ──
     def test_armed_cross_day_expires_to_normal_rules(self, env):
-        yesterday = (datetime.now(_ET) - timedelta(days=1)).strftime("%Y-%m-%d")
-        armed = self._armed_meta(minutes_ago=2000)
+        yesterday = (env["fixed_now"] - timedelta(days=1)).strftime("%Y-%m-%d")
+        armed = self._armed_meta(minutes_ago=2000, _now=env["fixed_now"])
         armed["patient_exit"]["armed_day"] = yesterday
         self._insert_open_position(env, held_min=300, extra_meta=armed)
         self._set_quote(env, "US.TEST", 99.5)
@@ -373,7 +391,8 @@ class TestMonitorPatientExitStateMachine:
     def test_short_armed_fills_symmetrically(self, env):
         self._insert_open_position(
             env, direction="SHORT", entry_price=100.0, held_min=80, stop_loss=104.0,
-            extra_meta=self._armed_meta(minutes_ago=10, immediate_exit_price=100.5))
+            extra_meta=self._armed_meta(minutes_ago=10, immediate_exit_price=100.5,
+                                        _now=env["fixed_now"]))
         self._set_quote(env, "US.TEST", 99.8)  # SHORT 有利 0.2%
         n = monitor_playbook_sim_exits(env["scheduler"])
         assert n == 1
@@ -384,10 +403,10 @@ class TestMonitorPatientExitStateMachine:
 
     # ── 场景 9: armed 等待中 (未触发任何腿) → 不平仓, 状态保留 ──
     def test_armed_waiting_no_action(self, env):
-        # 墙钟无关: 集成路径用真实 now_et, 默认 deadline=1550 会在 15:50 ET 后命中
-        # EOD 腿 → 本断言 n==0 失败. 动态推迟兜底到当日末尾 (仿场景 4 的 deadline=0).
+        # 冻结时钟=当日正午 ET, 默认 deadline=1550 尚未到点; 2359 兜底保留作双保险.
         env["cfg"]._d["patient_exit_deadline_hhmm"] = 2359
-        self._insert_open_position(env, held_min=80, extra_meta=self._armed_meta())
+        self._insert_open_position(env, held_min=80,
+                                   extra_meta=self._armed_meta(_now=env["fixed_now"]))
         self._set_quote(env, "US.TEST", 99.6)  # 水下 0.4%: 未回本/未止损/未到点
         n = monitor_playbook_sim_exits(env["scheduler"])
         assert n == 0
