@@ -22,6 +22,7 @@ Usage:
 """
 import json
 import logging
+import re
 import sqlite3
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -31,6 +32,32 @@ from app.utils.symbol_utils import normalize_symbol
 from app.utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
+
+
+# ── [DEB-20260902-stale-bridge P1-② 2026-09-02] 陈旧 decision_id 覆盖守卫 ────────
+#   RFC-066 覆盖仲裁按源类分级 (DA-/universe_expansion/intraday_reentry=3), 对
+#   decision_id 内嵌的决策日期无感 → 同 prio "同源类替换" 允许 T-1 决策覆盖当日决策。
+#   9/1 实锤: DA skill 19:27 直写 LLY/META did=DA-202609011* 被服务侧 21:04 陈旧批
+#   did=DA-202608311* 原地覆盖 (model_used 同步退化为 deterministic), 当日 DA 门对
+#   BABA/BWXT 的 BLOCK 因此被绕过。历史面: 8/1 起 274 条 DA- 指令仅这 5 行 (全 9/1)
+#   did 日期 ≠ date 列 → 守卫零误报史。
+_DA_DID_RE = re.compile(r"^DA-(\d{4})(\d{2})(\d{2})")
+
+
+def _did_trade_date(did: Any) -> str:
+    """从 DA-YYYYMMDDHHMMSS-<symbol>-<hash> 取决策日 (YYYY-MM-DD); 非 DA 源/不可解析 → ''。"""
+    m = _DA_DID_RE.match(str(did or ""))
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
+
+
+def _stale_did_guard_enabled() -> bool:
+    """守卫开关 (默认开)。配置读失败 → 保持开启 (完整性保护优先, R5 warn 留痕)。"""
+    try:
+        from app.core.config_container import get_config as _gc_sd
+        return bool(_gc_sd().get_dotted("playbook.stale_did_overwrite_guard_enabled", True))
+    except Exception as _sd_e:
+        logger.warning(f"[save_instruction] 陈旧did守卫开关读取失败 (保持开启): {_sd_e}")
+        return True
 
 
 def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
@@ -448,6 +475,21 @@ class PlaybookDB:
                     )
                     return _existing[-1][0]
                 _best = [r for r in _existing if _prio(r[1]) == _max_prio][-1]
+                # [DEB-20260902-stale-bridge P1-② 2026-09-02] 同源类"新鲜度" tiebreaker:
+                #   两侧 did 均可解析 DA 日期且 新 < 旧 → 拒绝覆盖 (返回现存行 id, 保留
+                #   当日决策); 任一侧非 DA 源/不可解析 → 不介入 (fail-soft 保持既有阶梯语义)。
+                #   回滚: playbook.stale_did_overwrite_guard_enabled=false。
+                _new_did_date = _did_trade_date(_did_new)
+                _old_did_date = _did_trade_date(_best[1])
+                if (_new_did_date and _old_did_date
+                        and _new_did_date < _old_did_date
+                        and _stale_did_guard_enabled()):
+                    logger.warning(
+                        f"[save_instruction] 陈旧did覆盖拒绝: {_symbol} ({_date}) "
+                        f"新 did={_did_new} (决策日 {_new_did_date}) < 现存行#{_best[0]} "
+                        f"did={_best[1]} (决策日 {_old_did_date}) → 保留当日决策, 不写入"
+                    )
+                    return _best[0]
                 if _best[2] == 1 and (_best[3] or "") in _TERMINAL:
                     logger.info(
                         f"[save_instruction] RFC-066 拒绝覆盖: {_symbol} ({_date}) 目标行#{_best[0]} "

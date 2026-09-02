@@ -1307,6 +1307,25 @@ playbook:
   # 路由限价单 TTL 上限 (秒); 实际 TTL = min(本值, confirmation.ttl_min×60)。
   #   证据 = DEB-20260806 锚限价影子: 5分钟 TTL Δ+416.8/108对 vs 30分钟 TTL -224.4。
   entry_archetype_ttl_seconds: 300
+  # [DEB-20260902-stale-bridge P1-① 2026-09-02] 陈旧 bridge 交易日滚动重载 (默认开)。
+  #   病灶: P0-2 (8/26) 重载守卫="已是 BridgeVotingAdapter 就不重载", 只治
+  #   TechnicalFallback→Bridge 半边; 服务在 ET 日界前启动 → 内存载 T-1 bridge,
+  #   当日 bridge 落盘后永不刷新, 生成批用昨日决策供单。9/1 实锤: 11:42CST 载 8/31
+  #   (7候选), 9/1 bridge 19:27:54 落盘 (13候选), 21:04 生成批 5 条 vote→instruction
+  #   全带 DA-202608311* → 4/14 成交溯源 T-1 决策 (净 +157.17 = 当日净利 72%),
+  #   其中 BABA/BWXT 当日 DA 门已 BLOCK、EIX 当日 DA 为 SKIP (8/31 SHORT 全天重试 67 次,
+  #   仅被单轮上限→单日 notional 上限挡住; 54.00→收盘 58.94, 若成交 5.5% SL 被扫 ≈ -$240)。
+  #   true = run_generate 入口探测到内存 bridge trade_date ≠ 今日即重载当日文件 (一日一次)。
+  #   回滚: 置 false (逐字节回到 P0-2 行为, 陈旧候选照消费, 仅 WARNING 留痕)。
+  bridge_stale_reload_enabled: true
+  # [DEB-20260902-stale-bridge P1-② 2026-09-02] 陈旧 decision_id 覆盖守卫 (默认开)。
+  #   RFC-066 覆盖仲裁按源类分级 (DA-/UE/intraday_reentry=3) 但对 did 内嵌日期无感 →
+  #   T-1 DA 行可"同源类替换"当日 DA 行 (9/1 LLY/META: skill 19:27 直写 DA-202609011*
+  #   被 21:04 陈旧批 DA-202608311* 原地覆盖, model_used 同步退化 deterministic)。
+  #   true = 新旧 did 均可解析 DA 日期且 新 < 旧 → 拒绝覆盖 (保留当日决策) + WARNING;
+  #   任一侧非 DA 源/不可解析 → 不介入。历史面 8/1 起 274 条 DA 指令仅 9/1 那 5 行越界。
+  #   回滚: 置 false (回到无条件同源类替换)。
+  stale_did_overwrite_guard_enabled: true
   admission:
     enabled: true
     enforce: true

@@ -6,6 +6,16 @@
 
 ---
 
+## 🚨 2026-09-02 13:36 紧急留痕: 3d544636 是空提交 — stale-bridge 批内容仍在工作区未入库 (Qoder)
+
+- **实锤**: `git diff 3192aa2b..3d544636` = **0 行**。该提交信息描述的 6 文件 (app/playbook/pipeline.py +53 / app/playbook/db.py +42 / config/unified_config.yaml +19 / scripts/daily_invariant_check.py +42 / docs/debates/DEB-20260902-stale-bridge-overnight-carryover.md / tests/test_stale_bridge_guard.py) **全部仍处未暂存修改或 untracked**, 一个字节都没进 git。
+- **成因 (诚实留痕, 双 Agent 并发竞态)**: Codex `git add` 其批 → Qoder 同期为自有批 (400a667f/3192aa2b) 做逐 hunk 部分暂存时, 见该 6 路径处于已暂存态, 误判为钩子自动暂存而执行 `git restore --staged` 撤销 → Codex 随后的 `git commit` 落在空 index 上, 产出零 diff 提交 (13:31:35)。Qoder 撤销动作非破坏性 (工作区内容零损失) 但直接导致了空提交。
+- **风险**: 工作区 = 当前生产运行代码 (13:19:09 重启加载) 的**唯一 repo 副本**。**在这 6 文件入库前, 严禁任何丢弃工作区的操作** (`git checkout -- .` / `git reset --hard` / `git stash` / `git clean`)。
+- **处置 (待用户裁决, Qoder 不越权提交他人批次)**: `git add` 上述 6 路径 + 新提交 (信息注明"补装 3d544636 空提交漏装内容, 内容=工作区逐字节现状, 验证见该提交信息"), 或 amend 3d544636 (本地未推送可改)。提交后核验: 4 修改文件 `git diff HEAD` 为空 + 2 新文件脱离 untracked + `tests/test_stale_bridge_guard.py` 29 passed。
+- **→ 已处置 (2026-09-02 13:45, 用户裁"同意")**: Qoder 补装提交, 内容=工作区逐字节现状 (提交前逐项复核与 3d544636 信息描述吻合: yaml 两开关默认开带完整注释 / db.py 陈旧 did 仲裁守卫 / pipeline 陈旧 bridge 滚动重载 / I15 尺子 / DEB 档 206 行 / 新钉 29 例实跑全过)。3d544636 留作信息载体不回滚 (空提交无害, 历史如实)。本警告条目随补装同批入库。
+
+---
+
 ## 🛡️ 2026-09-02 陈旧 bridge 越权供单 P1 双层守卫落地（Codex，用户裁"直接执行"）
 
 **缘起**: 用户令"对昨晚美股交易全链路进行复盘分析，包括多 Agent 做的调整和优化点"（临时一次性统计，明确不入项目记忆）。复盘 9/1 ET 全链（成交/出场/费用/多 Agent 批次）时实锤一个此前未立案的 P1 病灶：**T-1 bridge 陈旧供单**。

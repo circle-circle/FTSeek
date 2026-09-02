@@ -989,11 +989,37 @@ def _check_bridge_health_and_alert(context: str) -> None:
 _bridge_reloaded_date = None
 
 
+# [DEB-20260902-stale-bridge P1-① 2026-09-02] 陈旧 bridge 交易日滚动重载 —
+#   P0-2 守卫①"已是 BridgeVotingAdapter 就不重载"只治 TechnicalFallback→Bridge 半边,
+#   留下另半边: 服务在 ET 日界前启动 → 内存载 T-1 bridge, 当日 bridge 落盘后永不刷新,
+#   直到下一次重启 (而重启是事故驱动的, 不是设计驱动的)。
+#   9/1 实锤 (logs/ftseek_us.log-20260902): 11:42CST 启动载 8/31 bridge (7候选) →
+#   9/1 bridge 19:27:54 落盘 (13候选, DA skill 同时直写 13 条当日指令) → 21:00 服务侧
+#   生成批仍用陈旧 adapter, 21:04 五条 vote→instruction 全带 DA-202608311*
+#   (BABA/LLY/BWXT/META/EIX) → 4/14 成交溯源 T-1 决策 (净 +157.17 = 当日净利 72%),
+#   其中 BABA/BWXT 当日 DA 门已显式 BLOCK (破位硬买拦截), EIX 当日 DA 为 SKIP/BLOCK
+#   (8/31 SHORT strength=80 全天重试 67 次, 仅被单轮上限→单日 notional 上限挡住;
+#   EIX 54.00→收盘 58.94, 若成交会在 5.5% SL 被扫 ≈ -$240)。22:01 冻结 heal 重启才换血。
+#   回滚: playbook.bridge_stale_reload_enabled=false (逐字节回到 P0-2 行为)。
+
+
+def _stale_bridge_reload_enabled() -> bool:
+    """陈旧 bridge 滚动重载开关 (默认开)。配置读失败 → 保持开启 (完整性保护优先, R5 warn 留痕)。"""
+    try:
+        from app.core.config_container import get_config as _gc_sb
+        return bool(_gc_sb().get_dotted("playbook.bridge_stale_reload_enabled", True))
+    except Exception as _sb_e:
+        logger.warning(f"[playbook] P1 陈旧bridge重载开关读取失败 (保持开启): {_sb_e}")
+        return True
+
+
 def _reload_bridge_if_landed(scheduler) -> None:
-    """运行期 bridge 重载: 非 Bridge adapter + 当日文件已产出(ok) → 重挂 BridgeVotingAdapter.
+    """运行期 bridge 重载: 非 Bridge adapter (或陈旧 Bridge) + 当日文件已产出(ok) → 重挂.
 
     条件全满足才动作 (幂等, 一天最多一次成功重载):
-      ① 当前 scheduler.voting_coordinator 非 BridgeVotingAdapter (Bridge 无需重载);
+      ① 当前 scheduler.voting_coordinator 非 BridgeVotingAdapter, 或虽是 Bridge 但其
+         _trade_date ≠ 今日 (P1 陈旧 bridge 滚动重载, 开关
+         playbook.bridge_stale_reload_enabled; _trade_date 缺失 → 不判陈旧, fail-soft);
       ② 今日未重载过 (_bridge_reloaded_date 守卫 — 文件一日一产, 失败也不反复试);
       ③ 当日 bridge 文件 state==ok 且内部 trade_date==今日 (复用 _bridge_file_state).
     成功 → 替换 scheduler.voting_coordinator (该属性仅 __init__ 写入, 运行期无其他写者);
@@ -1005,8 +1031,23 @@ def _reload_bridge_if_landed(scheduler) -> None:
         if _bridge_reloaded_date == _today:
             return
         vc = getattr(scheduler, "voting_coordinator", None)
-        if vc is not None and type(vc).__name__ == "BridgeVotingAdapter":
-            return
+        _is_bridge = vc is not None and type(vc).__name__ == "BridgeVotingAdapter"
+        _stale = False
+        if _is_bridge:
+            _vc_date = str(getattr(vc, "_trade_date", "") or "")
+            _stale = bool(_vc_date) and _vc_date != _today
+            if not _stale:
+                return
+            if not _stale_bridge_reload_enabled():
+                logger.warning(
+                    f"[playbook] P1 陈旧bridge在内存 (trade_date={_vc_date} ≠ 今日{_today}, "
+                    f"{len(getattr(vc, '_candidates', {}) or {})} candidates) 但重载开关关闭 → "
+                    f"本批生成将消费 T-1 候选 (playbook.bridge_stale_reload_enabled=false)"
+                )
+                return
+            _from = f"BridgeVotingAdapter(trade_date={_vc_date})"
+        else:
+            _from = type(vc).__name__ if vc is not None else "None"
         if _bridge_file_state(_today) != "ok":
             return
         bridge = _try_load_bridge()
@@ -1015,8 +1056,8 @@ def _reload_bridge_if_landed(scheduler) -> None:
         scheduler.voting_coordinator = bridge
         _bridge_reloaded_date = _today
         logger.info(
-            f"[playbook] P0-2 运行期bridge重载成功: {_today} "
-            f"{type(vc).__name__} → BridgeVotingAdapter ({len(bridge._candidates)} candidates)"
+            f"[playbook] {'P1 陈旧bridge滚动重载' if _stale else 'P0-2 运行期bridge重载'}成功: "
+            f"{_today} {_from} → BridgeVotingAdapter ({len(bridge._candidates)} candidates)"
         )
     except Exception as _rl_e:
         logger.warning(f"[playbook] P0-2 bridge重载探测异常(不阻断): {_rl_e}")

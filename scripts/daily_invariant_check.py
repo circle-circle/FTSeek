@@ -20,6 +20,7 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   I12 realized_pnl=0 而 价差×数量 明显非零 → 占位符伪装盈亏 (8/28 占位链常驻守卫)
   I13 费用上线日后缺 fees_est/pnl_net → COALESCE 静默回落毛口径
   I14 了结行缺 exit_reason (空串或 NULL) → 出场归因分类丢行
+  I15 指令 decision_id 决策日 == 指令交易日 (T-1 bridge 陈旧供单守卫, 2026-09-02)
   W1 参数冻结窗 config_version 唯一性 (OKR-2026-09 KR2, 2026-08-31 用户裁"按建议执行")
   豁免: data_quality 前缀命中 duplicate/outlier/invalid/void/excluded 的行 (写入方
         声明"非真实了结", 如 id=1327 duplicate_external_close 故意留 NULL 使净额求和
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -49,6 +51,11 @@ from app.utils.timezone import now_et  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("invariant_check")
+
+# I15 口径起点 (2026-09-02, DEB-20260902-stale-bridge): 陈旧 did 守卫的 go-forward 起点
+#   = P1-①/P1-② 修复部署日。9/1 的 5 行 (BABA/BWXT/EIX/LLY/META) 是立档证据, 已裁决留痕,
+#   历史行不自愈 → 纳入窗口会连告 7 天 (不可动作噪声)。改本常量 = 改判据, 须先改 DEB。
+_I15_SINCE = "2026-09-02"
 
 
 def _resolve_db() -> Path:
@@ -248,6 +255,41 @@ def main() -> int:
         if not _is_structural_error(_e9):
             rec("I9_mirror_detector_error", "-", "instructions",
                 f"{type(_e9).__name__}: {_e9} → 指令侧 conf 守卫失明")
+
+    # I15 (2026-09-02, DEB-20260902-stale-bridge): 指令 did 的决策日必须等于指令交易日 —
+    #   服务在 ET 日界前启动时内存载 T-1 bridge, 当日 bridge 落盘后 P0-2 守卫不重载
+    #   ("已是 Bridge 就不重载"), 生成批于是用昨日决策号覆写/新增当日指令。9/1 实锤
+    #   5 行 (BABA/BWXT/EIX/LLY/META, did=DA-202608311* 落 date=2026-09-01), 其中 4 行
+    #   成交 = 当日净利 72%, 且 BABA/BWXT 当日 DA 门已 BLOCK、EIX 当日 DA 为 SKIP。
+    #   历史面: 8/1 起 274 条 DA- 指令仅这 5 行越界 → 本尺子零误报史。
+    #   修复面在 pipeline._reload_bridge_if_landed (P1-①) + db.save_instruction 仲裁
+    #   (P1-②); 本项是次日晨兜底 (盘后 05:05 即可见, 不依赖人工复盘发现)。
+    #   口径起点 _I15_SINCE = 修复部署日: 9/1 那 5 行是已裁决留档的立档证据
+    #   (DEB-20260902-stale-bridge §二), 历史行不自愈 → 不设起点会连告 7 天变成
+    #   不可动作的噪声 (告警必须可动作)。本尺子只守 go-forward。
+    try:
+        _c15 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        _c15.row_factory = sqlite3.Row
+        _rows15 = _c15.execute(
+            "SELECT id, symbol, date, decision_id, executed, outcome, pnl "
+            "FROM playbook_instructions WHERE date >= ? AND date >= ? "
+            "AND decision_id LIKE 'DA-%' ORDER BY id",
+            (since, _I15_SINCE)).fetchall()
+        _c15.close()
+        for _r15 in _rows15:
+            _did15 = str(_r15["decision_id"] or "")
+            if not re.match(r"^DA-\d{8}", _did15):
+                continue  # 非标准 DA 决策号 (不可判日期) → 不告, 避免尺子自身造假阳
+            _did_d = f"{_did15[3:7]}-{_did15[7:9]}-{_did15[9:11]}"
+            if _did_d != str(_r15["date"]):
+                rec("I15_stale_decision_id", _r15["id"], str(_r15["symbol"])[3:],
+                    f"did 决策日={_did_d} ≠ 指令日={_r15['date']} "
+                    f"(executed={_r15['executed']} outcome={_r15['outcome']} "
+                    f"pnl={_r15['pnl']}) → T-1 决策供单")
+    except Exception as _e15:
+        if not _is_structural_error(_e15):
+            rec("I15_detector_error", "-", "instructions",
+                f"{type(_e15).__name__}: {_e15} → 陈旧did守卫失明")
 
     # I10 (2026-08-28): 已了结行必须有 exit_time — 全仓"当日"口径自本日起一律按
     #   substr(exit_time,1,10) 归集 (熔断/日亏损门/日报/复盘验证/面板/心跳),
