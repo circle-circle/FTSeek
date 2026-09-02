@@ -528,7 +528,11 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/cf_pullback_limit_replay.py",
         created="2026-09-01",
         notes="首个生产夜=9/1 盘 (结构化字段首夜); 8/31 指令无结构化字段重放 n=0 合预期; "
-              "首批判读 9/2 05:47; count_mode=lines",
+              "首批判读 9/2 05:47; count_mode=lines。"
+              "双口径窗口 (2026-09-02 DEB-20260902 议题二补): 判据 n≥20 可配对样本自 "
+              "9/1 起算 (指令侧 DB 重构可信); chase_cap 违例率维度自 9/2 起算 (9/1 "
+              "trigger 影子全灭 json.loads(dict) bug, 修复 7e4d51cb 于盘中, 当日该维度 "
+              "输出 null 非零 — replay 报告已带口径注记)。",
     ),
     ShadowItem(
         id="gap_alignment",

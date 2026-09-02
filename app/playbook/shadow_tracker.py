@@ -18,6 +18,7 @@ Usage:
   tracker = ShadowTracker(playbook_db, market_data_provider)
   tracker.daily_tracking("2026-06-18")
 """
+import json
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
@@ -212,9 +213,11 @@ class ShadowTracker:
         if inst.get("executed") or updates.get("executed"):
             exec_price = updates.get("execution_price") or inst.get("execution_price")
             if exec_price and exec_price > 0:
-                # MFE/MAE 计算
+                # MFE/MAE 计算 (2026-09-02 方案A: tick 口径主路径, 见 _calc_mfe_mae docstring;
+                #   executed_trade 已含跨轮误联防御结果, 传入避免二次查询)
                 mfe, mae = self._calc_mfe_mae(
-                    symbol, exec_price, direction, trade_date, inst
+                    symbol, exec_price, direction, trade_date, inst,
+                    executed_trade=executed_trade,
                 )
                 updates["max_favorable_excursion"] = mfe
                 updates["max_adverse_excursion"] = mae
@@ -343,19 +346,56 @@ class ShadowTracker:
         direction: str,
         current_date: str,
         inst: Dict,
+        executed_trade: Optional[Dict] = None,
     ) -> tuple:
         """
         计算 MFE (最大有利偏移) 和 MAE (最大不利偏移)
 
-        MFE = 持仓期间最大浮盈 (金额)
-        MAE = 持仓期间最大浮亏 (金额, 负数)
+        2026-09-02 方案A (DEB-20260902-mfe-caliber-and-shadow-zero, 用户裁"按建议执行"):
+        持仓行改同源 tick 口径 — 读 trade_records.metadata 的 peak_price/trough_price
+        (与平仓终值 _close_trade_record 同源, 轮询采样粒度), 修复日 bar 口径把入场前
+        当日极值计入的污染 (ORCL 实证: 台账 +118.4 vs 入场后真实 $18.8, 09:31 spike
+        早于建仓 31min)。MAE 统一正数量纲 (幅度, 与平仓行一致; 历史持仓行是负数,
+        analyze_mfe_mae/feishu 均用 abs 兼容)。
 
-        使用日线 high/low 计算 (不需要分钟级数据)
+        peak/trough 方向语义 (pipeline.py 退出监控): LONG peak=最高价/trough=最低价;
+        SHORT peak=最低价(最有利)/trough=最高价(最不利)。
+
+        兜底: trade 联接失败或 meta 峰谷缺失 (旧仓/跨轮误联丢弃) → 日 bar 路径
+        (原口径) + warning 留痕 — 联接缺陷知悉而非静默。
         """
         if not exec_price or exec_price <= 0:
             return 0, 0
 
         position_size = inst.get("position_size", 0) or 100
+
+        # ── 主路径: tick 口径 (trade_records.metadata peak/trough) ──
+        trade = executed_trade
+        if trade is None:
+            trade = self._find_executed_trade(
+                symbol, direction, current_date, decision_id=inst.get("decision_id"))
+        meta = trade.get("metadata_json") if trade else None
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (json.JSONDecodeError, TypeError):
+                meta = None
+        peak = float(meta.get("peak_price", 0) or 0) if isinstance(meta, dict) else 0.0
+        trough = float(meta.get("trough_price", 0) or 0) if isinstance(meta, dict) else 0.0
+        if peak > 0 and trough > 0:
+            if direction == "BUY":
+                mfe = max(0.0, (peak - exec_price) * position_size)
+                mae = max(0.0, (exec_price - trough) * position_size)
+            else:
+                mfe = max(0.0, (exec_price - peak) * position_size)
+                mae = max(0.0, (trough - exec_price) * position_size)
+            return round(mfe, 2), round(mae, 2)
+
+        # ── 兜底: 日 bar 口径 (原路径, 含入场前极值污染 — 已知缺陷) ──
+        logger.warning(
+            f"[shadow_tracker] {symbol} tick 峰谷不可得 (联接失败/meta缺失), "
+            f"MFE/MAE 回退日 bar 口径 (含入场前极值, DEB-20260902 议题一知悉)"
+        )
 
         # 获取从入场到现在的日线数据
         daily_bars = self._get_daily_bars_since_entry(
@@ -366,7 +406,8 @@ class ShadowTracker:
             return 0, 0
 
         mfe = inst.get("max_favorable_excursion") or 0
-        mae = inst.get("max_adverse_excursion") or 0
+        # 历史持仓行 MAE 是负数量纲 → 取 abs 统一正数幅度 (本轮兜底输出量纲不变混)
+        mae = abs(inst.get("max_adverse_excursion") or 0)
 
         for bar in daily_bars:
             high = bar.get("high", 0)
@@ -382,7 +423,9 @@ class ShadowTracker:
                 adverse = (exec_price - high) * position_size
 
             mfe = max(mfe, favorable)
-            mae = min(mae, adverse)
+            # adverse 负=不利 (BUY low<exec / SHORT high>exec), -adverse=不利幅度;
+            # 正=当日无不利, 不计入。
+            mae = max(mae, -adverse)
 
         return round(mfe, 2), round(mae, 2)
 

@@ -804,12 +804,17 @@ class TradeStore:
         with self._lock:
             conn = self._get_conn()
             try:
+                # 2026-09-02 (DEB-20260902-mfe-caliber-and-shadow-zero 议题三): row_factory
+                #   按名映射 — 原 _row_to_dict 位置映射在 8/27 补 decision_id 列后未同步,
+                #   dict["created_at"] 实装 decision_id 值、decision_id 键缺失 → P2b 轮次级
+                #   联接仍读 None, 8/27 "补列即恢复守卫" 实际未生效 (实测 9/1 全 14 行复现)。
+                conn.row_factory = sqlite3.Row
                 if trade_mode:
                     rows = conn.execute("""
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, source_type, decision_id, created_at
+                               futu_order_id, source_type, decision_id, created_at, metadata_json
                         FROM trade_records
                         WHERE trade_date = ? AND trade_mode = ?
                         ORDER BY entry_time ASC
@@ -824,7 +829,7 @@ class TradeStore:
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, source_type, decision_id, created_at
+                               futu_order_id, source_type, decision_id, created_at, metadata_json
                         FROM trade_records
                         WHERE trade_date = ?
                         ORDER BY entry_time ASC
@@ -850,12 +855,16 @@ class TradeStore:
         with self._lock:
             conn = self._get_conn()
             try:
+                # 2026-09-02 (DEB-20260902 议题三): 列集对齐 query_by_date — 原 17 列 SELECT
+                #   共用 19 列位置映射, 调用即 IndexError (全仓零调用方, 死方法不自知);
+                #   _row_to_dict 已改按名映射, 补齐列集即恢复可用。
+                conn.row_factory = sqlite3.Row
                 if trade_mode:
                     rows = conn.execute("""
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, created_at
+                               futu_order_id, source_type, decision_id, created_at, metadata_json
                         FROM trade_records
                         WHERE trade_date BETWEEN ? AND ? AND trade_mode = ?
                         ORDER BY entry_time ASC
@@ -865,7 +874,7 @@ class TradeStore:
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, created_at
+                               futu_order_id, source_type, decision_id, created_at, metadata_json
                         FROM trade_records
                         WHERE trade_date BETWEEN ? AND ?
                         ORDER BY entry_time ASC
@@ -1527,23 +1536,16 @@ class TradeStore:
 
     @staticmethod
     def _row_to_dict(row) -> Dict[str, Any]:
-        return {
-            "id":                row[0],
-            "trade_date":        row[1],
-            "symbol":            row[2],
-            "direction":         row[3],
-            "entry_time":        row[4],
-            "exit_time":         row[5],
-            "entry_price":       row[6],
-            "exit_price":        row[7],
-            "quantity":          row[8],
-            "realized_pnl":      row[9],
-            "pnl_pct":           row[10],
-            "exit_reason":       row[11],
-            "holding_hours":     row[12],
-            "signal_strength":   row[13],
-            "signal_confidence": row[14],
-            "futu_order_id":     row[15],
-            "source_type":       row[16],
-            "created_at":        row[17],
-        }
+        # 2026-09-02 (DEB-20260902-mfe-caliber-and-shadow-zero 议题三): 改按列名映射 —
+        #   原位置映射在 SELECT 列序漂移时静默错位 (8/27 补 decision_id 后 created_at 槽
+        #   实装 decision_id 值, query_range 更是调用即 IndexError)。要求调用方设置
+        #   conn.row_factory = sqlite3.Row (query_by_date/query_range 已设)。
+        d = dict(row)
+        md = d.get("metadata_json")
+        if isinstance(md, str) and md:
+            try:
+                d["metadata_json"] = json.loads(md)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"[trade_store] trade id={d.get('id')} metadata_json "
+                               f"解析失败, 保留原始字符串")
+        return d

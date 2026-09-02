@@ -169,12 +169,15 @@ def main():
             continue
         rep = replay_one(sym, date, bars, direction, conf,
                          r["stop_loss"], qty, start_hm)
+        # 2026-09-02 (DEB-20260902-mfe-caliber-and-shadow-zero 议题二): 无影子行的指令
+        #   chase_cap 维度输出 null — "未采集"与"采集到零违例"语义相反, False 是假零。
         results.append({
             "date": date, "symbol": sym, "inst_id": r["id"],
             "decision_id": r["decision_id"], "direction": direction,
             "entry_archetype": arch,
             "chase_cap_price": raw.get("chase_cap_price"),
-            "chase_cap_violated": bool(sh.get("chase_cap_violation")),
+            "chase_cap_violated": (bool(sh.get("chase_cap_violation"))
+                                   if sh else None),
             "actual_executed": r["actual_net"] is not None,
             "actual_net": r["actual_net"],
             "actual_exit_reason": r["exit_reason"],
@@ -185,6 +188,13 @@ def main():
     entered = [x for x in results if x.get("status") == "entered"]
     expired = [x for x in results if x.get("status") == "expired_unfilled"]
     executed = [x for x in results if x.get("actual_executed")]
+    # 2026-09-02 (议题二): 影子未采集 (文件缺失或当日零行) → n_chase_cap_violated=null
+    #   非 0 — 9/1 首日 trigger 影子全灭 (json.loads(dict) bug, 修复 7e4d51cb 于盘中),
+    #   报告输出 0 会被判读为"零违例", 与"采到零违例"语义相反。
+    shadow_collected = bool(shadow)
+    note = "价格条件下界; 量价条件未重放; cf 出场仅 SL/EOD 近似"
+    if not shadow_collected:
+        note += "; trigger shadow 未采集 → chase_cap 维度 null (非零)"
     summary = {
         "date": date, "generated_at": datetime.now().isoformat(timespec="seconds"),
         "n_instructions_with_archetype": n,
@@ -193,8 +203,10 @@ def main():
         "n_actually_executed": len(executed),
         "actual_net_sum": round(sum(x["actual_net"] for x in executed), 2),
         "cf_net_sum": round(sum(x["cf_pnl"] for x in entered), 2),
-        "n_chase_cap_violated": sum(1 for x in results if x.get("chase_cap_violated")),
-        "note": "价格条件下界; 量价条件未重放; cf 出场仅 SL/EOD 近似",
+        "n_chase_cap_violated": (sum(1 for x in results
+                                     if x.get("chase_cap_violated"))
+                                 if shadow_collected else None),
+        "note": note,
     }
     with OUT_JSONL.open("a", encoding="utf-8") as f:
         for x in results:

@@ -139,11 +139,15 @@ def build_report(date):
 
     # 2) 影子触发
     lines.append("## 二、触发影子 (pullback_limit_shadow)")
-    lines.append(f"- 触发行 {len(trig)}; chase_cap 违例 {len(viol)}")
-    for t in trig[:12]:
-        lines.append(f"  - {t.get('symbol')} {t.get('entry_archetype')}: "
-                     f"确认位 {(t.get('confirmation') or {}).get('price_level')} "
-                     f"触发价 {t.get('trigger_price')} 入场价 {t.get('entry_price')}")
+    if not PB_SHADOW.exists():
+        lines.append("- ⚠️ 影子文件不存在 → 当日未采集 (触发行/违例计数无效, "
+                     "chase_cap 维度自次日采集日起算 — 非'零违例')")
+    else:
+        lines.append(f"- 触发行 {len(trig)}; chase_cap 违例 {len(viol)}")
+        for t in trig[:12]:
+            lines.append(f"  - {t.get('symbol')} {t.get('entry_archetype')}: "
+                         f"确认位 {(t.get('confirmation') or {}).get('price_level')} "
+                         f"触发价 {t.get('trigger_price')} 入场价 {t.get('entry_price')}")
     lines.append("")
 
     # 3) CF 重放

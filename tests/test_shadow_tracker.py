@@ -552,10 +552,11 @@ class TestPhantomTemporalGuard:
 # ========== MFE/MAE 计算测试 ==========
 
 class TestMfeMae:
-    """MFE/MAE 计算"""
+    """MFE/MAE 计算 (日 bar 兜底路径 — 无 trade 联接; tick 口径主路径见 TestMfeMaeTickCaliber)"""
 
     def test_mfe_mae_buy_direction(self, tracker, db, mock_market_data, mock_trade_store):
-        """BUY 方向: MFE 看 high, MAE 看 low"""
+        """BUY 方向: MFE 看 high, MAE 看 low.
+        2026-09-02 重锚 (DEB-20260902-mfe-caliber-and-shadow-zero 议题一方案A): MAE 统一正数量纲 (原负数)。"""
         inst_id = _save_instruction(db, entry_price=100.0, position_size=50)
         db.update_instruction_tracking(inst_id, {
             "executed": 1,
@@ -573,11 +574,12 @@ class TestMfeMae:
         result = db.get_instruction("2026-06-18", "US.NTES")
         # MFE = (110 - 100) * 50 = 500
         assert result["max_favorable_excursion"] == 500.0
-        # MAE = (95 - 100) * 50 = -250
-        assert result["max_adverse_excursion"] == -250.0
+        # MAE = (95 - 100) * 50 → 幅度 250 (正数量纲)
+        assert result["max_adverse_excursion"] == 250.0
 
     def test_mfe_mae_short_direction(self, tracker, db, mock_market_data, mock_trade_store):
-        """SHORT 方向: MFE 看 low, MAE 看 high"""
+        """SHORT 方向: MFE 看 low, MAE 看 high.
+        2026-09-02 重锚: MAE 统一正数量纲 (原负数)。"""
         inst_id = _save_instruction(db, direction="SELL_SHORT", entry_price=100.0, position_size=50)
         db.update_instruction_tracking(inst_id, {
             "executed": 1,
@@ -595,8 +597,8 @@ class TestMfeMae:
         result = db.get_instruction("2026-06-18", "US.NTES")
         # SHORT MFE = (100 - 92) * 50 = 400
         assert result["max_favorable_excursion"] == 400.0
-        # SHORT MAE = (100 - 108) * 50 = -400
-        assert result["max_adverse_excursion"] == -400.0
+        # SHORT MAE = (100 - 108) * 50 → 幅度 400 (正数量纲)
+        assert result["max_adverse_excursion"] == 400.0
 
     def test_mfe_mae_accumulates_over_days(self, tracker, db, mock_market_data, mock_trade_store):
         """MFE/MAE 跨天累积"""
@@ -621,6 +623,149 @@ class TestMfeMae:
         result = db.get_instruction("2026-06-18", "US.NTES")
         # 新的 MFE = max(300, (112-100)*50) = 600
         assert result["max_favorable_excursion"] == 600.0
+
+
+# ========== tick 口径契约 (2026-09-02, DEB-20260902-mfe-caliber-and-shadow-zero 议题一方案A) ==========
+
+class TestMfeMaeTickCaliber:
+    """持仓行 MFE/MAE = tick 口径主路径 (trade_records.metadata peak/trough, 与平仓终值同源)。
+
+    病灶背景: 日 bar 口径无 entry_time 概念, 入场前当日极值全部计入
+    (ORCL 9/1 实证: 台账 +118.4 vs 入场后真实 $18.8, 09:31 spike 早于建仓 31min)。
+    """
+
+    @staticmethod
+    def _executed_trade(peak, trough):
+        """构造带 tick 峰谷 metadata 的成交记录 (query_by_date 新口径: metadata 已解析)"""
+        return {
+            "symbol": "US.NTES", "direction": "LONG", "source_type": "PLAYBOOK_SIM",
+            "entry_price": 100.0, "entry_time": "2026-06-18T10:00:00-04:00",
+            "decision_id": "DA-test", "exit_price": 0,
+            "metadata_json": {"peak_price": peak, "trough_price": trough},
+        }
+
+    def test_long_tick_caliber(self, tracker):
+        """LONG: MFE=(peak-exec)×size, MAE=(exec-trough)×size, 均正数量纲."""
+        mfe, mae = tracker._calc_mfe_mae(
+            "US.NTES", 100.0, "BUY", "2026-06-18", {"position_size": 50},
+            executed_trade=self._executed_trade(peak=110.0, trough=95.0))
+        assert mfe == 500.0 and mae == 250.0
+
+    def test_short_tick_caliber_direction_semantics(self, tracker):
+        """SHORT 方向语义 (pipeline 退出监控): peak=最低价(最有利), trough=最高价(最不利).
+        MFE=(exec-peak)×size, MAE=(trough-exec)×size."""
+        trade = self._executed_trade(peak=92.0, trough=108.0)
+        trade["direction"] = "SHORT"
+        mfe, mae = tracker._calc_mfe_mae(
+            "US.NTES", 100.0, "SELL_SHORT", "2026-06-18", {"position_size": 50},
+            executed_trade=trade)
+        assert mfe == 400.0 and mae == 400.0
+
+    def test_pre_entry_spike_not_counted(self, tracker):
+        """ORCL 病灶复刻: 日 bar high 含入场前 spike (150), tick peak 只有入场后 (110)
+        → MFE 必须是 500 不是 2500 (日 bar 污染口径即本钉防线)."""
+        mfe, mae = tracker._calc_mfe_mae(
+            "US.NTES", 100.0, "BUY", "2026-06-18", {"position_size": 50},
+            executed_trade=self._executed_trade(peak=110.0, trough=95.0))
+        assert mfe == 500.0
+
+    def test_metadata_json_str_also_accepted(self, tracker):
+        """metadata_json 为 str (未解析形态) 时同样可用 — 双兼容防线."""
+        import json as _json
+        trade = self._executed_trade(peak=110.0, trough=95.0)
+        trade["metadata_json"] = _json.dumps(trade["metadata_json"])
+        mfe, mae = tracker._calc_mfe_mae(
+            "US.NTES", 100.0, "BUY", "2026-06-18", {"position_size": 50},
+            executed_trade=trade)
+        assert mfe == 500.0 and mae == 250.0
+
+    def test_missing_trough_falls_back_to_daily_bar(self, tracker, mock_market_data,
+                                                    mock_trade_store):
+        """兜底: trade 联接失败/meta 峰谷缺失 → 日 bar 路径 (MAE 正数量纲)."""
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 110, "low": 95, "close": 105}
+        ]
+        mock_trade_store.query_by_date.return_value = []
+        mfe, mae = tracker._calc_mfe_mae(
+            "US.NTES", 100.0, "BUY", "2026-06-18", {"position_size": 50},
+            executed_trade=None)
+        assert mfe == 500.0 and mae == 250.0
+
+    def test_e2e_daily_tracking_uses_tick_caliber(self, tracker, db, mock_market_data,
+                                                  mock_trade_store):
+        """端到端: daily_tracking 链路里 executed_trade (已认领) 的 tick 峰谷驱动 MFE/MAE,
+        日 bar 的入场前 spike (high=150) 不再进台账."""
+        inst_id = _save_instruction(db, entry_price=100.0, position_size=50)
+        db.update_instruction_tracking(inst_id, {
+            "executed": 1,
+            "execution_price": 100.0,
+            "execution_time": "2026-06-18",
+        })
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 150, "low": 94, "close": 105}
+        ]
+        mock_trade_store.query_by_date.return_value = [
+            self._executed_trade(peak=110.0, trough=95.0)
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        # tick 口径: MFE=(110-100)×50=500 (非日 bar 的 (150-100)×50=2500)
+        assert result["max_favorable_excursion"] == 500.0
+        # tick 口径: MAE=(100-95)×50=250 (非日 bar 的 (94-100)×50=300)
+        assert result["max_adverse_excursion"] == 250.0
+
+
+class TestTradeStoreNameMapping:
+    """议题三 (2026-09-02 同根发现): TradeStore._row_to_dict 按列名映射契约。
+
+    病灶: 原位置映射在 SELECT 列序漂移时静默错位 — 8/27 补 decision_id 列后
+    dict["created_at"] 实装 decision_id 值、decision_id 键缺失 → shadow_tracker
+    P2b 轮次级联接读 None (守卫纸面化); query_range (17列) 调用即 IndexError。
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        from app.storage.trade_store import TradeStore
+        ts = TradeStore(str(tmp_path / "ts.db"))
+        import json as _json
+        with ts._lock:
+            conn = ts._get_conn()
+            try:
+                conn.execute(
+                    """INSERT INTO trade_records (trade_date, symbol, direction,
+                       entry_time, entry_price, quantity, source_type, decision_id,
+                       created_at, metadata_json)
+                       VALUES ('2026-06-18','US.NTES','LONG','2026-06-18T10:00:00-04:00',
+                       100.0, 50, 'PLAYBOOK_SIM', 'DA-20260618-US.NTES-abc',
+                       '2026-06-18T22:00:00', ?)""",
+                    (_json.dumps({"peak_price": 110.0, "trough_price": 95.0}),))
+                conn.commit()
+            finally:
+                conn.close()
+        return ts
+
+    def test_decision_id_present_and_created_at_is_timestamp(self, store):
+        """钉1: decision_id 键存在且值正确; created_at 是时间戳非 decision_id (错位防线)."""
+        rows = store.query_by_date("2026-06-18")
+        assert len(rows) == 1
+        assert rows[0]["decision_id"] == "DA-20260618-US.NTES-abc"
+        assert rows[0]["created_at"] == "2026-06-18T22:00:00"
+        assert not str(rows[0]["created_at"]).startswith("DA-")
+
+    def test_metadata_json_parsed_and_tick_caliber_readable(self, store):
+        """钉2: metadata_json 自动解析为 dict, peak/trough 直接可读 (议题一主路径数据源)."""
+        rows = store.query_by_date("2026-06-18")
+        md = rows[0]["metadata_json"]
+        assert isinstance(md, dict)
+        assert md["peak_price"] == 110.0 and md["trough_price"] == 95.0
+
+    def test_query_range_no_index_error(self, store):
+        """钉3: query_range 不再调用即崩 (原 17 列 SELECT 共用 19 列位置映射 IndexError)."""
+        rows = store.query_range("2026-06-17", "2026-06-19")
+        assert len(rows) == 1
+        assert rows[0]["decision_id"] == "DA-20260618-US.NTES-abc"
 
 
 # ========== analyze_mfe_mae 测试 ==========
