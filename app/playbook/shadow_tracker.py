@@ -183,27 +183,13 @@ class ShadowTracker:
         # 2026-08-27 (P1 幻影回填·纵深防御B): 成交时刻早于指令行创建时刻 → 物理上
         #   不可能属于本指令 (典型: 再入场新轮行认领第一轮成交)。丢弃该匹配并告警,
         #   即使未来联接键再被削弱也不会重演 8/26 #1777 (被盖 #1370 成交)。
-        if executed_trade:
-            try:
-                _entry = str(executed_trade.get("entry_time") or "")
-                _created = str(inst.get("created_at") or "")
-                if _entry and _created:
-                    _ed = datetime.fromisoformat(_entry)
-                    _cd = datetime.fromisoformat(_created)
-                    # 时区归一 (对齐 _calc_holding_hours 约定): naive 按 ET 解释
-                    _attach = (lambda d: _ET.localize(d)) if hasattr(_ET, "localize") else (lambda d: d.replace(tzinfo=_ET))
-                    _ed = _attach(_ed) if _ed.tzinfo is None else _ed.astimezone(_ET)
-                    _cd = _attach(_cd) if _cd.tzinfo is None else _cd.astimezone(_ET)
-                    # 30s 时钟偏斜容差 (auto_execute 先 claim 后写行, created_at 可能略晚于成交)
-                    if (_cd - _ed).total_seconds() > 30:
-                        logger.warning(
-                            f"[shadow_tracker] {symbol} inst#{inst['id']} 认领的成交 entry "
-                            f"{_entry} 早于指令创建 {_created} >30s → 判为跨轮误联, 丢弃 "
-                            f"(幻影回填防御)"
-                        )
-                        executed_trade = None
-            except Exception as _ptl_e:
-                logger.debug(f"[shadow_tracker] 轮次时刻校验跳过 {symbol}: {_ptl_e}")
+        if executed_trade and self._is_phantom_attach(executed_trade, inst):
+            logger.warning(
+                f"[shadow_tracker] {symbol} inst#{inst['id']} 认领的成交 entry "
+                f"{executed_trade.get('entry_time')} 早于指令创建 {inst.get('created_at')} "
+                f">30s → 判为跨轮误联, 丢弃 (幻影回填防御)"
+            )
+            executed_trade = None
         if executed_trade:
             updates["executed"] = 1
             updates["execution_price"] = executed_trade.get("entry_price", 0)
@@ -374,6 +360,15 @@ class ShadowTracker:
         if trade is None:
             trade = self._find_executed_trade(
                 symbol, direction, current_date, decision_id=inst.get("decision_id"))
+            # 2026-09-02 (核查批): 二次重查补同款幻影校验 — 否则 _track_instruction
+            #   守卫丢弃的跨轮误联成交会在此处被捡回 (守卫纵深缺口)。
+            if trade is not None and self._is_phantom_attach(trade, inst):
+                logger.warning(
+                    f"[shadow_tracker] {symbol} MFE/MAE 重查命中幻影成交 "
+                    f"(entry {trade.get('entry_time')} 早于指令创建 {inst.get('created_at')}), "
+                    f"丢弃回退日 bar 口径"
+                )
+                trade = None
         meta = trade.get("metadata_json") if trade else None
         if isinstance(meta, str):
             try:
@@ -516,6 +511,27 @@ class ShadowTracker:
             logger.debug(f"[shadow] get_quote fallback failed for {symbol}: {e}")
 
         return []
+
+    def _is_phantom_attach(self, trade: Dict, inst: Dict) -> bool:
+        """幻影回填判定: 成交时刻早于指令创建 >30s → 跨轮误联 (2026-08-27 P1 纵深防御B).
+
+        30s 时钟偏斜容差 (auto_execute 先 claim 后写行, created_at 可能略晚于成交)。
+        异常/字段缺失 → False (保守: 不误杀正常认领; 校验失败留 debug 由调用方定夺)。
+        """
+        try:
+            _entry = str(trade.get("entry_time") or "")
+            _created = str(inst.get("created_at") or "")
+            if not (_entry and _created):
+                return False
+            _ed = datetime.fromisoformat(_entry)
+            _cd = datetime.fromisoformat(_created)
+            # 时区归一 (对齐 _calc_holding_hours 约定): naive 按 ET 解释
+            _attach = (lambda d: _ET.localize(d)) if hasattr(_ET, "localize") else (lambda d: d.replace(tzinfo=_ET))
+            _ed = _attach(_ed) if _ed.tzinfo is None else _ed.astimezone(_ET)
+            _cd = _attach(_cd) if _cd.tzinfo is None else _cd.astimezone(_ET)
+            return (_cd - _ed).total_seconds() > 30
+        except Exception:
+            return False
 
     def _find_executed_trade(
         self, symbol: str, direction: str, trade_date: str, decision_id: str = None

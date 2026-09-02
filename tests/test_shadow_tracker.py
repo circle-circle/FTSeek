@@ -548,6 +548,45 @@ class TestPhantomTemporalGuard:
         result = db.get_instruction("2026-06-18", "US.NTES")
         assert result["executed"] == 1
 
+    def test_mfe_mae_requery_does_not_reclaim_phantom(
+            self, tracker, db, mock_market_data, mock_trade_store):
+        """纵深缺口钉 (2026-09-02 核查发现): 指令已 executed=1 而本轮联接命中幻影 →
+        _track_instruction 守卫置 None 后, _calc_mfe_mae 二次 _find_executed_trade
+        重查会再遇同一幻影 — 必须再次丢弃, 不得用幻影 meta 峰谷算 MFE/MAE."""
+        inst_id = _save_instruction(db, entry_price=100.0, position_size=50,
+                                    created_at="2026-06-18T19:00:00+00:00")  # 15:00 ET
+        db.update_instruction_tracking(inst_id, {
+            "executed": 1,
+            "execution_price": 100.0,
+            "execution_time": "2026-06-18",
+        })
+
+        # 幻影成交: entry 09:43 ET 早于指令创建 15:00 ET >30s; 带 tick 峰谷 metadata
+        # (若被误用: MFE=(110-100)*50=500; 正确行为=丢弃回退日 bar: (105-100)*50=250)
+        mock_trade_store.query_by_date.return_value = [
+            {"symbol": "US.NTES", "direction": "LONG", "source_type": "PLAYBOOK_SIM",
+             "entry_price": 100.0, "entry_time": "2026-06-18T09:43:03-04:00",
+             "metadata_json": {"peak_price": 110.0, "trough_price": 95.0}},
+        ]
+        mock_market_data.get_daily_bars.return_value = [
+            {"time": "2026-06-18", "open": 100, "high": 105, "low": 97, "close": 102}
+        ]
+
+        tracker.daily_tracking("2026-06-18")
+
+        result = db.get_instruction("2026-06-18", "US.NTES")
+        assert result["max_favorable_excursion"] == 250.0, (
+            "幻影被重查捡回时会得 500 (幻影 peak=110); 250=日 bar 兜底 (high=105)")
+        assert result["max_adverse_excursion"] == 150.0  # (100-97)*50
+
+    def test_phantom_attach_missing_fields_conservative_false(self, tracker):
+        """_is_phantom_attach: entry_time/created_at 缺失 → False (保守不误杀正常认领)."""
+        assert tracker._is_phantom_attach({}, {"created_at": "2026-06-18T10:00:00"}) is False
+        assert tracker._is_phantom_attach(
+            {"entry_time": "2026-06-18T09:00:00"}, {}) is False
+        assert tracker._is_phantom_attach(
+            {"entry_time": "not-a-time"}, {"created_at": "2026-06-18T10:00:00"}) is False
+
 
 # ========== MFE/MAE 计算测试 ==========
 
