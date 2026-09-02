@@ -182,12 +182,14 @@ ET 日界（≈12:00/13:00 CST 正午）落在北京白天，而 DA 产出在 19
 2. **05:05 CST `logs/invariant_check.log`** 必须无 `I15_stale_decision_id`；出现即代表①②双层守卫被绕过（新写入方），按 §二.3 的仲裁路径查写入源。
 3. **`da_chain_health` 的"成交 DA=n 兜底=m"**：本缺陷曾使 `model_used` 退化为 `deterministic` 而该报表仍报 DA=14。若再出现 `deterministic` 成交行，先查 did 日期再看 fallback 链。
 4. **不新增注册表项**：本次是缺陷修复（非行为假设检验），无预注册判据、无影子窗；I15 属常驻尺子族（同 I9/I10），不入 `shadow_registry`。
+5. **明日 19:00–19:30 钉钉恰一条盘前推送**（§八.1 补记的推送去重收敛验证）：skill Stage 6c 已移除直推，唯一推送方为服务侧 `run_playbook_morning_push`（指令落库后 ≤1 个策略循环周期内推，实证 6s）。若仍两条 → skill 目录被回滚/未生效；若零条 → 查服务推送任务与 `_MORNING_PUSH_STATE`。
 
 ---
 
 ## 八、未做与诚实边界
 
 1. **双写者完成标记（P2, 待裁决）**：DA skill 直写 `playbook_instructions`（skill `pipeline.py:1059` 注释自证"FTSeek auto_execute 直接消费"）与服务侧 `run_generate` 是**两个写入方**，服务侧只靠"有行无完成标记 → 继续生成"判断，无跨进程完成标记/幂等握手。①②落地后陈旧内容进不来，但"当日内容被当日重生成覆盖"仍可能（设计内的同源类替换）。若要收口，建议 skill 写完 13 行后落完成标记，服务侧见标记即跳过生成 —— 涉及仓外 skill，另立 DEB。
+   - **补记（2026-09-02 19:52，用户裁"最终不要重复发送，选最合适的方案"）— 通知面已收口，DB 面仍待**：19:28 实锤同内容双推（钉钉两次，仅 VIX/SPY 快照异 — 两进程各自实时调 `MarketRegimeGate.assess()`，各有 ≤120s 进程内 TTL 缓存）：① skill `Stage 6c` 写完 DB 直推（19:28:01，async）；② 服务侧 `run_playbook_morning_push` 循环发现新指令再推（19:28:07，sync，随后落幂等标记）——skill 从不读/写服务的 `_MORNING_PUSH_STATE` 标记，幂等互不可见。裁决：**推送收敛为服务侧单点**（skill 移除 Stage 6c 推送、保留 Obsidian 归档；备份 `pipeline.py.bak-deb20260902-dedup-push`）。理由：skill 推送本是 07-10 针对"NullVotingAdapter 下推送被跳过"的补丁，07-11 服务侧独立推送任务（持久化标记+每轮重试+失败重试）即为该问题的正式修复，此后 skill 路径即冗余；单点方案无跨进程共享状态、无 check-then-push 竞态窗口，且顺带消除双快照不一致。服务侧**零改动零重启**（明日 19:00 DA cron 起自然生效，验证点=钉钉恰一条）。备选"skill 补写标记"方案弃用：跨仓共享标记文件语义会漂移、且留 check→push→mark 竞态窗。
 2. **陈旧指令无 TTL**：`invalidation` 是自然语言，`tripwire_checker` 不可核销（`DEB-20260825` P10 既有立案）。本次未加"did 日期 ≠ 当日 → 触发时终态跳过"（方案 D），理由见 §四。
 3. **EIX 反事实是价格路径推断，非成交回放**：SL/TP 逐轮 re-price 上移，实际成交与滑点未建模；−$240 是按首轮 SL 5.5% 的下界口径。
 4. **9/1 那 5 行不回填**：did 与 `model_used` 保持事故原样（历史事实），仅在本档留痕；回填会破坏"事故可复核"。
