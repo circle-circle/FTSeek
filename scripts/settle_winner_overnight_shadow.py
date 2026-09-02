@@ -9,6 +9,16 @@ replay_bars 结算"带 SL 持一夜"反事实臂:
 结算 = 反事实出场价相对 arm_price 的增量 × 数量 × 方向符号 (净口径基线:
 费用结构同实际平仓 — 多持一夜不增加往返费, delta 为纯价差)。
 
+B16 判据样本口径 (2026-09-02 核查补): arm 点挂 PRE_CLOSE_EXIT 触发处,
+非豁免亏损臂 (LIVE 水下/到期 SIM 仓) 也会落行 (近30日实测 11赢/1输≈8%污染) —
+DEB 问题定义是 "cohort A 盈利仓持夜", 汇总的 n/均值/胜率/by_outcome 只按
+盈利臂 (arm_profit_pct>0, 毛口径, 同 PRE_CLOSE skip 判定) 取样; 亏损臂照
+结算仅留对照 (loser_n), 不入判据。min_n=20 = 盈利臂结算行数。
+
+SL 口径注记: stop_loss_at_arm = 初始 SL (meta.stop_loss, 退出链不随
+breakeven/trail 收紧更新) — 真实赢家仓 arm 时刻生效 SL 更紧, 反事实"带SL
+持夜"的 SL_touch 读数因此偏少 (初始 SL 口径), 判据侧知悉。
+
 数据源: data/replay_bars/{SYM}_{date}.json (position_path_collector 盘后落).
 次日交易日 = holiday_calendar.nth_trading_day_after; bar 缺失 → 保留
 unsettled 待补算 (静默死亡族纪律: 每次运行打印未结算积压数)。
@@ -17,7 +27,6 @@ unsettled 待补算 (静默死亡族纪律: 每次运行打印未结算积压数
 """
 import argparse
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -26,6 +35,13 @@ sys.path.insert(0, str(ROOT))
 BAR_DIR = ROOT / "data" / "replay_bars"
 SHADOW = ROOT / "data" / "shadow" / "winner_overnight_shadow.jsonl"
 OUT = ROOT / "data" / "shadow" / "winner_overnight_shadow_latest.json"
+
+
+def _atomic_write(path: Path, text: str):
+    """temp+rename 原子写 — 06:25 cron 与 15:52 arm 追加写无并发窗口, 防半写."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def next_trading_day(d: str):
@@ -90,13 +106,13 @@ def settle_row(row):
     }
 
 
-def main():
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=0, help="只结算近 N 天 arm 行 (0=全部)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if not SHADOW.exists():
         print("无影子文件, 退出 (尚未产生 arm 行)")
-        return
+        return 0
     rows = [json.loads(l) for l in SHADOW.open() if l.strip()]
     pending = [r for r in rows if not r.get("settled") and r.get("type") == "arm"]
     if args.days > 0:
@@ -113,24 +129,30 @@ def main():
         if ok:
             r.update(fields)
             n_set += 1
-    SHADOW.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    _atomic_write(SHADOW, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     settled = [r for r in rows if r.get("settled")]
-    tot = sum(r.get("overnight_delta", 0) for r in settled)
-    wins = sum(1 for r in settled if r.get("overnight_delta", 0) > 0)
+    # B16 判据样本 = 盈利臂 (docstring 口径注记); 亏损臂仅对照
+    winners = [r for r in settled if float(r.get("arm_profit_pct", 0) or 0) > 0]
+    losers = [r for r in settled if float(r.get("arm_profit_pct", 0) or 0) <= 0]
+    tot = sum(r.get("overnight_delta", 0) for r in winners)
+    wins = sum(1 for r in winners if r.get("overnight_delta", 0) > 0)
     summary = {
         "settled_n": len(settled),
+        "winner_n": len(winners),
+        "loser_n": len(losers),
         "pending_n": len([r for r in rows if not r.get("settled")]),
         "sum_overnight_delta": round(tot, 2),
-        "win_rate": round(wins / len(settled), 3) if settled else None,
+        "win_rate": round(wins / len(winners), 3) if winners else None,
         "by_outcome": {},
     }
     from collections import Counter
-    summary["by_outcome"] = dict(Counter(r.get("settle_outcome") for r in settled))
-    OUT.write_text(json.dumps(summary, ensure_ascii=False, indent=1))
-    print(f"本次结算 {n_set} 笔 | 累计已结算 {len(settled)} | 未结算积压 "
-          f"{summary['pending_n']} | 合计delta {tot:+.2f} | 胜率 {summary['win_rate']}")
-    print(f"by_outcome: {summary['by_outcome']}")
+    summary["by_outcome"] = dict(Counter(r.get("settle_outcome") for r in winners))
+    _atomic_write(OUT, json.dumps(summary, ensure_ascii=False, indent=1))
+    print(f"本次结算 {n_set} 笔 | 盈利臂 {len(winners)} (B16样本) / 亏损臂 {len(losers)} (对照) "
+          f"| 未结算积压 {summary['pending_n']} | 盈利臂合计delta {tot:+.2f} | 胜率 {summary['win_rate']}")
+    print(f"by_outcome(盈利臂): {summary['by_outcome']}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

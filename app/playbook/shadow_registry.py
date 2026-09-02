@@ -494,13 +494,17 @@ REGISTRY: list[ShadowItem] = [
         data_path="data/shadow/winner_overnight_shadow.jsonl",
         config_key="playbook.execution_parameters.winner_overnight_shadow_enabled",
         min_n=20,
-        graduation_criteria="n≥20 结算行 → overnight_delta 均值>费用线(~0.15%) ∧ "
+        graduation_criteria="n≥20 盈利臂结算行 (arm_profit_pct>0, 毛口径 — 2026-09-02 "
+                            "核查补: arm 点会捕非豁免亏损臂, 不入判据仅对照) → "
+                            "overnight_delta 均值>费用线(~0.15%) ∧ "
                             "≥60%方向为正 ∧ SL_touch 占比<40% (防尾部) → 提案赢家隔夜臂 "
                             "(cohort A 盈利仓持夜豁免/或复活 long horizon, 另立DEB+用户裁); "
                             "否则维持当日落袋。窗内禁改 PRE_CLOSE/EOD 链。",
         eval_script="scripts/settle_winner_overnight_shadow.py",
         created="2026-09-02",
-        notes="count_mode=settled_arm_lines; 悲观序结算(不假设更优出场); "
+        notes="count_mode=settled_winner_arm_lines (arm_profit_pct>0, 毛口径; 汇总由"
+              "结算脚本过滤, 亏损臂仅 loser_n 对照); 悲观序结算(不假设更优出场); "
+              "stop_loss_at_arm=初始SL口径(生效SL更紧, SL_touch 偏少知悉); "
               "DEB-20260902-overnight-exit-timing; 判据字典 B16",
     ),
 

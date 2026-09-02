@@ -32,6 +32,7 @@
 - 开关: `winner_overnight_shadow_enabled=true` (每轮读取, 回滚免重启)。
 - 注册: `shadow_registry` id=`winner_overnight` (min_n=20) + 判据字典 B16。
 - 预注册 (窗口 9/2 起攒样): n≥20 结算行 → overnight_delta 均值>费用线(~0.15%) ∧ ≥60%为正 ∧ SL_touch 占比<40% → 提案赢家隔夜臂 (另立 DEB+用户裁); 否则维持当日落袋。窗内禁改 PRE_CLOSE/EOD 链。
+- 判据样本口径 (2026-09-02 核查补, 用户裁"按建议执行"): arm 点挂 PRE_CLOSE_EXIT 触发处, 非豁免亏损臂 (LIVE 水下/到期 SIM 仓) 也会落行 (近30日实测 11赢/1输≈8%污染) → B16 判据只按**盈利臂** (arm_profit_pct>0, 毛口径同 PRE_CLOSE skip 判定) 取样; 亏损臂照结算仅留对照 (loser_n), 不入 n/均值/胜率。汇总过滤落在结算脚本, 判据字典 B16/注册表已同步。
 - 历史上界参考 (日bar收盘价口径, 非裁决证据): 锁利型隔夜仓继续持有 T+1 +$75 / T+2 +$421 / T+3 +$824 (n=4/3/2, 小样本)。
 
 ## 五、方案D: long horizon 臂处置 — 暂缓
@@ -45,3 +46,4 @@
 - 反事实结算用收盘价近似, 盘中路径只检 SL 触碰 (不假设更优出场)。
 - 费用结构: 多持一夜不增加往返费, delta 为纯价差 (同 W_WEEK 回放口径)。
 - 不动: SL/跳空开盘退出 (价格保护正确), W_WEEK 现有参数 (已裁决基线)。
+- stop_loss_at_arm = 初始 SL (meta.stop_loss, 退出链不随 breakeven/trail 收紧更新) — 真实赢家仓 arm 时刻生效 SL 更紧, "带SL持一夜"的 SL_touch 读数按初始 SL 口径偏少; 判据 SL_touch<40% 若在紧 SL 现实下翻车, 另立 DEB 重裁 (2026-09-02 核查补注)。

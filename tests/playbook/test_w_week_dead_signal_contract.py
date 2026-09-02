@@ -45,13 +45,20 @@ def _run(current_price, peak_price, held_minutes, entry_time_str,
 
 
 class TestDeadSignalWWeekExempt:
-    """规则3.3 DEAD_SIGNAL 的 W_WEEK 豁免边界."""
+    """规则3.3 DEAD_SIGNAL 的 W_WEEK 豁免边界.
+
+    2026-09-02 钉子重锚 (RFC-073): 隔夜仓 DEAD_SIGNAL 生效口径改"今日开盘以来
+    分钟数"后, 隔夜场景必须给 minutes_from_open≥dead_signal_exit_minutes (61)
+    让时间门先过, 豁免边界才在被测位置 (否则 20<60 时间门挡住, 豁免测试假绿、
+    触发测试假断). 时间口径本身由 test_rfc073_dead_signal_overnight.py 专钉.
+    """
 
     def test_sim_underwater_overnight_exempt(self):
         """核心: SIM水下隔夜仓 (MFE=0.1%<0.2%, held=800min) → 豁免, 不退出."""
         entry = (now_et() - timedelta(days=1)).isoformat()
         reason, *_ = _run(current_price=99.0, peak_price=100.1,
-                          held_minutes=800, entry_time_str=entry)
+                          held_minutes=800, entry_time_str=entry,
+                          minutes_from_open=61)
         assert reason == "", f"W_WEEK水下仓应豁免DEAD_SIGNAL, got {reason}"
 
     def test_live_underwater_dead_signal_fires(self):
@@ -59,14 +66,15 @@ class TestDeadSignalWWeekExempt:
         entry = (now_et() - timedelta(days=1)).isoformat()
         reason, *_ = _run(current_price=99.0, peak_price=100.1,
                           held_minutes=800, entry_time_str=entry,
-                          source_type="PLAYBOOK_LIVE")
+                          source_type="PLAYBOOK_LIVE", minutes_from_open=61)
         assert reason == "DEAD_SIGNAL_EXIT", f"LIVE不受豁免影响, got {reason}"
 
     def test_sim_nonunderwater_dead_signal_fires(self):
         """水下边界: profit>=0 (微盈) 不在豁免范围, DEAD_SIGNAL 仍触发."""
         entry = (now_et() - timedelta(days=1)).isoformat()
         reason, *_ = _run(current_price=100.05, peak_price=100.1,
-                          held_minutes=800, entry_time_str=entry)
+                          held_minutes=800, entry_time_str=entry,
+                          minutes_from_open=61)
         assert reason == "DEAD_SIGNAL_EXIT", f"非水下仓不豁免, got {reason}"
 
     def test_sim_underwater_day1_also_exempt_planB(self):
@@ -80,7 +88,8 @@ class TestDeadSignalWWeekExempt:
         """5日窗口边界: 超窗 (入场12历日前≥8交易日) → 豁免失效, DEAD_SIGNAL 恢复."""
         entry = (now_et() - timedelta(days=12)).isoformat()
         reason, *_ = _run(current_price=99.0, peak_price=100.1,
-                          held_minutes=800, entry_time_str=entry)
+                          held_minutes=800, entry_time_str=entry,
+                          minutes_from_open=61)
         assert reason == "DEAD_SIGNAL_EXIT", f"超5日窗口后应恢复DEAD_SIGNAL, got {reason}"
 
     def test_sl_still_dominates_exempt_position(self):

@@ -116,13 +116,16 @@ class TestNetCaliberDeadSignalExempt:
 
     def _nvda_scenario(self, qty):
         """NVDA 8/17 场景: SHORT, 毛+0.013%, held=800min, peak<0.2%.
-        SHORT 的 initial_sl 必须在入场价上方 (105), 否则 SL_INITIAL 先触发."""
+        SHORT 的 initial_sl 必须在入场价上方 (105), 否则 SL_INITIAL 先触发.
+        2026-09-02 钉子重锚 (RFC-073): 隔夜仓 DEAD_SIGNAL 生效口径=今日开盘以来
+        分钟数 → minutes_from_open=61 让时间门先过, 毛净豁免口径回到被测位置
+        (TIME_EXIT 不误触: default 6h 且 only_if_loss, 毛+0.013% 非亏损)."""
         entry = (now_et() - timedelta(days=1)).isoformat()
         # SHORT: profit_pct = (entry - current) / entry * 100
         # 毛+0.013% → current = entry × (1 - 0.013/100) = 99.987
         return _run(
             current_price=99.987, peak_price=99.9,  # peak_profit_pct = +0.1% < 0.2%
-            held_minutes=800, entry_time_str=entry,
+            held_minutes=800, entry_time_str=entry, minutes_from_open=61,
             direction="SHORT", entry_price=100.0, initial_sl=105.0, qty=qty,
         )
 
@@ -139,12 +142,13 @@ class TestNetCaliberDeadSignalExempt:
             f"毛口径下微盈仓不豁免, got {reason}"
 
     def test_underwater_exempt_both_calibers(self):
-        """水下仓 (毛<0): 净口径下仍豁免 (净更负)."""
+        """水下仓 (毛<0): 净口径下仍豁免 (净更负).
+        minutes_from_open=61 (RFC-073 重锚): 时间门先过, 豁免才是存活原因."""
         entry = (now_et() - timedelta(days=1)).isoformat()
         # SHORT: 毛-0.5% → current = 100.5; SL在入场价上方 (105) 不触发
         reason, *_ = _run(
             current_price=100.5, peak_price=99.9,
-            held_minutes=800, entry_time_str=entry,
+            held_minutes=800, entry_time_str=entry, minutes_from_open=61,
             direction="SHORT", entry_price=100.0, initial_sl=105.0, qty=10,
         )
         assert reason == "", f"水下仓应豁免, got {reason}"

@@ -192,8 +192,8 @@ def main() -> int:
     ok = do_restart()
     try:
         STATE.write_text(str(now_ts))
-    except Exception:
-        _state_err = True  # 冷却态写失败不阻塞恢复, 下方告警行会因重复处置自带可见性
+    except Exception as e:
+        print(f"[freeze-sentinel] 冷却态写失败 (不阻断): {e}")
     age = int(now_ts - hb_mtime) if hb_mtime is not None else -1
     msg = (f"🚨 [freeze-sentinel] 进程冻结处置: 心跳停滞 {age}s (>420s 裁决阈值) | "
            f"栈: {stack_file} | systemctl restart {'成功' if ok else '失败, 需人工'} | DEB-20260902 E0")

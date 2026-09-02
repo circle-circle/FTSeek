@@ -7332,7 +7332,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             #   horizon 8月以来 0.5% 分配率)。影子记"带 SL 持一夜"反事实臂, 次日 1min
             #   bar 结算 (scripts/settle_winner_overnight_shadow.py)。零行为变更。
             #   回滚: winner_overnight_shadow_enabled 改 false (无需重启, 每轮读取)。
-            if bool(_pb_cfg.get("winner_overnight_shadow_enabled", True)):
+            #   2026-09-02 核查批补: pytest 环境隔离 (先例 audit_db.py) — 埋点写死生产
+            #   路径, 单测触发 PRE_CLOSE_EXIT 会污染生产账本 (实测一次全量跑 8 行 TEST
+            #   符号落账)。生产判定不读此环境变量, 零生产影响。
+            import os as _wos_os
+            if bool(_pb_cfg.get("winner_overnight_shadow_enabled", True)) \
+                    and not _wos_os.environ.get("PYTEST_CURRENT_TEST"):
                 try:
                     import json as _wos_j
                     from pathlib import Path as _WOS_P
