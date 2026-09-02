@@ -74,6 +74,15 @@ def _parse_json_field(val: Any, default: Any) -> Any:
 
 
 def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
+    """从 playbook 指令提取 ATR 绝对价 (兼容包装, 见 _extract_atr_with_basis)。
+
+    2026-09-02 (DEB-20260831 §8.7 atr_basis 打标): 拆出 with_basis 变体返回
+    (值, 来源), 本函数保持纯 float 契约 (tests/test_atr_source_unit_extraction.py)。
+    """
+    return _extract_atr_with_basis(inst)[0]
+
+
+def _extract_atr_with_basis(inst: Dict[str, Any]) -> tuple:
     """从 playbook 指令提取 ATR 数值, 写入 trade_records.metadata_json.atr (诊断用).
 
     2026-06-24 修复: playbook_instructions 表无 atr_source 顶层列 (schema 见 db.py),
@@ -120,9 +129,9 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
             if "atr_pct=" in src:
                 _entry = float(inst.get("entry_price", 0) or 0)
                 if _entry > 0:
-                    return round(_entry * _val / 100.0, 2)
+                    return round(_entry * _val / 100.0, 2), "real"
             else:
-                return _val
+                return _val, "real"
         except (ValueError, IndexError):
             pass
     
@@ -135,8 +144,8 @@ def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
         sl_pct = abs(entry - sl) / entry * 100
         # 反推 ATR: medium bucket sl_multiplier=1.5 → atr_pct ≈ sl_pct / 1.5
         # 但无法确定 bucket, 用 sl_pct 本身作为 atr% 近似 (保守上界)
-        return round(entry * sl_pct / 100, 2)  # 返回隐含 ATR 绝对值
-    return 0.0
+        return round(entry * sl_pct / 100, 2), "proxy"  # 返回隐含 ATR 绝对值
+    return 0.0, "missing"
 
 
 
@@ -1660,7 +1669,8 @@ class PlaybookService:
                     "playbook_instruction_id": instruction_id,
                     "stop_loss": float(stop_loss) if stop_loss else 0,
                     "take_profit": float(take_profit) if take_profit else 0,
-                    "atr": _extract_atr_from_instruction(inst),
+                    "atr": (_atr_pair := _extract_atr_with_basis(inst))[0],
+                    "atr_basis": _atr_pair[1],  # real|proxy|missing — KR2 切片口径 (DEB-20260831 §8.7)
                     "thesis": inst.get("thesis", "")[:200],
                     "invalidation": inst.get("invalidation", "") or "",  # 2026-07-11 Stage2a: 供退出侧影子评估
                     "peak_price": float(_fill),

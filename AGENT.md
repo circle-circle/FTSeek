@@ -26,3 +26,4 @@
 - **`auto_trading_enabled` 的三处裸 regex 读磁盘是刻意设计**（绕过热重载 60s 延迟的紧急开关语义），勿"优化"成 get_dotted。
 - **重启必跑启动冒烟**（2026-07-26，base.* 事故教训）：`systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` — 七条机器断言（ConfigValidator/漂移检测/热重载/SSOT 审计/模拟盘/快循环/零 Traceback），禁止用临场 grep 代替（"服务已启动"≠健康，ConfigGov 降级运行就是这么漏的）。删 yaml 段的零引用验证须含隐性消费面：validator REQUIRED_KEYS / config_audit _AUDIT_ITEMS / CRITICAL_KEYS。
 - **新增落库字段必带基数自检**（2026-07-27，"常量退化"已三例：DA conf 罚成 35 / UE conf cap=50 / UE info_source 恒 `LLM_EVENT_REASONING`）：字段落了库但取值退化为常量 → 一切下游切片零区分度且表面无恙。新字段的判分消费端（scorecard 等）必须带 distinct 计数体检，n≥10 且 distinct<2 即 WARNING。参照 `direction_hit_scorecard.py` info_channel 基数自检。
+- **新增落库字段必带单位/量纲声明 + 契约测试断言**（2026-09-02，"单位混装"已四案：ATR 百分比直落绝对槽 / da_glm_shadow 异基 taint 误杀 / KR2 快照漏键假绿 / UE conf 口径）：新字段入库时单位（绝对价|百分比|计数|枚举）必须写进契约测试断言；同一字段存在新旧双格式（如 atr_source）必须逐格式有契约例；读取端注释声明量纲假设。与上一条"基数自检"配套：基数防常量退化，单位防量纲说谎。

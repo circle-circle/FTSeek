@@ -2678,6 +2678,15 @@ class TradingScheduler:
                     get_watchdog().ping("playbook_exit_loop")
                 except Exception:
                     pass
+                # [DEB-20260902 E0 · 2026-09-02 裁决实施] 外部心跳 touch — 与内部 watchdog ping 同点:
+                #   循环活 = 心跳新; 冻结 (9/1 GIL 形态) → mtime 停滞 → 外部 cron 监督
+                #   (scripts/freeze_sentinel.py, 420s = 内部 heal 360s + 60s 余量裁决值)
+                #   py-spy 取证 + restart + 告警。休市期循环仍迭代 → 心跳仍新, 监督侧
+                #   以 TRADING 相位自行闸门。回滚: 删本块 (+ 删 cron 行 + 删脚本)。
+                try:
+                    Path("/run/ftseek-heartbeat").touch()
+                except Exception as _hb_e:
+                    logger.debug(f"[PlaybookExit] heartbeat touch 失败 (哨兵侧可见): {_hb_e}")
                 # 市场关闭时休眠 (照抄 VIX 样板: sleep_if_market_closed 返回 True=已睡到开市)
                 from app.core.scheduler_triggers import sleep_if_market_closed
                 if sleep_if_market_closed(self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC, lambda: self.running):

@@ -7138,7 +7138,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             _et_cand = max(_et_sl_pct, min(_et_ceiling, _et_mult * _et_atr_pct))
             if _et_cand > _et_sl_pct:
                 _et_sl_pct = _et_cand
-                _et_basis = f"atr={_et_atr_pct:.1f}%×{_et_mult:g}"
+                # [2026-09-02 DEB-20260831 §8.7] basis 尾缀透传 atr 来源 (real|proxy|missing),
+                #   切片时区分真 ATR 与 SL 距离代理; 历史仓无此键 → '?'。零行为变更。
+                _et_basis = f"atr={_et_atr_pct:.1f}%×{_et_mult:g}[{meta.get('atr_basis', '?')}]"
         if held_minutes <= _et_minutes and (_et_mfe_gate <= 0 or peak_profit_pct < _et_mfe_gate):
             _et_sl = entry_price * (1 - _et_sl_pct / 100.0) if direction == "LONG" \
                 else entry_price * (1 + _et_sl_pct / 100.0)
@@ -8882,4 +8884,3 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
     except Exception as e:
         logger.warning(f"[playbook sim] EOD force_close 异常 (已隔离): {e}")
         return 0
-

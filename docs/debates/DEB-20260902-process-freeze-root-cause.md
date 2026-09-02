@@ -1,7 +1,7 @@
 # DEB-20260902: 进程全冻结 10 分钟 (9/1 GIL 事件) — 根因取证、方案迭代与预注册修复
 
 - **立案日**: 2026-09-02（用户："请深入分析工程项问题，是否还有同类风险问题" → "是否是最优雅的解决方案？" → "请写入DEB文件，我需要另外agent分析"）
-- **状态**: 分析定案；修复方案 (E0/E1/E2) **已预注册待用户裁决，未实施**
+- **状态**: 分析定案；**E0 已实施**（2026-09-02 用户裁"按照建议执行落地"，Codex 复盘批）；E2 撤销（勘误，见 §五）；E1/E3 仍待裁决
 - **事故等级**: 无直接资金损失（最大实损 = LLY SL 延迟 ~2min，价格回到触发位附近；broker 侧挂单兜底在位）
 - **纪律引用**: 一次一变量；预注册后实施；打标前不切实盘；证据先行于方案
 
@@ -106,7 +106,7 @@ futu SDK 10.09.6908 的同步查询路径（`venv/.../futu/common/open_context_b
 
 ## 五、预注册方案 E0-E3（待裁决，未实施）
 
-### E0 — 外部心跳监督 + 事故时自动取证（keystone，~30 行零热路径风险）
+### E0 — 外部心跳监督 + 事故时自动取证（keystone，~30 行零热路径风险）【2026-09-02 已实施】
 
 - 退出快循环内顺手 `Path("/run/ftseek-heartbeat").touch()`（一行，每 20s）。
 - systemd timer 或 cron 每分钟检查：mtime > 420s 停滞（2026-09-02 裁决值，见下） → **先 `venv/bin/py-spy dump --pid <ftseek主进程>` 全线程栈落 `logs/freeze_stacks/`（py-spy 0.4.2 已在 venv，零新依赖），再 `systemctl restart ftseek-us`**，并发告警。
@@ -119,6 +119,9 @@ futu SDK 10.09.6908 的同步查询路径（`venv/.../futu/common/open_context_b
 - **[2026-09-02 独立复审议 · 另 agent (Codex)] 阈值异议 300s → 420s**：原文语义为"内部 watchdog 已死才接管"，但心跳由退出快循环 touch，300s 阈值区分不了"watchdog 已死"与"watchdog 活着、内部 heal 尚未到点（120–360s 窗口）"——退出循环冻而 watchdog 存活时，外部会在 300s 先开火，抢走内部 heal 本应在 360s 执行的那次重启，与同段"内部 heal 优先（1/3 额度节流）"语义相悖，且外部重启不走内部额度记账。建议阈值改 **420s（=360s+60s 余量）**：内部活着时内部必先出手；仅内部同死（本次事故形态）外部才兜底，代价仅 +60s 检测延迟。若坚持 300s，须把语义改写为"外部可抢跑内部"并接受为设计行为。异议不触及 E0 结构（心跳+py-spy 取证+重启），仅预注册阈值；采纳与否由用户裁决。
 - **[2026-09-02 裁决 · 用户裁"同意执行"] 采纳 420s**：异议成立 — 内部 heal 阈值 120×3=360s（`scheduler_core.py:2670` 注册 120s × heal_multiplier 3）已独立核实，300s 确实落在"watchdog 活着、heal 未到点"窗口内，外部会抢跑且绕过 1/3 每日额度记账。**E0 预注册阈值定为 420s**（=360+60s 余量），本节上文 300s 表述按此读。E0-E3 整体实施仍待裁决。
 - 风险与注意：py-spy dump 需要 ptrace 权限（root 下 OK，需实弹验证一次）；心跳写 /run/（tmpfs，零 IO 顾虑）；市场关闭时段退出快循环休眠在 `sleep_if_market_closed` — **该函数返回前不 touch 心跳，会积累 mtime 停滞** → 心跳 touch 必须放在循环顶部 ping watchdog 的同一位置（与内部 ping 同点，市场关闭时内部 watchdog 也因 WEEKEND 检查跳过告警 — 外部监督器需同判市场相位，或接受盘后/周末的假阳性并靠监督器读市场相位跳过。**此细节是 E0 实施的第一坑，留给实施者处理**）。
+
+
+- **[2026-09-02 实施实录 · Codex] 第一坑的解法与预想不同**：实测 `sleep_if_market_closed` 为短睡（interval 秒、1s 步进），休市期循环仍每 10–20s 迭代 → 心跳持续新鲜，不存在预想的 mtime 积累停滞；监督器以 TRADING 相位为处置闸门（相位读取带 15s SIGALRM 硬超时——防 OpenD 死锁反噬哨兵自身；相位失败落时间窗兜底：北京 周一~五 20:45 → 次日 04:45），休市期永不处置。实弹验证：重启后心跳 10s 内新鲜，哨兵健康静默、心跳缺失时 skip 语义正确（`tests/test_freeze_sentinel.py` 8 例）。
 
 ### E1 — 资金路径 bounded IO（收缩版 P1）
 
@@ -154,8 +157,8 @@ TRADING 时段每 5 分钟探测 OpenD（`get_global_state` 带 10s 超时），
 
 | 件 | 路径 | 回滚 |
 |---|---|---|
-| 心跳 touch | `app/core/scheduler_core.py` 退出快循环（一行） | 删行 |
-| 外部监督器 | `scripts/freeze_sentinel.py`（新） + cron/timer 每分钟 | 删 cron 行 + 脚本 |
+| 心跳 touch ✅ | `app/core/scheduler_core.py` 退出快循环（与 watchdog ping 同点） | 删块 |
+| 外部监督器 ✅ | `scripts/freeze_sentinel.py`（新）+ crontab 每分钟 + 契约测试 `tests/test_freeze_sentinel.py` 8 例 | 删 cron 行 + 脚本 + 测试 |
 | 退出取价硬墙 | `app/playbook/pipeline.py`（有界 executor + timeout） | git revert |
 | ~~HTTP timeout ×9~~ | ~~见风险#3 清单~~ **已撤销（E2 勘误）** | — |
 | 本档 | `docs/debates/DEB-20260902-process-freeze-root-cause.md` | — |
