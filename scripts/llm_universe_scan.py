@@ -1968,6 +1968,18 @@ def cmd_inject(force_dry: bool = False) -> int:
         }
     except Exception as _rg_ue_e:
         print(f"  [warn] regime 补齐失败(非致命): {_rg_ue_e}")
+    # [P1 2026-09-02 低ATR源头预检] ATR provider — 与执行门/盘前定桶
+    #   (pipeline.py _tag_volatility_buckets) 同一 provider 同一数据源 (日线 ATR,
+    #   盘前稳定不依赖 OpenD)。开关与阈值读执行门同键 (playbook.low_atr_gate_*),
+    #   单旋钮同开同关; provider 构建失败 → None → 预检整体 fail-open (执行门兜底)。
+    _ue_atr_provider = None
+    _ue_atr_gate_min = float(_cfg("playbook.low_atr_gate_min_atr_pct", 0.025))
+    if bool(_cfg("playbook.low_atr_gate_enabled", False)):
+        try:
+            from app.core.di_container import get_di_container
+            _ue_atr_provider = get_di_container().atr_provider()
+        except Exception as _atr_prov_e:
+            print(f"  [warn] ATR provider 构建失败, 低ATR预检 fail-open: {_atr_prov_e}")
     instructions = []
     for s in cand:
         # 2026-08-11: effective 口径 — 盘前时段用 pre_price 锚定 entry/SL/TP/band。
@@ -1995,6 +2007,41 @@ def cmd_inject(force_dry: bool = False) -> int:
             })
             print(f"  [skip] {s['symbol']} 价格地板 ({float(px):.2f} < {_floor:g}) → SKIP行")
             continue
+        # [P1 2026-09-02 低ATR源头预检] 执行门已判定低波票永不可能触发 → 注入即
+        #   "结构性死指令" (9/2 实测: XLY/XLI/XLU/AAPL/LLYVK 5 条 UE 指令全天每轮
+        #   low_atr_block 拦截, 只产生订阅槽位/re-price/遥测噪音; 全历史 ETF 仅 1 笔
+        #   成交 -$43)。与执行门同阈值源头拦截 = 零交易行为变更 (这些指令本来就不可能
+        #   成交), 只省死指令开销。ATR 取不到/异常 → fail-open 放行 (执行门兜底)。
+        #   落SKIP行保留可归因 (与 price_floor 同轨, skip_reason 自带数值)。
+        #   回滚: playbook.low_atr_gate_enabled 改 false (与执行门一起关)。
+        if _ue_atr_provider is not None:
+            try:
+                _ue_atr = _ue_atr_provider.get_atr_pct(f"US.{s['symbol']}", float(px))
+                if _ue_atr is not None and 0 < float(_ue_atr) < _ue_atr_gate_min:
+                    instructions.append({
+                        "date": today,
+                        "symbol": f"US.{s['symbol']}",
+                        "direction": "SKIP",
+                        "skip_reason": (
+                            f"low_atr({float(_ue_atr):.4f}<{_ue_atr_gate_min:g}, "
+                            f"低波票过不了执行门)"
+                        ),
+                        "entry_price": round(float(px), 4),
+                        "confidence": min(int(round(float(s["confidence"]) * 100)), 50),
+                        "thesis": s.get("thesis", ""),
+                        "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
+                        "model_used": _scan_model,
+                    })
+                    _log_inject_loop_reject(
+                        s, f"low_atr({float(_ue_atr):.4f}<{_ue_atr_gate_min:g})"
+                    )
+                    print(
+                        f"  [skip] {s['symbol']} 低ATR预检 "
+                        f"({float(_ue_atr):.4f} < {_ue_atr_gate_min:g}) → SKIP行"
+                    )
+                    continue
+            except Exception as _ue_atr_e:
+                print(f"  [warn] {s['symbol']} 低ATR预检异常 fail-open: {_ue_atr_e}")
         nums = _compute_numbers(float(px), s["direction"])
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
