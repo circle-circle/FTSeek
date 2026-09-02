@@ -179,6 +179,7 @@ ET 日界（≈12:00/13:00 CST 正午）落在北京白天，而 DA 产出在 19
 ## 七、go-forward 观察点（明晨判读清单）
 
 1. **21:00 CST 生成批日志**必须出现 `P1 陈旧bridge滚动重载成功: <今日> BridgeVotingAdapter(trade_date=<昨日>) → BridgeVotingAdapter (N candidates)`，且**当批 `vote→instruction` 的 did 全为当日**。若出现 `P1 陈旧bridge在内存 … 但重载开关关闭` → 有人把开关翻了，按 §五 回滚面核对。
+   - 判读注（2026-09-02 21:01 实测）：本条按"服务持有陈旧 Bridge"的前提写就；当晚服务 17:00 CST 重启早于 19:28 bridge 落盘 → 实际持有 TechnicalFallbackAdapter，故日志出现的是 **P0-2 变体** `P0-2 运行期bridge重载成功: 2026-09-02 TechnicalFallbackAdapter → BridgeVotingAdapter (14 candidates)`（守卫另一半生效，保护目标等价：投票前换上当日新鲜 bridge）。当晚核验：DA 行 14 条 did 全为 DA-2026090219\*（`substr(did,4,8)≠20260902` 计 0），生成批 21:07:05 完成 69/69 入库且未覆写 skill 的 14 行（created_at 仍 11:28:01）——两条变体出现其一 + did 全当日即判通过。
 2. **05:05 CST `logs/invariant_check.log`** 必须无 `I15_stale_decision_id`；出现即代表①②双层守卫被绕过（新写入方），按 §二.3 的仲裁路径查写入源。
 3. **`da_chain_health` 的"成交 DA=n 兜底=m"**：本缺陷曾使 `model_used` 退化为 `deterministic` 而该报表仍报 DA=14。若再出现 `deterministic` 成交行，先查 did 日期再看 fallback 链。
 4. **不新增注册表项**：本次是缺陷修复（非行为假设检验），无预注册判据、无影子窗；I15 属常驻尺子族（同 I9/I10），不入 `shadow_registry`。
