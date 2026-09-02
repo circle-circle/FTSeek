@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 # 美东时区
 ET = pytz.timezone("America/New_York")
 
+# Task #30 系统性问题周度归纳 kill switch (2026-09-03, DEB-20260903-trade-attribution-
+# zombie-watch 方案A, 用户裁"按建议执行"): analyze_weekly 唯一数据源 trade_attribution 表
+# 止于 2026-07-14 (ADR-015 策略隔离), 周五触发只会对着空表静默无操作. 恢复条件: playbook 链
+# 重接归因写入后置 True (与 review_loop 退役⑦ 恢复条件一致).
+_TASK30_SYSTEMIC_ANALYZER_ENABLED = False
+
 
 
 def _get_contract_multiplier(symbol: str) -> int:
@@ -771,7 +777,15 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
                 # 从 trade_attribution 聚合本周系统性问题, 按 systemic_pattern 聚类
                 # 然后推送 Top-3 高优先修复项。于周五 16:00+ ET 触发
                 # (避免依赖周末 scheduler 运行)。
+                # 2026-09-03 DEB-20260903 方案A 退役 (用户裁"按建议执行"): 数据源死表,
+                # 恢复条件见 _TASK30_SYSTEMIC_ANALYZER_ENABLED 注释。
                 try:
+                    if not _TASK30_SYSTEMIC_ANALYZER_ENABLED:
+                        raise RuntimeError(
+                            "Task#30 SystemicIssueAnalyzer 已退役 "
+                            "(DEB-20260903-trade-attribution-zombie-watch: "
+                            "trade_attribution 表止于 2026-07-14)"
+                        )
                     from app.analysis.systemic_issue_analyzer import SystemicIssueAnalyzer
                     analyzer = SystemicIssueAnalyzer()
                     weekly_report = analyzer.analyze_weekly()

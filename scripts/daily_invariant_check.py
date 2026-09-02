@@ -392,7 +392,11 @@ def main() -> int:
 
     # ── J2 三口径盈亏对账 (2026-07-31 议题⑩, 用户裁"整体执行"): trade_records (SSOT)
     #    vs trade_attribution vs daily_review 同窗口净额差值 — >5% (且绝对差 >$20) 告警.
-    #    攒 2 周数据后裁收敛方案 (J1 单一真相源工程留 08-07 后). 缺表/空窗如实跳过.
+    #    2026-09-03 (用户裁"按建议执行", DEB-20260903-trade-attribution-zombie-watch 方案A):
+    #    attribution 侧退役 — trade_attribution 表止于 2026-07-14 (ADR-015 策略隔离砍唯一
+    #    写入方, 8/27 退役⑦ 裁停 review_loop 规则), 本对账自 7/15 起恒 not_judgeable 属
+    #    僵尸观察而非待收敛项. 保留 trade_records_net (SSOT 净额快照), 死表查询移除.
+    #    现代归因载体: trade_records.attribution + f1_trend~f5_lifecycle.
     caliber_diff = {}
     try:
         _c2 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)  # 主连接 L48 已关, 自开
@@ -400,25 +404,12 @@ def main() -> int:
             "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) FROM trade_records "
             "WHERE trade_date >= ? AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
             "AND exit_time IS NOT NULL", (since,)).fetchone()[0]
-        _at_rows = _c2.execute(
-            "SELECT COUNT(*) FROM trade_attribution WHERE trade_date >= ?", (since,)).fetchone()[0]
-        _at_net = _c2.execute(
-            "SELECT COALESCE(SUM(pnl), 0) FROM trade_attribution WHERE trade_date >= ?",
-            (since,)).fetchone()[0]
-        _at_last = _c2.execute("SELECT MAX(trade_date) FROM trade_attribution").fetchone()[0]
         _c2.close()
         caliber_diff = {"trade_records_net": round(_tr_net, 2),
-                        "trade_attribution_pnl": round(_at_net, 2),
-                        "attribution_last_trade_date": str(_at_last),
-                        "note": "attribution 为毛口径且覆盖面≠全量, 差值观察 2 周后定收敛阈值"}
-        if not _at_rows:
-            # 载体停更 (D1 实锤: trade_attribution 最后写入 2026-07-14) → 本项不可判,
-            # 不输出 gap 数字 (否则"三口径对账"会长期拿着一个恒定的假差值自我安慰)
-            caliber_diff["status"] = "not_judgeable_attribution_stalled"
-        elif abs(_tr_net) > 20 and abs(_at_net) > 0:
-            _gap_pct = abs(_tr_net - _at_net) / max(abs(_tr_net), 1e-9) * 100
-            caliber_diff["gap_pct"] = round(_gap_pct, 1)
-            # 观察期只记录不告警 (毛/净口径差是已知的, 先攒基线)
+                        "status": "retired_attribution_20260827",
+                        "note": ("trade_attribution 表止于 2026-07-14 (ADR-015 策略隔离, "
+                                 "8/27 退役⑦); 现代载体 trade_records.attribution+f1~f5; "
+                                 "见 DEB-20260903-trade-attribution-zombie-watch")}
     except Exception as _cd_e:
         caliber_diff = {"error": type(_cd_e).__name__}
 
