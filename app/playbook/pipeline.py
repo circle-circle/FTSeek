@@ -5754,7 +5754,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                             _f_pb.write(_json_pb.dumps(_row_pb, ensure_ascii=False) + "\n")
                         logger.info(
                             f"[archetype影子] {symbol} {_arch_pb} 触发行落盘 "
-                            f"(确认位={(_raw_pb.get('confirmation') or {}).get('price_level')})")
+                            f"(确认位={(_sem_pb.get('confirmation') or {}).get('price_level')})")
         except Exception as _pb_err:
             logger.warning(
                 f"[playbook] archetype影子落盘失败 {symbol}: {_pb_err} "

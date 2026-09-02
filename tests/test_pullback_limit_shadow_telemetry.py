@@ -56,6 +56,23 @@ def test_trigger_shadow_row_uses_parse_raw_semantics():
     )
 
 
+def test_trigger_shadow_success_log_no_undefined_var():
+    """2026-09-02 修复: 成功日志行引用未定义 _raw_pb → NameError 被 except 吞成
+    '影子样本丢失' 假警告 (样本实际已落盘 — 写盘在日志行之前, 21:37 GTLB/DELL/
+    RIVN/BWXT 四条假警告实证)。锁住: 该块日志只能引用在场的 _sem_pb。"""
+    s = _src()
+    idx = s.find("[archetype影子]")
+    assert idx > 0, "trigger 影子落盘日志标记必须存在"
+    block = s[max(0, idx - 3000):idx + 500]
+    assert "_raw_pb" not in block, (
+        "trigger 影子成功日志不得引用未定义变量 _raw_pb (2026-09-02 NameError "
+        "假警告根因); 应引用解析结果 _sem_pb"
+    )
+    assert "_sem_pb.get('confirmation')" in block, (
+        "确认位日志应引用 _sem_pb 的 confirmation 字段"
+    )
+
+
 def test_source_fallback_isinstance_guard():
     s = _src()
     idx = s.find('_raw = inst.get("raw_instruction_json")')
