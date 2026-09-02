@@ -16,6 +16,7 @@ KNOWN_EXEMPT = {
     "exit-7f5263af3cfd",   # KR2 冻结基线版本 (8/24-8/28 唯一版本)
     "exit-2623be9c8879",   # 45e62f0f 8/29 early_tight_sl 毕业案, 用户已裁决
     "exit-d1120a105711",   # e32d376f 9/1 用户裁"A" ATR 比例紧 SL + 9/2 R-4b 漏键收尾
+    "exit-f837b002896d",   # RFC-073 9/2 用户裁"确认正效应直接上sim" DEAD_SIGNAL隔夜口径对齐
 }
 
 

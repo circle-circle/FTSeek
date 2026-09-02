@@ -161,6 +161,10 @@ class PlaybookConfig:
                 "dead_signal_exit_minutes": self.get("dead_signal_exit_minutes", 60),
                 "dead_signal_exit_mfe_pct": self.get("dead_signal_exit_mfe_pct", 0.2),
                 "dead_signal_reentry_extension_min": self.get("dead_signal_reentry_extension_min", 60),
+                # RFC-073 (2026-09-02): DEAD_SIGNAL 隔夜仓时间口径开关 — 改变隔夜仓已实现
+                #   PnL, 入哈希 (9/2 漏键纪律: 漏键=KR2 判分假绿).
+                "dead_signal_overnight_daily_reset_enabled": self.get(
+                    "dead_signal_overnight_daily_reset_enabled", True),
                 "patient_exit_enabled": self.get("patient_exit_enabled", True),
                 "patient_exit_max_underwater_pct": self.get("patient_exit_max_underwater_pct", 1.0),
                 "patient_exit_stop_pct": self.get("patient_exit_stop_pct", 1.5),

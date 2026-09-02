@@ -7487,7 +7487,18 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             _did_str = str(meta.get("decision_id", "") or "")
             if _did_str.startswith("intraday_reentry"):
                 _ds_minutes += _ds_reentry_ext
-        if held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
+        # ── RFC-073 (2026-09-02): DEAD_SIGNAL 隔夜仓时间口径对齐 (与 RFC-064 TIME_EXIT 同款) ──
+        # 隔夜仓 held_minutes 是入场以来墙钟 (数千分钟), 次日第一轮巡检恒 ≥60min →
+        # 规则退化为"次日开盘第一眼, 生命周期MFE<0.2%即杀", 时间维度完全消失.
+        # 修复: 隔夜仓用"今日开盘以来分钟数", 获得真实60min观察窗 —
+        #   窗内价格兑现(峰值≥0.2%) → 条件不满足, 存活; 真死信号照杀.
+        # 回放验证 (6笔1min bar, 悲观序): +$97 正效应; AMZN(基线0.027%)照杀.
+        # 回滚: dead_signal_overnight_daily_reset_enabled 改 false + 重启.
+        _ds_held_minutes = held_minutes
+        if bool(_pb_cfg.get("dead_signal_overnight_daily_reset_enabled", True)) \
+                and _is_overnight_position(entry_time_str):
+            _ds_held_minutes = float(minutes_from_open or 0)
+        if _ds_held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
             # 8/17 净口径: 豁免的"水下"判定用净盈亏 — 毛 0<毛<费用 的微盈仓是净水下,
             #   同样在修复窗口内, 不该因"毛利>0"被误判失去豁免而出场白跑 (NVDA 8/17 实弹).
             if _loser_overnight_exempt(meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
@@ -7504,13 +7515,17 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 exit_reason = "DEAD_SIGNAL_EXIT"
                 exit_price = current_price
                 meta["dead_signal_exit"] = {
-                    "check_minutes": round(held_minutes, 1),
+                    # check_minutes = 生效口径 (隔夜仓=今日开盘以来分钟, RFC-073); 保留
+                    # wall_minutes 供历史对照 (旧口径 7183min 类数字即病灶自证样本).
+                    "check_minutes": round(_ds_held_minutes, 1),
+                    "wall_minutes": round(held_minutes, 1),
                     "mfe_at_trigger": round(peak_profit_pct, 4),
                     "cur_at_trigger": round(profit_pct, 4),
                     "threshold": _ds_mfe_pct,
                 }
                 logger.info(
-                    f"[规则3.3-死信号] {_symbol} {direction} held={held_minutes:.0f}min "
+                    f"[规则3.3-死信号] {_symbol} {direction} held={_ds_held_minutes:.0f}min "
+                    f"(wall={held_minutes:.0f}min) "
                     f"peak={peak_profit_pct:.2f}%<{_ds_mfe_pct}% → 离场"
                 )
 
