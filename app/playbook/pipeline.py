@@ -7327,6 +7327,38 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price
+            # ── RFC-074 (2026-09-02, 用户裁"方案C同意"): 赢家隔夜影子 arm 点 (record-only) ──
+            #   结构缺口: cohort A 盈利仓 15:52 一律强平 → "赢家隔夜"臂事实死亡 (long
+            #   horizon 8月以来 0.5% 分配率)。影子记"带 SL 持一夜"反事实臂, 次日 1min
+            #   bar 结算 (scripts/settle_winner_overnight_shadow.py)。零行为变更。
+            #   回滚: winner_overnight_shadow_enabled 改 false (无需重启, 每轮读取)。
+            if bool(_pb_cfg.get("winner_overnight_shadow_enabled", True)):
+                try:
+                    import json as _wos_j
+                    from pathlib import Path as _WOS_P
+                    from app.utils.timezone import now_et as _wos_now
+                    _wos_et = _wos_now()
+                    _wos_sl = float(meta.get("stop_loss", 0) or 0)
+                    _wos_row = {
+                        "shadow": "winner_overnight",
+                        "type": "arm",
+                        "ts": _wos_et.isoformat(),
+                        "symbol": _symbol, "direction": direction,
+                        "entry_time": entry_time_str, "entry_price": entry_price,
+                        "quantity": meta.get("_qty"),
+                        "decision_id": str(meta.get("decision_id", "") or ""),
+                        "source_type": meta.get("_source_type", ""),
+                        "arm_date": _wos_et.strftime("%Y-%m-%d"),
+                        "arm_price": round(current_price, 4),
+                        "arm_profit_pct": round(profit_pct, 4),
+                        "arm_net_profit_pct": round(_profit_net_pct, 4),
+                        "stop_loss_at_arm": round(_wos_sl, 4) if _wos_sl > 0 else None,
+                        "settled": False,
+                    }
+                    with open(_WOS_P("data/shadow/winner_overnight_shadow.jsonl"), "a") as _wos_f:
+                        _wos_f.write(_wos_j.dumps(_wos_row, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass  # 影子埋点不阻断退出链 (静默死亡族纪律: 结算脚本侧有覆盖率对账)
 
     # ── 高 ATR 退出档 shadow 探针 (2026-07-28 首夜复盘 #1, record-only 零行为影响) ──
     #   处方源: L2 回测 hi4.0 翻案 (高 ATR 不拦入场→转退出档) + 07-27 实证 (TSM/GS ATR 5%

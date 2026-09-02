@@ -38,6 +38,7 @@
 | B13 | 再入场快TP门禁吞掉影子 | 窗口 9/1-9/30, n≥10 笔 TP 触达结算: tp_vs_actual 均值>费用线(~0.15%) ∧ ≥70%为正 → 提案恢复快TP(门禁豁免, 另立DEB+用户裁); 否则维持门禁+废 quick_tp 参数。窗内禁改门禁/快收参数 | DEB-20260831-reentry-quick-tp-gate-conflict §四 |
 | B14 | DA 门被拦方向性信号前瞻 (da_blocked_cf) | 主窗 T+1, n_eval≥50: mean_signed≤-0.15%(费用线) ∧ p_under≤0.05 → GATE_EFFECTIVE (拦得对, 维持); mean_signed≥+0.15% ∧ p_over≤0.05 → OVER_BLOCKING_SUSPECT (误杀, 提案另立DEB); 否则 KEEP_SAMPLING。T+3/T+5 仅一致性披露不参裁 (防多窗拣选)。基线首跑 9/1: n=126, T+1 mean=-0.088% 不显著; T+3/T+5 负且 p_under≤0.05 | DEB-20260901 Phase C 观察点③ (用户裁"要", 9/1) |
 | B15 | 隔夜臂判罪线 (overnight_kill_criterion) | w_week 臂已平仓 n≥20 且修复率(结局 pnl>0)<40% → 提请裁排除 loser_overnight_enabled (回滚=开关翻回 true); n≥20 且≥40% → 维持, 翻 SUPERSEDED 留痕; n<20 攒样周检机械跟踪不重置。首跑 9/1: n=6/20, 修复率 50%, 净 -$597 | 8/29 用户裁"5批" 预注册; 9/1 复查收口立项 (原判据只在 overnight_arm_report stdout, 对自动化不可见 → 注册 OBSERVING + cron 20 6 + JSON 落盘) |
+| B16 | 赢家隔夜影子 (winner_overnight) | 窗口 9/2 起攒样: n≥20 结算行 → overnight_delta 均值>费用线(~0.15%) ∧ ≥60%方向为正 ∧ SL_touch 占比<40%(防尾部) → 提案赢家隔夜臂 (cohort A 盈利仓持夜/复活 long horizon, 另立DEB+用户裁); 否则维持当日落袋。窗内禁改 PRE_CLOSE/EOD 链 | DEB-20260902-overnight-exit-timing §四 (用户裁"方案C同意") |
 
 ## C. 纪律红线 (冻结/不可动, 改需重新裁决)
 

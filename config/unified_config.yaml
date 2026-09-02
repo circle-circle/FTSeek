@@ -1113,6 +1113,11 @@ playbook:
     #   回放 (6笔1min bar悲观序): +$97 正效应, 真死信号(峰值从未≥0.2%)照杀.
     #   显式落键: 缺键则代码默认 true 无回滚入口. 回滚: 改 false + 重启.
     dead_signal_overnight_daily_reset_enabled: true
+    # ── RFC-074 (2026-09-02, 用户裁"方案C同意"): 赢家隔夜影子 (record-only) ──
+    #   PRE_CLOSE_EXIT 盈利仓落"带SL持一夜"反事实臂, 次日1min bar结算.
+    #   零行为变更 (只写 data/shadow/winner_overnight_shadow.jsonl).
+    #   回滚: 改 false (无需重启, 每轮读取).
+    winner_overnight_shadow_enabled: true
     # 2026-08-13 (DEB-20260813 §十六/§18.3, 用户裁"跳过影子直接 sim 观察"): 耐心出场 —
     #   DEAD_SIGNAL_EXIT 触发且信号时刻浅水下 (水下 ≤1.0%) 时不立即市价卖, 转为轮询
     #   等待价格站回入场价再卖 (fill, 保本); 等待期水下加深至 stop_pct → 立即卖 (stop);

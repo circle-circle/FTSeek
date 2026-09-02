@@ -481,6 +481,29 @@ REGISTRY: list[ShadowItem] = [
               "DEB-20260831-reentry-quick-tp-gate-conflict §四; 判据字典 B13",
     ),
 
+    # ── 隔夜退出时机重构批 (2026-09-02, 用户裁"方案C同意") ──
+    ShadowItem(
+        id="winner_overnight",
+        name="赢家隔夜影子 (PRE_CLOSE 盈利仓持一夜反事实)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-074: cohort A 盈利仓 15:52 一律强平, '赢家隔夜'臂事实死亡 "
+                    "(long horizon 8月以来 0.5% 分配率)。arm 点挂钩 PRE_CLOSE_EXIT "
+                    "(pipeline.py), 次日 1min bar 结算'带 SL 持一夜'结局 "
+                    "(SL_gap/SL_touch/EOD_next_day)。历史反事实上界: 锁利型隔夜仓 "
+                    "T+2 +$421/T+3 +$824 (n=3/2, 日bar收盘价口径)。",
+        data_path="data/shadow/winner_overnight_shadow.jsonl",
+        config_key="playbook.execution_parameters.winner_overnight_shadow_enabled",
+        min_n=20,
+        graduation_criteria="n≥20 结算行 → overnight_delta 均值>费用线(~0.15%) ∧ "
+                            "≥60%方向为正 ∧ SL_touch 占比<40% (防尾部) → 提案赢家隔夜臂 "
+                            "(cohort A 盈利仓持夜豁免/或复活 long horizon, 另立DEB+用户裁); "
+                            "否则维持当日落袋。窗内禁改 PRE_CLOSE/EOD 链。",
+        eval_script="scripts/settle_winner_overnight_shadow.py",
+        created="2026-09-02",
+        notes="count_mode=settled_arm_lines; 悲观序结算(不假设更优出场); "
+              "DEB-20260902-overnight-exit-timing; 判据字典 B16",
+    ),
+
     # ── DEB-20260901 Phase C 三观察点 (2026-09-01 用户裁"要"立项; 防散落: 全部注册于此,
     #    判据落字典 B14, 脚本落回放台账 — 不允许散落游离观察) ──
     ShadowItem(
