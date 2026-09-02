@@ -1,6 +1,6 @@
 # DEB-20260903-dell-dual-failure — 追高帽违例升级被去重吞没(尺子) + 净保本限价被动侧快跌滑点(出场)
 
-状态: **立案待裁** (2026-09-03, 用户裁"先立案, 我需要另外agent进行分析" — 交另一 agent 独立分析后由用户裁决)
+状态: **已裁决已执行** (2026-09-03, 用户裁"按建议执行" — 议题一/二均方案A; 独立 agent 核查 14 条证据链零失实后裁决)
 裁决请求: 议题一 (尺子) / 议题二 (出场) 各自方案三选一 (本文均建议 A)。
 锚定样本: DELL 2026-09-02, trade_records id=1425, 毛 -$45.12 / 净 -$49.30, 持仓 6.4 分钟。
 
@@ -116,3 +116,29 @@ PATIENT_EXIT_FILL 三退出原因同轨 (现限价保护集, pipeline.py:8406)�
 - **波动适配注记**: sim 采集期 CAUTIOUS 仓位乘数覆写 0.5→1.0 (live 将减半敞口),
   6% notional 上限与 5% SL 已知 ATR 高波动; 现无高 ATR 原型门 (低 ATR 门独存) —
   不立项, 仅注记。
+
+## 九、执行记录 (2026-09-03, 用户裁"按建议执行", 双方案A 落地)
+
+**议题一 (尺子)**: pipeline.py chase_cap 块 — warning 移出去重门 (每次违例 reprice 都打);
+去重键改 `f"chase_cap_violation:{round(_new_entry,2)}"` (同值重报去重, 更差 reprice 记新行);
+`_shadow_dedup_ok` 文件扫描侧补种值键 (重启后同值不误判首次); 行 type 保持裸值
+"chase_cap_violation" (replay 按存在性判, 零改动, 证据13 成立)。
+
+**议题二 (出场)**: pipeline.py 净保本限价块 — 侧判定从仅遥测升级为执行分支: 被动侧改挂
+marketable limit=检测价∓15bps (`breakeven_passive_marketable_pad_bps`, yaml SSOT, 0=回滚旧行为),
+主动侧一行未动; 遥测 `_be_close_telemetry` 增记 path/floor_px/pad_bps (毕业判分基建沿用);
+8/18 注释"TRAIL_LOCK→结构性主动侧"假设打勘误标记 (已被 DELL 击穿证伪)。
+
+**KR2 冻结联动**: 新键入退出参数哈希快照 (防漏键假绿, R-4b 纪律) → 新版本
+`exit-de49b1299290` (剔除新键复算=旧基线 f837b002896d, 证明哈希位移仅此一键);
+已走豁免通道登记 config_freeze_baseline.json + test_kr2_freeze_exemption 钉子同步。
+
+**测试**: 新增 10 例 (议题一 3: warning 在门外/键内嵌值/值键去重功能级; 议题二 7:
+分支把守+双向镜像/主动侧回归红线/垫0回滚/遥测三键/yaml SSOT/入哈希功能性/豁免登记闭环);
+既有 test_chase_cap_telemetry_uses_parse_raw_semantics 窗口 2500→4200 适配块体变长
+(断言意图不变); except:pass 棘轮约束 → 值键补种用 isinstance 免 except。
+**全量 2402 passed / 0 failed** (基线 2386+新增 13+patient_exit 3 例归队)。
+
+**生效**: 运行中服务持旧码, 下次重启窗口生效 (盘后编辑纪律); 议题一为纯记录侧零交易行为变更。
+**判分**: 议题二毕业判分沿 §八 — 被动侧出场笔数与净结局 vs 家族基线 (-$19.7/案),
+主动侧成交率/净结局不得回退; 议题一判据=升级违例入行数 >0 + Phase C 证据列复审。

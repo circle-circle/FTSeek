@@ -40,7 +40,9 @@ def test_chase_cap_telemetry_uses_parse_raw_semantics():
     s = _src()
     idx = s.find("chase_cap遥测异常")
     assert idx > 0, "chase_cap 遥测异常兜底日志必须存在"
-    block = s[max(0, idx - 2500):idx]
+    # 窗口 2500→4200 (2026-09-03): DEB-20260903 议题一把 warning 移出去重门 +
+    #   留痕注释, 块体变长, parse_raw_semantics 仍在同块内更上游.
+    block = s[max(0, idx - 4200):idx]
     assert "parse_raw_semantics" in block, (
         "chase_cap 遥测块必须用 parse_raw_semantics 解析 (dict 兼容)"
     )
@@ -183,3 +185,46 @@ class TestReplayShadowNullCaliber:
         assert "未采集" not in summary["note"]
         by_inst = {r["inst_id"]: r["chase_cap_violated"] for r in data["rows"]}
         assert by_inst[100] is False and by_inst[101] is True
+
+
+# ========== 议题一: 违例升级被去重吞没修复 (2026-09-03, DEB-20260903 方案A, 用户裁"按建议执行") ==========
+
+def test_chase_cap_warning_outside_dedup_gate():
+    """9/2 DELL 病灶: warning 在去重门内 → 二次更糟 reprice (464.41→474.27) 被
+    (inst_id,type) 全文件去重静默吞没, 无 jsonl 行无日志; 而 n_chase_cap_violated
+    是 DEB-20260901 Phase C 裁决证据列, 系统性少记=尺子偏向"违例罕见".
+    锁住: warning 先于去重门发射 (每次违例 reprice 都打)."""
+    s = _src()
+    idx = s.find("chase_cap违例遥测")
+    assert idx > 0, "chase_cap 违例遥测日志必须存在"
+    block = s[max(0, idx - 3000):idx + 800]
+    w = block.find("logger.warning(")
+    g = block.find("_shadow_dedup_ok(_cc_path")
+    assert 0 < w < g, (
+        "chase_cap warning 必须在 _shadow_dedup_ok 去重门之前 — "
+        "在去重门内 = 升级违例静默 (9/2 DELL 474.27 无遥测事故)")
+
+
+def test_chase_cap_dedup_key_embeds_reprice_value():
+    """去重键内嵌 reprice 值: 同值重报仍去重 (防同轮刷屏), 更差 reprice 记新行."""
+    s = _src()
+    assert 'f"chase_cap_violation:{round(_new_entry, 2)}"' in s, (
+        "chase_cap 去重 kind 必须内嵌 reprice 值 (DEB-20260903 方案A)")
+
+
+def test_shadow_dedup_value_keyed_file_seeding(tmp_path):
+    """功能级: 文件已有 464.41 违例行 → 同值去重 / 更差值 474.27 放行入行 /
+    放行后内存侧同值去重 / 无关 kind (trigger) 互不染指。"""
+    from app.playbook import pipeline as _pl
+    p = tmp_path / "shadow.jsonl"
+    p.write_text(json.dumps({"inst_id": 2072, "type": "chase_cap_violation",
+                             "repriced_entry": 464.41}) + "\n", encoding="utf-8")
+    _pl._SHADOW_SEEN.pop(str(p), None)
+    assert _pl._shadow_dedup_ok(p, 2072, "chase_cap_violation:464.41") is False, (
+        "文件已有同值违例 → 去重 (重启后同值不重复入行)")
+    assert _pl._shadow_dedup_ok(p, 2072, "chase_cap_violation:474.27") is True, (
+        "更差 reprice → 放行记新行 (9/2 DELL 升级违例必须可见)")
+    assert _pl._shadow_dedup_ok(p, 2072, "chase_cap_violation:474.27") is False, (
+        "放行后内存侧同值去重 (防同轮刷屏)")
+    assert _pl._shadow_dedup_ok(p, 2072, "trigger") is True, (
+        "值键补种不得污染其他 kind 的去重命名空间")

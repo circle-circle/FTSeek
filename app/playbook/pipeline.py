@@ -55,7 +55,15 @@ def _shadow_dedup_ok(path, inst_id, kind: str = "row") -> bool:
                         for _ln in _fsd:
                             try:
                                 _r = json.loads(_ln)
-                                seen.add((_r.get("inst_id"), _r.get("type", "row")))
+                                _t = _r.get("type", "row")
+                                seen.add((_r.get("inst_id"), _t))
+                                # DEB-20260903 议题一: chase_cap 违例按值去重 (kind 内嵌 reprice 值,
+                                #   形如 "chase_cap_violation:464.41") — 文件侧补种值键, 否则重启后
+                                #   文件里已有的同值违例被误判首次 (重复入行)。行 type 保持裸值,
+                                #   值键仅存在于本防重层, 不落盘。
+                                _rv = _r.get("repriced_entry")
+                                if isinstance(_rv, (int, float)):
+                                    seen.add((_r.get("inst_id"), f"{_t}:{round(float(_rv), 2)}"))
                             except Exception:
                                 _bad += 1
                     if _bad:
@@ -4167,7 +4175,16 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                     from pathlib import Path as _Pcc
                                     from datetime import datetime as _dtcc
                                     _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
-                                    if _shadow_dedup_ok(_cc_path, inst.get("id"), "chase_cap_violation"):
+                                    # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
+                                    #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
+                                    #   去重门静默吞没, 而 n_chase_cap_violated 是 Phase C 裁决证据列,
+                                    #   系统性少记=尺子偏向"违例罕见"); jsonl 行按 (inst_id, 值) 去重 —
+                                    #   同值重报不刷屏, 更差 reprice 记新行。行 type 保持
+                                    #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
+                                    logger.warning(
+                                        f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
+                                        f"越过禁追线 ${_cc_f:.2f} (DEB-20260901 Phase B record-only, 不拦截)")
+                                    if _shadow_dedup_ok(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}"):
                                         _row_cc = {
                                             "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
                                             "date": _today_et_str(), "schema": "v1",
@@ -4182,9 +4199,6 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                         _cc_path.parent.mkdir(parents=True, exist_ok=True)
                                         with open(_cc_path, "a", encoding="utf-8") as _f_cc:
                                             _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
-                                        logger.warning(
-                                            f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
-                                            f"越过禁追线 ${_cc_f:.2f} (DEB-20260901 Phase B record-only, 不拦截)")
                         except Exception as _cc_err:
                             logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
 
@@ -8409,21 +8423,56 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     # 2026-08-18 遥测 (WDC/AMD 案): 限价单相对触发价 = 主动侧(可立即吃)/
                     #   被动侧(等价格回摆). SL_BREAKEVEN 触发几何=价格已穿越保本线 → 结构性
                     #   被动侧; TRAIL_LOCK 地板<锁利线<触发价 → 主动侧. 毕业判分按侧分组.
+                    #   ⚠️ DEB-20260903 勘误: "TRAIL_LOCK→结构性主动侧"假设已被 9/2 DELL 击穿
+                    #   证伪 — 20s 轮询间隙内价格可击穿保本地板 (检测价 473.12 < 地板 474.65),
+                    #   TRAIL_LOCK 同样会落被动侧。
                     if direction == "LONG":
                         _be_side = "passive" if _close_limit_price > current_price else "active"
                     else:
                         _be_side = "passive" if _close_limit_price < current_price else "active"
+                    _be_path = "breakeven_floor"
+                    _be_floor_px = _close_limit_price
+                    _mkt_pad_bps = 0.0
+                    # DEB-20260903 议题二 (方案A, 用户裁"按建议执行"): 被动侧=保本线已被击穿
+                    #   (检测价在限价外侧), 挂保本限价结构性不可成交 — 家族5案0回摆成交
+                    #   (SNDK 8/18/MU 8/20/WPM 8/20/AU 8/20/DELL 9/2 全负, 均值≈-$19.7/案),
+                    #   唯一结局=3s死等→撤单→市价 ~12s 往返 (DELL 该分量 $30.90/63%).
+                    #   改挂 marketable limit=检测价∓垫: 立即成交且带地板, 砍掉死等往返。
+                    #   主动侧 (8/20 方案A 贴线几何) 行为完全不变。
+                    #   回滚: breakeven_passive_marketable_pad_bps 改 0 (=回旧保本限价行为).
+                    if _be_side == "passive" and current_price and current_price > 0:
+                        try:
+                            from app.playbook.config import get_playbook_config as _get_pb_cfg_mk
+                            _mkt_pad_bps = float(_get_pb_cfg_mk().get("breakeven_passive_marketable_pad_bps", 15.0))
+                        except Exception:
+                            _mkt_pad_bps = 15.0
+                        if _mkt_pad_bps > 0:
+                            if direction == "LONG":
+                                _close_limit_price = round(current_price * (1 - _mkt_pad_bps / 10000.0), 4)
+                            else:
+                                _close_limit_price = round(current_price * (1 + _mkt_pad_bps / 10000.0), 4)
+                            _be_path = "marketable_limit"
                     meta["_be_close_telemetry"] = {
                         "trigger_price": current_price,
                         "quote_src": _quote_src,
                         "limit_px": _close_limit_price,
                         "limit_side": _be_side,
+                        "path": _be_path,
+                        "floor_px": _be_floor_px,
+                        "pad_bps": _mkt_pad_bps,
                     }
-                    logger.info(
-                        f"[playbook sim] {symbol} {direction} {exit_reason} 净保本限价平仓 "
-                        f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion, 地板保护, "
-                        f"侧={_be_side} 触发价={current_price:.4f} src={_quote_src})"
-                    )
+                    if _be_path == "marketable_limit":
+                        logger.info(
+                            f"[playbook sim] {symbol} {direction} {exit_reason} 击穿marketable限价平仓 "
+                            f"@{_close_limit_price:.4f} (保本地板 {_be_floor_px:.4f} 已被击穿, "
+                            f"检测价∓{_mkt_pad_bps:.0f}bps垫, 触发价={current_price:.4f} src={_quote_src})"
+                        )
+                    else:
+                        logger.info(
+                            f"[playbook sim] {symbol} {direction} {exit_reason} 净保本限价平仓 "
+                            f"@{_close_limit_price:.4f} (entry={entry_price}, 费感知cushion, 地板保护, "
+                            f"侧={_be_side} 触发价={current_price:.4f} src={_quote_src})"
+                        )
             try:
                 from app.execution.dual_broker import get_dual_broker
                 dual = get_dual_broker()

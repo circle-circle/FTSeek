@@ -175,6 +175,9 @@ class PlaybookConfig:
                     "time_exit_overnight_daily_reset_enabled", True),
                 "breakeven_slip_cushion_pct": self.get("breakeven_slip_cushion_pct", 0.0),
                 "breakeven_limit_timeout_s": self.get("breakeven_limit_timeout_s", 8),
+                # DEB-20260903 议题二 (2026-09-03 用户裁"按建议执行"): 被动侧 marketable 垫宽
+                #   直接决定击穿分支成交价 (已实现 PnL) — 入哈希防漏键假绿 (R-4b 纪律).
+                "breakeven_passive_marketable_pad_bps": self.get("breakeven_passive_marketable_pad_bps", 15.0),
                 "profit_override_threshold_pct": self.get("profit_override_threshold_pct", 1.5),
                 "profit_override_drawdown_pct": self.get("profit_override_drawdown_pct", 0.5),
                 "loser_overnight_enabled": self.get("loser_overnight_enabled", True),

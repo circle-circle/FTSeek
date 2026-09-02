@@ -1215,6 +1215,11 @@ playbook:
     #   约束: slip < breakeven_at_pct(0.4). 回滚: 两键改 0/8 + 重启. 判分: BE出场净结局转正率.
     breakeven_slip_cushion_pct: 0.2
     breakeven_limit_timeout_s: 3
+    # 2026-09-03 (DEB-20260903-dell-dual-failure 议题二方案A, 用户裁"按建议执行"):
+    #   被动侧(保本线已被击穿)改挂 marketable limit=检测价∓垫, 砍掉"3s死等→撤单→市价"
+    #   ~12s往返 (家族5案0回摆成交全负, DELL 9/2 该分量 $30.90/63%). 仅控垫宽(bps).
+    #   主动侧(8/20方案A贴线几何)不变. 回滚: 改 0 (=回旧保本限价行为) + 重启.
+    breakeven_passive_marketable_pad_bps: 15
     # 🔀 隔夜三轨之一 (2026-08-22 audit A7 互参标注, 三轨语义不同勿混改):
     #   ① 本键 overnight_hold_enabled: 一般性隔夜持有总闸 (盈利仓过夜, RFC-061 cohort B), 当前 OFF;
     #   ② loser_overnight_enabled(+max_hold_days): PLAYBOOK_SIM 水下仓 W_WEEK 多夜豁免, 当前 ON.
