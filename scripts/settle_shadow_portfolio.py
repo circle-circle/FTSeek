@@ -186,11 +186,14 @@ def main():
     by_gate = defaultdict(list)
     for r in new_rows:
         by_gate[r["blocked_by"]].append(r["net"])
-    print(f"\n{'门':>12} {'n':>4} {'净合计':>10} {'笔均':>8} {'胜率':>6}")
+    # pipe 表格左对齐输出: 原空格居中对齐 (行首 4+ 空格) 会被 Markdown 视为代码块,
+    # 飞书旧版渲染器在此处截断整条消息 → 用户只看到表头前一行 (2026-09-03 实弹复现)。
+    print("\n| 门 | n | 净合计 | 笔均 | 胜率 |")
+    print("| --- | --- | --- | --- | --- |")
     for g in sorted(by_gate, key=lambda g: sum(by_gate[g])):
         v = by_gate[g]
         w = sum(1 for x in v if x > 0)
-        print(f"{g:>12} {len(v):>4} {sum(v):+10.2f} {sum(v)/len(v):+8.2f} {w/len(v)*100:5.0f}%")
+        print(f"| {g} | {len(v)} | {sum(v):+.2f} | {sum(v)/len(v):+.2f} | {w/len(v)*100:.0f}% |")
     print("\n判读: 某门笔均显著为负 → 门在拦亏 (好事); 显著为正 → 门在拦钱 (该松)。")
     return 0
 
