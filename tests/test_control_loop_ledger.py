@@ -10,19 +10,26 @@ docs/CONTROL-LOOP-LEDGER.md 是台账本体。本文件钉住最小不变量
   2. 台账里引用的 job_id 必须真实存在于 jobs.json (防台账记载幽灵环路);
   3. 台账必须存在且含造型陈述与包络/准入两节 (防台账被删空);
   4. 适应律文档存在且五段齐全 (改参数转移函数的单一真源, 防散回三处)。
+  5. **系统 crontab** 调用的仓内脚本必须在台账或存量棘轮基线里 (2026-09-03 复盘批补:
+     原 1/2 只核 Hermes jobs.json, 系统 crontab 是盲区 — 实测 68 个脚本仅 2 个在台账,
+     穿透影子两环 9/3 挂 cron 时零守卫拦截即首例实证)。
 
 回滚: 删本文件 + 删 docs/CONTROL-LOOP-LEDGER.md 即可, 零生产代码依赖。
 """
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
 JOBS_JSON = Path("/root/.hermes/cron/jobs.json")
 LEDGER = REPO / "docs" / "CONTROL-LOOP-LEDGER.md"
 ADAPT_LAW = REPO / "docs" / "ADAPTATION-CONTROL-LAW.md"
+CRONTAB_BASELINE = REPO / "docs" / "references" / "crontab-loop-baseline.txt"
+_SCRIPT_REF = re.compile(r"scripts/([A-Za-z0-9_]+\.py)")
 
 pytestmark = pytest.mark.skipif(
     not JOBS_JSON.exists(), reason="非生产机 (无 /root/.hermes/cron/jobs.json)")
@@ -129,3 +136,73 @@ def test_early_tight_sl_graduated_variant_stays_on():
     assert ep.get("early_tight_sl_mfe_gate") == 0.3, (
         f"early_tight_sl_mfe_gate 应为 0.3 (胜出变体口径, 无门变体误杀更多), "
         f"实际={ep.get('early_tight_sl_mfe_gate')!r}")
+
+
+# ── 系统 crontab 面 (2026-09-03 复盘批): 台账守卫原先只看 Hermes, crontab 是盲区 ──
+def _cron_scripts() -> set:
+    """cron 全解析面 (用户 crontab + /etc/crontab + /etc/cron.d, 注释行不计) 调用的仓内脚本。
+
+    复用 shadow_registry._cron_surface_texts — 与挂载核对哨兵同一解析面 (401bedcb 教训:
+    Alinux8 cronie 连含点号文件名也执行, 核面不能只看 crontab -l)。
+    """
+    from app.playbook.shadow_registry import _cron_surface_texts
+    names = set()
+    for text in _cron_surface_texts():
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            names.update(_SCRIPT_REF.findall(line))
+    return names
+
+
+def _baseline_entries() -> dict:
+    """{脚本 basename: 理由}; 文件缺失返回空 (由下面第一个测试报红)。"""
+    if not CRONTAB_BASELINE.exists():
+        return {}
+    out = {}
+    for line in CRONTAB_BASELINE.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        name, _, reason = line.partition("#")
+        out[name.strip()] = reason.strip()
+    return out
+
+
+def test_crontab_loops_are_ledgered_or_baselined(ledger_text):
+    """新环路无处可藏: crontab 调的仓内脚本必须在台账挂行, 或在存量棘轮基线里。"""
+    assert CRONTAB_BASELINE.exists(), (
+        f"棘轮基线被删了 ({CRONTAB_BASELINE.relative_to(REPO)}) — 删基线=把 66 个存量环"
+        "一次性变成守卫红, 或让新环路重新无处登记; 要收窄请逐行删 (每删一行=该环已入台账)")
+    scripts = _cron_scripts()
+    assert scripts, "cron 解析面读到 0 个仓内脚本 — 解析面本身坏了 (守卫失明比漏报更糟)"
+    base = _baseline_entries()
+    unaccounted = sorted(s for s in scripts if s not in ledger_text and s not in base)
+    assert not unaccounted, (
+        "以下系统 crontab 环路既未在控制环路台账 (docs/CONTROL-LOOP-LEDGER.md §2) 挂行, "
+        "也未登记存量棘轮基线 — 台账 §6.1 '新增 cron job 必须入账' 对 crontab 同样生效 "
+        "(首列用 crontab-<名> 并写明脚本路径, 先例 crontab-oneshot-0831f / crontab-pen-*):\n  "
+        + "\n  ".join(unaccounted))
+
+
+def test_crontab_baseline_entries_carry_reason():
+    """往基线加行必须带理由 (空白 = 把墓地重新藏起来, 同 §6.5 棘轮纪律)。"""
+    empty = sorted(k for k, v in _baseline_entries().items() if len(v) < 4)
+    assert not empty, f"棘轮基线条目缺理由: {empty} — 存量豁免也必须写明出处/待办"
+
+
+def test_crontab_baseline_has_no_ghost_entries():
+    """反向核对: 基线里的脚本若已不在 crontab 上 = 陈旧豁免 (同台账幽灵环路纪律)。"""
+    ghosts = sorted(set(_baseline_entries()) - _cron_scripts())
+    assert not ghosts, (
+        "棘轮基线记载了已不在 cron 面上的脚本 (陈旧豁免, 会掩盖真实覆盖进度) — "
+        "环下线请同步删基线行:\n  " + "\n  ".join(ghosts))
+
+
+def test_ledger_names_carrier_script_for_crontab_rows(ledger_text):
+    """台账里的 crontab-* 行必须写出载体脚本路径 (否则守卫按 basename 匹配不到 = 假入账)。"""
+    rows = [l for l in ledger_text.splitlines() if l.startswith("| crontab-")]
+    assert rows, "台账已无 crontab-* 行? (先例 crontab-oneshot-0831f / crontab-pen-*)"
+    nameless = [l.split("|")[1].strip() for l in rows if not _SCRIPT_REF.search(l)]
+    assert not nameless, (
+        f"以下 crontab 台账行未写载体脚本路径, 守卫无法据此认定入账: {nameless} — "
+        "一次性 job 可写只读脚本名 (如 verify_da_ue_batch_20260831.py)")

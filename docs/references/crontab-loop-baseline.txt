@@ -1,0 +1,80 @@
+# 系统 crontab 环路 · 台账存量棘轮基线 (2026-09-03 复盘批立, REVIEW-20260903 §四.3)
+#
+# 为什么有这个文件: docs/CONTROL-LOOP-LEDGER.md 是控制环路台账, §6.1 明写"新增 cron job
+# 必须在 §2 入账, 否则守卫测试红" — 但 tests/test_control_loop_ledger.py 原先只核 Hermes
+# jobs.json, **系统 crontab 是盲区**: 实测 68 个被 crontab 调用的仓内脚本里只有 2 个在台账。
+# 9/3 穿透影子两条环路挂 cron 时零守卫拦截, 就是这个盲区的第一例实证。
+#
+# 处置: 1:1 回填存量台账是专项工作 (需逐环写清角色/误差信号, 写假行比不写更糟), 不在
+# 复盘批范围内 — 故先立棘轮锁住存量, 让**新增**环路无处可藏:
+#   · 新环路 → 在台账 §2.x 挂行 (推荐, 首列用 `crontab-<名>` 并写明脚本路径), 本文件不用动;
+#   · 确实不便挂行 → 加到本文件下面并带理由与出处;
+#   · 从本文件删行 = 该环已入台账 (欢迎, 守卫会反向核对陈旧豁免=幽灵行)。
+#
+# 格式: 一行一个脚本 basename; 行内 "#" 之后是理由/出处 (不得为空)。
+# 存量统一理由: 8/28-9/2 期间陆续挂载的日级/周级测量与回填环, 台账 1:1 回填待专项
+# (REVIEW-20260903 §五 建议④); 各自角色/判据散见于其 DEB/RFC 与脚本 docstring。
+archetype_bars_ensure.py  # 存量测量/回填环, 台账回填待专项
+backfill_forward_returns.py  # 存量测量/回填环, 台账回填待专项
+be_family_gate_check.py  # 存量测量/回填环, 台账回填待专项
+borrow_rate_snapshot.py  # 存量测量/回填环, 台账回填待专项
+capital_flow_daily_aggregate.py  # 存量测量/回填环, 台账回填待专项
+cf_pullback_limit_replay.py  # 存量测量/回填环, 台账回填待专项
+condition_expectancy_report.py  # 存量测量/回填环, 台账回填待专项
+config_key_census.py  # 存量测量/回填环, 台账回填待专项
+da_blocked_signal_cf_eval.py  # 存量测量/回填环, 台账回填待专项
+da_bridge_dingtalk_push.py  # 存量测量/回填环, 台账回填待专项
+da_chain_health_report.py  # 存量测量/回填环, 台账回填待专项
+da_glm_shadow.py  # 存量测量/回填环, 台账回填待专项
+da_glm_shadow_eval.py  # 存量测量/回填环, 台账回填待专项
+da_prompt_distill_shadow.py  # 存量测量/回填环, 台账回填待专项
+da_prompt_distill_shadow_eval.py  # 存量测量/回填环, 台账回填待专项
+da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
+daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
+data_quality_census.py  # 存量测量/回填环, 台账回填待专项
+direction_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
+direction_hit_scorecard.py  # 存量测量/回填环, 台账回填待专项
+divergence_arbitration_shadow.py  # 存量测量/回填环, 台账回填待专项
+e2_momentum_shadow_daily.py  # 存量测量/回填环, 台账回填待专项
+exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
+exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项
+exit_scorecard.py  # 存量测量/回填环, 台账回填待专项
+factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
+fee_unit_economics_scorecard.py  # 存量测量/回填环, 台账回填待专项
+freeze_sentinel.py  # 存量测量/回填环, 台账回填待专项
+gap_alignment_shadow.py  # 存量测量/回填环, 台账回填待专项
+gap_chase_gate_eval.py  # 存量测量/回填环, 台账回填待专项
+gate_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
+gate_liveness_probe.py  # 存量测量/回填环, 台账回填待专项
+gen_event_symbols.py  # 存量测量/回填环, 台账回填待专项
+ic_health_check.py  # 存量测量/回填环, 台账回填待专项
+ic_weekly_report.py  # 存量测量/回填环, 台账回填待专项
+insider_signal_monitor.py  # 存量测量/回填环, 台账回填待专项
+kr3_runup_shadow.py  # 存量测量/回填环, 台账回填待专项
+limit_entry_shadow_replay.py  # 存量测量/回填环, 台账回填待专项
+live_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
+liveness_probe.py  # 存量测量/回填环, 台账回填待专项
+llm_universe_scan.py  # 存量测量/回填环, 台账回填待专项
+long_expectancy_ledger.py  # 存量测量/回填环, 台账回填待专项
+overnight_arm_report.py  # 存量测量/回填环, 台账回填待专项
+pangan_daily_rebuild.py  # 存量测量/回填环, 台账回填待专项
+position_path_collector.py  # 存量测量/回填环, 台账回填待专项
+premarket_data_check.py  # 存量测量/回填环, 台账回填待专项
+premarket_peer_shadow.py  # 存量测量/回填环, 台账回填待专项
+premarket_reprice_shadow.py  # 存量测量/回填环, 台账回填待专项
+reentry_gate_effect_tracker.py  # 存量测量/回填环, 台账回填待专项
+regime_divergence_shadow.py  # 存量测量/回填环, 台账回填待专项
+rotate_data_backups.py  # 存量测量/回填环, 台账回填待专项
+sector_pulse.py  # 存量测量/回填环, 台账回填待专项
+settle_winner_overnight_shadow.py  # 存量测量/回填环, 台账回填待专项
+shadow_board.py  # 存量测量/回填环, 台账回填待专项
+short_supply_funnel_report.py  # 存量测量/回填环, 台账回填待专项
+slippage_report.py  # 存量测量/回填环, 台账回填待专项
+ssr_shadow_daily.py  # 存量测量/回填环, 台账回填待专项
+symbol_performance_report.py  # 存量测量/回填环, 台账回填待专项
+t5_hold_counterfactual.py  # 存量测量/回填环, 台账回填待专项
+trend_state_recorder.py  # 存量测量/回填环, 台账回填待专项
+trigger_gate_report.py  # 存量测量/回填环, 台账回填待专项
+tripwire_checker.py  # 存量测量/回填环, 台账回填待专项
+ue_tier_shadow_eval.py  # 存量测量/回填环, 台账回填待专项
+universe_expansion_shadow.py  # 存量测量/回填环, 台账回填待专项

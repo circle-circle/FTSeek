@@ -101,6 +101,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | 2254de46fe64 | dc双口径日对比 | 40 5 * * 2-6 | 传感器标定: 收盘口径×策略退出配对 | 口径分歧 |
 | 13705b524e2a | FTSeek Insider Signal Monitor | 0 6 * * 2-6 | insider 异常告警 | 异常即报 |
 | 1a4a63fd3dae | 影子组合每日结算 (DEB-20260808) | 10 8 * * 2-6 | 门的边际价值: 被拦单反事实净贡献按门聚合 | 门错杀赢家 (拦钱) / 放过亏家 |
+| crontab-pen-backfill | 保本线穿透影子·夜间结局回填 (`scripts/penetration_outcome_backfill.py`, 系统 crontab 非 Hermes) | 5 6 * * 2-6 | 影子标签回填: 用离场后 1 分 bar 判 recovered_1/3/5/10m (V型回摆) + continued_bps_10m (续跌) + cf_floor_fill_saved_bps (反事实地板成交节省); 幂等自愈, 可见窗不足落 null 非 False | 端标口径错→被动侧击穿被系统性误标 V 回 (9/3 §十一 自查已修); 写读契约断→落盘行缺 status 使判分/看板恒 0 (9/3 复盘批已修+钉死); 载体心跳断流 >14 天由注册表哨兵告 |
 
 ### 2.4 慢环 — 周/月级裁决 (Hermes cron)
 
@@ -112,6 +113,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | e282a7667ae2 | 每周 ADF 平稳性 + 转正四判据 | 20 9 * * 6 | 实盘化门槛机械判定 (OOS≥15日∧净均值>0∧毛均值t>1∧ADF平稳) | 随机游走伪装成有期望的策略 |
 | 9ab9f1812dc4 | DEB-20260830 CAP/F2 容量结算 + UE-D2 观察结算 (一次性) | once 2026-09-14 09:00 CST | 方案A (帽不动+三层护栏自然限流) 10交易日结算: CAP-1影子放行量 / CAP-2单净额劣化→方案B预案 / CAP-3名义帽连续3日触顶 / CAP-4 UE执行率 + F2质量分配; **[8/31第9轮用户裁"1"追加]** UE-D2 四判据: ①延迟300s内 ②无length截断 ③填充率≥50%白名单(验模板+模型供料稳定性非模型切换) ④时代盈亏切分(样本<10笔报无法裁决) | DEB-20260830 第12轮预注册判据 (阈值冻结自该轮); 只读脚本不写文件; 2026-08-30 补登 (守卫测试抓出漏登); 2026-08-31 追加 UE-D2 段 (jobs.json.bak_20260831_deb20260830_ue_d2) |
 | crontab-oneshot-0831f | DA/UE 8-31 首批晨间核对 (一次性, 系统 crontab 非 Hermes) | once 2026-09-01 07:30 CST | v0.72 DA 首轮 (指纹 BD93AF5B0570 (大写防守卫误判): skip_reason_missing 违约→0 / finish 全 stop / 挑战者 verdict 分布=B11 前哨) + v2.8 UE+glm-5 首轮 (hash EB75D45A72C2 / IT 填充率报数 / 延迟 B6①<300s) + playbook decision_conf 分布 (B12 观察); 只读脚本 `scripts/verify_da_ue_batch_20260831.py`, 跑完自删本行 (失败也删+HIGH 推送, 防 9/1 固定日期行年度复燃; 手动重跑 `--date`) | 判据字典 B6/B11/B12 + DEB-20260831-da-debate-quality-and-decision-conf + handoff 2026-08-31f; 挂行当场登记 (入账提醒纪律) |
+| crontab-pen-analysis | 保本线穿透影子·周频出题判卷 (`scripts/penetration_llm_analysis.py`, 系统 crontab 非 Hermes, timeout 300) | 30 7 * * 6 | 慢环: 确定性基线统计永远可得 → n_labeled≥8 才调 LLM (`penetration_pattern_analysis`, qwen→deepseek) 按 schema 提假设 → 每假设确定性 replay 全样本判卷 → 毕业门 n≥20 ∧ matched≥8 ∧ precision≥0.7 自动开 DEB 草稿 + 推送呈裁 (仅立案, 写执行代码须用户裁) | 判据字典 B17 + DEB-20260903 §十/§十二 + 注册表 `penetration_shadow`; 基率诚实披露: 家族 5 案/12 交易日且 8/21→9/1 零案 → n≥8 约需 19-80 交易日, 本环是慢环, 不得当议题二判分前置 |
 
 迁移留痕 (2026-08-28): `1a4a63fd3dae` / `e282a7667ae2` 的前身是 agent-session 定时任务
 (e68ae9ad / b460b9c5, permanent)。**该载体绑定创建会话进程** — 进程一死, 任务在注册表里
@@ -184,7 +186,7 @@ config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug +
 | G1 | ~~OKR 以 PnL 为误差信号~~ | **已闭合** | OKR-2026-09 已重编译: 不设盈利目标, 尺子+冻结+预注册, PnL 仅观测 |
 | G2 | ~~适应律未成文~~ | **已闭合** | 2026-08-28 立 `docs/ADAPTATION-CONTROL-LAW.md` (改参数转移函数五段, 编排宪章§二/§四+OKR KR2+config_version, 无新机制) |
 | G3 | regime 传感器未独立验证: regime 条件化规则 (盘前失效 A/B/C, LONG 回调日) 的分类器本身 IC 无人测 | 半开环 | 与现有 record-only 攒样线合并, 不另起炉灶 |
-| G4 | 台账漂移: 环路新增/下线后本文件不同步 | 由守卫测试闭合 | tests/test_control_loop_ledger.py |
+| G4 | 台账漂移: 环路新增/下线后本文件不同步 | 由守卫测试闭合 (**2026-09-03 补系统 crontab 面**) | tests/test_control_loop_ledger.py 原先只核 Hermes `jobs.json` — 系统 crontab 是盲区 (实测 68 个 crontab 调用的仓内脚本仅 2 个在台账, 穿透影子两环 9/3 挂 cron 时无任何守卫拦截)。现加棘轮: 存量 66 个锁 `docs/references/crontab-loop-baseline.txt`, 新增环路必须入 §2 (推荐) 或显式加基线带理由, 基线内脚本若已下 crontab 同样报 (陈旧豁免=幽灵行)。存量 1:1 回填属专项 (REVIEW-20260903 §五) |
 | G5 | 自调器 (自动改参) | **用户已裁不做** | 小样本+非平稳+大延迟 → 自动适应是噪声放大器; 现形态"自动观测+人工裁决+门控生效"即小样本控制正确解 |
 | G6 | 元环只闭合"失明", 不闭合"该链是否该存在": earnings_calendar 永久零行 ⇒ 财报 ATR 上限门从未生效 | **已恢复在线 (2026-08-29 复核纠错)** | ~~已裁决下线~~ **裁决撤销 (2026-08-29 当日复核)**: 原裁决证据"earnings_calendar 表 0 行 ⇒ 门从未拦截"指向死表 (app/risk/earnings_guard.py SQLite 载体), 与本门实际读的活载体 (earnings_risk_guard.py 内存态, Alpha Vantage 经 scheduler_core→get_watchlist_earnings(7d)→update_earnings_calendar 每日喂数 103~109 只) 同名不同物。生产日志实锤: 8/19-8/26 拦截 85 次 ("[playbook] #2 财报门拦截", BABA 36 / CRM 49), 且 8/29 当日 11:17 仍在喂数 — 是正在工作的活门。键已置回 true + 守卫测试翻转 (test_g6_earnings_blackout_gate_stays_online 钉住键为 true)。教训入档: ①同名双载体 (死表/活内存) 是"表面证据掩盖真实行为"的典型陷阱, 审计门活性必须追到消费者实际读的载体; ②文本/表级断言测不出"数据流是否接通、行为是否发生", 门活性须以生产日志拦截计数为行为级证据; ③前置条件①"可靠财报日历源"实际已由 AV 满足 (非 0 行), 富途原生 get_earnings_calendar 可作冗余源待议。D1 看守的仍是死表, 不影响活门。证据登记 (08-29, DEB-20260817 第7轮): 47 笔跳空跌抄底中 33 笔带财报叙事, RBRK 08-28 实锤财报后承接回调 SL_INITIAL -$159 (门在线恰可覆盖此类事件风险) |
 | G7 | `CapitalSafety._save_state` 的 2026-06-21 "P0 修复: INSERT OR REPLACE 用 trade_env 作唯一键 UPSERT, 保持 1 行/env" **从未成立** — 该列无 UNIQUE/无冲突可触发 ⇒ 纯 INSERT, 实测 capital_state 42146 行仍在涨 (注释声称要止的"无清理机制"原样存在) | 日志正常但逻辑失效 (注释与行为分叉) | **已裁决排期 (2026-08-29, 用户裁"按建议执行")**: 下个维护批三步一批做 — ①历史 4.2 万行挪归档表 ②建 UNIQUE + 改 UPSERT ③对账行查询改"归档+活表"合看; 拆开任何一步都会让权益对账行静默退化"样本缺失"。表小无性能压力, 不急修 |
@@ -194,6 +196,10 @@ config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug +
 ## 6. 维护规则
 
 1. 新增 cron job: 必须在 §2 对应层入账 (job_id + 角色), 否则守卫测试红。
+   **系统 crontab 同此规则** (2026-09-03 复盘批补齐, 此前只 enforced 在 Hermes 面):
+   非 Hermes 环路首列用 `crontab-<名>` (先例 `crontab-oneshot-0831f`); 存量锁
+   `docs/references/crontab-loop-baseline.txt` 棘轮基线 — 从基线删行 = 已入台账 (欢迎),
+   往基线加行 = 必须带理由与出处, 否则守卫红。
 2. 包络/准入判据变更: 必须同步 §3/§4 并注明裁决来源 (DEB/RFC/用户裁)。
 3. 一次性裁决 job 完成后移入 §2.4 留痕区, 从守卫范围移除 (enabled=false)。
 4. 台账不记载任何"预测性"内容 — 只记结构、实值、判据、失效模式。

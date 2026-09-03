@@ -85,12 +85,22 @@ _DQ_NEUTRAL_PREFIXES = ("duplicate", "outlier", "invalid", "void", "excluded")
 #    月底结算才作废整月; 现每晚机器对账, 版本分裂当天告警 (损失封顶当天)。
 #    豁免通道 (KR2 例外): P0 bug + DEB 落档 + 用户知会 → 人工把新版本加入
 #    data/config_freeze_baseline.json 的 versions 并附 deb_ref, 本检查即放行。
+#    两维口径 (2026-09-03 复盘修复, REVIEW-20260903 §四.1): 名字 config_version 在本仓有
+#    两个语义 — ①trade_records.config_version **列** = 配置档案版本 (现恒 v2);
+#    ②metadata_json.config_version = **退出参数哈希** (exit-*, app/playbook/config.py:188)。
+#    KR2 判的是 ②, 而本守卫原先只查 ① → 8/24 起退出参数换 4 版此处恒 "ok" (读错列 =
+#    结构性失明; 只有周六周检 ops/hermes/ftseek_weekly_checkpoint.py 读对)。
+#    OKR-2026-09 KR2 判分 SQL 同病, 已同步勘误。①维保留 (档案版本分裂同样有意义)。
 _FREEZE_WINDOW_START = "2026-08-24"  # OKR-2026-09 KR2 判分窗口起点 (判据冻结, 改须先改 OKR)
 _FREEZE_BASELINE = REPO / "data" / "config_freeze_baseline.json"
 
 
 def _check_config_freeze(rec) -> dict:
-    """W1: 冻结窗内 PLAYBOOK_SIM config_version 唯一性。只读; 内部异常显性化。"""
+    """W1: 冻结窗内 PLAYBOOK_SIM 参数版本唯一性 (档案列 + 退出哈希两维)。只读; 异常显性化。
+
+    输出: versions/profile_status (档案列维) + exit_versions/exit_hash_missing_rows/
+    exit_status (退出哈希维=KR2 真口径, 每哈希笔数即 cohort 样本量) + status (两维取劣)。
+    """
     info = {"window_start": _FREEZE_WINDOW_START}
     try:
         conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
@@ -99,10 +109,19 @@ def _check_config_freeze(rec) -> dict:
                 "SELECT config_version, COUNT(*) FROM trade_records "
                 "WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' GROUP BY 1",
                 (_FREEZE_WINDOW_START,)).fetchall()
+            exit_pairs = conn.execute(
+                "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*) "
+                "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
+                "GROUP BY 1", (_FREEZE_WINDOW_START,)).fetchall()
         finally:
             conn.close()
         versions = {str(v): n for v, n in pairs}
+        # 无哈希行 (旧行/写入侧未落 metadata) 单列计数, 不当作版本 — 否则首跑即假漂移
+        exit_versions = {str(v): n for v, n in exit_pairs if str(v).startswith("exit-")}
+        info["exit_hash_missing_rows"] = sum(
+            n for v, n in exit_pairs if not str(v).startswith("exit-"))
         info["versions"] = versions
+        info["exit_versions"] = exit_versions
         if not versions:
             info["status"] = "no_rows_in_window"
             return info
@@ -123,9 +142,28 @@ def _check_config_freeze(rec) -> dict:
                 rec("W1_config_version_drift", "-", v,
                     f"冻结窗版本分裂: 基线={baseline.get('versions')} 新增={extra}; "
                     f"若属批准的 P0 修复, 更新 {_FREEZE_BASELINE.name} 并补 DEB 落档 (KR2 例外通道)")
-            info["status"] = "drift"
+            info["profile_status"] = "drift"
         else:
-            info["status"] = "ok"
+            info["profile_status"] = "ok"
+        # 退出哈希维 (KR2 真口径): 豁免清单 = baseline.exit_versions 键集 (与周六周检同源;
+        # 键集被 tests/test_kr2_freeze_exemption.py 钉死 — 新豁免必须改测试 = 强制留痕)
+        exempt = set((baseline.get("exit_versions") or {}).keys())
+        extra_exit = sorted(set(exit_versions) - exempt)
+        # 反向可见性 (信息级, 不告警): 豁免在册而窗内零笔 = 幽灵版本 (如 exit-d1120a105711,
+        # 登记于 9/1 但从未出现在任何成交行)。不告警是因为"先登记后上线"是合法顺序
+        # (exit-de49b1299290 于 9/3 登记, 当晚才首笔) — 同台账"幽灵环路"只作人工审计面。
+        info["exit_exempt_unobserved"] = sorted(exempt - set(exit_versions))
+        if extra_exit:
+            for v in extra_exit:
+                rec("W1_exit_version_drift", "-", v,
+                    f"退出参数哈希未在豁免清单 (窗内 {exit_versions[v]} 笔): 冻结期换版必须"
+                    f"先 DEB 落档 + 用户裁, 再登记 {_FREEZE_BASELINE.name} 的 exit_versions; "
+                    f"已豁免={sorted(exempt)} — 未裁先换 = KR2 破 (OKR-2026-09 结算判据)")
+            info["exit_status"] = "drift"
+        else:
+            info["exit_status"] = "ok"
+        info["status"] = ("drift" if "drift" in (info["profile_status"], info["exit_status"])
+                          else "ok")
         return info
     except Exception as e:
         if _is_structural_error(e):
