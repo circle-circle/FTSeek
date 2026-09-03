@@ -59,6 +59,11 @@ def test_rule05_consumes_meta_with_and_without_basis():
             return getattr(real, n)
 
     pb_config_mod.get_playbook_config = lambda: _Over()
+    # 时间炸弹修复 (2026-09-03 复查): 硬编码 entry 日期在 ET 跨日后被 _is_overnight_position
+    # 判隔夜 → RFC-073 重置分支改用 minutes_from_open=100 ≥ 60min 死信号门 → 假阳性。
+    # 动态取今日 ET = 当日新仓 (held=10min), 语义不变且永不隔夜。
+    from app.utils.timezone import now_et as _now_et_t
+    _entry_today = f"{_now_et_t().date().isoformat()}T10:00:00"
     try:
         for meta in ({"atr": 5.0, "_symbol": "US.T1"},
                      {"atr": 5.0, "_symbol": "US.T2", "atr_basis": "real"}):
@@ -66,7 +71,7 @@ def test_rule05_consumes_meta_with_and_without_basis():
                 direction="LONG", entry_price=100.0, current_price=98.0,
                 initial_sl=95.0, peak_price=100.0, meta=dict(meta),
                 held_minutes=10, minutes_to_close=300, minutes_from_open=100,
-                entry_time_str="2026-09-02T10:00:00")
+                entry_time_str=_entry_today)
             assert reason == ""  # tight=2.5% 上限, -2% 存活 (无论有无 basis 键)
     finally:
         pb_config_mod.get_playbook_config = _orig
