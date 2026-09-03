@@ -239,11 +239,18 @@
 | 7 | DEB §十二 (判据可执行性核算 + 改判) / §十三 (实施核查 + 三登记 + cohort 注记) | `docs/debates/DEB-20260903-dell-dual-failure.md` |
 | 8 | OKR KR2 判分 SQL 勘误 + 事实披露 + 待裁二选一 + 变更记录行 | `docs/OKR-2026-09.md` |
 | 9 | 盘后"最大回撤"常量退化 + 量纲修复 (键名带 `_pp`, 带非零样本数) | `app/review/daily_review.py`, `app/core/obsidian_writer.py`, `tests/test_postmarket_drawdown_caliber.py` 6 例 |
-| 10 | 复盘落档 (本文件) + handoff 补 9/3 全部条目 + 9/2 vault 产物入库 | 本文件, `handoff.md`, `obsidian_vault/daily/*` |
+| 10 | 复盘落档 (本文件) + handoff 补 9/3 全部条目 + 9/2 vault 产物入库 (含勘误标) | 本文件, `handoff.md`, `obsidian_vault/daily/*` |
 | 11 | 生产 `data/` 写入缝 (三处埋点路径提模块常量, 值/解析语义不变) | `app/playbook/pipeline.py` |
 | 12 | 测试隔离 + 硬闸 (缝自动重定向沙箱 / 未登记写入报错 / 豁免 marker) | `tests/conftest.py`, `pytest.ini`, `tests/test_recommendations.py`, `tests/test_vwap_gate_ab.py` |
 | 13 | 污染清洗 + 隔离留痕 (2307 行 + 363 行 + 40 个合成 JSON, 附 `.orig` 可回滚) | `data/_quarantine/20260903_test_pollution/` (README) |
 | 14 | 写入隔离钉子 (缝契约/重定向/硬闸/豁免阀/三条棘轮) | `tests/test_production_data_write_isolation.py` 9 例 |
+| 15 | 重启 + 启动冒烟 (军规: 服务侧改动必重启必冒烟) | `systemctl` **10:42:29 CST** + `startup_smoke_check.py` **7/7** |
+
+**提交**: `8399715b` (①测量/治理: W1 两维 + 台账 crontab 棘轮 + 判据/OKR 勘误) ·
+`cc771bd7` (②穿透影子 P0 契约 + 三登记 + 载体心跳 + DEB §十二/§十三) ·
+`b106b9da` (③测试污染: 缝 + 沙箱重定向 + 硬闸 + 清洗隔离) ·
+`3c3c42f6` (④回撤口径 + 本文件落档 + 9/2 vault 产物) · handoff 条目随后一提交。
+`bench/` 保持未跟踪 (§五⑧ 待裁)。
 
 **KR2 影响**: 本批零退出参数改动 → 退出哈希仍 `exit-de49b1299290` (上一批已登记豁免), 无新版本。
 **生效面**: 2/3/4/9 属服务侧或独立脚本 — 脚本类 (invariant/backfill) 下次 cron 即生效;
@@ -251,7 +258,10 @@
 
 ## 七、今晚 / 明晨判读清单
 
-- **重启窗口 (19:28 盘前推送前)**: `systemctl restart ftseek-us` → `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` (7/7)。
+- **重启窗口 — 已执行 ✅**: `systemctl restart ftseek-us` **10:42:29 CST** (早于 19:28 盘前推送窗口) →
+  启动冒烟 **7/7 全绿** (启动段 10:42:35 新鲜), 重启后日志 ERROR/Traceback/CRITICAL **0** 条。
+  → §三 所记 9/3 四个未生效的服务侧提交 (`b43ab05d`/`832fb7d9`/`ffb321c6`/`e6187b29`) 与本批四提交
+  (`8399715b`/`cc771bd7`/`b106b9da`/`3c3c42f6`) **一并生效**。
 - 19:28 钉钉**恰一条**晨报 (两条=skill 回滚, 零条=查服务推送任务)。
 - 21:00 生成批 did 全当日 (`P1 陈旧bridge滚动重载成功` 或 P0-2 变体); 21:10 UE 注入列表**无** XLY/XLI/XLU/AAPL/LLYVK 且执行门 `low_atr` 拦截归零。
 - 21:30 后: 追高帽**每次**违例都有 warning (议题一); 若发生 BE 被动侧出场 → 核 `_be_close_telemetry.path=marketable_limit` / `pad_bps=15` 与 `data/shadow/penetration_shadow.jsonl` 首行 (**不落盘=埋点静默死亡, 当场查**)。
@@ -266,7 +276,8 @@
 - **未做穿透影子历史重建** (§五③, 需裁决); 未做台账存量 1:1 回填 (§五④, 专项); 未动 `bench/` (§五⑧)。
 - **未修 pre-commit/commit-msg 钩子跨仓引用** (§四.7 小项, 治理文件需用户裁)。
 - 全量回归: 本文件首版落档时点 2443 passed; §四.8 修复后复跑 **2452 passed / 37 skipped / 0 failed**
-  (108.56s), 且探针实证**生产 `data/` 写入事件 0**、真库 sha256 未变。重启冒烟结果见 handoff 对应条目。
+  (108.56s), 且探针实证**生产 `data/` 写入事件 0**、真库 sha256 未变。
+  重启 **10:42:29 CST** + 启动冒烟 **7/7** (启动段 10:42:35 新鲜), 重启后日志零 ERROR/Traceback/CRITICAL。
 - **勘误 (对首版落档的自我更正)**: 首版曾记"已把测试污染的两个文件从快照还原, 生产影子零污染" —
   复核证伪: 还原发生在最后一次全量跑之前, 且当时只看见 2 个文件 (实为 4 个)、只做了还原没做根因隔离,
   故污染照旧累积 (§四.8 取证即在此复核中做出)。现改为**缝 + 硬闸 + 清洗 + 棘轮**四层, 不依赖人工还原。
