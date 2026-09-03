@@ -142,3 +142,58 @@ marketable limit=检测价∓15bps (`breakeven_passive_marketable_pad_bps`, yaml
 **生效**: 运行中服务持旧码, 下次重启窗口生效 (盘后编辑纪律); 议题一为纯记录侧零交易行为变更。
 **判分**: 议题二毕业判分沿 §八 — 被动侧出场笔数与净结局 vs 家族基线 (-$19.7/案),
 主动侧成交率/净结局不得回退; 议题一判据=升级违例入行数 >0 + Phase C 证据列复审。
+
+## 十、议题二后续: 穿透判别器 + V型反转研究闭环 (2026-09-03, 用户裁"A"全量)
+
+**缘起**: 用户问"击穿瞬间如何区分快速下跌趋势 vs 缓慢临时回撤(V型), 且不要引入混乱"。
+答: 判别特征今天无人知道 (DELL n=1), 拍脑袋写阈值才是混乱 → 先 record-only 攒样,
+LLM 出题代码判卷, 攒够样本走 DEB 裁决才动执行。
+
+**落地三件套 (全 record-only, 零交易行为变更)**:
+1. `app/playbook/penetration_shadow.py` — 穿透触发瞬间采集判别特征 (穿透深度bps/自峰值回吐/
+   是否刷新低/持仓时长/时间带/ATR归一/侧/路径/quote_src) → `data/shadow/penetration_shadow.jsonl`;
+   pipeline 净保本限价块 1 处埋点 (主/被动两侧都采, 异常仅 warn 留痕, 棘轮纪律合规)。
+2. `scripts/penetration_outcome_backfill.py` — 每晚用离场后 1 分 bar 回填结局标签
+   (recovered_1/3/5/10m=V型回摆判定 / continued_bps_10m / cf_floor_fill_saved_bps 反事实);
+   幂等自愈 (默认处理全部未回填事件); 可见窗不足落 null 非 False (防假零口径)。
+   cron 周二-六 06:05 北京 (早于 shadow_board 06:15)。
+3. `scripts/penetration_llm_analysis.py` — 周频 (周六 07:30): 确定性基线统计永远可得;
+   n≥8 才调 LLM (`penetration_pattern_analysis`, qwen→deepseek) 按 schema 提假设,
+   每个假设确定性 replay 全样本判分; **毕业门控 n≥20 且 matched≥8 且 precision≥0.7
+   → 自动开 DEB 草稿+飞书推送呈裁决** (阶段2 第三执行路径只在裁决后写码)。
+
+**防遗忘 (用户明确要求)**: ① 接入 shadow_board 段11 (每日 06:15 飞书推送攒样进度/V型率);
+② 攒样里程碑 n=10/20/30 飞书一次性提醒 (state 去重); ③ 毕业即自动开 DEB — 三级提醒,
+不开新通知渠道。
+
+**KR2**: 影子键零进 exit config 哈希, 版本复算仍 `exit-de49b1299290` 不变。
+**测试**: test_penetration_shadow.py 14 例 (record-only 不变量/TEST守卫/方向镜像口径/
+回填标签手工bar核验/幂等/判分器/源级契约/KR2红线/flag默认/看板注册);
+**全量 2416 passed / 0 failed** (基线 2402+新增14)。
+**生效**: 采集埋点随下次服务重启窗口生效 (盘后编辑纪律); 回填/分析环为独立 cron 进程即时生效。
+**回滚**: `llm_features.penetration_shadow.enabled=false` 单键全关 + crontab 两行删除;
+执行路径零改动无需回滚。
+
+## 十一、§十核查补记 (2026-09-03, 用户令"核查给出建议和补充")
+
+**P0 修复 (回填窗口端标 off-by-one, 已修)**: `label_one` 原窗口 `b[0][11:16] > et_hm` —
+bar 为端标 (标签=分钟结束时刻), 标签 hm+1 的 bar 覆盖触发分钟本身, 其 high/low 大概率
+**先于触发时刻** → 被动侧击穿样本被系统性误标 V-recovery (恰是本研究最关键人群, 偏向
+"等回摆"一侧)。DELL 9/2 实事件实证 (et_hm=09:48, 地板474.6533, 真实触发 09:48:54):
+原版输出 recovered_1/3/5/10m 全 True + cf_saved 85.5bps, 与同行 continued_bps_10m=−540
+自相矛盾; 地面真值=触发后 10 分钟最高 472.36 < 地板 → 全 False。修复=锚点改触发分钟+1
+(跳过触发分钟 bar, 分钟算术防跨小时), 修后 DELL 输出与家族 5 案 0 回摆地面真值对齐。
+**修复先于任何生产标签发生** (jsonl 尚未创建, 埋点未随运行中服务生效), 无存量污染。
+测试 14→16 例 (+触发分钟bar污染钉 / +跨小时锚点钉; partial 窗口断言 4→3 随口径),
+test_penetration_shadow 16/16 通过。附带行为变化: 收盘尾段 (15:59) 事件原会拿
+触发分钟 bar 标 1-bar partial, 现如实封账 no_bars_after。
+
+**核查通过项**: 议题一/二实施 (§九) 与 DEB 规格逐项吻合, 值键去重+重启补种/
+KR2 豁免闭环/勘误标注均验证; §十三件套 infra 全数在场 (yaml 路由 qwen→deepseek、
+flag 默认 on、shadow_board 段11 入 build_board、crontab 两行、看板/里程碑/毕业门)。
+
+**遗留观察 (未改, 备案)**: ① 平仓异常重试路径可对同一经济事件重复采集 (event_id=
+时间戳秒级, 重试 20s 后即新 id) — 仅 dual.close_position 抛异常时发生 (罕见且有告警);
+若 jsonl 中出现同 symbol 同分钟多行, 建议分析层按 (symbol, et_date, et_hm) 去重取首行。
+② 毕业门自动开 DEB 草稿由 cron 周六写 docs/debates/ — 双 Agent 环境下无冲突机制,
+文件名含日期无碰撞风险, 但草稿生效仍需用户裁决, 仅立案不实施, 风险可接受。

@@ -8461,6 +8461,20 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         "floor_px": _be_floor_px,
                         "pad_bps": _mkt_pad_bps,
                     }
+                    # 2026-09-03 (DEB-20260903 议题二后续, 用户裁"A"): 穿透影子 record-only
+                    #   埋点 — 触发瞬间采集"快跌 vs V回"判别特征, 夜间回填离场后结局。
+                    #   零执行变更: marketable limit 保持默认; 任何异常静默。
+                    try:
+                        from app.playbook.penetration_shadow import record_penetration as _rec_pen
+                        _rec_pen(symbol=symbol, direction=direction, exit_reason=exit_reason,
+                                 side=_be_side, path=_be_path, trigger_price=current_price,
+                                 floor_px=_be_floor_px, entry_price=entry_price,
+                                 peak_price=peak_price, trough_price=_trough,
+                                 held_minutes=held_minutes, quote_src=_quote_src,
+                                 inst_id=inst_id, telemetry=meta.get("_be_close_telemetry"))
+                    except Exception as _pen_e:
+                        # 棘轮纪律 (DEB-20260831 P1③): 吞错必须留痕; 仍为 record-only 不影响退出
+                        logger.warning(f"[playbook sim] {symbol} 穿透影子落盘异常(已忽略): {_pen_e}")
                     if _be_path == "marketable_limit":
                         logger.info(
                             f"[playbook sim] {symbol} {direction} {exit_reason} 击穿marketable限价平仓 "

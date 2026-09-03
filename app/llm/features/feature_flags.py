@@ -36,6 +36,7 @@ _DEFAULT_FLAGS = {
     "thesis_recheck": False,            # 持仓期 thesis/invalidation LLM 复核 (轨道B), 默认 off — 只收紧不放松, shadow→sim 后启用
     "sltp_verify_shadow": True,         # L1: reprice 时记录 LLM vs 代码 SL/TP 分歧 (record-only, 零改动作), 默认 on 采集校准数据
     "exit_param_shadow": True,          # 2026-07-13: 盘中回放更紧 breakeven/drawdown 变体首触发 (record-only, 零改动作), 默认 on 采集 capture 对照
+    "penetration_shadow": True,         # 2026-09-03 (DEB-20260903 议题二后续, 用户裁"A"): 保本线穿透瞬间判别特征采集 (record-only, 零改动作), 默认 on; 结局由夜间回填
 }
 
 

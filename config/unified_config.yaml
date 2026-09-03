@@ -428,6 +428,10 @@ llm:
       cache_on_fail: false
       fallback: deepseek
       primary: qwen
+    # 2026-09-03 (DEB-20260903 议题二后续): 穿透影子周频分析环 (LLM出题/代码判卷)
+    penetration_pattern_analysis:
+      fallback: deepseek
+      primary: qwen
     regime_classifier:
       fallback: deepseek
       primary: qwen
@@ -620,6 +624,10 @@ llm_features:
     enabled: false
     min_history_trades: 5
     timeout_sec: 5
+  # 2026-09-03 (DEB-20260903 议题二后续, 用户裁"A"): 保本线穿透影子 record-only
+  # 采集 (触发瞬间判别特征 + 夜间离场后回填)。零交易动作; 改 false 单键全关。
+  penetration_shadow:
+    enabled: true
   regime_classifier:
     daily_max_usd: 0.3
     enabled: false

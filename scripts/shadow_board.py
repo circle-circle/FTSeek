@@ -356,10 +356,37 @@ def _sec_early_dead():
     return lines
 
 
+# ── 段11: 保本线穿透影子 (2026-09-03, DEB-20260903 议题二后续, 用户裁"A") ──
+def _sec_penetration():
+    recs = _read_jsonl(SHADOW_DIR / "penetration_shadow.jsonl")
+    lines = ["【保本线穿透影子 (快跌vsV回判别器攒样, 毕业门20例)】"]
+    evs = [r for r in recs if r.get("type") == "penetration"]
+    ocs = [r for r in recs if r.get("type") == "outcome" and r.get("status") == "labeled"]
+    if not evs:
+        lines.append("  (尚无穿透样本 — 采集随下次服务重启生效)")
+        return lines
+
+    def blk(days):
+        se = [r for r in evs if _within(r.get("et_date"), days)]
+        so = [r for r in ocs if _within(r.get("et_date"), days)]
+        v5 = sum(1 for r in so if r.get("recovered_5m") is True)
+        vr = f" V型率{100*v5/len(so):.0f}%" if so else ""
+        return f"事件{len(se)} 已回填{len(so)}{vr}"
+
+    n_labeled = len(ocs)
+    v5_all = sum(1 for r in ocs if r.get("recovered_5m") is True)
+    lines.append(f"  今日 : {blk(1)}")
+    lines.append(f"  近7天: {blk(7)}")
+    lines.append(f"  攒样: {n_labeled}/20 带标签"
+                 + (f" (V型率{100*v5_all/n_labeled:.0f}%)" if n_labeled else "")
+                 + (" — 已达毕业门, 周六分析环评估开DEB" if n_labeled >= 20 else ""))
+    return lines
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead):
+    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration):
         try:
             body += sec() + [""]
         except Exception as e:
