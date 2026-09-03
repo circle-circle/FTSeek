@@ -44,8 +44,20 @@ def test_arm_symbol_day_stable_across_calls():
 
 # ── 2026-08-07 复核补: 集成路径 (开关语义 / 台账 / 首次放行 / 硬守卫) ──
 
-_LEDGER = Path(__file__).resolve().parents[1] / "data" / "vwap_gate_ab.jsonl"
 _TEST_SYM = "ZZTEST_VWAPAB"
+
+
+def _ledger_path() -> Path:
+    """活跃台账路径 — 必须读 pipeline 的缝, 不能硬编码仓根路径。
+
+    2026-09-03 复盘批 (REVIEW-20260903 §四.8): 本文件原先直写生产
+    data/vwap_gate_ab.jsonl (靠 _clean_ab_state 事后擦行, 与生产写者竞争同一文件,
+    擦不干净即留污染)。现 pipeline._VWAP_AB_LEDGER_PATH 由 tests/conftest.py 自动
+    重定向到 tmp 沙箱 → 写入与被测断言都发生在沙箱, 生产台账零接触; 本函数跟着缝走,
+    否则断言会去读生产台账 (读到别人的行 = 假绿/假红)。
+    """
+    import app.playbook.pipeline as _p
+    return Path(_p._VWAP_AB_LEDGER_PATH)
 
 
 @pytest.fixture
@@ -56,9 +68,10 @@ def _clean_ab_state():
     for _lk in list(_p._VWAP_AB_LOGGED):
         if _lk[0] == _TEST_SYM:
             _p._VWAP_AB_LOGGED.discard(_lk)
-    if _LEDGER.exists():
+    _led = _ledger_path()
+    if _led.exists():
         kept = []
-        with open(_LEDGER) as _f:
+        with open(_led) as _f:
             for _line in _f:
                 try:
                     if json.loads(_line).get("symbol") == _TEST_SYM:
@@ -67,9 +80,9 @@ def _clean_ab_state():
                     pass
                 kept.append(_line)
         if kept:
-            _LEDGER.write_text("".join(kept))
+            _led.write_text("".join(kept))
         else:
-            _LEDGER.unlink()
+            _led.unlink()
 
 
 class _FakePB:
@@ -97,10 +110,11 @@ class _FakeCC:
 
 
 def _ledger_rows():
-    if not _LEDGER.exists():
+    _led = _ledger_path()
+    if not _led.exists():
         return []
     rows = []
-    with open(_LEDGER) as _f:
+    with open(_led) as _f:
         for _line in _f:
             try:
                 _j = json.loads(_line)

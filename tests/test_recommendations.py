@@ -7,11 +7,11 @@ from unittest.mock import patch, MagicMock
 class TestRecommendationSynthesizer:
     """测试推荐合成器"""
 
-    def test_synthesize_basic(self):
+    def test_synthesize_basic(self, tmp_path):
         """测试基本合成逻辑"""
         from app.recommendations.synthesizer import RecommendationSynthesizer
 
-        synth = RecommendationSynthesizer()
+        synth = RecommendationSynthesizer(output_dir=str(tmp_path))
 
         battle_plan = {
             "date": "2026-05-28",
@@ -61,21 +61,21 @@ class TestRecommendationSynthesizer:
         assert rec["confidence_level"] in ("HIGH", "MEDIUM", "LOW")
         assert "risk_reward" in rec
 
-    def test_synthesize_empty_inputs(self):
+    def test_synthesize_empty_inputs(self, tmp_path):
         """测试空输入容错"""
         from app.recommendations.synthesizer import RecommendationSynthesizer
 
-        synth = RecommendationSynthesizer()
+        synth = RecommendationSynthesizer(output_dir=str(tmp_path))
         result = synth.synthesize({}, {}, {})
 
         assert "recommendations" in result
         assert isinstance(result["recommendations"], list)
 
-    def test_confidence_levels(self):
+    def test_confidence_levels(self, tmp_path):
         """测试置信度分级"""
         from app.recommendations.synthesizer import RecommendationSynthesizer
 
-        synth = RecommendationSynthesizer()
+        synth = RecommendationSynthesizer(output_dir=str(tmp_path))
 
         # HIGH confidence
         plan = {

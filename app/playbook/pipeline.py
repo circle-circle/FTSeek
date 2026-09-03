@@ -273,6 +273,18 @@ def _loser_overnight_exempt(source_type: str, entry_time_str: str, profit_pct: f
 #   门倾向"扼杀"。影子反事实已可测 (gated 臂轨迹在 entry_timing_shadow 持续轮询),
 #   但"真实成交口径 (费用/滑点/真实退出) 下是否仍成立"只能 A/B 双开实测 (SIM 无真金/无 PDT).
 #   分臂纯函数日内稳定: 同标的当日恒定同臂, 不随 300s 轮询漂移, 进程重启不变.
+# ── 生产数据写入缝 (2026-09-03 复盘批, REVIEW-20260903 §四.8) ────────────────
+#   取证 (全量套件挂 open/write_text 探针): 33 次写入落在生产 data/ 下 — 死单早期影子
+#   被灌 2307 行 symbol=TEST (占该文件 90%, shadow_board 段10 分母虚增 44×)、审计留痕
+#   363 行 100% 虚构、当日推荐 JSON 连续 8 天是合成 AAPL 180-185。根因: 埋点路径在
+#   函数体内就地拼字符串, 测试无从隔离 (对照: penetration_shadow._PEN_PATH 有缝,
+#   故其测试全量 monkeypatch 零污染)。
+#   提为模块常量 = **值与解析语义逐字不变** (systemd WorkingDirectory=/opt/ftseek/FTSeek-US,
+#   故相对/绝对两种既有写法各自保持原样), 仅把"写哪"变成可重定向的一个名字:
+#   tests/conftest.py 自动把它们指向 tmp 沙箱, 并对未登记的 data/ 写入硬闸报错。
+_VWAP_AB_LEDGER_PATH = Path(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl"
+_EARLY_DEAD_SHADOW_PATH = Path("data/early_dead_signal_shadow.jsonl")
+
 _VWAP_AB_LOGGED: set = set()
 
 
@@ -281,8 +293,7 @@ def _vwap_ab_row_exists(date_str: str, symbol: str, direction: str) -> bool:
     set, 进程重启(systemd 重启/cron 重跑)后清空 → 同 (symbol,date,direction) 重复
     append, 破坏"每 symbol-day-direction 一行"的台账唯一性承诺, A/B 统计重复计数。
     写前查文件历史行, 与进程 set 双保险。异常 → False (允许写, 审计降级优于丢行)."""
-    from pathlib import Path as _Pab
-    _f = _Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl"
+    _f = _VWAP_AB_LEDGER_PATH
     try:
         if not _f.exists():
             return False
@@ -340,7 +351,6 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
         if _lk not in _VWAP_AB_LOGGED and not _vwap_ab_row_exists(_d, symbol, _dir):
             import json as _jab
             from datetime import datetime as _dtab
-            from pathlib import Path as _Pab
             _slope = None
             try:
                 if data_router is not None:
@@ -355,8 +365,7 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
                 "vwap_slope": round(_slope, 6) if isinstance(_slope, (int, float)) else None,
                 "inst_id": inst_id, "rule": "vwap_gate_ab_50_50",
             }
-            with open(_Pab(__file__).resolve().parents[2] / "data" / "vwap_gate_ab.jsonl",
-                      "a", encoding="utf-8") as _fab:
+            with open(_VWAP_AB_LEDGER_PATH, "a", encoding="utf-8") as _fab:
                 _fab.write(_jab.dumps(_row, ensure_ascii=False) + "\n")
             # 2026-08-07 复核修复 (缺陷B): 写盘成功后才入进程 set — 原顺序 add 在前,
             #   NameError/写盘异常时 key 已标记 → 台账行永久丢失且 bypass 臂延迟一轮放行.
@@ -7527,7 +7536,6 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 if held_minutes >= _ed_pt and held_minutes <= _ed_pt + 5 and _ed_pt not in _ed_pts:
                     _ed_pts.append(_ed_pt)
                     import json as _edj
-                    from pathlib import Path as _EDP
                     from app.utils.timezone import now_et as _ed_now_et
                     _ed_row = {
                         "ts": _ed_now_et().isoformat(),
@@ -7540,7 +7548,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                         "rule": "early_dead_signal_shadow",
                         "settled": False,
                     }
-                    with open(_EDP("data/early_dead_signal_shadow.jsonl"), "a") as _edf:
+                    with open(_EARLY_DEAD_SHADOW_PATH, "a") as _edf:
                         _edf.write(_edj.dumps(_ed_row, ensure_ascii=False) + "\n")
                     logger.info(
                         f"[影子·死单早期] {_symbol} {direction} checkpoint={_ed_pt}min "
