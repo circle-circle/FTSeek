@@ -898,6 +898,18 @@ class ObsidianWriter:
         _overnight_block = (
             "\n\n## 过夜持仓 (未平, 盈亏未落袋)\n" + open_list if open_list else ""
         )
+        # 2026-09-03 复盘批: 原行 `- **最大回撤**: {data.get('max_drawdown', 0):.2%}` 双重说谎 —
+        #   ①无任何调用方写入 max_drawdown 键 (daily_review._generate_summary 从不产它) → 恒 0.00%,
+        #     却与"当日净亏 -49 + 水下过夜仓"并列显示 = 常量退化 (军规"基数自检"同类);
+        #   ②源字段 trade_records.max_drawdown 是**百分点**口径 (峰→谷, 由 mfe/mae 反算), 套 .2%
+        #     会把 3.65pp 印成 364.64% = 量纲说谎 (军规"单位/量纲声明"同类)。
+        #   现改为日级"最大单笔持仓回撤": 单位写进标签 + 带非零样本数自证 (全零日如实显示 0 笔)。
+        _dd_pp = data.get('max_drawdown_pp')
+        _dd_line = (
+            f"{float(_dd_pp):.2f} pp (峰→谷)"
+            + (f" · {data['max_drawdown_symbol']}" if data.get('max_drawdown_symbol') else "")
+            + f" | 当日 {data.get('max_drawdown_n') or 0}/{len(trades)} 笔有非零回撤"
+        ) if _dd_pp is not None else f"n/a | 当日 0/{len(trades)} 笔有非零回撤"
         content = f"""{fm}
 
 # 盘后复盘: {market} ({date_str})
@@ -906,7 +918,7 @@ class ObsidianWriter:
 {_ov_line}
 - **胜率 (已平口径)**: {data.get('win_rate', 0):.1%}
 - **总盈亏 (已平口径)**: {data.get('total_pnl', 0):+.2f}
-- **最大回撤**: {data.get('max_drawdown', 0):.2%}
+- **最大单笔持仓回撤**: {_dd_line}
 
 ## 交易明细 (仅已平仓)
 {trade_list}{_overnight_block}

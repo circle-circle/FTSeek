@@ -856,6 +856,15 @@ class DailyReviewGenerator:
             'avg_holding_period': round(sum(t.get('holding_hours') or 0 for t in closed_trades) / len(closed_trades), 1) if closed_trades else 0,
             'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,
             'mfe_capture_n': len(_cap_ratios),
+            # 最大单笔持仓回撤 (峰→谷, **百分点**口径 — trade_records.max_drawdown 由
+            #   pipeline._max_drawdown_from_mfe_mae(mfe_pct, mae_pct) 反算 = 100*(mfe+mae)/(100+mfe))。
+            #   2026-09-03 复盘批新增: 盘后文档原"最大回撤"行读 summary['max_drawdown'] 而本函数
+            #   从不产该键 → 恒 0.00% (常量退化); 且键名不带量纲 → 下游用 .2% 渲染会把 3.65pp
+            #   印成 364.64% (量纲说谎)。故键名带 _pp 后缀, 并附非零样本数 _n 自证不是常量
+            #   (AGENT.md 军规: 新增落库字段必带基数自检 + 单位/量纲声明)。
+            'max_position_drawdown_pp': round(max((t.get('max_drawdown') or 0) for t in closed_trades), 2),
+            'max_position_drawdown_symbol': max(closed_trades, key=lambda t: t.get('max_drawdown') or 0).get('symbol'),
+            'max_position_drawdown_n': sum(1 for t in closed_trades if (t.get('max_drawdown') or 0) > 0),
         }
     
     # =========================================================================
@@ -1305,7 +1314,10 @@ class DailyReviewGenerator:
                 'total_trades': summary.get('total_trades', 0),
                 'win_rate': summary.get('win_rate_net', summary.get('win_rate', 0)),
                 'total_pnl': summary.get('total_pnl_net', summary.get('total_pnl', 0)),
-                'max_drawdown': summary.get('max_drawdown', 0),
+                # 量纲声明: pp = 百分点 (源字段口径), 不是小数 — 渲染端不得再套百分比格式
+                'max_drawdown_pp': summary.get('max_position_drawdown_pp'),
+                'max_drawdown_symbol': summary.get('max_position_drawdown_symbol'),
+                'max_drawdown_n': summary.get('max_position_drawdown_n', 0),
                 'open_trades': _open_rows,
                 'trades': [{'code': str(t.get('symbol', '') or ''),
                             'pnl': t.get('pnl_net', t.get('realized_pnl', 0)),
