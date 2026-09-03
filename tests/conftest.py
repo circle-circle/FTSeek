@@ -62,6 +62,15 @@ _PRODUCTION_DATA_SEAMS = (
     ("app.playbook.pipeline", "_VWAP_AB_LEDGER_PATH", "path", "vwap_gate_ab.jsonl"),
     ("app.playbook.audit", "_default_audit_path", "callable",
      "audit/playbook_reconciliation.jsonl"),
+    # 2026-09-03 盘中链路体检补缝: 下方硬闸只拦 open/Path.write_text/write_bytes,
+    #   **sqlite3.connect 直写是盲区** — tests/strategy/test_regime_strategy_integration.py
+    #   每跑一次经 regime_filter.record_regime_change 往生产 signal_snapshots.db 的
+    #   regime_history 灌 8 行夹具 (SPY=550/450, MA200=500, VIX=15/22/27/28/40)。
+    #   实测: 表内 3044 行中 2504 行 (82.3%) 是该签名夹具, 生产自 2026-07-29 起零真行;
+    #   唯一读取端 ops/hermes/intraday_diagnose_late.py:206 取"最后一行"当现行 regime
+    #   → 盘中诊断长期播报测试夹具 (今日会报 BULL→BEAR trigger=safety VIX=28)。
+    ("app.strategy.regime_filter", "_REGIME_HISTORY_DB", "path",
+     "signal_snapshots.db"),
 )
 
 

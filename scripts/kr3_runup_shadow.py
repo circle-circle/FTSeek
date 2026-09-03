@@ -101,8 +101,21 @@ def main() -> int:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n_ok += 1
     print(f"[kr3-shadow] 采集 {n_ok} 笔, prev_close 缺失 {n_miss} 笔 → {OUT}")
+    # 2026-09-03: 不修则 Futu 非守护线程吊住解释器退出 — cron 每工作日泄漏一个
+    #   ~105MB 僵死进程 + 一条 OpenD 连接 (同 sector_pulse.py:95 的 2026-07-29 病灶;
+    #   实证: 09-03 06:10 那次采集 06:10:06 就落盘完成, 进程 pid 55906 到 22:10 仍在,
+    #   16h 不退, 而本机仅 3.5G 内存且 Hermes 已报 memory pressure elevated)。
+    try:
+        router.close()
+    except Exception as _e:
+        print(f"[kr3-shadow] router.close() 失败 (忽略, 进程将硬退出): {_e}", file=sys.stderr)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import os
+    _rc = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # futu SDK 后台线程阻解释器退出 → 硬退出 (jsonl 已 flush, 同 ssr_shadow_daily.py:120)
+    os._exit(_rc)

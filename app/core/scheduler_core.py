@@ -980,9 +980,23 @@ class TradingScheduler:
             # 2026-07-16 (H1): playbook 退出监控跑在 _llm_strategy_loop 内, 此前无看门狗覆盖 —
             #   若 dual.close_position 阻塞, 整个循环卡死 → 退出静默停摆, 止损失效.
             #   基础节奏 60s, 但盘后 LLM scan 可能耗时数分钟, 阈值放宽到 600s.
-            wd.register("llm_strategy_loop", stale_threshold_sec=600)
+            # 2026-09-03 (D2(b), DEB-20260903-intraday-chain-audit §四): 600s 硬编码 → 配置化,
+            #   **默认值不变** (不放宽检出)。放宽阈值会把真卡死的 heal 延迟同步放大 3×
+            #   (watchdog._heal_multiplier=3.0), 故本次不改默认值, 只开出可回滚的旋钮;
+            #   误报由 D2(a) 的轮内护航消除 (见 _wd_open_round_heartbeat)。
+            _llm_loop_stale_sec = 600.0
+            try:
+                _llm_loop_stale_sec = float(
+                    cfg.get_dotted("scheduler.watchdog_llm_loop_stale_sec", 600)
+                ) if cfg else 600.0
+            except Exception:
+                _llm_loop_stale_sec = 600.0
+            wd.register("llm_strategy_loop", stale_threshold_sec=_llm_loop_stale_sec)
             wd.start(check_interval_sec=60.0)
-            logger.info(f"[Watchdog] 已启动 — scan={scan_interval}min, monitor={monitor_interval}min, llm_strategy_loop=600s")
+            logger.info(
+                f"[Watchdog] 已启动 — scan={scan_interval}min, monitor={monitor_interval}min, "
+                f"llm_strategy_loop={_llm_loop_stale_sec:.0f}s"
+            )
         except Exception as _we:
             logger.warning(f"[Watchdog] 启动失败 (不影响交易): {_we}")
 
@@ -993,6 +1007,166 @@ class TradingScheduler:
         # 两者交替执行导致账本在 0↔0.643 之间震荡
         # 修复: 删除 T6，只保留 strategy_coordinator.reconcile() 作为唯一 reconcile 入口
         # (strategy_coordinator 已有完整持仓分类 + reconcile 逻辑，T6 是冗余)
+
+    # ── D2(a): 长轮心跳护航 (2026-09-03, DEB-20260903-intraday-chain-audit §四) ──────────────
+    # 病灶: `_llm_strategy_loop` 只在 while 顶部 ping 一次, 而单轮迭代实测可达 ~58min —
+    #   2026-09-03 盘前轮 20:02:28→21:01:09 CST (57.7min) · 2026-09-01 同窗 20:02:28→21:00:12
+    #   (57.7min) · 2026-08-22 盘后轮 04:00→04:30+ CST — 全部 ≫ 600s 阈值 → 连报 stale →
+    #   heal 整服重启 (08-22 04:30:44 / 09-03 21:31:38, 后者 = 开盘后 90s 起 36s 盲窗)。
+    #   〔归因勘误〕耗时的**不是**"盘前新闻采集 + 多标的 LLM 推荐": `llm_pushes.
+    #   after_hours_scan_enabled=false` → run_after_hours_llm_scan 进门即返回。真实长步在
+    #   盘前/盘后的数据采集链 (定桶逐标的 ATR / 宏观日历影子 / 富途通道影子全量拉取),
+    #   这些步骤自身零进度日志零心跳 → 日志上表现为 20-32min 静默段。
+    # 修法: 非 TRADING 阶段整轮护航 (轮内每 120s 补 ping), 受两重收敛避免变成"永不检出":
+    #   ① **预算** (scheduler.watchdog_long_round_budget_sec, 默认 2700s): 超预算即停 ping →
+    #      交回 watchdog 判定。无脑定时 ping 会让真卡死永远检不出 = 静默死亡
+    #      (见 DEB-20260831-silent-death-hardening), 故必须有预算。
+    #   ② **阶段**: 轮次跨到 TRADING 立即停 ping + critical 告警 — 盘前轮次跨开盘意味着
+    #      `run_playbook_auto_execute` (入场) 被阻塞, 此时要的是 watchdog 权威而不是护航
+    #      (09-03 那次误重启恰好解了阻塞, 不能把这条恢复路径挡掉)。
+    #   TRADING 阶段**不护航**: 入场执行在同一循环内, 卡死要紧检出 + heal;
+    #   出场另有独立快循环 (`playbook_exit_loop`, 阈值 120s), 完全不受本改动影响。
+    # 线程卫生 (同日 D3 教训): 全程最多 1 个护航线程, 每轮顶部结算 + join(5s), 停机随
+    #   self.running 自终止 → 不累积。回滚: scheduler.watchdog_long_round_enabled=false + 重启。
+    _WD_LOOP_NAME = "llm_strategy_loop"
+    _WD_ROUND_INTERVAL_SEC = 120.0
+
+    def _wd_ping(self, name: Optional[str] = None) -> None:
+        """补一次 watchdog 心跳 (永不抛 — 心跳本身不能成为新的故障点)。"""
+        try:
+            from app.observability.watchdog import get_watchdog
+            get_watchdog().ping(name or self._WD_LOOP_NAME)
+        except Exception as _e:
+            logger.debug(f"[Watchdog] 补心跳失败 (不影响循环): {_e}")
+
+    def _wd_round_cfg(self):
+        """读护航配置 (每次现读 → 跟随配置热重载): (enabled, budget_sec)。"""
+        _enabled, _budget = True, 2700.0
+        try:
+            from app.core.config_container import get_config as _gc_wd
+            _cfg = _gc_wd()
+            _enabled = bool(_cfg.get_dotted("scheduler.watchdog_long_round_enabled", True))
+            _budget = float(_cfg.get_dotted("scheduler.watchdog_long_round_budget_sec", 2700))
+        except Exception as _e:
+            logger.debug(f"[Watchdog·护航] 读配置失败, 用默认 (enabled=True,budget=2700): {_e}")
+        return _enabled, _budget
+
+    def _wd_open_round_heartbeat(self, phase) -> None:
+        """为当前轮次开心跳护航 (仅非 TRADING / 非 WEEKEND 阶段; 永不抛)。"""
+        try:
+            self._wd_close_round_heartbeat()  # 幂等: 绝不叠加线程
+            from .scheduler_triggers import MarketPhase
+            if phase is None or phase in (MarketPhase.TRADING, MarketPhase.WEEKEND):
+                return
+            _enabled, _budget = self._wd_round_cfg()
+            if not _enabled:
+                return
+            _t0 = time.time()
+            _stop = threading.Event()
+            _phase_name = getattr(phase, "value", str(phase))
+            _state: Dict[str, Any] = {"pings": 0, "stopped_reason": None}
+
+            def _keepalive():
+                while self.running and not _stop.wait(self._WD_ROUND_INTERVAL_SEC):
+                    _elapsed = time.time() - _t0
+                    if _budget > 0 and _elapsed > _budget:
+                        _state["stopped_reason"] = f"预算耗尽 ({_elapsed:.0f}s>{_budget:.0f}s)"
+                        logger.error(
+                            f"[Watchdog·护航] {_phase_name} 轮次已跑 {_elapsed:.0f}s > 预算 "
+                            f"{_budget:.0f}s → 停止补心跳, 交回 watchdog 判定 (可能真卡死)"
+                        )
+                        return
+                    try:
+                        from .scheduler_triggers import (
+                            get_market_phase as _gmp_wd, MarketPhase as _MP_wd,
+                        )
+                        if _gmp_wd() == _MP_wd.TRADING:
+                            _state["stopped_reason"] = f"跨入 TRADING (已跑 {_elapsed:.0f}s)"
+                            _msg = (
+                                f"⚠️ [Watchdog·护航] {_phase_name} 轮次跨开盘仍未结束 "
+                                f"(已跑 {_elapsed:.0f}s) → 入场执行被阻塞; 停止补心跳, "
+                                f"交回 watchdog 判定"
+                            )
+                            logger.error(_msg)
+                            try:
+                                from app.utils.critical_alerts import send_critical
+                                send_critical(_msg, async_mode=True)
+                            except Exception as _se:
+                                logger.debug(f"[Watchdog·护航] critical 上送失败: {_se}")
+                            return
+                    except Exception as _pe:
+                        logger.debug(f"[Watchdog·护航] 阶段判定失败 → 继续护航 (不误停): {_pe}")
+                    self._wd_ping()
+                    _state["pings"] += 1
+
+            _th = threading.Thread(target=_keepalive, daemon=True, name="WdRoundHeartbeat")
+            _th.start()
+            # getattr 读法: 本属性只在循环期存在, 不在 __init__ 里占位 (测试桩无需构造它)
+            self._wd_round_keeper = (_th, _stop, _t0, _phase_name, _state)
+        except Exception as _we:
+            logger.debug(f"[Watchdog·护航] 开启失败 (不影响循环): {_we}")
+
+    def _wd_close_round_heartbeat(self) -> None:
+        """结算本轮护航: 停线程 + 落轮次耗时遥测 (慢轮次可见, 取代过去的误报 stale)。"""
+        _keeper = getattr(self, "_wd_round_keeper", None)
+        if not _keeper:
+            return
+        self._wd_round_keeper = None
+        _th, _stop, _t0, _phase_name, _state = _keeper
+        _stop.set()
+        try:
+            _th.join(timeout=5.0)
+        except Exception as _e:
+            logger.debug(f"[Watchdog·护航] 护航线程 join 失败: {_e}")
+        _dur = time.time() - _t0
+        if _dur > 600 or _state.get("stopped_reason"):
+            _why = f"; 提前停止: {_state['stopped_reason']}" if _state.get("stopped_reason") else ""
+            logger.warning(
+                f"[Watchdog·护航] {_phase_name} 轮次耗时 {_dur:.0f}s "
+                f"(补心跳 {_state['pings']} 次{_why}) — 慢轮次, 非卡死"
+            )
+
+    # ── D4(a): 盘前步骤级取消 (2026-09-03, DEB-20260903-intraday-chain-audit §六) ────────────
+    # 实况: 2026-09-03 盘前轮次 ET 09:01:09 进 run_playbook_generate, 到 09:31:38 仍未完成 →
+    #   开盘后 90 秒内 TRADING 分支的 run_playbook_auto_execute (入场触发/re-price/下单)
+    #   **一次都没跑**; 当天是 watchdog 误重启 (09:31:38) 意外打断盘前轮次才恢复了入场。
+    # 修法: 盘前分支每个**非必需**步骤前查一次阶段, 已开盘就 `continue` 回轮顶 → 重新取 phase
+    #   进 TRADING 分支, 把"跨界阻塞 = 剩余四步之和"收敛成"= 当前正在跑的那一步"。
+    # 跳过零损失 (逐个核过调用点): generate / morning_push / topup_supplement /
+    #   normalize_vol_buckets 在 TRADING 分支都有**同名 catch-up 调用**且各自幂等
+    #   (scheduler_core.py TRADING 分支: generate→morning_push→premarket_invalidation→topup→
+    #   normalize→auto_execute); 宏观日历影子是 record-only 且自带 06:00-09:29 ET 窗口门
+    #   (跨开盘本就立即返回)。generate 本身**不跳** — 它是入场的供给前提, 跳了也只是换到
+    #   TRADING 分支跑同一件事, 不省时间。
+    # 残余 (转 D4(c) 另案): 单步内部不可中断 → 若长尾出在"跨开盘时正在跑的那一步"
+    #   (09-03 正是 generate 跑 30.5min 未完成), 本修法救不了, 仍需重活外移 worker 线程。
+    def _premarket_overrun(self, step_name: str) -> bool:
+        """盘前轮次是否已跨开盘 (True → 调用方应跳过剩余盘前步骤, continue 回轮顶)。
+
+        阶段判定异常 → False (保守: 维持原步骤顺序, 不因守卫故障跳步骤)。
+        每轮至多触发一次 (触发即 continue → 下一轮进 TRADING 分支, 不再回到盘前分支)。
+        """
+        try:
+            from .scheduler_triggers import get_market_phase as _gmp_po, MarketPhase as _MP_po
+            if _gmp_po() != _MP_po.TRADING:
+                return False
+        except Exception:
+            return False
+        logger.warning(
+            f"[盘前跨界] 市场已开盘但盘前轮次未收尾 → 跳过剩余盘前步骤 (下一站 {step_name}), "
+            f"回轮顶进 TRADING 分支恢复入场执行 (D4(a), DEB-20260903 §六)"
+        )
+        try:
+            from app.utils.critical_alerts import send_critical
+            send_critical(
+                f"⚠️ [盘前跨界] 盘前轮次跨开盘未收尾 → 已跳过剩余盘前步骤 (从 {step_name} 起), "
+                f"转入 TRADING 分支恢复入场。若本告警反复出现或入场仍延迟, 说明某个盘前单步长尾 "
+                f"(单步不可中断, 需 D4(c) 重活外移)",
+                async_mode=True,
+            )
+        except Exception:
+            pass
+        return True
 
     def _load_scheduler_params(self):
         """
@@ -2039,14 +2213,15 @@ class TradingScheduler:
             logger.debug(f"[LLM策略] scan 时间载入失败 (视为无记录): {_le}")
 
         while self.running:
-            try:
-                from app.observability.watchdog import get_watchdog
-                get_watchdog().ping("llm_strategy_loop")
-            except Exception:
-                pass
+            # D2(a): 结算上一轮护航 (停线程 + 落轮次耗时遥测) 再补心跳。原实现只有这一处 ping,
+            #   而单轮迭代实测 ~58min ≫ 阈值 600s → 误判 stale → heal 整服重启。
+            self._wd_close_round_heartbeat()
+            self._wd_ping()
             try:
                 phase = get_market_phase()
                 now = datetime.now(ET)
+                # D2(a): 非盘中阶段为本轮开"预算受限"的心跳护航; TRADING 阶段不护航 (紧检出)
+                self._wd_open_round_heartbeat(phase)
 
                 if phase == MarketPhase.TRADING:
                     # Catch-up: 盘前因重启/超时错过生成时的补救 (DB幂等, 已有指令则跳过)
@@ -2190,6 +2365,11 @@ class TradingScheduler:
 
                     # 2026-07-24 (用户裁决): 扩容补量 — 当日指令 < 目标下限时从流动性池走正式链补足.
                     #   函数内自带双窗口时间门(盘前08:45-09:30/盘中10:30-11:30 ET)/分窗幂等/开关, 此处无条件调用安全.
+                    # D4(a): 已跨开盘 → 跳过 (TRADING 分支有同名 catch-up, 幂等; 详见 _premarket_overrun)。
+                    #   诚实标注: 本步自带 08:45-09:30/10:30-11:30 ET 双窗口门, 跨开盘本就立即返回 →
+                    #   此守卫是**防御性**的 (窗口若被放宽仍护住入场), 不是今日实测的收益点。
+                    if self._premarket_overrun("topup_supplement"):
+                        continue
                     try:
                         from app.playbook.pipeline import run_playbook_topup_supplement
                         run_playbook_topup_supplement(self)
@@ -2197,6 +2377,9 @@ class TradingScheduler:
                         logger.warning(f"[LLM策略] playbook 补量异常 (已隔离): {_e}")
 
                     # 2026-07-17: 盘前波动率定桶落库 (DA/UE 直写指令补 vol_bucket/atr_pct 到主表)
+                    # D4(a): 本步实测最长 (09-03 达 31.4min, 逐标的 ATR) → 跨开盘必须让位给入场
+                    if self._premarket_overrun("normalize_vol_buckets"):
+                        continue
                     try:
                         from app.playbook.pipeline import run_playbook_normalize_vol_buckets
                         run_playbook_normalize_vol_buckets(self)
@@ -2204,6 +2387,8 @@ class TradingScheduler:
                         logger.warning(f"[LLM策略] playbook 盘前定桶异常 (已隔离): {_e}")
 
                     # 2026-07-11: 独立盘前指令推送 (不依赖生成内联, 持久化幂等+重试)
+                    if self._premarket_overrun("morning_push"):
+                        continue
                     try:
                         from app.playbook.pipeline import run_playbook_morning_push
                         run_playbook_morning_push(self)
@@ -2214,6 +2399,11 @@ class TradingScheduler:
                     # 蚂蚁API盘前拉8个美国核心宏观指标最新值/披露日, jsonl落库.
                     # 函数内自带时间窗口(06:00-09:29 ET)+每日幂等. record-only 不进决策.
                     # 回滚: macro_calendar.shadow_collect_enabled=false + 重启.
+                    # D4(a): 实测单次 26.7min (8 指标外部 API, 无逐指标日志), 但**窗口门在入口**
+                    #   (06:00-09:29 ET) → 跨开盘后本就立即返回, 此守卫同属防御性; 真正的风险是
+                    #   "09:29 前开始、跑过开盘"这一段, 单步内部不可中断 → 属 D4(c) 残余。
+                    if self._premarket_overrun("macro_calendar_shadow"):
+                        continue
                     try:
                         _mod_mc = self._load_script_module("macro_calendar_shadow_collect")
                         _mod_mc.run_collect(self, phase="PRE_MARKET")
@@ -2405,7 +2595,10 @@ class TradingScheduler:
                     if not self.running:
                         return
                     time.sleep(1)
-    
+
+        # D2(a): 循环退出 (停机) 时结算最后一轮护航 — 不留守护线程 (线程卫生)
+        self._wd_close_round_heartbeat()
+
     def _check_position_snapshot(self):
         """持仓快照任务 - 在 scheduler_triggers.py 中实现"""
         from .scheduler_triggers import check_position_snapshot

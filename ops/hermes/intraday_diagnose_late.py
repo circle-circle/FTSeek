@@ -199,6 +199,8 @@ regime = '?'
 regime_trigger = ''
 regime_rationale = ''
 regime_vix_zero = False
+regime_asof = ''
+regime_stale = False
 try:
     if os.path.exists(SIGNAL_DB_PATH):
         sdb = sqlite3.connect(SIGNAL_DB_PATH)
@@ -206,6 +208,14 @@ try:
         rh = sdb.execute('SELECT * FROM regime_history ORDER BY rowid DESC LIMIT 1').fetchone()
         if rh:
             d = dict(rh)
+            regime_asof = str(d.get('timestamp', ''))[:10]
+            # 2026-09-03 陈旧守卫: "最后一行" ≠ "现行 regime"。本表生产写者自 2026-07-29
+            #   起静默, 且清洗前 3044 行中 2504 行 (82.3%) 是 pytest 夹具 (SPY=550/450 ·
+            #   MA200=500 · VIX=15/22/27/28/40 — tests/strategy/
+            #   test_regime_strategy_integration.py 经 record_regime_change 直写生产库;
+            #   conftest 硬闸只拦 open/write_text, sqlite3.connect 是盲区, 已补缝)。
+            #   取最后一行当盘面播报 = 把测试夹具/上月旧值说成今日 regime。
+            regime_stale = (regime_asof != today)
             regime = f"{d.get('old_regime','?')}→{d.get('new_regime','?')}"
             regime_trigger = d.get('trigger', '')
             regime_rationale = d.get('rationale', '')
@@ -311,7 +321,11 @@ if trades:
 else:
     add(f"• 今日交易: 0笔")
 
-add(f"• 盘面: regime={regime} trigger={regime_trigger}, VIX={vix}({vix_src})")
+if regime_stale:
+    add(f"• 盘面: regime=无当日记录 (regime_history 最后一行 {regime_asof or '?'}: "
+        f"{regime} trigger={regime_trigger}), VIX={vix}({vix_src})")
+else:
+    add(f"• 盘面: regime={regime} trigger={regime_trigger}, VIX={vix}({vix_src})")
 if regime_vix_zero:
     add(f"  ⚠️ regime_history.vix=0.0 (数据未注入, rationale: {regime_rationale[:80]})")
 
@@ -333,6 +347,8 @@ if drawdown != '?' and float(drawdown) > 5:
     findings.append(f"回撤{drawdown}%超过5%")
 if regime_vix_zero:
     findings.append("regime_history vix/spy_price=0.0数据未注入")
+if regime_stale:
+    findings.append(f"regime_history 无当日生产记录 (最后一行 {regime_asof or '?'}) — 盘面 regime 不可用, 勿据旧值判市")
 if not svc_active:
     findings.append("⚠️ ftseek-us服务未运行!")
 if float(vix) > 25 if vix not in ('?', None) else False:

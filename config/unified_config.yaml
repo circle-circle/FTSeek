@@ -1204,7 +1204,19 @@ playbook:
     #   DA 的 invalidation 失效条件此前入场侧零消费 → thesis 已死但价格回到触发带的单
     #   照样成交. 核销后写 skip_reason='TRIPWIRE_INVALIDATED' (INVALIDATED_SKIP_REASONS).
     #   false = 只落审计 jsonl 不写库. 回滚: 改 false 或删 crontab 行.
-    tripwire_checker_enforce: true
+    # 2026-09-03 盘中止血 (用户裁"需要", DEB-20260903-intraday-chain-audit §三 D1):
+    #   true→false。实证 data/tripwire_checker.jsonl 674 行中 invalidated=11 条**全部 enforced**,
+    #   其中 5 条 (45%) 可逐条证伪为假失效 — ①成交量阈值是"倍数"语义却对比当日累计**股数**
+    #   (GEV `成交量>2.0(obs=3.89e+05)` 恒真) ②"翻红/站上VWAP"被模型写成 `收盘价>0.0` 退化阈值
+    #   (XLI/XLY/LLYVK 恒真) ③文本轨 OR 拆分后把**跨资产**阈值套到本股 (COIN 原文"若BTC跌破
+    #   $55000或COIN放量跌破$170" → `[HIT] 价格181.66 跌破阈值55000.0`)。根因=生产端
+    #   llm_universe_scan.py:107 契约逐 metric **单位从未声明** + 消费端 tripwire_checker.py:192
+    #   **无单位/退化值校验**(自称"宁漏不误杀"实为"宁误杀")= AGENT.md 军规(2026-09-02 量纲声明)同族。
+    #   关闭后: 判定照跑、审计 jsonl 照落 (enforced=false) → D1 守卫的影子样本继续攒;
+    #   代价=真失效也不再拦 (thesis 已死但价格回触发带的单会照样成交, 即本门 2026-08 上线前的原状)。
+    #   恢复条件: D1 消费端守卫 (成交量单位归一 + 退化/跨资产阈值跳过) 落地并 record-only 影子
+    #   ≥10 交易日、假失效率实测下降后, 再翻回 true。回滚本行: false→true (无需重启, cron 独立进程)。
+    tripwire_checker_enforce: false
     # ── Phase 0 reentry DEAD_SIGNAL 呼吸窗 (pipeline._check_playbook_exit_rules) ──
     #   reentry 仓额外加宽 DEAD_SIGNAL 出场宽限 (分钟). 120min 后仍 MFE<0.2% 照常出场.
     #   显式落键 (DEB 文档回滚路径依赖此键, 缺键则代码默认 60 无回滚入口).
@@ -1787,6 +1799,24 @@ scheduler:
   playbook_exit_fast_loop_enabled: true
   playbook_exit_fast_loop_interval_sec: 10
   scan_interval_minutes: 5
+  # ── Watchdog: llm_strategy_loop 心跳 (2026-09-03, DEB-20260903-intraday-chain-audit §四 D2) ──
+  #   病灶: 该循环原先只在每轮顶部 ping 一次, 而盘前/盘后单轮迭代实测 ~58min (数据采集链:
+  #   定桶逐标的 ATR / 宏观日历影子 / 富途通道影子全量拉取) ≫ 阈值 → 连报 stale → heal 整服
+  #   重启 (2026-08-22 04:30:44 CST 盘后轮 · 2026-09-03 21:31:38 CST=开盘后 90s, 36s 盲窗)。
+  #   近半月 llm_strategy_loop stale 告警 24 条 (盘前窗 12 / 盘后窗 12) = 复发病灶非偶发。
+  # 阈值 (原硬编码 600 → 配置化, **默认值不变**): heal 触发点 = 阈值 × 3 (watchdog
+  #   _heal_multiplier), 放宽阈值会把真卡死的整服重启延迟同步放大 3×, 故不建议单独调大;
+  #   误报由下面的"轮内护航"消除。改后需重启生效 (注册发生在启动期)。
+  watchdog_llm_loop_stale_sec: 600
+  # 轮内护航 (D2(a)): 非 TRADING 阶段的单轮迭代期间, 每 120s 代循环补一次心跳。
+  #   两重收敛防"永不检出": ①超 budget_sec 即停止补心跳 → 交回 watchdog 判定 (无脑定时 ping
+  #   会让真卡死变成静默死亡, 见 DEB-20260831-silent-death-hardening); ②轮次跨入 TRADING 立即
+  #   停止补心跳 + critical 告警 (盘前轮次跨开盘 = 入场执行被阻塞, 此时要 watchdog 权威)。
+  #   TRADING 阶段不护航 (入场执行在同一循环内, 卡死要紧检出+heal); 出场另有独立快循环
+  #   playbook_exit_loop (阈值 120s), 不受影响。budget 默认 2700s = 45min (实测最长静默单步
+  #   32min, 留 1.4× 余量)。回滚本项: watchdog_long_round_enabled=false + 重启 (恢复原行为)。
+  watchdog_long_round_enabled: true
+  watchdog_long_round_budget_sec: 2700
 service:
   api:
     external_url: http://39.97.58.4:8901

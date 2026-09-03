@@ -38,6 +38,57 @@ _DUP_GUARD_AUDITED: set = set()
 # pipeline_view TTL 缓存 (秒). 盘中数据每 5min 才变, 30s 缓存挡住高频轮询打 DB.
 _PV_TTL = 30
 
+# ── 本模块私有 MarketDataRouter 单例 (2026-09-03, DEB-20260903-intraday-chain-audit §五 D3(b)) ──
+# 病灶: 下单路径两处**每单** new MarketDataRouter() → 每单一条 OpenD 连接 + 一个 30s 健康守护
+#   线程; 守护线程 while True 无停止位且强引用 self → 实例与其 socket 永不回收 (实测 21:32 重启
+#   后 50min 内新建 17 次, 进程 32 socket / 73 线程, 且 09-02 全日 26 次)。
+# 本修法只把 "N 个实例" 收敛成 "1 个实例", 构造参数与原先逐字相同 (MarketDataRouter() 全默认)
+#   → 取价仍走**新建实例的快照路径** (get_market_snapshot, 带真 bid/ask), 报价口径零变更。
+# 为什么不用 market_data_router.get_market_data_router() 那个进程级共享单例: 共享实例是 scheduler
+#   注册的主 router, 监控池标的都在其 _subscribed_symbols 内 → get_quote 会走订阅/push 路径
+#   (futu_lv3_provider.py:824-851 get_stock_quote 无盘口, bid=ask=last 兜底; push 路径同)。
+#   换过去等于同时改 arrival price (滑点尺子) + P1 深跳空降仓探针 + 报价健康门严格度 → 行为变更,
+#   须按 C4 影子先行 + 宪章二.2 新旧基线切分另案处理 (DEB §五 (a))。本私有单例从不订阅任何标的,
+#   故 _subscribed_symbols 恒空 → 永远走快照路径, 与今日逐单新建同源同口径。
+# 为什么每次取价前清该 symbol 的报价缓存: 长生命周期实例会带 provider 侧缓存 (Futu 5s /
+#   Finnhub·TwelveData 300s), 而"每单新建"永远空缓存。不清就会在同一次下单内 (arrival price →
+#   成交价 quote 兜底, 确认窗最快 <5s 返回) 复用旧价, 给记账/滑点尺子引入无法归因的新鲜度差。
+#   清掉后与新建实例逐字等价 (总是新取一次)。缓存清空失败不影响取价 (fail-open)。
+_private_router = None
+_private_router_lock = threading.Lock()
+# provider 侧报价缓存键 (futu_lv3_provider.py:815 / finnhub_provider.py:215 / twelvedata_provider.py:271)
+_PRIVATE_ROUTER_QUOTE_CACHE_KEYS = ("quote:{sym}", "fh_quote_{sym}", "quote_{sym}")
+
+
+def _get_private_router():
+    """返回本模块私有 MarketDataRouter 单例 (懒创建, 双重检查锁)。"""
+    global _private_router
+    if _private_router is None:
+        with _private_router_lock:
+            if _private_router is None:
+                from app.data.market_data_router import MarketDataRouter
+                _private_router = MarketDataRouter()
+    return _private_router
+
+
+def _private_router_quote(symbol: str) -> Optional[Dict[str, Any]]:
+    """经私有单例取一次报价, 语义等同"每单新建 router" (不吃 provider 报价缓存)。"""
+    router = _get_private_router()
+    if router is None:
+        return None
+    for _prov_attr in ("futu", "fh", "td"):
+        _prov = getattr(router, _prov_attr, None)
+        _cache = getattr(_prov, "_cache", None)
+        if not isinstance(_cache, dict):
+            continue
+        _cache_time = getattr(_prov, "_cache_time", None)
+        for _key_tpl in _PRIVATE_ROUTER_QUOTE_CACHE_KEYS:
+            _key = _key_tpl.format(sym=symbol)
+            _cache.pop(_key, None)
+            if isinstance(_cache_time, dict):
+                _cache_time.pop(_key, None)
+    return router.get_quote(symbol)
+
 
 def _gap_dive_should_halve(direction: str, prev_close: float, today_open: float,
                            position_size: int, *, halve_pct: float = -3.0) -> bool:
@@ -1253,8 +1304,8 @@ class PlaybookService:
         _arrival_price = 0.0
         _arr_ctx = None
         try:
-            from app.data.market_data_router import MarketDataRouter as _MDR
-            _arr_ctx = _MDR().get_quote(symbol)
+            # D3(b): 私有单例取价 (原为每单 new MarketDataRouter() → OpenD 连接 + 守护线程泄漏)
+            _arr_ctx = _private_router_quote(symbol)
             if _arr_ctx:
                 _a_bid = float(_arr_ctx.get("lv3_bid") or _arr_ctx.get("bid") or 0)
                 _a_ask = float(_arr_ctx.get("lv3_ask") or _arr_ctx.get("ask") or 0)
@@ -1454,9 +1505,8 @@ class PlaybookService:
             # 2026-07-27: 加 _fill<=0 守卫 — 旧版无条件执行会把上面刚取得的真价覆盖回 ask 假价。
             if not _fill or _fill <= 0:
                 try:
-                    from app.data.market_data_router import MarketDataRouter
-                    _dr = MarketDataRouter()
-                    _ctx = _dr.get_quote(symbol)
+                    # D3(b): 同 arrival price 走私有单例, 不再每单新建 router
+                    _ctx = _private_router_quote(symbol)
                     if _ctx and _ctx.get("price", 0) > 0:
                         _cur = float(_ctx["price"])
                         _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
