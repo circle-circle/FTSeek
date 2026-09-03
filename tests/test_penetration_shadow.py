@@ -243,3 +243,106 @@ def test_shadow_board_section_registered():
     assert "_sec_penetration" in src
     idx = src.find("def build_board")
     assert "_sec_penetration" in src[idx:idx + 600], "段必须注册进 build_board"
+
+
+# ── 6. 写读契约 (2026-09-03 复盘批): 落盘行必须带 status, 否则研究环/看板结构性静默零 ──
+#    病灶: label_one 返回 {"status": "labeled", ...} 被 lab.pop("status") 摘掉后才 **lab 落盘,
+#    而三个消费端 (analysis.load_samples / shadow_board 段11 / 本脚本 v_recovery 汇总) 都按
+#    status=="labeled" 选行 → cron 照跑、jsonl 照长、看板照渲染, 但永远 0/20 不毕业。
+def _run_backfill(tmp_path, monkeypatch, *, pattern="v_at_3", with_event=True):
+    pob = _load_script("penetration_outcome_backfill")
+    # 文件名必须与生产一致 — shadow_board 段11 按 SHADOW_DIR/"penetration_shadow.jsonl" 读
+    shadow = tmp_path / "penetration_shadow.jsonl"
+    latest = tmp_path / "latest.json"
+    monkeypatch.setattr(pob, "SHADOW", shadow)
+    monkeypatch.setattr(pob, "OUT_LATEST", latest)
+    monkeypatch.setattr(pob, "load_bars", lambda s, d: _mk_bars(pattern=pattern))
+    monkeypatch.setattr(sys, "argv", ["x"])
+    if with_event:
+        shadow.write_text(json.dumps({
+            "type": "penetration", "event_id": "X-1", "et_date": "2026-09-02",
+            "et_hm": "14:58", "symbol": "US.DELL", "direction": "LONG", "side": "passive",
+            "path": "marketable_limit", "exit_reason": "SL_BREAKEVEN", "depth_bps": 20.0,
+            "floor_px": 100.0, "trigger_price": 99.8, "entry": 99.0,
+            "mfe_pct": 1.3, "giveback_bps": 30.0, "fresh_extreme": True,
+            "held_minutes": 6.4, "minutes_since_open": 18, "atr_pct": 2.0,
+        }) + "\n")
+    pob.main()
+    return pob, shadow, latest
+
+
+def test_labeled_outcome_row_carries_status(tmp_path, monkeypatch):
+    _, shadow, _ = _run_backfill(tmp_path, monkeypatch)
+    rows = [json.loads(l) for l in shadow.read_text().splitlines() if l.strip()]
+    oc = [r for r in rows if r.get("type") == "outcome"]
+    assert len(oc) == 1
+    assert oc[0].get("status") == "labeled", (
+        "落盘的 labeled 结局行必须自带 status — 三个消费端都按它选行")
+    assert oc[0].get("recovered_5m") is True
+
+
+def test_analysis_load_samples_sees_backfilled_rows(tmp_path, monkeypatch):
+    """写读配对: 回填一行 → 分析环 load_samples 必须看到 1 个可判分样本 (修复前恒 0)。"""
+    _, shadow, _ = _run_backfill(tmp_path, monkeypatch)
+    pla = _load_script("penetration_llm_analysis")
+    monkeypatch.setattr(pla, "SHADOW", shadow)
+    samples = pla.load_samples()
+    assert len(samples) == 1, "研究环永远 n=0 → n≥8 不调 LLM、n≥20 不毕业 = 环空转"
+    assert samples[0]["recovered_5m"] is True
+    assert "cf_floor_fill_saved_bps" in samples[0], "反事实地板节省必须进入判分样本 (值可为 null)"
+
+
+def test_shadow_board_section_counts_labeled_rows(tmp_path, monkeypatch):
+    """看板配对: 段11 攒样计数必须随行增长 (修复前恒 0/20 = 防遗忘看板自身在说谎)。"""
+    _, shadow, _ = _run_backfill(tmp_path, monkeypatch)
+    sb = _load_script("shadow_board")
+    monkeypatch.setattr(sb, "SHADOW_DIR", shadow.parent)
+    lines = sb._sec_penetration()
+    assert any("攒样: 1/20" in l for l in lines), lines
+
+
+def test_summary_v_recovery_not_structurally_zero(tmp_path, monkeypatch):
+    _, _, latest = _run_backfill(tmp_path, monkeypatch)
+    summary = json.loads(latest.read_text())["summary"]
+    assert summary["labeled"] == 1
+    assert summary["v_recovery_5m_this_run"] == 1, "汇总口径与落盘行同源, 不得结构性恒零"
+
+
+def test_backfill_heartbeat_creates_carrier(tmp_path, monkeypatch):
+    """载体心跳: 无事件也要保证 jsonl 存在 (稀有事件影子"无文件"≠"环死了")。"""
+    pob, shadow, latest = _run_backfill(tmp_path, monkeypatch, with_event=False)
+    assert shadow.exists(), "回填环每日 touch 载体 → 注册表产出核对面才有意义"
+    summary = json.loads(latest.read_text())["summary"]
+    assert summary["events_total"] == 0 and summary["written"] == 0
+    first_mtime = shadow.stat().st_mtime
+    import os
+    os.utime(shadow, (first_mtime - 86400, first_mtime - 86400))  # 模拟昨日心跳
+    monkeypatch.setattr(sys, "argv", ["x"])
+    pob.main()
+    assert shadow.stat().st_mtime > first_mtime - 86400, "每次跑必须推进 mtime (断流才可检)"
+
+
+def test_registry_entry_present_and_no_double_count(tmp_path):
+    """三登记之①: 注册表在册 (SSOT), 且计数口径不把 outcome 行重复计入样本量。"""
+    from app.playbook import shadow_registry as sr
+    item = next((s for s in sr.REGISTRY if s.id == "penetration_shadow"), None)
+    assert item is not None, "新影子必须注册 (注册表明文: 否则无人跟踪 = 等于没做)"
+    assert item.status == sr.ShadowStatus.OBSERVING
+    assert item.min_n == 20 and item.config_key == "llm_features.penetration_shadow.enabled"
+    assert item.eval_script == "scripts/penetration_llm_analysis.py"
+    assert item.count_mode == "where:type=penetration"
+    assert "B17" in item.graduation_criteria, "毕业判据必须指向判据字典条目"
+    p = tmp_path / "data" / "shadow" / "penetration_shadow.jsonl"   # _count_samples 以 base/data_path 拼
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join([
+        json.dumps({"type": "penetration", "event_id": "A", "et_date": "2026-09-03"}),
+        json.dumps({"type": "outcome", "event_id": "A", "status": "labeled"}),
+    ]) + "\n")
+    assert sr._count_samples(item, tmp_path) == 1, "1 事件 + 1 结局 = 1 个样本, 不是 2"
+
+
+def test_source_pins_status_kept_in_row():
+    src = (REPO / "scripts" / "penetration_outcome_backfill.py").read_text(encoding="utf-8")
+    assert 'lab.pop("status")' not in src, "pop 掉 status 会让三个消费端永远选到 0 行"
+    assert 'lab.get("status")' in src
+    assert "SHADOW.touch()" in src, "载体心跳不得被移除 (稀有事件影子的黄灯误报防线)"

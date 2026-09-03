@@ -197,3 +197,72 @@ flag 默认 on、shadow_board 段11 入 build_board、crontab 两行、看板/�
 若 jsonl 中出现同 symbol 同分钟多行, 建议分析层按 (symbol, et_date, et_hm) 去重取首行。
 ② 毕业门自动开 DEB 草稿由 cron 周六写 docs/debates/ — 双 Agent 环境下无冲突机制,
 文件名含日期无碰撞风险, 但草稿生效仍需用户裁决, 仅立案不实施, 风险可接受。
+
+## 十二、§八 验收判据可执行性核算 + 改判 (2026-09-03 复盘批, 用户令"确认问题存在无误后按建议做完整修复")
+
+**核算结论: §八 原判据不可执行 — 会在本世纪内一直"攒样中", 成为第二个悬置尺子。**
+
+| # | 事实 | 出处 |
+|---|------|------|
+| 1 | 被动侧只占 BE 类出场 **13/101** (8/17 起): active 88 笔 (均 +41.08, 合计 +3614.77) / passive 13 笔 (均 −5.76, 合计 −74.85) | `trade_records.metadata_json._be_close_telemetry.limit_side` 分组统计 |
+| 2 | 8/24→9/1 **九个交易日零 passive 事件**; 家族 5 案分布在 3 天 (8/18×1, 8/20×3, 9/2×1) ≈ 0.4 案/交易日 | 同上 + §二 证据 10 |
+| 3 | 要在 passive 侧检出 ~$20/案 的改善 (结局 sd 量级 $20-40) 需 n≈50+ → 按 0.4/日 ≈ **125 交易日** | 算术 |
+| 4 | 本日刚退役的 `DEB-20260903-trade-attribution-zombie-watch` 病灶正是"观察 2 周后定阈值"悬置 7 周未决 | 同 DEB §一 |
+
+**改判 (预注册, 2026-09-03 起, 窗内禁改; 与判据字典 B17 同源同文)** — 三层, 各层有自己的时钟:
+
+1. **机制判据 (逐事件即判, 不等 n)**: 被动侧击穿出场必须 0 次"3s 死等→撤单→市价";
+   成交滑点 ≤ pad(15bps) + 5bps 容差; `_be_close_telemetry.path=marketable_limit` 逐笔可查。
+   **回归红线**: 主动侧成交率/净结局不得回退 (证据 1 — 主动侧是利润引擎, 一行未动必须保持)。
+2. **预注册回滚线**: 前 10 笔被动侧 marketable 成交 **或 9/30 结算 (取先到)** —
+   若 ≥5 笔 `cf_floor_fill_saved_bps` > 垫成本 ∧ 中位节省 >20bps (即"等回摆"更优)
+   → 提请裁 `breakeven_passive_marketable_pad_bps=0` 回旧保本限价行为;
+   否则议题二转正, 家族基线 (−$19.7/案) 作废留痕。
+3. **毕业门 (慢环, 判别器研究)**: n_labeled≥20 ∧ 某假设 matched≥8 ∧ precision≥0.7
+   → 周六分析环自动开 DEB 草稿 + 推送呈裁 (仅立案, 写执行代码须用户裁)。
+   **本层不是议题二的前置** — 议题二按机制证据 (0/5 回摆成交) 独立生效。
+
+**§八 原文保留不删** (裁决留痕), 但其"被动侧净结局 vs 家族基线"一句自本日起按上述第 1/2 层执行。
+
+## 十三、§十 三件套实施核查: 一处 P0 写读契约断裂 (已修) + 三处登记补齐 (2026-09-03 复盘批)
+
+**P0 (已修, 修复先于任何生产标签)**: `penetration_outcome_backfill.py` 的 `label_one` 返回
+`{"status": "labeled", ...}`, 原写法 `st = lab.pop("status")` 把 status 摘掉后才 `**lab` 落盘
+→ 落盘的 labeled 结局行**没有 status 字段**, 而三个消费端都按 `type=="outcome" and
+status=="labeled"` 选行: ①`penetration_llm_analysis.load_samples` (判分/毕业门 n_labeled)
+②`shadow_board` 段11 (攒样看板 0/20) ③本脚本自己的 `v_recovery_5m_this_run` 汇总与逐行明细打印。
+后果 = **研究环与防遗忘看板结构性静默零**: cron 照跑、jsonl 照长、看板照渲染, 但永远 0/20 不毕业
+(与 AGENT.md 军规"常量退化"同类, 且恰是 §十 承诺的三级防遗忘全部失灵)。
+修: `lab.pop` → `lab.get` (status 随行落盘, outcome 行 status 口径统一为 labeled/no_bars_after)。
+钉死 7 例 (`tests/test_penetration_shadow.py` 第 6 组): writer↔analysis↔board 三方写读配对、
+汇总非结构性零、载体心跳、注册表计数不双计、源级禁 `pop("status")`。全文件 23 passed。
+
+**三登记补齐 (§十 承诺"防散落"但落地时三处全缺, 属 DEB-20260901 §十一 严令禁止的游离观察)**:
+- ①注册表: `app/playbook/shadow_registry.py` 新增 `penetration_shadow` (OBSERVING, min_n=20,
+  config_key=`llm_features.penetration_shadow.enabled`, eval_script=分析环,
+  **count_mode=`where:type=penetration`** — 每事件 1 行 penetration + ≤1 行 outcome,
+  用默认 `lines` 会把样本量双倍计数, 20 例门变 10 例真样)。`check_mounting()` 实测 0 告警。
+- ②判据字典: 新增 **B17** (即 §十二 三层判据 + 基率诚实披露)。
+- ③控制环路台账: §2.3 挂 `crontab-pen-backfill` (5 6 * * 2-6) / §2.4 挂 `crontab-pen-analysis`
+  (30 7 * * 6), 首列沿 `crontab-<名>` 先例并写明载体脚本路径。
+- **顺带闭合守卫盲区**: `tests/test_control_loop_ledger.py` 原先只核 Hermes `jobs.json`,
+  系统 crontab 无守卫 — 实测 68 个被 crontab 调用的仓内脚本仅 2 个在台账, 穿透两环挂 cron 时
+  零拦截即首例实证。现加棘轮: 存量 64 个锁 `docs/references/crontab-loop-baseline.txt`
+  (带理由, 反向核对陈旧豁免), 新增环路必须入台账或显式加基线; 台账 §5 G4 与 §6.1 同步注记。
+  存量 1:1 回填属专项 (REVIEW-20260903 §五 建议④), 不在本批。
+
+**载体心跳 (稀有事件影子的黄灯误报防线)**: 穿透是稀有事件 (证据 2), "文件不存在"与"当期无事件"
+对注册表产出核对长得一模一样 → 初生豁免期 (10 天) 过后必误报黄灯。回填 cron 每日 `SHADOW.touch()`
+→ 此后 mtime 新鲜度 = 回填环活着 (断流 >14 天即告), 行数 = 样本量, 样本新鲜度看行内 `et_date`。
+
+**cohort 注记 (判分口径)**: 9/3 起全部样本均为议题二 marketable 生效后 (post-fix cohort),
+旧"被动限价死等"行为无实时样本 — 判别器研究因此**不能**用实时样本回答"该不该等", 只能审计
+"不等"的代价 (`cf_floor_fill_saved_bps`), 这与 §十二 第 2 层回滚线正好同源。历史 13 条 passive
+事件可由 `trade_records._be_close_telemetry` + `data/replay_bars` (1793 文件) 重建, 但须打
+`reconstructed=true` 并与实时行分段判分 — **属另案, 本 DEB 不做** (见 REVIEW-20260903 §五 建议③)。
+
+**仍挂账 (未做)**: ①$18.40 分量 (20s 轮询间隙击穿) 只有方案D 事件驱动退出能治 — 建议列为
+10 月首项, 由本影子的 `depth_bps`/`continued_bps_10m` 分布提供设计输入; ②议题一修尺子后
+`n_chase_cap_violated` 口径断裂 (违例计数会上升, 因升级违例不再被吞) — DEB-20260901 Phase C
+判分时须按 9/3 前后分段, 不得解读为"违例变多"; ③Phase C 现 n=16/20, 预计 1-2 交易日达标,
+建议提前备好裁决包 (取数脚本 + 三判据实算), 达标当天即可裁。

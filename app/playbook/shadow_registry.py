@@ -605,6 +605,43 @@ REGISTRY: list[ShadowItem] = [
         notes="计数口径同 gap_chase_gate (DB 内标记, 注册表不计数, eval 现算); "
               "脚本自带 MarketDataRouter 拉日K, 盘后任意时点可跑",
     ),
+
+    # ── DEB-20260903 议题二后续 (2026-09-03 用户裁"A") — 三登记之①注册表本体;
+    #    判据落字典 B17, 两条环路落控制环路台账 §2.3/§2.4 (2026-09-03 复盘批补齐,
+    #    缘起: 落地时三处登记全缺 = DEB-20260901 §十一 严令禁止的游离观察) ──
+    ShadowItem(
+        id="penetration_shadow",
+        name="保本线穿透判别器 (快跌 vs V回)",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20260903 §十: 净保本类出场 (SL_BREAKEVEN/SL_TRAIL_LOCK/"
+                    "PATIENT_EXIT_FILL) 触发瞬间采集判别特征 (穿透深度bps/自峰回吐/"
+                    "是否刷新低/持仓时长/开盘以来分钟/ATR归一/侧/路径/quote_src), "
+                    "次晨用离场后 1 分 bar 回填 recovered_1/3/5/10m + continued_bps_10m "
+                    "+ cf_floor_fill_saved_bps; 周频 LLM 出题 + 确定性 replay 全样本判卷。"
+                    "record-only 零交易行为变更 — 议题二 marketable limit 已独立生效, "
+                    "本影子是它的审计尺, 不是它的开关。",
+        data_path="data/shadow/penetration_shadow.jsonl",
+        config_key="llm_features.penetration_shadow.enabled",
+        min_n=20,
+        graduation_criteria="判据字典 B17: n_labeled≥20 ∧ 某假设 matched≥8 ∧ precision≥0.7 "
+                            "→ 自动开 DEB 草稿 + 推送呈裁 (仅立案, 写执行代码须用户裁); "
+                            "议题二机制判据 (死等秒数=0 / 撤单转市价=0 / 成交滑点≤pad+容差) "
+                            "逐事件即判, 不等 n; 回滚线见 DEB-20260903 §十二。",
+        eval_script="scripts/penetration_llm_analysis.py",
+        created="2026-09-03",
+        notes="count_mode=where:type=penetration — 计采集事件数 (每事件 1 行 penetration "
+              "+ ≤1 行 outcome, 用 lines 会双倍计数); 判分口径是已回填配对 n_labeled "
+              "(analysis 脚本), 比本计数滞后 ≤1 夜。基率诚实披露: 家族 5 案/12 交易日 "
+              "(8/18×1, 8/20×3, 9/2×1) 且 8/21→9/1 零案 → n≥8 首调 LLM 约需 19-80 交易日, "
+              "n≥20 约 48+ 交易日; 本项是慢环, 不得当作议题二的判分前置。载体心跳: "
+              "回填 cron 每日 touch jsonl → mtime 新鲜度=回填环活着 (断流>14天告), "
+              "行数=样本量, 样本新鲜度看行内 et_date (看板段11 已按 et_date 分窗)。"
+              "cohort 注记: 9/3 起样本全为议题二 marketable 生效后 (post-fix cohort), "
+              "旧被动限价行为无实时样本 — 历史 13 条 passive 事件可由 trade_records "
+              "._be_close_telemetry + data/replay_bars 重建 (须打 reconstructed=true 并与"
+              "实时行分段判分, 属另案, 见 REVIEW-20260903 §五)。",
+        count_mode="where:type=penetration",
+    ),
 ]
 
 

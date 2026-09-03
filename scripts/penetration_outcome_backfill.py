@@ -124,6 +124,17 @@ def main():
     ap.add_argument("--date", default="", help="只回填该 et_date (缺省=全部未回填事件)")
     args = ap.parse_args()
 
+    # 载体心跳 (2026-09-03 复盘批): 穿透是稀有事件 (家族 5 案/12 交易日, 8/21→9/1 零案),
+    #   "文件不存在"与"当期无事件"对注册表产出核对长得一模一样 → 初生豁免期 (10 天) 过后
+    #   必误报黄灯 (黄灯永悬正是 DEB-20260903-trade-attribution-zombie-watch 退役的那类)。
+    #   回填环每日跑, 由它保证载体存在并推进 mtime: 此后 mtime 新鲜度 = 回填环活着
+    #   (断流 >_STALE_DAYS 即告), 行数 = 样本量, 样本新鲜度看行内 et_date。
+    try:
+        SHADOW.parent.mkdir(parents=True, exist_ok=True)
+        SHADOW.touch()
+    except Exception as e:
+        print(f"WARNING: 载体心跳失败 (不影响回填): {e}")
+
     events, done = load_events()
     todo = [e for e in events
             if e.get("event_id") not in done
@@ -137,7 +148,13 @@ def main():
             stats["no_bars"] += 1
             continue  # 不落 outcome → 下次自愈重试
         lab = label_one(ev, bars)
-        st = lab.pop("status")
+        # status 必须留在落盘行内 (2026-09-03 复盘批 P0 修): 三个消费端都按
+        #   `type=="outcome" and status=="labeled"` 选行 — penetration_llm_analysis
+        #   .load_samples (判分/毕业门 n_labeled)、shadow_board 段11 (攒样看板)、
+        #   以及本脚本的 v_recovery_5m_this_run 汇总与逐行明细打印。
+        #   原写法 pop 掉 status 再 **lab 落盘 → 三处永远选到 0 行: 研究环与看板
+        #   结构性静默零 (cron 照跑/jsonl 照长/看板照渲染, 但永远 0/20 不毕业)。
+        st = lab.get("status")
         if st != "labeled":
             stats[st if st in stats else "bad"] += 1
             if st == "no_bars_after":
