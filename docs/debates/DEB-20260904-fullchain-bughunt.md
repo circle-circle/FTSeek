@@ -1751,3 +1751,19 @@ L981: - .env.us.bak.before-key-unify · 4KB · 2026-07-02`
 
 **.py 改动需重启生效, 本批未重启服务、未提交 git。**
 
+
+---
+勘误 (2026-09-04 重启+提交 75096779 后, 用户追问"#S1 在走 playbook 还是被禁用的主线"触发的活性核查):
+
+**#S1 行为变更披露更正 — 实际生产影响为零, 此前"LONG 入场变严"的披露不成立。** 四层证据链:
+1. 门禁所在 `_check_gates_and_conflicts` (order_executor.py:1676) 唯一调用方 = `_submit_order_inner:3937`;
+2. `_submit_order` 入口硬开关 (order_executor.py:3338-3346, 2026-07-02 冻结期): source_type ∉ {PLAYBOOK_SIM, PLAYBOOK_LIVE, ORB_ENGINE} 一律拦截返回 None, 而**全仓无任何生产调用方传入这三个 source_type** (PLAYBOOK_SIM 字样仅出现在 position_sync 归因与 playbook/pipeline 查询中);
+3. Playbook 实际下单走 `playbook_service._execute_via_dual_broker` 直连 `ctx.place_order`, 不经 order_executor (playbook_service.py:892-893 注释实锤);
+4. ORB 引擎用自有 `_submit_order` 方法 (orb/engine.py:2212), 同样不经 order_executor; 另有第一层冻结 signal_pipeline.py:182 `_skip_execution_in_trading=True` 无条件设置 (scan_loop 仅做信号研究/IC 采集, 不下单)。
+→ 主线 LONG 门 (strength≥50∧confidence≥0.6) 恢复生效只发生在冻结代码内, 今晚开盘 LONG 入场行为与修复前逐字节一致。修复保留 (str-Enum 正确性, 防御未来解冻/复用), 但**不构成行为变更, 无需用户裁决回退**。
+
+**同核查顺带定性本批 order_executor 其余三项的活性**: #155 (反手 _safe_rev ×2, `_close_short_for_long`/`_close_long_for_short` 仅在 _check_gates_and_conflicts:2015/2026 内被调) 与 #153 (`_record_execution_metrics`, 仅在 `_submit_order_optimized`←`_execute_long` 内被调) 同属**冻结主线**, 生产零影响; #152 (`manual_unblock` 持锁) 操作的 `_close_retry_state` 是**活的平仓重试共享结构** (position_monitor→_close_position 路径在用), 但 manual_unblock 入口当前无 dashboard 路由 (仅人工/测试可达), 修复属活结构上的防御性正确性。
+**本批其余修复均在活链路**: 活交易链=playbook 唯一下单管线 + ORB 辅线 (RFC-075) + web_dashboard 人工单执行器 (#203/TP守卫/#197 在此); 活支撑链=review 簇 (#211/#212/#218/#219/#220) · news_v2 (#164/#165) · agent_bridge/Hermes (#159/#160) · reports (#205/#206/#207) · scheduler (#149) · storage (#148) · ORB (#174) · config (#138) · ops (#139/#141)。决策/策略/factors 各模块虽不直接下单, 但由 scan_loop 驱动做信号研究与 IC 采集, 属活的研究链而非禁用模块。
+
+---
+勘误② (2026-09-04, 用户指正"ORB 目前也已经禁用没有在使用", 核实成立): 上一段勘误中"活交易链=…+ ORB 辅线 (RFC-075)"的定性**错误**。实证: `config/unified_config.yaml:910 orb.enabled: false` → scheduler_core.py:688-693 仅当 enabled 才构造 orb_engine (生产恒 None) → `if self.orb_engine: orb_engine.start()` 从未执行; 主服务日志 ftseek_us.log 全文件 `ORB` 出现 **0 次** (启动段亦无) — 双线互证 ORB 为禁用模块。订正分类: **#169 (r_multiple 量纲) / #170 (range 重建条件) / #171 (rolling range 失效旧值) / #173 (scheduler 注入) / #174 (单例晚绑定推广) 共 5 项属禁用模块内修复, 生产零影响** (保留仅为模块正确性, 防未来启用时带病复活; order_executor 白名单中的 ORB_ENGINE 同理为 vestigial)。本批修订后的活性总账: **冻结主线 4 处 (#S1/#155×2/#153) + 禁用 ORB 5 项 (#169-#171/#173/#174) = 9 处生产零影响**; #152 活结构 manual-only 入口; 其余全部在活链路 (playbook 交易链 / web_dashboard 人工单 / review / news_v2 / llm·Hermes / reports / scheduler / storage / config / ops / scan_loop 信号研究链)。
