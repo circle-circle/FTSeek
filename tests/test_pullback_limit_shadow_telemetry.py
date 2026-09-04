@@ -42,7 +42,9 @@ def test_chase_cap_telemetry_uses_parse_raw_semantics():
     assert idx > 0, "chase_cap 遥测异常兜底日志必须存在"
     # 窗口 2500→4200 (2026-09-03): DEB-20260903 议题一把 warning 移出去重门 +
     #   留痕注释, 块体变长, parse_raw_semantics 仍在同块内更上游.
-    block = s[max(0, idx - 4200):idx]
+    # 窗口 4200→6500 (2026-09-04): P0-A enforce 分支 (终态跳过三件套) 嵌入
+    #   遥测写盘之后, 块体再次变长.
+    block = s[max(0, idx - 6500):idx]
     assert "parse_raw_semantics" in block, (
         "chase_cap 遥测块必须用 parse_raw_semantics 解析 (dict 兼容)"
     )

@@ -2123,6 +2123,17 @@ def cmd_inject(force_dry: bool = False) -> int:
             "model_used": _scan_model,  # 2026-08-03 任务#3: UE 指令模型归因 (scan 记录级)
             "raw_instruction": {
                 "source": STRATEGY_ID,  # universe_expansion — 报表侧切分 DA vs 本源
+                # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"] chase_cap 禁追线:
+                #   UE 指令此前无此字段 → pipeline chase_cap 遥测/enforce 对 UE 双盲
+                #   (9/4 USAR 盘前追价 +2.16% 入场, 8 分钟 SL_INITIAL -$158 实锤)。
+                #   取值=入场带顺势沿: LONG 取 entry_high / SHORT 取 entry_low
+                #   (compute_entry_band 的 CHASE_ZONE_PCT=5% 沿, 即系统自声明的
+                #   "顺势最大追入幅度" — 语义=越过入场带=追出被分析的区间)。
+                #   与 DA 的 LLM 声明式禁追线同顶层键位、同消费端
+                #   (parse_raw_semantics / pipeline chase_cap 块), 无需下游改动。
+                #   诚实边界: 带内追价 (如 USAR +2.16%) 不违例 — 该档病灶由
+                #   月报 D2/D3 裁决项覆盖, 本字段管的是"追出带外"的极端段。
+                "chase_cap_price": entry_high if pb_direction == "BUY" else entry_low,
                 "prompt_version": PROMPT_VERSION,
                 # [U1] 内容指纹随指令落库 (raw_instruction_json 内)
                 "prompt_hash": PROMPT_HASH_V2,

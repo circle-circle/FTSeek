@@ -4211,46 +4211,75 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         # ── [DEB-20260901 Phase B] chase_cap 违例遥测 (record-only) ──
                         # DA 写明"禁止在$X以上追涨"但 re-price 把入场位顶过禁追线 →
                         #   语义倒挂实锤采样。Phase B 仅记录不拦截; Phase C 才谈阻断。
+                        # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"]:
+                        #   chase_cap_enforce_enabled=true 时违例指令终态跳过 (见块尾)。
                         try:
                             # 2026-09-01 修复: raw_instruction_json 经 db._row_to_dict
                             #   已是 dict, json.loads(dict) 抛 TypeError (当日每轮刷屏)。
                             #   parse_raw_semantics 天然兼容 str|dict。
-                            from app.playbook.entry_routing import parse_raw_semantics
+                            from app.playbook.entry_routing import (
+                                parse_raw_semantics,
+                                chase_cap_violated as _cc_violated,
+                                chase_cap_enforce_enabled as _cc_enforce_f,
+                            )
                             _sem_cc = parse_raw_semantics(inst.get("raw_instruction_json"))
                             _cc_f = _sem_cc["chase_cap_price"]
-                            if _cc_f:
-                                _viol = (_new_entry > _cc_f) if _dir == "BUY" else (_new_entry < _cc_f)
-                                if _viol:
-                                    from pathlib import Path as _Pcc
-                                    from datetime import datetime as _dtcc
-                                    _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
-                                    # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
-                                    #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
-                                    #   去重门静默吞没, 而 n_chase_cap_violated 是 Phase C 裁决证据列,
-                                    #   系统性少记=尺子偏向"违例罕见"); jsonl 行按 (inst_id, 值) 去重 —
-                                    #   同值重报不刷屏, 更差 reprice 记新行。行 type 保持
-                                    #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
+                            _cc_enforce = _cc_enforce_f()
+                            if _cc_violated(_dir, _new_entry, _cc_f):
+                                from pathlib import Path as _Pcc
+                                from datetime import datetime as _dtcc
+                                _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+                                # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
+                                #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
+                                #   去重门静默吞没, 而 n_chase_cap_violated 是 Phase C 裁决证据列,
+                                #   系统性少记=尺子偏向"违例罕见"); jsonl 行按 (inst_id, 值) 去重 —
+                                #   同值重报不刷屏, 更差 reprice 记新行。行 type 保持
+                                #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
+                                logger.warning(
+                                    f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
+                                    f"越过禁追线 ${_cc_f:.2f} (enforce={'ON' if _cc_enforce else 'OFF'})")
+                                _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
+                                if _cc_claim is not None:
+                                    _row_cc = {
+                                        "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
+                                        "date": _today_et_str(), "schema": "v1",
+                                        "type": "chase_cap_violation",
+                                        "inst_id": inst.get("id"),
+                                        "decision_id": inst.get("decision_id"),
+                                        "symbol": inst.get("symbol"), "direction": _dir,
+                                        "entry_archetype": _sem_cc["entry_archetype"],
+                                        "chase_cap_price": _cc_f,
+                                        "repriced_entry": round(_new_entry, 4),
+                                        # P0-A: 行级标记违例时 enforce 是否生效 —
+                                        #   replay/月报可区分"记录期违例"与"拦截期违例"。
+                                        "enforced": bool(_cc_enforce),
+                                    }
+                                    _cc_path.parent.mkdir(parents=True, exist_ok=True)
+                                    with open(_cc_path, "a", encoding="utf-8") as _f_cc:
+                                        _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
+                                    # DEB-20260904 #175: 写盘成功后才提交键
+                                    _shadow_dedup_commit(_cc_claim)
+                                # ── P0-A enforce: 终态跳过 ──
+                                # 位置纪律: 在遥测写盘之后 (证据先落) 且在去重门之外
+                                #   (enforce 不被同值去重吞掉; 首违即终态, 本就无第二次)。
+                                # skip_reason 非空 → 触发头检/auto_execute 双保险不再捞起。
+                                if _cc_enforce:
+                                    db.update_instruction_tracking(inst["id"], {
+                                        "skip_reason": (
+                                            f"chase_cap_enforced(reprice={round(_new_entry, 2)},"
+                                            f"cap={_cc_f})")})
+                                    _emit_exec_gate_audit(
+                                        inst, action="skipped_chase_cap",
+                                        entry=_new_entry, size=inst.get("position_size") or 0,
+                                        notional=0.0,
+                                        extra={"chase_cap_price": _cc_f,
+                                               "repriced_entry": round(_new_entry, 4)})
                                     logger.warning(
-                                        f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
-                                        f"越过禁追线 ${_cc_f:.2f} (DEB-20260901 Phase B record-only, 不拦截)")
-                                    _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
-                                    if _cc_claim is not None:
-                                        _row_cc = {
-                                            "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
-                                            "date": _today_et_str(), "schema": "v1",
-                                            "type": "chase_cap_violation",
-                                            "inst_id": inst.get("id"),
-                                            "decision_id": inst.get("decision_id"),
-                                            "symbol": inst.get("symbol"), "direction": _dir,
-                                            "entry_archetype": _sem_cc["entry_archetype"],
-                                            "chase_cap_price": _cc_f,
-                                            "repriced_entry": round(_new_entry, 4),
-                                        }
-                                        _cc_path.parent.mkdir(parents=True, exist_ok=True)
-                                        with open(_cc_path, "a", encoding="utf-8") as _f_cc:
-                                            _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
-                                        # DEB-20260904 #175: 写盘成功后才提交键
-                                        _shadow_dedup_commit(_cc_claim)
+                                        f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
+                                        f"re-price=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
+                                        f"→ 终态跳过 (P0-A enforce)")
+                                    skipped_count += 1
+                                    continue
                         except Exception as _cc_err:
                             logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
 

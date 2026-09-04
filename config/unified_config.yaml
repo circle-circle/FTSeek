@@ -1324,6 +1324,14 @@ playbook:
   #   次日由 scripts/cf_pullback_limit_replay.py 重放判 would-fill/CF-PnL;
   #   chase_cap 违例 (re-price 越过禁追线) 同文件分行遥测。回滚: 置 false + 重启。
   pullback_limit_shadow_enabled: true
+  # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"] chase_cap 违例终态拦截。
+  #   语义修复非新策略: DA 指令自带"禁追线"(chase_cap_price) 但 9/3 实测 8/12 笔带 cap
+  #   指令被 re-price 顶破仍市价成交; 本开关=true 使违例指令终态跳过不下单, 遥测行
+  #   带 enforced=true 标记。UE 指令同日起自带 chase_cap_price (入场带顺势沿)
+  #   → DA/UE 同闸。证据: 近30天 mfe≈0 入场即错桶 32 笔 -$3389.71 (84% 在 09-10 ET
+  #   追高时窗)。入场侧核销门, 不触退出参数 (exit 哈希不变)。
+  #   回滚: 置 false (热重载即生效, 免重启; 违例退回 record-only 遥测)。
+  chase_cap_enforce_enabled: true
   # [DEB-20260901 选项1② 弹药先行 · ADR-035] 入场 archetype 路由开关 (默认关闭)。
   #   true = PULLBACK_LIMIT/FADE_SHORT 指令以确认位限价单+TTL撤单入场 (不成交=放弃,
   #   零市价追单, 消除"低吸变追高"机制根因); BREAKOUT/无 archetype 指令不受影响。

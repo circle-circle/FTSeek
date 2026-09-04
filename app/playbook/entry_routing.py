@@ -98,6 +98,40 @@ def parse_raw_semantics(raw_instruction_json: Any) -> Dict[str, Any]:
     return {"entry_archetype": arch, "confirmation": conf, "chase_cap_price": cap}
 
 
+def chase_cap_violated(direction: str, price: float, cap: Optional[float]) -> bool:
+    """方向感知禁追线违例判定。纯函数。
+
+    BUY  : price > cap 即追高违例 (禁追线=价格上限)。
+    SHORT: price < cap 即追空违例 (禁追线=价格下限, 低卖=更差的空头入场)。
+    cap 缺失/非正数/价格非正数 → False (不判, 与无 cap 指令现状行为一致)。
+    """
+    try:
+        p = float(price)
+        c = float(cap)
+    except (TypeError, ValueError):
+        return False
+    if p <= 0 or c <= 0:
+        return False
+    return (p > c) if str(direction).upper() == "BUY" else (p < c)
+
+
+def chase_cap_enforce_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """chase_cap enforce 开关 (默认 false)。每轮读取 → 改 yaml 热重载即回滚。
+
+    [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"] 违例从 record-only
+    遥测升级为终态跳过; 同批 UE 指令补 chase_cap_price 字段 (此前 UE 通道
+    无禁追线, 9/4 USAR 盘前追价 +2.16% 入场 8 分钟 SL_INITIAL -$158)。
+    """
+    if isinstance(cfg, dict) and "chase_cap_enforce_enabled" in cfg:
+        return bool(cfg.get("chase_cap_enforce_enabled", False))
+    try:
+        from app.core.config_container import get_config
+        return bool(get_config().get_dotted(
+            "playbook.chase_cap_enforce_enabled", False))
+    except Exception:
+        return False
+
+
 def resolve_route(raw_instruction_json: Any, direction: str,
                   market_price: float,
                   cfg: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
