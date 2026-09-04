@@ -194,36 +194,45 @@ try:
 except Exception:
     pass
 
-# 6. Regime (from signal_snapshots.db)
+# 6. Regime — 活源: market_regime.py 日志 "[Regime] Assessment" 行 (~5分钟一次, 直接驱动仓位乘数)
+# 2026-09-05 根因核查后弃用 regime_history 表: 唯一写者是旧链
+#   signal_stage._get_regime_verdict → evaluate_regime_with_hysteresis → record_regime_change,
+#   playbook 化后该链停跑 (8/23-9/5 全部轮转日志 RegimeHysteresis=0 行), 最后一行永远停在
+#   2026-07-29 且 vix/spy=0.0; 生产代码零读者 (仅本诊断在读) → 死表, 两条常驻告警均为误报。
 regime = '?'
-regime_trigger = ''
-regime_rationale = ''
-regime_vix_zero = False
-regime_asof = ''
-regime_stale = False
+regime_detail = ''
+regime_stale = True
 try:
-    if os.path.exists(SIGNAL_DB_PATH):
-        sdb = sqlite3.connect(SIGNAL_DB_PATH)
-        sdb.row_factory = sqlite3.Row
-        rh = sdb.execute('SELECT * FROM regime_history ORDER BY rowid DESC LIMIT 1').fetchone()
-        if rh:
-            d = dict(rh)
-            regime_asof = str(d.get('timestamp', ''))[:10]
-            # 2026-09-03 陈旧守卫: "最后一行" ≠ "现行 regime"。本表生产写者自 2026-07-29
-            #   起静默, 且清洗前 3044 行中 2504 行 (82.3%) 是 pytest 夹具 (SPY=550/450 ·
-            #   MA200=500 · VIX=15/22/27/28/40 — tests/strategy/
-            #   test_regime_strategy_integration.py 经 record_regime_change 直写生产库;
-            #   conftest 硬闸只拦 open/write_text, sqlite3.connect 是盲区, 已补缝)。
-            #   取最后一行当盘面播报 = 把测试夹具/上月旧值说成今日 regime。
-            regime_stale = (regime_asof != today)
-            regime = f"{d.get('old_regime','?')}→{d.get('new_regime','?')}"
-            regime_trigger = d.get('trigger', '')
-            regime_rationale = d.get('rationale', '')
-            if d.get('vix', 0) == 0:
-                regime_vix_zero = True
-        sdb.close()
+    import re as _re
+    _ass_pat = _re.compile(
+        r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*\[Regime\] Assessment: (\w+) (\([^)]*\)) \| (.*?) \| VIX=([\d.]+)')
+    _line = None
+    _now_cst = datetime.now()  # 服务器= CST, 日志时间戳同
+    # 先查活日志, 再查当日 CST 轮转件 (轮转后头几分钟活日志可能还没有 Assessment)
+    for _lf in (LOG_PATH, LOG_PATH + '-' + _now_cst.strftime('%Y%m%d')):
+        if not os.path.exists(_lf):
+            continue
+        try:
+            _p = subprocess.run(['grep', '-aF', '[Regime] Assessment', _lf],
+                                capture_output=True, text=True, timeout=15)
+            _tail = _p.stdout.strip().splitlines()
+            if _tail:
+                _line = _tail[-1]
+                break
+        except Exception:
+            pass
+    if _line:
+        _m = _ass_pat.search(_line)
+        if _m:
+            _ts_s, regime, _score, _spy_part, _vix_log = _m.groups()
+            regime_detail = f"{_score} {_spy_part.strip()} VIX={_vix_log}"
+            try:
+                _age = (_now_cst - datetime.strptime(_ts_s, '%Y-%m-%d %H:%M:%S')).total_seconds()
+                regime_stale = _age > 20 * 60
+            except Exception:
+                regime_stale = True
 except Exception:
-    pass
+    regime_stale = True
 
 # 7. Today's signal snapshots
 sig_count = 0
@@ -322,12 +331,9 @@ else:
     add(f"• 今日交易: 0笔")
 
 if regime_stale:
-    add(f"• 盘面: regime=无当日记录 (regime_history 最后一行 {regime_asof or '?'}: "
-        f"{regime} trigger={regime_trigger}), VIX={vix}({vix_src})")
+    add(f"• 盘面: ⚠️ regime 实时评估缺失/陈旧 (market_regime Assessment 超20分钟未见), VIX={vix}({vix_src})")
 else:
-    add(f"• 盘面: regime={regime} trigger={regime_trigger}, VIX={vix}({vix_src})")
-if regime_vix_zero:
-    add(f"  ⚠️ regime_history.vix=0.0 (数据未注入, rationale: {regime_rationale[:80]})")
+    add(f"• 盘面: regime={regime} {regime_detail}, VIX={vix}({vix_src})")
 
 add(f"• 信号: 今日{sig_count}条 snapshots")
 if sig_top:
@@ -345,10 +351,8 @@ if total_pnl < 0:
     findings.append(f"今日PnL为负(${total_pnl:.2f}), 关注大亏交易")
 if drawdown != '?' and float(drawdown) > 5:
     findings.append(f"回撤{drawdown}%超过5%")
-if regime_vix_zero:
-    findings.append("regime_history vix/spy_price=0.0数据未注入")
 if regime_stale:
-    findings.append(f"regime_history 无当日生产记录 (最后一行 {regime_asof or '?'}) — 盘面 regime 不可用, 勿据旧值判市")
+    findings.append("regime 实时评估缺失/陈旧 (market_regime Assessment 超20分钟未见) — 盘面判定可能失准")
 if not svc_active:
     findings.append("⚠️ ftseek-us服务未运行!")
 if float(vix) > 25 if vix not in ('?', None) else False:
