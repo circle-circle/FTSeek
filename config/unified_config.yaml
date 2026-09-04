@@ -1901,6 +1901,10 @@ universe_expansion:
   short_boost_shadow: true
   prompt_version: v2
   clue_hard_events: true
+  # RFC-076 (2026-09-04): FRED 宏观新披露线索段。生产方: scripts/ue_macro_brief_collect.py
+  #   (cron 21:05 CST, EDT 期=09:05 ET, 在 08:30 ET 宏观发布后)。文件缺失/无新披露=空段。
+  #   ⚠️ EST 切换后 21:05 CST=08:05 ET 早于发布, 需重评时点。回滚: false 或删 cron 行。
+  clue_macro_brief: true
   clue_earnings_events: true
   clue_insider_clusters: true
   clue_event_symbols: true

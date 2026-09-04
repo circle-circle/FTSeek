@@ -937,6 +937,23 @@ def _gather_event_symbols_file() -> List[str]:
         return []
 
 
+def _gather_macro_brief() -> List[str]:
+    """[RFC-076] 读当日宏观披露 brief (data/ue_macro_brief_{ET}.json)。
+
+    生产方: scripts/ue_macro_brief_collect.py (cron 21:05 CST, FRED 新披露派生)。
+    无文件/无新披露 → [] (静默降级, 与既有线索源同构)。"""
+    try:
+        path = _ROOT / "data" / f"ue_macro_brief_{_today()}.json"
+        if not path.exists():
+            return []
+        d = json.loads(path.read_text())
+        lines = d.get("brief_lines") or []
+        return [str(x)[:300] for x in lines][:8]
+    except Exception as e:
+        print(f"  [warn] 宏观brief读取失败 (降级): {e}")
+        return []
+
+
 def _gather_peer_surge() -> List[str]:
     """[P3 2026-07-22] 盘前峰群异动段 — 读 premarket_peer_shadow.jsonl 当日记录 (record-only 影子),
     把板块级盘前异动作为 clue 供 V2 引用 (evidence_ref 可用 peer_surge).
@@ -1144,6 +1161,13 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         except Exception as _dg_e:
             print(f"  [warn] 13D/G 直连失败 (降级): {_dg_e}")
             health.append("13DG:err")
+    # [RFC-076 2026-09-04] 宏观披露段: FRED 新披露 (非农/CPI/失业率当日发布) →
+    #   宏观→板块传导线索。生产方: scripts/ue_macro_brief_collect.py (cron 21:05)。
+    #   文件缺失/无新披露 → 空段, 行为与之前一致。回滚: 配置设 false 或删 cron 行。
+    if bool(_cfg("universe_expansion.clue_macro_brief", True)):
+        _mb = _gather_macro_brief()
+        hard += _mb
+        health.append(f"宏观:{len(_mb)}")
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
         parts.extend(hard)
