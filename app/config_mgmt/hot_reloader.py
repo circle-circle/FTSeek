@@ -232,4 +232,13 @@ def invalidate_config_snapshots() -> list:
     except Exception as e:
         logger.warning("[HotReloader] FeatureFlags 重载失败 (沿用旧快照): %s", e)
 
+    # DEB-20260903 #3: WatchlistManager 构造时快照 watchlist 到 _watchlist_data,
+    # 热重载不失效则 watchlist 变更不即时生效
+    try:
+        from app.utils.watchlist_manager import get_watchlist_manager
+        get_watchlist_manager().reload()
+        done.append("WatchlistManager")
+    except Exception as e:
+        logger.warning("[HotReloader] WatchlistManager 重载失败 (沿用旧快照): %s", e)
+
     return done

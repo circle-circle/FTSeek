@@ -74,12 +74,18 @@ class DailyReviewGenerator:
         # 2026-08-01: 黑名单改 D3 正向白名单 (DEB-20260730) — 黑名单会被未来新引擎静默穿透
         # (跨引擎拼接事故第四课); 今日两者等价, 结构性防呆。
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date = ? "
+            # DEB-20260904 #208: ① 补出场日匹配 (同 #131 collect_daily 修复) —
+            #   原仅按 trade_date(开仓日) 取数, 昨开今平的隔夜仓不进当日复盘;
+            # ② `exit_reason != '...'` 在 SQLite 下 NULL(未平仓)行被一并过滤
+            #   (NULL != 常量 = NULL) → open_trades 恒空/过夜持仓段永不渲染,
+            #   改为 NULL 保留式排除幽灵对账行。
+            "SELECT * FROM trade_records WHERE (trade_date = ? OR substr(exit_time, 1, 10) = ?) "
             "AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
-            "AND exit_reason != 'PHANTOM_RECONCILE_VOID' "
-            "AND trade_mode != 'live' "
+            "AND (exit_reason IS NULL OR exit_reason != 'PHANTOM_RECONCILE_VOID') "
+            # DEB-20260903 #127: 删除 trade_mode != 'live' 硬排除 —
+            # 实盘模式下 playbook_live 交易 trade_mode='live' 全被过滤 → 复盘报告为空
             "ORDER BY created_at",
-            (date,)
+            (date, date)
         )
         closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
@@ -221,6 +227,11 @@ class DailyReviewGenerator:
         """维度 ②: 投票一致性分析
         
         Phase 2 修复: 不再使用 or 50 fallback。数据为0时明确标记不可用。
+        2026-09-04 (M4): 3 模型投票已退役 — voting_predictions 停写于 2026-07-12,
+          playbook 路径的 voting_data 查询 (playbook_service L1654) 恒 miss →
+          final_strength/consensus_level 为化石列恒 0。原 note「请检查 voting_coordinator
+          写入管线」是误报 (管线未坏, 上游退役)。信号强度/置信度已由 signal_quality
+          维度覆盖 (signal_strength=confidence 镜像, 2026-07-16 P2)。
         """
         if not trades:
             return {
@@ -239,10 +250,12 @@ class DailyReviewGenerator:
         if not has_valid_strength and not has_valid_consensus:
             return {
                 'score': None,
-                'status': 'data_not_populated',
+                'status': 'retired',
                 'data_available': False,
-                'note': 'final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。'
-                        '请检查 voting_coordinator 写入管线。',
+                'note': '3模型投票已退役 (voting_predictions 停写于 2026-07-12), '
+                        'final_strength/consensus_level 为化石列恒 0。'
+                        '信号强度/置信度由 signal_quality 维度覆盖 '
+                        '(signal_strength=confidence 镜像)。',
                 'raw_strengths': final_strengths,
                 'raw_consensus': consensus_levels,
             }
@@ -461,7 +474,10 @@ class DailyReviewGenerator:
         breakdown = {}
         
         # 1. 胜率表现 (25%)
-        winning = [t for t in trades if (t.get('realized_pnl') or 0) > 0]
+        # DEB-20260903 #128: 胜率改净口径 COALESCE(pnl_net, realized_pnl) —
+        # 原毛口径与 :822 "pnl_net 为唯一对外口径" 矛盾, 毛赢净亏交易被误计为胜场
+        winning = [t for t in trades
+                   if ((t.get('pnl_net') if t.get('pnl_net') is not None else t.get('realized_pnl')) or 0) > 0]
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         win_rate = len(winning) / len(closed) if closed else 0
         # 映射: 0%→0, 50%→5, 70%→8, 90%+→10
@@ -585,38 +601,86 @@ class DailyReviewGenerator:
     # =========================================================================
     
     def _analyze_attribution(self, date: str) -> Dict:
-        """分析 trade_attribution 表 (47列)
+        """归因数据采集 (47列 → 双源)
         
         Phase 4 新增: 从 trade_attribution 提取高价值归因数据。
-        Phase 6 (2026-05-03): 新增五因子归因分解融合
+        2026-09-04 (M4, 根因修复): trade_attribution 表停写于 2026-06-26 —
+          平仓路径已改为把 compute_attribution 结果写入 trade_records.metadata_json.attribution
+          (pipeline L6415, 每笔必写), 复盘却还在读死表 → 恒「无当日数据」。
+          修复: 主源改读当日平仓单 metadata_json.attribution; 旧表作为历史日期
+          (≤2026-06-26) 补充。注意量纲: 新源 dimension score ∈ [-1,1], 与旧表
+          signal_score 等不同量纲, 故不硬填旧键 (防污染), 新增 dimension_scores 等新键。
         """
+        result = {
+            'signal_scores': [],
+            'execution_scores': [],
+            'risk_scores': [],
+            'timing_scores': [],
+            'overall_scores': [],
+            'slippage_values': [],
+            'success_factors': [],
+            'failure_factors': [],
+            'scene_tags': [],
+        }
+        sources = []
         try:
+            # ── 主源: 当日平仓单 metadata_json.attribution (2026-06-26 起每笔必写) ──
+            rows = self._query(
+                "SELECT metadata_json FROM trade_records WHERE trade_date = ? "
+                "AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
+                "AND exit_price IS NOT NULL AND exit_price > 0",
+                (date,)
+            )
+            dim_scores: Dict[str, List[float]] = {}
+            n_attr = 0
+            for r in rows:
+                try:
+                    md = json.loads(r.get('metadata_json') or '{}') if isinstance(r.get('metadata_json'), str) \
+                        else (r.get('metadata_json') or {})
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                attr = md.get('attribution') if isinstance(md, dict) else None
+                if not isinstance(attr, dict):
+                    continue
+                n_attr += 1
+                if attr.get('overall_score') is not None:
+                    result['overall_scores'].append(attr['overall_score'])
+                for d in (attr.get('dimensions') or []):
+                    if not isinstance(d, dict):
+                        continue
+                    name, score, verdict, label = d.get('name'), d.get('score'), d.get('verdict'), d.get('label')
+                    if score is not None:
+                        dim_scores.setdefault(name, []).append(float(score))
+                    if verdict == '✅' and label:
+                        result['success_factors'].append(label)
+                    elif verdict in ('⚠️', '❌') and label:
+                        result['failure_factors'].append(label)
+            if n_attr:
+                sources.append('trade_records.metadata')
+                result['attribution_source'] = 'trade_records.metadata'
+                result['total_records'] = n_attr
+                result['dimension_scores'] = {
+                    k: round(sum(v) / len(v), 3) for k, v in sorted(dim_scores.items())
+                }
+                result['dimension_counts'] = {k: len(v) for k, v in sorted(dim_scores.items())}
+                # 方向正确率 (direction 维 score>0 即方向对)
+                _dir = dim_scores.get('direction') or []
+                if _dir:
+                    result['direction_correct_rate'] = round(
+                        sum(1 for s in _dir if s > 0) / len(_dir), 3)
+        
+        except Exception as e:
+            logger.debug(f"[attribution] metadata 源读取失败: {e}")
+
+        try:
+            # ── 补充源: 旧 trade_attribution 表 (历史日期 ≤2026-06-26 有数据) ──
             rows = self._query(
                 "SELECT * FROM trade_attribution WHERE trade_date = ?",
                 (date,)
             )
-            
-            if not rows:
-                result = {
-                    'total_records': 0,
-                    'data_available': False,
-                    'note': 'trade_attribution 无当日数据',
-                }
-            else:
-                result = {
-                    'total_records': len(rows),
-                    'data_available': True,
-                    'signal_scores': [],
-                    'execution_scores': [],
-                    'risk_scores': [],
-                    'timing_scores': [],
-                    'overall_scores': [],
-                    'slippage_values': [],
-                    'success_factors': [],
-                    'failure_factors': [],
-                    'scene_tags': [],
-                }
-                
+            if rows:
+                sources.append('trade_attribution_table')
+                result['total_records'] = result.get('total_records', 0) + len(rows)
                 for r in rows:
                     if r.get('signal_score', 0):
                         result['signal_scores'].append(r['signal_score'])
@@ -644,45 +708,38 @@ class DailyReviewGenerator:
                                 result['failure_factors'].extend(factors)
                         except (json.JSONDecodeError, TypeError):
                             pass
-
-            # ── Phase 6: 五因子归因融合 ──
-            # 2026-08-01 断线 (做减法): 基线已退役 (旧持仓规则 vs 日内 playbook), 读数无效,
-            # 且每日全量加载 30 天 trade_records 空耗。模块本体留墓碑待 08-07 后下线。
-            five_factor = {
-                'five_factor_available': False,
-                'status': 'retired',
-                'note': '五因子归因已退役 (基线不匹配日内 playbook), 计算已停用, 模块待 08-07 后下线。',
-            }
-            result['five_factor'] = five_factor
-
-            # 统计摘要 (安全访问)
-            for key in ['signal_scores', 'execution_scores', 'risk_scores', 'timing_scores', 'overall_scores']:
-                vals = result.get(key, [])
-                if vals:
-                    result[f'{key}_avg'] = round(sum(vals) / len(vals), 2)
-                    result[f'{key}_max'] = max(vals)
-                    result[f'{key}_min'] = min(vals)
-                else:
-                    result[f'{key}_avg'] = None
-
-            return result
-
+            if not sources:
+                result['total_records'] = 0
+                result['note'] = '当日无归因数据 (metadata.attribution 与旧表均无)'
+            else:
+                result['attribution_source'] = '+'.join(sources)
         except Exception as e:
             logger.warning(f"[attribution] 分析失败: {e}")
-            return {
-                'total_records': 0,
-                'data_available': False,
-                'error': str(e),
-                'signal_scores': [],
-                'execution_scores': [],
-                'risk_scores': [],
-                'timing_scores': [],
-                'overall_scores': [],
-                'slippage_values': [],
-                'success_factors': [],
-                'failure_factors': [],
-                'scene_tags': [],
-            }
+            if not sources:
+                result['total_records'] = 0
+                result['note'] = f'归因读取异常: {e}'
+
+        # ── Phase 6: 五因子归因融合 ──
+        # 2026-08-01 断线 (做减法): 基线已退役 (旧持仓规则 vs 日内 playbook), 读数无效,
+        # 且每日全量加载 30 天 trade_records 空耗。模块本体留墓碑待 08-07 后下线。
+        five_factor = {
+            'five_factor_available': False,
+            'status': 'retired',
+            'note': '五因子归因已退役 (基线不匹配日内 playbook), 计算已停用, 模块待 08-07 后下线。',
+        }
+        result['five_factor'] = five_factor
+
+        # 统计摘要 (安全访问)
+        for key in ['signal_scores', 'execution_scores', 'risk_scores', 'timing_scores', 'overall_scores']:
+            vals = result.get(key, [])
+            if vals:
+                result[f'{key}_avg'] = round(sum(vals) / len(vals), 2)
+                result[f'{key}_max'] = max(vals)
+                result[f'{key}_min'] = min(vals)
+            else:
+                result[f'{key}_avg'] = None
+
+        return result
 
     def _get_five_factor_attribution(self, date: str) -> Dict:
         """
@@ -773,17 +830,39 @@ class DailyReviewGenerator:
             result['planned_targets'] = planned_symbols
 
             # 对比实际交易 (D3 白名单, 与主查询同口径)
+            # DEB-20260903 #127: 同步删除 trade_mode != 'live' (同主查询)
+            # DEB-20260904 #209: 补 PHANTOM_RECONCILE_VOID 排除 (同主查询,
+            #   NULL 保留式 — 未平仓单仍计为已执行; 原缺 → 幽灵对账冲销行
+            #   被当作真实成交, 可把未执行指令误判为"已执行"/制造假 unplanned)
             trades = self._query(
-                "SELECT symbol FROM trade_records WHERE trade_date = ? "
-                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') AND trade_mode != 'live'",
+                "SELECT symbol, direction FROM trade_records WHERE trade_date = ? "
+                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "AND (exit_reason IS NULL OR exit_reason != 'PHANTOM_RECONCILE_VOID')",
                 (date,)
             )
-            actual_symbols = set(t.get('symbol', '') for t in trades)
+            # DEB-20260903 #129: 按 (symbol, direction) 匹配 — 原仅按 symbol 集合交集,
+            # 计划 BUY 而实际 SELL_SHORT 同标的会被误判为已执行 (方向错误无法检出)
+            _dir_to_plan = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
+            planned_pairs = {(r['symbol'], r['direction']) for r in instructions}
+            actual_pairs = {(t.get('symbol', ''),
+                             _dir_to_plan.get(t.get('direction', ''), t.get('direction', '')))
+                            for t in trades}
+            actual_symbols = {s for s, _ in actual_pairs}
 
-            # 已执行的计划内交易
-            result['executed_targets'] = sorted(actual_symbols & set(planned_symbols))
-            # 错过的计划内交易
-            result['missed_opportunities'] = sorted(set(planned_symbols) - actual_symbols)
+            executed_pairs = planned_pairs & actual_pairs
+            # 方向错配检测 (同 symbol 但方向不一致)
+            _mismatch = sorted(
+                f"{s}(计划{pd}/实际{ad})"
+                for (s, pd) in planned_pairs for (s2, ad) in actual_pairs
+                if s == s2 and pd != ad
+            )
+            if _mismatch:
+                result['direction_mismatch'] = _mismatch
+
+            # 已执行的计划内交易 (方向一致)
+            result['executed_targets'] = sorted({s for s, _ in executed_pairs})
+            # 错过的计划内交易 (计划方向未执行)
+            result['missed_opportunities'] = sorted({s for s, _ in planned_pairs - executed_pairs})
             # 计划外交易
             result['unplanned_trades'] = sorted(actual_symbols - set(planned_symbols))
 
@@ -914,12 +993,64 @@ class DailyReviewGenerator:
     def _get_capital_state(self, date: str) -> Dict:
         """资金状态 (从 ftseek_us.db capital_state)"""
         try:
+            # DEB-20260903 #130: last_update 为 CST 裸时间戳 (capital_safety.py:174 datetime.now()),
+            # 服务器 CST 下美股盘中 12:00-16:00 ET 对应 CST 次日 00:00-04:00 →
+            # date(last_update)=ET交易日 系统性不匹配. 改为取最近 N 条后 Python 侧 CST→ET 转换匹配
             rows = self._query(
                 "SELECT initial_capital, current_equity, peak_equity, cash, "
                 "buying_power, drawdown_pct, max_drawdown_pct, water_level, last_update "
-                "FROM capital_state WHERE date(last_update) = ? ORDER BY last_update DESC LIMIT 1",
-                (date,)
+                "FROM capital_state ORDER BY last_update DESC LIMIT 10",
+                ()
             )
+            rows = list(rows or [])
+            from datetime import timezone as _tz, timedelta as _td
+            from app.utils.timezone import ET as _ET
+            _cst = _tz(_td(hours=8))
+
+            def _et_date(_row):
+                _dt = datetime.fromisoformat(str(_row.get('last_update', '')).replace('Z', ''))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=_cst)  # CST 裸时间戳
+                return _dt.astimezone(_ET).strftime("%Y-%m-%d")
+
+            _matched = None
+            if rows:
+                for _r in rows:
+                    try:
+                        if _et_date(_r) == date:
+                            _matched = _r
+                            break
+                    except Exception as _e:
+                        logger.debug(f"[DailyReview] 快照行时间戳解析失败, 跳过: {_e}")
+                        continue
+            # DEB-20260904 #210: 未匹配到当日时原静默回退 rows[:1](最新快照) —
+            # 历史日期复盘会把"今天"的回撤/水位当该日状态 → 风控维度/评分失真。
+            # 改为 as-of 口径: 取 ET 日 <= 复盘日 的最新快照; 一个都没有则记 warning
+            # 并标记维度不可用 (不带 drawdown_pct 键 → 下游按"数据不可用"处理),
+            # 不再静默挪用最新快照。
+            if _matched is None:
+                _cst_cutoff = (datetime.strptime(date, "%Y-%m-%d") + _td(days=1)
+                               ).strftime("%Y-%m-%dT13:00:00")  # 超集上限: ET D 23:59:59 ≤ CST D+1 12:59:59 (EST), 下方 _et_date <= date 精确过滤
+                _older = self._query(
+                    "SELECT initial_capital, current_equity, peak_equity, cash, "
+                    "buying_power, drawdown_pct, max_drawdown_pct, water_level, last_update "
+                    "FROM capital_state WHERE last_update <= ? "
+                    "ORDER BY last_update DESC LIMIT 10",
+                    (_cst_cutoff,)
+                )
+                for _r in (_older or []):
+                    try:
+                        if _et_date(_r) <= date:
+                            _matched = _r
+                            break
+                    except Exception as _e:
+                        logger.debug(f"[DailyReview] 快照行时间戳解析失败, 跳过: {_e}")
+                        continue
+            if _matched is None:
+                logger.warning(f"[DailyReview] {date} 无 as-of 资金快照, 风控维度标记不可用")
+                return {'note': f'No capital state as-of {date}',
+                        'data_available': False, 'unavailable': True}
+            rows = [_matched]
             if rows:
                 r = rows[0]
                 return {
@@ -1139,11 +1270,19 @@ class DailyReviewGenerator:
             if not cur:
                 conn.close()
                 return {"note": "pnl_outliers 表尚未创建"}
+            # DEB-20260904 #211: date(...,'localtime') 按服务器 CST 日期匹配,
+            # 与 ET 复盘日错位 (盘中 ET 12:00-16:00 = CST 次日) — 改 DST 感知的
+            # ET 日界 epoch 区间 (与 #130 capital_state 修复同口径)
+            from datetime import datetime as _dt, timedelta as _td, time as _time
+            from app.utils.timezone import ET as _ET, _localize
+            _d0 = _dt.strptime(date, "%Y-%m-%d").date()
+            _lo = int(_localize(_dt.combine(_d0, _time.min), _ET).timestamp())
+            _hi = int(_localize(_dt.combine(_d0 + _td(days=1), _time.min), _ET).timestamp())
             rows = conn.execute(
                 "SELECT symbol, realized_pnl, z_score, rolling_mean, rolling_std "
-                "FROM pnl_outliers WHERE date(detected_at,'unixepoch','localtime')=? "
+                "FROM pnl_outliers WHERE detected_at >= ? AND detected_at < ? "
                 "ORDER BY ABS(z_score) DESC LIMIT 10",
-                (date,)
+                (_lo, _hi)
             ).fetchall()
             conn.close()
             return {
@@ -1213,22 +1352,23 @@ class DailyReviewGenerator:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_arbitration'"
             ).fetchone()
             if cur:
-                total = arb_conn.execute(
-                    "SELECT COUNT(*) FROM signal_arbitration WHERE date(timestamp,'unixepoch','localtime')=?",
-                    (date,)
-                ).fetchone()[0]
-                multi = arb_conn.execute(
-                    "SELECT COUNT(*) FROM signal_arbitration "
-                    "WHERE date(timestamp,'unixepoch','localtime')=? AND n_candidates > 1",
-                    (date,)
-                ).fetchone()[0]
+                # DEB-20260904 #211: date(...,'localtime') 按 CST 匹配与 ET 复盘日错位 —
+                # 改 DST 感知 ET 日界 epoch 区间, Python 侧聚合 (与 #130 同口径)
+                from datetime import datetime as _dt, timedelta as _td, time as _time
+                from app.utils.timezone import ET as _ET, _localize
+                _d0 = _dt.strptime(date, "%Y-%m-%d").date()
+                _lo = int(_localize(_dt.combine(_d0, _time.min), _ET).timestamp())
+                _hi = int(_localize(_dt.combine(_d0 + _td(days=1), _time.min), _ET).timestamp())
+                _arb_rows = arb_conn.execute(
+                    "SELECT timestamp, n_candidates, winner_strategy FROM signal_arbitration "
+                    "WHERE timestamp >= ? AND timestamp < ?",
+                    (_lo, _hi)
+                ).fetchall()
+                total = len(_arb_rows)
+                multi = sum(1 for r in _arb_rows if (r[1] or 0) > 1)
                 winners = {}
-                for r in arb_conn.execute(
-                    "SELECT winner_strategy, COUNT(*) FROM signal_arbitration "
-                    "WHERE date(timestamp,'unixepoch','localtime')=? GROUP BY winner_strategy",
-                    (date,)
-                ).fetchall():
-                    winners[r[0]] = r[1]
+                for r in _arb_rows:
+                    winners[r[2]] = winners.get(r[2], 0) + 1
                 out["arbitration"] = {
                     "total": total,
                     "multi_candidate": multi,
@@ -1320,7 +1460,9 @@ class DailyReviewGenerator:
                 'max_drawdown_n': summary.get('max_position_drawdown_n', 0),
                 'open_trades': _open_rows,
                 'trades': [{'code': str(t.get('symbol', '') or ''),
-                            'pnl': t.get('pnl_net', t.get('realized_pnl', 0)),
+                            # DEB-20260904 #212: pnl_net 键存在但为 NULL 时
+                            # dict.get 的 default 不生效 — 与 846 行同款的 NULL 感知回退
+                            'pnl': t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0),
                             'id': str(t.get('id', i))}
                            for i, t in enumerate(trades)],
             })

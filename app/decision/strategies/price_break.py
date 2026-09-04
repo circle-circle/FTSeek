@@ -48,7 +48,9 @@ class PriceBreakStrategy(BaseStrategy):
         volume_ratio = market_data.get("volume_ratio", 1.0)
 
         # 突破阻力位 + 放量 → 做多
-        if current_price > resistance and volume_ratio > 1.5:
+        # DEB-20260903 #73: resistance<=0 时 (current_price-resistance)/resistance
+        # 除零崩溃, 且 current_price>0>resistance 恒真 → 假突破信号; 无效价位跳过
+        if resistance > 0 and current_price > resistance and volume_ratio > 1.5:
             # 计算强度：突破幅度越大，强度越高
             breakout_ratio = (current_price - resistance) / resistance
             strength = min(100, 60 + int(breakout_ratio * 100))
@@ -80,10 +82,13 @@ class PriceBreakStrategy(BaseStrategy):
             )
 
         # 跌破支撑位 + 放量 → 做空
-        if current_price < support and volume_ratio > 1.5:
+        # DEB-20260903 #73: support<=0 时除零崩溃, 无效价位跳过
+        if support > 0 and current_price < support and volume_ratio > 1.5:
             # 计算强度：跌破幅度越大，强度越高
             breakdown_ratio = (support - current_price) / support
-            strength = max(0, 40 - int(breakdown_ratio * 100))
+            # DEB-20260903 #73: 原 max(0, 40 - int(...)) 使跌破越深强度越低,
+            # 与注释相反; 改为随跌破幅度递增 (上限 100)
+            strength = min(100, 40 + int(breakdown_ratio * 100))
 
             # 计算置信度
             volume_factor = min(1.0, volume_ratio / 3.0)

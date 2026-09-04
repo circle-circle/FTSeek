@@ -34,17 +34,23 @@ class TradeQualityGate:
         self.config = get_config(config_path).get('strategy_enhancements.quality_gate', {})
         self.enabled = self.config.get('enabled', True)
         self.min_score = self.config.get('min_score_to_trade', 0.60)
-        self.weights = self.config.get('weights', {
+        # DEB-20260904 #158: 部分覆盖合并默认值 — 原 config.get('weights', 默认)
+        # 在 yaml 只配部分键时整体替换, 评分时缺失键 KeyError
+        _default_weights = {
             'regime': 0.15,
             'pivotal': 0.30,
             'capital_flow': 0.20,
             'leader': 0.15,
             'execution': 0.20
-        })
+        }
+        _cfg_weights = self.config.get('weights') or {}
+        self.weights = {**_default_weights, **_cfg_weights}
 
         # 延迟加载模块
         self._modules = {}
         self._initialized = False
+        # DEB-20260903 #54: 区分配置关闭与初始化失败 (fail-closed 判定依据)
+        self._init_failed = False
 
     def _init_modules(self):
         if self._initialized:
@@ -68,6 +74,7 @@ class TradeQualityGate:
         except Exception as e:
             logger.error(f"[交易质量门] 模块加载失败: {e}")
             self.enabled = False
+            self._init_failed = True  # DEB-20260903 #54
 
     def evaluate(self, symbol: str, signal: Any, history: Dict, market_ctx: Dict) -> Dict:
         """
@@ -83,6 +90,11 @@ class TradeQualityGate:
             评估结果字典
         """
         if not self.enabled:
+            # DEB-20260903 #54: 区分配置关闭(放行)与初始化失败(fail-closed) —
+            # 原统一返回 passed_gate=True, 模块加载失败期间所有信号裸奔
+            if self._init_failed:
+                return {"opportunity_score": 0.0, "passed_gate": False,
+                        "gate_details": {}, "reject_reason": "quality_gate_init_failed"}
             return {"opportunity_score": 0.5, "passed_gate": True, "gate_details": {}}
 
         self._init_modules()
@@ -140,6 +152,13 @@ class TradeQualityGate:
         """
         # 归一化分数 (0~1)
         final_score = min(1.0, max(0.0, total_score))
+
+        # DEB-20260903 #53: 综合分门槛生效 — min_score 原在 __init__ 读取后全文零引用,
+        # 各门全过但综合分低于阈值时仍放行; 现 final_score < min_score 即拒
+        if passed_gate and final_score < self.min_score:
+            passed_gate = False
+            if not reject_reason:
+                reject_reason = f"Score Below Min ({final_score:.2f}<{self.min_score:.2f})"
 
         # 只记录已存在的模块结果
         detail_parts = []

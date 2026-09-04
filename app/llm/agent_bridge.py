@@ -42,6 +42,38 @@ for d in [REQUESTS_DIR, RESPONSES_DIR, MEMORY_DIR]:
 QUEUE_DB_PATH = os.path.join(FTSEEK_DIR, "hermes_queue.db")
 
 
+def _strip_json_fence(text: str) -> str:
+    """剥离 LLM 输出常见的 markdown fence (```json ... ```)。
+
+    DEB-20260903 #56: _check_plan_response/_check_eod_response 原用 json.load
+    直接解析, 不像 wait_for_response 那样剥 fence, ```json 包裹的合法响应会解析失败。
+    """
+    cleaned = (text or "").strip()
+    if cleaned.startswith('```json'):
+        cleaned = cleaned[7:]
+    if cleaned.startswith('```'):
+        cleaned = cleaned[3:]
+    if cleaned.endswith('```'):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+def _quarantine_response(path: str) -> None:
+    """DEB-20260903 #56: 解析失败的毒响应文件移入 quarantine (失败则删除),
+    防止下次轮询读同一文件反复失败形成死循环。"""
+    try:
+        qdir = os.path.join(FTSEEK_DIR, "quarantine")
+        os.makedirs(qdir, exist_ok=True)
+        os.replace(path, os.path.join(qdir, os.path.basename(path)))
+        logger.warning(f"[Agent-US] 毒响应文件已隔离: {path}")
+    except Exception as qe:
+        try:
+            os.remove(path)
+        except Exception as _re:
+            logger.warning(f"[Agent-US] 毒响应文件删除也失败 (残留): {path} ({_re})")
+        logger.warning(f"[Agent-US] 毒响应文件隔离失败已删除: {path} ({qe})")
+
+
 class AgentRequestQueue:
     """SQLite-backed durable request queue for Hermes Agent communication.
 
@@ -692,7 +724,15 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
 
                     return result
                 except Exception as e:
+                    # DEB-20260904 #159: 毒响应隔离 — 原仅日志后 sleep,
+                    # 同一坏文件每 2s 重读直到超时 (~150 次空转); 改名隔离保留证据,
+                    # 循环继续等待 Hermes 可能重写的新响应
                     logger.warning(f"[Agent-US] 读取响应失败: {e}")
+                    try:
+                        if os.path.exists(response_file):
+                            os.rename(response_file, response_file + ".poison")
+                    except OSError as _q_err:
+                        logger.debug(f"[Agent-US] 毒响应隔离失败: {_q_err}")
             time.sleep(2)
 
         logger.warning(f"[Agent-US] 响应超时: {request_id}")
@@ -730,34 +770,65 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
     
     def _update_memory(self, updates: Dict):
         """更新交易记忆"""
+        # DEB-20260904 #160: 类型校验 — LLM 若把列表字段返回成字符串,
+        # 原实现 for lesson in "字符串" 会逐字符写入教训列表
+        if not isinstance(updates, dict):
+            logger.warning(f"[Agent-US] memory_updates 非 dict, 跳过: {type(updates).__name__}")
+            return
+
         if "historical_lessons" in updates:
-            for lesson in updates["historical_lessons"]:
+            _lessons = updates["historical_lessons"]
+            if isinstance(_lessons, str):
+                _lessons = [_lessons]
+            if not isinstance(_lessons, list):
+                logger.warning(f"[Agent-US] historical_lessons 类型异常, 跳过: {type(_lessons).__name__}")
+                _lessons = []
+            for lesson in _lessons:
                 if lesson not in self._memory["historical_lessons"]:
                     self._memory["historical_lessons"].append(lesson)
                     logger.info(f"[Agent-US] 新增教训: {lesson}")
         
         if "symbol_lessons" in updates:
-            for symbol, lesson in updates["symbol_lessons"].items():
+            _sym = updates["symbol_lessons"]
+            if not isinstance(_sym, dict):
+                logger.warning(f"[Agent-US] symbol_lessons 类型异常, 跳过: {type(_sym).__name__}")
+                _sym = {}
+            for symbol, lesson in _sym.items():
                 self._memory["symbol_lessons"][symbol] = lesson
                 logger.info(f"[Agent-US] 更新标的教训: {symbol}")
         
         if "strategy_adjustments" in updates:
-            for adj in updates["strategy_adjustments"]:
+            _adjs = updates["strategy_adjustments"]
+            if isinstance(_adjs, str):
+                _adjs = [_adjs]
+            if not isinstance(_adjs, list):
+                logger.warning(f"[Agent-US] strategy_adjustments 类型异常, 跳过: {type(_adjs).__name__}")
+                _adjs = []
+            for adj in _adjs:
                 self._memory["strategy_adjustments"].append({
                     "date": datetime.now().isoformat(),
                     "adjustment": adj
                 })
         
         if "performance" in updates:
-            self._memory["performance_tracking"].update(updates["performance"])
+            _perf = updates["performance"]
+            if isinstance(_perf, dict):
+                self._memory["performance_tracking"].update(_perf)
+            else:
+                logger.warning(f"[Agent-US] performance 类型异常, 跳过: {type(_perf).__name__}")
         
         self._save_memory()
     
     def _format_memory_for_prompt(self) -> str:
         """将记忆格式化为 prompt 上下文"""
+        # DEB-20260903 #55: 存储键为 core_principle(单数/字符串), 原读取
+        # core_principles(复数) 恒 miss → 核心原则从不进 prompt; 兼容两种键/类型
+        _cp = self._memory.get('core_principles') or self._memory.get('core_principle') or []
+        if isinstance(_cp, str):
+            _cp = [_cp]
         lines = [
             f"市场: 美股",
-            f"核心原则: {', '.join(self._memory.get('core_principles', [])[:3])}",
+            f"核心原则: {', '.join(list(_cp)[:3])}",
             "",
             "美股交易法则:",
         ]
@@ -998,7 +1069,8 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
                 
                 try:
                     with open(latest, 'r', encoding='utf-8') as f:
-                        response = json.load(f)
+                        # DEB-20260903 #56: 剥 fence 后解析 (原 json.load 直接解析)
+                        response = json.loads(_strip_json_fence(f.read()))
                     result = response.get("result", {})
                     plan = result.get("plan", {})
                     
@@ -1018,6 +1090,8 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
                     return plan
                 except Exception as e:
                     logger.warning(f"[Agent-US] 读取盘前计划响应失败: {e}")
+                    # DEB-20260903 #56: 毒文件隔离, 防下次轮询死循环
+                    _quarantine_response(latest)
                     return None
             
             # 如果不需要轮询，直接返回
@@ -1181,8 +1255,12 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
         logger.info("[AgentBridge] 降级到 Bailian 直连 (无工具)")
         fallback = self._call_llm_direct(prompt=prompt, system_prompt=system_prompt, timeout=timeout)
         if fallback:
+            # DEB-20260904 #161: _call_llm_direct 返回 json.loads 结果, 可能是
+            # list/str — 先做项赋值会 TypeError。非 dict 先归一成 dict。
+            if not isinstance(fallback, dict):
+                fallback = {"result": fallback}
             fallback["mode"] = "fallback_bailian"
-            fallback["response"] = fallback.get("result", "") if isinstance(fallback, dict) else str(fallback)
+            fallback["response"] = str(fallback.get("result", ""))
         return fallback
 
     def call_agent_debate(self, topic: str, debate_prompt: str = "",
@@ -1219,8 +1297,11 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
             timeout=timeout,
         )
         if fallback:
+            # DEB-20260904 #161: 同上 — fallback 可能是 list/str, 先归一再取值
+            if not isinstance(fallback, dict):
+                fallback = {"result": fallback}
             return {
-                "verdict": fallback.get("response", str(fallback)),
+                "verdict": str(fallback.get("response", fallback.get("result", ""))),
                 "analysts": [],
                 "tokens": 0,
                 "mode": "fallback_single",
@@ -1255,7 +1336,8 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
                 
                 try:
                     with open(latest, 'r', encoding='utf-8') as f:
-                        response = json.load(f)
+                        # DEB-20260903 #56: 剥 fence 后解析
+                        response = json.loads(_strip_json_fence(f.read()))
                     result = response.get("result", {})
                     review = result.get("review", {})
                     
@@ -1274,6 +1356,8 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
                     return review
                 except Exception as e:
                     logger.warning(f"[Agent-US] 读取 EOD 响应失败: {e}")
+                    # DEB-20260903 #56: 毒文件隔离, 防下次轮询死循环
+                    _quarantine_response(latest)
                     return None
             
             if poll_seconds <= 0:

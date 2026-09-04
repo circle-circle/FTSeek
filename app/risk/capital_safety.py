@@ -165,6 +165,12 @@ class CapitalSafetySystem:
             self._state.water_level = WaterLevel.BLACKOUT
             self._state.is_locked = True
             self._state.lock_reason = "净值为零或负数"
+            # DEB-20260903 #101: BLACKOUT 状态必须持久化 — 原立即 return 跳过
+            # _save_state(), 重启后熔断状态丢失, 系统以正常水位恢复交易
+            try:
+                self._save_state()
+            except Exception as _se:
+                logger.error(f"[资本安全] BLACKOUT 状态持久化失败 (内存状态仍生效): {_se}")
             return self._state
         
         self._state.current_equity = current_equity
@@ -554,7 +560,16 @@ class CapitalSafetySystem:
         try:
             bp = float(self._state.buying_power or 0)
             if bp <= 0:
-                # 降级: 用 equity × 80% 兜底
+                # DEB-20260904 #187: 仅"从未从 broker 刷新过"才允许 equity×0.8 估算
+                # (启动早期 bootstrap); 一旦真实数据流过 (last_update 非空),
+                # bp<=0 是 broker 真实上报 (T+0 耗尽/爆仓边缘) → 返回 0.0, 禁止捏造购买力
+                _never_refreshed = not (self._state.last_update or "").strip()
+                if not _never_refreshed:
+                    logger.warning(
+                        f"[DualMode] auto_budget: buying_power=${bp:,.0f} ≤0 且账户已刷新过, "
+                        f"判定为真实耗尽, 拒绝用 equity×0.8 捏造预算 → 0.0"
+                    )
+                    return 0.0
                 equity = float(self._state.current_equity or 0)
                 if equity <= 0:
                     return 0.0
@@ -595,6 +610,15 @@ class CapitalSafetySystem:
         try:
             bp = float(self._state.buying_power or 0)
             if bp <= 0:
+                # DEB-20260904 #187: 同 auto 版 — 仅从未刷新过才允许估算,
+                # 真实上报 bp<=0 时禁止捏造购买力
+                _never_refreshed = not (self._state.last_update or "").strip()
+                if not _never_refreshed:
+                    logger.warning(
+                        f"[DualMode] manual_budget: buying_power=${bp:,.0f} ≤0 且账户已刷新过, "
+                        f"判定为真实耗尽 → 0.0"
+                    )
+                    return 0.0
                 equity = float(self._state.current_equity or 0)
                 if equity <= 0:
                     return 0.0
@@ -700,6 +724,23 @@ class CapitalSafetySystem:
                 logger.info("[资本安全] DB 迁移: 已添加 trade_env 列")
             except Exception:
                 pass  # 列已存在
+            # DEB-20260903 #102: trade_env 唯一索引 — 原表仅 id PRIMARY KEY, trade_env 无
+            #   UNIQUE 约束, INSERT OR REPLACE 因 id 自增无冲突退化为普通 INSERT, 每次
+            #   _save_state 追加新行致表无限增长. 先清理历史重复行(每 env 保留最新 id),
+            #   再建唯一索引使 UPSERT 真正生效 (保持 1 行/env).
+            try:
+                c.execute("""
+                    DELETE FROM capital_state
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM capital_state GROUP BY trade_env
+                    )
+                """)
+            except Exception as _de:
+                logger.debug(f"[资本安全] 清理 capital_state 历史重复行失败: {_de}")
+            try:
+                c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_capital_state_trade_env ON capital_state(trade_env)")
+            except Exception as _ie:
+                logger.debug(f"[资本安全] 创建 trade_env 唯一索引失败: {_ie}")
             conn.commit()
             conn.close()
         except Exception as e:
@@ -829,6 +870,9 @@ class CapitalSafetySystem:
             self._state.water_level = WaterLevel.GREEN
             self._state.is_locked = False
             self._state.lock_reason = ""
+            # DEB-20260904 #189: 显式重置后必须标记 peak 已初始化,
+            # 否则首次 update_account 会用实时净值覆盖手动设定的基准
+            self._peak_initialized = True
             logger.info(
                 f"[资本安全] 资金基准已重置 → ${new_capital:,.0f} | "
                 f"水位重置为 GREEN"
@@ -866,4 +910,16 @@ def get_capital_safety_system(initial_capital: Optional[float] = None,
             initial_capital=initial_capital,
             trade_env=trade_env
         )
+    else:
+        # DEB-20260903 #103: 单例创建后原静默忽略后续 trade_env/initial_capital —
+        #   校验一致性, 不一致时告警(不自动重建以免运行中回撤/水位状态被冲掉).
+        if trade_env is not None and trade_env != _capital_instance.trade_env:
+            logger.warning(
+                f"[资本安全] 单例已存在 (trade_env={_capital_instance.trade_env}), "
+                f"忽略本次传入 trade_env={trade_env} — 环境不一致, 请确认调用方")
+        if (initial_capital is not None
+                and abs(initial_capital - _capital_instance._state.initial_capital) > 1e-6):
+            logger.warning(
+                f"[资本安全] 单例已存在 (initial_capital={_capital_instance._state.initial_capital}), "
+                f"忽略本次传入 initial_capital={initial_capital} — 基准不一致, 请确认调用方")
     return _capital_instance

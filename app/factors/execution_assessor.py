@@ -99,15 +99,21 @@ class ExecutionAssessor:
             # 3. 估算点差 (Spread Proxy)
             # 经验公式: 低流动性股票通常点差更大
             # 假设 Spread (bps) 与 Turnover 负相关
-            # 简单估算: 
+            # 简单估算:
+            # DEB-20260903 #48: 原映射在默认配置下使 spread 门不可达 —
+            # liq<0.4→50bps 已被 min_liquidity(0.4) 门先行拦截, 而通过门 liq≥0.4
+            # 的最高 spread=20 < max_slippage(50), elif spread>max_slippage 恒 False。
+            # 调整映射使边际流动性标的 (刚过流动性门) spread 仍可超阈, 让 spread 门可达:
             if liq_score < 0.4:
-                est_spread_bps = 50  # 高风险
-            elif liq_score < 0.6:
-                est_spread_bps = 20
-            elif liq_score < 0.8:
-                est_spread_bps = 5
+                est_spread_bps = 100  # 高风险 (同时被流动性门拦)
+            elif liq_score < 0.55:
+                est_spread_bps = 55   # 边际流动性: 过流动性门但点差超阈 → spread 门捕获
+            elif liq_score < 0.7:
+                est_spread_bps = 25
+            elif liq_score < 0.85:
+                est_spread_bps = 8
             else:
-                est_spread_bps = 1   # 极低
+                est_spread_bps = 2   # 极低
 
             # 4. 综合评分
             score = liq_score # 初始分为流动性分

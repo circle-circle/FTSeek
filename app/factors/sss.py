@@ -58,7 +58,9 @@ class SSSFactor(BaseFactor):
 
     # 默认参数
     _DEFAULTS = {
-        "threshold": -1.0,
+        # DEB-20260903 #52: -1.0→-0.5 — 原值 abs 后=1.0 使 L141 .get(...,0.5) 默认值被覆盖,
+        # 有效阈值恒 1.0, 而 |raw_score|≤权重和=1.0 → 方向判定恒 NEUTRAL
+        "threshold": -0.5,
         "w_rsi": 0.5,
         "w_bb": 0.35,
         "w_vol": 0.15,
@@ -135,10 +137,17 @@ class SSSFactor(BaseFactor):
 
         # 注意: SSS 是"超卖"因子，score 越负越超卖
         # 但 direction_hint 应该是反直觉的: 超卖 → 看多(反转)
-        if raw_score <= -0.5:
+        # DEB-20260903 #52: threshold 参数参与方向判定 (原仅写 params_used 不生效);
+        # 默认 0.5 保持原行为。注意: SSS 极性与 MFFF 相反 (负=看多反转),
+        # 聚合层不得对两因子 score 做同号加权 (见 params_used["polarity"])
+        # DEB-20260904 #157: threshold=0 是合法参数 (恒触发) — `or 0.5` 会把 0.0
+        # 静默改回 0.5, 参数空间中的 0 实际无效。仅 None/缺失时用默认。
+        _raw_thr = self.params.get("threshold", 0.5)
+        _thr = abs(float(_raw_thr)) if _raw_thr is not None else 0.5
+        if raw_score <= -_thr:
             direction = "LONG"   # 超卖 → 做多反转
             confidence = min(1.0, abs(raw_score))
-        elif raw_score >= 0.5:
+        elif raw_score >= _thr:
             direction = "SHORT"  # 超买 → 做空反转
             confidence = min(1.0, abs(raw_score))
         else:
@@ -152,7 +161,10 @@ class SSSFactor(BaseFactor):
             direction_hint=direction,
             confidence=confidence,
             params_used={"w_rsi": w_rsi, "w_bb": w_bb, "w_vol": w_vol,
-                         "threshold": self.params.get("threshold", -1.0)},
+                         "threshold": _thr,
+                         # DEB-20260903 #52: 显式标注极性 — SSS 为反转因子 (负分=看多),
+                         # 与动量类因子 (MFFF 正分=看多) 极性相反, 聚合时需感知
+                         "polarity": "reversal_negative_is_long"},
             metadata={
                 "rsi": round(rsi, 2),
                 "rsi_component": round(rsi_component, 4),

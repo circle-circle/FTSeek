@@ -102,6 +102,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | 13705b524e2a | FTSeek Insider Signal Monitor | 0 6 * * 2-6 | insider 异常告警 | 异常即报 |
 | 1a4a63fd3dae | 影子组合每日结算 (DEB-20260808) | 10 8 * * 2-6 | 门的边际价值: 被拦单反事实净贡献按门聚合 | 门错杀赢家 (拦钱) / 放过亏家 |
 | crontab-pen-backfill | 保本线穿透影子·夜间结局回填 (`scripts/penetration_outcome_backfill.py`, 系统 crontab 非 Hermes) | 5 6 * * 2-6 | 影子标签回填: 用离场后 1 分 bar 判 recovered_1/3/5/10m (V型回摆) + continued_bps_10m (续跌) + cf_floor_fill_saved_bps (反事实地板成交节省); 幂等自愈, 可见窗不足落 null 非 False | 端标口径错→被动侧击穿被系统性误标 V 回 (9/3 §十一 自查已修); 写读契约断→落盘行缺 status 使判分/看板恒 0 (9/3 复盘批已修+钉死); 载体心跳断流 >14 天由注册表哨兵告 |
+| crontab-post-exit-path | 出场后全天路径影子 (`scripts/post_exit_path_shadow.py --days 3`, 系统 crontab 非 Hermes, 2026-09-04 MU V反核查产物; 同日 P1 口径修正) | 45 5 * * 2-6 | 全量平仓单出场后路径记录, 状态四分类 (ok=全天bar收盘前出场判分用 / ah_exit=夜盘出场看隔夜gap / bar_truncated=窗口bar补拉失败 / no_bars=无bar): post_fav/post_adv/close_gap + 深回撤V反上下文 + next_open_gap (出场→次日开盘, 隔夜段量化); 与 penetration (10m短窗) / exit_disable_cf (禁用反事实) 边界互斥不重叠 | P1: replay_bars 是多写入者混杂目录 (fetch_bars全天缓存 + 窗口文件), 首版未区分致 31 笔窗口口径污染 + 19 笔误标 → 已全量重建; 截断 bar 自主补拉写回 (与 archetype_bars_ensure 同源同缓存, 05:35 跑完再到本环, 纯增益超集); 注册表 `post_exit_path` (min_n=100, 永久测量项); 幂等 trade_id 去重, 断流由注册表哨兵告 |
 
 ### 2.4 慢环 — 周/月级裁决 (Hermes cron)
 

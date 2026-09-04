@@ -190,9 +190,13 @@ def is_us_market_open() -> bool:
             if get_holiday_calendar().is_us_holiday(now_et.date()):
                 return False
         except Exception as _silent_e:
-            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            # DEB-20260904 #190: 节假日查询异常 fail-closed (旧逻辑吞异常后继续
+            # 走时间窗 → 节假日被当成交易日); 与外层异常分支口径一致
+            logger.warning(f"[is_us_market_open] 节假日查询异常, 保守返回False: {_silent_e}")
+            return False
         t = now_et.hour * 60 + now_et.minute
-        return 570 <= t <= 960
+        # DEB-20260904 #190: 960=16:00 已收盘, 改为 t<960 不含收盘分钟
+        return 570 <= t < 960
     except Exception as e:
         # P0 修复 (2026-05-28): fail-closed 而非 fail-open
         # 旧行为: 异常返回 True(假设市场开) → 周末/假日可能提交退出订单, 面临跳空风险
@@ -223,6 +227,9 @@ class ExitMonitor:
     FLAT_ALL_COOLDOWN_SECONDS = 1800  # 30 分钟
     WARN_COOLDOWN_SECONDS = 300  # 5 分钟 — 防止 WARN 级别每 tick 重复告警
     REDUCE_50_COOLDOWN_SECONDS = 300  # 5 分钟 — 防止 REDUCE_50 每 tick 重触发 (与 FLAT_ALL 同构)
+    # DEB-20260903 #108: ATR 刷新失败路径的缓存最大年龄 — 超过则不再复用旧值
+    #   (原无上限, 持续失败时过期 ATR 被无限期复用 → 止损位偏离实际波动)
+    ATR_FAIL_CACHE_MAX_AGE_SECONDS = 3600  # 1 小时
 
     def __init__(self):
         self._atr_cache: Dict[str, Dict] = {}  # {symbol: {date, value}}
@@ -418,9 +425,14 @@ class ExitMonitor:
             conn.close()
             return count > 0
         except Exception as e:
-            # P0-fix: DB错误时 fail-safe 返回 True (假设已退出, 跳过本轮避免双重平仓)
-            logger.warning(f"[exit_monitor] _has_exit_record DB查询失败 (fail-safe=True): {e}")
-            return True
+            # DEB-20260903 #104: 原 fail-safe=True 导致 DB 写入异常后仓位永远无法重试退出
+            # 改为 fail-open (False): 允许重试平仓。若平仓实际已执行, broker 会拒绝重复平仓;
+            # 若 DB 恢复, 下次 scan 会通过正常路径检测到退出记录。
+            logger.critical(
+                f"[exit_monitor] _has_exit_record DB查询异常 (fail-open, 允许重试): {e} — "
+                f"若首次平仓未实际执行但 DB 写入失败, 此修改确保仓位不被永久滞留"
+            )
+            return False
 
     def initialize(self, quote_ctx=None):
         """初始化工具"""
@@ -563,16 +575,38 @@ class ExitMonitor:
             warn_pct, reduce_pct, stop_pct = 0.02, 0.025, 0.03
 
         total_pnl = 0.0
+        _pnl_errors = 0  # DEB-20260903 #105: 追踪取价异常数, 防止回撤低估
         for p in positions:
             try:
                 price = get_price_fn(p.symbol)
-                if price and price > 0:
-                    if getattr(p, 'direction', None) and getattr(p.direction, 'value', 'LONG') == 'LONG':
-                        total_pnl += (price - p.avg_entry_price) * getattr(p, 'size', 0)
-                    else:
-                        total_pnl += (p.avg_entry_price - price) * getattr(p, 'size', 0)
+                # DEB-20260904 #191: price 0/None 此前静默跳过 → 该仓从回撤中消失,
+                # 计入 _pnl_errors 让 #105 的低估告警能触发
+                if not (price and price > 0):
+                    _pnl_errors += 1
+                    logger.critical(
+                        f"[退出监控·P0] {p.symbol} 取价无效 ({price}), "
+                        f"该仓未计入组合回撤, 回撤可能被低估"
+                    )
+                    continue
+                # DEB-20260904 #191: 方向判定同时兼容 Direction 枚举与纯字符串.
+                # 旧写法 getattr(p.direction,'value','LONG') 在 direction 是纯 str
+                # 'SHORT' 时取不到 .value → 默认 'LONG' → 空头盈亏方向算反
+                _d = getattr(p, 'direction', None)
+                _dv = getattr(_d, 'value', _d)
+                if str(_dv).upper() == 'SHORT':
+                    total_pnl += (p.avg_entry_price - price) * getattr(p, 'size', 0)
+                else:
+                    total_pnl += (price - p.avg_entry_price) * getattr(p, 'size', 0)
             except Exception as _silent_e:
+                _pnl_errors += 1
                 logger.critical(f"[退出监控·P0] 组合PnL计算异常，回撤检测可能失效: {_silent_e}", exc_info=True)
+
+        # DEB-20260903 #105: 取价异常时回撤数据不完整, 显性告警
+        if _pnl_errors > 0:
+            logger.critical(
+                f"[退出监控·P0] 组合PnL有 {_pnl_errors}/{len(positions)} 个仓位取价异常, "
+                f"回撤检测基于不完整数据, 实际回撤可能被低估"
+            )
 
         # P0 修复 (2026-05-28): 使用账户净值作为回撤分母，而非持仓成本
         # 旧行为: total_cost 作为分母 → 半仓时回撤被放大 2 倍，误触发 REDUCE/FLAT
@@ -773,8 +807,8 @@ class ExitMonitor:
                 portfolio_action = None  # 降级为不执行
 
         if portfolio_action == "FLAT_ALL":
-            self._flat_all_last_triggered_ts = time.time()
             logger.critical("[组合止损] 触发 FLAT_ALL, 全平所有持仓")
+            _flat_fail = 0
             for p in managed_positions:
                 try:
                     _cur = get_price_fn(p.symbol)
@@ -783,10 +817,28 @@ class ExitMonitor:
                     _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
                     _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
                     if _dir_str == 'SHORT': _pnl = -_pnl
-                    execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_HARD_STOP", "close_ratio": 1.0})
+                    # DEB-20260904 #192: 检查平仓返回值, 失败不计入 closed
+                    _ok = execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_HARD_STOP", "close_ratio": 1.0})
+                    if _ok is False:
+                        _flat_fail += 1
+                        logger.critical(
+                            f"[组合止损] FLAT_ALL 平仓 {p.symbol} 返回失败, "
+                            f"不计入已平列表, 下轮将重试"
+                        )
+                        continue
                     closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_HARD_STOP", "pnl_pct": _pnl})
                 except Exception as _e:
+                    _flat_fail += 1
                     logger.error(f"[组合止损] 平仓 {p.symbol} 失败: {_e}")
+            # DEB-20260904 #192: 冷却锁存改为循环后写入, 且全部失败时不锁存
+            # (旧逻辑: 先锁存再平仓 → 全败也被冷却掩盖, 无法重试)
+            if len(closed) > 0 or _flat_fail == 0:
+                self._flat_all_last_triggered_ts = time.time()
+            else:
+                logger.critical(
+                    f"[组合止损] FLAT_ALL {len(managed_positions)} 仓全部平仓失败, "
+                    f"不锁存冷却, 下轮继续尝试"
+                )
             return closed
         elif portfolio_action == "REDUCE_50":
             # P0 (2026-07-03): REDUCE_50 冷却 — 5 分钟内不重复触发
@@ -804,14 +856,19 @@ class ExitMonitor:
                 logger.warning("[组合止损] 触发 REDUCE_50, 每只减仓 50%")
                 for p in managed_positions:
                     try:
-                        close_qty = max(1, getattr(p, 'size', 100) // 2)
+                        # DEB-20260903 #106: 1 股持仓无法减半 (1//2=0, max(1,0)=1 实为全平),
+                        #   原 close_qty=1 与 close_ratio=0.5 语义冲突. 明确最小减仓单位:
+                        #   size>=2 → 减半(0.5); size==1 → 无法执行 50%, 按全平且 ratio 如实=1.0.
+                        _size = getattr(p, 'size', 100)
+                        close_qty = max(1, _size // 2)
+                        _close_ratio = 0.5 if _size >= 2 else 1.0
                         _cur = get_price_fn(p.symbol)
                         _entry = getattr(p, 'avg_entry_price', 0)
                         _dir = getattr(p, 'direction', None)
                         _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
                         _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
                         if _dir_str == 'SHORT': _pnl = -_pnl
-                        execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": 0.5})
+                        execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": _close_ratio})
                         closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_REDUCE", "pnl_pct": _pnl})
                     except Exception as _e:
                         logger.error(f"[组合止损] 减仓 {p.symbol} 失败: {_e}")
@@ -920,8 +977,19 @@ class ExitMonitor:
             _strict_owner = False
 
         # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐仓一连接 = N+1)
-        from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_em
-        _pb_open_syms = load_playbook_open_symbols()
+        # DEB-20260903 #107: 加 try/except 防护, 防止导入/加载异常导致整个退出监控崩溃
+        try:
+            from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_em
+            _pb_open_syms = load_playbook_open_symbols()
+        except Exception as _pb_e:
+            # DEB-20260904 #193: fail-open → fail-closed. 旧逻辑降级为不过滤
+            # (lambda False) → playbook 仓被主线退出误平 (2026-07-16 P0 同类事故).
+            # 与组合层 R-7c 降级口径一致: 护栏不可用时本轮逐仓退出整段跳过.
+            logger.error(
+                f"[退出监控·安全降级] 加载 playbook 未平仓集合异常 ({_pb_e}), "
+                f"为防误平 Playbook 仓, 本轮逐仓退出整段跳过"
+            )
+            return closed
 
         for position in main_positions:
             try:
@@ -2194,7 +2262,15 @@ class ExitMonitor:
 
         if daily_atr <= 0:
             if cached:
-                return cached.get('value', 0.0)
+                # DEB-20260903 #108: 失败路径缓存设最大年龄 — 原不检查缓存时间戳,
+                #   ATR 持续获取失败时过期缓存被无限期复用, 止损位偏离实际波动.
+                #   超过最大年龄返回 0 (保守) 并告警数据源异常.
+                _age = now - cached.get('ts', 0)
+                if _age < self.ATR_FAIL_CACHE_MAX_AGE_SECONDS:
+                    return cached.get('value', 0.0)
+                logger.warning(
+                    f"[ATR] {symbol} 数据源持续异常, 缓存已 {_age:.0f}s "
+                    f"(> {self.ATR_FAIL_CACHE_MAX_AGE_SECONDS}s) 不再复用, 返回 0 保守处理")
             return 0.0
 
         # 2. VIX 缩放 (VIX=20 为基线, VIX 越高 ATR 越大)
@@ -2257,8 +2333,12 @@ class ExitMonitor:
             if self._quote_ctx:
                 from futu import KLType, AuType
                 from datetime import date as _d, timedelta as _td
-                _end_v = _d.today().isoformat()
-                _start_v = (_d.today() - _td(days=10)).isoformat()
+                # DEB-20260904 #194: 日K窗口端点用 ET 日期 — 服务器本地 date.today()
+                # 在 CST 午后已是"明天", 美股日K窗口错位一天
+                from app.utils.timezone import now_et as _now_et_d
+                _today_et = _now_et_d().date()
+                _end_v = _today_et.isoformat()
+                _start_v = (_today_et - _td(days=10)).isoformat()
                 ret, data, _ = self._quote_ctx.request_history_kline(
                     "US.VIXY", ktype=KLType.K_DAY, max_count=10,
                     start=_start_v, end=_end_v
@@ -2287,8 +2367,11 @@ class ExitMonitor:
         try:
             from futu import KLType, AuType
             from datetime import date as _d, timedelta as _td
-            _end_a = _d.today().isoformat()
-            _start_a = (_d.today() - _td(days=400)).isoformat()
+            # DEB-20260904 #194: 同上 — ATR 日K窗口端点用 ET 日期
+            from app.utils.timezone import now_et as _now_et_a
+            _today_et_a = _now_et_a().date()
+            _end_a = _today_et_a.isoformat()
+            _start_a = (_today_et_a - _td(days=400)).isoformat()
             ret, data, _ = self._quote_ctx.request_history_kline(
                 symbol, ktype=KLType.K_DAY, max_count=320,
                 start=_start_a, end=_end_a

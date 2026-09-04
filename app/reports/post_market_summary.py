@@ -70,7 +70,10 @@ class PostMarketSummaryReport:
                 pnl_pct = trade.get("pnl_pct", 0)
                 
                 trade_emoji = "✅" if pnl >= 0 else "❌"
-                lines.append(f"• {trade_emoji} {symbol} {action}: {pnl_sign}${pnl:.2f} ({pnl_pct:+.2%})")
+                # DEB-20260904 #206: 单笔符号按自身盈亏, 原复用总盈亏 pnl_sign —
+                # 总盈时亏损交易显示 '+$-50.00' 双符号
+                _t_sign = "+" if pnl >= 0 else ""
+                lines.append(f"• {trade_emoji} {symbol} {action}: {_t_sign}${pnl:.2f} ({pnl_pct:+.2%})")
         
         # 最佳/最差交易
         best_trade = trading_stats.get("best_trade")
@@ -83,7 +86,8 @@ class PostMarketSummaryReport:
             if best_trade:
                 symbol = best_trade.get("symbol", "?")
                 pnl_pct = best_trade.get("pnl_pct", 0)
-                lines.append(f"• 最佳: {symbol} +{pnl_pct:.2%}")
+                # DEB-20260904 #206: 硬编码 '+' 在全亏日显示 '+-3.50%', 改 :+ 自动带号
+                lines.append(f"• 最佳: {symbol} {pnl_pct:+.2%}")
             
             if worst_trade:
                 symbol = worst_trade.get("symbol", "?")

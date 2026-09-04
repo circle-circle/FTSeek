@@ -38,33 +38,46 @@ class _StubContainer:
 
 @pytest.fixture
 def _clean_pbcache():
-    """隔离 PlaybookConfig / FeatureFlags 两个全局, 测试后还原 (避免污染其他套件)。"""
+    """隔离 PlaybookConfig / FeatureFlags 两个全局, 测试后还原 (避免污染其他套件)。
+
+    DEB-20260904: setup 段也必须清零 — 此前只在 teardown 还原, 若先跑的套件
+    (如 tests/playbook 直接调真 get_playbook_config) 留下了非空单例, 本文件
+    测试会读到陈旧真身而非 monkeypatch 的桩容器 (全量按字母序 core 先于
+    playbook 运行所以不炸, 反向顺序才暴露)。
+    """
     from app.core import feature_flags as ff
     from app.playbook import config as pbc
 
     saved_pbc = pbc._playbook_config
     saved_flags = ff.FeatureFlags._instance
+    pbc._playbook_config = None
+    ff.FeatureFlags._instance = None
     yield
     pbc._playbook_config = saved_pbc
     ff.FeatureFlags._instance = saved_flags
 
 
 def test_invalidate_resets_both_consumers(_clean_pbcache, monkeypatch):
-    """核心契约: 两个快照消费者都被失效, 且返回名列表可断言。"""
+    """核心契约: 快照消费者都被失效, 且返回名列表可断言。"""
     from app.core import feature_flags as ff
     from app.playbook import config as pbc
+    from app.utils import watchlist_manager as wlm
 
     pbc._playbook_config = pbc.PlaybookConfig()
     assert pbc._playbook_config is not None
 
     stub = _StubFlags()
     monkeypatch.setattr(ff, "get_feature_flags", lambda: stub)
+    # DEB-20260903 #3: WatchlistManager 也纳入热重载失效, 打桩避免读真实 watchlist 文件
+    wl_stub = _StubFlags()
+    monkeypatch.setattr(wlm, "get_watchlist_manager", lambda: wl_stub)
 
     done = invalidate_config_snapshots()
 
-    assert done == ["PlaybookConfig", "FeatureFlags"]
+    assert done == ["PlaybookConfig", "FeatureFlags", "WatchlistManager"]
     assert pbc._playbook_config is None, "PlaybookConfig 单例未被丢弃"
     assert stub.reload_calls == 1, "FeatureFlags.reload() 未被调用"
+    assert wl_stub.reload_calls == 1, "WatchlistManager.reload() 未被调用"
 
 
 def test_playbook_config_is_stale_without_invalidation(_clean_pbcache, monkeypatch):
@@ -100,9 +113,10 @@ def test_invalidation_makes_new_value_visible(_clean_pbcache, monkeypatch):
 
 
 def test_one_consumer_failing_does_not_block_the_other(_clean_pbcache, monkeypatch, caplog):
-    """一个失效失败只降级为 WARNING, 另一个照常, 且不向调用方抛异常。"""
+    """一个失效失败只降级为 WARNING, 其余照常, 且不向调用方抛异常。"""
     from app.core import feature_flags as ff
     from app.playbook import config as pbc
+    from app.utils import watchlist_manager as wlm
 
     def _boom():
         raise RuntimeError("reset failed")
@@ -110,10 +124,13 @@ def test_one_consumer_failing_does_not_block_the_other(_clean_pbcache, monkeypat
     monkeypatch.setattr(pbc, "reset_playbook_config", _boom)
     stub = _StubFlags()
     monkeypatch.setattr(ff, "get_feature_flags", lambda: stub)
+    wl_stub = _StubFlags()
+    monkeypatch.setattr(wlm, "get_watchlist_manager", lambda: wl_stub)
 
     done = invalidate_config_snapshots()
 
-    assert done == ["FeatureFlags"]
+    # PlaybookConfig 失效失败 → 不在 done; 其余两个照常
+    assert done == ["FeatureFlags", "WatchlistManager"]
     assert stub.reload_calls == 1
 
 

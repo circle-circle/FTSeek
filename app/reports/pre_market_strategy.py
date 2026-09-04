@@ -63,7 +63,8 @@ class PreMarketStrategyReport:
         
         # VIX状态
         if vix < 20:
-            vix_status = "低波动 ( благоприятный)"
+            # DEB-20260904 #207: 原混入俄语 'благоприятный' (跨市场复制残留)
+            vix_status = "低波动 (有利)"
         elif vix < 25:
             vix_status = "正常"
         elif vix < 30:

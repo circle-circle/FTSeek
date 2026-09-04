@@ -104,14 +104,17 @@ class PushHub:
                 if added:
                     with self._lock:
                         self._aggregated += 1
+                    # DEB-20260903 #110: 已入桶=已处理, 确认占窗防止同事件重复入桶
+                    self._dedup.mark_sent(dedup_key)
                     logger.debug(f"[PushHub·agg] 入桶 key={msg.aggregate_key} title={msg.title}")
                     return True
 
             # R2: 异步 fire-and-forget (主线 0 阻塞), 同步模式仅测试用
             if self._async_mode and self._executor is not None and not sync:
-                self._async_send(msg)
+                self._async_send(msg, dedup_key)
                 return True
-            return self._immediate_send(msg)
+            # DEB-20260903 #110: 同步路径发送成功后才确认占窗 (sync 模式本不走 dedup)
+            return self._send_and_mark(msg, dedup_key if not sync else None)
         except Exception as e:
             logger.warning(f"[PushHub·push] 异常: {e}")
             with self._lock:
@@ -156,17 +159,27 @@ class PushHub:
     # ─────────────────────────────────────────────────────────────
     # 内部
     # ─────────────────────────────────────────────────────────────
-    def _async_send(self, msg: PushMessage):
+    def _async_send(self, msg: PushMessage, dedup_key=None):
         """R2 (2026-05-16): 异步提交 send 到线程池, 主线不阻塞"""
         try:
-            self._executor.submit(self._immediate_send, msg)
+            self._executor.submit(self._send_and_mark, msg, dedup_key)
         except Exception as e:
             # executor 关闭后 submit 异常 — 降级同步
             logger.debug(f"[PushHub·async] submit 失败, 降级同步: {e}")
             try:
-                self._immediate_send(msg)
+                self._send_and_mark(msg, dedup_key)
             except Exception:
                 pass
+
+    def _send_and_mark(self, msg: PushMessage, dedup_key=None) -> bool:
+        """发送并在成功后确认 dedup 占窗 (DEB-20260903 #110).
+
+        失败时不 mark, 使同 key 重试不会被误判为重复.
+        """
+        ok = self._immediate_send(msg)
+        if ok and dedup_key:
+            self._dedup.mark_sent(dedup_key)
+        return ok
 
     def _immediate_send(self, msg: PushMessage) -> bool:
         """按优先级遍历 channels, 任一成功即停; 全失败时 flag 文件兜底"""

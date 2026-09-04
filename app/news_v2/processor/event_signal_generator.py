@@ -101,11 +101,17 @@ def generate_signals_from_classification(classification) -> List[Dict[str, Any]]
         if it.get("confidence", 0) < impacted_min_conf:
             continue
         d = it.get("direction", "NEUTRAL")
-        if d == "NEUTRAL":
+        # DEB-20260903 #60: direction 白名单校验 — 原 else 分支把任何非 UP/NEUTRAL
+        # 的值 (如 DOWN_UNKNOWN) 一律映射为 SHORT; 未知方向应丢弃而非默认做空
+        if d == "UP":
+            _dir = "LONG"
+        elif d == "DOWN":
+            _dir = "SHORT"
+        else:
             continue
         candidates.append({
             "symbol": it["ticker"],
-            "direction": "LONG" if d == "UP" else "SHORT",
+            "direction": _dir,
             "ticker_confidence": it["confidence"],
             "is_primary": False,
         })

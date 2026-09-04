@@ -59,7 +59,9 @@ class MFFFFactor(BaseFactor):
     }
 
     _DEFAULTS = {
-        "threshold": 1.0,
+        # DEB-20260903 #50: 1.0→0.3 — 原值使 L99 .get(...,0.3) 默认值被显式覆盖,
+        # 有效阈值恒 1.0, 而 |raw_score|≤权重和=1.0 → 方向判定恒 NEUTRAL
+        "threshold": 0.3,
         "w_macd": 0.4,
         "w_vol": 0.3,
         "w_flow": 0.3,
@@ -94,7 +96,9 @@ class MFFFFactor(BaseFactor):
         w_macd = self.params.get("w_macd", 0.4)
         w_vol = self.params.get("w_vol", 0.3)
         w_flow = self.params.get("w_flow", 0.3)
-        threshold = self.params.get("threshold", 1.0)
+        # DEB-20260903 #50: threshold 默认 1.0→0.3 与方向判定对齐
+        # (原默认 1.0 且权重和=1.0 → |raw_score|≤1 → above_threshold 几乎恒 False)
+        threshold = float(self.params.get("threshold", 0.3))
 
         # 1. MACD 动量分量
         macd_component = self._compute_macd_component(md)
@@ -111,10 +115,11 @@ class MFFFFactor(BaseFactor):
                      + w_flow * flow_component)
 
         # 方向判定
-        if raw_score >= 0.3:
+        # DEB-20260903 #50: 使用 threshold 参数 (原硬编码 0.3 使参数无效)
+        if raw_score >= threshold:
             direction = "LONG"
             confidence = min(1.0, abs(raw_score))
-        elif raw_score <= -0.3:
+        elif raw_score <= -threshold:
             direction = "SHORT"
             confidence = min(1.0, abs(raw_score))
         else:

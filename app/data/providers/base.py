@@ -57,7 +57,16 @@ class BaseDataProvider(ABC):
         cached = self._cache[symbol]
         from app.utils.timezone import now_utc
         from datetime import timezone
-        fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01").replace("Z", "+00:00"))
+        # DEB-20260903 #25: fetched_at 缺失/naive 时按过期处理 —
+        # 原防御默认值 "2000-01-01" 无 Z 后缀, .replace("Z",...) 为 no-op,
+        # fromisoformat 返回 naive, 与 aware 的 now_utc() 相减必抛 TypeError;
+        # 现 naive 一律视为 UTC, 缺失/解析异常一律按过期(返回 False)
+        try:
+            fetched_at = datetime.fromisoformat(cached.get("fetched_at", "").replace("Z", "+00:00"))
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        except Exception:
+            return False
         age_seconds = (now_utc() - fetched_at).total_seconds()
         return age_seconds < self.cache_ttl
 

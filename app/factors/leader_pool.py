@@ -84,16 +84,26 @@ class LeaderPoolEvaluator:
 
             # 标的涨幅 (简化：用今日涨幅代替，理想情况用 20 天)
             # 这里为了简化实现，使用今日涨幅 / 今日 SPY 涨幅
-            if len(closes) >= 2:
+            # DEB-20260903 #49: closes[1]=0 除零保护 (原异常被外层 catch 整函数作废)
+            if len(closes) >= 2 and closes[1] > 0:
                 stock_chg = (closes[0] - closes[1]) / closes[1]
             else:
                 stock_chg = 0.0
 
-            rs = stock_chg / spy_chg if abs(spy_chg) > 0.001 else 1.0
+            # DEB-20260903 #49: 带符号比值在 spy_chg<0 时方向反转 (同负时 rs>0 误判龙头) —
+            # 大盘涨: 保持比值; 大盘跌: 用超额收益差映射 (跌得少/逆势涨 → rs>1)
+            if abs(spy_chg) > 0.001:
+                if spy_chg > 0:
+                    rs = stock_chg / spy_chg
+                else:
+                    rs = 1.0 + (stock_chg - spy_chg) / abs(spy_chg)
+            else:
+                rs = 1.0
 
             # 2. 检查是否跌破均线 (衰竭预警)
-            # 计算 MA(5)
-            ma5 = sum(closes[:5]) / 5 if len(closes) >= 5 else current_price
+            # DEB-20260903 #49: MA 窗口使用配置 self.ma_exhaustion (原硬编码 5)
+            _ma_n = max(2, int(self.ma_exhaustion))
+            ma5 = sum(closes[:_ma_n]) / _ma_n if len(closes) >= _ma_n else current_price
             is_exhausted = current_price < ma5
 
             score = 0.5

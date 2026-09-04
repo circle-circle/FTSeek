@@ -93,18 +93,18 @@ class DailyLogStore:
                 data.get('exit_price'), int(data.get('is_exit', False))
             ))
             
-            # 优化：每 10 秒 commit 一次，避免 IO 瓶颈
-            now = time.time()
-            if now - self._last_commit > 10.0:
-                conn.commit()
-                self._last_commit = now
-            else:
-                pass # 延迟 commit
-                
+            # DEB-20260903 #28: 每次 INSERT 后立即 commit —
+            # 原"10秒延迟commit"优化与"每次新建连接+即关"组合致命:
+            # 未 commit 的 INSERT 随 conn.close() 回滚, 绝大部分 tick 静默丢失
+            conn.commit()
+            self._last_commit = time.time()
+
             conn.close()
             
         except Exception as e:
-            logger.debug(f"[ShadowLog] 记录失败: {e}")
+            # DEB-20260904 #148: tick 落库失败由 debug 升 warning —
+            # 并发锁/IO 失败会持续静默丢复盘数据, debug 级在生产不可见
+            logger.warning(f"[ShadowLog] 记录失败 (tick 丢失): {e}")
 
     def get_day_data(self, symbol: str, date_str: str) -> list:
         """

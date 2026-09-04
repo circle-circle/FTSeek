@@ -1496,23 +1496,23 @@ def _process_pending_order(scheduler, tracker, order: dict):
     """处理单个待确认订单"""
     try:
         from app.risk.order_tracker import OrderState
-        from app.pipeline.order_executor import _notify_exit, _close_position
+        from app.pipeline.order_executor import _notify_exit, _close_position, _resolve_trd_env
         from app.core.models import ExitReason
         from futu import RET_OK as RET_OK_FUTU, TrdEnv
-        
+
         futu_id = order["futu_order_id"]
         symbol = order["symbol"]
         direction = order["direction"]
         quantity = order["quantity"]
         exit_reason_str = order.get("exit_reason", "UNKNOWN")
         meta = order.get("metadata", {})
-        
+
         # 查询订单状态
         if not scheduler.execution_engine or not scheduler.execution_engine.broker_adapter:
             logger.warning(f"[订单追踪] {symbol} 无 broker_adapter，跳过")
             return
-        
-        trd_env = TrdEnv.SIMULATE if getattr(scheduler, 'trade_env', 1) == 1 else TrdEnv.REAL
+
+        trd_env = _resolve_trd_env(scheduler)  # DEB-20260904 #S3
         ret, data = scheduler.execution_engine.broker_adapter.trade_ctx.order_list_query(
             order_id=futu_id,
             trd_env=trd_env

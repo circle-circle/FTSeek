@@ -1132,6 +1132,21 @@ class PlaybookDB:
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def has_weekly_report_marker(self, week_end: str) -> bool:
+        """DEB-20260904 #S7: 周报幂等标记精确查询 (regime='weekly_report' AND date=week_end).
+
+        原实现借 get_regime_log(days=7, include_markers=True) — days 实为行数 LIMIT
+        而非日期窗: 标记行掉出最新 7 行 → 误判未出周报 → 重复推送; 反之上周旧标记
+        在窗内 → 误判已出 → 漏报。精确匹配消除两类假阳性/假阴性。
+        """
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT 1 FROM playbook_regime_log "
+            "WHERE regime = 'weekly_report' AND date = ? LIMIT 1",
+            (week_end,),
+        ).fetchone()
+        return row is not None
+
     # ========== 汇总统计 ==========
 
     def get_summary_stats(self, days: int = 30) -> Dict[str, Any]:

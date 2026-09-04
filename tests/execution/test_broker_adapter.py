@@ -78,9 +78,14 @@ class TestNotionalSanityCheck:
             "US.SNDK", 1000, 430.0, is_close=True) is True
 
     def test_invalid_params_not_intercepted_here(self, adapter):
-        """qty/price 非法不在此拦截 (上游职责), 返回 True."""
+        """qty 非法不在此拦截 (上游职责), 返回 True."""
         assert adapter._notional_sanity_check("US.AAPL", 0, 100.0) is True
-        assert adapter._notional_sanity_check("US.AAPL", 10, 0.0) is True
+
+    def test_market_order_fail_close_without_price(self, adapter):
+        """DEB-20260904 #182: 市价单 (price<=0) 估不到价时 fail-close 拒绝,
+        不再像旧逻辑那样直接放行绕过 30% 兜底."""
+        # 测试进程无注册的 _shared_router → 估价为 0 → 拒绝
+        assert adapter._notional_sanity_check("US.AAPL", 10, 0.0) is False
 
 
 # ----------------------------------------------------------------------
@@ -97,12 +102,15 @@ class TestSubmitOrderDisconnected:
         assert result["order_id"]
         assert str(result["futu_order_id"]).startswith("SIM_")
 
-    def test_real_account_refuses_when_disconnected(self, adapter, monkeypatch):
-        """real 断连 → 拒绝提交 — 绝不在断连状态下实盘交易."""
-        monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
-        adapter.connected = False
+    def test_real_account_refuses_when_disconnected(self, monkeypatch):
+        """real 断连 → 拒绝提交 — 绝不在断连状态下实盘交易.
+
+        DEB-20260903 #97: 实盘判定按 self.trade_env 而非 AUTO_TRADE_ACCOUNT 环境变量,
+        故此处必须构造 trade_env=0 的实盘适配器 (共享 fixture 是 trade_env=1 模拟)."""
+        real_adapter = FutuBrokerAdapter(host="127.0.0.1", port=11111, trade_env=0)
+        real_adapter.connected = False
         with pytest.raises(RuntimeError, match="实盘安全"):
-            adapter.submit_order(_mk_order())
+            real_adapter.submit_order(_mk_order())
 
 
 # ----------------------------------------------------------------------

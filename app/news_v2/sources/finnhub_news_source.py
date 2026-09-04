@@ -37,7 +37,10 @@ class FinnhubNewsSource(SourceAdapter):
         super().__init__(interval_seconds=interval_seconds)
         self.api_key = os.getenv("FINNHUB_API_KEY", "")
         self.watchlist_codes = [c.replace("US.", "") for c in (watchlist_codes or [])]
-        self._last_timestamp = int(time.time()) - 3600
+        # DEB-20260904 #162: 水位改按 symbol 维度 — 原全源全局值会被前一标的的新文章推进,
+        # 误抑制其他标的较旧但仍有效的文章; 沿用原语义(启动回看 1h, 纯内存无持久化)
+        self._watermark_init = int(time.time()) - 3600
+        self._last_timestamps: Dict[str, int] = {}
         self._consecutive_auth_failures = 0
         self._circuit_open_until = 0.0
 
@@ -134,6 +137,13 @@ class FinnhubNewsSource(SourceAdapter):
             except ValueError:
                 timestamp = int(time.time())
 
+        # DEB-20260903 #63: _last_timestamp 原初始化后全文零引用(死代码) —
+        # 现用于增量过滤: 跳过不新于上次采集水位(严格更早)的文章, 产出有效 item 时推进水位
+        # DEB-20260904 #162: 水位按 symbol 维度取/推进, 避免跨标的互相抑制
+        wm = self._last_timestamps.get(symbol, self._watermark_init)
+        if timestamp < wm:
+            return None
+
         item_id = f"finnhub_{hashlib.md5(title.encode()).hexdigest()[:8]}"
 
         urgency = NewsUrgency.NORMAL
@@ -143,6 +153,10 @@ class FinnhubNewsSource(SourceAdapter):
         related = []
         if symbol:
             related.append(f"US.{symbol}")
+
+        # 推进增量水位 (仅在产出有效 item 时; 按 symbol 维度, DEB-20260904 #162)
+        if timestamp > wm:
+            self._last_timestamps[symbol] = timestamp
 
         return UnifiedNewsItemV2(
             id=item_id,

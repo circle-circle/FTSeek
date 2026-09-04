@@ -170,6 +170,12 @@ def _sec_premarket_peer():
 
 
 # ── 段7: 退出参数影子 (capture) ───────────────────────────────
+# 2026-09-04 (M1): 同步加净口径 — 实盘/变体的净实现中位 (毛实现 - 往返费)。
+#   费率参考: 9/3 实测 fees 63.56/15笔, 均名义~5.1k ≈ 8bps (fee_model 同源量级);
+#   毛口径会把费用线边缘的单误判为有效改善, 净口径是裁决口径。
+_EXIT_FEE_PCT = 0.08
+
+
 def _sec_exit_param():
     """退出参数影子: 更早保本/更紧锁利变体 vs 实盘 capture (2026-07-13)。
 
@@ -191,19 +197,35 @@ def _sec_exit_param():
         if not sub:
             return "无可用样本"
         live_med = _med([r["live"]["capture"] for r in sub])
+        # 净差均值 (bps): 变体-实盘逐笔配对 (双边同费相消), 全员应用期望口径
+        live_real = {id(r): r["live"].get("realized_pct") for r in sub}
+        live_net_med = _med([p - _EXIT_FEE_PCT for p in live_real.values() if p is not None])
         names = []
         for r in sub:
             for k in r.get("variants", {}):
                 if k not in names:
                     names.append(k)
-        parts = [f"n={len(sub)} 实盘cap中位{live_med:+.3f}" if live_med is not None else f"n={len(sub)}"]
+        head = (f"n={len(sub)} 实盘cap中位{live_med:+.3f}"
+                + (f" 净实现中位{live_net_med:+.2f}%" if live_net_med is not None else ""))
+        parts = [head]
         for name in names:
             if name.startswith("baseline"):
                 continue
             caps = [r["variants"][name].get("capture") for r in sub if name in r.get("variants", {})]
             ntrig = sum(1 for r in sub if r.get("variants", {}).get(name, {}).get("triggered"))
             cm = _med(caps)
-            parts.append(f"{name} cap中位{cm:+.3f}(触发{ntrig})" if cm is not None else f"{name} n/a")
+            nm = _med([r["variants"][name].get("realized_pct") - _EXIT_FEE_PCT
+                       for r in sub if name in r.get("variants", {})
+                       and r["variants"][name].get("realized_pct") is not None])
+            nd = [r["variants"][name]["realized_pct"] - r["live"]["realized_pct"]
+                  for r in sub if name in r.get("variants", {})
+                  and r["variants"][name].get("realized_pct") is not None
+                  and r["live"].get("realized_pct") is not None]
+            ndm = f"净差均值{sum(nd)/len(nd)*100:+.1f}bp" if nd else ""
+            seg = f"{name} cap中位{cm:+.3f}"
+            if nm is not None:
+                seg += f"(净{nm:+.2f}% {ndm})"
+            parts.append(f"{seg}(触发{ntrig})" if cm is not None else f"{name} n/a")
         return " | ".join(parts)
 
     if not recs:
@@ -383,10 +405,63 @@ def _sec_penetration():
     return lines
 
 
+# ── 段10: 出场后全天路径 (全量平仓单, 2026-09-04 MU V反核查产物) ─────
+def _sec_post_exit():
+    """出场后路径: post_fav/close_gap 方向感知 (正=市场继续朝原方向走)。
+    与段9 (penetration, 10m短窗) 互补: 本段看到收盘。
+    状态四分类 (P1 口径): ok=全天bar收盘前出场 / ah_exit=夜盘出场(隔夜段
+    看 next_open_gap) / bar_truncated=窗口bar补拉失败 / no_bars=无bar。
+    判分只用 ok; 其余在状态行如实可见 (数据不许静默蒸发)。"""
+    import statistics
+    all_recs = [r for r in _read_jsonl(SHADOW_DIR / "post_exit_path.jsonl")
+                if r.get("type") == "post_exit"]
+    recs = [r for r in all_recs if r.get("status") == "ok"]
+    lines = ["【出场后全天路径 (全量平仓单, 退出判分对照臂)】"]
+    if not all_recs:
+        lines.append("  暂无样本 — post_exit_path_shadow.py 盘后跑后自动显示")
+        return lines
+    # 状态分布 (全量口径, 含非判分样本)
+    sc = {}
+    for r in all_recs:
+        sc[r.get("status")] = sc.get(r.get("status"), 0) + 1
+    sc_s = " ".join(f"{k}={v}" for k, v in sorted(sc.items()))
+    lines.append(f"  状态: {sc_s} (判分只用 ok; ah_exit=夜盘出场看隔夜段)")
+
+    def blk(days):
+        sub = [r for r in recs if _within(r.get("date"), days)]
+        if not sub:
+            return "无样本"
+        fav = statistics.median([r["post_fav_pct"] for r in sub])
+        gaps = [r["close_gap_pct"] for r in sub]
+        gm, ga = statistics.median(gaps), sum(gaps) / len(gaps)
+        miss = sum(1 for g in gaps if g > 1) / len(gaps)
+        deep = [r for r in sub if r.get("deep_dd_day")]
+        deep_s = ""
+        if deep:
+            dg = statistics.median([r["close_gap_pct"] for r in deep])
+            deep_s = f" | 深回撤V反日{len(deep)}笔 gap中位{dg:+.2f}%"
+        # 坑底附近割 (距当日低<1%) 且深回撤日 — MU 9/3 形态
+        pit = [r for r in deep if (r.get("exit_dist_from_low_pct") or 99) < 1.0]
+        pit_s = f" 其中坑底附近割{len(pit)}笔" if pit else ""
+        return (f"n={len(sub)} 出场后同向空间中位{fav:+.2f}% | 到收盘 gap中位{gm:+.2f}%"
+                f"(均值{ga:+.2f}%) 错过>1%: {100*miss:.0f}%{deep_s}{pit_s}")
+
+    lines.append(f"  今日 : {blk(1)}")
+    lines.append(f"  近7天: {blk(7)}")
+    lines.append(f"  近30天:{blk(30)}")
+    # 夜盘出场隔夜段 (ah_exit): 出场→次日开盘方向感知 gap
+    ah = [r for r in all_recs if r.get("status") == "ah_exit"
+          and r.get("next_open_gap_pct") is not None]
+    if ah:
+        nog = statistics.median([r["next_open_gap_pct"] for r in ah])
+        lines.append(f"  夜盘出场 {len(ah)} 笔: 隔夜gap中位 {nog:+.2f}% (出场→次日开盘, 方向感知)")
+    return lines
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration):
+    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit):
         try:
             body += sec() + [""]
         except Exception as e:

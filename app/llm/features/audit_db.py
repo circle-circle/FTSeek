@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import closing
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -92,37 +93,39 @@ def record_call(
     """落 1 行 LLM 调用审计. 失败静默不阻断业务."""
     try:
         with _lock:
-            conn = sqlite3.connect(_get_db_path())
-            _ensure_schema(conn)
-            ph = hashlib.md5((prompt or "").encode("utf-8")).hexdigest()[:12]
-            rh = hashlib.md5((response or "").encode("utf-8")).hexdigest()[:12]
-            summary = ""
-            if result_summary:
-                try:
-                    summary = json.dumps(result_summary, ensure_ascii=False)[:500]
-                except Exception:
-                    summary = str(result_summary)[:500]
-            conn.execute(
-                "INSERT INTO llm_calls "
-                "(feature, model, timestamp, prompt_hash, prompt_len, response_hash, response_len, "
-                " success, cost_usd, latency_ms, tokens_in, tokens_out, result_summary, error_msg, is_test) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    feature, model, time.time(),
-                    ph, len(prompt or ""),
-                    rh, len(response or ""),
-                    int(bool(success)),
-                    float(cost_usd or 0),
-                    float(latency_ms or 0),
-                    int(tokens_in or 0),
-                    int(tokens_out or 0),
-                    summary,
-                    (error_msg or "")[:500],
-                    1 if _is_test_context() else 0,
-                ),
-            )
-            conn.commit()
-            conn.close()
+            # DEB-20260903 #57: 用 closing() 确保异常路径连接关闭 —
+            # 原 conn.close() 不在 finally, _ensure_schema/execute/commit 任一步
+            # 抛异常时 SQLite 连接句柄泄漏
+            with closing(sqlite3.connect(_get_db_path())) as conn:
+                _ensure_schema(conn)
+                ph = hashlib.md5((prompt or "").encode("utf-8")).hexdigest()[:12]
+                rh = hashlib.md5((response or "").encode("utf-8")).hexdigest()[:12]
+                summary = ""
+                if result_summary:
+                    try:
+                        summary = json.dumps(result_summary, ensure_ascii=False)[:500]
+                    except Exception:
+                        summary = str(result_summary)[:500]
+                conn.execute(
+                    "INSERT INTO llm_calls "
+                    "(feature, model, timestamp, prompt_hash, prompt_len, response_hash, response_len, "
+                    " success, cost_usd, latency_ms, tokens_in, tokens_out, result_summary, error_msg, is_test) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        feature, model, time.time(),
+                        ph, len(prompt or ""),
+                        rh, len(response or ""),
+                        int(bool(success)),
+                        float(cost_usd or 0),
+                        float(latency_ms or 0),
+                        int(tokens_in or 0),
+                        int(tokens_out or 0),
+                        summary,
+                        (error_msg or "")[:500],
+                        1 if _is_test_context() else 0,
+                    ),
+                )
+                conn.commit()
     except Exception as e:
         logger.debug(f"[LLM Audit] 写入失败: {e}")
 
@@ -131,17 +134,16 @@ def get_feature_cost_today(feature: str) -> float:
     """该 feature 当日累计成本 (USD, 仅生产流量)"""
     try:
         with _lock:
-            conn = sqlite3.connect(_get_db_path())
-            _ensure_schema(conn)
-            cursor = conn.execute(
-                "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls "
-                "WHERE feature = ? AND COALESCE(is_test, 0) = 0 "
-                "AND date(timestamp,'unixepoch','localtime')=date('now','localtime')",
-                (feature,),
-            )
-            row = cursor.fetchone()
-            conn.close()
-            return float(row[0] or 0)
+            with closing(sqlite3.connect(_get_db_path())) as conn:
+                _ensure_schema(conn)
+                cursor = conn.execute(
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls "
+                    "WHERE feature = ? AND COALESCE(is_test, 0) = 0 "
+                    "AND date(timestamp,'unixepoch','localtime')=date('now','localtime')",
+                    (feature,),
+                )
+                row = cursor.fetchone()
+                return float(row[0] or 0)
     except Exception as e:
         logger.debug(f"[LLM Audit] 查询失败: {e}")
         return 0.0
@@ -150,15 +152,14 @@ def get_feature_cost_today(feature: str) -> float:
 def get_feature_call_count(feature: str, hours: int = 24) -> int:
     try:
         with _lock:
-            conn = sqlite3.connect(_get_db_path())
-            _ensure_schema(conn)
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM llm_calls "
-                "WHERE feature = ? AND COALESCE(is_test, 0) = 0 AND timestamp > ?",
-                (feature, time.time() - hours * 3600),
-            )
-            row = cursor.fetchone()
-            conn.close()
-            return int(row[0] or 0)
+            with closing(sqlite3.connect(_get_db_path())) as conn:
+                _ensure_schema(conn)
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM llm_calls "
+                    "WHERE feature = ? AND COALESCE(is_test, 0) = 0 AND timestamp > ?",
+                    (feature, time.time() - hours * 3600),
+                )
+                row = cursor.fetchone()
+                return int(row[0] or 0)
     except Exception:
         return 0

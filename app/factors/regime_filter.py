@@ -76,7 +76,9 @@ class RegimeFilter:
             # 2. 获取 SPY 趋势
             spy_ctx = market_ctx.get('spy_context', {})
             spy_price = spy_ctx.get('price', 0.0)
-            spy_ma = spy_ctx.get('ma50', 0.0) # 假设外部已计算或提供
+            # DEB-20260903 #51: 按配置 spy_trend_ma 读取对应 MA 键 (原硬编码 ma50 使配置无效),
+            # 键不存在时回退 ma50 保持兼容
+            spy_ma = spy_ctx.get(f'ma{self.spy_trend_ma}', 0.0) or spy_ctx.get('ma50', 0.0)
             
             # 简单逻辑：如果没有提供 MA，我们检查 price vs prev_close 的粗略趋势
             # 更好的方式是使用 TwelveData 获取 SPY 历史，但为了性能，这里假设 market_ctx 包含趋势状态
@@ -87,7 +89,9 @@ class RegimeFilter:
             else:
                 # VIX 较低时，分数随 VIX 降低而升高
                 # VIX 20 -> 1.0, VIX 30 -> 0.0 (线性插值)
-                score = max(0.5, 1.0 - (vix - 15.0) / 30.0)
+                # DEB-20260903 #51: 加上界钓位 min(1.0,...) — VIX<15 时原式 score>1.0
+                # 违反 GateResult score 0-1 约定 (:24)
+                score = min(1.0, max(0.5, 1.0 - (vix - 15.0) / 30.0))
                 reason = f"市场环境正常 (VIX={vix:.1f})"
 
             return GateResult(name="RegimeFilter", passed=True, score=score, reason=reason)

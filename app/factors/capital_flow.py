@@ -71,7 +71,9 @@ class CapitalFlowMonitor:
             closes = history.get('close', [])
             volumes = history.get('volume', [])
 
-            if len(closes) < self.corr_window + 2:
+            # DEB-20260903 #46: closes 与 volumes 均需校验窗口长度 —
+            # 原仅校验 closes, volumes 较短时窗口切片错配 → 循环 volumes[i] 越界 IndexError
+            if len(closes) < self.corr_window + 2 or len(volumes) < self.corr_window + 2:
                 return GateResult(name="CapitalFlowMonitor", passed=False, score=0.0, reason="Insufficient Data")
 
             # 1. 计算量价相关性 (Pearson Correlation)
@@ -97,7 +99,13 @@ class CapitalFlowMonitor:
             corr = self._pearson_corr(price_changes, vol_changes)
 
             # 2. 检查今日量能激增
-            avg_vol = sum(volumes[1:21]) / 20 if len(volumes) > 20 else 1
+            # DEB-20260903 #46: 均量不足时不得 fallback=1 — curr_vol/1 使 vol_ratio 虚增数百万倍
+            if len(volumes) > 20:
+                avg_vol = sum(volumes[1:21]) / 20
+            elif len(volumes) > 1:
+                avg_vol = sum(volumes[1:]) / (len(volumes) - 1)  # 可用窗口均值
+            else:
+                avg_vol = 0.0  # 均量不可用 → vol_ratio=0 (不放大)
             curr_vol = volumes[0]
             vol_ratio = curr_vol / avg_vol if avg_vol > 0 else 0
 
@@ -142,7 +150,9 @@ class CapitalFlowMonitor:
 
         except Exception as e:
             logger.warning(f"[资金流监控] {symbol} 检测异常: {e}")
-            return GateResult(name="CapitalFlowMonitor", passed=False, score=0.0, reason=f"Error: {e}")
+            # DEB-20260903 #47: 与其他四门对齐 fail-open —
+            # 原 fail-closed 导致资金流门单点异常即阻断所有交易
+            return GateResult(name="CapitalFlowMonitor", passed=True, score=0.5, reason=f"Error(降级放行): {e}")
 
     def _pearson_corr(self, x, y):
         """计算皮尔逊相关系数"""

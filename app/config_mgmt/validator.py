@@ -204,6 +204,13 @@ class ConfigValidator:
                 result.errors.append(
                     f"类型错误: {key} = {value!r} (期望 {expected_type})"
                 )
+            # DEB-20260903 #4: min_length 声明原未被校验 — watchlist.us_stocks
+            # 空列表静默通过必需键检查
+            _min_len = spec.get("min_length")
+            if _min_len is not None and hasattr(value, "__len__") and len(value) < _min_len:
+                result.errors.append(
+                    f"长度不足: {key} 长度 {len(value)} < min_length={_min_len}"
+                )
 
     def _check_ranges(self, result: ValidationResult):
         """范围校验"""
@@ -218,6 +225,13 @@ class ConfigValidator:
         for key, (low, high, label) in range_checks.items():
             value = self.config.get(key)
             if value is None:
+                continue
+            # DEB-20260904 #134: 非数值 (如误配字符串) 先告警跳过 — 直接比较
+            # 会抛 TypeError 使启动校验降级
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                result.warnings.append(
+                    f"{label} ({key}) = {value!r} 非数值, 跳过范围校验"
+                )
                 continue
             if not (low <= value <= high):
                 result.warnings.append(

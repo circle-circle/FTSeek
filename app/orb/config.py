@@ -1,5 +1,5 @@
 """
-ORB 辅线配置 — RFC-056
+ORB 辅线配置 — RFC-075
 
 Opening Range Breakout 独立管线配置加载。
 从 unified_config.yaml::orb 段读取参数。

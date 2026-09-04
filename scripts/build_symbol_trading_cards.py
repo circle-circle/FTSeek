@@ -120,30 +120,78 @@ def momentum_retention():
     return out
 
 
+def intraday_recovery():
+    """日内深回撤修复 (V反股性, 2026-09-04 MU 核查产物): 5年日K口径。
+
+    deep_dd 日 = (low-open)/open <= -2% (开盘后砸坑);
+    修复 = (close-low)/low (坑底→收盘)。高修复股 = V反股: 深坑被洗概率高
+    (BE 止损易被触发) 但坑底割损失也大 — 与退出判分 (post_exit_path) 交叉用。
+    样本 = 近5年 (replay_bars_daily, 264只), 门槛 n_deep_dd>=30 才 rated。
+    """
+    dd_dir = REPO / "data" / "replay_bars_daily"
+    out = {}
+    for fp in sorted(dd_dir.glob("US_*.json")):
+        sym = "US." + fp.stem.replace("US_", "")
+        try:
+            rows = json.loads(fp.read_text())
+        except Exception as e:
+            print(f"WARNING: V反股性解析失败 {fp.name}: {e} (跳过)")
+            continue
+        n_days = n_deep = 0
+        rec_sum = full_rec = 0.0
+        for r in rows:
+            # [date, open, high, low, close]
+            if len(r) < 5:
+                continue
+            o, lo, c = float(r[1]), float(r[3]), float(r[4])
+            if o <= 0 or lo <= 0:
+                continue
+            n_days += 1
+            if (lo - o) / o * 100 <= -2.0:
+                n_deep += 1
+                rec = (c - lo) / lo * 100
+                rec_sum += rec
+                if rec >= 2.0:
+                    full_rec += 1
+        if n_days < 60 or n_deep <= 0:   # 上市太短/无事件不写块
+            continue
+        out[sym] = {
+            "n_days": n_days, "n_deep_dd": n_deep,
+            "deep_dd_freq": round(n_deep / n_days, 3),
+            "recovery_mean_pct": round(rec_sum / n_deep, 2),
+            "full_recovery_rate": round(full_rec / n_deep, 3),
+            "tier": "rated" if n_deep >= MIN_SAMPLE else f"insufficient(n_deep={n_deep})",
+        }
+    return out
+
+
 def main():
     ts = trading_stats()
     pb = premarket_behavior()
     mr = momentum_retention()
-    syms = sorted(set(ts) | set(pb) | set(mr))
+    ir = intraday_recovery()
+    syms = sorted(set(ts) | set(pb) | set(mr) | set(ir))
     written = rated = 0
     for sym in syms:
         card = {
             "symbol": sym,
-            "schema": "symbol_trading_card/1.0",
+            "schema": "symbol_trading_card/1.1",
             "generated": date.today().isoformat(),
-            "usage": "L2素材: 本系统成交结果+盘前行为+动量留存, 非方向先验; "
-                     "insufficient 档不得读出评级倾向",
+            "usage": "L2素材: 本系统成交结果+盘前行为+动量留存+V反股性, 非方向先验; "
+                     "insufficient 档不得读出评级倾向; V反股 (deep_dd_freq高+"
+                     "recovery高) 提示 BE 止损易被坑洗 — 与退出判分交叉用, 勿单独定行为",
             "trading_record": ts.get(sym),
             "premarket_behavior": pb.get(sym),
             "momentum_retention": mr.get(sym),
+            "intraday_recovery": ir.get(sym),
         }
-        if not any(card[k] for k in ("trading_record", "premarket_behavior", "momentum_retention")):
+        keys = ("trading_record", "premarket_behavior", "momentum_retention", "intraday_recovery")
+        if not any(card[k] for k in keys):
             continue
         (OUT_DIR / f"{sym.replace('.', '_')}.json").write_text(
             json.dumps(card, ensure_ascii=False, indent=1))
         written += 1
-        if any((card[k] or {}).get("tier") == "rated" for k in
-               ("trading_record", "premarket_behavior", "momentum_retention")):
+        if any((card[k] or {}).get("tier") == "rated" for k in keys):
             rated += 1
     print(f"写卡 {written} 只 (含 rated 档 {rated} 只) → {OUT_DIR}")
     # 实证样例: 8/31 事故标的
@@ -152,8 +200,11 @@ def main():
         if fp.exists():
             c = json.loads(fp.read_text())
             tr = c.get("trading_record") or {}
+            ir = c.get("intraday_recovery") or {}
             print(f"  {s}: n={tr.get('n')} net={tr.get('net')} wr={tr.get('wr')} "
-                  f"mfe0={tr.get('mfe0_pct')} sl_initial={tr.get('sl_initial_pct')} tier={tr.get('tier')}")
+                  f"mfe0={tr.get('mfe0_pct')} sl_initial={tr.get('sl_initial_pct')} tier={tr.get('tier')} | "
+                  f"V反: deep_dd_freq={ir.get('deep_dd_freq')} recovery={ir.get('recovery_mean_pct')}% "
+                  f"full_rec={ir.get('full_recovery_rate')} ({ir.get('tier')})")
 
 
 if __name__ == "__main__":

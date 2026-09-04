@@ -20,6 +20,19 @@ from typing import Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
 
+# DEB-20260903 #29: ET 口径 — shadow 信号按美东交易日统计, 避免服务器本地时区错位
+try:
+    from app.utils.timezone import now_et as _now_et
+except Exception:
+    _now_et = None
+
+
+def _et_now() -> datetime:
+    """ET 当前时间; timezone 工具不可用时退化为本地时间."""
+    if _now_et is not None:
+        return _now_et()
+    return datetime.now()
+
 
 class ShadowSignalLogger:
     """记录所有生成的信号（包括未执行的）"""
@@ -41,7 +54,7 @@ class ShadowSignalLogger:
             return
         try:
             record = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _et_now().isoformat(),
                 "symbol": candidate.symbol,
                 "direction": "LONG" if candidate.is_long else "SHORT",
                 "strength": candidate.strength,
@@ -83,7 +96,7 @@ class ShadowSignalLogger:
             if not self.log_path.exists():
                 return []
             
-            today = datetime.now().date()
+            today = _et_now().date()
             signals = []
             
             with open(self.log_path, "r", encoding="utf-8") as f:

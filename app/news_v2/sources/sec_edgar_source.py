@@ -4,7 +4,8 @@ FTSeek-US SEC EDGAR 公告采集源
 数据源:
 - SEC EDGAR RSS Feed (8-K, 10-Q, 10-K, 4 等)
 
-100% 相关性 (只采集 watchlist 公司的公告)
+注意: 该 Feed 为全市场流, 仅在配置 watchlist_codes 时按代码过滤;
+未配置时返回全量公告 (不保证只含 watchlist 公司)。
 """
 
 import hashlib
@@ -98,6 +99,25 @@ class SECEdgarSource(SourceAdapter):
                     filing_type = "Other"
                 
                 urgency = FILING_URGENCY.get(filing_type, NewsUrgency.NORMAL)
+
+                # DEB-20260903 #66: 按 watchlist 过滤 — 原实现保存了 watchlist_codes
+                # 却全程未用, 直接返回全市场公告, 与模块 docstring 声称的
+                # "只采集 watchlist 公司公告" 不符。配置非空时按代码在标题/正文中
+                # 的大小写不敏感匹配过滤; 为空时保持全量 (调用方自行承担过滤)。
+                if self.watchlist_codes:
+                    # DEB-20260904 #S9: 子串匹配会把 US.A 的 'A' 匹配进任意单词 →
+                    # 非 watchlist 公告漏过过滤。剥掉市场前缀, 用词边界正则匹配裸 ticker。
+                    import re as _re
+                    haystack = (title + " " + summary).upper()
+                    _hit = False
+                    for code in self.watchlist_codes:
+                        _tk = str(code).upper().replace("US.", "").strip()
+                        if _tk and _re.search(rf"\b{_re.escape(_tk)}\b", haystack):
+                            _hit = True
+                            break
+                    if not _hit:
+                        continue
+
                 item_id = f"sec_{hashlib.md5(title.encode()).hexdigest()[:8]}"
                 
                 items.append(UnifiedNewsItemV2(

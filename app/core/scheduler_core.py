@@ -682,7 +682,7 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("[SharedKernel] 初始化失败 (将使用默认 VIX 值): %s", e)
 
-        # ── RFC-056 (2026-06-01): ORB 辅线引擎 ──
+        # ── RFC-075 (2026-06-01): ORB 辅线引擎 ──
         # Opening Range Breakout: ETF 专属标的池, 5 秒轮询, 独立退出栈
         # 与主线零重叠, 渐进上线: observe → shadow → active
         self.orb_engine = None
@@ -699,6 +699,7 @@ class TradingScheduler:
                     position_store=self.position_store,
                     notifier=self.notifier,
                     open_position_lock=self._open_position_lock,
+                    scheduler=self,  # DEB-20260904 #173: 冷却门禁依赖 _is_in_cooldown
                 )
                 logger.info(
                     "[ORB] 引擎已初始化 | mode=%s | universe=%d只",
@@ -1574,7 +1575,7 @@ class TradingScheduler:
             self.data_router.futu.subscribe(etfs, sub_types=['QUOTE', 'K_1M', 'K_15M'])
             logger.info(f"[FutuLV3] ✅ ETF Push 订阅: {len(etfs)} 只 (QUOTE+K_1M+K_15M)")
 
-        # ORB ETF 订阅 (RFC-056: 确保 ORB 标的池有 K 线数据)
+        # ORB ETF 订阅 (RFC-075: 确保 ORB 标的池有 K 线数据)
         try:
             from app.core.config_container import get_config as _gc_orb
             _cfg_orb = _gc_orb()
@@ -1876,7 +1877,7 @@ class TradingScheduler:
             self._playbook_exit_thread.start()
             logger.info(f"[PlaybookExit] 独立快循环线程已启动 (interval={self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC}s)")
 
-        # RFC-056: ORB 辅线引擎 (循环内部自带 sleep_if_market_closed 守卫)
+        # RFC-075: ORB 辅线引擎 (循环内部自带 sleep_if_market_closed 守卫)
         if self.orb_engine:
             self.orb_engine.start()
 
@@ -1965,7 +1966,7 @@ class TradingScheduler:
                 if t.is_alive():
                     logger.warning(f"[调度器] 线程 {t.name} 未能在 {t_timeout}s 内退出，跳过")
 
-        # RFC-056: 停止 ORB 辅线引擎
+        # RFC-075: 停止 ORB 辅线引擎
         if self.orb_engine:
             self.orb_engine.stop()
             logger.info("[ORB] 引擎已停止")
@@ -2910,7 +2911,13 @@ class TradingScheduler:
 
         # 持久化 scanned_today 到文件，避免调度器重启后 _scanned_today 丢失导致重复扫描
         from pathlib import Path
-        _sentinel_file = Path("data") / ".insider_scanned_today"
+        # DEB-20260903 #34: 哨兵路径用统一数据目录 (原 Path("data") 相对路径依赖 CWD,
+        #   CWD 非仓库根时哨兵写错位置 → 重启后重复扫描)
+        try:
+            from app.core.paths import get_data_dir
+            _sentinel_file = Path(str(get_data_dir())) / ".insider_scanned_today"
+        except Exception:
+            _sentinel_file = Path("data") / ".insider_scanned_today"
 
         while self.running:
             try:
@@ -2919,13 +2926,18 @@ class TradingScheduler:
                 if sleep_if_market_closed(3600, lambda: self.running):
                     continue
 
-                # 每日只扫一次 (ET 06:00-09:30 之间触发, 给盘前留时间)
+                # 每日只扫一次 (ET 06:00-09:30 盘前之间触发, 给盘前留时间)
                 from app.utils.timezone import now_et
-                today = now_et().strftime("%Y-%m-%d")
-                hour = now_et().hour
+                _now_scan = now_et()
+                today = _now_scan.strftime("%Y-%m-%d")
+                hour = _now_scan.hour
+                _minute = _now_scan.minute
 
-                # 每天 ET 6-9 点之间执行一次扫描
-                if hour < 6 or hour >= 10:
+                # 每天 ET 06:00-09:30 (盘前) 之间执行一次扫描
+                # DEB-20260903 #34: 原 hour<6 or hour>=10 允许 09:30-09:59 (开盘后)仍在窗口内,
+                #   与注释"盘前 06:00-09:30"不符. 收紧为 06:00 <= t < 09:30.
+                _in_window = (hour >= 6) and (hour < 9 or (hour == 9 and _minute < 30))
+                if not _in_window:
                     # 等待 1 小时后再次检查
                     for _ in range(3600):
                         if not self.running:
@@ -3017,6 +3029,7 @@ class TradingScheduler:
             return
         
         processed = 0
+        _failed_items = []
         for item in queue[:10]:  # 最多处理 10 条，防止过载
             try:
                 symbol = item.get("symbol", "")
@@ -3027,12 +3040,14 @@ class TradingScheduler:
                 processed += 1
             except Exception as e:
                 logger.warning("[LLM 审计] 延迟审计失败 | %s: %s", item.get("symbol", "?"), e)
+                # DEB-20260904 #149: 失败条目保留待下轮重试 —
+                # 原无条件切片丢弃前 10 条, 失败审计永不重试
+                _failed_items.append(item)
         
-        # 清空队列
-        remaining = count - processed
-        self._deferred_audit_queue = self._deferred_audit_queue[10:]
+        # 失败条目 + 未处理条目留待下轮
+        self._deferred_audit_queue = _failed_items + self._deferred_audit_queue[10:]
         
         logger.info(
             "[LLM 审计] 延迟队列处理完成 | 处理=%d | 剩余=%d",
-            processed, remaining
+            processed, len(self._deferred_audit_queue)
         )

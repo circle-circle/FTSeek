@@ -85,10 +85,44 @@ class WatchlistManager:
             logger.debug(f"[BLACKLIST] watchlist_manager 读取全局黑名单失败: {e}")
             return []
 
+    def _apply_exclusions(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """DEB-20260904 #136: 黑名单+自管过滤抽公共 — 股票与 ETF 同一口径.
+
+        此前 get_etfs 只过 enabled, 黑名单/自管 ETF 经 get_all_enabled 漏进扫描池.
+        """
+        blacklist = self._get_global_blacklist()
+        filtered = [
+            s for s in items
+            if s.get("code", "").replace("US.", "") not in blacklist
+        ] if blacklist else items
+        blocked = [s.get("code") for s in items if s not in filtered]
+        if blocked:
+            logger.info(f"[BLACKLIST] watchlist 过滤拦截 {len(blocked)} 个黑名单标的: {blocked}")
+
+        try:
+            from app.core.config_container import get_config
+            self_managed = get_config().get_dotted("risk.self_managed_symbols", []) or []
+            if self_managed:
+                before = len(filtered)
+                # DEB-20260903 #9: 剥 US. 前缀再比对 — 与上方黑名单过滤口径一致,
+                # 原直接比对带前缀 code 与裸名 self_managed 可能永不命中
+                _sm_bare = {m.replace("US.", "") for m in self_managed}
+                filtered = [
+                    s for s in filtered
+                    if s.get("code", "").replace("US.", "") not in _sm_bare
+                ]
+                skipped = before - len(filtered)
+                if skipped:
+                    logger.info(f"[SELF_MANAGED] watchlist 过滤 {skipped} 个自管标的")
+        except Exception:
+            pass
+
+        return filtered
+
     def get_enabled_stocks(self) -> List[Dict[str, Any]]:
         """
         获取启用的股票列表 (三重过滤: enabled + 不在全局黑名单 + 不在自管列表)
-        
+
         Returns:
             [
                 {"code": "US.TSLA", "name": "Tesla Inc", "order_qty": 50, ...},
@@ -97,34 +131,7 @@ class WatchlistManager:
         """
         stocks = self._watchlist_data.get("us_stocks", [])
         enabled = [s for s in stocks if s.get("enabled", False)]
-        # P0 (2026-05-30): 双重过滤 — enabled 且不在全局黑名单
-        blacklist = self._get_global_blacklist()
-        filtered = [
-            s for s in enabled
-            if s.get("code", "").replace("US.", "") not in blacklist
-        ] if blacklist else enabled
-        blocked = [s.get("code") for s in enabled if s not in filtered]
-        if blocked:
-            logger.info(f"[BLACKLIST] watchlist 过滤拦截 {len(blocked)} 个黑名单标的: {blocked}")
-        
-        # 2026-06-13: 三重过滤 — 排除 self_managed_symbols (AMD/AAPL等用户自管)
-        # 防止这些标的进入扫描池浪费API预算，或绕过信号管道的self_managed检查
-        try:
-            from app.core.config_container import get_config
-            self_managed = get_config().get_dotted("risk.self_managed_symbols", []) or []
-            if self_managed:
-                before = len(filtered)
-                filtered = [
-                    s for s in filtered
-                    if s.get("code", "") not in self_managed
-                ]
-                skipped = before - len(filtered)
-                if skipped:
-                    logger.info(f"[SELF_MANAGED] watchlist 过滤 {skipped} 个自管标的")
-        except Exception:
-            pass
-        
-        return filtered
+        return self._apply_exclusions(enabled)
     
     def get_stock_codes(self) -> List[str]:
         """
@@ -149,9 +156,10 @@ class WatchlistManager:
         return [code.replace("US.", "") for code in codes]
     
     def get_etfs(self) -> List[Dict[str, Any]]:
-        """获取启用的ETF列表"""
+        """获取启用的ETF列表 (DEB-20260904 #136: 与股票同一黑名单/自管口径)"""
         etfs = self._watchlist_data.get("etfs", [])
-        return [e for e in etfs if e.get("enabled", False)]
+        enabled = [e for e in etfs if e.get("enabled", False)]
+        return self._apply_exclusions(enabled)
 
     def get_symbols_by_role(self, role: str) -> List[str]:
         """按角色标签取标的 (P-1 名单合一 2026-08-01, DEB-20260724 §7).

@@ -91,7 +91,10 @@ class SignalArbitrator:
             else:
                 priority = int(getattr(strat, "priority", 5))
             confidence = float(getattr(sig, "confidence", 0.0) or 0.0)
-            direction = str(getattr(sig, "direction", ""))
+            # DEB-20260904 #S2: str-Enum 归一 — str(Direction.LONG)='Direction.LONG'
+            # (Py3.11), 直接 str() 会把 'Direction.LONG' 写进审计 JSON
+            _dir_obj = getattr(sig, "direction", "")
+            direction = _dir_obj.value if hasattr(_dir_obj, "value") else str(_dir_obj)
             score = priority * confidence
             scored.append((score, priority, strat, sig))
             candidate_dicts.append({

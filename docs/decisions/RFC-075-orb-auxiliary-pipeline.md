@@ -1,4 +1,4 @@
-# RFC-056: 独立 ORB 辅线 (Opening Range Breakout Auxiliary Pipeline)
+# RFC-075: 独立 ORB 辅线 (Opening Range Breakout Auxiliary Pipeline)
 
 > **服务焦点**: F1 (买卖规范和止损止盈策略)
 > **改什么指标**: 增加交易频率 + 利用 10:00-11:00 盈利时段窗口
@@ -193,7 +193,7 @@ class ORBConfig:
 ### 4.4 config/unified_config.yaml — 新增配置段
 
 ```yaml
-# ── RFC-056: 独立 ORB 辅线 ──
+# ── RFC-075: 独立 ORB 辅线 ──
 orb:
   enabled: true
   mode: observe                    # observe → shadow → active (渐进上线)

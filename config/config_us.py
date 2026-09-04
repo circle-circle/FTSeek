@@ -29,17 +29,8 @@ try:
     from config.config_loader import get_config
     _loader = get_config()
     
-    # 向后兼容: 导出旧接口
-    WATCH_LIST_US = _loader.WATCH_LIST_US
-    DECISION_CONFIG = _loader.DECISION_CONFIG
-    RISK_CONFIG = _loader.RISK_CONFIG
-    
-    # P1 新增: 统一配置导出 (迁移自硬编码)
-    EXECUTION_CONFIG = _loader.EXECUTION_CONFIG
-    OBSERVABILITY_CONFIG = _loader.OBSERVABILITY_CONFIG
-    DATABASE_CONFIG = _loader.DATABASE_CONFIG
-    LOGGING_CONFIG = _loader.LOGGING_CONFIG
-    AGENT_CONFIG = _loader.AGENT_CONFIG
+    # DEB-20260903 #11: 不再做 import 期属性快照 (热重载不生效);
+    # 改由模块级 __getattr__ 惰性转发 (见文件下方 _EXPORT_PROPERTIES)
     
 except Exception as e:
     # P0-7 修复 2026-04-26: 统一配置加载失败时拒绝启动，避免硬编码 fallback 悄悄接管生产
@@ -168,25 +159,29 @@ if not API_TOKEN:
 # P1 修复 2026-04-28: 已迁移至 unified_config.yaml (通过 _loader.EXECUTION_CONFIG 读取)
 
 # ============================================================
-#  监控股票池 (美股) - 从watchlist_us.json动态读取
+#  监控股票池 (美股)
 # ============================================================
-def _load_watchlist_from_json():
-    """从watchlist_us.json动态加载股票名单"""
-    try:
-        import json
-        from pathlib import Path
-        json_path = Path(__file__).parent / "watchlist_us.json"
-        if json_path.exists():
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return [s["code"] for s in data.get("us_stocks", []) if s.get("enabled", False)]
-    except Exception as e:
-        print(f"[警告] 加载watchlist_us.json失败: {e}")
-    
-    # fallback到默认值 (2026-04-18: 统一从 unified_config 读取，此处仅应急)
-    return ["US.TSLA", "US.NVDA", "US.MU", "US.GOOG", "US.BABA", "US.AAPL", "US.MSFT", "US.AMZN", "US.META", "US.NVDA"]
+# DEB-20260903 #11: 删除 _load_watchlist_from_json() 对 WATCH_LIST_US 的覆盖 —
+# 原 33 行从 unified_config.yaml 赋值后又被 JSON 覆盖, 双真源读写分离;
+# WATCH_LIST_US 唯一真源 = _loader.WATCH_LIST_US (unified_config.yaml)
+#
+# DEB-20260903 #11: 快照修复 — RISK_CONFIG/DECISION_CONFIG 等原在 import 期
+# 取 property 快照, 热重载不生效; 改用 PEP 562 模块级 __getattr__ 惰性转发
+# loader, 属性访问 (config_us.RISK_CONFIG) 始终拿实时值。
+# 注意: `from config.config_us import RISK_CONFIG` 仍是引用快照 (Python 语义),
+# 热重载敏感的消费方应使用 config_loader.get_config() 或属性访问。
 
-WATCH_LIST_US = _load_watchlist_from_json()
+_EXPORT_PROPERTIES = (
+    "WATCH_LIST_US", "DECISION_CONFIG", "RISK_CONFIG", "EXECUTION_CONFIG",
+    "OBSERVABILITY_CONFIG", "DATABASE_CONFIG", "LOGGING_CONFIG", "AGENT_CONFIG",
+)
+
+
+def __getattr__(name: str):
+    """PEP 562: 惰性转发 loader 实时值 (DEB-20260903 #11)."""
+    if name in _EXPORT_PROPERTIES:
+        return getattr(_loader, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ============================================================
 #  多 Agent 配置 - 已迁移至 unified_config.yaml
@@ -201,13 +196,19 @@ WATCH_LIST_US = _load_watchlist_from_json()
 #  加载监控股票池配置
 # ============================================================
 WATCHLIST_FILE = CONFIG_DIR / "watchlist_us.json"
+# DEB-20260904 #138: YAML (unified_config) 为股票池唯一真源 —
+# 原 JSON 存在即优先, 与 watchlist_manager (YAML 口径) 形成双真源;
+# app/ 内已无该文件的写入方, 若文件再现则告警并忽略
 if WATCHLIST_FILE.exists():
-    with open(WATCHLIST_FILE, "r") as f:
-        WATCHLIST_CONFIG = json.load(f)
-else:
-    WATCHLIST_CONFIG = {
-        "symbols": {symbol: {"enabled": True, "name": symbol} for symbol in WATCH_LIST_US}
-    }
+    print(
+        "⚠️ [config_us] watchlist_us.json 已弃用并被忽略 "
+        "(唯一真源: unified_config.yaml watchlist) — 请删除该文件"
+    )
+WATCHLIST_CONFIG = {
+    # DEB-20260903 #11: 模块级 WATCH_LIST_US 已改 __getattr__ 惰性转发,
+    # 模块内代码不走 __getattr__, 直接引用 _loader
+    "symbols": {symbol: {"enabled": True, "name": symbol} for symbol in _loader.WATCH_LIST_US}
+}
 
 def get_watchlist():
     """获取启用的监控股票列表（兼容 us_stocks 数组格式和 symbols 字典格式）"""
@@ -238,7 +239,8 @@ def validate_config():
     
     # 2. P0 新增：配置一致性检查
     # 检查 MIN_CONFIDENCE 在各处是否一致
-    min_confidence_risk = RISK_CONFIG.get("MIN_CONFIDENCE", 0.70)  # 2026-06-13 统一: fail-safe 0.70
+    # DEB-20260903 #11: 模块内函数直接读 _loader (模块级快照已移除, __getattr__ 仅对外生效)
+    min_confidence_risk = _loader.RISK_CONFIG.get("MIN_CONFIDENCE", 0.70)  # 2026-06-13 统一: fail-safe 0.70
     try:
         from app.risk.pre_trade_check import PreTradeChecker
         checker = PreTradeChecker()
@@ -252,11 +254,11 @@ def validate_config():
         pass  # 忽略导入失败
     
     # 3. 阈值合理性检查
-    if RISK_CONFIG.get("MIN_CONFIDENCE", 0) < 0.3 or RISK_CONFIG.get("MIN_CONFIDENCE", 1) > 0.9:
-        warnings.append(f"MIN_CONFIDENCE={RISK_CONFIG.get('MIN_CONFIDENCE')} 超出合理范围 (0.3-0.9)")
+    if _loader.RISK_CONFIG.get("MIN_CONFIDENCE", 0) < 0.3 or _loader.RISK_CONFIG.get("MIN_CONFIDENCE", 1) > 0.9:
+        warnings.append(f"MIN_CONFIDENCE={_loader.RISK_CONFIG.get('MIN_CONFIDENCE')} 超出合理范围 (0.3-0.9)")
     
-    if RISK_CONFIG.get("SIGNAL_MIN_SCORE", 0) < 30 or RISK_CONFIG.get("SIGNAL_MIN_SCORE", 100) > 80:
-        warnings.append(f"SIGNAL_MIN_SCORE={RISK_CONFIG.get('SIGNAL_MIN_SCORE')} 超出合理范围 (30-80)")
+    if _loader.RISK_CONFIG.get("SIGNAL_MIN_SCORE", 0) < 30 or _loader.RISK_CONFIG.get("SIGNAL_MIN_SCORE", 100) > 80:
+        warnings.append(f"SIGNAL_MIN_SCORE={_loader.RISK_CONFIG.get('SIGNAL_MIN_SCORE')} 超出合理范围 (30-80)")
     
     # 4. 打印警告
     for warning in warnings:
@@ -281,10 +283,10 @@ def _log_config_change():
     
     # 仅记录关键配置摘要（避免日志过多）
     config_summary = {
-        "MIN_CONFIDENCE": RISK_CONFIG.get("MIN_CONFIDENCE"),
-        "MIN_CONSENSUS": RISK_CONFIG.get("MIN_CONSENSUS"),
-        "SIGNAL_MIN_SCORE": RISK_CONFIG.get("SIGNAL_MIN_SCORE"),
-        "MAX_DAILY_DRAWDOWN": RISK_CONFIG.get("MAX_DAILY_DRAWDOWN"),
+        "MIN_CONFIDENCE": _loader.RISK_CONFIG.get("MIN_CONFIDENCE"),
+        "MIN_CONSENSUS": _loader.RISK_CONFIG.get("MIN_CONSENSUS"),
+        "SIGNAL_MIN_SCORE": _loader.RISK_CONFIG.get("SIGNAL_MIN_SCORE"),
+        "MAX_DAILY_DRAWDOWN": _loader.RISK_CONFIG.get("MAX_DAILY_DRAWDOWN"),
         # MAX_TOTAL_DRAWDOWN 已删除 (2026-08-24): 总回撤门 8/23 随死门删除, 死链清除
     }
     

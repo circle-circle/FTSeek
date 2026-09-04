@@ -466,6 +466,15 @@ class ExecutionEngine(BaseExecutionEngine):
                     result = self.broker_adapter.submit_order(order)
                     if isinstance(result, dict) and result.get("futu_order_id"):
                         order.futu_order_id = result["futu_order_id"]
+                    # DEB-20260904 #184: 回填提交时已成交量 (CANCELLED_PART 场景),
+                    # 使 order_executor 的 P1 部分成交检查能识别 PARTIALLY_FILLED
+                    if isinstance(result, dict):
+                        _dq = float(result.get("dealt_qty") or 0)
+                        if _dq > 0:
+                            order.filled_quantity = _dq
+                            _da = float(result.get("dealt_avg_price") or 0)
+                            if _da > 0:
+                                order.fill_price = _da
                     order.state = OrderState.SENT
                     state_machine.transition(OrderState.SENT)
                     order.sent_at = now_et()

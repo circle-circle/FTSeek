@@ -90,7 +90,9 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         symbol=ctx.symbol,
         direction=direction,
         strength=int(float(confidence) * 100),
-        confidence=0.85,
+        # DEB-20260903 #94: 原硬编 confidence=0.85 与 strength(用真值 confidence)口径不一,
+        #   下游看到 strength 与 confidence 两个口径. 改用真实 confidence.
+        confidence=round(float(confidence), 4),
         strategy_id="BATTLE_PLAN_FAST_PATH",
         source="fast_lane",
         entry_zone=entry_zone,

@@ -162,11 +162,13 @@ class HKEXSource(SourceAdapter):
     def _parse_hkex_date(self, date_str: str) -> float:
         """解析 HKEX 日期格式 (YYYY/MM/DD HH:MM)"""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone, timedelta
             # 格式: 2026/05/27 14:30
             dt = datetime.strptime(date_str, "%Y/%m/%d %H:%M")
-            # HKEX 时间是 HKT (UTC+8)
-            return dt.timestamp() - 8 * 3600  # 转换为 UTC
+            # DEB-20260903 #124: HKEX 时间为 HKT(UTC+8). 原 naive.timestamp() 以服务器
+            #   本地时区解释再 -8h, 仅 UTC 服务器正确; 显式绑定 UTC+8 后转 UTC epoch,
+            #   与部署时区无关.
+            return dt.replace(tzinfo=timezone(timedelta(hours=8))).timestamp()
         except Exception:
             return 0.0
     

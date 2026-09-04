@@ -95,8 +95,10 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     # confidence: 基于分析师数量 + 净修正 + 共识一致性
     analyst_factor = min(0.20, current_q.num_analysts / 200)  # 100 analysts → 0.20
-    net_factor = min(0.15, abs(revision.net_revisions) * 0.03)  # 5 net → 0.15
-    consensus_factor = min(0.15, abs(revision.consensus_shift) * 3)  # 0.05 shift → 0.15
+    # DEB-20260904 #S5: 净修正/共识漂移是有符号量, abs() 会把强负修正也算成
+    # LONG 信号的高置信 — 负向贡献应归零而非取绝对值
+    net_factor = min(0.15, max(0, revision.net_revisions) * 0.03)  # 5 net → 0.15
+    consensus_factor = min(0.15, max(0, revision.consensus_shift) * 3)  # 0.05 shift → 0.15
     confidence = min(0.85, 0.45 + analyst_factor + net_factor + consensus_factor)
 
     # Rationale

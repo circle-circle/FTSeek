@@ -195,9 +195,16 @@ def generate_dynamic_pool_profile(
     else:
         # 风险状态 → 收紧配置 (优先 YAML, 回退硬编码)
         if yaml_adjustments and risk_level in yaml_adjustments:
-            adj = yaml_adjustments[risk_level]
+            # DEB-20260903 #5: 合并硬编码兜底 — YAML 若为 danger/blackout 定义了
+            # 部分字段但缺 max_symbols, adj.get("max_symbols", -1)==0 不成立,
+            # 停止开仓安全闸被绕过; 缺省字段继承硬编码值
+            adj = {**_RISK_ADJUSTMENTS.get(risk_level, {}), **yaml_adjustments[risk_level]}
         else:
             adj = _RISK_ADJUSTMENTS.get(risk_level, {})
+
+        # DEB-20260903 #5: 危险级别强制停止开仓 (双保险, 防 YAML 显式放开安全闸)
+        if risk_level in ("danger", "blackout"):
+            adj["max_symbols"] = 0
 
         if adj.get("max_symbols", -1) == 0:
             # 危险/熔断 → 停止开新仓

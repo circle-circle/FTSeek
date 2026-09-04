@@ -38,6 +38,25 @@ class PromotionEngine:
     MAX_ACTIVE_SHADOWS = 3     # 最多同时运行 3 个影子
 
     @staticmethod
+    def _norm_ppf(p: float) -> float:
+        """标准正态逆 CDF (Abramowitz-Stegun 26.2.23 有理逼近, |误差|<4.5e-4).
+
+        DEB-20260903 #125: 支撑 _critical_t 按 alpha 参数化 — 原 z=1.96 硬编码,
+        Bonferroni 校正后的 alpha 传入但被忽略, 临界值永远按 alpha=0.05 计算。
+        """
+        if p <= 0.0 or p >= 1.0:
+            raise ValueError("p must be in (0,1)")
+        sign = 1.0
+        if p < 0.5:
+            sign = -1.0
+            p = 1.0 - p
+        t = math.sqrt(-2.0 * math.log(1.0 - p))
+        c0, c1, c2 = 2.515517, 0.802853, 0.010328
+        d1, d2, d3 = 1.432788, 0.189269, 0.001308
+        z = t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t * t)
+        return sign * z
+
+    @staticmethod
     def _critical_t(n: int, alpha: float) -> float:
         """双尾 t-test 临界值近似
 
@@ -47,13 +66,15 @@ class PromotionEngine:
         df = n - 1
         if df < 1:
             return float('inf')
-        if df == 1:
-            return 12.706  # t_0.025,1
-        if df == 2:
-            return 4.303   # t_0.025,2
 
-        # 正态近似: z_0.025 = 1.96
-        z = 1.96
+        # DEB-20260903 #125: z 由 alpha 计算 — 原硬编码 1.96 使校正后 alpha 失效
+        z = PromotionEngine._norm_ppf(1.0 - alpha / 2.0)
+        if df == 1:
+            # 小 df 用 z 的保守放大 (t 分布厚尾)
+            return z * 6.49  # t_0.025,1=12.706 ≈ 1.96*6.49
+        if df == 2:
+            return z * 2.195  # t_0.025,2=4.303 ≈ 1.96*2.195
+
         # Williams 修正
         t_approx = z + (z**3 + z) / (4 * df) + (z**5 + 2 * z**3 + z) / (96 * df**2)
         return t_approx

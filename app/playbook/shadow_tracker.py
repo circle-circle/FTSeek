@@ -127,7 +127,9 @@ class ShadowTracker:
         # 覆盖回 'holding' (曾因 stub 无 trade_store 导致 21 条 win/loss 被误覆盖).
         # 'holding' 与 NULL 仍需继续追踪直到产生最终 outcome.
         _existing_outcome = inst.get("outcome")
-        if _existing_outcome in ("win", "loss", "skipped", "missed"):
+        # DEB-20260904 #S6: 'void' 也是终态 (db.py:438 终态集; 幽灵仓标记),
+        # 漏掉会把 void 指令重新追踪/覆盖
+        if _existing_outcome in ("win", "loss", "skipped", "missed", "void"):
             return
 
         if direction == "SKIP":

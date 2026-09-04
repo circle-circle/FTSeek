@@ -339,7 +339,10 @@ class PlaybookService:
         #   陈旧文件的 per-symbol 因子分/composite 照常展示会被误读为当日评分 →
         #   陈旧时清空 screen_map (item 侧 factor_scores/composite 归零), 但保留
         #   screen_scored/screen_date/screen_stale 供漏斗层如实呈现"筛选非当日".
-        if screen_date and screen_date != trade_date:
+        # DEB-20260903 #88: 与 L486 screen_stale 语义对齐 — 原仅在 screen_date 非空
+        #   且不匹配时清空; 当 screen_date 为空(无 timestamp)时 screen_stale=True 但
+        #   screen_map 未清空, 陈旧因子分仍被当当日评分展示. 改为同一判定口径.
+        if (not screen_date) or screen_date != trade_date:
             screen_map = {}
 
         # ④ factor_ic_latest.json — 因子 IC
@@ -737,8 +740,13 @@ class PlaybookService:
         """从 playbook_direction_audit.jsonl 读取方向审计, 按 symbol 索引."""
         try:
             from pathlib import Path
-            root = Path(__file__).resolve().parent.parent.parent
-            log_path = root / "data" / "shadow" / "playbook_direction_audit.jsonl"
+            # DEB-20260903 #89: 读侧与写侧同源 — 原硬编码 root/data/shadow 绝对路径,
+            #   写侧(pipeline._log_playbook_direction_audit)走
+            #   playbook.technical_arbitration.shadow_log_path 配置, 两侧可漂移失联.
+            from app.core.config_container import get_config as _gc_audit
+            log_path = Path(str(_gc_audit().get_dotted(
+                "playbook.technical_arbitration.shadow_log_path",
+                "data/shadow/playbook_direction_audit.jsonl")))
             if not log_path.exists():
                 return {}
             result = {}
@@ -927,10 +935,14 @@ class PlaybookService:
             logger.warning(f"[playbook] execute_mode=simulate 已废弃, {symbol} 强制降级为 futu_simulate (真实模拟下单)")
             _exec_mode = "futu_simulate"
 
-        entry_price = custom_params.get("entry_price") if custom_params else inst.get("entry_price", 0)
-        stop_loss = custom_params.get("stop_loss") if custom_params else inst.get("stop_loss", 0)
-        take_profit = custom_params.get("take_profit") if custom_params else inst.get("take_profit", 0)
-        position_size = custom_params.get("position_size") if custom_params else inst.get("position_size", 0)
+        # DEB-20260903 #90: 逐键回退而非整体切换 — 原实现 custom_params 为非空 dict 但缺键时,
+        # .get() 返回 None 覆盖指令原始值 (entry/SL/TP 丢失, position_size 被兑底成 1 股)
+        # DEB-20260904 #179: 键存在但值为 None 时 .get 仍返回 None 覆盖原值 — 改为值非 None 才覆盖
+        _cp = custom_params or {}
+        entry_price = _cp["entry_price"] if _cp.get("entry_price") is not None else inst.get("entry_price", 0)
+        stop_loss = _cp["stop_loss"] if _cp.get("stop_loss") is not None else inst.get("stop_loss", 0)
+        take_profit = _cp["take_profit"] if _cp.get("take_profit") is not None else inst.get("take_profit", 0)
+        position_size = _cp["position_size"] if _cp.get("position_size") is not None else inst.get("position_size", 0)
         if not position_size or position_size <= 0:
             position_size = 1
 
@@ -989,7 +1001,21 @@ class PlaybookService:
             logger.warning(f"[admission] {symbol} 执行时复核异常 (fail-open 放行): {_adm_exec_err}")
 
         # 方向映射
-        mos_direction = "LONG" if direction == "BUY" else "SHORT"
+        # DEB-20260904 #180: 白名单校验 — 旧逻辑 direction==BUY→LONG 其余一律 SHORT,
+        # 任何意外值 (typo/空串/SELL) 被静默当 SHORT 下单
+        _dir_upper = str(direction or "").strip().upper()
+        if _dir_upper == "BUY":
+            mos_direction = "LONG"
+        elif _dir_upper in ("SELL_SHORT", "SHORT", "SELL"):
+            mos_direction = "SHORT"
+        else:
+            _bad_dir_reason = f"direction 非法: {direction!r} (仅允许 BUY/SELL_SHORT)"
+            logger.error(f"[playbook] {symbol} {_bad_dir_reason}, 拒单")
+            try:
+                self.db.update_instruction_tracking(instruction_id, {"skip_reason": _bad_dir_reason})
+            except Exception:
+                pass
+            return {"success": False, "message": _bad_dir_reason, "skipped_bad_direction": True}
 
         # 议题二C (2026-08-01, 用户授权): BUY 日执行配额 — 负 edge 方向限流
         #   (基线 3.65 笔/日 → 配额 2 笔/日). 超出配额的 BUY 不置 executed,
@@ -1527,6 +1553,9 @@ class PlaybookService:
                     pass
         if not _fill or _fill <= 0:
             logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
+            # DEB-20260904 #S10: 拒绝记账必须释放执行认领 — 否则 claim 行永久
+            # 占用, 该指令永远无法重试 (与上方"未成交"分支的 release 对齐)
+            self.db.release_execution_claim(instruction_id)
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
         # 部分成交处理 (P0 2026-07-19): 用真实成交量记账, 消除幽灵仓.
         #   broker 返回 filled_qty=0 时 (SIM avg_price=0 / 查询未命中) 回退下单量.
@@ -2059,6 +2088,23 @@ class PlaybookService:
                             "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
                 if any(_k in _status for _k in
                        ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
+                    # DEB-20260903 #91: 终态前检查部分成交 — CANCELLED_PART 等终态可能
+                    # 已有 dealt_qty>0, 直接 skip 会丢弃已成交部分 → broker 有真实持仓
+                    # 但无 trade_records 行 (孤儿仓, 无 SL 守护)
+                    if _dealt > 0:
+                        _fill_px = _davg if _davg > 0 else _limit_px
+                        logger.warning(
+                            f"[archetype路由] {symbol} 终态 {_status} 但已部分成交 "
+                            f"{_dealt}/{req_qty} @{_fill_px} — 按已成交量记账")
+                        self._append_routed_shadow(
+                            {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
+                             "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
+                             "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
+                             "wait_seconds": round(_ttl - max(0.0, _deadline - time.time()), 1),
+                             "partial": True, "terminal_status": _status,
+                             "futu_order_id": str(futu_order_id)})
+                        return {"proceed": True, "fill_price": _fill_px,
+                                "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
                     return _skip_terminal(
                         "archetype_order_dead",
                         f"{mode_label} {symbol} 路由限价单被拒/已撤 (status={_status}), 放弃不追单")
@@ -2080,17 +2126,34 @@ class PlaybookService:
                     "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
 
         _cancel_res = _dual.cancel_order(str(futu_order_id), target_env)
-        if not _cancel_res.get("success"):
-            logger.warning(f"[archetype路由] {symbol} 撤单失败 (继续按放弃处理): {_cancel_res.get('error')}")
+        _cancel_ok = bool(_cancel_res.get("success"))
+        if not _cancel_ok:
+            logger.warning(f"[archetype路由] {symbol} 撤单失败: {_cancel_res.get('error')}")
         time.sleep(2.0)  # 等撤单传播, 随后竞态复查
 
         # 竞态复查: 撤单请求与成交之间可能交叉 — 复查到成交则按成交记账
         _status2, _dealt2, _davg2 = _query_once()
         if _status2 is not None:
             _last_status = _status2
+
+        # DEB-20260904 #181a: 撤单未确认时若订单仍在途 (非终态), 不得 skip_terminal —
+        # 订单可能随后成交形成孤儿仓. 终止集合与 #184 同口径: 只认终态.
+        _terminal_frag = ("FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "DISABLED", "REJECTED")
+        _still_live = (not _cancel_ok) and _status2 and not any(_f in _status2 for _f in _terminal_frag)
+        if _still_live:
+            logger.error(
+                f"[archetype路由] {symbol} 撤单失败且订单仍在途 (status={_status2}), "
+                f"不置 terminal-skip — 保留待下轮复查, 防孤儿仓"
+            )
+            return {"proceed": False, "result": {
+                "success": False, "cancel_unconfirmed": True,
+                "message": f"撤单未确认 status={_status2} (订单仍在途, 未置 terminal-skip)"}}
+
         _fin_dealt = max(_dealt, _dealt2)
-        if _fin_dealt > 0 and (_davg2 > 0 or _davg > 0):
-            _fill_px = _davg2 if _davg2 > 0 else _davg
+        if _fin_dealt > 0:
+            # DEB-20260904 #181b: 双均价均为 0 时用 _limit_px 兜底入账 —
+            # 旧逻辑 (要求 _davg2>0 or _davg>0) 会把真实成交掉进 skip_terminal 成孤儿仓
+            _fill_px = _davg2 if _davg2 > 0 else (_davg if _davg > 0 else _limit_px)
             logger.info(f"[archetype路由] {symbol} TTL 到期部分成交 {_fin_dealt}/{req_qty}, "
                         f"撤余单后按已成交量记账 @{_fill_px}")
             self._append_routed_shadow(
@@ -2173,11 +2236,19 @@ class PlaybookService:
         if not inst:
             return {"success": False, "message": "指令不存在"}
 
+        # DEB-20260903 #92: 已执行指令不可被改写为 skipped —
+        # 对齐 execute_instruction (:747) 守卫, 防止 executed=1 ∧ outcome=skipped 矛盾态
+        if inst.get("executed"):
+            return {"success": False, "message": "指令已执行, 不可跳过"}
+
         skip_reason = custom_reason or reason or "用户主动跳过"
 
         # 更新 DB
+        # DEB-20260903 #92: skip_reason 同步写回指令跟踪表
+        # (原仅写 feedback 表, Dashboard/执行路径读 skip_reason 时口径不一致)
         self.db.update_instruction_tracking(instruction_id, {
             "outcome": "skipped",
+            "skip_reason": skip_reason,
         })
 
         # 保存反馈
@@ -2253,5 +2324,11 @@ class PlaybookService:
         try:
             from app.web_dashboard.data_service import et_today
             return et_today()
-        except ImportError:
-            return date.today().isoformat()
+        except Exception:
+            # DEB-20260903 #93: 兜底同样按 ET 取日 (原 date.today() 用服务器本地时区,
+            #   跨时区部署与上游 et_today() 口径不一致); except 由 ImportError 扩到
+            #   Exception (et_today 运行期异常原会逃逸). now_et 模块级已导入.
+            try:
+                return now_et().date().isoformat()
+            except Exception:
+                return date.today().isoformat()

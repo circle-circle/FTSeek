@@ -111,7 +111,9 @@ class MACrossStrategy(BaseStrategy):
             if ma20 < ma50: alignment_score += 25
             if price_below: alignment_score += 25
 
-            strength = 50 - int(alignment_score / 100 * 40)  # 10-50
+            # DEB-20260903 #72: 原 50 - int(...) 使空头排列越整齐强度越低,
+            # 与注释相反; 改为随排列整齐度递增 (50-90)
+            strength = 50 + int(alignment_score / 100 * 40)  # 50-90
 
             confidence = self._calculate_confidence({
                 "cross_confirm": 0.8 if death_cross else 0.5,

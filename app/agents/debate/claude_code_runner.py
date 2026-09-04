@@ -188,11 +188,17 @@ class ClaudeCodeRunner:
         新: YAML llm.features.claude_code 路由 + UnifiedLLMService
         """
         from app.llm.unified_service import UnifiedLLMService
+        # DEB-20260903 #67: model 参数原被忽略 (重试切换模型不生效) —
+        # UnifiedLLMService.call_text 无 model 形参, 但底层 model_call 先设
+        # payload["model"]=路由默认 再 payload.update(extra_body), 故经
+        # extra_body={"model": model} 可覆盖生效
+        extra_body = {"model": model} if model else None
         return UnifiedLLMService.call_text(
             "claude_code", prompt,
             system=system_prompt or "",
             temperature=temperature,
             max_tokens=16000,  # 2026-06-14: 4096→16000, 充分输出
+            extra_body=extra_body,
         )
     
     def _parse_response(self, response: str) -> Optional[Dict]:

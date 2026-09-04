@@ -41,8 +41,14 @@ _LIMIT_SHADOW_EMITTED: set = set()
 _SHADOW_SEEN: Dict[str, set] = {}
 
 
-def _shadow_dedup_ok(path, inst_id, kind: str = "row") -> bool:
-    """返回 True = 首次, 允许写入; 已存在返回 False。异常时放行 (影子宁多勿漏)。"""
+def _shadow_dedup_claim(path, inst_id, kind: str = "row"):
+    """DEB-20260904 #175: 两阶段防重 — claim 只查不占.
+
+    返回 None = 已存在 (调用方应跳过); 否则返回 (seen_set, key) 供写盘成功后
+    _shadow_dedup_commit 提交. 旧实现 _shadow_dedup_ok 在返回前就 seen.add(_k)
+    预占, 写盘失败时键残留 → 该信号永久被 dedup 拦下.
+    异常时放行 (影子宁多勿漏) — 返回 (None, key) 哨兵, commit 时安全跳过.
+    """
     try:
         key = str(path)
         seen = _SHADOW_SEEN.get(key)
@@ -75,11 +81,35 @@ def _shadow_dedup_ok(path, inst_id, kind: str = "row") -> bool:
             _SHADOW_SEEN[key] = seen
         _k = (inst_id, kind)
         if _k in seen:
-            return False
-        seen.add(_k)
-        return True
+            return None
+        return (seen, _k)
     except Exception:
-        return True
+        return (None, (inst_id, kind))
+
+
+def _shadow_dedup_commit(claim) -> None:
+    """DEB-20260904 #175: 写盘成功后提交 claim 的键 (与 _shadow_dedup_claim 配对)."""
+    try:
+        if not claim:
+            return
+        seen, _k = claim
+        if seen is not None:
+            seen.add(_k)
+    except Exception:
+        pass
+
+
+def _shadow_dedup_ok(path, inst_id, kind: str = "row") -> bool:
+    """[向后兼容] 返回 True = 首次, 允许写入; 已存在返回 False。异常时放行.
+
+    DEB-20260904 #175: 新代码应改用 _shadow_dedup_claim/_shadow_dedup_commit
+    两阶段 (写盘失败不留残留键). 本函数保留给旧调用点, 仍为"查即占"语义.
+    """
+    claim = _shadow_dedup_claim(path, inst_id, kind)
+    if claim is None:
+        return False
+    _shadow_dedup_commit(claim)
+    return True
 
 # 2026-08-06 (B1 二次修复): 盘口 micro 拉取的"已告警"集 ((symbol, date) 防刷屏).
 #   首修 (08-05) 用 get_push_orderbook 推送缓存 — 但 ADR-013 早已把 ORDER_BOOK 移出推送
@@ -428,7 +458,6 @@ def _shadow_portfolio_emit(inst, symbol, is_short, blocked_by, entry_path,
                     return
         except Exception:
             pass  # 文件不可读时退化为仅进程内 set 去重
-        _SP_EMITTED.add(_lk)
         import json as _jsp
         from datetime import datetime as _dtsp
         from pathlib import Path as _Psp
@@ -448,6 +477,9 @@ def _shadow_portfolio_emit(inst, symbol, is_short, blocked_by, entry_path,
         with open(_Psp(__file__).resolve().parents[2] / "data" / "shadow_portfolio_entries.jsonl",
                   "a", encoding="utf-8") as _fsp:
             _fsp.write(_jsp.dumps(_row, ensure_ascii=False) + "\n")
+        # DEB-20260903 #84: 写盘成功后才入进程 set — 原写盘前置位, 写盘异常时
+        #   (inst_id,date) 键已被标记 → 该影子入场行永久丢失, 与 _VWAP_AB_LOGGED 一致.
+        _SP_EMITTED.add(_lk)
         logger.info(f"[影子组合] {symbol} {'SHORT' if is_short else 'LONG'} "
                     f"被拦入场已登记 (blocked_by={blocked_by}, px=${current_price:.2f})")
     except Exception:
@@ -468,7 +500,9 @@ def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_dir
         except Exception:
             pass
         record = {
-            "timestamp": datetime.now().isoformat(),
+            # DEB-20260903 #84: 时间戳用 ET 口径 (原 datetime.now() 服务器本地时区,
+            #   读侧 playbook_service 按 ET trade_date 子串过滤, 跨时区会漏配).
+            "timestamp": datetime.now(_now_et()).isoformat(),
             "symbol": symbol,
             "llm_direction": llm_direction,
             "technical_direction": technical_direction or "",
@@ -812,8 +846,12 @@ class TechnicalFallbackAdapter:
         direction = str(getattr(cand, "direction", "") or "").upper()
         if direction not in ("LONG", "SHORT"):
             return None
-        strength = int(getattr(cand, "strength", 50) or 50)
-        confidence = float(getattr(cand, "confidence", 0.5) or 0.5)
+        # DEB-20260904 #177: `or 50`/`or 0.5` 会把合法的 0 值静默改写成默认值
+        # (strength=0 应被下游 SignalQuality 地板拦截, 改写成 50 反而放行)
+        _cand_str = getattr(cand, "strength", None)
+        _cand_conf = getattr(cand, "confidence", None)
+        strength = int(_cand_str) if _cand_str is not None else 50
+        confidence = float(_cand_conf) if _cand_conf is not None else 0.5
         logger.info(f"[TechnicalFallback] {symbol} technical 方向={direction} str={strength} — DA 缺席兜底")
         return {
             "symbol": symbol,
@@ -858,7 +896,10 @@ class BridgeVotingAdapter:
         if direction not in ("LONG", "SHORT"):
             return None
 
-        score = float(cand.get("score", 5.0))
+        # DEB-20260903 #85: score 类型守卫 — cand.get("score", 5.0) 当 score=None 时
+        # 返回 None, float(None) 抛 TypeError; schema 校验不查 score 字段, 需消费端守卫
+        _raw_score = cand.get("score")
+        score = float(_raw_score) if (isinstance(_raw_score, (int, float)) and not isinstance(_raw_score, bool)) else 5.0
         # 2026-08-30 (DEB-20260830 E11 修复): 删除消费端重复合成, 直读生成端权威值.
         # 根因: 原处用 `chall_dir == direction` 字面比较, 但挑战者方向是 BUY/SELL_SHORT
         # 标签体系而 direction 是 LONG/SHORT → 恒不等 → 全候选被误判"方向分歧"恒扣 0.35,
@@ -2981,11 +3022,13 @@ def run_playbook_track(scheduler, *, force: bool = False) -> Optional[Dict[str, 
                     _run_ic_backfill_only(scheduler, today)
                     return None
 
-                # 检查是否已追踪：所有指令均有终态 outcome (win/loss/skipped/missed)
+                # 检查是否已追踪：所有指令均有终态 outcome (win/loss/skipped/missed/void)
                 # outcome="holding"/NULL 均不算终态 — 持仓中或未追踪的指令需每日重追踪直到产生最终 outcome
                 # 空列表 (PRE_MARKET错过/重启) 也算已追踪 — 没有指令就没有需要追踪的
+                # DEB-20260904 #S6: 补 'void' (幽灵仓终态, db.py:438) — 漏掉则含 void 的
+                # 批次永远凑不齐"全部终态", 盘后追踪每日重跑
                 tracked = not instructions or all(
-                    inst.get("outcome") in ("win", "loss", "skipped", "missed")
+                    inst.get("outcome") in ("win", "loss", "skipped", "missed", "void")
                     for inst in instructions
                 )
                 if tracked:
@@ -3141,11 +3184,8 @@ def run_playbook_weekly(scheduler, *, force: bool = False) -> Optional[Dict[str,
             try:
                 from app.playbook.db import PlaybookDB
                 db = PlaybookDB()
-                regime_log = db.get_regime_log(days=7, include_markers=True)
-                has_weekly = any(
-                    r.get("regime") == "weekly_report" or "weekly" in str(r.get("regime", ""))
-                    for r in regime_log
-                )
+                # DEB-20260904 #S7: 精确标记查询, 替代 get_regime_log(days=7) 行数窗误判
+                has_weekly = db.has_weekly_report_marker(week_end)
                 if has_weekly:
                     logger.info(f"[playbook] 本周 ({week_end}) DB 已有周报，跳过 (幂等)")
                     scheduler._playbook_weekly_done = week_end
@@ -4193,7 +4233,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                     logger.warning(
                                         f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
                                         f"越过禁追线 ${_cc_f:.2f} (DEB-20260901 Phase B record-only, 不拦截)")
-                                    if _shadow_dedup_ok(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}"):
+                                    _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
+                                    if _cc_claim is not None:
                                         _row_cc = {
                                             "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
                                             "date": _today_et_str(), "schema": "v1",
@@ -4208,6 +4249,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                         _cc_path.parent.mkdir(parents=True, exist_ok=True)
                                         with open(_cc_path, "a", encoding="utf-8") as _f_cc:
                                             _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
+                                        # DEB-20260904 #175: 写盘成功后才提交键
+                                        _shadow_dedup_commit(_cc_claim)
                         except Exception as _cc_err:
                             logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
 
@@ -5711,7 +5754,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 # [DEB-20260901 §六.4] 内存集 + 文件级双防重 (重启后内存集清零,
                 #   文件级兜住; 历史旧行无 type 字段按 "row" 归一, 键不冲突)。
                 _le_path = _Path(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl"
-                if _lk not in _LIMIT_SHADOW_EMITTED and _shadow_dedup_ok(_le_path, inst.get("id")):
+                _le_claim = _shadow_dedup_claim(_le_path, inst.get("id"))
+                if _lk not in _LIMIT_SHADOW_EMITTED and _le_claim is not None:
                     _LIMIT_SHADOW_EMITTED.add(_lk)
                     _micro = _fetch_l1_micro(scheduler, symbol)
                     import json as _json2
@@ -5731,6 +5775,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                     }
                     with open(_P2(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl", "a", encoding="utf-8") as _f2:
                         _f2.write(_json2.dumps(_row, ensure_ascii=False) + "\n")
+                    # DEB-20260904 #175: 写盘成功后才提交键
+                    _shadow_dedup_commit(_le_claim)
                     logger.info(f"[锚限价影子] {symbol} {'SHORT' if is_short else 'LONG'} 触发行已落盘 (anchor=${entry_price:.2f})")
         except Exception as _anchor_err:
             # A6 fail-loud (2026-08-24): 锚限价影子行是次日重放判成交/延迟的输入,
@@ -5747,7 +5793,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                     and "TEST" not in symbol.upper():
                 from pathlib import Path as _Ppb
                 _pb_path = _Ppb(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
-                if _shadow_dedup_ok(_pb_path, inst.get("id"), "trigger"):
+                _pb_claim = _shadow_dedup_claim(_pb_path, inst.get("id"), "trigger")
+                if _pb_claim is not None:
                     # 2026-09-01 修复: raw_instruction_json 经 _row_to_dict 已是 dict,
                     #   旧 json.loads 抛 TypeError 被 except 静默吞 → archetype 恒 None
                     #   → 触发行零落盘 (首日全灭, 影子攒样实际未开始)。
@@ -5775,6 +5822,8 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                         _pb_path.parent.mkdir(parents=True, exist_ok=True)
                         with open(_pb_path, "a", encoding="utf-8") as _f_pb:
                             _f_pb.write(_json_pb.dumps(_row_pb, ensure_ascii=False) + "\n")
+                        # DEB-20260904 #175: 写盘成功后才提交键
+                        _shadow_dedup_commit(_pb_claim)
                         logger.info(
                             f"[archetype影子] {symbol} {_arch_pb} 触发行落盘 "
                             f"(确认位={(_sem_pb.get('confirmation') or {}).get('price_level')})")
@@ -8909,10 +8958,18 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                 logger.debug(f"[playbook sim] 水下仓隔夜豁免判定异常 {symbol} (不豁免): {_lex}")
 
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
-            # P1 fix (2026-06-25): 连续失败 3 次后放弃, 停止死循环日志刷屏
+            # P1 fix (2026-06-25): 连续失败 3 次后当日放弃, 停止死循环日志刷屏
+            # DEB-20260904 #178: 计数按日重置 — 旧逻辑跨日累计 ≥3 即永久 skip → 孤儿仓;
+            # 且 skip 升级为 warning 明示需人工对账
             _fail_count = _meta.get("eod_close_fail_count", 0)
+            _fail_date = _meta.get("eod_close_fail_date", "")
+            if _fail_date != _today_et_str():
+                _fail_count = 0  # 跨日重置
             if _fail_count >= 3:
-                logger.debug(f"[playbook dual] EOD 兜底放弃 {symbol} ({_row_target}) — 连续失败 {_fail_count} 次")
+                logger.warning(
+                    f"[playbook dual] EOD 兜底当日放弃 {symbol} ({_row_target}) — "
+                    f"当日已连续失败 {_fail_count} 次, 需人工对账确认是否孤儿仓"
+                )
                 continue
             try:
                 close_res = dual.close_position(symbol, qty, direction, target_env=_row_target)
@@ -8920,6 +8977,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                 logger.warning(f"[playbook dual] EOD 兜底平仓异常 {symbol} ({_row_target}): {_e}")
                 _fail_count += 1
                 _meta["eod_close_fail_count"] = _fail_count
+                _meta["eod_close_fail_date"] = _today_et_str()  # DEB-20260904 #178
                 conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                              (_json.dumps(_meta), r["id"]))
                 conn.commit()
@@ -8971,6 +9029,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         continue
                 _fail_count += 1
                 _meta["eod_close_fail_count"] = _fail_count
+                _meta["eod_close_fail_date"] = _today_et_str()  # DEB-20260904 #178
                 conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                              (_json.dumps(_meta), r["id"]))
                 conn.commit()
@@ -8992,6 +9051,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             if not _eod_order_filled:
                 _fail_count += 1
                 _meta["eod_close_fail_count"] = _fail_count
+                _meta["eod_close_fail_date"] = _today_et_str()  # DEB-20260904 #178
                 _meta["exit_price_source"] = _price_source
                 conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                              (_json.dumps(_meta), r["id"]))
@@ -9015,6 +9075,22 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                     pass
                 _price_source = "quote_fallback"
             if exit_price <= 0:
+                # DEB-20260903 #87: 已成交但成交价/报价均缺失不得静默 continue —
+                # 计失败次数+告警, 防止 trade_records 永久 open (孤儿仓, 监控看不到)
+                _fail_count += 1
+                _meta["eod_close_fail_count"] = _fail_count
+                _meta["eod_close_fail_date"] = _today_et_str()  # DEB-20260904 #178
+                _meta["exit_price_source"] = _price_source
+                conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
+                             (_json.dumps(_meta), r["id"]))
+                conn.commit()
+                logger.error(
+                    f"[playbook dual] EOD {symbol} 订单已成交但价格缺失 "
+                    f"(第{_fail_count}次) src={_price_source} — trade_records 保持未平仓, 需人工核查"
+                )
+                if _fail_count >= 3:
+                    _alert_close_failure(symbol, _row_target, "EOD_FILLED_NO_PRICE",
+                                         f"已成交但价格缺失 连续{_fail_count}次")
                 continue
 
             pnl = (exit_price - entry_price) * qty if direction == "LONG" else (entry_price - exit_price) * qty

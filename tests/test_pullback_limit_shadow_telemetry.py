@@ -193,15 +193,20 @@ def test_chase_cap_warning_outside_dedup_gate():
     """9/2 DELL 病灶: warning 在去重门内 → 二次更糟 reprice (464.41→474.27) 被
     (inst_id,type) 全文件去重静默吞没, 无 jsonl 行无日志; 而 n_chase_cap_violated
     是 DEB-20260901 Phase C 裁决证据列, 系统性少记=尺子偏向"违例罕见".
-    锁住: warning 先于去重门发射 (每次违例 reprice 都打)."""
+    锁住: warning 先于去重门发射 (每次违例 reprice 都打).
+
+    DEB-20260904 #175: 去重门拆为 _shadow_dedup_claim (只查不占) +
+    _shadow_dedup_commit (写盘成功后提交) — claim 在 warning 前后均可 (只读),
+    本测试锁的是 warning 不得被去重判定拦住 (即 warning 在 `if claim is not None`
+    分支之外先行发射)."""
     s = _src()
     idx = s.find("chase_cap违例遥测")
     assert idx > 0, "chase_cap 违例遥测日志必须存在"
     block = s[max(0, idx - 3000):idx + 800]
     w = block.find("logger.warning(")
-    g = block.find("_shadow_dedup_ok(_cc_path")
+    g = block.find("_shadow_dedup_claim(_cc_path")
     assert 0 < w < g, (
-        "chase_cap warning 必须在 _shadow_dedup_ok 去重门之前 — "
+        "chase_cap warning 必须在 _shadow_dedup_claim 去重门之前 — "
         "在去重门内 = 升级违例静默 (9/2 DELL 474.27 无遥测事故)")
 
 

@@ -130,6 +130,14 @@ class RSSHubUSSource(SourceAdapter):
                         desc = "".join(c for c in desc if ord(c) < 128 or ord(c) > 255 or c in '，。！？；：""''（）【】')[:1500]
                         
                         # 解析时间
+                        # DEB-20260903 #64: pubDate 解析失败时丢弃该条 —
+                        # 原实现解析失败保持 time.time() (当前时间), 过期新闻被误作
+                        # 即时新闻, 可能触发基于时效的信号生成
+                        # DEB-20260904 #163: pubDate 缺失同理 — `if pub_date:` 为假时
+                        # timestamp 保持当前时间, 旧闻被当即时新闻。缺失一并丢弃。
+                        if not pub_date:
+                            logger.debug("[%s] pubDate 缺失, 丢弃该条: %s", route["name"], title[:50])
+                            continue
                         timestamp = time.time()
                         if pub_date:
                             try:
@@ -137,7 +145,8 @@ class RSSHubUSSource(SourceAdapter):
                                 dt = parsedate_to_datetime(pub_date)
                                 timestamp = dt.timestamp()
                             except Exception:
-                                pass
+                                logger.debug("[%s] pubDate 解析失败, 丢弃该条: %r", route["name"], pub_date)
+                                continue
                         
                         # 计算 ID
                         item_id = f"{route['source_id']}_{hashlib.md5(title.encode()).hexdigest()[:8]}"
@@ -174,10 +183,7 @@ class RSSHubUSSource(SourceAdapter):
                     prev_count = prev[0] if isinstance(prev, tuple) and len(prev) >= 2 else 0
                     self._route_failures[name] = (prev_count + 1, now)
         
-        if not items and self._active_instance < len(RSSHUB_INSTANCES) - 1:
-            # 当前实例全部失败，切换备用
-            self._active_instance += 1
-            logger.warning("RSSHub 实例 %d 失败，切换到实例 %d", self._active_instance - 1, self._active_instance)
-            return await self.fetch()
-        
+        # DEB-20260903 #65: RSSHUB_INSTANCES 仅剩 1 个实例, 原备用实例切换分支
+        # (self._active_instance < len(RSSHUB_INSTANCES)-1 恒 False) 为死代码, 已移除。
+        # 单实例风险: 该实例不可用时本数据源整体返回空, 无自动切换。
         return items

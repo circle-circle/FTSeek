@@ -98,14 +98,27 @@ class ConfigDriftDetector:
             self._last_snapshot.key_count,
         )
 
+    def _read_disk_config(self) -> dict:
+        """DEB-20260903 #2: 独立读取磁盘配置文件 — 原哈希内存 _raw_config,
+        而热重载原地更新同一 _raw_config 对象, 合法热重载被误报为外部漂移;
+        磁盘态与内存态隔离后, 仅真正的外部修改触发漂移告警"""
+        try:
+            import yaml
+            path = getattr(self.config, '_config_path', None)
+            if path and Path(path).exists():
+                with open(path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("[DriftDetector] 磁盘配置读取失败 (回退内存态): %s", e)
+        return self.config._raw_config if hasattr(self.config, '_raw_config') else {}
+
     def _take_snapshot(self):
         """创建配置快照"""
-        raw = self.config._raw_config if hasattr(self.config, '_raw_config') else {}
-        self._last_snapshot = ConfigSnapshot(raw)
+        self._last_snapshot = ConfigSnapshot(self._read_disk_config())
 
     def _check_drift(self) -> bool:
         """检查是否有漂移"""
-        current = ConfigSnapshot(self.config._raw_config if hasattr(self.config, '_raw_config') else {})
+        current = ConfigSnapshot(self._read_disk_config())
         if self._last_snapshot is None:
             return False
 

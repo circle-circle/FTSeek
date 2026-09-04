@@ -227,12 +227,21 @@ def get_market_session(dt: Optional[datetime] = None) -> str:
     if dt.weekday() >= 5:
         return "closed"
 
-    hour_min = dt.hour + dt.minute / 60.0
-    if 4.0 <= hour_min < 9.5:
+    # DEB-20260903 #8: 复用 is_market_open 的动态收盘分钟与 `<` 上界 —
+    # 原固定 9.5<=hour_min<=16.0 (16:00 整误判 regular 且无半日市感知)
+    _close_mins = 16 * 60
+    try:
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        _close_mins = int(get_us_close_minutes_et(dt.date()))
+    except Exception as _e:
+        logger.debug(f"[TimezoneUtils] 动态收盘分钟获取失败, 回退 16:00: {_e}")
+
+    _mins = dt.hour * 60 + dt.minute
+    if 240 <= _mins < 570:
         return "pre_market"
-    elif 9.5 <= hour_min <= 16.0:
+    elif 570 <= _mins < _close_mins:
         return "regular"
-    elif 16.0 <= hour_min <= 20.0:
+    elif _close_mins <= _mins < 20 * 60:
         return "after_hours"
     return "closed"
 
@@ -254,7 +263,7 @@ def get_trade_date(dt: Optional[datetime] = None) -> str:
 
 def get_last_trade_date(dt: Optional[datetime] = None) -> str:
     """
-    获取最近一个美股交易日 (ET naive, 跳过周末).
+    获取最近一个美股交易日 (ET naive, 跳过周末 + 美股节假日).
 
     周日 → 上周五, 周六 → 上周五, 工作日 → 当日.
     用于盘前预检、盘后审计等 "回顾上一交易日" 场景.
@@ -262,11 +271,25 @@ def get_last_trade_date(dt: Optional[datetime] = None) -> str:
     if dt is None:
         dt = now_et()
     et_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
-    weekday = et_naive.weekday()  # 0=Mon … 5=Sat 6=Sun
-    if weekday == 6:  # Sunday → Friday (-2)
-        return (et_naive - timedelta(days=2)).strftime("%Y-%m-%d")
-    elif weekday == 5:  # Saturday → Friday (-1)
-        return (et_naive - timedelta(days=1)).strftime("%Y-%m-%d")
+    # DEB-20260904 #135: 原实现只跳周末, 节假日 (如感恩节次日盘前) 会被当成
+    # 交易日。回退链用离线硬编码表 (is_us_holiday), 日期计算不触网。
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        _cal = get_holiday_calendar()
+    except Exception:
+        _cal = None
+    for _ in range(10):  # 防死循环兜底
+        _wd = et_naive.weekday()
+        _is_wknd = _wd >= 5
+        _is_hol = False
+        if not _is_wknd and _cal is not None:
+            try:
+                _is_hol = _cal.is_us_holiday(et_naive.date())
+            except Exception:
+                _is_hol = False
+        if not _is_wknd and not _is_hol:
+            break
+        et_naive -= timedelta(days=1)
     return et_naive.strftime("%Y-%m-%d")
 
 

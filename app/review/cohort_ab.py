@@ -60,7 +60,11 @@ def _hold_bucket(h: float) -> str:
 def _fetch(db: Path, since: str | None):
     con = sqlite3.connect(str(db))
     con.row_factory = sqlite3.Row
-    where = "WHERE exit_time IS NOT NULL AND exit_time != '' AND exit_reason != ''"
+    # DEB-20260903 #126: 过滤无效成交 — 原仅查 exit_time/exit_reason 非空,
+    # 幽灵单(PHANTOM_RECONCILE_VOID)/exit_price=0 样本会污染 A/B 对比
+    # (对齐 daily_review.py:79,84 口径); pnl 改净口径 COALESCE(pnl_net, realized_pnl)
+    where = ("WHERE exit_time IS NOT NULL AND exit_time != '' AND exit_reason != '' "
+             "AND exit_price > 0 AND exit_reason != 'PHANTOM_RECONCILE_VOID'")
     params: list = []
     if since:
         where += " AND trade_date >= ?"
@@ -68,7 +72,8 @@ def _fetch(db: Path, since: str | None):
     rows = con.execute(
         f"""SELECT symbol, direction, realized_pnl, pnl_pct, exit_reason,
                   holding_hours, entry_time, exit_time, source_type,
-                  metadata_json, trade_date
+                  metadata_json, trade_date,
+                  COALESCE(pnl_net, realized_pnl) AS pnl_net_eff
             FROM trade_records {where}""", params
     ).fetchall()
     # 未平仓 (B 组持夜中, 附录 B.3 关键观测项)
@@ -85,7 +90,9 @@ def _aggregate(rows):
     n = len(rows)
     if n == 0:
         return {"n": 0}
-    pnls = [r["realized_pnl"] or 0 for r in rows]
+    # DEB-20260903 #126: 净口径 (与系统 COALESCE(pnl_net, realized_pnl) 一致,
+    # 原 realized_pnl 毛额未扣费, order_executor.py:4485 证实)
+    pnls = [r["pnl_net_eff"] if r["pnl_net_eff"] is not None else (r["realized_pnl"] or 0) for r in rows]
     pcts = [r["pnl_pct"] or 0 for r in rows]
     holds = [r["holding_hours"] or 0 for r in rows]
     wins = sum(1 for p in pnls if p > 0)

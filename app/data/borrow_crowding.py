@@ -164,7 +164,13 @@ def format_for_context(summary: Dict[str, Any]) -> str:
     lines = ["📉 SHORT BORROW CROWDING (借券拥挤度, record-only):"]
     for f in flagged[:5]:
         sym = f["symbol"].replace("US.", "")
-        lines.append(f"  ⚠️ {sym} [{f['level']}] fee={f['fee_rate']:.2f}% "
-                     f"pool={f['pool']:,.0f}股 — {'; '.join(f['reasons'][:2])}")
+        # DEB-20260904 #142: fee_rate/pool 来自 row.get() 可为 None (费率型信号
+        # 无 pool 字段) — 强格式化抛 TypeError 会炸掉整个盘前上下文
+        _fee = f.get("fee_rate")
+        _pool = f.get("pool")
+        _fee_txt = f"{_fee:.2f}%" if isinstance(_fee, (int, float)) else "n/a"
+        _pool_txt = f"{_pool:,.0f}股" if isinstance(_pool, (int, float)) else "n/a"
+        lines.append(f"  ⚠️ {sym} [{f['level']}] fee={_fee_txt} "
+                     f"pool={_pool_txt} — {'; '.join(f['reasons'][:2])}")
     lines.append("  (做空拥挤 → 轧空风险↑ / 借券成本↑; 不构成方向指令)")
     return "\n".join(lines)

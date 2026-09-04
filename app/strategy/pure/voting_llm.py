@@ -60,15 +60,17 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     confidence = float(vote.get("final_confidence", 0.5))
     min_conf = config.get("min_confidence", 0.70)
-    if confidence < min_conf:
-        return None
-
     strength = int(vote.get("final_strength", 50))
     std_dev = float(vote.get("std_dev", 0))
 
     # 高分歧时降低置信度
+    # DEB-20260903 #96: 惩罚移到 min_conf 门之前 — 原先过门再 *0.85,
+    # 惩罚后置信度可跌破门槛仍返回 Signal
     if std_dev > 20:
         confidence *= 0.85
+
+    if confidence < min_conf:
+        return None
 
     rationale = (
         f"LLM 投票 | 共识={consensus:.0%} | "

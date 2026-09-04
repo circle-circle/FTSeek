@@ -116,26 +116,76 @@ def _config_integrity_check(loader):
 # ============================================================
 #  TradingScheduler 入口 — DI 容器装配版
 # ============================================================
+def _lock_file_candidates():
+    """DEB-20260904 #140: 锁文件候选路径 — 启动与 --stop/--status 共用同一解析,
+    防止启动回退数据目录锁后 stop/status 找不到运行中实例"""
+    from pathlib import Path as _Plock
+    candidates = ["/run/ftseek-us.lock"]
+    try:
+        from app.core.paths import get_data_dir as _gdd
+        candidates.append(str(_Plock(str(_gdd())) / ".ftseek-us.lock"))
+    except Exception as _e:
+        print(f"⚠️  数据目录锁候选构建失败, 仅用 /run 锁: {_e}", file=sys.stderr)
+    return candidates
+
+
+def _resolve_lock_file():
+    """DEB-20260904 #140: 按启动同序解析实际锁文件 — 优先含存活 PID 的候选,
+    其次任一已存在候选, 兜底默认 /run 路径 (保持'未运行'语义)"""
+    candidates = _lock_file_candidates()
+    first_existing = None
+    for cand in candidates:
+        if not os.path.exists(cand):
+            continue
+        if first_existing is None:
+            first_existing = cand
+        try:
+            with open(cand, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            return cand  # 存活实例持有的锁
+        except Exception as _e:
+            logger.debug("锁候选 %s 无存活进程: %s", cand, _e)
+            continue
+    return first_existing or candidates[0]
+
+
 def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
 
-    LOCK_FILE = "/run/ftseek-us.lock"
-    try:
-        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.truncate(lock_fd, 0)
-        os.write(lock_fd, str(os.getpid()).encode())
-    except BlockingIOError:
+    # DEB-20260903 #13: 双实例防护 — 原 /run 不可写时仅 print 警告继续启动, 防护静默失效
+    #   (且 lock_fd 未定义 → cleanup_lock NameError). 现优先 /run, 失败回退数据目录锁;
+    #   两者均失败则 fail-closed 退出 (双交易实例风险 > 不启动).
+    # DEB-20260904 #140: 候选解析抽到 _lock_file_candidates(), 与 --stop/--status 共享
+    lock_fd = None
+    LOCK_FILE = None
+    _lock_candidates = _lock_file_candidates()
+
+    _lock_err = None
+    for _cand in _lock_candidates:
         try:
-            with open(LOCK_FILE, 'r') as f:
-                existing_pid = f.read().strip()
-            print(f"❌ FTSeek-US 已在运行 (PID: {existing_pid})")
-        except Exception:
-            print("❌ FTSeek-US 已在运行")
+            _fd = os.open(_cand, os.O_CREAT | os.O_RDWR)
+            fcntl.flock(_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.truncate(_fd, 0)
+            os.write(_fd, str(os.getpid()).encode())
+            lock_fd, LOCK_FILE = _fd, _cand
+            break
+        except BlockingIOError:
+            try:
+                with open(_cand, 'r') as f:
+                    existing_pid = f.read().strip()
+                print(f"❌ FTSeek-US 已在运行 (PID: {existing_pid})")
+            except Exception:
+                print("❌ FTSeek-US 已在运行")
+            sys.exit(1)
+        except Exception as e:
+            _lock_err = e
+            continue
+
+    if lock_fd is None:
+        print(f"❌ 无法获取进程锁 ({_lock_err}) — 为防止双实例交易, 拒绝启动")
         sys.exit(1)
-    except Exception as e:
-        print(f"⚠️  进程锁警告：{e}")
 
     import atexit
     def cleanup_lock():
@@ -143,14 +193,20 @@ def _run_new_scheduler(args):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
             os.unlink(LOCK_FILE)
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"⚠️  进程锁清理失败 ({LOCK_FILE}): {_e}", file=sys.stderr)
     atexit.register(cleanup_lock)
 
     # ── 启动前 OpenD 连通性检查 (P0 修复 2026-05-01) ──
     # 防止 OpenD 不可用时, Futu SDK _init_connect_sync 无限重试阻塞启动
     _opend_host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
-    _opend_port = int(os.environ.get("FUTU_OPEND_PORT", 11111))
+    # DEB-20260903 #13: 裸 int() 遇异常值直接崩溃 — 安全解析回退默认端口并告警
+    try:
+        _opend_port = int(os.environ.get("FUTU_OPEND_PORT", 11111) or 11111)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"[PreFlight] FUTU_OPEND_PORT={os.environ.get('FUTU_OPEND_PORT')!r} 解析失败, 回退默认 11111")
+        _opend_port = 11111
     import socket
     _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     _sock.settimeout(5)
@@ -184,6 +240,24 @@ def _run_new_scheduler(args):
     else:
         logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
         logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略")
+
+    # DEB-20260904 #154: TRADE_ENV(仅DB路由) 与 AUTO_TRADE_ACCOUNT(broker模式SSOT) 双键漂移检测 —
+    # 仅告警不拦截; 漂移时真实成交可能写入模拟库(或反之), 仓位/盈亏数据源错乱
+    try:
+        from app.core.trading_mode import _read_env_file as _read_acct_env
+        _auto_acc = _read_acct_env("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+    except Exception as _e:
+        logger.debug("AUTO_TRADE_ACCOUNT 读取失败, 回退环境变量: %s", _e)
+        _auto_acc = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+    _db_live = (_trade_env == "0")
+    _broker_live = (_auto_acc == "real")
+    if _db_live != _broker_live:
+        logger.warning(
+            "🚨 [配置一致性] TRADE_ENV=%s (DB路由=%s库) 与 AUTO_TRADE_ACCOUNT=%s (broker=%s) 不一致 — "
+            "成交记录与 broker 环境可能错配, 请核对 .env.us",
+            _trade_env, "实盘" if _db_live else "模拟",
+            _auto_acc, "实盘" if _broker_live else "模拟",
+        )
 
     # (已移除 2026-07-25, 隐患扫描小项①) Task#36 (2026-06-16) trade_records schema 迁移:
     #   scripts/migrate_trade_records.py 已删 (schema 早已稳定, TradeStore 自建表),
@@ -411,6 +485,11 @@ def _run_new_scheduler(args):
             logger.warning("[ConfigAudit] 配置审计异常 (降级运行): %s", e)
 
     except Exception as e:
+        # DEB-20260903 #14: blocking 异常 (ConfigValidator RuntimeError /
+        # ConfigAuditError) 不得被外层 except 吞掉 — 重新抛出保持阻断语义,
+        # 否则配置治理的 blocking 机制形同虚设 (日志声称阻止但实际继续运行)
+        if type(e).__name__ in ("RuntimeError", "ConfigAuditError"):
+            raise
         logger.warning(f"[ConfigGov] 配置治理初始化失败 (降级运行): {e}")
 
     # 【新增 Phase US-2】初始化每日动态交易池 (v2 架构 2026-04-19)
@@ -673,6 +752,120 @@ def _run_new_scheduler(args):
     scheduler.run_forever()
 
 
+def _stop_service():
+    """DEB-20260903 #15: --stop 实现 — 发送 SIGTERM 到运行中的主进程"""
+    import signal as _sig
+    # DEB-20260904 #140: 原硬编码 /run 锁, 启动回退数据目录锁时误报未运行 — 走共享解析
+    lock_file = _resolve_lock_file()
+    try:
+        with open(lock_file, 'r') as f:
+            pid = int(f.read().strip())
+        os.kill(pid, _sig.SIGTERM)
+        print(f"✅ 已发送 SIGTERM 到 FTSeek-US (PID: {pid})")
+    except FileNotFoundError:
+        print("❌ FTSeek-US 未在运行 (无锁文件)")
+        sys.exit(1)
+    except ProcessLookupError:
+        print(f"❌ 进程已不存在 (PID: {pid}), 清理锁文件")
+        try:
+            os.unlink(lock_file)
+        except Exception:
+            pass
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 停止失败: {e}")
+        sys.exit(1)
+
+
+def _show_status():
+    """DEB-20260903 #15: --status 实现 — 检查主进程是否存活"""
+    # DEB-20260904 #140: 原硬编码 /run 锁, 启动回退数据目录锁时误报未运行 — 走共享解析
+    lock_file = _resolve_lock_file()
+    try:
+        with open(lock_file, 'r') as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)  # 探测进程是否存在
+        print(f"✅ FTSeek-US 运行中 (PID: {pid})")
+    except FileNotFoundError:
+        print("❌ FTSeek-US 未运行")
+        sys.exit(1)
+    except ProcessLookupError:
+        print(f"❌ FTSeek-US 未运行 (锁文件残留 PID={pid})")
+        sys.exit(1)
+    except PermissionError:
+        print(f"✅ FTSeek-US 运行中 (PID: {pid}, 无权限探测)")
+    except Exception as e:
+        print(f"❌ 状态检查异常: {e}")
+        sys.exit(1)
+
+
+def _test_connections():
+    """DEB-20260903 #15: --test 实现 — 仅做连通性检查, 不启动交易调度器"""
+    import socket as _sock
+    ok = True
+
+    # 1. OpenD 连通性
+    host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
+    # DEB-20260904 #141: 安全解析端口 — 与启动 PreFlight (DEB-20260903 #13) 同口径,
+    # 裸 int() 遇异常值直接抛 ValueError 中断 --test
+    try:
+        port = int(os.environ.get("FUTU_OPEND_PORT", 11111) or 11111)
+    except (TypeError, ValueError):
+        print(f"⚠️  FUTU_OPEND_PORT={os.environ.get('FUTU_OPEND_PORT')!r} 解析失败, 回退默认 11111")
+        port = 11111
+    s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect((host, port))
+        print(f"✅ OpenD 连通: {host}:{port}")
+    except Exception as e:
+        print(f"❌ OpenD 不可达: {host}:{port} — {e}")
+        ok = False
+    finally:
+        s.close()
+
+    # 2. 主 DB 可读
+    try:
+        from app.core.db_utils import get_main_db
+        import sqlite3 as _sq
+        db_path = str(get_main_db())
+        conn = _sq.connect(db_path, timeout=3)
+        conn.execute("SELECT 1")
+        conn.close()
+        print(f"✅ 主 DB 可读: {db_path}")
+    except Exception as e:
+        print(f"❌ 主 DB 异常: {e}")
+        ok = False
+
+    # 3. 配置文件可读
+    try:
+        yaml_path = os.path.join(PROJECT_DIR, "config", "unified_config.yaml")
+        import yaml
+        with open(yaml_path) as f:
+            yaml.safe_load(f)
+        print(f"✅ 配置文件可读: {yaml_path}")
+    except Exception as e:
+        print(f"❌ 配置文件异常: {e}")
+        ok = False
+
+    # 4. 告警通道
+    has_ding = bool(os.getenv("DINGTALK_WEBHOOK_URL_US", "").strip())
+    has_fei = bool(os.getenv("FEISHU_WEBHOOK_URL_US", "").strip()) or bool(os.getenv("FEISHU_APP_ID", "").strip())
+    if has_ding or has_fei:
+        ch = []
+        if has_ding: ch.append("DingTalk")
+        if has_fei: ch.append("Feishu")
+        print(f"✅ 告警通道: {', '.join(ch)}")
+    else:
+        print("⚠️  未配置告警通道 (DingTalk/Feishu)")
+
+    if ok:
+        print("\n✅ 所有连通性检查通过")
+    else:
+        print("\n❌ 存在连通性问题")
+        sys.exit(1)
+
+
 def main():
     """主函数"""
     import argparse
@@ -684,7 +877,16 @@ def main():
     parser.add_argument("--test", action="store_true", help="测试连接")
 
     args = parser.parse_args()
-    _run_new_scheduler(args)
+
+    # DEB-20260903 #15: 按参数分派, 不再无条件启动调度器
+    if args.stop:
+        _stop_service()
+    elif args.status:
+        _show_status()
+    elif args.test:
+        _test_connections()
+    else:
+        _run_new_scheduler(args)
 
 
 if __name__ == "__main__":

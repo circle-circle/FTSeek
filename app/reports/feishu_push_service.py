@@ -114,6 +114,36 @@ class FeishuChatService:
             return False
 
 
+class FeishuWebhookOnlyService:
+    """DEB-20260904 #205: 仅 Webhook 的降级服务 —
+    SDK/APP 凭据缺失但 FEISHU_WEBHOOK_URL_US 已配置时,
+    复盘/告警仍可通过自定义机器人 webhook 送达 (text 类型)."""
+
+    def __init__(self, webhook_url: str):
+        self.webhook_url = webhook_url
+
+    def send_text(self, text: str) -> bool:
+        import requests
+        try:
+            content = text if text.startswith("[FTSeek-US]") else f"[FTSeek-US] {text}"
+            payload = {"msg_type": "text", "content": {"text": content}}
+            resp = requests.post(
+                self.webhook_url, json=payload,
+                headers={"Content-Type": "application/json"}, timeout=10,
+            )
+            result = resp.json()
+            if result.get("code") == 0 or result.get("StatusCode") == 0:
+                return True
+            logger.error(f"❌ 飞书 Webhook 发送失败：{result}")
+            return False
+        except Exception as e:
+            logger.error(f"飞书 Webhook 发送异常：{e}")
+            return False
+
+    def send_post_message(self, title: str, content_lines: List[str]) -> bool:
+        return self.send_text("\n".join([title, *content_lines]))
+
+
 _service = None
 
 def get_feishu_push_service() -> Optional[FeishuChatService]:
@@ -124,15 +154,19 @@ def get_feishu_push_service() -> Optional[FeishuChatService]:
         app_id = os.getenv("FEISHU_APP_ID")
         app_secret = os.getenv("FEISHU_APP_SECRET")
         chat_id = os.getenv("FEISHU_CHAT_ID")
-        
-        if not app_id or not app_secret or not chat_id:
-            logger.warning("⚠️ 飞书配置不完整")
+        webhook_url = os.getenv("FEISHU_WEBHOOK_URL_US")
+
+        # DEB-20260904 #205: SDK/APP 凭据缺失时降级 webhook 服务 —
+        # 原直接 return None, 架空 send_text 已有的 webhook 通道,
+        # 复盘/告警推送在 webhook 可用时仍整体静默丢失
+        if not app_id or not app_secret or not chat_id or not SDK_AVAILABLE:
+            if webhook_url:
+                logger.warning("⚠️ 飞书 SDK/APP 凭据不可用, 降级 Webhook 服务")
+                _service = FeishuWebhookOnlyService(webhook_url)
+                return _service
+            logger.warning("⚠️ 飞书配置不完整 (SDK/凭据与 Webhook 均不可用)")
             return None
-        
-        if not SDK_AVAILABLE:
-            logger.error("❌ 飞书 SDK 未加载")
-            return None
-        
+
         _service = FeishuChatService(app_id, app_secret, chat_id)
         logger.info(f"✅ 飞书推送服务已初始化")
         return _service

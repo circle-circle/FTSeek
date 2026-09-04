@@ -78,8 +78,20 @@ class FutuBrokerAdapter:
         if is_close:
             return True
 
-        if qty <= 0 or price <= 0:
+        if qty <= 0:
             return True  # 无效参数不在此拦截（上游应已处理）
+
+        # DEB-20260904 #182: 市价单 (price<=0) 此前直接 return True 绕过 30% 兜底.
+        # 现改为: 尝试用已注册的行情 router 单例估一个价 (只 peek 不新建连接);
+        # 估不到 → fail-close 拒绝 (平仓单已在上方 is_close 放行, 不受影响).
+        if price <= 0:
+            price = self._estimate_price_for_cap(symbol)
+            if price <= 0:
+                logger.error(
+                    f"🛑 [BROKER·兜底] {symbol} 拒绝: 市价单无法估价, fail-close "
+                    f"(qty={qty}) — 行情不可用时不放行无价格上限的订单!"
+                )
+                return False
 
         notional = float(qty) * price
         equity = 0.0
@@ -109,6 +121,32 @@ class FutuBrokerAdapter:
             )
             return False
         return True
+
+    def _estimate_price_for_cap(self, symbol: str) -> float:
+        """DEB-20260904 #182: 为兜底门禁估一个市价单参考价.
+
+        只 peek 已注册的进程级 MarketDataRouter 单例 (_shared_router),
+        绝不在下单热路径里新建行情连接. 任何失败都返回 0.0 (调用方 fail-close).
+        """
+        try:
+            from app.data import market_data_router as _mdr
+            router = getattr(_mdr, "_shared_router", None)
+            if router is None:
+                return 0.0
+            snap = router.get_quote(symbol)
+            if isinstance(snap, dict):
+                for k in ("price", "last_price", "close"):
+                    v = snap.get(k)
+                    try:
+                        fv = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if fv > 0:
+                        return fv
+            return 0.0
+        except Exception as e:
+            logger.debug(f"[BROKER·兜底] {symbol} 估价失败: {e}")
+            return 0.0
 
     # ------------------------------------------------------------------
     # 连接管理
@@ -181,7 +219,11 @@ class FutuBrokerAdapter:
                     self.connected = False
                     return False
                 # 实盘也自动探测账户 ID
-                self._discover_real_account()
+                # DEB-20260904 #183: REAL_ACCOUNT_ID 不匹配 = 阻断连接,
+                # 此前 connect() 无条件 connected=True 把阻断覆盖了
+                if not self._discover_real_account():
+                    self.disconnect()
+                    return False
 
             self.connected = True
             logger.info(f"[富途] 连接成功 {self.host}:{self.port} env={'模拟' if self.trade_env == 1 else '真实'}")
@@ -221,18 +263,23 @@ class FutuBrokerAdapter:
         except Exception as e:
             logger.warning(f"[富途] 自动探测账户异常: {e}，使用配置值: {self.account_id}")
 
-    def _discover_real_account(self):
-        """自动探测真实账户 ID，优先使用 REAL_ACCOUNT_ID 环境变量指定的账户"""
+    def _discover_real_account(self) -> bool:
+        """自动探测真实账户 ID，优先使用 REAL_ACCOUNT_ID 环境变量指定的账户
+
+        DEB-20260904 #183: 返回 False 仅当"显式指定了 REAL_ACCOUNT_ID 但它不在
+        可用真实账户列表" (= 阻断连接); 其余路径 (获取失败/无真实账户/异常)
+        维持原有宽松行为返回 True.
+        """
         try:
             from futu import TrdEnv, RET_OK
             ret, data = self.trade_ctx.get_acc_list()
             if ret != RET_OK:
                 logger.warning(f"[富途·实盘] 无法获取账户列表，使用配置值: {self.account_id}")
-                return
+                return True
             real_rows = data[data['trd_env'] == TrdEnv.REAL]
             if real_rows.empty:
                 logger.error("[富途·实盘] ❌ 未找到真实账户，请确认 OpenD 已登录真实账户")
-                return
+                return True
 
             real_ids = [str(r) for r in real_rows['acc_id'].tolist()]
             # 优先使用 REAL_ACCOUNT_ID 环境变量（多账户时明确指定）
@@ -247,6 +294,7 @@ class FutuBrokerAdapter:
                 )
                 # 不 fallback，阻断连接
                 self.connected = False
+                return False
             else:
                 # 未指定则用第一个（向后兼容，但多账户时不安全）
                 actual_real_id = str(real_rows.iloc[0]['acc_id'])
@@ -256,8 +304,10 @@ class FutuBrokerAdapter:
                     f"自动使用第一个真实账户: {actual_real_id} "
                     f"(可用账户: {real_ids})"
                 )
+            return True
         except Exception as e:
             logger.warning(f"[富途·实盘] 自动探测真实账户异常: {e}，使用配置值: {self.account_id}")
+            return True
 
     def disconnect(self):
         """断开连接"""
@@ -349,53 +399,48 @@ class FutuBrokerAdapter:
             return False
 
     def _attempt_reconnect(self):
-        """尝试自动重连（指数退避，最多 MAX_RECONNECT_ATTEMPTS 次）"""
+        """尝试自动重连（指数退避，最多 MAX_RECONNECT_ATTEMPTS 次）
+
+        DEB-20260903 #97: 原实现在非重入锁(threading.Lock)内递归调用自身导致死锁,
+        改为 while 循环在锁内完成所有重试。
+        """
         with self._reconnect_lock:
-            if self._reconnect_attempts >= self.MAX_RECONNECT_ATTEMPTS:
-                logger.error(
-                    f"[重连] 已达最大重试次数 ({self.MAX_RECONNECT_ATTEMPTS})，"
-                    f"标记连接断开"
+            while self._reconnect_attempts < self.MAX_RECONNECT_ATTEMPTS:
+                backoff = self.RECONNECT_BACKOFF_SEC[self._reconnect_attempts]
+                self._reconnect_attempts += 1
+                logger.info(
+                    f"[重连] 尝试 {self._reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS}，"
+                    f"等待 {backoff}s..."
                 )
-                self.connected = False
-                if self._on_disconnect_callback:
-                    try:
-                        self._on_disconnect_callback()
-                    except Exception as e:
-                        logger.error(f"[重连] 回调异常: {e}")
-                return
+                time.sleep(backoff)
 
-            backoff = self.RECONNECT_BACKOFF_SEC[self._reconnect_attempts]
-            self._reconnect_attempts += 1
-            logger.info(
-                f"[重连] 尝试 {self._reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS}，"
-                f"等待 {backoff}s..."
-            )
-            time.sleep(backoff)
+                # 先断开旧连接
+                self.disconnect()
 
-            # 先断开旧连接
-            self.disconnect()
-
-            # 尝试重新连接
-            success = self.connect()
-            if success:
-                logger.info(f"[重连] 成功 (尝试 {self._reconnect_attempts} 次)")
-                self._heartbeat_failures = 0
-                self._reconnect_attempts = 0
-                self._last_heartbeat_time = time.time()
-            else:
-                logger.warning(
-                    f"[重连] 第 {self._reconnect_attempts} 次失败"
-                )
-                # 如果仍有机会，递归尝试
-                if self._reconnect_attempts < self.MAX_RECONNECT_ATTEMPTS:
-                    self._attempt_reconnect()
+                # 尝试重新连接
+                success = self.connect()
+                if success:
+                    logger.info(f"[重连] 成功 (尝试 {self._reconnect_attempts} 次)")
+                    self._heartbeat_failures = 0
+                    self._reconnect_attempts = 0
+                    self._last_heartbeat_time = time.time()
+                    return
                 else:
-                    self.connected = False
-                    if self._on_disconnect_callback:
-                        try:
-                            self._on_disconnect_callback()
-                        except Exception as e:
-                            logger.error(f"[重连] 回调异常: {e}")
+                    logger.warning(
+                        f"[重连] 第 {self._reconnect_attempts} 次失败"
+                    )
+
+            # 所有重试均失败
+            logger.error(
+                f"[重连] 已达最大重试次数 ({self.MAX_RECONNECT_ATTEMPTS})，"
+                f"标记连接断开"
+            )
+            self.connected = False
+            if self._on_disconnect_callback:
+                try:
+                    self._on_disconnect_callback()
+                except Exception as e:
+                    logger.error(f"[重连] 回调异常: {e}")
 
     # ------------------------------------------------------------------
     # 下单
@@ -413,10 +458,9 @@ class FutuBrokerAdapter:
         """
         # 2. 提交订单
         if not self.is_connected():
-            # P0: 实盘模式下 Broker 断连时拒绝订单，不允许模拟成交
-            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由)
-            _auto_acc_disc = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-            if _auto_acc_disc == "real":
+            # DEB-20260903 #97: 实盘判定按 self.trade_env 而非环境变量 —
+            # 防止实盘适配器在 AUTO_TRADE_ACCOUNT 未同步时断连返回虚假模拟成交
+            if self.trade_env == 0:
                 raise RuntimeError(
                     f"[实盘安全] Broker 未连接, 拒绝提交 {order.symbol} 订单 — "
                     f"请勿在断连状态下交易"
@@ -467,6 +511,8 @@ class FutuBrokerAdapter:
                 # P0 Fix: 订单状态快速确认 (防止幽灵仓)
                 # 单次查询，不 sleep — place_order 成功返回时交易所拒单已同步返回
                 # 延迟性拒单由 position_sync (30s) 兜底
+                _dealt_qty = 0.0
+                _dealt_avg = 0.0
                 try:
                     from futu import TrdEnv, RET_OK as RET_OK_FUTU
                     
@@ -478,9 +524,27 @@ class FutuBrokerAdapter:
                     )
                     if ret_q == RET_OK_FUTU and not data_q.empty:
                         status = str(data_q.iloc[0].get('order_status', ''))
-                        if 'FAIL' in status or 'DEL' in status or 'CANCEL' in status:
+                        # DEB-20260903 #97: CANCELLED_PART 含部分成交, 不等于整单失败
+                        _is_hard_fail = 'FAIL' in status or 'DEL' in status
+                        # DEB-20260904 #184: 只有终态 CANCELLED_ALL 才算整单撤单;
+                        # 中间态 CANCELLING_ALL 会被 ('CANCEL' in status and 'PART' not in status)
+                        # 子串误杀 → 仍在途订单被抛 RuntimeError
+                        _is_full_cancel = 'CANCELLED_ALL' in status
+                        if _is_hard_fail or _is_full_cancel:
                             logger.error(f"🚨 [订单失败] {order.symbol} Status={status}")
                             raise RuntimeError(f"订单提交后失败: {order.symbol} status={status}")
+                        elif 'CANCELLED_PART' in status:
+                            logger.warning(f"⚠️ [部分成交后取消] {order.symbol} Status={status}, dealt={data_q.iloc[0].get('dealt_qty', 0)}")
+                        # DEB-20260904 #184: 透传已成交量, 供 engine 回填 order.filled_quantity
+                        # (order_executor 的 P1 部分成交检查依赖该字段)
+                        try:
+                            _dealt_qty = float(data_q.iloc[0].get('dealt_qty', 0) or 0)
+                        except (TypeError, ValueError):
+                            _dealt_qty = 0.0
+                        try:
+                            _dealt_avg = float(data_q.iloc[0].get('dealt_avg_price', 0) or 0)
+                        except (TypeError, ValueError):
+                            _dealt_avg = 0.0
                 except RuntimeError:
                     raise
                 except Exception as e:
@@ -500,14 +564,15 @@ class FutuBrokerAdapter:
                     "futu_order_id": futu_id,
                     "futu_order_ids": [futu_id],  # 保持向后兼容
                     "status": "submitted",
+                    "dealt_qty": _dealt_qty,          # DEB-20260904 #184
+                    "dealt_avg_price": _dealt_avg,    # DEB-20260904 #184
                 }
             else:
                 raise RuntimeError(f"下单失败: {data}")
 
         except ImportError:
-            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
-            _auto_acc_imp = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-            if _auto_acc_imp == "real":
+            # DEB-20260903 #97: 实盘判定按 self.trade_env 而非环境变量
+            if self.trade_env == 0:
                 raise RuntimeError(
                     f"[实盘安全] futu-api 未安装, 拒绝提交 {order.symbol} 订单"
                 )
@@ -517,10 +582,14 @@ class FutuBrokerAdapter:
             raise
 
     def cancel_order(self, order_id: str) -> bool:
-        """取消订单"""
+        """取消订单
+
+        DEB-20260903 #97: 断连/缺依赖时返回 False 而非模拟成功,
+        防止上游误判订单已取消导致重复下单或状态不一致。
+        """
         if not self.is_connected():
-            logger.warning("[富途] 未连接，模拟取消成功")
-            return True
+            logger.warning(f"[富途] 未连接，无法确认取消订单 {order_id}")
+            return False
 
         try:
             from futu import TrdEnv, ModifyOrderOp, RET_OK
@@ -536,6 +605,28 @@ class FutuBrokerAdapter:
                 acc_id=int(self.account_id) if self.account_id else 0,
             )
             if ret == 0:  # RET_OK
+                # DEB-20260904 #185: RET_OK 只代表撤单"请求"被接受, 不代表已到终态.
+                # 补一次状态查询: 已 FILLED_ALL = 撤单输了竞速 → False;
+                # CANCELLING_*/CANCELLED_* → True; 其余/查询异常 → True+warning
+                # (终态确认交给 position_sync 30s 兜底, 不阻塞主链路).
+                try:
+                    ret_q, data_q = self.trade_ctx.order_list_query(
+                        order_id=order_id, trd_env=trd_env,
+                    )
+                    if ret_q == RET_OK and not data_q.empty:
+                        _st = str(data_q.iloc[0].get('order_status', ''))
+                        if 'FILLED_ALL' in _st:
+                            logger.error(
+                                f"[富途] 撤单失败 {order_id}: 订单已全部成交 (status={_st})"
+                            )
+                            return False
+                        if 'CANCEL' not in _st:
+                            logger.warning(
+                                f"[富途] 撤单请求已接受 {order_id}, 当前状态={_st}, "
+                                f"终态由 position_sync 兜底"
+                            )
+                except Exception as qe:
+                    logger.warning(f"[富途] 撤单后状态查询异常 {order_id} (降级信任 RET_OK): {qe}")
                 logger.info(f"[富途] 取消订单成功 {order_id}")
                 return True
             else:
@@ -543,16 +634,20 @@ class FutuBrokerAdapter:
                 return False
 
         except ImportError:
-            return True
+            logger.error(f"[富途] futu-api 未安装, 无法取消订单 {order_id}")
+            return False
         except Exception as e:
             logger.error(f"[富途] 取消订单异常 {order_id}: {e}")
             return False
 
     def amend_order(self, order_id: str, new_price: float = None, new_qty: int = None) -> bool:
-        """改单 — 修改未成交订单的价格或数量 (ModifyOrderOp.MODIFY)"""
+        """改单 — 修改未成交订单的价格或数量 (ModifyOrderOp.MODIFY)
+
+        DEB-20260903 #97: 断连/缺依赖时返回 False 而非模拟成功。
+        """
         if not self.is_connected():
-            logger.warning("[富途] 未连接，模拟改单成功")
-            return True
+            logger.warning(f"[富途] 未连接，无法确认改单 {order_id}")
+            return False
 
         try:
             from futu import TrdEnv, ModifyOrderOp, RET_OK
@@ -575,7 +670,8 @@ class FutuBrokerAdapter:
                 return False
 
         except ImportError:
-            return True
+            logger.error(f"[富途] futu-api 未安装, 无法改单 {order_id}")
+            return False
         except Exception as e:
             logger.error(f"[富途] 改单异常 {order_id}: {e}")
             return False
@@ -693,11 +789,16 @@ class FutuBrokerAdapter:
             if ret == RET_OK and len(data) > 0:
                 positions = []
                 for _, row in data.iterrows():
+                    _qty = float(row.get("qty", 0))
+                    # DEB-20260904 #186: 空头 qty<0 时 max(1,qty)=1 → current_price
+                    # 变成 market_val 市值本身; 改用 abs 且防 0
+                    _mkt_val = float(row.get("market_val", 0))
+                    _cur_price = abs(_mkt_val) / abs(_qty) if abs(_qty) > 0 else 0.0
                     positions.append({
                         "symbol": str(row.get("code", "")),
-                        "qty": float(row.get("qty", 0)),
+                        "qty": _qty,
                         "cost_price": float(row.get("cost_price", 0)),
-                        "current_price": float(row.get("market_val", 0)) / max(1, float(row.get("qty", 1))),
+                        "current_price": _cur_price,
                         "unrealized_pnl": float(row.get("pl_val", 0)),
                         "unrealized_pnl_ratio": float(row.get("pl_ratio", 0)),
                     })
@@ -938,7 +1039,8 @@ class FutuBrokerAdapter:
                 trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
 
                 # 兜底门禁 (2026-06-06): broker 前最后一道墙
-                if not self._notional_sanity_check(symbol, qty, price if price > 0 else 1.0):
+                # DEB-20260904 #182: 去掉 $1 假价, 市价单由门禁内部估价/fail-close
+                if not self._notional_sanity_check(symbol, qty, price):
                     return {"success": False, "error": "broker_notional_cap", "order_id": ""}
 
                 ret, data = self.trade_ctx.place_order(
@@ -1044,6 +1146,11 @@ class FutuBrokerAdapter:
         # 新逻辑：统一走 API，trd_env=TrdEnv.SIMULATE 自动路由到模拟盘
         # 优势：验证期权代码有效性、获取真实成交状态、避免虚假持仓
         if not self.is_connected():
+            # DEB-20260903 #97/#98: 实盘判定按 self.trade_env — 断连时禁止虚假模拟成交
+            if self.trade_env == 0:
+                raise RuntimeError(
+                    f"[实盘安全] Broker 未连接, 拒绝期权订单 {option_code}"
+                )
             logger.info(
                 f"[期权·模拟] {direction} {option_code} qty={qty} price={price}"
             )
@@ -1061,7 +1168,14 @@ class FutuBrokerAdapter:
             trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
 
             # 兜底门禁 (2026-06-06): 期权也过 broker 兜底 (notional = qty × 100 × premium)
-            _opt_notional = float(qty) * 100 * (price if price > 0 else 1.0)
+            # DEB-20260904 #182: 市价期权单去掉 $1 假 premium — 估不到价就 fail-close
+            _prem = price if price > 0 else self._estimate_price_for_cap(option_code)
+            if _prem <= 0:
+                logger.error(
+                    f"🛑 [BROKER·兜底] 期权 {option_code} 拒绝: 市价单无法估价, fail-close"
+                )
+                return {"success": False, "error": "broker_notional_cap"}
+            _opt_notional = float(qty) * 100 * _prem
             if not self._notional_sanity_check(option_code, qty, _opt_notional / max(qty, 1)):
                 return {"success": False, "error": "broker_notional_cap"}
 
@@ -1096,6 +1210,11 @@ class FutuBrokerAdapter:
                 }
 
         except ImportError:
+            # DEB-20260903 #97/#98: 实盘禁止模拟成交
+            if self.trade_env == 0:
+                raise RuntimeError(
+                    f"[实盘安全] futu-api 未安装, 拒绝期权订单 {option_code}"
+                )
             return {
                 "order_id": f"OPT_{option_code}_{direction}",
                 "futu_order_id": f"SIM_OPT_{option_code[:20]}",

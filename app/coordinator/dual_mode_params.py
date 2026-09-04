@@ -128,7 +128,13 @@ _counter_state: Dict[str, Any] = {
 
 
 def _maybe_reset_counter() -> None:
-    today = date.today()
+    # DEB-20260903 #68: 跨日重置用 ET 交易日 — 原 date.today() 取服务器本地日期,
+    # 非 ET 时区跨日重置时刻偏移数小时, ET 交易日尾声交易可能被计入次日配额
+    try:
+        from app.utils.timezone import now_et
+        today = now_et().date()
+    except Exception:
+        today = date.today()
     if _counter_state["date"] != today:
         _counter_state["date"] = today
         _counter_state["count"] = 0
@@ -152,5 +158,12 @@ def increment_today_auto_trade_count(n: int = 1) -> int:
 def reset_today_auto_trade_count() -> None:
     """重置计数 (供测试/Dashboard 手动调用)."""
     with _counter_lock:
-        _counter_state["date"] = date.today()
+        # DEB-20260904 #166: 与 _maybe_reset_counter 同源用 ET 交易日 —
+        # 原 date.today() 取服务器本地日期, 与 #68 修的自动重置口径分裂
+        try:
+            from app.utils.timezone import now_et
+            _today = now_et().date()
+        except Exception:
+            _today = date.today()
+        _counter_state["date"] = _today
         _counter_state["count"] = 0

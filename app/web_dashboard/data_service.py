@@ -111,6 +111,9 @@ class DataService:
         self.cache = _SharedCache()
         # 请求级去重: 防 Thundering Herd (缓存 TTL 过期时多协程穿透到 Futu RPC)
         self._fetch_locks: Dict[str, asyncio.Lock] = {}
+        # DEB-20260904 #197: 每锁使用者计数 — lock.locked() 释放瞬间即 False,
+        # 无法区分已唤醒未恢复的等待者
+        self._fetch_lock_users: Dict[str, int] = {}
         self._pool = ThreadPoolExecutor(max_workers=8)
         self._last_snapshot: Dict[str, Any] = {}  # delta 检测用
         self._last_reconcile_time: float = 0.0  # 幽灵仓对账限流 (5min)
@@ -138,8 +141,18 @@ class DataService:
             # 持仓数量变化 或 任何 unrealized_pnl 变 > $1
             if len(old or []) != len(new or []):
                 return True
-            for o, n in zip(old, new):
-                if abs(safe_float(n.get("unrealized_pl", 0)) - safe_float(o.get("unrealized_pl", 0))) > 1:
+            # DEB-20260903 #112: 结构化比较 — 原仅比数量+unrealized_pl, 同数量下
+            #   qty/成本/方向(qty 正负即方向)变化若浮盈变动<$1 被静默过滤. 按 code 对齐逐字段比.
+            def _pos_by_code(rows):
+                return {str(r.get("code") or r.get("symbol") or ""): r for r in (rows or [])}
+            om, nm = _pos_by_code(old), _pos_by_code(new)
+            if set(om) != set(nm):
+                return True
+            for code in om:
+                o, n = om[code], nm[code]
+                if (safe_float(o.get("qty", 0)) != safe_float(n.get("qty", 0))
+                        or abs(safe_float(o.get("cost_price", 0)) - safe_float(n.get("cost_price", 0))) > 1e-6
+                        or abs(safe_float(n.get("unrealized_pl", 0)) - safe_float(o.get("unrealized_pl", 0))) > 1):
                     return True
             return False
         elif key == "account_raw":
@@ -266,7 +279,11 @@ class DataService:
         # HKD → USD 转换
         hkd_assets = safe_float(raw.get("total_assets"))
         usd_assets = safe_float(raw.get("usd_assets"))
+        # DEB-20260904 #196: hkd_assets=0 且 usd_assets>0 时 fx=0 → 下方 6 处 /fx
+        # 全炸 ZeroDivisionError; 派生汇率非正一律回退联系汇率 7.8
         fx = hkd_assets / usd_assets if usd_assets > 0 else 7.8
+        if fx <= 0:
+            fx = 7.8
 
         # 可用现金: 优先 us_avl_withdrawal_cash (扣除保证金后)
         avl_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
@@ -336,12 +353,18 @@ class DataService:
                 trd_env=trd_env, acc_id=acc_id,
             )
             logger.info(f"[DataService] position_list_query ret={ret}, data.empty={data.empty if hasattr(data, 'empty') else 'N/A'}")
-            if ret == RET_OK and not data.empty:
+            if ret == RET_OK:
+                # DEB-20260904 #S11: RET_OK + 空表 = broker 权威确认零持仓 —
+                # 原逻辑与"查询失败"混同走 DB fallback, 把已平仓的 DB 幽灵行
+                # 复活为持仓。空结果必须直接采信, 仅失败/异常才回退 DB。
+                if data is None or data.empty:
+                    logger.info("[DataService] Futu 确认零持仓 (RET_OK + empty)")
+                    return []
                 positions = [dict(row) for _, row in data.iterrows()]
                 logger.info(f"[DataService] Futu API returned {len(positions)} positions")
                 return positions
             else:
-                logger.warning(f"[DataService] Futu API returned empty or error, using DB fallback")
+                logger.warning(f"[DataService] Futu API error ret={ret}, using DB fallback")
         except Exception as e:
             logger.error(f"[DataService] positions failed: {e}")
         # Fallback: 从 DB 读取持仓 (盘后或 Futu 不可用时)
@@ -379,6 +402,11 @@ class DataService:
                     "qty": qty,
                     "cost_price": cost,
                     "cur_price": cost,  # Fallback: 使用成本价（盘后无法获取实时价格）
+                    # DEB-20260903 #113: 补齐 Futu 字段名 — enriched 构建(788-789)读
+                    # average_cost/nominal_price, DB fallback 仅提供 cost_price/cur_price
+                    # 时 enriched 全为 0 (持仓视图假数据)
+                    "average_cost": cost,
+                    "nominal_price": cost,
                     "val_price": cost * abs(qty),  # 用于 _parse_positions 的 fallback
                     "position_side": direction,
                     "pl_val": 0,
@@ -793,7 +821,8 @@ class DataService:
             direction = "SHORT" if qty < 0 else "LONG"
             futu_symbols.add(code)
 
-            meta = meta_map_full.get(code) or {}
+            meta = meta_map_full.get(code) or meta_map_full.get(bare) or {}
+            # ↑ DEB-20260903 #114: DB 历史数据可能存裸 symbol, 裸键 fallback
             # 异常记录 (is_anomalous=1) 不参与元数据合并 — 防止过期 SL/TP 误导决策
             if int(meta.get("is_anomalous", 0) or 0) == 1:
                 meta = {}
@@ -874,8 +903,15 @@ class DataService:
         ghosts_to_mark: List[str] = []
         ghosts_to_delete: List[str] = []
 
+        # DEB-20260903 #114: symbol 归一化再比较 — futu_symbols 为 US. 前缀
+        # (US.AAPL), DB 历史数据可能混存裸 symbol (AAPL), 直接比较会把真实持仓
+        # 误判为幽灵仓标记 is_anomalous / 24h 后删除
+        def _bare(s: str) -> str:
+            return s[3:] if s.startswith("US.") else s
+        _futu_bare = {_bare(s) for s in futu_symbols}
+
         for sym, meta in (meta_map or {}).items():
-            if sym in futu_symbols:
+            if _bare(sym) in _futu_bare:
                 continue
             if int(meta.get("is_anomalous", 0) or 0) == 1:
                 if self._is_meta_older_than(meta.get("updated_at", ""), hours=24):
@@ -968,6 +1004,8 @@ class DataService:
 
         # 获取/创建该 key 的锁 (setdefault 防止竞态创建重复锁)
         lock = self._fetch_locks.setdefault(cache_key, asyncio.Lock())
+        # DEB-20260904 #197: 使用者登记 (同步段, 无 await 抢占)
+        self._fetch_lock_users[cache_key] = self._fetch_lock_users.get(cache_key, 0) + 1
 
         # 标准 try/finally 模式: 确保锁始终释放, 防止 CancelledError 导致锁泄漏
         acquired = False
@@ -1003,11 +1041,17 @@ class DataService:
             self.cache.set(cache_key, self._CACHE_MISS, ttl=2)
             return None
         finally:
+            # DEB-20260904 #197: 最后一个使用者退出才移除锁 —
+            # 原 lock.locked() 在 release 后即使存在已唤醒未恢复的等待者也为 False,
+            # 误 pop 导致后续请求新建锁, 同一 cache_key 并发穿透
+            _users = self._fetch_lock_users.get(cache_key, 1) - 1
+            if _users > 0:
+                self._fetch_lock_users[cache_key] = _users
+            else:
+                self._fetch_lock_users.pop(cache_key, None)
+                self._fetch_locks.pop(cache_key, None)
             if acquired:
                 lock.release()
-                # LRU: 释放后若无竞争者, 从字典移除, 防止长期运行内存泄漏
-                if not lock.locked():
-                    self._fetch_locks.pop(cache_key, None)
 
     async def _run(self, func, *args, **kwargs):
         """在线程池中执行阻塞调用"""

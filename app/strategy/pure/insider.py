@@ -76,8 +76,8 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         last_emit = _cluster_dedup.get(fp)
         if last_emit and (now - last_emit) < _DEDUP_TTL:
             return None
-        _cluster_dedup[fp] = now
-        # 顺带清理过期条目
+        # DEB-20260903 #95: 去重写入移到所有门槛通过后 (原在此处写入, 失败评估
+        #   也锁定 24h 窗口抑制后续有效信号). 此处仅检查 + 顺带清理过期.
         expired = [k for k, v in _cluster_dedup.items() if (now - v) >= _DEDUP_TTL]
         for k in expired:
             del _cluster_dedup[k]
@@ -109,6 +109,10 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
     c_suite_ratio = c_suite_count / cluster.unique_buyers if cluster.unique_buyers > 0 else 0
     tightness = 1.0 - (cluster.days_span / 30.0)  # 更紧密 = 更高
     confidence = min(0.90, 0.50 + c_suite_ratio * 0.20 + tightness * 0.15 + cluster.score * 0.10)
+
+    # DEB-20260903 #95: 所有门槛通过、确认生成信号后才写入去重窗口
+    with _dedup_lock:
+        _cluster_dedup[fp] = now
 
     return SignalCandidate(
         symbol=symbol,

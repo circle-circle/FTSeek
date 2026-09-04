@@ -72,7 +72,10 @@ def register(app, templates):
             acknowledge_price_warning=bool(body.get("acknowledge_price_warning", False)),
         )
 
-        result = svc.submit_order(order, idempotency_key=body.get("idempotency_key"))
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
+        result = await asyncio.to_thread(
+            svc.submit_order, order, idempotency_key=body.get("idempotency_key"))
         ds = get_data_service()
         ds.invalidate_cache()
         if result.get("success"):
@@ -100,7 +103,10 @@ def register(app, templates):
                     limit_price = None
             except (ValueError, TypeError):
                 limit_price = None
-        result = svc.close_position(
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
+        result = await asyncio.to_thread(
+            svc.close_position,
             symbol=body.get("symbol", ""),
             reason=body.get("reason", "手动平仓"),
             close_qty=close_qty,
@@ -136,7 +142,9 @@ def register(app, templates):
         if not order_id or not order_id.replace(".", "").replace("-", "").isalnum():
             return api_error("BAD_REQUEST", "order_id 格式无效", 400)
         svc = get_manual_order_service()
-        result = svc.cancel_order(order_id=order_id)
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
+        result = await asyncio.to_thread(svc.cancel_order, order_id=order_id)
         ds = get_data_service()
         ds.invalidate_cache()
         if result.get("success"):
@@ -162,7 +170,9 @@ def register(app, templates):
             return api_error("BAD_REQUEST", "参数无效", 400)
 
         svc = get_manual_order_service()
-        result = svc.modify_stop_loss(symbol=symbol, new_sl=new_sl)
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
+        result = await asyncio.to_thread(svc.modify_stop_loss, symbol=symbol, new_sl=new_sl)
         ds = get_data_service()
         ds.invalidate_cache()
         if result.get("success"):
@@ -184,7 +194,9 @@ def register(app, templates):
         if owner not in ("manual", "auto"):
             owner = "manual"
         svc = get_manual_order_service()
-        result = svc.takeover_position(symbol=symbol, owner=owner)
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
+        result = await asyncio.to_thread(svc.takeover_position, symbol=symbol, owner=owner)
         ds = get_data_service()
         ds.invalidate_cache()
         if result.get("success"):

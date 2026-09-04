@@ -101,8 +101,10 @@ class TradingRisk:
 
 @dataclass
 class SignalQuality:
-    min_confidence: float = 0.70
-    min_consensus: float = 0.3
+    # DEB-20260903 #10: 默认值与 RISK_CONFIG 属性 get() fallback 对齐
+    # (原 0.70/0.3 vs 271-272 行 0.80/0.25, 两条读取路径口径不一)
+    min_confidence: float = 0.80
+    min_consensus: float = 0.25
     min_score: int = 60
 
 
@@ -203,15 +205,19 @@ class ConfigLoader:
             return re.sub(pattern, replacer, value)
         return value
     
+    def _resolve_any(self, v):
+        """DEB-20260904 #137: 任意层级解析环境变量 (dict/list/标量)。"""
+        if isinstance(v, dict):
+            return self._resolve_dict_env(v)
+        if isinstance(v, list):
+            return [self._resolve_any(i) for i in v]
+        return self._resolve_env_vars(v)
+
     def _resolve_dict_env(self, d: dict) -> dict:
         """递归解析字典中的环境变量"""
-        result = {}
-        for k, v in d.items():
-            if isinstance(v, dict):
-                result[k] = self._resolve_dict_env(v)
-            else:
-                result[k] = self._resolve_env_vars(v)
-        return result
+        # DEB-20260904 #137: list 元素也需递归 — 原实现只递归 dict,
+        # 列表内的 ${VAR} 保持未解析状态
+        return {k: self._resolve_any(v) for k, v in d.items()}
     
     def _load(self):
         """加载配置文件"""

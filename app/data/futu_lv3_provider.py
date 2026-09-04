@@ -118,12 +118,35 @@ def _map_ticker_direction(raw) -> str:
     2026-08-10 修复: handler 曾拿字符串与 int 1/2 比较 → 恒 NEUTRAL;
     若 TICKER 订阅开启, buy/sell 量全 0 → buy_sell_ratio 兜底 2.0 →
     order_flow_imbalance 假多头 +0.333 注入择时上下文。
+
+    DEB-20260903 #17: 本函数为方向映射 SSOT — get_recent_tickers (pull 路径)
+    也必须调用本函数, 禁止另写内联映射 (两路径曾 1/2 互反 → buy/sell 反转)。
     """
     if raw in ("BUY", 1):
         return "BUY"
     if raw in ("SELL", 2):
         return "SELL"
     return "NEUTRAL"
+
+
+def _futu_sub_type_map() -> dict:
+    """DEB-20260903 #16: 订阅类型映射 SSOT — subscribe 主路径/重连重试/退订共用.
+
+    原重连重试路径仅含 QUOTE/K_1M/K_15M/K_30M 四项, 丢失 ORDER_BOOK/TICKER/
+    K_5M/K_60M/K_DAY → 断线恢复后盘口/逐笔推送静默丢失且标的已标记已订阅。
+    """
+    from futu import SubType
+    return {
+        'QUOTE': SubType.QUOTE,
+        'K_1M': SubType.K_1M,
+        'K_5M': SubType.K_5M,
+        'K_15M': SubType.K_15M,
+        'K_30M': SubType.K_30M,
+        'K_60M': SubType.K_60M,
+        'K_DAY': SubType.K_DAY,
+        'ORDER_BOOK': SubType.ORDER_BOOK,  # 订单流深度 (Push Handler 已注册)
+        'TICKER': SubType.TICKER,          # 逐笔成交 (Push Handler 已注册)
+    }
 
 
 class FutuLV3Provider:
@@ -175,6 +198,11 @@ class FutuLV3Provider:
 
         # 订阅状态
         self._subscribed_symbols: set = set()
+        # DEB-20260903 #16: 独立锁保护 _subscribed_symbols 读-改-写竞态
+        # (subscribe 与 disconnect/close/force_reconnect 并发时可能重复订阅/漏订阅)
+        self._sub_lock = threading.Lock()
+        # 类型级订阅失败追踪: futu_symbol → 失败 sub_type 集 (下次 subscribe 自动补订)
+        self._failed_sub_types: Dict[str, set] = {}
 
         # Push 行情缓存 (由 Handler 异步更新，扫描循环主动读取)
         self._push_quote_cache: Dict[str, Any] = {}  # symbol -> quote dict
@@ -321,7 +349,18 @@ class FutuLV3Provider:
             while True:
                 try:
                     time.sleep(30)
+                    # DEB-20260904 #143: 盘前已连接/已订阅的会话纳入守护 —
+                    # 原仅常规时段检查, 盘前断连要等 09:30 后才重连, 盘前锚定/信号
+                    # 长时间用陈旧行情。盘前无 push 期待, is_healthy 只看连接标志
+                    # 识别不了假活 → 用 TCP 探测判定; 盘前无会话时不主动建连 (不占槽位)。
                     if not self._is_us_market_open():
+                        if not (self._is_us_pre_market() and self._connected
+                                and self._subscribed_symbols):
+                            continue
+                        if self._verify_connection_alive():
+                            continue
+                        logger.warning("[FutuLV3][Watchdog] 盘前连接断开/假活，触发重连")
+                        self.force_reconnect()
                         continue
                     # 只在有订阅时才检查（无订阅=无 push=正常）
                     if not self._subscribed_symbols:
@@ -485,6 +524,13 @@ class FutuLV3Provider:
                                     "ask": float(row.get("ask_price", 0) or 0) or float(row.get("last_price", 0) or 0),
                                     "bid_vol": row.get("bid_vol", 0),
                                     "ask_vol": row.get("ask_vol", 0),
+                                    # DEB-20260903 #18: 标记 bid/ask 是否来自 last_price 兜底 —
+                                    # 真实 bid/ask 均缺失时上两行退化为 last_price, 下游
+                                    # get_order_book_quality 若直接采用会得 spread=0/liquidity=100
+                                    "book_is_proxy": not (
+                                        float(row.get("bid_price", 0) or 0) > 0
+                                        and float(row.get("ask_price", 0) or 0) > 0
+                                    ),
                                     "timestamp": time.time(),
                                 }
                                 updated += 1
@@ -683,9 +729,14 @@ class FutuLV3Provider:
             return False
 
         futu_symbols = [self._to_futu_symbol(s) for s in symbols]
-        new_symbols = [s for s in futu_symbols if s not in self._subscribed_symbols]
+        # DEB-20260903 #16: 读-过滤在锁内 (与 unsubscribe/clear 竞态)
+        with self._sub_lock:
+            new_symbols = [s for s in futu_symbols if s not in self._subscribed_symbols]
+            # 已订阅但有类型级失败记录的标的 → 本次补订其失败类型
+            retry_symbols = [s for s in futu_symbols
+                             if s not in new_symbols and self._failed_sub_types.get(s)]
 
-        if not new_symbols:
+        if not new_symbols and not retry_symbols:
             logger.debug(f"[FutuLV3] 已订阅 {len(futu_symbols)} 只美股, 无需重复订阅")
             return True
 
@@ -696,40 +747,55 @@ class FutuLV3Provider:
             if sub_types is None:
                 sub_types = _configured_stock_sub_types()
 
-            sub_type_map = {
-                'QUOTE': SubType.QUOTE,
-                'K_1M': SubType.K_1M,
-                'K_5M': SubType.K_5M,
-                'K_15M': SubType.K_15M,
-                'K_30M': SubType.K_30M,
-                'K_60M': SubType.K_60M,
-                'K_DAY': SubType.K_DAY,
-                'ORDER_BOOK': SubType.ORDER_BOOK,  # 订单流深度 (Push Handler 已注册)
-                'TICKER': SubType.TICKER,          # 逐笔成交 (Push Handler 已注册)
-            }
+            # DEB-20260903 #16: 复用模块级 SSOT 映射 (与重试/退订路径一致)
+            sub_type_map = _futu_sub_type_map()
 
+            # DEB-20260903 #16: 按类型记录成功/失败 — 原实现部分/全部失败仍
+            # 无条件标记已订阅并返回 True, 造成假订阅状态 (无推送但显示健康)
+            failed_this_round: Dict[str, set] = {}
+            any_success = False
             for st_name in sub_types:
                 sub_type = sub_type_map.get(st_name)
                 if sub_type is None:
                     logger.warning(f"[FutuLV3] 未知订阅类型: {st_name}")
                     continue
-                ret, data = quote_ctx.subscribe(new_symbols, [sub_type], subscribe_push=True)
+                # 新标的全类型订阅; 老标的仅补订其失败类型
+                targets = list(new_symbols)
+                for _rs in retry_symbols:
+                    if st_name in self._failed_sub_types.get(_rs, set()):
+                        targets.append(_rs)
+                if not targets:
+                    continue
+                ret, data = quote_ctx.subscribe(targets, [sub_type], subscribe_push=True)
                 if ret != 0:
                     logger.warning(
                         f"[FutuLV3] 订阅 {st_name} 部分失败: {data}, "
-                        f"symbols={new_symbols}"
+                        f"symbols={targets} — 已记录待补订"
                     )
+                    for _s in targets:
+                        failed_this_round.setdefault(_s, set()).add(st_name)
                 else:
+                    any_success = True
                     logger.info(
-                        f"[FutuLV3] ✅ 已订阅 {len(new_symbols)} 只美股 {st_name}: "
-                        f"{[self._strip_prefix(s) for s in new_symbols]}"
+                        f"[FutuLV3] ✅ 已订阅 {len(targets)} 只美股 {st_name}: "
+                        f"{[self._strip_prefix(s) for s in targets]}"
                     )
 
-            self._subscribed_symbols.update(new_symbols)
+            with self._sub_lock:
+                # 仅当至少一个类型成功才标记已订阅; 全失败 → 不标记, 下轮完整重试
+                if any_success:
+                    self._subscribed_symbols.update(new_symbols)
+                for _s in list(new_symbols) + list(retry_symbols):
+                    _fails = failed_this_round.get(_s, set())
+                    if _fails:
+                        self._failed_sub_types[_s] = set(_fails)
+                    else:
+                        self._failed_sub_types.pop(_s, None)  # 全部成功, 清除失败记录
             logger.info(
                 f"[FutuLV3] 总订阅: {len(self._subscribed_symbols)} 只美股"
             )
-            return True
+            # 全部类型失败 → False (上层可感知降级); 部分失败 → True + 失败类型待补订
+            return any_success
 
         except Exception as e:
             # 根因修复 (2026-06-05): 订阅失败时自动重连并重试
@@ -739,15 +805,33 @@ class FutuLV3Provider:
                 try:
                     # 重连后 _subscribed_symbols 已清空，全部视为 new
                     futu_symbols_retry = [self._to_futu_symbol(s) for s in symbols]
+                    # DEB-20260903 #16: 复用完整 SSOT 映射 (原仅 QUOTE/K_1M/K_15M/K_30M 四项,
+                    # 丢失 ORDER_BOOK/TICKER/K_5M/K_60M/K_DAY → 重连后盘口/逐笔推送静默丢失)
+                    retry_map = _futu_sub_type_map()
+                    retry_failed: Dict[str, set] = {}
+                    retry_any_ok = False
                     for st_name in (sub_types or _configured_stock_sub_types()):
-                        from futu import SubType as _ST
-                        _sub = {
-                            'QUOTE': _ST.QUOTE, 'K_1M': _ST.K_1M,
-                            'K_15M': _ST.K_15M, 'K_30M': _ST.K_30M,
-                        }.get(st_name)
-                        if _sub and self._quote_ctx is not None:
-                            self._quote_ctx.subscribe(futu_symbols_retry, [_sub], subscribe_push=True)
-                    self._subscribed_symbols.update(futu_symbols_retry)
+                        _sub = retry_map.get(st_name)
+                        if _sub is None or self._quote_ctx is None:
+                            continue
+                        _r, _d = self._quote_ctx.subscribe(futu_symbols_retry, [_sub], subscribe_push=True)
+                        if _r != 0:
+                            logger.warning(f"[FutuLV3] 重连重订阅 {st_name} 失败: {_d}")
+                            for _s in futu_symbols_retry:
+                                retry_failed.setdefault(_s, set()).add(st_name)
+                        else:
+                            retry_any_ok = True
+                    with self._sub_lock:
+                        if retry_any_ok:
+                            self._subscribed_symbols.update(futu_symbols_retry)
+                        for _s in futu_symbols_retry:
+                            if retry_failed.get(_s):
+                                self._failed_sub_types[_s] = set(retry_failed[_s])
+                            else:
+                                self._failed_sub_types.pop(_s, None)
+                    if not retry_any_ok:
+                        logger.error("[FutuLV3] 重连后重订阅全部类型失败")
+                        return False
                     logger.info(f"[FutuLV3] ✅ 重连后重订阅成功: {len(futu_symbols_retry)} 只")
                     return True
                 except Exception as e2:
@@ -807,9 +891,21 @@ class FutuLV3Provider:
         # 1. Push 缓存检查 (实时推送，延迟 <100ms)
         push_data = self.get_push_quote(symbol)
         if push_data:
-            push_data["data_source"] = "futu_lv3_push"
-            push_data["symbol"] = symbol
-            return push_data
+            # DEB-20260904 #144: 返回副本 — 原原地改共享缓存 dict, 各调用者互相污染;
+            # 并补齐契约字段: change/change_percent 与 subscribed/snapshot 路径同口径,
+            # pre_price/pre_change_rate push 通道无此数据, 置 0 (与快照路径缺省口径一致)
+            quote = dict(push_data)
+            prev_close = float(quote.get("prev_close") or 0)
+            price = float(quote.get("price") or 0)
+            change = price - prev_close
+            quote["change"] = change
+            quote["change_percent"] = (change / prev_close * 100) if prev_close > 0 else 0.0
+            quote.setdefault("pre_price", 0.0)        # push 无盘前字段, 占位对齐契约
+            quote.setdefault("pre_change_rate", 0.0)  # 同上
+            quote["data_source"] = "futu_lv3_push"
+            quote["delay_ms"] = "<100"
+            quote["symbol"] = symbol
+            return quote
 
         # 2. 旧缓存检查 (快照模式 fallback)
         cache_key = f"quote:{futu_symbol}"
@@ -1465,7 +1561,10 @@ class FutuLV3Provider:
                     logger.debug(f"[FutuLV3] 断开连接异常: {e}")
                 self._quote_ctx = None
             self._connected = False
-            self._subscribed_symbols.clear()
+            # DEB-20260903 #16: clear 加 _sub_lock (与 subscribe 的读-过滤-写互斥)
+            with self._sub_lock:
+                self._subscribed_symbols.clear()
+                self._failed_sub_types.clear()
             logger.info("[FutuLV3] 已断开 OpenD 连接")
 
     # ═════════════════════════════════════════════════════════════
@@ -1625,8 +1724,10 @@ class FutuLV3Provider:
             True: 重连成功 (并尝试恢复订阅)
             False: 退避中 / 重连失败 / 非交易时段
         """
-        if not self._is_us_market_open():
-            logger.debug("[FutuLV3][RECONNECT] 非美股交易时段，跳过重连")
+        # DEB-20260904 #143: 盘前也允许重连 (与 _ensure_connected 会话口径一致),
+        # 否则 watchdog 盘前发现断连也会被此处拦截, 永远重连不上
+        if not self._is_us_market_open() and not self._is_us_pre_market():
+            logger.debug("[FutuLV3][RECONNECT] 非美股交易/盘前时段，跳过重连")
             return False
 
         now = time.time()
@@ -1648,7 +1749,9 @@ class FutuLV3Provider:
         )
 
         # 保存当前订阅，重连后恢复
-        saved_subs = list(self._subscribed_symbols)
+        # DEB-20260903 #16: 读集合加 _sub_lock (与 subscribe 并发互斥)
+        with self._sub_lock:
+            saved_subs = list(self._subscribed_symbols)
 
         # 强制关闭旧连接
         with self._lock:
@@ -1659,7 +1762,10 @@ class FutuLV3Provider:
                     logger.debug(f"[FutuLV3][RECONNECT] 关闭旧连接异常: {e}")
                 self._quote_ctx = None
             self._connected = False
-            self._subscribed_symbols.clear()
+            # DEB-20260903 #16: clear 加 _sub_lock
+            with self._sub_lock:
+                self._subscribed_symbols.clear()
+                self._failed_sub_types.clear()
             self._last_push_time = None
             with self._push_cache_lock:
                 self._push_quote_cache.clear()
@@ -1800,14 +1906,10 @@ class FutuLV3Provider:
 
             tickers = []
             for _, row in data.iterrows():
-                # 方向映射: 2=买入, 1=卖出, 4=中性 (富途定义)
-                raw_dir = row.get('Direction', 4)
-                if raw_dir == 2:
-                    direction = "BUY"
-                elif raw_dir == 1:
-                    direction = "SELL"
-                else:
-                    direction = "NEUTRAL"
+                # DEB-20260903 #17: 统一调用 _map_ticker_direction (SSOT) —
+                # 原内联映射 2=BUY/1=SELL 与 push 路径 (1=BUY/2=SELL) 互反,
+                # 降级到 API 拉取时买卖方向反转, 污染 buy_sell_ratio/order_flow_imbalance
+                direction = _map_ticker_direction(row.get('Direction', 4))
 
                 tickers.append({
                     "price": float(row.get('Price', 0)),
@@ -1862,10 +1964,15 @@ class FutuLV3Provider:
             if bid <= 0 or ask <= 0:
                 pq = self.get_push_quote(symbol)
                 if pq:
-                    bid = float(pq.get('bid', 0) or 0)
-                    ask = float(pq.get('ask', 0) or 0)
-                    bid_vol = float(pq.get('bid_vol', 0) or 0)
-                    ask_vol = float(pq.get('ask_vol', 0) or 0)
+                    # DEB-20260903 #18: push quote 的 bid/ask 在真实盘口缺失时
+                    # 兜底为 last_price (book_is_proxy=True), 直接采用会得 spread=0/
+                    # liquidity_score=100/tradeable=True, 把无真实盘口标的误判为高流动性。
+                    # proxy 时跳过, 交由快照降级/默认值处理
+                    if not pq.get("book_is_proxy"):
+                        bid = float(pq.get('bid', 0) or 0)
+                        ask = float(pq.get('ask', 0) or 0)
+                        bid_vol = float(pq.get('bid_vol', 0) or 0)
+                        ask_vol = float(pq.get('ask_vol', 0) or 0)
 
             # ③ 快照降级
             if (bid <= 0 or ask <= 0) and self._ensure_connected():
@@ -2034,10 +2141,13 @@ class FutuLV3Provider:
                     if self._subscribed_symbols:
                         from futu import SubType
                         symbols_list = list(self._subscribed_symbols)
+                        # DEB-20260904 #145: 默认退订列表补 K_DAY —
+                        # _futu_sub_type_map/stock_sub_types 均可订阅 K_DAY,
+                        # 原列表遗漏 → close 时 K_DAY 残留 OpenD 侧, 槽位泄漏
                         all_sub_types = [
                             SubType.QUOTE, SubType.K_1M, SubType.K_5M,
                             SubType.K_15M, SubType.K_30M, SubType.K_60M,
-                            SubType.ORDER_BOOK, SubType.TICKER,
+                            SubType.K_DAY, SubType.ORDER_BOOK, SubType.TICKER,
                         ]
                         for sub_type in all_sub_types:
                             try:
@@ -2048,7 +2158,10 @@ class FutuLV3Provider:
                     self._quote_ctx.close()
                     self._quote_ctx = None
                     self._connected = False
-                    self._subscribed_symbols.clear()
+                    # DEB-20260903 #16: clear 加 _sub_lock
+                    with self._sub_lock:
+                        self._subscribed_symbols.clear()
+                        self._failed_sub_types.clear()
                     with self._push_cache_lock:
                         self._push_quote_cache.clear()
                         self._push_kline_cache.clear()
@@ -2073,9 +2186,14 @@ class FutuLV3Provider:
 
         from futu import SubType
 
-        symbols_list = symbols or list(self._subscribed_symbols)
+        # DEB-20260903 #16: 读集合加 _sub_lock
+        with self._sub_lock:
+            symbols_list = symbols or list(self._subscribed_symbols)
         if sub_types is None:
-            sub_types = ['QUOTE', 'K_1M', 'K_5M', 'K_15M', 'K_30M', 'K_60M', 'ORDER_BOOK', 'TICKER']
+            # DEB-20260904 #145: 默认退订补 K_DAY — 原列表遗漏, 订阅过 K_DAY
+            # 的配置永远无法释放 (sub_type_map 已有该映射)
+            sub_types = ['QUOTE', 'K_1M', 'K_5M', 'K_15M', 'K_30M', 'K_60M',
+                         'K_DAY', 'ORDER_BOOK', 'TICKER']
 
         sub_type_map = {
             'QUOTE': SubType.QUOTE,
@@ -2108,13 +2226,28 @@ class FutuLV3Provider:
                 failed += 1
                 logger.warning(f"[FutuLV3] 退订 {st_name} 异常: {e}")
 
-        self._subscribed_symbols.clear()
-        with self._push_cache_lock:
-            self._push_quote_cache.clear()
-            self._push_kline_cache.clear()
-            self._push_ticker_cache.clear()
-            self._push_orderbook_cache.clear()
-        logger.info(f"[FutuLV3] 退订完成: 成功={success}, 失败={failed} | 槽位已释放")
+        # DEB-20260903 #19: 部分退订失败时保留本地订阅状态 —
+        # 原无条件 clear, 失败类型在 OpenD 侧仍活跃推送但本地已遗忘 →
+        # close() (依赖 _subscribed_symbols) 不再补退订 = 槽位泄漏, 且
+        # watchdog `if not _subscribed_symbols: continue` 使健康检查被跳过。
+        # 仅全部成功才清空; 有失败时保留集合供后续重试/补退订
+        if failed == 0:
+            # DEB-20260903 #16: clear 加 _sub_lock
+            with self._sub_lock:
+                self._subscribed_symbols.clear()
+                self._failed_sub_types.clear()
+            with self._push_cache_lock:
+                self._push_quote_cache.clear()
+                self._push_kline_cache.clear()
+                self._push_ticker_cache.clear()
+                self._push_orderbook_cache.clear()
+            logger.info(f"[FutuLV3] 退订完成: 成功={success}, 失败={failed} | 槽位已释放")
+        else:
+            logger.error(
+                f"[FutuLV3] 退订部分失败: 成功={success}, 失败={failed} | "
+                f"保留 _subscribed_symbols 与 push 缓存供后续补退订, "
+                f"OpenD 侧槽位可能仍被占用 (需人工/重试)"
+            )
 
 
 # ── 全局单例 ──────────────────────────────────────────────────────

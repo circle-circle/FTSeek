@@ -45,13 +45,17 @@ class RSIReboundStrategy(BaseStrategy):
         rsi = market_data.get("rsi", 50)
         price = market_data.get("current_price", 0)
 
-        if not rsi or not price:
+        # DEB-20260904 #168: RSI=0 是合法极端超卖读数, `not rsi` 会把它当缺数据
+        # 丢弃最强的超卖信号 — 仅 None 视为缺失
+        if rsi is None or not price:
             return StrategyResult()
 
         # RSI 超卖 → 做多（反弹）
         if rsi < 30:
             # 计算强度：RSI 越低，强度越高
-            strength = max(10, 70 - int((30 - rsi) * 2))
+            # DEB-20260903 #74: 原公式 70 - int((30-rsi)*2) 与注释相反 (RSI=10→30, RSI=29→68,
+            #   超卖越严重信号越弱). 改为随超卖加深递增, 上限 100.
+            strength = min(100, max(10, 70 + int((30 - rsi) * 2)))
 
             # 计算置信度：超卖越严重，置信度越高
             oversold_factor = min(1.0, (30 - rsi) / 20)

@@ -15,10 +15,14 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-def parse_json_strict(text: str) -> Optional[Dict[str, Any]]:
+def parse_json_strict(text: str) -> Optional[Any]:
     """
     从 LLM 输出抽取 JSON (容忍 ```json fenced code block / 前后说明文字).
     失败 → None
+
+    DEB-20260903 #58: 原步骤2/3 仅识别 {...} 对象, 顶层数组 [...] 无法被抽取
+    (步骤1 json.loads 可解析裸数组, 但 fenced/说明文包裹的数组漏抽)。
+    现步骤2/3 同时支持对象与数组; 返回类型放宽为 dict | list。
     """
     if not text or not text.strip():
         return None
@@ -27,28 +31,37 @@ def parse_json_strict(text: str) -> Optional[Dict[str, Any]]:
         return json.loads(text)
     except Exception:
         pass
-    # 2. 抽 ```json ... ```
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    # 2. 抽 ```json ... ``` (对象或数组)
+    m = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(1))
         except Exception:
             pass
-    # 3. 抽第一个 { ... } 平衡块
-    start = text.find("{")
-    if start >= 0:
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    chunk = text[start:i+1]
-                    try:
-                        return json.loads(chunk)
-                    except Exception:
-                        return None
+    # 3. 抽第一个 { ... } 或 [ ... ] 平衡块 (取先出现者)
+    brace = text.find("{")
+    bracket = text.find("[")
+    if brace < 0 and bracket < 0:
+        return None
+    if brace < 0:
+        start, open_ch, close_ch = bracket, "[", "]"
+    elif bracket < 0:
+        start, open_ch, close_ch = brace, "{", "}"
+    else:
+        start = min(brace, bracket)
+        open_ch, close_ch = ("{", "}") if start == brace else ("[", "]")
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == open_ch:
+            depth += 1
+        elif text[i] == close_ch:
+            depth -= 1
+            if depth == 0:
+                chunk = text[start:i+1]
+                try:
+                    return json.loads(chunk)
+                except Exception:
+                    return None
     return None
 
 

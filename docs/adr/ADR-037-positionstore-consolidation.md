@@ -1,4 +1,4 @@
-# ADR-007: PositionStore 写入路径收拢
+# ADR-037: PositionStore 写入路径收拢
 
 **日期**: 2026-06-16
 **状态**: 已规划 (待实施)

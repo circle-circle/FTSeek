@@ -15,9 +15,17 @@ class OrderStateMachine:
     VALID_TRANSITIONS: Dict[OrderState, Set[OrderState]] = {
         OrderState.CREATED: {OrderState.VALIDATED, OrderState.CANCELED},
         OrderState.VALIDATED: {OrderState.SENT, OrderState.CANCELED, OrderState.REJECTED, OrderState.FILLED},
-        OrderState.SENT: {OrderState.ACKED, OrderState.REJECTED, OrderState.CANCELED},
-        OrderState.ACKED: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELED},
-        OrderState.PARTIALLY_FILLED: {OrderState.FILLED, OrderState.CANCELED},
+        # DEB-20260903 #99: 补 SENT→PARTIALLY_FILLED/FILLED/CANCEL_REQUESTED —
+        # broker 可直接回报部分/全部成交; 撤单中间态缺失致合法回报被判非法转换
+        OrderState.SENT: {OrderState.ACKED, OrderState.REJECTED, OrderState.CANCELED,
+                          OrderState.PARTIALLY_FILLED, OrderState.FILLED,
+                          OrderState.CANCEL_REQUESTED},
+        OrderState.ACKED: {OrderState.PARTIALLY_FILLED, OrderState.FILLED, OrderState.CANCELED,
+                           OrderState.CANCEL_REQUESTED},
+        OrderState.PARTIALLY_FILLED: {OrderState.FILLED, OrderState.CANCELED,
+                                      OrderState.CANCEL_REQUESTED},
+        OrderState.CANCEL_REQUESTED: {OrderState.CANCELED, OrderState.FILLED,
+                                      OrderState.PARTIALLY_FILLED},
         OrderState.FILLED: set(),  # 终态
         OrderState.CANCELED: set(),  # 终态
         OrderState.REJECTED: set(),  # 终态
@@ -49,6 +57,9 @@ class OrderStateMachine:
             OrderState.CANCELED,
             OrderState.REJECTED,
             OrderState.EXPIRED,
+            # DEB-20260903 #99: UNKNOWN 是终态(空转换集)却不在完成集,
+            # 也不活跃 → 悬空状态永不清理; 归入完成集
+            OrderState.UNKNOWN,
         }
     
     def is_active(self) -> bool:

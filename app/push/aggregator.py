@@ -27,6 +27,7 @@ class Bucket:
     key: str
     messages: List[PushMessage] = field(default_factory=list)
     first_seen: float = field(default_factory=time.time)
+    attempts: int = 0  # DEB-20260903 #109: flush 重试计数
 
 
 class Aggregator:
@@ -93,6 +94,9 @@ class Aggregator:
             except Exception as e:
                 logger.debug(f"[PushAggregator·loop] {e}")
 
+    # DEB-20260903 #109: flush 回调失败重试上限 — 超过则丢弃并 error 留痕
+    MAX_FLUSH_RETRY = 3
+
     def _flush_bucket(self, key: str):
         """合并桶内消息为 1 条聚合消息推送 (必须持有 _lock 调用)"""
         bucket = self._buckets.pop(key, None)
@@ -102,7 +106,19 @@ class Aggregator:
             agg_msg = self._build_summary(bucket)
             self._flush_cb(agg_msg)
         except Exception as e:
-            logger.warning(f"[PushAggregator·flush] {key} 失败: {e}")
+            # DEB-20260903 #109: 原先 pop 后回调失败仅 warning, 桶内消息永久丢失.
+            #   现失败重入桶(保留原消息), 限制重试次数防止无限热循环.
+            bucket.attempts += 1
+            if bucket.attempts <= self.MAX_FLUSH_RETRY:
+                logger.warning(
+                    f"[PushAggregator·flush] {key} 失败(第{bucket.attempts}次), 重入桶待重试: {e}")
+                # 重置 first_seen 使其下一窗口后才重试, 避免热循环
+                bucket.first_seen = time.time()
+                self._buckets[key] = bucket
+            else:
+                logger.error(
+                    f"[PushAggregator·flush] {key} 重试 {self.MAX_FLUSH_RETRY} 次仍失败, "
+                    f"丢弃 {len(bucket.messages)} 条聚合消息: {e}")
 
     def _build_summary(self, bucket: Bucket) -> PushMessage:
         """把桶里 N 条交易消息汇总为 1 条 (盈亏 + 标的清单)"""

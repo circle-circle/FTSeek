@@ -20,7 +20,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_OUTPUT = Path("data/overnight_hold_shadow.jsonl")
+# DEB-20260903 #83: 相对路径 Path("data/...") 依赖进程 CWD — 改为基于 __file__
+# 的仓库根绝对路径 (app/playbook/file → parents[2]=仓库根), 与 pipeline.py 一致
+_OUTPUT = Path(__file__).resolve().parents[2] / "data" / "overnight_hold_shadow.jsonl"
 _BENIGN = frozenset({"SL_BREAKEVEN", "SL_TRAIL_LOCK", "PRE_CLOSE_EXIT"})
 
 

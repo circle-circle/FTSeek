@@ -417,6 +417,8 @@ class MarketDataRouter:
         
         # ★★★ Step 1: Futu LV3 主通道 — 实时价格 + K线 → 技术指标计算
         klines = None  # FIX (2026-05-22): Prevent UnboundLocalError if quote fails or price=0
+        # DEB-20260903 #20: 期权分支从未赋值 daily_klines, 后续引用抛 UnboundLocalError
+        daily_klines = None
         if self.futu:
             try:
                 # 获取 LV3 实时报价
@@ -610,7 +612,9 @@ class MarketDataRouter:
                                 else:
                                     ts_ctx["slope_5m"] = 0.0
                             # 距日内高点距离 (补充信号)
-                            day_high = float(futu_quote.get("high_price", 0))
+                            # DEB-20260903 #21: provider get_quote 产出键为 high/low/open
+                            # (futu_lv3_provider.py:885-887), 原读 high_price 等不存在的键 → 恒 0
+                            day_high = float(futu_quote.get("high", 0) or futu_quote.get("high_price", 0) or 0)
                             if day_high > 0 and ts_ctx["price"] > 0:
                                 ts_ctx["high_distance_pct"] = round(
                                     (ts_ctx["price"] - day_high) / day_high * 100, 3
@@ -618,8 +622,8 @@ class MarketDataRouter:
 
                             # ── ORB: 注入日内高/低/开盘价 + 开盘区间 ──
                             ts_ctx["day_high"] = day_high
-                            ts_ctx["day_low"] = float(futu_quote.get("low_price", 0))
-                            ts_ctx["open_price"] = float(futu_quote.get("open_price", 0))
+                            ts_ctx["day_low"] = float(futu_quote.get("low", 0) or futu_quote.get("low_price", 0) or 0)
+                            ts_ctx["open_price"] = float(futu_quote.get("open", 0) or futu_quote.get("open_price", 0) or 0)
 
                             # 计算开盘区间 (Opening Range): 开盘后前15根1分钟K线的高低点
                             if klines and len(klines) >= 15:
@@ -693,6 +697,14 @@ class MarketDataRouter:
                                             ts_ctx["lv3_ask"] = ob_factors["ask_price"]
                                             ts_ctx["lv3_bid_vol"] = ob_factors["bid_vol"]
                                             ts_ctx["lv3_ask_vol"] = ob_factors["ask_vol"]
+                                            # DEB-20260903 #21: 真实 OrderBook 覆盖后重算哨兵/OFI —
+                                            # 原实现保留 quote 路径的 proxy 标记, 把已有真实盘口的样本误标为 proxy
+                                            _ob_bv = float(ob_factors.get("bid_vol", 0) or 0)
+                                            _ob_av = float(ob_factors.get("ask_vol", 0) or 0)
+                                            _ob_tv = _ob_bv + _ob_av
+                                            ts_ctx["lv3_book_is_proxy"] = not (_ob_tv > 0)
+                                            if _ob_tv > 0:
+                                                ts_ctx["order_flow_imbalance"] = (_ob_bv - _ob_av) / _ob_tv
                             except Exception as obe:
                                 logger.debug(f"[Router] {symbol} OrderBook 因子注入跳过: {obe}")
 
@@ -756,7 +768,11 @@ class MarketDataRouter:
         _lv3_full = bool(ts_ctx) and ts_ctx.get("data_source") in (
             "futu_lv3", "futu_lv3_daily", "futu_lv3_1m_fallback"
         )
-        _needs_td_fallback = not _lv3_full
+        # DEB-20260904 #146: 期权永不降级 TwelveData (TD 不支持期权符号格式) —
+        # 原期权 quote_only 上下文不在 _lv3_full 白名单 → 仍触发 TD 调用,
+        # 浪费 API 配额且垃圾数据可能被 merge 进期权上下文; 上方 L757 已处理
+        # 期权无数据场景, 能走到这里的期权必有有效报价 → 直接跳过 TD
+        _needs_td_fallback = (not _lv3_full) and (not is_option)
         if _needs_td_fallback:
             if self.td:
                 try:
@@ -859,7 +875,14 @@ class MarketDataRouter:
             ts_ctx["prev_close"] = float(ts_ctx["previous_close"])
 
         # 添加时间戳
-        ts_ctx["timestamp"] = datetime.now().isoformat()
+        # DEB-20260903 #22: 用 ET naive 替代服务器本地 datetime.now() —
+        # 同函数 L522/L560/L633 均按 US/Eastern 推"今日", timestamp 须同口径,
+        # 否则非 ET 服务器上 ts_ctx 新鲜度/日期归因与 ET 交易日错位
+        try:
+            from app.utils.timezone import now_et as _now_et_ts
+            ts_ctx["timestamp"] = _now_et_ts().replace(tzinfo=None).isoformat()
+        except Exception:
+            ts_ctx["timestamp"] = datetime.now().isoformat()
 
         logger.debug(
             f"[Router] {symbol} price=${ts_ctx['price']:.2f} "
@@ -997,8 +1020,15 @@ class MarketDataRouter:
                 # 2026-06-30 根因修复: 加start/end + max_count>=范围交易日数
                 from futu import KLType
                 from datetime import date as _d, timedelta as _td
-                _end = _d.today().isoformat()
-                _start = (_d.today() - _td(days=400)).isoformat()
+                # DEB-20260903 #23: SPY 历史K线 end/start 边界用 ET 日期 —
+                # 原 _d.today() 取服务器本地日期, 非 ET 时区 end 可能超前/落后一日
+                try:
+                    from app.utils.timezone import now_et as _now_et_spy
+                    _today_spy = _now_et_spy().date()
+                except Exception:
+                    _today_spy = _d.today()
+                _end = _today_spy.isoformat()
+                _start = (_today_spy - _td(days=400)).isoformat()
                 if self.futu._ensure_connected() and self.futu._quote_ctx:
                     ret, data, _ = self.futu._quote_ctx.request_history_kline(
                         code="US.SPY", ktype=KLType.K_DAY, max_count=320,
@@ -1128,12 +1158,24 @@ class MarketDataRouter:
                     sources_healthy += 1
             except Exception as e:
                 status["sources"]["alphavantage"] = {"healthy": False, "error": str(e)}
-        
+
+        # DEB-20260903 #24: 主通道 Futu LV3 纳入健康口径 —
+        # 原仅统计 td/fh/av 三个备用源, 主通道宕掉时只要任一备用有 token
+        # 仍报 healthy=True, 监控对主通道失能无感知
+        if self.futu:
+            try:
+                _futu_ok = bool(self.futu._ensure_connected())
+                status["sources"]["futu_lv3"] = {"healthy": _futu_ok}
+                if _futu_ok:
+                    sources_healthy += 1
+            except Exception as e:
+                status["sources"]["futu_lv3"] = {"healthy": False, "error": str(e)}
+
         # 至少一个数据源健康即认为整体健康
         status["healthy"] = sources_healthy > 0
         status["sources_healthy"] = sources_healthy
-        status["sources_total"] = len([s for s in [self.td, self.fh, self.av] if s])
-        
+        status["sources_total"] = len([s for s in [self.td, self.fh, self.av, self.futu] if s])
+
         return status
     
     def close(self):

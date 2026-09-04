@@ -14,8 +14,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def test_25_pkill_matches_main_process_only():
     src = (PROJECT_ROOT / "ftseek_us.sh").read_text(encoding="utf-8")
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
-    assert 'pkill -f "main.py --start"' in code
-    assert 'pgrep -f "main.py --start"' in code
+    # DEB-20260903 #12: 模式升级为 "$MAIN_PY --start" (含项目绝对路径),
+    # 防误杀同机其他含同名参数的 Python 项目进程
+    assert 'pkill -f "$MAIN_PY --start"' in code
+    assert 'pgrep -f "$MAIN_PY --start"' in code
     assert 'pkill -f "ftseek_us"' not in code, "宽匹配会误杀脚本自身/日志tail/其他会话 (#25 回归)"
 
 

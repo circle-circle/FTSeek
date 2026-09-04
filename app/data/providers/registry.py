@@ -68,7 +68,8 @@ class ProviderRegistry:
         results = {}
         
         if parallel:
-            with ThreadPoolExecutor(max_workers=min(len(self._providers), 10)) as executor:
+            # DEB-20260903 #26: 无 provider 时 max_workers=0 抛 ValueError, 兜底 1
+            with ThreadPoolExecutor(max_workers=max(1, min(len(self._providers), 10))) as executor:
                 futures = {
                     executor.submit(provider.get_with_cache, symbol, **kwargs): name
                     for name, provider in self._providers.items()

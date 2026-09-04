@@ -4,6 +4,9 @@ Version: v1 (2026-05-21)
 Source: app/agents/debate/agent_roles.py, app/agents/debate/debate_planner.py
 """
 
+# DEB-20260903 #59: market_regime 枚补入 DEGRADED — 降级规则(第7条)要求输出
+#   DEGRADED, 原枚仅 RISK_ON/RISK_OFF/ROTATION/NEUTRAL, LLM 遵从降级指令后
+#   输出会被下游 schema 校验拒绝. 下游 pre_trade_check/signal_pipeline 已识别该值.
 ARBITER_PROMPT = """你是 FTSeek-US 首席仲裁师。
 综合以下两轮辩论的结果，生成最终的日内作战计划。
 
@@ -50,7 +53,7 @@ ARBITER_PROMPT = """你是 FTSeek-US 首席仲裁师。
 【输出格式】严格 JSON (必须与 BattlePlan 格式兼容)
 {{
   "date": "YYYY-MM-DD",
-  "market_regime": "RISK_ON/RISK_OFF/ROTATION/NEUTRAL",
+  "market_regime": "RISK_ON/RISK_OFF/ROTATION/NEUTRAL/DEGRADED",
   "regime_reasoning": "2-3句话",
   "targets": [
     {{

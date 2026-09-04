@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -32,6 +33,9 @@ logger = logging.getLogger("ftseek_us.manual_order_service.executor")
 # ── 延迟挂单注册表: 开仓单未成交时, SL/TP 排队等待 ──
 # {order_id: {"order": ManualOrder, "service": ManualOrderService, "registered_at": datetime}}
 _pending_protections: Dict[str, dict] = {}
+# DEB-20260903 #115: 注册表读写加锁 — 下单线程(写)与保护监控线程(读/pop)
+# 并发访问裸 dict, 可能竞态丢单/重复挂单
+_protections_lock = threading.Lock()
 _protection_monitor_started = False
 
 SQL_TAKEOVER = (
@@ -122,6 +126,27 @@ def synthesize_idem_key(order: "ManualOrder") -> str:
     return f"auto:{order.symbol}:{order.action}:{order.quantity}:{bucket}"
 
 
+# DEB-20260904 #198: 滑动窗口防重 — 固定 30s 桶在边界处失效 (双击 t=29.9/t=30.1 跨桶逃逸),
+# 补同 symbol+action+quantity 最近 N 秒判重; 仅作用于前端未传幂等键的兜底路径
+_RAPID_REPEAT_WINDOW_SEC = 30
+_last_request_ts: Dict[str, float] = {}
+
+
+def _request_fingerprint(order: "ManualOrder") -> str:
+    return f"{order.symbol}:{order.action}:{order.quantity}"
+
+
+def _is_rapid_repeat(order: "ManualOrder") -> bool:
+    """滑动窗口判重: 上次成功提交同指纹请求距今 < 窗口 即视为重复"""
+    now = time.time()
+    expired = [k for k, ts in _last_request_ts.items()
+               if now - ts > _RAPID_REPEAT_WINDOW_SEC]
+    for k in expired:
+        del _last_request_ts[k]
+    ts = _last_request_ts.get(_request_fingerprint(order))
+    return ts is not None and (now - ts) < _RAPID_REPEAT_WINDOW_SEC
+
+
 # ─────────────────────────────────────────────────────────────
 # 下单
 # ─────────────────────────────────────────────────────────────
@@ -137,6 +162,10 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
     with service._order_lock:
         if check_idempotency(service, _idem_key):
             logger.warning(f"[手动下单] 重复请求被拒绝: key={_idem_key}")
+            return {"success": False, "error": "重复提交，请勿连续点击"}
+        # DEB-20260904 #198: 无前端幂等键时补滑动窗口判重 — 固定桶在 30s 边界处防重失效
+        if not idempotency_key and _is_rapid_repeat(order):
+            logger.warning(f"[手动下单] 重复请求被拒绝(滑动窗口): {_request_fingerprint(order)}")
             return {"success": False, "error": "重复提交，请勿连续点击"}
 
         # 1. 风控校验
@@ -215,8 +244,15 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
                 # P0-3 修复 (2026-08-16): 提交成功后才记录幂等 key (不再预烧) —
                 # 失败/超时不记录, 用户可用同 key 安全重试; 成功则 1h 窗口内去重 + 重启重载
                 record_idempotency(service, _idem_key, order.order_id)
+                # DEB-20260904 #198: 记录成功时间, 供滑动窗口判重 (仅成功才标记, 失败可安全重试)
+                _last_request_ts[_request_fingerprint(order)] = time.time()
                 # 标记为手动持仓, 避免被系统退出监控误平
-                service._mark_position_manual(order.symbol, order.direction)
+                # DEB-20260903 #116: 包 try/except — 原裸调用异常会传播到外层
+                # except, 把已提交成功的订单覆写为 error, 且幂等已记录致重试被拒
+                try:
+                    service._mark_position_manual(order.symbol, order.direction)
+                except Exception as _mark_err:
+                    logger.warning(f"[手动下单] 标记 manual 失败 (不影响下单): {_mark_err}")
                 # 注册到 ManualHoldRegistry: 自动管线扫描时跳过此标的 (实时, 无延迟)
                 try:
                     manual_hold_registry.register(
@@ -482,17 +518,28 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                     else:
                         # 未成交 (限价挂单未到价/市价无回报): 撤单 + 不记账。
                         # 残留挂单与 ExitMonitor 双通道平仓 = 双倍平仓风险, 必须撤单。
+                        # DEB-20260904 #200: 撤单返回值此前被忽略且消息恒称"已撤单" —
+                        # 撤单失败时挂单残留, 与监控形成双通道平仓. 失败需显性告警.
+                        _cancel_ok = False
                         try:
-                            service._cancel_broker_order(order.order_id)
+                            _cancel_ok = bool(service._cancel_broker_order(order.order_id))
                         except Exception as _cx_err:
                             logger.warning(
                                 f"[手动平仓] {symbol} 未成交单撤单失败 (请人工处理): {_cx_err}"
                             )
-                        order.error_msg = "平仓单未成交, 已自动撤单"
-                        logger.warning(
-                            f"[手动平仓] {symbol} 平仓单未成交 (status={_order_status or 'unknown'}), "
-                            f"已撤单; 不写 trade_records, 仓位继续受退出监控保护"
-                        )
+                        if _cancel_ok:
+                            order.error_msg = "平仓单未成交, 已自动撤单"
+                            logger.warning(
+                                f"[手动平仓] {symbol} 平仓单未成交 (status={_order_status or 'unknown'}), "
+                                f"已撤单; 不写 trade_records, 仓位继续受退出监控保护"
+                            )
+                        else:
+                            order.error_msg = "平仓单未成交, 撤单未确认 — 挂单可能残留"
+                            logger.critical(
+                                f"[手动平仓] {symbol} 平仓单未成交且撤单未确认 "
+                                f"(status={_order_status or 'unknown'}), "
+                                f"挂单可能残留 → 与退出监控形成双通道平仓风险, 请人工核查!"
+                            )
                     _release_close_locks(symbol)
                     service._write_audit(order)
                     return {
@@ -507,10 +554,19 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         f"[手动平仓] {symbol} 部分成交 {_record_qty}/{int(qty)}, "
                         f"撤销剩余挂单, 仅按已成交部分处理"
                     )
+                    # DEB-20260904 #200: 撤余单返回值检查 — 失败意味着剩余挂单仍在,
+                    # 可能继续成交与已记账仓位冲突
                     try:
-                        service._cancel_broker_order(order.order_id)
+                        _pc_ok = bool(service._cancel_broker_order(order.order_id))
+                        if not _pc_ok:
+                            logger.critical(
+                                f"[手动平仓] {symbol} 部分成交后撤余单未确认 — "
+                                f"剩余挂单可能继续成交, 请人工核查!"
+                            )
                     except Exception:
-                        pass
+                        logger.critical(
+                            f"[手动平仓] {symbol} 部分成交后撤余单异常 — 剩余挂单可能残留"
+                        )
                 # P1-7 修复 (2026-08-16, DEB-fullchain): 仅"实际全部成交"时改判 manual
                 # 与执行全平清理。部分止盈后剩余仓位应继续受策略退出保护;
                 # 请求全平但部分成交 (剩余挂单已撤) 同样按部分处理。
@@ -571,10 +627,26 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         logger.warning(f"[手动平仓] ManualHoldRegistry 注销失败 (不影响平仓): {_unreg_err}")
 
                 # P1-6: 取消保护性订单组 (SL + TP)
-                try:
-                    cancel_order_group(service, symbol)
-                except Exception:
-                    pass
+                # DEB-20260904 #201 (S5): 原 unconditional 调用 — 部分平仓也撤掉 SL/TP
+                # 且不重建 → 剩余仓位在 broker 端裸奔. 改: 仅全平撤单; 部分平仓按剩余量重建.
+                if _effective_full:
+                    try:
+                        cancel_order_group(service, symbol)
+                    except Exception:
+                        pass
+                else:
+                    _remain_qty = int(total_qty) - _record_qty
+                    if _remain_qty > 0:
+                        try:
+                            cancel_order_group(service, symbol)
+                            _rebuild_protective_after_partial(
+                                service, symbol, position_dir, _remain_qty, row,
+                            )
+                        except Exception as _rp_err:
+                            logger.warning(
+                                f"[手动平仓] {symbol} 部分平仓后保护单重建失败 "
+                                f"(剩余 {_remain_qty} 股无 broker 端 SL/TP): {_rp_err}"
+                            )
 
                 # PDT 日内交易记录: 平仓时判断是否 round trip (P0 2026-06-11)
                 try:
@@ -709,8 +781,10 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                     logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
                 # P1-7 修复: 平仓尝试结束即释放竞态锁 (部分平仓成功后也必须释放,
                 # 否则 _pending_close 残留 → 组合级止损永久跳过该标的)
-                if not _effective_full:
-                    _release_close_locks(symbol)
+                # DEB-20260904 #202: 全平路径同样无条件释放 — 旧逻辑全平的锁释放依赖
+                # position_store.remove 成功 (其异常被 debug 吞), remove 失败 → 锁残留.
+                # _release_close_locks 对已被 remove 的 symbol 是 no-op, 调用安全.
+                _release_close_locks(symbol)
             else:
                 order.status = "error"
                 order.error_msg = str(data)
@@ -725,6 +799,10 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
 
         except Exception as e:
             logger.error(f"[手动平仓] 异常: {e}")
+            # DEB-20260903 #117: 外层兜底释放竞态锁 — 原未释放致
+            # _close_in_progress/_pending_close 永久残留,
+            # 退出监控 `if _meta.get('_pending_close'): continue` 永久跳过该标的
+            _release_close_locks(symbol)
             return {"success": False, "error": "操作失败，请稍后重试"}
 
 
@@ -777,7 +855,9 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
                         "trd_side": str(row.get("trd_side", "")),
                         "create_time": create_time,
                         "update_time": str(row.get("update_time", "")),
-                        "filled_qty": int(row.get("qty", 0)) if _is_filled else 0,
+                        # DEB-20260903 #118: 实际成交量取 dealt_qty —
+                        # qty 是委托量, 部分成交时高估 filled_qty 误导对账
+                        "filled_qty": int(row.get("dealt_qty", 0) or 0) if _is_filled else 0,
                     })
     except Exception as e:
         logger.warning(f"[订单查询] Broker 查询异常, 降级到审计 DB: {e}")
@@ -791,13 +871,18 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             # DEB-20260721 E-1: "今日"按 ET 交易日过滤 (原北京 LIKE 盘中差一天).
-            # timestamp 写入为 naive 北京; ET 日 D 对应北京区间 [D 12:00, D+1 12:00)
-            # (对齐 timezone._et_trade_date 的 -12h 约定).
-            from app.utils.timezone import now_et as _now_et
-            from datetime import timedelta as _td
-            _et_now = _now_et().replace(tzinfo=None)
-            _lo = _et_now.strftime("%Y-%m-%dT12:00:00")
-            _hi = (_et_now + _td(days=1)).strftime("%Y-%m-%dT12:00:00")
+            # timestamp 写入为 naive 北京; ET 日 D 对应北京区间 [ET午夜→北京, ET次日午夜→北京).
+            # DEB-20260904 #203: 硬编码 ±12h 在冬令时 (EST, 差 13h) 边界偏移 1 小时 —
+            # 改用真实时区换算: ET 当日 00:00 与次日 00:00 localize 后转北京, 自动处理 DST.
+            from app.utils.timezone import now_et as _now_et, ET as _ET, CST as _CST, _localize
+            from datetime import datetime as _dt, timedelta as _td, time as _time
+            _et_today = _now_et().date()
+
+            def _et_midnight_to_bj(d) -> str:
+                return _localize(_dt.combine(d, _time.min), _ET).astimezone(_CST).strftime("%Y-%m-%dT%H:%M:%S")
+
+            _lo = _et_midnight_to_bj(_et_today)
+            _hi = _et_midnight_to_bj(_et_today + _td(days=1))
             rows = conn.execute(
                 "SELECT * FROM manual_order_audit "
                 "WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC LIMIT 50",
@@ -1087,6 +1172,34 @@ def modify_stop_loss(service: "ManualOrderService", symbol: str,
             except Exception as e:
                 logger.error(f"[止损] {symbol} 下 STOP 单异常 (DB 仍更新): {e}")
 
+        # DEB-20260903 #119: 实盘 STOP 未挂出即返回失败 — 原仅记日志仍走
+        # "更新 DB"+success=True, 用户以为已改止损实际 broker 端无保护, 静默裸奔
+        if trd_env != TrdEnv.SIMULATE and not new_oid:
+            try:
+                from app.push import get_push_hub, PushMessage, Level, Category
+                get_push_hub().push(PushMessage(
+                    title=f"⚠️ 止损挂单失败 ({symbol})",
+                    body=(
+                        f"📌 标的: {symbol} {direction}\n"
+                        f"📉 新止损: ${new_sl}\n"
+                        f"❌ 实盘 STOP 单提交失败, 仓位无 broker 端止损保护\n"
+                        f"⚠️ 请人工检查并重挂"
+                    ),
+                    level=Level.CRITICAL,
+                    category=Category.RISK_ALERT,
+                    dedup_key=f"sl_place_fail:{symbol}",
+                ))
+            except Exception as _pe:
+                logger.warning(f"[止损] {symbol} 挂单失败的 CRITICAL 推送发送失败: {_pe}")
+            return {
+                "success": False,
+                "symbol": symbol,
+                "new_sl": new_sl,
+                "broker_order_id": None,
+                "status": "broker_failed",
+                "error": "实盘 STOP 单提交失败, DB 未更新, 仓位无止损保护",
+            }
+
         # 6. 更新 DB
         try:
             conn = service._db()
@@ -1191,11 +1304,12 @@ def _register_pending_protection(service: "ManualOrderService", order: "ManualOr
         threading.Timer(3.0, _try_place_protection, args=[service, order]).start()
         return
 
-    _pending_protections[order_id] = {
-        "order": order,
-        "service": service,
-        "registered_at": datetime.now(),
-    }
+    with _protections_lock:
+        _pending_protections[order_id] = {
+            "order": order,
+            "service": service,
+            "registered_at": datetime.now(),
+        }
     logger.info(
         f"[延迟挂单] ✅ 注册 {order.symbol} {order.direction} "
         f"order_id={order_id} SL=${order.stop_loss} TP=${order.take_profit}"
@@ -1260,9 +1374,10 @@ def _try_place_protection(service: "ManualOrderService", order: "ManualOrder") -
             return
         # 未成交/无成交价 → 转入 monitor 队列重试
         if order.order_id:
-            _pending_protections[order.order_id] = {
-                "order": order, "service": service, "registered_at": datetime.now(),
-            }
+            with _protections_lock:
+                _pending_protections[order.order_id] = {
+                    "order": order, "service": service, "registered_at": datetime.now(),
+                }
             _ensure_monitor_started()
             logger.warning(
                 f"[延迟挂单] {order.symbol} 市价单 3s 未成交, 转入监控队列等待成交后挂 SL/TP "
@@ -1281,11 +1396,13 @@ def _protection_monitor_loop() -> None:
     """后台线程: 每 30s 检查待处理保护挂单, 开仓成交后立即挂 SL/TP."""
     while True:
         time.sleep(30)
-        if not _pending_protections:
-            continue
+        # DEB-20260903 #115: 加锁读取 — 防与下单线程写竞态
+        with _protections_lock:
+            if not _pending_protections:
+                continue
 
-        # 复制一份, 避免迭代时修改
-        pending = list(_pending_protections.items())
+            # 复制一份, 避免迭代时修改
+            pending = list(_pending_protections.items())
         for order_id, entry in pending:
             order = entry["order"]
             service = entry["service"]
@@ -1294,7 +1411,8 @@ def _protection_monitor_loop() -> None:
             # 超时: 超过 24 小时自动放弃
             if (datetime.now() - registered_at).total_seconds() > 86400:
                 logger.warning(f"[延迟挂单] {order.symbol} 超时 24h, 移除")
-                _pending_protections.pop(order_id, None)
+                with _protections_lock:
+                    _pending_protections.pop(order_id, None)
                 continue
 
             try:
@@ -1317,9 +1435,12 @@ def _protection_monitor_loop() -> None:
 
                 if "FILLED" in status.upper() or dealt_qty > 0:
                     # 开仓单已成交! 立即挂 SL/TP
+                    total_qty = int(data.iloc[0].get("qty", 0)) or int(order.quantity)
+                    _is_partial = (dealt_qty > 0 and dealt_qty < total_qty
+                                   and "FILLED_ALL" not in status.upper())
                     logger.info(
                         f"[延迟挂单] 🎯 {order.symbol} 开仓单已成交 "
-                        f"(status={status}, dealt={dealt_qty}), 挂 SL/TP..."
+                        f"(status={status}, dealt={dealt_qty}/{total_qty}), 挂 SL/TP..."
                     )
                     # 用实际成交数量
                     if dealt_qty > 0:
@@ -1330,13 +1451,31 @@ def _protection_monitor_loop() -> None:
                         order.price = dealt_avg
 
                     place_protective_stop(service, order)
-                    _pending_protections.pop(order_id, None)
-                    logger.info(f"[延迟挂单] ✅ {order.symbol} SL/TP 已挂, 从队列移除")
+
+                    # DEB-20260903 #120: 部分成交时 SL/TP 已保护已成交部分,
+                    # 剩余数量需继续跟踪, 不移出队列
+                    if _is_partial:
+                        order.quantity = total_qty - dealt_qty
+                        logger.info(
+                            f"[延迟挂单] ⏳ {order.symbol} 部分成交 "
+                            f"({dealt_qty}/{total_qty}), SL/TP 已保护 {dealt_qty} 股, "
+                            f"剩余 {order.quantity} 股继续跟踪"
+                        )
+                    else:
+                        with _protections_lock:
+                            # DEB-20260903 #121: place_protective_stop 内部可能因 TP
+                            # 未确认重新入队 (registered_at 换新), 仅当 entry 未被替换
+                            # 时才移除, 防误删重试注册
+                            _cur = _pending_protections.get(order_id)
+                            if _cur is not None and _cur.get("registered_at") is registered_at:
+                                _pending_protections.pop(order_id, None)
+                                logger.info(f"[延迟挂单] ✅ {order.symbol} SL/TP 已挂, 从队列移除")
 
                 elif "CANCEL" in status.upper() or "FAIL" in status.upper() or "DEL" in status.upper():
                     # 开仓单被取消/失败, 移除
                     logger.info(f"[延迟挂单] {order.symbol} 开仓单 {status}, 移除")
-                    _pending_protections.pop(order_id, None)
+                    with _protections_lock:
+                        _pending_protections.pop(order_id, None)
 
                 # 其他状态 (SUBMITTED, WAITING 等): 继续等待
 
@@ -1451,22 +1590,32 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
             return
 
         # ── 实盘：挂止损 STOP 单 ──
-        _sl_order_id = None
-        ret, data = service._broker_ctx.place_order(
-            price=0,  # STOP 单触发后市价成交
-            qty=_qty,
-            code=order.symbol,
-            trd_side=trd_side_sl,
-            order_type=FutuOrderType.STOP,
-            trd_env=trd_env,
-            acc_id=service._acc_id(),
-            time_in_force=TimeInForce.GTC,
-            aux_price=_sl_price,  # 触发价 (Futu STOP 单必须用 aux_price)
-            trail_spread=0,  # 非追踪止损
-        )
+        # DEB-20260903 #121: TP 重试路径 SL 已挂出时跳过重挂, 防双止损单
+        _sl_order_id = getattr(order, "_sl_order_id", None) if getattr(order, "_sl_attached", False) else None
+        if _sl_order_id:
+            logger.info(f"[保护止损] {order.symbol} SL 已挂出 (order_id={_sl_order_id}), 跳过重挂")
+            ret, data = RET_OK, None
+        else:
+            ret, data = service._broker_ctx.place_order(
+                price=0,  # STOP 单触发后市价成交
+                qty=_qty,
+                code=order.symbol,
+                trd_side=trd_side_sl,
+                order_type=FutuOrderType.STOP,
+                trd_env=trd_env,
+                acc_id=service._acc_id(),
+                time_in_force=TimeInForce.GTC,
+                aux_price=_sl_price,  # 触发价 (Futu STOP 单必须用 aux_price)
+                trail_spread=0,  # 非追踪止损
+            )
 
-        if ret == RET_OK and not data.empty:
+        if ret == RET_OK and _sl_order_id:
+            pass  # SL 已在此前挂出 (TP 重试路径), 直接进 TP 挂单
+        elif ret == RET_OK and not data.empty:
             _sl_order_id = str(data.iloc[0].get("order_id", ""))
+            # DEB-20260903 #121: 标记已挂, TP 未确认重入队重试时跳过重挂
+            order._sl_attached = True
+            order._sl_order_id = _sl_order_id
             logger.info(
                 f"[保护止损] ✅ {order.symbol} {order.direction} "
                 f"STOP ${_sl_price} ({_sl_source}) qty={_qty} → order_id={_sl_order_id}"
@@ -1474,10 +1623,36 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
         else:
             error_msg = str(data) if not data.empty else "Empty response"
             logger.error(f"[保护止损] ❌ {order.symbol} STOP 单失败: {error_msg}")
+            # DEB-20260903 #121: 止损未挂出即中止 — 原继续挂 TP 形成
+            # "有止盈无止损"裸奔; 推送 CRITICAL 告警并 return, 不挂 TP
+            try:
+                from app.push import get_push_hub, PushMessage, Level, Category
+                get_push_hub().push(PushMessage(
+                    title=f"🚨 保护止损缺失 ({order.symbol})",
+                    body=(
+                        f"📌 标的: {order.symbol} {order.direction}\n"
+                        f"📦 数量: {_qty} 股 @ ${_entry:.2f}\n"
+                        f"❌ 实盘 STOP 止损单提交失败: {error_msg}\n"
+                        f"⚠️ 仓位当前无任何止损保护, 请立即人工挂止损!"
+                    ),
+                    level=Level.CRITICAL,
+                    category=Category.RISK_ALERT,
+                    dedup_key=f"protective_sl_fail:{order.symbol}",
+                ))
+            except Exception as _pe:
+                logger.warning(f"[保护止损] {order.symbol} 止损缺失的 CRITICAL 推送发送失败: {_pe}")
+            return
 
         # ── 挂止盈 LIMIT 单 (GTC) ──
         _tp_order_id = None
-        if _tp_price > 0:
+        # DEB-20260904 扫描修复: 与 #121 _sl_attached 对称的 TP 防重 —
+        # 部分成交跟踪/TP 重试路径每次 monitor 周期都会重入本函数,
+        # 无此守卫则每轮再挂一张 GTC TP 卖单, 累计卖出量可超持仓 → 意外做空
+        _tp_already = getattr(order, "_tp_attached", False) and getattr(order, "_tp_order_id", None)
+        if _tp_already:
+            _tp_order_id = order._tp_order_id
+            logger.info(f"[保护止盈] {order.symbol} TP 已挂出 (order_id={_tp_order_id}), 跳过重挂")
+        if _tp_price > 0 and not _tp_already:
             trd_side_tp = TrdSide.SELL if _tp_side_name == "SELL" else TrdSide.BUY
 
             # 等待持仓确认 (买入后 broker 可能尚未入账, 直接 SELL 会被拒绝为"做空")
@@ -1498,7 +1673,16 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
                     if _wait_i < 5:
                         time.sleep(3)
                 if not _pos_confirmed:
-                    logger.warning(f"[保护止盈] {order.symbol} 持仓未确认 (等了18s), TP 单延后由监控线程重试")
+                    logger.warning(f"[保护止盈] {order.symbol} 持仓未确认 (等了18s), TP 单转入监控队列重试")
+                    # DEB-20260903 #121: 原仅记日志声称重试但无任何注册, TP 保护
+                    # 永久丢失; 重新入队由监控线程 30s 后重试 (SL 已挂则自动跳过)
+                    if order.order_id:
+                        with _protections_lock:
+                            _pending_protections[order.order_id] = {
+                                "order": order, "service": service,
+                                "registered_at": datetime.now(),
+                            }
+                        _ensure_monitor_started()
 
             if _pos_confirmed or trd_side_tp == TrdSide.BUY:
                 try:
@@ -1514,6 +1698,9 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
                     )
                     if ret_tp == RET_OK and not data_tp.empty:
                         _tp_order_id = str(data_tp.iloc[0].get("order_id", ""))
+                        # DEB-20260904 扫描修复: 标记已挂, 监控重入时跳过重挂 (防重复 TP 单)
+                        order._tp_attached = True
+                        order._tp_order_id = _tp_order_id
                         logger.info(
                             f"[保护止盈] ✅ {order.symbol} {order.direction} "
                             f"LIMIT ${_tp_price} qty={_qty} → order_id={_tp_order_id}"
@@ -1544,6 +1731,90 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
         logger.warning(f"[保护止损] {order.symbol} 自动止损/止盈异常 (非致命): {_sl_err}")
 
 
+def _rebuild_protective_after_partial(
+    service: "ManualOrderService", symbol: str, direction: str,
+    remain_qty: int, row: Dict[str, Any],
+) -> None:
+    """DEB-20260904 #201 (S5): 部分平仓后按剩余量重建 SL/TP 保护单.
+
+    复用仓位原有 current_sl/initial_tp 价位 (不重新计算), 仅按 remain_qty 重挂.
+    best-effort: 任何失败只告警不抛 (仓位仍受 ExitMonitor 保护).
+    """
+    try:
+        _sl_price = float(row.get("current_sl") or 0)
+        _tp_price = float(row.get("initial_tp") or 0)
+        if remain_qty <= 0 or (_sl_price <= 0 and _tp_price <= 0):
+            logger.debug(f"[部分平仓·重建] {symbol} 无既有 SL/TP 价位或剩余量为 0, 跳过重建")
+            return
+        if not service._broker_ctx or not service._connected:
+            logger.warning(f"[部分平仓·重建] {symbol} broker 未连接, 无法重建保护单")
+            return
+
+        from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
+        trd_env = service._trd_env()
+        # 模拟盘 Futu 不支持 STOP — 价位仍在 DB, 由 ExitMonitor 轮询保护, 无需重挂
+        if trd_env == TrdEnv.SIMULATE:
+            logger.info(f"[部分平仓·重建] {symbol} 模拟盘: SL/TP 价位保留 DB, ExitMonitor 兜底")
+            return
+
+        _close_side = TrdSide.SELL if direction == "LONG" else TrdSide.BUY
+        _sl_order_id = None
+        _tp_order_id = None
+
+        if _sl_price > 0:
+            try:
+                ret, data = service._broker_ctx.place_order(
+                    price=0, qty=int(remain_qty), code=symbol,
+                    trd_side=_close_side, order_type=FutuOrderType.STOP,
+                    trd_env=trd_env, acc_id=service._acc_id(),
+                    time_in_force=TimeInForce.GTC, aux_price=_sl_price, trail_spread=0,
+                )
+                if ret == RET_OK and not data.empty:
+                    _sl_order_id = str(data.iloc[0].get("order_id", ""))
+                    logger.info(
+                        f"[部分平仓·重建] ✅ {symbol} SL STOP ${_sl_price} "
+                        f"qty={remain_qty} → {_sl_order_id}"
+                    )
+                else:
+                    logger.warning(f"[部分平仓·重建] {symbol} SL 重挂失败: {data}")
+            except Exception as _se:
+                logger.warning(f"[部分平仓·重建] {symbol} SL 重挂异常: {_se}")
+
+        if _tp_price > 0:
+            try:
+                ret, data = service._broker_ctx.place_order(
+                    price=_tp_price, qty=int(remain_qty), code=symbol,
+                    trd_side=_close_side, order_type=FutuOrderType.NORMAL,
+                    trd_env=trd_env, acc_id=service._acc_id(),
+                    time_in_force=TimeInForce.GTC,
+                )
+                if ret == RET_OK and not data.empty:
+                    _tp_order_id = str(data.iloc[0].get("order_id", ""))
+                    logger.info(
+                        f"[部分平仓·重建] ✅ {symbol} TP LIMIT ${_tp_price} "
+                        f"qty={remain_qty} → {_tp_order_id}"
+                    )
+                else:
+                    logger.warning(f"[部分平仓·重建] {symbol} TP 重挂失败: {data}")
+            except Exception as _te:
+                logger.warning(f"[部分平仓·重建] {symbol} TP 重挂异常: {_te}")
+
+        if _sl_order_id or _tp_order_id:
+            try:
+                service._ensure_sl_column()
+                conn = service._db()
+                conn.execute(
+                    "UPDATE open_positions SET sl_broker_order_id=?, tp_broker_order_id=? WHERE symbol=?",
+                    (_sl_order_id, _tp_order_id, symbol),
+                )
+                conn.commit()
+                conn.close()
+            except Exception as _dbe:
+                logger.error(f"[部分平仓·重建] {symbol} 订单 ID 落库失败: {_dbe}")
+    except Exception as _e:
+        logger.warning(f"[部分平仓·重建] {symbol} 重建保护单异常 (非致命): {_e}")
+
+
 # ── 订单组管理（OCO：One-Cancels-Other） ──
 # 事件驱动实现：见 oco_handler.py + TradeOrderHandlerBase
 # 手动平仓时取消订单组：见 cancel_order_group()
@@ -1567,20 +1838,49 @@ def cancel_order_group(service: "ManualOrderService", symbol: str) -> None:
         
         if sl_id:
             logger.info(f"[平仓] {symbol} 取消止损单 {sl_id}")
-            service._cancel_broker_order(sl_id)
-        
+            _sl_ok = service._cancel_broker_order(sl_id)
+            if not _sl_ok:
+                # DEB-20260903 #122: 撤单失败时保留 DB 记录, 防止丢失对活跃 broker 挂单的追踪
+                logger.error(
+                    f"[平仓] {symbol} 止损单 {sl_id} 撤单失败 — "
+                    f"保留 DB 记录以便后续对账, 请人工确认"
+                )
+
         if tp_id:
             logger.info(f"[平仓] {symbol} 取消止盈单 {tp_id}")
-            service._cancel_broker_order(tp_id)
-        
-        # 清除 DB 记录
-        conn = service._db()
-        conn.execute(
-            "UPDATE open_positions SET sl_broker_order_id=NULL, tp_broker_order_id=NULL WHERE symbol=?",
-            (symbol,),
-        )
-        conn.commit()
-        conn.close()
+            _tp_ok = service._cancel_broker_order(tp_id)
+            if not _tp_ok:
+                logger.error(
+                    f"[平仓] {symbol} 止盈单 {tp_id} 撤单失败 — "
+                    f"保留 DB 记录以便后续对账, 请人工确认"
+                )
+
+        # DEB-20260903 #122: 仅在撤单成功或无单可撤时清除 DB 记录
+        _sl_cleared = not sl_id or (sl_id and _sl_ok)
+        _tp_cleared = not tp_id or (tp_id and _tp_ok)
+        if _sl_cleared and _tp_cleared:
+            conn = service._db()
+            conn.execute(
+                "UPDATE open_positions SET sl_broker_order_id=NULL, tp_broker_order_id=NULL WHERE symbol=?",
+                (symbol,),
+            )
+            conn.commit()
+            conn.close()
+        else:
+            # 部分撤单失败: 仅清除已成功撤单的一侧
+            conn = service._db()
+            if _sl_cleared and sl_id:
+                conn.execute(
+                    "UPDATE open_positions SET sl_broker_order_id=NULL WHERE symbol=?",
+                    (symbol,),
+                )
+            if _tp_cleared and tp_id:
+                conn.execute(
+                    "UPDATE open_positions SET tp_broker_order_id=NULL WHERE symbol=?",
+                    (symbol,),
+                )
+            conn.commit()
+            conn.close()
         
     except Exception as e:
         logger.warning(f"[平仓] {symbol} 取消订单组失败 (非致命): {e}")

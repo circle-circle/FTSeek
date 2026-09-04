@@ -642,6 +642,70 @@ REGISTRY: list[ShadowItem] = [
               "实时行分段判分, 属另案, 见 REVIEW-20260903 §五)。",
         count_mode="where:type=penetration",
     ),
+
+    # ── 2026-09-04 (MU V反核查落地): 出场后全天路径 — 补「出场后到收盘」测量缺口;
+    #    同批补登已停采的 markout (stop-zero-consumer 决策留痕, 防将来重复建) ──
+    ShadowItem(
+        id="exit_disable_cf",
+        name="禁用型退出规则反事实影子 (M2)",
+        status=ShadowStatus.OBSERVING,
+        description="2026-09-04 落地: 对 MFE_STALL_EXIT / DEAD_SIGNAL_EXIT 出场笔, "
+                    "用当日 1min bar 回放「若该规则禁用」的后续链 (β紧SL→BE/dd→EOD收盘), "
+                    "saved=cf-live 方向感知。MFE_STALL 已于 8/15 实盘禁用 (DEB-20260815), "
+                    "其测量为禁用决策的事后验证; DEAD_SIGNAL 仍启用, 其测量为禁用候选证据。",
+        data_path="data/shadow/exit_disable_cf.jsonl",
+        min_n=50,
+        graduation_criteria="每规则 n≥50 且 saved 中位>0.15% (费用线) 且持有更优率≥65% "
+                            "→ 开 DEB 裁决禁用/参数放宽; 否则维持。",
+        eval_script="scripts/exit_disable_cf_shadow.py",
+        created="2026-09-04",
+        notes="首日回补 58 笔 (MFE_STALL 31 / DEAD_SIGNAL 27)。9/4 post_exit_path 真实路径"
+              "交叉验证一致: MFE_STALL saved中位+0.331% ≈ post gap 中位+0.32%/均值+0.33%; "
+              "DEAD_SIGNAL saved中位+0.217% vs post gap 中位+0.18%/均值+0.34%。"
+              "DEB-20260904-dead-signal-exit 裁决提案已立案 (三路互证误杀)。",
+        count_mode="where:type=cf",
+    ),
+
+    ShadowItem(
+        id="post_exit_path",
+        name="出场后全天路径影子 (全量平仓单)",
+        status=ShadowStatus.OBSERVING,
+        description="2026-09-04 MU V反核查产物: 每笔 playbook 平仓后用当日 1 分 bar 记录"
+                    "出场后路径 (post_fav/post_adv/close_gap + 日内深回撤V反上下文), "
+                    "回答「出场后市场走成什么样」。边界 (防重复): 10m 短窗归 "
+                    "penetration_shadow, 禁用反事实归 exit_disable_cf, 变体出场点归 "
+                    "exit_param_shadow — 本项只做全量×全天纯路径记录。首日回补 60 天 "
+                    "420 笔 (P1 口径重建后: ok 415 / ah_exit 5, 零截断零误标)。",
+        data_path="data/shadow/post_exit_path.jsonl",
+        min_n=100,
+        graduation_criteria="无毕业门 (永久测量项): 服务退出判分对照臂 + 股性素材。"
+                            "首次产出物: ①深回撤V反日 vs 平静日的 close_gap 分层是否显著 "
+                            "(n≥100 后呈 DEB); ②exit_dist_from_low_pct 低×deep_dd_day "
+                            "交集 (坑底附近割) 的错过分布 — 为保本线穿透判别器提供"
+                            "下游路径佐证。",
+        eval_script="scripts/post_exit_path_shadow.py",
+        created="2026-09-04",
+        notes="cron 05:45 ET (position_path_collector 05:15 → archetype_bars_ensure "
+              "05:35 之后); 幂等 trade_id 去重; 状态四分类 ok/ah_exit/bar_truncated/no_bars "
+              "(P1 口径 2026-09-04 晚: replay_bars 多写入者混杂目录, 截断 bar 自主补拉全天写回, "
+              "台账 crontab-post-exit-path 条); 夜盘出场走 ah_exit + next_open_gap 隔夜量化。",
+        count_mode="where:type=post_exit",
+    ),
+    ShadowItem(
+        id="markout_capture",
+        name="入场后 markout 漂移采集 (已停采)",
+        status=ShadowStatus.KILLED,
+        description="入场后 1/5/15min 方向感知 drift (sim 环境逆向选择代理)。"
+                    "2026-08-29 用户裁决 stop-zero-consumer 停采: sim 阶段零消费者, "
+                    "攒样无人判分 = 白采。累计样本止于 2026-08-28 (14 笔/日)。",
+        data_path="data/shadow/markout.jsonl",
+        created="2026-07-30",
+        last_evaluated="2026-08-29",
+        notes="补登 (2026-09-04): 8/29 停采时未入注册表, 状态变迁无审计痕 — 本次补录。"
+              "与 post_exit_path (出场后全天路径) 语义不同: 本项测【入场后】逆向选择, "
+              "彼项测【出场后】路径; 若未来 live 阶段需要重评估入场冲击成本, 按生命周期"
+              "重启新条目而非复活本项。",
+    ),
 ]
 
 

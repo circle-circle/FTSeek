@@ -18,6 +18,9 @@ class SlippageController:
         side: str,  # "BUY" or "SELL"
     ) -> bool:
         """检查滑点是否可接受"""
+        # DEB-20260903 #100: expected_price=0 除零保护 — 无效价格视为不可接受
+        if expected_price <= 0:
+            return False
         if side == "BUY":
             slippage = (actual_price - expected_price) / expected_price
         else:  # SELL
@@ -32,6 +35,9 @@ class SlippageController:
         side: str,
     ) -> float:
         """计算滑点比例"""
+        # DEB-20260903 #100: expected_price=0 除零保护
+        if expected_price <= 0:
+            return float('inf')
         if side == "BUY":
             return (actual_price - expected_price) / expected_price
         else:

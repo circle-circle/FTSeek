@@ -83,9 +83,16 @@ def retry_with_backoff(
                         time.sleep(wait)
                         continue
                     if attempt > 0:
-                        logger.info(
-                            "[retry] %s 第 %d 次重试后成功", label, attempt
-                        )
+                        # DEB-20260903 #7: retry_on_none 用尽后 result 仍为 None
+                        # 时不得记"重试后成功" (日志与实际结果矛盾)
+                        if retry_on_none and result is None:
+                            logger.warning(
+                                "[retry] %s 重试 %d 次后仍返回 None", label, attempt
+                            )
+                        else:
+                            logger.info(
+                                "[retry] %s 第 %d 次重试后成功", label, attempt
+                            )
                     return result
                 except retryable_exceptions as e:
                     last_exc = e

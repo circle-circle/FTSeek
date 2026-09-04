@@ -88,7 +88,17 @@ def test_critical_alert_helper():
 def test_dedup_basic():
     cache = DedupCache(ttl_sec=60)
     assert cache.should_send("k1") is True
+    # DEB-20260903 #110: should_send 改 peek (不记录), 发送成功后 mark_sent 才占窗
+    cache.mark_sent("k1")
     assert cache.should_send("k1") is False  # 60s 内重复
+
+
+def test_dedup_retry_not_blocked_without_mark():
+    """DEB-20260903 #110: 发送失败(未 mark_sent)时重试不被误判为重复"""
+    cache = DedupCache(ttl_sec=60)
+    assert cache.should_send("k1") is True   # peek, 不占窗
+    # 发送失败, 不调 mark_sent
+    assert cache.should_send("k1") is True   # 重试仍放行
 
 
 def test_dedup_different_keys():

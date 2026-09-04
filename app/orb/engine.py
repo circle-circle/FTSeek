@@ -1,5 +1,5 @@
 """
-ORB 辅线引擎 — RFC-056
+ORB 辅线引擎 — RFC-075
 
 独立 Opening Range Breakout 管线:
   - 5 秒轮询 daemon 线程 (突破窗口需要快速响应)
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 class ORBPosition:
-    """ORB 单仓位跟踪状态 (增强版 — RFC-056-DESIGN)"""
+    """ORB 单仓位跟踪状态 (增强版 — RFC-075-DESIGN)"""
 
     __slots__ = (
         "symbol", "direction", "entry_price", "quantity", "initial_quantity",
@@ -77,7 +77,9 @@ class ORBPosition:
         self.order_id = order_id
 
         # 2026-06-08: 清理分层止盈死代码 (2R 固定止盈替代)
-        self.r_multiple = sl_distance     # 风险单位
+        # DEB-20260904 #169: 用兜底后的有效 sl_distance 而非原始入参 —
+        # sl_distance<=0 时上一行已回退 atr_at_entry, 风险单位必须同源
+        self.r_multiple = self.sl_distance  # 风险单位
 
         # Task #11 (2026-06-02): trace_id 上传 — 若未传入则生成, 保证全链路不裸奔
         if not trace_id:
@@ -104,6 +106,7 @@ class ORBEngine:
         position_store: Any = None,
         notifier: Any = None,
         open_position_lock: Optional[threading.RLock] = None,
+        scheduler: Any = None,
     ):
         from app.orb.config import ORBConfig
         from app.orb.exits import ORBExitStack
@@ -114,6 +117,9 @@ class ORBEngine:
         self._store = position_store
         self._notifier = notifier
         self._lock = open_position_lock or threading.RLock()
+        # DEB-20260904 #173: 冷却门禁需要 _is_in_cooldown — 此前 _scheduler 从未赋值,
+        # 回退目标 scheduler_core._scheduler_instance 也从不存在 → 冷却门禁静默失效
+        self._scheduler = scheduler
 
         # 退出栈 (2026-06-23: trailing/TP 已移除, 仅 FloorStop + EOD; 2R止盈+breakdown 在本引擎判定)
         self._exit_stack = ORBExitStack(
@@ -242,6 +248,16 @@ class ORBEngine:
                     "🚨 [ORB·ADR-006] 标的池与主线重叠: %s — "
                     "请修改 unified_config.yaml 消除重叠", overlap
                 )
+                # DEB-20260903 #76: 自动剔除重叠标的 — 原仅打 critical 日志不阻断,
+                # 两套策略对同一标的可同时下单造成双倍仓位
+                self._cfg.universe = [
+                    s for s in self._cfg.universe
+                    if (f"US.{s}" if not s.startswith('US.') else s) not in overlap
+                ]
+                logger.critical(
+                    "[ORB·ADR-006] 已从 ORB universe 剔除 %d 个重叠标的, 剩余 %d 个",
+                    len(overlap), len(self._cfg.universe),
+                )
             else:
                 logger.info(
                     "[ORB·ADR-006] ✅ 标的池零重叠 | ORB=%d ETF | Main=%d 个股",
@@ -317,7 +333,15 @@ class ORBEngine:
             self._loss_records = {}  # 重置亏损记录 (2026-06-07)
             self._banned_today = set()  # 重置封杀列表
             self._first_breakout_done = set()  # 重置首次突破记录
-            # 不再清除区间，允许隔夜持仓继续使用
+            # DEB-20260903 #77: 清理非持仓标的的旧区间 — 昨日 fallback 伪区间
+            # (ready=True, quality=0.3) 会被 line 387 的 ready 跳过逻辑阻止当日重建;
+            # 仅保留当前持仓标的的区间供隔夜持仓退出使用
+            _hold = set(self._positions.keys()) if self._positions else set()
+            _stale = [s for s in self._ranges if s not in _hold]
+            for _s in _stale:
+                self._ranges.pop(_s, None)
+            if _stale:
+                logger.info("[ORB] 跨日重置: 清理 %d 个非持仓旧区间", len(_stale))
             logger.info("[ORB] 跨日重置 | date=%s", today_str)
 
         # 交易时段检查 (仅 ET 常规交易时段)
@@ -384,8 +408,11 @@ class ORBEngine:
             self._diag_logged = True
 
         for symbol in self._cfg.universe:
-            if symbol in self._ranges and self._ranges[symbol].get("ready"):
-                continue  # 已构建, 跳过
+            # DEB-20260904 #170: fallback 伪区间不得阻断同窗口重建 —
+            # 原条件 ready 即跳过, kline 暂时缺失的标的永远停在 0.3% 伪区间
+            _existing = self._ranges.get(symbol)
+            if _existing and _existing.get("ready") and not _existing.get("fallback"):
+                continue  # 已构建 (真实区间), 跳过
             try:
                 # 获取 1-min klines (至少 range_minutes 根)
                 klines = self._get_1min_klines(symbol, count=self._cfg.range_minutes + 5)
@@ -635,6 +662,15 @@ class ORBEngine:
                                 "(偏差=%.1f%%), 跳过",
                                 symbol, range_mid, cp, dev * 100,
                             )
+                            # DEB-20260904 #171: 校验失败必须作废旧 ready 区间 —
+                            # 否则陈旧区间继续可交易 (用上次有效区间挂单打偏离价)
+                            _stale = self._ranges.get(symbol)
+                            if _stale and _stale.get("ready"):
+                                _stale["ready"] = False
+                                logger.warning(
+                                    "[ORB] %s 旧区间已作废 (校验失败防陈旧交易): H=%.2f L=%.2f",
+                                    symbol, _stale.get("high", 0), _stale.get("low", 0),
+                                )
                             continue
 
                 if rolling_high > 0 and rolling_low > 0 and rolling_high > rolling_low:
@@ -790,22 +826,21 @@ class ORBEngine:
             return allowed
 
     def _get_account_equity(self) -> float:
-        """获取账户资金 (从 PositionStore 或配置)"""
-        # 尝试从 PositionStore 获取
-        if self._store and hasattr(self._store, 'get_account_equity'):
-            try:
-                equity = self._store.get_account_equity()
-                if equity and equity > 0:
-                    return float(equity)
-            except Exception as e:
-                logger.debug("[ORB] 获取账户资金失败: %s", e)
+        """获取账户资金 (用于最大持仓数计算)
 
-        # Fallback: 从配置获取
-        if hasattr(self._cfg, 'initial_capital') and self._cfg.initial_capital > 0:
-            return float(self._cfg.initial_capital)
+        DEB-20260903 #78: 与仓位 sizing 统一资金口径 — 原本 PositionStore/config 默认
+        $100K, 而 _get_equity 走 capital_safety (buying_power>cash>equity) 默认 $1M,
+        两口径 fallback 差 10x → 持仓数与仓位不匹配. 统一委托同一 helper _get_equity().
+        """
+        try:
+            equity = self._get_equity()
+            if equity and equity > 0:
+                return float(equity)
+        except Exception as e:
+            logger.debug("[ORB] _get_account_equity 委托 _get_equity 失败: %s", e)
 
-        # Default: 10 万美元
-        return 100000.0
+        # 极端兜底: 与 _get_equity 默认一致 ($1M 模拟盘)
+        return 1000000.0
 
     def _manage_overnight_positions(self, now: datetime, current_time: dt_time):
         """
@@ -828,15 +863,20 @@ class ORBEngine:
         logger.info("[ORB] 15:30 后调整隔夜持仓止损")
 
         for symbol, pos in self._positions.items():
-            # 放宽止损距离 (隔夜波动更大)
+            # DEB-20260904 #172: 隔夜放宽必须基于入场基线 (atr_at_entry),
+            # 不能在已放宽的 sl_distance 上乘 — 否则每晚 ×1.5 复利, N 晚后 1.5^N
+            _base = getattr(pos, 'atr_at_entry', 0.0) or pos.sl_distance
+            if _base <= 0:
+                continue
             original_sl_distance = pos.sl_distance
-            pos.sl_distance *= 1.5
+            pos.sl_distance = _base * 1.5
 
             logger.info(
-                "[ORB] %s 隔夜止损调整: SL距离 %.2f -> %.2f",
+                "[ORB] %s 隔夜止损调整: SL距离 %.2f -> %.2f (基线=%.2f)",
                 symbol,
                 original_sl_distance,
                 pos.sl_distance,
+                _base,
             )
 
         # 标记今天已调整
@@ -1015,7 +1055,7 @@ class ORBEngine:
         if not direction:
             return None
 
-        # Layer 4: 区间质量评分 (RFC-056-DESIGN)
+        # Layer 4: 区间质量评分 (RFC-075-DESIGN)
         vwap = rng.get("vwap", 0.0)
         if vwap <= 0:
             vwap = self._get_vwap(symbol)
@@ -1197,7 +1237,7 @@ class ORBEngine:
         except Exception as _dh_err:
             logger.warning("[ORB] 数据健康检查异常 (放行): %s", _dh_err)
 
-        # 自适应止损计算 (RFC-056-DESIGN)
+        # 自适应止损计算 (RFC-075-DESIGN)
         width_pct = rng.get("width_pct", 0.5)
         sl_distance = self._calculate_adaptive_stop(
             orb_width_pct=width_pct,
@@ -2021,7 +2061,7 @@ class ORBEngine:
         except Exception:
             return 1.0  # 降级: 不缩放
 
-    # ── 区间质量评估 (RFC-056-DESIGN) ──
+    # ── 区间质量评估 (RFC-075-DESIGN) ──
 
     def _calculate_quality_score(
         self,
@@ -2244,17 +2284,30 @@ class ORBEngine:
                     _state = _rsm.get_state().value
                     logger.warning(f"🚫 [ORB·风控·P1] {symbol} 拒绝: 系统 {_state} 状态禁止开仓")
                     return {"success": False, "error": f"risk_state_{_state}"}
-            except Exception:
-                pass
+            except Exception as _rsm_err:
+                # DEB-20260903 #80: 门禁异常 fail-closed — 原 pass 后继续下单,
+                # 风控模块失效时 ORB 绕过 RISK_OFF/HALT 裸奔
+                logger.error(f"🚫 [ORB·风控·P1] {symbol} 门禁异常 (拒绝下单): {_rsm_err}")
+                return {"success": False, "error": "risk_gate_error", "reason": str(_rsm_err)}
 
             # 门禁 2: 冷却期 (同标的近期止损后禁入)
             try:
+                # DEB-20260903 #80: self._scheduler 属性从未赋值致冷却门禁永远跳过 —
+                # 回退到 scheduler_core 模块级单例 (与 executor.py _release_close_locks 同模式)
                 _scheduler = getattr(self, '_scheduler', None) or getattr(self, 'scheduler', None)
+                if _scheduler is None:
+                    try:
+                        import importlib as _il
+                        _scheduler = getattr(_il.import_module("app.core.scheduler_core"), "_scheduler_instance", None)
+                    except Exception:
+                        _scheduler = None
                 if _scheduler and hasattr(_scheduler, '_is_in_cooldown') and _scheduler._is_in_cooldown(symbol):
                     logger.warning(f"🚫 [ORB·冷却·P1] {symbol} 拒绝: 信号冷却中")
                     return {"success": False, "error": "cooldown_active"}
-            except Exception:
-                pass
+            except Exception as _cd_err:
+                # DEB-20260903 #80: fail-closed
+                logger.error(f"🚫 [ORB·冷却·P1] {symbol} 门禁异常 (拒绝下单): {_cd_err}")
+                return {"success": False, "error": "cooldown_gate_error", "reason": str(_cd_err)}
 
             # 门禁 3: PDT 日交易限制
             try:
@@ -2265,8 +2318,10 @@ class ORBEngine:
                     if not _allowed:
                         logger.warning(f"🚫 [ORB·PDT·P1] {symbol} 拒绝: {_reason}")
                         return {"success": False, "error": f"pdt_{_reason}"}
-            except Exception:
-                pass
+            except Exception as _pdt_err:
+                # DEB-20260903 #80: fail-closed
+                logger.error(f"🚫 [ORB·PDT·P1] {symbol} 门禁异常 (拒绝下单): {_pdt_err}")
+                return {"success": False, "error": "pdt_gate_error", "reason": str(_pdt_err)}
 
             order = Order(
                 client_order_id=f"orb_{symbol}_{uuid.uuid4().hex[:8]}",
@@ -2349,5 +2404,20 @@ def get_orb_engine(**kwargs) -> ORBEngine:
         raw_cfg = kwargs.pop("config", {})
         cfg = ORBConfig.from_dict(raw_cfg) if isinstance(raw_cfg, dict) else raw_cfg
         _orb_engine_instance = ORBEngine(config=cfg, **kwargs)
+    else:
+        # DEB-20260904 #173/#174: 单例已建时允许晚绑定仍为 None 的依赖 —
+        # 原实现忽略首次创建后的全部 kwargs, 冷却门禁回退链
+        # (scheduler_core._scheduler_instance 不存在) 恒 None
+        _late_bind = {
+            "execution_engine": "_exec",
+            "data_router": "_data",
+            "position_store": "_store",
+            "notifier": "_notifier",
+            "scheduler": "_scheduler",
+        }
+        for _kw, _attr in _late_bind.items():
+            _val = kwargs.get(_kw)
+            if _val is not None and getattr(_orb_engine_instance, _attr, None) is None:
+                setattr(_orb_engine_instance, _attr, _val)
 
     return _orb_engine_instance

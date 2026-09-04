@@ -98,9 +98,17 @@ class ReviewDataCollector:
                 pi.take_profit             AS pb_take_profit
                FROM trade_records tr
                LEFT JOIN playbook_instructions pi ON tr.decision_id = pi.decision_id
-               WHERE tr.trade_date = ?
+               -- DEB-20260903 #131: 原仅按 trade_date(开仓日) 归集, 多日持仓在出场日
+               -- 复盘不可见 — 补出场日匹配 (exit_time 为 ET ISO, substr 取前 10 字符避免
+               -- SQLite date() 对带时区 ISO 转 UTC 造成日期错位)
+               -- DEB-20260904 #213: 补 source 白名单 + 幽灵对账行排除 (NULL 保留式,
+               -- 与 daily_review 主查询同口径) — 原无过滤, 幽灵冲销行/非 playbook
+               -- 来源交易混入辩论上下文, 与 daily_review 同日数字对不上
+               WHERE (tr.trade_date = ? OR substr(tr.exit_time, 1, 10) = ?)
+                 AND tr.source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
+                 AND (tr.exit_reason IS NULL OR tr.exit_reason != 'PHANTOM_RECONCILE_VOID')
                ORDER BY tr.created_at""",
-            (date,)
+            (date, date)
         )
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
@@ -111,7 +119,9 @@ class ReviewDataCollector:
             if src not in by_source:
                 by_source[src] = {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0}
             by_source[src]['trades'] += 1
-            pnl = t.get('realized_pnl', 0) or 0
+            # DEB-20260903 #131: 净口径 COALESCE(pnl_net, realized_pnl) —
+            # 与同文件 :2012/:2137/:2208 净口径一致 (原 realized_pnl 毛额不一致)
+            pnl = t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0)
             by_source[src]['pnl'] += pnl
             if pnl > 0:
                 by_source[src]['wins'] += 1
@@ -153,17 +163,26 @@ class ReviewDataCollector:
     
     def collect_weekly(self, week_start: str, week_end: str) -> Dict:
         """采集周级复盘数据"""
+        # DEB-20260904 #214: 补出场日匹配 (同 #131 daily 修复, 原仅修 daily 漏修周/月) —
+        # 跨日持仓进场日在周区间外、出场日在区间内时, 原口径该笔及其盈亏完全不可见
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date",
-            (week_start, week_end)
+            "SELECT * FROM trade_records "
+            "WHERE trade_date BETWEEN ? AND ? "
+            "OR substr(exit_time, 1, 10) BETWEEN ? AND ? "
+            "ORDER BY trade_date",
+            (week_start, week_end, week_start, week_end)
         )
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         # 逐日分布
+        # DEB-20260904 #214: 改出场日归集 + 净额口径 (同日复盘) — 原按进场日 + 毛额,
+        # 与日复盘数字不可加总
         daily_counts = self._query(
-            "SELECT trade_date, COUNT(*) as cnt, SUM(realized_pnl) as pnl "
-            "FROM trade_records WHERE trade_date BETWEEN ? AND ? "
-            "GROUP BY trade_date ORDER BY trade_date",
+            "SELECT substr(exit_time, 1, 10) as trade_date, COUNT(*) as cnt, "
+            "SUM(COALESCE(pnl_net, realized_pnl)) as pnl "
+            "FROM trade_records WHERE substr(exit_time, 1, 10) BETWEEN ? AND ? "
+            "AND exit_price > 0 "
+            "GROUP BY substr(exit_time, 1, 10) ORDER BY trade_date",
             (week_start, week_end)
         )
         
@@ -185,9 +204,14 @@ class ReviewDataCollector:
         else:
             end = f"{year}-{month+1:02d}-01"
         
+        # DEB-20260904 #214: 补出场日匹配 (同 #131 daily 修复) — 跨月持仓进场日在
+        # 上月、出场日在本月时, 原仅按 trade_date 归集 → 月复盘完全看不到该笔
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date >= ? AND trade_date < ? ORDER BY trade_date",
-            (start, end)
+            "SELECT * FROM trade_records "
+            "WHERE (trade_date >= ? AND trade_date < ?) "
+            "OR (substr(exit_time, 1, 10) >= ? AND substr(exit_time, 1, 10) < ?) "
+            "ORDER BY trade_date",
+            (start, end, start, end)
         )
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
@@ -274,22 +298,29 @@ class RichContextBuilder:
     
     def _build_historical_patterns(self, date: str) -> Dict:
         """构建 30 天历史交易模式"""
-        # 30 天内的所有已平仓交易
+        # DEB-20260904 #215: 改净额 COALESCE(pnl_net, realized_pnl) + 出场日口径
+        # (同文件 :117/:2012 已声明净/出场日口径) — 原毛额 realized_pnl + 进场日
+        # trade_date, 毛赢净亏单在此计胜、collector 处计负, 辩论统计自相矛盾
         trades = self._query(
-            "SELECT symbol, direction, realized_pnl, pnl_pct, exit_reason, "
+            "SELECT symbol, direction, realized_pnl, pnl_net, pnl_pct, exit_reason, "
             "signal_strength, strategy_id, holding_hours "
             "FROM trade_records WHERE exit_reason IS NOT NULL "
-            "AND trade_date >= date(?, '-30 days') AND trade_date <= ? "
-            "ORDER BY trade_date DESC",
+            "AND substr(exit_time, 1, 10) >= date(?, '-30 days') "
+            "AND substr(exit_time, 1, 10) <= ? "
+            "ORDER BY substr(exit_time, 1, 10) DESC",
             (date, date)
         )
-        
+
         if not trades:
             return {"total_trades": 0, "message": "无历史数据"}
-        
+
+        # 净口径取值 (旧行无 pnl_net → 回退 realized_pnl)
+        def _net(t):
+            return t.get("pnl_net") if t.get("pnl_net") is not None else (t.get("realized_pnl") or 0)
+
         total = len(trades)
-        wins = sum(1 for t in trades if t.get("realized_pnl", 0) > 0)
-        total_pnl = sum(t.get("realized_pnl", 0) or 0 for t in trades)
+        wins = sum(1 for t in trades if _net(t) > 0)
+        total_pnl = sum(_net(t) for t in trades)
         
         # 退出原因分布
         exit_reasons = {}
@@ -304,9 +335,9 @@ class RichContextBuilder:
             if sym not in symbol_stats:
                 symbol_stats[sym] = {"trades": 0, "wins": 0, "pnl": 0}
             symbol_stats[sym]["trades"] += 1
-            if t.get("realized_pnl", 0) > 0:
+            if _net(t) > 0:
                 symbol_stats[sym]["wins"] += 1
-            symbol_stats[sym]["pnl"] += t.get("realized_pnl", 0) or 0
+            symbol_stats[sym]["pnl"] += _net(t)
         
         # 胜率最差的标的 (至少 3 笔交易)
         worst_symbols = sorted(
@@ -465,14 +496,17 @@ class RichContextBuilder:
     
     def _build_performance_trend(self, date: str) -> List[Dict]:
         """构建逐日性能趋势 (最近 14 天)"""
+        # DEB-20260904 #215: 改出场日归集 + 净额口径 (同文件已声明净/出场日口径) —
+        # 原按进场日 trade_date 分组 + 毛额 realized_pnl, 与 collector/复盘净额对不上
         daily = self._query(
-            "SELECT trade_date, COUNT(*) as trades, "
-            "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins, "
-            "ROUND(SUM(realized_pnl), 2) as total_pnl, "
+            "SELECT substr(exit_time, 1, 10) as trade_date, COUNT(*) as trades, "
+            "SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins, "
+            "ROUND(SUM(COALESCE(pnl_net, realized_pnl)), 2) as total_pnl, "
             "ROUND(AVG(pnl_pct), 2) as avg_pnl_pct "
             "FROM trade_records WHERE exit_reason IS NOT NULL "
-            "AND trade_date >= date(?, '-14 days') AND trade_date <= ? "
-            "GROUP BY trade_date ORDER BY trade_date",
+            "AND substr(exit_time, 1, 10) >= date(?, '-14 days') "
+            "AND substr(exit_time, 1, 10) <= ? "
+            "GROUP BY substr(exit_time, 1, 10) ORDER BY trade_date",
             (date, date)
         )
         
@@ -490,13 +524,38 @@ class RichContextBuilder:
         return result
     
     def _build_capital_trajectory(self, date: str) -> List[Dict]:
-        """构建资金轨迹 (最近 14 次记录)"""
+        """构建资金轨迹 (最近 14 次记录, 截至复盘日)"""
+        # DEB-20260904 #216: 按复盘日截断 — 原 ORDER BY last_update DESC LIMIT 14 无日期
+        # 过滤, 历史复盘引入该日之后的资金状态 (前视)。last_update 为 CST 裸时间戳
+        # (同 #130): SQL 侧用 CST 截止取超集 (ET D 23:59:59 ≤ CST D+1 13:00),
+        # Python 侧再按 ET 日精确过滤。
+        from datetime import timezone as _tz, timedelta as _td
+        from app.utils.timezone import ET as _ET
+        _cst = _tz(_td(hours=8))
+        _cst_cutoff = (datetime.strptime(date, "%Y-%m-%d") + _td(days=1)
+                       ).strftime("%Y-%m-%dT13:00:00")
         capital = self._query(
             "SELECT current_equity, peak_equity, drawdown_pct, water_level, "
             "cash, market_value, last_update "
-            "FROM capital_state ORDER BY last_update DESC LIMIT 14"
+            "FROM capital_state WHERE last_update <= ? "
+            "ORDER BY last_update DESC LIMIT 100",
+            (_cst_cutoff,)
         )
-        return list(reversed(capital))  # 旧→新
+        kept = []
+        for _r in capital:
+            try:
+                _dt = datetime.fromisoformat(str(_r.get('last_update', '')).replace('Z', ''))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=_cst)  # CST 裸时间戳
+                if _dt.astimezone(_ET).strftime("%Y-%m-%d") > date:
+                    continue  # CST 截止超集中落入复盘日之后的行
+            except Exception as _e:
+                logger.debug(f"[RichContext] 资金轨迹行时间戳解析失败, 跳过: {_e}")
+                continue
+            kept.append(_r)
+            if len(kept) >= 14:
+                break
+        return list(reversed(kept))  # 旧→新
 
 
 # =====================================================================
@@ -629,7 +688,12 @@ class MultiModelDebateRunner:
         """执行一轮并行模型调用"""
         results = {}
         success_count = 0
-        
+        # DEB-20260904 #217: join 超时后 daemon 线程未取消, 仍可写入已返回的
+        # results/success_count (调用方已在消费 → 结果不确定)。每轮一个 closed 事件:
+        # 返回前在同一把锁内置位, 迟到线程写入前检测到 closed 即丢弃 (锁内检查+写入
+        # 原子, 无检查-写入竞态)。
+        closed = threading.Event()
+
         def call_one(cfg):
             nonlocal success_count
             role_prompt = self._build_role_prompt(system_prompt, cfg["role"], cfg["label"])
@@ -643,6 +707,9 @@ class MultiModelDebateRunner:
                 )
                 if result:
                     with self._lock:
+                        if closed.is_set():
+                            logger.debug(f"[DebateRunner] R{round_num} {cfg['label']} 超时后迟到, 结果丢弃")
+                            return
                         results[cfg["role"]] = result
                         # 2026-07-28 诚实化: 落真实路由 (agent_bridge 恒走 YAML primary),
                         #   不再把未生效的意图模型名当事实写进产出/日志
@@ -666,6 +733,8 @@ class MultiModelDebateRunner:
             if remaining > 0:
                 t.join(timeout=remaining)
         
+        with self._lock:
+            closed.set()  # DEB-20260904 #217: 冻结本轮结果, 迟到写入此后一律丢弃
         return results, success_count
     
     def _run_round2(self, original_prompt: str, system_prompt: str, round1_results: Dict, timeout: int) -> tuple:
@@ -678,7 +747,10 @@ class MultiModelDebateRunner:
         """
         results = {}
         success_count = 0
-        
+        # DEB-20260904 #217: 同 _run_round — join 超时后迟到线程写入已返回 results 的
+        # 竞态, 用每轮 closed 事件 + 锁内检查丢弃迟到写入
+        closed = threading.Event()
+
         def refute_one(cfg):
             nonlocal success_count
             role = cfg["role"]
@@ -762,6 +834,9 @@ class MultiModelDebateRunner:
                 )
                 if result:
                     with self._lock:
+                        if closed.is_set():
+                            logger.debug(f"[DebateRunner] R2 {cfg['label']} 超时后迟到, 结果丢弃")
+                            return
                         results[role] = result
                         results[f"{role}_model"] = "agent_bridge_routed"  # 2026-07-28 诚实化
                         success_count += 1
@@ -781,6 +856,8 @@ class MultiModelDebateRunner:
             if remaining > 0:
                 t.join(timeout=remaining)
         
+        with self._lock:
+            closed.set()  # DEB-20260904 #217: 冻结本轮结果
         return results, success_count
     
     def _run_arbiter(self, round1_results: Dict, round2_results: Dict, system_prompt: str, timeout: int) -> Dict:
@@ -2033,7 +2110,9 @@ class ValidationAgent:
         )
         if capital:
             c = capital[0]
-            dd = c.get("drawdown_pct", 0)
+            # DEB-20260904 #218: drawdown_pct 为 NULL 时 dict.get default 不生效,
+            # 下方 dd < -0.1 比较会 TypeError — 显式回退 0.0
+            dd = c.get("drawdown_pct") or 0.0
             return {
                 "claim": claim,
                 "category": "risk",
@@ -2056,15 +2135,17 @@ class ValidationAgent:
                     lines = f.readlines()[-2000:]
                 
                 from app.utils.timezone import now_et as _lg_now_et
-                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
+                # DEB-20260903 #132: 用传入复盘 date 而非当日 — 原 now_et() 当日使
+                # 历史复盘日志匹配永远落空, 验证结果必然错误
+                today = date or _lg_now_et().strftime("%Y-%m-%d")
                 keywords = ["滑点", "重复", "ghost", "幽灵", "持仓", "对账", "同步",
                            "slippage", "duplicate", "ghost", "reconcil", "sync"]
-                
+
                 for line in lines:
                     if today in line and any(kw in line.lower() for kw in keywords):
                         evidence_found = True
                         error_count += 1
-                        break
+                        # DEB-20260903 #132: 移除 break — 原使 error_count 恒 ≤1 失去计数意义
         except Exception:
             pass
         
@@ -2079,11 +2160,15 @@ class ValidationAgent:
     def _validate_funnel(self, claim: str, date: str, category: str) -> Dict:
         """验证漏斗相关 claim — 检查决策漏斗数据"""
         if date:
+            # DEB-20260904 #219: decisions.db 07-12 停写恒 0 → 漏斗 claim 验证恒
+            # 'no decision data'。采集层 (collect_daily:138 / _build_decision_funnel)
+            # 已于 2026-08-01 迁 playbook_instructions, 验证层同步迁移 (主库同源);
+            # 方向域为 BUY/SELL_SHORT/SKIP, actionable = 非 SKIP。
             decisions = self._query(
                 "SELECT COUNT(*) as total, "
-                "SUM(CASE WHEN direction != 'NEUTRAL' THEN 1 ELSE 0 END) as actionable "
-                "FROM decisions WHERE date(created_at) = ?",
-                (date,), db_path=self.decisions_db
+                "SUM(CASE WHEN direction != 'SKIP' THEN 1 ELSE 0 END) as actionable "
+                "FROM playbook_instructions WHERE date = ?",
+                (date,)
             )
             if decisions and decisions[0]["total"] > 0:
                 d = decisions[0]
@@ -2108,13 +2193,19 @@ class ValidationAgent:
                 with open(log_path, "r") as f:
                     lines = f.readlines()[-500:]
                 
-                from app.utils.timezone import now_et as _lg_now_et
-                today = _lg_now_et().strftime("%Y-%m-%d")  # 2026-07-28: CST→ET (日期切片口径)
+                # DEB-20260904 #219 补充: 原按 now_et() 当日过滤 — 历史日期复盘
+                # 扫错天; 且日志行日期为 CST, ET 复盘日 D 落在 CST [D 12:00, D+1 13:00)
+                # → 候选 CST 日期 {D, D+1} 一并匹配
+                from datetime import datetime as _dt_lg, timedelta as _td_lg
+                _d0 = _dt_lg.strptime(date, "%Y-%m-%d").date()
+                _date_candidates = {
+                    _d0.strftime("%Y-%m-%d"), (_d0 + _td_lg(days=1)).strftime("%Y-%m-%d"),
+                }
                 keywords = ["timeout", "connection", "refused", "failed", "error",
                            "断流", "降级", "不可用", "熔断"]
                 
                 for line in lines:
-                    if today in line and any(kw in line.lower() for kw in keywords):
+                    if any(ds in line for ds in _date_candidates) and any(kw in line.lower() for kw in keywords):
                         evidence_found = True
                         break
         except Exception:
@@ -2218,9 +2309,11 @@ class ValidationAgent:
                         }
             elif "decision" in hint.lower():
                 if date:
+                    # DEB-20260904 #219: decisions.db 停写 → 同 _validate_funnel
+                    # 改读 playbook_instructions (主库, 采集层同源)
                     result = self._query(
-                        "SELECT COUNT(*) as total FROM decisions WHERE date(created_at) = ?",
-                        (date,), db_path=self.decisions_db
+                        "SELECT COUNT(*) as total FROM playbook_instructions WHERE date = ?",
+                        (date,)
                     )
                     if result:
                         return {
@@ -2311,13 +2404,15 @@ class ValidationAgent:
         """验证趋势类型证据 — 检查近期性能趋势"""
         try:
             if date:
-                # 查询最近 7 天趋势
+                # DEB-20260904 #215: 改出场日归集 + 净额口径 (同 _validate_general /
+                #   _verify_db_evidence) — 原按进场日 + 毛额, 趋势证据与验证链口径分裂
                 trend = self._query(
-                    "SELECT trade_date, COUNT(*) as trades, "
-                    "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
+                    "SELECT substr(exit_time, 1, 10) as trade_date, COUNT(*) as trades, "
+                    "SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins "
                     "FROM trade_records WHERE exit_reason IS NOT NULL "
-                    "AND trade_date >= date(?, '-7 days') AND trade_date <= ? "
-                    "GROUP BY trade_date ORDER BY trade_date",
+                    "AND substr(exit_time, 1, 10) >= date(?, '-7 days') "
+                    "AND substr(exit_time, 1, 10) <= ? "
+                    "GROUP BY substr(exit_time, 1, 10) ORDER BY trade_date",
                     (date, date)
                 )
                 if trend and len(trend) >= 3:
@@ -2356,6 +2451,13 @@ def get_review_orchestrator(notifier=None, agent_bridge=None) -> ReviewOrchestra
     with _orchestrator_lock:
         if _orchestrator is None:
             _orchestrator = ReviewOrchestrator(notifier=notifier, agent_bridge=agent_bridge)
+        else:
+            # DEB-20260904 #220: 单例已建时允许晚绑定依赖 —
+            # 原实现静默忽略后续传入的 notifier/agent_bridge
+            if notifier is not None and getattr(_orchestrator, "notifier", None) is None:
+                _orchestrator.notifier = notifier
+            if agent_bridge is not None and getattr(_orchestrator, "agent_bridge", None) is None:
+                _orchestrator.agent_bridge = agent_bridge
     return _orchestrator
 
 

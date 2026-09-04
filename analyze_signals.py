@@ -236,13 +236,22 @@ def main():
         if not bucket:
             continue
         n = len(bucket)
-        wins = sum(1 for r in bucket if r['fwd_ret_t1'] > 0)
+        # DEB-20260903 #1: 按 direction 调整收益 — 做空信号 fwd_ret<0 才是胜,
+        # 原直接判 fwd_ret_t1>0 使 SHORT 胜率被反向计算 (与上方打印口径不符)
+        wins = sum(1 for r in bucket
+                   if r['fwd_ret_t1'] * (1 if r.get('direction', 'LONG') == 'LONG' else -1) > 0)
         losses = n - wins
         wr = wins / n
         print(f"[{lo:>3}-{hi:<4})  {n:>5}  {wins:>5}  {losses:>7}  {wr:>7.1%}")
 
     # Compute overall win rate and mean return
-    all_wins = sum(1 for r in data if r['fwd_ret_t1'] > 0)
+    # DEB-20260903 #1: 同上分桶口径, direction 调整后判胜
+    # DEB-20260904 #133: 空数据时 len(data)=0 → 下方两处除零; 提前退出
+    if not data:
+        print("\nOVERALL: n=0 (signal_snapshots 为空, 无统计输出)")
+        return
+    all_wins = sum(1 for r in data
+                   if r['fwd_ret_t1'] * (1 if r.get('direction', 'LONG') == 'LONG' else -1) > 0)
     all_losses = len(data) - all_wins
     avg_ret = sum(r['fwd_ret_t1'] for r in data) / len(data)
     print(f"\nOVERALL: n={len(data)}, wins={all_wins}, losses={all_losses}, "

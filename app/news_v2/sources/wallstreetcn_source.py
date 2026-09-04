@@ -50,7 +50,8 @@ class WallstreetCNSource(SourceAdapter):
         self._channels = list(channels or [c["key"] for c in DEFAULT_CHANNELS])
         self._proxy = proxy
         self._max_per_channel = max_per_channel
-        self._seen_ids: Set[str] = set()
+        # DEB-20260904 #165: dict 保插入序 (set 无序, 超限裁剪会丢最近 ID)
+        self._seen_ids: Dict[str, None] = {}
         self._max_seen = 1000
 
     @property
@@ -63,12 +64,20 @@ class WallstreetCNSource(SourceAdapter):
 
     async def fetch(self) -> List[UnifiedNewsItemV2]:
         all_items: List[UnifiedNewsItemV2] = []
+        _failed = 0
+        _last_err: Optional[Exception] = None
         for ch in self._channels:
             try:
                 items = await self._fetch_channel(ch)
                 all_items.extend(items)
             except Exception as e:
+                _failed += 1
+                _last_err = e
                 logger.warning(f"[WallstreetCN·{ch}] 拉取失败 (跳过): {e}")
+        # DEB-20260904 #164: 全渠道失败时抛出 — 原无条件吞掉返回 [],
+        # SourceHealthMonitor 永远记录不到该源故障
+        if self._channels and _failed == len(self._channels) and _last_err is not None:
+            raise RuntimeError(f"WallstreetCN 全部 {len(self._channels)} 渠道失败") from _last_err
         return all_items
 
     async def _fetch_channel(self, channel: str) -> List[UnifiedNewsItemV2]:
@@ -166,13 +175,15 @@ class WallstreetCNSource(SourceAdapter):
                 )
                 items.append(item)
                 if aid:
-                    self._seen_ids.add(aid)
+                    self._seen_ids[aid] = None
             except Exception as e:
                 logger.debug(f"[WallstreetCN] 解析单条失败 (跳过): {e}")
                 continue
 
         if len(self._seen_ids) > self._max_seen:
-            self._seen_ids = set(list(self._seen_ids)[-self._max_seen // 2:])
+            # DEB-20260904 #165: 保留最近一半 (dict 保插入序); 原 set 无序, 保留任意子集
+            _ids = list(self._seen_ids.keys())
+            self._seen_ids = {k: None for k in _ids[-self._max_seen // 2:]}
 
         return items
 
