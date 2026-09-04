@@ -158,7 +158,24 @@ class MemoryInjector:
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
+            # 批次0 闸1+闸2 (DEB-20260904 §10.2): 纳入扫描器晋升的 'ACTIVE' 违例教训,
+            # 排序 recurrence×|cost| 优先 (legacy 行乘积=0 → impact_score 次序与改前等价,
+            # 8000字符预算下高复发×高成本教训顶掉低质模板条目 = 反污染闸)。
+            # 符号约定 (2026-09-05 数据裁决): cost_since=−Σpnl_net, 正=净亏/负=净盈利;
+            # 排序取 ABS — 复发但净赚的教训同样上浮, 矛盾信号由展示层如实标注。
+            # 本模块纯读取零副作用 (不做 DDL): 新列缺失时回退 legacy 查询。
+            _ranked_sql = """
+                SELECT lesson_text, lesson_category, lesson_subcategory,
+                       impact_score, confidence, symbols, created_at, validation_count,
+                       recurrence_count, cost_since, status
+                FROM lessons
+                WHERE status IN ('active', 'ACTIVE')
+                  AND (expiry_date = '' OR expiry_date > ?)
+                ORDER BY COALESCE(recurrence_count, 0) * ABS(COALESCE(cost_since, 0.0)) DESC,
+                         impact_score DESC
+                LIMIT 20
+            """
+            _legacy_sql = """
                 SELECT lesson_text, lesson_category, lesson_subcategory,
                        impact_score, confidence, symbols, created_at, validation_count
                 FROM lessons
@@ -166,7 +183,11 @@ class MemoryInjector:
                   AND (expiry_date = '' OR expiry_date > ?)
                 ORDER BY impact_score DESC
                 LIMIT 20
-            """, (datetime.now().isoformat(),)).fetchall()
+            """
+            try:
+                rows = conn.execute(_ranked_sql, (datetime.now().isoformat(),)).fetchall()
+            except sqlite3.OperationalError:
+                rows = conn.execute(_legacy_sql, (datetime.now().isoformat(),)).fetchall()
             conn.close()
 
             if not rows:
@@ -179,6 +200,19 @@ class MemoryInjector:
                 impact = row["impact_score"] or 0
                 symbols = row["symbols"] or "[]"
                 confidence = row["confidence"] or 0
+                # 批次0: 违例教训带确定性复发账 (recurrence×cost), 供辩论引用
+                _keys = row.keys()
+                recur = row["recurrence_count"] if "recurrence_count" in _keys else 0
+                cost = row["cost_since"] if "cost_since" in _keys else 0
+                # 符号感知展示 (2026-09-05, 生产库逐笔数据裁决):
+                # cost_since = −Σpnl_net → 正=违例笔净亏 (真烧钱), 负=违例笔净盈利
+                # (矛盾信号 — 排序仍按 |cost| 上浮, 展示必须如实说"净赚"防误读)
+                if recur:
+                    money = (f"烧${cost:.0f}" if cost >= 0
+                             else f"违例笔净赚${abs(cost):.0f}")
+                    recur_tag = f" [复发{recur}次|{money}]"
+                else:
+                    recur_tag = ""
 
                 # 截断过长的教训
                 if len(text) > 200:
@@ -191,7 +225,7 @@ class MemoryInjector:
                     sym_str = ""
 
                 lines.append(
-                    f"  {i}. [{impact:.0f}分|{confidence:.0%}可信] {category}/{text}{sym_str}"
+                    f"  {i}. [{impact:.0f}分|{confidence:.0%}可信]{recur_tag} {category}/{text}{sym_str}"
                 )
 
             return "\n".join(lines)
@@ -206,7 +240,7 @@ class MemoryInjector:
             conn = sqlite3.connect(self.db_path)
             count = conn.execute("""
                 SELECT COUNT(*) FROM lessons
-                WHERE status = 'active'
+                WHERE status IN ('active', 'ACTIVE')
                   AND (expiry_date = '' OR expiry_date > ?)
             """, (datetime.now().isoformat(),)).fetchone()[0]
             conn.close()

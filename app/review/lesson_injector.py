@@ -21,6 +21,32 @@ from pathlib import Path
 logger = logging.getLogger("ftseek_us.lesson_injector")
 
 
+# ═══════════════════════════════════════════════════════════════
+#  批次0 (DEB-20260904 §10.2): lessons 生命周期 4 列幂等迁移 SSOT
+#  status 为既有列 (legacy 小写 'active'/'inactive' 语义保留不变);
+#  recurrence_count / last_triggered_at / cost_since 三新列由
+#  scripts/daily_violation_scan.py 维护 (唯一写入方), 本模块只保证列存在,
+#  使注入端排序 (闸2: recurrence×cost) 在任何初始化顺序下都不会撞缺列。
+# ═══════════════════════════════════════════════════════════════
+LESSONS_LIFECYCLE_COLUMNS = (
+    ("status", "TEXT DEFAULT 'active'"),
+    ("recurrence_count", "INTEGER DEFAULT 0"),
+    ("last_triggered_at", "TEXT DEFAULT ''"),
+    ("cost_since", "REAL DEFAULT 0.0"),
+)
+
+
+def ensure_lessons_lifecycle_columns(conn) -> list:
+    """幂等扩列, 返回实际新增的列名列表 (调用方负责 commit)。"""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(lessons)").fetchall()}
+    added = []
+    for col, decl in LESSONS_LIFECYCLE_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE lessons ADD COLUMN {col} {decl}")
+            added.append(col)
+    return added
+
+
 class LessonInjector:
     """
     从 lessons DB 加载活跃教训，生成结构化注入提示
@@ -67,6 +93,7 @@ class LessonInjector:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_status ON lessons(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_category ON lessons(lesson_category)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_expiry ON lessons(expiry_date)")
+            ensure_lessons_lifecycle_columns(conn)  # 批次0 幂等扩列 (DEB-20260904 §10.2)
             conn.commit()
         finally:
             conn.close()
@@ -76,8 +103,19 @@ class LessonInjector:
         conn = self._get_conn()
         try:
             now = datetime.now().strftime('%Y-%m-%d')
+            # 批次0 闸1+闸2 (DEB-20260904 §10.2): status 纳入扫描器晋升的 'ACTIVE'
+            # (PENDING/RETIRED 不注入); 排序 recurrence×|cost| 优先 — legacy 行两列为
+            # 0/NULL → 乘积 0 → tie-break impact_score DESC, 旧教训次序与改前逐行等价。
+            # ABS 修正 (2026-09-05, team-lead 核验): cost_since = −Σpnl_net
+            # (正=违例笔净亏即真烧钱, 负=违例笔净盈利即矛盾信号 — 生产库逐笔裁决确认)。
+            # 带符号排序会把净亏教训 (正×正=正? 不: 初版键=n×cost 对负 cost 得负积)
+            # 沉到 legacy 0 乘积之下, 与 §10.1 "高复发×高成本顶掉低质模板" 意图相反;
+            # 排序取 ABS (净赚的复发教训同样上浮), 符号保留在列中, 展示层如实标注。
             rows = conn.execute(
-                "SELECT * FROM lessons WHERE status = 'active' AND (expiry_date = '' OR expiry_date > ?) ORDER BY impact_score DESC",
+                "SELECT * FROM lessons WHERE status IN ('active', 'ACTIVE') "
+                "AND (expiry_date = '' OR expiry_date > ?) "
+                "ORDER BY COALESCE(recurrence_count, 0) * ABS(COALESCE(cost_since, 0.0)) DESC, "
+                "impact_score DESC",
                 (now,)
             ).fetchall()
             

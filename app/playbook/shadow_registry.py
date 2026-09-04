@@ -706,6 +706,30 @@ REGISTRY: list[ShadowItem] = [
               "彼项测【出场后】路径; 若未来 live 阶段需要重评估入场冲击成本, 按生命周期"
               "重启新条目而非复活本项。",
     ),
+    # -- 2026-09-05 GLM A' 熔断影子 (DEB-20260904 §11.5 一期① + §11.6(a) 首跑证伪留痕) --
+    ShadowItem(
+        id="intraday_loss_breaker_a_prime",
+        name="GLM A' 日内累计亏损熔断影子 (-400 预注册冻结)",
+        status=ShadowStatus.OBSERVING,
+        description="当日已实现 pnl_net 累计 <= -400 (exit 事件流口径, 阈值预注册冻结, "
+                    "修改=重新裁决) 后, 记录当日余下新开仓为被挡: 信号清单+假想轨迹 "
+                    "(=模拟盘真实结局)。record-only 零交易行为变更; 影子 != D1 落地, "
+                    "是为解冻裁决攒证据。",
+        data_path="data/shadow/cb_shadow_latest.json",
+        min_n=30,
+        graduation_criteria="判据字典 B18 (DEB-20260904 §11.5 预注册): 主判据=被挡笔期望 "
+                            "(settled pnl_net 均值) <= -10 且 n>=30 -> 提请裁决启用实盘熔断 "
+                            "(另立 DEB+用户裁); n>=30 顺延为毕业门槛。",
+        eval_script="scripts/intraday_loss_breaker_shadow.py",
+        created="2026-09-05",
+        notes="口径: trade_mode=simulate 且 pnl_net NOT NULL, ET 日, exit 事件流 "
+              "(tie 时 exit 先结)。持久化=ftseek_us.db 派生表 cb_shadow_daily/"
+              "cb_shadow_blocked (全量重建幂等) + JSON 汇总。首日回补即证伪预验证量级 "
+              "(entry 序累加=前视偏差): 全期 n=191 期望 +46.90 主判据不过, 近30天 "
+              "n=4 +254 方向相反 -> backfill 判不毕业, 价值转 forward 攒样; 详见 "
+              "DEB-20260904 §11.6(a)。注册表计 n=全期 settled 被挡笔, 首日即 >=min_n "
+              "属预期 (判据主门是期望非 n, READY 不等于毕业)。",
+    ),
 ]
 
 
