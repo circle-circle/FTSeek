@@ -324,12 +324,13 @@ def attribution_trend(db, today):
             "trades": sum(d['cnt'] for d in recent) / len(recent),
             "win_rate": sum(d['win_rate'] for d in recent) / len(recent),
             "pnl": sum(d['total_pnl'] for d in recent) / len(recent),
+            "n": len(recent),
         }
     else:
         avg5 = None
 
     today_data = next((d for d in daily if d['date'] == today), None)
-    return {"daily": daily, "avg5": avg5, "today": today_data}
+    return {"daily": daily, "avg5": avg5, "today": today_data, "window_start": since_5d}
 
 
 # ════════════════════════════════════════════════════════════
@@ -569,17 +570,18 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
         )
         actions.append("审计开仓→平仓链路完整性，减少ghost仓位产生")
 
-    # 4. 趋势归因: 近5日PnL方向
+    # 4. 趋势归因: 除今日外最近 N 个交易日 PnL方向 (N=窗口内交易日数-1, 最多6)
     if trend['avg5']:
         avg_pnl = trend['avg5']['pnl']
         avg_wr = trend['avg5']['win_rate']
+        _n = trend['avg5'].get('n', 5)
         if avg_pnl < -500:
             consensus.append(
-                f"📉 近5日持续亏损: 日均PnL ${avg_pnl:,.0f}，"
+                f"📉 近{_n}个交易日持续亏损: 日均PnL ${avg_pnl:,.0f}，"
                 f"日均净胜率{avg_wr:.0f}%，需评估是否暂停交易收集更多数据"
             )
         elif avg_pnl > 200:
-            consensus.append(f"📈 近5日盈利趋势: 日均PnL ${avg_pnl:+,.0f}，净胜率{avg_wr:.0f}%")
+            consensus.append(f"📈 近{_n}个交易日盈利趋势: 日均PnL ${avg_pnl:+,.0f}，净胜率{avg_wr:.0f}%")
 
     # ── 分歧检测 ──
 
@@ -661,7 +663,8 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
 # 报告构建
 # ════════════════════════════════════════════════════════════
 def build_report(today, strategy, signal, exit_attr, regime, trend,
-                 execution, shadow, risk, plan_attr, lessons, debate, fee_net=None):
+                 execution, shadow, risk, plan_attr, lessons, debate, fee_net=None,
+                 window_start=None):
     L = []
     L.append(f"### 📊 FTSeek-US 盘后归因辩论报告")
     L.append(f"**{today}** (美东) | equity=${risk['capital']['current_equity']:,.0f}" if risk['capital'] else f"**{today}**")
@@ -710,9 +713,15 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         L.append("")
 
     # ─── 趋势归因 ───
+    # 2026-09-05 修表头闭合 (用户抓 9/4 报告"近7日净-$321.82"与每日表 5 行求和 +$342
+    # 对不上): attribution_trend 窗口=ET now-7 日历日按入场日分桶, 最多含 7 个交易日;
+    # 旧代码 [:5] 静默截断最老行 (本次 08-28 14笔 -$664.27) → 读者把截断表当全窗口,
+    # 表行求和 ≠ 近7日头条。现渲染窗口内全部交易日 + 表头标注窗口起点。
+    # 5日均值语义不动: avg5 = 除今日外最近 5 个交易日均值, 即下方最后 5 行。
     L.append("---")
-    L.append("## 📈 趋势归因 (近5日)")
-    for d in trend['daily'][:5]:
+    _trend_win = f"窗口自{window_start}" if window_start else "近5日"
+    L.append(f"## 📈 趋势归因 ({_trend_win})")
+    for d in trend['daily']:
         marker = " ◀" if d['date'] == today else ""
         pnl_str = f"${d['total_pnl']:+,.0f}"
         L.append(
@@ -722,7 +731,7 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         )
     if trend['avg5']:
         a = trend['avg5']
-        L.append(f"  **5日均值**: {a['trades']:.1f}笔/日 净胜率{a['win_rate']:.0f}% 日均PnL=${a['pnl']:+,.0f}")
+        L.append(f"  **均值(除今日外最近{a['n']}个交易日)**: {a['trades']:.1f}笔/日 净胜率{a['win_rate']:.0f}% 日均PnL=${a['pnl']:+,.0f}")
     L.append("")
 
     # ─── 策略归因 ───
@@ -935,7 +944,8 @@ def run_audit():
         # 构建报告
         report = build_report(
             today, strategy, signal, exit_attr, regime, trend,
-            execution, shadow, risk, plan_attr, lessons, debate, fee_net=fee_net
+            execution, shadow, risk, plan_attr, lessons, debate, fee_net=fee_net,
+            window_start=trend.get("window_start")
         )
 
         # 推送
