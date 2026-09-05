@@ -2118,3 +2118,28 @@ DeprecationWarning, Python 3.12+ 升格 SyntaxWarning): 改成 raw docstring, **
 (服务体 idle-exit 属按需激活的正常态); `auto_execute: true`
 (`config/unified_config.yaml:1022`) 未动; **sim 交易与数据收集未中断**。
 **重启确认正常 —— 8/8 全过。**
+
+#### 13.18.9 ⚠️ 本节取证的**有效窗口** (07:03 起已被另一 Agent 的在途改动超越, 补记以免误读)
+
+§13.18.2 的 ② 项「磁盘代码 == 运行态」在 **06:44:26 – 07:01** 的核验窗口内成立
+(`find app scripts -name '*.py' -newermt '2026-09-06 06:44:26'` 当时为空, 06:56 实测)。
+**07:03 之后不再成立**, 原因是**另一 Agent 的在途改动** (非本批):
+
+- `app/playbook/intraday_reentry.py` mtime **07:03:20** (**交易路径文件**)
+- `scripts/llm_universe_scan.py` mtime **07:04:03**
+- `AGENT.md` mtime **07:04:31**
+- ⇒ `deploy_freshness_check` 07:06:15 重新报 `skip: stale_drift=1134s_outside_safe_window |
+  newest=app/playbook/intraday_reentry.py` (exit=0, 安全窗外不动作)。
+
+**处置与理由**:
+- **不再重启**。运行中的 PID 440903 承载的是**已通过全量回归**的代码 (2838 passed);
+  另一 Agent 的三个文件**未提交、验证状态未知**, 把它们热加载进生产 = 用未验证代码换掉
+  已验证代码, 方向错误。红线亦明令不得提交/干预另一 Agent 的在途文件。
+- **已知的后续自动动作 (如实登记)**: 按 G-02, `deploy_freshness_check` 每 10 分钟由 cron
+  跑一次, 若届时代码仍新于进程且落在**北京 09:00–12:00 安全窗**内, 它会**自愈重启**并告警
+  ⇒ 今天约 09:00 后可能自动重启一次, 载入的是**那时磁盘上的代码**。这属该守卫的设计行为,
+  不是本批引入; 若那次重启后出现异常, 排查起点应是 `intraday_reentry.py` 的在途改动,
+  而不是 §13.16/§13.17 (本批 5 个改动文件已在 440903 里跑过 17 分钟全绿)。
+- **本批结论不受影响**: §13.16/§13.17 的 5 个文件 (`app/plan/day_score.py`、
+  `app/web_dashboard/{routes/battle_plan,data_service,env_scope,auth}.py`) mtime 均早于
+  06:44:26 ⇒ **已随 440903 载入并验证**; 两库指纹与端点字节数见 §13.18.4/§13.18.5。
