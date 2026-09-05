@@ -6,6 +6,22 @@
 
 ---
 
+## 🛑 2026-09-05 止损路径执行：playbook.auto_execute 关闭（Qoder，用户裁"该关闭关闭"）
+
+**裁决依据**: DEB-20260815 §11.3 预注册 "GATE 1 全败 → 提前终审， 直接执行止损路径， 不等 W6" + §十六末条 "不再追加新实验变体"。GATE 1 结果： E1 前瞻判负 (臂P n=30 净均笔 -$77.60 vs 臂D n=118 -$16.05, 差 **-$61.55/笔**, 成功门 ≥+$10, 双周同号为负， 扩展窗同号确认 -69.22) + E2 存量判负 (§16.1 剥 beta 后 -$8/笔) + E3 判负 (§16.3 死胎率差 0.0pp) → 三实验全负， 止损路径生效条件成立。
+
+**执行 (2026-09-05 09:45:56 CST 写入)**: `config/unified_config.yaml` `playbook.auto_execute: true → false` （写入面=精确文本替换， 与 §11.4 监控器 deb0815_stoploss_monitor 同径同格式， 另加裁决注记注释）。**生效实证**: HotReloader 文件监视 09:45:59 CST 第 3 次重载 (=mtime+3s) 免重启生效； 生产读取路径 `_playbook_cfg("auto_execute")` 实测返回 False。时机=周末 (Fri 21:42 EDT 后), 市场关闭， 无盘中重启问题。
+
+**作用域 （精确）**: 只停 playbook **新开仓循环** (`run_playbook_auto_execute` 入口， pipeline.py:3505); 平仓/monitor/退出引擎不受影响 — 存量 3 持仓 (US.UBER LONG 70@78.09 9/3 / US.RIVN LONG 312@15.94 9/3 / US.HOOD LONG 23@123.42 9/4, 均 simulate) 退出管理照常； KILL_SWITCH.flag 全路径急停未动。信号生成/影子/复盘全链路继续 record-only （指令落库不执行， 对照样本继续积累）。
+
+**监控器互动**: deb0815 硬止损监控**保持现役** (9/5 实测 playbook_sim 累计净 -$1,884.13, 距 -$4,840.06 触线余量 +$2,955.93, 从未触发)。存量持仓若继续亏损触线， 监控器将进入"配置未按预期匹配， 请人工核查"告警分支 (因 auto_execute 已是 false) — 语义仍正确 （彼时确实需人工核查存量处置）, 不误写配置。
+
+**不变量**: exit-de49b1299290 不变 （退出参数零触碰， KR2 守卫 passed); D1-D7 冻结不动； 信号/影子/复盘采集不中断。**恢复条件 (§11.4 同规）**: 需用户明确指令 + DEB 追加裁决， 任何 Agent 不得自行重开。
+
+**验证**: 翻转后全量回归 **2560 passed / 1 failed / 37 skipped** (153s) — 唯一失败 `test_r9_r13_contracts` R12 HOOD 9/4 2.94s 时间漂移 = 执行链预存数据漂移 （与翻转前基线同款非本批， 已浮面待执行链所有方处置； 该断言读库内时间戳， 与 config 无关); +7 vs 前基线 2553 = 本批新增 e1_shadow_settle 契约测试。**行为级确认待周一 (9/7 ET)**: 首个 auto_execute 轮次应见日志 `auto_execute=false, 跳过自动执行` — 届时核对一次即闭环。落档 DEB-20260815 §42.4 执行记录。
+
+---
+
 ## 🧹 2026-09-05 Hermes skills/cron 体检执行批 + E1 GATE 1 裁决（Qoder，用户令"检查当前Hermes 已有的skills和agent 是否有需要调整 优化 甚至停止 避免空跑以及错误分析结论输出"→裁"按建议执行"）
 
 **体检范围**: `/root/.hermes/cron/jobs.json` 21 jobs + `~/.hermes/skills` 全量 + `.usage.json` 使用登记。**结论: 无一需停的空跑 job**；三类真问题修复如下。
