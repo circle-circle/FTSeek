@@ -31,10 +31,18 @@ def _calibration_block() -> str:
     """
     try:
         import sqlite3 as _sq
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import timedelta as _td
         from pathlib import Path as _Path
+        # 读侧日期串改按 ET 取 (2026-09-05 M-6/B1 第四阶): 下方 WHERE 过滤的是
+        #   trade_records.trade_date, 该列由 _et_trade_date(position.entry_time) 写 = **ET 日历日**
+        #   (order_executor:5254 / :5370、position_monitor:1585)。原按宿主 CST 取"今天"再减 30 天,
+        #   在 ET 12:00-23:59 (北京次日 00:00-11:59) 会把 cutoff 推后 1 天 ⇒ 号称"近30日"实际只有
+        #   29 日样本; 而这段数字是**注入 LLM prompt 的校准表述**, 样本口径失真即误导 —— 与本函数
+        #   docstring "校准数字不刷新会从诚实校准退化为过时误导"是同一条纪律。
+        #   本处只算读侧字符串、**不写库** ⇒ 零混存风险 (不同于 DEB §11.5 的账本列)。
+        from app.utils.timezone import now_et as _now_et_cal
         _db = _Path(__file__).resolve().parent.parent.parent.parent / "data" / "ftseek_us.db"
-        _cut = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
+        _cut = (_now_et_cal() - _td(days=30)).strftime("%Y-%m-%d")
         _conn = _sq.connect(str(_db), timeout=2)
         _rows = _conn.execute(
             "SELECT UPPER(direction), COUNT(*), "

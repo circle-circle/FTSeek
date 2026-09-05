@@ -481,8 +481,15 @@ def get_ic_summary(
         # 获取已回填的信号
         # 2026-06-16 修复: days_back 参数原来被声明但从未注入 WHERE 子句
         # 2026-06-30 修复: 排除已disabled策略的信号，防止死策略污染IC
-        from datetime import datetime as _dt, timedelta as _td
-        _cutoff = (_dt.now() - _td(days=days_back)).strftime("%Y-%m-%d")
+        from datetime import timedelta as _td
+        # 读侧日期串改按 ET 取 (2026-09-05 M-6/B1 第四阶): 下方 WHERE 过滤 signal_snapshots.trade_date,
+        #   该列 DDL 自注 "(YYYY-MM-DD, ET)" (:144), 写方是 record_signal_snapshot 的 get_trade_date()
+        #   (:247, = now_et() 的日历日)。原按宿主 CST 取"今天"再减 days_back ⇒ 在 ET 12:00-23:59
+        #   (北京次日 00:00-11:59) cutoff 推后 1 天, IC 样本窗**静默少一天**。该列另有
+        #   `ORDER BY trade_date DESC` (:320/:506) 与字符串比较, 跨尺即错序; 但本处只算读侧字符串、
+        #   **不写库** ⇒ 零混存风险 (不同于 DEB §11.5 的账本列, 无需归一方案)。
+        from app.utils.timezone import now_et as _now_et_ic
+        _cutoff = (_now_et_ic() - _td(days=days_back)).strftime("%Y-%m-%d")
         # Task #4: 支持按 weight_version 过滤
         _wv_clause = ""
         if weight_version:
@@ -759,7 +766,14 @@ def run_signal_ic_backfill(dry_run: bool = False) -> Dict[str, int]:
     import logging as _logging
     _bl = _logging.getLogger("ftseek_us.signal_ic_backfill")
 
-    today_str = _dt.now().strftime("%Y-%m-%d")
+    # 读侧日期串改按 ET 取 (2026-09-05 M-6/B1 第四阶): today_str 喂给 get_pending_snapshots 的
+    #   `trade_date < ?` (:319), 而 signal_snapshots.trade_date 的写方就是 get_trade_date() ⇒ 这里
+    #   直接调**同一个函数**, 同尺由构造保证, 不靠人工记着两边一致。原按宿主 CST 取"今天", 在 ET
+    #   12:00-23:59 (北京次日) 会把 today_str 推成 ET 的明天 ⇒ 当天 ET 的信号被提前当成"已有足够
+    #   交易日可回填"而进入回填队列 (forward return 尚不可得 → 灌进未成熟样本)。
+    #   注: 本函数下方 :833 的 `_dt.strptime` (±1 天容差匹配) 仍在用 ⇒ `_dt` 导入保留不动。
+    from app.utils.timezone import get_trade_date
+    today_str = get_trade_date()
     pending = get_pending_snapshots(trade_date_before=today_str, limit=5000)
 
     if not pending:

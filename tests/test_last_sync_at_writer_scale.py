@@ -23,7 +23,9 @@ r"""open_positions.last_sync_at 写方尺度契约 (2026-09-05, DEB-20260905 M-6
   - 现库 3 行 (UBER/RIVN/HOOD) 该列**全为 NULL** (活行由 `upsert_position_simple` 写, 其列清单
     不含本列) ⇒ 无历史 naive 行需归一, **本阶零数据迁移**。
 
-刻意**不动**的相邻尺度债 (B1 第四阶, 须单独 DEB): 同一条 INSERT 里的 `updated_at` 仍写 naive —
+刻意**不动**的相邻尺度债 (B1 **第五阶**, 须单独 DEB; 原第三阶稿件误称"第四阶", 而第四阶已用于
+别名裸 now 清剿 ⇒ 2026-09-05 第四阶批内统一改名, 见 DEB §12.6): 同一条 INSERT 里的 `updated_at`
+仍写 naive —
 它有真消费方做字符串排序/比较 (`position_monitor.py:1229` `ORDER BY updated_at DESC LIMIT 1`、
 `position_monitor.py:1164` `updated_at>=?`), 且**已经在混存** (`upsert_open_position` naive vs
 `upsert_position_simple` 的 `now_et()`) ⇒ 归一方案必须先于翻转。见
@@ -186,11 +188,11 @@ def test_all_six_writers_leave_no_naive_value_in_column(store):
     assert len(rows) == 3, f"应有 3 行, 实测 {len(rows)}"
 
 
-# ── 9. 相邻尺度债的显式留痕 (第四阶, 本阶刻意不动) ──────────────────────────
+# ── 9. 相邻尺度债的显式留痕 (第五阶, 本阶刻意不动) ──────────────────────────
 def test_updated_at_adjacent_scale_debt_is_documented(store):
     """同一条 INSERT 里 last_sync_at=ET 而 updated_at=naive — 这是**已知债**, 不是疏漏.
 
-    钉住现状的目的: 第四阶落地时本测试会变红, 逼迫执行者去改测试并出归一方案,
+    钉住现状的目的: 第五阶落地时本测试会变红, 逼迫执行者去改测试并出归一方案,
     而不是让"两列不同尺"这件事被遗忘。updated_at 有 `ORDER BY updated_at DESC` 与
     `updated_at>=?` 的字符串消费方 (position_monitor:1229 / :1164), 且已在混存 ⇒ 不可顺手翻。
     """
@@ -203,8 +205,8 @@ def test_updated_at_adjacent_scale_debt_is_documented(store):
     last_sync_at, updated_at, entry_time = row
     assert datetime.fromisoformat(last_sync_at).tzinfo is not None, "last_sync_at 应为 ET (本阶已翻)"
     assert datetime.fromisoformat(updated_at).tzinfo is None, (
-        f"updated_at 已变成带尺 ({updated_at!r}) ⇒ 说明有人在本阶之外翻了第四阶的账本列。"
+        f"updated_at 已变成带尺 ({updated_at!r}) ⇒ 说明有人在本阶之外翻了第五阶的账本列。"
         f"请先确认 `ORDER BY updated_at DESC` / `updated_at>=?` 两个字符串消费方已改成解析后比较, "
-        f"并更新本测试与 DEB 第四阶条目")
+        f"并更新本测试与 DEB 第五阶条目 (§11.5 / §11.7)")
     assert datetime.fromisoformat(entry_time).tzinfo is not None, \
         "entry_time 应仍为 ET (R-12 已统一, 本阶不动)"

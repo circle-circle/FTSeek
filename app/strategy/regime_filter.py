@@ -32,8 +32,10 @@ from typing import Optional, List
 
 import sqlite3
 import threading as _threading
-from datetime import datetime as _datetime
 from pathlib import Path as _Path
+
+# regime_history 的时间戳改按 ET 写 (2026-09-05 M-6/B1 第四阶), 见 record_regime_change 内注释。
+from app.utils.timezone import now_et
 
 logger = logging.getLogger("ftseek.regime_filter")
 
@@ -106,7 +108,15 @@ def record_regime_change(
         _ensure_regime_table()
         db_path = _get_regime_db_path()
         conn = sqlite3.connect(str(db_path))
-        now = _datetime.now().isoformat()
+        # timestamp/created_at 改按 ET 写 (2026-09-05 M-6/B1 第四阶)。**零运行时行为变更**: 该表经
+        #   ops/hermes/intraday_diagnose_late.py:198 于 2026-09-05 核查判定为**死表** — 唯一写者链
+        #   signal_stage._get_regime_verdict → evaluate_regime_with_hysteresis → record_regime_change
+        #   在 playbook 化后停跑 (8/23-9/5 全部轮转日志 RegimeHysteresis=0 行), 最后一行永远停在
+        #   2026-07-29 且 vix/spy=0.0, 生产代码**零读者** (仅该诊断脚本在读)。
+        #   价值只在**除后患**: 本表建有 idx_regime_ts ON regime_history(timestamp) (:89) = 明示按
+        #   timestamp 排序/范围查的意图; 若日后该链复活而列内 naive-CST 与 ET 混存, 字符串排序即错序
+        #   (DEB §11.5 同类)。因零读者, 历史 naive 行**无需归一**, 直接翻写方即可。
+        now = now_et().isoformat()
         conn.execute("""
             INSERT INTO regime_history
             (timestamp, old_regime, new_regime, trigger, vix, spy_price, spy_ma200, rationale, created_at)

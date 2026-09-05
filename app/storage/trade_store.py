@@ -1163,7 +1163,7 @@ class TradeStore:
                     _preserved_sl_price,
                     _preserved_trail_price,
                     _preserved_sl_broker_id,
-                    # ⚠️ 尺度债 — B1 第四阶范围, 本批**刻意不动**: updated_at 仍写 naive 本地墙钟,
+                    # ⚠️ 尺度债 — B1 第五阶范围(原误标"第四阶", DEB §12.6 更正), 本批**刻意不动**: updated_at 仍写 naive,
                     #   与同一条 INSERT 里的 last_sync_at(ET) / entry_time(ET) **不同尺**。不顺手翻的
                     #   实证理由: 该列有真消费方做字符串排序与比较 (position_monitor:1229
                     #   `ORDER BY updated_at DESC LIMIT 1`、position_monitor:1164 `updated_at>=?`),
