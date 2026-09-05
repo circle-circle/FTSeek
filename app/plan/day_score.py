@@ -39,6 +39,15 @@ _DEFAULT_CONFIG = {
 # 项目根目录
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 战绩类统计项 (近5笔胜率 / 本周已实现盈亏) 的账本来源 —— **硬编码 sim 库, 不随 TRADE_ENV 路由**。
+# 2026-09-05 (DEB-20260905 §13.16) 提为常量的理由: 原先两个 helper 各自拼一遍同一路径,
+# 调用侧看不出"这个评分的战绩来自哪个账本"; 而看板 (`routes/battle_plan.py`) 把该评分与
+# **实盘账户**的 available_cash / position_count 混算成"今日交易适合度" ⇒ 实盘仓位建议
+# (score/level/daily_risk_budget/"可适度放大仓位追趋势") 建立在 sim 战绩上。
+# 常量 + `DayScore.stats_source` 让来源**可被下游读到并如实披露**, 不必读源码才知道。
+STATS_LEDGER_PATH = os.path.join(_PROJECT_ROOT, "data", "ftseek_us.db")
+STATS_LEDGER_DESC = "模拟盘账本 data/ftseek_us.db (硬编码, 不随 TRADE_ENV 路由)"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # 数据结构
@@ -54,6 +63,9 @@ class DayScore:
     avoid_windows: List[Tuple[str, str]] = field(default_factory=list)
     suggestions: List[str] = field(default_factory=list)
     computed_at: str = ""
+    # 战绩类统计项 (胜率 / 周盈亏) 的账本来源。与 score/level 分开放, 供消费方如实披露
+    # "这个分数里的战绩是谁的" —— 混算本身未被本批改变 (见 §13.16 待裁项), 先做到不误导。
+    stats_source: str = ""
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -231,7 +243,7 @@ def _get_recent_win_rate(lookback_days: int = 7, limit: int = 5) -> float:
         胜率(0.0-1.0)，数据不足返回0.5
     """
     try:
-        db_path = os.path.join(_PROJECT_ROOT, "data", "ftseek_us.db")
+        db_path = STATS_LEDGER_PATH
         if not os.path.exists(db_path):
             return 0.5
 
@@ -264,7 +276,7 @@ def _get_recent_win_rate(lookback_days: int = 7, limit: int = 5) -> float:
 def _get_weekly_pnl() -> float:
     """获取本周已实现P&L"""
     try:
-        db_path = os.path.join(_PROJECT_ROOT, "data", "ftseek_us.db")
+        db_path = STATS_LEDGER_PATH
         if not os.path.exists(db_path):
             return 0.0
 
@@ -301,6 +313,7 @@ def calculate_day_score(
     max_positions: int = 8,
     weekly_realized_pnl: float = 0.0,
     weekly_target: float = 2000.0,
+    stats_ledger_label: Optional[str] = None,
 ) -> DayScore:
     """
     计算今日市场适合度评分
@@ -311,6 +324,13 @@ def calculate_day_score(
         max_positions: 最大持仓数
         weekly_realized_pnl: 本周已实现P&L (0表示自动从DB查询)
         weekly_target: 本周目标
+        stats_ledger_label: 战绩类文案的**来源标注前缀** (如 "模拟盘")。给出时, 凡来自
+            `STATS_LEDGER_PATH` 的统计项 (近5笔胜率 / 本周已实现盈亏) 在 `reasons` 文案里
+            带上该前缀。**数字、评分、level、风险预算一律不变** —— 只去掉误导。
+            看板 (`routes/battle_plan.py`, 实盘手动操作台) 传 "模拟盘"; sim 主管线
+            (`us_pipeline/battle_plan_manager.py`) **不传** ⇒ 文案逐字不变。
+            背景见 DEB-20260905 §13.16: 这两项统计硬编码读 sim 库, 而 available_cash /
+            position_count 来自调用方的**实盘**账户 ⇒ 混算出的建议会被读成"我的实盘战绩"。
     """
     cfg = _load_config()
     base_score = cfg["base_score"]
@@ -318,6 +338,8 @@ def calculate_day_score(
     reasons: List[str] = []
     suggestions: List[str] = []
     avoid_windows: List[Tuple[str, str]] = []
+    # 战绩类文案前缀 (空串 = 不标注 = sim 主管线的既有口径)
+    _stats_prefix = stats_ledger_label or ""
 
     # ── 1. VIX因子 (-20 ~ +10) ──
     vix = _get_vix()
@@ -395,18 +417,18 @@ def calculate_day_score(
 
     if effective_target > 0 and weekly_pnl >= effective_target:
         score -= 10
-        reasons.append(f"本周已盈 ${weekly_pnl:.0f} >= 目标 ${effective_target:.0f}，建议收手保护利润")
+        reasons.append(f"{_stats_prefix}本周已盈 ${weekly_pnl:.0f} >= 目标 ${effective_target:.0f}，建议收手保护利润")
         suggestions.append("本周已达目标，减少交易频率")
     elif effective_target > 0 and weekly_pnl >= effective_target * 0.8:
         score -= 5
-        reasons.append(f"本周已盈 ${weekly_pnl:.0f}，接近周目标")
+        reasons.append(f"{_stats_prefix}本周已盈 ${weekly_pnl:.0f}，接近周目标")
         suggestions.append("谨慎操作，以保护利润为主")
 
     # 近期状态加分
     recent_wr = _get_recent_win_rate(lookback_days=7, limit=5)
     if recent_wr > 0.7:
         score += 5
-        reasons.append(f"近5笔胜率 {recent_wr*100:.0f}%，状态良好")
+        reasons.append(f"{_stats_prefix}近5笔胜率 {recent_wr*100:.0f}%，状态良好")
 
     # ── 分数裁剪 ──
     score = max(0, min(100, score))
@@ -446,4 +468,5 @@ def calculate_day_score(
         avoid_windows=avoid_windows,
         suggestions=suggestions,
         computed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        stats_source=STATS_LEDGER_DESC,
     )

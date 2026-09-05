@@ -29,6 +29,14 @@ ALLOWLIST = {
     "scripts/daily_ic_analysis.py": "解析器兜底按 TRADE_ENV 判 (2026-08-28 由无条件硬编码改)",
     "app/web_dashboard/mode_switch_service.py": "模式切换器职责所在: 切实盘前清空/校验该库",
     "scripts/data_health_check.py": "健康检查故意同时统计两个载体 (比对而非消费)",
+    # 2026-09-06 (DEB-20260905 §13.17): 本条目由该门**自己抓出来后**补登记的, 不是
+    # 先写代码再放行 —— 门确实咬人了, 记档以证其证伪力。
+    "scripts/env_separation_shadow.py": "库级分离切换前的**双载体**影子核对: 故意同时"
+                                        "只读两个载体做 schema/EXPLAIN/数据面比对"
+                                        "(比对而非消费), 与 data_health_check 同类。"
+                                        "不得改用 mode-aware 解析器 —— 解析器只返回"
+                                        "一个载体, 而本脚本的产出正是两载体之差"
+                                        "(判定 READY_TO_SWITCH 的依据)",
     "app/plan/plan_feedback.py": "模块已冻结 (scheduler_triggers 调用点 2026-08-28 摘除), "
                                 "复活前须先按 docstring 4 项缺陷清单改解析",
 }

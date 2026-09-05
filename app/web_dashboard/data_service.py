@@ -920,9 +920,14 @@ class DataService:
             conn = sqlite3.connect(path)
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
-            # ftseek_us_live.db 的 open_positions **没有 account_type 列** (实测), 而
-            # get_main_db 在 live 路由下会指到它 ⇒ 先探列再拼过滤, 否则整条查询抛错、
-            # 退化成"元数据全丢"(SL/TP 消失)。缺列即视为单 env 库, 无需过滤。
+            # 先探列再拼过滤, 否则整条查询抛错、退化成"元数据全丢"(SL/TP 消失)。
+            # 缺列即视为单 env 库, 无需过滤。
+            # 历史 (2026-09-06 更新, DEB-20260905 §13.17): ftseek_us_live.db 的
+            # open_positions 曾无 account_type 列 (40 vs sim 41), 而 get_main_db 在
+            # live 路由下会指到它。该缺口已按影子核对脚本
+            # scripts/env_separation_shadow.py 产出的 DDL 清单补齐 (DEFAULT 'real'),
+            # 两库现同为 41 列。**探列分支保留不退**: 恢复旧备份或另建实盘库仍可能
+            # 缺列, 而这里的失败模式是静默丢元数据, 不值得为省一次 PRAGMA 去赌。
             if account_scope in ("real", "simulate"):
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(open_positions)")}
                 if "account_type" in cols:
@@ -1215,8 +1220,16 @@ class DataService:
 
     async def get_diagnostic_data(self, key: str) -> Optional[str]:
         """诊断结果 JSON"""
+        # 2026-09-06 (DEB-20260905 §13.17, env_separation_shadow 双侧 EXPLAIN 抓获):
+        # 原 SQL 写 `WHERE key = ?`, 而 diagnostic_results **两个库都没有 key 列**
+        # (sim/live 实测建表语句一致: id/module_name/status/data/summary/timestamp/
+        # created_at)。写方 app/diagnostics/base.py:131 插入的键列是 module_name,
+        # 仓内另两个读方 (routes/analytics.py:989, routes/trade.py:644) 也都用
+        # module_name ⇒ 本行是**列名笔误**。后果被 _db_query_sync 的
+        # `except → return []` 放大成**静默空数据** (只留一行 ERROR 日志), 调用方
+        # 拿到 None 无从区分"无诊断"与"查询炸了"。现零调用方 ⇒ 属潜伏地雷, 就地修掉。
         row = await self.db_query_one(
-            "SELECT data FROM diagnostic_results WHERE key = ? ORDER BY rowid DESC LIMIT 1",
+            "SELECT data FROM diagnostic_results WHERE module_name = ? ORDER BY rowid DESC LIMIT 1",
             (key,),
         )
         return row["data"] if row else None

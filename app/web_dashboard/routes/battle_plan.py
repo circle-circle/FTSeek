@@ -1370,7 +1370,12 @@ def register(app, templates):
         try:
             from app.plan.day_score import calculate_day_score
             day = calculate_day_score(
-                available_cash=available_cash, position_count=position_count
+                available_cash=available_cash, position_count=position_count,
+                # 看板是**实盘手动操作台**, 而 day_score 的"近5笔胜率/本周已盈"硬编码读
+                # **sim 账本** (`day_score.STATS_LEDGER_PATH`), 只有 available_cash /
+                # position_count 来自实盘账户 ⇒ 混算。本批不改数字与评分 (那属 §13.16 待裁),
+                # 只把来源标出来, 免得 sim 战绩被读成"我的实盘战绩"。DEB-20260905 §13.16。
+                stats_ledger_label="模拟盘",
             )
             result["day_score"] = {
                 "score": day.score,
@@ -1380,6 +1385,8 @@ def register(app, templates):
                 "risk_budget_pct": day.risk_budget_pct,
                 "avoid_windows": day.avoid_windows,
                 "suggestions": day.suggestions,
+                # 机器可读的来源披露 (前端/接口消费方可据此如实展示)
+                "stats_source": day.stats_source,
             }
         except Exception as e:
             logger.warning(f"[decision-hub] day_score error: {e}")

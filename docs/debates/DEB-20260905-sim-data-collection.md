@@ -1742,3 +1742,288 @@ UPDATE open_positions SET owner='manual', account_type='real' WHERE symbol=?
 而不是「覆盖 sim 行」: 前者是一条 CRITICAL 日志 + API 明确回错 + 需人工对账,
 后者是**静默毁掉数据集并让 sim 仓失去退出监控**。两害相权取其轻, 但**这确实是代价**:
 撞仓时实盘持仓在 DB 里是缺记录的 (券商侧真实存在)。彻底消除需 ①落地。
+
+---
+
+### 13.16 day_score 上下文感知标注 (2026-09-05 23:45 – 2026-09-06 00:10 CST · 用户裁「同意」两步走的 (a))
+
+#### 13.16.0 一句话结论
+
+§13.15.8 ② 列的三个选项里, 用户裁「同意」= 选 **(b) 保留 sim 数据但如实标注来源**:
+`calculate_day_score` 加**调用侧选择加入**的 `stats_ledger_label` 参数, 看板传「模拟盘」、
+sim 主管线不传 ⇒ 看板文案从「近5笔胜率 100%，状态良好」变成「**模拟盘**近5笔胜率 100%」,
+而**评分数字/level/日风险预算一律零变更**。9 例测试 (含源码契约), 双向证伪实跑过
+(退回 HEAD 版 ⇒ 8 failed / 1 passed, 且唯一通过的那条正是不该受影响的 sim 管线契约)。
+
+#### 13.16.1 为什么是 (b) 而不是 (a)/(c)
+
+- **(a) 改读实盘成交**: live 库仅 17 笔且冻结在 2026-07-02 ⇒ 多数时候落到「数据不足
+  ⇒ 0.5 中性」, 评分退化成 VIX/现金驱动。这是**行为变更**, 且会连带改动 sim 主管线
+  (`battle_plan_manager.py:291` 消费同一函数) ⇒ 违反「不停 sim、不改交易行为」的红线。
+- **(c) mode-aware**: 同样会改 sim 侧行为, 且把"看板恒 REAL 券商"与"DB 由 TRADE_ENV
+  路由"这对既有矛盾 (§13.15.1 层 1) 再编进一层分支 ⇒ 复杂度换不来确定性。
+- **(b) 标注**: 病灶不是"读了 sim 数据", 而是**读来源不说**。用户看的是**实盘仓位建议**
+  (`daily_risk_budget=$12,975.11` 由 REAL 现金算出), 却把 sim 战绩当成自己的战绩 ——
+  标注把这条误导掐掉, 且**零决策变更**, 是唯一不越权的修法。
+
+#### 13.16.2 修法 (调用侧选择加入, 不动默认行为)
+
+- `app/plan/day_score.py`:
+  · 原 `:234` / `:267` 两处**硬编码** `data/ftseek_us.db` (连 TRADE_ENV 都不看) 收敛为
+    模块常量 `STATS_LEDGER_PATH` / `STATS_LEDGER_DESC`, 两个 helper 改读常量;
+  · `DayScore` 新增 `stats_source` 字段 (标注来源, 供看板透出);
+  · `calculate_day_score(..., stats_ledger_label: Optional[str] = None)` — **默认 None
+    ⇒ 文案与修前逐字一致**; 传值时给 3 处战绩类 reason 加前缀。
+- `app/web_dashboard/routes/battle_plan.py`: 调用点 (`:1372`) 传 `stats_ledger_label="模拟盘"`,
+  响应体透出 `"stats_source"`。
+- `app/us_pipeline/battle_plan_manager.py:291` **不传** ⇒ sim 主管线文案/行为不变。
+
+#### 13.16.3 不变量声明 (本批的验收口径)
+
+`score` / `level` / `daily_risk_budget` / 各分项权重 / 阈值 **一律不变**; 变的只有
+reasons 的**措辞前缀**与新增的 `stats_source` 透出字段。任何数值差异都视为回归。
+
+#### 13.16.4 测试与双向证伪 (含一次中断事故的复原取证)
+
+- `tests/test_day_score_ledger_label.py` 9 例: 不传标注时文案逐字不变、传标注时 3 处
+  reason 带前缀、`stats_source` 透出、**源码契约**双向钉 (看板调用点必须传标注 /
+  sim 主管线 `battle_plan_manager.py` **不得**传)、常量钉桩防硬编码回潮。
+- 证伪: `git show HEAD:<file> > <file>` 退回修复前版本 ⇒ **8 failed / 1 passed**, 唯一
+  通过的是 `test_sim_pipeline_call_site_does_not_pass_label` —— HEAD 版确实不传 label,
+  **符合预期** ⇒ 该例不是空转, 证伪成立。
+- ⚠️ **过程事故 (记档)**: 证伪跑到一半交接中断, 工作树留在"退回态"。复原三步已执行并取证:
+  从 `/tmp` 备份 `cp` 回来 → `md5sum` 双向比对逐字一致 → `git status` 首列**无 `MM`**
+  (证明索引未被污染) → 复跑 9 例全绿。教训沿用 §13.13: 证伪回退只用
+  `git show HEAD~N:<file> > <file>`, 禁 `git checkout HEAD~N --`。
+
+---
+
+### 13.17 库级分离准备批 (2026-09-06 00:10 – 00:45 CST · 用户裁「同意」两步走的 (b) 第一步)
+
+#### 13.17.0 一句话结论
+
+§13.15.8 ① 的**终局修法**做了"切换前的一切准备, 但不切换": 新增只读双侧影子核对脚本
+`scripts/env_separation_shadow.py`, 用它把「切到 live 库会不会炸」从推测变成实测 ——
+第一版跑出 **93 条失败**, 分类后**真缺口只有 2 列**; 备份后补齐这 2 列, 判定从
+`NOT_READY` 翻成 **`READY_TO_SWITCH` (阻塞 0 条)**。顺带抓获**一条与 env 分离无关的现役
+缺陷** (`diagnostic_results` 列名笔误) 和一处无效转义。**路由切换本身仍挂在用户验收上,
+未动一行。** 全量 2838 passed / 1 failed (预存 R12) / 37 skipped; sim 库 open_positions
+指纹全程 `24346bb…` 未变 (与 §13.15 交接记录逐字一致) ⇒ sim 交易与数据收集未受任何影响。
+
+#### 13.17.1 关键取证: **不能**靠翻 `TRADE_ENV` 实现分离 (会直接终止数据收集)
+
+`get_main_db()` / `get_trade_records_db()` 在 `app/` 下共 **110 个调用点**, 其中看板内
+仅 **12 个** (9 文件), 看板外 **98 个** (pipeline 27 / core 19 / risk 15 / …)。
+⇒ 把 `.env.us` 的 `TRADE_ENV` 翻成 0 会让**整条 sim 主管线**一起搬到 live 库, 直接
+违反用户红线「不停止 sim 模拟交易、要继续收集数据」。
+**故分离只能是看板本地的解析器** (建议落在 `env_scope.dashboard_db()`), 同时覆盖
+`app/core/db_utils.get_main_db` 与 `app/core/paths.get_trade_records_db` **两个**入口,
+sim 侧 98 个调用点一个都不碰。
+
+#### 13.17.2 顺带查出的两处**登记不修** (越权即扩范围)
+
+- **路由入口不同源 (潜伏裂脑)**: `db_utils.is_live_mode()` 读 `.env.us` 且**进程内固化**
+  (R-3), 而 `paths.get_trade_records_db()` 每次**直读** `os.getenv("TRADE_ENV")`。
+  实测今日三者一致 (`.env.us` 与主服务进程环境都是 `TRADE_ENV=1`, 三个解析器都返回
+  `data/ftseek_us.db`) ⇒ **无活跃裂脑**; 但只改 `.env.us` 不重启会让两者分叉。修它要动
+  sim 侧解析 ⇒ 本批不碰。
+- **一致性断言对看板失明**: `_assert_env_routing_consistent` 拿 `AUTO_TRADE_ACCOUNT`
+  与 DB 路由对账, 而看板的券商侧是 `manual_order_service._is_live()` **硬编码 True**
+  (不看 `AUTO_TRADE_ACCOUNT`) ⇒ "账本与实际成交账户分离"这条 CRITICAL 在看板进程
+  **永远不会触发** (dashboard unit 走 `EnvironmentFile=.env.us` ⇒ `AUTO_TRADE_ACCOUNT=sim`,
+  与 `TRADE_ENV=1` 自洽)。这正是 §13.15.1 层 1 的矛盾在**可观测性**上的投影。
+
+#### 13.17.3 影子核对脚本的设计 (只读, 双侧 EXPLAIN)
+
+`scripts/env_separation_shadow.py` — 不连券商、不改配置、不写任何库:
+
+1. AST 提取 `app/web_dashboard/**/*.py` 全部 SQL 字面量: **131 条**, 其中主库语句
+   **104 条**, 他库语句 **12 条** (`signal_snapshots` / `sentiment_cache` / `rejections` /
+   `manual_order_audit_archive` —— 走独立库文件, 不受主库路由影响 ⇒ 出范围)。
+2. **双侧** `EXPLAIN`: EXPLAIN 只编译不执行 (不需真参数、不可能改数据), 却能精确抓
+   `no such table/column`。
+   · **sim 侧** = 看板今天的实际库 ⇒ 这里失败与 env 分离无关, 是**现役生产缺陷**;
+   · **live 侧** = 切换后目标库 ⇒ 这里失败而 sim 侧通过的, 才是**切换缺口**。
+3. 三个提取坑 (第一版全踩过, 已各留钉子):
+   · `ast.walk` 会**重复**访问 JoinedStr 的子 Constant ⇒ 半截片段 (`"... WHERE "`) 被
+     判 `incomplete input`。修: 先把 JoinedStr 全部后代标记 consumed 再跳过。
+   · f-string 插值分**表达式位** (`LIMIT {n}`) 与**语句位** (`{date_filter}` 展开成整段
+     `AND trade_date >= '...'` 或空串) ⇒ 单一替身必然误报。修: 每模板 3 变体
+     (`1` / `''` / 空), **任一编译通过即通过**。
+   · 中文文档串里出现 SQL 动词被误当语句。修: 要求字面量**以 SQL 动词开头**。
+4. 分类器把「探测器局限」与「真缺陷」分开, 否则假阳性会把真缺口淹掉:
+   `SCHEMA_GAP` (真缺口) / `IDEMPOTENT_DDL_OK` (`ALTER ADD COLUMN` 撞已存在列, 代码用
+   `except sqlite3.OperationalError: pass` **显式容忍**, 是设计意图) /
+   `UNVERIFIABLE_TEMPLATE` (插值落在标识符位, 如 `ADD COLUMN {col_name} {col_type}`、
+   `SET {', '.join(sets)}` ⇒ 静态不可判定, 交 token 兜底扫描) / `FRAGMENT_CONCAT`
+   (跨行拼接左半截, 悬空 `WHERE`) / `BINDING`。
+5. 连接一律 `mode=ro` 而**不用** `immutable=1`: 后者会忽略 `-wal`, 对**正被主服务写入**的
+   sim 库会读到滞后 schema。代价是对原本无 `-wal/-shm` 的库留下 0 字节空壳 (不含帧、
+   不改数据, SQLite 在最后一个连接关闭时自行回收)。
+6. **篡改判据只钉可归因的一侧**: live 库无其它写方 (死库, `lsof` 实测零持有者) ⇒ 运行期
+   它的内容指纹/文件大小变化就是本脚本干的 ⇒ 退出码 2 + CRITICAL; sim 库正被合法写入
+   (数据收集不停), 其漂移只作 `sim_drift` 上报**不参与判据** —— 否则会把正常交易读成事故。
+7. 幂等实测: 连跑两次, json 除 `generated_at` 外**字节稳定**。
+
+#### 13.17.4 抓获一条与 env 分离**无关**的现役缺陷 (sim 侧探测的副产品)
+
+`app/web_dashboard/data_service.py:1219` `get_diagnostic_data()`:
+```sql
+SELECT data FROM diagnostic_results WHERE key = ? ORDER BY rowid DESC LIMIT 1
+```
+`diagnostic_results` **两个库都没有 `key` 列** (建表语句实测逐字一致:
+`id/module_name/status/data/summary/timestamp/created_at`)。写方
+`app/diagnostics/base.py:131` 插入的键列是 `module_name`, 仓内另两个读方
+(`routes/analytics.py:989`、`routes/trade.py:644`) 也都用 `module_name` ⇒ **列名笔误**。
+后果被 `_db_query_sync` 的 `except → return []` 放大成**静默空数据** (只留一行 ERROR
+日志), 调用方拿到 `None` 无从区分"无诊断"与"查询炸了"。
+实测 `get_diagnostic_data` **零调用方** (grep 全仓仅定义处) ⇒ 属**潜伏地雷**, 就地修成
+`WHERE module_name = ?` (参数名 `key` 保留, 是调用侧语义名)。
+生产面复核: `logs/*.log` 与 journald 全量 grep `no such column|no such table` **零命中**
+⇒ 确认它从未在生产触发过, 与"零调用方"互证。
+
+顺带修 `app/web_dashboard/auth.py` 模块文档串里的 `\$` (无效转义序列 ⇒
+DeprecationWarning, Python 3.12+ 升格 SyntaxWarning): 改成 raw docstring, **渲染逐字不变**
+(实测 `get_docstring()` 里 `\$` 计数仍为 1)。是本批新测试把它照出来的。
+
+#### 13.17.5 live 库 schema 补齐 (备份 → 2 条 DDL → 判定翻绿)
+
+- **备份** (仓内纪律: hard-to-reverse 先备份): `data/backups/ftseek_us_live.db.bak-20260906-001201-pre-env-separation`,
+  与改前 live 库 **md5 逐字一致** `2a21b24170770ba42d4905e3a942a7cb`, `integrity_check=ok`,
+  44 表, `open_positions` 8 行 / `trade_records` 17 行复核通过。
+  · 备份被只读校验带出的 `-wal`/`-shm` 空壳已清: `rm -f` 被沙箱策略拦 ⇒ 改 Python
+    `unlink()`, 且**前置断言 `-wal` 必须 0 字节**才允许删、删后 md5 复核不变 ⇒
+    备份恢复纯净单文件 (避免"备份旁边躺着一个别的状态的 wal"这种复原陷阱)。
+- **2 条 DDL** (即影子脚本产出的清单, 逐字执行):
+  · `ALTER TABLE open_positions ADD COLUMN account_type TEXT DEFAULT 'real'`
+    —— **刻意不照抄** sim 库的 `DEFAULT 'sim'`: 那会让 live 库 8 行 `owner='manual'` 的
+    实盘墓碑被**反向污染**成 sim, 正是本批要消灭的混淆的镜像。读方口径
+    `LOWER(COALESCE(account_type,'')) != 'simulate'` 对 `'real'`/NULL 均判实盘 ⇒ 行为不变。
+  · `ALTER TABLE trade_records ADD COLUMN pnl_net REAL`
+    —— 17 行历史留 NULL, 让 `dashboard.py:191/:830` 的 `COALESCE(pnl_net, realized_pnl)`
+    正确回落, **不改写任何既有数值** (实测 `pnl_net` 非空行数 = 0)。
+- **补齐后**: live `open_positions` **41 列 = sim 41 列** (原 40 vs 41); `trade_records`
+  44 列 (sim 51, 差的 7 列全是休眠列); `integrity_check=ok`; 行数 8/17 未变;
+  `account_type` 分布 `{real: 8}`。判定 `NOT_READY` (5 条阻塞) → **`READY_TO_SWITCH` (0 条)**。
+- **休眠列刻意不补** (`capital_state.account_id` 1 列、`playbook_instructions` 22 列、
+  `trade_records` 7 列): 看板 SQL **不引用**它们, 补了会掩盖真实缺口、也违反最小改动。
+  已在报告 `column_gap_audit` 里按"阻塞/休眠"逐条登记, 切换后若新增看板查询再按需补。
+
+#### 13.17.6 一条必须取证的担忧: live 库 8 行墓碑切换后会冒充现役仓吗?
+
+不会, 且是**双重排除**: `data_service.py:427` 的过滤条件是 `size > 0` **且**
+`sync_status NOT IN ('closed_by_daemon','closed_by_scheduler','closed_by_sync',
+'closed_emergency','stale_not_in_broker')`, 而 8 行实测全是 `size=0.0` **且**
+`sync_status='closed_by_sync'` ⇒ 两道都拦住。它们是 2026-06-13..06-25 的已平仓残骸,
+不是持仓。
+
+#### 13.17.7 数据面对比 = 用户验收材料 (切换后看板会看到什么)
+
+| 表 | sim 库 (今天看板读的) | live 库 (切换后读的) | 切换后可感变化 |
+|---|---|---|---|
+| `open_positions` | 3 行, 全 `account_type='simulate'`, **全 `size>0`** (UBER 70 / RIVN 312 / HOOD 23) | 8 行, 全 `'real'`, **全 `size=0`** 墓碑 | 现役仓列表**不受影响** (以券商 REAL 账户为准, DB 只是 fallback) |
+| `trade_records` | **795 笔**, 2026-04-24..09-04, `realized_pnl` 合计 **+21227.08** | **17 笔**, 2026-06-12..07-02, **+1965.05** (MANUAL 11 / POSITION_SYNC 4 / PLAYBOOK_SHADOW 2) | 历史/绩效/胜率**大幅变少** —— 这是**正确**的 (那 795 笔本就是模拟盘), 但用户会立刻感到"数据变少" |
+| `capital_state` | 1 行 | **0 行** | ⚠️ 权益曲线/回撤历史会**空**; `risk.py:87` 的 `SELECT current_equity … LIMIT 1` 返回 `None` ⇒ 降级路径需在切换前验 (已列入清单) |
+| `manual_order_audit` | 83 行 | **96 行** (反而更多) | 手动下单审计更完整 |
+| `trade_attribution` | 223 行 | 197 行 | 归因样本略少 |
+
+#### 13.17.8 刻意未做: **路由切换本身** (待用户验收, 附切换清单)
+
+本批到"准备就绪"为止, 一行路由都没改。切换清单 (建议 9/8 周二 21:30 CST 开盘前完成;
+9/7 Labor Day 休市):
+1. 新增看板本地解析器 `env_scope.dashboard_db()`, 覆盖 **两个**入口
+   (`db_utils.get_main_db` / `paths.get_trade_records_db`), 替换看板内 **12 个解析点 / 9 文件**;
+   sim 侧 98 个调用点**一个不碰**。
+2. 先验 `capital_state` 空表降级 (equity 曲线 / 回撤 / `risk.py` 起始权益)。
+3. live 库 17 笔陈旧 `trade_records` 是否按 `mode_switch_service._clear_live_db()` 先例
+   **先归档再清空** —— 属破坏性动作, 需用户明确点头。
+4. `day_score` 是否随之改读 live 库 (§13.16 选了"标注", 切换后需重议; 注意它同时被
+   sim 主管线消费)。
+5. 切换后用本脚本复核 sim 侧指纹必须仍是 `24346bb…` (sim 库零看板写入的硬证据)。
+
+#### 13.17.9 测试与双向证伪
+
+`tests/test_env_separation_shadow.py` **20 例**, 每条都验过"退回即红":
+- 探测器双向: 缺 `account_type` 必判失败、补列后必放行、占位符自动绑定不再假阳性、
+  INSERT 的 `has no column named` 报法同样抓到。
+- 分类器: 幂等 DDL 不得被当缺陷、模板插值不得被当缺陷、**但缺列错误即使来自模板也必须
+  判 `SCHEMA_GAP`** (否则真缺口会被模板借口吃掉)。
+- 三个提取坑各留钉子 (3 变体、JoinedStr 子节点不重复提取、悬空尾巴判片段、文档串不当 SQL)。
+- **只读守卫**: 断言脚本每个 `sqlite3.connect` 都带 `mode=ro`、无 `commit(`、
+  `execute()` 实参只允许 `EXPLAIN`/`SELECT`/`PRAGMA`、且不得出现 `immutable=1`。
+- **生产库钉桩**: live 库那 2 列必须存在。证伪: 把 live 库复制到临时目录后
+  `DROP COLUMN` 两列 ⇒ `test_live_db_blocking_columns_are_present` **转红**并给出
+  "切换后看板 3 处写/读点全抛错"; 另两例转 `OperationalError` (同为红)。
+- **反向污染钉桩**: live 库不得有行被标成 `sim`/`simulate` (钉住 13.17.5 的 DEFAULT 选择)。
+- **diagnostic 修复**: 用**写方真 DDL + 读方真 SQL 字面量**在内存库对跑 (不是只断言源码
+  字符串 —— 后者对"改了字符串但仍不对"零证伪力)。证伪: `git show HEAD:` 退回
+  `data_service.py` ⇒ 转红且报错文本直指旧 SQL; 复原后 md5 逐字一致 ⇒ 转绿。
+  另配 `test_old_diagnostic_query_would_have_failed` 作**证伪力自检**: 把 SQL 退回旧写法
+  必须真抛 `no such column: key`, 否则上一条测试是空转。
+- **切换面钉桩**: 看板内不得硬编码主库路径 (AST 排除文档串, 唯一豁免
+  `mode_switch_service`); `open_positions` PK 必须仍是 `['symbol']` —— 这是"只能库文件级
+  分离"的**根据**, PK 若变则本批结论要重议。
+- **既有门自己咬人了 (记档以证其证伪力)**: 新脚本被 `tests/test_dead_db_literal_gate.py`
+  当场抓红 ("无条件引用废弃同名单库 ftseek_us_live.db")。按该门自述的豁免类目
+  「双载体健康检查」补登记 ALLOWLIST 并写明理由 (本脚本的产出**正是**两载体之差,
+  改用 mode-aware 解析器就只能拿到一个载体、无法比对)。**先被抓、后登记**, 不是先放行。
+
+#### 13.17.10 验证与运行态
+
+- **全量**: **2838 passed / 1 failed / 37 skipped** (总 2876)。对账: §13.15 后 2847 总
+  + 本批新增 **29 例** (§13.16 的 9 + §13.17 的 20) = **2876** ✓。唯一 failed 是
+  **预存**的 `test_r9_r13_contracts.py::TestR12EntryTimeConvention` (HOOD 时刻差
+  **2.94s**, 与 §13.15 交接记录逐字吻合) ⇒ 非本批引入。
+- **棘轮**: `BASELINE_NOW=445` / `except:pass=955` 均未涨 (实测通过; 新脚本在 `scripts/`
+  不受 `now` 棘轮扫描, 但受 `except:pass` 全仓扫描 ⇒ 全程未写裸 `except:`)。
+- **主服务未重启**: PID 404040, 起于 22:15:52, `systemctl is-active=active`,
+  `NRestarts=0` ⇒ **sim 交易与数据收集全程未中断**。dashboard 是 socket 激活 +
+  15min 闲置自退, 无需重启。
+- **两库指纹**: sim `open_positions` 全表 md5 全程 `24346bbec4f3ebcc898af947c8fc344e`
+  **未变** (与 §13.15 交接记录逐字一致, 是本批"零污染"的硬证据); live 由
+  `54f0e7cd…` (40 列) → `89b42dde…` (41 列, **仅加列**, 行数 8/17 未变)。
+- **报告产物**: `data/env_separation_shadow.json` (`data/*` 已 gitignore, 可复现故不入库)。
+
+#### 13.17.11 前批记录更正 (复算义务)
+
+§13.15.7 与 handoff「上一批 (2026-09-05 23:40)」都把 sim 库 `open_positions` 的 `owner`
+记成 `['scheduler'×3]`。**实测更正** (2026-09-06 00:50 CST 只读复查):
+`owner = ['auto'×3]`, `owner_strategy = ['playbook_sim'×3]`, `account_type = ['simulate'×3]`,
+`is_anomalous = [0,0,0]`。
+
+- **不是数据变了**: 同一次复查的全表 md5 **仍是** `24346bbec4f3ebcc898af947c8fc344e`, 与
+  §13.15.7 记录逐字一致 ⇒ 三行内容零变化, 错的是**记录时誊错了列值**。
+- **原结论不受影响**: 那条取证的用途是证明 `owner` **没有被翻成 `manual`**; 真值 `auto`
+  同样 ≠ `manual` ⇒ 推断成立, 只是引用的字面值错了。
+- **处置**: 按仓内纪律 (参 §13.8「交接稿三处更正 (复算义务)」/ §13.13「提交后自审」)
+  **不改写已提交的旧节** (改写历史 = 毁审计链), 在此登记更正; 后来者引用 §13.15.7 的
+  `owner` 值时**以本节为准**。
+- **教训 (值得制度化)**: 内容指纹 (md5) 与人工誊抄的字段值是**两种独立证据** —— 前者可
+  复算、后者会抄错。本批的影子脚本因此把指纹做成**脚本自动输出**而非手打; 日后取证
+  优先贴可复算的指纹, 字段值一律用脚本输出粘贴。
+
+#### 13.17.12 生产面冒烟 (含 §13.16 不变量的**生产面**证明)
+
+- **无需重启任何服务**: dashboard 早已 idle-exit, `.socket` = `active/listening`
+  (127.0.0.1:8901 由 systemd 持有) ⇒ 冷启即新代码。
+- `GET /health` → **200 / 56B** ⇒ 本批改动的 5 个模块 (`day_score` / `battle_plan` /
+  `data_service` / `env_scope` / `auth`) 全部正常装载, 无 import/语法错误。
+- **鉴权路径**: `.env.us` 只存 `DASHBOARD_PASSWORD_MD5` **哈希**、明文未知 ⇒ 密码登录
+  **401** (一次即止, 避免触发 `_is_rate_limited` 的 5 分钟锁)。改用**应用自身**的
+  `create_session_token()` 铸 `ftseek_session` cookie (先 `verify_session_token=True`
+  自校验) ⇒ 走的是 `app.py:250` **同一条中间件鉴权路径**, 不绕过任何校验逻辑,
+  也不需要知道用户密码。
+- `GET /api/battle-plan/actions` → **200 / 1229 bytes** = 与 §13.15.7 记录**同尺寸逐字一致**
+  ⇒ 该端点未受本批影响。
+- `GET /api/decision-hub` → **200 / 1079 bytes** (vs §13.15.7 的 **982B**, **+97B**) ⇒
+  增量恰为标注本身: reason 由「近5笔胜率 100%，状态良好」变成「**模拟盘**近5笔胜率 100%，
+  状态良好」, 并新透出 `stats_source="模拟盘账本 data/ftseek_us.db (硬编码, 不随 TRADE_ENV 路由)"`。
+- **§13.16 的不变量在生产面成立 (不只是单测)**: `score=85` / `level="STRONG"` /
+  `daily_risk_budget=12975.11` 与 §13.15.1 记录的实测值**逐字一致** ⇒ 标注**零决策变更**,
+  只去掉了「把 sim 战绩当自己战绩」的误导。
+- **两库零改动**: 冒烟前后 sim `open_positions` 全表 md5 均为 `24346bbec4f3ebcc898af947c8fc344e`。
+- `logs/dashboard.log` 新增段**零** `Traceback` / `CRITICAL` / `GhostReconcile` /
+  `EnvIsolation`; 唯一一条 `[Auth] 登录失败: 密码错误 (IP: 127.0.0.1)` 是本次冒烟自己那次
+  密码尝试留下的痕迹, **非缺陷** (记此一句以免后来者当成新故障)。
+- **主服务零影响**: PID 404040 未重启 (uptime 2h40m, `NRestarts=0`) ⇒ sim 交易与数据收集
+  全程未中断。

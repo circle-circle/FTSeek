@@ -22,10 +22,16 @@ r"""看板(实盘手动操作台) 与 SIM 数据收集仓的硬隔离谓词.
   · `order/oco_handler.py` / `order/thesis.py` 同类;
   · `routes/battle_plan.py` 用 **sim 行**的 `is_anomalous` 去过滤**实盘**标的 (读侧串味)。
 
-**列容错是必需的**: `data/ftseek_us_live.db` 的 `open_positions` **没有 `account_type`
+**列容错是必需的**: `data/ftseek_us_live.db` 的 `open_positions` 曾**没有 `account_type`
 列** (实测 40 列 vs sim 库 41 列, 差集恰为 `account_type`)。若把谓词硬拼进 SQL,
 将来 DB 路由切到 live 库时**每一条查询都会抛 `OperationalError`** ⇒ 手动实盘单
 落库全断。故谓词按"库里有这列才过滤, 没有就恒真"生成 (缺列 = 单 env 库, 无需过滤)。
+
+2026-09-06 更新 (DEB-20260905 §13.17): 该缺口已按 `scripts/env_separation_shadow.py`
+的双侧 EXPLAIN 影子核对补齐 —— live 库 `open_positions` 加 `account_type TEXT
+DEFAULT 'real'`、`trade_records` 加 `pnl_net REAL`, 两库列数对齐 41/41, 阻塞缺口归零
+(判定 READY_TO_SWITCH)。**容错分支不删**: 恢复旧备份或另建实盘库时仍可能缺列, 而其
+失败模式是整条查询抛错 ⇒ 属便宜保险。库级路由切换本身仍挂在用户验收上, 未动。
 
 回滚: 删本文件 + `git revert` 各接入点 ⇒ 回到"看板可静默改写 sim 数据收集仓"。
 """
