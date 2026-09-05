@@ -105,9 +105,13 @@ class OCOHandler(TradeOrderHandlerBase):
             return
         conn = self.service._db()
         params.append(symbol)
-        conn.execute(
+        # SIM 隔离 (2026-09-05, DEB-20260905 §13.15): 实盘侧 OCO 回调不得改写 sim 行
+        from app.web_dashboard.env_scope import scoped_update
+        scoped_update(
+            conn,
             f"UPDATE open_positions SET {', '.join(sets)} WHERE symbol=?",
             tuple(params),
+            symbol, "OCO 回调清除 SL/TP 订单 ID",
         )
         conn.commit()
         conn.close()

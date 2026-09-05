@@ -492,8 +492,24 @@ def mark_position_manual(service: "ManualOrderService", symbol: str,
     """
     try:
         conn = service._db()
+        # 硬隔离 (2026-09-05, DEB-20260905 §13.15 · 用户裁"看板=实盘手动操作台, 不与 SIM 混"):
+        # 撞上 SIM 数据收集仓时**整段跳过** (DB 改写 + 下面那段 in-memory PositionStore 改写)。
+        # 不拦的后果: sim 行被翻成 owner='manual'/account_type='real' ⇒ 主线 Reconciler 判
+        # LEGACY/MANUAL → PROTECTED ⇒ **sim 仓静默失去退出监控** (SL/trailing 不再管它),
+        # 同时正在收集的数据集被改写。这是本批拦下的最严重一条。
+        from app.web_dashboard.env_scope import is_simulate_row, real_only
+        if is_simulate_row(conn, symbol):
+            conn.close()
+            logger.critical(
+                f"[EnvIsolation] mark_position_manual 被拦截: {symbol} 是 SIM 数据收集仓 "
+                f"(PK=symbol ⇒ 实盘手动仓无法与其共存)。未改写 owner/account_type、"
+                f"未同步 in-memory metadata ⇒ sim 仓退出监控保持不变; 该**实盘**持仓未被 "
+                f"DB 记录, 需人工对账 (库级分离方案见 DEB-20260905 §13.15)。"
+            )
+            return
         cursor = conn.execute(
-            "UPDATE open_positions SET owner='manual', account_type='real' WHERE symbol=?",
+            "UPDATE open_positions SET owner='manual', account_type='real' "
+            f"WHERE symbol=? AND {real_only(conn)}",
             (symbol,),
         )
         if cursor.rowcount == 0:

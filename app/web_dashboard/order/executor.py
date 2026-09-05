@@ -24,6 +24,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from app.coordinator.manual_hold_registry import manual_hold_registry
+# SIM 隔离 (2026-09-05, DEB-20260905 §13.15): 看板恒走 REAL 券商, 但 DB 由 TRADE_ENV
+# 路由到 sim 库, 且 open_positions 的 PK 是 symbol ⇒ 以 symbol 为键的实盘侧写操作一旦
+# 撞上 sim 数据收集仓就会改写它。scoped_update 自动加隔离谓词并在撞仓时 CRITICAL 出声。
+from app.web_dashboard.env_scope import is_simulate_row, scoped_update
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.web_dashboard.manual_order_service import ManualOrder, ManualOrderService
@@ -1029,6 +1033,17 @@ def takeover_position(service: "ManualOrderService", symbol: str,
                 (symbol,),
             ).fetchone()
             if exist:
+                # 撞 SIM 收集仓时把话说清楚: 不是含糊的"已存在", 而是**两 env 抢同一 PK**
+                if is_simulate_row(conn, symbol):
+                    logger.critical(
+                        f"[EnvIsolation] [Takeover] 拒绝接管 {symbol}: 该标的由 SIM 数据收集仓持有 "
+                        f"(account_type='simulate'; PK=symbol ⇒ 实盘仓无法与其共存)。"
+                        f"未改写任何 sim 行 — 库级分离见 DEB-20260905 §13.15。"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"{symbol} 是 SIM 数据收集仓, 看板(实盘台)不接管 — DEB-20260905 §13.15",
+                    }
                 return {"success": False, "error": f"{symbol} already in DB (owner={exist[1]})"}
             now = datetime.now().isoformat()
             conn.execute(SQL_TAKEOVER, (symbol, direction, qty_abs, cost, owner, now))
@@ -1203,9 +1218,11 @@ def modify_stop_loss(service: "ManualOrderService", symbol: str,
         # 6. 更新 DB
         try:
             conn = service._db()
-            conn.execute(
+            scoped_update(
+                conn,
                 "UPDATE open_positions SET current_sl=?, sl_broker_order_id=?, updated_at=? WHERE symbol=?",
                 (new_sl, new_oid, datetime.now().isoformat(), symbol),
+                symbol, "手动改止损 SL 落库",
             )
             conn.commit()
             conn.close()
@@ -1715,9 +1732,11 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
             try:
                 service._ensure_sl_column()
                 conn = service._db()
-                conn.execute(
+                scoped_update(
+                    conn,
                     "UPDATE open_positions SET current_sl=?, sl_broker_order_id=?, initial_tp=?, tp_broker_order_id=? WHERE symbol=?",
                     (_sl_price, _sl_order_id, _tp_price, _tp_order_id, order.symbol),
+                    order.symbol, "订单组 SL/TP 订单 ID 落库",
                 )
                 conn.commit()
                 conn.close()
@@ -1803,9 +1822,11 @@ def _rebuild_protective_after_partial(
             try:
                 service._ensure_sl_column()
                 conn = service._db()
-                conn.execute(
+                scoped_update(
+                    conn,
                     "UPDATE open_positions SET sl_broker_order_id=?, tp_broker_order_id=? WHERE symbol=?",
                     (_sl_order_id, _tp_order_id, symbol),
+                    symbol, "部分平仓·重建保护单 ID 落库",
                 )
                 conn.commit()
                 conn.close()
@@ -1860,9 +1881,11 @@ def cancel_order_group(service: "ManualOrderService", symbol: str) -> None:
         _tp_cleared = not tp_id or (tp_id and _tp_ok)
         if _sl_cleared and _tp_cleared:
             conn = service._db()
-            conn.execute(
+            scoped_update(
+                conn,
                 "UPDATE open_positions SET sl_broker_order_id=NULL, tp_broker_order_id=NULL WHERE symbol=?",
                 (symbol,),
+                symbol, "平仓后清除 SL/TP 订单 ID",
             )
             conn.commit()
             conn.close()
@@ -1870,14 +1893,18 @@ def cancel_order_group(service: "ManualOrderService", symbol: str) -> None:
             # 部分撤单失败: 仅清除已成功撤单的一侧
             conn = service._db()
             if _sl_cleared and sl_id:
-                conn.execute(
+                scoped_update(
+                    conn,
                     "UPDATE open_positions SET sl_broker_order_id=NULL WHERE symbol=?",
                     (symbol,),
+                    symbol, "部分撤单后清除 SL 订单 ID",
                 )
             if _tp_cleared and tp_id:
-                conn.execute(
+                scoped_update(
+                    conn,
                     "UPDATE open_positions SET tp_broker_order_id=NULL WHERE symbol=?",
                     (symbol,),
+                    symbol, "部分撤单后清除 TP 订单 ID",
                 )
             conn.commit()
             conn.close()

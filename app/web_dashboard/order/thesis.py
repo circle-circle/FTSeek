@@ -209,10 +209,14 @@ def save_thesis_to_db(service: "ManualOrderService", order: "ManualOrder", thesi
         plan = thesis_ctx.get("plan", {})
         invalidation = plan.get("stop_loss") if thesis_ctx.get("plan_match") else None
 
-        conn.execute(
+        # SIM 隔离 (2026-09-05, DEB-20260905 §13.15): 实盘单的 thesis 不得写进 sim 收集仓
+        from app.web_dashboard.env_scope import scoped_update
+        scoped_update(
+            conn,
             "UPDATE open_positions SET thesis=?, entry_context_json=?, "
             "expected_hold_days=?, invalidation_price=? WHERE symbol=?",
             (thesis_text, entry_context, 7, invalidation, order.symbol),
+            order.symbol, "auto-thesis 落库",
         )
         conn.commit()
         conn.close()

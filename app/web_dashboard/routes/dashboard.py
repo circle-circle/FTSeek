@@ -370,11 +370,27 @@ def register(app, templates, dashboard):
         price = body.get("price")
         if price is None:
             return {"success": False, "error": "price required"}
-        await ds.db_execute(
-            "UPDATE open_positions SET stop_loss_price = ?, stop_loss_triggered = 0 WHERE symbol = ?",
+        # SIM 隔离 (2026-09-05, DEB-20260905 §13.15): 看板是**实盘**手动台, 而这个 DB 由
+        # TRADE_ENV 路由到 sim 库。不拦的后果: 给实盘仓设止损会**改写 sim 数据收集仓的 SL**
+        # (污染数据集, 还可能让 sim 仓被提前止损), 而真正的实盘仓依旧裸奔、用户毫不知情。
+        from app.web_dashboard.env_scope import is_simulate_row, real_only
+        db_path = ds._get_db()
+        if is_simulate_row(db_path, symbol):
+            logger.critical(
+                f"[EnvIsolation] 设置止损被拦截: {symbol} 是 SIM 数据收集仓 "
+                f"(看板=实盘台, 不改写 sim 行) — DEB-20260905 §13.15"
+            )
+            return {
+                "success": False, "symbol": symbol,
+                "error": f"{symbol} 是 SIM 数据收集仓, 看板(实盘台)不改写其止损 — DEB-20260905 §13.15",
+            }
+        rows = await ds.db_execute(
+            "UPDATE open_positions SET stop_loss_price = ?, stop_loss_triggered = 0 "
+            f"WHERE symbol = ? AND {real_only(db_path)}",
             (float(price), symbol)
         )
-        return {"success": True, "symbol": symbol, "stop_loss_price": float(price)}
+        return {"success": True, "symbol": symbol, "stop_loss_price": float(price),
+                "rows_affected": rows}
 
     @router.post("/api/protection/confirm/{symbol}")
     async def confirm_protection(symbol: str, request: Request):
@@ -399,11 +415,23 @@ def register(app, templates, dashboard):
     async def cancel_protection(symbol: str):
         """取消告警（清除triggered标记，继续监控）"""
         ds = get_data_service()
-        await ds.db_execute(
-            "UPDATE open_positions SET stop_loss_triggered = 0, trailing_stop_triggered = 0 WHERE symbol = ?",
+        # SIM 隔离 (DEB-20260905 §13.15): 同上 — 清 triggered 标记不得落到 sim 行
+        from app.web_dashboard.env_scope import is_simulate_row, real_only
+        db_path = ds._get_db()
+        if is_simulate_row(db_path, symbol):
+            logger.critical(
+                f"[EnvIsolation] 取消告警被拦截: {symbol} 是 SIM 数据收集仓 — DEB-20260905 §13.15"
+            )
+            return {
+                "success": False, "symbol": symbol,
+                "error": f"{symbol} 是 SIM 数据收集仓, 看板(实盘台)不改写其告警标记 — DEB-20260905 §13.15",
+            }
+        rows = await ds.db_execute(
+            "UPDATE open_positions SET stop_loss_triggered = 0, trailing_stop_triggered = 0 "
+            f"WHERE symbol = ? AND {real_only(db_path)}",
             (symbol,)
         )
-        return {"success": True, "symbol": symbol}
+        return {"success": True, "symbol": symbol, "rows_affected": rows}
 
     app.include_router(router)
 

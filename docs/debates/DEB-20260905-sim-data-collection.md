@@ -1566,3 +1566,179 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
 约 1 小时), 不是回潮。另: 决策中枢显示的持仓是**实盘账户**的 `MU SHORT / TSLA LONG`
 (`hold_days=0`, 因实盘仓在主 sim 库里没有元数据行), **不是**正在收集数据的 sim 三仓
 `UBER/RIVN/HOOD` —— 这是 13.14.5 ①那条**待裁**的 env 矛盾的**可见症状**, 本批刻意未改。
+
+### 13.15 SIM / 实盘硬隔离批 (2026-09-05 23:00–23:40 CST · 用户裁「不要混乱了」)
+
+#### 13.15.0 一句话结论
+
+§13.14.5 留下的那条「待裁 env 矛盾」被用户当场裁掉: **「webdashboard 是我用来手动操作实盘,
+自管理的, 和 SIM 模拟账号数据不要混乱了」**。据此做全量审计, 发现「混」不是一处而是**三层**,
+其中两条能**静默改写正在收集的 sim 数据集**、一条让**实盘仓位建议建立在 sim 战绩上**。
+本批落地**收敛层** `app/web_dashboard/env_scope.py` + 6 文件 13 个写点接入 + 13 例测试
+(含豁免台账式源码契约), 双向证伪实跑过、生产面两端点冒烟输出**逐字未变**、两库**零字节改动**。
+**库级分离 (看板 DB 切 live 库) 与 day_score 口径属产品语义变更, 已列方案待裁, 本批未动。**
+
+#### 13.15.1 审计: 「混」在哪三层
+
+- **层 1 · env 不一致 (结构性)**: 看板进程**券商侧恒 REAL** —— `ManualOrderService._is_live()`
+  **硬编码 `return True`** (`manual_order_service.py:111`, 2026-06-24 三态共存 Phase 0:
+  「手动交易永远是实盘, TRADE_ENV 现仅控制 DB 路由」); **DB 侧却由 TRADE_ENV 路由** ——
+  现值 `TRADE_ENV=1` ⇒ `is_live_mode()=False` ⇒ `get_main_db()` = **sim 库** `data/ftseek_us.db`
+  (运行态打印确认), 其 `open_positions` 现役 3 行全是 `account_type='simulate'` 的收集仓。
+- **⇒ 分栏方案被证伪 (关键取证)**: `open_positions` 的 **PRIMARY KEY 是 `symbol`**
+  (sim 库与 live 库 `PRAGMA table_info` 实测一致, PK 列均为 `['symbol']`) ⇒
+  **同一标的的实盘手动仓与 sim 收集仓在同一张表里物理上无法共存**。
+  所以「加个 `account_type` 过滤就分栏了事」对**新写实盘仓**根本不成立 (会撞 PK);
+  真正的分离只能落在**库文件级**。本批的谓词层因此定性为**分离落地前的收敛层**, 不是终局。
+- **层 2 · 写侧污染 (13 个 `UPDATE open_positions` 写点 + 1 个 UPSERT + 1 个 stub INSERT)**:
+  全部以 `WHERE symbol=?` 为键、全部打在 sim 库上。最严重的一条见 13.15.2。
+- **层 3 · 读侧串味 (含一条比写侧更危险的)**:
+  · `routes/battle_plan.py:1014` 取「幽灵标的」过滤**实盘**目标池, 读的却是 **sim 行**的
+    `is_anomalous` ⇒ 用 sim 的异常去筛实盘标的;
+  · **`app/plan/day_score.py:234` / `:267` 硬编码 `data/ftseek_us.db`** (连 TRADE_ENV 都不看) ⇒
+    `_get_recent_win_rate` / `_get_weekly_pnl` 全部来自 **795 笔 sim 成交**;
+    而 `calculate_day_score(available_cash=…, position_count=…)` 的两个入参来自 **REAL 账户**
+    ⇒ 产出的 `score=85 STRONG` / `daily_risk_budget=$12,975.11` / 「可适度放大仓位追趋势」
+    是**用实盘现金 × sim 战绩**算出来的**实盘仓位建议**。实测那句「近5笔胜率 100%，状态良好」
+    就是 sim 的胜率。**这是本批查到后果最重的一条混用** —— 它不是显示错, 是**建议错**;
+    且因该函数同时被 sim 主管线 (`app/us_pipeline/battle_plan_manager.py:290`) 消费,
+    改口径会**同时改动 sim 侧行为** ⇒ 列为待裁, 未擅动。
+  · 其余读点 (`routes/analytics.py:26` MetricsTables、`routes/stock_detail.py:293/:391`、
+    `routes/trade.py:255`、`routes/watchlist.py:18`、`order/executor.py:869/:945`、
+    `manual_order_service._get_db_path`) 一律经 `get_main_db()` ⇒ 看板看到的历史/绩效/审计
+    **全是 sim 数据**。
+
+#### 13.15.2 最严重的一条: 手动实盘单会**劫持** sim 收集仓并让它失去退出监控
+
+`order/audit.py::mark_position_manual` (由 `executor.py:253/:575` 在**每次手动下单后**调用):
+```sql
+UPDATE open_positions SET owner='manual', account_type='real' WHERE symbol=?
+```
+若用户手动买的标的**恰是 sim 正在收集的仓** (UBER/RIVN/HOOD 这类热门票, 相撞概率不低):
+1. sim 行被翻成 `owner='manual'` ⇒ 主线 Reconciler 判 **`LEGACY/MANUAL → PROTECTED`**
+   (启动日志里那条 `↳ legacy : N (LEGACY/MANUAL → PROTECTED)` 就是这个映射) ⇒
+   **sim 仓静默失去退出监控** (SL/trailing 不再管它), 零告警;
+2. `account_type` `'simulate'` → `'real'` ⇒ **正在收集的数据集被改写**, 且该行从此对
+   所有按 `account_type='simulate'` 取数的 sim 统计**消失**;
+3. 行不存在时还会 INSERT stub (`owner='manual'`, `account_type='real'`) ⇒ 在 sim 库里
+   **凭空造出一条实盘行**, 之后 `position_sync` 会继续往里 merge。
+**取证方式**: 不是推理 —— 双向证伪时把 6 个接入文件退回 HEAD 实跑, 测试输出的 diff 精确显示
+`{'account_type': 'real'} != {'account_type': 'simulate'}` 与 `{'owner': 'manual'} != {'owner': 'auto'}`。
+**当前血量**: `owner='manual'` 现库 **0 行**、`ftseek_us_live.db` 自 **2026-07-19** 起零写入
+⇒ 手动单路径近期**未使用**, 属**潜伏**而非在燃。这也是本批敢在周六夜里做收敛层、
+而把库级迁移留到裁决后的原因。
+
+#### 13.15.3 修法: 收敛层 `app/web_dashboard/env_scope.py` (新文件)
+
+- `real_only(conn|path)` → 可直接拼进 WHERE 的隔离谓词 `LOWER(COALESCE(account_type,'')) != 'simulate'`
+  (口径与 `data_service._fetch_positions_from_db` 既有过滤**完全一致**)。
+- **列容错是必需的, 不是锦上添花**: `ftseek_us_live.db` 的 `open_positions` **没有 `account_type`
+  列** (实测 40 列 vs sim 库 41 列, 差集恰为 `account_type`)。硬拼谓词 ⇒ 将来 DB 路由切 live 库时
+  **每条查询都抛 `OperationalError`** ⇒ 手动实盘单落库全断。故按「库里有这列才过滤, 没有就 `1=1`」
+  生成, 并按**库文件路径缓存**探测结果。
+- **探测失败一律落在安全侧**: 返回 `1=1` / `False` (宁可不过滤, 也不让实盘侧写入整条抛错) ——
+  与 §13.14「删除不可逆 ⇒ 解析失败返回 False」同一方向纪律。
+- `scoped_update(conn, sql, params, symbol, action)`: 自动拼谓词 + **0 行生效时 CRITICAL 出声**。
+  **强制校验 `sql` 必须以 `WHERE symbol=?` 结尾** (正则容忍空白), 不满足直接 `ValueError` ——
+  谓词是拼在末尾的, 位置错了会让隔离**静默失效**, 那比不修更危险, 故宁可炸在开发期。
+- **不静默 no-op**: 券商侧单子已经出去了、DB 侧却没记下, 若不出声就变成「账外实盘仓」且用户
+  毫不知情 ⇒ 一律 `logger.critical` 把冲突摊到日志, 并把原因写进 API 返回。
+  同时 `warn_sim_collision` 只在**确为撞仓**时报 (`is_simulate_row` 为真), 行压根不存在不报
+  —— 否则告警会被噪音磨钝。
+
+#### 13.15.4 接入清单 (6 文件) 与豁免台账
+
+| 文件 | 点位 | 处置 |
+|---|---|---|
+| `order/audit.py` | `mark_position_manual` | **整段前置拦截** (撞 sim 仓 ⇒ CRITICAL + `return`, 连下面那段 in-memory `PositionStore` 改写一起跳过) + UPDATE 再拼谓词 (防 `position_sync` 竞态) |
+| `order/executor.py` | 改止损 SL 落库 / 订单组 SL+TP ID / 部分平仓重建 ID / 平仓清 ID / 部分撤单清 SL / 清 TP | 6 处 `scoped_update` |
+| `order/executor.py` | `[Takeover]` 预检 | 撞 sim 仓时把含糊的 `already in DB` 换成明确拒绝 + CRITICAL (不接管、不改写) |
+| `order/oco_handler.py` | OCO 回调清 SL/TP ID | `scoped_update` |
+| `order/thesis.py` | auto-thesis 落库 | `scoped_update` |
+| `routes/dashboard.py` | 设置止损 / 取消告警 | 前置拦截 + 谓词 + **API 如实回错** (原来会静默改 sim 行的 SL, 而真实盘仓依旧裸奔) |
+| `routes/battle_plan.py` | 幽灵标的过滤 (读侧) | 查询拼 `real_only(db_path)` |
+
+**豁免台账 (2 条, 写在测试里并断言穷尽+不冗余)**:
+① `order/executor.py:1600` 的 `SET current_sl=?, initial_tp=?` —— 该分支由
+`trd_env == TrdEnv.SIMULATE` 进入 (模拟盘不下 STOP 单、仅记录到 DB), 写的**本就是 sim 行**,
+加实盘隔离谓词反而错; 今天它是**死代码** (`_is_live()` 恒 True ⇒ `_trd_env()` 恒 REAL),
+但语义属 sim 侧。② `data_service.py:1024` 的幽灵标记 —— 隔离靠**上游两道闸**
+(meta_map 已按 `_env_account_scope()` 裁剪 + `_reconcile_ghosts` 权威闩, 见 §13.14),
+此处再加谓词是重复防御。
+
+#### 13.15.5 测试与双向证伪
+
+- 新增 **13 例** `tests/test_dashboard_sim_isolation.py`: A 谓词列容错 2 / B `scoped_update`
+  行为 5 / C `mark_position_manual` 劫持 3 (含 2 条**正向对照**: 实盘行仍须照标、
+  stub INSERT 仍须能建 —— 2026-06-11 那条 race fix 不能被本批弄丢) / D 源码契约 3。
+- **D 组是豁免台账式源码契约** (仿 `test_naive_datetime_now_ratchet.py` 的 `_ALIAS_EXEMPTIONS`):
+  扫 `app/web_dashboard/**/*.py` 全部 `UPDATE open_positions`, 判定「前 200 字符内有
+  `scoped_update` 或后 300 字符内有 `real_only`」, 未守卫者必须**逐条**在台账里有理由;
+  另一条断言 **实测未守卫数 == 台账条数** ⇒ 台账**冗余条目**同样报红 (冗余会掩盖
+  「守卫被人删掉」的事实)。第三条断言 6 个接入文件都真的还引用 `env_scope`
+  (防止 import 被后来的"清理"删掉)。
+- **双向证伪 (实跑)**: 保留新 helper、把 **6 个接入文件**退回 `HEAD`
+  (`git show HEAD:<file> > <file>`, 只动工作树) ⇒ **4 failed / 9 passed**;
+  其中 `test_mark_position_manual_does_not_hijack_sim_row` 的失败输出**精确显示劫持**
+  (`account_type: simulate→real`、`owner: auto→manual`) ⇒ 行为级证伪。
+  9 passed 是 A/B 组 (直接测 helper, 与接线无关) + C 组两条正向对照 = **符合预期**。
+  复原: `cp` 回备份, **逐文件 diff 6/6 为空**, `git status` 首列**无 `MM`** (索引干净)。
+- **全量**: **2809 passed / 1 failed / 37 skipped**。对账: §13.14 后 2796 passed + 1 failed = 2797 总,
+  本批 **+13** ⇒ 应 2810 总; 实测 2809 + 1 = **2810** ✓; skipped **37 持平** ✓;
+  唯一 failed 仍是**预存** R12 (`US.HOOD` 两表 `entry_time` 差 2.94s)。
+
+#### 13.15.6 过程登记: 棘轮报红, **改正而不是抬基线**
+
+首次全量跑出 **2 failed**: 除预存 R12 外, `test_except_pass_ratchet` 报
+**955 → 957**。逐点归因: 正是我新文件 `env_scope.py` 里两处
+`finally: try: conn.close() except Exception: pass` (只读探测连接的收尾)。
+**处置**: 按棘轮自己的口径 (「新增异常处理必须 warn 留痕 (R5 模式)」) 改成
+`except Exception as e: logger.debug(...)`, **复跑归 955** —— 而**不是**把 `BASELINE` 抬到 957。
+⇒ 记档以免复犯: 新写"防御性收尾"时, `except: pass` 在本仓是**被棘轮禁止**的,
+默认就要留痕; 抬基线只在该处确属不可避免时用, 且须在 DEB 写明理由。
+
+#### 13.15.7 生产面冒烟 (修好后)
+
+- dashboard 事故进程早已 idle-exit (`ftseek-dashboard.service` = **inactive**, `.socket` 仍
+  **active/listening**) ⇒ **无需重启任何服务**, 冷启即新代码。
+- 两端点复验: `GET /api/decision-hub` → **HTTP 200 / 982 bytes**, `position_advice` 与
+  §13.14 修后快照**逐字一致**; `GET /api/battle-plan/actions` (读侧改动所在端点) →
+  **HTTP 200 / 1229 bytes**, 载荷正常 (`date/regime/brief/risk_budget` 齐)。
+- **两库零改动**: sim 库 `open_positions` 全表 md5 **仍是 `24346bbec4f3ebcc898af947c8fc344e`**、
+  `is_anomalous=[0,0,0]`、`owner=['scheduler'×3]` (**没有被翻成 `manual`**);
+  live 库仍 **8 行 / `size>0` 为 0 行** (未被写入)。
+- `logs/dashboard.log` 新增段**零** `GhostReconcile` / `EnvIsolation` / `Traceback` / `ERROR`
+  (无撞仓 ⇒ 隔离层不需要出声, 这正是期望态)。
+- **主服务零影响**: 6 个接入文件全在 `app/web_dashboard/` 下, 主服务进程不加载其写路径
+  (§13.14.7 已取证); **未重启主服务**, 交易与 sim 收集不中断。
+
+#### 13.15.8 刻意未做 (须用户裁, 勿在此扩权)
+
+- **① 库级分离 (终局修法)**: 把看板的 DB 路由从 `get_main_db()` 切到**实盘专属库**
+  `data/ftseek_us_live.db`。代价与前置:
+  · live 库 `open_positions` **缺 `account_type` 列** (需 `ALTER TABLE ADD COLUMN`);
+  · 两库各 **44 表但集合不同** (sim 独有 `cb_shadow_blocked`/`close_retry_state`/
+    `playbook_generate_state`…, live 独有 `daemon_heartbeat`/`option_peak_profits`…) ⇒
+    必须**逐表核对**看板会碰的表在 live 库是否存在, 否则查询整条抛错;
+  · live 库自 **2026-07-19** 零写入 = **陈旧**, 切过去后看板的历史/绩效会从
+    **795 笔 sim** 变成 **17 笔实盘** (这是**正确**的, 但用户会立刻看到"数据变少");
+  · 迁移前须备份 (仓内纪律: hard-to-reverse 先备份+确认);
+  · 已有先例可参照: `mode_switch_service._clear_live_db()` 在切实盘时会**先归档再清空**
+    live 库的 `open_positions`/`trade_records`。
+- **② day_score 口径 (后果最重, 三个选项)**: (a) 改读实盘成交 ⇒ 现仅 17 笔, 多数时候
+  落到「数据不足 ⇒ 0.5 中性」, 评分退化为 VIX/现金驱动; (b) **保留 sim 数据但如实标注来源**
+  (「近5笔胜率」→「**模拟盘**近5笔胜率(非实盘)」) = 零决策变更、只去掉误导;
+  (c) 做成 mode-aware。**注意该函数同时被 sim 主管线消费** (`battle_plan_manager.py:290`),
+  改 (a)/(c) 会**连带改动 sim 侧行为** ⇒ 不可顺手翻。
+- **③ 是否保留一个明确标注的「SIM 数据收集」视图**: sim 数据是当前 OKR 的产物, 若看板
+  完全 REAL 化, sim 侧的可观测性就只剩 cron 报表 (`symbol_performance_report` /
+  `ic_weekly_report` / `da_chain_health_report` 等)。**这是产品取舍, 不是技术取舍。**
+- **④ `is_anomalous` 语义分裂** (§13.14.8 ③ 已提): 三个写方各自解释, 建议单独 DEB。
+
+#### 13.15.9 遗留风险 (如实登记, 收敛层的**已知代价**)
+
+在库级分离落地前, 若用户手动实盘买入的标的**恰是 sim 正在收集的仓**, 则该实盘持仓
+**无法落库** (`symbol` 是 PK, 两 env 抢同一行) —— 本批选择**「出声 + 不写」**,
+而不是「覆盖 sim 行」: 前者是一条 CRITICAL 日志 + API 明确回错 + 需人工对账,
+后者是**静默毁掉数据集并让 sim 仓失去退出监控**。两害相权取其轻, 但**这确实是代价**:
+撞仓时实盘持仓在 DB 里是缺记录的 (券商侧真实存在)。彻底消除需 ①落地。

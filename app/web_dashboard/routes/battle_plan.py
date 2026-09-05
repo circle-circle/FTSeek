@@ -1011,9 +1011,13 @@ def register(app, templates):
             if db_path.exists():
                 conn = sqlite3.connect(str(db_path))
                 cur = conn.cursor()
-                cur.execute("""
+                # SIM 隔离 (2026-09-05, DEB-20260905 §13.15 · 读侧): 这里取的是"幽灵标的"
+                # 用来过滤**实盘**看板的目标池。TRADE_ENV=1 时本库是 sim 库 ⇒ 原查询读的是
+                # **sim 行**的 is_anomalous, 拿 sim 的异常去过滤实盘标的 = 读侧串味。
+                from app.web_dashboard.env_scope import real_only
+                cur.execute(f"""
                     SELECT symbol FROM open_positions
-                    WHERE is_anomalous=1
+                    WHERE is_anomalous=1 AND {real_only(db_path)}
                 """)
                 ghost_symbols = {row[0] for row in cur.fetchall()}
                 conn.close()
