@@ -1408,3 +1408,161 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
    差点被读成"活库测试无判别力"。**取错基准代的证伪比不做证伪更危险**: 它会给出一条看似实测、
    实则无效的结论。判据: 回退后必须先 `grep` 一处**只存在于修复前**的特征串
    (本例 `txt[: 26`, 实测命中 1) 再跑测试。
+
+### 13.14 重启后观察 + 现场抓获一条**活体**数据破坏路径 (2026-09-05 22:15–22:50 CST)
+
+#### 13.14.0 一句话结论
+
+用户裁「现在重启后观察」⇒ 已重启并按 §13.11 的 8 项前置条件逐条核验全过、观察至 22:47 全绿;
+但**观察动作本身当场打穿了一次数据** —— 我为验证 dashboard 面而发的一次 `GET /api/decision-hub`
+让 `_reconcile_ghosts` 把 **3 个真实在仓的 sim 数据收集仓标成幽灵仓** (`is_anomalous=1`, 24h 后
+`DELETE`)。已按备份原值**逐字节回滚**, 并修掉两条独立成因 (跨 env 差集 + 空结果被当零持仓),
+新增 10 例钉桩、双向证伪实跑过、生产面同端点复验**看板输出逐字未变而 DB 不再被写**。
+**§13.5/§13.11 的「`_reconcile_ghosts` 全库零触发 = 可达但休眠」断言在此正式证伪。**
+
+#### 13.14.1 重启与观察取证 (8/8 全过)
+
+- 旧 **PID 388594 @ 19:41:29** → 新 **PID 404040 @ 22:15:52 CST** (`systemctl restart ftseek-us`),
+  `active/running`, **NRestarts=0** (无崩溃自拉起)。
+- ① 另一 Agent 两条守卫已绿 (19 passed); ② `find app -name '*.py' -newermt '2026-09-05 22:15:52'`
+  **空** ⇒ 磁盘代码 == 运行态; ③ 新启动段 (日志行 3800–4071, 272 行) **0 ERROR/CRITICAL/Traceback**;
+  ④ `[US Sync] Done | Futu: 3 | 主线DB: 0 | playbook自管: 3 | 一致性: ✓`、`broker_only: 0`、
+  UBER/RIVN/HOOD 三仓仍判 `禁止 takeover`; ⑤ `[PlaybookExit] 快循环已启动 (interval=10s)`;
+  ⑥ 心跳新鲜 (核验时 2s); ⑦ `scripts/deploy_freshness_check.py` exit=0 静默;
+  ⑧ WARNING **21 → 21**, 且数字归一化后**告警家族集合 diff 为空** (20 个家族, 无新增亦无消失)。
+- **修复在运行态生效的独立取证** (不靠日志自证): 6 个改动文件磁盘 md5 == `6e9a9468`(修复批)
+  且 ≠ `a85844d3`(修复前); 6 文件 mtime (21:52–22:02) 全部早于启动时刻 22:15:52。
+- **持续观察至 22:47 CST**: 健康检查 22:20/22:30/22:40 **三轮全绿**; 主日志停在 22:16:11 的启动
+  完成行、**零新增** (周六休市, 循环在跑但不产日志 —— `data/llm_scan_state.json` 22:22:07 有写入
+  ⇒ 进程确实活着, 不是卡死); `open_positions` 3 行原文未变。
+
+#### 13.14.2 ⚠️ 「休眠」断言被证伪 —— 错在**取证口径**, 不在推理
+
+- 原断言 (§13.5 缺陷3b / §13.11 / handoff): 「`_reconcile_ghosts` 调用链活 (`:779 → :844`) 但
+  `logs/` 全库**零** `[GhostReconcile]` 触发 = **可达但休眠**」。
+- **实测反例**: 2026-09-05 **22:24:35** 一次 `GET /api/decision-hub` 即在
+  **`logs/dashboard.log`** 打出 `[GhostReconcile] 标记幽灵仓 is_anomalous=1 (3):
+  ['US.UBER', 'US.RIVN', 'US.HOOD']`。
+- **口径错在哪**: dashboard 是 **systemd socket 激活的独立进程** (`ftseek-dashboard.service` +
+  `.socket` 监听 127.0.0.1:8901, 闲置 15min 自杀), 其 logger 落在 **`logs/dashboard.log`**;
+  而取证只 grep 了主服务的 `logs/ftseek_us.log` ⇒ 「全库零触发」实为「**查错了文件**」。
+  同批还据此推出「本次改写零运行态影响」—— 该结论一并作废。
+- **教训 (可复用)**: 判「某写方是否休眠」必须先枚举**所有会加载该模块的进程**及其**各自的日志
+  出口**, 而不是默认全仓共用一个日志文件。本仓至少有 3 类出口: 主服务 `ftseek_us.log`、
+  dashboard `dashboard.log`、cron 各自 `>> logs/<name>.log`。
+- 附带更正: handoff 早已记过「**读一次仪表盘就可能删库行**」(`battle_plan.py:1355` 与 `:1495`
+  共用一个端点) —— 那条**耦合判断是对的**, 只是被「休眠」结论盖住了血量。现定性为**热路径**。
+
+#### 13.14.3 事故经过 / 影响 / 回滚取证
+
+- **触发者是我自己**: 为闭合「dashboard 面未验证」这个中断点, 先用 `create_session_token()`
+  (读 `.env.us` 的 `DASHBOARD_SECRET`, 64 hex, mtime 08-12 **未变动** ⇒ 无写入副作用) 本地签发
+  只读 cookie, 再 `curl /api/decision-hub` ⇒ HTTP 200, 同时打穿 DB。
+- **污染态**: 3 行 `is_anomalous` 0→1, `updated_at` 被改写为 `2026-09-05T10:24:34.818579-04:00`
+  (= 22:24:34 CST, 正是那一次请求; 写方格式已是本批改过的 aware-ET 自描述串 —— 讽刺的是
+  **尺度修对了, 语义照样破坏数据**)。
+- **回滚**: 以 `data/backups/ftseek_us.db.bak_batch0_vscan_20260905_040912` (当日 04:09) 为原值来源
+  (3 行 `updated_at == entry_time`, `is_anomalous=0`), 执行
+  `UPDATE open_positions SET is_anomalous=0, updated_at=entry_time WHERE symbol IN (…) AND is_anomalous=1`
+  ⇒ 3 行; **回滚后全表 md5 = `24346bbec4f3ebcc898af947c8fc344e`, 与事故前 22:23 独立采到的
+  md5 逐字相同** ⇒ 证明是字节级复原而非「看起来对了」。回滚前先 `cp` 了污染态副本 (`/tmp/pre_restore_ftseek_us.db`) 留证。
+- **暴露窗口 ≈100s, 实际影响 = 0**: 该窗口 (22:24–22:27) 主日志**一行都没有** (休市, 无退出尝试),
+  且全库 `is_anomalous` / `_close_blocked_reason` 在主日志出现 **0 次** ⇒ 没有触发
+  「DB 异常 ⇒ 禁止平仓」那条分支。若发生在盘中, 后果是**三个仓在 100s 内失去平仓许可**,
+  且 24h 后记录被删 ⇒ 属**不可逆**破坏 (删除无软删/无审计副本)。
+
+#### 13.14.4 根因: 两条**独立**成因, 缺一不会打穿
+
+- **A · 跨 env 差集 (主因)**: `DataService._get_env_ctx` 复用 `ManualOrderService._is_live()`,
+  而该方法**硬编码 `return True`** (「手动交易固定走实盘」, 2026-06-24 三态共存 Phase 0)
+  ⇒ dashboard **恒查 REAL 账户**; 但 `.env.us` 的 `TRADE_ENV=1` ⇒ `is_live_mode()=False`
+  ⇒ `get_main_db()` = **sim 库** `data/ftseek_us.db` (运行态实测打印确认)。该库 `open_positions`
+  **只有 3 行、全部 `account_type='simulate'`**。REAL 账户应答 `{MU SHORT, TSLA LONG}`
+  与 sim 库 `{UBER, RIVN, HOOD}` 做差集 ⇒ **3 个 sim 仓全判幽灵**。
+  **旁证 (口径本就该如此)**: 同文件的 `_fetch_positions_from_db` **早就**带
+  `LOWER(COALESCE(account_type,'')) != 'simulate'` 过滤, 且 fallback 行还专门携带
+  `account_type` 供「实盘页不渲染 sim 仓」的防御 ⇒ `open_positions` 是**混 env 表**、
+  REAL 视图本就该忽略 sim 行; **`_load_position_meta` 漏了这层过滤**才是缺口。
+  (MU/TSLA 判定为**真实券商应答**而非 DB fallback 的依据: 输出 `pnl_pct` 非零
+  (−0.0176 / −0.0164), 而 fallback 把 `nominal_price` 设成成本价 ⇒ 盈亏必为 0。)
+- **B · 空结果被当成零持仓 (放大器)**: `_fetch_positions` 失败/超时 → DB fallback →
+  fallback 在**本部署恒为空** (它排除 simulate 行, 而主库只有 simulate 行) →
+  `if not r: return None` → `get_positions_raw()` 交出 `[]` → `futu_symbols=set()` ⇒
+  **所有** meta 行判幽灵。即「**一次券商抖动 + 一次看板访问 = 全仓标异常, 24h 后全删**」。
+  DEB-20260904 #S11 已区分「RET_OK+空表 = 权威零持仓」与「查询失败」, 但这个区分**只活在
+  `_fetch_positions` 内部, 从未传给对账层** ⇒ 下游拿到的 `[]` 无法自证是哪一种。
+- **为什么之前没人踩**: 需要「**已登录**的看板请求」。此前未鉴权的 curl 一律 401
+  (中间件在 `app.py:248-256` 拦在 handler 之前) ⇒ 打不到 `_build_enriched_positions`。
+  用户平时若不登录看板, 这条路径就一直静默; 一旦登录, **每次访问都在给真实持仓上删除倒计时**。
+
+#### 13.14.5 修法 (只动 `app/web_dashboard/data_service.py`, +90/−5)
+
+1. **env 归一 + 作用域**: 新增 `_trd_env_label()` (吃 futu `TrdEnv` 常量/其 `.value`/裸字符串,
+   未知返回 None) 与 `_env_account_scope()` → `'real'` / `'simulate'` / `None`。
+2. **`_load_position_meta(exclude_anomalous, account_scope=None)`**: 按作用域拼 SQL, 口径与
+   `_fetch_positions_from_db` **完全一致**。`None` (env 未知) 时**不过滤** = 保留旧行为, 由闸门兜底。
+   **缺列容错 (必需)**: `ftseek_us_live.db` 的 `open_positions` **没有 `account_type` 列** (实测
+   PRAGMA), 而 live 路由下 `get_main_db()` 正指向它 ⇒ 先 `PRAGMA table_info` 探列再拼过滤;
+   否则整条 SELECT 抛 `OperationalError` → 被 except 吞掉 → meta_map 变空 →
+   **实盘仓 SL/TP 全部消失 (比不修更糟)**。
+3. **权威闩**: 新增 `_last_positions_authoritative` / `_last_positions_env`。
+   `_fetch_positions` **每轮开头**先落 env 标签并把闩清零, 只有 `ret == RET_OK` 分支置回 True;
+   `_fetch_positions_from_db` **也清一次** —— 覆盖 `asyncio.wait_for(…, 10s)` 超时把
+   `_fetch_positions` 掐断、闩停留在**上一轮 True** 的情况 (那会让降级空列表被误读成权威零持仓)。
+4. **闸门位置**: `_reconcile_ghosts` 的闩检查放在 **5min 限流之前** —— 否则一次降级轮次会
+   **消耗掉限流窗口**, 把紧随其后的权威轮次挤掉, 幽灵仓照旧留存。
+5. **代码内更正**: 缺陷3b 那段「本写方**休眠**, 故本次改写零运行态影响」的注释已就地改写为
+   证伪记录 (含取证口径错在哪), 避免下一个人再据此判断血量。
+
+**刻意不动 (须用户裁, 勿在此扩权)**: ① `_is_live()` 硬编码 True 与 `TRADE_ENV=1` 的 DB 路由
+**互相矛盾** —— 改任一边都会**变更看板显示的是哪个账户** (产品语义变更); ② 是否让 REAL env 下
+的元数据改读 `ftseek_us_live.db`; ③ `is_anomalous` 目前被三个写方
+(`trade_store.mark_anomalous` / ghost reconcile / 主线 reconciler) 各自解释, 语义是
+「跨源不一致」的垃圾桶, 建议单独 DEB。**本批只保证「不再破坏数据」, 不改任何显示口径。**
+
+#### 13.14.6 测试与双向证伪
+
+- 新增 **10 例** `tests/test_ghost_reconcile_env_scope.py`: A 事故回归 2 / B 权威闩 4 /
+  C「没把功能修死」2 / D 缺列容错 + env 归一 2。
+- **事故回归用例的判别力是行为级的**: 断言**逐列比对整行** (不只 `is_anomalous`) —— 因为
+  `updated_at` 被改写本身就是污染 (它是 24h 删除倒计时的**起点**), 只断 `is_anomalous==0`
+  会漏掉半个事故。
+- **双向证伪 (实跑)**: `git show HEAD:app/web_dashboard/data_service.py > <file>` (只动工作树,
+  不污染索引 —— 沿用 §13.13 记的坑) ⇒ **9 failed / 1 passed**。其中事故回归例的失败输出与生产
+  **逐字同形**: `[GhostReconcile] 标记幽灵仓 is_anomalous=1 (3): ['US.UBER', 'US.RIVN', 'US.HOOD']`,
+  diff 明确显示 `is_anomalous` 0→1 且 `updated_at` 被改写 ⇒ 不是 `AttributeError` 级的假红。
+  **唯一通过的那条是 `test_legit_ghost_deleted_after_24h`, 且这是设计意图** —— 它是「同 env 真幽灵
+  超 24h 仍须 DELETE」的**正向钉桩**, 修前修后都该绿 (证明本批没把功能修死); 其余 9 条覆盖每一个成因。
+  复原: `cp /tmp/ds_fixed.py` 回去, md5 `9e2cad74da749e2f6cbfc2f5ee387e1c` 与修复版一致,
+  `git status` **首列干净** (只有 ` M`, 无 `MM`)。
+- **测试自身的坑 (记档免复犯)**: 首跑 3 例红, 真因是我用字符串 `"RET_OK"` 冒充 futu 常量, 而
+  **`futu.RET_OK == 0` (int)** ⇒ `ret == RET_OK` 恒 False ⇒ 三个用例**静默走到 DB fallback 分支**,
+  测的是错的路径 (日志里 `Futu API error ret=RET_OK` 就是这个自相矛盾的证据)。已改
+  `from futu import RET_OK`。**桩替身必须用被测代码比较的那个真常量**, 否则「看起来在测 A 分支、
+  实际在测 B 分支」且**全绿**。另: 首版 `_make_db` 的 INSERT 少绑一个参数 (7 占位/6 值), 手写 schema 的低级错。
+- **全量回归**: `PYTHONPATH=. venv/bin/python -m pytest tests/ -q -p no:randomly` →
+  **2796 passed / 1 failed / 37 skipped** (135.6s)。对账: 前次 2786 passed + 本批 **10** = **2796** ✓;
+  skipped **37 持平** ✓; 唯一 failed 仍是**预存** R12 (`US.HOOD` 两表 `entry_time` 差 2.94s), 不顺手修。
+  `BASELINE_NOW` **445 未动** (棘轮只扫 `app/`, 本批未新增任何裸 now 字面量, 注释亦按不带括号约定书写)。
+
+#### 13.14.7 生产面复验 (修好后, 同一个端点, 同一条鉴权路径)
+
+- 事故那个 dashboard 进程已自行 idle-exit (`ftseek-dashboard.service` = **inactive/dead**,
+  `.socket` 仍 listening) ⇒ **无需重启任何服务**, 下一次请求天然冷启修复版。
+- 复验 (22:46:08, 新进程 PID 407470): `GET /api/decision-hub` → **HTTP 200 / 982 bytes**;
+  `position_advice` 与 `portfolio_health` 与修前 **逐字一致** (看板显示口径**零变化**);
+  `logs/dashboard.log` **零新增 `[GhostReconcile]`** (全库计数仍为 1 = 事故那一条历史行);
+  `open_positions` 全表 md5 **仍是 `24346bbec4f3ebcc898af947c8fc344e`**, 3 行 `is_anomalous=0`。
+- **影响面判定 (为什么主服务不需要重启)**: `get_enriched_positions` 的**唯一**消费方是
+  `routes/battle_plan.py:1355`; 主服务侧对 `data_service` 的引用只有
+  `app/plan/factor_engine.py:516/:680` (**只用 `get_batch_quotes_detailed` 取行情**) 与
+  `app/playbook/playbook_service.py:2395` (**只 import `et_today`**) ⇒ 主服务进程**永不**走到
+  对账写方。**交易与 sim 数据收集零中断**, 符合用户红线「不要终止开仓、要继续交易下去」。
+
+#### 13.14.8 预期管理 (别把正确告警读成新故障)
+
+现在 (≈10:46 ET) Rule 4 对 **UBER/RIVN 会合法触发** —— 真实持仓已满 2 天、历史平均 1 天
+(`2 > 1×1.5`)。这是 §13.13 已记档的**修复后正确行为** (20:46 那次快照不触发只是取样恰在日界前
+约 1 小时), 不是回潮。另: 决策中枢显示的持仓是**实盘账户**的 `MU SHORT / TSLA LONG`
+(`hold_days=0`, 因实盘仓在主 sim 库里没有元数据行), **不是**正在收集数据的 sim 三仓
+`UBER/RIVN/HOOD` —— 这是 13.14.5 ①那条**待裁**的 env 矛盾的**可见症状**, 本批刻意未改。

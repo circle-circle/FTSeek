@@ -117,6 +117,11 @@ class DataService:
         self._pool = ThreadPoolExecutor(max_workers=8)
         self._last_snapshot: Dict[str, Any] = {}  # delta 检测用
         self._last_reconcile_time: float = 0.0  # 幽灵仓对账限流 (5min)
+        # 幽灵对账安全闩 (2026-09-05, DEB-20260905 §13.14): 记录"最近一次持仓列表"的
+        # 来源权威性与所属交易 env。只有券商对**本 env** 的权威应答 (RET_OK) 才允许
+        # _reconcile_ghosts 写 DB; DB fallback / 查询失败 / 超时 / env 未知一律 False。
+        self._last_positions_authoritative: bool = False
+        self._last_positions_env: Optional[str] = None  # 'REAL' / 'SIMULATE' / None
 
     async def _emit_change(self, key: str, new_value: Any):
         """缓存刷新后发 WS 事件 (非阻塞, 失败静默)"""
@@ -222,6 +227,34 @@ class DataService:
             "REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"
         ))
         return svc, trd_env, acc_id
+
+    @staticmethod
+    def _trd_env_label(trd_env) -> Optional[str]:
+        """把 futu TrdEnv 归一成 'REAL'/'SIMULATE'/None (不依赖 futu 导入, 未知返回 None)"""
+        s = str(getattr(trd_env, "value", trd_env) or "").upper()
+        if "SIMULATE" in s:
+            return "SIMULATE"
+        if "REAL" in s:
+            return "REAL"
+        return None
+
+    def _env_account_scope(self) -> Optional[str]:
+        """本轮持仓所属 env 对应的 open_positions.account_type 作用域。
+
+        open_positions 是**混 env 表**: 同文件 `_fetch_positions_from_db` 早就按
+        `account_type != 'simulate'` 过滤 (实盘页不渲染 sim 仓), 而 `_load_position_meta`
+        此前**无任何 env 过滤** ⇒ 恒查 REAL 账户的 dashboard 会把 simulate 行并进
+        meta_map, 再被 `_reconcile_ghosts` 当成"DB 有 / 券商无"的幽灵仓 →
+        标 is_anomalous=1 → 24h 后 DELETE。实测 2026-09-05 22:24:35 一次
+        GET /api/decision-hub 就把 3 个 sim 持仓 (UBER/RIVN/HOOD) 全部标异常。
+        env 未知时返回 None (= 不过滤, 但对账闸门同时挡住写入)。
+        """
+        env = self._last_positions_env
+        if env == "REAL":
+            return "real"
+        if env == "SIMULATE":
+            return "simulate"
+        return None
 
     # ═══════════════════════════════════════════
     #  Futu 数据获取 (async + cached)
@@ -343,6 +376,11 @@ class DataService:
 
     def _fetch_positions(self) -> list:
         svc, trd_env, acc_id = self._get_env_ctx()
+        # 每轮先落 env 标签并把权威闩清零, 只有下面 RET_OK 分支才置回 True。
+        # _fetch_positions_from_db 还会再清一次 — 覆盖 asyncio.wait_for 超时把本函数
+        # 掐断、闩停留在上一轮 True 的情况 (那会让降级空列表被误读成"券商确认零持仓")。
+        self._last_positions_env = self._trd_env_label(trd_env)
+        self._last_positions_authoritative = False
         if not svc:
             logger.warning("[DataService] svc is None, using DB fallback")
             return self._fetch_positions_from_db()
@@ -354,6 +392,8 @@ class DataService:
             )
             logger.info(f"[DataService] position_list_query ret={ret}, data.empty={data.empty if hasattr(data, 'empty') else 'N/A'}")
             if ret == RET_OK:
+                # 权威应答 (含空表): 允许下游幽灵对账据此写 DB
+                self._last_positions_authoritative = True
                 # DEB-20260904 #S11: RET_OK + 空表 = broker 权威确认零持仓 —
                 # 原逻辑与"查询失败"混同走 DB fallback, 把已平仓的 DB 幽灵行
                 # 复活为持仓。空结果必须直接采信, 仅失败/异常才回退 DB。
@@ -372,6 +412,10 @@ class DataService:
 
     def _fetch_positions_from_db(self) -> list:
         """从主 DB (get_main_db) 读取持仓作为 fallback, 排除已关闭的幽灵记录"""
+        # 降级源: 清权威闩。fallback 返回空列表时上游 `if not r: return None` 会让
+        # get_positions_raw 交出 [] —— 这个空**不是**券商说的零持仓, 绝不能拿去做
+        # "DB 有 / 券商无" 的差集 (否则一次券商抖动 = 全仓标异常, 24h 后全删)。
+        self._last_positions_authoritative = False
         import sqlite3
         from app.core.db_utils import get_main_db
         db_path = str(get_main_db())
@@ -795,8 +839,10 @@ class DataService:
     async def _build_enriched_positions(self) -> List[Dict]:
         """实际构建 enriched 持仓视图 (供 _deduplicated_fetch 调用)"""
         raw_positions = await self.get_positions_raw()
-        # 加载全量元数据 (含 is_anomalous), 同时用于合并与对账
-        meta_map_full = await self._run(self._load_position_meta, False)
+        # 加载全量元数据 (含 is_anomalous), 同时用于合并与对账。
+        # env 作用域必须在 get_positions_raw 之后取: 权威闩/env 标签由本轮 fetch 写入。
+        account_scope = self._env_account_scope()
+        meta_map_full = await self._run(self._load_position_meta, False, account_scope)
 
         enriched: List[Dict] = []
         futu_symbols: Set[str] = set()
@@ -848,11 +894,16 @@ class DataService:
         # 即使空列表也返回 (会被缓存): 0 持仓账户避免重复 DB 加载
         return enriched
 
-    def _load_position_meta(self, exclude_anomalous: bool = True) -> Dict[str, Dict]:
+    def _load_position_meta(
+        self, exclude_anomalous: bool = True, account_scope: Optional[str] = None
+    ) -> Dict[str, Dict]:
         """读取 open_positions 元数据映射 {symbol: {sl, tp, created_at, is_anomalous, updated_at}}.
 
         - 仅返回 size > 0 的真实持仓记录
         - exclude_anomalous=True 时过滤掉 is_anomalous=1 的记录
+        - account_scope: 'real' → 排除 account_type='simulate' 行; 'simulate' → 只要
+          simulate 行; None → 不过滤 (env 未知, 此时幽灵对账闸门亦不会写 DB)。
+          口径与 `_fetch_positions_from_db` 的既有过滤一致 — 见 `_env_account_scope`。
         - 使用实际 schema 列名: current_sl → stop_loss, initial_tp → take_profit, entry_time → created_at
         """
         sql = (
@@ -869,6 +920,20 @@ class DataService:
             conn = sqlite3.connect(path)
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
+            # ftseek_us_live.db 的 open_positions **没有 account_type 列** (实测), 而
+            # get_main_db 在 live 路由下会指到它 ⇒ 先探列再拼过滤, 否则整条查询抛错、
+            # 退化成"元数据全丢"(SL/TP 消失)。缺列即视为单 env 库, 无需过滤。
+            if account_scope in ("real", "simulate"):
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(open_positions)")}
+                if "account_type" in cols:
+                    if account_scope == "real":
+                        sql += " AND LOWER(COALESCE(account_type,'')) != 'simulate'"
+                    else:
+                        sql += " AND LOWER(COALESCE(account_type,'')) = 'simulate'"
+                else:
+                    logger.debug(
+                        "[DataService] open_positions 无 account_type 列, 跳过 env 作用域过滤"
+                    )
             rows = conn.execute(sql).fetchall()
             conn.close()
             for r in rows:
@@ -894,7 +959,23 @@ class DataService:
         - 限流: 5 分钟内最多执行一次
         - 未标记的 → 标 is_anomalous=1, updated_at=now
         - 已标记且 updated_at 超过 24h 的 → 直接 DELETE
+        - 前置闸门: 本轮持仓必须是券商对**本 env** 的权威应答, 且 meta_map 已按 env
+          作用域裁剪 (见 _env_account_scope)。两条任一不满足 → 直接 return, 不写 DB。
         """
+        # 权威闩放在限流**之前**: 非权威轮次既不写 DB, 也不消耗 5min 窗口。
+        # 实证 (2026-09-05 22:24:35): dashboard 的 _get_env_ctx 走
+        # ManualOrderService._is_live() — 该方法**硬编码 return True** ("手动交易固定走
+        # 实盘"), 于是 dashboard 恒查 REAL 账户; 而 TRADE_ENV=1 ⇒ get_main_db 是 sim 库
+        # ftseek_us.db, 现役 3 行全是 account_type='simulate' 的数据收集仓。
+        # REAL 账户应答 {MU, TSLA} 与 sim 库 {UBER, RIVN, HOOD} 做差集 ⇒ 3 个 sim 仓
+        # 全被判幽灵, 一次 GET /api/decision-hub 就写了 is_anomalous=1 (24h 后 DELETE)。
+        if not self._last_positions_authoritative or not self._last_positions_env:
+            logger.info(
+                "[DataService] 幽灵对账跳过: 本轮持仓非券商权威应答 "
+                f"(authoritative={self._last_positions_authoritative}, "
+                f"env={self._last_positions_env}) — 空/降级结果不可解释为零持仓"
+            )
+            return
         now = time.time()
         if now - self._last_reconcile_time < 300:
             return
@@ -926,8 +1007,12 @@ class DataService:
         # = open_positions.updated_at 的**第三种尺度** (naive-UTC + 空格), 而该列现役 3 行与
         # trade_store 写方都是 aware-ET + 'T'。naive-UTC 串无法自描述尺度, 任何读方只能靠猜。
         # 现改写 aware-ET isoformat (自描述), 与 _is_meta_older_than 的解析契约同尺闭环。
-        # 注: 本写方**休眠** (logs/ 全库零 [GhostReconcile] 触发), 故本次改写零运行态影响;
-        #     trade_store:1111 那条**热路径** updated_at 写方仍属 B1 第五阶 (须单独 DEB), 本批不动。
+        # 注 (2026-09-05 §13.14 更正): 本批曾断言"本写方**休眠** (logs/ 全库零
+        #     [GhostReconcile] 触发)" — **该断言已被证伪**: 取证只 grep 了
+        #     logs/ftseek_us.log, 而 dashboard 是 systemd socket 激活的**独立进程**,
+        #     其 logger 落在 logs/dashboard.log。实测该写方是**热路径**: 一次
+        #     GET /api/decision-hub 即触发 (22:24:35 标了 3 行, 已按 04:09 备份原值回滚)。
+        #     trade_store:1111 那条 updated_at 写方仍属 B1 第五阶 (须单独 DEB), 本批不动。
         from app.utils.timezone import now_et
         now_iso = now_et().isoformat()
         path = self._get_db()
