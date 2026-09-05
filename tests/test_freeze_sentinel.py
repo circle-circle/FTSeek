@@ -9,6 +9,13 @@
   S6  停滞+服务活+TRADING+无冷却 → enforce (420s 裁决阈值: 内部 heal 360s+60s)
   S7  时间窗兜底: 北京 周一22:00/周二03:00 命中; 周三12:00/周六12:00 不命中
   S8  相位 resolver 异常 → 落时间窗兜底
+
+存活层 (2026-09-05 审计 G-01/R-5(ii) 伴生 — 与相位/心跳正交):
+  S9  ActiveState=active/reloading → ok
+  S10 activating/deactivating → skip (过渡态, 给 systemd 时间)
+  S11 inactive + Result=success → skip (干净退出 ≈ 运维主动 stop, 不抢方向盘)
+  S12 failed / 异常退出 → revive (reset-failed + restart + critical)
+  S13 revive 冷却期内 → skip; systemctl 不可用 (unknown) → skip 不拦截
 """
 import importlib.util
 from datetime import datetime
@@ -77,3 +84,69 @@ def test_phase_resolver_direct():
     assert ok is True and basis == "phase"
     ok, _ = fs.market_phase_allows(datetime(2026, 9, 7, 22, 0), resolver=lambda: False)
     assert ok is False
+
+
+# ── 存活层 (S9–S13) ───────────────────────────────────────────────────────
+
+def test_liveness_active_ok():
+    assert fs.evaluate_liveness("active", "success", NOW, None) == ("ok", "active")
+    assert fs.evaluate_liveness("reloading", "success", NOW, None)[0] == "ok"
+
+
+def test_liveness_transitioning_skip():
+    for state in ("activating", "deactivating"):
+        a, r = fs.evaluate_liveness(state, "success", NOW, None)
+        assert a == "skip" and state in r
+
+
+def test_liveness_clean_stop_not_fought():
+    """运维 systemctl stop 后 Restart=always 不拉起 → Result=success 的 inactive。
+    哨兵若在此重启就是与操作者抢方向盘 (比停机更糟)。"""
+    a, r = fs.evaluate_liveness("inactive", "success", NOW, None)
+    assert a == "skip" and "clean_exit" in r
+
+
+def test_liveness_failed_revives():
+    """start-limit 击穿 (failed) 与异常退出都必须拉起 — 这是 G-01 的真实空洞:
+    systemd 放弃后无告警, 存量仓在下一交易日开盘时无人看护。"""
+    for state, result in (("failed", "start-limit-hit"), ("failed", "exit-code"),
+                          ("inactive", "signal")):
+        a, r = fs.evaluate_liveness(state, result, NOW, None)
+        assert a == "revive", f"{state}/{result} 必须 revive"
+        assert state in r
+
+
+def test_liveness_revive_cooldown():
+    a, r = fs.evaluate_liveness("failed", "start-limit-hit", NOW, NOW - 60)
+    assert a == "skip" and "revive_cooldown" in r
+    # 冷却期满即恢复处置能力
+    a2, _ = fs.evaluate_liveness("failed", "start-limit-hit", NOW,
+                                 NOW - fs.RESTART_COOLDOWN_S - 1)
+    assert a2 == "revive"
+
+
+def test_liveness_unknown_state_does_not_block():
+    a, r = fs.evaluate_liveness("unknown", "unknown", NOW, None)
+    assert a == "skip" and "state_unknown" in r
+
+
+def test_liveness_is_phase_independent():
+    """存活层签名不含相位参数 — 周末/假日死亡同样致命 (锁住"正交"设计)."""
+    import inspect
+    params = list(inspect.signature(fs.evaluate_liveness).parameters)
+    assert params == ["active_state", "result", "now_ts", "last_revive_ts"]
+
+
+def test_revive_path_resets_failed():
+    """reset-failed 必须在 restart 之前: start-limit 击穿后 systemd 拒绝再拉起。"""
+    src = (REPO / "scripts" / "freeze_sentinel.py").read_text(encoding="utf-8")
+    body = src[src.index("def do_revive()"):]
+    body = body[:body.index("\ndef ")]
+    assert body.index("reset-failed") < body.index("do_restart()")
+
+
+def test_main_runs_liveness_before_freeze_layer():
+    src = (REPO / "scripts" / "freeze_sentinel.py").read_text(encoding="utf-8")
+    body = src[src.index("def main()"):]
+    assert body.index("evaluate_liveness(") < body.index("evaluate(now_ts, hb_mtime")
+    assert "alert(msg)" in body, "存活层处置必须 critical 外推 (进程已死, 进程内通道不可达)"

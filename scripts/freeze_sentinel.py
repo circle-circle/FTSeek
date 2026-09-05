@@ -6,6 +6,12 @@
 挂载: crontab 每分钟 (回滚 = 删 cron 行 + 删本脚本 + 删 scheduler_core touch 块).
 
 决策链:
+  ── 存活层 (与相位/心跳正交, 每分钟必判) ──
+  ActiveState=active/reloading              → 健康, 落入下方冻结层
+  ActiveState=activating/deactivating        → 不处置 (过渡态, 给 systemd 时间)
+  ActiveState=inactive 且 Result=success     → 不处置 (干净退出 ≈ 运维 systemctl stop, 不抢方向盘)
+  其余 (failed / start-limit-hit / 异常退出)  → reset-failed + restart + critical 告警 (冷却 900s)
+  ── 冻结层 (原逻辑不变) ──
   心跳 mtime 龄 ≤ 420s                 → 健康, 静默退出
   心跳文件缺失                          → 不处置 (非冻结形态; 启动冒烟/内部 watchdog 管辖, 防重启循环)
   服务未运行                            → 不处置 (systemd Restart=on-failure 管辖)
@@ -20,6 +26,13 @@
 阈值理由 (裁决值 420s): 内部 heal = 120s×3 = 360s; 外部 > 360s 保证内部 watchdog 活着时
 必先出手, 仅"内部同死" (9/1 事故形态) 才外部兜底。300s 原案因抢跑内部 heal 被异议推翻
 (见 DEB §五 E0 异议+裁决条)。
+
+存活层理由 (2026-09-05 审计 G-01/R-5(ii) 伴生): 冻结层被相位门 (仅 TRADING) 与
+"服务未运行→不处置" 双重挡在门外 —— 恰恰把 G-01 的真实空洞 (进程死亡/休市期死亡)
+留给了 systemd。而 systemd 一旦 start-limit 击穿即永久 failed (无告警), 存量仓在下一
+交易日开盘时无人看护 (2026-09-05 存量 UBER/RIVN/HOOD 即此形态)。本层只补"死了没人知道":
+不判行情、不判冻结, 只在 systemd 已放弃时拉一次并 critical 告警。
+回滚: 删 main() 内存活层分支 + evaluate_liveness/service_state/do_revive 三函数。
 """
 from __future__ import annotations
 
@@ -37,6 +50,7 @@ RESTART_COOLDOWN_S = 900
 PY_SPY = REPO / "venv" / "bin" / "py-spy"
 STACK_DIR = REPO / "logs" / "freeze_stacks"
 SERVICE = "ftseek-us"
+REVIVE_STATE = Path("/run/ftseek-freeze-sentinel.revive.state")
 
 
 # ── 纯决策 (单元测试锚点) ─────────────────────────────────────────────────
@@ -91,6 +105,28 @@ def evaluate(now_ts: float, hb_mtime, service_active: bool,
     return "enforce", f"age={age:.0f}s"
 
 
+def evaluate_liveness(active_state: str, result: str, now_ts: float,
+                      last_revive_ts) -> tuple:
+    """纯决策 (存活层)。返回 (action, reason); action ∈ ok|skip|revive.
+
+    与 evaluate (冻结层) 正交: 不看心跳、不看相位 —— 服务不在跑本身就是事故,
+    周末/假日死亡同样致命 (下一交易日开盘时存量仓无人看护)。
+    """
+    if active_state in ("active", "reloading"):
+        return "ok", "active"
+    if active_state in ("activating", "deactivating"):
+        return "skip", f"transitioning({active_state})"
+    if active_state == "unknown":
+        return "skip", "state_unknown(systemctl 不可用, 不以此闸拦截)"
+    if active_state == "inactive" and result == "success":
+        # 干净退出 ≈ 运维 systemctl stop (Restart=always 不会自动拉起的情形)。
+        # 与操作者抢方向盘比停机更糟 → 只留痕不处置。
+        return "skip", "inactive_clean_exit(疑运维主动停机)"
+    if last_revive_ts is not None and now_ts - last_revive_ts < RESTART_COOLDOWN_S:
+        return "skip", f"revive_cooldown({int(now_ts - last_revive_ts)}s<{RESTART_COOLDOWN_S}s)"
+    return "revive", f"state={active_state}/result={result}"
+
+
 # ── 副作用层 ──────────────────────────────────────────────────────────────
 
 def service_is_active() -> bool:
@@ -100,6 +136,30 @@ def service_is_active() -> bool:
         return r.stdout.strip() == "active"
     except Exception:
         return True  # systemctl 不可用时不以此闸门拦截
+
+
+def service_state() -> tuple:
+    """返回 (ActiveState, Result) — 比 is-active 多一个 Result, 用于区分
+    "运维干净停机" 与 "崩溃/ start-limit 击穿"。systemctl 不可用 → ("unknown","unknown")。"""
+    try:
+        r = subprocess.run(["systemctl", "show", SERVICE,
+                            "-p", "ActiveState", "-p", "Result"],
+                           capture_output=True, text=True, timeout=10)
+        kv = {}
+        for line in r.stdout.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                kv[k.strip()] = v.strip()
+        return kv.get("ActiveState", "unknown"), kv.get("Result", "unknown")
+    except Exception:
+        return "unknown", "unknown"
+
+
+def last_revive_ts():
+    try:
+        return float(REVIVE_STATE.read_text().strip())
+    except Exception:
+        return None
 
 
 def last_enforce_ts():
@@ -162,6 +222,15 @@ def do_restart() -> bool:
         return False
 
 
+def do_revive() -> bool:
+    """start-limit 击穿后 systemd 会拒绝再拉起 → 必须先 reset-failed 清计数."""
+    try:
+        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=60)
+    except Exception as e:
+        print(f"[freeze-sentinel] reset-failed 失败 (继续尝试 restart): {e}")
+    return do_restart()
+
+
 def alert(msg: str) -> None:
     try:
         sys.path.insert(0, str(REPO))
@@ -180,12 +249,34 @@ def main() -> int:
     except Exception:
         hb_mtime = None
     phase_ok, basis = market_phase_allows(now_cst)
+    active_state, result = service_state()
+
+    # ── 存活层 (先判): 服务死了 → 冻结层无意义 (心跳必然停滞, 且 phase 门会挡住处置) ──
+    laction, lreason = evaluate_liveness(active_state, result, now_ts, last_revive_ts())
+    if laction == "skip":
+        print(f"[{ts}] liveness skip: {lreason}")
+    elif laction == "revive":
+        pid = resolve_main_pid()
+        stack_file = dump_stacks(pid, ts) if pid else "(进程不在, 无栈可取)"
+        ok = do_revive()
+        try:
+            REVIVE_STATE.write_text(str(now_ts))
+        except Exception as e:
+            print(f"[freeze-sentinel] revive 冷却态写失败 (不阻断): {e}")
+        msg = (f"🚨 [freeze-sentinel·存活层] ftseek-us 不在运行 "
+               f"(ActiveState={active_state} Result={result}) — systemd 已放弃自愈 | "
+               f"栈: {stack_file} | reset-failed+restart {'成功' if ok else '失败, 需人工'} | "
+               f"⚠️ 存量持仓在本进程死亡期间无退出监控 (G-01 空洞)")
+        print(f"[{ts}] {msg}")
+        alert(msg)
+        return 0
+
     action, reason = evaluate(now_ts, hb_mtime, service_is_active(),
                               phase_ok, last_enforce_ts())
     if action == "ok":
         return 0  # 健康静默
     if action == "skip":
-        print(f"[{ts}] skip: {reason} ({basis})")
+        print(f"[{ts}] skip: {reason} ({basis}) | liveness={lreason}")
         return 0
     pid = resolve_main_pid()
     stack_file = dump_stacks(pid, ts) if pid else "(pid 未解析, 跳过取证)"

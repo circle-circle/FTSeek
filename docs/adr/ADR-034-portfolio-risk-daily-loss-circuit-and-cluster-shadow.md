@@ -57,3 +57,44 @@ financial/consumer/industrial_energy/other) + 占位区间 [entry,exit) 重放,
 
 P1 属执行路径新增拦截门 (sim 期) — 用户裁决 "同意建议" 后执行, 变更日期在案。
 P2 零执行路径改动。两项回滚均为配置键/阈值, 无数据迁移。
+
+## 追加 (2026-09-05, 用户裁"同意，按照建议执行"): P1 日亏闸加滞回带 + latch 持久化
+
+DEB-20260905 §9.4 (第二批 · 熔断"解除与观察"机制) 修订本 ADR 的 P1 **解除语义**。
+
+**改了什么**: 原 P1 "自恢复: 净值回升过阈即放行, **无 pause 状态机**" → 现为触发 -3% /
+放行 -2% 的**滞回带** + `latched` 状态机:
+
+- ≤ `daily_loss_threshold` (-3%) → 触发并锁存;
+- 回升到 ≥ `daily_loss_release_threshold` (-2%, **新键**) → 解除;
+- 两线之间 (-3%~-2%) → **维持已触发态**。
+
+`latched` 与基线同文件持久化 (`data/daily_loss_baseline.json`), 跨重启不丢, 新交易日首评清零,
+仅**状态翻转**才写盘 (本函数每轮 auto_execute 调一次)。返回键新增 `raw_breach` (原始越线与否)
+与 `release_threshold_pct`, 使"越线"与"锁存态"可区分。
+
+**为何**: 原实现放行线 == 触发线且每轮独立重算 → 净值在 -3% 附近来回时闸门逐轮 on/off 抖动。
+后果不是"多拦一笔", 而是**同一交易日内入场口径不稳定** — 数据采集模式 (DEB-20260905 M-1) 下
+采到的样本分不清"被熔断拦下"还是"恰好那一轮放行", 直接污染对照性。
+
+**范围与不变量**: 仍 entry-only (只拦 auto_execute 新开仓, 平仓/monitor 不经过此门);
+口径仍是富途实时净值 vs 当日首评基线 (同尺); fail-open 语义不变。
+**未同步放宽的**: AbsoluteCircuitBreaker 的日亏 -$2000 闸**保持单向锁存**
+(建议5 明确不动 — 它守尾部事故, 给它加自动复活等于在最极端那天反复开关闸门;
+`test_daily_loss_stayed_latched_despite_recovery` 反向锁死)。
+
+**边界容差 (本批自审抓到的缺陷)**: `_pct = _eq/_base_eq - 1` 恰卡线时有 IEEE754 表示误差 —
+实证 `98000/100000-1 = -0.020000000000000018 < -0.02` ⇒ 净值正好回升到放行线被判"仍在带内",
+**解除永久失效** (滞回带反成单向焊死, 恰是本修订要治的病)。修法 = 阈值比较加 `1e-9`
+**不对称容差** (触发线 `_pct <= _thr+EPS` 稍早触发 = 保守; 放行线 `_pct < _rel-EPS` 卡线即解除
+= 与本 ADR 原口径一致), 按仓库纪律**修代码不抬旧测基线** — 缺陷正是由本 ADR 原 9 例中的
+`test_recovers_when_equity_rebounds` 撞红暴露 (该文件在 `tests/` 根目录, 只跑 `tests/risk|playbook`
+会漏检, 教训入档)。
+
+**测试**: 新增 `tests/playbook/test_daily_loss_circuit_hysteresis.py` 11 例 (带内维持 / 恰卡放行线
+仍解除 / 恰卡触发线仍触发 / 跨重启 / 误配守卫 / 未触发不误拦 / 每翻转只写盘一次) +
+本 ADR 原 `tests/test_daily_loss_circuit.py` 9 例全绿。
+
+**回滚**: `risk.circuit_breaker.strategy.daily_loss_release_threshold` 改成与 `daily_loss_threshold`
+同值 (-0.03) 即等效旧行为 (**热载**, 无需重启)。健全性守卫: 该键若被配得比触发线更负
+(永不解除方向), 代码自动退回无滞回 — 宁可抖动也不把闸门焊死。

@@ -3,8 +3,14 @@ Description=FTSeek-US 美股AI投研服务 (LV3实时行情)
 Documentation=https://github.com/ftseek/FTSeek-US
 After=network.target network-online.target
 Wants=network-online.target
+# 自愈配额 (2026-09-05 审计 G-01/R-5(ii)): 5次/300s 在 RestartSec=30 下约 2.5min 即击穿
+#   → 单元转 failed 后 systemd 永久放弃且零告警, 存量仓在下一交易日开盘时无人看护。
+#   提到 20次/600s: 给 OpenD/网络抖动足够重试窗口; 真击穿仍由 scripts/freeze_sentinel.py
+#   存活层 (每分钟 cron) reset-failed + restart + critical 告警兜住。
+StartLimitBurst=20
+StartLimitIntervalSec=600
 
-# 单实例保护: main.py 的 fcntl.flock (进程死/SIGKILL 内核自动释放) + ExecStartPre 清锁
+# 单实例保护: main.py 的 fcntl.flock (进程死/SIGKILL 内核自动释放) + 下方 ExecStartPre 清锁
 # (2026-07-11 移除 ConditionPathExists=!/run/ftseek-us.lock: 它仅看文件存在性,
 #  SIGKILL 残留锁文件会在 ExecStartPre 清锁前被评估, 从而静默挡住启动)
 
@@ -23,21 +29,25 @@ EnvironmentFile=/opt/ftseek/FTSeek-US/.env.us
 # 启动命令：使用增强后的 start.sh（包含 OpenD 健康检查）
 # 若需直接拉起 main.py（OpenD 由 main.py 内部管理），可改回：
 #   ExecStart=/opt/ftseek/FTSeek-US/venv/bin/python main.py --start
+ExecStartPre=/bin/rm -f /run/ftseek-us.lock
 ExecStart=/opt/ftseek/FTSeek-US/start.sh
 
-# 优雅停止
-TimeoutStopSec=45
+# 优雅停止 — 120s 给 Futu 连接清理和持仓状态持久化足够时间
+# P5 修复 (2026-06-09): 45s 太短，Futu 连接断开经常超时导致 SIGKILL
+TimeoutStopSec=120
 KillSignal=SIGTERM
 KillMode=control-group
 TimeoutStartSec=120
 
 # ── Task #21 自动重启策略 ──
 # RestartSec=30 给依赖（OpenD/网络）足够恢复时间
-# StartLimitBurst=5 / StartLimitIntervalSec=300 防止崩溃循环
-Restart=on-failure
+# StartLimitBurst=20 / StartLimitIntervalSec=600 防止崩溃循环
+# Restart=always (2026-09-05): on-failure 漏掉"退出码 0 但服务不该停"的形态 (start.sh
+#   set -e 下任何非零前置检查失败仍会重试, 但正常退出 0 就不拉起)。交易守护进程的正确
+#   语义是"只要不是运维显式 systemctl stop, 就必须在跑" — always 满足此语义 (显式 stop
+#   不会被 always 拉起), 运维停机意图由 freeze_sentinel 存活层的 Result=success 判据尊重。
+Restart=always
 RestartSec=30
-StartLimitBurst=5
-StartLimitIntervalSec=300
 
 # 日志
 StandardOutput=append:/opt/ftseek/FTSeek-US/logs/ftseek_us.log

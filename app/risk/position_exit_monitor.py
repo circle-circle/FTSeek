@@ -852,8 +852,14 @@ class ExitMonitor:
                 )
                 # 冷却中: 不减仓, 继续执行 per-position 检查 (与 FLAT_ALL 冷却降级一致)
             else:
-                self._reduce_50_last_triggered_ts = time.time()
                 logger.warning("[组合止损] 触发 REDUCE_50, 每只减仓 50%")
+                # G-07/A7 (2026-09-05 审计): 与 FLAT_ALL (#192 已修版) 对称化。
+                #   旧逻辑三处缺陷: ① 先锁存后执行; ② 不检 execute_close_fn 返回值;
+                #   ③ 无条件 closed.append。→ 全部减仓失败也记 closed 并被 5min 冷却
+                #   掩盖, 下轮不重试 = 组合回撤保护实际失效 (同型代码 #192 只改了 FLAT_ALL)。
+                #   修法照抄 FLAT_ALL: 检返回值 (False 不计入) + 锁存移到循环后 + 全败不锁存。
+                _reduce_done = 0
+                _reduce_fail = 0
                 for p in managed_positions:
                     try:
                         # DEB-20260903 #106: 1 股持仓无法减半 (1//2=0, max(1,0)=1 实为全平),
@@ -868,10 +874,27 @@ class ExitMonitor:
                         _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
                         _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
                         if _dir_str == 'SHORT': _pnl = -_pnl
-                        execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": _close_ratio})
+                        _ok = execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": _close_ratio})
+                        if _ok is False:
+                            _reduce_fail += 1
+                            logger.critical(
+                                f"[组合止损] REDUCE_50 减仓 {p.symbol} 返回失败, "
+                                f"不计入已平列表, 下轮将重试"
+                            )
+                            continue
+                        _reduce_done += 1
                         closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_REDUCE", "pnl_pct": _pnl})
                     except Exception as _e:
+                        _reduce_fail += 1
                         logger.error(f"[组合止损] 减仓 {p.symbol} 失败: {_e}")
+                # G-07/A7: 锁存改为循环后写入, 且全部失败时不锁存 (与 FLAT_ALL #192 同款)
+                if _reduce_done > 0 or _reduce_fail == 0:
+                    self._reduce_50_last_triggered_ts = time.time()
+                else:
+                    logger.critical(
+                        f"[组合止损] REDUCE_50 {len(managed_positions)} 仓全部减仓失败, "
+                        f"不锁存冷却, 下轮继续尝试"
+                    )
                 # P0 (2026-06-12): REDUCE_50 后必须 return
                 # 根因: 减仓后继续执行 per-position 检查 → 同一标的再触发全平
                 # → 两笔卖单同时到达 broker → 可能产生反向仓位 (SNDK 类事故)
@@ -978,16 +1001,33 @@ class ExitMonitor:
 
         # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐仓一连接 = N+1)
         # DEB-20260903 #107: 加 try/except 防护, 防止导入/加载异常导致整个退出监控崩溃
+        _pb_open_syms = None
         try:
             from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_em
-            _pb_open_syms = load_playbook_open_symbols()
-        except Exception as _pb_e:
-            # DEB-20260904 #193: fail-open → fail-closed. 旧逻辑降级为不过滤
-            # (lambda False) → playbook 仓被主线退出误平 (2026-07-16 P0 同类事故).
-            # 与组合层 R-7c 降级口径一致: 护栏不可用时本轮逐仓退出整段跳过.
-            logger.error(
-                f"[退出监控·安全降级] 加载 playbook 未平仓集合异常 ({_pb_e}), "
-                f"为防误平 Playbook 仓, 本轮逐仓退出整段跳过"
+            try:
+                _pb_open_syms = load_playbook_open_symbols()
+            except Exception as _pb_load_e:
+                # G-08/A6 (2026-09-05 审计): #193 矫枉过正 — 预载失败即 `return closed`,
+                #   跳过**所有**逐仓退出 (含已触硬止损的主线仓), 等于把 fail-open(误平
+                #   playbook) 换成 fail-open(漏退主线), 两者都是钱路径上的错误方向。
+                #   关键事实: playbook_open_check(symbol, None) 自带降级 — preloaded=None
+                #   时逐 symbol 调 is_playbook_open_position, **fail-closed 语义原样保留**
+                #   (playbook 仓仍不会被主线误平), 代价仅退回 #107 之前的 N+1 查询。
+                #   → 护栏不可用应降级"判定方式", 不该取消"其余仓的退出"。
+                #   回滚: 把本内层 except 改回 `return closed` 即恢复 #193 行为。
+                logger.error(
+                    f"[退出监控·护栏降级] 预载 playbook 未平仓集合异常 ({_pb_load_e}) — "
+                    f"降级为逐 symbol 判定 (N+1, fail-closed 语义不变), 其余仓退出照常执行"
+                )
+                _pb_open_syms = None
+        except Exception as _pb_imp_e:
+            # 导入级失败 (playbook 模块整体不可用): 此时 monitor_playbook_sim_exits 同源
+            #   不可用, 无任何手段判别仓归属 → 保守跳过本轮 (维持 #193 语义), 但升 critical:
+            #   这是"全部退出停摆"而非"个别仓降级", 必须可见且可告警 (G-13 同族)。
+            logger.critical(
+                f"🚨 [退出监控·护栏不可用] playbook 护栏模块导入失败 ({_pb_imp_e}) — "
+                f"无法判别仓归属, 本轮逐仓退出整段跳过 (防误平 Playbook 仓); "
+                f"⚠️ 主线仓硬止损本轮同样不生效, 需立即人工介入"
             )
             return closed
 

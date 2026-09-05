@@ -809,6 +809,12 @@ class PlaybookService:
         if inst.get("direction") == "SKIP":
             return {"success": False, "message": "SKIP 指令不可执行"}
 
+        # 风控分级复权缩放 (2026-09-05, 用户裁"按照建议执行"): 两个半仓来源取 min —
+        #   ① OKR 账户熔断的 REDUCE_50 档 (此前**无任何消费方**, 见下方接线);
+        #   ② 绝对熔断连亏冷静期到期后的"观察期"(AbsoluteCircuitBreaker.get_position_scale)。
+        #   只缩**新开仓名义**, 不触碰已持仓的 SL/TP/退出 (退出快环永不受熔断影响)。
+        _risk_scale = 1.0
+
         # 2026-06-25: 账户级熔断 guard (OKR)
         # 若当日亏损 ≥2% 停止新仓, ≥3% LIQUIDATE 档 (强制全平从未接线, 实际与
         # 停新仓同效 — 见 account_circuit_breaker.py 头注 2026-08-28 纠偏).
@@ -823,6 +829,18 @@ class PlaybookService:
                     _msg = f"[OKR熔断] {_cb.reason}, 暂停 Playbook 执行"
                     logger.warning(_msg)
                     return {"success": False, "message": _msg}
+                elif _cb.action == "REDUCE_50":
+                    # 2026-09-05 接线: account_circuit_breaker 定义了 NORMAL/REDUCE_50/HALT/
+                    #   LIQUIDATE 四档, 而本处此前只拦 HALT/LIQUIDATE → 日亏 -1%~-2% 区间
+                    #   **什么都不做**, 从"正常"直接跳"停新仓", 中间那级是纸面的 (全仓
+                    #   grep REDUCE_50 唯一产出点即 account_circuit_breaker.py:123, 零消费方)。
+                    #   接上它=给熔断一个"观察档": 不停新开 (符合数据采集目标), 只把名义减半。
+                    #   实证零成本: 现行制度 48 个交易日最差日 -$793.60 = 权益的 -0.80%,
+                    #   从未进入 -1% 档 → 本分支历史触发 0 次。
+                    _risk_scale = min(_risk_scale, 0.5)
+                    logger.warning(
+                        f"[OKR熔断·REDUCE_50] {_cb.reason} → 本笔名义×0.5 "
+                        f"(分级复权, 不停新开仓)")
             else:
                 # DEB-20260823 X2: equity≤0(启动首查前/断供窗口)时熔断失明——原实现静默
                 # 跳过检查, 与下方异常路径 acb_fail_mode=closed 哲学矛盾. 改为拒单,
@@ -850,10 +868,20 @@ class PlaybookService:
         #   live 切换时翻 closed, 符合"可回滚、可配置化"铁律.
         try:
             from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
-            _allowed, _acb_reason = get_absolute_circuit_breaker().can_open_new_position("playbook")
+            _acb = get_absolute_circuit_breaker()
+            _allowed, _acb_reason = _acb.can_open_new_position("playbook")
             if not _allowed:
                 logger.warning(f"[绝对熔断] {_acb_reason}, 拒绝开仓")
                 return {"success": False, "message": f"[绝对熔断] {_acb_reason}"}
+            # 连亏冷静期到期 → 观察期半仓 (不是直接全放行)。实测现行制度 48 个交易日中
+            #   11 天触发连亏暂停, 其中 4 天当日再无盈利平仓 → 旧语义一路锁到收盘,
+            #   半天成交样本丢失; 新语义 30min 冷静 + 3 笔半仓观察, 观察期内亏损即回冷静期。
+            _acb_scale = float(_acb.get_position_scale("playbook") or 1.0)
+            if _acb_scale < 1.0:
+                _risk_scale = min(_risk_scale, _acb_scale)
+                logger.warning(
+                    f"[绝对熔断·观察期] {symbol} 连亏冷静期已过, 本笔名义×{_acb_scale} "
+                    f"(观察期内出现亏损即回到冷静期)")
         except Exception as _acb_err:
             # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
             try:
@@ -999,6 +1027,18 @@ class PlaybookService:
                             "admission_blocked": True}
         except Exception as _adm_exec_err:
             logger.warning(f"[admission] {symbol} 执行时复核异常 (fail-open 放行): {_adm_exec_err}")
+
+        # 应用风控分级复权 (放在准入门二次复核**之后**: 与 LIVE_TRIAL/gap_dive 两处半仓
+        #   先例同序, 且不会因缩小名义而新触发 admission 的 NOTIONAL_TOO_SMALL — 该判据
+        #   当前 min_notional_usd=0.0 未启用, 但顺序上先保证"不减少成交笔数"这条红线)。
+        #   已知代价 (与两处先例同源): admission 的 fee_bps 判据评的是缩放前的名义,
+        #   若将来启用 min_profit_fee_ratio 须把缩放移到复核之前, 否则判据与实际下单不符。
+        if _risk_scale < 1.0 and position_size and position_size > 1:
+            _ps_before_risk = int(position_size)
+            position_size = max(1, int(position_size * _risk_scale))
+            logger.warning(
+                f"[playbook] {symbol} 风控分级复权: 仓位 {_ps_before_risk} → {position_size} "
+                f"(scale={_risk_scale}) — 半仓观察, 非停新开")
 
         # 方向映射
         # DEB-20260904 #180: 白名单校验 — 旧逻辑 direction==BUY→LONG 其余一律 SHORT,
@@ -1816,15 +1856,25 @@ class PlaybookService:
             try:
                 _dual_rb = get_dual_broker()
                 _rb = _dual_rb.close_position(symbol, _effective_qty, mos_direction, target_env=target_env)
-                if _rb.get("success"):
+                # G-04 (2026-09-05 审计): 必须同时检 order_filled/dealt_qty, 不能只看 success。
+                #   根因: dual_broker.close_position 在 order_filled=False 时 price_source
+                #   = "broker_close_failed" 却仍 return success=True → 上层记"孤儿仓已防",
+                #   实际仓位残留 broker 侧, 且 DB 无 trade_record → monitor 永远查不到它,
+                #   恰好造成本回滚想要避免的孤儿仓。部分成交同理: 残余量仍裸露无人管。
+                _rb_filled = bool(_rb.get("order_filled"))
+                _rb_dealt = float(_rb.get("dealt_qty") or 0.0)
+                if _rb.get("success") and _rb_filled and _rb_dealt >= float(_effective_qty):
                     logger.warning(
                         f"[playbook] {_mode_label} 回滚平仓成功 {symbol} @ {_rb.get('filled_price')} "
-                        f"(孤儿仓已防)"
+                        f"(孤儿仓已防, dealt={_rb_dealt}/{_effective_qty})"
                     )
                 else:
-                    logger.error(
-                        f"[playbook] {_mode_label} 回滚平仓失败 {symbol}: {_rb.get('error')} "
-                        f"— ⚠️ 需手动处理 sim 账户孤儿仓"
+                    logger.critical(
+                        f"🚨 [playbook] {_mode_label} 回滚平仓未确认全量成交 {symbol}: "
+                        f"success={_rb.get('success')} order_filled={_rb_filled} "
+                        f"dealt={_rb_dealt}/{_effective_qty} src={_rb.get('price_source')} "
+                        f"err={_rb.get('error')} "
+                        f"— ⚠️ broker 侧仍有残余仓位且 DB 无 trade_record (monitor 不接管), 需人工平仓"
                     )
             except Exception as _rbe:
                 logger.error(
@@ -1850,14 +1900,32 @@ class PlaybookService:
             logger.warning(f"ManualHoldRegistry register failed: {_e}")
 
         # 更新 DB — execution_price 用真实成交价
-        self.db.update_instruction_tracking(instruction_id, {
-            "executed": 1,
-            "execution_price": float(_fill),
-            "execution_time": _now_iso,
-            "outcome": "holding",
-            "decision_id": matched_decision_id,
-        })
-        self.db.save_user_feedback({"instruction_id": instruction_id, "action": "executed"})
+        # G-05 (2026-09-05 审计): 成交后簿记必须包 try — 此前两行裸奔, SQLite 锁忙
+        #   (database is locked) 时异常冒出 execute_instruction, 被调用方 (pipeline 自动执行
+        #   循环) 的 except 记为 _audit_action="error" + skipped_count+=1 → broker 侧仓位已
+        #   真实成交而漏斗遥测报"跳过", 且 executed_count/_max_deploy 均不累加 → 同轮后续
+        #   指令的购买力/日名义额度被高估 (已部署敞口口径失真)。
+        #   处置原则: 成交既已发生 → 一律按 success 返回 (返回失败会诱发重下=双重持仓);
+        #   幂等锁**不得**释放 (释放=指令可被再次捞起→重复下单), 缺口以 critical 告警 +
+        #   bookkeeping_failed 标记上交, 由 position_sync 补 open_positions。
+        #   回滚: 去掉 try 包裹即恢复旧行为 (不建议, 旧行为会冒泡)。
+        _bk_failed = None
+        try:
+            self.db.update_instruction_tracking(instruction_id, {
+                "executed": 1,
+                "execution_price": float(_fill),
+                "execution_time": _now_iso,
+                "outcome": "holding",
+                "decision_id": matched_decision_id,
+            })
+            self.db.save_user_feedback({"instruction_id": instruction_id, "action": "executed"})
+        except Exception as _bk_err:
+            _bk_failed = str(_bk_err)
+            logger.critical(
+                f"🚨 [playbook] {_mode_label} 成交簿记失败 {symbol} (仓位已成交, 严禁重下): "
+                f"instruction={instruction_id} fill={_fill} qty={_effective_qty} "
+                f"futu_id={_futu_id} err={_bk_err} — 需 position_sync/人工补账"
+            )
 
         _env_desc = "实盘真实成交" if _is_live else "模拟盘真实成交"
         logger.info(f"Playbook {_mode_label} executed: {symbol} {direction} @ ${_fill} ({_env_desc}, futu_id={_futu_id})")
@@ -1951,6 +2019,8 @@ class PlaybookService:
             "execution_price": float(_fill),
             "mode": _mode_label,
             "futu_order_id": _futu_id,
+            # G-05: 簿记失败但成交为真 — 调用方须按"已部署敞口"计入, 不可当 skip 处理
+            "bookkeeping_failed": _bk_failed,
         }
 
     # ========== 跳过/反馈接口 ==========

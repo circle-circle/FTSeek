@@ -3285,7 +3285,12 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
     _resolve_sizing_base 同尺) vs 当日首评基线快照. 已实现+未实现+全部交易来源
     天然包含 (账户级亏损无漏项); 基线与现值强制同源, 取不到净值时本轮跳过
     (fail-open + 日志) — 混用 config 兜底尺子会制造 ±15% 级假触发.
-    触发自恢复: 净值回升过阈即放行 (基线固定, 无 pause 状态机).
+    解除语义 (2026-09-05 加滞回带, 用户裁"按照建议执行"): 触发线 -3% / 放行线 -2%,
+    两线之间**维持已触发态**。此前放行线==触发线 (无状态机, 每轮独立判), 净值在阈值
+    附近来回就会 on/off 逐轮抖动 — 同一交易日内入场口径不稳定, 采到的样本分不清
+    "被熔断拦下"还是"恰好那一轮放行"。latch 与基线同文件持久化 (data/daily_loss_baseline.json),
+    跨重启不丢; 新交易日首评自动清零。健全性守卫: 若配置把放行线设得比触发线更负
+    (永不解除的方向), 自动退回无滞回 (_rel = _thr), 宁可抖动也不把闸门焊死。
     """
     try:
         from app.risk.capital_safety import get_capital_safety_system
@@ -3307,7 +3312,8 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
         try:
             _DAILY_LOSS_BASELINE.parent.mkdir(parents=True, exist_ok=True)
             _DAILY_LOSS_BASELINE.write_text(json.dumps(
-                {"date": today, "equity": _eq, "ts": datetime.now().isoformat()}))
+                {"date": today, "equity": _eq, "ts": datetime.now().isoformat(),
+                 "latched": False}))
         except Exception as _e:
             logger.warning(f"[playbook] 日亏熔断: 基线落盘失败: {_e}")
         return None
@@ -3318,15 +3324,58 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
         from app.core.config_container import get_config as _gc
         _thr = float(_gc().get_dotted(
             "risk.circuit_breaker.strategy.daily_loss_threshold", -0.03))
+        _rel = float(_gc().get_dotted(
+            "risk.circuit_breaker.strategy.daily_loss_release_threshold", -0.02))
     except Exception:
         _thr = -0.03
+        _rel = -0.02
+    if _rel <= _thr:
+        # 放行线必须比触发线更接近 0; 否则触发后永不解除 → 退回无滞回 (fail-safe)
+        _rel = _thr
     _pct = _eq / _base_eq - 1
+    # 阈值比较加 1e-9 容差: _pct 出自浮点除法, "恰卡线"会被表示误差推到线外。
+    #   实证 (旧测 test_recovers_when_equity_rebounds 撞红): 98000/100000-1 =
+    #   -0.020000000000000018 < -0.02 → 恰卡放行线却被判"仍在带内", 解除永久失效。
+    #   容差方向刻意不对称: 触发线取"稍早触发"(保守), 放行线取"恰好卡线即解除"
+    #   (与文档口径"回升到 ≥-2% 才解除"及本闸改动前的既有契约一致)。
+    _EPS = 1e-9
+    _breached = _pct <= _thr + _EPS
+    _was_latched = bool(base.get("latched"))
+    if _breached:
+        _latched = True
+    elif _was_latched and _pct < _rel - _EPS:
+        _latched = True      # 滞回带内: 维持触发态
+    else:
+        _latched = False
+    if _latched != _was_latched:
+        # 仅状态翻转时落盘+留痕 (本函数每轮 auto_execute 调一次, 不每轮写盘)
+        if _latched:
+            logger.critical(
+                f"🚨 [playbook] 日亏熔断触发: 净值 {_pct * 100:.2f}% ≤ {_thr * 100:.2f}% "
+                f"(基线 ${_base_eq:,.0f} → 现值 ${_eq:,.0f}) | 停新开, 平仓照常; "
+                f"解除需回升过 {_rel * 100:.2f}% (滞回带)")
+        else:
+            logger.warning(
+                f"[playbook] 日亏熔断解除: 净值回升至 {_pct * 100:.2f}% ≥ "
+                f"{_rel * 100:.2f}% 放行线 → 恢复新开仓")
+        try:
+            _DAILY_LOSS_BASELINE.write_text(json.dumps({
+                "date": base.get("date"), "equity": _base_eq,
+                "ts": base.get("ts"), "latched": _latched,
+                "flip_equity": round(_eq, 2),
+                "flip_pct": round(_pct * 100, 2),
+                "flip_at": datetime.now().isoformat()}))
+        except Exception as _e:
+            # 落盘失败 → latch 只存内存本轮 (下次重启回到无 latch), 属放松方向, 必须留痕
+            logger.warning(f"[playbook] 日亏熔断: latch 落盘失败 (跨重启会丢失触发态): {_e}")
     return {
-        "triggered": _pct <= _thr,
+        "triggered": _latched,
+        "raw_breach": _breached,
         "equity": round(_eq, 2),
         "baseline": round(_base_eq, 2),
         "loss_pct": round(_pct * 100, 2),
         "threshold_pct": round(_thr * 100, 2),
+        "release_threshold_pct": round(_rel * 100, 2),
     }
 
 
@@ -4208,81 +4257,6 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             f"盘前=${inst.get('entry_price', 0):.2f} → 实时=${_new_entry:.2f} "
                             f"SL={_new_sl:.2f} ({_sl_pct:.2f}%) TP={_new_tp:.2f}"
                         )
-                        # ── [DEB-20260901 Phase B] chase_cap 违例遥测 (record-only) ──
-                        # DA 写明"禁止在$X以上追涨"但 re-price 把入场位顶过禁追线 →
-                        #   语义倒挂实锤采样。Phase B 仅记录不拦截; Phase C 才谈阻断。
-                        # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"]:
-                        #   chase_cap_enforce_enabled=true 时违例指令终态跳过 (见块尾)。
-                        try:
-                            # 2026-09-01 修复: raw_instruction_json 经 db._row_to_dict
-                            #   已是 dict, json.loads(dict) 抛 TypeError (当日每轮刷屏)。
-                            #   parse_raw_semantics 天然兼容 str|dict。
-                            from app.playbook.entry_routing import (
-                                parse_raw_semantics,
-                                chase_cap_violated as _cc_violated,
-                                chase_cap_enforce_enabled as _cc_enforce_f,
-                            )
-                            _sem_cc = parse_raw_semantics(inst.get("raw_instruction_json"))
-                            _cc_f = _sem_cc["chase_cap_price"]
-                            _cc_enforce = _cc_enforce_f()
-                            if _cc_violated(_dir, _new_entry, _cc_f):
-                                from pathlib import Path as _Pcc
-                                from datetime import datetime as _dtcc
-                                _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
-                                # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
-                                #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
-                                #   去重门静默吞没, 而 n_chase_cap_violated 是 Phase C 裁决证据列,
-                                #   系统性少记=尺子偏向"违例罕见"); jsonl 行按 (inst_id, 值) 去重 —
-                                #   同值重报不刷屏, 更差 reprice 记新行。行 type 保持
-                                #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
-                                logger.warning(
-                                    f"[playbook] chase_cap违例遥测: {inst['symbol']} re-price=${_new_entry:.2f} "
-                                    f"越过禁追线 ${_cc_f:.2f} (enforce={'ON' if _cc_enforce else 'OFF'})")
-                                _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
-                                if _cc_claim is not None:
-                                    _row_cc = {
-                                        "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
-                                        "date": _today_et_str(), "schema": "v1",
-                                        "type": "chase_cap_violation",
-                                        "inst_id": inst.get("id"),
-                                        "decision_id": inst.get("decision_id"),
-                                        "symbol": inst.get("symbol"), "direction": _dir,
-                                        "entry_archetype": _sem_cc["entry_archetype"],
-                                        "chase_cap_price": _cc_f,
-                                        "repriced_entry": round(_new_entry, 4),
-                                        # P0-A: 行级标记违例时 enforce 是否生效 —
-                                        #   replay/月报可区分"记录期违例"与"拦截期违例"。
-                                        "enforced": bool(_cc_enforce),
-                                    }
-                                    _cc_path.parent.mkdir(parents=True, exist_ok=True)
-                                    with open(_cc_path, "a", encoding="utf-8") as _f_cc:
-                                        _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
-                                    # DEB-20260904 #175: 写盘成功后才提交键
-                                    _shadow_dedup_commit(_cc_claim)
-                                # ── P0-A enforce: 终态跳过 ──
-                                # 位置纪律: 在遥测写盘之后 (证据先落) 且在去重门之外
-                                #   (enforce 不被同值去重吞掉; 首违即终态, 本就无第二次)。
-                                # skip_reason 非空 → 触发头检/auto_execute 双保险不再捞起。
-                                if _cc_enforce:
-                                    db.update_instruction_tracking(inst["id"], {
-                                        "skip_reason": (
-                                            f"chase_cap_enforced(reprice={round(_new_entry, 2)},"
-                                            f"cap={_cc_f})")})
-                                    _emit_exec_gate_audit(
-                                        inst, action="skipped_chase_cap",
-                                        entry=_new_entry, size=inst.get("position_size") or 0,
-                                        notional=0.0,
-                                        extra={"chase_cap_price": _cc_f,
-                                               "repriced_entry": round(_new_entry, 4)})
-                                    logger.warning(
-                                        f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
-                                        f"re-price=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
-                                        f"→ 终态跳过 (P0-A enforce)")
-                                    skipped_count += 1
-                                    continue
-                        except Exception as _cc_err:
-                            logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
-
                         # 2026-07-12 L1: SL/TP 验证影子 (record-only, 不改任何交易动作)。
                         #   记录 LLM 原始 SL/TP vs 代码波动率桶 SL/TP 的分歧, 供日后与 pnl 联合校准。
                         #   自带 try/except, 绝不影响 reprice 与下单。
@@ -4300,6 +4274,141 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             pass
             except Exception as _rp_err:
                 logger.debug(f"[playbook] re-price 失败, 用DB原值: {_rp_err}")
+
+            # ── [DEB-20260901 Phase B] chase_cap 违例遥测 (record-only) ──
+            # DA 写明"禁止在$X以上追涨"但 re-price 把入场位顶过禁追线 →
+            #   语义倒挂实锤采样。Phase B 仅记录不拦截; Phase C 才谈阻断。
+            # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"]:
+            #   chase_cap_enforce_enabled=true 时违例指令终态跳过 (见块尾)。
+            # G-06 (2026-09-05 审计): 本闸门从 re-price try (上方 :3901→except _rp_err) 内
+            #   **提出为独立门**。原缺陷 = 两条静默跳过路径, 使 P0-A 禁追高闸在异常下等于不存在:
+            #   ① 块内任何异常 (含 entry_routing 导入失败) 被自身 except 吞成 warning → 照常下单;
+            #   ② re-price 早段任何异常 → 外层 except 仅 debug, 本闸门根本不被求值,
+            #      指令按 DB 原始价执行 (而"禁追线"语义恰应对真实下单价生效)。
+            #   提出后判定对象 = "即将真实下单的价格": re-price 成功取 _reprice_params
+            #   (与下方 custom_params=_reprice_params 消费口径同源), 失败取 DB 原值。
+            #   纪律点保持: 遥测写盘先于 enforce、enforce 在去重门之外 (test_chase_cap_enforce
+            #   源级契约), skip_reason 前缀 chase_cap_enforced(reprice= 与旧行兼容不改。
+            #   回滚: chase_cap_enforce_enabled=false 退回纯遥测, 或 git revert 本块。
+            # 开关先行独立读取 — 读不到取保守方向 (视为 ON): T2 "读取失败=保守方向"。
+            #   跳过一笔违例单是安全的, 放行一笔追高单不是。
+            _cc_enforce = True
+            try:
+                from app.playbook.entry_routing import (
+                    chase_cap_enforce_enabled as _cc_enforce_f,
+                )
+                _cc_enforce = _cc_enforce_f()
+            except Exception as _cc_sw_err:
+                logger.warning(
+                    f"[playbook] chase_cap enforce 开关读取失败 {inst.get('symbol')} "
+                    f"→ 保守视为 ON: {_cc_sw_err}")
+            _cc_gate_ok = False
+            try:
+                # 2026-09-01 修复: raw_instruction_json 经 db._row_to_dict
+                #   已是 dict, json.loads(dict) 抛 TypeError (当日每轮刷屏)。
+                #   parse_raw_semantics 天然兼容 str|dict。
+                from app.playbook.entry_routing import (
+                    parse_raw_semantics,
+                    chase_cap_violated as _cc_violated,
+                )
+                _sem_cc = parse_raw_semantics(inst.get("raw_instruction_json"))
+                _cc_f = _sem_cc["chase_cap_price"]
+                # G-06: 真实下单价 SSOT — custom_params 非空即覆盖 DB entry_price。
+                #   变量名沿用 _dir/_new_entry (源级契约 + 本循环下游不再消费, 无遮蔽风险)。
+                _dir = inst.get("direction", "")
+                _new_entry = float((_reprice_params or {}).get("entry_price")
+                                   or inst.get("entry_price") or 0.0)
+                if _cc_violated(_dir, _new_entry, _cc_f):
+                    from pathlib import Path as _Pcc
+                    from datetime import datetime as _dtcc
+                    _cc_path = _Pcc(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+                    # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
+                    #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
+                    #   去重门静默吞没, 而 n_chase_cap_violated 是 Phase C 裁决证据列,
+                    #   系统性少记=尺子偏向"违例罕见"); jsonl 行按 (inst_id, 值) 去重 —
+                    #   同值重报不刷屏, 更差 reprice 记新行。行 type 保持
+                    #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
+                    logger.warning(
+                        f"[playbook] chase_cap违例遥测: {inst['symbol']} 下单价=${_new_entry:.2f} "
+                        f"越过禁追线 ${_cc_f:.2f} (enforce={'ON' if _cc_enforce else 'OFF'}"
+                        f"{'' if _reprice_params else ', re-price未生效判定用DB原值'})")
+                    # G-06: 遥测写盘独立 try — 写盘失败 (磁盘满/权限) 不得冒泡到外层 except,
+                    #   否则 _cc_gate_ok=False 会让下方 fail-close 误杀一笔"已判定未违例"或
+                    #   "已判定违例应拦截"的指令 (前者误伤合法交易, 后者漏拦)。判定与留痕
+                    #   分离: 判定失败→fail-close 不下单; 留痕失败→照判定结果执行。
+                    #   次序纪律不变 (commit 仍先于 enforce, 源级契约测试锚点保持)。
+                    try:
+                        _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
+                        if _cc_claim is not None:
+                            _row_cc = {
+                                "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
+                                "date": _today_et_str(), "schema": "v1",
+                                "type": "chase_cap_violation",
+                                "inst_id": inst.get("id"),
+                                "decision_id": inst.get("decision_id"),
+                                "symbol": inst.get("symbol"), "direction": _dir,
+                                "entry_archetype": _sem_cc["entry_archetype"],
+                                "chase_cap_price": _cc_f,
+                                "repriced_entry": round(_new_entry, 4),
+                                # P0-A: 行级标记违例时 enforce 是否生效 —
+                                #   replay/月报可区分"记录期违例"与"拦截期违例"。
+                                "enforced": bool(_cc_enforce),
+                                # G-06: 判定价来源 — re-price 失败路径判的是 DB 原值,
+                                #   Phase C 复算须能区分 (否则违例率分母口径混淆)。
+                                "reprice_ok": bool(_reprice_params),
+                            }
+                            _cc_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(_cc_path, "a", encoding="utf-8") as _f_cc:
+                                _f_cc.write(json.dumps(_row_cc, ensure_ascii=False) + "\n")
+                            # DEB-20260904 #175: 写盘成功后才提交键
+                            _shadow_dedup_commit(_cc_claim)
+                    except Exception as _cc_w_err:
+                        logger.warning(
+                            f"[playbook] chase_cap遥测写盘失败 {inst.get('symbol')} "
+                            f"(不影响 enforce 判定/拦截): {_cc_w_err}")
+                    # ── P0-A enforce: 终态跳过 ──
+                    # 位置纪律: 在遥测写盘之后 (证据先落) 且在去重门之外
+                    #   (enforce 不被同值去重吞掉; 首违即终态, 本就无第二次)。
+                    # skip_reason 非空 → 触发头检/auto_execute 双保险不再捞起。
+                    if _cc_enforce:
+                        db.update_instruction_tracking(inst["id"], {
+                            "skip_reason": (
+                                f"chase_cap_enforced(reprice={round(_new_entry, 2)},"
+                                f"cap={_cc_f})")})
+                        _emit_exec_gate_audit(
+                            inst, action="skipped_chase_cap",
+                            entry=_new_entry, size=inst.get("position_size") or 0,
+                            notional=0.0,
+                            extra={"chase_cap_price": _cc_f,
+                                   "repriced_entry": round(_new_entry, 4)})
+                        logger.warning(
+                            f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
+                            f"下单价=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
+                            f"→ 终态跳过 (P0-A enforce)")
+                        skipped_count += 1
+                        continue
+                _cc_gate_ok = True
+            except Exception as _cc_err:
+                logger.warning(f"[playbook] chase_cap遥测异常 {inst.get('symbol')}: {_cc_err}")
+            # G-06 fail-close: enforce=ON 而闸门自身未能完成判定 (解析/写盘/落库异常) →
+            #   无法证明"未违例", 保守不下单。enforce=OFF 保持旧的纯遥测行为不拦截。
+            #   落痕失败也不放行 — 跳过动作无条件执行。
+            if not _cc_gate_ok and _cc_enforce:
+                logger.critical(
+                    f"🚨 [playbook] chase_cap闸门不可用 → fail-close 终态跳过 "
+                    f"{inst.get('symbol')} (enforce=ON 时无法证明未违例, 保守不下单)")
+                try:
+                    db.update_instruction_tracking(inst["id"], {
+                        "skip_reason": "chase_cap_gate_unavailable"})
+                    _emit_exec_gate_audit(
+                        inst, action="skipped_chase_cap",
+                        entry=0.0, size=inst.get("position_size") or 0,
+                        notional=0.0, extra={"fail_close": True})
+                except Exception as _cc_fc_err:
+                    logger.warning(
+                        f"[playbook] chase_cap fail-close 落痕失败 (仍跳过): {_cc_fc_err}")
+                skipped_count += 1
+                continue
 
             # 2026-07-10: 删除 confidence<65 执行层gate (G6 conf<70已覆盖, E1从不拦截)
             # 原代码: _min_confidence=65, if conf<65 → SKIP
@@ -6437,6 +6546,30 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         )
     conn.commit()
 
+    # G-09/A5 (2026-09-05 审计): playbook 平仓必须标 tombstone。
+    #   根因: 全仓唯一标记点在 app/pipeline/order_executor.py:5091 (主链平仓路径),
+    #   playbook 平仓回路从不标 → 本函数上方已 DELETE open_positions, 而 broker 结算
+    #   存在延迟窗口, position_sync 在窗口内看到 "broker 有 / DB 无" → 复活为主链幽灵仓
+    #   (7/15 RIVN/NVDA/XOM 双平事故家族; 账本实证 BROKER_GHOST_CLOSE 现行制度 10 笔)。
+    #   挂钩点选本函数而非各 close_position 调用点: 本函数是 7 条平仓路径的唯一簿记收口,
+    #   逐点补写必漏 (T2 "修而不彻" 正是上批修复的最大回归模式)。
+    #   语义照抄主链样板: mark → confirm (broker 已确认成交) → 即时 sync。
+    #   fail-open: 标记失败不影响已完成的平仓写入 (与本函数其余 post-commit 块一致)。
+    #   回滚: 删本块即恢复旧行为。
+    if symbol:
+        _tomb_sym = symbol
+        try:
+            from app.core.position_sync import get_us_position_sync
+            _sync_tomb = get_us_position_sync()
+            _sync_tomb.mark_closed_tombstone(_tomb_sym)
+            _sync_tomb.confirm_tombstone(_tomb_sym)
+            _sync_tomb.request_immediate_sync()
+        except Exception as _tomb_err:
+            logger.warning(
+                f"[playbook平仓] tombstone 标记失败 {_tomb_sym} "
+                f"(不影响平仓写入, 但结算延迟窗内可能被 sync 复活): {_tomb_err}"
+            )
+
     # ── 再入场快TP门禁吞掉影子·结算 (2026-08-31, record-only, 见 app/playbook/reentry_tp_shadow.py) ──
     #   放 commit 之后: 只读 SELECT + append-only jsonl, 零平仓事务影响; 异常仅 warn 不阻断。
     try:
@@ -7941,6 +8074,89 @@ def _alert_close_failure(symbol: str, target_env: str, reason: str, detail: str)
         pass
 
 
+def _portfolio_backstop_evaluate(rows, batch_quotes: dict, cfg: dict):
+    """G-01/A9 (2026-09-05 审计): playbook 组合级敞口聚合 — 纯函数 (可单测)。
+
+    输入 trade_records 未平行快照 + 批量报价 + 配置; 输出聚合敞口与阈值 dict,
+    不可评估 (无任何有价标的) 时返回 None。抽成纯函数的理由: 风险阈值若不可单测,
+    就会像 G-03 (小时熔断每日仅一次) 那样长期带病存活。
+
+    阈值口径 (刻意宽于噪声, 吸取 2026-08-21 AMZN 误杀教训):
+      threshold = max(min_abs_loss_usd, Σ逐仓SL距离 × sl_loss_multiple)
+    Σ SL 距离 = "所有逐仓 SL 同时按设计触发"的合计损失 → 乘倍数后本兜底只在逐仓 SL
+    **集体失效**时才可能开火, 结构上不可能被盘中噪声触发 (AMZN 案: 水深上限被开盘噪声
+    打穿即清仓, 30min 后价格回 +1.1%, -5% 的 SL 从未参与 → 用户裁撤销该上限)。
+
+    保守口径: 批量报价未命中/无价的标的**既不计入浮亏也不计入成本与 ΣSL** — 宁少算敞口,
+    也不用陈旧价触发全平 (缺价标的已由逐仓路径 R2 连续取价失败告警覆盖)。
+    浮亏逐行按 direction 定号后求和 (SHORT 反向), 不用毛市值差 — 否则空头盈亏符号翻转
+    (盈利当亏损→误开火, 亏损当盈利→永不开火), 与 H-06 同族。
+    单行异常只跳过该行, 不污染整体聚合。
+    """
+    cost = 0.0
+    mkt = 0.0
+    sl_sum = 0.0
+    unrealized = 0.0
+    n_priced = 0
+    n_unusable = 0
+    last_err = ""
+    for r in rows:
+        try:
+            entry_price = float(r["entry_price"] or 0)
+            qty = float(r["quantity"] or 0)
+            if entry_price <= 0 or qty <= 0:
+                continue
+            quote = (batch_quotes or {}).get(r["symbol"])
+            if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
+                continue
+            price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
+            if price <= 0:
+                continue
+            # 方向感知 (H-06 同族: "非 LONG 一律按 SHORT" 曾致盈亏反转)。账本实测 direction
+            #   仅 LONG/SHORT 两值 (388/85), 未知值按 LONG 兜底 = position_exit_monitor 同款默认。
+            _is_short = str(r["direction"] or "").strip().upper() in ("SHORT", "SELL")
+            cost += entry_price * qty
+            mkt += price * qty
+            n_priced += 1
+            # 浮亏必须逐行按方向定号再求和: mkt-cost 只对 LONG 成立, SHORT 符号相反
+            #   (空头 price<entry 是盈利)。用毛市值差聚合会把空头盈利算成亏损 → 兜底误开火,
+            #   把空头亏损算成盈利 → 兜底永不开火。两个方向都是钱路径上的错。
+            unrealized += ((entry_price - price) if _is_short else (price - entry_price)) * qty
+            try:
+                meta = json.loads(r["metadata_json"]) if r["metadata_json"] else {}
+            except Exception:
+                meta = {}
+            sl = float(meta.get("stop_loss", 0) or 0)
+            if sl > 0:
+                if not _is_short:
+                    sl_sum += max(0.0, (entry_price - sl) * qty)
+                else:
+                    sl_sum += max(0.0, (sl - entry_price) * qty)
+        except Exception as _row_err:
+            # 单行异常只跳过该行, 但**必须留痕** (except:pass 棘轮纪律 / R5 静默死亡病灶族):
+            #   计数 + 末条错误随聚合结果上交, 由调用方 warn — 否则"敞口被少算"与
+            #   "本来就没有敞口"不可区分 (守卫自己坏了却报零违例)。
+            n_unusable += 1
+            last_err = f"{type(_row_err).__name__}: {_row_err}"
+            continue
+    if n_priced <= 0 or cost <= 0:
+        return None
+    threshold = max(float(cfg.get("min_abs_loss_usd", 500.0) or 0.0),
+                    sl_sum * float(cfg.get("sl_loss_multiple", 1.5) or 0.0))
+    return {
+        "n_priced": n_priced,
+        "cost_usd": cost,
+        "market_usd": mkt,
+        "unrealized_usd": unrealized,
+        "unrealized_pct": (unrealized / cost * 100.0) if cost else 0.0,
+        "sl_loss_sum_usd": sl_sum,
+        "threshold_usd": threshold,
+        "breached": (-unrealized) >= threshold,
+        "n_unusable_rows": n_unusable,
+        "unusable_last_err": last_err,
+    }
+
+
 def monitor_playbook_sim_exits(scheduler) -> int:
     """盘中监控 PLAYBOOK_SIM 真实模拟仓位的退出.
 
@@ -8042,6 +8258,83 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             _pb_cfg_m = {}
             _cooldown_sl_pct = 4.0
         _in_open_cooldown = minutes_from_open is not None and minutes_from_open < 15
+
+        # ── G-01/A9 (2026-09-05 审计): playbook 组合级敞口聚合兜底 ──
+        # 缺陷: playbook 是唯一活体执行链, 但组合级保护为零 — ExitMonitor 的
+        #   FLAT_ALL/REDUCE_50 在 R-7c (app/risk/position_exit_monitor.py:781) 结构性排除
+        #   playbook 仓; 本函数只有逐仓规则无组合聚合; _check_daily_loss_circuit 明确
+        #   "触发停新开, 平仓照常"= entry-only; BLACKOUT 仅乘数/入场闸; sim 无 broker 侧
+        #   STOP (app/execution/dual_broker.py:675 对 target_env!="real" 直接 skipped)。
+        # 阈值设计 (吸取 2026-08-21 AMZN 误杀教训: 水深上限被开盘噪声打穿即清仓, 30min 后
+        #   价格回到 +1.1%, -5% 的 SL 从未参与, 用户裁撤销 loser_overnight_max_depth_pct):
+        #   阈值 = max(绝对下限, Σ逐仓SL距离 × 倍数)。Σ SL 距离是"所有逐仓 SL 同时按设计
+        #   触发"的合计损失, 乘倍数后本兜底**只在逐仓 SL 集体失效时**才可能开火 →
+        #   结构上不可能是盘中噪声触发, 不会重演 AMZN。
+        # 保守口径: ① 仅 TRADING 相位 (上方相位门) + 批量报价命中的标的计入, 不用盘后失真价;
+        #   ② 缺价标的**不计入分子也不计入分母** (宁少算敞口, 不用陈旧价触发全平)。
+        # 动作边界 (刻意偏离 DEB-20260905 A9 的"全仓逐笔市价平"): 本函数自带 TRADING 相位门,
+        #   进程死亡/休市/盘前盘后时它与兜底一起不跑 —— 那才是 G-01 的真实空洞, 在函数内
+        #   加强平堵不到它; 而在函数内另建平仓回路会与逐仓路径的 close+簿记+tombstone 重复,
+        #   引入双平/账实不符风险 (G-04/G-09 同族)。故 v1 = 检测 + critical 告警 + 推送,
+        #   真实存活保护交外部监督层 (systemd Restart + freeze_sentinel 非 TRADING 存活检查)。
+        #   升级路径: 攒到告警样本后, 若要接强平, 应复用逐仓 SL 分支的 close+簿记路径而非新建。
+        #   回滚: playbook.portfolio_backstop.enabled=false (热载, 无需重启)。
+        try:
+            from app.playbook.config import get_playbook_config as _get_pb_cfg_bs
+            _bs_raw = _get_pb_cfg_bs().get("portfolio_backstop", {}) or {}
+        except Exception as _bs_cfg_e:
+            logger.warning(f"[playbook组合兜底] 配置读取失败 → 用内置保守默认: {_bs_cfg_e}")
+            _bs_raw = {}
+        _bs_cfg = {"enabled": True, "sl_loss_multiple": 1.5, "min_abs_loss_usd": 500.0,
+                   "cooldown_sec": 300.0}
+        if isinstance(_bs_raw, dict):
+            for _bs_k in list(_bs_cfg):
+                if _bs_k in _bs_raw:
+                    _bs_cfg[_bs_k] = _bs_raw[_bs_k]
+
+        if _bs_cfg.get("enabled") and _batch_quotes:
+            # 聚合与阈值判定走纯函数 _portfolio_backstop_evaluate (可单测);
+            # 本处只保留告警动作 (需 logger/push, 不入纯函数)。
+            _bs_agg = _portfolio_backstop_evaluate(rows, _batch_quotes, _bs_cfg)
+            if _bs_agg is not None:
+                _bs_n = _bs_agg["n_priced"]
+                # 脏行留痕 (棘轮纪律): 仅在计数变化时 warn, 避免 20s 快环刷屏
+                _bs_bad = _bs_agg.get("n_unusable_rows") or 0
+                if _bs_bad and _bs_bad != getattr(monitor_playbook_sim_exits, "_bs_last_bad_rows", 0):
+                    monitor_playbook_sim_exits._bs_last_bad_rows = _bs_bad
+                    logger.warning(
+                        f"[playbook组合兜底] {_bs_bad} 行无法计入聚合 (敞口按保守少算) | "
+                        f"末条错误: {_bs_agg.get('unusable_last_err')}")
+                _bs_cost = _bs_agg["cost_usd"]
+                _bs_mkt = _bs_agg["market_usd"]
+                _bs_sl_sum = _bs_agg["sl_loss_sum_usd"]
+                _bs_unreal = _bs_agg["unrealized_usd"]
+                _bs_thresh = _bs_agg["threshold_usd"]
+                if -_bs_unreal >= _bs_thresh:
+                    _bs_now_ts = time.time()
+                    _bs_last_ts = getattr(monitor_playbook_sim_exits, "_bs_last_alert_ts", 0.0)
+                    if _bs_now_ts - _bs_last_ts >= float(_bs_cfg["cooldown_sec"]):
+                        monitor_playbook_sim_exits._bs_last_alert_ts = _bs_now_ts
+                        _bs_pct = (_bs_unreal / _bs_cost * 100.0) if _bs_cost else 0.0
+                        logger.critical(
+                            f"🚨 [playbook组合兜底] {_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
+                            f"({_bs_pct:.2f}%) ≥ 阈值 ${_bs_thresh:,.2f} "
+                            f"(Σ逐仓SL距离 ${_bs_sl_sum:,.2f} × {_bs_cfg['sl_loss_multiple']}, "
+                            f"绝对下限 ${_bs_cfg['min_abs_loss_usd']:,.0f}) — 逐仓 SL 已集体失效, "
+                            f"成本 ${_bs_cost:,.0f} 市值 ${_bs_mkt:,.0f}"
+                        )
+                        try:
+                            from app.push import get_push_hub
+                            from app.push.message import Level as _BsLevel
+                            get_push_hub().push_text(
+                                f"🚨 [Playbook组合兜底] {_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
+                                f"({_bs_pct:.2f}%) 越过组合阈值 ${_bs_thresh:,.2f}. "
+                                f"逐仓 SL 未能兜住, 请人工核查是否全平. "
+                                f"(G-01/A9, 阈值=ΣSL距离×{_bs_cfg['sl_loss_multiple']})",
+                                level=_BsLevel.HIGH,
+                            )
+                        except Exception as _bs_push_e:
+                            logger.warning(f"[playbook组合兜底] 告警推送失败: {_bs_push_e}")
 
         exited = 0
         for r in rows:

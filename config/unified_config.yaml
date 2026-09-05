@@ -1002,7 +1002,24 @@ playbook:
   # 2026-09-05 用户裁"该关闭关闭" (DEB-20260815 §11.3 预注册止损路径):
   #   GATE 1 E1/E2/E3 全负 (E1 臂P -$77.60 vs 臂D -$16.05, 差 -$61.55/笔, §四十二)
   #   → 提前终审关闭 auto_execute。恢复需用户明确指令 + DEB 追加裁决。
-  auto_execute: false
+  # 2026-09-05 14:15 恢复 (DEB-20260905 M-1 APPROVED / M-7 MODIFIED, docs/debates/):
+  #   用户当日指令 = "不停止 sim 模拟交易、保障正常交易且收集数据、不要终止开仓、
+  #   要继续交易下去" (高于 DEB 全部条款, 见该 DEB §六 末条)。目标函数改为
+  #   链路验证 + 成交流数据 (账面盈亏只作预算监控, 不作绩效主张) — 不推翻 E1_FAIL,
+  #   E1 判的是"盈利能力"命题, 本键服务的是"数据采集"命题。
+  #   恢复前置 (M-2 Tier-A A1–A9) 已于同日全部落地并测试: G-03 小时熔断重新武装 /
+  #   G-04 回滚平仓检 order_filled+dealt_qty / G-05 簿记入 try + bookkeeping_failed
+  #   (幂等锁**不**释放, 防重复下单) / G-06 chase_cap 闸移出 reprice try + fail-close /
+  #   G-07 REDUCE_50 与 FLAT_ALL 对称 / G-08 护栏预载失败降级为逐 symbol 判定 (不再
+  #   return closed 停摆全部逐仓退出) / G-09 playbook 平仓写 tombstone /
+  #   G-01 组合级兜底 v1 (聚合检测+critical+推送, 阈值=max($500, Σ逐仓SL距离×1.5)) /
+  #   A1 进程重启 (14:11:01, 加载 87ebc785+46e31ccf+本批) + 外部存活层
+  #   (systemd Restart=always, StartLimitBurst=20/600s; freeze_sentinel 存活层每分钟)。
+  #   M-7 的 48h 影子期取消 (9/7 Labor Day 休市, 影子期只会白吃两个交易日的数据断流);
+  #   替代控制 = 9/8 开盘首小时人工盯盘 + 三项在场核验 (chase_cap 遥测/enforce、
+  #   20s 退出快环心跳、组合兜底聚合), 任一缺位即当轮把本键写回 false (热载, 无需重启)。
+  #   回滚: 本键写 false (热载生效) — 平仓/monitor 路径不受影响, 只停新开仓。
+  auto_execute: true
   # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
   #   0产出+0消费方+DEB窗口过期(DEB-20260805 C1/门E), 见 obsidian 2026-08-16_change_review_audit.md
   premarket_invalidation_observe: true
@@ -1288,6 +1305,27 @@ playbook:
     duplicate_position_guard_enabled: true
     profit_override_threshold_pct: 1.5
     profit_override_drawdown_pct: 0.5
+    # G-01/A9 (2026-09-05 审计): playbook 组合级敞口聚合兜底 (检测+告警, v1 不强平)。
+    #   为何需要: playbook 是唯一活体执行链却无组合级保护 — ExitMonitor 的 FLAT_ALL/
+    #   REDUCE_50 在 R-7c (app/risk/position_exit_monitor.py:781) 结构性排除 playbook 仓;
+    #   monitor_playbook_sim_exits 只有逐仓规则; _check_daily_loss_circuit 是 entry-only
+    #   ("触发停新开, 平仓照常"); BLACKOUT 仅乘数/入场闸; sim 无 broker 侧 STOP
+    #   (app/execution/dual_broker.py:675 对非 real 直接 skipped)。
+    #   阈值口径: max(min_abs_loss_usd, Σ逐仓SL距离 × sl_loss_multiple)。Σ SL 距离 =
+    #   "所有逐仓 SL 同时按设计触发"的合计损失 → 乘倍数后只在逐仓 SL **集体失效**时开火,
+    #   结构上不可能被盘中噪声触发 (吸取 2026-08-21 AMZN 误杀教训: 水深上限被开盘噪声
+    #   打穿即清仓, 30min 后价格回 +1.1%, -5% SL 从未参与 → 用户裁撤销该上限)。
+    #   v1 为何不强平: 本兜底宿主 monitor_playbook_sim_exits 自带 TRADING 相位门
+    #   (app/playbook/pipeline.py:8053), 进程死亡/休市时它与兜底一起不跑 —— 那才是 G-01
+    #   的真实空洞, 函数内强平堵不到; 且另建平仓回路会与逐仓 close+簿记+tombstone 重复,
+    #   引入双平/账实不符 (G-04/G-09 同族)。存活保护交外部监督层 (systemd + freeze_sentinel)。
+    #   保守口径: 缺价标的不计入分子分母 (不用陈旧价触发); 仅 TRADING 相位计算。
+    #   回滚: enabled=false (热载, 无需重启)。
+    portfolio_backstop:
+      enabled: true
+      sl_loss_multiple: 1.5      # Σ逐仓SL距离的倍数 — 越大越保守 (只抓集体失效)
+      min_abs_loss_usd: 500.0    # 绝对下限, 防小组合时倍数阈值过低
+      cooldown_sec: 300.0        # 告警去重窗 (与 20s 快环解耦, 防刷屏)
   # ⚠️ 死块×2 (2026-08-22 audit A7): horizon_selector._is_enabled() 读的是
   #   "horizon_selector.enabled" 而非本块; playbook_horizon.yaml 的路径在
   #   app/playbook/config.py:87 硬编码解析. 改本块两键均无效果.
@@ -1650,9 +1688,18 @@ risk:
       #   组合级日亏熔断从未存在. 已接 pipeline.auto_execute 开仓门
       #   (_check_daily_loss_circuit): 当日净值跌幅 (富途实时净值 vs 当日首评基线
       #   data/daily_loss_baseline.json, 已实现+未实现+全部来源) ≤ -3% → 停新开,
-      #   平仓照常, 净值回升自恢复. 历史最差实盘日 8/14 -794$ ≈ -0.8% 未及阈 =
+      #   平仓照常, 净值回升**过放行线**自恢复 (滞回带见下键). 历史最差实盘日 8/14 -794$ ≈ -0.8% 未及阈 =
       #   纯尾部保护不伤 sim 数据产量. 回滚: 改 -1.0 + 重启 (等效失效, 无需改码).
       daily_loss_threshold: -0.03
+      # 2026-09-05 (用户裁"按照建议执行", 熔断解除与观察机制批): 滞回带的**放行线**。
+      #   此前放行线==触发线 (每轮独立重算、无状态机), 净值在 -3% 附近来回会逐轮 on/off
+      #   抖动 → 同一交易日内入场口径不稳定, 采到的样本分不清"被熔断拦下"还是"恰好那轮放行"。
+      #   现语义: ≤-3% 触发并锁存; 回升到 ≥-2% 才解除; -3%~-2% 之间维持触发态。
+      #   latch 与基线同文件持久化 (跨重启不丢), 新交易日首评自动清零。
+      #   健全性守卫: 本键若被设得比 daily_loss_threshold 更负 (永不解除方向), 代码自动
+      #   退回无滞回 (放行线=触发线) — 宁可抖动也不把闸门焊死。
+      #   回滚: 本键改成与 daily_loss_threshold 同值 (-0.03) 即等效旧行为, 热载生效。
+      daily_loss_release_threshold: -0.02
       # ⚠️ 仍为死键 (2026-08-27 审计): 小时亏损熔断无消费方. 未随 P1 接线 —
       #   需净值滚动窗口基线 (当前仅日基线), 且 pause_duration 恢复状态机超 P1 范围.
       #   需要时另立批次接线, 或按死键清理惯例删除.

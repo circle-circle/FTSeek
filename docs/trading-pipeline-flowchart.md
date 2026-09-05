@@ -182,7 +182,7 @@ flowchart TD
 #### 总开关与时间框架 (unified_config.yaml / playbook_horizon.yaml)
 | 参数 | 值 | 出处 | 说明 |
 |---|---|---|---|
-| auto_execute | False | unified_config.yaml::playbook | 自动执行总开关 (2026-09-05 §11.3 止损路径关闭, DEB-20260815 §42.4) |
+| auto_execute | True | unified_config.yaml::playbook | 自动执行总开关 (2026-09-05 14:13 数据采集模式恢复, DEB-20260905 M-1/M-7; 前值 False = §11.3 止损路径) |
 | fallback_when_no_bridge | technical | unified_config.yaml::playbook | 无bridge时兜底策略 |
 | short_horizon.rr_ratio | 999 (999=禁TP靠EOD) | playbook_horizon.yaml | 盈亏比 |
 | short_horizon.max_hold_days | 1 | playbook_horizon.yaml | 最长持仓天数 |
