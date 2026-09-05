@@ -15,13 +15,35 @@ import sqlite3
 import threading
 import logging
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from app.utils.timezone import _et_trade_date, now_et
+from app.utils.timezone import _et_trade_date, now_et, CST, _localize
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_sync_ts(raw: Optional[str]) -> Optional[datetime]:
+    """把 open_positions.last_sync_at 解析成 aware datetime; 解析不出返回 None。
+
+    兼容两种格式 (该列 DDL 无默认值 ⇒ 不存在 SQLite `datetime('now')` 那条写入路):
+      ① naive isoformat — 现役写入方 `datetime.now().isoformat()` = 服务器本地(CST)墙钟;
+      ② 带偏移 isoformat — M-6/B1 把写入方迁到 now_et()/now_utc() 之后的行。
+    naive 一律按 **CST** 解释 = 与写入方同一把尺子 (跨尺比较正是 D-06 的病灶)。
+    """
+    if not raw:
+        return None
+    _text = str(raw).strip()
+    if not _text:
+        return None
+    try:
+        _dt = datetime.fromisoformat(_text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if _dt.tzinfo is None:
+        _dt = _localize(_dt, CST)
+    return _dt
 
 
 def assign_cohort(symbol: str, trade_date: str) -> str:
@@ -1426,18 +1448,52 @@ class TradeStore:
                 conn.close()
 
     def get_pending_sync_positions(self, max_age_seconds: int = 300) -> List[str]:
-        """获取超过指定时间仍未同步的仓位 (用于告警)"""
+        """获取超过指定时间仍未同步的仓位 (用于告警).
+
+        ⚠️ **零消费方** (2026-09-05 全仓实测, DEB-20260905 M-6/B2 复算): 本函数在仓内只有
+        这一处 def, 调用方为零; REPORT D-06 声称的调用链
+        `scheduler_core._position_sync_loop → get_pending_sync_positions(300)` 中
+        `_position_sync_loop` **在仓内不存在** ⇒ 这条"同步卡住"告警**从未发出过**, 而非
+        D-06 判的"延迟 8h" (影响面已按实情更正入 DEB §十)。`sync_status` 字段本身是活的
+        (写: web_dashboard/order/audit.py 手动单落 'pending_sync'; 读: app/core/position_sync.py
+        判 needs_data_fix), 但**超时告警这一层是纸面的**。接线 = 新增告警环路 (须入
+        docs/CONTROL-LOOP-LEDGER.md), 本批不代裁; 先把判据修对, 免接线当天即静默漏报 8h。
+
+        时区修复 (D-06 的**机制**成立): 原判据把 cutoff 交给 SQLite —
+        `datetime(last_sync_at) < datetime('now','-300 seconds')`; 而 last_sync_at 由
+        mark_sync_pending / mark_sync_complete / mark_anomalous 用 naive
+        `datetime.now().isoformat()` 写 = 服务器本地(CST)墙钟, SQLite `datetime('now')` = **UTC**
+        → 库内时刻被当成"8 小时之后", 判据在 8h 内恒 False (**漏报方向**: 卡住的同步不告警,
+        直到 CST 墙钟老化到比 UTC now 更早才触发 = 感知窗口 5min 膨胀到 8h+)。
+        现改 Python 侧解析比较, 同尺原则:
+          - 带 tz 的值按其偏移换算 (B1 把写入方迁到 now_et() 后无需再改本函数);
+          - naive 值一律按 **CST** 解释 = 与现役写入方同一把尺子;
+          - NULL / 脏格式解析不出 → **保守计入告警** (fail-loud: 宁可多告一次, 不可让卡住的
+            同步静默 — 与"读取失败=保守方向"同哲学)。
+        """
+        _cutoff = datetime.now(CST) - timedelta(seconds=max(0, int(max_age_seconds)))
         with self._lock:
             conn = self._get_conn()
             try:
                 rows = conn.execute("""
-                    SELECT symbol FROM open_positions
+                    SELECT symbol, last_sync_at FROM open_positions
                     WHERE sync_status = 'pending_sync'
-                    AND datetime(last_sync_at) < datetime('now', '-{max_age_seconds} seconds')
-                """.replace("{max_age_seconds}", str(max_age_seconds))).fetchall()
-                return [r[0] for r in rows]
+                """).fetchall()
             finally:
                 conn.close()
+        _stale: List[str] = []
+        for _sym, _raw in rows:
+            _ts = _parse_sync_ts(_raw)
+            if _ts is None:
+                _why = ("从未写过 last_sync_at" if not _raw
+                        else f"last_sync_at 不可解析 ({_raw!r})")
+                logger.warning(
+                    f"[TruthSource] {_sym} 处于 pending_sync 但 {_why} → "
+                    f"保守计入超时告警 (fail-loud, 宁多告不静默)")
+                _stale.append(_sym)
+            elif _ts < _cutoff:
+                _stale.append(_sym)
+        return _stale
 
     # ------------------------------------------------------------------
     # Phase 2 (2026-05-31): 市场上下文快照 (entry/exit)

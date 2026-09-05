@@ -3292,6 +3292,10 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
     跨重启不丢; 新交易日首评自动清零。健全性守卫: 若配置把放行线设得比触发线更负
     (永不解除的方向), 自动退回无滞回 (_rel = _thr), 宁可抖动也不把闸门焊死。
     """
+    # ts/flip_at 改用 ET 写 (2026-09-05 M-6/B1 第一阶): 两键是**纯信息位** — 全仓唯一读点
+    #   是下方 "ts": base.get("ts") 的原值透传, 无解析无比较, 故改写尺度零风险; 改后文件
+    #   自证尺度 (带 -04:00 偏移), 免人工读档时把 CST 墙钟当 ET (G-16 同源坑)。
+    from app.utils.timezone import now_et as _now_et_ts
     try:
         from app.risk.capital_safety import get_capital_safety_system
         _cs = get_capital_safety_system()
@@ -3312,7 +3316,7 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
         try:
             _DAILY_LOSS_BASELINE.parent.mkdir(parents=True, exist_ok=True)
             _DAILY_LOSS_BASELINE.write_text(json.dumps(
-                {"date": today, "equity": _eq, "ts": datetime.now().isoformat(),
+                {"date": today, "equity": _eq, "ts": _now_et_ts().isoformat(),
                  "latched": False}))
         except Exception as _e:
             logger.warning(f"[playbook] 日亏熔断: 基线落盘失败: {_e}")
@@ -3364,7 +3368,7 @@ def _check_daily_loss_circuit(today: str) -> Optional[Dict[str, Any]]:
                 "ts": base.get("ts"), "latched": _latched,
                 "flip_equity": round(_eq, 2),
                 "flip_pct": round(_pct * 100, 2),
-                "flip_at": datetime.now().isoformat()}))
+                "flip_at": _now_et_ts().isoformat()}))
         except Exception as _e:
             # 落盘失败 → latch 只存内存本轮 (下次重启回到无 latch), 属放松方向, 必须留痕
             logger.warning(f"[playbook] 日亏熔断: latch 落盘失败 (跨重启会丢失触发态): {_e}")
@@ -9179,7 +9183,6 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
         from app.execution.dual_broker import get_dual_broker
         dual = get_dual_broker()
         closed = 0
-        now_iso = datetime.now().isoformat()
 
         for r in rows:
             symbol = r["symbol"]

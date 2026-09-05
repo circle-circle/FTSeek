@@ -159,6 +159,7 @@ E1 GATE 1 判负后入场全停。但**模拟盘的目的函数不是当期盈�
 |---|---|
 | 9/5(六) 13:00–14:20 | **已完成**: M-1…M-8 裁决 + Tier-A A1–A9 全部编码/测试 + 运维硬化 + A1 重启 (14:11:01) + auto_execute=true 热载 (14:13:36) |
 | 9/5(六) 15:00–15:25 | **已完成 (第二批)**: 熔断"解除与观察"机制 (用户追问"当天亏损有回撤好转, 是否有解除和观察的机制" → 裁"同意, 按照建议执行") — 建议 1+2+3+4 落地 / 建议 5 不动, +37 例测试, 全量 2683 passed, 重启 PID 367294 @ 15:23:50 (见 §九) |
+| 9/5(六) 17:30–17:55 | **已完成 (第三批·Tier-B 首批)**: B2 pending_sync 时区判据修复 (含 D-06 影响面更正: 零消费方 = 告警从未存在, 非"延迟 8h") + B1 第一阶 (裸 `datetime.now()` 棘轮守卫 455 基线 + 清剿 3 处 + 定案"按列不按文件"的清剿次序), +19 例, 全量 2702 passed, 重启 PID 377720 @ 17:51:13 (见 §十) |
 | 9/7(一, 休市) | M-6 首批开工 (B2 pending_sync 时区 → B1 datetime.now 清扫 + CI 守护); 观察三仓 EOD/隔夜路径空跑是否正常 |
 | 9/8(二) 21:30 CST 开盘 | auto_execute **已为 true** (M-7 MODIFIED: 取消 48h 影子期)。开盘首小时人工盯盘 + 三项在场核验: ① chase_cap 遥测/enforce 日志 ② 20s 退出快环心跳 ③ 组合兜底聚合行; 任一缺位 → 当轮 auto_execute=false。同时实战检验 G-09 平仓 tombstone (三仓 UBER/RIVN/HOOD 退出) |
 | 9/12 起每周五 | M-7 采集健康报告 (成交数/费用占比/告警延迟/双平与幽灵仓计数/时间戳抽检) |
@@ -452,5 +453,100 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
 预存语义, 含费后恰为 0 概率近零, 不动; ② G-07 `_ok is False` 只认显式 False —
 与 FLAT_ALL (#192) 同款的既定契约, execute_close_fn 返回 None 记成功, 与对称化目标一致, 不动。
 
+## 十、Tier-B (M-6) 首批执行台账 (2026-09-05 17:30–17:55 CST · B2 完成 + B1 第一阶)
+
+### 10.1 B2 — pending_sync 超时判据的 CST-vs-UTC (REPORT D-06 / G-12)
+
+**机制成立, 影响面不成立 (本批按复算义务更正)**:
+
+- **机制**: `trade_store.get_pending_sync_positions` 原判据把 cutoff 交给 SQLite —
+  `datetime(last_sync_at) < datetime('now','-300 seconds')`; 而 `last_sync_at` 由
+  `mark_sync_pending` / `mark_sync_complete` / `mark_anomalous` 用 naive `datetime.now().isoformat()`
+  写 = **服务器本地 (CST) 墙钟**, SQLite `datetime('now')` = **UTC** → 库内时刻被当成"8 小时之后",
+  判据在 8h 内**恒 False** (**漏报方向**: 真卡住的同步不告警)。
+- **影响面更正**: D-06 声称调用链 `scheduler_core._position_sync_loop → get_pending_sync_positions(300)`,
+  影响 = "告警延迟 8h / 感知窗口 5min 膨胀到 8h+"。全仓实测: 本函数**只有 def 一处、零调用方**,
+  且 `_position_sync_loop` **在仓内不存在** ⇒ 现实不是"延迟 8h", 而是**这条告警从未存在过** —
+  与 §三 3.1 那张"纸面防线"表同族的又一例 (REPORT 把它记成"今天的告警延迟 8h" 属**过度声称**)。
+  `sync_status` 字段本身是活的 (写: `web_dashboard/order/audit.py` 手动单落 `pending_sync`;
+  读: `app/core/position_sync.py` 判 `needs_data_fix`), 死的只有"超时告警"这一层。
+- **修法**: 判据收回 Python 侧 (`_parse_sync_ts` + cutoff 参数化), 同尺原则 —
+  带 tz 的值按其偏移换算; naive 一律按 **CST** 解释 = 与现役写入方同一把尺子;
+  NULL / 脏格式解析不出 → **保守计入告警** (fail-loud, 与"读取失败=保守方向"同哲学)。
+  写入方迁 ET 属 B1, 本判据对两种格式已兼容 → 迁移时无需再改此处。
+- **刻意不做**: 接线 = 新增告警环路 (须入 `docs/CONTROL-LOOP-LEDGER.md` + 推送/冷却设计),
+  属人工裁决, 本批不代裁。零消费方 ⇒ 本修**零运行时行为变更** (修的是"接线当天不会静默漏报 8h")。
+- **测试**: `tests/test_pending_sync_staleness.py` **14 例** — 核心回归 (CST 墙钟 10min 前必须判超时)、
+  **在测内直接跑旧 SQL 判据证明其 8h 盲区** (`test_old_sql_predicate_was_blind_for_8h`, 证伪内建
+  无需手工还原)、窗内/窗外边界、aware-ET 与 aware-UTC 同尺、迁移期 naive/aware 混存一轮判对、
+  NULL/脏值/空串三态 fail-loud (含日志断言)、非 pending_sync 行不告警、`max_age=0` 与负值夹取、
+  解析器单元 (naive→+08:00、同一瞬间两种写法判等、`Z` 后缀)。
+
+### 10.2 B1 第一阶 — 棘轮守卫 + 三处清剿 + 清剿次序定案
+
+- **盘点 (更正 DEB 原文口径)**: `app/` 下裸 `datetime.now()` = **455 处 / 127 文件** (另
+  `datetime.utcnow()` 4 处, 同族病灶)。M-6/B1 原文举的 "trade_store×11, decision_recorder×5" 是
+  **行数**口径且仅为样例; 按出现次数实测重灾为 agent_bridge 16 / position_sync 14 / trade_store 13 /
+  review_loop 12 / alphavantage_provider 12 / voting_accuracy_tracker 12 / pipeline 7 (清剿后)。
+- **CI 守护已落**: `tests/test_naive_datetime_now_ratchet.py` **5 例** — 数值棘轮 `BASELINE_NOW=455`、
+  `BASELINE_UTCNOW=4`, **只降不升**; 另钉三条守卫自身失效模式: ①扫描空转必须红
+  (`test_scan_is_not_vacuous`: "零违反"与"守卫崩了"不可同形, 命中文件数 <100 即疑范围被缩小)
+  ②正则只咬裸调用, 带尺写法 (`datetime.now(CST)` / `datetime.now(_now_et())` / `now_et()`) **不计入**
+  (`test_pattern_only_matches_naive_forms` — 否则清剿无路可走) ③本批已清三处不得回潮
+  (`test_cleared_sites_stay_cleared`)。
+  **偏离声明**: 选**数值棘轮**而非 B1 原文的"白名单制" — 127 文件清单的维护成本高于收益,
+  数值棘轮已能拦住任何净增长 (约束等价), 与仓内既有 `test_except_pass_ratchet.py` (基线 955) 同款。
+  **证伪实跑**: 往 `app/risk/order_tracker.py` 追加一行 `_PROBE = datetime.now()` → `assert 456 <= 455`
+  即红; `cp` 还原后 5 例全绿且 `git diff` 为空。副作用诚实登记: 该 `cp` 还原把 mtime 推到 17:44 →
+  部署守卫 17:50:01 cron 跑如实报 `stale_drift=4425s | newest=app/risk/order_tracker.py`
+  (**守卫在工作**, 内容与 HEAD 逐字相同), 17:51 重启后手动实跑 exit=0 静默自清。
+- **本批清剿 3 处 (458 → 455)**:
+  ① `pipeline._check_daily_loss_circuit` 的 `ts` / `flip_at` → `now_et()`: 两键是**纯信息位**
+  (全仓唯一读点 = `"ts": base.get("ts")` 原值透传, 无解析无比较) ⇒ 改写尺度零风险, 且改后
+  `data/daily_loss_baseline.json` **自证尺度** (带 -04:00 偏移), 免人工读档把 CST 墙钟当 ET;
+  ② `pipeline._force_close_orphaned_sim_positions` 的 `now_iso` → **删**: 赋值后全函数
+  (9145–9454) **零引用** = 死变量, 留着会让人误以为 EOD 兜底平仓用 CST 打时间戳;
+  ③ **保留不动 (永久豁免)**: `pipeline:6135` 的 `now_iso = datetime.now().isoformat()` 在 `except`
+  分支, 主路径是 `datetime.now(_now_et())` (2026-07-03 修, 注释"与 entry_time 格式对齐") —
+  清剿它等于让异常路径也炸; 计入基线但已在测试头注标为不应清剿。
+- **关键结论: B1 不可一次全仓翻 (本批新推导, 已入测试头注)** — 把写入方从 naive-CST 改成 aware-ET
+  会让同一列**混存两种格式**, 而 ISO 字符串的字典序在混存时**不再等于时间序**:
+  实证 `2026-09-05T06:00:00-04:00` (= 18:00 CST) 字典序**小于** `2026-09-05T17:00:00`
+  (= 17:00 CST, **更早**的瞬间) ⇒ 切换日附近任何 `ORDER BY <该列>` 或 `substr(col,1,10)` 分桶会
+  **错序 / 错日**。故清剿必须**按列推进** (先审该列全部消费方: 排序 / 分桶 / 字符串比较 / 展示),
+  而不是按文件一次翻 — 这是 B1 从"一次清扫"改为"分批按列"的实证依据。
+- **后续次序 (风险从低到高, 每批调低 BASELINE)**: 1 纯信息位 (**本批已做**) → 2 死变量 (**本批已做**)
+  → 3 单列闭环 (`last_sync_at`: 读方本批已做成格式兼容, 写方 3 处可随下批翻) → 4 账本列
+  (`trade_records.created_at` / `open_positions.updated_at`) 最高危, 须先出消费方清单 + 归一或打标方案,
+  **单独 DEB 裁决** (M-6 已注: B1 完成前的行在复盘查询中以 `entry_time` 而非 `created_at` 归日)。
+
+### 10.3 B3–B6 状态 (本批未开工, 仍在 M-6 窗口内)
+
+| # | 项 | 状态 / 下一动作 |
+|---|---|---|
+| B3 | 退出 PnL 改用 broker 实际成交量 (G-14) | 未开工 — 先核对 dual_broker 回填 `dealt_qty` 在 sim 下的可信度 (与 A3/G-04 已修的 `order_filled` 判据同源) |
+| B4 | push 缓存统一 freshness gate (G-11/G-17) | 未开工 — ticker TTL / orderbook age>10s 丢弃或置信衰减 / premarket phase-aware / 1-min fallback change_percent 语义 |
+| B5 | `_wd_ping` 首失败升 warning (G-13) | 未开工 |
+| B6 | SQLite 连接 with/finally 批扫 + KILL_SWITCH 覆盖退出循环评估 (T6/G-10) | 未开工 |
+
+排期仍在 M-6 裁决的"恢复后 10 个交易日内"窗口 (9/8 起算 → 截止 ≈ 9/22)。
+
+### 10.4 验证与运行态
+
+- **新增 19 例** (B2 14 + B1 5); 受影响面 (`tests/test_open_row_pnl_placeholder.py` /
+  `tests/test_shadow_tracker.py` / `tests/coordinator/test_owner_strategy_persistence.py` /
+  `tests/test_daily_loss_circuit.py` / `tests/playbook/test_daily_loss_circuit_hysteresis.py` /
+  `tests/test_except_pass_ratchet.py`) **91 passed**。
+- **全量回归**: `PYTHONPATH=. venv/bin/python -m pytest tests/ -q -p no:randomly` →
+  **2702 passed / 1 failed / 37 skipped** (154.5s)。唯一 failed 仍是 `tests/test_r9_r13_contracts.py`
+  R12 (US.HOOD 9/4 `entry_time` 两表差 2.94s) = 预存数据漂移, 三批基线同款, 与本批零关联。
+  **+19 vs 前基线 2683** = 本批新增, 逐笔对账。
+- **零交易行为变更声明**: B2 修的函数零消费方; B1 清的三处 = 2 个信息位/死变量 + 1 个导入别名 ⇒
+  **本批不改变任何交易决策、账本数值或退出参数** (KR2 仍 exit-de49b1299290)。
+- **运行态**: PID 372300 (16:32:36, §9.8 第三批) → **377720 @ 17:51:13 CST**; 两改动文件 mtime
+  `trade_store.py` 17:34:20 / `pipeline.py` 17:42:45 **均早于启动** ⇒ 本批代码在内存;
+  启动段**零 ERROR / 零 CRITICAL / 零 Traceback**; 3 存量仓 17:51:28 判 `playbook 自管 (禁止 takeover)`;
+  `[PlaybookExit] 快循环已启动 (interval=10s)` 17:51:33; `/run/ftseek-heartbeat` 17:52:33 新鲜;
+  部署守卫手动实跑 **exit=0 且静默 = fresh**。`playbook.auto_execute: true` 未动。
 ---
 *提案方证据全量索引: REPORT.md (严重度已归一, 5=最重); 底稿 agent_A…F + ssot_findings.md 同目录 (`/opt/llm-eval-harness/results/explore_20260905/`)。本档为裁决+执行版, 由 docs/debates/ 归档; 提案原文的"目标仓零写入"声明仅约束审计会话, 不约束本执行批。*
