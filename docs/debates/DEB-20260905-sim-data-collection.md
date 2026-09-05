@@ -413,5 +413,13 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
   恢复生成器或修钩子 §6 属结构变更, 呈 team-lead 裁决, 本批不擅动 `.git/hooks/`。
 - **本提交不含** (待用户裁决是否入库): `results/` (审计会话底稿, 仓内从未跟踪)、
   `docs/DA-LLM-PROMPTS-VERBATIM.md`、`docs/STRATEGY-BRIEF-FOR-EXTERNAL-REVIEW{,-EN}.md` (外审简报, 另一会话产物)。
+- **提交后部署补记 (15:46)**: 提交前对 `app/risk/absolute_circuit_breaker.py` 的注释同步 (mtime **15:38:15**)
+  晚于当时进程启动 (15:23:50) → `deploy_freshness_check` 15:40:01 cron 跑与 15:45:46 手动跑各记一次
+  `skip: stale_drift=865s_outside_safe_window` (按 `newest_code_ts` 去重 = 单条告警; 窗外不重启符合设计)。
+  该改动为**纯注释**、行为与 HEAD 等价, 但为守住 G-02 的"进程内代码 == HEAD"不变量, 已再次重启:
+  PID 367294 → **369600 @ 15:46:03**。取证同款全绿: 启动段零 ERROR/CRITICAL/Traceback;
+  3 存量仓 15:46:12 判 `playbook 自管 (禁止 takeover, 否则双管理)`; `[PlaybookExit] 快循环已启动 (interval=10s)`
+  15:46:18; `/run/ftseek-heartbeat` 15:46:58 新鲜; 三改动文件 mtime 15:22:50–15:38:15 **全早于启动**;
+  守卫手动实跑 **exit=0 且静默 = fresh** → 部署断层归零。
 ---
 *提案方证据全量索引: REPORT.md (严重度已归一, 5=最重); 底稿 agent_A…F + ssot_findings.md 同目录 (`/opt/llm-eval-harness/results/explore_20260905/`)。本档为裁决+执行版, 由 docs/debates/ 归档; 提案原文的"目标仓零写入"声明仅约束审计会话, 不约束本执行批。*
