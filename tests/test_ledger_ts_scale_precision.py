@@ -759,11 +759,48 @@ def test_live_db_timestamps_all_parseable():
 
 
 @pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
-def test_live_positions_rule4_no_longer_misfires():
-    """端到端回归: 现库 3 个活仓的 hold_days 必须等于真值, 且 Rule 4 不得误报。
+def test_live_positions_hold_days_match_true_instant():
+    """端到端回归: 现库活仓的 `hold_days` 必须等于**按正确尺度解析后的真值**。
 
-    修复前实测 (2026-09-05 20:46 CST): UBER/RIVN hold_days=2 (真值 1)、HOOD=1 (真值 0)
-    ⇒ UBER/RIVN 触发 Rule 4 → HOLD 变 PARTIAL_EXIT + "持仓2天(历史平均1天) ⇒ 减仓50%"。
+    这条断言是**时间无关**的 (真值与实测同源同时刻), 故可作为常驻不变量。
+
+    修复前实测 (2026-09-05 20:46 CST = 08:46 ET): UBER/RIVN `hold_days=2` 而真值 1、
+    HOOD `=1` 而真值 0 ⇒ 全体 +12h 偏置。
+
+    ⚠️ **本测试首版是错的, 记档免复犯**: 首版还额外硬断言"Rule 4 不得触发", 于
+    2026-09-05 21:59 CST (= 09:59 ET) **变红** — 但那**不是修复回潮**: UBER 入场
+    2026-09-03T09:39:51-04:00, 到 09:59 ET 真实持仓已满 **2 天 0.3h** ⇒ `hold_days=2`
+    **等于真值**, 而 `avg=1` ⇒ `2 > 1*1.5` ⇒ Rule 4 **合法触发** (持仓确实达到历史均值的
+    2 倍)。20:46 那次快照恰好在日界翻转前约 1 小时, 使"Rule 4 不触发"看起来像不变量 —
+    **把时间相关的业务结论当成不变量, 是这类"实测取样即断言"测试的典型陷阱**。
+    现改为断言**尺度不变量** (见下一例), 业务结论不再入断言。
+    """
+    from app.plan.position_intelligence import _calc_hold_days
+
+    conn = sqlite3.connect(f"file:{_LIVE_DB}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT symbol, direction, entry_time FROM open_positions WHERE size > 0"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows, "现库无活仓"
+    now = now_et()
+    for symbol, _direction, entry_raw in rows:
+        entry = parse_ledger_ts(entry_raw)
+        assert entry is not None, f"{symbol} entry_time 解析不出: {entry_raw!r}"
+        truth = (now - entry).days
+        got = _calc_hold_days(entry_raw)
+        assert got == truth, f"{symbol}: hold_days={got} 与真值 {truth} 不符 (尺度偏置回潮)"
+
+
+@pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
+def test_live_positions_rule4_verdict_is_scale_invariant():
+    """Rule 4 的判定必须**与尺度无关**: 原文串算出的结论 == 正确解析后算出的结论。
+
+    这才是缺陷1 的可断言内核, 且**时间无关** — 无论 Rule 4 此刻该不该触发
+    (那是随持仓时长变化的业务结论), "两种算法给出同一结论"必须恒成立。
+    修复前二者必然分歧 (+12h 偏置使 hold_days 大一档 ⇒ 阈值 `avg*1.5` 更早被越过)。
     """
     from app.plan.position_intelligence import _calc_hold_days, _get_avg_hold_days
 
@@ -775,14 +812,17 @@ def test_live_positions_rule4_no_longer_misfires():
     finally:
         conn.close()
     assert rows, "现库无活仓"
+
+    def _rule4(hold_days, avg):
+        return hold_days > 0 and avg > 0 and hold_days > avg * 1.5
+
     now = now_et()
     for symbol, direction, entry_raw in rows:
         entry = parse_ledger_ts(entry_raw)
         assert entry is not None, f"{symbol} entry_time 解析不出: {entry_raw!r}"
-        truth = (now - entry).days
-        got = _calc_hold_days(entry_raw)
-        assert got == truth, f"{symbol}: hold_days={got} 与真值 {truth} 不符 (尺度偏置回潮)"
         avg = _get_avg_hold_days(symbol, direction)
-        if got > 0 and avg > 0 and got > avg * 1.5:
-            pytest.fail(f"{symbol}: Rule 4 仍在触发 (hold_days={got}, avg={avg}) — "
-                        f"若这是真实信号请更新本测试并记入 DEB")
+        from_raw = _rule4(_calc_hold_days(entry_raw), avg)
+        from_instant = _rule4(max(0, (now - entry).days), avg)
+        assert from_raw == from_instant, (
+            f"{symbol}: Rule 4 判定依赖尺度 (原文串={from_raw} / 正确瞬间={from_instant}, "
+            f"hold_days={_calc_hold_days(entry_raw)}, avg={avg}) ⇒ 截断偏移的偏置回潮")
