@@ -28,6 +28,35 @@ from typing import TYPE_CHECKING, Dict, List
 if TYPE_CHECKING:  # pragma: no cover
     from app.web_dashboard.manual_order_service import ManualOrder, ManualOrderService
 
+
+def _earliest_ledger_iso(raw_values) -> "str | None":
+    """从一组混存尺度的时间串里取**真实最早瞬间**, 返回 aware-ET isoformat (无可用值 → None).
+
+    尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷5): 原实现用 SQL `MIN(updated_at)` —
+    那是**字符串**最小值, 而 `open_positions.updated_at` 实测混存 aware-ET+'T' /
+    naive-CST+'T' / naive-UTC+空格三种尺度, 跨尺时字典序与真实时间序不一致 ⇒ 会挑错行。
+    该值随后被写进 `trade_records.entry_time`, 而下游按"entry_time 前 10 位 = ET 日"约定
+    (见本模块头注 T4 钩子), 挑错行 = 归日错一天。
+
+    边界 (刻意不越权): 本函数只归一**从库里读出来的**混存值; 手动单路径自己新造的
+    裸 `datetime.now` (:323 / :413 / :432 / :475) 属已登记的 **T4 钩子**范围
+    ("手动单再启用时须统一走 now_et() 口径"), 本批不动。
+    """
+    from app.utils.timezone import parse_ledger_ts, to_et
+
+    best = None
+    for raw in raw_values or ():
+        if not raw:
+            continue
+        parsed = parse_ledger_ts(raw)
+        if parsed is None:
+            continue
+        if best is None or parsed < best:
+            best = parsed
+    if best is None:
+        return None
+    return to_et(best).isoformat()
+
 logger = logging.getLogger("ftseek_us.manual_order_service.audit")
 
 
@@ -390,23 +419,24 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
             entry_time = None
             try:
                 cursor = conn.execute(
-                    "SELECT MIN(updated_at) FROM open_positions WHERE symbol=? AND owner='manual'",
+                    # 尺度修复: 不再用 SQL MIN() 挑字符串最小值 (updated_at 混存三种尺度),
+                    # 改为取出全部候选交给 _earliest_ledger_iso 解析后取真实最早瞬间。
+                    "SELECT updated_at FROM open_positions WHERE symbol=? AND owner='manual'",
                     (symbol,),
                 )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    entry_time = row[0]
+                entry_time = _earliest_ledger_iso(r[0] for r in cursor.fetchall())
             except Exception:
                 pass
             if not entry_time:
                 try:
                     cursor = conn.execute(
-                        "SELECT MIN(timestamp) FROM manual_order_audit WHERE symbol=? AND action='BUY'",
+                        # 该列单尺 (naive-CST, 全 83 行同尺同分隔符) ⇒ MIN 本身自洽;
+                        # 但仍走同一 helper, 目的是把输出**归一成 aware-ET** 再写进
+                        # trade_records.entry_time (R-12 口径), 堵住 naive-CST 向账本列的泄漏。
+                        "SELECT timestamp FROM manual_order_audit WHERE symbol=? AND action='BUY'",
                         (symbol,),
                     )
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        entry_time = row[0]
+                    entry_time = _earliest_ledger_iso(r[0] for r in cursor.fetchall())
                 except Exception:
                     pass
             if not entry_time:

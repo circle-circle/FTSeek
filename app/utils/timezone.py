@@ -372,6 +372,51 @@ def parse_iso_safe(s: Optional[str]) -> Optional[datetime]:
             return None
 
 
+def parse_ledger_ts(raw) -> Optional[datetime]:
+    """把 SQLite **账本时间列**解析成 aware datetime — 跨模块统一尺度契约。
+
+    ⚠️ 与上方 `parse_iso_safe` 的区别是**刻意的, 勿合并**: `parse_iso_safe` 把 naive
+    当 **UTC**, 本函数把 naive 当 **CST**。账本列的 naive 值是服务器本地墙钟 (见下方
+    实证), 用 `parse_iso_safe` 读它们会整体偏 8 小时。
+
+    背景 (DEB-20260905 §十三): `trade_records.entry_time/exit_time/created_at` 与
+    `open_positions.updated_at/entry_time` 实测 **3 种尺度 × 2 种分隔符混存**
+    (aware-ET+'T' / naive-CST+'T' / naive-UTC+空格)。任何"截断偏移后按字符串比较"或
+    "naive 直接相减"的读方都会算错, 已实证 4 个活体缺陷:
+      · `position_intelligence._calc_hold_days` 截断偏移 → 持仓天数 +12h 偏置
+      · `position_monitor` 10min 冷却窗字符串比较 → 恒真 (10/10 误判)
+      · `data_service._is_meta_older_than` 剥偏移按 naive UTC → 提前 4h 删幽灵仓
+      · `position_intelligence._get_avg_hold_days` SQL julianday 跨尺相减 → 16 行负时长
+
+    尺度归因规则 (与 `trade_store._parse_sync_ts` / `to_et()` 同一契约):
+      ① 带偏移的 isoformat → 原样 (自描述瞬间);
+      ② 'Z' 后缀 → UTC;
+      ③ naive → 一律按 **CST** 解释。
+    ③ 的实证依据 (2026-09-05, 795 行 trade_records 全量复算): naive `entry_time`
+    353 行按 CST→ET(-12h) 解读有 **330 行 (93.5%)** 落在美股正常交易时段, 按 ET 解读
+    仅 **8 行 (2.3%)**; 16 行"负持仓时长"(naive entry / aware exit)按 CST 解读后全部
+    转正且量级合理 (分钟级 scalping)。
+
+    Returns: aware datetime; 空值/解析失败返回 None。调用方**必须显式处理 None**,
+    不得回退成"当作现在"或"当作 epoch" — 那正是本函数要消灭的静默错算。
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        text = str(raw).strip()
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = _localize(dt, CST)
+    return dt
+
+
 def market_phase_now() -> str:
     """返回当前 ET 市场 phase"""
     n = now_et()

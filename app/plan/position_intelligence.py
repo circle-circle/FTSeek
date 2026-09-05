@@ -16,7 +16,6 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -87,29 +86,23 @@ def _calc_hold_days(created_at) -> int:
     """计算持仓天数。
 
     支持 str (ISO 格式 / 'YYYY-MM-DD HH:MM:SS') 或 datetime；解析失败返回 0。
+
+    尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷1): 原实现用 `txt[:26]` / `txt[:19]`
+    定长截断后 `strptime`, 会把 `2026-09-03T09:39:51.298036-04:00` 的 **偏移量截掉**
+    (不抛异常, 静默变成 naive), 再与裸 `datetime.now` (宿主 = CST 墙钟) 相减 ⇒ 凭空
+    **+12h 偏置**。实测当天 3 个活仓: UBER/RIVN 算出 2 天 (真值 1)、HOOD 算出 1 天
+    (真值 0) ⇒ Rule 4 对 UBER/RIVN 误报 "持仓2天(历史平均1天) ⇒ 减仓50%"。
+    现改用 `parse_ledger_ts` (aware 归一, naive 按 CST) + `now_et()` 同尺相减。
     """
     if not created_at:
         return 0
     try:
-        if isinstance(created_at, datetime):
-            dt = created_at
-        else:
-            txt = str(created_at).strip().replace("Z", "")
-            dt: Optional[datetime] = None
-            for fmt in (
-                "%Y-%m-%dT%H:%M:%S.%f",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%d",
-            ):
-                try:
-                    dt = datetime.strptime(txt[: 26 if "%f" in fmt else (19 if "%H" in fmt else 10)], fmt)
-                    break
-                except Exception:
-                    continue
-            if dt is None:
-                dt = datetime.fromisoformat(txt)
-        delta = datetime.now() - dt
+        from app.utils.timezone import now_et, parse_ledger_ts
+        dt = parse_ledger_ts(created_at)
+        if dt is None:
+            logger.debug(f"_calc_hold_days 无法解析尺度: {created_at!r}")
+            return 0
+        delta = now_et() - dt
         return max(0, delta.days)
     except Exception as e:
         logger.debug(f"_calc_hold_days 解析失败: {created_at!r} ({e})")
@@ -130,24 +123,27 @@ def _resolve_trade_records_db() -> Optional[str]:
 def _get_avg_hold_days(symbol: str, direction: str) -> int:
     """从 trade_records 表查询历史平均持有天数。
 
-    SQL:
-        SELECT AVG(julianday(exit_time) - julianday(entry_time))
-        FROM trade_records
-        WHERE symbol=? AND direction=?
-          AND entry_time IS NOT NULL AND exit_time IS NOT NULL
+    尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷2): 原实现在 SQL 里做
+    `AVG(julianday(exit_time) - julianday(entry_time))` — `julianday()` 把两种尺度的
+    字符串当**同一把尺**相减, 而该两列实测混存 (aware-ET / naive-CST) ⇒ 跨尺对产生
+    **负持仓时长** (全库实证 16 行, 如 id=854 US.XLK −0.332 天), 把均值整体拉低。
+    附带缺陷: 原 `COUNT(*)` 计的是"两列非 NULL 的行", 而 `julianday('')` 返回 NULL 会被
+    AVG 跳过却仍被 COUNT 计入 ⇒ cnt 虚高, 可能让数据不足的组越过 `< 2` 门槛。
+    现改为取出原始字符串, 用 `parse_ledger_ts` 归一到 aware 后在 Python 侧相减,
+    且 cnt 只数**成功解析的配对**。修复后全库 792 行有退出的记录负时长归零。
 
-    数据不足或异常时返回 DEFAULT_AVG_HOLD_DAYS=3。
+    数据不足 (< 2 个可解析配对) 或异常时返回 DEFAULT_AVG_HOLD_DAYS=3。
     """
     db_path = _resolve_trade_records_db()
     if not db_path or not os.path.exists(db_path):
         return DEFAULT_AVG_HOLD_DAYS
     try:
+        from app.utils.timezone import parse_ledger_ts
         conn = sqlite3.connect(db_path, timeout=2.0)
         try:
             cur = conn.execute(
                 """
-                SELECT AVG(julianday(exit_time) - julianday(entry_time)) AS avg_days,
-                       COUNT(*) AS cnt
+                SELECT entry_time, exit_time
                 FROM trade_records
                 WHERE symbol = ?
                   AND direction = ?
@@ -156,13 +152,22 @@ def _get_avg_hold_days(symbol: str, direction: str) -> int:
                 """,
                 (symbol, direction),
             )
-            row = cur.fetchone()
+            rows = cur.fetchall()
         finally:
             conn.close()
-        if not row:
+        total_seconds = 0.0
+        cnt = 0
+        for row in rows:
+            entry_dt = parse_ledger_ts(row[0])
+            exit_dt = parse_ledger_ts(row[1])
+            if entry_dt is None or exit_dt is None:
+                continue
+            total_seconds += (exit_dt - entry_dt).total_seconds()
+            cnt += 1
+        if cnt < 2:
             return DEFAULT_AVG_HOLD_DAYS
-        avg_days, cnt = row[0], row[1]
-        if not avg_days or (cnt or 0) < 2:
+        avg_days = total_seconds / cnt / 86400.0
+        if not avg_days:
             return DEFAULT_AVG_HOLD_DAYS
         return max(1, int(round(float(avg_days))))
     except Exception as e:

@@ -1154,16 +1154,43 @@ def _reconcile_position_store(scheduler):
             db_path = str(get_main_db())
             ts = TradeStore(db_path)
             conn = ts._get_conn()
-            cutoff = (now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
-            recent_exits = conn.execute(
-                "SELECT COUNT(*) FROM trade_records WHERE symbol=? AND exit_time>=? AND exit_reason IS NOT NULL",
-                (symbol, cutoff)
-            ).fetchone()[0]
-                # 也检查 open_positions 表是否有同标的 recent close 标记
-            recent_pos_closes = conn.execute(
-                "SELECT COUNT(*) FROM open_positions WHERE symbol=? AND sync_status='closed' AND updated_at>=?",
-                (symbol, cutoff)
-            ).fetchone()[0]
+            # 尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷3): 原实现把 cutoff 格式化成
+            # "%Y-%m-%d %H:%M:%S" (**空格**分隔) 后与 exit_time (**'T'** 分隔 + 偏移) 做
+            # SQL 字符串比较。同日内 'T'(0x54) 恒大于 ' '(0x20) ⇒ `exit_time >= cutoff`
+            # **恒真**, "最近 10 分钟" 实际退化成 "今天退出过"。用 2026-09-04 15:00 ET
+            # 复跑当天 10 笔退出: 误判 10/10 (真实为 2.8–5.2h 前), 且该查询无
+            # source_type 过滤 ⇒ PLAYBOOK_SIM 的退出记录会抑制主链仓重建 (G-09 正门)。
+            # 换分隔符**不足以**修复: 跨 DST 反例 '2026-11-01T08:30:00-04:00' 与
+            # '2026-11-01T08:30:00-05:00' 字符串序与真实瞬间序相反 ⇒ 必须解析后比较。
+            # 现做法: SQL 侧只留一个**尺度无关且偏保守**的日期前缀预筛 (substr 对
+            # 'T'/空格两种分隔符都取到 YYYY-MM-DD, 放宽 1 天覆盖 CST/ET/UTC 最大 12h 偏差),
+            # 精确判定在 Python 侧用 parse_ledger_ts 归一到 aware 后做。
+            from app.utils.timezone import parse_ledger_ts
+            cutoff_dt = now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)
+            prefilter_date = (cutoff_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+            exit_rows = conn.execute(
+                "SELECT exit_time FROM trade_records "
+                "WHERE symbol=? AND exit_reason IS NOT NULL AND substr(exit_time,1,10)>=?",
+                (symbol, prefilter_date)
+            ).fetchall()
+            recent_exits = 0
+            for _row in exit_rows:
+                _exit_dt = parse_ledger_ts(_row[0])
+                if _exit_dt is not None and _exit_dt >= cutoff_dt:
+                    recent_exits += 1
+            # 也检查 open_positions 表是否有同标的 recent close 标记
+            # 注 (2026-09-05 实测): sync_status='closed' 全仓**零写方** (2026-07-14 起软删除
+            #   已改物理 DELETE), 库内 3 行全为 'synced' ⇒ 本条件恒不成立, 是死闸。此处
+            #   **刻意保留原语义** (不放宽也不删除), 只把时间比较修对, 以便日后有写方时正确。
+            recent_pos_closes = 0
+            _pos_row = conn.execute(
+                "SELECT updated_at FROM open_positions WHERE symbol=? AND sync_status='closed'",
+                (symbol,)
+            ).fetchone()
+            if _pos_row is not None:
+                _pos_dt = parse_ledger_ts(_pos_row[0])
+                if _pos_dt is not None and _pos_dt >= cutoff_dt:
+                    recent_pos_closes = 1
             if recent_exits > 0 or recent_pos_closes > 0:
                 logger.info(
                     f"[持仓对账] {symbol}: Broker 有持仓但本地无记录，但 {RECENT_CLOSE_WINDOW_MINUTES}min 内"

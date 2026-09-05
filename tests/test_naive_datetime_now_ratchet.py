@@ -145,10 +145,15 @@ import sys
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-BASELINE_NOW = 446     # 2026-09-05 B1 第三阶: 455 → 446 — 只降不升。构成: last_sync_at 写方 6 处
+BASELINE_NOW = 445     # 2026-09-05 §十三 精度批: 446 → 445 — 只降不升。本阶 −1:
+                       #   `position_intelligence._calc_hold_days` 的裸 now 被 `now_et()` 取代
+                       #   (该处正是缺陷1 的 +12h 偏置源头: 截断偏移后的 naive ET 墙钟与
+                       #   naive CST 墙钟相减)。同批新增的 2 处 docstring 提及按头注边界①
+                       #   约定写成不带括号的 `datetime.now`, 故不计入本正则。
+                       # 2026-09-05 B1 第三阶: 455 → 446。构成: last_sync_at 写方 6 处
                        #   翻 ET (−6) + 2 处 docstring 字面量按头注边界①约定改写 (−2) + 主正则加
                        #   (?<!\w) 修掉 `_datetime.now()` 的 1 处双计 (−1)。旧正则口径下的等价历史
-                       #   基线是 454, 故本阶真实清剿量 = 454 − 446 = 8。
+                       #   基线是 454, 故该阶真实清剿量 = 454 − 446 = 8。
 BASELINE_UTCNOW = 4    # 同类病灶 (naive UTC), 未清剿, 先钉住不增长
 BASELINE_NOW_ALIAS = 11    # 别名裸 now — 第三阶新增 (堵"改名规避棘轮"通道), 第四阶 15 → 11:
                            #   翻掉 4 处真病灶 (3 处读侧日期串 + 1 处死表写方), 余 11 处**全部**由

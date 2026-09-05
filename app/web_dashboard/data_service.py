@@ -922,8 +922,14 @@ class DataService:
         if not ghosts_to_mark and not ghosts_to_delete:
             return
 
-        from app.utils.timezone import now_utc
-        now_iso = now_utc().strftime("%Y-%m-%d %H:%M:%S")
+        # 尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷3b): 原写 `now_utc().strftime(空格分隔)`
+        # = open_positions.updated_at 的**第三种尺度** (naive-UTC + 空格), 而该列现役 3 行与
+        # trade_store 写方都是 aware-ET + 'T'。naive-UTC 串无法自描述尺度, 任何读方只能靠猜。
+        # 现改写 aware-ET isoformat (自描述), 与 _is_meta_older_than 的解析契约同尺闭环。
+        # 注: 本写方**休眠** (logs/ 全库零 [GhostReconcile] 触发), 故本次改写零运行态影响;
+        #     trade_store:1111 那条**热路径** updated_at 写方仍属 B1 第五阶 (须单独 DEB), 本批不动。
+        from app.utils.timezone import now_et
+        now_iso = now_et().isoformat()
         path = self._get_db()
         try:
             conn = sqlite3.connect(path, timeout=10)
@@ -953,23 +959,26 @@ class DataService:
 
     @staticmethod
     def _is_meta_older_than(updated_at: str, hours: int = 24) -> bool:
-        """判断 SQLite updated_at 字符串是否早于 now-hours (UTC 比较, 容错多种格式)"""
+        """判断 SQLite updated_at 字符串是否早于 now-hours (aware 同尺比较).
+
+        尺度修复 (2026-09-05, DEB-20260905 §十三 缺陷4): 原实现先把 'T' 换成空格、再
+        **按 '+'/'Z' 切掉偏移量**, 然后把剩下的 naive 墙钟**当作 UTC** 与
+        `now_utc().replace(tzinfo=None)` 相减。该列实测混存两种尺度, 于是两头都错:
+          · aware-ET 行 (现库 3 行全是): 剥掉 `-04:00` 后 ET 墙钟被当 UTC ⇒ 账龄
+            **虚增 4h** ⇒ 24h 删除门槛**提前 4h** 命中 ⇒ 提前 DELETE 真实持仓记录
+            = G-09「Futu 有 / DB 无」的正门 (本函数的唯一消费方就是
+            `_reconcile_ghosts` 的 `DELETE FROM open_positions`);
+          · naive-CST 行: CST 墙钟被当 UTC ⇒ 账龄**少算 8h** ⇒ 删除延迟 8h。
+        现统一走 `parse_ledger_ts` (带偏移原样 / naive 按 CST), 与 `now_utc()` 都是
+        aware ⇒ 相减即真实时长。解析失败仍返回 False (= 不删), 保持保守方向。
+        """
         if not updated_at:
             return False
-        s = str(updated_at).strip().replace("T", " ")
-        for sep in ("+", "Z"):
-            if sep in s:
-                s = s.split(sep)[0].strip()
-        if "." in s:
-            s = s.split(".")[0].strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-            try:
-                ts = datetime.strptime(s, fmt)
-                from app.utils.timezone import now_utc
-                return (now_utc().replace(tzinfo=None) - ts).total_seconds() > hours * 3600
-            except ValueError:
-                continue
-        return False
+        from app.utils.timezone import now_utc, parse_ledger_ts
+        ts = parse_ledger_ts(updated_at)
+        if ts is None:
+            return False
+        return (now_utc() - ts).total_seconds() > hours * 3600
 
     # ═══════════════════════════════════════════
     #  通用 async 执行器

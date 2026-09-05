@@ -208,6 +208,10 @@ class FutuLV3Provider:
         self._push_quote_cache: Dict[str, Any] = {}  # symbol -> quote dict
         self._push_kline_cache: Dict[str, Any] = {}   # symbol -> latest kline
         self._push_ticker_cache: Dict[str, List] = {} # symbol -> recent tickers (ring buffer)
+        # B4 (2026-09-05, DEB-20260905 §十三): 逐笔缓存的**到达时刻** (epoch, 单调钟) —
+        # 与 orderbook 的 cached["timestamp"] 同一套 freshness gate 机制。用 time.time()
+        # 而非 ticker["time"] 字符串, 是为了绕开 Futu 时间串的尺度/格式不确定性。
+        self._push_ticker_seen_at: Dict[str, float] = {}  # symbol -> last push arrival epoch
         self._push_orderbook_cache: Dict[str, Any] = {}  # symbol -> latest orderbook
         self._push_cache_lock = threading.Lock()
         self._kline_handler = None
@@ -234,6 +238,15 @@ class FutuLV3Provider:
         self._kline_data_cache: dict = {}       # symbol -> {"data": [...], "ts": time.time()}
         self._kline_cache_lock = threading.Lock()
         self._kline_cache_ttl = 60              # M6 (2026-06-03): 300→60s, K线缓存缩短到1分钟 (技术指标滞后从5min降到1min)
+        # B4: 逐笔缓存 TTL = 300s, 对齐 ticker_analyzer.MEDIUM_WINDOW (中窗口 ~250 笔 ≈ 5min)。
+        #   依据: analyze_tickers 的头注明确写了"Push 数据没有 Unix 时间戳, 用最近 N 笔近似"
+        #   ⇒ 它**假定缓存是新鲜的**。缓存停更后 (断线/收盘/未订阅) 缓冲里仍是几小时前的
+        #   500 笔, 旧实现 `if cached: return list(cached)` 会把它当实时数据返回, 于是
+        #   ticker_velocity(笔/分钟) 与 buy_sell_ratio 全在描述一个远古窗口, 却被
+        #   market_data_router 注入 ts_ctx 的 ticker_* 与 order_flow_imbalance = 信号污染。
+        #   超过中窗口即视为不可用 ⇒ 返回 None, 走既有"无逐笔数据"降级分支 (不注入因子,
+        #   不阻断下单)。
+        self._ticker_cache_ttl = 300
         self._kline_symbol_cooldown: dict = {}  # symbol -> last_request_time (防同一标的重复请求)
         self._kline_symbol_cooldown_sec = 30    # 同一标的最小请求间隔30秒 (10→30 降低配额压力)
 
@@ -609,6 +622,7 @@ class FutuLV3Provider:
                                 # Ring buffer: 只保留最近 MAX_TICKERS_PER_SYMBOL 条
                                 if len(buf) > self.MAX_TICKERS_PER_SYMBOL:
                                     provider._push_ticker_cache[sym] = buf[-self.MAX_TICKERS_PER_SYMBOL:]
+                                provider._push_ticker_seen_at[sym] = time.time()
                         provider._push_ticker_count += len(data)
                         provider._last_push_time = time.time()
                         if provider._push_ticker_count <= len(data):  # 首次接收
@@ -686,12 +700,22 @@ class FutuLV3Provider:
 
         由 PushTickerHandler 异步更新，实时推送延迟 <100ms。
         返回最近 500 笔逐笔数据，供量能分析因子使用。
+
+        B4 freshness gate (2026-09-05): 缓存停更超过 `_ticker_cache_ttl` (300s) 返回 None。
+        与同类 `get_push_orderbook` (:707) 的 `(time.time() - cached["timestamp"]) < cache_ttl`
+        对齐 — 原实现两个方法一个有闸一个没有, 是同一个类里的自相矛盾。
         """
         futu_symbol = self._to_futu_symbol(symbol)
         with self._push_cache_lock:
             cached = self._push_ticker_cache.get(futu_symbol)
             if cached:
-                return list(cached)  # 返回副本防止外部修改
+                age = time.time() - self._push_ticker_seen_at.get(futu_symbol, 0)
+                if age < self._ticker_cache_ttl:
+                    return list(cached)  # 返回副本防止外部修改
+                logger.debug(
+                    f"[FutuLV3] {futu_symbol} 逐笔缓存已停更 {age:.0f}s "
+                    f"(> {self._ticker_cache_ttl}s TTL), 按无数据处理 (不注入 ticker_* 因子)"
+                )
         return None
 
     def get_push_orderbook(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -1771,6 +1795,7 @@ class FutuLV3Provider:
                 self._push_quote_cache.clear()
                 self._push_kline_cache.clear()
                 self._push_ticker_cache.clear()
+                self._push_ticker_seen_at.clear()
                 self._push_orderbook_cache.clear()
 
         # 重新连接
@@ -2116,6 +2141,7 @@ class FutuLV3Provider:
             "push_orderbook_count": self._push_orderbook_count,
             "push_error_count": self._push_error_count,
             "ticker_cache_symbols": len(self._push_ticker_cache),
+            "ticker_cache_stale_symbols": self._count_stale_ticker_symbols(),
             "orderbook_cache_symbols": len(self._push_orderbook_cache),
             "last_error": self._last_error,
             "last_connect_time": (
@@ -2131,6 +2157,19 @@ class FutuLV3Provider:
             return False
         age = time.time() - self._cache_time.get(key, 0)
         return age < self.cache_ttl
+
+    def _count_stale_ticker_symbols(self) -> int:
+        """B4: 统计"有缓存但已停更超 TTL"的标的数 — 让 freshness gate 的触发面可观测。
+
+        get_push_tickers 在热路径上只打 debug (避免刷屏), 故把命中面汇总到本计数,
+        经 get_stats()/健康端点暴露, 免得重演 B5 那种"debug 全吞 ⇒ 故障不可见"。
+        """
+        now = time.time()
+        with self._push_cache_lock:
+            return sum(
+                1 for sym in self._push_ticker_cache
+                if (now - self._push_ticker_seen_at.get(sym, 0)) >= self._ticker_cache_ttl
+            )
 
     def close(self):
         """关闭连接"""
@@ -2166,6 +2205,7 @@ class FutuLV3Provider:
                         self._push_quote_cache.clear()
                         self._push_kline_cache.clear()
                         self._push_ticker_cache.clear()
+                        self._push_ticker_seen_at.clear()
                         self._push_orderbook_cache.clear()
                     logger.info("[FutuLV3] 连接已关闭")
                 except Exception as e:
@@ -2240,6 +2280,7 @@ class FutuLV3Provider:
                 self._push_quote_cache.clear()
                 self._push_kline_cache.clear()
                 self._push_ticker_cache.clear()
+                self._push_ticker_seen_at.clear()
                 self._push_orderbook_cache.clear()
             logger.info(f"[FutuLV3] 退订完成: 成功={success}, 失败={failed} | 槽位已释放")
         else:

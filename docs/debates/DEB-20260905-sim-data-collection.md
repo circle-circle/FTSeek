@@ -162,6 +162,7 @@ E1 GATE 1 判负后入场全停。但**模拟盘的目的函数不是当期盈�
 | 9/5(六) 17:30–17:55 | **已完成 (第三批·Tier-B 首批)**: B2 pending_sync 时区判据修复 (含 D-06 影响面更正: 零消费方 = 告警从未存在, 非"延迟 8h") + B1 第一阶 (裸 `datetime.now()` 棘轮守卫 455 基线 + 清剿 3 处 + 定案"按列不按文件"的清剿次序), +19 例, 全量 2702 passed, 重启 PID 377720 @ 17:51:13 (见 §十) |
 | 9/5(六) 18:00–18:40 | **已完成 (第四批·B1 第三阶)**: `last_sync_at` 单列闭环 — 写方 **6 处**(不是前批记的 3 处, 漏盘已更正) 全翻 `now_et()` + 棘轮守卫堵别名盲区 (`_dt.now()` 15 处独立钉住) 并修掉 `_datetime.now()` 的 1 处双计 (455→446), +16 例, 全量 2718 passed, 重启 PID 382313 @ 18:36:06 (见 §十一) |
 | 9/5(六) 18:40–19:40 | **已完成 (第五批·B1 第四阶)**: 别名裸 now **15 处逐点归类** — 结果与原计划严重不符: 只翻 **4 处** (3 读侧日期串 + 1 死表写方), **10 处豁免** (5 except 兜底 / 3 注释留痕 / 2 刻意 `ts_cst`), **1 处刻意不翻并立契约** (`risk_audit.json` 的 naive-CST 同尺闭环 = 单翻一侧会静默杀死 RISK_OFF 去重)。`BASELINE_NOW_ALIAS` 15→11 且 11 处**全部登记进可执行台账**, +8 例, 全量 2726 passed。**零交易行为变更** (见 §十二) |
+| 9/5(六) 20:40–21:40 | **已完成 (第六批·精度与数据修复)**: 用户裁「如确实存在精度和数据问题, 请全部修复」⇒ 新增共享解析器 `parse_ledger_ts` 把"naive=CST"契约 (实证 330/353 vs 8/353) 固化, **5 个读方接入** (持仓天数 +12h 偏置 / `julianday` 跨尺负时长 / 对账冷却窗字符串恒真 / 幽灵仓提前 4h 删 / `MIN()` 挑错行) + **1 个写方**改自描述 + **B4** 逐笔缓存 freshness gate。存量数据**零字节改动**而全库负持仓时长 **16→0**, 活仓 Rule 4 误报当场消失, `_get_avg_hold_days` 输出 **179 组零变化**。`BASELINE_NOW` 446→445, +59 例, 全量 **2783 passed / 3 failed / 37 skipped** (三个 failed 逐一归因**均非本批**: 1 预存 R12 + 2 另一 Agent 并发)。**刻意不重启** (会连带加载另一 Agent 未落地的 config), 前置条件见 §13.11 (见 §十三) |
 | 9/7(一, 休市) | M-6 首批开工 (B2 pending_sync 时区 → B1 datetime.now 清扫 + CI 守护); 观察三仓 EOD/隔夜路径空跑是否正常 |
 | 9/8(二) 21:30 CST 开盘 | auto_execute **已为 true** (M-7 MODIFIED: 取消 48h 影子期)。开盘首小时人工盯盘 + 三项在场核验: ① chase_cap 遥测/enforce 日志 ② 20s 退出快环心跳 ③ 组合兜底聚合行; 任一缺位 → 当轮 auto_execute=false。同时实战检验 G-09 平仓 tombstone (三仓 UBER/RIVN/HOOD 退出) |
 | 9/12 起每周五 | M-7 采集健康报告 (成交数/费用占比/告警延迟/双平与幽灵仓计数/时间戳抽检) |
@@ -1036,3 +1037,292 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
 - **本提交不含**: 另一 Agent 在制的 `docs/reviews/REVIEW-20260905-da-ue-prompt-multimodel.md` (仍未跟踪;
   本批用**显式路径** `git add`, 未用 `-A`/`.`; 提交前 `git diff --cached --name-only` 复核 9 文件清单、
   提交后 `git status --porcelain` 复核该文件仍未跟踪 ⇒ 未卷入)。
+
+---
+
+## 十三、精度与数据修复批执行台账 (2026-09-05 20:40–21:40 CST · 账本时间尺度读侧闭环 + B4)
+
+### 13.0 一句话结论
+
+**剩余项里藏着 5 个活体缺陷, 全部与"账本时间列混存尺度被读方猜错"同源**; 本批不猜了 —
+新增一个共享解析器 `parse_ledger_ts` 把尺度归因规则固化成**单一契约**, 5 个读方全部接入,
+另修 1 个写方 (消灭第三种尺度) + 补 B4 的 freshness gate。**存量数据一个字节未改**, 而全库
+"负持仓时长"从 **16 行归零**; 活仓 Rule 4 误报 ("持仓2天 ⇒ 减仓50%") **当场消失**。
+新增 **59 例**, 全量 **2783 passed / 3 failed / 37 skipped**, 三个 failed **逐一归因均非本批**
+(见 §13.11)。**本批刻意不重启服务** — 理由与前置条件见 §13.11, 这是本批唯一未闭合的动作。
+
+### 13.1 立案缘由与裁决
+
+- 用户前置指令: 「直接深入分析检查剩下的问题项」⇒ 先出纯只读取证 (零代码零文档改动),
+  汇报 5 个活体缺陷 + §11.5 三条前提更正 + 剩余项状态。
+- 用户裁决: 「**如确实存在精度和数据问题, 请全部修复**」。
+- 裁决解读 (范围界定见 §13.2): "精度和数据问题" = **时间尺度错算**与**由此产生的脏数据/脏建议**,
+  不含可观测性 (B5)、资源泄漏 (B6)、急停语义 (G-10) — 后三者改错方向的代价高于收益,
+  且各有独立登记, 不属"精度/数据"命题。
+
+### 13.2 范围界定 (in / out 及其理由)
+
+| | 项 | 处置 | 理由 |
+|---|---|---|---|
+| **in** | 缺陷1 `_calc_hold_days` +12h 偏置 | 已修 | 今天正在对 2/3 活仓发错误减仓建议 |
+| **in** | 缺陷2 `_get_avg_hold_days` 跨尺负时长 | 已修 | 全库 16 行负持仓时长 = 数据正确性 |
+| **in** | 缺陷3 对账冷却窗字符串比较 | 已修 | 热路径 (每 300s), G-09 正门 |
+| **in** | 缺陷3b `_reconcile_ghosts` 写第三种尺度 | 已修 | 写方休眠 (零触发), 零运行态风险 |
+| **in** | 缺陷4 `_is_meta_older_than` 提前 4h 删仓 | 已修 | 唯一消费方是 `DELETE FROM open_positions` |
+| **in** | 缺陷5 `MIN(updated_at)` 字符串挑错行 | 已修 | 值会写进 `trade_records.entry_time` ⇒ 归日错一天 |
+| **in** | B4 `get_push_tickers` 无 freshness gate | 已修 | 陈旧逐笔被当实时注入 `order_flow_imbalance` = 信号污染 |
+| out | `trade_store:1111` 热路径 `updated_at` 写方翻转 | **不动** | = B1 **第五阶**, §11.5/§11.7 冻结为"须单独 DEB"; 两条债标记测试仍绿 (§13.9) |
+| out | 存量 16 行负时长的**物理迁移** | **不动** | 存储的每个串在**自己的尺度里都是对的**; 改写历史账本 = 毁审计链。修读方已让负时长归零 (§13.10) |
+| out | 手动单路径自造的裸 now (`order/audit.py:323/:413/:432/:475`) | **不动** | 已登记为 **T4 钩子** (该文件头注), 触发条件明写"手动单再启用时"; 现库 `owner='manual'` **0 行** |
+| out | G-10 playbook 退出快环无 kill_switch | **不动** | 属急停**语义**变更: 在退出环加急停可能让持仓失去 SL 保护, 方向比现状更危险 ⇒ 须独立裁决 |
+| out | B5 `_wd_ping` 首失败升 warning / B6 连接 finally 棘轮 | **不动** | 非精度/数据命题; B6 实测规模 ~115–122 处, 须先棘轮化 (见 §13.8) |
+
+### 13.3 §11.5 三条前提更正 (第五阶的前置取证被本批改写)
+
+§11.5 是"账本列不可顺手翻"的实证依据。逐条复核后 **三条前提有两条不成立、一条漏盘**:
+
+1. **登记的两个"字符串消费方"都不成立 (排序风险被高估)**:
+   - `position_monitor.py:1229` 的 `ORDER BY updated_at DESC LIMIT 1` 因 `symbol` 是
+     **PRIMARY KEY** (DDL 实证) 而**退化** — `WHERE symbol=?` 最多 1 行, 排序无意义;
+   - `position_monitor.py:1164` 的 `sync_status='closed'` 是**死闸** — 全仓零写方
+     (2026-07-14 起软删除已改物理 DELETE), 库内 3 行全 `synced`。
+2. **漏登记的真消费方 (DELETE 风险被低估)**: `data_service.py:917` → `:955`
+   `_is_meta_older_than` 剥偏移后按 **naive UTC** 比较, 把守 `:891` `_reconcile_ghosts` 的
+   `DELETE FROM open_positions`。对 aware-ET 行账龄虚增 4h (**提前删**), 对 naive-CST 行少算
+   8h (延迟删)。调用链活 (`get_enriched_positions:779 → :844 → _reconcile_ghosts`) 但
+   `logs/` 全库**零** `[GhostReconcile]` 触发 ⇒ **可达但休眠**。
+   ⇒ **提前删 = G-09「Futu 有 / DB 无」的正门**, 比 §11.5 登记的排序风险严重一个量级。
+3. **写方普查远超 §11.5**: `open_positions.updated_at` 实测 **12 处显式写点、3 尺度 × 2 分隔符**
+   (aware-ET+'T' 仅 `trade_store:1001`, 现库 3 行全出自它; naive-CST+'T' 9 处;
+   naive-UTC+空格 1 处 = `data_service:926`)。§11.5 只记了 2 个写方。
+
+**另发现一处关键耦合**: `GET /api/decision-hub` (`routes/battle_plan.py:1326`) 一个端点同时
+干两件事 — `:1355` 触发 `_reconcile_ghosts` (可能 DELETE 库行)、`:1495` 产出持仓建议。
+**读一次仪表盘就可能删库行**, 且两条路径共用同一个被污染的 `updated_at`。
+
+### 13.4 naive = CST 的量化实证 (整批的地基)
+
+第三阶对 `last_sync_at` 立的规则是"naive 一律按 CST"。本批要把它提升为**跨列跨模块**契约,
+故重新做了全量取证而非沿用:
+
+- `trade_records` naive `entry_time` **353 行**, 按 **CST→ET (−12h)** 解读有 **330 行 (93.5%)**
+  落在美股正常交易时段 (09:25–16:05 ET), 按 **ET** 解读仅 **8 行 (2.3%)**;
+- 16 行"负持仓时长"(naive entry / aware exit) 按 CST 解读后**全部转正**且量级合理
+  (id=854 US.XLK: `entry=2026-06-02T23:09:10` naive-CST / `exit=2026-06-02T11:11:42-04:00`
+  ⇒ **+2 分 32 秒**, 而 SQL `julianday` 跨尺相减给 **−0.332 天**);
+- 分布: 2026-05 260 行 / 2026-06 75 / 2026-04 11 / 2026-07 7; `source_type` 以
+  `MAIN_PIPELINE` 179 + `SCALPING` 129 为主 ⇒ 不是某个边缘写方的孤例。
+- **解析器全覆盖性**: 现库 `trade_records` 三列 + `open_positions` 两列共 **2388 个时间值,
+  2388 个解析成功 (100%)**, 零 fallback。
+
+⇒ 规则成立, 固化为 `app/utils/timezone.py::parse_ledger_ts`。
+
+### 13.5 五个缺陷: 病灶 / 实证 / 修法
+
+**缺陷1 — `position_intelligence._calc_hold_days` 定长截断偏移 (+12h 偏置)**
+- 病灶: `txt[:26 if "%f" in fmt else (19 if "%H" in fmt else 10)]` 把
+  `2026-09-03T09:39:51.298036-04:00` 的 `-04:00` **截掉**, 静默变 naive, 再与裸
+  `datetime.now` (宿主 CST 墙钟) 相减。**不抛异常** ⇒ 无人察觉。
+- 实证 (2026-09-05 20:46 CST 实跑): UBER/RIVN `hold_days=2` (真值 1)、HOOD `=1` (真值 0);
+  `avg=1` ⇒ `hold_days > avg*1.5` (`:409`) 命中 ⇒ UBER/RIVN 由 HOLD 变 **PARTIAL_EXIT**
+  + 「持仓2天(历史平均1天) ⇒ 考虑减仓50%」。**2/3 活仓收到错误减仓建议**。
+- 影响面: `position_intelligence` 全仓**唯一**消费方是 `routes/battle_plan.py:1495`
+  (`GET /api/decision-hub`) ⇒ **纯人面建议, 零交易环调用** ⇒ 修复零成交影响。
+- 修法: 接 `parse_ledger_ts` + `now_et()` 同尺相减; 解析失败返回 0 并 debug 留痕。
+
+**缺陷2 — `_get_avg_hold_days` SQL `julianday` 跨尺相减 (16 行负时长)**
+- 病灶: `AVG(julianday(exit_time) - julianday(entry_time))` 把两种尺度当同一把尺。
+- 附带病灶: `COUNT(*)` 数的是"两列非 NULL 的行", 而 `julianday('')` 返回 NULL 会被 AVG 跳过
+  却仍被 COUNT 计入 ⇒ **cnt 虚高**, 可能让数据不足的组越过 `<2` 门槛拿到假均值。
+- 修法: 取出原始串, `parse_ledger_ts` 归一后在 Python 侧相减; cnt 只数**成功解析的配对**。
+- **刻意不采用的修法 (陷阱, 见 §13.8)**: "只统计 aware 行" —— 那会让 38 个组从 1 翻成
+  DEFAULT=3, Rule 4 阈值从 1.5 天跳到 4.5 天 = 建议静默变哑。
+- 效果: 全库 **792 行有退出的记录, 负时长 16 → 0**; 而 `_get_avg_hold_days` 的输出在
+  **179 个 (symbol,direction) 组里零变化** ⇒ 纯正确性修复, 不改任何建议阈值。
+
+**缺陷3 — `position_monitor._reconcile_position_store` 10min 冷却窗字符串比较 (恒真)**
+- 病灶: `cutoff` 用 `"%Y-%m-%d %H:%M:%S"` (**空格**分隔) 格式化, 与 `exit_time`
+  (**'T'** 分隔 + 偏移) 做 SQL 字符串 `>=`。同日内 `'T'`(0x54) > `' '`(0x20) ⇒ **恒真**
+  ⇒ "最近 10 分钟"退化成"**今天退出过**"。
+- 实证 (以 2026-09-04 15:00 ET 为模拟时钟复跑当天 10 笔退出): 代码判"刚退出" **10/10**,
+  其中 **9 笔真实是 2.8–5.2h 前** (09:45–12:12 ET), 第 10 笔 15:52 ET 晚于模拟时钟属伪影。
+- 后果: 当天稍晚的仓位重建被跳过 ⇒ 仓位在主链侧不可见 / 无 SL = **G-09 正门**。
+  调用链是活的: `monitor_loop:1704` 每 **300s** 跑一次。当前主链 0 仓 ⇒ 零血量。
+- **换分隔符不足以修复** (已证伪): 跨 DST 反例 `'2026-11-01T08:30:00-04:00'` 与
+  `'2026-11-01T08:30:00-05:00'` 的字符串序与真实瞬间序**相反** ⇒ 必须解析后比较。
+- 修法: SQL 侧只留**尺度无关且偏保守**的日期前缀预筛 (`substr(exit_time,1,10) >= cutoff−1天`,
+  对 'T'/空格两种分隔符都取到 `YYYY-MM-DD`, 放宽 1 天覆盖 CST/ET/UTC 最大 12h 偏差),
+  精确判定在 Python 侧做。**预筛不会漏真阳性** (三种尺度的日期前缀均 ≥ cutoff−1天, 已逐尺论证)。
+- **诚实登记未修的部分**: 该查询**无 `source_type` 过滤**, 故 `PLAYBOOK_SIM` 的退出记录仍会
+  抑制主链仓重建。本批只修时间精度, 不动这个语义 (改它会变动 sim/主链隔离边界, 属独立议题),
+  并由 `test_reconcile_sim_exits_still_gate_main_chain` **钉住现状** — 日后要改语义时它会变红。
+
+**缺陷3b — `_reconcile_ghosts` 写第三种尺度**
+- 病灶: `now_utc().strftime("%Y-%m-%d %H:%M:%S")` = **naive-UTC + 空格**, 而该列现役 3 行与
+  `trade_store` 写方都是 aware-ET + 'T'。
+- 修法: 改 `now_et().isoformat()` (自描述)。**该写方休眠** (零 `[GhostReconcile]` 触发) ⇒
+  零运行态影响; 热路径写方 `trade_store:1111` 仍属第五阶, 本批不动。
+
+**缺陷4 — `_is_meta_older_than` 剥偏移后当 UTC (提前 4h 删仓)**
+- 病灶: `s.split("+")[0]` 切掉偏移 → naive 墙钟 → 与 `now_utc().replace(tzinfo=None)` 相减。
+  aware-ET 行账龄**虚增 4h** ⇒ 24h 删除门槛**提前 4h** 命中; naive-CST 行**少算 8h** ⇒ 延迟 8h。
+- 修法: 接 `parse_ledger_ts`, 与 `now_utc()` 同为 aware ⇒ 相减即真实时长。解析失败仍返回
+  False (= 不删) — **删除不可逆, 兜底必须朝保守方向**。
+
+**缺陷5 — `order/audit.py` `MIN(updated_at)` 挑错行**
+- 病灶: SQL `MIN()` 是**字符串**最小值。实证样本: naive-CST `2026-09-05T01:30:12.768948`
+  (= `2026-09-04T13:30:12.768948-04:00`) 比 aware `…13:30:12.864694-04:00` **早 0.096 秒**,
+  但字符串序里 `'2026-09-05…' > '2026-09-04…'` ⇒ MIN 挑了后者。
+- 后果: 该值随后写进 `trade_records.entry_time`, 而下游按"前 10 位 = ET 日"约定
+  (见 `order/audit.py` 头注 T4) ⇒ **归日错一天**。
+- 修法: 新增 `_earliest_ledger_iso()` — 取全部候选、解析后取真实最早瞬间、输出归一为
+  **aware-ET isoformat** (顺带堵住 naive-CST 向账本列的泄漏)。第二顺位 fallback
+  (`manual_order_audit.timestamp`, 单尺 naive-CST 全 83 行) 也走同一 helper — MIN 本身自洽,
+  目的是**输出归一**。
+
+### 13.6 一条解析无法修复的事实 (必须记档, 否则会被人"顺手优化"掉)
+
+**naive-UTC 与 naive-CST 字节形态完全相同** ⇒ 任何解析器都只能二选一。本批契约是
+"naive 一律按 CST" (§13.4 实证 330/353), 于是 `data_service` 旧写方产出的 naive-UTC 行会被
+读成 CST ⇒ **偏 8 小时, 且读侧无法消除**。
+
+⇒ 这就是 §13.5 缺陷3b **必须同时改写方**的原因: 唯一根治手段是让新数据**自描述尺度**。
+存量 naive-UTC 行仅可能出现在 `is_anomalous=1` 的幽灵标记里, 而该写方**全库零触发**
+⇒ 现库零存量。由 `test_naive_utc_is_indistinguishable_from_naive_cst` +
+`test_ghost_reconcile_writer_emits_self_describing_et` 两例钉住 (前者断言偏差恰为 8h —
+若有人给解析器加"空格分隔=UTC"之类的猜测规则, 它会变红, 而那会反过来把 naive-CST 行读错 8h)。
+
+同理钉住 `parse_ledger_ts` 与既有 `parse_iso_safe` 的**刻意分歧**: 后者头注称"naive 视为 UTC",
+但实测其 `fromisoformat` 成功分支返回的是 **naive** (UTC 归属只发生在对合法 ISO 串永不可达的
+`strptime` 兜底分支) ⇒ 两者相减直接 `TypeError`。契约测试断言的正是这个 TypeError,
+使"顺手统一两者"变红而不是静默偏 8h。
+
+### 13.7 B4 — `get_push_tickers` freshness gate (G-11/G-17)
+
+- 病灶: 同一个类里 `get_push_orderbook` 早有 `(time.time() - cached["timestamp"]) < cache_ttl`
+  的闸, `get_push_tickers` 却是 `if cached: return list(cached)` **零时间戳** = 自相矛盾。
+- 为何是精度问题而非纯工程问题: `ticker_analyzer.analyze_tickers` 头注明写
+  "Push 数据没有 Unix 时间戳, 我们用 sequence 单调递增 + **最近 N 笔近似**" ⇒ 它**假定缓存新鲜**。
+  缓存停更后 (断线/收盘/未订阅) 环形缓冲里仍是几小时前的 500 笔, 旧实现照返 ⇒
+  `ticker_velocity`(笔/分钟)、`buy_sell_ratio` 全在描述一个**远古窗口**, 却被
+  `market_data_router:661-677` 注入 `ts_ctx` 的 7 个 `ticker_*` 因子**并覆盖
+  `order_flow_imbalance`** = 信号污染。
+- 修法: 新增 `_push_ticker_seen_at` (epoch 单调钟 — **刻意不用** `ticker["time"]` 字符串,
+  以绕开 Futu 时间串的尺度/格式不确定性), TTL = **300s 对齐 `ticker_analyzer.MEDIUM_WINDOW`**
+  (中窗口 ~250 笔 ≈ 5min; 超过它则"最近 250 笔"根本不再描述最近 5 分钟)。
+- 安全性: 超 TTL 返回 None ⇒ 走**既有**"无逐笔数据"降级分支 (`ticker_analyzer:196`
+  `if not tickers: return None` / `market_data_router:662` `if push_tickers and len(...)>=10`),
+  **只少注入因子, 不阻断下单**。盘中推送活跃时 age <1s, 闸不触发。
+- 可观测性 (吸取 B5 教训): 热路径只打 debug 避免刷屏, 另加
+  `_count_stale_ticker_symbols()` 并暴露进 `get_health_status()["ticker_cache_stale_symbols"]`
+  ⇒ 命中面经健康端点可见, 不重演"debug 全吞 = 故障不可见"。
+- 三处 `_push_ticker_cache.clear()` (重连/关闭/退订) 全部补 `_push_ticker_seen_at.clear()`,
+  并由 `test_unsubscribe_clears_ticker_seen_at` 断言**两处计数相等** (漏一处 ⇒ 重订阅后拿残留
+  epoch 误判新鲜度)。
+
+### 13.8 交接稿三处更正 (复算义务)
+
+1. **"96 个 (symbol,direction) 组输出无一改变" → 实测 179 组**, 且结论要拆两半:
+   ① 有 ≥2 条 aware 行的组, 四舍五入后输出**确实零变化** (UBER LONG 混存 raw 0.114 vs
+   纯 aware 0.230, 都被 `max(1,int(round()))` 地板压成 1);
+   ② 但有 **38 个组** aware 行不足 2 条, 若按"只算 aware 行"去修会从 1 **翻成 DEFAULT=3**,
+   Rule 4 阈值 1.5 天 → 4.5 天 ⇒ **建议静默变哑**。
+   ⇒ 交接稿的数字错、且**漏标了这个陷阱**; 本批因此选择"修解析"而非"过滤行", 并由
+   `test_avg_hold_days_cross_scale_error_can_move_the_rounded_result` 强证伪
+   (构造 3 天 aware 对 + 2.5 分钟混存对: 修前 `(3−0.332)/2=1.334→1`, 修后
+   `(3+0.0017)/2=1.501→2` ⇒ **均值差一档**; 而只看"负时长是否转正"的弱测试在修前也能过,
+   因为 `max(1,int(round(-0.33)))` 的地板会把它抬回 1 = 抓不到 bug)。
+2. **B6 规模**: 交接稿 AST 口径 115 处, 本批复扫得 **122 处** (差异来自 with/finally 判定细节;
+   粗扫上界 196)。分布 `web_dashboard` 14 / `risk` 13 / `storage` 13 / `data` 12 / `llm` 10 …
+   ⇒ 无论取哪个数, 都是原估"13+"的 **~9 倍**, 结论不变: **B6 必须改成 B1 同款棘轮**
+   (基线 ~115–122, 按模块分批), 不能一次批扫。
+3. **`open_positions.updated_at` 的字符串排序消费方清单**: 除 §11.5 记的两处 (均已证伪/修掉) 外,
+   本批新查到 `order/audit.py:393` 的 `MIN(updated_at)` (已修, 见缺陷5)。
+   `routes/chain.py:141` 的 `ORDER BY updated_at DESC` 属 **`signal_lifecycle` 表**, 与本列无关
+   (交接稿与 §11.5 均未误记, 此处只是补全排除依据)。
+
+### 13.9 第五阶冻结项的完整性核验 (本批未越权)
+
+本批改了 `position_monitor` 与 `data_service`, 而 §11.5 的两条**债标记测试**正是钉这两个文件的
+消费方, 故逐条实跑核验:
+- `test_stage5_ledger_columns_not_flipped_yet` **仍绿** — 它断言 `trade_store.py` 的
+  ⚠️ 尺度债注释、以及 `position_monitor.py` 里 `ORDER BY updated_at DESC LIMIT 1` 字符串仍在原位;
+  本批未动 `trade_store.py` 一行, 且 `position_monitor:1229` 那条查询**原样保留** (它是退化的,
+  修它无收益, 而删它会让债标记测试失去指路标)。
+- `test_updated_at_adjacent_scale_debt_is_documented` **仍绿** — 它钉的是
+  `trade_store.upsert_open_position` 写出的 `updated_at` 仍为 naive; 本批改的是
+  `data_service` 那个**休眠**写方, 与该断言无关。
+- **副产品**: 该测试的失败提示明写第五阶的前置条件是"请先确认 `ORDER BY updated_at DESC` /
+  `updated_at>=?` 两个字符串消费方已改成解析后比较"。本批已把 `updated_at>=?` 改成解析后比较,
+  并实证 `ORDER BY` 那条因 PK 退化 ⇒ **第五阶的两个前置条件之一已被本批满足、另一个已被证伪**。
+  第五阶仍须单独 DEB (热路径写方翻转 + 存量归一方案), 但它的"不可顺手翻"论证需要按 §13.3 重写。
+
+### 13.10 测试与证伪
+
+- **新增 59 例**: `tests/test_ledger_ts_scale_precision.py` (**新文件**) —
+  A 解析器契约 8 (含三尺度可区分性、naive-UTC 不可区分性、写方自描述、与 `parse_iso_safe`
+  的刻意分歧) / B 缺陷1 5 / C 缺陷2 7 / D 缺陷4 5+4 参数化 / E 缺陷5 3+5 参数化 /
+  F B4 8 / G 缺陷3 5 (含 1 条源码契约 + 1 条**钉住未修语义**) / H 现库回归 3。
+- **守卫调低**: `BASELINE_NOW` **446 → 445** (`_calc_hold_days` 的裸 now 被 `now_et()` 取代)。
+  过程登记: 首次实跑棘轮**报红 446→447**, 根因是本批**新增 docstring 里的 `datetime.now()`
+  字面量被主正则计入** (`_PAT_NOW` 不区分代码与注释) ⇒ 按仓内既有约定改写成**不带括号**的
+  `datetime.now` (与 §12 第四阶同款处置), 复跑归 445。**这与 §12.7 登记的"注释字面量触发钩子
+  假阳性"是同一类坑, 但这次是棘轮守卫而非 commit-msg 钩子**。
+- **双向证伪 (实跑, 非推理)**: `git stash push -- app/` 后**只还原 `timezone.py`**
+  (否则测试在 import 层就断, 证伪不充分), 保持 5 个消费方为 HEAD 未修状态 ⇒
+  **25 failed / 33 passed**, 覆盖**每一个**缺陷类 (缺陷1 2 例 / 缺陷2 1 / 缺陷3 3 /
+  缺陷3b 1 / 缺陷4 2 / 缺陷5 7 / B4 8 / 端到端 Rule4 1)。随后 `git stash pop` 复原,
+  并与 `/tmp/fixbak` 备份**逐文件 diff 为空** (6/6 一致)。
+- **存量数据零改动的实证**: H 组三例全部**只读** `file:data/ftseek_us.db?mode=ro` —
+  负时长 16→0、2388/2388 可解析、活仓 `hold_days == 真值` 且 Rule 4 不触发。
+  本批**未执行任何 UPDATE/DELETE**, 16 行原文仍在库里。
+- **测试自身的坑 (记档以免复犯)**: 首版用 `datetime(2026,9,5,8,46, tzinfo=ET)` 冻结时钟,
+  而 venv 装的是 **pytz** ⇒ 拿到的是 **LMT (UTC−7:52:58)** 而非 EDT, UBER 用例因此算出
+  2 天而非 1 天 (误判成"修复无效")。已加 `_et()` helper 走 `_localize` 并在其 docstring 记明。
+  另一处: 断言 `min([AWARE_ET, NAIVE_CST, NAIVE_UTC_SPACE]) == AWARE_ET` 写错 —
+  空格 (0x20) < 'T' (0x54) ⇒ 字符串 MIN 实际挑中 naive-UTC 那条; 已改成两元素样本使
+  "字符串 MIN 挑错行"的对照成立。
+
+### 13.11 验证与运行态 (含**刻意不重启**的决定)
+
+- **全量回归**: `PYTHONPATH=. venv/bin/python -m pytest tests/ -q -p no:randomly` →
+  **2783 passed / 3 failed / 37 skipped** (148.2s)。
+- **逐项对账**: 前批基线 2726 passed + 1 failed = 2727 总; 本批 +59 ⇒ 应为 **2786 总**;
+  实测 2783 + 3 = **2786** ✓; skipped **37 与前批持平** ✓。
+- **三个 failed 逐一归因, 均非本批**:
+  1. `test_r9_r13_contracts.py::TestR12EntryTimeConvention::test_live_rows_aligned_with_trade_records`
+     = **预存** R12 数据漂移 (US.HOOD 两表 `entry_time` 差 **2.94s**, 值与前四批逐字相同), 不顺手修;
+  2. `test_config_key_census.py::test_gate_no_new_dead_keys` = **另一 Agent 并发改动** —
+     报 `unified_config.yaml:tier_gate_enabled` 为新增未登记死键 (orphan), 出自其未提交的
+     `config/unified_config.yaml` (+17 行) 与 `scripts/llm_universe_scan.py` (+289/−118);
+  3. `test_except_pass_ratchet.py::test_except_pass_not_growing` (955→956) = **另一 Agent 并发改动** —
+     已用同款正则逐文件复算取证: **本批 6 个 app/ 文件 35 → 33 (−2)**, 而
+     `scripts/llm_universe_scan.py` **12 → 13 (+1)** ⇒ +1 出自其脚本, 与本批无关
+     (该棘轮扫**全仓** `*.py` 含 `scripts/`, 不只 `app/`)。
+- **静态检查**: 6 个改动文件 `pyflakes` 与 HEAD 基线**逐条对比零新增**
+  (`position_intelligence.py` 首跑报 `datetime.datetime imported but unused` = 本批删掉
+  `_calc_hold_days` 里唯一用处所致, **已删该 import 并复跑归零**; `position_monitor:1149`
+  的 shadowed/unused 两条经 `git show HEAD:` 对照确认为**预存**; `futu_lv3_provider` 前后同为 9 条)。
+  这一步必需 — 本批删了 1 处 import, 而删导入后的残留引用是 `py_compile` 抓不到的。
+- **⚠️ 本批刻意不重启服务 (唯一未闭合动作)**: 运行态仍为 **PID 388594 @ 19:41:29 CST**
+  (`logs/healthcheck.log` 20:40 仍绿, `FutuOpenD` 在跑), 即**内存里仍是修复前的代码**。
+  理由: `systemctl restart ftseek-us` 会连带加载**另一 Agent 尚未落地完成**的
+  `config/unified_config.yaml` 改动 — 而其自己的守卫已判 `tier_gate_enabled` 为**孤儿键**
+  (消费方未接上) ⇒ 重启等于替他激活在途工作, 超出本批授权, 且可能改动 UE prompt 渲染行为
+  (`clue_render_extreme_band: false` / `clue_side_symmetry: true`)。
+- **不重启的代价 (如实登记)**: 缺陷1 的错误减仓建议在 dashboard 上**仍会显示**到下次重启为止。
+  其余四项当前**零血量** (主链 0 仓 ⇒ 缺陷3 无受害面; `_reconcile_ghosts` 全库零触发 ⇒
+  缺陷3b/4 休眠; `owner='manual'` 0 行 ⇒ 缺陷5 休眠; B4 只在推送停更时才咬人, 休市期间
+  本就无逐笔数据可注入)。**下一交易日 9/8 (二) 21:30 CST 开盘**, 9/7 Labor Day 休市 ⇒
+  重启窗口充裕。
+- **重启前置条件 (交下一位执行者)**: ① 另一 Agent 的 `config/`+`scripts/` 改动已提交或已回滚,
+  且 `test_config_key_census` / `test_except_pass_ratchet` 复绿; ② `find app -name '*.py'
+  -newermt '<启动时刻>'` 为空 (代码==运行态); ③ 启动段零 ERROR/CRITICAL/Traceback;
+  ④ `[Reconciler] playbook: 3 / broker_only: 0` 且三仓仍判 `禁止 takeover`;
+  ⑤ `[PlaybookExit] 快循环已启动 (interval=10s)`; ⑥ `/run/ftseek-heartbeat` 新鲜;
+  ⑦ `scripts/deploy_freshness_check.py` exit=0; ⑧ 告警集合同比 (条数与类型均不得增减 —
+  **消失同样是信号**)。命令: `systemctl restart ftseek-us`。
+
+### 13.12 入库记录
+
+- 见下方回填小节 (回填提交无法包含自身哈希, 沿用 §10.5/§11.8/§12.9 先例)。
