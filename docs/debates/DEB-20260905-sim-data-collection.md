@@ -389,5 +389,29 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
   `consecutive_pause_expired_probation` → `probation_passed` / `probation_failed`；下单日志应见
   `[playbook] <SYM> 风控分级复权: 仓位 N → M (scale=0.5) — 半仓观察, 非停新开`。
   **红线复核**: 观察期内成交笔数不得少于旧语义 (旧语义此时段是 0 笔 — 锁到收盘)。
+### 9.7 入库记录 (2026-09-05 15:42 CST, 用户裁"需要")
+
+两批 (§八 Tier-A + 运维硬化、§九 熔断解除与观察机制) 因**同文件交叠** (`pipeline.py` /
+`playbook_service.py` / `absolute_circuit_breaker.py` / `unified_config.yaml` / `handoff.md` 均被两批先后修改,
+且第一批此前未提交) 无法在不做 hunk 级拆分的前提下分成两个提交, 故按用户裁决合并为**一个提交**:
+
+- **`9a13d7c9`** · 分支 `rfc-060-phase1-hotfixes` · 21 文件 / **+3338 −125** ·
+  tag `[ADR-034][DEB-20260905][§八/§九][fix]`。
+- **治理钩子**: pre-commit §3 就 `portfolio_backstop.enabled: true` 交互确认 → 答 `y`
+  (判据 = ADR-034 追加段 + 本档 §8.1/§8.2 + M-2 MODIFIED(A9) 用户裁决; v1 为检测+告警级, 零交易行为变更);
+  commit-msg 高风险闸由 `[ADR-034]` 满足 (既有决策记录, 本批修订其 P1 解除语义并已追加修订段)。
+- **随提交一并收口的三处 SSOT 漂移** (非新功能, 属"文档宣称 vs 实际"纪律):
+  ① `docs/adr/ADR-034-*.md` 追加修订段 (原文"自恢复: 净值回升过阈即放行, **无 pause 状态机**"已被 §9.4 改掉,
+  不追加即成陈旧声明); ② `docs/trading-pipeline-flowchart.md` L185 `auto_execute` False→True
+  (批一 14:13 已恢复, 沿 a1865c60 惯例**仅单值手工更正**); ③ `scripts/ftseek-us.service` 仓内副本与生产同步
+  (批一改了生产单元的 `Restart=always` 与 `StartLimitBurst/IntervalSec=20/600`, 副本仍停在 2026-07-12 版);
+  ④ `app/risk/absolute_circuit_breaker.py` 内引用单元配置的注释同步 (原写 `Restart=on-failure`, 已陈旧)。
+- **预存缺陷披露 (非本批引入, 仍未处置)**: pre-commit §6 引用的 `scripts/gen_trading_ssot.py` 已于
+  2026-07-26 `c2745036` 删除, 现存 `scripts/archive/` 副本按自身位置解析路径已失效
+  (`FileNotFoundError: scripts/docs/trading-pipeline-flowchart.md`) ⇒ AUTOGEN 块自彼时冻结, 而钩子 `|| true`
+  仍打印"已刷新并加入本提交" = **假成功提示** (本次提交实测复现该假提示; a1865c60 已首次披露)。
+  恢复生成器或修钩子 §6 属结构变更, 呈 team-lead 裁决, 本批不擅动 `.git/hooks/`。
+- **本提交不含** (待用户裁决是否入库): `results/` (审计会话底稿, 仓内从未跟踪)、
+  `docs/DA-LLM-PROMPTS-VERBATIM.md`、`docs/STRATEGY-BRIEF-FOR-EXTERNAL-REVIEW{,-EN}.md` (外审简报, 另一会话产物)。
 ---
 *提案方证据全量索引: REPORT.md (严重度已归一, 5=最重); 底稿 agent_A…F + ssot_findings.md 同目录 (`/opt/llm-eval-harness/results/explore_20260905/`)。本档为裁决+执行版, 由 docs/debates/ 归档; 提案原文的"目标仓零写入"声明仅约束审计会话, 不约束本执行批。*
