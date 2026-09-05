@@ -8310,10 +8310,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 _bs_sl_sum = _bs_agg["sl_loss_sum_usd"]
                 _bs_unreal = _bs_agg["unrealized_usd"]
                 _bs_thresh = _bs_agg["threshold_usd"]
-                if -_bs_unreal >= _bs_thresh:
+                # 判定复用纯函数的 breached 键 (判定只此一处, 防双写分裂);
+                # cooldown_sec 加 or 兜底 — yaml 误配 null 时 float(None) 会炸当轮监控循环。
+                if _bs_agg["breached"]:
                     _bs_now_ts = time.time()
                     _bs_last_ts = getattr(monitor_playbook_sim_exits, "_bs_last_alert_ts", 0.0)
-                    if _bs_now_ts - _bs_last_ts >= float(_bs_cfg["cooldown_sec"]):
+                    if _bs_now_ts - _bs_last_ts >= float(_bs_cfg.get("cooldown_sec") or 300.0):
                         monitor_playbook_sim_exits._bs_last_alert_ts = _bs_now_ts
                         _bs_pct = (_bs_unreal / _bs_cost * 100.0) if _bs_cost else 0.0
                         logger.critical(

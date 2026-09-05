@@ -421,5 +421,36 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
   3 存量仓 15:46:12 判 `playbook 自管 (禁止 takeover, 否则双管理)`; `[PlaybookExit] 快循环已启动 (interval=10s)`
   15:46:18; `/run/ftseek-heartbeat` 15:46:58 新鲜; 三改动文件 mtime 15:22:50–15:38:15 **全早于启动**;
   守卫手动实跑 **exit=0 且静默 = fresh** → 部署断层归零。
+
+### 9.8 第三批 · 独立复核 (2026-09-05 16:10–16:40 CST, 用户裁"按建议执行")
+
+对 `9a13d7c9` 全批做事后独立复核 (主审 + kimi-reviewer 交叉): 13 项声称逐项与实物一致,
+全量回归独立复跑 **2683 passed / 1 failed (R12 预存漂移) / 37 skipped** 与提交声称逐字吻合,
+生产 PID 369600 启动段零 ERROR/CRITICAL、心跳新鲜、两守卫 cron 在位、仓内 unit 副本与生产逐行一致。
+交叉复核另确认: 5 个新审计事件全部真实写入、配置键真实存在且热载链路成立、测试非恒绿
+(AST 结构契约锚定 `_risk_scale` 分支内无 return)。
+
+**处置三项** (复核抓到的均为低危, 无 money-path 缺陷):
+
+- **F1 · 观察期状态不跨重启 (已知限制, 本次声明不修复)**: `_strategy_probation` 纯内存。
+  进程在观察期 (≤3 笔半仓窗口) 内重启时, `_restore_from_db` 按 DB 重算尾部连亏 —
+  若期间赢过 ≥1 笔则连亏链断 → 直接回全仓, 观察期蒸发 (**放松方向**, 与 `manual_override`
+  刻意 fail-closed 的设计哲学不对称)。暴露面 ≈ ≤3 笔单由半仓变全仓, 窗口极小, 方向虽松但有界。
+  升级路径 (暂不动): 观察期计数随状态翻转写 `data/acb_probation.json` (与滞回带 latch 同款模式),
+  `_restore_from_db` 优先读它。待 9/8 起观察实际重启频率后再裁决是否值得做。
+- **F2 · `_max_deploy`/`_today_opened_notional` 按缩放前名义累加 (口径注记, 不改代码)**:
+  pipeline 在 `execute_instruction` 外按预缩放名义记账, 观察期/REDUCE_50 实际成交半仓 →
+  额度记账高估至 2×。**方向保守** (更快触顶 = 更少新开仓), 视为风控期合意行为;
+  仅遥测口径失真, handoff 已注记。
+- **F3 · 组合兜底两处微修 (已修, 本批唯一代码改动)**: `monitor_playbook_sim_exits` 内
+  ① breach 判定复用纯函数 `_bs_agg["breached"]` 键 (消除判定逻辑双写分裂风险);
+  ② `cooldown_sec` 读数加 `or 300.0` 兜底 (yaml 误配 null 时 `float(None)` 会在 breach 路径
+  炸当轮退出监控循环)。行为与现状完全等价 (现配置 cooldown_sec=300.0, breached 与原重算同值)。
+  验证: `test_portfolio_backstop` 43 例 + `test_g04_g06_structure_contracts` 13 例全绿。
+
+**交叉复核另记录两处不处置项**: ① `pnl == 0` 走"盈利"分支 (重置连亏+观察期计通过) —
+预存语义, 含费后恰为 0 概率近零, 不动; ② G-07 `_ok is False` 只认显式 False —
+与 FLAT_ALL (#192) 同款的既定契约, execute_close_fn 返回 None 记成功, 与对称化目标一致, 不动。
+
 ---
 *提案方证据全量索引: REPORT.md (严重度已归一, 5=最重); 底稿 agent_A…F + ssot_findings.md 同目录 (`/opt/llm-eval-harness/results/explore_20260905/`)。本档为裁决+执行版, 由 docs/debates/ 归档; 提案原文的"目标仓零写入"声明仅约束审计会话, 不约束本执行批。*
