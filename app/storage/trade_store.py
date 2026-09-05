@@ -28,9 +28,14 @@ def _parse_sync_ts(raw: Optional[str]) -> Optional[datetime]:
     """把 open_positions.last_sync_at 解析成 aware datetime; 解析不出返回 None。
 
     兼容两种格式 (该列 DDL 无默认值 ⇒ 不存在 SQLite `datetime('now')` 那条写入路):
-      ① naive isoformat — 现役写入方 `datetime.now().isoformat()` = 服务器本地(CST)墙钟;
-      ② 带偏移 isoformat — M-6/B1 把写入方迁到 now_et()/now_utc() 之后的行。
-    naive 一律按 **CST** 解释 = 与写入方同一把尺子 (跨尺比较正是 D-06 的病灶)。
+      ① 带偏移 isoformat — **现役格式**: 该列全部 **6 个**写方已于 2026-09-05 M-6/B1 第三阶
+         统一改用 now_et() (upsert_open_position / mark_sync_pending / mark_sync_complete /
+         mark_anomalous / unmark_anomalous / update_position_field);
+      ② naive isoformat — 历史行 / 手工 SQL 改库 / 别名兜底路径遗留 = 服务器本地(CST)墙钟。
+    naive 一律按 **CST** 解释 = 与**旧**写入方同一把尺子 (跨尺比较正是 D-06 的病灶)。
+    该 naive 分支**刻意保留为兜底, 不因写方已统一而删**: 现库 3 行 last_sync_at 全为 NULL
+    (活行由 upsert_position_simple 写, 其列清单不含本列), 既无历史 naive 行需归一, 也无法保证
+    今后不出现 (回滚 / 手工修库 / 别名 `_dt` 兜底) ⇒ 保留成本 3 行, 收益是永不因格式意外静默漏报。
     """
     if not raw:
         return None
@@ -1137,7 +1142,8 @@ class TradeStore:
                     current_version,
                     source,
                     "synced",
-                    datetime.now().isoformat(),
+                    # last_sync_at → ET (2026-09-05 M-6/B1 第三阶): 与读方 _parse_sync_ts 同尺闭环
+                    now_et().isoformat(),
                     int(is_filled),
                     int(is_partially_reduced),
                     int(preserve_anomalous or (getattr(position, "metadata", {}) or {}).get("_close_blocked", False)),
@@ -1157,6 +1163,12 @@ class TradeStore:
                     _preserved_sl_price,
                     _preserved_trail_price,
                     _preserved_sl_broker_id,
+                    # ⚠️ 尺度债 — B1 第四阶范围, 本批**刻意不动**: updated_at 仍写 naive 本地墙钟,
+                    #   与同一条 INSERT 里的 last_sync_at(ET) / entry_time(ET) **不同尺**。不顺手翻的
+                    #   实证理由: 该列有真消费方做字符串排序与比较 (position_monitor:1229
+                    #   `ORDER BY updated_at DESC LIMIT 1`、position_monitor:1164 `updated_at>=?`),
+                    #   且它**已经在混存** (本处 naive vs upsert_position_simple 的 now_et) ⇒ 不是
+                    #   "翻后才混存", 必须先出消费方清单 + 归一/打标方案, 单独 DEB 裁决。
                     datetime.now().isoformat(),
                 ))
                 conn.commit()
@@ -1317,7 +1329,7 @@ class TradeStore:
                     UPDATE open_positions
                     SET sync_status = 'pending_sync', last_sync_at = ?, trace_id = ?
                     WHERE symbol = ?
-                """, (datetime.now().isoformat(), trace_id, symbol))
+                """, (now_et().isoformat(), trace_id, symbol))  # ET: B1 第三阶
                 conn.commit()
             finally:
                 conn.close()
@@ -1331,7 +1343,7 @@ class TradeStore:
                     UPDATE open_positions
                     SET sync_status = 'synced', last_sync_at = ?
                     WHERE symbol = ?
-                """, (datetime.now().isoformat(), symbol))
+                """, (now_et().isoformat(), symbol))  # ET: B1 第三阶
                 conn.commit()
             finally:
                 conn.close()
@@ -1345,7 +1357,7 @@ class TradeStore:
                     UPDATE open_positions
                     SET is_anomalous = 1, sync_status = 'error', last_sync_at = ?
                     WHERE symbol = ?
-                """, (datetime.now().isoformat(), symbol))
+                """, (now_et().isoformat(), symbol))  # ET: B1 第三阶
                 logger.warning(f"[TruthSource] 仓位标记异常 {symbol}: {reason}")
                 conn.commit()
             finally:
@@ -1383,7 +1395,7 @@ class TradeStore:
                     SET is_anomalous = 0, sync_status = 'synced',
                         version = ?, last_sync_at = ?
                     WHERE symbol = ?
-                """, (new_version, datetime.now().isoformat(), symbol))
+                """, (new_version, now_et().isoformat(), symbol))  # ET: B1 第三阶
                 conn.commit()
                 logger.info(f"[TruthSource] 已恢复 {symbol} 正常监控 (v{row[1]}→v{new_version}): {reason}")
                 return True
@@ -1440,7 +1452,7 @@ class TradeStore:
                             ELSE json_insert(action_log_json, '$[' || json_array_length(action_log_json) || ']', json(?))
                         END
                     WHERE symbol = ?
-                """, (value, new_version, source, datetime.now().isoformat(), trace_id,
+                """, (value, new_version, source, now_et().isoformat(), trace_id,  # ET: B1 第三阶
                       action_entry, action_entry, symbol))
                 conn.commit()
                 return True
@@ -1460,14 +1472,17 @@ class TradeStore:
         docs/CONTROL-LOOP-LEDGER.md), 本批不代裁; 先把判据修对, 免接线当天即静默漏报 8h。
 
         时区修复 (D-06 的**机制**成立): 原判据把 cutoff 交给 SQLite —
-        `datetime(last_sync_at) < datetime('now','-300 seconds')`; 而 last_sync_at 由
-        mark_sync_pending / mark_sync_complete / mark_anomalous 用 naive
-        `datetime.now().isoformat()` 写 = 服务器本地(CST)墙钟, SQLite `datetime('now')` = **UTC**
+        `datetime(last_sync_at) < datetime('now','-300 seconds')`; 而 last_sync_at 当时由
+        **6 个**写方以 naive 本地(CST)墙钟写入 (前批记的"3 处"是漏盘: 除 mark_sync_pending /
+        mark_sync_complete / mark_anomalous 外, 还有 upsert_open_position / unmark_anomalous /
+        update_position_field; 其中 upsert_open_position 是最热路径 ⇒ 只翻 3 处会让该列**永久**
+        混存而非过渡期混存), SQLite `datetime('now')` = **UTC**
         → 库内时刻被当成"8 小时之后", 判据在 8h 内恒 False (**漏报方向**: 卡住的同步不告警,
         直到 CST 墙钟老化到比 UTC now 更早才触发 = 感知窗口 5min 膨胀到 8h+)。
         现改 Python 侧解析比较, 同尺原则:
-          - 带 tz 的值按其偏移换算 (B1 把写入方迁到 now_et() 后无需再改本函数);
-          - naive 值一律按 **CST** 解释 = 与现役写入方同一把尺子;
+          - 带 tz 的值按其偏移换算 (**已是现役格式**: 写方 6 处已在 B1 第三阶统一为 now_et(),
+            本函数一行未改即兼容 — 这正是当初把读方做成格式兼容的目的);
+          - naive 值一律按 **CST** 解释 = 与**旧**写入方同一把尺子 (兜底分支, 见 _parse_sync_ts);
           - NULL / 脏格式解析不出 → **保守计入告警** (fail-loud: 宁可多告一次, 不可让卡住的
             同步静默 — 与"读取失败=保守方向"同哲学)。
         """
