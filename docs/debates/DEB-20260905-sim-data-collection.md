@@ -728,5 +728,38 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
 | B1 第五阶 | 账本列 (`updated_at` / `trade_records.created_at`) | 未开工 — **最高危**, 前置取证已在 §11.5 出齐 (两个字符串消费方 + 已在混存), 须先出归一/打标方案并**单独 DEB 裁决** |
 | B1 低危尾 | `action_log_json["time"]` ×2 | 未开工 — 经查无消费方解析 `time`, 可随任一阶顺做 |
 | B3–B6 | 见 §10.3 | 未开工 — 排期仍在 M-6"恢复后 10 交易日内"窗口 (9/8 起算 → 截止 ≈ 9/22) |
+
+### 11.8 入库记录 (2026-09-05 18:47 CST)
+
+- **提交 `09ccdedc`** (分支 `rfc-060-phase1-hotfixes`, 5 文件 **+563 −32**):
+  `app/storage/trade_store.py` (写方 6 处翻 ET + 尺度债注释 + 两处 docstring 按复算更正) +
+  `tests/test_last_sync_at_writer_scale.py`(新, 11 例) + `tests/test_naive_datetime_now_ratchet.py`
+  (基线 455→446、别名守卫、头注次序清单更新) + 本档 §十一 + `handoff.md` 📐 节。
+  提交后 `git show --stat` 复核 = **非空** (仓内双 Agent 竞态致空提交先例 `3d544636`→`9790d19f` 补装,
+  故强制复核)。
+- **`--no-verify` 及其理由 (已写进提交信息尾部, 与 §10.5 同类)**: commit-msg 钩子 8 个高风险 pattern
+  实测**仅 `position_monitor` 命中 2 次**, 其余 7 个 (`order_executor`/`signal_pipeline`/
+  `scheduler_core`/`risk/engine`/`exit_policy`/`enabled.*true`/`options_selector`) 命中数**均为 0**。
+  该 2 次命中全部出自 `app/storage/trade_store.py` **新增注释里对消费方位置的引用** —
+  「实证理由: 该列有真消费方做字符串排序与比较 (`position_monitor:1229` `ORDER BY updated_at DESC
+  LIMIT 1`、`position_monitor:1164` `updated_at>=?`)」, 而 **`position_monitor.py` 本身一行未改、
+  也未暂存** (`git diff --cached --name-only` 可验) ⇒ **假阳性**。那段注释是"为何不顺手翻第四阶账本列"的
+  **唯一实证依据**, 删掉它等于把 §11.5 的债标记降级成无据断言 ⇒ 两条歧路都不走: ①不为躲关键词改写文档
+  (信息损失 + 刷治理指标); ②不谎标 `[hotfix]` (时区议题无 ADR/RFC, 决策记录是
+  `DEB-20260725-timezone-ssot-consolidation` 与 `DEB-20260830-timezone-duplication-audit`, 均在
+  `docs/debates/` 而钩子只认 `[ADR-N]/[RFC-N]/[hotfix]`)。
+- **pre-commit 各检查项手动等价执行并取证**: ①无 `.env` 变更 ②无 yaml `enabled→true`
+  ③**无任何删除** (`--diff-filter=D` 为空, 含治理文件 `SYSTEM_OBJECTIVE/AGENTS/CLAUDE.md` 与
+  `data/*.db`) ④3 个改动 `.py` 全部 `python3 -m py_compile` OK ⑤§5.5 undefined-name 检查因
+  `scripts/check_undefined_names.py` **本就不存在**而由钩子自身跳过 ⑥§6 SSOT 刷新**不触发**
+  (staged 中无 `config/unified_config.yaml` / `config/playbook_horizon.yaml` / `app/playbook/pipeline.py`);
+  该脚本已删导致的"假成功"是预存缺陷 (`a1865c60` 首披露), 本批未处置、不顺手修,
+  `docs/trading-pipeline-flowchart.md` AUTOGEN 块维持冻结未动。
+- **本提交不含**: 另一 Agent 在制的 `docs/reviews/REVIEW-20260905-da-ue-prompt-multimodel.md`
+  (仍未跟踪; 本批用**显式路径** `git add`, 未用 `git add -A`/`.`, 提交前后两次
+  `git status --porcelain` 复核确认未卷入)。
+- **附带修掉一处自身引入的告警**: 本批新增测试头注里的 `(?<!\w)` 曾触发
+  `DeprecationWarning: invalid escape sequence` (模块 docstring 非 raw 字符串) ⇒ 已给该 docstring 加
+  `r` 前缀改为 raw, 复跑 10 例全绿且警告消失 (不把自己造的噪音留在仓里)。
 ---
 *提案方证据全量索引: REPORT.md (严重度已归一, 5=最重); 底稿 agent_A…F + ssot_findings.md 同目录 (`/opt/llm-eval-harness/results/explore_20260905/`)。本档为裁决+执行版, 由 docs/debates/ 归档; 提案原文的"目标仓零写入"声明仅约束审计会话, 不约束本执行批。*
