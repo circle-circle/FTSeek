@@ -999,7 +999,10 @@ playbook:
   #   feature_flags.auto_trading_enabled (只拦 ORB/MAIN, 均休眠) 互不感知;
   #   DEB-20260815 §11.4 硬止损监控的仓外写手(hermes deb0815_stoploss_monitor)
   #   触线即把本键写 false。全路径急停请用 KILL_SWITCH.flag。
-  auto_execute: true
+  # 2026-09-05 用户裁"该关闭关闭" (DEB-20260815 §11.3 预注册止损路径):
+  #   GATE 1 E1/E2/E3 全负 (E1 臂P -$77.60 vs 臂D -$16.05, 差 -$61.55/笔, §四十二)
+  #   → 提前终审关闭 auto_execute。恢复需用户明确指令 + DEB 追加裁决。
+  auto_execute: false
   # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
   #   0产出+0消费方+DEB窗口过期(DEB-20260805 C1/门E), 见 obsidian 2026-08-16_change_review_audit.md
   premarket_invalidation_observe: true

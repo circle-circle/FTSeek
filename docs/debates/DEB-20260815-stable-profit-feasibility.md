@@ -1575,3 +1575,30 @@ D -$8.10, 差 -$69.22, 同向 → 结论对窗口选择稳健。
   (27c495f96fd5) 停用, paused_reason 记录本节裁决; 数据文件保留不删 (复盘可溯)。
 - 硬止损监控 (deb0815 ×2) **保持现役** — 9/5 实测 playbook_sim 累计净 -$1,884.13,
   距 -$4,840.06 触线余量 +$2,955.93, 从未触发; 止损路径裁决落地前它是唯一在岗熔断。
+
+### 42.4 止损路径执行记录 (2026-09-05, 用户裁"该关闭关闭")
+
+- **裁决**: 用户裁"该关闭关闭" → §11.3 预注册止损路径生效: 关闭 auto_execute
+  (提前终审, 不等 W6; §十六末条"不再追加新实验变体"同步生效)。
+- **执行** (2026-09-05 09:45:56 CST): `config/unified_config.yaml`
+  `playbook.auto_execute: true→false` — 与 §11.4 硬止损监控同一写入面同一格式,
+  裁决留痕注释入 yaml。
+- **作用域** (yaml 既有注释载明, 本次未扩大): 只停 playbook 新开仓循环
+  (`run_playbook_auto_execute` 入口, pipeline.py:3505); **平仓/monitor/退出引擎
+  不受影响** — 存量 3 持仓 (UBER/RIVN 9/3, HOOD 9/4, simulate) 继续由退出引擎
+  正常管理。`KILL_SWITCH.flag` 未动 (全路径急停不在本次裁决范围)。
+- **生效实证**: HotReloader 第 3 次重载 09:45:59 CST (yaml mtime +3s, 免重启);
+  生产读取路径 `_playbook_cfg("auto_execute")` 实测 = False; 行为级确认 =
+  次一交易日首个 auto_execute 轮应见日志 `auto_execute=false, 跳过自动执行`
+  (本周末无轮次, 周一开盘核验)。
+- **回归** (翻转后全量 pytest, 2026-09-05): **2560 passed / 1 failed / 37 skipped**
+  (153s) — 唯一 failed = test_r9_r13_contracts R12 HOOD 预存时间漂移 (执行链 owner
+  处置中, 非本批引入); 较上一基线 2553 的 +7 = §42.1 e1_shadow_settle 契约测试;
+  KR2 守卫 test_kr2_freeze_exemption passed → exit-de49b1299290 实测不变。
+- **不变量**: exit-de49b1299290 不变 (auto_execute=入场侧键, 不入退出快照);
+  D1-D7 冻结不动; 信号生成/影子/复盘全链路继续 record-only 运行 (DA/UE 生成不停,
+  指令落库不执行 → 对照样本继续积累, 复盘数据流不断)。
+- **监控器互动**: deb0815 硬止损监控保持现役; 若存量持仓后续触线, 其文本替换
+  不再匹配 (已是 false) → 走"请人工核查"告警分支并写 tripped 状态 — 告警语义
+  仍正确 (触达人工), 留此说明防误读。
+- **恢复条件** (与 §11.4 同规): 需用户明确指令 + DEB 追加裁决。
