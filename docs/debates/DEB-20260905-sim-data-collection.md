@@ -997,3 +997,42 @@ UBER 70@78.09 (SL 74.57) + RIVN 312@15.94 (SL 15.12) + HOOD 23@123.42 (SL 119.13
   `git diff` 为空、PROBE 零残留) ⇒ 又一次印证"该守卫量的是 mtime 而非内容", 报警是**假阳性但方向安全**
   (宁多报); 其余各次指向本批真实改动。守卫因不在北京 09:00–12:00 安全窗而**只报不自愈重启** (设计如此),
   19:41 手动重启后已自清为 fresh。
+
+### 12.9 入库记录 (2026-09-05 19:52 CST)
+
+- **提交 `b026e66e`** (分支 `rfc-060-phase1-hotfixes`, **9 文件 +750 −32**, 开工前锚定 HEAD `c0372ad7`):
+  `app/analysis/signal_ic_tracker.py` (2 处读侧日期串: `_cutoff` 翻 ET + `today_str` 改写方同一
+  `get_trade_date()`) + `app/llm/prompts/deep_target_analysis.py` (LLM prompt 校准 cutoff 翻 ET) +
+  `app/strategy/regime_filter.py` (死表 `regime_history` 写方翻 ET) + `app/storage/trade_store.py`
+  (**仅 1 行注释**: 尺度债阶次标注 第四阶→第五阶, 原地单行替换 ⇒ 行数与 HEAD 同为 **1622**, 零行号漂移) +
+  `tests/test_risk_audit_time_scale_contract.py` (**新**, 7 例) + `tests/test_naive_datetime_now_ratchet.py`
+  (`BASELINE_NOW_ALIAS` 15→11、可执行台账 `_ALIAS_EXEMPTIONS`/`_alias_hit_lines`/
+  `test_alias_exemptions_ledger_is_exact`、`test_stage4_…`→`test_stage5_…`、头注第四阶归类大节) +
+  `tests/test_last_sync_at_writer_scale.py` (阶次文案) + 本档 §十二 与 §11.5/§11.6/§11.7 更正 + §七时间线新行 +
+  `handoff.md` 🗂️ 节。提交后 `git show --stat` 复核 = **非空** (仓内双 Agent 竞态致空提交先例
+  `3d544636`→`9790d19f` 补装, 故强制复核)。
+- **`--no-verify` 及其理由 (已写进提交信息尾部, 与 §10.5/§11.8 同类)**: commit-msg 钩子 8 个高风险 pattern
+  实测**命中 1 行、匹配 2 个 pattern** (`order_executor`=1 / `position_monitor`=1; 其余 6 个
+  `signal_pipeline`/`scheduler_core`/`risk/engine`/`exit_policy`/`enabled.*true`/`options_selector`
+  命中数**均为 0**)。该唯一命中行出自 `app/analysis/signal_ic_tracker.py` **新增注释里对
+  `trade_records.trade_date` 写方位置的文字引用**「(`order_executor:5254` / `:5370`、
+  `position_monitor:1585`)」, 而这两个文件**一行未改、也未暂存** (`git diff --cached --name-only` 可验)
+  ⇒ **假阳性**。那段注释是"被过滤的列确为 ET 口径"的**唯一实证依据**, 删掉它等于把 §12.2 的判定降级成
+  无据断言 ⇒ 两条歧路都不走: ①不为躲关键词改写文档 (信息损失 + 刷治理指标); ②不谎标 `[hotfix]`
+  (时区议题无 ADR/RFC, 决策记录是 `DEB-20260725-timezone-ssot-consolidation` 与
+  `DEB-20260830-timezone-duplication-audit`, 均在 `docs/debates/` 而钩子只认 `[ADR-N]/[RFC-N]/[hotfix]`)。
+  **并更正交接稿的误判**: 其称"本批钩子假阳性风险低, 8 个 pattern 预计全 0" — 实跑证明**不成立**;
+  结论仍是假阳性, 但依据必须实测而非预估 (预估口径漏掉了"新注释里引用他文件名"这条命中路径)。
+- **pre-commit 各检查项手动等价执行并取证**: ①无 `.env` 变更 ②无 yaml `enabled→true` (config 未 staged)
+  ③**无任何删除** (`--diff-filter=D` 为空, 含治理文件 `SYSTEM_OBJECTIVE/AGENTS/CLAUDE.md` 与 `data/*.db`)
+  ④7 个 staged `.py` 全部 `python3 -m py_compile` OK ⑤§5.5 undefined-name 检查因
+  `scripts/check_undefined_names.py` **本就不存在**而由钩子自身跳过 ⇒ **手动补跑
+  `venv/bin/python -m pyflakes`, 4 个 app/ 改动文件零 undefined-name** (本批删了 3 处 import, 这一步必需)
+  ⑥§6 SSOT 刷新**不触发** (staged 中无 `config/unified_config.yaml` / `config/playbook_horizon.yaml` /
+  `app/playbook/pipeline.py`); 该脚本已删导致的"假成功"是预存缺陷 (`a1865c60` 首披露), 本批未处置、不顺手修,
+  `docs/trading-pipeline-flowchart.md` AUTOGEN 块维持冻结未动。
+- **提交态复跑**: `test_naive_datetime_now_ratchet`(11) + `test_risk_audit_time_scale_contract`(7) +
+  `test_last_sync_at_writer_scale`(11) + `test_pending_sync_staleness`(14) = **43 passed**。
+- **本提交不含**: 另一 Agent 在制的 `docs/reviews/REVIEW-20260905-da-ue-prompt-multimodel.md` (仍未跟踪;
+  本批用**显式路径** `git add`, 未用 `-A`/`.`; 提交前 `git diff --cached --name-only` 复核 9 文件清单、
+  提交后 `git status --porcelain` 复核该文件仍未跟踪 ⇒ 未卷入)。
