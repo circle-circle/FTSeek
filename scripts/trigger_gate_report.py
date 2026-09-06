@@ -39,6 +39,15 @@ sys.path.insert(0, PROJECT_ROOT)
 OUT_LATEST = Path(PROJECT_ROOT) / "data" / "trigger_gate_latest.json"
 OUT_HISTORY = Path(PROJECT_ROOT) / "data" / "trigger_gate_history.jsonl"
 
+# 同口径时序锚点 (2026-09-06 修尺子)。
+#   病灶: history 每行的 since 随 `--days 30` 滚动 — 实测 10 行里 since 分别是
+#   6/19,6/19,7/27,7/1,7/8,7/15,7/22,7/29,8/5,8/7 → render 里写的"缺口>0 且持续 ≥2 周"
+#   这条判据**无从审计**: 看到的"缺口 4.955→0.703 收窄"其实是窗口起点在动, 不是同口径时序。
+#   治法: 锚点冻结在本脚本既有的三门基线 (BASELINE), 每次运行额外落一份 fixed_anchor 块,
+#   滚动窗口照旧输出 (头条不变, 下游不破), 时序可比性由锚点块提供。
+#   改锚点 = 改判据, 须先落档 ADR/DEB (承判据字典纪律), 不许静默改写。
+ANCHOR_SINCE = "2026-07-24"
+
 
 def _et_today_minus(days: int) -> str:
     """ET 口径的 N 天前日期 (与 exit_scorecard 一致)。"""
@@ -76,10 +85,8 @@ def _group_stats(rows) -> dict:
     }
 
 
-def compute(since: str) -> dict:
-    from app.storage.db_pool import get_db
-    conn = get_db("ftseek_us").connection()
-
+def _window_stats(conn, since: str) -> dict:
+    """单个窗口的反向选择画像 (纯取样+统计, 不落 timestamp/锚点, 便于同口径复用)。"""
     rows = conn.execute(
         """
         SELECT outcome, direction, skip_reason, triggered,
@@ -134,7 +141,109 @@ def compute(since: str) -> dict:
         gap_buy is not None and gap_short is not None
         and (gap_buy > 0) == (gap_short > 0) == (gap > 0)
     )
+    return result
+
+
+def _fixed_anchor_streak(current_gap, current_robust, at=None) -> dict:
+    """给 render 里"持续 ≥2 周"这条判据补上可审计留痕。
+
+    只统计带 fixed_anchor 块的 history 行 — 滚动 since 的行彼此不可比, 计入即造假时序。
+    单位: gap 为百分点 (pp), 与 adverse_selection_gap_pct 同量纲。
+    **观测点按日去重**: 同一天跑 N 次只算 1 个点 (否则一天内手动重跑两次就能假满足
+      "持续≥2周" — 判据要的是时间跨度, 不是运行次数)。同日保留最后一次。
+    诚实披露: 2026-09-06 之前的 10 行 history 无 fixed_anchor 块, 且其缺口是"当时窗口"的
+      点值, 无法按时点回填 (playbook_instructions 持续在长) → 同口径时序自本次起算, 不追溯。
+    异常处置 (R5 模式 / `tests/test_except_pass_ratchet.py` 棘轮): 坏行与读失败**不静默吞**,
+      以计数/错误串显性透出 — "零观测点"与"history 读炸了"必须可区分。
+    """
+    seq = []
+    bad_json_rows = 0
+    history_error = None
+    try:
+        if OUT_HISTORY.exists():
+            for line in OUT_HISTORY.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    doc = json.loads(line)
+                except Exception as _je:
+                    bad_json_rows += 1
+                    continue
+                fa = doc.get("fixed_anchor")
+                if not fa or fa.get("adverse_selection_gap_pct") is None:
+                    continue
+                seq.append((doc.get("generated_at") or doc.get("timestamp"),
+                            fa["adverse_selection_gap_pct"],
+                            bool(fa.get("robust_both_directions"))))
+    except Exception as _he:
+        history_error = f"{type(_he).__name__}: {_he}"
+    if current_gap is not None:
+        seq.append((at or "current", current_gap, bool(current_robust)))
+
+    # 按日折叠 (history 追加即时间序, 故只需折叠相邻同日项)
+    collapsed = []
+    for _at, gap, robust in seq:
+        day = (_at or "")[:10] or "unknown"
+        if collapsed and collapsed[-1][0] == day:
+            collapsed[-1] = (day, _at, gap, robust)
+        else:
+            collapsed.append((day, _at, gap, robust))
+
+    run = 0
+    for _, _, gap, robust in reversed(collapsed):
+        if gap > 0 and robust:
+            run += 1
+        else:
+            break
+    return {
+        "n_points": len(collapsed),
+        "n_points_dedup_by": "ET/本地日历日 (同日多次运行折叠为 1 点)",
+        "consecutive_positive_robust": run,
+        "criterion_ge2_met": bool(run >= 2),
+        "history_rows_skipped_bad_json": bad_json_rows,
+        "history_error": history_error,
+        "points": [{"day": day, "at": at, "gap_pct": gap, "robust_both_directions": rob}
+                   for day, at, gap, rob in collapsed[-8:]],
+        "note": ("同口径时序自 2026-09-06 起算 (此前 history 行 since 滚动且无 fixed_anchor, "
+                 "点值不可按时点回填); '持续≥2周'需 ≥2 个**不同日**的锚点观测点"),
+    }
+
+
+def _generated_at() -> str:
+    """带时区的生成时刻。
+
+    病灶: history 10 行全部只有 `timestamp` (本地裸时间, 无时区) 而无 generated_at →
+      留痕无法与 ET 交易日 / cron 时刻对齐取证, 跨机对时更是无解。
+    `timestamp` 保留不动 (下游兼容); 本值另作 `generated_at`, 并被 streak 用于**按日去重**。
+    """
+    try:
+        from app.utils.timezone import now_et
+        return now_et().isoformat()
+    except Exception:
+        return datetime.now().astimezone().isoformat()
+
+
+def compute(since: str) -> dict:
+    from app.storage.db_pool import get_db
+    conn = get_db("ftseek_us").connection()
+
+    result = _window_stats(conn, since)
+    anchor = _window_stats(conn, ANCHOR_SINCE)
+    generated_at = _generated_at()
+    result["fixed_anchor"] = {
+        "since": ANCHOR_SINCE,
+        "executed": anchor["executed"],
+        "missed": anchor["missed"],
+        "missed_opportunity": anchor["missed_opportunity"],
+        "adverse_selection_gap_pct": anchor["adverse_selection_gap_pct"],
+        "gap_by_direction": anchor["gap_by_direction"],
+        "robust_both_directions": anchor["robust_both_directions"],
+    }
+    result["fixed_anchor_streak"] = _fixed_anchor_streak(
+        anchor["adverse_selection_gap_pct"], anchor["robust_both_directions"], at=generated_at)
     result["timestamp"] = datetime.now().isoformat()
+    result["generated_at"] = generated_at
     return result
 
 
@@ -164,9 +273,32 @@ def render(r: dict) -> str:
         f"反向选择缺口 (missed−executed): {r['adverse_selection_gap_pct']} 个百分点"
         f" | 分方向 BUY={r['gap_by_direction']['buy']} SHORT={r['gap_by_direction']['short']}"
         f" | 双向同号稳健: {'✅' if r['robust_both_directions'] else '❌ (可能是单边行情混杂)'}",
+    ]
+    fa = r.get("fixed_anchor") or {}
+    if fa:
+        lines += [
+            "",
+            f"同口径锚点 (since {fa['since']} 冻结, 不随 --days 滚动 → 时序可比):",
+            f"  缺口 {fa['adverse_selection_gap_pct']} pp"
+            f" | executed {fa['executed']['avg_fwd_pct']}% (n={fa['executed']['n']})"
+            f" vs missed {fa['missed']['avg_fwd_pct']}% (n={fa['missed']['n']})"
+            f" | 双向同号稳健: {'✅' if fa['robust_both_directions'] else '❌'}",
+            f"  机会成本 ${fa['missed_opportunity']['total_shadow_pnl']}"
+            f" / {fa['missed_opportunity']['n_with_shadow_pnl']} 笔",
+        ]
+    st = r.get("fixed_anchor_streak") or {}
+    if st:
+        lines += [
+            f"  '持续≥2周'判据留痕: 锚点观测 {st['n_points']} 个, 连续为正且稳健 "
+            f"{st['consecutive_positive_robust']} 个 → "
+            f"{'✅ 满足' if st['criterion_ge2_met'] else '⏳ 未满足 (需 ≥2)'}",
+            f"  ({st.get('note', '')})",
+        ]
+    lines += [
         "",
         "判读: 缺口>0 且双向稳健 且持续 ≥2 周 → 触发门在反向选择,",
         "      下一个 shadow 变体应为'触发条件放宽', 而非继续调退出参数。",
+        "      ⚠️ 三条都得看**同口径锚点**那几行 — 滚动窗口的缺口跨行不可比。",
     ]
     return "\n".join(lines)
 
@@ -181,7 +313,7 @@ def main():
     # 基线警告: 07-24 三门上线 = 退出参数 config_version 断点
     # 注: playbook_instructions 无 source_type 列, 本脚本度量指令层 (非 trade_records 层),
     #     executed=1 的 win/loss 与 SIM/LIVE 成交一一对应 (实测无 SHADOW 混入)
-    BASELINE = "2026-07-24"
+    BASELINE = ANCHOR_SINCE   # 单一真源: 基线警告与同口径锚点共用一个日期
     if since < BASELINE:
         import sys
         print(f"⚠️  警告: since={since} 早于三门基线 {BASELINE}, 窗口混入旧退出参数 regime。"

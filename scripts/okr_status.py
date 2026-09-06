@@ -72,13 +72,34 @@ _source_filter = ", ".join(f"'{s}'" for s in PLAYBOOK_SOURCE_TYPES)
 # 2026-08-20 (用户裁"切"): PnL/胜率统一净口径 — pnl_net=毛-费; 旧行无 pnl_net 回退毛.
 #   毛口径把"毛>0但≤费用"的假盈利计为胜, 8/1-8/20 实测虚高胜率 18pp.
 _NET = "COALESCE(pnl_net, realized_pnl)"
+# 2026-09-06 修尺子: 尺寸归一口径 (bps of notional) 与美元口径**并列输出**。
+#   美元/笔跨 2026-08-06 sizing 变更 (三提交 8b81f4dc/8e281cd3/e889b6b5 → 名义额中位
+#   $3,307→$5,737, 每笔佣金几乎不变 $4.14→$4.21) 不可比: "净$/笔变好"里混着"注下大了"。
+#   bps 把分母归一才是同一把尺子。单位: 万分比 (1bp = 0.01%), 名义额 = entry_price*quantity。
+# 括号是**必需**的: SQL 里 `/` 与 `*` 同级左结合, 裸写 `pnl / entry_price * quantity`
+#   会被解析成 `(pnl/entry_price)*quantity` → bps 放大 quantity 倍 (实测炸到 +1.5e6 bps)。
+#   与 exit_scorecard.size_normalized() 的 Python 侧算式互为对照, 两边必须同值。
+_NOTIONAL = "(entry_price * quantity)"
+# guard 同时要求 realized_pnl 非空: 未平仓行的 realized_pnl 是 NULL, AVG 会自动跳过 →
+#   毛/净均值的实际取样面是"已平仓", 而 fee 用 COALESCE(fees_est,0) 不会跳过 → 三个均值
+#   取样面不一致, "毛 − 费 = 净" 就不恒等 (实测费被 3 行未平仓稀释成 8.83 而非 8.95)。
+#   统一到已平仓面, cnt_bps 才是这三个数字真实的 n。
+_BPS_GUARD = f"CASE WHEN realized_pnl IS NOT NULL AND {_NOTIONAL} > 0 THEN"
+# bps 合理性哨兵: 单笔 |bps| 上界取 10000 (=100% 名义额)。日均超此值 = 量纲/括号又错了,
+#   标 suspect 而不是静默输出天文数字 (承 AGENT.md「单位/量纲声明」军规)。
+_BPS_SUSPECT_LIMIT = 10000.0
 trade_stats = {}
 try:
     cursor = conn.execute(f"""
         SELECT COUNT(*) as cnt,
                SUM(CASE WHEN {_NET} > 0 THEN 1 ELSE 0 END) as wins,
                SUM(CASE WHEN {_NET} < 0 THEN 1 ELSE 0 END) as losses,
-               SUM({_NET}) as total_pnl
+               SUM({_NET}) as total_pnl,
+               SUM(CASE WHEN realized_pnl IS NOT NULL AND {_NOTIONAL} > 0 THEN 1 ELSE 0 END) as cnt_bps,
+               AVG({_BPS_GUARD} realized_pnl / {_NOTIONAL} * 10000 END) as gross_bps,
+               AVG({_BPS_GUARD} COALESCE(fees_est, 0) / {_NOTIONAL} * 10000 END) as fee_bps,
+               AVG({_BPS_GUARD} {_NET} / {_NOTIONAL} * 10000 END) as net_bps,
+               AVG({_BPS_GUARD} {_NOTIONAL} END) as avg_notional
         FROM trade_records
         WHERE trade_date >= ?
           AND source_type IN ({_source_filter})
@@ -86,6 +107,13 @@ try:
     """, (_cutoff_30d,))
     row = cursor.fetchone()
     trade_stats = dict(row) if row else {}
+    for _k in ("gross_bps", "fee_bps", "net_bps", "avg_notional"):
+        if trade_stats.get(_k) is not None:
+            trade_stats[_k] = round(trade_stats[_k], 2)
+    trade_stats["bps_unit"] = "bps of notional (万分比; 1bp = 0.01%)"
+    trade_stats["bps_suspect"] = any(
+        abs(trade_stats.get(_k) or 0) > _BPS_SUSPECT_LIMIT
+        for _k in ("gross_bps", "fee_bps", "net_bps"))
 except Exception as e:
     trade_stats = {"error": str(e)}
 
@@ -364,6 +392,16 @@ if trade_stats and 'error' not in trade_stats:
     print(f"  Total: {trade_stats.get('cnt', 0)}")
     print(f"  Wins: {trade_stats.get('wins', 0)}, Losses: {trade_stats.get('losses', 0)}")
     print(f"  PnL: ${trade_stats.get('total_pnl', 0):.2f}")
+    if trade_stats.get('cnt_bps'):
+        if trade_stats.get('bps_suspect'):
+            print(f"  ⚠️ 尺寸归一口径 SUSPECT: |bps| > {_BPS_SUSPECT_LIMIT:,.0f} "
+                  f"(毛 {trade_stats.get('gross_bps')} / 净 {trade_stats.get('net_bps')}) — "
+                  f"量纲或括号错, 数字不可用, 先查 _NOTIONAL 展开")
+        else:
+            print(f"  尺寸归一 (n={trade_stats['cnt_bps']}, avg名义 ${trade_stats.get('avg_notional') or 0:,.0f}): "
+                  f"毛 {trade_stats.get('gross_bps') or 0:+.2f}bps − 费 {trade_stats.get('fee_bps') or 0:.2f}bps "
+                  f"= 净 {trade_stats.get('net_bps') or 0:+.2f}bps/笔")
+            print(f"  (美元/笔跨 2026-08-06 sizing 变更不可比 — 名义额中位 $3,307→$5,737; bps 才是同口径)")
 
 if versioned_stats and 'error' not in versioned_stats:
     print(f"\n🎓 GRADUATION SAMPLE (当前退出参数版本, 30d)")
