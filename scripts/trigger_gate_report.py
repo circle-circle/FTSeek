@@ -144,19 +144,16 @@ def _window_stats(conn, since: str) -> dict:
     return result
 
 
-def _fixed_anchor_streak(current_gap, current_robust, at=None) -> dict:
-    """给 render 里"持续 ≥2 周"这条判据补上可审计留痕。
+def _history_anchor_points():
+    """读 history 里带 fixed_anchor 的行 → (points, bad_json_rows, history_error)。
 
-    只统计带 fixed_anchor 块的 history 行 — 滚动 since 的行彼此不可比, 计入即造假时序。
-    单位: gap 为百分点 (pp), 与 adverse_selection_gap_pct 同量纲。
-    **观测点按日去重**: 同一天跑 N 次只算 1 个点 (否则一天内手动重跑两次就能假满足
-      "持续≥2周" — 判据要的是时间跨度, 不是运行次数)。同日保留最后一次。
-    诚实披露: 2026-09-06 之前的 10 行 history 无 fixed_anchor 块, 且其缺口是"当时窗口"的
-      点值, 无法按时点回填 (playbook_instructions 持续在长) → 同口径时序自本次起算, 不追溯。
+    points = [(day, at, gap_pct, robust), ...] 按文件顺序 (追加即时间序)。
+    滚动 since 的旧行无 fixed_anchor ⇒ 不计入 (计入即造假时序)。
+    单位: gap_pct 为百分点 (pp), 与 adverse_selection_gap_pct 同量纲。
     异常处置 (R5 模式 / `tests/test_except_pass_ratchet.py` 棘轮): 坏行与读失败**不静默吞**,
       以计数/错误串显性透出 — "零观测点"与"history 读炸了"必须可区分。
     """
-    seq = []
+    pts = []
     bad_json_rows = 0
     history_error = None
     try:
@@ -173,11 +170,25 @@ def _fixed_anchor_streak(current_gap, current_robust, at=None) -> dict:
                 fa = doc.get("fixed_anchor")
                 if not fa or fa.get("adverse_selection_gap_pct") is None:
                     continue
-                seq.append((doc.get("generated_at") or doc.get("timestamp"),
+                at = doc.get("generated_at") or doc.get("timestamp")
+                pts.append(((at or "")[:10] or "unknown", at,
                             fa["adverse_selection_gap_pct"],
                             bool(fa.get("robust_both_directions"))))
     except Exception as _he:
         history_error = f"{type(_he).__name__}: {_he}"
+    return pts, bad_json_rows, history_error
+
+
+def _fixed_anchor_streak(current_gap, current_robust, at=None) -> dict:
+    """给 render 里"持续 ≥2 周"这条判据补上可审计留痕。
+
+    **观测点按日去重**: 同一天跑 N 次只算 1 个点 (否则一天内手动重跑两次就能假满足
+      "持续≥2周" — 判据要的是时间跨度, 不是运行次数)。同日保留最后一次。
+    诚实披露: 2026-09-06 之前的 10 行 history 无 fixed_anchor 块, 且其缺口是"当时窗口"的
+      点值, 无法按时点回填 (playbook_instructions 持续在长) → 同口径时序自本次起算, 不追溯。
+    """
+    pts, bad_json_rows, history_error = _history_anchor_points()
+    seq = [(at, gap, robust) for _, at, gap, robust in pts]
     if current_gap is not None:
         seq.append((at or "current", current_gap, bool(current_robust)))
 
@@ -303,10 +314,95 @@ def render(r: dict) -> str:
     return "\n".join(lines)
 
 
+def _anchor_push_text(result: dict):
+    """锚点裁决推送的 (title, body) — 纯函数, 便于契约测试断言内容而不碰任何通道。"""
+    fa = result.get("fixed_anchor") or {}
+    st = result.get("fixed_anchor_streak") or {}
+    ex, ms = fa.get("executed") or {}, fa.get("missed") or {}
+    mo = fa.get("missed_opportunity") or {}
+    gd = fa.get("gap_by_direction") or {}
+    gap = fa.get("adverse_selection_gap_pct")
+    met = bool(st.get("criterion_ge2_met"))
+    title = (f"🎯 触发门同口径锚点 · 缺口 {gap}pp · 观测 {st.get('n_points')}/2 · "
+             f"{'✅ 可裁' if met else '⏳ 未满足'}")
+    body = "\n".join([
+        f"锚点 since {fa.get('since')} (冻结, 不随 --days 滚动 → 跨周可比)",
+        f"executed {ex.get('avg_fwd_pct')}% (n={ex.get('n')}) vs "
+        f"missed {ms.get('avg_fwd_pct')}% (n={ms.get('n')})",
+        f"缺口 {gap} 个百分点 | 双向同号稳健 "
+        f"{'✅' if fa.get('robust_both_directions') else '❌'} "
+        f"(BUY={gd.get('buy')} / SHORT={gd.get('short')})",
+        f"机会成本 ${mo.get('total_shadow_pnl')} / {mo.get('n_with_shadow_pnl')} 笔",
+        f"「持续≥2周」判据: 同口径观测 {st.get('n_points')} 个不同日, 连续为正且稳健 "
+        f"{st.get('consecutive_positive_robust')} 个 → "
+        f"{'✅ 满足, 可提请裁决' if met else '⏳ 未满足 (需 ≥2 个不同日)'}",
+        f"对照·滚动窗 (since {result.get('since')}, 跨行不可比, 仅当期参考): "
+        f"缺口 {result.get('adverse_selection_gap_pct')}pp",
+        "裁决含义: 满足即支持「放宽触发条件」而非继续调退出参数 "
+        "(判据字典 C7 冻结期不动退出参数)。",
+    ])
+    return title, body
+
+
+def push_anchor_verdict(result: dict, prior_anchor_days=None) -> dict:
+    """把锚点裁决状态推进 `app/push` hub (军规: 禁直连 notifier / 禁自写 webhook)。
+
+    为什么值得推: 三张周六记分牌 cron (exit/direction/trigger_gate) 全部只 `>> logs/*.log`
+      落文件, **零读者** — 与 7/31 DEB-cleanup-remaining ⑥ G1 修 dashboard 前的病灶同族。
+      锚点观测点每周只 +1, 凑满 2 个不同日即可裁「持续≥2周」⇒ 到点必须有人知道, 否则
+      判据会在文件里**静默成熟** (判据字典 B17 已把"悬置观察 7 周未决"定性为僵尸尺子病灶)。
+
+    防噪: **同日只推一次**, 与 `_fixed_anchor_streak` 的按日折叠同一口径 (判据数的是不同日,
+      推送也不该数运行次数) ⇒ 手动重跑当日不重复推。`prior_anchor_days` 必须由调用方在
+      **追加 history 之前**取 (追加后当日行已在文件里 → 会恒判"已推过")。
+
+    level=NORMAL + category=REVIEW_WEEKLY: 主通道(钉钉 priority=1)即达; 全通道失败会 durable
+      落 `data/push_failures.jsonl` (`hub._immediate_send` 对 INFO **不落盘** ⇒ 不用 INFO);
+      不用 CRITICAL (那是 kill_switch/RISK_OFF 语义, 会广播全通道 + 写 flag 文件)。
+    **sync=True** (而非默认异步): 本脚本是短命 cron 进程, 异步 `push()` 返回的 True 只代表
+      "已派发进线程池", 送达与否要靠解释器退出时 `concurrent.futures` 的 atexit join 兜 —
+      那是隐式依赖。hub 文档明写 sync=True "同步立即送达并返回真实结果 (用于关键必达推送,
+      调用方据此决定是否重试)" ⇒ 周报判据推送要的就是真实结果。sync 会绕过 hub 的 60s
+      dedup, 但防重复由本函数的**按日闸**负责 (比 60s 窗更强, 且与判据口径一致)。
+    推送失败不得拖垮只读报表, 但必须**显性** (承 except:pass 棘轮: 不静默吞)。
+    """
+    fa = result.get("fixed_anchor") or {}
+    if not fa:
+        return {"pushed": False, "reason": "无 fixed_anchor 块 (锚点未算出)", "ok": None,
+                "error": None}
+    st = result.get("fixed_anchor_streak") or {}
+    day = (result.get("generated_at") or result.get("timestamp") or "")[:10]
+    if prior_anchor_days is None:
+        prior_anchor_days = {d for d, _, _, _ in _history_anchor_points()[0]}
+    if day and day in prior_anchor_days:
+        return {"pushed": False, "ok": None, "error": None,
+                "reason": f"{day} 当日已有锚点观测记录 → 同日只推一次 (判据数不同日, 不数运行次数)"}
+    title, body = _anchor_push_text(result)
+    try:
+        from app.push import get_push_hub, PushMessage, Level, Category
+        ok = get_push_hub().push(PushMessage(
+            title=title,
+            body=body,
+            level=Level.NORMAL,
+            category=Category.REVIEW_WEEKLY,
+            dedup_key=f"trigger_gate_anchor:{day}",
+            payload={"anchor_since": fa.get("since"),
+                     "gap_pct": fa.get("adverse_selection_gap_pct"),
+                     "n_points": st.get("n_points"),
+                     "criterion_ge2_met": st.get("criterion_ge2_met")},
+        ), sync=True)
+        return {"pushed": True, "reason": "sent", "ok": bool(ok), "error": None}
+    except Exception as _pe:
+        return {"pushed": True, "reason": "attempted", "ok": False,
+                "error": f"{type(_pe).__name__}: {_pe}"}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", help="起始日期 YYYY-MM-DD")
     ap.add_argument("--days", type=int, default=30, help="近 N 天 (默认30)")
+    ap.add_argument("--push", action="store_true",
+                    help="把同口径锚点裁决推给 app/push hub (周六 cron 用; 同日只推一次)")
     args = ap.parse_args()
     since = args.since or _et_today_minus(args.days)
 
@@ -322,10 +418,23 @@ def main():
     result = compute(since)
     print(render(result))
 
+    # 推送防噪判据必须在**追加 history 之前**取 — 追加后当日行已在文件里, 会恒判"已推过"。
+    prior_anchor_days = ({d for d, _, _, _ in _history_anchor_points()[0]}
+                         if args.push else None)
+
     OUT_LATEST.write_text(json.dumps(result, ensure_ascii=False, indent=2))
     with OUT_HISTORY.open("a") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
     print(f"\n→ 已落 {OUT_LATEST.name} + history")
+
+    if args.push:
+        info = push_anchor_verdict(result, prior_anchor_days=prior_anchor_days)
+        if info["pushed"] and info["ok"]:
+            print("→ 锚点裁决已推送 (app/push hub · REVIEW_WEEKLY/NORMAL · 同日只推一次)")
+        elif info["pushed"]:
+            print(f"⚠️ 锚点裁决推送**未成功**: {info['error'] or 'hub 返回 False — 全通道失败, 已 durable 落 data/push_failures.jsonl'}")
+        else:
+            print(f"→ 未推送: {info['reason']}")
 
 
 if __name__ == "__main__":

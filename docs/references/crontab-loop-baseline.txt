@@ -74,7 +74,7 @@ ssr_shadow_daily.py  # 存量测量/回填环, 台账回填待专项
 symbol_performance_report.py  # 存量测量/回填环, 台账回填待专项
 t5_hold_counterfactual.py  # 存量测量/回填环, 台账回填待专项
 trend_state_recorder.py  # 存量测量/回填环, 台账回填待专项
-trigger_gate_report.py  # 存量测量/回填环, 台账回填待专项
+trigger_gate_report.py  # 存量测量/回填环; 2026-09-06 修尺子批②追加 (用户裁「同意」) crontab 行加 --push 作动面 → 已入台账 §2.4 `crontab-trigger-gate-anchor-push` (锚点裁决推送, 周六 06:24); 存量回填专项仍待
 tripwire_checker.py  # 存量测量/回填环, 台账回填待专项
 ue_tier_shadow_eval.py  # 存量测量/回填环, 台账回填待专项
 universe_expansion_shadow.py  # 存量测量/回填环, 台账回填待专项

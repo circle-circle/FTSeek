@@ -336,3 +336,157 @@ def test_streak_survives_missing_or_corrupt_history(tmp_path, monkeypatch):
         "坏行必须**显性计数** — 静默 continue 会让'零观测点'与'history 坏了'不可区分 "
         "(R5 模式 / except:pass 棘轮基线只降不升)")
     assert st2["history_error"] is None
+
+
+# ══════════════════════ 锚点裁决推送 (走 app/push hub) ══════════════════════
+
+import pytest  # noqa: E402  (置于文件尾: 上半部纯断言不需要 pytest)
+
+from app.push import PushHub, Level, Category  # noqa: E402
+from app.push.channels import Channel  # noqa: E402
+import app.push as _app_push  # noqa: E402
+
+
+class _MockChannel(Channel):
+    def __init__(self, will_succeed=True):
+        self.name = "mock"
+        self.priority = 1
+        self.will_succeed = will_succeed
+        self.sent = []
+
+    def is_available(self):
+        return True
+
+    def send(self, msg):
+        self.sent.append(msg)
+        return self.will_succeed
+
+
+class _RecordingHub:
+    """包住真 PushHub, 只为记下 sync= 实参 (钉住"短命 cron 进程必须同步"的决定)。"""
+
+    def __init__(self, hub):
+        self._hub = hub
+        self.calls = []
+
+    def push(self, msg, sync=False):
+        self.calls.append({"msg": msg, "sync": sync})
+        return self._hub.push(msg, sync=sync)
+
+
+_ANCHOR_RESULT = {
+    "since": "2026-08-07",
+    "adverse_selection_gap_pct": 0.703,
+    "generated_at": "2026-09-13T06:24:01-04:00",
+    "fixed_anchor": {
+        "since": "2026-07-24",
+        "executed": {"n": 302, "avg_fwd_pct": -0.164},
+        "missed": {"n": 246, "avg_fwd_pct": 2.695},
+        "missed_opportunity": {"n_with_shadow_pnl": 245, "total_shadow_pnl": 25604.53},
+        "adverse_selection_gap_pct": 2.859,
+        "gap_by_direction": {"buy": 3.036, "short": 2.144},
+        "robust_both_directions": True,
+    },
+    "fixed_anchor_streak": {"n_points": 2, "consecutive_positive_robust": 2,
+                            "criterion_ge2_met": True},
+}
+
+
+@pytest.fixture
+def hub(monkeypatch, tmp_path):
+    """真 PushHub + mock 通道; 并把失败落盘重定向到 tmp。
+
+    不隔离就会把测试的失败记录写进**生产** data/push_failures.jsonl
+    (同 tests/coordinator/test_push_hub.py 的 autouse 隔离理由)。
+    """
+    import app.core.paths as _paths
+    monkeypatch.setattr(_paths, "get_data_dir", lambda: tmp_path)
+    ch = _MockChannel()
+    real = PushHub(channels=[ch], enable_health_check=False, async_mode=False)
+    rec = _RecordingHub(real)
+    monkeypatch.setattr(_app_push, "get_push_hub", lambda: rec)
+    yield rec, ch
+    real.stop()
+
+
+def test_push_text_carries_anchor_caliber_and_criterion_state():
+    title, body = tgr._anchor_push_text(_ANCHOR_RESULT)
+    assert "2.859" in title and "2/2" in title and "可裁" in title
+    assert "2026-07-24" in body, "必须写清锚点 since (否则读者以为是滚动窗)"
+    assert "302" in body and "246" in body
+    assert "25604.53" in body and "245" in body
+    assert "持续≥2周" in body and "满足" in body
+    assert "0.703" in body, "滚动窗口值必须并列作对照, 且标注跨行不可比"
+    assert "跨行不可比" in body
+    assert "C7" in body, "裁决含义要点明冻结期不动退出参数"
+
+
+def test_push_uses_hub_with_weekly_review_contract(hub):
+    rec, ch = hub
+    info = tgr.push_anchor_verdict(_ANCHOR_RESULT, prior_anchor_days=set())
+    assert info == {"pushed": True, "reason": "sent", "ok": True, "error": None}
+    assert len(ch.sent) == 1, "必须真的走通道 (军规: 禁直连 notifier/自写 webhook)"
+    msg = ch.sent[0]
+    assert msg.category == Category.REVIEW_WEEKLY
+    assert msg.level == Level.NORMAL, (
+        "不用 CRITICAL — 那是 kill_switch/RISK_OFF 语义 (广播全通道 + 写 flag 文件); "
+        "也不用 INFO — 全通道失败时 INFO 不 durable 落盘")
+    assert rec.calls[0]["sync"] is True, (
+        "短命 cron 进程必须 sync=True 拿真实送达结果, 不得依赖解释器退出时 atexit join 线程池")
+    assert msg.payload["gap_pct"] == 2.859 and msg.payload["criterion_ge2_met"] is True
+
+
+def test_push_day_guard_blocks_same_day_rerun(hub):
+    """判据数的是**不同日**, 推送也不该数运行次数 — 手动重跑当日不得重复推。"""
+    rec, ch = hub
+    info = tgr.push_anchor_verdict(_ANCHOR_RESULT, prior_anchor_days={"2026-09-13"})
+    assert info["pushed"] is False and info["ok"] is None
+    assert "同日只推一次" in info["reason"]
+    assert ch.sent == [] and rec.calls == [], "闸在推送之前就拦下, 不得先推再解释"
+
+
+def test_push_defaults_day_guard_from_history_when_not_supplied(hub, tmp_path, monkeypatch):
+    """调用方忘传 prior_anchor_days 时, 从 history 自取 (而不是无脑推)。"""
+    monkeypatch.setattr(tgr, "OUT_HISTORY", _hist(tmp_path, [
+        {"fixed_anchor": {"adverse_selection_gap_pct": 2.9, "robust_both_directions": True},
+         "generated_at": "2026-09-13T06:24:01-04:00"},
+    ]))
+    rec, ch = hub
+    info = tgr.push_anchor_verdict(_ANCHOR_RESULT)
+    assert info["pushed"] is False and ch.sent == []
+
+
+def test_push_failure_is_explicit_not_swallowed(hub):
+    """推送失败不得拖垮只读报表, 但必须显性 (承 except:pass 棘轮: 不静默吞)。"""
+    rec, ch = hub
+    ch.will_succeed = False
+    info = tgr.push_anchor_verdict(_ANCHOR_RESULT, prior_anchor_days=set())
+    assert info["pushed"] is True and info["ok"] is False and info["error"] is None
+    assert len(ch.sent) >= 1, "试过了才算失败 — 没试就报失败是另一种说谎"
+    # 不断言确切次数: hub 自带 send_retries=1 (共 2 次尝试), 那是 hub 的行为不是本函数的
+
+
+def test_push_exception_is_reported_not_raised(hub, monkeypatch):
+    rec, _ = hub
+
+    def _boom():
+        raise RuntimeError("hub 炸了")
+
+    monkeypatch.setattr(_app_push, "get_push_hub", _boom)
+    info = tgr.push_anchor_verdict(_ANCHOR_RESULT, prior_anchor_days=set())
+    assert info["pushed"] is True and info["ok"] is False
+    assert "RuntimeError" in info["error"] and "hub 炸了" in info["error"]
+
+
+def test_push_without_anchor_block_is_noop(hub):
+    rec, ch = hub
+    info = tgr.push_anchor_verdict({"since": "x"}, prior_anchor_days=set())
+    assert info["pushed"] is False and "fixed_anchor" in info["reason"]
+    assert ch.sent == [] and rec.calls == []
+
+
+def test_push_is_opt_in_so_manual_runs_stay_silent():
+    """默认不推 — 只读报表被手动重跑时不得骚扰告警面; 推送由周六 cron 显式 --push 触发。"""
+    src = (PROJECT_ROOT / "scripts" / "trigger_gate_report.py").read_text(encoding="utf-8")
+    assert '"--push"' in src and 'action="store_true"' in src
+    assert "if args.push:" in src, "推送必须挂在显式开关下, 不得无条件执行"
