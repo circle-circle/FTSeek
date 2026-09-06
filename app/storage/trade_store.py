@@ -972,7 +972,8 @@ class TradeStore:
                                entry_price: float, owner_strategy: str = 'playbook_sim',
                                owner: str = 'auto', account_type: str = 'simulate',
                                source_type: str = '', futu_order_id: str = '',
-                               stop_loss: float = 0, sync_status: str = 'synced') -> None:
+                               stop_loss: float = 0, sync_status: str = 'synced',
+                               entry_time: str = '') -> None:
         """简单UPSERT open_positions — 不需要Position对象 (2026-07-02)
 
         用途: playbook_service下单后立即写open_positions, 使其成为SSOT.
@@ -981,6 +982,10 @@ class TradeStore:
         2026-07-02 fix: 移除 futu_order_id/source_type 列引用 (open_positions schema 无此列).
         futu_order_id 存入 sl_broker_order_id (语义匹配: 入场单的 broker order id).
         source_type 不存入 open_positions (仅在 trade_records 中保留).
+
+        entry_time (2026-09-06 R-12b 裁决): 传入权威成交时刻 (如 trade_records 的
+        entry_time), 两表同源消除结构漂移; 空串 = 旧行为 (自取 now_et()).
+        注意 ON CONFLICT 分支本就不刷新 entry_time, 该语义不变.
         """
         from datetime import datetime as _dt
         # ── R-12 (2026-08-23 DEB-20260823): entry_time 统一 ET 口径 ──
@@ -995,6 +1000,8 @@ class TradeStore:
             _now = _now_et_ts().isoformat()
         except Exception:
             _now = _dt.now().isoformat()
+        # R-12b (2026-09-06): 优先用调用方传入的成交时刻; updated_at 恒为写入时刻.
+        _entry_ts = entry_time or _now
         conn = self._get_conn()
         try:
             conn.execute("""
@@ -1015,7 +1022,7 @@ class TradeStore:
                     trader_type=excluded.trader_type,
                     strategy_id=excluded.strategy_id
             """, (symbol, direction, size, entry_price, stop_loss, stop_loss,
-                  _now, _now, owner_strategy, 'AUTO', owner_strategy,
+                  _entry_ts, _now, owner_strategy, 'AUTO', owner_strategy,
                   owner, sync_status, 'normal', account_type, futu_order_id, stop_loss))
             conn.commit()
         finally:

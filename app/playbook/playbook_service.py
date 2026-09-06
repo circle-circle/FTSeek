@@ -1833,6 +1833,8 @@ class PlaybookService:
             # 无法区分系统仓和人工仓 → 人工仓被误标auto → 被自动平仓
             # 修复: 下单后立即UPSERT open_positions, owner='auto', source_type标记来源
             try:
+                # R-12b (2026-09-06 裁决): entry_time 与上方 trade_records 同源 (_now_iso,
+                # 成交后富化前取值) — 此前本调用自取 now_et(), 富化 I/O 慢路径实测漂 2.94s.
                 _ts.upsert_position_simple(
                     symbol=symbol,
                     direction=mos_direction,
@@ -1845,6 +1847,7 @@ class PlaybookService:
                     futu_order_id=_futu_id or _order_id,
                     stop_loss=float(stop_loss) if stop_loss else 0,
                     sync_status='synced',
+                    entry_time=_now_iso,
                 )
                 logger.info(f"[playbook] {_mode_label} open_position 已写入: {symbol}")
             except Exception as _ope:

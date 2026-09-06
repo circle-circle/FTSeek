@@ -147,6 +147,49 @@ class TestR12EntryTimeConvention:
             conn.close()
         assert not mismatched, f"两表 entry_time 口径/时刻不一致: {mismatched}"
 
+    def test_upsert_entry_time_passthrough_r12b(self, tmp_path):
+        """R-12b (2026-09-06 裁决): entry_time 可选参数透传, 两表同源治结构漂移.
+
+        根因: 富化 I/O (regime assess/VIX 重试链 + full_market_context) 夹在
+        trade_records 取时戳与 open_positions 自取 now_et() 之间, 慢路径实测漂
+        2.94s (US.HOOD 2026-09-04, fill :09.928 vs 记账 :12.864)。裁决: 调用方
+        传入权威成交时刻; 空串 = 旧行为; updated_at 恒为写入时刻; CONFLICT 重
+        upsert 不刷新 entry_time (既有语义不变)。
+        """
+        from app.storage.trade_store import TradeStore
+        store = TradeStore(str(tmp_path / "r12b.db"))
+        fill_ts = "2026-09-04T13:30:09.928261-04:00"
+
+        store.upsert_position_simple("US.XXX", "LONG", 10, 100.0, entry_time=fill_ts)
+        row = store._get_conn().execute(
+            "SELECT entry_time, updated_at FROM open_positions WHERE symbol='US.XXX'"
+        ).fetchone()
+        assert row[0] == fill_ts, "传入的成交时刻必须逐字落 entry_time"
+        assert row[1] != fill_ts, "updated_at 恒为写入时刻, 不跟随 entry_time"
+
+        # 重 upsert (CONFLICT 分支): entry_time 保持首插值 (既有语义不动)
+        store.upsert_position_simple("US.XXX", "LONG", 20, 101.0,
+                                     entry_time="2026-09-05T09:30:00-04:00")
+        row = store._get_conn().execute(
+            "SELECT entry_time, size FROM open_positions WHERE symbol='US.XXX'"
+        ).fetchone()
+        assert row[0] == fill_ts and row[1] == 20
+
+        # 空串 = 旧行为: entry_time == updated_at == 写入时刻 (ET aware)
+        store.upsert_position_simple("US.YYY", "LONG", 5, 50.0)
+        row = store._get_conn().execute(
+            "SELECT entry_time, updated_at FROM open_positions WHERE symbol='US.YYY'"
+        ).fetchone()
+        assert row[0] == row[1] and "-04:00" in row[0]
+
+    def test_playbook_service_passes_fill_timestamp(self):
+        """防"加了参数忘了接线": playbook_service 的 upsert 调用必须传 _now_iso."""
+        src = (Path(__file__).resolve().parent.parent
+               / "app" / "playbook" / "playbook_service.py").read_text(encoding="utf-8")
+        assert "entry_time=_now_iso," in src, (
+            "R-12b: upsert_position_simple 调用须传 entry_time=_now_iso "
+            "(与 trade_records 同源), 否则结构漂移仍在")
+
     def test_migration_script_is_idempotent(self):
         """迁移脚本必须可重复执行 (存在且带幂等判据).
 
