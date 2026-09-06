@@ -33,6 +33,7 @@
 | 跨仓位变更比较绩效 (美元/笔不可比时) | **尺寸归一口径 (bps of notional)** | 脚本 `scripts/exit_scorecard.py::size_normalized()` + `scripts/okr_status.py` trade_stats 四列 | 任何 sizing/仓位参数改动前后, $/笔混入"注下大了" → 必须并列 bps; 且按**日等权**做 t (pooled 会被成交多的日子主导, 实测 pooled +1.25bps 而日均 −1.32bps) |
 | 单行状态表被误当时序用 (算峰谷/回撤/趋势) | **事件日记账重建 + 权威锚点倒推** | 脚本 `scripts/exit_scorecard.py::reconstruct_max_drawdown()` | 带 UNIQUE 约束的状态表 (如 `capital_state`) 窗口内恒 1 行 → 峰谷恒 0.0 = 判据免检假绿; 改从事件流 (`trade_records` 出场日记账) 重建, 锚定 live 权威值倒推窗口初值, 不可测一律 `None` 不得当 0 |
 | 滚动窗口的 history 被当成时序 | **冻结同口径锚点块 + 观测点按日去重 + 到点推送** | 脚本 `scripts/trigger_gate_report.py::ANCHOR_SINCE` / `_fixed_anchor_streak()` / `push_anchor_verdict()` (2026-09-06 已接周六 cron `--push`) | `--days N` 滚动使每行 `since` 不同 → 跨行趋势是窗口在动不是指标在动; 额外落一份锚点块 (滚动头条不动), "持续≥N周"类判据按**日历日**折叠计数 (同日重跑不得凑数); **判据会在文件里静默成熟** ⇒ 观测点凑满即推送呈裁 (推送闸与判据同一按日口径) |
+| 判分面板沿用**已废 OKR** 的 KR 集 (目标换了、尺子没换) | **新旧判据并列不替代 + 拆纯函数模块才可钉 + 不给百分比总分** | 脚本 `scripts/okr_2026_09_scoring.py` + `scripts/okr_status.py` 6b 段 | OKR-2026-08 已于 8/23 SUPERSEDED 而 `calc_okr_score` 仍按 win_rate/weekly_pnl/IC 判分 ⇒ 头条 60% 与现行判据**不同源** (KR2/KR4 恒 0 是废目标算出来的 = 量错了东西而非没做到); 旧块键名有消费方 (`okr_query.py`) + history 时序连续性 ⇒ **并列**并在两处头条标口径, 不改键; 判分逻辑必须拆出**模块级执行体** (import 即跑 SQL 的脚本契约测试钉不到); 二元/待裁项取算术平均 = 假精度 ⇒ 只出 verdict 计数; 待裁项 (KR2 (a)/(b)) **恒 PENDING 不自评**; **不新增第四把尺子** — 已有两处测量实现时只读其产物 (再加一份 SQL 即口径漂移) |
 
 ## 二、元规则层 (高于一切场景)
 

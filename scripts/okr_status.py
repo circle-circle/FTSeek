@@ -335,15 +335,48 @@ def calc_okr_score():
 
 overall_score, kr_scores = calc_okr_score()
 
+# ─── 6b. OKR-2026-09 KR 集 (现行判据, 与上方 8 月旧块**并列不替代**) ───
+# 病灶 (修尺子批③, 2026-09-06 用户裁「需要」): 上方 calc_okr_score 判的是 **OKR-2026-08 的
+# KR 集** (win_rate 55% / weekly_pnl $1000 / sample 30 / IC(T+3) 0.05 / trigger 50%), 而
+# docs/OKR-2026-08.md 已于 2026-08-23 **提前结算为 SUPERSEDED**; 现行判据是
+# docs/OKR-2026-09.md 的 KR1 修尺子 / KR2 参数冻结 / KR3 预注册找 edge / KR4 实盘硬门 /
+# KR5 学费明码 ⇒ 头条 overall_score 与现行判据**不同源** (KR2/KR4 恒 0 是已废目标算出来的)。
+# 治法=并列不改旧块: kr_scores/overall_score 键名被 scripts/okr_query.py:58,168 消费, 且
+# okr_history.jsonl 有时序连续性 — 改键 = 断消费方 + 造假时序。
+# 判分逻辑拆到 scripts/okr_2026_09_scoring.py (纯函数): 本脚本是**模块级执行体** (import 即跑
+# 全部 SQL), 契约测试钉不到它 (批② 只能抽源码字符串); 拆出去才钉得到。只读载体, 零写副作用。
+_OKR09_UNAVAILABLE = "⚠️ OKR-2026-09 判分不可用: "
+try:
+    from scripts.okr_2026_09_scoring import collect_and_score as _collect_2026_09
+    from scripts.okr_2026_09_scoring import render_lines as _render_2026_09
+    okr_2026_09 = _collect_2026_09(
+        repo_root=Path('/opt/ftseek/FTSeek-US'),
+        ic_playbook=ic_data["playbook"],
+        graduation=ic_data["playbook"].get("graduation"),
+        graduation_deprecated=ic_data["playbook"].get("graduation_deprecated"),
+        trade_stats=trade_stats,
+        window_days=30,          # trade_stats 的取样窗 (_cutoff_30d), KR5 笔频外推用
+        gate_redefined=False,    # 新毕业判据尚未预注册+用户批准 (OKR-2026-09 KR4); 批准后才可翻 True
+    )
+    okr_2026_09_lines = _render_2026_09(okr_2026_09)
+except Exception as _okr09_err:  # 显性留痕 (except:pass 棘轮 955 只降不升): 判分炸了必须看得见
+    okr_2026_09 = {"error": f"{type(_okr09_err).__name__}: {_okr09_err}"}
+    okr_2026_09_lines = [_OKR09_UNAVAILABLE + okr_2026_09["error"]]
+
 # ─── OUTPUT ───
 print("=" * 65)
 print("  OKR STATUS REPORT — " + datetime.now().strftime('%Y-%m-%d %H:%M'))
 print("=" * 65)
 
-print(f"\n🎯 OVERALL PROGRESS: {overall_score:.0f}%")
+print(f"\n🎯 OVERALL PROGRESS: {overall_score:.0f}%  "
+      f"← OKR-**2026-08** KR 集 (2026-08-23 已 SUPERSEDED, 仅续算; 现行判据见下方 2026-09 块)")
 for kr, score in kr_scores.items():
     bar = "█" * int(score/5) + "░" * (20 - int(score/5))
     print(f"  {kr:<20} {bar} {score:.0f}%")
+
+print()
+for _line09 in okr_2026_09_lines:
+    print(_line09)
 
 print(f"\n📊 PIPELINE METRICS")
 print(f"  Instructions:    {total} (SKIP: {skip_count}, active: {non_skip})")
@@ -466,6 +499,11 @@ output = {
     "timestamp": datetime.now().isoformat(),
     "overall_score": round(overall_score, 1),
     "kr_scores": {k: round(v, 1) for k, v in kr_scores.items()},
+    # 口径声明 (军规: 新落库字段带单位/来源声明): 旧块是 SUPERSEDED OKR 的续算值, 不是现行判据
+    "kr_scores_caliber": ("OKR-2026-08 KR 集 (win_rate/weekly_pnl/sample/ic_t3/trigger), "
+                          "该 OKR 2026-08-23 提前结算为 SUPERSEDED ⇒ 本块仅续算以保 "
+                          "okr_query.py 消费面与 okr_history.jsonl 时序连续; **现行判据见 okr_2026_09**"),
+    "okr_2026_09": okr_2026_09,
     "pipeline": {
         "total": total, "skip": skip_count, "active": non_skip,
         "with_entry": with_entry, "triggered": triggered, "executed": executed,
