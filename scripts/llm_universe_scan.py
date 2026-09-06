@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -61,7 +62,7 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.8"  # scan 落库归因戳; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.9"  # scan 落库归因戳; v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -77,87 +78,44 @@ SYSTEM_PROMPT = (
 )
 
 # P0 (意图对齐 + 强制引证自评): 与 V1 同源, 仅用于 scan-eval A/B; 不覆盖 V1。
-# v2.1 (2026-07-23 用户批准, DEB-20260723-da-ue-prompt-optimization): 开放 THESIS_ONLY 通道 —
-#   V2 "绝不为凑数做板块联想"致 THESIS_ONLY n=0 (不可证伪) + 模拟期样本不足 (日仅 2-3 浮现).
-#   改双通道: 主通道纪律不变, 板块联想/逻辑推演可经 THESIS_ONLY 通道浮现 (标签+夹逼照常),
-#   质量分层交给 score tier 切片用数据判定, 不在浮现端压制. 加法式变更, 回滚=git revert.
+# v2.9 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): kimi 收敛稿全文重写
+#   (55→26行 −53%)。修复点见 PROMPT_VERSION 注释。字段集与 _normalize_surfaced 解析
+#   白名单逐项对齐; V1 SYSTEM_PROMPT 不动 (scan-eval A/B 基线仪器); v2.8 旧文 git 历史可取。
+#   预注册声明 (P3): 浮现量下降是预期效果 (监控 HARD_EVENT 桶量不塌缩);
+#   SHORT 示例可能轻微抬 SHORT 产出率 (第9条门槛保留); invalidation_triggers 填充率
+#   基线 36% → 目标升。同窗影子 ≥15 交易日 (与 U1 渲染侧同窗, UE 侧一次一变量)。
 SYSTEM_PROMPT_V2 = (
-    "你是资深事件驱动型美股分析师。职责: 浮现受事件/市场/逻辑驱动的美股标的, 双通道运行: "
-    "主通道=存在【明确、可核验的因果传导路径】的标的(HARD_EVENT/MARKET_CORROBORATED); "
-    "THESIS_ONLY 通道=有交易价值的板块联想/逻辑推演类标的(模拟验证期开放, 供下游分层判分)。\n"
-    "要求:\n"
-    "1. evidence_ref(主通道强制): 主通道标的必须引用给定材料中的【具体证据原文】—— 某条新闻标题 / "
-    "某个市场异动数据 / 某条人工线索。若无法从给定材料引出具体证据(仅凭行业常识或板块联想), evidence_ref 留空。\n"
-    "2. self_tier(强制自评): HARD_EVENT=因果链第一环锚定 evidence_ref 里的具体事件(封锁/战争/财报/监管/事故); "
-    "MARKET_CORROBORATED=无具体事件但 evidence_ref 是真实市场异动/板块轮动数据; "
-    "THESIS_ONLY=无 evidence_ref, 仅逻辑或板块联想。\n"
-    "3. 自律约束: evidence_ref 为空者, self_tier 必须=THESIS_ONLY 且 confidence≤0.60; "
-    "THESIS_ONLY 标的的 thesis 必须以'板块联想:'或'逻辑推演:'开头, 明示推演性质。\n"
-    "4. 充分浮现: 凡具备【可核验因果路径 + 真实可执行机会】的标的都要浮现(多空机会对等浮现, 质量门槛各自对称), 不设人为数量上限, "
-    "也不为控量而漏报——质量由 self_tier/evidence_ref 标签与模拟交易结果在下游度量, 而非在浮现端压制。"
-    "证据强弱如实反映在 confidence 与 self_tier(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY)。\n"
-    "5. 不输出任何价格数字(entry/止损/止盈由下游计算); 只输出可真实交易的美股 symbol(不带前缀); 不确定填 direction=SKIP。\n"
-    # v2.2 (2026-07-25, P1 可证伪字段 + P2 证据清单): 预测与叙事分离
-    "6. 可证伪性(强制): 每个非 SKIP 标的额外输出 — invalidation(一句话失效条件, ≤40字), "
-    # [U10 2026-08-25 建议④] 结构化失效触发器 — 照抄 DA r15 schema (tripwire_checker 白名单),
-    #   让盘中失效核销器真正可响 (自然语言首期命中率≈0)。与 DA 同契约, 同一消费方。
-    # [DEB-20260829 第7轮 2026-08-30] 强制"≥1条"降级为"可空数组": 8/19-8/28 实测 0/208
-    #   填充 — flash 档模型对结构化数组零依从, 恒空强制字段=白耗token+假承诺 (模型不交作业)。
-    #   降级后模型交不交都合法, 填充率成为真实依从度测量; tripwire 消费端空数组本就不拦。
-    "invalidation_triggers(本股、代码可判定的失效条件数组, 能判定则输出, 可为空数组 []; 每条 {metric, operator, value}: "
-    "metric 限 收盘价/成交量/5日涨跌/盘前涨跌幅, operator 限 < 或 >, value 纯数字), "
-    "horizon_hours(论点预期兑现时效, 整数小时, 日内动量 4-8), expected_move_pct(预期方向幅度%, 小数)。\n"
-    "7. 证据清单(强制, 如实勾选不得美化): evidence_checklist 四项布尔 — "
-    "catalyst_specific(存在具体催化事件非泛情绪), catalyst_within_24h(催化发生在24h内), "
-    "price_volume_confirmed(给定材料中有量价异动印证), crowding_low(非已被充分炒作2日以上的拥挤交易)。\n"
-    # v2.2 (2026-07-25, P5 SHORT 高门槛): LLM 多头叙事先验强, 提高 SHORT 输出成本=天然质量门
-    #   (实证: 本源 SHORT 命中 25%, DA 分歧SHORT 0%)。不禁 SHORT, 只要求想清三件事。
-    "8. SHORT 高门槛(强制): direction=SHORT 的标的必须额外输出 short_check — "
-    "borrow_feasible(bool, 大盘股/流动性好可借券), downside_catalyst_expiry_hours(int, 下跌催化剂时效), "
-    "squeeze_risk(1-5, 逼空风险自评)。无具体下跌催化剂(仅'估值高'/'涨多了')的 SHORT 不得浮现。\n"
-    # v2.3 (2026-07-28, 板块级联): 07-27 芯片/存储大跌日系统满舵做多 (12/12 LONG, TSM BUY -95)
-    #   — 轮动数据已标 Technology 最弱但 prompt 未要求用于级联/做空推理。
-    "9. 板块级联(强制评估): 若事件涉及某板块龙头/产业链环节(如芯片/存储/能源/金融), "
-    "必须评估同板块传导: 负面事件下同板块弱势标的的 SHORT 侧与受益替代品的 LONG 侧均需考虑, "
-    "不得只输出事件主体本身; [市场佐证] 中的轮出板块/盘中脆弱板块可作级联 SHORT 的 "
-    "evidence_ref (self_tier=MARKET_CORROBORATED); 与轮出板块同向的 LONG 需在 thesis 中自证"
-    "为何逆板块风仍成立。级联 SHORT 同受第 8 条高门槛约束。\n"
-    # v2.4 (2026-08-09, DEB-20260808-signal-source §17.1): 结构性约束前置 + 回调优先 —
-    #   追涨日 LONG 实证净负; 让 LLM 不产低质的单.
-    # v2.5 (2026-08-16, DEB-fullchain #23): 删除死止损宽度规则 — 原"止损须2-5%(>6%被准入硬拦)"
-    #   中, 硬拦门 max_sl_pct=6.0 已于 8/16 禁用 (max_sl_pct=0), 且 SL 宽度由代码
-    #   _compute_numbers 恒定算出 (LONG 5.91% / SHORT 6.09%), LLM 不控制止损价, 该规则
-    #   LLM 永远无法满足 → 持续扭曲生成端 (E1 空头衰减诊断的混淆变量, DEB-short-funnel §8.2 N1).
-    "10. 结构约束: 不接当日跌>5% 且无企稳证据的接飞刀 LONG; 入场区贴近支撑/VWAP 的回踩企稳优先于新高追涨延伸。\n"
-    "11. 回调优先: 做多论点优先选'回调日企稳'标的; "
-    "强势延伸日的 LONG 需在 thesis 自证为何不追高。\n"
-    "每个标的字段: symbol, direction(LONG/SHORT/SKIP), causal_chain(事件→传导→标的, 一句话), "
-    "evidence_ref(引用的具体证据原文, 无则空), self_tier(HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY), "
-    "thesis(≤60字), confidence(0~1 小数), is_universe_external(bool), winner_loser(WINNER/LOSER), "
-    "corroborated_by_market(bool), invalidation(str), horizon_hours(int), expected_move_pct(float), "
-    "evidence_checklist({catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low} 均bool), "
-    "short_check(仅SHORT: {borrow_feasible,downside_catalyst_expiry_hours,squeeze_risk}), "
-    # [U4 2026-08-25 DEB-ue-audit] SKIP 必须给理由 — 可归因"为什么不浮现" (审计病灶: 拒绝不可归因)。
-    "skip_reason(仅SKIP: 一句话, 如'已充分反映/无具体催化/流动性不足')。\n"
-    # [E3-fix 2026-08-31, DEB-20260830第5轮·用户裁"按建议先执行"] 模板占位 {字段...} →
-    #   显式字段列表。E3 8臂实弹 (data/shadow/e3_contract_bakeoff.jsonl): 措辞强度
-    #   0%→0%, 字段写进 JSON 模板即 83-100% 填充 — 模型照 JSON 模板示例填空, 示例里
-    #   没有的字段≈不存在 (DA 侧 45/45=100% 的同构真因)。字段集与 _normalize_surfaced
-    #   解析白名单逐项对齐; V1 SYSTEM_PROMPT 不动 (scan-eval A/B 基线仪器)。
-    "严格只输出 JSON, 格式: {\"surfaced\": [ {\"symbol\": \"AAPL\", \"direction\": \"LONG\", "
-    "\"causal_chain\": \"事件→传导→标的(一句话)\", \"evidence_ref\": \"引用的具体证据原文, 无则留空字符串\", "
-    "\"self_tier\": \"HARD_EVENT或MARKET_CORROBORATED或THESIS_ONLY\", \"thesis\": \"交易论点≤60字\", "
-    "\"confidence\": 0.72, \"is_universe_external\": false, \"winner_loser\": \"WINNER\", "
-    "\"corroborated_by_market\": true, \"invalidation\": \"一句话失效条件≤40字\", "
-    "\"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], "
-    "\"horizon_hours\": 6, \"expected_move_pct\": 2.5, "
-    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, "
-    "\"price_volume_confirmed\": false, \"crowding_low\": true}, "
-    "\"short_check\": {\"borrow_feasible\": true, \"downside_catalyst_expiry_hours\": 24, \"squeeze_risk\": 2}, "
-    "\"skip_reason\": \"仅SKIP时填, 一句话\"}, ... ]}。"
-    "每个标的必须列全上述全部字段: invalidation_triggers 每条限白名单 (metric∈收盘价/成交量/5日涨跌/盘前涨跌幅, "
-    "operator∈<或>, value 纯数字), 能判定则填, 确实无可判定条件才可为空数组 []; "
-    "short_check 仅 SHORT 标的填对象, 非 SHORT 填 null; skip_reason 仅 SKIP 标的填字符串, 非 SKIP 填 null。"
+    "你是资深事件驱动型美股分析师。职责: 从给定材料浮现受事件/市场驱动的可交易美股标的, 多空对等, 质量分层由下游代码执行。\n"
+    "输出契约(逐字段, 缺字段=违约):\n"
+    "1. symbol: 美股代码不带前缀, 只输出真实可交易标的; direction: LONG/SHORT/SKIP, 不确定=SKIP。\n"
+    "2. evidence_ref: 引用给定材料中的具体证据原文(新闻标题/异动数据/人工线索); 仅凭行业常识或板块联想则留空字符串。"
+    "代码将核验引证真实性, 空引证将被强制降级。\n"
+    "3. self_tier: HARD_EVENT=因果链锚定evidence_ref里的具体事件(封锁/战争/财报/监管/事故); "
+    "MARKET_CORROBORATED=无具体事件但evidence_ref是真实市场异动/板块轮动数据; THESIS_ONLY=evidence_ref为空仅逻辑联想。\n"
+    "4. causal_chain: 事件→传导→标的一句话; thesis: 交易论点≤60字(THESIS_ONLY必须以'板块联想:'或'逻辑推演:'开头)。\n"
+    "5. confidence: 0~1小数, 如实反映证据强度(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY; 空引证者将被代码封顶0.60)。\n"
+    "6. invalidation: 一句话失效条件≤40字(非SKIP必填); invalidation_triggers: 代码可判定失效条件数组, "
+    "每条{metric,operator,value}, metric限收盘价/成交量/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字, 无可判定条件填[]。\n"
+    "7. evidence_checklist: {catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low}均bool, 如实勾选不得美化。\n"
+    "8. horizon_hours: 预期兑现时效整数小时(日内动量4-8); expected_move_pct: 预期方向幅度%小数; "
+    "is_universe_external: bool; winner_loser: WINNER/LOSER; corroborated_by_market: bool。\n"
+    "9. 仅SHORT填short_check对象{borrow_feasible(bool),downside_catalyst_expiry_hours(int),squeeze_risk(1-5)}, 非SHORT填null; "
+    "无具体下跌催化剂(仅'估值高'/'涨多了')的SHORT不得浮现。仅SKIP填skip_reason一句话, 非SKIP填null。\n"
+    "不输出任何价格数字(entry/止损/止盈由下游代码计算)。严格只输出JSON, 字段与顺序与示例完全一致:\n"
+    "{\"surfaced\": [\n"
+    " {\"symbol\": \"AAPL\", \"direction\": \"LONG\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"HARD_EVENT\", "
+    "\"causal_chain\": \"事件→传导→标的\", \"thesis\": \"交易论点≤60字\", \"confidence\": 0.72, "
+    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], "
+    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": true}, "
+    "\"horizon_hours\": 6, \"expected_move_pct\": 2.5, \"is_universe_external\": false, \"winner_loser\": \"WINNER\", "
+    "\"corroborated_by_market\": true, \"short_check\": null, \"skip_reason\": null},\n"
+    " {\"symbol\": \"XYZ\", \"direction\": \"SHORT\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"MARKET_CORROBORATED\", "
+    "\"causal_chain\": \"事件→传导→标的\", \"thesis\": \"交易论点≤60字\", \"confidence\": 0.65, "
+    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [], "
+    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": false}, "
+    "\"horizon_hours\": 8, \"expected_move_pct\": 3.0, \"is_universe_external\": true, \"winner_loser\": \"LOSER\", "
+    "\"corroborated_by_market\": true, \"short_check\": {\"borrow_feasible\": true, \"downside_catalyst_expiry_hours\": 24, \"squeeze_risk\": 2}, \"skip_reason\": null}\n"
+    "]}"
 )
 
 # [DEB-20260825-ue-audit U1] SYSTEM_PROMPT_V2 指纹 — 落库归因戳 (与 DA r13
@@ -474,6 +432,93 @@ def _log_streak_counterfactual(surfaced: List[Dict[str, Any]], min_conf: float,
         print(f"  [streak-counterfactual] {len(rows)} 个被 streak 闸拦截信号已登记反事实跟踪")
     except Exception as e:
         print(f"  [warn] streak 反事实落盘失败 (不阻塞): {e}")
+
+
+# ── [U3 PROPOSAL-20260905 P4, 2026-09-05 用户裁"如无问题可以实施"] tier 闸 (影子-only) ──
+# 病灶 (B1+CF1/CF2 实证): self_tier 有真实区分度但完全未消费 — HARD_EVENT +$101.54/17笔
+#   vs MARKET_CORROBORATED −$379.10/12笔 (MC=出血桶); THESIS_ONLY 现状漏洞:
+#   夹逼上限 0.60 > min_conf 0.5 必漏 (库内已有 4 条指令 3 笔成交)。
+# 规则 (影子判定, 不拦任何指令):
+#   HARD_EVENT            → 直进 (仍过既有 conf/streak/持仓/价格地板/低ATR 闸)
+#   MARKET_CORROBORATED   → 需补强: symbol ∈ 当日交叉命中集 (ue_corro_syms_{ET}.json,
+#     U1③ scan 侧落盘) 或 raw_conf≥0.70 且 rubric_score≥3; 否则 would_block=True
+#   THESIS_ONLY           → would_block=True
+# 预注册判据: 攒样 ≥15 交易日且被影子化桶 fwd 回填 n≥30。
+#   毕业: 被拦桶方向性前瞻均值 ≤0 且放行桶均笔 >0 → 用户裁决开 enforce (tier_gate_enabled)。
+#   撤闸认错: 被拦桶前瞻 >+0.3% 且 n≥30 → 撤。
+# 诚实声明: MC 桶 n=12, 均笔 −31.59 可能由少数大亏主导 (未做 permutation/聚类)
+#   → 闸设计为可撤而非永久封禁。影子期 tier_gate_enabled 禁改 true。
+# 回滚: 配置 universe_expansion.tier_gate_shadow: false。
+_TIER_GATE_SHADOW_PATH = _ROOT / "data" / "shadow" / "ue_tier_gate_shadow.jsonl"
+
+
+def _load_corro_syms(today: str) -> set:
+    """读当日交叉命中集 (U1③ scan 侧落盘)。文件缺失/陈旧=空集 (交叉命中判 False)。"""
+    try:
+        _p = _ROOT / "data" / f"ue_corro_syms_{today}.json"
+        if _p.exists():
+            _d = json.loads(_p.read_text(encoding="utf-8"))
+            if _d.get("date") == today:
+                return {str(x).upper() for x in (_d.get("symbols") or [])}
+    except Exception as _e:
+        # 降级空集须响亮 (except-pass 棘轮 + 禁静默纪律); 文件缺失属正常分支不进此
+        print(f"  [warn] 交叉命中集读取失败 (降级空集, tier 闸交叉命中臂失效): {_e}")
+    return set()
+
+
+def _tier_gate_verdict(s: Dict[str, Any], corro_syms: set) -> Dict[str, Any]:
+    """tier 闸影子判定 — 返回判定行 (纯观测, 永不改变指令流)。"""
+    tier = str(s.get("self_tier") or s.get("tier") or "THESIS_ONLY").upper()
+    if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
+        tier = "THESIS_ONLY"
+    # 量纲: 此层 (scan jsonl / normalize) raw_confidence 是 0-1 小数, 阈值 0.70 同尺;
+    #   指令 origin blob 的同名键是 0-100 整数, 不可跨载体直接比较。
+    raw_conf = float(s.get("raw_confidence", s.get("confidence", 0)) or 0)
+    try:
+        rubric = int(s.get("rubric_score", 0) or 0)
+    except (TypeError, ValueError):
+        rubric = 0
+    sym = str(s.get("symbol", "")).upper()
+    in_cross = bool(sym) and sym in corro_syms
+    if tier == "HARD_EVENT":
+        would_block, rule = False, "hard_event_pass"
+    elif tier == "MARKET_CORROBORATED":
+        reinforced = in_cross or (raw_conf >= 0.70 and rubric >= 3)
+        would_block = not reinforced
+        rule = ("mc_cross_hit" if in_cross
+                else ("mc_conf_rubric" if reinforced else "mc_unreinforced"))
+    else:
+        would_block, rule = True, "thesis_only_shadow"
+    return {"symbol": sym, "direction": s.get("direction", ""),
+            "tier": tier, "raw_conf": round(raw_conf, 3), "rubric_score": rubric,
+            "in_cross_hit": in_cross, "would_block": would_block, "rule": rule}
+
+
+def _log_tier_gate_shadow(surfaced: List[Dict[str, Any]], cand_syms: set) -> None:
+    """对全部 LONG/SHORT 浮现标的落 tier 闸影子判定。passed_chain=是否过了既有
+    筛选链 (进 cand) — 毕业判据 join fwd 时以 passed_chain=True 子集度量
+    "若开闸, 今日实际被拦的指令" (被既有链先拦下的标的不受 tier 闸影响)。"""
+    if not bool(_cfg("universe_expansion.tier_gate_shadow", True)):
+        return
+    try:
+        corro = _load_corro_syms(_today())
+        rows = []
+        for s in surfaced:
+            if s.get("direction") not in ("LONG", "SHORT"):
+                continue
+            v = _tier_gate_verdict(s, corro)
+            v["passed_chain"] = v["symbol"] in cand_syms
+            rows.append(v)
+        if not rows:
+            return
+        n_block = sum(1 for r in rows if r["would_block"])
+        _append_jsonl(_TIER_GATE_SHADOW_PATH,
+                      {"date": _today(), "n": len(rows), "n_would_block": n_block,
+                       "corro_set_size": len(corro), "rows": rows})
+        print(f"  [tier-gate-shadow] {n_block}/{len(rows)} 影子拦截 "
+              f"→ {_TIER_GATE_SHADOW_PATH.name}")
+    except Exception as e:
+        print(f"  [warn] tier 闸影子落盘失败 (不阻塞): {e}")
 
 
 # ── [UE-A3 2026-08-29, DEB-20260829 第3轮批准] 8-K/13DG clue 噪声过滤 ──
@@ -1015,7 +1060,8 @@ def _gather_premarket_rank_clues() -> List[str]:
       质量门 (盘前成交额≥$5M / 价格≥$5 / 市值≥$2B / ETF剔除 / |涨幅|>25% 打标不入围),
       每向 ≤5 候选。本函数只负责把过滤结果渲染成 clue 行。
     定位: 输入端扩容 (同 peer_surge), 非放行信号 — 候选进分析池, gate 照常把关。
-      涨幅带影子打标: EXTREME 候选不入围只展示, 预注册判据攒样 (>25% vs 带内配对) 待裁决。
+      涨幅带影子打标: EXTREME 候选数据保留在 candidates json 攒样 (预注册判据照跑),
+      默认不渲染进 prompt (U1①, clue_render_extreme_band: true 可回滚恢复展示)。
     文件缺失/当日无候选 → 触发一次采集兜底 (盘前 21:10 CST 首跑即产文件);
       采集失败降级 []。回滚: 配置 universe_expansion.clue_premarket_rank: false。"""
     try:
@@ -1028,21 +1074,34 @@ def _gather_premarket_rank_clues() -> List[str]:
             return []  # 陈旧文件 (跨日残留) 不消费
         out: List[str] = []
 
-        def _fmt_side(side: Dict, label: str) -> None:
+        def _fmt_side(side: Dict, label: str) -> List[str]:
+            lines: List[str] = []
             for c in (side.get("candidates") or []):
                 tags = ",".join(c.get("tags") or [])
                 tag_s = f" [{tags}]" if tags else ""
                 mcap_b = round(float(c.get("market_cap_usd", 0)) / 1e9, 1)
-                out.append(f"- {c['symbol']} 盘前{label}#{c.get('rank', '?')} "
-                           f"{c['change_pct']:+.1f}% 盘前成交${float(c.get('turnover_usd', 0)) / 1e6:.1f}M "
-                           f"市值${mcap_b}B{tag_s}")
-            for c in (side.get("extreme") or []):
-                # 极端带: 展示但不入围 (影子攒样), 显式告知模型别当候选
-                out.append(f"- {c['symbol']} 盘前{label}极端涨幅带({c['change_pct']:+.1f}%) "
-                           f"[仅记录不入围: 追高=买顶风险, 预注册攒样中]")
+                lines.append(f"- {c['symbol']} 盘前{label}#{c.get('rank', '?')} "
+                             f"{c['change_pct']:+.1f}% 盘前成交${float(c.get('turnover_usd', 0)) / 1e6:.1f}M "
+                             f"市值${mcap_b}B{tag_s}")
+            # [U1① PROPOSAL-20260905, 2026-09-05] 极端带行默认不渲染 — "展示但不入围"
+            #   是自相矛盾的输入 (模型仍会当软候选锚定, 追高语境污染源)。攒样不丢:
+            #   extreme 数据保留在 candidates json (采集端), 预注册判据照跑。
+            #   回滚: universe_expansion.clue_render_extreme_band: true。
+            if bool(_cfg("universe_expansion.clue_render_extreme_band", False)):
+                for c in (side.get("extreme") or []):
+                    lines.append(f"- {c['symbol']} 盘前{label}极端涨幅带({c['change_pct']:+.1f}%) "
+                                 f"[仅记录不入围: 追高=买顶风险, 预注册攒样中]")
+            return lines
 
-        _fmt_side(d.get("gainers") or {}, "涨")
-        _fmt_side(d.get("losers") or {}, "跌")
+        _g = _fmt_side(d.get("gainers") or {}, "涨")
+        _l = _fmt_side(d.get("losers") or {}, "跌")
+        # [U1② PROPOSAL-20260905] 多空对称截断 — gainer 行数 ≤ loser 行数
+        #   (losers=0 → gainers 全不渲染; 纯涨幅日=追榜日, 预注册声明此特性)。
+        #   依据: 涨幅榜单边注入把扫描语境推向 LONG 偏向。回滚: clue_side_symmetry: false。
+        if bool(_cfg("universe_expansion.clue_side_symmetry", True)):
+            _g = _g[:len(_l)]
+        out.extend(_g)
+        out.extend(_l)
         return out
     except Exception as e:
         print(f"  [warn] 盘前榜线索读取失败 (降级): {e}")
@@ -1078,15 +1137,18 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
             "ORDER BY date DESC, symbol", (_today(), f"-{days} day")).fetchall()
         conn.close()
         out = []
-        for r in rows[:max_rows]:
+        for r in rows:
             f = r["fwd_return_intraday"] if r["fwd_return_intraday"] is not None else r["fwd_return_t1"]
+            # [U5 2026-09-05] 滤"待回填"行: 无结果行对 prompt 是纯占位噪音
+            #   (负反馈注入的意义=真实盈亏方向, 待回填行没有方向信息)。
             if f is None:
-                res = "待回填"
-            else:
-                adj = float(f) * (1 if r["direction"] == "BUY" else -1) * 100
-                res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗")
+                continue
+            adj = float(f) * (1 if r["direction"] == "BUY" else -1) * 100
+            res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗")
             _dir = "LONG" if r["direction"] == "BUY" else "SHORT"
             out.append(f"- {r['date']} {r['symbol'].replace('US.', '')} {_dir}: {res}")
+            if len(out) >= max_rows:
+                break
         return out
     except Exception as e:
         print(f"  [warn] 负反馈表构建失败 (降级无注入): {e}")
@@ -1278,6 +1340,15 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     except Exception:
         pass
     _gather_earnings_shadow(_corro_syms)
+    # [U1③ PROPOSAL-20260905, 2026-09-05] 交叉命中集落盘 — U3 tier 闸影子判定的
+    #   "市场佐证交叉命中"消费源: scan 写 (此处), inject 读。失败降级不阻断
+    #   (影子闸读不到文件 = 交叉命中判 False, 与文件缺失语义一致)。
+    try:
+        (_ROOT / "data" / f"ue_corro_syms_{_today()}.json").write_text(
+            json.dumps({"date": _today(), "symbols": sorted(_corro_syms)},
+                       ensure_ascii=False), encoding="utf-8")
+    except Exception as _corro_e:
+        print(f"  [warn] 交叉命中集落盘失败 (降级, 不阻断): {_corro_e}")
 
     print(f"  [输入源健康] " + " | ".join(health))
     # [U9 2026-08-25 建议②] 扫描时注入当日 regime 摘要 — 与注入端同源 (MarketRegimeGate),
@@ -1840,6 +1911,12 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
         # [U4] 契约校验统计 — 攒样判据数据源 (违约率/修复率/方向补丁拒收)
         "contract_stats": _contract_stats,
+        # [PROPOSAL-20260906 2026-09-06] RAW 口径契约统计 (normalize/repair 之前) —
+        #   P3 判据"invalidation_triggers 填充率基线 36%"是 RAW 口径; contract_stats
+        #   是 repair 后口径, 直接对比会高估依从 → 假毕业。同函数即 thinking-eval
+        #   的 _v29_contract_stats, v1 臂不落 (字段集不适用)。
+        "contract_stats_raw": (_v29_contract_stats(parsed.get("surfaced"))
+                               if _use_v2 else None),
         "surfaced": surfaced,
         "note": ("record-only midday shadow; 不进 inject/DA供料/push, 判据见 DEB §13.3"
                  if midday else "record-only; 不驱动 live, inject 另需 entry_enabled=true"),
@@ -1970,6 +2047,13 @@ def cmd_inject(force_dry: bool = False) -> int:
     # [DA-C1 / UE-C2 2026-08-30] 方向结构 + streak 反事实测量 (纯观测零行为)。
     _log_direction_structure(surfaced, _today_pb, min_conf, _max_streak)
     _log_streak_counterfactual(surfaced, min_conf, positions, existing_pb, _max_streak)
+    # [U3 2026-09-05, PROPOSAL-20260905 P4] tier 闸影子判定 (record-only, 永不拦指令)。
+    # tier_gate_enabled 是毕业后才许开的 enforce 开关 (判据见 yaml); 影子期若被误开,
+    # enforce 代码尚不存在 → 静默=true 即死键幻觉, 此处响亮告警并坚持影子。
+    if bool(_cfg("universe_expansion.tier_gate_enabled", False)):
+        print("  [warn] tier_gate_enabled=true 但 tier 闸 enforce 尚未实现 (影子期) — "
+              "按影子继续; 毕业判据满足并经用户裁决前请保持 false")
+    _log_tier_gate_shadow(surfaced, {str(s.get("symbol", "")).upper() for s in cand})
 
     if not cand:
         print(f"[inject] 无合格候选 (min_conf={min_conf}, 已排除持仓/DA已写)")
@@ -2024,7 +2108,8 @@ def cmd_inject(force_dry: bool = False) -> int:
                 "direction": "SKIP",
                 "skip_reason": f"price_floor({float(px):.2f}<{_floor:g}, OTC/仙股无富途行情)",
                 "entry_price": round(float(px), 4),
-                "confidence": min(int(round(float(s["confidence"]) * 100)), 50),
+                # [U2 2026-09-05] 去 cap=50: SKIP 行同保留原始 conf 供分桶归因
+                "confidence": int(round(float(s["confidence"]) * 100)),
                 "thesis": s.get("thesis", ""),
                 "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
                 "model_used": _scan_model,
@@ -2051,7 +2136,8 @@ def cmd_inject(force_dry: bool = False) -> int:
                             f"低波票过不了执行门)"
                         ),
                         "entry_price": round(float(px), 4),
-                        "confidence": min(int(round(float(s["confidence"]) * 100)), 50),
+                        # [U2 2026-09-05] 去 cap=50: 同保留原始 conf
+                        "confidence": int(round(float(s["confidence"]) * 100)),
                         "thesis": s.get("thesis", ""),
                         "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
                         "model_used": _scan_model,
@@ -2075,18 +2161,13 @@ def cmd_inject(force_dry: bool = False) -> int:
         entry_low, entry_high = nums["entry_zone"][0], nums["entry_zone"][1]
         # 方向映射到 playbook 词汇 (以 DA 实际写入值为准: pipeline.py L736)
         pb_direction = "BUY" if s["direction"] == "LONG" else "SELL_SHORT"
-        # 2026-07-16 P1 修复: universe_expansion confidence 上限 50.
-        #   根因: LLM 直接输出 confidence=0.85-0.92, 高于 DA 2模型一致的 0.70.
-        #   但 universe_expansion 的分析深度 (1句thesis, 无conditions, 无invalidation)
-        #   远不如 DA (200字thesis + 3 conditions + invalidation).
-        #   高 confidence → auto_execute 排序优先 → 抢占 DA 信号的预算分配.
-        #   修复: 上限 50 (低于 DA 一致70, 高于 DA 分歧35), 反映"有方向但无深度分析".
-        #   [2026-07-25 勘误留记] 曾试 cap→30 降 UE 排序优先级, 后发现排序主键是
-        #   pipeline.py::_src_priority (ADR-020 用户指定 UE 最优先), conf 仅同源内次键 —
-        #   改 cap 对跨源排序无效且污染 scorecard conf 分桶, 已回滚。资源错配议题见 handoff。
+        # [U2 PROPOSAL-20260905 P2, 2026-09-05 用户裁"如无问题可以实施"] 删除 confidence cap=50.
+        #   原动机 (压 auto_execute 排序) 已死: 排序主键是 _src_priority (ADR-020),
+        #   conf 仅同源内次键 (2026-07-25 勘误) — cap 只剩副作用: 库内 UE conf 恒=50,
+        #   置信分层归零 (0/29 条有可分桶信息), conf 校准/tier 闸阈值全部无从谈起。
+        #   护栏: UE conf 此后只用于归因分桶与影子判分, 禁止新增任何线性 conf 门
+        #   (阈值裁决走 U3 tier 闸规则, 不是 conf 数字)。
         _raw_conf = int(round(float(s["confidence"]) * 100))  # schema INTEGER 0-100
-        _UE_CONF_CAP = 50
-        _capped_conf = min(_raw_conf, _UE_CONF_CAP)
         instructions.append({
             "date": today,
             "symbol": f"US.{s['symbol']}",
@@ -2103,7 +2184,7 @@ def cmd_inject(force_dry: bool = False) -> int:
             ),
             "stop_loss": nums["stop_loss"],
             "take_profit": nums["take_profit"],
-            "confidence": _capped_conf,
+            "confidence": _raw_conf,
             "thesis": s.get("thesis", ""),
             # [DEB-20260825-ue-audit U2] invalidation 顶层透传 — 此前只进 origin blob
             #   (invalidation_ue), save_instruction 只认顶层键 (db.py) → 列恒空,
@@ -2153,8 +2234,10 @@ def cmd_inject(force_dry: bool = False) -> int:
                     # [2026-07-22] 解除数量压制后按证据层级分层判分的前提: tier/证据透传落库
                     "self_tier": s.get("self_tier") or None,
                     "evidence_ref": (s.get("evidence_ref") or "")[:300] or None,
-                    # [2026-07-25 信息源复盘] cap 前原始 conf 落库 — 否则 07-16 cap=50 把 LLM
-                    #   置信分层全抹掉 (库内 UE conf 恒=50, 归因无信息量)。排序仍用 capped。
+                    # [2026-07-25 信息源复盘] cap 前原始 conf 落库 (0-100 整数)。
+                    #   2026-09-05 U2 删 cap 后顶层 confidence 与本键同值 (历史行
+                    #   顶层=cap50 截断值, 本键才是原值 — 跨史 join 须用本键)。
+                    #   量纲注意: scan jsonl 同名键是 0-1 小数 (normalize 层), 不同尺。
                     "raw_confidence": _raw_conf,
                     # [v2.2 2026-07-25, P1/P2] 可证伪字段 + rubric 落库 (纯归因, 不进执行)
                     "invalidation_ue": s.get("invalidation") or None,
@@ -2505,6 +2588,201 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
     return 0
 
 
+# ── thinking-eval: glm-5.2 enable_thinking on/off 影子 A/B (record-only) ──
+# 2026-09-05 (用户令"要"跑探针+影子A/B): thinking 现被 model_call.py DashScope
+#   setdefault(enable_thinking=False) 全局关闭 (2026-07-06 P0 针对 800-tok 投票小调用,
+#   UE 16000-tok 大调用系误伤)。路由级 extra_body.enable_thinking 灰度基建已在
+#   (2026-07-25 E3 用户裁决)。本命令 = 开生产灰度前的影子实证仪器:
+#   同一 clue brief + 同一 v2.9 prompt, 唯一变量 = enable_thinking。
+#   纯 shadow: 不落主 scan / 不 inject / 不下单, 独立 jsonl 不污染 prompt_eval 序列。
+#   预注册判读: ①schema 通过率不降 ②时延增量 (生产满载 210-230s/timeout=300 的
+#   安全余量) ③token 增量 (thinking 消耗 reasoning token, 挤占 16000 预算的风险)
+#   ④v2.9 契约填充率 (基线 36% 同窗) ⑤tier 分布不塌缩。
+_THINKING_EVAL_PATH = _ROOT / "data" / "shadow" / "thinking_eval.jsonl"
+
+
+def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
+    """v2.9 契约填充率统计 — RAW response 口径 (normalize/repair 之前),
+    衡量模型本体依从度, 与生产修复链无关。null-by-design 字段按方向分别判定合规。"""
+    items = [it for it in (raw_items or []) if isinstance(it, dict)]
+    n = len(items)
+    st = {
+        "n": n, "n_long": 0, "n_short": 0, "n_skip": 0,
+        "tiers": {}, "evidence_ref_nonempty": 0,
+        "invalidation_filled_non_skip": 0, "non_skip": 0,
+        "triggers_present": 0, "triggers_nonempty": 0,
+        "checklist_ok": 0, "horizon_present": 0, "move_present": 0,
+        "short_check_compliant": 0, "skip_reason_compliant": 0,
+        "wl_valid": 0, "conf_valid": 0, "_conf_sum": 0.0,
+    }
+    for it in items:
+        d = str(it.get("direction", "")).upper().strip()
+        if d == "LONG":
+            st["n_long"] += 1
+        elif d == "SHORT":
+            st["n_short"] += 1
+        elif d == "SKIP":
+            st["n_skip"] += 1
+        tier = str(it.get("self_tier", "")).upper().strip()
+        st["tiers"][tier or "<missing>"] = st["tiers"].get(tier or "<missing>", 0) + 1
+        if str(it.get("evidence_ref") or "").strip():
+            st["evidence_ref_nonempty"] += 1
+        if d != "SKIP":
+            st["non_skip"] += 1
+            if str(it.get("invalidation") or "").strip():
+                st["invalidation_filled_non_skip"] += 1
+        tr = it.get("invalidation_triggers")
+        if isinstance(tr, list):
+            st["triggers_present"] += 1
+            if tr:
+                st["triggers_nonempty"] += 1
+        cl = it.get("evidence_checklist")
+        if isinstance(cl, dict) and all(
+            isinstance(cl.get(k), bool)
+            for k in ("catalyst_specific", "catalyst_within_24h",
+                      "price_volume_confirmed", "crowding_low")
+        ):
+            st["checklist_ok"] += 1
+        if isinstance(it.get("horizon_hours"), (int, float)):
+            st["horizon_present"] += 1
+        if isinstance(it.get("expected_move_pct"), (int, float)):
+            st["move_present"] += 1
+        sc = it.get("short_check")
+        if d == "SHORT":
+            if isinstance(sc, dict) and all(
+                k in sc for k in ("borrow_feasible",
+                                  "downside_catalyst_expiry_hours", "squeeze_risk")
+            ):
+                st["short_check_compliant"] += 1
+        elif sc is None:
+            st["short_check_compliant"] += 1
+        sr = it.get("skip_reason")
+        if d == "SKIP":
+            if str(sr or "").strip():
+                st["skip_reason_compliant"] += 1
+        elif sr is None or not str(sr).strip():
+            st["skip_reason_compliant"] += 1
+        if str(it.get("winner_loser", "")).upper().strip() in ("WINNER", "LOSER"):
+            st["wl_valid"] += 1
+        try:
+            c = float(it.get("confidence", 0) or 0)
+        except (TypeError, ValueError):
+            c = 0.0
+        if 0.0 < c <= 1.0:
+            st["conf_valid"] += 1
+        st["_conf_sum"] += c
+    st["conf_mean"] = round(st.pop("_conf_sum") / n, 3) if n else 0.0
+    return st
+
+
+def cmd_thinking_eval() -> int:
+    """同一 clue brief + 同一 v2.9 prompt, enable_thinking off/on 双臂并排。
+    纯 shadow: 不落主 scan、不 inject、不下单。唯一变量=enable_thinking。"""
+    brief = _build_clue_brief("")
+    print("=" * 72)
+    print(f"thinking-eval clue brief ({len(brief)} chars):")
+    print(brief[:1200])
+    print("=" * 72)
+
+    try:
+        from app.llm.model_call import call_llm
+    except Exception as e:
+        print(f"[thinking-eval] 无法导入 call_llm: {e}")
+        return 1
+
+    def _run(tag: str, thinking_on: bool):
+        t0 = time.time()
+        res = call_llm(
+            "universe_expansion_reasoning", brief,
+            system=SYSTEM_PROMPT_V2, temperature=0.2, max_tokens=16000,
+            schema_required={"surfaced": list}, json_mode=True,
+            extra_body={"enable_thinking": True} if thinking_on else None,
+        )
+        dt = time.time() - t0
+        if not res or not res.success:
+            print(f"[{tag}] LLM 调用失败: {getattr(res, 'error', '?') if res else 'no_result'}")
+            return {"tag": tag, "ok": False, "latency_s": round(dt, 1),
+                    "error": getattr(res, "error", "no_result") if res else "no_result"}
+        parsed = res.response if isinstance(res.response, dict) else {}
+        raw_items = parsed.get("surfaced")
+        norm = _normalize_surfaced(raw_items, with_tier=True)
+        return {
+            "tag": tag, "ok": True, "latency_s": round(dt, 1),
+            "model": getattr(res, "model_used", ""),
+            "finish": getattr(res, "finish_reason", ""),
+            "tokens_in": getattr(res, "tokens_in", 0),
+            "tokens_out": getattr(res, "tokens_out", 0),
+            "stats": _v29_contract_stats(raw_items),
+            "surfaced_brief": [
+                {"symbol": s["symbol"], "direction": s["direction"],
+                 "confidence": s["confidence"], "self_tier": s.get("self_tier", "")}
+                for s in norm
+            ],
+        }
+
+    print("[OFF] thinking=False (生产现状) 推理中 ...", flush=True)
+    off = _run("OFF", False)
+    print(f"  -> {'OK' if off['ok'] else 'FAIL'} {off['latency_s']}s"
+          + (f" out={off.get('tokens_out')} n={off['stats']['n']}" if off["ok"] else ""),
+          flush=True)
+    print("[ON]  thinking=True 推理中 ...", flush=True)
+    on = _run("ON", True)
+    print(f"  -> {'OK' if on['ok'] else 'FAIL'} {on['latency_s']}s"
+          + (f" out={on.get('tokens_out')} n={on['stats']['n']}" if on["ok"] else ""),
+          flush=True)
+
+    print("\n" + "=" * 72)
+    print("thinking OFF/ON 并排对比")
+    print("-" * 72)
+    hdr = ("指标", "OFF(现状)", "ON")
+    rows = [("schema 通过", "✓" if off["ok"] else "✗ " + off.get("error", ""),
+             "✓" if on["ok"] else "✗ " + on.get("error", ""))]
+    if off["ok"] and on["ok"]:
+        def _pct(a: Dict[str, Any], k: str, base: str = "n") -> str:
+            den = a["stats"].get(base, 0)
+            return f"{a['stats'].get(k, 0)}/{den}" if den else "-"
+        rows += [
+            ("时延 s", off["latency_s"], on["latency_s"]),
+            ("tokens_out (含 reasoning)", off["tokens_out"], on["tokens_out"]),
+            ("finish_reason", off["finish"], on["finish"]),
+            ("浮现数 L/S/K",
+             f"{off['stats']['n_long']}/{off['stats']['n_short']}/{off['stats']['n_skip']}",
+             f"{on['stats']['n_long']}/{on['stats']['n_short']}/{on['stats']['n_skip']}"),
+            ("tier 分布", json.dumps(off["stats"]["tiers"], ensure_ascii=False),
+             json.dumps(on["stats"]["tiers"], ensure_ascii=False)),
+            ("invalidation 填充(非SKIP)", _pct(off, "invalidation_filled_non_skip", "non_skip"),
+             _pct(on, "invalidation_filled_non_skip", "non_skip")),
+            ("triggers 非空", _pct(off, "triggers_nonempty"), _pct(on, "triggers_nonempty")),
+            ("checklist 合规", _pct(off, "checklist_ok"), _pct(on, "checklist_ok")),
+            ("short_check 合规", _pct(off, "short_check_compliant"),
+             _pct(on, "short_check_compliant")),
+            ("skip_reason 合规", _pct(off, "skip_reason_compliant"),
+             _pct(on, "skip_reason_compliant")),
+            ("引证非空", _pct(off, "evidence_ref_nonempty"), _pct(on, "evidence_ref_nonempty")),
+            ("conf 均值", off["stats"]["conf_mean"], on["stats"]["conf_mean"]),
+        ]
+    for r in rows:
+        print(f"  {r[0]:<22} {str(r[1]):<28} {r[2]}")
+    if off["ok"] and on["ok"]:
+        print("-" * 72)
+        _o = {b["symbol"]: b for b in off["surfaced_brief"]}
+        _n = {b["symbol"]: b for b in on["surfaced_brief"]}
+        for sym in sorted(set(_o) | set(_n)):
+            a, b = _o.get(sym), _n.get(sym)
+            _a = f"{a['direction']:5} {a['confidence']:.2f} {a['self_tier']}" if a else "—"
+            _b = f"{b['direction']:5} {b['confidence']:.2f} {b['self_tier']}" if b else "—"
+            print(f"  {sym:6} OFF[{_a}]  ON[{_b}]")
+    print("=" * 72)
+
+    _append_jsonl(_THINKING_EVAL_PATH, {
+        "type": "thinking_eval", "date": _today(), "evaluated_at": _now_et().isoformat(),
+        "prompt_version": PROMPT_VERSION, "prompt_hash": PROMPT_HASH_V2,
+        "off": off, "on": on,
+    })
+    print(f"[thinking-eval] 已落对比文件: {_THINKING_EVAL_PATH.name} (record-only, 未下单)")
+    return 0 if (off["ok"] or on["ok"]) else 1
+
+
 # ── eval-report: 近端评估 (浮现质量, 当天可得) ─────────
 def cmd_eval_report(days: int = 14) -> int:
     """Layer 1 近端评估: 聚合 prompt_eval.jsonl 的浮现质量指标
@@ -2798,6 +3076,7 @@ def main() -> int:
     p_rep.add_argument("--days", type=int, default=30)
     p_eval = sub.add_parser("scan-eval", help="V1/V2 prompt A/B 对比 (shadow, 不落主scan/不下单)")
     p_eval.add_argument("--clue", default="", help="人工线索 (复现强事件场景做对比)")
+    sub.add_parser("thinking-eval", help="glm-5.2 enable_thinking on/off A/B (shadow, 不落主scan/不下单)")
     p_evr = sub.add_parser("eval-report", help="近端评估: 聚合浮现质量指标 (克制比/引证率/稳定性)")
     p_evr.add_argument("--days", type=int, default=14)
     p_push = sub.add_parser("push", help="读今日最新一轮 scan → 钉钉整体汇总 (新鲜度守卫)")
@@ -2821,6 +3100,8 @@ def main() -> int:
             return cmd_report(days=args.days)
         if args.cmd == "scan-eval":
             return cmd_scan_eval(manual_clue=args.clue)
+        if args.cmd == "thinking-eval":
+            return cmd_thinking_eval()
         if args.cmd == "eval-report":
             return cmd_eval_report(days=args.days)
         if args.cmd == "push":

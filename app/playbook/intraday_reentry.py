@@ -181,8 +181,16 @@ _DEFAULTS: Dict[str, Any] = {
     "max_prior_loss_pct": 1.0,    # 前笔亏损 >1% 视为硬止损/论破位 → 不再入场 (防报复性交易)
     "direction_adaptive_enabled": True,   # 2026-08-12 用户裁决直接落地: 方向由 slope_5m 顺势裁决, 缺失/0 回退继承
     "max_cumulative_pos_mult": 1.5,  # 同标的当日累计名义 ≤ 1.5×单笔上限 (防再入场=加仓的标的集中暴露)
-    "vwap_band_low_pct": 0.3,     # LONG: 允许跌破 VWAP 至多 0.3% (回踩区下沿)
-    "vwap_band_high_pct": 1.0,    # LONG: price ≤ vwap×(1+1.0%) (不追高位); SHORT 对称
+    "vwap_band_low_pct": 0.3,     # LONG: 允许跌破 VWAP 至多 0.3% (回踩区下沿); SHORT 对称上沿
+    "vwap_band_high_pct": 1.0,    # SHORT: price ≥ vwap×(1−1.0%) (反弹位上沿)。LONG 已拆键 ↓
+    # [PROPOSAL-20260906 R1, 2026-09-06 三模型核查后用户裁"确认有效可不用影子"]:
+    #   LONG 专属上沿。实证 (全史 19 笔逐笔回查): LONG dev>0 (VWAP上方追入) 9 笔净 −96.95
+    #   vs dev≤0 (真回踩) 4 笔 +24.24 — dev>0 与 thesis "回踩VWAP企稳" 自相矛盾。
+    #   拆键而非收窄共享键: vwap_band_high_pct 被 SHORT 分支共用 ([−hi,+lo]),
+    #   直接改会颠倒 SHORT 带语义并误杀 SNDK (dev=−0.84, +38.07)。
+    #   必须先进 _DEFAULTS — _cfg() 白名单 (k in cfg) 会静默丢弃不在此表的 yaml 键。
+    #   回滚: yaml 删键或置 1.0 (=旧行为)。
+    "vwap_band_long_high_pct": 1.0,
     "min_slope_5m_pct": 0.0,      # LONG 要求 >0 / SHORT 要求 <0 (方向转正)
     "min_vol_ratio": 0.8,         # 盘中实时量能比 (与 chase 门同档)
     "max_spread_bps": 25.0,       # L1 盘口 spread 上限
@@ -206,6 +214,12 @@ _DEFAULTS: Dict[str, Any] = {
     #   ⚠️ 2026-08-27 勘误 (RFC-067): "次日强平"语义已不存在 — 首夜豁免后次日起
     #   由 W_WEEK (_loser_overnight_exempt, 不查 decision_id) 接管, 再入场仓与
     #   DA 仓同权享受最多 5 交易日修复窗口 (时间mock实弹验证).
+    #   ⚠️ 2026-09-06 二次勘误 (PROPOSAL-20260906B): 上条"接管"措辞曾被误读为轨③已死。
+    #   事实: 轨③是活代码, 在 pipeline.py:7601/9257 两处【先于】W_WEEK 判定,
+    #   2026-09-04 US.HOOD (trade id=1459) 实锤触发 (metadata overnight_arm.source=
+    #   reentry_first_night)。轨③现行语义 = 仅首夜 + 先于 W_WEEK; 次夜起确由 W_WEEK 接管。
+    #   (naive 输入按 ET 墙钟解释 = R-12 约定的既有语义, 早有契约测试
+    #   test_overnight_naive_timestamp_treated_as_et 钉住; 本次仅补行内声明。)
     #   注意: overnight_hold_enabled 总开关下 OVERNIGHT_GAP_STOP 不生效, 持夜风险由
     #   原 SL 1.5% 兜底 (开盘跳空越 SL 有次日市价滑点风险, sim 期可接受, 影子记录对照).
     "overnight_hold_loser_enabled": False,
@@ -404,9 +418,11 @@ def evaluate_candidate(direction: str, price: float, vwap: float,
         return False, ["no_price_or_vwap"]
     dev_pct = (price - vwap) / vwap * 100.0
     lo, hi = float(cfg["vwap_band_low_pct"]), float(cfg["vwap_band_high_pct"])
+    # LONG 上沿拆键 (见 _DEFAULTS 注释): 缺键回退 hi → 行为与旧版一致; SHORT 分支仍共享 hi
+    hi_long = float(cfg.get("vwap_band_long_high_pct", hi))
     if is_long:
-        if not (-lo <= dev_pct <= hi):
-            reasons.append(f"vwap_dev({dev_pct:+.2f}%∉[{-lo},{hi}])")
+        if not (-lo <= dev_pct <= hi_long):
+            reasons.append(f"vwap_dev({dev_pct:+.2f}%∉[{-lo},{hi_long}])")
         if slope_5m is None or slope_5m <= float(cfg["min_slope_5m_pct"]):
             reasons.append(f"slope_5m({slope_5m}≤{cfg['min_slope_5m_pct']})")
     else:
@@ -623,7 +639,8 @@ def _shadow_write(row: Dict[str, Any]) -> None:
 
 def _arm_instruction(symbol: str, direction: str, price: float,
                      cfg: Dict[str, Any], trade_id: Any,
-                     atr_pct: Optional[float] = None) -> Optional[int]:
+                     atr_pct: Optional[float] = None,
+                     entry_metrics: Optional[Dict[str, Any]] = None) -> Optional[int]:
     """重武装当日指令: 为新一轮入场武装一条**独立指令行** (过 admission 入口审计)。
 
     返回指令 id; 失败 None。
@@ -644,6 +661,11 @@ def _arm_instruction(symbol: str, direction: str, price: float,
 
     2026-08-07 (用户裁决快收结构): SL/TP 主口径改 quick_sl_tp_pct (ATR 相对,
     SL放宽/TP降档); ATR 缺失回退 sl_pct/tp_rr 固定值。
+
+    entry_metrics (PROPOSAL-20260906 R2①): 武装时刻指标+证伪门输入快照
+    (slope_5m_pct/vwap_dev_pct/atr_pct 百分数, spread_bps 万分数, vol_ratio 倍数,
+    sentiment [-1,1]) — record-only, 不进任何执行逻辑; 消费方 = 入场门阈值裁决
+    的事后回算 (shadow jsonl 有同名字段, 此处是 DB join 直通副本)。
     """
     from app.playbook.db import PlaybookDB
     db = PlaybookDB()
@@ -692,7 +714,8 @@ def _arm_instruction(symbol: str, direction: str, price: float,
                    + "指标二次确认(方向由slope_5m顺势裁决)"),
         "horizon": "short",
         "model_used": "intraday_reentry_v1",
-        "raw_instruction": {"source": "intraday_reentry", "reentry_of_trade": trade_id},
+        "raw_instruction": {"source": "intraday_reentry", "reentry_of_trade": trade_id,
+                            "entry_metrics": entry_metrics or None},
         "metadata_json": {
             "source": "intraday_reentry",
             "reentry_of_trade": trade_id,
@@ -1097,9 +1120,47 @@ def run_scan(scheduler=None) -> int:
             social_sentiment_score=social_sentiment_score,
             ticker_sentiment=ticker_sentiment,
         )
+        # [PROPOSAL-20260906 R2① 2026-09-06] 武装时刻指标+证伪门输入快照落库 —
+        #   死单回查实证 (n=19): MFE≤0.2% 桶 7/7 全亏 vs MFE≥0.43% 桶 11/12 赚,
+        #   盈亏入场几分钟内已决 → 入场门裁决必须有输入留痕。此前 shadow 只落
+        #   技术指标, 9 个证伪门输入全丢 → 被拒/被放行两桶都无法复算阈值。
+        #   单位: slope_5m/vwap_dev/atr 为百分数(0.3=0.3%), spread_bps 为万分数,
+        #   vol_ratio 为倍数, sentiment 为 [-1,1] 分, days_to_earnings 为整数天。
+        _falsif_inputs = {
+            "capital_flow_direction": capital_flow_direction,
+            "short_percent": short_percent,
+            "insider_signal": insider_signal,
+            "analyst_trend": analyst_trend,
+            "days_to_earnings": days_to_earnings,
+            "sentiment_score": sentiment_score,
+            "sec_event_negative": sec_event_negative,
+            "sec_event_13dg": sec_event_13dg,
+            "social_sentiment_score": social_sentiment_score,
+            "ticker_sentiment": ticker_sentiment,
+        }
+        _dev_pct = (round((price - vwap) / vwap * 100, 3)
+                    if price and vwap else None)
+        # [PROPOSAL-20260906 R2②] record-only 观察标记 (不驱动裁决, 纯攒样;
+        #   覆盖域与 falsif_inputs 相同 — same_day_reversal/白名单/敞口等更早
+        #   continue 的拒绝行不含此标记):
+        #   momentum_chase_candidate: LONG 且 dev>0 且 slope≥0.30 (阈值源自死单
+        #     中 UBER 0.295/META 0.344 的观察间隔, 仅作切片不作闸)。禁追高闸
+        #     (vwap_band_long_high_pct=0.0) 生效后 dev>0 恒被拒 → 此标记攒的
+        #     是无 P&L 的反事实分布, 供"强趋势追高是否被误杀"的前向对照。
+        #   short_deep_dev_candidate: SHORT 且 dev≤−0.5 且 vol_ratio>3
+        #     (SNDK 型深跌放量识别钉, SNDK dev=−0.84 为现役最赚 SHORT)。
+        _is_long_dir = direction.upper() in ("BUY", "LONG")
         base.update({"price": price, "vwap": vwap, "slope_5m": slope_5m,
                      "atr_pct": atr_pct, "vol_ratio": vol_ratio,
-                     "spread_bps": spread_bps, "micro": micro})
+                     "spread_bps": spread_bps, "micro": micro,
+                     "vwap_dev_pct": _dev_pct,
+                     "momentum_chase_candidate": bool(
+                         _is_long_dir and _dev_pct is not None and _dev_pct > 0
+                         and slope_5m is not None and slope_5m >= 0.30),
+                     "short_deep_dev_candidate": bool(
+                         not _is_long_dir and _dev_pct is not None and _dev_pct <= -0.5
+                         and vol_ratio is not None and vol_ratio > 3.0),
+                     "falsif_inputs": _falsif_inputs})
         if not ok:
             base["action"] = "rejected"
             base["reasons"] = reasons
@@ -1112,8 +1173,18 @@ def run_scan(scheduler=None) -> int:
             logger.info(f"[再入场·影子] {sym} {direction} 指标确认, shadow 模式不武装")
             continue
 
-        inst_id = _arm_instruction(sym, direction, price, cfg, prior["trade_id"],
-                                   atr_pct=float(atr_pct) if atr_pct is not None else None)
+        inst_id = _arm_instruction(
+            sym, direction, price, cfg, prior["trade_id"],
+            atr_pct=float(atr_pct) if atr_pct is not None else None,
+            entry_metrics={
+                "slope_5m_pct": (float(slope_5m) if slope_5m is not None else None),
+                "vwap_dev_pct": base.get("vwap_dev_pct"),
+                "vol_ratio": vol_ratio,
+                "spread_bps": spread_bps,
+                "atr_pct": (float(atr_pct) if atr_pct is not None else None),
+                "direction_mode": dir_mode,
+                "falsif_inputs": _falsif_inputs,
+            })
         base["action"] = "armed" if inst_id else "arm_failed"
         base["instruction_id"] = inst_id
         _f_sl, _f_tp = quick_sl_tp_pct(float(atr_pct) if atr_pct is not None else None, cfg)
@@ -1174,6 +1245,8 @@ def overnight_loser_exempt(symbol: str, entry_time_str: str, profit_pct: float,
         from app.utils.timezone import now_et as _now_et_fn
         _et_now = _now_et_fn()
         _entry = _dt.fromisoformat(str(entry_time_str))
+        # naive 输入按 ET 墙钟解释 (R-12 约定: trade_records.entry_time 恒为 ET ISO aware;
+        # 语义钉: test_overnight_naive_timestamp_treated_as_et)
         _entry_date = (_entry.astimezone(_et_now.tzinfo).date()
                        if _entry.tzinfo is not None else _entry.date())
         if _entry_date != _et_now.date():

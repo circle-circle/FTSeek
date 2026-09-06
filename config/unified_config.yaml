@@ -1507,6 +1507,12 @@ playbook:
     max_cumulative_pos_mult: 2.0
     vwap_band_low_pct: 0.3
     vwap_band_high_pct: 1.0
+    # 2026-09-06 (用户裁决, 跳过影子直接生效): LONG 专用上沿 — 0.0 = 禁追高闸,
+    #   LONG 只在 dev∈[−0.3%, 0%] (回踩 VWAP 不越位) 才放行; SHORT 分支仍共享
+    #   vwap_band_high_pct, 语义零变。证据 (PROPOSAL-20260906, n=19 死单回查):
+    #   LONG dev>0 追高桶 9 笔 −96.95 (唯一出血桶) vs dev≤0 回踩桶 +24.24;
+    #   且与策略自身"回踩企稳"论点自洽。回滚: 改回 1.0 (与旧版恒等)。
+    vwap_band_long_high_pct: 0.0
     min_slope_5m_pct: 0.0
     min_vol_ratio: 0.8
     max_spread_bps: 25
@@ -1972,6 +1978,13 @@ universe_expansion:
   #   持久化 data/premarket_rank_candidates_{ET}.json 后本线索源消费。候选非信号。
   #   回滚: 置 false。
   clue_premarket_rank: true
+  # 2026-09-05 (PROPOSAL-20260905 U1, 用户裁"如无问题可以实施"): 盘前榜渲染两开关。
+  # U1①: 极端带(|涨幅|>25%)行默认不渲染进 prompt — "展示但不入围"是自相矛盾输入,
+  #   模型仍当软候选锚定。攒样数据保留在 candidates json, 预注册判据照跑。回滚: true。
+  clue_render_extreme_band: false
+  # U1②: 多空对称截断 — gainer 行数 ≤ loser 行数 (losers=0 则 gainers 全不渲染,
+  #   纯涨幅日=追榜日, 预注册声明此特性), 治涨幅榜单边注入的 LONG 偏向。回滚: false。
+  clue_side_symmetry: true
   # 2026-08-29 (DEB-20260829 第3轮, 用户裁"同意执行"): 修尺子批次三开关。
   #   代码内 default=true, 此处显式声明仅使回滚路径可发现 (值与默认一致=零行为变更)。
   # UE-B2: inject 拒绝归因落盘 data/shadow/llm_universe_inject.jsonl (纯观测)。回滚: false。
@@ -1986,6 +1999,16 @@ universe_expansion:
   direction_structure_log: true
   # UE-C2: streak 闸反事实跟踪 (被拦信号逐笔记档, 裁决时 join score results)。回滚: false。
   streak_counterfactual_log: true
+  # 2026-09-05 (PROPOSAL-20260905 U3/P4, 用户裁"如无问题可以实施"): tier 闸影子-only。
+  #   规则: HARD_EVENT 直进 / MARKET_CORROBORATED 需补强 (当日交叉命中集
+  #   ue_corro_syms_{ET}.json 或 raw_conf≥0.70且rubric_score≥3) / THESIS_ONLY 拦。
+  #   依据: HARD_EVENT +$101.54/17笔 vs MC −$379.10/12笔; THESIS_ONLY 夹逼漏洞必漏。
+  # tier_gate_shadow: 影子判定落盘 data/shadow/ue_tier_gate_shadow.jsonl。回滚: false。
+  tier_gate_shadow: true
+  # tier_gate_enabled: enforce 开关 — 影子期禁止打开。预注册判据: 攒样≥15交易日且
+  #   被影子化桶 fwd 回填 n≥30; 毕业=被拦桶方向性前瞻均值≤0 且放行桶均笔>0 → 用户裁决;
+  #   撤闸认错=被拦桶前瞻 >+0.3% 且 n≥30。
+  tier_gate_enabled: false
   peer_surge_groups:
     存储:
     - MU

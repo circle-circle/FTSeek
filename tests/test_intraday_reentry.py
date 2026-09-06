@@ -88,6 +88,44 @@ def test_zero_price_or_vwap_reject():
         assert not ok and reasons == ["no_price_or_vwap"]
 
 
+# ── vwap_band_long_high_pct 拆键闸 (PROPOSAL-20260906 R1, 2026-09-06 用户裁决直接生效) ──
+# 证据: LONG dev>0 追高桶 9 笔 −96.95 (唯一出血桶) vs dev≤0 回踩桶 +24.24。
+# 不变量: LONG-only (SHORT 共享带零变) / 缺键回退 hi=旧行为恒等 / 回滚=删键或置 1.0。
+
+def test_long_chase_rejected_with_zero_long_high():
+    cfg = _cfg(vwap_band_long_high_pct=0.0)
+    # dev=+0.5% 追高 → 拒 (现役出血桶形态)
+    ok, reasons = evaluate_candidate("BUY", 100.5, VWAP, cfg=cfg, **GOOD)
+    assert not ok and any("vwap_dev" in r for r in reasons)
+    # dev=0.0 (贴 VWAP 不越位) → 边界放行
+    ok, reasons = evaluate_candidate("BUY", 100.0, VWAP, cfg=cfg, **GOOD)
+    assert ok, reasons
+
+
+def test_long_pullback_still_passes_with_zero_long_high():
+    # dev=−0.1% 回踩区 (策略论点形态) → 闸不误伤
+    cfg = _cfg(vwap_band_long_high_pct=0.0)
+    ok, reasons = evaluate_candidate("BUY", 99.9, VWAP, cfg=cfg, **GOOD)
+    assert ok, reasons
+
+
+def test_short_unaffected_by_long_high_key():
+    # SHORT 带 [−hi,+lo]=[−1.0,+0.3] 由共享键决定: dev=−0.5 带内 → 放行,
+    # 即使 LONG 专用键=0.0 (拆键不倒置 SHORT 语义, SNDK dev=−0.84 型不受影响)
+    cfg = _cfg(vwap_band_long_high_pct=0.0)
+    ok, reasons = evaluate_candidate(
+        "SELL_SHORT", 99.5, VWAP, cfg=cfg, **{**GOOD, "slope_5m": -0.2})
+    assert ok, reasons
+
+
+def test_missing_long_high_key_fallback_preserves_old_behavior():
+    # 手工 cfg 缺新键 → 回退 hi=1.0: dev=+0.5 仍放行 (与拆键前恒等)
+    cfg = _cfg()
+    del cfg["vwap_band_long_high_pct"]
+    ok, reasons = evaluate_candidate("BUY", 100.5, VWAP, cfg=cfg, **GOOD)
+    assert ok, reasons
+
+
 # ── overnight_loser_exempt (2026-08-06 用户裁决: 再入场水下仓首夜豁免 EOD) ──
 
 from datetime import timedelta
@@ -416,3 +454,78 @@ def test_cf_index_partial_line_not_lost(monkeypatch, tmp_path):
     with open(p, "a", encoding="utf-8") as f:
         f.write(full_line[20:] + "\n")    # 写完剩余部分
     assert ir._capital_flow_today_index() == {"US.AAPL": "INFLOW", "US.LLY": "OUTFLOW"}
+
+
+# ── _arm_instruction entry_metrics 埋点 (PROPOSAL-20260906 R2①, 2026-09-06) ──
+# 军规"新增落库字段必带契约测试断言": 钉透传结构/键集/零行为变更。
+
+class _FakePDBCapture:
+    """捕获 save_instruction 入参; orig 快照查询返回 None (归档失败不阻断分支)。"""
+
+    def __init__(self):
+        self.saved = None
+
+    def _conn(self):
+        return _FakeConn(None)
+
+    def save_instruction(self, inst):
+        self.saved = inst
+        return 9001
+
+
+def _arm_cfg():
+    return {"sl_pct": 1.5, "tp_rr": 1.6}
+
+
+def _metrics():
+    return {
+        "slope_5m_pct": 0.13, "vwap_dev_pct": -0.28, "vol_ratio": 1.52,
+        "spread_bps": 3.7, "atr_pct": 4.1, "direction_mode": "inherited",
+        "falsif_inputs": {"capital_flow_direction": "INFLOW",
+                          "short_percent": None, "insider_signal": "buy",
+                          "analyst_trend": None, "days_to_earnings": 5,
+                          "sentiment_score": 0.2, "sec_event_negative": False,
+                          "sec_event_13dg": False, "social_sentiment_score": None,
+                          "ticker_sentiment": "bullish"},
+    }
+
+
+def test_arm_instruction_entry_metrics_pass_through(monkeypatch):
+    fake = _FakePDBCapture()
+    _patch_pdb(monkeypatch, lambda: fake)
+    m = _metrics()
+    new_id = ir._arm_instruction("US.AMD", "BUY", 100.0, _arm_cfg(), 1451,
+                                 atr_pct=None, entry_metrics=m)
+    assert new_id == 9001
+    ri = fake.saved["raw_instruction"]
+    assert ri["source"] == "intraday_reentry" and ri["reentry_of_trade"] == 1451
+    # 透传不改写 (单位口径由生产侧注释声明: pct=百分数, spread_bps=万分数)
+    assert ri["entry_metrics"] == m
+    assert ri["entry_metrics"]["vwap_dev_pct"] == -0.28
+    assert set(ri["entry_metrics"]["falsif_inputs"]) == {
+        "capital_flow_direction", "short_percent", "insider_signal",
+        "analyst_trend", "days_to_earnings", "sentiment_score",
+        "sec_event_negative", "sec_event_13dg", "social_sentiment_score",
+        "ticker_sentiment"}
+
+
+def test_arm_instruction_entry_metrics_default_none(monkeypatch):
+    fake = _FakePDBCapture()
+    _patch_pdb(monkeypatch, lambda: fake)
+    new_id = ir._arm_instruction("US.AMD", "BUY", 100.0, _arm_cfg(), 1451)
+    assert new_id == 9001
+    assert fake.saved["raw_instruction"]["entry_metrics"] is None
+
+
+def test_arm_instruction_metrics_zero_behavior_change(monkeypatch):
+    # 埋点不改变 SL/TP/方向/decision_id 形态 (record-only 纪律钉)
+    f1, f2 = _FakePDBCapture(), _FakePDBCapture()
+    _patch_pdb(monkeypatch, lambda: f1)
+    ir._arm_instruction("US.AMD", "BUY", 100.0, _arm_cfg(), 1451)
+    _patch_pdb(monkeypatch, lambda: f2)
+    ir._arm_instruction("US.AMD", "BUY", 100.0, _arm_cfg(), 1451,
+                        entry_metrics=_metrics())
+    for k in ("direction", "entry_price", "stop_loss", "take_profit",
+                  "confidence", "thesis", "model_used"):
+        assert f1.saved[k] == f2.saved[k]
+    assert f1.saved["decision_id"].startswith("intraday_reentry-1451-")

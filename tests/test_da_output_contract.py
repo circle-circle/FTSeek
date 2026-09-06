@@ -435,33 +435,40 @@ class TestRound14:
         assert out["score"] == 3.0
 
     def test_p12_challenger_more_conservative_lowers_score(self):
-        """P12: 同向 AGREE 时挑战者分更低 → 取低 (此前 challenger_score 只落盘不进合成)."""
+        """丙1 (PROPOSAL-20260905): 同向挑战者分更低 → 不覆写, 影子记录.
+        修复前: 取低覆写把 HIGH 档 77% 拉平 8.0→6.0, 打分区分度归零."""
         init = {"direction": "BUY", "score": 7.0, "rating": "看多", "confidence": "中",
                 "bull_case": [{"thesis": "x", "claim_type": "earnings_beat"}], "bear_case": [], "risks": []}
         ch = {"my_direction": "BUY", "my_score": 5.0, "agreed": True, "verdict": "AGREE",
               "validation": {}, "missed_risks": [], "challenged_claims": []}
         out = L._merge_debate_results(dict(init), dict(ch))
-        assert out["score"] == 5.0 and out.get("_score_lowered_by_challenger") is True
+        assert out["score"] == 7.0
+        assert out.get("_challenger_score_shadow") == 5.0
+        assert out.get("_score_lowered_by_challenger") is True
 
     def test_p12_challenger_more_aggressive_no_lower(self):
-        """P12: 挑战者更激进 → 不取低 (只在更保守时取低)."""
+        """丙1: 挑战者更激进 → 影子照记, 无覆写标记."""
         init = {"direction": "BUY", "score": 7.0, "rating": "看多", "confidence": "中",
                 "bull_case": [{"thesis": "x", "claim_type": "earnings_beat"}], "bear_case": [], "risks": []}
         ch = {"my_direction": "BUY", "my_score": 8.0, "agreed": True, "verdict": "AGREE",
               "validation": {}, "missed_risks": [], "challenged_claims": []}
         out = L._merge_debate_results(dict(init), dict(ch))
-        assert out["score"] == 7.0 and "_score_lowered_by_challenger" not in out
+        assert out["score"] == 7.0
+        assert out.get("_challenger_score_shadow") == 8.0
+        assert "_score_lowered_by_challenger" not in out
 
     def test_challenger_band_mapped(self):
-        """P9d: 挑战者 my_score_band → my_score 数字映射, 保留 legacy."""
+        """P9d+丙1: 挑战者 my_score_band → my_score 数字映射进影子分, 不覆写分析师 score."""
         init = {"direction": "BUY", "score": 7.0, "rating": "看多", "confidence": "中",
                 "bull_case": [{"thesis": "x", "claim_type": "earnings_beat"}], "bear_case": [], "risks": []}
         ch = {"my_direction": "BUY", "my_score_band": "LOW", "my_score": 7,
               "agreed": True, "verdict": "AGREE", "validation": {}, "missed_risks": [],
               "challenged_claims": []}
         out = L._merge_debate_results(dict(init), ch)
-        # LOW→3.0, 且 P12 同向取低 → 3.0
-        assert out["score"] == 3.0
+        # LOW→3.0 映射后仅进影子分, 分析师 score 保持 7.0
+        assert out["score"] == 7.0
+        assert out.get("_challenger_score_shadow") == 3.0
+        assert out.get("_score_lowered_by_challenger") is True
 
     def test_invalidation_triggers_validator(self):
         """P10: 机器可核销失效条件 — 外部标的/自由文本不算, 本股+</>+纯数字才算."""
