@@ -6,6 +6,12 @@ metadata_json.config_version 才是**退出参数哈希** (exit-*, KR2 判分真
 退化为"最多 6 天")。本文件钉住: ①退出哈希维必须存在且以 exit_versions 豁免清单对账;
 ②档案列维原行为不得回退; ③无哈希行只计数不当版本 (防首跑假漂移)。
 
+2026-09-06 追加 (修尺子批④, OKR-2026-09 KR2 判分单位修订, 用户授权代裁): ④**cohort 维** —
+主 cohort 窗 (`_FREEZE_COHORT_START=2026-09-03` → 9/30) 内退出哈希唯一值数必须 = 1, ≥2 即
+`W1_kr2_cohort_broken` 当天告警; ⑤**豁免清单对本维不适用** (变更预算归零: 前 4 版全走了
+豁免, 再开一次口子 = 判据名存实亡) ⇒ 已豁免的哈希进 cohort 窗同样判 broken, 且全窗维
+`exit_status` 仍可为 'ok' —— **两口径并列, 不得互相冒充**。
+
 回滚: 删本文件 + revert 对应提交即可, 零生产代码依赖。
 """
 import importlib.util
@@ -149,3 +155,72 @@ def test_exempt_but_unobserved_hashes_are_visible_not_alarmed(tmp_path, monkeypa
                       _baseline(tmp_path, exit_versions=(_EXEMPT, _NEW)))
     assert info["exit_exempt_unobserved"] == [_NEW]
     assert info["exit_status"] == "ok" and hits == []
+
+
+# ══════════ cohort 维 (2026-09-06 KR2 判分单位修订: 全窗 → 主 cohort 窗) ══════════
+def test_cohort_single_version_is_ok(tmp_path, monkeypatch):
+    """cohort 窗 (9/3 起) 内只有一个退出哈希 ⇒ single_version, 零告警 (判据在轨)。"""
+    db = _mk_db(tmp_path)
+    _row(db, exit_hash=_EXEMPT, n=5, day="2026-09-02")     # 窗前 (多版本期), 不入 cohort
+    _row(db, exit_hash=_NEW, n=3, day="2026-09-03")
+    _row(db, exit_hash=_NEW, n=2, day="2026-09-04")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_EXEMPT, _NEW)))
+    c = info["cohort"]
+    assert c["window_start"] == "2026-09-03" and c["n_unique"] == 1
+    assert c["versions"] == {_NEW: {"n": 5, "first": "2026-09-03", "last": "2026-09-04"}}
+    assert c["status"] == "single_version" and hits == []
+
+
+def test_cohort_second_version_alarms_same_day(tmp_path, monkeypatch):
+    """KR2 回滚线: cohort 窗内第 2 个哈希 ⇒ 当天告警 (损失封顶当天, 不等 9/30 结算)。"""
+    db = _mk_db(tmp_path)
+    _row(db, exit_hash=_NEW, n=3, day="2026-09-03")
+    _row(db, exit_hash="exit-cccccccccc", n=1, day="2026-09-08")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_NEW, "exit-cccccccccc")))
+    assert info["cohort"]["n_unique"] == 2 and info["cohort"]["status"] == "broken"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"]
+    assert "BROKEN" in hits[0][2] and "豁免" in hits[0][2] and "10 月开跑会" in hits[0][2]
+
+
+def test_cohort_broken_even_when_hash_is_exempted(tmp_path, monkeypatch):
+    """**关键纪律**: 变更预算归零 ⇒ 豁免清单对 cohort 维不适用。
+
+    全窗维 exit_status 仍 'ok' (该哈希在册豁免) 而 cohort 维 broken — 两口径并列,
+    任何一侧都不得冒充另一侧 (原判分式查档案列恒 v2 = 结构性假绿的同族教训)。
+    """
+    db = _mk_db(tmp_path)
+    _row(db, exit_hash=_EXEMPT, n=4, day="2026-09-03")
+    _row(db, exit_hash=_NEW, n=2, day="2026-09-04")        # _NEW 也在豁免清单里
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_EXEMPT, _NEW)))
+    assert info["exit_status"] == "ok", "全窗维: 两版均已豁免 ⇒ 无未豁免漂移"
+    assert info["cohort"]["n_unique"] == 2 and info["cohort"]["status"] == "broken"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"], "cohort 维必须独立告警"
+
+
+def test_cohort_rows_without_hash_are_counted_not_versioned(tmp_path, monkeypatch):
+    """未平仓行 metadata 无哈希 ⇒ 只计数不当版本 (与全窗维同一纪律, 否则首跑即假 broken)。"""
+    db = _mk_db(tmp_path)
+    _row(db, exit_hash=_NEW, n=2, day="2026-09-03")
+    _row(db, exit_hash=None, n=3, day="2026-09-04")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_NEW,)))
+    assert info["cohort"]["hash_missing_rows"] == 3
+    assert info["cohort"]["n_unique"] == 1 and info["cohort"]["status"] == "single_version"
+    assert hits == []
+
+
+def test_cohort_no_rows_in_window(tmp_path, monkeypatch):
+    """窗内零成交 (如长假/链路断流) ⇒ no_rows, 与"单版本"必须可区分 (不得当达成)。"""
+    db = _mk_db(tmp_path)
+    _row(db, exit_hash=_EXEMPT, n=2, day="2026-09-02")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path))
+    assert info["cohort"]["n_unique"] == 0 and info["cohort"]["status"] == "no_rows"
+    assert info["cohort"]["versions"] == {} and hits == []
+
+
+def test_cohort_start_is_pinned_and_documented():
+    """源级契约: cohort 起点写死在守卫里且带修订出处 (改窗 = 改判据 = 须先改 OKR)。"""
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    assert '_FREEZE_COHORT_START = "2026-09-03"' in src
+    assert "W1_kr2_cohort_broken" in src and "OKR-2026-09 KR2" in src
+    assert "变更预算" in src and "豁免通道" in src, "修订理由必须写在代码注释里 (可审计)"

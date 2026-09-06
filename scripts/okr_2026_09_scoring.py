@@ -68,6 +68,10 @@ LOCK_EXPECT = {
     "ALLOW_REAL_TRADING": "false",
     "execute_mode": "futu_simulate",
 }
+# 毕业门禁重定义 (KR4 未完成条款) 的预注册**草案**载体 — 2026-09-06 用户授权代裁批次起草。
+# 草案 ≠ 生效: OKR-2026-09 KR4 原文要求「新判据**预注册 + 用户批准**后才生效」, 且
+# 「没有打标前严格不切实盘 = 用户明令」⇒ 批准权不在代理侧, gate_redefined 恒 False 直到签字。
+GATE_PREREG_DRAFT = "docs/decisions/RFC-077-graduation-gate-redefinition-preregistration.md"
 ENV_FILE = ".env.us"
 CONFIG_FILE = "config/unified_config.yaml"
 WEEKLY_CHECKPOINT = "ops/hermes/ftseek_weekly_checkpoint.py"
@@ -84,10 +88,21 @@ ARTIFACTS = {
     "kr3_verdict": ("data/shadow/kr3_runup_verdict_latest.json", None),
 }
 
+# ── KR2 修订判据 (2026-09-06, 用户授权代裁「交给你来做决策」; 落档 docs/OKR-2026-09.md 变更记录) ──
+# 判分单位 = **主 cohort 窗** (现行退出参数版本的连续窗), 不再是 8/24 起的全窗。
+COHORT_START = "2026-09-03"          # = daily_invariant_check._FREEZE_COHORT_START (钉子钉住分叉即红)
+COHORT_SETTLED_TARGET = 200          # 非判据, 只作功效提示: OKR 自算 19 交易日 × 11.3 笔/日 ≈ 215
+KR2_CHANGE_BUDGET = 0                # 9/6→9/30 允许的退出参数变更次数 = 零
+KR2_EXEMPT_CHANNEL = "CLOSED"        # P0 豁免通道对本维关闭 (前 4 版全走豁免 ⇒ 再开口子=判据名存实亡)
+# KR3 样本门 (RFC-072 §三.5 原文: would-block 子集 n<30 → 不裁决, 延长观察)
+KR3_MIN_BLOCKED_N = 30
+
 VERDICT_MET = "MET"
 VERDICT_NOT_MET = "NOT_MET"
 VERDICT_PENDING = "PENDING_USER_RULING"
 VERDICT_UNMEASURABLE = "NOT_MEASURABLE"
+VERDICT_ACCUMULATING = "ACCUMULATING"            # 窗未闭合/样本未达门 ⇒ 判据尚未到期 (不是没做到)
+VERDICT_READY = "READY_TO_ADJUDICATE"            # 样本门已达 ⇒ 可开裁决批 (判分口径现写现验)
 
 
 def _now(now=None):
@@ -229,67 +244,132 @@ def kr1_ruler(ic_playbook=None, exit_scorecard=None, exit_scorecard_error=None):
         note="a/c/d 任一 False 即 NOT_MET — 尺子没修好时下游所有结论都不可采信 (宪章第 9 律)")
 
 
-def kr2_freeze(invariant=None, baseline=None):
-    """KR2 (参数冻结): 只**读**日级守卫产物, 不自算 SQL; verdict 恒 PENDING_USER_RULING。
+def kr2_freeze(invariant=None, baseline=None, cohort_settled=None, today=None):
+    """KR2 (参数冻结) — **2026-09-06 修订判据** (用户授权代裁, 落档 OKR-2026-09 变更记录)。
 
-    两个口径**并列**, 不得互相冒充:
-      · KR2 原文口径 = 窗内退出哈希**唯一值数 = 1** (换版即破) ⇒ 实测 4 版 = 按字面已破;
-      · 日级守卫口径 = `exit_status` (豁免清单对账后有无**未豁免**漂移) ⇒ 'ok' 不等于 KR2 达成。
-    OKR-2026-09 KR2 勘误段已定性: 原判分式查 `trade_records.config_version` **列** (恒 'v2')
-    ⇒ 唯一值数永远=1 = **结构性假绿**; 真口径在 `metadata_json.config_version` (`exit-*`)。
+    判分单位从"8/24 起全窗唯一值数=1"改为"**主 cohort 窗**唯一值数=1":
+      · 为什么必须改: 全窗事实上已有 **4 个**退出哈希且**不可逆** (8/24→9/2 每 1-2 天一版,
+        全部经 DEB + 用户裁走豁免通道) ⇒ 按原文字面判, KR2 在 9/6 就已永久 BROKEN, 而 9/30
+        结算会把"9/3 起硬冻结"能创造出的 **≈215 笔单版本样本**一起判作废 —— 那是自毁项目史上
+        第一个统计可用窗口 (OKR-2026-09 KR2 的价值陈述本身)。
+      · 为什么不是只改判分不冻未来 (纯 (a)) : cohort 判分若不配"变更预算归零", 继续每 1-2 天
+        换版 ⇒ cohort 永远攒不满 ⇒ 判据退化成"永远在攒样"的僵尸尺子 (判据字典 B17 病灶)。
+      ⇒ 采 **(a)+(b) 合流**: 判分改 cohort (可达成且可证伪) + 9/6→9/30 **零换版**承诺
+        (P0 豁免通道对本维关闭) + 多版本期如实留痕 (只可作跨版本对照, 不得作单版本期望结论)。
+
+    口径纪律 (三条, 全部由钉子钉住):
+      1. **不自建 SQL** — cohort 维由日级守卫 `daily_invariant_check._check_config_freeze`
+         一处测量 (本模块只读其产物), 避免第四把尺子;
+      2. **两个口径并列不得互相冒充** — 守卫 `exit_status='ok'` 是**豁免后**口径 (无未豁免漂移),
+         cohort `status` 才是 KR2 判据口径; 原判分式查 `trade_records.config_version` **列**
+         (恒 'v2') = 结构性假绿 (OKR-2026-09 KR2 勘误 2026-09-03);
+      3. **窗未闭合不提前判 MET** — 9/30 之前只报 ACCUMULATING (当前零换版), 不做乐观自评。
     """
     inv = invariant or {}
     doc, err = inv.get("doc"), inv.get("error")
     cf = (doc or {}).get("config_freeze") or {}
+    cohort = cf.get("cohort") or {}
     base = (baseline or {}).get("doc") or {}
     base_err = (baseline or {}).get("error")
     exit_versions = cf.get("exit_versions") or {}
     exempt = set((base.get("exit_versions") or {}).keys())
-    observed = set(exit_versions)
-    unexempted = sorted(observed - exempt)
+    unexempted = sorted(set(exit_versions) - exempt)
+    c_versions = cohort.get("versions") or {}
+    n_unique = cohort.get("n_unique")
+    today_s = str(today or "")[:10]
+    window_closed = bool(today_s) and today_s >= OKR_SETTLEMENT_DATE
     evidence = {
-        "window_start": cf.get("window_start") or OKR_WINDOW_START,
-        "n_unique_exit_versions": len(observed),
-        "target_unique_versions": KR2_TARGET_UNIQUE_VERSIONS,
-        "exit_versions": exit_versions,
-        "exempt_in_baseline": sorted(observed & exempt),
-        "unexempted_drift": unexempted,
-        "exit_hash_missing_rows": cf.get("exit_hash_missing_rows"),
+        "cohort_window_start": cohort.get("window_start") or COHORT_START,
+        "cohort_n_unique_versions": n_unique,
+        "cohort_versions": c_versions,
+        "cohort_status": cohort.get("status"),
+        "cohort_hash_missing_rows": cohort.get("hash_missing_rows"),
+        "cohort_settled_n": cohort_settled,
+        # 口径声明 (军规: 新字段带单位/来源): cohort_settled_n 取 okr_status 既有的
+        # "毕业样本 (当前退出参数版本, 30d 已结算)" 聚合, 而 cohort 维数的是 trade_date ≥
+        # COHORT_START 的**全部行** ⇒ 两者可差 1-2 笔 (同版本但成交日在 cohort 窗前, 如
+        # exit-de49b1299290 的 9/2 行)。两个数都**不是判据**, 只作功效提示, 差值必须可见。
+        "cohort_settled_caliber": ("graduation_sample: 当前版本 30d **已结算**笔数; 与 cohort 窗 "
+                                   "(trade_date≥%s, 全部行) 口径不同, 差值 = 窗前同版本行"
+                                   % COHORT_START),
+        "cohort_rows_all": sum(int((v or {}).get("n") or 0) for v in c_versions.values()),
+        "cohort_settled_target": COHORT_SETTLED_TARGET,
+        "okr_original_estimate_n": 215,
+        "change_budget_remaining": KR2_CHANGE_BUDGET,
+        "exempt_channel_for_cohort": KR2_EXEMPT_CHANNEL,
+        "full_window_n_unique_versions": len(exit_versions),
+        "full_window_versions": exit_versions,
+        "full_window_exempt": sorted(set(exit_versions) & exempt),
+        "full_window_unexempted_drift": unexempted,
         "daily_guard_exit_status": cf.get("exit_status"),
-        "daily_guard_status": cf.get("status"),
+        "baseline_error": base_err,
         "artifact_age_hours": inv.get("age_hours"),
+        "window_closed": window_closed,
     }
-    if err or not cf or not observed:
-        return _block(
-            "KR2", "参数冻结: 9 月退出参数 config_version 唯一值数 = 1", VERDICT_UNMEASURABLE,
-            unit="唯一值数 (个) — 退出哈希 metadata_json.config_version",
-            source=f"{OKR_DOC} KR2 + {ARTIFACTS['invariant'][0]} (config_freeze 块)",
-            evidence=evidence, gate="全月 (2026-08-24→09-30)", score=None,
-            note=f"不可测 (fail-close, 不当 0 也不当达成): {err or 'config_freeze 块为空/窗内零行'}")
-    return _block(
-        "KR2", "参数冻结: 9 月退出参数 config_version 唯一值数 = 1", VERDICT_PENDING,
-        unit="唯一值数 (个) — 退出哈希 metadata_json.config_version",
-        source=f"{OKR_DOC} KR2 + {ARTIFACTS['invariant'][0]} (config_freeze 块) + "
-               f"{ARTIFACTS['freeze_baseline'][0]} (豁免清单)",
-        evidence=evidence, gate="全月 (2026-08-24→09-30)", score=None,
-        alarm=bool(unexempted),
-        note=(f"实测唯一值数 = {len(observed)} (判据原文要求 = {KR2_TARGET_UNIQUE_VERSIONS}, "
-              f"「换版即 KR2 破」⇒ 按字面已破); 其中 {len(observed & exempt)}/{len(observed)} 在豁免清单内"
-              + (f", **未豁免漂移 {unexempted}** (日级守卫应已告警)" if unexempted else
-                 " (4 版均经 DEB + 用户裁走例外通道)")
-              + "。OKR-2026-09 KR2 明写「**待用户裁决 (不得擅自结算)**」: (a) 改按 cohort 分段判分 + "
-                "明写变更预算 / (b) 宣布 9/3 起硬冻结至 9/30 ⇒ 本块只报实测事实, **不自评达成/未达成**。"
-                "日级守卫 exit_status='ok' 是**豁免后**口径, 不得冒充 KR2 达成。"
-              + (f" 豁免基线载体异常: {base_err}" if base_err else "")))
+    unit = "唯一值数 (个) — 退出哈希 metadata_json.config_version, 主 cohort 窗口径"
+    source = (f"{OKR_DOC} KR2 (2026-09-06 修订) + {ARTIFACTS['invariant'][0]} "
+              f"(config_freeze.cohort 块, 由 daily_invariant_check 一处测量)")
+    gate = (f"主 cohort 窗 {COHORT_START}→{OKR_SETTLEMENT_DATE}; 变更预算 {KR2_CHANGE_BUDGET} 次, "
+            f"豁免通道 {KR2_EXEMPT_CHANNEL}")
+    power = ("" if cohort_settled is None else
+             f" 功效提示 (非判据): cohort 已结算 {cohort_settled} 笔 / 目标 ≈{COHORT_SETTLED_TARGET} "
+             f"(OKR 自算 215; 原 KR 价值陈述 250; 口径=当前版本 30d 已结算, cohort 窗全部行 "
+             f"{sum(int((v or {}).get('n') or 0) for v in c_versions.values())} 笔) ⇒ "
+             + ("样本门已达, 可对毛期望=0 做首次有功效的确认/证伪"
+                if cohort_settled >= COHORT_SETTLED_TARGET else
+                f"尚差 {COHORT_SETTLED_TARGET - cohort_settled} 笔 (n<200 时期望检验功效不足, "
+                f"冻结成立≠结论可测)"))
+    if err or not cf:
+        return _block("KR2", "参数冻结: 主 cohort 窗退出参数唯一值数 = 1", VERDICT_UNMEASURABLE,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                      note=f"不可测 (fail-close, 不当 0 也不当达成): {err or 'config_freeze 块为空'}")
+    if n_unique is None:
+        return _block("KR2", "参数冻结: 主 cohort 窗退出参数唯一值数 = 1", VERDICT_UNMEASURABLE,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                      note="产物里无 `config_freeze.cohort` 块 — 该载体是**旧版守卫**跑的 "
+                           "(cohort 维 2026-09-06 才加) ⇒ 重跑 scripts/daily_invariant_check.py "
+                           "或等次日 05:05 cron; 不得用全窗维冒充 cohort 判分")
+    if n_unique > 1:
+        return _block("KR2", "参数冻结: 主 cohort 窗退出参数唯一值数 = 1", VERDICT_NOT_MET,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=0.0,
+                      alarm=True,
+                      note=f"🚨 **BROKEN** — cohort 窗内出现 {n_unique} 个退出哈希 "
+                           f"({sorted(c_versions)}) ⇒ 变更预算 ({KR2_CHANGE_BUDGET}) 已破且豁免通道"
+                           f"对本维关闭, 豁免清单**不适用**。后果按预注册回滚线: 9 月单版本样本作废, "
+                           f"须 DEB 落档 + 10 月开跑会项目级裁决 (用户主持)。{power}")
+    if window_closed:
+        return _block("KR2", "参数冻结: 主 cohort 窗退出参数唯一值数 = 1", VERDICT_MET,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=100.0,
+                      note=f"窗已闭合 ({today_s} ≥ {OKR_SETTLEMENT_DATE}) 且 cohort 唯一值数 = 1 ⇒ "
+                           f"MET。多版本期 ({OKR_WINDOW_START}→{COHORT_START}) 有 "
+                           f"{len(exit_versions)} 版如实留痕, 其样本只可作跨版本对照。{power}")
+    return _block("KR2", "参数冻结: 主 cohort 窗退出参数唯一值数 = 1", VERDICT_ACCUMULATING,
+                  unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                  alarm=bool(unexempted),
+                  note=(f"⏳ 窗未闭合 ({today_s} < {OKR_SETTLEMENT_DATE}) — 当前 cohort 唯一值数 = "
+                        f"{n_unique} ({sorted(c_versions) or '窗内零成交行'}) ⇒ **零换版, 判据在轨**; "
+                        f"9/30 才出 MET/BROKEN, 不提前自评。全窗 (8/24 起) {len(exit_versions)} 版"
+                        f"属多版本期 (变更预算已用尽), 其中 {len(set(exit_versions) & exempt)}/"
+                        f"{len(exit_versions)} 在豁免清单内"
+                        + (f", **未豁免漂移 {unexempted}**" if unexempted else "")
+                        + f"。日级守卫 exit_status='{cf.get('exit_status')}' 是**豁免后**口径, "
+                          f"不得冒充本判据达成。{power}"))
 
 
-def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS):
-    """KR3 (找 edge): ①只许一个预注册假设 ②判据三要素是否已在产物落地。
+def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS,
+               min_blocked_n=KR3_MIN_BLOCKED_N):
+    """KR3 (找 edge): ①只许一个预注册假设 ②RFC-072 §三.5 样本门 ③裁决批是否可开。
 
-    三要素 = 按日聚类 t>2 + MDE 覆盖声称效应 + 样本外窗口验证 (原文, 期间禁改阈值)。
-    现产物 `kr3_runup_verdict_latest.json` 给的是**分组均值/中位/胜率/符号检验** ⇒ 三要素
-    一个都没有 ⇒ 既不能报"确认"也不能报"证伪", 只能 `NOT_MEASURABLE` (判据未落地)。
-    这正是 KR1 修尺子未完成时 KR3 无法结算的因果链, 不是"数据不够"。
+    **归因更正 (2026-09-06, 修尺子批④)**: 批③ 把"预注册三要素 (按日聚类 t / MDE / OOS) 在产物
+    里全缺"记成尺子未落地, 并说成 KR1 的因果链 —— **不准确**。RFC-072 §六.3 明写:
+    「期末裁决为独立批次 (含按日聚类统计脚本), **不在本预注册内预先实现判分代码** — 判分口径在
+    裁决批现写现验, 防『先写判分再凑数据』的选择压力」⇒ 三要素缺席是**预注册明令的设计**,
+    不是病灶。本批尊重该边界, **不写判分代码**; 三要素只作 evidence 透出 (裁决批的待办清单)。
+
+    可机械判的只有两件 (都不是"判分"):
+      · 假设数 = 1 (KR3 原文「只许一个」; >1 ⇒ 多重比较, 任何显著结果都不得当 edge 呈裁);
+      · §三.5 样本门: would-block 子集已结算 n ≥ 30 才可裁决 (现产物 groups 里数字段直接求和,
+        零新统计量) —— 未达 ⇒ ACCUMULATING (不裁决, 延长观察), 已达 ⇒ READY_TO_ADJUDICATE。
     """
     art = kr3 or {}
     doc, err = art.get("doc"), art.get("error")
@@ -310,14 +390,26 @@ def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS):
             registry_mentions = any(tok in reg for tok in ("RFC-072", "runup", "kr3"))
         except Exception as exc:                   # noqa: BLE001
             registry_mentions = f"read_failed: {type(exc).__name__}: {exc}"
+    groups = (doc or {}).get("groups") or {}
+    blocked_n = sum(int((groups.get(f"{d}|blocked") or {}).get("n_eval") or 0)
+                    for d in ("LONG", "SHORT"))
+    pass_n = sum(int((groups.get(f"{d}|pass") or {}).get("n_eval") or 0)
+                 for d in ("LONG", "SHORT"))
+    sample_gate = {"blocked_n": blocked_n, "min_n": min_blocked_n,
+                   "met": blocked_n >= min_blocked_n, "pass_n": pass_n,
+                   "rule": "RFC-072 §三.5: would-block 子集 n<30 → 不裁决, 延长观察"}
     hypothesis_count = len(present)
+    count_ok = hypothesis_count == KR3_HYPOTHESIS_LIMIT
     evidence = {
         "hypothesis_count": hypothesis_count,
         "hypothesis_limit": KR3_HYPOTHESIS_LIMIT,
         "prereg_docs_present": present,
         "prereg_docs_missing": absent,
-        "prereg_elements_landed": landed,
-        "prereg_elements_missing": missing,
+        "sample_gate": sample_gate,
+        "adjudication_elements_pending": missing,
+        "adjudication_elements_landed": landed,
+        "elements_absent_by_design": ("RFC-072 §六.3 明令判分代码不得预先实现 (裁决批现写现验) "
+                                      "⇒ 缺项是设计不是病灶"),
         "n_collected": (doc or {}).get("n_collected"),
         "n_eval": (doc or {}).get("n_eval"),
         "prereg_text": (doc or {}).get("prereg"),
@@ -325,38 +417,43 @@ def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS):
         "artifact_age_hours": art.get("age_hours"),
         "registered_in_shadow_registry": registry_mentions,
     }
-    count_ok = hypothesis_count == KR3_HYPOTHESIS_LIMIT
-    if missing:
-        return _block(
-            "KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_UNMEASURABLE,
-            unit="假设数 (个) + 判据要素落地数 (个/3)",
-            source=f"{OKR_DOC} KR3 + {ARTIFACTS['kr3_verdict'][0]} + {'/'.join(prereg_docs)}",
-            evidence=evidence, gate="第 2-4 周; 判据预注册, 期间禁改阈值 (宪章第 6 律)",
-            score=None,
-            note=(f"假设数 {hypothesis_count}/{KR3_HYPOTHESIS_LIMIT} "
-                  f"{'✅' if count_ok else '❌ 超一个 = 七路并发改动重演'}; 但预注册判据三要素缺 "
-                  f"{missing} ⇒ 产物给的是分组均值/中位/符号检验, **既不得报确认也不得报证伪** "
-                  f"(9/4 首判悬置未裁, 见 handoff 📏 节)。"
-                  + ("" if registry_mentions is True else
+    unit = "假设数 (个) + would-block 已结算样本 n (笔)"
+    source = f"{OKR_DOC} KR3 + docs/decisions/RFC-072-* + {ARTIFACTS['kr3_verdict'][0]}"
+    gate = "第 2-4 周; 判据预注册冻结 (RFC-072 §三), 期间禁改阈值 (宪章第 6 律)"
+    registry_note = ("" if registry_mentions is True else
                      " 另: KR3 影子**未在 `app/playbook/shadow_registry.py` 注册** (注册表纪律"
                      "「新增影子必须在此注册, 否则无人跟踪 = 等于没做」) — 待裁是否补登。")
-                  + (f" 载体异常: {err}" if err else "")))
-    return _block(
-        "KR3", "找 edge: 预注册入场侧假设, 只许一个",
-        VERDICT_MET if count_ok else VERDICT_NOT_MET,
-        unit="假设数 (个) + 判据要素落地数 (个/3)",
-        source=f"{OKR_DOC} KR3 + {ARTIFACTS['kr3_verdict'][0]}",
-        evidence=evidence, gate="第 2-4 周", score=100.0 if count_ok else 0.0,
-        note=("三要素齐备 ⇒ 按原文判: 日聚类 t>2 ∧ MDE 覆盖声称效应 ∧ OOS 同号 → 确认; 否则干净证伪 "
-              "(证伪同样算达成 — 本 KR 的产出是证据不是盈利)"
-              if count_ok else
-              f"🚨 预注册假设 **{hypothesis_count} 个 > 上限 {KR3_HYPOTHESIS_LIMIT}** "
-              f"({present}) ⇒ 违反 KR3「只许一个假设进入检验」(防七路并发改动重演)。"
-              f"判分不取劣充数: 多假设下的任何显著结果都是多重比较产物, 不得当 edge 呈裁 — "
-              f"须先由用户裁撤回哪一个, 再继续攒样"))
+    if err or not doc:
+        return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_UNMEASURABLE,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                      note=f"载体不可用 (fail-close): {err or '产物为空'}{registry_note}")
+    if not count_ok:
+        return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_NOT_MET,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=0.0,
+                      alarm=True,
+                      note=f"🚨 预注册假设 **{hypothesis_count} 个 > 上限 {KR3_HYPOTHESIS_LIMIT}** "
+                           f"({present}) ⇒ 违反 KR3「只许一个假设进入检验」(防七路并发改动重演)。"
+                           f"多假设下的任何显著结果都是**多重比较产物**, 不得当 edge 呈裁 — "
+                           f"须先由用户裁撤回哪一个, 再继续攒样。")
+    if not sample_gate["met"]:
+        return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_ACCUMULATING,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                      note=(f"⏳ 样本门未达: would-block 已结算 **n={blocked_n} < {min_blocked_n}** "
+                            f"(LONG|blocked + SHORT|blocked) ⇒ 按 RFC-072 §三.5 **不裁决, 延长观察** "
+                            f"—— 这与日历无关, 是样本门在挡。判分三要素 {missing} 按 §六.3 留到裁决批"
+                            f"现写现验 (**本批不实现判分代码**); 现产物的分组均值/中位/符号检验只是"
+                            f"稳健性视角, 不得当预注册判据读。{registry_note}"))
+    return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_READY,
+                  unit=unit, source=source, evidence=evidence, gate=gate, score=None,
+                  note=(f"✅ 样本门已达 (would-block n={blocked_n} ≥ {min_blocked_n}) ⇒ 可开**独立裁决批**: "
+                        f"按 RFC-072 §三 现写现验 ①按日聚类双样本 t>2 ②MDE 覆盖声称效应 "
+                        f"③窗口最后 2 周 vs 之前 OOS 方向一致 (三要素当前均未实现, 见 evidence)。"
+                        f"确认或**干净证伪**都算 KR3 达成 (产出是证据不是盈利); 证伪后不立即换假设 "
+                        f"(防链式 fishing, OKR KR3 明令)。{registry_note}"))
 
 
-def kr4_hard_gate(locks=None, gate_redefined=False, weekly_checkpoint_present=None):
+def kr4_hard_gate(locks=None, gate_redefined=False, weekly_checkpoint_present=None,
+                  gate_prereg_draft=None):
     """KR4 (实盘硬门): 四锁零松动 + 毕业门禁重定义。四锁任一松 = 硬门破 (alarm)。"""
     lk = locks or {}
     closed = lk.get("closed") or {}
@@ -365,9 +462,13 @@ def kr4_hard_gate(locks=None, gate_redefined=False, weekly_checkpoint_present=No
         {"id": "four_locks_all_closed", "ok": all_closed,
          "evidence": f"observed={lk.get('observed')} closed={closed}"},
         {"id": "graduation_gate_redefined_preregistered", "ok": bool(gate_redefined),
-         "evidence": ("新判据已预注册 + 用户批准" if gate_redefined else
-                      "旧 confidence IC 判据已 DEPRECATED, 新判据**尚未**预注册/批准 ⇒ 门禁保持现状 "
-                      "(fail-close = 安全侧)")},
+         "evidence": ("新判据已预注册 + 用户批准 ⇒ 生效" if gate_redefined else
+                      "旧 confidence IC 判据已 DEPRECATED; 新判据"
+                      + (f"**草案已出** ({gate_prereg_draft}) 但**未生效** — OKR-2026-09 KR4 要求"
+                         f"「预注册 + 用户批准」, 且「打标前严格不切实盘 = 用户明令」⇒ 批准权不在"
+                         f"代理侧; 门禁保持现状 (fail-close = 安全侧)"
+                         if gate_prereg_draft else
+                         "**尚未**预注册/批准 ⇒ 门禁保持现状 (fail-close = 安全侧)"))},
         {"id": "weekly_checkpoint_has_lock_item", "ok": weekly_checkpoint_present,
          "evidence": f"{WEEKLY_CHECKPOINT} "
                      f"{'存在 (周六 09:05 Hermes 0e87d094dcdf 跑四锁+冻结+证伪门)' if weekly_checkpoint_present else '缺失'}"},
@@ -419,40 +520,61 @@ def kr5_tuition(cnt=None, window_days=None, fee_bps=None, avg_notional=None,
               f"**不是提频换样本**; 约束项 (禁加仓/提频、禁追盈亏) 非机械可判, 属人工审计面。"))
 
 
-def settle(krs):
+def settle(krs, today=None):
     """OKR-2026-09 §结算判据 (2026-09-30): KR1+KR2+KR4 全达成 ∧ KR3 给出干净的确认或证伪。
 
-    任一必需项 PENDING ⇒ 结算状态 PENDING_USER_RULING (**不得自评**);
-    任一 NOT_MEASURABLE ⇒ 结算不可判 (尺子没落地); 不给百分比总分 (假精度)。
+    本函数输出的是**当日投影**, 不是结算 — 结算只在 9/30 (窗闭合) 出。状态优先级 (取劣):
+      NOT_MET (决定性: 硬门破/判据破) > NOT_MEASURABLE (尺子/载体不可用) >
+      PENDING_USER_RULING (裁决权在人) > ACCUMULATING (窗未闭合/样本门未达) > MET。
+    **不给百分比总分**: 五个二元/待裁/攒样项取算术平均 = 假精度 (旧块 overall_score=60 即此病)。
     """
     required = ("KR1", "KR2", "KR4")
     verdicts = {k: (v or {}).get("verdict") for k, v in krs.items()}
     counts = {}
     for v in verdicts.values():
         counts[v] = counts.get(v, 0) + 1
+    today_s = str(today or "")[:10]
+    window_closed = bool(today_s) and today_s >= OKR_SETTLEMENT_DATE
     blocking = sorted(k for k in required if verdicts.get(k) != VERDICT_MET)
-    kr3 = verdicts.get("KR3")
-    if any(verdicts.get(k) == VERDICT_PENDING for k in required):
-        status = VERDICT_PENDING
-        why = (f"{[k for k in required if verdicts.get(k) == VERDICT_PENDING]} 挂用户裁决 "
-               f"⇒ {OKR_SETTLEMENT_DATE} 结算不可自评 (OKR 原文「不得擅自结算」)")
-    elif blocking or kr3 in (VERDICT_UNMEASURABLE, VERDICT_NOT_MET):
-        status = VERDICT_NOT_MET
-        why = f"必需项未达成 {blocking}; KR3={kr3}"
+    not_met = [k for k in (*required, "KR3") if verdicts.get(k) == VERDICT_NOT_MET]
+    unmeasurable = [k for k in (*required, "KR3") if verdicts.get(k) == VERDICT_UNMEASURABLE]
+    pending = [k for k in required if verdicts.get(k) == VERDICT_PENDING]
+    accumulating = [k for k in ("KR2", "KR3")
+                    if verdicts.get(k) in (VERDICT_ACCUMULATING, VERDICT_READY)]
+    if not_met:
+        status, why = VERDICT_NOT_MET, (
+            f"决定性未达成 {not_met} — "
+            + ("KR2 判据破 ⇒ 按预注册回滚线 9 月单版本样本作废, 10 月开跑会项目级裁决"
+               if "KR2" in not_met else
+               "KR4 四锁/门禁条款未完成 (硬门项, 不是扣分项)" if "KR4" in not_met else
+               "KR3 违反「只许一个假设」⇒ 多重比较, 任何显著结果不得当 edge")
+            + (f"; 另窗未闭合项 {accumulating}" if accumulating else ""))
+    elif unmeasurable:
+        status, why = VERDICT_UNMEASURABLE, (
+            f"尺子/载体不可用 {unmeasurable} ⇒ 结算不可判 (不可测 ≠ 0 ≠ 达成)")
+    elif pending:
+        status, why = VERDICT_PENDING, (
+            f"{pending} 挂用户裁决 ⇒ 结算不可自评 (OKR 原文「不得擅自结算」)")
+    elif not window_closed or accumulating:
+        status, why = VERDICT_ACCUMULATING, (
+            f"窗未闭合 (今日 {today_s or '?'} < {OKR_SETTLEMENT_DATE}) 且 {accumulating or required} "
+            f"仍在攒样/待裁决批 ⇒ 当日投影不结算; 判据本身在轨 (无 NOT_MET/不可测项)")
     else:
-        status = VERDICT_MET
-        why = "KR1+KR2+KR4 全 MET 且 KR3 给出干净的确认或证伪"
+        status, why = VERDICT_MET, "KR1+KR2+KR4 全 MET 且 KR3 给出干净的确认或证伪"
     return {"rule": (f"{OKR_DOC} §结算判据: 达标 = KR1 + KR2 + KR4 全达成, 且 KR3 给出干净的"
                      f"确认或证伪 (两者都算达成); 未达标 = KR2 破 (又换参) 或 KR1 未完成"),
-            "settlement_date": OKR_SETTLEMENT_DATE, "status": status, "why": why,
+            "settlement_date": OKR_SETTLEMENT_DATE, "as_of": today_s or None,
+            "window_closed": window_closed, "status": status, "why": why,
             "verdicts": verdicts, "counts": counts, "blocking": blocking,
-            "no_numeric_total": ("本 OKR 不设盈利目标, 五个二元/待裁项取算术平均是假精度 "
+            "not_met": not_met, "unmeasurable": unmeasurable, "pending": pending,
+            "accumulating": accumulating,
+            "no_numeric_total": ("本 OKR 不设盈利目标, 五个二元/待裁/攒样项取算术平均是假精度 "
                                  "(旧块 overall_score 即此病) ⇒ 只出 verdict 计数")}
 
 
 def collect_and_score(repo_root, ic_playbook=None, graduation=None,
                       graduation_deprecated=None, trade_stats=None, window_days=30,
-                      gate_redefined=False, now=None):
+                      gate_redefined=False, now=None, cohort_settled=None, today=None):
     """读全部载体 → 判五个 KR → 结算状态。只读, 零副作用 (不写任何文件)。"""
     root = Path(repo_root)
     arts = {k: read_artifact(root, k, now=now) for k in ARTIFACTS}
@@ -462,10 +584,14 @@ def collect_and_score(repo_root, ic_playbook=None, graduation=None,
     krs = {
         "KR1": kr1_ruler(ic_playbook=ic_playbook, exit_scorecard=arts["exit_scorecard"]["doc"],
                          exit_scorecard_error=arts["exit_scorecard"]["error"]),
-        "KR2": kr2_freeze(invariant=arts["invariant"], baseline=arts["freeze_baseline"]),
+        "KR2": kr2_freeze(invariant=arts["invariant"], baseline=arts["freeze_baseline"],
+                          cohort_settled=cohort_settled,
+                          today=today or _now(now).date().isoformat()),
         "KR3": kr3_prereg(kr3=arts["kr3_verdict"], repo_root=root),
         "KR4": kr4_hard_gate(locks=locks, gate_redefined=gate_redefined,
-                             weekly_checkpoint_present=(root / WEEKLY_CHECKPOINT).exists()),
+                             weekly_checkpoint_present=(root / WEEKLY_CHECKPOINT).exists(),
+                             gate_prereg_draft=(GATE_PREREG_DRAFT
+                                                if (root / GATE_PREREG_DRAFT).exists() else None)),
         "KR5": kr5_tuition(cnt=ts.get("cnt_bps") or ts.get("cnt"), window_days=window_days,
                            fee_bps=ts.get("fee_bps"), avg_notional=ts.get("avg_notional"),
                            bps_suspect=bool(ts.get("bps_suspect"))),
@@ -480,7 +606,7 @@ def collect_and_score(repo_root, ic_playbook=None, graduation=None,
                     "SUPERSEDED, 旧块仅为 kr_scores 消费方 (scripts/okr_query.py) 与 "
                     "okr_history.jsonl 时序连续性保留, **不代表现行判据**。"),
         "krs": krs,
-        "settlement": settle(krs),
+        "settlement": settle(krs, today=today or _now(now).date().isoformat()),
         "locks": locks,
         "artifacts": {k: {"path": v["path"], "age_hours": v["age_hours"], "error": v["error"]}
                       for k, v in arts.items()},
@@ -498,7 +624,9 @@ def render_lines(block):
         b = (block.get("krs") or {}).get(kr) or {}
         flag = "🚨" if b.get("alarm") else {"MET": "✅", "NOT_MET": "❌",
                                             "PENDING_USER_RULING": "⏳",
-                                            "NOT_MEASURABLE": "❓"}.get(b.get("verdict"), "·")
+                                            "NOT_MEASURABLE": "❓",
+                                            "ACCUMULATING": "⏳",
+                                            "READY_TO_ADJUDICATE": "🎯"}.get(b.get("verdict"), "·")
         lines.append(f"  {flag} {kr} {b.get('title','?'):<28} {b.get('verdict','?')}")
         note = b.get("note")
         if note:

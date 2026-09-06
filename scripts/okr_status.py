@@ -357,6 +357,11 @@ try:
         trade_stats=trade_stats,
         window_days=30,          # trade_stats 的取样窗 (_cutoff_30d), KR5 笔频外推用
         gate_redefined=False,    # 新毕业判据尚未预注册+用户批准 (OKR-2026-09 KR4); 批准后才可翻 True
+        # KR2 修订判据 (2026-09-06 用户授权代裁): 判分单位=主 cohort 窗, 已结算笔数取本脚本
+        # 既有的"毕业样本 (当前退出参数版本)"聚合 — 不新增 SQL (第四把尺子纪律)。
+        cohort_settled=(versioned_stats or {}).get("cnt")
+        if isinstance(versioned_stats, dict) and "error" not in versioned_stats else None,
+        today=datetime.now().date().isoformat(),
     )
     okr_2026_09_lines = _render_2026_09(okr_2026_09)
 except Exception as _okr09_err:  # 显性留痕 (except:pass 棘轮 955 只降不升): 判分炸了必须看得见

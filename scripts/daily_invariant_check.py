@@ -94,6 +94,15 @@ _DQ_NEUTRAL_PREFIXES = ("duplicate", "outlier", "invalid", "void", "excluded")
 #    OKR-2026-09 KR2 判分 SQL 同病, 已同步勘误。①维保留 (档案版本分裂同样有意义)。
 _FREEZE_WINDOW_START = "2026-08-24"  # OKR-2026-09 KR2 判分窗口起点 (判据冻结, 改须先改 OKR)
 _FREEZE_BASELINE = REPO / "data" / "config_freeze_baseline.json"
+# 主 cohort 窗起点 (2026-09-06 OKR-2026-09 KR2 判分单位修订, 用户授权代裁「交给你来做决策」):
+# = 现行退出参数版本 exit-de49b1299290 上线日 (DEB-20260903 议题二方案A, 9/3 夜首笔)。
+# 为什么要 cohort 维: 全窗 (8/24 起) 事实上已有 4 个哈希且**不可逆** ⇒ 按全窗字面判 KR2
+# 永远 BROKEN, 会把"9/3 起硬冻结"创造出的单版本样本 (OKR 自算 ≈215 笔) 一起判作废 —
+# 那是自毁项目史上第一个统计可用窗口。判分单位改 cohort 后判据重新**可达成且可证伪**
+# (窗内出现第 2 个哈希即 BROKEN), 同时 8/24→9/2 多版本期如实留痕 (只可作跨版本对照)。
+# 变更预算 (同批写死): 2026-09-06 → 09-30 **零次**退出参数变更, P0 豁免通道对本维**关闭**
+# (前 4 版全走了豁免清单; 再开一次口子 = 判据名存实亡)。
+_FREEZE_COHORT_START = "2026-09-03"
 
 
 def _check_config_freeze(rec) -> dict:
@@ -114,6 +123,13 @@ def _check_config_freeze(rec) -> dict:
                 "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*) "
                 "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
                 "GROUP BY 1", (_FREEZE_WINDOW_START,)).fetchall()
+            # cohort 维: 每版本笔数 + 首末成交日 (不依赖 exit_time 列 — 与既有两维同款最小
+            # schema 面, 库形态差异时整段走 skipped_old_schema 而非半截假绿)
+            cohort_pairs = conn.execute(
+                "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*), "
+                "MIN(trade_date), MAX(trade_date) "
+                "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
+                "GROUP BY 1", (_FREEZE_COHORT_START,)).fetchall()
         finally:
             conn.close()
         versions = {str(v): n for v, n in pairs}
@@ -123,6 +139,25 @@ def _check_config_freeze(rec) -> dict:
             n for v, n in exit_pairs if not str(v).startswith("exit-"))
         info["versions"] = versions
         info["exit_versions"] = exit_versions
+        cohort_versions = {str(v): {"n": n, "first": f, "last": la}
+                           for v, n, f, la in cohort_pairs if str(v).startswith("exit-")}
+        info["cohort"] = {
+            "window_start": _FREEZE_COHORT_START,
+            "versions": cohort_versions,
+            "n_unique": len(cohort_versions),
+            # 无哈希行同样只计数不当版本 (未平仓行 metadata 未落哈希 — 与全窗维同一纪律)
+            "hash_missing_rows": sum(n for v, n, _, _ in cohort_pairs
+                                     if not str(v).startswith("exit-")),
+        }
+        if len(cohort_versions) > 1:
+            info["cohort"]["status"] = "broken"
+            rec("W1_kr2_cohort_broken", "-", ",".join(sorted(cohort_versions)),
+                f"KR2 主 cohort 窗 ({_FREEZE_COHORT_START}→2026-09-30) 出现 "
+                f"{len(cohort_versions)} 个退出哈希 ⇒ 判据 **BROKEN** (2026-09-06 修订: 变更预算"
+                f"归零, P0 豁免通道对本维关闭 — config_freeze_baseline.json 的豁免**不适用**); "
+                f"9 月单版本样本作废, 须 DEB 落档 + 10 月开跑会项目级裁决")
+        else:
+            info["cohort"]["status"] = "single_version" if cohort_versions else "no_rows"
         if not versions:
             info["status"] = "no_rows_in_window"
             return info

@@ -730,6 +730,47 @@ REGISTRY: list[ShadowItem] = [
               "DEB-20260904 §11.6(a)。注册表计 n=全期 settled 被挡笔, 首日即 >=min_n "
               "属预期 (判据主门是期望非 n, READY 不等于毕业)。",
     ),
+    # ── KR3 预注册假设影子 (采集 9/2 上线 cron, **2026-09-06 补登记** — 未登记=无人跟踪) ──
+    ShadowItem(
+        id="kr3_direction_runup_gate",
+        name="KR3 方向×涨幅证伪门 (RFC-072, 9 月唯一预注册假设)",
+        status=ShadowStatus.OBSERVING,
+        description="H-KR3-1: 入场前同向已动 ≥1.0% (阈值冻结) 的指令, 净期望是否显著低于其余人群 "
+                    "(=MFE≈0/SL_INITIAL 亏损族的事前可识别子集)。record-only **零拦截行为**; "
+                    "采集器 scripts/kr3_runup_shadow.py 每日 06:10 (cron 2-6) 采上交易日入场, "
+                    "trade_id 幂等去重。2026-09-06 补登 (修尺子批④, 用户授权代裁): 9/2 上线至 9/6 "
+                    "**未在注册表** ⇒ 违「新增影子必须在此注册, 否则无人跟踪 = 等于没做」纪律, "
+                    "OKR 面板只看得见产物、看不见攒样进度与离裁决门多远。",
+        data_path="data/shadow/kr3_direction_runup_gate.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="RFC-072 §三 (预注册冻结, 期间禁改阈值): ①主判据 would-block vs 其余人群 "
+                            "单均净期望差异**按日聚类**双样本 t>2 (pooled 不得单独采信, 宪章第 9 律) "
+                            "②MDE 覆盖声称效应 (< MDE 判不可测, 不判确认) ③样本外: 窗口最后 2 周 vs "
+                            "之前方向一致 ④次级端点: would-block 子集 MFE=0 率 ⑤样本量诚实: "
+                            "would-block 子集 n<30 → **不裁决, 延长观察**。确认 → 10 月 OKR 立案为入场门 "
+                            "(新 DEB + 用户裁 + 影子转正流程); 证伪 → 如实记录, **不立即换下一个假设** "
+                            "(防链式 fishing, OKR-2026-09 KR3 明令)。",
+        eval_script="scripts/kr3_runup_report.py",
+        created="2026-09-02",
+        last_evaluated="2026-09-04",
+        verdict_history=[{"date": "2026-09-04", "verdict": "NO_ADJUDICATION",
+                          "evidence": "首判 (data/shadow/kr3_runup_verdict_latest.json): n_collected=44 / "
+                                     "n_eval=41; LONG|blocked n=15 mean +6.19 median +14.88 vs pass "
+                                     "+20.88/+18.95; SHORT|blocked n=8 mean -25.42 median +11.2 vs pass "
+                                     "+50.43/+25.0 → 双方向 DIRECTIONAL (期望与中位均更差)。"
+                                     "**未裁决**: would-block 合计 n=23 < 30 (§三.5 样本门未达), 且均值受"
+                                     "尾部支配 (SHORT blocked 总亏 -203 全靠 HPE -149/AVGO -60 两笔, "
+                                     "tail_share 104.3%) — 一刀切全拦会误杀追涨多头 (LONG blocked 胜率 73%)。"}],
+        notes="计数口径 = jsonl 行数 (trade_id 去重); **min_n=30 数的是 would-block 子集已结算笔数, "
+              "不是总行数** ⇒ 注册表 READY 不等于可裁决, 裁决批须按子集 n 判 (2026-09-06 面板实测 "
+              "子集 n=23/30)。判分代码 (按日聚类 t / MDE / OOS) 按 RFC-072 §六.3 **不得预先实现** — "
+              "「期末裁决为独立批次, 判分口径现写现验, 防先写判分再凑数据的选择压力」; 故 eval_script "
+              "只出稳健性视角 (均值/中位/胜率/尾部), 不出预注册判据值, 这是设计不是缺口。"
+              "eval_on_demand=True: 报告脚本无 cron (手动/裁决日触发), 只有采集器挂 cron "
+              "(crontab 10 6 * * 2-6, 台账 §2.3)。回滚=删本条目 + 删 cron 行 + 删 jsonl (纯观察件)。",
+        eval_on_demand=True,
+    ),
 ]
 
 
