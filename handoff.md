@@ -35,6 +35,8 @@
 
 **未做 / 待裁（不在本批授权内，逐条留痕）**: ①**KR2/C1 判据仍悬空**（`docs/ADJUDICATED-CRITERIA.md:50`）：字面"唯一值数=1"已破（窗内 4 版 + 3 行无哈希），二选一 —— (a) 修订为按 cohort 分段判分 + 明写变更预算 / (b) 宣布 9/3 起硬冻结至 9/30（事实已在走 (b)：`exit-de49b1299290` 24 笔且 9/3 后零换版），9/30 结算前不裁则自评失真；②skill `references/` 500K 方法论文档在 `/root` 仓仍属未跟踪（本批只提交两源文件；异地副本已由 §2.7 覆盖，是否纳入 `/root` 仓版本跟踪待裁）；③R1 禁追高闸证据 n=19 偏薄，观察面 = `data/shadow/reentry_*` 被拒行的 `momentum_chase_candidate` 切片，回滚 = `vwap_band_long_high_pct` 改回 `1.0`（一行）；④U1② 对称截断的"被丢弃行数"埋点缺失（见上），建议下批以 record-only 补。
 
+**入库**: `5b2867cd`（7 文件 +333 −4；提交后立即 `git show --stat` 复核 diff 非空 —— 仓内有双 Agent 竞态致空提交先例 `9790d19f`/`3d544636`）。**hooks 正常通过, 未用 `--no-verify`**: commit-msg 高风险关键词 `exit_policy` 命中系本批**实改** `app/risk/exit_policy.yaml`（注释行, 值零变更）, message 已带 `[ADR-038]` ⇒ 属正当引用而非假阳性（对比前批 `aba64edf` 的 docstring 文字引用型假阳性）。**推送取证**: `git ls-remote origin rfc-060-phase1-hotfixes` = `5b2867cd`, `git status -sb` ahead 0。**异机备份取证**（手动实跑 `scripts/git_backup_push.sh` 验证新 §2.7）: 分支推送完成 / 当日 DB 副本 46M / hermes cron 定义 / **DA skill 源 84 文件 1.3M** / **判据基线 W1+W2** 全部入 `backup/runtime-snapshot` = `09891e23`（`git ls-tree -r 09891e23` 复核: `data/ops/hermes_skill_dsa` 84 项 + `config_freeze_baseline.json` + `field_cardinality_baseline.json`）。**仓外 skill**: `/root` 仓提交 `fab0fdc` [v0.75], 两源文件工作区已干净（残留 `??` 均为 `*.bak*`/`data/`/`references/`, 属历史未跟踪面）。**服务未重启**（PID 464175 @ 15:47:55, `NRestarts=0`）, 16:50 健康检查通过, 主日志 0 ERROR/CRITICAL/Traceback, `deploy_freshness_check` exit=0。本回填提交自身哈希不可自含（先例 `a85844d3`）。
+
 
 ## ⚖️ 2026-09-05 精度与数据修复批：账本时间尺度**读侧闭环**（共享解析器 `parse_ledger_ts`）+ B4 逐笔缓存 freshness gate（Codex，用户先令「直接深入分析检查剩下的问题项」→ 汇报后裁「如确实存在精度和数据问题，请全部修复」）
 
