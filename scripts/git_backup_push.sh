@@ -69,6 +69,40 @@ else
     echo "$LOG_PREFIX ⚠️ data/ops/hermes_jobs.json 缺失/为空 (cp 失败?), 本次快照不含 cron 定义"
 fi
 
+# ── 2.7 判据基线 + 仓外 DA skill 源纳入异机快照 (2026-09-06, ADR-038 复核批, 用户裁"按建议执行") ──
+#   两类文件此前全机器只有单份, 机器损毁即不可复原:
+#   ① 判据基线 json — .gitignore:46 `data/*` 整体忽略 ⇒ config_freeze_baseline (W1/KR2)
+#      与 field_cardinality_baseline (W2/P7) 从不入任何 commit。它们本身就是"判据",
+#      丢了就无法证明守卫有没有被人偷偷放宽 (与 2026-08-28 hermes_jobs 空承诺同族病灶)。
+#   ② DA 分析师 skill 源 (/root/.hermes/skills/deep-stock-analysis) — handoff 长期 caveat
+#      明写"DA 是 repo 外的 Hermes skill, 修复点在 skill", 即交易决策的一半真身在本仓
+#      版本托管之外; 该目录所属 git 仓 (/root) 无 remote, 2026-09-06 实测 llm_synth.py /
+#      pipeline.py 自 9/5 起改动未提交、skill 最后一次提交停在 9/1 ⇒ 既无回滚点也无异地副本。
+#   口径: 只拷源 (*.py / *.md, 排除 *.bak* / data/ / __pycache__), 实测 84 文件 1.3MB
+#   (对比同快照内 DB 副本 46MB); 已核全文无硬编码密钥 (只有 os.environ/getenv 读法)。
+#   不删旧文件 (只归档不删证, 同 scripts/rotate_data_backups.py 纪律) — 快照以覆盖为准,
+#   force-push 只留最新一份, 不累积。回滚: 删本段。
+SKILL_DIR=/root/.hermes/skills/deep-stock-analysis
+mkdir -p data/ops/hermes_skill_dsa
+if [ -d "$SKILL_DIR" ]; then
+    if ( cd "$SKILL_DIR" && find . \( -path './data' -o -name '__pycache__' \) -prune -o \
+           \( -name '*.py' -o -name '*.md' \) -not -name '*.bak*' -print0 ) \
+       | tar --null -C "$SKILL_DIR" -cf - -T - \
+       | tar -C data/ops/hermes_skill_dsa -xf - \
+       && git add -f -- data/ops/hermes_skill_dsa/ 2>/dev/null; then
+        echo "$LOG_PREFIX DA skill 源已纳入异机快照: $(find data/ops/hermes_skill_dsa -type f | wc -l) 文件 / $(du -sh data/ops/hermes_skill_dsa | cut -f1)"
+    else
+        echo "$LOG_PREFIX ⚠️ DA skill 源拷贝/add -f 失败, 本次快照不含仓外 DA 代码"
+    fi
+else
+    echo "$LOG_PREFIX ⚠️ $SKILL_DIR 不存在 (路径迁移?), 本次快照不含仓外 DA 代码"
+fi
+if git add -f -- data/config_freeze_baseline.json data/field_cardinality_baseline.json 2>/dev/null; then
+    echo "$LOG_PREFIX 判据基线已纳入异机快照: W1 config_freeze + W2 field_cardinality"
+else
+    echo "$LOG_PREFIX ⚠️ 判据基线 add -f 失败, 本次快照不含判据文件"
+fi
+
 TREE=$(git write-tree)
 unset GIT_INDEX_FILE
 

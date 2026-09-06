@@ -7,7 +7,8 @@
 #
 # ⚠️ 不管辖 (2026-09-06 勘明, PROPOSAL-20260906B P0):
 #   PLAYBOOK_SIM / PLAYBOOK_LIVE 仓 (DA/UE/reentry 三源落库仓) 不读本文件——
-#   它们走 playbook 自管链 _check_playbook_exit_rules (app/playbook/pipeline.py),
+#   它们走 playbook 自管链 _check_playbook_exit_rules (本体 app/playbook/exit_engine.py,
+#   2026-09-06 P2a 自 pipeline.py 逐字迁出, 旧名在 pipeline.py 留转发),
 #   退出参数来自武装指令 meta (如 reentry 的 ATR 相对化 SL/TP) 与
 #   config/unified_config.yaml 的 playbook 节。本文件改名前, 请勿据此推断 playbook 仓行为。
 #

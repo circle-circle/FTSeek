@@ -22,6 +22,7 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   I14 了结行缺 exit_reason (空串或 NULL) → 出场归因分类丢行
   I15 指令 decision_id 决策日 == 指令交易日 (T-1 bridge 陈旧供单守卫, 2026-09-02)
   W1 参数冻结窗 config_version 唯一性 (OKR-2026-09 KR2, 2026-08-31 用户裁"按建议执行")
+  W2 字段基数棘轮 (离散字段塌缩为常量 → 下游切片零区分度; ADR-038 P7 军规自动化, 2026-09-06)
   豁免: data_quality 前缀命中 duplicate/outlier/invalid/void/excluded 的行 (写入方
         声明"非真实了结", 如 id=1327 duplicate_external_close 故意留 NULL 使净额求和
         自动排除) 不告; 数量落 JSON (settled_exempt_marked) 防豁免面无声扩大。
@@ -170,6 +171,101 @@ def _check_config_freeze(rec) -> dict:
             info["status"] = "skipped_old_schema"
             return info
         rec("W1_detector_error", "-", type(e).__name__, f"W1 检测器自身异常: {e}")
+        info["status"] = "detector_error"
+        return info
+
+
+# ── W2 字段基数棘轮 (2026-09-06, ADR-038 P7 军规自动化, 用户裁"按建议执行") ──
+#    病灶: "字段在生产 ≠ 有信息" — 常量退化已六例 (da_score 75.9% 塌在 6.0 /
+#    invalidation_trigger_count 100%=2 / tripwire_count 99.6%=2 / ue_instruction
+#    confidence 100%=50 / da_instruction score 53.2% 塌在 7.0 / challenger_score),
+#    全部靠事后人工复盘才发现。工具 scripts/shadow_field_cardinality.py (W0) 已能机械
+#    判 DEGEN 并 exit 1, 但此前无任何调度方 → P7 军规停在纸面。本守卫把它接进每晚
+#    不变量自检, 与 W1 同款棘轮纪律:
+#      基线外新增 DEGEN  → 告警 (损失封顶当天, 经 error_alert.sh 推钉钉);
+#      基线内已知 DEGEN  → silenced_known 计数, 不刷不可动作噪声 (存量病灶在修);
+#      基线内已愈合      → healed 列出, 提示人工收缩基线 (棘轮只降不升, 不自动改写);
+#      采集器/检测器异常 → W2_detector_error ("零违反"与"守卫自己崩了"必须可区分);
+#      表/列不存在       → skipped_old_schema (库形态差异, 与 W1/I9/I10 同款静默跳过)。
+#    豁免通道: data/field_cardinality_baseline.json 的 degen 追加 "source.field" + refs
+#    说明 (改本文件 = 改判据, 须先落档 ADR/DEB — 与 config_freeze_baseline.json 同纪律)。
+#    回滚: 删本段 + main() 内两行接线 + 基线文件; 零生产代码依赖。
+_FIELD_CARD_SCRIPT = REPO / "scripts" / "shadow_field_cardinality.py"
+_FIELD_CARD_BASELINE = REPO / "data" / "field_cardinality_baseline.json"
+_FIELD_CARD_DAYS = 30  # 与工具默认口径一致 (n<30 记 INSUFFICIENT, 不判 DEGEN)
+
+
+def _load_field_cardinality_module():
+    """按路径加载 W0 工具 (scripts/ 非包, 与 tests 侧 importlib 加载本脚本同款做法)。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "shadow_field_cardinality", _FIELD_CARD_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _check_field_cardinality(rec, _collect=None) -> dict:
+    """W2: 离散字段基数棘轮 — 新塌缩当天告警, 已知病灶静默计数。全程只读。
+
+    _collect: 可注入采集器 (days -> [check_field 结果 dict]); 默认加载
+    scripts/shadow_field_cardinality.py 的 collect, 并把其模块级 _DB 覆写为本脚本
+    按 TRADE_ENV 解析出的 DB — 工具默认硬编码 data/ftseek_us.db, 切实盘那天会变成
+    "守卫在读陈旧 sim 名单" (与 _resolve_db 注释同一族病灶)。单测传桩, 不碰生产库/日志。
+    """
+    info = {"days": _FIELD_CARD_DAYS}
+    try:
+        if _collect is None:
+            mod = _load_field_cardinality_module()
+            mod._DB = DB
+            _collect = mod.collect
+        results = _collect(_FIELD_CARD_DAYS) or []
+    except Exception as e:
+        # 表/列不存在 = 库形态差异 (旧库/最小夹具), 与 W1/I9/I10 同款静默跳过 —
+        # 否则凡是用最小夹具跑 main() 的既有测试都会被 W2 染红 (2026-09-06 实测 8 例)。
+        if _is_structural_error(e):
+            info["status"] = "skipped_old_schema"
+            return info
+        rec("W2_detector_error", "-", type(e).__name__,
+            f"W2 基数自检采集失败: {e} → 常量退化守卫失明, 本次'零违反'不可信")
+        info["status"] = "detector_error"
+        return info
+    try:
+        def _key(row: dict) -> str:
+            return f'{row["source"]}.{row["field"]}'
+
+        degen = sorted(_key(r) for r in results if r.get("verdict") == "DEGEN")
+        info["fields_checked"] = len(results)
+        info["degen"] = degen
+        info["insufficient"] = sorted(
+            _key(r) for r in results if r.get("verdict") == "INSUFFICIENT")
+        if not _FIELD_CARD_BASELINE.exists():
+            baseline = {
+                "degen": degen,
+                "established_at": now_et().isoformat(timespec="seconds"),
+                "note": ("已知常量退化字段基线 (ADR-038 P7 军规); 豁免=degen 追加 "
+                         "\"source.field\" 并在 refs 写裁决出处。改本文件=改判据, 须先落档; "
+                         "棘轮只降不升 — 字段愈合后由人工收缩, 守卫不自动改写。"),
+                "refs": {},
+            }
+            _FIELD_CARD_BASELINE.write_text(
+                json.dumps(baseline, ensure_ascii=False, indent=1), encoding="utf-8")
+            info["status"] = "baseline_established"
+            return info
+        baseline = json.loads(_FIELD_CARD_BASELINE.read_text(encoding="utf-8"))
+        known = set(baseline.get("degen") or [])
+        new = sorted(set(degen) - known)
+        info["silenced_known"] = len(set(degen) & known)
+        info["healed"] = sorted(known - set(degen))
+        for f in new:
+            rec("W2_new_field_degen", "-", f,
+                f"字段取值塌缩 (基线外新增 DEGEN, 近 {_FIELD_CARD_DAYS} 天 n≥30): 落了库但"
+                f"零区分度, 一切下游切片表面无恙实则失明; 处置=查写入方是否退化/是否 "
+                f"write-only (P7 消费方登记), 或经 ADR/DEB 落档后登记 {_FIELD_CARD_BASELINE.name}")
+        info["status"] = "drift" if new else "ok"
+        return info
+    except Exception as e:
+        rec("W2_detector_error", "-", type(e).__name__, f"W2 检测器自身异常: {e}")
         info["status"] = "detector_error"
         return info
 
@@ -454,11 +550,15 @@ def main() -> int:
     # ── W1 参数冻结窗守卫 (2026-08-31, 用户裁"按建议执行"): 版本分裂当天告警 ──
     config_freeze = _check_config_freeze(rec)
 
+    # ── W2 字段基数棘轮 (2026-09-06, ADR-038 P7 军规自动化): 新塌缩字段当天告警 ──
+    field_cardinality = _check_field_cardinality(rec)
+
     result = {
         "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
         "caliber_diff": caliber_diff,
         "config_freeze": config_freeze,
+        "field_cardinality": field_cardinality,
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
     }

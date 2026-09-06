@@ -2,7 +2,7 @@
 
 > **⚠️ 时代勘误 (2026-09-06, PROPOSAL-20260906B)**：本文是 MAIN_PIPELINE 时代 (2026-06) 的设计文档。
 > §统一规则 第1条"所有持仓走 ExitMonitor"对 **playbook 仓 (DA/UE/reentry, PLAYBOOK_SIM/LIVE) 从未成立**——
-> playbook 仓走自管链 `_check_playbook_exit_rules` (app/playbook/pipeline.py)，ExitMonitor 对其结构性排除
+> playbook 仓走自管链 `_check_playbook_exit_rules`（本体 `app/playbook/exit_engine.py`，2026-09-06 P2a 自 `pipeline.py` 逐字迁出并留同名转发），ExitMonitor 对其结构性排除
 > (position_exit_monitor.py:942-945)；exit_policy.yaml 同样不管辖 playbook 仓。
 > 收敛终态见 docs/proposals/PROPOSAL-20260906B-exit-arch-convergence.md。本文保留作历史定位，勿据第1条推断现状。
 
