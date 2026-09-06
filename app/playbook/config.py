@@ -272,7 +272,7 @@ def get_playbook_config() -> PlaybookConfig:
 def tighten_sl_by_beta(direction: str, entry_price: float, initial_sl: float) -> float:
     """SL β收紧公式的单一真源 (2026-08-14, 止损可见性修复).
 
-    退出评估 (pipeline._compute_dynamic_effective_sl) 与成交推送展示
+    退出评估 (exit_engine._compute_dynamic_effective_sl, P2a 前为 pipeline) 与成交推送展示
     (playbook_service) 必须用同一份公式 — 此前公式只内联在退出逻辑里,
     推送展示的止损价 ≠ 实际生效的止损价 (UCTT 案: 展示-4.83% 实际-2.42%).
     参数源 sl_tighten_beta / sl_tighten_min_pct 与退出逻辑同源 (config.get).

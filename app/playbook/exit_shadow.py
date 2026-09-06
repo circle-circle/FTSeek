@@ -111,7 +111,7 @@ _SHADOW_PATH = Path(__file__).resolve().parents[2] / "data" / "shadow" / "exit_p
 def _variant_effective_sl(direction: str, entry: float, initial_sl: float,
                           peak_profit_pct: float, be_pct: float, dd_pct: float,
                           dd_threshold: float = 0.0, fee_cushion_pct: float = 0.0) -> float:
-    """纯函数: 忠实复刻 pipeline._compute_dynamic_effective_sl (trailing_enabled=True 分支)。
+    """纯函数: 忠实复刻 exit_engine._compute_dynamic_effective_sl (P2a 前为 pipeline; trailing_enabled=True 分支)。
 
     保持与实盘退出同一数学, 只替换 breakeven_at_pct / drawdown_from_peak_pct 两个参数。
 

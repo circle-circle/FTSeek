@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import app.playbook.pipeline as pipeline_mod
-from app.playbook.pipeline import _check_playbook_exit_rules
+from app.playbook.pipeline import _check_playbook_exit_rules  # P2a: 转发器; 本体在 exit_engine, patch 落点随迁
 
 class _CfgStub(dict):
     """get_playbook_config 桩: dict.get + horizon 段空实现 (本测试不触 factor 规则)."""
@@ -41,7 +41,7 @@ def _run(cfg, meta, held_minutes, minutes_from_open, peak_profit_pct=0.1,
          entry_time="2026-08-31T09:40:00-04:00", now_patched=True):
     """调用退出规则, patch 配置与"当前时间"(模拟次日开盘后)."""
     with patch("app.playbook.config.get_playbook_config", return_value=_CfgStub(cfg)), \
-         patch("app.playbook.pipeline._is_overnight_position", return_value=True):
+         patch("app.playbook.exit_engine._is_overnight_position", return_value=True):
         return _check_playbook_exit_rules(
             direction="LONG", entry_price=100.0, current_price=100.1,
             initial_sl=95.0, peak_price=100.0 * (1 + peak_profit_pct / 100),
@@ -103,7 +103,7 @@ class TestDeadSignalIntradayUnchanged:
     def test_intraday_61min_low_peak_killed(self):
         meta = {"cohort": "A", "horizon": "short"}
         with patch("app.playbook.config.get_playbook_config", return_value=_CfgStub(CFG_BASE)), \
-             patch("app.playbook.pipeline._is_overnight_position", return_value=False):
+             patch("app.playbook.exit_engine._is_overnight_position", return_value=False):
             reason, *_ = _check_playbook_exit_rules(
                 direction="LONG", entry_price=100.0, current_price=100.1,
                 initial_sl=95.0, peak_price=100.1,
@@ -115,7 +115,7 @@ class TestDeadSignalIntradayUnchanged:
     def test_intraday_59min_not_killed(self):
         meta = {"cohort": "A", "horizon": "short"}
         with patch("app.playbook.config.get_playbook_config", return_value=_CfgStub(CFG_BASE)), \
-             patch("app.playbook.pipeline._is_overnight_position", return_value=False):
+             patch("app.playbook.exit_engine._is_overnight_position", return_value=False):
             reason, *_ = _check_playbook_exit_rules(
                 direction="LONG", entry_price=100.0, current_price=100.1,
                 initial_sl=95.0, peak_price=100.1,

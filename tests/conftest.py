@@ -57,7 +57,8 @@ _DATA_DIR = (project_root / "data").resolve()
 
 _PRODUCTION_DATA_SEAMS = (
     # (模块, 属性, 缝类型, 沙箱内相对路径)
-    ("app.playbook.pipeline", "_EARLY_DEAD_SHADOW_PATH", "path",
+    # P2a (2026-09-06): 死单影子缝随退出引擎迁入 exit_engine (常量/写入点同迁)
+    ("app.playbook.exit_engine", "_EARLY_DEAD_SHADOW_PATH", "path",
      "early_dead_signal_shadow.jsonl"),
     ("app.playbook.pipeline", "_VWAP_AB_LEDGER_PATH", "path", "vwap_gate_ab.jsonl"),
     ("app.playbook.audit", "_default_audit_path", "callable",

@@ -1,5 +1,11 @@
 # 统一退出策略设计：基于股票分层+波动率的针对性止损止盈
 
+> **⚠️ 时代勘误 (2026-09-06, PROPOSAL-20260906B)**：本文是 MAIN_PIPELINE 时代 (2026-06) 的设计文档。
+> §统一规则 第1条"所有持仓走 ExitMonitor"对 **playbook 仓 (DA/UE/reentry, PLAYBOOK_SIM/LIVE) 从未成立**——
+> playbook 仓走自管链 `_check_playbook_exit_rules` (app/playbook/pipeline.py)，ExitMonitor 对其结构性排除
+> (position_exit_monitor.py:942-945)；exit_policy.yaml 同样不管辖 playbook 仓。
+> 收敛终态见 docs/proposals/PROPOSAL-20260906B-exit-arch-convergence.md。本文保留作历史定位，勿据第1条推断现状。
+
 ## 设计目标
 
 一套统一的退出策略，基于每只股票的实时行情和波动率特征，自动选择针对性的SL/TP参数。不再区分"哪套退出系统"，所有持仓走同一条退出路径。
@@ -110,7 +116,7 @@ VIX作为市场级叠加，在个股SL基础上加宽：
 
 ### 统一规则
 
-1. **所有持仓走ExitMonitor**，不走_check_playbook_exit_rules
+1. ~~所有持仓走ExitMonitor，不走_check_playbook_exit_rules~~ **(已失效，见文首勘误： playbook 仓恰好相反——只走 _check_playbook_exit_rules，不走 ExitMonitor)**
 2. **initial_sl由vol_buckets在开仓时设定**，position_sync不得覆盖
 3. **current_sl由ExitMonitor的atr_stop管理**，受SL契约约束（不逾越initial_sl）
 4. **pre_close参数按波动率桶动态选择**，不再用全局固定值

@@ -30,23 +30,30 @@ _SANDBOX_MARKER = "production_data_sandbox"
 
 def test_pipeline_shadow_paths_are_module_seams():
     src = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
-    assert '_EARLY_DEAD_SHADOW_PATH = Path("data/early_dead_signal_shadow.jsonl")' in src, (
-        "死单影子埋点路径必须是模块常量 (值=原相对路径, 解析语义不变)")
     assert "_VWAP_AB_LEDGER_PATH = Path(__file__).resolve().parents[2]" in src
-    assert 'open(_EARLY_DEAD_SHADOW_PATH, "a")' in src
     assert 'open(_VWAP_AB_LEDGER_PATH, "a", encoding="utf-8")' in src
     # 就地拼接的旧写法不得回来 (它们正是测试无法隔离的根因)
     body = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
-    assert '_EDP("data/early_dead_signal_shadow.jsonl")' not in body
     assert body.count('"data" / "vwap_gate_ab.jsonl"') == 1, (
         "台账路径只应在模块常量处出现一次 (原两处就地拼接)")
 
 
+def test_exit_engine_shadow_path_is_module_seam():
+    """P2a (2026-09-06): 死单影子缝随 _check_playbook_exit_rules 迁入 exit_engine."""
+    src = (REPO / "app" / "playbook" / "exit_engine.py").read_text(encoding="utf-8")
+    assert '_EARLY_DEAD_SHADOW_PATH = Path("data/early_dead_signal_shadow.jsonl")' in src, (
+        "死单影子埋点路径必须是模块常量 (值=原相对路径, 解析语义不变)")
+    assert 'open(_EARLY_DEAD_SHADOW_PATH, "a")' in src
+    body = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert '_EDP("data/early_dead_signal_shadow.jsonl")' not in body
+
+
 def test_seams_are_redirected_away_from_production_data():
+    import app.playbook.exit_engine as exit_engine
     import app.playbook.pipeline as pipeline
     import app.playbook.audit as audit
 
-    for val in (pipeline._EARLY_DEAD_SHADOW_PATH, pipeline._VWAP_AB_LEDGER_PATH,
+    for val in (exit_engine._EARLY_DEAD_SHADOW_PATH, pipeline._VWAP_AB_LEDGER_PATH,
                 audit._default_audit_path()):
         resolved = str(Path(val).resolve())
         assert not resolved.startswith(str(DATA) + "/"), (
@@ -80,8 +87,8 @@ def test_hard_guard_allows_reads_tmp_writes_and_relative_outside_data(tmp_path):
     with open(tmp_path / "ok2.jsonl", "w", encoding="utf-8") as fh:
         fh.write("{}")
     # 沙箱内 (缝重定向后) 放行
-    import app.playbook.pipeline as pipeline
-    seam = Path(pipeline._EARLY_DEAD_SHADOW_PATH)
+    import app.playbook.exit_engine as exit_engine
+    seam = Path(exit_engine._EARLY_DEAD_SHADOW_PATH)
     seam.parent.mkdir(parents=True, exist_ok=True)
     with open(seam, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"symbol": "US.GUARDPROBE"}) + "\n")
