@@ -78,21 +78,27 @@ fi
 #      明写"DA 是 repo 外的 Hermes skill, 修复点在 skill", 即交易决策的一半真身在本仓
 #      版本托管之外; 该目录所属 git 仓 (/root) 无 remote, 2026-09-06 实测 llm_synth.py /
 #      pipeline.py 自 9/5 起改动未提交、skill 最后一次提交停在 9/1 ⇒ 既无回滚点也无异地副本。
-#   口径: 只拷源 (*.py / *.md, 排除 *.bak* / data/ / __pycache__), 实测 84 文件 1.3MB
-#   (对比同快照内 DB 副本 46MB); 已核全文无硬编码密钥 (只有 os.environ/getenv 读法)。
-#   不删旧文件 (只归档不删证, 同 scripts/rotate_data_backups.py 纪律) — 快照以覆盖为准,
-#   force-push 只留最新一份, 不累积。回滚: 删本段。
+#   口径: 只打包源 (*.py / *.md, 排除 *.bak* / data/ / __pycache__), 实测 84 文件 →
+#   单文件 tar.gz ~0.4MB (对比同快照内 DB 副本 46MB); 已核全文无硬编码密钥 (只有
+#   os.environ/getenv 读法)。
+#   ⚠️ 必须是 **单个 tar.gz**, 不得散拷成目录 (2026-09-06 首版实证踩坑): 散落在
+#   data/ops/hermes_skill_dsa/ 的 17 个 .py 会被全仓扫描器当本仓代码计数 —
+#   tests/test_except_pass_ratchet.py 实测 955 → 1002 染红 (naive-now 棘轮 /
+#   配置普查 / 死库字面量闸 同族风险)。判据基线管的是"仓内代码", 仓外镜像不得进计数面;
+#   打包成 blob 即对一切 *.py 扫描器不可见, 且无需为迁就备份去放宽任何棘轮。
+#   覆盖式 (每夜重写同一 tar, 异机只留最新一份 — 与 DB 副本/快照分支 force-push 同设计;
+#   历史版本靠 skill 自身 git 仓 /root@fab0fdc 起的提交链, 不靠本快照)。回滚: 删本段。
 SKILL_DIR=/root/.hermes/skills/deep-stock-analysis
-mkdir -p data/ops/hermes_skill_dsa
+SKILL_TAR=data/ops/hermes_skill_dsa.tar.gz
+mkdir -p data/ops
 if [ -d "$SKILL_DIR" ]; then
     if ( cd "$SKILL_DIR" && find . \( -path './data' -o -name '__pycache__' \) -prune -o \
            \( -name '*.py' -o -name '*.md' \) -not -name '*.bak*' -print0 ) \
-       | tar --null -C "$SKILL_DIR" -cf - -T - \
-       | tar -C data/ops/hermes_skill_dsa -xf - \
-       && git add -f -- data/ops/hermes_skill_dsa/ 2>/dev/null; then
-        echo "$LOG_PREFIX DA skill 源已纳入异机快照: $(find data/ops/hermes_skill_dsa -type f | wc -l) 文件 / $(du -sh data/ops/hermes_skill_dsa | cut -f1)"
+       | tar --null -C "$SKILL_DIR" -czf "$SKILL_TAR" -T - \
+       && git add -f -- "$SKILL_TAR" 2>/dev/null; then
+        echo "$LOG_PREFIX DA skill 源已纳入异机快照: $(tar -tzf "$SKILL_TAR" | wc -l) 文件 / $(du -h "$SKILL_TAR" | cut -f1) ($SKILL_TAR)"
     else
-        echo "$LOG_PREFIX ⚠️ DA skill 源拷贝/add -f 失败, 本次快照不含仓外 DA 代码"
+        echo "$LOG_PREFIX ⚠️ DA skill 源打包/add -f 失败, 本次快照不含仓外 DA 代码"
     fi
 else
     echo "$LOG_PREFIX ⚠️ $SKILL_DIR 不存在 (路径迁移?), 本次快照不含仓外 DA 代码"
