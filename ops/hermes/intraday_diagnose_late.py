@@ -50,7 +50,7 @@ else:
                 capture_output=True, text=True, timeout=10,
                 cwd='/opt/ftseek/FTSeek-US'
             )
-            if result.returncode != 0:
+            if "NON_TRADING_DAY" in (result.stdout or "").upper():  # 2026-09-07 修: 原判据 returncode!=0 恒不成立 — trading_day_check.py 契约是 exit 恒 0 / 按 stdout 判断 ⇒ 假日守卫曾退化为只排周末
                 is_trading = False
         except Exception:
             pass  # If check fails, assume trading (better to report than miss)

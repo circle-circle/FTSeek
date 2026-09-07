@@ -42,7 +42,7 @@ if os.path.exists(TRADING_DAY_CHECK) and os.path.exists(VENV_PYTHON):
         r = subprocess.run([VENV_PYTHON, TRADING_DAY_CHECK, '--market', 'US'],
                            capture_output=True, text=True, timeout=10,
                            cwd='/opt/ftseek/FTSeek-US')
-        if r.returncode != 0:
+        if "NON_TRADING_DAY" in (r.stdout or "").upper():  # 2026-09-07 修: 原判据 returncode!=0 恒不成立 — trading_day_check.py 契约是 exit 恒 0 / 按 stdout 判断 ⇒ 假日守卫曾退化为只排周末
             sys.exit(0)
     except Exception:
         pass
