@@ -24,6 +24,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from app.playbook.pipeline import _check_playbook_exit_rules  # noqa: E402
 from app.utils.timezone import now_et  # noqa: E402
 
+
+def _entry_trading_days_ago(n: int) -> str:
+    """交易日锚定的 entry_time: 从今日(ET)往回数 n 个交易日 (非日历日).
+
+    2026-09-08 根治 (遗留清单 P2): MAX_HOLD 判定走 nth_trading_day_after (交易日历),
+    旧写法 `timedelta(days=3)` 是日历日算术, 遇假日/长周末 3 日历日前可能只跨 0-1 个
+    交易日 (9/7 劳动节实锤: entry=9/4, deadline=9/8>今天 → 触发臂假红、豁免臂假绿).
+    锚定 n=3 个交易日 → 触发臂 deadline 恒 ≤ 今天, 且 3 交易日 < loser_overnight 5
+    交易日窗口 → 豁免臂恒在窗内, 两臂都与运行日期无关.
+    """
+    from app.utils.holiday_calendar import get_holiday_calendar
+    cal = get_holiday_calendar()
+    d = now_et().date()
+    for _ in range(n):
+        d = cal.prev_trading_day("US", d)
+    return now_et().replace(year=d.year, month=d.month, day=d.day).isoformat()
+
 # fee_model 确定性锚: 10股@100 往返费 = $4.0706 → cushion = 0.40706%
 # (与 app/execution/fee_model.py estimate_round_trip 一致, 测试前已验证)
 _FEE_CUSHION_PCT = 0.40706  # 百分比
@@ -316,7 +333,7 @@ class TestNetCaliberMaxHoldExempt:
         """MAX_HOLD: 毛+0.013%, 超horizon max_hold(short=1日) → 净口径豁免.
         peak=0.3%≥0.2% 隔离 DEAD_SIGNAL; entry=3日前 (超short 1日cap, 但仍在
         loser_overnight 5日窗口内 — 12日前会同时超5日窗口, 豁免失效)."""
-        entry = (now_et() - timedelta(days=3)).isoformat()
+        entry = _entry_trading_days_ago(3)
         reason, *_ = _run(
             current_price=100.013, peak_price=100.3,
             held_minutes=800, entry_time_str=entry,
@@ -327,7 +344,7 @@ class TestNetCaliberMaxHoldExempt:
 
     def test_micro_profit_fires_max_hold_brute(self, overnight_cfg):
         """毛口径: 无_qty → 不豁免 → MAX_HOLD."""
-        entry = (now_et() - timedelta(days=3)).isoformat()
+        entry = _entry_trading_days_ago(3)
         reason, *_ = _run(
             current_price=100.013, peak_price=100.3,
             held_minutes=800, entry_time_str=entry,

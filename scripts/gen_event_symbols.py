@@ -52,6 +52,23 @@ def _today_et() -> str:
     return _now_et().strftime("%Y-%m-%d")
 
 
+def _is_trading_day_et(date_str: str) -> bool:
+    """[P3 2026-09-08 遗留清单] 假日守卫 — 与 llm_universe_scan 同款 fail-open.
+
+    gen_event_symbols 产物 (event_symbols_{ET}.json) 仅被 DA(--symbols)/UE(clue) 消费,
+    二者自身已按交易日守卫跳过 (bace63a6 同批修 9 处). 非交易日生成 = 无人消费的白跑.
+    日历不可用 → 放行 (宁可假日白跑一轮, 不可让守卫在依赖故障日误拦交易日).
+    """
+    try:
+        from datetime import date as _date
+        from app.utils.holiday_calendar import get_holiday_calendar
+        _y, _m, _d = (int(x) for x in date_str.split("-"))
+        return bool(get_holiday_calendar().is_trading_day("US", _date(_y, _m, _d)))
+    except Exception as e:
+        print(f"  [warn] 交易日判定失败 (放行): {e}", file=sys.stderr)
+        return True
+
+
 def _add(bag: Dict[str, Dict[str, Any]], symbol: str, score: int, reason: str) -> None:
     sym = str(symbol).strip().upper()
     if not sym or sym in ("(板块传导)", ""):
@@ -177,6 +194,12 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="stdout 输出 JSON 而非人类摘要")
     args = ap.parse_args()
     date = args.date
+
+    # [P3 2026-09-08] 假日守卫: 非交易日 → 跳过生成 (产物无消费方, 白跑).
+    #   与 9 个已修守卫同批语义 (bace63a6): 周末由 cron 表达式排除, 假日由本守卫兜底.
+    if not _is_trading_day_et(date):
+        print(f"[gen_event_symbols] {date} 非美股交易日, 跳过 (产物仅 DA/UE 交易日消费)")
+        return 0
 
     events = merge_bags(gather_hard_events(), gather_earnings(), gather_insider(date))
     quiet = not events

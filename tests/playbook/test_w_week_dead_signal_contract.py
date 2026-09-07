@@ -21,6 +21,24 @@ from app.playbook.pipeline import _check_playbook_exit_rules  # noqa: E402
 from app.utils.timezone import now_et  # noqa: E402
 
 
+def _entry_trading_days_ago(n: int) -> str:
+    """交易日锚定的 entry_time: 从今日(ET)往回数 n 个交易日 (非日历日).
+
+    2026-09-08 根治 (遗留清单 P2): 旧写法 `now_et() - timedelta(days=3)` 是日历日
+    算术 — MAX_HOLD 判定走 nth_trading_day_after (交易日历), 遇假日/长周末时
+    3 日历日前可能只跨 0-1 个交易日 (9/7 劳动节实锤: entry=9/4, deadline=9/8>今天
+    → 触发测试假红、豁免测试假绿). 锚定 n=3 个交易日后: deadline=第 n-max_hold 个
+    交易日必 ≤ 今天 (触发臂恒真), 且 3 交易日 < loser_overnight 5 交易日窗口
+    (豁免臂恒在窗内) — 两臂都与运行日期无关.
+    """
+    from app.utils.holiday_calendar import get_holiday_calendar
+    cal = get_holiday_calendar()
+    d = now_et().date()
+    for _ in range(n):
+        d = cal.prev_trading_day("US", d)
+    return now_et().replace(year=d.year, month=d.month, day=d.day).isoformat()
+
+
 def _meta(source_type="PLAYBOOK_SIM", skip_allowed=False):
     return {
         "_log_tag": "test", "_symbol": "TEST", "cohort": "A",
@@ -128,14 +146,14 @@ class TestMaxHoldWWeekExempt:
 
     def test_max_hold_exempt_underwater(self, overnight_cfg):
         """隔夜开关打开后: 水下仓达 horizon max_hold(1日) 仍豁免 (W_WEEK 5日窗口)."""
-        entry = (now_et() - timedelta(days=3)).isoformat()
+        entry = _entry_trading_days_ago(3)
         reason, *_ = _run(current_price=99.0, peak_price=100.1,
                           held_minutes=800, entry_time_str=entry, skip_allowed=True)
         assert reason == "", f"W_WEEK水下仓应豁免MAX_HOLD, got {reason}"
 
     def test_max_hold_fires_when_profit(self, overnight_cfg):
         """豁免边界: 盈利仓不豁免, MAX_HOLD 正常触发."""
-        entry = (now_et() - timedelta(days=3)).isoformat()
+        entry = _entry_trading_days_ago(3)
         reason, *_ = _run(current_price=100.5, peak_price=100.6,
                           held_minutes=800, entry_time_str=entry, skip_allowed=True)
         assert reason == "MAX_HOLD", f"盈利仓不豁免MAX_HOLD, got {reason}"
