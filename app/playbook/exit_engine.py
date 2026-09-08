@@ -664,6 +664,16 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         elif _overnight_eod_exempt(_symbol, meta.get("_source_type", ""), entry_time_str, _profit_net_pct):
             pass  # P1 单点 (2026-09-06): 轨③ reentry 首夜 (8/6 裁决) → W_WEEK SIM 水下多夜
                   # (8/15 三问Q3), 顺序/8/17 净口径与合并前逐字一致
+            # ── RFC-079 (2026-09-09): EOD 深水闸影子打点 (record-only, 豁免行为零变更) ──
+            #   豁免成立后记录决策时刻净水深; would_revoke 行由次日结算脚本算反事实 Δ。
+            #   开关 eod_depth_gate_shadow_enabled (回滚 false + 重启); 异常全收口不影响主链。
+            try:
+                from app.playbook.overnight_decision import emit_eod_depth_gate_shadow as _edg_emit
+                _edg_emit("poll_pre_close", _symbol, direction,
+                          meta.get("_source_type", ""), entry_price, meta.get("_qty"),
+                          entry_time_str, current_price, _profit_net_pct)
+            except Exception:
+                pass  # 打点内层已全量收口, 此为 import 级兜底
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price

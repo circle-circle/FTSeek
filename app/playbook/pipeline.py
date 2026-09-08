@@ -8368,6 +8368,15 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                     if _eod_exempt:
                         _mark_overnight_arm(conn, r["id"], _meta, _eod_track,
                                             _rpnl_net if _rpnl_net is not None else _rpnl)
+                        # ── RFC-079 (2026-09-09): EOD 深水闸影子打点 (record-only, 豁免行为零变更) ──
+                        try:
+                            from app.playbook.overnight_decision import emit_eod_depth_gate_shadow as _edg_emit
+                            _edg_emit("sweeper", symbol, direction, r["source_type"],
+                                      entry_price, qty, r["entry_time"], _rp,
+                                      _rpnl_net if _rpnl_net is not None else _rpnl,
+                                      track=_eod_track)
+                        except Exception:
+                            pass  # 打点内层已全量收口, 此为 import 级兜底
                         if _eod_track == "reentry_first_night":
                             logger.info(
                                 f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}%"

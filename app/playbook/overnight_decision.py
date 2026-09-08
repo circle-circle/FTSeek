@@ -159,3 +159,100 @@ def overnight_eod_exempt(symbol: str, source_type: str, entry_time_str: str,
     """bool 投影 — poll 侧 PRE_CLOSE 只需豁免与否, 不需要台账标签 (单次求值)。"""
     return overnight_eod_decision(symbol, source_type, entry_time_str, profit_pct,
                                   is_reentry=is_reentry)[0]
+
+
+# ── RFC-079 (2026-09-09): EOD 深水闸影子打点 (record-only, 零行为变更) ──────────
+# 缘起: 8/1-9/8 隔夜仓回放 (24 笔) — EOD 收盘水深 ≤-2.5% 的豁免仓 3/3 开盘死亡
+#   (8/27 UBER -$307 / 8/31 GAP -$387 / 9/8 UBER -$273), 反事实 EOD 平省 +$410,
+#   误杀修复赢家 0; 浅水豁免仓修复率 69% (机制保留)。按 PROPOSAL-20260906B P3
+#   修正设计 (§0.5): 新建独立键 eod_depth_gate_pct (不复用 8/21 已裁决回滚的
+#   loser_overnight_max_depth_pct=99 键), 仅 EOD 判定时刻查水深, 盘中豁免链不查。
+# 本函数 = 影子第一步: 豁免成立后记录决策时刻水深 + would_revoke 标志,
+#   次日结算 scripts/settle_eod_depth_gate_shadow.py 算 Δ (反事实 EOD 平 vs 实际结局)。
+# 预注册判据 (判据字典 B19): 触发结算 n≥8 ∧ ΣΔ>0 ∧ 误杀赢家≤1 → 提请转硬闸 (另裁)。
+# 回滚: eod_depth_gate_shadow_enabled=false (热重载可读, 无需重启)。
+import json as _edg_json
+import os as _edg_os
+from pathlib import Path as _EdgPath
+
+_EDG_SHADOW_PATH = _EdgPath(__file__).resolve().parents[2] / "data" / "shadow" / "eod_depth_gate_shadow.jsonl"
+
+
+def _edg_pytest_guard() -> bool:
+    """pytest 哨兵 (先例 RFC-074 winner shadow): 单测触发豁免路径不得污染生产账本。
+    独立函数以便单测 monkeypatch (pytest 会在 call 阶段重设 PYTEST_CURRENT_TEST,
+    fixture 里 delenv 拦不住)。生产判定不读测试注入。"""
+    return bool(_edg_os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
+                               source_type: str, entry_price: float, qty,
+                               entry_time_str: str, decision_price: float,
+                               profit_pct: float, track=None) -> None:
+    """EOD 豁免成立后的深水闸影子打点。任何异常 → debug 日志, 绝不影响豁免主链。
+
+    Args:
+        decision_point: "poll_pre_close" (规则[3] 15:52) / "sweeper" (EOD 兜底)
+        profit_pct: 决策时刻净盈亏% (与豁免判定同口径 _profit_net_pct)
+        track: 豁免臂标签 (sweeper 传 overnight_arm.source; poll 侧无标签传 None)
+    去重键 = (arm_date_et, symbol): 同日 poll+sweeper 对同一仓双评估只落首行。
+    """
+    try:
+        if _edg_pytest_guard():
+            return  # pytest 隔离 (先例 RFC-074 winner shadow): 防单测污染生产账本
+        from app.playbook.config import get_playbook_config
+        _cfg = get_playbook_config()
+        if not bool(_cfg.get("eod_depth_gate_shadow_enabled", False)):
+            return
+        _gate_pct = float(_cfg.get("eod_depth_gate_pct", 2.5))
+        from app.utils.timezone import now_et as _edg_now
+        _now = _edg_now()
+        _arm_date = _now.strftime("%Y-%m-%d")
+        # 持久化去重 (跨进程重启): 读既有行键 — 文件量级 <10行/周, 全读可接受
+        _seen = set()
+        if _EDG_SHADOW_PATH.exists():
+            with open(_EDG_SHADOW_PATH) as _f:
+                for _ln in _f:
+                    try:
+                        _r = _edg_json.loads(_ln)
+                        _seen.add((_r.get("arm_date"), _r.get("symbol")))
+                    except Exception:
+                        continue
+        if (_arm_date, symbol) in _seen:
+            return
+        _entry_date = ""
+        try:
+            from datetime import datetime as _edg_dt
+            from app.core.scheduler_triggers import ET as _EDG_ET
+            _et = _edg_dt.fromisoformat(str(entry_time_str))
+            if _et.tzinfo is not None:
+                _et = _et.astimezone(_EDG_ET)
+            _entry_date = _et.strftime("%Y-%m-%d")
+        except Exception:
+            _entry_date = str(entry_time_str or "")[:10]
+        _row = {
+            "shadow": "eod_depth_gate",
+            "ts": _now.isoformat(),
+            "arm_date": _arm_date,
+            "symbol": symbol,
+            "direction": direction,
+            "source_type": source_type,
+            "track": track,
+            "decision_point": decision_point,
+            "entry_price": float(entry_price or 0),
+            "entry_date_et": _entry_date,
+            "qty": float(qty or 0),
+            "decision_price": float(decision_price or 0),
+            "depth_net_pct": round(float(profit_pct), 4) if profit_pct is not None else None,
+            "gate_pct": _gate_pct,
+            "would_revoke": bool(profit_pct is not None and float(profit_pct) <= -_gate_pct),
+        }
+        _EDG_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_EDG_SHADOW_PATH, "a") as _f:
+            _f.write(_edg_json.dumps(_row, ensure_ascii=False) + "\n")
+        if _row["would_revoke"]:
+            logger.info(
+                f"[shadow·eod_depth_gate] {symbol} {decision_point} 水深{_row['depth_net_pct']:.2f}% "
+                f"≤-{_gate_pct}% → would_revoke (反事实EOD平, record-only 真仓照常豁免)")
+    except Exception as _edg_e:
+        logger.debug(f"[shadow·eod_depth_gate] 打点跳过 {symbol}: {_edg_e}")

@@ -1299,6 +1299,16 @@ playbook:
     #   水下仓豁免持满 loser_overnight_max_hold_days 交易日, SL 唯一盘中杀手.
     #   观测工具保留 scripts/w_week_depth_cap_ev.py, 攒 n≥30 可重裁.
     loser_overnight_max_depth_pct: 99
+    # ── RFC-079 (2026-09-09, 用户裁"执行"方案A): EOD 深水闸影子 (record-only, 零行为变更) ──
+    # 与上方 99 键的区别 (PROPOSAL-20260906B §0.5 修正设计): 99 键是盘中/EOD 共用的
+    #   豁免撤销闸 (8/21 AMZN 盘中噪声误杀已裁决回滚禁用, 本键永不复用);
+    #   本组键只在 EOD 豁免判定时刻记录影子 (would_revoke), 真仓照常豁免持夜,
+    #   次日结算反事实 Δ。证据: 8/1-9/8 回放 24 笔, EOD 水深≤-2.5% 的 3 笔全开盘死亡
+    #   (省 +$410/误杀 0), 浅水修复率 69% 机制保留。
+    # 毕业判据 (判据字典 B19): 触发结算 n≥8 ∧ ΣΔ>0 ∧ 误杀赢家≤1 → 提请转硬闸 (另裁)。
+    # 回滚: enabled 改 false + 重启 (playbook.* 热重载穿不透)。
+    eod_depth_gate_shadow_enabled: true
+    eod_depth_gate_pct: 2.5
     # 2026-08-21 (盲区A): 重复开仓守卫 — W_WEEK 延长后水下仓存活期×2.5, DA 每日重新提名
     #   同标的会二次开仓 (7/2 GOOG 实锤重叠). _execute_via_dual_broker 单点查
     #   open_positions size>0 → 拒开. 回滚: false + 重启.
