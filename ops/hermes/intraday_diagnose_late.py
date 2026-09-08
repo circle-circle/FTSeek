@@ -143,6 +143,10 @@ except Exception as e:
     add(f"[playbook_instructions查询失败] {e}")
 
 # 4. Today's trade records (净口径 pnl_net — 8/20 裁决)
+# 口径说明 (2026-09-08 加注): 本段 = 入场日口径 (trade_date=今日, 今日开仓且已了结)。
+#   心跳/盘后复盘"今日块"/周日周报/熔断器 = 出场日口径 (substr(exit_time,1,10)=今日),
+#   隔夜仓在了结日计入。两口径差额 = 今日了结的隔夜仓, 见 4b 对账备注。
+#   exit_price>0 过滤: 未平仓行不属于"已实现净PnL" (持仓段已单独展示)。
 trades = []
 total_pnl = 0.0
 wins = 0
@@ -153,6 +157,7 @@ try:
         SELECT symbol, direction, realized_pnl, pnl_net, pnl_pct, exit_reason, entry_session,
                entry_price, exit_price, decision_id
         FROM trade_records WHERE trade_date LIKE ?
+          AND exit_price > 0 AND COALESCE(pnl_net, realized_pnl) IS NOT NULL
         ORDER BY rowid
     ''', (f'{today}%',)).fetchall()
     for r in trades:
@@ -169,6 +174,24 @@ try:
             reentry_trades.append(d)
 except Exception as e:
     add(f"[trade_records查询失败] {e}")
+
+# 4b. 隔夜对账 (2026-09-08 加): 出场日=今日 但 入场日≠今日 的已平仓 —
+#     心跳/盘后复盘按出场日口径把它们计入"今日", 本段(入场日)不计 → 数字差异全在这里。
+overnight_closed = []
+overnight_net = 0.0
+try:
+    overnight_closed = db.execute('''
+        SELECT symbol, direction, realized_pnl, pnl_net, exit_reason, trade_date, exit_time
+        FROM trade_records WHERE substr(exit_time, 1, 10) = ?
+          AND trade_date NOT LIKE ?
+          AND exit_price > 0 AND COALESCE(pnl_net, realized_pnl) IS NOT NULL
+        ORDER BY exit_time
+    ''', (today, f'{today}%')).fetchall()
+    for r in overnight_closed:
+        d = dict(r)
+        overnight_net += d['pnl_net'] if d['pnl_net'] is not None else (d['realized_pnl'] or 0)
+except Exception as e:
+    add(f"[隔夜对账查询失败] {e}")
 
 # 5. VIX
 vix = '?'
@@ -308,7 +331,7 @@ if reentry_instr:
         add(f"    {d['symbol']:8s} {d.get('direction','?'):9s} trig={'✅' if d.get('triggered') else '—'} exec={'✅' if d.get('executed') else '—'}")
 
 if trades:
-    add(f"• 今日交易: {len(trades)}笔 → {wins}胜{losses}负, 已实现净PnL = ${total_pnl:.2f}")
+    add(f"• 今日交易(入场日口径): {len(trades)}笔 → {wins}胜{losses}负, 已实现净PnL = ${total_pnl:.2f}")
     for t in trades:
         d = dict(t)
         pnl = d.get('pnl_net')
@@ -328,7 +351,15 @@ if trades:
             elif p < 0: re_l += 1
         add(f"  └ 再入场小计: {len(reentry_trades)}笔 {re_w}胜{re_l}负 净${re_pnl:.2f}")
 else:
-    add(f"• 今日交易: 0笔")
+    add(f"• 今日交易(入场日口径): 0笔")
+# 隔夜对账备注: 与心跳/盘后复盘(出场日口径)数字对账
+if overnight_closed:
+    add(f"  🌙 另: 隔夜仓今日了结 {len(overnight_closed)}笔 净${overnight_net:.2f} (出场日口径计入今日, 本段不含)")
+    for r in overnight_closed:
+        d = dict(r)
+        p = d['pnl_net'] if d['pnl_net'] is not None else (d['realized_pnl'] or 0)
+        add(f"    {d['symbol']:8s} {d.get('direction','?'):8s} 入场{d.get('trade_date','?')[:10]} pnl=${p:>8.2f} reason={d.get('exit_reason','-')}")
+    add(f"  → 出场日口径合计(=心跳'已平盈亏今日'): ${total_pnl + overnight_net:.2f}")
 
 if regime_stale:
     add(f"• 盘面: ⚠️ regime 实时评估缺失/陈旧 (market_regime Assessment 超20分钟未见), VIX={vix}({vix_src})")
@@ -347,8 +378,8 @@ if recent_errors and error_count > 0:
 
 # Notable findings
 findings = []
-if total_pnl < 0:
-    findings.append(f"今日PnL为负(${total_pnl:.2f}), 关注大亏交易")
+if total_pnl + overnight_net < 0:
+    findings.append(f"今日PnL为负(入场日口径${total_pnl:.2f}/出场日口径${total_pnl + overnight_net:.2f}), 关注大亏交易")
 if drawdown != '?' and float(drawdown) > 5:
     findings.append(f"回撤{drawdown}%超过5%")
 if regime_stale:
