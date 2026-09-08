@@ -57,11 +57,29 @@ def test_eval_on_demand_exempt(monkeypatch):
 
 
 def test_missing_file_grace_for_new_items(monkeypatch):
+    """初生豁免: 注册未满 `_GRACE_DAYS` 天的事项缺产出不报; 满整则必须报。
+
+    `created` 必须**相对今天**算 —— 首版硬编码 `"2026-08-30"` (注释还自述"9/1 视角 <10 天"),
+    到 2026-09-09 正好满 10 天豁免期 ⇒ 本例**变红且永不自愈** (日期钉死在过去, 只会越来越旧)。
+    现与同文件 `test_stale_file_warned` 的相对写法 (`time.time() - (_STALE_DAYS+2)*86400`) 对齐,
+    并把**边界**一并钉住: 原判据是 `days < _GRACE_DAYS` 而非 `<=`, 漂成 `<=` 必须红。
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    inside = (today - timedelta(days=sr._GRACE_DAYS - 1)).isoformat()
+    edge = (today - timedelta(days=sr._GRACE_DAYS)).isoformat()
     monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {}))
     monkeypatch.setattr(sr, "REGISTRY",
                         [_item("t1", data_path="data/shadow/no_such_new.jsonl",
-                               created="2026-08-30")])  # 9/1 视角 <10 天
+                               created=inside)])
     assert sr.check_mounting() == []
+
+    monkeypatch.setattr(sr, "REGISTRY",
+                        [_item("t1", data_path="data/shadow/no_such_new.jsonl",
+                               created=edge)])
+    assert any("产出缺失" in w for w in sr.check_mounting()), (
+        f"满 _GRACE_DAYS={sr._GRACE_DAYS} 天整仍被豁免 ⇒ 判据从 `<` 漂成了 `<=`")
 
 
 def test_missing_file_warned_after_grace(monkeypatch):
