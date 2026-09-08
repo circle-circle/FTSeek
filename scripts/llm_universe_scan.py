@@ -62,7 +62,7 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.9"  # scan 落库归因戳; v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.10"  # scan 落库归因戳; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -78,9 +78,10 @@ SYSTEM_PROMPT = (
 )
 
 # P0 (意图对齐 + 强制引证自评): 与 V1 同源, 仅用于 scan-eval A/B; 不覆盖 V1。
+# v2.10 在 v2.9 收敛稿上补齐 invalidation_triggers 量纲并与 parser 白名单对齐。
 # v2.9 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): kimi 收敛稿全文重写
-#   (55→26行 −53%)。修复点见 PROMPT_VERSION 注释。字段集与 _normalize_surfaced 解析
-#   白名单逐项对齐; V1 SYSTEM_PROMPT 不动 (scan-eval A/B 基线仪器); v2.8 旧文 git 历史可取。
+#   (55→26行 −53%)。修复点见 PROMPT_VERSION 注释。V1 SYSTEM_PROMPT 不动
+#   (scan-eval A/B 基线仪器); v2.8 旧文 git 历史可取。
 #   预注册声明 (P3): 浮现量下降是预期效果 (监控 HARD_EVENT 桶量不塌缩);
 #   SHORT 示例可能轻微抬 SHORT 产出率 (第9条门槛保留); invalidation_triggers 填充率
 #   基线 36% → 目标升。同窗影子 ≥15 交易日 (与 U1 渲染侧同窗, UE 侧一次一变量)。
@@ -95,7 +96,8 @@ SYSTEM_PROMPT_V2 = (
     "4. causal_chain: 事件→传导→标的一句话; thesis: 交易论点≤60字(THESIS_ONLY必须以'板块联想:'或'逻辑推演:'开头)。\n"
     "5. confidence: 0~1小数, 如实反映证据强度(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY; 空引证者将被代码封顶0.60)。\n"
     "6. invalidation: 一句话失效条件≤40字(非SKIP必填); invalidation_triggers: 代码可判定失效条件数组, "
-    "每条{metric,operator,value}, metric限收盘价/成交量/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字, 无可判定条件填[]。\n"
+    "每条{metric,operator,value}, metric限收盘价/量比/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字。"
+    "收盘价单位=USD; 量比=当日累计成交量÷最近20个完整交易日平均成交量(无量纲, 如2.0); 两个涨跌幅指标单位=百分比百分点(如-5); 无可判定条件填[]。\n"
     "7. evidence_checklist: {catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low}均bool, 如实勾选不得美化。\n"
     "8. horizon_hours: 预期兑现时效整数小时(日内动量4-8); expected_move_pct: 预期方向幅度%小数; "
     "is_universe_external: bool; winner_loser: WINNER/LOSER; corroborated_by_market: bool。\n"
@@ -105,7 +107,7 @@ SYSTEM_PROMPT_V2 = (
     "{\"surfaced\": [\n"
     " {\"symbol\": \"AAPL\", \"direction\": \"LONG\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"HARD_EVENT\", "
     "\"causal_chain\": \"事件→传导→标的\", \"thesis\": \"交易论点≤60字\", \"confidence\": 0.72, "
-    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], "
+    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}, {\"metric\": \"量比\", \"operator\": \"<\", \"value\": 0.8}], "
     "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": true}, "
     "\"horizon_hours\": 6, \"expected_move_pct\": 2.5, \"is_universe_external\": false, \"winner_loser\": \"WINNER\", "
     "\"corroborated_by_market\": true, \"short_check\": null, \"skip_reason\": null},\n"
@@ -1449,9 +1451,9 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["invalidation"] = str(it.get("invalidation", ""))[:120]
             # [U10 2026-08-25 建议④] 结构化失效触发器解析 — 白名单与
             #   tripwire_checker._get_structured_triggers 同契约 (同一消费方):
-            #   metric∈{收盘价,成交量,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
+            #   metric∈{收盘价,量比,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
             #   非法条目静默丢弃 (宁漏语义, 与消费端一致)。
-            _it_metrics = ("收盘价", "成交量", "5日涨跌", "盘前涨跌幅")
+            _it_metrics = ("收盘价", "量比", "5日涨跌", "盘前涨跌幅")
             _it_raw = it.get("invalidation_triggers") or []
             if not isinstance(_it_raw, list):
                 _it_raw = []
@@ -2515,6 +2517,9 @@ _PROMPT_EVAL_PATH = _ROOT / "data" / "shadow" / "prompt_eval.jsonl"
 def cmd_scan_eval(manual_clue: str = "") -> int:
     """同一 clue brief 分别喂 V1(现状)/V2(P0 意图对齐+引证自评), 并排对比。
     纯 shadow: 不落主 scan、不 inject、不下单。唯一变量=SYSTEM_PROMPT。"""
+    if not _is_us_trading_day_today():
+        print("[scan-eval] 非美股交易日，跳过评估")
+        return 0
     brief = _build_clue_brief(manual_clue)
     print("=" * 72)
     print(f"scan-eval clue brief ({'有人工线索' if manual_clue else '无clue,自动新闻'}):")
@@ -2593,16 +2598,16 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
 #   setdefault(enable_thinking=False) 全局关闭 (2026-07-06 P0 针对 800-tok 投票小调用,
 #   UE 16000-tok 大调用系误伤)。路由级 extra_body.enable_thinking 灰度基建已在
 #   (2026-07-25 E3 用户裁决)。本命令 = 开生产灰度前的影子实证仪器:
-#   同一 clue brief + 同一 v2.9 prompt, 唯一变量 = enable_thinking。
+#   同一 clue brief + 同一 v2.9+ prompt, 唯一变量 = enable_thinking。
 #   纯 shadow: 不落主 scan / 不 inject / 不下单, 独立 jsonl 不污染 prompt_eval 序列。
 #   预注册判读: ①schema 通过率不降 ②时延增量 (生产满载 210-230s/timeout=300 的
 #   安全余量) ③token 增量 (thinking 消耗 reasoning token, 挤占 16000 预算的风险)
-#   ④v2.9 契约填充率 (基线 36% 同窗) ⑤tier 分布不塌缩。
+#   ④v2.9+ 契约填充率 (基线 36% 同窗) ⑤tier 分布不塌缩。
 _THINKING_EVAL_PATH = _ROOT / "data" / "shadow" / "thinking_eval.jsonl"
 
 
 def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
-    """v2.9 契约填充率统计 — RAW response 口径 (normalize/repair 之前),
+    """v2.9+ 契约填充率统计 — RAW response 口径 (normalize/repair 之前),
     衡量模型本体依从度, 与生产修复链无关。null-by-design 字段按方向分别判定合规。"""
     items = [it for it in (raw_items or []) if isinstance(it, dict)]
     n = len(items)
@@ -2676,8 +2681,11 @@ def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
 
 
 def cmd_thinking_eval() -> int:
-    """同一 clue brief + 同一 v2.9 prompt, enable_thinking off/on 双臂并排。
+    """同一 clue brief + 同一 v2.9+ prompt, enable_thinking off/on 双臂并排。
     纯 shadow: 不落主 scan、不 inject、不下单。唯一变量=enable_thinking。"""
+    if not _is_us_trading_day_today():
+        print("[thinking-eval] 非美股交易日，跳过评估")
+        return 0
     brief = _build_clue_brief("")
     print("=" * 72)
     print(f"thinking-eval clue brief ({len(brief)} chars):")

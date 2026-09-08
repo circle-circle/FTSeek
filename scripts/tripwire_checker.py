@@ -24,13 +24,13 @@ _check_intraday_trigger 头检自动跳过。
   - "开盘后 N 分钟/小时 跌破 X": 窗口条件, 仅在 [开盘, 开盘+N] 内评估
 
 [2026-08-25 DEB-20260825 r15 P10接线] 结构化失效条件消费:
-  DA v0.68+ 指令除自然语言 `invalidation` 外, raw_instruction_json 还带
+  DA v0.78+ 指令除自然语言 `invalidation` 外, raw_instruction_json 还带
   `invalidation_triggers` = [{metric, operator, value, deadline}], metric 限
-  收盘价/成交量/5日涨跌/盘前涨跌幅, operator 限 </>, value 纯数字 (模型侧
-  契约见 skill llm_synth.py 校验器)。语义 = thesis 失效条件, 各条 **OR**:
-  任一命中 → 指令失效。同样宁漏不误杀: 不可评估 (字段非法/行情缺字段) 不计,
-  deadline 可解析且已过期 → 该条跳过 (防陈旧条件误杀), 收盘价口径与文本侧
-  同守卫 (ET ≥ 15:50 才评估)。
+  收盘价/量比/5日涨跌/盘前涨跌幅, operator 限 </>, value 纯数字 (模型侧
+  契约见 skill llm_synth.py 校验器)。量比 = 当日累计成交量 / 最近20个完整交易日
+  平均成交量。语义 = thesis 失效条件, 各条 **OR**: 任一命中 → 指令失效。
+  同样宁漏不误杀: 不可评估 (字段非法/行情缺字段/阈值退化) 不计, deadline
+  可解析且已过期 → 该条跳过, 收盘价口径与文本侧同守卫 (ET ≥ 15:50 才评估)。
 
 用法:
     PYTHONPATH=. venv/bin/python scripts/tripwire_checker.py          # 实际核销
@@ -107,13 +107,28 @@ def _clause_time_gate(clause: str, now_et_dt) -> bool:
     return True
 
 
+def _price_threshold_guard(threshold, entry_price):
+    """返回退化/疑似跨资产价格阈值的审计原因，否则返回空字符串。"""
+    try:
+        threshold = float(threshold)
+        entry_price = float(entry_price)
+    except (TypeError, ValueError):
+        return "degenerate_price:no_entry_anchor"
+    if threshold <= 0 or entry_price <= 0:
+        return "degenerate_price:non_positive"
+    ratio = threshold / entry_price
+    if ratio < _PRICE_THRESHOLD_MIN_RATIO or ratio > _PRICE_THRESHOLD_MAX_RATIO:
+        return f"degenerate_price:ratio={ratio:.4g}"
+    return ""
+
+
 def evaluate_invalidation_text(*, invalidation, direction, entry_price,
                                current_price, now_et_dt):
     """按析取/合取语义判定 invalidation 文本是否已失效。
 
     返回 (invalidated: bool, detail: str)。
     """
-    from app.playbook.invalidation_shadow import evaluate_invalidation_shadow
+    from app.playbook.invalidation_shadow import _PRICE_PAT, evaluate_invalidation_shadow
 
     text = (invalidation or "").strip()
     if not text:
@@ -133,6 +148,13 @@ def evaluate_invalidation_text(*, invalidation, direction, entry_price,
                 group_hit = False
                 group_notes.append("time_gated")
                 break
+            price_match = _PRICE_PAT.search(clause)
+            if price_match:
+                guard_reason = _price_threshold_guard(price_match.group(1), entry_price)
+                if guard_reason:
+                    group_hit = False
+                    group_notes.append(guard_reason)
+                    break
             r = evaluate_invalidation_shadow(
                 invalidation=clause, direction=dir_norm,
                 entry_price=entry_price, current_price=current_price)
@@ -147,14 +169,16 @@ def evaluate_invalidation_text(*, invalidation, direction, entry_price,
 
 
 # ── [DEB-20260825 r15 P10接线] 结构化失效条件 (invalidation_triggers) ──
-_IT_METRICS = ("收盘价", "成交量", "5日涨跌", "盘前涨跌幅")
+_IT_METRICS = ("收盘价", "量比", "5日涨跌", "盘前涨跌幅")
 _IT_OPS = ("<", ">")
+_PRICE_THRESHOLD_MIN_RATIO = 0.1
+_PRICE_THRESHOLD_MAX_RATIO = 10.0
 
 
 def _get_structured_triggers(inst: Dict) -> List[Dict]:
     """从指令行提取合法结构化失效条件 (与模型侧契约同白名单).
 
-    合法 = metric∈{收盘价,成交量,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
+    合法 = metric∈{收盘价,量比,5日涨跌,盘前涨跌幅} & operator∈{<,>} & value可float。
     非法条目静默丢弃 (与文本侧'未解析子句不命中'同宁漏语义)。
     """
     raw = inst.get("raw_instruction_json") or {}
@@ -189,17 +213,16 @@ def _deadline_expired(deadline: str, now_et_dt) -> bool:
         return False
 
 
-def evaluate_invalidation_triggers(*, triggers, quote, prev_close_5d=None,
+def evaluate_invalidation_triggers(*, triggers, quote, entry_price=None,
+                                   prev_close_5d=None, avg_volume_20d=None,
                                    now_et_dt) -> tuple:
     """判定结构化失效条件 (各条 OR, 任一命中即失效). 返回 (invalidated, detail)。
 
     行情取值 (宁漏不误杀, 缺字段该条跳过):
-      收盘价   = quote.price, 但仅 ET ≥ CLOSE_QUALIFIER_HHMM 才评估 (与文本侧同守卫,
-                 盘中现价非收盘价, 早评估会误杀);
-      成交量   = quote.volume (当日累计);
+      收盘价   = quote.price, 但仅 ET ≥ CLOSE_QUALIFIER_HHMM 且阈值量级合理时评估;
+      量比     = quote.volume / 最近20个完整交易日平均成交量;
       盘前涨跌幅 = quote.pre_change_rate (百分比, 当日定值);
-      5日涨跌  = (现价 - prev_close_5d)/prev_close_5d×100, prev_close_5d 由调用方
-                 从日K算好传入 (避免本纯函数拉网络), 缺失则该条跳过。
+      5日涨跌  = (现价 - prev_close_5d)/prev_close_5d×100。
     """
     if not triggers or not isinstance(quote, dict):
         return False, "no_triggers"
@@ -221,13 +244,22 @@ def evaluate_invalidation_triggers(*, triggers, quote, prev_close_5d=None,
             if now_et_dt.hour * 100 + now_et_dt.minute < CLOSE_QUALIFIER_HHMM:
                 notes.append(f"[close_gated]{label}")
                 continue
+            guard_reason = _price_threshold_guard(t["value"], entry_price)
+            if guard_reason:
+                notes.append(f"[{guard_reason}]{label}")
+                continue
             obs = price
-        elif m == "成交量":
-            obs = quote.get("volume")
+        elif m == "量比":
+            volume = quote.get("volume")
             try:
-                obs = float(obs) if obs is not None else None
+                volume = float(volume) if volume is not None else None
+                avg_volume = float(avg_volume_20d) if avg_volume_20d is not None else None
             except (TypeError, ValueError):
-                obs = None
+                volume, avg_volume = None, None
+            if volume is None or avg_volume is None or avg_volume <= 0:
+                notes.append(f"[no_avg_volume]{label}")
+                continue
+            obs = volume / avg_volume
         elif m == "盘前涨跌幅":
             obs = quote.get("pre_change_rate")
             try:
@@ -249,15 +281,18 @@ def evaluate_invalidation_triggers(*, triggers, quote, prev_close_5d=None,
     return False, " ".join(notes) or "all_unevaluable"
 
 
-def _prev_close_5d(router, symbol: str, today: str):
-    """5个交易日前收盘价 (不含今日)。日K缺失/不足5根 → None。router 内部有5分钟缓存。"""
+def _daily_reference_values(router, symbol: str, today: str):
+    """返回5个交易日前收盘价与最近20个完整交易日平均成交量。"""
     try:
-        bars = router.get_daily_bars(symbol, count=12) or []
-        closes = [float(b.get("close")) for b in bars
-                  if str(b.get("time", ""))[:10] < today and b.get("close")]
-        return closes[-5] if len(closes) >= 5 else None
+        bars = router.get_daily_bars(symbol, count=25) or []
+        completed = [b for b in bars if str(b.get("time", ""))[:10] < today]
+        closes = [float(b.get("close")) for b in completed if b.get("close")]
+        volumes = [float(b.get("volume")) for b in completed if b.get("volume") is not None]
+        prev_close_5d = closes[-5] if len(closes) >= 5 else None
+        avg_volume_20d = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else None
+        return prev_close_5d, avg_volume_20d
     except Exception:
-        return None
+        return None, None
 
 
 def main() -> int:
@@ -322,13 +357,14 @@ def main() -> int:
         s_detail = ""
         if s_triggers:
             quote = quotes.get(symbol.replace("US.", "").upper()) or {}
-            # 5日涨跌需前收: 仅当存在该metric条件时才拉日K (router缓存5分钟)
-            pc5 = None
-            if any(t["metric"] == "5日涨跌" for t in s_triggers):
-                pc5 = _prev_close_5d(router, symbol, today)
+            pc5, avg_volume_20d = None, None
+            if any(t["metric"] in ("5日涨跌", "量比") for t in s_triggers):
+                pc5, avg_volume_20d = _daily_reference_values(router, symbol, today)
             s_inv, s_detail = evaluate_invalidation_triggers(
                 triggers=s_triggers, quote=quote,
-                prev_close_5d=pc5, now_et_dt=now_et_dt)
+                entry_price=float(inst.get("entry_price") or 0) or None,
+                prev_close_5d=pc5, avg_volume_20d=avg_volume_20d,
+                now_et_dt=now_et_dt)
             if s_inv:
                 invalidated = True
                 detail = (detail + " ‖ " if detail else "") + "structured: " + s_detail

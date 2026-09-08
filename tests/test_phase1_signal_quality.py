@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.playbook.pipeline import (
     INVALIDATED_SKIP_REASONS,
@@ -133,6 +134,78 @@ class TestTripwireInvalidation:
 
     def test_skip_reason_is_consumed_by_trigger_guards(self, mod):
         assert mod.SKIP_REASON in INVALIDATED_SKIP_REASONS
+
+    def test_structured_metric_accepts_ratio_and_rejects_raw_volume(self, mod):
+        inst = {"raw_instruction_json": {"invalidation_triggers": [
+            {"metric": "量比", "operator": ">", "value": 2},
+            {"metric": "成交量", "operator": ">", "value": 2},
+        ]}}
+        assert [t["metric"] for t in mod._get_structured_triggers(inst)] == ["量比"]
+
+    def test_volume_ratio_uses_twenty_day_average(self, mod, at):
+        trigger = {"metric": "量比", "operator": ">", "value": 2, "deadline": ""}
+        miss, miss_detail = mod.evaluate_invalidation_triggers(
+            triggers=[trigger], quote={"price": 100, "volume": 300_000},
+            entry_price=100, avg_volume_20d=200_000, now_et_dt=at(15, 55))
+        hit, hit_detail = mod.evaluate_invalidation_triggers(
+            triggers=[trigger], quote={"price": 100, "volume": 500_000},
+            entry_price=100, avg_volume_20d=200_000, now_et_dt=at(15, 55))
+        assert miss is False and "obs=1.5" in miss_detail
+        assert hit is True and "obs=2.5" in hit_detail
+
+    @pytest.mark.parametrize("avg_volume", [None, 0, "bad"])
+    def test_volume_ratio_without_valid_average_is_skipped(self, mod, at, avg_volume):
+        trigger = {"metric": "量比", "operator": ">", "value": 2, "deadline": ""}
+        hit, detail = mod.evaluate_invalidation_triggers(
+            triggers=[trigger], quote={"price": 100, "volume": 500_000},
+            entry_price=100, avg_volume_20d=avg_volume, now_et_dt=at(15, 55))
+        assert hit is False
+        assert "no_avg_volume" in detail
+
+    def test_daily_references_use_only_completed_sessions(self, mod):
+        bars = [
+            {"time": f"2026-08-{day:02d}", "close": 80 + day, "volume": 100}
+            for day in range(1, 21)
+        ] + [{"time": "2026-09-08", "close": 999, "volume": 999_999}]
+
+        class Router:
+            def get_daily_bars(self, symbol, count):
+                assert symbol == "US.TEST" and count == 25
+                return bars
+
+        prev_close, avg_volume = mod._daily_reference_values(
+            Router(), "US.TEST", "2026-09-08")
+        assert prev_close == 96
+        assert avg_volume == 100
+
+    @pytest.mark.parametrize("metric,operator,value", [
+        ("收盘价", ">", 0),
+        ("收盘价", "<", 6),
+        ("收盘价", "<", 55_000),
+    ])
+    def test_structured_degenerate_price_threshold_is_skipped(
+            self, mod, at, metric, operator, value):
+        trigger = {"metric": metric, "operator": operator, "value": value, "deadline": ""}
+        hit, detail = mod.evaluate_invalidation_triggers(
+            triggers=[trigger], quote={"price": 170}, entry_price=180,
+            now_et_dt=at(15, 55))
+        assert hit is False
+        assert "degenerate_price" in detail
+
+    def test_text_cross_asset_price_threshold_is_skipped(self, mod, at):
+        hit, detail = mod.evaluate_invalidation_text(
+            invalidation="若BTC跌破$55000则多头逻辑失效", direction="BUY",
+            entry_price=180, current_price=170, now_et_dt=at(11, 0))
+        assert hit is False
+        assert "degenerate_price" in detail
+
+    def test_tripwire_production_enforcement_remains_disabled(self):
+        config = yaml.safe_load(
+            (ROOT / "config" / "unified_config.yaml").read_text(encoding="utf-8")
+        )
+        assert config["playbook"]["execution_parameters"][
+            "tripwire_checker_enforce"
+        ] is False
 
 
 class TestIntradayVolCurve:
