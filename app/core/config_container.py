@@ -438,42 +438,61 @@ class ConfigContainer:
         return value
 
     def _load_unified_config(self) -> None:
-        """从 unified_config.yaml 加载全部配置到内存字典"""
+        """从 unified_config.yaml 加载全部配置到内存字典.
+
+        加载顺序 (2026-09-08 根治, 原为 YAML 嵌套在 loader import 的 try 内):
+          ① YAML 全量 —— 唯一真源, 路径由 __file__ 推导, **不依赖任何 import**,
+             永远先加载 (它决定 _yaml_raw, 即 get_dotted 的唯一数据源);
+          ② config_loader 导出节 —— 覆盖式补充 (保持原"loader 优先"语义), 失败仅降级。
+
+        原缺陷 (实锤 2026-09-08 DA cron): `from config.config_loader import get_config`
+        在 DA/UE 这类**外部 workdir 进程**里被单文件 `config.py` 遮蔽 →
+        `No module named 'config.config_loader'; 'config' is not a package` →
+        异常冒泡使 **YAML 补充加载整段被跳过** → _yaml_raw 永空 →
+        该进程内所有 get_dotted() 静默返回代码 default (配置形同不存在)。
+        教训: 降级路径不得寄生在上游可选依赖的 try 块内 — import 失败 ≠ 配置不可读。
+        """
+        # ── ① YAML 全量 (不依赖 import, 永不因 loader 失败而丢失) ──
+        try:
+            import yaml
+            yaml_path = Path(__file__).resolve().parent.parent.parent / "config" / "unified_config.yaml"
+            if yaml_path.exists():
+                with open(yaml_path) as f:
+                    full_cfg = yaml.safe_load(f) or {}
+                # 展开 ${VAR} 环境变量占位符 (修复 DingTalk webhook URL 等)
+                full_cfg = ConfigContainer._expand_env_vars(full_cfg)
+                # 原始 YAML 结构 (供 get_dotted 嵌套访问) — SSOT
+                self._yaml_raw = {k.lower(): v for k, v in full_cfg.items()}
+                for key, val in full_cfg.items():
+                    if isinstance(val, (dict, list)):
+                        self._config_dict[key.lower()] = val
+            else:
+                logger.warning(f"[ConfigContainer] unified_config.yaml 不存在: {yaml_path}")
+        except Exception as e:
+            # R5 留痕: YAML 是 get_dotted 唯一数据源, 加载失败 = 全进程配置退化为代码默认值
+            logger.warning(f"[ConfigContainer] YAML 加载失败 (get_dotted 将只返回代码默认值): {e}")
+
+        # ── ② config_loader 导出节 (可选; 外部 workdir 可能被同名模块遮蔽) ──
         try:
             from config.config_loader import get_config
             loader = get_config()
-            # 将 loader 的所有大写属性导出为配置节
             for attr_name in dir(loader):
                 if attr_name.startswith("_"):
                     continue
                 attr = getattr(loader, attr_name)
                 if isinstance(attr, (dict, list)):
                     # 统一用小写名访问: RISK_CONFIG -> risk_config, WATCH_LIST_US -> watchlist_us
+                    # loader 导出优先于 YAML 同名节 (保持原合并语义)
                     self._config_dict[attr_name.lower()] = attr
-            # 同时加载 unified_config.yaml 全量配置 (补充 loader 未导出的节)
-            try:
-                import yaml
-                yaml_path = Path(__file__).resolve().parent.parent.parent / "config" / "unified_config.yaml"
-                if yaml_path.exists():
-                    with open(yaml_path) as f:
-                        full_cfg = yaml.safe_load(f) or {}
-                    # 展开 ${VAR} 环境变量占位符 (修复 DingTalk webhook URL 等)
-                    full_cfg = ConfigContainer._expand_env_vars(full_cfg)
-                    # 保存原始 YAML 结构 (供 get_dotted 嵌套访问)
-                    self._yaml_raw = {k.lower(): v for k, v in full_cfg.items()}
-                    # 合并全量配置 (loader 已导出的优先)
-                    for key, val in full_cfg.items():
-                        k = key.lower()
-                        if k not in self._config_dict and isinstance(val, (dict, list)):
-                            self._config_dict[k] = val
-            except Exception as e:
-                logger.debug(f"[ConfigContainer] YAML 补充加载失败: {e}")
-            logger.info(
-                "[ConfigContainer] 已加载 %d 个配置节",
-                len(self._config_dict)
-            )
         except Exception as e:
-            logger.warning(f"[ConfigContainer] unified_config 加载失败: {e}")
+            logger.warning(
+                f"[ConfigContainer] config_loader 不可用 (降级: 仅用 YAML 全量, "
+                f"get_dotted 不受影响): {e}")
+
+        logger.info(
+            "[ConfigContainer] 已加载 %d 个配置节 (yaml_raw=%d 节)",
+            len(self._config_dict), len(self._yaml_raw)
+        )
     
     @classmethod
     def get_instance(cls) -> 'ConfigContainer':
