@@ -231,6 +231,41 @@ def roundtrip_section(start: str, end: str) -> Dict[str, Any]:
     }
 
 
+def derived_roundtrip_section(market: str, start: str, end: str,
+                              open_lots: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """券商真值层**派生**的回合小结 (批 D / RFC-078 §8) — 港美同一套代码、同一条口径.
+
+    与 `roundtrip_section` (读 `trade_records`) 的区别必须在报告里写明, 两者不得互相冒充:
+      · `trade_records` = **决策记录** — 有 exit_reason / thesis / attribution, 但曾断链
+        3 个月 (2026-06-19~09-08), 且港股**从来没有**;
+      · 本段 = **执行事实派生** — 券商成交 FIFO 配对, 不依赖下单代码是否记得写, 港美都有,
+        但**没有决策理由** (`exit_reason` 恒 NOT_CAPTURED: `hk_manual_orders.jsonl` 63 行里
+        reason 非空仅 7 行 ⇒ 靠时间邻近"推断"理由 = 把猜测写成事实, 刻意不做)。
+    窗口按**出场日**归集 (与 `roundtrip_section` 同口径), 但派生本身用全量台账 ——
+    窗口截断会把进场腿落在窗口外的完整回合误标成基准不完整。
+    """
+    try:
+        from app.web_dashboard import live_ledger
+        rows = live_ledger.read_round_trips(start, end, market=market)
+        cov = (live_ledger.ledger_coverage().get("round_trips") or {}).get(market) or {}
+        summary = live_ledger.summarize_round_trips(rows)
+    except Exception as exc:  # noqa: BLE001 — 派生段失败不得让整份周报不出, 但要显式报态
+        return {"state": "UNAVAILABLE", "summary": {}, "rows": [], "open_lots": [],
+                "ledger_rows_market": None, "ledger_span": [None, None],
+                "detail": f"派生回合查询失败: {exc} — 这**不是**零回合"}
+    lots = [lot for lot in (open_lots or []) if lot.get("market") == market]
+    ledger_rows = cov.get("rows") or 0
+    return {
+        "state": "OK" if rows else ("NO_DATA" if not ledger_rows else "NO_TRADES_IN_WINDOW"),
+        "summary": summary, "rows": rows, "open_lots": lots,
+        "ledger_rows_market": ledger_rows,
+        "ledger_span": [cov.get("first"), cov.get("last")],
+        "source": "broker_fifo(live_round_trips)",
+        "detail": (f"台账派生回合共 {ledger_rows} 笔({cov.get('first')}~{cov.get('last')}), "
+                   f"本窗口(按出场日) 0 笔" if not rows and ledger_rows else ""),
+    }
+
+
 def _hk_jsonl_activity(start: str, end: str) -> Dict[str, Any]:
     """港股手动单活动的**真实源**: `data/audit/hk_manual_orders.jsonl`.
 
@@ -334,7 +369,8 @@ def _et_window_to_cst_bounds(start: str, end: str) -> tuple:
 def _render_market(market: str, deals: Dict[str, Any], pos: Dict[str, Any],
                    audit: Dict[str, Any], rt: Optional[Dict[str, Any]],
                    recon: Optional[Dict[str, Any]] = None,
-                   window: Optional[Dict[str, str]] = None) -> List[str]:
+                   window: Optional[Dict[str, str]] = None,
+                   drt: Optional[Dict[str, Any]] = None) -> List[str]:
     ccy = _CCY[market]
     # 每段自带自己的窗口与尺度: 两段窗口**不是同一个绝对区间** (各市场本地日历),
     # 不写出来就会被当成同一周读 ⇒ 跨市场比较的结论从读法上就错了。
@@ -349,7 +385,11 @@ def _render_market(market: str, deals: Dict[str, Any], pos: Dict[str, Any],
                    f"平仓额 {_money(deals['close_amount'], ccy)} | "
                    f"净现金流 {_money(deals['net_cash'], ccy)}")
         f = deals["fifo"]
-        out.append(f"已实现(**毛**, FIFO 完整基准): {_money(f['realized_gross_complete_basis_only'], ccy)}"
+        # 标出**配对口径**: 本行只用窗口内成交配对 (跨窗持仓的进场腿在窗口外 ⇒ 会被误标
+        # 基准不完整而整段排除, 数字偏低)。不标出来, 读者会拿它与下面"回合(全量台账配对)"
+        # 的已实现直接对比, 以为是同一件事的两个版本 (实测港股段 49,200 vs 59,775)。
+        out.append(f"已实现(**毛**, FIFO 完整基准 · 仅用本窗口成交配对): "
+                   f"{_money(f['realized_gross_complete_basis_only'], ccy)}"
                    f" | 不含手续费(券商 deal 级不返回, {deals['fee_rows_null']}/{deals['n']} 笔 fee=NULL)")
         if f["incomplete_basis_symbols"]:
             out.append(f"  ⚠ 成本基准不完整(**未计入**合计, 不编造基准): "
@@ -397,6 +437,67 @@ def _render_market(market: str, deals: Dict[str, Any], pos: Dict[str, Any],
         if rt.get("open_rows"):
             out.append(f"  未闭环台账行(exit_price=0): {len(rt['open_rows'])} 笔 "
                        f"→ {', '.join(r['symbol'] for r in rt['open_rows'][:6])}")
+
+    # 回合 (券商真值派生, 批 D) — **港美两段都有**, 与上面的决策级台账并列且标明来源
+    if drt is not None:
+        tz = (window or {}).get("tz", "本地")
+        if drt["state"] == "OK":
+            s = drt["summary"]
+            if s.get("win_rate_state") == "OK":
+                win = f"胜 {s['wins']}/{s['n_scored']} ({s['win_rate_pct']}%)"
+            elif s.get("win_rate_state") == "SMALL_SAMPLE":
+                # 计数是事实、比率是推断 ⇒ 小样本只给计数, 明说不给胜率
+                win = (f"胜 {s['wins']} / 负 {s['losses']} (计分 {s['n_scored']} 笔 < 5, "
+                       "**不给胜率**: 小样本比率无信息量)")
+            else:
+                # 覆盖率不足时**不给胜率**: 标的级排除往往排掉的正是亏损行,
+                # 照算会得到一个漂亮但假的胜率 (实测美股段曾算出 100%)。
+                # 刻意不把 win_rate_state 枚举直出: 状态码是给程序的, 报告要给人读
+                win = (f"**不给胜率**(计分覆盖率 {s.get('scored_coverage', 0):.0%} < 70%): "
+                       "排除掉的往往正是亏损行")
+            out.append(f"回合(券商真值派生 FIFO · **全量台账配对**/出场{tz}日归集/**毛**): "
+                       f"{s['n']} 笔 / "
+                       f"{s['symbols']} 标的 | {win} | 已实现(毛, 完整基准) "
+                       f"{_money(s['pnl_gross_complete_basis_only'], ccy)} | "
+                       f"中位持有 {s.get('median_holding_hours')}h")
+            out.append(f"  口径: 排除粒度=**标的级**(有未配对腿的标的整段不计分: "
+                       f"{', '.join(s.get('incomplete_basis_symbols') or []) or '无'}) ⇒ "
+                       f"金额只覆盖 {s['n_scored']}/{s['n']} 回合; 不含手续费(fee 全 NULL)")
+            # 两个"已实现"不等时**必须当场说清为什么** (同页两个数而不解释 = 读者自己挑一个信)
+            d_rz = ((deals.get("fifo") or {}).get("realized_gross_complete_basis_only")
+                    if deals.get("state") == "OK" else None)
+            rt_gross = s.get("pnl_gross_complete_basis_only")
+            if d_rz is not None and rt_gross is not None and abs(d_rz - rt_gross) > 0.005:
+                out.append(
+                    f"  ⚠ 与上面「已实现(仅用本窗口成交配对)」{_money(d_rz, ccy)} **不相等** — "
+                    f"本行是**全量台账配对**后按出场日归集, 上面那行只用窗口内成交配对; "
+                    f"跨窗持仓的进场腿落在窗口外会被误标基准不完整而整段排除 ⇒ 窗口口径偏低。"
+                    f"本窗口口径以**本行**为准, 两者都不含手续费")
+            out.append(f"  ⚠ 决策理由未捕获 {s.get('exit_reason_not_captured')}/{s['n']} 笔 "
+                       "(派生只有执行事实; 不用时间邻近推断 exit_reason = 不把猜测写成事实)")
+            for r in drt["rows"][:6]:
+                if r.get("basis") == "COMPLETE":
+                    out.append(
+                        f"  {r['symbol']:<12}{r['direction']:<6}"
+                        f"{(r['entry_date'] or '?')}→{(r['exit_date'] or '?')} "
+                        f"qty {r['qty']:>9,.0f} @{(r['entry_price'] or 0):>9,.2f}→"
+                        f"{(r['exit_price'] or 0):>9,.2f}  毛 {_money(r['pnl_gross'], ccy):>12}"
+                        f"  ({(r['pnl_pct'] or 0):+.2f}%)  持有 {r['holding_hours']}h")
+                else:
+                    out.append(
+                        f"  {r['symbol']:<12}{r['direction']:<6}"
+                        f"?→{(r['exit_date'] or '?')} qty {r['qty']:>9,.0f} "
+                        f"出场 @{(r['exit_price'] or 0):>9,.2f}  盈亏**未知**"
+                        f"(进场腿早于台账首日, 不编基准)")
+            if len(drt["rows"]) > 6:
+                out.append(f"  … 另 {len(drt['rows']) - 6} 笔派生回合未列 (看 "
+                           f"`live_round_trips` 或看板台账卡)")
+            if drt["open_lots"]:
+                syms = sorted({lot["symbol"] for lot in drt["open_lots"]})
+                out.append(f"  未闭环批次(= 在仓, **不算回合**): {len(drt['open_lots'])} 批 / "
+                           f"{len(syms)} 标的 → {', '.join(syms[:6])}")
+        else:
+            out.append(f"回合(券商真值派生): {drt['state']} — {drt.get('detail', '')}")
 
     # 台账 vs 券商 对账 (只在两侧都齐时才出差集)
     if recon is not None:
@@ -452,15 +553,18 @@ def render(start: str, end: str, us: Dict[str, Any], hk: Dict[str, Any],
              ""]
     lines += _render_market("US", us["deals"], us["positions"], us["audit"],
                             us["roundtrip"], us.get("reconcile"),
-                            window=(windows or {}).get("US"))
+                            window=(windows or {}).get("US"),
+                            drt=us.get("derived_rt"))
     lines += [""]
     lines += _render_market("HK", hk["deals"], hk["positions"], hk["audit"], None,
-                            hk.get("reconcile"), window=(windows or {}).get("HK"))
+                            hk.get("reconcile"), window=(windows or {}).get("HK"),
+                            drt=hk.get("derived_rt"))
     lines += ["", "【数据状态 (三态, 不伪装空)】"]
     for tag, sec in (("US成交", us["deals"]), ("US在仓", us["positions"]),
                      ("US回合台账", us["roundtrip"]), ("US对账", us.get("reconcile") or {}),
-                     ("US手动单", us["audit"]), ("HK成交", hk["deals"]),
-                     ("HK在仓", hk["positions"]), ("HK手动单", hk["audit"])):
+                     ("US回合派生", us.get("derived_rt") or {}), ("US手动单", us["audit"]),
+                     ("HK成交", hk["deals"]), ("HK在仓", hk["positions"]),
+                     ("HK回合派生", hk.get("derived_rt") or {}), ("HK手动单", hk["audit"])):
         lines.append(f"  {tag:<12} {sec.get('state','?')}")
     if gaps:
         lines += ["", "【已知缺口 (如实登记, 不让读报告的人自己发现)】"]
@@ -479,8 +583,34 @@ def collect_gaps(us: Dict[str, Any], hk: Dict[str, Any]) -> List[str]:
             "因 `_record_manual_close` 委派签名漂移断链(券商已平仓、账本零记录), "
             "33d5568c 已修但**历史不可本地回补**; 券商真值层已回补成交流水, "
             "故本报告的成交/仓位可信、回合级 exit_reason 分析样本偏小")
-    gaps.append("港股**无回合台账**: 不进 trade_records ⇒ 无 exit_reason / thesis / "
-                "attribution, 港股复盘只能用成交流水 + FIFO + 仓位快照")
+    hk_drt = hk.get("derived_rt") or {}
+    if hk_drt.get("state") in ("OK", "NO_TRADES_IN_WINDOW"):
+        gaps.append(
+            "港股**无决策级回合台账**: 不进 trade_records ⇒ 无 exit_reason / thesis / "
+            f"attribution。批 D 已从券商真值层派生**执行级**回合 ({hk_drt.get('ledger_rows_market')} 笔"
+            f"({hk_drt.get('ledger_span', [None])[0]}~{hk_drt.get('ledger_span', [None])[1]}), "
+            "进出场时刻/价/量/毛盈亏/持有时长可用), 但**决策理由仍不可复盘** "
+            "(hk_manual_orders.jsonl 63 行里 reason 非空仅 7 行 ⇒ 派生不出 exit_reason, "
+            "也不做时间邻近推断 = 不把猜测写成事实)")
+    else:
+        gaps.append(f"港股回合数据不可用 (派生段 {hk_drt.get('state', '?')}): "
+                    "既不进 trade_records, 派生段又未出数 ⇒ 港股本期无法做回合级复盘")
+    # 胜率闸门: 覆盖率不足时报告里已经**不给胜率**, 这里把"为什么不给"写进缺口, 否则读者
+    # 只会以为漏印了一行 (与"三态不得伪装空"同族: 不给数也要说清楚为什么不给)
+    for tag, sec in (("US", us.get("derived_rt") or {}), ("HK", hk.get("derived_rt") or {})):
+        s = sec.get("summary") or {}
+        if s.get("win_rate_state") == "INSUFFICIENT_COVERAGE":
+            gaps.append(
+                f"{_MARKET_LABEL[tag]}派生回合**不给胜率**: 计分覆盖率仅 "
+                f"{s.get('scored_coverage', 0):.0%} ({s.get('n_scored')}/{s.get('n')}) < 70% —— "
+                f"成本基准不完整的标的({', '.join(s.get('incomplete_basis_symbols') or [])})"
+                "整段被排除, 而实盘亏损往往正集中在这些老仓上 (实测美股段照算会得 100% 胜率)。"
+                "要拿到可用胜率, 需把台账首日之前的持仓成本补齐或等回合样本自然累积")
+        elif s.get("win_rate_state") == "SMALL_SAMPLE":
+            gaps.append(
+                f"{_MARKET_LABEL[tag]}派生回合**不给胜率**: 本窗口计分仅 {s.get('n_scored')} 笔 "
+                f"(< 5) —— 胜负计数如实给, 但比率在小样本上无信息量 (2 笔的 100% 与 50 笔的 "
+                "100% 在纸面上长得一样)。要判胜率请拉长窗口或等样本累积")
     if us["deals"].get("state") == "OK" and us["deals"].get("fee_rows_null"):
         gaps.append("所有金额为**毛/成交额**: 富途 deal 级不返回手续费(fee 全 NULL), "
                     "不得当净额用 (本仓已有「毛 edge 修到 0 仍净亏」的费用判决书)")
@@ -497,7 +627,10 @@ def collect_gaps(us: Dict[str, Any], hk: Dict[str, Any]) -> List[str]:
         gaps.append(
             f"美股台账有 {len(recon['orphans'])} 笔孤儿在仓行"
             f"({', '.join(recon['orphans'])}): 券商已无此仓而台账 exit_price 仍为 0 = "
-            "断链期平仓未落账的残留。这批行的盈亏**永久缺失**, 不要把它们当在仓念")
+            "断链期平仓未落账的残留。这批行的盈亏**永久缺失**, 不要把它们当在仓念。"
+            "处置(2026-09-08 用户裁「需要，继续」⇒ 代裁并记档): **永久标注缺失、不回填** "
+            "`exit_price`/`exit_time` —— 回填等于编造一笔不存在的成交, 而编出来的平仓会直接"
+            "进胜率与 exit_reason 分布 (disposition=PERMANENT_GAP_NO_BACKFILL)")
     if recon.get("state") == "OK" and recon.get("untracked"):
         gaps.append(
             f"美股券商有仓但台账无在仓行: {', '.join(recon['untracked'])} ⇒ "
@@ -543,12 +676,22 @@ def default_window(days: int) -> tuple:
 def build(days: int, end_date: Optional[str]) -> Dict[str, Any]:
     win = market_windows(days, end_date)
     us_w, hk_w = win["US"], win["HK"]
+    # 未闭环批次(在仓)一次派生、两段共用: 派生必须用**全量**台账 (窗口截断会把进场腿
+    # 落在窗口外的完整回合误标成基准不完整), 故不在各段里各派一次。
+    try:
+        from app.web_dashboard import live_ledger
+        open_lots = live_ledger.build_round_trips(live_ledger.read_all_deals())["open_lots"]
+    except Exception as exc:  # noqa: BLE001 — 派生不可用不得让周报不出, 段内自报 UNAVAILABLE
+        print(f"[live_weekly_review] ⚠ 回合派生不可用(报告仍出): {exc}", file=sys.stderr)
+        open_lots = []
     us = {"deals": deal_section("US", us_w["start"], us_w["end"]),
           "positions": position_section("US", us_w["end"]),
           "roundtrip": roundtrip_section(us_w["start"], us_w["end"]),
+          "derived_rt": derived_roundtrip_section("US", us_w["start"], us_w["end"], open_lots),
           "audit": manual_activity_section(us_w["start"], us_w["end"], "US")}
     hk = {"deals": deal_section("HK", hk_w["start"], hk_w["end"]),
           "positions": position_section("HK", hk_w["end"]),
+          "derived_rt": derived_roundtrip_section("HK", hk_w["start"], hk_w["end"], open_lots),
           "audit": manual_activity_section(hk_w["start"], hk_w["end"], "HK")}
     # 对账要等两侧都算完 (缺一侧的差集会把正常在仓报成孤儿, 比不对账更坏)
     us["reconcile"] = reconcile_section("US", us["roundtrip"], us["positions"])

@@ -2108,6 +2108,62 @@
                 : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2});
         }
 
+        // 批 D (RFC-078 §8): 回合(券商真值派生) — **只加一行**, 不做第二张成交/回合表。
+        // 本页已有「交易记录」= trade_records 决策台账 + 审计; 派生回合是券商成交的另一种
+        // 粒度, 并列两张表 = 同一笔钱在同页出现两次 (信噪比反向退化)。两层必须**自陈**不是
+        // 同一层, 否则会互相冒充 (决策台账有 exit_reason 但断链过; 派生层不断链但无理由)。
+        function _usRtLine(d) {
+            const rt = d.round_trips || {};
+            if (!rt.state) return '';
+            if (rt.state === 'OK') {
+                const rs = rt.summary || {};
+                // 与成交层那个"已实现"是**两种配对口径**, 不等时必须当场解释 (同页两个数
+                // 而不解释 = 让读者自己挑一个信): 本行=全量台账配对后按出场日归集;
+                // 成交层=仅用本窗口成交配对 (跨窗持仓的进场腿在窗口外 ⇒ 被整段排除 ⇒ 偏低)。
+                const fz = (d.fifo || {}).realized_gross_complete_basis_only;
+                const rtz = rs.pnl_gross_complete_basis_only;
+                const diffNote = (d.state === 'OK' && fz != null && rtz != null
+                    && Math.abs(fz - rtz) > 0.005)
+                    ? '<br><span style="color:#fbbf24">⚠ 与上面「FIFO 已实现(仅用本窗口成交配对)」'
+                      + _usMoney(fz) + ' <b>不相等</b>: 本行是全量台账配对后按出场日归集, '
+                      + '跨窗持仓的进场腿落在窗口外会被误标基准不完整而整段排除 ⇒ 窗口口径偏低。'
+                      + '本窗口以<b>本行</b>为准, 两者都不含手续费。</span>'
+                    : '';
+                // 胜率过闸门才给: 计数是事实、比率是推断 (小样本/低覆盖率的比率会误导)
+                const win = (rs.win_rate_state === 'OK')
+                    ? '胜 ' + (rs.wins || 0) + '/' + (rs.n_scored || 0) + ' (' + rs.win_rate_pct + '%)'
+                    : '<b style="color:#fbbf24">不给胜率</b> (' + (rs.win_rate_state === 'SMALL_SAMPLE'
+                        ? '计分仅 ' + (rs.n_scored || 0) + ' 笔 < 5, 小样本比率无信息量'
+                        : '计分覆盖率 ' + Math.round((rs.scored_coverage || 0) * 100)
+                          + '% < 70%, 排除掉的往往正是亏损行') + ')';
+                return '<br>回合(<span style="color:#fbbf24">券商真值派生 FIFO · 全量台账配对 · 毛'
+                    + '</span>): <b>'
+                    + (rs.n || 0) + '</b> 笔 / ' + (rs.symbols || 0) + ' 标的 · ' + win
+                    + ' · 已实现(毛, 完整基准, 按出场日归集) <b>' + _usMoney(rtz) + '</b>'
+                    + ' · 中位持有 ' + (rs.median_holding_hours == null ? '--' : rs.median_holding_hours) + 'h'
+                    + diffNote
+                    + '<br><span style="color:#8b949e">⚠ 派生回合只有**执行事实**: 决策理由未捕获 '
+                    + (rs.exit_reason_not_captured || 0) + '/' + (rs.n || 0) + ' 笔'
+                    + ' (不做时间邻近推断 = 不把猜测写成事实)'
+                    + ' · 与下表「交易记录」(trade_records 决策台账)**不是同一层**, 两者不得互相冒充'
+                    + ' · 未闭环批次(= 在仓, **不算回合**) ' + (rt.open_lots_n || 0) + ' 批'
+                    + ((rt.open_lots_symbols || []).length
+                        ? ': ' + escHtml(rt.open_lots_symbols.join(', ')) : '')
+                    + '</span>';
+            }
+            if (rt.state === 'NO_ROUNDS_IN_WINDOW') {
+                return '<br><span style="color:#8b949e">回合(派生): 本窗口无**了结**回合 — 台账累计 '
+                    + (rt.ledger_rows || 0) + ' 笔 ⇒ 是真没了结, 不是没派生; 未闭环批次 '
+                    + (rt.open_lots_n || 0) + ' 批 = 仍在仓</span>';
+            }
+            if (rt.state === 'NO_DATA') {
+                return '<br><span style="color:#8b949e">回合(派生): 台账一行回合都没有 = 还没派生过, '
+                    + '这**不是**"零回合" — 点「回补」会一并派生</span>';
+            }
+            return '<br><span style="color:#f87171">回合(派生): ' + escHtml(rt.state)
+                + ' — 该段未出数, 不是零回合</span>';
+        }
+
         async function loadUsLedger() {
             const el = document.getElementById('ledgerStrip');
             if (!el) return;
@@ -2141,19 +2197,19 @@
                 + ' <button class="btn btn-ghost btn-sm" id="usLedgerSync" onclick="syncUsLedger()">回补</button>';
             if (d.state === 'NO_DATA') {
                 el.innerHTML = head + ': <span style="color:#fbbf24">台账为空 = 还没回补过, '
-                    + '这**不是**"本期零成交"</span>' + tail;
+                    + '这**不是**"本期零成交"</span>' + _usRtLine(d) + tail;
                 return;
             }
             if (d.state !== 'OK') {
                 el.innerHTML = head + ': <span style="color:#fbbf24">本期无成交 '
-                    + '(台账有数据 ⇒ 是真没交易, 不是没同步)</span>' + tail;
+                    + '(台账有数据 ⇒ 是真没交易, 不是没同步)</span>' + _usRtLine(d) + tail;
                 return;
             }
             const s = d.summary || {}, f = d.fifo || {};
             let html = head + ': <b>' + (s.n || 0) + '</b> 笔成交 / ' + (s.symbols || 0)
                 + ' 标的 · 开 ' + _usMoney(s.open_amount) + ' · 平 ' + _usMoney(s.close_amount)
                 + ' · 净现金流 <b>' + _usMoney(s.net_cash) + '</b>'
-                + ' · FIFO 已实现(<span style="color:#fbbf24">毛</span>) <b>'
+                + ' · FIFO 已实现(<span style="color:#fbbf24">毛</span>, 仅用本窗口成交配对) <b>'
                 + _usMoney(f.realized_gross_complete_basis_only) + '</b>'
                 + ' <span style="color:#fbbf24">不含手续费(' + (s.fee_rows_null || 0) + '/'
                 + (s.n || 0) + ' 笔 fee=NULL), 不得当净额用</span>';
@@ -2164,6 +2220,7 @@
             if (s.unknown_side_rows) {
                 html += '<br>⚠ 未见过的方向 ' + s.unknown_side_rows + ' 笔 (未计入开/平, 不猜方向)';
             }
+            html += _usRtLine(d);
             html += '<br><span style="color:#8b949e">台账↔券商对账 (孤儿在仓行 / 未入账仓) 见周一实盘周报'
                 + ' — 下表是回合台账+审计, 断链期 (2026-06-19~09-08) 的平仓不在下表</span>' + tail;
             el.innerHTML = html;

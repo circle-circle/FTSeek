@@ -700,67 +700,142 @@ def test_reconcile_sim_exits_still_gate_main_chain(tmp_path, monkeypatch):
 #  H. 存量数据回归 (只读现库; 无库则跳过)
 # ═══════════════════════════════════════════════════════════════════════
 
-_LIVE_DB = PROJECT_ROOT / "data" / "ftseek_us.db"
+# RFC-078 批A (库级隔离) 后账本分两本: **实盘** = ftseek_us_live.db / **模拟** = ftseek_us.db。
+# 本节原 `_LIVE_DB` 名义叫 LIVE、实体却单指 **sim** 库 (`ftseek_us.db`) ⇒ 名实错位; 而尺度
+# 不变量对两本账本都该成立 (读方 `_calc_hold_days` / `_reconcile_position_store` 两边都会被喂)。
+# 故改为枚举**现存**账本库逐本断言, 并把库标签带进失败信息 (哪本账本回潮一目了然)。
+_LEDGER_DBS = tuple(
+    (label, path)
+    for label, path in (
+        ("live", PROJECT_ROOT / "data" / "ftseek_us_live.db"),
+        ("sim", PROJECT_ROOT / "data" / "ftseek_us.db"),
+    )
+    if path.exists()
+)
 
 
-@pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
+def _ledger_rows(sql):
+    """逐账本库**只读**取行, 产出 `(库标签, 行)`; 库不存在则该本不产出。"""
+    for label, path in _LEDGER_DBS:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            for row in conn.execute(sql):
+                yield label, row
+        finally:
+            conn.close()
+
+
+# 实盘账本**已登记**的负持仓时长债 (2026-09-09 把本节扩到 live 本时咬出, 见 RFC-078 §8.8):
+# US.SPCX 的 `exit_time` 丢了微秒 (`…54.409566` → `…54`) ⇒ −0.4096s。这是**亚秒截断**类,
+# 与本节主治的**跨尺相减**类 (−12h 量级) 不是一回事 ⇒ 不并入同一判据, 也不就地改真钱账本
+# 字节 (守"本批未改任何存储字节"同纪律)。sim 本 801 行同款复查为 0。
+#
+# 双闸门 (各自**已证伪可达**, 勿当死代码删掉):
+#   ① 白名单按 (symbol, entry_time, exit_time) **原文三元组** ⇒ 实盘负值只允许这一行原文,
+#      债不得增长。实测注入同幅度 US.NEWDEBT (−0.4096s) 与跨尺 US.SCALEBACK (−43,800s) 均咬出;
+#      删掉白名单行本身 (上游修好) 不误红 ⇒ 是**上界**, 不是硬编码计数。
+#   ② 幅度上界: 三元组钉死原文 ⇒ 正常态下 Δ 恒 −0.4096s, 本闸门**不触发**; 它守的是
+#      **解析器契约漂移**把白名单行自己撑大 (原文一字未动 ⇒ ①必沉默)。实测把 live 副本裁到
+#      只剩该行 + 注入"带微秒的 naive 串改判 UTC"的漂移 ⇒ Δ 撑成 −28,800.41s ⇒ 独立咬出。
+_LIVE_NEG_DEBT_ROWS = frozenset({
+    ("US.SPCX", "2026-06-13T03:35:54.409566", "2026-06-13T03:35:54"),
+})
+_LIVE_NEG_DEBT_CEILING_SECONDS = 1.0
+
+
+def _synthetic_position_rows():
+    """构造"活仓"样本 `(entry_time 原文, 钉住的 avg)`, 使尺度不变量**不依赖账户当下是否有仓**。
+
+    覆盖解析器契约认得的 2 种尺度: aware-ET+'T' / naive-CST+'T'。刻意**不含** naive-UTC+空格
+    那一种 — 契约把 naive 一律当 CST, 该尺度是已登记的 B1 第五阶债 (由
+    `test_stage5_ledger_columns_not_flipped_yet` 等钉住), 不在本例断言范围。
+
+    偏移取 12/36/60h: 距日界都 ≥12h ⇒ 同日多次运行结论稳定; 且 +12h 偏置足以把 `hold_days`
+    推高一档 (12h→1≠0、36h→2≠1) ⇒ 有证伪力。`avg` 钉 1 使 Rule 4 阈值 `avg*1.5=1.5` 正好
+    卡在 36h 样本的真值(1)与偏置值(2)之间 ⇒ Rule 4 那一例在空仓时也不退化成恒等式。
+    """
+    now = now_et()
+    rows = []
+    for hours in (12, 36, 60):
+        inst = now - timedelta(hours=hours)
+        rows.append((inst.isoformat(), 1))
+        rows.append((inst.astimezone(CST).replace(tzinfo=None).isoformat(), 1))
+    return rows
+
+
+_ACTIVE_POSITION_SQL = "SELECT symbol, direction, entry_time FROM open_positions WHERE size > 0"
+
+
+@pytest.mark.skipif(not _LEDGER_DBS, reason="两本账本库均不存在")
 def test_live_db_has_no_negative_holding_duration():
     """全库回归: 修复前 16 行 `julianday(exit)-julianday(entry) < 0`, 修复后必须为 0。
 
     本批**未改任何存储字节** — 16 行的原文仍在库里, 只是读方不再跨尺相减。
+    RFC-078 批A 后**逐本**查 (2026-09-09 实测: live 20 行带退出 / sim 801 行)。
+    实盘账本查出 **1 行**负值 = 亚秒截断类, 已登记为 `_LIVE_NEG_DEBT_ROWS` — 不当 0 掩盖,
+    也不许增长或变大幅度 (见该常量注释)。
     """
-    conn = sqlite3.connect(f"file:{_LIVE_DB}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
-            "SELECT entry_time, exit_time FROM trade_records "
-            "WHERE entry_time IS NOT NULL AND exit_time IS NOT NULL "
-            "AND entry_time<>'' AND exit_time<>''"
-        ).fetchall()
-    finally:
-        conn.close()
-    assert rows, "现库无带退出的记录, 本测试失去意义"
+    rows = list(_ledger_rows(
+        "SELECT symbol, entry_time, exit_time FROM trade_records "
+        "WHERE entry_time IS NOT NULL AND exit_time IS NOT NULL "
+        "AND entry_time<>'' AND exit_time<>''"
+    ))
+    assert rows, "两本账本均无带退出的记录, 本测试失去意义"
     negative = []
     unparsed = []
-    for entry_raw, exit_raw in rows:
+    for label, (symbol, entry_raw, exit_raw) in rows:
         e, x = parse_ledger_ts(entry_raw), parse_ledger_ts(exit_raw)
         if e is None or x is None:
-            unparsed.append((entry_raw, exit_raw))
+            unparsed.append((label, symbol, entry_raw, exit_raw))
             continue
-        if (x - e).total_seconds() < 0:
-            negative.append((entry_raw, exit_raw))
-    assert not unparsed, f"现库有解析不出的账本时间串: {unparsed[:5]}"
-    assert not negative, f"仍有负持仓时长 (跨尺相减未修净): {negative[:5]}"
+        delta = (x - e).total_seconds()
+        if delta < 0:
+            negative.append((label, symbol, entry_raw, exit_raw, delta))
+    assert not unparsed, f"账本有解析不出的时间串: {unparsed[:5]}"
+
+    non_live = [n for n in negative if n[0] != "live"]
+    assert not non_live, f"仍有负持仓时长 (跨尺相减未修净): {non_live[:5]}"
+
+    live = [n for n in negative if n[0] == "live"]
+    unregistered = [n for n in live if (n[1], n[2], n[3]) not in _LIVE_NEG_DEBT_ROWS]
+    assert not unregistered, (
+        f"实盘账本出现**未登记**的负持仓时长 (登记债不得增长): {unregistered[:5]} — "
+        f"若确属新债, 先归因 (亚秒截断 / 跨尺相减) 再登记入 _LIVE_NEG_DEBT_ROWS 与 RFC-078 §8.6")
+    over_ceiling = [n for n in live if abs(n[4]) >= _LIVE_NEG_DEBT_CEILING_SECONDS]
+    assert not over_ceiling, (
+        f"实盘账本负值幅度 ≥{_LIVE_NEG_DEBT_CEILING_SECONDS}s ⇒ 已不是亚秒截断类, "
+        f"疑为 −12h 级尺度回潮: {over_ceiling[:5]}")
 
 
-@pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
+@pytest.mark.skipif(not _LEDGER_DBS, reason="两本账本库均不存在")
 def test_live_db_timestamps_all_parseable():
-    """全库 2382 个账本时间值必须 100% 可解析 — 解析器的全覆盖性实证。"""
-    conn = sqlite3.connect(f"file:{_LIVE_DB}?mode=ro", uri=True)
-    try:
-        total = unparsed = 0
-        for col in ("entry_time", "exit_time", "created_at"):
-            for (v,) in conn.execute(
-                f"SELECT {col} FROM trade_records WHERE {col} IS NOT NULL AND {col}<>''"
+    """两本账本的账本时间值必须 100% 可解析 — 解析器的全覆盖性实证。
+
+    2026-09-09 逐本实测: live 69 值 (trade_records 60 + open_positions 9) / sim 2403 值,
+    合计 2472 值 0 不可解析。live 账本里 `2026-06-15`、`2026-06-25 14:19:53` 这类
+    **纯日期 / 空格分隔**的旧写方也在覆盖内。
+    """
+    total = unparsed = 0
+    bad = []
+    for table, cols in (
+        ("trade_records", ("entry_time", "exit_time", "created_at")),
+        ("open_positions", ("entry_time", "updated_at")),
+    ):
+        for col in cols:
+            for label, (value,) in _ledger_rows(
+                f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL AND {col}<>''"
             ):
                 total += 1
-                if parse_ledger_ts(v) is None:
+                if parse_ledger_ts(value) is None:
                     unparsed += 1
-        for col in ("entry_time", "updated_at"):
-            for (v,) in conn.execute(
-                f"SELECT {col} FROM open_positions WHERE {col} IS NOT NULL AND {col}<>''"
-            ):
-                total += 1
-                if parse_ledger_ts(v) is None:
-                    unparsed += 1
-    finally:
-        conn.close()
+                    bad.append((label, table, col, value))
     assert total > 0
-    assert unparsed == 0, f"{unparsed}/{total} 个账本时间值解析不出"
+    assert unparsed == 0, f"{unparsed}/{total} 个账本时间值解析不出: {bad[:5]}"
 
 
-@pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
+@pytest.mark.skipif(not _LEDGER_DBS, reason="两本账本库均不存在")
 def test_live_positions_hold_days_match_true_instant():
-    """端到端回归: 现库活仓的 `hold_days` 必须等于**按正确尺度解析后的真值**。
+    """端到端回归: 活仓的 `hold_days` 必须等于**按正确尺度解析后的真值**。
 
     这条断言是**时间无关**的 (真值与实测同源同时刻), 故可作为常驻不变量。
 
@@ -774,55 +849,70 @@ def test_live_positions_hold_days_match_true_instant():
     2 倍)。20:46 那次快照恰好在日界翻转前约 1 小时, 使"Rule 4 不触发"看起来像不变量 —
     **把时间相关的业务结论当成不变量, 是这类"实测取样即断言"测试的典型陷阱**。
     现改为断言**尺度不变量** (见下一例), 业务结论不再入断言。
+
+    ⚠️ **第二次同款陷阱 (2026-09-09 00:00 CST), 记档**: 原 `assert rows, "现库无活仓"` 把
+    "账户有活仓"当成不变量 ⇒ 误红。取证: **不是回归、不是删仓** — sim playbook 于
+    23:56:27 以 `DEAD_SIGNAL_EXIT` 平掉最后一只 US.BIDU (env=sim), `[US Sync] Done |
+    Futu: 0 | 主线DB: 0 | playbook自管: 0 | 一致性: ✓`; 真钱 live 库 8 行与 21:11 备份
+    逐字一致 (未被动); 批A 只**新增** `get_dashboard_db()`, 未改全局解析器
+    (`get_main_db`/`get_trade_records_db` 仍指 sim 本) ⇒ 与本事件无关。**空仓是业务态**。
+    空集上全称命题平凡成立, 但"平凡通过"= 覆盖丢失 ⇒ 现常驻并入构造样本
+    (`_synthetic_position_rows`), 使本例不再依赖账户状态; 有真仓时真仓照查。
     """
     from app.plan.position_intelligence import _calc_hold_days
 
-    conn = sqlite3.connect(f"file:{_LIVE_DB}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
-            "SELECT symbol, direction, entry_time FROM open_positions WHERE size > 0"
-        ).fetchall()
-    finally:
-        conn.close()
-    assert rows, "现库无活仓"
+    rows = [
+        (label, symbol, entry_raw)
+        for label, (symbol, _direction, entry_raw) in _ledger_rows(_ACTIVE_POSITION_SQL)
+    ]
+    rows += [
+        ("synthetic", f"SYNTH{i}", entry_raw)
+        for i, (entry_raw, _avg) in enumerate(_synthetic_position_rows())
+    ]
     now = now_et()
-    for symbol, _direction, entry_raw in rows:
+    for label, symbol, entry_raw in rows:
         entry = parse_ledger_ts(entry_raw)
-        assert entry is not None, f"{symbol} entry_time 解析不出: {entry_raw!r}"
+        assert entry is not None, f"[{label}] {symbol} entry_time 解析不出: {entry_raw!r}"
         truth = (now - entry).days
         got = _calc_hold_days(entry_raw)
-        assert got == truth, f"{symbol}: hold_days={got} 与真值 {truth} 不符 (尺度偏置回潮)"
+        assert got == truth, (
+            f"[{label}] {symbol}: hold_days={got} 与真值 {truth} 不符 (尺度偏置回潮)")
 
 
-@pytest.mark.skipif(not _LIVE_DB.exists(), reason="现库不存在")
+@pytest.mark.skipif(not _LEDGER_DBS, reason="两本账本库均不存在")
 def test_live_positions_rule4_verdict_is_scale_invariant():
     """Rule 4 的判定必须**与尺度无关**: 原文串算出的结论 == 正确解析后算出的结论。
 
     这才是缺陷1 的可断言内核, 且**时间无关** — 无论 Rule 4 此刻该不该触发
     (那是随持仓时长变化的业务结论), "两种算法给出同一结论"必须恒成立。
     修复前二者必然分歧 (+12h 偏置使 hold_days 大一档 ⇒ 阈值 `avg*1.5` 更早被越过)。
+
+    活仓为空时 (2026-09-09 事件, 见上一例记档) 改用构造样本 + **钉住的 avg=1** 保持证伪力:
+    真仓的 `avg` 来自 `_get_avg_hold_days` 查历史, 构造标的无历史会落到默认值 3, 那会让
+    阈值 4.5 高于所有样本的 hold_days ⇒ 判定恒 False、两算法"错得一样也算通过"。钉 avg=1
+    才能让 36h 样本的真值(1)与偏置值(2)分居阈值 1.5 两侧。
     """
     from app.plan.position_intelligence import _calc_hold_days, _get_avg_hold_days
 
-    conn = sqlite3.connect(f"file:{_LIVE_DB}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
-            "SELECT symbol, direction, entry_time FROM open_positions WHERE size > 0"
-        ).fetchall()
-    finally:
-        conn.close()
-    assert rows, "现库无活仓"
+    rows = [
+        (label, symbol, direction, entry_raw, None)
+        for label, (symbol, direction, entry_raw) in _ledger_rows(_ACTIVE_POSITION_SQL)
+    ]
+    rows += [
+        ("synthetic", f"SYNTH{i}", "LONG", entry_raw, pinned_avg)
+        for i, (entry_raw, pinned_avg) in enumerate(_synthetic_position_rows())
+    ]
 
     def _rule4(hold_days, avg):
         return hold_days > 0 and avg > 0 and hold_days > avg * 1.5
 
     now = now_et()
-    for symbol, direction, entry_raw in rows:
+    for label, symbol, direction, entry_raw, pinned_avg in rows:
         entry = parse_ledger_ts(entry_raw)
-        assert entry is not None, f"{symbol} entry_time 解析不出: {entry_raw!r}"
-        avg = _get_avg_hold_days(symbol, direction)
+        assert entry is not None, f"[{label}] {symbol} entry_time 解析不出: {entry_raw!r}"
+        avg = _get_avg_hold_days(symbol, direction) if pinned_avg is None else pinned_avg
         from_raw = _rule4(_calc_hold_days(entry_raw), avg)
         from_instant = _rule4(max(0, (now - entry).days), avg)
         assert from_raw == from_instant, (
-            f"{symbol}: Rule 4 判定依赖尺度 (原文串={from_raw} / 正确瞬间={from_instant}, "
+            f"[{label}] {symbol}: Rule 4 判定依赖尺度 (原文串={from_raw} / 正确瞬间={from_instant}, "
             f"hold_days={_calc_hold_days(entry_raw)}, avg={avg}) ⇒ 截断偏移的偏置回潮")

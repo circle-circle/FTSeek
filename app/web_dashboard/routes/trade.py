@@ -240,6 +240,8 @@ def register(app, templates):
                 "summary": live_ledger.summarize_deals(deals),
                 "fifo": live_ledger.fifo_realized(deals),
                 "latest_positions": live_ledger.latest_snapshot("US", on_or_before=end),
+                # 批 D (RFC-078 §8): 回合(券商真值派生) — 看板只出**一行**, 不做第二张表
+                "round_trips": live_ledger.round_trip_panel("US", start, end),
                 "coverage": cov,
                 "currency": "USD",
                 "amount_caliber": "gross_deal_amount_no_fee",

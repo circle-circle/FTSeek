@@ -269,20 +269,40 @@ def test_end_to_end_report_structure(env):
     db = env["db"]
     _put_deal(db, "u1", "US", "US.TSLA", "BUY", 50, 360.0, "2026-09-03 10:00:00")
     _put_deal(db, "h1", "HK", "HK.00700", "BUY", 100, 440.0, "2026-09-03 10:00:00")
+    _put_deal(db, "h2", "HK", "HK.00700", "SELL", 100, 450.0, "2026-09-05 10:00:00")
     _put_snap(db, "2026-09-08", "US", "US.TSLA", 50, 360.0, 355.0, 17750.0, -250.0)
     _put_snap(db, "2026-09-08", "HK", "HK.00700", 100, 440.0, 435.0, 43500.0, -500.0)
+    # 批 D: 派生回合必须先落表, 否则该段只会报 NO_DATA (那也是合法态, 见下面第二个用例)
+    assert live_ledger.sync_round_trips()["inserted"] == 1
 
     data = lwr.build(7, "2026-09-08")
     report = lwr.render(data["start"], data["end"], data["us"], data["hk"], data["gaps"])
     assert "实盘周报" in report and "ftseek_us_live.db" not in report  # 只报文件名不报全路径
     assert "【美股 · 实盘】" in report and "【港股 · 实盘】" in report
     assert "【数据状态 (三态, 不伪装空)】" in report
-    for tag in ("US成交", "US在仓", "US回合台账", "US对账", "US手动单",
-                "HK成交", "HK在仓", "HK手动单"):
+    for tag in ("US成交", "US在仓", "US回合台账", "US对账", "US回合派生", "US手动单",
+                "HK成交", "HK在仓", "HK回合派生", "HK手动单"):
         assert tag in report, f"三态清单缺 {tag}"
     assert "【已知缺口" in report
-    assert "港股**无回合台账**" in report
+    # 批 D 后港股**有了执行级派生回合**, 但决策级仍缺 ⇒ 缺口措辞必须区分两者,
+    # 否则读者会以为"港股回合台账已建好、可以做 exit_reason 归因了" (那是把两层混成一层)
+    assert "港股**无决策级回合台账**" in report
+    assert "执行级" in report and "决策理由仍不可复盘" in report
+    assert "回合(券商真值派生 FIFO" in report, "港股段缺派生回合小节 (批 D 判据 8)"
     assert "毛/成交额" in report
+
+
+def test_end_to_end_report_structure_without_derived_rows(env):
+    """派生表为空时, 缺口必须说"派生段也没出数", 不得沿用"已有执行级回合"的措辞."""
+    db = env["db"]
+    _put_deal(db, "h1", "HK", "HK.00700", "BUY", 100, 440.0, "2026-09-03 10:00:00")
+    _put_snap(db, "2026-09-08", "HK", "HK.00700", 100, 440.0, 435.0, 43500.0, -500.0)
+    data = lwr.build(7, "2026-09-08")
+    assert data["hk"]["derived_rt"]["state"] == "NO_DATA"
+    gaps = "\n".join(data["gaps"])
+    assert "港股回合数据不可用" in gaps and "NO_DATA" in gaps
+    assert "已有执行级回合" not in gaps and "进出场时刻/价/量/毛盈亏" not in gaps, \
+        "派生段没出数时不得宣称港股已有回合级数据"
 
 
 def test_gaps_flag_orphan_ledger_rows(env):

@@ -201,3 +201,96 @@ def test_us_sync_endpoint_is_the_same_sync_all_as_hk():
     assert "live_ledger.sync_all" in us and "live_ledger.sync_all" in hk
     assert "两市场券商腿均不可达" in us and "两市场券商腿均不可达" in hk, \
         "全挂必须 503 且声明'不是零成交'; 一腿挂必须 PARTIAL 而不是 503 (否则好腿被坏腿掩盖)"
+
+
+# ══════════════════════════════════════════════════════════════════
+#  6. 批 D · 回合(券商真值派生) 的呈现契约
+# ══════════════════════════════════════════════════════════════════
+def test_batch_d_adds_one_line_not_a_second_table():
+    """派生回合与成交表是**同一批钱的两种粒度** ⇒ 两页都只许加一行, 不许加第二张表.
+
+    证伪: 往任一页塞 `roundtrip-tbody` / 第四张 `<table>` ⇒ 本条转红。
+    """
+    hk, us_tmpl, us_js = _src(HK_TMPL), _src(US_TMPL), _src(US_JS)
+    for banned in ("roundtrip-tbody", "rt-tbody", "round-trips-table"):
+        assert banned not in hk and banned not in us_tmpl and banned not in us_js, \
+            f"批 D 出现了第二套回合表控件 {banned} (信噪比反向退化)"
+    assert hk.count("<table") == hk.count('class="hk-stack"') == 3, \
+        "港股页表数被批 D 改变了 (应仍是 持仓/今日订单/成交台账 三张)"
+    assert us_tmpl.count("<table") == us_tmpl.count('class="pos-stack"') == 2
+    # 港股: 回合行挂在既有的 ledger-ctx 里 (与成交表同一张卡, 不新开卡)
+    hk_blob = _slice(hk, "function renderLedger(", "async function syncLedger()")
+    assert "d.round_trips" in hk_blob and "券商真值派生 FIFO" in hk_blob
+    assert "round_trip_panel" not in hk_blob, "前端不得自己拼派生视图, 只展示后端给的字段"
+    # 美股: 回合行由 _usRtLine 给, 且**三个分支都要挂**(NO_DATA/非OK/OK),
+    # 只挂 OK 分支会让"台账为空"时读者以为根本没有回合这一层
+    calls = len(re.findall(r"(?<!function )_usRtLine\(d\)", us_js))
+    assert calls == 3, f"美股页有分支漏挂回合行 (定义 1 处 + 调用应 3 处, 实测调用 {calls})"
+
+
+def test_win_rate_gate_is_surfaced_not_bypassed():
+    """胜率过闸门才给: 计数是事实、比率是推断 (实测小样本/低覆盖率都会算出 100% 假胜率)."""
+    hk = _slice(_src(HK_TMPL), "function renderLedger(", "async function syncLedger()")
+    us = _slice(_src(US_JS), "function _usRtLine(", "async function loadUsLedger()")
+    for blob, name in ((hk, "港股页"), (us, "美股页")):
+        assert "不给胜率" in blob, f"{name}未声明胜率闸门"
+        # 两个闸门分支都要有处理: 样本量 (SMALL_SAMPLE) + 覆盖率 (scored_coverage)
+        assert "SMALL_SAMPLE" in blob, f"{name}缺样本闸门分支"
+        assert "scored_coverage" in blob, f"{name}缺覆盖率闸门分支"
+        assert "小样本比率无信息量" in blob, f"{name}缺样本闸门的理由 (只写状态码读者看不懂)"
+        assert "排除掉的往往正是亏损行" in blob, f"{name}缺覆盖率闸门的理由"
+        assert "win_rate_pct" in blob and "rs.wins" in blob, \
+            f"{name}必须给胜负计数(事实) + 过闸门时才给比率(推断)"
+        assert "'%'" not in blob.split("win_rate_state === 'OK'")[0], \
+            f"{name}在判闸门之前就拼了百分号 = 绕过闸门"
+
+
+def test_two_ledger_layers_do_not_impersonate_each_other():
+    """派生层(执行事实) 与 trade_records(决策记录) 必须自陈不是同一层.
+
+    病灶: 派生层不断链但**没有决策理由**, 决策台账有理由但断链过 3 个月 ⇒ 若两层标题
+    看起来一样, 读者会把派生的盈亏当成"有 exit_reason 可归因的回合"。
+    """
+    us = _slice(_src(US_JS), "function _usRtLine(", "async function loadUsLedger()")
+    assert "不是同一层" in us and "trade_records" in us
+    assert "决策理由未捕获" in us and "不把猜测写成事实" in us
+    hk = _slice(_src(HK_TMPL), "function renderLedger(", "async function syncLedger()")
+    assert "同一批钱的两种粒度" in hk, "港股页必须说明回合行与上面那张成交表不是两笔数据"
+    assert "决策理由未捕获" in hk and "不把猜测写成事实" in hk
+    # 未闭环批次(= 在仓) 必须在两页都出现: 否则"0 回合"会被读成"没有持仓"
+    assert "不算回合" in us and "不算回合" in hk
+
+
+def test_round_trip_line_reuses_the_same_read_only_endpoint():
+    """回合行必须复用 `GET /api/{hk,us}/ledger`, 不得新开一个端点或多打一次券商."""
+    hk_js = _slice(_src(HK_TMPL), "async function loadLedger()", "function renderLedger(")
+    us_js = _slice(_src(US_JS), "async function loadUsLedger()", "function renderUsLedger(")
+    assert hk_js.count("fetch(") == 1 and us_js.count("fetch(") == 1, \
+        "回合行另开了一次请求 (白耗一次往返, 且两个请求可能给出不一致的两层数据)"
+    assert "round_trip" not in hk_js and "round_trip" not in us_js, \
+        "回合数据必须随台账端点一起来, 不得单独取"
+    for path, name in ((HK_ROUTES, "港股"), (US_ROUTES, "美股")):
+        src = _src(path)
+        assert "round_trip_panel" in src, f"{name}端点未下发派生回合视图"
+        blob = _slice(src, f'@router.get("/api/{"hk" if name == "港股" else "us"}/ledger")',
+                      f'@router.post("/api/{"hk" if name == "港股" else "us"}/ledger/sync")')
+        assert "sync_all" not in blob and "sync_round_trips" not in blob, \
+            f"{name}的只读 GET 里出现了回补/派生写操作 (刷新页面就会打券商)"
+
+
+def test_two_realized_calibers_are_labeled_and_reconciled():
+    """同页出现两个"已实现"必须各自标出**配对口径**, 且不等时当场解释.
+
+    实测 (2026-09-08, 港股 30 天窗口): 成交层 HK$49,200 (仅用窗口内成交配对) vs
+    回合层 HK$59,775 (全量台账配对 + 按出场日归集) —— 差在跨窗持仓被窗口配对口径
+    误标"基准不完整"而**整段排除**。两个数都"看起来合理", 不标口径读者只会挑一个信。
+    """
+    hk = _slice(_src(HK_TMPL), "function renderLedger(", "async function syncLedger()")
+    us = _src(US_JS)
+    for blob, name in ((hk, "港股页"), (us, "美股页")):
+        assert "仅用本窗口成交配对" in blob, f"{name}未标成交层的配对口径"
+        assert "全量台账配对" in blob, f"{name}未标回合层的配对口径"
+        assert "不相等" in blob and "窗口口径偏低" in blob, \
+            f"{name}两个已实现不等时未解释 (同页两个数而不解释 = 让读者自己挑一个信)"
+        assert "为准" in blob, f"{name}未指明本窗口以哪个口径为准"
+        assert "0.005" in blob, f"{name}的相等判定必须是数值容差, 不得用字符串比"

@@ -1133,7 +1133,9 @@ function renderLedger(d) {
         parts.push(`本窗口 <b>${s.n ?? 0}</b> 笔 / ${s.symbols ?? 0} 标的 · 开仓额 <b>${hkMoney(s.open_amount)}</b>`
             + ` · 平仓额 <b>${hkMoney(s.close_amount)}</b> · 净现金流 <b class="${netCls}">${hkMoney(s.net_cash)}</b>`);
         const rz = f.realized_gross_complete_basis_only;
-        parts.push(`已实现 (<b class="cal">毛</b>, FIFO 完整基准): <b>${hkMoney(rz)}</b>`
+        // 标出**配对口径**: 本行只用窗口内成交配对 (跨窗持仓的进场腿在窗口外 ⇒ 被误标
+        // 基准不完整而整段排除 ⇒ 偏低)。不标出来读者会拿它与下面回合行的已实现直接对比。
+        parts.push(`已实现 (<b class="cal">毛</b>, FIFO 完整基准 · 仅用本窗口成交配对): <b>${hkMoney(rz)}</b>`
             + ` · <span class="cal">不含手续费 (${s.fee_rows_null ?? 0}/${s.n ?? 0} 笔 fee=NULL, 券商 deal 级不返回) ⇒ 不得当净额用</span>`);
         if ((f.incomplete_basis_symbols || []).length) {
             parts.push(`<span class="cal">⚠️ 成本基准不完整, 其盈亏**未计入**合计 (不编造基准: 不用现价/均价补成本): `
@@ -1144,6 +1146,45 @@ function renderLedger(d) {
         }
     } else {
         parts.push('<span class="cal">本窗口无成交 — 台账有数据 ⇒ 是真没交易, 不是没同步上</span>');
+    }
+    // 批 D (RFC-078 §8): 回合(券商真值派生) — 港股此前**没有任何回合级数据**。
+    // 刻意只加**一行**(不给明细表): 上面那张成交表与回合是**同一批钱的两种粒度**
+    // (逐笔 vs 一次进出), 同页并列两张表 = 信噪比反向退化, 明细留给周一实盘周报。
+    const rt = d.round_trips || {};
+    if (rt.state === 'OK') {
+        const rs = rt.summary || {};
+        const win = (rs.win_rate_state === 'OK')
+            ? `胜 ${rs.wins ?? 0}/${rs.n_scored ?? 0} (${rs.win_rate_pct}%)`
+            : `<b class="cal">不给胜率</b> (${rs.win_rate_state === 'SMALL_SAMPLE'
+                ? `计分仅 ${rs.n_scored ?? 0} 笔 < 5, 小样本比率无信息量`
+                : `计分覆盖率 ${((rs.scored_coverage || 0) * 100).toFixed(0)}% < 70%, 排除掉的往往正是亏损行`})`;
+        parts.push(`回合 (<b class="cal">券商真值派生 FIFO · 全量台账配对 · 毛</b>): <b>${rs.n ?? 0}</b> 笔 / `
+            + `${rs.symbols ?? 0} 标的 · ${win} · 已实现(毛, 完整基准, 按出场日归集) `
+            + `<b>${hkMoney(rs.pnl_gross_complete_basis_only)}</b> · 中位持有 `
+            + `${rs.median_holding_hours ?? '--'}h`);
+        // 两个"已实现"不等时**当场说清为什么** — 同页两个数而不解释 = 让读者自己挑一个信
+        const winRz = ((d.fifo || {}).realized_gross_complete_basis_only);
+        if (d.state === 'OK' && winRz != null && rs.pnl_gross_complete_basis_only != null
+            && Math.abs(winRz - rs.pnl_gross_complete_basis_only) > 0.005) {
+            parts.push(`<span class="cal">⚠️ 与上面「已实现(仅用本窗口成交配对)」${hkMoney(winRz)}`
+                + ` <b>不相等</b>: 回合行是**全量台账配对**后按出场日归集, 上面那行只用窗口内成交配对;`
+                + ` 跨窗持仓的进场腿落在窗口外会被误标基准不完整而整段排除 ⇒ 窗口口径偏低。`
+                + ` 本窗口以<b>回合行</b>为准, 两者都不含手续费。</span>`);
+        }
+        parts.push(`<span class="cal">⚠️ 派生回合只有**执行事实**: 决策理由未捕获 `
+            + `${rs.exit_reason_not_captured ?? 0}/${rs.n ?? 0} 笔 (不做时间邻近推断 = 不把猜测写成事实)`
+            + ` · 与上面那张成交表是**同一批钱的两种粒度**, 不是两笔数据`
+            + ` · 未闭环批次(= 在仓, **不算回合**) ${rt.open_lots_n ?? 0} 批`
+            + ((rt.open_lots_symbols || []).length ? ': ' + esc(rt.open_lots_symbols.join(', ')) : '')
+            + `</span>`);
+    } else if (rt.state === 'NO_ROUNDS_IN_WINDOW') {
+        parts.push(`<span class="cal">回合(派生): 本窗口无**了结**回合 — 台账累计 ${rt.ledger_rows ?? 0} 笔`
+            + ` ⇒ 是真没了结, 不是没派生; 未闭环批次 ${rt.open_lots_n ?? 0} 批 = 仍在仓</span>`);
+    } else if (rt.state === 'NO_DATA') {
+        parts.push('<span class="cal">回合(派生): 台账一行回合都没有 = 还没派生过, 这**不是**"零回合"'
+            + ' — 点「回补台账」会一并派生</span>');
+    } else if (rt.state) {
+        parts.push(`<span class="cal">回合(派生): ${esc(rt.state)} — 该段未出数, 不是零回合</span>`);
     }
     parts.push(covLine);
     ctx.innerHTML = parts.join('<br>');

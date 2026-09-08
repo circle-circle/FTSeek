@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -148,6 +148,8 @@ _IDX = (
     "CREATE INDEX IF NOT EXISTS idx_live_deals_mkt_date ON live_deal_records(market, deal_date)",
     "CREATE INDEX IF NOT EXISTS idx_live_deals_symbol ON live_deal_records(symbol, deal_date)",
     "CREATE INDEX IF NOT EXISTS idx_live_snap_mkt_date ON live_position_snapshots(market, snapshot_date)",
+    "CREATE INDEX IF NOT EXISTS idx_live_rt_mkt_exit ON live_round_trips(market, exit_date)",
+    "CREATE INDEX IF NOT EXISTS idx_live_rt_symbol ON live_round_trips(symbol, exit_date)",
 )
 
 
@@ -170,6 +172,7 @@ def ensure_tables(db_path: Optional[Path] = None) -> None:
     try:
         conn.execute(_DDL_DEALS)
         conn.execute(_DDL_SNAPSHOTS)
+        conn.execute(_DDL_ROUND_TRIPS)
         for stmt in _IDX:
             conn.execute(stmt)
         conn.commit()
@@ -509,7 +512,13 @@ def sync_position_snapshots(snapshot_date: Optional[str] = None) -> Dict[str, An
 
 
 def sync_all(days: int = 30) -> Dict[str, Any]:
-    """成交 + 持仓快照一并回补 (cron 入口). 各腿各自三态, 互不掩盖."""
+    """成交 + 持仓快照 + **派生回合** 一并回补 (cron 入口 / POST 端点). 各腿各自三态, 互不掩盖.
+
+    派生回合放在这里而不是各消费方各派一次: 派生是**本地只读计算 + 幂等落表**, 跟着回补走
+    ⇒ 台账一更新, 看板与周报看到的回合就是同一份 (否则会出现"成交是新的、回合是旧的")。
+    `overall` **只由两条券商腿决定** —— 派生失败不得把券商回补的成功掩盖成 PARTIAL,
+    反之派生的 status 单独如实上报。
+    """
     out: Dict[str, Any] = {"deals": sync_deals(days),
                            "positions": sync_position_snapshots()}
     statuses = [out["deals"].get("status"), out["positions"].get("status")]
@@ -519,6 +528,13 @@ def sync_all(days: int = 30) -> Dict[str, Any]:
         out["overall"] = "PARTIAL"
     else:
         out["overall"] = "OK"
+    try:
+        out["round_trips"] = sync_round_trips()
+    except Exception as exc:  # noqa: BLE001
+        # 不静默吞: 派生失败 = 回合段会停留在上一次的旧数据而读者无从得知 (三态纪律)
+        logger.warning("[实盘台账] 回合派生失败 (成交/快照回补不受影响): %s", exc)
+        out["round_trips"] = {"status": "DERIVE_FAILED", "detail": str(exc),
+                              "total_rows": None}
     return out
 
 
@@ -593,6 +609,18 @@ def ledger_coverage() -> Dict[str, Any]:
             "SELECT COUNT(*) FROM live_deal_records WHERE fee IS NULL").fetchone()[0]
         out["deals"]["unknown_market_rows"] = conn.execute(
             "SELECT COUNT(*) FROM live_deal_records WHERE currency IS NULL").fetchone()[0]
+        # 派生回合覆盖面 (批 D): 让"港股零回合"这类缺口同样能被一行查询发现
+        out["round_trips"] = {}
+        for m in MARKETS:
+            r = conn.execute(
+                "SELECT COUNT(*), MIN(exit_date), MAX(exit_date), COUNT(DISTINCT symbol), "
+                "SUM(CASE WHEN basis='COMPLETE' THEN 1 ELSE 0 END) "
+                "FROM live_round_trips WHERE market=?", (m,)).fetchone()
+            out["round_trips"][m] = {"rows": r[0], "first": r[1], "last": r[2],
+                                     "symbols": r[3], "complete_rows": r[4] or 0}
+        out["round_trips"]["exit_reason_not_captured"] = conn.execute(
+            "SELECT COUNT(*) FROM live_round_trips "
+            "WHERE exit_reason IS NULL").fetchone()[0]
     finally:
         conn.close()
     return out
@@ -641,6 +669,11 @@ def summarize_deals(deals: List[Dict[str, Any]]) -> Dict[str, Any]:
 def fifo_realized(deals: List[Dict[str, Any]]) -> Dict[str, Any]:
     """按标的 FIFO 配对成交流水, 算**毛**已实现盈亏.
 
+    **本函数不再自己实现 FIFO** —— 批 D (RFC-078 §8) 把配对逻辑收敛到 `build_round_trips`,
+    本函数只取它的 per-symbol 汇总。为什么必须收敛: 若"回合派生"与"已实现盈亏"各写一份
+    FIFO, 两者会在**同一个页面上给出两个不同的已实现盈亏**, 而且都看起来合理 (方向语义
+    各判一次 = 两边错得一样的同族错误)。一份实现、两个视图。
+
     **诚实优先**: 若某标的的平仓量超过台账内可见的开仓量 (仓位在台账首日之前就建好了),
     该标的标 `INCOMPLETE_COST_BASIS`, 其盈亏**不计入合计** —— 宁缺毋假: 用现价或均价
     编一个成本基准, 编出来的已实现盈亏会直接进复盘结论, 比留白更坏。
@@ -649,13 +682,142 @@ def fifo_realized(deals: List[Dict[str, Any]]) -> Dict[str, Any]:
     与本仓"毛 edge 修到 0 仍净亏"的费用判决书口径一致 —— 毛数不得当净数用。
 
     方向语义 (实测富途 trd_side 四值): BUY 开多 / SELL 平多 / SELL_SHORT 开空 /
-    BUY_BACK 平空 (开/平的粗分类见 `OPEN_SIDES`/`CLOSE_SIDES`; 本函数需要更细的四值
+    BUY_BACK 平空 (开/平的粗分类见 `OPEN_SIDES`/`CLOSE_SIDES`; 配对需要更细的四值
     语义 —— 平多与平空的盈亏符号相反, 粗分类不够用)。
     """
-    long_q: Dict[str, List[List[float]]] = {}
-    short_q: Dict[str, List[List[float]]] = {}
+    rt = build_round_trips(deals)
+    return {
+        "per_symbol": rt["per_symbol"],
+        "realized_gross_complete_basis_only": rt["realized_gross_complete_basis_only"],
+        "incomplete_basis_symbols": rt["incomplete_basis_symbols"],
+        "unknown_sides": rt["unknown_sides"],
+        "fee_included": False,
+        "caveat": "券商 deal 级不含手续费 ⇒ **毛**口径, 不得当净数用; "
+                  "INCOMPLETE_COST_BASIS 标的的成本早于台账首日, 其盈亏未计入合计 (不编造基准)",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  批 D · 回合台账 (券商真值派生, 市场中立) — RFC-078 §8
+# ══════════════════════════════════════════════════════════════════
+# 为什么需要: 港股此前**没有任何回合级数据** (不进 trade_records, jsonl 只有 submit/cancel),
+# 美股回合台账又断链过 3 个月 ⇒ 复盘只能看流水、看不到"一次进出赚亏多少、持有多久"。
+# 派生源只用 live_deal_records (券商真值层) ⇒ 不依赖下单代码是否记得写。
+#
+# 只能派生**执行事实**, 不能派生**决策理由**: hk_manual_orders.jsonl 63 行里 reason 非空仅
+# 7 行 ⇒ 靠时间邻近去"推断"exit_reason, 推断出来的理由会以事实的样子进复盘结论 (与"用现价
+# 编成本基准"同族) ⇒ 第一版 exit_reason 恒 NULL + exit_reason_state='NOT_CAPTURED'。
+
+_DDL_ROUND_TRIPS = """
+CREATE TABLE IF NOT EXISTS live_round_trips (
+    rt_id             TEXT PRIMARY KEY,
+    market            TEXT NOT NULL,
+    currency          TEXT,
+    symbol            TEXT NOT NULL,
+    stock_name        TEXT,
+    direction         TEXT,
+    qty               REAL,
+    entry_deal_id     TEXT,
+    entry_time        TEXT,
+    entry_date        TEXT,
+    entry_price       REAL,
+    exit_deal_id      TEXT,
+    exit_time         TEXT,
+    exit_date         TEXT,
+    exit_price        REAL,
+    pnl_gross         REAL,
+    pnl_pct           REAL,
+    holding_hours     REAL,
+    basis             TEXT,
+    fee_included      INTEGER NOT NULL DEFAULT 0,
+    exit_reason       TEXT,
+    exit_reason_state TEXT,
+    status            TEXT,
+    source            TEXT,
+    derived_at        TEXT
+)
+"""
+
+_RT_COLUMNS: Tuple[str, ...] = (
+    "rt_id", "market", "currency", "symbol", "stock_name", "direction", "qty",
+    "entry_deal_id", "entry_time", "entry_date", "entry_price",
+    "exit_deal_id", "exit_time", "exit_date", "exit_price",
+    "pnl_gross", "pnl_pct", "holding_hours", "basis", "fee_included",
+    "exit_reason", "exit_reason_state", "status", "source", "derived_at",
+)
+
+# 港股本地时 (HKT) 与 Asia/Shanghai 同为 UTC+8 且**均无 DST** ⇒ 同尺, 用 CST 即可。
+_RT_TZ = {"HK": "CST", "US": "ET"}
+
+# 胜率闸门: 计分回合占比低于此值 ⇒ **不给胜率** (返回 None + 状态), 而不是照算。
+# 为什么需要 (2026-09-08 实测, 判据 3 顺带咬出来的真问题): 标的级排除会把"有任一未配对腿"
+# 的标的**整段**排掉, 而实盘里亏损往往正集中在这些老仓上 ⇒ 实测全量 99 笔成交派生 59 回合,
+# 计分只剩 28 (覆盖率 47.5%), 胜率算出来 **96.4%** (27胜1负); 美股段更极端: 38 回合计分 11,
+# 9 笔亏损全落在被排除的 US.SNDK/US.BABA 里 ⇒ 该段胜率 **100%**。
+# 一个"看起来很漂亮"的胜率比没有胜率更坏: 它会直接进复盘结论并强化"我做对了"的错觉。
+# 金额合计仍照给 (它是"已知为真的部分之和", 且明示只覆盖 N/M 回合), 但胜率必须过闸门。
+_RT_MIN_SCORED_COVERAGE = 0.7
+
+# 小样本闸门: 计分回合少于此数 ⇒ 给**胜负计数**(事实)但不给**胜率**(推断)。
+# 为什么 (2026-09-08 实测): 7 天窗口下美股只有 2 笔、港股 6 笔派生回合, 覆盖率都是 100%
+# ⇒ 覆盖率闸门放行, 报告上就出现"胜 2/2 (100.0%)"。2 笔样本的 100% 与 50 笔样本的 100%
+# 在纸面上长得一模一样, 而前者毫无信息量 —— 与本仓"n≥8 才调 LLM 出题、n≥20 才毕业"
+# 的样本纪律同族: 计数是事实, 比率是推断, 推断要过样本门。
+_RT_MIN_SCORED_N = 5
+
+
+def _parse_deal_dt(market: str, raw: Optional[str]):
+    """把券商给的**市场本地 naive** `deal_time` 附上该市场时区.
+
+    实测格式 `2026-07-10 04:02:38.179` (各市场本地时, 见文件头"第二个实测发现")。
+    附尺而不是裸相减: 美股跨 DST 的回合裸减会差 1 小时; 且**只在同市场内相减**
+    (进场腿与出场腿必然同市场 —— 表按 symbol 分队列, symbol 自带市场前缀)。
+
+    ⚠ **附尺还不够** (2026-09-08 实测踩到): CPython 的 datetime 相减有一条既有语义 ——
+    两个 aware 对象若 `tzinfo` 是**同一个对象**, 相减时会**忽略 utcoffset**
+    ("both are aware and have the same tzinfo attribute, the tzinfo attributes are ignored")。
+    同市场的进场/出场腿正是同一个 tz 对象 ⇒ `exit_dt - entry_dt` 得到的是**墙钟差**而不是
+    绝对时刻差。实测 2026-03-07 09:00 EST → 03-08 09:00 EDT (跨 DST): 直接相减 **24.0h**,
+    而 `timestamp()` 差与转 UTC 相减都是 **23.0h** (真值 23h)。故一律用 `.timestamp()` 相减。
+    """
+    if not raw:
+        return None
+    from app.utils.timezone import CST as _CST, ET as _ET, _localize
+    txt = str(raw).strip()
+    naive = None
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
+                "%Y-%m-%dT%H:%M:%S"):
+        try:
+            naive = datetime.strptime(txt, fmt)
+            break
+        except ValueError:
+            continue
+    if naive is None:
+        logger.warning("[实盘台账] deal_time 解析失败, 持有时长留空 (不猜): %r", raw)
+        return None
+    return _localize(naive, _CST if _RT_TZ.get(market) == "CST" else _ET)
+
+
+def build_round_trips(deals: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """FIFO 配对成交流水 → **回合行** + per-symbol 汇总 (本仓唯一的 FIFO 实现).
+
+    返回:
+      `rows`       派生回合行 (列名与 `live_round_trips` 一致, 可直接 upsert)
+      `per_symbol` / `realized_gross_complete_basis_only` / `incomplete_basis_symbols`
+                   / `unknown_sides`  —— 与批 B 的 `fifo_realized` 返回结构逐字一致
+                   (该函数现委派本函数, 保证看板/周报/回合三处同一个数)
+      `open_lots`  未闭环的开仓批次 (= 在仓, **不落回合表**, 但必须可见:
+                   否则"派生 0 回合"会被读成"没有持仓" —— 三态纪律同族)
+
+    口径: `pnl_gross` 是**毛** (fee 全 NULL); `basis='INCOMPLETE_COST_BASIS'` 的行
+    盈亏为 **NULL** 且不计入合计 (开仓腿早于台账首日 ⇒ 不用现价/均价编基准)。
+    """
+    long_q: Dict[str, List[Dict[str, Any]]] = {}
+    short_q: Dict[str, List[Dict[str, Any]]] = {}
     per_symbol: Dict[str, Dict[str, Any]] = {}
     unknown_sides: Dict[str, int] = {}
+    rows: List[Dict[str, Any]] = []
+    derived_at = now_utc().isoformat(timespec="seconds")
 
     def slot(sym: str) -> Dict[str, Any]:
         return per_symbol.setdefault(sym, {
@@ -664,60 +826,335 @@ def fifo_realized(deals: List[Dict[str, Any]]) -> Dict[str, Any]:
             "open_qty_remaining": 0.0,
         })
 
-    for d in sorted(deals, key=lambda x: (x.get("deal_time") or "", x.get("deal_id") or "")):
+    ordered = sorted(deals, key=lambda x: (x.get("deal_time") or "", x.get("deal_id") or ""))
+    for d in ordered:
         sym = d.get("symbol")
         side = (d.get("trd_side") or "").upper()
         qty = float(d.get("qty") or 0.0)
         price = float(d.get("price") or 0.0)
         if not sym or qty <= 0:
             continue
+        market = d.get("market") or market_of(d.get("deal_market"), sym)
+        currency = d.get("currency") or _CURRENCY_BY_MARKET.get(market)
         s = slot(sym)
         s["legs"] += 1
-        if side == "BUY":
-            long_q.setdefault(sym, []).append([qty, price])
-        elif side == "SELL_SHORT":
-            short_q.setdefault(sym, []).append([qty, price])
-        elif side in ("SELL", "BUY_BACK"):
-            q = long_q.setdefault(sym, []) if side == "SELL" else short_q.setdefault(sym, [])
-            remain = qty
-            while remain > 1e-9 and q:
-                lot_qty, lot_price = q[0]
-                take = min(lot_qty, remain)
-                # SELL 平多: 卖价−成本; BUY_BACK 平空: 成本−买回价
-                pnl = ((price - lot_price) if side == "SELL"
-                       else (lot_price - price)) * take
-                s["realized_gross"] += pnl
-                s["matched"] += take
-                lot_qty -= take
-                remain -= take
-                if lot_qty <= 1e-9:
-                    q.pop(0)
-                else:
-                    q[0][0] = lot_qty
-            if remain > 1e-9:
-                s["unmatched"] = round(s["unmatched"] + remain, 6)
-                s["complete_basis"] = False
-            s["closed_qty"] += qty
-        else:
-            unknown_sides[side or "<empty>"] = unknown_sides.get(side or "<empty>", 0) + 1
 
+        if side in ("BUY", "SELL_SHORT"):
+            q = long_q if side == "BUY" else short_q
+            q.setdefault(sym, []).append({
+                "qty": qty, "price": price, "deal_id": d.get("deal_id"),
+                "time": d.get("deal_time"), "date": d.get("deal_date"),
+                "market": market, "currency": currency,
+                "stock_name": d.get("stock_name"),
+                "direction": "LONG" if side == "BUY" else "SHORT",
+            })
+            continue
+
+        if side not in ("SELL", "BUY_BACK"):
+            key = side or "<empty>"
+            unknown_sides[key] = unknown_sides.get(key, 0) + 1
+            continue
+
+        # SELL 只吃 long 队列 / BUY_BACK 只吃 short 队列 (混用会把空单盈利报成亏损)
+        direction = "LONG" if side == "SELL" else "SHORT"
+        q = (long_q if side == "SELL" else short_q).setdefault(sym, [])
+        exit_dt = _parse_deal_dt(market, d.get("deal_time"))
+        s["closed_qty"] += qty
+        remain, seq = qty, 0
+        while remain > 1e-9 and q:
+            lot = q[0]
+            take = min(lot["qty"], remain)
+            pnl = ((price - lot["price"]) if direction == "LONG"
+                   else (lot["price"] - price)) * take
+            entry_dt = _parse_deal_dt(lot["market"], lot["time"])
+            notional = lot["price"] * take
+            rows.append({
+                # rt_id 确定性: exit_deal_id 券商全局唯一 + seq 区分"一笔平仓吃掉多个批次"
+                "rt_id": f"{d.get('deal_id')}#{seq}",
+                "market": market, "currency": currency, "symbol": sym,
+                "stock_name": d.get("stock_name") or lot.get("stock_name"),
+                "direction": direction, "qty": round(take, 6),
+                "entry_deal_id": lot["deal_id"], "entry_time": lot["time"],
+                "entry_date": lot["date"], "entry_price": lot["price"],
+                "exit_deal_id": d.get("deal_id"), "exit_time": d.get("deal_time"),
+                "exit_date": d.get("deal_date"), "exit_price": price,
+                "pnl_gross": round(pnl, 6),
+                "pnl_pct": round(pnl / notional * 100.0, 4) if notional else None,
+                # 用绝对时刻相减, 不用 `exit_dt - entry_dt`: 同 tzinfo 对象会被 CPython
+                # 忽略偏移 ⇒ 跨 DST 的美股回合会多算 1 小时 (见 _parse_deal_dt 的实测记档)
+                "holding_hours": (round((exit_dt.timestamp() - entry_dt.timestamp()) / 3600.0, 2)
+                                  if (exit_dt is not None and entry_dt is not None) else None),
+                "basis": "COMPLETE", "fee_included": 0,
+                "exit_reason": None, "exit_reason_state": "NOT_CAPTURED",
+                "status": "CLOSED", "source": "broker_fifo", "derived_at": derived_at,
+            })
+            s["realized_gross"] += pnl
+            s["matched"] += take
+            lot["qty"] -= take
+            remain -= take
+            seq += 1
+            if lot["qty"] <= 1e-9:
+                q.pop(0)
+            else:
+                q[0]["qty"] = lot["qty"]
+        if remain > 1e-9:
+            # 平仓量超出台账内可见开仓量 ⇒ 单落一行, 进出场腿与盈亏全 NULL (不编基准)。
+            # 刻意**留行**而不是丢弃: 丢了就会让"平仓笔数"与成交流水对不上, 读者无从发现。
+            rows.append({
+                "rt_id": f"{d.get('deal_id')}#{seq}",
+                "market": market, "currency": currency, "symbol": sym,
+                "stock_name": d.get("stock_name"),
+                "direction": direction, "qty": round(remain, 6),
+                "entry_deal_id": None, "entry_time": None,
+                "entry_date": None, "entry_price": None,
+                "exit_deal_id": d.get("deal_id"), "exit_time": d.get("deal_time"),
+                "exit_date": d.get("deal_date"), "exit_price": price,
+                "pnl_gross": None, "pnl_pct": None, "holding_hours": None,
+                "basis": "INCOMPLETE_COST_BASIS", "fee_included": 0,
+                "exit_reason": None, "exit_reason_state": "NOT_CAPTURED",
+                "status": "CLOSED_NO_ENTRY_IN_LEDGER", "source": "broker_fifo",
+                "derived_at": derived_at,
+            })
+            s["unmatched"] = round(s["unmatched"] + remain, 6)
+            s["complete_basis"] = False
+
+    open_lots: List[Dict[str, Any]] = []
     for sym, s in per_symbol.items():
+        # 先按标的把毛盈亏圆到 2 位再求总 (与批 B 原实现逐字同序 ⇒ 两处同一个数)
         s["realized_gross"] = round(s["realized_gross"], 2)
         s["matched"] = round(s["matched"], 6)
         s["closed_qty"] = round(s["closed_qty"], 6)
-        s["open_qty_remaining"] = round(
-            sum(l[0] for l in long_q.get(sym, [])) + sum(l[0] for l in short_q.get(sym, [])), 6)
+        lots = [(l, "LONG") for l in long_q.get(sym, [])] + \
+               [(l, "SHORT") for l in short_q.get(sym, [])]
+        s["open_qty_remaining"] = round(sum(l["qty"] for l, _ in lots), 6)
         s["basis"] = "COMPLETE" if s["complete_basis"] else "INCOMPLETE_COST_BASIS"
+        for lot, dirn in lots:
+            open_lots.append({
+                "symbol": sym, "market": lot["market"], "currency": lot["currency"],
+                "direction": dirn, "qty": round(lot["qty"], 6),
+                "entry_price": lot["price"], "entry_time": lot["time"],
+                "entry_date": lot["date"], "entry_deal_id": lot["deal_id"],
+            })
+    open_lots.sort(key=lambda x: (x["symbol"], x["entry_time"] or "", x["entry_deal_id"] or ""))
 
     incomplete = sorted(k for k, v in per_symbol.items() if not v["complete_basis"])
     total = round(sum(v["realized_gross"] for v in per_symbol.values()
                       if v["complete_basis"]), 2)
     return {
+        "rows": rows,
         "per_symbol": per_symbol,
         "realized_gross_complete_basis_only": total,
         "incomplete_basis_symbols": incomplete,
         "unknown_sides": unknown_sides,
-        "fee_included": False,
-        "caveat": "券商 deal 级不含手续费 ⇒ **毛**口径, 不得当净数用; "
-                  "INCOMPLETE_COST_BASIS 标的的成本早于台账首日, 其盈亏未计入合计 (不编造基准)",
+        "open_lots": open_lots,
+        "n_rows": len(rows),
+        "n_complete": sum(1 for r in rows if r["basis"] == "COMPLETE"),
+        "n_incomplete": sum(1 for r in rows if r["basis"] != "COMPLETE"),
+    }
+
+
+def read_all_deals() -> List[Dict[str, Any]]:
+    """全量成交流水 (派生回合**必须**用全量, 见 `sync_round_trips` 的口径说明)."""
+    ensure_tables()
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM live_deal_records ORDER BY deal_time, deal_id").fetchall()]
+    finally:
+        conn.close()
+
+
+def sync_round_trips() -> Dict[str, Any]:
+    """从**全量**台账派生回合并 upsert (确定性 + 幂等).
+
+    ⚠ 派生用全量而不是某个窗口: 窗口截断会把"进场腿落在窗口外"的完整回合误标成
+    `INCOMPLETE_COST_BASIS` (盈亏变 NULL) ⇒ 窗口只能用于**展示**, 不能用于派生。
+    同理, 重跑会用新派生集**剪掉**已不存在的 rt_id (派生是确定性的 ⇒ 剪枝安全);
+    台账为空时**不剪** (那会把已有回合清空, 把"没同步"变成"没交易")。
+    """
+    ensure_tables()
+    deals = read_all_deals()
+    if not deals:
+        return {"status": "NO_DATA", "inserted": 0, "updated": 0, "pruned": 0,
+                "total_rows": _count_round_trips(),
+                "detail": "成交流水为空 — 台账还没回补过, 这**不是**零回合"}
+    rt = build_round_trips(deals)
+    now = now_utc().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        existing = {r[0] for r in conn.execute("SELECT rt_id FROM live_round_trips")}
+        cols = ", ".join(_RT_COLUMNS)
+        marks = ", ".join("?" * len(_RT_COLUMNS))
+        updates = ", ".join(f"{c}=excluded.{c}" for c in _RT_COLUMNS if c != "rt_id")
+        new_ids = set()
+        inserted = updated = 0
+        for row in rt["rows"]:
+            row = dict(row)
+            row["derived_at"] = now
+            rid = row["rt_id"]
+            new_ids.add(rid)
+            if rid in existing:
+                updated += 1
+            else:
+                inserted += 1
+            conn.execute(
+                f"INSERT INTO live_round_trips ({cols}) VALUES ({marks}) "
+                f"ON CONFLICT(rt_id) DO UPDATE SET {updates}",
+                tuple(row.get(c) for c in _RT_COLUMNS))
+        pruned = 0
+        stale = sorted(existing - new_ids)
+        if stale:
+            conn.executemany("DELETE FROM live_round_trips WHERE rt_id = ?",
+                             [(x,) for x in stale])
+            pruned = len(stale)
+        conn.commit()
+        total = conn.execute("SELECT COUNT(*) FROM live_round_trips").fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "status": "OK", "deals": len(deals), "inserted": inserted, "updated": updated,
+        "pruned": pruned, "total_rows": total,
+        "n_complete": rt["n_complete"], "n_incomplete": rt["n_incomplete"],
+        "open_lots": len(rt["open_lots"]),
+        "incomplete_basis_symbols": rt["incomplete_basis_symbols"],
+        "unknown_sides": rt["unknown_sides"],
+        "realized_gross_complete_basis_only": rt["realized_gross_complete_basis_only"],
+    }
+
+
+def _count_round_trips() -> int:
+    conn = _connect()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM live_round_trips").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def read_round_trips(start: Optional[str] = None, end: Optional[str] = None,
+                     market: Optional[str] = None) -> List[Dict[str, Any]]:
+    """读派生回合 (窗口按**出场日**, 与周报"出场日归集"同口径; 不传窗口 = 全量)."""
+    ensure_tables()
+    sql = "SELECT * FROM live_round_trips WHERE 1=1"
+    args: List[Any] = []
+    if market:
+        sql += " AND market = ?"
+        args.append(market)
+    if start:
+        sql += " AND exit_date >= ?"
+        args.append(start)
+    if end:
+        sql += " AND exit_date <= ?"
+        args.append(end)
+    sql += " ORDER BY exit_time DESC, rt_id DESC"
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
+    finally:
+        conn.close()
+
+
+def round_trip_panel(market: str, start: str, end: str) -> Dict[str, Any]:
+    """看板"一行"用的派生回合视图 (港美**共用**, 端点层不再各写一份).
+
+    三态与成交层同族且措辞自陈: `OK` / `NO_ROUNDS_IN_WINDOW` (台账有回合、本窗口没有
+    = 真没了结) / `NO_DATA` (台账一行回合都没有 = 还没派生过, **不是**零回合)。
+    """
+    rows = read_round_trips(start, end, market=market)
+    summary = summarize_round_trips(rows)
+    lots = [lot for lot in build_round_trips(read_all_deals())["open_lots"]
+            if lot.get("market") == market]
+    cov = (ledger_coverage().get("round_trips") or {}).get(market) or {}
+    ledger_rows = cov.get("rows") or 0
+    return {
+        "state": "OK" if rows else ("NO_DATA" if not ledger_rows else "NO_ROUNDS_IN_WINDOW"),
+        "summary": summary,
+        "n_in_window": len(rows),
+        "ledger_rows": ledger_rows,
+        "ledger_span": [cov.get("first"), cov.get("last")],
+        # 未闭环批次 = **在仓**, 不算回合; 必须给, 否则"0 回合"会被读成"没有持仓"
+        "open_lots_n": len(lots),
+        "open_lots_symbols": sorted({lot["symbol"] for lot in lots}),
+        "window": [start, end],
+        "window_tz": _TZ_LABEL.get(market),
+        "source": "broker_fifo(live_round_trips)",
+        "caliber": "gross_no_fee",
+    }
+
+
+def summarize_round_trips(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """派生回合的**毛**小结 (看板一行 / 周报一段共用).
+
+    合计口径与 `fifo_realized` **逐字一致** —— 这是判据 3 (看板/周报/回合三处不可能给出
+    两个不同的已实现盈亏) 的落点, 第一版就是在这里咬出真问题的:
+
+      · 排除粒度是**标的级**而不是行级: 某标的只要有任一条腿 `basis != COMPLETE`
+        (平仓量超出台账内可见开仓量), 该标的**全部**回合都不计分 —— 包括那些配对完整的行。
+        为什么不用行级 (行级会把已知为真的行留下, 数字更大更好看): 该标的的成本基准
+        已被证明不完整 ⇒ 它的 FIFO 队列本身就是残的, 残队列上配出来的"完整行"依赖
+        "先来的先卖"这个在缺腿情况下并不成立的假设 ⇒ 留着就是半真半假。宁缺毋假。
+      · 先按标的圆到 2 位再求总 (与 `build_round_trips` 的 per-symbol 圆整同序)。
+    """
+    per_symbol: Dict[str, float] = {}
+    wins = losses = flat = 0
+    incomplete = 0
+    reason_missing = 0
+    symbols = set()
+    holdings: List[float] = []
+    bad_symbols = {r["symbol"] for r in rows
+                   if r.get("basis") != "COMPLETE" or r.get("pnl_gross") is None}
+    for r in rows:
+        if r.get("symbol"):
+            symbols.add(r["symbol"])
+        if (r.get("exit_reason_state") or "NOT_CAPTURED") == "NOT_CAPTURED":
+            reason_missing += 1
+        if r["symbol"] in bad_symbols or r.get("pnl_gross") is None:
+            incomplete += 1
+            continue
+        per_symbol[r["symbol"]] = per_symbol.get(r["symbol"], 0.0) + float(r["pnl_gross"])
+        pnl = float(r["pnl_gross"])
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+        else:
+            flat += 1
+        if r.get("holding_hours") is not None:
+            holdings.append(float(r["holding_hours"]))
+    n_scored = wins + losses + flat
+    gross = round(sum(round(v, 2) for v in per_symbol.values()), 2)
+    coverage = round(n_scored / len(rows), 4) if rows else 0.0
+    if not rows:
+        win_rate_state = "NO_DATA"
+    elif n_scored == 0:
+        win_rate_state = "NO_SCORED_ROW"
+    elif coverage < _RT_MIN_SCORED_COVERAGE:
+        win_rate_state = "INSUFFICIENT_COVERAGE"
+    elif n_scored < _RT_MIN_SCORED_N:
+        win_rate_state = "SMALL_SAMPLE"
+    else:
+        win_rate_state = "OK"
+    return {
+        "n": len(rows), "symbols": len(symbols), "n_scored": n_scored,
+        "wins": wins, "losses": losses, "flat": flat,
+        # 胜率**只在过闸门时给**: 覆盖率不足时给数字 = 把"排除掉的正是亏损行"藏起来
+        "win_rate_pct": (round(100.0 * wins / n_scored, 1)
+                         if win_rate_state == "OK" else None),
+        "win_rate_state": win_rate_state,
+        "scored_coverage": coverage,
+        "pnl_gross_complete_basis_only": gross,
+        "incomplete_basis_rows": incomplete,
+        "incomplete_basis_symbols": sorted(bad_symbols),
+        "exit_reason_not_captured": reason_missing,
+        "median_holding_hours": (round(sorted(holdings)[len(holdings) // 2], 2)
+                                 if holdings else None),
+        "pnl_caliber": "gross_no_fee",
+        "caveat": ("毛口径 (fee 全 NULL); 排除粒度=**标的级** — "
+                   "有任一未配对腿的标的整段不计分 (含其配对完整的行), 与 fifo_realized 同口径; "
+                   f"金额合计只覆盖 {n_scored}/{len(rows)} 回合, 覆盖率不足 "
+                   f"{_RT_MIN_SCORED_COVERAGE:.0%} 或计分样本 < {_RT_MIN_SCORED_N} 笔时"
+                   "**不给胜率** (前者排除掉的往往正是亏损行; 后者是小样本比率无信息量)"),
+        "win_rate_caliber": ("分母只含**基准完整标的**的回合 — 基准不完整的标的盈亏未知, "
+                             "计入分母会虚高/虚低胜率"),
     }
