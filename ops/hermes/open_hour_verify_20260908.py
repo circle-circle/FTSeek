@@ -209,6 +209,59 @@ def main():
     except Exception as e:
         out.append(f"持仓查询失败: {e}")
 
+    # ── 项5: A/C 门影子样本落盘 (用户裁「不动」= 攒极端跳空样本的前提) ──
+    # 窗口 09:35-09:59 ET; 本核验 09:50/10:25 ET 均在窗口内/后。
+    # 9/8 实况: QCOM BUY +7.9% (C_long_chase) / NVS SHORT -13% (A_short_chase) /
+    #   BIDU SHORT -7.7% — 三门 record-only 放行, 样本必须落盘否则裁决永远缺证据。
+    inv_path = os.path.join(ROOT, "data/premarket_invalidation_shadow.jsonl")
+    inv_today, inv_flagged = 0, 0
+    if os.path.exists(inv_path):
+        try:
+            with open(inv_path) as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    if r.get("date") != today:
+                        continue
+                    inv_today += 1
+                    if r.get("would_invalidate") or r.get("hits"):
+                        inv_flagged += 1
+        except Exception as e:
+            out.append(f"⚠️ 项5 影子文件读取失败: {e}")
+    hm = n.hour * 100 + n.minute
+    if inv_today > 0:
+        out.append(f"✅ 项5 A/C门影子: 当日 {inv_today} 行落盘 (命中失效规则 {inv_flagged} 行)")
+    elif hm < 959:
+        out.append(f"⚠️ 项5 A/C门影子: 尚无当日行 (窗口 09:35-09:59, 现在 {n.strftime('%H:%M')})")
+    else:
+        # 窗口已过仍零行 = 采集链断 (router.futu.get_snapshot 不可用 / observe 关)
+        fails.append("项5 A/C门影子断供: 09:35-09:59 窗口已过但 premarket_invalidation_shadow.jsonl "
+                     "无当日行 — 极端跳空样本丢失, A/C 转正裁决继续缺证据")
+
+    # ── 项6: 实际成交 + 执行时门禁留痕 ──
+    try:
+        tr = conn.execute(
+            "SELECT symbol, direction, entry_price, realized_pnl, pnl_net, exit_reason, decision_id "
+            "FROM trade_records WHERE trade_date LIKE ?", (today + "%",)).fetchall()
+        net = sum(float(r["pnl_net"] if r["pnl_net"] is not None else (r["realized_pnl"] or 0))
+                  for r in tr)
+        closed = [r for r in tr if r["exit_reason"]]
+        out.append(f"成交: {len(tr)} 笔 (已平 {len(closed)}), 净 PnL=${net:,.2f}")
+        for r in tr[:8]:
+            tag = " [再入场]" if str(r["decision_id"] or "").startswith("intraday_reentry") else ""
+            out.append(f"   {r['symbol']} {r['direction']} @{r['entry_price']} "
+                       f"exit={r['exit_reason'] or '持仓中'}{tag}")
+    except Exception as e:
+        out.append(f"成交查询失败: {e}")
+
+    cnt6, _ = log_today_lines(["B门硬门拦截", "chase_cap违例遥测", "极端gap", "价格偏离过大",
+                               "admission] ", "规则5-MAX_HOLD"])
+    for k, v in cnt6.items():
+        if v:
+            out.append(f"   门禁留痕 [{k.strip()}] = {v} 次")
+
     # ── 结论 ──
     n_warn = sum(1 for l in out if l.startswith("⚠️"))
     if fails:
