@@ -145,9 +145,14 @@ class PlaybookPusher:
             _overnight = []
             # 2026-08-21 (Qoder §56.2-4): 持仓天数改交易日计数 — 日历天口径周五→周一
             # 显示"3天"与 W_WEEK 5交易日豁免倒数脱节. fail-open: 日历异常回退日历天.
+            # 2026-09-08 根治: 原 import 名 `HolidayCalendar` 不存在 (真名
+            # TradingHolidayCalendar, 入口是 get_holiday_calendar) → 每日 ImportError 被
+            # 下方 except 静默吞掉 → 交易日修复自 8/21 起**从未执行过**, 一直显示日历天
+            # (9/8 实锤: UBER/RIVN 显示 5天, 真实 2 交易日). 同日补 R5 留痕: 回退必须
+            # warn, 否则"显示口径错"与"守卫根本没跑"不可区分.
             try:
-                from app.utils.holiday_calendar import HolidayCalendar as _HC
-                _hc = _HC()
+                from app.utils.holiday_calendar import get_holiday_calendar as _get_hc
+                _hc = _get_hc()
                 def _tdays(d0, d1):
                     n = 0
                     d = d0
@@ -157,7 +162,10 @@ class PlaybookPusher:
                         if _hc.is_trading_day("US", d):
                             n += 1
                     return n
-            except Exception:
+            except Exception as _hc_err:
+                logger.warning(
+                    f"[playbook推送] 交易日历不可用, 持仓天数回退日历天口径 "
+                    f"(与 W_WEEK 5交易日豁免窗脱节): {_hc_err}")
                 _hc = None
             for _r in _on_rows:
                 _et_str = str(_r["entry_time"] or "")[:10]
