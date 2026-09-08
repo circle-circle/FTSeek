@@ -68,13 +68,28 @@ def test_us_positions_table_columns_match_colspan():
 
 
 def test_hk_tables_columns_match_colspan():
-    """港股持仓表/订单表同样钉住 (A4 只改文案, 不得改列数)。"""
+    """港股三张表同样钉住 (A4 只改文案不得改列数; RFC-078 批B 又加了第三张台账表)。"""
     html = _hk_src()
-    for tbody_id, expected in (("pos-tbody", 10), ("ord-tbody", 10)):
+    for tbody_id, expected in (("pos-tbody", 10), ("ord-tbody", 10), ("ledger-tbody", 9)):
         assert _thead_cols(html, tbody_id) == expected, tbody_id
         assert set(_colspans_for(html, tbody_id)) == {expected}, tbody_id
-    # JS 内联在同文件: 所有 colspan 都应与对应表一致
-    assert set(int(n) for n in re.findall(r'colspan="(\d+)"', html)) == {10}
+    # JS 内联在同文件: 每个 colspan 都必须等于**它所属那张表**的列数。
+    # 写死 {10} 在加表时会假红, 只写 {9,10} 则挡不住"台账空态行套了持仓表列数"(= 错位)
+    # ⇒ 逐处判定: colspan==9 当且仅当它落在台账表自己的区域 (HTML 骨架 / 台账 JS 块)。
+    ledger_zones = [
+        (html.index("📒 实盘成交台账"),
+         html.index("</table>", html.index('<tbody id="ledger-tbody">'))),
+        (html.index("// ── RFC-078 批B: 实盘成交台账"),
+         html.index("async function syncLedger()")),
+    ]
+    seen = set()
+    for m in re.finditer(r'colspan="(\d+)"', html):
+        n = int(m.group(1))
+        seen.add(n)
+        in_ledger = any(a <= m.start() < b for a, b in ledger_zones)
+        assert (n == 9) == in_ledger, \
+            f'colspan="{n}" 落在{"台账(应 9)" if in_ledger else "持仓/订单(应 10)"}表区域 ⇒ 空态行错位'
+    assert seen == {9, 10}, seen
 
 
 def test_us_sl_column_renders_stop_price_and_distance():

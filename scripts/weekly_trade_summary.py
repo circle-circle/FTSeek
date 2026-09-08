@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""周日综合复盘 · 本期交易汇总 (原 Hermes cron prompt 内嵌 SQL 的仓内化).
+"""周日综合复盘 · 本期交易汇总 — **模拟研究口径** (原 Hermes cron prompt 内嵌 SQL 的仓内化).
+
+⚠ 口径边界 (2026-09-08, RFC-078 批C 标注): 本脚本报的是 **SIM 数据收集臂**, 不是实盘。
+  依据: ①来源白名单 `TRADE_SOURCES = ('PLAYBOOK_SIM','PLAYBOOK_LIVE')` 全是模拟臂;
+  ②载体 `DB_PATH` 固定 `data/ftseek_us.db` = sim 数据收集仓。
+  **实盘(真钱)周报是另一个脚本**: `scripts/live_weekly_review.py` (美股段 + 港股段,
+  载体 `data/ftseek_us_live.db`)。两份报告不得互相冒充 —— 此前本脚本标题只写
+  "本周交易汇总", 推到飞书上无法分辨是模拟还是实盘, 而同期 `exit_scorecard.py:244`
+  还写着 `AND trade_mode != 'live'` 显式排除实盘 ⇒ 全套周报里实盘根本不是一等公民。
+  `DB_PATH` **刻意保持硬编码 sim 载体**而不改 `get_main_db()`: 本脚本的身份就是
+  "模拟研究周报", 若随 TRADE_ENV 漂移, 将来自动管线切实盘时它会静默换载体并报
+  "窗口内无已了结交易" —— 那是把"换了库"伪装成"没交易"。
 
 为什么存在 (2026-08-28):
   Hermes job「FTSeek-US 周日综合复盘」Step 5 把 SQL 直接写在 prompt 里, 长期
@@ -127,9 +138,19 @@ def default_end_date() -> date:
 
 def render(cur: Dict, prev: Optional[Dict], days: int) -> str:
     label = "本周" if days == 7 else f"{days}天"
-    lines = [f"=== {label}交易汇总 (出场日 {cur['start']} ~ {cur['end']}, ET) ==="]
+    lines = [
+        f"=== {label}交易汇总 · **模拟研究口径 (非实盘)** (出场日 {cur['start']} ~ {cur['end']}, ET) ===",
+        f"载体: {os.path.basename(DB_PATH)} (SIM 数据收集仓) | 来源白名单 "
+        f"{'/'.join(TRADE_SOURCES)} | 币种 USD",
+        # 刻意不在报告文本里硬编码库文件名: 载体名由 SSOT 解析器给 (dead_db 门也据此不告警)
+        "实盘(真钱)周报另见 scripts/live_weekly_review.py (美股段 + 港股段, "
+        "载体 = 看板实盘专属库, 由 app.core.db_utils.get_dashboard_db() 解析)",
+    ]
     if not cur["total_n"]:
-        lines.append("窗口内无已了结交易 (0 笔) — 若整周为空, 请核对交易链是否在跑")
+        # 措辞刻意保留"无已了结交易"原句 (tests/test_weekly_trade_summary.py 钉了它),
+        # 口径标注追加在后 —— 改既有契约措辞不如加限定语。
+        lines.append("窗口内无已了结交易 (0 笔, 模拟口径) — 若整周为空, 请核对 sim 交易链是否在跑; "
+                     "本行**不代表实盘**, 实盘看 scripts/live_weekly_review.py")
     else:
         lines.append(
             f"总计: {cur['total_n']}笔 | 胜 {cur['total_wins']} ({cur['win_rate_pct']}%) | "

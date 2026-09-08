@@ -230,16 +230,48 @@ def test_live_db_account_type_does_not_mislabel_real_rows_as_sim():
 
 @pytest.mark.skipif(not ess.LIVE_DB.exists(), reason="live 库不存在")
 def test_live_db_legacy_pnl_rows_still_fall_back_to_realized_pnl():
-    """新增 pnl_net 必须留 NULL, 让 COALESCE(pnl_net, realized_pnl) 正确回落."""
+    """新增 pnl_net 必须留 NULL, 让 COALESCE(pnl_net, realized_pnl) 正确回落.
+
+    RFC-078 (2026-09-08) 收紧而非放宽: 一次性迁移器
+    `scripts/migrate_live_records_to_live_db.py` 把 3 行**误落在 sim 库的实盘行**
+    (US.TTE 2026-07-09 / US.PDD 2026-07-10 / US.BULL 2026-08-20) 逐字搬进 live 库,
+    其中 2 行的 pnl_net 是 sim 侧当期费用净额管线算出的**真值** ⇒ 它们带着非 NULL 的
+    pnl_net 落进了"历史窗口"。这不是改写历史数值, 而是**插入**一行本就带值的行。
+    故本例不再用"日期 < 2026-09-01 ⇒ pnl_net 必须 NULL"这个会被合法迁移证伪的代理判据,
+    改成要求例外行**自证**: 必须在 sim 库找到同 symbol + 同 entry_time 且
+    realized_pnl / pnl_net 完全相同、trade_mode='live' 的源行 (= 逐字搬运的证据)。
+    找不到 ⇒ 有人真改写了历史数值 ⇒ 转红 (证伪力比原判据更强: 原判据只挡"写非 NULL",
+    新判据还要求非 NULL 的值与源库逐字一致)。
+    """
     conn = sqlite3.connect(f"file:{ess.LIVE_DB}?mode=ro", uri=True)
     try:
-        rows = conn.execute(
-            "SELECT COUNT(*), SUM(CASE WHEN pnl_net IS NULL THEN 1 ELSE 0 END) "
-            "FROM trade_records WHERE trade_date < '2026-09-01'").fetchone()
+        legacy = conn.execute(
+            "SELECT symbol, entry_time, trade_mode, realized_pnl, pnl_net "
+            "FROM trade_records WHERE trade_date < '2026-09-01'").fetchall()
     finally:
         conn.close()
-    assert rows[0] > 0, "live 库无历史成交, 本例失去意义"
-    assert rows[0] == rows[1], "历史行被写入了 pnl_net ⇒ 改写了既有数值"
+    assert legacy, "live 库无历史成交, 本例失去意义"
+    dirty = [r for r in legacy if r[4] is not None]
+    if not dirty:
+        return  # 主路径: 历史行全为 NULL, COALESCE 回落成立
+
+    assert all(r[2] == "live" for r in dirty), (
+        f"非实盘行被写入 pnl_net: {dirty} — RFC-078 迁移只搬 trade_mode='live'")
+    if not ess.SIM_DB.exists():
+        pytest.skip("sim 库不在, 无法核验例外行的逐字来源")
+    sconn = sqlite3.connect(f"file:{ess.SIM_DB}?mode=ro", uri=True)
+    try:
+        for symbol, entry_time, _mode, realized_pnl, pnl_net in dirty:
+            n = sconn.execute(
+                "SELECT COUNT(*) FROM trade_records WHERE trade_mode='live' "
+                "AND symbol=? AND entry_time=? AND realized_pnl IS ? AND pnl_net IS ?",
+                (symbol, entry_time, realized_pnl, pnl_net)).fetchone()[0]
+            assert n > 0, (
+                f"live 库历史行 {symbol} {entry_time} 的 pnl_net={pnl_net} 在 sim 库找不到"
+                f"逐字源行 (realized_pnl={realized_pnl}) ⇒ 不是 RFC-078 迁移, 而是改写了"
+                f"既有历史数值 (COALESCE(pnl_net, realized_pnl) 的回落语义已被破坏)")
+    finally:
+        sconn.close()
 
 
 # ══════════════════════════════════════════════════════════════════

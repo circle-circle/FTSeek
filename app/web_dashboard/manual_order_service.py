@@ -96,10 +96,10 @@ class ManualOrderService:
         return conn
 
     def _get_db_path(self) -> str:
-        """获取当前模式对应的 DB 路径."""
+        """获取看板(手动实盘台)对应的 DB 路径 (RFC-078: 恒 live 库, 与 TRADE_ENV 解耦)."""
         if self._db_path is None:
-            from app.core.db_utils import get_main_db
-            self._db_path = str(get_main_db())
+            from app.core.db_utils import get_dashboard_db
+            self._db_path = str(get_dashboard_db())
         return self._db_path
 
     def _is_live(self) -> bool:

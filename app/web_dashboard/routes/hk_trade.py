@@ -8,8 +8,14 @@
   POST /api/hk/orders/cancel 撤单
   GET  /api/hk/positions    港股持仓 (实时查 broker, 只读)
   GET  /api/hk/account      港股账户资金 (实时查 broker, 只读)
+  GET  /api/hk/ledger       港股实盘台账 (本地只读: 成交流水 + 仓位快照 + FIFO 毛已实现)
+  POST /api/hk/ledger/sync  台账回补 (券商 → live 库; 综合账户故两市场一并回补)
 
-不写任何 DB; 成交/持仓管理以富途 App 为准。
+**"不写任何 DB" 已于 2026-09-08 (RFC-078 批B) 作废**: 港股此前唯一留痕是
+`data/audit/hk_manual_orders.jsonl` 的 submit/cancel (无成交价/量/盈亏), 而券商侧港股
+是真钱真有仓 (实测总资产 HK$715,975.88, HK.02513 浮亏 −33,900) ⇒ 港股在所有绩效/复盘
+口径里等于不存在。现由 `app/web_dashboard/live_ledger.py` 落两张表到 **live 库**
+(`live_deal_records` / `live_position_snapshots`)。下单/撤单路径本身仍不写 DB。
 
 2026-09-08 (REVIEW-20260908 批1): 查询失败不再伪装成空列表 —— positions/orders
 两端点在 broker 不可用时返回 503 BROKER_UNAVAILABLE (retryable), 前端据此渲染
@@ -137,5 +143,63 @@ def register(app, templates):
             return api_error("BROKER_UNAVAILABLE",
                              f"港股账户查询失败: {result['error']}", 503, retryable=True)
         return api_ok({"account": result["info"]})
+
+    @router.get("/api/hk/ledger")
+    async def hk_ledger(days: int = 30):
+        """港股实盘台账 (纯本地只读, **不连券商** ⇒ broker 挂了也能看历史).
+
+        三态如实下发: 台账为空时 `state=NO_DATA` 并提示先回补, 前端不得渲染成
+        "本周零成交" (那会让人以为实盘停了)。金额一律**毛/成交额** —— 富途 deal 级
+        不返回手续费, `fee` 全 NULL, 不伪造 0。
+        """
+        from app.web_dashboard import live_ledger
+        days = min(max(int(days), 1), 365)
+
+        def _collect():
+            # 窗口按**港股本地日**取 (deal_date 是券商给的 HKT 日), 不用服务器 CST 墙钟:
+            # 尺度由 live_ledger.window_for 统一给出, 路由层不再自己算日期。
+            start, end = live_ledger.window_for("HK", days)
+            deals = live_ledger.read_deals(start, end, market="HK")
+            cov = live_ledger.ledger_coverage()
+            return {
+                "window": [start, end],
+                "window_tz": live_ledger._TZ_LABEL["HK"],
+                "state": "OK" if deals else ("NO_DATA" if cov["deals"]["HK"]["rows"] == 0
+                                             else "NO_DEALS_IN_WINDOW"),
+                "deals": deals,
+                # 汇总口径由后端给 (与实盘周报同一个 summarize_deals): 方向语义只有一份,
+                # 不让前端各自判 BUY/SELL_SHORT ⇒ 避免"两边错得一样"的净现金流符号反。
+                "summary": live_ledger.summarize_deals(deals),
+                "fifo": live_ledger.fifo_realized(deals),
+                "latest_positions": live_ledger.latest_snapshot("HK", on_or_before=end),
+                "coverage": cov,
+                "currency": "HKD",
+                "amount_caliber": "gross_deal_amount_no_fee",
+            }
+
+        data = await asyncio.to_thread(_collect)
+        if data["state"] == "NO_DATA":
+            # 不是错误, 但必须让前端知道"空"是哪一种空
+            data["hint"] = ("台账为空 — 先 POST /api/hk/ledger/sync 回补, "
+                            "或等每日 cron (10 17 * * 1-5)")
+        return api_ok(data)
+
+    @router.post("/api/hk/ledger/sync")
+    async def hk_ledger_sync(days: int = 30):
+        """台账回补 (券商 → live 库). 幂等, 可反复点.
+
+        ⚠ 综合账户下券商一次返回**两市场**成交 (实测 99 笔 = HK 47 + US 52), 故本端点
+        同时回补美股腿 —— 这是券商侧的事实, 不是本端点越权。两腿各自三态, 一腿失败
+        返回 207-ish 的 PARTIAL 而不是整体 503 (否则好腿的数据会被坏腿掩盖)。
+        """
+        from app.web_dashboard import live_ledger
+        days = min(max(int(days), 1), 365)
+        result = await asyncio.to_thread(live_ledger.sync_all, days)
+        result["coverage"] = live_ledger.ledger_coverage()
+        if result.get("overall") == "UNAVAILABLE":
+            return api_error("BROKER_UNAVAILABLE",
+                             "两市场券商腿均不可达 — 台账未更新, 这**不是**零成交",
+                             503, retryable=True)
+        return api_ok(result)
 
     app.include_router(router)

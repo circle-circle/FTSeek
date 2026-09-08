@@ -122,8 +122,10 @@ def test_stack_css_present_on_both_pages():
     hk, us = _src(HK_TMPL), _src(US_TMPL)
     assert ".hk-stack td::before { content: attr(data-label)" in hk
     assert ".pos-stack td::before { content: attr(data-label)" in us
-    assert hk.count('class="hk-stack"') == 2, "港股两张表都要挂 hk-stack"
-    assert us.count('class="pos-stack"') == 2, "美股两张表都要挂 pos-stack"
+    # 钉"每张表都挂 stack 类"而不是写死张数: 港股现为**三**张 (持仓 / 今日订单 /
+    # RFC-078 券商真值台账), 写死 2 会在加表时假红, 只写 >=2 则挡不住"新表另起一套渲染"
+    assert hk.count('class="hk-stack"') == hk.count("<table") == 3, "港股每张表都要挂 hk-stack"
+    assert us.count('class="pos-stack"') == us.count("<table") == 2, "美股每张表都要挂 pos-stack"
     # 空态/错误态是 colspan 单元格, 堆叠时必须回到整块居中, 不能被 flex 撕开
     assert ".hk-stack td[colspan]" in hk and ".pos-stack td[colspan]" in us
 

@@ -75,6 +75,12 @@
         .today-ctx .tc-sym { color: #e1e4e8; font-weight: 700; font-size: 12px; }
         .today-ctx .neg { color: #f87171; }
         .today-ctx .pos { color: #4ade80; }
+        /* ── RFC-078 批B: 券商真值台账面板。琥珀左边框 = 「毛口径, 不含手续费」的常驻提醒 ── */
+        .ledger-ctx { font-size: 11px; line-height: 1.75; color: #8b949e; background: #0d1117; border: 1px solid #21262d; border-left: 3px solid #fbbf24; border-radius: 6px; padding: 7px 10px; margin: 0 0 8px; }
+        .ledger-ctx b { color: #e1e4e8; font-weight: 700; }
+        .ledger-ctx .neg { color: #f87171; }
+        .ledger-ctx .pos { color: #4ade80; }
+        .ledger-ctx .cal { color: #fbbf24; }
         /* A1: 输入代码与报价标的不一致 */
         .sym-mismatch { display: none; font-size: 11px; color: #f87171; margin-top: 4px; line-height: 1.4; }
         .sym-mismatch.show { display: block; }
@@ -258,6 +264,31 @@
                 <table class="hk-stack">
                     <thead><tr><th>时间</th><th>代码</th><th>方向</th><th>类型</th><th>状态</th><th>数量</th><th>已成交</th><th>价格</th><th>成交均价</th><th></th></tr></thead>
                     <tbody id="ord-tbody"><tr><td colspan="10" class="empty-hint">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 实盘成交台账 (券商真值层, RFC-078 批B): 港股**历史成交**此前在看板上完全不可见
+             (只有实时持仓 + 今日订单), 而券商侧是真钱真有仓。本面板纯本地只读 ⇒ OpenD 掉线
+             也能看历史; 回补才连券商。 -->
+        <div class="card">
+            <div class="refresh-bar">
+                <h3 style="margin:0">📒 实盘成交台账 <span style="color:#8b949e;font-weight:400;font-size:11px">(券商真值层 · 本地只读 · HKD)</span></h3>
+                <span style="display:flex;gap:6px;align-items:center">
+                    <select id="ledger-days" class="btn-sm" onchange="loadLedger()" title="窗口按港股本地日 (HKT) 取, 不是服务器墙钟">
+                        <option value="7">近 7 天</option>
+                        <option value="30" selected>近 30 天</option>
+                        <option value="90">近 90 天</option>
+                    </select>
+                    <button class="btn-sm" onclick="loadLedger()">刷新</button>
+                    <button class="btn-sm" id="ledger-sync" onclick="syncLedger()" title="向券商回补成交+持仓快照 (幂等; 综合账户下会同时回补美股腿 —— 那是券商侧事实)">回补台账</button>
+                </span>
+            </div>
+            <div class="ledger-ctx" id="ledger-ctx">加载中...</div>
+            <div style="overflow-x:auto">
+                <table class="hk-stack">
+                    <thead><tr><th>成交日</th><th>时间</th><th>代码</th><th>名称</th><th>方向</th><th>数量</th><th>价格</th><th>成交额</th><th>对手方</th></tr></thead>
+                    <tbody id="ledger-tbody"><tr><td colspan="9" class="empty-hint">加载中...</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -1037,9 +1068,147 @@ function renderAccountBar(a) {
             : '');
 }
 
+// ── RFC-078 批B: 实盘成交台账 (券商真值层) ──────────────────────────────
+// 三态由后端判定, 前端**不得**把三者渲染成同一句"无成交" (那会让人以为实盘停了):
+//   OK = 窗口内有成交 / NO_DEALS_IN_WINDOW = 台账有数据但本窗口没有 (真没交易)
+//   NO_DATA = 台账为空 (还没回补过) ⇒ 必须引导去回补。
+// 金额一律**毛/成交额**: 富途 deal 级不返回手续费 (fee 全 NULL) ⇒ 常驻琥珀口径提醒。
+// 方向语义不在前端另写一份: 开/平汇总由后端 summarize_deals 给 (与实盘周报同源),
+// 前端只做展示标签 —— 两处各判方向会"错得一样"(净现金流符号反), 谁都发现不了。
+function hkMoney(v) {
+    return (v === null || v === undefined || isNaN(v)) ? '--'
+        : 'HK$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+function ledgerSide(side) {
+    const s = String(side || '').toUpperCase();
+    return {BUY: '买入·开多', SELL: '卖出·平多', SELL_SHORT: '卖空·开空',
+            BUY_BACK: '买回·平空'}[s] || (s || '--');   // 未见过的方向原样显示, 不猜
+}
+
+async function loadLedger() {
+    const days = document.getElementById('ledger-days').value || 30;
+    const ctx = document.getElementById('ledger-ctx');
+    const tb = document.getElementById('ledger-tbody');
+    try {
+        const r = await fetch('/api/hk/ledger?days=' + encodeURIComponent(days));
+        const j = await r.json();
+        if (!j.ok) {
+            ctx.innerHTML = `<span class="cal">⚠️ 台账读取失败: ${esc(j.error?.message || ('HTTP ' + r.status))}`
+                + ` —— 这**不是**"本窗口无成交"</span>`;
+            tb.innerHTML = `<tr><td colspan="9" class="err-row">⚠️ 台账读取失败`
+                + ` <button class="btn-sm" onclick="loadLedger()">重试</button></td></tr>`;
+            return;
+        }
+        renderLedger(j.data || {});
+    } catch (e) {
+        ctx.innerHTML = `<span class="cal">⚠️ 台账请求异常: ${esc(e)}</span>`;
+        tb.innerHTML = `<tr><td colspan="9" class="err-row">⚠️ 台账请求异常: ${esc(e)}`
+            + ` <button class="btn-sm" onclick="loadLedger()">重试</button></td></tr>`;
+    }
+}
+
+function renderLedger(d) {
+    const ctx = document.getElementById('ledger-ctx');
+    const tb = document.getElementById('ledger-tbody');
+    const cov = ((d.coverage || {}).deals || {}).HK || {};
+    const snap = ((d.coverage || {}).snapshots || {}).HK || {};
+    const w = d.window || [];
+    const head = `窗口 <b>${esc(w[0] || '?')} ~ ${esc(w[1] || '?')}</b> (${esc(d.window_tz || 'HKT')} 本地日)`
+        + ` · 状态 <b>${esc(d.state || '?')}</b>`;
+    const covLine = `台账覆盖 <b>${esc(cov.first || '--')} ~ ${esc(cov.last || '--')}</b>`
+        + ` · 累计 ${cov.rows ?? 0} 笔 / ${cov.symbols ?? 0} 标的`
+        + ` · 持仓快照 ${snap.days ?? 0} 天 (最近 ${esc(snap.last || '--')})`;
+
+    if (d.state === 'NO_DATA') {
+        ctx.innerHTML = head + `<br><span class="cal">台账为空 = 还没回补过, 这**不是**"本窗口零成交"。`
+            + esc(d.hint || '点右上「回补台账」向券商拉取, 或等每日 cron (工作日 17:10)。') + '</span>';
+        tb.innerHTML = '<tr><td colspan="9" class="empty-hint">台账为空 — 点右上「回补台账」</td></tr>';
+        return;
+    }
+
+    const parts = [head];
+    if (d.state === 'OK') {
+        const s = d.summary || {}, f = d.fifo || {};
+        const netCls = (s.net_cash || 0) >= 0 ? 'pos' : 'neg';
+        parts.push(`本窗口 <b>${s.n ?? 0}</b> 笔 / ${s.symbols ?? 0} 标的 · 开仓额 <b>${hkMoney(s.open_amount)}</b>`
+            + ` · 平仓额 <b>${hkMoney(s.close_amount)}</b> · 净现金流 <b class="${netCls}">${hkMoney(s.net_cash)}</b>`);
+        const rz = f.realized_gross_complete_basis_only;
+        parts.push(`已实现 (<b class="cal">毛</b>, FIFO 完整基准): <b>${hkMoney(rz)}</b>`
+            + ` · <span class="cal">不含手续费 (${s.fee_rows_null ?? 0}/${s.n ?? 0} 笔 fee=NULL, 券商 deal 级不返回) ⇒ 不得当净额用</span>`);
+        if ((f.incomplete_basis_symbols || []).length) {
+            parts.push(`<span class="cal">⚠️ 成本基准不完整, 其盈亏**未计入**合计 (不编造基准: 不用现价/均价补成本): `
+                + esc(f.incomplete_basis_symbols.join(', ')) + '</span>');
+        }
+        if (s.unknown_side_rows) {
+            parts.push(`<span class="cal">⚠️ 未见过的方向 ${s.unknown_side_rows} 笔 (未计入开/平, 不猜方向)</span>`);
+        }
+    } else {
+        parts.push('<span class="cal">本窗口无成交 — 台账有数据 ⇒ 是真没交易, 不是没同步上</span>');
+    }
+    parts.push(covLine);
+    ctx.innerHTML = parts.join('<br>');
+
+    const rows = (d.deals || []).slice().reverse();   // 后端按时间升序, 展示要新→旧
+    const shown = rows.slice(0, 50);
+    if (!shown.length) {
+        tb.innerHTML = '<tr><td colspan="9" class="empty-hint">本窗口无成交</td></tr>';
+        return;
+    }
+    tb.innerHTML = shown.map(x => {
+        const side = String(x.trd_side || '').toUpperCase();
+        const cls = (side === 'BUY' || side === 'BUY_BACK') ? 'green' : 'red';
+        return `<tr>
+            <td data-label="成交日">${esc(x.deal_date || '--')}</td>
+            <td data-label="时间">${esc((x.deal_time || '').slice(11, 19))}</td>
+            <td data-label="代码">${esc(x.symbol)}</td>
+            <td data-label="名称">${esc(x.stock_name || '')}</td>
+            <td data-label="方向" class="${cls}">${esc(ledgerSide(x.trd_side))}</td>
+            <td data-label="数量">${x.qty ?? '--'}</td>
+            <td data-label="价格">${fmt(x.price)}</td>
+            <td data-label="成交额">${hkMoney(x.amount)}</td>
+            <td data-label="对手方">${esc(x.counter_broker_name || '--')}</td>
+        </tr>`;
+    }).join('') + (rows.length > shown.length
+        ? `<tr><td colspan="9" class="empty-hint">仅显示最近 ${shown.length} 笔 (本窗口共 ${rows.length} 笔) — 缩短窗口或看周一实盘周报</td></tr>`
+        : '');
+}
+
+async function syncLedger() {
+    const btn = document.getElementById('ledger-sync');
+    const ctx = document.getElementById('ledger-ctx');
+    const days = document.getElementById('ledger-days').value || 30;
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = '回补中...';
+    try {
+        const r = await fetch('/api/hk/ledger/sync?days=' + encodeURIComponent(days), {method: 'POST'});
+        const j = await r.json();
+        if (!j.ok) {
+            await loadLedger();
+            ctx.insertAdjacentHTML('beforeend',
+                `<br><span class="cal">⚠️ 回补失败: ${esc(j.error?.message || ('HTTP ' + r.status))}`
+                + ` —— 台账**未更新**, 这不等于零成交</span>`);
+            return;
+        }
+        const res = j.data || {}, dl = res.deals || {};
+        const legs = Object.entries(dl.legs || {}).map(([m, v]) => `${m} ${v.status}`).join(' / ') || '--';
+        const bad = dl.unavailable_legs || [];
+        await loadLedger();
+        ctx.insertAdjacentHTML('beforeend',
+            `<br>回补: overall <b>${esc(res.overall || '?')}</b> · 成交腿 ${esc(legs)}`
+            + ` · 新增 ${dl.inserted ?? 0} / 覆写 ${dl.updated ?? 0} 笔`
+            + (bad.length ? `<br><span class="cal">⚠️ 不可达腿: ${esc(bad.join(', '))}`
+                + ` —— 该腿数据**未更新**, 不是零成交</span>` : ''));
+    } catch (e) {
+        ctx.insertAdjacentHTML('beforeend', `<br><span class="cal">⚠️ 回补请求异常: ${esc(e)}</span>`);
+    } finally {
+        btn.disabled = false; btn.textContent = label;
+    }
+}
+
 loadPositions();
 loadOrders();
 loadAccount();
+loadLedger();   // 台账是本地只读, 不进 30s 轮询 (无需实时, 且省富途频率额度)
 renderRecent();
 renderSession();
 syncSymbolState();

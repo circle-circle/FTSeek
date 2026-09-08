@@ -1006,8 +1006,12 @@ def register(app, templates):
             #   是 2026-07-19 起零写入的陈旧同名单 (实测今日本库 anomalous=0, 该死库=1 笔
             #   US.MU @06-25), 过滤器一边过滤幽灵标的、一边对今天的真实异常完全失明。
             #   改走模式感知解析器 (TRADE_ENV=0 时它本身就返回 live 库)。
-            from app.core.db_utils import get_main_db
-            db_path = Path(get_main_db())
+            # RFC-078 (2026-09-08): 进一步收敛到**看板专属**解析器。原 get_main_db 在
+            #   TRADE_ENV=1 下仍返回 sim 库 ⇒ 下面 real_only() 谓词只能在 sim 库里挑
+            #   "非 simulate 行", 而 sim 库现役 3 行全是 simulate ⇒ 幽灵标的过滤恒空。
+            #   改走 live 库后, 谓词与载体同侧, 读侧串味彻底消除。
+            from app.core.db_utils import get_dashboard_db
+            db_path = Path(get_dashboard_db())
             if db_path.exists():
                 conn = sqlite3.connect(str(db_path))
                 cur = conn.cursor()

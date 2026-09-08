@@ -214,6 +214,61 @@ def register(app, templates):
         history = svc.get_audit_history(limit)
         return {"orders": history}
 
+    @router.get("/api/us/ledger")
+    async def us_ledger(days: int = 30):
+        """美股实盘台账 (券商真值层, **纯本地只读** ⇒ OpenD 掉线也能看历史).
+
+        与 `/api/hk/ledger` 同源同纪律, 只差市场与尺度: 窗口按 **ET 本地日**取
+        (`deal_date` 是券商给的市场本地日, 服务器 CST 墙钟会在 ET 上午把窗口推后一天)。
+        三态如实下发 (`OK` / `NO_DEALS_IN_WINDOW` / `NO_DATA`), 金额一律**毛/成交额**
+        (富途 deal 级不返回手续费, `fee` 全 NULL, 不伪造 0)。
+        """
+        from app.web_dashboard import live_ledger
+        days = min(max(int(days), 1), 365)
+
+        def _collect():
+            start, end = live_ledger.window_for("US", days)
+            deals = live_ledger.read_deals(start, end, market="US")
+            cov = live_ledger.ledger_coverage()
+            return {
+                "window": [start, end],
+                "window_tz": live_ledger._TZ_LABEL["US"],
+                "state": "OK" if deals else ("NO_DATA" if cov["deals"]["US"]["rows"] == 0
+                                             else "NO_DEALS_IN_WINDOW"),
+                "deals": deals,
+                # 汇总口径与港股页/实盘周报同一个 summarize_deals: 方向语义只有一份
+                "summary": live_ledger.summarize_deals(deals),
+                "fifo": live_ledger.fifo_realized(deals),
+                "latest_positions": live_ledger.latest_snapshot("US", on_or_before=end),
+                "coverage": cov,
+                "currency": "USD",
+                "amount_caliber": "gross_deal_amount_no_fee",
+            }
+
+        data = await asyncio.to_thread(_collect)
+        if data["state"] == "NO_DATA":
+            data["hint"] = ("台账为空 — 先 POST /api/us/ledger/sync 回补, "
+                            "或等每日 cron (10 17 * * 1-5)")
+        return api_ok(data)
+
+    @router.post("/api/us/ledger/sync")
+    async def us_ledger_sync(days: int = 30):
+        """台账回补 — 与 `/api/hk/ledger/sync` **同一个** `sync_all`.
+
+        综合账户下券商一次返回两市场成交, 不存在"只补美股一腿"; 两个路径都在只是为了
+        让美股页/港股页各有本市场语义的按钮。一腿失败返回 PARTIAL 而不是整体 503
+        (否则好腿的数据会被坏腿掩盖)。
+        """
+        from app.web_dashboard import live_ledger
+        days = min(max(int(days), 1), 365)
+        result = await asyncio.to_thread(live_ledger.sync_all, days)
+        result["coverage"] = live_ledger.ledger_coverage()
+        if result.get("overall") == "UNAVAILABLE":
+            return api_error("BROKER_UNAVAILABLE",
+                             "两市场券商腿均不可达 — 台账未更新, 这**不是**零成交",
+                             503, retryable=True)
+        return api_ok(result)
+
     @router.get("/api/trade/attribution")
     async def get_trade_attribution(symbol: str = "", limit: int = 10):
         """获取最近已平仓交易的归因分析"""
@@ -255,8 +310,10 @@ def register(app, templates):
 
         import sqlite3
         from datetime import datetime, timedelta
-        from app.core.db_utils import get_main_db
-        db_path = str(get_main_db())
+        # RFC-078 (2026-09-08): 看板专属库路由 — 清理的是**实盘手动**审计留痕,
+        # 原 get_main_db 在 TRADE_ENV=1 下指向 sim 库 ⇒ 清错载体。
+        from app.core.db_utils import get_dashboard_db
+        db_path = str(get_dashboard_db())
         cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
 
         conn = sqlite3.connect(db_path, timeout=10)

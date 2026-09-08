@@ -290,11 +290,12 @@ def register(app, templates):
 
         # 引擎持仓
         try:
-            from app.core.paths import get_trade_records_db
+            from app.core.db_utils import get_dashboard_trade_records_db
             rows = await ds.db_query(
                 "SELECT symbol, direction, size, avg_entry_price, stop_loss_price, initial_tp "
                 "FROM open_positions WHERE symbol = ? AND size > 0",
-                (symbol,), db_path=str(get_trade_records_db()),
+                # RFC-078 (2026-09-08): 看板专属库路由 (原解析器随 TRADE_ENV 漂到 sim 库)
+                (symbol,), db_path=str(get_dashboard_trade_records_db()),
             )
             if rows:
                 r = rows[0]
@@ -388,11 +389,12 @@ def register(app, templates):
 
         # 引擎持仓
         try:
-            from app.core.paths import get_trade_records_db
+            from app.core.db_utils import get_dashboard_trade_records_db
             rows = await ds.db_query(
                 "SELECT direction, size, avg_entry_price, stop_loss_price, initial_tp "
                 "FROM open_positions WHERE symbol = ? AND size > 0",
-                (symbol,), db_path=str(get_trade_records_db()),
+                # RFC-078 (2026-09-08): 看板专属库路由 (原解析器随 TRADE_ENV 漂到 sim 库)
+                (symbol,), db_path=str(get_dashboard_trade_records_db()),
             )
             if rows:
                 r = rows[0]

@@ -57,6 +57,10 @@
         @keyframes tsPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .audit-period { padding: 4px 10px; font-size: 11px; min-height: 28px; }
         .audit-period.active { border-color: #58a6ff; color: #58a6ff; }
+        /* RFC-078 批B: 券商真值层上下文条。琥珀左边框 = 「毛口径, 不含手续费」常驻提醒,
+           与港股页 .ledger-ctx 同色系 (两页同一心智模型)。 */
+        .ledger-strip { font-size: 11px; line-height: 1.7; color: #8b949e; background: #0d1117; border: 1px solid #21262d; border-left: 3px solid #fbbf24; border-radius: 6px; padding: 6px 10px; margin: 8px 0 0; }
+        .ledger-strip b { color: #e1e4e8; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .form-group { display: flex; flex-direction: column; gap: 4px; }
         .form-group.full { grid-column: 1 / -1; }
@@ -531,6 +535,13 @@
                 </div>
             </div>
             <div id="ordersBody" style="margin-top:10px">
+                {# RFC-078 批B: 券商真值层上下文条 (放在表**前**: 先读口径提醒再读数据;
+                   置于 #ordersBody 内 ⇒ 随「交易记录」折叠一起显隐, 不留孤立一行)。
+                   下表是**回合台账 + 审计**, 而回合台账曾断链 3 个月
+                   (2026-06-19~09-08 `_record_manual_close` 委派签名漂移 ⇒ 券商已平仓、
+                   账本零记录) ⇒ 这一行告诉读者真值层看到多少笔、台账覆盖多少、缺口在哪。
+                   刻意**不做第二张成交表**: 今日成交下表已有, 再列一遍只会稀释信噪比。 #}
+                <div class="ledger-strip" id="ledgerStrip">券商真值层: 加载中...</div>
                 <div class="tw">
                     <table class="pos-stack">
                         <thead><tr>

@@ -22,8 +22,10 @@ def register(app, templates):
         try:
             from app.storage.metrics_tables import MetricsTables
             from app.observability.metrics_api import MetricsAPI
-            from app.core.paths import get_trade_records_db
-            mt = MetricsTables(str(get_trade_records_db()))
+            # RFC-078 (2026-09-08): 看板专属库路由 — 原 get_trade_records_db() 随 TRADE_ENV
+            # 漂到 sim 库, 而看板券商侧恒 REAL ⇒ 实盘指标读的是模拟数据。
+            from app.core.db_utils import get_dashboard_trade_records_db
+            mt = MetricsTables(str(get_dashboard_trade_records_db()))
             api = MetricsAPI(mt)
             status = api.get_latest_trading_status()
             return {

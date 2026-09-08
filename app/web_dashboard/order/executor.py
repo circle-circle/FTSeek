@@ -870,8 +870,10 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
     if not orders:
         try:
             import sqlite3
-            from app.core.db_utils import get_main_db
-            db_path = get_main_db()
+            # RFC-078 (2026-09-08): 看板专属库路由 — 今日**实盘手动**订单的 DB fallback,
+            # 原 get_main_db 在 TRADE_ENV=1 下读 sim 库的 manual_order_audit。
+            from app.core.db_utils import get_dashboard_db
+            db_path = get_dashboard_db()
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             # DEB-20260721 E-1: "今日"按 ET 交易日过滤 (原北京 LIKE 盘中差一天).
@@ -945,8 +947,10 @@ def cancel_order(service: "ManualOrderService", order_id: str) -> Dict[str, Any]
             # 更新审计 DB 状态, 防止 DB fallback 仍显示 submitted
             try:
                 import sqlite3
-                from app.core.db_utils import get_main_db
-                conn = sqlite3.connect(str(get_main_db()))
+                # RFC-078 (2026-09-08): 看板专属库路由 — 撤单状态回写必须与下单审计同载体,
+                # 否则写进 sim 库而实盘审计在 live 库 ⇒ DB fallback 仍显示 submitted。
+                from app.core.db_utils import get_dashboard_db
+                conn = sqlite3.connect(str(get_dashboard_db()))
                 conn.execute(
                     "UPDATE manual_order_audit SET status='cancelled' WHERE order_id=?",
                     (order_id,),

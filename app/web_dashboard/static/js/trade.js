@@ -2098,11 +2098,110 @@
             }
         })();
 
+        // ── RFC-078 批B: 券商真值层上下文条 (本地只读, **不进**快照轮询) ──────────
+        // 本页「交易记录」= 回合台账 + 审计, 而回合台账曾断链 3 个月 (2026-06-19~09-08,
+        // `_record_manual_close` 委派签名漂移 ⇒ 券商已平仓、账本零记录)。这一条让读者知道
+        // 真值层看到多少笔、台账覆盖多少、缺口在哪。刻意不做第二张成交表 (今日成交下表已有,
+        // 再列一遍只会稀释信噪比)。三态由后端判定, 前端不得把三者渲染成同一句"无成交"。
+        function _usMoney(v) {
+            return (v === null || v === undefined || isNaN(v)) ? '--'
+                : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+        }
+
+        async function loadUsLedger() {
+            const el = document.getElementById('ledgerStrip');
+            if (!el) return;
+            try {
+                const r = await fetch('/api/us/ledger?days=30');
+                const j = await r.json();
+                if (!j.ok) {
+                    el.innerHTML = '券商真值层: <span style="color:#f87171">读取失败 '
+                        + escHtml((j.error && j.error.message) || ('HTTP ' + r.status))
+                        + ' — 这**不是**"无成交"</span> '
+                        + '<button class="btn btn-ghost btn-sm" onclick="loadUsLedger()">重试</button>';
+                    return;
+                }
+                renderUsLedger(j.data || {}, el);
+            } catch (e) {
+                el.innerHTML = '券商真值层: <span style="color:#f87171">请求异常 '
+                    + escHtml(String(e)) + '</span>';
+            }
+        }
+
+        function renderUsLedger(d, el) {
+            const cov = ((d.coverage || {}).deals || {}).US || {};
+            const snap = ((d.coverage || {}).snapshots || {}).US || {};
+            const w = d.window || [];
+            const head = '券商真值层 (' + escHtml(d.window_tz || 'ET') + ' 本地日 '
+                + escHtml(w[0] || '?') + '~' + escHtml(w[1] || '?') + ')';
+            const tail = ' · 台账累计 <b>' + (cov.rows || 0) + '</b> 笔 ('
+                + escHtml(cov.first || '--') + '~' + escHtml(cov.last || '--') + ')'
+                + ' · 持仓快照 ' + (snap.days || 0) + ' 天'
+                + ' <button class="btn btn-ghost btn-sm" onclick="loadUsLedger()">刷新</button>'
+                + ' <button class="btn btn-ghost btn-sm" id="usLedgerSync" onclick="syncUsLedger()">回补</button>';
+            if (d.state === 'NO_DATA') {
+                el.innerHTML = head + ': <span style="color:#fbbf24">台账为空 = 还没回补过, '
+                    + '这**不是**"本期零成交"</span>' + tail;
+                return;
+            }
+            if (d.state !== 'OK') {
+                el.innerHTML = head + ': <span style="color:#fbbf24">本期无成交 '
+                    + '(台账有数据 ⇒ 是真没交易, 不是没同步)</span>' + tail;
+                return;
+            }
+            const s = d.summary || {}, f = d.fifo || {};
+            let html = head + ': <b>' + (s.n || 0) + '</b> 笔成交 / ' + (s.symbols || 0)
+                + ' 标的 · 开 ' + _usMoney(s.open_amount) + ' · 平 ' + _usMoney(s.close_amount)
+                + ' · 净现金流 <b>' + _usMoney(s.net_cash) + '</b>'
+                + ' · FIFO 已实现(<span style="color:#fbbf24">毛</span>) <b>'
+                + _usMoney(f.realized_gross_complete_basis_only) + '</b>'
+                + ' <span style="color:#fbbf24">不含手续费(' + (s.fee_rows_null || 0) + '/'
+                + (s.n || 0) + ' 笔 fee=NULL), 不得当净额用</span>';
+            if ((f.incomplete_basis_symbols || []).length) {
+                html += '<br>⚠ 成本基准不完整 (其盈亏**未计入**合计, 不编造基准): '
+                    + escHtml(f.incomplete_basis_symbols.join(', '));
+            }
+            if (s.unknown_side_rows) {
+                html += '<br>⚠ 未见过的方向 ' + s.unknown_side_rows + ' 笔 (未计入开/平, 不猜方向)';
+            }
+            html += '<br><span style="color:#8b949e">台账↔券商对账 (孤儿在仓行 / 未入账仓) 见周一实盘周报'
+                + ' — 下表是回合台账+审计, 断链期 (2026-06-19~09-08) 的平仓不在下表</span>' + tail;
+            el.innerHTML = html;
+        }
+
+        async function syncUsLedger() {
+            const el = document.getElementById('ledgerStrip');
+            const btn = document.getElementById('usLedgerSync');
+            if (btn) { btn.disabled = true; btn.textContent = '回补中...'; }
+            let note;
+            try {
+                const r = await fetch('/api/us/ledger/sync?days=30', {method: 'POST'});
+                const j = await r.json();
+                if (!j.ok) {
+                    note = '⚠ 回补失败: ' + ((j.error && j.error.message) || ('HTTP ' + r.status))
+                        + ' — 台账**未更新**, 这不等于零成交';
+                } else {
+                    const res = j.data || {}, dl = res.deals || {};
+                    const bad = dl.unavailable_legs || [];
+                    note = '回补 overall=' + (res.overall || '?') + ' · 新增 ' + (dl.inserted || 0)
+                        + ' / 覆写 ' + (dl.updated || 0) + ' 笔'
+                        + (bad.length ? ' · ⚠ 不可达腿 ' + bad.join(',') + ' (该腿未更新, 不是零成交)' : '');
+                }
+            } catch (e) {
+                note = '⚠ 回补请求异常: ' + String(e);
+            }
+            await loadUsLedger();   // 重绘正文 (按钮一并复原)
+            const el2 = document.getElementById('ledgerStrip');
+            if (el2) el2.insertAdjacentHTML('beforeend',
+                '<br><span style="color:#8b949e">' + escHtml(note) + '</span>');
+        }
+
         // ── Expose handlers to window for inline HTML event handlers ──
+        loadUsLedger();      // 台账是本地只读, 只加载一次 (不进 30s 轮询, 省富途频率额度)
         bindRecentChips();   // B10: 最近标的 chips (localStorage 不可用时静默无 chips)
         bindCloseReasonChips();   // B11: 平仓理由 chips (事件委托, 弹窗开合不影响监听)
         Object.assign(window, {
-            cancelOrder, clearSlTp, closeCloseModal, closePos, closePosAtPrice, closePreview, _executeCancel, executeClose, executeOrder, fetchQuote, fillClosePrice, hideDiag, loadOrders, loadPositions, onQuantityInput, pctQty, previewOrder, restoreSuggestion, setDir, setMaxPct, setOp, setQty, setRiskPct, showDiag, stepQty, takeoverPos, toggleOrders, toggleRiskCfg
+            cancelOrder, clearSlTp, closeCloseModal, closePos, closePosAtPrice, closePreview, _executeCancel, executeClose, executeOrder, fetchQuote, fillClosePrice, hideDiag, loadOrders, loadPositions, loadUsLedger, onQuantityInput, pctQty, previewOrder, restoreSuggestion, setDir, setMaxPct, setOp, setQty, setRiskPct, showDiag, stepQty, syncUsLedger, takeoverPos, toggleOrders, toggleRiskCfg
         });
 
 })();

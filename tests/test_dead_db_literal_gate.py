@@ -21,7 +21,11 @@ SKIP_DIRS = {"venv", ".venv", "archive", "docs", "tests", "node_modules", ".git"
 # 现存站点 → 为何允许 (2026-08-28 逐个人工核实)
 ALLOWLIST = {
     "app/core/paths.py": "mode SSOT 解析器本体 (TRADE_ENV=0 才返回此名)",
-    "app/core/db_utils.py": "mode SSOT 解析器本体 (同上)",
+    # 2026-09-08 (RFC-078): 理由**扩充** —— 除 TRADE_ENV 条件式解析外, 新增的
+    # get_dashboard_db() / get_dashboard_trade_records_db() 在 FTSEEK_DASHBOARD_DB_ISOLATION=1
+    # (默认) 时**无条件**返回此名: 看板券商侧恒 REAL (_is_live() 硬编码 True), 其账本必须
+    # 落 live 库, 与 TRADE_ENV 解耦, 否则真钱实盘单写进 sim 数据收集仓。仍是解析器本体。
+    "app/core/db_utils.py": "mode SSOT 解析器本体 (TRADE_ENV 条件式 + RFC-078 看板专属路由)",
     "app/core/config_container.py": "TRADE_ENV 条件式解析, 非无条件读",
     "app/storage/db_pool.py": "TRADE_ENV 条件式 _DB_PATHS 映射",
     "app/plan/position_intelligence.py": "解析器 except 兜底, 且兜底本身按 TRADE_ENV 判",
@@ -39,6 +43,14 @@ ALLOWLIST = {
                                         "(判定 READY_TO_SWITCH 的依据)",
     "app/plan/plan_feedback.py": "模块已冻结 (scheduler_triggers 调用点 2026-08-28 摘除), "
                                 "复活前须先按 docstring 4 项缺陷清单改解析",
+    # 2026-09-08 (RFC-078 批A): 本条目同样是**先被本门抓红、后补登记**的 (与
+    # env_separation_shadow 同例), 记档以证该门的证伪力。
+    "scripts/migrate_live_records_to_live_db.py":
+        "RFC-078 批A 一次性账本迁移器: 把误落在 sim 库的**实盘**行 (trade_records "
+        "trade_mode='live' / manual_order_audit mode LIKE 'live%') 搬进 live 库。"
+        "**必须**同时只读源库+读写目标库 (双载体搬运), 改用 mode-aware 解析器只能拿到"
+        "一个载体、无法完成迁移; 且本脚本正是为了终结「该库零写入=死库」这一状态 —— "
+        "迁移+看板路由切换后 live 库重新成为实盘账本的活载体。默认 dry-run, --apply 前强制备份。",
 }
 
 

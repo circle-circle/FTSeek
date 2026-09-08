@@ -134,6 +134,79 @@ def get_trade_records_db() -> Path:
     return _DATA_DIR / "ftseek_us.db"
 
 
+# ── RFC-078 (2026-09-08): 看板(手动实盘台)专属库路由 ──────────────────
+# 病灶: 看板券商侧**恒 REAL** (manual_order_service._is_live() 硬编码 return True, 2026-06-24
+# 三态共存 Phase 0), 而 DB 侧由 TRADE_ENV 路由。现网 TRADE_ENV=1 ⇒ 真钱实盘手动单的账本
+# 写进了 sim 数据收集仓 (实证 2026-09-08: sim 库 manual_order_audit 有 64 行
+# mode='live_conservative' 一直写到 2026-09-04, 而 live 库同 mode 止于 2026-06-22;
+# sim 库 trade_records 795 行里只有 3 行 trade_mode='live', live 库 17 行止于 07-02)。
+# _assert_env_routing_consistent() 对此**不告警** —— 它比的是 TRADE_ENV vs
+# AUTO_TRADE_ACCOUNT (都是 sim, 自洽), 而看板手动链路绕开了这条比较 ⇒ 一致性断言有盲区。
+#
+# 为什么不直接翻全局 TRADE_ENV=0: get_main_db() 是全仓 90+ 文件共用的解析点, 翻它会把
+# **自动 sim 数据收集管线** (现役 ≈200 笔/月, 喂 IC / OKR / exit_scorecard / KR2 cohort)
+# 一并灌进 live 库 ⇒ 用"污染实盘库"换"隔离看板", 方向相反。且 open_positions 的
+# PRIMARY KEY 是 symbol ⇒ 同标的的实盘手动仓与 sim 收集仓物理上无法共存于一张表,
+# 隔离只能落在**库文件级**。
+#
+# 故: 看板 → live 库 (本解析器, 与 TRADE_ENV 解耦); 自动管线 → 保持 TRADE_ENV 路由。
+# 切换硬前提已由 scripts/env_separation_shadow.py 2026-09-08 复跑验证: 阻塞缺口 0,
+# live 侧 8 条失败全部 sim 侧同败 (现役缺陷, 非切换缺口) ⇒ READY_TO_SWITCH。
+# 回滚: .env.us 置 FTSEEK_DASHBOARD_DB_ISOLATION=0 + 重启 ⇒ 回落 get_main_db(), 零代码回滚。
+_DASHBOARD_ISOLATION_CACHE: Optional[bool] = None
+_DASHBOARD_ISOLATION_LOCK = threading.Lock()
+
+
+def _parse_dashboard_isolation_from_file() -> bool:
+    """从 .env.us 解析 FTSEEK_DASHBOARD_DB_ISOLATION (默认 1=开). 无文件则回落环境变量."""
+    env_file = _PROJECT_ROOT / ".env.us"
+    if env_file.exists():
+        try:
+            with open(env_file) as f:
+                for line in f:
+                    if line.strip().startswith("FTSEEK_DASHBOARD_DB_ISOLATION="):
+                        return line.strip().split("=", 1)[1].strip() != "0"
+        except OSError as exc:
+            # 必须留痕 (R5): 读不到开关就静默回落默认值 = "看板可能写错库"这件事无人知晓
+            logger.warning("[RFC-078] 读取 .env.us 的 FTSEEK_DASHBOARD_DB_ISOLATION 失败, "
+                           "回落环境变量/默认值(隔离开): %s", exc)
+    return os.getenv("FTSEEK_DASHBOARD_DB_ISOLATION", "1").strip() != "0"
+
+
+def dashboard_db_isolation_enabled() -> bool:
+    """看板库级隔离开关是否开启 (默认开; 与 is_live_mode 同法进程内固化, 改文件须重启).
+
+    固化而非每次重读: 运行期半路改路由会让同一进程内前后两次写落到不同库文件,
+    产生"半本账在 sim 半本在 live"的撕裂账本 —— 与 R-3 固化 TRADE_ENV 同理。
+    """
+    global _DASHBOARD_ISOLATION_CACHE
+    if os.getenv("FTSEEK_ALLOW_RUNTIME_TRADE_ENV_SWITCH", "").strip() == "1":
+        return _parse_dashboard_isolation_from_file()
+    if _DASHBOARD_ISOLATION_CACHE is None:
+        with _DASHBOARD_ISOLATION_LOCK:
+            if _DASHBOARD_ISOLATION_CACHE is None:
+                _DASHBOARD_ISOLATION_CACHE = _parse_dashboard_isolation_from_file()
+    return _DASHBOARD_ISOLATION_CACHE
+
+
+def get_dashboard_db() -> Path:
+    """看板(手动实盘台)主库 — 隔离开启时**恒 live 库**, 与 TRADE_ENV 解耦 (RFC-078).
+
+    看板内一律用本解析器, 不得用 get_main_db() (后者随 TRADE_ENV 漂到 sim 库),
+    也不得硬编码库文件路径 (tests/test_env_separation_shadow.py 有钉桩门)。
+    """
+    if dashboard_db_isolation_enabled():
+        return _DATA_DIR / "ftseek_us_live.db"
+    return get_main_db()
+
+
+def get_dashboard_trade_records_db() -> Path:
+    """看板成交台账库 (RFC-078) — 与 get_dashboard_db 同源, 保持两者永不分裂."""
+    if dashboard_db_isolation_enabled():
+        return _DATA_DIR / "ftseek_us_live.db"
+    return get_trade_records_db()
+
+
 def get_rejections_db() -> Path:
     """Get path to rejections.db"""
     return _DATA_DIR / "rejections.db"

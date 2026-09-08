@@ -411,14 +411,17 @@ class DataService:
         return self._fetch_positions_from_db()
 
     def _fetch_positions_from_db(self) -> list:
-        """从主 DB (get_main_db) 读取持仓作为 fallback, 排除已关闭的幽灵记录"""
+        """从看板库 (get_dashboard_db, RFC-078 后恒 live 库) 读取持仓作为 fallback, 排除已关闭的幽灵记录"""
         # 降级源: 清权威闩。fallback 返回空列表时上游 `if not r: return None` 会让
         # get_positions_raw 交出 [] —— 这个空**不是**券商说的零持仓, 绝不能拿去做
         # "DB 有 / 券商无" 的差集 (否则一次券商抖动 = 全仓标异常, 24h 后全删)。
         self._last_positions_authoritative = False
         import sqlite3
-        from app.core.db_utils import get_main_db
-        db_path = str(get_main_db())
+        # RFC-078 (2026-09-08): 看板专属库路由 — 本函数是**实盘**持仓的 DB fallback,
+        # 原 get_main_db 在 TRADE_ENV=1 下返回 sim 库, 而 sim 库 open_positions 现役 3 行
+        # 全是 account_type='simulate' 的数据收集仓 ⇒ fallback 会拿模拟仓冒充实盘仓。
+        from app.core.db_utils import get_dashboard_db
+        db_path = str(get_dashboard_db())
         if not os.path.exists(db_path):
             return []
         try:
@@ -692,8 +695,10 @@ class DataService:
     # ═══════════════════════════════════════════
 
     def _get_db(self) -> str:
-        from app.core.db_utils import get_main_db
-        return str(get_main_db())
+        # RFC-078 (2026-09-08): 看板**全部** db_query 的默认库 = live 库 (手动实盘台)。
+        # 与 TRADE_ENV 解耦: 自动 sim 数据收集管线仍走 get_main_db(), 两者永不混写。
+        from app.core.db_utils import get_dashboard_db
+        return str(get_dashboard_db())
 
     async def db_query(self, sql: str, params: tuple = (), db_path: str = None) -> list:
         """异步 DB 查询, 返回 list of dict"""

@@ -196,6 +196,21 @@ def test_render_empty_window_says_so(db, capsys):
     assert "环比上期" in out
 
 
+def test_report_declares_sim_caliber_not_live(db, capsys):
+    """RFC-078 批C 钉桩: 本报告必须**自称模拟口径**, 不得让读者以为是实盘.
+
+    病灶: 此前标题只写"本周交易汇总", 推到飞书无法分辨模拟/实盘; 而全套周报
+    (本脚本 + symbol_performance_report + exit_scorecard 的 `trade_mode != 'live'`)
+    **都是模拟口径** ⇒ 用户的真钱交易在任何周报里都不是一等公民。
+    证伪: 删掉 render() 里的口径三行 ⇒ 本条转红。
+    """
+    _row(db, "2026-08-27T10:00:00-04:00", net=42.5)
+    assert wts.main(["--db", str(db), "--end-date", "2026-08-27"]) == 0
+    out = capsys.readouterr().out
+    assert "模拟研究口径" in out and "非实盘" in out
+    assert "live_weekly_review.py" in out, "必须指向实盘周报, 否则两份报告仍会互相冒充"
+
+
 def test_cli_end_to_end(db, capsys):
     _row(db, "2026-08-27T10:00:00-04:00", net=42.5)
     _row(db, "2026-08-20T10:00:00-04:00", net=-7.5)

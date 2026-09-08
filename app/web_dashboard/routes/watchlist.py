@@ -14,8 +14,9 @@ router = APIRouter()
 
 
 def _get_db():
-    from app.core.db_utils import get_main_db
-    return str(get_main_db())
+    # RFC-078 (2026-09-08): 看板专属库路由 (原 get_main_db 随 TRADE_ENV 漂到 sim 库)
+    from app.core.db_utils import get_dashboard_db
+    return str(get_dashboard_db())
 
 
 def _get_latest_signals(symbols: list) -> dict:
