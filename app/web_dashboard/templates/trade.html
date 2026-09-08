@@ -28,6 +28,17 @@
         .ts-row-primary { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .ts-row-secondary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #21262d; font-size: 11px; color: #8b949e; }
         .ts-row-secondary b { color: #e1e4e8; font-weight: 600; margin-left: 4px; }
+        /* ── 手动下单闸门条 (2026-09-08 REVIEW-20260908 批1 B1) ──
+           validator 的闸门此前只在拒单后可见 (实测 13/83 被拒); 现提交前呈现。
+           只呈现不裁决: 后端仍是唯一权威, 前端不因自己读不到就宣称被阻断。 */
+        .gates-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #21262d; font-size: 11px; }
+        .gates-row:empty { display: none; }
+        .gates-title { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+        .gate-chip { padding: 2px 8px; border-radius: 10px; border: 1px solid #30363d; background: #0d1117; color: #8b949e; white-space: nowrap; }
+        .gate-chip b { color: inherit; font-weight: 700; }
+        .gate-chip.ok { border-color: #1f6f43; color: #4ade80; }
+        .gate-chip.warn { border-color: #7a5c00; color: #fbbf24; background: #1c1500; }
+        .gate-chip.block { border-color: #ef4444; color: #f87171; background: #2a0a0a; }
         .ts-item { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; min-width: 70px; }
         .ts-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.3px; }
         .ts-val { font-size: 14px; font-weight: 700; color: #e1e4e8; margin-top: 2px; }
@@ -49,12 +60,23 @@
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .form-group { display: flex; flex-direction: column; gap: 4px; }
         .form-group.full { grid-column: 1 / -1; }
+        /* B10 (2026-09-08 REVIEW-20260908 批3): 最近标的 chips (localStorage),
+           与港股页 #recent-chips 同一心智模型; 空数组时整行不渲染 (不留空槽)。 */
+        .rec-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+        .rec-chips:empty { display: none; }
+        .rec-chip { padding: 3px 10px; border: 1px solid #30363d; border-radius: 12px; background: #0d1117; color: #8b949e; font-size: 11px; font-family: inherit; cursor: pointer; }
+        .rec-chip:hover { color: #58a6ff; border-color: #58a6ff; }
+        /* B11 (2026-09-08 §H): 平仓理由 chips 复用 .rec-chip 外形, 选中态加一档 */
+        .rec-chip.on { color: #58a6ff; border-color: #58a6ff; background: #0a1a2a; }
         label { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
         input, select, textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; color: #e1e4e8; font-size: 14px; outline: none; }
         input:focus, select:focus { border-color: #58a6ff; }
         textarea { resize: vertical; min-height: 40px; }
         .dir-group { display: flex; gap: 6px; }
-        .dir-btn { flex: 1; padding: 10px; border: 2px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+        /* B9 (批3): 方向/操作切换由 <div onclick> 改为真 <button type="button">,
+           故补 button 的 UA 样式复位 (font-family / appearance), 视觉与改前逐像素一致。 */
+        .dir-btn { flex: 1; padding: 10px; border: 2px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; appearance: none; -webkit-appearance: none; }
+        .dir-btn:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
         .dir-btn.active.long { border-color: #22c55e; background: #0a2a1a; color: #4ade80; }
         .dir-btn.active.short { border-color: #ef4444; background: #2a0a0a; color: #f87171; }
         .dir-btn.active.open { border-color: #58a6ff; background: #0a1a2a; color: #58a6ff; }
@@ -126,21 +148,9 @@
         .btn-close { border: 1px solid #ef4444; color: #f87171; background: transparent; border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer; min-height: 36px; }
         .btn-close:hover { background: #2a0a0a; }
         .btn-cancel { border: 1px solid #f59e0b; color: #fbbf24; background: transparent; border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer; min-height: 36px; }
-        /* Position card view (mobile only) */
-        .pos-cards-mobile { display: none; }
-        .pos-card-m { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
-        .pos-card-m-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-        .pos-card-m-header .code { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-        .pos-card-m-header .dir-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
-        .pos-card-m-header .dir-badge.long { background: rgba(74,222,128,0.15); color: #4ade80; }
-        .pos-card-m-header .dir-badge.short { background: rgba(248,113,113,0.15); color: #f87171; }
-        .pos-card-m-header .weight { font-size: 12px; color: #8b949e; }
-        .pos-card-m-info { font-size: 12px; color: #8b949e; margin-bottom: 6px; }
-        .pos-card-m-divider { height: 1px; background: #21262d; margin: 6px 0; }
-        .pos-card-m-pnl { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
-        .pos-card-m-pnl .label { color: #8b949e; }
-        .pos-card-m-actions { margin-top: 8px; display: flex; gap: 8px; }
-        .pos-card-m-actions .btn { flex: 1; text-align: center; }
+        /* B7 (2026-09-08 REVIEW-20260908 批3): 原 .pos-cards-mobile / .pos-card-m* 移动端卡片
+           视图 14 行 CSS 已退役 —— 全仓零消费方 (实测 grep 仅命中 CSS 自身), 从未被渲染过。
+           移动端窄屏改走 A12 同一套 .pos-stack td::before 堆叠方案 (与港股页共用心智模型)。 */
         .result { padding: 10px; border-radius: 6px; margin-top: 10px; display: none; font-size: 13px; }
         .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
         .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
@@ -162,39 +172,9 @@
         .sig.yellow { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); }
         .sig.red { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.5); }
 
-        /* ── Decision Quality Panel ── */
-        .dq-score-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
-        .dq-score-item { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
-        .dq-score-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.3px; }
-        .dq-score-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
-        .dq-score-sub { font-size: 10px; color: #8b949e; margin-top: 2px; }
-        .dq-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
-        .dq-card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-        .dq-card-sym { font-weight: 700; font-size: 14px; }
-        .dq-card-pnl { font-weight: 700; font-size: 14px; }
-        .dq-card-meta { font-size: 11px; color: #8b949e; }
-        .dq-dims { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
-        .dq-dim { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
-        .dq-dim.pass { background: rgba(74,222,128,0.12); color: #4ade80; }
-        .dq-dim.warn { background: rgba(251,191,36,0.12); color: #fbbf24; }
-        .dq-dim.fail { background: rgba(248,113,113,0.12); color: #f87171; }
-        .dq-summary { font-size: 12px; color: #c9d1d9; line-height: 1.4; padding: 4px 0; }
-        .dq-behavior { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-top: 12px; }
-        .dq-behavior-title { font-size: 13px; font-weight: 600; color: #58a6ff; margin-bottom: 8px; }
-        .dq-behavior-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
-        .dq-behavior-label { color: #8b949e; min-width: 70px; }
-        .dq-behavior-dots { display: flex; gap: 3px; }
-        .dq-dot { width: 8px; height: 8px; border-radius: 50%; background: #30363d; }
-        .dq-dot.on-green { background: #4ade80; }
-        .dq-dot.on-yellow { background: #fbbf24; }
-        .dq-dot.on-red { background: #f87171; }
-        .dq-behavior-text { color: #c9d1d9; flex: 1; }
-        .dq-na { color: #7d8590; font-size: 12px; text-align: center; padding: 20px; }
-        @media (max-width: 768px) {
-            .dq-score-bar { grid-template-columns: repeat(2, 1fr); }
-            .dq-score-val { font-size: 18px; }
-            .dq-card-header { flex-direction: column; align-items: flex-start; }
-        }
+        /* B7 (批3): 原 .dq-* 决策质量面板 28 行 CSS + 其 768px 媒体查询已随
+           GET /api/trade/slow-data 一起退役 —— 前端消费方 2026-06 即已摘除
+           (trade.js 仅存注释), 全仓零命中; 端点现返回 410 墓碑。 */
 
         /* Diagnostic popper */
         .diag-overlay { display: none; position: fixed; inset: 0; z-index: 90; }
@@ -225,6 +205,21 @@
         .preview-row:last-child { border-bottom: none; }
         .preview-row .pk { color: #8b949e; font-size: 13px; }
         .preview-row .pv { font-weight: 600; font-size: 14px; text-align: right; }
+        /* ── B8 (2026-09-08 REVIEW-20260908 批3): 限价偏离警告样式收敛为 class ──
+           原硬(≥10%)/软(≥5%)两分支各写一份 ~60 行内联 style + 内联 onchange 字符串,
+           差异只有颜色与文案; 现共用 .price-warn, 变体只切 .hard/.soft/.gated/.ext。
+           .gated = 需勾选才放行确认键 (盘中, 与后端 validator 同一阈值);
+           .ext   = 盘外纯提示, 不设勾选门槛 (后端盘外同样不拦截, 不得假装有闸门)。 */
+        .price-warn { border-radius: 8px; margin: 12px 0; padding: 12px; }
+        .price-warn.hard { background: #dc2626; color: #fff; }
+        .price-warn.soft { background: #f59e0b; }
+        .price-warn.gated { font-weight: 700; font-size: 14px; }
+        .price-warn.gated.soft { color: #1a1a1a; }
+        .price-warn.ext { font-weight: 400; font-size: 13px; color: #fff; padding: 10px 12px; }
+        .price-warn .pw-scenario { display: block; font-weight: 400; font-size: 13px; margin-top: 2px; }
+        .price-warn .pw-note { font-size: 12px; opacity: 0.92; margin-top: 4px; }
+        .price-warn label { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-weight: 400; font-size: 13px; cursor: pointer; }
+        .price-warn input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
 
         /* ── Inline AI Suggestion (内嵌智能建议) ── */
         .ai-suggest {
@@ -285,12 +280,23 @@
 
         @media (max-width: 768px) {
             .form-grid { grid-template-columns: 1fr; }
-            .cap-grid { grid-template-columns: repeat(2, 1fr); }
             .dir-group { flex-wrap: wrap; }
             .diag-card { width: calc(100vw - 20px); left: 10px !important; right: 10px; }
             .pos-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
             .quote-detail { word-break: break-all; }
             table { min-width: 400px; }
+            /* A12-US (批3): 持仓 7 列 / 交易记录 8 列此前只能横向滚动 (B6 新增
+               "距止损" 列后更宽), 手机上最关键的风控数字被推出屏外。改走与港股页
+               .hk-stack 同一套 CSS 变形 —— **单一渲染路径**, 不另写卡片渲染, 故不会
+               出现 "表格与卡片数据不一致" 的经典漂移。标签取 td[data-label]。 */
+            .pos-stack { min-width: 0; }
+            .pos-stack thead { display: none; }
+            .pos-stack, .pos-stack tbody { display: block; width: 100%; }
+            .pos-stack tr { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+            .pos-stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: none; padding: 3px 0; white-space: normal; text-align: right !important; }
+            .pos-stack td::before { content: attr(data-label); color: #8b949e; font-size: 11px; text-align: left; flex: 0 0 auto; }
+            .pos-stack td[data-label=""]::before { content: none; }
+            .pos-stack td[colspan] { display: block; text-align: center !important; }
             .estimate-panel .est-line { gap: 8px; }
             .trade-summary { gap: 2px; padding: 6px 8px; }
             .ts-item { padding: 3px 8px; min-width: 55px; }
@@ -301,8 +307,6 @@
         }
 
         @media (max-width: 480px) {
-            .cap-grid { grid-template-columns: 1fr 1fr; gap: 4px; }
-            .cap-item .cv { font-size: 14px; }
             .btn-group { flex-direction: column; }
             .btn-group .btn { min-width: 100%; }
             table { min-width: 350px; }
@@ -329,6 +333,7 @@
                 <span class="ts-sec-item">冻结 <b id="tsFrozen">--</b></span>
                 <span class="ts-sec-item">保证金占用 <b id="tsMarginUsage">--</b></span>
             </div>
+            <div class="gates-row" id="gatesRow"></div>
         </div>
 
         <!-- ═══ 下单表单 ═══ -->
@@ -337,6 +342,7 @@
                         <div class="form-group">
                             <label>标的</label>
                             <input type="text" id="symbol" placeholder="AAPL 或 US.AAPL" autocomplete="off">
+                            <div class="rec-chips" id="recentChips"></div>
                         </div>
                         <div class="form-group">
                             <label>类型</label>
@@ -348,15 +354,15 @@
                         <div class="form-group">
                             <label>方向</label>
                             <div class="dir-group">
-                                <div class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</div>
-                                <div class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</div>
+                                <button type="button" class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</button>
+                                <button type="button" class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</button>
                             </div>
                         </div>
                         <div class="form-group">
                             <label>操作</label>
                             <div class="dir-group">
-                                <div class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</div>
-                                <div class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</div>
+                                <button type="button" class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</button>
+                                <button type="button" class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</button>
                             </div>
                         </div>
                         <div class="form-group" id="priceGroup" style="display:none">
@@ -500,11 +506,12 @@
                     <!-- Desktop & Mobile: unified table view -->
                     <div class="pos-table-wrap">
                         <div class="tw">
-                            <table>
+                            <table class="pos-stack">
                                 <thead><tr>
-                                    <th>代码</th><th style="text-align:right">市值/数量</th><th style="text-align:right">现价/成本</th><th style="text-align:right">今日盈亏</th><th style="text-align:right">持仓盈亏</th><th style="text-align:center">占比</th>
+                                    {# B6 (2026-09-08 REVIEW-20260908 批2): 距止损此前只是代码旁 10px 色点, 看数字要点开弹层 #}
+                                    <th>代码</th><th style="text-align:right">市值/数量</th><th style="text-align:right">现价/成本</th><th style="text-align:right">今日盈亏</th><th style="text-align:right">持仓盈亏</th><th style="text-align:right">距止损/SL</th><th style="text-align:center">占比</th>
                                 </tr></thead>
-                                <tbody id="posBody"><tr><td colspan="6" class="loading">加载中...</td></tr></tbody>
+                                <tbody id="posBody"><tr><td colspan="7" class="loading">加载中...</td></tr></tbody>
                             </table>
                         </div>
                     </div>
@@ -525,7 +532,7 @@
             </div>
             <div id="ordersBody" style="margin-top:10px">
                 <div class="tw">
-                    <table>
+                    <table class="pos-stack">
                         <thead><tr>
                             <th>时间</th><th>标的</th><th>动作</th><th style="text-align:right">数量</th><th style="text-align:right">价格</th><th>状态</th><th>备注</th><th></th>
                         </tr></thead>
@@ -562,6 +569,8 @@
                 <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
                     <span style="color:#8b949e">现价</span><span id="closeCurPrice">--</span>
                 </div>
+                {# B3 (2026-09-08 REVIEW-20260908): 盘外市价平仓会被券商拒, 此前弹窗零提示 #}
+                <div id="closeSessionHint" style="display:none;font-size:12px;line-height:1.5;padding:8px 10px;background:#2a1a0a;border:1px solid #f59e0b;border-radius:6px;margin:10px 0"></div>
                 <div id="closeThesisRow" style="display:none;padding:8px 0;border-bottom:1px solid #21262d">
                     <div style="display:flex;justify-content:space-between">
                         <span style="color:#8b949e">📋 入场理由</span>
@@ -578,9 +587,14 @@
                     <input type="number" id="closePriceInput" step="0.01" style="margin-top:4px">
                     <div style="font-size:11px;color:#8b949e;margin-top:4px">填写 = 限价平仓 (止损/止盈)；留空 = 市价平仓</div>
                 </div>
+                {# B11 (2026-09-08 REVIEW-20260908 §H, 用户裁「理由非必填」): 平仓是**最紧急动作**,
+                   此前理由为空直接拦 ("请填写理由") = 在最该快的路径上加摩擦, 且与港股页口径相反
+                   (港股 2026-07-22 已裁「去掉理由必填」)。改为 4 枚一键 chips (保留痕、免打字) +
+                   可选补充文本; 全不选不填 ⇒ 后端按 "手动平仓" 记账, 归因链不断、不新增任何阻断。 #}
                 <div class="form-group" style="margin-top:10px">
-                    <label>理由</label>
-                    <input type="text" id="closeReasonInput" style="margin-top:4px">
+                    <label>理由（可选）</label>
+                    <div class="rec-chips" id="closeReasonChips" style="margin:4px 0 6px"></div>
+                    <input type="text" id="closeReasonInput" placeholder="留空 = 手动平仓；其它理由可手填" style="margin-top:0">
                 </div>
             </div>
             <div id="closeError" style="display:none;color:#f87171;font-size:12px;padding:6px 10px;background:#2a0a0a;border:1px solid #ef4444;border-radius:4px;margin-bottom:8px"></div>
@@ -635,5 +649,6 @@
 {% endblock %}
 
 {% block external_scripts %}
-<script src="/static/js/trade.js?v=20260625b"></script>
+<script src="/static/js/trade.js?v=20260908d"></script>
+{# 2026-09-08: /static/ 是 max-age=2592000 immutable (app.py:184) — 改 JS 必须 bump 版本号 #}
 {% endblock %}

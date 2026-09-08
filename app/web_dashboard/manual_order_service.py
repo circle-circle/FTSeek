@@ -423,11 +423,22 @@ class ManualOrderService:
         return record_manual_open(self, order)
 
     def _record_manual_close(self, symbol: str, direction: str, entry_price: float,
-                             exit_price: float, quantity: int, reason: str, order_id: str):
+                             exit_price: float, quantity: int, reason: str, order_id: str,
+                             entry_reason: str = ""):
+        """手动平仓 → 写 trade_records 形成交易闭环。
+
+        2026-09-08 (REVIEW-20260908 §H) 修复**委派签名漂移**: `order/executor.py:711` 自
+        2026-06-19 (768e443f) 起就传 `entry_reason=`, 而本委派一直没这个形参 ⇒ 每次手动平仓
+        都在此处抛 TypeError, 被 executor.py:784 的 `except Exception` 降级成一行 warning
+        ("trade_records 写入失败 (不影响平仓)") ⇒ **券商侧已平仓、账本侧零记录**的静默断链
+        (实证: trade_records 中 `exit_reason LIKE '[%'` 的手动平仓行 = 0, 最后一笔手动平仓
+        留痕停在 2026-06-09 = 该 commit 之前)。下游 `record_manual_close` 早就收这个参数,
+        只是委派层没跟着改 —— 典型的"重构改了实现忘了改门面"。
+        """
         from app.web_dashboard.order.audit import record_manual_close
         return record_manual_close(
             self, symbol, direction, entry_price, exit_price,
-            quantity, reason, order_id,
+            quantity, reason, order_id, entry_reason=entry_reason,
         )
 
     def _mark_position_manual(self, symbol: str, direction: str = "LONG"):

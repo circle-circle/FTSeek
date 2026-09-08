@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.web_dashboard.data_service import get_data_service
 from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
+from app.web_dashboard.order.gates import collect_manual_gates
 
 logger = logging.getLogger("ftseek_us.routes.trade")
 router = APIRouter()
@@ -108,7 +109,10 @@ def register(app, templates):
         result = await asyncio.to_thread(
             svc.close_position,
             symbol=body.get("symbol", ""),
-            reason=body.get("reason", "手动平仓"),
+            # B11 (2026-09-08 REVIEW-20260908 §H, 用户裁「理由非必填」): 前端不再拦空理由。
+            #   `body.get("reason", 默认)` 只在**键缺失**时兜底, 前端送 "" 会穿透成
+            #   "[平仓] " (空留痕) ⇒ 改用 or 兜底, 空/缺键统一落 "手动平仓"。
+            reason=(str(body.get("reason") or "").strip() or "手动平仓"),
             close_qty=close_qty,
             price=limit_price,
             fill_outside_rth=bool(body.get("fill_outside_rth", False)),
@@ -467,213 +471,66 @@ def register(app, templates):
             "stale": bool(any(p.get("stale") for p in positions)),
             "as_of": datetime.now().isoformat(timespec="seconds"),
         }
-        # Debug: 记录返回数据量
-        import json
-        logger.info(f"[trade/snapshot] positions={len(positions)}, orders={len(orders)}, account_keys={list(account.keys()) if account else 'empty'}")
+        # B7 (2026-09-08 REVIEW-20260908 批3): 盘中 5s 一轮轮询 ⇒ 原 info 级
+        # 每分钟 24 行等量噪声, 且函数内 import json 从未使用; 降为 debug。
+        logger.debug(
+            "[trade/snapshot] positions=%d orders=%d account_keys=%s",
+            len(positions), len(orders),
+            list(account.keys()) if account else "empty",
+        )
         return result
 
-    @router.get("/api/trade/slow-data")
-    async def trade_slow_data():
-        """
-        交易决策质量 — 统一端点 (5min cache)
-        返回: audit + decision_quality + behavioral + plan_adherence + profit_factor + trade_cards
-        """
-        import glob as _glob
-        import json as _json
-        import os as _os
+    @router.get("/api/trade/gates")
+    async def trade_gates():
+        """手动下单闸门只读快照 (2026-09-08, REVIEW-20260908 批1 B1).
 
-        svc = get_manual_order_service()
-        audit = svc.get_audit_history(50)
-
+        把 validator 里"只在拒单后可见"的闸门提前送到前端预检条/预览弹窗。
+        纯只读: 不改判据、不改阈值、不新增拦截; 不含 PDT (2026-08-02 已裁决关闭,
+        富途香港账户不适用 FINRA PDT)。详见 app/web_dashboard/order/gates.py。
+        """
         ds = get_data_service()
-        cached = ds.cache.get("decision_quality_v2")
+        cached = ds.cache.get("trade_gates")
         if cached is not None:
-            return {**cached, "audit": {"orders": audit}}
+            return cached
+        # 依赖均为进程内读取 (flag 文件 / capital_safety 状态 / DB 计数), 无 broker RPC
+        gates = await asyncio.to_thread(collect_manual_gates)
+        ds.cache.set("trade_gates", gates, ttl=15)
+        return gates
 
-        result = {
-            "decision_quality": {"score": 0, "grade": "--", "sample_size": 0, "sample_sufficient": False},
-            "behavioral": {"available": False, "score": 0, "grade": "--", "disposition": {}, "anchoring": {}, "chasing": {}},
-            "plan_adherence": {"available": False, "traded_rate": 0, "hit_rate": 0, "planned_count": 0, "date": ""},
-            "profit_factor": 0,
-            "trade_cards": [],
-        }
+    @router.get("/api/trade/slow-data")
+    async def trade_slow_data(request: Request):
+        """已退役 (410 Gone) — 2026-09-08 REVIEW-20260908 批3 B7.
 
-        try:
-            # ── 1. Trade cards with attribution ──
-            trades = await ds.db_query("""
-                SELECT id, symbol, direction, realized_pnl, pnl_pct, trade_date,
-                       entry_price, exit_price, quantity, exit_reason, entry_time, exit_time,
-                       metadata_json, source_type
-                FROM trade_records
-                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0
-                ORDER BY id DESC LIMIT 20
-            """)
+        减法三步的「证零消费 → 停」两步: 前端早在 2026-06 已摘除该面板
+        (trade.js 仅存注释 "slow-data removed: decision quality moved to
+        dashboard deep review"), 全仓 grep 零消费方 ⇒ 约 200 行决策质量聚合
+        逻辑 (decision_quality / behavioral / plan_adherence / profit_factor /
+        trade_cards) 连同 5min 缓存一起退役。
 
-            # Load latest plan effectiveness for planned matching
-            plan_targets = set()
-            plan_date = ""
-            plan_traded_rate = 0.0
-            plan_hit_rate = 0.0
-            plan_count = 0
-            plan_files = sorted(_glob.glob("/opt/ftseek/FTSeek-US/data/plan_effectiveness/daily_*.json"))
-            if plan_files:
-                try:
-                    with open(plan_files[-1]) as f:
-                        pe = _json.load(f)
-                    plan_date = pe.get("date", "")
-                    plan_traded_rate = pe.get("traded_rate", 0)
-                    plan_hit_rate = pe.get("hit_rate", 0)
-                    plan_count = pe.get("planned_count", 0)
-                    for t in pe.get("targets", []):
-                        if t.get("traded"):
-                            plan_targets.add(t.get("symbol", ""))
-                except Exception:
-                    pass
-
-            cards = []
-            total_win_pnl = 0.0
-            total_loss_pnl = 0.0
-            attr_scores = []
-
-            for r in trades:
-                pnl = round(float(r.get("realized_pnl") or 0), 2)
-                if pnl > 0:
-                    total_win_pnl += pnl
-                else:
-                    total_loss_pnl += abs(pnl)
-
-                # Parse attribution from metadata_json
-                attr = None
-                meta_raw = r.get("metadata_json")
-                if meta_raw:
-                    try:
-                        meta = _json.loads(meta_raw)
-                        a = meta.get("attribution")
-                        if a:
-                            attr = {
-                                "dimensions": a.get("dimensions", []),
-                                "summary": a.get("summary", ""),
-                            }
-                            # Collect dimension scores for decision quality
-                            for dim in a.get("dimensions", []):
-                                s = dim.get("score")
-                                if s is not None:
-                                    attr_scores.append(float(s))
-                    except Exception:
-                        pass
-
-                # Also check trade_attribution table for overall_score
-                sym = r.get("symbol", "")
-                td = r.get("trade_date", "")
-
-                # Calculate holding hours
-                holding_h = None
-                entry_t = r.get("entry_time")
-                exit_t = r.get("exit_time")
-                if entry_t and exit_t:
-                    try:
-                        from datetime import datetime as _dt
-                        # Handle various formats
-                        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
-                            try:
-                                et = _dt.strptime(str(entry_t)[:26], fmt)
-                                xt = _dt.strptime(str(exit_t)[:26], fmt)
-                                holding_h = round((xt - et).total_seconds() / 3600, 1)
-                                break
-                            except ValueError:
-                                continue
-                    except Exception:
-                        pass
-
-                planned = sym in plan_targets
-
-                cards.append({
-                    "id": r.get("id"),
-                    "symbol": sym,
-                    "direction": r.get("direction", ""),
-                    "pnl": pnl,
-                    "pnl_pct": round(float(r.get("pnl_pct") or 0), 4),
-                    "date": td,
-                    "entry_price": round(float(r.get("entry_price") or 0), 2),
-                    "exit_price": round(float(r.get("exit_price") or 0), 2),
-                    "quantity": r.get("quantity", 0),
-                    "exit_reason": r.get("exit_reason", ""),
-                    "holding_hours": holding_h,
-                    "attribution": attr,
-                    "planned": planned,
-                })
-
-            result["trade_cards"] = cards
-
-            # ── 2. Profit factor ──
-            pf = round(total_win_pnl / total_loss_pnl, 2) if total_loss_pnl > 0 else (99.99 if total_win_pnl > 0 else 0)
-            result["profit_factor"] = pf
-
-            # ── 3. Decision quality from trade_attribution ──
-            try:
-                from app.web_dashboard.data_service import et_days_ago as _eda
-                attr_rows = await ds.db_query(f"""
-                    SELECT overall_score FROM trade_attribution
-                    WHERE trade_date >= '{_eda(30)}'
-                    ORDER BY created_at DESC LIMIT 20
-                """)  # 2026-07-28: date('now') UTC→ET (时区家族)
-                if attr_rows:
-                    scores = [r["overall_score"] for r in attr_rows if r.get("overall_score")]
-                    if scores:
-                        avg_score = round(sum(scores) / len(scores), 1)
-                        sample = len(scores)
-                        if avg_score >= 90: grade = "A+"
-                        elif avg_score >= 80: grade = "A"
-                        elif avg_score >= 70: grade = "B+"
-                        elif avg_score >= 60: grade = "B"
-                        elif avg_score >= 50: grade = "C+"
-                        elif avg_score >= 40: grade = "C"
-                        else: grade = "D"
-                        result["decision_quality"] = {
-                            "score": avg_score, "grade": grade,
-                            "sample_size": sample, "sample_sufficient": sample >= 5,
-                        }
-            except Exception:
-                pass
-
-            # ── 4. Behavioral from diagnostic_results ──
-            try:
-                # 2026-08-01: 模块已退役 (写入已停), 读数为历史最后一帧
-                diag = await ds.db_query_one("""
-                    SELECT data FROM diagnostic_results
-                    WHERE module_name = 'shadow_account_v2' AND status = 'success'
-                    ORDER BY created_at DESC LIMIT 1
-                """)
-                if diag and diag.get("data"):
-                    bdata = _json.loads(diag["data"])
-                    bs = bdata.get("behavioral_score", {})
-                    if bs:
-                        result["behavioral"] = {
-                            "available": True,
-                            "score": bs.get("score", 0),
-                            "grade": bs.get("grade", "--"),
-                            "disposition": bdata.get("disposition_effect", {}),
-                            "anchoring": bdata.get("anchoring", {}),
-                            "chasing": bdata.get("chasing", {}),
-                        }
-            except Exception:
-                pass
-
-            # ── 5. Plan adherence ──
-            if plan_files:
-                result["plan_adherence"] = {
-                    "available": True,
-                    "traded_rate": plan_traded_rate,
-                    "hit_rate": plan_hit_rate,
-                    "planned_count": plan_count,
-                    "date": plan_date,
-                }
-
-            ds.cache.set("decision_quality_v2", result, ttl=60)
-        except Exception as e:
-            logger.error(f"[trade/slow-data] error: {e}")
-
-        return {**result, "audit": {"orders": audit}}
+        为何留墓碑而非直接删路由: 仓外仍有 3 份 Hermes skill 文档按旧契约描述
+        该端点 (/root/.hermes/skills/devops/ftseek-dashboard/**)。直接删 ⇒ 调用方
+        拿到 404 与「路由打错」不可区分; 返回 410 + 明确 message ⇒ 调用方一眼知道
+        是「刻意退役」而非自己写错, 且 warning 日志会暴露任何仍在打的调用方。
+        文档同步 + 墓碑本身的删除登记为后续项 (见 handoff 待办)。
+        """
+        logger.warning(
+            "[trade/slow-data] 命中已退役端点 (410) — 调用方=%s; "
+            "决策质量面板已迁至 dashboard 深度复盘, 请更新调用方/skill 文档",
+            request.client.host if request.client else "?",
+        )
+        return JSONResponse(
+            status_code=410,
+            content={
+                "ok": False,
+                "error": {
+                    "code": "ENDPOINT_RETIRED",
+                    "message": (
+                        "/api/trade/slow-data 已于 2026-09-08 退役 (前端零消费); "
+                        "决策质量数据请看 dashboard 深度复盘相关端点"
+                    ),
+                },
+            },
+        )
 
 
     # ═══════════════════════════════════════════════════════════

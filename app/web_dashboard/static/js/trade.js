@@ -22,6 +22,10 @@
         let _suppressOverride = false;   // 程序填值时抑制override检测
         let _planTargetsCache = null;    // 作战计划指标缓存
         let _planLastFetchTs = 0;
+        // B1 (2026-09-08 REVIEW-20260908): 手动下单闸门只读快照 (/api/trade/gates)。
+        // 声明在顶部以避免 TDZ —— updateEstimate 早于轮询段执行也要能安全读。
+        let _gates = null;
+        let _gatesTimer = null;
         const _riskCfg = { riskPct: 0.01, maxPct: 0.05 };
         const isLive = (window.__CONFIG__ && window.__CONFIG__.isLive) || false;
 
@@ -450,11 +454,90 @@
             if (!sym) return;
             // 重置override状态 (新 symbol 默认采纳建议)
             _userOverridden = false;
+            // B10 (批3): 换标的即作废上一只票的报价/购买力快照。
+            //   不作废 ⇒ 新报价到达前点"预览下单", 预估金额与限价偏离检查会拿
+            //   **上一只票的价格**当基准 (与港股页 A1 同族缺陷)。宁可短暂显示 "--"
+            //   (updateEstimate 会退回"请先获取报价"), 也不给一个错得很像样的数字。
+            curQuote = null;
+            curCap = null;
             // 报价与plan并发; plan会设置股数/价格/方向
             fetchQuote();
             autoFillFromPlan(sym);
         }
 
+        // ── B10 (2026-09-08 REVIEW-20260908 批3): 最近标的 chips (localStorage) ──
+        // 港股页早有这排 chips (#recent-chips), 美股页此前零 localStorage (实测 grep 无命中),
+        // 只能靠 URL 参数带代码 —— 连续复盘/加仓同一批票时每次都要重打代码。
+        // **只存代码本身** (5 枚, 去重, 最新在前): 不存价格/股数/方向, 免得把过期数字带回表单。
+        // 点击走 onSymbolChanged() —— 与"手输代码 + 失焦"完全同一条路径, 不另开分支。
+        const RECENT_SYMBOLS_KEY = 'us_recent_symbols';
+        function _recentSymbols() {
+            try {
+                const arr = JSON.parse(localStorage.getItem(RECENT_SYMBOLS_KEY) || '[]');
+                return Array.isArray(arr) ? arr.filter(x => typeof x === 'string' && x.length > 0) : [];
+            } catch (e) {
+                return [];   // localStorage 被禁用 / JSON 损坏 ⇒ chips 不显示, 绝不影响下单主流程
+            }
+        }
+        function saveRecentSymbol(sym) {
+            if (!sym) return;
+            try {
+                const arr = [sym].concat(_recentSymbols().filter(x => x !== sym)).slice(0, 5);
+                localStorage.setItem(RECENT_SYMBOLS_KEY, JSON.stringify(arr));
+            } catch (e) { return; }
+            renderRecentChips();
+        }
+        function renderRecentChips() {
+            const box = document.getElementById('recentChips');
+            if (!box) return;
+            // data-sym + 事件委托 (下方 bindRecentChips), 不用内联 onclick 字符串拼接:
+            // 标的字符串来自服务端, 走 escHtml 后放进属性值即可, 不进 JS 字面量。
+            box.innerHTML = _recentSymbols().map(s =>
+                `<button type="button" class="rec-chip" data-sym="${escHtml(s)}" title="点击填入 ${escHtml(s)}">${escHtml(s.replace(/^US\./, ''))}</button>`
+            ).join('');
+        }
+        function pickRecentSymbol(sym) {
+            const el = document.getElementById('symbol');
+            if (!el || !sym) return;
+            el.value = sym;
+            onSymbolChanged();
+        }
+        function bindRecentChips() {
+            const box = document.getElementById('recentChips');
+            if (!box) return;
+            box.addEventListener('click', function (ev) {
+                const btn = ev.target.closest ? ev.target.closest('.rec-chip') : null;
+                if (btn && btn.dataset.sym) pickRecentSymbol(btn.dataset.sym);
+            });
+            renderRecentChips();
+        }
+
+        // ── B11 (2026-09-08 REVIEW-20260908 §H, 用户裁「理由非必填」): 平仓理由一键 chips ──
+        // 平仓是**最紧急动作**, 此前理由为空直接拦 ("请填写理由") = 在最该快的路径上加摩擦,
+        // 且与港股页口径相反 (港股 2026-07-22 已裁「去掉理由必填」)。改法 = 保留痕、去掉打字:
+        // chips 一点即填, 也**可以什么都不填** —— 留空由后端按 "手动平仓" 记账 (routes/trade.py),
+        // 归因链不断。审计口径: 全仓零消费方按理由**文本**分支 (消费方都读 EXTERNAL_CLOSE/MANUAL
+        // 这类枚举), 故 chips 词表只影响留痕可读性, 不影响任何判据。
+        // 只给 4 枚实义 chips: 建议里的第 5 枚「其它」与下面的自由文本框完全重复 = 纯噪声。
+        const CLOSE_REASONS = ['止损触发', '止盈达成', '计划变更', '风控降敞口'];
+        function renderCloseReasonChips(active) {
+            const box = document.getElementById('closeReasonChips');
+            if (!box) return;
+            box.innerHTML = CLOSE_REASONS.map(r =>
+                `<button type="button" class="rec-chip${r === active ? ' on' : ''}" data-reason="${escHtml(r)}">${escHtml(r)}</button>`
+            ).join('');
+        }
+        function bindCloseReasonChips() {
+            const box = document.getElementById('closeReasonChips');
+            if (!box) return;
+            box.addEventListener('click', function (ev) {
+                const btn = ev.target.closest ? ev.target.closest('.rec-chip') : null;
+                if (!btn || !btn.dataset.reason) return;
+                const inp = document.getElementById('closeReasonInput');
+                if (inp) inp.value = btn.dataset.reason;   // 单一真源仍是 input ⇒ 提交路径逐字不变
+                renderCloseReasonChips(btn.dataset.reason);
+            });
+        }
         // ── Symbol Intelligence ──
         async function loadIntel(sym) {
             const card = document.getElementById('intelCard');
@@ -535,10 +618,28 @@
                 clearTimeout(timeout);
                 const q = await qRes.json();
                 const c = await cRes.json();
+                // B10 (批3): 两道标的校验 (报价响应带 symbol — manual_order_service.py:255 —
+                //   但此前前端从不比对)。
+                //   ① 在途响应过期: 请求发出后输入框已换成别的标的 ⇒ 整份丢弃, 既不写
+                //      curQuote/curCap 也不渲染 —— 否则**后到的旧响应**会盖掉新标的的报价
+                //      (5s 轮询与手输代码并发时真实可发生)。
+                //   ② 回包标的与请求不符 ⇒ 同样丢弃, 但要说出来 (三态口径: 报错 ≠ 空)。
+                const nowSym = document.getElementById('symbol').value.trim().toUpperCase();
+                if (nowSym !== sym) return;
+                if (q.symbol && String(q.symbol).toUpperCase() !== sym) {
+                    curQuote = null;
+                    curCap = null;
+                    document.getElementById('quotePrice').textContent = '--';
+                    document.getElementById('quoteDetail').textContent =
+                        `⚠️ 报价标的不一致（请求 ${sym} / 回包 ${q.symbol}）— 已丢弃，请重新查询`;
+                    return;
+                }
                 curCap = c;
 
                 if (q.cur_price) {
                     curQuote = q;
+                    // B10: 只在**报价成功**时记忆 (打错的代码不会污染 chips)
+                    saveRecentSymbol(sym);
                     // 价格标签: 按时段显示盘前/盘后/夜盘
                     const {phase: qPhase} = isExtendedHours();
                     let priceLabel = '';
@@ -605,6 +706,76 @@
         }
 
         function setQty(n) { if (n > 0) { document.getElementById('quantity').value = n; updateEstimate(); } }
+
+        // ── 盘外时段价格基准 (2026-09-08 REVIEW B2) ──
+        // 盘外 cur_price 是上次常规收盘价, 拿它算偏离既会假警报也会假安心;
+        // 报价响应已带时段价 (manual_order_service.py:263-265), 与 quoteBox 展示同源选择。
+        function _extPriceBasis(q, phase) {
+            if (!q) return {price: 0, label: ''};
+            if (phase === 'PRE_MARKET' && q.pre_price) return {price: q.pre_price, label: '盘前价'};
+            if (phase === 'AFTER_HOURS' && q.after_price) return {price: q.after_price, label: '盘后价'};
+            if (q.overnight_price) return {price: q.overnight_price, label: '夜盘价'};
+            if (q.after_price) return {price: q.after_price, label: '盘后价'};
+            if (q.pre_price) return {price: q.pre_price, label: '盘前价'};
+            return {price: q.cur_price || 0, label: '上次收盘价'};
+        }
+
+        // ── B8 (2026-09-08 REVIEW-20260908 批3): 限价偏离警告的单一实现 ──
+        // 原盘中 ≥10% / ≥5% 两分支各写一份 ~60 行内联 HTML + 内联 onchange 字符串,
+        // 差异只有颜色与文案; 且阈值在前端硬编码, 与后端 validator 用的服务常量各写一份。
+        // 现: 文案查表 + 样式走 .price-warn class + 勾选逻辑走 addEventListener。
+        // **行为逐条保持**: 仍不阻止提交 (2026-06-24 起硬档也只是 strong warn),
+        // 仍靠 window._priceWarnAck → order.acknowledge_price_warning 与后端软拦截对齐
+        // (validator.py:229 无此标志即拒), 故这个全局标志是契约的一部分, 不得顺手删掉。
+        const _PRICE_WARN_TEXT = {
+            hard: {icon: '🛑', title: '价格偏离过大', ack: '⚠️ 确认提交 (已知晓价格偏离大)', gate: '请先确认价格偏离'},
+            soft: {icon: '⚠️', title: '价格偏离警告', ack: '⚠️ 确认提交 (已知晓价格异常)', gate: '请先确认价格异常'},
+        };
+
+        // 场景化文案与后端 validator.py:203-224 的四条逐字同构 (买卖 × 高于/低于市价)。
+        function _priceDevScenario(action, lp, cp, dev) {
+            const isBuy = action === 'BUY';
+            const rel = isBuy ? (lp > cp ? '高于' : '低于') : (lp < cp ? '低于' : '高于');
+            const immediate = isBuy ? (lp > cp) : (lp < cp);
+            const tail = immediate ? '将以市价立即成交（可能非预期）' : '订单不会立即成交（请确认是否输入正确）';
+            return `${isBuy ? '买入' : '卖出'}限价 $${lp.toFixed(2)} ${rel}市价 $${cp.toFixed(2)} 达 ${dev.toFixed(1)}%，${tail}`;
+        }
+
+        function _renderPriceWarn(kind, dev, scenarioMsg) {
+            const t = _PRICE_WARN_TEXT[kind] || _PRICE_WARN_TEXT.soft;
+            const boxId = 'priceWarn_' + kind + '_' + Date.now();
+            return {
+                boxId: boxId,
+                ackText: t.ack,
+                gateText: t.gate,
+                html: `<div class="price-warn gated ${kind}">
+                    ${t.icon} ${t.title} (${dev.toFixed(1)}%)
+                    <span class="pw-scenario">${escHtml(scenarioMsg)}</span>
+                    <label><input type="checkbox" id="${boxId}">我已知晓价格偏离 ${dev.toFixed(1)}%，确认继续下单</label>
+                </div>`,
+            };
+        }
+
+        // 必须在 warn HTML 已写入 el.innerHTML 之后调用 (innerHTML += 会重建子树)。
+        function _bindPriceWarn(w, confirmBtn) {
+            window._priceWarnAck = false;
+            if (!confirmBtn) return;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = w.gateText;
+            confirmBtn.style.opacity = '0.5';
+            confirmBtn.style.cursor = 'not-allowed';
+            const box = document.getElementById(w.boxId);
+            if (!box) return;
+            box.addEventListener('change', function () {
+                const on = this.checked;
+                window._priceWarnAck = on;
+                confirmBtn.disabled = !on;
+                confirmBtn.style.opacity = on ? '1' : '0.5';
+                confirmBtn.style.cursor = on ? 'pointer' : 'not-allowed';
+                confirmBtn.textContent = on ? w.ackText : w.gateText;
+            });
+        }
+
         function stepQty(delta) {
             const el = document.getElementById('quantity');
             const cur = parseInt(el.value) || 0;
@@ -678,19 +849,31 @@
                 }
 
                 // ── 实时限价偏离提示 (P0 2026-06-15) ──
-                // 2026-06-25: 盘前/盘后/休市时 cur_price 为上次收盘价, 不反映盘外报价 → 跳过 (与后端 validator 对齐)
+                // 2026-06-25 原注释称盘外"跳过 (与后端 validator 对齐)", 但代码从未跳过 ——
+                //   实际是拿陈旧收盘价算偏离, 既造假警报也造假安心。
+                // 2026-09-08 (REVIEW B2): 改为按时段选基准价并标注基准; 盘中语义与阈值完全不变。
                 const otype = document.getElementById('orderType')?.value;
                 const lpRaw = document.getElementById('limitPrice')?.value;
-                if (otype === 'LIMIT' && lpRaw && parseFloat(lpRaw) > 0 && curQuote.cur_price > 0) {
+                if (otype === 'LIMIT' && lpRaw && parseFloat(lpRaw) > 0) {
+                    const {phase: dPhase} = isExtendedHours();
+                    const basis = dPhase === 'REGULAR'
+                        ? {price: curQuote.cur_price || 0, label: '市价'}
+                        : _extPriceBasis(curQuote, dPhase);
                     const lp = parseFloat(lpRaw);
-                    const cp = curQuote.cur_price;
-                    const dev = Math.abs(lp - cp) / cp * 100;
-                    if (dev >= 10) {
-                        const existing = estWarning.innerHTML || '';
-                        estWarning.innerHTML = existing + `<div class="est-danger">⚠️ 限价偏离市价 ${dev.toFixed(1)}% (≥10%)，提交时需确认</div>`;
-                    } else if (dev >= 5) {
-                        const existing = estWarning.innerHTML || '';
-                        estWarning.innerHTML = existing + `<div class="est-warn">⚠️ 限价偏离市价 ${dev.toFixed(1)}% (≥5%)，提交时需确认</div>`;
+                    const hardPct = (_gates && _gates.price_deviation_hard_pct) || 10;
+                    const warnPct = (_gates && _gates.price_deviation_warn_pct) || 5;
+                    if (basis.price > 0) {
+                        const dev = Math.abs(lp - basis.price) / basis.price * 100;
+                        const tail = dPhase === 'REGULAR'
+                            ? '，提交时需确认'
+                            : `（对比${basis.label}；盘外后端不拦截，请自行确认）`;
+                        if (dev >= hardPct) {
+                            const existing = estWarning.innerHTML || '';
+                            estWarning.innerHTML = existing + `<div class="est-danger">⚠️ 限价偏离${basis.label} ${dev.toFixed(1)}% (≥${hardPct}%)${tail}</div>`;
+                        } else if (dev >= warnPct) {
+                            const existing = estWarning.innerHTML || '';
+                            estWarning.innerHTML = existing + `<div class="est-warn">⚠️ 限价偏离${basis.label} ${dev.toFixed(1)}% (≥${warnPct}%)${tail}</div>`;
+                        }
                     }
                 }
             } else {
@@ -720,6 +903,32 @@
         }
 
         // ── Preview modal = confirmation ──
+        // B1 (2026-09-08 REVIEW-20260908): 本单相关的闸门比对 — 只呈现, 后端仍是唯一裁决方。
+        // 此前这些判据只在拒单后可见 (实测 83 条手动单 13 条被拒, 2026-06-30 连撞 PDT 3 次)。
+        // 不含 PDT: 2026-08-02 用户裁决关闭 (富途证券(香港)账户不适用 FINRA PDT), 2026-09-08 用户复述。
+        function orderGateLines(estCost) {
+            if (!_gates) return '';
+            const lines = [];
+            const row = (color, text) => lines.push(
+                '<div class="preview-row" style="color:' + color + '"><span class="pk">闸门</span><span class="pv">'
+                + escHtml(text) + '</span></div>');
+            (_gates.blocks_now || []).forEach(function(b) { row('#f87171', b); });
+            (_gates.warnings_now || []).forEach(function(w) { row('#fbbf24', w); });
+            const money = function(v) { return '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 0}); };
+            const cap = _gates.max_order_value_usd;
+            if (cap && estCost > 0) {
+                if (estCost > cap) row('#f87171', '订单金额 ' + money(estCost) + ' 超过单笔上限 ' + money(cap));
+                else if (estCost > cap * 0.8) row('#fbbf24', '订单金额已达单笔上限的 ' + (estCost / cap * 100).toFixed(0) + '%（上限 ' + money(cap) + '）');
+            }
+            const budget = _gates.manual_budget_usd;
+            if (budget != null && curOp === 'OPEN' && estCost > budget) {
+                row('#f87171', '超出手动预算余量 ' + money(budget) + '（全局 80% 上限）');
+            }
+            const n = _gates.today_manual_orders, mx = _gates.max_daily_manual_orders;
+            if (n != null && mx != null && n >= mx) row('#f87171', '今日手动下单已达 ' + n + ' 次（上限 ' + mx + '）');
+            return lines.join('');
+        }
+
         function previewOrder() {
           try {
             let sym = document.getElementById('symbol').value.trim().toUpperCase();
@@ -737,7 +946,12 @@
 
             if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
 
-            const est = curQuote ? qty * curQuote.cur_price : 0;
+            // B10 (批3): 报价响应带 symbol (manual_order_service.py:255) 但此前从不比对。
+            //   比对不上 ⇒ 当作"无报价"处理 (est 显示 --, 偏离检查跳过) 并**明说跳过**,
+            //   而不是拿别的票的价格算出一个看起来很权威的预估金额。
+            const quoteSym = curQuote && curQuote.symbol ? String(curQuote.symbol).toUpperCase() : '';
+            const quoteMatches = !!curQuote && (!quoteSym || quoteSym === sym);
+            const est = quoteMatches ? qty * curQuote.cur_price : 0;
             const {extended, phase, etMinutes} = isExtendedHours();
             const isClosed = (phase === 'CLOSED' || phase === 'WEEKEND');
             const tif = isClosed ? 'GTC' : 'DAY';
@@ -783,92 +997,57 @@
             if (isClosed) {
                 html += '<div class="preview-row" style="color:#f87171;background:rgba(248,113,113,0.08);padding:6px 10px;border-radius:6px"><span class="pk">⏳ 排队</span><span class="pv">' + getNextSessionText(phase, etMinutes) + '</span></div>';
             }
+            // B3 (2026-09-08 REVIEW): 休市自动 GTC + 卖空 = 券商必拒
+            // (实测 2026-08-20 US.BABA: "撤单前有效订单不支持股票卖空。股票卖空请使用当日有效订单。")
+            if (isClosed && action === 'SELL' && curDir === 'SHORT' && curOp === 'OPEN') {
+                html += '<div class="preview-row" style="color:#f87171;background:rgba(248,113,113,0.08);padding:6px 10px;border-radius:6px"><span class="pk">🚫 卖空 + GTC</span><span class="pv">券商不接受"撤单前有效"的卖空单 — 请等盘中时段提交</span></div>';
+            }
+            // B10 (批3): 报价属于别的标的 ⇒ 预估金额与偏离检查按"无报价"处理, 并把这件事
+            //   **说出来** (静默跳过会让人以为检查过了)。只提示不阻断: 后端 validator 仍会
+            //   用自己取的现价做偏离软拦截, 前端不该多设一道闸门。
+            if (curQuote && !quoteMatches) {
+                html += '<div class="preview-row" style="color:#fbbf24"><span class="pk">⚠️ 报价标的</span><span class="pv">当前报价属于 ' + escHtml(quoteSym) + '，与输入的 ' + escHtml(sym) + ' 不一致 — 预估金额与限价偏离检查已跳过（提交时后端仍会校验）</span></div>';
+            }
             el.innerHTML = html;
+            // B1: 闸门信息随预览一起呈现 (提交前可见, 不再靠一次失败往返得知)
+            el.innerHTML += orderGateLines(est);
 
             // ── 价格偏离检测 (P0 2026-06-15: SNDK 事故防护) ──
             // 仅盘中实时行情有效; 盘前/盘后/休市时报价不准, 跳过检测
             const confirmBtn = document.getElementById('confirmBtn');
-            let priceWarnAcknowledged = false;
             const _skipDevCheck = (phase !== 'REGULAR');
-            if (!_skipDevCheck && otype === 'LIMIT' && price && curQuote && curQuote.cur_price > 0) {
+            // B8: 阈值改读 /api/trade/gates —— 后端 validator 用的就是这组服务常量
+            // (PRICE_DEVIATION_WARN_PCT=5.0 / HARD_PCT=10.0), 前端再硬编码一份 5/10
+            // 等于把同一个判据写两处。gates 未加载或字段缺失 ⇒ fail-open 回落 5/10
+            // (与既有常量同值, 今日行为不变); 绝不让"取不到阈值"变成"不做偏离检查"。
+            const warnPct = (_gates && _gates.price_deviation_warn_pct) || 5;
+            const hardPct = (_gates && _gates.price_deviation_hard_pct) || 10;
+            if (!_skipDevCheck && otype === 'LIMIT' && price && quoteMatches && curQuote.cur_price > 0) {
                 const lp = parseFloat(price);
                 const cp = curQuote.cur_price;
                 const dev = Math.abs(lp - cp) / cp * 100;
-                const isHard = dev >= 10;
-                const isWarn = dev >= 5;
-
-                if (isHard || isWarn) {
-                    let scenarioMsg = '';
-                    if (action === 'BUY') {
-                        if (lp > cp) scenarioMsg = `买入限价 $${lp.toFixed(2)} 高于市价 $${cp.toFixed(2)} 达 ${dev.toFixed(1)}%，将以市价立即成交（可能非预期）`;
-                        else scenarioMsg = `买入限价 $${lp.toFixed(2)} 低于市价 $${cp.toFixed(2)} 达 ${dev.toFixed(1)}%，订单不会立即成交（请确认是否输入正确）`;
-                    } else {
-                        if (lp < cp) scenarioMsg = `卖出限价 $${lp.toFixed(2)} 低于市价 $${cp.toFixed(2)} 达 ${dev.toFixed(1)}%，将以市价立即成交（可能非预期）`;
-                        else scenarioMsg = `卖出限价 $${lp.toFixed(2)} 高于市价 $${cp.toFixed(2)} 达 ${dev.toFixed(1)}%，订单不会立即成交（请确认是否输入正确）`;
-                    }
-
-                    if (isHard) {
-                        // ≥10% 强提醒 — 需勾选确认, 但不阻止提交 (2026-06-24: 原 hard block 改为 strong warn)
-                        const warnId = 'priceWarnHard_' + Date.now();
-                        el.innerHTML += `<div style="background:#dc2626;color:#fff;padding:12px;border-radius:8px;margin:12px 0;font-weight:bold;font-size:14px">
-                            🛑 价格偏离过大 (${dev.toFixed(1)}%)<br>
-                            <span style="font-weight:normal;font-size:13px">${scenarioMsg}</span><br>
-                            <label style="font-weight:normal;font-size:13px;margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
-                                <input type="checkbox" id="${warnId}" style="width:18px;height:18px;cursor:pointer" onchange="
-                                    var btn = document.getElementById('confirmBtn');
-                                    if (this.checked) {
-                                        btn.disabled = false;
-                                        btn.style.opacity = '1';
-                                        btn.style.cursor = 'pointer';
-                                        btn.textContent = '⚠️ 确认提交 (已知晓价格偏离大)';
-                                        window._priceWarnAck = true;
-                                    } else {
-                                        btn.disabled = true;
-                                        btn.style.opacity = '0.5';
-                                        btn.style.cursor = 'not-allowed';
-                                        btn.textContent = '请先确认价格偏离';
-                                        window._priceWarnAck = false;
-                                    }
-                                ">
-                                我已知晓价格偏离 ${dev.toFixed(1)}%，确认继续下单
-                            </label>
+                if (dev >= warnPct) {
+                    const w = _renderPriceWarn(dev >= hardPct ? 'hard' : 'soft', dev,
+                        _priceDevScenario(action, lp, cp, dev));
+                    el.innerHTML += w.html;
+                    _bindPriceWarn(w, confirmBtn);
+                }
+            }
+            else if (_skipDevCheck && otype === 'LIMIT' && price && quoteMatches) {
+                // B2 (2026-09-08 REVIEW-20260908): 盘外原本前后端**同时**跳过偏离检测 = 零防护
+                //   (前端 _skipDevCheck / 后端 validator.py:189-196), 而 SNDK 事故正是盘后场景。
+                //   报价已带 pre_price/after_price/overnight_price ⇒ 用时段对应价做基准。
+                //   纯提示: 后端盘外同样不拦截, 故此处**不加勾选门槛、不 disable 确认键** (不改闸门)。
+                const basis = _extPriceBasis(curQuote, phase);
+                const lp = parseFloat(price);
+                if (basis.price > 0 && lp > 0) {
+                    const dev = Math.abs(lp - basis.price) / basis.price * 100;
+                    if (dev >= warnPct) {
+                        const strong = dev >= hardPct;
+                        el.innerHTML += `<div class="price-warn ext ${strong ? 'hard' : 'soft'}">
+                            ${strong ? '🛑' : '⚠️'} 限价 $${lp.toFixed(2)} 偏离${basis.label} $${basis.price.toFixed(2)} 达 ${dev.toFixed(1)}%
+                            <div class="pw-note">盘外时段流动性低、价差可扩大 3-5 倍，且后端此时不做偏离拦截 — 请自行确认价格无误。</div>
                         </div>`;
-                        confirmBtn.disabled = true;
-                        confirmBtn.textContent = '请先确认价格偏离';
-                        confirmBtn.style.opacity = '0.5';
-                        confirmBtn.style.cursor = 'not-allowed';
-                        window._priceWarnAck = false;
-                    } else {
-                        // 5-10% 软警告 — 需勾选确认
-                        const warnId = 'priceWarnCheck_' + Date.now();
-                        el.innerHTML += `<div style="background:#f59e0b;color:#1a1a1a;padding:12px;border-radius:8px;margin:12px 0;font-weight:bold;font-size:14px">
-                            ⚠️ 价格偏离警告 (${dev.toFixed(1)}%)<br>
-                            <span style="font-weight:normal;font-size:13px">${scenarioMsg}</span><br>
-                            <label style="font-weight:normal;font-size:13px;margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
-                                <input type="checkbox" id="${warnId}" style="width:18px;height:18px;cursor:pointer" onchange="
-                                    var btn = document.getElementById('confirmBtn');
-                                    if (this.checked) {
-                                        btn.disabled = false;
-                                        btn.style.opacity = '1';
-                                        btn.style.cursor = 'pointer';
-                                        btn.textContent = '⚠️ 确认提交 (已知晓价格异常)';
-                                        window._priceWarnAck = true;
-                                    } else {
-                                        btn.disabled = true;
-                                        btn.style.opacity = '0.5';
-                                        btn.style.cursor = 'not-allowed';
-                                        btn.textContent = '请先确认价格异常';
-                                        window._priceWarnAck = false;
-                                    }
-                                ">
-                                我已知晓价格偏离 ${dev.toFixed(1)}%，确认继续下单
-                            </label>
-                        </div>`;
-                        confirmBtn.disabled = true;
-                        confirmBtn.textContent = '请先确认价格异常';
-                        confirmBtn.style.opacity = '0.5';
-                        confirmBtn.style.cursor = 'not-allowed';
-                        window._priceWarnAck = false;
                     }
                 }
             }
@@ -970,6 +1149,18 @@
         let _slMap = {};
         let _diagData = {};
         let _prevPnl = {};  // PnL 趋势: {symbol: previous_unrealized_pnl}
+        let _lastSnapshotAt = 0;  // B5: 上一轮渲染时间戳 → 横幅"变动"文案的真实比较窗口
+
+        // B5 (2026-09-08 REVIEW-20260908 批2): 原文案硬编码"15s 内变动 $X", 而实际比较
+        // 窗口 = 上一轮渲染至今 (盘中 5s) ⇒ 用户对"恶化速度"的判断被系统性放大 3 倍。
+        // 改用实测间隔; 拿不到 (首轮 / 标签页休眠过久) 才退回轮询间隔。
+        function _snapshotWindowSecs() {
+            if (_lastSnapshotAt) {
+                const s = Math.round((Date.now() - _lastSnapshotAt) / 1000);
+                if (s > 0 && s < 600) return s;
+            }
+            return Math.round(_getQuoteInterval() / 1000);
+        }
 
         function computeSignal(pos, slData) {
             const cost = pos.cost_price || 0;
@@ -1063,11 +1254,14 @@
             document.getElementById('closeQtyInput').max = absQty;
             document.getElementById('closeQtyInput').placeholder = absQty + ' (全部平仓)';
             document.getElementById('closePriceInput').value = '';
-            document.getElementById('closeReasonInput').value = '手动平仓';
+            // B11: 不再预填文本 (预填 = 用户要么照抄要么改字, 都是摩擦); 留空即按「手动平仓」记账
+            document.getElementById('closeReasonInput').value = '';
+            renderCloseReasonChips('');
             document.getElementById('closeError').style.display = 'none';
             document.getElementById('closeConfirmBtn').textContent = '确认平仓';
             document.getElementById('closeModal').classList.add('show');
             setTimeout(() => document.getElementById('closeQtyInput').focus(), 100);
+            hydrateCloseSessionHint(sym);
 
             // 加载入场 thesis
             const thesisRow = document.getElementById('closeThesisRow');
@@ -1105,9 +1299,43 @@
             closePos(sym, totalQty, false);
             if (presetPrice > 0) {
                 document.getElementById('closePriceInput').value = presetPrice.toFixed(2);
-                document.getElementById('closeReasonInput').value = '止损平仓';
+                // B11: 从 SL/TP 入口进来 ⇒ 预选「止损触发」(仍可改、可清空, 不阻断)
+                document.getElementById('closeReasonInput').value = '止损触发';
+                renderCloseReasonChips('止损触发');
                 document.getElementById('closeConfirmBtn').textContent = `确认限价平仓 @ $${presetPrice.toFixed(2)}`;
             }
+        }
+
+        // ── B3 (2026-09-08 REVIEW-20260908): 平仓弹窗的时段提示 ──
+        // 开仓侧早有守卫 (盘外禁市价 + 自动 GTC 提示), 平仓侧却完全没有: 未填限价即市价,
+        // 且 executeClose 自动置 fill_outside_rth=true, executor.py:427 直接发 MARKET
+        // ⇒ 盘外大概率被券商拒, 用户只看到富途原文而没有下一步。此处只提示 + 一键填时段价,
+        // 不改提交语义 (是否放行仍由券商/后端裁决)。
+        async function hydrateCloseSessionHint(sym) {
+            const box = document.getElementById('closeSessionHint');
+            if (!box) return;
+            const info = isExtendedHours();
+            if (info.phase === 'REGULAR') { box.style.display = 'none'; box.innerHTML = ''; return; }
+            const phaseTxt = {PRE_MARKET: '盘前', AFTER_HOURS: '盘后', CLOSED: '休市', WEEKEND: '周末休市'}[info.phase] || '非盘中';
+            box.style.display = 'block';
+            box.innerHTML = '<div style="color:#fbbf24">⏳ 当前为' + phaseTxt + '时段：美股盘外不接受市价单，'
+                + '留空限价直接提交大概率被券商拒。建议填入限价。</div>';
+            try {
+                const res = await fetch(`/api/quote/${encodeURIComponent(sym)}`);
+                const q = await res.json();
+                const basis = _extPriceBasis(q, info.phase);
+                if (basis.price > 0) {
+                    box.innerHTML += '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" '
+                        + `onclick="fillClosePrice(${basis.price})">填入${escHtml(basis.label)} $${basis.price.toFixed(2)}</button>`;
+                }
+            } catch (e) { /* 提示已渲染, 取价失败不阻断平仓 */ }
+        }
+
+        function fillClosePrice(p) {
+            const el = document.getElementById('closePriceInput');
+            if (!el) return;
+            el.value = Number(p).toFixed(2);
+            el.focus();
         }
 
         function closeCloseModal() {
@@ -1129,12 +1357,10 @@
                 return;
             }
 
+            // B11 (用户裁「理由非必填」): 原实现理由为空直接 return 拦截 —— 已删除。
+            //   留空 ⇒ 送空串, 由后端 routes/trade.py 落 "手动平仓" (留痕不断、归因不失真)。
+            //   这是**去阻断**, 不是加阻断: 数量校验等既有防线逐字未动。
             const reason = document.getElementById('closeReasonInput').value.trim();
-            if (!reason) {
-                errEl.textContent = '请填写理由';
-                errEl.style.display = 'block';
-                return;
-            }
 
             const btn = document.getElementById('closeConfirmBtn');
             btn.disabled = true;
@@ -1224,6 +1450,7 @@
             if (!positions.length) { banner.style.display = 'none'; return; }
 
             let topAlert = null, topScore = 0;
+            const winSecs = _snapshotWindowSecs();
             for (const p of positions) {
                 const sym = p.code || p.symbol;
                 const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
@@ -1250,7 +1477,7 @@
                 }
                 if (pnlChange < -100 && score < 80) {
                     score = 80; type = 'danger';
-                    msg = '<strong>' + escHtml(sym.replace('US.','')) + '</strong> 盈亏快速恶化，15s 内变动 $' + pnlChange.toFixed(0);
+                    msg = '<strong>' + escHtml(sym.replace('US.','')) + '</strong> 盈亏快速恶化，近 ' + winSecs + 's 变动 $' + pnlChange.toFixed(0);
                     action = '查看持仓'; actionFn = "showDiag('" + escHtml(sym) + "', this)";
                 }
                 const pnlPct = cost > 0 && cur > 0 ? ((isLong ? (cur-cost) : (cost-cur)) / cost * 100) : 0;
@@ -1283,7 +1510,9 @@
                 const res = await fetch('/api/trade/snapshot');
                 if (!res.ok) { console.error('snapshot HTTP error:', res.status); return; }
                 const d = await res.json();
-                console.log('[snapshot]', 'positions:', (d.positions||[]).length, 'orders:', (d.orders||[]).length, 'account:', !!d.account);
+                // B7 (批3): 原每轮 console.log('[snapshot]', …) 已删 —— 盘中 5s 一轮 =
+                // 每分钟 12 行浏览器控制台噪声, 且与后端 [trade/snapshot] 日志同内容双份
+                // (后端那条同批降为 debug)。异常路径的 console.error 全部保留。
 
                 const positions = (d.positions || []).filter(p => p.qty !== 0);
                 document.getElementById('posCount').textContent = `(${positions.length})`;
@@ -1368,7 +1597,7 @@
 
                 const tbody = document.getElementById('posBody');
                 if (!positions.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px">无持仓</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:20px">无持仓</td></tr>';
                 } else {
                     const totalMv = positions.reduce((s, x) => s + (x.market_val || x.market_value || Math.abs(x.qty) * (x.cur_price || x.current || 0)), 0);
                     tbody.innerHTML = positions.map(p => {
@@ -1399,41 +1628,56 @@
                             : (mv >= 1000 ? '-$'+(mv/1000).toFixed(1)+'K' : '-$'+mv.toFixed(0));
                         const mvColor = isLong ? '#e1e4e8' : '#f87171';
                         const qtyColor = isLong ? '#8b949e' : '#f87171';
-                        // PnL 趋势
+                        // PnL 趋势 — B4 (2026-09-08 REVIEW-20260908 批2): 原实现每轮每行都渲染
+                        // ↑/↓/→, 其中"→ 横盘"零信息量, 盘中 5s 一轮导致整列持续闪动 = 稳定噪声。
+                        // 现只在 |Δ| 超阈值时渲染, 中性态不占像素; 真实比较窗口写进 title。
                         const prevU = _prevPnl[sym];
                         const pnlDelta = prevU !== undefined ? uPnl - prevU : 0;
-                        const trendIcon = prevU === undefined ? '' : pnlDelta > 5 ? ' <span style="color:#4ade80;font-size:11px" title="盈利改善 +$'+pnlDelta.toFixed(0)+'">↑</span>' : pnlDelta < -5 ? ' <span style="color:#f87171;font-size:11px" title="盈利恶化 $'+pnlDelta.toFixed(0)+'">↓</span>' : ' <span style="color:#8b949e;font-size:11px" title="横盘">→</span>';
+                        const trendWin = '（近 ' + _snapshotWindowSecs() + 's）';
+                        const trendIcon = prevU === undefined ? ''
+                            : pnlDelta > 5 ? ' <span style="color:#4ade80;font-size:11px" title="盈利改善 +$'+pnlDelta.toFixed(0)+trendWin+'">↑</span>'
+                            : pnlDelta < -5 ? ' <span style="color:#f87171;font-size:11px" title="盈利恶化 $'+pnlDelta.toFixed(0)+trendWin+'">↓</span>'
+                            : '';
                         _prevPnl[sym] = uPnl;
                         // Signal light
                         const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
                         const slData = _slMap[slKey];
                         const sig = computeSignal(p, slData);
                         _diagData[sym] = {pos: p, slData, signal: sig, qty, isLong};
+                        // B6 (2026-09-08 REVIEW-20260908 批2): 最关键的风控信息此前只体现为代码旁
+                        // 一个 10px 色点, 要看数字必须点开弹层 —— 而注意力横幅的最高优先级恰恰是
+                        // "距止损 < 2%"。现升为独立列 (数据本就在 snapshot.stop_distances), 色点与
+                        // 弹层保留为动作入口。ATR 估算值显式标 "~", 不伪装成系统真实 SL。
+                        const slCell = slData
+                            ? `<div style="font-size:12px;font-weight:700;color:${slData.danger ? '#f87171' : (slData.sl_distance_pct < 5 ? '#fbbf24' : '#8b949e')}">${slData.sl_distance_pct.toFixed(1)}%${slData.atr_estimated ? '<span title="止损位为 ATR 估算 (非系统实际 SL)">~</span>' : ''}</div>`
+                              + `<div style="font-size:11px;color:#8b949e">$${(slData.stop_loss || 0).toFixed(2)}</div>`
+                            : '<div style="color:#8b949e">--</div>';
                         // 点击代码跳转交易页面并带入代码+数量
                         const tradeUrl = '/trade?symbol=' + encodeURIComponent(sym) + '&qty=' + qty;
                         return `<tr onclick="showDiag('${escHtml(sym)}', this)" style="cursor:pointer">
-                            <td style="white-space:nowrap">
+                            <td data-label="代码" style="white-space:nowrap">
                                 <a href="${tradeUrl}" style="color:#58a6ff;text-decoration:none;font-weight:700" onclick="event.stopPropagation()">${escHtml(codeShort)}</a>
                                 <span class="sig ${sig.color}" style="width:10px;height:10px;vertical-align:middle;margin-left:6px" title="${sig.action}"></span>
                                 ${p.legacy ? `<span title="broker has position but system not managing" onclick="event.stopPropagation();takeoverPos('${sym}')" style="display:inline-block;font-size:9px;padding:1px 5px;margin-left:4px;background:#7c2d12;color:#fed7aa;border:1px solid #c2410c;border-radius:3px;cursor:pointer;font-weight:700">未管理</span>` : ''}
                             </td>
-                            <td style="text-align:right;white-space:nowrap">
+                            <td data-label="市值/数量" style="text-align:right;white-space:nowrap">
                                 <div style="font-weight:600;color:${mvColor}">${mvStr}</div>
                                 <div style="font-size:11px;color:${qtyColor}">${qtyStr}</div>
                             </td>
-                            <td style="text-align:right;white-space:nowrap">
+                            <td data-label="现价/成本" style="text-align:right;white-space:nowrap">
                                 <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}${pbBadge}</div>
                                 <div style="font-size:11px;color:#8b949e">/$${cost.toFixed(2)}</div>
                             </td>
-                            <td style="text-align:right;white-space:nowrap" class="${stale ? '' : tCls}">
+                            <td data-label="今日盈亏" style="text-align:right;white-space:nowrap" class="${stale ? '' : tCls}">
                                 <div>${stale ? '<span style="color:#8b949e">--</span>' : (tPnl ? (tPnl>=0?'+$':'-$')+Math.abs(tPnl).toFixed(2) : '--')}</div>
                                 <div style="font-size:11px">${stale ? '' : (tPnl ? (tPnl>=0?'+':'')+tPnlPct.toFixed(1)+'%' : '')}</div>
                             </td>
-                            <td style="text-align:right;white-space:nowrap" class="${stale ? '' : uCls}">
+                            <td data-label="持仓盈亏" style="text-align:right;white-space:nowrap" class="${stale ? '' : uCls}">
                                 <div>${stale ? '<span style="color:#8b949e">--</span>' : (uPnl>=0?'+$':'-$')+Math.abs(uPnl).toFixed(2)+trendIcon}</div>
                                 <div style="font-size:11px">${stale ? '' : (uPnl>=0?'+':'')+uPnlPct.toFixed(1)+'%'}</div>
                             </td>
-                            <td style="text-align:center;white-space:nowrap">
+                            <td data-label="距止损/SL" style="text-align:right;white-space:nowrap">${slCell}</td>
+                            <td data-label="占比" style="text-align:center;white-space:nowrap">
                                 <div style="font-size:12px;font-weight:600">${concPct.toFixed(1)}%</div>
                                 <div style="height:3px;background:#21262d;border-radius:2px;margin-top:3px"><div style="height:100%;width:${Math.min(concPct,100)}%;background:${concColor};border-radius:2px"></div></div>
                             </td>
@@ -1443,6 +1687,7 @@
 
                 // ── 注意力优先引擎: 扫描持仓，置顶最紧急事项 ──
                 updateAttentionBanner(positions);
+                _lastSnapshotAt = Date.now();   // B5: 必须在本轮渲染完成之后打点
 
                 // Orders — store and render unified with audit
                 _brokerOrders = d.orders || [];
@@ -1458,7 +1703,7 @@
                 if (_failCount >= _MAX_FAILS_BEFORE_BANNER) {
                     const posBody = document.getElementById('posBody');
                     if (posBody && !posBody.querySelector('.api-error-row')) {
-                        posBody.innerHTML = '<tr class="api-error-row"><td colspan="6" style="text-align:center;color:#f87171;padding:20px">⚠️ 数据加载失败 (已重试 ' + _failCount + ' 次) — 请检查网络连接</td></tr>';
+                        posBody.innerHTML = '<tr class="api-error-row"><td colspan="7" style="text-align:center;color:#f87171;padding:20px">⚠️ 数据加载失败 (已重试 ' + _failCount + ' 次) — 请检查网络连接</td></tr>';
                     }
                 }
             }
@@ -1486,18 +1731,62 @@
             return 15000;
         }
 
+        // ══════════════════════════════════════════════════════
+        //  B1 (2026-09-08 REVIEW-20260908): 手动下单闸门只读呈现
+        //  闸门此前只在拒单后可见 (实测 83 条手动单 13 条被拒, 其中 kill switch /
+        //  资本水位 / 回撤熔断 / 手动预算 / 单笔上限 / 当日单数 六类前端零呈现)。
+        //  纪律: 只呈现不裁决 —— 后端 validator 仍是唯一权威; 读取失败一律静默降级,
+        //  绝不因为前端拿不到数据就宣称"被阻断"。不含 PDT (2026-08-02 已裁决关闭)。
+        // ══════════════════════════════════════════════════════
+        async function loadGates() {
+            try {
+                const res = await fetch('/api/trade/gates');
+                if (!res.ok) return;          // 端点不存在 (旧后端) → 保持静默
+                _gates = await res.json();
+                renderGates();
+                updateEstimate();             // 阈值改由后端下发, 到位后重算一次提示
+            } catch (e) { /* 降级: 不呈现 ≠ 阻断 */ }
+        }
+
+        function renderGates() {
+            const row = document.getElementById('gatesRow');
+            if (!row || !_gates) return;
+            const chips = [];
+            const push = (cls, html) => chips.push('<span class="gate-chip ' + cls + '">' + html + '</span>');
+            const blocks = _gates.blocks_now || [];
+            const warns = _gates.warnings_now || [];
+            // 正常态只留一枚暗色 chip, 避免常驻噪声; 有阻断/警告才逐条展开
+            if (blocks.length) blocks.forEach(b => push('block', escHtml(b)));
+            else if (warns.length) warns.forEach(w => push('warn', escHtml(w)));
+            else push('ok', '闸门 ✓ 无全局阻断');
+            const n = _gates.today_manual_orders, mx = _gates.max_daily_manual_orders;
+            if (n != null && mx != null) {
+                push(n >= mx ? 'block' : (n >= mx * 0.8 ? 'warn' : ''), `今日手动单 <b>${n}/${mx}</b>`);
+            }
+            row.innerHTML = '<span class="gates-title">闸门</span>' + chips.join('');
+        }
+
+        function startGatesTimer() {
+            if (_gatesTimer) return;
+            _gatesTimer = setInterval(loadGates, 60000);   // 闸门变化慢, 60s 足够
+        }
+
         function startPolling() {
             if (_isPolling) return;
             _isPolling = true;
             loadTradeSnapshot();
+            loadGates();
+            startGatesTimer();
             var fastInterval = _getQuoteInterval();
-            _fastTimer = setInterval(function() {
+            // B10 (批3): 原实现用 arguments.callee 重挂定时器 —— 严格模式下直接抛
+            // TypeError, 是本文件将来加 'use strict' 的地雷; 改具名函数表达式, 语义不变。
+            var fastTick = function fastTick() {
                 // 动态调整: 盘中/盘外间隔不同
                 var desired = _getQuoteInterval();
                 if (desired !== fastInterval) {
                     fastInterval = desired;
                     clearInterval(_fastTimer);
-                    _fastTimer = setInterval(arguments.callee, desired);
+                    _fastTimer = setInterval(fastTick, desired);
                 }
                 // WS 5s 内推送过 quote_update → 跳过 HTTP 轮询
                 if (_tradeWsLastQuote && (Date.now() - _tradeWsLastQuote < 5000)) return;
@@ -1505,13 +1794,15 @@
                 // 刷新输入框中的标的报价
                 var _curSym = document.getElementById('symbol')?.value?.trim();
                 if (_curSym) fetchQuote();
-            }, fastInterval);
+            };
+            _fastTimer = setInterval(fastTick, fastInterval);
         }
 
         function stopPolling() {
             _isPolling = false;
             if (_fastTimer) { clearInterval(_fastTimer); _fastTimer = null; }
             if (_slowTimer) { clearInterval(_slowTimer); _slowTimer = null; }
+            if (_gatesTimer) { clearInterval(_gatesTimer); _gatesTimer = null; }
         }
 
         document.addEventListener('visibilitychange', () => {
@@ -1586,16 +1877,16 @@
                 rows.push({
                     sortKey: sortKey,
                     html: '<tr>' +
-                        '<td style="font-size:11px;color:#8b949e;white-space:nowrap">' + timeStr +
+                        '<td data-label="时间" style="font-size:11px;color:#8b949e;white-space:nowrap">' + timeStr +
                             (durStr ? ' <span style="font-size:10px;color:#58a6ff">' + durStr + '</span>' : '') +
                         '</td>' +
-                        '<td><b>' + escHtml(o.code || '') + '</b></td>' +
-                        '<td>' + sideLabel + '</td>' +
-                        '<td style="text-align:right">' + qtyDisplay + '</td>' +
-                        '<td style="text-align:right;white-space:nowrap">' + priceStr + '</td>' +
-                        '<td style="color:' + stColor + ';font-weight:600;font-size:12px">' + escHtml(stStr || o.order_status || '--') + '</td>' +
-                        '<td style="font-size:11px;color:#8b949e">' + note + '</td>' +
-                        '<td style="white-space:nowrap">' + cancelBtn + '</td>' +
+                        '<td data-label="标的"><b>' + escHtml(o.code || '') + '</b></td>' +
+                        '<td data-label="动作">' + sideLabel + '</td>' +
+                        '<td data-label="数量" style="text-align:right">' + qtyDisplay + '</td>' +
+                        '<td data-label="价格" style="text-align:right;white-space:nowrap">' + priceStr + '</td>' +
+                        '<td data-label="状态" style="color:' + stColor + ';font-weight:600;font-size:12px">' + escHtml(stStr || o.order_status || '--') + '</td>' +
+                        '<td data-label="备注" style="font-size:11px;color:#8b949e">' + note + '</td>' +
+                        '<td data-label="" style="white-space:nowrap">' + cancelBtn + '</td>' +
                         '</tr>'
                 });
             }
@@ -1617,17 +1908,25 @@
                 var aNote = escHtml((a.reason || '').substring(0, 40));
                 if (a.error_msg) aNote += (aNote ? ' ' : '') + '<span style="color:#f87171">' + escHtml(a.error_msg.substring(0, 25)) + '</span>';
                 var aSym = escHtml((a.symbol || '').replace('US.', ''));
+                // B7 附带 (批3): 统一交易记录表的第 5 列表头是"价格", 但 audit 行此前
+                //   往该列塞的是 order_type ⇒ 表头说价格、内容写 MARKET/LIMIT (实测
+                //   manual_order_audit.price 对 LIMIT 单有值、MARKET 单为 NULL)。
+                //   现按表头的口径显示真价格, 订单类型降为灰色小字后缀 (信息不丢)。
+                var aPrice = (a.price != null && Number(a.price) > 0)
+                    ? '$' + Number(a.price).toFixed(2) : '--';
+                var aType = escHtml(a.order_type || '');
                 rows.push({
                     sortKey: a.timestamp || '',
                     html: '<tr style="opacity:0.75">' +
-                        '<td style="font-size:11px;color:#8b949e;white-space:nowrap">' + aTime + '</td>' +
-                        '<td><b>' + aSym + '</b> <span style="font-size:9px;color:#8b949e">系统</span></td>' +
-                        '<td>' + aAction + '</td>' +
-                        '<td style="text-align:right">' + escHtml(String(a.quantity || '')) + '</td>' +
-                        '<td style="text-align:right;font-size:11px;color:#8b949e">' + escHtml(a.order_type || '') + '</td>' +
-                        '<td style="color:' + aSc + ';font-weight:600;font-size:12px">' + escHtml(a.status) + '</td>' +
-                        '<td style="font-size:11px;color:#8b949e">' + aNote + '</td>' +
-                        '<td></td>' +
+                        '<td data-label="时间" style="font-size:11px;color:#8b949e;white-space:nowrap">' + aTime + '</td>' +
+                        '<td data-label="标的"><b>' + aSym + '</b> <span style="font-size:9px;color:#8b949e">系统</span></td>' +
+                        '<td data-label="动作">' + aAction + '</td>' +
+                        '<td data-label="数量" style="text-align:right">' + escHtml(String(a.quantity || '')) + '</td>' +
+                        '<td data-label="价格" style="text-align:right;white-space:nowrap">' + aPrice +
+                            (aType ? ' <span style="font-size:10px;color:#8b949e">' + aType + '</span>' : '') + '</td>' +
+                        '<td data-label="状态" style="color:' + aSc + ';font-weight:600;font-size:12px">' + escHtml(a.status) + '</td>' +
+                        '<td data-label="备注" style="font-size:11px;color:#8b949e">' + aNote + '</td>' +
+                        '<td data-label=""></td>' +
                         '</tr>'
                 });
             }
@@ -1800,8 +2099,10 @@
         })();
 
         // ── Expose handlers to window for inline HTML event handlers ──
+        bindRecentChips();   // B10: 最近标的 chips (localStorage 不可用时静默无 chips)
+        bindCloseReasonChips();   // B11: 平仓理由 chips (事件委托, 弹窗开合不影响监听)
         Object.assign(window, {
-            cancelOrder, clearSlTp, closeCloseModal, closePos, closePosAtPrice, closePreview, _executeCancel, executeClose, executeOrder, fetchQuote, hideDiag, loadOrders, loadPositions, onQuantityInput, pctQty, previewOrder, restoreSuggestion, setDir, setMaxPct, setOp, setQty, setRiskPct, showDiag, stepQty, takeoverPos, toggleOrders, toggleRiskCfg
+            cancelOrder, clearSlTp, closeCloseModal, closePos, closePosAtPrice, closePreview, _executeCancel, executeClose, executeOrder, fetchQuote, fillClosePrice, hideDiag, loadOrders, loadPositions, onQuantityInput, pctQty, previewOrder, restoreSuggestion, setDir, setMaxPct, setOp, setQty, setRiskPct, showDiag, stepQty, takeoverPos, toggleOrders, toggleRiskCfg
         });
 
 })();

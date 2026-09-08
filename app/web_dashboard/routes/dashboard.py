@@ -1109,18 +1109,44 @@ def _load_sentiment_cache(symbols: list) -> dict:
         return {}
 
 def _parse_risk_level(account: dict) -> dict:
-    rl = account.get("risk_status", "N/A") if account else "N/A"
+    """富途账户风险档位 → 标签/颜色/说明 (只读呈现, 不参与任何判据)。
+
+    2026-09-08 (REVIEW-20260908 §H) **口径更正 —— 两头都错的假警报**: 原表把 LEVEL1-5
+    当成 安全/注意/警告/危险/强平, 而富途官方 `CltRiskStatus` 是**九档且 LEVEL1 最安全 ⇒
+    LEVEL9 最危险** (LEVEL3 = 较安全, LEVEL5 = 中等风险)。后果实测:
+      ① **常态误报** — 线上 `/api/risk/status` 对健康账户 (risk_status=LEVEL3) 返回
+         `{"label":"警告","color":"orange","desc":"接近维持保证金"}`;
+      ② **真危险漏报** — LEVEL6-9 (偏高风险/预警/危险/危险) 全部落 default gray「未知状态」,
+         即最该报警的四档被渲染成中性灰。
+    新表按官方九档逐档给中文标签, 分档语义与港股页 `hkRiskBadge()` 一致
+    (LEVEL1-3 安全 / 4-6 隐患 / 7-9 危险); 本页色板有 5 色, 故隐患带内再分 yellow/orange,
+    **排序不变**。未知 (`N/A`、`NONE`、券商新增档位) 一律 gray + 原样透出 —— 未知 ≠ 危险。
+    desc 只写档位含义与可执行动作, **不编造保证金阈值** (富途文档只给档位名与"LEVEL1 最安全
+    / LEVEL9 最危险", 原表的"接近维持保证金"等描述无出处)。
+
+    登记 (AGENT.md「字段消费方登记制」): `futu_risk` 目前**前端零消费** (templates/static
+    全仓 grep 无命中) = write-only payload; 但 `/api/risk/status` 与 dashboard snapshot 是
+    对外契约 (仓外 skill 文档/LLM 会读), 故**更正口径而非删键**, 消费方待补登记。
+    """
+    rl = str(account.get("risk_status", "N/A") if account else "N/A")
     risk_levels = {
-        "LEVEL1": {"label": "安全", "color": "green", "desc": "账户资金充足"},
-        "LEVEL2": {"label": "注意", "color": "yellow", "desc": "保证金使用较高"},
-        "LEVEL3": {"label": "警告", "color": "orange", "desc": "接近维持保证金"},
-        "LEVEL4": {"label": "危险", "color": "red", "desc": "低于维持保证金"},
-        "LEVEL5": {"label": "强平", "color": "red", "desc": "面临强制平仓"},
+        "LEVEL1": {"label": "非常安全", "color": "green", "desc": "九档中最安全档，账户资金充裕"},
+        "LEVEL2": {"label": "安全", "color": "green", "desc": "账户资金充足"},
+        "LEVEL3": {"label": "较安全", "color": "green", "desc": "有杠杆但流动性充裕，无需动作"},
+        "LEVEL4": {"label": "较低风险", "color": "yellow", "desc": "保证金使用开始上升，留意即可"},
+        "LEVEL5": {"label": "中等风险", "color": "yellow", "desc": "关注保证金使用率与流动性"},
+        "LEVEL6": {"label": "偏高风险", "color": "orange", "desc": "流动性偏紧，考虑减仓或入金"},
+        "LEVEL7": {"label": "预警", "color": "red", "desc": "券商预警档，尽快减仓或入金"},
+        "LEVEL8": {"label": "危险", "color": "red", "desc": "贴近维持保证金，存在强平风险"},
+        "LEVEL9": {"label": "危险", "color": "red", "desc": "九档中最危险档，随时可能被强平"},
     }
     return {
         "risk_level": rl,
         "interest_charged": account.get("interest_charged", 0) if account else 0,
-        "detail": risk_levels.get(rl, {"label": rl, "color": "gray", "desc": "未知状态"}),
+        "detail": risk_levels.get(
+            rl.strip().upper(),
+            {"label": rl, "color": "gray", "desc": "未知状态（券商未给档位或非九档口径）"},
+        ),
     }
 
 

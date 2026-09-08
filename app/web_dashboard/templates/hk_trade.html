@@ -5,6 +5,19 @@
 {% block nav_trade_hk_class2 %}class="active"{% endblock %}
 {% block nav_trade_hk_class3 %}class="active"{% endblock %}
 
+{# 2026-09-08 (REVIEW-20260908 A7): 本页恒为实盘直通, 却是全站唯一没有模式徽标的
+   交易页 (nav_extra 三块都没定义), 只剩一条会随页面滚走的 banner。补齐三处徽标 —
+   导航本身是 sticky, 因此标识常驻。 #}
+{% block nav_extra %}
+<span class="mode-tag live">🔴 港股实盘</span>
+{% endblock %}
+{% block nav_extra_tablet %}
+<span class="mode-tag live">🔴 港股实盘</span>
+{% endblock %}
+{% block nav_extra_mobile %}
+<span class="mode-tag live" style="margin-left:0">🔴 港股实盘</span>
+{% endblock %}
+
 {% block extra_css %}
         button, .btn, input, select, textarea, a, [onclick] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
         .hk-banner { padding: 10px 14px; background: #1c1500; border: 1px solid #7a5c00; border-radius: 10px; color: #fbbf24; font-size: 12px; margin-bottom: 14px; }
@@ -23,6 +36,10 @@
         .dir-btn.active.sell { border-color: #ef4444; background: #2a0a0a; color: #f87171; }
         .btn-primary { width: 100%; padding: 12px; border: none; border-radius: 6px; background: #b91c1c; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; min-height: 46px; }
         .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        /* A6 (2026-09-08 REVIEW 批2): 按钮跟随方向色 — 原恒为暗红, 选"买入"(绿)却按红按钮 = 语义冲突。
+           实盘警示已由 nav 徽标 + banner + 卡片标题承担, 按钮颜色改为承载"哪个方向"的信息。 */
+        .btn-primary.dir-buy { background: #15803d; }
+        .btn-primary.dir-sell { background: #b91c1c; }
         .btn-sm { padding: 4px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 12px; cursor: pointer; }
         .btn-sm:hover { color: #e1e4e8; border-color: #58a6ff; }
         .quote-box { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 13px; display: none; }
@@ -36,6 +53,35 @@
         td { padding: 8px; border-bottom: 1px solid #21262d; color: #e1e4e8; white-space: nowrap; }
         .empty-hint { color: #8b949e; font-size: 12px; padding: 12px 4px; }
         .qty-hint { font-size: 11px; color: #8b949e; margin-top: 2px; }
+        /* ── 提交前预检条 (2026-09-08 REVIEW A2): 后端 validate() 判据前置呈现 ── */
+        .precheck { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+        .precheck:empty { display: none; }
+        .pc-chip { font-size: 11px; padding: 3px 8px; border-radius: 10px; border: 1px solid #30363d; background: #0d1117; color: #8b949e; white-space: nowrap; }
+        .pc-chip b { font-weight: 700; color: inherit; }
+        .pc-chip.ok { border-color: #1f6f43; color: #4ade80; }
+        .pc-chip.warn { border-color: #7a5c00; color: #fbbf24; background: #1c1500; }
+        .pc-chip.block { border-color: #ef4444; color: #f87171; background: #2a0a0a; }
+        /* ── A4 (2026-09-08 REVIEW 批2): 券商英文枚举 → 中文 + 状态色 ── */
+        .st { font-size: 11px; padding: 2px 7px; border-radius: 9px; border: 1px solid #30363d; background: #0d1117; color: #8b949e; white-space: nowrap; }
+        .st.st-wait { border-color: #7a5c00; color: #fbbf24; background: #1c1500; }
+        .st.st-part { border-color: #1f4b7a; color: #58a6ff; background: #0a1a2a; }
+        .st.st-done { border-color: #1f6f43; color: #4ade80; background: #0a2a1a; }
+        .st.st-off { border-color: #30363d; color: #8b949e; background: #0d1117; }
+        .st.st-bad { border-color: #ef4444; color: #f87171; background: #2a0a0a; }
+        /* ── A5 (2026-09-08 REVIEW 批2): 同标的当日累计上下文 (纯呈现, 不阻断) ── */
+        .today-ctx { display: none; font-size: 11px; line-height: 1.7; color: #8b949e; background: #0d1117; border: 1px solid #21262d; border-left: 3px solid #58a6ff; border-radius: 6px; padding: 7px 10px; margin: 8px 0 0; }
+        .today-ctx.show { display: block; }
+        .today-ctx b { color: #e1e4e8; font-weight: 700; }
+        .today-ctx .tc-sym { color: #e1e4e8; font-weight: 700; font-size: 12px; }
+        .today-ctx .neg { color: #f87171; }
+        .today-ctx .pos { color: #4ade80; }
+        /* A1: 输入代码与报价标的不一致 */
+        .sym-mismatch { display: none; font-size: 11px; color: #f87171; margin-top: 4px; line-height: 1.4; }
+        .sym-mismatch.show { display: block; }
+        .quote-box.dirty { opacity: 0.5; }
+        /* A3: 查询失败 ≠ 空状态 */
+        .err-row { color: #f87171; font-size: 12px; padding: 12px 4px; white-space: normal; }
+        .err-row .btn-sm { margin-left: 8px; }
         .warn-box { display: none; background: #2a0a0a; border: 1px solid #ef4444; border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 12px; color: #f87171; }
         .warn-box label { display: flex; align-items: center; gap: 6px; color: #fbbf24; text-transform: none; font-size: 12px; margin-top: 6px; cursor: pointer; }
         .warn-box input[type=checkbox] { width: auto; }
@@ -56,12 +102,46 @@
         .session-tag.lunch { color: #fbbf24; border-color: #7a5c00; }
         .q-age { font-size: 11px; color: #8b949e; font-weight: 400; }
         .q-age.stale { color: #d29922; }
+        /* ── A11 (2026-09-08 REVIEW 批3): 港股账户资金条 ──
+           本页是实盘直通, 此前全文无 accinfo_query ⇒ 下单前看不到可用资金。 */
+        .acct-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 9px 14px; margin-bottom: 14px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; font-size: 12px; color: #8b949e; }
+        .acct-bar .acct-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: #8b949e; }
+        .acct-bar b { color: #e1e4e8; font-weight: 700; }
+        .acct-bar .neg { color: #f87171; } .acct-bar .pos { color: #4ade80; }
+        .acct-bar.err { border-color: #ef4444; color: #f87171; background: #2a0a0a; }
+        .acct-risk { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; }
+        /* A11 修正: 风险档位三色 (与 .pc-chip / .st 同色系), 中性灰 = 券商未给口径或档位未登记 */
+        .acct-risk.ok { border-color: #1f6f43; color: #4ade80; background: #0a2a1a; }
+        .acct-risk.warn { border-color: #7a5c00; color: #fbbf24; background: #1c1500; }
+        .acct-risk.bad { border-color: #ef4444; color: #f87171; background: #2a0a0a; }
+        /* ── A11: 自绘 modal 取代 window.confirm / alert (与全站其它页一致) ── */
+        .hk-modal { display: none; position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; padding: 16px; }
+        .hk-modal.show { display: flex; }
+        .hk-modal-card { width: 100%; max-width: 380px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; }
+        .hk-modal-title { font-size: 14px; font-weight: 700; color: #e1e4e8; margin-bottom: 8px; }
+        .hk-modal-body { font-size: 12px; color: #8b949e; line-height: 1.6; word-break: break-all; margin-bottom: 14px; }
+        .hk-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .hk-modal-ok { border-color: #ef4444; color: #f87171; }
+        .hk-modal-ok:hover { background: #2a0a0a; }
+        /* ── A12 (2026-09-08 REVIEW 批3): 移动端把 10 列表格堆叠成卡片 ──
+           刻意用 CSS 变形而非另写一套卡片渲染: **单一渲染路径**, 不会出现
+           "表格与卡片数据不一致" 这类经典漂移。标签取 td[data-label]。 */
+        @media (max-width: 768px) {
+            .hk-stack thead { display: none; }
+            .hk-stack, .hk-stack tbody { display: block; width: 100%; }
+            .hk-stack tr { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+            .hk-stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: none; padding: 3px 0; white-space: normal; text-align: right; }
+            .hk-stack td::before { content: attr(data-label); color: #8b949e; font-size: 11px; text-align: left; flex: 0 0 auto; }
+            .hk-stack td[data-label=""]::before { content: none; }
+            .hk-stack td[colspan] { display: block; text-align: left; }
+        }
 {% endblock %}
 
 {% block content %}
 <div class="hk-banner">
     ⚠️ 港股为<b>实盘直通下单</b>（不接入本系统风控/退出监控/复盘），成交与持仓管理请以<b>富途 App</b> 为准。止损止盈请在富途 App 自行设置。
 </div>
+<div class="acct-bar" id="acct-bar"><span class="acct-title">港股账户</span><span style="color:#8b949e">加载中…</span></div>
 
 <div class="hk-grid">
     <div>
@@ -72,9 +152,11 @@
                 <label>代码（如 700 / 00700 / HK.00700）</label>
                 <div style="display:flex;gap:8px">
                     <input id="q-symbol" placeholder="00700" autocomplete="off"
-                           onkeydown="if(event.key==='Enter')fetchQuote()">
+                           onkeydown="if(event.key==='Enter')fetchQuote()"
+                           oninput="onSymbolInput()">
                     <button class="btn-sm" style="min-width:64px" onclick="fetchQuote()">查询</button>
                 </div>
+                <div class="sym-mismatch" id="sym-mismatch"></div>
                 <div class="chips" id="recent-chips"></div>
             </div>
             <div class="quote-box" id="quote-box">
@@ -117,7 +199,8 @@
                     <label>限价 (HKD)</label>
                     <div style="display:flex;gap:6px">
                         <button type="button" class="tick-btn" onclick="adjPrice(-1)" title="减一个价位">−</button>
-                        <input id="f-price" type="number" step="0.001" min="0" placeholder="0.000" oninput="updateQtyHint()">
+                        <input id="f-price" type="number" step="0.001" min="0" placeholder="0.000"
+                               oninput="updateQtyHint()" onblur="snapPriceToTick()">
                         <button type="button" class="tick-btn" onclick="adjPrice(1)" title="加一个价位">+</button>
                     </div>
                 </div>
@@ -139,6 +222,8 @@
                 <button type="button" class="btn-sm" onclick="setLots(10)">10手</button>
                 <button type="button" class="btn-sm" onclick="setLotsAllSellable()">全部可卖</button>
             </div>
+            <div class="precheck" id="precheck"></div>
+            <div class="today-ctx" id="today-ctx"></div>
             <div class="warn-box" id="warn-box">
                 <div id="warn-text"></div>
                 <label><input type="checkbox" id="f-ack-warn"> 我确认限价偏离无误，继续提交</label>
@@ -156,7 +241,7 @@
                 <button class="btn-sm" onclick="loadPositions()">刷新</button>
             </div>
             <div style="overflow-x:auto">
-                <table>
+                <table class="hk-stack">
                     <thead><tr><th>代码</th><th>名称</th><th>持仓</th><th>可卖</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>盈亏%</th><th></th></tr></thead>
                     <tbody id="pos-tbody"><tr><td colspan="10" class="empty-hint">加载中...</td></tr></tbody>
                 </table>
@@ -170,11 +255,23 @@
                 <button class="btn-sm" onclick="loadOrders()">刷新</button>
             </div>
             <div style="overflow-x:auto">
-                <table>
+                <table class="hk-stack">
                     <thead><tr><th>时间</th><th>代码</th><th>方向</th><th>类型</th><th>状态</th><th>数量</th><th>已成交</th><th>价格</th><th>成交均价</th><th></th></tr></thead>
                     <tbody id="ord-tbody"><tr><td colspan="10" class="empty-hint">加载中...</td></tr></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+</div>
+
+{# A11: 撤单确认改自绘 modal (原 window.confirm / alert 与全站其它页不一致) #}
+<div class="hk-modal" id="hk-modal" onclick="if(event.target===this)closeHkModal()">
+    <div class="hk-modal-card">
+        <div class="hk-modal-title" id="hk-modal-title">确认</div>
+        <div class="hk-modal-body" id="hk-modal-body"></div>
+        <div class="hk-modal-actions">
+            <button type="button" class="btn-sm" id="hk-modal-cancel" onclick="closeHkModal()">取消</button>
+            <button type="button" class="btn-sm hk-modal-ok" id="hk-modal-ok" onclick="confirmHkModal()">确认</button>
         </div>
     </div>
 </div>
@@ -188,6 +285,9 @@ let lastQuoteAt = 0;    // 报价本地时间戳 (新鲜度展示)
 let quoteTimer = null;  // 10s 自动刷新
 let ageTimer = null;    // 1s 新鲜度重绘
 let positionsCache = []; // 持仓缓存 (全部可卖用)
+let orderLimits = null;  // 后端只读限额快照 (单笔上限/当日额度/偏离阈值), 来自 /api/hk/orders/today
+let symbolDirty = false; // A1: 输入代码与最近报价标的不一致 → 禁止提交
+let ordersCache = [];    // A5: 今日订单缓存 (同标的当日累计聚合用, 纯前端, 不落库)
 
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -202,10 +302,210 @@ function showMsg(id, text, ok) {
 }
 function hideMsg(id) { document.getElementById(id).className = 'msg-box'; }
 
+// ── A1: 标的错配防护 (2026-09-08 REVIEW-20260908 批1) ──
+// 原 submitOrder 取 `lastQuote?.symbol || 输入框`, 且输入框无失效逻辑 ⇒ 查过 00700 后
+// 把代码改成 09988 却没点「查询」就提交, 订单会打到 HK.00700 (lot_size 也是旧标的的)。
+function normalizeHk(raw) {
+    let s = String(raw || '').trim().toUpperCase();
+    if (s.startsWith('HK.')) s = s.slice(3);
+    if (/^\d{1,5}$/.test(s)) return 'HK.' + s.padStart(5, '0');
+    return s ? 'HK.' + s : '';
+}
+function syncSymbolState() {
+    const typed = normalizeHk(document.getElementById('q-symbol').value);
+    symbolDirty = !!(typed && lastQuote && typed !== lastQuote.symbol);
+    const box = document.getElementById('quote-box');
+    const hint = document.getElementById('sym-mismatch');
+    if (box) box.classList.toggle('dirty', symbolDirty);
+    if (hint) {
+        hint.textContent = symbolDirty
+            ? `⚠️ 输入代码 ${typed} 与当前报价 ${lastQuote.symbol} 不一致 — 请先点「查询」，否则会按 ${lastQuote.symbol} 下单`
+            : '';
+        hint.classList.toggle('show', symbolDirty);
+    }
+    renderSubmitBtn();
+    renderTodayCtx();   // A5: 标的/脏状态变化 → 上下文行必须同步 (不一致时不显示, 避免张冠李戴)
+}
+function onSymbolInput() { syncSymbolState(); }
+
+// 股数/参考价: 与 submitOrder 同口径 (无报价时手数框按股数直填)
+function currentShares() {
+    const n = parseInt(document.getElementById('f-lots').value) || 0;
+    const lot = lastQuote?.lot_size;
+    return lot ? n * lot : n;
+}
+function currentRefPrice() {
+    return document.getElementById('f-order-type').value === 'MARKET'
+        ? (lastQuote?.cur_price || 0)
+        : (parseFloat(document.getElementById('f-price').value) || lastQuote?.cur_price || 0);
+}
+
+// ── 提交按钮自带全要素: 标的/方向/股数/金额在按下去之前就能核对 ──
+function renderSubmitBtn() {
+    const btn = document.getElementById('btn-submit');
+    if (!btn || btn.dataset.busy === '1') return;
+    const dirTxt = currentAction === 'BUY' ? '买入' : '卖出';
+    // A6 (批2): 按钮底色跟随方向, 与上方 买入=绿 / 卖出=红 的方向键同语义
+    btn.classList.toggle('dir-buy', currentAction === 'BUY');
+    btn.classList.toggle('dir-sell', currentAction !== 'BUY');
+    const sym = (!symbolDirty && lastQuote) ? lastQuote.symbol : '';
+    const shares = currentShares();
+    if (sym && shares > 0) {
+        const px = currentRefPrice();
+        const valTxt = px > 0
+            ? ` · 约 HK$${(shares * px).toLocaleString(undefined, {maximumFractionDigits: 0})}`
+            : '';
+        btn.textContent = `${dirTxt} ${sym} · ${shares.toLocaleString()} 股${valTxt}`;
+    } else {
+        btn.textContent = `${dirTxt} · 提交实盘订单`;
+    }
+}
+
+// ── A4 (2026-09-08 REVIEW-20260908 批2): 券商英文枚举 → 中文 + 颜色 ──
+// 此前订单表直出 BUY / NORMAL / SUBMITTED / FILLED_ALL / CANCELLED_ALL —— 中文界面里的纯噪声,
+// 且 NORMAL(=限价) 对用户无意义、状态无颜色区分。
+// 纪律: 未收录的枚举一律**原样透出** + 中性色, 绝不渲染成空 —— 中文化不得以丢信息为代价。
+const HK_SIDE_CN = { BUY: '买入', SELL: '卖出', SELL_SHORT: '卖空', BUY_BACK: '买回平空' };
+const HK_OTYPE_CN = {
+    NORMAL: '限价', MARKET: '市价', ENHANCED_LIMIT: '增强限价', SPECIAL_LIMIT: '特别限价',
+    LIMIT_ALL_OR_NONE: '限价·全成或撤', SPECIAL_LIMIT_ALL_OR_NONE: '特别限价·全成或撤',
+    MARKET_ALL_OR_NONE: '市价·全成或撤', STOP: '止损', STOP_LIMIT: '止损限价',
+    TRAILING_STOP: '跟踪止损', TRAILING_STOP_LIMIT: '跟踪止损限价',
+};
+// 状态色: 已报=黄 / 部分成交·撤单中=蓝 / 已成=绿 / 已撤·已删=灰 / 废单·失败=红
+const HK_STATUS_CN = {
+    WAITING_SUBMIT: ['待提交', 'st-wait'], SUBMITTING: ['提交中', 'st-wait'], SUBMITTED: ['已报', 'st-wait'],
+    FILLED_PART: ['部分成交', 'st-part'], CANCELLING_PART: ['撤单中', 'st-part'], CANCELLING_ALL: ['撤单中', 'st-part'],
+    FILLED_ALL: ['已成', 'st-done'],
+    CANCELLED_PART: ['部撤', 'st-off'], CANCELLED_ALL: ['已撤', 'st-off'], DELETED: ['已删', 'st-off'],
+    FAILED: ['废单', 'st-bad'], SUBMIT_FAILED: ['提交失败', 'st-bad'], DISABLED: ['已失效', 'st-bad'],
+    UNSUPPORTED: ['不支持', 'st-bad'], TIMEOUT: ['超时', 'st-bad'],
+};
+function hkSide(v) { return HK_SIDE_CN[String(v ?? '').toUpperCase()] || (v || '--'); }
+function hkOType(v) { return HK_OTYPE_CN[String(v ?? '').toUpperCase()] || (v || '--'); }
+function hkStatus(v) {
+    const hit = HK_STATUS_CN[String(v ?? '').toUpperCase()];
+    return hit ? `<span class="st ${hit[1]}">${hit[0]}</span>` : `<span class="st">${esc(v ?? '--')}</span>`;
+}
+
+// ── A5 (2026-09-08 REVIEW-20260908 批2): 同标的当日累计上下文 ──
+// 实测典型用法是同标的日内多笔、连续向下加仓: HK.02513 三日 9 笔价格 -15%; 2026-09-08 当日
+// 实测持仓 400 股 / 成本 1000.75 / 现价 910 / -9.07%, 而当天又买了 998 与 924 两笔 ——
+// 但在点"提交"的那个位置看不到自己已经在这只票上加了多少。
+// 口径: 纯前端聚合已有数据 (/api/hk/orders/today + /api/hk/positions), **不落库、不新增闸门、
+// 不阻断、不引入确认关键词** (港股按设计不接系统风控; 用户 2026-07-22 已裁"降低手动下单摩擦")。
+function renderTodayCtx() {
+    const el = document.getElementById('today-ctx');
+    if (!el) return;
+    const hide = () => { el.classList.remove('show'); el.innerHTML = ''; };
+    const sym = (!symbolDirty && lastQuote) ? lastQuote.symbol : '';
+    if (!sym) return hide();
+    const mine = ordersCache.filter(o => o.symbol === sym);
+    const pos = positionsCache.find(p => p.symbol === sym);
+    if (!mine.length && !pos) return hide();
+    const money = v => 'HK$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 0});
+    const agg = side => {
+        const rows = mine.filter(o => String(o.trd_side).toUpperCase() === side && Number(o.dealt_qty) > 0);
+        const qty = rows.reduce((s, o) => s + Number(o.dealt_qty || 0), 0);
+        const amt = rows.reduce((s, o) => s + Number(o.dealt_qty || 0) * Number(o.dealt_avg_price || 0), 0);
+        return {n: rows.length, qty, amt, vwap: qty > 0 ? amt / qty : 0};
+    };
+    const parts = [];
+    ['BUY', 'SELL', 'SELL_SHORT', 'BUY_BACK'].forEach(side => {
+        const a = agg(side);
+        if (!a.n) return;
+        parts.push(`今日${hkSide(side)} <b>${a.n}</b> 笔成交 / <b>${a.qty.toLocaleString()}</b> 股 / 均价 <b>${a.vwap.toFixed(3)}</b>`
+            + (side === 'BUY' ? ` / 投入 <b>${money(a.amt)}</b>` : ''));
+    });
+    const dropped = mine.filter(o => Number(o.dealt_qty || 0) === 0).length;
+    if (dropped) parts.push(`另有 <b>${dropped}</b> 笔未成交（已撤 / 废单，未计入均价）`);
+    if (pos) {
+        const cls = Number(pos.pl_val) >= 0 ? 'pos' : 'neg';
+        const sign = Number(pos.pl_val) >= 0 ? '+' : '';
+        const plTxt = Math.abs(Number(pos.pl_val)).toLocaleString(undefined, {maximumFractionDigits: 0});
+        parts.push(`持仓 <b>${Number(pos.qty).toLocaleString()}</b> 股 / 成本 <b>${fmt(pos.cost_price)}</b> / 现价 <b>${fmt(pos.cur_price)}</b> / 浮动 <span class="${cls}"><b>${sign}HK$${plTxt}</b>（${sign}${pos.pl_ratio}%）</span>`);
+    }
+    el.innerHTML = `<div class="tc-sym">${esc(sym)}${lastQuote?.name ? ' · ' + esc(lastQuote.name) : ''} — 今日上下文</div>`
+        + parts.map(p => `<div>${p}</div>`).join('');
+    el.classList.add('show');
+}
+
+// ── A2: 提交前预检条 — 把 hk_order_service.validate() 的判据提前呈现 ──
+// 只呈现不裁决: 不 disable 按钮, 最终仍由后端 validate() 决定, 避免前后端口径漂移
+// 时把合法单卡死。实测 13 次拒单里 11 次属这类"提交后才知道"。
+function renderPrecheck() {
+    const el = document.getElementById('precheck');
+    if (!el) return;
+    const shares = currentShares();
+    const px = currentRefPrice();
+    const lot = lastQuote?.lot_size;
+    const chips = [];
+    const push = (cls, html) => chips.push(`<span class="pc-chip ${cls}">${html}</span>`);
+    const money = v => 'HK$' + v.toLocaleString(undefined, {maximumFractionDigits: 0});
+
+    if (shares > 0 && px > 0) {
+        const val = shares * px;
+        const cap = orderLimits?.max_order_value_hkd;
+        if (cap > 0) {
+            const pct = val / cap * 100;
+            push(pct > 100 ? 'block' : pct > 80 ? 'warn' : 'ok',
+                 `金额 <b>${money(val)}</b> · 占单笔上限 ${pct.toFixed(0)}%`);
+        } else {
+            push('', `金额 <b>${money(val)}</b>`);
+        }
+    }
+    if (shares > 0) {
+        if (!lot) push('warn', '整手 <b>未知</b>（无报价，按股直填，券商裁决）');
+        else if (shares % lot !== 0) push('block', `整手 <b>✗</b> ${shares} 不是每手 ${lot} 股的整数倍`);
+        else push('ok', `整手 <b>✓</b> ${shares / lot} 手 × ${lot} 股`);
+    }
+    const cur = lastQuote?.cur_price || 0;
+    if (document.getElementById('f-order-type').value === 'LIMIT' && px > 0 && cur > 0) {
+        const dev = Math.abs(px - cur) / cur * 100;
+        const hard = orderLimits?.price_deviation_hard_pct ?? 10;
+        const warn = orderLimits?.price_deviation_warn_pct ?? 5;
+        if (dev >= hard) push('block', `偏离 <b>${dev.toFixed(1)}%</b> ≥${hard}% 硬拦截（勾选也提交不了，请改价）`);
+        else if (dev >= warn) push('warn', `偏离 <b>${dev.toFixed(1)}%</b> ≥${warn}%，提交时需勾选确认`);
+        else push('ok', `偏离现价 <b>${dev.toFixed(1)}%</b>`);
+    }
+    const mx = orderLimits?.max_daily_manual_orders;
+    if (mx != null) {
+        const n = orderLimits?.today_manual_orders ?? 0;
+        push(n >= mx ? 'block' : n >= mx * 0.8 ? 'warn' : '', `今日手动单 <b>${n}/${mx}</b>`);
+    }
+    // ── A9 (2026-09-08 REVIEW-20260908 批3): 价位表此前只对 ± 按钮生效, 手输价格不校验 ──
+    // 实证 HK.00700 2026-08-28 "该产品的最小变动价位为0.2，请按其整数倍调整价格"。
+    // 仍是只呈现不裁决: 失焦时吸附 (snapPriceToTick), 但不在前端拦提交。
+    if (document.getElementById('f-order-type').value === 'LIMIT' && px > 0) {
+        const t = hkTick(px);
+        const snapped = tickOffset(px, t);
+        if (snapped !== null) push('block', `价位 <b>✗</b> ${px} 不是 ${t} 的整数倍（最近合法价 <b>${snapped.toFixed(tickDecimals(t))}</b>，失焦自动吸附）`);
+        else push('ok', `价位 <b>${t}</b> ✓`);
+    }
+    // ── A8 (批3): 卖空 up-tick 规则前置提示 ──
+    // 实证 HK.09988 2026-08-20 连续两次 "卖空订单价格不可低于卖一价，请修改价格。"
+    // (间隔 24s ⇒ 用户照原样重试了一次)。页面早就有卖一价, 只是从没和卖空规则连起来。
+    if (currentAction === 'SELL' && shares > 0 && lastQuote) {
+        const canSell = Number(positionsCache.find(p => p.symbol === lastQuote.symbol)?.can_sell_qty || 0);
+        if (shares > canSell) {                        // 超出可卖数量 = 含卖空
+            const ask = Number(lastQuote.ask_price || 0);
+            const shortQty = shares - canSell;
+            const fillBtn = ask > 0 ? ` <button type="button" class="btn-sm" style="margin-left:6px" onclick="usePrice('ask')">填卖一价</button>` : '';
+            if (ask > 0 && px > 0 && px < ask) {
+                push('block', `卖空 <b>${shortQty.toLocaleString()}</b> 股：限价 <b>${px}</b> 低于卖一价 <b>${ask}</b> — 港股卖空须 ≥ 卖一价（up-tick），券商必拒${fillBtn}`);
+            } else {
+                push('warn', `含卖空 <b>${shortQty.toLocaleString()}</b> 股（可卖 ${canSell.toLocaleString()}）— 卖空须 ≥ 卖一价${ask > 0 ? ` <b>${ask}</b>` : ''}${fillBtn}`);
+            }
+        }
+    }
+    el.innerHTML = chips.join('');
+}
+
 function setAction(a) {
     currentAction = a;
     document.getElementById('btn-buy').classList.toggle('active', a === 'BUY');
     document.getElementById('btn-sell').classList.toggle('active', a === 'SELL');
+    renderSubmitBtn();
 }
 function onTypeChange() {
     const isMkt = document.getElementById('f-order-type').value === 'MARKET';
@@ -226,6 +526,7 @@ async function fetchQuote(silent = false) {
             document.getElementById('quote-box').style.display = 'none';
             lastQuote = null;
             showMsg('quote-msg', j.error?.message || '报价失败', false);
+            syncSymbolState();
             updateQtyHint();
             return;
         }
@@ -249,16 +550,23 @@ async function fetchQuote(silent = false) {
         // 限价默认带入现价
         const priceInput = document.getElementById('f-price');
         if (!priceInput.value && q.cur_price) priceInput.value = q.cur_price;
+        syncSymbolState();
         updateQtyHint();
     } catch (e) {
         if (!silent) showMsg('quote-msg', '请求失败: ' + e, false);
     }
 }
 
-// ── 报价新鲜度 + 10s 自动刷新 ──
+// ── 报价新鲜度 + 自动刷新 (A10: 可见性 + 时段双守卫) ──
 function startQuoteTimers() {
-    if (!quoteTimer) quoteTimer = setInterval(() => fetchQuote(true), 10000);
+    if (!quoteTimer) scheduleQuoteRefresh();
     if (!ageTimer) ageTimer = setInterval(renderQuoteAge, 1000);
+}
+// 自调度 setTimeout 而非 setInterval: 时段变化 (开盘↔收盘) 能在下一拍生效,
+// 且避开 arguments.callee 那类重挂定时器的写法 (对照美股页 B10 的地雷)。
+function scheduleQuoteRefresh() {
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(() => { fetchQuote(true); scheduleQuoteRefresh(); }, hkPollMs(10000));
 }
 function renderQuoteAge() {
     const el = document.getElementById('q-age');
@@ -299,6 +607,27 @@ function adjPrice(dir) {
     updateQtyHint();
 }
 
+// ── A9 (2026-09-08 REVIEW-20260908 批3): 手输价格按港股价位表吸附 ──
+// 港股价位表的 1/tick 全是整数 (1000/200/100/50/20/10/5/2/1), 故用整数刻度比较,
+// 避开 0.1+0.2 那类浮点误差 (直接 price % tick 会误判)。
+function tickOffset(price, tick) {
+    const scale = Math.round(1 / tick);
+    const n = price * scale;
+    const r = Math.round(n);
+    if (Math.abs(n - r) < 1e-6) return null;      // 已在价位表上
+    return Math.max(tick, r / scale);             // 最近合法价 (不得为 0)
+}
+function snapPriceToTick() {
+    const el = document.getElementById('f-price');
+    const p = parseFloat(el.value);
+    if (!p || p <= 0) return;
+    const t = hkTick(p);
+    const snapped = tickOffset(p, t);
+    if (snapped === null) return;                 // 已合法 → 静默, 不打扰
+    el.value = snapped.toFixed(tickDecimals(t));
+    updateQtyHint();                              // 预检条同步从 ✗ 翻成 ✓ = 反馈
+}
+
 // ── 手数快捷 ──
 function setLots(n) { document.getElementById('f-lots').value = n; updateQtyHint(); }
 function setLotsAllSellable() {
@@ -315,6 +644,7 @@ function setLotsAllSellable() {
 // ── 持仓一键卖出 ──
 async function sellFromPosition(sym, canSell) {
     document.getElementById('q-symbol').value = sym.replace('HK.', '');
+    syncSymbolState();   // A1: 程序改值不触发 input 事件, 需立刻标脏直到新报价到达
     setAction('SELL');
     await fetchQuote();
     const lot = lastQuote?.lot_size;
@@ -340,53 +670,100 @@ function renderRecent() {
 }
 function pickRecent(sym) {
     document.getElementById('q-symbol').value = sym.replace('HK.', '');
+    syncSymbolState();   // A1: 同上, 防止"点了最近代码却按上一只标的提交"
     fetchQuote();
 }
 
 // ── 港股交易时段 (HKT=UTC+8, 客户端时区无关) ──
-function renderSession() {
+// ── A10 (2026-09-08 REVIEW-20260908 批3): 时段判定抽为单一真源 ──
+// renderSession 用它画标签, 轮询守卫用它降频 —— 两处口径必须同源, 否则会出现
+// "标签写着已收盘、轮询却按开盘频率打券商 API" 的自相矛盾。
+function hkSessionState() {
     const now = new Date();
     const hkt = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
     const day = hkt.getDay(), m = hkt.getHours() * 60 + hkt.getMinutes();
-    let txt = '已收盘', cls = '';
+    let txt = '已收盘', cls = '', open = false;
     if (day === 0 || day === 6) { txt = '休市(周末)'; }
     else if (m >= 540 && m < 570) { txt = '盘前竞价'; cls = 'lunch'; }
-    else if (m >= 570 && m < 720) { txt = '早市'; cls = 'open'; }
+    else if (m >= 570 && m < 720) { txt = '早市'; cls = 'open'; open = true; }
     else if (m >= 720 && m < 780) { txt = '午休'; cls = 'lunch'; }
-    else if (m >= 780 && m < 960) { txt = '午市'; cls = 'open'; }
+    else if (m >= 780 && m < 960) { txt = '午市'; cls = 'open'; open = true; }
     else if (m >= 960 && m < 970) { txt = '收盘竞价'; cls = 'lunch'; }
+    return {txt, cls, open, hkt};
+}
+function hkPollMs(base) { return hkSessionState().open ? base : base * 2; }   // 收盘降频 ×2
+
+function renderSession() {
+    const s = hkSessionState();
     const el = document.getElementById('session-tag');
-    el.textContent = `HKT ${String(hkt.getHours()).padStart(2, '0')}:${String(hkt.getMinutes()).padStart(2, '0')} · ${txt}`;
-    el.className = 'session-tag' + (cls ? ' ' + cls : '');
+    el.textContent = `HKT ${String(s.hkt.getHours()).padStart(2, '0')}:${String(s.hkt.getMinutes()).padStart(2, '0')} · ${s.txt}`;
+    el.className = 'session-tag' + (s.cls ? ' ' + s.cls : '');
 }
 
+// ── A10: 可见性守卫 (照搬美股页 trade.js 已有的 Visibility API 做法) ──
+// 此前后台标签页 + 收盘后仍每 10s 拉快照、每 30s 拉持仓+订单 ⇒ 白耗富途频率额度。
+// 隐藏 = 全停 (连纯 DOM 的 1s 新鲜度重绘也停, 没人看); 回前台立刻补画, 且离开超过
+// 一个轮询周期就补拉一次 (不补 = 用户看到的是几分钟前的持仓, 在实盘页更危险)。
+let dataTimer = null, sessionTimer = null, _hiddenSince = 0;
+
+function startDataTimer() {
+    stopDataTimer();
+    dataTimer = setInterval(() => { loadOrders(); loadPositions(); loadAccount(); }, hkPollMs(30000));
+}
+function stopDataTimer() { if (dataTimer) { clearInterval(dataTimer); dataTimer = null; } }
+
+function applyPollingState() {
+    if (document.hidden) {
+        _hiddenSince = Date.now();
+        if (ageTimer) { clearInterval(ageTimer); ageTimer = null; }
+        stopDataTimer();
+        if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+        clearTimeout(quoteTimer); quoteTimer = null;
+        return;
+    }
+    const away = _hiddenSince ? Date.now() - _hiddenSince : 0;
+    _hiddenSince = 0;
+    renderSession();
+    renderQuoteAge();
+    if (!ageTimer) ageTimer = setInterval(renderQuoteAge, 1000);
+    if (!sessionTimer) sessionTimer = setInterval(renderSession, 30000);
+    startDataTimer();
+    if (lastQuote) startQuoteTimers();
+    if (away > 30000) { loadOrders(); loadPositions(); loadAccount(); }
+}
+document.addEventListener('visibilitychange', applyPollingState);
+
 function updateQtyHint() {
-    const lots = parseInt(document.getElementById('f-lots').value) || 0;
     const hintEl = document.getElementById('qty-hint');
     const lot = lastQuote?.lot_size;
     if (!lot) {
         document.getElementById('qty-label').textContent = '股数（未获报价，按股输入）';
         hintEl.textContent = '报价不可用时按股数直接输入，整手校验由券商裁决';
+        renderPrecheck();
+        renderSubmitBtn();
         return;
     }
     document.getElementById('qty-label').textContent = '手数';
-    const shares = lots * lot;
-    let txt = `= ${shares.toLocaleString()} 股`;
-    const px = document.getElementById('f-order-type').value === 'MARKET'
-        ? lastQuote?.cur_price
-        : parseFloat(document.getElementById('f-price').value) || lastQuote?.cur_price;
-    if (shares > 0 && px > 0) txt += `，约 HK$ ${(shares * px).toLocaleString(undefined, {maximumFractionDigits: 0})}`;
-    hintEl.textContent = txt;
+    // 金额移入预检条 (renderPrecheck), 此处只留股数换算, 避免同一数字两处显示
+    hintEl.textContent = `= ${currentShares().toLocaleString()} 股`;
+    renderPrecheck();
+    renderSubmitBtn();
 }
 
 async function submitOrder() {
     hideMsg('order-msg');
     const btn = document.getElementById('btn-submit');
-    const symbol = (lastQuote?.symbol) || document.getElementById('q-symbol').value.trim();
+    const typed = document.getElementById('q-symbol').value.trim();
+    // A1: 报价标的优先, 但输入框若已改成别的代码则拒绝提交 (否则会下单到旧标的)
+    const symbol = (lastQuote?.symbol) || typed;
     if (!symbol) { showMsg('order-msg', '请先输入/查询标的代码', false); return; }
-    const lots = parseInt(document.getElementById('f-lots').value) || 0;
-    const lot = lastQuote?.lot_size;
-    const quantity = lot ? lots * lot : lots;  // 无报价时按股数直填
+    if (symbolDirty) {
+        showMsg('order-msg',
+            `⚠️ 代码与报价不一致（输入 ${normalizeHk(typed)} / 报价 ${lastQuote?.symbol}）— 请先点「查询」再提交`,
+            false);
+        return;
+    }
+    const quantity = currentShares();  // 无报价时按股数直填 (与预检条同口径)
     const orderType = document.getElementById('f-order-type').value;
     const body = {
         symbol: symbol,
@@ -399,6 +776,7 @@ async function submitOrder() {
         idempotency_key: pendingKey || (pendingKey = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random())),
     };
     btn.disabled = true;
+    btn.dataset.busy = '1';
     btn.textContent = '提交中...';
     try {
         const r = await fetch('/api/hk/orders', {
@@ -431,7 +809,8 @@ async function submitOrder() {
         showMsg('order-msg', '请求失败: ' + e, false);
     } finally {
         btn.disabled = false;
-        btn.textContent = '提交实盘订单';
+        btn.dataset.busy = '0';
+        renderSubmitBtn();
     }
 }
 
@@ -449,8 +828,17 @@ async function loadPositions() {
     try {
         const r = await fetch('/api/hk/positions');
         const j = await r.json();
-        const rows = j.ok ? (j.data.positions || []) : [];
+        // A3: 查询失败 ≠ 空仓 — 实盘页把 OpenD 掉线显示成"无港股持仓"是最危险的误读
+        if (!j.ok) {
+            positionsCache = [];
+            renderTodayCtx();   // A5: 持仓查询失败 → 上下文行只留今日订单部分, 不假装有持仓
+            tb.innerHTML = `<tr><td colspan="10" class="err-row">⚠️ 港股持仓加载失败: ${esc(j.error?.message || ('HTTP ' + r.status))}`
+                + `<button class="btn-sm" onclick="loadPositions()">重试</button></td></tr>`;
+            return;
+        }
+        const rows = j.data.positions || [];
         positionsCache = rows;
+        renderTodayCtx();       // A5: 持仓/浮亏是上下文行的一半数据源
         if (!rows.length) {
             tb.innerHTML = '<tr><td colspan="10" class="empty-hint">无港股持仓</td></tr>';
             return;
@@ -458,17 +846,20 @@ async function loadPositions() {
         tb.innerHTML = rows.map(p => {
             const cls = p.pl_val >= 0 ? 'green' : 'red';
             return `<tr>
-                <td>${esc(p.symbol)}</td><td>${esc(p.name)}</td>
-                <td>${p.qty}</td><td>${p.can_sell_qty}</td>
-                <td>${fmt(p.cost_price)}</td><td>${fmt(p.cur_price)}</td>
-                <td>${Number(p.market_val).toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
-                <td class="${cls}">${p.pl_val >= 0 ? '+' : ''}${fmt(p.pl_val, 0)}</td>
-                <td class="${cls}">${p.pl_ratio >= 0 ? '+' : ''}${p.pl_ratio}%</td>
-                <td>${p.can_sell_qty > 0 ? `<button class="btn-sm" onclick="sellFromPosition('${esc(p.symbol)}', ${p.can_sell_qty})">卖出</button>` : ''}</td>
+                <td data-label="代码">${esc(p.symbol)}</td><td data-label="名称">${esc(p.name)}</td>
+                <td data-label="持仓">${p.qty}</td><td data-label="可卖">${p.can_sell_qty}</td>
+                <td data-label="成本">${fmt(p.cost_price)}</td><td data-label="现价">${fmt(p.cur_price)}</td>
+                <td data-label="市值">${Number(p.market_val).toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                <td data-label="盈亏" class="${cls}">${p.pl_val >= 0 ? '+' : ''}${fmt(p.pl_val, 0)}</td>
+                <td data-label="盈亏%" class="${cls}">${p.pl_ratio >= 0 ? '+' : ''}${p.pl_ratio}%</td>
+                <td data-label="">${p.can_sell_qty > 0 ? `<button class="btn-sm" onclick="sellFromPosition('${esc(p.symbol)}', ${p.can_sell_qty})">卖出</button>` : ''}</td>
             </tr>`;
         }).join('');
     } catch (e) {
-        tb.innerHTML = `<tr><td colspan="10" class="empty-hint">加载失败: ${esc(e)}</td></tr>`;
+        positionsCache = [];
+        renderTodayCtx();
+        tb.innerHTML = `<tr><td colspan="10" class="err-row">⚠️ 港股持仓请求异常: ${esc(e)}`
+            + `<button class="btn-sm" onclick="loadPositions()">重试</button></td></tr>`;
     }
 }
 
@@ -478,7 +869,18 @@ async function loadOrders() {
     try {
         const r = await fetch('/api/hk/orders/today');
         const j = await r.json();
-        const rows = j.ok ? (j.data.orders || []) : [];
+        if (!j.ok) {
+            ordersCache = [];   // A5: 失败不得伪装成"今日无订单", 但也不得留陈旧聚合 → 清空并只显示持仓侧
+            renderTodayCtx();
+            tb.innerHTML = `<tr><td colspan="10" class="err-row">⚠️ 今日订单加载失败: ${esc(j.error?.message || ('HTTP ' + r.status))}`
+                + `<button class="btn-sm" onclick="loadOrders()">重试</button></td></tr>`;
+            return;
+        }
+        // A2: 限额快照随订单一起下发 (只读), 预检条据此显示 上限/当日额度/偏离阈值
+        if (j.data.limits) { orderLimits = j.data.limits; renderPrecheck(); }
+        const rows = j.data.orders || [];
+        ordersCache = rows;     // A5: 同标的当日累计聚合的数据源 (纯前端缓存, 不落库)
+        renderTodayCtx();
         if (!rows.length) {
             tb.innerHTML = '<tr><td colspan="10" class="empty-hint">今日无订单</td></tr>';
             return;
@@ -487,22 +889,61 @@ async function loadOrders() {
             const sideCls = String(o.trd_side).includes('BUY') ? 'green' : 'red';
             const canCancel = CANCELLABLE.some(s => String(o.status).toUpperCase().includes(s));
             return `<tr>
-                <td>${esc((o.create_time || '').slice(11, 19))}</td>
-                <td>${esc(o.symbol)} ${esc(o.name)}</td>
-                <td class="${sideCls}">${esc(o.trd_side)}</td>
-                <td>${esc(o.order_type)}</td><td>${esc(o.status)}</td>
-                <td>${o.qty}</td><td>${o.dealt_qty}</td>
-                <td>${fmt(o.price)}</td><td>${fmt(o.dealt_avg_price)}</td>
-                <td>${canCancel ? `<button class="btn-sm" onclick="cancelOrder('${esc(o.order_id)}')">撤单</button>` : ''}</td>
+                <td data-label="时间">${esc((o.create_time || '').slice(11, 19))}</td>
+                <td data-label="代码">${esc(o.symbol)} ${esc(o.name)}</td>
+                <td data-label="方向" class="${sideCls}">${esc(hkSide(o.trd_side))}</td>
+                <td data-label="类型">${esc(hkOType(o.order_type))}</td><td data-label="状态">${hkStatus(o.status)}</td>
+                <td data-label="数量">${o.qty}</td><td data-label="已成交">${o.dealt_qty}</td>
+                <td data-label="价格">${fmt(o.price)}</td><td data-label="成交均价">${fmt(o.dealt_avg_price)}</td>
+                <td data-label="">${canCancel ? `<button class="btn-sm" onclick="cancelOrder('${esc(o.order_id)}')">撤单</button>` : ''}</td>
             </tr>`;
         }).join('');
     } catch (e) {
-        tb.innerHTML = `<tr><td colspan="10" class="empty-hint">加载失败: ${esc(e)}</td></tr>`;
+        ordersCache = [];
+        renderTodayCtx();
+        tb.innerHTML = `<tr><td colspan="10" class="err-row">⚠️ 今日订单请求异常: ${esc(e)}`
+            + `<button class="btn-sm" onclick="loadOrders()">重试</button></td></tr>`;
     }
 }
 
-async function cancelOrder(orderId) {
-    if (!window.confirm(`确认撤销订单 ${orderId}?`)) return;
+// ── A11 (2026-09-08 REVIEW-20260908 批3): 自绘 modal 取代 window.confirm / alert ──
+// 全站其它页用自绘 modal (trade.html), 本页此前是原生 confirm/alert: 手机上样式不可控、
+// 阻塞主线程、且原生 confirm 只显示 order_id — 用户无法核对要撤的到底是哪一笔。
+// 行为语义不变: 撤单仍需一次显式确认 (不降低实盘操作的摩擦防线)。
+let _hkModalOk = null;
+function openHkModal(title, bodyHtml, okText, onOk) {
+    _hkModalOk = onOk;
+    document.getElementById('hk-modal-title').textContent = title;
+    document.getElementById('hk-modal-body').innerHTML = bodyHtml;
+    document.getElementById('hk-modal-ok').textContent = okText;
+    document.getElementById('hk-modal-cancel').style.display = onOk ? '' : 'none';
+    document.getElementById('hk-modal').classList.add('show');
+}
+function closeHkModal() {
+    _hkModalOk = null;
+    document.getElementById('hk-modal').classList.remove('show');
+}
+function confirmHkModal() {
+    const fn = _hkModalOk;
+    closeHkModal();
+    if (fn) fn();
+}
+
+function cancelOrder(orderId) {
+    const o = ordersCache.find(x => String(x.order_id) === String(orderId));
+    // 复核信息取自已加载的今日订单: 撤单前能看到标的/方向/类型/数量/价格/状态,
+    // 而不是只有一个 order_id (原 window.confirm 的全部信息量)。
+    const desc = o
+        ? `<div style="color:#e1e4e8;margin-bottom:6px">${esc(o.symbol)} ${esc(o.name || '')}</div>`
+          + `<div>${esc(hkSide(o.trd_side))} · ${esc(hkOType(o.order_type))} · ${hkStatus(o.status)}</div>`
+          + `<div>数量 ${Number(o.qty).toLocaleString()} 股（已成交 ${Number(o.dealt_qty).toLocaleString()}）@ ${fmt(o.price)}</div>`
+        : `<div>订单 ${esc(orderId)}</div>`;
+    openHkModal('确认撤单',
+        desc + '<div style="margin-top:8px;color:#fbbf24">撤销后不可恢复；如已部分成交，仅撤销剩余数量。</div>',
+        '确认撤单', () => doCancelOrder(orderId));
+}
+
+async function doCancelOrder(orderId) {
     try {
         const r = await fetch('/api/hk/orders/cancel', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -510,14 +951,98 @@ async function cancelOrder(orderId) {
         });
         const j = await r.json();
         if (j.ok) { loadOrders(); burstRefresh(3); }
-        else { alert(j.error?.message || '撤单失败'); }
-    } catch (e) { alert('撤单请求失败: ' + e); }
+        else { openHkModal('撤单失败', esc(j.error?.message || '未知错误'), '知道了', null); }
+    } catch (e) { openHkModal('撤单请求失败', esc(String(e)), '知道了', null); }
+}
+
+// ── A11 (批3): 港股账户资金条 ──
+// 本页是实盘直通, 此前却看不到可用资金/购买力 (hk_order_service 全文无 accinfo_query),
+// 只能开富途 App 对照。三态口径同 A3: 查询失败明确报错 + 重试, 绝不显示成 "资金 0"
+// (那会让人误以为没钱而放弃合法下单)。
+async function loadAccount() {
+    const bar = document.getElementById('acct-bar');
+    if (!bar) return;
+    const fail = (txt) => {
+        bar.className = 'acct-bar err';
+        bar.innerHTML = `<span class="acct-title">港股账户</span><span>⚠️ ${txt} `
+            + `<button class="btn-sm" style="margin-left:6px" onclick="loadAccount()">重试</button></span>`;
+    };
+    try {
+        const r = await fetch('/api/hk/account');
+        const j = await r.json();
+        if (!j.ok) { fail('资金查询失败: ' + esc(j.error?.message || ('HTTP ' + r.status))); return; }
+        renderAccountBar(j.data.account);
+    } catch (e) { fail('资金查询异常: ' + esc(String(e))); }
+}
+// ── A11 修正 (2026-09-08 批3 上线复核实测): 风险档位配色按富途官方口径分级 ──
+// 旧实现 riskBad = risk_status && !/SAFE|NORMAL|OK/i.test(risk_status) 是**假警报**:
+// 富途 risk_status 是 CltRiskStatus 九档 LEVEL1(非常安全) ⇒ LEVEL9(危险), 字面永远不含
+// "SAFE", 于是实盘常态 LEVEL3「较安全」每次打开都被染红 —— 红色本该留给真危险,
+// 天天误报等于把这一档信号彻底作废 (信噪比反例: 警报越多, 警报越不值钱)。
+// 新口径 (futu OpenAPI 枚举): 两字段各查一张表, **取较严重的一档**; 已知值给中文标签,
+// 未登记的档位/空值/N/A/NONE 一律**中性灰 + 原样透出** —— 未知 ≠ 危险 (A4 纪律:
+// 不得用颜色替用户编造结论), 两档皆未知则不出芯片 (没信息就不占注意力)。
+const HK_RISK_LEVEL_CN = {      // CltRiskLevel: 账户风险级别 (粗档)
+    SAFE: ['安全', 'ok'], ABSOLUTE_SAFE: ['绝对安全', 'ok'],
+    WARNING: ['预警', 'warn'],
+    DANGER: ['危险', 'bad'], OPT_DANGER: ['危险(期权)', 'bad'],
+};
+const HK_RISK_STATUS_CN = {     // CltRiskStatus: 九档, LEVEL1 最安全 ⇒ LEVEL9 最危险
+    LEVEL1: ['非常安全', 'ok'], LEVEL2: ['安全', 'ok'], LEVEL3: ['较安全', 'ok'],
+    LEVEL4: ['较低风险', 'warn'], LEVEL5: ['中等风险', 'warn'], LEVEL6: ['偏高风险', 'warn'],
+    LEVEL7: ['预警', 'bad'], LEVEL8: ['危险', 'bad'], LEVEL9: ['危险', 'bad'],
+};
+const HK_RISK_SEV = { ok: 0, warn: 1, bad: 2 };
+const HK_RISK_UNKNOWN = ['', 'N/A', 'NA', 'NONE', 'NULL', 'UNDEFINED', 'UNKNOWN', '-1'];
+function hkRiskBadge(a) {
+    const pick = (val, table) => {
+        const v = String(val ?? '').trim().toUpperCase();
+        if (HK_RISK_UNKNOWN.includes(v)) return null;   // 券商没给这一档 ⇒ 不参与定档
+        return { raw: v, hit: table[v] || null };
+    };
+    const cands = [pick(a && a.risk_level, HK_RISK_LEVEL_CN),
+                   pick(a && a.risk_status, HK_RISK_STATUS_CN)].filter(Boolean);
+    if (!cands.length) return null;
+    let worst = null;
+    for (const c of cands) {
+        if (c.hit && (!worst || HK_RISK_SEV[c.hit[1]] > HK_RISK_SEV[worst.hit[1]])) worst = c;
+    }
+    const rawTxt = cands.map(c => c.raw).join(' · ');
+    return {
+        sev: worst ? worst.hit[1] : '',                 // 有值但未登记 ⇒ 中性灰, 不猜
+        text: `风险 ${worst ? worst.hit[0] : cands.filter(c => !c.hit).map(c => c.raw).join(' / ')}`,
+        title: `券商回报 ${rawTxt}${worst ? '' : '（档位未登记，不作判断）'}`
+             + '｜富途口径 CltRiskStatus: LEVEL1 最安全 ⇒ LEVEL9 最危险',
+    };
+}
+function renderAccountBar(a) {
+    const bar = document.getElementById('acct-bar');
+    if (!bar || !a) return;
+    bar.className = 'acct-bar';
+    const cur = esc(a.currency || 'HKD');      // 币种由券商回报, 不假设一定是 HKD
+    const m = v => (v === null || v === undefined || isNaN(v))
+        ? '--' : Number(v).toLocaleString(undefined, {maximumFractionDigits: 0});
+    const pl = v => (v === null || v === undefined || isNaN(v)) ? '--'
+        : `<b class="${Number(v) >= 0 ? 'pos' : 'neg'}">${Number(v) >= 0 ? '+' : '−'}${m(Math.abs(v))}</b>`;
+    const risk = hkRiskBadge(a);
+    bar.innerHTML = `<span class="acct-title">港股账户</span>`
+        + `<span>现金 <b>${m(a.cash)}</b> ${cur}</span>`
+        + `<span>购买力 <b>${m(a.power)}</b></span>`
+        + `<span>证券市值 <b>${m(a.market_val)}</b></span>`
+        + `<span>总资产 <b>${m(a.total_assets)}</b></span>`
+        + `<span>今日已实现 ${pl(a.realized_pl)}</span>`
+        + `<span>浮动 ${pl(a.unrealized_pl)}</span>`
+        + (risk
+            ? `<span class="acct-risk${risk.sev ? ' ' + risk.sev : ''}" title="${esc(risk.title)}">${esc(risk.text)}</span>`
+            : '');
 }
 
 loadPositions();
 loadOrders();
+loadAccount();
 renderRecent();
 renderSession();
-setInterval(renderSession, 30000);
-setInterval(() => { loadOrders(); loadPositions(); }, 30000);
+syncSymbolState();
+renderSubmitBtn();
+applyPollingState();   // A10: 统一启动 dataTimer / sessionTimer + 挂可见性守卫
 {% endblock %}

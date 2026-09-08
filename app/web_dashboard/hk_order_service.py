@@ -346,9 +346,33 @@ class HKOrderService:
     # ── 查询 (实时透传, 不缓存) ──────────────────────────────
 
     def get_positions(self) -> List[Dict[str, Any]]:
-        """港股持仓 (只读展示, 数据源=富途实时)."""
+        """港股持仓 (只读展示, 数据源=富途实时). 兼容旧签名: 查询失败返回 []。"""
+        return self.get_positions_with_status()["rows"]
+
+    def get_order_limits(self) -> Dict[str, Any]:
+        """前端预检条所需的只读限额快照 (2026-09-08, REVIEW-20260908 A2).
+
+        此前这些阈值只在 validate() 拒单后才可见 (实测 13 次拒绝里 11 次属可预防:
+        金额超限 4 次 / 整手 3 次 / 偏离往返 2 次 / 卖空价位 2 次)。纯只读下发,
+        判据仍在 validate() —— 前端只做"提前呈现", 不新增也不放宽任何闸门。
+        """
+        return {
+            "max_order_value_hkd": float(self.MAX_ORDER_VALUE_HKD),
+            "max_daily_manual_orders": int(self.MAX_DAILY_MANUAL_ORDERS),
+            "today_manual_orders": int(self._count_today_orders()),
+            "price_deviation_warn_pct": float(self.PRICE_DEVIATION_WARN_PCT),
+            "price_deviation_hard_pct": float(self.PRICE_DEVIATION_HARD_PCT),
+        }
+
+    def get_positions_with_status(self) -> Dict[str, Any]:
+        """港股持仓 + 查询状态 → {"rows": [...], "error": None|str}.
+
+        2026-09-08 (REVIEW-20260908 A3): 原实现"未连接/查询失败/异常"与"真的没有
+        持仓"都返回 [], 前端只能渲染"无港股持仓" —— 实盘页把 OpenD 掉线伪装成空仓
+        是最危险的误读。现区分三态, 路由据此返回 503 而非 200+空列表。
+        """
         if not self.connect():
-            return []
+            return {"rows": [], "error": "broker_not_connected"}
         from app.utils.numeric import safe_float as _f
         try:
             from futu import TrdEnv, RET_OK
@@ -357,7 +381,7 @@ class HKOrderService:
             )
             if ret != RET_OK:
                 logger.warning(f"[港股直通] 持仓查询失败: {data}")
-                return []
+                return {"rows": [], "error": f"query_failed: {data}"}
             out = []
             for _, row in data.iterrows():
                 code = str(row.get("code") or "")
@@ -380,16 +404,20 @@ class HKOrderService:
                     "pl_ratio": round(_f(row.get("pl_ratio")), 2),
                     "position_side": str(row.get("position_side") or ""),
                 })
-            return out
+            return {"rows": out, "error": None}
         except Exception as e:
             self._connected = False
             logger.error(f"[港股直通] 持仓查询异常: {e}")
-            return []
+            return {"rows": [], "error": f"exception: {e}"}
 
     def get_today_orders(self) -> List[Dict[str, Any]]:
-        """今日订单 (实时查 broker, 按时间倒序)."""
+        """今日订单 (实时查 broker, 按时间倒序). 兼容旧签名: 查询失败返回 []。"""
+        return self.get_today_orders_with_status()["rows"]
+
+    def get_today_orders_with_status(self) -> Dict[str, Any]:
+        """今日订单 + 查询状态 → {"rows": [...], "error": None|str} (同 A3 口径)."""
         if not self.connect():
-            return []
+            return {"rows": [], "error": "broker_not_connected"}
         from app.utils.numeric import safe_float as _f
         try:
             from futu import TrdEnv, RET_OK
@@ -398,7 +426,7 @@ class HKOrderService:
             )
             if ret != RET_OK:
                 logger.warning(f"[港股直通] 订单查询失败: {data}")
-                return []
+                return {"rows": [], "error": f"query_failed: {data}"}
             out = []
             for _, row in data.iterrows():
                 code = str(row.get("code") or "")
@@ -418,11 +446,52 @@ class HKOrderService:
                     "create_time": str(row.get("create_time") or ""),
                 })
             out.sort(key=lambda x: x["create_time"], reverse=True)
-            return out
+            return {"rows": out, "error": None}
         except Exception as e:
             self._connected = False
             logger.error(f"[港股直通] 订单查询异常: {e}")
-            return []
+            return {"rows": [], "error": f"exception: {e}"}
+
+    def get_account_info_with_status(self) -> Dict[str, Any]:
+        """港股账户资金快照 (只读) → {"info": dict|None, "error": None|str}.
+
+        2026-09-08 (REVIEW-20260908 批3 A11): 本页是**实盘直通**, 却全文没有
+        accinfo_query —— 下单前看不到可用资金/购买力, 只能靠富途 App 对照。
+        三态口径与 get_positions_with_status 一致: 查询失败**不得**伪装成"资金为 0"
+        (那会让人误以为没钱而放弃合法下单), 必须明确报错由前端呈现。
+
+        注意: 本方法异常时**不**把 _connected 置 False —— 资金查询失败不等于连接断了
+        (账户类型不支持某字段也会走到这里), 置 False 会引发无谓的重连风暴。
+        字段口径: 只下发前端真的会渲染的 8+1 个键 (write-only 键 = 接口膨胀主因);
+        currency 由券商回报, 不假设一定是 HKD。
+        """
+        if not self.connect():
+            return {"info": None, "error": "broker_not_connected"}
+        from app.utils.numeric import safe_float as _f
+        try:
+            from futu import TrdEnv, RET_OK
+            ret, data = self._broker_ctx.accinfo_query(
+                trd_env=TrdEnv.REAL, acc_id=self._acc_id(),
+            )
+            if ret != RET_OK:
+                logger.warning(f"[港股直通] 账户查询失败: {data}")
+                return {"info": None, "error": f"query_failed: {data}"}
+            row = data.iloc[0]
+            info = {
+                "currency": str(row.get("currency") or "HKD").upper(),
+                "cash": round(_f(row.get("cash")), 2),
+                "power": round(_f(row.get("power")), 2),
+                "market_val": round(_f(row.get("market_val")), 2),
+                "total_assets": round(_f(row.get("total_assets")), 2),
+                "realized_pl": round(_f(row.get("realized_pl")), 2),
+                "unrealized_pl": round(_f(row.get("unrealized_pl")), 2),
+                "risk_level": str(row.get("risk_level") or ""),
+                "risk_status": str(row.get("risk_status") or ""),
+            }
+            return {"info": info, "error": None}
+        except Exception as e:
+            logger.error(f"[港股直通] 账户查询异常: {e}")
+            return {"info": None, "error": f"exception: {e}"}
 
     # ── 审计 (jsonl, 不落 DB) ────────────────────────────────
 

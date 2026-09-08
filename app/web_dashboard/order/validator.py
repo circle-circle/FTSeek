@@ -26,9 +26,10 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
         2. 单笔金额上限
         3. 每日手动下单次数限制
         4. 理由 (现非强制)
-        5. 实盘 ALLOW_REAL_TRADING gate
-        6. PDT Guard (实盘 only)
-        7. 仓位集中度 (开仓时)
+        5. 实盘额外校验 (ALLOW_REAL_TRADING 只锁 AUTO pipeline, 手动下单不适用 — 2026-06-24)
+        6. PDT Guard — **已退役** (2026-09-08 REVIEW §H; 富途香港不适用 FINRA PDT,
+           `pdt_guard.enabled=false` ⇒ 恒放行死分支, 详见下方注释)
+        7. 仓位集中度 — **已移除** (2026-06-26; 手动下单由用户决策, 详见下方注释)
         7.5 购买力 (开仓时, 缓存+实时双确认)
         8. 日回撤熔断
         9. 资本安全水位 (BLACKOUT 硬阻断)
@@ -83,19 +84,21 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
 
     # 5. 实盘额外校验
     # 2026-06-24: ALLOW_REAL_TRADING 是 AUTO pipeline (playbook/ORB) 的安全锁,
-    # 手动交易不受此限制 — 用户通过 dashboard 下单是显式行为, 已有 kill switch + PDT + 金额上限保护.
-    # 仅保留 PDT + 仓位 + 回撤 等风控检查 (下方).
+    # 手动交易不受此限制 — 用户通过 dashboard 下单是显式行为, 已有 kill switch + 金额上限保护.
+    # 仅保留 购买力 + 回撤 + 资本安全水位 + 预算 + 价格偏离 等检查 (下方 7.5–11).
+    # (原文案写"仅保留 PDT + 仓位 + 回撤": 仓位集中度已于 2026-06-26 移除、PDT 见下条退役
+    #  ⇒ 注释与代码漂移了两处, 一并更正 —— 过期注释是下一个读者按错前提改代码的源头。)
 
-    # 6. [P1 2026-06-13] PDT Guard (实盘 only)
-    if service._is_live() and cur_price > 0:
-        try:
-            from app.risk.pdt_guard import PDTGuard
-            _pdt = PDTGuard()
-            _pdt_ok, _pdt_reason, _pdt_level = _pdt.check_trade_permission(is_overnight=False)
-            if not _pdt_ok:
-                errors.append(f"PDT 风控拦截: {_pdt_reason}")
-        except Exception as _pdt_err:
-            logger.debug(f"[手动下单] PDT 检查跳过: {_pdt_err}")
+    # 6. PDT Guard 已退役 (2026-09-08, REVIEW-20260908 §H; 用户裁「美股 PDT 限制条件在当前
+    #    富途中不存在」, 前裁 2026-08-02「富途证券(香港)账户不适用 FINRA PDT」)。
+    #    证据链 (减法三步之"证零消费"): `risk.pdt_guard.enabled: false`
+    #    (config/unified_config.yaml:1646) ⇒ `PDTGuard.check_trade_permission()` 首行即
+    #    `return True, "PDT 守卫已关闭…", SAFE` (app/risk/pdt_guard.py:350) ⇒ 此处
+    #    `if not _pdt_ok` **自 2026-08-02 起永不成立** = 恒放行的死分支 (只贡献一次
+    #    import + 对象构造的开销, 和一处"看起来有 PDT 防护"的错觉)。
+    #    `app/risk/pdt_guard.py` 本体**保留** (moomoo US 实体适用 PDT; 届时把 enabled 改回
+    #    true 并重新接上调用点)。同族未动: `app/risk/pre_trade_check.py:425` 是自动管线里的
+    #    同款恒放行调用点 — 属退出参数冻结期的交易管线, 不在本呈现层批授权范围, 已登记待裁。
 
     # 仓位集中度检查已移除 (2026-06-26): 手动 Dashboard 下单由用户决策,
     # 已有 kill switch + 金额上限 + 购买力 + 回撤 + BLACKOUT + 预算80% + 价格偏离 足够保护.
