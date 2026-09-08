@@ -1322,7 +1322,8 @@ def _build_instructions_from_votes(
         "direction_conflict_skip": 0,
         "neg_edge_factor_skip": 0,  # 2026-07-10: 纯负edge因子拦截
         "neg_pair_skip": 0,  # 2026-07-11: 配对级负edge拦截
-        "price_gap_skip": 0,
+        # "price_gap_skip" 已删除 (2026-09-08): 价格偏离门结构性恒不触发 (同对象同快照,
+        #   只能测买卖价差), 盘前必假阳, 对 DA 标的又被 prio 仲裁丢弃 — 详见 1677 行注释。
         "no_entry_price": 0,
         "final_instructions": 0,
     }
@@ -1677,26 +1678,29 @@ def _build_instructions_from_votes(
             ))
             continue
 
-        # 2026-06-25 P0 修复: 盘前 last_price 与 bid/ask 偏离 guardrail.
-        # 若 last_traded_price 与真实可成交价偏离 >2%, 说明信号生成后价格已大幅异动,
-        # 原条件 (如 rsi_oversold) 可能失效, 应跳过.
-        _last_price = float(data.technical.price or 0)
-        _entry = float(values.get("entry_price", 0))
-        if _last_price > 0 and _entry > 0:
-            _price_gap = abs(_entry - _last_price) / _last_price
-            if _price_gap > 0.02:
-                _filter_audit["price_gap_skip"] += 1
-                logger.warning(
-                    f"[playbook] {symbol} 价格偏离过大: last_price={_last_price:.2f} "
-                    f"entry={_entry:.2f} 偏离={_price_gap:.2%} → SKIP"
-                )
-                instructions.append(Instruction(
-                    symbol=symbol,
-                    direction="SKIP",
-                    skip_reason=f"价格偏离过大 ({_price_gap:.1%}), 信号失效",
-                ))
-                continue
-        
+        # 2026-06-25 P0 修复的"价格偏离 guardrail"于 2026-09-08 删除 (根治, 非调参):
+        #   原实现: `_last_price = data.technical.price` vs `_entry = values.entry_price`,
+        #   偏离 >2% 则 SKIP。三条证据表明它从未产生价值, 只产假阳 WARNING:
+        #   ① **同对象同快照** → 结构上测不到它声称要防的东西。entry 由
+        #      compute_instruction_values(decision, data=**同一个 data**) 取 tech.bid/ask,
+        #      而 _last_price 取 tech.price —— 两者来自同一次 router.get_full_market_context
+        #      的同一个 ctx (market_data_router:431)。所以差值只含**买卖价差**, 不含
+        #      "信号生成后价格已异动"。实测 TRADING 相位 10 标的最大偏离 0.142%,
+        #      全部 << 2% → 盘中恒不触发 (死门)。
+        #   ② **盘前必然假阳**。盘前 technical.price 是上一交易日收盘价 (无成交),
+        #      而 entry 已由 6/25 同批修复改用实时 bid/ask → 偏离纯粹是数据不同步。
+        #      近 5 日 9 次触发全在 ET 09:04-09:07, 偏离 2.1%-26%
+        #      (BE 8.16% / ROIV 19.18% / GTLB 25.97%) 全是假阳。
+        #   ③ **对 DA 直写标的恒失效**。本门产出空 decision_id 的 SKIP 票 (prio 0),
+        #      save_instruction 的 8/17 覆盖仲裁阶梯拒绝其覆盖 DA 行 (prio 3) →
+        #      上述 9 次 SKIP **全部被仲裁丢弃**, 对应 DA 指令 7/9 照常触发成交。
+        #      即: 对 DA 标的是死门, 对投票通道标的是假阳误杀 — 两头都不产生价值。
+        #   6/25 的原始事故 (MU last=$1048 vs bid/ask=$1242 → 按旧价做空止损瞬间击穿)
+        #   的真修法是"entry 改用 bid/ask", **那一半已经修了** (instruction_generator:377);
+        #   本门是同批留下的残留。盘中保护由 re-price + chase_cap enforce +
+        #   极端gap门(>8%) 三道在触发时刻用实时价承担, 不受影响。
+        #   同步删除 _filter_audit["price_gap_skip"] 与其报告字段 (无测试/下游依赖, 已 grep 确认)。
+
         # 2026-07-10: bridge候选用辩论合成confidence, 非bridge用数据质量confidence
         # 根因: compute_confidence()是纯数据质量分(数据维度ok数×12+条件验证×28,封顶90)
         #   → 数据完整时永远=90, 与分析确信度无关
@@ -1882,7 +1886,6 @@ def _build_instructions_from_votes(
         f"buy_filter_disabled={_filter_audit['buy_macd_ma50_disabled']} "
         f"dir_flip={_filter_audit['direction_flip']} "
         f"dir_conflict={_filter_audit['direction_conflict_skip']} "
-        f"price_gap={_filter_audit['price_gap_skip']} "
         f"no_entry={_filter_audit['no_entry_price']}"
     )
 
@@ -5856,6 +5859,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 _lk = (inst.get("id"), _today_et_str())
                 # [DEB-20260901 §六.4] 内存集 + 文件级双防重 (重启后内存集清零,
                 #   文件级兜住; 历史旧行无 type 字段按 "row" 归一, 键不冲突)。
+                # 2026-09-08 修潜伏 NameError: 原用 `_Path` 但本作用域无绑定 — 5079/5136 的
+                #   `from pathlib import Path as _Path` 在嵌套子函数 (_emit_trigger_miss /
+                #   _emit_entry_shadow) 内, 绑定不外泄到宿主 _check_intraday_trigger (AST 实证)。
+                #   被 limit_entry_shadow_observe=false (8/29 用户裁 KILLED) 挡着从未求值,
+                #   故影子 8/29 后停写的真因是那次裁决而非此 bug — 本行只治潜伏, 不改行为。
+                from pathlib import Path as _Path
                 _le_path = _Path(__file__).resolve().parents[2] / "data" / "limit_entry_shadow.jsonl"
                 _le_claim = _shadow_dedup_claim(_le_path, inst.get("id"))
                 if _lk not in _LIMIT_SHADOW_EMITTED and _le_claim is not None:
