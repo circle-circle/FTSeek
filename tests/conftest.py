@@ -165,6 +165,33 @@ def _isolate_production_data_writes(monkeypatch, request, production_data_sandbo
     yield
 
 
+@pytest.fixture(autouse=True)
+def _block_live_llm_http(monkeypatch):
+    """测试默认禁真实 LLM API 出口 (2026-09-09): 网关与 DA skill 都走 urllib,
+    "假设功能默认关"的用例在 yaml 常开后会静默真调付费 API (实证: test_l3
+    thesis_inferer 以 trace_id=test 真调 qwen3.7-max 落生产审计库, 与上方
+    生产数据写入硬闸同纪律)。确需真调的会话: FTSEEK_LIVE_LLM=1 pytest ..."""
+    if os.environ.get("FTSEEK_LIVE_LLM") == "1":
+        yield
+        return
+    import urllib.request
+    _real_urlopen = urllib.request.urlopen
+    _LLM_HOSTS = ("dashscope.aliyuncs.com", "api.openai.com", "api.anthropic.com",
+                  "api.deepseek.com", "open.bigmodel.cn")
+
+    def _guarded_urlopen(req, *a, **kw):
+        url = getattr(req, "full_url", None) or (req if isinstance(req, str) else "")
+        if any(h in str(url) for h in _LLM_HOSTS):
+            raise RuntimeError(
+                f"测试发起真实 LLM API 请求被拦: {url} — 测试应 monkeypatch 关闭/打桩 "
+                f"(先例: test_llm_features.py L1 news_classifier 强制 is_enabled=False)。"
+                f"确需真调: FTSEEK_LIVE_LLM=1 显式放行")
+        return _real_urlopen(req, *a, **kw)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _guarded_urlopen)
+    yield
+
+
 def pytest_sessionfinish(session, exitstatus):
     # futu SDK 线程退出兜底 (2026-08-27 修正): 事后置 t._daemonic 对 3.8+ 无效 —
     # threading._shutdown 按线程【启动时】注册的 _shutdown_locks 逐锁 acquire 等

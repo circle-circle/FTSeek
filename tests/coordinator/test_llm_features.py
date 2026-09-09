@@ -145,10 +145,13 @@ def test_l9_news_signal_disabled():
 # ─── (L2 emergency review removed — module deleted 2026-06-15) ───
 
 # ─── L3 thesis inferer ─────────────────────────────────────
-def test_l3_thesis_disabled_does_not_run():
-    from app.llm.thesis_inferer import infer_thesis_async
-    # disabled → 不会调 LLM (无报错即 OK)
-    infer_thesis_async("NVDA", {"trace_id": "test"}, {})
+def test_l3_thesis_disabled_does_not_run(monkeypatch):
+    import app.llm.thesis_inferer as ti
+    # 2026-09-09: yaml 已常开 thesis_inferer, 原测试假设默认关 → 每次真调
+    # qwen3.7-max 花钱 (trace_id=test 落生产审计库)。镜像上方 L1 news_classifier
+    # 先例: 强制 disabled, 密封化验证关闭路径。
+    monkeypatch.setattr(ti, "is_enabled", lambda *a, **k: False)
+    ti.infer_thesis_async("NVDA", {"trace_id": "test"}, {})
 
 
 # L6 regime_classifier / L8 daily_auto_tuner: 2026-07-26 减法R2 已删

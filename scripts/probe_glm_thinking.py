@@ -16,6 +16,9 @@ import sys
 import time
 
 sys.path.insert(0, "/opt/ftseek/FTSeek-US")
+import os
+# 2026-09-09 F2: 探针流量打标 — 真实付费调用落 is_test=1, 不污染生产口径
+os.environ.setdefault("FTSEEK_SHADOW_RUN", "1")
 import config  # noqa: F401  (加载 .env.us → DASHSCOPE_API_KEY)
 from app.llm.model_call import _get_llm_config, _try_single_model, call_llm
 

@@ -74,9 +74,11 @@ def _query_da_direct(day: str) -> dict:
     但 skill 用 urllib 直连 DashScope, 调用不落 llm_audit.db → 本日报此前完全看不到
     DA 成本 (8/25 P1 已把 _usage 落 checkpoint, 此函数完成最后一公里归集)。
     口径: 分析师侧 token/成本来自 checkpoint _llm_output._usage (含缓存命中);
-    挑战者 token 不落 checkpoint, 只计次数。只读, 失败安全 (异常返回空段)。"""
+    挑战者 token 自 2026-09-09 (F1) 起落 checkpoint _debate.challenger_usage,
+    有则计价归集 (ch_*), 无则维持只计次数的旧行为。只读, 失败安全 (异常返回空段)。"""
     out = {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cached": 0,
-           "cost": 0.0, "trunc": 0, "challenger_calls": 0}
+           "cost": 0.0, "trunc": 0, "challenger_calls": 0,
+           "ch_tok_in": 0, "ch_tok_out": 0, "ch_cost": 0.0}
     try:
         d = DATA / "da_checkpoint" / day
         if not d.is_dir():
@@ -110,13 +112,85 @@ def _query_da_direct(day: str) -> dict:
             out["cost"] += ti / 1000.0 * cin + to / 1000.0 * cout
             if str(lo.get("_finish_reason") or "") == "length":
                 out["trunc"] += 1
-            if ((lo.get("_debate") or {}).get("challenger_verdict")):
+            deb = lo.get("_debate") or {}
+            if deb.get("challenger_verdict"):
                 out["challenger_calls"] += 1
+                cu = deb.get("challenger_usage") or {}
+                if isinstance(cu, dict) and cu:
+                    cti = int(cu.get("prompt_tokens", 0) or 0)
+                    cto = int(cu.get("completion_tokens", 0) or 0)
+                    cmodel = str(deb.get("challenger_model") or "")
+                    # 日期快照名归一: deepseek-v4-pro-0813 → deepseek-v4-pro
+                    # (yaml 价目以基名为键, 8/27 裁决固化快照后原名在价目表查无)
+                    cc = costs.get(cmodel) or costs.get(cmodel.rsplit("-", 1)[0],
+                                                        (0.0, 0.0))
+                    out["ch_tok_in"] += cti
+                    out["ch_tok_out"] += cto
+                    out["ch_cost"] += cti / 1000.0 * cc[0] + cto / 1000.0 * cc[1]
     except Exception as e:
         # R5 留痕: 失败安全 (本段置空不阻断日报), 但 warn 留痕禁静默吞
         print(f"[warn] DA 直连段归集异常, 本段按空输出: {e}", file=sys.stderr)
         return {"calls": 0, "ok": 0, "tok_in": 0, "tok_out": 0, "cached": 0,
-                "cost": 0.0, "trunc": 0, "challenger_calls": 0}
+                "cost": 0.0, "trunc": 0, "challenger_calls": 0,
+                "ch_tok_in": 0, "ch_tok_out": 0, "ch_cost": 0.0}
+    return out
+
+
+def _query_shadow(day: str) -> dict:
+    """影子/实验消耗归集 (2026-09-09 F2): 在跑影子实验的 jsonl → {label: {calls, tok_in, tok_out, cost}}.
+
+    背景: 9/8 复盘发现日报低估真实消耗 >50% — 蒸馏影子 ($1.32/日) / glm 影子
+    ($0.37/日) / thinking_eval ($0.30/日) 均不在网关也不归 DA 直连段。
+    口径: 蒸馏影子只计 v2 增量 (v1 是生产 checkpoint 复述, 非新消耗);
+    glm 影子 9/9 起有 glm_tokens_in (此前行无, 按 0 计 → 成本偏低估, 留痕不补);
+    thinking_eval off/on 两臂都计。只读, 失败安全 (单文件异常跳过并 stderr 留痕)。"""
+    out: dict = {}
+    costs = _llm_model_costs()
+
+    def _add(label: str, tin: int, tout: int, model: str) -> None:
+        d = out.setdefault(label, {"calls": 0, "tok_in": 0, "tok_out": 0, "cost": 0.0})
+        cin, cout = costs.get(model, (0.0, 0.0))
+        d["calls"] += 1
+        d["tok_in"] += tin
+        d["tok_out"] += tout
+        d["cost"] += tin / 1000.0 * cin + tout / 1000.0 * cout
+
+    def _rows(fname: str):
+        try:
+            p = DATA / "shadow" / fname
+            if not p.exists():
+                return
+            n_bad = 0
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception as e:
+                    n_bad += 1
+                    if n_bad <= 3:  # R5 留痕: 坏行不静默吞, 封顶防爆屏
+                        print(f"[warn] 影子段坏行跳过 {fname}: {e}", file=sys.stderr)
+                    continue
+                if str(rec.get("date") or "") == day:
+                    yield rec
+        except Exception as e:
+            print(f"[warn] 影子段读取失败 {fname}: {e}", file=sys.stderr)
+
+    for rec in _rows("da_prompt_distill_shadow.jsonl"):
+        _add("distill_v2增量", int(rec.get("v2_tokens_in") or 0),
+             int(rec.get("v2_tokens_out") or 0), str(rec.get("model") or "qwen3.7-max"))
+    for rec in _rows("da_glm_shadow.jsonl"):
+        _add("da_glm_shadow", int(rec.get("glm_tokens_in") or 0),
+             int(rec.get("glm_tokens_out") or 0), str(rec.get("glm_model") or "glm-5.2"))
+    for rec in _rows("thinking_eval.jsonl"):
+        for arm in ("off", "on"):
+            a = rec.get(arm) or {}
+            if not isinstance(a, dict) or a.get("tokens_out") is None:
+                continue
+            _add(f"thinking_eval_{arm}", int(a.get("tokens_in") or 0),
+                 int(a.get("tokens_out") or 0),
+                 str(a.get("model") or rec.get("model") or "glm-5.2"))
     return out
 
 
@@ -194,28 +268,38 @@ def _query_trunc_7d(conn: sqlite3.Connection, day: str) -> list:
 
 
 def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
-                   da_direct: dict | None = None, da_prev: dict | None = None) -> str:
+                   da_direct: dict | None = None, da_prev: dict | None = None,
+                   shadow: dict | None = None, shadow_prev: dict | None = None) -> str:
     t = today["total"]
     calls = t["calls"]
     da = da_direct or {}
-    da_cost = float(da.get("cost", 0) or 0)
     # 2026-09-01 (PE 审阅): 全链路口径 = 网关 + DA 直连 — 此前 DA (全链最大 LLM
     #   消费方) 完全不在日报内, 预算告警/环比皆失真。
-    full_cost = t["cost"] + da_cost
-    if calls == 0 and not da.get("calls"):
+    # 2026-09-09 (F1+F2): 口径再扩 — DA 侧挑战者 (F1 起 token 落 checkpoint) 与
+    #   影子/实验 (F2, 独立 jsonl 归集) 计入 total/预算/环比; 9/8 复盘发现旧口径
+    #   低估真实消耗 >50% ($1.68 报表 vs ~$3.8 真实)。
+    da_analyst_cost = float(da.get("cost", 0) or 0)
+    ch_cost = float(da.get("ch_cost", 0) or 0)
+    da_total = da_analyst_cost + ch_cost
+    shadow_cost = sum(float(s.get("cost", 0) or 0) for s in (shadow or {}).values())
+    full_cost = t["cost"] + da_total + shadow_cost
+    if calls == 0 and not da.get("calls") and not shadow:
         return f"🪙 LLM 消耗日报 {today['date']}\n(当日无 LLM 调用记录)"
 
     tok_total = t["tok_in"] + t["tok_out"]
     ok_rate = (t["ok"] / calls * 100) if calls else 0
     avg_lat = (t["lat_sum"] / calls / 1000) if calls else 0  # 秒
 
-    # 环比昨日成本 (全链路口径)
-    pv = (prev["total"]["cost"] if prev else 0) + float((da_prev or {}).get("cost", 0) or 0)
+    # 环比昨日成本 (扩展口径: 网关 + DA 直连 + 影子/实验)
+    pv = ((prev["total"]["cost"] if prev else 0)
+          + float((da_prev or {}).get("cost", 0) or 0)
+          + float((da_prev or {}).get("ch_cost", 0) or 0)
+          + sum(float(s.get("cost", 0) or 0) for s in (shadow_prev or {}).values()))
     delta = ""
     if pv > 0:
         pct = (full_cost - pv) / pv * 100
         arrow = "▲" if pct >= 0 else "▼"
-        delta = f" ({arrow}{abs(pct):.0f}% vs 昨)"
+        delta = f" ({arrow}{abs(pct):.0f}% vs 昨, 扩展口径)"
 
     # 预算告警 (只提示不拦截): 当日成本占 daily_max_usd 的比例
     budget = _load_budget()
@@ -232,8 +316,13 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
     if alert_line:
         lines.append(alert_line)
     _total_line = f"总计: {calls} 次调用 | {_fmt_tok(tok_total)} tok | {_fmt_usd(full_cost)}{delta}"
+    _extras = []
     if da.get("calls"):
-        _total_line += f" (含 DA 直连 {da['calls']} 次 {_fmt_usd(da_cost)})"
+        _extras.append(f"DA 直连 {da['calls']} 次 {_fmt_usd(da_total)}")
+    if shadow_cost > 0:
+        _extras.append(f"影子/实验 {_fmt_usd(shadow_cost)}")
+    if _extras:
+        _total_line += " (含 " + "; ".join(_extras) + ")"
     lines += [
         f"🪙 LLM 消耗日报 {today['date']}",
         _total_line,
@@ -262,9 +351,20 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
         lines.append("── DA 直连 (skill 直连 DashScope, 不经网关) ──")
         _da_tok = int(da.get("tok_in", 0)) + int(da.get("tok_out", 0))
         _cache_s = f" 缓存命中{_fmt_tok(int(da.get('cached', 0)))}tok" if da.get("cached") else ""
-        lines.append(f"分析师: {da['calls']}次 {_fmt_tok(_da_tok)}tok {_fmt_usd(da_cost)}{_cache_s} 截断{da.get('trunc', 0)}")
+        lines.append(f"分析师: {da['calls']}次 {_fmt_tok(_da_tok)}tok {_fmt_usd(da_analyst_cost)}{_cache_s} 截断{da.get('trunc', 0)}")
         if da.get("challenger_calls"):
-            lines.append(f"挑战者: {da['challenger_calls']}次 (token 不落 checkpoint, 成本未含)")
+            if da.get("ch_tok_in") or da.get("ch_tok_out"):
+                _ch_tok = int(da.get("ch_tok_in", 0)) + int(da.get("ch_tok_out", 0))
+                lines.append(f"挑战者: {da['challenger_calls']}次 {_fmt_tok(_ch_tok)}tok {_fmt_usd(ch_cost)}")
+            else:
+                lines.append(f"挑战者: {da['challenger_calls']}次 (token 不落 checkpoint, 成本未含)")
+
+    if shadow:
+        lines.append("")
+        lines.append("── 影子/实验 (独立 jsonl 归集, 已计入总计与预算口径) ──")
+        for label, s in sorted(shadow.items(), key=lambda kv: kv[1]["cost"], reverse=True):
+            _stok = int(s["tok_in"]) + int(s["tok_out"])
+            lines.append(f"{label}: {s['calls']}次 {_fmt_tok(_stok)}tok {_fmt_usd(s['cost'])}")
 
     if trunc_7d:
         lines.append("")
@@ -298,8 +398,11 @@ def main(date=None, days_back=1, push=False, dry=False):
     # DA 直连段 (不经网关, 独立归集; 前一日同口径供环比)
     da_direct = _query_da_direct(target)
     da_prev = _query_da_direct(prev_day)
+    # 影子/实验段 (F2, 独立 jsonl 归集; 前一日同口径供环比)
+    shadow = _query_shadow(target)
+    shadow_prev = _query_shadow(prev_day)
 
-    msg = _build_message(today, prev, trunc_7d, da_direct, da_prev)
+    msg = _build_message(today, prev, trunc_7d, da_direct, da_prev, shadow, shadow_prev)
     print("=" * 60)
     print(msg)
     print("=" * 60)
@@ -307,6 +410,7 @@ def main(date=None, days_back=1, push=False, dry=False):
     # 落盘单日档
     try:
         today["da_direct"] = da_direct
+        today["shadow"] = shadow
         out = DATA / f"llm_token_daily_{target}.json"
         out.write_text(json.dumps(today, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[saved] {out}")

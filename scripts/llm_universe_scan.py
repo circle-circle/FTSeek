@@ -2683,6 +2683,9 @@ def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
 def cmd_thinking_eval() -> int:
     """同一 clue brief + 同一 v2.9+ prompt, enable_thinking off/on 双臂并排。
     纯 shadow: 不落主 scan、不 inject、不下单。唯一变量=enable_thinking。"""
+    # 2026-09-09 F2: 影子实验流量打标 — 网关审计 is_test=1, 不污染生产存活检测/
+    #   日报网关口径 (成本由日报影子段从 thinking_eval.jsonl 独立归集)。
+    os.environ["FTSEEK_SHADOW_RUN"] = "1"
     if not _is_us_trading_day_today():
         print("[thinking-eval] 非美股交易日，跳过评估")
         return 0

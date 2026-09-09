@@ -174,7 +174,11 @@ def main():
                 row["shadow_price"] = _snap.get("last_price")
                 row["shadow_effective_chg_pct"] = _snap.get("effective_chg_pct")
                 data_text = llm_synth._format_data_for_prompt(collected)
-                user_prompt = llm_synth.USER_PROMPT_TEMPLATE.format(data=data_text)
+                # [2026-09-09 F3] 与生产共用同一 prompt 构造函数 — 重排 flag 两臂同步
+                #   翻转, 当日臂间比较保持单变量。glm 臂保持纯字符串格式 (不走数组
+                #   缓存格式), 拼接后文本与生产模型所见逐字节一致。
+                _u, _tail = llm_synth.build_user_prompt(data_text)
+                user_prompt = (_tail + _u) if _tail else _u
 
                 t1 = time.time()
                 res = llm_synth._call_llm(
@@ -194,6 +198,7 @@ def main():
                         "glm_rating": res.get("rating"),
                         "glm_score_band": str(res.get("score_band") or "").upper(),
                         "glm_finish_reason": res.get("_finish_reason"),
+                        "glm_tokens_in": (res.get("_usage") or {}).get("prompt_tokens"),
                         "glm_tokens_out": (res.get("_usage") or {}).get("completion_tokens"),
                         "glm_trig_n": len(trig) if isinstance(trig, list) else 0,
                         "glm_raw": res,

@@ -28,9 +28,14 @@ def _is_test_context() -> bool:
     """pytest 会话内调用 (测试流量标记, 2026-08-27): 测试无数据目录隔离,
     历史上 fallback/cache/simple/test_xyz 四个测试 feature 已写 ~3.7k 行进
     生产审计库 (占 72%), 污染 token 日报与 intraday_heartbeat 的 LLM 存活
-    检测 (30min 窗口内测试行可掩盖真实断流). 生产进程 (main.py) 不满足任一条件."""
+    检测 (30min 窗口内测试行可掩盖真实断流). 生产进程 (main.py) 不满足任一条件.
+
+    FTSEEK_SHADOW_RUN=1 (2026-09-09 F2): 脚本级影子实验 (thinking_eval 等) 经网关的
+    调用同样打 is_test=1 — 是真实付费调用但非生产流量; 成本由日报影子段从各自
+    jsonl 独立归集, 生产存活检测/网关口径不受污染。"""
     try:
-        return bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in sys.modules
+        return bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in sys.modules \
+            or os.environ.get("FTSEEK_SHADOW_RUN") == "1"
     except Exception:
         return False
 
