@@ -273,6 +273,81 @@ def _count_deals() -> int:
         return 0
 
 
+def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str,
+                     existing: set) -> str:
+    """单笔成交幂等 upsert (SSOT — 每日 sync 与实时 push 共用, 防字段映射漂移).
+
+    `raw` 兼容两种来源行 (字段名差异已实测确认):
+      · history_deal_list_query 行: 市场字段 = `deal_market`
+      · TradeDealHandlerBase push 行: 市场字段 = `trd_market` (且多一个 `trd_env`)
+    `market`/`currency` 一律由**行自带市场字段**推导 (非"哪个 ctx 返回"), deal_id 走 str()
+    (19 位 > 2^53, 经 float 静默变位 ⇒ 幂等键失效)。
+    返回 "inserted" / "updated" / "skipped" (无 deal_id)。
+    """
+    deal_id = _s(raw, "deal_id")
+    if not deal_id:
+        logger.warning("[实盘台账] 跳过无 deal_id 的成交行: %s", raw)
+        return "skipped"
+    symbol = _s(raw, "code")
+    # query 行用 deal_market, push 行用 trd_market — 任一在场即可 (实测两者不同时出现)
+    deal_market = _s(raw, "deal_market") or _s(raw, "trd_market")
+    market = market_of(deal_market, symbol)
+    qty, price = _f(raw, "qty"), _f(raw, "price")
+    amount = round(qty * price, 4) if qty is not None and price is not None else None
+    deal_time = _s(raw, "create_time")
+    currency = _CURRENCY_BY_MARKET.get(market)  # 未知市场 ⇒ NULL, 不跨币种猜
+    conn.execute(
+        """INSERT INTO live_deal_records (
+               market, currency, order_id, symbol, stock_name, deal_market,
+               trd_side, qty, price, amount, fee, deal_time, deal_date,
+               counter_broker_id, counter_broker_name, status, synced_at, deal_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(deal_id) DO UPDATE SET
+               market=excluded.market, currency=excluded.currency,
+               order_id=excluded.order_id, symbol=excluded.symbol,
+               stock_name=excluded.stock_name, trd_side=excluded.trd_side,
+               qty=excluded.qty, price=excluded.price, amount=excluded.amount,
+               deal_time=excluded.deal_time, deal_date=excluded.deal_date,
+               status=excluded.status, synced_at=excluded.synced_at""",
+        (market, currency, _s(raw, "order_id"), symbol, _s(raw, "stock_name"),
+         deal_market, _s(raw, "trd_side"), qty, price, amount,
+         None,  # fee: 券商 deal 级不提供 ⇒ NULL, 不伪造 0
+         deal_time, (deal_time or "")[:10] or None,
+         _s(raw, "counter_broker_id"), _s(raw, "counter_broker_name"),
+         _s(raw, "status"), now, deal_id),
+    )
+    if deal_id in existing:
+        return "updated"
+    existing.add(deal_id)
+    return "inserted"
+
+
+def record_deal_push(raw: Dict[str, Any]) -> Optional[str]:
+    """实时成交推送入口 (RFC-078 批E push 层): 单笔 push 行幂等落 live_deal_records.
+
+    被 app/web_dashboard/live_deal_push.py 的 TradeDealHandlerBase 回调调用。
+    返回 (result, deal_id): result ∈ inserted/updated/skipped; 自带连接, 即调即落,
+    异常全收口返回 None (推送链失败绝不可影响主交易进程)。
+    """
+    try:
+        ensure_tables()
+        now = now_utc().isoformat(timespec="seconds")
+        conn = _connect()
+        try:
+            existing = {r[0] for r in
+                        conn.execute("SELECT deal_id FROM live_deal_records")}
+            result = _upsert_deal_row(conn, raw, now, existing)
+            conn.commit()
+        finally:
+            conn.close()
+        return result, _s(raw, "deal_id")
+    except Exception as exc:  # noqa: BLE001 — 推送落库失败不得冒泡到 Futu 回调线程
+        logger.warning("[实盘台账·push] 成交落库异常 (deal_id=%s): %s",
+                       raw.get("deal_id"), exc)
+        return None
+
+
+
 def sync_deals(days: int = 30) -> Dict[str, Any]:
     """回补最近 `days` 天的实盘成交流水 (两市场都查; 幂等 upsert by deal_id).
 
@@ -322,41 +397,19 @@ def sync_deals(days: int = 30) -> Dict[str, Any]:
         # 靠它区分 inserted/updated 是空转 (首版就写了个恒 False 的辅助函数, 已删)。
         existing = {r[0] for r in conn.execute("SELECT deal_id FROM live_deal_records")}
         for deal_id, raw in pooled.items():
-            symbol = _s(raw, "code")
-            market = market_of(_s(raw, "deal_market"), symbol)
-            qty, price = _f(raw, "qty"), _f(raw, "price")
-            amount = round(qty * price, 4) if qty is not None and price is not None else None
-            deal_time = _s(raw, "create_time")
-            currency = _CURRENCY_BY_MARKET.get(market)
-            if currency is None:
-                # 未知市场 ⇒ 币种留 NULL, 不按 HKD/USD 猜 (猜错会让金额跨币种相加)
-                unknown_market += 1
-            conn.execute(
-                """INSERT INTO live_deal_records (
-                       market, currency, order_id, symbol, stock_name, deal_market,
-                       trd_side, qty, price, amount, fee, deal_time, deal_date,
-                       counter_broker_id, counter_broker_name, status, synced_at, deal_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(deal_id) DO UPDATE SET
-                       market=excluded.market, currency=excluded.currency,
-                       order_id=excluded.order_id, symbol=excluded.symbol,
-                       stock_name=excluded.stock_name, trd_side=excluded.trd_side,
-                       qty=excluded.qty, price=excluded.price, amount=excluded.amount,
-                       deal_time=excluded.deal_time, deal_date=excluded.deal_date,
-                       status=excluded.status, synced_at=excluded.synced_at""",
-                (market, currency, _s(raw, "order_id"), symbol, _s(raw, "stock_name"),
-                 _s(raw, "deal_market"), _s(raw, "trd_side"), qty, price, amount,
-                 None,  # fee: 券商 deal 级不提供 ⇒ NULL, 不伪造 0
-                 deal_time, (deal_time or "")[:10] or None,
-                 _s(raw, "counter_broker_id"), _s(raw, "counter_broker_name"),
-                 _s(raw, "status"), now, deal_id),
-            )
-            per_market[market] = per_market.get(market, 0) + 1
-            if deal_id in existing:
+            # SSOT: 单笔 upsert 映射与实时 push 共用 _upsert_deal_row (RFC-078 批E), 防漂移
+            result = _upsert_deal_row(conn, raw, now, existing)
+            if result == "skipped":
+                continue
+            _symbol = _s(raw, "code")
+            _mkt = market_of(_s(raw, "deal_market") or _s(raw, "trd_market"), _symbol)
+            if _CURRENCY_BY_MARKET.get(_mkt) is None:
+                unknown_market += 1  # 未知市场 ⇒ 币种 NULL, 不按 HKD/USD 猜
+            per_market[_mkt] = per_market.get(_mkt, 0) + 1
+            if result == "updated":
                 updated += 1
             else:
                 inserted += 1
-                existing.add(deal_id)
         conn.commit()
         total = conn.execute("SELECT COUNT(*) FROM live_deal_records").fetchone()[0]
     finally:

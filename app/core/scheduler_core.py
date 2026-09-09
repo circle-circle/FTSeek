@@ -1820,6 +1820,17 @@ class TradingScheduler:
         except Exception as _ce:
             logger.warning(f"[调度器·Coordinator] 启动回灌失败: {_ce}")
 
+        # RFC-078 批E (2026-09-09): 实盘成交实时推送订阅 (record-only, 真钱成交秒级落账+飞书提醒).
+        #   自建常驻 US+HK 双 ctx (被动接收无需解锁, 不碰下单 ctx); REAL-only 过滤防 sim
+        #   同账户 SIMULATE 成交污染; 异常全收口 — 订阅失败不阻断主服务 (每日 sync cron 兜底).
+        #   回滚: .env.us FTSEEK_LIVE_DEAL_PUSH=0 + 重启.
+        try:
+            from app.web_dashboard.live_deal_push import start_live_deal_push
+            if start_live_deal_push():
+                logger.info("[调度器] 实盘成交推送订阅已启动 (RFC-078 批E)")
+        except Exception as _ldp_err:
+            logger.warning(f"[调度器] 实盘成交推送启动失败 (不影响主链路, 每日 sync 兜底): {_ldp_err}")
+
         # 信号扫描线程 (循环内部自带 WEEKEND/OVERNIGHT 守卫)
         self._scan_thread = threading.Thread(
             target=self._scan_loop, name="SignalScanLoop", daemon=True
