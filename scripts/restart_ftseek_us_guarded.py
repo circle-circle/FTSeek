@@ -106,7 +106,7 @@ def main(argv=None) -> int:
         print(f"[restart-guarded] 🚨 systemctl restart 失败 (rc={rc}): {out.strip()[:500]}",
               file=sys.stderr)
         return 3
-    rc2, out2 = _run([str(ROOT / "venv" / "bin" / "python"), str(SMOKE), "--wait"], timeout=300)
+    rc2, out2 = _run([str(ROOT / "venv" / "bin" / "python"), str(SMOKE), "--wait", "120"], timeout=300)
     print(out2.strip()[-2000:])
     if rc2 != 0:
         print(f"[restart-guarded] 🚨 已重启但冒烟未过 (rc={rc2}) ⇒ 需人工介入", file=sys.stderr)
