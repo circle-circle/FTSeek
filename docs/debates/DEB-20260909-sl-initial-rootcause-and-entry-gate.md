@@ -1,7 +1,7 @@
 ---
 title: SL_INITIAL 出血口根因辩论 + UE 深度借鉴路径 (用户三问核查)
 date: 2026-09-09
-status: 多模型辩论完成, 待用户裁决 (修订后 D1'/D2'/D3' 见第5轮)
+status: 已裁决并落地 (2026-09-09 用户裁「同意」§5.2 修订案; D1'/D2'/D3' 影子上线攒样, 落地回执见第6轮)
 trigger: 用户三问 — ①min_notional 质疑 (成交记录有超过 $5,000) ②SL_INITIAL 需根源辩论 ③UE 能否借鉴 DA thinking; 用户再令「多模型规划辩论分析, 给出共识点后及方案后再决策执行」
 ---
 
@@ -222,3 +222,36 @@ DA 9 月 82%WR 的优势不只在 thinking, 而在**每标的独立深挖** (con
 - 不接 deep_target_analysis 死代码路由; 若未来重立"UE 语义深验", 必须接 skill 仓活链或新写极简 veto prompt, 且排在 D1' 影子结算之后;
 - thinking-eval 按注册口径 (≥10 有效轮、v2.10 序列) 攒样, ON 臂时延是主要判据风险点 (2/3 已超 300s 墙);
 - 本 DEB 全部影子落地待用户裁决后另行实施, 本轮零代码变更。
+
+## 第6轮 用户裁决 + 落地回执 (2026-09-09 13:40 CST, 追加式)
+
+**裁决**: 用户裁「同意」— §5.2 修订案全表批准 (D1'/D2'/D3' 影子落地, B 撤回确认, C 降对照臂)。
+本批全部 record-only, 零交易行为变更/零参数变更/零阈值变更/DB 只读/不重启服务。
+
+**实施清单**:
+- **D1' + D3'** 折进 `scripts/unit_cell_daily_readout.py` (同 jsonl 单一真源, 零新采集零新 cron):
+  D1' 小节 = 全日窗×双向(ag 方向归一同判)×双阈值腿(−3.0/−3.5, 顺向腿 ≥+4 共享)×按源分层
+  被拦篮读数 + 腿内三判据 + 两腿同向判定; D3' 小节 = 每源 SL_INITIAL率/mfe0率 (全史+滚动20日)。
+  契约钉 13→27 例 (`tests/test_unit_cell_daily_readout.py`)。
+- **D2'** 新 `scripts/entry_delay_confirm_shadow.py`: 每笔 PLAYBOOK_SIM 已平仓穿越触发单回放
+  当日 1 分 bar, N∈{2,5}min 延迟复核反事实; price_at(t)=首根 bar_time≥t 的 bar 开盘价;
+  bar 加载/补拉/写回 import 复用 post_exit_path_shadow 同一实现; 幂等键 (trade_id, delay_min);
+  强制披露 (confirm_gate 反向先验 + E3 TTL=300s 互斥) 逐字随 `entry_delay_confirm_latest.json`
+  输出。契约钉 17 例 (`tests/test_entry_delay_confirm_shadow.py`, 含幂等/只读纪律钉)。
+- **三挂**: cron `58 5 * * 2-6`; 台账 §2.3 `crontab-entry-delay-confirm` 行 (+unit_cell 行更新);
+  注册表 `extreme_gap_ban_shadow` (min_n=30) + `entry_delay_confirm` (min_n=20) 两条 OBSERVING,
+  挂载哨兵对新条目零告警。
+- **验证**: 全量 pytest **3538 passed / 41 skipped / 0 failed** (160s; 前基线 3497)。
+
+**首日读数 (攒样起点, 非裁决点)**:
+- **D1'** (全历史 443 行/ag 缺失 99): −3.0腿 被拦 n=54 净 −1947.13 误杀率 **48%**;
+  −3.5腿 n=48 净 −1928.36 误杀率 48% ⇒ 两腿同向但误杀率超 40% 预注册门 ⇒
+  **未达毕业线, 维持攒样** (禁入省 $1.9k/全史但每拦 2 笔错杀 ~1 笔赢家)。
+- **D2'** (回补 60 天 408 笔×2 腿, ok 407/腿, 夜盘入场 1 笔正确分类 no_bar_at_target):
+  **N=2min ALL 回避 50% / 回避价值 +$1,680 / 机会成本 0.1231% ⇒ ALL 与 SL_INITIAL (n=21,
+  回避 66.7%) 双人群均过预注册线; N=5min 机会成本 0.3306% 超 0.3% 门 ⇒ ALL 不过 /
+  SL_INITIAL (回避 80.95%) 过** — N=2 vs N=5 张力 (更长确认回避更多出血但成本过线)
+  正是双阈值并行设计要回答的, forward 攒样后以裁决日 latest.json 冻结值为准。
+- **D3'**: 滚动20日 UE SL_INITIAL 率 **24.0%**(6/25) vs DA 7.3%(12/164) — 与第2轮
+  26.1%/7.5% 基线互证, 口径一致。
+- **C 对照臂** 零代码: post_exit_path.jsonl 已在攒 day_deep_dd/close_gap, D1' 结算点同窗复算。

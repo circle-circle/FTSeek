@@ -771,6 +771,62 @@ REGISTRY: list[ShadowItem] = [
               "(crontab 10 6 * * 2-6, 台账 §2.3)。回滚=删本条目 + 删 cron 行 + 删 jsonl (纯观察件)。",
         eval_on_demand=True,
     ),
+    # ── 2026-09-09 DEB-20260909 §5.2 (SL_INITIAL 根因 + 入场门重设计, 三模型辩论 5 轮,
+    #    用户裁「同意」): D1'/D2' 两条 record-only 影子登记; B 案撤回, C 宽SL仅对照臂,
+    #    D3' 监控折进 unit_cell_daily_readout by_source 小节 (无独立条目, 监控项无毕业判据) ──
+    ShadowItem(
+        id="extreme_gap_ban_shadow",
+        name="D1' 极端跳空禁入影子 (DEB-20260909 §5.2)",
+        status=ShadowStatus.OBSERVING,
+        description="全日窗 (去开盘窗限定) × 双向 (aligned_gap_pct 方向归一 ⇒ LONG/SHORT 同判) × "
+                    "双阈值并行腿 (ag≤−3 / ag≤−3.5, 顺向追高腿 ag≥+4 两腿共享) × 按源分层 "
+                    "(DA/UE/REENTRY) 的「若禁入则不交易」反事实被拦篮读数。E1 原案被辩论证伪后 "
+                    "(Aug-only 证据/9月误杀70%/−3 阈值悬崖/开盘窗只覆盖 48%) 的重设计。"
+                    "数据源=既有 gap_alignment_shadow.jsonl 零新采集; 读数面=unit_cell_daily_readout "
+                    "D1' 小节 (被拦 n/被拦净额/误杀率, 全历史判读+滚动20日 regime 对照)。",
+        data_path="data/shadow/gap_alignment_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="DEB-20260909 §5.2 逐字: 每腿 n≥30 ∧ 被拦单反事实净<0 ∧ 误杀率≤40% "
+                            "∧ 两腿结论同向; 任一不满足则降纯观测。达线只提请用户裁决, 不自动生效。",
+        eval_script="scripts/unit_cell_daily_readout.py",
+        created="2026-09-09",
+        notes="首日读数 (2026-09-09, 全历史 443 行/ag 缺失 99): −3.0腿 被拦 n=54 净−1947.13 "
+              "误杀率48%; −3.5腿 n=48 净−1928.36 误杀率48% ⇒ 两腿同向但误杀率超 40% 门, "
+              "**未达毕业线维持攒样**。计数口径注意: 注册表 current_n 是共享 jsonl 行数 "
+              "(>min_n 属预期, READY≠毕业), 毕业 n 数的是**每腿被拦子集** (裁决时以当日报告 "
+              "D1' 小节冻结值为准, 同 kr3 子集计数先例)。data_path 与 gap_alignment 影子共享 "
+              "= 心跳由 52 5 cron 保证。回滚=删本条目 (读数小节属 unit_cell 脚本, 另案)。",
+    ),
+    ShadowItem(
+        id="entry_delay_confirm",
+        name="D2' 触发延迟确认影子 (DEB-20260909 §5.2, 最高优先级)",
+        status=ShadowStatus.OBSERVING,
+        description="对每笔 PLAYBOOK_SIM 已平仓穿越触发单回放当日 1 分 bar: 「延迟 N∈{2,5}min "
+                    "复核, 价格仍站触发方向则进场否则放弃」反事实。回避率 (延迟后不再触发) + "
+                    "机会成本 (方向归一延迟价差, 只在仍触发笔上计) + 回避价值 (=−被回避笔 pnl_net)。"
+                    "动机=SL_INITIAL 出血族尸检 (19 笔 16 笔 MFE=0 / 11 笔 ≤25min)。"
+                    "口径: price_at(t)=首根 bar_time≥t 的 bar 开盘价; bar 加载/补拉/写回复用 "
+                    "post_exit_path_shadow 同一实现; 幂等键 (trade_id, delay_min)。",
+        data_path="data/shadow/entry_delay_confirm.jsonl",
+        config_key=None,
+        min_n=20,
+        graduation_criteria="DEB-20260909 §5.2 逐字: 回放 n≥20 ∧ 避免率≥30% ∧ 机会成本<0.3%; "
+                            "不达标退役。人群注记 (DEB 未指定人群, 双人群并列呈裁不算挪门柱): "
+                            "避免率主判读人群=SL_INITIAL 出血族, 机会成本在全体仍触发笔上计。",
+        eval_script="scripts/entry_delay_confirm_shadow.py",
+        created="2026-09-09",
+        notes="首日回补 (2026-09-09, 60 天 408 笔×2 腿, ok 407/腿, 夜盘入场 1 笔正确分类 "
+              "no_bar_at_target): N=2 ALL 回避 50% 回避价值+$1680 opp 0.1231% ⇒ 双人群均过线; "
+              "N=5 opp 0.3306% 超 0.3% 门 ⇒ ALL 不过 / SL_INITIAL (回避 80.95%) 过 — "
+              "**按 DEB 这是攒样起点不是裁决点**, forward 攒样后以裁决日 latest.json 冻结值为准。"
+              "强制披露随汇总输出 (disclosures): ①confirm_gate 反向先验 +0.50%/笔 t=5.67 "
+              "(口径差异=盘前注入趋势域 vs 开盘窗微结构域) ②E3 PULLBACK_LIMIT TTL=300s 互斥 "
+              "(转正时二选一或 TTL 重议)。count_mode=where:status=ok ⇒ current_n 是两腿 ok 行 "
+              "合计, 每腿≈一半 (腿级 n 以 latest.json 为准)。cron 58 5 * * 2-6 (台账 "
+              "crontab-entry-delay-confirm)。回滚=删本条目+删 cron 行+删两个 data/shadow 产物。",
+        count_mode="where:status=ok",
+    ),
 ]
 
 
