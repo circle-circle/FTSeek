@@ -22,7 +22,7 @@
 
 - **新增推送必须走 `app/push/` hub**（去重/聚合/健康监控），禁止直连 notifier 或自写 webhook。存量 5 个旁路不动，08-29 后按"谁先出 bug 谁先迁"处理。
 - **新增熔断/regime 类机制前先查分层地图**：熔断见 `docs/circuit-breaker-map.md`（6 层正交，禁造平行层）；regime 合一待 shadow 分歧率数据（减法R2-5c）。
-- **归档/删除前的零引用验证必须覆盖四个调用面**：仓内 import / crontab / systemd / **Hermes prompt 文本**（`/root/.hermes/cron/jobs.json`）—— archive/ 目录必须零 import。
+- **归档/删除前的零引用验证必须覆盖五个调用面**：仓内 import / crontab / systemd / **Hermes prompt 文本**（`/root/.hermes/cron/jobs.json`）/ **`.git/hooks`**（2026-09-06 实证：`check_undefined_names.py` 被 pre-commit §5.5 引用，却在减法 R2 被当零引用归档，门禁静默失效 ~40 天）—— archive/ 目录必须零 import。
 - **`auto_trading_enabled` 的三处裸 regex 读磁盘是刻意设计**（绕过热重载 60s 延迟的紧急开关语义），勿"优化"成 get_dotted。
 - **重启必跑启动冒烟**（2026-07-26，base.* 事故教训）：`systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` — 七条机器断言（ConfigValidator/漂移检测/热重载/SSOT 审计/模拟盘/快循环/零 Traceback），禁止用临场 grep 代替（"服务已启动"≠健康，ConfigGov 降级运行就是这么漏的）。删 yaml 段的零引用验证须含隐性消费面：validator REQUIRED_KEYS / config_audit _AUDIT_ITEMS / CRITICAL_KEYS。
 - **新增落库字段必带基数自检**（2026-07-27，"常量退化"已三例：DA conf 罚成 35 / UE conf cap=50 / UE info_source 恒 `LLM_EVENT_REASONING`）：字段落了库但取值退化为常量 → 一切下游切片零区分度且表面无恙。新字段的判分消费端（scorecard 等）必须带 distinct 计数体检，n≥10 且 distinct<2 即 WARNING。参照 `direction_hit_scorecard.py` info_channel 基数自检。

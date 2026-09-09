@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCAN_DIRS = ["app", "scripts", "config"]
+SCAN_DIRS = ["app", "scripts", "config", "tests"]  # tests/ 2026-09-06 起纳入 (批F 曾藏活 import)
+SELF = Path(__file__).resolve()
 PATTERN = re.compile(r"(from\s+scripts\.archive|import\s+scripts\.archive|scripts/archive/)")
 
 
@@ -21,6 +22,8 @@ def test_no_live_imports_from_archive():
             rel = py.relative_to(ROOT)
             if "archive" in rel.parts or "__pycache__" in rel.parts:
                 continue
+            if py.resolve() == SELF:
+                continue  # 守卫自身含模式字面量, 不扫
             try:
                 text = py.read_text(encoding="utf-8", errors="ignore")
             except OSError:

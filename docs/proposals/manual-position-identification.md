@@ -1,5 +1,8 @@
 # 方案：人工仓位识别 — 安全默认manual
 
+> ⚠️ 状态回写 (2026-09-06 治理审计): 本方案未记录落地/废弃状态, 悬挂;
+> 新仓位默认 manual/auto 的现行行为以 app 侧 position_sync 代码与近期 DEB 为准。
+
 ## 根因
 position_sync发现新Broker仓位时（DB无记录），当前逻辑：
 1. 检查YAML `self_managed_symbols` 列表 → 在列表中→标manual

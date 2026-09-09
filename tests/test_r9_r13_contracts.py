@@ -193,7 +193,7 @@ class TestR12EntryTimeConvention:
     def test_migration_script_is_idempotent(self):
         """迁移脚本必须可重复执行 (存在且带幂等判据).
 
-        2026-08-28: 脚本已归档 scripts/archive/ (一次性迁移已 --apply 完毕,
+        2026-08-28: 脚本已归档 (scripts/archive, 一次性迁移已 --apply 完毕,
         保留是为了 R-12 合同的可复现性), 路径随迁 — 合同本身不撤.
         """
         p = (Path(__file__).resolve().parent.parent

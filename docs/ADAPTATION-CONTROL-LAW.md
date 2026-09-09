@@ -84,7 +84,7 @@ DEB-20260823 §三; 已废止)。本律五段就是这个"极小增益"的具体
 | 单版本样本窗口目标 ~250 笔 (9 月窗口), 是系统史上首个统计可用窗口 | OKR-2026-09 KR2 |
 | 转正/采信需 OOS 双窗口: OOS≥15 日 + 净均>0 + 毛利 t>1 + ADF 平稳; 双窗口 ≥40% 才采信 | 记忆/转正门槛 |
 | 判据预注册并冻结, 验证期内不得挪门柱 | 宪章 §二.6 |
-| 冻结执行由**周六周检机械核查**: `check_freeze()` 查 `config_version` 唯一值数 | `/root/.hermes/scripts/ftseek_weekly_checkpoint.py` |
+| 冻结执行的**权威载体=日级守卫** `scripts/daily_invariant_check.py` `_check_config_freeze` 的 cohort 维 (info["cohort"]): 判分单位=主 cohort 窗 (2026-09-03→09-30) 内退出哈希唯一; 周六周检 `check_freeze()` 同口径锚点并列核查 | `scripts/daily_invariant_check.py` + `/root/.hermes/scripts/ftseek_weekly_checkpoint.py` (2026-09-06 KR2 判分单位修订, 用户授权代裁 (a)+(b) 合流) |
 
 ## 5. 回滚段 (出问题怎么退)
 

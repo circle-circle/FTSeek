@@ -8,6 +8,9 @@ tags: [playbook, entry, vwap, confidence, shadow, backlog]
 updated: 2026-07-18
 ---
 
+> ⚠️ 状态回写 (2026-09-06 治理审计): front-matter 标 `status: active` 但自 2026-07-18 起未更新,
+> 且锚定的 OKR-2026-07 已届满作废 (现行 = OKR-2026-09); 条目有效性需逐条重新裁决, 勿当活跃 backlog 消费。
+
 # 入场门张力 backlog
 
 > 用途: 记录 2026-07-18 对"信号获取→筛选→标的范围→门阈值"深度梳理中发现的**结构性张力**及其

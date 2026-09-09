@@ -1,5 +1,8 @@
-"""DEB-20260816-fullchain 批次F 契约测试: #25 (pkill 精确匹配) / P1-13 (解锁密码
-去硬编码) / P1-6cap (fallback 陈旧度上限) / 低优 (ATR带因返回, DTE 用 ET)."""
+"""DEB-20260816-fullchain 批次F 契约测试: P1-13 (解锁密码
+去硬编码) / P1-6cap (fallback 陈旧度上限) / 低优 (ATR带因返回, DTE 用 ET).
+
+2026-09-06: #25 (pkill 精确匹配) 两条契约随 ftseek_us.sh 一并删除 — 脚本既删,
+全仓 live 代码已无 pkill 面, 契约主体不存在 (治理审计批②, 用户批准删脚本)."""
 import sys
 from datetime import date
 from pathlib import Path
@@ -7,27 +10,6 @@ from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-
-# ── #25: ftseek_us.sh 停止/状态匹配主进程命令行, 不自杀 ──────────────────
-
-def test_25_pkill_matches_main_process_only():
-    src = (PROJECT_ROOT / "ftseek_us.sh").read_text(encoding="utf-8")
-    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
-    # DEB-20260903 #12: 模式升级为 "$MAIN_PY --start" (含项目绝对路径),
-    # 防误杀同机其他含同名参数的 Python 项目进程
-    assert 'pkill -f "$MAIN_PY --start"' in code
-    assert 'pgrep -f "$MAIN_PY --start"' in code
-    assert 'pkill -f "ftseek_us"' not in code, "宽匹配会误杀脚本自身/日志tail/其他会话 (#25 回归)"
-
-
-def test_25_pattern_matches_running_service():
-    # 与生产进程命令行互操作验证: 服务以 `venv/bin/python main.py --start` 运行
-    import subprocess
-    out = subprocess.run(
-        ["pgrep", "-f", "main.py --start"], capture_output=True, text=True)
-    # 本机 ftseek-us 服务在跑时应能命中; 未跑时 pgrep 返回非零也算通过 (只验证命令可用)
-    assert out.returncode in (0, 1)
 
 
 # ── P1-13: 期权解锁密码不再硬编码 ────────────────────────────────────────
@@ -39,7 +21,13 @@ def test_p1_13_no_hardcoded_md5():
 
 
 def test_p1_13_missing_env_refuses():
-    from scripts.archive import close_all_options as cao
+    # 按路径加载归档模块 (archive 零活 import 军规: 不得 from scripts.archive import)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "close_all_options_archived",
+        PROJECT_ROOT / "scripts" / "archive" / "close_all_options.py")
+    cao = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cao)
     called = []
     cao.unlock_trade(SimpleNamespace(unlock_trade=lambda **kw: called.append(kw)),
                      acc_id=123, )

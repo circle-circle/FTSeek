@@ -195,7 +195,8 @@ except Exception as _ver_err:
     versioned_stats = {"error": str(_ver_err)}
 
 # ─── 2d. Void 率趋势 (2026-07-20 #7) ───
-# void = ghost/orphan 幽灵仓判定 (非真实交易, 毕业样本清洗时剔除, 见 OKR-SPEC δ.6).
+# void = ghost/orphan 幽灵仓判定 (非真实交易, 毕业样本清洗时剔除, 见 OKR-SPEC δ.6 —
+# 该 SPEC 的 OKR 周期已届满, 唯 δ.6 口径沿用, 见 docs/OKR-SPEC.md 文首注记).
 # 口径: void / (win+loss+void) = 进入平仓终态的指令中被判幽灵的比例.
 # void 率回升 = 执行/对账链路又在产幽灵仓, 是数据质量回退信号, 需趋势可见而非事后才发现.
 void_trend = {"weekly": [], "overall_rate": None}

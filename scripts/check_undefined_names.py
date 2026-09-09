@@ -75,7 +75,8 @@ def main(argv):
         try:
             with open(f, "r", encoding="utf-8") as fh:
                 src = fh.read()
-        except OSError:
+        except OSError as e:
+            print(f"⚠️  check_undefined_names: 读不了 {f} ({e}), 跳过", file=sys.stderr)
             continue
         pyflakes_api.check(src, f, reporter=collector)
 
