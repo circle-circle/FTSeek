@@ -52,7 +52,23 @@ class HorizonDecision:
     horizon: str                       # "short" or "long"
     short_score: float                 # 短线综合得分
     long_score: float                  # 长线综合得分
-    confidence: float                  # |short_score - long_score|
+    # ⚠️ 量纲声明 (2026-09-09 复盘立案, SSOT — 落库列名 playbook_instructions.horizon_confidence):
+    #   本字段是 **得分差 (margin)**, 单位 = short_score/long_score 的差值, **不是概率、不是 0-1 置信度**,
+    #   无上界 (>1 合法, 实测 2026-09-01 有 2.0 / 09-02 有 1.5), 也**无下界意义** (近平局 → 1e-5 量级,
+    #   实测 0.000136 / 7.4e-05, 那是"两条 horizon 得分几乎相等", 不是"置信度 0.0136%")。
+    #   列名里的 "confidence" 是历史误名, 改列名 = 断 5 个写入/读取面 + 800 行历史, 故只在 SSOT 声明量纲。
+    #   🔴 两条生成路径的自然量级相差约 5 个数量级, 禁止跨路径比大小或对它设任何绝对阈值:
+    #     · _score_with_model (historical_return_model): 得分是历史收益贡献的均值, 近平局时 margin ~1e-5..1e-2
+    #     · _fallback_score (fallback_rules): 得分是 0.5/0.2 步长的规则累加, margin ~0.1..2.0 (常见 0.7)
+    #     · 第三条: horizon_strategy 禁用时硬编码 confidence=1.0 (见 select()), 与上两者不同基
+    #     · 第四条: pipeline.py Horizon 选择异常兜底写 0.0, 与"真近平局的 0.0"不可区分
+    #   ✅ 已核实与本字段无关: horizon 的**选择**走 _choose() 的比值判据 (long > short*(1+margin_threshold))
+    #     与 fallback 的 long_score > short_score*1.1, **都不读 confidence** ⇒ 本字段的口径/量级变化
+    #     不可能改变 horizon 选择, 因而不触碰 playbook_horizon.yaml 的退出参数 (OKR-2026-09 C1 冻结安全)。
+    #   消费方登记 (军规 2026-09-06): 现仅 shadow_tracker.py 的 DEBUG 日志 + playbook_service.py 看板透传,
+    #     **零闸门消费** ⇒ 新增任何消费方必须先读本声明, 并由
+    #     tests/test_horizon_confidence_unit.py 的消费面白名单钉子显式放行。
+    confidence: float                  # |short_score - long_score| — 得分差, 非概率 (见上)
     reasoning: Dict[str, Any] = field(default_factory=dict)
     feature_weights: Dict[str, float] = field(default_factory=dict)
 

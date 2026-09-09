@@ -216,6 +216,76 @@ def parse_log_alerts(log_path: str, market: str, since: datetime, until: datetim
     return alerts
 
 
+# ================== 日志轮转档覆盖 (2026-09-09) ==================
+
+def resolve_log_sources(log_path: str, since: datetime, until: datetime) -> List[str]:
+    """返回覆盖 [since, until) 的日志文件序列, 按时间升序 (轮转档在前, 当前档最后)。
+
+    根因: /etc/logrotate.d/ftseek-us 用 daily + copytruncate + dateext(-%Y%m%d),
+    轮转由 /etc/cron.daily/logrotate 触发, 近 7 个交易日实测落在 **03:12-03:48 CST**
+    —— 正好在美股会话 (21:30-04:00 CST) 内部 ⇒ 只读当前档 logs/ftseek_us.log 会丢掉
+    会话前 ~5.5 小时。实证: 9/8 chase_cap拦截 轮转档 145 条 / 当前档 3 条, 汇总报
+    「0 错误 + 6 警告」= 真相的 4%; 9/4 同病 (轮转档 142 条 WARNING|ERROR / 报告 2 条,
+    且两条时间戳都是轮转后的 03:52)。
+
+    copytruncate 语义: 轮转档 = 截断前的副本(内容至轮转时刻), 当前档 = 截断后继续写,
+    两档内容不重叠 ⇒ 按日期升序拼接即完整时间线。dateext 用**轮转当日**日期命名
+    (实测 ftseek_us.log-20260909 首行 2026-09-08 12:00 / 末行 2026-09-09 03:48),
+    故候选日期取 since.date()..until.date() 全覆盖, 窗口外的档由 parse 的时间戳过滤兜掉。
+    未轮转时 (cron.daily 晚于本脚本, 如 9/6-9/7 的 06:28/06:44) 候选档不存在 ⇒ 只返回当前档。
+    """
+    p = Path(log_path)
+    sources: List[str] = []
+    day = since.date()
+    while day <= until.date():
+        stamp = day.strftime("%Y%m%d")
+        for cand in (p.parent / f"{p.name}-{stamp}.gz", p.parent / f"{p.name}-{stamp}"):
+            if cand.exists():
+                sources.append(str(cand))
+                break
+        day += timedelta(days=1)
+    if p.exists():
+        sources.append(str(p))
+    return sources
+
+
+def parse_log_alerts_window(log_path: str, market: str, since: datetime,
+                            until: datetime = None) -> Tuple[List[Dict], List[str]]:
+    """跨轮转档解析一个会话窗的告警; 返回 (告警列表, 覆盖诊断行)。
+
+    只读, 不改 parse_log_alerts 的判级/噪音过滤逻辑 (单一真源, 逐档复用)。
+    跨档按 (time, level, content) 去重: copytruncate 本身不重叠, 此举只防
+    「本脚本运行途中正好轮转」的读写竞态把同一行计两次。
+    覆盖诊断行随 stdout 落盘 ⇒ 盲区若复发 (只剩当前档 / 覆盖起点远晚于 since)
+    在读数上直接可见, 不靠人事后对账。
+    同一批诊断行还由 main() 传进 build_summary_report(log_coverage=…) 渲染到
+    **推送正文的总结区** (紧邻「✅ 盘中系统运行正常」那句) —— 只进 stdout 的话,
+    读者看到的推送正文里那句「无异常告警」仍可能在覆盖不全时说谎 (9/8 实证)。
+    纯观测行, 不进任何判据、不改判级。
+    """
+    sources = resolve_log_sources(log_path, since, until or (since + timedelta(days=1)))
+    alerts: List[Dict] = []
+    seen = set()
+    per_source: List[str] = []
+    for src in sources:
+        got = parse_log_alerts(src, market, since, until)
+        added = 0
+        for a in got:
+            key = (a["time"], a["level"], a["content"])
+            if key in seen:
+                continue
+            seen.add(key)
+            alerts.append(a)
+            added += 1
+        per_source.append(f"{Path(src).name}={added}")
+    alerts.sort(key=lambda a: a["time"])
+    span = f"{alerts[0]['time'][11:19]}→{alerts[-1]['time'][11:19]}" if alerts else "无告警"
+    diag = (f"{market} 日志源 {len(sources)} 个 ({', '.join(per_source) or '无'}) "
+            f"| 告警跨度 {span} | 窗 {since.strftime('%m-%d %H:%M')}→"
+            f"{(until or since).strftime('%m-%d %H:%M')}")
+    return alerts, [diag]
+
+
 # ================== 交易数据汇总 ==================
 
 def get_us_trade_summary(trade_date: str) -> Dict:
@@ -543,6 +613,7 @@ def build_summary_report(
     hk_summary: Dict,
     report_date: str,
     us_equity_recon: Dict = None,
+    log_coverage: List[str] = None,
 ) -> str:
     """构建 Markdown 格式汇总报告
     
@@ -639,6 +710,14 @@ def build_summary_report(
         lines.append("- 🔴 盘中告警较多，建议排查")
     else:
         lines.append("- 🟡 盘中有少量告警，已观察")
+
+    # 日志覆盖自检 (2026-09-09): 告警计数的可信度前提, 必须与计数同屏。
+    # 纯观测, 不参与上面的判级 —— 判级改了就是改判据, 须另立案。
+    if log_coverage:
+        lines.append("")
+        lines.append("**🗂 日志覆盖自检** (logrotate 跨档拼接; 档数=1 且跨度远短于窗口 ⇒ 覆盖不全, 上面的告警计数不可信):")
+        for cover_line in log_coverage:
+            lines.append(f"- {cover_line}")
 
     return "\n".join(lines)
 
@@ -770,12 +849,14 @@ def main():
     print(f"  US 交易日: {us_trade_date} | HK 交易日: {hk_trade_date}")
     print(f"  扫描范围: {since} → {until}")
 
-    # 1. 解析日志 (带截止边界 + 噪音过滤)
+    # 1. 解析日志 (带截止边界 + 噪音过滤 + 跨轮转档覆盖, 2026-09-09)
     us_log = str(US_ROOT / "logs" / "ftseek_us.log")
     hk_log = str(HK_ROOT / "logs" / "ftseek.log")
 
-    us_alerts = parse_log_alerts(us_log, "US", since, until)
-    hk_alerts = parse_log_alerts(hk_log, "HK", since, until)
+    us_alerts, us_cover = parse_log_alerts_window(us_log, "US", since, until)
+    hk_alerts, hk_cover = parse_log_alerts_window(hk_log, "HK", since, until)
+    for line in us_cover + hk_cover:
+        print(f"  [覆盖] {line}")
 
     # 分类统计: 盘中 vs 非盘中
     us_trading = [a for a in us_alerts if a.get("is_trading_hours")]
@@ -793,7 +874,8 @@ def main():
 
     # 3. 构建报告
     report = build_summary_report(us_alerts, hk_alerts, us_summary, hk_summary,
-                                  report_date, us_equity_recon=us_equity_recon)
+                                  report_date, us_equity_recon=us_equity_recon,
+                                  log_coverage=us_cover + hk_cover)
 
     # 4. 推送 (钉钉 + 飞书)
     title = f"📊 FTSeek 每日告警汇总 — {report_date}"

@@ -154,6 +154,7 @@ Hermes job 时**当场**在本表 §2.4 加一行 — 当天已两次因"建了�
 | tests/test_dead_db_literal_gate.py | 代码级引用废弃同名单 `ftseek_us_live.db` 的站点必须逐文件声明理由; 名单内文件不再引用=陈旧豁免同样报警 | 死库伪装 | sim 模式下该库零写入且"读得到、长得像真库" (实测冻结 2026-07-19), thesis_challenge/battle_plan/watchlist/plan_feedback 均硬编码过; 单向普查本身即缺陷故双向 |
 | scripts/deploy_freshness_check.py `crontab-deploy-freshness` (cron */10 * * * *, 2026-09-05 G-02) | `drift = max(app/**/*.py, main.py mtime) − 进程启动时刻` (进程龄读 `/proc/PID/stat` field 22 + `/proc/uptime` 反推, 实测与 systemd `ActiveEnterTimestamp` 对齐); drift>120s 且在北京 09:00–12:00 安全窗内 → `systemctl restart` + critical; 窗外只告警不重启 (按 `newest_code_ts` 去重) | 部署意图 ≠ 进程内实际代码 | **YAML 热载而 Python 代码只在 import 时加载一次** ⇒ 2026-09-05 实锤: chase_cap enforce (87ebc785 07:19 落盘) 与经验泛化批 (46e31ccf) 均已入库, 而进程 PID 266035 起于 9/4 14:45 → 日志/配置/测试三绿而**风控闸是纸面的** (REPORT G-02 严重度 5)。此前无每日重启机制, 断层只能靠人工发现。两条自身失效模式已堵: ① 探测器坏了 (`undetermined`) 必须吼一次, 禁 `except: pass` (§6 规则5); ② 严禁 `stat -c %Y /proc/PID` 取进程龄 — 那是目录实时 mtime, 比代码 mtime 恒真 ⇒ 守卫恒报 fresh (§6 规则6② 同源教训)。代价诚实登记: 重启丢 `trail_state`/`_exit_cooldowns` 内存态 (REPORT H-12), 故只在代码真变时重启, 不做无条件每日重启 |
 | scripts/daily_alert_summary.py 权益对账行 (随 Hermes `0 4 * * 2-6` 盘后综合复盘) | 恒等式 **C ≈ G + U**: C=capital_state 收盘印权益变动, G=当日已了结毛利 (出场日记账), U=券商未平仓仓当日波动 (`today_pl_val`, 毛额); 残差 R 超 $50 标 ⚠️ | 两口径间不可归因差额 | **纯观测, 不进任何判据**。立起理由: 2026-08-29 用户拷问"富途 App 今日盈亏 +5百 vs 日报 −338.76" — 两数本就不同口径 (App=账户全口径含未平仓波动, 且模拟盘 `today_pl_val` 是毛额; 真账户另有用户自有 SNDK/MU 仓 Σ+480.59), 差异必须每晚机器摊开而非等人问。失效模式两则: ①首版"取最接近 boundary 的样本"选中收盘前 13.5s 的盘中共价 (单项 $40.75 直接灌进残差) → 改取收盘**后**首样本, 窗内无样本即不判; ②任一输入缺失/异常/跨账户 → `not_judgeable` + 原因, 严禁以 0 冒充已对账 (§6 规则5/6 同源), 券商侧 `qty==0` 行必须排除否则与 G 双计→桥接假闭合 |
+| scripts/daily_alert_summary.py `resolve_log_sources`/`parse_log_alerts_window` (随 Hermes `0 4 * * 2-6` 盘后综合复盘 Step 3; 2026-09-09) | 会话窗 (US 交易日 21:00 → 次日 06:00 CST) 跨 logrotate 档拼接: `dateext -%Y%m%d` 候选档 (含 `.gz`) 按日期升序 + 当前档殿后, 逐档复用 `parse_log_alerts` 的时间戳过滤, 跨档按 (time, level, content) 去重防轮转读写竞态 | **告警计数被日志轮转截断**; 读数面自带 `[覆盖]` 诊断行 (档数 + 逐档条数 + 告警跨度 + 窗口边界), **同时进 stdout 与推送正文总结区** (只进 stdout 时, 正文那句「✅ 盘中系统运行正常」在覆盖不全时仍会说谎 — 9/8 实证), 档数=1 且跨度明显短于会话窗即盲区复发 | `/etc/logrotate.d/ftseek-us` 用 `daily + copytruncate`, 由 `/etc/cron.daily/logrotate` 触发, 近 7 个交易日实测轮转时刻落在 **03:12–03:48 CST = 美股会话 (21:30–04:00 CST) 内部** ⇒ 原实现只读当前档 `logs/ftseek_us.log`, 会话前 ~5.5 小时全盲。实证 9/8: `chase_cap拦截` 轮转档 145 条 / 当前档 3 条, 推送报「0 错误 + 6 警告」= 真相的 4%; 9/4 同病 (轮转档 142 条 WARNING/ERROR / 报告 2 条, 且两条时间戳都是轮转后的 03:52)。修后 9/8 复算: 盘中 603 条 (3 ERROR + 600 WARN) / 138 组, 并首次暴露此前完全不可见的 `[Finnhub] 429 限速 ×61` 与 `[再入场] 反手拦截 ×27`。纯读数面修复, 不改判级/噪音过滤逻辑 (单一真源逐档复用)。钉子 `tests/test_daily_alert_summary_log_sources.py` (10 例) |
 
 ---
 
@@ -169,8 +170,11 @@ Hermes job 时**当场**在本表 §2.4 加一行 — 当天已两次因"建了�
 | 四锁 (实盘隔离) | sim/false/futu_simulate/毕业门禁 fail-close | .env.us + unified_config.yaml | 周六周检实测 + 毕业门禁三重闸 |
 | 费用线 | ~10bps (edge 必须 > 费用线) | DEB-20260823 实证 | 准入判据, 非配置项 |
 
-**冻结区 (2026-08-24 → 09-30)**: 退出参数 (playbook_horizon.yaml 退出段) 冻结,
-config_version 唯一值数=1 由周六周检机械核查; 例外仅限 P0 bug + DEB 落档 + 用户知会。
+**冻结区 (主 cohort 窗 2026-09-03 → 09-30)**: 退出参数 (playbook_horizon.yaml 退出段) 冻结,
+权威核查载体=日级守卫 `scripts/daily_invariant_check.py` `_check_config_freeze` 的 cohort 维
+(config_freeze.cohort 块, 窗内退出哈希唯一值数=1); 周六周检 `check_freeze()` 同口径锚点并列核查;
+例外仅限 P0 bug + DEB 落档 + 用户知会。(2026-09-06 KR2 判分单位修订: 判分单位从全窗 8/24 起改为主
+cohort 窗 — 全窗已不可逆有 4 个哈希, 按全窗字面判必 BROKEN; 用户授权代裁 (a)+(b) 合流, 历史留痕见判据字典 C1。)
 
 ---
 
