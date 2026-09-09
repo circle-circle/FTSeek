@@ -4334,10 +4334,11 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         logger.warning(
                             f"[playbook] chase_cap遥测写盘失败 {inst.get('symbol')} "
                             f"(不影响 enforce 判定/拦截): {_cc_w_err}")
-                    # ── P0-A enforce: 终态跳过 ──
+                    # ── P0-A enforce: 本轮跳过 (非终态, 每~5min重评) ──
                     # 位置纪律: 在遥测写盘之后 (证据先落) 且在去重门之外
-                    #   (enforce 不被同值去重吞掉; 首违即终态, 本就无第二次)。
-                    # skip_reason 非空 → 触发头检/auto_execute 双保险不再捞起。
+                    #   (enforce 不被同值去重吞掉; 每轮重评独立判定 — 价格回落帽下
+                    #    下轮即放行, 9/8 SNDK 正是因此成交; SKHY 同指令可拦数十轮)。
+                    # skip_reason 落库为拦截留痕; auto_execute 重评循环不读它 (REVIEW-20260909 F-2)。
                     if _cc_enforce:
                         db.update_instruction_tracking(inst["id"], {
                             "skip_reason": (
@@ -4352,7 +4353,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         logger.warning(
                             f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
                             f"下单价=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
-                            f"→ 终态跳过 (P0-A enforce)")
+                            f"→ 本轮跳过 (每~5min重评, 回落帽下即放行; P0-A enforce)")
                         skipped_count += 1
                         continue
                 _cc_gate_ok = True
@@ -8375,8 +8376,10 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                                       entry_price, qty, r["entry_time"], _rp,
                                       _rpnl_net if _rpnl_net is not None else _rpnl,
                                       track=_eod_track)
-                        except Exception:
-                            pass  # 打点内层已全量收口, 此为 import 级兜底
+                        except Exception as _edg_err:
+                            # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕,
+                            #   否则「影子零样本」与「打点链路断了」不可区分 (2026-09-09 棘轮清剿)
+                            logger.warning(f"[playbook] EOD深水闸影子打点兜底异常 {symbol}: {_edg_err}")
                         if _eod_track == "reentry_first_night":
                             logger.info(
                                 f"[playbook sim] EOD 兜底豁免 {symbol} 再入场水下仓 {_rpnl:.2f}%"

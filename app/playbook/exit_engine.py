@@ -672,8 +672,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 _edg_emit("poll_pre_close", _symbol, direction,
                           meta.get("_source_type", ""), entry_price, meta.get("_qty"),
                           entry_time_str, current_price, _profit_net_pct)
-            except Exception:
-                pass  # 打点内层已全量收口, 此为 import 级兜底
+            except Exception as _edg_err:
+                # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕 (2026-09-09 棘轮清剿)
+                logger.warning(f"[exit_engine] EOD深水闸影子打点兜底异常 {_symbol}: {_edg_err}")
         else:
             exit_reason = "PRE_CLOSE_EXIT"
             exit_price = current_price

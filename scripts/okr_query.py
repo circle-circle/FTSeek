@@ -27,23 +27,24 @@ def load_latest():
         return json.load(f)
 
 def load_history(days=7):
-    """加载历史记录"""
+    """加载历史记录 (同日多次跑只取最新一条 — REVIEW-20260909 F-3 读侧防护,
+    历史存量重复行不回填清洗)"""
     path = Path(__file__).parent.parent / "data" / "okr_history.jsonl"
     if not path.exists():
         return []
-    
+
     cutoff = datetime.now() - timedelta(days=days)
-    history = []
+    by_date = {}
     with open(path) as f:
         for line in f:
             try:
                 record = json.loads(line)
                 ts = datetime.fromisoformat(record['timestamp'])
                 if ts >= cutoff:
-                    history.append(record)
-            except:
+                    by_date[ts.date().isoformat()] = record  # 后行覆盖前行 = 同日取最新
+            except Exception:
                 continue
-    return history
+    return [by_date[k] for k in sorted(by_date)]
 
 def cmd_status():
     """显示当前状态"""

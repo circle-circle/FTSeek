@@ -216,8 +216,9 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
                     try:
                         _r = _edg_json.loads(_ln)
                         _seen.add((_r.get("arm_date"), _r.get("symbol")))
-                    except Exception:
-                        continue
+                    except Exception as _parse_err:
+                        # R5 (2026-09-09 棘轮清剿): 坏行跳过但必须留痕 — 静默 = 去重失效不可见
+                        logger.warning(f"[EOD深水闸] 影子档坏行跳过: {_parse_err} | {_ln[:120]!r}")
         if (_arm_date, symbol) in _seen:
             return
         _entry_date = ""

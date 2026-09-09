@@ -49,8 +49,10 @@ def load_rows():
             continue
         try:
             rows.append(json.loads(ln))
-        except Exception:
-            continue
+        except Exception as _parse_err:
+            # R5 (2026-09-09 棘轮清剿): 坏行跳过但必须留痕 — 静默坏行会让结算集悄悄缩小
+            print(f"[settle_eod_depth_gate] 影子档坏行跳过: {_parse_err} | {ln[:120]!r}",
+                  file=sys.stderr)
     return rows
 
 

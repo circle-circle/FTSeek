@@ -185,6 +185,64 @@ class TestPlaybookInstructions:
         result = db.get_instruction("2026-06-18", "US.NTES")
         assert result["symbol"] == "US.NTES"
 
+    def test_executed_clears_residual_skip_reason(self, db):
+        """F-2 契约: executed=1 落库时清空拦截阶段残留的 skip_reason.
+
+        REVIEW-20260909 §F-2: chase_cap 拦截留痕在成交后残留 (实盘 12/495 行
+        executed=1 AND skip_reason<>''), 消费方按 skip_reason<>'' 判"跳过"会误计。
+        """
+        row_id = db.save_instruction({
+            "date": "2026-09-08",
+            "symbol": "US.SNDK",
+            "direction": "BUY",
+            "entry_price": 1750.0,
+        })
+        db.update_instruction_tracking(row_id, {
+            "skip_reason": "chase_cap_enforced(reprice=1766.75,cap=1760.0)",
+        })
+
+        db.update_instruction_tracking(row_id, {
+            "executed": 1,
+            "execution_price": 1752.665,
+            "outcome": "holding",
+        })
+
+        result = db.get_instruction("2026-09-08", "US.SNDK")
+        assert result["executed"] == 1
+        assert result["skip_reason"] == ""
+
+    def test_executed_respects_explicit_skip_reason(self, db):
+        """F-2 契约: 调用方显式给 skip_reason 时不覆盖 (显式优先)."""
+        row_id = db.save_instruction({
+            "date": "2026-09-08",
+            "symbol": "US.SNDK",
+            "direction": "BUY",
+        })
+
+        db.update_instruction_tracking(row_id, {
+            "executed": 1,
+            "skip_reason": "调用方显式归因",
+        })
+
+        result = db.get_instruction("2026-09-08", "US.SNDK")
+        assert result["skip_reason"] == "调用方显式归因"
+
+    def test_non_executed_update_preserves_skip_reason(self, db):
+        """F-2 契约: 未带 executed 的更新不动 skip_reason (不变式不误伤)."""
+        row_id = db.save_instruction({
+            "date": "2026-09-08",
+            "symbol": "US.SKHY",
+            "direction": "BUY",
+        })
+        db.update_instruction_tracking(row_id, {
+            "skip_reason": "chase_cap_enforced(reprice=187.21,cap=182.0)",
+        })
+
+        db.update_instruction_tracking(row_id, {"triggered": 1})
+
+        result = db.get_instruction("2026-09-08", "US.SKHY")
+        assert result["skip_reason"] == "chase_cap_enforced(reprice=187.21,cap=182.0)"
+
     def test_get_instructions_with_outcome(self, db):
         """获取有结果的指令 (用于因子分析)"""
         # 保存并标记结果

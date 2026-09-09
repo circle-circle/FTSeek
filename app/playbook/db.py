@@ -689,6 +689,15 @@ class PlaybookDB:
         conn = self._conn()
         now = now_utc().isoformat()
 
+        # 2026-09-09 (REVIEW-20260909 F-2): executed=1 落库即消费方眼中的成交,
+        #   拦截阶段残留 skip_reason (如 chase_cap_enforced) 会让 dashboard chain /
+        #   premarket_trend_verify / plan_vs_actual / short_supply_funnel 等 6+ 消费方
+        #   把已成交行误计为"跳过" (实盘 12/495 行矛盾态)。强制清空 (单点不变式,
+        #   覆盖主成交簿记与 already_held 回填; try_claim_execution 抢占不经本函数)。
+        #   拦截留痕由 exec_gate_audit 遥测承担, 不依赖本列。
+        if updates.get("executed") == 1 and "skip_reason" not in updates:
+            updates = {**updates, "skip_reason": ""}
+
         set_clauses = []
         values = []
         for key, value in updates.items():

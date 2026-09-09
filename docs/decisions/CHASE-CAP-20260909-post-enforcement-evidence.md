@@ -1,10 +1,10 @@
 ---
-title: chase_cap 追高帽转正后证据账 (首日) + 残留待裁
+title: chase_cap 追高帽转正后证据账 (首日) + 残留三项已裁
 date: 2026-09-09
-status: 待用户裁决 (残留三项)
+status: 已裁 (2026-09-09 用户「按建议执行」, 残留三项处置见 §3)
 ---
 
-# chase_cap 追高帽：转正后证据账（首日）与残留待裁
+# chase_cap 追高帽：转正后证据账（首日）与残留三项已裁
 
 > 触发：用户令「起草追高帽影子转正的裁决材料」。取证后发现前提已过时——
 > **LONG 侧 chase_cap 已于 2026-09-05 转正为硬闸**，故本文改为「转正后首日证据账 +
@@ -36,21 +36,30 @@ status: 待用户裁决 (残留三项)
 价格不回落者全程放弃。首日证据方向支持维持 enforce；**单日 n=2 指令，不构成
 统计结论**（宪章第 9 律），意义在于「机制定性验证 + 反例零出现」。
 
-## 3. 残留三项待裁
+## 3. 残留三项（已裁：2026-09-09 用户「按建议执行」）
 
 1. **日志措辞与行为相反**（REVIEW §F-1）：`pipeline.py:4353` 打 `→ 终态跳过`，实际
    每 ~5 分钟重评（SNDK 正因重评才成交）。改 = 动最热路径文件的日志字符串，需重启生效。
    **建议**：随下一批改动带走，不单独立案。
+   **✅ 已执行**：措辞改「→ 本轮跳过 (每~5min重评, 回落帽下即放行; P0-A enforce)」，
+   上方注释块「首违即终态, 本就无第二次」同步更正（与 SKHY ×76 事实矛盾）。
 2. **`skip_reason` 成交后不清空**（REVIEW §F-2）：`executed=1 AND skip_reason<>''`
    共 12/495 行（SNDK 在列），任何按 skip_reason 统计「为何没成交」的查询会误计。
    改点在 `db.py`/`playbook_service.py`。**建议**：登记为下批交接项，修复时连带
    `skip_reason` 消费方普查。
+   **✅ 已执行**：消费方普查 6+ 处受影响（dashboard chain / premarket_trend_verify /
+   plan_vs_actual / short_supply_funnel / gap_semantics / band_vol 均按 `skip_reason<>''`
+   判「跳过」）；修复落在 `db.py:update_instruction_tracking` 单点不变式
+   （任何写 `executed=1` 且未显式给 skip_reason ⇒ 强制清空；`try_claim_execution`
+   下单前抢占不经该函数，不受影响）；契约测试 ×3（`test_playbook_db.py`）全绿。
+   历史 12 行残留不回填（家法）。
 3. **SHORT 侧追低帽仍是影子**（`short_chase_ban_shadow_enabled: true`，阈值 3.0%）：
    `data/short_chase_ban_shadow.jsonl` 自 8/24 仅 **n=5**（NTES/MSTR/BIDU×2/DDOG），
    且无 outcome/反事实列 ⇒ 不可裁。样本率 ~0.45 例/交易日，到 n=20 约需 44 个交易日
    （≈10 月末）。**预注册裁决口径（请裁）**：n≥20 would-block + 逐笔反事实
    （被拦价 vs 当日剩余时段极值/收盘）方向一致 ≥70% ⇒ 转正；若 10/31 仍 n<20，
    则裁「退役该影子」或「降档为纯日志」，不再无限攒样。
+   **✅ 口径已采纳**：维持影子攒样，10/31 死线按上述预注册口径裁决。
 
 ## 4. 回滚条件（既有，不重立）
 

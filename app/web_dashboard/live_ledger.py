@@ -785,15 +785,17 @@ def _parse_deal_dt(market: str, raw: Optional[str]):
     from app.utils.timezone import CST as _CST, ET as _ET, _localize
     txt = str(raw).strip()
     naive = None
+    _fmt_err = None
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
                 "%Y-%m-%dT%H:%M:%S"):
         try:
             naive = datetime.strptime(txt, fmt)
             break
-        except ValueError:
-            continue
+        except ValueError as _ve:
+            _fmt_err = _ve  # 试下一格式; 全失败由循环后 warning 统一留痕 (R5)
     if naive is None:
-        logger.warning("[实盘台账] deal_time 解析失败, 持有时长留空 (不猜): %r", raw)
+        logger.warning("[实盘台账] deal_time 解析失败, 持有时长留空 (不猜): %r (%s)",
+                       raw, _fmt_err)
         return None
     return _localize(naive, _CST if _RT_TZ.get(market) == "CST" else _ET)
 

@@ -536,7 +536,26 @@ with open(data_dir / 'okr_latest.json', 'w') as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
 
 # Append to history (one JSON per line)
-with open(data_dir / 'okr_history.jsonl', 'a') as f:
-    f.write(json.dumps(output, ensure_ascii=False) + '\n')
+# 2026-09-09 (REVIEW-20260909 F-3): 同日幂等 — 同日多次跑只留最新行
+#   (此前纯追加, 157 行里 17 个日期重复, "与昨日 delta" 锚到当天临时跑)。
+#   历史存量重复行不回填 (家法), 由读侧 okr_query.load_history 去重防护。
+_hist_path = data_dir / 'okr_history.jsonl'
+_today_key = output["timestamp"][:10]
+_keep = []
+if _hist_path.exists():
+    with open(_hist_path) as f:
+        for _ln in f:
+            _ln = _ln.strip()
+            if not _ln:
+                continue
+            try:
+                if json.loads(_ln).get("timestamp", "")[:10] == _today_key:
+                    continue  # 同日旧行被本轮替换
+            except Exception as _bad_line:
+                print(f"[okr_status] history 坏行保留 (不丢数据): {_bad_line}", file=sys.stderr)
+            _keep.append(_ln)
+_keep.append(json.dumps(output, ensure_ascii=False))
+with open(_hist_path, 'w') as f:
+    f.write('\n'.join(_keep) + '\n')
 
 print("JSON saved to data/okr_latest.json + data/okr_history.jsonl")
