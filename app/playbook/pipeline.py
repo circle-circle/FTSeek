@@ -3354,7 +3354,8 @@ def _has_consecutive_losses(n: int = 5) -> bool:
     """
     try:
         from app.playbook.db import PlaybookDB
-        db = PlaybookDB()
+        # [RFC-080 S1] pin 研究库 (与 _check_graduation_gate 同源): 连亏证据产自 sim 研究臂。
+        db = PlaybookDB(db_name="ftseek_research")
         instructions = db.get_recent_instructions(limit=200)
         consecutive = 0
         for inst in instructions:
@@ -3389,7 +3390,10 @@ def _check_graduation_gate() -> Dict[str, Any]:
         from app.playbook.ic_tracker import compute_playbook_ic, _check_graduation
         from app.playbook.db import PlaybookDB
 
-        db = PlaybookDB()
+        # [RFC-080 S1] pin 研究库: 毕业门禁证据 (IC/样本/连亏) 恒产自 sim 研究臂
+        # (ftseek_us.db, playbook_instructions 1918 行)。不 pin 则翻 TRADE_ENV=0 后
+        # 门禁读 live 库 16 行 → 永判未毕业 → 降级 sim 下单但记录写 live = 自锁 (缺口1)。
+        db = PlaybookDB(db_name="ftseek_research")
         ic_report = compute_playbook_ic(db, days=30)
         grad = _check_graduation(ic_report)
 
