@@ -240,6 +240,45 @@ def _load_field_cardinality_module():
     return mod
 
 
+def _check_env_demix(rec) -> dict:
+    """W3: sim/live 账本混同守卫 (RFC-080 demix 2026-09-09, 用户裁决"不要混为一谈包括历史数据").
+
+    双向检测 (只读):
+      · sim 库出现 trade_mode='live' 行 = 真钱记录误进研究账本
+      · live 库出现 trade_mode!='live' 行 = 模拟记录误进实盘账本
+    根因已修: position_sync external_close 原硬编码 trade_mode='live' 无视 env
+    (broker REAL 成交史实锤 MSFT/AVGO/TTE/BULL 4 行零真钱证据); 现跟随
+    AUTO_TRADE_ACCOUNT。本守卫防任何新写入方复发。
+    单库翻转日后 (TRADE_ENV=0): 权威库=live 库, sim 库停止生长 — 届时 sim 侧检测
+    自动空转, live 侧检测继续有效 (auto-live 与 manual 都属 live, trade_mode='live'
+    恒真; PLAYBOOK_SHADOW 等模拟行混入即告警)。
+    """
+    out = {"sim_live_rows": -1, "live_sim_rows": -1}
+    sim_db = REPO / "data" / "ftseek_us.db"
+    live_db = REPO / "data" / "ftseek_us_live.db"
+    try:
+        if sim_db.exists():
+            c = sqlite3.connect(f"file:{sim_db}?mode=ro", uri=True)
+            out["sim_live_rows"] = c.execute(
+                "SELECT COUNT(*) FROM trade_records WHERE trade_mode='live'").fetchone()[0]
+            c.close()
+        if live_db.exists():
+            c = sqlite3.connect(f"file:{live_db}?mode=ro", uri=True)
+            out["live_sim_rows"] = c.execute(
+                "SELECT COUNT(*) FROM trade_records WHERE trade_mode!='live'").fetchone()[0]
+            c.close()
+        if out["sim_live_rows"] > 0:
+            rec("W3_sim_db_live_rows", "-", "trade_records",
+                f"sim 库出现 {out['sim_live_rows']} 行 trade_mode='live' (真钱记录误进研究账本)")
+        if out["live_sim_rows"] > 0:
+            rec("W3_live_db_sim_rows", "-", "trade_records",
+                f"live 库出现 {out['live_sim_rows']} 行 trade_mode!='live' (模拟记录误进实盘账本)")
+    except Exception as e:
+        if not _is_structural_error(e):
+            rec("W3_demix_check_error", "-", "-", f"{type(e).__name__}: {e}")
+    return out
+
+
 def _check_field_cardinality(rec, _collect=None) -> dict:
     """W2: 离散字段基数棘轮 — 新塌缩当天告警, 已知病灶静默计数。全程只读。
 
@@ -588,12 +627,16 @@ def main() -> int:
     # ── W2 字段基数棘轮 (2026-09-06, ADR-038 P7 军规自动化): 新塌缩字段当天告警 ──
     field_cardinality = _check_field_cardinality(rec)
 
+    # ── W3 sim/live 账本混同守卫 (RFC-080 demix 2026-09-09): 双向检测, 复发当天告警 ──
+    env_demix = _check_env_demix(rec)
+
     result = {
         "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
         "caliber_diff": caliber_diff,
         "config_freeze": config_freeze,
         "field_cardinality": field_cardinality,
+        "env_demix": env_demix,
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
     }

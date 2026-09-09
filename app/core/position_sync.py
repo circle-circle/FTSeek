@@ -1627,6 +1627,14 @@ class USPositionSync:
                     )
                     
                     # 写入 trade_records (使用真实数据)
+                    # [RFC-080 demix2 2026-09-09] trade_mode 标签跟随 AUTO_TRADE_ACCOUNT —
+                    # 与被扫描 broker 仓位的 env 同源 (上方 :539 同款逻辑)。原硬编码 'live'
+                    # 导致 sim 仓外部平仓被打真钱标签 → RFC-078 迁移按标签搬进 live 库 →
+                    # 混同实锤 (MSFT#900/AVGO#901/TTE#902/BULL#904, broker REAL 成交史零证据,
+                    # demix2_broker_verified.py 已清)。库路由 _get_db_path() 不动: 单库翻转
+                    # 模型下 TRADE_ENV 与 AUTO_TRADE_ACCOUNT 同翻, 路由自然正确。
+                    _auto_acc_ec = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+                    _trade_mode_label = 'live' if _auto_acc_ec == "real" else 'simulate'
                     _dup_skip = False  # 查重守卫命中标记 (2026-08-21): try 前初始化防 NameError
                     try:
                         import sqlite3 as _sqlite3
@@ -1696,7 +1704,7 @@ class USPositionSync:
                                  _entry_time_str, _et_now.isoformat(),
                                  _entry, _exit_price, int(_size),
                                  round(_pnl, 2), round(_pnl_pct, 4),
-                                 'external_close', 'POSITION_SYNC', 'manual', 'live',
+                                 'external_close', 'POSITION_SYNC', 'manual', _trade_mode_label,
                                  _et_now.isoformat(),
                                  getattr(existing_pos, 'trace_id', None),
                                  getattr(existing_pos, 'signal_id', None),

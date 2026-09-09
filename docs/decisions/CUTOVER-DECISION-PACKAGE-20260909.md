@@ -24,24 +24,39 @@
    已有 `--db` 参数); `exit_scorecard.py:244` 有 `trade_mode != 'live'` 过滤 →
    翻转后全部行都是 live → scorecard 读空。
 
-### 方案 (推荐 A: 翻转日证据迁移)
-翻转日 runbook (顺序执行, 每步可独立验证):
-1. **迁移脚本** `scripts/cutover_migrate_research_evidence.py` (翻转获批后先建, 干跑默认):
-   playbook_instructions + trade_records (sim 历史) 幂等复制 sim库→live库。
-   schema 差异已核: live 库 playbook_instructions 缺 22 列,
-   PlaybookDB._migrate_instruction_columns 首开自动补齐 (S2 前置核查已验证)。
-2. **重指 pin**: db_pool `ftseek_research` 一行改指 live 库 (S1 pin 的设计意图就是
-   "研究证据载体"单一别名, 载体切换只动这一处)。
-3. **翻开关**: TRADE_ENV=0 + AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true
-   (三者必须同翻 — S2' 互锁已把半翻态 fail-close)。
-4. **研究脚本随翻**: weekly_trade_summary cron 加 `--db live库` (参数已存在);
-   exit_scorecard 的 `trade_mode != 'live'` 过滤改为按 source_type 白名单
-   (翻转日同批, 否则 scorecard 静默读空)。
-5. 验证: 门禁在 live 库读到完整历史 IC + 新指令持续入册; 周报/scorecard 出数。
+### ~~方案 A: 翻转日证据迁移~~ — ❌ 已被用户裁决否决 (2026-09-09)
 
-否决 B (门禁双库 union 读): 永久双读复杂度 > 一次性迁移; 且 outcome 回填原子性
-仍要求指令与 trade_records 同库, union 救不了平仓路径。
-否决 C (研究臂停产): RFC-062 门2 要求试点期对照组; 且 IC/OKR 周报是现役治理面。
+> **用户裁决**: "模拟交易和实盘交易不要混为一谈，包括历史数据"。
+> 方案 A 把 sim 历史行复印进 live 库 = 正是混为一谈。**作废**。
+> 同日 demix 事件 (§五) 实证了混同的真实代价: 4 行 sim 仓因误标被搬进 live 库,
+> 污染实盘周报与台账对账。
+
+### 方案 A' (替代, 遵守两账本永久物理分离):
+**原则: sim 历史永远留在 sim 库 (翻转后冻结为只读档案), live 历史永远在 live 库。
+零行跨库复制。跨库只允许"只读研究视图", 不允许"账本合并"。**
+
+翻转日 runbook (顺序执行, 每步可独立验证):
+1. **证据快照归档** (不搬行): 翻转前把 sim 臂最终成绩单导出为独立 JSON 档案
+   (`data/cutover/sim_evidence_<date>.json`: IC 报告/回合统计/连亏序列, 即门禁当日
+   实算结果) + 用户签字引用。这是预注册证据的冻结快照 — sim 数据以 sim 身份归档,
+   永不改标 live。
+2. **门禁证据源重指**: 毕业门禁 pin 从研究库改指 live 库 PLAYBOOK_LIVE 行
+   (db_pool `ftseek_research` 一行 + 门禁加试点期语义: 翻转后 n<门槛 期间引用
+   §1 快照 + 累积 live 证据, 判"试点攒样中"而非"证据不足")。
+3. **降级语义改 HALT**: 翻转后门禁不达标的动作从"降级 sim 下单"改为"**停开新仓**"。
+   原降级路径在 TRADE_ENV=0 下会把 sim 记录写进 live 库 = 混同 (§五同款病)。
+   HALT 保持账本纯净 + 强制人工介入。
+4. **翻开关**: TRADE_ENV=0 + AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING=true
+   (三者必须同翻 — S2' 互锁已把半翻态 fail-close)。
+5. **研究脚本随翻 (各自诚实, 不合并)**: weekly_trade_summary 保持读 sim 库 —
+   翻转后如实报"sim 臂已于 <date> 停止" (加一行停臂说明, 防"无交易"误读);
+   exit_scorecard 加 `--arm live` 读 live 库 PLAYBOOK_LIVE (sim 判分器冻结存档)。
+6. 验证: 门禁读到 live 证据 + 试点期语义生效; 两库 W3 混同守卫零告警。
+
+否决 B (门禁双库 union 读): union 统计 = 把 sim 战绩与 live 战绩混进同一个 IC 数字,
+违反"不混为一谈"裁决; 且 outcome 回填原子性仍要求指令与 trade_records 同库。
+否决 C (研究臂停产不清尾): 冻结不清尾会让周报/scorecard 静默读空 (伪装"没交易")。
+A' 与 C 的区别: A' 显式归档 + 显式停臂说明 + 判分器换臂, 每个读方都有诚实出口。
 
 ---
 
@@ -95,11 +110,50 @@ live_ledger_sync (已降级为兜底对账, 每日跑) 顺手加一步: 拉 brok
 
 ---
 
+---
+
+## 五、sim/live 混同清理事件 (2026-09-09, 用户裁决触发)
+
+**用户裁决**: "模拟交易和实盘交易不要混为一谈，包括历史数据" — 直接否决原方案 A
+(sim 历史复印进 live 库), 改为 A' (两账本永久物理分离, 零跨库复制)。
+
+**审计发现现存混同 (已清)**: 两库各有对方账本的行 —
+- sim 库 3 行 trade_mode='live' (真钱标签误进研究账本)
+- live 库 2 行 trade_mode='simulate' (PLAYBOOK_SHADOW 影子误进实盘账本)
+
+**根因 (活跃源, 已修)**: position_sync external_close INSERT (:1699) **硬编码
+trade_mode='live'**, 无视被平仓位的真实 broker env。sim 仓被外部平仓时打上真钱标签
+→ RFC-078 迁移脚本按标签把它搬进 live 库 → 混同。
+
+**broker 真值核验 (唯一权威)**: 拉 REAL env 成交历史 (253 笔, 06-01~09-10) 逐行核对
+live 库 18 行 — 14 行有 REAL 成交铁证 (正确属实盘), **4 行 external_close
+(MSFT#900/AVGO#901/TTE#902/BULL#904) 零 REAL 证据** = sim 仓误标。
+
+**两阶段清理 (demix_sim_live_records.py + demix2_broker_verified.py)**:
+- 阶段1 教训: 只验"两库都有副本"不够 — TTE 被按"live 有副本"删了 sim 侧, 但 broker
+  真值说两边都非真钱, sim 侧才是正确归属 → **删错方向**。
+- 阶段2 修正 (broker 真值定向): TTE 从备份恢复回 sim 库 (改标 simulate); AVGO 孤行
+  移回 sim 库; MSFT/BULL sim 侧已有原始 PLAYBOOK_SIM 记账 → external_close 是重复残缺
+  行, 直接删 live 侧。两库终验纯净 (sim trade_mode=live 残留 0, live trade_mode!=live 残留 0)。
+
+**防复发 (已落地)**:
+- 活跃源: external_close trade_mode 改为跟随 AUTO_TRADE_ACCOUNT (与被扫描仓位 env 同源)。
+- 每日守卫: daily_invariant_check W3 双向混同检测 (sim 库现 live 行 / live 库现 sim 行 → 当天告警)。
+- 单测钉桩: test_rfc080_external_close_label.py (标签语义 + 源码锚点防回归硬编码)。
+
+**门2 对照组与 A' 的协调**: A' 第5步 sim 研究周报翻转后停臂, 但 RFC-062 门2 要求
+试点期 SIM 并行对照组 — 二者不冲突: 对照组 = **影子模式** (只记录不下单, 如
+PLAYBOOK_SHADOW/env_separation_shadow), 本就属 sim 账本身份, 与 live 物理分离, 不违反
+"不混为一谈"。翻转后 sim 影子臂继续跑 (对照组), 只是不再产生"可成交的 sim 实盘臂";
+weekly_trade_summary 停的是后者, 影子对照另有载体。
+
+---
+
 ## 裁决点汇总 (3 个)
 
 | # | 问题 | 推荐 | 备选 |
 |---|------|------|------|
-| 1 | 研究臂归宿 | A: 翻转日证据迁移 + pin 重指 (runbook 五步) | B union 读 / C 停产 (均否决理由见 §一) |
+| 1 | 研究臂归宿 | A': 两账本永久分离 + 证据快照归档 + 门禁改指 live + 降级改 HALT (§一, A 已被用户裁决否决) | B union 读 (混战绩,违反裁决) / C 停产不清尾 (静默读空) |
 | 2 | FLAT_ALL | B: 账户级触发→HALT_NEW, managed 级→FLAT_ALL 不变 | A 保持全平连坐 / C 混合 |
 | 3 | 陈旧行 | 每日 sync 对账修数, registry 不动 | 不修 (容忍多拦) |
 | 附 | 门1 判据 | 沿用既有 OOS≥15日+净均>0+t>1+ADF+双窗口≥40% + 签字 | — |
