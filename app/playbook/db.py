@@ -367,7 +367,7 @@ class PlaybookDB:
         # 准入门 (2026-08-06): 全写入方唯一收口点 — DA 直写/UE/topup/generate 四路都过这里。
         #   立项根因: confidence 门只写在 _build_instructions_from_votes 内 (pipeline.py:1264),
         #   DA/UE 直写 DB 绕过全部质量门 (实测 35 日 DA 219 条 BUY 平均 conf=36 全入库)。
-        #   默认 record-only (playbook.admission.enforce=false) → 不改指令, 只落审计。
+        #   代码 fallback enforce=false; 生产 YAML 当前 enabled=true/enforce=true, 命中门槛会转 SKIP。
         #   回滚: playbook.admission.enabled=false。异常一律不阻断写入 (审计降级优于丢指令)。
         # 2026-08-07 grilling Q2 (record-only 预判): 生成时 position_size=None →
         #   notional=0 → 判据全空转 (8月 0 条生成时拦截)。用估算 size 预判,

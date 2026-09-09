@@ -64,6 +64,28 @@ class TestCmdScanFailureBranches:
         assert len(feishu_out) == 1
         assert "all_models_failed" in feishu_out[0]
 
+    @pytest.mark.parametrize(
+        ("command", "args", "label"),
+        [
+            (scan_mod.cmd_scan_eval, ("manual clue",), "[scan-eval]"),
+            (scan_mod.cmd_thinking_eval, (), "[thinking-eval]"),
+        ],
+    )
+    def test_eval_holiday_has_zero_side_effects(
+        self, monkeypatch, capsys, command, args, label
+    ):
+        forbidden = mock.Mock(side_effect=AssertionError("holiday guard ran too late"))
+        monkeypatch.setattr(scan_mod, "_is_us_trading_day_today", lambda: False)
+        monkeypatch.setattr(scan_mod, "_build_clue_brief", forbidden)
+        monkeypatch.setattr(scan_mod, "_build_router", forbidden)
+        monkeypatch.setattr(scan_mod, "_batch_quotes", forbidden)
+        monkeypatch.setattr(scan_mod, "_append_jsonl", forbidden)
+        monkeypatch.setattr("app.llm.model_call.call_llm", forbidden)
+
+        assert command(*args) == 0
+        assert label in capsys.readouterr().out
+        forbidden.assert_not_called()
+
     def test_main_scan_exception_sends_alert(self, monkeypatch, feishu_out):
         # main() 的 scan 意外异常同样断 && 链 — 与 LLM 失败分支同告警 (第三接线点)
         def _boom(manual_clue="", midday=False):

@@ -880,7 +880,7 @@ class PlaybookService:
             if _acb_scale < 1.0:
                 _risk_scale = min(_risk_scale, _acb_scale)
                 logger.warning(
-                    f"[绝对熔断·观察期] {symbol} 连亏冷静期已过, 本笔名义×{_acb_scale} "
+                    f"[绝对熔断·观察期] {inst.get('symbol')} 连亏冷静期已过, 本笔名义×{_acb_scale} "
                     f"(观察期内出现亏损即回到冷静期)")
         except Exception as _acb_err:
             # A1+: 配置驱动 fail 模式 (open=放行, closed=拒绝)
@@ -990,8 +990,8 @@ class PlaybookService:
 
         # 准入门二次复核 (2026-08-06, 用户指示): 执行时 position_size 已确定 (F1 SSOT/factor),
         #   弥补 save_instruction 入口 position_size=None → notional=0 → 费用类判据空转的问题.
-        #   enforce=true 且 REJECT → 拦截 (记 skip_reason 不落 executed); record-only 仅审计.
-        #   异常 fail-open 放行 (宁漏不误杀, 同 save_instruction 入口语义).
+        #   生产 YAML 当前 enforce=true, REJECT 会拦截 (记 skip_reason 不落 executed);
+        #   代码 fallback enforce=false 时仅审计。异常 fail-open 放行 (宁漏不误杀).
         try:
             from app.playbook.admission import evaluate as _adm_eval
             _adm_result = _adm_eval({
@@ -1029,8 +1029,8 @@ class PlaybookService:
             logger.warning(f"[admission] {symbol} 执行时复核异常 (fail-open 放行): {_adm_exec_err}")
 
         # 应用风控分级复权 (放在准入门二次复核**之后**: 与 LIVE_TRIAL/gap_dive 两处半仓
-        #   先例同序, 且不会因缩小名义而新触发 admission 的 NOTIONAL_TOO_SMALL — 该判据
-        #   当前 min_notional_usd=0.0 未启用, 但顺序上先保证"不减少成交笔数"这条红线)。
+        #   先例同序, 且不会因随后缩小名义而新触发 admission 的 NOTIONAL_TOO_SMALL。
+        #   生产 min_notional_usd=2500; 当前顺序按缩放前名义复核, 避免风险降仓二次拒绝)。
         #   已知代价 (与两处先例同源): admission 的 fee_bps 判据评的是缩放前的名义,
         #   若将来启用 min_profit_fee_ratio 须把缩放移到复核之前, 否则判据与实际下单不符。
         if _risk_scale < 1.0 and position_size and position_size > 1:

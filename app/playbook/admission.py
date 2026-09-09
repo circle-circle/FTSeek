@@ -13,8 +13,8 @@
 
 设计原则:
   - 纯函数 + 一次性读配置, 零 IO, 可单测 (同 fee_model.py 风格);
-  - **默认 record-only** (`playbook.admission.enforce=false`): 只判定+落审计,
-    不改任何指令 → 上线首夜零生产影响, 先攒"若启用会拦掉什么"的对照;
+  - 代码 fallback 为 record-only (`_DEFAULTS.enforce=false`), 配置不可用时不改指令;
+  - 生产 YAML 当前 `enabled=true/enforce=true`, 命中已启用的费用/价格门会硬拦;
   - 收口点选 `PlaybookDB.save_instruction` (db.py:124) — 唯一全写入方必经处,
     DA 直写/UE/topup/generate 四条路径一次覆盖;
   - 回滚: playbook.admission.enabled=false (或删除 save_instruction 内调用)。

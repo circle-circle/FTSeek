@@ -20,10 +20,12 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
 _SKILL = "/root/.hermes/skills/deep-stock-analysis/scripts"
+_SKILL_ROOT = Path(_SKILL).parent
 if _SKILL not in sys.path:
     sys.path.insert(0, _SKILL)
 try:
@@ -47,8 +49,14 @@ def _ok_long():
             "invalidation_triggers": [{"metric": "收盘价", "operator": "<", "value": "97"},
                                       {"metric": "5日涨跌", "operator": "<", "value": "-5"}],
         },
-        "bull_case": [{"claim_type": "earnings_beat"}, {"claim_type": "technical_breakout"}],
-        "bear_case": [{"claim_type": "valuation_expensive"}, {"claim_type": "macro_headwind"}],
+        "bull_case": [
+            {"claim_type": "earnings_beat", "thesis": "营收增长12%", "evidence": "输入营收同比12%"},
+            {"claim_type": "technical_breakout", "thesis": "股价站上100", "evidence": "现价100"},
+        ],
+        "bear_case": [
+            {"claim_type": "valuation_expensive", "thesis": "PE达到35", "evidence": "输入PE 35"},
+            {"claim_type": "macro_headwind", "thesis": "利率维持5%", "evidence": "输入利率5%"},
+        ],
         "risks": [],
     }
 
@@ -181,6 +189,28 @@ def test_compliant_sample_has_no_violation():
     assert L._validate_output_contract(_ok_long())["violations"] == []
 
 
+def test_generic_claim_requires_numeric_anchor():
+    sample = _ok_long()
+    sample["bull_case"][0] = {
+        "claim_type": "product_catalyst",
+        "thesis": "公司旗舰产品获批",
+        "evidence": "新闻披露旗舰产品获批",
+    }
+    violations = L._validate_output_contract(sample)["violations"]
+    assert violations.count("generic_claim: bull_case 论据无数字锚点") == 1
+
+
+def test_numeric_anchor_may_be_in_evidence():
+    sample = _ok_long()
+    sample["bull_case"][0] = {
+        "claim_type": "product_catalyst",
+        "thesis": "公司旗舰产品获批",
+        "evidence": "公告日期为2026-09-08",
+    }
+    assert not any(v.startswith("generic_claim")
+                   for v in L._validate_output_contract(sample)["violations"])
+
+
 def test_empty_threshold_tripwire_not_counted():
     r = L._validate_output_contract(_violating())
     assert any(v.startswith("tripwires_lt2") for v in r["violations"])
@@ -229,8 +259,14 @@ def test_direction_aliases_normalized(alias, canonical):
                                          {"metric": "c", "threshold": "d"}],
                            "invalidation_triggers": [{"metric": "收盘价", "operator": "<", "value": "92"},
                                                       {"metric": "5日涨跌", "operator": "<", "value": "-5"}]},
-        "bull_case": [{"claim_type": "earnings_beat"}, {"claim_type": "macro_tailwind"}],
-        "bear_case": [{"claim_type": "technical_breakdown"}, {"claim_type": "insider_bearish"}],
+        "bull_case": [
+            {"claim_type": "earnings_beat", "thesis": "营收增长12%"},
+            {"claim_type": "macro_tailwind", "evidence": "利率回落至4%"},
+        ],
+        "bear_case": [
+            {"claim_type": "technical_breakdown", "thesis": "跌破92"},
+            {"claim_type": "insider_bearish", "evidence": "内部人减持10%"},
+        ],
     }
     src["direction"] = alias
     assert L._validate_output_contract(src)["violations"] == []
@@ -477,8 +513,10 @@ class TestRound14:
                                    "take_profit_price": 108,
                                    "tripwires": [{"metric": "a", "threshold": "b"},
                                                  {"metric": "c", "threshold": "d"}]},
-                "bull_case": [{"claim_type": "earnings_beat"}, {"claim_type": "technical_breakout"}],
-                "bear_case": [{"claim_type": "valuation_expensive"}, {"claim_type": "macro_headwind"}]}
+                "bull_case": [{"claim_type": "earnings_beat", "thesis": "营收增长12%"},
+                              {"claim_type": "technical_breakout", "evidence": "股价站上100"}],
+                "bear_case": [{"claim_type": "valuation_expensive", "thesis": "PE达到35"},
+                              {"claim_type": "macro_headwind", "evidence": "利率维持5%"}]}
         # 外部标的 tripwires 不能回填 → 违约
         r = L._validate_output_contract(base)
         assert any(v.startswith("invalidation_triggers_lt2") for v in r["violations"])
@@ -492,8 +530,37 @@ class TestRound14:
                                    "take_profit_price": 108,
                                    "tripwires": [{"metric": "收盘价", "threshold": "<97"},
                                                  {"metric": "盘前涨跌幅", "threshold": ">3"}]},
-                "bull_case": [{"claim_type": "earnings_beat"}, {"claim_type": "technical_breakout"}],
-                "bear_case": [{"claim_type": "valuation_expensive"}, {"claim_type": "macro_headwind"}]}
+                "bull_case": [{"claim_type": "earnings_beat", "thesis": "营收增长12%"},
+                              {"claim_type": "technical_breakout", "evidence": "股价站上100"}],
+                "bear_case": [{"claim_type": "valuation_expensive", "thesis": "PE达到35"},
+                              {"claim_type": "macro_headwind", "evidence": "利率维持5%"}]}
         r = L._validate_output_contract(base)
         assert not any(v.startswith("invalidation_triggers_lt2") for v in r["violations"]), \
             "可判定的旧 tripwires 应回填为满足 invalidation_triggers"
+
+    def test_volume_ratio_metric_replaces_raw_volume(self):
+        sample = _ok_long()
+        sample["execution_plan"]["invalidation_triggers"] = [
+            {"metric": "量比", "operator": ">", "value": 2.0},
+            {"metric": "收盘价", "operator": "<", "value": 97},
+        ]
+        assert not any(v.startswith("invalidation_triggers_lt2")
+                       for v in L._validate_output_contract(sample)["violations"])
+
+        sample["execution_plan"]["invalidation_triggers"][0]["metric"] = "成交量"
+        assert any(v.startswith("invalidation_triggers_lt2")
+                   for v in L._validate_output_contract(sample)["violations"])
+
+    def test_skill_version_sources_are_consistent(self):
+        skill_text = (_SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        changelog = (_SKILL_ROOT / "references" / "CHANGELOG.md").read_text(encoding="utf-8")
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        frontmatter_version = next(
+            line.split(":", 1)[1].strip()
+            for line in skill_text.splitlines() if line.startswith("version:"))
+        latest_changelog_version = next(
+            line.split()[1].removeprefix("v")
+            for line in changelog.splitlines() if line.startswith("## v"))
+        assert frontmatter_version == latest_changelog_version == "0.78"
+        assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
+        assert "^version:" in pipeline

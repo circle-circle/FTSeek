@@ -1,15 +1,19 @@
 """admission gate 单测 (2026-08-06, DEB-20260806-source-control).
 
 覆盖点 (按"最容易出事"排序):
-  1. record-only 默认不改指令 (最重要的安全不变量)
+  1. record-only fallback 不改指令 (最重要的安全不变量)
   2. enforce=true 才转 SKIP, 且原方向留审计可追溯
   3. 非 dict 的 raw_instruction 不被吞掉 (数据丢失回归)
   4. SKIP/未知方向直接放行, 不误判
   5. 费用判据的算术正确性 (与 fee_model 同源)
   6. 阈值缺省全为 0 = 不拦 (无证据不设门)
   7. enabled=false 完全短路
+  8. 生产 YAML 的 enforce 与费用/价格阈值不漂移
 """
+from pathlib import Path
+
 import pytest
+import yaml
 
 from app.playbook import admission as A
 
@@ -183,3 +187,16 @@ def test_missing_fields_do_not_raise(over):
     out, res = A.apply(_inst(**over))
     assert res["verdict"] in ("PASS", "REJECT")
     assert isinstance(res["metrics"], dict)
+
+
+def test_production_yaml_admission_contract():
+    path = Path(__file__).resolve().parents[1] / "config" / "unified_config.yaml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    admission = config["playbook"]["admission"]
+
+    assert admission["enabled"] is True
+    assert admission["enforce"] is True
+    assert admission["min_notional_usd"] == 2500
+    assert admission["min_entry_price"] == 5.0
+    assert admission["min_confidence_buy"] == 0
+    assert admission["min_confidence_short"] == 0

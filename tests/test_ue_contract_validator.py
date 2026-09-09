@@ -1,4 +1,5 @@
 """U4 契约校验器单测 — 违约检测逻辑 (不触 LLM, mock call_llm)."""
+import hashlib
 import os
 import sys
 from unittest import mock
@@ -6,6 +7,9 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.llm_universe_scan import (  # noqa: E402
+    PROMPT_HASH_V2,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT_V2,
     _normalize_surfaced,
     _validate_and_repair_surfaced,
 )
@@ -160,3 +164,31 @@ class TestNormalizeSkipReason:
                 "confidence": 0.3}]
         out = _normalize_surfaced(raw, with_tier=False)
         assert len(out[0]["skip_reason"]) <= 120
+
+
+class TestPromptV210Contract:
+    def test_version_and_hash_derive_from_current_prompt(self):
+        assert PROMPT_VERSION == "v2.10"
+        expected = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
+        assert PROMPT_HASH_V2 == expected
+
+    def test_prompt_and_parser_share_trigger_metrics(self):
+        expected_metrics = {"收盘价", "量比", "5日涨跌", "盘前涨跌幅"}
+        for metric in expected_metrics:
+            assert metric in SYSTEM_PROMPT_V2
+        assert "当日累计成交量÷最近20个完整交易日平均成交量" in SYSTEM_PROMPT_V2
+
+        raw = [{
+            "symbol": "TEST",
+            "direction": "LONG",
+            "confidence": 0.5,
+            "invalidation_triggers": [
+                {"metric": metric, "operator": "<", "value": 1}
+                for metric in sorted(expected_metrics)
+            ] + [{"metric": "成交量", "operator": ">", "value": 1000000}],
+        }]
+        out = _normalize_surfaced(raw, with_tier=True)
+        parsed_metrics = {t["metric"] for t in out[0]["invalidation_triggers"]}
+
+        assert parsed_metrics == expected_metrics
+        assert "成交量" not in parsed_metrics
