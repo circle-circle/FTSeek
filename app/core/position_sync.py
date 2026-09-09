@@ -34,6 +34,39 @@ EXTERNAL_CLOSE_DUP_SQL = (
     "AND exit_price > 0"
 )
 
+# ── [RFC-080 2026-09-09] 系统委托 remark 白名单 — AUTO 认领的唯一凭证 ──────────
+# 病灶: _query_today_futu_orders 返回当日 env 内**所有**已成交委托, AUTO/MANUAL 分类
+# 此前只看 "symbol in _today_orders" ⇒ 切实盘后 (AUTO_TRADE_ACCOUNT=real), 用户在富途
+# APP 直接下的手动单 (无 remark) 会被认领为 AUTO → 纳入 PositionStore/DB trader_type=
+# AUTO → 被自动退出监控平掉真钱手动仓。2026-07-02 "安全默认 MANUAL" 只修了 else 分支,
+# 没修 _today_orders 命中分支。
+# 活体探针实证 (2026-09-09, history_order_list_query 9/1-9/9):
+#   SIMULATE env 159 笔 remark 全部 'pb_*' (playbook client_order_id=pb_{iid}_{env});
+#   REAL env 45 笔 remark 全部 '' (APP/看板手动单 place_order 不带 remark)。
+#   remark 经 broker 往返不丢失 ⇒ 可作归属凭证。
+# 白名单 = 全部 auto 下单生产者的 remark 前缀 (grep 'remark=' 全仓枚举):
+#   pb_*              playbook 入场 (pb_{iid}_{env}) + 平仓 (pb_close_/pb_be_close_/pb_stop_)
+#                     — dual_broker.py:228 remark=order.client_order_id
+#   orb_*             ORB 引擎 (engine.py:2327, 现禁用, 预留)
+#   OVER_LIMIT_TRIM   position_sync 自trim (:2427)
+# fail-safe 方向: 未知/空 remark → 非系统单 → MANUAL (宁可漏认领也不误平手动仓)。
+# 严格大小写匹配 (生产者全小写 pb_/orb_, OVER_LIMIT_TRIM 全大写; 不做 case-fold,
+# 意外大小写变体归 MANUAL 更安全)。
+# 注意: 外部平仓检测 (~:1548 _today_orders.get) **不得**用本白名单过滤 —
+# 手动/APP 平仓正是它要检测的对象。本白名单只用于 AUTO 认领两处分类点。
+_SYSTEM_ORDER_REMARK_PREFIXES = ("pb_", "orb_", "OVER_LIMIT_TRIM")
+
+
+def is_system_order_remark(remark) -> bool:
+    """委托 remark 是否出自系统下单路径 (RFC-080 AUTO 认领白名单).
+
+    fail-safe: None/空/未知前缀 → False (归 MANUAL, 与 2026-07-02 安全默认同向)。
+    """
+    if not remark:
+        return False
+    r = str(remark)
+    return any(r.startswith(p) for p in _SYSTEM_ORDER_REMARK_PREFIXES)
+
 def _get_db_path():
     from app.core.db_utils import get_main_db
     return str(get_main_db())
@@ -546,12 +579,18 @@ class USPositionSync:
                 
                 # 保留最新的一笔（可能被多次 fill 覆盖）
                 if code not in result or create_time > result[code].get('time', ''):
+                    # RFC-080: 记录 remark + 系统单判定。外部平仓检测 (~1548) 需要
+                    # **全部**委托 (手动/APP 平仓正是其检测对象), 故此处不过滤;
+                    # AUTO 认领分类点用 is_system 白名单过滤。
+                    _remark = str(order.get('remark', '') or '')
                     result[code] = {
                         'order_id': order_id,
                         'price': price,
                         'qty': dealt_qty,
                         'trd_side': trd_side,
                         'time': create_time,
+                        'remark': _remark,
+                        'is_system': is_system_order_remark(_remark),
                     }
             
             if result:
@@ -1120,11 +1159,15 @@ class USPositionSync:
                 # 修复: 只有当日系统委托(_today_orders)有记录才标AUTO, 否则MANUAL
                 # open_positions已是SSOT (playbook下单时也写open_positions), DB无记录=人工
                 _db_already_manual = symbol in getattr(self, '_db_manual_symbols', set())
+                _today_ord = _today_orders.get(symbol)
+                # RFC-080: AUTO 认领必须凭系统委托 remark 白名单 — 否则切实盘后
+                # APP 手动单 (无 remark) 被误认领 AUTO → 被自动退出监控平掉真钱仓。
+                _is_system_order = bool(_today_ord and _today_ord.get('is_system'))
                 if _db_already_manual:
                     _db_trader_type = "MANUAL"
                 elif symbol in _manual_today:
                     _db_trader_type = "MANUAL"
-                elif symbol in _today_orders:
+                elif _is_system_order:
                     _db_trader_type = "AUTO"
                 else:
                     _db_trader_type = "MANUAL"  # was AUTO (2026-07-02: 安全默认)
@@ -1359,7 +1402,11 @@ class USPositionSync:
             # P3 修复 (2026-06-12): 三层手动判断优先级: DB已有manual > 今日手动审计 > 富途委托
             _is_db_manual = symbol in getattr(self, '_db_manual_symbols', set())
             _is_manual_today = symbol in getattr(self, '_manual_today', set())
-            _has_today_order = symbol in _today_orders and not _is_manual_today and not _is_db_manual
+            # RFC-080: 认领 AUTO 必须凭系统委托 remark 白名单 (is_system) — 无 remark 的
+            # APP/看板手动单落入 else → manual_sync, 不被自动退出监控接管。
+            _today_ord_ps = _today_orders.get(symbol)
+            _has_today_order = bool(_today_ord_ps and _today_ord_ps.get('is_system')) \
+                and not _is_manual_today and not _is_db_manual
             if _is_db_manual:
                 strategy_id = "manual_sync"
                 trader_type = "MANUAL"
