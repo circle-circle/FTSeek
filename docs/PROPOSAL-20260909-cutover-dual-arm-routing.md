@@ -88,7 +88,35 @@ fail-safe 方向 (只少交易), 但属静默产能损失。
 ### 方案C: 什么都不做, cutover 时手工迁移 — **否决**
 缺口1 自锁是确定性的 (1918 vs 16 行实证), 手工迁移 1900+ 行指令历史 + IC 数据易错且不可回滚。
 
-## 四、方案B 实施分解 (影子先行, 每段独立可回滚)
+## ⚠️ 三·五、S2 前提证伪 (2026-09-09 实施前影响面分析, 推翻本节方案B 的 S2)
+
+实施 S2 前逐行读退出链, 三处代码事实推翻"记录按臂物理分库"前提:
+
+1. **退出监控单库单 conn 扫两臂** (pipeline.py:7302):
+   `WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')` — 一个 conn (TRADE_ENV 路由) 同时管两臂。
+2. **平仓三表原子写同一 conn** (`_close_trade_record(conn,...)`, :6085):
+   trade_records + playbook_instructions + open_positions 在一个 conn 上原子提交。
+3. **broker 臂按行决定, 不按库** (:7561/7896/8401):
+   `_row_target = "real" if r["source_type"]=="PLAYBOOK_LIVE" else "sim"`。
+
+⇒ 系统真实 cutover 模型 = **单库翻转** (TRADE_ENV=0 → 两臂都进 live 库, source_type 列区分;
+监控读 live 库见两臂; broker 按行路由)。**不是**方案B 的"按 target_env 物理分库"。
+
+**S2 照原样实施 = 制造裸仓**: 若 real 记录路由到 live 库而监控仍读 sim 库 (TRADE_ENV=1),
+监控看不到 live 库 PLAYBOOK_LIVE 行 → 真钱自动仓失去退出监控。**S2 作废, 不实施。**
+
+单库翻转模型下, 退出监控/三表原子性/broker 按行路由**已自洽, 无需 S2**。真正的 cutover
+障碍改为 (见 §七):
+  · 研究臂归宿: weekly_trade_summary.py / exit_scorecard.py **硬编码** data/ftseek_us.db
+    (sim 库), TRADE_ENV=0 后 sim-broker 记录也进 live 库 → 研究脚本读空库 → IC/OKR 断供。
+  · 半翻不一致态 (half-flip): AUTO_TRADE_ACCOUNT=real + TRADE_ENV=1 (broker 真钱但记录进
+    sim 库) — `_assert_env_routing_consistent` 只 WARN 不阻断, di_container 只降级自身局部变量,
+    playbook 每次执行独立读 env ⇒ 无硬锁防半翻。
+  · S1 pin 仍正确 (保留): 门禁毕业证据恒在 sim 研究库 (1918 行), pin 防 TRADE_ENV=0 后
+    误读 live 库 16 行 → 永判未毕业自锁。但 pin 也暴露: 翻转后 sim 研究臂若停产, pin 库
+    证据会随时间老化 ⇒ 研究臂归宿是 cutover 真前置。
+
+## 四、方案B 实施分解 (影子先行, 每段独立可回滚) — ⚠️ S2 已证伪作废, 见 §三·五
 
 | 段 | 内容 | 行为变化 (现状 TRADE_ENV=1 + AUTO=sim) | 风险 |
 |---|---|---|---|
@@ -114,3 +142,31 @@ S1-S4 全部是 **cutover 前可安全预置** 的 (现状零行为变化), 符�
 
 - S1-S4 每段独立 commit, `git revert` 即回滚; 现状 (TRADE_ENV=1 + AUTO=sim) 下全部零行为变化, 回滚无状态迁移。
 - cutover 日回滚 = AUTO_TRADE_ACCOUNT=sim + 重启 (既有 kill 条件同款, RFC-062)。
+
+
+## 七、实施记录 (2026-09-09, S2 证伪后修正落地)
+
+| 段 | 状态 | commit | 验证 |
+|---|---|---|---|
+| S0 (P0 #2) | ✅ AUTO 认领 remark 白名单 | 050c268c | 19 测试 + 重启部署零 ERROR |
+| S1 | ✅ 毕业门禁研究库 pin (db_pool "ftseek_research") | c70c60d2 | 6 测试 (含 TRADE_ENV=0 翻转模拟) |
+| S2 | ❌ **作废** — 前提证伪见 §三·五 (单库翻转模型下无需分库) | — | — |
+| S2' | ✅ 半翻互锁 (playbook_service real 臂 fail-close: ALLOW_REAL_TRADING + is_live_mode 双前提) | 本批 | 7 测试 + 源码锚点防漂移钉桩 |
+| S3a | ⛔ **实施后撤回** — size>0 过滤会把 MU (实际持 -10, open_positions size=0.0 陈旧) 解除手动保护 = fail-open 方向错误。缺口5 真因是 size 陈旧 (position_sync 刷新路径), 另行处理 | 零 diff | 因果链回放证伪 |
+| S3b | ✅ 反向守卫 (executor.submit_order 1b: auto-live 持仓标的拒绝手动单, fail-open 协调门) | 本批 | 6 测试; 现状恒 no-op (live 库无 auto 行), cutover 后生效; APP 直接下单不经此路径 (局限已注明, 靠批E 推送可见性兜底) |
+| S4 | ✅ 周报分臂 (roundtrip_section arms: auto=PLAYBOOK_LIVE / manual=其余含 NULL; 渲染"分臂"行, 空窗口不伪装) | 本批 | 3 测试 + 真实运行验证 (NO_TRADES_IN_WINDOW 不输出分臂行) |
+| S5 | ⏳ 待用户裁决 (FLAT_ALL 政策) | — | — |
+
+修正后 cutover 阻塞清单 (§二 缺口表的替代):
+1. ~~门禁自锁~~ → S1 已修
+2. ~~半翻不一致~~ → S2' 已修
+3. ~~反向守卫~~ → S3b 已修
+4. **研究臂归宿 (唯一剩余硬阻塞)**: weekly_trade_summary.py / exit_scorecard.py 硬编码
+   data/ftseek_us.db (刻意设计, 文件头注明防"换库伪装成没交易")。单库翻转后 sim-broker
+   记录进 live 库 → 研究脚本读旧库只见存量不见增量 → IC/OKR 周报静默断供。
+   选项: (a) 研究脚本加 --db 双库合并读; (b) cutover 后研究臂停产 (RFC-062 门2 不允许);
+   (c) 翻转时同步改研究脚本载体为 live 库 + 按 source_type/trade_mode 过滤 sim 行。
+   → 留 cutover 决策包, 与门1 重裁一并裁决。
+5. FLAT_ALL 政策 (S5, 待裁决)
+6. open_positions size 陈旧 (S3a 撤回暴露的真缺口: position_sync 对 manual 行 size
+   刷新路径缺失) → 低危 (fail-safe 方向), 列入待办不阻塞 cutover。

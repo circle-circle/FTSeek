@@ -1210,6 +1210,34 @@ class PlaybookService:
 
         _is_live = (target_env == "real")
 
+        # [RFC-080 S2' 2026-09-09] 半翻互锁 (fail-close): real 臂的完整前提 =
+        #   ALLOW_REAL_TRADING=true + TRADE_ENV=0 (单库翻转模型: 两臂记录都进 live 库,
+        #   source_type 列区分, 退出监控/broker 按行路由自洽)。
+        # 为什么必须锁: 本函数上方 dispatch (playbook_service:1116) 直接读 env, 绕过
+        #   di_container 的 ALLOW_REAL_TRADING 降级门 ⇒ 半翻态 (AUTO=real 但
+        #   ALLOW_REAL_TRADING=false 或 TRADE_ENV=1) 此前只靠毕业门禁单挡。半翻后果:
+        #   broker 真钱下单但记录进 sim 研究库 → 实盘归属分裂 + 研究臂污染
+        #   (db_utils._assert_env_routing_consistent 只 WARN 不阻断, 且它比的是
+        #   TRADE_ENV vs AUTO_TRADE_ACCOUNT, 不含 ALLOW_REAL_TRADING)。
+        # 降级方向与既有模式一致 (di_container 同款: 强制降级 sim, 宁可不下真钱单)。
+        if _is_live:
+            import os as _os_il
+            _allow_real = str(_os_il.getenv("ALLOW_REAL_TRADING", "false")).strip().lower() == "true"
+            _db_is_live = False
+            try:
+                from app.core.db_utils import is_live_mode as _is_live_db_mode
+                _db_is_live = _is_live_db_mode()
+            except Exception:
+                _db_is_live = False  # fail-close: 读不到路由状态 → 视为不一致
+            if not _allow_real or not _db_is_live:
+                logger.critical(
+                    f"🚨 [playbook] 半翻互锁: target_env=real 但前提不完整 "
+                    f"(ALLOW_REAL_TRADING={_allow_real}, TRADE_ENV→live库={_db_is_live}) "
+                    f"— 强制降级 sim, 禁止真钱下单进错误账本 (RFC-080 S2')"
+                )
+                target_env = "sim"
+                _is_live = False
+
         # 2026-06-28 fail-closed guard: 任何路径请求 live 都必须先通过毕业门禁.
         # 如果未毕业(包括异常), 强制降级 sim, 避免误下实盘单.
         if _is_live:

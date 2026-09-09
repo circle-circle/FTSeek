@@ -180,6 +180,40 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
             service._write_audit(order)
             return {"success": False, "errors": errors, "order": asdict(order)}
 
+        # 1b. [RFC-080 S3b] 反向守卫: auto-live 持仓标的禁止手动下单 (缺口4).
+        #   正向 (auto 避手动) 已有 ManualHoldRegistry; 反向此前无守卫。
+        #   冲突机制: open_positions PK=symbol 单列 ⇒ 同标的 auto-live 行与 manual 行
+        #   物理无法共存, 手动单成交后 broker 净额合并 → 一行两主 → 仓位孤儿化。
+        #   现状 (TRADE_ENV=1) auto 仓在 sim 库/模拟账户, live 库无 owner=auto 行
+        #   ⇒ 本守卫恒 no-op; cutover (单库翻转) 后 auto-live 行落 live 库 ⇒ 守卫生效。
+        #   fail-open (协调门, 与 ManualHoldRegistry 同款哲学): DB 异常不阻断手动交易。
+        #   局限: 富途 APP 直接下单不经本路径, 无法代码守卫 (靠 RFC-078 批E 成交推送
+        #   秒级可见 + position_sync 安全默认 MANUAL 兜底)。
+        try:
+            import sqlite3 as _rg_sql
+            from app.core.db_utils import get_dashboard_db as _rg_db
+            _rg_conn = _rg_sql.connect(f"file:{_rg_db()}?mode=ro", uri=True, timeout=3)
+            try:
+                _auto_row = _rg_conn.execute(
+                    "SELECT owner_strategy FROM open_positions "
+                    "WHERE symbol=? AND owner='auto' AND COALESCE(size,0) > 0 LIMIT 1",
+                    (order.symbol,),
+                ).fetchone()
+            finally:
+                _rg_conn.close()
+            if _auto_row is not None:
+                order.status = "rejected"
+                order.error_msg = (
+                    f"{order.symbol} 当前由自动交易持有 ({_auto_row[0] or 'auto'}), "
+                    f"同标的无法双轨管理 — 请先在看板平掉自动仓再手动下单"
+                )
+                service._write_audit(order)
+                logger.warning(f"[手动下单] 反向守卫拦截: {order.error_msg}")
+                return {"success": False, "error": "auto_position_conflict",
+                        "errors": [order.error_msg], "order": asdict(order)}
+        except Exception as _rg_err:
+            logger.warning(f"[手动下单] 反向守卫查询失败 (fail-open 放行): {_rg_err}")
+
         # 2. 连接 broker
         if not service.connect():
             order.status = "error"

@@ -212,6 +212,21 @@ def roundtrip_section(start: str, end: str) -> Dict[str, Any]:
             all_live = conn.execute(
                 "SELECT COUNT(*), MIN(substr(entry_time,1,10)), MAX(substr(entry_time,1,10)) "
                 "FROM trade_records WHERE trade_mode='live'").fetchone()
+            # [RFC-080 S4] auto/manual 分臂 — cutover 后评估"算法本身是否稳定盈利"
+            # (晋级判据) 必须把 auto-live (source_type='PLAYBOOK_LIVE') 与 manual-live
+            # 拆开。现状 live 库无 PLAYBOOK_LIVE 行 ⇒ auto 臂恒 0, 报告如实显示。
+            arms = {}
+            for _arm, _cond in (("auto", "source_type = 'PLAYBOOK_LIVE'"),
+                                ("manual", "(source_type IS NULL OR source_type != 'PLAYBOOK_LIVE')")):
+                _a = conn.execute(f"""
+                    SELECT COUNT(*),
+                           SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END),
+                           ROUND(SUM(COALESCE(pnl_net, realized_pnl)), 2)
+                    FROM trade_records
+                    WHERE trade_mode = 'live' AND exit_price > 0 AND {_cond}
+                      AND substr(exit_time, 1, 10) BETWEEN :start AND :end
+                """, {"start": start, "end": end}).fetchone()
+                arms[_arm] = {"n": _a[0] or 0, "wins": _a[1] or 0, "net_pnl": _a[2] or 0.0}
         finally:
             conn.close()
     except sqlite3.OperationalError as exc:
@@ -224,6 +239,7 @@ def roundtrip_section(start: str, end: str) -> Dict[str, Any]:
         "rows": rows, "open_rows": open_rows, "n": n, "wins": wins,
         "win_rate_pct": round(100.0 * wins / n, 1) if n else 0.0,
         "net_pnl": round(sum(r["total_pnl"] or 0.0 for r in rows), 2),
+        "arms": arms,
         "ledger_total_live_rows": all_live[0] or 0,
         "ledger_span": [all_live[1], all_live[2]],
         "detail": (f"台账实盘行共 {all_live[0]} 笔({all_live[1]}~{all_live[2]}), "
@@ -429,6 +445,13 @@ def _render_market(market: str, deals: Dict[str, Any], pos: Dict[str, Any],
         if rt["state"] == "OK":
             out.append(f"回合台账(trade_records, 出场ET日归集/净额): {rt['n']} 笔 | "
                        f"胜 {rt['wins']} ({rt['win_rate_pct']}%) | 净 {_money(rt['net_pnl'], ccy)}")
+            # [RFC-080 S4] auto/manual 分臂 (评估算法本身盈亏, 晋级判据用)
+            _arms = rt.get("arms") or {}
+            _a, _m = _arms.get("auto", {}), _arms.get("manual", {})
+            if _a.get("n") or _m.get("n"):
+                out.append(f"  分臂: auto(PLAYBOOK_LIVE) {_a.get('n',0)}笔 "
+                           f"净{_money(_a.get('net_pnl',0.0), ccy)} | "
+                           f"manual {_m.get('n',0)}笔 净{_money(_m.get('net_pnl',0.0), ccy)}")
             for r in rt["rows"][:6]:
                 out.append(f"  {r['direction']:<6} {r['exit_reason']:<26} {r['n']:>3}笔 "
                            f"胜{r['wins']:>3}  {_money(r['total_pnl'], ccy):>13}")
