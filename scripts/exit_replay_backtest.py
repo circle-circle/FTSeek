@@ -6,8 +6,12 @@ bar 缓存写 data/replay_bars/ (新目录), 结果写 data/exit_replay_latest.j
 
 数据源: data/ftseek_us.db trade_records (source_type=PLAYBOOK_SIM, 已平仓).
 bar:   Futu request_history_kline K_1M (常规时段, 深度实测 ≥2026-01).
-数学:  直接复用 app.playbook.pipeline._compute_dynamic_effective_sl /
+数学:  直接复用 app.playbook.exit_engine._compute_dynamic_effective_sl /
        _get_factor_exit_config — 与实盘退出同一函数, 杜绝两份数学漂移.
+       (2026-09-07 修: 原从 app.playbook.pipeline 取; P2a 提交 14e9a544 把本体逐字
+        迁入 exit_engine 并**撤掉了 pipeline 侧 `_compute_dynamic_effective_sl` 转发器**
+        ⇒ 本引擎 ImportError, 并级联打穿 6 个复用方 (含 3 个 cron 活体的懒 import)。
+        修法=改指向 SSOT 本体, 不改数学; 由 tests/test_replay_engine_import_smoke.py 钉住。)
 
 保真度边界 (如实报告):
   1. 1min bar 内 high/low 先后不可知 → 双序假设 (pess=不利先触, opt=有利先触) 各跑, 报区间.
@@ -37,7 +41,7 @@ sys.path.insert(0, str(REPO))
 import yaml  # noqa: E402
 
 from app.utils.timezone import ET, to_et  # noqa: E402
-from app.playbook.pipeline import (  # noqa: E402
+from app.playbook.exit_engine import (  # noqa: E402
     _compute_dynamic_effective_sl,
     _get_factor_exit_config,
 )
@@ -120,7 +124,8 @@ def load_trades(since: str, until: str | None) -> list[dict]:
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     sql = ("SELECT id, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
-           "quantity, realized_pnl, exit_reason, mfe_pct, mae_pct, config_version, metadata_json "
+           "quantity, realized_pnl, exit_reason, mfe_pct, mae_pct, config_version, "
+           "decision_id, metadata_json "
            "FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_time IS NOT NULL "
            "AND entry_price > 0 AND quantity > 0 ORDER BY entry_time")
     out = []
@@ -146,6 +151,9 @@ def load_trades(since: str, until: str | None) -> list[dict]:
             "qty": float(r["quantity"]), "live_pnl": float(r["realized_pnl"] or 0),
             "live_reason": r["exit_reason"] or "", "live_mfe": float(r["mfe_pct"] or 0),
             "config_version": r["config_version"] or "",
+            # 重放器 DEAD_SIGNAL 的 Phase0 reentry 呼吸窗判据 (decision_id 前缀),
+            #   全窗 19 笔 reentry ⇒ 不带上就会把 120min 窗误算成 60min 窗。
+            "decision_id": r["decision_id"] or "",
             "initial_sl": float(meta.get("stop_loss") or 0),
             "take_profit": float(meta.get("take_profit") or 0),
             "conditions": meta.get("conditions") or [],

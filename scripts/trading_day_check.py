@@ -30,6 +30,23 @@
 两条 intraday 脚本已同批改为**按 stdout 判定**(语义更严格: 子进程崩溃/超时时 fail-open
   照报而非静默), 与本文件新的 exit code 语义在正向路径上结论一致。
 
+stdout 洁净度 (2026-09-07 追加修正, DEB-20260907 §8.2 #7)
+--------------------------------------------------------
+`is_trading_day()` 的权威层会连 Futu OpenD, 而 futu SDK 的 `FTLog` 单例在**首次构造时**
+把 console handler 绑到当时的 `sys.stdout` (`futu/common/ft_logger.py:102`
+`logging.StreamHandler(sys.stdout)`), 于是 `_init_connect_sync` / `on_disconnect` 两行
+连接日志混进本脚本 stdout ⇒ 按 stdout 逐字比对的消费方读到的是三行噪声而不是一个 token
+(`tests/test_trading_day_check_contract.py::test_stdout_token_and_exit_code_agree` 因此红)。
+治根 = **把 SDK 日志引到 stderr, 而不是放宽测试**:
+  ① 计算判定期间把 `sys.stdout` 指向 `sys.stderr` ⇒ 此后构造的 handler 天然绑 stderr;
+  ② 再把已绑到真 stdout 的 FT*Log handler 逐个改流 (防 SDK 早于本函数构造单例);
+  ③ 最后只在**入口处取得的那个真 stdout** 上打那一个 token (不做模块级快照, 否则
+     会绕过调用方的 `redirect_stdout` 替身)。
+`on_disconnect` 是异步/延迟发出的 (实测落在 token 之后), 但 handler 绑的是 stderr **对象**,
+故 restore `sys.stdout` 之后它仍然走 stderr — 这也是不能只靠"临时 swap"的原因。
+token 逐字与 exit code 语义均**不变** (他批 `bace63a6` 的字节形态纪律仍然成立):
+改变的只有"噪声去哪"。
+
 判定真源 (2026-09-07 同批修正)
 ------------------------------
 旧实现直接读 `app.utils.holiday_calendar.US_HOLIDAYS` **常量**做集合判断, 绕过了同模块
@@ -81,6 +98,28 @@ def _is_trading(market: str) -> bool:
         return True
 
 
+def _repoint_sdk_log_handlers(real_stdout) -> None:
+    """把 futu SDK 的 FT*Log console handler 从真 stdout 改流到 stderr。
+
+    handler 在**构造那一刻**绑定 stream 对象, 故仅靠临时替换 `sys.stdout` 只能覆盖
+    "构造发生在替换期间"的情形; 若单例已被更早的 import 构造出来, 就必须显式改流。
+    `real_stdout` 由 main() 在**入口时**取 (不是模块级常量) — 模块级快照会把 token
+    打到进程原始 stdout 上, 绕过调用方的 `contextlib.redirect_stdout` 替身, 消费方
+    (含本仓契约测试) 就会读到空串。
+    改流失败**必须留痕**(R5 纪律 / except:pass 棘轮): 否则"stdout 干净"与"治理根本没跑"
+    不可区分。判定本身绝不能因日志治理而失败 ⇒ 只 warn 到 stderr, 不抛。
+    """
+    import logging
+    for name in ("FTConsoleLog", "FTFileLog", "FT"):
+        for h in list(logging.getLogger(name).handlers):
+            try:
+                if getattr(h, "stream", None) in (real_stdout, sys.__stdout__):
+                    h.setStream(sys.stderr)
+            except Exception as e:
+                print(f"[trading_day_check] SDK 日志改流失败 logger={name} "
+                      f"{type(e).__name__}: {e}", file=sys.stderr)
+
+
 def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="US trading day check")
@@ -88,10 +127,18 @@ def main() -> int:
     args = parser.parse_args()
 
     market = (args.market or "US").upper()
+    real_stdout = sys.stdout             # 入口时的真 stdout (cron 管道 / 测试替身)
+    # 判定期间 stdout 让位给 stderr: 此后 futu SDK 构造的 console handler 绑的就是 stderr
+    sys.stdout = sys.stderr
     try:
-        is_trading = _is_trading(market)
-    except Exception:
-        is_trading = True                # 兜底 fail-open (与上方 except 同口径)
+        _repoint_sdk_log_handlers(real_stdout)   # 覆盖"单例早于本函数已构造"的情形
+        try:
+            is_trading = _is_trading(market)
+        except Exception:
+            is_trading = True            # 兜底 fail-open (与上方 except 同口径)
+    finally:
+        sys.stdout = real_stdout
+        _repoint_sdk_log_handlers(real_stdout)   # 覆盖"判定过程中才构造单例"的情形
 
     print("TRADING_DAY" if is_trading else "NON_TRADING_DAY")
     return 0 if is_trading else 1

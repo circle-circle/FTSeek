@@ -103,11 +103,13 @@ def _mk_replay_env(tmp_path, monkeypatch, shadow_rows, n_instr=2):
         id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, direction TEXT,
         entry_price REAL, stop_loss REAL, take_profit REAL, position_size INTEGER,
         decision_id TEXT, raw_instruction_json TEXT)""")
+    # v2 (2026-09-07) 双臂同尺需读 exit_time / metadata_json (对齐生产真表列) —
+    # 缺列会让 build_rows 的 SELECT 直接 OperationalError, 影子口径三例集体假失败。
     conn.execute("""CREATE TABLE trade_records (
         id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, direction TEXT,
-        entry_time TEXT, entry_price REAL, exit_price REAL, quantity INTEGER,
-        pnl_net REAL, pnl_pct REAL, exit_reason TEXT, source_type TEXT,
-        decision_id TEXT, created_at TEXT)""")
+        entry_time TEXT, exit_time TEXT, entry_price REAL, exit_price REAL,
+        quantity INTEGER, pnl_net REAL, pnl_pct REAL, exit_reason TEXT,
+        source_type TEXT, decision_id TEXT, metadata_json TEXT, created_at TEXT)""")
     for i in range(n_instr):
         conn.execute(
             "INSERT INTO playbook_instructions VALUES (?,?,?,?,?,?,?,?,?,?)",
