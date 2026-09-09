@@ -34,8 +34,13 @@ def test_no_baseline_skips_accounting(tmp_path, monkeypatch):
     assert c.is_trading_allowed()
 
 
-def test_daily_drawdown_limit():
+def test_daily_drawdown_limit(tmp_path, monkeypatch):
     """亏损累计到 4% (>3%) 触发日限熔断"""
+    # 2026-09-10 修 (纪律12 输出隔离): __new__ 绕过了 __init__ 的 _load_state,
+    # 但 record_trade_pnl 末尾 _save_state 仍写模块级 _DB_PATH → 每次 pytest
+    # 向生产 data/drawdown_state.db 写测试指纹行 (100000/4000/DAILY_DRAWDOWN),
+    # 实测污染 8/23-9/9 连续 16 行, 重启加载后成假熔断。必须隔离输出路径。
+    monkeypatch.setattr(drawdown_control, "_DB_PATH", str(tmp_path / "dd_state.db"))
     c = DrawdownController.__new__(DrawdownController)  # 绕过 DB 初始化
     c.max_daily = 0.03
     c.baseline = c.current_assets = c.daily_start_assets = 100_000.0

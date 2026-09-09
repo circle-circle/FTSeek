@@ -112,11 +112,23 @@ class DrawdownController:
             if row:
                 self.daily_start_assets = float(row[0])
                 self.current_daily_dd_abs = float(row[1])
-                self.block_reason = row[2] if row[2] else None
                 if float(row[3]) > 0:
                     self.baseline = float(row[3])
                 if float(row[4]) > 0:
                     self.current_assets = float(row[4])
+                # 2026-09-10 修 (陈旧block照抄): 恢复后按当前配置重算, 不照抄持久化的
+                # block_reason 字符串。根因: tests test_daily_drawdown_limit 曾绕过 DB
+                # 隔离, 每次 pytest 向生产库 INSERT OR REPLACE 测试指纹行 (100000/4000/
+                # DAILY_DRAWDOWN, 实测 8/23-9/9 连续16行全同指纹) → _load_state 照抄
+                # 后重启即加载假熔断 (main 通道 HardStop + dashboard 手动单被拦,
+                # 22:11 重启日志实证)。重算=源头自愈: 污染行 4%<sim上限5% → block 清除;
+                # 真实超限行重算后仍拦 (拦截方向不降级)。
+                if self.daily_start_assets > 0:
+                    self.current_daily_dd = (
+                        self.current_daily_dd_abs / self.daily_start_assets
+                    )
+                self._check_limits()
+                self._save_state()
                 logger.info(
                     f"[回撤持久化] 恢复今日状态: daily_start=${self.daily_start_assets:,.0f} "
                     f"dd_abs=${self.current_daily_dd_abs:,.0f} block={self.block_reason}"
