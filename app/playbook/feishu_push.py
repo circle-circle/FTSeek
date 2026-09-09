@@ -326,11 +326,14 @@ class PlaybookPusher:
         #   yaml 真值 (unified_config.yaml playbook.execution_parameters)。0.15 是
         #   2026-08 前 yaml 旧值的过期拷贝; 生产读到 yaml 时无行为变化, 修的是
         #   yaml 缺键降级路径的阈值漂移 (与第13轮前批 UE 默认值对齐同款病)。
+        # 2026-09-09 (行动项C): 两处 0.4 兜底收敛 BE_FALLBACK_FEE_CUSHION_PCT — 旧值与
+        #   slip 0.2 叠加=0.6>be0.4 破几何; 单一真源防再漂移。
+        from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
         try:
             from app.playbook.config import get_playbook_config
-            _cushion_pct = float(get_playbook_config().get("breakeven_fee_cushion_pct", 0.4) or 0.4)
+            _cushion_pct = float(get_playbook_config().get("breakeven_fee_cushion_pct", _BE_FEE_FB) or _BE_FEE_FB)
         except Exception:
-            _cushion_pct = 0.4
+            _cushion_pct = _BE_FEE_FB
         _trapped = []
         for i in instructions:
             if i.get("direction") == "SKIP" or not i.get("executed"):

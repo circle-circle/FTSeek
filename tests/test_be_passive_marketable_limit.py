@@ -106,4 +106,4 @@ def test_new_exit_version_registered_in_freeze_baseline():
     v = get_playbook_config().get_exit_config_version()
     note = bl.get("exit_versions", {}).get(v, "")
     assert note, f"当前退出参数版本 {v} 未登记冻结基线豁免清单 (KR2 周检将告警)"
-    assert "DEB-20260903" in note, "豁免说明必须携带 DEB 裁决依据"
+    assert "DEB-20260909" in note, "豁免说明必须携带 DEB 裁决依据"

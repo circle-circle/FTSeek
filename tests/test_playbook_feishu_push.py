@@ -125,11 +125,13 @@ class TestEveningPush:
 
 
 class TestTrappedEntryCushionDefault:
-    """TZ-3 (DEB-20260830-timezone-duplication-audit): cushion 三处兜底 0.15→0.4 对齐 yaml 真值。
+    """TZ-3 (DEB-20260830-timezone-duplication-audit): cushion 兜底必须对齐 yaml 真值。
 
-    病根: get 默认 / or 兜底 / except 兜底三处 0.15 是 2026-08 前 yaml 旧值的过期拷贝,
-    yaml 真值已 0.4 (playbook.execution_parameters.breakeven_fee_cushion_pct) → 降级路径
-    阈值漂移。判别式: notional $5000 的单, MFE=$15 — 旧线 0.15%=$7.5 放行, 新线 0.4%=$20 拦截。
+    病根: get 默认 / or 兜底 / except 兜底是 yaml 旧值的过期拷贝 → 降级路径阈值漂移。
+    2026-09-09 (DEB-20260909 行动项C, 用户裁"同意"): 真值 0.4→0.15 并收敛共享常量
+    BE_FALLBACK_FEE_CUSHION_PCT (0.4+slip0.2>be0.4 破几何); 对齐纪律不变。
+    判别式: notional $5000 的单 — 新线 0.15%=$7.5: MFE=$5 拦截, MFE=$15 放行
+    ($15<$20 旧线, 同时钉死"回退到 0.4"变异)。
     """
 
     @staticmethod
@@ -141,34 +143,35 @@ class TestTrappedEntryCushionDefault:
             "pnl": -50.0, "horizon": "short",
         }
 
-    def test_missing_key_falls_back_to_yaml_truth_04(self, pusher):
-        """yaml 缺键/配置读成空 → 阈值 0.4, MFE=$15 被拦截 (旧默认 0.15 时放行 → 钉死旧值)"""
+    def test_missing_key_falls_back_to_yaml_truth(self, pusher):
+        """yaml 缺键/配置读成空 → 阈值 0.15 (共享常量), MFE=$5(<$7.5线) 被拦截"""
         with patch("app.playbook.config.get_playbook_config", return_value={}):
-            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=15.0)])
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=5.0)])
         assert "入场即套牢" in msg
-        assert "阈值 0.40%" in msg
+        assert "阈值 0.15%" in msg
 
-    def test_config_exception_falls_back_to_04(self, pusher):
-        """get_playbook_config 抛异常 → except 兜底同样 0.4 (三处默认一致)"""
+    def test_config_exception_falls_back_to_constant(self, pusher):
+        """get_playbook_config 抛异常 → except 兜底同样 0.15 (三处默认一致)"""
         with patch("app.playbook.config.get_playbook_config", side_effect=RuntimeError("boom")):
-            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=15.0)])
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=5.0)])
         assert "入场即套牢" in msg
-        assert "阈值 0.40%" in msg
+        assert "阈值 0.15%" in msg
 
     def test_above_floor_not_trapped(self, pusher):
-        """MFE=$25 > 新线 $20 → 不报套牢 (防'永远拦截'反向变异)"""
+        """MFE=$15 > 新线 $7.5 → 不报套牢 (防'永远拦截'反向变异; $15<$20旧线兼防回退0.4)"""
         with patch("app.playbook.config.get_playbook_config", return_value={}):
-            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=25.0)])
+            msg = pusher._format_evening_message("2026-08-30", [self._closed_inst(mfe=15.0)])
         assert "入场即套牢" not in msg
 
-    def test_yaml_truth_unchanged_04(self):
-        """生产口径自证: 活配置读到 0.4 == yaml 真值 → 生产/降级同阈值 (零行为变化的前提)"""
-        from app.playbook.config import get_playbook_config
+    def test_yaml_truth_equals_shared_constant(self):
+        """生产口径自证: 活配置读到 0.15 == yaml 真值 == 共享常量 → 生产/降级同阈值"""
+        from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT, get_playbook_config
         import yaml as _yaml
         from pathlib import Path as _Path
         raw = _yaml.safe_load(open(_Path(__file__).resolve().parent.parent / "config" / "unified_config.yaml"))
-        assert raw["playbook"]["execution_parameters"]["breakeven_fee_cushion_pct"] == 0.4
-        assert get_playbook_config().get("breakeven_fee_cushion_pct", 0.4) == 0.4
+        assert raw["playbook"]["execution_parameters"]["breakeven_fee_cushion_pct"] == 0.15
+        assert get_playbook_config().get("breakeven_fee_cushion_pct") == 0.15
+        assert BE_FALLBACK_FEE_CUSHION_PCT == 0.15
 
 
 class TestHelpers:

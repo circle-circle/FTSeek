@@ -172,11 +172,14 @@ def record_exit_shadow_poll(meta: Dict[str, Any], *, direction: str, entry_price
         # P1-1 (2026-07-20): 读 fee_cushion 对齐实盘保本线数学
         #   修正: 用与 pipeline 相同的 get_playbook_config 路径 (config_container.get_dotted
         #   实测返回 0.0 默认值, 读不到 playbook.breakeven_fee_cushion_pct=0.15).
+        # 2026-09-09 (行动项C): 两处 0.0 兜底收敛 BE_FALLBACK_FEE_CUSHION_PCT —
+        #   旧值与实盘回退口径分叉 (影子 0.0 vs 实盘 yaml 0.4), 同一失效场景两套数学。
+        from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_shadow
-            _fee_cushion = float(_get_pb_cfg_shadow().get("breakeven_fee_cushion_pct", 0.0))
+            _fee_cushion = float(_get_pb_cfg_shadow().get("breakeven_fee_cushion_pct", _BE_FEE_FB))
         except Exception:
-            _fee_cushion = 0.0
+            _fee_cushion = _BE_FEE_FB
         for name, p in EXIT_VARIANTS.items():
             if name in sh:  # 只记首次触发, 已触发的不覆盖
                 continue

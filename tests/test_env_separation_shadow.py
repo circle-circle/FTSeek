@@ -242,6 +242,14 @@ def test_live_db_legacy_pnl_rows_still_fall_back_to_realized_pnl():
     realized_pnl / pnl_net 完全相同、trade_mode='live' 的源行 (= 逐字搬运的证据)。
     找不到 ⇒ 有人真改写了历史数值 ⇒ 转红 (证伪力比原判据更强: 原判据只挡"写非 NULL",
     新判据还要求非 NULL 的值与源库逐字一致)。
+
+    RFC-080 尾声 (2026-09-09 用户裁"模拟交易和实盘交易不要混为一谈, 包括历史数据"):
+    demix 清理把 sim 侧孪生行**有意删除** (demix2 经 broker REAL 核验逐行分类:
+    PDD#1039 删除成立, 权威副本 live#903; TTE 行系一阶段误删, 已由 demix2 从备份
+    恢复回 sim 为 #1469 — id 不搬运, 目标库自增),
+    逐字源行的留存处从 sim 现库转移到 data/backups/*-rfc080-demix*/ 备份链
+    (demix 脚本 --apply 前强制备份)。故判据扩一档: sim 现库查不到时备份链里找到
+    逐字源行同样成立 (溯源语义不变, 变的是溯源位置); 两处都找不到 ⇒ 转红。
     """
     conn = sqlite3.connect(f"file:{ess.LIVE_DB}?mode=ro", uri=True)
     try:
@@ -259,19 +267,30 @@ def test_live_db_legacy_pnl_rows_still_fall_back_to_realized_pnl():
         f"非实盘行被写入 pnl_net: {dirty} — RFC-078 迁移只搬 trade_mode='live'")
     if not ess.SIM_DB.exists():
         pytest.skip("sim 库不在, 无法核验例外行的逐字来源")
-    sconn = sqlite3.connect(f"file:{ess.SIM_DB}?mode=ro", uri=True)
-    try:
-        for symbol, entry_time, _mode, realized_pnl, pnl_net in dirty:
-            n = sconn.execute(
+
+    def _has_verbatim_source(db_path, symbol, entry_time, realized_pnl, pnl_net) -> bool:
+        c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            return c.execute(
                 "SELECT COUNT(*) FROM trade_records WHERE trade_mode='live' "
                 "AND symbol=? AND entry_time=? AND realized_pnl IS ? AND pnl_net IS ?",
-                (symbol, entry_time, realized_pnl, pnl_net)).fetchone()[0]
-            assert n > 0, (
-                f"live 库历史行 {symbol} {entry_time} 的 pnl_net={pnl_net} 在 sim 库找不到"
-                f"逐字源行 (realized_pnl={realized_pnl}) ⇒ 不是 RFC-078 迁移, 而是改写了"
-                f"既有历史数值 (COALESCE(pnl_net, realized_pnl) 的回落语义已被破坏)")
-    finally:
-        sconn.close()
+                (symbol, entry_time, realized_pnl, pnl_net)).fetchone()[0] > 0
+        finally:
+            c.close()
+
+    backups = sorted(Path(ess.SIM_DB).parent.glob(
+        "backups/*-rfc080-demix*/ftseek_us.db"))
+    for symbol, entry_time, _mode, realized_pnl, pnl_net in dirty:
+        if _has_verbatim_source(ess.SIM_DB, symbol, entry_time, realized_pnl, pnl_net):
+            continue
+        if any(_has_verbatim_source(b, symbol, entry_time, realized_pnl, pnl_net)
+               for b in backups):
+            continue  # RFC-080 demix 有意删除 sim 孪生, 逐字源行在备份链 (已核实: PDD#1039)
+        raise AssertionError(
+            f"live 库历史行 {symbol} {entry_time} 的 pnl_net={pnl_net} 在 sim 现库与"
+            f" RFC-080 demix 备份链都找不到逐字源行 (realized_pnl={realized_pnl})"
+            f" ⇒ 不是 RFC-078 迁移/RFC-080 清理, 而是改写了既有历史数值"
+            f" (COALESCE(pnl_net, realized_pnl) 的回落语义已被破坏)")
 
 
 # ══════════════════════════════════════════════════════════════════

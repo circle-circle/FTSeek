@@ -51,6 +51,21 @@ ALLOWLIST = {
         "**必须**同时只读源库+读写目标库 (双载体搬运), 改用 mode-aware 解析器只能拿到"
         "一个载体、无法完成迁移; 且本脚本正是为了终结「该库零写入=死库」这一状态 —— "
         "迁移+看板路由切换后 live 库重新成为实盘账本的活载体。默认 dry-run, --apply 前强制备份。",
+    # 2026-09-09 (RFC-080 demix): 以下三处同样是**先被本门抓红、后逐个人工核实补登记**
+    # (与 env_separation_shadow / migrate_live_records_to_live_db 同例), 记档以证
+    # 该门证伪力 —— 三者全是双载体比对/搬运工具, 非消费方:
+    "scripts/demix_sim_live_records.py":
+        "RFC-080 demix 一阶段清理器: 同时只读两库普查互污行 (sim 库 trade_mode='live' "
+        "真钱行 / live 库模拟行), 字段级验证孪生后删错放副本。**必须**双载体 (比对而非"
+        "消费), mode-aware 解析器只给一个载体无法做差集。默认 dry-run, --apply 前强制备份。",
+    "scripts/demix2_broker_verified.py":
+        "RFC-080 demix 二阶段定向修正器: 以 broker REAL 成交史 (唯一权威) 核验后对两库"
+        "做恢复/移动/删除 (TTE 恢复回 sim, AVGO 移回 sim, MSFT/BULL 删 live 重复行)。"
+        "与 migrate_live_records_to_live_db 同类双载体搬运。默认 dry-run, --apply 前备份。",
+    "scripts/daily_invariant_check.py":
+        "W3 防复发守卫: 只读统计两库互污行数 (sim 库 live 行 / live 库 sim 行), "
+        "比对而非消费, 与 data_health_check 同类。单库翻转日后 sim 侧检测自动空转、"
+        "live 侧继续有效, 改用 mode-aware 解析器反而丢掉守卫意义。",
 }
 
 

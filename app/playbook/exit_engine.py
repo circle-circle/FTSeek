@@ -379,7 +379,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
 
     # ── effective SL (factor-specific breakeven ratchet + trailing stop) ──
     # Phase 3 (2026-06-30): 按因子类型动态调整利润锁定/跟踪止损
-    _fee_cushion_pct = float(_pb_cfg.get("breakeven_fee_cushion_pct", 0.0))
+    # 2026-09-09 (行动项C): 回退默认值收敛 BE_FALLBACK_FEE_CUSHION_PCT (原 0.0,
+    #   与 yaml 旧值 0.4 叠加 slip 0.2 = 0.6 > be 0.4 破几何同族; 单一真源防再漂移)。
+    from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
+    _fee_cushion_pct = float(_pb_cfg.get("breakeven_fee_cushion_pct", _BE_FEE_FB))
     # 2026-07-30 (DEB-fee-net-pnl D4, 用户裁"直接实现"): 费用感知保本线 — 拍的 0.15%
     #   换真实往返费用/名义额 (真成本由 $/股固定佣金主导: 小仓 cushion 低估→假保本净亏,
     #   大仓高估→锁利线虚高)。同一 _fee_cushion_pct 变量下游三处 (ratchet/退出归类/

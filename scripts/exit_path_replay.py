@@ -142,12 +142,13 @@ def load_cfg(refresh: bool = False) -> Dict[str, Any]:
     if _CFG_CACHE is not None and not refresh:
         return _CFG_CACHE
     from app.playbook.config import get_playbook_config
+    from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
     from app.playbook.exit_engine import overnight_master_switch_on
 
     pb = get_playbook_config()
     cfg = {
         "factor_exit_rules": pb.get_horizon_top("factor_exit_rules", {}) or {},
-        "breakeven_fee_cushion_pct": float(pb.get("breakeven_fee_cushion_pct", 0.4)),
+        "breakeven_fee_cushion_pct": float(pb.get("breakeven_fee_cushion_pct", _BE_FEE_FB)),
         "breakeven_slip_cushion_pct": float(pb.get("breakeven_slip_cushion_pct", 0.0)),
         "breakeven_fee_aware_enabled": bool(pb.get("breakeven_fee_aware_enabled", False)),
         "cooldown_sl_pct": float(pb.get("cooldown_sl_pct", 4.0)),

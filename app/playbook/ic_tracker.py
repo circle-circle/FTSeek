@@ -192,9 +192,10 @@ def _sim_mechanism_adjusted_return(
     def profit(px):
         return sign * (px - entry_price) / entry_price * 100.0
 
+    from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
     be_pct = float(exit_cfg.get("breakeven_at_pct", 0.4))
     dd_pct = float(exit_cfg.get("drawdown_from_peak_pct", 0.8))
-    fee_pad = float(exit_cfg.get("breakeven_fee_cushion_pct", 0.4)) + \
+    fee_pad = float(exit_cfg.get("breakeven_fee_cushion_pct", _BE_FEE_FB)) + \
               float(exit_cfg.get("breakeven_slip_cushion_pct", 0.2))
     po_thresh = float(exit_cfg.get("profit_override_threshold_pct", 1.5))
     po_dd = float(exit_cfg.get("profit_override_drawdown_pct", 0.5))
@@ -374,13 +375,14 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         #   参数读 config 实值 (与 _compute_dynamic_effective_sl 同源), 日K OHLC 回放.
         try:
             from app.playbook.config import get_playbook_config as _gpc_adj
+            from app.playbook.config import BE_FALLBACK_FEE_CUSHION_PCT as _BE_FEE_FB
             _pb_adj = _gpc_adj()
             _exit_cfg = {
                 "breakeven_at_pct": float(_pb_adj.get("breakeven_at_pct", 0.4)),
                 "drawdown_from_peak_pct": float(_pb_adj.get("drawdown_from_peak_pct", 0.8)),
                 "trailing_enabled": bool(_pb_adj.get("trailing_enabled", True)),
                 "trailing_step_pct": float(_pb_adj.get("trailing_step_pct", 2.0)),
-                "breakeven_fee_cushion_pct": float(_pb_adj.get("breakeven_fee_cushion_pct", 0.4)),
+                "breakeven_fee_cushion_pct": float(_pb_adj.get("breakeven_fee_cushion_pct", _BE_FEE_FB)),
                 "breakeven_slip_cushion_pct": float(_pb_adj.get("breakeven_slip_cushion_pct", 0.2)),
                 "profit_override_threshold_pct": float(_pb_adj.get("profit_override_threshold_pct", 1.5)),
                 "profit_override_drawdown_pct": float(_pb_adj.get("profit_override_drawdown_pct", 0.5)),

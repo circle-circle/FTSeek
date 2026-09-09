@@ -20,6 +20,15 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# BE 保本垫几何安全回退值 (DEB-20260909-exit-params 行动项C, 2026-09-09 用户裁"同意"):
+#   fee-aware 失效/配置缺键时保本费用垫的唯一回退真源。几何不变式:
+#   BE_FALLBACK_FEE_CUSHION_PCT + breakeven_slip_cushion_pct < breakeven_at_pct(0.4),
+#   否则武装瞬间 SL>现价 = 变相硬 TP (武装即触发)。0.15 ≈ fee-aware 实弹均值 0.147%。
+#   消费方: exit_engine / ic_tracker(×2) / feishu_push / exit_shadow / scripts/exit_path_replay。
+#   豁免: pipeline.py PATIENT_EXIT_FILL 腿保持 0 回退 (BE_FALLBACK_EXEMPT) — 在仓旧仓
+#   meta 无 _be_cushion_fee_aware 标记, 改其回退=变更在仓实时行为。
+BE_FALLBACK_FEE_CUSHION_PCT = 0.15
+
 
 class PlaybookConfig:
     """Playbook 配置包装器, 提供点号访问和默认值."""

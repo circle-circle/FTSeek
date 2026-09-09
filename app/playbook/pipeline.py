@@ -7018,6 +7018,9 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
         # 8/17 净口径: fill 腿"站回保本"必须是净保本线 (entry×(1±费率)), 不是入场价 —
         #   正好在入场价成交 = 毛利0, 白交一趟往返费 (8月已有 PATIENT_EXIT_FILL 实弹).
         #   cushion 取自 meta._be_cushion_fee_aware (arm 轮规则链算出并写回); 算不出→0=原行为.
+        #   BE_FALLBACK_EXEMPT (DEB-20260909-exit-params 行动项C): 本腿回退有意保持 0,
+        #   不收敛 BE_FALLBACK_FEE_CUSHION_PCT — 在仓旧仓 meta 无该标记,
+        #   改回退=变更在仓实时行为, 超出"零交易行为变更"裁决范围.
         try:
             _fill_cushion = float((meta or {}).get("_be_cushion_fee_aware", 0) or 0)
         except Exception:

@@ -1247,7 +1247,13 @@ playbook:
     #   翻全源启用判据: reentry+UE 组 n≥30 chase + 日聚类 t + DA 对比组方向一致。
     volume_gate_vwap_relative: true
     volume_gate_vwap_relative_da_enforce: false   # DA 源: false=走线性(对比组), true=走p50
-    breakeven_fee_cushion_pct: 0.4
+    # 2026-09-09 (DEB-20260909-exit-params 行动项C, 用户裁"同意"): 0.4→0.15.
+    #   本键=fee-aware 失效时的回退值 (实弹 156/156 走 fee-aware, 生产路径不读本键);
+    #   旧值 0.4 + slip 0.2 = 0.6 > breakeven_at_pct(0.4) → 回退路径武装瞬间 SL>现价
+    #   = 变相硬 TP (破几何潜伏缺陷, 一次 fee-aware 故障即激活)。0.15 ≈ fee-aware 实弹
+    #   均值 0.147%, 回退垫 0.15+0.2=0.35 < 0.4 几何安全。注意: 本键在 config 版本哈希内,
+    #   值变更 → KR2 判分开新窗口 (不改变实现 PnL, 窗口分裂属保守可接受)。
+    breakeven_fee_cushion_pct: 0.15
     breakeven_fee_aware_enabled: true
     # 2026-08-20 (方案A, 用户裁"同意先方案A"): 保本触发线滑点垫 + 限价超时缩短.
     #   实弹依据 8/20: 6笔BE出场 3:3 — 限价成交3笔全净正(+4.00) / 8s超时降级市价3笔全净负(-40.36),
