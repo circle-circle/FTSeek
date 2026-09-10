@@ -1207,8 +1207,33 @@ W456 真实基线慢测(1)。前 8 条的断言形态都是"干净库 ⇒ `rc==0
 - `pre-commit` 的三关已手工预演通过 (22 个 `.py` 过 `python3 -m py_compile` / `scripts/check_undefined_names.py`
   exit 0 / yaml `^\+.*enabled.*true` 0 命中) ⇒ 本次**无需** `--no-verify`; 入栈面由 31 → **32** 路径 (加 ADR)。
 
+**隔离副本实测 (提交后): 73 passed / 1 skipped / 1 failed — 1 红已定性, 非 HEAD 残缺**
+- 副本 = `git worktree add --detach /tmp/hc-1271a0a0 HEAD`, 跑完 `git worktree remove --force` 清理
+  (**全程不碰主工作区、不用 `git stash`/`checkout`** — 军规)。注: `git worktree list` 里另有一个
+  `/tmp/wt-be57742a` 是**他人**的副本, 未动。
+- HEAD 自洽面全绿: `scripts/error_alert.py` 在位、旧 `.sh` 只在 `scripts/archive/`、
+  `app/observability/audit_logger.py` 已退役; 本批 7 个测试文件在副本里 **73 passed / 1 skipped**
+  (含 `test_no_archive_imports` 的**双向**腐烂门 ⇒ PROSE_ALLOWLIST 4 个键在 HEAD 仍全部命中, 未腐烂)。
+- 唯一 1 红 = `test_w456_log_hygiene_ratchet.py::test_real_repo_within_registered_baseline`, 报
+  `W4_debug_swallow_grew: main.py 3→4 (+1, 例 L113 logger.debug(f'[ConfigIntegrity] 校验跳过: {e}'))`。
+- **定性 (实测非推断)**: 把 8 份 `data/*_baseline.json` 拷进副本后**仍红** ⇒ 排除"基线缺席"这一环境解释。
+  真因: §10.5④ 把 `main.py` 的 W4 基线由 4 收紧到 **3**, 而那个 3 是**按工作区状态**校的 ——
+  工作区 `main.py` 含对方未提交批删掉的一处 `logger.debug("AUTO_TRADE_ACCOUNT 读取失败, 回退环境变量: %s", _e)`
+  (`git diff -- main.py` 实证) ⇒ HEAD 的 `main.py` 仍是 4 处。告警正文举的 `L113 [ConfigIntegrity]` 只是
+  该文件 4 处里的第一例, **不是**多出来的那一处 (多出来的那处已被对方删除、但删除未入库)。
+- **处置: 不放宽基线** (3→4 是"只降不升"纪律的反向操作, 且 3 才是目标态), 登记为遗留:
+  ①对方批 `main.py` 入库后 HEAD 自然一致; ②若对方批最终不落地, 则按告警正文的处置建议**真修代码**
+  (`main.py` 那处 debug 改 `logger.warning(..., exc_info=True)` 或删掉), 让代码回到 3, 而不是把基线抬到 4。
+- **顺带把 §9.1 待裁项「6 份判据基线未入库」的具体失败形态钉住了** (此前只是"未入库"三个字):
+  基线 gitignored ⇒ 任何 fresh clone / 隔离副本**首跑**会走 `baseline_established` 去写 `data/`,
+  而本仓有"测试写生产数据"守卫 (`_PRODUCTION_DATA_SEAMS`) 会拦下 ⇒ 变成 `W4/W5/W6_detector_error`
+  三条红 (副本首跑实测正是这个形态, 补齐基线后才收敛到上面那 1 红)。入库与否属判据变更, 仍待用户裁, 不擅动。
+
 **遗留登记 (不代改)**
 - `ops/hermes/ftseek_us_restart_20260829_hotfix.sh` 仍引用已搬家的 `scripts/error_alert.sh` ⇒ 若有人执行该
   一次性脚本会失败; 属带日期历史工件, 由运维面裁"改写 / 加注释 / 一并归档"。
 - §9.1③ W456 非密封耦合 (8 个无关不变量测试各付 ~15s) 仍待裁; 修法甲需动 2 个对方在途文件 ⇒ 继续等对方批入库。
 - `main.py` / `app/core/position_sync.py` 的共写切分需两批同人同轮提交 (或对方先入库), 本批不擅动。
+- **W4 基线对 `main.py` 记 3 而 HEAD 实为 4** (差的那 1 处属对方未提交批的删除) ⇒ 在对方批入库前,
+  任何 HEAD 隔离副本 / fresh clone 上 `test_real_repo_within_registered_baseline` 会红且信息指向 `main.py`。
+  主工作区与夜间 cron 不受影响 (两处都是合并树, 实测绿)。处置见上「隔离副本实测」, **不放宽基线**。
