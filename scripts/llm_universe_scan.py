@@ -1763,7 +1763,7 @@ def _scan_fail_alert(reason: str, midday: bool = False) -> None:
         print(f"  [warn] scan 失败告警发送失败 (不阻断): {e}")
 
 
-def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
+def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False) -> int:
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
         return 0
@@ -1866,7 +1866,10 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
     #   (universe_expansion:{date}:{symbol}), UPSERT 幂等. 失败静默不阻断扫描.
     #   §十三: 午间模式跳过 — decision_id 键与早间 scan/inject 相同, UPSERT 会覆盖
     #   早间快照 (scan_price/factors 被午间值污染)。午间样本由独立 jsonl + 评估脚本自评分。
-    if not midday:
+    #   da_feed 早跑 (2026-09-09) 同理跳过: 它的唯一职责是给 DA 供新鲜 SHORT 候选,
+    #   IC 快照的唯一写手仍是 21:10 的 premarket 跑 — 否则 19:40 的薄盘前数据会先占位,
+    #   若 21:10 跑失败, 被污染的快照就成了当日 canonical。
+    if not midday and not da_feed:
         try:
             from app.analysis.signal_ic_tracker import record_signal_snapshot as _rec_snap
             _snap_n = 0
@@ -1902,7 +1905,9 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
         "type": "scan",
         "date": _today(),
         "scanned_at": _now_et().isoformat(),
-        "scan_window": "midday" if midday else "premarket",  # §十三: 评估脚本按窗口切片
+        # §十三: 评估脚本按窗口切片; da_feed (2026-09-09) = 19:40 CST 早跑, 只供 DA,
+        #   不进 inject/push/confirm/score (四者均按 premarket 或 today[-1] 取行)。
+        "scan_window": "midday" if midday else ("da_feed" if da_feed else "premarket"),
         "source_type": SOURCE_TYPE,
         "strategy_id": STRATEGY_ID,
         "discovery_source": DISCOVERY_SOURCE,
@@ -1921,7 +1926,12 @@ def cmd_scan(manual_clue: str = "", midday: bool = False) -> int:
                                if _use_v2 else None),
         "surfaced": surfaced,
         "note": ("record-only midday shadow; 不进 inject/DA供料/push, 判据见 DEB §13.3"
-                 if midday else "record-only; 不驱动 live, inject 另需 entry_enabled=true"),
+                 if midday else
+                 ("DA 供料早跑 (19:40 CST/07:40 ET); 写主 jsonl 供 DA _load_ue_short_candidates "
+                  "取 scans[-1]; 不进 inject/push/confirm/score; 回滚=删 crontab 行或 "
+                  "universe_expansion.da_candidate_feed=false"
+                  if da_feed else
+                  "record-only; 不驱动 live, inject 另需 entry_enabled=true")),
     }
     _append_jsonl(_MIDDAY_PATH if midday else _SCAN_PATH, rec)
 
@@ -2389,7 +2399,10 @@ def cmd_inject(force_dry: bool = False) -> int:
 # ── score / report ───────────────────────────────────────────
 def cmd_score() -> int:
     records = _read_jsonl(_SCAN_PATH)
-    scans = [r for r in records if r.get("type") == "scan"]
+    # da_feed 早跑 (2026-09-09) 不入评分: 它只为 DA 供候选, 盘前数据薄, 评它会把同一
+    #   交易日的前瞻收益计两次 (原 todo 按 date 判 scored, 同日两行会双双入选)。
+    scans = [r for r in records if r.get("type") == "scan"
+             and r.get("scan_window", "premarket") == "premarket"]
     scored = {r.get("scan_date") for r in records if r.get("type") == "score"}
     todo = [c for c in scans if c.get("date") not in scored and c.get("surfaced")]
     if not todo:
@@ -2435,7 +2448,8 @@ def cmd_report(days: int = 30) -> int:
         print(f"影子文件为空: {_SCAN_PATH}")
         return 0
     cutoff = (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
-    scans = [r for r in records if r.get("type") == "scan" and r.get("date", "") >= cutoff]
+    scans = [r for r in records if r.get("type") == "scan" and r.get("date", "") >= cutoff
+             and r.get("scan_window", "premarket") == "premarket"]
     scores = [r for r in records if r.get("type") == "score" and r.get("scan_date", "") >= cutoff]
     total = sum(len(c.get("surfaced", [])) for c in scans)
     uniq = {s["symbol"] for c in scans for s in c.get("surfaced", [])}
@@ -3080,6 +3094,9 @@ def main() -> int:
     p_scan.add_argument("--clue", default="", help="人工事件/线索文本 (dry-run 验证推理)")
     p_scan.add_argument("--midday", action="store_true",
                         help="午间影子模式: 独立jsonl, 跳过R5快照, 不进inject/DA供料 (DEB §13)")
+    p_scan.add_argument("--da-feed", action="store_true",
+                        help="DA 供料早跑 (19:40 CST): 写主jsonl(scan_window=da_feed)供 DA 取 scans[-1]; "
+                             "跳过R5快照; 不进 inject/push/confirm/score — 与 --midday 互斥")
     p_inj = sub.add_parser("inject", help="代码出数值→写作战计划 (仅 entry_enabled=true)")
     p_inj.add_argument("--dry-run", action="store_true", help="强制只打印不写盘")
     sub.add_parser("score", help="对已 scan 未评分标的算前瞻收益")
@@ -3102,7 +3119,8 @@ def main() -> int:
 
     try:
         if args.cmd == "scan":
-            return cmd_scan(manual_clue=args.clue, midday=args.midday)
+            return cmd_scan(manual_clue=args.clue, midday=args.midday,
+                            da_feed=getattr(args, "da_feed", False))
         if args.cmd == "inject":
             return cmd_inject(force_dry=args.dry_run)
         if args.cmd == "score":
