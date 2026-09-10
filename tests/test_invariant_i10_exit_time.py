@@ -11,6 +11,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +24,15 @@ _spec = importlib.util.spec_from_file_location(
 )
 dic = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dic)
+
+# 夹具日 + 冻结时钟 (2026-09-10, DEB-20260910-logging-observability §10.7 — 与
+# tests/test_stale_bridge_guard.py 的 I15 日历炸弹同族同批修):
+#   尺子窗口 = now_et()-7d 滑动窗, 而本文件夹具 trade_date 是硬编码常量。2026-09-03 起
+#   夹具行滑出窗口 ⇒ 主循环 (I1/I2/I7/I8/I9) 与 I11~I14 全部看不到该行, `rc == 0` 从
+#   "物理自洽行全过"退化成"根本没扫到"的假绿 (I10 自身查询无窗口过滤仍会红, 所以这层
+#   腐坏静默了 13 天没人发现)。冻结在夹具日次日 ⇒ window_since=夹具日-6d, 恒覆盖。
+_FIXTURE_DATE = "2026-08-27"
+_FROZEN_NOW = datetime(2026, 8, 28, 12, 0)
 
 _COLS = (
     "id INTEGER PRIMARY KEY, symbol TEXT, direction TEXT, source_type TEXT, "
@@ -49,8 +59,8 @@ def _row(db, *, symbol, exit_time, exit_price=11.0, exit_day_pnl=10.0):
         "entry_time, exit_time, entry_price, exit_price, quantity, realized_pnl, "
         "pnl_net, fees_est, pnl_pct, mfe_pct, mae_pct, signal_confidence, "
         "metadata_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (symbol, "LONG", "PLAYBOOK_SIM", "2026-08-27",
-         "2026-08-27T09:40:00-04:00", exit_time, 10.0, exit_price, 10.0,
+        (symbol, "LONG", "PLAYBOOK_SIM", _FIXTURE_DATE,
+         f"{_FIXTURE_DATE}T09:40:00-04:00", exit_time, 10.0, exit_price, 10.0,
          exit_day_pnl, exit_day_pnl - 1.0, 1.0, 10.0, 12.0, 2.0, 0.6, "{}"),
     )
     conn.commit()
@@ -61,8 +71,14 @@ def _run(tmp_path, monkeypatch, db):
     out = tmp_path / "invariant_out.json"
     monkeypatch.setattr(dic, "DB", db)
     monkeypatch.setattr(dic, "OUT", out)
+    monkeypatch.setattr(dic, "now_et", lambda: _FROZEN_NOW)
     rc = dic.main()
-    return rc, json.loads(out.read_text())
+    result = json.loads(out.read_text())
+    # 防空转钉放在 harness 里 (不是逐个用例里) ⇒ 新增用例想忘也忘不了
+    assert result["checked_at"].startswith(_FROZEN_NOW.date().isoformat()), result["checked_at"]
+    assert result["window_since"] <= _FIXTURE_DATE, (
+        f"夹具日 {_FIXTURE_DATE} 滑出窗口 (window_since={result['window_since']}) → 用例空转")
+    return rc, result
 
 
 def test_closed_row_missing_exit_time_is_flagged(tmp_path, monkeypatch):
@@ -90,6 +106,7 @@ def test_clean_db_passes(tmp_path, monkeypatch):
     rc, result = _run(tmp_path, monkeypatch, db)
     assert rc == 0, result["violations"]
     assert "I10_closed_missing_exit_time" not in result["violations"]
+    assert result["sample"] == 1, result  # 该行确实进了主循环 (I1/I2/I7/I8/I9 真跑过)
 
 
 def test_open_row_not_false_positive(tmp_path, monkeypatch):

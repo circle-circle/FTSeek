@@ -102,11 +102,80 @@ def test_push_and_sync_share_ssot(tmp_db, monkeypatch):
     _feed(sub, _push_row("4444444444444444444"))
     # 模拟 sync 路径直接调共享 mapper
     conn = live_ledger._connect()
-    existing = {r[0] for r in conn.execute("SELECT deal_id FROM live_deal_records")}
     res = live_ledger._upsert_deal_row(
-        conn, _push_row("4444444444444444444"), "2026-09-09T00:00:00+00:00", existing)
+        conn, _push_row("4444444444444444444"), "2026-09-09T00:00:00+00:00")
     conn.commit(); conn.close()
     assert res == "updated"
+    assert len(live_ledger.read_all_deals()) == 1
+
+
+# ══════════ 2026-09-10 追加 (DEB-20260910 §10.3-2, 用户裁「继续」) ══════════
+# 病根: inserted/updated 曾由"先读全表 deal_id 快照"判定, 而 US/HK 两条 SDK recv 线程
+# 相隔 ~16ms 各自建快照 ⇒ 双方都在对方 commit 前读到"不存在" ⇒ **都判 inserted** ⇒
+# 每笔真钱成交重复推 2 条飞书 + stats["real_inserted"] 翻倍 (9/10 13:57:25 与 14:01:04
+# 两笔, 2/2 复现; 账本本身被 deal_id PRIMARY KEY 兜住, 没有重复记账)。
+# 修法: 判定改由**唯一约束仲裁** (INSERT … ON CONFLICT DO NOTHING 取 rowcount, 撞键再 UPDATE)。
+# 以下三钉: ①两腿同刻抢同一 deal_id 恰好一条 inserted; ②通知只发一次; ③快照参数不得回潮。
+
+def test_two_legs_racing_same_deal_yield_exactly_one_inserted(tmp_db):
+    """①真钉: 两线程经 barrier 同刻调 record_deal_push → 恰好一条 inserted / 一条 updated。"""
+    deal = "8888888888888888888"
+    barrier = threading.Barrier(2, timeout=10)
+    outcomes = []
+    lock = threading.Lock()
+
+    def _leg():
+        barrier.wait()
+        res = live_ledger.record_deal_push(_push_row(deal))
+        with lock:
+            outcomes.append(res)
+
+    threads = [threading.Thread(target=_leg, name=f"recv-{i}") for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    verdicts = sorted(r[0] for r in outcomes)
+    assert verdicts == ["inserted", "updated"], f"两腿判定必须一插一更, 实得 {outcomes}"
+    assert len(live_ledger.read_all_deals()) == 1
+
+
+def test_racing_double_recv_notifies_once(tmp_db, monkeypatch):
+    """②用户可见面: 竞态下也只推**一条**飞书 (旧实现两腿都走 inserted 分支 ⇒ 推两条)。"""
+    sub, sent = _subscriber(monkeypatch, tmp_db)
+    deal = "9999999999999999999"
+    barrier = threading.Barrier(2, timeout=10)
+
+    def _leg(ctx):
+        barrier.wait()
+        sub._handle_push(ctx, pd.DataFrame([_push_row(deal)]))
+
+    threads = [threading.Thread(target=_leg, args=(ctx,), name=f"Thread-{ctx}")
+               for ctx in ("US", "HK")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert sent == [deal], f"真钱成交必须只通知一次, 实得 {sent}"
+    assert sub.stats["real_inserted"] == 1, sub.stats
+    assert sub.stats["real_updated"] == 1, sub.stats
+
+
+def test_upsert_verdict_has_no_snapshot_param(tmp_db):
+    """③结构钉: 签名里不得再有 `existing` 快照参数 (它一回来, 竞态窗口就跟着回来)。"""
+    import inspect
+
+    params = list(inspect.signature(live_ledger._upsert_deal_row).parameters)
+    assert "existing" not in params, f"快照参数回潮: {params}"
+    src = inspect.getsource(live_ledger.record_deal_push)
+    assert "SELECT deal_id FROM live_deal_records" not in src, "push 路径又在读全表快照"
+    # 判定语义仍正确: 同一行连喂两次 = inserted → updated
+    conn = live_ledger._connect()
+    row = _push_row("1212121212121212121")
+    assert live_ledger._upsert_deal_row(conn, row, "2026-09-10T00:00:00+00:00") == "inserted"
+    conn.commit()
+    assert live_ledger._upsert_deal_row(conn, row, "2026-09-10T00:00:01+00:00") == "updated"
+    conn.commit(); conn.close()
     assert len(live_ledger.read_all_deals()) == 1
 
 

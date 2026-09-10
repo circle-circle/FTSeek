@@ -157,7 +157,11 @@ class PreTradeChecker:
                 eff_conf = max(CFG.MIN_CONFIDENCE, eff_conf - 0.10)
                 eff_strength = max(40, self.min_strength - 10)
         except Exception:
-            pass
+            # 同批清剿: DEGRADED 收紧折扣读不到 = 门槛静默留在常态档 (弱市里反而更宽松),
+            # 也是 fail-open。不留痕则"今天门槛为何没收紧"事后无从追查。
+            logger.warning(
+                "[PreTradeCheck·thresholds] battle_plan market_regime 读取失败 → DEGRADED "
+                "收紧折扣未应用, 本次按常态门槛判定 (fail-open)", exc_info=True)
         return eff_conf, eff_strength
     
     def check(self, signal: SignalScore, lesson_injector=None) -> PreTradeResult:
@@ -632,7 +636,13 @@ class PreTradeChecker:
                 if is_trading_suspended():
                     return False, "SYSTEM_BREAKER: market_suspended"
             except Exception:
-                pass
+                # 2026-09-10 (DEB-20260910-logging-observability §10.7, except:pass 清剿):
+                # 本维异常 = **放行** (fail-open)。静默 pass 会让"熔断未触发"与"熔断检查
+                # 根本没跑成"在读数上完全一致 → 值班人把失明读成安全态。留痕 + 栈。
+                logger.warning(
+                    "[PreTradeCheck·system_breaker] 市场闪跌熔断检查自身异常 → 本维放行 "
+                    "(fail-open, 不等于「未熔断」); 若持续出现说明 market_circuit_breaker "
+                    "不可用, P0-R2 保护实际失效", exc_info=True)
             # 2) 数据源熔断 — 通过 signal.metadata 注入的 system_breaker_state
             #    (scheduler 在 monitor_loop 喂 VIX/数据源状态后填充)
             try:

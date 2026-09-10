@@ -273,8 +273,7 @@ def _count_deals() -> int:
         return 0
 
 
-def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str,
-                     existing: set) -> str:
+def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str) -> str:
     """单笔成交幂等 upsert (SSOT — 每日 sync 与实时 push 共用, 防字段映射漂移).
 
     `raw` 兼容两种来源行 (字段名差异已实测确认):
@@ -282,6 +281,15 @@ def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str,
       · TradeDealHandlerBase push 行: 市场字段 = `trd_market` (且多一个 `trd_env`)
     `market`/`currency` 一律由**行自带市场字段**推导 (非"哪个 ctx 返回"), deal_id 走 str()
     (19 位 > 2^53, 经 float 静默变位 ⇒ 幂等键失效)。
+
+    inserted/updated 的判定由**唯一约束仲裁** (`deal_id TEXT PRIMARY KEY`): 先
+    `INSERT … ON CONFLICT DO NOTHING` 取 rowcount (1=新增 / 0=撞键), 撞键再补 UPDATE。
+    **不吃"先读全表 deal_id 快照"** —— 2026-09-10 实测 (DEB-20260910 §10.3-2): US/HK 两条
+    SDK recv 线程相隔 ~16ms 各自建快照, 双方都在对方 commit 前读到"不存在" ⇒ 都判 inserted
+    ⇒ 每笔真钱成交重复推 2 条飞书 + `stats["real_inserted"]` 翻倍计 (账本本身被主键兜住,
+    没有重复记账)。快照法还有第二个毛病: 它是全表扫描, 台账越大读得越慢 ⇒ 竞态窗口越宽。
+    注: 单条 `ON CONFLICT DO UPDATE` 的 rowcount 对"新增"与"覆写"**都是 1**, 区分不了
+    (sync_deals 首版就栽在这), 故必须 DO NOTHING 拿 0/1 后再补 UPDATE。
     返回 "inserted" / "updated" / "skipped" (无 deal_id)。
     """
     deal_id = _s(raw, "deal_id")
@@ -296,19 +304,13 @@ def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str,
     amount = round(qty * price, 4) if qty is not None and price is not None else None
     deal_time = _s(raw, "create_time")
     currency = _CURRENCY_BY_MARKET.get(market)  # 未知市场 ⇒ NULL, 不跨币种猜
-    conn.execute(
+    cur = conn.execute(
         """INSERT INTO live_deal_records (
                market, currency, order_id, symbol, stock_name, deal_market,
                trd_side, qty, price, amount, fee, deal_time, deal_date,
                counter_broker_id, counter_broker_name, status, synced_at, deal_id)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-           ON CONFLICT(deal_id) DO UPDATE SET
-               market=excluded.market, currency=excluded.currency,
-               order_id=excluded.order_id, symbol=excluded.symbol,
-               stock_name=excluded.stock_name, trd_side=excluded.trd_side,
-               qty=excluded.qty, price=excluded.price, amount=excluded.amount,
-               deal_time=excluded.deal_time, deal_date=excluded.deal_date,
-               status=excluded.status, synced_at=excluded.synced_at""",
+           ON CONFLICT(deal_id) DO NOTHING""",
         (market, currency, _s(raw, "order_id"), symbol, _s(raw, "stock_name"),
          deal_market, _s(raw, "trd_side"), qty, price, amount,
          None,  # fee: 券商 deal 级不提供 ⇒ NULL, 不伪造 0
@@ -316,10 +318,20 @@ def _upsert_deal_row(conn: sqlite3.Connection, raw: Dict[str, Any], now: str,
          _s(raw, "counter_broker_id"), _s(raw, "counter_broker_name"),
          _s(raw, "status"), now, deal_id),
     )
-    if deal_id in existing:
-        return "updated"
-    existing.add(deal_id)
-    return "inserted"
+    if cur.rowcount == 1:
+        return "inserted"
+    # 撞键 ⇒ 覆写既有行。列集与旧 `ON CONFLICT DO UPDATE SET` **逐列一致** (13 列):
+    # deal_market / fee / counter_broker_* 刻意不覆写 — 首次落账即定, 后续回补不改归属。
+    conn.execute(
+        """UPDATE live_deal_records SET
+               market=?, currency=?, order_id=?, symbol=?, stock_name=?, trd_side=?,
+               qty=?, price=?, amount=?, deal_time=?, deal_date=?, status=?, synced_at=?
+           WHERE deal_id=?""",
+        (market, currency, _s(raw, "order_id"), symbol, _s(raw, "stock_name"),
+         _s(raw, "trd_side"), qty, price, amount,
+         deal_time, (deal_time or "")[:10] or None, _s(raw, "status"), now, deal_id),
+    )
+    return "updated"
 
 
 def record_deal_push(raw: Dict[str, Any]) -> Optional[str]:
@@ -334,9 +346,7 @@ def record_deal_push(raw: Dict[str, Any]) -> Optional[str]:
         now = now_utc().isoformat(timespec="seconds")
         conn = _connect()
         try:
-            existing = {r[0] for r in
-                        conn.execute("SELECT deal_id FROM live_deal_records")}
-            result = _upsert_deal_row(conn, raw, now, existing)
+            result = _upsert_deal_row(conn, raw, now)
             conn.commit()
         finally:
             conn.close()
@@ -393,12 +403,10 @@ def sync_deals(days: int = 30) -> Dict[str, Any]:
     unknown_market = inserted = updated = 0
     conn = _connect()
     try:
-        # 先取既存 deal_id 集合再逐行分类: upsert 的 rowcount 对"新增"与"覆写"都是 1,
-        # 靠它区分 inserted/updated 是空转 (首版就写了个恒 False 的辅助函数, 已删)。
-        existing = {r[0] for r in conn.execute("SELECT deal_id FROM live_deal_records")}
         for deal_id, raw in pooled.items():
             # SSOT: 单笔 upsert 映射与实时 push 共用 _upsert_deal_row (RFC-078 批E), 防漂移
-            result = _upsert_deal_row(conn, raw, now, existing)
+            # inserted/updated 由主键仲裁 (见该函数 docstring); 不再先读全表快照。
+            result = _upsert_deal_row(conn, raw, now)
             if result == "skipped":
                 continue
             _symbol = _s(raw, "code")

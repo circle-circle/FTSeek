@@ -527,8 +527,11 @@ def main(push=False, dry=False, update_baseline=False):
                 try:
                     with open(_state_file, "w") as _f:
                         json.dump({"ts": _now, "msg_hash": _hash_msg(msg)}, _f)
-                except Exception:
-                    pass
+                except Exception as _e_state:
+                    # 2026-09-10 (DEB-20260910-logging-observability §10.7, except:pass 清剿):
+                    # 冷却状态写失败 → 下一轮同内容告警**重复推** (本文件 2026-08-09 消除的
+                    # 告警风暴回归)。静默 pass 时值班人只看得到重复告警、看不到根因。
+                    print(f"[warn] 冷却状态写入失败 ({_state_file}): {_e_state!r} → 下轮可能重复推送")
             except Exception as e:
                 print(f"[warn] 推送失败: {e}")
     elif not msg:

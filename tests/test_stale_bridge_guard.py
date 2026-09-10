@@ -278,9 +278,17 @@ class TestInvariantRulerAndDidCaliber:
 # ═══════════════════════════════════════════════════════════════
 import importlib.util  # noqa: E402
 import json  # noqa: E402
+from datetime import datetime  # noqa: E402
 
 _dic_spec = importlib.util.spec_from_file_location(
     "daily_invariant_check_i15", PROJECT_ROOT / "scripts" / "daily_invariant_check.py")
+
+# I15 组统一冻结时钟 (2026-09-10, DEB-20260910-logging-observability §10.7):
+#   尺子窗口 = now_et()-7d 的滑动窗, 而本组夹具日期是硬编码常量 (09-01/09-02)。
+#   不冻结 → 2026-09-10 起窗口滑过夹具日: 正例天天恒红 ("陈旧 did" 假阳), 三个负例
+#   恒真空转 (行根本不在窗内, "不告"是假绿)。冻结在 09-05 ⇒ window_since=08-29,
+#   夹具日全部在窗内, 判定只由 _I15_SINCE floor 与 did 日期决定 = 尺子本意。
+_I15_NOW = datetime(2026, 9, 5, 12, 0)
 
 _TRADE_COLS = (
     "id INTEGER PRIMARY KEY, symbol TEXT, direction TEXT, source_type TEXT, "
@@ -295,7 +303,30 @@ _INST_COLS = (
 )
 
 
-def _run_invariant(tmp_path, monkeypatch, inst_rows):
+_I15_FLOOR = None
+
+
+def _i15_floor():
+    """尺子口径起点 _I15_SINCE — 供"豁免来自 floor 而非窗口滑过"的断言用。"""
+    global _I15_FLOOR
+    if _I15_FLOOR is None:
+        _dic = importlib.util.module_from_spec(_dic_spec)
+        _dic_spec.loader.exec_module(_dic)
+        _I15_FLOOR = _dic._I15_SINCE
+    return _I15_FLOOR
+
+
+def _assert_window_covers(res, *dates):
+    """防空转钉: 断言时钟冻结确已生效, 且被测行真的落在尺子窗口内。
+
+    少了这层, "不告"可能只是行滑出 7 天窗 (假绿), 而不是判据放行。"""
+    assert res["checked_at"].startswith(_I15_NOW.date().isoformat()), res["checked_at"]
+    for d in dates:
+        assert res["window_since"] <= d, (
+            f"夹具日 {d} 滑出窗口 (window_since={res['window_since']}) → 本例空转")
+
+
+def _run_invariant(tmp_path, monkeypatch, inst_rows, frozen_now=None):
     dic = importlib.util.module_from_spec(_dic_spec)
     _dic_spec.loader.exec_module(dic)
     db = tmp_path / "ftseek_us.db"
@@ -310,6 +341,8 @@ def _run_invariant(tmp_path, monkeypatch, inst_rows):
     out = tmp_path / "invariant_out.json"
     monkeypatch.setattr(dic, "DB", db)
     monkeypatch.setattr(dic, "OUT", out)
+    if frozen_now is not None:
+        monkeypatch.setattr(dic, "now_et", lambda: frozen_now)
     dic.main()   # 返回码受其他不变量影响, 本组只判 I15 键 (合成夹具口径)
     return json.loads(out.read_text())
 
@@ -319,21 +352,26 @@ class TestInvariantI15Functional:
         """I15 病根钉: 修复部署日起, did 决策日 ≠ 指令日 → 必须报违反。"""
         res = _run_invariant(tmp_path, monkeypatch, [
             ("2026-09-02", "US.LLY", "BUY", "DA-20260901192313-US.LLY-2038", 1, "win", 10.0, 70),
-        ])
+        ], frozen_now=_I15_NOW)
+        _assert_window_covers(res, "2026-09-02")
         assert res["violations"].get("I15_stale_decision_id") == 1
         assert "did 决策日=2026-09-01" in res["examples"]["I15_stale_decision_id"]
 
     def test_i15_clean_when_did_matches_date(self, tmp_path, monkeypatch):
         res = _run_invariant(tmp_path, monkeypatch, [
             ("2026-09-02", "US.LLY", "BUY", "DA-20260902192313-US.LLY-2038", 1, "win", 10.0, 70),
-        ])
+        ], frozen_now=_I15_NOW)
+        _assert_window_covers(res, "2026-09-02")
         assert "I15_stale_decision_id" not in res["violations"]
 
     def test_i15_exempts_founding_evidence_rows(self, tmp_path, monkeypatch):
         """I15 口径起点: 9/1 立档证据行不重复告警 (历史行不自愈 → 连告 7 天=不可动作噪声)。"""
         res = _run_invariant(tmp_path, monkeypatch, [
             ("2026-09-01", "US.BWXT", "BUY", "DA-20260831191607-US.BWXT-cd0c", 1, "win", 105.63, 70),
-        ])
+        ], frozen_now=_I15_NOW)
+        _assert_window_covers(res, "2026-09-01")
+        # 豁免必须来自 _I15_SINCE floor, 不能来自"行滑出 7 天窗"(后者随日历变假绿)
+        assert "2026-09-01" < _i15_floor(), "本例已被窗口放行 → floor 判据未被覆盖"
         assert "I15_stale_decision_id" not in res["violations"]
 
     def test_i15_non_da_did_not_judgeable(self, tmp_path, monkeypatch):
@@ -343,5 +381,25 @@ class TestInvariantI15Functional:
              1, "win", 5.0, 70),
             ("2026-09-02", "US.BABA", "BUY", "intraday_reentry-1420-1223", 0, "missed", 0.0, 70),
             ("2026-09-02", "US.EIX", "SELL_SHORT", "DA-notadate", 0, "missed", 0.0, 70),
-        ])
+        ], frozen_now=_I15_NOW)
+        _assert_window_covers(res, "2026-09-02")
         assert "I15_stale_decision_id" not in res["violations"]
+
+
+class TestInvariantI15ClockFrozen:
+    """结构钉 (2026-09-10): 本组每例都必须冻结时钟 + 断言窗口覆盖。
+
+    9/10 实锤的日历炸弹是"夹具日期硬编码 vs 尺子窗口滑动"的耦合, 修一次不够 —
+    新增用例只要忘传 frozen_now, 就会在 7 天后重新退化成恒红或恒真空转。"""
+
+    def test_every_i15_case_freezes_the_clock(self):
+        src = inspect.getsource(TestInvariantI15Functional)
+        calls = src.count("_run_invariant(")
+        assert calls >= 4, calls
+        assert src.count("frozen_now=_I15_NOW") == calls, (
+            "有 I15 用例未冻结时钟 → 日历炸弹 (窗口滑过夹具日)")
+
+    def test_every_i15_case_asserts_window_coverage(self):
+        src = inspect.getsource(TestInvariantI15Functional)
+        assert src.count("_assert_window_covers(") >= src.count("_run_invariant("), (
+            "有 I15 用例未断言窗口覆盖 → 负例可能只是空转 (假绿)")

@@ -14,7 +14,9 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 955  # 2026-09-01 DEB-20260901 Phase C 批清剿 4 处后调低 (957→955) — 只降不升
+BASELINE = 952  # 2026-09-10 DEB-20260910-logging §10.7 清剿 3 处后调低 (955→952):
+                  #   pre_trade_check 系统熔断 fail-open / DEGRADED 门槛折扣 fail-open,
+                  #   data_freshness_watchdog 冷却状态写失败 (重复告警根因) — 只降不升
 _EXCLUDE_PARTS = {"venv", "node_modules", ".git", "tests", "archive",
                   "__pycache__", ".backup_premigration", "obsidian_vault"}
 _PATTERN = re.compile(r"except[^:\n]*:\s*\n\s*(pass|continue)\s*(?:#.*)?$", re.MULTILINE)
