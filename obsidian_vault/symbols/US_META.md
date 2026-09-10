@@ -2,12 +2,12 @@
 type: "symbol"
 symbol: "US.META"
 name: ""
-latest_date: "2026-09-04"
+latest_date: "2026-09-09"
 latest_direction: "BUY"
 latest_score: 6.0
 latest_rating: "看多"
-total_trades: 13
-win_rate: 0.54
+total_trades: 15
+win_rate: 0.6
 tags: [symbol, backfill]
 industry: "Media"
 ---
@@ -2226,6 +2226,54 @@ Muse Spark 1.3发布(产品催化)→开发者付费接入推动AI商业化(营�
 
 ## 同行业 (Media)
 - [[US_AMC]]
+- [[US_DIS]]
+- [[US_GOOG]]
+- [[US_GOOGL]]
+- [[US_NTES]]
+- [[US_SPOT]]
+- [[US_WLY]]
+---
+
+## 2026-09-09 | 看多 | 信心中高 | BUY
+<!-- id:2026-09-09-b865 -->
+
+> Meta盘前+5.16%至$645.12，Muse AI代理发布+Threads规模对标X构成产品催化，但盘前量比仅1.12x显示部分定价；锚定MA5($602.46)回踩分2批建仓，目标$680止损$615
+
+- **标的**: Meta Platforms (US.META) | 现价: 645.12 | 评分: 6.0/10
+- **IC ID**: `DA-20260909201500-US.META-b865`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [HIGH][IC=-0.03n=1231] Muse个人AI代理发布获Shopify/YC CEO背书，商业化路径清晰（月费最高$100），产品催化尚未完全定价 (news)
+  2. [MEDIUM][IC=-0.03n=1231] Threads用户规模已接近或超越X，社交矩阵护城河加深，ARPU提升逻辑强化 (news)
+  3. [HIGH][IC=+0.01n=917] 营收YoY+27.65%、净利润率29.84%、ROE 29.73%，基本面强劲支撑估值扩张 (fundamental)
+  4. [MEDIUM][IC=-0.00n=541] 71位分析师中87.3%给出买入评级，美银维持$810目标价（较盘前现价+25.6%上行空间） (fundamental)
+
+### 看空论据
+  1. [MEDIUM][IC=+0.01n=871] 6个月MSPR=-28.05显示高管持续净卖出，内部人情绪偏空 (sentiment)
+  2. [MEDIUM][IC=+0.00n=807] 盘前+5.16%但量比仅1.12x，放量不足显示利好已被部分定价，追高风险存在 (technical)
+
+### 交易计划
+- 入场: 分2批建仓：第1批锚定MA5回踩$620限价买入（确认支撑），第2批突破盘前高$650放量追入（量比>1.5确认）
+- 止损: 615
+- 止盈: 680
+- 支撑: 620, 602.46, 577.81 | 阻力: 650, 680, 788.22
+
+### 风险
+  - 财报前3日不开仓（earnings_calendar降级，具体日期缺失）
+  - 盘前+5.16%追高风险：量比1.12x未达1.5阈值，利好或已部分定价
+  - AI基础设施支出压缩利润率：09-09 SeekingAlpha提及margin compression from AI infrastructure spending
+  - [挑战者] 无实质反证：当前方向的数据支撑成立。补充观察（非反证）：09-09 Finnhub新闻提及Meta支付$18B和解金，虽未在分析师风险中列出，但该金额相对1562.8B市值占比约1.15%
+
+### 因果链
+Muse AI代理发布+Threads规模突破 → 广告引擎+订阅收入双轮驱动预期 → 分析师上调目标价至$810 → 估值扩张空间+25.6%
+
+### 论据IC验证
+- 基于1838条历史信号alpha IC验证 (overall_t1=-0.0051)
+
+## 同行业 (Media)
+- [[US_AMC]]
+- [[US_CARG]]
 - [[US_DIS]]
 - [[US_GOOG]]
 - [[US_GOOGL]]
