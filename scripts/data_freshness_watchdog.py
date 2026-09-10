@@ -59,6 +59,10 @@ WATCHLIST = [
     #   当晚 confirm 跑后自恢复, 零数据污染 — 误报本身证明链路活着, 接受为已知噪音。
     #   代价: 真静默死亡最坏 ~5 天检出 — 可接受, 本条只是兜底中的兜底。
     ("data/shadow/ue_confirm_gate.jsonl",         74, "UE 开盘确认门 shadow (U11)",       True),
+    # 2026-09-11 断头传感器修复批: premarket_invalidation 采集侧 8/9 起写盘但 31 天无结算器
+    #   (无 watchdog 无台账), 补结算器同时补新鲜度监控 — 采集停产必须当日可见。
+    ("data/premarket_invalidation_shadow.jsonl",  50, "盘前失效 A/B/C 影子 (采集, 09:35-09:59 ET/交易日)", True),
+    ("data/shadow/ue_tier_gate_shadow.jsonl",     74, "UE tier 闸影子 (UE 扫描日批写, 周末+假日 74h 口径同 U11)", True),
     # 已知墓地 (DEB-20260723 time-exit-censoring 实证6): 若已裁决停用应从清单移除, 否则持续告警提醒清理
     # 2026-08-26: prompt_eval + shadow_technical_direction 已归档至
     #   data/shadow/archive_20260826/ (上游停产实锤, 全影子普查裁决), 条目移除。

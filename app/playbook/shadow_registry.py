@@ -839,6 +839,52 @@ REGISTRY: list[ShadowItem] = [
               "crontab-entry-delay-confirm)。回滚=删本条目+删 cron 行+删两个 data/shadow 产物。",
         count_mode="where:status=ok",
     ),
+
+    # ── 2026-09-11 断头传感器修复批 (用户裁「做」): 两个有写者无读者/无登记的影子补全判分侧 ──
+    ShadowItem(
+        id="premarket_invalidation",
+        name="盘前失效评估 A/B/C 规则影子 (8/9 立项, 9/11 补结算器)",
+        status=ShadowStatus.OBSERVING,
+        description="每日 09:35-09:59 ET 对当日可执行指令按盘前涨跌幅打三规则标记 "
+                    "(A=SHORT盘前涨>3% / B=LONG盘前跌<-5% / C=LONG盘前涨>3%), record-only。"
+                    "8/11-9/10 攒 310 行零结算 (无结算器无台账 = 8/28 静默零产出同款), "
+                    "9/11 补 settle_premarket_invalidation.py 判分侧。",
+        data_path="data/premarket_invalidation_shadow.jsonl",
+        config_key="playbook.premarket_invalidation_observe",
+        min_n=20,
+        graduation_criteria="预注册 (settle 脚本头, 2026-09-11 写死于裁决读数前): 每规则 "
+                            "executed n>=20 ∧ 禁入价值>0 (executed 净<0) ∧ 误杀率<=40% ∧ "
+                            "全窗与滚动20交易日同向 → 提请转正另裁。B 规则注记: 执行时刻口径"
+                            "硬门已在线 (RFC-068), 判据针对盘前口径增量。首读 (9/11): "
+                            "C 净-$152 但误杀 68% 超门 / B n=3 不足 / A n=1 — 全部 KEEP_SAMPLING。",
+        eval_script="scripts/settle_premarket_invalidation.py",
+        created="2026-08-09",
+        notes="count_mode=where_nonempty:would_invalidate (flagged 口径, 与结算器分母一致)。"
+              "cron 2 6 * * 2-6。回滚=删 cron 行+删结算器+删本条目 (采集侧 observe 开关独立)。",
+        count_mode="where_nonempty:would_invalidate",
+    ),
+    ShadowItem(
+        id="ue_tier_gate",
+        name="UE tier 闸影子 (PROPOSAL-20260905 U3/P4, 9/11 补结算器)",
+        status=ShadowStatus.OBSERVING,
+        description="HARD_EVENT 直进 / MARKET_CORROBORATED 需补强 / THESIS_ONLY 拦 — 影子判定"
+                    "落盘 (写者 llm_universe_scan._log_tier_gate_shadow), enforce=false。"
+                    "9/11 补 ue_tier_gate_shadow_eval.py: 被拦/放行桶 fwd_return_t1 对照 + "
+                    "LONG/SHORT 方向分层并列读数 (UE LONG 全史净-$780 vs SHORT +$208 的裁决备证)。",
+        data_path="data/shadow/ue_tier_gate_shadow.jsonl",
+        config_key="universe_expansion.tier_gate_shadow",
+        min_n=15,
+        graduation_criteria="预注册 (unified_config.yaml 逐字, 2026-09-05): 攒样>=15交易日 ∧ "
+                            "被影子化桶 fwd 回填 n>=30; 毕业=被拦桶方向性前瞻均值<=0 ∧ 放行桶"
+                            "均笔>0 → 用户裁决; 撤闸认错=被拦桶前瞻>+0.3% ∧ n>=30。"
+                            "方向分层只并列呈报不另设门 (防多重比较挪门柱)。",
+        eval_script="scripts/ue_tier_gate_shadow_eval.py",
+        created="2026-09-05",
+        notes="count_mode=distinct:date (每扫描日 1 行, 行数=交易日数, 与 >=15 交易日判据同轴)。"
+              "cron 52 5 * * 6 (fwd 回填 05:30 后, 与 ue_tier_shadow_eval 05:50 同窗)。"
+              "与 tier_gate_enabled 互锁: 影子期禁止打开 (config 注释在案)。回滚=删 cron 行+结算器+本条目。",
+        count_mode="distinct:date",
+    ),
 ]
 
 
@@ -917,6 +963,22 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                         continue
                 seen.discard(None)
                 return len(seen)
+            if s.count_mode.startswith("where_nonempty:"):
+                # "where_nonempty:field" — 计该字段为真值 (非空 list/str/非零) 的行。
+                # 2026-09-11 premarket_invalidation 登记引入: flagged 口径 = would_invalidate
+                # 非空行, where: 的 field=value 字符串相等语义无法表达 list 非空。
+                fld = s.count_mode.split(":", 1)[1]
+                cnt = 0
+                for _line in open(p, encoding="utf-8"):
+                    if not _line.strip():
+                        continue
+                    try:
+                        _hit = bool(_j.loads(_line).get(fld))
+                    except Exception:
+                        _hit = False  # 坏行不计分母 (同 where: R5 纪律)
+                    if _hit:
+                        cnt += 1
+                return cnt
             if s.count_mode.startswith("where:"):
                 # "where:field=value" — 仅计满足字段条件的行 (2026-09-01 复查收口:
                 # da_glm_shadow live-only 口径落地, 原 lines 把 test 行也计入)
