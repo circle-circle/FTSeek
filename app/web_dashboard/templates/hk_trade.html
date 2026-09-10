@@ -129,17 +129,53 @@
         .hk-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
         .hk-modal-ok { border-color: #ef4444; color: #f87171; }
         .hk-modal-ok:hover { background: #2a0a0a; }
-        /* ── A12 (2026-09-08 REVIEW 批3): 移动端把 10 列表格堆叠成卡片 ──
-           刻意用 CSS 变形而非另写一套卡片渲染: **单一渲染路径**, 不会出现
-           "表格与卡片数据不一致" 这类经典漂移。标签取 td[data-label]。 */
+        /* ── A13 (批5, 2026-09-09 用户反馈「手机端持仓/订单都是一个正方框, 拥塞不美观,
+           要一条一条记录 + 自适应」): A12 的堆叠是「一条记录 = 一个带边框方块, 每列独占一行」
+           ⇒ 本页三张表 9~10 列, 手机上每条记录就是 9~10 行的方块, 一屏放不下两条。
+           现改为「一条记录 = 一行列表项」的自适应网格 (与美股页 .pos-stack 同构, 两页同一心智模型):
+           ① 方块外框 → 记录之间只留 1px 分隔线 (读起来是列表, 不是一堆盒子);
+           ② 每列一行 → CSS Grid auto-fit 多列 (320px 2~3 列 / 768px 6~7 列), 窄宽屏都不横向滚动;
+           ③ 「代码」作记录标题占满左侧, 每张表的关键列 (持仓=盈亏 / 今日订单=状态 / 台账=方向)
+              钉在标题行右端 —— 一眼先读到「哪个标的、赚亏多少 / 什么状态 / 买卖」,
+              其余字段作小标签网格跟在下面;
+           ④ 空格子 (无卖出/撤单按钮) 不占位, 不留空槽。
+           仍是**单一渲染路径**: 只改 CSS, thead/tbody 与 td[data-label] 一套列名逐字未动
+           (A12 钉子照旧生效)。关键列按 tbody id 点名 —— 同一个 .hk-stack 下挂三张表,
+           只按 data-label 点名会让「方向」在今日订单与台账两张表里抢同一格 (grid 允许重叠
+           ⇒ 静默压字)。 */
         @media (max-width: 768px) {
             .hk-stack thead { display: none; }
             .hk-stack, .hk-stack tbody { display: block; width: 100%; }
-            .hk-stack tr { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
-            .hk-stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: none; padding: 3px 0; white-space: normal; text-align: right; }
-            .hk-stack td::before { content: attr(data-label); color: #8b949e; font-size: 11px; text-align: left; flex: 0 0 auto; }
+            .hk-stack tr {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr));
+                gap: 5px 10px;
+                padding: 9px 2px;
+                border-bottom: 1px solid #21262d;
+            }
+            .hk-stack tbody > tr:last-child { border-bottom: none; }
+            .hk-stack td {
+                display: block; min-width: 0; padding: 0; border-bottom: none;
+                text-align: left; white-space: normal !important;
+                overflow-wrap: break-word; font-size: 12px; line-height: 1.4;
+            }
+            .hk-stack td::before { content: attr(data-label); display: block; color: #8b949e; font-size: 10px; letter-spacing: 0.2px; }
             .hk-stack td[data-label=""]::before { content: none; }
-            .hk-stack td[colspan] { display: block; text-align: left; }
+            .hk-stack td[colspan] { display: block; grid-column: 1 / -1; text-align: left; }
+            .hk-stack td[colspan]::before { content: none; }
+            .hk-stack td[data-label="代码"] {
+                grid-column: 1 / -2; grid-row: 1; align-self: center;
+                font-size: 14px; font-weight: 700; line-height: 1.3;
+            }
+            .hk-stack td[data-label="代码"]::before { content: none; }
+            #pos-tbody td[data-label="盈亏"], #ord-tbody td[data-label="状态"], #ledger-tbody td[data-label="方向"] {
+                grid-column: -2 / -1; grid-row: 1; align-self: center; text-align: right;
+            }
+            /* 动作格 (卖出/撤单) 独占一行右对齐 = 44px 级可点区; 无按钮时整格不渲染 */
+            .hk-stack td[data-label=""] { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; }
+            .hk-stack td[data-label=""]:not(:has(button)) { display: none; }
+            .hk-stack td[data-label=""] button { min-height: 36px; padding: 6px 14px; }
+            .hk-stack tbody > tr > td:empty { display: none; }
         }
 {% endblock %}
 

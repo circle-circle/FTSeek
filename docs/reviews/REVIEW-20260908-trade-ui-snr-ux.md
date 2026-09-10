@@ -526,3 +526,56 @@ PYTHONPATH=. ./venv/bin/python -c "from app.web_dashboard.order.gates \
 
 - **C1（抽 `hk_trade.js` + 共享 `trade-ui.css` + HK/US 各一份枚举字典）— 延后**：①跨两页结构性搬迁（`trade.js` 1900+ 行、港股内联 1000+ 行），与呈现层批混在一个 diff 里不可审、不可分段回滚；②批3/批4 已把两页**口径**对齐（三态、枚举中文化、堆叠、modal、chips、守卫、风险词表），共享化的收益已从「修口径不一致」降级为「减少重复代码」= 维护性收益，不该占交易页的变更预算；③它是 C4 的前置（先共享再合并入口，顺序反了要做两遍）。**重开条件**：单独立项、独立 diff、独立回滚点。
 - **C4（「交易」与「交易 HK」合并为单一入口 + 市场段控件）— 延后**：①合并后港股「物理隔离」需在前端重新表达（隔离本体在服务层不受影响，但视觉分隔是设计题不是搬运算）；②两页各自独立的轮询/守卫/枚举逻辑若未先共享，合并入口会让首屏同时加载两套逻辑或引入动态加载分支 = 用新复杂度换一个 tab；③收益（省一个 tab）< 代价（结构性改动 + 隔离表达重设计）。**重开条件**：C1 落地后再评。
+
+---
+
+## I. 批 5 实施记录（2026-09-09，用户反馈「手机端持仓/订单都是一个正方框」⇒ A13 移动端记录行重做）
+
+> 用户反馈原话：「web dashboard 中显示的持仓和订单记录在手机端都是一个正方框，展示的过于拥塞和不美观，需要一条一条记录，需要能自适应展示，请核查」。**核查属实**：A12（批3）的窄屏方案是「一条记录 = 一个带边框圆角方块，每列独占一行」——美股持仓 7 列 / 交易记录 8 列、港股 9~10 列 ⇒ 手机上一条记录就是 7~10 行的盒子，一屏放不下两条；且 `td` 走 `flex space-between` 后 label 与 value 被撕成左右两栏，**配对关系反而难读**（见 §I.3 旧版截图量高）。本批把两页五张表的窄屏呈现重做为「一条记录 = 一行列表项」的自适应网格。**纯 CSS，零 `.py` 改动，零判据/阈值/闸门触碰，不写库。**
+
+### I.0 不变量声明（先说没动什么）
+
+- `thead` / `tbody` / `td[data-label]` 一套列名**逐字未动** ⇒ A12 的「data-label 序列 == thead 序列」钉子（批3）与 RFC-078 台账钉子照旧全绿；仍是**单一渲染路径**（CSS 变形，不写第二套移动端 DOM/JS）。
+- 桌面 / 平板（>768px）呈现**零变化**：全部新规则在 `@media (max-width: 768px)` 内。
+- 下单/撤单/平仓链路与任何后端 `.py` **零改动** ⇒ 按 `AGENT.md` 军规**无需重启**；已线上实测 `curl /trade` 与 `/trade/hk` 返回的 HTML 含新 CSS（Jinja `auto_reload` 对模板生效，与 `.py` 需重启是两回事）。
+- 港股「物理隔离」、美股 Playbook 唯一管线、退出参数冻结（C1/C7）均不受影响（呈现层）。
+
+### I.1 已实施（两页同构：`trade.html` `.pos-stack` / `hk_trade.html` `.hk-stack`）
+
+| # | 改动 | 做法 |
+|---|---|---|
+| 1 | **去盒子**：记录之间的边框圆角底色 → 1px 分隔线 | `.pos-stack tr / .hk-stack tr` 去掉 `background/border/border-radius/margin-bottom`，改 `border-bottom: 1px solid #21262d`（末行无线）⇒ 视觉上是「一条一条记录」的列表，不是一堆盒子 |
+| 2 | **自适应多列**：每列一行 → CSS Grid auto-fit | `grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr))`：320px 2 列 / 390px 3 列 / 768px 6~7 列，窄宽屏都不横向滚动（`min(100%, …)` 兜住超窄容器） |
+| 3 | **记录标题行**：首列作标题占满左侧，关键列钉右端 | 美股 `代码`/`标的`、港股 `代码` 走 `grid-column: 1 / -2; grid-row: 1`（14px 加粗、去掉冗余小标签）；关键列走 `grid-column: -2 / -1; grid-row: 1` 右对齐：US 持仓=`持仓盈亏`、US 交易记录=`状态`、HK 持仓=`盈亏`、HK 今日订单=`状态`、HK 台账=`方向` ⇒ 一眼先读「哪个标的、赚亏多少 / 什么状态」 |
+| 4 | **右端格按 tbody id 点名** | `#posBody td[data-label="持仓盈亏"]` 等（五张表逐一点名）。**原因**：同一个 `.pos-stack`/`.hk-stack` 类下挂 2~3 张表，只按 data-label 点名会让「方向」在今日订单与台账两张表里抢同一格，而 grid **允许重叠** ⇒ 静默压字，且只在手机上看得到 |
+| 5 | **空格子/冗余格不占位** | `td:empty { display: none }`（无备注、audit 行空动作格）；`td[data-label=""]:not(:has(button)) { display: none }`（券商已成交行的「已成交」文字与标题行状态列重复）；动作格有按钮时独占一行右对齐 + `min-height: 36px`（撤单/卖出是最紧急动作，不能缩成 23px） |
+| 6 | **空态/错误态不被网格撕开** | `td[colspan] { grid-column: 1 / -1 }` + `td[colspan]::before { content: none }`（否则「加载中/无持仓/加载失败」行会顶出一行空白小标签） |
+
+### I.2 关键取舍（4 条）
+
+1. **继续 CSS 变形而非另写卡片渲染**：A12 当初的理由（表格/卡片双渲染必然漂移）在本批依然成立；本批只改 `@media` 块内的声明，`td[data-label]` 仍是唯一第二套列名。
+2. **右端关键列按 tbody id 点名而非按 data-label**：多一张表/改一个列名时，按 data-label 的写法会静默重叠或静默失效；按 id 点名 + 批5 钉子（id 必须在模板存在、label 必须在该表 thead 存在）把这类漂移变成当天红。
+3. **`:has()` 用于「无按钮即不渲染」**：iOS <15.4 / 老 Chrome 不支持时**退化为照旧显示该行**（不报错、不丢信息），属可接受的优雅降级；不用 JS 判断（那才是第二套渲染的入口）。
+4. **US 持仓记录高度基本持平（163→168px）据实登记**：旧版 flex 每字段本就一行，本批在该表赢的是层级与配对可读性（标题行 + 小标签网格）而非高度；港股三张表与美股交易记录才是高度的净收益方（§I.3）。不为凑数字把单元格压成 label 内联（会牺牲窄列可读性）。
+
+### I.3 验证（真渲染，非纸面推演）
+
+- **钉子**：新增 `tests/web_dashboard/test_trade_ui_batch5_contract.py` **14 例**，按四类静默坏法立：①方块回归（tr 必须 `display: grid` + 分隔线，禁 `border-radius/background/margin-bottom`）；②自适应丢失（auto-fit 列宽逐字 + `.pos-stack { min-width: 0 }` 且前提 `table { min-width: 400px }` 仍在）；③标题行抢格（右端格规则必须以 `#tbody-id` 开头、id 与 data-label 必须对得上模板 thead、点名集合必须与登记表逐字相等）；④空槽/冗余（`:empty`、`:not(:has(button))`、colspan 整行 + 无空白标签行）+ 单一渲染路径（trade.js 禁 `pos-card/matchMedia` 等第二套渲染痕迹）。`tests/web_dashboard/` **129 passed**（批1 48 + 批2 11 + 批3 27 + 批4 12 + RFC-078 17 + 批5 14）。
+- **真渲染量高**：headless Chromium（playwright 装在 `/tmp` 临时 venv，**不进仓依赖**）渲染两页真实模板 + 注入样例行，320/390/768 三档视口逐记录量高、并断言 `document.scrollWidth - innerWidth == 0`（三档全 0 = 零横向滚动）。单条记录高度（390px，px）：
+
+  | 表 | 旧（A12 盒子） | 新（批5 记录行） |
+  |---|---|---|
+  | US 持仓 | 163 / 164 | 168 / 167（持平，赢在层级） |
+  | US 交易记录 | 189 / 179 / 166 | 184 / 121 / 155 |
+  | HK 持仓 | 236 / 204 | 198 / 156 |
+  | HK 今日订单 | 209 / 241 | 157 / 197 |
+  | HK 台账 | 198 / 198 | 157 / 156 |
+
+- **线上实测（不重启）**：`curl -k -H "Cookie: ftseek_session=<本进程签发>" http://127.0.0.1:8901/trade` 与 `/trade/hk` 均 **200** 且 HTML 含 `A13` 注释与 `repeat(auto-fit, minmax(min(100%, 92px), 1fr))` ⇒ 模板热生效确认。
+- **未做**：未做实盘下单/撤单验证（呈现层批不动交易链路）；未给桌面端做任何视觉改动。
+- **补记（2026-09-09 14:35，用户令「重启服务观察确认生效和无异常」）**：`systemctl restart ftseek-us` + `systemctl restart ftseek-dashboard`（两单元：主服务 PID **768543 → 790573**、看板 PID **773481 → 790585**，均 `active/running`、`NRestarts=0`）⇒ `startup_smoke_check.py --wait 90` **7/7 全过 exit=0**；`deploy_freshness_check.py` **exit=0 且静默**；`/health`、`/trade`、`/trade/hk` 均 **200** 且后两页 HTML 含 `A13` 注释与 `repeat(auto-fit, minmax(min(100%, 92px), 1fr))`；`/api/trade/gates`、`/api/trade/snapshot` **200**；journal 与 `logs/ftseek_us.log` / `logs/dashboard.log` 重启窗口（14:35:20 起）`ERROR|CRITICAL|Traceback` = **0**。本批原判定「零 `.py` 改动无需重启」仍成立，此次重启为用户要求的双服务生效确认，非生效前提。
+
+### I.4 待办 / 观察点（批 5 后）
+
+- **观察点**：真实手机（含 iOS <15.4 老 Safari）打开 `/trade` 与 `/trade/hk` 复核记录行观感；老浏览器上「已成交」冗余行会照旧出现（已知降级，非 bug）。
+- **仍待裁 / 延后**：§H.5 全部条目不变（C1 共享化重构、C4 入口合并、`slow-data` 墓碑物理删除）；本批不新增待裁项。
