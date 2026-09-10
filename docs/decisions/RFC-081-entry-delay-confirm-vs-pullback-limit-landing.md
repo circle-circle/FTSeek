@@ -1,0 +1,231 @@
+# RFC-081: 入场确认门落地设计 — B案(2min延迟复核) vs D案(回调限价), 裁决日直用
+
+> **状态**: 草稿 (预裁决设计包 — 两案均不实施, 等 D2'/E3 影子裁决日二选一)
+> **日期**: 2026-09-11
+> **作者**: Hermes (qwen3.8-max)
+> **审批人**: 用户 (裁决日)
+
+---
+
+## 摘要
+
+针对 MFE<0.3% 入场墓地 (30天 64笔 净−$4,860), 两条正交路线已在影子攒样:
+**B案 = D2' 触发延迟确认** (穿越后等 2min, 价格仍站触发方向才进场) /
+**D案 = E3 PULLBACK_LIMIT 回调限价** (穿越不买, 挂限价在触发线上等回踩, TTL=300s)。
+DEB-20260909 §5.2 已强制披露两者互斥 (同一触发时点只能选一种语义)。
+本 RFC 预先定死两案的落地工程细节与交互规则, 裁决日 whichever 过线即按本文件直接实施,
+不再重新设计。**本文件零代码零行为变更。**
+
+---
+
+## 问题陈述 (数据基线, 2026-09-10 复核)
+
+- 30天 (8/11–9/10) 净口径: SL_INITIAL 20笔 −$3,341 (avg MFE=0.02% = 入场即错);
+  OVERNIGHT_GAP_STOP 3笔 −$911。MFE<0.3% 桶 64笔 −$4,860 ≈ 全部净亏。
+- D2' 影子首日回补 (60天 412笔×2腿, 2026-09-10 05:58 结算):
+  - N=2min: 回避率 50.2%, 回避组亏损单 98 笔省 $4,657 / 误杀赢家 109 笔丢 $3,102
+    → 净回避价值 +$1,555; 延迟成交组机会成本均值 0.125% (< 0.3% 预注册门)
+  - SL_INITIAL 子集: 回避 14/21 (66.7%), 省 $2,206, 机会成本仅 $86 → 净 +$2,120
+  - N=5min: 机会成本 0.336% 超门 → **N=5 全体口径已死, 落地只可能 N=2**
+- E3 archetype 影子: pullback_limit_shadow.jsonl 337 行 (9/2–9/10),
+  触发行含 chase_cap_price/repriced_entry 全上下文; 生产开关
+  `entry_archetype_routing_enabled: false` (纯影子)。
+- 反向先验 (强制披露): ue_confirm_gate 8轮实证 10/30min 确认方向 92% 不变但
+  +0.50%/笔 (t=5.67) — 长延迟在本系统有成本前科; 2min 是微结构噪声带复核, 域不同,
+  裁决以 D2' forward 新窗冻结值为准。
+
+---
+
+## 裁决门 (预注册, 引自 D2' 脚本头, 数值已冻结)
+
+| 判据 | B案 (D2') | D案 (E3) |
+|---|---|---|
+| 样本 | forward 新窗 n≥20 (count_mode=where:status=ok) | 影子结算配对样本 (cf_pullback_limit_replay 口径) |
+| 主判读 | 避免率≥30% ∧ 机会成本<0.3%; 双人群 (ALL + SL_INITIAL) 并列呈裁, 二选一不算挪门柱 | 反事实净Δ>0 ∧ 误杀率≤40% ∧ n≥20 |
+| 互斥 | 两案都过线 → 按净Δ/误杀率横向对比, 用户终裁 | 同左 |
+| 不过线 | 退役 (影子脚本保留为回放资产), 不动生产 | 同左 |
+
+裁决日预计: D2' forward 攒样自 9/10 起, 1–2 周; E3 同源同期。
+
+---
+
+## B案设计: 2min 延迟复核 (载体 = PlaybookExitFastLoop)
+
+### 否决 A案 (主循环两段式) 的理由 — 实测节奏
+
+主触发循环 (LLMStrategyLoop→run_playbook_auto_execute) 实测 **5–6 分钟/轮**
+(9/10 日志: 21:45→21:52→21:58→22:03→22:09→22:14), 历史单轮可达 58min
+(scheduler_core.py:1013 注记)。在主循环内"本轮武装/下轮复核"= 实际延迟 N≥5min,
+而 N=5 腿机会成本已超预注册门 → **A案落地的是失败变体, 永久否决**。
+快循环 (PlaybookExitFastLoop) config 10s/轮 (unified_config.yaml:1894,
+scheduler 默认 20s 被 config 覆盖), 是唯一与影子 1min-bar 语义保真的现役宿主。
+
+### 数据流
+
+```
+_check_intraday_trigger 穿越命中 (pipeline.py:5045)
+  ├─ delay_confirm_enabled=false (现状) → 原路径: triggered=1 → 同轮执行 (零变更)
+  └─ delay_confirm_enabled=true →
+       ① ARM: triggered 不置 1; 写 metadata_json._delay_arm =
+          {armed_at(ET iso), arm_price, direction, deadline=armed_at+150s}
+          + 影子行 data/shadow/entry_delay_gate.jsonl (action=armed)
+       ② 快循环每 10s 扫 _delay_arm 未决指令:
+          - now < armed_at+120s → 跳过 (未到期)
+          - 120s ≤ now ≤ deadline(150s): 取实时价复核
+              LONG: px ≥ arm_price → CONFIRM; px < arm_price → REVOKE
+              SHORT: px ≤ arm_price → CONFIRM; px > arm_price → REVOKE
+            CONFIRM → triggered=1, 走既有 auto_execute 执行链 (chase_cap/re-price/
+                      admission 全部原样生效, 评估价=确认时价=实际下单价)
+            REVOKE → skip_reason='delay_confirm_revoked', 影子行 action=revoked
+          - now > deadline (快循环停摆/重启错过窗口) → skip_reason='delay_arm_expired',
+            影子行 action=expired (fail-safe: 过期宁可放弃不追单)
+       ③ 重启恢复: armed 状态在 DB (metadata_json), 快循环启动即扫;
+          deadline 已过 → expired。零内存态。
+```
+
+### 交互规则 (裁决通过即生效, 不另行讨论)
+
+1. **chase_cap**: 在确认后的执行链原位评估 (现状即"下单价 vs 禁追线",
+   pipeline.py:4250 块) → 延迟 2min 后价格更高若越线, 照拦。零代码改动,
+   语义=以实际可成交价判追高, 与 9/4 P0-A enforce 裁决一致。
+2. **量能门 (intraday_vol_gate)**: 在 ARM 时刻评估 (穿越轮), 确认时刻不重评 —
+   量能是"突破真实性"证据, 属武装判据; 2min 内量能语义无新信息。
+3. **RFC-068 接飞刀门**: 维持执行时刻口径 (现状), 确认执行时再判一次 — 双保险不变。
+4. **intraday_reentry 通道豁免**: `decision_id LIKE 'intraday_reentry%'` 指令
+   **不走延迟门** (直接原路径)。理由: ① 再入场设计语义=出场后快速回接,
+   加 2min 直接废掉该通道 (8/7 审计其供给本就脆弱); ② 它自带 spread_bps
+   微结构门已承担同类噪声过滤。⚠️ 此为 Hermes 推荐值, **裁决日用户可推翻**
+   (推翻=再入场同走延迟门, 一行配置分支)。
+5. **PDT/单日帽/购买力帽**: 全部在确认后执行链原位, 零交互。
+6. **E3 互斥**: B案落地时 `entry_archetype_routing_enabled` 必须保持 false —
+   同一指令不允许"既延迟复核又改挂限价", 影子落盘照旧 (record-only 无冲突)。
+
+### 配置键 (unified_config.yaml playbook 节)
+
+```yaml
+entry_delay_confirm_enabled: false     # 总开关, 默认 false 零行为变更
+entry_delay_confirm_minutes: 2         # 复核延迟 (=影子 N=2 腿, 冻结)
+entry_delay_confirm_ttl_sec: 150       # 复核窗口上限, 过期作废 (fail-safe)
+entry_delay_confirm_reentry_exempt: true  # 交互规则4
+```
+
+PlaybookConfig 单例缓存穿不透热重载 → **改键必须重启** (与 early_tight_sl 同款纪律)。
+
+### 代码量与触点
+
+| 文件 | 改动 | 量级 |
+|---|---|---|
+| app/playbook/pipeline.py | `_check_intraday_trigger` 命中后 ARM 分支 (~20行) | 中 |
+| app/playbook/pipeline.py | 快循环头部插入 `_scan_delay_arms()` (~35行新函数) | 中 |
+| config/unified_config.yaml | 4 键 + 注释 | 小 |
+| data/config_freeze_baseline.json | 新版本指纹豁免登记 (KR2 窗口分裂留痕, BE垫先例) | 小 |
+| tests/ | 契约钉 ≥6: ARM落库/120s前不复核/CONFIRM-REVOKE双向/过期fail-safe/重启恢复/reentry豁免 | 中 |
+
+合计 ~60 行生产代码。**Guard-First 核查**: 下游 auto_execute 有幂等锁
+(executed 标志) + 重复开仓拦截, ARM/CONFIRM 拆两段不产生重复下单路径;
+影子 dedup 键 (trade_id, delay_min) 与生产无关。
+
+### 观测与判分 (落地后 5 交易日)
+
+- 影子 jsonl 三分计数: armed / confirmed / revoked / expired
+- 判分口径: confirmed 组的 MFE<0.3% 率 vs 落地前基线 (30天 23%);
+  revoked 组的反事实损失 (若进场会怎样, T+1 用既有 post_exit_path bar 回放结算)
+- 熔断回滚: revoked/(armed) > 70% 或 confirmed 组 SL_INITIAL 率不降 →
+  `entry_delay_confirm_enabled: false` + 重启, 影子继续攒
+
+---
+
+## D案设计: PULLBACK_LIMIT 回调限价 (复用 E3 archetype 基建)
+
+### 现状盘点 (已存在, 非新建)
+
+- `app/playbook/entry_routing.py`: 路由/确认位/TTL/chase_cap 全套已实现,
+  生产开关 `entry_archetype_routing_enabled: false`, 影子常开
+  (337行, 9/2 起; 落盘点 pipeline.py:5945)
+- `scripts/cf_pullback_limit_replay.py`: 反事实回放器已存在 (bar 级)
+- `app/playbook/playbook_service.py:2178`: 限价阻塞上限=route.ttl_seconds (300s) 已接线
+
+### 落地 = 翻开关 + 裁决参数, 无新引擎
+
+```yaml
+entry_archetype_routing_enabled: true   # 唯一生产开关
+entry_archetype_ttl_seconds: 300        # 回踩等待窗 (现值, 裁决日可调)
+```
+
+语义: 带 `entry_archetype=PULLBACK_LIMIT` 的指令触发时不市价追,
+挂限价单在确认位 (DA 计划价/回调位), TTL 300s 内回踩即成交, 超时撤单作废。
+FADE_SHORT 同族 (SHORT 版回调)。
+
+### D案特有风险 (裁决日必读)
+
+1. **供给侧收窄**: 真突破不回踩 → 整单错过。影子须给出"回踩成交率"
+   (337行触发中实际 5min 内触及确认位的比例) — 若 <50%, D案把系统变成
+   "只做回调"策略, 与 DA 突破语义冲突, 须用户明示接受。
+2. **限价单在 Futu sim 的成交保真**: 触及≠成交 (排队); sim 撮合乐观,
+   实盘滑向更差。落地判分用"触及价 vs 成交价"差监控。
+3. **与 B案互斥点**: 同一指令二选一。D案 TTL=300s ≫ B案 150s,
+   资金占用周期不同, 单日帽消耗节奏不同。
+
+### D案代码量
+
+~0 行新生产代码 (基建已在) + 开关翻转 + 契约测试补 E3 enforce 分支 (~4 钉)。
+**这是 D 案最大优势: 爆炸半径 = 一个布尔值。**
+
+---
+
+## 两案对比表 (裁决日呈裁用)
+
+| 维度 | B案 2min延迟复核 | D案 回调限价 |
+|---|---|---|
+| 语义 | 追确认 (真突破多付 0.125%) | 等回踩 (假脉冲买更低, 真突破错过) |
+| 新代码 | ~60行 + 快循环触点 | ~0行 (翻开关) |
+| 影子证据 (首日) | 净回避价值 +$1,555 (ALL) / SL_INITIAL 子集 +$2,120 | 337行触发行在攒, 回放器就绪, 裁决日出反事实净Δ |
+| 主要风险 | 误杀率 53% (109/207) — 一半回避是赢家 | 回踩成交率未知 — 可能系统性错过趋势单 |
+| 成交笔数影响 | ~50% 触发被放弃 (各影子攒样同步变慢) | 不回踩单全错过 (可能更多) |
+| 与用户哲学贴合 | "识别不预测" 中性 | "留空间/不追" 更贴 |
+| 回滚 | 单键+重启 | 单键+重启 |
+
+**Hermes 推荐序** (数据未出全前的先验, 裁决日以影子冻结值为准):
+若两案都过线 → **D 优先** (零新代码、爆炸半径最小、贴用户"不追"哲学);
+若仅 B 过线 → B 按本文件实施; 若仅 D 过线 → D; 都不过 → 双双退役, 墓地留给
+入场质量侧 (D1' 跳空门 / D3' 按源监控) 继续攻。
+
+---
+
+## 风险评估 (共同)
+
+- **最坏情况**: 落地后成交笔数腰斩, 各攒样影子 (tiered/KR2/E1') 判分周期拉长一倍;
+  sim 数据供给不足拖慢转正门槛 (OOS≥15日) 时间线。缓解: 落地后 5 交易日观察期内
+  若日均成交 <3 笔, 触发供给复审 (用户 8/6 裁决"数据量优先"仍有效)。
+- **重启丢 ARM**: B案已设计为 DB 持久化 + deadline fail-safe, 昨日 8 次重启的
+  现实下零内存态是硬要求。
+- **配置指纹分裂**: 两案任一新键都进 config 版本哈希 → KR2 判分开新窗,
+  须在 config_freeze_baseline.json 登记豁免 (BE垫 9/9 先例, 强制留痕)。
+
+## 验证计划 (实施日)
+
+```bash
+# 1. 契约测试全绿
+venv/bin/python -m pytest tests/playbook/ tests/risk/ -q
+# 2. 重启 (HotReloader 穿不透 playbook.*)
+systemctl restart ftseek-us && sleep 30 && systemctl is-active ftseek-us
+# 3. 开盘后 grep 新行为证据
+grep -E '_delay_arm|delay_confirm|archetype路由' logs/ftseek_us.log | head
+# 4. 影子 jsonl 当日有行且三分计数合理
+wc -l data/shadow/entry_delay_gate.jsonl   # B案
+# 5. 5交易日后按"观测与判分"节出首份对照报告
+```
+
+## 回滚
+
+- B案: `entry_delay_confirm_enabled: false` + 重启 (影子落盘可留, record-only)
+- D案: `entry_archetype_routing_enabled: false` + 重启
+- 两案回滚后 KR2 指纹再分裂一次 → 回滚同样要在 config_freeze_baseline.json 留痕
+
+---
+
+## 台账
+
+- 影子注册表: entry_delay_confirm (OBSERVING, min_n=20) / extreme_gap_ban_shadow (OBSERVING) 已在册 (9/9 落地批)
+- 本 RFC 不含新 cron/新影子 — 纯设计预置, 不触发 CONTROL-LOOP-LEDGER 入账义务
+- 裁决日动作: 读本文件 → 对照 latest.json 冻结值 → 二选一 → 按对应节实施
