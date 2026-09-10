@@ -194,9 +194,17 @@ def print_config_audit(yaml_data: Dict[str, Any], strict: bool = False) -> int:
         non_blocking = [w for w in warnings if "[BLOCKING]" not in w]
 
         if non_blocking:
-            logger.warning(f"⚠️ 配置一致性审计发现 {len(non_blocking)} 个警告")
-            for w in non_blocking:
-                logger.warning(f"  {w}")
+            # 2026-09-10 (DEB-20260910 §3 议题三, 用户裁「按照建议执行优化」): WARNING → INFO。
+            #   病灶: 这些项**自带** `⚠️ [INFO]` / `⚠️ [DRIFT]` 标签 (见 :125/:137) 却用
+            #   logger.warning 输出 ⇒ 消息自称 INFO 而级别是 WARNING, 名实相矛盾; 且紧接着
+            #   main.py:490 打 `[ConfigAudit] ✅ SSOT 配置一致性审计通过` (INFO) ⇒ 相邻两行互相
+            #   打脸, 每次重启都出现 (昨日 8 次)。实测 7 日本族 120 条 WARNING (占全仓 7.0%),
+            #   零阻断价值。
+            #   **blocking 项仍走 logger.critical** (下方) ⇒ 阻断语义与 strict=True 的 raise 不变;
+            #   本改动只让"非阻断"与"阻断"在级别上可区分 (DEB §3.4 判据 2)。
+            #   合成单 record: handler 锁保证原子, 启动期多线程共写一条 stdout 时清单不被穿插。
+            logger.info("ℹ️ 配置一致性审计发现 %d 个非阻断项 (INFO/DRIFT — 不阻断启动):\n  %s",
+                        len(non_blocking), "\n  ".join(non_blocking))
 
         if blocking:
             logger.critical(f"🚨 配置一致性审计发现 {len(blocking)} 个 BLOCKING 错误!")

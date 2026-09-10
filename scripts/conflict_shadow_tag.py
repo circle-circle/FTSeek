@@ -19,6 +19,7 @@
 回滚: 配置键 false + 重启。
 """
 import json, os, sqlite3, sys
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -26,6 +27,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
 OUT = ROOT / "data" / "conflict_shadow.jsonl"
 MIN_TRADE_DATE = "2026-06-01"
+
+# 2026-09-10 (可观测性批): print → logger。本脚本经 scheduler._load_script_module 在服务
+#   进程内执行, print 无时间戳/级别/来源, 且摘要多行会被其他线程输出穿插 (无锁)。
+#   合成单条 record 保证原子; 消息正文保持逐字不变, 以免打断既有 grep 口径。
+logger = logging.getLogger("ftseek.conflict_shadow")
 
 
 def _load_existing_keys():
@@ -184,14 +190,18 @@ def main():
     # ── 摘要 ──
     from collections import Counter
     types = Counter(r["conflict_type"] for r in rows_out)
-    print(f"[conflict_shadow] 新增 {added} 行 → {OUT}")
-    for t, n in types.most_common():
-        print(f"  {t}: {n}")
+    _rpt = [f"[conflict_shadow] 新增 {added} 行 → {OUT}"]
+    _rpt += [f"  {t}: {n}" for t, n in types.most_common()]
     if not rows_out:
-        print("  (无新增)")
+        _rpt.append("  (无新增)")
+    logger.info("%s", "\n".join(_rpt))
 
     conn.close()
 
 
 if __name__ == "__main__":
+    # 独立 CLI 运行需自配 handler (同 ah_exit_shadow.py:452), 否则 print→logger 后输出静默变空。
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     main()

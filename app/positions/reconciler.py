@@ -552,34 +552,51 @@ class StartupReconciler:
         )
 
     def _log_summary(self, result: ReconcileResult, broker_positions, local_positions):
-        logger.warning("=" * 70)
-        logger.warning("[Reconciler] 启动对账完成")
-        logger.warning(f"  Broker 持仓: {len(broker_positions)} | 本地内存: {len(local_positions)}")
-        logger.warning(f"  matched         : {result.matched}")
-        logger.warning(f"  broker_only     : {result.broker_only_added} (智能推断补录)"
-                       + (f" | playbook自管跳过: {result.playbook_skipped}" if result.playbook_skipped else ""))
-        logger.warning(f"  ↳ adopted       : {result.adopted_strategy} (策略孤儿 → MANAGED, ExitMonitor 续命)")
+        """启动对账**成功**摘要 — INFO 单条原子 record (2026-09-10, DEB-20260910 §3 议题三).
+
+        改前: 整段 16 行 `logger.warning` ⇒ 成功与失败同级, WARNING 失去区分度。实测 7 日本族
+        359 条 WARNING (占全仓 20.9%, 仅次于 playbook.pipeline), 全部是这张横幅 (16 行 × 8 次
+        重启 × ~3 日) ⇒ 零信息量, 且被 daily_alert_summary 的 "WARN" 子串判级逐行计入推送
+        警告组 (DEB §3.4 判据 4 要求该组数下降 ~27.8%)。
+
+        **异常分支保持 WARNING 不动** (`:147` 启动对账异常 / `:223` broker_only 补录失败 /
+        `:252` local_only 标记失败) —— DEB §3.4 判据 5: 人为制造一次补录失败必须仍出 WARNING,
+        降噪不得致盲 (同源教训: "守卫只能报健康")。`result.errors > 0` 时摘要仍走 INFO 也不丢
+        信号: 逐笔失败已在上游分支各出一条 WARNING。
+
+        单 record 而非 16 条: handler 锁保证原子, 多线程 (scan/monitor/出场快循环/心跳) 共写一条
+        stdout 时横幅不被穿插 (同 §7 报告块做法); `"=" * 70` 纯分隔符行随之消失 (DEB §9 议题 3
+        附带项, 用户裁「按照建议执行优化」)。
+        """
         _n_legacy = result.broker_only_added + result.tagged_legacy - result.adopted_strategy
-        logger.warning(f"  ↳ legacy        : {_n_legacy} (LEGACY/MANUAL → PROTECTED)")
+        _lines = [
+            "[Reconciler] 启动对账完成",
+            f"  Broker 持仓: {len(broker_positions)} | 本地内存: {len(local_positions)}",
+            f"  matched         : {result.matched}",
+            f"  broker_only     : {result.broker_only_added} (智能推断补录)"
+            + (f" | playbook自管跳过: {result.playbook_skipped}" if result.playbook_skipped else ""),
+            f"  ↳ adopted       : {result.adopted_strategy} (策略孤儿 → MANAGED, ExitMonitor 续命)",
+            f"  ↳ legacy        : {_n_legacy} (LEGACY/MANUAL → PROTECTED)",
+        ]
         if result.playbook_skipped > 0:
             # 2026-08-27 审计⑤: 明确区分 — 这些仓由 monitor_playbook_sim_exits 自管退出,
             #   勿 takeover 接管 (会与 playbook 退出链双管理)。
-            logger.warning(
+            _lines.append(
                 f"  ↳ playbook      : {result.playbook_skipped} (未平 PLAYBOOK 仓, 自管退出 — "
                 "禁止 takeover, 否则双管理)"
             )
-        logger.warning(f"  local_only      : {result.local_only_ghosted} (标 ghost)")
-        logger.warning(f"  errors          : {result.errors}")
+        _lines.append(f"  local_only      : {result.local_only_ghosted} (标 ghost)")
+        _lines.append(f"  errors          : {result.errors}")
         if result.adopted_strategy > 0:
-            logger.warning(
+            _lines.append(
                 "  🤖 adopted 仓位 (识别为策略孤儿): ExitMonitor 续命监控, 已有 trail/SL 不变."
             )
         if _n_legacy > 0:
-            logger.warning(
+            _lines.append(
                 f"  ⚠ {_n_legacy} 笔 LEGACY 受保护 — 策略不操作; 如需接管: "
                 "python scripts/position_takeover.py takeover <symbol>"
             )
-        logger.warning("=" * 70)
+        logger.info("\n".join(_lines))
 
 
 def run_startup_reconcile(position_store, broker_adapter=None) -> ReconcileResult:

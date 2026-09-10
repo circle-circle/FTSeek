@@ -82,11 +82,34 @@ def step3b_trading_cards():
     print(f"[step3b] 成交口径卡重建: {line[0] if line else 'FAIL'}")
 
 # ── Step 0: 日K缓存增量 (DEB §十六: 触发判定依赖最新日K; refresh_daily_bars 此前无 cron) ──
+# 2026-09-10 (DEB-20260910 §8.9): 摘要行必须从**子进程 stderr** 取, 不是 stdout。
+#   病灶: refresh_daily_bars 的 print→logger 后, `logging.basicConfig` 默认 stream=**stderr**
+#   (仓内既有约定: main.py:49 的 `StreamHandler()` 同样是 stderr), 而 futu SDK 自己的日志写
+#   **stdout** ⇒ 原 `r.stdout` 的最后一行恒为 SDK 的 `on_disconnect: Disconnected`, 摘要被顶掉。
+#   实证 (非推断): logs/pangan_rebuild.log-20260827.gz ~ -20260910 **连续五档**的 [step0] 行全部是
+#   `on_disconnect`, 即 `完成: 刷新 0 | 已最新跳过 280 | 失败 1` 这类真实读数在本日志里**从未出现过**
+#   ⇒ 日K刷新的失败票名单长期不可见 (returncode 仍被核, 故只显示 OK/FAIL, 病灶被"OK"掩盖)。
+#   这正是 DEB §8.3「改输出面必须普查下游解析面」漏掉的第七面: **流归属** (stdout vs stderr)。
 def step0_daily_increment():
     r = subprocess.run([PY, str(ROOT / "scripts" / "refresh_daily_bars.py")],
                        capture_output=True, text=True)
-    tail = (r.stdout or "").strip().splitlines()[-1:]
-    print(f"[step0] 日K增量: {'OK' if r.returncode == 0 else 'FAIL'} {tail[0] if tail else ''}")
+    print(f"[step0] 日K增量: {'OK' if r.returncode == 0 else 'FAIL'} "
+          f"{_pick_refresh_summary(r.stderr, r.stdout)}")
+
+
+def _pick_refresh_summary(stderr_text: str, stdout_text: str) -> str:
+    """从子进程输出里挑日K刷新摘要 (纯函数, 便于钉子直测; 见 tests/test_pangan_step0_summary.py)。
+
+    优先 stderr 的 `[日K刷新] 完成:` / `失败票:` 两行 (后者才是本修复要救回的真实读数);
+    一条都没有 ⇒ 退回 stdout 末行 (旧行为, 至少留下 SDK 痕迹证明子进程真跑过),
+    再没有 ⇒ 显式 `无摘要输出` 而不是空串 (空串与"摘要为空"不可区分 = 静默失败形态)。
+    """
+    tagged = [ln.strip() for ln in (stderr_text or "").splitlines() if "[日K刷新]" in ln]
+    picked = [ln for ln in tagged if ("完成:" in ln or "失败票:" in ln)] or tagged[-1:]
+    if picked:
+        return " | ".join(picked)
+    fallback = (stdout_text or "").strip().splitlines()[-1:]
+    return fallback[0] if fallback else "无摘要输出 (子进程 stderr/stdout 均无 [日K刷新] 行)"
 
 
 if __name__ == "__main__":

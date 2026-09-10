@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import sys
 from datetime import datetime
@@ -33,6 +34,11 @@ REPO = Path(__file__).resolve().parents[1]
 OUT = REPO / "data" / "band_vol_shadow.jsonl"
 DB = REPO / "data" / "ftseek_us.db"
 RB_DIR = REPO / "data" / "replay_bars"  # 分钟bar: US_{SYM}_{DATE}.json
+
+# 2026-09-10 (可观测性批): print → logger。本脚本经 scheduler._load_script_module 在服务
+#   进程内执行, print 无时间戳/级别/来源。命名沿用 in-process 脚本约定 ftseek.<name>;
+#   消息正文保持逐字不变, 以免打断既有 grep 口径。
+logger = logging.getLogger("ftseek.band_vol_shadow")
 
 # 扁平 band 常量 (与 entry_band.py 单一真源一致, 只读引用)
 CHASE_ZONE_PCT = 0.05
@@ -185,9 +191,14 @@ def main() -> int:
             for r in new_rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
     total = len(seen) + len(new_rows)
-    print(f"[band_vol_shadow] 累计 {total} 行 (+{len(new_rows)}), 无atr跳过 {n_skip_noatr}")
+    logger.info("[band_vol_shadow] 累计 %d 行 (+%d), 无atr跳过 %d",
+                total, len(new_rows), n_skip_noatr)
     return 0
 
 
 if __name__ == "__main__":
+    # 独立 CLI 运行需自配 handler (同 ah_exit_shadow.py:452), 否则 print→logger 后输出静默变空。
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     sys.exit(main())

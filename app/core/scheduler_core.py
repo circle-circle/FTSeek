@@ -2212,7 +2212,10 @@ class TradingScheduler:
                 with open(_llm_scan_state, "w", encoding="utf-8") as _f:
                     _json.dump({"last_afterhours_run": ts.isoformat() if ts else None}, _f)
             except Exception as _pe:
-                logger.debug(f"[LLM策略] scan 时间持久化失败 (不影响): {_pe}")
+                # 2026-09-10 debug→warning: 并非"不影响" — 写不进 last_afterhours_run,
+                #   下次重启即复位 None → 首圈命中 is-None 重推盘前/盘后 LLM 推荐,
+                #   正是下方 2026-07-16 那段修复要防的形态。fail 必须可见可计数。
+                logger.warning(f"[LLM策略] scan 时间持久化失败 (重启将重推LLM推荐): {_pe}", exc_info=True)
 
         last_afterhours_run = None
         try:
@@ -2222,7 +2225,8 @@ class TradingScheduler:
                     last_afterhours_run = datetime.fromisoformat(_saved)
                     logger.info(f"[LLM策略] 载回上次LLM推荐时间: {_saved} (重启不重推)")
         except Exception as _le:
-            logger.debug(f"[LLM策略] scan 时间载入失败 (视为无记录): {_le}")
+            # 2026-09-10 debug→warning: 载入失败按"无记录"处理 → 重启即重推, 同上必须可见。
+            logger.warning(f"[LLM策略] scan 时间载入失败 (视为无记录, 重启将重推LLM推荐): {_le}", exc_info=True)
 
         while self.running:
             # D2(a): 结算上一轮护航 (停线程 + 落轮次耗时遥测) 再补心跳。原实现只有这一处 ping,
@@ -2319,7 +2323,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("futu_channel_shadow_collect")
                         _mod.run_collect(self, phase="TRADING")
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] futu通道影子采集异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] futu通道影子采集异常 (已隔离): {_e}", exc_info=True)
 
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
@@ -2347,7 +2351,10 @@ class TradingScheduler:
                                 time.sleep(1)
                             continue
                     except Exception as e:
-                        logger.debug(f"[LLM策略] 节假日检查异常 (继续): {e}")
+                        # 2026-09-10 debug→warning + exc_info: 这是 fail-open — 节假日判定抛异常
+                        #   即直接落入下方交易分支 (开盘确认器/生成/推送)。按 DEB-20260721 R4 共识
+                        #   "fail-open 失明必须 WARNING + 可计数", 原 debug 在 INFO 级下零可见。
+                        logger.warning(f"[LLM策略] 节假日检查异常 (fail-open 继续): {e}", exc_info=True)
 
                     # P0 修复: 开盘确认器 — run_open_checker 内部自带时间窗口 + 日期幂等
                     # 无需外部 guard，函数自行判断 09:15-09:29 ET 窗口并每日执行一次
@@ -2373,7 +2380,7 @@ class TradingScheduler:
                         run_playbook_generate(self)
                     except Exception as _e:
                         # 2026-07-04: debug→warning — 盘前生成失败会导致当日无作战计划, 必须可见
-                        logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}", exc_info=True)
 
                     # 2026-07-24 (用户裁决): 扩容补量 — 当日指令 < 目标下限时从流动性池走正式链补足.
                     #   函数内自带双窗口时间门(盘前08:45-09:30/盘中10:30-11:30 ET)/分窗幂等/开关, 此处无条件调用安全.
@@ -2386,7 +2393,7 @@ class TradingScheduler:
                         from app.playbook.pipeline import run_playbook_topup_supplement
                         run_playbook_topup_supplement(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] playbook 补量异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] playbook 补量异常 (已隔离): {_e}", exc_info=True)
 
                     # 2026-07-17: 盘前波动率定桶落库 (DA/UE 直写指令补 vol_bucket/atr_pct 到主表)
                     # D4(a): 本步实测最长 (09-03 达 31.4min, 逐标的 ATR) → 跨开盘必须让位给入场
@@ -2396,7 +2403,7 @@ class TradingScheduler:
                         from app.playbook.pipeline import run_playbook_normalize_vol_buckets
                         run_playbook_normalize_vol_buckets(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] playbook 盘前定桶异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] playbook 盘前定桶异常 (已隔离): {_e}", exc_info=True)
 
                     # 2026-07-11: 独立盘前指令推送 (不依赖生成内联, 持久化幂等+重试)
                     if self._premarket_overrun("morning_push"):
@@ -2405,7 +2412,7 @@ class TradingScheduler:
                         from app.playbook.pipeline import run_playbook_morning_push
                         run_playbook_morning_push(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] playbook 盘前指令推送异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] playbook 盘前指令推送异常 (已隔离): {_e}", exc_info=True)
 
                     # 宏观日历影子采集 (2026-08-12, financial-data-query 数据源接入):
                     # 蚂蚁API盘前拉8个美国核心宏观指标最新值/披露日, jsonl落库.
@@ -2420,7 +2427,7 @@ class TradingScheduler:
                         _mod_mc = self._load_script_module("macro_calendar_shadow_collect")
                         _mod_mc.run_collect(self, phase="PRE_MARKET")
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 宏观日历影子采集异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 宏观日历影子采集异常 (已隔离): {_e}", exc_info=True)
 
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
@@ -2432,7 +2439,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("futu_channel_shadow_collect")
                         _mod.run_collect(self, phase="AFTER_HOURS")
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] futu通道影子盘后采集异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] futu通道影子盘后采集异常 (已隔离): {_e}", exc_info=True)
                     
                     # 盘后: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
@@ -2449,7 +2456,7 @@ class TradingScheduler:
                     except Exception as _e:
                         # 2026-07-04: debug→warning — 原debug级别在INFO日志中不可见,
                         # 导致盘后追踪静默失败(AMD/BABA holding仓位未被EOD平仓)
-                        logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}", exc_info=True)
 
                     # 隔夜持仓 shadow 结算 (2026-08-10, record-only, 用户批准):
                     #   benign 退出决策点的次日反事实结算. 每日幂等 (settled 标记),
@@ -2458,7 +2465,10 @@ class TradingScheduler:
                         _mod = self._load_script_module("settle_overnight_shadow")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.debug(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}")
+                        # 2026-09-10 debug→warning + exc_info: 与上方 :2452 的 2026-07-04 修复
+                        #   同一病灶、相隔 11 行却漏改 — 逐案修而不立规则的代价。全环 23 处
+                        #   [LLM策略] 隔离异常本批一次性收口 (19 补 exc_info + 4 debug→warning)。
+                        logger.warning(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}", exc_info=True)
 
                     # MFE_STALL 入场侧影子打标 (2026-08-12, record-only): 8/11诊断
                     #   发现 news_positive 触发 100%出现在 STALL 笔 (6/6) — 攒样验证
@@ -2467,7 +2477,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("stall_entry_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] stall影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] stall影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 入场去同步化影子打标 (2026-08-12, record-only): 8/11 实锤 21秒
                     #   5笔齐射 (禁触窗解除瞬间同轮倾泻) 4亏1赢; 历史分散入场同区
@@ -2477,7 +2487,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("entry_sync_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 入场同步影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 盘后出场影子监控 (2026-08-27, 用户动议·record-only): 水下隔夜仓
                     #   盘后延续修复观测 (touch_entry/touch_be/touch_tp) + red_cut_1pct
@@ -2490,7 +2500,7 @@ class TradingScheduler:
                         _mod_ah = self._load_script_module("ah_exit_shadow")
                         _mod_ah.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] AH出场影子异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] AH出场影子异常 (已隔离): {_e}", exc_info=True)
 
                     # 陈旧锚影子打标 (2026-08-12 Plan B, record-only): DA锚价 vs 盘前价
                     #   对照暴露陈旧 (AVGO锚低4.3%/HON锚高3.7%); drift门/extreme_gap/出带
@@ -2501,7 +2511,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("stale_anchor_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 陈旧锚影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 陈旧锚影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 隔夜持仓×新指令冲突影子打标 (2026-08-16, record-only):
                     # W_WEEK 引入多夜持仓后, 隔夜股次日可能被 DA/UE 再选中。执行段已有
@@ -2511,7 +2521,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("conflict_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 持仓冲突影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 簇浓度影子打标 (2026-08-27, 组合风控P2, record-only): 日开仓帽16/
                     #   并发帽12全是笔数维度无结构维度。手工簇映射+占位区间重放, 每笔开仓
@@ -2522,7 +2532,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("cluster_concentration_shadow")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 簇浓度影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 簇浓度影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 空头转化漏斗影子打标 (2026-08-16, record-only): SELL_SHORT指令
                     #   8/7后断崖, 真实断点=LLM分析层转化率低 (8/14轮35只→看空仅1)。
@@ -2532,7 +2542,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("short_funnel_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 空头漏斗影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 空头漏斗影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 缺口语义影子打标 (2026-08-17, DEB-20260817, record-only):
                     #   A3票型驱动冻结(gap_filler零区分度), 但gap-bucket级语义(市场级)
@@ -2543,7 +2553,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("gap_semantics_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 缺口语义影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 缺口语义影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # band波动率化影子打标 (2026-08-17, DEB-20260817, record-only):
                     #   扁平band全池一套(entry_band.py自认不合理), 用SL同源atr分桶口径算
@@ -2554,7 +2564,7 @@ class TradingScheduler:
                         _mod = self._load_script_module("band_vol_shadow_tag")
                         _mod.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}", exc_info=True)
 
                     # 日K缓存增量刷新 (2026-08-17, DEB-20260817第4轮根因治理):
                     #   replay_bars_daily 曾停更3周→A2报告35%行gap被污染。A2的prev_close
@@ -2566,7 +2576,7 @@ class TradingScheduler:
                                 "playbook.daily_bars_refresh_enabled", True)):
                             self._load_script_module("refresh_daily_bars").run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}", exc_info=True)
 
                 elif phase == MarketPhase.OVERNIGHT:
                     # 盘后出场影子终评 (2026-08-27, record-only): AH 20:00 收后用完结
@@ -2576,7 +2586,7 @@ class TradingScheduler:
                         _mod_ah = self._load_script_module("ah_exit_shadow")
                         _mod_ah.run_check(self)
                     except Exception as _e:
-                        logger.warning(f"[LLM策略] AH出场影子(夜)异常 (已隔离): {_e}")
+                        logger.warning(f"[LLM策略] AH出场影子(夜)异常 (已隔离): {_e}", exc_info=True)
 
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:

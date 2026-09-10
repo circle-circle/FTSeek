@@ -18,6 +18,7 @@
 回滚: 配置键 false + 重启。
 """
 import json, os, re, sqlite3
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
 OUT = ROOT / "data" / "short_funnel_shadow.jsonl"
 LOG_DIR = ROOT / "logs"
+
+# 2026-09-10 (可观测性批): print → logger。本脚本经 scheduler._load_script_module 在服务
+#   进程内执行, print 无时间戳/级别/来源。命名沿用 in-process 脚本约定 ftseek.<name>;
+#   消息正文保持逐字不变, 以免打断既有 grep 口径。
+logger = logging.getLogger("ftseek.short_funnel_shadow")
 
 
 def run_check(scheduler=None):
@@ -134,9 +140,13 @@ def main():
         existing_dates.add(trade_date)
         added += 1
 
-    print(f"[short_funnel_shadow] 新增 {added} 日 → {OUT}")
+    logger.info("[short_funnel_shadow] 新增 %d 日 → %s", added, OUT)
     conn.close()
 
 
 if __name__ == "__main__":
+    # 独立 CLI 运行需自配 handler (同 ah_exit_shadow.py:452), 否则 print→logger 后输出静默变空。
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     main()

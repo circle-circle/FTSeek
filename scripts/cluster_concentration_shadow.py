@@ -23,6 +23,7 @@ blocked_pnl 净差>0 (拦掉的合计是亏的) + 符号检验 p<0.05 才议真�
 回滚: 配置键 false + 重启.
 """
 import json
+import logging
 import sqlite3
 import sys
 from collections import defaultdict
@@ -37,6 +38,11 @@ SUMMARY = ROOT / "data" / "cluster_concentration_shadow_summary.json"
 MIN_DATE = "2026-08-01"   # 16帽时代供给结构 (8/17起), 略前推含齐射实证期
 CLUSTER_CAP = 6           # 观测参考帽 (任意 cap 可由 jsonl 的 concurrent 字段离线重切)
 ET = ZoneInfo("America/New_York")
+
+# 2026-09-10 (可观测性批): print → logger, 并把 __name__ (裸 "cluster_concentration_shadow")
+#   统一到 in-process 脚本既有约定 ftseek.<name> — 实测主日志 logger 命名已有 4 套并存
+#   (app.* / ftseek_us.* / ftseek.* / 裸脚本名), 裸名无法按子系统统一设级或过滤。
+logger = logging.getLogger("ftseek.cluster_concentration_shadow")
 
 CLUSTERS = {
     "semis": "AVGO AMD NVDA MU TSM QCOM MRVL LRCX SNDK STX WDC SMTC LITE ALAB UCTT",
@@ -73,8 +79,6 @@ def _parse_ts(s):
 
 def run_check(scheduler=None) -> int:
     """调度器钩子 (AFTER_HOURS)."""
-    import logging
-    _logger = logging.getLogger(__name__)
     try:
         from app.core.config_container import ConfigContainer
         if not bool(ConfigContainer.get_instance().get_dotted(
@@ -85,10 +89,10 @@ def run_check(scheduler=None) -> int:
     try:
         n = main()
         if n:
-            _logger.info("[簇浓度影子] 已重放 %d 交易日", n)
+            logger.info("[簇浓度影子] 已重放 %d 交易日", n)
         return n
     except Exception as e:
-        _logger.warning("[簇浓度影子] 异常 (已隔离): %s", e)
+        logger.warning("[簇浓度影子] 异常 (已隔离): %s", e, exc_info=True)
         return 0
 
 
@@ -209,17 +213,24 @@ def main() -> int:
         }
         SUMMARY.write_text(json.dumps(summary, ensure_ascii=False, indent=1))
 
-        print(f"=== 簇浓度影子 (n={len(out_rows)}日, cap_ref={CLUSTER_CAP}) ===")
-        print(f"最大单簇并发: {summary['max_cluster_concurrent_ever']}")
-        print("cap敏感性 (拦笔数/Σ被拦pnl): " + " | ".join(
-            f"cap{c}={v['blocked']}笔/{v['blocked_pnl_sum']:+.0f}$"
-            for c, v in cap_sens.items()))
-        print("簇排行 (最大并发): " + ", ".join(
-            f"{c}={v['max_conc']}" for c, v in
-            sorted(by_cluster.items(), key=lambda kv: -kv[1]["max_conc"])))
-    print(f"落盘: {OUT.name} / {SUMMARY.name} (跳过不可解析行 {skipped})")
+        _rpt = [
+            f"=== 簇浓度影子 (n={len(out_rows)}日, cap_ref={CLUSTER_CAP}) ===",
+            f"最大单簇并发: {summary['max_cluster_concurrent_ever']}",
+            "cap敏感性 (拦笔数/Σ被拦pnl): " + " | ".join(
+                f"cap{c}={v['blocked']}笔/{v['blocked_pnl_sum']:+.0f}$"
+                for c, v in cap_sens.items()),
+            "簇排行 (最大并发): " + ", ".join(
+                f"{c}={v['max_conc']}" for c, v in
+                sorted(by_cluster.items(), key=lambda kv: -kv[1]["max_conc"])),
+        ]
+        logger.info("[簇浓度影子] %s", "\n".join(_rpt))
+    logger.info("[簇浓度影子] 落盘: %s / %s (跳过不可解析行 %d)", OUT.name, SUMMARY.name, skipped)
     return len(out_rows)
 
 
 if __name__ == "__main__":
+    # 独立 CLI 运行需自配 handler (同 ah_exit_shadow.py:452), 否则 print→logger 后输出静默变空。
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     sys.exit(0 if main() else 1)

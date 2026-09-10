@@ -16,6 +16,7 @@ data/overnight_hold_shadow_latest.json。
 """
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -28,6 +29,12 @@ DB = ROOT / "data" / "ftseek_us.db"
 BAR_DIR = ROOT / "data" / "replay_bars"
 SHADOW = ROOT / "data" / "overnight_hold_shadow.jsonl"
 OUT = ROOT / "data" / "overnight_hold_shadow_latest.json"
+
+# 2026-09-10 (可观测性批): print → logger, 命名沿用 in-process 脚本既有约定 ftseek.<name>。
+#   本脚本经 scheduler._load_script_module 在**服务进程内**执行, print 落 systemd stdout 后
+#   无时间戳/无级别/无来源, 且整段报告会被其他线程输出穿插 (无锁)。合成单条 record 后由
+#   handler 锁保证原子, 且首行可 grep 可判级。
+logger = logging.getLogger("ftseek.settle_overnight_shadow")
 
 
 def load_day(symbol: str, date_str: str):
@@ -58,20 +65,41 @@ def _next_trading_day(d0: str, symbol: str):
 
 
 def run_check(scheduler=None) -> int:
-    """调度器钩子 (AFTER_HOURS, 每日幂等): 结算隔夜 shadow. 返回新结算笔数."""
-    import logging
-    _logger = logging.getLogger(__name__)
+    """调度器钩子 (AFTER_HOURS): 结算隔夜 shadow. 返回新结算笔数.
+
+    2026-09-10 (DEB-20260910 §2): 补配置门 playbook.overnight_hold_settler_enabled (默认 false)。
+    此前本钩子是 AFTER_HOURS 段 12 个 in-process 钩子里**唯一无任何门**的一个 ⇒ 写入方
+    (overnight_hold_shadow_enabled=false) 已停, 结算器却仍每 ~7m47s 重算重印 74 笔全表, 一晚 32 轮。
+
+    配置读取失败时**fail-closed (跳过)**, 与另 10 个钩子的 `except: pass`(fail-open 继续跑) 相反,
+    理由: ①本门默认 false = "本就不该跑", fail-open 会让一次 ConfigContainer 抖动把已停的作业复活;
+    ②跳过零代价 —— 结算是**全量幂等重算** (从 jsonl 读全部 settled=False 行), 漏一夜下夜自动补齐,
+    不像"当日一次"型作业漏了就永久丢数据。fail-closed 必须吼一声 (WARNING), 不得静默。
+    """
+    try:
+        from app.core.config_container import ConfigContainer
+        if not bool(ConfigContainer.get_instance().get_dotted(
+                "playbook.overnight_hold_settler_enabled", False)):
+            return 0
+    except Exception as e:
+        logger.warning("[隔夜shadow] 配置门读取失败 → fail-closed 跳过本轮 (结算全量幂等, 下轮自动补): %s",
+                       e, exc_info=True)
+        return 0
     try:
         n = _settle_all()
         if n:
-            _logger.info("[隔夜shadow] 结算 %d 笔", n)
+            logger.info("[隔夜shadow] 结算 %d 笔", n)
         return n
     except Exception as e:
-        _logger.warning("[隔夜shadow] 结算异常 (已隔离): %s", e)
+        logger.warning("[隔夜shadow] 结算异常 (已隔离): %s", e, exc_info=True)
         return 0
 
 
 def main():
+    # 独立 CLI 运行需自配 handler (同 ah_exit_shadow.py:452), 否则 print→logger 后输出静默变空。
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -169,14 +197,16 @@ def _settle_all(dry_run: bool = False) -> int:
     }
     OUT.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
-    print(f"\n=== 隔夜持仓反事实 (已结算 {n} 笔) ===")
-    print(f"隔夜跳空: 胜率 {summary['gap']['win_rate']}% 均 {summary['gap']['avg_pct']:+.2f}% 金额 {gap_pnl:+.0f}")
-    print(f"持到次日收盘: 胜率 {summary['fullday']['win_rate']}% 均 {summary['fullday']['avg_pct']:+.2f}% 金额 {full_pnl:+.0f}")
-    print(f"\n按标的 (n≥2):")
-    for s, v in summary["by_symbol"].items():
-        if v["n"] >= 2:
-            print(f"  {s:8} n={v['n']:2} 胜率{v['win_rate']:5.0f}% 金额{v['total_pnl']:+8.0f}")
-    print(f"\n本次新结算 {settled_ct} 笔, 汇总已写 {OUT.name}")
+    _rpt = [
+        f"=== 隔夜持仓反事实 (已结算 {n} 笔) ===",
+        f"隔夜跳空: 胜率 {summary['gap']['win_rate']}% 均 {summary['gap']['avg_pct']:+.2f}% 金额 {gap_pnl:+.0f}",
+        f"持到次日收盘: 胜率 {summary['fullday']['win_rate']}% 均 {summary['fullday']['avg_pct']:+.2f}% 金额 {full_pnl:+.0f}",
+        "按标的 (n≥2):",
+    ]
+    _rpt += [f"  {s:8} n={v['n']:2} 胜率{v['win_rate']:5.0f}% 金额{v['total_pnl']:+8.0f}"
+             for s, v in summary["by_symbol"].items() if v["n"] >= 2]
+    _rpt.append(f"本次新结算 {settled_ct} 笔, 汇总已写 {OUT.name}")
+    logger.info("[隔夜shadow] %s", "\n".join(_rpt))
     return settled_ct
 
 

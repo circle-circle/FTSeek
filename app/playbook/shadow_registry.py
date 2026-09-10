@@ -420,7 +420,19 @@ REGISTRY: list[ShadowItem] = [
              "evidence": "用户裁'5批': 生产判罪线预注册 — w_week 臂已平 n≥20 且修复率<40% "
                          "→ 裁排除 loser_overnight_enabled。跟踪: overnight_arm_report "
                          "预注册判据段 (当前 n=4, 修复率75%, 净PnL -$207, 攒样中)"}],
-        notes="毕业后生产表现由 RFC-067 台账 + overnight_arm_report 预注册判据跟踪",
+        notes="毕业后生产表现由 RFC-067 台账 + overnight_arm_report 预注册判据跟踪。"
+              " [2026-09-10 DEB-20260910 §2 挂载面补登记] 本项有**两个**挂载面, 此前只登记了写入方: "
+              "①写入方 app/playbook/overnight_hold_shadow.py ← config_key "
+              "playbook.overnight_hold_shadow_enabled (2026-08-28 置 false, 已停); "
+              "②结算器 scripts/settle_overnight_shadow.py ← 新键 "
+              "playbook.overnight_hold_settler_enabled (2026-09-10 置 false, 减法三步第②步配置停; "
+              "第③步代码退役待观察一周)。结算器挂载点 = scheduler_core.py AFTER_HOURS 段 "
+              "_load_script_module(\"settle_overnight_shadow\") —— **进程内 importlib 按文件路径加载, "
+              "无 import 语句**, 故 crontab/Hermes/`rg import` 三面全查不到 (8/28 注释因此误判"
+              "「无排班」而实际一晚跑 32 轮)。零引用核对必须含此第六面。"
+              " 结算器产出零 live 消费方: cf_fullday_from_exit_pnl/fullday_from_exit 只有 "
+              "tests/test_overnight_shadow.py 读; overnight_hold_shadow_latest.json 消费方 0; "
+              "eval_script overnight_arm_report.py 读 DB metadata_json.overnight_arm, 不读该 jsonl。",
     ),
     ShadowItem(
         id="overnight_kill_criterion",

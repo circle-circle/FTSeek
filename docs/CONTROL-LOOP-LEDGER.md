@@ -234,3 +234,8 @@ cohort 窗 — 全窗已不可逆有 4 个哈希, 按全窗字面判必 BROKEN; 
    本日志 `] ERROR:` 形态 (LEVEL 后随冒号非空格) ⇒ ERROR 硬判恒 0, 而告警链
    `scripts/error_alert.sh` 用的是 `/ERROR|CRITICAL/` ⇒ **判据模式必须逐字与告警判据一致**,
    且改动后要注一行错样本反证 (旧=0 / 新=2) 才算立起。
+   **2026-09-10 更新 (DEB-20260910 §4)**: 告警链已重写为 `scripts/error_alert.py`, 判级
+   口径改为**字面量** `"] ERROR:"` / `"] CRITICAL:"` (与本日志形态、与 intraday_heartbeat
+   同源单一真源) —— 旧 .sh 的 `/ERROR|CRITICAL/` 是级别盲匹配 (INFO 正文含 ERROR 即计入),
+   且只读 `logs/ftseek_us.log` ⇒ `logs/invariant_check.log` 里的违反从未推送过。
+   本条规则的现行含义: 新写探测器要对齐的是 `error_alert.py::LEVEL_MARKERS`, 不再是 awk 模式。

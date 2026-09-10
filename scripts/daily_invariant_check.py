@@ -23,6 +23,9 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   I15 指令 decision_id 决策日 == 指令交易日 (T-1 bridge 陈旧供单守卫, 2026-09-02)
   W1 参数冻结窗 config_version 唯一性 (OKR-2026-09 KR2, 2026-08-31 用户裁"按建议执行")
   W2 字段基数棘轮 (离散字段塌缩为常量 → 下游切片零区分度; ADR-038 P7 军规自动化, 2026-09-06)
+  W4 except 块内 logger.debug 棘轮 (失败被 LOG_LEVEL=INFO 吞掉; DEB-20260910 §8.2, 2026-09-10)
+  W5 裸名 logger 棘轮 (无点号 ⇒ 按子系统设级/过滤覆盖不到; DEB-20260910 §5, 2026-09-10)
+  W6 except 块内告警无 exc_info 棘轮 (有告警无栈 ⇒ 根因靠猜; DEB-20260910 §8.2, 2026-09-10)
   豁免: data_quality 前缀命中 duplicate/outlier/invalid/void/excluded 的行 (写入方
         声明"非真实了结", 如 id=1327 duplicate_external_close 故意留 NULL 使净额求和
         自动排除) 不告; 数量落 JSON (settled_exempt_marked) 防豁免面无声扩大。
@@ -30,12 +33,15 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
         *_detector_error 违反 (2026-08-28 D1/D2 同课: "零违反"与"守卫自己崩了"必须可区分,
         否则一个坏掉的看门狗就是最会撒谎的看门狗)。表/列不存在属旧库形态, 仍静默跳过。
 
-输出: 违反数 >0 → logger.error (被 error_alert.sh 15min 扫描拾取推钉钉) + exit 1;
+输出: 违反数 >0 → logger.error (被 error_alert.py 15min 扫描拾取推钉钉 — 2026-09-10 起本脚本的
+     logs/invariant_check.log 才真进了告警扫描面; 此前 error_alert.sh 只读 logs/ftseek_us.log,
+     「违反 → 推钉钉」自 7/28 上线起是纸面的, 见 DEB-20260910 §4) + exit 1;
      全过 → 一行 OK + exit 0。结果落 data/invariant_check_latest.json。
 cron: 每交易日盘后 (见 crontab '05 5 * * 2-6')。
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -217,7 +223,7 @@ def _check_config_freeze(rec) -> dict:
 #    全部靠事后人工复盘才发现。工具 scripts/shadow_field_cardinality.py (W0) 已能机械
 #    判 DEGEN 并 exit 1, 但此前无任何调度方 → P7 军规停在纸面。本守卫把它接进每晚
 #    不变量自检, 与 W1 同款棘轮纪律:
-#      基线外新增 DEGEN  → 告警 (损失封顶当天, 经 error_alert.sh 推钉钉);
+#      基线外新增 DEGEN  → 告警 (损失封顶当天, 经 error_alert.py 推钉钉);
 #      基线内已知 DEGEN  → silenced_known 计数, 不刷不可动作噪声 (存量病灶在修);
 #      基线内已愈合      → healed 列出, 提示人工收缩基线 (棘轮只降不升, 不自动改写);
 #      采集器/检测器异常 → W2_detector_error ("零违反"与"守卫自己崩了"必须可区分);
@@ -342,6 +348,189 @@ def _check_field_cardinality(rec, _collect=None) -> dict:
         rec("W2_detector_error", "-", type(e).__name__, f"W2 检测器自身异常: {e}")
         info["status"] = "detector_error"
         return info
+
+
+# ── W4/W5/W6 日志卫生棘轮 (2026-09-10, DEB-20260910 §8.2 + §5, 用户裁「按照建议执行优化」) ──
+#    病灶 (全仓 AST 实测, 非 grep 估算; 数字见三个基线文件的 counts 合计):
+#      W4 `except` 块内 logger.debug 记失败/异常 ≈ 711 处 / 164 文件 — LOG_LEVEL=INFO 下**全不
+#         可见**。已逐案修 4 轮仍在漏: scheduler_core.py:2375/:2450 (2026-07-04)、
+#         playbook_service.py:1466/:1486 (DEB-20260721 R4)、pipeline.py:800 (2026-07-27)、
+#         DEB-20260904 #148, 本批又抓 4 处, 其中 :2461 与已修的 :2450 **相隔 11 行**
+#         ⇒ 逐案修不收敛, 必须立规则 (DEB §8.2 的立法理由)。
+#      W5 裸名 logger (`logging.getLogger("无点号字面量")`) ≈ 17 处 — 无法按子系统 setLevel/
+#         过滤, 且迫使 error_alert / daily_alert_summary 退化为全行子串匹配 (DEB §5 的成因链)。
+#      W6 `except` 块内 warning/error/critical **不带 exc_info** ≈ 1142 处 / 243 文件 (全仓
+#         4230 个 except 处理器只有 103 处带栈, 98% 无栈) ⇒ 有告警无栈, 根因只能靠猜。
+#         ②批已在 scheduler_core 逐处补 19 处; 本棘轮防新增。
+#    纪律 (照 W2 棘轮形态原样沿用):
+#      基线外新增文件 / 基线内计数增长 → 当晚告警 + exit 1 (经 error_alert.py 推钉钉);
+#      基线内存量 → silenced_known 计数, 不刷不可动作噪声 (存量在修);
+#      计数下降 → healed 列出, 提示人工收缩基线 (**守卫绝不自动改写基线**, 棘轮只降不升);
+#      解析失败 → W456_parse_error; 检测器异常 → *_detector_error ("零违反"与"守卫自己崩了"
+#      必须可区分, 8/28 D1/D2 同课)。
+#    判据口径 = **per-file 计数**, 不是行号: 行号随任何编辑漂移 ⇒ 行号基线会天天假告警,
+#      假告警一多守卫就被无视 (比没有守卫更糟)。refs 只是诊断样本, 判据不用它。
+#      已知弱点 (诚实登记): 同一文件"修一处 + 新增一处"净计数不变 ⇒ 抓不到; 跨文件不掩盖。
+#    豁免通道: 改对应 data/*_baseline.json 的 counts + 在 refs 写裁决出处 (改基线 = 改判据,
+#      须先落档 ADR/DEB — 与 config_freeze_baseline.json / field_cardinality_baseline.json 同纪律)。
+#    扫描面: main.py + app/ scripts/ ops/ config/ 的 *.py; 排除 tests/ venv/ archive/
+#      __pycache__/ (tests 非生产可见面; archive 是墓地, 军规要求零 import 也就不必守它)。
+#    回滚: 删本段 + main() 内两行接线 + 三个基线文件; 零生产代码依赖。
+_HYGIENE_ROOTS = ("app", "scripts", "ops", "config")
+_HYGIENE_EXCLUDE = {"archive", "__pycache__", "venv", "tests", ".git", "node_modules"}
+_HYGIENE_DIMS = ("debug_swallow", "bare_logger", "except_stack")
+_HYGIENE_CODES = {"debug_swallow": "W4_debug_swallow", "bare_logger": "W5_bare_logger",
+                  "except_stack": "W6_except_stack"}
+_HYGIENE_BASELINES = {
+    "debug_swallow": REPO / "data" / "debug_swallow_baseline.json",
+    "bare_logger": REPO / "data" / "bare_logger_baseline.json",
+    "except_stack": REPO / "data" / "except_stack_baseline.json",
+}
+_NO_STACK_METHODS = {"warning", "warn", "error", "critical"}
+_HYGIENE_FIX = {
+    "debug_swallow": ("except 块内改 logger.warning(..., exc_info=True) — 失败必须可见且带栈; "
+                      "确属可忽略噪声就删掉这行 debug, 别靠 LOG_LEVEL=INFO 把它藏起来"),
+    "bare_logger": ("logger 名改 `ftseek.<subsystem>.<module>` (DEB-20260910 §5 建议的 SSOT "
+                    "约定) — 裸名无法按子系统设级/过滤"),
+    "except_stack": ("补 exc_info=True 或改用 logger.exception(...) — 有告警无栈等于让值班人猜根因"),
+}
+_HYGIENE_NOTE = (
+    "日志卫生棘轮基线 (DEB-20260910 §8.2/§5, W2 同款纪律)。counts = per-file 计数, 判据只用它; "
+    "refs = 诊断样本 (带行号, 会随编辑漂移, **不参与判定**)。只降不升: 计数下降由人工收缩本文件, "
+    "守卫绝不自动改写。改 counts = 改判据, 须先落档 ADR/DEB 并在 refs 写裁决出处。"
+)
+
+
+def _hygiene_py_files(repo: Path = None) -> list:
+    """扫描面 (确定性排序, 与运行目录无关)。
+
+    repo 不用默认参数绑 REPO —— 默认参数在 def 时求值, 单测 monkeypatch `dic.REPO`
+    就换不掉扫描面 (与 _check_field_cardinality 覆写 mod._DB 同一族接线坑)。
+    """
+    repo = repo or REPO
+    files = [repo / "main.py"]
+    for root in _HYGIENE_ROOTS:
+        base = repo / root
+        if not base.is_dir():
+            continue
+        for f in base.rglob("*.py"):
+            if any(part in _HYGIENE_EXCLUDE for part in f.relative_to(repo).parts):
+                continue
+            files.append(f)
+    return sorted({f for f in files if f.is_file()})
+
+
+def _scan_log_hygiene(path: Path) -> dict:
+    """AST 单遍量三维 (只读)。嵌套 except 只计一次 (按 Call 节点身份去重)。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    in_handler = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler):
+            in_handler.update(sub for sub in ast.walk(node) if isinstance(sub, ast.Call))
+    out = {d: 0 for d in _HYGIENE_DIMS}
+    refs = {d: [] for d in _HYGIENE_DIMS}
+
+    def _hit(dim: str, node) -> None:
+        out[dim] += 1
+        if len(refs[dim]) < 3:
+            try:
+                code = ast.unparse(node)
+            except Exception:                     # 极端形态 (py<3.9 语法) 不影响计数
+                code = "<unparse 失败>"
+            refs[dim].append({"line": getattr(node, "lineno", -1), "code": code[:110]})
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        method = node.func.attr
+        if node in in_handler:
+            if method == "debug":
+                _hit("debug_swallow", node)
+            elif (method in _NO_STACK_METHODS
+                  and "exc_info" not in {kw.arg for kw in node.keywords}):
+                _hit("except_stack", node)
+        if (method == "getLogger" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value and "." not in node.args[0].value):
+            _hit("bare_logger", node)
+    out["refs"] = refs
+    return out
+
+
+def _hygiene_ratchet(rec, dim: str, counts: dict, refs: dict) -> dict:
+    """单维棘轮 (照 _check_field_cardinality 形态): 新增/增长当天告警, 存量静默计数, 愈合提示。"""
+    code = _HYGIENE_CODES[dim]
+    path = _HYGIENE_BASELINES[dim]
+    info = {"total": sum(counts.values()),
+            "files": sum(1 for v in counts.values() if v)}
+    try:
+        if not path.exists():
+            path.write_text(json.dumps(
+                {"counts": counts, "refs": refs,
+                 "established_at": now_et().isoformat(timespec="seconds"),
+                 "note": _HYGIENE_NOTE, "fix": _HYGIENE_FIX[dim],
+                 "deb_ref": "DEB-20260910-logging-observability-batch §8.2/§5"},
+                ensure_ascii=False, indent=1), encoding="utf-8")
+            info["status"] = "baseline_established"
+            return info
+        known = (json.loads(path.read_text(encoding="utf-8")) or {}).get("counts") or {}
+        new_files = sorted(k for k, v in counts.items() if v and k not in known)
+        grew = sorted((k, known[k], counts[k]) for k in counts
+                      if k in known and counts[k] > known[k])
+        healed = sorted((k, known[k], counts.get(k, 0)) for k in known
+                        if counts.get(k, 0) < known[k])
+        info.update({
+            "silenced_known": sum(1 for k, v in counts.items()
+                                  if v and k in known and v <= known[k]),
+            "new_files": new_files,
+            "grew": [f"{k}: {a}→{b} (+{b - a})" for k, a, b in grew],
+            "healed": [f"{k}: {a}→{b}" for k, a, b in healed],
+        })
+        for k in new_files:
+            sample = (refs.get(k) or [{}])[0]
+            rec(f"{code}_new_file", "-", k,
+                f"基线外新增 {counts[k]} 处 (例 L{sample.get('line')}: {sample.get('code', '')}) "
+                f"→ 处置: {_HYGIENE_FIX[dim]}; 或经 ADR/DEB 落档后登记 {path.name}")
+        for k, a, b in grew:
+            sample = (refs.get(k) or [{}])[0]
+            rec(f"{code}_grew", "-", k,
+                f"{a}→{b} (+{b - a}, 例 L{sample.get('line')}: {sample.get('code', '')}) "
+                f"→ 处置: {_HYGIENE_FIX[dim]}; 或经 ADR/DEB 落档后登记 {path.name}")
+        info["status"] = "drift" if (new_files or grew) else "ok"
+        return info
+    except Exception as e:
+        rec(f"{code}_detector_error", "-", dim,
+            f"{type(e).__name__}: {e} → 日志卫生棘轮失明, 本次'零违反'不可信")
+        info["status"] = "detector_error"
+        return info
+
+
+def _check_log_hygiene(rec) -> dict:
+    """W4/W5/W6: 一次 AST 遍历, 三份棘轮。全程只读, 不碰生产库/日志。"""
+    counts = {d: {} for d in _HYGIENE_DIMS}
+    refs = {d: {} for d in _HYGIENE_DIMS}
+    parse_errors = []
+    files = _hygiene_py_files()
+    for f in files:
+        rel = str(f.relative_to(REPO))
+        try:
+            got = _scan_log_hygiene(f)
+        except Exception as e:
+            # 解析不了 = 该文件对本棘轮不可见 ⇒ 必须显性化, 不得当"零违反"
+            parse_errors.append(f"{rel}: {type(e).__name__}: {e}")
+            continue
+        for dim in _HYGIENE_DIMS:
+            if got[dim]:
+                counts[dim][rel] = got[dim]
+                refs[dim][rel] = got["refs"][dim]
+    for pe in parse_errors:
+        rec("W456_parse_error", "-", pe.split(":")[0],
+            f"日志卫生扫描无法解析该文件 ⇒ 三维棘轮对它失明: {pe}")
+    out = {"files_scanned": len(files), "parse_errors": len(parse_errors)}
+    for dim in _HYGIENE_DIMS:
+        out[_HYGIENE_CODES[dim]] = _hygiene_ratchet(rec, dim, counts[dim], refs[dim])
+    return out
 
 
 def _col(row, name, default=None):
@@ -630,6 +819,9 @@ def main() -> int:
     # ── W3 sim/live 账本混同守卫 (RFC-080 demix 2026-09-09): 双向检测, 复发当天告警 ──
     env_demix = _check_env_demix(rec)
 
+    # ── W4/W5/W6 日志卫生棘轮 (2026-09-10, DEB-20260910 §8.2/§5): 基线外新增当天告警 ──
+    log_hygiene = _check_log_hygiene(rec)
+
     result = {
         "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
@@ -637,6 +829,7 @@ def main() -> int:
         "config_freeze": config_freeze,
         "field_cardinality": field_cardinality,
         "env_demix": env_demix,
+        "log_hygiene": log_hygiene,           # W4 debug吞异常 / W5 裸名logger / W6 无栈告警
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
     }

@@ -1120,3 +1120,95 @@ W456 真实基线慢测(1)。前 8 条的断言形态都是"干净库 ⇒ `rc==0
 - `except:pass` 余量归零 (**952 = BASELINE**) ⇒ 下一处新增即红, 需持续小批清剿 (本轮已示范选点判据)。
 - I15/I10 每个用例仍会真跑一次 778 文件卫生扫描 (~6s/例) = §9.1③ 已登记的测试耦合, 本轮**未顺手改**。
 - `live_round_trips` 同族快照读 (`live_ledger.py:1049`) 合法 (剪枝需 pre-image), 只登记不修。
+
+---
+
+### 10.8 第二批提交: 日志批「可按路径分离部分」入库 + 归属核验方法 (2026-09-10 17:05–17:30, 用户裁「需要」)
+
+> 上一提交 `d76ab3bb` 只含 §10.7 轮的 9 个文件。用户裁「需要」⇒ 本轮把日志/可观测性批 (§7.1–§7.9)
+> 中**能按路径干净分离**的部分入库并推送; 不能分离的**显式排除 + 逐条给理由**, 不静默夹带。
+
+**归属核验方法 (不靠记忆、不靠 mtime)**
+- 三道筛: ①逐文件 `git diff` 双面关键词打分 (本批署名 `DEB-20260910`/`议题N`/`§N`/`exc_info`/`threadName`/
+  `error_alert.py` vs 对方批标记 `M2`/`A1|B1|C2`/`execution_state`/`startup_mode`/`submit_state`/`mode_switch`/
+  `live_quote`/`trading_mode`); ②判定可疑者**逐行读 diff**, 不采信单一关键词信号; ③与本文档 §7.1–§7.9 落地清单逐条对账。
+- 关键词筛**误判 2 次, 均被逐行复核纠正** (更正显式不静默):
+  - `scripts/startup_smoke_check.py` 被误判"对方批" —— 命中的 `StartupMode` 其实是**本批 §10.5② 为适配对方新
+    日志标记而写的解析**; 但结论仍是**排除**, 理由换成正确那条: 它解析的 `[StartupMode]` 行只存在于对方
+    **未提交**的 `main.py`, 单独入库会让 HEAD 的冒烟守卫走"证据缺席 → exit 2"。
+  - `app/execution/dual_broker.py` 被误判"本批" (对方标记 0 命中) —— 逐行读 diff 实为对方的 `submit_state`
+    (ACCEPTED / DEFINITIVE_REJECT / UNKNOWN) 下单重试语义, 与日志批无关 ⇒ 排除; 与 §9.1② 早先把它归为
+    在途批的记录交叉印证。
+
+**入库 (32 个路径; 含事后补的 `ADR-039`)**
+- 生产/脚本: `app/core/scheduler_core.py` (§7.1 23 处 exc_info/debug→warning + §7.3 议题一执行级日门) /
+  `app/core/config_audit.py`、`app/positions/reconciler.py` (§3.4 WARNING→INFO 降级) /
+  `app/pipeline/observers.py` (§7.7 死审计组件退役) / `app/playbook/shadow_registry.py` (§2 挂载面补登记, 纯 notes) /
+  `scripts/daily_invariant_check.py` (+195 行 = §7.6 W4/W5/W6 三棘轮 + error_alert 引用更新, 对方关键词 0 命中) /
+  `scripts/error_alert.py` (新, §7.5) / 7 个 in-process 脚本 print→logger (`refresh_daily_bars`/
+  `settle_overnight_shadow`/`cluster_concentration_shadow`/`short_funnel_shadow_tag`/`conflict_shadow_tag`/
+  `gap_semantics_shadow_tag`/`band_vol_shadow_tag`) / `scripts/pangan_daily_rebuild.py` (§7.8-C step0 摘要改取
+  子进程 stderr) / `config/unified_config.yaml` (§2 议题二新键 `overnight_hold_settler_enabled: false`)。
+- 退役/搬家 (索引里早轮已预入栈, 本轮与伴侣文件配套一起入库): 删 `app/observability/audit_logger.py` +
+  `tests/observability/test_audit_logger.py` (§7.7), `scripts/error_alert.sh → scripts/archive/error_alert.sh` (§7.5)。
+- 钉子/测试: 6 新 (`tests/test_error_alert.py`、`tests/test_w456_log_hygiene_ratchet.py`、
+  `tests/test_warning_level_discipline.py`、`tests/test_refresh_daily_bars_gate.py`、
+  `tests/test_settle_overnight_settler_gate.py`、`tests/test_pangan_step0_summary.py`) + 1 改
+  (`tests/test_no_archive_imports.py` §7.8-B PROSE_ALLOWLIST 双向门)。
+- 文档: `AGENT.md`、`docs/OKR-2026-09.md` (各 1 行 `error_alert.sh`→`.py` 引用更新, 与搬家配套) /
+  `docs/CONTROL-LOOP-LEDGER.md` (§4 告警链判级口径改为 `error_alert.py::LEVEL_MARKERS`) / 本文档 §10.8 / `handoff.md`。
+
+**显式排除 (不入库, 理由逐条)**
+- **两批共写、按路径无法切分**: `main.py` (本批 §7.1 日志格式加 `%(threadName)s` + 对方
+  `_validate_startup_mode_or_exit`, 新增行里对方标记 10 命中) / `app/core/position_sync.py` (本批 §7.1 线程补名
+  1 行 + 对方 B1 `_reconcile_playbook_execution_states` 等 128 行, 对方标记 12 命中)。
+  **hunk 级拆分 (`git add -p`) 被否**: 两批从未各自单独跑过全量回归, 拆出来的 HEAD 是**没人测过的状态**
+  (本批全量 3755 passed 量的是合并树) —— 宁可晚提交, 不制造未验证的 HEAD。
+- **对方批 (M2 / us-trading-fullchain-live-readiness)**: `app/core/trading_mode.py`、`app/execution/dual_broker.py`、
+  `app/playbook/db.py`、`app/playbook/playbook_service.py`、`app/web_dashboard/mode_switch_service.py`、
+  `tests/core/test_m2_a1_startup_mode.py`、`tests/playbook/test_m2_b1_execution_state.py`、
+  `tests/playbook/test_m2_c2_live_quote_gate.py`、`tests/web_dashboard/test_m2_a1_atomic_mode_switch.py`、
+  `tests/playbook/test_g04_g06_structure_contracts.py`、`tests/test_entry_archetype_routing.py`、
+  `docs/debates/DEB-20260910-us-trading-fullchain-live-readiness.md`。
+- **本批但依赖对方未提交代码**: `scripts/startup_smoke_check.py` + `tests/test_startup_smoke_check.py`
+  (§10.5② 的 10 枚钉子) ⇒ 等与 `main.py` 同轮入库。
+
+**HEAD 自洽性核验 (提交前静态 5 面 + 提交后隔离实测)**
+- **告警链不断**: crontab 已指向 `scripts/error_alert.py` (`*/15 21-23 * * 1-5` 与 `*/15 0-5 * * 2-6` 两行),
+  注释含回滚指引 (指回 `/bin/bash …/error_alert.sh`); 旧 `.sh` 已不在原位、在 `scripts/archive/`。
+- **引用面收口**: HEAD 中引用 `error_alert.sh` 的 8 个已提交文件 → 4 个本轮同步更新
+  (`AGENT.md`/`docs/OKR-2026-09.md`/`docs/CONTROL-LOOP-LEDGER.md`/`scripts/daily_invariant_check.py`);
+  3 个是**历史档刻意不改写** (`docs/archive/handoff-archive-pre-2026-08-24.md`、
+  `docs/debates/DEB-20260726-subtraction-audit-round2.md`、`handoff.md` 历史条目);
+  1 个是带日期的一次性 ops 脚本 `ops/hermes/ftseek_us_restart_20260829_hotfix.sh` ⇒ 登记为遗留不代改。
+- **双向腐烂门在 HEAD 也成立**: `tests/test_no_archive_imports.py` 的 PROSE_ALLOWLIST 4 个键文件全部在本提交内
+  (`app/pipeline/observers.py`、`scripts/error_alert.py`、`tests/test_error_alert.py`、
+  `tests/test_w456_log_hygiene_ratchet.py`); 第 5 键 `scripts/archive/dead.py` 是 W456 夹具**字面量**、非真文件。
+- **钩子三关预演**: 待提交 22 个 `.py` 过 `python3 -m py_compile` (系统 python3 = 3.11.15) 0 错、
+  `scripts/check_undefined_names.py` exit 0; yaml 关 (`^\+.*enabled.*true`) **0 命中** ⇒ 不会触发交互式确认
+  而在非交互环境直接失败; 无 `.env`、无治理文件删除、无 `data/*.db` 删除。
+- **跨批符号依赖 = 0**: 本批 7 个核心文件的新增行里 `read_startup_mode_snapshot` / `validate_startup_mode_config` /
+  `submit_state` / `_reconcile_playbook_execution_states` / `mark_execution_` / `mode_switch_service` /
+  `trading_mode` 命中 **0** ⇒ 不依赖对方未提交符号。
+- **提交后隔离实测**: `git worktree add --detach` 开隔离副本跑本批 7 个测试文件 + 关键模块导入烟测
+  (**不碰主工作区、不用 `git stash`/`checkout`** — 军规), 结果见下。
+
+**提交被治理钩子拦下 → 补 `ADR-039` (不硬凑编号、不静默绕过)**
+- 首次 `git commit` 被 `.git/hooks/commit-msg` **拒绝**: 本批入栈含 `app/core/scheduler_core.py`, 命中钩子
+  高风险词表 (`scheduler_core` = 交易主路径) ⇒ 要求提交引用 `[ADR-XXX]`/`[RFC-XXX]`/`[hotfix]`;
+  而本批此前只有 DEB 记录、**无编号可引**。
+- 三个候选处置的取舍: ①引一个无关既有编号 (如 `ADR-036` 治理加固批) = **硬凑, 否** (编号存在的意义是
+  可追溯到该批决策, 借号等于伪造留痕); ②`git commit --no-verify` = 静默削弱治理, 否;
+  ③按仓库既有体例 (`ADR-036` 治理加固批 / `ADR-038` 裁决执行批 都是"裁决批 → ADR") **补一份真决策记录** ⇒ 采纳。
+- 产出 `docs/adr/ADR-039-logging-observability-hardening-2026-09-10.md` (109 行): 固化七项决策与其理由
+  (①告警链重写 ②W4/W5/W6 三棘轮 ③异常留痕纪律 R5 模式 ④降噪与名实相符 ⑤减法 = 死组件退役 + 结算器配置停 +
+  **第六挂载面制度化** ⑥流归属"日志行存在≠有用" ⑦print→logger), 主记录仍指向本 DEB (证据/实测数字不重复);
+  且**在 ADR 自身里显式登记"立此 ADR 的直接缘由是钩子拦截"** ⇒ 后人不会误以为本批当初就按 ADR 立项。
+- `pre-commit` 的三关已手工预演通过 (22 个 `.py` 过 `python3 -m py_compile` / `scripts/check_undefined_names.py`
+  exit 0 / yaml `^\+.*enabled.*true` 0 命中) ⇒ 本次**无需** `--no-verify`; 入栈面由 31 → **32** 路径 (加 ADR)。
+
+**遗留登记 (不代改)**
+- `ops/hermes/ftseek_us_restart_20260829_hotfix.sh` 仍引用已搬家的 `scripts/error_alert.sh` ⇒ 若有人执行该
+  一次性脚本会失败; 属带日期历史工件, 由运维面裁"改写 / 加注释 / 一并归档"。
+- §9.1③ W456 非密封耦合 (8 个无关不变量测试各付 ~15s) 仍待裁; 修法甲需动 2 个对方在途文件 ⇒ 继续等对方批入库。
+- `main.py` / `app/core/position_sync.py` 的共写切分需两批同人同轮提交 (或对方先入库), 本批不擅动。
