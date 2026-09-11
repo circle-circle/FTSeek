@@ -568,6 +568,34 @@ def get_debouncer_status() -> List[Dict]:
 
 # ================== 告警去重 ==================
 
+# 日志行前缀 = 时间戳 + 0..n 个前置 [字段] (线程名等) + `[logger] LEVEL:` 正文。
+# 此前 _normalize 与两处展示各自写死 `content[50:]` 剥前缀 —— 那个 50 只在 `[线程名]`
+# 恰好 22 字符 (如 `[ThreadPoolExecutor-0_1]`) 时对齐; 实测四种真实格式里**三种被切坏**:
+#   `[LLMStrategyLoop]`(15) → `ybook.pipeline] WARNING: …`  (logger 名残缺)
+#   `[MainThread]`(10)      → `eduler_core] INFO: …`        (logger 名残缺)
+#   无线程字段的旧格式        → `RNING: …`                   (连级别字符串都被拦腰截断)
+# 9/10 夜日报 **8 条 bullet 全部畸形** (实测对照 data/reports/daily_alert_summary_2026-09-10.md):
+#   7 条 logger 名被截断 (`ybook.pipeline]` / `ybook.intraday_reentry]` ⇒ 照着 grep 不到),
+#   1 条只差左括号 (`app.data.finnhub_provider]`) —— 它正是唯一"碰巧对齐"的那种线程名;
+# 且 _normalize 用同一切片当**去重键** ⇒ 同一模板换个线程名就裂成多组
+# (与 §11.11「69 轮炸成 69 组」同一病族)。改为正则剥前缀, 键与展示同源同函数。
+_LOG_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d+)?\s+"          # 时间戳 (毫秒可选)
+    r"(?:\[[^\]]*\]\s+)*?"                                             # 惰性吃掉 0..n 个前置字段
+    r"(?=\[[^\]]*\]\s+(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s*:)"  # 停在 [logger] LEVEL: 之前
+)
+
+
+def _strip_log_prefix(content: str) -> str:
+    """剥掉「时间戳 + 线程名」前缀, 返回 `[logger] LEVEL: 正文`。
+
+    解析不出来 (traceback 续行 / 非标准格式) 就**原样返回** —— 宁可多显示, 不可少显示。
+    刻意不保留线程名: 它若进归一化键, 同一模板会按线程名裂组。
+    """
+    m = _LOG_PREFIX_RE.match(content)
+    return content[m.end():] if m else content
+
+
 def _dedup_alerts(alerts: List[Dict]) -> List[Dict]:
     """将告警按归一化内容去重, 返回唯一告警 + 出现次数 + 首次时间
     
@@ -579,7 +607,7 @@ def _dedup_alerts(alerts: List[Dict]) -> List[Dict]:
     
     def _normalize(content: str) -> str:
         """提取告警模板: 去掉百分比、金额、股数等变化数值"""
-        s = content[50:] if len(content) > 50 else content  # 和展示逻辑一致截取
+        s = _strip_log_prefix(content)  # 与展示逻辑同源同函数 (原 content[50:] 硬切片见上方注释)
         # 替换数字+单位 (40.5%, $12,769, 7/20.0股) 为占位符
         s = _re.sub(r'\d+\.?\d*%', 'N%', s)
         s = _re.sub(r'\$[\d,]+\.?\d*', '$N', s)
@@ -667,7 +695,8 @@ def build_summary_report(
         for item in _deduped[:8]:  # Top 8 unique
             emoji = "🔴" if item["level"] == "ERROR" else "🟡"
             count_suffix = f" (×{item['count']})" if item["count"] > 1 else ""
-            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] {item['content'][50:]}{count_suffix}")
+            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] "
+                         f"{_strip_log_prefix(item['content'])}{count_suffix}")
 
     lines += [
         "",
@@ -691,7 +720,8 @@ def build_summary_report(
         for item in _deduped[:8]:
             emoji = "🔴" if item["level"] == "ERROR" else "🟡"
             count_suffix = f" (×{item['count']})" if item["count"] > 1 else ""
-            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] {item['content'][50:]}{count_suffix}")
+            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] "
+                         f"{_strip_log_prefix(item['content'])}{count_suffix}")
 
     # 总结
     total_errors = us_error + hk_error

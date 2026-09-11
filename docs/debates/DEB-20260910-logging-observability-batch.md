@@ -1853,3 +1853,108 @@ ModuleNotFoundError: No module named 'config.config_center'
 - 变异实测: 变异①(退回符号链接) 6 颗碎 / 变异②(另植假想新链接包) 2 颗碎 ⇒ 钉子会碎, 不是装饰。
 - **未做**: 未推送 (用户未令); 未改任何 baseline JSON 的 counts; 未接配置驱动时段 (待裁, 见 (庚));
   未动 `scripts/daily_alert_summary.py` 的 HK_ROOT 死数据源 (待裁, 见 (戊)1); 未碰他人在途文件。
+
+### 11.14 顺藤摸出的第二个观测面缺陷: 日报 `content[50:]` 硬切片把 logger 名切坏 (用户令「继续」, 2026-09-11 13:05–13:25)
+
+> **来源**: §11.13 落档后继续深挖日志面, 读**已推送的** `data/reports/daily_alert_summary_2026-09-10.md`
+> 时发现 bullet 里写着 `ybook.pipeline]` —— 全仓不存在这个 logger。
+
+**(甲) 病灶与实测**
+
+`scripts/daily_alert_summary.py` 三处 (原 `:582` `_normalize` / `:670` US 渲染 / `:694` HK 渲染)
+各自写死 `content[50:]` 剥日志前缀, 注释还自称"和展示逻辑一致截取"。**那个 50 是巧合常量** ——
+只在 `[线程名]` 恰好 22 字符 (`[ThreadPoolExecutor-0_1]`) 时对齐。四种真实格式实测:
+
+| 真实前缀 | logger 起始位 | `content[50:]` 渲染出 |
+|---|---|---|
+| `…03:38:02,733 [app.playbook.pipeline] WARNING:` (旧格式, 无线程字段) | 25 | `RNING: [playbook] …` ← **级别串被拦腰截断** |
+| `…03:21:29,776 [LLMStrategyLoop] [app.playbook.pipeline] WARNING:` | 43 | `ybook.pipeline] WARNING: …` |
+| `…21:40:05,531 [ThreadPoolExecutor-0_1] [app.data.finnhub_provider] WARNING:` | 50 | `app.data.finnhub_provider] WARNING: …` ✅ 唯一对齐 |
+| `…12:02:17,069 [MainThread] [app.core.scheduler_core] INFO:` | 38 | `eduler_core] INFO: …` |
+
+- **9/10 夜实际推送的那份报告: 8 条 bullet 全部畸形** —— 7 条 logger 名被截断
+  (`ybook.pipeline]` ×2 / `ybook.intraday_reentry]` ×5, 照着 grep **零命中**), 1 条只差左括号。
+- 该报告不只给人看: **Hermes cron `7a40dd7c9e94`** (`0 4 * * 2-6`, enabled) 的 prompt Step 3 就是跑这个脚本,
+  LLM 读它 stdout 再转述 ⇒ 残缺串会进推送正文。(这也是 AGENT.md 军规"零引用验证须含 Hermes prompt 文本"那条的正面用例。)
+- **第二层危害比展示更重**: `_normalize` 用**同一切片**当去重键 ⇒ 同一模板换个线程名就裂成多组。
+  这与 §11.11「69 轮炸成 69 组」是**同一病族** (那次是裸整数没归一, 这次是前缀宽度不稳)。
+  **诚实登记**: 我 10:44 改 `_normalize` 时就在这一行的**下面 9 行**补 `第N轮→第N轮`, 当时只盯着轮次、
+  没抬头看切片本身 ⇒ 上一批的"连带风险实测"做得不够宽。
+
+**(乙) 修法**
+
+- 新增 `_LOG_PREFIX_RE` + `_strip_log_prefix()`, **键与展示同源同函数** —— 原注释要求的"一致"从口头约定变成结构保证。
+- 正则剥「时间戳 + 0..n 个前置 `[字段]`」, 用 lookahead 停在 `[logger] LEVEL:` 之前 ⇒ 输出恒为
+  `[logger] LEVEL: 正文`, **与线程名长度无关**。
+- **解析不出来就原样返回** (traceback 续行 / 非标准格式) —— 宁可多显示, 不可少显示 (与本批 fail-loud 取向一致)。
+- **刻意不保留线程名**: 它若进归一化键, 同一模板会按线程裂组 (正是要治的病)。
+- 三处调用点全换成同一函数; `[50:]` 硬切片在**代码里**清零 (AST 判定, 不被注释里的字面量绊红 —— §11.11 方法论坑复用)。
+
+**(丙) 验证 (三层, 最硬的一层是真数据端到端)**
+
+1. **钉子**: 新增 `tests/test_daily_alert_log_prefix.py` **12 颗** —— 旧格式(无线程字段) / 5 种线程名宽度参数化不变性 /
+   四种线程名共用一个去重键 / 不同 logger 不得合并 (剥离不得过头) / 6 个级别全认 / 不可解析行原样返回 /
+   端到端渲染带完整 logger 名 / AST 棘轮"代码里不得再有 `[50:]`"。
+2. **变异实测**: 把 `_strip_log_prefix` 的实现换回 `content[50:]` (函数名与调用面都不动, 只换实现) ⇒
+   **12 颗碎 11 颗**; 唯一幸存的是"不同 logger 不得合并"(两种实现下都成立, 属对照组)。
+   隔离用 `git worktree add --detach` → 跑完 `remove --force`, 未用 `git stash/checkout`。
+3. **真数据端到端对照**: 打桩干跑 (`push_to_dingtalk`/`push_to_feishu` 打桩 = **零触网**;
+   `sqlite3.connect` 强制 `file:…?mode=ro` = **零写库** —— 服务在跑且并行 Agent 在途),
+   用**与 04:01 那次实跑完全相同的窗口** (9/10 21:00 → 9/11 06:00 CST) 重渲染, 与已推送原件逐条对照:
+   - 8 条 bullet 的 logger 名**全部复原** (`[app.playbook.pipeline]` / `[app.data.finnhub_provider]` / `[app.playbook.intraday_reentry]`);
+   - **计数逐条不变**: `×72 / ×72 / ×54 / ×21 / ×18 / ×18 / ×17 / ×16` ⇒ 本修**没有改变任何分组**,
+     是纯展示保真修复。(这条最关键: 动去重键的最大风险就是悄悄合并/拆分告警, 实测为零。)
+   - **干跑副作用已清**: 它会覆写 `data/reports/daily_alert_summary_<date>.md` ⇒ 跑前 `cp -p` 备份 52 份、
+     跑后逐份还原 (原件 md5 `90776b90cb7d90982396da44cf92b4d6` 复算一致); 干跑新产生的空报告
+     `…_2026-09-11.md` 已 `Path.unlink()` 删除 (`data/reports/` 未被 git 跟踪 ⇒ 工作区零噪音)。
+   - **干跑时间坑 (留档)**: 13:12 CST 调 `main()` 时 `get_last_trade_date()` 已翻到 ET 9/11 ⇒
+     扫描窗自动变成**今晚** 21:00→明早 06:00 (0 条告警)。该脚本是**按 04:00 CST 形状设计的**,
+     白天干跑必须显式传 `since/until` 走 `parse_log_alerts_window`, 不能靠 `main()` 自己算窗口。
+4. 既有钉子未咬断: `test_daily_alert_summary_log_sources` + `test_daily_alert_equity_recon` +
+   `test_daily_alert_summary_pnl` + `test_chase_cap_round_counter` + 新 12 颗 = **59 passed**。
+
+**(丁) 重启决策 = 不重启 (与 §11.13(戊)2 同理, 但这次连"导入图中立"都不需要)**
+
+- 本批只改 `scripts/daily_alert_summary.py` 与 `tests/`, **不在守卫扫描面内**
+  (`SCAN_DIRS=("app",)`, `SCAN_FILES=("main.py",)`); 守卫头注自己写明"scripts/ 由 cron 独立进程运行 — 变更不需要重启"。
+- 该脚本由 Hermes cron 每次**新起进程**执行 ⇒ 下次实跑 (**9/12 04:00 CST**) 自动生效。
+- 实测守卫 `newest_code_ts` 仍是 `12:39:55 app/playbook/shadow_registry.py` (并行 Agent 在途文件) ⇒
+  **本批未给守卫添新码**, 不会因本批触发额外告警或重启。
+
+**(戊) 同批拿到硬数但仍不擅动: 日报 HK 段是彻底死的数据源**
+
+与 §11.13(戊)1 同源, 本次量到确切数字:
+- `/opt/ftseek/FTSeek/logs/ftseek.log` 最后一行 = `2026-06-14 13:20:48 [ftseek.main] INFO: [Shutdown] 优雅关闭完成，FTSeek 已退出`
+  ⇒ **冻结 89 天**, 与 `.DECOMMISSIONED` 的 13:21 同刻; `data/ftseek.db` mtime 2026-06-16,
+  `signal_outcomes` 最新 2026-06-01、共 26 行。
+- ⇒ 日报每天解析 2.7MB 冻结日志 + 打开 9.8MB 冻结库, 产出恒为 `港股 0 笔 / 0 只 / 0 告警`。
+  这正是 AGENT.md 军规「基数自检防常量退化」要防的形态, 只是发生在**报表段**:
+  读者会把"港股 0 告警"读成"港股健康", 而真相是"港股已经不存在了"。
+- `:39` 的 `sys.path.insert(1, HK_ROOT)` 实测**不承重**: HK 独有顶层模块只有 `modules` / `run_backtest` / `strategies`,
+  而全仓 `^\s*(from|import)\s+(modules|strategies|run_backtest)\b` **零命中**; `app.shared` 收回本仓后它连最后一条理由也没了。
+- **建议 (待裁, 与 (庚) 时段配置同批交裁)**: 退役 HK 段 (`get_hk_trade_summary` / `hk_log` 解析 / 🇭🇰 区块),
+  或至少把标题改成「🇭🇰 港股 (已于 2026-06-14 停用, 本段恒为零)」+ 摘掉 `:39`。
+  不擅动理由: 它改的是**推送正文的内容结构**, 消费方是 Hermes cron 的 LLM (prompt Step 3 指名跑此脚本)
+  ⇒ 属"报表契约"变更, 不该由观测面修复批顺手改。
+
+**(己) 本批改动面、验证汇总与归属核验**
+
+**改动面 = 4 条路径** (逐条显式 `git add`): `scripts/daily_alert_summary.py` (前缀剥离单一真源 + 三处调用点) /
+`tests/test_daily_alert_log_prefix.py` (新, 12 颗) / 本文档 §11.14 / `handoff.md`。
+
+- 定向: **59 passed** (新 12 + 日报既有 47: `log_sources` / `equity_recon` / `pnl` / `chase_cap_round_counter`)。
+- 全量回归: **3898 passed / 1 failed / 41 skipped (419.42s)**。收集数 3899 = 上轮 3866 (= 3854 + 本批新钉 12)
+  **+ 并行 Agent `ccafdbe5` 新增的 33 颗** (`test_shadow_intent_uniqueness.py` 169 行 / `test_w7_chg_denominator_sentinel.py` 212 行
+  + 两个既有测试文件扩面), 数目可对账。
+- **唯一 1 红不属本批, 已做归属核验 (不靠"看起来不是我的文件"下结论)**:
+  `tests/test_ops_scripts_sync.py::test_repo_and_live_scripts_in_sync` 报
+  `ftseek_weekly_checkpoint.py: 内容漂移 (改了没回库, 或库改了没部署)`。三层证据:
+  ① 本批 4 条路径**不含 `ops/`**; ② `git worktree add --detach /tmp/wt_attr 07b7ced3` (我的提交) 里
+  **同一颗钉 3 passed** ⇒ 红不是我引入的; ③ 漂移内容 = 库内副本新增 `check_intent_uniqueness` / `intents` 键 (9 行),
+  而线上副本 `/root/.hermes/scripts/ftseek_weekly_checkpoint.py` mtime 仍是 **2026-09-03 02:26**
+  ⇒ 是并行 Agent `ccafdbe5`「盘前失效门收口批」**改了库内副本但尚未部署到线上**。
+  按"谁引入谁收口"**不代修**, 在此登记并需知会对方 (修法二选一: 部署到 `/root/.hermes/scripts/`, 或回退库内副本)。
+- 守卫面: 本批未给守卫添新码 (`newest_code_ts` 仍是 `12:39:55 app/playbook/shadow_registry.py`, 对方在途文件) ⇒
+  **不触发额外告警/重启**; 无需重启的理由见 (丁)。
+- **未推送** (用户未令)。回滚: `git revert` 本提交即可 —— 改动全在 `scripts/` + `tests/`, 零生产进程依赖、
+  零 baseline 变更、零配置变更。
