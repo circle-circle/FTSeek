@@ -584,6 +584,11 @@ def _dedup_alerts(alerts: List[Dict]) -> List[Dict]:
         s = _re.sub(r'\d+\.?\d*%', 'N%', s)
         s = _re.sub(r'\$[\d,]+\.?\d*', '$N', s)
         s = _re.sub(r'\d+/\d+\.?\d*股', 'N/N股', s)
+        # 2026-09-11 (DEB-20260910-logging §11.8-3): chase_cap 新增的 `同指令累计第69轮` 是
+        #   "具体数值"但**不带 %/$/股 单位** ⇒ 上面三条归一不到它。不补这条, 同一模板的 69 轮
+        #   会被拆成 69 组, 日报从 1 行炸成 69 行 —— 与本函数文档口径("去掉…具体数值,
+        #   保留告警模板特征")一致, 属补齐而非改判据。
+        s = _re.sub(r'第\s*\d+\s*轮', '第N轮', s)
         return s
     
     groups = {}  # normalized_key -> {level, content, first_time, count}

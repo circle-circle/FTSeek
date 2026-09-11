@@ -30,6 +30,30 @@ logger = logging.getLogger(__name__)
 #   meta 每轮从 DB 重读且写回有条件门, 计时不可放 meta; 按 symbol 记 (同日重复开仓重置无害).
 _BAR_STALL_SINCE: Dict[str, float] = {}
 
+# 2026-09-11 (DEB-20260910-logging §11.8-3): chase_cap **同指令累计拦截轮次** (inst_id -> 轮次)。
+#   纯观测面 — **不参与任何判定**: enforce 仍每轮独立重评 (9/8 SNDK 正是靠重评成交, 行为零改动)。
+#   动机: 9/10 夜 US.AMD SELL_SHORT 被连拦 **69 轮** (21:45→03:58, 每~5min 一轮), 每轮文案除价格外
+#   完全相同 ⇒ 值班人无法从单行分清"首次拦截"与"整夜拦了 69 次", 只能 grep 数行 (那 138 行 WARNING
+#   占当晚 237 条的 58%)。补上轮次 ⇒ 一眼可判"是否该人工放弃", 不必再数行。
+#   进程内计数 (重启归零, 与 _BAR_STALL_SINCE 同款取舍): 一夜美股会话 = 一个进程生命周期, 够用;
+#   跨重启累计要落盘, 不值得为一个观测面计数器引入状态文件。
+#   ⚠️ 本助手**刻意不写 try/except**: 调用点在 G-06 fail-close 的 try 内, 任何异常都会让
+#   `_cc_gate_ok` 停在 False ⇒ 把"本轮跳过"升级成"终态跳过"(= 真行为变更)。故只用不可能抛的
+#   内存字典操作 (str + dict.get/len/pop/赋值), **不碰 DB / 文件 / 网络**。
+#   容量上界 _CHASE_CAP_ROUNDS_MAX, 超限淘汰最旧键 (一夜指令量级 ~10², 512 用不满, 仅防长驻进程无界增长)。
+_CHASE_CAP_ROUNDS: Dict[str, int] = {}
+_CHASE_CAP_ROUNDS_MAX = 512
+
+
+def _chase_cap_round_bump(inst_id) -> int:
+    """该指令**进程内累计**被 chase_cap 拦截的轮次 (从 1 起)。见上方"刻意不写 try/except"。"""
+    key = str(inst_id)
+    rounds = _CHASE_CAP_ROUNDS.get(key, 0) + 1
+    if key not in _CHASE_CAP_ROUNDS and len(_CHASE_CAP_ROUNDS) >= _CHASE_CAP_ROUNDS_MAX:
+        _CHASE_CAP_ROUNDS.pop(next(iter(_CHASE_CAP_ROUNDS)), None)
+    _CHASE_CAP_ROUNDS[key] = rounds
+    return rounds
+
 # 2026-08-06 (DEB-20260806 终裁): 锚限价影子幂等集 ((inst_id, date) — 每指令触发只落一行).
 _LIMIT_SHADOW_EMITTED: set = set()
 
@@ -4354,10 +4378,13 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             notional=0.0,
                             extra={"chase_cap_price": _cc_f,
                                    "repriced_entry": round(_new_entry, 4)})
+                        # 轮次计数在 enforce 动作**之后**取 (纯观测, 不得影响上面的判定/落痕)
+                        _cc_rounds = _chase_cap_round_bump(inst["id"])
                         logger.warning(
                             f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
                             f"下单价=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
-                            f"→ 本轮跳过 (每~5min重评, 回落帽下即放行; P0-A enforce)")
+                            f"→ 本轮跳过 (每~5min重评, 回落帽下即放行; "
+                            f"同指令累计第{_cc_rounds}轮; P0-A enforce)")
                         skipped_count += 1
                         continue
                 _cc_gate_ok = True

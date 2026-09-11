@@ -14,7 +14,12 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 952  # 2026-09-10 DEB-20260910-logging §10.7 清剿 3 处后调低 (955→952):
+BASELINE = 951  # 2026-09-11 DEB-20260910-logging §11.13 调低 (952→951): `app/shared` 符号链接
+                  #   退役后本棘轮**首次看见** market_hours.py (pathlib.rglob 不跟随链接目录,
+                  #   此前它的 2 处 `except: pass` 一直在分母外 = 基线是按少算校准的)。
+                  #   同批就地清剿那 2 处 (config_center 时段回退 / HK 半日市日历 fail-open,
+                  #   均改 logger.warning(..., exc_info=True)) ⇒ 净 −1, 顺带吃掉原有 1 格余量。
+                  # 2026-09-10 DEB-20260910-logging §10.7 清剿 3 处后调低 (955→952):
                   #   pre_trade_check 系统熔断 fail-open / DEGRADED 门槛折扣 fail-open,
                   #   data_freshness_watchdog 冷却状态写失败 (重复告警根因) — 只降不升
 _EXCLUDE_PARTS = {"venv", "node_modules", ".git", "tests", "archive",

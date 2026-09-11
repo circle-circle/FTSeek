@@ -20,8 +20,9 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Callable
 
-# ── 共享时段定义 (FTSeek 和 FTSeek-US 共用) ──
-# Via symlink: app/shared → ../../FTSeek/app/shared
+# ── 共享时段定义 (app/shared 自 2026-09-11 起在本仓版本控制内, 符号链接已退役) ──
+# 退役理由: 港股 2026-06-14 停用 + pathlib.rglob 不跟随链接目录使守卫失明
+#          (DEB-20260910-logging §11.12/§11.13)
 from app.shared.market_hours import MarketHours, MarketType, get_market_phase
 
 # ── 项目统一 ET 时区工具 (Task #32, 2026-06-16) ──
