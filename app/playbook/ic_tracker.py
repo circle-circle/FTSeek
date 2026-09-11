@@ -16,6 +16,32 @@ Playbook IC Tracker — Playbook 指令预测力追踪 (Phase 1)
   1. 纯只读计算, 不修改交易路径
   2. 复用 PlaybookDB, 不引入新表 (扩展 _TRACKING_FIELDS)
   3. 失败静默, 不影响主流程
+
+⚠️ fwd_return_* 符号契约 (单一真源, 本模块是写侧):
+  所有回填列 (fwd_return_intraday / _t1 / _t3 / _t5 及 _open / _adj 孪生) 存的都是
+  **已按方向签名**的指令收益 = sign × (close − 基准) / 基准, sign = BUY:+1 / SELL_SHORT:−1。
+  语义: 正数 = 该方向的指令赚钱, 负数 = 亏钱, **与标的自身涨跌无关** (空头标的下跌 ⇒ 存正数)。
+  这不是便利而是判据前提: compute_playbook_ic 直接拿该值与 confidence 求 Spearman,
+  只有签名后"高信心且赚钱"才恒落在正象限, IC>0 才等于"有预测力"。
+  ⇒ **读侧一律不得再乘方向 / 再取负**。违者会把 SHORT 行整体反转:
+  U1 (2026-09-11 实测) 三个读方各自二次签名, 导致自 2026-07-25 起 UE SHORT 有前瞻收益的
+  66 条 66/66 标签反转 (41 条做对的空头被标"推错"并送进抑制规则), 潜伏 6 周零测试覆盖。
+  唯一合法例外 = **反签名还原价位** (不是判盈亏): `close_t1 = entry × (1 + sign × fwd)`
+  (见 scripts/loser_hold_path_replay.py) —— 乘 sign 是为了把签名后的收益还原成标的自身涨跌
+  以重建价格水平, 该处**正确, 勿"顺手修"**。
+
+  ⚠️ 第二张库同约定 (U1b): `data/signal_snapshots.db` 的 `fwd_ret_t1/_t5/_t20` 与
+  `alpha_t1/_t5/_t20` 写侧是 `app/analysis/signal_ic_tracker.py::_calc_fwd`, 用**倒数式**签名
+  (LONG/NEUTRAL: (tN/t0)−1; SHORT: (t0/tN)−1), alpha = 已签名 fwd − 原始 spy。
+  ⇒ **与本表约定相同 (正数=该方向赚钱), 只是公式不同**。NEUTRAL 走 else 分支 ⇒ 存原始
+  close-to-close。切莫采信"两张库两种约定"的说法 —— 那个误解正是 U1b 的成因:
+  活体 cron 尺子 scripts/direction_counterfactual_ruler.py 的 B 节因此对 SHORT 再乘一次 sign,
+  自 2026-08-20 起每日把空头池真值 +0.159% 报成 −0.159%, 并据费后判据输出
+  "pool_does_not_support_this_side" (用反过来的证据反对做空)。同仓 factor_ic_backfill.py
+  对同一列的记载本来就是对的 ⇒ 曾长期并存两种矛盾说法, 错的那份在活体尺子里。
+
+  也正因同一文本形态在一处是 bug、另一处是正确用法 (意图不可 grep), 本契约**刻意不立
+  全仓正则棘轮**, 只按读方逐个上行为钉子 (见 tests/test_u1_fwd_return_sign_contract.py)。
 """
 from __future__ import annotations
 

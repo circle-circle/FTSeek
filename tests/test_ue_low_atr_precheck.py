@@ -10,7 +10,14 @@
   2. 高ATR候选照常生成正常指令 (预检不误杀);
   3. 开关关 → provider 不构建、预检整体旁路;
   4. ATR 缺失/provider 异常 → fail-open 放行 (执行门兜底);
-  5. 源级契约: 读执行门同键 playbook.low_atr_gate_* 且回退默认 0.025 对齐。
+  5. 源级契约: 与执行门同 accessor get_playbook_config() (app/playbook/config.py,
+     pipeline.py:5317-5318 同源), 回退默认 0.025 对齐; 扁平键 playbook.low_atr_gate_*
+     禁止回归 (U2 事故根因: get_dotted 严格逐层读不到扁平键 → 预检自 09-02 上线
+     从未生效, 而旧版本本测试恰好把错键供了起来 — mock 注入不存在的键使功能测试恒绿,
+     源级契约断言把错键冻进 CI);
+  6. 反分叉钉 (TestNoForkNail, mock 不可满足): 从活 unified_config.yaml 经执行门
+     accessor 与 yaml 真实路径 get_dotted 双路读同一键, 断言取值一致 — 任何人
+     重新分叉读取路径或搬键不同步, 立即红。
 """
 import os
 import sys
@@ -53,6 +60,16 @@ def _cand(sym: str, direction: str = "LONG", conf: float = 0.8):
     }
 
 
+class _FakePbCfg:
+    """get_playbook_config() 返回值替身 — 只提供 .get(key, default) 边界."""
+
+    def __init__(self, values):
+        self._values = values
+
+    def get(self, key, default=None):
+        return self._values.get(key, default)
+
+
 def _run_inject(tmp_cfg=None, atr_by_symbol=None, provider_error=False):
     """驱动 cmd_inject (dry-run, 不写库), 返回 (stdout, mocks)."""
     cfg = {
@@ -62,11 +79,18 @@ def _run_inject(tmp_cfg=None, atr_by_symbol=None, provider_error=False):
         "universe_expansion.max_emergence_streak": 99,
         "universe_expansion.min_price_floor": 5,
         "universe_expansion.premarket_anchor": True,
-        "playbook.low_atr_gate_enabled": True,
-        "playbook.low_atr_gate_min_atr_pct": 0.03,
+    }
+    # [U2 根因修 2026-09-11] 低ATR门开走执行门 accessor (get_playbook_config),
+    #   不再经 _cfg 扁平键 — mock 打在 accessor 边界, 与生产读取路径同构。
+    pb_values = {
+        "low_atr_gate_enabled": True,
+        "low_atr_gate_min_atr_pct": 0.03,
     }
     if tmp_cfg:
         cfg.update(tmp_cfg)
+        for _k in ("low_atr_gate_enabled", "low_atr_gate_min_atr_pct"):
+            if _k in tmp_cfg:
+                pb_values[_k] = tmp_cfg.pop(_k)
     candidates = [_cand("XLY"), _cand("TEST")]
 
     fake_provider = mock.MagicMock()
@@ -110,6 +134,8 @@ def _run_inject(tmp_cfg=None, atr_by_symbol=None, provider_error=False):
         mock.patch("app.playbook.db.PlaybookDB"),
         mock.patch("app.playbook.market_regime.MarketRegimeGate", fake_mrg),
         mock.patch("app.core.di_container.get_di_container", get_di),
+        mock.patch("app.playbook.config.get_playbook_config",
+                   return_value=_FakePbCfg(pb_values)),
     ]
     from io import StringIO
     out = StringIO()
@@ -149,7 +175,7 @@ class TestLowAtrPrecheck:
     def test_gate_disabled_bypasses_provider(self):
         """开关关 → get_di_container 不被调用, 低ATR标的照常生成."""
         out, rc, mocks = _run_inject(
-            tmp_cfg={"playbook.low_atr_gate_enabled": False},
+            tmp_cfg={"low_atr_gate_enabled": False},
             atr_by_symbol={"US.XLY": 0.0131, "US.TEST": 0.06},
         )
         assert mocks["get_di"].call_count == 0
@@ -171,16 +197,25 @@ class TestLowAtrPrecheck:
 
 
 class TestSourceContract:
-    """源级契约: 与执行门同键同阈值同纪律 (防未来键名漂移导致双门失联)."""
+    """源级契约: 与执行门同 accessor 同阈值同纪律 (防路径分叉导致双门失联)."""
 
-    def test_reads_exec_gate_keys(self):
+    def test_reads_exec_gate_via_same_accessor(self):
+        """U2 根因修: 与 pipeline.py:5317-5318 同一 accessor get_playbook_config()."""
         s = _src(_SRC)
-        assert '"playbook.low_atr_gate_enabled"' in s
-        assert '"playbook.low_atr_gate_min_atr_pct"' in s
+        assert "get_playbook_config" in s
+        assert '"low_atr_gate_enabled"' in s
+        assert '"low_atr_gate_min_atr_pct"' in s
+
+    def test_no_flat_key_fork_regression(self):
+        """反分叉 (源级): 扁平键禁止回归 — get_dotted 严格逐层读不到
+        playbook.low_atr_gate_* (真路径在 execution_parameters 下), 本次事故根因."""
+        s = _src(_SRC)
+        assert '"playbook.low_atr_gate_enabled"' not in s
+        assert '"playbook.low_atr_gate_min_atr_pct"' not in s
 
     def test_default_threshold_matches_pipeline(self):
         s = _src(_SRC)
-        assert '"playbook.low_atr_gate_min_atr_pct", 0.025' in s
+        assert '"low_atr_gate_min_atr_pct", 0.025' in s
         # pipeline.py 执行门回退默认同为 0.025 (活性值由 yaml SSOT 0.03 覆盖)
         p = _src(_PIPE)
         assert 'low_atr_gate_min_atr_pct", 0.025' in p
@@ -194,3 +229,52 @@ class TestSourceContract:
         """ATR 异常必须 fail-open (与执行门 'atr 解析异常 → fail-open' 同纪律)."""
         s = _src(_SRC)
         assert "低ATR预检异常 fail-open" in s
+
+
+class TestNoForkNail:
+    """反分叉钉 (mock 不可满足): 活 unified_config.yaml 双 accessor 读同一键必须同值.
+
+    A = 执行门 / 修复后 UE 预检: get_playbook_config() — PlaybookConfig._load 把
+        playbook.risk_parameters + execution_parameters 扁平合并 (config.py:84-90);
+    B = yaml 真实路径直读: ConfigContainer.get_dotted("playbook.execution_parameters.*")
+        (严格逐层, config_container.py:382-418)。
+    U2 事故: 预检走了第三条路 (扁平键 playbook.low_atr_gate_*) 恒读默认 False,
+    执行门读 True/0.03 — 同名门一侧活一侧死, 且旧测试用 mock 注入错键恒绿。
+    本钉不 mock 任何配置层: 键被搬走/两路分叉/单侧改值 → 立即红。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _live_singletons(self):
+        from app.playbook.config import reset_playbook_config
+        reset_playbook_config()
+        yield
+        reset_playbook_config()
+
+    def test_both_accessors_agree_on_live_yaml(self):
+        from app.core.config_container import ConfigContainer
+        from app.playbook.config import get_playbook_config
+
+        pb = get_playbook_config()
+        container = ConfigContainer.get_instance()
+        for flat_key, dotted in (
+            ("low_atr_gate_enabled",
+             "playbook.execution_parameters.low_atr_gate_enabled"),
+            ("low_atr_gate_min_atr_pct",
+             "playbook.execution_parameters.low_atr_gate_min_atr_pct"),
+        ):
+            via_pb = pb.get(flat_key, None)
+            via_yaml = container.get_dotted(dotted, None)
+            assert via_yaml is not None, (
+                f"{dotted} 在活 yaml 缺失 — 键被搬走? 须同步两 accessor 与本钉"
+            )
+            assert via_pb == via_yaml, (
+                f"accessor 分叉: get_playbook_config().get({flat_key!r})={via_pb!r} "
+                f"vs get_dotted({dotted!r})={via_yaml!r}"
+            )
+
+    def test_nail_cannot_be_satisfied_by_mocked_flat_keys(self):
+        """负例自证: 扁平键路径 (事故根因) 从活 yaml 读不到 — 钉住 get_dotted 严格逐层语义."""
+        from app.core.config_container import ConfigContainer
+        container = ConfigContainer.get_instance()
+        assert container.get_dotted("playbook.low_atr_gate_enabled", None) is None
+        assert container.get_dotted("playbook.low_atr_gate_min_atr_pct", None) is None

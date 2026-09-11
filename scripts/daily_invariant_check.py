@@ -36,6 +36,11 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
 输出: 违反数 >0 → logger.error (被 error_alert.py 15min 扫描拾取推钉钉 — 2026-09-10 起本脚本的
      logs/invariant_check.log 才真进了告警扫描面; 此前 error_alert.sh 只读 logs/ftseek_us.log,
      「违反 → 推钉钉」自 7/28 上线起是纸面的, 见 DEB-20260910 §4) + exit 1;
+     **W1_* 关键违反另直走 app/push hub** (2026-09-11, DEB-20260909 §7.7⑤(i)): 本脚本单次运行
+     无论多少违反恒只输出 1 行汇总 ERROR, 永远够不着 error_alert 的行数阈值地板 3 — 速率型
+     判据与"判据破"这类事件型告警结构性不兼容 (§7.2: 9/11 实跑 1 条 < 3 未推送) ⇒ W1_*
+     (KR2 冻结守卫) 直推 hub sync=True 必达, 不经行数阈值; 同键集已成功送达则抑制重推;
+     其余违反仍走原 logger.error → error_alert 速率通道 (不动别人的判据)。
      全过 → 一行 OK + exit 0。结果落 data/invariant_check_latest.json。
 cron: 每交易日盘后 (见 crontab '05 5 * * 2-6')。
 """
@@ -109,6 +114,31 @@ _FREEZE_BASELINE = REPO / "data" / "config_freeze_baseline.json"
 # 变更预算 (同批写死): 2026-09-06 → 09-30 **零次**退出参数变更, P0 豁免通道对本维**关闭**
 # (前 4 版全走了豁免清单; 再开一次口子 = 判据名存实亡)。
 _FREEZE_COHORT_START = "2026-09-03"
+# ── 子窗观测面 (2026-09-11, DEB-20260909 §7.6 选项(d), 用户裁"按建议执行") ──
+# 背景: 9/9 行动项C (breakeven_fee_cushion_pct 0.4→0.15) 换了退出参数哈希 ⇒ 主 cohort 窗
+# 出现第 2 个哈希 ⇒ W1_kr2_cohort_broken (2026-09-11 05:05 实测已报)。选项(d) = **双口径并列**:
+# 主 cohort 判分窗与 BROKEN 判定**一字不动** (不放宽预注册判据), 另加本观测面如实报告
+# "破判之后仍有一个单版本窗在攒样", 两份事实并存、不得互相冒充 (沿用 OKR-2026-09 KR2 边界注
+# 的既有惯例)。本块**只观测不判分**: 不调 rec()、不产生违反、不参与 status 取劣。
+#
+# 为什么起点是**显式常量**而不是自动取"最新哈希的首个 trade_date": 自动推导会让**任何**未来
+# 换版都静默把窗口重置到自己上线那天 ⇒ 判据永远"单版本"= 比 9/3 勘误修掉的"读错列恒 v2"
+# 更隐蔽的结构性假绿。移动本常量 = 改判据面, 必须先落 DEB + 改 OKR (与 _FREEZE_COHORT_START
+# 同纪律), 并由 tests/test_w1_exit_version_guard.py 字面钉死强制留痕。
+# 为什么是 9/10 而不是 9/9: 9/9 含唯一骑墙笔 (trade 1473 US.SNDK, 开仓 9/9=变更前、
+# 退出 9/10T09:38=变更后), 把混源交易放进"单版本窗"会重新制造歧义; 实测两段退出时刻
+# 间隔 ≈20h 零交错 (de49 末 9/9T13:33 ET → 13f6 首 9/10T09:38 ET), 9/10 是干净边界。
+_SUB_COHORT_START = "2026-09-10"
+# ── W1_* 关键违反直推 (2026-09-11, DEB-20260909 §7.7 清单⑤(i), 用户裁选项(d) 同批落地) ──
+#    断链根因 (§7.2): 事件型告警 (判据破, 一违反即关键) vs error_alert 的速率型行数阈值
+#    (地板 3) 结构性不兼容 — 调低阈值只会让日常噪声刷屏, 不是解法。W1_* 是"零违反=判据
+#    在轨, 一违反=判据破"的二元关键事件, 直走 app/push hub (sync=True: 短命 cron 进程要
+#    真实送达结果, 与 trigger_gate_report / live_reconcile_check 的直推模式同族)。
+#    防刷屏 (同 _I15_SINCE 的"告警必须可动作"纪律): KR2 已破是**持续状态**, 与上次已成功
+#    送达的 W1 键集相同则不重推 (否则每晚重推同一事实 = 不可动作噪声, 假告警一多守卫就被
+#    无视); 首次 / 上次推送失败 / 键集变化 (如子窗内出现第 3 个哈希的 W1_exit_version_drift)
+#    必推。推送结果落 result.w1_direct_push, 失败显性化不上抛 (JSON/exit 码照落)。
+_W1_KEY_PREFIX = "W1_"
 
 
 def _check_config_freeze(rec) -> dict:
@@ -136,6 +166,23 @@ def _check_config_freeze(rec) -> dict:
                 "MIN(trade_date), MAX(trade_date) "
                 "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
                 "GROUP BY 1", (_FREEZE_COHORT_START,)).fetchall()
+            # 子窗观测面 (DEB-20260909 §7.6 选项(d)): 同口径, 但只数**已闭合**行 —
+            # 本块的用途是"破判后还有多少可测样本", 未平仓行不构成样本 (与主 cohort 维不同,
+            # 主维必须含未平仓行才能发现 hash_missing_rows)。同样不依赖 exit_time 列。
+            # 独立容错 (2026-09-11 落地时实测教训): 本查询比主维多依赖 exit_price 列 —
+            # 旧库/最小测试夹具缺该列时只降级**本观测面** (skipped_old_schema), 不得拖垮
+            # 主 cohort 维 (W1 主判据); 若无此隔离, 一次观测面查询就把既有钉子测试整批
+            # 打红 = 主判据被观测面绑架。非结构异常照旧上抛走 detector_error。
+            try:
+                sub_cohort_pairs = conn.execute(
+                    "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*), "
+                    "MIN(trade_date), MAX(trade_date) "
+                    "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
+                    "AND exit_price > 0 GROUP BY 1", (_SUB_COHORT_START,)).fetchall()
+            except Exception as _se:
+                if not _is_structural_error(_se):
+                    raise
+                sub_cohort_pairs = None
         finally:
             conn.close()
         versions = {str(v): n for v, n in pairs}
@@ -161,9 +208,36 @@ def _check_config_freeze(rec) -> dict:
                 f"KR2 主 cohort 窗 ({_FREEZE_COHORT_START}→2026-09-30) 出现 "
                 f"{len(cohort_versions)} 个退出哈希 ⇒ 判据 **BROKEN** (2026-09-06 修订: 变更预算"
                 f"归零, P0 豁免通道对本维关闭 — config_freeze_baseline.json 的豁免**不适用**); "
-                f"9 月单版本样本作废, 须 DEB 落档 + 10 月开跑会项目级裁决")
+                f"9 月单版本样本作废, 须 DEB 落档 + 10 月开跑会项目级裁决 | 2026-09-11 追加: "
+                f"起因=9/9 行动项C 换版 (DEB-20260909 §6), 已按 §7.6 选项(d) 双口径并列落档 — "
+                f"本判定维持 BROKEN 不放宽, 另见 sub_cohort 观测面 (非 KR2 判分对象)")
         else:
             info["cohort"]["status"] = "single_version" if cohort_versions else "no_rows"
+        # ── 子窗观测面: 只报告, 不判分 (不调 rec / 不参与 status 取劣) ──
+        if sub_cohort_pairs is None:
+            # 缺 exit_price 列的旧库形态: 观测面跳过, 主 cohort 维结果不受影响
+            info["sub_cohort"] = {
+                "window_start": _SUB_COHORT_START,
+                "status": "skipped_old_schema",
+                "not_kr2_verdict": True,
+                "note": "exit_price 列缺失 (旧库形态) — 观测面跳过, 主 cohort 判分维不受影响",
+            }
+        else:
+            sub_versions = {str(v): {"n": n, "first": f, "last": la}
+                            for v, n, f, la in sub_cohort_pairs if str(v).startswith("exit-")}
+            info["sub_cohort"] = {
+                "window_start": _SUB_COHORT_START,
+                "versions": sub_versions,
+                "n_unique": len(sub_versions),
+                "n_closed": sum(d["n"] for d in sub_versions.values()),
+                "status": ("single_version" if len(sub_versions) == 1 else
+                           "broken" if len(sub_versions) > 1 else "no_rows"),
+                # 显式防误读: 本块不是判据, 不得被任何面板/结算当成 KR2 达标证据
+                "not_kr2_verdict": True,
+                "note": ("观测面 (DEB-20260909 §7.6 选项(d), 2026-09-11 用户裁'按建议执行'): "
+                         "主 cohort 窗 BROKEN 后仍在攒样的单版本子窗, 只报已闭合笔数与唯一性, "
+                         "**不是** KR2 判分对象, 不得据此宣称 KR2 达标或 9 月样本有效"),
+            }
         if not versions:
             info["status"] = "no_rows_in_window"
             return info
@@ -214,6 +288,63 @@ def _check_config_freeze(rec) -> dict:
         rec("W1_detector_error", "-", type(e).__name__, f"W1 检测器自身异常: {e}")
         info["status"] = "detector_error"
         return info
+
+
+def _push_w1_critical(viol, examples: dict, checked_at: str) -> dict:
+    """W1_* 关键违反直推 app/push hub (sync=True) — 不经 error_alert 行数阈值。
+
+    防刷屏判据 = 与**上一次已成功送达**的 W1 键集比较 (读旧 OUT 文件, 须在覆写前调用):
+    相同 → suppressed; 上次失败 / 无记录 (含旧代码时代的产物, 即"从未送达") / 键集变化 →
+    必推。读取上次状态失败按"未送达"处理 (宁可重推不可漏推)。返回 dict 落
+    result.w1_direct_push: {keys, attempted, ok, error, suppressed_reason}。
+    """
+    w1_keys = sorted(str(k) for k in viol if str(k).startswith(_W1_KEY_PREFIX))
+    out = {"keys": w1_keys, "attempted": False, "ok": None, "error": None,
+           "suppressed_reason": None}
+    if not w1_keys:
+        return out
+    prev_notified: list = []
+    try:
+        prev = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
+        prev_push = (prev or {}).get("w1_direct_push") or {}
+        if prev_push.get("attempted") and prev_push.get("ok"):
+            prev_notified = sorted(prev_push.get("keys") or [])
+    except Exception:
+        prev_notified = []
+    if w1_keys == prev_notified:
+        out["suppressed_reason"] = "与上次已成功送达的 W1 键集相同 (持续状态不每晚重推)"
+        return out
+    out["attempted"] = True
+    lines = [f"· {k}×{viol[k]} — 例: {examples.get(k, '')}" for k in w1_keys]
+    hub = None
+    try:
+        from app.push import get_push_hub, PushMessage, Level, Category
+        hub = get_push_hub()
+        ok = hub.push(PushMessage(
+            title=f"⚠️ 不变量自检 W1 关键违反 {len(w1_keys)} 类: {', '.join(w1_keys)}",
+            body="\n".join(lines) + (
+                f"\n产物 data/invariant_check_latest.json (checked_at {checked_at})。"
+                "W1 = OKR-2026-09 KR2 参数冻结守卫; 判分口径见 DEB-20260909-exit-params §7 "
+                "(2026-09-11 已裁选项(d): 主 cohort BROKEN 不放宽, sub_cohort 观测面非判分对象)。"
+                "本推送为事件型直推, 不经 error_alert 行数阈值。"),
+            level=Level.HIGH,
+            category=Category.RISK_ALERT,
+            dedup_key=f"invariant_w1:{str(checked_at)[:16]}",
+        ), sync=True)
+        out["ok"] = bool(ok)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+        logger.error(f"W1 直推失败 (违反已落 JSON/日志, 但主动通知链路断): {e}", exc_info=True)
+    finally:
+        # sync=True 时消息已发出, stop() 只做聚合 flush + 关线程池; 不关会让短命 cron 进程
+        # 挂在 hub 的非 daemon worker 上 (error_alert.py:360-384 同课)。关失败只 WARNING 带栈,
+        # 不改 out["ok"] — 推送成败以 hub.push 返回为准。
+        try:
+            if hub is not None:
+                hub.stop()
+        except Exception as e:
+            logger.warning("W1 直推后 push hub 关闭异常 (推送结果不受影响): %s", e, exc_info=True)
+    return out
 
 
 # ── W2 字段基数棘轮 (2026-09-06, ADR-038 P7 军规自动化, 用户裁"按建议执行") ──
@@ -565,8 +696,10 @@ def _i7_time_violated(entry_s, exit_s) -> bool:
         return str(exit_s) <= str(entry_s)
 
 
-def main() -> int:
+def main(push_enabled: bool = True) -> int:
+    """push_enabled=False 供测试/演练走完整违反路径而不真发钉钉 (直推是外部副作用)。"""
     since = (now_et().date() - timedelta(days=7)).isoformat()
+    checked_at = now_et().isoformat()
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     rows = c.execute(
@@ -822,17 +955,28 @@ def main() -> int:
     # ── W4/W5/W6 日志卫生棘轮 (2026-09-10, DEB-20260910 §8.2/§5): 基线外新增当天告警 ──
     log_hygiene = _check_log_hygiene(rec)
 
+    # ── W1_* 关键违反直推: **必须在覆写 OUT 之前** (防刷屏判据读的是上一轮 OUT 里的
+    #    w1_direct_push 状态; 先覆写就永远读到本轮自己 ⇒ 首次告警即被自我抑制)。──
+    if push_enabled:
+        w1_push = _push_w1_critical(viol, examples, checked_at)
+    else:
+        w1_push = {"keys": sorted(str(k) for k in viol if str(k).startswith(_W1_KEY_PREFIX)),
+                   "attempted": False, "ok": None, "error": None,
+                   "suppressed_reason": "push_enabled=False (测试/演练路径, 不发外部通知)"}
+
     result = {
-        "checked_at": now_et().isoformat(), "window_since": since, "sample": len(rows),
+        "checked_at": checked_at, "window_since": since, "sample": len(rows),
         "violations": dict(viol), "examples": examples, "field_health": field_health,
         "caliber_diff": caliber_diff,
         "config_freeze": config_freeze,
         "field_cardinality": field_cardinality,
         "env_demix": env_demix,
         "log_hygiene": log_hygiene,           # W4 debug吞异常 / W5 裸名logger / W6 无栈告警
+        "w1_direct_push": w1_push,            # W1 事件型直推回执 (DEB-20260909 §7.7⑤)
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
     }
+
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=1))
 
     if viol:

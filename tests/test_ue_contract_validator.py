@@ -166,11 +166,28 @@ class TestNormalizeSkipReason:
         assert len(out[0]["skip_reason"]) <= 120
 
 
-class TestPromptV210Contract:
+class TestPromptVersionContract:
     def test_version_and_hash_derive_from_current_prompt(self):
-        assert PROMPT_VERSION == "v2.10"
+        # v2.11 (2026-09-11): 负反馈表 U1 反号修 + U1b 零收益三态, 均在 brief/user 侧。
+        # 升版者必须同时改这里 —— 这条钉子变红是它的设计意图, 不是回归。
+        assert PROMPT_VERSION == "v2.11"
         expected = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
         assert PROMPT_HASH_V2 == expected
+
+    def test_brief_only_bump_leaves_hash_identical_to_v210(self):
+        """v2.10 → v2.11 未动 SYSTEM_PROMPT_V2 ⇒ 哈希必须**完全不变**。这是盲区, 不是 bug。
+
+        实测: v2.10 与 v2.11 的 `PROMPT_HASH_V2` 同为 `70e4680597af`、`SYSTEM_PROMPT_V2`
+        同为 2582 字符 (v2.10 值见 `docs/analysis/2026-09-09-core-chain-brief-for-claude.md`
+        §Prompt 版本锚)。⇒ 任何按 `prompt_hash` 切分样本的口径都**无法区分这两个行为版本**,
+        例如 `docs/CONTROL-LOOP-LEDGER.md` thinking-eval 预注册判据「跨 prompt_hash 不得混合」
+        在 9/11 这次 brief 变更上**不会触发序列归零**。只能按 `prompt_version` 切分。
+        指纹扩到 brief 侧属另立项 (DEB-20260910 §11.6-6, 用户裁「缺口另立项」), 本钉不代其实现。
+        """
+        assert PROMPT_HASH_V2 == "70e4680597af", (
+            "SYSTEM_PROMPT_V2 被改动了 — 若属有意, 需同时升 PROMPT_VERSION 并更新本钉与 "
+            "DEB-20260910 §11.6-6 的盲区记录; 若属无意, 即回归")
+        assert len(SYSTEM_PROMPT_V2) == 2582
 
     def test_prompt_and_parser_share_trigger_metrics(self):
         expected_metrics = {"收盘价", "量比", "5日涨跌", "盘前涨跌幅"}

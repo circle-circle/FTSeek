@@ -224,3 +224,298 @@ def test_cohort_start_is_pinned_and_documented():
     assert '_FREEZE_COHORT_START = "2026-09-03"' in src
     assert "W1_kr2_cohort_broken" in src and "OKR-2026-09 KR2" in src
     assert "变更预算" in src and "豁免通道" in src, "修订理由必须写在代码注释里 (可审计)"
+
+
+# ══════════ sub_cohort 观测面 (2026-09-11, DEB-20260909 §7.6 选项(d) 双口径并列) ══════════
+# 选项(d) 的两条红线: ①主 cohort **判分维一字不动** (不重开窗、不放宽 BROKEN);
+# ②子窗**只观测不判分** (不产生违反、不冒充 KR2 达标证据)。以下逐条钉死。
+# 夹具须带 exit_price 列 — 既有 _COLS 没有该列, 正是守卫 skipped_old_schema 降级路径的成因。
+_COLS_CLOSED = ("id INTEGER PRIMARY KEY, symbol TEXT, source_type TEXT, trade_date TEXT, "
+                "config_version TEXT, metadata_json TEXT, exit_price REAL")
+
+_OLD = "exit-de49b1299290"      # 变更前版本 (9/3→9/9)
+_CUR = "exit-13f6c2cc7fc4"      # 9/9 行动项C 变更后版本
+
+
+def _mk_db_closed(tmp_path, *, name="ftseek_us.db"):
+    db = tmp_path / name
+    conn = sqlite3.connect(str(db))
+    conn.execute(f"CREATE TABLE trade_records ({_COLS_CLOSED})")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _row_closed(db, *, exit_hash=_CUR, n=1, day="2026-09-10", exit_price=100.0, profile="v2"):
+    """exit_price=0/None 表示未平仓 — 子窗只数已闭合行 (未平仓不构成样本)。"""
+    conn = sqlite3.connect(str(db))
+    meta = "{}" if exit_hash is None else json.dumps({"config_version": exit_hash})
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO trade_records (symbol, source_type, trade_date, config_version, "
+            "metadata_json, exit_price) VALUES (?,?,?,?,?,?)",
+            (f"US.S{i}", "PLAYBOOK_SIM", day, profile, meta, exit_price))
+    conn.commit()
+    conn.close()
+
+
+def test_sub_cohort_single_version_observed_without_alarming(tmp_path, monkeypatch):
+    """子窗内单版本 ⇒ 如实报 single_version + 笔数, 但**零违反** (观测面不判分)。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_CUR, n=8, day="2026-09-10")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_CUR,)))
+    s = info["sub_cohort"]
+    assert s["window_start"] == "2026-09-10" and s["n_unique"] == 1
+    assert s["n_closed"] == 8 and s["status"] == "single_version"
+    assert s["not_kr2_verdict"] is True, "必须自带防误读标记, 不得被面板当成 KR2 达标证据"
+    assert hits == [], "观测面不得产生违反 — 否则就是新增了一把判分尺子"
+
+
+def test_sub_cohort_does_not_relax_main_cohort_broken(tmp_path, monkeypatch):
+    """**核心红线**: 主 cohort 已 BROKEN 时, 子窗单版本**不得**冲淡/覆盖主判定。
+
+    这是选项(d) 与选项(a)/(c) 的分界: 移窗或裁"行为中性豁免"都会让 BROKEN 消失,
+    双口径并列则两份事实同时在场 (沿用 KR2 边界注"不得互相冒充"的既有惯例)。
+    """
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OLD, n=37, day="2026-09-03")     # 变更前
+    _row_closed(db, exit_hash=_CUR, n=9, day="2026-09-09")      # 变更后 (跨子窗起点)
+    _row_closed(db, exit_hash=_CUR, n=8, day="2026-09-10")      # 子窗内
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_OLD, _CUR)))
+    assert info["cohort"]["n_unique"] == 2 and info["cohort"]["status"] == "broken"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"], "主判定必须照告, 不被子窗抑制"
+    assert info["sub_cohort"]["n_unique"] == 1 and info["sub_cohort"]["status"] == "single_version"
+    assert "选项(d)" in hits[0][2] and "sub_cohort" in hits[0][2], \
+        "告警文案须自陈已按选项(d) 落档且不放宽 (运维读到告警即知处置口径)"
+
+
+def test_sub_cohort_broken_is_reported_but_still_not_a_verdict(tmp_path, monkeypatch):
+    """子窗自身也分裂 ⇒ status='broken' 如实报, 但**不新增违反键** (仍只有主维那一条)。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OLD, n=2, day="2026-09-03")
+    _row_closed(db, exit_hash=_CUR, n=3, day="2026-09-10")
+    _row_closed(db, exit_hash="exit-dddddddddddd", n=1, day="2026-09-11")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_OLD, _CUR, "exit-dddddddddddd")))
+    assert info["sub_cohort"]["n_unique"] == 2 and info["sub_cohort"]["status"] == "broken"
+    assert info["sub_cohort"]["not_kr2_verdict"] is True
+    assert "不是" in info["sub_cohort"]["note"], \
+        "note 文本须自陈非判分对象 (消费方即使忽略 not_kr2_verdict 标记也读得到)"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"], \
+        "子窗分裂不得自造告警键 (它不是判据); 主维已就同一事实告过警"
+
+
+def test_sub_cohort_counts_only_closed_rows(tmp_path, monkeypatch):
+    """子窗只数已闭合行; 未平仓行仍计入主 cohort 维 (两维口径差异是**有意**的)。
+
+    主维必须含未平仓行才能发现 hash_missing_rows (写入侧停止落哈希); 子窗的用途是
+    "破判后还有多少**可测**样本", 未平仓行不构成样本。
+    """
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_CUR, n=5, day="2026-09-10", exit_price=100.0)
+    _row_closed(db, exit_hash=None, n=3, day="2026-09-10", exit_price=0)   # 未平仓
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_CUR,)))
+    assert info["sub_cohort"]["n_closed"] == 5, "未平仓行不得计入子窗样本量"
+    assert info["sub_cohort"]["n_unique"] == 1
+    assert info["cohort"]["hash_missing_rows"] == 3, "主维仍须看见无哈希行 (口径不得趋同)"
+    assert hits == []
+
+
+def test_sub_cohort_excludes_straddler_opened_before_window(tmp_path, monkeypatch):
+    """骑墙笔 (开仓在子窗前、退出在子窗后) 不入子窗 — 窗按 trade_date=开仓日切。
+
+    实证依据: trade 1473 US.SNDK 开仓 9/9 (变更前)、退出 9/10T09:38 ET (变更后),
+    是窗内唯一混源笔; 把混源交易放进"单版本窗"会重新制造歧义 (故起点取 9/10 而非 9/9)。
+    """
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_CUR, n=1, day="2026-09-09")    # 骑墙笔: 开仓 9/9
+    _row_closed(db, exit_hash=_CUR, n=4, day="2026-09-10")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_CUR,)))
+    assert info["sub_cohort"]["n_closed"] == 4, "9/9 开仓行不得混入 9/10 子窗"
+    assert info["sub_cohort"]["versions"][_CUR]["first"] == "2026-09-10"
+    assert hits == []
+
+
+def test_sub_cohort_skipped_on_old_schema_without_hostaging_main_verdict(tmp_path, monkeypatch):
+    """缺 exit_price 列的旧库/最小夹具 ⇒ 观测面 skipped_old_schema, **主 cohort 维照判**。
+
+    回归红线 (2026-09-11 落地时实测教训): 观测面比主维多依赖一列, 初版无独立容错时
+    本文件既有钉子 **12/14 被打红** = 主判据被观测面绑架。本例把该回归永久钉住。
+    """
+    db = _mk_db(tmp_path)                                     # 无 exit_price 列
+    _row(db, exit_hash=_NEW, n=3, day="2026-09-03")
+    _row(db, exit_hash="exit-cccccccccc", n=1, day="2026-09-08")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_NEW, "exit-cccccccccc")))
+    assert info["sub_cohort"]["status"] == "skipped_old_schema"
+    assert info["sub_cohort"]["not_kr2_verdict"] is True
+    assert info["cohort"]["n_unique"] == 2 and info["cohort"]["status"] == "broken"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"], "旧库形态下主判据不得失明"
+
+
+def test_sub_cohort_no_rows_is_distinguishable_from_single_version(tmp_path, monkeypatch):
+    """子窗零闭合 ⇒ no_rows, 与 single_version 必须可区分 (零样本不得读成"判据在轨")。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OLD, n=2, day="2026-09-03")     # 全在子窗前
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_OLD,)))
+    assert info["sub_cohort"]["status"] == "no_rows" and info["sub_cohort"]["n_closed"] == 0
+    assert info["sub_cohort"]["versions"] == {} and hits == []
+
+
+def test_sub_cohort_start_pinned_and_scoring_window_untouched():
+    """源级契约: 子窗起点写死 + 主判分窗**未被子窗改动** (选项(d) 的定义性约束)。
+
+    子窗起点若改成自动推导"最新哈希首个 trade_date", 任何未来换版都会静默把窗口重置到
+    自己上线那天 ⇒ 判据永远单版本 = 比 9/3 勘误修掉的"读错列恒 v2"更隐蔽的结构性假绿。
+    """
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    assert '_SUB_COHORT_START = "2026-09-10"' in src
+    assert '_FREEZE_COHORT_START = "2026-09-03"' in src, "选项(d) 不得移动主判分窗"
+    assert '"not_kr2_verdict": True' in src, "观测面必须自带非判据标记"
+    assert "exit_price > 0" in src, "子窗只数已闭合行的口径须写在 SQL 里"
+
+
+# ══════════ W1 事件型直推 (2026-09-11, DEB-20260909 §7.2/§7.7⑤: 告警链二次断裂) ══════════
+# 病灶: 本脚本单次运行恒只输出 1 行汇总 ERROR, 而 error_alert.py 阈值地板 MIN_THRESHOLD=3
+# ⇒ 9/11 实测 W1_kr2_cohort_broken 落日志但**从未推送** (判据破了没人知道)。
+# 速率型行数阈值与"判据破"这类事件型告警结构性不兼容; 调低阈值只会让日常噪声刷屏。
+class _FakeHub:
+    def __init__(self, *, ok=True, push_raises=None, stop_raises=None):
+        self.ok, self.push_raises, self.stop_raises = ok, push_raises, stop_raises
+        self.sent, self.stop_calls = [], 0
+
+    def push(self, msg, sync=False):
+        if self.push_raises is not None:
+            raise self.push_raises
+        self.sent.append({"msg": msg, "sync": sync})
+        return self.ok
+
+    def stop(self):
+        self.stop_calls += 1
+        if self.stop_raises is not None:
+            raise self.stop_raises
+
+
+def _arm_push(monkeypatch, tmp_path, hub, *, prev=None):
+    """把 dic.OUT 指到 tmp (测试**绝不**写生产 data/invariant_check_latest.json) 并装假 hub。"""
+    out = tmp_path / "invariant_check_latest.json"
+    if prev is not None:
+        out.write_text(json.dumps(prev, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(dic, "OUT", out)
+    import app.push as push_mod
+    monkeypatch.setattr(push_mod, "get_push_hub", lambda: hub)
+    return out
+
+
+_V = {"W1_kr2_cohort_broken": 1}
+_EX = {"W1_kr2_cohort_broken": "exit-a,exit-b"}
+
+
+def test_w1_push_fires_on_first_violation_and_stops_hub(tmp_path, monkeypatch):
+    """首次违反必推; sync=True (短命 cron 进程要真实送达结果); 推完必须 stop() 关线程池。
+
+    非 W1 违反即使同轮存在也**不得混入直推体** — 各走各的通道 (不动别人的判据)。
+    """
+    hub = _FakeHub(ok=True)
+    _arm_push(monkeypatch, tmp_path, hub)
+    viol = dict(_V, I1_pnl_vs_prices=3, W2_new_field_degen=1)
+    out = dic._push_w1_critical(viol, _EX, "2026-09-11T05:05:09-04:00")
+    assert out["attempted"] is True and out["ok"] is True and out["error"] is None
+    assert out["keys"] == ["W1_kr2_cohort_broken"], "只推 W1_* 键"
+    assert len(hub.sent) == 1 and hub.sent[0]["sync"] is True
+    assert hub.stop_calls == 1, "不 stop 会让 cron 进程挂在 hub 的非 daemon worker 上"
+    msg = hub.sent[0]["msg"]
+    assert "W1" in msg.title
+    assert msg.level.value == "high" and msg.category.value == "risk_alert"
+    assert "invariant_check_latest.json" in msg.body, "告警须指向可审计产物"
+    assert "I1_pnl_vs_prices" not in msg.body and "W2_new_field_degen" not in msg.body, \
+        "非 W1 违反仍走 error_alert 速率通道, 不得混入事件型直推"
+
+
+def test_w1_push_suppressed_when_same_keyset_already_delivered(tmp_path, monkeypatch):
+    """KR2 已破是**持续状态**: 与上次已成功送达的键集相同则不重推 (否则每晚刷屏 ⇒ 守卫被无视)。"""
+    hub = _FakeHub(ok=True)
+    _arm_push(monkeypatch, tmp_path, hub,
+              prev={"w1_direct_push": {"keys": ["W1_kr2_cohort_broken"],
+                                       "attempted": True, "ok": True}})
+    out = dic._push_w1_critical(_V, _EX, "2026-09-12T05:05:09-04:00")
+    assert out["attempted"] is False and out["suppressed_reason"]
+    assert hub.sent == [], "已送达的同一事实不得重推"
+
+
+def test_w1_push_redelivers_when_keyset_changes(tmp_path, monkeypatch):
+    """键集变化 (如全窗维另报 W1_exit_version_drift) ⇒ 必推, 不被旧送达记录抑制。"""
+    hub = _FakeHub(ok=True)
+    _arm_push(monkeypatch, tmp_path, hub,
+              prev={"w1_direct_push": {"keys": ["W1_kr2_cohort_broken"],
+                                       "attempted": True, "ok": True}})
+    viol = {"W1_kr2_cohort_broken": 1, "W1_exit_version_drift": 2}
+    out = dic._push_w1_critical(viol, _EX, "2026-09-12T05:05:09-04:00")
+    assert out["attempted"] is True and out["suppressed_reason"] is None
+    assert out["keys"] == ["W1_exit_version_drift", "W1_kr2_cohort_broken"]
+    assert len(hub.sent) == 1
+
+
+def test_w1_push_retries_after_failed_delivery(tmp_path, monkeypatch):
+    """上次 attempted 但 ok=False ⇒ **必须重推** (宁可重推不可漏推; 漏推=判据破无人知)。"""
+    hub = _FakeHub(ok=True)
+    _arm_push(monkeypatch, tmp_path, hub,
+              prev={"w1_direct_push": {"keys": ["W1_kr2_cohort_broken"],
+                                       "attempted": True, "ok": False,
+                                       "error": "RuntimeError: 上轮网络故障"}})
+    out = dic._push_w1_critical(_V, _EX, "2026-09-12T05:05:09-04:00")
+    assert out["attempted"] is True and out["ok"] is True
+    assert len(hub.sent) == 1, "失败送达不算送达"
+
+
+def test_w1_push_swallows_failure_but_keeps_hub_hygiene(tmp_path, monkeypatch):
+    """推送异常不得上抛 (JSON 落盘与 exit 码是主职责), 但须显性化 error + 仍 stop()。"""
+    hub = _FakeHub(push_raises=RuntimeError("dingtalk 502"))
+    _arm_push(monkeypatch, tmp_path, hub)
+    out = dic._push_w1_critical(_V, _EX, "2026-09-11T05:05:09-04:00")
+    assert out["attempted"] is True and out["ok"] is None
+    assert "RuntimeError" in out["error"] and "dingtalk 502" in out["error"]
+    assert hub.stop_calls == 1, "推送失败也要关线程池, 否则 cron 进程照样挂住"
+
+
+def test_w1_push_stop_failure_does_not_change_verdict(tmp_path, monkeypatch):
+    """stop() 失败只 WARNING 带栈 (W4/W6 棘轮不许 except:pass), 不改 out['ok'] — 成败以 push 为准。"""
+    hub = _FakeHub(ok=True, stop_raises=RuntimeError("线程池已关"))
+    _arm_push(monkeypatch, tmp_path, hub)
+    out = dic._push_w1_critical(_V, _EX, "2026-09-11T05:05:09-04:00")
+    assert out["ok"] is True and out["error"] is None, "stop 失败不得污染推送结论"
+    assert hub.stop_calls == 1
+
+
+def test_w1_push_noop_without_w1_keys(tmp_path, monkeypatch):
+    """只有 I/F 系列违反 (走原速率通道) ⇒ 不构造 hub、不推送 (不动别人的判据)。"""
+    hub = _FakeHub(ok=True)
+    _arm_push(monkeypatch, tmp_path, hub)
+    out = dic._push_w1_critical({"I1_pnl_mismatch": 4, "F_field_dropout": 1}, {}, "2026-09-11T05:05:09")
+    assert out == {"keys": [], "attempted": False, "ok": None, "error": None,
+                   "suppressed_reason": None}
+    assert hub.sent == [] and hub.stop_calls == 0
+
+
+def test_w1_push_reads_prev_state_before_out_is_overwritten():
+    """源级契约: 直推调用点必须在 OUT.write_text **之前** (防刷屏判据读的是上一轮的 OUT)。
+
+    顺序写反的后果是首次告警即被自我抑制 — 读到的"上次送达记录"其实是本轮自己,
+    等于把断链修成了一个更隐蔽的断链 (与"读错列恒 v2"同族的结构性假绿)。
+    """
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    call = "_push_w1_critical(viol, examples, checked_at)"
+    call_at = src.index(call)
+    write_at = src.index("OUT.write_text(json.dumps(result")
+    assert call_at < write_at, "直推必须在覆写 OUT 之前调用"
+    # 只数调用点 (不能用 "_push_w1_critical(viol" — 那会连 def 行一起数到)
+    assert src.count(call) == 1, "只许一处调用点 (两处=同一事实推两遍)"
+
+
+def test_main_push_enabled_flag_gates_external_side_effect(tmp_path, monkeypatch):
+    """push_enabled=False 时不得发外部通知, 但 W1 键集仍须落 JSON (否则产物看着像"无 W1 违反")。"""
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    assert "def main(push_enabled: bool = True) -> int:" in src
+    assert "if push_enabled:" in src and '"w1_direct_push": w1_push' in src
+    assert "push_enabled=False" in src, "禁用原因须写在产物里, 不得静默缺键"

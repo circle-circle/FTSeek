@@ -62,7 +62,7 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.10"  # scan 落库归因戳; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.11"  # scan 落库归因戳; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -1126,7 +1126,15 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
     """v2.2 (P3): 本源近 N 日浮现→fwd 结果小表 (供 prompt 负反馈注入)。
 
     口径: playbook_instructions 中 source=universe_expansion 的方向指令,
-    fwd = fwd_return_intraday 优先 (t1 兜底), 按方向调整 (SHORT 取负)。失败返回 []。
+    fwd = fwd_return_intraday 优先 (t1 兜底)。失败返回 []。
+
+    ⚠️ 契约 (U1 2026-09-11): fwd_return_* 各列**已经是方向签名后**的指令收益 —
+      写侧 app/playbook/ic_tracker.py 统一乘 sign (BUY=+1 / SELL_SHORT=-1),
+      故正数=该方向指令赚钱、负数=亏钱, 与标的自身涨跌无关。读侧**不得**再乘方向,
+      否则 SHORT 行被二次取负 = 标签整体反转 (实测自 2026-07-25 起 UE SHORT 有 fwd 共
+      66 条、66/66 反转, 其中 41 条做对的空头被标"推错", 直接喂给 prompt 里"连续推错的
+      同标的+同方向不得再次浮现"那条抑制规则 ⇒ 系统性地驱逐正确空头、强化错误空头)。
+      本函数只做 fraction→percent 换算。
     """
     try:
         import sqlite3
@@ -1145,8 +1153,13 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
             #   (负反馈注入的意义=真实盈亏方向, 待回填行没有方向信息)。
             if f is None:
                 continue
-            adj = float(f) * (1 if r["direction"] == "BUY" else -1) * 100
-            res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗")
+            adj = float(f) * 100  # 已含方向符号 (见上方契约), 只做 fraction→percent
+            # [U1b 零收益三态 2026-09-11] 修前 adj==0 落 else 被判 ✗, 而下游表头把"推错"
+            #   定义为负收益、抑制规则写"连续推错(连续负收益)…不得再次浮现" ⇒ 一次持平被当
+            #   一次推错喂进抑制规则 (自我矛盾, 非策略选择)。
+            #   判定用**精确** adj==0, 不得放宽为显示舍入 round(adj,1)==0: 后者会把真实非零的
+            #   小收益误判为中性 (实测 2026-08-11 US.CVX 真值 +0.0249%, 显示 "+0.0%")。
+            res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗" if adj < 0 else " ＝")
             _dir = "LONG" if r["direction"] == "BUY" else "SHORT"
             out.append(f"- {r['date']} {r['symbol'].replace('US.', '')} {_dir}: {res}")
             if len(out) >= max_rows:
@@ -1321,10 +1334,12 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         fb = _build_feedback_table()
         health.append(f"负反馈:{len(fb)}条")
         if fb:
-            parts.append("\n[本源近7日浮现回顾 (方向调整后前瞻收益, 负=推错)]")
+            parts.append("\n[本源近7日浮现回顾 (方向调整后前瞻收益: ✓=推对盈利 / ✗=推错亏损 / "
+                         "＝=零收益持平, ＝不计入推错)]")
             parts.extend(fb)
             parts.append("规则: 对上表中连续推错(连续负收益)的 同标的+同方向, 除非今日材料中出现"
-                         "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。")
+                         "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。"
+                         "表中 ＝ (零收益) 不是推错, 不得计入「连续推错」或据以触发本规则。")
 
     # [UE-B1影子 2026-08-29] 全市场财报影子落盘 (只记不喂) — 交叉印证源③事件标的文件 ④盘前榜
     try:
@@ -2090,11 +2105,34 @@ def cmd_inject(force_dry: bool = False) -> int:
         print(f"  [warn] regime 补齐失败(非致命): {_rg_ue_e}")
     # [P1 2026-09-02 低ATR源头预检] ATR provider — 与执行门/盘前定桶
     #   (pipeline.py _tag_volatility_buckets) 同一 provider 同一数据源 (日线 ATR,
-    #   盘前稳定不依赖 OpenD)。开关与阈值读执行门同键 (playbook.low_atr_gate_*),
-    #   单旋钮同开同关; provider 构建失败 → None → 预检整体 fail-open (执行门兜底)。
+    #   盘前稳定不依赖 OpenD)。
+    # [U2 根因修 2026-09-11] 开关/阈值改走执行门同一 accessor get_playbook_config()
+    #   (app/playbook/config.py, 与 pipeline.py:5317-5318 同源)。修前读扁平键
+    #   _cfg("playbook.low_atr_gate_*"), 而真 yaml 路径是
+    #   playbook.execution_parameters.low_atr_gate_* (unified_config.yaml:1185-1186) —
+    #   get_dotted 严格逐层找不到扁平键 (config_container.py:401-418) → 自 09-02
+    #   上线以来预检恒读默认 False, 从未生效; 执行门经 PlaybookConfig 扁平合并
+    #   (config.py:84-90) 读到 True/0.03 — 同名门一侧活一侧死。统一 accessor 后
+    #   "单旋钮同开同关"是结构保证, 不再依赖两处字符串手工同步。
+    #   行为变更记录 (契约): 本次接线修复使预检首次真实生效, inject 候选分布收窄 —
+    #   只读影子复算 (DB ro, 08-27~09-10 UE 指令行 n=55, atr_pct 覆盖率 100%):
+    #   56.4% atr_pct<0.03 (BUY 62.5% / SHORT 51.6%); 同批本就被执行门拦截
+    #   (7/24 以来 5,240 条 low_atr_block 遥测) → 交易行为理论零变更, 省死指令开销。
+    #   prompt 未动 → prompt_version/prompt_hash 指纹不变。反分叉钉:
+    #   tests/test_ue_low_atr_precheck.py TestNoForkNail (活 yaml 双 accessor 同值,
+    #   mock 不可满足) + TestSourceContract 禁扁平键回归。
+    #   accessor 异常 / provider 构建失败 → 预检整体 fail-open (执行门兜底), 显式留痕。
     _ue_atr_provider = None
-    _ue_atr_gate_min = float(_cfg("playbook.low_atr_gate_min_atr_pct", 0.025))
-    if bool(_cfg("playbook.low_atr_gate_enabled", False)):
+    _ue_atr_gate_enabled = False
+    _ue_atr_gate_min = 0.025  # 回退默认与执行门 pipeline.py:5318 对齐; 活性值 yaml SSOT
+    try:
+        from app.playbook.config import get_playbook_config as _get_pb_cfg_ue
+        _pb_cfg_ue = _get_pb_cfg_ue()
+        _ue_atr_gate_enabled = bool(_pb_cfg_ue.get("low_atr_gate_enabled", False))
+        _ue_atr_gate_min = float(_pb_cfg_ue.get("low_atr_gate_min_atr_pct", 0.025))
+    except Exception as _pb_cfg_ue_e:
+        print(f"  [warn] 执行门配置读取失败, 低ATR预检 fail-open (执行门兜底): {_pb_cfg_ue_e}")
+    if _ue_atr_gate_enabled:
         try:
             from app.core.di_container import get_di_container
             _ue_atr_provider = get_di_container().atr_provider()
@@ -2134,7 +2172,7 @@ def cmd_inject(force_dry: bool = False) -> int:
         #   成交 -$43)。与执行门同阈值源头拦截 = 零交易行为变更 (这些指令本来就不可能
         #   成交), 只省死指令开销。ATR 取不到/异常 → fail-open 放行 (执行门兜底)。
         #   落SKIP行保留可归因 (与 price_floor 同轨, skip_reason 自带数值)。
-        #   回滚: playbook.low_atr_gate_enabled 改 false (与执行门一起关)。
+        #   回滚: playbook.execution_parameters.low_atr_gate_enabled=false (单旋钮同关两门)。
         if _ue_atr_provider is not None:
             try:
                 _ue_atr = _ue_atr_provider.get_atr_pct(f"US.{s['symbol']}", float(px))

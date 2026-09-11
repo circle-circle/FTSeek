@@ -118,7 +118,6 @@ def _run_inject_capture(directions):
         "universe_expansion.min_price_floor": 5,
         "universe_expansion.premarket_anchor": True,
         "universe_expansion.same_symbol_cooldown_days": 0,  # 跳过冷却 DB 查询
-        "playbook.low_atr_gate_enabled": False,
     }
     candidates = [_cand(f"TS{i}", d) for i, d in enumerate(directions)]
     quotes = {f"TS{i}": {"price": 100.0} for i in range(len(directions))}
@@ -158,6 +157,14 @@ def _run_inject_capture(directions):
         mock.patch("app.playbook.db.PlaybookDB", return_value=fake_db),
         mock.patch("app.playbook.market_regime.MarketRegimeGate", fake_mrg),
         mock.patch("app.core.config_container.get_config", fake_gc),
+        # [U2 根因修 2026-09-11] 低ATR预检改走执行门 accessor (get_playbook_config);
+        #   原扁平键 _cfg 注入 ("playbook.low_atr_gate_enabled": False) 已随接线修复
+        #   失效 — 若不打此桩, 活 yaml True/0.03 会在本测试内构建真实 DI provider。
+        mock.patch(
+            "app.playbook.config.get_playbook_config",
+            return_value=SimpleNamespace(
+                get=lambda k, d=None: {"low_atr_gate_enabled": False}.get(k, d)),
+        ),
     ]
     for p in patches:
         p.start()

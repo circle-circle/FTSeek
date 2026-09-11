@@ -13,9 +13,10 @@ Direction Counterfactual Ruler — 方向反事实尺子 (只读, 白名单·修
 
   B. 候选级反事实对侧视图 (signal_snapshots, 全候选含未执行/NEUTRAL — 无提名幸存者偏差)
      DA / UE × 提名方向{LONG/SHORT/NEUTRAL} × {T+1,T+5,T+20}:
-       - 提名侧方向调整收益 (LONG=+fwd, SHORT=-fwd; fwd 为原始 close-to-close)
-       - 反事实对侧 = 提名侧取负 ("若反着做会怎样")
-       - 方向调整 alpha (扣 SPY beta; LONG=+alpha, SHORT=-alpha) — 去掉市场方向这一最大混杂
+       - 提名侧方向调整收益 (**fwd_ret_* 写侧已签名** ⇒ 直接取值, 不再乘方向;
+         U1b 2026-09-11 更正, 实测证据见 section_candidate_counterfactual docstring)
+       - 反事实对侧 = 提名侧取负 ("若反着做会怎样", 一阶近似)
+       - 方向调整 alpha (扣 SPY beta; alpha 写侧亦已签名 ⇒ 同样直接取值)
      NEUTRAL 队列作内部控制 (应≈市场漂移, 无方向先验)。
 
   C. 预注册判读 (读数为尺, 不设门不下单):
@@ -120,9 +121,22 @@ STRATEGIES = [("deep_analysis", "DA"), ("universe_expansion", "UE")]
 def section_candidate_counterfactual(snap, since):
     """每个 strategy × 提名方向 × horizon: 提名侧/对侧(反事实)/alpha。
 
-    signal_snapshots.fwd_ret_* 为原始 close-to-close (未方向调整)。
-    提名侧方向调整: LONG=+fwd, SHORT=-fwd, NEUTRAL=原始(市场漂移对照)。
-    方向调整 alpha: LONG=+alpha, SHORT=-alpha (alpha=fwd-spy)。
+    ⚠️ 口径 (U1b 2026-09-11 更正): `signal_snapshots.fwd_ret_*` **写侧已按方向签名** —
+    `app/analysis/signal_ic_tracker.py::_calc_fwd` 用倒数式而非乘号:
+      LONG/NEUTRAL: (close_tN / close_t0) − 1     SHORT: (close_t0 / close_tN) − 1
+    ⇒ 正数 = 该提名方向赚钱, 与 `playbook_instructions.fwd_return_*` **同约定**
+    (只是公式不同)。实测 (只读生产库) 1366/1366 条 SHORT 行匹配倒数式、仅 11 条
+    (close_t0==close_t1 的退化行) 匹配未签名式。`alpha_*` 同样已签名
+    (= signed_fwd − raw_spy, 1355/1366 SHORT 行在 1e-6 内成立)。
+    故提名侧**直接取值, 不得再乘方向**。NEUTRAL 走 `_calc_fwd` 的 else 分支 ⇒ 存的是
+    原始 close-to-close, 作市场漂移对照。
+    对侧反事实 = 提名侧取负, 是**一阶近似** (倒数式与取负仅在二阶项上不同)。
+
+    修前本节把 SHORT 全反号: 实测 SHORT T+1 真值 +0.159% 被报成 −0.159%,
+    而下方 `flag` 判据是 `cost_adj > 0` ⇒ 自 2026-08-20 立项起**每日**输出
+    "pool_does_not_support_this_side" 于空头侧 —— 用反过来的证据反对做空。
+    (同文件 A 节读 `playbook_instructions` 时没有再签名, 一直是对的; 错因是
+    当时误以为两个库约定不同。)
     """
     out = {}
     for sid, slabel in STRATEGIES:
@@ -148,10 +162,10 @@ def section_candidate_counterfactual(snap, since):
                     row["nominated_side"][hlabel] = {"raw_drift_pct": mean_raw,
                                                      "alpha_pct": mean_alpha}
                     continue
-                sign = 1.0 if nom == "LONG" else -1.0
-                nominated = round(sign * mean_raw, 3)          # 提名侧方向调整
-                flip = round(-sign * mean_raw, 3)              # 对侧反事实
-                dir_alpha = round(sign * mean_alpha, 3) if mean_alpha is not None else None
+                # mean_raw / mean_alpha 均已含方向签名 (见上方口径) ⇒ 直接取值
+                nominated = round(mean_raw, 3)                 # 提名侧方向调整
+                flip = round(-mean_raw, 3)                     # 对侧反事实 (一阶近似)
+                dir_alpha = round(mean_alpha, 3) if mean_alpha is not None else None
                 row["nominated_side"][hlabel] = {
                     "dir_adj_pct": nominated,
                     "hit_pct": None,  # 候选级均值优先; 命中率见指令级
