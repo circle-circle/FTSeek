@@ -68,26 +68,11 @@ def _read_jsonl(path):
 
 
 # ── 段1: 分歧仲裁 ─────────────────────────────────────────────
-def _sec_divergence():
-    recs = _read_jsonl(SHADOW_DIR / "divergence_arbitration_shadow.jsonl")
-
-    def blk(sub):
-        n = len(sub)
-        opp = [r for r in sub if r.get("type") == "OPPOSITE"]
-        diff = [r for r in sub if r.get("differs")]
-        oe = [r for r in opp if r.get("current_executed") and r.get("pnl_pct") is not None]
-        s = f"分歧{n} 反向{len(opp)}(→拦) 差异{len(diff)}"
-        if oe:
-            pv = [r["pnl_pct"] for r in oe]
-            wr = sum(1 for v in pv if v > 0) / len(pv) * 100
-            s += f" | 已成交反向{len(oe)}笔 pnl均{sum(pv)/len(pv):+.4f} 胜{wr:.0f}%"
-        return s
-
-    lines = ["【分歧仲裁 (反向→SKIP / 单方SKIP→跟随)】"]
-    lines.append(f"  今日 : {blk([r for r in recs if _within(r.get('date'), 1)])}")
-    lines.append(f"  近7天: {blk([r for r in recs if _within(r.get('date'), 7)])}")
-    lines.append(f"  近30天:{blk([r for r in recs if _within(r.get('date'), 30)])}")
-    return lines
+# ── 段1 已摘除 (2026-09-12, 体检「生产者死消费者仍读」批, 用户裁「按建议执行」): ──
+#   _sec_divergence (分歧仲裁) 上游=DA 3模型投票制 debate_outcome, 投票制已废 →
+#   cron 每日重算 30 天窗恒 0 候选 (末行 7/17, 累计 40 行), 看板恒显「分歧0」假绿灯。
+#   cron 已注释停行, jsonl 留档 data/shadow/archive/ 不删 (同段2/段5先例)。
+#   若未来恢复投票制再重新挂段。
 
 
 # ── 段2/段5 已摘除 (2026-08-26 用户批准): ──
@@ -461,7 +446,7 @@ def _sec_post_exit():
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_divergence, _sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit):
+    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit):
         try:
             body += sec() + [""]
         except Exception as e:

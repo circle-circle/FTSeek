@@ -50,7 +50,6 @@ WATCHLIST = [
     ("data/factor_ic_latest.json",                 50, "因子 IC 回填 (Tue-Sat cron, 周一 gap 49h 为计划内)", True),
     ("data/shadow/llm_universe_scan.jsonl",        30, "UE 宇宙扫描 shadow",               True),
     ("data/shadow/premarket_peer_shadow.jsonl",    30, "盘前 peer shadow",                 True),
-    ("data/shadow/divergence_arbitration_shadow.jsonl", 48, "分歧仲裁 shadow",             True),
     ("data/shadow/exec_gate_audit.jsonl",          30, "执行闸门审计",                     True),
     ("data/shadow/sltp_verify_shadow.jsonl",       30, "止盈止损校验 shadow",             True),
     # 2026-08-26 复查加固: U11 确认门兜底告警 (主防线=双季cron+当日幂等+窗口守卫日志)。

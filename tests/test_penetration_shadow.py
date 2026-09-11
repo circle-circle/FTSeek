@@ -346,3 +346,60 @@ def test_source_pins_status_kept_in_row():
     assert 'lab.pop("status")' not in src, "pop 掉 status 会让三个消费端永远选到 0 行"
     assert 'lab.get("status")' in src
     assert "SHADOW.touch()" in src, "载体心跳不得被移除 (稀有事件影子的黄灯误报防线)"
+
+
+# ── 7. 幂等守卫 (2026-09-11 重试风暴污染根因修, 用户裁「按建议执行」) ──────────
+#    病灶: 平仓失败重试每 ~10s 重新触发埋点, 一夜灌 786 行重复 (日均 8-22),
+#    min_n=20 毕业门一夜假达标。契约"每事件 1 行" ⇒ 同 (symbol, inst_id, exit_reason)
+#    只落首行。风暴备份实证: 821 行按本键去重=40, 与去重后生产文件 40 行逐一对应。
+def test_retry_storm_dedup_same_event_only_first_row(tmp_path, monkeypatch):
+    """同键重试 N 轮 → 只落 1 行 (首行=真实触发瞬间), 后续返回 False。"""
+    monkeypatch.setattr(ps, "_PEN_PATH", tmp_path / "pen.jsonl")
+    monkeypatch.setattr(ps, "_atr_pct", lambda s, p: 2.0)
+    kw = dict(symbol="US.CTRN", direction="SHORT", exit_reason="SL_TRAIL_LOCK",
+              side="passive", path="marketable_limit", trigger_price=59.9,
+              floor_px=59.5, entry_price=60.2, peak_price=59.8, trough_price=59.85,
+              held_minutes=37.0, quote_src="futu_lv3_push", inst_id=2251)
+    assert ps.record_penetration(**kw) is True
+    for _ in range(5):  # 模拟快环 10s×5 轮重试 (触发价随行情微动)
+        assert ps.record_penetration(**{**kw, "trigger_price": 59.88}) is False
+    rows = [json.loads(l) for l in (tmp_path / "pen.jsonl").read_text().splitlines()]
+    assert len(rows) == 1, "重试风暴不得灌重复行 (毕业门假达标根因)"
+    assert rows[0]["trigger_price"] == 59.9, "保留首行=真实触发瞬间"
+
+
+def test_dedup_distinct_events_all_pass(tmp_path, monkeypatch):
+    """不同 (symbol/inst_id/exit_reason) 是不同事件, 全部放行 — 守卫不得误杀。"""
+    monkeypatch.setattr(ps, "_PEN_PATH", tmp_path / "pen.jsonl")
+    monkeypatch.setattr(ps, "_atr_pct", lambda s, p: 2.0)
+    base = dict(direction="LONG", side="passive", path="marketable_limit",
+                trigger_price=99.0, floor_px=100.0, entry_price=98.0,
+                peak_price=101.0, trough_price=98.5, held_minutes=5.0, quote_src="x")
+    events = [
+        dict(base, symbol="US.AAAA", inst_id=1, exit_reason="SL_BREAKEVEN"),
+        dict(base, symbol="US.AAAA", inst_id=2, exit_reason="SL_BREAKEVEN"),  # 同票不同指令
+        dict(base, symbol="US.BBBB", inst_id=1, exit_reason="SL_BREAKEVEN"),  # 不同票
+        dict(base, symbol="US.AAAA", inst_id=1, exit_reason="SL_TRAIL_LOCK"),  # 同指令不同退出
+    ]
+    for ev in events:
+        assert ps.record_penetration(**ev) is True
+    rows = [json.loads(l) for l in (tmp_path / "pen.jsonl").read_text().splitlines()]
+    assert len(rows) == 4
+
+
+def test_dedup_corrupt_line_failopen(tmp_path, monkeypatch):
+    """文件含坏行 → 判重不崩 (坏行跳过); 读档整体失败 → fail-open 放行 (宁多勿漏)。"""
+    pen = tmp_path / "pen.jsonl"
+    pen.write_text("{坏行json\n" + json.dumps(
+        {"type": "penetration", "symbol": "US.CCCC", "inst_id": 9,
+         "exit_reason": "SL_BREAKEVEN"}) + "\n")
+    monkeypatch.setattr(ps, "_PEN_PATH", pen)
+    monkeypatch.setattr(ps, "_atr_pct", lambda s, p: None)
+    kw = dict(symbol="US.CCCC", direction="LONG", exit_reason="SL_BREAKEVEN",
+              side="passive", path="marketable_limit", trigger_price=99.0,
+              floor_px=100.0, entry_price=98.0, peak_price=101.0, trough_price=98.5,
+              held_minutes=5.0, quote_src="x", inst_id=9)
+    assert ps.record_penetration(**kw) is False  # 已有同键 → 拦
+    # 读档异常 (目录占位使 open 抛错) → 守卫 fail-open 不崩; 写盘也抛 → 外层吞掉返回 False
+    monkeypatch.setattr(ps, "_PEN_PATH", tmp_path)  # tmp_path 是目录, open() 必抛
+    assert ps.record_penetration(**kw) is False  # 不抛出异常即合格 (record-only 铁律)

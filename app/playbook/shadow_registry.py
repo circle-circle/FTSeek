@@ -404,11 +404,13 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="DEB-20260807 §5.1: 拦截组净亏+放行组盈利模式成立 → 提请用户裁决转硬门; 统计按宪章第9律日聚类+MDE",
         eval_script="scripts/e2_momentum_graduation_gate.py",
         created="2026-07-20",
-        last_evaluated="2026-08-23",
+        last_evaluated="2026-09-12",
         verdict_history=[{"date": "2026-08-23", "verdict": "PATTERN_DIRECTIONAL",
                          "evidence": "前向n=129: 拦截n=80净-$1589.6(均-$19.87,WR33%) vs 放行n=49净+$1221.7(均+$24.93,WR65%); 日聚类15配对日 diff=-$34.8 t=-2.67<MDE$51.6 → 方向强但不可分辨。字面判据(拦截组全亏)不成立(WR33%)。转硬门与9月退出参数冻结冲突, 建议10月初裁。"},
                         {"date": "2026-08-23", "verdict": "USER_DEFERRED",
-                         "evidence": "用户裁决'同意': 不转硬门, 压至10月初(冻结窗口结束后)再裁; 影子继续攒样不重置, 周检机械跟踪。"}],
+                         "evidence": "用户裁决'同意': 不转硬门, 压至10月初(冻结窗口结束后)再裁; 影子继续攒样不重置, 周检机械跟踪。"},
+                        {"date": "2026-09-12", "verdict": "USER_CONTINUE_SAMPLING",
+                         "evidence": "毕业门 9/11 复跑(只读): PATTERN_CONFIRMED_DIRECTIONAL — 放行组净+$2290.8(WR78.4%), 拦截组净亏; 日聚类 n=26 diff_mean=-$29.37 t=-2.742 < MDE=42.42 → significant_beyond_mde=false。用户裁'按建议执行'=继续攒样不转硬门 (统计不可分辨, 不满足双窗口≥40%采信门槛); 维持压至10月初冻结窗结束再裁, 采集不重置。"}],
     ),
     ShadowItem(
         id="overnight_hold",
@@ -660,7 +662,13 @@ REGISTRY: list[ShadowItem] = [
               "cohort 注记: 9/3 起样本全为议题二 marketable 生效后 (post-fix cohort), "
               "旧被动限价行为无实时样本 — 历史 13 条 passive 事件可由 trade_records "
               "._be_close_telemetry + data/replay_bars 重建 (须打 reconstructed=true 并与"
-              "实时行分段判分, 属另案, 见 REVIEW-20260903 §五)。",
+              "实时行分段判分, 属另案, 见 REVIEW-20260903 §五)。"
+              " [2026-09-12 根因修] 9/11 重试风暴一夜灌 786 行重复 (平仓失败每 ~10s 重触发埋点, "
+              "无幂等守卫) → 已去重 (备份 .bak_storm_20260911) 并在本模块落 _pen_event_exists 守卫 "
+              "(键=(symbol,inst_id,exit_reason) 保留首行=真实触发瞬间; 风暴备份 821 行按本键去重=40 "
+              "与生产文件逐一对应实证键正确)。pipeline.py 埋点零改动 (该文件在他 agent 未提交批中, "
+              "避纠缠)。契约钉 tests/test_penetration_shadow.py §7 三例 (26 passed)。"
+              "生效=下次服务重启 (G-02 部署断层守卫周六安全窗自愈); 重启前若再风暴按本键去重可复原。",
         count_mode="where:type=penetration",
     ),
 
@@ -683,7 +691,11 @@ REGISTRY: list[ShadowItem] = [
         notes="首日回补 58 笔 (MFE_STALL 31 / DEAD_SIGNAL 27)。9/4 post_exit_path 真实路径"
               "交叉验证一致: MFE_STALL saved中位+0.331% ≈ post gap 中位+0.32%/均值+0.33%; "
               "DEAD_SIGNAL saved中位+0.217% vs post gap 中位+0.18%/均值+0.34%。"
-              "DEB-20260904-dead-signal-exit 裁决提案已立案 (三路互证误杀)。",
+              "DEB-20260904-dead-signal-exit 裁决提案已立案 (三路互证误杀)。"
+              " [2026-09-12 补挂] 9/4 落地后从未挂 cron → 末行停 9/3 (停更8天, 9/11 体检发现, "
+              "手工补跑 +3 笔累计 61: DEAD_SIGNAL 持有更优率 80%/saved中位+0.213%)。"
+              "已挂 25 6 * * 2-6 (与 ssr 同班), 台账 crontab-exit-disable-cf 行同批入账, "
+              "挂载哨兵 check_mounting 悬空观察随之消除。",
         count_mode="where:type=cf",
     ),
 

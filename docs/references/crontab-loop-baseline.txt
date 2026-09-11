@@ -34,7 +34,6 @@ daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
 data_quality_census.py  # 存量测量/回填环, 台账回填待专项
 direction_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
 direction_hit_scorecard.py  # 存量测量/回填环, 台账回填待专项
-divergence_arbitration_shadow.py  # 存量测量/回填环, 台账回填待专项
 e2_momentum_shadow_daily.py  # 存量测量/回填环, 台账回填待专项
 exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
 exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项

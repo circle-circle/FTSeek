@@ -54,6 +54,40 @@ def _atr_pct(symbol: str, price: float) -> Optional[float]:
         return None
 
 
+def _pen_event_exists(symbol: str, inst_id: Any, exit_reason: str) -> bool:
+    """幂等判重: 同 (symbol, inst_id, exit_reason) 事件是否已落盘。
+
+    键选择: 与 2026-09-11 风暴去重口径一致 — 风暴备份 821 行 penetration 按本键
+    去重后 40, 与去重后生产文件 40 行逐一对应 (每键唯一)。event_id 含触发秒
+    (重试每轮不同) 不能作键。读档任何异常 → False (fail-open, 宁多勿漏)。
+    """
+    try:
+        if not _PEN_PATH.exists():
+            return False
+        _s = str(symbol or "")
+        _i = str(inst_id) if inst_id is not None else None
+        _e = str(exit_reason or "")
+        with open(_PEN_PATH, encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    r = json.loads(ln)
+                except Exception:
+                    continue
+                if r.get("type") != "penetration":
+                    continue
+                _ri = r.get("inst_id")
+                if (str(r.get("symbol") or "") == _s
+                        and (str(_ri) if _ri is not None else None) == _i
+                        and str(r.get("exit_reason") or "") == _e):
+                    return True
+        return False
+    except Exception:
+        return False
+
+
 def record_penetration(*, symbol: str, direction: str, exit_reason: str,
                        side: str, path: str, trigger_price: float,
                        floor_px: float, entry_price: float, peak_price: float,
@@ -126,6 +160,13 @@ def record_penetration(*, symbol: str, direction: str, exit_reason: str,
         if telemetry:
             row["limit_px"] = telemetry.get("limit_px")
             row["pad_bps"] = telemetry.get("pad_bps")
+        # 幂等守卫 (2026-09-11, 重试风暴污染根因修): 平仓失败重试每 ~10s 重新触发本埋点,
+        #   一夜灌 786 行重复 (历史日均 8-22), 会让 min_n=20 毕业门假达标。契约"每事件
+        #   1 行" (registry notes) ⇒ 同 (symbol, inst_id, exit_reason) 只落首行 (真实触发
+        #   瞬间)。扫文件判重不缓存: 触发基率 5案/12交易日, 百行级文件读 <<1ms, 无状态
+        #   = 无缓存失效/测试串染面。读档失败 fail-open (影子宁多勿漏, 与 dedup_claim 同律)。
+        if _pen_event_exists(symbol, inst_id, exit_reason):
+            return False
         _PEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(_PEN_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
