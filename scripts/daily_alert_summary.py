@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
-"""FTSeek 每日告警汇总报告 (Daily Alert Summary Report)
+"""FTSeek-US 每日告警汇总报告 (Daily Alert Summary Report)
 
 运行时间:
-  - 港股: 收盘后 1 小时 (HKT 17:00 → CST 17:00)
-  - 美股: 收盘后 1 小时 (ET 17:00 → CST 次日 05:00)
+  - 美股: 收盘后 1 小时 (ET 17:00 → CST 次日 05:00); 实跑由 Hermes cron
+    `7a40dd7c9e94` (0 4 * * 2-6)「盘后综合复盘」的 Step 3 调起。
 
 功能:
 1. 汇总当日所有告警事件 (从 debouncer + 日志分析)
 2. 生成 Markdown 格式报告
 3. 同时推送到钉钉 + 飞书
+
+港股段退役 (2026-09-11, DEB-20260910-logging §11.15):
+  原报告含「### 🇭🇰 港股 (FTSeek)」一段, 其数据源是**仓外已停用项目**的两个文件:
+    - `/opt/ftseek/FTSeek/logs/ftseek.log`  末行冻结在 2026-06-14 13:20:48 (89 天零写入)
+    - `/opt/ftseek/FTSeek/data/ftseek.db`   signal_outcomes 最新 2026-06-01 / 共 26 行, open 持仓 0
+  ⇒ 该段恒渲染「0 笔 | +0.00% | 0 只 | 0 错误 + 0 警告」, 是一个**永不变化的假绿灯**,
+    且被 Hermes cron 的 LLM 读走转述进推送正文; 覆盖自检里那条「HK 日志源 1 个 (ftseek.log=0)」
+    更像是在声称港股日志仍被监视。
+  第二条污染: `sys.path.insert(1, HK_ROOT)` 把已停用仓库挂上导入路径, 而它有同名
+  `app/ config/ scripts/` 包 ⇒ 任何 US 侧缺失的模块都会**静默从死仓解析**
+  (`scripts/error_alert.py:112` 正是为躲这个副作用才自带 resolve_log_sources 同构实现)。
+  退役口径: 只断**本脚本对 HK 文件的读取与渲染**。港股**手动交易**链
+  (`app/web_dashboard/routes/hk_trade.py` + `hk_order_service.py`, 富途综合账户实盘直通,
+  `app.py:363` 在册) 与 `app/shared/market_hours.py` 的 HK 相位**不在本批范围**, 一律未动。
 
 Karpathy 原则:
 - 纯读取, 不修改任何数据
@@ -30,13 +44,13 @@ from dotenv import load_dotenv
 
 # ================== 路径配置 ==================
 US_ROOT = Path("/opt/ftseek/FTSeek-US")
-HK_ROOT = Path("/opt/ftseek/FTSeek")
 
 # 加载 US 环境变量 (DINGTALK/FEISHU webhooks)
 load_dotenv(US_ROOT / ".env.us")
 
-sys.path.insert(0, str(US_ROOT))  # US first so app.observability resolves correctly
-sys.path.insert(1, str(HK_ROOT))   # HK second (fallback for shared modules)
+# 单一导入根: 只挂本仓。原第二根 `/opt/ftseek/FTSeek` 是港股段的共享模块回退,
+# 随港股段一同退役 (死仓有同名 app/config/scripts 包 ⇒ 模块遮蔽面, 见文件头说明)。
+sys.path.insert(0, str(US_ROOT))  # US only so app.observability resolves correctly
 
 # 时区 SSOT — 统一使用 app.utils.timezone (必须在 sys.path.insert 之后)
 from app.utils.timezone import now_et, now_cst, get_last_trade_date
@@ -106,20 +120,6 @@ def is_us_trading_hours(dt: datetime) -> bool:
     return False
 
 
-def is_hk_trading_hours(dt: datetime) -> bool:
-    """判断 CST (UTC+8) 时间是否处于港股交易时段
-    
-    港股盘中: 09:00-12:00, 13:00-16:00 HKT (= CST)
-    周末不交易。
-    """
-    if dt.weekday() >= 5:
-        return False
-    h = dt.hour
-    if (9 <= h < 12) or (13 <= h < 16):
-        return True
-    return False
-
-
 # ================== 噪音过滤 ==================
 
 # 非交易时间的预期性消息 — 不算真正告警
@@ -135,14 +135,14 @@ _NOISE_PATTERNS = [
 ]
 
 
-def _is_noise_alert(content: str, market: str, dt: datetime) -> bool:
-    """判断是否为噪音告警 (非交易时间的预期消息)"""
+def _is_noise_alert(content: str, dt: datetime) -> bool:
+    """判断是否为噪音告警 (非交易时间的预期消息)
+
+    `market` 形参随港股段退役删除 (2026-09-11): 两个分支的过滤规则本就逐字相同,
+    唯一差别是用哪套时段判定, 而本脚本现在只判美股。
+    """
     # 非交易时间: 过滤预期性消息
-    if market == "US" and not is_us_trading_hours(dt):
-        for pat in _NOISE_PATTERNS:
-            if pat in content:
-                return True
-    elif market == "HK" and not is_hk_trading_hours(dt):
+    if not is_us_trading_hours(dt):
         for pat in _NOISE_PATTERNS:
             if pat in content:
                 return True
@@ -151,8 +151,8 @@ def _is_noise_alert(content: str, market: str, dt: datetime) -> bool:
 
 # ================== 日志解析 ==================
 
-def parse_log_alerts(log_path: str, market: str, since: datetime, until: datetime = None) -> List[Dict]:
-    """从日志文件中提取告警类事件
+def parse_log_alerts(log_path: str, since: datetime, until: datetime = None) -> List[Dict]:
+    """从日志文件中提取告警类事件 (美股单一市场)
 
     匹配的日志模式:
     - ERROR / WARNING / CRITICAL
@@ -161,6 +161,9 @@ def parse_log_alerts(log_path: str, market: str, since: datetime, until: datetim
     改进:
     - 支持 until 截止边界, 防止跨日污染
     - 非交易时间的噪音消息自动过滤
+
+    `market` 形参随港股段退役删除 (2026-09-11): 它只用于在 US/HK 两套时段判定间二选一,
+    而 HK 数据源已断 ⇒ 留着就是一个只能传 "US" 的摆设形参。
     """
     alerts = []
     try:
@@ -197,18 +200,15 @@ def parse_log_alerts(log_path: str, market: str, since: datetime, until: datetim
                     content = content[:200] + "..."
 
                 # 过滤非交易时间的噪音
-                if _is_noise_alert(content, market, line_time):
+                if _is_noise_alert(content, line_time):
                     continue
 
                 alerts.append({
-                    "market": market,
+                    "market": "US",
                     "time": ts_str,
                     "level": level,
                     "content": content,
-                    "is_trading_hours": (
-                        is_us_trading_hours(line_time) if market == "US"
-                        else is_hk_trading_hours(line_time)
-                    ),
+                    "is_trading_hours": is_us_trading_hours(line_time),
                 })
     except Exception as e:
         print(f"[汇总报告] 解析 {log_path} 失败: {e}")
@@ -249,7 +249,7 @@ def resolve_log_sources(log_path: str, since: datetime, until: datetime) -> List
     return sources
 
 
-def parse_log_alerts_window(log_path: str, market: str, since: datetime,
+def parse_log_alerts_window(log_path: str, since: datetime,
                             until: datetime = None) -> Tuple[List[Dict], List[str]]:
     """跨轮转档解析一个会话窗的告警; 返回 (告警列表, 覆盖诊断行)。
 
@@ -268,7 +268,7 @@ def parse_log_alerts_window(log_path: str, market: str, since: datetime,
     seen = set()
     per_source: List[str] = []
     for src in sources:
-        got = parse_log_alerts(src, market, since, until)
+        got = parse_log_alerts(src, since, until)
         added = 0
         for a in got:
             key = (a["time"], a["level"], a["content"])
@@ -280,7 +280,7 @@ def parse_log_alerts_window(log_path: str, market: str, since: datetime,
         per_source.append(f"{Path(src).name}={added}")
     alerts.sort(key=lambda a: a["time"])
     span = f"{alerts[0]['time'][11:19]}→{alerts[-1]['time'][11:19]}" if alerts else "无告警"
-    diag = (f"{market} 日志源 {len(sources)} 个 ({', '.join(per_source) or '无'}) "
+    diag = (f"US 日志源 {len(sources)} 个 ({', '.join(per_source) or '无'}) "
             f"| 告警跨度 {span} | 窗 {since.strftime('%m-%d %H:%M')}→"
             f"{(until or since).strftime('%m-%d %H:%M')}")
     return alerts, [diag]
@@ -530,29 +530,6 @@ def _format_equity_recon_line(r: Dict) -> str:
             f"${r['fees']:.2f})")
 
 
-def get_hk_trade_summary(trade_date: str) -> Dict:
-    """获取港股当日交易数据"""
-    summary = {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0}
-    try:
-        db_path = HK_ROOT / "data" / "ftseek.db"
-        if not db_path.exists():
-            return summary
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(pnl_pct), 0) FROM signal_outcomes "
-            "WHERE timestamp LIKE ?",
-            (f"{trade_date}%",)
-        ).fetchone()
-        summary["trades"] = row[0]
-        summary["pnl"] = float(row[1])
-        row2 = conn.execute("SELECT COUNT(*) FROM positions WHERE status = 'open'").fetchone()
-        summary["positions"] = row2[0]
-        conn.close()
-    except Exception as e:
-        print(f"[汇总报告] HK 交易数据获取失败: {e}")
-    return summary
-
-
 # ================== 告警防抖器状态 ==================
 
 def get_debouncer_status() -> List[Dict]:
@@ -639,35 +616,38 @@ def _dedup_alerts(alerts: List[Dict]) -> List[Dict]:
 
 # ================== 报告生成 ==================
 
+# 港股段退役后的口径声明 (2026-09-11, DEB-20260910-logging §11.15)。
+# 刻意显式写进口径, 而不是让港股段"静默消失": 本报告由 Hermes cron `7a40dd7c9e94`
+# 的 LLM 读走并转述进推送, 少了这句它会把"没有港股数据"读成"港股数据缺失", 反而
+# 造出一条新的假告警 —— 那就等于把旧污染换成新污染。
+_REPORT_SCOPE_NOTE = ("仅美股 (港股系统已于 2026-06-14 停用, 原港股段恒为零, "
+                      "2026-09-11 随死数据源一同退役)")
+
 def build_summary_report(
     us_alerts: List[Dict],
-    hk_alerts: List[Dict],
     us_summary: Dict,
-    hk_summary: Dict,
     report_date: str,
     us_equity_recon: Dict = None,
     log_coverage: List[str] = None,
 ) -> str:
-    """构建 Markdown 格式汇总报告
+    """构建 Markdown 格式汇总报告 (美股单市场)
     
     区分盘中/非盘中告警, 非交易时段告警默认静默(仅展示盘中告警)。
+
+    `hk_alerts` / `hk_summary` 两个形参与「### 🇭🇰 港股 (FTSeek)」整段于 2026-09-11 退役
+    (DEB-20260910-logging §11.15): 数据源是已停用项目的冻结文件, 该段恒为零。
     """
 
     # 盘中告警 vs 非盘中
     us_trading = [a for a in us_alerts if a.get("is_trading_hours")]
     us_offhours = [a for a in us_alerts if not a.get("is_trading_hours")]
-    hk_trading = [a for a in hk_alerts if a.get("is_trading_hours")]
-    hk_offhours = [a for a in hk_alerts if not a.get("is_trading_hours")]
 
     # 统计 (仅计盘中告警)
     us_error = sum(1 for a in us_trading if a["level"] == "ERROR")
     us_warn = sum(1 for a in us_trading if a["level"] == "WARN")
-    hk_error = sum(1 for a in hk_trading if a["level"] == "ERROR")
-    hk_warn = sum(1 for a in hk_trading if a["level"] == "WARN")
 
     # 非盘中被过滤的数量
     us_offhours_count = len(us_offhours)
-    hk_offhours_count = len(hk_offhours)
 
     lines = [
         f"## 📊 FTSeek 每日告警汇总 — {report_date}",
@@ -698,41 +678,17 @@ def build_summary_report(
             lines.append(f"- {emoji} {item['first_time']} [{item['level']}] "
                          f"{_strip_log_prefix(item['content'])}{count_suffix}")
 
-    lines += [
-        "",
-        "---",
-        "",
-        "### 🇭🇰 港股 (FTSeek)",
-        "",
-        f"- **交易**: {hk_summary['trades']} 笔 | 盈亏: {hk_summary['pnl']:+.2f}%",
-        f"- **持仓**: {hk_summary['positions']} 只",
-        f"- **盘中告警**: {hk_error} 错误 + {hk_warn} 警告 (共 {len(hk_trading)} 条)",
-    ]
-
-    if hk_offhours_count > 0:
-        lines.append(f"- 🔇 非盘中静默: {hk_offhours_count} 条 (已过滤)")
-
-    # 港股盘中告警去重
-    if hk_trading:
-        lines.append("")
-        lines.append("**盘中告警**:")
-        _deduped = _dedup_alerts(hk_trading)
-        for item in _deduped[:8]:
-            emoji = "🔴" if item["level"] == "ERROR" else "🟡"
-            count_suffix = f" (×{item['count']})" if item["count"] > 1 else ""
-            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] "
-                         f"{_strip_log_prefix(item['content'])}{count_suffix}")
-
-    # 总结
-    total_errors = us_error + hk_error
-    total_warns = us_warn + hk_warn
-    total_offhours = us_offhours_count + hk_offhours_count
+    # 总结 (港股段退役后 "全系统" == 美股; 变量名保留以维持本节口径可读)
+    total_errors = us_error
+    total_warns = us_warn
+    total_offhours = us_offhours_count
     lines += [
         "",
         "---",
         "",
         "### 📋 总结",
         "",
+        f"- ℹ️ 口径: {_REPORT_SCOPE_NOTE}",
         f"- 盘中告警: {total_errors} 错误 + {total_warns} 警告",
     ]
 
@@ -846,7 +802,6 @@ def main():
     | 报告标题 & 文件名  | CST (Asia/Shanghai) | 用户日历视角  |
     | 日志扫描范围       | CST                 | 服务器本地时间 |
     | 美股交易数据查询   | ET (美东)           | DB 存储基准    |
-    | 港股交易数据查询   | CST                 | DB 存储基准    |
     ─────────────────────────────────────────────────────
 
     美股交易日跨 CST 午夜:
@@ -860,12 +815,6 @@ def main():
 
     et_now = now_et()
     us_trade_date = _last_us_trade_date(et_now)  # ET 最后交易日 (DB 查询 + 报告标题)
-
-    # 港股: 5AM CST 港股尚未开盘, 查上一个港股交易日
-    hk_dt = cst_now - timedelta(days=1)
-    while hk_dt.weekday() >= 5:  # 跳过周末
-        hk_dt -= timedelta(days=1)
-    hk_trade_date = hk_dt.strftime("%Y-%m-%d")
 
     # 报告标题用 US 交易日期 (核心数据源)
     report_date = us_trade_date
@@ -881,36 +830,30 @@ def main():
 
     print(f"[汇总报告] 生成 {report_date} 告警汇总...")
     print(f"  时区: CST={cst_now.strftime('%H:%M')} | ET={et_now.strftime('%H:%M')}")
-    print(f"  US 交易日: {us_trade_date} | HK 交易日: {hk_trade_date}")
+    print(f"  US 交易日: {us_trade_date}")
     print(f"  扫描范围: {since} → {until}")
 
     # 1. 解析日志 (带截止边界 + 噪音过滤 + 跨轮转档覆盖, 2026-09-09)
     us_log = str(US_ROOT / "logs" / "ftseek_us.log")
-    hk_log = str(HK_ROOT / "logs" / "ftseek.log")
 
-    us_alerts, us_cover = parse_log_alerts_window(us_log, "US", since, until)
-    hk_alerts, hk_cover = parse_log_alerts_window(hk_log, "HK", since, until)
-    for line in us_cover + hk_cover:
+    us_alerts, us_cover = parse_log_alerts_window(us_log, since, until)
+    for line in us_cover:
         print(f"  [覆盖] {line}")
 
     # 分类统计: 盘中 vs 非盘中
     us_trading = [a for a in us_alerts if a.get("is_trading_hours")]
     us_offhours = [a for a in us_alerts if not a.get("is_trading_hours")]
-    hk_trading = [a for a in hk_alerts if a.get("is_trading_hours")]
-    hk_offhours = [a for a in hk_alerts if not a.get("is_trading_hours")]
 
     print(f"  US: {len(us_alerts)} 条 (盘中 {len(us_trading)}, 非盘中 {len(us_offhours)})")
-    print(f"  HK: {len(hk_alerts)} 条 (盘中 {len(hk_trading)}, 非盘中 {len(hk_offhours)})")
 
-    # 2. 交易数据 (US 用 ET 交易日, HK 用 CST 日期)
+    # 2. 交易数据 (US 用 ET 交易日)
     us_summary = get_us_trade_summary(us_trade_date)
     us_equity_recon = get_us_equity_reconciliation(us_trade_date)
-    hk_summary = get_hk_trade_summary(hk_trade_date)
 
     # 3. 构建报告
-    report = build_summary_report(us_alerts, hk_alerts, us_summary, hk_summary,
-                                  report_date, us_equity_recon=us_equity_recon,
-                                  log_coverage=us_cover + hk_cover)
+    report = build_summary_report(us_alerts, us_summary, report_date,
+                                  us_equity_recon=us_equity_recon,
+                                  log_coverage=us_cover)
 
     # 4. 推送 (钉钉 + 飞书)
     title = f"📊 FTSeek 每日告警汇总 — {report_date}"

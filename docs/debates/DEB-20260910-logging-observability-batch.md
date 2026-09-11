@@ -1958,3 +1958,109 @@ ModuleNotFoundError: No module named 'config.config_center'
   **不触发额外告警/重启**; 无需重启的理由见 (丁)。
 - **未推送** (用户未令)。回滚: `git revert` 本提交即可 —— 改动全在 `scripts/` + `tests/`, 零生产进程依赖、
   零 baseline 变更、零配置变更。
+
+### 11.15 用户裁「去掉港股段的数据源和文件，排除污染」: 日报港股段整段退役 (§11.14(戊) 待裁① 落地, 2026-09-11 13:40–14:10)
+
+**(甲) 裁决与范围界定 — 先把"港股"这个词的两种含义拆开, 否则会误删实盘**
+
+用户指令是「去掉港股段的数据源和文件，排除污染」。落刀前必须确认"港股"在本仓有**两个完全不同的所指**:
+
+| 所指 | 状态 | 证据 | 本批处置 |
+|---|---|---|---|
+| **港股自动化系统** (`/opt/ftseek/FTSeek`) | **已死** | `.DECOMMISSIONED` (2026-06-14 停用/功能全迁/DO NOT RESTART)、`ftseek.service` masked、日志末行 `2026-06-14 13:20:48 [Shutdown] 优雅关闭完成` | **退役其数据源与渲染** |
+| **港股手动交易链** (本仓 web dashboard) | **活的** | `app/web_dashboard/app.py:363` 在册 `r_hk_trade.register(app, templates)`; `live_ledger.py:229/437` 调 `get_hk_order_service()`; 富途**综合账户**实盘直通; handoff 记载 9/8–9/9 (批3/批5) 仍在迭代 `hk_trade.html` 的持仓/订单呈现 | **一律未动** |
+
+⇒ 本批范围**严格收窄**为「日报脚本对已死港股仓的读取与渲染」。`app/web_dashboard/routes/hk_trade.py` /
+`hk_order_service.py` / `templates/hk_trade.html` / `app/catalyst/sources/hkex_source.py` 与
+`app/shared/market_hours.py` 的 HK 相位**全部保留** —— 把它们当"港股残留"删掉会直接断掉实盘手动下单。
+这条界定写进 `tests/test_daily_alert_hk_retired.py` 的文件头, 防止下一个维护者按"清港股"扩大化。
+
+**(乙) 死数据源的实测数字 (与 §11.14(戊) 同批, 本次复算一致)**
+
+- `/opt/ftseek/FTSeek/logs/ftseek.log` 末行 = `2026-06-14 13:20:48,823 [ftseek.main] INFO: [Shutdown] 优雅关闭完` ⇒ **冻结 89 天**。
+- `/opt/ftseek/FTSeek/data/ftseek.db`: `signal_outcomes` `max(timestamp)` = `2026-06-01T10:56:33`、全表 **26 行**; `positions where status='open'` = **0**。
+- 昨夜 (9/11 04:01) 已推送原件 `data/reports/daily_alert_summary_2026-09-10.md` 的港股段实渲染:
+  `**交易**: 0 笔 | 盈亏: +0.00%` / `**持仓**: 0 只` / `**盘中告警**: 0 错误 + 0 警告 (共 0 条)`,
+  覆盖自检还多一条 `HK 日志源 1 个 (ftseek.log=0) | 告警跨度 无告警`。
+- **污染的三条具体路径** (不只是"多一段零"):
+  ① **假绿灯**: 读者/LLM 把「港股 0 告警」读成「港股健康」, 真相是「港股已不存在」——
+     正是 AGENT.md 军规「基数自检防常量退化」要防的形态, 只是发生在报表段;
+  ② **导入遮蔽面**: `sys.path.insert(1, HK_ROOT)` 把死仓挂上导入路径, 实测该仓有同名
+     `app/` `config/` `scripts/` 三个包 ⇒ 任何 US 侧缺失的模块都会**静默从死仓解析**
+     (US 在 index 0 时侥幸不中, 一旦 US 侧改名/漏迁就中招, 且报错指向另一个项目);
+     `scripts/error_alert.py:112` 原文自陈"import 那个模块会…把 HK 根注入 sys.path, cron 告警脚本
+     不引入这些副作用 ⇒ 本地同构实现" —— **一个已停用仓库逼出了第二份实现**, 这就是污染的代价;
+  ③ **计数合流**: `total_errors = us_error + hk_error` ⇒ 死仓一旦被人写入一行 ERROR,
+     会直接混进美股日报的总结判级 (并触发「🔴 盘中告警较多」那条判据)。
+
+**(丙) 修法 (逐条)**
+
+1. **断数据源**: 删 `get_hk_trade_summary()` (读 HK `ftseek.db`) 与 `main()` 里的 `hk_log` 解析;
+   删 `HK_ROOT` 常量与 `sys.path.insert(1, HK_ROOT)` ⇒ 本脚本导入根**只剩本仓一个**。
+2. **断渲染**: 删 `build_summary_report()` 的 `hk_alerts`/`hk_summary` 两个形参与「### 🇭🇰 港股 (FTSeek)」整段;
+   `total_* = us_*` (港股段退役后"全系统" == 美股, 变量名保留以维持本节口径可读)。
+3. **删摆设形参**: `parse_log_alerts` / `parse_log_alerts_window` / `_is_noise_alert` 的 `market` 形参一并删除。
+   理由: 它只用于在 US/HK 两套时段判定间二选一, HK 断源后**只剩一个合法取值** ⇒ 留着就是"顺手传 HK"的入口。
+   `is_hk_trading_hours()` 同步删除 (全仓零其他消费点, 已 grep 核实)。
+4. **口径显式声明, 而不是静默消失**: 总结区新增一行
+   `- ℹ️ 口径: 仅美股 (港股系统已于 2026-06-14 停用, 原港股段恒为零, 2026-09-11 随死数据源一同退役)`。
+   这条**不是装饰**: 本报告由 Hermes cron `7a40dd7c9e94` 的 LLM 读走转述进推送,
+   港股段无声消失会被它判成"港股数据缺失"再造一条假告警 —— 那就等于把旧污染换成新污染。
+   插在计数行**之前**, 以保住既有钉子「不传 log_coverage 时结论句必须是最后一行」的契约。
+5. **同步失效文档**: `scripts/error_alert.py:110` 与 `tests/test_error_alert.py:386` 两处
+   "把 HK 根插进 sys.path (其 :34-39)" 的表述已随本批失效 ⇒ 改为事实 (只剩本仓一根, 行号 :45-53),
+   并写明**本地同构实现照旧保留** (load_dotenv 与 sys.path 改写两个副作用仍在; 去重属独立重构, 不搭车)。
+
+**(丁) 验证三层**
+
+1. **新钉 `tests/test_daily_alert_hk_retired.py` (12 颗)**, 分五级: 源级 (港股根字面量 / 单一导入根) ·
+   签名级 (无 `hk_*` 形参 / 无 `market` 形参) · **运行时级** · 渲染级 (无港股段 + 必须有口径行) ·
+   判据级 (总结读数逐字等于美股区读数)。
+   其中运行时级最强: 子进程装 `sys.addaudithook` 拦任何对 `/opt/ftseek/FTSeek/` 的 `open`,
+   再跑完整读取链 ⇒ **即使用 f-string 拼路径重新读 HK 也躲不过** (源级 grep 抓不到)。
+   钩子自带**负对照** (先故意开一次 HK 文件, 必须被拦) 证明它真的会响, 否则本钉是空转常绿。
+2. **变异实测 7/7 全被抓到**: M1 重挂港股根 · M2 f-string 真读港股日志 · M3 重长 `hk_alerts` 形参 ·
+   M4 重渲染港股段 · M5 总结区混入第二市场计数 · M6 重长 `market` 摆设形参 · M7 摘掉口径声明行。
+   **诚实登记 (钉子自身曾有缺陷)**: 首跑 M2 **漏网**。根因不在被测代码, 而在探针里
+   `ROOT = Path("/opt/ftseek/FTSeek-US")` **写死了生产仓路径** ⇒ 在 worktree 里跑变异时,
+   审计钩子测的一直是生产仓的干净副本, 变异体从未被加载。已改为由测试把 `PROJECT_ROOT` 传进子进程。
+   教训: **探针的项目根必须继承被测根**, 写死绝对路径会让"最强那颗钉"静默失效, 且它自己是绿的。
+3. **真数据同窗对照 (零漂移证明)**: 打桩干跑 (推送函数替换成"一调就炸"= **零触网**;
+   `sqlite3.connect` 强制 `file:…?mode=ro` = **零写库**; 且**不调 `main()`** ⇒ 不覆写 `data/reports/`)。
+   首跑计数与原件不符 (`403→416` 条 / `2→4` 错误), **归因不是本批**: 原件覆盖跨度止于 `04:01:14`,
+   而干跑发生在 13:5x, 日志已继续增长到 `04:33:13` (窗口本就到 06:00)。
+   把 `until` 卡回原件生成时刻 `2026-09-11 04:01:15` 复跑 ⇒
+   **逐字一致**: `盘中 403 条 = 2 错误 + 401 警告`, 覆盖行 `ftseek_us.log-20260910.gz=0,
+   ftseek_us.log-20260911=378, ftseek_us.log=25`, 跨度 `21:30:28→04:01:14`。
+   另: 交易/盈亏/持仓三行与 8 条 bullet 的 `×N` 计数 (`72/72/54/21/18/18/17/16`) 全窗一致;
+   报告行数 `39 → 31` (港股段 9 行 + HK 覆盖行 1 行 − 口径行 1 行 = 净 −9… 实测 −8,
+   差额是港股段与总结区之间共用的一条 `---` 分隔线, 已核对渲染结果无误)。
+4. 既有钉子未咬断: `test_daily_alert_summary_log_sources` (9) + `test_daily_alert_log_prefix` (12)
+   同步改调用面后 **22 passed**; 加 `test_error_alert` + `test_except_pass_ratchet` 共 **64 passed**。
+   `check_undefined_names.py` 对 6 个改动文件 **OK** (pre-commit 同款)。
+   `_strip_log_prefix(` 计数钉子由 `>= 4` 改 `>= 3` 并写明理由 (港股段曾有独立渲染路径)。
+
+**(戊) 重启决策 = 不重启** (与 §11.14(丁) 同理)
+
+本批只改 `scripts/` + `tests/` + 文档, **不在守卫扫描面内** (`SCAN_DIRS=("app",)`, `SCAN_FILES=("main.py",)`);
+该脚本由 Hermes cron 每次**新起进程**执行 ⇒ 下次实跑 (**9/12 04:00 CST**) 自动生效, 与 §11.14 的前缀修复同夜首验。
+
+**(己) 诚实登记: 本批查出但未动**
+
+1. **`data/ftseek.db` (本仓内的港股同名残留库)**: 未被 git 跟踪 (`git ls-files data/` 只有 2 个 json)、
+   `unified_config.yaml` 的 `database.path` / `paths.*` **均未声明它** (指向 `data/ftseek_us.db`)、
+   全仓 `rg "ftseek\.db"` 除日报的 HK_ROOT 路径外**零消费点**、5 张表 (`metrics`/`metrics_hourly`/
+   `vote_logs`/`decision_logs`/`sqlite_sequence`) **全部 0 行**、mtime 2026-04-15。
+   ⇒ 判定为迁移期遗留死文件。**未删**: pre-commit 治理条 4 明写「数据库文件不可删除, 如需清理使用明确的
+   cleanup 脚本」, 删库不可逆且属治理敏感面, 交用户裁 (删或留都不影响本批效果 —— 日报读的是 HK 仓那份, 已断)。
+2. **`app/core/scheduler_core.py:2092 _is_hk_trading_hours()`**: 已 `return False` 硬退役
+   (docstring 自陈"港股已停止自动交易 (2026-06-11)"), 但其调用点 `:1927` 与
+   `_ensure_futu_disconnected_during_hk()` 整套"港股时段断开 OpenD 释放槽位"逻辑仍在 ⇒ 恒不触发的死支路。
+   属**调度器行为面**, 不在观测面批范围, 未动。
+3. **`app/shared/market_hours.py` 的 HK 相位** (`MarketType.HK` / `_DEFAULT_SESSIONS[HK]` /
+   `is_hk_active` / 半日市日历): 港股手动交易链仍可能经 `MarketHours` 兼容层触达, 且该文件刚在 §11.13
+   逐字节迁入本仓并有 8 颗钉子看护 ⇒ 未动。
+4. **`scripts/error_alert.py` 与日报的 `resolve_log_sources` 双实现**: 本批只把它的失效注释改成事实,
+   **未做去重** (去重需先把日报模块的 import 副作用剥干净, 属独立重构)。
+   `tests/test_error_alert.py` 的口径交叉钉照旧在守两者一致。
+5. **未推送** (用户未令)。回滚: `git revert` 本提交即可 —— 零生产进程依赖、零 baseline 变更、零配置变更。

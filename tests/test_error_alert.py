@@ -383,8 +383,10 @@ def test_baseline_error_falls_back_to_floor(env, monkeypatch, caplog):
 def test_rotated_sources_matches_daily_alert_summary_convention():
     """轮转档命名口径必须与 daily_alert_summary.resolve_log_sources 一致 (logrotate dateext)。
 
-    在**子进程**里比对: import daily_alert_summary 会执行 load_dotenv + 把 HK 根插进
-    sys.path (其 :34-39), 在 pytest 会话里做这件事会污染后续用例的模块解析。
+    在**子进程**里比对: import daily_alert_summary 会执行 load_dotenv + 改写 sys.path
+    (其 :45-53), 在 pytest 会话里做这件事会污染后续用例的模块解析。
+    (2026-09-11: 原第二导入根 = 已停用港股仓, 随日报港股段退役; 子进程隔离照旧必要,
+     因为 load_dotenv 与 sys.path 改写两个副作用仍在。)
     """
     repo = Path(__file__).resolve().parents[1]
     code = (

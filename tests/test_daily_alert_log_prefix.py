@@ -113,7 +113,7 @@ def test_rendered_bullet_carries_intact_logger_name():
     alert = {"market": "US", "time": "2026-09-11 03:21:29", "level": "WARN",
              "content": _line("LLMStrategyLoop"), "is_trading_hours": True}
     summary = {"trades": 1, "pnl": -1.0, "positions": 1, "errors": 0}
-    report = das.build_summary_report([alert], [], summary, dict(summary), "2026-09-11")
+    report = das.build_summary_report([alert], summary, "2026-09-11")
     bullet = next(ln for ln in report.splitlines() if "chase_cap拦截" in ln)
     assert "[app.playbook.pipeline] WARNING:" in bullet, bullet
     # 注意: 残缺形态 `ybook.pipeline]` 是正确形态 `app.playbook.pipeline]` 的**子串**,
@@ -133,5 +133,6 @@ def test_no_hardcoded_50_slice_left_in_code():
                     and sl.lower.value == 50 and sl.upper is None:
                 offenders.append(getattr(node, "lineno", -1))
     assert not offenders, f"仍有 [50:] 硬切片 (行 {offenders}) — 前缀宽度是变量, 不得写死"
-    assert _SRC.count("_strip_log_prefix(") >= 4, (
-        "剥前缀必须**同源同函数**: 1 处定义 + _normalize + 两处渲染 (US/HK)")
+    assert _SRC.count("_strip_log_prefix(") >= 3, (
+        "剥前缀必须**同源同函数**: 1 处定义 + _normalize + 1 处渲染。"
+        " (原为 4: 港股段有独立渲染路径, 2026-09-11 随死数据源退役 ⇒ 降为 3)")

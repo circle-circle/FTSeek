@@ -109,9 +109,14 @@ def rotated_sources(day: datetime, logs_dir: Path = LOG_DIR) -> list:
 
     与 daily_alert_summary.resolve_log_sources 同口径 (logrotate: daily + copytruncate +
     dateext, 轮转由 /etc/cron.daily 触发, 近 7 日实测 03:12-03:48 CST — **在盘中窗口内**)。
-    该函数在 daily_alert_summary 模块内, 而 import 那个模块会执行 load_dotenv + 把 HK 根
-    注入 sys.path (scripts/daily_alert_summary.py:34-39), cron 告警脚本不引入这些副作用
+    该函数在 daily_alert_summary 模块内, 而 import 那个模块会执行 load_dotenv + 改写
+    sys.path (scripts/daily_alert_summary.py:45-53), cron 告警脚本不引入这些副作用
     ⇒ 本地同构实现, 并由 tests/test_error_alert.py 交叉钉住两者口径一致。
+
+    2026-09-11 事实更新 (DEB-20260910-logging §11.15): 那个模块原有的**第二导入根**
+    `/opt/ftseek/FTSeek` (已停用港股仓, 有同名 app/config/scripts 包 ⇒ 遮蔽面) 随日报
+    港股段一同退役, 现在只剩本仓一根。本地同构实现**照旧保留** —— 理由是 load_dotenv
+    与 sys.path 改写这两个副作用仍在, 且"两处去重"属独立重构, 不搭车。
     """
     stamp = day.strftime("%Y%m%d")
     out = []

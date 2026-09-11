@@ -91,7 +91,7 @@ def test_out_of_window_rotated_file_contributes_zero(logdir):
         _line("2026-09-08 03:20:00", "上一会话的告警"), encoding="utf-8"
     )
 
-    alerts, diag = das.parse_log_alerts_window(str(cur), "US", SINCE, UNTIL)
+    alerts, diag = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
 
     assert len(alerts) == 1
     assert "上一会话" not in alerts[0]["content"]
@@ -107,7 +107,7 @@ def test_cross_file_duplicate_counted_once(logdir):
         _line("2026-09-08 22:00:00", "轮转档独有") + dup, encoding="utf-8"
     )
 
-    alerts, _ = das.parse_log_alerts_window(str(cur), "US", SINCE, UNTIL)
+    alerts, _ = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
 
     assert sum(1 for a in alerts if "竞态重复行" in a["content"]) == 1
     assert len(alerts) == 2
@@ -121,7 +121,7 @@ def test_merged_alerts_sorted_ascending_across_files(logdir):
         _line("2026-09-08 22:00:00", "早"), encoding="utf-8"
     )
 
-    alerts, _ = das.parse_log_alerts_window(str(cur), "US", SINCE, UNTIL)
+    alerts, _ = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
 
     assert [a["time"] for a in alerts] == sorted(a["time"] for a in alerts)
     assert "早" in alerts[0]["content"]
@@ -135,7 +135,7 @@ def test_coverage_diagnostic_exposes_source_count_and_span(logdir):
         _line("2026-09-08 21:35:00", "首段"), encoding="utf-8"
     )
 
-    _, diag = das.parse_log_alerts_window(str(cur), "US", SINCE, UNTIL)
+    _, diag = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
 
     line = diag[0]
     assert "日志源 2 个" in line
@@ -149,7 +149,7 @@ def test_missing_log_file_does_not_raise(logdir):
     srcs = das.resolve_log_sources(str(logdir / "nope.log"), SINCE, UNTIL)
     assert srcs == []
 
-    alerts, diag = das.parse_log_alerts_window(str(logdir / "nope.log"), "US", SINCE, UNTIL)
+    alerts, diag = das.parse_log_alerts_window(str(logdir / "nope.log"), SINCE, UNTIL)
     assert alerts == []
     assert "无告警" in diag[0]
 
@@ -157,18 +157,18 @@ def test_missing_log_file_does_not_raise(logdir):
 # ---------- 诊断行必须进推送正文 (不只 stdout) ----------
 
 def _summaries():
-    return ({"trades": 9, "pnl": -165.53, "positions": 3},
-            {"trades": 0, "pnl": 0.0, "positions": 0})
+    """美股汇总样本 (原第二项是港股恒零样本, 随港股段 2026-09-11 退役删除)。"""
+    return {"trades": 9, "pnl": -165.53, "positions": 3}
 
 
 def test_coverage_diagnostic_rendered_into_report_body():
     """诊断行必须渲染进**推送正文**: 只进 stdout 时, 正文里那句「✅ 盘中系统运行正常」
     在覆盖不全的场合仍会说谎 (9/8 实证: 正文报 6 条, 真相 603 条)。"""
-    us, hk = _summaries()
+    us = _summaries()
     diag = ["US 日志源 3 个 (ftseek_us.log-20260908.gz=0, ftseek_us.log-20260909=592, "
             "ftseek_us.log=44) | 告警跨度 21:01:41→05:43:42 | 窗 09-08 21:00→09-09 06:00"]
 
-    report = das.build_summary_report([], [], us, hk, "2026-09-08", log_coverage=diag)
+    report = das.build_summary_report([], us, "2026-09-08", log_coverage=diag)
 
     assert "日志覆盖自检" in report
     assert diag[0] in report, "诊断行必须原样进正文, 不得被压缩或改写"
@@ -178,9 +178,9 @@ def test_coverage_diagnostic_rendered_into_report_body():
 
 def test_report_body_without_coverage_kwarg_unchanged():
     """旧调用面 (不传 log_coverage) 不得多出覆盖段 —— 向后兼容, 不牵连既有钉子。"""
-    us, hk = _summaries()
+    us = _summaries()
 
-    report = das.build_summary_report([], [], us, hk, "2026-09-08")
+    report = das.build_summary_report([], us, "2026-09-08")
 
     assert "日志覆盖自检" not in report
     assert report.rstrip().endswith("- ✅ 盘中系统运行正常，无异常告警")
