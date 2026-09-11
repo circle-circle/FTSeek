@@ -6,7 +6,23 @@
   **本文正文多处数字已被核实为错误，行动前必读该章的勘误表 E1–E8**）
 - [x] 待决策 → **已裁决**
 - [x] 已决策（2026-09-11 用户裁「按建议执行」：执行范围 = **P0 全部 + P1 全部**；
-  **P2-1/P2-2 明确未执行** — 触碰现役硬门/生产取数路径，须另立预注册 DEB）
+  **P2-1/P2-2 明确未执行** — 触碰现役硬门/生产取数路径，须另立预注册 DEB。
+  第二轮用户裁「按照建议执行 提交 重启」⇒ **已入库 `ccafdbe5`**（13 文件，按文件点名，
+  未用 `git add -A` — 工作树另有他批未提交改动）+ 决策记录 **`docs/adr/ADR-041-…-2026-09-11.md`**。
+  立 ADR 的缘由诚实登记在 ADR-041 首部：`commit-msg` 钩子词表 `enabled.*true` 命中
+  `daily_invariant_check.py` 既有形参 `def main(push_enabled: bool = True)` 的 hunk 上下文行
+  = **误报第二次发生**（首次见 ADR-040），不辩解、不 `--no-verify` 绕过、不硬凑无关编号）
+- [x] 已关闭前置：git 入库 ✅ / **服务重启 ✅**（2026-09-11 13:23:35 CST，`ftseek-us.service`
+  新 PID 1043924；`startup_smoke_check.py --wait 120` **7 项全绿 exit=0**；重启后新增日志段
+  282 行 **0 ERROR / 0 CRITICAL / 0 Traceback**（字面量口径与告警链 `error_alert.py` 同源）。
+  **退役的行为级实证**（不只读代码）：`evaluate_rules('SELL_SHORT', +5.0) → []`、
+  `evaluate_rules('BUY', +12.0) → []`、`evaluate_rules('BUY', -6.0) → ['B_long_knife']`
+  ⇒ 线上进程自本次重启起只按 B 打标，A/C 形态不再产出标记行）
+- [ ] 已关闭（两项未了：①P2-1/P2-2 另立预注册 DEB；②**周检线上副本部署** —
+  `cp ops/hermes/ftseek_weekly_checkpoint.py /root/.hermes/scripts/`，消掉上述红钉。
+  该步是仓库外线上运维路径写入，本轮**被权限分类器拦下**（用户裁决文本覆盖"提交/重启"，
+  未覆盖该部署）⇒ 仍未做，需用户明确授权。它**不需要重启服务**：cron 每次周检新起进程
+  读 live 副本，`cp` 后下个周六即生效）
 - [x] 已验证（**契约钉 55 例全绿**：settler 17 + premarket 10 + 意图守卫 16 + W7 12；
   **全量回归亲跑**：3928 收集 → 3886 passed / 41 skipped / **1 failed** / 628s。
   唯一那红 = `test_ops_scripts_sync::test_repo_and_live_scripts_in_sync`
@@ -14,9 +30,6 @@
   两条棘轮（`test_except_pass_ratchet` / `test_w456_log_hygiene_ratchet`）未被本轮新增
   except 块顶破。**旧基线 3485 passed 已作废**：工作树含未入库的 M2 批新测试
   （`tests/core/test_m2_a1_startup_mode.py` 等），本轮起以 3886/41 重锚）
-- [ ] 已关闭（三项未了：①P2-1/P2-2 另立预注册；②周检线上副本部署（消掉上述红钉）；
-  ③**服务重启** — A/C 退役是采集侧 Python 改动，只在 import 时加载，未重启则线上仍按
-  三规则打标，重启窗口须用户裁）
 
 - **提出方**：Hermes（qwen3.8-max），2026-09-11
 - **数据基线**：`data/premarket_invalidation_shadow.jsonl` 310 行（**8/11–9/10，21 个交易日，
@@ -376,12 +389,26 @@ sed -n '5530,5565p' app/playbook/pipeline.py
   `_conflict_check` + conflict_check 进 latest.json）、`scripts/daily_invariant_check.py`（W7 哨兵）、
   `scripts/data_freshness_watchdog.py`（描述口径更正）、`docs/CONTROL-LOOP-LEDGER.md`
   （§2.5 两行 + §5 G3 更新/G8 新增 + L117 注记）、本文、`data/chg_denominator_baseline.json`（新，
-  首跑锁 90 存量键）、契约钉 4 文件（settler/premarket 改写 + 意图守卫/W7 新增）。
+  首跑锁 90 存量键）、契约钉 4 文件（settler/premarket 改写 + 意图守卫/W7 新增）、
+  `docs/adr/ADR-041-premarket-invalidation-denominator-and-intent-uniqueness-2026-09-11.md`
+  （新，提交时补写的决策记录 —— 缘由见其首部：`commit-msg` 钩子 `enabled.*true` 词表误报第二次发生）。
 - **生效边界（诚实登记，两条）**：①A/C 退役是**采集侧 record-only** 改动 —— 只停"打标"，
   零交易行为变更，未触碰任何现役硬门（`extreme_gap`/`chase_cap`/thesis 漂移/`B_long_knife`）
-  与退出参数（DEB-20260909 冻结期内）；②**服务尚未重启** ⇒ 线上进程仍按旧三规则打标，
-  直到重启加载新 `_RULES`（Python 代码只在 import 时加载，台账 §2.5 deploy_freshness 同课）。
-  重启窗口、git 入库、周检线上副本部署三件事均**待用户裁**，本轮未做。
+  与退出参数（DEB-20260909 冻结期内）；②**服务已于 2026-09-11 13:23:35 CST 重启**
+  （用户裁「按照建议执行 提交 重启」；`ftseek-us.service` 新 PID 1043924，旧 PID 1033176
+  自 12:02:10 起运行的进程不含本批 mtime 12:26–12:46 的改动）。重启后判据：
+  `scripts/startup_smoke_check.py --wait 120` **7 项全绿 exit=0**（ConfigValidator / 漂移检测 /
+  热重载 / SSOT 审计 0 BLOCKING / 模拟盘安全 / 退出快循环 / 零 Traceback-CRITICAL）；
+  重启后新增日志段 282 行 **`] ERROR:` 0 / `] CRITICAL:` 0 / Traceback 0**（字面量与告警链
+  `scripts/error_alert.py::LEVEL_MARKERS` 同源，非级别盲匹配）；**行为级实证**（不止读代码）：
+  `evaluate_rules('SELL_SHORT', +5.0) → []`（旧应命中 A_short_chase）、
+  `evaluate_rules('BUY', +12.0) → []`（旧应命中 C_long_chase）、
+  `evaluate_rules('BUY', -6.0) → ['B_long_knife']` ⇒ 自本次重启起线上只按 B 打标，
+  下一个 09:35–09:59 ET 窗即生效。
+  **仍待用户裁的只剩一件**：周检线上副本部署
+  （`cp ops/hermes/ftseek_weekly_checkpoint.py /root/.hermes/scripts/`）—— 本轮尝试时被权限
+  分类器拦下（裁决文本覆盖"提交/重启"，未覆盖该仓库外线上路径写入），故 `test_ops_scripts_sync`
+  仍红 1 条。git 入库（`ccafdbe5`）与重启均已完成。
 
 ## 执行项
 

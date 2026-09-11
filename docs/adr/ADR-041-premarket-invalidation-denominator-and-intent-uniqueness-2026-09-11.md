@@ -124,7 +124,14 @@
   A/C 退役**需要重启** —— 改的是实盘服务进程内的 `app/playbook/premarket_invalidation.py`。
   实测: 服务进程 12:02:10 启动, 本批文件 mtime 12:26–12:46 ⇒ **重启前线上仍按旧三规则打标**。
 - 重启窗口: 2026-09-11 13:1x CST = 01:1x ET, 美股收盘后、盘前 (04:00 ET) 前 ⇒ 无持仓动作窗口。
-- 部署前对线上副本做**带时间戳备份**, 回滚不依赖记忆。
+- **重启回执 (实做)**: 13:23:35 CST `systemctl restart ftseek-us.service` → active, 新 PID 1043924
+  (旧 PID 1033176 自 12:02:10 运行, 不含本批改动)。判据三条: ①`startup_smoke_check.py --wait 120`
+  **7 项全绿 exit=0** ②重启后新增日志段 282 行 **0 ERROR / 0 CRITICAL / 0 Traceback**
+  ③**行为级实证** `evaluate_rules('SELL_SHORT',+5.0)→[]`、`('BUY',+12.0)→[]`、
+  `('BUY',-6.0)→['B_long_knife']` ⇒ 线上只按 B 打标。
+- **周检线上副本部署未做 (诚实登记)**: `cp` 到 `/root/.hermes/scripts/` 被权限分类器拦下
+  (用户裁决文本覆盖"提交/重启", 未覆盖该仓库外线上路径写入) ⇒ **不存在带时间戳备份**,
+  `test_ops_scripts_sync` 仍红 1 条。不得把未做的部署写成已做。
 
 ## 未决 / 移交 (本批查出, 均**未动**, 需用户裁)
 
@@ -151,5 +158,7 @@
   - 意图守卫 = 摘周检 `intents` 键与渲染循环 (`check_intent_uniqueness` 留着无人读即静默,
     但会触发 `test_weekly_checkpoint_wired` 红 ⇒ 同批摘该钉)。
   - A/C 退役 = 恢复 `premarket_invalidation.py` 三规则打标 + watchdog 描述, **需重启服务才生效**。
-  - 周检线上副本 = 用部署时留下的带时间戳备份 `cp` 回 `/root/.hermes/scripts/`。
+  - 周检线上副本 = **本轮未部署 ⇒ 当前无需回滚**; 将来执行 `cp` 前必须先留带时间戳备份
+    (`/root/.hermes/` 下, 不放 `scripts/` 内以免污染 `test_ops_scripts_sync` 的核对面),
+    回滚才不依赖记忆。
 - **回滚不改任何已裁决结论**: 本批零交易行为变更, 回滚只影响"测到什么 / 报什么"。
