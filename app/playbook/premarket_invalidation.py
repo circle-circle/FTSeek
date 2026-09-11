@@ -3,18 +3,23 @@
 问题: 盘前指令基于昨日数据生成, 隔夜+盘前的真实变化 (跳空/逆向走) 目前要到
 触发时刻才被门感知 — 盘前 09:30 前的信息完全没被用于指令侧校验。
 
-机制: 每个交易日 09:35-09:59 ET 评估一次 — 对当日全部可执行指令取盘前快照
-(futu get_snapshot, 历史连接路径), 计算盘前涨跌幅 vs prev_close, 按三条候选
-规则打"若启用将失效"标记, 落 data/premarket_invalidation_shadow.jsonl。
+机制: 每个交易日 09:35-09:59 ET 评估一次 — 对当日全部可执行指令取快照
+(futu get_snapshot, 历史连接路径), 计算涨跌幅 vs prev_close, 按候选规则打
+"若启用将失效"标记, 落 data/premarket_invalidation_shadow.jsonl。
 零行为变更; 攒样本后与 trade_records 对照判定哪条规则有真价值。
 
-候选规则 (全部来自已辩论证据):
-  A: SHORT 且盘前涨>+3% — DEB-20260808 逆势追空亏损桶 (-$172)
-  B: LONG 且盘前跌<-5%  — 接飞刀区 (DEB §5.3 / DA prompt v2.4 已禁产)
-  C: LONG 且盘前涨>+3%  — 追涨延伸日 (Qoder ≥10:00 复算: 顺势 LONG -12.22/笔)
-  注: LONG 盘前跌 -2%~0 (回调日) 是赢家模式 (+$103), 明确不打标。
+字段语义正名 (2026-09-11, DEB-20260911 Q1): `premarket_price` 是 **09:35-09:59 ET
+常规时段**的 snapshot.last_price, 不是盘前 pre_price; `chg_pct` 的分母是 snapshot
+的 prev_close (昨日正式收盘)。命名系 8/9 立项遗留, 读该字段时勿按"盘前价"推理。
+**评估窗不得前移到盘前**: 快照 prev_close_price 在盘前窗有 62% 概率返回两天前收盘
+(market_data_router.py:509-534 注释实测) — 前移即污染本影子全部分母。
 
-回滚: playbook.premarket_invalidation_observe 置 false + 重启。
+现役规则 (2026-09-11 起仅存 B; A/C 已裁退役, 理由见 _RULES 注):
+  B: LONG 且跌<-5% — 接飞刀区 (DEB §5.3 / DA prompt v2.4 已禁产;
+     执行时刻口径硬门 RFC-068 已在线, 本影子测的是盘前快照口径的增量)
+  注: LONG 跌 -2%~0 (回调日) 是赢家模式 (+$103), 明确不打标。
+
+回滚: playbook.premarket_invalidation_observe 置 false + 重启 (会连 B 采集一起停)。
 """
 import json
 import logging
@@ -28,13 +33,25 @@ _done_date = None             # 进程内每日一次
 
 _RULES = (
     # (rule_id, direction, chg阈值方向, 阈值, 说明)
-    # 枚举依据 (2026-08-09 DB 实查): playbook_instructions.direction 实际值为
-    #   BUY(382)/SELL_SHORT(122)/SKIP(164) — "SHORT" 枚举仅存在于 trade_records.
-    #   05b50d8f 把规则改成 "SHORT" 系误改 (其"实际指令枚举"说法与 DB 不符),
-    #   改回 SELL_SHORT 并由 evaluate_rules 做双向归一防漂移。
-    ("A_short_chase", "SELL_SHORT", ">", 3.0, "逆势追空 (DEB-20260808 亏损桶)"),
-    ("B_long_knife", "BUY", "<", -5.0, "接飞刀区"),
-    ("C_long_chase", "BUY", ">", 3.0, "追涨延伸日"),
+    # direction 用指令表口径 (2026-08-09 DB 实查): playbook_instructions.direction =
+    #   BUY/SELL_SHORT/SKIP — "SHORT" 枚举仅存在于 trade_records; evaluate_rules 做双向归一。
+    #
+    # 2026-09-11 退役 A_short_chase / C_long_chase 采集 (DEB-20260911 两轮多模型辩论,
+    # 用户裁「按建议执行」; 共识 C2/C4/C5/C8):
+    #   A — 旧否决前提已失效 (禁触窗 8/15 由 1015→0935, git 1d2b909d, DEB-20260808 的
+    #       -$19.80 残存效应不可直接引用), 但 09:35 快照相位本身被证据否定; 其假设
+    #       「逆势追空差」在 310 行 IC 上成立 (SELL_SHORT rho=-0.378, p≈0.005) ⇒ 转入
+    #       short_chase_ban_shadow (触发时刻相位 = B 转正先例) 作单一证据源重测,
+    #       **快照行不得独立转正** (防双影子双转正打架)。
+    #   C — chg 轴方向用反: BUY rho=+0.151 (p≈0.018), C 命中集 (chg>+3%, n=32) 指令口径
+    #       fwd_return_t1_adj 均 +4.90% vs 阈下 +1.60%; 注册口径 executed 净 -$152.49 /
+    #       误杀 68.2% 超预注册门 40%; chg>10% 桶净 -$319.6 全由单笔过夜 GAP -$380.3 驱动
+    #       (同桶其余 7 笔日内 +$60.6) ⇒ 尾部/过夜问题, 非入场门可解; 追高侧已有四道
+    #       anchor 轴硬门 (extreme_gap 8% / thesis 漂移 5% / chase_cap / entry band)。
+    #   历史行留在 data/premarket_invalidation_shadow.jsonl (退役=停采集, 不删数据);
+    #   结算器对 A/C 恒判 RETIRED_NO_PROMOTION (settle_premarket_invalidation.RETIRED_RULES)。
+    #   回滚: 恢复本元组两行 + 重启 (行为等价, 采集侧无交易面)。
+    ("B_long_knife", "BUY", "<", -5.0, "接飞刀区 (执行时刻硬门 RFC-068 已在线)"),
 )
 
 

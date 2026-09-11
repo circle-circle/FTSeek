@@ -2,14 +2,25 @@
 
 ## 状态
 
-- [x] 进行中（等待第二方 agent 分析）
-- [ ] 待决策
-- [ ] 已决策
-- [ ] 已验证
-- [ ] 已关闭
+- [x] 进行中 → **已完成两轮辩论并收敛**（第二方/第三方辩论记录见文末；
+  **本文正文多处数字已被核实为错误，行动前必读该章的勘误表 E1–E8**）
+- [x] 待决策 → **已裁决**
+- [x] 已决策（2026-09-11 用户裁「按建议执行」：执行范围 = **P0 全部 + P1 全部**；
+  **P2-1/P2-2 明确未执行** — 触碰现役硬门/生产取数路径，须另立预注册 DEB）
+- [x] 已验证（**契约钉 55 例全绿**：settler 17 + premarket 10 + 意图守卫 16 + W7 12；
+  **全量回归亲跑**：3928 收集 → 3886 passed / 41 skipped / **1 failed** / 628s。
+  唯一那红 = `test_ops_scripts_sync::test_repo_and_live_scripts_in_sync`
+  （库内周检副本领先 `/root/.hermes/scripts` 线上副本，属部署步、等用户裁，非代码缺陷）；
+  两条棘轮（`test_except_pass_ratchet` / `test_w456_log_hygiene_ratchet`）未被本轮新增
+  except 块顶破。**旧基线 3485 passed 已作废**：工作树含未入库的 M2 批新测试
+  （`tests/core/test_m2_a1_startup_mode.py` 等），本轮起以 3886/41 重锚）
+- [ ] 已关闭（三项未了：①P2-1/P2-2 另立预注册；②周检线上副本部署（消掉上述红钉）；
+  ③**服务重启** — A/C 退役是采集侧 Python 改动，只在 import 时加载，未重启则线上仍按
+  三规则打标，重启窗口须用户裁）
 
 - **提出方**：Hermes（qwen3.8-max），2026-09-11
-- **数据基线**：`data/premarket_invalidation_shadow.jsonl` 310 行（8/11–9/11），
+- **数据基线**：`data/premarket_invalidation_shadow.jsonl` 310 行（**8/11–9/10，21 个交易日，
+  其中 39 行 flagged**；原写 8/11–9/11 系勘误表 E2 所指窗口错标），
   结算产物 `data/premarket_invalidation_report_latest.json`（结算器 commit `ea614074`，
   2026-09-11 落地，本辩论数据全部由该结算器 + ad-hoc SQL 产出）
 - **当前形态**：全部 record-only 影子，零交易行为变更。B 规则的**执行时刻硬门已独立在线上**
@@ -330,18 +341,143 @@ sed -n '5530,5565p' app/playbook/pipeline.py
 
 ## 决策
 
-- 选择方案：**（待第二方分析后填写）**
-- 决策依据：
-- 保留空间：
-- 负责人：
-- 截止时间：
+- 选择方案：**用户已裁（2026-09-11「按建议执行」）= 方案 C 的两段式变体 + 方案 A′ 死线合并，P0 与 P1 全量执行；P2 未执行**
+  - 第一段（P0，纯测量/治理层，零交易面）：✅ 分母审计（只读）→ ✅ 补登记
+    `short_chase_ban_shadow` → ✅ 落「同意图互引 + 分母哨兵」守卫 → ✅ 本文勘误。
+    **注**：原 P0 措辞含"修 ctx 侧陈旧昨收分母"，该**修复**动作经执行时定性属生产取数
+    路径改动，已划归 P2-1 未执行；本轮只落"让分叉当日可见"的 W7 哨兵与污染期标注。
+  - 第二段（P1）：✅ 退役 `C_long_chase` 采集；✅ `A_short_chase` 快照规则退役，
+    其**假设**并入 ban-shadow（触发时刻相位）作为单一证据源（注册表 `verdict_history` +
+    `cross_ref` 双向互指留痕），A 快照行不得独立转正；✅ 保留 `B_long_knife`
+    （已验证、现役、分母走日K注入侧=干净）。
+  - 否决项：方案 B（C_v2）冻结 —— 会成第四道追高门且 Q5 未裁；
+    方案 D（昨收轴上移 regime）不落地 —— 先做 IC 验证，且其输入依赖同批污染数据。
+  - 死线：A/C 的合并处置挂在 **D2' 裁决日**（forward 实测 13/20，约 1–2 周）；
+    ban-shadow 预注册死线 10/31 不变，但**分母修复前的样本须标注污染期**，
+    否则 10/31 到点裁的是废样（已写进注册表 `graduation_criteria` 前置条件）。
+- 决策依据：见文末「共识清单」C1–C9（每条附复现命令或代码行号）。
+  核心三条：① chg 轴有信息但 **C 把方向用反了**（BUY 侧 rho=+0.151、C 命中集指令口径
+  fwd +4.90% vs 阈下 +1.60%）；② 「极端涨幅桶危险」由**1 笔过夜跳空**驱动
+  （GAP −$380.3，同桶其余 7 笔日内 +$60.6）；③ A 的旧否决前提已失效
+  （禁触窗 8/15 由 1015→0935，git `1d2b909d`），但其正确载体不是 09:35 快照。
+- 保留空间：若用户倾向「先不动、继续攒样」，最低必须做 P0 的分母审计与 ban-shadow 登记
+  （否则两个影子在裁决日都会给出不可解释的结论）。
+- 负责人：本会话（team-lead）收口写入；并行会话分工 reviewer-kimi（#5 结算器/#8 回归）、
+  verifier-glm（#6 W7 哨兵）、architect-qwen（#4 注册表起步）。#9 台账/本文回写由
+  team-lead 独占写入权（避免同文件双写）。
+- 截止时间：P0/P1 已于 2026-09-11 当日落地；后续节点 = D2' 裁决日（A/C 合并处置复核）
+  与 ban-shadow 10/31 死线。
+- **辩论阶段（两轮收敛前）零改动**：全部结论由只读复现（SQLite mode=ro、文件读取、
+  只读 git）产出。**执行阶段（用户裁「按建议执行」后）改动清单**：
+  `app/playbook/premarket_invalidation.py`（`_RULES` 仅存 B + 字段语义正名/评估窗不得前移的
+  docstring 约束）、`app/playbook/shadow_registry.py`（`intent`/`cross_ref` 两字段 +
+  ban-shadow 补登记 + `check_intent_uniqueness()`）、`ops/hermes/ftseek_weekly_checkpoint.py`
+  （周检接 `intents` 键）、`scripts/settle_premarket_invalidation.py`（`RETIRED_RULES` 退役闸 +
+  `_conflict_check` + conflict_check 进 latest.json）、`scripts/daily_invariant_check.py`（W7 哨兵）、
+  `scripts/data_freshness_watchdog.py`（描述口径更正）、`docs/CONTROL-LOOP-LEDGER.md`
+  （§2.5 两行 + §5 G3 更新/G8 新增 + L117 注记）、本文、`data/chg_denominator_baseline.json`（新，
+  首跑锁 90 存量键）、契约钉 4 文件（settler/premarket 改写 + 意图守卫/W7 新增）。
+- **生效边界（诚实登记，两条）**：①A/C 退役是**采集侧 record-only** 改动 —— 只停"打标"，
+  零交易行为变更，未触碰任何现役硬门（`extreme_gap`/`chase_cap`/thesis 漂移/`B_long_knife`）
+  与退出参数（DEB-20260909 冻结期内）；②**服务尚未重启** ⇒ 线上进程仍按旧三规则打标，
+  直到重启加载新 `_RULES`（Python 代码只在 import 时加载，台账 §2.5 deploy_freshness 同课）。
+  重启窗口、git 入库、周检线上副本部署三件事均**待用户裁**，本轮未做。
 
 ## 执行项
 
 （辩论收敛后填写，每条须附 grep/SQL 验证结果；未过验证的降级 P2）
 
-- [ ] 
-- [ ] 
+- [x] **P0-1 分母审计（只读，零风险）**：核 `ban-shadow` 的 `ctx["change_percent"]`
+  陈旧范围。验证：BIDU 9/8 inst2353 两行 7 秒内 −7.65% vs +4.07%；
+  `change_percent`/`volume` 在 09:35:25 与 10:47:00 完全冻结；
+  同窗可比 38 对中 21 对（55%）|Δchg|>3pp；干净侧对照 SMTC 8/26 prev_close=127.52
+  = 日线真值 127.52。复现：`grep '"US.BIDU"' data/entry_timing_shadow.jsonl`；
+  `sed -n '509,534p' app/data/market_data_router.py`
+  **审计结论（9/11 落地）**：`prev_close` 实为**三源并存** — ①快照
+  `get_market_snapshot.prev_close_price`（干净）②`get_quote` 推送缓存（**污染源**，跨日冻结）
+  ③RFC-068 日K自算注入 `ctx["prev_close"]`（`market_data_router.py:509-534`，干净）。
+  **现役 `B_long_knife` 硬门走③，不在污染面内**（架构师第二轮主张"B 门输入也被污染"
+  经三路径核实后**已撤回**）⇒ 本议题全程留在测量层，零现役硬门受影响。
+  全量对账（W7 首跑，195 可比对）：**90 对（46%）差 >2pp**，窗参数不敏感
+  （5/10/15min 窗发散数恒 90 — 分母分叉是全日冻结型）。已入账台账 §5 **G8**。
+- [x] **P0-2 补登记 ban-shadow**：`app/playbook/shadow_registry.py`、watchdog、
+  `docs/CONTROL-LOOP-LEDGER.md` 三处均零命中（「建了没登」第 4 例）。
+  验证：`grep -rn short_chase_ban app/playbook/shadow_registry.py docs/CONTROL-LOOP-LEDGER.md` → 空
+  **落地（9/11）**：注册表新增 `id="short_chase_ban_shadow"`（`config_key` 用嵌套真键
+  `playbook.execution_parameters.short_chase_ban_shadow_enabled` — top-level 写法是死键；
+  `eval_on_demand=True` 无独立结算器；`min_n=20`；预注册判据含**死线 2026-10-31** 与
+  「分母修复前样本=污染期，是否计入 n 由裁决日显式裁」前置条件；`verdict_history` 两条留痕
+  8/8 旧基线否决 → 9/11 归并为 SHORT 追空意图单一证据源）；`intent="short_chase_ban"` 与
+  `premarket_invalidation`（`intent="long_knife_gate"`）`cross_ref` **双向互指**。
+  台账：§5 G8 附带登记 + §2.5 意图守卫行。
+  **一处与原执行项不同的裁定（诚实登记）**：watchdog 面**不补** —
+  `data_freshness_watchdog.py` 的阈值是小时级，而本影子 18 天仅 5 行（8/24 NTES、9/1 MSTR、
+  9/3 DDOG、9/8 BIDU×2），入表即永久误报；断流改由注册表 `check_mounting` 的
+  **14 天静默哨兵**接管（登记后自动生效）。该影子同时被记为"采集濒死"：按此节奏
+  10/31 死线大概率裁 KILLED 而非达标，且行内无 `date` 字段、`direction` 在写者处硬编码
+  `'SHORT'`（`pipeline.py:5549`）、只能靠 `inst_id` join 而该键有脏对
+  （NTES 8/24 inst1535 同日 DA BUY 09:35 / reentry SHORT 10:55）⇒ 三项须裁决前先修。
+- [x] **P0-3 同意图守卫落地（三处落点）**：`shadow_registry.py:46` 增 `intent`+`cross_ref`
+  并钉「同意图且均 OBSERVING ⇒ 必须互指」；`scripts/settle_premarket_invalidation.py:112-120`
+  的 READY_TO_ADJUDICATE 分支强制输出 conflict_check（缺则降级 KEEP_SAMPLING）；
+  `scripts/daily_invariant_check.py` 增分母哨兵（两 jsonl 按 (symbol,date) join，
+  |Δchg|>2pp 即 violation）。
+  **落点①已落地（9/11）**：`ShadowItem` 增 `intent: str = ""` / `cross_ref: tuple = ()`
+  （`shadow_registry.py:75-76`，字段注释写明立起理由）；新增 `check_intent_uniqueness()`
+  （同文件 `:1262`）**五判定** — ①同意图现役项必须互指 ②互引目标必须在册（悬空即报）
+  ③目标现役必须回指（**单向即报**，补①盲区：本仓真实那对 intent 标签不同，①不触发）
+  ④`REGISTRY` 内 id 必须唯一（**同日真实事故**：并发补登记一度产出同 id 两条，
+  `summary()` 重复出行、互引只认一条）⑤守卫自身异常产 `intent_uniqueness_detector_error`
+  （§6 规则5，"零违反"≠"守卫崩了"）。已接入周六周检
+  （`ops/hermes/ftseek_weekly_checkpoint.py`：import + `'intents': check_intent_uniqueness()`
+  + 渲染循环与 mounts 并列）— 防"函数建了没人读"的断头传感。现网零告警；
+  契约钉 `tests/test_shadow_intent_uniqueness.py` 16 例。
+  **落点②已落地（9/11）**：settle 脚本 `RETIRED_RULES` 恒判 A/C
+  RETIRED_NO_PROMOTION（历史行仍结算呈报，实跑 A=1行/C=32行照常出数）；
+  READY 前置 `_conflict_check`（未互引/注册表不可读→降级 KEEP_SAMPLING+stderr）。
+  契约钉 TestRetiredGate/TestConflictCheck 共 5 例，17/17 通过。
+  **追加（同日）**：`_verdict(rule, a, conflict=None)` 第三参可选（两参调用与 monkeypatch
+  形态不变），`main()` 一次计算两处复用，并把结果写进
+  `latest.json → rules[k].conflict_check`（`{ok, detail, refs}`，退役规则为 null）—
+  原先降级只留 cron stderr，则"被冲突核对挡下"与"四关没过"在产物里长得一模一样，
+  裁决日不可审计。实跑确认 B = `{ok: True, detail: "互引齐: ['RFC-068']"}`。
+  **落点③已落地（9/11）**：`scripts/daily_invariant_check.py` 新增 `W7` 分母哨兵
+  （`_check_chg_denominator`，随 I11~I14 同班 cron `5 5 * * 2-6`，接线进 `main()`、
+  结果落 `result["chg_denominator"]`）。join 键 **inst_id 精确优先、(symbol,date) 回退**
+  （比原执行项的单一 (symbol,date) 更严，防跨指令串染）；±10min 可比窗内取**最小** |Δchg|，
+  >2pp 即 `W7_chg_denominator_divergence`。棘轮基线 `data/chg_denominator_baseline.json`
+  首跑锁 90 存量键（BIDU 9/8 带本文出处入 `refs`）：存量 silenced_known、**新增才告警**、
+  愈合只报不自动改写基线（守卫绝不自我加宽）；影子档缺失 `skipped_no_shadow`、
+  单行坏跳过计数、整档不可读 `W7_detector_error`。
+  契约钉 `tests/test_w7_chg_denominator_sentinel.py` 12 例（含 BIDU 脏对当晚告警、
+  DDOG Δ0.17pp 健康对照零误报、窗外行/跨 inst_id 两个防假阳钉、棘轮只降不升）。
+  台账 §2.5 已入账两行（W7 + 意图守卫）。
+- [x] **P0-4 本文勘误**：已随本章节落档（见勘误表 E1–E8）。
+  **追加（9/11）**：状态块的数据基线窗口按 E2 更正为 8/11–9/10（21 个交易日、39 flagged 行）。
+- [x] **P1-1 退役 C 采集**（9/11 落地：`premarket_invalidation.py` `_RULES` 仅存 B；
+  验证 `evaluate_rules("BUY", 5.0) == []` 且 B 硬门 SSOT 路径
+  `evaluate_rules("BUY", -6.0)` 仍命中 B_long_knife；310 行 jsonl 未删）：删 `premarket_invalidation.py:29-38` 的 `C_long_chase` 规则行，
+  归档 310 行 jsonl（**不删数据**）。验证：影子产物读者仅结算器/watchdog/ops 校验，
+  无交易路径消费 → 前后行为等价；注意不可直接关 observe 总开关
+  （`config/unified_config.yaml:1025` 会连 B 采集一起停）。
+- [x] **P1-2 A 快照规则退役**（同批落地，规则行已删；ban-shadow 修复+补登记
+  属 P0-2，由注册表任务承接）：同文件同轴同相位，随 C 一起处理；
+  重测须在 0935 禁触窗新基线上跑（旧 −$19.80 残存效应不可直接引用，
+  git `1d2b909d`）。
+- [ ] **P2-1（本辩论权限外，需另立预注册）**：`prev_close` 单源化修复 B 门日K缺失回落分支、
+  `extreme_gap` 8% 收紧、方案 D 落地、C_v2。
+  **本轮（9/11 用户裁「按建议执行」）明确未执行 — 一行代码未动。** 理由：四项全部触碰
+  **现役硬门或生产取数路径**（`extreme_gap`/`chase_cap`/thesis 漂移/`B_long_knife` 与
+  `ctx["change_percent"]` 的写入侧），超出本辩论"测量层"权限，且未经预注册即改门 =
+  挪门柱。当前替代防线：①`W7` 哨兵让分母分叉**当日可见**（基线外新增即告警）；
+  ②注册表 `short_chase_ban_shadow` 把"分母修复前样本=污染期"写成转正**前置条件**，
+  使 10/31 死线裁决不会拿废样当真样。解锁条件：另立预注册 DEB（判据写死于读数前）+ 用户裁。
+- [ ] **P2-2（另开议题）**：chg>10% 桶净负由单笔 `OVERNIGHT_GAP_STOP` 驱动 →
+  过夜跳空是否应由过夜规则/仓位处理，属退出与持仓层，不在本辩论权限内。
+  **本轮明确未执行**：属退出/持仓层（且退出参数在 DEB-20260909 冻结期内，
+  裁决窗口 9/12–9/16），须另开议题；本辩论只登记事实 —
+  该桶全窗净 −$319.6 中 −$380.3 来自一笔过夜跳空，其余 7 笔日内合计 **+$60.6**
+  ⇒ 以该桶为据收紧日内追高门属**归因错配**（E1/E3 同源教训：先分清毛净与昼夜，再谈门）。
 
 ---
 
@@ -355,3 +491,221 @@ sed -n '5530,5565p' app/playbook/pipeline.py
   按判据自然裁决，本辩论不提前干预）。
 - 本辩论的输出**只应是测量层/规格层的决定**（换轴、换相位、退役、合并裁决），
   任何「立刻上硬门」的结论都需要另开预注册攒样，不在本辩论权限内。
+
+---
+
+# 第二方/第三方辩论记录（2026-09-11，多模型两轮）
+
+## 参与方与分工
+
+| 方 | 模型 | 分工 | 产出性质 |
+|---|---|---|---|
+| 提出方 Hermes | qwen3.8-max | 开案（本文正文） | 主张 |
+| 实证方 | GLM-5.3 | 复跑全部验证命令、逐条比对数字、查 Q1–Q4、跑 310 行 IC、追昨收分母调用链、只读 git 核配置史 | 事实裁决 |
+| 审查方 | Kimi-K3 | 证据链/统计诚实性/越界主张审查、逐条对代码核实 | 论证裁决 |
+| 架构方 | Qwen3.8-Max | 根因定位、门职责链与 SSOT、双影子治理风险、动作爆炸半径分级 | 结构裁决 |
+
+轮次：第一轮三方互不可见独立成文；第二轮交叉转达彼此结论并要求「坚持/修正/撤回」三栏表态；
+第三轮为单项追问（B 硬门分母归属）。**全程只读**（SQLite `mode=ro`、文件读取、只读 git），
+未改动任何代码、配置或影子产物；本文正文原有内容未被改写，勘误以本章为准。
+
+## 勘误表（正文需更正处，E1–E8）
+
+| # | 位置 | 正文原文 | 实测/核实 | 判定 |
+|---|---|---|---|---|
+| E1 | L41 首读叙述 | 16 赢 +$1,157 / 6 输 −$1,224 / 净 ≈−$67 | 毛口径 16 赢 +$1,185.4 / 6 输 −$1,223.9 / 净 **−$38.5**；**净口径（结算器注册口径 `COALESCE(pnl_net,realized_pnl)`）15 赢 / 7 输 / 净 −$152.49 / 误杀 15/22=68.2%** | 三组互斥数字并存。「16 赢家」与「68%」在任何单一口径下不能同时成立；−$67 两口径都算不出 |
+| E2 | L12 数据基线 | 310 行（8/11–9/11） | 310 行 ✓，但日期范围实为 **8/11–9/10** | 日期终值有偏 |
+| E3 | L139-141 实证4 | 6 笔输家中 3 笔 MFE=0+SL_INITIAL、另 3 笔 MFE>0 回吐 | MFE=0 共 **5 笔**（SNDK/USAR/QCOM/AFRM/GAP；4 笔 SL_INITIAL、GAP 为 OVERNIGHT_GAP_STOP），MFE>0 仅 **DELL 1 笔**（1.31%）。AFRM 被误归入「回吐」组 | 分组错。注意：这**加强**而非削弱「C 管不了退出层」的论点（入场即错的单更多） |
+| E4 | L153-155 实证5 | 赢家被 D2' 误杀 9 / 放行 7 | 实际 **7 / 9 互换**（毛口径误杀 7、净口径 6）；「ORCL×2」不实，实际仅 1 笔 ORCL 被拦。输家两格 3/3 ✓，22/22 覆盖 ✓，最大赢家零误杀 ✓ | 计数反了，点名标的列表与分组一致 |
+| E5 | L90-93 实证2 第三行 | chg/ATR% = 125×–238× | **Q3 成立**：`atr_pct` 存小数（n=720，min 0.0064 / med 0.0359 / max 0.1538），÷100 后为 **1.26×–2.38×**；方向不变（输家延伸更高） | 数值错 100 倍，结论方向不变 |
+| E6 | L177-178 实证6 | 「现役硬门**全部**用 anchor 轴 + 触发时刻相位」 | 假命题：`B_long_knife` 现役硬门就是**昨收轴**（实时价 vs prev_close <−5%，`pipeline.py:3914-3920`）。成立的只有「相位」结论（快照 vs 执行/触发时刻） | 全称判断错，连带方案 C 理由②失据（昨收轴未被整体取代） |
+| E7 | L249 方案A | 「裁决日自动 KEEP_SAMPLING/FAIL → 不支持转正」 | 结算器 verdict 只有 `KEEP_SAMPLING` / `READY_TO_ADJUDICATE` 两态，且明示「提请转正另裁，不自动生效」（`scripts/settle_premarket_invalidation.py:112-120`）。**不存在自动否决机制** | 方案 A 的「自然否决」= 永不转正且永不退役的无限攒样，不是零风险 |
+| E8 | L180-188 实证7 / L318 | 引文原文 + 「D2' forward 窗才攒到 n=4」 | 引文原文核对无误（−$19.80 / 禁触窗架空 / 8月逆势亏单全在9点档），DEB-20260808 L164 亦有。但**否决前提已失效**（见 C8）；D2' forward 实测 **n=13**（9/9:5 + 9/10:8，delay=2 status=ok），仍 <min_n 20 | 引文属实、时效未审；n=4 偏低 |
+
+已核实**无误**的正文数字（供后续引用）：实证1 分桶四格（−80/+125/+235/−320，胜率 3/4、4/4、3/6、6/8）、
+实证2 前两行、实证3 分桶四格（−206/+33/+514/−379）、实证4 逐笔 22 行 pnl 与 entry_t/slip%、
+`vs_trig` 实测区间 [−0.34%, +0.16%]（以 `inst.entry_price` 为参照）、最大赢家全在 chg>+6%、
+A 首读 n=1/+$6.2/误杀 100%、C 命中 32 行、`SL_TRAIL_LOCK` 30 天 n=58 净 **+$3,909.56**。
+两处**未验证、勿作论据**：L144「UE LONG −$780」（`trade_records` 无 UE source 枚举，未找到出处）；
+实证4 `trig` 列的统一来源（AU=119.63 不匹配任何 DB 字段，`inst.entry_price`=120.18，疑取自分钟 bar，未深挖 replay_bars）。
+
+## 共识清单（C1–C9，三方一致或经第二轮收敛）
+
+**C1 影子的事实骨架可靠。** `_RULES` 三规则阈值确为硬编码（`premarket_invalidation.py:29-38`），
+评估窗 `_WINDOW=(935,959)` 每日一次，record-only 名副其实（产物读者仅结算器/watchdog/ops 校验脚本，
+**无任何交易路径消费**），B 门是独立硬门且只取 `B_long_knife`（A/C 无硬门），
+D2' 对 C 命中 22 笔 22/22 覆盖。
+
+**C2 chg vs 昨收轴携带信息，但 C 把方向用反了 —— 不是「零区分度」。**
+310 行影子按 `inst_id` join `playbook_instructions.fwd_return_t1_adj`（295/310 有值；
+该列为方向化机制调整收益，SHORT 对称、正=赚，`ic_tracker.py:190`），Spearman：
+
+| 分层 | n | chg 轴 rho | p | anchor 延伸轴 rho | p |
+|---|---|---|---|---|---|
+| 整体 | 295 | +0.043 | ≈0.46 | +0.103 | ≈0.08 |
+| BUY | 242 | **+0.151** | ≈0.018 | **+0.284** | <0.001 |
+| SELL_SHORT | 53 | **−0.378** | ≈0.005 | **−0.660** | <0.001 |
+| executed | 184 | +0.054 | ≈0.47 | +0.125 | ≈0.09 |
+| 未 executed | 111 | +0.036 | ≈0.70 | +0.036 | ≈0.71 |
+| BUY & executed | 162 | +0.128 | ≈0.11 | +0.205 | ≈0.009 |
+| BUY & 未 executed | 80 | +0.230 | ≈0.041 | +0.408 | <0.001 |
+
+chg 五分位 fwd 均值：Q1[−22.1,−2.0%] +2.47% / Q2 +1.56% / Q3 +1.21% / Q4 +1.71% /
+**Q5[+1.74,+109.6%] +3.80%**（最高分位最好）。阈值对照：**BUY chg>+3%（C 拦截集 n=32）fwd 均 +4.90%
+vs 阈下（n=210）+1.60%**。executed/未 executed 分层无翻转 → 无选择偏差。
+提出方 L70「样本再大也分不开」应撤回为：**在已成交实盘口径上无可分性，在指令口径上方向相反**。
+
+**C3 信息量排序：anchor 延伸轴 > chg 轴**（所有分层 |rho| 约 1.7–2 倍）。
+真变量是「入场价相对锚的延伸/滑点」，不是「距昨收涨幅」。这也解释了口径裂缝：
+`fwd_return_t1_adj` 从**指令锚价**起算、不含追高滑点，而 C 命中单实际入场常高于锚 0.9–5.4%
+（实证4 slip 列）→ 指令口径 +4.90% 与 executed 实盘净 −$152.49 并存，两者不矛盾。
+
+**C4 「极端涨幅桶危险」不能作为入场门依据。** chg>10% 那 8 笔净 −$319.6 拆开：
+**过夜 1 笔（GAP，`OVERNIGHT_GAP_STOP`，8/28 入场 → 8/31 出场）= −$380.3，其余 7 笔日内合计 +$60.6**。
+即该桶的全部净负由一笔过夜跳空撑起（提出方原说「2 笔驱动」，收紧为 1 笔）→
+政策变量是**过夜规则/仓位控制**，不是入场追高门。
+
+**C5 误杀 68% 的正确读法与结论保留。** 注册口径（净）15/22=68.2% > 预注册门 ≤40% →
+**C 不支持转正**，三方一致。但成立的理由应是 C2（方向用反）+ C4（极端桶由单笔过夜驱动）+
+C3（真变量是延伸/滑点），而非「轴零信息」。
+
+**C6 昨收分母存在两套来源，脏的是 ctx 侧 —— 定性为数据口径 bug，不是相位差。**
+- 干净侧：A/C 影子的 `get_snapshot().prev_close_price`（`premarket_invalidation.py:97-112` →
+  `futu_lv3_provider.py:1707-1735`）。真值对照：SMTC 8/26 影子 prev_close=**127.52** =
+  replay 日线 8/25 真实收盘 **127.52**。
+- 脏侧：`ban-shadow` 的 `ctx["change_percent"]`（`pipeline.py:5541` ← `get_full_market_context`
+  → `futu.get_quote` 的 push 缓存优先路径，`futu_lv3_provider.py:915-932`）。
+  实锤：BIDU 9/8 inst2353，09:35:17 影子 −7.65%（prev_close=99.47）vs 09:35:24 ban-shadow +4.07%，
+  7 秒反号；两源**价格一致**（91.86 vs 91.85）→ 只能是分母不同（99.47 vs 隐含 ≈88.26）；
+  且 BIDU 的 `change_percent`/`volume` 在 09:35:25 与 10:47:00 **完全冻结**（4.07 / 2578698）。
+- 影响面：09:35–09:36 同窗可比 38 对中 **21 对（55%）|Δchg|>3pp 且符号频繁翻转**
+  （HOOD −1.18 vs +13.7、AMD +4.34 vs −3.49）；ban-shadow 全量 5 行中 BIDU 2 行按错误 chg 攒样
+  （记录 +4.07，真实 −7.65）。污染所有消费 `ctx["change_percent"]` 的影子
+  （`short_chase_ban_shadow`、`entry_timing_shadow` 等）。
+
+**C7 由 C6 解除/撤回两项第一轮的判断。**
+① 架构方第一轮把「C 退役」降级为「等分母审计后定」的理由**解除** —— C 的分桶用的是干净分母，
+实证1/2/3 的既有数字不作废，C 可以现在退役。
+② 架构方「③ B 硬门输入同病」的影响面判断**撤回** —— B 门虽与 ban-shadow 共用同一个 ctx 字典，
+但读的是 `ctx["price"]` + `ctx["prev_close"]`，**不读 `change_percent`**；而 `prev_close` 键由
+`market_data_router.py:509-534`「RFC-068 审计修复（2026-08-29）」的**日K自算真昨收**独立注入
+（注释明记「不用快照 prev_close_price — 盘前概率性返回两天前收盘，62% 实测」，仅日K全不可得才回落脏侧）。
+即该注入恰是对 push 缓存陈旧问题的修复产物。+$302.97 的转正反事实用「成交价/真昨收」独立重算
+（RFC-068 勘误2，且已自纠 SNDK 影子 −4.54% 的陈旧昨收假象）→ 不受污染，无需加可信度标注。
+线上唯一拦截案例 TECK 9/10（chg −7.72→−6.08 随时间演化，证时价新鲜、逐轮复评）与干净参照
+（pmi 09:35 chg=−7.51）差 <0.3pp，无 |Δ|>3pp 案例。
+保留两个 caveat：日K缺失回落分支仍可能触脏（fail-open 放行，风险有限）；
+**评估窗不可前移到盘前**（见 Q1）。
+
+**C8 A 规则的旧否决前提已失效，但重测载体不是 A 快照行。**
+只读 git 核实禁触窗变更链：`1817eec7`（8/8，RFC-063 上线开盘禁触窗 10:00）→
+`ebdb7069`（8/12，10:00→10:15）→ **`1d2b909d`（8/15，ADR-028 用户裁，10:15→09:35 对齐实盘）**；
+`3fca11a9` 显示回退到 1015 的旧 patch 已被物理废弃。当前值
+`config/unified_config.yaml:1127 entry_open_blackout_hhmm: 0935`（enabled=true）。
+DEB-20260808 裁决当日窗为 10:00，「8月逆势亏单全在9点档被禁触窗架空」的前提 8/15 后不成立 →
+**−$19.80 残存效应不可直接引用**。同时 SHORT 侧 chg 轴 rho=−0.378（p≈0.005）说明
+「逆势追空差」的**假设方向被数据支持**。结论：保留意图、换载体（修复并重注册后的 ban-shadow，
+触发时刻相位 = B 转正先例），**A 快照行不得独立转正**。
+
+**C9 双影子并行的治理风险真实且已兑现，级别高于「相位差」。**
+同一意图的两把尺子**连分母都不一致**（C6），矛盾结论已在真实数据发生（BIDU），
+不是「未来可能矛盾」。且 `ban-shadow` 作为传感器已接近坏死：全量仅 5 行、
+`shadow_registry`/watchdog/`CONTROL-LOOP-LEDGER` **三处零登记**、`direction` 字段硬编码 `"SHORT"`
+（`pipeline.py:5549`）、无 `decision_id` 字段、NTES 8/24 同一 inst_id 出现 DA BUY（09:35）与
+reentry SHORT（10:55）两方向 → inst_id 作 join key 有脏数据。
+属**系统性问题**（「建了没登」第 4 例，`CONTROL-LOOP-LEDGER.md:143-146` 已记前三例；
+同形例：DA confidence 双算法（signal_gate:383-404 vs adapter:191-254）、KR2 冻结双尺子、
+earnings_calendar 同名双载体）。共同根因：**守卫只强制「存在性登记」，无机制强制「意图唯一性」**。
+
+## 未收敛分歧（含反转条件）
+
+- **D1 C 的退役时点**：审查方主张立即退役采集；架构方主张审计后两段式。
+  主持人合并意见：C6/C7 已使 C 侧分母清白 → **C 可现在退役，但先跑完 P0-1 审计**（成本近零），
+  避免「退役」与「修 bug」两件事在时间上纠缠、日后无法归因。
+  *反转条件*：若审计发现 A/C 影子在评估窗内也存在跨日 prev_close 污染，则 22 笔分桶需重算后才能退役。
+- **D2 A 假设重测的投入优先级**：三方同意「重测 A」是新攒样而非延续旧影子，
+  但对是否值得在 10/31 前投入 ban-shadow 修复工时未表态。
+  *反转条件*：SHORT 侧 rho=−0.378 若在修复分母后仍稳定 → 值得投入；
+  若 ban-shadow 修复需改 push 缓存订阅链路（成本过高）→ SHORT 侧改由快照口径继续攒
+  （相位缺陷已知但分母干净），并在台账标注该权衡。
+- **D3 方案 D（昨收轴上移 regime）的前置验证数据源**：三方同意「先验 IC、不落地」，
+  但对用哪批数据验 IC 有分歧（实证方：ctx 侧污染使 D 的输入同样需先修）。
+  架构方查实 `market_regime.py` 评分输入仅 SPY MA20/50/200 + VIX（:217-259），
+  `spy_change_pct` 被采集（:152,:310）但**评分零消费** → 「全市场高开」确非现有 regime 输入，**D 不重复**；
+  但 regime 在盘前生成（TTL 缓存 :77-79）而全市场高开 09:30 后才可知，落地需新增盘中复评环并
+  触碰现役 `position_multiplier` 路径（`pipeline.py:1667`），且 LEDGER G3（:210）明记 regime 分类器自身 IC 无人测。
+
+## 四个预判分歧点的裁决
+
+1. **chg 轴是否携带信息** → 判给反方（见 C2/C3）。提出方在 L298-302 预留的
+   「这个反驳如果成立，提出方接受」条件已满足：310 行 IC 实跑完成，BUY 侧 rho=+0.151 显著、
+   C 命中集指令口径 fwd +4.90% vs 阈下 +1.60%。轴有信息，**C 用它做了反方向的事**。
+2. **轴错还是阈值错** → 两者都不是（见 C4）。审查方「轴和阈值都答错了题」获支持；
+   提出方「阈值从 3% 调到 6%/10% 改变不了非单调结构」被 IC 部分反驳
+   （指令口径单调性存在，只是方向相反；实盘非单调由延伸/滑点与单笔过夜制造）。
+3. **C 是否已被 D2' 取代** → **绕开而非裁决**。三方一致同意提出方的自我退让：
+   不能用未裁决的影子论证另一影子该退役（D2' forward 实测 13，仍 <20，判据未到点）。
+   但 C 退役的依据独立成立（C2/C4/C5），与 D2' 无关 → 该分歧点对决策不再关键。
+4. **双影子并行是否构成真实裁决风险** → 判给提出方，且实测比正文描述更重（见 C6/C9）。
+   反方「矛盾结论本身是有价值信息」部分成立：矛盾确实产出了分母 bug 这一发现，
+   但代价是 ban-shadow 攒样与 A 的对照证据在修复前**不可用**。
+
+## Q1–Q5 的第二方回答
+
+- **Q1 命名与语义不符：成立。** `chg=(snapshot.last_price − snapshot.prev_close)/prev_close×100`，
+  窗 09:35–09:59 属常规时段（`premarket_invalidation.py:97-124`），不是盘前价。
+  立项记录仓库内**无**（8/12 复盘仅「首跑 9 只 0 作废」；「9/8 pre_price 蒸发实锤」未在仓库找到，
+  可能在会话日志）→ 标【证据不足】。但机制性理由已由 `market_data_router.py:509-534` 注释给出：
+  快照 `prev_close_price` 在**盘前窗 62% 返回两天前收盘** → **评估窗不可前移到盘前**，
+  否则 A/C 分母直接命中该缺陷。若将来改窗（C_v2 或 A 重测），这是硬约束。
+- **Q2 证据源存在但不可复现，错相位确认。** 「≥10:00 逆势 LONG +3.21 vs 顺势 −12.22」
+  确在 `DEB-20260808-signal-source-strategy.md` L246/494/521（Qoder 8/8 复算），
+  但仅一行引用、无口径存档 → 原数字【不可复现】。19/22 在 10:00 前入场 ✓。
+  当前数据近似重算**方向相反**：8/11–9/10、LONG ≥10:00 入场，顺势（chg>0）n=20 均 **−$1.18/笔**
+  vs 逆势 n=19 均 **−$12.89/笔**（chg>+3% 子集 n=3 均 −$34.88）；原始窗口 8/4–8/8 的 ≥10:00 LONG 现存仅 n=4。
+  → C 的证据源**不能**用作支持 09:35 快照口径的依据。
+- **Q3 确认小数**（E5）：`atr_pct` 量纲为小数，实证2 第三行须 ÷100，方向不变。
+- **Q4 同意合并为单一证据源，但顺序必须是「先修分母 + 先登记，再谈合并裁决」。**
+  台账互引缺失确认（LEDGER 仅 L117 结算器条目；ban-shadow 零条目、不在 shadow_registry）。
+  样本重叠：A 命中仅 1 行（DDOG 9/3 inst2172，A 侧 +3.27 / ban 侧 +3.44，同判「拦」，覆盖率 1/1）；
+  矛盾结论已在 BIDU 9/8 真实发生（C6）。
+- **Q5 不建 C_v2，做减法。** 追高侧责任链已有四道 anchor 轴硬门：
+  `extreme_gap` 8%（`pipeline.py:5576-5607`，逆方向额外永久作废）、thesis 漂移 5%（:5641-5649）、
+  `chase_cap`（:4250-4382，9/5 转正、fail-close）、entry band（:5362-5452，widen 上限 8% = extreme_gap 线）。
+  C_v2 会成第五道且踩 SSOT。`extreme_gap` 的 8% 是否收紧属**现役硬门变更**，
+  本辩论权限外，需另立预注册。
+
+## 辩论期间发现的新事实（超出原议题，需另立条目跟踪）
+
+- **N1 push 缓存昨收跨日不更新**（C6）：影响所有 `ctx["change_percent"]` 消费者，
+  含 ban-shadow 至 10/31 预注册死线的攒样有效性。**修复前该死线攒的是废样**，
+  须暂停计入或标注污染期。
+- **N2 ban-shadow 传感器坏死**（C9）：5 行、零登记、direction 硬编码、无 decision_id、
+  inst_id join 脏。修复成本未评估。
+- **N3 测量面冗余无「意图唯一性」守卫**（C9）：三处可执行落点已定位 ——
+  `shadow_registry.py:46`（ShadowItem 增 `intent`+`cross_ref`，与 `check_mounting` :1129 同层）、
+  `settle_premarket_invalidation.py:112-120`（READY_TO_ADJUDICATE 强制 conflict_check，缺则降级）、
+  `daily_invariant_check.py`（分母哨兵：两 jsonl 按 (symbol,date) join，|Δchg|>2pp 即 violation，
+  BIDU 案立刻可报）。
+- **N4 过夜跳空单笔风险**（C4）：chg>10% 桶净负全部来自 1 笔 `OVERNIGHT_GAP_STOP`。
+  属退出/持仓层，本辩论权限外（正文边界已声明不动退出参数）。
+
+## 本轮实跑的复现入口
+
+```bash
+cd /opt/ftseek/FTSeek-US
+# C2 310 行 IC（join key: shadow.inst_id → playbook_instructions.id；fwd 列 fwd_return_t1_adj）
+#    分层：整体 / BUY / SELL_SHORT / executed / 未executed；chg 五分位 + 阈值对照
+# C6 分母三路径对照
+sed -n '509,534p' app/data/market_data_router.py          # RFC-068 prev_close 日K自算注入
+grep '"US.BIDU"' data/entry_timing_shadow.jsonl            # change_percent/volume 冻结实锤
+grep '"US.SMTC"' data/premarket_invalidation_shadow.jsonl | grep 2026-08-26   # 干净侧真值 127.52
+# C8 禁触窗变更史（只读）
+git log -S entry_open_blackout_hhmm --oneline              # 1817eec7 → ebdb7069 → 1d2b909d
+sed -n '1126,1127p' config/unified_config.yaml             # 当前值 0935
+# C4 过夜/日内切分（主持人补跑）
+#   SELECT entry_time, exit_time, exit_reason, realized_pnl FROM trade_records
+#   WHERE decision_id IN (C 命中 ∧ chg_pct>=10) → 8 笔：GAP 唯一 overnight=True
+# C7 B 门线上判定样本
+grep -h B_long_knife data/shadow/exec_gate_audit.jsonl | head -3   # TECK 9/10 chg 逐轮演化
+```

@@ -26,6 +26,8 @@ bar峰<成交价 / 负MFE / 时间乱序 / 审计桶加总≠skips), 但此前�
   W4 except 块内 logger.debug 棘轮 (失败被 LOG_LEVEL=INFO 吞掉; DEB-20260910 §8.2, 2026-09-10)
   W5 裸名 logger 棘轮 (无点号 ⇒ 按子系统设级/过滤覆盖不到; DEB-20260910 §5, 2026-09-10)
   W6 except 块内告警无 exc_info 棘轮 (有告警无栈 ⇒ 根因靠猜; DEB-20260910 §8.2, 2026-09-10)
+  W7 昨收分母哨兵: 两影子 jsonl 同标的同窗 chg 差>2pp ⇒ 昨收分母口径分叉
+     (DEB-20260911 共识 N1/N3, BIDU 2026-09-08 实锤 11.72pp; 基线棘轮锁存量, 新增才告警)
   豁免: data_quality 前缀命中 duplicate/outlier/invalid/void/excluded 的行 (写入方
         声明"非真实了结", 如 id=1327 duplicate_external_close 故意留 NULL 使净额求和
         自动排除) 不告; 数量落 JSON (settled_exempt_marked) 防豁免面无声扩大。
@@ -664,6 +666,152 @@ def _check_log_hygiene(rec) -> dict:
     return out
 
 
+# ── W7 昨收分母哨兵 (2026-09-11, DEB-20260911 共识 N1/N3, 用户裁「按建议执行」) ──
+#    病灶 (BIDU 2026-09-08 实锤, DEB C6): 同一标的同一时刻, 两条取数路径对「chg vs 昨收」
+#    给出分叉读数 — premarket_invalidation 走 futu get_market_snapshot 原始 prev_close_price
+#    (干净侧, SMTC 8/26 真值对照已证), ctx 走 get_quote push 缓存 prev_close (陈旧侧, 9/8 BIDU
+#    快照 -7.65% vs ctx +4.07%, 7 秒内差 11.72pp 且 change_percent 全日冻结) ⇒ 所有
+#    ctx["change_percent"] 消费者 (short_chase_ban_shadow / entry_timing_shadow / 记分牌)
+#    当日读数全部不可信, 但此前无守卫盯「分母口径」维度 — 两个影子各自零违反 ≠ 口径一致。
+#    机制: 两影子 jsonl 按 inst_id (缺失退 (symbol,date)) join, 可比窗 ±10min 内取最小
+#    |Δchg| (两读数最接近的时刻才是同一次测量; 窗外行含日内价格漂移, 不可比不判)。
+#    纪律 (照 W2/W456 棘轮形态):
+#      |Δchg|>2pp 基线外新增 → 当晚 W7_chg_denominator_divergence (损失封顶当天);
+#      基线内存量 (BIDU 9/8 等 90 例) → silenced_known 计数, 不刷不可动作噪声 (分母修复前排期中);
+#      愈合 → healed 列出提示人工收缩基线 (棘轮只降不升, 守卫绝不自动改写);
+#      影子档缺失 = 部署形态差异 → skipped_no_shadow 静默 (与 W1 skipped_old_schema 同纪律);
+#      坏行跳过计数, 整档不可读 → W7_detector_error ("零违反"与"守卫崩了"必须可区分, 8/28 D1/D2 同课)。
+#    豁免通道: data/chg_denominator_baseline.json 的 divergent 追加键 + refs 裁决出处
+#    (改基线 = 改判据, 须先落档 ADR/DEB — 与 config_freeze / field_cardinality 同纪律)。
+#    回滚: 删本段 + main() 内两行接线 + 基线文件; 零生产代码依赖。
+_W7_THRESHOLD_PP = 2.0
+_W7_WINDOW_MIN = 10
+_W7_PMI = REPO / "data" / "premarket_invalidation_shadow.jsonl"   # 快照路径 (干净昨收)
+_W7_ETS = REPO / "data" / "entry_timing_shadow.jsonl"             # ctx 路径 (push 缓存昨收)
+_W7_BASELINE = REPO / "data" / "chg_denominator_baseline.json"
+
+
+def _w7_ts(value):
+    """ISO 时间戳 → aware datetime; 不可解析/naive → None (该行不可比, 跳过但不灭灯)。"""
+    from datetime import datetime
+    try:
+        t = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    return t if t.tzinfo is not None else None
+
+
+def _load_jsonl_quiet(path: Path) -> tuple:
+    """读 jsonl: (好行列表, 坏行数)。坏行跳过计数 — 单行损坏不灭整个哨兵。"""
+    rows, bad = [], 0
+    for ln in (path.read_text(encoding="utf-8") or "").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rows.append(json.loads(ln))
+        except Exception:
+            bad += 1
+    return rows, bad
+
+
+def _check_chg_denominator(rec) -> dict:
+    """W7: 昨收分母哨兵 — 两条取数路径的 chg 读数分叉即测量面口径分裂。全程只读 (除首跑建基线)。"""
+    info = {"threshold_pp": _W7_THRESHOLD_PP, "window_min": _W7_WINDOW_MIN}
+    try:
+        if not (_W7_PMI.exists() and _W7_ETS.exists()):
+            info["status"] = "skipped_no_shadow"
+            return info
+        pmi_rows, pmi_bad = _load_jsonl_quiet(_W7_PMI)
+        ets_rows, ets_bad = _load_jsonl_quiet(_W7_ETS)
+        info["bad_lines"] = {"pmi": pmi_bad, "ets": ets_bad}
+        # 整档坏 = 哨兵失明面 100%, 不得读作"零分叉" (单行坏只计数)
+        for label, rows, bad in (("pmi", pmi_rows, pmi_bad), ("ets", ets_rows, ets_bad)):
+            if bad and not rows:
+                rec("W7_detector_error", "-", label,
+                    f"{_W7_ETS.name if label == 'ets' else _W7_PMI.name} 全部 {bad} 行不可解析"
+                    f" → 昨收分母哨兵失明, 本次'零违反'不可信")
+                info["status"] = "detector_error"
+                return info
+        # ets 双索引: inst_id 精确 (指令表唯一键) + (symbol,date) 兜底 (供 pmi 侧无 inst_id 的行)
+        idx_inst, idx_sym = {}, {}
+        for r in ets_rows:
+            cp = (r.get("features") or {}).get("change_percent")
+            if cp is None:
+                continue
+            t = _w7_ts(r.get("ts"))
+            if t is None:
+                continue
+            date = str(r.get("ts"))[:10]
+            idx_sym.setdefault((str(r.get("symbol") or ""), date), []).append((t, float(cp)))
+            if r.get("inst_id") is not None:
+                idx_inst.setdefault((r["inst_id"], date), []).append((t, float(cp)))
+        divergent, paired, unpaired = {}, 0, 0
+        for r in pmi_rows:
+            chg = r.get("chg_pct")
+            if chg is None:
+                continue
+            t0 = _w7_ts(r.get("ts"))
+            date = str(r.get("date") or str(r.get("ts"))[:10])
+            if t0 is None:
+                unpaired += 1
+                continue
+            if r.get("inst_id") is not None:
+                cands = idx_inst.get((r["inst_id"], date), [])
+            else:
+                cands = idx_sym.get((str(r.get("symbol") or ""), date), [])
+            # 可比窗 ±10min: 触发评估与 09:35 快照的时差; 窗外行含日内价格漂移 → 不可比不判。
+            # 窗内取最小 |Δchg|: 分母若一致, 最接近时刻的两次读数必 ≈0; 分母若分叉, 全日冻结必全发散。
+            deltas = [abs(cp - float(chg)) for t, cp in cands
+                      if abs((t - t0).total_seconds()) <= _W7_WINDOW_MIN * 60]
+            if not deltas:
+                unpaired += 1
+                continue
+            paired += 1
+            dmin = min(deltas)
+            if dmin > _W7_THRESHOLD_PP:
+                inst = r.get("inst_id")
+                vk = f"{date} {r.get('symbol')}#{inst if inst is not None else 'noinst'}"
+                if dmin > divergent.get(vk, -1.0):
+                    divergent[vk] = dmin
+        keys = sorted(divergent)
+        info.update({"paired": paired, "unpaired": unpaired,
+                     "divergent_n": len(keys), "divergent": keys})
+        if not _W7_BASELINE.exists():
+            _W7_BASELINE.write_text(json.dumps({
+                "divergent": keys,
+                "established_at": now_et().isoformat(timespec="seconds"),
+                "note": ("昨收分母哨兵基线 (DEB-20260911 共识 N1/N3, W2 同款棘轮纪律)。"
+                         "divergent = 已知分叉存量 (date symbol#inst_id), 判据只用它; "
+                         "refs = 诊断样本。只降不升: 分叉愈合后由人工收缩本文件, 守卫绝不自动改写。"
+                         "改 divergent = 改判据, 须先落档 ADR/DEB 并在 refs 写裁决出处。"
+                         "判据: |Δchg|>2pp, 可比窗 ±10min 窗内取最小差。"),
+                "refs": {"2026-09-08 US.BIDU#2353": (
+                    "DEB-20260911 C6: push 缓存昨收跨日不更新 (pmi 快照 -7.65% vs ctx "
+                    "+4.07%, 7 秒内差 11.72pp, change_percent 全日冻结) — 立档实锤")},
+            }, ensure_ascii=False, indent=1), encoding="utf-8")
+            info["status"] = "baseline_established"
+            return info
+        baseline = json.loads(_W7_BASELINE.read_text(encoding="utf-8"))
+        known = set(baseline.get("divergent") or [])
+        new = [k for k in keys if k not in known]
+        info["silenced_known"] = len([k for k in keys if k in known])
+        info["healed"] = sorted(known - set(keys))
+        for k in new:
+            rec("W7_chg_denominator_divergence", "-", k,
+                f"两影子同标的同窗 chg 差 {divergent[k]:.2f}pp > {_W7_THRESHOLD_PP}pp "
+                f"(pmi 快照昨收 vs ctx push 缓存昨收) → 昨收分母口径分叉, 该日所有 "
+                f"ctx[change_percent] 消费者读数不可信; 已知存量登记 {_W7_BASELINE.name} "
+                f"(改基线=改判据, 须先落档 DEB)")
+        info["status"] = "drift" if new else "ok"
+        return info
+    except Exception as e:
+        rec("W7_detector_error", "-", type(e).__name__,
+            f"W7 分母哨兵自身异常: {e} → 昨收口径守卫失明, 本次'零违反'不可信")
+        info["status"] = "detector_error"
+        return info
+
+
 def _col(row, name, default=None):
     """ sqlite3.Row 取不存在的列会 IndexError — 旧库/测试夹具列集小于生产库, 缺列按 default 处理。"""
     try:
@@ -955,6 +1103,9 @@ def main(push_enabled: bool = True) -> int:
     # ── W4/W5/W6 日志卫生棘轮 (2026-09-10, DEB-20260910 §8.2/§5): 基线外新增当天告警 ──
     log_hygiene = _check_log_hygiene(rec)
 
+    # ── W7 昨收分母哨兵 (2026-09-11, DEB-20260911 共识 N1/N3): 分母口径分叉当天告警 ──
+    chg_denominator = _check_chg_denominator(rec)
+
     # ── W1_* 关键违反直推: **必须在覆写 OUT 之前** (防刷屏判据读的是上一轮 OUT 里的
     #    w1_direct_push 状态; 先覆写就永远读到本轮自己 ⇒ 首次告警即被自我抑制)。──
     if push_enabled:
@@ -972,6 +1123,7 @@ def main(push_enabled: bool = True) -> int:
         "field_cardinality": field_cardinality,
         "env_demix": env_demix,
         "log_hygiene": log_hygiene,           # W4 debug吞异常 / W5 裸名logger / W6 无栈告警
+        "chg_denominator": chg_denominator,   # W7 两影子昨收分母口径分叉 (pmi 快照 vs ctx 缓存)
         "w1_direct_push": w1_push,            # W1 事件型直推回执 (DEB-20260909 §7.7⑤)
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)

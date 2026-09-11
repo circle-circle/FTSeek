@@ -24,6 +24,18 @@
     任一不满足 → KEEP_SAMPLING。B 规则额外注记: 其硬门已在线 (执行时刻口径),
     本判据针对的是"盘前口径收紧/放宽执行时刻口径"的增量, 裁决时须对照 RFC-068 勘误节。
 
+退役闸 (2026-09-11 DEB-20260911 两轮多模型辩论, 用户裁「按建议执行」):
+  A_short_chase / C_long_chase 已裁退役 (昨收轴追高/追空侧; 采集侧同日停采,
+  见 premarket_invalidation.py _RULES 注)。历史行仍照常结算呈报 — 退役=停采集+
+  禁转正, 不删数据不抹读数 — 但裁决恒为 RETIRED_NO_PROMOTION, 任何后续读数
+  不得作为转正依据。
+
+转正前冲突核对 (DEB-20260911 Q4, 防双影子双转正):
+  READY_TO_ADJUDICATE 前置 _conflict_check: 相关组件须在注册表
+  (app/playbook/shadow_registry.py) 或台账 (docs/CONTROL-LOOP-LEDGER.md)
+  可互引; 注册表/台账不可读或任一相关组件未互引 → 降级 KEEP_SAMPLING 并
+  stderr 留痕 (宁可不转正, 不可带病转正)。
+
 挂载: crontab 2 6 * * 2-6 (D2' 58 5 结算后同班; 本器只依赖 trade_records 已平仓行, 不依赖 fwd 回填)。
 产物: data/premarket_invalidation_report_latest.json (atomic write)。
 
@@ -46,6 +58,17 @@ OUT = ROOT / "data" / "premarket_invalidation_report_latest.json"
 MIN_N = 20          # 预注册: 每规则 executed 样本下限
 MAX_MISKILL = 0.40  # 预注册: 误杀率上限
 RULES = ("A_short_chase", "B_long_knife", "C_long_chase")
+
+# 2026-09-11 DEB-20260911 裁决 (用户裁「按建议执行」): 昨收轴追高/追空侧退役。
+# 历史行仍照常结算呈报 (退役=停采集+禁转正, 不删数据不抹读数), 裁决恒
+# RETIRED_NO_PROMOTION。回滚=退役须另开辩论, 不得仅删本元组。
+RETIRED_RULES = ("A_short_chase", "C_long_chase")
+
+# 转正前冲突核对 (DEB-20260911 Q4): 规则 → 转正前必须在注册表或台账可互引的
+# 相关组件。A/C 已退役永不达此关, 列 B 备将来; 新规则入会须先登记此表。
+_CONFLICT_REFS = {
+    "B_long_knife": ("RFC-068",),  # 执行时刻口径硬门已在线, 转正裁决须对照勘误节
+}
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -108,17 +131,53 @@ def _settle(flags: list, conn: sqlite3.Connection, roll_since: str) -> dict:
     return by_rule
 
 
-def _verdict(a: dict) -> str:
-    """预注册判据: 全窗 ∧ 滚动20日 同向, 否则 KEEP_SAMPLING."""
+def _conflict_check(rule: str):
+    """转正前冲突核对 (DEB-20260911 Q4). 返回 (ok, detail).
+
+    注册表/台账不可读, 或 _CONFLICT_REFS 声明的相关组件未在两者任一互引
+    → (False, detail), 调用方降级 KEEP_SAMPLING 并 stderr 留痕。
+    """
+    refs = _CONFLICT_REFS.get(rule, ())
+    if not refs:
+        return True, "无声明的相关组件"
+    try:
+        corpus = (ROOT / "app" / "playbook" / "shadow_registry.py").read_text(
+            encoding="utf-8")
+    except Exception as e:
+        return False, f"注册表不可读: {e}"
+    try:
+        corpus += "\n" + (ROOT / "docs" / "CONTROL-LOOP-LEDGER.md").read_text(
+            encoding="utf-8")
+    except Exception as e:
+        return False, f"台账不可读: {e}"
+    missing = [r for r in refs if r not in corpus]
+    if missing:
+        return False, f"相关组件未互引: {missing}"
+    return True, f"互引齐: {list(refs)}"
+
+
+def _verdict(rule: str, a: dict, conflict=None) -> str:
+    """裁决顺序: 退役闸 → 预注册四关 (全窗 ∧ 滚动20日同向) → 转正前冲突核对.
+
+    conflict: 调用方预算好的 (ok, detail) — 供 main() 一次计算两处复用 (裁决 + 报告留痕);
+    缺省则本函数自行核对 (单测两参调用形态)。
+    """
+    if rule in RETIRED_RULES:
+        return "RETIRED_NO_PROMOTION"
     if a["executed"] < MIN_N:
         return "KEEP_SAMPLING"
     miskill = a["wins"] / a["executed"]
     full_ok = a["net"] < 0 and miskill <= MAX_MISKILL
     roll_ok = (a["roll_executed"] >= 5 and a["roll_net"] < 0
                and (a["roll_wins"] / a["roll_executed"]) <= MAX_MISKILL)
-    if full_ok and roll_ok:
-        return "READY_TO_ADJUDICATE"
-    return "KEEP_SAMPLING"
+    if not (full_ok and roll_ok):
+        return "KEEP_SAMPLING"
+    ok, detail = conflict if conflict is not None else _conflict_check(rule)
+    if not ok:
+        print(f"[settle_pmi] conflict_check 降级: {rule} READY_TO_ADJUDICATE "
+              f"→ KEEP_SAMPLING ({detail})", file=sys.stderr)
+        return "KEEP_SAMPLING"
+    return "READY_TO_ADJUDICATE"
 
 
 def main() -> int:
@@ -146,11 +205,16 @@ def main() -> int:
     for k in RULES:
         a = by_rule[k]
         miskill = (a["wins"] / a["executed"]) if a["executed"] else None
+        # 冲突核对一次算两处用 (裁决 + 报告留痕): 降级必须在产物里可审计, 否则
+        # "conflict_check 挡下"与"四关没过"在 latest.json 里长得一模一样。
+        cc = None if k in RETIRED_RULES else _conflict_check(k)
         report["rules"][k] = {
             **a,
             "ban_value_usd": round(-a["net"], 2),
             "miskill_rate": round(miskill, 3) if miskill is not None else None,
-            "verdict": _verdict(a),
+            "conflict_check": ({"ok": cc[0], "detail": cc[1],
+                                "refs": list(_CONFLICT_REFS.get(k, ()))} if cc else None),
+            "verdict": _verdict(k, a, cc),
         }
     _atomic_write(OUT, json.dumps(report, ensure_ascii=False, indent=1))
 

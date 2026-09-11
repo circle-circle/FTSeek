@@ -65,6 +65,15 @@ class ShadowItem:
     # eval 执行方式: False=应有 cron/调度挂载 (挂载核对话语权); True=按需手工/
     # 裁决日触发 (哨兵跳过挂载核对, 2026-09-01 挂载核对哨兵引入)
     eval_on_demand: bool = False
+    # 意图归组 + 互引 (2026-09-11, DEB-20260911 共识 C9/N3, 用户裁「按建议执行」):
+    #   立起理由 — A_short_chase (盘前快照口径) 与 short_chase_ban_shadow (触发时刻口径)
+    #   同意图「逆势追空禁入」同阈值 +3%, 双影子独立攒样独立裁决、台账零互引, 且已在真实
+    #   数据给出矛盾结论 (BIDU 9/8 同指令 7 秒内 -7.65% vs +4.07) ⇒ 存在"一个 FAIL 一个
+    #   PASS → 双转正打架"风险。现有守卫只强制**存在性登记**, 无机制强制**意图唯一性**。
+    #   intent: 交易意图标签 (同标签的现役事项必须互指, 见 check_intent_uniqueness);
+    #   cross_ref: 与本源同意图/同假设的其它注册表 id (含已退役/被取代方, 供裁决日对照)。
+    intent: str = ""
+    cross_ref: tuple = ()
 
 
 REGISTRY: list[ShadowItem] = [
@@ -843,12 +852,13 @@ REGISTRY: list[ShadowItem] = [
     # ── 2026-09-11 断头传感器修复批 (用户裁「做」): 两个有写者无读者/无登记的影子补全判分侧 ──
     ShadowItem(
         id="premarket_invalidation",
-        name="盘前失效评估 A/B/C 规则影子 (8/9 立项, 9/11 补结算器)",
+        name="盘前失效评估影子 (B 规则; A/C 2026-09-11 退役)",
         status=ShadowStatus.OBSERVING,
-        description="每日 09:35-09:59 ET 对当日可执行指令按盘前涨跌幅打三规则标记 "
-                    "(A=SHORT盘前涨>3% / B=LONG盘前跌<-5% / C=LONG盘前涨>3%), record-only。"
-                    "8/11-9/10 攒 310 行零结算 (无结算器无台账 = 8/28 静默零产出同款), "
-                    "9/11 补 settle_premarket_invalidation.py 判分侧。",
+        description="每日 09:35-09:59 ET 对当日可执行指令按涨跌幅 (vs snapshot 昨收) 打标, "
+                    "record-only。8/11-9/10 攒 310 行零结算 (无结算器无台账 = 8/28 静默零产出"
+                    "同款), 9/11 补 settle_premarket_invalidation.py 判分侧。同日 DEB-20260911 "
+                    "两轮多模型辩论裁退役 A_short_chase/C_long_chase 采集 (仅存 B_long_knife), "
+                    "历史行不删。",
         data_path="data/premarket_invalidation_shadow.jsonl",
         config_key="playbook.premarket_invalidation_observe",
         min_n=20,
@@ -856,12 +866,72 @@ REGISTRY: list[ShadowItem] = [
                             "executed n>=20 ∧ 禁入价值>0 (executed 净<0) ∧ 误杀率<=40% ∧ "
                             "全窗与滚动20交易日同向 → 提请转正另裁。B 规则注记: 执行时刻口径"
                             "硬门已在线 (RFC-068), 判据针对盘前口径增量。首读 (9/11): "
-                            "C 净-$152 但误杀 68% 超门 / B n=3 不足 / A n=1 — 全部 KEEP_SAMPLING。",
+                            "C 净-$152 但误杀 68% 超门 / B n=3 不足 / A n=1 — 全部 KEEP_SAMPLING。"
+                            "**A/C 已退役 (DEB-20260911): 结算器恒判 RETIRED_NO_PROMOTION, "
+                            "历史行仍结算呈报但永不提请转正。**",
         eval_script="scripts/settle_premarket_invalidation.py",
         created="2026-08-09",
         notes="count_mode=where_nonempty:would_invalidate (flagged 口径, 与结算器分母一致)。"
-              "cron 2 6 * * 2-6。回滚=删 cron 行+删结算器+删本条目 (采集侧 observe 开关独立)。",
+              "cron 2 6 * * 2-6。回滚=删 cron 行+删结算器+删本条目 (采集侧 observe 开关独立)。"
+              "**口径差提示**: 本条 current_n 是 flagged **行数** (9/11 时 33 行 ≥ min_n=20 ⇒ "
+              "周检会报 READY_TO_EVALUATE), 而转正判据是**每规则 executed n≥20** — 通知不可"
+              "直接读成「可裁决」, 以结算器 latest.json 的 per-rule verdict 为准。"
+              "A 的假设「逆势追空差」去向: 并入 short_chase_ban_shadow (触发时刻相位) 单一"
+              "证据源重测, 快照行不得独立转正 (DEB-20260911 C8)。",
         count_mode="where_nonempty:would_invalidate",
+        intent="long_knife_gate",
+        cross_ref=("short_chase_ban_shadow",),
+    ),
+    # ── 2026-09-11 DEB-20260911 P0-2 补登记 (用户裁「按建议执行」): 8/8 起攒样但
+    #    registry/watchdog/台账三处零登记 —「建了没登」第 4 例 (前三例见台账 §2.4 入账提醒)。
+    #    9/11 起本项是「逆势追空禁入」意图的**单一证据源** (A_short_chase 快照规则已退役,
+    #    其假设并入本项, 触发时刻相位 = B 转正先例 RFC-068)。──
+    ShadowItem(
+        id="short_chase_ban_shadow",
+        name="SHORT 逆势追空禁入影子 (触发时刻口径)",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20260808 §8.3 裁定①: 「SHORT 且当日涨>3% 禁入」硬门在 "
+                    "post-blackout(1015) 基线残存效应 −$19.80 被否 → 仅 shadow 记录。"
+                    "写者 pipeline.py:5530-5565 (SHORT 触发评估处, ctx.change_percent > "
+                    "short_chase_ban_pct 落一行, 含 triggered/entry_path)。8/15 禁触窗 "
+                    "1015→0935 (unified_config.yaml:1127, git 1d2b909d) ⇒ 旧否决前提失效, "
+                    "本影子 = 新基线下重测该假设的唯一载体 (2026-09-11 起, DEB-20260911)。",
+        data_path="data/short_chase_ban_shadow.jsonl",
+        config_key="playbook.execution_parameters.short_chase_ban_shadow_enabled",
+        min_n=20,
+        graduation_criteria="预注册 (2026-09-09 用户裁, handoff 9/9 批/REVIEW-20260909 §I-8): "
+                            "n>=20 ∧ 反事实方向一致>=70% → 提案硬门复活 (另立 DEB + 用户裁); "
+                            "**死线 2026-10-31**, 到点不达标 → 裁退役或降纯日志。"
+                            "转正前置 (DEB-20260911 C8): 昨收分母分裂修复落地 + 污染期样本"
+                            "处置已裁, 否则到点裁的是废样。",
+        eval_script=None,
+        created="2026-08-08",
+        verdict_history=[
+            {"date": "2026-08-08", "verdict": "HARD_GATE_REJECTED_OLD_BASELINE",
+             "evidence": "DEB-20260808 §8.3: post-blackout(1015) 基线残存效应 −$19.80 "
+                         "(8月逆势亏单全在9点档, 被禁触窗架空) → 不落硬门, 仅 shadow 记录"},
+            {"date": "2026-09-11", "verdict": "SSOT_FOR_SHORT_CHASE_INTENT",
+             "evidence": "DEB-20260911: 禁触窗 8/15 已改 0935 ⇒ 旧否决前提失效, 假设在新基线"
+                         "下未检验; A_short_chase 快照规则退役, 假设并入本项作单一证据源 "
+                         "(A 的 310 行 IC: SELL_SHORT rho=-0.378 p≈0.005 方向成立, 但载体"
+                         "相位须为触发时刻); A 快照行**不得独立转正**"}],
+        notes="**污染期标注 (DEB-20260911 P0-2)**: chg 参照 ctx.change_percent (futu_quote, "
+              "market_data_router.py:432), 与 premarket_invalidation 快照侧 get_snapshot 的 "
+              "prev_close 分母已实锤分裂 — BIDU 9/8 同指令 7 秒内 −7.65% vs +4.07% (隐含分母 "
+              "99.47 vs ≈88.26)。分母修复落地前的样本为污染期, 是否计入 10/31 预注册 n 由"
+              "裁决日显式裁, 不得默认全计。join 键警示: inst_id 有脏数据 (NTES 8/24 "
+              "inst_id=1535 同日 DA BUY / reentry SHORT 双方向), 结算须 symbol+date+direction "
+              "复核, 不能单靠 inst_id。**采集濒死实证 (9/11 复核)**: 8/24-9/10 仅 5 行 "
+              "(NTES 8/24、MSTR 9/1、DDOG 9/3、BIDU 9/8 ×2) — 按此节奏 10/31 死线大概率裁 "
+              "KILLED 而非达标; 且行内无 date 字段 (日期只能从 ts 截)、direction 在写者处硬编码 "
+              "'SHORT' (非取自指令), 这两项裁决前须先补。eval_on_demand=True: 无独立结算器, "
+              "裁决日 (或 10/31 死线) 手工结算; n 计数锚 = jsonl 行数 (周检 refresh_counts 读)。"
+              "**不入 data_freshness_watchdog (9/11 裁)**: 本影子写盘极稀 (18 天 5 行), 小时级"
+              "新鲜度阈值会永久误报; 断流由 check_mounting 的 14 天静默哨兵接管。台账行另批补 "
+              "(任务 #9)。回滚 = short_chase_ban_shadow_enabled 置 false。",
+        eval_on_demand=True,
+        intent="short_chase_ban",
+        cross_ref=("premarket_invalidation",),
     ),
     ShadowItem(
         id="ue_tier_gate",
@@ -1186,4 +1256,71 @@ def check_mounting() -> list[str]:
             warnings.append(
                 f"🪝 产出超龄 [{s.id}] {s.name}: {p.name} 已 {age} 天未更新 "
                 f"(阈值 {_STALE_DAYS} 天, 疑似采集断流)")
+    return warnings
+
+
+def check_intent_uniqueness() -> list[str]:
+    """意图唯一性守卫 (2026-09-11, DEB-20260911 P0-3①, 用户裁「按建议执行」).
+
+    立起理由: A_short_chase (09:35 快照口径) 与 short_chase_ban_shadow (触发时刻口径)
+    同意图「逆势追空禁入」同阈值 +3%, 独立攒样独立裁决、台账零互引, 且已在真实数据给出
+    矛盾读数 (BIDU 9/8 同指令 7 秒内 −7.65% vs +4.07%, 连 prev_close 分母都不同) ⇒
+    「一个 FAIL 一个 PASS → 双转正打架」不是假想风险。现有守卫 (test_control_loop_ledger /
+    check_mounting / D1 watchdog) 只强制**存在性登记**, 本守卫补**意图唯一性**层。
+
+    判定口径:
+      ① 同一非空 intent 的现役事项 (OBSERVING/READY_TO_EVALUATE) ≥2 时, 每项的 cross_ref
+         必须互指其余项 id — 缺指 = 告警 (裁决前须先裁归属/归并, 防双转正);
+      ② cross_ref 引用的 id 必须存在于 REGISTRY (任意状态, 含 KILLED/SUPERSEDED 留痕项),
+         悬空引用 = 告警;
+      ③ 互引必须双向: 目标若也现役却不回指 = 告警。补①的盲区 — 本对实际意图标签不同
+         (long_knife_gate vs short_chase_ban, A 退役后假设归并而非同标签), ①不触发,
+         单边引用只在一条周检里可见;
+      ④ REGISTRY 内 id 必须唯一: 重复 id 会让 by_id 静默吞掉一条、summary 重复出两行
+         (2026-09-11 补登记时实际发生过一次), 且守卫自身读不到被吞的那条;
+      ⑤ 守卫自身异常必须显性产出 *_detector_error (元环规则 5: 「零违反」与「守卫崩了」
+         必须可区分, 严禁 except:pass)。
+    返回告警行列表 (供周检推送), 空列表 = 全部通过。
+    """
+    warnings = []
+    try:
+        live_statuses = (ShadowStatus.OBSERVING, ShadowStatus.READY_TO_EVALUATE)
+        by_id: dict = {}
+        for s in REGISTRY:
+            if s.id in by_id:
+                warnings.append(
+                    f"🧭 注册表 id 重复 [{s.id}]: 同名条目 {len([x for x in REGISTRY if x.id == s.id])} "
+                    f"条 — 互引/计数会静默只认一条, summary 会重复出行, 必须合并或改名")
+            by_id.setdefault(s.id, s)
+        known = set(by_id)
+        by_intent: dict = {}
+        for s in REGISTRY:
+            if s.status in live_statuses and s.intent:
+                by_intent.setdefault(s.intent, []).append(s)
+        for intent, items in sorted(by_intent.items()):
+            if len(items) < 2:
+                continue
+            for s in items:
+                peers = {o.id for o in items if o.id != s.id}
+                missing = peers - set(s.cross_ref or ())
+                if missing:
+                    warnings.append(
+                        f"🧭 意图不唯一 [{s.id}] {s.name}: 与 {sorted(missing)} 共享意图 "
+                        f"'{intent}' 但 cross_ref 未互指 — 同意图双影子独立裁决有双转正风险, "
+                        f"裁决日前须先裁归属/归并 (DEB-20260911 P0-3①)")
+        for s in REGISTRY:
+            for ref in (s.cross_ref or ()):
+                if ref not in known:
+                    warnings.append(
+                        f"🧭 悬空互引 [{s.id}]: cross_ref '{ref}' 不在注册表 — "
+                        f"互引必须指向已登记事项 (含终态留痕项)")
+                    continue
+                t = by_id[ref]
+                if t.status in live_statuses and s.id not in (t.cross_ref or ()):
+                    warnings.append(
+                        f"🧭 单向互引 [{s.id}] → [{ref}]: 目标现役却未回指 — 同意图/同假设的"
+                        f"两条必须在彼此周检里都可见 (指向终态留痕项不要求回指)")
+    except Exception as e:
+        warnings.append(
+            f"🧭 intent_uniqueness_detector_error: 守卫自身异常 (≠零违反, 元环规则5): {e}")
     return warnings

@@ -1,32 +1,35 @@
-"""premarket_invalidation.evaluate_rules 单测 (2026-08-09).
+"""premarket_invalidation.evaluate_rules 单测 (2026-08-09; 2026-09-11 改版).
 
 枚举校准 (2026-08-09 DB 实查): playbook_instructions.direction = BUY/SELL_SHORT/SKIP;
 "SHORT" 仅存在于 trade_records。05b50d8f/af15897f 的"SHORT 化"系误改, 本文件恢复
 正确枚举并加归一化回归断言。
+
+2026-09-11 (DEB-20260911 两轮多模型辩论, 用户裁「按建议执行」):
+A_short_chase / C_long_chase 采集退役 (昨收轴追高/追空侧; 理由见
+premarket_invalidation.py _RULES 注), _RULES 仅存 B_long_knife。本文件相应
+改为退役钉: A/C 对任何输入不得命中 (防有人把规则行加回来而不开新辩论);
+B 的 SSOT 判定钉不动 (RFC-068 硬门复用本函数)。
+退役回滚 = 另开辩论, 不是改本文件。
 """
 from app.playbook.premarket_invalidation import evaluate_rules
 
 
-def test_short_chase_rule_A_canonical_enum():
-    # 指令表实际枚举 SELL_SHORT (DB: 122 行) — 必须命中
-    assert evaluate_rules("SELL_SHORT", 3.5) == ["A_short_chase"]
-    assert evaluate_rules("SELL_SHORT", 3.0) == []      # 边界不含
-    assert evaluate_rules("SELL_SHORT", -4.0) == []     # 顺向不打标
+def test_retired_rule_A_never_fires():
+    # DEB-20260911: A 已退役 — 旧命中输入现在必须零命中 (SELL_SHORT 枚举与 SHORT 别名同判)
+    for d in ("SELL_SHORT", "SHORT", "sell_short"):
+        assert evaluate_rules(d, 3.5) == [], f"{d} +3.5% 不应命中已退役的 A"
+        assert evaluate_rules(d, 99.0) == []
 
 
-def test_short_chase_rule_A_alias_normalized():
-    # trade_records 口径 SHORT 经归一化后同样命中 (防枚举漂移)
-    assert evaluate_rules("SHORT", 3.5) == ["A_short_chase"]
-    assert evaluate_rules("sell_short", 3.5) == ["A_short_chase"]  # 大小写不敏感
+def test_retired_rule_C_never_fires():
+    # DEB-20260911: C 已退役 — 旧命中输入现在必须零命中
+    assert evaluate_rules("BUY", 3.4) == []
+    assert evaluate_rules("BUY", 25.0) == []
 
 
 def test_long_knife_rule_B():
     assert evaluate_rules("BUY", -5.2) == ["B_long_knife"]
     assert evaluate_rules("BUY", -5.0) == []            # 边界不含
-
-
-def test_long_chase_rule_C():
-    assert evaluate_rules("BUY", 3.4) == ["C_long_chase"]
 
 
 def test_pullback_day_not_flagged():
@@ -36,8 +39,8 @@ def test_pullback_day_not_flagged():
 
 
 def test_double_impossible_and_unknown_direction():
-    # BUY 不会命中 SHORT 规则; SKIP 方向永不命中
-    assert evaluate_rules("BUY", 5.0) == ["C_long_chase"]  # 不叠加 A
+    # SKIP 方向永不命中; BUY 顺向大涨在 A/C 退役后零命中
+    assert evaluate_rules("BUY", 5.0) == []
     assert evaluate_rules("SKIP", 9.9) == []
 
 

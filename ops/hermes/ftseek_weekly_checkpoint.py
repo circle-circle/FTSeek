@@ -119,10 +119,12 @@ def check_e2_gate():
 
 def check_shadow_registry():
     """影子注册表汇总 (2026-08-23 接入, 原模块零引用): 各影子攒样进度 + 状态变迁."""
-    code = ("from app.playbook.shadow_registry import refresh_counts, summary, check_mounting; "
+    code = ("from app.playbook.shadow_registry import refresh_counts, summary, check_mounting, "
+            "check_intent_uniqueness; "
             "import json; notifs = refresh_counts(); "
             "print(json.dumps({'notifs': notifs, 'summary': summary(), "
-            "'mounts': check_mounting()}, ensure_ascii=False))")
+            "'mounts': check_mounting(), "
+            "'intents': check_intent_uniqueness()}, ensure_ascii=False))")
     r = subprocess.run([str(REPO / "venv/bin/python"), "-c", code],
                        capture_output=True, text=True, timeout=90,
                        cwd=str(REPO))
@@ -231,6 +233,9 @@ def main():
     else:
         # 挂载核对哨兵 (2026-09-01): 悬空观察/产出断流告警优先于进度汇总
         for m in reg.get("mounts", []):
+            out.append(m)
+        # 意图唯一性哨兵 (2026-09-11, DEB-20260911 P0-3①): 同假设双影子未互指 = 双转正风险
+        for m in reg.get("intents", []):
             out.append(m)
         for n in reg.get("notifs", []):
             out.append(f"🔔 {n}")
