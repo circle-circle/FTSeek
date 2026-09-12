@@ -81,15 +81,28 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="p1_1_vwap_slope",
         name="VWAP 斜率证伪门",
-        status=ShadowStatus.OBSERVING,
-        description="入场前 5min 量加权价逆方向 → 动量反驳。reentry+UE 启用拦截, DA 只记不拦(对比组)。",
+        status=ShadowStatus.GRADUATED,
+        description="入场前 5min 量加权价逆方向 → 动量反驳。全源生产拦截 (reentry+UE 2026-08-23 起, DA 2026-09-12 RFC-082 起)。",
         data_path="data/trigger_miss_telemetry.jsonl (reason=falsification_vwap_slope)",
         config_key="playbook.execution_parameters.falsification_gate_vwap_slope_enabled",
         min_n=30,
         graduation_criteria="reentry+UE 组 n≥30 + 日聚类 t≤-2 + DA 对比组方向一致 → 翻 da_enforce=true",
         eval_script="scripts/falsification_gate_weekly_review.py",
         created="2026-08-23",
-        notes="按源分流: reentry+UE 拦截, DA 对比组记录不拦; E2 n=136 方向极强",
+        last_evaluated="2026-09-12",
+        verdict_history=[
+            {"date": "2026-09-12", "verdict": "GRADUATED_BY_USER_OVERRIDE",
+             "evidence": "RFC-082 用户裁「已过大量收集数据阶段, 该出手出手, 以盈利和降低亏损为目标」— "
+                         "知情推翻预注册判据 (reentry+UE 真被拦 n=2 < 30, t=-1.303 未达 -2)。"
+                         "转正依据: DA 对比组 8/27-9/11 共 13 行 (12 行 join 真实成交), 若当时拦下省 $735; "
+                         "8/28 单日 5 行全中省 $839 (AFRM/RBRK/GAP = 当日 SL_INITIAL+隔夜缺口出血主力); "
+                         "与近4周最大出血点 SL_INITIAL 入场即逆 (18笔 -$3,069, DA占12笔 -$2,298) 同模式; "
+                         "强制源实测拦截 60% (3/5) 为延迟成交 = 门形态偏延迟器, 期望值打折已披露。"
+                         "da_enforce false→true + 重启。回滚: 改回 false + 重启, 本条 revert OBSERVING。"},
+        ],
+        notes="按源分流历史: reentry+UE 拦截 (2026-08-23), DA 对比组记录不拦; E2 n=136 方向极强。"
+              "2026-09-12 起全源拦截; 周检脚本继续按全源计算真被拦组 (DA 行今后进入强制拦截桶, "
+              "对比组读数自然停增 — 判读时以 2026-09-12 为 DA enforce 分界)。",
     ),
     ShadowItem(
         id="p1_3_vol_p50",

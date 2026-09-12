@@ -185,10 +185,13 @@ def main():
     if g.get("error"):
         out.append(f"⚠️ 证伪门周检: {g['error']}")
     else:
+        _extra = ""
+        if g.get("n_da_would_block_pre_enforce"):
+            _extra = f" + DA对比组(9/12前只记不拦) {g['n_da_would_block_pre_enforce']}"
         out.append(
             f"证伪门(VWAP斜率): 遥测拦 {g.get('n_telemetry_blocks', g.get('n_shadow_rows', 0))} = "
             f"真被拦 {g.get('n_true_blocked', 0)} + 延迟成交 "
-            f"{g.get('n_delayed_executed', 0)}")
+            f"{g.get('n_delayed_executed', 0)}{_extra}")
         if g.get("n_with_counterfactual"):
             out.append(
                 f"  被拦组净收益 pooled={g.get('blocked_pooled_mean_net_ret')} | "

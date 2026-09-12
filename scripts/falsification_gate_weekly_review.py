@@ -158,9 +158,17 @@ def main():
     blocked = load_blocked()
     executed_ids = load_executed_inst_ids()
 
-    true_blocked, delayed_exec = [], []
+    true_blocked, delayed_exec, da_would_block = [], [], []
+    # [RFC-082 2026-09-12] da_enforce 翻 true 的分界日: 此前的 DA 行是"只记不拦"
+    #   对比组 (独立桶, 不进被拦组统计); 此后的 DA 行是真拦截, 与 reentry+UE
+    #   同口径进 true_blocked/delayed_exec 分桶。分界日 = config 注释登记日。
+    _DA_ENFORCE_SINCE = "2026-09-12"
     for d in blocked:
-        if d.get("inst_id") in executed_ids:
+        _is_da_cmp = (str(d.get("decision_id") or "").startswith("DA-")
+                      and str(d.get("date") or "") < _DA_ENFORCE_SINCE)
+        if _is_da_cmp:
+            da_would_block.append(d)
+        elif d.get("inst_id") in executed_ids:
             delayed_exec.append(d)
         else:
             true_blocked.append(d)
@@ -244,6 +252,7 @@ def main():
         "source": "trigger_miss_telemetry.jsonl (reason=%s, 逐轮全量, 按 inst_id+date 去重)" % GATE,
         "n_telemetry_blocks": len(blocked),
         "n_delayed_executed": len(delayed_exec),
+        "n_da_would_block_pre_enforce": len(da_would_block),
         "n_true_blocked": len(true_blocked),
         "n_with_counterfactual": n_b,
         "blocked_pooled_mean_net_ret": round(sum(pooled_b) / n_b, 6) if n_b else None,

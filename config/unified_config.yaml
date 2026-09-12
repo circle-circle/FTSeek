@@ -1211,7 +1211,16 @@ playbook:
     #   DA 源额外标 would_block=true 供对比分析。周检照常按全源计算。
     #   翻全源启用判据: reentry+UE 组 n≥30 + 日聚类 t≤-2 + DA 对比组方向一致。
     falsification_gate_vwap_slope_enabled: true
-    falsification_gate_vwap_slope_da_enforce: false   # DA 源: false=只记不拦(对比组), true=拦
+    # [RFC-082 2026-09-12 用户裁"该出手出手,以盈利和降低亏损为目标"] false→true:
+    #   DA 源从"只记不拦(对比组)"翻为生产拦截 — 知情破例转正, 预注册判据
+    #   (reentry+UE n≥30+t≤-2) 未达标 (真被拦 n=2), 用户直接裁决。证据:
+    #   DA 对比组 8/27-9/11 共 13 行 (12 行 join 上真实成交), 若当时拦下省 $735;
+    #   其中 8/28 单日 5 行全中省 $839 (AFRM -308/RBRK -159/GAP -387 = 当日
+    #   SL_INITIAL+隔夜缺口出血主力); 与近4周最大出血点 SL_INITIAL"入场即逆"
+    #   (18笔 -$3,069, 15/18 mfe<0.2%, DA占12笔 -$2,298) 同模式。
+    #   拦截是逐轮的: 逆行斜率消失后下一轮可复触发成交 (强制源实测 3/5 延迟成交)。
+    #   回滚: 改回 false + systemctl restart ftseek-us。
+    falsification_gate_vwap_slope_da_enforce: true
     falsification_gate_vwap_slope_tol: 0.001   # 0.1% — 模块噪声底, 低于此视为无斜率
     #   资金流背离门: record-only 影子, 不拦单. 用户 2026-08-23 裁决 —
     #   该信号回放四关门全不过 (capital_flow_replay_verdict.json: inflow t=-0.48 /
