@@ -677,6 +677,16 @@ REGISTRY: list[ShadowItem] = [
                             "逐事件即判, 不等 n; 回滚线见 DEB-20260903 §十二。",
         eval_script="scripts/penetration_llm_analysis.py",
         created="2026-09-03",
+        last_evaluated="2026-09-13",
+        verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING",
+                         "evidence": "判据实测(B17: n_labeled≥20 ∧ 某假设matched≥8 ∧ precision≥0.7): "
+                                     "n_labeled=42 ✓ 但 hypotheses_scored=[] — LLM 出题环零可判分假设, "
+                                     "故 matched/precision 无实测值。⚠️ latest.json 里的 "
+                                     "graduation_gate={n:20,matched:8,precision:0.7} 是 GRAD_* 常量回显"
+                                     "非实测结果, 不得当达标读 (2026-09-13 实锤)。基线: overall "
+                                     "v_rate_5m=0.976 (active 1.000/passive 0.750) — 几乎全 V 回, "
+                                     "判别器要分出'快跌不回'的少数族, 当前无假设能分。维持攒样。"},
+                        ],
         notes="count_mode=where:type=penetration — 计采集事件数 (每事件 1 行 penetration "
               "+ ≤1 行 outcome, 用 lines 会双倍计数); 判分口径是已回填配对 n_labeled "
               "(analysis 脚本), 比本计数滞后 ≤1 夜。基率诚实披露: 家族 5 案/12 交易日 "
@@ -713,6 +723,16 @@ REGISTRY: list[ShadowItem] = [
                             "→ 开 DEB 裁决禁用/参数放宽; 否则维持。",
         eval_script="scripts/exit_disable_cf_shadow.py",
         created="2026-09-04",
+        last_evaluated="2026-09-13",
+        verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING",
+                         "evidence": "判据实测(每规则 n≥50 ∧ saved中位>0.15% ∧ 持有更优率≥65%): "
+                                     "MFE_STALL_EXIT n=31 **<50** (saved中位+0.331% ✓ / 持有更优 "
+                                     "61.3% **<65%** ✗ 两关不过); DEAD_SIGNAL_EXIT n=30 **<50** "
+                                     "(saved中位+0.213% ✓ / 持有更优 80.0% ✓ 仅 n 不够)。"
+                                     "⇒ 两规则均 n<50, 不可裁。注意 MFE_STALL 持有更优率 61.3% "
+                                     "低于门限且该规则 8/15 已实盘禁用 — 本项对它是事后验证, "
+                                     "攒够 n 后若仍 <65% 应如实记录'禁用决策的反事实支持偏弱'。"},
+                        ],
         notes="首日回补 58 笔 (MFE_STALL 31 / DEAD_SIGNAL 27)。9/4 post_exit_path 真实路径"
               "交叉验证一致: MFE_STALL saved中位+0.331% ≈ post gap 中位+0.32%/均值+0.33%; "
               "DEAD_SIGNAL saved中位+0.217% vs post gap 中位+0.18%/均值+0.34%。"
@@ -780,6 +800,17 @@ REGISTRY: list[ShadowItem] = [
                             "(另立 DEB+用户裁); n>=30 顺延为毕业门槛。",
         eval_script="scripts/intraday_loss_breaker_shadow.py",
         created="2026-09-05",
+        last_evaluated="2026-09-13",
+        verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING_FORWARD_ONLY",
+                         "evidence": "判据实测(B18: 被挡笔期望≤-10 ∧ n≥30): n=194 ✓ 但期望 "
+                                     "**+46.83** ✗ (被挡单净 +$9,084, 132亏/62盈)。"
+                                     "⚠️ 该读数 **191/194 笔来自 backfill**, 而 notes 已记录 "
+                                     "backfill 有前视偏差 (entry 序累加) 判不毕业; forward 样本"
+                                     "仅 **3 笔** (9/8 单日) → 期望符号不可作裁决依据。"
+                                     "根因: eval_script 自 9/5 创建起**从未挂 cron**, forward "
+                                     "永远攒不动。2026-09-13 补挂 28 6 * * 6 (周跑, 全量重建幂等) "
+                                     "+ 悬空告警随之消除。裁决须等 forward n≥30 后重测。"},
+                        ],
         notes="口径: trade_mode=simulate 且 pnl_net NOT NULL, ET 日, exit 事件流 "
               "(tie 时 exit 先结)。持久化=ftseek_us.db 派生表 cb_shadow_daily/"
               "cb_shadow_blocked (全量重建幂等) + JSON 汇总。首日回补即证伪预验证量级 "
@@ -811,7 +842,7 @@ REGISTRY: list[ShadowItem] = [
                             "(防链式 fishing, OKR-2026-09 KR3 明令)。",
         eval_script="scripts/kr3_runup_report.py",
         created="2026-09-02",
-        last_evaluated="2026-09-04",
+        last_evaluated="2026-09-13",
         verdict_history=[{"date": "2026-09-04", "verdict": "NO_ADJUDICATION",
                           "evidence": "首判 (data/shadow/kr3_runup_verdict_latest.json): n_collected=44 / "
                                      "n_eval=41; LONG|blocked n=15 mean +6.19 median +14.88 vs pass "
@@ -819,7 +850,20 @@ REGISTRY: list[ShadowItem] = [
                                      "+50.43/+25.0 → 双方向 DIRECTIONAL (期望与中位均更差)。"
                                      "**未裁决**: would-block 合计 n=23 < 30 (§三.5 样本门未达), 且均值受"
                                      "尾部支配 (SHORT blocked 总亏 -203 全靠 HPE -149/AVGO -60 两笔, "
-                                     "tail_share 104.3%) — 一刀切全拦会误杀追涨多头 (LONG blocked 胜率 73%)。"}],
+                                     "tail_share 104.3%) — 一刀切全拦会误杀追涨多头 (LONG blocked 胜率 73%)。"},
+                         {"date": "2026-09-13", "verdict": "NO_ADJUDICATION",
+                          "evidence": "二判 (n_collected=84/n_eval=74, 未平仓待结算10): "
+                                     "LONG|blocked n=21 **<30** mean +4.27 median +15.12 WR71% vs pass "
+                                     "+15.44/+14.11 WR85% → **TAIL_ONLY** (中位不差, 全靠 worst2=-373 "
+                                     "拖累, tail_share 416%) ⇒ 全拦会误杀多数; "
+                                     "SHORT|blocked n=12 **<30** mean -22.29 median +7.21 vs pass "
+                                     "+59.53/+18.72 → DIRECTIONAL 但样本远不足。"
+                                     "**两腿 would-block 子集均 n<30 ⇒ §三.5 明令不裁决, 延长观察**。"
+                                     "9/4→9/13 变化: LONG 由 DIRECTIONAL 转为 TAIL_ONLY (n 15→21 后"
+                                     "中位翻正), 说明早读数是尾部噪声 — 印证样本门不可绕过。"
+                                     "注: 判据①②③(日聚类t/MDE/OOS)按 RFC-072 §六.3 期末才现写, "
+                                     "本次不出该三值属设计。"},
+                        ],
         notes="计数口径 = jsonl 行数 (trade_id 去重); **min_n=30 数的是 would-block 子集已结算笔数, "
               "不是总行数** ⇒ 注册表 READY 不等于可裁决, 裁决批须按子集 n 判 (2026-09-06 面板实测 "
               "子集 n=23/30)。判分代码 (按日聚类 t / MDE / OOS) 按 RFC-072 §六.3 **不得预先实现** — "
@@ -849,6 +893,22 @@ REGISTRY: list[ShadowItem] = [
                             "∧ 两腿结论同向; 任一不满足则降纯观测。达线只提请用户裁决, 不自动生效。",
         eval_script="scripts/unit_cell_daily_readout.py",
         created="2026-09-09",
+        last_evaluated="2026-09-13",
+        verdict_history=[{"date": "2026-09-13", "verdict": "NO_ADJUDICATION_FAIL_ON_FALSE_KILL",
+                         "evidence": "判据实测(DEB-20260909 §5.2 逐字四关, 报告 "
+                                     "data/reports/unit_cells_2026-09-13.md D1' 小节): "
+                                     "腿「ag≤−3.0 或 ≥+4.0」被拦 n=58(门30)✓ 净−2029.06✓ "
+                                     "误杀率 **50%**✗(门≤40%); 腿「ag≤−3.5 或 ≥+4.0」n=52✓ "
+                                     "净−2010.29✓ 误杀率 **50%**✗; 两腿同向✓。"
+                                     "⇒ **四关三过, 仅误杀率一关不过** ⇒ 未达毕业线, 维持纯观测。"
+                                     "分源: DA 33笔−1485(误杀48%)/UE 18笔−532(56%)/REENTRY 7笔−12(43%) "
+                                     "— 三源误杀率均 >40%, 非单源拖累, 无'只禁某源'的子集捷径。"
+                                     "滚动20日 n=47 净−2035.75 与全历史几乎同值 ⇒ 出血集中近期但"
+                                     "误杀率未改善, regime 漂移不改变结论。"
+                                     "⚠️ 纠错留痕: 9/13 早先分析曾引'误杀76-87%/覆盖率5-14%', 那是按 "
+                                     "mfe<0.05% 死单子集算的**另一口径**, 与本影子注册判据(被拦笔盈利占比)"
+                                     "不可混用; 本行以注册判据口径 50% 为准。"},
+                        ],
         notes="首日读数 (2026-09-09, 全历史 443 行/ag 缺失 99): −3.0腿 被拦 n=54 净−1947.13 "
               "误杀率48%; −3.5腿 n=48 净−1928.36 误杀率48% ⇒ 两腿同向但误杀率超 40% 门, "
               "**未达毕业线维持攒样**。计数口径注意: 注册表 current_n 是共享 jsonl 行数 "
@@ -1023,8 +1083,10 @@ def refresh_counts() -> list[str]:
         if s.status == ShadowStatus.OBSERVING and s.current_n >= s.min_n:
             s.status = ShadowStatus.READY_TO_EVALUATE
             notifications.append(
-                f"🔔 影子 [{s.id}] {s.name} 样本已达 {s.current_n}/{s.min_n} → "
-                f"READY_TO_EVALUATE, 待用户裁决。判据: {s.graduation_criteria}")
+                f"🔔 影子 [{s.id}] {s.name} 样本量已达 {s.current_n}/{s.min_n} → "
+                f"READY_TO_EVALUATE。⚠️ 仅**样本量**达标, 不代表判据通过 — "
+                f"裁决前必须跑 eval_script 实测判据 (READY≠毕业, 2026-09-13 实锤: "
+                f"5 个 READY 影子实测判据 0 个过门)。判据: {s.graduation_criteria}")
     return notifications
 
 

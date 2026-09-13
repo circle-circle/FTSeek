@@ -40,6 +40,67 @@ def check_locks():
     return ok, locks
 
 
+def check_edge_vs_fee():
+    """经济边际读数 (2026-09-13 立, STRATEGY-AUDIT-20260913 §十).
+
+    立起理由: 7-8月亏损的真实机制是**双向挤压** — 毛edge 掉一半 (14.47→6.19bps)
+    同时费率翻倍 (5.46→10.43bps, 名义变小→固定佣金$3.98占比升高)。9月已修复但
+    **余量仅 +3.64bps**, 这是系统生死线, 此前周检无任何读数盯它。
+
+    口径 (纯测量, 只读 DB, 零交易行为变更):
+      notional  = entry_price × quantity  (派生量, trade_records 无 notional 列)
+      毛edge_bps = sum(realized_pnl)/sum(notional)×1e4
+      费率_bps   = sum(fees_est)/sum(notional)×1e4
+      净_bps     = 毛 - 费
+    分桶按 trade_date (ET 日, RFC-070 公共尺子)。
+    公式已验证逐位复现 STRATEGY-AUDIT-20260913 §十 表 (全期/7月/8月/9月)。
+    """
+    from datetime import date as _date
+    try:
+        cc = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        cc.row_factory = sqlite3.Row
+        rows = [dict(r) for r in cc.execute(
+            "SELECT trade_date, entry_price, quantity, realized_pnl, fees_est "
+            "FROM trade_records WHERE exit_time IS NOT NULL "
+            "AND realized_pnl IS NOT NULL AND entry_price IS NOT NULL "
+            "AND quantity IS NOT NULL")]
+        cc.close()
+    except Exception as e:
+        return {"error": str(e)[:80]}
+    if not rows:
+        return {"error": "无平仓样本"}
+
+    def agg(rs):
+        notional = sum(r["entry_price"] * r["quantity"] for r in rs)
+        if not notional:
+            return None
+        gross = sum(r["realized_pnl"] or 0 for r in rs)
+        fee = sum(r["fees_est"] or 0 for r in rs)
+        return {"n": len(rs),
+                "gross_bps": round(gross / notional * 1e4, 2),
+                "fee_bps": round(fee / notional * 1e4, 2),
+                "net_bps": round((gross - fee) / notional * 1e4, 2)}
+
+    def _ym(d):
+        return f"{d.year}-{d.month:02d}"
+
+    today = _date.today()
+    this_ym = _ym(today)
+    # 滚动 3 月 = 本月 + 前两月 (自然月)
+    roll3 = set()
+    y, m = today.year, today.month
+    for _ in range(3):
+        roll3.add(f"{y}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+
+    out = {"this_month": None, "roll3": None, "this_ym": this_ym}
+    out["this_month"] = agg([r for r in rows if str(r["trade_date"])[:7] == this_ym])
+    out["roll3"] = agg([r for r in rows if str(r["trade_date"])[:7] in roll3])
+    return out
+
+
 def check_graduation():
     """毕业门禁实测 (打标状态)。异常按 fail-close 报。
 
@@ -179,6 +240,24 @@ def main():
             out.append(f"⚠️ 参数冻结已破: {len(unknown)} 个未豁免版本 — {desc} (KR2 破, 需复盘)")
         if _exempt_err:
             out.append(f"⚠️ 豁免清单读取失败 (按未豁免告警口径处理): {_exempt_err}")
+
+    # 2b. 经济边际读数 (2026-09-13 立): 毛edge vs 费率 — 系统生死线
+    ef = check_edge_vs_fee()
+    if ef.get("error"):
+        out.append(f"⚠️ 经济边际读数: {ef['error']}")
+    else:
+        def _fmt(tag, b):
+            if not b:
+                return f"{tag}: 无平仓样本"
+            return (f"{tag}: n={b['n']} 毛edge {b['gross_bps']:+.2f}bps | "
+                    f"费率 {b['fee_bps']:.2f}bps | 净 {b['net_bps']:+.2f}bps")
+        out.append(_fmt(f"经济边际(本月{ef['this_ym']})", ef.get("this_month")))
+        out.append("  " + _fmt("滚动3月", ef.get("roll3")))
+        _tm = ef.get("this_month")
+        if _tm and _tm["net_bps"] < 0:
+            out.append(f"  ⚠️ 告警: 本月净edge {_tm['net_bps']:+.2f}bps < 0 — 毛edge 未覆盖费用线")
+        elif _tm:
+            out.append(f"  余量 {_tm['net_bps']:+.2f}bps (净edge<0 即系统亏损; 9月修复后 +3.64bps)")
 
     # 3. 证伪门
     g = check_gate()
