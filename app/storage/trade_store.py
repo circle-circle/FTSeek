@@ -354,26 +354,17 @@ class TradeStore:
                 # F19 (2026-05-12): 归因表完整 schema
                 self._ensure_trade_attribution_schema(conn)
 
-                # Phase 2 (2026-05-31): 入场/出场市场上下文快照表
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS entry_context_snapshot (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        trade_id        TEXT,
-                        symbol          TEXT NOT NULL,
-                        snapshot_type   TEXT NOT NULL DEFAULT 'entry',  -- 'entry' or 'exit'
-                        snapshot_time   TEXT NOT NULL,
-                        price           REAL,
-                        vix_value       REAL,
-                        spy_change_pct  REAL,
-                        atr_value       REAL,
-                        session_type    TEXT,
-                        market_regime   TEXT,
-                        volume_ratio    REAL,
-                        created_at      TEXT DEFAULT (datetime('now'))
-                    )
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_trade_id ON entry_context_snapshot(trade_id)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_symbol_time ON entry_context_snapshot(symbol, snapshot_time)")
+                # ── entry_context_snapshot 死表退役 (2026-09-13, 用户裁"删除"): 表
+                #    2026-05-31 建立后全仓零行落库 (save_context_snapshot 零调用方,
+                #    watchdog D1:never_fed 实锤)。入场时刻真数值指标快照已由 F2
+                #    (DEB-20260804) 落 trade_records.factor_detail.ts_ctx (8月起
+                #    275/275=100% 覆盖), 本表功能被活通道完全取代。唯一读者
+                #    AttributionScheduler 本身是死码 (零消费方, T5 钩子)。幂等 DROP。
+                #    回滚: 恢复原 CREATE 块 (git revert 本提交)。 ──
+                try:
+                    conn.execute("DROP TABLE IF EXISTS entry_context_snapshot")
+                except Exception:
+                    pass
 
                 # Phase 2 (2026-05-31): exit_reason 标准化术语表
                 conn.execute("""
@@ -1518,99 +1509,14 @@ class TradeStore:
         return _stale
 
     # ------------------------------------------------------------------
-    # Phase 2 (2026-05-31): 市场上下文快照 (entry/exit)
+    # (Phase 2 市场上下文快照区已退役 — 见下方退役注记)
     # ------------------------------------------------------------------
 
-    def save_context_snapshot(
-        self,
-        trade_id: str,
-        symbol: str,
-        snapshot_type: str,
-        snapshot_time: str,
-        price: Optional[float] = None,
-        vix_value: Optional[float] = None,
-        spy_change_pct: Optional[float] = None,
-        atr_value: Optional[float] = None,
-        session_type: Optional[str] = None,
-        market_regime: Optional[str] = None,
-        volume_ratio: Optional[float] = None,
-    ) -> int:
-        """保存市场上下文快照
-
-        Args:
-            trade_id: trade_records.id (可为字符串, 进库存为 TEXT)
-            symbol: 标的
-            snapshot_type: 'entry' / 'exit'
-            snapshot_time: ISO 格式时间戳
-            price/vix_value/spy_change_pct/atr_value: 可选指标
-            session_type/market_regime/volume_ratio: 可选上下文
-
-        Returns:
-            新快照记录的 rowid
-        """
-        if snapshot_type not in ("entry", "exit"):
-            logger.warning(f"[TradeStore.context] 未知 snapshot_type={snapshot_type}, 仍会写入")
-        with self._lock:
-            conn = self._get_conn()
-            try:
-                cursor = conn.execute("""
-                    INSERT INTO entry_context_snapshot (
-                        trade_id, symbol, snapshot_type, snapshot_time,
-                        price, vix_value, spy_change_pct, atr_value,
-                        session_type, market_regime, volume_ratio, created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    str(trade_id) if trade_id is not None else None,
-                    symbol,
-                    snapshot_type,
-                    snapshot_time,
-                    price,
-                    vix_value,
-                    spy_change_pct,
-                    atr_value,
-                    session_type,
-                    market_regime,
-                    volume_ratio,
-                    datetime.now().isoformat(),
-                ))
-                conn.commit()
-                return cursor.lastrowid
-            finally:
-                conn.close()
-
-    def get_context_snapshot(self, trade_id: str) -> Dict[str, Any]:
-        """获取交易的入场与出场上下文
-
-        Returns:
-            {
-                "entry": {...} | None,
-                "exit":  {...} | None,
-            }
-        """
-        cols = [
-            "id", "trade_id", "symbol", "snapshot_type", "snapshot_time",
-            "price", "vix_value", "spy_change_pct", "atr_value",
-            "session_type", "market_regime", "volume_ratio", "created_at",
-        ]
-        result: Dict[str, Any] = {"entry": None, "exit": None}
-        with self._lock:
-            conn = self._get_conn()
-            try:
-                rows = conn.execute(f"""
-                    SELECT {', '.join(cols)}
-                    FROM entry_context_snapshot
-                    WHERE trade_id = ?
-                    ORDER BY snapshot_time ASC
-                """, (str(trade_id),)).fetchall()
-                for r in rows:
-                    d = dict(zip(cols, r))
-                    stype = d.get("snapshot_type")
-                    if stype in ("entry", "exit"):
-                        # 同类型多条保留最新一条
-                        result[stype] = d
-                return result
-            finally:
-                conn.close()
+    # ── save_context_snapshot / get_context_snapshot 退役 (2026-09-13, 用户裁"删除") ──
+    #    entry_context_snapshot 死表退役配套: 两函数全仓零调用方 (唯一读者
+    #    AttributionScheduler 的调用块同批删除)。入场时刻指标快照活通道 =
+    #    trade_records.factor_detail.ts_ctx (F2, DEB-20260804)。
+    #    回滚: git revert 本提交。
 
     @staticmethod
     def _row_to_dict(row) -> Dict[str, Any]:

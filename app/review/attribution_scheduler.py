@@ -233,13 +233,8 @@ class AttributionScheduler:
             except (TypeError, ValueError):
                 ctx["model_scores"] = trade.get("model_scores")
 
-        # 市场上下文 (entry/exit snapshots)
-        try:
-            snap = self.trade_store.get_context_snapshot(str(trade.get("id")))
-            if snap:
-                ctx["market_context"] = snap
-        except Exception as e:
-            logger.debug(f"[AttributionScheduler] 取 context_snapshot 失败: {e}")
+        # 市场上下文快照已退役 (2026-09-13): entry_context_snapshot 死表删除,
+        # 活通道 = trade_records.factor_detail.ts_ctx (F2, DEB-20260804)
 
         # 入场理由
         if trade.get("entry_reason"):
