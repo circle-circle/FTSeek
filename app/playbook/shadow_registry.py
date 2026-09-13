@@ -409,8 +409,8 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="e2_momentum",
         name="E2 入场动量确认",
-        status=ShadowStatus.READY_TO_EVALUATE,
-        description="入场后 15min MFE 确认 (θ=0.5%) 反事实。record-only 不拦。毕业人群=前向影子(8/3起)。",
+        status=ShadowStatus.KILLED,
+        description="入场后 15min MFE 确认 (θ=0.5%) 反事实。record-only 不拦。**2026-09-13 用户裁退役**: 采集cron已摘, 数据留档242行, 毕业门恒判 RETIRED_NO_PROMOTION。",
         data_path="data/e2_momentum_shadow.jsonl",
         config_key=None,
         min_n=30,
@@ -423,7 +423,19 @@ REGISTRY: list[ShadowItem] = [
                         {"date": "2026-08-23", "verdict": "USER_DEFERRED",
                          "evidence": "用户裁决'同意': 不转硬门, 压至10月初(冻结窗口结束后)再裁; 影子继续攒样不重置, 周检机械跟踪。"},
                         {"date": "2026-09-12", "verdict": "USER_CONTINUE_SAMPLING",
-                         "evidence": "毕业门 9/11 复跑(只读): PATTERN_CONFIRMED_DIRECTIONAL — 放行组净+$2290.8(WR78.4%), 拦截组净亏; 日聚类 n=26 diff_mean=-$29.37 t=-2.742 < MDE=42.42 → significant_beyond_mde=false。用户裁'按建议执行'=继续攒样不转硬门 (统计不可分辨, 不满足双窗口≥40%采信门槛); 维持压至10月初冻结窗结束再裁, 采集不重置。"}],
+                         "evidence": "毕业门 9/11 复跑(只读): PATTERN_CONFIRMED_DIRECTIONAL — 放行组净+$2290.8(WR78.4%), 拦截组净亏; 日聚类 n=26 diff_mean=-$29.37 t=-2.742 < MDE=42.42 → significant_beyond_mde=false。用户裁'按建议执行'=继续攒样不转硬门 (统计不可分辨, 不满足双窗口≥40%采信门槛); 维持压至10月初冻结窗结束再裁, 采集不重置。"},
+                        {"date": "2026-09-13", "verdict": "KILLED",
+                         "evidence": "用户裁「无效就停止，退役」。裁决前全量复核(/tmp/e2_deep.py): "
+                                     "①统计不可分辨 日聚类t=-2.897但|diff|=29.91<MDE=40.88; "
+                                     "②OOS衰减归零 IS(7/28-8/19)拦截组均-$25.15 → OOS(8/20-9/11)均+$0.21 — 现役门(DA v2.4禁接飞刀/RFC-082)已提前拦掉最烂入场, E2人群被覆盖残差趋零; "
+                                     "③误杀率50.7% 拦截组138笔中70笔盈利(+$1791, 含SL_TRAIL_LOCK赢家21笔)=砍在利润引擎起涨前; "
+                                     "④SHORT仅6拦/9放, 宪章方向对称无法验; "
+                                     "⑤实现语义差距 影子=全程退出净额 vs 硬门=15min提前出场价, 不可平移。 "
+                                     "与 R-Breaker 独立回放同向: 现役过滤栈已把烂入场拦得差不多, 第二道入场门边际价值快速下降。"},
+                        ],
+        notes="2026-09-13 用户裁 KILLED: 采集cron(e2_momentum_shadow_daily 20 5 * * 2-6)已摘, "
+              "数据 data/e2_momentum_shadow.jsonl 242行留档不删; 毕业门恒判 RETIRED_NO_PROMOTION; "
+              "回滚须另开辩论改判, 不得仅删开关 (同 premarket_invalidation A/C 退役先例)。",
     ),
     ShadowItem(
         id="overnight_hold",

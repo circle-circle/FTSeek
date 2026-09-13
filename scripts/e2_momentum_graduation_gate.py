@@ -33,6 +33,19 @@ REPLAY = REPO / "data" / "e2_momentum_replay_latest.json"  # 设计集, 仅上�
 OUT = REPO / "data" / "e2_momentum_graduation_report.json"
 THETA = 0.5  # 预注册 θ (%)
 
+# ── 退役开关 (2026-09-13 用户裁「无效就停止，退役」) ──────────────────
+# 裁决证据 (裁决前复核, /tmp/e2_deep.py 全量重算):
+#   ① 统计不可分辨: 日聚类 t=-2.897 显著但 |diff|=29.91 < MDE=40.88 (宪章第9律);
+#   ② OOS 衰减归零: IS(7/28-8/19) 拦截组均-$25.15 → OOS(8/20-9/11) 均+$0.21 —
+#      现役门 (DA v2.4 禁接飞刀/RFC-082 等) 已把最烂入场提前拦掉, E2 残差价值趋零;
+#   ③ 误杀率 50.7%: 拦截组 138 笔中 70 笔盈利(+$1791, 含 SL_TRAIL_LOCK 赢家 21 笔),
+#      转硬门=砍在利润引擎起涨前;
+#   ④ SHORT 样本不足 (6拦/9放) — 宪章方向对称硬伤无法补验;
+#   ⑤ 实现语义差距: 影子=全程退出净额, 硬门=15min 提前出场价, 数字不可平移。
+# 数据留档不删 (data/e2_momentum_shadow.jsonl 242 行), 裁决恒 RETIRED_NO_PROMOTION。
+# 回滚 = 退役须另开辩论改判, 不得仅删本开关 (同 premarket_invalidation A/C 先例)。
+RETIRED = True
+
 
 def load_shadow():
     rows = []
@@ -113,7 +126,15 @@ def main():
         except Exception:
             ctx = {"note": "设计集读取失败"}
 
-    if n_b + n_p < 20:
+    if RETIRED:
+        # 恒判退役 (2026-09-13 用户裁): 读数照常结算呈报 (历史留档+趋势可见),
+        # 但裁决永为 RETIRED_NO_PROMOTION, 任何后续读数不得再提请转硬门。
+        verdict = ("🪦 E2 已退役 (2026-09-13 用户裁「无效就停止，退役」): 统计不可分辨"
+                   "(|diff|<MDE) + OOS 拦截组衰减归零(-$25.15→+$0.21, 现役门已覆盖其人群) "
+                   "+ 误杀率50.7% (70/138 盈利单含 trailing 赢家) — 恒判 RETIRED_NO_PROMOTION, "
+                   "读数仅留档。回滚须另开辩论。")
+        decision = "RETIRED_NO_PROMOTION"
+    elif n_b + n_p < 20:
         verdict = f"样本不足 (n={n_b + n_p} < 20 预注册门槛), 继续攒样"
         decision = "INSUFFICIENT"
     elif significant:
@@ -148,6 +169,7 @@ def main():
         "design_set_context": ctx,
         "execution_semantics_caveat": ("影子拦截组净亏=全程退出链真实净额; 转硬门后实现的是"
                                        "15min时刻提前出场价, 影子数字是方向证据非精确期望"),
+        "retired": RETIRED,
         "decision": decision,
         "verdict": verdict,
     }
