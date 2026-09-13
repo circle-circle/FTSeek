@@ -1189,6 +1189,12 @@ playbook:
     liquidity_gate_max_adv_pct: 0.5
     borrow_pool_gate_enabled: true
     borrow_pool_gate_min_cover: 10
+    # ── P1 候选批次时效 (2026-09-12, DEB-20260910 / proud-slope-falcon) ──
+    #   UE inject 只允许消费最新有效 premarket 批次; DA feed 共用同一显式键。
+    #   空扫描/失败批次也必须落批次记录, 最新空批不得静默回用早先候选。
+    #   语义边界: 批次时效 ≠ 订单 TTL, 不改变原盘中入场截止规则。
+    #   回滚: 删除本键 (代码回退 DEFAULTS 3.0)。
+    candidate_scan_max_age_hours: 3
     # ── G6 恢复在线 (2026-08-29 复核纠错: 原下线裁决前提错误) ──
     #   8/29 上午依据"earnings_calendar 表 0 行 ⇒ 门从未拦截"置 false。复核实锤:
     #   该证据是死表 (app/risk/earnings_guard.py 的 SQLite 载体), 而本门实际读的是
@@ -2017,6 +2023,32 @@ universe_expansion:
   #   持久化 data/premarket_rank_candidates_{ET}.json 后本线索源消费。候选非信号。
   #   回滚: 置 false。
   clue_premarket_rank: true
+  # ── P2.2 输入具名标的可交易性初筛 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon) ──
+  #   对 clue brief 材料里**已具名**的 ticker 批量取轻量快照, 先跑 P1 同口径资格判定,
+  #   在 brief 末尾追加一段"可交易 / 仅背景(context_only) / 未定"三态清单。
+  #   定位: 让低价·低波·权证优先股不再作为**直接交易候选**占用模型注意力 (P2 验收项①),
+  #     但材料本身**一条不删** —— 不可交易公司的事件仍可用于产业链推导 (P2 验收项②)。
+  #   ⚠ 这不是封闭股票白名单: 模型仍可提出材料里没有的新 ticker, 那些在 inject 侧走
+  #     同一资格门 (P1.5)。本段只标注"输入里已具名的标的现在能不能交易"。
+  #   扫描期口径刻意**不含**执行时微结构门 (报价新鲜度 90s / 点差 / 借券) —— scan 在
+  #     ET 09:10 盘前跑, 距入场窗约 2h, 用 90 秒新鲜度筛会把输入标的几乎全判 stale
+  #     ⇒ 初筛退化成"全清"。微结构门留在 inject/执行侧复核 (计划 P1.2 明写"执行前仍
+  #     复核有效性, 不能拿盘前快照当实时行情")。
+  #   全程 fail-open: 取不到行情/ATR、配置读不到、任何异常 ⇒ 不追加本段, 材料零改动。
+  #   回滚: input_prescreen 置 false (或删本两键, 代码默认亦为 true/30)。
+  input_prescreen: true
+  input_prescreen_max_symbols: 30
+  # ── P2.6 输入空转守卫 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon) ──
+  #   材料索引里**一条事实都没有**时不调 LLM, 直接落完成态空批 (llm_skipped=true,
+  #   skip_reason=no_actionable_input)。旧行为是拿近空白 brief 去问模型: 模型只能凭
+  #   参数记忆编标的 (幻觉), 且照样烧满 max_tokens=16000。
+  #   判据刻意窄, 两句计划原文相撞时一律偏向**不跳** (漏跳只浪费预算, 错跳是静默丢掉
+  #   当天全部 UE 发现, 且账上看着像"当日无机会"):
+  #     · 具名标的哪怕全被判 context_only 也不跳 (不可交易公司的事件保留作产业链推导);
+  #     · 任何一条无具名标的的宏观/板块/regime 材料都算传导材料 ⇒ 不跳;
+  #     · 初筛降级 (unavailable) 一律不跳 —— 缺数 ≠ 没有机会。
+  #   回滚: 置 false (代码默认 true)。
+  scan_skip_on_empty_input: true
   # 2026-09-05 (PROPOSAL-20260905 U1, 用户裁"如无问题可以实施"): 盘前榜渲染两开关。
   # U1①: 极端带(|涨幅|>25%)行默认不渲染进 prompt — "展示但不入围"是自相矛盾输入,
   #   模型仍当软候选锚定。攒样数据保留在 candidates json, 预注册判据照跑。回滚: true。

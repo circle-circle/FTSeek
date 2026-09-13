@@ -13,7 +13,7 @@ UE conf 恒=50、DA score 2/3 塌缩于 7.0, 全是事后人工复盘才发现�
   UE 指令 (source=universe_expansion): confidence / origin.raw_confidence /
     origin.self_tier / origin.rubric_score
   UE 扫描 (shadow/llm_universe_scan.jsonl type=scan): surfaced.confidence /
-    self_tier / rubric_score
+    self_tier / rubric_score / evidence_citation_state
 
 DEGEN 判据 (默认, 乙2 §四): 唯一值<5 或 最大单值占比>60% 或 归一化熵<0.60。
   设计低基数字段 (3档/枚举) 用 FIELD_RULES 放宽 — 查"塌缩"不查"档位本身"。
@@ -51,6 +51,14 @@ FIELD_RULES = {
     # rubric_score 设计基数=5 (0-4 四项清单命中数): 小样本缺极端值 (0/4) 合法,
     #   默认 min_unique=5 是误报。查"塌缩到单一值", 不查"没集齐"。
     "rubric_score": {"min_unique": 3, "max_top_share": 0.60, "min_entropy": 0.50},
+    # [P2.4 2026-09-12, DEB-20260910 §17] 引证三态, 设计基数=4 (no_ref / not_found /
+    #   entity_linked / transmission_assumed)。放宽理由与 self_tier 同族: 查"塌缩到单一
+    #   值"(=传感器死了或模型行为单一化), 不查"没集齐四档"。真实生产分布**预期高度
+    #   偏斜** (有引证的行里 entity_linked 应占多数) ⇒ 用默认 min_unique=5 会天天误报。
+    #   消费方登记 (AGENT.md P7): evidence_grounding_enforce 开启裁决的人工抽检分层 +
+    #   P4 unit_cell_daily_readout 全漏斗 LLM 段分层。
+    "evidence_citation_state": {"min_unique": 2, "max_top_share": 0.95,
+                                "min_entropy": 0.20},
 }
 
 
@@ -156,7 +164,8 @@ def collect(days: int) -> list:
                  and str(r.get("date") or "") >= cutoff]
     surfaced = [s for r in scan_rows for s in (r.get("surfaced") or [])
                 if isinstance(s, dict)]
-    for field in ("confidence", "self_tier", "rubric_score"):
+    for field in ("confidence", "self_tier", "rubric_score",
+                  "evidence_citation_state"):
         vals = [s[field] for s in surfaced if s.get(field) is not None]
         results.append(check_field("ue_scan", field, vals))
 

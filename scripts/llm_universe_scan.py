@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -62,7 +63,105 @@ HIT_PCT = 1.0  # 评分: 前瞻收益(按方向) ≥ 此值 → 命中
 # [U8 2026-08-25 evidence grounding] 当日输入材料缓存 — _build_clue_brief 每次构建重置,
 #   供 _ground_evidence_refs 核验模型引证真实性。模块级避免跨函数传参。
 _LAST_BRIEF_MATERIALS: List[str] = []
-PROMPT_VERSION = "v2.11"  # scan 落库归因戳; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+
+# ── [P2.1 2026-09-12, proud-slope-falcon] 材料索引: gather 时登记结构化事实 ──
+# 病灶 (原实现 = "事后按行前缀猜材料", 已实证为断头传感器):
+#   _build_clue_brief 尾部曾把 parts 按 "\n" 拆行, 再用
+#   `not line.startswith("[")` 排除节标题 —— 但该谓词同时**误杀了以 `[` 开头的事实行**:
+#     `[CRITICAL/REGULATION] …`  (_gather_hard_events 分类新闻)
+#     `[HIGH/EARNINGS] …` / `[MEDIUM/EARNINGS_UPCOMING] …`  (_gather_earnings_events)
+#     `[HIGH/INSIDER_CLUSTER] …`  (_gather_insider_clusters)
+#   这四类正是 SYSTEM_PROMPT_V2 要求模型为 `self_tier=HARD_EVENT` 去锚定引用的材料。
+#   后果 (只读实测 data/shadow/llm_universe_scan*.jsonl, 347 行带 evidence_grounded):
+#     grounded=False 共 32 行 (9.2%), 其中 **31 行 (96.9%) 是 HARD_EVENT 逐字引用上述四类行**
+#     (例: `[HIGH/INSIDER_CLUSTER] BABA 内部人集群买入信号 x1 → 看多` = gather 的 f-string 原文),
+#     仅 1 行是 MARKET_CORROBORATED ⇒ 观测到的"误杀"几乎全是本缺陷, 不是模型编造。
+#   影响面: `evidence_grounding_enforce=false`(当前值) ⇒ **暂无行为变更**, 但攒样判据
+#     ("5 交易日人工抽检误杀率 <10% → 裁开强制") 正建立在被污染的分母上; 若据 9.2% 开强制,
+#     31 条真实 HARD_EVENT 引证会被清成空串 → Track A 夹逼 → tier 降 THESIS_ONLY + conf≤0.60。
+# 修法: 材料索引在 **gather 现场**登记 (source/symbols/published_at/event_key 当时都还在手上),
+#   render 消费同一份对象; `_LAST_BRIEF_MATERIALS` 由索引派生, **不再有任何行前缀猜测**。
+#   节标题/日期行本来就不是事实 ⇒ 不登记 (by construction, 而非靠谓词过滤)。
+# 本子批**不改渲染文本** (text 逐字沿用旧 f-string) ⇒ brief 正文零漂移, 无需升 PROMPT_VERSION。
+# 回滚: 还原本段 + _build_clue_brief 尾部派生行 (见 DEB-20260910 §17)。
+_BRIEF_EVIDENCE: List[Dict[str, Any]] = []
+EVIDENCE_SCHEMA = ("evidence_id", "source", "published_at", "symbols",
+                   "event_key", "text")
+
+
+# [P2.1 修正 2026-09-13] 只有"长得像 ticker"的 token 才准进材料索引的 symbols 槽。
+#   形状族与 candidate_eligibility._SYMBOL / _SYMBOL_UNSUPPORTED_SHAPE 同源 (字母数字 +
+#   单个 `.`/`-` 分隔的权证·优先股后缀), 但这里是**登记前的卫生门, 不是资格判定** ——
+#   资格判定的唯一真源仍是 candidate_eligibility.evaluate_candidate。
+# 为什么需要它 (实测缺陷, 2026-09-13 只读复现): market_corroboration 的"宇宙外异动"行
+#   曾写 `symbols=[x.split(":")[0].split("(")[0] for x in movers]` —— 那是按**臆想的**
+#   渲染格式去反解 ticker, 而生产实际格式是 f"{symbol} {direction} {pct:+}%"
+#   (例 "ESTC UP +19.3%", 既无冒号也无括号) ⇒ 整串被当 symbol 登记进索引。后果两层:
+#     ① 初筛把 "ESTC+19.3%" 判 invalid_symbol → brief 里凭空多一行
+#        "仅背景(context_only, 不得当直接交易候选): ESTC UP +19.3%" = **对真标的的假指控**,
+#        正是 P2 验收②"背景事件和榜外发现未被错误清空"要防的事;
+#     ② 真 ESTC 从未被初筛过 (它压根没进具名集合), P2 验收①的"低价/低波不占预算"在
+#        异动源上等于没生效。
+#   根因与 P2.1 要修的是同一族: **事后从渲染串里猜结构化字段**。故正解是把 symbols 取回
+#   gather 现场 (_gather_market_corroboration 现返回 mover_symbols), 本门只作兜底 ——
+#   拦住任何未来又冒出来的"拿字符串当 symbols"的调用点, 不让它污染索引与初筛。
+_TICKERISH = re.compile(r"[A-Z][A-Z0-9]{0,5}(?:[.-][A-Z0-9]{1,4})?\Z")
+
+
+def _ticker_symbols(values) -> List[str]:
+    """挑出 ticker 形状的 token (去 `US.` 前缀/大写/去重/保序), 非 ticker 一律丢弃。"""
+    out: List[str] = []
+    for raw in values or ():
+        tok = str(raw or "").strip().upper().replace("US.", "")
+        if tok and _TICKERISH.fullmatch(tok) and tok not in out:
+            out.append(tok)
+    return out
+
+
+def _fact(source: str, text: str, *, symbols=(), published_at=None,
+          event_key=None) -> Dict[str, Any]:
+    """[P2.1] 一条结构化事实 — gather 产出、render 消费、索引登记**同一个对象**。
+
+    `text` 必须是最终送进 brief 的那一行 (逐字), 否则索引与正文不对应,
+    引证核验就又回到"猜"。symbols 统一去 `US.` 前缀并大写 (与既有 _corro_syms 同口径),
+    并过 `_ticker_symbols` 形状兜底 (见其注释: 拦住"拿渲染串当 symbols"的源头污染)。
+    """
+    return {
+        "source": str(source),
+        "text": str(text),
+        "symbols": sorted(set(_ticker_symbols(symbols))),
+        "published_at": published_at,
+        "event_key": event_key,
+    }
+
+
+def _take_facts(facts, *, source: str = "unknown") -> List[str]:
+    """登记 facts 进材料索引, 返回可渲染文本行 (顺序与内容逐字不变)。
+
+    兼容传入裸 str (未改造的调用点/降级路径) —— 一律按事实登记, 不丢材料。
+    """
+    lines: List[str] = []
+    for item in (facts or []):
+        if isinstance(item, str):
+            item = _fact(source, item)
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        entry = dict(item)
+        entry["text"] = text
+        entry["source"] = str(entry.get("source") or source)
+        entry["evidence_id"] = f"E{len(_BRIEF_EVIDENCE) + 1:03d}"
+        _BRIEF_EVIDENCE.append(entry)
+        lines.append(text)
+    return lines
+
+
+def brief_evidence_index() -> List[Dict[str, Any]]:
+    """[P2.1] 最近一次 _build_clue_brief 的材料索引 (只读副本, 供落盘/核验/测试)。"""
+    return [{k: e.get(k) for k in EVIDENCE_SCHEMA} for e in _BRIEF_EVIDENCE]
+
+
+PROMPT_VERSION = "v2.12"  # scan 落库归因戳; v2.12=P2.2 输入具名标的可交易性初筛段 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon, 用户裁"按设计计划执行落地"): clue brief 末尾按 **P1 同一资格口径**追加"可作直接交易候选 / 仅背景(context_only) / 未定(缺数据)"三态清单 —— 属 brief(user)侧**输入变更**, 故升版; 材料一条不删、全程 fail-open、扫描期口径刻意不含执行时微结构门(报价新鲜度/点差/借券, 见 _scan_phase_policy); ⚠ 与 v2.11 同族盲区**再次出现**: PROMPT_HASH_V2(:195) 只哈希 SYSTEM_PROMPT_V2 ⇒ 本变更不改哈希(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.11/v2.12**; 分段请改用本批同时落库的 brief_template_version(=ue_brief_v3) / brief_template_hash / brief_content_hash —— P2.5 已把该基建补上, 所以这次是"缺口已兑现"而非"又添一个盲区"(盲区记录见下方 v2.11 段与 tests/test_ue_contract_validator.py::test_brief_only_bump_leaves_hash_identical_to_v210); 同批 P2.4 引证三态 / P2.6 空转跳批均为**代码侧附加留痕与预算守卫**, 不改模型输入, 不单独占版号; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -124,6 +223,79 @@ SYSTEM_PROMPT_V2 = (
 #   _prompt_fingerprint 同模式)。病灶1版本戳失真: PROMPT_VERSION 常量可在 prompt
 #   已改时忘记升 (8/16 v2.5 改动落库仍标 v2.4), hash 随内容自动变 → 新旧基线可切分。
 PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
+
+# ── [P2.5 2026-09-12, proud-slope-falcon] brief 侧指纹: 补 §11.6-item6 基建缺口 ──
+# 病灶 (DEB-20260910 §11.6-item6 已量出, 当时按用户裁"另立项"未动):
+#   `PROMPT_HASH_V2` = sha1(SYSTEM_PROMPT_V2), **只覆盖系统 prompt**。而负反馈表、
+#   抑制规则散文、输入初筛段、以及全部 clue 材料都在 **user 内容 (brief)** 里
+#   ⇒ 任何 brief 侧改动对落库的 prompt_version/prompt_hash **完全不可见**,
+#   "同版本内样本可混算"这条护栏在 UE 侧对 brief 改动不设防。
+#   后果已发生过一次: v2.11 改的正是反馈表渲染, 而 PROMPT_HASH_V2 一字未变。
+#   对照: 仓外 DA 侧 `_prompt_fingerprint(SYSTEM_PROMPT, USER_PROMPT_TEMPLATE)`
+#   同时哈希 user 模板 —— UE 侧此前没有对等物, 本段补上。
+# 三个指纹各司其职 (不可互相替代):
+#   brief_template_version  手工维护的**分段键** — 试验按它切窗 (计划 P0.5:
+#                           "输入分布变化后, 受影响试验按新版本分段");
+#   brief_template_hash     自动算的**结构**指纹 — 只哈希非事实的脚手架 (节标题 +
+#                           指令散文), 数字掩码后跨日稳定 ⇒ 改了段结构/措辞就变,
+#                           当天新闻变了不变。它的作用是**验证 template_version 没忘升**
+#                           (与 PROMPT_HASH_V2 对 SYSTEM_PROMPT_V2 同一防护意图);
+#   brief_content_hash      当次渲染全文指纹 — 逐run 唯一, 供精确复现与审计,
+#                           **不可**当分段键 (每天都变)。
+# 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
+#   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
+BRIEF_TEMPLATE_VERSION = "ue_brief_v3"   # v3 = P2.1 材料索引 + P2.2 输入初筛段
+# [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
+#   planned_* 记的是"生成时刻的数值与口径", 而 default_stop_pct/default_tp_pct/
+#   KNIFE_FLOOR_PCT/CHASE_ZONE_PCT 任一改动都会让同一份 planned_* 的含义漂移
+#   (配置 3%/6% 落到价格上其实是 5.91%/11.30%, 见 §18.2 表)。改这些常量 ⇒ 必须升本版本,
+#   否则跨期比较 planned vs 重定价 会拿两把不同的尺子。
+# [P3.3-3.5 2026-09-13] v1→v2: blob 从"只有生成值三段"扩成"生成值 + 估算股数/费用覆盖/
+#   可执行性"。升版是读账需要 —— v1 行没有 size/cost/exec 三段, 跨期聚合时若不按版本
+#   切分, 会把"当时刻意没算"(v1) 与"算了但缺数"(v2 的 not_computed_*) 混成一类。
+#   sizing/cost 口径自身的版本另记 planned_executability.PLANNED_EXEC_BASIS_VERSION
+#   (只改借券基准或上限归因时升那个, 不必升 blob 版本)。
+PLANNED_PREVIEW_VERSION = "ue_planned_v2"
+_LAST_BRIEF_FINGERPRINTS: Dict[str, Any] = {}
+
+
+def _brief_fingerprints(parts, evidence, brief_text: str) -> Dict[str, Any]:
+    r"""算 brief 三指纹 + 材料构成统计 (纯函数, 不做 IO)。
+
+    脚手架 = parts 里**不是**已登记事实文本的条目 (节标题、指令散文、日期行)。
+    数字掩码 (`\d+` → `#`) 让 `日期: 2026-09-12 (ET)`、`[近24h 新闻头条 (共37条…)]`
+    这类含当日值的脚手架跨日稳定 —— 否则 template_hash 每天都变, 无法当结构指纹。
+
+    ⚠ 诚实边界 (实测确认, 不是理论担忧): template_hash 只在**同一组段落被渲染**时跨日
+      稳定。多个段本来就是条件段 —— 负反馈表空则不出、regime 拉取失败则不出、本批新增
+      的输入初筛段在无具名标的时不出 ⇒ 段落集合变化会让 hash 移动而代码并未改。
+      方向是**安全侧**: 它只会多报"hash 变了"(假阳, 人工比对 brief_sections 即可排除),
+      不会漏报真实的模板改动 —— 而漏报才是"忘了升 template_version"的危险方向。
+      `brief_sections` 就是为这次人工排除而落的段落清单 (只进 _LAST_BRIEF_FINGERPRINTS
+      供诊断/测试, **不落库** —— 不新增无消费方的库字段, AGENT.md P7 军规)。
+      试验分段键仍以手工维护的 brief_template_version 为准。
+    """
+    fact_texts = {str(e.get("text") or "") for e in (evidence or [])}
+    scaffolding = [str(x) for x in (parts or []) if str(x).strip() not in fact_texts]
+    masked = "\n".join(re.sub(r"\d+", "#", line) for line in scaffolding)
+    # 段落清单 = 以 "\n[" 开头的 parts 条目 (节标题统一格式)。事实行虽也可能以 "["
+    #   开头 (如 `[HIGH/EARNINGS] …`), 但它们是独立列表项、无前导换行 ⇒ 不会被误收。
+    sections = [str(x).lstrip("\n") for x in (parts or []) if str(x).startswith("\n[")]
+    stats: Dict[str, int] = {}
+    for entry in (evidence or []):
+        key = str(entry.get("source") or "unknown")
+        stats[key] = stats.get(key, 0) + 1
+    return {
+        "brief_template_version": BRIEF_TEMPLATE_VERSION,
+        "brief_template_hash": hashlib.sha1(masked.encode("utf-8")).hexdigest()[:12],
+        "brief_content_hash": hashlib.sha1(
+            str(brief_text or "").encode("utf-8")).hexdigest()[:16],
+        "brief_scaffolding_lines": len(scaffolding),
+        "brief_material_count": len(evidence or []),
+        "brief_material_stats": dict(sorted(stats.items())),
+        "brief_section_count": len(sections),
+        "brief_sections": sections,
+    }
 
 
 # ── 通用工具 ──────────────────────────────────────────────────
@@ -249,6 +421,11 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
 #   无法归因。每个被拒候选落一行结构化记录, 连续10交易日后首次成表分解衰减漏斗。
 #   纯观测, 零行为影响。回滚: 配置设 universe_expansion.inject_reject_log: false。
 _INJECT_REJECT_PATH = _ROOT / "data" / "shadow" / "llm_universe_inject.jsonl"
+# [P1.5 2026-09-12, proud-slope-falcon] inject 额度进程间锁载体 (flock)。
+#   覆盖"读取当日额度 → 资格筛选 → 写后确认"整段, 防 cron 与手动重跑并发超额;
+#   锁键语义 = 自动账户模式/来源/ET 日期 (本文件即 UE 自动源, 每日一条链)。
+#   已在 tests/conftest.py _PRODUCTION_DATA_SEAMS 登记 → 单测自动落沙箱。
+_INJECT_LOCK_PATH = _ROOT / "data" / "shadow" / "ue_inject_quota.lock"
 
 
 def _log_inject_reject(surfaced: List[Dict[str, Any]], min_conf: float,
@@ -300,6 +477,51 @@ def _log_inject_reject(surfaced: List[Dict[str, Any]], min_conf: float,
         print(f"  [inject-reject-log] {len(rows)} 条拒绝记录 → {_INJECT_REJECT_PATH.name}")
     except Exception as e:
         print(f"  [warn] inject 拒绝落盘失败 (不阻塞): {e}")
+
+
+def _log_inject_batch_decision(scan_rec: Optional[Dict[str, Any]], reason: str,
+                               today: str, now_et: datetime) -> None:
+    """[P1.5 2026-09-12] inject 批次级消费留痕: 消费了哪一批 / 为何不消费。
+
+    与 _log_inject_reject (候选级) 分层。本行回答"今天的注入依据是哪一批材料",
+    使"静默回用过期/异窗 (da_feed/midday) 候选"在审计上不可能隐形。
+    复用 inject jsonl 载体, 不新建文件/库。
+    """
+    try:
+        rec = scan_rec or {}
+        row = {"date": today, "type": "batch_decision", "stage": "inject_batch",
+               "decided_at": now_et.isoformat(), "reason": reason,
+               "batch_id": rec.get("batch_id"),
+               "scan_window": rec.get("scan_window", "premarket"),
+               "batch_started_at": rec.get("started_at"),
+               "batch_scanned_at": rec.get("scanned_at"),
+               "surfaced_n": len(rec.get("surfaced") or []),
+               "empty_batch": bool(rec.get("empty_batch")),
+               "model_used": rec.get("model_used"),
+               "policy_version": rec.get("policy_version")}
+        _INJECT_REJECT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _INJECT_REJECT_PATH.open("a") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception as e:
+        # 留痕失败必须可见 (R5/AGENT.md "静默吞 = 门死了没人知道"):
+        #   本行是"今天注入依据哪一批材料"的唯一载体, 静默 pass 会让批次纪律
+        #   在审计上隐形 (也曾吞掉 tests/conftest.py 的生产 data/ 写入硬闸)。
+        print(f"  [warn] inject 批次决策留痕落盘失败 (不阻塞注入): {e}")
+
+
+def _eligibility_skip_reason(reason_codes: List[str], screening: Dict[str, Any],
+                             policy: Dict[str, Any]) -> str:
+    """资格拒绝 → 可归因 skip_reason (自带数值; 与旧 price_floor/low_atr 同轨)。"""
+    codes = [str(c) for c in (reason_codes or [])]
+    px = screening.get("price")
+    ratio = screening.get("screening_atr_ratio")
+    if "price_floor" in codes and px:
+        return (f"price_floor({float(px):.2f}<{float(policy.get('min_price') or 0):g}, "
+                f"OTC/仙股无富途行情)")
+    if "low_atr" in codes and ratio is not None:
+        return (f"low_atr({float(ratio):.4f}<{float(policy.get('min_atr_ratio') or 0):g}, "
+                f"低波票过不了执行门)")
+    return f"candidate_ineligible({','.join(codes) or 'unknown'})"
 
 
 def _log_inject_loop_reject(s: Dict[str, Any], reason: str) -> None:
@@ -764,6 +986,7 @@ def _gather_market_corroboration() -> Dict[str, Any]:
                     "strong_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("strongest") or [])[:3]],
                     "weak_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("weakest") or [])[:3]],
                     "movers": [],
+                    "mover_symbols": [],
                 }
     except Exception as _re:
         print(f"  [warn] deep_sector_rotation 读取失败: {_re}")
@@ -805,12 +1028,19 @@ def _gather_market_corroboration() -> Dict[str, Any]:
                          for s in last.get("weak_sectors", [])],
         "movers": [f"{r['symbol']} {r['direction']} {r['change_pct']:+}%"
                    for r in last.get("surfaced", [])],
+        # [P2.1 修正 2026-09-13] 结构化 ticker 与渲染串**同源同处**产出 — 消费方不再需要
+        #   从 "ESTC UP +19.3%" 这种成品串里反解 symbol (反解口径曾与真实格式不符, 见
+        #   _ticker_symbols 注释)。渲染串本身一字未改 ⇒ brief 正文零漂移。
+        "mover_symbols": [str(r.get("symbol") or "") for r in last.get("surfaced", [])],
     }
 
 
-def _gather_hard_events(news: List[Dict[str, Any]]) -> List[str]:
+def _gather_hard_events(news: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """[ADR-017] 复用 CatalystClassifier(纯关键词, use_llm=False) 把已拉取新闻分类为
-    结构化硬事件 → clue brief 的 [硬事件] 段, 供 V2 自评 HARD_EVENT。失败降级返回 []。"""
+    结构化硬事件 → clue brief 的 [硬事件] 段, 供 V2 自评 HARD_EVENT。失败降级返回 []。
+
+    [P2.1] 返回结构化事实 (`_fact`) 而非裸行 —— 渲染文本逐字不变, 但 severity/event_type
+    与关联 ticker 同时进材料索引, 引证核验不再靠行前缀猜来源。"""
     if not news:
         return []
     try:
@@ -853,28 +1083,42 @@ def _gather_hard_events(news: List[Dict[str, Any]]) -> List[str]:
     for ev in events[:15]:
         tks = ", ".join(str(t).replace("US.", "") for t in (ev.tickers or []))
         head = (ev.headline or "").strip()[:70]
-        out.append(f"[{ev.severity}/{ev.event_type}] {head} → 关联: {tks or '(板块传导)'}")
+        out.append(_fact(
+            "hard_event_classified",
+            f"[{ev.severity}/{ev.event_type}] {head} → 关联: {tks or '(板块传导)'}",
+            symbols=[str(t) for t in (ev.tickers or [])],
+            event_key=f"{ev.severity}/{ev.event_type}"))
     return out
 
 
-def _gather_earnings_events() -> List[str]:
+def _gather_earnings_events() -> List[Dict[str, Any]]:
     """[ADR-018] 复用 EarningsCalendar (Alpha Vantage, 仅 1 次日历调用+内置缓存) 注入
     财报硬事件: 近期已发布(EARNINGS) + 临近(EARNINGS_UPCOMING 时点风险)。
-    不用逐股 history 接口(5/min 限流不稳)。失败降级返回 []。"""
+    不用逐股 history 接口(5/min 限流不稳)。失败降级返回 []。
+
+    [P2.1] 返回结构化事实; `report_date` 落 `published_at` (财报日是时效锚, 此前渲染后即丢)。"""
     try:
         from app.data.earnings_calendar import EarningsCalendar
     except Exception as e:
         print(f"  [warn] 财报日历不可用 (降级): {e}")
         return []
-    out: List[str] = []
+    out: List[Dict[str, Any]] = []
     try:
         ec = EarningsCalendar()
         for e in ec.get_recently_reported(days_back=2)[:8]:
-            out.append(f"[HIGH/EARNINGS] {e.get('ticker','')} 财报已发布 {e.get('report_date','')}"
-                       f"({e.get('time_of_day','')}) → 关注财报后动量")
+            out.append(_fact(
+                "earnings_calendar",
+                f"[HIGH/EARNINGS] {e.get('ticker','')} 财报已发布 {e.get('report_date','')}"
+                f"({e.get('time_of_day','')}) → 关注财报后动量",
+                symbols=[e.get("ticker", "")], published_at=e.get("report_date"),
+                event_key="EARNINGS"))
         for u in ec.get_watchlist_earnings(days_ahead=3)[:8]:
-            out.append(f"[MEDIUM/EARNINGS_UPCOMING] {u.get('ticker','')} 财报临近 {u.get('report_date','')}"
-                       f"({u.get('days_until','?')}d) → 时点风险")
+            out.append(_fact(
+                "earnings_calendar",
+                f"[MEDIUM/EARNINGS_UPCOMING] {u.get('ticker','')} 财报临近 {u.get('report_date','')}"
+                f"({u.get('days_until','?')}d) → 时点风险",
+                symbols=[u.get("ticker", "")], published_at=u.get("report_date"),
+                event_key="EARNINGS_UPCOMING"))
     except Exception as e:
         print(f"  [warn] 财报事件拉取失败 (降级): {e}")
     return out
@@ -943,70 +1187,86 @@ def _gather_earnings_shadow(corroboration_syms: set) -> None:
         print(f"  [warn] 财报影子落盘失败 (降级): {e}")
 
 
-def _gather_insider_clusters() -> List[str]:
+def _gather_insider_clusters() -> List[Dict[str, Any]]:
     """[ADR-018] 读今日已持久化的内部人集群报告 (insider_daily_{date}.json, 无网络).
-    集群买入=看多硬事件。无今日文件/无信号 → []。"""
+    集群买入=看多硬事件。无今日文件/无信号 → []。
+
+    [P2.1] 返回结构化事实 (本段是 31/32 误杀样本的来源, 见 _BRIEF_EVIDENCE 注释)。"""
     try:
         path = _ROOT / "data" / "reports" / f"insider_daily_{_today()}.json"
         if not path.exists():
             return []
         d = json.loads(path.read_text())
         by_sym = (d.get("stats") or {}).get("by_symbol") or {}
-        out: List[str] = []
+        out: List[Dict[str, Any]] = []
         for sym, cnt in by_sym.items():
             t = str(sym).replace("US.", "")
-            out.append(f"[HIGH/INSIDER_CLUSTER] {t} 内部人集群买入信号 x{cnt} → 看多")
+            out.append(_fact("insider_cluster",
+                             f"[HIGH/INSIDER_CLUSTER] {t} 内部人集群买入信号 x{cnt} → 看多",
+                             symbols=[t], published_at=_today(),
+                             event_key="INSIDER_CLUSTER"))
         return out
     except Exception as e:
         print(f"  [warn] 内部人集群读取失败 (降级): {e}")
         return []
 
 
-def _gather_event_symbols_file() -> List[str]:
+def _gather_event_symbols_file() -> List[Dict[str, Any]]:
     """[P2' 2026-07-21] 读 gen_event_symbols.py 的当日产出 (data/event_symbols_{ET}.json).
 
     给 V2 提供"预消化的事件驱动标的+原因"作为佐证原料 — MARKET_CORROBORATED 需要
     可引用证据, 事件清单正是证据源; 不动 prompt 克制标准. 文件不存在/为空 → []。
-    同一天 DA --symbols 与本段共用同一文件, 双源原料同源。"""
+    同一天 DA --symbols 与本段共用同一文件, 双源原料同源。
+
+    [P2.1] 返回结构化事实。"""
     try:
         path = _ROOT / "data" / f"event_symbols_{_today()}.json"
         if not path.exists():
             return []
         d = json.loads(path.read_text())
-        out: List[str] = []
+        out: List[Dict[str, Any]] = []
         for e in (d.get("event_symbols") or [])[:10]:
             t = str(e.get("symbol", "")).replace("US.", "")
             reasons = "; ".join(str(r)[:60] for r in (e.get("reasons") or [])[:2])
-            out.append(f"- {t} (score={e.get('score', 0)}): {reasons}")
+            out.append(_fact("event_symbols",
+                             f"- {t} (score={e.get('score', 0)}): {reasons}",
+                             symbols=[t], published_at=_today(),
+                             event_key="event_symbol"))
         return out
     except Exception as e:
         print(f"  [warn] 事件标的文件读取失败 (降级): {e}")
         return []
 
 
-def _gather_macro_brief() -> List[str]:
+def _gather_macro_brief() -> List[Dict[str, Any]]:
     """[RFC-076] 读当日宏观披露 brief (data/ue_macro_brief_{ET}.json)。
 
     生产方: scripts/ue_macro_brief_collect.py (cron 21:05 CST, FRED 新披露派生)。
-    无文件/无新披露 → [] (静默降级, 与既有线索源同构)。"""
+    无文件/无新披露 → [] (静默降级, 与既有线索源同构)。
+
+    [P2.1] 返回结构化事实; 宏观行**无具名标的** (`symbols=[]`) — 这正是 P2.6
+    "无合格具名候选但有宏观材料时仍允许一次 UE 扫描" 的判据来源。"""
     try:
         path = _ROOT / "data" / f"ue_macro_brief_{_today()}.json"
         if not path.exists():
             return []
         d = json.loads(path.read_text())
         lines = d.get("brief_lines") or []
-        return [str(x)[:300] for x in lines][:8]
+        return [_fact("macro_brief", str(x)[:300], published_at=_today(),
+                      event_key="macro") for x in lines][:8]
     except Exception as e:
         print(f"  [warn] 宏观brief读取失败 (降级): {e}")
         return []
 
 
-def _gather_peer_surge() -> List[str]:
+def _gather_peer_surge() -> List[Dict[str, Any]]:
     """[P3 2026-07-22] 盘前峰群异动段 — 读 premarket_peer_shadow.jsonl 当日记录 (record-only 影子),
     把板块级盘前异动作为 clue 供 V2 引用 (evidence_ref 可用 peer_surge).
     定位: 输入端扩容, 非放行信号 — "峰群直接跟随"已被 7 天回测否决 (-8.48%, 唯一 CONFIRM 日 -1.32%),
     此段仅把高波动板块票送入分析池, gate 照常把关. 文件缺失/当日无记录 → 跳过 (降级无碍).
-    回滚: 配置 universe_expansion.clue_peer_surge: false."""
+    回滚: 配置 universe_expansion.clue_peer_surge: false.
+
+    [P2.1] 返回结构化事实; 峰群成分股落 `symbols` (此前只在渲染串里, 无法按标的核验引证)."""
     try:
         path = Path("data/shadow/premarket_peer_shadow.jsonl")
         if not path.exists():
@@ -1024,13 +1284,15 @@ def _gather_peer_surge() -> List[str]:
             return []
         snap = rec.get("peers_snapshot") or {}
 
-        def _fmt(members: List[str]) -> str:
+        def _fmt(members: List[str]) -> tuple:
             cells = []
+            used: List[str] = []
             for sym in members:
                 v = snap.get(sym)
                 if isinstance(v, dict) and v.get("pre_change") is not None:
                     cells.append(f"{sym}{float(v['pre_change']):+.1f}%(量比{float(v.get('volume_ratio', 0)):.2f})")
-            return " ".join(cells)
+                    used.append(str(sym))
+            return " ".join(cells), used
 
         # 2026-07-22: 多板块组 (groups + groups_members 自描述成分); 旧记录无 groups → 回落顶层存储组 (向后兼容)
         groups = rec.get("groups") or {}
@@ -1038,23 +1300,32 @@ def _gather_peer_surge() -> List[str]:
             members_map = rec.get("groups_members") or {}
             out = []
             for name, gd in groups.items():
-                line = _fmt([str(s).upper() for s in (members_map.get(name) or [])])
+                line, members = _fmt([str(s).upper() for s in (members_map.get(name) or [])])
                 if line:
-                    out.append(f"{name}峰群 verdict={(gd or {}).get('verdict', '?')}: {line}")
+                    out.append(_fact(
+                        "peer_surge",
+                        f"{name}峰群 verdict={(gd or {}).get('verdict', '?')}: {line}",
+                        symbols=members, published_at=today,
+                        event_key=f"peer_surge/{name}"))
             return out
         cells: List[str] = []
+        used_syms: List[str] = []
         for sym, v in snap.items():
             if isinstance(v, dict) and v.get("pre_change") is not None:
                 cells.append(f"{sym}{float(v['pre_change']):+.1f}%(量比{float(v.get('volume_ratio', 0)):.2f})")
+                used_syms.append(str(sym))
         if not cells:
             return []
-        return [f"存储峰群 verdict={rec.get('group_verdict', '?')}: " + " ".join(cells)]
+        return [_fact("peer_surge",
+                      f"存储峰群 verdict={rec.get('group_verdict', '?')}: " + " ".join(cells),
+                      symbols=used_syms, published_at=today,
+                      event_key="peer_surge/storage")]
     except Exception as e:
         print(f"  [warn] 峰群影子读取失败 (降级): {e}")
         return []
 
 
-def _gather_premarket_rank_clues() -> List[str]:
+def _gather_premarket_rank_clues() -> List[Dict[str, Any]]:
     """[2026-08-29 盘前榜过滤规则, 用户裁"按建议执行"] 富途全市场盘前榜质量门候选 → 线索。
 
     数据链: premarket_enrichment.ensure_premarket_rank_candidates() 幂等保证当日文件
@@ -1065,7 +1336,9 @@ def _gather_premarket_rank_clues() -> List[str]:
       涨幅带影子打标: EXTREME 候选数据保留在 candidates json 攒样 (预注册判据照跑),
       默认不渲染进 prompt (U1①, clue_render_extreme_band: true 可回滚恢复展示)。
     文件缺失/当日无候选 → 触发一次采集兜底 (盘前 21:10 CST 首跑即产文件);
-      采集失败降级 []。回滚: 配置 universe_expansion.clue_premarket_rank: false。"""
+      采集失败降级 []。回滚: 配置 universe_expansion.clue_premarket_rank: false。
+
+    [P2.1] 返回结构化事实; 候选 symbol 落 `symbols`, 极端带行另记 event_key 以便审计区分。"""
     try:
         from app.data.premarket_enrichment import ensure_premarket_rank_candidates
         path = ensure_premarket_rank_candidates(_today())
@@ -1074,25 +1347,33 @@ def _gather_premarket_rank_clues() -> List[str]:
         d = json.loads(path.read_text(encoding="utf-8"))
         if d.get("date") != _today():
             return []  # 陈旧文件 (跨日残留) 不消费
-        out: List[str] = []
+        out: List[Dict[str, Any]] = []
 
-        def _fmt_side(side: Dict, label: str) -> List[str]:
-            lines: List[str] = []
+        def _fmt_side(side: Dict, label: str) -> List[Dict[str, Any]]:
+            lines: List[Dict[str, Any]] = []
             for c in (side.get("candidates") or []):
                 tags = ",".join(c.get("tags") or [])
                 tag_s = f" [{tags}]" if tags else ""
                 mcap_b = round(float(c.get("market_cap_usd", 0)) / 1e9, 1)
-                lines.append(f"- {c['symbol']} 盘前{label}#{c.get('rank', '?')} "
-                             f"{c['change_pct']:+.1f}% 盘前成交${float(c.get('turnover_usd', 0)) / 1e6:.1f}M "
-                             f"市值${mcap_b}B{tag_s}")
+                lines.append(_fact(
+                    "premarket_rank",
+                    f"- {c['symbol']} 盘前{label}#{c.get('rank', '?')} "
+                    f"{c['change_pct']:+.1f}% 盘前成交${float(c.get('turnover_usd', 0)) / 1e6:.1f}M "
+                    f"市值${mcap_b}B{tag_s}",
+                    symbols=[c.get("symbol", "")], published_at=_today(),
+                    event_key=f"premarket_rank/{label}"))
             # [U1① PROPOSAL-20260905, 2026-09-05] 极端带行默认不渲染 — "展示但不入围"
             #   是自相矛盾的输入 (模型仍会当软候选锚定, 追高语境污染源)。攒样不丢:
             #   extreme 数据保留在 candidates json (采集端), 预注册判据照跑。
             #   回滚: universe_expansion.clue_render_extreme_band: true。
             if bool(_cfg("universe_expansion.clue_render_extreme_band", False)):
                 for c in (side.get("extreme") or []):
-                    lines.append(f"- {c['symbol']} 盘前{label}极端涨幅带({c['change_pct']:+.1f}%) "
-                                 f"[仅记录不入围: 追高=买顶风险, 预注册攒样中]")
+                    lines.append(_fact(
+                        "premarket_rank",
+                        f"- {c['symbol']} 盘前{label}极端涨幅带({c['change_pct']:+.1f}%) "
+                        f"[仅记录不入围: 追高=买顶风险, 预注册攒样中]",
+                        symbols=[c.get("symbol", "")], published_at=_today(),
+                        event_key=f"premarket_rank_extreme/{label}"))
             return lines
 
         _g = _fmt_side(d.get("gainers") or {}, "涨")
@@ -1122,7 +1403,7 @@ def _latest_insider_report_age() -> Optional[int]:
         return None
 
 
-def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
+def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[Dict[str, Any]]:
     """v2.2 (P3): 本源近 N 日浮现→fwd 结果小表 (供 prompt 负反馈注入)。
 
     口径: playbook_instructions 中 source=universe_expansion 的方向指令,
@@ -1135,6 +1416,9 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
       66 条、66/66 反转, 其中 41 条做对的空头被标"推错", 直接喂给 prompt 里"连续推错的
       同标的+同方向不得再次浮现"那条抑制规则 ⇒ 系统性地驱逐正确空头、强化错误空头)。
       本函数只做 fraction→percent 换算。
+
+    [P2.1] 返回结构化事实 —— 抑制规则要求"若确有新证据, evidence_ref 必须引用新证据",
+      即本表**是**模型会引用的材料, 必须进索引 (此前它以 `- ` 开头侥幸未被前缀谓词误杀)。
     """
     try:
         import sqlite3
@@ -1161,7 +1445,10 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
             #   小收益误判为中性 (实测 2026-08-11 US.CVX 真值 +0.0249%, 显示 "+0.0%")。
             res = f"{adj:+.1f}%" + (" ✓" if adj > 0 else " ✗" if adj < 0 else " ＝")
             _dir = "LONG" if r["direction"] == "BUY" else "SHORT"
-            out.append(f"- {r['date']} {r['symbol'].replace('US.', '')} {_dir}: {res}")
+            out.append(_fact("feedback_table",
+                             f"- {r['date']} {r['symbol'].replace('US.', '')} {_dir}: {res}",
+                             symbols=[r["symbol"]], published_at=r["date"],
+                             event_key=f"feedback/{_dir}"))
             if len(out) >= max_rows:
                 break
         return out
@@ -1170,22 +1457,247 @@ def _build_feedback_table(days: int = 7, max_rows: int = 10) -> List[str]:
         return []
 
 
+# ── [P2.2 2026-09-12, proud-slope-falcon] 输入具名标的的可交易性初筛 ──────────
+# 计划 P2.2: "对输入中明确的 ticker 批量取轻量快照, 先做 P1 初筛。不可交易公司的
+#   事件可保留为 context_only, 用于产业链推导, 但不能直接当合格交易对象。"
+# 病灶: 修前 clue brief 把 8-K / 财报 / 内部人 / 盘前榜 / 峰群里出现的 ticker 原样送进
+#   模型, 模型无从知道其中哪些**根本不能交易** (仙股价 / 低波 / 权证优先股), 于是把
+#   分析预算花在注定被 inject 侧资格门拒掉的标的上 (白烧 LLM), 或把不可交易公司的
+#   事件当成直接交易机会。
+# 设计取舍 (三条, 每条都对应计划里的一句硬约束):
+#   ① **附加段, 不改既有行** — 渲染成 brief 末尾一个独立三态清单, 原有材料行逐字不动
+#      (P2 验收②"背景事件和榜外发现未被错误清空"; 也让本改动的正文漂移面可被零漂移测试钉住)。
+#   ② **不是白名单** — 只标注"输入里已具名的标的", 模型仍可提出材料外的新 ticker,
+#      那些在 inject 侧走同一资格门 (P1.5)。计划 P2.3 明写"不把输入集合当封闭股票白名单"。
+#   ③ **扫描期口径 ≠ 执行期口径** — 见 _scan_phase_policy 的理由。
+# 全程 fail-open: 任何异常 ⇒ 返回 status=unavailable 且**不追加本段**, 材料零改动。
+#   "筛不了"绝不能变成"清空材料"。
+# 回滚: universe_expansion.input_prescreen=false。
+_LAST_INPUT_PRESCREEN: Dict[str, Any] = {}
+INPUT_PRESCREEN_SOURCE = "ue_input_prescreen"
+# [P2.2 2026-09-12] 这些源里的 symbols **不计入**待初筛的具名集合 (理由见
+#   _build_clue_brief 内注释): feedback_table = 近7日浮现**回顾**, 配套 prompt 规则是
+#   "连续推错的同标的同方向不得再浮现" ⇒ 反候选清单, 不该占今日初筛名额。
+_PRESCREEN_EXCLUDED_SOURCES = frozenset({"feedback_table"})
+
+
+def _scan_phase_policy(base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """[P2.2] 扫描期资格口径 = P1 执行口径**减去**执行时微结构门。
+
+    为什么不能照搬 `load_candidate_policy()`: 它带 `max_quote_age_sec=90`(报价新鲜度)、
+    `quote_gate_enabled`(点差/bid-ask)、`borrow_gate_enabled`(借券) —— 那三样是**下单前**
+    的实时行情门。UE scan 在 ET 09:10 盘前跑, 距入场窗约 2 小时, 用 90 秒新鲜度去筛会把
+    输入标的几乎全判 `stale_quote` ⇒ 初筛退化成"全清", 正是 P2 验收②要防的事。
+    计划 P1.2 也明写"执行前仍复核有效性, 不能拿盘前快照当实时行情" ⇒ 微结构门留在
+    inject/执行侧 (P1.5 已接), 扫描期只判**结构性可交易性**:
+      标的形状 (权证/优先股) / 价格地板 / 低 ATR (低波)。
+
+    `max_quote_age_sec` 设成一个不可能达到的大值而不是删键 —— `evaluate_candidate`
+    读 `policy["max_quote_age_sec"]`, 删键会退回默认 90 (更严), 与意图相反。
+
+    ⚠ 该值必须是**有限** float, 不能用 `float("inf")`: `screen_candidates` 会把 policy
+      整体喂给 `_fingerprint()` → `json.dumps(..., allow_nan=False)` 计算 `input_hash`,
+      `Infinity` 不是合法 JSON ⇒ 抛 ValueError ⇒ 被本函数的 fail-open 兜住后
+      **每次初筛都静默退化成 status=unavailable** (材料不标注, 缺陷隐形)。
+      实测教训, 由 test_scan_phase_policy_is_json_fingerprintable 钉住。
+    """
+    from app.playbook.candidate_eligibility import load_candidate_policy
+
+    policy = dict(base if base is not None else load_candidate_policy())
+    policy["quote_gate_enabled"] = False
+    policy["borrow_gate_enabled"] = False
+    # 1e12 秒 ≈ 3.2 万年: 有限 (可 JSON 指纹化) 且任何真实报价龄都不可能超过。
+    policy["max_quote_age_sec"] = 1e12
+    policy["phase"] = "ue_input_prescreen"
+    return policy
+
+
+def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
+                             max_symbols=None) -> Dict[str, Any]:
+    """对材料索引里**已具名**的 ticker 做批量轻量初筛, 返回三态清单 (纯读, 不落库)。
+
+    三态语义 (与 P1 资格判定同口径, 不新造判据):
+      `tradeable`    PASS    —— 结构性可交易, 可作直接交易候选;
+      `context_only` REJECT  —— 明确不可交易 (形状/价格地板/低ATR), 事件只作背景与
+                               产业链推导, **不得**当直接交易候选 (附 reasons 可归因);
+      `unknown`      UNKNOWN —— 缺价/缺ATR/缺行情时戳 ⇒ 不猜, 按未定处理,
+                               执行侧仍受原风险门约束 (缺数 ≠ 拒绝, 计划 P1.3)。
+    """
+    from app.playbook.candidate_eligibility import make_batch_id, screen_candidates
+
+    ordered = list(dict.fromkeys(str(s).strip().upper().replace("US.", "")
+                                 for s in (symbols or []) if str(s).strip()))
+    if max_symbols is None:
+        max_symbols = int(_cfg("universe_expansion.input_prescreen_max_symbols", 30))
+    summary: Dict[str, Any] = {
+        "status": "ok", "named_in_materials": len(ordered),
+        "checked": 0, "overflow_skipped": ordered[max_symbols:],
+        "tradeable": [], "context_only": [], "unknown": [],
+        "policy_version": None, "phase": "ue_input_prescreen",
+    }
+    ordered = ordered[:max_symbols]
+    if not ordered:
+        summary["status"] = "no_named_symbol"
+        return summary
+    try:
+        now = now or _now_et()
+        policy = policy if policy is not None else _scan_phase_policy()
+        summary["policy_version"] = policy.get("version")
+        router = router if router is not None else _build_router()
+        batch_id = make_batch_id(INPUT_PRESCREEN_SOURCE, now)
+        rows = screen_candidates([{"symbol": s} for s in ordered], router,
+                                 source=INPUT_PRESCREEN_SOURCE, batch_id=batch_id,
+                                 now=now, policy=policy)
+    except Exception as exc:
+        print(f"  [warn] 输入初筛失败 (fail-open, 材料零改动): {exc}")
+        summary.update(status="unavailable", error=type(exc).__name__)
+        return summary
+    for row in rows:
+        scr = row.get("candidate_screening") or {}
+        bare = str(scr.get("symbol") or "").replace("US.", "")
+        status = str(scr.get("status") or "UNKNOWN").upper()
+        entry = {"symbol": bare, "status": status,
+                 "reasons": list(scr.get("reasons") or []),
+                 "missing_fields": list(scr.get("missing_fields") or []),
+                 "price": scr.get("price"),
+                 "screening_atr_ratio": scr.get("screening_atr_ratio"),
+                 "atr_reason": scr.get("atr_reason")}
+        summary["checked"] += 1
+        if status == "PASS":
+            summary["tradeable"].append(bare)
+        elif status == "REJECT":
+            summary["context_only"].append(entry)
+        else:
+            summary["unknown"].append(entry)
+    return summary
+
+
+# ── [P2.6 2026-09-12, proud-slope-falcon] 输入可用性: 空转材料不花 LLM 预算 ──
+SCAN_SKIP_NO_INPUT = "no_actionable_input"
+
+
+def _scan_input_is_actionable(index, prescreen=None, fingerprints=None) -> Dict[str, Any]:
+    """[P2.6] 纯函数: 这次输入值不值得花一次 LLM 调用 (不做 IO, 不落库)。
+
+    计划 P2.6 原文: "无合格具名候选且无有效宏观/传导材料时跳过 LLM 并写空批次;
+    有发现价值的背景材料则仍允许一次 UE 扫描。" 两句相撞时**一律偏向不跳** ——
+    P2 验收②("背景事件和榜外发现未被错误清空")比省一次调用重要: 漏跳只浪费预算,
+    错跳是静默丢掉当天全部 UE 发现, 且账上看起来像"当日无机会"。故判据刻意窄到
+    只剩"材料索引里一条事实都没有"这一退化态:
+      · 具名标的哪怕**全被判 context_only 也不跳** (P2.2: 不可交易公司的事件保留作
+        产业链推导, 属计划原文里"有发现价值的背景材料");
+      · 任何一条无 symbols 的事实 (宏观/板块/regime) 都算传导材料 ⇒ 不跳;
+      · 初筛降级 (status=unavailable) 一律不跳 —— 缺数 ≠ 没有机会 (计划 P1.3);
+      · **brief 管线未被观测到**一律不跳 (见下 `fingerprints`);
+      · 人工线索 (`manual_clue`) 在 _build_clue_brief 里就登记成一条无 symbols 的事实
+        ⇒ 天然落进 macro 桶, 人明确要求扫的时候绝不会被判空转跳过。
+
+    `fingerprints` = `_LAST_BRIEF_FINGERPRINTS`。它只由 `_build_clue_brief` 在**成功构建
+    的最后一行**赋值, 且函数入口先清空 ⇒ 非空 = "本次 brief 确实走完了 gather 管线,
+    材料索引可信"。为空 = brief 来自别处 (测试桩整体替换 _build_clue_brief / 被 patch /
+    构建中途抛错) ⇒ 此时索引里的"空"不能读成"今天真没材料", 必须不跳。
+    实测教训 (2026-09-12 离线全链): tests/playbook/offline_chain_driver.py 把
+    `_build_clue_brief` 换成返回冻结串的桩, 索引自然为空, 守卫据此跳过了 LLM
+    ⇒ 整条 scan→inject→execute 链断在第一节 (18 例 setup ERROR)。缺这道观测前提,
+    "索引空"与"没跑 gather"在代码里是同一个形态。
+
+    真正会被跳过的只有"全部输入源同时空转": 此时旧行为是拿一份几乎空白的 brief 去问
+    模型, 模型只能凭参数记忆编标的 (幻觉), 且照样烧满 max_tokens=16000。
+    """
+    facts = [e for e in (index or []) if str(e.get("text") or "").strip()]
+    named = [e for e in facts if (e.get("symbols") or [])]
+    macro = [e for e in facts if not (e.get("symbols") or [])]
+    ps_status = str((prescreen or {}).get("status") or "")
+    degraded = ps_status not in ("", "ok", "no_named_symbol")
+    observed = bool(fingerprints)
+    has_material = bool(named or macro)
+    if not observed:
+        reason = "brief_pipeline_not_observed"
+    elif named and macro:
+        reason = "has_named_and_macro_material"
+    elif named:
+        reason = "has_named_material"
+    elif macro:
+        reason = "has_macro_material"
+    elif degraded:
+        reason = "input_degraded_fail_open"
+    else:
+        reason = "empty_material_index"
+    return {
+        "actionable": bool(has_material or degraded or not observed),
+        "reason": reason,
+        "brief_observed": observed,
+        "material_count": len(facts),
+        "named_material_count": len(named),
+        "macro_material_count": len(macro),
+        "prescreen_status": ps_status or None,
+    }
+
+
+def _render_input_prescreen(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把初筛结果渲染成 brief 附加段的事实行 (空结果 ⇒ 不追加任何行)。"""
+    if not summary or summary.get("status") not in ("ok", "no_named_symbol"):
+        return []
+    if not (summary.get("tradeable") or summary.get("context_only")
+            or summary.get("unknown")):
+        return []
+    lines: List[Dict[str, Any]] = []
+    tradeable = list(summary.get("tradeable") or [])
+    if tradeable:
+        lines.append(_fact("input_prescreen",
+                           "可作直接交易候选: " + ", ".join(tradeable),
+                           symbols=tradeable, published_at=_today(),
+                           event_key="prescreen_tradeable"))
+    for entry in (summary.get("context_only") or []):
+        why = ",".join(entry.get("reasons") or []) or "ineligible"
+        lines.append(_fact(
+            "input_prescreen",
+            f"仅背景(context_only, 不得当直接交易候选): {entry['symbol']} — {why}",
+            symbols=[entry.get("symbol")], published_at=_today(),
+            event_key="prescreen_context_only"))
+    for entry in (summary.get("unknown") or []):
+        why = ",".join(entry.get("missing_fields") or []) or "unknown"
+        lines.append(_fact(
+            "input_prescreen",
+            f"未定(缺数据, 不猜; 执行侧仍受原风险门约束): {entry['symbol']} — 缺 {why}",
+            symbols=[entry.get("symbol")], published_at=_today(),
+            event_key="prescreen_unknown"))
+    if summary.get("overflow_skipped"):
+        lines.append(_fact(
+            "input_prescreen",
+            f"初筛名额上限外未判定 (按未定处理, 不因此排除): "
+            f"{', '.join(summary['overflow_skipped'][:20])}",
+            symbols=summary["overflow_skipped"], published_at=_today(),
+            event_key="prescreen_overflow"))
+    return lines
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
+    # [U8 2026-08-25 / P2.1 / P2.5 2026-09-12] 材料索引与指纹 — 供 _evidence_grounded /
+    #   _classify_evidence_citation 做"引证是否真实存在于今日输入"的代码核验。
+    #   索引在 **gather 现场**逐条登记 (见 _take_facts); _LAST_BRIEF_MATERIALS 在函数
+    #   末尾由索引派生, 不再有行前缀猜测。
+    # ⚠ 状态失效必须排在**任何可能抛的语句之前** (原先排在 `_cfg(...)` 之后): 构建在
+    #   第一行就抛时, 上一次的 _BRIEF_EVIDENCE/_LAST_BRIEF_FINGERPRINTS 会原地留存,
+    #   等于宣称"这次输入和上次一样" —— P2.6 的空转守卫正是读这份索引判"今天有没有材料",
+    #   留着旧值会让它按上次的材料决定是否调 LLM。
+    global _LAST_BRIEF_MATERIALS, _BRIEF_EVIDENCE, _LAST_BRIEF_FINGERPRINTS
+    _LAST_BRIEF_MATERIALS = []
+    _BRIEF_EVIDENCE = []
+    _LAST_BRIEF_FINGERPRINTS = {}
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
     health: List[str] = []  # [新鲜度 2026-07-22] 各输入源健康摘要 (日志可观测, 区分"无事件"与"链路断")
-    # [U8 2026-08-25 evidence grounding] 材料行缓存 — 供 _ground_evidence_refs 做
-    #   "引证是否真实存在于今日输入"的代码核验。每次构建重置。
-    global _LAST_BRIEF_MATERIALS
-    _LAST_BRIEF_MATERIALS = []
 
     if manual_clue:
         parts.append(f"\n[人工线索]\n{manual_clue.strip()}")
+        _take_facts([_fact("manual_clue", manual_clue.strip(), event_key="manual")],
+                    source="manual_clue")
 
     news = _gather_news(hours)
 
     # [ADR-017/018] 结构化硬事件段 (config 驱动, 传导优先级最高, 供 V2 自评 HARD_EVENT)
-    hard: List[str] = []
+    hard: List[Dict[str, Any]] = []
     _corro_syms: set = set()  # [UE-B1影子] 财报影子交叉印证符号集 (8-K/13DG ticker)
     if bool(_cfg("universe_expansion.clue_hard_events", True)):
         _he = _gather_hard_events(news)            # 新闻分类 (关键词, 零成本)
@@ -1210,8 +1722,12 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                 "universe_expansion.news_lookback_hours", 24)))
             # [UE-A3 2026-08-29] ETF/权证/商品信托例行文件剔除 (先过滤再取15, 不足不补凑)
             _8k = _filter_8k_noise(_8k)
-            _8k_lines = [f"8-K {r['ticker']}: {'; '.join(r['item_labels'])} "
-                         f"(filed {r['updated'][:16]})" for r in _8k[:15]]
+            _8k_lines = [_fact("sec_8k",
+                               f"8-K {r['ticker']}: {'; '.join(r['item_labels'])} "
+                               f"(filed {r['updated'][:16]})",
+                               symbols=[r.get("ticker", "")],
+                               published_at=str(r.get("updated") or "")[:16] or None,
+                               event_key="sec_8k") for r in _8k[:15]]
             hard += _8k_lines
             health.append(f"8-K:{len(_8k_lines)}")
             _corro_syms.update(str(r.get("ticker", "")).upper().replace("US.", "")
@@ -1228,9 +1744,14 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             # [UE-A3 2026-08-29] 权证/优先股举牌剔除 (对普通股发现无事件意义)
             _dg = [r for r in _dg
                    if not _is_13dg_noise(r.get("ticker", ""), r.get("company", ""))]
-            _dg_lines = [f"举牌 {r['ticker']}: {r['form']}"
-                         f"{' (主动举牌, 看多先验强)' if r['form'].startswith('SC 13D') else ' (被动持仓)'} "
-                         f"(filed {r['updated'][:16]})" for r in _dg[:10]]
+            _dg_lines = [_fact("sec_13dg",
+                               f"举牌 {r['ticker']}: {r['form']}"
+                               f"{' (主动举牌, 看多先验强)' if r['form'].startswith('SC 13D') else ' (被动持仓)'} "
+                               f"(filed {r['updated'][:16]})",
+                               symbols=[r.get("ticker", "")],
+                               published_at=str(r.get("updated") or "")[:16] or None,
+                               event_key=str(r.get("form") or "sec_13dg"))
+                         for r in _dg[:10]]
             hard += _dg_lines
             health.append(f"13DG:{len(_dg_lines)}")
             _corro_syms.update(str(r.get("ticker", "")).upper().replace("US.", "")
@@ -1247,7 +1768,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         health.append(f"宏观:{len(_mb)}")
     if hard:
         parts.append("\n[硬事件 (已分类, 传导优先级最高)]")
-        parts.extend(hard)
+        parts.extend(_take_facts(hard, source="hard_event"))
 
     # [P2' 2026-07-21] 事件驱动标的清单 (gen_event_symbols 当日产出, 与 DA --symbols 同源).
     #   给 V2 可引用的佐证原料; 文件缺失=当日未生成 → 跳过, 行为与之前一致. 回滚: 配置设 false.
@@ -1256,7 +1777,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         health.append(f"事件标的:{len(es)}")
         if es:
             parts.append("\n[今日事件驱动标的 (事件清单, 可作 evidence_ref 引用)]")
-            parts.extend(es)
+            parts.extend(_take_facts(es, source="event_symbols"))
 
     # [P3 2026-07-22] 盘前板块峰群 (影子测量转 clue 输入; 仅热度参考, 跟随策略已回测否决).
     if bool(_cfg("universe_expansion.clue_peer_surge", True)):
@@ -1264,7 +1785,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         health.append(f"峰群:{len(ps)}组")
         if ps:
             parts.append("\n[盘前板块峰群 (影子实测, 热度参考非跟随信号)]")
-            parts.extend(ps)
+            parts.extend(_take_facts(ps, source="peer_surge"))
 
     # [2026-08-29 盘前榜过滤规则] 富途全市场盘前榜质量门候选 (成交额/价格/市值/ETF门后每向≤5)。
     #   定位同峰群: 输入端扩容非放行信号; 极端涨幅带已剔除只展示。回滚: 配置设 false。
@@ -1273,20 +1794,38 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         health.append(f"盘前榜:{len(pr)}条")
         if pr:
             parts.append("\n[盘前全市场榜质量门候选 (已过成交额≥$5M/价格≥$5/市值≥$2B门, 候选非信号)]")
-            parts.extend(pr)
+            parts.extend(_take_facts(pr, source="premarket_rank"))
 
     mkt = _gather_market_corroboration()
     health.append(f"佐证:{mkt.get('date') or '无/陈旧'}")
     if mkt:
         parts.append("\n[市场佐证 (板块轮动/异动)]")
+        _mkt_facts: List[Dict[str, Any]] = []
         if mkt.get("strong_sectors"):
-            parts.append("轮入板块: " + ", ".join(mkt["strong_sectors"]))
+            _mkt_facts.append(_fact("market_corroboration",
+                                    "轮入板块: " + ", ".join(mkt["strong_sectors"]),
+                                    published_at=mkt.get("date"),
+                                    event_key="sector_rotation_in"))
         if mkt.get("weak_sectors"):
-            parts.append("轮出板块: " + ", ".join(mkt["weak_sectors"]))
+            _mkt_facts.append(_fact("market_corroboration",
+                                    "轮出板块: " + ", ".join(mkt["weak_sectors"]),
+                                    published_at=mkt.get("date"),
+                                    event_key="sector_rotation_out"))
         if mkt.get("movers"):
-            parts.append("宇宙外异动: " + ", ".join(mkt["movers"][:12]))
+            _mkt_facts.append(_fact("market_corroboration",
+                                    "宇宙外异动: " + ", ".join(mkt["movers"][:12]),
+                                    # symbols 取 gather 现场的结构化字段 (与渲染串同处产出),
+                                    #   不再从成品串反解 —— 见 _ticker_symbols 注释的实测缺陷。
+                                    symbols=(mkt.get("mover_symbols") or [])[:12],
+                                    published_at=mkt.get("date"),
+                                    event_key="out_of_universe_movers"))
         if mkt.get("intraday_pulse"):
-            parts.append("盘中板块脉搏(实时): " + ", ".join(str(x) for x in mkt["intraday_pulse"][:11]))
+            _mkt_facts.append(_fact("market_corroboration",
+                                    "盘中板块脉搏(实时): "
+                                    + ", ".join(str(x) for x in mkt["intraday_pulse"][:11]),
+                                    published_at=mkt.get("date"),
+                                    event_key="intraday_sector_pulse"))
+        parts.extend(_take_facts(_mkt_facts, source="market_corroboration"))
 
     if news:
         # [2026-07-22] symbols 字段为 JSON 字符串, 空列表 "[]" 真值恒真曾拼出 "[[]]" 噪声 → 解析后非空才展示
@@ -1321,7 +1860,15 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             except Exception:
                 pass
             if title:
-                parts.append(f"- {title}{_age_tag}" + (f"  [{', '.join(syms)}]" if syms else ""))
+                # [P2.1] 事实登记与渲染同源: published_at/symbols 在此刻还在手上,
+                #   渲染完就只剩字符串, 事后无从复原 (原实现正是这样丢的)。
+                parts.extend(_take_facts(
+                    [_fact("news_headline",
+                           f"- {title}{_age_tag}"
+                           + (f"  [{', '.join(syms)}]" if syms else ""),
+                           symbols=syms,
+                           published_at=str(n.get("published_at") or "") or None,
+                           event_key="news")], source="news_headline"))
         health.append(f"新闻:{len(news)}条(带标的{_n_sym})")
     else:
         parts.append("\n[新闻] 无近期新闻 (依赖市场佐证 + 人工线索推理)")
@@ -1336,7 +1883,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         if fb:
             parts.append("\n[本源近7日浮现回顾 (方向调整后前瞻收益: ✓=推对盈利 / ✗=推错亏损 / "
                          "＝=零收益持平, ＝不计入推错)]")
-            parts.extend(fb)
+            parts.extend(_take_facts(fb, source="feedback_table"))
             parts.append("规则: 对上表中连续推错(连续负收益)的 同标的+同方向, 除非今日材料中出现"
                          "【新增量证据】(新事件/新数据), 否则不得再次浮现; 若确有新证据, evidence_ref 必须引用新证据。"
                          "表中 ＝ (零收益) 不是推错, 不得计入「连续推错」或据以触发本规则。")
@@ -1379,17 +1926,55 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             _regime_line = (f"regime={_rc_scan.regime.value} · VIX={_rc_scan.vix} · "
                             f"SPY {_spy_trend} (MA20 {_rc_scan.spy_ma20:.1f} / MA50 {_rc_scan.spy_ma50:.1f})")
             parts.append("\n[当日市场环境 (与执行端同源口径, 因果推理须考虑)]")
-            parts.append(_regime_line)
+            parts.extend(_take_facts(
+                [_fact("market_regime", _regime_line, published_at=_today(),
+                       event_key="regime")], source="market_regime"))
         except Exception as _rg_scan_e:
             print(f"  [warn] regime 摘要注入失败 (降级, 不阻断): {_rg_scan_e}")
-    # [U8 2026-08-25 evidence grounding] 收集全部材料行 — 供引证真实性核验。
-    #   拆行保留 (人工线索段是头+内容单元素); 排除节标题与日期行。
-    for _p in parts:
-        for _line in str(_p).split("\n"):
-            _line = _line.strip()
-            if _line and not _line.startswith("[") and not _line.startswith("日期"):
-                _LAST_BRIEF_MATERIALS.append(_line)
-    return "\n".join(parts)
+
+    # ── [P2.2] 输入具名标的可交易性初筛 (附加段; 材料一条不删, fail-open) ──
+    #   具名集合取自**材料索引**而非再解析正文 —— 索引在 gather 现场登记了 symbols,
+    #   这里直接消费, 不需要从渲染串里把 ticker 抠回来 (那又是一次"事后猜")。
+    #   放在最后: 此时全部 gather 已完成, 具名集合才是完整的。
+    global _LAST_INPUT_PRESCREEN
+    _LAST_INPUT_PRESCREEN = {}
+    if bool(_cfg("universe_expansion.input_prescreen", True)):
+        #   具名集合的取法有两处刻意选择 (都是"别把最该判的挤掉"):
+        #   ① **排除 feedback_table** — 那是"近7日浮现回顾", 配套 prompt 规则本就是
+        #      "连续推错的同标的同方向不得再浮现"。它是**反候选**清单, 拿它占初筛名额
+        #      等于让历史标的挤掉今日事件标的。
+        #   ② **保材料索引顺序**而非字典序 — 索引顺序 = gather 顺序 = 传导优先级顺序
+        #      (硬事件→财报→内部人→…→回顾→regime)。名额上限截断时字典序会把 Z 开头的
+        #      今日热点整批丢进 overflow, 保序丢的才是优先级尾巴。与计划 P1.4"避免先丢掉
+        #      最强空头"同一原则: 先定序, 后截断。
+        _named = list(dict.fromkeys(
+            s for e in _BRIEF_EVIDENCE
+            if str(e.get("source") or "") not in _PRESCREEN_EXCLUDED_SOURCES
+            for s in (e.get("symbols") or [])))
+        _ps = _prescreen_input_symbols(_named)
+        _ps_lines = _render_input_prescreen(_ps)
+        if _ps_lines:
+            parts.append("\n[输入具名标的可交易性初筛 (与注入侧同一资格口径; "
+                         "本段只标注输入里已具名的标的, 不是可选股票白名单 — "
+                         "你仍可提出材料外的新标的, 它们会在注入前接受同一资格判定)]")
+            parts.extend(_take_facts(_ps_lines, source="input_prescreen"))
+        _LAST_INPUT_PRESCREEN = _ps
+        health.append(f"输入初筛:{_ps.get('checked', 0)}判/"
+                      f"{len(_ps.get('tradeable') or [])}可交易/"
+                      f"{len(_ps.get('context_only') or [])}仅背景/"
+                      f"{len(_ps.get('unknown') or [])}未定"
+                      + ("" if _ps.get("status") == "ok" else f"({_ps.get('status')})"))
+    # [P2.1 2026-09-12] 材料行由**索引派生** — 索引在 gather 现场逐条登记, 与正文同源。
+    #   原实现在此处把 parts 按 "\n" 拆行再用 `not startswith("[")` 排除节标题, 该谓词
+    #   同时误杀了 `[CRITICAL/…]`/`[HIGH/EARNINGS]`/`[HIGH/INSIDER_CLUSTER]` 等**事实行**
+    #   (实测 32 条 grounded=False 中 31 条即此因, 见 _BRIEF_EVIDENCE 注释)。
+    #   现节标题/日期行本就不登记为事实 ⇒ 无需任何前缀猜测。
+    _LAST_BRIEF_MATERIALS = [e["text"] for e in _BRIEF_EVIDENCE]
+    _brief_text = "\n".join(parts)
+    # [P2.5] 三指纹与材料构成随构建落定 — cmd_scan 直接取, 不再事后重算 (事后重算
+    #   就等于又给"猜"留了一个入口)。
+    _LAST_BRIEF_FINGERPRINTS = _brief_fingerprints(parts, _BRIEF_EVIDENCE, _brief_text)
+    return _brief_text
 
 
 # ── scan: LLM 推理浮现标的 ─────────────────────────────────────
@@ -1429,6 +2014,9 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
         }
         if with_tier:
             ev = str(it.get("evidence_ref", ""))[:200].strip()
+            # [P2.4] 留原始引证 — 下方 enforce=true 会把 ev 清空, 三态分类必须用清空前的值,
+            #   否则"未过核验"会被误记成"模型没给引证"(no_ref), 两种缺陷在账上混成一类。
+            _ev_raw = ev
             tier = str(it.get("self_tier", "")).upper().strip()
             _tier_fallback = False  # 2026-08-22 (UE P1): 非法 tier 静默替换留痕, 攒样数据可区分
             if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
@@ -1457,6 +2045,23 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["self_tier"] = tier
             # [U8] 引证真实性留痕 — 供攒样判误杀率; 未过核验且未开强制时不改变判定
             item["evidence_grounded"] = _ev_grounded
+            # ── [P2.4 2026-09-12] 引证三态 (纯附加留痕, 不改上面任何判定) ──
+            #   消费方登记见 _classify_evidence_citation 注释 (AGENT.md P7 军规)。
+            #   fail-safe: 分类器自身异常**不落 not_found** —— 那是对模型"编造引证"的
+            #   指控, 传感器坏了不能赖模型; 改落 transmission_assumed (保守: 不宣称直接
+            #   关联) 并把 matched_source 标成 classifier_error 供归因。与 _ev_grounded
+            #   的"核验器故障 → 不误杀"同一处置哲学。
+            try:
+                _cit = _classify_evidence_citation(
+                    _ev_raw, sym, brief_evidence_index())
+            except Exception:
+                _cit = {"state": ("no_ref" if not _ev_raw else "transmission_assumed"),
+                        "evidence_id": None, "matched_symbols": [],
+                        "matched_source": "classifier_error" if _ev_raw else None}
+            item["evidence_citation_state"] = _cit.get("state")
+            item["evidence_id"] = _cit.get("evidence_id")
+            item["evidence_matched_symbols"] = list(_cit.get("matched_symbols") or [])
+            item["evidence_matched_source"] = _cit.get("matched_source")
             item["raw_confidence"] = round(raw_conf, 3)
             item["clamped"] = clamped
             if _tier_fallback:
@@ -1550,6 +2155,97 @@ def _evidence_grounded(ev: str, materials: List[str], k: int = 6, ratio: float =
         return False
     hit = sum(1 for g in ev_grams if g in grams)
     return hit / len(ev_grams) >= ratio
+
+
+# ── [P2.4 2026-09-12, proud-slope-falcon] 引证三态: "材料里有这句" ≠ "因果已核实" ──
+# 病灶: `evidence_grounded` 是**一个 bool**, 只回答"这段引证出自今日材料吗"。它答不了
+#   计划 P2.4 要的那一问: 命中的那条材料**自己就带这个标的**吗 (直接关联实体), 还是
+#   模型从宏观/板块/同业材料**推**到这只票 (间接传导假设)。两者在账上同一个 True ⇒
+#   "引证已核验"被下游读成"因果已核验", 而传导假设恰恰是最需要人工抽检的一类。
+#   错实体 (拿 A 公司的事件给 B 票背书) 也一并落进 True 侧, 在既有传感器上完全不可见。
+# 修法: 材料索引 (P2.1) 每条事实都带 symbols ⇒ 把同一套滑窗匹配从"过没过阈"改成
+#   "过阈的是哪一条", 再按那条事实的 symbols 是否含本标的分态。
+# **纯附加留痕** (刻意的边界, 计划 P2.4 明写"本轮不借此打开现有 tier/grounding/confirm
+#   强制门"): 不改 `_evidence_grounded` 的算法与取值, 不改 Track A 夹逼, 不改 confidence,
+#   不动 `evidence_grounding_enforce`。三态只落库供人工抽检与 P4 readout 分层。
+# 消费方登记 (AGENT.md P7): ①`evidence_grounding_enforce` 开启裁决的人工抽检分层
+#   (预注册判据"5 交易日抽检误杀率 <10%"此前只有 bool, 无法区分误杀与真传导);
+#   ②P4 `scripts/unit_cell_daily_readout.py` 全漏斗的 LLM 段分层;
+#   ③`scripts/shadow_field_cardinality.py` ue_scan.evidence_citation_state 基数自检。
+CITATION_STATES = ("no_ref", "not_found", "entity_linked", "transmission_assumed")
+
+
+def _match_evidence_fact(ev: str, index, k: int = 6, ratio: float = 0.5):
+    """返回与引证最匹配的**那一条事实** (dict) 或 None — 与 `_evidence_grounded` 同参同算法。
+
+    差别只在返回"哪一条"而不是"过没过阈": 分实体/传导必须知道命中的事实带哪些 symbols。
+    同分取索引里更靠前的一条 (gather 顺序即传导优先级顺序) ⇒ 结果可复现。
+    """
+    ev_n = _norm_text(ev)
+    if not ev_n or not index:
+        return None
+    best, best_score = None, 0.0
+    for entry in index:
+        mn = _norm_text(str(entry.get("text") or ""))
+        if not mn:
+            continue
+        if len(ev_n) < k or len(mn) < k:
+            score = 1.0 if (ev_n in mn or mn in ev_n) else 0.0
+        else:
+            grams = {mn[i:i + k] for i in range(len(mn) - k + 1)}
+            ev_grams = [ev_n[i:i + k] for i in range(len(ev_n) - k + 1)]
+            score = sum(1 for g in ev_grams if g in grams) / len(ev_grams)
+        if score > best_score:
+            best, best_score = entry, score
+    return best if best_score >= ratio else None
+
+
+def _classify_evidence_citation(ev: str, symbol: str, index) -> Dict[str, Any]:
+    """[P2.4] 引证三态判定 (纯函数, 不做 IO, 不改任何既有判定)。
+
+    状态枚举 (量纲=枚举, 取值域固定为 CITATION_STATES):
+      `no_ref`               模型没给引证 —— 已被 Track A 夹逼接管, 此处只归类不改判;
+      `not_found`            给了引证但材料索引里定位不到 = 编造/未知编号 ⇒ **不得**记作
+                             已核验证据 (计划 P2.4 原文);
+      `entity_linked`        命中的事实**自己就带这个标的** = 直接关联实体;
+      `transmission_assumed` 引证真实存在, 但那条事实的 symbols 里没有本标的 = 间接传导
+                             **假设** (宏观/板块/同业推导, 或错实体)。编号存在 ≠ 因果已核实。
+
+    `evidence_matched_symbols` 是为"错实体 vs 真传导"的人工分辨而落的: 二者同落
+      transmission_assumed, 但命中事实带 symbols (→ 可能是错实体/同业传导) 与不带
+      symbols (→ 纯宏观传导) 在抽检时处置不同。`evidence_id=None` 且状态为
+      transmission_assumed 表示**跨行引证**: 整段话由多条材料拼成, 池化匹配过阈但
+      定位不到单条事实 ⇒ 保守不宣称直接关联。
+    """
+    sym = str(symbol or "").strip().upper().replace("US.", "")
+    ev = str(ev or "").strip()
+    out: Dict[str, Any] = {"state": "no_ref", "evidence_id": None,
+                           "matched_symbols": [], "matched_source": None}
+    if not ev:
+        return out
+    entries = [e for e in (index or []) if str(e.get("text") or "").strip()]
+    if not entries:
+        out["state"] = "not_found"
+        return out
+    hit = _match_evidence_fact(ev, entries)
+    if hit is None:
+        # 单条定位失败, 但池化匹配 (既有传感器口径) 可能仍过阈 = 跨行拼引。
+        #   此时**不**回退成 not_found: 那会与 evidence_grounded=True 自相矛盾;
+        #   也不宣称 entity_linked: 定位不到事实就无从判断实体关联 ⇒ 保守落传导假设。
+        pooled = False
+        try:
+            pooled = _evidence_grounded(ev, [str(e.get("text") or "") for e in entries])
+        except Exception:
+            pooled = False
+        out["state"] = "transmission_assumed" if pooled else "not_found"
+        return out
+    out["evidence_id"] = hit.get("evidence_id")
+    out["matched_source"] = hit.get("source")
+    matched = [str(x).strip().upper().replace("US.", "")
+               for x in (hit.get("symbols") or []) if str(x).strip()]
+    out["matched_symbols"] = matched
+    out["state"] = "entity_linked" if sym and sym in matched else "transmission_assumed"
+    return out
 
 
 def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1782,6 +2478,39 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
         return 0
+    from app.playbook.candidate_eligibility import make_batch_id, POLICY_VERSION
+    window = "midday" if midday else ("da_feed" if da_feed else "premarket")
+    now = _now_et()
+    batch = {"batch_id": make_batch_id("UE", now), "date": _today(),
+             "scan_window": window, "started_at": now.isoformat(),
+             "policy_version": POLICY_VERSION}
+    path = _MIDDAY_PATH if midday else _SCAN_PATH
+    _append_jsonl(path, {**batch, "type": "batch_start", "batch_status": "pending"})
+    result = {}
+    try:
+        rc = _cmd_scan_impl(manual_clue, midday, da_feed, batch, result)
+    except Exception as exc:
+        _append_jsonl(path, {**batch, "type": "batch_end", "batch_status": "failed",
+                            "error": str(exc), "finished_at": _now_et().isoformat()})
+        _scan_fail_alert(f"执行异常: {exc}", midday=midday)
+        return 1
+    if rc != 0:
+        # 失败批次必须落盘并与"无机会"区分 (latest_premarket 据此拒绝消费)。
+        _append_jsonl(path, {**batch, "type": "batch_end", "batch_status": "failed",
+                            "finished_at": _now_et().isoformat()})
+        return rc
+    if not result.get("scan_written"):
+        # rc=0 但 impl 未落 scan 记录 (如 midday 影子关闭) → 显式落一条非 scan 终态,
+        #   使本次尝试作废早先候选, 而不是静默让 inject 回用旧批次。
+        _append_jsonl(path, {**batch, "type": "batch_end",
+                            "batch_status": "complete_no_scan",
+                            "finished_at": _now_et().isoformat()})
+    return rc
+
+
+def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
+    # [P1.5] 窗口标签单一真源: 记录里的 scan_window 与包装器选路径必须同源。
+    _window = "midday" if midday else ("da_feed" if da_feed else "premarket")
     # DEB-20260814 §十三: 午间影子扫描 (ET 12:30) — 只 scan 不 inject, 独立 jsonl。
     #   填补 09:10→次日早间的事件真空带。回滚: universe_expansion.midday_shadow_enabled=false
     #   或删 crontab 行。判据预注册于 DEB §13.3。
@@ -1807,6 +2536,54 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
     _use_v2 = _pv in ("v2", "v2.0")
     _system = SYSTEM_PROMPT_V2 if _use_v2 else SYSTEM_PROMPT
     print(f"[scan] prompt_version={'v2' if _use_v2 else 'v1'} (config: universe_expansion.prompt_version)")
+
+    # ── [P2.6] 材料索引空转 ⇒ 不调 LLM, 直接落**完成态空批** ──
+    #   与另两种终态互斥可区分: ①本态 llm_skipped=true (根本没问模型);
+    #   ②empty_batch=true 且 llm_skipped 缺省 (问了, schema 通过但 surfaced 空 = 当日无机会);
+    #   ③batch_end/batch_status=failed (调用失败/异常)。inject 见 ①② 均正常收工不回用旧候选。
+    _actionable = _scan_input_is_actionable(brief_evidence_index(),
+                                            _LAST_INPUT_PRESCREEN,
+                                            _LAST_BRIEF_FINGERPRINTS)
+    if not _actionable["actionable"] and bool(
+            _cfg("universe_expansion.scan_skip_on_empty_input", True)):
+        print(f"[scan] 输入无可用材料 ({_actionable['reason']}: 具名 "
+              f"{_actionable['named_material_count']} / 宏观 "
+              f"{_actionable['macro_material_count']}) → 跳过 LLM, 落空批次 "
+              f"(完成态, 非失败; 不拿近空白 brief 诱发幻觉)")
+        _append_jsonl(_MIDDAY_PATH if midday else _SCAN_PATH, {
+            "type": "scan",
+            "date": _today(),
+            "scanned_at": _now_et().isoformat(),
+            "scan_window": _window,
+            "batch_id": batch.get("batch_id"),
+            "batch_status": "complete",
+            "started_at": batch.get("started_at"),
+            "policy_version": batch.get("policy_version"),
+            "source_type": SOURCE_TYPE,
+            "strategy_id": STRATEGY_ID,
+            "discovery_source": DISCOVERY_SOURCE,
+            "info_source": INFO_SOURCE,
+            "model_used": None,
+            "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
+            "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
+            "brief_template_version": BRIEF_TEMPLATE_VERSION,
+            "brief_template_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_template_hash"),
+            "brief_content_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_content_hash"),
+            "brief_material_count": _actionable["material_count"],
+            "brief_material_stats": _LAST_BRIEF_FINGERPRINTS.get("brief_material_stats"),
+            "input_prescreen": dict(_LAST_INPUT_PRESCREEN or {}),
+            "input_actionability": _actionable,
+            "surfaced": [],
+            "empty_batch": True,
+            "llm_skipped": True,
+            "skip_reason": SCAN_SKIP_NO_INPUT,
+            "note": ("P2.6: 材料索引空转 ⇒ 未调 LLM (省预算 + 防幻觉)。与"
+                     "'问了模型但 surfaced 空'及'batch_end/failed'三者互斥可区分; "
+                     "回滚=universe_expansion.scan_skip_on_empty_input 置 false"),
+        })
+        result["scan_written"] = True
+        return 0
+
     res = call_llm(
         "universe_expansion_reasoning",
         brief,
@@ -1832,7 +2609,33 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
     parsed = res.response if isinstance(res.response, dict) else {}
     surfaced = _normalize_surfaced(parsed.get("surfaced"), with_tier=_use_v2)
     if not surfaced:
-        print("[scan] LLM 未浮现有效标的 (schema 通过但 surfaced 空)")
+        # [P1.5 2026-09-12] 空扫描必须落批次 — 修前直接 return 0 不写记录:
+        #   ①inject 取"当日最后一条 scan" → 静默回用早先(可能已过期)候选;
+        #   ②"当日无机会"与"批次失败"在账上无法区分。
+        #   空批次 = 正常结束 (batch_status=complete, surfaced=[], empty_batch=true),
+        #   与失败批次 (batch_end/failed) 分开; inject 见空批次即正常收工, 不回用旧候选。
+        print("[scan] LLM 未浮现有效标的 (schema 通过但 surfaced 空) → 落空批次")
+        _append_jsonl(_MIDDAY_PATH if midday else _SCAN_PATH, {
+            "type": "scan",
+            "date": _today(),
+            "scanned_at": _now_et().isoformat(),
+            "scan_window": _window,
+            "batch_id": batch.get("batch_id"),
+            "batch_status": "complete",
+            "started_at": batch.get("started_at"),
+            "policy_version": batch.get("policy_version"),
+            "source_type": SOURCE_TYPE,
+            "strategy_id": STRATEGY_ID,
+            "discovery_source": DISCOVERY_SOURCE,
+            "info_source": INFO_SOURCE,
+            "model_used": getattr(res, "model_used", None),
+            "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
+            "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
+            "surfaced": [],
+            "empty_batch": True,
+            "note": "LLM schema 通过但 surfaced 空 — 当日无机会 (非失败批次)",
+        })
+        result["scan_written"] = True
         return 0
 
     # [U4 2026-08-25, DEB-ue-audit r7] per-item 输出契约校验 + 白名单修复。
@@ -1922,7 +2725,13 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
         "scanned_at": _now_et().isoformat(),
         # §十三: 评估脚本按窗口切片; da_feed (2026-09-09) = 19:40 CST 早跑, 只供 DA,
         #   不进 inject/push/confirm/score (四者均按 premarket 或 today[-1] 取行)。
-        "scan_window": "midday" if midday else ("da_feed" if da_feed else "premarket"),
+        "scan_window": _window,
+        # [P1.5 2026-09-12] 批次身份/时效/策略版本随完成记录落盘 —
+        #   inject 只消费最新有效 premarket 批次, 时效走 candidate_scan_max_age_hours。
+        "batch_id": batch.get("batch_id"),
+        "batch_status": "complete",
+        "started_at": batch.get("started_at"),
+        "policy_version": batch.get("policy_version"),
         "source_type": SOURCE_TYPE,
         "strategy_id": STRATEGY_ID,
         "discovery_source": DISCOVERY_SOURCE,
@@ -1931,6 +2740,21 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
         "prompt_version": PROMPT_VERSION if _use_v2 else "v1",
         # [U1] 内容指纹 — 版本戳失真防护 (旧记录无此字段, 按日期切分)
         "prompt_hash": PROMPT_HASH_V2 if _use_v2 else None,
+        # [P2.5 2026-09-12] brief 侧指纹与材料构成 — 补 §11.6-item6 缺口:
+        #   prompt_hash 只覆盖 SYSTEM_PROMPT_V2, brief 改动此前对归因戳完全不可见。
+        #   brief_template_version 是试验分段键; brief_template_hash 防"忘了升版号";
+        #   brief_content_hash 逐run 唯一供复现; brief_material_stats 是输入构成的
+        #   按源计数 (P4 readout 与 W2 基数自检的消费面)。
+        "brief_template_version": BRIEF_TEMPLATE_VERSION,
+        "brief_template_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_template_hash"),
+        "brief_content_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_content_hash"),
+        "brief_material_count": _LAST_BRIEF_FINGERPRINTS.get("brief_material_count"),
+        "brief_material_stats": _LAST_BRIEF_FINGERPRINTS.get("brief_material_stats"),
+        # [P2.2 2026-09-12] 输入具名标的初筛摘要 — 三态清单 + 口径版本。
+        #   落库目的: ①P4 全漏斗第一段 ("输入里有多少具名标的、多少本就不可交易")
+        #   ②验证"低价/低波不再占用 UE 输入预算"这条验收项 ③context_only 标的若仍被
+        #   模型当直接候选浮现, 可据此归因是模型不遵还是标注没送到。
+        "input_prescreen": dict(_LAST_INPUT_PRESCREEN or {}),
         # [U4] 契约校验统计 — 攒样判据数据源 (违约率/修复率/方向补丁拒收)
         "contract_stats": _contract_stats,
         # [PROPOSAL-20260906 2026-09-06] RAW 口径契约统计 (normalize/repair 之前) —
@@ -1949,6 +2773,7 @@ def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False)
                   "record-only; 不驱动 live, inject 另需 entry_enabled=true")),
     }
     _append_jsonl(_MIDDAY_PATH if midday else _SCAN_PATH, rec)
+    result["scan_written"] = True
 
     print(f"[scan] {_today()} 模型={getattr(res,'model_used','?')} 浮现 {len(surfaced)} 标的:")
     # [2026-07-22] tier 分布计数: 解除数量压制后监控 THESIS_ONLY 是否洪泛 (配合输入源健康行)
@@ -1979,9 +2804,33 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
     """
     from app.playbook.entry_band import compute_entry_band
     is_short = (direction == "SHORT")
+    # ── [P3.1 2026-09-13] 非有限入场价显式拒绝 (计划 P3「非有限数…拒绝」) ──
+    #   实测缺陷 (本批测试自己抓到的, 修前): compute_entry_band 只挡 `e <= 0`, 而
+    #   NaN 与 ±inf 都**通不过**那个比较 (NaN<=0 为 False, inf>0) ⇒ 返回 (nan, nan)
+    #   / (inf, inf)。于是 entry_zone 是**非空**列表 ⇒ 调用方 `if not nums["entry_zone"]`
+    #   守卫放行 ⇒ 一条 stop_loss=NaN 的指令会被写库。共享基建侧同样不拦 (实测
+    #   compute_entry_band(nan)/(inf) 原样返回), 但那是执行路径共用的, 本批不代改
+    #   (同 §17.3-⑥ 纪律: 共享基建要有自己的批次与验证窗), 已在 DEB §19 列待裁。
+    #   UE 侧就地拒绝还有第二个理由: P3.1 新增了 planned_preview **JSON blob**, 而
+    #   json.dumps(nan) 会吐出 `NaN` —— Python 能吃、严格 JSON 解析器不能
+    #   ⇒ 不拦住就会把无效 JSON 写进 raw_instruction_json。
+    try:
+        _ep = float(entry_price)
+    except (TypeError, ValueError):
+        _ep = float("nan")
+    if not math.isfinite(_ep) or _ep <= 0:
+        return {"entry_zone": [], "stop_loss": 0.0, "take_profit": 0.0,
+                "planned_preview": {
+                    "state": "not_generated_non_finite_price"
+                    if not math.isfinite(_ep) else "not_generated_invalid_band",
+                    "version": PLANNED_PREVIEW_VERSION,
+                }}
+    entry_price = _ep
     low, high = compute_entry_band(entry_price, is_short)
     if not (low and high):
-        return {"entry_zone": [], "stop_loss": 0.0, "take_profit": 0.0}
+        return {"entry_zone": [], "stop_loss": 0.0, "take_profit": 0.0,
+                "planned_preview": {"state": "not_generated_invalid_band",
+                                    "version": PLANNED_PREVIEW_VERSION}}
     stop_pct = float(_cfg("universe_expansion.default_stop_pct", 3.0)) / 100.0
     tp_pct = float(_cfg("universe_expansion.default_tp_pct", 6.0)) / 100.0
     if is_short:
@@ -1990,11 +2839,73 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
     else:
         stop_loss = low * (1 - stop_pct)    # SL 低于 zone low
         take_profit = high * (1 + tp_pct)   # TP 高于 zone high
+    # ── [P3.1 2026-09-13, DEB-20260910 §18.2/§18.6] 生成值预览 (纯派生, 零 IO) ──
+    #   同时记"配置口径"与"从 entry 量出的实测口径": SL/TP 锚在 entry_band 边界之外,
+    #   所以 default_stop_pct=3.0 / default_tp_pct=6.0 落到价格上是 BUY −5.91%/+11.30%、
+    #   SHORT +6.09%/−10.70% (§18.2 表, 已与 8 行未触发 UE 生产行逐位对齐)。只记配置值
+    #   会让读账的人以为生成止损是 3%; 只记实测值则常量一改就无法复算 ⇒ 两个都记。
+    _sl_dist = abs(entry_price - stop_loss)
+    _tp_dist = abs(take_profit - entry_price)
+    _preview = {
+        "state": "generated",
+        "version": PLANNED_PREVIEW_VERSION,
+        # ⚠ 与 DA 侧 planned_* 同名不同源: DA 的 planned_* 是**模型声明**的数值,
+        #   UE 的是**代码出的**数值 (Track A)。跨源比 "planned vs 重定价" 测的不是
+        #   同一件事, 必须带本键一起读。
+        "value_origin": "code_track_a",
+        "direction": "SELL_SHORT" if is_short else "BUY",
+        "entry": round(float(entry_price), 4),
+        "entry_zone": [low, high],
+        "stop_loss": round(stop_loss, 4),
+        "take_profit": round(take_profit, 4),
+        # 计划 P3 要求的"风险距离" = |entry − SL| (价格单位, 未乘股数 ⇒ 不是风险金额)
+        "risk_distance": round(_sl_dist, 4),
+        "sl_pct_cfg": round(stop_pct * 100.0, 4),
+        "tp_pct_cfg": round(tp_pct * 100.0, 4),
+        "sl_pct_from_entry": (round(_sl_dist / float(entry_price) * 100.0, 4)
+                              if entry_price else None),
+        "tp_pct_from_entry": (round(_tp_dist / float(entry_price) * 100.0, 4)
+                              if entry_price else None),
+        "rr": round(_tp_dist / _sl_dist, 4) if _sl_dist > 0 else None,
+        "generated_at": _now_et().isoformat(),
+    }
     return {
         "entry_zone": [low, high],
         "stop_loss": round(stop_loss, 4),
         "take_profit": round(take_profit, 4),
+        "planned_preview": _preview,
     }
+
+
+def _planned_exec_block(preview: Dict[str, Any], sizing_ctx: Dict[str, Any],
+                        borrow_rates: Dict[str, Any], surfaced: Dict[str, Any],
+                        screening: Dict[str, Any], px: float, nums: Dict[str, Any],
+                        pb_direction: str, confidence: int, today: str,
+                        regime: Optional[str]) -> Dict[str, Any]:
+    """[P3.3-3.5 2026-09-13] 估算股数 / 费用覆盖 / 可执行性 → 合入 planned_preview。
+
+    record-only: 产物只进 raw_instruction_json 的嵌套键, **不进**指令顶层、不进任何门/
+    排序/定价/仲裁判据 (计划 P3「预估股数不写成真实仓位」)。执行侧真门仍是
+    admission.apply() (enforce=true) 与 pipeline 的 sizing/reprice; 本块只是把
+    "生成时刻按同一口径会算出什么" 留在账上, 供 P3 验收② 与 P4 全漏斗对账。
+
+    权益/借券费率**每批读一次** (调用方传入 sizing_ctx / borrow_rates), 逐候选只跑纯函数
+    —— 计划明禁"逐候选调用会读取资本状态的完整 compute_instruction_values()"。
+    任何异常都退化成显式 exec_state, 不让预览失败拖垮注入。
+    """
+    try:
+        from app.playbook.planned_executability import build_planned_executability
+        extra = build_planned_executability(
+            preview=preview, sizing_ctx=sizing_ctx,
+            symbol=f"US.{surfaced['symbol']}", direction=pb_direction,
+            entry=px, stop_loss=nums.get("stop_loss"), take_profit=nums.get("take_profit"),
+            confidence=confidence, horizon_hours=surfaced.get("horizon_hours"),
+            trade_date=today, screening=screening, borrow_rates=borrow_rates, regime=regime,
+        )
+    except Exception as _pe_e:
+        return {"exec_state": "not_generated_error",
+                "exec_error": f"{type(_pe_e).__name__}: {_pe_e}"[:200]}
+    return {**preview, **extra}
 
 
 def _position_symbols() -> set:
@@ -2024,17 +2935,71 @@ def cmd_inject(force_dry: bool = False) -> int:
     # 活性值经实弹探针确认=0.5/30 (yaml SSOT), 本改动零活性行为变更,
     # 仅消除 config 容器降级路径下阈值静默漂移 (浮现标的被比预期多丢/少放)。
 
-    scans = [r for r in _read_jsonl(_SCAN_PATH) if r.get("type") == "scan"]
-    today_scans = [r for r in scans if r.get("date") == _today()]
-    if not today_scans:
-        print(f"[inject] 今日({_today()})无 scan 结果, 先跑 scan")
-        return 0
-    surfaced = today_scans[-1].get("surfaced", [])
-    _scan_model = today_scans[-1].get("model_used")  # 2026-08-03 任务#3: 记录级模型归因 → 指令列
+
+    # ── [P1.5 2026-09-12, DEB-20260910 / proud-slope-falcon] 批次消费纪律 ──
+    #   修前: 取当日最后一条 type=="scan" — ①da_feed (07:40 ET) 与 premarket
+    #   (09:10 ET) 同写主 jsonl, "最后一条"可能误消费 da_feed 批次; ②空扫描不落
+    #   批次 → 静默回用早先(可能过期)候选; ③无时效校验。
+    #   修后: 只允许最新有效 premarket 批次; 更晚开始的空/失败批次使更早的成功批次
+    #   失效 (不回用); 时效走 playbook.candidate_scan_max_age_hours (与 DA feed 同一
+    #   显式键)。这是批次时效, 不是订单 TTL — 原盘中入场截止规则不变。
+    from app.playbook.candidate_eligibility import load_candidate_policy, require_auto_sim
+    from app.playbook.ue_batch import injection_lock, latest_premarket
 
     today = _today()
-    positions = _position_symbols()
+    now_et = _now_et()
+    try:
+        policy = load_candidate_policy()
+    except Exception as _pol_e:
+        print(f"[inject] 候选资格配置读取失败 → 停止注入 (不猜阈值): {_pol_e}")
+        return 1
+    scan_rec, batch_reason = latest_premarket(
+        _read_jsonl(_SCAN_PATH), today, now_et, policy["max_scan_age_hours"])
+    _log_inject_batch_decision(scan_rec, batch_reason, today, now_et)
+    if scan_rec is None:
+        print(f"[inject] 无有效 premarket 批次 ({batch_reason}) → 不注入; "
+              f"不回用 da_feed/midday/过期候选")
+        return 0
+    batch_id = str(scan_rec.get("batch_id") or f"UE:legacy:{today}")
+    surfaced = scan_rec.get("surfaced") or []
+    if not surfaced:
+        # 全空 = 正常结束 (无机会), 与失败批次分开; 空批次已由 cmd_scan 落盘。
+        print(f"[inject] 最新 premarket 批次 {batch_id} 浮现 0 条 (全空正常结束, "
+              f"非失败) → 无候选可注入")
+        return 0
+    # 新策略注入的身份前置条件 (P0.2): 自动 broker 与自动账本必须同为 SIM。
+    #   矛盾/未知 → 停止本批, 不自动改 .env.us/账户/模式。dry-run 只读不在此拦。
+    if not dry:
+        try:
+            require_auto_sim()
+        except Exception as _sim_e:
+            print(f"[inject] 启动模式非 SIM 或矛盾 → 停止注入 (不写库): {_sim_e}")
+            return 1
+    # 读取额度 → 筛选 → 写后确认全程持进程间锁: cron 与手动重跑并发不会双花名额。
+    with injection_lock(_INJECT_LOCK_PATH):
+        return _cmd_inject_impl(
+            enabled=enabled, dry=dry, min_conf=min_conf, max_n=max_n, today=today,
+            now_et=now_et, scan_model=scan_rec.get("model_used"), batch_id=batch_id,
+            surfaced=surfaced, policy=policy)
 
+
+def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
+                     today: str, now_et: datetime, scan_model: Optional[str],
+                     batch_id: str, surfaced: List[Dict[str, Any]],
+                     policy: Dict[str, Any]) -> int:
+    """inject 主体 — 在 cmd_inject 的批次校验与进程间额度锁之内运行。
+
+    P1.5 顺序契约: 原有方向/confidence/持仓/DA/streak 过滤 (阈值与排序含义不变)
+    → 报价 + 筛选口径 ATR 资格判定 → 在合格集合内按当日剩余额度取 K (淘汰由剩余
+    合格队列补位) → 写入 → 写后确认。分析名额不是成交配额, 允许零推荐。
+    """
+    from app.playbook.candidate_eligibility import (
+        positive_number, record_candidate_batch, screen_candidates, select_candidates,
+        selection_summary)
+    from app.playbook.ue_batch import confirm_saved, effective_ue_symbols
+
+    positions = _position_symbols()
+    _scan_model = scan_model  # 保留原局部名: 指令行 model_used 归因逐字不变
     # 排重: 今日已在 playbook_instructions 的标的 (DA 优先, universe_expansion 让路).
     #   save_instruction 按 (date,symbol) UPSERT — 同标的会覆盖 DA, 故此处排除.
     # [ADR-019] 只对"实际占位"指令让路: 跳过 direction=SKIP 的被拒候选行.
@@ -2067,7 +3032,8 @@ def cmd_inject(force_dry: bool = False) -> int:
             and s["symbol"] not in existing_pb
             and _streak_passes(s, _max_streak)]
     cand.sort(key=lambda s: s["confidence"], reverse=True)
-    cand = cand[:max_n]
+    # [P1.5] 不再在此截断: 名额改在资格判定之后消费 ("先过滤后预算"), 被淘汰者由
+    #   剩余合格队列补位。原 cand[:max_n] 先截断 → 价格/ATR 淘汰后不补位 = 名额空转。
 
     # [UE-B2 2026-08-29] 拒绝归因落盘 — 筛选链每个落选候选一行结构化记录 (纯观测)。
     _log_inject_reject(surfaced, min_conf, positions, existing_pb, _max_streak, max_n)
@@ -2103,6 +3069,24 @@ def cmd_inject(force_dry: bool = False) -> int:
         }
     except Exception as _rg_ue_e:
         print(f"  [warn] regime 补齐失败(非致命): {_rg_ue_e}")
+    # ── [P3.3-3.5 2026-09-13, DEB-20260910 §20] 估算股数/费用覆盖/可执行性的**批级**上下文 ──
+    #   权益每批读一次 (只读 URI 取 capital_state 最新行, 不实例化 CapitalSafetySystem —
+    #   后者 __init__ 会 _ensure_db_table() 开写连接, cron fork 的 UE 进程不该引入);
+    #   借券费率每批读一次 (data/shadow/borrow_rate_series.jsonl, cron 快照)。
+    #   两者失败都只降级预览, 不阻塞注入 (record-only)。
+    _sizing_ctx: Dict[str, Any] = {"state": "unavailable", "notes": ["context_not_read"]}
+    _borrow_rates: Dict[str, Any] = {}
+    try:
+        from app.playbook.planned_executability import load_borrow_rates, read_sizing_context
+        _sizing_ctx = read_sizing_context()
+        _borrow_rates = load_borrow_rates()
+        print(f"  [planned-exec] 权益=${_sizing_ctx.get('equity'):,.0f} "
+              f"(源={_sizing_ctx.get('equity_origin')}, 龄={_sizing_ctx.get('equity_age_hours')}h, "
+              f"水位={_sizing_ctx.get('water_level')}) | 借券费率覆盖 {len(_borrow_rates)} 标的 "
+              f"| 上限={float(_sizing_ctx.get('max_position_pct') or 0)*100:g}% "
+              f"⇒ 帽内名义≈${float(_sizing_ctx.get('equity') or 0)*float(_sizing_ctx.get('max_position_pct') or 0):,.0f}")
+    except Exception as _pe_ctx_e:
+        print(f"  [warn] 生成期预览上下文读取失败 (record-only, 不阻塞注入): {_pe_ctx_e}")
     # [P1 2026-09-02 低ATR源头预检] ATR provider — 与执行门/盘前定桶
     #   (pipeline.py _tag_volatility_buckets) 同一 provider 同一数据源 (日线 ATR,
     #   盘前稳定不依赖 OpenD)。
@@ -2138,8 +3122,101 @@ def cmd_inject(force_dry: bool = False) -> int:
             _ue_atr_provider = get_di_container().atr_provider()
         except Exception as _atr_prov_e:
             print(f"  [warn] ATR provider 构建失败, 低ATR预检 fail-open: {_atr_prov_e}")
+
+    # ── [P1.1/P1.5 2026-09-12] 统一可交易性初筛 → 之后才取 K ──
+    #   筛选 ATR 改走 ATRProvider.get_screening_atr (原始已完成日线 TR14 rolling-mean),
+    #   不再是止损口径 get_atr_pct (那条链可能含 VIX 缩放 / 三层底限 / 分钟 ATR)。
+    #   ⚠️ 显式策略行为变更 (P1.2): ATR 来源与口径改变 → 拒绝集合与旧预检不完全相同;
+    #   阈值仍是执行门同一旋钮 low_atr_gate_* (上方 accessor), 未新增永久开关。
+    #   价格地板 = max(admission.min_entry_price, universe_expansion.min_price_floor),
+    #   两个既有地板都不放宽 (今日同为 5.0)。
+    _ue_floor = float(_cfg("universe_expansion.min_price_floor", 0) or 0)
+    policy["low_atr_enabled"] = _ue_atr_gate_enabled
+    policy["min_atr_ratio"] = _ue_atr_gate_min
+    if _ue_floor > 0:
+        policy["min_price"] = max(float(policy.get("min_price") or 0.0), _ue_floor)
+    policy["min_price_sources"] = ("max(playbook.admission.min_entry_price,"
+                                   " universe_expansion.min_price_floor)")
+    if _ue_atr_gate_enabled and _ue_atr_provider is None:
+        # 与旧预检同纪律: provider 构建失败 → 低ATR预检整体 fail-open (执行门兜底)。
+        print("  [warn] ATR provider 不可用 → 低ATR预检 fail-open (执行门兜底)")
+        policy["low_atr_enabled"] = False
+    _screen_rows = [
+        {"symbol": s["symbol"], "direction": s["direction"],
+         # 资格判定与指令锚价用同一个数 (UE 盘前锚定口径), 避免筛选价/锚价分叉。
+         "effective_price": _effective_quote_price(q.get(s["symbol"], {})),
+         "scan_price": s.get("scan_price"), "confidence": s.get("confidence"),
+         "surfaced": s}
+        for s in cand
+    ]
+    try:
+        _screened = screen_candidates(
+            _screen_rows, router, source="UE", batch_id=batch_id, now=now_et,
+            quotes=q, policy=policy, atr_provider=_ue_atr_provider)
+    except Exception as _scr_e:
+        # 初筛整体异常 → fail-open (执行门兜底), 但必须留痕, 不静默当"全部合格"。
+        print(f"  [warn] 候选资格判定异常 fail-open (执行门兜底): {_scr_e}")
+        _screened = [dict(r, candidate_screening={
+            "status": "UNKNOWN", "reasons": [], "missing_fields": [],
+            "reason": f"screening_error:{type(_scr_e).__name__}"}) for r in _screen_rows]
+    for _row in _screened:
+        if (_row.get("candidate_screening") or {}).get("atr_reason") == "atr_unavailable":
+            print(f"  [warn] {_row['surfaced']['symbol']} 低ATR预检异常 fail-open: atr_unavailable")
+    _summary = selection_summary(_screened)
+    print(f"[inject] 资格初筛: 候选 {_summary['total']} → REJECT "
+          f"{_summary['rejected_ineligible']} reasons={_summary['reason_codes']}")
+
+    # 资格拒绝 → SKIP 行 (可归因, 不占当日额度; 与旧 price_floor/low_atr 同轨)。
     instructions = []
-    for s in cand:
+    for _row in _screened:
+        _sc = _row.get("candidate_screening") or {}
+        if _sc.get("status") != "REJECT":
+            continue
+        _s = _row["surfaced"]
+        _reasons = [str(c) for c in (_sc.get("reasons") or [])]
+        _skip_reason = _eligibility_skip_reason(_reasons, _sc, policy)
+        _px = _sc.get("price") or _s.get("scan_price")
+        if not _px:
+            # 无有效参考价 → 不能生成可执行指令, 也不落 entry_price 缺失的伪 SKIP 行。
+            print(f"  [skip] {_s['symbol']} 资格拒绝且无有效参考价 ({_skip_reason})")
+            _log_inject_loop_reject(_s, f"ineligible_no_price({_skip_reason})")
+            continue
+        instructions.append({
+            "date": today,
+            "symbol": f"US.{_s['symbol']}",
+            "direction": "SKIP",
+            "skip_reason": _skip_reason,
+            "entry_price": round(float(_px), 4),
+            "confidence": int(round(float(_s["confidence"]) * 100)),
+            "thesis": _s.get("thesis", ""),
+            "decision_id": f"{STRATEGY_ID}:{today}:{_s['symbol']}",
+            "model_used": scan_model,
+            # [P3.1] SKIP 行从不调用 _compute_numbers (无 SL/TP 可留档) ⇒ 显式写状态。
+            #   否则日后读账无法区分"UE 行没有 planned_* 因为它是 SKIP 行"(正常) 与
+            #   "没有 planned_* 因为代码漏写"(缺陷) —— 与 §17.3-② "索引空 vs 没跑
+            #   gather" 同型的歧义, 一律用显式状态消除, 不靠"键不存在"表态。
+            "raw_instruction": {
+                "source": STRATEGY_ID,
+                "candidate_screening": _sc,
+                "planned_preview": {"state": "not_generated_ineligible",
+                                    "version": PLANNED_PREVIEW_VERSION},
+            },
+        })
+        if "low_atr" in _reasons and _sc.get("screening_atr_ratio") is not None:
+            print(f"  [skip] {_s['symbol']} 低ATR预检 "
+                  f"({float(_sc['screening_atr_ratio']):.4f} "
+                  f"< {policy['min_atr_ratio']:g}) → SKIP行")
+        else:
+            print(f"  [skip] {_s['symbol']} 资格初检 ({_skip_reason}) → SKIP行")
+        _log_inject_loop_reject(_s, _skip_reason)
+
+    # 合格集合 (PASS + UNKNOWN) 按源排序进入取 K 与补位。UNKNOWN = 缺数, 不等于拒绝:
+    #   研究/注入可继续, 执行阶段仍由原低ATR风险门用实时行情复核 (盘前快照不当实时价)。
+    _eligible = [r for r in _screened
+                 if (r.get("candidate_screening") or {}).get("status") != "REJECT"]
+    for _row in _eligible:
+        s = _row["surfaced"]
+        _sc = _row.get("candidate_screening") or {}
         # 2026-08-11: effective 口径 — 盘前时段用 pre_price 锚定 entry/SL/TP/band。
         #   修复前 last_price=昨收 → 锚错 (8/11 JD 实盘锚 33.47 vs 真实盘前 32.21, 错 3.8%)。
         px = _effective_quote_price(q.get(s["symbol"], {})) or s.get("scan_price")
@@ -2147,61 +3224,6 @@ def cmd_inject(force_dry: bool = False) -> int:
             print(f"  [skip] {s['symbol']} 无现价")
             _log_inject_loop_reject(s, "no_quote(无现价)")
             continue
-        # 2026-08-13: 价格地板 — OTC仙股源头拦截 (AETN $0.13案例: Futu无OTC行情,
-        #   执行端永远无法re-price=死指令+轮询噪音). 与DA扫描器$5闸+admission.min_entry_price同源.
-        #   落SKIP行保留可归因 (与admission REJECT同轨, 不丢样本). 回滚: min_price_floor=0.
-        _floor = float(_cfg("universe_expansion.min_price_floor", 0) or 0)
-        if _floor > 0 and float(px) < _floor:
-            instructions.append({
-                "date": today,
-                "symbol": f"US.{s['symbol']}",
-                "direction": "SKIP",
-                "skip_reason": f"price_floor({float(px):.2f}<{_floor:g}, OTC/仙股无富途行情)",
-                "entry_price": round(float(px), 4),
-                # [U2 2026-09-05] 去 cap=50: SKIP 行同保留原始 conf 供分桶归因
-                "confidence": int(round(float(s["confidence"]) * 100)),
-                "thesis": s.get("thesis", ""),
-                "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
-                "model_used": _scan_model,
-            })
-            print(f"  [skip] {s['symbol']} 价格地板 ({float(px):.2f} < {_floor:g}) → SKIP行")
-            continue
-        # [P1 2026-09-02 低ATR源头预检] 执行门已判定低波票永不可能触发 → 注入即
-        #   "结构性死指令" (9/2 实测: XLY/XLI/XLU/AAPL/LLYVK 5 条 UE 指令全天每轮
-        #   low_atr_block 拦截, 只产生订阅槽位/re-price/遥测噪音; 全历史 ETF 仅 1 笔
-        #   成交 -$43)。与执行门同阈值源头拦截 = 零交易行为变更 (这些指令本来就不可能
-        #   成交), 只省死指令开销。ATR 取不到/异常 → fail-open 放行 (执行门兜底)。
-        #   落SKIP行保留可归因 (与 price_floor 同轨, skip_reason 自带数值)。
-        #   回滚: playbook.execution_parameters.low_atr_gate_enabled=false (单旋钮同关两门)。
-        if _ue_atr_provider is not None:
-            try:
-                _ue_atr = _ue_atr_provider.get_atr_pct(f"US.{s['symbol']}", float(px))
-                if _ue_atr is not None and 0 < float(_ue_atr) < _ue_atr_gate_min:
-                    instructions.append({
-                        "date": today,
-                        "symbol": f"US.{s['symbol']}",
-                        "direction": "SKIP",
-                        "skip_reason": (
-                            f"low_atr({float(_ue_atr):.4f}<{_ue_atr_gate_min:g}, "
-                            f"低波票过不了执行门)"
-                        ),
-                        "entry_price": round(float(px), 4),
-                        # [U2 2026-09-05] 去 cap=50: 同保留原始 conf
-                        "confidence": int(round(float(s["confidence"]) * 100)),
-                        "thesis": s.get("thesis", ""),
-                        "decision_id": f"{STRATEGY_ID}:{today}:{s['symbol']}",
-                        "model_used": _scan_model,
-                    })
-                    _log_inject_loop_reject(
-                        s, f"low_atr({float(_ue_atr):.4f}<{_ue_atr_gate_min:g})"
-                    )
-                    print(
-                        f"  [skip] {s['symbol']} 低ATR预检 "
-                        f"({float(_ue_atr):.4f} < {_ue_atr_gate_min:g}) → SKIP行"
-                    )
-                    continue
-            except Exception as _ue_atr_e:
-                print(f"  [warn] {s['symbol']} 低ATR预检异常 fail-open: {_ue_atr_e}")
         nums = _compute_numbers(float(px), s["direction"])
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
@@ -2218,6 +3240,11 @@ def cmd_inject(force_dry: bool = False) -> int:
         #   护栏: UE conf 此后只用于归因分桶与影子判分, 禁止新增任何线性 conf 门
         #   (阈值裁决走 U3 tier 闸规则, 不是 conf 数字)。
         _raw_conf = int(round(float(s["confidence"]) * 100))  # schema INTEGER 0-100
+        # [P3.3-3.5] 估算股数 + 费用覆盖 + 可执行性 (record-only, 逐候选只跑纯函数)
+        _preview_full = _planned_exec_block(
+            nums["planned_preview"], _sizing_ctx, _borrow_rates, s, _sc,
+            float(px), nums, pb_direction, _raw_conf, today,
+            _regime_fields.get("market_regime"))
         instructions.append({
             "date": today,
             "symbol": f"US.{s['symbol']}",
@@ -2254,6 +3281,10 @@ def cmd_inject(force_dry: bool = False) -> int:
             "model_used": _scan_model,  # 2026-08-03 任务#3: UE 指令模型归因 (scan 记录级)
             "raw_instruction": {
                 "source": STRATEGY_ID,  # universe_expansion — 报表侧切分 DA vs 本源
+                # [P1.5] 候选筛选快照随指令落库: ①写后确认按 candidate_id 回读核对
+                #   (save_instruction 返回 ID ≠ 入围成功); ②执行侧低ATR门读同义字段;
+                #   ③漏斗审计 candidate_funnel.jsonl 与指令行可 join。
+                "candidate_screening": _sc,
                 # [P0-A 2026-09-04, REVIEW-20260904 用户裁"按建议执行"] chase_cap 禁追线:
                 #   UE 指令此前无此字段 → pipeline chase_cap 遥测/enforce 对 UE 双盲
                 #   (9/4 USAR 盘前追价 +2.16% 入场, 8 分钟 SL_INITIAL -$158 实锤)。
@@ -2268,6 +3299,29 @@ def cmd_inject(force_dry: bool = False) -> int:
                 "prompt_version": PROMPT_VERSION,
                 # [U1] 内容指纹随指令落库 (raw_instruction_json 内)
                 "prompt_hash": PROMPT_HASH_V2,
+                # ── [P3.1 2026-09-13, DEB-20260910 §18.2/§18.6] UE 生成值留档 ──
+                #   实测: 触发时 pipeline.py:4242 用重定价值整体覆盖 entry_price/
+                #   stop_loss/take_profit 三列 (DA 侧 307 行可比中 300 行三字段全变),
+                #   而 UE 行 raw_instruction_json 的 planned_* 覆盖率是 **0/183**
+                #   (DA 侧 457/470=97.2%) ⇒ 重定价后库里既无生成值也无"从哪到哪"
+                #   (§18.3: reprice_* 三键被 db._TRACKING_FIELDS 静默丢弃), P3 验收②
+                #   "生成预览与最终委托可追踪" 对 UE **不可测**。
+                #   前三个键**与 DA 侧同名同层** ⇒ 同一条 json_extract('$.planned_entry')
+                #   可跨源查询 (P4 全漏斗需要); UE 特有的口径元数据收进 planned_preview
+                #   一个嵌套键, 不铺开成一堆平级键。
+                #   纯附加、零行为变更: raw_instruction 只被 parse_raw_semantics (按
+                #   .get() 取 entry_archetype/confirmation/chase_cap_price) 与报表读,
+                #   admission.apply() 保留既有键 (test_dict_raw_instruction_keys_are_kept),
+                #   不进任何门/排序/定价判据。
+                #   **未记 position_size_hint**: UE 生成时不持股数估算, 而算它需要资本
+                #   状态 (计划 P3 明禁"逐候选调用会读取资本状态的完整
+                #   compute_instruction_values()"); 执行侧真实股数由 P3.2 的
+                #   metadata_json.reprice_audit + sizing_delta.jsonl 影子承担。留待
+                #   "估算股数/费用覆盖/可执行性" 那一批一起做, 不在本批造半截数字。
+                "planned_entry": round(float(px), 4),
+                "planned_stop_loss": nums["stop_loss"],
+                "planned_take_profit": nums["take_profit"],
+                "planned_preview": _preview_full,
                 # [U10 2026-08-25 建议④] 结构化失效触发器 → tripwire_checker 结构化轨
                 #   (与 DA r15 同契约同消费方; 消费端 _get_structured_triggers 再验一次白名单)
                 "invalidation_triggers": s.get("invalidation_triggers") or [],
@@ -2315,6 +3369,38 @@ def cmd_inject(force_dry: bool = False) -> int:
                   f"zone=[{it['entry_low']},{it['entry_high']}] SL={it['stop_loss']} TP={it['take_profit']} "
                   f"conf={it['confidence']} src={STRATEGY_ID}")
 
+    # ── [P1.5] 当日额度: 唯一有效 UE 入围累计 (重跑不重占名额; SKIP/仲裁拒绝不算成功) ──
+    from app.playbook.db import PlaybookDB
+    db = PlaybookDB()
+    db.ensure_tables()
+    _consumed = effective_ue_symbols(db.get_instructions_by_date(today) or [], STRATEGY_ID)
+    _quota = max(0, max_n - len(_consumed))
+    # [P1.5 补 2026-09-12] 写库名额只发给"能产出可执行指令"的候选。
+    #   资格层: 无有效价格 = 缺数 → UNKNOWN (研究可继续, 不是拒绝)。
+    #   预算层: 名额是**成交预算**, 发给产不出指令的候选 = 空耗一名, 后面合格候选
+    #   补不上位 (离线全链实测 2026-09-12: 无报价候选占 rank=1, 名额 3 只写出 2 条)。
+    #   分层记录不混成一个 SKIP: 资格 status=UNKNOWN + selection_status=deferred_no_price。
+    def _defer_no_executable_price(row):
+        _s = row.get("surfaced") or {}
+        _px = (_effective_quote_price(q.get(_s.get("symbol"), {}))
+               or _s.get("scan_price"))
+        return None if positive_number(_px) is not None else "deferred_no_price"
+
+    _selected = select_candidates(_screened, _quota, allow_unknown=True,
+                                  already_selected=_consumed,
+                                  defer_reason=_defer_no_executable_price)
+    # 全漏斗审计 (批次/候选级): 资格 → 预算; LLM 否决与写库仲裁在各自阶段分开记录。
+    record_candidate_batch(_screened, batch_id=batch_id, source="UE",
+                           phase="inject_dry" if dry else "inject")
+    _sel = selection_summary(_screened)
+    print(f"[inject] 当日额度 max={max_n} | 已入围唯一标的={len(_consumed)} | "
+          f"本轮名额={_quota} | 选取={len(_selected)} (budget_cut={_sel['budget_cut']}, "
+          f"duplicate={_sel['duplicate']}, "
+          f"deferred_no_price={_sel.get('deferred_no_price', 0)})")
+    _writable = {str(r["surfaced"]["symbol"]) for r in _selected}
+    _quota_written = 0
+    _unknown_writes = 0
+    saved = 0
     if dry:
         if not enabled:
             print("  [安全阀] universe_expansion.entry_enabled=false → 未写库, 未下单。")
@@ -2326,10 +3412,6 @@ def cmd_inject(force_dry: bool = False) -> int:
     # 写入 playbook_instructions — 与 DA 共用同一执行/触发/退出轨道.
     #   auto_execute 会对未触发指令做 _check_intraday_trigger (symbol-agnostic 取价),
     #   宇宙外标的无需订阅/轮询注册即可被执行.
-    from app.playbook.db import PlaybookDB
-    db = PlaybookDB()
-    db.ensure_tables()
-    saved = 0
     # S0 影子开关 (DEB-20260805-supply 终裁②, 2026-08-06 用户裁"同意"): 只读一次.
     try:
         from app.core.config_container import get_config as _gc_sb
@@ -2337,6 +3419,20 @@ def cmd_inject(force_dry: bool = False) -> int:
     except Exception:
         _sb_on = False
     for it in instructions:
+        _is_skip = it.get("direction") == "SKIP"
+        _cand_sym = str(it.get("symbol", "")).replace("US.", "")
+        if not _is_skip:
+            # 名额闸: 只写本轮选取的候选; 名额用尽即停 (被淘汰者不写入)。
+            if _unknown_writes:
+                print(f"  [quota] {it['symbol']} 前一笔写入结果不明 → 停止补位 "
+                      f"(先核对, 不盲目重写)")
+                _log_inject_save_reject(it, "halted_after_unknown_write")
+                continue
+            if _cand_sym not in _writable or _quota_written >= _quota:
+                print(f"  [quota] {it['symbol']} 超出当日 UE 名额 "
+                      f"({_quota_written}/{_quota}) → 不写入")
+                _log_inject_save_reject(it, f"quota_exhausted({_quota_written}/{_quota})")
+                continue
         try:
             # [DEB-fullchain P1-14 2026-08-16] DA 优先防覆盖: 旧版 save_instruction 的
             #   UPSERT 按 (date,symbol) 无条件整行覆盖 — UE cron 复跑会把 DA 同日更深
@@ -2402,8 +3498,29 @@ def cmd_inject(force_dry: bool = False) -> int:
                 except Exception as _cool_err:
                     # 冷却查询失败不阻断主流程, 但禁静默 (死门教训: 静默吞 = 门死了没人知道)
                     print(f"  [warn] cooldown 查询失败 ({it.get('symbol')}): {_cool_err}")
-            db.save_instruction(it)
-            saved += 1
+            _rid = db.save_instruction(it)
+            # [P1.5] 写后确认: save_instruction 返回 ID **不代表入围成功** — 覆盖仲裁
+            #   拒绝时同样返回现存行 ID (db.py:393-401)。按 candidate_id/decision_id/
+            #   symbol/direction/source/skip_reason 回读核对, 确定拒绝才补下一名。
+            _state = confirm_saved(db, it, _rid)
+            if _state == "saved":
+                saved += 1
+                if not _is_skip:
+                    _quota_written += 1
+            elif _state == "rejected":
+                print(f"  [reject] {it['symbol']} 写库仲裁拒绝 (id={_rid}) "
+                      f"→ 不占额度, 后续合格候选补位")
+                _log_inject_save_reject(it, f"arbitration_rejected(id={_rid})")
+                continue
+            else:
+                _log_inject_save_reject(it, f"write_state_unknown(id={_rid})")
+                if _is_skip:
+                    print(f"  [warn] {it['symbol']} SKIP 行写库结果不明 (id={_rid})")
+                else:
+                    _unknown_writes += 1
+                    print(f"  [warn] {it['symbol']} 写库结果不明 (id={_rid}) "
+                          f"→ 不计额度, 停止补位待核对")
+                    continue
             # S0 影子: UE×SHORT 加码 record-only — 登记"若 ×1.25 加码"假设队列成员,
             #   T+1 与未加码同池对照; 主门 n=60 单侧 α=0.025 δ=2pp, 敏感性 Bonferroni n=85,
             #   毕业前不动真仓 (停止规则见 DEB §四.3). 回滚: 开关置 false.
@@ -2430,7 +3547,9 @@ def cmd_inject(force_dry: bool = False) -> int:
         except Exception as e:
             print(f"  [warn] {it['symbol']} 写库失败: {e}")
 
-    print(f"[inject] 已写入 {saved} 条 playbook_instructions (source={STRATEGY_ID}, 走 DA 统一执行轨道)")
+    print(f"[inject] 已写入 {saved} 条 playbook_instructions (占额度 "
+          f"{_quota_written}/{_quota}, 结果不明 {_unknown_writes}; "
+          f"source={STRATEGY_ID}, 走 DA 统一执行轨道)")
     return 0
 
 
@@ -2638,6 +3757,11 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
         "type": "prompt_eval", "date": _today(), "evaluated_at": _now_et().isoformat(),
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH_V2,  # [U1]
+        # [P2.5 2026-09-13] 同 thinking_eval: prompt_hash 只覆盖 SYSTEM_PROMPT_V2,
+        #   brief 侧变更对它不可见 ⇒ 并列落 brief 分段键, 使 v1/v2 对比序列可按输入版本切分。
+        "brief_template_version": BRIEF_TEMPLATE_VERSION,
+        "brief_template_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_template_hash"),
+        "brief_content_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_content_hash"),
         "clue": manual_clue, "v1": {"model": m1, "surfaced": v1},
         "v2": {"model": m2, "surfaced": v2},
     })
@@ -2840,6 +3964,21 @@ def cmd_thinking_eval() -> int:
     _append_jsonl(_THINKING_EVAL_PATH, {
         "type": "thinking_eval", "date": _today(), "evaluated_at": _now_et().isoformat(),
         "prompt_version": PROMPT_VERSION, "prompt_hash": PROMPT_HASH_V2,
+        # ── [P2.5 2026-09-13] brief 侧分段键也落进本影子序列 ──
+        #   为什么必须落: `docs/CONTROL-LOOP-LEDGER.md` 里 thinking-eval 的预注册判据是
+        #   "有效轮次 ≥10 且**跨 prompt_hash 不得混合**"(cron 1e96c03c945e, 到期
+        #   2026-09-22)。而 PROMPT_HASH_V2 = sha1(SYSTEM_PROMPT_V2), P2.2 改的是 **brief
+        #   (user 侧)** ⇒ 哈希不变 ⇒ 该判据**机械上不会归零**, v2.12 前后的轮次会被静默
+        #   混进同一序列去宣布毕业。这正是计划 P0.5 明令禁止的 ("输入分布变化后, 受影响
+        #   试验按新版本分段, 不能混入旧窗口宣布毕业"), 也是 §11.6-item6 量出过的同一盲区
+        #   (v2.10→v2.11 已实际发生过一次)。
+        #   本改动只**采集分段键**, 不改判据本身 —— 判据的切分键要不要从 prompt_hash 扩到
+        #   brief_template_version 属"改判据", 须用户裁 (DEB-20260910 §17.6 已列为待裁项)。
+        #   不落这两个键的后果是: 即便用户裁了要分段, 历史轮次也**无从分段**(数据没采)。
+        "brief_template_version": BRIEF_TEMPLATE_VERSION,
+        "brief_template_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_template_hash"),
+        "brief_content_hash": _LAST_BRIEF_FINGERPRINTS.get("brief_content_hash"),
+        "brief_material_count": _LAST_BRIEF_FINGERPRINTS.get("brief_material_count"),
         "off": off, "on": on,
     })
     print(f"[thinking-eval] 已落对比文件: {_THINKING_EVAL_PATH.name} (record-only, 未下单)")
