@@ -101,7 +101,13 @@ def _fb(monkeypatch, tmp_path, rows, **kw):
     monkeypatch.setattr(ue, "_ROOT", tmp_path)
     out = ue._build_feedback_table(**kw)
     assert out or not rows, f"反馈表为空 — 夹具或 SQL 窗口有问题, 不是被测行为: {db}"
-    return out
+    # [P2.1 2026-09-12, DEB-20260910 §17] `_build_feedback_table` 现返回**结构化事实**
+    #   (dict: source/text/symbols/published_at/event_key) 而非裸 str —— 材料索引改在
+    #   gather 现场登记, 取消事后按行前缀猜材料 (旧谓词误杀了 4 类以 `[` 开头的事实行)。
+    #   本文件钉的是**渲染文本**的方向符号与三态口径, 故在此取 text 面即可; 结构化字段
+    #   与"索引↔正文逐条对应"由 tests/test_ue_evidence_index.py 覆盖。裸 str 仍兼容
+    #   (降级路径 _take_facts 也接受 str), 所以两种形态都能过。
+    return [x["text"] if isinstance(x, dict) else str(x) for x in out]
 
 
 def _line(out, symbol):
@@ -274,9 +280,19 @@ def test_prompt_version_bumped_and_blind_spot_declared():
 
     同时钉住**盲区声明在场**: PROMPT_HASH_V2 只哈希 SYSTEM_PROMPT_V2, 本版两处变更都不在
     system prompt 内 ⇒ 升版号不改变哈希。不写这句, v2.11 会被误读成"指纹已覆盖 brief"。
+
+    [2026-09-12 补记] 该盲区已由 P2.5 (DEB-20260910 §17) 补上 brief 侧指纹基建
+    (`BRIEF_TEMPLATE_VERSION` / `_brief_fingerprints`), 故 v2.12 起 brief 变更可被自动指纹
+    看见。但**哈希口径本批仍不动** —— 它是既有 thinking-eval A/B 预注册判据的切分键,
+    改它=中途换尺子, 须用户裁。下面最后一条断言因此继续有效。
     """
     src = (REPO / "scripts" / "llm_universe_scan.py").read_text(encoding="utf-8")
-    assert 'PROMPT_VERSION = "v2.11"' in src
+    # 版本戳棘轮跟**当前**版号走 (升版者必须同时改这里 — 变红是设计意图, 不是回归)。
+    # v2.11→v2.12 (2026-09-12, P2.2 输入初筛段, 同为 brief/user 侧变更)。
+    assert 'PROMPT_VERSION = "v2.12"' in src, \
+        "版本戳已升过 v2.12 — 同步改本钉 (棘轮意图: 升版必留痕)"
+    # U1 的变更记录不得随后续升版被顺手抹掉 (删注释 = 归因链断, 9/11 前后样本不可分)。
+    assert "v2.11=负反馈表口径两处修" in src, "U1 版号变更记录被删 — 归因链断"
     assert "归因盲区就地声明" in src and "只哈希 SYSTEM_PROMPT_V2" in src
     # 哈希口径本批**不动** (缺口另立项, 需独立授权) — 被动过即红
     assert ('PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8"))'

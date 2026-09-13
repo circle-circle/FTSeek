@@ -279,7 +279,11 @@ class TestWiringContract:
         start, end = _monitor_fn_span()
         body = _PIPE_SRC[start:end]
         idx = body.index("# ── G-01/A9")
-        block = body[idx:body.index("exited = 0", idx)]
+        # 块尾锚 2026-09-13 修正 (fond-shore-swan 批次 REVIEW-20260912 §5 红项):
+        # 原锚 "exited = 0" 被该批前移到 G-01 之前 (body 偏移 487 < G-01 4356),
+        # index(..., idx) 必抛 ValueError。改用 G-01 之后稳定存在的逐仓退出循环头
+        # "for r in rows:" 作锚 (偏移 9144), 块内动作集不变 (logger.critical+push_text)。
+        block = body[idx:body.index("for r in rows:", idx)]
         for forbidden in ("close_position", "_close_trade_record", "execute_close_fn",
                           "get_dual_broker", "place_order"):
             assert forbidden not in block, f"v1 兜底不得含平仓动作 {forbidden}"

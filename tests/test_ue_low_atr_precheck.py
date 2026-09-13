@@ -93,13 +93,27 @@ def _run_inject(tmp_cfg=None, atr_by_symbol=None, provider_error=False):
                 pb_values[_k] = tmp_cfg.pop(_k)
     candidates = [_cand("XLY"), _cand("TEST")]
 
+    # [P1.2 2026-09-12, proud-slope-falcon] 筛选 ATR 换源: get_atr_pct (止损口径,
+    #   可能含 VIX 缩放/底限/分钟 ATR) → get_screening_atr (原始已完成日线 TR14
+    #   rolling-mean)。atr_by_symbol 语义仍是"比例", 此处按参考价还原绝对 ATR。
+    _prices = {"US.XLY": 250.0, "US.TEST": 100.0}
+
+    def _fake_screening_atr(sym, asof=None, **kwargs):
+        if provider_error:
+            raise RuntimeError("boom")
+        ratio = (atr_by_symbol or {}).get(sym)
+        if ratio is None:
+            return {"status": "UNKNOWN", "reason": "no_completed_daily_bars",
+                    "atr": None, "basis": "daily_tr14_rolling_mean", "bars_asof": None}
+        return {"status": "PASS", "reason": "ok", "atr": ratio * _prices.get(sym, 100.0),
+                "basis": "daily_tr14_rolling_mean", "source": "router.get_daily_bars",
+                "adjustment": "split_guarded_source_undeclared",
+                "bars_asof": "2026-09-11", "bars_used": 15}
+
     fake_provider = mock.MagicMock()
-    if provider_error:
-        fake_provider.get_atr_pct.side_effect = RuntimeError("boom")
-    else:
-        fake_provider.get_atr_pct.side_effect = (
-            lambda sym, px: (atr_by_symbol or {}).get(sym)
-        )
+    fake_provider.get_screening_atr.side_effect = _fake_screening_atr
+    fake_provider.get_atr_pct.side_effect = AssertionError(
+        "止损口径 get_atr_pct 不得再被选股初筛调用 (P1.2 口径分离)")
     fake_container = mock.MagicMock()
     fake_container.atr_provider.return_value = fake_provider
     get_di = mock.MagicMock(return_value=fake_container)
@@ -111,9 +125,15 @@ def _run_inject(tmp_cfg=None, atr_by_symbol=None, provider_error=False):
     fake_mrg = mock.MagicMock()
     fake_mrg.return_value.assess.return_value = regime
 
+    # [P1.5] 批次身份/时效是 inject 消费前置条件: 无 started_at/scanned_at 的记录
+    #   一律视为"时效不可核验" → 不注入 (不静默回用旧候选)。
+    _now_iso = ue._now_et().isoformat()
     scan_rec = {
         "type": "scan", "date": ue._today(),
         "surfaced": candidates, "model_used": "test-model",
+        "scan_window": "premarket", "batch_id": "UE:test-batch",
+        "batch_status": "complete", "started_at": _now_iso, "scanned_at": _now_iso,
+        "policy_version": "da_ue_v1",
     }
     quotes = {"XLY": {"price": 250.0}, "TEST": {"price": 100.0}}
 

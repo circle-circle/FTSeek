@@ -34,9 +34,21 @@ os.makedirs(config.LOG_DIR, exist_ok=True)
 
 # P2-1 修复 (2026-04-17): 不使用 FileHandler, 避免与 systemd StandardOutput=append 双重写入
 # 只输出到 stdout, 由 systemd 负责写入文件
+# 格式契约 (2026-09-10 加 threadName 时实测全部下游解析面, 改格式前必读):
+#   ① asctime 必须占据行首前 19 字符 — daily_alert_summary.parse_log_alerts 取 line[:19],
+#      intraday_heartbeat 取 line[:16], error_alert.py 取 line[:16] (2026-09-10 .sh→.py 重写后
+#      同口径; 旧 .sh 的 awk 取 $1" "$2 且对无时间戳行做字符串比较 = 恒判"最近"), startup_smoke_check
+#      用 re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}") 定位启动段。
+#   ② "] %(levelname)s:" 必须紧邻 — intraday_heartbeat.py:244 与 scripts/error_alert.py 的
+#      LEVEL_MARKERS 都是**字面量**匹配 "] ERROR:" / "] WARNING:" / "] CRITICAL:"。在
+#      [%(name)s] 与级别之间插任何字段 → 两个守卫同时恒报 0 错 0 警,
+#      即"守卫只能报健康"失效形态 (同源教训: ops/hermes/ftseek_us_restart_20260829_hotfix.sh
+#      首版写 '/ ERROR /' 而日志形态是 "] ERROR:")。
+#   ③ 故 threadName 只能插在 asctime 与 [%(name)s] 之间。多线程 (scan/monitor/出场快循环/
+#      LLM循环/心跳/对账) 共写一条 stdout, 无此字段时交错行无法归因。
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    format="%(asctime)s [%(threadName)s] [%(name)s] %(levelname)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
     ],
@@ -150,6 +162,39 @@ def _resolve_lock_file():
     return first_existing or candidates[0]
 
 
+def _validate_startup_mode_or_exit():
+    """在任何 OpenD/DI 副作用前阻断 broker、数据库路由或许可半翻。"""
+    from app.core.trading_mode import (
+        read_startup_mode_snapshot,
+        validate_startup_mode_config,
+    )
+
+    snapshot = read_startup_mode_snapshot()
+    result = validate_startup_mode_config(
+        os.getenv("AUTO_TRADE_ACCOUNT", snapshot["AUTO_TRADE_ACCOUNT"]),
+        snapshot["TRADE_ENV"],
+        os.getenv("ALLOW_REAL_TRADING", snapshot["ALLOW_REAL_TRADING"]),
+        os.getenv("FTSEEK_DB_FILE", snapshot["FTSEEK_DB_FILE"]),
+    )
+    deprecated_futu_env = os.getenv(
+        "FUTU_TRADE_ENV", snapshot["FUTU_TRADE_ENV"]
+    ).strip()
+    if deprecated_futu_env:
+        logger.warning(
+            "[StartupMode] FUTU_TRADE_ENV=%s 已废弃，不参与 broker/DB 模式判定",
+            deprecated_futu_env,
+        )
+    if not result["valid"]:
+        for error in result["errors"]:
+            logger.critical("[StartupMode] %s: %s", error["code"], error["message"])
+        raise SystemExit(1)
+    logger.info(
+        "[StartupMode] 模式一致: broker=%s db=%s ALLOW_REAL_TRADING=%s",
+        result["broker_route"], result["db_route"], result["allow_real_trading"],
+    )
+    return result
+
+
 def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
@@ -197,6 +242,8 @@ def _run_new_scheduler(args):
             print(f"⚠️  进程锁清理失败 ({LOCK_FILE}): {_e}", file=sys.stderr)
     atexit.register(cleanup_lock)
 
+    _validate_startup_mode_or_exit()
+
     # ── 启动前 OpenD 连通性检查 (P0 修复 2026-05-01) ──
     # 防止 OpenD 不可用时, Futu SDK _init_connect_sync 无限重试阻塞启动
     _opend_host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
@@ -219,45 +266,6 @@ def _run_new_scheduler(args):
         logger.critical(f"[PreFlight] ❌ OpenD 不可达 ({_opend_host}:{_opend_port}): {_e}")
         logger.critical("[PreFlight] 请先启动 Futu OpenD, 然后重试")
         sys.exit(1)
-
-    # ── P0 修复 (2026-05-11): 模拟盘/实盘模式确认 ──
-    # 当前运行阶段: 强制模拟盘 (TRADE_ENV=1)，禁止自动切换实盘
-    _trade_env = os.environ.get("TRADE_ENV", "<unset, default=1>")
-    _futu_trade_env = os.environ.get("FUTU_TRADE_ENV", "<unset, default=1>")
-    _allow_real = os.environ.get("ALLOW_REAL_TRADING", "false").lower() == "true"
-    if (_trade_env == "0" or _futu_trade_env == "0") and not _allow_real:
-        logger.critical("🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨")
-        logger.critical("🚨 [安全拦截] 检测到实盘模式配置但 ALLOW_REAL_TRADING!=true!")
-        logger.critical("🚨 TRADE_ENV=%s | FUTU_TRADE_ENV=%s | ALLOW_REAL_TRADING=%s", _trade_env, _futu_trade_env, _allow_real)
-        logger.critical("🚨 当前阶段为模拟盘验证期，禁止运行实盘交易！")
-        logger.critical("🚨 如需切换实盘，请先通过 Web Dashboard 确认切换")
-        logger.critical("🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨")
-        sys.exit(1)
-
-    if _trade_env == "0" or _futu_trade_env == "0":
-        logger.warning("[安全确认] ⚠️ 实盘模式已启用 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s | ALLOW_REAL_TRADING=%s)", _trade_env, _futu_trade_env, _allow_real)
-        logger.warning("[安全确认] ⚠️ 所有交易将使用真实账户，产生真实盈亏")
-    else:
-        logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
-        logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略")
-
-    # DEB-20260904 #154: TRADE_ENV(仅DB路由) 与 AUTO_TRADE_ACCOUNT(broker模式SSOT) 双键漂移检测 —
-    # 仅告警不拦截; 漂移时真实成交可能写入模拟库(或反之), 仓位/盈亏数据源错乱
-    try:
-        from app.core.trading_mode import _read_env_file as _read_acct_env
-        _auto_acc = _read_acct_env("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-    except Exception as _e:
-        logger.debug("AUTO_TRADE_ACCOUNT 读取失败, 回退环境变量: %s", _e)
-        _auto_acc = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-    _db_live = (_trade_env == "0")
-    _broker_live = (_auto_acc == "real")
-    if _db_live != _broker_live:
-        logger.warning(
-            "🚨 [配置一致性] TRADE_ENV=%s (DB路由=%s库) 与 AUTO_TRADE_ACCOUNT=%s (broker=%s) 不一致 — "
-            "成交记录与 broker 环境可能错配, 请核对 .env.us",
-            _trade_env, "实盘" if _db_live else "模拟",
-            _auto_acc, "实盘" if _broker_live else "模拟",
-        )
 
     # (已移除 2026-07-25, 隐患扫描小项①) Task#36 (2026-06-16) trade_records schema 迁移:
     #   scripts/migrate_trade_records.py 已删 (schema 早已稳定, TradeStore 自建表),

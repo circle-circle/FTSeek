@@ -126,6 +126,12 @@ class PlaybookDB:
             self._migrate_instruction_columns(conn)
             # RFC-066 (2026-08-25): 存量表移除 UNIQUE(date, symbol) — 多轮指令共存前提.
             self._migrate_drop_date_symbol_unique(conn)
+            self._backfill_execution_state(conn)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_execution_state "
+                "ON playbook_instructions(execution_state, updated_at, id)"
+            )
+            conn.commit()
             self._tables_created = True
             logger.debug("Playbook tables ensured")  # 2026-07-31 降噪: INFO→DEBUG (每 ensure 都打, 23条/11h)
         except Exception as e:
@@ -213,6 +219,11 @@ class PlaybookDB:
                     raw_instruction_json TEXT,
                     decision_id TEXT DEFAULT '',
                     created_at TEXT NOT NULL, updated_at TEXT,
+                    execution_state TEXT NOT NULL DEFAULT 'PENDING',
+                    execution_attempt INTEGER NOT NULL DEFAULT 0,
+                    broker_order_id TEXT,
+                    broker_env TEXT,
+                    broker_order_status TEXT,
                     config_version TEXT DEFAULT 'v1', invalidation TEXT,
                     fwd_return_intraday_open REAL, fwd_return_t1_open REAL, fwd_return_t3_open REAL,
                     entry_low REAL, entry_high REAL, fwd_proxy INTEGER, anchor_dev_pct REAL,
@@ -249,6 +260,10 @@ class PlaybookDB:
             mig.execute(
                 "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_date_symbol "
                 "ON playbook_instructions(date, symbol)"
+            )
+            mig.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_execution_state "
+                "ON playbook_instructions(execution_state, updated_at, id)"
             )
             mig.execute("COMMIT")
             logger.info(
@@ -320,19 +335,56 @@ class PlaybookDB:
             "fwd_return_t1_adj": "REAL",
             "fwd_return_t3_adj": "REAL",
             "fwd_return_t5_adj": "REAL",
+            # B1-lite: broker 提交与本地簿记分离的持久状态机。
+            "execution_state": "TEXT NOT NULL DEFAULT 'PENDING'",
+            "execution_attempt": "INTEGER NOT NULL DEFAULT 0",
+            "broker_order_id": "TEXT",
+            "broker_env": "TEXT",
+            "broker_order_status": "TEXT",
+        }
+        safety_columns = {
+            "execution_state", "execution_attempt", "broker_order_id",
+            "broker_env", "broker_order_status",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
         except Exception as e:
-            logger.warning(f"[playbook] 迁移: 读取 table_info 失败: {e}")
-            return
+            raise RuntimeError("无法确认 playbook 执行安全列") from e
         for col, col_type in needed.items():
             if col not in existing:
                 try:
                     conn.execute(f"ALTER TABLE playbook_instructions ADD COLUMN {col} {col_type}")
                     logger.info(f"[playbook] 迁移: 已补列 playbook_instructions.{col} ({col_type})")
                 except Exception as e:
+                    if col in safety_columns:
+                        raise RuntimeError(f"playbook 执行安全列迁移失败: {col}") from e
                     logger.warning(f"[playbook] 迁移: 补列 {col} 失败: {e}")
+        migrated = {
+            row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()
+        }
+        missing_safety = safety_columns - migrated
+        if missing_safety:
+            raise RuntimeError(
+                f"playbook 执行安全列缺失: {sorted(missing_safety)}"
+            )
+        conn.commit()
+
+    def _backfill_execution_state(self, conn) -> None:
+        """安全回填旧行：历史 executed 行绝不因加列默认值变回可重试。"""
+        conn.execute(
+            "UPDATE playbook_instructions SET execution_state = CASE "
+            "WHEN COALESCE(executed, 0) = 0 THEN 'PENDING' "
+            "WHEN COALESCE(execution_price, 0) > 0 "
+            "  OR COALESCE(outcome, '') IN ('holding', 'win', 'loss', 'void', 'already_held') "
+            "THEN 'BOOKED' ELSE 'LEGACY_LOCKED' END "
+            "WHERE execution_state IS NULL OR execution_state = '' "
+            "OR (execution_state = 'PENDING' AND COALESCE(executed, 0) = 1 "
+            "    AND COALESCE(execution_attempt, 0) = 0)"
+        )
+        conn.execute(
+            "UPDATE playbook_instructions SET execution_attempt = 0 "
+            "WHERE execution_attempt IS NULL"
+        )
         conn.commit()
 
 
@@ -718,31 +770,203 @@ class PlaybookDB:
         )
         conn.commit()
 
-    def try_claim_execution(self, instruction_id: int) -> bool:
-        """原子抢占执行权 — 防止同一指令被并发/重试双重下单.
+    def merge_instruction_metadata(self, instruction_id: int, patch: Dict[str, Any]) -> bool:
+        """把 patch 浅合并进 playbook_instructions.metadata_json (读-改-写, 零 schema 迁移)。
 
-        用条件 UPDATE (WHERE executed 未置位) 把 executed 置 1, 仅当本次调用
-        真正翻转了行 (rowcount == 1) 才返回 True. 两个并发线程只有一个能抢到.
-        必须在调用 broker submit_order 之前调用; 若后续下单失败可用
-        release_execution_claim 释放以便重试.
+        为什么不走 update_instruction_tracking: 那个函数只写 _TRACKING_FIELDS 白名单里的
+        **DB 列**, 而 metadata_json 不在白名单 (它是 insert/UPSERT 时整块写入的 blob)。
+        后果实测于 DEB-20260910 §18.3: pipeline.py 自 2026-06-29 起每次 re-price 都构造
+        reprice_from/reprice_to/reprice_original_sl 并注释为"审计字段…审计可追溯", 但
+        _TRACKING_FIELDS (42 项) 不含这三键、73 列里也没有它们 ⇒ 每次都被静默丢弃;
+        db.py 白名单侧的 2026-07-11 注释同时写着"非 DB 列, 仍由 whitelist 正确忽略"。
+        两侧注释对同一行为给了相反意图, 净效果是**重定价痕迹在库里从来不存在**。
+        本方法给"该落库但不值得为它加列"的审计字段一条零迁移出路, 口径与既有
+        metadata_json.original_instruction (intraday_reentry.py:719) 一致。
+
+        契约:
+          - 只浅合并顶层键: patch 覆盖同名旧键, 其余旧键原样保留 (生产库 377 行已有
+            phantom_repair_20260827 / rfc066_backfill_round1 / ab_contamination /
+            reentry_of_trade 等注记, 一个都不得丢)。
+          - 现有 metadata_json 解析不出 dict ⇒ **不写**, 返回 False。宁可丢新审计,
+            不可毁既有注记 (那些注记是别的批次唯一的事故留痕)。
+          - 任何异常都不外抛: 审计降级优于阻断下单 (与本文件 admission 门同纪律)。
+          - 同名键后写覆盖前写 (latest-wins), 不追加历史; 需要多次重定价全史的
+            消费方应读 sltp_verify_shadow / sizing_delta.jsonl 影子, 不读本键。
+
+        Returns: True=已写入; False=未写入 (行不存在 / 既有值解析失败 / 异常)。
+        """
+        try:
+            conn = self._conn()
+            row = conn.execute(
+                "SELECT metadata_json FROM playbook_instructions WHERE id = ?",
+                (instruction_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            raw = row[0]
+            meta: Dict[str, Any] = {}
+            if raw not in (None, ""):
+                try:
+                    loaded = json.loads(raw)
+                except Exception:
+                    # exc_info=True: W6 棘轮口径 —— except 块里的告警必须带栈,
+                    #   否则值班人只看到"解析失败"却要自己猜是什么内容解析不了。
+                    logger.warning(
+                        "merge_instruction_metadata: id=%s 既有 metadata_json 解析失败, "
+                        "放弃写入以保全既有注记", instruction_id, exc_info=True,
+                    )
+                    return False
+                if not isinstance(loaded, dict):
+                    logger.warning(
+                        "merge_instruction_metadata: id=%s 既有 metadata_json 非 dict (%s), "
+                        "放弃写入以保全既有注记", instruction_id, type(loaded).__name__,
+                    )
+                    return False
+                meta = loaded
+            meta.update(patch or {})
+            conn.execute(
+                "UPDATE playbook_instructions SET metadata_json = ? WHERE id = ?",
+                (json.dumps(meta, ensure_ascii=False), instruction_id),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            # 用 warning + exc_info 而不是 debug: W4_debug_swallow 把 except 块内的
+            #   logger.debug 计为"吞异常"(审计静默死亡正是本仓反复立案的病灶),
+            #   W6_except_stack 要求 except 内告警带栈 ⇒ warning(..., exc_info=True)
+            #   是同时满足两个棘轮的唯一形态。
+            logger.warning(
+                "merge_instruction_metadata 失败 (已隔离, 不阻断下单): id=%s err=%s",
+                instruction_id, e, exc_info=True,
+            )
+            return False
+
+    def try_claim_execution(self, instruction_id: int) -> Optional[int]:
+        """原子抢占并返回本次 attempt；只有 PENDING 指令可被领取。
+
+        领取时先进入 UNKNOWN，而不是假定 broker 尚未受理。返回 None 表示未领取；
+        返回的递增 attempt 必须用于后续所有 CAS 写，阻止旧请求的迟到结果覆盖新轮次。
         """
         conn = self._conn()
+        now = now_utc().isoformat()
+        try:
+            row = conn.execute(
+                "UPDATE playbook_instructions SET executed = 1, execution_state = 'UNKNOWN', "
+                "execution_attempt = COALESCE(execution_attempt, 0) + 1, "
+                "broker_order_id = NULL, broker_env = NULL, broker_order_status = NULL, updated_at = ? "
+                "WHERE id = ? AND execution_state = 'PENDING' AND COALESCE(executed, 0) = 0 "
+                "RETURNING execution_attempt",
+                (now, instruction_id),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            # Python/SQLite 旧版本兼容：条件 UPDATE 后按同一连接读取 attempt。
+            if "RETURNING" not in str(exc).upper():
+                raise
+            cur = conn.execute(
+                "UPDATE playbook_instructions SET executed = 1, execution_state = 'UNKNOWN', "
+                "execution_attempt = COALESCE(execution_attempt, 0) + 1, "
+                "broker_order_id = NULL, broker_env = NULL, broker_order_status = NULL, updated_at = ? "
+                "WHERE id = ? AND execution_state = 'PENDING' AND COALESCE(executed, 0) = 0",
+                (now, instruction_id),
+            )
+            row = (conn.execute(
+                "SELECT execution_attempt FROM playbook_instructions WHERE id = ?", (instruction_id,)
+            ).fetchone() if cur.rowcount == 1 else None)
+        conn.commit()
+        return int(row[0]) if row is not None else None
+
+    def mark_execution_submitted(self, instruction_id: int, attempt: int,
+                                 broker_order_id: str, broker_env: str,
+                                 broker_order_status: str = "SUBMITTED") -> bool:
+        """CAS 持久化 broker order id；必须在任何成交查询前调用。"""
+        conn = self._conn()
+        order_id = str(broker_order_id)
+        env = str(broker_env or "")
         cur = conn.execute(
-            "UPDATE playbook_instructions SET executed = 1, updated_at = ? "
-            "WHERE id = ? AND (executed IS NULL OR executed = 0)",
-            (now_utc().isoformat(), instruction_id),
+            "UPDATE playbook_instructions SET execution_state='SUBMITTED', broker_order_id=?, "
+            "broker_env=COALESCE(NULLIF(broker_env, ''), NULLIF(?, '')), "
+            "broker_order_status=?, updated_at=? "
+            "WHERE id=? AND execution_attempt=? AND execution_state IN ('UNKNOWN','SUBMITTED') "
+            "AND (broker_order_id IS NULL OR broker_order_id='' OR broker_order_id=?) "
+            "AND (?='' OR broker_env IS NULL OR broker_env='' OR broker_env=?)",
+            (order_id, env, broker_order_status, now_utc().isoformat(),
+             instruction_id, attempt, order_id, env, env),
         )
         conn.commit()
         return cur.rowcount == 1
 
-    def release_execution_claim(self, instruction_id: int):
-        """释放执行抢占 (executed 置回 0) — 下单前失败时允许重试."""
+    def mark_execution_unknown(self, instruction_id: int, attempt: int,
+                               broker_order_id: str = "", broker_env: str = "",
+                               broker_order_status: str = "UNKNOWN") -> bool:
+        """CAS 保持不确定提交锁定；已进入成交态的行不会被降级。"""
         conn = self._conn()
-        conn.execute(
-            "UPDATE playbook_instructions SET executed = 0, updated_at = ? WHERE id = ?",
-            (now_utc().isoformat(), instruction_id),
+        order_id = str(broker_order_id or "")
+        env = str(broker_env or "")
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET execution_state='UNKNOWN', "
+            "broker_order_id=COALESCE(NULLIF(broker_order_id, ''), NULLIF(?, '')), "
+            "broker_env=COALESCE(NULLIF(broker_env, ''), NULLIF(?, '')), "
+            "broker_order_status=?, updated_at=? "
+            "WHERE id=? AND execution_attempt=? AND execution_state IN ('UNKNOWN','SUBMITTED') "
+            "AND (?='' OR broker_order_id IS NULL OR broker_order_id='' OR broker_order_id=?) "
+            "AND (?='' OR broker_env IS NULL OR broker_env='' OR broker_env=?)",
+            (order_id, env, broker_order_status, now_utc().isoformat(),
+             instruction_id, attempt, order_id, order_id, env, env),
         )
         conn.commit()
+        return cur.rowcount == 1
+
+    def mark_execution_filled_unbooked(self, instruction_id: int, attempt: int,
+                                       broker_order_status: str = "FILLED") -> bool:
+        """CAS 标记 broker 已有成交但本地账尚未完成。"""
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET execution_state='FILLED_UNBOOKED', "
+            "broker_order_status=?, updated_at=? WHERE id=? AND execution_attempt=? "
+            "AND execution_state IN ('UNKNOWN','SUBMITTED','FILLED_UNBOOKED')",
+            (broker_order_status, now_utc().isoformat(), instruction_id, attempt),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
+    def mark_execution_booked(self, instruction_id: int, attempt: int,
+                              execution_price: Optional[float] = None,
+                              execution_time: Optional[str] = None,
+                              outcome: str = "holding") -> bool:
+        """CAS 完成簿记；可选地原子写入指令成交跟踪字段。"""
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET execution_state='BOOKED', executed=1, "
+            "execution_price=COALESCE(?, execution_price), "
+            "execution_time=COALESCE(?, execution_time), outcome=COALESCE(?, outcome), "
+            "skip_reason='', updated_at=? WHERE id=? AND execution_attempt=? "
+            "AND execution_state='FILLED_UNBOOKED'",
+            (execution_price, execution_time, outcome, now_utc().isoformat(), instruction_id, attempt),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
+    def unlock_execution_if_zero_fill_terminal(self, instruction_id: int, attempt: int,
+                                               broker_order_status: str,
+                                               dealt_qty: float = 0.0) -> bool:
+        """仅 broker 明确零成交终态时 CAS 解锁为 PENDING。"""
+        terminal = {
+            "DEFINITIVE_REJECT", "FAILED", "CANCELLED", "CANCELLED_ALL",
+            "DELETED", "DISABLED", "REJECTED", "EXPIRED", "TIMEOUT",
+        }
+        raw_status = str(broker_order_status or "").upper().strip()
+        status = raw_status.rsplit(".", 1)[-1]
+        if "PART" in status or status not in terminal or float(dealt_qty or 0) != 0.0:
+            return False
+        conn = self._conn()
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET execution_state='PENDING', executed=0, "
+            "broker_order_status=?, updated_at=? WHERE id=? AND execution_attempt=? "
+            "AND execution_state IN ('UNKNOWN','SUBMITTED')",
+            (status, now_utc().isoformat(), instruction_id, attempt),
+        )
+        conn.commit()
+        return cur.rowcount == 1
 
     def get_instructions_with_outcome(self, days_back: int = 90) -> List[Dict]:
         """获取有结果的指令 (用于因子分析)"""
@@ -1475,7 +1699,14 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     decision_id TEXT DEFAULT '',
 
     created_at TEXT NOT NULL,
-    updated_at TEXT
+    updated_at TEXT,
+
+    -- B1-lite: broker 接单与本地簿记分阶段持久化
+    execution_state TEXT NOT NULL DEFAULT 'PENDING',
+    execution_attempt INTEGER NOT NULL DEFAULT 0,
+    broker_order_id TEXT,
+    broker_env TEXT,
+    broker_order_status TEXT
 
     -- RFC-066 (2026-08-25): 移除 UNIQUE(date, symbol)。
     --   旧约束强制每标的每日单行: 盘中再入场重武装的 UPSERT 整行覆盖并复位

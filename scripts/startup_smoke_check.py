@@ -5,12 +5,14 @@
 (漂移检测/热重载/审计未启动), 但 980 测试全绿 + 人工重启验证 grep "服务已启动"
 都没拦住, 靠用户读日志才发现。教训: 启动判据必须固化成机器断言, 不能靠临场记忆。
 
-七条断言 (对最近一次启动段, 以最后一个 [PreFlight] 为界):
+七条断言 (对最近一次启动段, 以最后一个 [StartupMode] 为界, 缺失时回退 [PreFlight]):
   1. ConfigValidator 校验结果 ✅ 全部通过
   2. [ConfigGov] ✅ 漂移检测已启动
   3. [ConfigGov] ✅ 热重载已启动
   4. [ConfigAudit] ✅ SSOT 配置一致性审计通过 (0 BLOCKING)
-  5. 模拟盘安全确认 (TRADE_ENV=1)
+  5. 模拟盘安全确认 (**语义判定**, 两个独立证据源就位者必须全部说是 sim):
+     · `[StartupMode] 模式一致: broker=… db=… ALLOW_REAL_TRADING=…` (main.py)
+     · `[交易环境] 账户路由 AUTO_TRADE_ACCOUNT=… | ALLOW_REAL_TRADING=…` (scheduler_core)
   6. [PlaybookExit] 快循环已启动
   7. 启动段零 Traceback / ImportError / ModuleNotFoundError / CRITICAL
 
@@ -18,7 +20,18 @@
   systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90
   --wait N : 最多轮询 N 秒 (每 5s 重读日志), 适配启动耗时; 缺省单次判定
   --push   : 失败时飞书告警 (app.notifier.feishu)
-退出码: 0=全过 / 1=断言失败 / 2=日志缺失或无近期启动段
+退出码: 0=全过 / 1=断言失败 (含"证据到位且确认不是模拟盘") /
+        2=判定无效 (日志缺失 | 无近期启动段 | 模式证据缺失=守卫失明, 与"确认不安全"分开报)
+
+2026-09-10 修 (DEB-20260910 §10.2-2, 用户裁「需要」): 断言 5 原针 `模拟盘 (TRADE_ENV=1`
+在上游把启动横幅 `[安全确认]`→`[StartupMode]` 之后**全仓已无任何代码输出** (仅剩
+`app/execution/engine.py` 一句注释) ⇒ 这条安全断言变成永久红。**且不是换根针就能修**:
+段界取"最后一个 [PreFlight]", 而实测该次启动 `[StartupMode] 模式一致` 落在日志第 2917 行、
+`[PreFlight] OpenD 连通性检查通过` 在第 2918 行 ⇒ 新标记在段界**之外**, 把针直接换成
+`[StartupMode] 模式一致` 实测仍是 False。故三处同改:
+  ①段界主标记 → `[StartupMode]` (比 [PreFlight] 早 1ms, 且模式一致/不一致/废弃告警三分支都打);
+  ②断言 5 → 正则解析语义值 (不再吃文案字面量 ⇒ 下次改文案不会静默解除守卫), 且两个源都查;
+  ③任一证据源缺席 → exit 2「判定无效」而非 exit 1, 让"守卫失明"与"确认不安全"可区分。
 """
 import argparse
 import re
@@ -30,20 +43,47 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "logs" / "ftseek_us.log"
 
+# 断言 5 的证据源: (源名, 正则, 期望值元组)。每个源自带期望值, 缺席者由 run_once 判"守卫失明"。
+_MODE_RE = re.compile(
+    r"\[StartupMode\] 模式一致: broker=(\S+) db=(\S+) ALLOW_REAL_TRADING=(\S+)")
+_ROUTE_RE = re.compile(r"账户路由 AUTO_TRADE_ACCOUNT=(\S+) \| ALLOW_REAL_TRADING=(\S+)")
+_MODE_PROBES = (
+    ("StartupMode", _MODE_RE, ("sim", "sim", "False")),
+    ("交易环境横幅", _ROUTE_RE, ("sim", "False")),
+)
+_MODE_SOURCES_REQUIRED = tuple(name for name, _rx, _exp in _MODE_PROBES)
+
+
+def _mode_sources(seg: str) -> dict:
+    """{源名: (实测值元组, 期望值元组)} — 只含在启动段里**就位**的源。"""
+    got = {}
+    for name, rx, expected in _MODE_PROBES:
+        m = rx.search(seg)
+        if m:
+            got[name] = (m.groups(), expected)
+    return got
+
+
+def _is_sim_mode(seg: str) -> bool:
+    """断言 5: 已就位的证据源必须**全部**判定为模拟盘 (缺席走 exit 2, 不在这里放行)。"""
+    got = _mode_sources(seg)
+    return bool(got) and all(actual == expected for actual, expected in got.values())
+
+
 # (名称, 判定函数) — 判定输入为启动段文本
 CHECKS = [
     ("ConfigValidator 全部通过", lambda s: "[ConfigValidator] 校验结果: ✅ 全部通过" in s),
     ("漂移检测已启动",           lambda s: "[ConfigGov] ✅ 漂移检测已启动" in s),
     ("热重载已启动",             lambda s: "[ConfigGov] ✅ 热重载已启动" in s),
     ("SSOT 审计 0 BLOCKING",     lambda s: "[ConfigAudit] ✅ SSOT 配置一致性审计通过" in s),
-    ("模拟盘安全确认",           lambda s: "模拟盘 (TRADE_ENV=1" in s),
+    ("模拟盘安全确认",           _is_sim_mode),
     ("退出快循环已启动",         lambda s: "[PlaybookExit] 快循环已启动" in s),
     ("零 Traceback/CRITICAL",    lambda s: not re.search(
         r"Traceback|ImportError|ModuleNotFoundError| CRITICAL", s)),
 ]
 
-BOOT_MARKER = "[PreFlight]"          # 每次启动最早的稳定标记
-BOOT_MARKER_FALLBACK = "[安全确认]"
+BOOT_MARKER = "[StartupMode]"         # 每次启动最早的稳定标记 (模式判定三分支都会打)
+BOOT_MARKER_FALLBACK = "[PreFlight]"  # 回退: 上游再改名时, OpenD 预检仍在启动路径上
 MAX_BOOT_AGE_HOURS = 6               # 启动段太旧 = 本次重启没产生新段, 判定无效
 
 
@@ -72,9 +112,13 @@ def run_once():
     text = LOG.read_text(encoding="utf-8", errors="replace")
     seg, boot_time = _extract_boot_segment(text)
     if seg is None:
-        return 2, ["日志中未找到启动标记 [PreFlight]/[安全确认]"], None
+        return 2, [f"日志中未找到启动标记 {BOOT_MARKER}/{BOOT_MARKER_FALLBACK}"], None
     if boot_time and datetime.now() - boot_time > timedelta(hours=MAX_BOOT_AGE_HOURS):
         return 2, [f"最近启动段过旧 ({boot_time}), 本次重启可能未产生日志"], boot_time
+    missing = [n for n in _MODE_SOURCES_REQUIRED if n not in _mode_sources(seg)]
+    if missing:
+        return 2, [f"模式证据缺失 {missing} ⇒ 判定无效 (守卫失明 ≠ 安全); "
+                   f"段界标记={BOOT_MARKER}/{BOOT_MARKER_FALLBACK}"], boot_time
     failed = [name for name, fn in CHECKS if not fn(seg)]
     return (1 if failed else 0), failed, boot_time
 

@@ -57,7 +57,19 @@ class TestScanFailAlert:
 class TestCmdScanFailureBranches:
     def test_llm_failure_sends_alert_and_returns_1(self, monkeypatch, feishu_out):
         monkeypatch.setattr(scan_mod, "_is_us_trading_day_today", lambda: True)
-        monkeypatch.setattr(scan_mod, "_build_clue_brief", lambda manual: "brief")
+
+        def _stub_brief(manual=""):
+            # 桩必须履行真 `_build_clue_brief` 的**状态契约**: 入口清空材料索引与指纹。
+            #   否则 P2.6 空转守卫读到的是**别的测试留下的**模块态, 本例成败就取决于测试
+            #   执行顺序 (索引非空 → 守卫放行 → 调到 LLM → 告警; 索引空且指纹非空 →
+            #   守卫跳过 LLM → rc=0 无告警 → 本例红)。真函数把这三条 reset 放在第一句,
+            #   正是为了"构建失败/被绕过也不留旧值"。
+            scan_mod._BRIEF_EVIDENCE = []
+            scan_mod._LAST_BRIEF_MATERIALS = []
+            scan_mod._LAST_BRIEF_FINGERPRINTS = {}
+            return "brief"
+
+        monkeypatch.setattr(scan_mod, "_build_clue_brief", _stub_brief)
         monkeypatch.setattr("app.llm.model_call.call_llm", mock.Mock(return_value=_fail_result()))
         rc = scan_mod.cmd_scan()
         assert rc == 1

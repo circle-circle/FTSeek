@@ -40,7 +40,25 @@ def db():
 
 
 @pytest.fixture
-def svc(db):
+def svc(db, monkeypatch, tmp_path):
+    # Routing tests do not measure these upstream state/market-data providers.
+    monkeypatch.setattr(
+        "app.coordinator.manual_hold_registry.manual_hold_registry.is_auto_blocked",
+        lambda symbol: False,
+    )
+    monkeypatch.setattr(
+        "app.risk.symbol_day_loss.is_symbol_day_loss_exceeded",
+        lambda symbol: (False, 0.0),
+    )
+    main_db = tmp_path / "routing-positions.sqlite"
+    conn = sqlite3.connect(main_db)
+    try:
+        conn.execute("CREATE TABLE open_positions (symbol TEXT, size REAL, owner_strategy TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr("app.core.db_utils.get_main_db", lambda: main_db)
+    monkeypatch.setattr("app.playbook.playbook_service._private_router_quote", lambda symbol: None)
     return PlaybookService(playbook_db=db)
 
 
@@ -193,6 +211,37 @@ class TestOrderConstruction:
         assert row["skip_reason"] == "archetype_order_dead"
         assert not row["executed"]  # 执行占位已释放
 
+    def test_definitive_reject_unlocks_for_retry(self, svc, db):
+        iid = _save_inst(db)
+        dual, captured = _mk_dual([], submit_result={
+            "success": False, "submit_state": "DEFINITIVE_REJECT",
+            "futu_order_id": "", "error": "broker rejected",
+        })
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), \
+             patch("app.data.market_data_router.MarketDataRouter") as _mdr:
+            _mdr.return_value.get_quote.return_value = None
+            result = _call_inner(svc, db, iid, None)
+        row = svc._find_instruction_by_id(iid)
+        assert result["success"] is False
+        assert row["execution_state"] == "PENDING"
+        assert row["executed"] == 0
+        assert captured["order"].client_order_id.endswith("_1")
+
+    def test_unknown_submit_stays_locked(self, svc, db):
+        iid = _save_inst(db)
+        dual, _ = _mk_dual([], submit_result={
+            "success": False, "submit_state": "UNKNOWN",
+            "futu_order_id": "", "error": "transport timeout",
+        })
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), \
+             patch("app.data.market_data_router.MarketDataRouter") as _mdr:
+            _mdr.return_value.get_quote.return_value = None
+            result = _call_inner(svc, db, iid, None)
+        row = svc._find_instruction_by_id(iid)
+        assert result["success"] is False
+        assert row["execution_state"] == "UNKNOWN"
+        assert row["executed"] == 1
+
     def test_market_path_unchanged_without_route(self, svc, db):
         """无路由 = 市价现状 (零行为变更对照). 成交即时返回 → 不进确认窗."""
         iid = _save_inst(db)
@@ -201,17 +250,16 @@ class TestOrderConstruction:
                                "filled_price": 145.0, "filled_qty": 40, "error": ""})
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), \
              patch("app.data.market_data_router.MarketDataRouter") as _mdr, \
-             patch.object(PlaybookService, "_execute_post_fill_side_effects",
-                          create=True, return_value=None):
+             patch.object(db, "mark_execution_filled_unbooked", return_value=False) as mark_unbooked:
             _mdr.return_value.get_quote.return_value = None
-            try:
-                _call_inner(svc, db, iid, None)
-            except Exception:
-                pass  # 记账后段依赖 (非本测试范围); 订单构造断言不受影响
+            # Stop at the real post-fill CAS, before unrelated trade bookkeeping.
+            result = _call_inner(svc, db, iid, None)
         from app.core.models import OrderType
         order = captured["order"]
         assert order.order_type == OrderType.MARKET
         assert order.price == 0.0
+        mark_unbooked.assert_called_once_with(iid, 1, "FILLED")
+        assert result == {"success": False, "message": "成交状态持久化冲突，已停止本次簿记"}
 
 
 # ── R3-R7: _handle_routed_fill_wait 状态机 ────────────────────────────────
@@ -238,11 +286,14 @@ class TestFillWaitStateMachine:
         assert rt["price_source"] == "routed_limit_deal"
 
     def test_ttl_expired_cancels_and_skips(self, svc, db):
-        """TTL 内零成交 → 撤单 + skip_reason=archetype_ttl_expired + 释放占位."""
+        """TTL 内零成交且撤单复查为明确终态，才释放为可重试。"""
         iid = _save_inst(db)
         route, iid, sym = _wait_kwargs(svc, db, iid, ttl=1)
-        dual, _ = _mk_dual([{"order_status": "SUBMITTED", "dealt_qty": 0,
-                             "dealt_avg_price": 0}])
+        dual, _ = _mk_dual([
+            {"order_status": "SUBMITTED", "dealt_qty": 0, "dealt_avg_price": 0},
+            {"order_status": "SUBMITTED", "dealt_qty": 0, "dealt_avg_price": 0},
+            {"order_status": "CANCELLED_ALL", "dealt_qty": 0, "dealt_avg_price": 0},
+        ])
         db.try_claim_execution(iid)
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual):
             rt = svc._handle_routed_fill_wait("F1", "sim", route, iid, sym, 40, "futu_simulate", "BUY")
@@ -252,6 +303,27 @@ class TestFillWaitStateMachine:
         row = svc._find_instruction_by_id(iid)
         assert row["skip_reason"] == "archetype_ttl_expired"
         assert not row["executed"]
+        assert row["execution_state"] == "PENDING"
+
+    def test_ttl_cancel_unconfirmed_stays_locked(self, svc, db):
+        """撤单返回成功但复查仍 SUBMITTED 时不得恢复可重试。"""
+        iid = _save_inst(db)
+        route, iid, sym = _wait_kwargs(svc, db, iid, ttl=0)
+        dual, _ = _mk_dual([
+            {"order_status": "SUBMITTED", "dealt_qty": 0, "dealt_avg_price": 0},
+            {"order_status": "SUBMITTED", "dealt_qty": 0, "dealt_avg_price": 0},
+        ])
+        attempt = db.try_claim_execution(iid)
+        db.mark_execution_submitted(iid, attempt, "F1", "sim")
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), \
+             patch("app.playbook.playbook_service.time.sleep", return_value=None):
+            rt = svc._handle_routed_fill_wait(
+                "F1", "sim", route, iid, sym, 40, "futu_simulate", "BUY", attempt)
+        assert rt["proceed"] is False
+        row = svc._find_instruction_by_id(iid)
+        assert row["execution_state"] == "UNKNOWN"
+        assert row["executed"] == 1
+        assert not row["skip_reason"]
 
     def test_partial_at_deadline_books_dealt_cancels_rest(self, svc, db):
         iid = _save_inst(db)

@@ -55,6 +55,11 @@ class PlaybookConfig:
         #   补 pretrade_quote_gate 盲区 (降级源无 bid/ask 整体绕过 health 门). 只拦开仓不拦平仓.
         "entry_freshness_gate_enabled": True,
         "entry_max_quote_age_sec": 90.0,
+        # P1 (2026-09-12, DEB-20260910 / proud-slope-falcon): 候选批次时效。
+        #   UE inject 只消费最新有效 premarket 批次, DA feed 共用同一显式键;
+        #   过期/未来时间戳批次不得静默回用旧候选。
+        #   语义边界: 这是"候选批次时效", 不是订单 TTL, 不改变盘中入场截止规则。
+        "candidate_scan_max_age_hours": 3.0,
         # 2026-06-28: 单日 guardrail (仅 auto_execute 阶段生效)
         # 2026-07-06: 模拟交易期提升交易量 20%→40%, 5→10 (收集更多样本数据)
         # 2026-07-09: 40%→60% — bridge候选直写DB后, deep_analysis信号质量提升,

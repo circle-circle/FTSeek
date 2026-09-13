@@ -17,6 +17,7 @@ Python 计算 (确定性):
 """
 import json
 import logging
+import math
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -160,6 +161,16 @@ class Instruction:
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========
 
+def _positive_finite_atr(value) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
 def _compute_volatility_based_sl_tp(
     atr_pct: float,
     direction: str,
@@ -170,10 +181,11 @@ def _compute_volatility_based_sl_tp(
 
     Returns:
         {"bucket": str, "sl_pct": float, "tp_multiplier": float} or None
-        未配置 vol_buckets 时返回 None, 走固定百分比兜底.
+        未配置桶或 ATR 比例无效时返回 None，由调用方区分缺数与固定参数路径。
     """
     vol_buckets = _horizon_params.get("vol_buckets") or pb_cfg.get("vol_buckets")
-    if not vol_buckets:
+    atr_pct = _positive_finite_atr(atr_pct)
+    if not vol_buckets or atr_pct is None:
         return None
 
     # 选择 bucket: 按 atr_pct_max 从小到大匹配
@@ -393,11 +405,11 @@ def compute_instruction_values(
     # ── 止损 = 波动率分桶 or 固定百分比 (配置化, 方向差异化) ──
     # Phase 2 (2026-06-30): 优先按 ATR% 分桶, 未配置时回退固定百分比
     _direction = decision["direction"]
-    atr_14 = getattr(tech, "atr_14", 0) or 0
-    atr_pct = (atr_14 / entry_price) if entry_price > 0 else 0.0
+    atr_14 = _positive_finite_atr(getattr(tech, "atr_14", None))
+    atr_pct = _positive_finite_atr(atr_14 / entry_price) if atr_14 is not None else None
 
     # ATR 数据缺失 → 无法评估波动率, 跳过 (防 vol_buckets 误匹配 low桶)
-    if atr_pct <= 0:
+    if atr_pct is None:
         logger.info(f"[Playbook] {decision.get('symbol','')} 跳过: ATR 数据缺失 (atr_14=0), 无法评估波动率")
         # 2026-08-07 grilling Q3 (shadow): 量化 ATR 缺失丢失量 — 只记录不放行。
         #   背景: 固定百分比 fallback 仅在 vol_buckets 未配置时生效, ATR=0 是硬丢弃

@@ -80,7 +80,8 @@ class USPositionSync:
 
     def _backfill_playbook_trade_record(self, symbol: str, direction: str, qty: int,
                                         entry: float, sl: float, tp: float,
-                                        trace_id: str, futu_order_id: str = "") -> None:
+                                        trace_id: str, futu_order_id: str = "",
+                                        broker_env: str = "sim") -> bool:
         """统一管线 #4 (2026-07-20): 恢复仓位标 playbook_sim 时补录未平 PLAYBOOK_SIM trade_record.
 
         场景: playbook 下单后 GHOST-RC1 拒绝记账但订单实际成交 → trade_records 无记录 →
@@ -91,18 +92,18 @@ class USPositionSync:
         """
         try:
             db_path = _get_db_path()
+            _source = "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM"
             conn = safe_sqlite_connect(db_path, timeout=5)
             try:
                 existing = conn.execute(
-                    "SELECT id FROM trade_records WHERE symbol=? "
-                    "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                    "SELECT id FROM trade_records WHERE symbol=? AND source_type=? "
                     "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) "
-                    "LIMIT 1", (symbol,)
+                    "LIMIT 1", (symbol, _source)
                 ).fetchone()
             finally:
                 conn.close()
             if existing:
-                return
+                return True
             now_iso = datetime.now().astimezone().isoformat()
             # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
             atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
@@ -123,13 +124,13 @@ class USPositionSync:
                 "signal_strength": 50,
                 "signal_confidence": 0.5,
                 "futu_order_id": futu_order_id,
-                "source_type": "PLAYBOOK_SIM",
+                "source_type": "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM",
                 "entry_reason": "sync_recovery_backfill",
-                "owner_strategy": "playbook_sim",
-                "strategy_id": "playbook_sim",
+                "owner_strategy": "playbook_live" if broker_env == "real" else "playbook_sim",
+                "strategy_id": "playbook_live" if broker_env == "real" else "playbook_sim",
                 "market_regime": "RANGE",
                 "mode": "normal",
-                "trade_mode": "sim",
+                "trade_mode": "live" if broker_env == "real" else "sim",
                 "signal_id": trace_id,
                 "metadata_json": json.dumps({
                     "stop_loss": sl,
@@ -145,14 +146,125 @@ class USPositionSync:
             from app.storage.trade_store import TradeStore
             rid = TradeStore(db_path).save_trade(record)
             logger.info(
-                f"[US Sync·P3] {symbol} 已补录未平 PLAYBOOK_SIM trade_record (id={rid}, "
+                f"[US Sync·P3] {symbol} 已补录未平 {_source} trade_record (id={rid}, "
                 f"sl=${sl:.2f}) → playbook 监控接管"
             )
+            return True
         except Exception as e:
             logger.error(
                 f"[US Sync·P3] {symbol} playbook trade_record 补录失败: {e} — "
                 f"该仓可能两不管, 请人工执行 scripts/adopt_position_to_playbook.py {symbol}"
             )
+            return False
+
+    def _reconcile_playbook_execution_states(self, ctx, trd_env, broker_env: str,
+                                             futu_positions: Dict, limit: int = 25) -> None:
+        """B1-lite 未决订单对账；只有 broker 明确零成交终态才解锁。"""
+        db_path = _get_db_path()
+        if not os.path.exists(db_path):
+            return
+        conn = safe_sqlite_connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT id, symbol, direction, stop_loss, take_profit, execution_price, "
+                "execution_time, execution_state, execution_attempt, broker_order_id, broker_env "
+                "FROM playbook_instructions WHERE execution_state IN "
+                "('UNKNOWN','SUBMITTED','FILLED_UNBOOKED') ORDER BY updated_at, id LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            from app.playbook.db import PlaybookDB
+            pdb = PlaybookDB(conn=conn)
+            for row in rows:
+                env = str(row["broker_env"] or broker_env).lower()
+                if env != broker_env:
+                    continue
+                instruction_id = int(row["id"])
+                state = str(row["execution_state"] or "")
+                order_id = str(row["broker_order_id"] or "")
+                attempt = int(row["execution_attempt"] or 0)
+                dealt_qty = 0.0
+                dealt_avg_price = 0.0
+
+                if state in ("UNKNOWN", "SUBMITTED"):
+                    try:
+                        if order_id:
+                            ret, data = ctx.order_list_query(order_id=order_id, trd_env=trd_env)
+                        else:
+                            ret, data = ctx.order_list_query(trd_env=trd_env)
+                            if ret == 0 and data is not None and not data.empty:
+                                if "remark" not in data:
+                                    data = data.iloc[0:0]
+                                else:
+                                    remark = f"pb_{instruction_id}_{env}_{attempt}"
+                                    data = data[data["remark"].astype(str) == remark]
+                        if ret != 0 or data is None or data.empty:
+                            logger.warning(
+                                f"[US Sync·B1] 未找到未决订单 instruction={instruction_id} "
+                                f"attempt={attempt}, 保持锁定"
+                            )
+                            continue
+                        broker_row = data.iloc[-1]
+                        discovered_id = str(broker_row.get("order_id", "") or order_id)
+                        status = str(broker_row.get("order_status", "") or "UNKNOWN")
+                        dealt_qty = float(broker_row.get("dealt_qty", 0) or 0)
+                        dealt_avg_price = float(broker_row.get("dealt_avg_price", 0) or 0)
+                        if not discovered_id or not pdb.mark_execution_submitted(
+                                instruction_id, attempt, discovered_id, env, status):
+                            logger.critical(
+                                f"[US Sync·B1] broker order 身份持久化失败 instruction={instruction_id} "
+                                f"attempt={attempt} order_id={discovered_id}, 保持锁定"
+                            )
+                            continue
+                        order_id = discovered_id
+                        if dealt_qty > 0 or "FILLED_ALL" in status or "FILLED_PART" in status:
+                            if not pdb.mark_execution_filled_unbooked(
+                                    instruction_id, attempt, status):
+                                continue
+                            state = "FILLED_UNBOOKED"
+                        else:
+                            pdb.unlock_execution_if_zero_fill_terminal(
+                                instruction_id, attempt, status, dealt_qty=dealt_qty)
+                            continue
+                    except Exception as exc:
+                        logger.exception(
+                            f"[US Sync·B1] order 查询失败 instruction={instruction_id} "
+                            f"order_id={order_id}: {exc}"
+                        )
+                        continue
+
+                if state != "FILLED_UNBOOKED":
+                    continue
+                pos = futu_positions.get(str(row["symbol"]))
+                if not pos:
+                    continue
+                entry = float(
+                    dealt_avg_price or row["execution_price"] or pos.get("cost", 0) or 0
+                )
+                if entry <= 0:
+                    continue
+                qty = int(dealt_qty or pos.get("qty") or 0)
+                if qty <= 0:
+                    continue
+                ok = self._backfill_playbook_trade_record(
+                    symbol=str(row["symbol"]), direction=str(pos.get("direction") or row["direction"]),
+                    qty=qty, entry=entry,
+                    sl=float(row["stop_loss"] or 0), tp=float(row["take_profit"] or 0),
+                    trace_id=f"playbook-reconcile-{instruction_id}-{attempt}",
+                    futu_order_id=order_id, broker_env=env,
+                )
+                if ok:
+                    pdb.mark_execution_booked(
+                        instruction_id, attempt, execution_price=entry,
+                        execution_time=row["execution_time"] or datetime.now(timezone.utc).isoformat(),
+                        outcome="holding",
+                    )
+        except sqlite3.OperationalError as exc:
+            logger.warning(f"[US Sync·B1] execution state 对账跳过: {exc}", exc_info=True)
+        except Exception as exc:
+            logger.exception(f"[US Sync·B1] execution state 对账失败: {exc}")
+        finally:
+            conn.close()
 
     def __init__(self, sync_interval: int = 30, position_store=None, broker_adapter=None):
         self.sync_interval = sync_interval
@@ -220,7 +332,7 @@ class USPositionSync:
             logger.warning(f"⚠️ [US Sync] 启动对账失败 (将继续后台同步): {e}")
         
         self._running = True
-        self._thread = threading.Thread(target=self._sync_loop, daemon=True)
+        self._thread = threading.Thread(target=self._sync_loop, daemon=True, name="PositionSync")
         self._thread.start()
         logger.info("US position sync started (interval=%ds)", self.sync_interval)
 
@@ -711,6 +823,10 @@ class USPositionSync:
             # 连接异常时重置，下次同步会重新创建
             self._reset_futu_ctx("position查询异常")
             return
+
+        # B1-lite: 每轮有限扫描未决 Playbook 执行并按 broker 明确终态恢复。
+        self._reconcile_playbook_execution_states(
+            ctx, _envs_to_query[0], _auto_acc, futu_positions, limit=25)
 
         # 2. Get DB positions
         if not os.path.exists(_get_db_path()):
@@ -1511,11 +1627,15 @@ class USPositionSync:
                 # trade_record — 主线护栏与 monitor_playbook_sim_exits 查的都是 trade_records
                 # 而非 owner_strategy, 只改标记会造成 "主线跳过 + playbook 不管" 的两不管孤儿仓.
                 # (走到这里说明 L1195 is_playbook_open_position=False, 即 playbook 漏账/ghost 场景)
+                # 本仓惯例: 局部读 AUTO_TRADE_ACCOUNT (与 L587/L650/L1753 一致);
+                # broker_env=="real" → PLAYBOOK_LIVE, 否则 PLAYBOOK_SIM (见 L95)
+                _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
                 self._backfill_playbook_trade_record(
                     symbol=symbol, direction=info['direction'], qty=int(size),
                     entry=cost, sl=sl_price, tp=tp_price,
                     trace_id=_sync_trace,
                     futu_order_id=str(_order_info.get('order_id', '')),
+                    broker_env=_auto_acc,
                 )
             else:
                 logger.warning(

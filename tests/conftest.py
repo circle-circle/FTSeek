@@ -72,6 +72,27 @@ _PRODUCTION_DATA_SEAMS = (
     #   → 盘中诊断长期播报测试夹具 (今日会报 BULL→BEAR trigger=safety VIX=28)。
     ("app.strategy.regime_filter", "_REGIME_HISTORY_DB", "path",
      "signal_snapshots.db"),
+    # 2026-09-12 (DEB-20260910 / proud-slope-falcon P1): DA/UE 候选漏斗新载体 —
+    #   candidate_funnel.jsonl (批次/候选级审计) 与 inject 额度进程间锁文件。
+    #   两者都在 data/shadow/ 下且由 inject 链无条件写入 → 登记为缝, 单测自动落沙箱。
+    ("app.playbook.candidate_eligibility", "FUNNEL_PATH", "path",
+     "candidate_funnel.jsonl"),
+    ("scripts.llm_universe_scan", "_INJECT_LOCK_PATH", "path",
+     "ue_inject_quota.lock"),
+    # 2026-09-12 (同批补缝): cmd_scan 现在**无条件**先落 batch_start, 失败/空扫描再落
+    #   batch_end — 批次纪律要求"失败批次必须落盘并与无机会区分", 于是原本零写入的
+    #   失败分支 (tests/test_ue_scan_fail_alert.py) 也开始写主 jsonl。这两个路径同时是
+    #   判分样本载体 (cmd_score/cmd_report 读它), 测试写它 = 直接污染尺子, 故登记为缝。
+    ("scripts.llm_universe_scan", "_SCAN_PATH", "path",
+     "llm_universe_scan.jsonl"),
+    ("scripts.llm_universe_scan", "_MIDDAY_PATH", "path",
+     "llm_universe_scan_midday.jsonl"),
+    # 2026-09-12 (同批补缝②): inject 批次级消费留痕 (_log_inject_batch_decision) 复用
+    #   llm_universe_inject.jsonl 载体, 与既有 _log_inject_reject 同文件。它现在是
+    #   cmd_inject 的无条件写入点 (消费了哪一批/为何不消费), 未登记前被写者自己的
+    #   except 吞掉硬闸 = 隔离形同虚设, 故按 (b) 方案登记为缝。
+    ("scripts.llm_universe_scan", "_INJECT_REJECT_PATH", "path",
+     "llm_universe_inject.jsonl"),
 )
 
 

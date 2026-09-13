@@ -119,8 +119,12 @@ def _run_inject_capture(directions):
         "universe_expansion.premarket_anchor": True,
         "universe_expansion.same_symbol_cooldown_days": 0,  # 跳过冷却 DB 查询
     }
-    candidates = [_cand(f"TS{i}", d) for i, d in enumerate(directions)]
-    quotes = {f"TS{i}": {"price": 100.0} for i in range(len(directions))}
+    # [P1.5 2026-09-12] 符号用纯字母 (TSA/TSB…): cmd_inject 现在先过统一资格初筛,
+    #   `US\.[A-Z]{1,6}` 的形状门会把带数字的夹具 (旧 TS0) 判 invalid_symbol →
+    #   本类断言的 chase_cap 字段根本产不出来。夹具跟随真实标的口径, 不放宽门。
+    syms = [f"TS{chr(65 + i)}" for i in range(len(directions))]
+    candidates = [_cand(sym, d) for sym, d in zip(syms, directions)]
+    quotes = {sym: {"price": 100.0} for sym in syms}
 
     fake_db = mock.MagicMock()
     fake_db.get_instructions_by_date.return_value = []
@@ -140,6 +144,16 @@ def _run_inject_capture(directions):
     scan_rec = {
         "type": "scan", "date": ue._today(),
         "surfaced": candidates, "model_used": "test-model",
+        # [P1.5 2026-09-12, proud-slope-falcon] cmd_inject 现在只消费**最新有效
+        #   premarket 批次** (ue_batch.latest_premarket): 需要 tz-aware scanned_at
+        #   (时效 candidate_scan_max_age_hours=3h)、scan_window 与 batch_status。
+        #   缺任一项 → "无有效 premarket 批次" 直接返回 0, 本类 4 条断言全落空。
+        #   这不是放宽纪律: 真实 cmd_scan 一直写这三个字段 (见 llm_universe_scan
+        #   L2028-2036), 夹具此前只是没跟上批次契约。
+        "scan_window": "premarket", "batch_status": "complete",
+        "batch_id": f"UE:{ue._today()}:chase-cap-test",
+        "started_at": ue._now_et().isoformat(),
+        "scanned_at": ue._now_et().isoformat(),
     }
     patches = [
         mock.patch.object(ue, "_cfg", side_effect=lambda k, d=None: cfg.get(k, d)),
@@ -165,6 +179,10 @@ def _run_inject_capture(directions):
             return_value=SimpleNamespace(
                 get=lambda k, d=None: {"low_atr_gate_enabled": False}.get(k, d)),
         ),
+        # 本类只验 chase_cap 字段, 不验模式门; 钉住 SIM 前置条件的是
+        # tests/playbook/test_ue_funnel_batch.py (含 require_auto_sim 源级接线)。
+        mock.patch("app.playbook.candidate_eligibility.require_auto_sim",
+                   return_value={"broker_route": "sim", "db_route": "sim"}),
     ]
     for p in patches:
         p.start()

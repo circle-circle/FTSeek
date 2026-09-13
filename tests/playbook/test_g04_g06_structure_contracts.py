@@ -150,16 +150,13 @@ class TestG05BookkeepingGuarded:
         self.src = _SVC.read_text(encoding="utf-8")
 
     def _find_holding_tracking_call(self):
-        """定位成交后簿记的 update_instruction_tracking (带 outcome=holding)."""
+        """定位 B1 成交后 BOOKED CAS（含 outcome/execution_price）。"""
         hits = []
-        for call in _calls_named(self.tree, "update_instruction_tracking"):
-            dicts = [a for a in call.args if isinstance(a, ast.Dict)]
-            dicts += [kw.value for kw in call.keywords if isinstance(kw.value, ast.Dict)]
-            for d in dicts:
-                keys = [k.value for k in d.keys if isinstance(k, ast.Constant)]
-                if "outcome" in keys and "execution_price" in keys:
-                    hits.append(call)
-        assert len(hits) == 1, f"期望唯一成交簿记调用, 实得 {len(hits)}"
+        for call in _calls_named(self.tree, "mark_execution_booked"):
+            keys = {kw.arg for kw in call.keywords}
+            if "outcome" in keys and "execution_price" in keys:
+                hits.append(call)
+        assert len(hits) == 1, f"期望唯一 BOOKED 簿记调用, 实得 {len(hits)}"
         return hits[0]
 
     def test_bookkeeping_is_inside_try(self):

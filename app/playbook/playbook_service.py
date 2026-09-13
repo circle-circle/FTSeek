@@ -1394,7 +1394,7 @@ class PlaybookService:
             logger.warning(f"[playbook] PDT 检查异常 (放行): {_pe}")
 
         # 滑点数据闭环 (P0): 下单前抓 arrival price (信号参考价), 事后与真实成交价对比.
-        #   口径: bid/ask 中间价优先, 兜底 last price. 取价失败不阻塞下单 (fail-open, 记 0).
+        #   口径: bid/ask 中间价优先, 兜底 price；失败记 0，随后由目标环境决定是否放行。
         _arrival_price = 0.0
         _arr_ctx = None
         try:
@@ -1408,7 +1408,27 @@ class PlaybookService:
                 else:
                     _arrival_price = float(_arr_ctx.get("price", 0) or 0)
         except Exception as _arr_e:
-            logger.debug(f"[playbook] {symbol} arrival price 抓取失败 (不阻塞下单): {_arr_e}")
+            logger.debug(
+                f"[playbook] {symbol} arrival price 抓取失败: {_arr_e}",
+                exc_info=True,
+            )
+
+        # C2: 实盘新开仓必须至少有一个有效价格；此基础门不可关闭。
+        _live_quote_price = _arrival_price
+        if _is_live and _arr_ctx and _live_quote_price <= 0:
+            try:
+                _live_quote_price = float(_arr_ctx.get("last", 0) or 0)
+            except (TypeError, ValueError):
+                _live_quote_price = 0.0
+        if _is_live and (_arr_ctx is None or _live_quote_price <= 0):
+            logger.error(
+                f"[playbook] {_mode_label} {symbol} 实盘无可用报价, C2 fail-close 拒绝开仓 "
+                f"(instruction_id={instruction_id})"
+            )
+            return {"success": False,
+                    "message": f"{_mode_label} {symbol} 实盘无可用报价 (C2 fail-close)",
+                    "error_code": "LIVE_ENTRY_NO_QUOTE",
+                    "c2_no_quote": True}
 
         # P1 深跳空逆势 BUY 降仓 (2026-08-20, DEB §44/§47, 用户裁决).
         #   _execute_via_dual_broker 是 DA直写/reentry/投票 全部 writer 的唯一执行路径
@@ -1432,16 +1452,21 @@ class PlaybookService:
             logger.warning(f"[playbook] P1 gap 降仓判定异常 (fail-open 放行): {_gd_e}")
 
         # 下单前报价健康门 (Tier B 2026-07-19): 复用 check_quote_health 拦截过宽 spread / 过期报价.
-        #   复用上面已抓的 _arr_ctx (不额外调 API). 取价失败/无报价 → fail-open (下游另有兜底).
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_gate
             _gate_cfg = _get_pb_cfg_gate()
-            if _gate_cfg.get("pretrade_quote_gate_enabled", True) and _arr_ctx:
-                from app.risk.data_health_guard import check_quote_health
-                _g_bid = float(_arr_ctx.get("lv3_bid") or _arr_ctx.get("bid") or 0)
-                _g_ask = float(_arr_ctx.get("lv3_ask") or _arr_ctx.get("ask") or 0)
-                # 仅在 bid/ask 齐备时硬门 (缺失=薄盘/盘前, 不过度拦截, 交由下游兜底).
-                if _g_bid > 0 and _g_ask > 0:
+            if _gate_cfg.get("pretrade_quote_gate_enabled", True):
+                _g_bid = float((_arr_ctx or {}).get("lv3_bid") or (_arr_ctx or {}).get("bid") or 0)
+                _g_ask = float((_arr_ctx or {}).get("lv3_ask") or (_arr_ctx or {}).get("ask") or 0)
+                if _is_live and (_g_bid <= 0 or _g_ask <= 0):
+                    logger.error(
+                        f"[playbook] {_mode_label} {symbol} 实盘 bid/ask 缺失, C2 fail-close 拒绝开仓"
+                    )
+                    return {"success": False,
+                            "message": f"{_mode_label} {symbol} 实盘 bid/ask 缺失 (C2 fail-close)",
+                            "c2_quote_health": True}
+                if _arr_ctx and _g_bid > 0 and _g_ask > 0:
+                    from app.risk.data_health_guard import check_quote_health
                     _gate_quote = {
                         "bid": _g_bid,
                         "ask": _g_ask,
@@ -1450,8 +1475,7 @@ class PlaybookService:
                     }
                     # DEB-ruler §7.5-A (2026-08-04): push 报价路径无真盘口, 兜底 bid=ask=last
                     # (futu_lv3_provider.py:426-431/791-795) → 真盘口恒有 ask>bid, 故
-                    # bid==ask 即"数据退化"信号: spread 维度不可检, 跳过该维度只留 staleness,
-                    # 不再假装校验流动性。行为中性 (该维度历史上从未触发过), 语义诚实化。
+                    # bid==ask 即"数据退化"信号: spread 维度不可检, 跳过该维度只留 staleness.
                     _book_degenerate = abs(_g_bid - _g_ask) < 1e-9
                     _q_ok, _q_reason = check_quote_health(
                         _gate_quote,
@@ -1463,13 +1487,20 @@ class PlaybookService:
                         logger.warning(f"[playbook] {_mode_label} {symbol} 报价健康门拒绝下单: {_q_reason}")
                         return {"success": False, "message": f"报价健康门拒绝: {_q_reason}"}
         except Exception as _gate_e:
-            # DEB-20260721 R4: debug→warning — fail-open 失明必须可观测可计数 (grep "报价健康门异常").
-            logger.warning(f"[playbook] {symbol} 报价健康门异常 (fail-open 放行): {_gate_e}")
+            if _is_live:
+                logger.error(
+                    f"[playbook] {_mode_label} {symbol} 报价健康门异常, 实盘 C2 fail-close 拒绝开仓: {_gate_e}",
+                    exc_info=True,
+                )
+                return {"success": False,
+                        "message": f"{_mode_label} {symbol} 实盘报价健康门异常 (C2 fail-close)",
+                        "c2_gate_error": True}
+            logger.warning(
+                f"[playbook] {symbol} 报价健康门异常 (fail-open 放行): {_gate_e}",
+                exc_info=True,
+            )
 
-        # B4 数据新鲜度门 (2026-07-20): 降级源 (finnhub 15min延迟等) / 过期报价 → 禁开新仓.
-        #   补 health 门盲区: 降级源恰好无 bid/ask → 整体绕过上面的 health 门.
-        #   仅拦开仓 (本路径只做开仓, 平仓走 monitor_playbook_sim_exits 不经此处).
-        #   _arr_ctx 为 None (取价失败) 维持 fail-open, 与 health 门语义一致.
+        # B4 数据新鲜度门 (2026-07-20): 降级源 / 过期报价 → 禁开新仓。
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_fresh
             _fresh_cfg = _get_pb_cfg_fresh()
@@ -1483,8 +1514,18 @@ class PlaybookService:
                     logger.warning(f"[playbook] {_mode_label} {symbol} 数据新鲜度门拒绝开仓: {_f_reason}")
                     return {"success": False, "message": f"数据新鲜度门拒绝: {_f_reason}"}
         except Exception as _fresh_e:
-            # DEB-20260721 R4: debug→warning — fail-open 失明必须可观测可计数 (grep "新鲜度门异常").
-            logger.warning(f"[playbook] {symbol} 数据新鲜度门异常 (fail-open 放行): {_fresh_e}")
+            if _is_live:
+                logger.error(
+                    f"[playbook] {_mode_label} {symbol} 数据新鲜度门异常, 实盘 C2 fail-close 拒绝开仓: {_fresh_e}",
+                    exc_info=True,
+                )
+                return {"success": False,
+                        "message": f"{_mode_label} {symbol} 实盘数据新鲜度门异常 (C2 fail-close)",
+                        "c2_gate_error": True}
+            logger.warning(
+                f"[playbook] {symbol} 数据新鲜度门异常 (fail-open 放行): {_fresh_e}",
+                exc_info=True,
+            )
 
         # [DEB-20260901 选项1② · ADR-035] archetype 路由: execute_instruction 从
         #   custom_params 提取后经参数透传 (本作用域无 custom_params)。默认关闭/
@@ -1508,29 +1549,44 @@ class PlaybookService:
                 price=0.0,  # 市价单
             )
         _order.metadata = {"playbook_instruction_id": instruction_id, "source": f"playbook_{_mode_label}"}
-        _order.client_order_id = f"pb_{instruction_id}_{target_env}"
 
-        # 幂等抢占 (P0 2026-07-19): 下单前原子置位 executed, 防并发/重启重试双重下单.
-        #   抢占失败 → 已有其他调用在处理该指令, 直接放弃 (不重复下单).
-        if not self.db.try_claim_execution(instruction_id):
+        # B1-lite: claim 原子进入 UNKNOWN 并返回 attempt；所有后续状态写均 CAS。
+        _attempt = self.db.try_claim_execution(instruction_id)
+        if _attempt is None:
             logger.warning(f"[playbook] {_mode_label} {symbol} 指令 {instruction_id} 已被抢占, 跳过 (防重复下单)")
             return {"success": False, "message": "指令已被执行或正在执行 (幂等抢占)"}
+        _order.client_order_id = f"pb_{instruction_id}_{target_env}_{_attempt}"
 
-        # 下单 (sim 或 real, 同一方法)
         try:
             _dual = get_dual_broker()
             _result = _dual.submit_order(_order, target_env=target_env)
         except Exception as _e:
-            logger.error(f"[playbook] {_mode_label} 下单异常 {symbol}: {_e}")
-            self.db.release_execution_claim(instruction_id)
-            return {"success": False, "message": f"{_mode_label} 下单异常: {_e}"}
+            logger.error(f"[playbook] {_mode_label} 下单异常且受理结果不确定 {symbol}: {_e}")
+            self.db.mark_execution_unknown(
+                instruction_id, _attempt, broker_env=target_env, broker_order_status="SUBMIT_EXCEPTION")
+            return {"success": False, "message": f"{_mode_label} 下单异常(状态不确定，已锁定): {_e}"}
 
-        if not _result.get("success"):
-            logger.error(f"[playbook] {_mode_label} 下单失败 {symbol}: {_result.get('error')}")
-            self.db.release_execution_claim(instruction_id)
+        _submit_state = str(_result.get("submit_state") or
+                            ("ACCEPTED" if _result.get("success") else "UNKNOWN"))
+        _futu_id = str(_result.get("futu_order_id") or "")
+        if _submit_state == "DEFINITIVE_REJECT":
+            self.db.unlock_execution_if_zero_fill_terminal(
+                instruction_id, _attempt, "DEFINITIVE_REJECT", dealt_qty=0)
+            logger.error(f"[playbook] {_mode_label} 下单明确拒绝 {symbol}: {_result.get('error')}")
             return {"success": False, "message": f"{_mode_label} 下单失败: {_result.get('error')}"}
+        if _submit_state != "ACCEPTED" or not _futu_id:
+            self.db.mark_execution_unknown(
+                instruction_id, _attempt, broker_order_id=_futu_id, broker_env=target_env,
+                broker_order_status=_submit_state or "UNKNOWN")
+            logger.error(f"[playbook] {_mode_label} 下单结果不确定 {symbol}: {_result.get('error')}")
+            return {"success": False, "message": f"{_mode_label} 下单结果不确定，指令保持锁定"}
 
-        _futu_id = _result.get("futu_order_id", "")
+        # 一拿到 order id 就先持久化，成交查询/进程崩溃均不能丢失 broker 身份。
+        _broker_status = str(_result.get("broker_order_status") or "ACCEPTED")
+        if not self.db.mark_execution_submitted(
+                instruction_id, _attempt, _futu_id, target_env, _broker_status):
+            logger.critical(f"[playbook] {symbol} order id 持久化 CAS 失败: {_futu_id} attempt={_attempt}")
+            return {"success": False, "message": "订单已受理但状态持久化冲突，指令保持锁定"}
         # [DEB-20260901 选项1② · ADR-035] 路由限价单: TTL 内等待成交, 到期撤单放弃
         #   (绝不市价追)。成交真相源与市价路径确认窗同源 (order_list_query.dealt_*)。
         #   proceed=True → _fill>0, 下方兜底链自然空转; 终态失败 → 记 skip 返回。
@@ -1539,7 +1595,8 @@ class PlaybookService:
         if _route:
             _rt = self._handle_routed_fill_wait(
                 _futu_id, target_env, _route, instruction_id, symbol,
-                int(position_size) if position_size else 1, _mode_label, direction)
+                int(position_size) if position_size else 1, _mode_label, direction,
+                execution_attempt=_attempt)
             if not _rt.get("proceed"):
                 return _rt["result"]
             _fill = _rt["fill_price"]
@@ -1570,15 +1627,21 @@ class PlaybookService:
                 _confirmed, _ostatus, _confirm_davg, _confirm_dqty = self._confirm_order_filled(
                     _futu_id, target_env, max_wait_s=_confirm_wait)
             except Exception as _cf_err:
-                logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (降级放行): {_cf_err}")
-                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = True, "query_error", 0.0, 0.0
+                logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (保持锁定): {_cf_err}")
+                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = False, "QUERY_ERROR", 0.0, 0.0
             if not _confirmed:
+                _unlocked = self.db.unlock_execution_if_zero_fill_terminal(
+                    instruction_id, _attempt, _ostatus, dealt_qty=_confirm_dqty)
+                if not _unlocked:
+                    self.db.mark_execution_unknown(
+                        instruction_id, _attempt, broker_order_id=_futu_id, broker_env=target_env,
+                        broker_order_status=_ostatus or "CONFIRM_TIMEOUT")
                 logger.error(
-                    f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未成交 (status={_ostatus}), "
-                    f"拒绝记账 — 消除 GHOST-RC1 虚假仓位"
+                    f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未确认成交 "
+                    f"(status={_ostatus}, retryable={_unlocked})"
                 )
-                self.db.release_execution_claim(instruction_id)
-                return {"success": False, "message": f"{_mode_label} {symbol} 订单未成交 (status={_ostatus})"}
+                return {"success": False, "message":
+                        f"{_mode_label} {symbol} 订单未确认成交 (status={_ostatus})"}
             # 2026-07-27 (DEB-entry-fill 复核翻案): 确认循环已带回 dealt_avg_price 真成交均价 —
             #   优先用它记账 (broker_deal_confirm), quote 兜底降为真正的极端后备。
             #   旧链路: 下单瞬间取价必为 0 (sim 异步成交) → 确认后直接跳 quote_fallback 记 ask
@@ -1620,11 +1683,17 @@ class PlaybookService:
                 except Exception:
                     pass
         if not _fill or _fill <= 0:
-            logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
-            # DEB-20260904 #S10: 拒绝记账必须释放执行认领 — 否则 claim 行永久
-            # 占用, 该指令永远无法重试 (与上方"未成交"分支的 release 对齐)
-            self.db.release_execution_claim(instruction_id)
-            return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
+            logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 已可能成交但缺成交价, 保持锁定待补账")
+            self.db.mark_execution_filled_unbooked(
+                instruction_id, _attempt, broker_order_status="FILLED_NO_PRICE")
+            return {"success": False, "message": f"{_mode_label} {symbol} 成交价缺失，已锁定待对账"}
+
+        _observed_qty = float(_result.get("filled_qty", 0) or 0) or float(_confirm_dqty or 0)
+        _requested_qty = float(int(position_size) if position_size else 1)
+        _fill_status = "FILLED_PART" if 0 < _observed_qty < _requested_qty else "FILLED"
+        if not self.db.mark_execution_filled_unbooked(instruction_id, _attempt, _fill_status):
+            logger.critical(f"[playbook] {symbol} 成交状态 CAS 失败 attempt={_attempt}, 严禁继续簿记/重下")
+            return {"success": False, "message": "成交状态持久化冲突，已停止本次簿记"}
         # 部分成交处理 (P0 2026-07-19): 用真实成交量记账, 消除幽灵仓.
         #   broker 返回 filled_qty=0 时 (SIM avg_price=0 / 查询未命中) 回退下单量.
         # 2026-07-27 (同款时序修复): _result.filled_qty 也是下单瞬间取的 (sim 异步必 0) —
@@ -1685,10 +1754,12 @@ class PlaybookService:
             _gap_meta = None
 
         # 写 trade_records (真实成交价, source_type 按 target_env 区分)
+        _trade_db_path = None
         try:
-            from app.storage.trade_store import TradeStore
             from app.core.paths import get_trade_records_db
-            _ts = TradeStore(str(get_trade_records_db()))
+            _trade_db_path = str(get_trade_records_db().resolve())
+            from app.storage.trade_store import TradeStore
+            _ts = TradeStore(_trade_db_path)
             _trace_id = f"playbook-{_mode_label}-{symbol}-{_now_iso[:10]}"
 
             # 2026-07-11: 入场市场上下文补全 (entry_vix/entry_session 此前 PLAYBOOK 全空,
@@ -1881,41 +1952,53 @@ class PlaybookService:
             except Exception as _ope:
                 logger.warning(f"[playbook] open_position 写入失败 (不影响主流程, position_sync会补): {_ope}")
         except Exception as _tre:
-            # P0 (2026-06-24): broker 已下单但 trade_record 写失败 → 反向平仓回滚, 防孤儿仓
-            # (否则 monitor 查不到该仓位, 永不被自动平仓). 首跑 sim 最高危断点.
-            logger.error(f"[playbook] {_mode_label} trade_record 写入失败, 回滚平仓 {symbol}: {_tre}")
+            logger.error(f"[playbook] {_mode_label} trade_record 写入失败, 补偿退出 {symbol}: {_tre}")
             try:
+                if not _trade_db_path:
+                    raise ValueError("compensation source ledger identity unavailable")
+                _entry_identity = _futu_id
+                _rb_owner = {
+                    "kind": "compensation", "db_path": _trade_db_path,
+                    "close_key": f"entry:{_entry_identity}",
+                    "instruction_id": instruction_id, "execution_attempt": _attempt,
+                    "entry_order_id": _entry_identity, "entry_time": _now_iso,
+                    "entry_price": float(_fill), "quantity": _effective_qty,
+                    "symbol": symbol, "direction": mos_direction, "source_type": _source_type,
+                }
+                _rb_decision = {
+                    "reason": "ENTRY_BOOKKEEPING_COMPENSATION", "reference_price": float(_fill),
+                    "metadata": {"playbook_instruction_id": instruction_id}, "holding_hours": 0.0,
+                }
                 _dual_rb = get_dual_broker()
-                _rb = _dual_rb.close_position(symbol, _effective_qty, mos_direction, target_env=target_env)
-                # G-04 (2026-09-05 审计): 必须同时检 order_filled/dealt_qty, 不能只看 success。
-                #   根因: dual_broker.close_position 在 order_filled=False 时 price_source
-                #   = "broker_close_failed" 却仍 return success=True → 上层记"孤儿仓已防",
-                #   实际仓位残留 broker 侧, 且 DB 无 trade_record → monitor 永远查不到它,
-                #   恰好造成本回滚想要避免的孤儿仓。部分成交同理: 残余量仍裸露无人管。
+                _rb = _dual_rb.close_position(
+                    symbol, _effective_qty, mos_direction, target_env=target_env,
+                    exit_owner=_rb_owner, exit_decision=_rb_decision)
                 _rb_filled = bool(_rb.get("order_filled"))
                 _rb_dealt = float(_rb.get("dealt_qty") or 0.0)
-                if _rb.get("success") and _rb_filled and _rb_dealt >= float(_effective_qty):
+                if _rb.get("success") and _rb_filled and _rb_dealt == float(_effective_qty):
+                    from app.playbook.pipeline import _book_playbook_exit_result
+                    _book_playbook_exit_result(_dual_rb, _rb)
                     logger.warning(
-                        f"[playbook] {_mode_label} 回滚平仓成功 {symbol} @ {_rb.get('filled_price')} "
-                        f"(孤儿仓已防, dealt={_rb_dealt}/{_effective_qty})"
+                        f"[playbook] {_mode_label} 补偿退出已全量成交 {symbol} @ {_rb.get('filled_price')} "
+                        f"(dealt={_rb_dealt}/{_effective_qty}, intent={_rb.get('exit_intent_id')})"
                     )
                 else:
                     logger.critical(
-                        f"🚨 [playbook] {_mode_label} 回滚平仓未确认全量成交 {symbol}: "
+                        f"[playbook] {_mode_label} 补偿退出待确认 {symbol}: "
                         f"success={_rb.get('success')} order_filled={_rb_filled} "
                         f"dealt={_rb_dealt}/{_effective_qty} src={_rb.get('price_source')} "
-                        f"err={_rb.get('error')} "
-                        f"— ⚠️ broker 侧仍有残余仓位且 DB 无 trade_record (monitor 不接管), 需人工平仓"
+                        f"err={_rb.get('error')} intent={_rb.get('exit_intent_id')} "
+                        f"— 未决意图由退出监控接续；无意图或证据冲突须人工对账"
                     )
             except Exception as _rbe:
-                logger.error(
-                    f"[playbook] {_mode_label} 回滚平仓异常 {symbol}: {_rbe} "
-                    f"— ⚠️ 需手动处理 sim 账户孤儿仓"
+                logger.exception(
+                    f"[playbook] {_mode_label} 补偿退出或落账异常 {symbol}: {_rbe} "
+                    f"— 保留入场锁及已有退出意图，需对账"
                 )
-            # 2026-08-22 (P0-b 幂等锁泄漏修复): 回滚平仓后必须释放幂等锁,
-            # 否则该指令永久 stuck executed=1, 后续再也不会被执行 (审计发现).
-            self.db.release_execution_claim(instruction_id)
-            return {"success": False, "message": f"{_mode_label} trade_record 写入失败已回滚平仓: {_tre}"}
+            # B1-lite: broker 曾有成交且本地簿记失败，无论补偿平仓结果如何均不可重下。
+            self.db.mark_execution_filled_unbooked(
+                instruction_id, _attempt, broker_order_status="BOOKKEEPING_FAILED")
+            return {"success": False, "message": f"{_mode_label} trade_record 写入失败，已锁定待对账: {_tre}"}
 
         # 注册 ManualHoldRegistry (防 auto pipeline 干扰)
         # 2026-07-03 fix: account 应与 target_env 一致 (sim→sim, real→real)
@@ -1942,16 +2025,16 @@ class PlaybookService:
         #   回滚: 去掉 try 包裹即恢复旧行为 (不建议, 旧行为会冒泡)。
         _bk_failed = None
         try:
-            self.db.update_instruction_tracking(instruction_id, {
-                "executed": 1,
-                "execution_price": float(_fill),
-                "execution_time": _now_iso,
-                "outcome": "holding",
-                "decision_id": matched_decision_id,
-            })
+            self.db.update_instruction_tracking(instruction_id, {"decision_id": matched_decision_id})
             self.db.save_user_feedback({"instruction_id": instruction_id, "action": "executed"})
+            if not self.db.mark_execution_booked(
+                    instruction_id, _attempt, execution_price=float(_fill),
+                    execution_time=_now_iso, outcome="holding"):
+                raise RuntimeError(f"BOOKED CAS rejected for attempt={_attempt}")
         except Exception as _bk_err:
             _bk_failed = str(_bk_err)
+            self.db.mark_execution_filled_unbooked(
+                instruction_id, _attempt, broker_order_status="BOOKKEEPING_FAILED")
             logger.critical(
                 f"🚨 [playbook] {_mode_label} 成交簿记失败 {symbol} (仓位已成交, 严禁重下): "
                 f"instruction={instruction_id} fill={_fill} qty={_effective_qty} "
@@ -2096,7 +2179,8 @@ class PlaybookService:
     def _handle_routed_fill_wait(self, futu_order_id: str, target_env: str,
                                   route: Dict, instruction_id: int, symbol: str,
                                   req_qty: int, mode_label: str,
-                                  direction: str = "BUY") -> Dict[str, Any]:
+                                  direction: str = "BUY",
+                                  execution_attempt: int = None) -> Dict[str, Any]:
         """[DEB-20260901 选项1② · ADR-035] 路由限价单 TTL 等待 → 成交或撤单放弃。
 
         语义 (绝不降级市价, 消除"低吸变追高"的机制性根因):
@@ -2117,17 +2201,36 @@ class PlaybookService:
         _arch = route.get("archetype", "")
         _deadline = time.time() + _ttl
         _last_status = "UNKNOWN"
+        if execution_attempt is None:
+            try:
+                execution_attempt = int(
+                    (self._find_instruction_by_id(instruction_id) or {}).get("execution_attempt") or 0)
+            except Exception:
+                execution_attempt = 0
 
-        def _skip_terminal(reason: str, message: str, extra: Dict = None) -> Dict[str, Any]:
-            """终态跳过: 释放执行占位 + 落 skip_reason + 遥测 + 返回失败结果。"""
+        def _skip_terminal(reason: str, message: str, extra: Dict = None,
+                           dealt_qty: float = 0.0) -> Dict[str, Any]:
+            """仅明确零成交终态可 CAS 解锁并落终态 skip。"""
+            _canonical = next((s for s in (
+                "CANCELLED_PART", "CANCELLED_ALL", "CANCELLED", "REJECTED", "FAILED",
+                "DELETED", "DISABLED", "TIMEOUT") if s in str(_last_status).upper()), "")
             try:
-                self.db.release_execution_claim(instruction_id)
+                _unlocked = self.db.unlock_execution_if_zero_fill_terminal(
+                    instruction_id, execution_attempt, _canonical, dealt_qty=dealt_qty)
             except Exception as _rel_err:
-                logger.warning(f"[archetype路由] {symbol} 释放执行占位失败: {_rel_err}")
-            try:
-                self.db.update_instruction_tracking(instruction_id, {"skip_reason": reason})
-            except Exception as _sk_err:
-                logger.warning(f"[archetype路由] {symbol} skip_reason 落库失败: {_sk_err}")
+                _unlocked = False
+                logger.warning(f"[archetype路由] {symbol} 安全解锁失败: {_rel_err}")
+            if _unlocked:
+                try:
+                    self.db.update_instruction_tracking(instruction_id, {"skip_reason": reason})
+                except Exception as _sk_err:
+                    logger.warning(f"[archetype路由] {symbol} skip_reason 落库失败: {_sk_err}")
+            else:
+                self.db.mark_execution_unknown(
+                    instruction_id, execution_attempt, broker_order_id=str(futu_order_id),
+                    broker_env=target_env, broker_order_status=_last_status or "UNKNOWN")
+                reason = "archetype_order_unconfirmed"
+                message = f"{mode_label} {symbol} 订单终态/零成交未确认，保持锁定"
             _row = {"date": (inst_date or ""), "type": reason, "inst_id": instruction_id,
                     "symbol": symbol, "direction": ("SHORT" if str(direction).upper() in ("SHORT", "SELL_SHORT")
                                                      else "LONG"),

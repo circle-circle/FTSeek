@@ -1,6 +1,11 @@
 """Tests for app.playbook.pipeline — 关键函数回归测试."""
+import json
 import sqlite3
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from threading import Barrier
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -86,6 +91,44 @@ class TestBridgeVotingAdapterConfidence:
 class TestCloseTradeRecord:
     """_close_trade_record 写入完整性和幂等性测试."""
 
+    @pytest.fixture(autouse=True)
+    def sealed_close_callbacks(self, monkeypatch):
+        """The isolated runner seals I/O before imports; callbacks are explicit fakes."""
+        calls = []
+        callbacks = {}
+
+        def module(name, **attributes):
+            fake = ModuleType(name)
+            fake.__dict__.update(attributes)
+            monkeypatch.setitem(sys.modules, name, fake)
+
+        def callback(name, result=None):
+            mock = MagicMock(side_effect=lambda *a, **kw: (calls.append(name), result)[1])
+            callbacks[name] = mock
+            return mock
+
+        sync = SimpleNamespace(
+            mark_closed_tombstone=callback("tombstone"),
+            confirm_tombstone=callback("confirm"),
+            request_immediate_sync=callback("sync"),
+        )
+        module("app.core.position_sync", get_us_position_sync=lambda: sync)
+        module("app.playbook.exit_shadow", finalize_exit_shadow=callback("shadow"))
+        module("app.playbook.reentry_tp_shadow", settle_on_close=callback("reentry"))
+        acb = SimpleNamespace(record_trade_result=callback("acb"))
+        pdt = SimpleNamespace(record_close=callback("pdt"))
+        module("app.risk.absolute_circuit_breaker", get_absolute_circuit_breaker=lambda: acb)
+        module("app.risk.pdt_guard", get_pdt_guard=lambda: pdt)
+        module("app.coordinator.manual_hold_registry", manual_hold_registry=SimpleNamespace(
+            get_hold_info=lambda symbol: {}, unregister=callback("unregister")))
+        module("app.analysis.trade_attribution", compute_attribution=callback("attribution", SimpleNamespace(
+            summary="sealed", improvement="sealed", to_dict=lambda: {"sealed": True})))
+        push = SimpleNamespace(push=callback("push"), push_text=callback("push_text"))
+        module("app.push", get_push_hub=lambda: push, trade_exit=lambda **kw: kw)
+        monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: {
+            "sl_burst_alert_enabled": False})
+        return SimpleNamespace(calls=calls, callbacks=callbacks)
+
     @pytest.fixture
     def conn(self):
         conn = sqlite3.connect(":memory:")
@@ -151,7 +194,10 @@ class TestCloseTradeRecord:
             "INSERT INTO playbook_instructions (id, outcome) VALUES (1, 'holding')"
         )
         conn.commit()
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def test_close_trade_record_writes_exit_time_and_reason(self, conn):
         """验证 exit_time / exit_reason / pnl 被正确写入 trade_records."""
@@ -213,6 +259,260 @@ class TestCloseTradeRecord:
         )
         row = conn.execute("SELECT outcome FROM playbook_instructions WHERE id=1").fetchone()
         assert row["outcome"] == "win"
+
+    @pytest.fixture
+    def owned_conn(self, conn):
+        conn.execute("ALTER TABLE trade_records ADD COLUMN futu_order_id TEXT")
+        for definition in ("fees_est REAL", "pnl_net REAL", "fees_source TEXT"):
+            conn.execute("ALTER TABLE trade_records ADD COLUMN " + definition)
+        for definition in ("direction TEXT", "size REAL", "avg_entry_price REAL", "entry_time TEXT"):
+            conn.execute("ALTER TABLE open_positions ADD COLUMN " + definition)
+        conn.execute(
+            "UPDATE trade_records SET entry_time=?, futu_order_id='entry-1', metadata_json=? WHERE id=1",
+            ("2026-09-03T10:00:00-04:00", json.dumps({"peak_price": 102, "trough_price": 99})),
+        )
+        conn.execute(
+            "INSERT INTO open_positions VALUES ('US.TEST', 'synced', 'LONG', 10, 100, ?)",
+            ("2026-09-03T10:00:00-04:00",),
+        )
+        conn.commit()
+        return conn
+
+    def owner(self, **overrides):
+        return {
+            "trade_id": 1, "db_path": ":memory:", "entry_order_id": "entry-1",
+            "symbol": "US.TEST", "direction": "LONG", "quantity": 10,
+            "entry_price": 100, "entry_time": "2026-09-03T10:00:00-04:00",
+            "source_type": "PLAYBOOK_SIM", **overrides,
+        }
+
+    def book(self, conn, **overrides):
+        args = dict(trade_id=1, exit_price=101, exit_reason="TP_HIT", pnl=10,
+                    pnl_pct=0.01, holding_hours=1, inst_id=1, symbol="US.TEST",
+                    close_futu_order_id="exit-order-1", exit_intent_id="intent-1",
+                    exit_owner=self.owner(), exit_metadata={"decision_frozen": True},
+                    exit_time="2026-09-03T11:00:00-04:00")
+        args.update(overrides)
+        return _close_trade_record(conn, **args)
+
+    def test_receipt_replay_is_noop_after_durable_booking(self, owned_conn, sealed_close_callbacks):
+        assert self.book(owned_conn) is True
+        row = dict(owned_conn.execute("SELECT * FROM trade_records WHERE id=1").fetchone())
+        metadata = json.loads(row["metadata_json"])
+        assert metadata["exit_intent_id"] == "intent-1"
+        assert metadata["decision_frozen"] is True
+        assert row["exit_time"] == "2026-09-03T11:00:00-04:00"
+        assert row["holding_hours"] == 1
+        assert row["mfe_pct"] == 2 and row["mae_pct"] == 1
+        assert row["pnl_net"] == pytest.approx(10 - row["fees_est"])
+        calls = list(sealed_close_callbacks.calls)
+        assert "acb" in calls and "push" in calls and "tombstone" in calls
+        assert self.book(owned_conn, exit_price=199, pnl=990) is False
+        assert dict(owned_conn.execute("SELECT * FROM trade_records WHERE id=1").fetchone()) == row
+        assert sealed_close_callbacks.calls == calls
+        assert not owned_conn.in_transaction
+
+    @pytest.mark.parametrize("override", [
+        {"trade_id": 2}, {"entry_order_id": "new-entry"}, {"symbol": "US.OTHER"},
+        {"direction": "SHORT"}, {"quantity": 11}, {"entry_price": 99},
+        {"entry_time": "2026-09-03T10:01:00-04:00"}, {"source_type": "PLAYBOOK_LIVE"},
+    ])
+    def test_original_owner_mismatch_is_rejected(self, owned_conn, sealed_close_callbacks, override):
+        with pytest.raises(ValueError, match="identity|owner"):
+            self.book(owned_conn, exit_owner=self.owner(**override))
+        assert owned_conn.execute("SELECT exit_time FROM trade_records WHERE id=1").fetchone()[0] is None
+        assert sealed_close_callbacks.calls == []
+        assert not owned_conn.in_transaction
+
+    @pytest.mark.parametrize("receipt", [None, "intent-other"])
+    def test_already_closed_conflict_cannot_claim_receipt(self, owned_conn, sealed_close_callbacks, receipt):
+        owned_conn.execute("UPDATE trade_records SET exit_time='closed', exit_price=100, metadata_json=?",
+                           (json.dumps({"exit_intent_id": receipt}),))
+        owned_conn.commit()
+        with pytest.raises(ValueError, match="closed|receipt|intent"):
+            self.book(owned_conn)
+        assert sealed_close_callbacks.calls == []
+        assert not owned_conn.in_transaction
+
+    @pytest.mark.parametrize("target", ["metadata_json", "exit_time"])
+    def test_receipt_and_close_roll_back_together(self, owned_conn, sealed_close_callbacks, target):
+        owned_conn.execute("CREATE TRIGGER reject_close BEFORE UPDATE OF " + target +
+                           " ON trade_records BEGIN SELECT RAISE(ABORT, 'injected write failure'); END")
+        with pytest.raises(sqlite3.DatabaseError, match="injected"):
+            self.book(owned_conn)
+        row = owned_conn.execute("SELECT exit_time, metadata_json FROM trade_records WHERE id=1").fetchone()
+        assert row[0] is None and "exit_intent_id" not in json.loads(row[1])
+        assert owned_conn.execute("SELECT outcome FROM playbook_instructions").fetchone()[0] == "holding"
+        assert owned_conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0] == 1
+        assert sealed_close_callbacks.calls == []
+        assert not owned_conn.in_transaction
+        owned_conn.execute("DROP TRIGGER reject_close")
+        assert self.book(owned_conn) is True
+
+    def test_pending_caller_writes_are_not_committed(self, owned_conn, sealed_close_callbacks):
+        owned_conn.execute("UPDATE playbook_instructions SET outcome='caller-pending'")
+        with pytest.raises(ValueError, match="clean|transaction"):
+            self.book(owned_conn)
+        assert owned_conn.in_transaction
+        owned_conn.rollback()
+        assert owned_conn.execute("SELECT outcome FROM playbook_instructions").fetchone()[0] == "holding"
+        assert sealed_close_callbacks.calls == []
+
+    @pytest.mark.parametrize("new_trade", [False, True])
+    def test_new_same_symbol_position_survives_old_close(self, owned_conn, sealed_close_callbacks, new_trade):
+        owned_conn.execute("UPDATE open_positions SET entry_time='2026-09-03T11:01:00-04:00', avg_entry_price=103")
+        if new_trade:
+            owned_conn.execute("INSERT INTO trade_records (id, symbol, direction, entry_time, entry_price, quantity, source_type) "
+                               "VALUES (2, 'US.TEST', 'LONG', '2026-09-03T11:01:00-04:00', 103, 10, 'PLAYBOOK_SIM')")
+        owned_conn.commit()
+        assert self.book(owned_conn) is True
+        row = owned_conn.execute("SELECT avg_entry_price FROM open_positions WHERE symbol='US.TEST'").fetchone()
+        assert row[0] == 103
+        assert "tombstone" not in sealed_close_callbacks.calls
+        assert "unregister" not in sealed_close_callbacks.calls
+
+    def test_replacement_entry_order_survives_identical_snapshot(self, owned_conn, sealed_close_callbacks):
+        # upsert_position_simple preserves old entry_time on symbol conflict but changes this ID.
+        owned_conn.execute("ALTER TABLE open_positions ADD COLUMN sl_broker_order_id TEXT")
+        owned_conn.execute("UPDATE open_positions SET sl_broker_order_id='entry-2'")
+        owned_conn.commit()
+        assert self.book(owned_conn) is True
+        assert owned_conn.execute("SELECT sl_broker_order_id FROM open_positions").fetchone()[0] == "entry-2"
+        assert "tombstone" not in sealed_close_callbacks.calls
+        assert "unregister" not in sealed_close_callbacks.calls
+
+    def test_callbacks_see_commit_and_failures_do_not_undo_booking(self, owned_conn, sealed_close_callbacks):
+        observations = []
+        def fail_after_commit(*args, **kwargs):
+            row = owned_conn.execute("SELECT exit_time, metadata_json FROM trade_records WHERE id=1").fetchone()
+            # Assert outside callbacks: production deliberately catches callback failures.
+            observations.append((owned_conn.in_transaction, row[0], json.loads(row[1]).get("exit_intent_id")))
+            raise RuntimeError("callback failure")
+        names = ("shadow", "reentry", "acb", "pdt", "tombstone", "unregister", "attribution", "push")
+        for name in names:
+            sealed_close_callbacks.callbacks[name].side_effect = fail_after_commit
+        assert self.book(owned_conn) is True
+        assert observations == [(False, "2026-09-03T11:00:00-04:00", "intent-1")] * len(names)
+        assert self.book(owned_conn) is False
+        assert len(observations) == len(names)
+        assert not owned_conn.in_transaction
+
+    def test_writer_lock_precedes_receipt_read(self, owned_conn):
+        statements = []
+        owned_conn.set_trace_callback(statements.append)
+        assert self.book(owned_conn) is True
+        statements = [s.upper().strip() for s in statements]
+        begin = next(i for i, s in enumerate(statements) if s == "BEGIN IMMEDIATE")
+        receipt_read = next(i for i, s in enumerate(statements) if s.startswith("SELECT") and "FROM TRADE_RECORDS" in s)
+        assert begin < receipt_read
+
+    def test_source_database_path_is_canonical_and_verified(self, owned_conn, tmp_path):
+        path = tmp_path / "bookkeeping.db"
+        disk = sqlite3.connect(path)
+        try:
+            owned_conn.backup(disk)
+            with pytest.raises(ValueError, match="database identity"):
+                self.book(disk, exit_owner=self.owner(db_path=str(tmp_path / "wrong.db")))
+            assert not disk.in_transaction
+            assert self.book(disk, exit_owner=self.owner(db_path=str(tmp_path) + "/./bookkeeping.db")) is True
+        finally:
+            disk.close()
+
+    @pytest.mark.parametrize("second_intent", ["intent-1", "intent-2"])
+    def test_separate_connections_serialize_receipt_claims(self, owned_conn, tmp_path, sealed_close_callbacks, second_intent):
+        path = tmp_path / "concurrent-bookkeeping.db"
+        disk = sqlite3.connect(path)
+        owned_conn.backup(disk)
+        disk.close()
+        barrier = Barrier(2)
+        owner = self.owner(db_path=str(path))
+
+        def book_concurrently(intent):
+            connection = sqlite3.connect(path)
+            try:
+                barrier.wait(timeout=5)
+                try:
+                    return self.book(connection, exit_intent_id=intent, exit_owner=owner)
+                except ValueError as error:
+                    return str(error)
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(book_concurrently, ("intent-1", second_intent)))
+        assert sum(result is True for result in results) == 1
+        if second_intent == "intent-1":
+            assert sum(result is False for result in results) == 1
+        else:
+            assert any(isinstance(result, str) and "receipt conflict" in result for result in results)
+        assert sealed_close_callbacks.calls.count("acb") == 1
+        assert sealed_close_callbacks.calls.count("push") == 1
+        disk = sqlite3.connect(path)
+        try:
+            row = disk.execute("SELECT realized_pnl, metadata_json FROM trade_records WHERE id=1").fetchone()
+            assert row[0] == 10
+            assert json.loads(row[1])["exit_intent_id"] in ("intent-1", second_intent)
+        finally:
+            disk.close()
+
+    def test_commit_failure_rolls_back_and_has_no_callbacks(self, owned_conn, sealed_close_callbacks):
+        def reject_commit(action, arg1, arg2, db, trigger):
+            if action == sqlite3.SQLITE_TRANSACTION and arg1 == "COMMIT":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+        owned_conn.set_authorizer(reject_commit)
+        with pytest.raises(sqlite3.DatabaseError):
+            self.book(owned_conn)
+        owned_conn.set_authorizer(None)
+        assert not owned_conn.in_transaction
+        row = owned_conn.execute("SELECT exit_time, metadata_json FROM trade_records WHERE id=1").fetchone()
+        assert row[0] is None and "exit_intent_id" not in json.loads(row[1])
+        assert sealed_close_callbacks.calls == []
+        assert self.book(owned_conn) is True
+
+    def test_attribution_write_failure_cannot_leave_partial_transaction(self, owned_conn):
+        owned_conn.execute("CREATE TRIGGER reject_attribution BEFORE UPDATE OF metadata_json ON trade_records "
+                           "WHEN NEW.metadata_json LIKE '%attribution%' "
+                           "BEGIN SELECT RAISE(ABORT, 'attribution write failure'); END")
+        assert self.book(owned_conn) is True
+        assert not owned_conn.in_transaction
+        assert self.book(owned_conn) is False
+
+    def test_recheck_replacement_entry_created_after_commit(self, owned_conn, sealed_close_callbacks):
+        def create_replacement(**kwargs):
+            owned_conn.execute("INSERT INTO open_positions VALUES ('US.TEST', 'synced', 'LONG', 10, 103, ?)",
+                               ("2026-09-03T11:01:00-04:00",))
+            owned_conn.commit()
+        sealed_close_callbacks.callbacks["shadow"].side_effect = create_replacement
+        assert self.book(owned_conn) is True
+        assert owned_conn.execute("SELECT avg_entry_price FROM open_positions").fetchone()[0] == 103
+        assert "tombstone" not in sealed_close_callbacks.calls
+        assert "unregister" not in sealed_close_callbacks.calls
+
+    @pytest.mark.parametrize("metadata", ["[]", "null", "broken-json"])
+    def test_invalid_metadata_cannot_destroy_receipt_history(self, owned_conn, metadata):
+        owned_conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=1", (metadata,))
+        owned_conn.commit()
+        with pytest.raises(ValueError, match="metadata"):
+            self.book(owned_conn)
+        assert not owned_conn.in_transaction
+        assert owned_conn.execute("SELECT metadata_json FROM trade_records WHERE id=1").fetchone()[0] == metadata
+
+    def test_open_row_with_receipt_is_conflict_not_replay(self, owned_conn):
+        owned_conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=1",
+                           (json.dumps({"exit_intent_id": "intent-1"}),))
+        owned_conn.commit()
+        with pytest.raises(ValueError, match="receipt conflict"):
+            self.book(owned_conn)
+        assert not owned_conn.in_transaction
+
+    def test_reused_trade_id_cannot_redeem_old_receipt(self, owned_conn):
+        assert self.book(owned_conn) is True
+        owned_conn.execute("UPDATE trade_records SET entry_time='2026-09-03T11:01:00-04:00', futu_order_id='entry-2' WHERE id=1")
+        owned_conn.commit()
+        with pytest.raises(ValueError, match="identity mismatch"):
+            self.book(owned_conn)
+        assert not owned_conn.in_transaction
 
 
 class TestCheckIntradayTrigger:

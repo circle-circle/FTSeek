@@ -45,7 +45,8 @@ def get_dual_broker():
 class DualBrokerAdapter:
     """双账户 broker: 模拟 + 实盘 per-call 路由."""
 
-    def __init__(self):
+    def __init__(self, *, exit_ledger_path=None):
+        self._exit_ledger_path = exit_ledger_path
         self.host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
         self.port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
         self.sim_account_id = os.getenv("SIMULATE_ACCOUNT_ID", "").strip()
@@ -195,61 +196,91 @@ class DualBrokerAdapter:
     # ── 下单 ──────────────────────────────────────────────
 
     def submit_order(self, order, target_env: str = "sim") -> Dict[str, Any]:
-        """提交订单到指定账户.
+        """提交订单；保留旧字段，并用 submit_state 区分可否安全重试。
 
-        Args:
-            order: Order 对象 (app.core.models.Order) — 需 symbol/direction/quantity/price/order_type
-            target_env: "sim" | "real"
-
-        Returns:
-            {"success": bool, "futu_order_id": str, "filled_price": float, "error": str}
+        submit_state 为 ACCEPTED / DEFINITIVE_REJECT / UNKNOWN。只要已取得 order id，
+        后续成交查询异常也仍返回 ACCEPTED 且保留该 id。
         """
+        _place_attempted = False
+        _accepted_id = ""
         try:
             from futu import TrdSide, OrderType as FutuOrderType, RET_OK
             from app.core.models import Direction, OrderType
 
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
-
-            # 风控兜底: 单笔名义本金上限 (平仓单/市价单跳过)
             _order_meta = getattr(order, 'metadata', None) or {}
             _is_close = bool(_order_meta.get('is_exit', False)) if isinstance(_order_meta, dict) else False
             if not self._notional_sanity_check(order.symbol, order.quantity, order.price, is_close=_is_close):
-                return {"success": False, "error": "dual_broker_notional_cap", "futu_order_id": ""}
+                return {"success": False, "submit_state": "DEFINITIVE_REJECT",
+                        "error": "dual_broker_notional_cap", "futu_order_id": ""}
 
             trd_side = TrdSide.BUY if order.direction == Direction.LONG else TrdSide.SELL
             futu_order_type = FutuOrderType.MARKET if order.order_type == OrderType.MARKET else FutuOrderType.NORMAL
 
+            _place_attempted = True
             with lock:
                 ret, data = ctx.place_order(
                     price=order.price, qty=order.quantity, code=order.symbol,
                     trd_side=trd_side, order_type=futu_order_type,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
-                    # B4 (2026-07-19): 透传 client_order_id 到 broker 侧留痕 (崩溃后可审计/可定位, 非真幂等).
                     remark=getattr(order, 'client_order_id', '') or None,
                 )
+            try:
+                _candidate_id = str(data["order_id"].values[0]).strip()
+                if _candidate_id.lower() not in ("", "none", "nan"):
+                    _accepted_id = _candidate_id
+            except Exception:
+                pass
+            try:
+                _broker_status = str(data["order_status"].values[0] or "")
+            except Exception:
+                _broker_status = ""
 
+            if ret != RET_OK and not _accepted_id:
+                return {"success": False, "submit_state": "DEFINITIVE_REJECT",
+                        "broker_order_status": _broker_status,
+                        "error": f"place_order 失败: {data}", "futu_order_id": ""}
+            if not _accepted_id:
+                logger.error(f"[DualBroker] broker 已响应成功但 order_id 不可读 {order.symbol}")
+                return {"success": False, "submit_state": "UNKNOWN",
+                        "broker_order_status": _broker_status,
+                        "error": "broker order_id missing", "futu_order_id": "",
+                        "filled_price": 0.0, "filled_qty": 0.0}
             if ret != RET_OK:
-                return {"success": False, "error": f"place_order 失败: {data}", "futu_order_id": ""}
+                logger.warning(
+                    f"[DualBroker] broker 返回非成功但已给 order id，按已受理锁定 "
+                    f"{order.symbol} futu_id={_accepted_id}"
+                )
 
-            futu_id = str(data["order_id"].values[0])
-            filled_price, filled_qty = self._query_fill(ctx, futu_id, trd_env, lock)
+            try:
+                filled_price, filled_qty = self._query_fill(ctx, _accepted_id, trd_env, lock)
+            except Exception as exc:
+                logger.warning(
+                    f"[DualBroker] 下单已受理但成交查询异常 {order.symbol} "
+                    f"futu_id={_accepted_id}: {exc}",
+                    exc_info=True,
+                )
+                filled_price, filled_qty = 0.0, 0.0
 
             if filled_qty > 0 and filled_qty < float(order.quantity):
                 logger.warning(
                     f"[DualBroker] 部分成交: {order.symbol} 下单 {order.quantity} 实际成交 {filled_qty} "
-                    f"env={target_env} futu_id={futu_id}"
+                    f"env={target_env} futu_id={_accepted_id}"
                 )
-
             logger.info(
-                f"[DualBroker] 下单成功: {order.symbol} {order.direction} qty={order.quantity} "
-                f"env={target_env} futu_id={futu_id} fill={filled_price} filled_qty={filled_qty}"
+                f"[DualBroker] 下单已受理: {order.symbol} {order.direction} qty={order.quantity} "
+                f"env={target_env} futu_id={_accepted_id} fill={filled_price} filled_qty={filled_qty}"
             )
-            return {"success": True, "futu_order_id": futu_id, "filled_price": filled_price,
-                    "filled_qty": filled_qty, "error": ""}
+            return {"success": True, "submit_state": "ACCEPTED", "futu_order_id": _accepted_id,
+                    "broker_order_status": _broker_status,
+                    "filled_price": filled_price, "filled_qty": filled_qty, "error": ""}
 
         except Exception as e:
             logger.exception(f"[DualBroker] submit_order 异常 {order.symbol}: {e}")
-            return {"success": False, "error": str(e), "futu_order_id": ""}
+            state = "ACCEPTED" if _accepted_id else ("UNKNOWN" if _place_attempted else "DEFINITIVE_REJECT")
+            return {"success": bool(_accepted_id), "submit_state": state, "error": str(e),
+                    "futu_order_id": _accepted_id, "broker_order_status": "",
+                    "filled_price": 0.0, "filled_qty": 0.0}
 
     def cancel_order(self, futu_order_id: str, target_env: str = "sim") -> Dict[str, Any]:
         """撤单 (尽力而为) — [DEB-20260901 选项1②] 入场限价路由 TTL 到期撤单用。
@@ -275,263 +306,56 @@ class DualBrokerAdapter:
             logger.warning(f"[DualBroker] cancel_order 异常 {futu_order_id}: {e}")
             return {"success": False, "error": str(e)}
 
+    def _exit_lifecycle(self):
+        from app.execution.exit_lifecycle import ExitLedger, ExitLifecycle
+        path = getattr(self, '_exit_ledger_path', None)
+        if path is None:
+            from app.core.paths import get_exit_ledger_db
+            path = get_exit_ledger_db()
+        return ExitLifecycle(self, ExitLedger(path), getattr(self, '_exit_clock', None))
+
     def close_position(self, symbol: str, qty: float, direction_held: str,
                        target_env: str = "sim", limit_price: float = 0.0,
-                       limit_timeout_s: float = 8.0) -> Dict[str, Any]:
-        """平仓 (持仓方向 → 反向单). 默认市价; limit_price>0 时挂限价单.
-
-        根因修复 (2026-07-07): 订单状态是成交的唯一真相来源.
-        旧实现用 position_list_query (持仓列表) 验证平仓 — SIM 环境持仓列表更新延迟可达 29s,
-        3s 轮询不够 → 假阴性 broker_close_failed → 下一轮 broker_no_position → BROKER_GHOST_CLOSE.
-        现改为用 order_list_query 的 order_status 验证 (FILLED_ALL = 全部成交),
-        与持仓列表更新延迟无关, 从源头消灭整类问题.
-
-        限价平仓 (2026-08-17, 用户裁"净保本包含费用"): SL_BREAKEVEN 市价平仓的 fill
-        系统性落回保本线下方 (D4 后 31 笔 24 笔净亏, 越位≈费用本身 — 轮询间隙漂移吃掉
-        cushion). 限价单@净保本线使成交价物理上 ≥ 保本线, 净保本由订单类型保证.
-        limit_timeout_s 内未成交 → 撤单降级市价 (最坏=现状, 无卡单风险).
-
-        Args:
-            direction_held: "LONG" | "SHORT" — 持仓方向; 平仓用反向.
-            limit_price: >0 时限价平仓 (LONG→SELL LIMIT, SHORT→BUY LIMIT); 0=市价.
-            limit_timeout_s: 限价单等待上限, 超时撤单转市价.
-
-        Returns:
-            {"success": bool, "futu_order_id": str, "filled_price": float,
-             "price_source": str, "broker_qty_before": float, "broker_qty_after": float, "error": str}
-        """
+                       limit_timeout_s: float = 8.0, *, exit_owner: dict = None,
+                       exit_decision: dict = None) -> Dict[str, Any]:
+        """Close only the owned quantity through a durable, recoverable send gate."""
+        from app.execution.exit_lifecycle import held
+        if not isinstance(exit_owner, dict) or not isinstance(exit_decision, dict):
+            return held('exit_identity_required', owner=exit_owner, decision=exit_decision)
         try:
-            from futu import TrdSide, OrderType as FutuOrderType, RET_OK, OrderStatus
-            from app.core.models import Order, Direction, OrderType
-            import time as _t
+            return self._exit_lifecycle().request(symbol, qty, direction_held, target_env,
+                limit_price, limit_timeout_s, exit_owner, exit_decision)
+        except Exception:
+            logger.exception('[DualBroker] durable close failed symbol=%s', symbol)
+            return held('exit_ledger_or_identity_error', owner=exit_owner, decision=exit_decision)
 
-            ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+    def pending_closes(self) -> list:
+        """Enumerate all unsettled accounts/environments without constructing contexts."""
+        return self._exit_lifecycle().ledger.list_unsettled()
 
-            # ── 平仓前查 broker 实际持仓量 ──
-            broker_qty_before = 0.0
-            with lock:
-                ret_pos, pos_data = ctx.position_list_query(trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0)
-            if ret_pos == RET_OK and pos_data is not None and not pos_data.empty:
-                _matches = pos_data[pos_data["code"] == symbol]
-                if not _matches.empty:
-                    broker_qty_before = abs(float(_matches.iloc[0].get("qty", 0) or 0))
+    def resume_close(self, intent_id: str, *, allow_submit: bool = True) -> Dict[str, Any]:
+        from app.execution.exit_lifecycle import held
+        try:
+            return self._exit_lifecycle().resume(intent_id, allow_submit=allow_submit)
+        except Exception:
+            logger.exception('[DualBroker] durable resume failed intent=%s', intent_id)
+            result = held('exit_ledger_error')
+            result['exit_intent_id'] = intent_id
+            return result
 
-            if broker_qty_before < 0.5:
-                logger.info(f"[DualBroker] {symbol} broker 无持仓 (qty={broker_qty_before}), 跳过平仓")
-                return {"success": False, "error": "broker_no_position",
-                        "filled_price": 0, "price_source": "broker_empty",
-                        "broker_qty_before": 0, "broker_qty_after": 0}
-
-            # 用 broker 实际持仓量平仓, 不用调用方传入的 qty (可能过期)
-            close_qty = int(broker_qty_before)
-            close_side = TrdSide.SELL if direction_held == "LONG" else TrdSide.BUY
-
-            # ── 净保本限价腿 (2026-08-17, 用户裁"保本单真正净保本包含费用") ──
-            # SL_BREAKEVEN 市价平仓的 fill 系统性落回保本线下方 (D4 后 31 笔 24 笔净亏,
-            #   越位≈费用本身: 20s 轮询间隙的价格漂移把 fee cushion 精确吃掉).
-            # 限价单@净保本线: LONG→SELL LIMIT@entry×(1+费率), SHORT→BUY LIMIT@entry×(1−费率),
-            #   成交价物理上 ≥(空: ≤) 保本线 → 净保本由订单类型保证, 不靠轮询追价.
-            # timeout 未成交 → 撤单降级市价 (最坏=现状, 无卡单风险). SIM 支持 LIMIT(NORMAL).
-            # 2026-08-18 (WDC/AMD 实弹案, 用户裁"要"): timeout 30s → 8s.
-            #   SL_BREAKEVEN 触发几何 = 价格已穿越保本线 → 限价单结构性站在被动侧,
-            #   只有价格 30s 内回摆才成交; 不回摆则等满 30s 撤单降级市价, 多漂一段:
-            #   WDC SHORT 限价@503.32 零成交 31s → 市价 505.02 (多亏 ~$17.8);
-            #   AMD LONG 限价@481.54 零成交 31s → 市价 480.77 (多亏 ~$8.0).
-            #   对照 BABA: 价格快速回摆 → 限价成交净 +$0.43 (博弈收益保留).
-            #   8s = 保留小幅回摆博弈, 逆向漂移上限砍 73%. 回滚: 改回 30.0.
-            _limit_dealt = 0.0
-            _limit_fill_px = 0.0  # 限价腿已成交部分的均价 (部分成交降级时加权记账用)
-            if limit_price and float(limit_price) > 0 and close_qty > 0:
-                _limit_px = round(float(limit_price), 2)
-                with lock:
-                    ret_l, data_l = ctx.place_order(
-                        price=_limit_px, qty=close_qty, code=symbol,
-                        trd_side=close_side, order_type=FutuOrderType.NORMAL,  # LIMIT
-                        trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
-                        remark=f"pb_be_close_{symbol}_{target_env}",  # B4: 净保本平仓单留痕
-                    )
-                if ret_l == 0 and data_l is not None and not data_l.empty:
-                    _lid = str(data_l["order_id"].values[0])
-                    _n_polls = max(1, int(float(limit_timeout_s) / 0.5))
-                    _l_fill = 0.0
-                    for _lw in range(_n_polls):
-                        _t.sleep(0.5)
-                        try:
-                            with lock:
-                                _ret_lo, _lod = ctx.order_list_query(order_id=_lid, trd_env=trd_env)
-                            if _ret_lo == RET_OK and _lod is not None and not _lod.empty:
-                                _lrow = _lod.iloc[0]
-                                _lstatus = str(_lrow.get("order_status", ""))
-                                _limit_dealt = float(_lrow.get("dealt_qty", 0) or 0)
-                                if "FILLED_ALL" in _lstatus or _limit_dealt >= close_qty:
-                                    try:
-                                        _l_fill = float(_lrow.get("dealt_avg_price", 0) or 0)
-                                    except Exception:
-                                        _l_fill = 0.0
-                                    if _l_fill <= 0:
-                                        _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
-                                    _ba = broker_qty_before - _limit_dealt if _limit_dealt > 0 else broker_qty_before
-                                    logger.info(
-                                        f"[DualBroker] 平仓(限价@净保本): {symbol} qty={close_qty} env={target_env} "
-                                        f"limit={_limit_px} fill={_l_fill} src=broker_limit_deal "
-                                        f"broker_qty: {broker_qty_before}→{_ba}"
-                                    )
-                                    return {"success": True, "futu_order_id": _lid,
-                                            "filled_price": _l_fill, "price_source": "broker_limit_deal",
-                                            "broker_qty_before": broker_qty_before, "broker_qty_after": _ba,
-                                            "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
-                                if any(_x in _lstatus for _x in ("FAILED", "CANCELLED", "DELETED", "TIMEOUT", "REJECTED")):
-                                    logger.warning(f"[DualBroker] {symbol} 限价平仓订单失败: status={_lstatus}")
-                                    break
-                        except Exception as _le:
-                            logger.debug(f"[DualBroker] {symbol} 限价单查询异常: {_le}")
-                    # ── 未成交: 撤单 + 竞态复查 + 降级市价 ──
-                    try:
-                        from futu import ModifyOrderOp
-                        with lock:
-                            ctx.modify_order(modify_order_op=ModifyOrderOp.CANCEL, order_id=_lid,
-                                             qty=0, price=0, trd_env=trd_env,
-                                             acc_id=int(acc_id) if acc_id else 0)
-                    except Exception as _ce:
-                        logger.warning(f"[DualBroker] {symbol} 撤限价单异常 (继续降级): {_ce}")
-                    # 竞态复查: 撤单请求与成交之间的窗口 — 若已全部成交, 直接按限价成交返回
-                    try:
-                        with lock:
-                            _ret_lq, _lq = ctx.order_list_query(order_id=_lid, trd_env=trd_env)
-                        if _ret_lq == RET_OK and _lq is not None and not _lq.empty:
-                            _lqr = _lq.iloc[0]
-                            _limit_dealt = float(_lqr.get("dealt_qty", 0) or 0)
-                            if "FILLED_ALL" in str(_lqr.get("order_status", "")) or _limit_dealt >= close_qty:
-                                try:
-                                    _l_fill = float(_lqr.get("dealt_avg_price", 0) or 0)
-                                except Exception:
-                                    _l_fill = 0.0
-                                if _l_fill <= 0:
-                                    _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
-                                logger.info(
-                                    f"[DualBroker] 平仓(限价@净保本·撤单竞态全成): {symbol} fill={_l_fill}"
-                                )
-                                return {"success": True, "futu_order_id": _lid,
-                                        "filled_price": _l_fill, "price_source": "broker_limit_deal",
-                                        "broker_qty_before": broker_qty_before,
-                                        "broker_qty_after": broker_qty_before - _limit_dealt,
-                                        "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
-                    except Exception as _lqe:
-                        logger.debug(f"[DualBroker] {symbol} 撤单后复查异常: {_lqe}")
-                    logger.info(
-                        f"[DualBroker] {symbol} 限价平仓单 {limit_timeout_s:.0f}s 未成交 "
-                        f"(dealt={_limit_dealt}), 撤单降级市价 (净保本兜底路径)"
-                    )
-                    if _limit_dealt > 0:
-                        # 部分成交: 市价腿只平剩余 (持仓列表有延迟, 用订单 dealt 推算更准)
-                        _limit_fill_px = self._query_filled_price(ctx, _lid, trd_env, lock)
-                        close_qty = int(broker_qty_before - _limit_dealt)
-                        if close_qty <= 0:
-                            _l_fill = self._query_filled_price(ctx, _lid, trd_env, lock)
-                            return {"success": True, "futu_order_id": _lid,
-                                    "filled_price": _l_fill, "price_source": "broker_limit_deal",
-                                    "broker_qty_before": broker_qty_before, "broker_qty_after": 0,
-                                    "order_filled": True, "dealt_qty": _limit_dealt, "error": ""}
-                else:
-                    logger.warning(f"[DualBroker] {symbol} 限价平仓下单失败, 降级市价: {data_l}")
-
-            with lock:
-                ret, data = ctx.place_order(
-                    price=0.0, qty=close_qty, code=symbol,
-                    trd_side=close_side, order_type=FutuOrderType.MARKET,
-                    trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
-                    remark=f"pb_close_{symbol}_{target_env}",  # B4: 平仓单留痕
-                )
-            if ret != 0:
-                return {"success": False, "error": f"平仓下单失败: {data}",
-                        "filled_price": 0, "price_source": "order_rejected",
-                        "broker_qty_before": broker_qty_before, "broker_qty_after": broker_qty_before}
-
-            futu_id = str(data["order_id"].values[0])
-
-            # ── 根因修复: 用订单状态验证成交, 不用持仓列表 ──
-            # order_list_query 返回 order_status + dealt_qty, 与持仓列表更新延迟无关.
-            # FILLED_ALL = 全部成交; FILLED_PART = 部分成交.
-            # 最多等待 30s (60×0.5s), 覆盖 SIM 环境 ~29s 延迟.
-            order_filled = False
-            dealt_qty = 0.0
-            filled_price = 0.0
-
-            for _wait in range(60):  # 最多 30s (60×0.5s)
-                _t.sleep(0.5)
-                # 查订单状态
-                try:
-                    with lock:
-                        ret_od, od_data = ctx.order_list_query(order_id=futu_id, trd_env=trd_env)
-                    if ret_od == RET_OK and od_data is not None and not od_data.empty:
-                        _row = od_data.iloc[0]
-                        _status = str(_row.get("order_status", ""))
-                        dealt_qty = float(_row.get("dealt_qty", 0) or 0)
-                        # FILLED_ALL 或 dealt_qty >= close_qty = 成交完成
-                        if "FILLED_ALL" in _status or dealt_qty >= close_qty:
-                            order_filled = True
-                            # 2026-07-27 (DEB-entry-fill 同款对称修复): 本行里就有 dealt_avg_price
-                            #   真成交均价, 旧版只读 status/qty 丢价 → 事后 _query_filled_price
-                            #   (sim 主路径 history_deal 不支持) 失败率 41% → 41% 平仓价被报价兜底。
-                            if filled_price <= 0:
-                                try:
-                                    _davg = float(_row.get("dealt_avg_price", 0) or 0)
-                                    if _davg > 0:
-                                        filled_price = _davg
-                                except Exception:
-                                    pass
-                            break
-                        # 订单失败/取消 = 不可恢复
-                        if any(_x in _status for _x in ("FAILED", "CANCELLED", "DELETED", "TIMEOUT", "REJECTED")):
-                            logger.warning(f"[DualBroker] {symbol} 平仓订单失败: status={_status}")
-                            break
-                except Exception as _od_err:
-                    logger.debug(f"[DualBroker] {symbol} order_list_query 异常: {_od_err}")
-                # 同时尝试获取成交价 (可能在等待期间成交了)
-                if filled_price <= 0:
-                    filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
-
-            # 订单成交后再查一次成交价 (确保拿到最终价)
-            if order_filled and filled_price <= 0:
-                filled_price = self._query_filled_price(ctx, futu_id, trd_env, lock)
-
-            # 限价腿部分成交 + 市价腿平剩余 → 按全部已成交量的加权均价记账 (2026-08-17).
-            #   dealt_qty 此处仅为市价腿成交; _limit_dealt/_limit_fill_px 是限价腿.
-            _total_dealt = dealt_qty + _limit_dealt
-            if order_filled and _limit_dealt > 0 and filled_price > 0 and _limit_fill_px > 0 and _total_dealt > 0:
-                _wavg = (_limit_fill_px * _limit_dealt + filled_price * dealt_qty) / _total_dealt
-                logger.info(
-                    f"[DualBroker] {symbol} 两腿平仓加权均价: limit腿 {_limit_dealt}@{_limit_fill_px} + "
-                    f"market腿 {dealt_qty}@{filled_price} → {_wavg:.4f}"
-                )
-                filled_price = round(_wavg, 4)
-                dealt_qty = _total_dealt
-
-            # 计算剩余持仓 (仅用于日志/审计, 不作为成交判定依据)
-            broker_qty_after = broker_qty_before - dealt_qty if dealt_qty > 0 else broker_qty_before
-
-            # 确定价格来源
-            if order_filled and filled_price > 0:
-                price_source = "broker_deal"
-            elif order_filled and filled_price <= 0:
-                price_source = "broker_closed_no_price"  # 成交了但价格查不到
-            else:
-                price_source = "broker_close_failed"  # 订单未成交
-
-            logger.info(
-                f"[DualBroker] 平仓: {symbol} qty={close_qty} env={target_env} "
-                f"fill={filled_price} src={price_source} order_filled={order_filled} "
-                f"dealt={dealt_qty} broker_qty: {broker_qty_before}→{broker_qty_after}"
-            )
-            return {"success": True, "futu_order_id": futu_id, "filled_price": filled_price,
-                    "price_source": price_source,
-                    "broker_qty_before": broker_qty_before, "broker_qty_after": broker_qty_after,
-                    "order_filled": order_filled, "dealt_qty": dealt_qty, "error": ""}
-
-        except Exception as e:
-            logger.exception(f"[DualBroker] close_position 异常 {symbol}: {e}")
-            return {"success": False, "error": str(e), "filled_price": 0,
-                    "price_source": "exception", "broker_qty_before": 0, "broker_qty_after": 0}
+    def acknowledge_close(self, intent_id: str, receipt: dict) -> bool:
+        try:
+            lifecycle = self._exit_lifecycle()
+            intent = lifecycle.ledger.get(intent_id)
+            if not intent:
+                return False
+            account = getattr(self, 'real_account_id' if intent['target_env'] == 'real' else 'sim_account_id', '')
+            if str(account) != intent['account_id']:
+                return False
+            return lifecycle.ledger.ack_booked(intent_id, receipt, lifecycle.clock.time())
+        except Exception:
+            logger.exception('[DualBroker] exit acknowledgement failed intent=%s', intent_id)
+            return False
 
     def _query_filled_price(self, ctx, futu_order_id: str, trd_env, lock) -> float:
         """查订单成交均价 (兼容旧调用, 只取价格). 内部委托 _query_fill."""

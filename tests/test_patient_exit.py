@@ -173,7 +173,7 @@ class TestMonitorPatientExitStateMachine:
                 realized_pnl REAL, pnl_pct REAL, holding_hours REAL,
                 close_futu_order_id TEXT, mfe_pct REAL, mae_pct REAL,
                 max_drawdown REAL, pnl_net REAL, fees_est REAL, decision_id TEXT,
-                trade_mode TEXT, trade_date TEXT
+                trade_mode TEXT, trade_date TEXT, futu_order_id TEXT
             )
         """)
         conn.execute("""
@@ -199,7 +199,11 @@ class TestMonitorPatientExitStateMachine:
         close_calls = []
 
         def _fake_close(conn_, trade_id, exit_price, exit_reason, pnl, pnl_pct,
-                        holding_hours, inst_id=None, symbol=None, close_futu_order_id=None):
+                        holding_hours, inst_id=None, symbol=None, close_futu_order_id=None,
+                        *, exit_intent_id=None, exit_owner=None, exit_metadata=None, exit_time=None):
+            if exit_metadata is not None:
+                conn_.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
+                              (json.dumps(exit_metadata), trade_id))
             close_calls.append({
                 "trade_id": trade_id, "exit_price": exit_price,
                 "exit_reason": exit_reason, "pnl": pnl, "symbol": symbol,
@@ -208,6 +212,7 @@ class TestMonitorPatientExitStateMachine:
                 "UPDATE trade_records SET exit_price=?, exit_reason=?, exit_time=? WHERE id=?",
                 (exit_price, exit_reason, datetime.now(_ET).isoformat(), trade_id))
             conn_.commit()
+            return True
 
         monkeypatch.setattr(pipeline_mod, "_close_trade_record", _fake_close)
 
@@ -216,15 +221,20 @@ class TestMonitorPatientExitStateMachine:
             dual = MagicMock()
 
             def _close(symbol, qty, direction, target_env=None,
-                       limit_price=0.0, limit_timeout_s=30.0):
+                       limit_price=0.0, limit_timeout_s=30.0, *, exit_owner=None, exit_decision=None):
                 return {
                     "success": True, "order_filled": True,
                     "filled_price": _last_quote.get("price", 0),
-                    "price_source": "test_mock",
+                    "price_source": "test_mock", "dealt_qty": qty,
                     "broker_qty_before": qty, "broker_qty_after": 0,
-                    "futu_order_id": "TEST-ORDER-1",
+                    "futu_order_id": "TEST-ORDER-1", "confirmed_at": fixed_now.timestamp(),
+                    "exit_intent_id": f"test-{exit_owner['trade_id']}",
+                    "exit_state": "FILLED_UNBOOKED", "owner": exit_owner,
+                    "decision": exit_decision,
                 }
             dual.close_position.side_effect = _close
+            dual.pending_closes.return_value = []
+            dual.acknowledge_close.return_value = True
             return dual
 
         monkeypatch.setattr("app.execution.dual_broker.get_dual_broker", _fake_get_dual_broker)
@@ -414,3 +424,58 @@ class TestMonitorPatientExitStateMachine:
         meta = self._meta_after(env)
         assert "patient_exit" in meta
         assert meta["patient_exit"].get("exit_mode") is None
+
+    @pytest.mark.parametrize("bad_index", [0, 1, 2])
+    @pytest.mark.parametrize("fault", ["stop", "metadata", "rule", "bookkeeping"])
+    def test_bad_position_does_not_abort_other_exits(self, env, monkeypatch,
+                                                    bad_index, fault):
+        env["cfg"]._d["patient_exit_enabled"] = False
+        symbols = ["US.TEST0", "US.TEST1", "US.TEST2"]
+        bad_symbol = symbols[bad_index]
+        for symbol in symbols:
+            self._insert_open_position(env, symbol=symbol)
+        env["scheduler"].data_router.get_batch_quotes.return_value = {
+            symbol: {"last": 99.3} for symbol in symbols}
+        env["last_quote"]["price"] = 99.3
+        bad_id = env["conn"].execute(
+            "SELECT id FROM trade_records WHERE symbol=?", (bad_symbol,)
+        ).fetchone()[0]
+        if fault == "stop":
+            env["conn"].execute(
+                "UPDATE trade_records SET metadata_json=? WHERE id=?",
+                (json.dumps({"stop_loss": "invalid"}), bad_id))
+        elif fault == "metadata":
+            env["conn"].execute(
+                "UPDATE trade_records SET metadata_json='[]' WHERE id=?", (bad_id,))
+        elif fault == "rule":
+            original_rule = pipeline_mod._check_playbook_exit_rules
+
+            def rule(*args, **kwargs):
+                meta = args[5]
+                if meta.get("_symbol") == bad_symbol:
+                    raise ValueError("bad rule")
+                return original_rule(*args, **kwargs)
+
+            monkeypatch.setattr(pipeline_mod, "_check_playbook_exit_rules", rule)
+        else:
+            original_close = pipeline_mod._close_trade_record
+
+            def close(conn, trade_id, *args, **kwargs):
+                if trade_id == bad_id:
+                    conn.execute("UPDATE trade_records SET exit_reason='uncommitted' WHERE id=?",
+                                 (trade_id,))
+                    raise ValueError("bookkeeping failed")
+                return original_close(conn, trade_id, *args, **kwargs)
+
+            monkeypatch.setattr(pipeline_mod, "_close_trade_record", close)
+        env["conn"].commit()
+        alerts = MagicMock()
+        monkeypatch.setattr(pipeline_mod, "_alert_close_failure", alerts)
+        assert monitor_playbook_sim_exits(env["scheduler"]) == 2
+        assert {call["symbol"] for call in env["close_calls"]} == set(symbols) - {bad_symbol}
+        row = env["conn"].execute(
+            "SELECT exit_price, exit_reason FROM trade_records WHERE id=?", (bad_id,)
+        ).fetchone()
+        assert not row["exit_price"]
+        assert row["exit_reason"] != "uncommitted"
+        assert any(call.args[0] == bad_symbol for call in alerts.call_args_list)

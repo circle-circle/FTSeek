@@ -27,6 +27,14 @@ import app.playbook.pipeline as pl  # noqa: E402
 from app.playbook import overnight_decision as od  # noqa: E402
 from app.utils.timezone import now_et  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def offline_calendar(monkeypatch):
+    from app.utils import holiday_calendar
+    monkeypatch.setattr(holiday_calendar.TradingHolidayCalendar, "_instance", None)
+    monkeypatch.setattr(holiday_calendar, "_futu_request_trading_days", lambda *args: None)
+
+
 YES = lambda sym, date: True   # noqa: E731
 NO = lambda sym, date: False   # noqa: E731
 

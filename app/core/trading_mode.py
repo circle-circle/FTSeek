@@ -27,7 +27,7 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,78 @@ def _read_env_file(key: str, default: str = "") -> str:
     except Exception:
         pass
     return os.getenv(key, default)
+
+
+def read_startup_mode_snapshot() -> Dict[str, str]:
+    """从同一个 .env.us 文件版本读取启动模式相关键。"""
+    keys = (
+        "AUTO_TRADE_ACCOUNT",
+        "TRADE_ENV",
+        "ALLOW_REAL_TRADING",
+        "FTSEEK_DB_FILE",
+        "FUTU_TRADE_ENV",
+    )
+    values = {key: os.getenv(key, "") for key in keys}
+    values["AUTO_TRADE_ACCOUNT"] = values["AUTO_TRADE_ACCOUNT"] or "sim"
+    values["TRADE_ENV"] = values["TRADE_ENV"] or "1"
+    values["ALLOW_REAL_TRADING"] = values["ALLOW_REAL_TRADING"] or "false"
+    try:
+        if _ENV_FILE.exists():
+            with open(_ENV_FILE) as env_file:
+                for line in env_file:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in stripped:
+                        continue
+                    key, value = stripped.split("=", 1)
+                    key = key.strip()
+                    if key in values:
+                        values[key] = value.strip()
+    except Exception:
+        pass
+    return values
+
+
+def validate_startup_mode_config(auto_account: str, trade_env: str,
+                                 allow_real_trading: str,
+                                 ftseek_db_file: str = "") -> Dict[str, object]:
+    """纯校验 broker、数据库路由和实盘许可是否构成一致启动快照。"""
+    account = str(auto_account or "").strip().lower()
+    db_mode = str(trade_env or "").strip()
+    allow_raw = str(allow_real_trading or "").strip().lower()
+    db_override = str(ftseek_db_file or "").strip()
+    errors = []
+
+    if account not in ("sim", "real"):
+        errors.append({"code": "INVALID_AUTO_TRADE_ACCOUNT",
+                       "message": f"AUTO_TRADE_ACCOUNT={account or '<empty>'} 非法"})
+    if db_mode not in ("0", "1"):
+        errors.append({"code": "INVALID_TRADE_ENV",
+                       "message": f"TRADE_ENV={db_mode or '<empty>'} 非法"})
+    if allow_raw not in ("true", "false"):
+        errors.append({"code": "INVALID_ALLOW_REAL_TRADING",
+                       "message": f"ALLOW_REAL_TRADING={allow_raw or '<empty>'} 非法"})
+    if db_override:
+        errors.append({"code": "FTSEEK_DB_FILE_OVERRIDE",
+                       "message": "主服务禁止设置 FTSEEK_DB_FILE，避免账本组件分库"})
+
+    if account in ("sim", "real") and db_mode in ("0", "1"):
+        expected_db_mode = "1" if account == "sim" else "0"
+        if db_mode != expected_db_mode:
+            errors.append({"code": "BROKER_DB_MODE_MISMATCH",
+                           "message": f"AUTO_TRADE_ACCOUNT={account} 要求 TRADE_ENV={expected_db_mode}"})
+    if account == "real" and allow_raw in ("true", "false") and allow_raw != "true":
+        errors.append({"code": "REAL_TRADING_NOT_ALLOWED",
+                       "message": "AUTO_TRADE_ACCOUNT=real 要求 ALLOW_REAL_TRADING=true"})
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "auto_account": account,
+        "trade_env": db_mode,
+        "allow_real_trading": allow_raw == "true",
+        "broker_route": "real" if account == "real" else "sim",
+        "db_route": "live" if db_mode == "0" else "sim",
+    }
 
 
 class TradingMode:

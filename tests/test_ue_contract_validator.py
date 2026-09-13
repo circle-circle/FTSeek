@@ -169,8 +169,10 @@ class TestNormalizeSkipReason:
 class TestPromptVersionContract:
     def test_version_and_hash_derive_from_current_prompt(self):
         # v2.11 (2026-09-11): 负反馈表 U1 反号修 + U1b 零收益三态, 均在 brief/user 侧。
+        # v2.12 (2026-09-12, DEB-20260910 §17): P2.2 输入具名标的可交易性初筛段,
+        #   同为 brief/user 侧输入变更 (材料一条不删, 只在末尾追加三态清单)。
         # 升版者必须同时改这里 —— 这条钉子变红是它的设计意图, 不是回归。
-        assert PROMPT_VERSION == "v2.11"
+        assert PROMPT_VERSION == "v2.12"
         expected = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
         assert PROMPT_HASH_V2 == expected
 
@@ -183,6 +185,13 @@ class TestPromptVersionContract:
         例如 `docs/CONTROL-LOOP-LEDGER.md` thinking-eval 预注册判据「跨 prompt_hash 不得混合」
         在 9/11 这次 brief 变更上**不会触发序列归零**。只能按 `prompt_version` 切分。
         指纹扩到 brief 侧属另立项 (DEB-20260910 §11.6-6, 用户裁「缺口另立项」), 本钉不代其实现。
+
+        [2026-09-12 更新, DEB-20260910 §17 / P2.5] 该"另立项"已兑现: 新增
+        `BRIEF_TEMPLATE_VERSION` + `_brief_fingerprints()`, 落库 `brief_template_version /
+        brief_template_hash / brief_content_hash / brief_material_stats`。⇒ v2.12 (P2.2 初筛段)
+        是**第一次** brief 侧变更能被自动指纹看见的版本。但本钉的两条断言**继续有效且必须
+        继续红在改 SYSTEM_PROMPT_V2 的那天**: brief 侧指纹是**补充**, 不是 prompt_hash 的替代
+        —— 既有 A/B 预注册判据仍按 prompt_hash 切分, 中途换尺子须用户裁。
         """
         assert PROMPT_HASH_V2 == "70e4680597af", (
             "SYSTEM_PROMPT_V2 被改动了 — 若属有意, 需同时升 PROMPT_VERSION 并更新本钉与 "

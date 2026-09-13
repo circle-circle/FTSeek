@@ -36,6 +36,11 @@ def get_data_dir() -> Path:
     return _get_project_root() / relative
 
 
+def get_exit_ledger_db() -> Path:
+    """Playbook exit evidence under the existing data root; no new config key."""
+    return get_data_dir() / "playbook_exits.db"
+
+
 def get_reviews_dir() -> Path:
     """获取 daily_reviews/ 目录"""
     cfg = _get_config()
