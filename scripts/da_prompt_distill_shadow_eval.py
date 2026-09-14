@@ -172,6 +172,26 @@ def evaluate(rows: list) -> dict:
     save_in = 1.0 - tin2 / tin1 if tin1 else 0.0
     c4 = save_in >= MIN_TOKEN_SAVE
 
+    # ── V1 prompt_hash 混段披露 (2026-09-14, 用户裁"照跑+披露") ──
+    # 窗口内 V1 生产 prompt 变更过多次 (实测 9/1-4=1f53d632452b, 9/8=2fc05e73451f,
+    # 9/9-14=b6b8034c471a, 9/15 起=2cdcd4fa624e [v0.80 飞刀几何批])。本 eval 不按
+    # hash 分组 (窗口全混), 判据①-④照算; 此处只**如实披露**各 hash 段样本分布,
+    # 供裁决人读数时自行判断段间可比性 — 不改任何判据、不剔除任何样本。
+    _seg: dict = {}
+    for r in rows:
+        _h = str(r.get("prompt_v1_hash") or "MISSING")
+        _d = str(r.get("date") or "?")[:10]
+        _s = _seg.setdefault(_h, {"n": 0, "days": set()})
+        _s["n"] += 1
+        _s["days"].add(_d)
+    v1_hash_segments = {h: {"n": s["n"], "days": sorted(s["days"])}
+                        for h, s in sorted(_seg.items())}
+    hash_mixed_warning = None
+    if len(v1_hash_segments) > 1:
+        _parts = "; ".join(f"{h[:8]}×{s['n']}({s['days'][0]}~{s['days'][-1]})"
+                           for h, s in v1_hash_segments.items())
+        hash_mixed_warning = f"V1 prompt 窗口内 {len(v1_hash_segments)} 个 hash 段混算: {_parts}"
+
     if c1 and c2 and c3 and c4:
         verdict = "PROMOTE_PROPOSAL"
     elif c1 and c2 and c3 and not c4:
@@ -188,6 +208,8 @@ def evaluate(rows: list) -> dict:
         "worst_pair_diff": round(worst, 6) if worst is not None else None,
         "small_sample_flag": small_sample,
         "save_prompt_tokens": round(save_in, 4), "v1_tokens_in": tin1, "v2_tokens_in": tin2,
+        "v1_hash_segments": v1_hash_segments,
+        "hash_mixed_warning": hash_mixed_warning,
         "c1": c1, "c2": c2, "c3": c3, "c4": c4, "verdict": verdict,
     }
 
@@ -211,6 +233,12 @@ def main() -> int:
         print(f"T+1 配对: n={e['n_pairs']}{ss} 均值差={e['mean_diff']} 最差对={e['worst_pair_diff']}")
         print(f"prompt_tokens 降幅: {e['save_prompt_tokens']*100:.2f}% "
               f"(V1={e['v1_tokens_in']} V2={e['v2_tokens_in']})")
+        # 混段披露 (2026-09-14, 用户裁"照跑+披露"): V1 prompt 窗口内变更多次,
+        # 本 eval 不按 hash 分组 → 如实打印各段分布, 提醒裁决人段间可比性风险。
+        if e.get("hash_mixed_warning"):
+            print("⚠️ " + e["hash_mixed_warning"])
+            print("   (判据①-④按全窗口混算, 未剔除任何样本; v0.80 飞刀几何批使 9/15 夜"
+                  "起 V1 臂 hash=2cdcd4fa624e, V2 蒸馏臂未同步该约束)")
         print("判据① 有效≥%.0f%%且违约≤V1: %s" % (MIN_JSON_RATE * 100, "✓" if e["c1"] else "✗"))
         print("判据② 漂移≤%.0fpp: %s" % (MAX_DRIFT * 100, "✓" if e["c2"] else "✗"))
         print("判据③ 非劣(均值差≥%.2f%%): %s" % (NON_INFERIOR_FLOOR * 100, "✓" if e["c3"] else "✗"))
@@ -227,13 +255,14 @@ def main() -> int:
 
     try:
         from app.notifier.feishu import send_text
+        _mix_line = ("\n⚠️ " + e["hash_mixed_warning"] if e.get("hash_mixed_warning") else "")
         send_text(
             "📋 DA 蒸馏影子窗口裁决 (9/1-9/15)\n"
             f"live n={e.get('n_live', 0)} V2有效率={e.get('json_rate_v2', 0)*100:.2f}% "
             f"漂移={e.get('drift_dir', 0)*100:.2f}pp\n"
             f"①{'✓' if e.get('c1') else '✗'} ②{'✓' if e.get('c2') else '✗'} "
             f"③{'✓' if e.get('c3') else '✗'} ④{'✓' if e.get('c4') else '✗'}\n"
-            f"裁决: {e.get('verdict')}\n产物: {OUT_JSON}")
+            f"裁决: {e.get('verdict')}{_mix_line}\n产物: {OUT_JSON}")
         print("[distill-eval] 飞书已推送")
     except Exception as ex:
         print(f"[distill-eval] 飞书推送失败: {ex}")
