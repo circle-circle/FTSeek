@@ -225,6 +225,8 @@ except Exception:
 regime = '?'
 regime_detail = ''
 regime_stale = True
+_ts_s = ''
+_ass_age = 0
 try:
     import re as _re
     _ass_pat = _re.compile(
@@ -251,7 +253,10 @@ try:
             regime_detail = f"{_score} {_spy_part.strip()} VIX={_vix_log}"
             try:
                 _age = (_now_cst - datetime.strptime(_ts_s, '%Y-%m-%d %H:%M:%S')).total_seconds()
-                regime_stale = _age > 20 * 60
+                _ass_age = int(_age // 60)
+                # 16:00 ET 收盘后 playbook 循环停跑, Assessment 不再产出 → 陈旧是预期, 非故障
+                # (9/15 确诊: 每日最后一轮 04:30 CST=16:30 ET 必误报, 9/12 同样复现)
+                regime_stale = _age > 20 * 60 and now_et.hour < 16
             except Exception:
                 regime_stale = True
 except Exception:
@@ -363,6 +368,8 @@ if overnight_closed:
 
 if regime_stale:
     add(f"• 盘面: ⚠️ regime 实时评估缺失/陈旧 (market_regime Assessment 超20分钟未见), VIX={vix}({vix_src})")
+elif regime != '?' and now_et.hour >= 16 and _ass_age > 20:
+    add(f"• 盘面: regime={regime} {regime_detail} (收盘定格值, 末次评估{_ass_age}分钟前), VIX={vix}({vix_src})")
 else:
     add(f"• 盘面: regime={regime} {regime_detail}, VIX={vix}({vix_src})")
 
