@@ -236,6 +236,102 @@ def test_claim_type_enum_enforced():
                for v in L._validate_output_contract(s)["violations"])
 
 
+# ── 飞刀几何一致性机检 (v0.80, 2026-09-14) ─────────────────────────────────
+# 病灶: 盘前涨跌<-5% 的 LONG, chase_cap < 昨收×0.95(飞刀线) → 价格回升出飞刀区
+#   (唯一可成交时刻)必越禁追线 → B门与 chase_cap 终态闸联合成空集 = 结构性死指令。
+# 实证 9/14: HPE(昨收62.09/禁追58.00<58.98) / NOK(昨收11.13/禁追10.50<10.57)。
+def _knife_long(cap, prev_close=62.0894, pre_chg=-7.746, direction="BUY"):
+    s = _ok_long()
+    s["direction"] = direction
+    s["execution_plan"]["chase_cap_price"] = cap
+    snap = {"prev_close_price": prev_close, "pre_change_rate": pre_chg}
+    return s, snap
+
+
+def test_knife_geometry_fires_on_real_hpe():
+    """HPE 真实值: 禁追58.00 < 飞刀线58.98 → 必须命中。"""
+    s, snap = _knife_long(58.0)
+    v = L._validate_output_contract(s, snapshot=snap)["violations"]
+    assert any(x.startswith("knife_geometry_conflict") for x in v), v
+
+
+def test_knife_geometry_negative_prechange_parsed():
+    """回归钉: pre_change_rate 是**负数**字段 — 误用只接受正数的解析器会让门静默失效。
+
+    首版 bug: _as_num(-7.746)=None → 门对全部真实样本不触发 (假绿)。
+    本测试用真实负值, 若有人改回正数解析器即红。
+    """
+    s, snap = _knife_long(58.0, pre_chg=-7.746)
+    assert snap["pre_change_rate"] < 0, "fixture 必须是负涨跌幅 (钉住负数解析路径)"
+    assert any(x.startswith("knife_geometry_conflict")
+               for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_cap_above_line_ok():
+    """禁追线 ≥ 飞刀线 → 可成交窗非空, 不报。"""
+    s, snap = _knife_long(59.5)  # 59.5 > 58.98
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_cap_exactly_on_line_ok():
+    """边界: chase_cap 恰等于飞刀线 → 不报 (规则是 ≥, 非 >)。
+
+    fixture 用未 round 的精确乘积 — round 到 4 位会比真实线低 3e-5 而误触发,
+    测的就不是边界语义了。
+    """
+    s, snap = _knife_long(62.0894 * 0.95)  # 恰等于飞刀线
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_cap_just_below_line_fires():
+    """边界另一侧: 低于飞刀线 1e-6 也报 (规则严格是 <)。"""
+    s, snap = _knife_long(62.0894 * 0.95 - 1e-6)
+    assert any(x.startswith("knife_geometry_conflict")
+               for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+@pytest.mark.parametrize("pre_chg", [-4.9, -2.0, 0.0, 3.5])
+def test_knife_geometry_only_below_minus5(pre_chg):
+    """盘前未达 -5% 飞刀区 → 即便禁追线很低也不报 (B门只管 <-5%)。"""
+    s, snap = _knife_long(50.0, pre_chg=pre_chg)  # cap 远低于飞刀线
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_short_never_fires():
+    """B门只约束 LONG — SHORT 不报 (AAOI/NBIS 9/14 盘前-7%/-8% SHORT 均正常)。"""
+    s, snap = _knife_long(50.0, direction="SELL_SHORT")
+    s["execution_plan"]["stop_loss_price"] = 108
+    s["execution_plan"]["take_profit_price"] = 92
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_no_snapshot_no_violation():
+    """老调用点/测试不传 snapshot → 判定跳过, 零行为变更。"""
+    s, _ = _knife_long(58.0)
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s)["violations"])
+
+
+def test_knife_geometry_no_cap_no_violation():
+    """LLM 未写禁追线 (chase_cap=null) → 无冲突可判, 不报。"""
+    s, snap = _knife_long(None)
+    assert not any(x.startswith("knife_geometry_conflict")
+                   for x in L._validate_output_contract(s, snapshot=snap)["violations"])
+
+
+def test_knife_geometry_is_record_only_not_repairable():
+    """机检只报告不改 chase_cap (改价=改交易决策, 属门禁范畴非结构补全)。"""
+    s, snap = _knife_long(58.0)
+    r = L._validate_output_contract(s, snapshot=snap)
+    assert any(x.startswith("knife_geometry_conflict") for x in r["violations"])
+    assert "chase_cap" not in r["repairable"] and "prices" not in r["repairable"], \
+        "飞刀几何冲突不得进入定向补全白名单"
+
+
 def test_skip_requires_reason():
     r = L._validate_output_contract({"direction": "SKIP", "rating": "观望", "score": 4})
     assert "skip_reason_missing" in r["violations"]
@@ -561,6 +657,9 @@ class TestRound14:
         latest_changelog_version = next(
             line.split()[1].removeprefix("v")
             for line in changelog.splitlines() if line.startswith("## v"))
-        assert frontmatter_version == latest_changelog_version == "0.78"
+        # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
+        #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
+        #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
+        assert frontmatter_version == latest_changelog_version == "0.80"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
