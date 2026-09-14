@@ -7459,14 +7459,61 @@ _sl_burst_alerted = set()
 #   补上"为什么平仓失败"这一半黑暗 — 平仓失败=仓位卡住无止损保护, 切实盘后最致命.
 _close_fail_alerted = set()
 
+# 2026-09-14 (复核方修复, 用户裁「按照建议执行」建议①): 瞬态 pending 与终态失败分流.
+#   病灶: exit_lifecycle 的 8 个 `*_pending` error 语义是"成交证据尚未回流"(腿刚提交、
+#   券商回报未到), **不是失败**; 但三处调用点 (EXIT_HELD 7732 / EXIT_PENDING 8432 /
+#   SL_EXIT_PENDING 8062) 一律按 `not result["success"]` 升级为 `[playbook平仓失败]`
+#   ERROR + 飞书 HIGH("仓位可能卡住/无止损保护").
+#   生产实证 (2026-09-14 21:33 US.FCX SHORT 64, intent 959d5f30c267):
+#     21:33:09 leg2 MARKET 提交 → 21:33:12/22/32 快环三轮查到 pending → 3 条 ERROR + 1 条飞书
+#     → 21:33:43 leg2 FILLED_ALL 64股@67.835 → intent BOOKED, trade_records#1483 净 +$157.77,
+#       broker_qty_after=0.0 与 DB 一致 ⇒ 平仓全程成功, 告警窗口 34s 纯误报.
+#   同类误报日次: 9/11 20 条 / 9/12 12 条 / 9/14 6 条 (9/11 那 781 条 CLOSE_FAILED 是真事故,
+#   机制不同 — 本次分流对它零影响, 因其 error 不带 _pending 后缀).
+#   为何不按 intent age 判宽限: 三处调用点只有 _resume_playbook_exits 有 intent 上下文,
+#   另两处拿不到 created_at ⇒ 在本函数内自记"首次见到该 key 的时刻", 一处注入覆盖三处.
+#   终态零延迟 (宁可多告不可漏告): error 不以 `_pending` 结尾 (25 个, 含 9/11 事故根因
+#   exit_identity_required、exit_order_identity_conflict、exit_terminal_shortfall、
+#   exit_account_mismatch) 或 error 为空 ⇒ 立即 ERROR + 推送, 与修复前逐字同语义.
+_close_fail_first_seen = {}
+_TRANSIENT_PENDING_GRACE_S = 120.0
+#   宽限取值依据: sim 实测腿提交→回报落定 34s (LIMIT 3s 超时 + MARKET 30s deadline + 4s 回报
+#   滞后), 120s ≈ 3.5x 余量; 真卡单持续数分钟至数小时, 仍会升级告警, 只是晚 120s
+#   (该仓位的 broker SL 单仍挂着, 保护不因告警延后而消失).
 
-def _alert_close_failure(symbol: str, target_env: str, reason: str, detail: str) -> None:
-    """平仓失败结构化告警 (WARN 日志 + 飞书 HIGH). record-only, 不改平仓行为, 永不抛异常.
+
+def _alert_close_failure(symbol: str, target_env: str, reason: str, detail: str,
+                         *, error: str = "") -> None:
+    """平仓失败结构化告警 (ERROR 日志 + 飞书 HIGH). record-only, 不改平仓行为, 永不抛异常.
 
     2026-07-20 修复3b: 平仓失败意味着仓位卡住、无止损保护, 必须可见. monitor 每轮巡检
     命中同一失败会重复调用, 故按 symbol+当日+reason 去重, 避免刷屏 (进程重启后重记一次).
+
+    2026-09-14: 新增 keyword-only `error` (exit_lifecycle 的 error 码原文). 以 `_pending`
+    结尾 = 成交证据未回流的瞬态 ⇒ 首次只记 INFO, 超过 _TRANSIENT_PENDING_GRACE_S 才升级;
+    其余 (含 error 为空, 兼容未传该参数的调用点) = 终态失败, 立即升级. 见上方注释实证.
     """
     try:
+        _key = f"{symbol}:{date.today().isoformat()}:{reason}"
+        # ── 瞬态 pending 宽限分流 (见 _close_fail_first_seen 上方注释) ──
+        if str(error).endswith("_pending"):
+            _now = time.time()
+            _first = _close_fail_first_seen.setdefault(_key, _now)
+            if len(_close_fail_first_seen) > 512:
+                # 防长跑无界增长: 键含日期, 跨日自然换键, 此处清掉非今日的残留
+                _today = date.today().isoformat()
+                for _k in [k for k in _close_fail_first_seen if _today not in k]:
+                    _close_fail_first_seen.pop(_k, None)
+            _age = _now - _first
+            if _age < _TRANSIENT_PENDING_GRACE_S:
+                logger.info(
+                    f"[playbook平仓待回报] {symbol} ({target_env}) reason={reason} error={error} "
+                    f"age={_age:.0f}s < 宽限 {_TRANSIENT_PENDING_GRACE_S:.0f}s — "
+                    f"成交证据未回流, 暂不升级为失败告警 (超窗仍会告)"
+                )
+                return
+            detail = (f"{detail} (瞬态 pending 已持续 {_age:.0f}s > "
+                      f"宽限 {_TRANSIENT_PENDING_GRACE_S:.0f}s, 判定为真卡单)")
         logger.error(
             f"[playbook平仓失败] {symbol} ({target_env}) reason={reason} detail={detail} — "
             f"仓位可能卡住/无止损保护, 需人工核查"
@@ -7731,7 +7778,10 @@ def _resume_playbook_exits(*, allow_submit):
             if not result.get("success"):
                 _alert_close_failure(intent["symbol"], intent["target_env"],
                                      "EXIT_" + result.get("exit_state", "HELD"),
-                                     f"intent={intent['intent_id']} {result.get('error', '')}")
+                                     f"intent={intent['intent_id']} {result.get('error', '')}",
+                                     # 2026-09-14: 传 error 原文 → 瞬态 *_pending 走宽限分流,
+                                     # 终态 (identity_conflict 等) 仍零延迟告警. 见函数头注释实证.
+                                     error=result.get("error", ""))
         except Exception as error:
             logger.exception("[playbook] exit recovery failed intent=%s", intent["intent_id"])
             try:
@@ -8060,7 +8110,9 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                             exit_owner=_playbook_exit_owner(db_path, r, meta), exit_decision=decision)
                         if not close_res.get("success"):
                             _alert_close_failure(symbol, _row_target, "SL_EXIT_PENDING",
-                                                 close_res.get("error", "exit evidence pending"))
+                                                 close_res.get("error", "exit evidence pending"),
+                                                 # 2026-09-14: 同上 — 瞬态分流, 终态零延迟
+                                                 error=close_res.get("error", ""))
                             continue
                         exited += _book_playbook_exit_result(dual, close_res, conn)
                         continue
@@ -8430,7 +8482,9 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
                 if not close_res.get("success"):
                     _alert_close_failure(symbol, _row_target, "EXIT_PENDING",
-                                         close_res.get("error", "exit evidence pending"))
+                                         close_res.get("error", "exit evidence pending"),
+                                         # 2026-09-14: 传 error 原文 → 瞬态 *_pending 走宽限分流
+                                         error=close_res.get("error", ""))
                     continue
                 exited += _book_playbook_exit_result(dual, close_res, conn)
             except Exception as row_error:
@@ -8689,7 +8743,10 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                     raise
                 if not close_res.get("success"):
                     _alert_close_failure(symbol, _row_target, "EOD_EXIT_PENDING",
-                                         close_res.get("error", "exit evidence pending"))
+                                         close_res.get("error", "exit evidence pending"),
+                                         # 2026-09-14: 第四处同病调用点 (EOD 平仓走同一
+                                         # close_res.error 语义) — 瞬态 *_pending 走宽限分流.
+                                         error=close_res.get("error", ""))
                     continue
                 closed += _book_playbook_exit_result(dual, close_res, conn)
             except Exception as row_error:
