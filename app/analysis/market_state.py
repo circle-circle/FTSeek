@@ -148,13 +148,48 @@ class MarketStateChecker:
         获取 VIX 恐慌指数
 
         2026-04-20 升级: FRED CSV 优先 (无需 API key) → AlphaVantage → 跳过 Finnhub
-        
+
+        2026-09-14 修复 (盘前数据有效性审计, 用户裁「全部处理」P0-1), 两处病灶:
+          ① **兜底假值**: 原末行 `return 20.0  # 合理默认值` 使本函数**永不返回 None**,
+             于是 get_vix_cached() 文档承诺的 "取不到返回 None (fail-close 友好)"
+             是纸面的 — order_executor.py:3418 / playbook_service.py:932 两处
+             `if vix is None: 拒绝新仓` 分支**不可达**, VIX 源全挂时反倒放行
+             (与"回撤熔断静默失效"同型: 守卫恒不触发)。现改为如实返回 None,
+             兜底由调用方按各自语义显式声明 (vix_below_25 → fail-open True,
+             get_vix_regime → 显式 20.0, fail-close 侧 → 真拒绝)。
+          ② **口径分裂**: 原链路 FRED 日频优先, 而 regime 侧
+             (app/playbook/market_regime.py) 走 Futu VIXY×0.85 实时代理
+             (2026-08-03 修复)。同一天的 VIX 门读两个口径 —— 实测 2026-09-14
+             FRED VIXCLS 序列最新仅到 2026-09-10, 即执行硬拒门看的是 T-1/T-2
+             收盘值, **今日盘中 VIX 冲高在门上不可见**, 与"新鲜度 fail-close"
+             的注释意图相悖。现与 router 同条件补 VIXY 实时代理腿。
+          ⚠️ 富途不供指数快照 (实测 US.VIX/US.IXIC/US.DJI/US.SPX 全 `_error: empty`,
+             US.VIXY/US.SPY/US.QQQ 正常; 见 DEB-20260818-futu-capability-audit.md:89,144),
+             故代理腿取 US.VIXY 而非直查 US.VIX。
+
         Returns:
-            VIX 值或 None
+            VIX 值; 所有源均不可用返回 None (**不再兜底 20.0**)。
         """
         import requests
-        
-        # ★ 优先: FRED CSV (免费公开接口, 无需 key)
+
+        # ★ 0. 盘前/盘中: VIXY 实时代理优先 (与 MarketDataRouter 同口径同条件)
+        #    VIX 现货无盘前交易 (CBOE 现金指数不撮合), 此处是盘前唯一有效值。
+        #    盘中: 每 tick 变动, 捕捉当日 VIX 跳升 (FRED 日频做不到)。
+        #    盘后/周末: 仍走 FRED 日频 (代理收盘后意义不大, 且与既有行为一致)。
+        try:
+            from app.core.scheduler_triggers import get_market_phase, MarketPhase
+            if get_market_phase() in (MarketPhase.TRADING, MarketPhase.PRE_MARKET):
+                from app.data.vix_source import fetch_vixy_via_opend
+                vixy_vix = fetch_vixy_via_opend()
+                if vixy_vix is not None:
+                    return vixy_vix
+        except Exception as e:
+            # 不许静默降级 (W4 debug-swallow 棘轮): VIXY 代理取不到意味着口径
+            #   退化为 FRED 日频 (T-1/T-2) —— 这正是本次审计要暴露的那类退化。
+            logger.warning("VIXY 实时代理获取 VIX 失败 (口径降级为 FRED 日频/T-1): %s",
+                           e, exc_info=True)
+
+        # ★ 优先: FRED CSV (免费公开接口, 无需 key) — 日频, 盘后/周末主源
         try:
             fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             response = requests.get(fred_url, timeout=10)
@@ -197,8 +232,10 @@ class MarketStateChecker:
                 logger.debug(f"AlphaVantage 获取 VIX 失败: {e}")
 
         # Finnhub 已跳过 (key=*** 无效, 免费版也返回 0)
-        logger.debug("VIX 数据源均不可用 (FRED/AlphaVantage 失败), 返回默认值 20.0")
-        return 20.0  # 合理默认值
+        # 2026-09-14 (P0-1): 原此处 `return 20.0  # 合理默认值` — 兜底假值使
+        #   fail-close 分支恒不可达 (详见函数 docstring ①)。现如实返回 None。
+        logger.warning("VIX 数据源均不可用 (VIXY/FRED/AlphaVantage 全失败), 返回 None")
+        return None
     
     def spy_above_ma200(self) -> bool:
         """
@@ -338,7 +375,13 @@ class MarketStateChecker:
         else:
             vix = self._fetch_vix_data()
             if vix is None:
-                vix = 20.0  # 默认正常
+                # 显式 fail-open 兜底 (2026-09-14 澄清; 只改注释与日志, 行为不变):
+                #   20.0 落 VIX_REGIMES=(20,30) ⇒ "caution" ⇒ 仓位乘数 0.7。
+                #   即"取不到数据 → 偏保守", 与本处的 fail-open 意图一致 (故意不改成
+                #   fail-close, 见 tests/test_vix_single_source_contract.py)。
+                #   注意 20.0 不是 "normal"(1.0) —— 原注释"默认正常"与边界不符, 已纠正。
+                vix = 20.0
+                logger.warning("VIX 取数失败 (全源不可用), regime 兜底 20.0 → caution (仓位×0.7)")
         
         for regime, (low, high) in VIX_REGIMES.items():
             if low <= vix < high:

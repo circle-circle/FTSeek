@@ -288,9 +288,9 @@ def test_prompt_version_bumped_and_blind_spot_declared():
     """
     src = (REPO / "scripts" / "llm_universe_scan.py").read_text(encoding="utf-8")
     # 版本戳棘轮跟**当前**版号走 (升版者必须同时改这里 — 变红是设计意图, 不是回归)。
-    # v2.11→v2.12 (2026-09-12, P2.2 输入初筛段, 同为 brief/user 侧变更)。
-    assert 'PROMPT_VERSION = "v2.12"' in src, \
-        "版本戳已升过 v2.12 — 同步改本钉 (棘轮意图: 升版必留痕)"
+    # v2.12→v2.13 (2026-09-14, 市场佐证段时点诚实化, 同为 brief/user 侧变更)。
+    assert 'PROMPT_VERSION = "v2.13"' in src, \
+        "版本戳已升过 v2.13 — 同步改本钉 (棘轮意图: 升版必留痕)"
     # U1 的变更记录不得随后续升版被顺手抹掉 (删注释 = 归因链断, 9/11 前后样本不可分)。
     assert "v2.11=负反馈表口径两处修" in src, "U1 版号变更记录被删 — 归因链断"
     assert "归因盲区就地声明" in src and "只哈希 SYSTEM_PROMPT_V2" in src

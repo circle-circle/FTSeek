@@ -42,8 +42,9 @@
 | 项 | 说明 | 坑 |
 |---|---|---|
 | data/replay_bars/US_{SYM}_{DATE}.json | 1min bar 缓存 (fetch_bars 写) | **list-of-lists** [t,o,h,l,c] 非 dict; NONE 口径 (07-28 后); collector 与 L1 回放共享 |
-| data/sector_pulse.json | 盘中板块脉搏 30min | 凌晨为平盘噪声 (asof_et 判新鲜) |
-| data/deep_sector_rotation.json | 日更盘前轮动 (DA scanner 产) | 消费方: UE 佐证 + DA 个股材料 (07-28 接线前零消费) |
+| data/sector_pulse.json | 盘中板块脉搏 30min (cron ET 10:00-15:30) | 凌晨为平盘噪声 (asof_et 判新鲜); **盘前链路读到的必然是上一交易日** — DA 盘前只注入"上一已收盘交易日"且标签带日期 (2026-09-14 P1-1/P1-3); UE 生产两窗 (ET 07:40/09:10) 结构上不可得, 仅 midday 只读影子可见 |
+| data/deep_sector_rotation.json | 日更盘前轮动 (DA scanner 产, **ET 08:00** 写) | 消费方: UE 佐证 + DA 个股材料 (07-28 接线前零消费); **UE `--da-feed` 早跑 (ET 07:40) 结构上早于生产者 ⇒ 该窗次次落 capture 回退** (2026-09-14 P1-3 已显式留痕) |
+| data/shadow/universe_expansion_shadow.jsonl | 机械 capture (cron **ET 00:30** 日更) — UE 市场佐证回退源 | **`date` 是采集时刻的 ET 日期, 数字实为上一交易日收盘** (实测 date=2026-09-14 装的是 09-11 涨跌) ⇒ 消费方须用 `_prev_trading_day_str()` 还原数据日; 守卫对**未来日期**曾放行 (2026-09-14 P1-3 已修) |
 
 ## 读侧视图
 

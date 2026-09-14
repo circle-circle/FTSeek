@@ -161,7 +161,7 @@ def brief_evidence_index() -> List[Dict[str, Any]]:
     return [{k: e.get(k) for k in EVIDENCE_SCHEMA} for e in _BRIEF_EVIDENCE]
 
 
-PROMPT_VERSION = "v2.12"  # scan 落库归因戳; v2.12=P2.2 输入具名标的可交易性初筛段 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon, 用户裁"按设计计划执行落地"): clue brief 末尾按 **P1 同一资格口径**追加"可作直接交易候选 / 仅背景(context_only) / 未定(缺数据)"三态清单 —— 属 brief(user)侧**输入变更**, 故升版; 材料一条不删、全程 fail-open、扫描期口径刻意不含执行时微结构门(报价新鲜度/点差/借券, 见 _scan_phase_policy); ⚠ 与 v2.11 同族盲区**再次出现**: PROMPT_HASH_V2(:195) 只哈希 SYSTEM_PROMPT_V2 ⇒ 本变更不改哈希(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.11/v2.12**; 分段请改用本批同时落库的 brief_template_version(=ue_brief_v3) / brief_template_hash / brief_content_hash —— P2.5 已把该基建补上, 所以这次是"缺口已兑现"而非"又添一个盲区"(盲区记录见下方 v2.11 段与 tests/test_ue_contract_validator.py::test_brief_only_bump_leaves_hash_identical_to_v210); 同批 P2.4 引证三态 / P2.6 空转跳批均为**代码侧附加留痕与预算守卫**, 不改模型输入, 不单独占版号; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.13"  # scan 落库归因戳; v2.13=市场佐证段**时点诚实化** (2026-09-14, DEB-20260914-premarket-data-validity-audit §一 P1-3, 用户裁"诚实化+补时点标签"): [市场佐证] 三条源 (DA 日更盘前轮动 / 机械 capture 回退源 / 当日盘中脉搏) 的渲染行补齐**数据时点口径** —— 修前模型看到的是**无日期**的 "轮入板块: XLK(Technology) +1.32%", 无从判断是今日还是上一交易日, 而实测该回退源的数字**本就是上一交易日收盘**(capture 的 date 是采集时刻 ET 日期, cron ET 00:30) 且 `published_at` 也照抄该采集日 ⇒ 时点错一个交易日; 同批修①生产两窗 (ET 07:40 da_feed / 09:10) 结构上永不成立却挂着"盘中板块脉搏(实时)"标签的**失实声明**(实测唯一命中者是 ET 12:30 的 `--midday` **只读影子** ⇒ 该输入从未进过任何生产指令), ②`_age_days` 负数(未来日期)被放行的守卫缺口, ③脉搏分支 `except: pass` 静默吞错 → 显式留痕。**刻意不放宽守卫**: 盘前仍不注入上一交易日脉搏 — DEB-20260729 §十 作者按其价值判断"建议不修"(pulse 真归宿是盘中板块 veto, 至今仍在参数冻结后排队), 本批只消除"宣称有而实际没有"的静默, 不改变该价值判断; 材料一条不增不外扩、全程 fail-open; ⚠ 与 v2.11/v2.12 同族盲区**第三次出现**: 本变更改的是 brief(user)侧渲染 ⇒ `PROMPT_HASH_V2` 只哈希 SYSTEM_PROMPT_V2 故**哈希不变**(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.12 前后**; 分段必须改用本批同步升版的 `BRIEF_TEMPLATE_VERSION=ue_brief_v4` + `brief_template_hash`/`brief_content_hash` (三指纹基建见 P2.5, 已于 2026-09-13 起落进 scan 与 thinking-eval 两条记录) — 即"缺口已兑现": 用户裁要分段时历史轮次**有键可切**; ⚠ 另: thinking-eval 预注册判据 (ledger cron 1e96c03c945e, 到期 2026-09-22) 的切分键是 `prompt_hash`, 本批**不动判据**(改判据＝改尺子须用户裁, DEB-20260910 §17.6 已在待裁项), 但本批使该序列新增一个 brief 分段点(v3→v4), 故 9/22 读数须按 `brief_template_version` 分段后再判"有效轮次"; v2.12=P2.2 输入具名标的可交易性初筛段 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon, 用户裁"按设计计划执行落地"): clue brief 末尾按 **P1 同一资格口径**追加"可作直接交易候选 / 仅背景(context_only) / 未定(缺数据)"三态清单 —— 属 brief(user)侧**输入变更**, 故升版; 材料一条不删、全程 fail-open、扫描期口径刻意不含执行时微结构门(报价新鲜度/点差/借券, 见 _scan_phase_policy); ⚠ 与 v2.11 同族盲区**再次出现**: PROMPT_HASH_V2(:195) 只哈希 SYSTEM_PROMPT_V2 ⇒ 本变更不改哈希(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.11/v2.12**; 分段请改用本批同时落库的 brief_template_version(=ue_brief_v3) / brief_template_hash / brief_content_hash —— P2.5 已把该基建补上, 所以这次是"缺口已兑现"而非"又添一个盲区"(盲区记录见下方 v2.11 段与 tests/test_ue_contract_validator.py::test_brief_only_bump_leaves_hash_identical_to_v210); 同批 P2.4 引证三态 / P2.6 空转跳批均为**代码侧附加留痕与预算守卫**, 不改模型输入, 不单独占版号; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -244,7 +244,8 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 #                           **不可**当分段键 (每天都变)。
 # 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
 #   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
-BRIEF_TEMPLATE_VERSION = "ue_brief_v3"   # v3 = P2.1 材料索引 + P2.2 输入初筛段
+BRIEF_TEMPLATE_VERSION = "ue_brief_v4"   # v4 = 市场佐证段时点口径 (2026-09-14, PROMPT_VERSION v2.13)
+                                         #  v3 = P2.1 材料索引 + P2.2 输入初筛段
 # [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
 #   planned_* 记的是"生成时刻的数值与口径", 而 default_stop_pct/default_tp_pct/
 #   KNIFE_FLOOR_PCT/CHASE_ZONE_PCT 任一改动都会让同一份 planned_* 的含义漂移
@@ -964,45 +965,98 @@ def _gather_news(hours: int) -> List[Dict[str, Any]]:
     return items
 
 
+def _prev_trading_day_str(dstr: str) -> str:
+    """`dstr`(YYYY-MM-DD) 之前的**上一个美股交易日**; 日历不可用时原样返回 (fail-open)。
+
+    2026-09-14 (DEB-20260914-premarket-data-validity-audit §一 P1-3) 为什么需要它:
+    回退源 `universe_expansion_shadow.jsonl` 的 `date` 是**写入时刻的 ET 日期**
+    (writer `scripts/universe_expansion_shadow.py` `date = _today_et_str()`, cron 是
+    ET 00:30), 而那一刻取到的行情是**上一交易日收盘** ⇒ 记录 date=2026-09-14 装的是
+    09-11(周五)的板块涨跌。消费端此前把该 date 当数据时点透传 (published_at),
+    **时点错一个交易日** —— 与本批其它条目同族("时点不清的值被当成实时值用")。
+    """
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        _d = datetime.strptime(dstr, "%Y-%m-%d").date()
+        _p = get_holiday_calendar().prev_trading_day("US", _d)
+        if _p is not None:
+            return _p.isoformat()
+    except Exception as _e:
+        print(f"  [warn] 上一交易日推算失败 ({_e}) → 时点口径退回原 date")
+    return dstr
+
+
 def _gather_market_corroboration() -> Dict[str, Any]:
-    """市场佐证: 板块轮动/异动.
+    """市场佐证: 板块轮动/异动. **每条材料都必须自带数据时点口径**。
 
     2026-07-28 (板块级联批, 用户裁"要动"): 主源升级为 deep_sector_rotation.json —
-    每日盘前生成 (07:42 ET) 含 sector_changes 数字, 但此前仓内零消费者 ("有人生成
-    没人吃"): 07-27 它明确标注 Technology -1.44% 最弱, UE 却因只读周更机械影子
-    capture 而对芯片满舵 BUY (TSM -95 实证)。周更 capture 降为 fallback。
-    盘中脉搏 sector_pulse.json (若存在且新鲜) 一并注入。
+    DA 每日**盘前 (ET 08:00, cron 20:00 CST 的 DA 链)** 生成, 含 sector_changes 数字,
+    但此前仓内零消费者 ("有人生成没人吃"): 07-27 它明确标注 Technology -1.44% 最弱,
+    UE 却因只读机械影子 capture 而对芯片满舵 BUY (TSM -95 实证)。capture 降为 fallback。
+
+    ⚠ 2026-09-14 时点诚实化批 (DEB-20260914 §一 P1-3, 用户裁"诚实化+补时点标签") 修正了
+    本函数此前**三处失实/无时点**的声明 (全部实测取证, 非读注释推断):
+      ① 原写"每日盘前生成 (07:42 ET)" —— 实为 DA 在 **ET 08:00** 写 ⇒ UE 的 **da_feed
+         早跑 (ET 07:40)** 结构上**永远早于生产者 20 分钟**, 该窗次次落到 capture 回退;
+      ② 原写"周更机械影子 capture" —— 该 capture (**ET 00:30** 日更) 的 `date` 是写入
+         时刻的 ET 日期, 而当时取到的行情是**上一交易日收盘** ⇒ 数字的真实数据日是
+         `date` 的前一交易日 (由 `_prev_trading_day_str` 还原, 见其 docstring);
+      ③ 原写"盘中脉搏 (若存在且新鲜) 一并注入" + 渲染标签"盘中板块脉搏(实时)"——
+         **生产两窗 (ET 07:40 / 09:10) 结构上永不成立** (脉搏由 sector_pulse.py 在
+         ET 10:00-15:30 写), 唯一能命中"当日"的是 **ET 12:30 的 `--midday` 只读影子**
+         ⇒ 该输入从未进过任何生产指令。此处**只修"声明失实"与"时点不清", 不放宽守卫**:
+         盘前不注入上一交易日脉搏 —— DEB-20260729 §十 作者按其价值判断建议"不修"
+         (pulse 的真归宿是盘中板块 veto, 至今仍挂在参数冻结后排队), 本批保留该**价值
+         判断**, 但"宣称有而实际没有"的静默必须消除 (丢弃时显式留痕)。
+    返回 dict 的 `date` = **数据实际所属交易日** (不是采集时刻), `caliber`/`caliber_pulse`
+    为可读口径串, 由调用方渲染进行首 (改渲染 ⇒ 已升 PROMPT_VERSION v2.13 + ue_brief_v4)。
     """
     out: Dict[str, Any] = {}
-    # ── 主源: 每日盘前板块轮动 ──
+    # ── 主源: DA 日更盘前板块轮动 (守卫: 必须是**今日**盘前那一版) ──
     try:
         _rot_p = _ROOT / "data" / "deep_sector_rotation.json"
         if _rot_p.exists():
             _rot = json.loads(_rot_p.read_text())
             if str(_rot.get("date", "")) == _today():
                 _chg = _rot.get("sector_changes") or {}
+                _gen = str(_rot.get("generated_at", "") or "")
                 out = {
                     "date": _rot.get("date"),
+                    "caliber": (f"DA 日更盘前轮动 {_rot.get('date')} 盘前生成"
+                                + (f" (generated_at {_gen})" if _gen else "")),
                     "strong_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("strongest") or [])[:3]],
                     "weak_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("weakest") or [])[:3]],
                     "movers": [],
                     "mover_symbols": [],
                 }
+            else:
+                # 不许静默替换: 回退源与主源的**口径不同** (见 docstring ①②), 替换必须可见。
+                print(f"  [info] 主源 deep_sector_rotation date={_rot.get('date') or '缺失'} "
+                      f"!= 今日 {_today()} → 落 capture 回退 (da_feed 07:40 窗结构上早于 "
+                      f"DA 08:00 生产, 见 DEB-20260914 §一 P1-3)")
     except Exception as _re:
         print(f"  [warn] deep_sector_rotation 读取失败: {_re}")
-    # ── 盘中脉搏补充 (sector_pulse.py 产出, 盘中 30min 更新) ──
+    # ── 盘中脉搏补充 (sector_pulse.py 产出, 盘中 ET 10:00-15:30 每 30min 覆写) ──
     try:
         _pulse_p = _ROOT / "data" / "sector_pulse.json"
         if _pulse_p.exists():
             _pu = json.loads(_pulse_p.read_text())
-            if str(_pu.get("date", "")) == _today() and _pu.get("ranked"):
-                out.setdefault("date", _pu.get("date"))
+            _pu_date = str(_pu.get("date", "") or "")
+            if _pu_date == _today() and _pu.get("ranked"):
+                out.setdefault("date", _pu_date)
+                out["caliber_pulse"] = f"当日盘中脉搏 (asof {_pu.get('asof_et', '?')} ET)"
                 out["intraday_pulse"] = _pu["ranked"]
-    except Exception:
-        pass
+            else:
+                # 显式留痕 (原为 `except Exception: pass` 式的静默): 盘前窗日复一日走到这里,
+                #   不打印就无人知道这条输入从未生效过。
+                print(f"  [info] 盘中脉搏未注入: date={_pu_date or '缺失'} != 今日 {_today()} "
+                      f"(脉搏在 ET 10:00-15:30 写, UE 生产窗 07:40/09:10 结构上不可得; "
+                      f"仅 midday 只读影子可见 — DEB-20260914 §一 P1-3)")
+    except Exception as _pe:
+        print(f"  [warn] 盘中脉搏读取失败 (降级, 无脉搏行): {_pe}")
     if out:
         return out
-    # ── fallback: 周更机械影子 capture (原逻辑) ──
+    # ── fallback: 机械影子 capture (原逻辑) ──
     recs = _read_jsonl(_MECH_CAPTURE_PATH)
     caps = [r for r in recs if r.get("type") == "capture"]
     if not caps:
@@ -1020,8 +1074,22 @@ def _gather_market_corroboration() -> Dict[str, Any]:
         print(f"  [warn] 市场佐证 capture 已陈旧 (date={_cap_date or '?'}, {_age_days}d) → 跳过, "
               f"LLM 落回新闻+硬事件推理")
         return {}
+    # [2026-09-14 P1-3] 未来日期守卫: `_age_days` 为**负数**时原逻辑直接放行
+    #   (守卫只写 `> 4`) ⇒ writer 时钟可疑时, 未来日期的数据会被当成"最新"消费。
+    #   与上面陈旧守卫同一意图的对称面: 宁可落回新闻+硬事件, 不消费无法定位时点的数据。
+    if _age_days < 0:
+        print(f"  [warn] 市场佐证 capture 日期在未来 (date={_cap_date}, {_age_days}d) → 跳过, "
+              f"writer 时钟可疑; LLM 落回新闻+硬事件推理")
+        return {}
+    # [2026-09-14 P1-3] 时点还原: capture 的 `date` 是**写入时刻的 ET 日期** (cron ET 00:30),
+    #   而那一刻的行情是**上一交易日收盘** ⇒ 数据真实所属交易日 = date 的前一交易日。
+    #   旧代码把这个采集日当数据时点透传给 published_at (实测差一个交易日) 且渲染进 brief
+    #   的文本里**没有任何时点** —— 模型无从判断是今日还是上一交易日。
+    _cap_session = _prev_trading_day_str(_cap_date)
     return {
-        "date": last.get("date"),
+        "date": _cap_session,
+        "caliber": (f"机械 capture 回退源 (采集于 {_cap_date} ET 盘前) — "
+                    f"**数据为上一交易日 {_cap_session} 收盘涨跌**, 非今日盘中"),
         "strong_sectors": [f"{s['etf']}({s['name']}) {s['change_pct']:+}%"
                            for s in last.get("strong_sectors", [])],
         "weak_sectors": [f"{s['etf']}({s['name']}) {s['change_pct']:+}%"
@@ -1800,20 +1868,26 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     health.append(f"佐证:{mkt.get('date') or '无/陈旧'}")
     if mkt:
         parts.append("\n[市场佐证 (板块轮动/异动)]")
+        # [2026-09-14 P1-3] 时点口径**必须出现在模型看得到的正文里**: 上述三条源的采集
+        #   时刻/数据所属交易日各不相同 (DA 日更盘前轮动 / capture 的上一交易日收盘 /
+        #   当日盘中脉搏), 旧渲染只给光秃秃的板块涨跌行 ⇒ 模型无从判断时点。
+        _cal = str(mkt.get("caliber") or "").strip()
+        _cal_p = str(mkt.get("caliber_pulse") or "").strip()
+        _cal_pre = f" [{_cal}]" if _cal else ""
         _mkt_facts: List[Dict[str, Any]] = []
         if mkt.get("strong_sectors"):
             _mkt_facts.append(_fact("market_corroboration",
-                                    "轮入板块: " + ", ".join(mkt["strong_sectors"]),
+                                    f"轮入板块{_cal_pre}: " + ", ".join(mkt["strong_sectors"]),
                                     published_at=mkt.get("date"),
                                     event_key="sector_rotation_in"))
         if mkt.get("weak_sectors"):
             _mkt_facts.append(_fact("market_corroboration",
-                                    "轮出板块: " + ", ".join(mkt["weak_sectors"]),
+                                    f"轮出板块{_cal_pre}: " + ", ".join(mkt["weak_sectors"]),
                                     published_at=mkt.get("date"),
                                     event_key="sector_rotation_out"))
         if mkt.get("movers"):
             _mkt_facts.append(_fact("market_corroboration",
-                                    "宇宙外异动: " + ", ".join(mkt["movers"][:12]),
+                                    f"宇宙外异动{_cal_pre}: " + ", ".join(mkt["movers"][:12]),
                                     # symbols 取 gather 现场的结构化字段 (与渲染串同处产出),
                                     #   不再从成品串反解 —— 见 _ticker_symbols 注释的实测缺陷。
                                     symbols=(mkt.get("mover_symbols") or [])[:12],
@@ -1821,7 +1895,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                                     event_key="out_of_universe_movers"))
         if mkt.get("intraday_pulse"):
             _mkt_facts.append(_fact("market_corroboration",
-                                    "盘中板块脉搏(实时): "
+                                    f"盘中板块脉搏 [{_cal_p or '当日盘中'}] (实时): "
                                     + ", ".join(str(x) for x in mkt["intraday_pulse"][:11]),
                                     published_at=mkt.get("date"),
                                     event_key="intraday_sector_pulse"))

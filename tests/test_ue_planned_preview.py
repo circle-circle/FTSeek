@@ -192,10 +192,10 @@ class TestRulerUnchanged:
         改 SYSTEM_PROMPT_V2 / PROMPT_HASH_V2 = 中途换 A/B 尺子, 须用户裁。
         本测试变红即代表有人把 P3 做成了改 prompt。
         """
-        assert ue.PROMPT_VERSION == "v2.12"
+        assert ue.PROMPT_VERSION == "v2.13"
         assert ue.PROMPT_HASH_V2 == "70e4680597af"
         assert len(ue.SYSTEM_PROMPT_V2) == 2582
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v3"
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v4"
 
     def test_planned_preview_version_is_its_own_ruler(self):
         """输入版本与落库审计版本分尺: 改 planned 口径不该逼着升 prompt 版。"""

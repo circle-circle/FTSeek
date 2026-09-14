@@ -92,7 +92,9 @@ class SentimentData:
     """情绪数据"""
     news_sentiment: float = 0.0  # -1.0 ~ 1.0, Finnhub 原生
     articles_count: int = 0
-    vix: float = 20.0  # 当前 VIX
+    vix: Optional[float] = None  # 当前 VIX; None = 取不到 (2026-09-14: 原为 20.0 哨兵,
+    #   使"缺失"与"真值恰为 20.0"不可区分。消费方 instruction_generator 的
+    #   market_state_overlay 已按 `or 20.0` 显式兜底 (fail-open), 故语义不变。
     quality: str = "missing"
 
 
@@ -196,26 +198,34 @@ class PlaybookDataCollector:
         self.futu_ext = futu_extended
 
     # 2026-08-22 (P1-2): VIX 全市场指标单次拉取缓存 — 逐标的实例化是浪费
+    # 2026-09-14 (P2, 用户裁「全部处理」): 改走**执行门同源**的 market_state 检查器。
+    #   原实现走 AlphaVantageProvider.get_vix() —— 两个病灶:
+    #   ① 失败兜底 `return 20.0` 假值 (调用方用 `vix != 20.0` 猜"缺失", 真值等于
+    #      20.0 时反被误判缺失; 20.0 又恰好卡在 overlay 档位边界上);
+    #   ② 盘前/盘后走 FRED 日频 (T-1/T-2) ⇒ 与执行门/regime 侧的 VIXY 实时代理
+    #      不同口径 (盘前恰恰是本链路的运行时段)。
+    #   现改为 get_checker().get_vix_cached() (盘前/盘中优先 VIXY 实时代理, 30min
+    #   缓存) —— Playbook 看到的就是 VIX 硬门看到的那个数; 取不到如实 None。
+    #   缓存语义: 只要 ts>0 即视为"已有结果", **None 也缓存 5min** —— 否则每只标的
+    #   都要重连一次 OpenD (连接风暴, 见 data_collector 顶部限流注释)。
     _vix_cache = {"value": None, "ts": 0}
     _VIX_CACHE_TTL = 300  # 5 分钟
 
     def _get_vix_cached(self):
-        """VIX 全市场指标, 5分钟缓存, 避免逐标的重复实例化 AlphaVantageProvider"""
+        """VIX 全市场指标 (执行门同源), 5分钟缓存; 取不到返回 None (不造 20.0)。"""
         import time as _time
         now = _time.time()
-        if (self._vix_cache["value"] is not None and
-            now - self._vix_cache["ts"] < self._VIX_CACHE_TTL):
+        if self._vix_cache["ts"] > 0 and now - self._vix_cache["ts"] < self._VIX_CACHE_TTL:
             return self._vix_cache["value"]
         try:
-            from app.data.alphavantage_provider import AlphaVantageProvider
-            av = AlphaVantageProvider()
-            vix = av.get_vix()
-            self._vix_cache["value"] = vix
-            self._vix_cache["ts"] = now
-            return vix
+            from app.analysis.market_state import get_checker
+            vix = get_checker().get_vix_cached()
         except Exception as e:
             logger.debug(f"Failed to get VIX: {e}")
-            return 20.0
+            vix = None
+        self._vix_cache["value"] = vix
+        self._vix_cache["ts"] = now
+        return vix
 
     def collect(self, symbol: str) -> PlaybookData:
         """收集单只股票的 6 维度数据"""
@@ -759,7 +769,9 @@ class PlaybookDataCollector:
 
             # 3. VIX (2026-08-22 P1-2: 全市场指标走缓存, 不逐标的实例化)
             vix = self._get_vix_cached()
-            vix_quality = "ok" if vix != 20.0 else "missing"
+            # 2026-09-14 (P2): 原为 `vix != 20.0` —— 用"值等于哨兵"猜缺失, 真值恰为
+            #   20.0 时反被判缺失 (且 20.0 正好卡在 overlay 档位边界)。现 None 即缺失。
+            vix_quality = "ok" if vix is not None else "missing"
 
             # 综合质量
             if sentiment_quality == "ok" and vix_quality == "ok":

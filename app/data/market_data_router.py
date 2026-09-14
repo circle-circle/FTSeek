@@ -966,9 +966,12 @@ class MarketDataRouter:
                 if get_market_phase() in (MarketPhase.TRADING, MarketPhase.PRE_MARKET):
                     quote = self.futu.get_quote("US.VIXY")
                     if quote and quote.get("price", 0) > 0:
-                        vix_est = round(quote["price"] * 0.85, 2)
-                        logger.info(f"[Router] VIX (Futu VIXY实时): VIXY=${quote['price']:.2f} → VIX≈{vix_est:.2f}")
-                        return vix_est
+                        # 2026-09-14 (P0-1): 换算系数收敛到单一真源 app/data/vix_source.py
+                        from app.data.vix_source import vixy_to_vix
+                        vix_est = vixy_to_vix(quote["price"])
+                        if vix_est is not None:
+                            logger.info(f"[Router] VIX (Futu VIXY实时): VIXY=${quote['price']:.2f} → VIX≈{vix_est:.2f}")
+                            return vix_est
             except Exception as e:
                 logger.warning(f"[Router] Futu VIXY 获取失败: {e}")
         if self.av:

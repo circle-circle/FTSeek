@@ -3417,6 +3417,10 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         from app.analysis.market_state import get_checker
         _vix_val = get_checker().get_vix_cached()
         if _vix_val is None:
+            # 2026-09-14 (盘前数据有效性审计 P0-1): 本分支自上线起**不可达** —
+            #   market_state._fetch_vix_data 末行恒 `return 20.0`, 故 None 永不出现,
+            #   守卫纸面化 (同型: 回撤熔断静默失效)。该函数已改为如实返回 None,
+            #   本分支自此真实生效: VIXY/FRED/AV 全失败 → 拒新仓 (fail-close)。
             logger.warning(
                 f"🔒 [VIX_FAILCLOSE] {symbol} VIX数据不可用，拒绝新仓"
             )

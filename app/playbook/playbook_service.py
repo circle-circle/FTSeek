@@ -928,6 +928,11 @@ class PlaybookService:
         if _vix_gate_on:
             _vix_val = None
             try:
+                # 2026-09-14 (盘前数据有效性审计 P0-1): 紧随其后的 `if _vix_val is None`
+                #   分支自上线起**不可达** — 上游 market_state._fetch_vix_data 末行恒
+                #   `return 20.0`, 故注释宣称的"新鲜度 fail-close"当时是纸面的 (与
+                #   order_executor 同款同因)。上游已改为如实返回 None, 本分支自此真实生效,
+                #   且上游现于盘前/盘中优先取 Futu VIXY 实时代理 (不再读 T-1 FRED 日频)。
                 from app.analysis.market_state import get_checker as _get_vix_checker
                 _vix_val = _get_vix_checker().get_vix_cached()
             except Exception as _vix_err:

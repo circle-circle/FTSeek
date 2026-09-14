@@ -101,6 +101,15 @@ async def run_sentiment_analysis(
             vix_val = fng_data.get("vix", {}).get("value", 0)
             vix_regime = fng_data.get("vix", {}).get("regime", "normal")
 
+            # 2026-09-14 (P2 口径诚实化): 该覆盖用的是**加密** Fear&Greed (见
+            #   _fetch_fear_greed docstring) —— 对齐口径后本块逻辑一字未改, 只加
+            #   告警让"用 BTC 情绪覆盖美股方向"这件事在日志里可见可统计。
+            _fng_src = (fng_data.get("fear_greed") or {}).get("index", "?")
+            if _fng_src != "equity_fear_greed":
+                logger.info("[sentiment_analyst] 方向覆盖依据含非 equities 情绪源 "
+                            "(index=%s, BTC 口径): fng=%s vix_regime=%s",
+                            _fng_src, fng_val, vix_regime)
+
             if fng_val <= 25 and vix_regime == "high_vol":
                 result["direction"] = "偏空"  # Extreme Fear + high VIX = bearish
             elif fng_val >= 75 and vix_regime == "calm":
@@ -123,11 +132,22 @@ async def run_sentiment_analysis(
 
 
 async def _fetch_fear_greed() -> Optional[Dict]:
-    """获取 CNN Fear & Greed Index + VIX (市场整体情绪, free, no key)"""
+    """获取**加密市场** Fear & Greed (alternative.me) + VIX 现货 (Yahoo)。
+
+    ⚠️ 源口径澄清 (2026-09-14, 盘前数据有效性审计 P2 — 只改标注, 不改判定):
+      本函数原 docstring 写 "CNN Fear & Greed Index" —— **不实**。
+      `api.alternative.me/fng/` 是 **Bitcoin/加密市场** 的 Fear & Greed
+      (CNN 那个是 equities 指数, 无此免费接口)。两者在极端行情下并不同步:
+      BTC 情绪受加密自身叙事 (ETF 流向/减半/监管) 驱动, 拿它做**美股个股**的
+      方向覆盖属于口径错配 —— 但本函数是 record 侧供给, 判定逻辑另行裁决,
+      本次只在返回值里把口径写实 + 加告警, 不改任何方向判定。
+      另: Yahoo `^VIX` 是**现货指数**, 盘前/盘后无撮合 ⇒ 该值等于上一交易日收盘
+      (与 DA/UE 侧"VIX 现货无盘前交易, 只能取 VIXY 代理"同一条事实), 故标注 caliber。
+    """
     try:
         import requests
 
-        # Fear & Greed Index
+        # Fear & Greed Index (⚠️ 加密市场口径, 非 CNN equities 指数 — 见 docstring)
         fng_resp = await asyncio.get_event_loop().run_in_executor(
             None, lambda: requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
         )
@@ -137,6 +157,12 @@ async def _fetch_fear_greed() -> Optional[Dict]:
             fng_data = {
                 "value": int(d.get("value", 50)),
                 "classification": d.get("value_classification", "Neutral"),
+                # 口径自述 (2026-09-14): 让消费方/报告能一眼看出这不是 equities 指数
+                "index": "crypto_fear_greed",
+                "index_provider": "alternative.me",
+                "is_equity_index": False,
+                "caliber_note": ("BTC/加密市场情绪, 非 CNN equities Fear&Greed; "
+                                 "作风险偏好代理使用, 极端行情下与美股情绪可背离"),
             }
 
         # VIX (from Yahoo Finance, free)
@@ -158,6 +184,11 @@ async def _fetch_fear_greed() -> Optional[Dict]:
                     "52w_high": vix_52w_high,
                     "52w_low": vix_52w_low,
                     "regime": "high_vol" if vix_price >= 25 else "calm" if vix_price <= 15 else "normal",
+                    # 口径自述 (2026-09-14): 现货 VIX 无盘前/盘后撮合 ⇒ 非盘中时段
+                    #   该值恒等于上一交易日收盘, 别当成实时读数用
+                    "caliber": "spot_index",
+                    "caliber_note": ("VIX 现货指数 (Yahoo ^VIX); 盘前/盘后=上一交易日收盘 "
+                                     "(现货无盘前交易), 盘中代理见仓内 vix_source (VIXY×0.85)"),
                 }
 
         if not fng_data and not vix_data:
@@ -166,7 +197,11 @@ async def _fetch_fear_greed() -> Optional[Dict]:
         return {
             "fear_greed": fng_data,
             "vix": vix_data,
-            "source": "alternative.me + yahoo finance",
+            # 2026-09-14 (P2): 原文案 "alternative.me + yahoo finance" 不点明口径,
+            #   读的人会默认 fear_greed 是 CNN equities 指数 (实际是 BTC)。
+            "source": "alternative.me(BTC/加密 Fear&Greed) + yahoo finance(^VIX 现货)",
+            "caliber_warning": ("fear_greed 为加密市场口径 (非 equities); "
+                                "vix 现货在非盘中时段恒等于上一交易日收盘"),
         }
     except Exception as e:
         logger.debug(f"[sentiment] Fear&Greed/VIX error: {e}")

@@ -561,7 +561,11 @@ class AlphaVantageProvider:
             fh_data = fh_resp.json()
             fh_price = fh_data.get("c", 0)
             if fh_price and fh_price > 0:
-                vix_est = round(fh_price * 0.85, 2)
+                # 2026-09-14 (P0-1): 换算系数收敛到单一真源 app/data/vix_source.py
+                from app.data.vix_source import vixy_to_vix
+                vix_est = vixy_to_vix(fh_price)
+                if vix_est is None:
+                    return None
                 result = {"vix": vix_est, "source": "finnhub_vixy"}
                 self.cache[cache_key] = result
                 self.cache_time[cache_key] = datetime.now()

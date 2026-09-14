@@ -1005,10 +1005,12 @@ class TestNoModelInputDrift:
     """P3.3-3.5 不碰模型输入 — 四项指纹必须原样 (与 P3.1 收口时逐值相同)。"""
 
     def test_prompt_rulers_unchanged(self):
-        assert ue.PROMPT_VERSION == "v2.12"
+        # 版号钉跟当前版号走 (v2.13 = 2026-09-14 市场佐证段时点诚实化); 哈希/长度两条
+        #   是**真正的**"不碰 SYSTEM_PROMPT_V2"钉子 —— 本批为 brief 侧变更, 两者不得移动。
+        assert ue.PROMPT_VERSION == "v2.13"
         assert ue.PROMPT_HASH_V2 == "70e4680597af"
         assert len(ue.SYSTEM_PROMPT_V2) == 2582
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v3"
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v4"
 
     def test_compute_numbers_return_shape_unchanged(self):
         """P3.3-3.5 没动 _compute_numbers ⇒ 返回面仍是 P3.1 的 4 键。"""

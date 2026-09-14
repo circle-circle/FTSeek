@@ -258,9 +258,13 @@ class VIXMonitor:
             if price and price > 0:
                 # VIXY → VIX 转换: 正常 contango 下 VIXY ≈ VIX * 1.15~1.20
                 # 保守取 0.85 (略低估, 避免误触发 HIGH_VOL 拦截)
-                vix_est = price * 0.85
+                # 2026-09-14 (P0-1): 换算系数收敛到单一真源 app/data/vix_source.py
+                from app.data.vix_source import vixy_to_vix
+                vix_est = vixy_to_vix(price)
+                if vix_est is None:
+                    return None
                 logger.debug("VIX (Finnhub/VIXY proxy): VIXY=$%.2f → VIX≈%.2f", price, vix_est)
-                return round(vix_est, 2)
+                return vix_est
         except Exception as e:
             logger.debug("Finnhub VIXY 获取失败: %s", e)
         return None

@@ -2557,13 +2557,18 @@ _SECTOR_TO_PULSE = (
 )
 
 
-def _gather_intraday_evidence(data_router, symbol: str, direction: str) -> Optional[Dict[str, Any]]:
+def _gather_intraday_evidence(data_router, symbol: str, direction: str,
+                              data_root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     """盘中方向证据叠加 (2026-07-30 Phase1, 用户裁"统一" — record-only 零行为变更)。
 
     背景: technical 三票/VWAP 门/sector_pulse/订单流四层盘中方向证据各自存在但互不
     通气且无预测力检验。本函数在 topup 指令落库时把证据并排写进 raw.evidence —
     S1 记分牌按"证据一致度"切片, 胜出者才升确认/否决门 (Phase2, 另裁)。
     失败返 None 不阻断落库; 板块名与 pulse 键不匹配时 pulse_chg=null 如实缺省。
+    [P1-2 2026-09-14] 板块脉搏须为**当日 ET** 读数 (sector_pulse.json 由盘中 cron
+    每 30min 覆写, 盘前窗 ET 08:45-09:30 拿到的必然是上一交易日收盘读数) —
+    非当日则 pulse_chg=null 并记 pulse_stale_reason, 绝不把昨收读数冒充日内;
+    当日读数另记 pulse_date/pulse_age_min 供 scoreboard 按陈旧度切片。
     """
     try:
         raw = data_router.get_full_market_context(symbol) if data_router else None
@@ -2580,25 +2585,61 @@ def _gather_intraday_evidence(data_router, symbol: str, direction: str) -> Optio
             "ticker_buy_sell_ratio": raw.get("ticker_buy_sell_ratio"),
             "volume_ratio": raw.get("volume_ratio"),
             "sector": None, "sector_pulse_chg": None, "pulse_asof_et": None,
+            # [P1-2 2026-09-14, 用户裁「全部处理」] 脉搏新鲜度留痕 — 见下方块
+            "pulse_date": None, "pulse_age_min": None, "pulse_stale_reason": None,
         }
         # 板块脉搏: symbol→sector (deep_sector_rotation) × 实时涨跌 (sector_pulse)
         try:
             import json as _json
-            _root = Path(__file__).resolve().parents[2] / "data"
+            # data_root 仅供测试注入 (默认走生产 data/): 脉搏新鲜度守卫需要构造
+            #   "陈旧/当日"两种文件, 而测试禁止写生产 data/ (tests/conftest.py)。
+            _root = data_root if data_root is not None else (
+                Path(__file__).resolve().parents[2] / "data")
             _rot = _json.loads((_root / "deep_sector_rotation.json").read_text())
             _sec = (_rot.get("symbol_sectors") or {}).get(symbol)
             ev["sector"] = _sec
             _pl = _json.loads((_root / "sector_pulse.json").read_text())
             _chg = _pl.get("changes") or {}
-            if _sec:
-                _hit = _chg.get(_sec)
-                if _hit is None:  # 关键词映射 (两侧板块名库不同源, 映射不上如实 null)
-                    _sl = _sec.lower()
-                    _pk = next((pk for kws, pk in _SECTOR_TO_PULSE
-                                if any(kw in _sl for kw in kws)), None)
-                    _hit = _chg.get(_pk) if _pk else None
-                ev["sector_pulse_chg"] = _hit
+            # ── [P1-2 2026-09-14, 用户裁「全部处理」盘前数据有效性审计] ────────────
+            # 病根: 原实现读 sector_pulse.json 只记 `asof_et` (如 "15:30") **不记日期**,
+            #   且**无任何新鲜度检查**。该文件由 scripts/sector_pulse.py 在盘中每 30min
+            #   覆盖写 (cron: CST 22:00-23:30 + 00:00-03:30 = ET 10:00-15:30) ⇒
+            #   ① topup 盘前窗 (ET 08:45-09:30) 读到的**必然是上一交易日**的收盘读数
+            #      (周一更跨周末 = 3 天前), 却记成"盘中脉搏 asof 15:30";
+            #   ② 若脉搏 cron 挂掉, 可以是任意久的旧文件。
+            #   后果: 该 evidence 会被写进 raw_instruction.evidence 供 S1 记分牌按
+            #   "证据一致度"切片 (胜出者才升确认/否决门, Phase2) —— 陈旧读数被当成
+            #   当日盘中读数参与切片, 污染候选证据。本条 record-only, 不动任何交易
+            #   行为, 只把"这份读数到底新不新"如实记下来。
+            # 修法: ① 只接受 date == 当日 ET 的脉搏 (盘前窗必然为旧 ⇒ 如实 null 并
+            #   写明原因, 不拿昨收读数冒充日内); ② 补记 pulse_date 与 pulse_age_min,
+            #   让 scoreboard 能按陈旧度切片而不是被动继承一个无日期的 "15:30"。
+            _today_et_s = _today_et_str()
+            _p_date = str(_pl.get("date", "") or "")
+            if _p_date != _today_et_s:
+                ev["pulse_stale_reason"] = (
+                    f"脉搏日期 {_p_date or '缺失'} != 当日 ET {_today_et_s} (非当日盘中读数)")
+            else:
+                ev["pulse_date"] = _p_date
                 ev["pulse_asof_et"] = _pl.get("asof_et")
+                try:
+                    _asof = str(_pl.get("asof_et", "") or "")
+                    _hh, _mm = (int(x) for x in _asof.split(":")[:2])
+                    _now = datetime.now(_now_et())
+                    # 同 ET 日内的"分钟差"即可: 跨日情形已被上面的 date 守卫拒掉,
+                    #   故不必做完整日期运算。负值 = 时钟偏差, 如实 null 不取绝对值。
+                    _age = ((_now.hour * 60 + _now.minute) - (_hh * 60 + _mm))
+                    ev["pulse_age_min"] = _age if _age >= 0 else None
+                except Exception:
+                    ev["pulse_age_min"] = None
+                if _sec:
+                    _hit = _chg.get(_sec)
+                    if _hit is None:  # 关键词映射 (两侧板块名库不同源, 映射不上如实 null)
+                        _sl = _sec.lower()
+                        _pk = next((pk for kws, pk in _SECTOR_TO_PULSE
+                                    if any(kw in _sl for kw in kws)), None)
+                        _hit = _chg.get(_pk) if _pk else None
+                    ev["sector_pulse_chg"] = _hit
         except Exception:
             pass
         # 一致度计数: 可用证据里与方向同向的份数 (方向无关统一式: sign × 证据正负)
