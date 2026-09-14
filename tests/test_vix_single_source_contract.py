@@ -22,8 +22,10 @@
   2. `get_vix_cached()` 如实传播 None ⇒ 两处 fail-close 分支真实可达;
   3. VIXY→VIX 换算仅有 `app/data/vix_source.py::vixy_to_vix` 一个入口,
      三个原复制点不得再出现字面量换算;
-  4. 盘前/盘中优先 VIXY 实时代理 (与 router 同条件), 且**禁止直查 US.VIX**
+  4. 盘前/盘中优先 VIXY 实时代理, 且**禁止直查 US.VIX**
      (富途不供指数快照, 实测 `_error: empty`; DEB-20260818 §89/§144);
+     "哪些阶段算代理窗口"须走单一入口 `vix_source.is_vixy_proxy_window`
+     (四消费方一致性钉在 tests/test_vix_proxy_window_single_source.py);
   5. 显式 fail-open 的两处调用方 (`vix_below_25` / `get_vix_regime`) 语义不变。
 
 回滚: 删本文件 + 还原 market_state._fetch_vix_data 末行 `return 20.0` 与三处
@@ -152,17 +154,25 @@ class TestNoNumericFallback:
         assert 18.0 not in consts, "禁止恢复数值兜底"
         assert None in consts, "全源失败必须如实返回 None"
 
-    def test_vixy_leg_is_guarded_to_premarket_and_trading(self):
-        """代理腿只在盘前/盘中生效 (与 router 同条件), 盘后/周末仍走 FRED 日频。
+    def test_vixy_leg_uses_shared_proxy_window(self):
+        """代理腿的窗口判据只能来自单一真源, 不得在本函数内自带一份。
+
+        (2026-09-14 追加: 原断言直接在本函数体里找 "PRE_MARKET"/"TRADING" 字符串。
+        用户裁「修复再提交」后, 这条判据收敛为 `vix_source.is_vixy_proxy_window()`
+        —— 修前它在本函数与 router / alphavantage_provider / vix_monitor 四处
+        各写一份且分成两派, 实测盘前同刻两个 VIX (执行门 14.71 vs 看板 17.84)。
+        窗口内容本身由 tests/test_vix_proxy_window_single_source.py 钉住 +
+        四消费方一致性断言, 故此处改钉"调用单一入口"。)
 
         且**禁止直查 US.VIX** —— 富途不供指数快照 (实测 `_error: empty`;
         DEB-20260818-futu-capability-audit.md:89,144), 只能取 US.VIXY 代理。
         """
         node = _func_node("app/analysis/market_state.py", "_fetch_vix_data")
         strings = _code_strings(node)
-        body = ast.dump(node)
-        assert "PRE_MARKET" in body and "TRADING" in body, \
-            "代理腿必须限定在盘前/盘中 (与 MarketDataRouter 同条件)"
+        names = {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
+        names |= {sub.attr for sub in ast.walk(node) if isinstance(sub, ast.Attribute)}
+        assert "is_vixy_proxy_window" in names, \
+            "代理腿必须走单一真源 is_vixy_proxy_window (禁止自带阶段元组)"
         assert "US.VIX" not in strings, "禁止直查 US.VIX"
         assert "US.VIXY" not in strings, "取数统一走 vix_source.fetch_vixy_via_opend"
 

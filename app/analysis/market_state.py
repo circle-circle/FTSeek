@@ -176,10 +176,13 @@ class MarketStateChecker:
         #    VIX 现货无盘前交易 (CBOE 现金指数不撮合), 此处是盘前唯一有效值。
         #    盘中: 每 tick 变动, 捕捉当日 VIX 跳升 (FRED 日频做不到)。
         #    盘后/周末: 仍走 FRED 日频 (代理收盘后意义不大, 且与既有行为一致)。
+        #    窗口判据 (哪些阶段算代理窗口) 收敛在单一真源:
+        #    app/data/vix_source.py::is_vixy_proxy_window —— 2026-09-14 追加修复,
+        #    修前这条规则在 4 个 VIX 生产者里各写一份且分成两派, 实测盘前会出现
+        #    两个 VIX (执行门 14.71 vs 看板 vix_cache 17.84), 见 DEB-20260914 §八。
         try:
-            from app.core.scheduler_triggers import get_market_phase, MarketPhase
-            if get_market_phase() in (MarketPhase.TRADING, MarketPhase.PRE_MARKET):
-                from app.data.vix_source import fetch_vixy_via_opend
+            from app.data.vix_source import fetch_vixy_via_opend, is_vixy_proxy_window
+            if is_vixy_proxy_window():
                 vixy_vix = fetch_vixy_via_opend()
                 if vixy_vix is not None:
                     return vixy_vix

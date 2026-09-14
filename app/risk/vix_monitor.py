@@ -61,10 +61,11 @@ class VIXMonitor:
     """
     VIX 指数监控器
 
-    数据源优先级:
-    1. FRED CSV API (免费、稳定、无频率限制)
-    2. AlphaVantage API
-    3. Yahoo Finance (按需)
+    数据源优先级 (2026-09-14 更正; 原文只列 FRED/AV/Yahoo, 漏了 VIXY 且未写窗口):
+      代理窗口 (盘前/交易时段, 判据 app/data/vix_source.py::is_vixy_proxy_window):
+        1. Finnhub VIXY 实时代理 (VIXY×0.85)  2. FRED CSV  3. AlphaVantage  4. Yahoo
+      其余时段 (盘后/隔夜/周末): 1. FRED CSV  2. AlphaVantage  3. Finnhub VIXY  4. Yahoo
+      全失败 → None (fail-close, 消费方各自降级; 见 CACHE_MAX_AGE_SECONDS 注释)
     """
 
     def __init__(self, api_key: str = None):
@@ -156,28 +157,36 @@ class VIXMonitor:
         # 网络请求在锁外执行 (避免阻塞其他线程)
         # P0 修复 (2026-06-21): 交易时段优先 Finnhub VIXY (实时), FRED 降为 fallback
         # 根因: FRED VIXCLS 是日频序列, 盘中永不变 → Rapid Regime Change 检测失效
-        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        # 2026-09-14 (用户裁「修复再提交」): 窗口判据收敛到单一真源
+        #   app/data/vix_source.py::is_vixy_proxy_window — 修前此处是
+        #   `is_trading = phase == TRADING`, 即**盘前走 FRED-first**, 而执行门/regime
+        #   走 VIXY-first ⇒ 同刻两个 VIX (本函数写的 data/vix_cache/vix_data.json
+        #   实测 17.84 vs 执行门 14.71), 而本缓存供看板 data_service / day_score /
+        #   order.thesis / data_health_check 读 ⇒ 人看到的值与系统决策用的值不是同一个。
+        #   方向按 2026-08-03 事故证据统一 (盘前 FRED 滞后 2-3 天污染 regime)。
+        from app.core.scheduler_triggers import get_market_phase
+        from app.data.vix_source import is_vixy_proxy_window
         phase = get_market_phase()
-        is_trading = phase == MarketPhase.TRADING
 
-        if is_trading:
-            # 交易时段: VIXY 实时 → FRED 日频 fallback
-            vix = self._fetch_vix_finnhub()
-            if vix is None:
-                vix = self._fetch_vix_fred()
-            if vix is None:
-                vix = self._fetch_vix_alphavantage()
-            if vix is None:
-                vix = self._fetch_vix_fallback()
-        else:
-            # 非交易时段: FRED 日频 → VIXY fallback
-            vix = self._fetch_vix_fred()
-            if vix is None:
-                vix = self._fetch_vix_alphavantage()
-            if vix is None:
-                vix = self._fetch_vix_finnhub()
-            if vix is None:
-                vix = self._fetch_vix_fallback()
+        # 两种尝试顺序 (首个非 None 者胜) — 顺序由单一判据决定, 不再各写一份 if/else
+        _vixy_first = (
+            self._fetch_vix_finnhub,        # VIXY 实时代理 (×0.85 单一真源)
+            self._fetch_vix_fred,           # FRED 日频 fallback
+            self._fetch_vix_alphavantage,
+            self._fetch_vix_fallback,       # Yahoo ^VIX (最后兜底, 失败返回 None)
+        )
+        _fred_first = (
+            self._fetch_vix_fred,           # FRED 日频 (T-1 收盘, 盘后/隔夜/周末此刻是真值)
+            self._fetch_vix_alphavantage,
+            self._fetch_vix_finnhub,
+            self._fetch_vix_fallback,
+        )
+        _order = _vixy_first if is_vixy_proxy_window(phase) else _fred_first
+        vix = None
+        for _fetch in _order:
+            vix = _fetch()
+            if vix is not None:
+                break
 
         if vix:
             self._mark_success()

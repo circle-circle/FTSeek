@@ -507,8 +507,18 @@ class AlphaVantageProvider:
         20.0, 真值 18.44 在 16:02:21 才到缓存).
 
         优先级:
-        交易时段: Finnhub VIXY (实时) → FRED (日频 fallback) → None
-        非交易时段: FRED (日频) → Finnhub VIXY → None
+        代理窗口 (盘前/交易时段, 判据见 app/data/vix_source.py::is_vixy_proxy_window):
+            Finnhub VIXY (实时) → FRED (日频 fallback) → None
+        其余时段: FRED (日频) → Finnhub VIXY → None
+
+        2026-09-14 (用户裁「修复再提交」): 原判据是 `phase == TRADING` ⇒ 盘前走
+        FRED-first, 与执行门/regime 的 VIXY-first 分裂 (实测同刻 17.84 vs 14.71)。
+        方向按 2026-08-03 事故证据 (盘前 FRED 滞后 2-3 天污染 regime) 统一为盘前
+        也走代理; 窗口判据收敛到单一真源。
+        ⚠️ 缓存 TTL **仍按 is_trading 分档** (60s 盘中 / 600s 盘外) — 两件事:
+        TTL 管的是"多久允许再打一次 API"(急变捕捉 vs 调用频率), 窗口管的是
+        "哪个源优先"。盘前不必 60s 轮询 (VIXY 盘前成交稀疏), 故刻意**不**合并,
+        避免顺手把 API 调用率抬 10 倍。
 
         Returns:
             VIX 真实值, 或 None (所有源均失败).
@@ -524,8 +534,9 @@ class AlphaVantageProvider:
                 # cache 仅在真实获取成功时写入, 故命中即为真值
                 return self.cache.get(cache_key, {}).get("vix")
 
-            if is_trading:
-                # ── 交易时段: 优先 Finnhub VIXY 实时代理 ──
+            from app.data.vix_source import is_vixy_proxy_window
+            if is_vixy_proxy_window(phase):
+                # ── 代理窗口 (盘前/交易时段): 优先 Finnhub VIXY 实时代理 ──
                 vix = self._fetch_finnhub_vixy(cache_key)
                 if vix is not None:
                     return vix
@@ -534,7 +545,7 @@ class AlphaVantageProvider:
                 if vix is not None:
                     return vix
             else:
-                # ── 非交易时段: FRED 日频优先 (稳定) → Finnhub VIXY fallback ──
+                # ── 盘后/隔夜/周末: FRED 日频优先 (T-1 收盘此刻是真值) → VIXY fallback ──
                 vix = self._fetch_fred_vix(cache_key)
                 if vix is not None:
                     return vix

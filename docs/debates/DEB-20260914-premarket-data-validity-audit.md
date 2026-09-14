@@ -18,6 +18,9 @@
 恒缺却被覆盖审计掩盖**、**板块脉搏无日期且无新鲜度守卫**），并把"缺失/陈旧"从**静默**改为
 **显式**（prompt 里写明、审计里具名、日志里可见）。策略面零改动 ⇒ 本批的效果是"让现有
 判据看到真实的输入"，不是"改变判据"。
+**追补（§八，用户裁「修复再提交」）**：同族第四条 —— 重启后实测"**哪些阶段该走 VIXY 代理**"
+这条判据在 4 个生产者的每一处都写着、还分成两派，盘前同刻出现两个 VIX（执行门 14.71 /
+看板 17.84）⇒ 收敛为单一入口 `vix_source.is_vixy_proxy_window`（§8.1 有事故依据）。
 
 ---
 
@@ -168,3 +171,108 @@ UE 边际价值低，**建议不修** —— pulse 的真归宿是盘中板块 v
 3. 本批未覆盖的影子面：`raw_instruction.evidence` 的 S1 记分牌切片需在下一次读数时**按 `pulse_stale_reason` 分组**重算（本批只是让该分组第一次可用）。
 4. **UE 侧（P1-3 追加批）**：下次 07:40 / 09:10 生产的 stdout 应出现 `[info] 盘中脉搏未注入 …`（证明这条输入从未生效、且现在可见）；若 DA 当日未产出轮动文件，还应出现 `[info] 主源 … 落 capture 回退`。**取证时务必核对 brief 正文里的口径串**（`data/shadow/llm_universe_scan.jsonl` 已落 `brief_template_version=ue_brief_v4` 与 `brief_template_hash`）。
 5. **thinking-eval 9/22 到期读数（有到期日，优先级最高）**：先按 `brief_template_version` 把轮次切成 v3/v4 两段（现有 6 轮早于三指纹基建，`brief_template_version=None` ⇒ 属"**无从分段**"的既成事实，须如实标注），再判"有效轮次≥10"；**不得**把 v2.9→v2.13 的轮次混成同一序列宣布毕业（P0.5 明令禁止）。切分键要不要从 `prompt_hash` 改成 `brief_template_version` ＝ 改判据 ⇒ **须用户裁**（DEB-20260910 §17.6 待裁项）。
+
+---
+
+## 六、交付留痕（2026-09-14 17:0x，用户裁「按照建议执行」）
+
+用户就"提交 / 重启 / 9-22 读数"三问裁「**按照建议执行**」⇒ 本 DEB 记录三项决定：
+
+| 决定 | 内容 | 依据 |
+|---|---|---|
+| **提交** | **`41ae0675b`**（24 文件，+1548 / −67）。门禁标签 `[hotfix]`（staged 面含 `app/pipeline/order_executor.py` 触发高风险门；按仓内体例 f2f2333e3 标 hotfix，**本批不引入架构决策 ⇒ 决策记录是本 DEB 而非 ADR，不硬凑编号**）。未纳入：`config/unified_config.yaml`（UE 兜底换档，他批）与 `scripts/cutover_*.py` 等并行工作流在途产物。连带提交 `handoff.md` / `docs/debates/README.md`（经查 `README.md` **只含本批索引行**，`handoff.md` 连带切换基建批两条增量） | 本 DEB §二 回滚表 |
+| **不重启** ~~（已作废）~~ | ~~`app/` 那 9 个文件**不在本批重启**：重启时机留给要一起上线的那批，避免未验收批单独上生产。代价显式记账：执行侧 VIX fail-close 的可达性在重启前仍在纸面~~ ⇒ **用户后续裁「重启观察」已覆盖**：2026-09-14 17:34:15 完成重启，见 §七（代价已解除、功能已实证） | 本批 §一 P0-1 + handoff §⑥ |
+| **9/22 读数延后裁** | thinking-eval 到期读数先按 `brief_template_version` 切段；**切段后若有效轮次不足 10，届时另行提请用户裁"该读数还算不算数"**——改判据本批**不代裁** | §五.5 + DEB-20260910 §17.6 |
+
+**本条为追补**：`handoff.md` 中本批条目头部的版号与追记（`已提交 41ae0675b`）系提交后追补，该追补文本**不在 `41ae0675b` 内**，随下一次提交入库（仓内 `handoff.md` 追补钩子体例）。
+
+---
+
+## 七、重启与观察（2026-09-14 17:33–17:55，用户后续裁「重启观察」⇒ 覆盖 §六 的"不重启"）
+
+**执行**：`systemctl restart ftseek-us` 17:33:54 → 17:34:15（21s），`MainPID=1348442`（旧 1330923），**`NRestarts=0`**；冒烟 7/7 绿 exit=0；启动段 ERROR/CRITICAL/Traceback **0**；台账 pre/post/复核三次采样逐字相同（两库 `open_positions` 指纹与 14:23 基线同值）⇒ 零数据污染。**§六"不重启"决定已被用户裁覆盖**，其记录的代价（fail-close 停留在纸面）**已解除**。
+
+**功能验收（只读探针，非推理）**：`MarketStateChecker._fetch_vix_data()` 正常路径 → **14.71**（VIXY×0.85，走新增的 `app/data/vix_source.py`）；**强制全源失败 → `None`** ⇒ `order_executor.py:3418` / `playbook_service.py:932` 的 `if vix is None: 拒绝新仓` **自 17:34 起真实可达**（本 DEB §一 P0-1 的修复目标达成）。加载一致性：进程启动时刻 17:34:15 晚于全部 `app/` 文件 mtime（≤16:12:46），且 `deploy_freshness_check.py` 由 `stale_drift=7465s` 转为两次静默 exit=0。
+
+### §七.1 ⚠️ 新发现：盘前 VIX 口径分裂**并未消除，只是分裂对象换了一侧**（须另裁）
+
+| 消费方 | 盘前取值 | 依据 |
+|---|---|---|
+| 执行门（`market_state` → `order_executor` / `playbook_service`）+ regime 侧（`market_regime` → router） | **14.71**（VIXY×0.85，新鲜代理） | 本批新增的 PRE_MARKET·TRADING 代理腿 |
+| `app/risk/vix_monitor.py`（VIX Monitor 循环）→ `data/vix_cache/vix_data.json` → **看板 `data_service` / `day_score` / `order.thesis` / `data_health_check`** | **17.84**（FRED 日频，昨日收盘） | `vix_monitor.py:172-180`：**仅 `phase==TRADING` 走 VIXY-first；`PRE_MARKET` 走 FRED-first**（本批未动） |
+
+**改动前后的分裂面对比（实测，不是推断）**：改前 `git show HEAD~1:app/analysis/market_state.py | grep -c "VIXY\|vix_source"` = **0** ⇒ 执行门与 `vix_monitor` 同为 FRED(17.84) **一致**、与 regime(VIXY) **不一致**；改后执行门与 **regime 对齐（14.71）**、与 **`vix_monitor`→看板（17.84）出现新分歧**。**净效果**：驱动仓位的那一门移到了"新鲜侧"（与仓位缩放同源），而**人看的看板仍显示 T-1 值**。两侧各有道理（盘前 VIX 现货不撮合：FRED = 昨日真收盘但陈旧；VIXY×0.85 = 代理但新鲜）⇒ **改任一侧都是消费者可见的行为变更，须另开辩论**；本批（`41ae0675b`）按"不改变调用方兜底/分支语义"原则**未动 `vix_monitor` 的 phase 顺序**（该文件在该提交里只做了 ×0.85 字面量 → 真源的逐字同值替换）。
+
+> **已闭环**：用户随后裁「**修复再提交**」⇒ §七.1 的"须另开辩论"由该裁决就地满足，收敛方案与证据见 **§八**（`vix_monitor` 的 phase 顺序在 §八 已改；本文 §7.1 的"未动"仅描述 `41ae0675b` 时点的状态）。
+
+**后续观察点**（本条未验，留待 2026-09-14 晚间）：19:40 `--da-feed`、20:00 DA v0.79 首轮、21:10 UE premarket 三段（核对 `brief_template_version=ue_brief_v4` 落库，并核对三条源渲染行的时点口径串首次出现在生产 brief 正文里）。
+
+---
+
+## 八、盘前 VIX 口径收敛（2026-09-14 18:2x，用户裁「修复再提交」⇒ 就地裁决 §七.1 的"须另开辩论"）
+
+§七.1 明确写了"改任一侧都是消费者可见的行为变更，**须另开辩论**"。用户就此直接裁「**修复再提交**」—— 该裁决即为本次辩论，故**不另立 DEB**，方向按 §七.1 已列的证据定（不是偏好选择，见下表"方向依据"）。
+
+### §8.1 根因：不是某处写错，而是**同一条规则写了四份、且分成两派**
+
+§一 P0-1 收敛了"VIXY→VIX 的**换算系数**"（0.85 的唯一入口），但**漏掉了同等重要的另一半**："**哪些市场阶段该走代理**"这条判据当时仍散在 4 个生产者里，且分两派：
+
+| 生产者 | 修前判据 | 盘前派别 |
+|---|---|---|
+| `app/data/market_data_router.py::get_vix_or_none` | `phase in (TRADING, PRE_MARKET)` | A 派（代理） |
+| `app/analysis/market_state.py::_fetch_vix_data` | 同上（本批 §一 P0-1 新增） | A 派（代理） |
+| `app/data/alphavantage_provider.py::get_vix_or_none` | `phase == TRADING` | **B 派（日频）** |
+| `app/risk/vix_monitor.py::get_vix` | `phase == TRADING` | **B 派（日频）** |
+
+⇒ 实测同刻两个 VIX：执行门/regime **14.71** vs `vix_cache`（看板）**17.84**（§七.1）。**方向依据**（既有事故，非口味）：2026-08-03 regime 精准性验证 —— 盘前 FRED VIXCLS 更新滞后 2–3 天，7/31 盘前生成的 **23 条指令全用 7/29 的 20.66**，与 SPY 实际波动 12.4% 脱节、污染 regime（`market_data_router.py:955-963` + obsidian `2026-08-03_regime_validation`）。事实基础：VIX 现货（CBOE 现金指数）**盘前不撮合**，VIXY 是 ETF、有盘前成交 ⇒ 盘前唯一"可用且新鲜"的 VIX 就是代理值。故 **B 派向 A 派对齐**。
+
+### §8.2 改动（1 真源 + 4 消费方；判据/阈值零改动）
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `app/data/vix_source.py` | 新增 `VIXY_PROXY_PHASES = ("PRE_MARKET", "TRADING")` + `is_vixy_proxy_window(phase=None)`，**唯一判据入口**（只决定**尝试顺序**，不取数、不兜底）。取不到 phase ⇒ **fail-open 为 True** 且告警可见（只影响顺序，代理失败必继续回落 ⇒ 无害；反向 fail-closed 会在时钟坏时静默退回 T-1 陈旧值 —— 正是本族病灶形态，不能反向引入） |
+| 2 | `app/analysis/market_state.py` | 代理腿条件由自带元组改为 `is_vixy_proxy_window()`（**行为不变**，只去重复） |
+| 3 | `app/data/market_data_router.py` | 同上（**行为不变**） |
+| 4 | `app/data/alphavantage_provider.py` | 顺序判据由 `is_trading` 改为 `is_vixy_proxy_window(phase)`；**cache TTL 仍按 `is_trading` 分档（60s/600s）刻意不动** —— TTL 管"多久允许再打一次 API"，窗口管"哪个源优先"，两件事；合并会把盘前 API 调用率抬 10 倍 |
+| 5 | `app/risk/vix_monitor.py` | 两套 `if is_trading / else` 顺序链折叠为**一个 order 元组**（首个非 None 者胜），判据同 1；顺带更正类 docstring 的数据源优先级（原文只列 FRED/AV/Yahoo，漏 VIXY 且未写窗口） |
+
+未纳入（明确列举，防"顺手改"）：① `app/risk/position_exit_monitor.py::_get_vix` —— **退出参数域，P0.5 明令不动**；其降级腿用 `vixy_close * 1.05`（与 0.85 口径相反、且 ~20% 偏高），**仅记录不改**，待退出域另开辩论时一并处理；② `app/plan/analysts/sentiment_analyst.py` 的 Yahoo `^VIX` 现货 —— 已在 §一 P2 标注口径，本次不动；③ `app/data/yahoo_provider.py` 委托 `VIXMonitor` ⇒ **自动继承**本次口径（无需改，但已确认）。
+
+### §8.3 生效面 / 血溅半径（诚实列全，含"人读文本"那一处）
+
+| 消费方 | 变化 | 性质 |
+|---|---|---|
+| 看板 VIX 数值（`web_dashboard/data_service`）、`data_health_check` 文本 | 盘前 17.84 → ~14.71 | **显示值变化**（人看到的值与系统决策用的值自此一致） |
+| `web_dashboard/order/thesis.py`（两处 `ctx["vix"]` 展示） | 同上 | 显示值变化，无门控 |
+| **`app/plan/day_score.py` 的 VIX 因子** | 17.84 落在 `(15,20]` ⇒ **无分支（0 分）**；14.71 `< 15` ⇒ **+10 分 + 追加"VIX=…低位，市场稳定有利趋势"/"可适度放大仓位追趋势"** | ⚠️ **本批最需盯的一处（见下）** |
+|  其下游①：`us_pipeline/battle_plan_manager.py::check_trade` 的 `level=="AVOID" → 拒绝新仓` **硬门** | 盘前 score **抬高 10 分** ⇒ 在"FRED 说 15–20 / 代理说 <15"的日子可能**跨出 AVOID**（例：44→54）⇒ 原先被拒的新仓改为放行 | **门控行为变化**（方向：更接近真实波动，但确属放宽） |
+| ⤷ 其下游②：看板 `routes/battle_plan.py` 的 `level` / `risk_budget_pct` / `daily_risk_budget` | `NORMAL(20%)` ↔ `STRONG(30%)` 之间可能移位（level 边界 75/60/45）| 给操作员的仓位预算建议变化（"看板是实盘手动操作台"，人会照此手操） |
+| 执行门（`order_executor`/`playbook_service`）、regime 侧 | **无变化**（本已是代理派） | — |
+| Finnhub 调用次数（AV / vix_monitor 盘前） | 成功时省一次 FRED；失败时多一次 Finnhub | 量级 ≤1 次/缓存周期（AV 600s / vix_monitor 180s） |
+| 失败面 | 代理腿失败仍回落原链（FRED→AV→Yahoo，顺序不变） | **无新增失败面** |
+
+**关于 day_score 那一处必须说清（本批唯一具有门控后果的副作用）**：
+①**它不是纯展示**——`day_score` 的 `score → level` 既进 `battle_plan_manager.check_trade()` 的 `level=="AVOID" → 拒绝新仓` **硬门**，又进看板的 `risk_budget_pct`（20%/30%）/`daily_risk_budget` 建议值；盘前 +10 分是真实的判分位移（**方向为"更宽松"**：低 VIX 加仓建议 + 更少被 AVOID 拒）。
+②**精度边界**：14.71 距 15 这条边界仅 **0.29（~2%）**，而 VIXY 代理自身误差量级 ±5–10%（backwardation 时更大）⇒ **"盘前 day_score 的 VIX 分档"从此对代理噪声敏感**。这**不是本次引入的**（旧的 T-1 值同样可能跨界，只是它的错法是滞后 2–3 天、更隐蔽），但它说明**该边界在盘前这一段被使用的合理性本身值得质疑**（判据是围绕"当日波动"设计的，喂给它的却是隔日值 —— 这一点在修前修后都成立）。
+③**本批的处置**：按"策略判据/阈值零改动"原则，**不改** `day_score` 的 `vix_low=15` 等阈值、不改 level 边界、不改 `battle_plan_manager` 的门；只把这一处**列为本批最需盯的副作用**并写进 handoff 的观察点（重启后首个盘前 `day_score` 读数应记 `VIX` 分档与 level，供日后判断是否需要另开辩论）。**若用户认为"盘前 day_score 不该吃代理值"，那是一个独立的价值判断（= 让看板/评分留在 FRED 日频），须另开辩论** —— 本批不擅自代裁。
+
+### §8.4 钉子与变异（"这道闸今天该红"已用变异实证）
+
+新增 `tests/test_vix_proxy_window_single_source.py`（21 例）：窗口内容钉死、五阶段判定、字符串/时钟解析、fail-open 方向 + 告警可见、**四消费方一致性**（同阶段四个生产者取值必须同时由该判据决定）、**翻转判据四处必须一起翻**、以及两条源码棘轮（四文件必须调用唯一入口；`(MarketPhase.TRADING, MarketPhase.PRE_MARKET)` 这写法不得再出现在 `app/` 任何文件）。另更新 `tests/test_vix_single_source_contract.py` 的 `test_vixy_leg_is_guarded_to_premarket_and_trading` → `test_vixy_leg_uses_shared_proxy_window`（**不是删断言**：阶段窗口本身改由新文件的语义测试 + 四消费方一致性钉住，理由写在测试 docstring 里；该文件仍 21 例）。
+
+**四刀变异全杀，且各杀不同钉子**（每刀跑后复原，复原后 42 例全绿）：
+
+| 刀 | 变异内容 | 杀它的钉子 |
+|---|---|---|
+| A | `vix_monitor` 还原为 `phase == MarketPhase.TRADING`（= **修前行为**） | **四消费方一致性 [PRE_MARKET]**（当场红：两个值 14.71/17.84 并存）+ 判据唯一性 |
+| B | `alphavantage_provider` 还原为 `if is_trading:`（= **修前行为**） | **四消费方一致性 [PRE_MARKET]** |
+| C | 窗口收窄为 `("TRADING",)` | 窗口内容钉死 + 阶段判定 + 时钟解析（4 例红） |
+| D | `market_state` 自带旧元组、不走真源 | 源码棘轮「不得自带阶段对」+ `test_vixy_leg_uses_shared_proxy_window` |
+
+⇒ **A/B 两刀证明：这道闸在修前状态下会当场红** —— 即"今天该有的那道闸"确实存在了，而不是事后补的说法。
+
+### §8.5 验证与回滚
+
+- 钉子：新增 21 例（`test_vix_proxy_window_single_source.py`）+ 改后 `test_vix_single_source_contract.py` 仍 21 例 ⇒ 两文件 **42 passed**；受影响 18 套件（VIX/regime/router/AV/playbook data_collector/day_score/exit/entry-gate 等）**402 passed**；**全量套件 = 3 failed, 5110 passed, 41 skipped, 333.13s**（对比 §三 上一轮 5089 passed ⇒ **+21 = 恰为本批新增钉子数**；3 例失败与 §三/§四 逐例归因的**同三条**、均在本批文件之外，属并行工作流在途产物：`test_control_loop_ledger` / `test_dead_db_literal_gate` / `test_except_pass_ratchet`（959 > 951）——**未代改**）。
+- 生效需重启：`app/` 五个文件改动，**重启后按 §七 同法复核**（探针 + 台账零污染 + 启动段计数），并**新增核对一条**：盘前 `data/vix_cache/vix_data.json` 的 `vix` 与 `market_state._fetch_vix_data()` 取到同一个值（口径一致性的生产实证，探针见 §七.1 表两行应同值）。
+- 回滚：四个消费方各自还原为原 phase 比较、删 `is_vixy_proxy_window` + 删新测试文件。**回滚须另开辩论** —— 恢复分派等于让看板值继续与执行门值不一致（且盘前重新退回 T-1 陈旧口径，与 2026-08-03 事故的修法相反）。

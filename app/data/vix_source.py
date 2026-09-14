@@ -16,11 +16,22 @@
      在执行门上不可见, 与 "VIX 新鲜度 fail-close" 的注释意图相悖。
   ③ VIXY→VIX 换算系数 0.85 此前复制在 4 处 (router / alphavantage_provider /
      vix_monitor / 本次新增), 任一漂移即口径分裂。
+  ④ (2026-09-14 追加, 用户裁「修复再提交」)"**哪些市场阶段该走 VIXY 代理解析**"
+     这条规则此前同样在 4 处各写一份, 且**分成了两派**:
+        A 派 {PRE_MARKET, TRADING} — market_data_router / market_state (本批新增)
+        B 派 {TRADING}           — alphavantage_provider / risk.vix_monitor
+     后果 (2026-09-14 17:44 ET 实测, 同进程同一时刻): 执行门+regime 读
+     **14.71** (VIXY 代理), 而 vix_monitor 写的 data/vix_cache/vix_data.json
+     读 **17.84** (FRED T-1) → 看板 data_service / day_score / order.thesis /
+     data_health_check 与执行门各看一个 VIX。修 ③ 时把系数收敛了, 却漏了这
+     条同等重要的规则 ⇒ 本模块补上唯一判据 `is_vixy_proxy_window`。
 
-本模块职责 (只做这两件事, 不持有缓存/不持连接):
+本模块职责 (只做这三件事, 不持有缓存/不持连接):
   1. VIXY 价格 → VIX 估算 的唯一换算入口 (`vixy_to_vix`) — 消除系数漂移。
   2. Futu OpenD 直连取 VIXY 快照 (`fetch_vixy_via_opend`) — 供无 Router 的
      调用方 (如 MarketStateChecker 直连 OpenD 的既定模式) 复用同一链路。
+  3. 代理窗口的唯一判据 (`is_vixy_proxy_window` + `VIXY_PROXY_PHASES`) —
+     消除"哪些阶段走代理"的四处分派。
 
 口径依据:
   - **VIX 现货无盘前交易** (CBOE 现金指数不撮合), 故盘前/盘中只能取代理值;
@@ -61,6 +72,50 @@ def vixy_to_vix(vixy_price: Optional[float]) -> Optional[float]:
     if _p <= 0:
         return None
     return round(_p * VIXY_CONTANGO_FACTOR, 2)
+
+
+# VIXY 实时代理**有效窗口**的唯一判据 (2026-09-14, 用户裁「修复再提交」)。
+#
+# 依据 (仓内既有实测与事故记录, 非偏好):
+#   - 2026-08-03 regime 精准性验证 (market_data_router.py 注释 + obsidian
+#     2026-08-03_regime_validation): 盘前用 FRED VIXCLS 日频 → FRED 更新滞后
+#     2-3 天, 7/31 盘前生成的 23 条指令**全用 7/29 的 20.66**, 与 SPY 实际波动
+#     12.4% 脱节, **污染 regime**。当事修复即"盘前/交易时段优先取 VIXY 实时代理"。
+#   - 事实基础: VIX 现货 (CBOE 现金指数) **盘前不撮合**, 而 VIXY 是 ETF、有盘前
+#     成交 (实测 04:00 ET 起有报价) ⇒ 盘前唯一**可用且新鲜**的 VIX 值就是代理值。
+#
+# 为何**不含** AFTER_HOURS / OVERNIGHT / WEEKEND: 盘后 VIXY 报价稀疏易失真, 且
+#   此刻 FRED 的 T-1 收盘是**只欠几小时的真值** ⇒ 维持 FRED 优先 (与 router 原
+#   `OVERNIGHT/WEEKEND 用 FRED 日频可接受` 注释一致)。改这条边界属消费者可见的
+#   行为变更, 须另开辩论。
+VIXY_PROXY_PHASES = ("PRE_MARKET", "TRADING")
+
+
+def is_vixy_proxy_window(phase=None) -> bool:
+    """当前 (或给定) 市场阶段是否处于 **VIXY 实时代理优先** 窗口 — 唯一判据入口。
+
+    修前这条规则散在 4 个 VIX 生产者里且分成两派 (见模块 docstring ④):
+    `market_data_router` / `market_state` 认 {PRE_MARKET, TRADING}, 而
+    `alphavantage_provider` / `risk.vix_monitor` 只认 {TRADING} ⇒ 同一进程盘前
+    会同时存在两个 VIX (2026-09-14 实测 14.71 vs 17.84)。方向按 2026-08-03
+    事故证据统一为 A 派 (盘前也走代理)。
+
+    本函数只决定**尝试顺序**, 不取数、不兜底: 代理腿取不到时各调用方仍会各自
+    回落 FRED/Old 链。
+
+    fail-open 方向 (取不到 phase ⇒ 返回 True): 只影响尝试顺序, 而代理失败必然
+    继续回落 ⇒ **无害**; 反之 fail-closed 到 False 会在"时钟坏了"时静默退回
+    T-1 陈旧值 —— 本模块立项要消灭的正是这种静默 (2026-08-03 事故同型)。
+    """
+    if phase is None:
+        try:
+            from app.core.scheduler_triggers import get_market_phase
+            phase = get_market_phase()
+        except Exception as _e:
+            logger.warning("[vix_source] 市场阶段判定失败 → 代理窗口 fail-open 为 True: %s",
+                           _e, exc_info=True)
+            return True
+    return getattr(phase, "name", str(phase)) in VIXY_PROXY_PHASES
 
 
 def fetch_vixy_via_opend(host: Optional[str] = None,

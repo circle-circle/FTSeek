@@ -962,8 +962,11 @@ class MarketDataRouter:
         if self.futu:
             try:
                 # 延迟导入避免循环依赖; 盘前/交易时段用实时代理 (OVERNIGHT/WEEKEND 用 FRED 日频可接受)
-                from app.core.scheduler_triggers import get_market_phase, MarketPhase
-                if get_market_phase() in (MarketPhase.TRADING, MarketPhase.PRE_MARKET):
+                # 2026-09-14: 窗口判据收敛到单一真源 app/data/vix_source.py::is_vixy_proxy_window
+                #   (修前这条规则在 4 个 VIX 生产者里各写一份且分成两派, 盘前会同时存在两个
+                #    VIX: 执行门 14.71 vs 看板 vix_cache 17.84 — 见 DEB-20260914 §八)。
+                from app.data.vix_source import is_vixy_proxy_window
+                if is_vixy_proxy_window():
                     quote = self.futu.get_quote("US.VIXY")
                     if quote and quote.get("price", 0) > 0:
                         # 2026-09-14 (P0-1): 换算系数收敛到单一真源 app/data/vix_source.py
