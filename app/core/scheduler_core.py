@@ -190,6 +190,10 @@ class TradingScheduler:
     # 2026-07-21: playbook 退出监控独立快循环默认值 (实例值由 _sb_get 覆盖; 配置加载失败时类属性兜底)
     PLAYBOOK_EXIT_FAST_LOOP_ENABLED = True
     PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC = 20
+    # 2026-09-15: 盘中自动执行轮询间隔 (原 2290 行硬编码 300 → 参数化; 用户裁"执行"落 180s).
+    #   实测 (9/14 日志): 单轮耗时 p50=1s/p90=9s, 间隔 p50=310s; 入场价漂移中位 0.15% (~费用线量级),
+    #   缩短间隔主要省"门禁解除→进场"的响应延迟. 回滚: YAML 键改回 300.
+    PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC = 180
     MAX_POSITIONS = 12             # fallback: scheduler.max_positions (同步 YAML 2026-06-03: 5→12)
     _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
     _DEFAULT_MIN_CONFIDENCE = 0.70        # 2026-06-13: fail-safe 统一 YAML SSOT
@@ -1204,6 +1208,9 @@ class TradingScheduler:
             )
             self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC = int(_sb_get(
                 "scheduler.playbook_exit_fast_loop_interval_sec", self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC
+            ))
+            self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC = int(_sb_get(
+                "scheduler.playbook_auto_execute_interval_sec", self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC
             ))
             self.MAX_POSITIONS = cfg.get_dotted(
                 "scheduler.max_positions", self.MAX_POSITIONS
@@ -2280,14 +2287,17 @@ class TradingScheduler:
                         logger.warning(f"[playbook] TRADING 定桶 catch-up 异常 (已隔离): {_e}")
 
                     # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
-                    # 每5分钟检查一次是否有新的 triggered 指令需要自动执行
+                    # 每 N 秒检查一次是否有新的 triggered 指令需要自动执行
                     # 2026-07-10: 从30分钟降到5分钟 — 分批建仓指令依赖价格触及入场区间,
                     #   30分钟间隔可能错过最佳入场窗口(如日内闪崩回调后快速反弹)
+                    # 2026-09-15: 硬编码 300 → self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC (默认 180,
+                    #   配置键 scheduler.playbook_auto_execute_interval_sec). 用户裁"执行": 缩短
+                    #   门禁解除→进场的响应延迟. 单轮耗时实测 p50=1s/p90=9s, 调用余量充足.
                     if not hasattr(self, '_playbook_auto_execute_last_run'):
                         self._playbook_auto_execute_last_run = None
                     
                     if (self._playbook_auto_execute_last_run is None or 
-                        (now - self._playbook_auto_execute_last_run).total_seconds() >= 300):
+                        (now - self._playbook_auto_execute_last_run).total_seconds() >= self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC):
                         try:
                             from app.playbook.pipeline import run_playbook_auto_execute
                             run_playbook_auto_execute(self)

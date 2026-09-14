@@ -1958,6 +1958,9 @@ scheduler:
   min_consensus_level: 0.25
   min_signal_strength: 60
   monitor_interval_minutes: 0.25
+  # 2026-09-15 (用户裁"执行"): 盘中自动执行轮询间隔 300→180s. 原为 scheduler_core 硬编码,
+  #   本次参数化. 缩短"门禁解除→进场"响应延迟; 入场价漂移实测中位 0.15%. 回滚: 改回 300.
+  playbook_auto_execute_interval_sec: 180
   playbook_exit_fast_loop_enabled: true
   playbook_exit_fast_loop_interval_sec: 10
   scan_interval_minutes: 5
