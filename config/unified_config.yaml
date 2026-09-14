@@ -457,7 +457,12 @@ llm:
       #   timeout=300 已配足 (实体定义处); 若 21:10 轮超时频发, 先看 llm_audit
       #   latency_ms 分布再裁 (勿直接改 timeout 掩盖问题).
       #   回滚: primary 改回 qwen (原 qwen-max, 2026-08-27 同日别名去规格化) + 重启.
-      fallback: deepseek
+      # 2026-09-14 (用户裁决): UE 兜底 deepseek(deepseek-v4-pro) → deepseek-v4.1-flash.
+      #   只动本 feature 一行, 专用实体见 llm.models.deepseek-v41-flash (为何不改
+      #   deepseek 实体: 该别名被 30 个 feature 引用, 改实体=超授权范围静默降档).
+      #   DA 侧同名诉求在 hermes skill config.py 的 CHALLENGER_MODEL 一行, 不经本 yaml.
+      #   回滚: 本行改回 fallback: deepseek 一行.
+      fallback: deepseek-v41-flash
       # 2026-08-30 (用户裁决, DEB-20260829 第8轮, 方案A): UE 主模型 qwen3.8-flash → glm-5 (glm-5.2).
       #   [E6 更正 2026-08-31, DEB-20260830 第7轮派生·用户批准] 原依据"invalidation_triggers
       #   填充是 GLM 独占能力 (96% vs qwen 全系 0)"已被 E3/Q1 证为模板伪影: 当时台面是
@@ -518,6 +523,54 @@ llm:
       cost_in: 0.002
       cost_out: 0.008
       model_name: deepseek-v4-pro
+      provider: dashscope
+      timeout: 300
+    # 2026-09-14 (用户裁决): UE 兜底专用实体 — 新增别名, 不动上面 deepseek 实体.
+    #   诉求: "DA 和 UE 中 deepseek 版本改 deepseek-v4.1-flash". DA 侧 = hermes
+    #   skill 的 CHALLENGER_MODEL 一行, 不经本 yaml; 本实体只服务
+    #   UE 侧 (llm.features.universe_expansion_reasoning.fallback).
+    #   为何新增别名而非改 deepseek 实体: deepseek 别名被 38 个 feature 中的 30 个
+    #   引用 (15 primary + 15 fallback, 含现役 agent_bridge — 9/1 起 49 次生产调用),
+    #   改实体 model_name = 这 30 个 feature 全部静默降档 pro→flash, 远超"DA 和 UE"
+    #   授权范围. 本仓 SSOT 约定"单 feature 换档 = 改 features 一行", 故新增实体.
+    #   ⚠️ 档位提示 (非阻塞, 记录在案): 这是 pro→flash 降档, 不是同档换版 —
+    #   v4.1-flash 为 2026-09-10 新发布代次, 但价格与延迟都在 flash 档. UE 兜底位
+    #   只在 primary(glm-5) schema 失败/空响应时触发 (9/1 起仅 3 次), 影响面=兜底
+    #   路径, 非 UE 主路径.
+    #   可达性已实测 (2026-09-14 DashScope 实弹): 返回 model=deepseek-v4.1-flash;
+    #   json_mode(schema) ✓; reasoning_content ✓ (思考 token 计入输出计费).
+    #   cost 依据 (2026-09-14 修正): 原值系推断 (DashScope /models 不暴露价格, 当时
+    #   借 flash 档同价 + Fireworks 旁证估 0.0002/0.0004) — 用户令"模型的调用价格说明
+    #   <定价页> 以人民币计价"后, 改按官方定价页换算。
+    #     来源: help.aliyun.com/zh/model-studio/model-pricing, 华北2(北京) 表 —
+    #     deepseek-v4.1-flash 输入 忙时2元/闲时1元, 输出 忙时8元/闲时4元 (每百万 Token)。
+    #     列头"思维链+回答" ⇒ 思考 token **已含在输出单价内**, 不另计费 (本地 reasoning
+    #     token 因此天然进 cost_out, 无需单独系数)。
+    #   取**闲时**档的依据: 本系统全部 DA/UE 调度都落在忙时窗外 — 忙时 = 周一至周五
+    #     9:00-12:00 与 14:00-18:00 (北京时间), 其余全部时间皆闲时; 实测 UE 主 scan
+    #     21:10 / inject+push 21:10 / confirm 21:40·22:40 / DA 20:00-20:30 /
+    #     UE score 05:40 / midday 00:30 — 无一落在忙时。若将来把调用移进忙时窗,
+    #     实账单是本地读数的 2x。
+    #   换算: 1元/1M = 0.001元/1k; 汇率 USD/CNY 6.7156 (2026-09-14, open.er-api.com)
+    #     ⇒ 输入 $0.0001489/1k, 输出 $0.0005956/1k (即 $0.1489 / $0.5956 per 1M)。
+    #   ⚠️ 修正方向**不对称** (留档, 勿当作无意义抖动): 输入被高估 34%
+    #     (0.0002→0.000149), 输出被低估 33% (0.0004→0.000596)。两者恰好在
+    #     "输入:输出 ≈ 1:1"的混合比例上相互抵消, 所以旧值在总量上偶然接近真值 —
+    #     但结构是错的: 本模型输出单价是输入的 4x, 任何输入/输出配比变化都会露馅。
+    #   两处未建模的偏差 — 恒定 cost 字段无法表达, 实际账单**低于**本读数:
+    #     ①显式缓存: 创建按输入单价 125%、命中按 10% 计费 (百炼规则); 本实体未挂
+    #       cache_control, 故 UE 兜底位用不到 (UE 主路径用缓存的是别的实体);
+    #     ②Batch 调用半价 (本系统未启用)。
+    #   归因: UE 指令行落 model_used=真实 model_name ⇒ v4.1-flash 时代样本与
+    #   glm-5/qwen 时代天然可切分。
+    #   回滚: universe_expansion_reasoning.fallback 改回 deepseek 一行 (本实体可留,
+    #   零引用无害; 若要清干净, 删本块)。备份: unified_config.yaml.bak-v41flash-cost-20260914。
+    deepseek-v41-flash:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.000149
+      cost_out: 0.000596
+      model_name: deepseek-v4.1-flash
       provider: dashscope
       timeout: 300
     glm-5:
