@@ -269,12 +269,15 @@ try:
     if os.path.exists(SIGNAL_DB_PATH):
         sdb = sqlite3.connect(SIGNAL_DB_PATH)
         sdb.row_factory = sqlite3.Row
+        # 计数与展示分离: COUNT(*) 全量口径 (原 len(LIMIT 10 行) 少报总数)
+        sig_count = sdb.execute(
+            'SELECT COUNT(*) FROM signal_snapshots WHERE trade_date LIKE ?',
+            (f'{today}%',)).fetchone()[0]
         rows = sdb.execute('''
             SELECT symbol, direction, strength, confidence, trade_date
             FROM signal_snapshots WHERE trade_date LIKE ?
             ORDER BY id DESC LIMIT 10
         ''', (f'{today}%',)).fetchall()
-        sig_count = len(rows)
         sig_top = [dict(r) for r in rows]
         sdb.close()
 except Exception:
