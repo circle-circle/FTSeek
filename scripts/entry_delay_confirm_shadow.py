@@ -61,11 +61,18 @@ DELAYS_MIN = (2, 5)
 GRAD_MIN_N = 20
 GRAD_MIN_AVOID_RATE = 0.30
 GRAD_MAX_OPP_COST_PCT = 0.3   # %, 严格小于
+# [RFC-081盲区1] forward 新窗起点 = DEB §5.2 预注册攒样日 (9/10 影子落地次日)
+FORWARD_SINCE = "2026-09-10"
 
 DISCLOSURES = [
     "confirm_gate 反向先验: 等待确认历史成本 +0.50%/笔 (t=5.67, n=8轮); "
     "口径差异 = 盘前注入趋势衰减域 vs 本影子开盘窗微结构噪声域, 作参考不定罪。",
     "E3 TTL=300s 冲突: PULLBACK_LIMIT 现役 TTL 与延迟确认互斥, 转正时二选一或 TTL 重议。",
+    # [2026-09-16 RFC-081 增补盲区1 批注] 强制披露:
+    "分流人群分层: 按成交单口径, forward 窗 ~72% 属 D 分支候选 (可路由限价单) — "
+    "B 案原 ALL 块是混合人群读数; 分流落地后 B 只管 by_branch.B_only / "
+    "forward.B_only 人群。裁决日 B 分支须以 forward_B_only_pass 为主判读, "
+    "ALL_pass 只作历史参考, 不得用混合人群给分流后的 B 背书。",
 ]
 
 
@@ -97,6 +104,43 @@ def _load_sources() -> dict:
                     m[r["trade_id"]] = r.get("source") or "?"
             except Exception as e:
                 _log(f"gap jsonl 脏行跳过: {e}")
+    return m
+
+
+def _load_routable_map(con) -> dict:
+    """[2026-09-16 RFC-081 增补盲区1] trade_id → routable_candidate (bool).
+
+    RFC-081 分流融合按成交单口径下, D 分支候选 (PULLBACK_LIMIT/FADE_SHORT +
+    有效 confirmation.price_level) 占 forward 窗成交单 ~72% — B 案的判据是在
+    混合人群上过的, 分流落地后 B 只管非可路由人群。本函数给每笔 trade 打
+    「分流后归 B 分支还是 D 分支候选」标签, summary 按人群分层呈裁。
+    纯 record-only 观测: 不改变 ALL/SL_INITIAL 原块与原毕业判据。
+    """
+    routable_dids = set()
+    try:
+        # decision_id 是表列, 不在 raw_instruction_json 里 (实测 raw keys 无此字段)
+        for did, raw in con.execute(
+                "SELECT decision_id, raw_instruction_json FROM playbook_instructions "
+                "WHERE decision_id IS NOT NULL AND decision_id != ''"):
+            try:
+                r = json.loads(raw or "{}")
+            except Exception:
+                continue
+            if (r.get("entry_archetype") in ("PULLBACK_LIMIT", "FADE_SHORT")
+                    and (r.get("confirmation") or {}).get("price_level")):
+                routable_dids.add(did)
+    except Exception as e:
+        _log(f"routable 映射查询失败(分层块将为空): {e}")
+        return {}
+    if not routable_dids:
+        return {}
+    m = {}
+    try:
+        for tid, did in con.execute(
+                "SELECT id, decision_id FROM trade_records WHERE decision_id != ''"):
+            m[tid] = did in routable_dids
+    except Exception as e:
+        _log(f"trade→decision 映射失败: {e}")
     return m
 
 
@@ -133,12 +177,16 @@ def _agg_block(recs: list) -> dict:
     dl = [r for r in ok if r["still_triggers"]]
     avoided_net = sum(float(r.get("pnl_net") or 0) for r in av)
     opp = [float(r["opp_cost_pct"]) for r in dl]
+    # [RFC-081盲区1] 误杀 = 回避组里的盈利单 (延迟门放过的本来会赚钱的单)
+    miskilled = [r for r in av if float(r.get("pnl_net") or 0) > 0]
     return {
         "n": len(ok),
         "n_avoided": len(av),
         "avoidance_rate": round(len(av) / len(ok), 4) if ok else None,
         "avoided_net_usd": round(avoided_net, 2),
         "avoided_value_usd": round(-avoided_net, 2),
+        "n_miskilled": len(miskilled),
+        "miskill_rate": round(len(miskilled) / len(av), 4) if av else None,
         "n_delayed": len(dl),
         "opp_cost_mean_pct": round(statistics.mean(opp), 4) if opp else None,
         "opp_cost_median_pct": round(statistics.median(opp), 4) if opp else None,
@@ -161,6 +209,7 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
     con.row_factory = sqlite3.Row
     done = _load_done()
     sources = _load_sources()
+    routable_map = _load_routable_map(con)  # [RFC-081盲区1] trade_id→D分支候选
 
     where = ("entry_time >= datetime('now', ?) " if not only_date else "date(entry_time) = ? ")
     params = (only_date,) if only_date else (f"-{days} day",)
@@ -195,7 +244,10 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
                        "entry_min": t_entry, "entry_price": ep, "notional": notional,
                        "exit_reason": r["exit_reason"],
                        "pnl_net": float(r["pnl_net"]) if r["pnl_net"] is not None else None,
-                       "source": sources.get(r["id"], "?")}
+                       "source": sources.get(r["id"], "?"),
+                       # [RFC-081盲区1] 分流后归属: True=D分支候选(可路由限价),
+                       # False=B分支(延迟复核), None=映射不到(老单/无decision_id)
+                       "routable_candidate": routable_map.get(r["id"])}
                 if not bars:
                     rec["status"] = "no_bars"
                 else:
@@ -225,6 +277,10 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
             try:
                 rr = json.loads(line)
                 if rr.get("type") == "entry_delay":
+                    # [RFC-081盲区1] 历史行无 routable_candidate → 汇总期从映射回填
+                    # (jsonl 本体不重写; 行级标签以本次运行映射为准, 幂等无副作用)
+                    if rr.get("routable_candidate") is None and rr.get("trade_id") in routable_map:
+                        rr["routable_candidate"] = routable_map[rr["trade_id"]]
                     all_rows.append(rr)
             except Exception as e:
                 _log(f"汇总读取脏行跳过: {e}")
@@ -237,6 +293,23 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
         delays[str(n)] = {
             "ALL": blk_all,
             "SL_INITIAL": blk_sl,
+            # [RFC-081盲区1] 分流人群分层 (record-only 观测, 原 ALL/SL_INITIAL 块不动):
+            #   B分支 = routable_candidate=False (分流后延迟复核只管这些);
+            #   D候选 = True (分流后归限价路由, B 判据不应再拿它背书);
+            #   unmapped = None (老单/无 decision_id 映射)
+            "by_branch": {
+                "B_only": _agg_block([r for r in recs if r.get("routable_candidate") is False]),
+                "D_candidate": _agg_block([r for r in recs if r.get("routable_candidate") is True]),
+                "unmapped": _agg_block([r for r in recs if r.get("routable_candidate") is None]),
+            },
+            # forward 新窗 (DEB §5.2 预注册裁决口径: 自 9/10 攒样日起)
+            "forward": {
+                "ALL": _agg_block([r for r in recs if r.get("date", "") >= FORWARD_SINCE]),
+                "B_only": _agg_block([r for r in recs if r.get("date", "") >= FORWARD_SINCE
+                                      and r.get("routable_candidate") is False]),
+                "D_candidate": _agg_block([r for r in recs if r.get("date", "") >= FORWARD_SINCE
+                                           and r.get("routable_candidate") is True]),
+            },
             "by_source": {s: _agg_block([r for r in recs if r.get("source") == s])
                           for s in sorted({r.get("source") for r in recs})},
             "status_counts": {s: sum(1 for r in recs if r.get("status") == s)
@@ -245,6 +318,11 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
     graduation = {str(n): {
         "ALL_pass": _grad_pass(delays[str(n)]["ALL"]),
         "SL_INITIAL_pass": _grad_pass(delays[str(n)]["SL_INITIAL"]),
+        # [RFC-081盲区1] forward + 分流人群毕业读数 — 裁决日主判读 (预注册于
+        # RFC-081 增补批注§六): B 分支落地后只管非可路由人群, 其 forward B_only
+        # 块才是分流后的真实验收人群; ALL_pass 原样保留不替换 (不挪门柱, 只加读数)。
+        "forward_ALL_pass": _grad_pass(delays[str(n)]["forward"]["ALL"]),
+        "forward_B_only_pass": _grad_pass(delays[str(n)]["forward"]["B_only"]),
     } for n in DELAYS_MIN}
 
     summary = {
@@ -272,6 +350,16 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
               f"| SL_INITIAL n={s['n']} 回避率 {s['avoidance_rate']} "
               f"| 毕业: ALL={'✓' if graduation[str(n)]['ALL_pass'] else '✗'} "
               f"SL_INITIAL={'✓' if graduation[str(n)]['SL_INITIAL_pass'] else '✗'}")
+        # [RFC-081盲区1] 分流人群分层 + forward 读数一行
+        f_all = d["forward"]["ALL"]; f_b = d["forward"]["B_only"]; f_d = d["forward"]["D_candidate"]
+        print(f"    ├ 分流: B_only n={d['by_branch']['B_only']['n']} / "
+              f"D候选 n={d['by_branch']['D_candidate']['n']} / "
+              f"unmapped n={d['by_branch']['unmapped']['n']}")
+        print(f"    └ forward(≥{FORWARD_SINCE}): ALL n={f_all['n']} "
+              f"opp={f_all['opp_cost_mean_pct']}% grad={'✓' if graduation[str(n)]['forward_ALL_pass'] else '✗'} | "
+              f"B_only n={f_b['n']} 回避率={f_b['avoidance_rate']} opp={f_b['opp_cost_mean_pct']}% "
+              f"误杀率={f_b['miskill_rate']} grad={'✓' if graduation[str(n)]['forward_B_only_pass'] else '✗'} | "
+              f"D候选 n={f_d['n']}")
     print(f"→ {OUT_LATEST}")
     return n_new
 

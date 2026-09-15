@@ -722,6 +722,13 @@ def _readout_card(s):
             f"│ C3分层(观测): 可达(≤0.5ATR) n={_rs.get('reachable_n')} 成交率={_rs.get('reachable_fill_rate')} | "
             f"不可达 n={_rs.get('unreachable_n')} 成交率={_rs.get('unreachable_fill_rate')} "
             f"⇒ C3={'仅不可达桶拖累(DA定价问题)' if (_rs.get('reachable_fill_rate') or 0) >= 0.5 > (_rs.get('unreachable_fill_rate') or 0) else '需看两桶'}")
+    # [2026-09-16 RFC-081盲区2/3 用户裁"要"] D分支误杀率 + 放弃经济一行 (expired 口径冻结)
+    _mk = s.get("d_branch_miskill") or {}
+    if _mk.get("n_expired"):
+        lines.append(
+            f"│ D误杀(expired口径,门≤40%): {_mk['n_miskilled']}/{_mk['n_expired']}={_mk['miskill_rate']}"
+            f"{' ✅' if _mk['pass'] else ' ❌'} | 不成交腿放弃实盘净利 {_mk['forgone_actual_net_usd']:+.2f}"
+            f"{' (净放弃利润,躲烂单叙事打折)' if (_mk['forgone_actual_net_usd'] or 0) > 0 else ''}")
     lines.append(f"│ 结论: {concl}; 接线开关 entry_archetype_routing_enabled "
                  f"{'维持关闭' if not wire else '四判据全过, 可进入接线裁决'}")
     st = lic.get("status")
@@ -980,6 +987,23 @@ def summarize_v2(results, fidelity_pairs):
             "no_atr_n": sum(1 for x in _rr if x.get("reach_dist_atr") is None),
             "rule": "可达=dist_atr≤0.5 (预注册桶界); 观测不裁决 — C3 门槛 50% 本身不动",
         })([x for x in results if x.get("status") in ("entered", "expired_unfilled")]),
+        # [2026-09-16 RFC-081盲区2/3 用户裁"要"] D分支误杀率 + expired 腿放弃经济 —
+        #   盲区2: 误杀率分母**冻结为 expired_unfilled** (RFC-081 增补"误杀率≤40%"
+        #   原文未定分母; expired 口径 = 限价没成交而实盘赚钱 = 真"错过", 全配对口径
+        #   会把成交腿稀释进去 — 裁决前锁死 expired 口径, 防临时解释)。
+        #   盲区3: "不成交=躲烂单"叙事必须与放弃的实盘净利同屏呈报, 防单边美化。
+        "d_branch_miskill": (lambda _exp: {
+            "denominator": "expired_unfilled (冻结, RFC-081 增补批注§六)",
+            "n_expired": len(_exp),
+            "n_miskilled": sum(1 for x in _exp if (x.get("actual_net") or 0) > 0),
+            "miskill_rate": (round(sum(1 for x in _exp if (x.get("actual_net") or 0) > 0)
+                                   / len(_exp), 3) if _exp else None),
+            "threshold_le": 0.40,
+            "pass": (len(_exp) == 0 or
+                     sum(1 for x in _exp if (x.get("actual_net") or 0) > 0) / len(_exp) <= 0.40),
+            "forgone_actual_net_usd": round(sum((x.get("actual_net") or 0) for x in _exp), 2),
+            "note": "forgone>0 = 不成交腿净放弃了实盘利润, '躲烂单'叙事不能只看配对差",
+        })(expired),
         "mfe0_share": {"cf": mfe0_cf, "actual": mfe0_act},
         "exit_reason_dist": {
             "cf": {k2: sum(1 for v in v2rows if v.get("cf_exit_reason") == k2)
