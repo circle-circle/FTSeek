@@ -483,7 +483,35 @@ llm:
       #   成本: ¥0.13/轮 → ¥7.8/月 (77x 但绝对值小); 归因: model_used 落库, 8/31 起
       #   glm 时代 vs flash 时代样本可切分对比 (预注册: 10交易日观察延迟/截断/填充率).
       #   回滚: primary 改回 qwen3.8-flash + max_tokens 可保留 8000 (对 flash 无害).
-      primary: glm-5
+      # 2026-09-15 (用户裁「请将ue中glm-5.2模型更换为glm-5.3」): UE 主模型 glm-5(=glm-5.2)
+      #   → glm-5.3 (裸名; dashscope /models 实测 created=2026-09-15, 8/29 时尚不存在见
+      #   DEB-20260829 §326 "GLM系最新=glm-5.2"). 只动 UE 一行: glm-5 别名同时被
+      #   stock_analyst(L441) 引用, 改实体 model_name 会连带它静默升版 (超「UE」授权范围),
+      #   故新增 glm-5.3 专用实体 + 改本行 (同 deepseek-v41-flash 先例: 单 feature 换档改 features 一行).
+      #   同档同系列升版 (非降档); 涨价 输入6→8/输出20→28 元每百万 (华北2裸名定价, help.aliyun.com
+      #   /zh/model-studio/glm-5-3), UE ¥/轮级别绝对值小. max_tokens=16000 不变 (官方思维链上限
+      #   131072, Max Output 131072, 远大于 16000). prompt_cache 保留 (官方 Context Caching ✓).
+      #   归因: model_used 落库, 9/15 起 glm-5.3 时代 vs glm-5.2 时代样本可切分.
+      #   回滚: 本行改回 glm-5 一行 (glm-5.3 实体可留, 零引用无害).
+      # ⚠️ 必配套 extra_body.enable_thinking=true (2026-09-15 实弹实锤, 缺则切换为空操作):
+      #   glm-5.3 是**强制思考**模型 — dashscope 对 enable_thinking=False 返回
+      #   HTTP 400 "The value of the enable_thinking parameter is restricted to True."
+      #   而 app/llm/model_call.py:_http_call 对全部 dashscope 调用
+      #   `payload.setdefault("enable_thinking", False)` (2026-07-06 P0修复: 关思考消灭
+      #   empty_response 根因 + 速度 10x) ⇒ glm-5.3 必 400.
+      #   失败形态隐蔽: call_llm 两发全 400 → 静默 fallback 到 deepseek-v4.1-flash 且
+      #   success=True / fallback_used=True ⇒ **主模型实际变成兜底模型而无人察觉**
+      #   (llm_audit id=11675 glm-5.3 HTTP400 → id=11676 deepseek ok, 实测复现).
+      #   解法纯配置: payload.update(extra_body) 在 setdefault **之前** (model_call.py:148
+      #   vs :163) ⇒ extra_body 已置 True 则 setdefault 不覆盖. 先例 dr_debate(L386).
+      #   代价 (诚实披露): 思考 token 计入 max_tokens=16000 预算且计费.
+      #   glm-5.2 时代 UE 已有 1 笔 tokens_out=16000 撞顶 + 1 笔 empty_response 失败
+      #   (llm_audit 实测 n=39), glm-5.3 思考量更大 (trivial prompt 即 809 tok, 5.2 为 20)
+      #   ⇒ 撞顶/截断风险高于 5.2. 若上线后出现 empty_response 或 tokens_out 贴 16000,
+      #   处置=抬 max_tokens (官方 Max Output 131072) 或加 thinking_budget 限流.
+      extra_body:
+        enable_thinking: true
+      primary: glm-5.3
       prompt_cache: true
     web_search_fundamental:
       cache_on_fail: false
@@ -579,6 +607,25 @@ llm:
       cost_in: 0.006
       cost_out: 0.02
       model_name: glm-5.2
+      provider: dashscope
+      timeout: 300
+    # 2026-09-15 (用户裁「请将ue中glm-5.2更换为glm-5.3」): UE 主模型专用实体.
+    #   为何新增而非改 glm-5 实体: glm-5 别名被 UE + stock_analyst 两 feature 共享,
+    #   改实体 model_name = stock_analyst 连带静默升版 (超授权). 单 feature 换档 = 新增实体
+    #   + 改 features 一行 (本仓 SSOT 约定, 同 deepseek-v41-flash 先例).
+    #   cost 依据: help.aliyun.com/zh/model-studio/glm-5-3 华北2(北京)裸名定价 —
+    #   输入 8 / 输出 28 / 缓存命中输入 2 (元每百万 tokens), 单一档无 32k 分档.
+    #   换算 cost_in/out 单位=元每千 tokens (÷1000): 0.008 / 0.028.
+    #   ⚠️ 较 glm-5.2 (0.006/0.02) 涨价 输入+33%/输出+40%; UE 主调用 max_tokens=16000,
+    #   单轮成本仍 ¥ 级别 (8/30 实测 glm-5.2 ¥0.13/轮 → 5.3 约 ¥0.18/轮), 绝对值小.
+    #   可达性已实测 (2026-09-15 dashscope 实弹): model 回显 glm-5.3 / json_mode ✓ /
+    #   finish=stop / reasoning_content 有 (同 glm-5.2, 思考 token 计入输出计费).
+    glm-5.3:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.008
+      cost_out: 0.028
+      model_name: glm-5.3
       provider: dashscope
       timeout: 300
     kimi-k2:
