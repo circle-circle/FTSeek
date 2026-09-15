@@ -107,6 +107,31 @@ def test_knife_gate_wired_before_execution():
     assert "skipped_knife_gate" in seg and "skipped_count += 1" in seg
 
 
+def test_knife_gate_writes_precise_skip_reason():
+    """源级契约 (2026-09-15 用户裁「都做」批②): B门拦截必须精确回写 skip_reason。
+
+    根因: 原实现只写 exec_gate_audit jsonl 就 continue → shadow_tracker 收盘兜底
+    盖误导标签"已触发未执行(资金护栏/时段/执行失败)" (三猜测全错), 且
+    no_trigger_counterfactual_replay 按 LIKE '已触发未执行%' 分桶把飞刀拦截
+    误归"资金护栏"桶。9/14 实锤 BE/SKHY/NOK 共 83 拦全被盖错标签。
+    守护点: ① 回写发生在拦截块内 (audit 之前) ② 标签前缀 knife_gate_blocked
+    不与 '已触发未执行%' / '未触发%' 桶前缀碰撞 ③ 回写失败不吞拦截动作
+    (try/except 包裹, warning 级不静默)。
+    """
+    from pathlib import Path
+    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    i_block = src.index('if _kg_block:')
+    i_audit = src.index('action="skipped_knife_gate"', i_block)
+    seg = src[i_block:i_audit]
+    assert 'update_instruction_tracking' in seg, "B门拦截必须回写 skip_reason (照抄 chase_cap 模式)"
+    assert 'knife_gate_blocked(' in seg, "skip_reason 前缀须为 knife_gate_blocked (与兜底标签可区分)"
+    assert 'except Exception as _kg_sr_err' in seg, "回写失败须捕获且不吞拦截 (warning 级)"
+    # 桶碰撞守护: seg 内 skip_reason 赋值恰一次, 且值为 knife_gate_blocked( 前缀
+    # (不以 '已触发未执行'/'未触发' 开头 → 不落 shadow_tracker 兜底桶与 no_trigger 桶;
+    #  注释里引用错误标签原文不算赋值, 故用计数而非全文 not-in)
+    assert seg.count('"skip_reason"') == 1
+
+
 def test_knife_gate_config_key_present():
     """配置键须落盘且默认启用 (回滚 = 置 false + 重启)。"""
     from pathlib import Path

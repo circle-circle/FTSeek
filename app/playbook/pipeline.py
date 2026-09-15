@@ -3990,6 +3990,23 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 except Exception as _kg_err:
                     logger.warning(f"[playbook] {inst['symbol']} B门硬门评估异常 (放行): {_kg_err}")
                 if _kg_block:
+                    # 2026-09-15 (用户裁「都做」批②): skip_reason 精确回写 — 照抄 chase_cap
+                    # enforce 块模式 (留痕纪律 REVIEW-20260909 F-2: auto_execute 重评循环
+                    # 不读它, 纯审计留痕)。原缺陷: 本门只写 exec_gate_audit jsonl 就 continue,
+                    # 收盘 shadow_tracker 兜底盖误导标签"已触发未执行(资金护栏/时段/执行失败)"
+                    # — 三个猜测全错 (真因=knife_gate), 且 no_trigger_counterfactual_replay
+                    # 按 LIKE '已触发未执行%' 分桶会把飞刀拦截误归"资金护栏"桶污染归因。
+                    # 9/14 实锤: BE(37拦)/SKHY(38拦)/NOK(8拦) 全部被盖错标签。
+                    try:
+                        db.update_instruction_tracking(inst["id"], {
+                            "skip_reason": (
+                                f"knife_gate_blocked(B_long_knife,chg="
+                                f"{round(_chg_kg, 2) if _chg_kg is not None else '?'}%"
+                                f"<-5%,下轮复评)")})
+                    except Exception as _kg_sr_err:
+                        logger.warning(
+                            f"[playbook] knife_gate skip_reason 回写失败 "
+                            f"{inst.get('symbol')} (不影响拦截): {_kg_sr_err}")
                     _emit_exec_gate_audit(inst, action="skipped_knife_gate",
                                           entry=float(inst.get("entry_price") or 0),
                                           size=float(inst.get("position_size") or 0),
