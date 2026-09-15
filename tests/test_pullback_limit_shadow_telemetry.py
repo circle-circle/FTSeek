@@ -102,7 +102,7 @@ def _mk_replay_env(tmp_path, monkeypatch, shadow_rows, n_instr=2):
     conn.execute("""CREATE TABLE playbook_instructions (
         id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, direction TEXT,
         entry_price REAL, stop_loss REAL, take_profit REAL, position_size INTEGER,
-        decision_id TEXT, raw_instruction_json TEXT)""")
+        decision_id TEXT, raw_instruction_json TEXT, atr_pct REAL)""")
     # v2 (2026-09-07) 双臂同尺需读 exit_time / metadata_json (对齐生产真表列) —
     # 缺列会让 build_rows 的 SELECT 直接 OperationalError, 影子口径三例集体假失败。
     conn.execute("""CREATE TABLE trade_records (
@@ -112,13 +112,15 @@ def _mk_replay_env(tmp_path, monkeypatch, shadow_rows, n_instr=2):
         source_type TEXT, decision_id TEXT, metadata_json TEXT, created_at TEXT)""")
     for i in range(n_instr):
         conn.execute(
-            "INSERT INTO playbook_instructions VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO playbook_instructions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (100 + i, "2026-06-18", "US.NTES", "BUY", 100.0, 95.0, 110.0, 50,
              f"DA-t{i}",
              json.dumps({"entry_archetype": "PULLBACK_LIMIT",
                          "confirmation": {"price_level": 98.0, "side": "below",
                                            "ttl_min": 30},
-                         "chase_cap_price": 101.0})))
+                         "chase_cap_price": 101.0}),
+             # [2026-09-16] 可达性刻度需 atr_pct (对齐生产真表列; 0.04=4%日ATR)
+             0.04))
     conn.commit()
     conn.close()
 

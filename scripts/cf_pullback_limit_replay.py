@@ -135,6 +135,41 @@ def _sign_test_one_sided(k: int, n: int) -> float:
     return sum(comb(n, i) for i in range(max(k, 0), n + 1)) / (2 ** n)
 
 
+def _reachability(level, ref_price, atr_pct):
+    """[2026-09-16 用户裁"要"] 确认位可达性刻度 — 纯观测字段, 不是判据。
+
+    dist_atr = |确认位 − 触发时参考价| / (ATR% × 参考价) — 距离多少个日ATR。
+    实证 (9/8-9/14 窗 27 笔): 距离<1% 成交率 75%, ≥2% 成交率 0% —
+    C3 fill_rate 失败可能全部由"不可达桶"贡献; 裁决日需按桶分层判读,
+    否则会把 DA 定价质量问题误判成限价机制成交能力问题。
+    ref_price 优先级: 影子 trigger_price > 实盘成交价 > 指令锚价 (逐行标注来源)。
+    返回 (dist_atr, dev_pct, ref_source:str|None) — 输入不全时相应分量为 None。
+    """
+    try:
+        lvl = float(level)
+    except (TypeError, ValueError):
+        return None, None, None
+    if not isinstance(ref_price, tuple):
+        # 允许调用方传 (price, source) 二元组; 裸数值时来源未知
+        ref_price = (ref_price, None)
+    raw_ref, ref_source = ref_price
+    try:
+        ref = float(raw_ref)
+    except (TypeError, ValueError):
+        ref = None
+    if not ref or ref <= 0:
+        return None, round(lvl, 4), None
+    dev_pct = round((lvl / ref - 1.0) * 100.0, 3)
+    dist_atr = None
+    try:
+        _atr = float(atr_pct)
+        if _atr and _atr > 0:
+            dist_atr = round(abs(lvl - ref) / (_atr * ref), 3)
+    except (TypeError, ValueError):
+        pass
+    return dist_atr, dev_pct, (ref_source or "unknown")
+
+
 #: 采样口径双报 (2026-09-07 保真度专项步骤①): 实盘 10s 轮询的真值必落在两口径之间 —
 #:   bar_extreme = 假设轮询看到了整根 bar 的极值 (观测**上界**)
 #:   bar_close   = 假设轮询只看到收盘价 (观测**下界**)
@@ -229,6 +264,7 @@ def build_rows(db, date):
     rows = db.execute(
         """SELECT i.id, i.symbol, i.direction, i.entry_price, i.stop_loss,
                   i.take_profit, i.position_size, i.decision_id, i.raw_instruction_json,
+                  i.atr_pct,
                   t.pnl_net AS actual_net, t.quantity AS actual_qty, t.exit_reason,
                   t.entry_price AS actual_entry_price, t.entry_time AS actual_entry_time,
                   t.exit_time AS actual_exit_time, t.metadata_json AS actual_meta
@@ -284,6 +320,17 @@ def build_rows(db, date):
             "actual_exit_reason": r["exit_reason"],
             **rep,
         }
+        # [2026-09-16 用户裁"要"] 可达性刻度 (record-only, 供 C3 分层判读) —
+        #   参考价优先级: 影子 trigger_price (触发瞬间真价) > 实盘成交价 > 指令锚价。
+        _lvl = (conf or {}).get("price_level")
+        _ref, _ref_src = (trig.get("trigger_price"), "shadow_trigger") \
+            if trig.get("trigger_price") else (
+                (r["actual_entry_price"], "actual_fill") if r["actual_entry_price"]
+                else (r["entry_price"], "instruction_anchor"))
+        _dist_atr, _dev_pct, _ = _reachability(_lvl, (_ref, _ref_src), r["atr_pct"])
+        row["reach_dist_atr"] = _dist_atr
+        row["reach_dev_pct"] = _dev_pct
+        row["reach_ref_source"] = (_ref_src if _dist_atr is not None or _dev_pct is not None else None)
 
         # ── v2: 双臂同尺重放 ──
         did = r["decision_id"] or ""
@@ -668,6 +715,13 @@ def _readout_card(s):
             ev = f"符号检验 p={p} ⇒ 没有统计学证据判定优劣 (点估计不是结论)"
         concl = (f"限价确认位 vs 现行入场 — 点估计{rel} (配对差中位 {med:+.2f} 美元/笔, "
                  f"n={n}, {agree}), {ev}")
+    # [2026-09-16 用户裁"要"] C3 可达性分层一行 — 观测不裁决 (桶界 dist_atr≤0.5 预注册)
+    _rs = s.get("c3_reachability_split") or {}
+    if _rs.get("reachable_n") or _rs.get("unreachable_n"):
+        lines.append(
+            f"│ C3分层(观测): 可达(≤0.5ATR) n={_rs.get('reachable_n')} 成交率={_rs.get('reachable_fill_rate')} | "
+            f"不可达 n={_rs.get('unreachable_n')} 成交率={_rs.get('unreachable_fill_rate')} "
+            f"⇒ C3={'仅不可达桶拖累(DA定价问题)' if (_rs.get('reachable_fill_rate') or 0) >= 0.5 > (_rs.get('unreachable_fill_rate') or 0) else '需看两桶'}")
     lines.append(f"│ 结论: {concl}; 接线开关 entry_archetype_routing_enabled "
                  f"{'维持关闭' if not wire else '四判据全过, 可进入接线裁决'}")
     st = lic.get("status")
@@ -906,6 +960,26 @@ def summarize_v2(results, fidelity_pairs):
         "trim_ladder": trim_ladder,
         "top_contributors": top_contributors,
         "fill_rate": (round(fill_rate, 3) if fill_rate is not None else None),
+        # [2026-09-16 用户裁"要"] C3 可达性分层 — 观测字段, 不改判据不挪门槛。
+        #   裁决日读法: C3 若败, 先看 reachable/unreachable 两桶各自的成交率与净额,
+        #   区分"限价机制成交能力不足"(可达桶也败) vs "DA 确认位定价不可达"(仅不可达桶败)。
+        #   可达定义 = reach_dist_atr ≤ 0.5 (预注册于 ADR-035 批注§五.2, 桶界不得事后调)。
+        "c3_reachability_split": (lambda _rr: {
+            "reachable_n": sum(1 for x in _rr if x.get("reach_dist_atr") is not None
+                               and x["reach_dist_atr"] <= 0.5),
+            "reachable_fill_rate": (lambda s: (round(
+                sum(1 for x in s if x.get("status") == "entered") / len(s), 3) if s else None))(
+                [x for x in _rr if x.get("reach_dist_atr") is not None
+                 and x["reach_dist_atr"] <= 0.5]),
+            "unreachable_n": sum(1 for x in _rr if x.get("reach_dist_atr") is not None
+                                 and x["reach_dist_atr"] > 0.5),
+            "unreachable_fill_rate": (lambda s: (round(
+                sum(1 for x in s if x.get("status") == "entered") / len(s), 3) if s else None))(
+                [x for x in _rr if x.get("reach_dist_atr") is not None
+                 and x["reach_dist_atr"] > 0.5]),
+            "no_atr_n": sum(1 for x in _rr if x.get("reach_dist_atr") is None),
+            "rule": "可达=dist_atr≤0.5 (预注册桶界); 观测不裁决 — C3 门槛 50% 本身不动",
+        })([x for x in results if x.get("status") in ("entered", "expired_unfilled")]),
         "mfe0_share": {"cf": mfe0_cf, "actual": mfe0_act},
         "exit_reason_dist": {
             "cf": {k2: sum(1 for v in v2rows if v.get("cf_exit_reason") == k2)
