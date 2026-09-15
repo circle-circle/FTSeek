@@ -885,6 +885,20 @@ _E2E_NAMED_ORDER = ["VRTX", "NVDA", "ORCL", "BABA", "BBBY", "CNO", "TSLA", "NIO"
                     "SOLS", "ESTC", "QQQ", "SPY"]
 
 
+def _e2e_mention_counts():
+    """[2026-09-15] 从**材料索引**(输入侧, 非被测代码)推每个具名标的被几条材料提到。
+
+    名额排序契约从"保材料索引顺序"改成"提及数降序 → 同数保首现"后, 断言不能再硬编码一个
+    顺序常量: 段落重排/材料增减都会让它假红。改为在测试里从索引现推, 再断言产出顺序
+    **满足契约性质**(集合不变 / 提及数非增 / 同数保首现) ⇒ 钉的是规则, 不是某一次的排列。
+    """
+    index = [s for e in ue.brief_evidence_index()
+             if e["source"] not in ue._PRESCREEN_EXCLUDED_SOURCES
+             for s in e["symbols"]]
+    first_seen = list(dict.fromkeys(index))
+    return first_seen, {s: index.count(s) for s in first_seen}
+
+
 def _e2e_router():
     """假路由 (零网络)。报价同时给 price 与 pre_price, 且时戳=now-5min。
 
@@ -954,12 +968,33 @@ class TestBriefEndToEndPrescreen:
         assert {e["event_key"] for e in ps_facts} == {
             "prescreen_tradeable", "prescreen_context_only", "prescreen_unknown"}
 
-    def test_named_set_follows_index_order_not_alphabet(self, prescreen_on):
-        """先定序后截断 (计划 P1.4 同一原则): 名额上限砍的是优先级尾巴, 不是 Z 开头。"""
+    def test_named_set_ordered_by_mention_count_then_first_seen(self, prescreen_on):
+        """[2026-09-15 改契约] 名额排序 = 被几条材料具名(降序) → 同提及数保首现顺序。
+
+        旧契约是"保材料索引顺序", 2026-09-14 两轮首跑**实测证伪**: 受检 30 个与模型
+        surfaced 的重叠仅 4/10 与 1/6, 未受检的全落在 overflow_skipped (含当日真成交的
+        AAOI/CRWD) ⇒ 初筛看的和模型选的几乎是两批票, P2 验收①落空。修法不新增变量
+        (max_symbols 仍 30), 只换排序键: 多源交叉提及 = 更可能被提名。
+        仍保"先定序后截断"(计划 P1.4): 砍的是提及数最少的尾巴, 不是 Z 开头。
+        """
         ue._build_clue_brief("")
         asked = prescreen_on.router.quote_calls[0]
-        assert asked == [f"US.{s}" for s in _E2E_NAMED_ORDER]
-        assert asked != sorted(asked), "退化成字典序了 — 截断时会丢今日热点"
+        first_seen, mentions = _e2e_mention_counts()
+        bare = [a.replace("US.", "") for a in asked]
+        # ① 同一集合: 不丢、不重、不外扩 (排序只重排, 不改成员)
+        assert sorted(bare) == sorted(first_seen)
+        # ② 提及数沿产出顺序非增 ⇒ 名额确实给了多源热点
+        counts = [mentions[s] for s in bare]
+        assert counts == sorted(counts, reverse=True), (bare, counts)
+        # ③ 同提及数内保首现顺序 ⇒ 没丢掉 gather 传导优先级语义
+        for a, b in zip(bare, bare[1:]):
+            if mentions[a] == mentions[b]:
+                assert first_seen.index(a) < first_seen.index(b), (a, b)
+        # ④ 全为单提及时退回首现顺序, 此时仍不得是字典序 (旧病灶: 字典序丢今日热点)
+        if len(set(counts)) == 1:
+            assert bare != sorted(bare), "退化成字典序了 — 截断时会丢今日热点"
+        assert ue._LAST_INPUT_PRESCREEN["ordering"] == \
+            "mention_count_desc_then_first_seen"
 
     def test_named_set_is_derived_from_index_not_reparsed(self, prescreen_on):
         """具名集合取自材料索引 (P2.1), 不是再从渲染串里把 ticker 抠回来。"""
@@ -969,7 +1004,10 @@ class TestBriefEndToEndPrescreen:
             if e["source"] not in ue._PRESCREEN_EXCLUDED_SOURCES
             for s in e["symbols"]))
         assert from_index == _E2E_NAMED_ORDER
-        assert prescreen_on.router.quote_calls[0] == [f"US.{s}" for s in from_index]
+        # 2026-09-15: 顺序改由提及数决定, 但**成员必须仍是索引集合的重排** —
+        #   "取自索引而非重解析正文"这条契约靠集合相等钉, 不靠顺序。
+        asked = prescreen_on.router.quote_calls[0]
+        assert sorted(asked) == sorted(f"US.{s}" for s in from_index)
 
     def test_feedback_symbols_do_not_consume_prescreen_budget(self, prescreen_on,
                                                              monkeypatch):
@@ -988,14 +1026,97 @@ class TestBriefEndToEndPrescreen:
         prescreen_on.cfg["universe_expansion.input_prescreen_max_symbols"] = 3
         brief = ue._build_clue_brief("")
         asked = prescreen_on.router.quote_calls[0]
-        assert asked == ["US.VRTX", "US.NVDA", "US.ORCL"]
-        assert ue._LAST_INPUT_PRESCREEN["checked"] == 3
-        overflow = ue._LAST_INPUT_PRESCREEN["overflow_skipped"]
-        assert overflow == _E2E_NAMED_ORDER[3:]
+        ps = ue._LAST_INPUT_PRESCREEN
+        assert ps["checked"] == 3
+        overflow = ps["overflow_skipped"]
+        # [2026-09-15] 截断契约: 名额内的提及数不得低于名额外任何标的 (砍的是优先级尾巴)
+        first_seen, mentions = _e2e_mention_counts()
+        asked_bare = [a.replace("US.", "") for a in asked]
+        assert len(asked_bare) == 3
+        assert min(mentions[s] for s in asked_bare) >= \
+            max(mentions[s] for s in overflow), (asked_bare, overflow)
+        assert sorted(asked_bare + list(overflow)) == sorted(first_seen)
         # 上限外只"未判定", 不得被当成不可交易 (计划 P1.3 缺数策略)
         assert "上限外未判定" in brief
-        assert not [e for e in ue._LAST_INPUT_PRESCREEN["context_only"]
-                    if e["symbol"] in overflow]
+        assert not [e for e in ps["context_only"] if e["symbol"] in overflow]
+
+    def test_provider_timestamp_only_shape_reaches_pass(self, prescreen_on, monkeypatch):
+        """[2026-09-15 回归钉] **生产报价形态**必须仍能判出 PASS。
+
+        病灶: 2026-09-14 两轮首跑 30/30 受检标的 `missing_fields` 恒含 `source_asof`
+        ⇒ `tradeable` 恒空。根因是键名错配 —— 供应商给的是 `timestamp`(unix, 我方观测时刻,
+        `app/data/futu_lv3_provider.py:1098`), 而 SSOT `_source_time` 只认
+        `source_asof`/`update_time`。
+        ⚠ 本钉存在的原因: 既有夹具(`_ps_quote`/`_e2e_router`)一律喂 `source_asof`,
+          **比生产宽松** ⇒ 键名错配在测试里隐形(假绿)。本钉把报价改成生产形态。
+        """
+        router = prescreen_on.router
+        stamp = (datetime.now().astimezone() - timedelta(minutes=5)).timestamp()
+        prod = {}
+        for sym, q in router.quotes.items():
+            stripped = {k: v for k, v in q.items()
+                        if k not in ("source_asof", "update_time")}
+            if stripped:            # 空报价保持空 (缺价路径不被时戳归一"洗白")
+                stripped["timestamp"] = stamp
+            prod[sym] = stripped
+        monkeypatch.setattr(router, "quotes", prod)
+        brief = ue._build_clue_brief("")
+        ps = ue._LAST_INPUT_PRESCREEN
+        assert ps["status"] == "ok", ps
+        assert ps["tradeable"], f"PASS 态仍不可达 — 键名错配未修: {ps}"
+        assert "VRTX" in ps["tradeable"]
+        assert ps.get("source_asof_normalized", 0) > 0
+        assert ps.get("source_asof_basis") == "provider_observation_timestamp"
+        # 真缺数的仍必须诚实落 UNKNOWN, 不得被归一洗白成 PASS
+        assert [e["symbol"] for e in ps["unknown"]] == ["ESTC"]
+        assert "ESTC" not in ps["tradeable"]
+        assert "[输入具名标的可交易性初筛" in brief
+
+    def test_quote_prefetch_failure_fails_open(self, prescreen_on, monkeypatch):
+        """预取报价炸了 ⇒ 退回 `screen_candidates` 自取价, 不炸本段、不伪造三态。"""
+        router = prescreen_on.router
+
+        def boom(symbols):
+            router.quote_calls.append(list(symbols))
+            raise RuntimeError("provider down")
+
+        monkeypatch.setattr(router, "get_batch_quotes", boom)
+        brief = ue._build_clue_brief("")
+        ps = ue._LAST_INPUT_PRESCREEN
+        assert ps["status"] in ("ok", "unavailable"), ps
+        assert "quotes_prefetched" not in ps, "预取失败却声称预取成功"
+        # 两条取价路径都炸 ⇒ 内部 fail-open 成 {} ⇒ 只能 UNKNOWN, 不得凭空判 PASS/REJECT
+        assert not ps["tradeable"]
+        assert not ps["context_only"]
+        assert ps["checked"] == len(ps["unknown"])
+        assert isinstance(brief, str)
+
+    def test_now_resolved_after_quote_prefetch(self, prescreen_on, monkeypatch):
+        """[2026-09-15 回归钉] `now` 必须在**取价之后**定型 — 否则 future_quote 误判。
+
+        生产报价的 `timestamp` 是取价完成时刻 (`futu_lv3_provider` 各处 `time.time()`)。
+        修前 `now = now or _now_et()` 在取价**之前**执行 ⇒ `_source_time` 算出的
+        `quote_age = now - stamp` 为负; 批量取 30 只一旦超 5s 容差 (走降级源时
+        AlphaVantage 免费档每只 sleep 12s), 归一出时戳的标的会被 `evaluate_candidate`
+        判 `future_quote` **REJECT** —— 即时戳归一这个修反而把"缺数 UNKNOWN"升级成
+        "明确不可交易"写进 brief, 反向误导模型 (比修前更糟)。
+        钉**调用顺序**而非真 sleep ⇒ 确定、零耗时、不依赖机器快慢。
+        """
+        router = prescreen_on.router
+        real_now_et = ue._now_et
+        order = []
+        monkeypatch.setattr(
+            ue, "_now_et", lambda: (order.append("now"), real_now_et())[1])
+        orig = router.get_batch_quotes
+        monkeypatch.setattr(
+            router, "get_batch_quotes",
+            lambda syms: (order.append("quotes"), orig(syms))[1])
+        ps = ue._prescreen_input_symbols(["VRTX", "NVDA"], router=router)
+        assert ps["status"] == "ok", ps
+        assert "quotes" in order and "now" in order, order
+        assert order.index("quotes") < order.index("now"), \
+            f"now 在取价前定型 ⇒ future_quote 误判风险: {order}"
+        assert not [e for e in ps["context_only"] if "future_quote" in e["reasons"]], ps
 
     def test_only_appends_never_rewrites_existing_material(self, prescreen_on):
         """P2 验收②: 初筛只**追加**一段, 既有材料行一条不改一条不删。"""

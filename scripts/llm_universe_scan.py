@@ -1580,8 +1580,53 @@ def _scan_phase_policy(base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return policy
 
 
+# ── [P2.2-fix 2026-09-15, DEB-20260910 §20 后续] 扫描期报价时戳**键名归一** ──────────
+# 病灶 (2026-09-14 两轮首跑实测): 30/30 受检标的 `missing_fields` 恒含 `source_asof`、
+#   `quote_age_sec=None` ⇒ `evaluate_candidate` 的 PASS 要求"零 missing" ⇒ **`tradeable` 恒空**,
+#   P2 验收①的正向半边从未生效 (负向 `low_atr`/`price_floor` 正常, 零误杀)。
+# 根因不是缺数据, 是**键名错配**: 供应商报价字典带的是 `timestamp` (unix; = 我方取数/入 push
+#   缓存的时刻, 见 `app/data/futu_lv3_provider.py:1098` 与 `:1056`), 而
+#   `app/playbook/candidate_eligibility.py:_source_time` 只认 `source_asof`/`update_time`。
+# ⚠ 为什么**只在扫描期**归一、不去改 SSOT 的 `_source_time`: inject 侧 (:3289) 按
+#   `status != "REJECT"` **真过滤**, 且 inject 用 `load_candidate_policy()` 的
+#   `max_quote_age_sec=90` ⇒ 全局补时戳会**新激活 `stale_quote` 拒绝并真丢候选** =
+#   交易路径行为变更, 按 AGENT.md C4「行为变更一律影子先行」须另立影子批 (已登记待裁)。
+#   扫描期口径本就**不含**新鲜度门 (`_scan_phase_policy` 把 `max_quote_age_sec` 设成 1e12),
+#   所以这里补时戳只让"缺数"不再冒充"未知", **不产生任何新拒绝、不改任何门**。
+# 语义诚实: `timestamp` 是"我方观测到该报价的时刻", **不是**交易所撮合时点 ⇒ 归一后在
+#   summary 里写 `source_asof_basis` 标明口径, 供审计区分 (不当成行情时点用)。
+# fail-open: 预取异常 ⇒ 返回 None, `screen_candidates` 自己取价 (行为逐字退回修前, 不炸本段)。
+def _prescreen_quotes_with_asof(router, symbols, now=None):
+    try:
+        from app.playbook.candidate_eligibility import _SYMBOL, canonical_symbol
+        canon = [canonical_symbol(s) for s in (symbols or []) if str(s).strip()]
+        # 与 screen_candidates 自取价时的过滤逐字同口径 (candidate_eligibility:186
+        #   `_SYMBOL.fullmatch`) —— 材料里混进的非标的形状 token 不得进 router,
+        #   否则一个坏代码可能拖垮整批取价 (修前它们本就被挡在取价之外)。
+        canon = [s for s in canon if _SYMBOL.fullmatch(s)]
+        raw = router.get_batch_quotes(canon) if router and canon else {}
+    except Exception as exc:
+        print(f"  [warn] 初筛报价预取失败 (退回 screen_candidates 自取价): {exc}")
+        return None, 0
+    out: Dict[str, Any] = {}
+    normalized = 0
+    for key, quote in (raw or {}).items():
+        if not isinstance(quote, dict):
+            continue
+        row = dict(quote)
+        if not (row.get("source_asof") or row.get("update_time")):
+            stamp = row.get("timestamp")
+            if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
+                row["source_asof"] = float(stamp)
+                normalized += 1
+        out[key] = row
+    print(f"  [prescreen] 报价命中 {len(out)}/{len(canon)}, 时戳键归一 {normalized} 条")
+    return out, normalized
+
+
 def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
-                             max_symbols=None) -> Dict[str, Any]:
+                             max_symbols=None,
+                             ordering: str = "material_index_order") -> Dict[str, Any]:
     """对材料索引里**已具名**的 ticker 做批量轻量初筛, 返回三态清单 (纯读, 不落库)。
 
     三态语义 (与 P1 资格判定同口径, 不新造判据):
@@ -1602,20 +1647,36 @@ def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
         "checked": 0, "overflow_skipped": ordered[max_symbols:],
         "tradeable": [], "context_only": [], "unknown": [],
         "policy_version": None, "phase": "ue_input_prescreen",
+        "ordering": ordering,
     }
     ordered = ordered[:max_symbols]
     if not ordered:
         summary["status"] = "no_named_symbol"
         return summary
     try:
-        now = now or _now_et()
         policy = policy if policy is not None else _scan_phase_policy()
         summary["policy_version"] = policy.get("version")
         router = router if router is not None else _build_router()
+        # [P2.2-fix 2026-09-15] 扫描期报价时戳键归一 (理由/边界见函数头注释)。
+        #   返回 None 时传 quotes=None ⇒ screen_candidates 自取价, 与修前逐字同行为。
+        _quotes, _n_asof = _prescreen_quotes_with_asof(router, ordered, now)
+        # [P2.2-fix③ 2026-09-15] `now` 必须**在取价之后**定型。供应商 `timestamp` 写的是
+        #   取价完成时刻 (`futu_lv3_provider` 各处 `time.time()`), 若 `now` 早于它,
+        #   `_source_time` 算出的 `quote_age` 为负 ⇒ 超过 5s 容差即被
+        #   `evaluate_candidate` 判 `future_quote` **REJECT** —— 比修前的 UNKNOWN 更糟:
+        #   "缺数"被升级成"明确不可交易"写进 brief, 反向误导模型。批量取 30 只一旦走
+        #   降级源 (AlphaVantage 免费档每只 sleep 12s) 远超 5s。
+        #   调用方显式传 now (测试/回放) 时保持原值, 不擅改观测时点。
+        now = now or _now_et()
         batch_id = make_batch_id(INPUT_PRESCREEN_SOURCE, now)
+        if _quotes is not None:
+            summary["quotes_prefetched"] = len(_quotes)
+            summary["source_asof_normalized"] = _n_asof
+            if _n_asof:
+                summary["source_asof_basis"] = "provider_observation_timestamp"
         rows = screen_candidates([{"symbol": s} for s in ordered], router,
                                  source=INPUT_PRESCREEN_SOURCE, batch_id=batch_id,
-                                 now=now, policy=policy)
+                                 now=now, policy=policy, quotes=_quotes)
     except Exception as exc:
         print(f"  [warn] 输入初筛失败 (fail-open, 材料零改动): {exc}")
         summary.update(status="unavailable", error=type(exc).__name__)
@@ -2021,11 +2082,29 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         #      (硬事件→财报→内部人→…→回顾→regime)。名额上限截断时字典序会把 Z 开头的
         #      今日热点整批丢进 overflow, 保序丢的才是优先级尾巴。与计划 P1.4"避免先丢掉
         #      最强空头"同一原则: 先定序, 后截断。
-        _named = list(dict.fromkeys(
-            s for e in _BRIEF_EVIDENCE
-            if str(e.get("source") or "") not in _PRESCREEN_EXCLUDED_SOURCES
-            for s in (e.get("symbols") or [])))
-        _ps = _prescreen_input_symbols(_named)
+        #   ③ [P2.2-fix 2026-09-15] **名额排序改按"被几条材料具名"降序** (同数保首现顺序)。
+        #      病灶 (2026-09-14 两轮首跑实测): 只保材料索引顺序截断 30 个后, 模型 surfaced
+        #      的标的与受检集合重叠仅 **4/10** 与 **1/6** —— 未受检的全落在 overflow_skipped
+        #      (含当日真成交的 AAOI/CRWD) ⇒ 初筛看的和模型选的几乎是两批票, 验收①落空。
+        #      判据: 被多条**独立**材料交叉具名 = 更可能被提名, 优先占名额; 同提及数按首现顺序
+        #      (= gather 传导优先级) 稳定排序 ⇒ 不丢②的优先级语义, 只把多源热点提进名额内。
+        #      刻意**不动** max_symbols=30 (一次一个变量; 覆盖面够不够等实跑数据再裁)。
+        _mentions: Dict[str, int] = {}
+        _named: List[str] = []
+        for _ev in _BRIEF_EVIDENCE:
+            if str(_ev.get("source") or "") in _PRESCREEN_EXCLUDED_SOURCES:
+                continue
+            for _sym in (_ev.get("symbols") or []):
+                _key = str(_sym).strip().upper().replace("US.", "")
+                if not _key:
+                    continue
+                if _key not in _mentions:
+                    _named.append(_key)
+                _mentions[_key] = _mentions.get(_key, 0) + 1
+        _first_seen = {_sym: _i for _i, _sym in enumerate(_named)}
+        _named.sort(key=lambda _s: (-_mentions[_s], _first_seen[_s]))
+        _ps = _prescreen_input_symbols(
+            _named, ordering="mention_count_desc_then_first_seen")
         _ps_lines = _render_input_prescreen(_ps)
         if _ps_lines:
             parts.append("\n[输入具名标的可交易性初筛 (与注入侧同一资格口径; "
