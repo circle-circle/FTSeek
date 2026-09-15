@@ -1139,6 +1139,28 @@ playbook:
     entry_vwap_gate_enabled: true
     entry_vwap_gate_tolerance: 0.003
     vwap_gate_ab_enabled: true
+    # 2026-09-15 (DEB-20260910 §24, 用户裁"按照建议执行"): 报价门 5 键**原值落 yaml**,
+    #   零行为变更 —— 此前它们只活在 app/playbook/config.py DEFAULTS (:51-:57), yaml 里
+    #   一个都没有 (改前实测 5 键 in_yaml=False), 而 B4 交接
+    #   (docs/archive/handoff-archive-pre-2026-08-24.md:1440) 写的"回滚:
+    #   entry_freshness_gate_enabled: False (一键)"实际**无键可翻** = 文档与现实不符。
+    #   本批只把当前生效值 (True/60.0/0.05/True/90.0) 显式落到 SSOT, 补齐一键回滚能力,
+    #   不动任何阈值。取值优先级: yaml > config.py DEFAULTS (config.py:111-115)。
+    # 注 (为什么这两个龄期数字今天是空转的, 别误当活跃门去调):
+    #   富途各路径 timestamp 恒写 time.time() (futu_lv3_provider.py:970/:1024), push 缓存
+    #   TTL 硬编码 5s (market_data_router.py:129) ⇒ 龄期恒 ≈0; 且 check_quote_freshness
+    #   **先**判降级源黑名单即返回 (data_health_guard.py:105), 90s 龄期分支 (:119) 只对
+    #   非降级源生效 ⇒ 结构上走不到。真正干活的是黑名单 + health 门的盘口齐备/spread。
+    #   行为级对照: 全量 logs/*.log 里"数据新鲜度门拒绝开仓"/"报价健康门拒绝下单"各 0 命中
+    #   (阳性对照: 09-15 21:46 US.MU BUY 真实成交、auto_execute 正常跑 ⇒ 非假绿)。
+    #   ⇒ 调这两个数字今天不改行为, 但也**别删**: 一旦将来 provider 改回传交易所真时戳
+    #   (影子 scripts/ue_quote_freshness_shadow.py 正在量化该假设), 它们是唯一兜底。
+    # 回滚: 删本 5 键 (退回 DEFAULTS, 值相同, 行为不变) 或按需改值 + 重启。
+    pretrade_quote_gate_enabled: true
+    pretrade_max_quote_age_sec: 60.0
+    pretrade_max_spread_pct: 0.05
+    entry_freshness_gate_enabled: true
+    entry_max_quote_age_sec: 90.0
     min_tp_rr: 1.5
     # 2026-08-31 (退出策略核查发现·两次裁决互杀, 用户裁"影子先行"): 再入场快TP
     #   门禁吞掉影子 — 8/7 裁决的快收结构 (quick_tp=0.35×ATR clamp[1,2]% vs
