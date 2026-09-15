@@ -28,6 +28,11 @@
 只读, 幂等, 零副作用。挂载: 一次性 cron 9/15 06:35 CST (窗口 8/31-9/14 第 10 采集夜
 收口后裁决 — 2026-09-01 复查收口补挂; 原注册措辞"9/14 裁决"勘误: 裁决须在窗口最后一夜
 采集之后), 跑完自删本 crontab 行 (防年度复燃) + latest json 落盘 + 飞书推送。
+
+2026-09-15 收口补丁 (用户裁「按照建议执行」): 加**预注册窗口硬边界** (WINDOW_START/END,
+越窗行不入读数 + n_out_of_window 单列披露)。缘起: 采集环与裁决器是两个开关, 一次性裁决
+自删了自己的 cron 行, 但采集行没摘 → 当晚又多采 16 行 (n 100→116); 本器原先吃全部 live 行
+而 window 字段是硬编码字符串 ⇒ 重跑会把窗口外的样算进"8/31-9/14"读数 (事后拣选/窗口污染)。
 """
 import argparse
 import json
@@ -44,8 +49,23 @@ MIN_N_SHORT = 5          # ② SHORT 提案数
 MIN_N_DIR = 20           # ③ 方向性结论最小样本 (9.5 修正)
 TAINT_PCT = 1.0          # 9.6 材料漂移阈值 (pp)
 
+# 预注册窗口硬边界 (2026-09-15 收口, 用户裁「按照建议执行」): 越窗行不入读数。
+# 立起实锤 — 采集环 (cron 30 20 * * 1-5) 与裁决器是**两个开关**: 9/15 06:35 一次性
+# 裁决跑完并自删了自己的 cron 行, 但采集行没摘 ⇒ 当晚又采 16 行 (n 100→116), 而本器
+# 原先吃全部 live 行、window 字段还是硬编码字符串 → 重跑即把窗口外的样算进"8/31-9/14"
+# 读数 = 事后拣选/窗口污染。现按日期过滤 + 越窗行单列 n_out_of_window 透明披露
+# (宁可见不可静默, 同 n_taint_unevaluable 纪律)。
+WINDOW_START = "2026-08-31"
+WINDOW_END = "2026-09-14"
 
-def load_rows(path: str = str(SHADOW_PATH), live_only: bool = True) -> list:
+
+def _row_date(r: dict) -> str:
+    return str(r.get("date") or "")[:10]
+
+
+def load_rows(path: str = str(SHADOW_PATH), live_only: bool = True,
+              window: tuple = (WINDOW_START, WINDOW_END)) -> list:
+    """window=None 关过滤 (供越窗计数用); 缺 date 的行按越窗处理 (不入读数)。"""
     out = []
     p = Path(path)
     if not p.exists():
@@ -60,8 +80,17 @@ def load_rows(path: str = str(SHADOW_PATH), live_only: bool = True) -> list:
             continue
         if live_only and r.get("run_mode") != "live":
             continue
+        if window and not (window[0] <= _row_date(r) <= window[1]):
+            continue
         out.append(r)
     return out
+
+
+def count_out_of_window(path: str = str(SHADOW_PATH),
+                        window: tuple = (WINDOW_START, WINDOW_END)) -> int:
+    """越窗 live 行数 (透明披露, 不入任何判据)。"""
+    return sum(1 for r in load_rows(path, window=None)
+               if not (window[0] <= _row_date(r) <= window[1]))
 
 
 def _ckpt_snapshot(date: str, symbol: str) -> dict:
@@ -156,9 +185,12 @@ def main() -> int:
     ap.add_argument("--jsonl", default=str(SHADOW_PATH))
     args = ap.parse_args()
     rows = load_rows(args.jsonl)
+    n_oow = count_out_of_window(args.jsonl)
     e = evaluate(rows)
-    print("═══ da_glm_shadow 影子评估 (窗口 8/31-9/14) ═══")
+    print("═══ da_glm_shadow 影子评估 (预注册窗口 %s..%s) ══" % (WINDOW_START, WINDOW_END))
     print(f"live 样本: n={e['n_live']}  解析成功: {e['n_ok']} ({e['json_rate']*100:.1f}%)")
+    if n_oow:
+        print(f"⚠ 越窗行 (窗口外采集, 不入读数): {n_oow} — 采集环窗口收官后仍在跑?")
     print(f"tainted (材料漂移>{TAINT_PCT}pp): {e['n_tainted']}  不可判(缺effective对照): {e['n_taint_unevaluable']}"
           f"  SHORT提案(去污后): {e['n_short']}")
     print(f"T+1 可结算: {e['n_t1']}  方向均值: {e['dir_mean']}")
@@ -172,7 +204,8 @@ def main() -> int:
 
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(json.dumps(
-        {**e, "window": "2026-08-31..2026-09-14",
+        {**e, "window": f"{WINDOW_START}..{WINDOW_END}",
+         "n_out_of_window": n_oow,
          "generated_at": datetime.now().isoformat(timespec="seconds")},
         ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[da-glm-eval] 裁决快照已落盘 {OUT_JSON}")

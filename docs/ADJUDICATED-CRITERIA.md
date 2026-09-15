@@ -25,7 +25,7 @@
 |---|---|---|---|
 | B1 | gap_chase_gate | n≥30 ∧ 拦截组笔均<0 ∧ 单侧符号检验 p≤0.05。〔9/1 补注: eval cron 补挂 06:10 CST (8/29 注册后悬空勘误); 8/31 PCG -19.8% 崩跌追空实为 aligned 口径逆追族入列 (前"缺口上沿做空"误读已勘误: prev_close 16.6→open 13.31); fade/chase 同族均归 aligned_gap≥5% 口径〕 | f2a91d31 (8/29) + DEB-20260901 Phase C (9/1) |
 | B2 | BE 门 | n≥30 达标即停新开仓转纯采集; 不提前降速 | 用户 8/25 批准 |
-| B3 | da_glm_shadow | ①JSON成功率≥90% ②SHORT提案≥5 → PROMOTE; ③T+1方向仅n≥20参考; 窗口 8/31-9/14 | 05a69c43 + 第9/10轮 |
+| B3 | da_glm_shadow | ①JSON成功率≥90% ②SHORT提案≥5 → PROMOTE; ③T+1方向仅n≥20参考; 窗口 8/31-9/14 〔**9/15 窗口收官·机械裁决已出**: ①100% ✓ ②去污后 20 ✓ ③n=18<20 仅参考 (+0.2246%) → PROMOTE_PROPOSAL; 采集环已退役, 数据保留〕〔**终裁 2026-09-15 用户裁「停止 da_glm_shadow 不转正」⇒ SUPERSEDED / 方案 B 归档 (方案 C 未采纳, 不转正)**; 归档留痕=脚本与数据保留、注册表 status=SUPERSEDED + verdict_history 落痕、钉子 test_da_glm_shadow::test_registry_pin 钉住; **本条判据自此冻结, 不得据本窗口数据续验或改阈值重算 — 重开须新预注册** (DEB-20260915 §六)〕 | 05a69c43 + 第9/10轮; 9/15 收口; 9/15 终裁 |
 | B4 | DA-A2 白名单 | 前向 5 交易日 unverified 率 85%→<20% | DEB-20260829 第2/3轮 |
 | B5 | UE-D1 triggers 字段 | 10 交易日填充率仍=0 → 字段删除; >0 → 按填充样本评消费价值 | DEB-20260829 第7轮 |
 | B6 | UE-D2 glm 首发 | 10 交易日观察: 延迟<300s ∧ 无 length 截断 ∧ trig 填充率≥50% | DEB-20260829 第8轮 |
@@ -43,6 +43,7 @@
 
 | B18 | GLM A' 日内累计亏损熔断影子 (intraday_loss_breaker_a_prime) | 阈值 -400 **预注册冻结** (修改=重新裁决, §11.3.1 阈值购物纪律); 口径冻结: trade_mode=simulate ∧ pnl_net NOT NULL, ET 日, exit 事件流。判据: 被挡笔期望 (settled pnl_net 均值) ≤ -10 ∧ n≥30 (顺延毕业门槛) → 提请裁决启用实盘熔断 (**另立 DEB+用户裁, 影子≠D1 落地**); 期望不过线 → 维持 OBSERVING 纯攒样。**首跑即裁决留痕**: backfill 全期 n=196 期望 +36.85 (主判据不过), DEB 预验证 -685/月 系 entry 序累加前视偏差 (8/14 簇崩塌 9 笔同分钟入场, 亏损实现恒晚于同分钟簇 → 已实现口径结构抓不住开盘簇) → backfill 判不毕业, 价值转 forward 攒样 | DEB-20260904 §11.5 (三方收敛+用户裁决实施) + §11.6(a) 首跑证伪; 注册表 intraday_loss_breaker_a_prime |
 | B19 | EOD 深水闸影子 (eod_depth_gate, RFC-079) | EOD 豁免判定时刻净水深 ≤-2.5% 记 would_revoke (record-only, 真仓照常豁免持夜); 次日结算 Δ=反事实EOD平−实际结局 (费两边抵消=纯价差)。毕业判据: would_revoke 结算 n≥8 ∧ ΣΔ>0 ∧ 误杀赢家(abs(Δ)>费地板$5)≤1 → **提请转硬闸 (另立DEB+用户裁, 影子不自动生效)**; 不过线 → 维持豁免机制原状。回溯证据 (8/1-9/8 回放 24 笔): -2.5% 阈值 3/3 命中开盘死亡灾难 (8/27 UBER -$307 / 8/31 GAP -$387 / 9/8 UBER -$273), ΣΔ=+$410, 误杀 0; 浅水豁免修复率 69% 机制保留。窗内禁改: loser_overnight_max_depth_pct (99=8/21 已裁决禁用, 永不复用) / EOD 豁免链行为。阈值 -2.5% 预注册冻结 (改=重裁) | 用户 9/8 裁"执行"方案A (隔夜仓开盘即杀归因); PROPOSAL-20260906B P3 §0.5 修正设计 (EOD 判定时刻闸, 独立键); 回放脚本 /tmp/o6_replay.py 结论落本文; 结算 scripts/settle_eod_depth_gate_shadow.py (crontab 30 6 * * 2-6) |
+| B20 | UE 报价新鲜度门「哑弹」量化影子 (ue_quote_freshness_shadow) | **预注册 (改=重裁, 禁事后改阈值重算)**: ≥10 个**交易日有效轮次** ∧ 盘前 `genuine` 龄 (futu `update_time` = 交易所侧时戳口径) **P95 ≤ 候选阈值** → 方可**提议激活** SSOT `stale_quote` 门并定盘前专属阈值 (另立 DEB + 用户裁, 影子不自动生效); **有效轮次 <10 禁止建议激活** (同 thinking-eval 先例)。**有效轮次** = `status==ok` ∧ 非 `forced_non_trading_day` ∧ 交易日为真 的**去重 ET 日期**数 (假日报价龄小时级 ⇒ 假一轮比缺一轮更坏, fail-safe)。阈值不硬编码 (取影子行自带 `threshold_sec`, 行间不一致则并列披露)。**挂环当日报数 (1/10 仅供参考, 不作证据)**: 交易所时戳可得率 100%; genuine 龄 1.5–159.1s (AXON 4 次观测 2 次超 90s ⇒ 现役 90s 阈值在盘前阵发报价下不成立, 但 n 不足不得据此下结论); alias 洗白真陈旧 1/5 | DEB-20260910 §22–§25 + 台账 §2.3 `crontab-ue-quote-freshness-shadow` + §4 准入行; 裁决器 scripts/ue_quote_freshness_shadow_eval.py (eval_on_demand, 机械只读); 到期触发 ≈2026-09-29 |
 
 ## C. 纪律红线 (冻结/不可动, 改需重新裁决)
 

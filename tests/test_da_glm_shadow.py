@@ -1,7 +1,9 @@
 """da_glm_shadow 影子: 评估逻辑行为级测试 + 注册表钉子 (9.1/9.5/9.6 修复守卫).
 
 红绿纪律: 判定函数对构造数据必须给出机械一致结论;
-注册项必须保持 OBSERVING 直到 9/14 窗口裁决; eval 脚本文件必须真实存在。
+注册项状态钉在 READY_TO_EVALUATE (2026-09-15 窗口 8/31-9/14 收口: 机械裁决已出
+PROMOTE_PROPOSAL, 采集环已退役, 待用户对 DEB-20260915 终裁 — 终态翻牌必须是显式裁决);
+eval 脚本文件必须真实存在; 越窗行不得入读数 (2026-09-15 收口补丁)。
 """
 import json
 import sys
@@ -11,8 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.da_glm_shadow_eval import (  # noqa: E402
-    CRON_MARKER, MIN_N_SHORT, _self_remove_cron, evaluate, is_tainted,
-    load_rows, taint_diff)
+    CRON_MARKER, MIN_N_SHORT, WINDOW_END, WINDOW_START, _self_remove_cron,
+    count_out_of_window, evaluate, is_tainted, load_rows, taint_diff)
 from app.playbook.shadow_registry import REGISTRY, ShadowStatus  # noqa: E402
 
 
@@ -105,13 +107,48 @@ def test_registry_pin():
     items = {it.id: it for it in REGISTRY}
     it = items.get("da_glm_shadow")
     assert it is not None, "da_glm_shadow 未注册 (9.1 修复回归)"
-    assert it.status == ShadowStatus.OBSERVING
+    # 2026-09-15 **用户终裁「停止 da_glm_shadow 不转正」** ⇒ 终态 SUPERSEDED (归档留痕:
+    # 脚本与数据保留 = 停用非删证)。此前钉的 READY_TO_EVALUATE 是"待终裁"中间态, 已过期。
+    assert it.status == ShadowStatus.SUPERSEDED
     assert it.eval_script == "scripts/da_glm_shadow_eval.py"
+    # 采集行退役后 eval 无周期挂载面 → 按需触发 (防挂载哨兵把"一次性已跑完"当悬空报)
+    assert it.eval_on_demand is True
+    assert it.last_evaluated == "2026-09-15"
     assert "PROMOTE_PROPOSAL" in it.graduation_criteria
     assert "n≥20" in it.graduation_criteria  # 9.5 判据③降级钉住
     # 2026-09-01 复查收口: live-only 计数口径钉住 (原 lines 把 test 行计入)
     assert it.count_mode == "where:run_mode=live"
     assert (Path(__file__).resolve().parents[1] / it.eval_script).exists()
+    # 终裁落痕: 裁决历史末条必须是 SUPERSEDED, 且不得写成"转正"的假绿
+    last = it.verdict_history[-1]
+    assert last["date"] == "2026-09-15" and "SUPERSEDED" in last["verdict"]
+    assert "不转正" in it.notes, "终态理由须落在 notes (归档留痕)"
+
+
+# ── 2026-09-15 收口: 预注册窗口硬边界 (采集环与裁决器是两个开关) ──
+
+def test_out_of_window_rows_excluded(tmp_path):
+    """越窗行不入读数: 9/15 采集环多跑一夜 (16 行) 不得被算进 8/31-9/14 窗口。"""
+    rows = [_row(date="2026-09-14"), _row(date="2026-08-31"),
+            _row(date="2026-09-15"), _row(date="2026-09-15")]
+    p = _mk_jsonl(tmp_path, rows)
+    got = load_rows(p)
+    assert [r["date"] for r in got] == ["2026-09-14", "2026-08-31"]
+    assert len(got) == 2, "越窗行混进了窗口读数 (窗口污染)"
+    assert count_out_of_window(p) == 2, "越窗行必须单列披露, 不得静默丢弃"
+    # 窗口外单独成样本时判据照常机械判 (不做"窗口外也凑数"的假绿)
+    assert evaluate(load_rows(p))["n_live"] == 2
+
+
+def test_window_bound_is_pinned():
+    """窗口边界是预注册事实, 改动=重新裁决 — 漂了必须红。"""
+    assert (WINDOW_START, WINDOW_END) == ("2026-08-31", "2026-09-14")
+
+
+def test_out_of_window_counts_live_only(tmp_path):
+    """越窗计数只数 live 行 (test 行不进任何读数, 含披露计数)。"""
+    rows = [_row(date="2026-09-15"), _row(date="2026-09-15", mode="test")]
+    assert count_out_of_window(_mk_jsonl(tmp_path, rows)) == 1
 
 
 # ── 一次性裁决 cron 自删 (2026-09-01 复查收口: eval 补挂 9/15 一次性机械裁决) ──

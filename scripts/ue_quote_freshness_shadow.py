@@ -54,6 +54,17 @@ P2.2 修复批 (commit 3646e0b36) 在**扫描期**把供应商的 `timestamp` �
 * 只追加一个 jsonl: `data/shadow/ue_quote_freshness_shadow.jsonl`。
 * 全程 fail-open 且**降级要响亮** (仓内 except-pass 棘轮 + 禁静默纪律): 任何异常都
   打印 `[warn]`, 不静默吞。
+* **非交易日不落盘** (2026-09-15 补口, 用户裁「请执行」): 交易日守卫 (`_trading_context`)
+  在取数**之前**判, 假日/周末/日历不可用一律不写行 — 假日报价来自上一交易日收盘,
+  `genuine` 龄小时级, 会**伪造**"激活必杀"的读数并冒充一个"有效轮次"。手工核查用 `--force`
+  (该行带 `forced_non_trading_day=true`, 裁决器按 forced 排除)。
+* **裁决器与到期触发人** (2026-09-15 补口): `scripts/ue_quote_freshness_shadow_eval.py`
+  (机械只读) + 注册条目 `ue_quote_freshness_shadow` (`shadow_registry.py`,
+  `eval_on_demand=True`)。预注册判据: **≥10 个交易日有效轮次 ∧ 盘前 genuine 龄
+  P95 ≤ 候选阈值** ⇒ 方可提议激活 (另立 DEB + 用户裁); 有效轮次 <10 **禁止建议激活**。
+  补这条的理由: 原挂环时该时钟只活在 crontab 注释与台账文字里, **无注册条目、无 jsonl
+  消费者** ⇒ 10 个交易日后不会有人被提醒去读尺子 (同族病灶: "窗口制影子"的采集开关与
+  裁决开关是两件事, 两者都要写死责任人与触发点)。
 
 回滚: 删本文件 + 删 jsonl (零生产耦合, 无调用方)。
 """
@@ -82,6 +93,73 @@ HYPOTHESES = ("as_is", "alias", "genuine")
 
 def _now_et() -> datetime:
     return datetime.now(_ET)
+
+
+def _holiday_calendar_max_year() -> int:
+    """本地假日历覆盖面 (与 `app/playbook/shadow_tracker.US_MARKET_HOLIDAYS_2026` 对齐)。"""
+    return 2026
+
+
+def us_trading_day_flag(d) -> Optional[bool]:
+    """美股交易日判定 — **纯本地、零 futu 连接**; 日历覆盖面之外返回 `None` (=未知)。
+
+    为什么**不用** `app.shared.market_hours` / `app.utils.holiday_calendar` / `app.core.trade_guard`:
+    它们都走 `get_holiday_calendar()`, **实测会打开一个 futu OpenQuoteContext** (2026-09-15
+    实测: 调一次 `is_trading_day` 就 `New connect ready`/`Close`) —— 而 OpenD 槽位与生产共享,
+    且本守卫的全部意义是"非交易日什么都别做" ⇒ 用会连 futu 的日历当守卫, 等于为了省一次
+    取数先占一次连接 (正是本环挂载时最忌讳的事)。
+
+    为什么覆盖外返回 `None` 而不是 `True`: `US_MARKET_HOLIDAYS_2026` 只覆盖 2026 (仓内已知
+    定时炸弹)。默认"是交易日"会把 2027 年起的所有假日**静默**当交易日 —— 那是静默错误;
+    返回 `None` 则 fail-closed 不落盘 + 响亮提示扩展日历, 是**可见的缺失**。
+    """
+    if d.weekday() >= 5:          # 周六=5, 周日=6
+        return False
+    if d.year != _holiday_calendar_max_year():
+        return None
+    try:
+        from app.playbook.shadow_tracker import US_MARKET_HOLIDAYS_2026
+    except Exception as exc:
+        print(f"  [warn] 假日历常量导入失败 ⇒ 交易日判定不可得 (fail-closed): {exc}")
+        return None
+    return d.isoformat() not in US_MARKET_HOLIDAYS_2026
+
+
+def _session_hint(now: datetime) -> str:
+    """本地时钟派生的时段标签 — **仅审计附注, 非 SSOT 时段** (不为一个标签去连 futu)。
+
+    用处: 万一有人把 cron 挪出盘前窗 (本环预注册前提是 09:15 ET 盘前), 读数里能一眼看出。
+    """
+    hm = now.hour * 100 + now.minute
+    if 400 <= hm < 930:
+        return "PRE_MARKET"
+    if 930 <= hm < 1600:
+        return "TRADING"
+    if 1600 <= hm < 2000:
+        return "AFTER_HOURS"
+    return "CLOSED"
+
+
+def _trading_context(now: datetime) -> Dict[str, Any]:
+    """交易日守卫 + 时段标签。判定不可得 ⇒ `is_trading_day=None` (调用方 fail-closed)。
+
+    为什么必须有这个守卫 (2026-09-15 补口, 用户裁「请执行」): cron 是 `15 21 * * 1-5`,
+    **假日照跑**。假日报价来自上一交易日收盘 ⇒ `genuine` 龄小时级 ⇒ 当轮
+    `n_newly_rejected_genuine = n`, 而预注册判据是"≥10 交易日 + 盘前 genuine 龄
+    P95 ≤ 候选阈值" —— 一条假日样本既**冒充了一个有效轮次**, 又能把 P95 拽向
+    "激活必杀"的假结论 (与 §22.6 的朴素 `now` 同族: 都是**仪器姿势**制造的假拒绝)。
+
+    不可用时的取舍 = **不落盘**: 宁可丢一轮, 不可污染读数。与"有效轮次 <10 禁止建议
+    激活"同向 —— 少一轮是安全的, 多一轮假的不安全。
+    """
+    ctx: Dict[str, Any] = {"is_trading_day": None, "session_hint": None}
+    ctx["is_trading_day"] = us_trading_day_flag(now.date())
+    ctx["session_hint"] = _session_hint(now)
+    if ctx["is_trading_day"] is None:
+        print("  [warn] 交易日判定不可得 (日历覆盖面之外或常量不可读) ⇒ "
+              "**fail-closed: 本轮不落盘** (判定不可得时, 假样本比缺样本贵; "
+              "若已过 2026, 请先扩展 US_MARKET_HOLIDAYS)")
+    return ctx
 
 
 def _age_sec(stamp: Any, now: datetime) -> Optional[float]:
@@ -307,7 +385,7 @@ def _collect_stamps(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def run(symbols: Optional[List[str]] = None, *, limit: int = 12,
-        write: bool = True) -> Dict[str, Any]:
+        write: bool = True, force: bool = False) -> Dict[str, Any]:
     from app.playbook.candidate_eligibility import canonical_symbol, load_candidate_policy
 
     syms = [s for s in (symbols or []) if s] or latest_ue_symbols(limit)
@@ -323,6 +401,25 @@ def run(symbols: Optional[List[str]] = None, *, limit: int = 12,
         record["status"] = "no_symbols"
         print("[shadow] 无可测标的 (当日 scan 无 surfaced?) — 不落盘")
         return record
+    # ── 交易日守卫 (2026-09-15 补口) ── 取数**之前**判, 既省 OpenD 槽位又防假日样本。
+    tctx = _trading_context(now)
+    record["is_trading_day"] = tctx["is_trading_day"]
+    record["session_hint"] = tctx["session_hint"]
+    record["forced_non_trading_day"] = False
+    if tctx["is_trading_day"] is None:
+        record["status"] = "trading_day_undecidable"
+        print("[shadow] 交易日判定不可得 ⇒ 不落盘 (fail-closed, 见 _trading_context)")
+        return record
+    if not tctx["is_trading_day"] and not force:
+        record["status"] = "non_trading_day"
+        print(f"[shadow] {now.astimezone(_ET).date().isoformat()} 非美股交易日 — **不落盘**: "
+              f"假日报价来自上一交易日收盘 ⇒ genuine 龄小时级 ⇒ 会伪造'激活必杀'读数 "
+              f"(手工核查用 --force, 该行被裁决器排除)")
+        return record
+    if not tctx["is_trading_day"]:
+        # --force: 人工核查用。**显式标记**, 裁决器按 forced 排除, 不冒充有效轮次。
+        record["forced_non_trading_day"] = True
+        print("[shadow] ⚠ --force 在非交易日运行: 本行**不计入有效轮次** (裁决器按 forced 排除)")
     try:
         policy = load_candidate_policy()
     except Exception as exc:
@@ -385,7 +482,13 @@ def run(symbols: Optional[List[str]] = None, *, limit: int = 12,
               f"{r['verdicts']['as_is']['status']}→{r['verdicts']['genuine']['status']}"
               f"{flag}{wash}{naive}")
     if write:
-        print(f"  → {SHADOW_PATH.relative_to(_ROOT)}")
+        # `relative_to` 会在"路径不在仓内"时抛 ValueError (测试注入 tmp_path 即触发):
+        # 落盘已成功, 不该因为一行展示把它变成崩溃。
+        try:
+            shown = SHADOW_PATH.relative_to(_ROOT)
+        except ValueError:
+            shown = SHADOW_PATH
+        print(f"  → {shown}")
     return record
 
 
@@ -395,9 +498,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="指定标的 (裸代码); 缺省=当日最后一条 scan 的 surfaced")
     parser.add_argument("--limit", type=int, default=12, help="缺省取样上限")
     parser.add_argument("--dry", action="store_true", help="只算不落盘")
+    parser.add_argument("--force", action="store_true",
+                        help="非交易日也跑 (人工核查用; 该行带 forced 标记, 裁决器不计入有效轮次)")
     args = parser.parse_args(argv)
-    rec = run(args.symbols, limit=args.limit, write=not args.dry)
-    return 0 if rec.get("status") in ("ok", "no_symbols") else 1
+    rec = run(args.symbols, limit=args.limit, write=not args.dry, force=args.force)
+    return 0 if rec.get("status") in ("ok", "no_symbols", "non_trading_day") else 1
 
 
 if __name__ == "__main__":

@@ -323,7 +323,12 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="da_glm_shadow",
         name="DA glm-5.2 影子攒样 (SHORT 产出意愿)",
-        status=ShadowStatus.OBSERVING,
+        # 2026-09-15 窗口收官: OBSERVING → READY_TO_EVALUATE (机械裁决已出, 待用户终裁)。
+        # 采集环同日退役 (crontab 行已摘), 故 eval 改按需触发 (无周期挂载面)。
+        # 2026-09-15 **用户终裁「停止 da_glm_shadow 不转正」** ⇒ READY_TO_EVALUATE → SUPERSEDED:
+        #   归档留痕 (脚本与数据保留 = 停用非删证), 对应 DEB-20260915 方案 B。
+        status=ShadowStatus.SUPERSEDED,
+        eval_on_demand=True,
         description="2026-08-30 用户裁'1要' (05a69c43 落地), 2026-08-30 第9轮 9.1 补注册。"
                     "检验 8/30 多模型对比中 glm-5.2 的唯一显著分歧: 生产 4/4 里唯一给 SELL_SHORT 的是 glm。"
                     "架构纯旁路: 读生产 bridge 候选池 → 独立 collect_all (输入同构) → "
@@ -343,11 +348,32 @@ REGISTRY: list[ShadowItem] = [
                             "最后一夜采集之后, 且此前 eval 悬空无任何挂载), 周检可见。",
         eval_script="scripts/da_glm_shadow_eval.py",
         created="2026-08-30",
-        last_evaluated=None,
+        last_evaluated="2026-09-15",
         verdict_history=[{"date": "2026-08-30", "verdict": "BASELINE_NO_DATA",
                          "evidence": "补注册基线: 现仅 1 行 run_mode=test (COIN 干跑复现分歧 "
                                      "prod=LONG vs glm=SELL_SHORT, trig=2, finish_reason=stop), "
-                                     "无 live 样本; 8/31 起攒样"}],
+                                     "无 live 样本; 8/31 起攒样"},
+                        {"date": "2026-09-15", "verdict": "PROMOTE_PROPOSAL (机械, 待用户终裁)",
+                         "evidence": "窗口 8/31-9/14 收官读数 (data/shadow/da_glm_shadow_eval_latest.json, "
+                                     "09:35 CST 一次性机械裁决, 已推飞书): n_live=100, JSON 成功率 "
+                                     "100% (①过); 去污后 SHORT 提案 20 笔 (②过, 门槛 5); ③n_t1=18<20 "
+                                     "仅作参考 (方向均值 +0.2246%, 不作证据读)。预注册'①②全过 → "
+                                     "PROMOTE_PROPOSAL 另立 DEB' → 立 DEB-20260915-da-glm-short-supply-promote "
+                                     "呈裁。证据面 (窗口内 n=100): glm 方向 BUY 71/SELL_SHORT 21/SKIP 8 vs "
+                                     "生产 LONG 87/SHORT 13; 分歧 agree 72 / glm_SHORT_prod_not_SHORT 14 / "
+                                     "SKIP_vs_LONG 8 / LONG_vs_SHORT 6 — 立项假设'glm 更愿做空'方向成立 "
+                                     "(21 vs 13 且 14 次独家看空), 但'生产 4/4 唯一给 SELL_SHORT'的量级表述 "
+                                     "被证伪 (生产也给了 13 次); 有效性判据③ n=18<20 未成立 ⇒ 本裁决只证"
+                                     "'会不会', 未证'值不值得' (不代裁)。"},
+                        {"date": "2026-09-15", "verdict": "SUPERSEDED (用户终裁「停止/不转正」)",
+                         "evidence": "用户裁「停止 da_glm_shadow 不转正」(2026-09-15) ⇒ 终态 "
+                                     "SUPERSEDED 归档留痕 (非 GRADUATED/KILLED)。理由面: 机械裁决 ①JSON "
+                                     "成功率 100% ②去污后 SHORT 提案 20 笔均过门, 但有效性判据③ n=18<20 "
+                                     "(A6) 未成立; 且立项前提'生产唯一给 SHORT'的量级表述被证伪 (glm 21 vs "
+                                     "生产 13) ⇒ **只证'会不会', 未证'值不值得'**。DEB-20260915 方案 B "
+                                     "(归档) 生效; 方案 C (C1 SHORT 二读器 / C2 新窗口续验) 未采纳。数据 "
+                                     "jsonl 与两个脚本**保留** (归档=停用, 非删证; 若日后重开须新预注册 + "
+                                     "重新注册, 禁用窗口外样本补样)。"}],
         notes="计数口径=live 行数 (count_mode=where:run_mode=live — 2026-09-01 复查收口修正, "
               "原 lines 口径把 test 行也计入); cron '30 20 * * 1-5' (timeout 9000, "
               "9.2 修正自 3000) 是唯一采集线也是唯一 kill switch; "
@@ -357,8 +383,17 @@ REGISTRY: list[ShadowItem] = [
               "误污 3/7 含 BABA SHORT 误杀) + 生产值采集时随行捕获 prod_snapshot_"
               "change_pct (检查点 _CKPT_KEEP_DAYS=3 过期免疫); 旧行缺一不判, "
               "n_taint_unevaluable 单列。见 DEB-20260829 第11轮。"
-              "一次性裁决行自删后 (9/15), 注册表待用户裁决翻终态 — 翻终态前哨兵周检会"
-              "再提示一次悬空 (设计内提醒, 非故障)。",
+              "2026-09-15 收口 (用户裁「按照建议执行」): ①采集环退役 — crontab "
+              "'30 20 * * 1-5' 两行 (注释+行) 已摘 (备份 /tmp/crontab.bak_20260915_glm_retire), "
+              "脚本与数据保留 (退役=停采, 非删证); ②窗口污染堵口 — 9/15 20:30 采集环因 kill "
+              "switch 未拉而多跑一夜 (窗口外 16 行, n 100→116), eval 已加窗口上界过滤 "
+              "(WINDOW_END=2026-09-14, 越窗行单列 n_out_of_window 不入读数), 重跑不再污染; "
+              "③棘轮基线 da_glm_shadow.py / da_glm_shadow_eval.py 两行已删 (环下线同步删, "
+              "test_crontab_baseline_has_no_ghost_entries 由红转绿); ④终态: 2026-09-15 用户裁"
+              "「停止 da_glm_shadow 不转正」⇒ **SUPERSEDED** (归档留痕: 脚本与数据保留, "
+              "采集环已退役; 方案 B 生效, C 未采纳)。"
+              "教训 (留痕): 预注册窗口与采集环是两个开关, 裁决器自删 ≠ 采集器退役; "
+              "凡'窗口制'影子, 注册时须写明窗口末夜之后由谁摘采集行。",
     ),
     ShadowItem(
         id="da_prompt_distill_shadow",
@@ -1051,6 +1086,58 @@ REGISTRY: list[ShadowItem] = [
               "cron 52 5 * * 6 (fwd 回填 05:30 后, 与 ue_tier_shadow_eval 05:50 同窗)。"
               "与 tier_gate_enabled 互锁: 影子期禁止打开 (config 注释在案)。回滚=删 cron 行+结算器+本条目。",
         count_mode="distinct:date",
+    ),
+    # ── 2026-09-15 (DEB-20260910 §22-§25 报价新鲜度门, 用户裁「请执行」) ──
+    ShadowItem(
+        id="ue_quote_freshness_shadow",
+        name="UE 报价新鲜度门「哑弹」量化影子",
+        status=ShadowStatus.OBSERVING,
+        description="纯只读探针 (scripts/ue_quote_freshness_shadow.py): 对当日 UE surfaced "
+                    "标的, 用 **SSOT 自己的判据** (`evaluate_candidate`+`_source_time`) 算三假设"
+                    "资格差异 — as_is(现状/门哑火) · alias(供应商 timestamp=我方抓取时刻) · "
+                    "genuine(futu update_time=交易所侧) ⇒ 量化'激活 SSOT stale_quote 门'会新拒谁、"
+                    "以及 alias 会洗白多少真陈旧。零生产路径改动 (不进 inject/scan、不落库、"
+                    "不下单、不改配置、不动退出参数)。",
+        data_path="data/shadow/ue_quote_freshness_shadow.jsonl",
+        min_n=10,   # 单位 = 交易日**有效轮次** (count_mode=distinct:date), 不是行数
+        graduation_criteria="预注册 (写死于台账 §2 `crontab-ue-quote-freshness-shadow` 行 + "
+                            "crontab 注释, 本处不改判据): ≥10 个**交易日有效轮次** ∧ 盘前 genuine "
+                            "龄 **P95 ≤ 候选阈值** → 可提议激活并定盘前专属阈值 (另立 DEB + 用户裁); "
+                            "**有效轮次 <10 禁止建议激活** (同 thinking-eval 先例); P95 超阈值时"
+                            "**不得事后改阈值重算** (改阈值 = 重新预注册)。",
+        eval_script="scripts/ue_quote_freshness_shadow_eval.py",
+        created="2026-09-15",
+        count_mode="distinct:date",   # 与预注册单位同轴 (交易日轮次 ≠ jsonl 行数)
+        last_evaluated="2026-09-15",
+        verdict_history=[
+            {"date": "2026-09-15", "verdict": "BASELINE_NO_DATA (挂环当日 1/10 轮次)",
+             "evidence": "挂环当日 4 组读数 (ET 盘前同一批 5-7 标的): 交易所时戳可得率 5/5→7/7 "
+                         "=100%; genuine 龄 1.5–159.1s (AXON 4 次观测 2 次超 90s ⇒ **90s 阈值在盘前"
+                         "阵发报价下不成立**); alias 洗白真陈旧 1/5 (AXON 别名 −10s'很新鲜' / 交易所 "
+                         "159.1s 已超阈)。机械裁决器首跑 = INSUFFICIENT_RECORD (有效轮次 1/10, "
+                         "P95 41.8s 仅供参考) ⇒ 禁止建议激活。"}],
+        notes="挂环 `crontab-ue-quote-freshness-shadow` (15 21 * * 1-5 = 09:15 ET 盘前, 刻意避开 "
+              "21:10 scan→inject→push 链, 不抢 OpenD 槽位/DailyK 配额)。"
+              "**2026-09-15 三点补口 (用户裁「请执行」)**: ①**交易日守卫** — 探针在取数**之前**"
+              "判交易日 (纯本地、**零 futu 连接**: 假日历只读常量, 因为共享日历 accessor 实测会开 "
+              "OpenQuoteContext 而 OpenD 槽位与生产共享), 假日/覆盖面外一律**不落盘** (`--force` "
+              "人工行带 `forced_non_trading_day` 标记, 裁决器排除) — 因 cron 假日照跑而假日"
+              "报价龄小时级会伪造'激活必杀'读数; ②**裁决器 + 到期触发人** — 本条注册 + "
+              "eval 脚本 (机械只读, `eval_on_demand=True`), 补上「谁在 10 交易日后读这把尺子」"
+              "(此前只活在 crontab 注释里, 到期无人被提醒); ③**alias 边界加红钉** — inject 侧喂"
+              "抓取时刻不得判 stale (行为钉 + 门有牙阳性对照) + 扫描期归一函数只能被初筛调用"
+              "(源码钉 + 阳性对照), 见 tests/test_ue_quote_freshness_shadow.py "
+              "TestAliasConfinedToGateOffPaths。"
+              "**到期触发**: 轮次自 2026-09-16 起算, 预计 **2026-09-29** 达 10 轮, 届时手工/会话跑 "
+              "eval_script 呈裁; 判据未达前**不得**建议激活 (选项 (A)/(B) 按 2026-09-15 用户裁 (C) "
+              "维持现状: 不透出 update_time、不动 SSOT、不动 90s 阈值)。"
+              "断流无自动告警 (纯只读研究环, 与 tier-gate 影子同待遇), 靠台账 §6 与静默哨兵兜; "
+              "**计数口径残留 (诚实披露)**: 周检 `refresh_counts` 用 `distinct:date` 数本文件行, "
+              "而它不认 `status`/`forced_non_trading_day`, 故 `--force` 人工核查行有可能把接口计数"
+              "抬 +1 ⇒ 到期判据**一律以裁决器为准** (裁决器按 status=ok ∧ 非 forced ∧ 交易日三重"
+              "过滤); 接口计数只作攒样进度提示, 达标通知 (READY) 本身已写明 'READY≠毕业'。"
+              "回滚 = 删 crontab 两行 + 删本条目 + 删两个文件 (零生产耦合、无调用方)。",
+        eval_on_demand=True,
     ),
 ]
 

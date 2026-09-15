@@ -2202,3 +2202,57 @@ compute_entry_band(nan, False) = (nan, nan)   compute_entry_band(inf, False) = (
 **周一读账基线（重启后重新确认，全部为 0 ⇒ 前后对比干净）**：`metadata_json` 含 `reprice_audit` **0 行**；`raw_instruction_json` 含 `size_estimate` / `cost_coverage` / `executability` **各 0 行**；含 `planned_preview` **0 行**（2151 行指令全都没有）。周一这几个数只要 >0，就是新账真的开始记了，不会与旧数据混淆。
 
 **边界更新**：本批**已重启**（用户裁，11:52:33），但**仍未提交、未推送、未下单、未观察任何模拟成交**；`.env` / LIVE / 持仓 / 退出参数 / `data/*_baseline.json` 一律未动。**重启没有改变「尚未观察模拟成交」这个结论** —— 它只是把「闸门是否纸面」这一可能性**彻底排除**掉了。
+
+---
+
+## 二十五、2026-09-16 用户裁落地：报价新鲜度门「三处补口」执行回执 + `da_glm_shadow` 终态 SUPERSEDED（**零生产路径改动、零行为变更、未重启**）
+
+> **编号说明**：本节入库时 **§21–§24 尚未入库**（其叙述文本属并行会话的在途产物，工作树内可见、其描述的代码均在 HEAD）；故本文件在 HEAD 里**从 §20 直接跳到 §25** —— 是入库顺序的暂时状态，**不是丢档**，待对方批次入库后自然补齐。
+
+> **一句话**：用户裁「1. 报价新鲜度门补充的三处请执行 2. 停止 da_glm_shadow 不转正」。§22 交付的是**尺子**、§24 钉的是**哑弹事实**，但 §23.6 挂环只做了一半 —— **有采集、无裁决**：那条"≥10 交易日后再裁"只活在 crontab 注释与台账文字里（注册表无条目、jsonl 无消费者）⇒ **到期不会有人被提醒去读尺子**。本节把三处补口做掉，把影子环闭成**有牙的闭环**；另把 §15 起、DEB-20260915 提请的 `da_glm_shadow` 终裁收口为 **SUPERSEDED**。
+
+### 25.1 补口一 — 交易日守卫（探针侧，**防假轮次污染 P95**）
+
+`scripts/ue_quote_freshness_shadow.py` 在**取数之前**判交易日：假日 / 日历覆盖面外 ⇒ **不落盘**（`--force` 人工行带 `forced_non_trading_day` 标记，裁决器排除）。
+
+- **为什么必须**：cron `15 21 * * 1-5` 假日照跑，而假日报价来自**上一交易日收盘** ⇒ genuine 龄**小时级** ⇒ 一条假日样本既冒充一个轮次、又把 P95 拽向"**激活必杀**"的假结论（与 §22.6「朴素 `now` 制造假拒绝」同族）。**假一轮比缺一轮更坏**。
+- **选型实证（本次最该被复用的一条）**：首版用 `app.shared.market_hours.is_trading_day`，实测其**会开 futu `OpenQuoteContext`** —— 而 OpenD 槽位**与生产共享**（同 §23.5 DailyK 配额同源风险）⇒ **守卫本身成了生产干扰源**。改用**纯本地、零 futu** 的 `app.playbook.shadow_tracker.US_MARKET_HOLIDAYS_2026` 常量。
+- **覆盖面缺口按 fail-closed**：该常量只到 2026 年末（`docs` 既登记的定时炸弹）⇒ 日历覆盖面外返回 `None`（=**不可得**）⇒ **不落盘**、状态 `trading_day_undecidable`，**不默认"是交易日"**。
+- **钉子**（`TestTradingDayGuard`）：周末/Labor Day/覆盖面缺口(None)/取数前早退/`--force` 只打标 + **futu-free 子进程钉**（断言 `futu`/`holiday_calendar`/`market_hours` **均未进 `sys.modules`** —— 这是"零 futu 连接"这句话唯一会红的形态）。既有 `run()` 类测试用 autouse fixture 钉住交易日，否则守卫会在周末/假日把套件变红（**测试不随日历漂**）。
+
+### 25.2 补口二 — 机械裁决器 + 注册表条目 + **到期触发人**（补"谁在 10 交易日后读这把尺子"）
+
+- 新增 `scripts/ue_quote_freshness_shadow_eval.py`（**只读、零生产耦合、无调用方、不加 cron**）+ 注册表条目 `ue_quote_freshness_shadow`（`OBSERVING` / `min_n=10` / `count_mode=distinct:date` / `eval_on_demand=True`）+ 台账 §2.3 环路行 + §4 准入行 + 判据字典 **B20**。
+- **裁据预注册冻结（裁决器不改判据）**：≥10 个**交易日有效轮次** ∧ 盘前 `genuine` 龄 **P95 ≤ 候选阈值** ⇒ 方可**提议**激活并定盘前专属阈值（**另立 DEB + 用户裁**）；**有效轮次 <10 禁止建议激活**；P95 超阈**不得事后改阈值重算**（= 重新预注册）。
+- **有效轮次定义（本脚本实现，写死于 `__doc__`）**：`status == "ok"` ∧ 非 `forced_non_trading_day` ∧ 交易日为真 的**去重 ET 日期**数；老版本行无 `is_trading_day` 字段 ⇒ 按 `date` 回查日历，查不出**不计**（fail-safe）。
+- **阈值不硬编码**：取影子行自带的活配置 `threshold_sec`（运行时从 `max_quote_age_sec` 读到）；行间不一致**并列披露**（`thresholds_seen`）而**不挑一个** —— 事后挑尺子是预注册要防的第一件事。
+- **首跑实测（2026-09-15，1/10 轮次）**：`INSUFFICIENT_RECORD`，`genuine` 龄 P50 8.8s / P95 41.8s / max 159.1s，超阈 2 / 会新拒 2 / 别名洗白 1 / future_quote 0 / 交易所时戳可得 29/29 ⇒ **裁决器与预注册一致地拒绝给出激活建议**。次日 9/16 起算，**预计 2026-09-29** 达 10 轮。
+- **计数口径残留（诚实披露）**：周检 `refresh_counts` 的 `distinct:date` **不认** `status`/`forced_non_trading_day` ⇒ `--force` 行可能把接口计数抬 +1 而触发 READY 通知。**到期判据一律以裁决器为准**；接口计数只作攒样进度提示。**已用测试演练这条缝**（9 真轮次 + 1 周六 forced 行 ⇒ 接口计数 10 却裁决器 9/10）⇒ 假 READY **不得**变成假激活。
+
+### 25.3 补口三 — `alias` 口径红钉（把 §23.6 的文字纪律变成会红的尺子）
+
+`tests/test_ue_quote_freshness_shadow.py::TestAliasConfinedToGateOffPaths` 两组**成对**钉子：
+
+1. **行为钉**：往 inject 侧喂 `timestamp`（抓取时刻）**不得**产生 `stale_quote`；**阳性对照**：写进 `source_asof`（600s 前）**必须**判 `stale` + REJECT —— 证明"门是有牙的"，否则行为钉是**恒绿的假钉**。
+2. **源码钉（AST）**：`scripts/llm_universe_scan.py` 里把抓取时刻写进 `source_asof` 的**只有** `_prescreen_quotes_with_asof`，且它**只被**初筛 `_prescreen_input_symbols` 调用；**阳性对照**：合成源把写点搬进 `_inject_screens` ⇒ 检查器**必须**报出来。
+
+⇒ 同一套 alias 逻辑一旦搬进 inject（90s 真执法）就会**当场被拦**（9/15 实测其洗白真陈旧 **1/5**：AXON 别名口径 −10s"很新鲜" / 交易所口径 **159.1s 已超阈**）。
+
+### 25.4 `da_glm_shadow` 终态 **SUPERSEDED**（用户裁「停止/不转正」）
+
+- **终态理由**：门**根本没进生产** ⇒ 不是 `GRADUATED`；"否决"的对象是**立案假设**而非某道现役门 ⇒ 也不是 `KILLED`；**归档留痕非删证**（脚本与 116 行 jsonl 原样保留）⇒ **`SUPERSEDED`**。方案 B 生效，方案 C（C1 二读器 / C2 新窗口续验）**未采纳**，方案 A 不转正（③ n=18<20 未成立 + 77x 成本级动作无正期望证据 + A4）。
+- **三处落痕 + 钉子**：注册表 `status` + `verdict_history` 终裁条 + `notes` ④；`tests/test_da_glm_shadow.py::test_registry_pin` 由 READY 翻 SUPERSEDED，**新增**两条断言（裁决历史末条必须 SUPERSEDED；终态理由须落在 notes —— 防"翻了状态却没留理由"的空翻）；DEB-20260915 §六/§七、`docs/debates/README.md`（待决策 → **已决策**）、判据字典 **B3**（不删行改状态 + **判据自此冻结**：不得据本窗口数据续验或改阈值重算，**重开须新预注册**）。
+- **旁效（正向）**：终态 ⇒ `refresh_counts` / `check_mounting` **自动跳过**该项，不再触达 READY 通知与悬空哨兵。实跑 `check_mounting()` **告警 0**、`check_intent_uniqueness()` **0**。
+- **教训复用**：本次三处补口正是 DEB-20260915 §二教训（**预注册窗口与采集环是两个开关**）的镜像 —— 那边是**裁决器自删而采集行没人摘**，这边是**采集行在跑而无人裁决器/无人到期被告知**。两个方向都要在注册时写死触发点。
+
+### 25.5 台账 G4 补账（本批唯一"我造成"的红）+ 已知他人红
+
+- `test_crontab_loops_are_ledgered_or_baselined` 首跑报 **2 项未入账**：`ue_quote_freshness_shadow.py`（**我的** —— 9/15 挂环时台账行写在工作树但**未提交**，被并行会话的 WIP 面覆盖后丢失，属既有「**已生效未入库**」风险族）与 `cutover_preflight.py`（**不是我的**）。
+- 已按 §6.1 补：台账 **§2.3 `crontab-ue-quote-freshness-shadow` 行**（层级/测什么/三条补口失效模式/回滚三件）+ **§4 准入行**。
+- **已知红（不藏）**：重跑后剩 **1 红 = `scripts/cutover_preflight.py`**（crontab 第 272 行哨兵未入台账），属并行工作流 `DEB-20260914-cutover-bidirectional-seamless`（其 DEB 自述"✅ 入台账 `crontab-cutover-preflight` 行"，但该行**当前不在**台账文件里）。按其 9/14 的明示纪律「**未代改——那是另一条工作流的在途产物，介入会与其冲突**」，本批**不动**。
+
+### 25.6 边界与提交卫生
+
+- **零生产行为变更**：`app/` 仅动**注册表**（状态字段 + 一个**纯元数据**条目）；探针加守卫；**新增**一个只读裁决器；**未加/未改任何 cron**（采集行与 21:15 排期保持 9/15 状态）、**未改配置键**、**未动 SSOT**（`candidate_eligibility.py` 一行未动）、未动退出参数（OKR 全月冻结）、未动 `.env`/LIVE/持仓、**未重启**、**仍未观察任何模拟成交**。
+- **测试**：`test_ue_quote_freshness_shadow` **40 passed**（原 36 + 新 4）、五套件合跑 **92 passed / 1 failed（=§25.5 他人红）**；`py_compile` OK；裁决器实跑 rc=0 且**未连 futu**。
+- **提交（用户裁「请提交」）**：本批**已入库**（与 9/15 两批一并）。**显式暂存清单，无 `git add -A`**；三个混合作者文件走**索引单独构造**（只叠加本会话 hunk，工作树逐字节未动）⇒ 并行会话在途产物（cutover 工作流脚本/台账行、DEB-20260914、`obsidian_vault/**`、其他脚本与测试）**未卷入**；本文件在 HEAD 里因此**从 §20 跳到 §25**（见本节开头的编号说明）。**回滚**：删裁决器 + 删注册表条目 + revert 探针守卫（三件互不依赖，零生产耦合）。
