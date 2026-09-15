@@ -2092,8 +2092,27 @@ universe_expansion:
   #     复核有效性, 不能拿盘前快照当实时行情")。
   #   全程 fail-open: 取不到行情/ATR、配置读不到、任何异常 ⇒ 不追加本段, 材料零改动。
   #   回滚: input_prescreen 置 false (或删本两键, 代码默认亦为 true/30)。
+  #   ── [2026-09-15 上限 30→80, DEB-20260910 §23, 用户裁"按照建议执行"] ──
+  #   21:10 premarket **主轮**实测证伪了"30 够用": 材料具名 68 个 ⇒ 38 个落
+  #   overflow_skipped, 而模型 surfaced 7 个里**只有 1 个 (FPS)** 在受检集合内 (1/7);
+  #   未受检的 6 个 (COIN/MSTR/ASML/TRMD/VERA/NOK) 全被名额挤出。19:40 da_feed 那轮
+  #   的 5/5 是**材料薄的侥幸** (named=35), 不能外推到主轮。
+  #   同时实测: **提及数降序不是好的名额分配器** —— 被同一条 8-K 同时写进 sec_8k +
+  #   event_symbols + news_headline 的低流动性事件票提及数最高 (JAZZ/BAND/GTBP/PLSE/
+  #   ASTH/LUXE/CTEV/OBK/FEAV/CLST 等), 把 NVDA/AAPL/META/MSFT 与当日真热点全推到尾部
+  #   ⇒ 该排序键与"模型会提名谁"基本无关。故改法不是再换排序键, 而是**让上限不再是
+  #   竞争**: 只读实测受检 30 个耗时 10.88s、受检 68 个(全覆盖) 27.17s ⇒ 仅 +16s,
+  #   而 cron 给 scan+inject+push 整段 1800s; tradeable 只从 12 → 13 (不会灌爆模型),
+  #   覆盖面 1/7 → 7/7。
+  #   排序键**保留** (提及数降序→同数保首现): 具名数超上限的日子仍需要一条**确定**的
+  #   截断规则, 且它至少比字典序好 (字典序会把今日热点整批丢进 overflow)。
+  #   ⚠ 副作用已实测并披露: 68 只全覆盖时撞过一次 Futu DailyK 配额窗口 (60次/30s,
+  #   INVLW 触发"等待超时, 返回 None 触发 Router fallback" → TwelveData 404), 与
+  #   handoff 2026-09-15 16:30 增量⑧ 同源; ATR 日线取数是配额主要消费者 ⇒ 上限若继续
+  #   放大必须重新评估配额, 不得只看到 +16s 就无脑加。
+  #   回滚: 本键改回 30 (单键, 零代码改动)。
   input_prescreen: true
-  input_prescreen_max_symbols: 30
+  input_prescreen_max_symbols: 80
   # ── P2.6 输入空转守卫 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon) ──
   #   材料索引里**一条事实都没有**时不调 LLM, 直接落完成态空批 (llm_skipped=true,
   #   skip_reason=no_actionable_input)。旧行为是拿近空白 brief 去问模型: 模型只能凭
