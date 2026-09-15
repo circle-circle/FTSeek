@@ -491,6 +491,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             # 紧SL = 更靠近入场价 = LONG取max, SHORT取min
             _sl_before_tight = _active_sl
             _active_sl = max(_active_sl, _et_sl) if direction == "LONG" else min(_active_sl, _et_sl)
+            # [2026-09-16 用户裁"同意按建议执行"第1条, 纯观测零行为变更] 紧SL线落 meta —
+            #   ARM 9/15 案: 真杀仓的是本规则 (248.84), 但标签/推送只有初始SL 255.94,
+            #   对账要翻日志。触发轮由规则1 写 _effective_sl_at_exit/_tight_sl_killed,
+            #   随 _playbook_exit_decision 快照 → exit_metadata → metadata_json + 推送。
+            if _active_sl != _sl_before_tight:
+                meta["_early_tight_sl_px"] = round(_et_sl, 4)
             # 审计日志 (2026-07-19 辩论收敛#2): 紧SL实际生效(改变了SL)时每 symbol每日 只记一次,
             #   供 exit_scorecard 判分用: "SL_INITIAL 早期出场" ← 本日志记录, 可区分紧SL触发 vs 正常2%SL触发.
             #   防刷屏: monitor 轮询期间同一仓位每轮都命中本分支, 模块级 set 去重 (进程重启后重记一次, 可接受).
@@ -510,6 +516,15 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   便于 exit_shadow / 报表按真实语义归因. 保留 SL_ 前缀以兼容 LIKE 'SL%' 过滤.
     if _active_sl > 0 and ((direction == "LONG" and current_price <= _active_sl) or
                            (direction == "SHORT" and current_price >= _active_sl)):
+        # [2026-09-16 用户裁"同意按建议执行"第1条, record-only] 生效SL观测性 — ARM 9/15 案:
+        #   真触发线是早期紧SL 248.84, 但标签 SL_INITIAL + 推送只有初始SL 255.94,
+        #   对账要翻日志。触发瞬间把生效线/是否紧SL所杀写 meta, 随 decision 快照 →
+        #   exit_metadata → metadata_json + exit_telemetry + 平仓推送。零行为变更。
+        meta["_effective_sl_at_exit"] = round(_active_sl, 4)
+        _et_px = meta.get("_early_tight_sl_px")
+        meta["_tight_sl_killed"] = bool(
+            _et_px is not None
+            and abs(float(_et_px) - _active_sl) < entry_price * 1e-4)
         # 2026-07-16 P0 修复: exit_price 用 current_price 而非 _active_sl.
         #   _active_sl 是止损线价格, 实际市价单成交价可能远低于 SL (滑点/gap).
         #   旧逻辑 exit_price = _active_sl 系统性高估退出价 → PnL 偏高.

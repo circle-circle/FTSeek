@@ -6541,6 +6541,12 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "breakeven_triggered": bool(_tmeta.get("breakeven_triggered", False)) \
                         or exit_reason in ("SL_BREAKEVEN", "SL_TRAIL_LOCK"),
                     "initial_sl": float(_tmeta.get("stop_loss", 0) or 0),
+                    # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性 — ARM 9/15 案:
+                    #   SL_INITIAL 标签不区分初始线 vs 规则0.5紧SL线, 对账要翻日志。
+                    #   触发瞬间由 exit_engine 规则1 写 _effective_sl_at_exit/_tight_sl_killed
+                    #   (record-only); 0/False = 历史仓或未走规则1 (兜底/耐心出场路径)。
+                    "effective_sl": float(_tmeta.get("_effective_sl_at_exit", 0) or 0),
+                    "tight_sl_triggered": bool(_tmeta.get("_tight_sl_killed", False)),
                     "take_profit": float(_tmeta.get("take_profit", 0) or 0),
                     "config_version": _tmeta.get("config_version", ""),
                     "recorded_at": now_iso,
@@ -6961,6 +6967,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "cohort": _meta.get("cohort"),
                     "horizon": _meta.get("horizon"),
                     "inv_price": _meta.get("alite_inv_price"),
+                    # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性 — ARM 9/15 案:
+                    #   SL_INITIAL 推送只见初始SL, 真杀仓的紧SL线要翻日志。exit_engine 规则1
+                    #   触发瞬间写 _effective_sl_at_exit/_tight_sl_killed, 渲染端区分展示。
+                    "effective_sl": float(_meta.get("_effective_sl_at_exit", 0) or 0) or None,
+                    "tight_sl_triggered": bool(_meta.get("_tight_sl_killed", False)) or None,
                     # 2026-08-21 (用户裁"落"): BE 出场分类 — 通知直接区分"真保本/贴线残差/瀑布坠穿",
                     #   消除"保本名义亏损"歧义. drift 仅 GAP 路径有意义 (bps, 负=坠穿).
                     "be_exit_class": _meta.get("be_exit_class"),

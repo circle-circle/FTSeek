@@ -153,6 +153,13 @@ class PushMessage:
                 _cap = p.get("capture_pct")
                 _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
                 lines.append(f"📊 路径: MFE {float(p['mfe_pct']):.2f}%{_t2s} / MAE {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
+            # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性: 区分初始线 vs 紧SL线 (ARM 9/15 案)
+            _eff_sl = p.get("effective_sl")
+            if _eff_sl:
+                _ep = float(p.get("entry_price", 0) or 0)
+                _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
+                _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
+                lines.append(f"🛡️ 触发线: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
             _e60 = p.get("e60_ok")
             if _e60 is not None:
                 lines.append("⏱️ 60min表态: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))
@@ -261,6 +268,13 @@ class PushMessage:
                 _cap = p.get("capture_pct")
                 _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
                 lines.append(f"**📊 MFE/MAE**: {float(p['mfe_pct']):.2f}%{_t2s} / {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
+            # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性 (同飞书文本口径)
+            _eff_sl = p.get("effective_sl")
+            if _eff_sl:
+                _ep = float(p.get("entry_price", 0) or 0)
+                _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
+                _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
+                lines.append(f"**🛡️ 触发线**: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
             _e60 = p.get("e60_ok")
             if _e60 is not None:
                 lines.append("**⏱️ 60min表态**: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))
