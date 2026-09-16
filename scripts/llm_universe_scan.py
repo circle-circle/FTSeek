@@ -2749,7 +2749,7 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
         #   && 链, inject/push 未跑 (llm_audit 实证; 输出需求内容驱动波动大 3008→>8000).
         #   16000 DashScope probe 实收; 满载 ~210-230s 仍在实体 timeout=300 内;
         #   截断降档底线 16000*0.5=8000 恰为旧上限.
-        max_tokens=16000,
+        max_tokens=24000,
         schema_required={"surfaced": list},
         json_mode=True,
     )
@@ -3858,7 +3858,7 @@ def cmd_scan_eval(manual_clue: str = "") -> int:
 
     def _run(system: str, tag: str, with_tier: bool):
         res = call_llm("universe_expansion_reasoning", brief, system=system,
-                       temperature=0.2, max_tokens=16000,
+                       temperature=0.2, max_tokens=24000,
                        schema_required={"surfaced": list}, json_mode=True)
         # [DEB-20260829 第10轮 9.4 修复] 2500→8000: glm-5.2 实测输出 5448-6070 tok。
         # 原 2500 下自救降档到 max(1024, 2500*0.5)=1250 只会更糟 (A/B 仪器在 glm 下实质死亡);
@@ -4034,7 +4034,7 @@ def cmd_thinking_eval() -> int:
         t0 = time.time()
         res = call_llm(
             "universe_expansion_reasoning", brief,
-            system=SYSTEM_PROMPT_V2, temperature=0.2, max_tokens=16000,
+            system=SYSTEM_PROMPT_V2, temperature=0.2, max_tokens=24000,
             schema_required={"surfaced": list}, json_mode=True,
             extra_body={"enable_thinking": True} if thinking_on else None,
         )

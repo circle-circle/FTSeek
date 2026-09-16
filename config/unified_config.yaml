@@ -548,8 +548,8 @@ llm:
     deepseek:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.002
-      cost_out: 0.008
+      cost_in: 0.000298
+      cost_out: 0.001191
       model_name: deepseek-v4-pro
       provider: dashscope
       timeout: 300
@@ -604,8 +604,8 @@ llm:
     glm-5:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.006
-      cost_out: 0.02
+      cost_in: 0.000893
+      cost_out: 0.002978
       model_name: glm-5.2
       provider: dashscope
       timeout: 300
@@ -615,24 +615,26 @@ llm:
     #   + 改 features 一行 (本仓 SSOT 约定, 同 deepseek-v41-flash 先例).
     #   cost 依据: help.aliyun.com/zh/model-studio/glm-5-3 华北2(北京)裸名定价 —
     #   输入 8 / 输出 28 / 缓存命中输入 2 (元每百万 tokens), 单一档无 32k 分档.
-    #   换算 cost_in/out 单位=元每千 tokens (÷1000): 0.008 / 0.028.
-    #   ⚠️ 较 glm-5.2 (0.006/0.02) 涨价 输入+33%/输出+40%; UE 主调用 max_tokens=16000,
+    #   换算 (2026-09-17 修正): model_call.py:230-244 cost = tok/1000 × rate, 字段名
+    #     cost_usd ⇒ 实体单位 = 美元每千 tokens. 人民币价 ÷ 汇率 6.7156 (2026-09-14
+    #     open.er-api.com). glm-5.3: 8/28 元每百万 ÷1000 ÷6.7156 → 0.001191 / 0.004169.
+    #   ⚠️ 较 glm-5.2 (0.000893/0.002978) 涨价 输入+33%/输出+40%; UE 主调用 max_tokens=16000,
     #   单轮成本仍 ¥ 级别 (8/30 实测 glm-5.2 ¥0.13/轮 → 5.3 约 ¥0.18/轮), 绝对值小.
     #   可达性已实测 (2026-09-15 dashscope 实弹): model 回显 glm-5.3 / json_mode ✓ /
     #   finish=stop / reasoning_content 有 (同 glm-5.2, 思考 token 计入输出计费).
     glm-5.3:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.008
-      cost_out: 0.028
+      cost_in: 0.001191
+      cost_out: 0.004169
       model_name: glm-5.3
       provider: dashscope
       timeout: 300
     kimi-k2:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.004
-      cost_out: 0.016
+      cost_in: 0.000596
+      cost_out: 0.002383
       model_name: kimi-k2.6
       provider: dashscope
       timeout: 60
@@ -661,8 +663,8 @@ llm:
     qwen:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      cost_in: 0.008
-      cost_out: 0.024
+      cost_in: 0.001191
+      cost_out: 0.003574
       model_name: qwen3.7-max
       provider: dashscope
       timeout: 300
