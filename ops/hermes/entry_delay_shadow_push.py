@@ -30,7 +30,7 @@ DB = REPO / "data/ftseek_us.db"
 GRAVE_MFE = 0.3          # 墓地线: MFE<0.3% = 入场即错族
 FORWARD_START = "2026-09-09"  # DEB-20260909 影子落地日, forward 攒样窗起点 (裁决日以 forward 冻结值为准)
 STALE_HOURS = 26         # 结算 cron 05:58, 推送 06:10; >26h = 昨晨结算缺失
-D_TARGET_N = 30          # D案配对裁决门槛 (RFC-081 增补: n≥30)
+D_TARGET_N = 40          # D案配对裁决门槛 (RFC-081 批注二②: 统一 n≥40 最严优先, 溯源 DEB-20260907 §4.9; 30=中间态只说方向不得提请裁决)
 B_TARGET_N = 20          # B案 forward 毕业门槛 (DEB §5.2: n≥20)
 
 
