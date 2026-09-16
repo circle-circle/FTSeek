@@ -6,7 +6,14 @@
 只统计"价格型"失效触发器 (metric 含 收盘/close/价格 或 value 与 planned_entry 同量级).
 """
 import json
+import argparse
 import sqlite3
+
+DEFAULT_SINCE = "2026-08-15"
+_parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+_parser.add_argument("--since", default=DEFAULT_SINCE,
+                     help="ISO 起始日期 (默认 %(default)s)")
+_args = _parser.parse_args()
 
 db = sqlite3.connect("file:/opt/ftseek/FTSeek-US/data/ftseek_us.db?mode=ro", uri=True)
 db.row_factory = sqlite3.Row
@@ -18,8 +25,10 @@ rows = db.execute(
        FROM playbook_instructions i
        LEFT JOIN trade_records t ON t.decision_id = i.decision_id
             AND t.source_type = 'PLAYBOOK_SIM'
-       WHERE i.date >= '2026-08-15' AND i.direction IN ('BUY','SELL_SHORT')
-         AND i.entry_price IS NOT NULL AND i.entry_price > 0""").fetchall()
+       WHERE i.date >= ? AND i.direction IN ('BUY','SELL_SHORT')
+         AND i.entry_price IS NOT NULL AND i.entry_price > 0""",
+    (_args.since,),
+).fetchall()
 
 n = 0
 has_inv = 0

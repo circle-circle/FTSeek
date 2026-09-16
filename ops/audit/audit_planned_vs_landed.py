@@ -9,8 +9,15 @@
   E. 分组结局: re-priced vs 未 re-price 的 pnl/exit_reason
 """
 import json
+import argparse
 import sqlite3
 import statistics as st
+
+DEFAULT_SINCE = "2026-08-15"
+_parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+_parser.add_argument("--since", default=DEFAULT_SINCE,
+                     help="ISO 起始日期 (默认 %(default)s)")
+_args = _parser.parse_args()
 
 db = sqlite3.connect("file:/opt/ftseek/FTSeek-US/data/ftseek_us.db?mode=ro", uri=True)
 db.row_factory = sqlite3.Row
@@ -22,8 +29,10 @@ rows = db.execute(
        FROM playbook_instructions i
        LEFT JOIN trade_records t ON t.decision_id = i.decision_id
             AND t.source_type = 'PLAYBOOK_SIM'
-       WHERE i.date >= '2026-08-15' AND i.direction IN ('BUY','SELL_SHORT')
-         AND i.entry_price IS NOT NULL AND i.entry_price > 0""").fetchall()
+       WHERE i.date >= ? AND i.direction IN ('BUY','SELL_SHORT')
+         AND i.entry_price IS NOT NULL AND i.entry_price > 0""",
+    (_args.since,),
+).fetchall()
 
 n_total = n_planned = n_repriced = 0
 rr_da, rr_db = [], []
@@ -79,7 +88,7 @@ for r in rows:
                         f"pnl={r['pnl_net']}", r["exit_reason"]))
 
 print("=" * 78)
-print("DA planned_* vs 落库 (re-price 后) — 全窗量化 (2026-08-15 起)")
+print(f"DA planned_* vs 落库 (re-price 后) — 全窗量化 ({_args.since} 起)")
 print("=" * 78)
 print(f"指令 {n_total} | 带完整 planned_entry/SL/TP {n_planned} | 被 re-price 移动 entry {n_repriced}"
       f" ({n_repriced/max(n_planned,1)*100:.0f}%)")

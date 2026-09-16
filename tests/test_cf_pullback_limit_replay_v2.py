@@ -71,6 +71,63 @@ def test_sign_test_one_sided():
     assert M._sign_test_one_sided(-1, 4) == 1.0           # 负 k 不得崩
 
 
+# ── 宪章第 9 律: 日聚类 t + MDE(80%) ───────────────────────────────────────
+
+def test_day_clustered_t_math_and_gates():
+    # n_days<3 / 空 / 零方差 → None (不可判, 不得当成 0 或 PASS)
+    assert M._day_clustered_t([]) is None
+    assert M._day_clustered_t([1.0, 2.0]) is None
+    assert M._day_clustered_t([10, 10, 10]) is None
+    dc = M._day_clustered_t([8.0, 10.0, 12.0])
+    assert dc["n_days"] == 3 and dc["day_mean"] == 10.0
+    assert dc["t"] == 8.66 and dc["distinguishable"] is True
+    assert dc["mde_80pct"] > 0 and dc["unit"].startswith("usd_per_trade")
+
+
+def test_summarize_v2_day_clustered_pairs_by_date():
+    rows = [_v2row(symbol=f"US.D{i}", date=f"2026-09-{8 + i // 2:02d}",
+                   cf_net=10.0 + i, act_net=5.0) for i in range(6)]
+    s = M.summarize_v2(rows, _pairs(n_match=10))
+    assert s["n_paired"] == 6
+    # 每日配对差 (5,6)/(7,8)/(9,10) → 日均 5.5/7.5/9.5 → day_mean 7.5
+    assert s["paired_diff_day_clustered"]["n_days"] == 3
+    assert s["paired_diff_day_clustered"]["day_mean"] == 7.5
+    assert s["day_pair_counts"] == {"2026-09-08": 2, "2026-09-09": 2, "2026-09-10": 2}
+    assert any("日聚类(宪章9)" in ln for ln in s["readout_card"])
+
+
+def test_c3_reachability_split_sub_buckets_and_atr_basis():
+    rows = [
+        {"status": "entered", "reach_dist_atr": 0.1, "atr_basis": "proxy"},
+        {"status": "entered", "reach_dist_atr": 0.2, "atr_basis": "proxy"},
+        {"status": "expired_unfilled", "reach_dist_atr": 0.3, "atr_basis": "proxy"},
+        {"status": "expired_unfilled", "reach_dist_atr": 0.4, "atr_basis": "proxy"},
+        {"status": "expired_unfilled", "reach_dist_atr": 0.9, "atr_basis": None},
+    ]
+    split = M._c3_reachability_split(rows)
+    assert split["reachable_n"] == 4 and split["reachable_fill_rate"] == 0.5
+    assert split["unreachable_n"] == 1 and split["unreachable_fill_rate"] == 0.0
+    assert split["sub_bucket_lt_025"] == {"n": 2, "fill_rate": 1.0}
+    assert split["sub_bucket_025_to_05"] == {"n": 2, "fill_rate": 0.0}
+    assert split["atr_basis_mix"] == {"proxy": 4, "unknown": 1}
+    assert "子桶" in split["rule"] and "C3 门槛 50% 本身不动" in split["rule"]
+
+
+def test_readout_card_shows_c3_subbucket_atr_basis_and_day_cluster():
+    rows = []
+    for i in range(6):
+        r = _v2row(symbol=f"US.R{i}", date=f"2026-09-{8 + i // 2:02d}")
+        r["status"] = "entered" if i % 2 == 0 else "expired_unfilled"
+        r["reach_dist_atr"] = 0.1 if i % 2 == 0 else 0.6
+        r["atr_basis"] = "proxy" if i < 4 else None
+        rows.append(r)
+    s = M.summarize_v2(rows, _pairs(n_match=10))
+    card = "\n".join(s["readout_card"])
+    assert "C3子桶(观测)" in card
+    assert "ATR口径(观测)" in card and "降级方向性" in card
+    assert "日聚类(宪章9)" in card
+
+
 # ── 2. 配对群纪律 ─────────────────────────────────────────────────────────
 
 def test_sums_only_over_paired_group():

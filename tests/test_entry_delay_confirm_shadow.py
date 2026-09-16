@@ -81,6 +81,45 @@ class TestAggBlock:
         b = edc._agg_block([])
         assert b["n"] == 0 and b["avoidance_rate"] is None
         assert b["opp_cost_mean_pct"] is None
+        assert b["net_value_usd"] is None and b["day_clustered"] is None
+
+    def test_net_value_and_day_clustered_math(self):
+        # 3 日各 2 笔: 日均值 15/20/25 (回避省 $80~100, 延迟付 $50)
+        # ⇒ day_mean=20 (等权日均/笔), sd=5, t=6.93; 合计净价值 $120
+        recs = []
+        for day, saved in (("2026-09-08", 80.0), ("2026-09-09", 90.0),
+                           ("2026-09-10", 100.0)):
+            recs += [
+                {"status": "ok", "still_triggers": False, "pnl_net": -saved,
+                 "opp_cost_pct": -1.0, "notional": 5000, "date": day},
+                {"status": "ok", "still_triggers": True, "pnl_net": 30.0,
+                 "opp_cost_pct": 1.0, "notional": 5000, "date": day},
+            ]
+        b = edc._agg_block(recs)
+        assert b["net_value_usd"] == 120.0
+        assert b["day_clustered"]["n_days"] == 3
+        assert b["day_clustered"]["day_mean"] == 20.0
+        assert b["day_clustered"]["distinguishable"] is True
+        assert b["day_clustered"]["unit"].startswith("usd_per_trade")
+
+
+class TestDayClusteredCharterRule9:
+    """宪章第 9 律: pooled 读数须配日聚类 t + MDE(80%); n_days<3 不可判."""
+
+    def test_math_known_values(self):
+        # 日均值 [10, 10, 10] ⇒ sd=0 → None (零方差不可判, 不当 0/PASS)
+        assert edc._day_clustered_t([10, 10, 10]) is None
+
+    def test_less_than_three_days_returns_none(self):
+        assert edc._day_clustered_t([1.0, 2.0]) is None
+        assert edc._day_clustered_t([]) is None
+
+    def test_positive_shift_is_distinguishable(self):
+        # 日均值 [8, 10, 12] ⇒ mean=10 sd=2 t=10/sqrt(4/3)=8.66 ≥2 ⇒ 可分辨
+        dc = edc._day_clustered_t([8.0, 10.0, 12.0])
+        assert dc["n_days"] == 3 and dc["day_mean"] == 10.0
+        assert dc["t"] == 8.66 and dc["distinguishable"] is True
+        assert dc["mde_80pct"] > 0  # MDE 与入参同量纲 (美元/笔)
 
 
 class TestGraduation:

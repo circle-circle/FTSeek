@@ -1,23 +1,33 @@
 # -*- coding: utf-8 -*-
 """补验: ①DA 生成时点与所见价格 vs 当日真实价格区间 ②re-price 机械公式来源."""
 import json
+import argparse
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
 ET = timezone(timedelta(hours=-4))
+DEFAULT_CHECKPOINT_DATE = "2026-09-15"
+DEFAULT_DB_SINCE = "2026-09-13"
+_parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+_parser.add_argument("--checkpoint-date", default=DEFAULT_CHECKPOINT_DATE,
+                     help="DA checkpoint 日期 (默认 %(default)s)")
+_parser.add_argument("--db-since", default=DEFAULT_DB_SINCE,
+                     help="reprice_audit 查询起始日期 (默认 %(default)s)")
+_args = _parser.parse_args()
 db = sqlite3.connect("file:/opt/ftseek/FTSeek-US/data/ftseek_us.db?mode=ro", uri=True)
 db.row_factory = sqlite3.Row
 
 print("=" * 78)
-print("① DA 输入时点 & 所见价格 (9/15 checkpoint, 有 bar 的标的)")
+print(f"① DA 输入时点 & 所见价格 ({_args.checkpoint_date} checkpoint, 有 bar 的标的)")
 print("=" * 78)
 import os
 BAR = "/opt/ftseek/FTSeek-US/data/replay_bars"
-for f in sorted(os.listdir("/opt/ftseek/FTSeek-US/data/da_checkpoint/2026-09-15")):
+checkpoint_dir = f"/opt/ftseek/FTSeek-US/data/da_checkpoint/{_args.checkpoint_date}"
+for f in sorted(os.listdir(checkpoint_dir)):
     if not f.endswith(".json") or ".raw." in f:
         continue
     sym = f[:-5].replace("_", ".")
-    p = f"/opt/ftseek/FTSeek-US/data/da_checkpoint/2026-09-15/{f}"
+    p = f"{checkpoint_dir}/{f}"
     try:
         d = json.load(open(p))
     except Exception:
@@ -29,7 +39,7 @@ for f in sorted(os.listdir("/opt/ftseek/FTSeek-US/data/da_checkpoint/2026-09-15"
     seen = snap.get("price") if isinstance(snap, dict) else None
     when = datetime.fromtimestamp(ts, ET).strftime("%H:%M ET") if ts else "?"
     # 当日 1min bar 真实区间
-    bp = f"{BAR}/{sym.replace('.','_')}_2026-09-15.json"
+    bp = f"{BAR}/{sym.replace('.','_')}_{_args.checkpoint_date}.json"
     rng = ""
     pe = ep.get("entry_price")
     reach = ""
@@ -49,7 +59,8 @@ print("=" * 78)
 print("② re-price 机械公式 (vol_bucket → sl_pct / tp_mult)")
 print("=" * 78)
 rows = db.execute("""SELECT metadata_json FROM playbook_instructions
-                     WHERE date>='2026-09-13' AND metadata_json LIKE '%reprice_audit%'""").fetchall()
+                     WHERE date>=? AND metadata_json LIKE '%reprice_audit%'""",
+                   (_args.db_since,)).fetchall()
 import collections
 c = collections.Counter()
 for r in rows:

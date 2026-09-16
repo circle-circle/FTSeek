@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import statistics
 import sys
@@ -73,6 +74,10 @@ DISCLOSURES = [
     "B 案原 ALL 块是混合人群读数; 分流落地后 B 只管 by_branch.B_only / "
     "forward.B_only 人群。裁决日 B 分支须以 forward_B_only_pass 为主判读, "
     "ALL_pass 只作历史参考, 不得用混合人群给分流后的 B 背书。",
+    # [2026-09-16 宪章第 9 律批注] 每个 _agg_block 新增 day_clustered 读数:
+    "日聚类+MDE(宪章9): 各块新增 day_clustered (延迟门净价值/笔按日等权聚类后的 t 与 "
+    "MDE(80%)); n_days<3 → None 不可判。判据 (避免率/机会成本) 数值不动 — 该读数只回答 "
+    "'B 案净效果与 0 是否可分辨', 不改变毕业门槛。",
 ]
 
 
@@ -167,6 +172,32 @@ def _eval_delay(direction: str, entry_price: float, px: float):
     return px <= entry_price, (entry_price - px) / entry_price * 100
 
 
+def _day_clustered_t(daily_values):
+    """[2026-09-16 用户裁「按照建议执行」] 宪章第 9 律读数 — 日聚类 t + MDE(80%).
+
+    与 scripts/exit_scorecard.py 同一口径: 先按日等权取均值, 再对日均值做单样本 t
+    (同日多笔高度相关, pooled 统计会被大日绑架 — RFC-081 窗实测 9/10 单日占 42% 配对)。
+    单位声明: t 无量纲; day_mean / mde_80pct 与入参同量纲 (本调用 = 美元/笔)。
+    n_days<3 或零方差 → None (不可判, 不得当成 0 或 PASS)。
+    """
+    n_days = len(daily_values)
+    if n_days < 3:
+        return None
+    day_mean = statistics.mean(daily_values)
+    sd = statistics.stdev(daily_values)
+    if sd == 0:
+        return None
+    t = day_mean / (sd / math.sqrt(n_days))
+    return {
+        "t": round(t, 2),
+        "n_days": n_days,
+        "day_mean": round(day_mean, 2),
+        "mde_80pct": round(2.802 * sd / math.sqrt(n_days), 2),
+        "distinguishable": bool(abs(t) >= 2.0),
+        "unit": "usd_per_trade (day_mean/mde_80pct; t 无量纲)",
+    }
+
+
 def _full_day(symbol: str, et_date: str, allow_fetch: bool):
     return _pep._fetch_full_day(symbol, et_date, allow_fetch)
 
@@ -177,6 +208,19 @@ def _agg_block(recs: list) -> dict:
     dl = [r for r in ok if r["still_triggers"]]
     avoided_net = sum(float(r.get("pnl_net") or 0) for r in av)
     opp = [float(r["opp_cost_pct"]) for r in dl]
+    # [宪章第 9 律] 延迟门净价值/笔: avoided→省下的钱 (−pnl_net);
+    # delayed→付出的机会成本 (−opp_cost_pct/100×notional)。按日聚类后与 0 可辨
+    # 才允许说「B 案有/没有净效果」— 判据 (避免率/机会成本) 本身不动。
+    _by_day = {}
+    for r in ok:
+        if not r["still_triggers"]:
+            val = -(float(r.get("pnl_net") or 0))
+        else:
+            val = -(float(r.get("opp_cost_pct") or 0) / 100.0
+                    * float(r.get("notional") or 0))
+        _by_day.setdefault(str(r.get("date") or "?"), []).append(val)
+    day_clustered = _day_clustered_t(
+        [sum(v) / len(v) for v in _by_day.values()] if _by_day else [])
     # [RFC-081盲区1] 误杀 = 回避组里的盈利单 (延迟门放过的本来会赚钱的单)
     miskilled = [r for r in av if float(r.get("pnl_net") or 0) > 0]
     return {
@@ -192,6 +236,8 @@ def _agg_block(recs: list) -> dict:
         "opp_cost_median_pct": round(statistics.median(opp), 4) if opp else None,
         "opp_cost_usd": round(sum(float(r["opp_cost_pct"]) / 100 * float(r["notional"])
                                   for r in dl), 2),
+        "net_value_usd": round(sum(sum(v) for v in _by_day.values()), 2) if ok else None,
+        "day_clustered": day_clustered,
     }
 
 
@@ -360,6 +406,13 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
               f"B_only n={f_b['n']} 回避率={f_b['avoidance_rate']} opp={f_b['opp_cost_mean_pct']}% "
               f"误杀率={f_b['miskill_rate']} grad={'✓' if graduation[str(n)]['forward_B_only_pass'] else '✗'} | "
               f"D候选 n={f_d['n']}")
+        for _tag, _blk in (("ALL", a), ("fwd_B_only", f_b)):
+            _dc = _blk.get("day_clustered")
+            if _dc:
+                print(f"    日聚类[{_tag}](宪章9): n_days={_dc['n_days']} "
+                      f"day_mean={_dc['day_mean']:+.2f}美元/笔 t={_dc['t']} "
+                      f"MDE(80%)=±{_dc['mde_80pct']}美元 "
+                      f"⇒ {'与0可分辨' if _dc['distinguishable'] else '与0不可分辨'}")
     print(f"→ {OUT_LATEST}")
     return n_new
 

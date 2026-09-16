@@ -18,6 +18,7 @@
 """
 import argparse
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -170,6 +171,71 @@ def _reachability(level, ref_price, atr_pct):
     return dist_atr, dev_pct, (ref_source or "unknown")
 
 
+def _day_clustered_t(daily_values):
+    """[2026-09-16 用户裁「按照建议执行」] 宪章第 9 律读数 — 日聚类 t + MDE(80%).
+
+    与 scripts/exit_scorecard.py 同一口径: 先按日等权取均值, 再对日均值做单样本 t。
+    动机 (RFC-081 窗实算): pooled 中位 −$2.30 (p=0.968) vs 日聚类 day_mean +$11.18
+    (t=1.28, n_days=6), 且 9/10 单日占 24 笔配对中的 10 笔 — 同日相关使 pooled 读数
+    既不稳定也不可采信。单位声明: t 无量纲; day_mean / mde_80pct 与入参同量纲
+    (本调用 = 美元/笔)。n_days<3 或零方差 → None (不可判, 不得当成 0 或 PASS)。
+    """
+    if not daily_values:
+        return None
+    n_days = len(daily_values)
+    if n_days < 3:
+        return None
+    day_mean = sum(daily_values) / n_days
+    sd = (sum((x - day_mean) ** 2 for x in daily_values) / (n_days - 1)) ** 0.5
+    if sd == 0:
+        return None
+    t = day_mean / (sd / math.sqrt(n_days))
+    return {
+        "t": round(t, 2),
+        "n_days": n_days,
+        "day_mean": round(day_mean, 2),
+        "mde_80pct": round(2.802 * sd / math.sqrt(n_days), 2),
+        "distinguishable": bool(abs(t) >= 2.0),
+        "unit": "usd_per_trade (day_mean/mde_80pct; t 无量纲)",
+    }
+
+
+def _c3_reachability_split(results):
+    """C3 可达性分层 + 子桶 + ATR 口径披露 (2026-09-16, record-only).
+
+    桶界 dist_atr≤0.5 与 C3 门槛 50% 均预注册不动; 本函数只加**读数维度**:
+      · sub_bucket_lt_025 / sub_bucket_025_to_05: 实测 fill 随距离单调递减
+        (53%/25%/0%), 二值归因会把「距离梯度」误读成「机制整体不足」— 子桶
+        给裁决日"可达性门阈值 (0.25 vs 0.5)"提案留数据依据。
+      · atr_basis_mix: 0.5ATR 桶界的输入是 ATR, ATR 口径 (real/proxy/unknown)
+        未披露 ⇒ 桶界噪声地板不可知。proxy/unknown 主导 ⇒ 分层读数降级方向性。
+    """
+    from collections import Counter
+    pool = [x for x in results if x.get("status") in ("entered", "expired_unfilled")]
+
+    def _bucket(pred):
+        s = [x for x in pool
+             if x.get("reach_dist_atr") is not None and pred(float(x["reach_dist_atr"]))]
+        return {"n": len(s),
+                "fill_rate": (round(sum(1 for x in s if x.get("status") == "entered")
+                                    / len(s), 3) if s else None)}
+
+    near, mid = _bucket(lambda d: d < 0.25), _bucket(lambda d: 0.25 <= d <= 0.5)
+    reach, unreach = _bucket(lambda d: d <= 0.5), _bucket(lambda d: d > 0.5)
+    basis_mix = dict(Counter(str(x.get("atr_basis") or "unknown") for x in pool))
+    return {
+        "reachable_n": reach["n"], "reachable_fill_rate": reach["fill_rate"],
+        "unreachable_n": unreach["n"], "unreachable_fill_rate": unreach["fill_rate"],
+        "sub_bucket_lt_025": near,
+        "sub_bucket_025_to_05": mid,
+        "no_atr_n": sum(1 for x in pool if x.get("reach_dist_atr") is None),
+        "atr_basis_mix": basis_mix,
+        "rule": ("可达=dist_atr≤0.5 (预注册桶界); 观测不裁决 — C3 门槛 50% 本身不动。"
+                 "子桶与 ATR 口径为 2026-09-16 增补读数 (宪章: 读数可后加, 判据不可挪); "
+                 "atr_basis_mix 以 real/proxy/unknown 计数, proxy/unknown 主导时分层降级方向性"),
+    }
+
+
 #: 采样口径双报 (2026-09-07 保真度专项步骤①): 实盘 10s 轮询的真值必落在两口径之间 —
 #:   bar_extreme = 假设轮询看到了整根 bar 的极值 (观测**上界**)
 #:   bar_close   = 假设轮询只看到收盘价 (观测**下界**)
@@ -318,6 +384,9 @@ def build_rows(db, date):
             "actual_executed": r["actual_net"] is not None,
             "actual_net": r["actual_net"],
             "actual_exit_reason": r["exit_reason"],
+            # [2026-09-16 ATR 口径披露] 0.5ATR 可达桶界的输入质量 — 来源
+            #   trade_records.metadata_json.atr_basis (real/proxy; 无成交臂→unknown)。
+            "atr_basis": meta.get("atr_basis"),
             **rep,
         }
         # [2026-09-16 用户裁"要"] 可达性刻度 (record-only, 供 C3 分层判读) —
@@ -722,6 +791,19 @@ def _readout_card(s):
             f"│ C3分层(观测): 可达(≤0.5ATR) n={_rs.get('reachable_n')} 成交率={_rs.get('reachable_fill_rate')} | "
             f"不可达 n={_rs.get('unreachable_n')} 成交率={_rs.get('unreachable_fill_rate')} "
             f"⇒ C3={'仅不可达桶拖累(DA定价问题)' if (_rs.get('reachable_fill_rate') or 0) >= 0.5 > (_rs.get('unreachable_fill_rate') or 0) else '需看两桶'}")
+        _near = _rs.get("sub_bucket_lt_025") or {}
+        _midb = _rs.get("sub_bucket_025_to_05") or {}
+        if _near.get("n") or _midb.get("n"):
+            lines.append(
+                f"│ C3子桶(观测): <0.25ATR n={_near.get('n')} 成交率={_near.get('fill_rate')} | "
+                f"0.25-0.5ATR n={_midb.get('n')} 成交率={_midb.get('fill_rate')} "
+                "⇒ 距离梯度读数 (可达性门阈值提案的数据依据, 不改 C3 门槛)")
+        _abm = _rs.get("atr_basis_mix") or {}
+        if _abm:
+            _bad_basis = sum(_abm.get(b, 0) for b in ("proxy", "unknown"))
+            lines.append(
+                f"│ ATR口径(观测): {_abm} "
+                f"{'⇒ real 不主导, 0.5ATR 桶界含输入噪声, 分层降级方向性' if _bad_basis > _abm.get('real', 0) else '⇒ real 主导'}")
     # [2026-09-16 RFC-081盲区2/3 用户裁"要"] D分支误杀率 + 放弃经济一行 (expired 口径冻结)
     _mk = s.get("d_branch_miskill") or {}
     if _mk.get("n_expired"):
@@ -729,6 +811,17 @@ def _readout_card(s):
             f"│ D误杀(expired口径,门≤40%): {_mk['n_miskilled']}/{_mk['n_expired']}={_mk['miskill_rate']}"
             f"{' ✅' if _mk['pass'] else ' ❌'} | 不成交腿放弃实盘净利 {_mk['forgone_actual_net_usd']:+.2f}"
             f"{' (净放弃利润,躲烂单叙事打折)' if (_mk['forgone_actual_net_usd'] or 0) > 0 else ''}")
+    # [2026-09-16 宪章第 9 律] pooled 与日聚类必须同屏 — 缺日聚类的裁决读数不完整。
+    _dc = s.get("paired_diff_day_clustered")
+    if _dc:
+        _top_day = max(s.get("day_pair_counts") or {}, key=lambda d: (s["day_pair_counts"][d], d), default=None)
+        lines.append(
+            f"│ 日聚类(宪章9): n_days={_dc['n_days']} day_mean={_dc['day_mean']:+.2f}美元/笔 "
+            f"t={_dc['t']} MDE(80%)=±{_dc['mde_80pct']}美元 "
+            f"⇒ {'与0可分辨' if _dc['distinguishable'] else '与0不可分辨'}"
+            + (f" | 单日最大集中 {_top_day}={s['day_pair_counts'][_top_day]}/{s.get('n_paired')}" if _top_day else ""))
+    else:
+        lines.append("│ 日聚类(宪章9): n_days<3 ⇒ 不可判 (不得当成 0 或 PASS)")
     lines.append(f"│ 结论: {concl}; 接线开关 entry_archetype_routing_enabled "
                  f"{'维持关闭' if not wire else '四判据全过, 可进入接线裁决'}")
     st = lic.get("status")
@@ -788,6 +881,18 @@ def summarize_v2(results, fidelity_pairs):
     mfe0_act = _mfe0([v.get("act_replay_mfe_pct") for v in paired])
     k = sum(1 for d in diffs if d > 0)
     trimmed = sorted(diffs, key=abs)[:-3] if len(diffs) > 6 else diffs
+
+    # [2026-09-16 宪章第 9 律] 配对差按日等权聚类 t + MDE(80%) —
+    #   同日配对高度相关 (9/8-9/15 窗 9/10 单日占 42%), pooled 符号检验不可单独采信;
+    #   n_days<3 → None (不可判)。day_pair_counts 披露单日集中度, 防"大日绑架"。
+    _day_diffs = {}
+    for _r in results:
+        _v = _r.get("v2") or {}
+        if _v.get("paired") and _v.get("paired_diff") is not None:
+            _day_diffs.setdefault(str(_r.get("date"))[:10], []).append(float(_v["paired_diff"]))
+    day_clustered = _day_clustered_t(
+        [sum(v) / len(v) for v in _day_diffs.values()] if _day_diffs else [])
+    day_pair_counts = {d: len(v) for d, v in sorted(_day_diffs.items())}
 
     # 抗极值阶梯 (承 PROPOSAL-20260905 A2 教训: "HIGH 前 3 笔占净额 77.9%" —
     #   合计口径可被两三笔绑架, 故均值/中位/胜率/剔除极值四种读法必须并报)。
@@ -961,6 +1066,9 @@ def summarize_v2(results, fidelity_pairs):
              if v.get("paired_diff_vs_db") is not None]) if paired else None,
         "cf_better_count": k,
         "sign_test_p_one_sided": round(_sign_test_one_sided(k, len(diffs)), 4) if diffs else None,
+        # [宪章第 9 律] 裁决日必读: pooled 与日聚类并列, 缺日聚类块的裁决读数不完整。
+        "paired_diff_day_clustered": day_clustered,
+        "day_pair_counts": day_pair_counts,
         "robust_drop3_largest_abs": {
             "cf_better_count": sum(1 for d in trimmed if d > 0), "n": len(trimmed),
             "median": round(statistics.median(trimmed), 2) if trimmed else None},
@@ -971,22 +1079,7 @@ def summarize_v2(results, fidelity_pairs):
         #   裁决日读法: C3 若败, 先看 reachable/unreachable 两桶各自的成交率与净额,
         #   区分"限价机制成交能力不足"(可达桶也败) vs "DA 确认位定价不可达"(仅不可达桶败)。
         #   可达定义 = reach_dist_atr ≤ 0.5 (预注册于 ADR-035 批注§五.2, 桶界不得事后调)。
-        "c3_reachability_split": (lambda _rr: {
-            "reachable_n": sum(1 for x in _rr if x.get("reach_dist_atr") is not None
-                               and x["reach_dist_atr"] <= 0.5),
-            "reachable_fill_rate": (lambda s: (round(
-                sum(1 for x in s if x.get("status") == "entered") / len(s), 3) if s else None))(
-                [x for x in _rr if x.get("reach_dist_atr") is not None
-                 and x["reach_dist_atr"] <= 0.5]),
-            "unreachable_n": sum(1 for x in _rr if x.get("reach_dist_atr") is not None
-                                 and x["reach_dist_atr"] > 0.5),
-            "unreachable_fill_rate": (lambda s: (round(
-                sum(1 for x in s if x.get("status") == "entered") / len(s), 3) if s else None))(
-                [x for x in _rr if x.get("reach_dist_atr") is not None
-                 and x["reach_dist_atr"] > 0.5]),
-            "no_atr_n": sum(1 for x in _rr if x.get("reach_dist_atr") is None),
-            "rule": "可达=dist_atr≤0.5 (预注册桶界); 观测不裁决 — C3 门槛 50% 本身不动",
-        })([x for x in results if x.get("status") in ("entered", "expired_unfilled")]),
+        "c3_reachability_split": _c3_reachability_split(results),
         # [2026-09-16 RFC-081盲区2/3 用户裁"要"] D分支误杀率 + expired 腿放弃经济 —
         #   盲区2: 误杀率分母**冻结为 expired_unfilled** (RFC-081 增补"误杀率≤40%"
         #   原文未定分母; expired 口径 = 限价没成交而实盘赚钱 = 真"错过", 全配对口径

@@ -1,9 +1,19 @@
 # -*- coding: utf-8 -*-
 """ARM 9/15 指令源头回溯: DA 原始输出 vs 落库指令 (re-price 后) 的风险几何对比."""
 import json
+import argparse
 import sqlite3
 
-d = json.load(open("/opt/ftseek/FTSeek-US/data/da_checkpoint/2026-09-15/US.ARM.json"))
+DEFAULT_CHECKPOINT = "/opt/ftseek/FTSeek-US/data/da_checkpoint/2026-09-15/US.ARM.json"
+DEFAULT_DECISION_ID = 2697
+_parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+_parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT,
+                     help="DA checkpoint JSON (默认 ARM 9/15)")
+_parser.add_argument("--decision-id", type=int, default=DEFAULT_DECISION_ID,
+                     help="playbook_instructions.id (默认 %(default)s)")
+_args = _parser.parse_args()
+
+d = json.load(open(_args.checkpoint))
 lo = d["_llm_output"]
 ep = lo["execution_plan"]
 print("=== DA 原始计划 (LLM 输出) ===")
@@ -16,7 +26,8 @@ print("entry_strategy:", ep["entry_strategy"])
 db = sqlite3.connect("file:/opt/ftseek/FTSeek-US/data/ftseek_us.db?mode=ro", uri=True)
 db.row_factory = sqlite3.Row
 r = db.execute("SELECT entry_price,stop_loss,take_profit,confidence,atr_pct,vol_bucket,"
-               "raw_instruction_json FROM playbook_instructions WHERE id=2697").fetchone()
+               "raw_instruction_json FROM playbook_instructions WHERE id=?",
+               (_args.decision_id,)).fetchone()
 print("\n=== 落库指令 (re-price 改写后) ===")
 print({k: r[k] for k in ("entry_price", "stop_loss", "take_profit", "confidence",
                          "atr_pct", "vol_bucket")})
