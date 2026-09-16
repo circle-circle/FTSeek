@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """D2' 入场确认门影子每日推送 (no_agent cron script, 2026-09-11 用户裁「要」).
 
-读结算产物 (05:58 CST crontab entry_delay_confirm_shadow.py 已落盘):
+[2026-09-16 用户裁「要」扩展] 增 D 案 (ADR-035 限价路由) 段 + B/D 分流人群分层读数
+(RFC-081 §六批注) + 裁决窗口开启提醒 — 单推送承载入场门双影子, 不新增 cron (推送治理)。
+
+读结算产物 (05:47/05:58 CST crontab 已落盘):
   - data/shadow/entry_delay_confirm.jsonl   逐笔反事实 (幂等键 trade_id+delay_min)
-  - data/shadow/entry_delay_confirm_latest.json  汇总+预注册判据
+  - data/shadow/entry_delay_confirm_latest.json  汇总+预注册判据+by_branch/forward分层
+  - data/shadow/pullback_limit_replay_v2_latest.json  D案 v2 读数卡 (05:47 replay cron)
   - data/ftseek_us.db (mode=ro)  trade_records.mfe_pct → 墓地捕获 (MFE<0.3%)
 
-输出 5-7 行中文报告到 stdout (飞书推送)。record-only 影子的消费面:
-每日亏损对比 (回避省$ vs 照进多付$) + forward 攒样进度 + 毕业判据状态。
+输出 8-10 行中文报告到 stdout (飞书推送)。record-only 影子的消费面:
+每日亏损对比 (回避省$ vs 照进多付$) + forward 攒样进度 + 毕业判据状态 + D案裁决进度。
 结算文件陈旧 (>26h) → 推警告行 (传感器失效可见化, 8/28 教训)。
 本脚本零写入 (DB ro + 不碰 jsonl), 失败时输出错误行而非静默。
 """
@@ -20,11 +24,14 @@ from pathlib import Path
 REPO = Path("/opt/ftseek/FTSeek-US")
 JSONL = REPO / "data/shadow/entry_delay_confirm.jsonl"
 LATEST = REPO / "data/shadow/entry_delay_confirm_latest.json"
+CF_LATEST = REPO / "data/shadow/pullback_limit_replay_v2_latest.json"
 DB = REPO / "data/ftseek_us.db"
 
 GRAVE_MFE = 0.3          # 墓地线: MFE<0.3% = 入场即错族
 FORWARD_START = "2026-09-09"  # DEB-20260909 影子落地日, forward 攒样窗起点 (裁决日以 forward 冻结值为准)
 STALE_HOURS = 26         # 结算 cron 05:58, 推送 06:10; >26h = 昨晨结算缺失
+D_TARGET_N = 30          # D案配对裁决门槛 (RFC-081 增补: n≥30)
+B_TARGET_N = 20          # B案 forward 毕业门槛 (DEB §5.2: n≥20)
 
 
 def _fmt_usd(v: float) -> str:
@@ -101,6 +108,50 @@ def main() -> int:
         f"全窗参照: n={g2.get('n', '?')} 回避率 {(g2.get('avoidance_rate') or 0) * 100:.0f}%"
         f" 成本 {g2.get('opp_cost_mean_pct', '?')}% | 判据 ALL={'✅' if grad.get('ALL_pass') else '❌'}"
         f" SL_INIT={'✅' if grad.get('SL_INITIAL_pass') else '❌'}")
+
+    # ── [2026-09-16] B/D 分流人群分层 (RFC-081 §六: 裁决日 B 主判读=B_only 人群) ──
+    f_blk = latest.get("delays", {}).get("2", {}).get("forward", {})
+    f_b = f_blk.get("B_only", {})
+    if f_b.get("n") is not None:
+        lines.append(
+            f"B自身人群(forward): n={f_b.get('n')}/{B_TARGET_N} 回避率 {(f_b.get('avoidance_rate') or 0) * 100:.0f}%"
+            f" 成本 {f_b.get('opp_cost_mean_pct') if f_b.get('opp_cost_mean_pct') is not None else '?'}%(门<0.3%)"
+            f" | grad={'✅' if grad.get('forward_B_only_pass') else '❌'} (混合ALL过门≠分流后B过门)")
+
+    # ── [2026-09-16] D案 (ADR-035 限价路由) 裁决进度 ──
+    try:
+        # 新鲜度: v2_latest 由 05:47 cron 窗口模式产出; >26h = 昨日结算缺失 (断头传感器可见化)
+        _age_h = (datetime.now().timestamp() - CF_LATEST.stat().st_mtime) / 3600
+        cf = json.loads(CF_LATEST.read_text())
+        s = cf.get("summary", {})
+        n_p = s.get("n_paired")
+        crit = s.get("adr035_criteria") or s.get("criteria") or {}
+        mk = s.get("d_branch_miskill") or {}
+        rs = s.get("c3_reachability_split") or {}
+        if _age_h > STALE_HOURS:
+            lines.append(f"⚠️ D案产物陈旧 ({_age_h:.0f}h前) — 查 crontab 47 5 窗口模式段")
+        if n_p is not None:
+            lines.append(
+                f"D案限价路由: 配对 n={n_p}/{D_TARGET_N} | 窗 {s.get('window_start')}→{s.get('window_end')}"
+                f" | 配对差中位 {s.get('paired_diff_median') if s.get('paired_diff_median') is not None else '?'}$/笔")
+            _extra = []
+            if mk.get("n_expired"):
+                _extra.append(f"误杀(expired口径,门≤40%) {mk.get('miskill_rate')}{'✅' if mk.get('pass') else '❌'}"
+                              f" 放弃净利{_fmt_usd(mk.get('forgone_actual_net_usd') or 0)}")
+            if rs.get("reachable_n") is not None:
+                _extra.append(f"C3分层: 可达成交率{rs.get('reachable_fill_rate')} / 不可达{rs.get('unreachable_fill_rate')}")
+            if _extra:
+                lines.append("  " + " | ".join(_extra))
+            # 裁决窗口开启提醒 (n 达门槛 → 提请用户裁决, 不自动接线)
+            if n_p >= D_TARGET_N:
+                lines.append(f"🔔 D案配对样本已达门槛 n={n_p}≥{D_TARGET_N} — 裁决材料齐备, 提请裁决 (读 RFC-081 §六 + ADR-035 §五.2 判读规则)")
+        else:
+            lines.append("D案限价路由: latest 无 n_paired 字段 (replay cron 05:47 待跑?)")
+    except FileNotFoundError:
+        lines.append("D案限价路由: 产物缺失 — 查 crontab 47 5 行")
+    except Exception as e:  # noqa: BLE001
+        lines.append(f"D案限价路由: 读取失败 ({e})")
+
     lines.append("record-only 零交易影响 | 裁决日按 forward 冻结值提请 (RFC-081)")
 
     print("\n".join(lines))
