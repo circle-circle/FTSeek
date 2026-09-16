@@ -3781,24 +3781,35 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         _today_opened_notional = 0.0
         _today_opened_count = 0
         try:
-            import sqlite3 as _sql3
-            _db_path = "/opt/ftseek/FTSeek-US/data/ftseek_us.db"
-            _db_conn = _sql3.connect(_db_path)
+            from app.core.db_utils import safe_sqlite_connect
+            from app.core.paths import get_trade_records_db as _get_guardrail_db
             # S3 (2026-07-19, DEB-round2 Ω.3-6): 日名义额度仅统计 Playbook 自身交易.
             #   修复前无 source_type 过滤 → 当日手动/ORB/主线交易 notional 挤占 Playbook 的
             #   daily_notional_cap, 导致 Playbook 被误拦 (保守方向, 不漏放但漏信号).
             #   与同函数 R1b 查询 (2315 source_type='PLAYBOOK_SIM') 口径对齐.
-            _row = _db_conn.execute(
-                "SELECT COALESCE(SUM(entry_price * quantity), 0), COUNT(*) "
-                "FROM trade_records WHERE substr(entry_time,1,10) = ? "
-                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')",
-                (today,)
-            ).fetchone()
-            _today_opened_notional = float(_row[0] or 0)
-            _today_opened_count = int(_row[1] or 0)
-            _db_conn.close()
+            # 2026-09-16 (DEB #396): 必须与成交簿记同库。硬编码 sim 库会让 live
+            # 已平仓交易从日帽中消失; 查询失败也必须 fail-close, 不得从 0 放行.
+            _db_conn = safe_sqlite_connect(_get_guardrail_db(), timeout=5)
+            try:
+                _row = _db_conn.execute(
+                    "SELECT COALESCE(SUM(entry_price * quantity), 0), COUNT(*) "
+                    "FROM trade_records WHERE substr(entry_time,1,10) = ? "
+                    "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')",
+                    (today,)
+                ).fetchone()
+                _today_opened_notional = float(_row[0] or 0)
+                _today_opened_count = int(_row[1] or 0)
+            finally:
+                _db_conn.close()
         except Exception as _e:
-            logger.warning(f"[playbook] 查询当日已开仓失败, 从0开始: {_e}")
+            logger.error(f"[playbook] 查询当日已开仓失败, fail-close 拦截本轮: {_e}")
+            return {
+                "date": today,
+                "executed": 0,
+                "skipped": 0,
+                "reason": "daily_guardrail_query_failed",
+                "detail": str(_e),
+            }
 
         logger.info(
             f"[playbook] 单日 guardrail: notional_cap=${_daily_notional_cap:,.0f} "
@@ -3849,11 +3860,6 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
             #   P1-2 (2026-08-23): 取值集合化 — 含 tripwire 核销 (见 INVALIDATED_SKIP_REASONS)
             if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
-                continue
-            # 2026-07-19 (DEB-round3 #3-B 消费端): expires_at 过期指令跳过 (SCAN 24h 失效)
-            if _is_instruction_expired(inst):
-                logger.info(f"[playbook] {inst.get('symbol')} 指令已过期 (expires_at={inst.get('expires_at')}), 跳过")
-                skipped_count += 1
                 continue
 
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
@@ -5232,9 +5238,6 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     #   特异性匹配作废语义取值 (P1-2 起集合化), 不误伤其他 skip_reason 语义.
     if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
         return False
-    # 2026-07-19 (DEB-round3 #3-B 消费端): 过期指令不再触发 — 与 auto_execute 双保险.
-    if _is_instruction_expired(inst):
-        return False
 
     # 2026-07-11: 只读埋点 — 记录未触发原因/实时价/偏离幅度.
     # 目的: 量化 never-trigger 里 "追高/接飞刀被正确拒绝" vs "盘前参考价过期但盘中价合理".
@@ -5651,7 +5654,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
 
     # P1-C (2026-07-24, DEB-20260724): 入场路径标注 — pullback(回调/反弹有利侧) / chase(追入) /
     #   out_of_band(出带未触发). 量能门拦截时保留 chase (表示"想走 chase 被拦"). 供 _emit_entry_shadow 落库.
+    # P0 (2026-09-17, 用户裁「接收建议」): 触发条件宽松化 — 98% missed 因"未触发",
+    #   根因是 chase_zone=5% 过严. 加"接近确认位"宽松条件: 距 chase_zone 边界 ±1% 内也触发.
     _entry_path = None
+    _near_miss_tolerance = 0.01  # ±1% 接近确认位容忍度
     if is_short:
         if current_price >= entry_price:
             # 反弹到入场价或更高 → 更优做空点, 直接触发 (设上限防已冲高背离)
@@ -5661,6 +5667,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             # 跌破入场价 → 追空, 需量能确认 (防无量假跌)
             triggered = _vol_ok
             _entry_path = "chase"
+        elif current_price >= entry_price * (1 - _chase_zone - _near_miss_tolerance):
+            # P0: 接近 chase_zone 边界 (±1% 内) → 宽松触发
+            triggered = _vol_ok
+            _entry_path = "chase_near_miss"
         else:
             triggered = False
             _entry_path = "out_of_band"
@@ -5673,6 +5683,10 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             # 突破入场价 → 追涨, 需量能确认 (防无量假突破)
             triggered = _vol_ok
             _entry_path = "chase"
+        elif current_price <= entry_price * (1 + _chase_zone + _near_miss_tolerance):
+            # P0: 接近 chase_zone 边界 (±1% 内) → 宽松触发
+            triggered = _vol_ok
+            _entry_path = "chase_near_miss"
         else:
             triggered = False
             _entry_path = "out_of_band"
@@ -6201,24 +6215,6 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
         inst_confidence=inst.get("confidence"),
     )
     return triggered
-
-
-def _is_instruction_expired(inst) -> bool:
-    """#3-B (2026-07-19, DEB-round3): expires_at 过期判定 (SCAN 注入 24h 失效).
-
-    消费端: auto_execute 跳过 + _check_intraday_trigger 拒触发 (双保险).
-    无 expires_at 字段 → 不过期 (旧指令/非 SCAN 源兼容). 解析异常 → 不过期 (不误杀).
-    """
-    try:
-        _exp = inst.get("expires_at")
-        if not _exp:
-            return False
-        _exp_dt = datetime.fromisoformat(str(_exp).replace("Z", "+00:00"))
-        if _exp_dt.tzinfo is None:
-            _exp_dt = _exp_dt.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) >= _exp_dt
-    except Exception:
-        return False
 
 
 def _classify_ghost_cause(conn, symbol: str, self_trade_id: int) -> str:
@@ -7106,7 +7102,15 @@ def load_playbook_open_symbols():
         _rows = _c.execute(
             "SELECT DISTINCT symbol FROM trade_records "
             "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
-            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) "
+            "AND decision_id IS NOT NULL AND decision_id <> '' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM trade_records t2 "
+            "  WHERE t2.futu_order_id = trade_records.futu_order_id "
+            "  AND trade_records.futu_order_id <> '' "
+            "  AND t2.id <> trade_records.id "
+            "  AND t2.exit_price > 0 AND t2.exit_time IS NOT NULL AND t2.exit_time <> ''"
+            ")"
         ).fetchall()
         return {r[0] for r in _rows if r[0]}
     except Exception as e:

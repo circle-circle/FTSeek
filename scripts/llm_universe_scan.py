@@ -923,6 +923,21 @@ def _gather_news(hours: int) -> List[Dict[str, Any]]:
         items = RSSHubUSNewsFetcher().get_recent_news(hours=hours, limit=30) or []
     except Exception as e:
         print(f"  [warn] 新闻拉取失败 (降级): {e}")
+        # P2 (2026-09-17, 用户裁「接收建议」): RSSHub 降级告警 — 静默降级=病D,
+        #   无人知晓信息层断腿. 告警失败只打印, 不阻断主链 (best-effort).
+        try:
+            from app.observability.feishu_alert import FeishuAlerter
+            alerter = FeishuAlerter(
+                app_id=os.getenv("FEISHU_APP_ID", ""),
+                app_secret=os.getenv("FEISHU_APP_SECRET", "")
+            )
+            alerter.send_warn(
+                title="UE 新闻源降级告警",
+                content=f"RSSHub 拉取失败, 降级到 Finnhub 单源。\n错误: {str(e)[:200]}\n时间: {_today()}",
+                receive_id=os.getenv("FEISHU_CHAT_ID", "")
+            )
+        except Exception as _ae:
+            print(f"  [warn] 降级告警发送失败 (不阻断): {_ae}")
     if bool(_cfg("universe_expansion.clue_finnhub_news", True)):
         try:
             from datetime import timezone as _tz
@@ -2749,6 +2764,9 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
         #   && 链, inject/push 未跑 (llm_audit 实证; 输出需求内容驱动波动大 3008→>8000).
         #   16000 DashScope probe 实收; 满载 ~210-230s 仍在实体 timeout=300 内;
         #   截断降档底线 16000*0.5=8000 恰为旧上限.
+        # 2026-09-17 (用户裁「按建议执行」②): 16000→24000 — glm-5.3 强制思考链烧满
+        #   16k 预算致 schema 失败 4/4=100% (llm_audit 11686/11719/11721/11751),
+        #   官方 Max Output 131072 有充足余量. 单轮成本上限 24k×0.004169≈$0.10 可控.
         max_tokens=24000,
         schema_required={"surfaced": list},
         json_mode=True,
