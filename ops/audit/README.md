@@ -15,6 +15,8 @@ DA 指令源头回溯 (识别层 vs 执行层 re-price 几何改写) 的实证�
 | `audit_cross_outcome.py` | **核心读数**: 跨失效线组 vs 未跨组的已平仓结局 + **按日配对差 t/MDE(80%)** — 决定"几何守卫"是否值得另提 | `--since`, 默认 2026-08-15 |
 | `trace_arm_origin.py` | ARM 9/15 单例深挖: DA 原始 execution_plan vs 落库指令的风险几何 + 挑战者独立性 + 输入缺口申报 | `--checkpoint`, `--decision-id` |
 | `audit_inputs.py` | DA 输入时点 & planned_entry 当日可达性 (1min bar 真值) + re-price 机械公式溯源 + TP 触发史 | `--checkpoint-date`, `--db-since`; bar 字段序 b[2]=high/b[3]=low |
+| `audit_da_pricing_quality.py` | §七 预测力检验: DA SL距/RR/追价距离 分桶+Spearman ρ vs 结局 (决定定价直通是否值得) | `--since`, 默认 2026-08-01 |
+| `drill_chase_zero.py` | §七 追价≈0 桶下钻: 拆"按DA原价成交反而最差"的组成伪影 (月份/确认位有无) | `--since`, 默认 2026-08-01 |
 
 ### 复核方改窗口的方法
 三个全窗脚本均支持 `--since YYYY-MM-DD`（不再改源码）:
