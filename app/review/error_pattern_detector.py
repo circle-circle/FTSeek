@@ -90,7 +90,8 @@ class ErrorPatternDetector:
             "name": "止损违规",
             "type": "risk",
             "condition": lambda t: (
-                (t.get("max_drawdown") or 0) > 0.05 and
+                # trade_records.max_drawdown = 百分点口径 (5.53 ≡ 5.53%); 2026-09-17 单位勘误 0.05→5.0
+                (t.get("max_drawdown") or 0) > 5.0 and
                 (t.get("realized_pnl", 0) or 0) < 0
             ),
             "description": "持仓期间回撤超过 5% 导致亏损",

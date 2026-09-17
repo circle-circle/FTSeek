@@ -7082,6 +7082,24 @@ def is_playbook_open_position(symbol: str) -> bool:
                 pass
 
 
+# 2026-09-17 (用户裁「按建议执行」; 9/16 MRCY/SNDK 案): "同一 broker 单已有已平孪生行" 排除谓词.
+#   建仓簿记 CAS 失败 → P3 补录出孪生 open 行 (无 decision_id), playbook 重试写入带身份行并正常平仓;
+#   孪生行悬空 (exit_time NULL) ⇒ 被当"未平仓"反复平仓, exit_lifecycle 报 exit_owner_conflict,
+#   快环每 20s 重试且按终态失败升级 ERROR+"仓位可能卡住/无止损保护" (9/16 实测 192 条/32min, 全是误报:
+#   仓位 09:52 已真平, broker_qty=0). 同一 broker 单既有已平行 ⇒ 该行的身份已被结算, 不得再入未平集.
+#   SSOT: ghost 豁免 (load_playbook_open_symbols) 与退出快环行源共用本片段, 防两处漂移.
+#   安全性实测: 全库 futu_order_id 重复组仅 MRCY/SNDK 两对 (均为该故障产物); 无部分平仓新建行路径.
+_PB_CLOSED_TWIN_NOT_EXISTS = (
+    " AND NOT EXISTS ("
+    "  SELECT 1 FROM trade_records t2"
+    "  WHERE t2.futu_order_id = trade_records.futu_order_id"
+    "  AND trade_records.futu_order_id <> ''"
+    "  AND t2.id <> trade_records.id"
+    "  AND t2.exit_price > 0 AND t2.exit_time IS NOT NULL AND t2.exit_time <> ''"
+    ")"
+)
+
+
 def load_playbook_open_symbols():
     """一次查询返回全部未平 Playbook 标的集合 (与 is_playbook_open_position 同口径).
 
@@ -7104,13 +7122,7 @@ def load_playbook_open_symbols():
             "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
             "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) "
             "AND decision_id IS NOT NULL AND decision_id <> '' "
-            "AND NOT EXISTS ("
-            "  SELECT 1 FROM trade_records t2 "
-            "  WHERE t2.futu_order_id = trade_records.futu_order_id "
-            "  AND trade_records.futu_order_id <> '' "
-            "  AND t2.id <> trade_records.id "
-            "  AND t2.exit_price > 0 AND t2.exit_time IS NOT NULL AND t2.exit_time <> ''"
-            ")"
+            + _PB_CLOSED_TWIN_NOT_EXISTS
         ).fetchall()
         return {r[0] for r in _rows if r[0]}
     except Exception as e:
@@ -7865,6 +7877,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             FROM trade_records
             WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
               AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)
+        """ + _PB_CLOSED_TWIN_NOT_EXISTS + """
             ORDER BY id DESC
         """).fetchall()
 

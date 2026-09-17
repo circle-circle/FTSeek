@@ -105,6 +105,28 @@ class USPositionSync:
             if existing:
                 return True
             now_iso = datetime.now().astimezone().isoformat()
+            # ③ 防重 (2026-09-16): 同 symbol+direction+price 且入场时间差<60s 的 open 记录已存在则跳过
+            # (防 playbook 簿记失败后 P3 补录与 playbook 重试写入产生重复行, 如 1511/1512)
+            try:
+                dup_conn = safe_sqlite_connect(db_path, timeout=5)
+                try:
+                    dup = dup_conn.execute(
+                        "SELECT id FROM trade_records WHERE symbol=? AND direction=? "
+                        "AND ABS(entry_price - ?) < 0.01 "
+                        "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) "
+                        "AND ABS(julianday(entry_time) - julianday(?)) * 86400 < 60 "
+                        "LIMIT 1",
+                        (symbol, direction, entry, now_iso)
+                    ).fetchone()
+                finally:
+                    dup_conn.close()
+            except Exception:
+                dup = None
+            if dup:
+                logger.info(
+                    f"[US Sync·P3] {symbol} 同方向同价格 open 记录已存在 (id={dup[0]}), 跳过补录"
+                )
+                return True
             # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
             atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
             record = {

@@ -352,10 +352,13 @@ class TradeAnalyzer:
         if position_value > 200000:
             issues.append(f"仓位过大 (${position_value:,.0f})")
         
-        # 最大回撤检查
+        # 最大回撤检查 (trade_records.max_drawdown = **百分点**口径, 由
+        #   pipeline._max_drawdown_from_mfe_mae 反算 100*(mfe+mae)/(100+mfe); 例 5.5342 ≡ 5.53%)
+        #   2026-09-17 单位勘误: 旧代码 `> 0.05` + `*100` 把 5.53% 打成 "553.4%", 阈值等价 0.05%
+        #   ⇒ 每笔都误报"超过 5% 阈值"。与 daily_review.max_position_drawdown_pp (百分比口径) 对齐。
         max_dd = trade.get('max_drawdown', 0) or 0
-        if max_dd > 0.05:
-            issues.append(f"持仓期间最大回撤 {max_dd*100:.1f}% — 超过 5% 阈值")
+        if max_dd > 5.0:
+            issues.append(f"持仓期间最大回撤 {max_dd:.1f}% — 超过 5% 阈值")
         
         # 亏损幅度检查
         if analysis.pnl_pct < -0.05:
