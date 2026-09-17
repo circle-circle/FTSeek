@@ -880,3 +880,66 @@ drawdown_pct = clamp((100 - target_capture_pct) × MFE / 100,
 - 新增 `tests/playbook/test_adaptive_trailing.py` 覆盖公式分档、clamp、SIM-only、配置禁用、非法配置、盘中/延长时段动态线、JSONL/状态持久化。
 - 验证：adaptive/BE/TP/scope/hold/flatten **43 passed**；延长时段套件 **55 passed**；`tests/execution/test_exit_lifecycle.py` **112 passed**；playbook 相关补充 **121 passed**；`py_compile` 通过。
 - 回滚：`adaptive_trailing_enabled=false` 后 `systemctl restart ftseek-us`，延长时段 collector 下次调用自动回到固定 factor 回撤；不需要改 SIM-only helper。
+
+## 23. 独立复查回执（第三方复核 Codex 66d781dcc「延长时段利润保护链路 + MFE 自适应 trailing」）
+
+**复核方式**：不采信 DEB 描述 —— 逐行读码 + 直接查 DB/审计文件/配置加载器 + 实弹调用决策函数 + 跑测试。
+**复核人视角**：另一 agent（我）在 §17 落地的 `EXT_EXIT_TAKE_PROFIT_ONLY` 被本批 §21 取代，故本次复核同时确认"用户勘误是否真的落地"与"我的改动残留是否干净"。
+
+### 23.1 核对通过（附我自己的证据）
+
+| 项 | 我的验证动作 | 结果 |
+|---|---|---|
+| 延长时段**不做亏损止损**（用户 §21 勘误的核心） | 实调 `decide_original_profit_exit()` | 深亏 −10% 未保本 → `hold_no_stop` / `initial_loss_stop_deferred_to_rth` ✅；保本后回落 → `SL_TRAIL_LOCK`（eff_sl **101.76 > 成本 100** = 锁盈线非止损）✅；止盈线 → `TAKE_PROFIT` ✅ |
+| 费用/RR 门真接线（非仅注释） | 读码 | `fee_cushion_pct` 扣费后准入、`take_profit_below_net_fee`、`min_tp_rr=1.5` 硬门 ✅ |
+| 可执行价口径 | 读 `market_session.quote_metrics` | LONG 用 **bid**（不是 pre_high/last）✅ 与我 §16 强调的"盘前 high ≠ 可成交价"一致 |
+| 新配置是否**死门**（启动快照陷阱） | `get_playbook_config()` 实读 + 实算 | `adaptive_trailing_*` 在快照内；MFE 1/3/8% → 回撤 0.4/1.2/1.2% ✅；**config mtime 09-18 01:35 < 服务启动 01:40** ⇒ 非死配置 ✅ |
+| 是否出现**双退出载体** | 全量 crontab | 旧两条 `*/5` shadow 行**已移除**，替换为单一 `* * * * * extended_hours_exit_cron.py`（flock 防叠加 + 120s 超时 + ET 日历门）✅ 实测返回 `skip: outside_extended_hours` ✅ |
+| 执行器是否仍市价单/直写库 | grep + 读码 | **无任何 INSERT/UPDATE**；`place_order(session="ETH", 限价)` ✅ |
+| **§18.3 历史修复**（本批唯一动库动作） | 直接查 DB + 审计 jsonl + 备份文件 | 1522 GIPR = **11,494 股 @0.424 / tighten / close_futu_order_id=8185461 / PnL −80.46** ✅ 与声称逐字一致；1523/1525/1527 已带 `data_quality='duplicate_external_close'` ✅；同 (symbol,entry_time) 重复 closed 组数 **0** ✅；2 条 `repair_source='historical_reconciliation'` 审计行在 jsonl（非 DB，DEB 用词准确）✅；备份 **24.3MB / 09-17 23:29** 存在 ✅ |
+| 修复脚本本身的**安全设计** | 读 `repair_extended_hours_exit_books.py` 全文 | 默认 dry-run；`--apply` 先用 SQLite **在线 backup()** 再写；整个计划在 `BEGIN IMMEDIATE` 单事务，异常 rollback；UPDATE 带"仍 open"前置条件 + `data_quality IS NOT ...` 守卫 ⇒ **可重复执行不叠加** ✅ |
+| 测试 | 全套延长时段 16 个文件 | **206 passed**；`test_exit_lifecycle` 单跑 **112 passed** ⇒ 批量跑那 1 个 ERROR 是测试里真调了钉钉通知器（`[钉钉] send_text 异常`）造成的环境抖动，非产品缺陷 |
+
+**门控模块 `extended_hours_market_session.py` 逐行读完，无正确性缺陷，且修掉了一个真隐患**：
+会话窗按 **ET 日历**（`is_trading_day` + `get_us_close_minutes_et` 早收盘）判定，cheap 前置只做周末快筛、权威判定仍走完整日历 ⇒ **DST/半日/假日三类时钟坑一次解决**
+（此前 cron 挂北京时间相对 ET 发布时刻，11 月冬令时会右移 1h —— 本条已覆盖）。
+
+### 23.2 待处理发现（按重要度，附建议）
+
+**F1 ⚠️ 幻影盈亏：重复记录保留了非 NULL 的 realized_pnl（建议立刻处理）**
+- 事实：1523/1525/1527 的 `realized_pnl` = −91.95 / +17.64 / −184.21，**合计 −258.52**（全表已平仓 PnL 21,393.42）。
+- 与既有先例冲突：`id=1327` 的处理是**故意留 NULL**，让净额求和在 SQL 层自动排除（见 `daily_invariant_check.py:32/:998` 的约定）。
+- 现状：`reconcile_extended_hours_exits.py:132` 已过滤该标记；但**未确认所有净额消费方**（日报/复盘/OKR）都过滤。
+- 建议：在 repair 的 `mark_duplicate_external_close` 分支一并把 `realized_pnl`/`pnl_pct` **置 NULL**（与 1327 先例统一），或逐消费者补过滤 + 在 `daily_invariant_check` 显式豁免这三个 id。
+- 验证：改后重跑 `scripts/reconcile_extended_hours_exits.py` + `daily_invariant_check.py`，断言净额与"排除重复标记后"一致。
+
+**F2 ⚠️ 退出频率放大 5 倍，防重只在测试里验证过**
+- 事实：exit 载体由 `*/5` 改为 **每分钟**（叠加每分钟快照轮询）。有 flock 防进程叠加 ✅、`_already_executed(symbol, today)` 读审计防重 ✅。
+- 未验证：**真实窗内相邻分钟是否可能重复下单**（我只有接线级证据）。
+- 建议：首次盘前窗（北京 16:00 起）核对 `ext_exit_*` 券商订单数 = 应平仓持仓数；若出现同一 symbol 两笔，把 `_already_executed` 的 key 从 (symbol, 日) 收紧到 (symbol, 日, 决策动作) 并加券商活动单检查（`extended_hours_order_lifecycle.query_order_rows` 已有）。
+
+**F3 ⚠️ adaptive trailing 在高 MFE 段其实"不自适应"**
+- 事实：`clamp((100−60)%×MFE, 0.4%, 1.2%)` 在 **MFE ≥3% 即饱和** ⇒ MFE 3% 与 10% 共用 1.2% 回撤，对应捕获率 60% vs 88%。
+- 影响：高 MFE 端比"60% 目标捕获"更紧（更早锁），与 §22 注释里"高 MFE 按目标捕获率给空间"不完全一致。
+- 建议：确认是否为预期；若想真正按捕获率给空间，应让 `max_drawdown_pct` 随 MFE 线性放开（如 `max(1.2%, 0.4×MFE)` 不设上限），或至少在 DEB 注明"高 MFE 段为固定 1.2% 紧锁"。
+
+**F4 ℹ️ 备份默认路径会被覆盖**
+- `--backup` 默认是固定名 `ftseek_us_before_extended_hours_exit_repair.db`（本次实际运行传了带时间戳的名字 ✅）。建议把时间戳做成默认，避免第二次 `--apply` 覆盖上一份备份。
+
+**F5 ℹ️ `previous_session_volume` 每次全文件倒读**
+- 分钟级 cron × 每标的一次全量读 jsonl。当前 306 行无影响，但样本增长后是 O(文件大小)/分钟。建议只读尾部 N 行或把上一行缓存到内存/小状态文件。
+
+**F6 ℹ️ 修复后无自动断言**
+- `repair_...py` 只输出 applied 列表；§18.3 的"修复后 mismatch=0"是人工复核的。建议加 `--verify`：apply 后自动重跑 reconcile 并断言 `broker_filled_exit_orders == audit_confirmed == db_matched` 且 `mismatches == 0`。
+
+### 23.3 与我 §17 的关系（残留检查）
+
+- `EXT_EXIT_TAKE_PROFIT_ONLY` / 我的 `tp_only=False` 回滚测试**已被本批取代**（§21.3 明确移除 +0.3%/+2% 语义）⇒ 我这条回滚路径不再存在，**新的回滚见 §21.4（我未逐条验证）**。
+- **入场关闭开关未被触碰**：`.env.us` 仍为 `EXT_ENTRY_ALLOW_SIM=false`，实测入场脚本早退 ✅。
+- 我 §17 中"延长时段不做亏损止损"的语义**保留**（SL_INITIAL → hold_no_stop）✅ 用户诉求未丢。
+
+### 23.4 本次复核的边界（如实）
+
+- 逐行读过：`extended_hours_profit_exit_rules.py`(231)、`extended_hours_market_session.py`(214)、`extended_hours_exit_cron.py`(78)、`repair_extended_hours_exit_books.py`(231)、executor 的下单与库访问段、config 增段、两个 shadow 的决策接缝。
+- **未逐行核**：`extended_hours_observation_cardinality.py`(78)、`reconcile_extended_hours_exits.py`(226，仅核了过滤行)、`app/playbook/adaptive_trailing.py`(73)、`exit_engine/exit_lifecycle/dual_broker` 的 diff、`extended_hours_position_scope.py`、`handoff.md`(258)。
+- 结论强度：23.1 的"通过"项均有直接证据；23.2 的 F1–F6 为**建议**，其中 F1 我认为应立刻处理，F2 需在下一个真实延长时段观察，F3 需产品口径确认。
