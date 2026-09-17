@@ -255,7 +255,9 @@ def _reconcile_broker_entry_orders(
         #   ext_entry 单, 今天就被**静默跳过**(实测 US.NOK 因 ET 9/16 23:14 的旧测试单在 9/17 被封锁,
         #   且因每日重复回填而永久封锁 = 供给静默饿死). 修复: 只看订单自身 ET 日期是否为当日.
         #   活动单仍**无条件**计入 active_orders — 活单本来就该拦住新开仓, 与日期无关.
-        row_is_today = _order_et_date(row.get("create_time")) == today
+        # today 为空 = 调用方未要求按日过滤 (如 _execute 下单前的安全闸, 不传 state/today)
+        #   ⇒ 保持旧行为(全量处理), 否则会把当天单也误判"跨日"而跳过。
+        row_is_today = (not today) or (_order_et_date(row.get("create_time")) == today)
         attempt = None
         if row_is_today and isinstance(state, dict) and today:
             attempts = state.setdefault("attempts", {})
@@ -585,8 +587,10 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
     tctx = _open_trade_context()
     try:
         env = TrdEnv.SIMULATE
+        # 显式传当日: 下单前安全闸只对**当日**已成交无主的单做建仓回补/冲突检测,
+        #   跨日旧单不回补(entry_time 会是错的) — 与 collect() 同一口径。
         active_orders, reconcile_conflicts = _reconcile_broker_entry_orders(
-            tctx, env, acc_id, session
+            tctx, env, acc_id, session, today=_today_et()
         )
         if reconcile_conflicts:
             rec.update({

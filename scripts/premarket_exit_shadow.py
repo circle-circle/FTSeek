@@ -202,12 +202,21 @@ def collect(dry: bool) -> int:
             if action in ("lock_in", "breakeven_lock", "tighten") and in_window and not dry:
                 try:
                     import subprocess as _sp
-                    _sp.run([sys.executable, str(ROOT / "scripts" / "extended_hours_exit_executor.py"),
-                             "--symbol", symbol, "--direction", direction, "--qty", str(qty),
-                             "--price", str(last), "--session", "premarket", "--reason", action],
-                            capture_output=True, timeout=90)
-                except Exception:
-                    pass  # 执行器内部自推告警
+                    # 2026-09-17 修复(实盘发现): 原为 capture_output=True + except: pass ⇒ 子进程异常/超时
+                    #   **完全不可见** (04:10/04:20 CTNT/GIPR 平仓单在券商侧已成交, 但本地无审计行、无 DB 回写,
+                    #   根因因输出被丢弃而无法定位)。现把 rc/stdout/stderr 尾部打进日志 (cron 重定向到本 log)。
+                    _proc = _sp.run(
+                        [sys.executable, str(ROOT / "scripts" / "extended_hours_exit_executor.py"),
+                         "--symbol", symbol, "--direction", direction, "--qty", str(qty),
+                         "--price", str(last), "--session", "premarket", "--reason", action],
+                        capture_output=True, text=True, timeout=90)
+                    _tail = ((_proc.stdout or "")[-300:] + " | " + (_proc.stderr or "")[-300:]).strip()
+                    if _proc.returncode != 0:
+                        print(f"[shadow_exit] {symbol} {action} exit_executor rc={_proc.returncode} :: {_tail}")
+                    else:
+                        print(f"[shadow_exit] {symbol} {action} exit_executor ok :: {_tail[-200:]}")
+                except Exception as _exc:
+                    print(f"[shadow_exit] {symbol} {action} exit_executor 异常: {type(_exc).__name__}: {_exc}")
                 _push_lock_suggestion(symbol, direction, qty, entry, last, pnl_pct, pnl_usd, pre_vol)
         else:
             pnl_pct, pnl_usd, action = None, None, "no_data"

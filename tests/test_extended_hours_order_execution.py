@@ -307,6 +307,36 @@ def test_entry_reconciliation_active_order_still_blocks_across_dates():
     assert state["attempts"] == {}
 
 
+def test_reconciliation_without_today_keeps_legacy_full_scan(tmp_path, monkeypatch):
+    """回归 (2026-09-17 实盘 16:15 发现): `_execute` 的下单前安全闸调用对账时**不传 today/state**。
+
+    若此时仍按"日期过滤"处理, `_order_et_date(...) == None` 恒 False ⇒ **当天单也被判跨日全部跳过**
+    (当日已成交无主单的建仓回补 + 冲突检测失效, 且日志把它误报成"跨日旧单").
+    约定: today 为空 ⇒ 调用方未要求按日过滤 ⇒ 保持全量处理(旧行为).
+    """
+    db_path = tmp_path / "rec.db"
+    _create_db(db_path)
+    monkeypatch.setattr(entry_executor, "DB", db_path)
+    calls = []
+    monkeypatch.setattr(entry_executor, "_write_open_position",
+                        lambda **kw: calls.append(kw) or "EXT-test")
+
+    context = FakeTradeContext(rows=[
+        {"order_id": "8185449", "code": "US.CTNT", "order_status": "FILLED_ALL",
+         "qty": 68493, "dealt_qty": 68493, "dealt_avg_price": 0.072, "price": 0.073,
+         "remark": "ext_entry", "create_time": "2026-09-17 04:05:11"},
+    ])
+
+    active_orders, conflicts = entry_executor._reconcile_broker_entry_orders(
+        context, "SIMULATE", 19930823, "premarket",  # 不传 state/today (同 _execute 安全闸)
+    )
+
+    assert active_orders == [] and conflicts == []
+    assert len(calls) == 1                      # 仍须尝试回补建仓, 未被误判为跨日
+    assert calls[0]["symbol"] == "US.CTNT"
+    assert calls[0]["qty"] == 68493
+
+
 @pytest.fixture()
 def exit_environment(tmp_path, monkeypatch):
     db_path = tmp_path / "exit.db"
