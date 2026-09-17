@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,49 @@ from scripts.reconcile_extended_hours_exits import load_audit_records
 DEFAULT_REPORT = ROOT / "data" / "extended_hours_exit_reconciliation_latest.json"
 DEFAULT_DB = ROOT / "data" / "ftseek_us.db"
 DEFAULT_AUDIT = ROOT / "data" / "extended_hours_exit_executions.jsonl"
-DEFAULT_BACKUP = ROOT / "data" / "backups" / "ftseek_us_before_extended_hours_exit_repair.db"
+DEFAULT_RECONCILE = ROOT / "scripts" / "reconcile_extended_hours_exits.py"
+
+
+def default_backup_path(db_path=DEFAULT_DB):
+    """F4 (2026-09-18 复查): 默认备份名带时间戳 —— 固定名会被第二次 --apply 覆盖."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(db_path).parent / "backups" / f"{Path(db_path).stem}_before_repair_{stamp}.db"
+
+
+# 2) F6: 应用后自动断言不变量 (verify_invariants 为纯函数, 可测)
+def verify_invariants(summary):
+    """返回 (ok, failures). 判据取自 reconcile 的 summary (不变量: 三方一致 + 零缺陷)."""
+    summary = summary or {}
+    failures = []
+    for key in ("mismatches", "open_position_conflicts", "duplicate_close_records"):
+        got = summary.get(key)
+        if got != 0:
+            failures.append(f"{key}={got} (期望 0)")
+    broker = summary.get("broker_filled_exit_orders")
+    audit = summary.get("audit_confirmed")
+    matched = summary.get("db_matched")
+    if not (broker == audit == matched):
+        failures.append(
+            f"三方不一致: broker_filled={broker} / audit_confirmed={audit} / db_matched={matched}")
+    return (not failures), failures
+
+
+def run_verification(reconcile_script=DEFAULT_RECONCILE, output_path=None, timeout_s=300):
+    """重跑只读对账 → 读 summary → 断言. 不写库 (对账脚本本身只读)."""
+    output_path = Path(output_path or (ROOT / "data" / "extended_hours_exit_reconciliation_verify.json"))
+    completed = subprocess.run(
+        [sys.executable, str(reconcile_script), "--output", str(output_path)],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=timeout_s,
+    )
+    if completed.returncode != 0:
+        return {"ok": False, "failures": [f"reconcile rc={completed.returncode}"],
+                "stderr_tail": (completed.stderr or "")[-300:], "summary": None}
+    try:
+        summary = json.loads(output_path.read_text()).get("summary")
+    except Exception as exc:
+        return {"ok": False, "failures": [f"报告读取失败: {type(exc).__name__}"], "summary": None}
+    ok, failures = verify_invariants(summary)
+    return {"ok": ok, "failures": failures, "summary": summary, "output": str(output_path)}
 
 
 def _order_time_et(order):
@@ -232,12 +275,24 @@ def apply_repair_plan(db_path, audit_path, actions, report_generated_at, backup_
     return {"applied": applied, "audit_appended": appended, "backup": str(backup_path or "")}
 
 
+def _emit_verification(result):
+    """打印验证结论; 失败时以非零码退出 (可被 cron/CI 直接判)."""
+    print(json.dumps({"verify": result}, ensure_ascii=False, indent=2))
+    if not result.get("ok"):
+        raise SystemExit(2)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", default=str(DEFAULT_REPORT))
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--audit", default=str(DEFAULT_AUDIT))
-    parser.add_argument("--backup", default=str(DEFAULT_BACKUP))
+    parser.add_argument("--backup", default=None,
+                        help="备份路径 (默认: 带时间戳的 data/backups/<db>_before_repair_<ts>.db)")
+    parser.add_argument("--verify-output", default=None, help="验证报告输出路径")
+    parser.add_argument("--verify", action="store_true",
+                        help="应用后自动重跑只读对账并断言不变量 (mismatch/冲突/重复=0 且三方一致); "
+                             "单独使用则不写任何数据, 只做验证")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--fix-duplicate-pnl", action="store_true",
                         help="维护模式: 把已标记为重复但仍带非 NULL 盈亏的历史行置 NULL (F1 修复)")
@@ -248,13 +303,17 @@ def main():
         if not args.apply:
             print(json.dumps({"mode": "fix_duplicate_pnl", "actions": actions},
                              ensure_ascii=False, indent=2))
+            if args.verify:
+                _emit_verification(run_verification(output_path=args.verify_output))
             return
-        backup_path = _backup(args.db, args.backup)
+        backup_path = _backup(args.db, args.backup or default_backup_path(args.db))
         result = apply_repair_plan(args.db, args.audit, actions,
                                    datetime.utcnow().isoformat() + "Z", backup_path)
         result["mode"] = "fix_duplicate_pnl"
         result["backup"] = str(backup_path)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.verify:
+            _emit_verification(run_verification(output_path=args.verify_output))
         return
 
     report = json.loads(Path(args.report).read_text())
@@ -264,13 +323,17 @@ def main():
             "report": args.report,
             "actions": actions,
         }, ensure_ascii=False, indent=2))
+        if args.verify:                       # 2026-09-18 F6: 只读验证, 不写任何数据
+            _emit_verification(run_verification(output_path=args.verify_output))
         return
-    backup_path = _backup(args.db, args.backup)
+    backup_path = _backup(args.db, args.backup or default_backup_path(args.db))
     result = apply_repair_plan(
         args.db, args.audit, actions, report.get("generated_at"), backup_path
     )
     result["backup"] = str(backup_path)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.verify:
+        _emit_verification(run_verification(output_path=args.verify_output))
 
 
 if __name__ == "__main__":

@@ -94,3 +94,25 @@ def test_scan_finds_only_tagged_non_null_rows(tmp_path):
     plan = R.build_duplicate_pnl_plan(str(db))
     assert [a["trade_id"] for a in plan] == [1]
     assert plan[0]["previous_realized_pnl"] == -10.0
+
+# ── F6/F4 (2026-09-18) ──────────────────────────────────────────────
+def test_verify_invariants_pure_function():
+    good = {"mismatches": 0, "open_position_conflicts": 0, "duplicate_close_records": 0,
+            "broker_filled_exit_orders": 6, "audit_confirmed": 6, "db_matched": 6}
+    assert R.verify_invariants(good) == (True, [])
+    assert R.verify_invariants(None)[0] is False                      # 空报告 → 失败
+    bad = dict(good, mismatches=2)
+    ok, fails = R.verify_invariants(bad)
+    assert ok is False and any("mismatches=2" in f for f in fails)
+    ok3, fails3 = R.verify_invariants(dict(good, broker_filled_exit_orders=7))
+    assert ok3 is False and any("三方不一致" in f for f in fails3)
+    ok4, fails4 = R.verify_invariants(dict(good, duplicate_close_records=1))
+    assert ok4 is False and any("duplicate_close_records=1" in f for f in fails4)
+
+
+def test_default_backup_path_is_timestamped():
+    import re
+    p1 = R.default_backup_path("/tmp/x/ftseek_us.db")
+    assert re.match(r"^ftseek_us_before_repair_\d{8}_\d{6}\.db$", p1.name), p1.name
+    assert p1.parent.name == "backups"
+    assert p1.name != "ftseek_us_before_extended_hours_exit_repair.db"   # 不再是固定名

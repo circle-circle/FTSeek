@@ -966,3 +966,26 @@ drawdown_pct = clamp((100 - target_capture_pct) × MFE / 100,
 **回滚**：数据 → 停服务后用上述 backup 恢复 `data/ftseek_us.db`；代码 → `git revert` 本节脚本改动（重置后会重新出现 3 行幻影，属预期）。
 
 **F2–F6 状态**：本次仅处理 F1（用户指定）。F2（频率 5x / 防重需真实窗验证）、F3（adaptive trailing 高 MFE 饱和）、F4（备份默认名）、F5（全文件倒读）、F6（修复后无自动断言）**仍待处理**，其中 F6 与本节的维护模式天然互补（建议下一步给 repair 加 `--verify`）。
+
+### 23.6 F6 + F4 已修（2026-09-18，用户令「需要」）
+
+**F6 修复后自动断言** —— `scripts/repair_extended_hours_exit_books.py` 新增 `--verify`：
+- `verify_invariants(summary)`（纯函数，可测）：判据 = `mismatches` / `open_position_conflicts` / `duplicate_close_records` **皆为 0** 且
+  `broker_filled_exit_orders == audit_confirmed == db_matched`；任一不满足即列出失败项。
+- `run_verification()`：重跑**只读**对账（`reconcile_extended_hours_exits.py --output <verify 报告>`）→ 读 summary → 断言。
+- 用法：① 与 `--apply` 连用（应用后自动断言，失败以**退出码 2** 结束，可直接被 cron/CI 判）；② **单独用** = 不写任何数据，只验证当前账本。
+- 只读性：对账脚本本身只读；验证报告落 `data/extended_hours_exit_reconciliation_verify.json`，不覆盖对账主报告。
+
+**F4 默认备份名带时间戳** —— `--backup` 默认由固定名改为 `data/backups/<db>_before_repair_<YYYYmmdd_HHMMSS>.db`（`default_backup_path()`），
+避免第二次 `--apply` 覆盖上一份备份；`--fix-duplicate-pnl` 与常规修复路径共用。
+
+**实弹验证**
+| 项 | 结果 |
+|---|---|
+| `--verify`（只读，单独使用） | `ok: true`；summary = broker_filled **6** / audit_confirmed **6** / db_matched **6** / mismatches **0** / conflicts **0** / duplicate **0**；退出码 **0** ✅ |
+| 修复计划 | 当前对账报告已是修复后状态 ⇒ `actions: []`（无待修项，符合预期）✅ |
+| 测试 | `tests/test_ext_duplicate_pnl_null.py` 增至 **5 项**（新增：不变量纯函数含 3 种失败形态、时间戳默认名正则），与其原 repair 测试合计 7 项全绿 ✅ |
+
+**回滚**：代码 `git revert`；数据不受影响（`--verify` 不写库；`--apply` 路径均有时间戳备份）。
+
+**F2/F3/F5 仍未处理**：F2（退出频率 5x，需真实延长时段观察）、F3（adaptive trailing 高 MFE 饱和，需口径确认）、F5（`previous_session_volume` 全文件倒读，性能）。
