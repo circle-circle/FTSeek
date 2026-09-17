@@ -94,6 +94,28 @@ def build_repair_plan(report):
     return actions
 
 
+def build_duplicate_pnl_plan(db_path):
+    """维护模式: 找出 data_quality 命中中性前缀但 realized_pnl/pnl_pct 仍非 NULL 的历史行.
+
+    起因 (2026-09-18 复查 F1): 本脚本首版只打标记、未置 NULL ⇒ 3 行幻影盈亏 -258.52
+    被不做过滤的净额消费方计入。对账报告已是修复后状态 (重复候选 0), 故需独立扫描自愈。
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT id, symbol, realized_pnl, pnl_pct FROM trade_records "
+            "WHERE LOWER(COALESCE(data_quality,'')) LIKE 'duplicate%' "
+            "AND (realized_pnl IS NOT NULL OR pnl_pct IS NOT NULL) ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"action": "mark_duplicate_external_close", "order_id": "", "symbol": r[1],
+         "trade_id": int(r[0]), "previous_realized_pnl": r[2], "previous_pnl_pct": r[3]}
+        for r in rows
+    ]
+
+
 def _merge_metadata(raw, value):
     try:
         metadata = json.loads(raw) if raw else {}
@@ -153,9 +175,17 @@ def apply_repair_plan(db_path, audit_path, actions, report_generated_at, backup_
                 )
                 applied.append(action)
             elif name == "mark_duplicate_external_close":
+                # 2026-09-18 第三方复查 F1: 按 daily_invariant_check 的既定约定
+                #   (data_quality 命中 duplicate/outlier/invalid/void/excluded 前缀者
+                #    "故意留 NULL 使净额求和自动排除"), 标记重复时必须**同时置 NULL** realized_pnl/pnl_pct;
+                #   否则任何不过滤标记的净额消费方会把幻影盈亏算进去 (实测 3 行 = -258.52)。
+                #   原值不丢: 写方已把 pnl/pnl_pct 存在 metadata_json.attribution 内 (已核)。
+                #   守卫放宽为"未标记 或 仍带非 NULL 盈亏" ⇒ 对历史漏改行可自愈且可重复执行。
                 updated = conn.execute(
-                    "UPDATE trade_records SET data_quality='duplicate_external_close' "
-                    "WHERE id=? AND data_quality IS NOT 'duplicate_external_close'",
+                    "UPDATE trade_records SET data_quality='duplicate_external_close', "
+                    "realized_pnl=NULL, pnl_pct=NULL "
+                    "WHERE id=? AND (COALESCE(data_quality,'') <> 'duplicate_external_close' "
+                    "OR realized_pnl IS NOT NULL OR pnl_pct IS NOT NULL)",
                     (action["trade_id"],),
                 ).rowcount
                 if updated:
@@ -209,7 +239,23 @@ def main():
     parser.add_argument("--audit", default=str(DEFAULT_AUDIT))
     parser.add_argument("--backup", default=str(DEFAULT_BACKUP))
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--fix-duplicate-pnl", action="store_true",
+                        help="维护模式: 把已标记为重复但仍带非 NULL 盈亏的历史行置 NULL (F1 修复)")
     args = parser.parse_args()
+
+    if args.fix_duplicate_pnl:
+        actions = build_duplicate_pnl_plan(args.db)
+        if not args.apply:
+            print(json.dumps({"mode": "fix_duplicate_pnl", "actions": actions},
+                             ensure_ascii=False, indent=2))
+            return
+        backup_path = _backup(args.db, args.backup)
+        result = apply_repair_plan(args.db, args.audit, actions,
+                                   datetime.utcnow().isoformat() + "Z", backup_path)
+        result["mode"] = "fix_duplicate_pnl"
+        result["backup"] = str(backup_path)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
 
     report = json.loads(Path(args.report).read_text())
     actions = build_repair_plan(report)

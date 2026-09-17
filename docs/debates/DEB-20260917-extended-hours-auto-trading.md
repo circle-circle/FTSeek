@@ -943,3 +943,26 @@ drawdown_pct = clamp((100 - target_capture_pct) × MFE / 100,
 - 逐行读过：`extended_hours_profit_exit_rules.py`(231)、`extended_hours_market_session.py`(214)、`extended_hours_exit_cron.py`(78)、`repair_extended_hours_exit_books.py`(231)、executor 的下单与库访问段、config 增段、两个 shadow 的决策接缝。
 - **未逐行核**：`extended_hours_observation_cardinality.py`(78)、`reconcile_extended_hours_exits.py`(226，仅核了过滤行)、`app/playbook/adaptive_trailing.py`(73)、`exit_engine/exit_lifecycle/dual_broker` 的 diff、`extended_hours_position_scope.py`、`handoff.md`(258)。
 - 结论强度：23.1 的"通过"项均有直接证据；23.2 的 F1–F6 为**建议**，其中 F1 我认为应立刻处理，F2 需在下一个真实延长时段观察，F3 需产品口径确认。
+
+### 23.5 F1 已修（2026-09-18，用户令「需要」）—— 幻影盈亏归零，且做了根因级修复
+
+**代码修复（根因，非一次性数据订正）**：`scripts/repair_extended_hours_exit_books.py`
+1. `mark_duplicate_external_close` 分支：打标记的同时**置 NULL `realized_pnl` / `pnl_pct`** —— 对齐 `daily_invariant_check.py` 的既定约定
+   （"data_quality 命中 duplicate/outlier/invalid/void/excluded 前缀者 = 写方声明非真实了结, 故意留 NULL 使**净额求和在 SQL 层自动排除**"）。
+   守卫放宽为"未标记 **或** 仍带非 NULL 盈亏" ⇒ 对历史漏改行**可自愈且可重复执行**（首版只打标记不置 NULL，是本次幻影的根因）。
+2. 新增维护模式 `--fix-duplicate-pnl`（默认 dry-run；`--apply` 先做**带时间戳**的 SQLite 在线备份再写）。
+3. **数据不丢**：这 3 行的原始 pnl/pnl_pct 本就写在 `metadata_json.attribution` 内（已核），置 NULL 只是让 SQL 聚合自动排除。
+
+**执行与复核（实弹）**
+| 项 | 结果 |
+|---|---|
+| 备份 | `data/backups/ftseek_us_before_dup_pnl_null_20260918_063857.db`（24.3MB）✅ |
+| 1523/1525/1527 | `realized_pnl` / `pnl_pct` → **NULL**，`data_quality='duplicate_external_close'` 保留 ✅ |
+| 净额口径 | 修前：全表 21,407.30 / 排除标记 21,665.82（差 **−258.52**）；修后：全表 **21,665.82** = 排除标记后 21,665.82，**差 0.0** ✅ |
+| 残留 | `data_quality LIKE 'duplicate%' AND realized_pnl IS NOT NULL` 的行数 = **0** ✅ |
+| 日不变量自检 | 跑通；`settled_exempt_marked = 3`（计数不入告警，符合约定）；53 处违反**全部为既有基线**（W7×29 / I13×8 / I4×4 / I1×2 / I12×2 / W6×3 / I3,I6×1 / W1×3），**与本次改动无关** ✅ |
+| 测试 | 新增 `tests/test_ext_duplicate_pnl_null.py` 3 项（置 NULL / 幂等+自愈 / 只选"已标记且非 NULL"），与其原有 repair 测试合计 **5 passed** ✅ |
+
+**回滚**：数据 → 停服务后用上述 backup 恢复 `data/ftseek_us.db`；代码 → `git revert` 本节脚本改动（重置后会重新出现 3 行幻影，属预期）。
+
+**F2–F6 状态**：本次仅处理 F1（用户指定）。F2（频率 5x / 防重需真实窗验证）、F3（adaptive trailing 高 MFE 饱和）、F4（备份默认名）、F5（全文件倒读）、F6（修复后无自动断言）**仍待处理**，其中 F6 与本节的维护模式天然互补（建议下一步给 repair 加 `--verify`）。
