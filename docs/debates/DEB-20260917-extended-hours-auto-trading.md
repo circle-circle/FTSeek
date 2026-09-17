@@ -1013,3 +1013,30 @@ drawdown_pct = clamp((100 - target_capture_pct) × MFE / 100,
 ⇒ 延长时段**限价单在薄量下不成交 1/7 ≈ 14%**，与 DEB §15 记录的"盘前薄量滑点/不成交未知"一致 —— 这是切实盘前必须补的成本/滑点模型输入（P0-7），不是去重缺陷。
 
 **F2 判定：通过**（载体 175/175 零失败、无重复成交、账本一致）；剩余 F3（adaptive trailing 高 MFE 饱和，待口径确认）、F5（全文件倒读，性能）未处理。
+
+### 23.8 F3 + F5 已落地（2026-09-18，用户令「需要」）
+
+**F5 `previous_session_volume` 全文件倒读 → 只读尾部**
+- 新增 `_tail_lines(path, max_bytes=65536)`：`seek(END)` 后回退读 64KB，并丢弃可能被字节窗口截断的首行。
+- 依据：同一 session 的"上一行"必然在文件末尾附近（按时间追加）；分钟级 cron × 每标的的全量 `read_text()` 会随样本线性放大 I/O。
+- 行为不变（找不到返回 `None`，`session_volume_delta` 语义不变）。
+
+**F3 adaptive trailing 上限放开 —— 做成 env，**不动冻结窗 config**
+- 问题：`clamp((100−target)/100×MFE, min, max)` 的 `max` 在 **MFE ≥ min/max 比例处即饱和** ⇒ MFE 3% 与 16% 共用 1.2% 回撤（捕获率 60% vs 88%），与 §22"高 MFE 按 target_capture 给空间"的注释**方向相反**。
+- 实现：`app/playbook/adaptive_trailing.py` 支持 `EXT_ADAPTIVE_TRAILING_MAX_DD`（未设 = 沿用 config `1.2`，**行为零变化**）：
+  - `=2.5` ⇒ MFE ≤6.25% 走 40% 捕获公式，之上以 **2.5% 绝对上限**封顶（MFE 10% → 捕获 75%；MFE 16% → 84%）：**给空间但有界**，不无限让出浮盈（对齐用户"保持净盈利"口径）。
+  - 设极大值（如 `99`）= 纯 40% 捕获（无上限）。
+- **为何不直接改 config**：`config/unified_config.yaml` 的 exit 参数在 **KR2 冻结窗（2026-09-03→09-30）** 内，按既定协议"冻结期换版须先 DEB 落档 + 用户裁，再登记 `config_freeze_baseline.json`"；直接改会再造一次 `exit_version_drift`。
+  ⚠️ 顺带提醒：日不变量自检当前已报 **`exit-34c7153088a1` 未在豁免清单**（本批 §20–§22 引入的新退出参数哈希）——**该豁免登记尚未做**，属既有待办（非本次改动引入）。
+- 激活：`EXT_ADAPTIVE_TRAILING_MAX_DD=2.5`（无需重启，env 在每次调用读取）→ **未激活前不改变任何现役行为**。
+
+**验证**
+| 项 | 结果 |
+|---|---|
+| 测试 | 新增 `tests/test_ext_trailing_and_tail.py` 5 项：默认 cap 不变(0.4/1.2/1.2/非SIM=None)、env 放开(0.4/1.2/2.5/2.5)、非法 env 回落 config、尾部读不全量+首行截断丢弃、`previous_session_volume`/`delta` 走尾部且缺失返回 None ✅ |
+| 相关文件合计 | 含 Codex 的 `test_extended_hours_market_session.py`、`playbook/test_adaptive_trailing.py` 与我的 3 个测试文件 → **38 passed** ✅ |
+| 实弹 | 盘后影子 `--dry` 在真实盘后窗跑通（当前无持仓 → 落 0 行，无异常）✅ |
+
+**回滚**：F5 = `git revert`；F3 = 删除/清空 `EXT_ADAPTIVE_TRAILING_MAX_DD`（立即回到 1.2 行为，代码保留）。
+
+**复查收口总表（§23 全节）**：F1 ✅ 已修（根因+数据）｜F2 ✅ 实盘核对通过｜F3 ✅ 已落地待激活（env）｜F4 ✅ 时间戳备份｜F5 ✅ 已修｜F6 ✅ `--verify` 自证。

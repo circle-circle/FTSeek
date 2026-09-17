@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ET-calendar session gate and observation metrics for extended-hours exits."""
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -177,14 +178,29 @@ def net_executable_pnl_pct(entry_price, exit_price, direction, fee_pct):
     return round(gross - float(fee_pct), 4)
 
 
+def _tail_lines(path, max_bytes=65536):
+    """只读文件尾部 (2026-09-18 复查 F5: 原实现每次全量 read_text + 倒读 ⇒ 分钟级 cron × 每标的
+    会随样本量线性放大 I/O)。同 session 的"上一行"必然在文件末尾附近 (按时间追加), 故尾部足够。"""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - max_bytes)
+            handle.seek(start)
+            data = handle.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", errors="ignore").splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]          # 丢掉可能被字节窗口截断的首行
+    return lines
+
+
 def previous_session_volume(output_path, symbol, trade_date, session):
     path = Path(output_path)
     if not path.exists():
         return None
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return None
+    lines = _tail_lines(path)
     for line in reversed(lines):
         try:
             row = json.loads(line)
