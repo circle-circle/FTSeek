@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """盘前/盘后事件驱动开仓安全入口 (2026-09-17, SIM fail-closed).
 
-信号三层过滤 (宁缺毋滥, 用户原话"确定性因素第一时间执行"):
+信号四层过滤 (宁缺毋滥, 用户原话"确定性因素第一时间执行"):
   1. 事件: Finnhub company_earnings 最近财报超预期 (surprisePercent>0) — "确定性"
   2. 价格: pre/after_price 相对昨收涨 ≥ +2% — 市场认可事件
   3. 量:   pre/after_volume ≥ 200,000 股 — 非薄量假动作
+  4. 价格下限: ≥ MIN_PRICE ($5, 2026-09-17 用户裁方案A) — 挡仙股/妖股
+     (实证: CTNT $0.073 +75.06% / GIPR $0.435 +19.75% 曾透过前 3 层; 仙股的"超预期>0"是季末噪声,
+      而涨幅/量闸对妖股天然放行 ⇒ 日配额被噪声票用尽, 当晚真催化票开不出来)
 当前 Futu SIM 不支持 STOP/STOP_LIMIT。没有券商侧止损时本脚本拒绝真实开仓；
 dry 模式仅输出候选，不写 state、不下单。
 
@@ -46,6 +49,11 @@ POSITION_USD = 5000        # 单笔仓位
 MAX_PER_DAY = 2            # 盘前+盘后合计每日新仓上限
 ENTRY_CHANGE_PCT = 2.0     # 盘前涨幅门槛
 MIN_VOLUME = 200000        # 盘前量门槛
+MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
+# ↑ 价格下限闸 (2026-09-17 用户裁方案A): 挡 $5 以下仙股/妖股.
+#   实证: CTNT $0.073(+75.06%, 量2217万, Finnhub超预期+105%) 与 GIPR $0.435(+19.75%)
+#   曾透过"事件+涨幅+量"三闸 —— 仙股的第1闸(超预期>0)是季末噪声, 第2/3闸对妖股天然放行。
+#   事故代价: 日配额 2 笔被噪声票用尽, 当晚真催化票开不出来。回滚=env EXT_ENTRY_MIN_PRICE=0。
 STOP_PCT = -5.0            # 止损距离 (%) — 开盘写入 initial_sl, 由规则引擎盘中兜底
 SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: 官方榜 top50, 旧为15只活跃股)
 # 2026-09-17 用户裁方案1: SIM 无券商STOP → 接受规则引擎兜底, 开关恢复下单.
@@ -148,6 +156,16 @@ def _audit(rec):
     rec["ts"] = datetime.utcnow().isoformat() + "Z"
     with AUDIT.open("a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _price_in_range(price):
+    """价格闸 (2026-09-17 用户裁方案A 加下限).
+
+    下限 MIN_PRICE: 挡 $5 以下仙股/妖股 (实证 CTNT $0.073 / GIPR $0.435 曾透过前三闸)。
+    上限 POSITION_USD: 单笔仓位 $5000, 超过则连 1 股都买不起。
+    `price > 0` 在 MIN_PRICE 被 env 调成 0 时仍是必要的兜底。
+    """
+    return price > 0 and MIN_PRICE <= price <= POSITION_USD
 
 
 def _scan_movers(session, qctx):
@@ -379,7 +397,7 @@ def collect(session, dry=False):
             movers = _scan_movers(session, qctx)
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
-                if symbol in held or price <= 0 or price > POSITION_USD:
+                if symbol in held or not _price_in_range(price):
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     continue
@@ -460,7 +478,7 @@ def collect(session, dry=False):
                     continue
                 if symbol in held:
                     continue
-                if price <= 0 or price > POSITION_USD:
+                if not _price_in_range(price):
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     continue

@@ -337,6 +337,45 @@ def test_reconciliation_without_today_keeps_legacy_full_scan(tmp_path, monkeypat
     assert calls[0]["qty"] == 68493
 
 
+def test_price_gate_blocks_penny_stocks_and_over_budget():
+    """2026-09-17 用户裁方案A: 价格下限闸 $5 (挡仙股) + 上限 = 单笔仓位 $5000。"""
+    assert entry_executor._price_in_range(0.073) is False   # US.CTNT 实盘样例
+    assert entry_executor._price_in_range(0.435) is False   # US.GIPR 实盘样例
+    assert entry_executor._price_in_range(4.99) is False
+    assert entry_executor._price_in_range(5.0) is True      # 边界含等号
+    assert entry_executor._price_in_range(42.0) is True
+    assert entry_executor._price_in_range(5000.0) is True
+    assert entry_executor._price_in_range(0) is False       # 无效价
+    assert entry_executor._price_in_range(-1.0) is False
+    assert entry_executor._price_in_range(5000.01) is False  # 超过单笔仓位, 连 1 股都买不起
+
+
+def test_collect_dry_drops_penny_candidate_before_signal(monkeypatch):
+    """方案A 端到端: 扫描出的仙股必须被价格闸挡掉, 不得进入候选 (实盘 CTNT/GIPR 教训)。"""
+
+    class _FakeQuote:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(entry_executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(entry_executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(entry_executor, "_held_symbols", lambda: [])
+    monkeypatch.setattr(entry_executor, "_scan_movers", lambda session, qctx: [
+        {"symbol": "US.CTNT", "px": 0.073, "chg": 75.06, "vol": 22167799.0},
+        {"symbol": "US.GIPR", "px": 0.435, "chg": 19.75, "vol": 318404.0},
+        {"symbol": "US.BIGCO", "px": 42.0, "chg": 6.10, "vol": 900000.0},
+    ])
+    monkeypatch.setattr(entry_executor, "_earnings_surprise",
+                        lambda symbol: {"surprise_pct": 10.0, "period": "2026-06-30"})
+    import futu
+    monkeypatch.setattr(futu, "OpenQuoteContext", lambda **kw: _FakeQuote())
+
+    results = entry_executor.collect("premarket", dry=True)
+
+    assert [r["symbol"] for r in results] == ["US.BIGCO"]
+    assert results[0]["qty"] == int(entry_executor.POSITION_USD / 42.0)
+
+
 @pytest.fixture()
 def exit_environment(tmp_path, monkeypatch):
     db_path = tmp_path / "exit.db"
