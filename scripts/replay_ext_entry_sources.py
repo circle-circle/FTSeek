@@ -40,7 +40,11 @@ KLINE_MIN_INTERVAL = 0.5
 ENTRY_HHMM = 405         # 入场时点 04:05 ET (与 cron 盘前首跑一致)
 PREMARKET_END = 925      # 盘前收口 09:25 ET
 _last_call = [0.0]
-CHUNK_DAYS = 9            # 单次请求跨度 (9 日 × ~91 根5m ≈ 820 根 < max_count 1000)
+CHUNK_DAYS = 6            # 单次请求跨度 (日历日)
+# 2026-09-17 实测修正: 开 extended_time 后每个交易日约 **192** 根 5m (04:00-20:00),
+# 而 max_count=1000 ⇒ 单次只能覆盖约 **5.2 个交易日**。原设 9(*2=18 日历日≈12 交易日)
+# 会**静默截断**(只回该块最早的 1000 根, 后半段与边界日丢失) — 实测 04-20→04-28 只回到 04-27 07:20。
+# 现取 6 日历日(≈4 交易日 ≈ 770 根) 留安全余量。
 
 
 CACHE_DIR = ROOT / "data" / "replay_cache"
@@ -277,6 +281,7 @@ def main():
     ap.add_argument("--min-chg", type=float, default=None, help="覆盖涨幅门槛(默认用现役 2.0)")
     ap.add_argument("--min-vol", type=float, default=None, help="覆盖量门槛(默认用现役 200000)")
     ap.add_argument("--session", default="premarket", choices=["premarket", "afterhours"])
+    ap.add_argument("--end", default=None, help="窗口结束日 YYYY-MM-DD (默认今天) —— 用于换一段窗口做样本外")
     args = ap.parse_args()
 
     import scripts.extended_hours_entry_executor as E
@@ -298,8 +303,8 @@ def main():
             watch = E._watchlist_symbols(ctx)
 
         # 交易日序列: 以宽基 SPY 的日线为准 (最近 N+1 个交易日)
-        end = datetime.now().strftime("%Y-%m-%d")
-        start = (datetime.now() - timedelta(days=args.days * 2 + 15)).strftime("%Y-%m-%d")
+        end = args.end or datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=args.days * 2 + 15)).strftime("%Y-%m-%d")
         days_bars = _kline(ctx, "US.SPY", start, end, KLType.K_DAY)
         days = [b["t"][:10] for b in days_bars][-(args.days + 1):]
         print(f"[replay] 交易日窗口: {days[0]} → {days[-1]} ({len(days)} 日); 源={args.source} "
@@ -383,7 +388,7 @@ def main():
             k = r["source"].split(":")[0]
             src_dist[k] = src_dist.get(k, 0) + 1
         summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "days": len(days) - 1,
-                   "source": args.source, "session": args.session, "min_chg": args.min_chg, "min_vol": args.min_vol,
+                   "source": args.source, "session": args.session, "end": end, "min_chg": args.min_chg, "min_vol": args.min_vol,
                    "candidates_evaluated": len(rows), "passed_by_source": src_dist,
                    "gates_passed": len(passed)}
         if passed:
