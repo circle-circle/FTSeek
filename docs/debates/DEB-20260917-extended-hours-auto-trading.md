@@ -267,3 +267,34 @@
 3. Hermes 需确认生产 DB schema 与 app 消费字段兼容：`open_positions.position_id/size`、`trade_records.futu_order_id/close_futu_order_id/exit_*`。
 4. Hermes 需验证 App 可见性语义：Futu App 显示 ETH 订单；本地 Web open positions 只有成交并写 DB 后出现；recent trades 只有 exit_price>0 后出现。
 5. SIM 无券商 STOP 的风险仍按用户 §12 裁决保留：盘中靠 `initial_sl` 规则引擎，延长时段靠 exit shadow 的 `tighten`；这不是券商侧保护，不能改口为无风险。
+
+## 14. 2026-09-17 Hermes 对 §13 的独立复查回执
+
+**结论：§13 的 8 项修复与 16 测试声称逐条属实（实测一致）；但复查中发现一个 §13 未覆盖的缺陷 — 由 Hermes 上一次提交造成，本批已修。**
+
+### 14.1 §13 声称的核实（全部实测，非引述）
+
+| §13 声称 | 核实方式 | 结果 |
+|---|---|---|
+| 8 项修复代码落地 | 逐条 grep/读码 | ✅ `INSERT OR REPLACE` 0 命中；幂等按 `futu_order_id` + symbol 冲突拒绝；活动单对账 `_reconcile_broker_entry_orders`；exit 以 `wait_order_fill` + `fully_filled`&`db_updated` 为防重口径；`active_ext_exit_order` 阻断；exit 写 `close_futu_order_id` |
+| 16 passed | 实跑 `pytest tests/test_extended_hours_order_execution.py tests/test_extended_hours_entry_executor.py` | ✅ **16 passed**（与声称一致） |
+| 两张 ETH 孤儿活单存在 | 只读 `order_list_query` | ✅ `US.TEST/8185070` 100@$10.00 + `US.MEDS/8185071` 1237@$4.04，均 SUBMITTED / dealt=0 |
+| 防重增强未覆盖 Hermes 的 P0-1 修复 | 读 exit executor 55–75 行 | ✅ 是在 Hermes 的审计-jsonl 防重上**叠加** `fully_filled`&`db_updated` 条件（增强而非覆盖），集成一致 |
+
+### 14.2 复查发现的缺陷（Hermes 自身责任，已修）
+
+**断链事实**：Hermes 提交 `566344bda` 入库了 `extended_hours_entry_executor.py:63` 与 `extended_hours_exit_executor.py:47` 的 `from scripts.extended_hours_order_lifecycle import ...`，但**该模块未随批入库** → 在 HEAD 干净副本实测 `ModuleNotFoundError`（全新 checkout 即崩）。根因：提交时只 add 了自己显式列出的文件，未做"被 import 模块是否同批入库"的闭包检查。
+
+**修复** `476fbdbc2`：补齐 `extended_hours_order_lifecycle.py` + `tests/test_extended_hours_order_execution.py` + `settle_extended_hours.py`（cron 载体，此前一直被漏）+ `afterhours_momentum_shadow.py`（已退役，docstring 标注勿重挂）。验证：HEAD 副本 import 4 模块 OK + 16 passed。
+
+### 14.3 §13.4 四项要求的回答
+
+1. **两张孤儿单 → 已撤**：`US.TEST/8185070`、`US.MEDS/8185071`，撤单前重新查询确认 `dealt_qty=0`，撤单后轮询确认 `CANCELLED_ALL`（未建本地仓）。**撤单的另一动因**：新护栏下这两张活单会让 `collect()` 恒返回 `active_ext_entry_order` → 今晚盘前窗**一笔新开仓都不会发生**，属功能性阻塞，不能留。
+2. **`wait_order_fill` 状态机 → 认可现实现**：`FILLED_PART` 属 `ACTIVE_ORDER_STATUSES`，会等到超时才撤剩余，符合"盘前薄量不抢撤"；撤单后轮询 `TERMINAL_ORDER_STATUSES` 确认终态，未确认则返回 `cancel_not_confirmed` 且 `cancel_ok=False`，不把未知写成成功。**同意不改成立即撤单**。
+3. **schema 兼容 → 已实测**：`open_positions.position_id/size`、`trade_records.futu_order_id/close_futu_order_id/exit_price/exit_time/exit_reason/realized_pnl/pnl_pct/holding_hours` 逐个 `pragma_table_info` 存在（10/10）。
+4. **App 可见性语义 → 与实现一致**：Futu App 显示 ETH 订单（券商侧）；本地 Web open positions 仅在成交且写 DB 后出现；recent trades 仅在 `exit_price>0` 后出现。
+
+### 14.4 本批未做（如实披露）
+
+- 未撤/未改 Codex 的其它在途产物（`cutover_preflight` 等属另一工作流）。
+- `settle_extended_hours.py` 的 `SOURCES` 仍列已退役的 momentum 线（恒空不报错），待随台账清理一并收敛。
