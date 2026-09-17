@@ -601,3 +601,19 @@ def test_exit_blocks_when_broker_exit_order_is_active(
 
     assert result["skip"] == "active_ext_exit_order"
     assert context.placed == []
+
+
+def test_entry_change_pct_env_override(monkeypatch):
+    """涨幅闸门可用 env 覆写, 默认 2.0 不变 (2026-09-17 回放: <3% 边际跳空档是唯一负档).
+
+    证据: 现役口径 n=46 → <3% 档 -0.65%/WR42.9%; ≥3% 档 +1.41%。
+    放宽口径 n=161 → <3% 档 -0.33%/WR39.4%; ≥3% 档 +1.32%。
+    """
+    import importlib
+    assert entry_executor.ENTRY_CHANGE_PCT == 2.0          # 默认不变
+    monkeypatch.setenv("EXT_ENTRY_CHANGE_PCT", "3.0")
+    m = importlib.reload(entry_executor)
+    assert m.ENTRY_CHANGE_PCT == 3.0                       # env 可覆写
+    monkeypatch.delenv("EXT_ENTRY_CHANGE_PCT")
+    m = importlib.reload(entry_executor)
+    assert m.ENTRY_CHANGE_PCT == 2.0

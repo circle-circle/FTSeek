@@ -180,6 +180,20 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
             break
     if e4 is None:
         e4 = e3
+    # F) 灾难止损臂 (2026-09-17 用户「需要」): 只在 pnl ≤ -K% 时提前平, 其余仍持到 09:25 收口。
+    #   动机: AEHL 实弹反例 (盘前 +126% 跳空票, 单笔 -12%) 说明"无止损"臂的样本尾部 (-6.86%) 不够,
+    #   需要一个硬底; 同时保留"去掉 -1.5% 噪声止损"的收益。
+    for _k in (4.0, 6.0, 8.0):
+        _cp = None
+        for b in bars_day:
+            if b["t"] <= bars_day[entry_bar_i]["t"]:
+                continue
+            if _hhmm(b["t"]) > PREMARKET_END:
+                break
+            if (b["c"] / entry - 1) * 100 <= -_k:
+                _cp = b["c"]
+                break
+        res[f"cat_{int(_k)}pct_px"] = _cp if _cp else e2
     # E) 收口分流: 强平 pnl < K 的仓, 只让 ≥K 的强票进盘中 (用户 9/17「要」)
     for _k in (1.0, 2.0):
         _lp = pre[-1] if pre else None
@@ -193,7 +207,10 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
                     ("sl_only", res.get("sl_only_px") or e2),
                     ("sl_only_rth", res.get("sl_only_rth_px") or e3),
                     ("keep_1pct", res.get("keep_1pct_px") or e2),
-                    ("keep_2pct", res.get("keep_2pct_px") or e2)):
+                    ("keep_2pct", res.get("keep_2pct_px") or e2),
+                    ("cat_4pct", res.get("cat_4pct_px") or e2),
+                    ("cat_6pct", res.get("cat_6pct_px") or e2),
+                    ("cat_8pct", res.get("cat_8pct_px") or e2)):
         if px:
             g = (px / entry - 1) * 100
             res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
@@ -375,7 +392,8 @@ def main():
             arms = {}
             for r in passed:
                 for tag in ("rule", "pre_close", "rth_close", "intraday_sl", "sl_only",
-                            "sl_only_rth", "keep_1pct", "keep_2pct", "session_close",
+                            "sl_only_rth", "keep_1pct", "keep_2pct",
+                            "cat_4pct", "cat_6pct", "cat_8pct", "session_close",
                             "next_open", "next_rth_close"):
                     if tag in r:
                         arms.setdefault(tag, []).append(r[tag]["net_pct"])
