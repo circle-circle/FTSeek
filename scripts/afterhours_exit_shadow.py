@@ -62,6 +62,16 @@ TIGHTEN_AT_PCT = -1.5      # 相对入场价 ≤-1.5% → 建议收紧
 # 2026-09-17 用户令「不强止损，直接持有到次日开盘」: 当日在盘后进的仓**停用**上述三信号,
 # 改持到次日开盘兑现 (DEB §16.6: 现役盘后规则净 -0.64%, 持到次日开盘 +3.47%)。
 # 回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+# ─ 延长时段"只做止盈, 不做止损" (2026-09-17 用户令: 「只做止盈，不做止损(止损放在盘中)」) ──
+#   依据 = 我们自建的盘前影子台账 (20 个**真实盘中持仓**的盘前路径):
+#     现役组合(回本锁+0.3%/止盈+2% + 盘前止损-1.5%)  均值 -0.11%
+#     去掉盘前止损 (回本锁+0.3%, 无盘前止损)          均值 -0.07%
+#     只止盈 +1.5% / +2.0% / +3.0%                   +0.42% / +0.39% / +0.38%
+#     什么都不做(持到盘前收口)                        +0.21%
+#     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
+#       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
+#   回滚: EXT_EXIT_TAKE_PROFIT_ONLY=false
+TAKE_PROFIT_ONLY = os.getenv("EXT_EXIT_TAKE_PROFIT_ONLY", "true").lower() == "true"
 HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
 
 
@@ -175,6 +185,8 @@ def collect(dry: bool) -> int:
             action = decide(pnl_pct, sess_vol)
             if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et):
                 action = "hold_to_next_open"
+            if TAKE_PROFIT_ONLY and action == "tighten":
+                action = "hold_no_stop"      # 延长时段不做止损 (止损只在盘中)
             # 2026-09-17 用户裁方案1: lock_in锁盈 + tighten止损 调 exit executor 真平仓 (EXT仓盘后止损兜底).
             if action in ("lock_in", "breakeven_lock", "tighten") and in_window and not dry:
                 try:

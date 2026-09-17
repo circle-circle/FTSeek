@@ -95,6 +95,16 @@ FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:2
 #   尾部如实: 该臂最差 -19.39% (25 笔中 6 笔亏) —— 真隔夜跳空风险, 非无风险套利。
 #   范围: 仅"entry ET 时间在盘后窗 (16:00-20:00) 且 ET 日期 != 今日"的 carry 仓; 其余仓走原规则。
 #   回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+# ─ 延长时段"只做止盈, 不做止损" (2026-09-17 用户令: 「只做止盈，不做止损(止损放在盘中)」) ──
+#   依据 = 我们自建的盘前影子台账 (20 个**真实盘中持仓**的盘前路径):
+#     现役组合(回本锁+0.3%/止盈+2% + 盘前止损-1.5%)  均值 -0.11%
+#     去掉盘前止损 (回本锁+0.3%, 无盘前止损)          均值 -0.07%
+#     只止盈 +1.5% / +2.0% / +3.0%                   +0.42% / +0.39% / +0.38%
+#     什么都不做(持到盘前收口)                        +0.21%
+#     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
+#       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
+#   回滚: EXT_EXIT_TAKE_PROFIT_ONLY=false
+TAKE_PROFIT_ONLY = os.getenv("EXT_EXIT_TAKE_PROFIT_ONLY", "true").lower() == "true"
 AFTERHOURS_HOLD_TO_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
 NEXT_OPEN_EXIT_FROM = int(os.getenv("EXT_NEXT_OPEN_EXIT_FROM", "930"))
 NEXT_OPEN_EXIT_TO = int(os.getenv("EXT_NEXT_OPEN_EXIT_TO", "945"))
@@ -290,6 +300,8 @@ def collect(dry: bool) -> int:
             if _flat:
                 # 收口强平**覆盖**原规则信号 (回放: 强平 >> 现役规则 >> 止损)
                 action = "pre_close_flatten"
+            if TAKE_PROFIT_ONLY and action == "tighten":
+                action = "hold_no_stop"      # 延长时段不做止损 (止损只在盘中)
             _ah_carry = is_afterhours_carry(entry_time, today_et)
             if _ah_carry:
                 # 盘后进场仓: 开盘前**一律不动作** (不强止损) → 09:30-09:45 开盘兑现

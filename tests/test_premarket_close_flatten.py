@@ -139,4 +139,5 @@ def test_collect_does_not_flatten_before_0920(monkeypatch, tmp_path):
                         or types.SimpleNamespace(returncode=0, stdout="", stderr=""))
     M.collect(dry=False)
     row = _json.loads((tmp_path / "out.jsonl").read_text().strip())
-    assert row["action"] == "tighten"                    # 未被强平覆盖
+    # 09:19 未被强平覆盖; 且 2026-09-17 起延长时段"只做止盈不做止损" ⇒ tighten 被改成 hold_no_stop
+    assert row["action"] == "hold_no_stop"
