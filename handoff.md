@@ -1,5 +1,45 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-17 增量②：关闭盘中再入场生成器 (intraday_reentry) —— 用户裁「按建议执行」
+
+> **一句话**：reentry 毛边际≈0 过不了费用线，供给 0.7笔/天且与 DA 活跃度负相关，DA/UE 供给远超执行能力 → 关闭其**入场**（退出跟踪/隔夜轨不受影响）。
+
+**① 数据依据（全期 `trade_records`，`pnl_net` 净口径）**：reentry 26 笔净 **-$349.7**；剔 9/9 SNDK 隔夜缺口（-$251.8, `OVERNIGHT_GAP_STOP`）后 24 笔 -$136.0 = **-$5.67/笔 = -10.3bps**，而平均费用 **7.7bps**（$4.27/笔，均名义 $5,516）→ **毛边际≈-2.6bps**，即"选股不是错，是过不了费用线"（8/22 结论：edge 必须 > 费用线）。对照：DA 345 笔 **-$0.03/笔**（打平）、UE 79 笔 -$2.98/笔。漏斗：**1714 拒绝 vs 14 武装**（0.8% 武装率）→ 近半月成交仅 10 笔。
+
+**② 用户前提核验（成立）**：DA/UE 每日生成 **71-80 条**指令 vs 实际执行 **4-13 笔** → 供给远超执行能力；瓶颈在**资金帽**（8/24 实锤：DA 晨间批吃 $73,862 / 帽 $78,300 → 再入场被单日 notional 流水帽拦是设计行为），**不在标的数**。盘前/盘后事件通道已补新供给。
+
+**③ 变更（L4 配置）**：`config/unified_config.yaml` → `playbook.intraday_reentry.enabled: true → false`（含日期+依据+回滚注释）。**关键**：`_cfg()` 走 `get_config().get_dotted()` = ConfigContainer **启动快照**，HotReloader 刷不到 → **必须 `systemctl restart ftseek-us`**。
+
+**④ 验证（Gate 5/6）**：进程启动 14:17:14 > 文件修改 14:16:22 ✅；`_cfg()['enabled']=False` ✅；`run_scan()=0` ✅；启动日志 0 error ✅。影响面实测：无未平仓 reentry 仓（0）、无待触发指令（不留孤儿武装）、退出跟踪不受影响（`monitor_playbook_sim_exits` 按 `source_type` 不按来源）、隔夜轨（③首夜豁免/②W_WEEK 按 `decision_id` 判定）仅作用于已存在仓。
+
+**⑤ 回滚**：`enabled: true` + `systemctl restart ftseek-us`。
+
+**⑥ 未提交 git（风险声明）**：仓库存在他 agent 大量 WIP（4000+ 行，0 staged），未提交以免主题纠缠 → **Live-but-Uncommitted Config Drift**（磁盘已生效/git 无记录，服务器重建会静默回退），需后续按闭包补提交。
+
+---
+
+## 2026-09-17 增量：盘前/盘后全自动交易体系上线（SIM 攒样）—— 锁盈+事件驱动开仓，全自动+飞书推结果
+
+> **一句话**：盘前/盘后从"影子攒样"升级为"全自动执行"——持仓回本即自动锁盈卖出，财报超预期异动即自动买入并挂止损，成交结果推飞书，不等人工确认。全程 SIM，盘中逻辑不动（对照组）。
+
+**① 战略背景（角色反转厘清的用户底牌）**：①纪律—能净回本最好，回不来认亏，盘前卖出是"比开盘高的价就卖"非扛单；②盘前要**事件确定性**（财报超预期）非价格动量；③要**盈亏比**非胜率。据此砍掉盘后 momentum 价格异动影子线（方向错）。
+
+**② 落地四件套**：
+- **卖出**：`premarket_exit_shadow.py`/`afterhours_exit_shadow.py` 加 `breakeven_lock` 信号（回本+0.3%有量）→ 接 `extended_hours_exit_executor.py` 自动卖出（`session=ETH` 限价单，SIM 硬门，每日每标的1次，成败都推飞书）。
+- **买入**：`extended_hours_entry_executor.py`（新建）三层过滤 → 自动买入 + 挂 -5% 盘前止损限价单。**$5000/笔、日≤2笔**（用户拍板）。
+- **配置**：trail_lock `profit_override_threshold 1.5→0.8` + `drawdown 0.5→1.0`（**用户选 2 全局生效**，盘中+盘前一致；根因：114笔 MFE均值2.02%实收1.14%回吐0.88%）。
+- **覆盖面**：扫描源从"近5日活跃股15只"→ 富途官方榜 `get_us_pre_market_rank`/`get_us_after_hours_rank` top50。
+
+**③ 实测钉死的技术事实（勿推翻）**：延长时段须 `Session.ETH`+限价单；模拟账户 19930823 下单需 `filter_trdmarket=TrdMarket.US`+`security_firm=SecurityFirm.NONE`（否则 `Nonexisting acc_id`）；盘后榜全是小盘妖股（DCX+176%），被财报新鲜度门全拦截；行情采集盘前用 `pre_price` 盘后用 `after_price`（`last_price` 延长时段滞后）。
+
+**④ 开仓三层过滤**：官方榜 top50 → 涨幅≥2%+量≥20万 → 财报超预期且 period 在近 `EARNINGS_FRESH_DAYS=2` 天内 → 买入+挂止损。**修两 bug**：财报时效性（旧财报误触发）+ dry 污染每日配额（dry 不读写 state）。
+
+**⑤ 验证**：盘前卖/买下单通路实测成立（order 8184646/8184864 均撤单复原，NOK 575股未动）；dry 抓 AAOI（财报超预期+292%）三层全过；盘后妖股全被财报门挡；四脚本语法过；主服务重启 active。**cron 5 行**（盘前 exit/entry `*/5 16-21 * * 1-5`，盘后 exit/entry `*/5 4-7 * * 2-6`，结算 `30 6 * * 2-6`，均北京时；11月冬令时右移1h）。
+
+**⑥ 转正门槛**：≥30笔开仓样本 + 台账净值显著为正 + trail_lock 捕获率从 -16.6% 转正。观察点：若财报门太严致零成交，放宽 `EARNINGS_FRESH_DAYS` 至 3-5 天（台账裁决）。落档 `docs/debates/DEB-20260917-extended-hours-auto-trading.md`。回滚：删 4 个新脚本调用 + 5 cron 行 + config 两键改回 1.5/0.5。
+
+---
+
 ## 2026-09-16 增量：两条用户裁落地 —— ①报价新鲜度门「三处补口」执行完毕 ②`da_glm_shadow` 终态 **SUPERSEDED（不转正/归档）**；**零生产路径改动、零行为变更、未重启**
 
 > **一句话**：用户裁「1. 报价新鲜度门补充的三处请执行 2. 停止 da_glm_shadow 不转正」。**裁决②** 把 9/15 20:50 那条"待裁"收口为终态：注册表 `da_glm_shadow` → **`SUPERSEDED`**（方案 B 归档生效、方案 C 未采纳、A 不转正；**归档留痕非删证** —— 脚本与 116 行 jsonl 原样保留），DEB §六 勾选项/README 状态列/判据字典 B3/注册表钉子四处同步。**裁决①** 把新鲜度影子的"尺子"补成**闭环**（此前挂环只是"有采集、无裁决"的一半）。

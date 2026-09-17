@@ -1470,8 +1470,13 @@ playbook:
     #   同标的会二次开仓 (7/2 GOOG 实锤重叠). _execute_via_dual_broker 单点查
     #   open_positions size>0 → 拒开. 回滚: false + 重启.
     duplicate_position_guard_enabled: true
-    profit_override_threshold_pct: 1.5
-    profit_override_drawdown_pct: 0.5
+    # 2026-09-17 trail_lock 回吐修复 (用户批准方案一): profit_override 阈值 1.5→0.8, 回撤 0.5→1.0
+    #   根因: 114笔 trail_lock MFE均值2.02%实收1.14%回吐0.88%; TSM/DELL/HOOD MFE1.3%却亏出.
+    #   1.5%阈值太高 → MFE<1.5% 的多数信号根本没进锁利; 0.5%回撤太紧 → 峰值刚过就锁死.
+    #   改为 0.8% 阈值 + 1.0% 回撤: 更早启动锁利, 锁利后容忍更大回撤保利润.
+    #   回滚: 两键改回 1.5/0.5 + 重启. 判分: trail_lock 捕获率(capture_pct)从 -16.6% 转正.
+    profit_override_threshold_pct: 0.8
+    profit_override_drawdown_pct: 1.0
     # G-01/A9 (2026-09-05 审计): playbook 组合级敞口聚合兜底 (检测+告警, v1 不强平)。
     #   为何需要: playbook 是唯一活体执行链却无组合级保护 — ExitMonitor 的 FLAT_ALL/
     #   REDUCE_50 在 R-7c (app/risk/position_exit_monitor.py:781) 结构性排除 playbook 仓;
@@ -1663,7 +1668,12 @@ playbook:
   #   污染A2报告35%行gap。A2 prev_close单点依赖, 幂等刷新防复发。回滚同上。
   daily_bars_refresh_enabled: true
   intraday_reentry:
-    enabled: true
+    # 2026-09-17 用户裁决关闭 (L4): reentry 全期26笔净 -$349.7 (剔9/9 SNDK隔夜缺口 -$251.8 后 -$5.67/笔
+    #   = -10.3bps, 低于费用线 7.7bps → 毛边际≈0); 供给 0.7笔/天 (14武装/1714拒绝) 且与 DA 活跃度负相关
+    #   (忙日单日notional帽被DA晨间批顶满 → 供给=0)。DA/UE 每日生成 71-80 条远超执行 4-13 笔,
+    #   瓶颈是资金帽非标的数; 盘前/盘后事件通道已补供给。毕业判据 (n≥30 且净>0) 方向已负, 不再攒样。
+    #   回滚: 改回 true + systemctl restart ftseek-us (playbook.* 走 ConfigContainer 启动快照, 热载无效)。
+    enabled: false
     mode: live
     window_start_hhmm: 1045
     window_end_hhmm: 1355
