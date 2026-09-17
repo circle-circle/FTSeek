@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """延长时段统一结算器 (2026-09-17, record-only, 用户批准).
 
-结算对象: 三条延长时段影子线的决策点 jsonl
+结算对象: 两条在役延长时段影子线的决策点 jsonl
   - premarket_exit_shadow.jsonl      (盘前 exit: lock_in/tighten)
   - afterhours_exit_shadow.jsonl     (盘后 exit: lock_in/tighten)
-  - afterhours_momentum_shadow.jsonl (盘后 entry: long/short_candidate)
+(2026-09-17 清理: 原第三源 afterhours_momentum_shadow.jsonl 已移除 — 该线同日被用户裁停(方向错:
+ 价格动量≠事件确定性), 且从未产出过任何行(data/ 下无该文件), 属死源. 脚本本体保留归档,
+ 见 scripts/afterhours_momentum_shadow.py 头部停用说明; 历史结算产物零该源行, 清理无数据损失.)
 
 设计要点 (用户 9/17 明确):
   1. 多时点结算 — 不只看次日, 对每个决策点记录一串观测点的价格路径:
@@ -27,6 +29,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -47,7 +50,6 @@ REPORT = ROOT / "data" / "extended_hours_settle_latest.json"
 SOURCES = [
     ("premarket_exit", ROOT / "data" / "premarket_exit_shadow.jsonl"),
     ("afterhours_exit", ROOT / "data" / "afterhours_exit_shadow.jsonl"),
-    ("afterhours_momentum", ROOT / "data" / "afterhours_momentum_shadow.jsonl"),
 ]
 
 # 观测点: 决策后第 N 个交易日 (0=当日)
@@ -98,36 +100,86 @@ def _already_settled():
     return s
 
 
+class _KlineUnavailable(Exception):
+    """历史K线接口不可用(限频/连接). 该行保持未结算, 下次重跑补 — 绝不静默当"无数据"."""
+
+
+_KLINE_MIN_INTERVAL = float(os.getenv("SETTLE_KLINE_MIN_INTERVAL", "0.6"))
+_KLINE_RETRIES = int(os.getenv("SETTLE_KLINE_RETRIES", "3"))
+_last_kline_ts = [0.0]
+_day_bars_cache = {}
+_intraday_cache = {}
+
+
+def _kline_call(ctx, code, ktype, start, end, max_count):
+    """限频 + 重试的历史K线请求. 返回 kl (DataFrame, 可为空表).
+
+    2026-09-17 实测根因: 富途 OpenD 历史K线有请求预算(约 60 次/30 秒), 超限后**整体拒绝**
+    且错误文本为 None. 原实现 `ret, kl, _ = ...; if ret != RET_OK: return []` 把"拒绝"当成
+    "无数据" ⇒ 结算循环跑到约第 30 行(≈60 次调用)后, **后续行全部静默返回 None 永不结算**。
+    实测证据: 颠倒 SOURCES 顺序后变成"盘后 30 行 OK、其后 119 盘后 + 138 盘前全 None"
+    ⇒ 故障随累计调用数走、与数据源无关。故: 调用间隔 ≥ _KLINE_MIN_INTERVAL, 失败按 3/6/9s
+    退避重试, 仍失败则抛 _KlineUnavailable (由 main 计为 api_unavailable, 下轮重跑补)。
+    """
+    from futu import RET_OK
+    for attempt in range(_KLINE_RETRIES):
+        wait = _KLINE_MIN_INTERVAL - (time.time() - _last_kline_ts[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_kline_ts[0] = time.time()
+        try:
+            ret, kl, _msg = ctx.request_history_kline(
+                code, ktype=ktype, start=start, end=end, max_count=max_count)
+        except Exception:
+            ret, kl = -1, None
+        if ret == RET_OK and kl is not None:
+            return kl
+        time.sleep(3 * (attempt + 1))
+    raise _KlineUnavailable(f"{code} {start}")
+
+
 def _day_bars(ctx, symbol, start, days):
-    """拉 symbol 从 start 起 days 个日K. 返回 list of (date, open,high,low,close)."""
-    from futu import KLType, RET_OK
+    """拉 symbol 从 start 起 days 个日K. 记忆化: 同(标的,起始,长度)只请求一次.
+
+    376 行影子数据只对应 15 个唯一 (symbol, trade_date) 对 ⇒ 记忆化把 ~752 次 K线调用
+    降到 ~30 次, 这本身就落在限频预算内。
+    """
+    key = (symbol, start, days)
+    if key in _day_bars_cache:
+        return _day_bars_cache[key]
+    from futu import KLType
     end = (datetime.strptime(start, "%Y-%m-%d") + timedelta(days=days + 10)).strftime("%Y-%m-%d")
-    ret, kl, _ = ctx.request_history_kline(symbol, ktype=KLType.K_DAY, start=start, end=end, max_count=days + 10)
-    if ret != RET_OK or kl is None or len(kl) == 0:
-        return []
+    kl = _kline_call(ctx, symbol, KLType.K_DAY, start, end, days + 10)
     bars = []
-    for _, r in kl.iterrows():
-        bars.append({
-            "date": str(r["time_key"])[:10],
-            "open": float(r["open"]), "high": float(r["high"]),
-            "low": float(r["low"]), "close": float(r["close"]),
-        })
+    if len(kl) > 0:
+        for _, r in kl.iterrows():
+            bars.append({
+                "date": str(r["time_key"])[:10],
+                "open": float(r["open"]), "high": float(r["high"]),
+                "low": float(r["low"]), "close": float(r["close"]),
+            })
+    _day_bars_cache[key] = bars
     return bars
 
 
 def _intraday_path(ctx, symbol, date_str):
-    """当日 5m K 线, 用于 MFE/MAE 路径还原. 返回 (highs, lows, closes) 或 None."""
-    from futu import KLType, RET_OK
-    try:
-        ret, kl, _ = ctx.request_history_kline(symbol, ktype=KLType.K_5M, start=date_str, end=date_str, max_count=200)
-        if ret != RET_OK or kl is None or len(kl) == 0:
-            return None
-        highs = [float(r["high"]) for _, r in kl.iterrows()]
-        lows = [float(r["low"]) for _, r in kl.iterrows()]
-        closes = [float(r["close"]) for _, r in kl.iterrows()]
-        return highs, lows, closes
-    except Exception:
+    """当日 5m K 线, 用于 MFE/MAE 路径还原. 返回 (highs, lows, closes) 或 None(确实无数据).
+
+    记忆化同 (标的,日期). 接口不可用会抛 _KlineUnavailable (区别于"确实没有5m数据")。
+    """
+    key = (symbol, date_str)
+    if key in _intraday_cache:
+        return _intraday_cache[key]
+    from futu import KLType
+    kl = _kline_call(ctx, symbol, KLType.K_5M, date_str, date_str, 200)
+    if len(kl) == 0:
+        _intraday_cache[key] = None
         return None
+    highs = [float(r["high"]) for _, r in kl.iterrows()]
+    lows = [float(r["low"]) for _, r in kl.iterrows()]
+    closes = [float(r["close"]) for _, r in kl.iterrows()]
+    _intraday_cache[key] = (highs, lows, closes)
+    return highs, lows, closes
 
 
 def settle_row(r, ctx):
@@ -269,6 +321,7 @@ def main():
                            port=int(os.getenv("FUTU_OPD_PORT", "11111")))
     settled_rows = []
     n_new = 0
+    n_api_unavailable = 0
     try:
         for r in rows:
             if r.get("trade_date", "") < cutoff:
@@ -277,7 +330,12 @@ def main():
             if key in done:
                 # 已结算: 从 settle jsonl 读回 (用于台账聚合)
                 continue
-            s = settle_row(r, ctx)
+            try:
+                s = settle_row(r, ctx)
+            except _KlineUnavailable:
+                # K线接口不可用: 该行保持未结算 ⇒ 下轮重跑自动补. 计数进报告, 不静默.
+                n_api_unavailable += 1
+                continue
             if s:
                 r["settle"] = s
                 settled_rows.append(r)
@@ -310,13 +368,16 @@ def main():
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "newly_settled": n_new,
         "total_settled": len(all_settled),
+        # 接口不可用而未结算的行数 (>0 说明台账本轮有缺口, 下轮重跑自动补)
+        "api_unavailable": n_api_unavailable,
         "ledger": ledger,
     }
     if args.dry:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2))
-        print(f"[settle] 新结算 {n_new} 行, 累计 {len(all_settled)}, 台账 → {REPORT}")
+        print(f"[settle] 新结算 {n_new} 行, API不可用跳过 {n_api_unavailable} 行(下轮重跑补), "
+              f"累计 {len(all_settled)}, 台账 → {REPORT}")
 
 
 if __name__ == "__main__":
