@@ -59,6 +59,11 @@ MIN_SESSION_VOL = 50000    # 盘后量 ≥5万股 (盘后更薄, 阈值同盘前
 BREAKEVEN_LOCK_PCT = 0.3   # 回本线锁盈 (2026-09-17 用户批准, 与盘前对称): 盘后市价>成本+0.3% 且有量
 TIGHTEN_AT_PCT = -1.5      # 相对入场价 ≤-1.5% → 建议收紧
 
+# 2026-09-17 用户令「不强止损，直接持有到次日开盘」: 当日在盘后进的仓**停用**上述三信号,
+# 改持到次日开盘兑现 (DEB §16.6: 现役盘后规则净 -0.64%, 持到次日开盘 +3.47%)。
+# 回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
+
 
 def _now_et():
     try:
@@ -112,6 +117,19 @@ def _load_open_positions():
         conn.close()
 
 
+def _is_afterhours_entry_today(entry_time, today_et: str) -> bool:
+    """当日在盘后窗内进的仓 (纯函数). entry_time 是 CST → 转 ET 后判窗与日期."""
+    try:
+        from scripts.premarket_exit_shadow import _entry_et_dt
+    except Exception:                                   # 回退: 只比日期前缀 (不会误伤当日仓)
+        return str(entry_time)[:10] == today_et
+    et = _entry_et_dt(entry_time)
+    if et is None:
+        return False
+    hhmm_et = et.hour * 100 + et.minute
+    return et.strftime("%Y-%m-%d") == today_et and 1600 <= hhmm_et <= 2000
+
+
 def collect(dry: bool) -> int:
     today_et = _today_et()
     n_et = _now_et()
@@ -155,6 +173,8 @@ def collect(dry: bool) -> int:
             pnl_pct = round((last - entry) / entry * 100 * sign, 3)
             pnl_usd = round((last - entry) * qty * sign, 2)
             action = decide(pnl_pct, sess_vol)
+            if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et):
+                action = "hold_to_next_open"
             # 2026-09-17 用户裁方案1: lock_in锁盈 + tighten止损 调 exit executor 真平仓 (EXT仓盘后止损兜底).
             if action in ("lock_in", "breakeven_lock", "tighten") and in_window and not dry:
                 try:

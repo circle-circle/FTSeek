@@ -42,7 +42,8 @@ except Exception:
 MIN_VOLUME = 50000  # 与影子线一致
 _AUDIT_LOG = ROOT / "data" / "extended_hours_exit_executions.jsonl"
 DB = ROOT / "data" / "ftseek_us.db"
-SESSION_WINDOWS = {"premarket": (400, 929), "afterhours": (1600, 1959)}
+SESSION_WINDOWS = {"premarket": (400, 929), "afterhours": (1600, 1959),
+                   "next_open": (930, 945)}   # 2026-09-17 用户裁: 盘后仓持到次日开盘兑现 (RTH 已开盘)
 
 from scripts.extended_hours_order_lifecycle import (
     ACTIVE_ORDER_STATUSES,
@@ -358,7 +359,9 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
             order_type=OrderType.NORMAL,
             trd_env=env,
             acc_id=acc_id,
-            time_in_force=TimeInForce.DAY, session=Session.ETH,
+            time_in_force=TimeInForce.DAY,
+            # next_open = 次日开盘 (RTH 已开盘) ⇒ 用常规 session; 其余延长时段用 ETH
+            session=(Session.RTH if session == "next_open" else Session.ETH),
             remark=f"ext_exit_{reason}",
         )
         if ret != RET_OK:
@@ -435,7 +438,7 @@ def main():
     ap.add_argument("--direction", required=True)
     ap.add_argument("--qty", type=float, required=True)
     ap.add_argument("--price", type=float, required=True)
-    ap.add_argument("--session", default="premarket", choices=["premarket", "afterhours"])
+    ap.add_argument("--session", default="premarket", choices=["premarket", "afterhours", "next_open"])
     ap.add_argument("--reason", default="breakeven_lock")
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()

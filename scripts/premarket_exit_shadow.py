@@ -27,6 +27,10 @@
   因为回放里"什么都不做等到收口"净 +0.78%/+0.26%, 而现役规则 -0.06%/-0.19%、-1.5%止损最差。
   回滚: EXT_PREMARKET_FLATTEN=false
 
+盘后进场仓 (2026-09-17 用户令「不强止损，直接持有到次日开盘」):
+  盘后窗内进的仓在**开盘前一律不动作** (既不锁盈也不止损), 09:30-09:45 ET 开盘兑现
+  (调 exit executor --session next_open = RTH 单)。回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+
 执行 (2026-09-17 用户裁「方案1」, 详见 DEB-20260917 §12):
   lock_in / breakeven_lock(回本+0.3%有量) / tighten 三信号且窗内 → 调
   extended_hours_exit_executor.py SIM 真平仓 (session=ETH 限价单) + 飞书推结果.
@@ -84,6 +88,18 @@ BREAKEVEN_LOCK_PCT = 0.3  # 回本线锁盈 (方案二, 9/17 用户批准): 盘�
 FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "true").lower() == "true"
 FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:20 ET 起每次轮询都强平
 
+# ─ 盘后进场仓: 不强止损, 持有到次日开盘兑现 (2026-09-17 用户令「不强止损，直接持有到次日开盘」) ──
+#   依据 (DEB §16.6 盘后回放 60 交易日): 现役盘后规则净 -0.64%(负); 盘后收口平 +0.94%;
+#   **持有到次日开盘 +3.47%/中位+4.84%/WR 76%/合计+86.7%** = 最强臂; 持有到次日收盘 -1.14%。
+#   盘后入场多为信息驱动跳空 (MFE 3.85-6.36%) ⇒ 止损/锁小利是在砍趋势, 与盘前噪声型 spike 相反。
+#   尾部如实: 该臂最差 -19.39% (25 笔中 6 笔亏) —— 真隔夜跳空风险, 非无风险套利。
+#   范围: 仅"entry ET 时间在盘后窗 (16:00-20:00) 且 ET 日期 != 今日"的 carry 仓; 其余仓走原规则。
+#   回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+AFTERHOURS_HOLD_TO_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
+NEXT_OPEN_EXIT_FROM = int(os.getenv("EXT_NEXT_OPEN_EXIT_FROM", "930"))
+NEXT_OPEN_EXIT_TO = int(os.getenv("EXT_NEXT_OPEN_EXIT_TO", "945"))
+AFTERHOURS_WINDOW_FROM, AFTERHOURS_WINDOW_TO = 1600, 2000
+
 
 def _today_et() -> str:
     try:
@@ -133,6 +149,32 @@ def decide(pnl_pct: float, pre_volume: float) -> str:
     if pnl_pct <= TIGHTEN_AT_PCT:
         return "tighten"
     return "hold"
+
+
+def _entry_et_dt(entry_time):
+    """entry_time (open_positions, **CST**) → ET datetime; 失败回 None."""
+    try:
+        from app.utils.timezone import to_et
+        dt = entry_time if isinstance(entry_time, datetime) else datetime.fromisoformat(str(entry_time))
+        return to_et(dt)
+    except Exception:
+        return None
+
+
+def is_afterhours_carry(entry_time, today_et: str, enabled: bool = None) -> bool:
+    """该仓是否属"盘后进场 → 次日开盘兑现" cohort (纯函数, 可测).
+
+    判据: entry 的 ET 时间落在盘后窗 (16:00-20:00) 且 ET 日期 != 今日
+    (今日的盘后仓归盘后影子管, 不归盘前影子)。
+    """
+    if not (AFTERHOURS_HOLD_TO_OPEN if enabled is None else enabled):
+        return False
+    et = _entry_et_dt(entry_time)
+    if et is None:
+        return False
+    hhmm_et = et.hour * 100 + et.minute
+    return (et.strftime("%Y-%m-%d") != today_et
+            and AFTERHOURS_WINDOW_FROM <= hhmm_et <= AFTERHOURS_WINDOW_TO)
 
 
 def _entry_et_date(entry_time) -> str:
@@ -248,9 +290,20 @@ def collect(dry: bool) -> int:
             if _flat:
                 # 收口强平**覆盖**原规则信号 (回放: 强平 >> 现役规则 >> 止损)
                 action = "pre_close_flatten"
+            _ah_carry = is_afterhours_carry(entry_time, today_et)
+            if _ah_carry:
+                # 盘后进场仓: 开盘前**一律不动作** (不强止损) → 09:30-09:45 开盘兑现
+                if hhmm < NEXT_OPEN_EXIT_FROM:
+                    action = "hold_to_next_open"
+                elif hhmm <= NEXT_OPEN_EXIT_TO:
+                    action = "next_open_exit"
+                else:
+                    action = "hold_intraday_takeover"   # 错过窗口 → 盘中引擎接管(不补单)
             # 2026-09-17 用户裁方案1 (SIM真下单+规则引擎兜底): lock_in锁盈 + tighten止损 都调 exit executor 真平仓.
             #   tighten 是 EXT 仓盘前止损的唯一兜底 (盘中 monitor 只管 TRADING 时段).
-            if action in ("lock_in", "breakeven_lock", "tighten", "pre_close_flatten") and in_window and not dry:
+            _exec_ok = in_window or action == "next_open_exit"   # 开盘兑现发生在盘前窗之外
+            if action in ("lock_in", "breakeven_lock", "tighten", "pre_close_flatten",
+                          "next_open_exit") and _exec_ok and not dry:
                 try:
                     import subprocess as _sp
                     # 2026-09-17 修复(实盘发现): 原为 capture_output=True + except: pass ⇒ 子进程异常/超时
@@ -259,7 +312,8 @@ def collect(dry: bool) -> int:
                     _proc = _sp.run(
                         [sys.executable, str(ROOT / "scripts" / "extended_hours_exit_executor.py"),
                          "--symbol", symbol, "--direction", direction, "--qty", str(qty),
-                         "--price", str(last), "--session", "premarket", "--reason", action],
+                         "--price", str(last), "--reason", action,
+                         "--session", ("next_open" if action == "next_open_exit" else "premarket")],
                         capture_output=True, text=True, timeout=90)
                     _tail = ((_proc.stdout or "")[-300:] + " | " + (_proc.stderr or "")[-300:]).strip()
                     if _proc.returncode != 0:
@@ -268,7 +322,7 @@ def collect(dry: bool) -> int:
                         print(f"[shadow_exit] {symbol} {action} exit_executor ok :: {_tail[-200:]}")
                 except Exception as _exc:
                     print(f"[shadow_exit] {symbol} {action} exit_executor 异常: {type(_exc).__name__}: {_exc}")
-                if action != "pre_close_flatten":
+                if action not in ("pre_close_flatten", "next_open_exit"):
                     _push_lock_suggestion(symbol, direction, qty, entry, last, pnl_pct, pnl_usd, pre_vol)
         else:
             pnl_pct, pnl_usd, action = None, None, "no_data"
@@ -295,6 +349,7 @@ def collect(dry: bool) -> int:
             "pullback_from_pre_high_pct": pullback,
             "action": action,
             "is_today_entry": _entry_et_date(entry_time) == today_et,
+            "is_afterhours_carry": _ah_carry,
             "flatten_enabled": FLATTEN_ENABLED,
             "settled": False,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
