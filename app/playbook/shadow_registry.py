@@ -175,7 +175,7 @@ REGISTRY: list[ShadowItem] = [
                     "(Cremers-Weinbaum 知情资金先进期权假说)。8/12 已上线, 8/29 补登记。"
                     "8/24 初评: 超额均收益 -0.006%, 超额胜率 47.5% — 暂无领先证据。",
         data_path="data/futu_deriv_unusual.jsonl",
-        config_key="futu_channels.deriv_collect_enabled",
+        config_key=None,
         min_n=3000,
         current_n=4634,
         graduation_criteria="DEB-20260812 §五预注册: 事件后窗口收益 > 同票无事件基线 (配对) "
@@ -192,7 +192,8 @@ REGISTRY: list[ShadowItem] = [
             {"date": "2026-08-29", "verdict": "KILLED",
              "evidence": "用户裁'3批': 预注册判据不达且两连否 → 停采 (deriv_collect_enabled=false), "
                          "历史数据 4634 事件保留备查, 通道B/C/D 不受影响"}],
-        notes="8/29 用户裁决 KILLED, 停采生效; 回滚: deriv_collect_enabled 置 true",
+        notes="8/29 用户裁决 KILLED, 停采生效; 2026-09-16 删除采集实现与开关, "
+              "历史 data/futu_deriv_unusual.jsonl 保留",
     ),
     ShadowItem(
         id="futu_channel_ofi_baseline",
@@ -492,18 +493,9 @@ REGISTRY: list[ShadowItem] = [
                          "→ 裁排除 loser_overnight_enabled。跟踪: overnight_arm_report "
                          "预注册判据段 (当前 n=4, 修复率75%, 净PnL -$207, 攒样中)"}],
         notes="毕业后生产表现由 RFC-067 台账 + overnight_arm_report 预注册判据跟踪。"
-              " [2026-09-10 DEB-20260910 §2 挂载面补登记] 本项有**两个**挂载面, 此前只登记了写入方: "
-              "①写入方 app/playbook/overnight_hold_shadow.py ← config_key "
-              "playbook.overnight_hold_shadow_enabled (2026-08-28 置 false, 已停); "
-              "②结算器 scripts/settle_overnight_shadow.py ← 新键 "
-              "playbook.overnight_hold_settler_enabled (2026-09-10 置 false, 减法三步第②步配置停; "
-              "第③步代码退役待观察一周)。结算器挂载点 = scheduler_core.py AFTER_HOURS 段 "
-              "_load_script_module(\"settle_overnight_shadow\") —— **进程内 importlib 按文件路径加载, "
-              "无 import 语句**, 故 crontab/Hermes/`rg import` 三面全查不到 (8/28 注释因此误判"
-              "「无排班」而实际一晚跑 32 轮)。零引用核对必须含此第六面。"
-              " 结算器产出零 live 消费方: cf_fullday_from_exit_pnl/fullday_from_exit 只有 "
-              "tests/test_overnight_shadow.py 读; overnight_hold_shadow_latest.json 消费方 0; "
-              "eval_script overnight_arm_report.py 读 DB metadata_json.overnight_arm, 不读该 jsonl。",
+              " [2026-09-16 代码退役] 写入方自 2026-08-28 置 false 停采；结算器自 "
+              "2026-09-10 配置停并观察一周后，已于 2026-09-16 删除调度挂载、脚本与死开关。"
+              "历史 jsonl 保留；live 判罪线继续由 overnight_arm_report 读取 DB metadata。",
     ),
     ShadowItem(
         id="overnight_kill_criterion",

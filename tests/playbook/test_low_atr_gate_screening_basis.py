@@ -45,6 +45,9 @@ _SRC = (Path(__file__).resolve().parents[2] / "app" / "playbook" / "pipeline.py"
 # 只把低ATR门打开 (本文件测的就是它)。
 CFG = {
     "entry_time_cutoff_enabled": False,
+    # 2026-09-14: 同 test_playbook_pipeline.py 一并补密封 — 开盘禁触窗是 wall-clock 门
+    #   (yaml true/0935), 不密封则本文件在 ET 00:00-09:35 随挂钟漂移。
+    "entry_open_blackout_enabled": False,
     "earnings_blackout_gate_enabled": False,
     "low_atr_gate_enabled": True,
     "low_atr_gate_min_atr_pct": 0.03,       # 比例口径: 3%

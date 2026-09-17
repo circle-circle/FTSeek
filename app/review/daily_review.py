@@ -895,15 +895,13 @@ class DailyReviewGenerator:
                 }
             return base
         
-        total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in closed_trades)
-        winning = [t for t in closed_trades if (t.get('realized_pnl', 0) or 0) > 0]
-
         # 净口径 (2026-08-01, DEB-20260730 D1: pnl_net 为唯一对外口径)
         # 旧行无 pnl_net → 回退 realized_pnl (与 exit_scorecard 同 COALESCE 语义)
         net_pnls = [(t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0))
                     for t in closed_trades]
+        total_pnl = sum(net_pnls)
+        winning = [pnl for pnl in net_pnls if pnl > 0]
         fees_total = sum(t.get('fees_est', 0) or 0 for t in closed_trades)
-        winning_net = [p for p in net_pnls if p > 0]
         fake_wins = sum(1 for t, p in zip(closed_trades, net_pnls)
                         if (t.get('realized_pnl', 0) or 0) > 0 >= p)
 
@@ -928,9 +926,9 @@ class DailyReviewGenerator:
             'avg_pnl': round(total_pnl / len(closed_trades), 2),
             'pnl_basis': 'net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)',
             'fees_total': round(fees_total, 2),
-            'total_pnl_net': round(sum(net_pnls), 2),
-            'winning_trades_net': len(winning_net),
-            'win_rate_net': round(len(winning_net) / len(closed_trades), 4),
+            'total_pnl_net': round(total_pnl, 2),
+            'winning_trades_net': len(winning),
+            'win_rate_net': round(len(winning) / len(closed_trades), 4),
             'fake_wins': fake_wins,
             'avg_holding_period': round(sum(t.get('holding_hours') or 0 for t in closed_trades) / len(closed_trades), 1) if closed_trades else 0,
             'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,

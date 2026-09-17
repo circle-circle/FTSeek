@@ -7046,7 +7046,9 @@ def is_playbook_open_position(symbol: str) -> bool:
         _row = _c.execute(
             "SELECT 1 FROM trade_records WHERE symbol=? "
             "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
-            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) LIMIT 1",
+            "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+            + _PB_CLOSED_TWIN_NOT_EXISTS
+            + " LIMIT 1",
             (symbol,)
         ).fetchone()
         return _row is not None
@@ -7087,15 +7089,28 @@ def is_playbook_open_position(symbol: str) -> bool:
 #   孪生行悬空 (exit_time NULL) ⇒ 被当"未平仓"反复平仓, exit_lifecycle 报 exit_owner_conflict,
 #   快环每 20s 重试且按终态失败升级 ERROR+"仓位可能卡住/无止损保护" (9/16 实测 192 条/32min, 全是误报:
 #   仓位 09:52 已真平, broker_qty=0). 同一 broker 单既有已平行 ⇒ 该行的身份已被结算, 不得再入未平集.
+#   2026-09-17 GIPR 案补充: POSITION_SYNC 的 external_close 行没有共享 futu_order_id,
+#   但同日/同环境/同方向/同数量/同入场价的已平孪生同样证明该 Playbook 行已外部结算,
+#   不得再进入 ghost 豁免或退出行源 (21:30 误报 exit_position_ownership_conflict).
 #   SSOT: ghost 豁免 (load_playbook_open_symbols) 与退出快环行源共用本片段, 防两处漂移.
-#   安全性实测: 全库 futu_order_id 重复组仅 MRCY/SNDK 两对 (均为该故障产物); 无部分平仓新建行路径.
+#   安全性: order-id 精确匹配优先; external_close 兜底匹配必须同日+环境+方向+数量+入场价.
 _PB_CLOSED_TWIN_NOT_EXISTS = (
     " AND NOT EXISTS ("
     "  SELECT 1 FROM trade_records t2"
-    "  WHERE t2.futu_order_id = trade_records.futu_order_id"
-    "  AND trade_records.futu_order_id <> ''"
-    "  AND t2.id <> trade_records.id"
+    "  WHERE t2.id <> trade_records.id"
     "  AND t2.exit_price > 0 AND t2.exit_time IS NOT NULL AND t2.exit_time <> ''"
+    "  AND ("
+    "   (t2.futu_order_id = trade_records.futu_order_id"
+    "    AND trade_records.futu_order_id <> '')"
+    "   OR (t2.source_type = 'POSITION_SYNC'"
+    "    AND t2.exit_reason = 'external_close'"
+    "    AND t2.symbol = trade_records.symbol"
+    "    AND t2.direction = trade_records.direction"
+    "    AND t2.quantity = trade_records.quantity"
+    "    AND t2.entry_price = trade_records.entry_price"
+    "    AND t2.trade_date = trade_records.trade_date"
+    "    AND t2.trade_mode = trade_records.trade_mode)"
+    "  )"
     ")"
 )
 

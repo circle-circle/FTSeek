@@ -870,11 +870,10 @@ class TradingScheduler:
 
     def _init_coordinator(self):
         """
-        Phase A (2026-05-14): 初始化 StrategyCoordinator (灰度).
+        初始化 StrategyCoordinator 资金/锁账本 (灰度).
 
         默认 enabled=true (从 yaml 读), observe_only=true → 不阻断现有逻辑.
         当 enabled=false 时, self.coordinator 仍创建为对象但所有方法都 short-circuit.
-        Phase B 把 observe_only 切到 false 后才真正强制.
         """
         try:
             from app.core.config_container import get_config as _gc
@@ -943,19 +942,7 @@ class TradingScheduler:
             enabled=enabled,
         )
 
-        # 注册 4 个 adapter (Phase A: 仅声明元数据, 不接管下单)
-        try:
-            from app.strategy.adapters import all_adapters
-            self._strategy_adapters = all_adapters()
-            logger.info(
-                f"[调度器·Coordinator] 已注册 {len(self._strategy_adapters)} 个 adapter: "
-                f"{[a.name + '(p=' + str(a.priority) + ')' for a in self._strategy_adapters]}"
-            )
-        except Exception as e:
-            logger.warning(f"[调度器·Coordinator] adapter 注册失败 (降级运行): {e}")
-            self._strategy_adapters = []
-
-        # Phase A 启动 banner — 一行扫到的关键信息
+        # Coordinator 启动 banner — 一行扫到的关键信息
         banner = [
             "═" * 70,
             "║ Coordinator Phase A — 多策略协调层启动",
@@ -963,7 +950,6 @@ class TradingScheduler:
             f"║   observe_only  : {observe_only}  (true=不阻断只记录 / false=强制)",
             f"║   max_total_pct : {max_total}",
             f"║   caps          : {caps}",
-            f"║   adapters      : {[(a.name, a.priority) for a in self._strategy_adapters]}",
             f"║   reconcile     : every {cfg.get_dotted('strategies.coordinator.reconcile_interval_sec', 300) if cfg else 300}s",
             f"║   audit_db      : signal_arbitration in decisions.db",
             f"║   watchdog      : scan_loop + monitor_loop 心跳监控",
@@ -2467,18 +2453,6 @@ class TradingScheduler:
                         # 2026-07-04: debug→warning — 原debug级别在INFO日志中不可见,
                         # 导致盘后追踪静默失败(AMD/BABA holding仓位未被EOD平仓)
                         logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}", exc_info=True)
-
-                    # 隔夜持仓 shadow 结算 (2026-08-10, record-only, 用户批准):
-                    #   benign 退出决策点的次日反事实结算. 每日幂等 (settled 标记),
-                    #   需次日 replay_bars 已落 (position_path_collector 盘后采集), 缺则留待下次.
-                    try:
-                        _mod = self._load_script_module("settle_overnight_shadow")
-                        _mod.run_check(self)
-                    except Exception as _e:
-                        # 2026-09-10 debug→warning + exc_info: 与上方 :2452 的 2026-07-04 修复
-                        #   同一病灶、相隔 11 行却漏改 — 逐案修而不立规则的代价。全环 23 处
-                        #   [LLM策略] 隔离异常本批一次性收口 (19 补 exc_info + 4 debug→warning)。
-                        logger.warning(f"[LLM策略] 隔夜shadow结算异常 (已隔离): {_e}", exc_info=True)
 
                     # MFE_STALL 入场侧影子打标 (2026-08-12, record-only): 8/11诊断
                     #   发现 news_positive 触发 100%出现在 STALL 笔 (6/6) — 攒样验证

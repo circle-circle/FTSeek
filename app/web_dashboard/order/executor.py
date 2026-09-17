@@ -451,6 +451,26 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                 qty = close_qty
                 close_type = f"部分({qty}/{total_qty})"
 
+            _protection_snapshot = None
+            if service._is_live():
+                _protection_snapshot = _load_protective_snapshot(service, symbol)
+                if (
+                    0 < close_qty < total_qty
+                    and (
+                        _protection_snapshot is None
+                        or _protection_snapshot["current_sl"] <= 0
+                        or _protection_snapshot["initial_tp"] <= 0
+                    )
+                ):
+                    logger.critical(
+                        f"[手动平仓] {symbol} 实盘部分平仓前无法读取 open_positions 的 "
+                        f"SL/TP 价位，拒绝下单以避免剩余仓位失去 broker 端保护"
+                    )
+                    return {
+                        "success": False,
+                        "error": "实盘部分平仓前读取 SL/TP 价位失败，已拒绝下单",
+                    }
+
             logger.info(
                 f"[手动平仓] {symbol}: {close_type} {position_dir}, "
                 f"平仓动作={'SELL' if is_long else 'BUY'}, 数量={qty}"
@@ -678,7 +698,8 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         try:
                             cancel_order_group(service, symbol)
                             _rebuild_protective_after_partial(
-                                service, symbol, position_dir, _remain_qty, row,
+                                service, symbol, position_dir, _remain_qty,
+                                _protection_snapshot,
                             )
                         except Exception as _rp_err:
                             logger.warning(
@@ -1788,20 +1809,56 @@ def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -
         logger.warning(f"[保护止损] {order.symbol} 自动止损/止盈异常 (非致命): {_sl_err}")
 
 
+def _load_protective_snapshot(service: "ManualOrderService", symbol: str) -> Optional[Dict[str, float]]:
+    """Load live SL/TP levels from open_positions before any protective order is cancelled."""
+    try:
+        service._ensure_sl_column()
+        conn = service._db()
+        try:
+            if symbol.startswith("US."):
+                row = conn.execute(
+                    "SELECT current_sl, initial_tp FROM open_positions WHERE symbol=?",
+                    (symbol,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT current_sl, initial_tp FROM open_positions "
+                    "WHERE symbol IN (?, ?)",
+                    (symbol, f"US.{symbol}"),
+                ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        return {
+            "current_sl": float(row[0] or 0),
+            "initial_tp": float(row[1] or 0),
+        }
+    except Exception as error:
+        logger.exception(f"[部分平仓·保护价位] {symbol} 读取 open_positions 失败: {error}")
+        return None
+
+
 def _rebuild_protective_after_partial(
     service: "ManualOrderService", symbol: str, direction: str,
-    remain_qty: int, row: Dict[str, Any],
+    remain_qty: int, protection_snapshot: Optional[Dict[str, float]],
 ) -> None:
     """DEB-20260904 #201 (S5): 部分平仓后按剩余量重建 SL/TP 保护单.
 
-    复用仓位原有 current_sl/initial_tp 价位 (不重新计算), 仅按 remain_qty 重挂.
-    best-effort: 任何失败只告警不抛 (仓位仍受 ExitMonitor 保护).
+    复用下单前从 open_positions 读取的 current_sl/initial_tp 价位 (不重新计算),
+    仅按 remain_qty 重挂. best-effort: 任何失败只告警不抛 (仓位仍受 ExitMonitor 保护).
     """
     try:
-        _sl_price = float(row.get("current_sl") or 0)
-        _tp_price = float(row.get("initial_tp") or 0)
-        if remain_qty <= 0 or (_sl_price <= 0 and _tp_price <= 0):
-            logger.debug(f"[部分平仓·重建] {symbol} 无既有 SL/TP 价位或剩余量为 0, 跳过重建")
+        _sl_price = float((protection_snapshot or {}).get("current_sl") or 0)
+        _tp_price = float((protection_snapshot or {}).get("initial_tp") or 0)
+        if remain_qty <= 0:
+            logger.debug(f"[部分平仓·重建] {symbol} 剩余量为 0, 跳过重建")
+            return
+        if _sl_price <= 0 and _tp_price <= 0:
+            logger.critical(
+                f"[部分平仓·重建] {symbol} open_positions 无可用 SL/TP 价位, "
+                f"剩余 {remain_qty} 股无 broker 端保护单, 需人工立即处理"
+            )
             return
         if not service._broker_ctx or not service._connected:
             logger.warning(f"[部分平仓·重建] {symbol} broker 未连接, 无法重建保护单")

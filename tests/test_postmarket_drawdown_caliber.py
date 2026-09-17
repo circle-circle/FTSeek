@@ -40,6 +40,17 @@ def test_summary_emits_drawdown_with_unit_and_basis():
     assert "max_drawdown" not in s, "不带量纲的旧键名不得复活 (下游会再套 .2%)"
 
 
+def test_summary_base_pnl_and_win_rate_use_net_basis():
+    s = DailyReviewGenerator._generate_summary(
+        _STUB, [_trade(), _trade("US.DELL", dd=2.0769, pnl=-45.12)],
+        [_trade(), _trade("US.DELL", dd=2.0769, pnl=-45.12)])
+    assert s["total_pnl"] == -38.13, "total_pnl 必须是 COALESCE(pnl_net, realized_pnl)"
+    assert s["win_rate"] == 0.5
+    assert s["winning_trades"] == 1 and s["losing_trades"] == 1
+    assert s["total_pnl_net"] == s["total_pnl"]
+    assert s["win_rate_net"] == s["win_rate"]
+
+
 def test_summary_handles_zero_drawdown_rows():
     rows = [_trade("US.MDB", dd=0.0), _trade("US.ASTS", dd=0.0)]
     s = DailyReviewGenerator._generate_summary(_STUB, rows, rows)

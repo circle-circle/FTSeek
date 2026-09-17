@@ -22,6 +22,8 @@ class TestWhitelist:
         "pb_be_close_US.SNDK_sim",  # 净保本平仓
         "pb_stop_US.SNDK_sim",      # STOP 单
         "orb_US.QCOM_1a2b3c4d",     # ORB 引擎 (现禁用, 预留)
+        "ext_entry",                # 延长时段系统入场
+        "ext_exit_breakeven_lock",  # 延长时段系统平仓
         "OVER_LIMIT_TRIM:daily_notional",  # position_sync 自trim
     ])
     def test_system_remarks_claimed(self, remark):
@@ -40,7 +42,9 @@ class TestWhitelist:
 
     def test_prefix_registry_frozen(self):
         """白名单 = 全部 auto 生产者枚举, 增删必须过审计 (防静默漂移)."""
-        assert _SYSTEM_ORDER_REMARK_PREFIXES == ("pb_", "orb_", "OVER_LIMIT_TRIM")
+        assert _SYSTEM_ORDER_REMARK_PREFIXES == (
+            "pb_", "orb_", "ext_entry", "ext_exit_", "OVER_LIMIT_TRIM"
+        )
 
 
 class TestClassificationPoints:

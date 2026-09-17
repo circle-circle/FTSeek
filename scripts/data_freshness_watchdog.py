@@ -19,7 +19,13 @@
      告警"有写入方却零行 / 长期停更"的载体 (生产者静默死亡)。
   D2 调度应跑未跑: 从 Hermes jobs.json 的 cron 表达式反推最近应跑槽位,
      与 executions.db 实跑记录对账 (连续 ≥2 槽缺席才告, 未到期不算)。
-  两者都用基线棘轮抑制既有墓地噪音: 新出现的键才告警, 已知项静默计数。
+  D3 跑了但失败且未恢复 (2026-09-14 补): D2 只看"槽位上有没有实跑记录", 而一条
+     failed 记录同样占位 ⇒ DA 主作业 9/11 20:45 被 shutdown 打断后 last_status
+     挂了 3 天零告警。D3 收"最新一条执行 = failed"的作业 (派发失败归 D2, 不重叠)。
+  D4 孤儿进程 (2026-09-14 补): D3 只看得到"作业失败", 看不到"失败作业的进程还活着
+     占资源" —— 9/11 那次 DA 挂死被 reparent 后存活 2天16小时, 握着生产库 3 个句柄
+     + 1 条 FutuOpenD 连接。D4 按 cmdline 模式 × 存活时长收这类慢性泄漏。
+  四者都用基线棘轮抑制既有墓地噪音: 新出现的键才告警, 已知项静默计数。
   冻结基线: --update-liveness-baseline (只许减少不许新增, 同 config_key_census)。
 运行: PYTHONPATH=. ./venv/bin/python scripts/data_freshness_watchdog.py [--push] [--dry]
       [--update-liveness-baseline]
@@ -119,6 +125,25 @@ def _is_weekend() -> bool:
 # ══════════════════════════════════════════════════════════════════════
 
 TABLE_STALE_DAYS = 21  # 周级环路留双倍余量 (周日复盘/每周 ADF 均 ≤7 天)
+
+# 锁存表 (2026-09-14, DEB-20260910 §11.8 选项(b), 用户裁"如果问题确认，请执行修复"):
+#   事件驱动/锁存型表只在条件真成立时才写行 ⇒ 零行 = 条件从未成立 = **健康**,
+#   不是"生产者从未跑"。D1 的 never_fed 判据把两者混为一谈, 于是每轮实跑都推一条
+#   假阳性到飞书 (9/12 06:25 生产实证 `[pushed] 飞书`; 9/14 --dry 复现该键
+#   `D1:playbook_risk_state:never_fed` 为当轮唯一新告),
+#   真告警会被这条常态噪音掩掉 —— 与本文件"降级不报警"的立项初衷正好相反。
+#   为何选 (b) 而非 (a) 补基线: DEB 原文已给理由 —— (a) 每建一张锁存表就要人工加
+#   一次键, (b) 把知识写进判据本身且可被测试钉住 (tests/test_watchdog_liveness.py)。
+#   登记纪律: 新增条目必须写明"零行为何等于健康" + 读侧在哪, 并补一条钉子测试。
+#   回滚: 本 dict 置空即恢复旧行为 (playbook_risk_state 重新按 never_fed 告警)。
+LATCH_TABLES = {
+    # RiskCircuitBreaker._stop_until 的熔断锁存表 (58e3ce8b, DEB-20260830-timezone
+    #   第 2 轮 TZ-1, 8/30 建表): 只在熔断真触发时写行。读侧
+    #   app/playbook/risk_circuit_breaker.py:164 明确"无行/不可解析 → None = 未熔断",
+    #   不是"门恒空"。liveness 基线冻结于 8/28 21:16, 比建表早 2 天 ⇒ 它被判"新键"。
+    "playbook_risk_state": "熔断锁存表: 零行 = 从未熔断 = 健康 (读侧无行→None=未熔断)",
+}
+
 _WRITE_SQL_RE = re.compile(
     r"(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE)\s+[`\"\[]?([A-Za-z_]\w*)",
     re.I,
@@ -144,9 +169,10 @@ def _load_liveness_baseline() -> dict:
 
 
 def save_liveness_baseline() -> dict:
-    """冻结当前全部 D1/D2 发现为已知基线 (棘轮起点; 此后只新增才告警)。"""
+    """冻结当前全部 D1/D2/D3/D4 发现为已知基线 (棘轮起点; 此后只新增才告警)。"""
     keys = {}
-    for f in _check_table_liveness({})[0] + _check_hermes_jobs({})[0]:
+    for f in (_check_table_liveness({})[0] + _check_hermes_jobs({})[0]
+              + _check_hermes_failures({})[0] + _check_orphan_processes({})[0]):
         keys[f["key"]] = f["detail"]
     LIVENESS_BASELINE.write_text(json.dumps(
         {"frozen_at": datetime.now().isoformat(timespec="seconds"),
@@ -248,6 +274,8 @@ def _check_table_liveness(baseline: dict):
                 if not w:
                     continue  # 无现役写入方 → 人工裁决面, 不自动告
                 if n == 0:
+                    if t.lower() in LATCH_TABLES:
+                        continue  # 锁存表零行是健康态, 不是生产者死亡 (见 LATCH_TABLES)
                     kind, detail = "never_fed", f"{len(w)} 个写入方 ({','.join(w[:3])}) 零行落库"
                     act = "生产者从未喂数 → 读该表的门/报表恒空"
                 elif age > TABLE_STALE_DAYS:
@@ -263,10 +291,20 @@ def _check_table_liveness(baseline: dict):
         finally:
             conn.close()
     except Exception as e:
-        return ([], known, observed) if baseline.get("D1:detector_error") else [
-            {"key": "D1:detector_error", "kind": "D1",
-             "detail": f"表级活性普查内部异常: {type(e).__name__}: {e}",
-             "action": "D1 检测器自身失明, 需人工修复"}], 0, []
+        # 检测器自身异常必须显性化 (静默返回 [] 会被读成"全部表健康" = 二次失明)。
+        # 2026-09-14 修**优先级陷阱** (D1-D4 四处同病, 由 D4 新钉子测试抓出):
+        #   原写 `return ([], known, observed) if cond else [ {...} ], 0, []` ——
+        #   条件表达式比元组构造结合得更紧, 故 cond 为真时实际返回的是
+        #   `(([], known, observed), 0, [])`, 即"发现位"是个**元组**而不是 list;
+        #   下游 collect_liveness 的 `t_find + h_find + f_find + o_find` 遂成
+        #   tuple + list → TypeError ⇒ 恰好在"detector_error 已入基线、本轮应静默"
+        #   这条路径上把整个看门狗打崩 (四个维一起失明, 只剩 cron 的钉钉兜底吼一声)。
+        #   改为显式 if/return, 语义不变且对优先级免疫。
+        if baseline.get("D1:detector_error"):
+            return [], known, observed
+        return [{"key": "D1:detector_error", "kind": "D1",
+                 "detail": f"表级活性普查内部异常: {type(e).__name__}: {e}",
+                 "action": "D1 检测器自身失明, 需人工修复"}], 0, []
     return findings, known, observed
 
 
@@ -277,6 +315,8 @@ def _check_table_liveness(baseline: dict):
 #   判据: 从 cron 表达式反推最近 N 个应跑时刻 (服务器本地时区 = Hermes 调度时区),
 #     未到期 (created_at 晚于槽位) 与超出 executions.db 覆盖窗口的槽位一律跳过,
 #     连续 ≥HERMES_MISS_SLOTS 槽无实跑记录才告。
+#     "有实跑记录" = 该槽有 started_at 非空的执行行 (2026-09-14 修正): 派发失败的行
+#     claimed_at 有值而 started_at IS NULL — 业务脚本从未启动, 不算跑过。
 # ══════════════════════════════════════════════════════════════════════
 
 def _cron_field(spec, lo, hi) -> set:
@@ -349,8 +389,22 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
         local_tz = now.astimezone().tzinfo
         conn = sqlite3.connect(f"file:{HERMES_EXEC_DB}?mode=ro", uri=True)
         try:
+            # "实跑" = worker 真的启动了 (started_at 非空), 不等于"被认领过" (claimed_at)。
+            #   实证 (2026-09-14 审计): 2026-09-06 10:00 → 09-07 22:30 `systemd-run --user
+            #   --scope` 不可用, Hermes 写下 12 行派发失败记录 — claimed_at 有值、
+            #   started_at IS NULL、error="cannot create restart-safe systemd scope for
+            #   gateway child"。旧判据 MAX(claimed_at) 把这 12 行全当"已跑" ⇒
+            #   ①「DEB-20260815 硬止损监控·上午段」盘中连缺 4 槽 (9/7 21:00/21:30/22:00/
+            #     22:30) 零告警 — 风控兜底整段是纸面的;
+            #   ② DA 主作业 9/7 20:00 同因失败 ⇒ da_gate_decisions.jsonl 该日零行。
+            #   与本文件反复钉住的教训同源 (E13 影子空转 / e1_shadow_collector:122
+            #   "9 次 last_status=ok 而文件 0 字节"): 调度面有记录 ≠ 业务真的跑了。
+            #   started_at 缺列 (Hermes 旧 schema) → 回落 claimed_at 保持旧行为, 不炸 D2。
+            _cols = {r[1] for r in conn.execute("PRAGMA table_info(executions)")}
+            run_col = "started_at" if "started_at" in _cols else "claimed_at"
             last = {r[0]: r[1] for r in conn.execute(
-                "SELECT job_id, MAX(claimed_at) FROM executions GROUP BY job_id")}
+                f"SELECT job_id, MAX({run_col}) FROM executions "
+                f"WHERE {run_col} IS NOT NULL GROUP BY job_id")}
             # 覆盖窗 = 全库最旧一条实跑记录 (executions 是 1000 行环形缓冲), 不是
             # "各作业最后实跑里最早的那个" — 后者会把刚跑过的作业全部槽位推出窗外,
             # judged 恒 0, 与"检测器失明"不可区分 (2026-08-28 回归测试实锤)。
@@ -398,10 +452,215 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
                                  "detail": detail, "action": "Hermes 作业静默停摆 → 下游数据/推送全空"})
     except Exception as e:
         # 检测器自身异常必须显性化 (返回 [] 会被读成"全部作业健康" = 二次失明)
-        return ([], known, judged) if baseline.get("D2:detector_error") else [
-            {"key": "D2:detector_error", "kind": "D2",
-             "detail": f"调度对账内部异常: {type(e).__name__}: {e}",
-             "action": "D2 检测器自身失明, 需人工修复"}], 0, 0
+        # (显式 if/return: 见 D1 处 2026-09-14 优先级陷阱说明, 四处同修)
+        if baseline.get("D2:detector_error"):
+            return [], known, judged
+        return [{"key": "D2:detector_error", "kind": "D2",
+                 "detail": f"调度对账内部异常: {type(e).__name__}: {e}",
+                 "action": "D2 检测器自身失明, 需人工修复"}], 0, 0
+    return findings, known, judged
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D3 跑了但失败且未恢复 (executions 最新一条 status=failed 且 started_at 非空)
+#   动机 (2026-09-14 全链路审计实证): DA 主作业「deep-stock-analysis 每日盘前扫描+分析」
+#   9/11 20:45 `Interrupted by shutdown before terminal completion` (跑满 45min 被中断),
+#   其后 9/12-9/13 是周末 (cron `0 20 * * 1-5`) 无后续执行 ⇒ jobs.json last_status
+#   挂着 'error' 整整 3 天, 到 9/14 审计才发现, 期间零告警。同类还有 9/9 04:08
+#   盘后综合复盘 / 9/11 04:43 盘前趋势验证 (同 "Interrupted by shutdown")。
+#   D2 补不上这一维: 它只问"槽位上有没有实跑记录", 而一条 failed 记录同样占位
+#   ⇒ D2 判它"跑过了"。与本文件立项初衷同源 ("降级不报警"是墓地根因)。
+#   与 D2 分工不重叠: started_at IS NULL (派发失败, worker 从未启动) 归 D2 —
+#   那不是"跑了但失败"而是"根本没跑"; D3 只收 started_at 非空的失败, 故 9/7 那 12 行
+#   派发失败不会被两面重复告。
+#   判据: 该作业 executions 里**最新一条** (MAX(rowid)) 为 failed 即告 —— 最新即失败
+#   ⇒ 其后必然没有成功执行覆盖它, "未恢复"由 MAX(rowid) 天然表达, 无需额外状态文件。
+#   噪音边界: 真跑了但业务失败的作业 (如 8 月 alpha-backfill 连续 8 次 rc=124 超时)
+#   也会告 —— 那是信号不是噪音 (同一作业连失败 8 次当时无人知)。确需静默走棘轮基线。
+# ══════════════════════════════════════════════════════════════════════
+
+def _check_hermes_failures(baseline: dict):
+    """返回 (待告警发现, 基线内静默数, 已判定作业数)。异常显性化, 不静默少算。"""
+    findings, known, judged = [], 0, 0
+    try:
+        import sqlite3
+        if not HERMES_JOBS_JSON.exists() or not HERMES_EXEC_DB.exists():
+            return [], 0, 0   # 调度面不可读由 D2:hermes_missing 负责吼, 不重复告
+        enabled = {j.get("id"): j
+                   for j in json.loads(HERMES_JOBS_JSON.read_text()).get("jobs", [])
+                   if j.get("enabled")}
+        conn = sqlite3.connect(f"file:{HERMES_EXEC_DB}?mode=ro", uri=True)
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(executions)")}
+            if not {"status", "started_at"} <= cols:
+                # Hermes 旧 schema → 本维不可判。静默退出而不是抛错被外层吞成"全健康"
+                # (与 D2 的 run_col 回落同理: 宁可少一维, 不可让检测器整体失明)。
+                return [], 0, 0
+            err_col = "error" if "error" in cols else "NULL"
+            fin_col = "finished_at" if "finished_at" in cols else "claimed_at"
+            rows = conn.execute(f"""
+                SELECT e.job_id, e.status, e.started_at, e.{fin_col}, {err_col}
+                FROM executions e
+                JOIN (SELECT job_id, MAX(rowid) AS m FROM executions GROUP BY job_id) x
+                  ON x.job_id = e.job_id AND x.m = e.rowid""").fetchall()
+        finally:
+            conn.close()
+        for job_id, status, started, finished, error in rows:
+            j = enabled.get(job_id)
+            if not j:
+                continue          # 已停用/一次性作业: 不再期望它跑, 不告
+            judged += 1
+            if str(status) != "failed" or not started:
+                continue          # 成功 / 派发失败 (归 D2) → 本维不管
+            name = str(j.get("name") or job_id)[:36]
+            why = " ".join(str(error or "").split())[:120] or "(无 error 文本)"
+            key = f"D3:{job_id}"
+            detail = (f"最近一次执行 failed 且此后无成功执行覆盖 "
+                      f"(止于 {str(finished)[:16]}): {why}")
+            if key in baseline:
+                known += 1
+            else:
+                findings.append({
+                    "key": key, "kind": "D3", "name": name, "detail": detail,
+                    "action": "作业跑了但没跑成且不会自愈 → 下游数据/推送缺口"})
+    except Exception as e:
+        # 检测器自身异常必须显性化 (返回 [] 会被读成"全部作业健康" = 二次失明)
+        # (显式 if/return: 见 D1 处 2026-09-14 优先级陷阱说明, 四处同修)
+        if baseline.get("D3:detector_error"):
+            return [], known, judged
+        return [{"key": "D3:detector_error", "kind": "D3",
+                 "detail": f"失败对账内部异常: {type(e).__name__}: {e}",
+                 "action": "D3 检测器自身失明, 需人工修复"}], 0, 0
+    return findings, known, judged
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D4 孤儿进程 (调度面已判死 / 进程仍活)
+#   动机 (2026-09-14 全链路审计实证, DEB-20260910 §16.10(a)): DA cron 的 pipeline
+#   调用**没有套 timeout** (对比 UE cron 每段 timeout 900/1800/600), 9/11 20:03 那次
+#   挂死在对 FutuOpenD 的 socket 读上 (无超时); hermes 20:45 判 "Interrupted by
+#   shutdown before terminal completion" 后, shell(PID 1075503)+python(1075525) 被
+#   reparent 到 `systemd --user`(PID 995) 却**存活 2天16小时**, 期间持有
+#   data/ftseek_us.db(+ -wal/-shm) 3 个句柄 + FutuOpenD ESTAB (127.0.0.1:50952→11111)
+#   + Futu SDK 日志 fd。D3 只报"作业失败", 报不出"进程还活着占资源"; 而 cron 下次
+#   照常 fork 新进程 ⇒ 同类挂死会**累积**, 行情连接/句柄单调增长。
+#   (该孤儿已于 2026-09-14 12:40 SIGTERM 清理, 取证 /tmp/orphan_forensics_20260914.txt。
+#    根因侧"给 DA cron 套 timeout"属 hermes 自动化层变更 (~/.hermes/cron/jobs.json),
+#    按 handoff.md:1432 既有纪律不擅动, 待用户裁; 本维是仓内可落地的兜底观测。)
+#   判据: (cmdline **或** cwd) 命中 ORPHAN_PATTERNS 且存活 > ORPHAN_MAX_HOURS。
+#     阈值 2h = DA 历史最长实跑 51min (9/10 20:00→20:51) 的 2.3 倍余量。
+#     为何必须带 cwd 一路 (2026-09-14 自测实证): 9/11 挂死的** python 子进程**
+#     argv 是 `.../venv/bin/python pipeline.py --mode full --top 5 --symbols  --format json`
+#     —— `cd /root/.hermes/skills/deep-stock-analysis/scripts` 发生在**父 shell**,
+#     子进程 argv 里根本没有 skill 路径, 只按 cmdline 匹配会**恰好漏掉真正握着
+#     生产库句柄与 FutuOpenD 连接的那一个** (只抓到无害的包装 shell)。cwd 是子进程
+#     从父 shell 继承的, 故 `pat in cwd` 补上这一路; 两路取或, 单路失效仍有另一路。
+#     覆盖面: 该 skill 目录下 3 个 cron 作业 (盘前扫描 e0d574cc1a3c / 盘后复盘
+#     3a6c83bbd84c / alpha-backfill 6af0648e3eb3) **均未套 timeout**, 同属孤儿易感面。
+#   零误伤边界: 模式只认 hermes skill 目录下的一次性批处理脚本, 不含任何常驻服务
+#     (ftseek-us MainPID / scripts/hermes_worker.py / `hermes_cli.main gateway run`
+#      的 cmdline 与 cwd 均不匹配) ⇒ 长寿命常驻进程不会被打成孤儿。
+#   节奏: 本脚本 cron `25 6 * * 2-6` 每日一次 ⇒ 按 PID 建键不构成告警风暴。
+#   回滚: ORPHAN_PATTERNS 置空 (本维静默不判, 其余维不受影响)。
+# ══════════════════════════════════════════════════════════════════════
+
+ORPHAN_MAX_HOURS = 2.0
+ORPHAN_PATTERNS = {
+    # cmdline/cwd 子串 → 它挂死为什么是风险 (登记纪律同 LATCH_TABLES: 必须写明理由)
+    "deep-stock-analysis/scripts":
+        "DA 盘前扫描 pipeline: cron 未套 timeout, 挂死即泄漏 FutuOpenD 连接 + 生产库句柄",
+}
+# /proc 采样降级阈值: 竞态退出 (listdir 与 read 之间进程消失) 是常态但占比极低;
+#   超过一半读不到 = 结构性不可读 (权限/容器/proc 挂载异常), 此时"0 孤儿"是**假绿**
+#   —— 与本文件"降级不报警"的立项初衷同源, 故必须显性化成告警而不是静默少算。
+PROC_SCAN_SKIP_RATIO = 0.5
+
+
+def _iter_processes(stats=None):
+    """只读枚举 /proc → (pid, ppid, elapsed_hours, cmdline, cwd)。
+
+    零新依赖 (不引 psutil): 存活时长由 /proc/uptime 与 /proc/<pid>/stat 第 22 字段
+    (starttime, 单位 clock tick) 推出。单进程读取失败 (竞态退出/权限) 跳过不中断 ——
+    与 D1/D2/D3 同款"宁可少一个样本, 不可让检测器整体失明"。
+
+    stats: 可选 dict, 回填 {"seen": 候选数, "skipped": 读不到而丢弃数} —— 丢样本
+      本身必须可观测, 否则大面积不可读时 D4 会静默报"0 孤儿"(假绿)。
+    """
+    import os
+    clk = os.sysconf("SC_CLK_TCK") or 100
+    with open("/proc/uptime") as f:
+        boot = time.time() - float(f.read().split()[0])
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        if stats is not None:
+            stats["seen"] = stats.get("seen", 0) + 1
+        try:
+            with open(f"/proc/{entry}/stat") as f:
+                raw = f.read()
+            # comm(第2字段) 可含空格与括号 → 必须从最后一个 ')' 之后再切
+            rest = raw[raw.rindex(")") + 1:].split()
+            ppid = int(rest[1])        # 第 4 字段
+            started = int(rest[19])    # 第 22 字段 starttime
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+            hours = (time.time() - (boot + started / clk)) / 3600.0
+        except Exception:
+            # R5 留痕 (仓内纪律: 新增异常处理不得静默 pass/continue) — 计入降级分子,
+            # 由调用方按 PROC_SCAN_SKIP_RATIO 判是否显性化, 不逐条打日志刷屏。
+            if stats is not None:
+                stats["skipped"] = stats.get("skipped", 0) + 1
+            continue
+        try:    # cwd 读不到 (僵尸/权限) 只丢这一路信号, 不丢整个样本
+            cwd = os.readlink(f"/proc/{entry}/cwd")
+        except Exception:
+            cwd = ""
+        yield int(entry), ppid, hours, cmd, cwd
+
+
+def _check_orphan_processes(baseline: dict, procs=None):
+    """返回 (待告警发现, 基线内静默数, 已判定进程数)。异常显性化, 不静默少算。"""
+    findings, known, judged = [], 0, 0
+    if not ORPHAN_PATTERNS:
+        return findings, known, judged    # 回滚态: 本维不判 (不产 detector_error)
+    try:
+        stats = {}
+        for pid, ppid, hours, cmd, cwd in (procs or (lambda: _iter_processes(stats)))():
+            why = next((w for pat, w in ORPHAN_PATTERNS.items()
+                        if pat in cmd or pat in cwd), None)
+            if why is None:
+                continue
+            judged += 1
+            if hours <= ORPHAN_MAX_HOURS:
+                continue                  # 正常在跑 (历史最长 51min) → 不告
+            age = f"{hours:.1f}h" if hours < 48 else f"{hours / 24:.1f}天"
+            key = f"D4:{pid}"
+            hit = "cmdline" if any(p in cmd for p in ORPHAN_PATTERNS) else "cwd"
+            detail = (f"{why} | 已存活 {age} (阈值 {ORPHAN_MAX_HOURS:.0f}h, ppid={ppid}, "
+                      f"命中 {hit}): "
+                      f"{' '.join(cmd.split())[:110]}")
+            if key in baseline:
+                known += 1
+            else:
+                findings.append({
+                    "key": key, "kind": "D4", "name": f"pid {pid}", "detail": detail,
+                    "action": "调度面已判死但进程仍活 → 泄漏行情连接/库句柄, 需 kill 并给 cron 套 timeout"})
+        # 采样降级显性化: 注入式 procs (测试) 不回填 stats ⇒ seen=0 ⇒ 本段自动跳过。
+        seen, skipped = stats.get("seen", 0), stats.get("skipped", 0)
+        if seen and skipped / seen > PROC_SCAN_SKIP_RATIO:
+            findings.append({
+                "key": "D4:proc_scan_degraded", "kind": "D4", "name": "/proc 采样降级",
+                "detail": (f"{skipped}/{seen} 个进程读不到 "
+                           f"({skipped / seen * 100:.0f}% > 阈值 {PROC_SCAN_SKIP_RATIO * 100:.0f}%)"),
+                "action": "本轮'孤儿数'不可信 (可能假绿), 需查权限/proc 挂载后重跑"})
+    except Exception as e:
+        # 检测器自身异常必须显性化 (返回 [] 会被读成"没有孤儿" = 二次失明)
+        # (显式 if/return: 见 D1 处 2026-09-14 优先级陷阱说明, 四处同修)
+        if baseline.get("D4:detector_error"):
+            return [], known, judged
+        return [{"key": "D4:detector_error", "kind": "D4",
+                 "detail": f"孤儿进程对账内部异常: {type(e).__name__}: {e}",
+                 "action": "D4 检测器自身失明, 需人工修复"}], 0, 0
     return findings, known, judged
 
 
@@ -449,33 +708,37 @@ def _build_message(stale, missing, liveness=None) -> str:
                 shown = rel
             lines.append(f"❓ {desc}: {shown}")
     if alarms:
-        lines.append("── 活性对账 (D1 表载体 / D2 调度应跑未跑) ──")
+        lines.append("── 活性对账 (D1 表载体 / D2 应跑未跑 / D3 跑了但失败 / D4 孤儿进程) ──")
         for f in alarms:
-            tag = "🫥" if f["kind"] == "D1" else "🕰"
+            tag = {"D1": "🫥", "D2": "🕰", "D3": "💥", "D4": "👻"}.get(f["kind"], "❗")
             head = f.get("name") or f["key"].split(":")[-1]
             lines.append(f"{tag} [{f['kind']}] {head}: {f['detail']}")
     return "\n".join(lines)
 
 
 def collect_liveness() -> dict:
-    """D1+D2 一次性采集 (基线内发现静默计数, 新键进告警)。异常已在各检测器内吞掉。"""
+    """D1+D2+D3+D4 一次性采集 (基线内发现静默计数, 新键进告警)。异常已在各检测器内吞掉。"""
     baseline = _load_liveness_baseline()
     t_find, t_known, observed = _check_table_liveness(baseline)
     h_find, h_known, h_judged = _check_hermes_jobs(baseline)
+    f_find, f_known, f_judged = _check_hermes_failures(baseline)
+    o_find, o_known, o_judged = _check_orphan_processes(baseline)
     return {
         "at": datetime.now().isoformat(timespec="seconds"),
         "baseline_keys": len(baseline),
-        "alarms": t_find + h_find,
-        "silenced_known": t_known + h_known,
+        "alarms": t_find + h_find + f_find + o_find,
+        "silenced_known": t_known + h_known + f_known + o_known,
         "tables": observed,
         "hermes_jobs_judged": h_judged,
+        "hermes_failures_judged": f_judged,
+        "orphan_procs_judged": o_judged,
     }
 
 
 def main(push=False, dry=False, update_baseline=False):
     if update_baseline:
         keys = save_liveness_baseline()
-        print(f"[baseline] 已冻结 {len(keys)} 项 D1/D2 发现 → {LIVENESS_BASELINE}")
+        print(f"[baseline] 已冻结 {len(keys)} 项 D1/D2/D3/D4 发现 → {LIVENESS_BASELINE}")
         for k, v in sorted(keys.items()):
             print(f"  {k}: {v[:70]}")
         return 0
@@ -495,8 +758,10 @@ def main(push=False, dry=False, update_baseline=False):
         print(f"  [MISS ] {desc}: {_shown}")
     for rel, age in ok:
         print(f"  [ok   ] {rel}: {age:.1f}h")
-    print(f"[D1/D2] 表枚举 {len(live['tables'])} 张 | 新告 {len(live['alarms'])} | "
-          f"基线内静默 {live['silenced_known']} | 调度已对账 {live['hermes_jobs_judged']} 作业")
+    print(f"[D1/D2/D3/D4] 表枚举 {len(live['tables'])} 张 | 新告 {len(live['alarms'])} | "
+          f"基线内静默 {live['silenced_known']} | 调度已对账 {live['hermes_jobs_judged']} 作业 | "
+          f"失败已对账 {live['hermes_failures_judged']} 作业 | "
+          f"孤儿已对账 {live.get('orphan_procs_judged', 0)} 进程")
     for f in live["alarms"]:
         print(f"  [LIVE ] {f['kind']} {f.get('name') or f['key']}: {f['detail']} → {f['action']}")
     print("=" * 60)

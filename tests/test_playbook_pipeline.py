@@ -3,7 +3,7 @@ import json
 import sqlite3
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, tzinfo
 from threading import Barrier
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -524,6 +524,11 @@ class TestCheckIntradayTrigger:
 
     SEALED_CFG = {
         "entry_time_cutoff_enabled": False,      # 密封 wall-clock (14:00 ET 截止)
+        # 2026-09-14: 补密封同类 wall-clock 门 (开盘禁触窗, yaml true/0935)。
+        #   漏密封 ⇒ ET 00:00-09:35 (= CST 12:00-21:35) 触发判定被 pipeline.py:5405
+        #   静默拦掉, 本类断言随挂钟漂移; 全量跑批跨 CST 正午时会分裂成部分红。
+        #   门本体另有专属测试 (TestEntryOpenBlackoutGate), 此处只密封不验证。
+        "entry_open_blackout_enabled": False,
         "earnings_blackout_gate_enabled": False,
         "low_atr_gate_enabled": False,
         "symbol_streak_ban_enabled": False,
@@ -700,3 +705,204 @@ class TestCheckIntradayTrigger:
         inst = {"id": 996, "symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
         assert recorded == {}
+
+
+class TestEntryOpenBlackoutGate:
+    """开盘禁触窗门 (pipeline.py:5395-5407) 专属测试 — 2026-09-14 补零覆盖缺口.
+
+    缺口背景 (为何必须补): 该门在生产 yaml 是**开启**的
+    (`entry_open_blackout_enabled: true` / `entry_open_blackout_hhmm: 0935`,
+    config/unified_config.yaml:1179), 但全仓此前无任何测试覆盖, 且 3 处密封夹具
+    漏了这个键 ⇒ 每天 ET 00:00-09:35 (= CST 12:00-21:35) 触发判定被 :5405
+    静默拦掉, 全量跑批跨 CST 正午会分裂成部分红 (2026-09-14 全量 11 failed 根因)。
+    夹具侧已补密封 (只密封不验证), 本类钉门本体语义:
+      1. 边界是**严格小于** (`hour*100+minute < hhmm`) → 配置当分即放行,
+         与 14:00 cutoff 门的 `>=` 恰好相反, 两者不可混写;
+      2. 翻转点跟随配置 hhmm (改配置边界同步移动) → 排除"别的门恰好返回 False"
+         造成的假阳性 (这是本类的变异杀伤主力);
+      3. 遥测 reason=before_open_blackout 且 ts/date 走 ET 尺 (R-8a);
+      4. 开关关闭 / 配置畸形 / 取时异常 → 一律 fail-open 不拦 (回滚路径可验)。
+    """
+
+    # 与 TestCheckIntradayTrigger.SEALED_CFG 同值 (该类已实证可触发), 仅把禁触窗打开。
+    CFG = {
+        "entry_time_cutoff_enabled": False,      # 密封 14:00 ET cutoff (同类 wall-clock 门)
+        "earnings_blackout_gate_enabled": False,
+        "low_atr_gate_enabled": False,
+        "symbol_streak_ban_enabled": False,
+        "intraday_vol_gate_enabled": False,
+        "entry_vwap_gate_enabled": False,
+        "entry_reanchor_enabled": True,
+        "entry_reanchor_max_drift_pct": 4.0,
+        "thesis_drift_invalidate_enabled": True,
+        "falsification_gates_enabled": False,
+        "entry_open_blackout_enabled": True,     # ← 被测门
+        "entry_open_blackout_hhmm": 935,
+    }
+
+    @pytest.fixture(autouse=True)
+    def _sealed_pb_cfg(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config", lambda: dict(self.CFG)
+        )
+
+    @staticmethod
+    def _freeze(monkeypatch, hour, minute, day=14):
+        """把 pipeline 的 ET 墙钟冻结到 2026-09-<day> hour:minute.
+
+        注: `_now_et()` 返回的是**时区对象**而非 datetime (见 pipeline.py:5209 注释),
+        门体用 `datetime.now(_now_et())` 取墙钟, 且 `datetime` 是函数内局部导入 ⇒
+        唯一注入点是让该时区的 `fromutc()` 忽略真实 UTC now。
+        """
+        from app.core.scheduler_triggers import ET as _ET_TZ
+        frozen = _ET_TZ.localize(datetime(2026, 9, day, hour, minute, 30))
+
+        class _FrozenZone(tzinfo):
+            def utcoffset(self, dt):
+                return frozen.utcoffset()
+
+            def dst(self, dt):
+                return frozen.dst()
+
+            def tzname(self, dt):
+                return frozen.tzname()
+
+            def fromutc(self, dt):
+                return frozen
+
+        monkeypatch.setattr("app.playbook.pipeline._now_et", lambda: _FrozenZone())
+        return frozen
+
+    def _make_scheduler(self, price, day_high, day_low):
+        scheduler = MagicMock()
+        scheduler.data_router.get_full_market_context.return_value = {
+            "price": price,
+            "day_high": day_high,
+            "day_low": day_low,
+            "volume_5d_avg_ratio": 2.0,
+        }
+        return scheduler
+
+    def _triggering(self, direction="BUY"):
+        """构造一个"若无禁触窗则必然触发"的指令 (entry=100, price=101 在带上)."""
+        return {"symbol": "US.TEST", "direction": direction, "entry_price": 100.0}
+
+    # ── 1. 边界: 严格小于 ──
+
+    def test_blocked_one_minute_before_hhmm(self, monkeypatch):
+        self._freeze(monkeypatch, 9, 34)          # 934 < 935
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is False
+
+    def test_allowed_exactly_at_hhmm(self, monkeypatch):
+        """配置当分即放行 — `<` 而非 `<=` (与 cutoff 门的 `>=` 反向, 勿混写)."""
+        self._freeze(monkeypatch, 9, 35)          # 935 < 935 → False ⇒ 不拦
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True
+
+    def test_allowed_after_hhmm(self, monkeypatch):
+        self._freeze(monkeypatch, 9, 36)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True
+
+    def test_blocked_at_et_midnight(self, monkeypatch):
+        """00:23 ET — 即夹具漏密封时每天恒红的那个真实时刻 (bridge 盘前写单后)."""
+        self._freeze(monkeypatch, 0, 23)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is False
+
+    def test_short_direction_also_blocked(self, monkeypatch):
+        """门与方向无关: SHORT 同样被拦 (不是只护多头)."""
+        self._freeze(monkeypatch, 9, 34)
+        scheduler = self._make_scheduler(price=99.0, day_high=101.0, day_low=98.0)
+        assert _check_intraday_trigger(scheduler, self._triggering("SELL_SHORT")) is False
+
+    # ── 2. 翻转点跟随配置 (假阳性排除) ──
+
+    @pytest.mark.parametrize("hhmm,hour,minute,expected", [
+        (1015, 10, 14, False),   # 旧生产值 1015 (2026-08-15 前): 10:14 仍拦
+        (1015, 10, 15, True),    # 边界随配置右移 → 10:15 放行
+        (935, 10, 14, True),     # 现生产值 0935: 10:14 早已放行
+        (1000, 9, 59, False),    # 缺省回落值 1000 语义一致
+        (1000, 10, 0, True),
+    ])
+    def test_flip_point_tracks_configured_hhmm(self, monkeypatch, hhmm, hour, minute, expected):
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config",
+            lambda: {**self.CFG, "entry_open_blackout_hhmm": hhmm},
+        )
+        self._freeze(monkeypatch, hour, minute)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is expected
+
+    def test_missing_hhmm_falls_back_to_1000(self, monkeypatch):
+        """键缺失 → 代码默认 1000 (不是 yaml 的 0935) — 钉住默认值本身."""
+        cfg = {k: v for k, v in self.CFG.items() if k != "entry_open_blackout_hhmm"}
+        monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: dict(cfg))
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        self._freeze(monkeypatch, 9, 59)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is False
+        self._freeze(monkeypatch, 10, 0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True
+
+    # ── 3. 遥测口径 ──
+
+    def test_telemetry_reason_and_et_scale(self, monkeypatch, tmp_path):
+        """拦截须落 reason=before_open_blackout (与 after_cutoff 可区分), ts/date 走 ET.
+
+        遥测路径由 `Path(__file__).parents[2]/data/` 推导 ⇒ 改模块 `__file__` 指到
+        tmp 即可重定向, 既不污染生产 trigger_miss_telemetry.jsonl, 又能用非 TEST
+        标的 (TEST 标的被 :5189 守卫提前 return, 不落盘)。
+        """
+        (tmp_path / "app" / "playbook").mkdir(parents=True)
+        (tmp_path / "data").mkdir()
+        monkeypatch.setattr(
+            "app.playbook.pipeline.__file__", str(tmp_path / "app" / "playbook" / "pipeline.py")
+        )
+        frozen = self._freeze(monkeypatch, 0, 23)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        inst = {"id": 4242, "symbol": "US.OOB", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is False
+
+        fp = tmp_path / "data" / "trigger_miss_telemetry.jsonl"
+        assert fp.exists(), "禁触窗拦截必须留遥测痕 (否则门效果不可度量)"
+        rows = [json.loads(line) for line in fp.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["reason"] == "before_open_blackout"
+        assert row["inst_id"] == 4242
+        assert row["symbol"] == "US.OOB"
+        # ET 尺 (R-8a 2026-08-23): date 必须是 ET 当日, 不是宿主 CST 次日
+        assert row["date"] == frozen.strftime("%Y-%m-%d")
+        assert row["ts"].startswith(frozen.strftime("%Y-%m-%dT%H:%M"))
+        assert row["tz"] == "ET"
+
+    # ── 4. fail-open / 回滚路径 ──
+
+    def test_disabled_flag_allows_open_window(self, monkeypatch):
+        """开关关闭 → 09:34 照常触发 (yaml 注明的回滚路径: enabled 改 false)."""
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config",
+            lambda: {**self.CFG, "entry_open_blackout_enabled": False},
+        )
+        self._freeze(monkeypatch, 9, 34)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True
+
+    def test_malformed_config_fails_open(self, monkeypatch):
+        """hhmm 畸形 (int() 抛) → except 把 enabled 一并置 False, 不拦也不炸扫描线程."""
+        monkeypatch.setattr(
+            "app.playbook.config.get_playbook_config",
+            lambda: {**self.CFG, "entry_open_blackout_hhmm": "09:35"},
+        )
+        self._freeze(monkeypatch, 9, 34)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True
+
+    def test_clock_exception_fails_open(self, monkeypatch):
+        """取时异常 → fail-open (与既有异常处理一致, 时钟故障不得停掉全部入场)."""
+        def _boom():
+            raise RuntimeError("clock unavailable")
+        monkeypatch.setattr("app.playbook.pipeline._now_et", _boom)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is True

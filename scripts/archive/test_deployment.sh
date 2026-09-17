@@ -49,7 +49,7 @@ echo ""
 echo "2. 检查依赖安装..."
 if ! python -c "import fastapi" 2>/dev/null; then
     echo "   ❌ FastAPI 未安装"
-    echo "   请运行：pip install -r requirements.txt"
+    echo "   请运行：pip install -r requirements.lock"
     exit 1
 fi
 

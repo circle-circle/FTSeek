@@ -747,26 +747,19 @@ class CapitalSafetySystem:
             logger.warning(f"[资本安全] 创建 DB 表失败: {e}")
     
     def _load_state(self):
-        """从 DB 加载状态 — 检测 trade_env 切换自动重置基准"""
+        """从 DB 加载当前 trade_env 的状态；无记录时等待首次同步初始化。"""
         try:
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
-            c.execute("SELECT * FROM capital_state ORDER BY id DESC LIMIT 1")
+            c.execute(
+                "SELECT * FROM capital_state WHERE trade_env = ? ORDER BY id DESC LIMIT 1",
+                (self.trade_env,),
+            )
             row = c.fetchone()
             conn.close()
             
             if row:
-                # P0 修复 (2026-05-01): 检查 trade_env 是否切换
-                saved_env = row["trade_env"] if "trade_env" in row.keys() else None
-                if saved_env is not None and saved_env != self.trade_env:
-                    logger.warning(
-                        f"[资本安全] 检测到交易环境切换 (saved={saved_env} → current={self.trade_env})，"
-                        f"自动重置资金基准"
-                    )
-                    self._peak_initialized = False
-                    return  # 不加载旧状态，让首次 update_account 重新初始化
-                
                 self._state.initial_capital = float(row["initial_capital"] or 0)
                 self._state.current_equity = float(row["current_equity"] or 0)
                 self._state.peak_equity = float(row["peak_equity"] or 0)
@@ -779,11 +772,11 @@ class CapitalSafetySystem:
                 self._state.is_locked = bool(row["is_locked"])
                 self._state.lock_reason = row["lock_reason"] or ""
                 self._state.last_update = row["last_update"] or ""
-                # P0 修复 (2026-06-14): 保留 peak_equity 跨重启, 防止回撤归零
+            # P0 修复 (2026-06-14): 保留 peak_equity 跨重启, 防止回撤归零
                 # 原问题: _peak_initialized=False 导致首次 update_account 重置 peak 为当前净值
                 #   → 重启后回撤从 0% 开始, 丢失历史亏损记忆
                 # 修复: trade_env 未变时保留 DB 中的 peak, 标记已初始化
-                #   trade_env 变化已在 L613 单独处理 (重置 _peak_initialized=False)
+            #   trade_env 隔离由 WHERE trade_env=? 保证，不再用“读到他环境行”重置。
                 if self._state.peak_equity > 0:
                     self._peak_initialized = True
                     logger.info(
@@ -879,6 +872,18 @@ class CapitalSafetySystem:
             )
         else:
             # 清除历史状态，等待首次 update_account 同步
+            self._state.initial_capital = 0.0
+            self._state.current_equity = 0.0
+            self._state.peak_equity = 0.0
+            self._state.cash = 0.0
+            self._state.market_value = 0.0
+            self._state.buying_power = 0.0
+            self._state.drawdown_pct = 0.0
+            self._state.max_drawdown_pct = 0.0
+            self._state.water_level = WaterLevel.GREEN
+            self._state.last_update = ""
+            self._state.is_locked = False
+            self._state.lock_reason = ""
             self._peak_initialized = False
             logger.info("[资本安全] 历史状态已清除, 等待首次 update_account 同步")
         
@@ -911,12 +916,13 @@ def get_capital_safety_system(initial_capital: Optional[float] = None,
             trade_env=trade_env
         )
     else:
-        # DEB-20260903 #103: 单例创建后原静默忽略后续 trade_env/initial_capital —
-        #   校验一致性, 不一致时告警(不自动重建以免运行中回撤/水位状态被冲掉).
+        # DEB-20260903 #103: 单例创建后拒绝 trade_env 混用；运行中重建会冲掉
+        #   回撤/水位状态，显式失败比静默返回错误环境更安全。
         if trade_env is not None and trade_env != _capital_instance.trade_env:
-            logger.warning(
-                f"[资本安全] 单例已存在 (trade_env={_capital_instance.trade_env}), "
-                f"忽略本次传入 trade_env={trade_env} — 环境不一致, 请确认调用方")
+            raise RuntimeError(
+                f"capital_safety 单例 trade_env 不一致: "
+                f"existing={_capital_instance.trade_env}, requested={trade_env}"
+            )
         if (initial_capital is not None
                 and abs(initial_capital - _capital_instance._state.initial_capital) > 1e-6):
             logger.warning(

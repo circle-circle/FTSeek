@@ -7,8 +7,7 @@
   但 COIN 单笔占 78% — 剔除后 ≈打平; regime 未剥离; 样本内结论.
 
 本 emitter: 每次 PRE_CLOSE_EXIT / SL_BREAKEVEN / SL_TRAIL_LOCK 触发时落一行决策点
-(零行为变更), 次日 settle_overnight_shadow.py 结算反事实 (持仓过夜 vs 已退出).
-跨 regime 攒样本, 判定隔夜是否真有 edge (标的层面).
+(零行为变更)。2026-08-28 已停采, 历史反事实数据保留在 jsonl。
 
 配置键: playbook.overnight_hold_shadow_enabled (默认 true)
 回滚: 置 false + 重启.

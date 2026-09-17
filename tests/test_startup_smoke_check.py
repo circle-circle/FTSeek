@@ -10,9 +10,19 @@
 两个独立证据源 (`[StartupMode]` 三元组 + `[交易环境]` 账户路由横幅) 就位者必须全部为 sim;
 ③证据源缺席 → exit 2「判定无效」(守卫失明 ≠ 安全), 与 exit 1「确认不安全」分开。
 
+2026-09-14 增补 (跨轮转失明): 原实现只读当前档 `logs/ftseek_us.log`, 而 logrotate 是
+daily + copytruncate (实测 03:12-03:48 CST) ⇒ 进程在轮转前启动、轮转后再跑本守卫时,
+启动段整段在轮转档里, 当前档只剩尾巴: 实测 2026-09-14 10:17 (进程 00:08:55 启动,
+03:31 轮转, 服务健康) 报 exit=2「日志中未找到启动标记」, 七条断言全部无从判定。
+修法 = 当前档无段界标记时按 `daily_alert_summary.resolve_log_sources` 的语义升序拼接
+回溯窗内的轮转档 (含 .gz)。下方 TestCrossRotation 四例钉住: 拼得到 / 拼接后断言 7
+仍咬得住轮转前那半段的 Traceback (假绿面) / 全档无标记时报"拼了几档"而不是静默 /
+当前档已有标记时走快路径不读旧档 (重启后立刻跑的常规形态行为不变)。
+
 回滚: 删本文件 + revert `scripts/startup_smoke_check.py` 对应改动 (零生产代码依赖)。
 """
 import importlib.util
+import gzip
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -33,10 +43,10 @@ def _load():
     return mod
 
 
-def _write_boot_log(tmp_path, *, mode_line=SIM_MODE, route_line=SIM_ROUTE,
-                    marker="[PreFlight] OpenD 连通性检查通过 (127.0.0.1:11111)",
-                    extra="", when=None):
-    """写一份合成启动段. 关键: `[StartupMode]` 行**排在** `[PreFlight]` 之前 (照抄实测顺序)。"""
+def _boot_lines(*, mode_line=SIM_MODE, route_line=SIM_ROUTE,
+                marker="[PreFlight] OpenD 连通性检查通过 (127.0.0.1:11111)",
+                extra="", when=None):
+    """合成启动段的行列表. 关键: `[StartupMode]` 行**排在** `[PreFlight]` 之前 (照抄实测顺序)。"""
     stamp = (when or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
     parts = []
     if mode_line:
@@ -56,8 +66,13 @@ def _write_boot_log(tmp_path, *, mode_line=SIM_MODE, route_line=SIM_ROUTE,
                  "[PlaybookExit] 快循环已启动 (interval=10s)")
     if extra:
         parts.append(extra)
+    return parts
+
+
+def _write_boot_log(tmp_path, **kw):
+    """把合成启动段写进当前档 (轮转前启动/未轮转的常规形态)。"""
     log = tmp_path / "ftseek_us.log"
-    log.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    log.write_text("\n".join(_boot_lines(**kw)) + "\n", encoding="utf-8")
     return log
 
 
@@ -153,3 +168,92 @@ def test_dead_literal_needle_not_reintroduced():
     for dead in ("TRADE_ENV=1", "模拟盘 (TRADE_ENV", "[安全确认]"):
         offenders = [c for c in code_consts if dead in c]
         assert not offenders, f"文案字面量针回潮 ({dead!r}): {offenders}"
+
+
+# ══════════════ 2026-09-14 增补: 跨轮转拼接 (copytruncate 失明面) ══════════════
+
+def _split_logs(tmp_path, boot_lines, tail_lines, *, stamp=None, gz=True):
+    """模拟 logrotate copytruncate: 启动段落进轮转档, 当前档只剩轮转后的尾巴。
+
+    dateext 用**轮转当日**日期命名 (实测 ftseek_us.log-20260914 末行是 09-14 03:31),
+    所以默认用今天的戳; 两档内容不重叠, 升序拼接即完整时间线。
+    """
+    stamp = stamp or datetime.now().strftime("%Y%m%d")
+    arch = tmp_path / f"ftseek_us.log-{stamp}"
+    arch.write_text("\n".join(boot_lines) + "\n", encoding="utf-8")
+    if gz:
+        with open(arch, "rb") as raw, gzip.open(arch.with_suffix(arch.suffix + ".gz"), "wb") as z:
+            z.write(raw.read())
+        arch.unlink()
+        arch = arch.with_suffix(arch.suffix + ".gz")
+    log = tmp_path / "ftseek_us.log"
+    log.write_text("\n".join(tail_lines) + "\n", encoding="utf-8")
+    return log, arch
+
+
+def _run_split(tmp_path, **kw):
+    ssc = _load()
+    ssc.LOG = _split_logs(tmp_path, **kw)[0]
+    return ssc, ssc.run_once()
+
+
+class TestCrossRotation:
+    def test_boot_segment_in_rotated_archive_is_found(self, tmp_path):
+        """病根钉: 启动段整段在轮转档里 (当前档只有尾巴) → 仍须找到并七条全判。
+
+        旧实现只读当前档 ⇒ 报 exit 2「日志中未找到启动标记」, 七条断言全部无从判定
+        (2026-09-14 10:17 实测形态: 进程 00:08:55 启动, 03:31 轮转, 服务其实健康)。
+        """
+        ssc, (code, failed, boot_time) = _run_split(
+            tmp_path, boot_lines=_boot_lines(), tail_lines=[
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} [VIXMonitorLoop] "
+                "[app.core.scheduler_core] INFO: [VIX] 当前值=14.8 | 级别=NORMAL"])
+        assert code == 0, failed
+        assert boot_time is not None
+        assert ssc.LAST_COVERAGE["spliced"] is True and ssc.LAST_COVERAGE["sources"] == 2
+
+    def test_traceback_after_rotation_still_fails_assertion_seven(self, tmp_path):
+        """假绿面钉: 启动段被轮转劈成两半时, **后半段**的 Traceback 必须照样咬住。
+
+        旧实现在这一形态下走 exit 2 (找不到段界) ⇒ 断言 7 根本没跑, 崩了也报不出。
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _ssc, (code, failed, _bt) = _run_split(
+            tmp_path, boot_lines=_boot_lines(), tail_lines=[
+                f"{now} [PlaybookExitFastLoop] [app.playbook.pipeline] ERROR: 退出链异常",
+                "Traceback (most recent call last):",
+                '  File "app/playbook/pipeline.py", line 1, in x',
+            ])
+        assert code == 1, failed
+        assert "零 Traceback/CRITICAL" in failed
+
+    def test_no_marker_anywhere_reports_splice_count(self, tmp_path):
+        """全档都没有段界标记 → 仍 exit 2, 但必须自陈"拼了几档"(证明慢路径真跑过, 不是静默跳过)。"""
+        _ssc, (code, failed, boot_time) = _run_split(
+            tmp_path, boot_lines=["2026-09-14 00:08:59 [MainThread] INFO: 无标记的一档"],
+            tail_lines=["2026-09-14 05:00:00 [MainThread] INFO: 尾巴"])
+        assert code == 2 and boot_time is None
+        assert "未找到启动标记" in failed[0] and "已跨轮转拼接 2 档" in failed[0]
+
+    def test_fast_path_ignores_archives_when_current_has_marker(self, tmp_path):
+        """快路径不变钉: 当前档已有段界标记 → 只读当前档, 不把轮转档拼进来。
+
+        钉的是**读取面**而不是判定结果: 轮转档里放一段带 Traceback 的旧启动段 (上一个
+        进程的残骸), 当前档放轮转后那次重启的干净启动段。若实现无脑拼接, sources 会变 2
+        (与 test_boot_segment_in_rotated_archive_is_found 的断言互为反证 ⇒ 本例非空转)。
+        """
+        ssc = _load()
+        _log, _arch = _split_logs(
+            tmp_path,
+            boot_lines=_boot_lines(extra="Traceback (most recent call last):"),
+            tail_lines=["2026-09-14 05:00:00 [MainThread] INFO: 尾巴"])
+        # 轮转后又重启一次: 新的干净启动段写进当前档 (尾巴保留, 模拟 copytruncate 后继续写)
+        cur = tmp_path / "ftseek_us.log"
+        cur.write_text(cur.read_text(encoding="utf-8") + "\n".join(_boot_lines()) + "\n",
+                       encoding="utf-8")
+        ssc.LOG = cur
+        code, failed, boot_time = ssc.run_once()
+        assert code == 0, failed
+        assert boot_time is not None
+        assert ssc.LAST_COVERAGE == {"sources": 1, "spliced": False}, (
+            "当前档已有段界标记却去拼了轮转档 ⇒ 读取面变宽, 上一个进程的崩栈会污染本次判定")

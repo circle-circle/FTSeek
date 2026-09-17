@@ -54,7 +54,7 @@ EXTERNAL_CLOSE_DUP_SQL = (
 # 意外大小写变体归 MANUAL 更安全)。
 # 注意: 外部平仓检测 (~:1548 _today_orders.get) **不得**用本白名单过滤 —
 # 手动/APP 平仓正是它要检测的对象。本白名单只用于 AUTO 认领两处分类点。
-_SYSTEM_ORDER_REMARK_PREFIXES = ("pb_", "orb_", "OVER_LIMIT_TRIM")
+_SYSTEM_ORDER_REMARK_PREFIXES = ("pb_", "orb_", "ext_entry", "ext_exit_", "OVER_LIMIT_TRIM")
 
 
 def is_system_order_remark(remark) -> bool:
@@ -66,6 +66,51 @@ def is_system_order_remark(remark) -> bool:
         return False
     r = str(remark)
     return any(r.startswith(p) for p in _SYSTEM_ORDER_REMARK_PREFIXES)
+
+
+def upsert_external_close_trade_record(
+    conn, *, symbol, direction, entry_time, entry_price, exit_price, quantity,
+    realized_pnl, pnl_pct, trade_mode, created_at, trace_id=None, signal_id=None,
+    futu_order_id=None, close_order_id=None,
+):
+    closed = conn.execute(
+        "SELECT id FROM trade_records WHERE symbol=? AND direction=? AND exit_price > 0 "
+        "ORDER BY id DESC LIMIT 1",
+        (symbol, direction),
+    ).fetchone()
+    if closed:
+        return {"action": "duplicate_skip", "trade_id": closed[0]}
+
+    open_trade = conn.execute(
+        "SELECT id FROM trade_records WHERE symbol=? AND direction=? "
+        "AND (COALESCE(exit_price, 0)=0 OR COALESCE(exit_time, '')='') "
+        "ORDER BY id DESC LIMIT 1",
+        (symbol, direction),
+    ).fetchone()
+    if open_trade:
+        conn.execute(
+            "UPDATE trade_records SET exit_price=?, exit_time=?, quantity=?, "
+            "realized_pnl=?, pnl_pct=?, exit_reason='external_close', "
+            "close_futu_order_id=?, trace_id=COALESCE(trace_id, ?), "
+            "signal_id=COALESCE(signal_id, ?), futu_order_id=COALESCE(futu_order_id, ?) "
+            "WHERE id=? AND (COALESCE(exit_price, 0)=0 OR COALESCE(exit_time, '')='')",
+            (exit_price, created_at, quantity, realized_pnl, pnl_pct,
+             close_order_id, trace_id, signal_id, futu_order_id, open_trade[0]),
+        )
+        return {"action": "updated_open_trade", "trade_id": open_trade[0]}
+
+    cursor = conn.execute(
+        "INSERT INTO trade_records "
+        "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
+        "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
+        "trace_id, signal_id, futu_order_id, close_futu_order_id, config_version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2')",
+        (created_at[:10], symbol, direction, entry_time, created_at, entry_price,
+         exit_price, quantity, realized_pnl, pnl_pct, "external_close",
+         "POSITION_SYNC", "manual", trade_mode, created_at, trace_id, signal_id,
+         futu_order_id, close_order_id),
+    )
+    return {"action": "inserted", "trade_id": cursor.lastrowid}
 
 def _get_db_path():
     from app.core.db_utils import get_main_db
@@ -1787,74 +1832,27 @@ class USPositionSync:
                         _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
                         _entry_time_str = _entry_time.isoformat() if hasattr(_entry_time, 'isoformat') else str(_entry_time)
 
-                        # ── 查重守卫 (2026-08-21, BULL 1327 实锤; 2026-08-28 收紧判据) ──
-                        #    executor 平仓与 position_sync external_close 可能对同一仓位双重记账。
-                        #    entry_time 时区写法可不同 (+08:00 vs -04:00), 字符串比对会漏
-                        #    → 归一化为 epoch 秒后比对。
-                        #    判据必须是"已了结的记账行"(exit_price>0, 全仓统一口径), 不能只看
-                        #    realized_pnl IS NOT NULL: 未平仓行也带 realized_pnl 占位值, 且其
-                        #    entry_time 与本仓位同源 → 守卫会命中该仓位的开仓行, 把真实的外部平仓
-                        #    整条跳过 (不 INSERT、不通知), 而下方 DELETE 照常执行 → 平仓凭空消失。
-                        def _to_epoch_sec(_ts):
-                            try:
-                                from datetime import datetime as _dt
-                                if isinstance(_ts, _dt):
-                                    _d = _ts
-                                else:
-                                    _d = _dt.fromisoformat(str(_ts).replace('Z', '+00:00'))
-                                if _d.tzinfo is None:
-                                    # 注: 2026-07-20 前的历史 naive 行实测是服务器 CST (按 ET 解释偏 12h),
-                                    # 但守卫只比对已了结行 (相隔数月不会误命中) 且新写入 entry_time 均 aware ET,
-                                    # 故此处不加启发式纠偏。
-                                    # 8/27 时钟统一: zoneinfo 真实 ET (DST 自适),
-                                    # 极端环境落固定偏移兜底
-                                    try:
-                                        from zoneinfo import ZoneInfo
-                                        _d = _d.replace(tzinfo=ZoneInfo("America/New_York"))
-                                    except Exception:
-                                        from datetime import timezone as _tz, timedelta as _td
-                                        _d = _d.replace(tzinfo=_tz(_td(hours=-4)))
-                                return int(_d.timestamp())
-                            except Exception:
-                                return None
-                        _dup_skip = False
-                        try:
-                            _this_epoch = _to_epoch_sec(_entry_time_str)
-                            if _this_epoch is not None:
-                                _exist = _conn.execute(
-                                    EXTERNAL_CLOSE_DUP_SQL, (symbol, _dir_name)).fetchall()
-                                for _er in _exist:
-                                    if _to_epoch_sec(_er[1]) == _this_epoch:
-                                        logger.warning(
-                                            f"🛑 [US Sync] 外部平仓查重命中, 跳过重复记账: {symbol} {_dir_name} "
-                                            f"入场{_entry_time_str} 已由 trade_records.id={_er[0]} 记录 (entry_time={_er[1]})")
-                                        _dup_skip = True
-                                        break
-                        except Exception as _de:
-                            logger.warning(f"[US Sync] 外部平仓查重异常(不阻断写入) {symbol}: {_de}")
-                        if _dup_skip:
-                            _conn.close()
-                            _trade_id = None
-                        else:
-                            _cursor = _conn.execute(
-                                "INSERT INTO trade_records "
-                                "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
-                                "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
-                                "trace_id, signal_id, futu_order_id, config_version) "
-                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2')",
-                                (_et_now.strftime('%Y-%m-%d'), symbol, _dir_name,
-                                 _entry_time_str, _et_now.isoformat(),
-                                 _entry, _exit_price, int(_size),
-                                 round(_pnl, 2), round(_pnl_pct, 4),
-                                 'external_close', 'POSITION_SYNC', 'manual', _trade_mode_label,
-                                 _et_now.isoformat(),
-                                 getattr(existing_pos, 'trace_id', None),
-                                 getattr(existing_pos, 'signal_id', None),
-                                 getattr(existing_pos, 'futu_order_id', None))
-                            )
-                            _trade_id = _cursor.lastrowid
-                            _conn.commit()
-                            _conn.close()
+                        _book_result = upsert_external_close_trade_record(
+                            _conn,
+                            symbol=symbol,
+                            direction=_dir_name,
+                            entry_time=_entry_time_str,
+                            entry_price=_entry,
+                            exit_price=_exit_price,
+                            quantity=int(_size),
+                            realized_pnl=round(_pnl, 2),
+                            pnl_pct=round(_pnl_pct, 4),
+                            trade_mode=_trade_mode_label,
+                            created_at=_et_now.isoformat(),
+                            trace_id=getattr(existing_pos, 'trace_id', None),
+                            signal_id=getattr(existing_pos, 'signal_id', None),
+                            futu_order_id=getattr(existing_pos, 'futu_order_id', None),
+                            close_order_id=str(_deal_info.get('order_id') or '') or None,
+                        )
+                        _conn.commit()
+                        _conn.close()
+                        _trade_id = _book_result["trade_id"]
+                        _dup_skip = _book_result["action"] == "duplicate_skip"
 
                         # ── 归因分析: 为外部平仓生成5维度归因 (查重命中时跳过) ──
                         if not _dup_skip:

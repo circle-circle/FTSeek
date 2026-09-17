@@ -1,38 +1,27 @@
 #!/usr/bin/env python3.11
 """富途未利用通道影子采集 (DEB-20260812-futu-unused-channels 主张A/B, record-only).
 
-背景 (2026-08-12): OpenD/SDK 升级 10.9 后解锁的通道中, 两条有研究支撑且零行为变更:
-  A. get_derivative_unusual — 期权大单异动 (Cremers-Weinbaum 2010 等: 知情资金
-     先进期权后进正股). DA skill 侧已注入 prompt (llm_synth.py:231), 但无结构化
-     落库 → 无法与成交结局 join 验证"大单流领先正股方向"假说. 本脚本补落库.
-  B. get_capital_flow — 分钟级大小单净流入 (每次返回全天序列, 391行/日).
-     DA skill 侧仅生成时单次快照, 无盘中连续采样 → 无法做增量 IC. 本脚本补采样.
+背景 (2026-08-12): OpenD/SDK 升级 10.9 后解锁的通道中, capital_flow 有研究支撑
+且零行为变更。通道 A (get_derivative_unusual) 已于 2026-08-29 两轮评估后 KILLED,
+采集实现退役; 历史 data/futu_deriv_unusual.jsonl 保留。
 
 设计:
   - 采集对象 = scheduler._get_subscription_codes() 活跃集 (基准+当日指令+未平仓)
-  - TRADING: 节流 300s/次 (capital_flow 12标的×1次+derivative_unusual 12标的×1次,
-    低于 30次/30s 限流); AFTER_HOURS: 每日 1 次全量收尾拉取 (盘后序列才完整).
+  - TRADING: 节流 300s/次; AFTER_HOURS: 每日 1 次全量收尾拉取 (盘后序列才完整).
   - capital_flow 按 (symbol, capital_flow_item_time) 合并去重 — API 每次返回全天
     序列, 只追加比已存最大时间戳新的行 (防轮询放大, 2026-08-10 教训).
-  - derivative_unusual 按事件稳定键去重 (symbol|ts|action|opt|vol|strike|expiry,
-    剔除 OI/V-OI/amount 渲染抖动字段; API 返回滚动 7 天窗, 重复拉取会重放).
-  - 时间口径: capital_flow_item_time 为美东市场时间 (原样存储); derivative 事件
-    时间戳为 OpenD 服务器本地时区 (CST, 原样存储 raw_ts_str, 解析仅做结构提取).
+  - 时间口径: capital_flow_item_time 为美东市场时间 (原样存储).
 
 输出:
   data/futu_capital_flow.jsonl     — {symbol, item_time, in_flow, super/big/mid/sml}
-  data/futu_deriv_unusual.jsonl    — {symbol, event_ts_raw, side, opt_type, volume,
-                                      open_interest, v_oi, amount_usd, strike, expiry, raw}
   data/.futu_channel_shadow_state.json — 节流/幂等状态
 
 挂载: scheduler_core._llm_strategy_loop TRADING 分支 (盘末休眠块前) + AFTER_HOURS.
 回滚: futu_channels.shadow_collect_enabled=false + 重启.
 """
-import hashlib
 import json
 import logging
 import os
-import re
 import socket
 import time
 from datetime import date, datetime
@@ -43,31 +32,7 @@ logger = logging.getLogger("ftseek.futu_channel_shadow")
 
 _BASE = Path(__file__).resolve().parents[1]
 _FLOW_OUT = _BASE / "data" / "futu_capital_flow.jsonl"
-_DERIV_OUT = _BASE / "data" / "futu_deriv_unusual.jsonl"
 _STATE = _BASE / "data" / ".futu_channel_shadow_state.json"
-
-# 期权大单异动文本行解析 (富途中文文案, 改文案即断流 → 解析失败记 _parse_fail 不抛)
-# 动作三态: 买入/卖出/中性 (中性=方向不明的大单, 2026-08-12 实测 SPY 有此变体)
-_DERIV_LINE_RE = re.compile(
-    r"(?P<ts>\d{1,2}\.\d{1,2}\s+\d{1,2}:\d{2})，出现一笔"
-    r"(?P<action>买入|卖出|中性)(?P<opt>看涨|看跌)期权交易，"
-    r"成交量为(?P<vol>[\d,]+)张，未平仓数为(?P<oi>[\d,]+)张，"
-    r"V/OI值为(?P<voi>[\d.]+)，交易金额为(?P<amt>[\d,.]+)USD，"
-    r"合约行权价是(?P<strike>[\d.]+)，到期日为(?P<expiry>[\d/]+)。"
-)
-
-
-def _deriv_event_key(symbol: str, ts: str, action: str, opt_type: str,
-                     volume: int, strike: float, expiry: str) -> str:
-    """事件稳定去重键 (2026-08-12 修复): 剔除 OI/V-OI/amount 易变字段.
-
-    原实现对整行原文取 MD5 — 富途多次渲染同一事件时 V/OI 存在舍入抖动
-    (实测 SPY 8.10 23:58 同行 v_oi 0.3/0.2 并存), 旧键会把同一事件判为
-    两条 → 逻辑重复 5/354. 稳定键只用事件中不变的身份字段.
-    代价: 同分钟同价同量的两笔真实独立交易会被合并 (概率极低, 接受).
-    """
-    raw = f"{symbol}|{ts}|{action}|{opt_type}|{volume}|{strike}|{expiry}"
-    return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
 def _enabled() -> bool:
@@ -121,33 +86,6 @@ def _max_item_time_per_symbol() -> Dict[str, str]:
     except Exception:
         pass
     return out
-
-
-def _seen_deriv_hashes() -> set:
-    """已存事件的稳定键集合.
-
-    存量行是旧键 (整行哈希) 写入的, 但结构化字段齐全 → 直接重算稳定键,
-    键制切换不会让 7 天滚动窗内的旧事件重放进库.
-    """
-    seen = set()
-    if not _DERIV_OUT.exists():
-        return seen
-    try:
-        for line in _DERIV_OUT.read_text().splitlines():
-            try:
-                r = json.loads(line)
-                if r.get("event_ts_raw") and r.get("action"):
-                    seen.add(_deriv_event_key(
-                        r["symbol"], r["event_ts_raw"], r["action"],
-                        r.get("opt_type", ""), int(r.get("volume", 0)),
-                        float(r.get("strike", 0) or 0), r.get("expiry", "")))
-                elif r.get("event_hash"):
-                    seen.add(r["event_hash"])  # 结构字段缺失的旧行兜底
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return seen
 
 
 def _active_symbols(scheduler) -> List[str]:
@@ -345,64 +283,6 @@ def _collect_iv_hv(ctx, symbols: List[str]) -> int:
     return len(rows_buf)
 
 
-def _collect_deriv_unusual(ctx, symbols: List[str]) -> int:
-    from futu import RET_OK
-    seen = _seen_deriv_hashes()
-    new_rows = []
-    parse_fail = 0
-    for sym in symbols:
-        try:
-            ret, data = ctx.get_derivative_unusual(sym)
-            if ret != RET_OK or not isinstance(data, dict):
-                continue
-            content = data.get("content") or ""
-            for line in content.splitlines():
-                line = line.strip()
-                if not line or line.startswith("期权大单异动"):
-                    continue  # 空行/标题行
-                m = _DERIV_LINE_RE.search(line)
-                if m:
-                    # 先解析后去重: 稳定键剔除 OI/V-OI/amount (跨次渲染会抖动)
-                    _opt_type = "CALL" if m.group("opt") == "看涨" else "PUT"
-                    h = _deriv_event_key(
-                        sym, m.group("ts"), m.group("action"), _opt_type,
-                        int(m.group("vol").replace(",", "")),
-                        float(m.group("strike")), m.group("expiry"))
-                    if h in seen:
-                        continue
-                    new_rows.append({
-                        "symbol": sym,
-                        "event_hash": h,
-                        "event_ts_raw": m.group("ts"),
-                        "action": m.group("action"),
-                        "opt_type": _opt_type,
-                        "volume": int(m.group("vol").replace(",", "")),
-                        "open_interest": int(m.group("oi").replace(",", "")),
-                        "v_oi": float(m.group("voi")),
-                        "amount_usd": float(m.group("amt").replace(",", "")),
-                        "strike": float(m.group("strike")),
-                        "expiry": m.group("expiry"),
-                        "raw": line,
-                        "collected_at": datetime.now().isoformat(timespec="seconds"),
-                    })
-                    seen.add(h)
-                elif "出现一笔" in line:
-                    parse_fail += 1
-                # 其余行 = 非事件内容 ([timestamp:] 标记 / IV 评述 / 支撑阻力
-                # 评述文本), 静默跳过 — 2026-08-12 实测 content 混合多段内容
-            time.sleep(0.3)
-        except Exception as e:
-            logger.warning(f"[futu通道影子] derivative_unusual {sym} 异常: {e}")
-    if new_rows:
-        _DERIV_OUT.parent.mkdir(parents=True, exist_ok=True)
-        with _DERIV_OUT.open("a", encoding="utf-8") as f:
-            for r in new_rows:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    if parse_fail:
-        logger.warning(f"[futu通道影子] derivative 文本解析失败 {parse_fail} 行 (富途文案可能变更)")
-    return len(new_rows)
-
-
 def _collect_top_movers(ctx) -> int:
     """通道 E: 全市场盘中异动榜快照 (2026-08-29 能力利用率审计, record-only).
 
@@ -479,19 +359,6 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         return
     try:
         n_flow = _collect_capital_flow(ctx, symbols)
-        # 2026-08-29: 通道 A 裁决 KILLED (用户裁"3批") — 两次独立评估超额均为负
-        #   (8/24 n=3207 -0.006%; 8/29 n_paired=3556 excess=-0.014% WR47.8%),
-        #   Cremers-Weinbaum 假说在本标的不成立。独立开关 deriv_collect_enabled
-        #   (缺省 true 零变更; 本批 config 置 false 停采省额度, 通道 B 继续攒样)。
-        #   回滚: config 删键或置 true.
-        n_deriv = 0
-        try:
-            from app.core.config_container import get_config as _gc
-            _deriv_on = bool(_gc().get_dotted("futu_channels.deriv_collect_enabled", True))
-        except Exception:
-            _deriv_on = True
-        if _deriv_on:
-            n_deriv = _collect_deriv_unusual(ctx, symbols)
         # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
         # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
         n_ofi = _collect_ofi_baseline(ctx, symbols)
@@ -511,8 +378,8 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     if is_after_hours:
         st["last_afterhours_date"] = str(date.today())
     _save_state(st)
-    if n_flow or n_deriv or n_ofi or n_iv or n_movers:
+    if n_flow or n_ofi or n_iv or n_movers:
         logger.info(
             f"[futu通道影子] 采集完成 ({phase}): capital_flow +{n_flow} 行, "
-            f"deriv_unusual +{n_deriv} 事件, ofi_baseline +{n_ofi} 快照, "
+            f"ofi_baseline +{n_ofi} 快照, "
             f"iv_hv +{n_iv} 行, movers +{n_movers} 快照, 标的 {len(symbols)} 只")

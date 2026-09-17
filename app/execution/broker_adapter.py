@@ -468,7 +468,7 @@ class FutuBrokerAdapter:
             return self._simulate_fill(order)
 
         try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK, TimeInForce, Session
 
             # 转换方向 (确保 Order 对象有 direction 或从 action 推断)
             trd_side = order.trd_side if hasattr(order, 'trd_side') else (TrdSide.BUY if order.direction == Direction.LONG else TrdSide.SELL)
@@ -503,6 +503,7 @@ class FutuBrokerAdapter:
                 order_type=futu_order_type,
                 trd_env=trd_env,
                 acc_id=int(self.account_id) if self.account_id else 0,
+                time_in_force=TimeInForce.DAY, session=Session.RTH,  # R04
             )
 
             if ret == RET_OK:
@@ -692,7 +693,7 @@ class FutuBrokerAdapter:
             return {"success": False, "reason": "not_connected"}
 
         try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK, TimeInForce, Session
 
             trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
 
@@ -1033,7 +1034,7 @@ class FutuBrokerAdapter:
 
         for attempt in range(1, max_attempts + 1):
             try:
-                from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+                from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK, TimeInForce, Session
 
                 futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET
                 trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
@@ -1051,6 +1052,7 @@ class FutuBrokerAdapter:
                     order_type=futu_order_type,
                     trd_env=trd_env,
                     acc_id=int(self.account_id) if self.account_id else 0,
+                    time_in_force=TimeInForce.DAY, session=Session.RTH,  # R04
                 )
 
                 if ret == RET_OK:
@@ -1161,7 +1163,7 @@ class FutuBrokerAdapter:
             }
 
         try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK, TimeInForce, Session
 
             trd_side = TrdSide.BUY if direction.upper() == "BUY" else TrdSide.SELL
             futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET

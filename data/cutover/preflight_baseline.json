@@ -1,0 +1,28 @@
+{
+ "frozen_at": "2026-09-14T15:52:08+08:00",
+ "rule": "棘轮: 基线内的探针状态静默 (既有墓地/长期未裁面), 状态跃迁才告警; 重新冻结是人工动作 (--accept-baseline), 脚本自身永不自动写基线",
+ "keys": {
+  "P0": "ok",
+  "P1": "block",
+  "P2": "warn",
+  "P3": "warn",
+  "P4": "warn",
+  "P5": "warn",
+  "P6": "warn",
+  "P7": "ok",
+  "P8": "warn",
+  "P9": "warn"
+ },
+ "readings": {
+  "P0": "TRADE_ENV=1 AUTO_TRADE_ACCOUNT=sim ALLOW_REAL_TRADING=false DASHBOARD_DB_ISOLATION=1",
+  "P1": "graduated=False ic_t3=-0.0155 n_t3=265 reason=未毕业: ['ic_positive', 'no_consecutive_5_losses']",
+  "P2": "共有表 35 | 列集不同 4 张 | 列序不同 1 张 | 切 live 触发补列 33 条 · 切 sim 触发 0 条",
+  "P3": "sim 1 行(envs=[1]) | live 0 行(envs=[]) | live 有 account_id 列=False",
+  "P4": "sim 2 行(owner=['auto']) | live 8 行(owner=['manual'], 僵尸 size=0 共 8) | PK=symbol:True source_type列:False | 两库同标的重叠 0",
+  "P5": "入场单号污染: sim 2 行 / live 0 行 | 真 SL 单号: sim 0 / live 1",
+  "P6": "pb_stop_ 留痕 {'sim': 0, 'live': 0} | 日志 'live STOP 单已挂' 命中 0",
+  "P7": "两库 trade_mode 归属纯净 (双向 0 行)",
+  "P8": "研究库 playbook_instructions 2151 行 (近30天 1423) | trade_records 823 行 | 分臂 [('PLAYBOOK_SIM', 479), ('MAIN_PIPELINE', 179), ('SCALPING', 129), ('PLAYBOOK_SHADOW', 23), ('ORB_ENGINE', 11), ('POSITION_SYNC', 2)]",
+  "P9": "live 库分臂 {'MANUAL': 12, 'POSITION_SYNC': 2} | auto 臂行数=0 (从未跑过) | 硬编码 sim 载体的研究脚本 ['weekly_trade_summary.py']"
+ }
+}

@@ -23,6 +23,7 @@ Phase 1 实现: 通过 Futu OpenD 获取美股实时行情 (LV3)
   quote = provider.get_quote("US.NVDA")
   context = provider.get_full_market_context("US.NVDA")
 """
+import atexit
 import logging
 import os
 import socket
@@ -66,6 +67,35 @@ def silence_futu_sdk_logs() -> None:
 # import 即抑制: 任何 import 本模块的进程 (main / dashboard / cron 脚本)
 # 在建立第一个 Futu 连接前即完成静默, 不再依赖"连接时"时机。
 silence_futu_sdk_logs()
+
+
+def enable_daemon_threads() -> None:
+    """SSOT 唯一入口: 让 futu SDK 内部线程全部 daemon (2026-09-16 提取, 生产侧落点).
+
+    与 `tests/conftest.py` 2026-08-27 那段是**同一根因**, 本函数把测试侧已验证的
+    修法落到生产侧: SDK 的 `CallbackExecutor` 是**非 daemon** `threading.Thread`,
+    永久阻塞在 `self._queue.get()`; 只要有一个 `OpenQuoteContext` 未 close, 解释器
+    收尾时 `threading._shutdown()` 的 join 就**永不返回** ⇒ 进程干完活却不退出。
+
+    实证 (2026-09-16): DA 盘前 pipeline 20:21 活已干完, 25 分钟不退出 → cron agent
+    判为挂起 → SIGTERM(`PIPELINE_EXIT=143`) → **整条管线全量重跑** (白烧一倍 LLM
+    预算); 2026-09-11 更留下存活 **2 天 16 小时**的孤儿进程 (持 `ftseek_us.db` 三
+    句柄 + 一条 OpenD ESTAB)。daemon 化后, 这类"收尾拖住不退"在**任何 import 本
+    模块的进程**里都不再可能 (main / dashboard / cron 脚本 / DA skill pipeline)。
+
+    对主服务无行为变更: `_graceful_shutdown()` 第 4 步已 `data_router.close()` 释放
+    LV3, 末尾 `os._exit(0)` 本就绕过 SDK 线程 —— 本函数只是让"暴力退出"不再是必需。
+    注意: 线程的 daemon 标志在**建线程时**读取, 事后设置无效 ⇒ 必须早于本进程建立
+    第一条 futu 连接, 故与 `silence_futu_sdk_logs()` 一样在模块级 import 即调用。
+    """
+    try:
+        from futu.common.sys_config import SysConfig
+        SysConfig.set_all_thread_daemon(True)
+    except Exception as _e:
+        logger.warning(f"[FutuThreads] futu 线程 daemon 化失败 (非致命): {_e}")
+
+
+enable_daemon_threads()
 
 
 def _configured_stock_sub_types() -> List[str]:
@@ -2335,3 +2365,40 @@ def reset_futu_lv3_provider():
             _futu_lv3_instance.close()
             _futu_lv3_instance = None
         logger.info("[FutuLV3] 单例已重置")
+
+
+def _atexit_release_futu_lv3(timeout: float = 5.0) -> None:
+    """进程正常退出时释放单例连接 —— atexit 钩子 (**有界, 绝不拖住退出**).
+
+    为什么需要: `reset_futu_lv3_provider()` 只有显式调用才会跑; 短命 CLI/cron 进程
+    (DA skill `pipeline.py`、UE `scripts/llm_universe_scan.py`、审计脚本) 走完
+    `get_futu_lv3_provider()` 就退出, 单例的行情订阅会留在 OpenD 侧直到 TCP 超时
+    才回收 —— 而 OpenD 槽位是稀缺资源 (盘前多进程并发时尤其明显)。
+
+    为什么"有界": `close()` 内含一轮 unsubscribe, OpenD 不可达时可能阻塞 (SDK 已知
+    问题) —— 无界的话, 一个**清理**钩子会把退出重新变成挂死。这里把 close 丢进
+    daemon 线程 + `join(timeout)`: 超时即放弃清理, 进程照常退出, 只留一条告警。
+
+    为什么不影响主服务: `main.py::_graceful_shutdown()` 末尾走 `os._exit(0)`,
+    **atexit 在 os._exit 下不执行** ⇒ 本钩子对常驻服务是 no-op (其 LV3 释放由
+    `data_router.close()` 第 4 步负责, 语义不变)。
+
+    回滚: 删掉本函数与下面的 `atexit.register(...)` 一行即可 (纯增量, 无调用方)。
+    """
+    inst = _futu_lv3_instance
+    if inst is None:
+        return
+    _t = threading.Thread(
+        target=reset_futu_lv3_provider, name="futu-lv3-atexit-release", daemon=True
+    )
+    _t.start()
+    _t.join(timeout)
+    if _t.is_alive():
+        logger.warning(
+            f"[FutuLV3] atexit 释放未在 {timeout:.0f}s 内完成 → 放弃清理直接退出 "
+            f"(OpenD 侧槽位由 TCP 断连回收)"
+        )
+
+
+# 2026-09-16: 短命进程的兜底释放 (常驻服务不受影响, 见 docstring)
+atexit.register(_atexit_release_futu_lv3)

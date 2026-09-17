@@ -1408,8 +1408,23 @@ hermes 侧已把该次运行判为失败：`last_status = error`，`last_error =
 
 **处置建议（需批准，本批未执行）**：`kill 1075525`（及其父 shell 1075503）；并给 DA cron 的 pipeline 调用套 `timeout`（对比 UE cron 每段都有 `timeout 900/1800/600`，DA 这行**没有**），否则同类挂死会重现。
 
+> **✅ 收口（2026-09-14 12:40 CST，用户裁「如果问题确认，请执行修复」）**：上条建议的**前半已执行**——两个 PID 以 `SIGTERM` 干净退出（**未用到 `SIGKILL`**），复查证据：`ps` 无 `deep-stock-analysis` 残留、`11111` 端口只剩现役服务（PID 1278022）的连接、`ftseek_us.db` 持有者只剩 1278022/1275992、`ftseek-us.service` 仍 `active` 且 `MainPID=1278022`/`NRestarts=0` **未变**（即本次清理**没有触碰服务**）、`-wal` 仍 424,392B（无异常截断/膨胀）。挂死时该进程实际存活 **2 天 16 小时**（不是 26.5h），5 个线程全 `S`、CPU 累计仅 2m25s、`wchan=0`。取证快照（kill 前后各一份，含 fd 表/socket 对端/线程态）：`/tmp/orphan_forensics_20260914.txt`。
+>
+> **后半（给 cron 套 `timeout`）仍未执行，且不应由代码批执行**：改的是 `~/.hermes/cron/jobs.json`（自动化层），按 handoff.md:1432 既有纪律需用户裁。补充实测覆盖面——该 skill 目录下 **3 个 enabled 作业全无 `timeout`**：`e0d574cc1a3c`（盘前扫描，即本次挂死者）/ `3a6c83bbd84c`（盘后复盘+记忆更新）/ `6af0648e3eb3`（alpha-backfill，8 月曾连续 8 次 rc=124）；另一次性作业 `d630ce54fc84`（09-14 22:40 RFC-082 双验证）同样没套。**系统性面**：crontab 96 行含 python 中 **49 行未套 `timeout`**。
+>
+> **仓内已落地的兜底（不等裁决即生效）**：`scripts/data_freshness_watchdog.py` 新增 **D4 孤儿进程维**——判据 `(cmdline 或 cwd) 命中 ORPHAN_PATTERNS 且存活 > 2h`（阈值 = DA 历史最长实跑 51min 的 2.3 倍）。**为何必须带 cwd 一路**：挂死的 python 子进程 argv 是 `.../venv/bin/python pipeline.py --mode full --top 5 --symbols  --format json`，`cd <skill>/scripts` 发生在**父 shell**，故子进程 argv 里根本没有 skill 路径——只按 cmdline 匹配会**恰好漏掉真正握着库句柄与 FutuOpenD 连接的那一个**，只抓到无害的包装壳（这一缺陷是被本批新写的钉子测试当场抓出来的，不是事后想到的）。已活体验证：诱饵进程被 cwd 一路命中、真机 `/proc` 118 进程 0 跳过 0 误伤；常驻服务（`main.py --start` / `hermes_worker.py` / `gateway run` / `systemd --user`）两路信号均不命中并有钉子测试锁住。**另堵一个假绿口子**：`/proc` 采样跳过率 >50% 时不再静默报「0 孤儿」，改报 `D4:proc_scan_degraded`。钉子 `tests/test_watchdog_liveness.py`（52→76 例）。
+
+> **⚠️ 顺带查出并修掉一个既有生产缺陷（不属 §16.10，但同批发现）**：`data_freshness_watchdog.py` 的 **D1/D2/D3/D4 四个检测器**的 `detector_error` 出口都写成 `return ([], known, judged) if baseline.get("Dn:detector_error") else [ {...} ], 0, 0` —— **条件表达式比元组构造结合得更紧**，故「已基线化、本轮应静默」那条分支实际返回 `(([], known, judged), 0, 0)`，即**发现位是个元组而不是 list**；下游 `collect_liveness()` 的 `t_find + h_find + f_find + o_find` 遂成 `tuple + list` → **TypeError → 整个看门狗崩掉（四维一起失明）**，只剩 crontab 那行的钉钉兜底吼一声「watchdog 自身执行失败」。触发条件恰好是「上一轮某检测器坏过、且其 `detector_error` 键已被 `--update-liveness-baseline` 冻结进基线」——**即最需要它继续工作的时刻**。D1/D2 属既有代码（2026-08-28 批），D3 属 09-14 早批，D4 是新抄的；已四处同改显式 `if/return`，并补四维同款**返回形状契约**钉子（变异验证：把 D1 改回陷阱写法 → 该钉立即红）。顺带按仓内 R5 纪律把 D4 新增的 `except: continue` 改为计数留痕，`tests/test_except_pass_ratchet.py` 余量由 0 回到 1（950/951）。
+
 **(b) `scripts/exit_atr_retrace_sim.py:89` 疑似单位误用**：`atr_pct >= 3.0` 按**百分数**比较，而 DB 中 `atr_pct` 实测为**比例**（§16.4：728 行 max 0.1538，`>1.0` 的行 0）⇒ 该判据恒假。**仅提示，本批未修**（属退出参数域，计划 P0.5 明令不动）。这与 §16.4 的量纲确证互为印证：任何把 `atr_pct` 当百分数用的代码都是错的。
 
+> **❌ 更正（2026-09-14 13:20 CST，实测否证；原文按「不改写历史」纪律保留）**：本条指控**不成立**，且末句的推广「任何把 `atr_pct` 当百分数用的代码都是错的」**是错的、照它去改会把尺子改坏**。
+>
+> - **根因是同名不同尺**：§16.4 量的 728 行 max 0.1538 是 **`playbook_instructions.atr_pct`**（比例尺）；而本脚本**从不读该列**，它自己算 `CAST(json_extract(metadata_json,'$.atr') AS REAL)/entry_price*100`，其中 `$.atr` 是**绝对价差**（实测 n=502，min 0 / max 109.43 / avg 13.21 美元）⇒ 结果是**百分点**（min 0 / max 6.29 / **avg 3.75**）。
+> - **「恒假」被运行时直接否证**：该判据把样本切成 **低中波 n=36 / 高波 n=372**（`PYTHONPATH=. ./venv/bin/python scripts/exit_atr_retrace_sim.py` 输出原文可见），两桶皆非空；全库口径 502 行中 `>=3.0` 占 **379 行（75.5%）**。
+> - **各臂量纲自洽的独立佐证**：臂A/臂B 用 `clamp(k×ATR, 0.5, 1.5)`，k∈0.15–0.40。按百分点 `0.25×3.75≈0.94` 落在区间内、各臂有展开；**若真按 §16.10(b) 去「修」（除以 100）**，`0.25×0.0375≈0.009` 会被**全部钳到下限 0.5** ⇒ 所有臂退化成同一条，输出却依旧「正常」——**这才是本条真正的风险：一次出于好意的修复会让退出参数尺子静默失效**。
+> - **处置**：不改判据（它本来就对），改为**根治同名歧义**——别名 `atr_pct` → **`atr_pp`**（percentage points），文件头补量纲声明并写明与 `playbook_instructions.atr_pct` 的尺差。该脚本零消费方（不在 crontab、无人 import、纯只读），改名后输出与改前**逐字节相同**（`diff` 为空）。新增钉子 `tests/test_exit_atr_retrace_sim_units.py`（5 例）：钉住 `*100`、阈值 3.0 的量纲、比例尺标识符不得回流，外加一条纯数值的**退化数学钉**（百分点尺有区分度 / 比例尺全钳到 0.5）。变异验证两刀皆红：去掉 `*100` → `test_sql_alias_is_percentage_scaled` 红；阈值改 0.03 → `test_bucket_threshold_stays_in_percentage_points` 红。
+> - **教训（值得进 AGENT.md 候选）**：跨文件比较同名指标前，必须先确认**该标识符在该文件里的定义式**，不能拿另一张表的量纲去判它。「量纲声明」纪律的价值正在此处——本条恰好是**没有声明**才让审计者（和读者）都掉进同名陷阱。
 ### 16.11 边界声明、回滚与下一步
 
 **本批做了什么**：仓内 7 个文件（2 新增 + 5 修改）与 6 个测试文件（含 2 个驱动）、仓外 DA 2 个文件；新增配置 6 行；追加本 DEB 与 handoff。
@@ -2202,6 +2217,312 @@ compute_entry_band(nan, False) = (nan, nan)   compute_entry_band(inf, False) = (
 **周一读账基线（重启后重新确认，全部为 0 ⇒ 前后对比干净）**：`metadata_json` 含 `reprice_audit` **0 行**；`raw_instruction_json` 含 `size_estimate` / `cost_coverage` / `executability` **各 0 行**；含 `planned_preview` **0 行**（2151 行指令全都没有）。周一这几个数只要 >0，就是新账真的开始记了，不会与旧数据混淆。
 
 **边界更新**：本批**已重启**（用户裁，11:52:33），但**仍未提交、未推送、未下单、未观察任何模拟成交**；`.env` / LIVE / 持仓 / 退出参数 / `data/*_baseline.json` 一律未动。**重启没有改变「尚未观察模拟成交」这个结论** —— 它只是把「闸门是否纸面」这一可能性**彻底排除**掉了。
+
+## 二十一、2026-09-15 P2.2 缺陷修复批交付回执：初筛 `tradeable` 恒空的键名错配根因修 + 名额排序改「提及数降序」+ 取价/`now` 顺序陷阱（**已实跑验证，尚未观察模拟成交**）
+
+> **一句话**：§17 落地的 P2.2 输入初筛在 09-14 两轮首跑里**正向半边从未生效**（`tradeable` 恒空），根因不是缺数据而是**键名错配**；本批修三处，今晚 19:40 `da_feed` 轮**实跑验证**：`tradeable` 由 `[]` → **15 个**，模型 surfaced 5 个**全部落在受检集合内且全判 PASS（5/5，修前 4/10 与 1/6）**，`missing_fields` 里 `source_asof` **彻底消失**，且**零 `future_quote` 误判**。改动仅限 `scripts/`（免重启即生效），SSOT `app/playbook/candidate_eligibility.py` **一行未动**。
+
+### 21.1 病灶实证（09-14 两轮首跑，只读取证）
+
+`data/shadow/llm_universe_scan.jsonl` 两条 `scan_window=premarket/midday` 记录的 `input_prescreen`：`status=ok`、`checked=30`，但 **`tradeable=[]`**，30/30 受检标的 `missing_fields` 恒含 `source_asof`、`quote_age_sec=None`。而 `evaluate_candidate` 的 PASS 要求**零 missing** ⇒ **PASS 态在结构上不可达**。即 P2 验收①「初筛真发生在 LLM 之前**且能放行**」只兑现了负向半边（`low_atr`/`price_floor` 正常判、零误杀），正向半边是**哑的**。
+
+### 21.2 根因＝键名错配，不是数据缺失
+
+- 供应商侧：`app/data/futu_lv3_provider.py:1098`（`get_full_market_context`）与 `:1056`（finnhub 降级兜底）等**各处**写的都是 `timestamp`（unix float，语义＝**我方取数/入 push 缓存的时刻**）。
+- SSOT 侧：`app/playbook/candidate_eligibility.py:134 _source_time` 只认 `source_asof` / `update_time` 两个键。
+- 两边都"对"，但**对不上** ⇒ 报价明明取到了（`price` 有值、`quote_gate` 在扫描期已关），时戳却被判为"缺"。这是典型的**接口契约靠约定而非靠类型**导致的静默失效：不报错、不告警，只是把 PASS 变成 UNKNOWN。
+
+### 21.3 修法①：扫描期报价时戳**键名归一**（`_prescreen_quotes_with_asof`）
+
+初筛前预取一次批量报价，把 `timestamp` 补写为 `source_asof`（仅在两个 SSOT 键都缺时），再作为 `quotes=` 传给 `screen_candidates`（该函数本就支持预取注入，签名零改动）。三条护栏：
+
+- **fail-open**：预取抛异常 ⇒ 返回 `None` ⇒ 传 `quotes=None` ⇒ `screen_candidates` 自取价，**行为逐字退回修前**，不炸本段（钉子 `test_quote_prefetch_failure_fails_open`）。
+- **语义诚实**：`timestamp` 是"我方观测时刻"，**不是**交易所撮合时点 ⇒ summary 里写 `source_asof_basis="provider_observation_timestamp"` 标明口径，审计可区分，不得当行情时点用。
+- **取价入参与修前逐字同口径**：预取前按 `_SYMBOL.fullmatch` 过滤（与 `screen_candidates:186` 自取价时同一把尺）——材料里混进的非标的形状 token 不得进 router，否则一个坏代码可能拖垮整批取价（修前它们本就被挡在取价之外）。
+
+### 21.4 为何**刻意不改** SSOT 的 `_source_time`（登记待裁）
+
+全局补键名会同时作用于 **inject 侧**（`scripts/llm_universe_scan.py:3289`）——那里按 `status != "REJECT"` **真过滤**，且用 `load_candidate_policy()` 的 `max_quote_age_sec=90`。UE scan 在 ET 07:40/09:10 盘前跑，距入场窗约 2 小时 ⇒ 一旦时戳被补上，**会新激活 `stale_quote` 拒绝并真丢候选**＝交易路径行为变更。按 AGENT.md C4「行为变更一律影子先行」，这必须另立影子批，不能夹带在一个"修键名"的批里。扫描期口径本就**不含**新鲜度门（`_scan_phase_policy` 把 `max_quote_age_sec` 设成 `1e12`），所以本批补时戳**只让"缺数"不再冒充"未知"，不产生任何新拒绝、不改任何门**。
+
+### 21.5 夹具盲区：为什么这个缺陷能穿过 88 个测试（**假绿**）
+
+既有夹具（`_ps_quote` / `_e2e_router`）一律喂 `source_asof`，**比生产报价形态宽松** ⇒ 键名错配在测试里**结构上不可见**。新增回归钉 `test_provider_timestamp_only_shape_reaches_pass` 把报价改成生产形态（剥掉 `source_asof`/`update_time`、只留 `timestamp`），断言 PASS 可达 + `source_asof_normalized>0` + `source_asof_basis` 正确；同时钉住**真缺数的仍必须诚实落 UNKNOWN**（`ESTC` 空报价不得被归一"洗白"成 PASS）。**教训**：夹具的宽松度必须对齐生产形态，否则"测试全绿"只证明夹具自洽。
+
+### 21.6 修法②：初筛名额排序改「被几条材料具名」降序（同数保首现）
+
+- **病灶**：修前只保材料索引顺序截断 30 个，09-14 实测受检集合与模型 surfaced 的重叠仅 **4/10** 与 **1/6** ——未受检的全落 `overflow_skipped`（**含当日真成交的 AAOI/CRWD**）⇒ 初筛看的和模型选的几乎是两批票，验收①即便修好键名也仍会落空。
+- **判据**：被多条**独立**材料交叉具名 ⇒ 更可能被提名 ⇒ 优先占名额；同提及数按首现顺序（＝gather 传导优先级）**稳定排序** ⇒ 不丢既有优先级语义，只把多源热点提进名额内。仍保计划 P1.4「先定序后截断」：砍的是提及数最少的尾巴，不是字典序的 Z 开头。
+- **刻意不动** `input_prescreen_max_symbols=30`（一次一个变量；覆盖面够不够等实跑数据再裁）。summary 里落 `ordering="mention_count_desc_then_first_seen"` 便于分段归因。
+- 钉子改法：`test_named_set_ordered_by_mention_count_then_first_seen` 不再硬编码顺序常量（段落重排会假红），改为**从材料索引现推提及数**、断言产出顺序满足**契约性质**（集合不变 / 提及数非增 / 同数保首现 / 全单提及时不得退化成字典序）⇒ 钉的是规则不是某一次排列。
+
+### 21.7 本会话新发现的**第三个陷阱**：`now` 在取价之前定型 ⇒ `future_quote` 误判（比修前更糟）
+
+- **机理**：`_prescreen_input_symbols` 修前在取价**之前**执行 `now = now or _now_et()`，而供应商 `timestamp` 写的是**取价完成时刻** ⇒ `_source_time` 算出的 `quote_age = now − stamp` 为**负**；`evaluate_candidate:110` 的 `quote_age < −5 ⇒ REJECT future_quote` 判据在扫描期口径下**仍然生效**（关掉的只是新鲜度上限，不是未来容差）。批量取 30 只一旦走降级源（AlphaVantage 免费档**每只 `sleep 12.0`**）远超 5s。
+- **为什么这比修前更糟**：修前是"缺时戳 ⇒ UNKNOWN（未定，执行侧仍受原风险门约束）"；触发本陷阱则变成"**明确不可交易**"写进 brief 的 `context_only` 段，**反向误导模型**放弃本可交易的标的。即修法①若无本条配套，有可能把缺陷从"哑"升级成"错"。
+- **修法③**：`now` 改为**在取价之后**定型（调用方显式传 `now` 时保持原值，不擅改观测时点——测试/回放语义不变）。
+- **钉子与变异实证**：`test_now_resolved_after_quote_prefetch` 钉**调用顺序**而非真 sleep（确定、零耗时、不依赖机器快慢）。变异验证：把顺序改回修前（仅在内存里构造变异体、经 `sys.modules` 注入，**未触碰仓库文件**）⇒ 该钉立即红，实测 `order=['now','quotes']`、`assert 1 < 0` 失败。**不是空钉**。
+- **同类风险已排查**：`_e2e_router` 夹具把时戳设成 `now−5min` 正是为了避开 `future_quote`，这也说明该判据此前已被意识到，但**只在夹具层规避、未在生产路径钉住** ⇒ 生产形态与夹具形态的第二次分叉（第一次是 21.5 的键名）。
+
+### 21.8 今晚 19:40 `da_feed` 轮实跑验证（cron `40 19 * * 1-5`，`scripts/` 免重启即生效）
+
+`data/shadow/llm_universe_scan.jsonl` 末条 `type=scan / scan_window=da_feed / prompt_version=v2.13 / brief_template_version=ue_brief_v4`：
+
+| 判据 | 修前（09-14 两轮） | 修后（09-15 19:40） |
+|---|---|---|
+| `status` | ok | ok |
+| `tradeable` | **`[]`（PASS 不可达）** | **15 个**：FPS VERA BLSM AXON DRVN QBTS RKLB RIG NOK ASML AXTI TRMD CRCL COIN BMNR |
+| `missing_fields` 含 `source_asof` | **30/30** | **0/30** |
+| `quotes_prefetched` / `source_asof_normalized` | 无此字段 | **28 / 28**（`basis=provider_observation_timestamp`） |
+| `ordering` | 无此字段 | `mention_count_desc_then_first_seen` |
+| surfaced ∩ 受检 | **4/10、1/6** | **5/5**（FPS VERA AXON TRMD COIN 全部受检且全判 PASS） |
+| `future_quote` 误判 | — | **0** |
+| `named_in_materials` / `checked` / `overflow_skipped` | 30+ | 35 / 30 / `[MSTR, CAT, INTC, NFLX, ORCL]`（单提及尾巴） |
+
+`context_only` 12 个，**reasons 全部可归因且符合 P1.3 设计意图**：`low_atr` ×4（TCOM/LEN/AXP/PDM）· `price_floor` ×6（LAES/EPM/VRA/BIOX/FBLG/CNTB）· `unsupported_security_shape` ×2（**BFH-PB / TFC-PI，正是优先股**——P1.3 要挡的形状门首次有实证命中）。`unknown` 3 个（COE/RCKTW/LUXE，缺 `price`+`screening_atr_ratio`）⇒ **缺数仍诚实落 UNKNOWN，未被归一洗白**。
+
+**28 vs 30 的差额已解释**：`BFH-PB`/`TFC-PI` 被 `_SYMBOL`（`US\.[A-Z]{1,6}(?:[.-][A-Z])?`，尾段只容**一个**字母）挡在预取之外，随后由 `evaluate_candidate` 判 `unsupported_security_shape` ⇒ **两条路口径一致、无矛盾**。
+
+**空转守卫未误跳**：本轮 surfaced 5 个、正常落库，`SCAN_SKIP_NO_INPUT` 未触发。日志 `[prescreen] 报价命中 28/28, 时戳键归一 28 条` 为本批新增留痕行。
+
+### 21.9 边界、回滚与未做
+
+- **本批做了什么**：`scripts/llm_universe_scan.py`（+三处修）与 `tests/test_ue_evidence_index.py`（3 条旧契约钉改新契约 + 3 条新钉，88→89 例）。`tests/test_ue_evidence_index.py` 全绿；`app/` / `config/` / `.env` / LIVE / 持仓 / **退出参数（OKR 全月冻结）** 一律未动。
+- **回滚**：单键 `universe_expansion.input_prescreen=false` 即整段不追加（材料零改动）；代码级回滚副本 `/tmp/llm_universe_scan.py.pre-20260915`、`/tmp/llm_universe_scan.py.pre-futurequote-20260915`、`/tmp/test_ue_evidence_index.py.pre-20260915`、`/tmp/test_ue_evidence_index.py.pre-futurequote-20260915`（⚠ 仍不在夜推覆盖面，见 §20 未决项）。
+- **仍未做/未观察**：**尚未观察任何模拟成交**；`input_prescreen_max_symbols=30` 未动；**inject 侧 `_source_time` 键名修**仍待裁（须影子先行，见 21.4）；21:10 CST 的 `premarket` 主轮（scan→inject→push）才是进生产指令的那一轮，本节数据来自 `da_feed` 早跑（**不进 inject/push**，执行面零变化）。
+- **提交卫生**：本节与 handoff 增量**只写工作树、不随本批提交**——`handoff.md` / 本 DEB / `docs/CONTROL-LOOP-LEDGER.md` / `.gitignore` 当前带有**另一会话未提交的 WIP**（16:30 同主题复盘，+32/+15/+1/+9 行），显式名单暂存以免卷走对方工作。
+
+## 二十二、2026-09-15 报价新鲜度门「哑弹」影子批：根因比 §21 说的"键名错配"更深，诚实修法已在手边（**只度量、零行为变更、未提交生产路径**）
+
+> **一句话**：§21 把病灶描述成"键名错配"，**这个定性不够准，须就地更正**。真相是三条：①SSOT 的新鲜度门 `stale_quote` **全系统从未响过**（全仓没有任何生产代码给报价写过 `source_asof`/`update_time`）；②交易所侧的真时戳**一直到手边却被丢弃**（`futu get_quote` 取的就是含 `update_time` 的同一行快照）；③**诚实修法一行就够、且 SSOT 一个字都不用改**（`_source_time` 对 naive 串本就假定 ET，而 futu `update_time` 正是 ET-naive）。但"透出真时戳"＝**激活一道从未响过的门**＝真丢候选，按 C4 影子先行 ⇒ 本节交付的是那把尺子（`scripts/ue_quote_freshness_shadow.py`），**不是修复本身**。三次实跑已给出首个反直觉结论：**90s 阈值在盘前窗口不成立**。
+
+### 22.1 对 §21 修复①定性的更正（原文按纪律不改写，此处就地补正）
+
+§21.2 写的"根因＝键名错配"**只对了一半**，且**低估了严重性、也高估了修法的普适性**：
+
+- **SSOT 是刻意区分的，不是漏写**：`candidate_eligibility.py:246-252` 已经从 `quote["timestamp"]` 派生出 `fetched_at`，注释明写「fetched_at = 行情抓取时刻 (源侧 timestamp), 与 source_asof (行情所属时刻) 分开; 缺源侧时间戳时退化为本次筛选时刻, **但仍不冒充 source_asof**」。
+- **`timestamp` 是混合语义字段**：futu 各路径写 `time.time()`（抓取时刻），但 finnhub 降级路径的 `timestamp` 是**上游成交时间**——`futu_lv3_provider.py:1052` 的 B4 修复注释明写「不再覆写 timestamp —— 覆写为抓取时间会把 **15min 延迟报价"洗白"成新鲜** → 新鲜度门失效」。
+- ⇒ 所以"把 `timestamp` 当 `source_asof`"**在新鲜度门开着的路径上是错的**（就是 B4 警告的洗白）。§21 修复①之所以安全，靠的是**三个同时成立的前提**，缺一不可：**(a)** 扫描期口径把 `max_quote_age_sec` 设成 `1e12`（新鲜度门是关的，`quote_age_sec` 只影响 missing 与 future_quote 两支）；**(b)** `_prescreen_input_symbols` **纯读不落库**（docstring 原文），归一值不进 DB、不进任何执行门；**(c)** summary 落 `source_asof_basis="provider_observation_timestamp"` 显式标注口径。
+- **本节的影子实测把 (a) 的必要性坐实了**：`alias_washes_stale` 在 08:19 那次实跑命中 **1/5**（AXON——别名口径 −10s"很新鲜"，交易所口径 **159.1s 已超阈**）。⇒ **同一套别名逻辑若搬到 inject 侧（`max_quote_age_sec=90` 真执法），就会把真陈旧洗白**。§21.4「刻意不改 SSOT」的判断由此从"谨慎"升级为"有实测支撑"。
+
+### 22.2 三条新发现（只读取证，含代码锚）
+
+1. **门是装了的，但从来没打过响**：`_source_time` 只认 `source_asof`/`update_time`；全仓生产代码**无一**给报价写这两个键（唯一另一处 `app/data/adaptive_polling.py:151` 写的 `update_time` 也是 `time.time()`，即抓取时刻，同样不是交易所时点）。⇒ `quote_age_sec` 恒 `None` ⇒ 恒落 `missing_fields=['source_asof']` ⇒ status 恒 **UNKNOWN**；而 inject 侧（`llm_universe_scan.py:3306`）只拦 `REJECT` ⇒ **全放行**。这与 §20 记的「§6 SSOT 哑弹」是同一族，但**范围更大**：不是某条支路哑，是**整个新鲜度维度在全系统哑火**。
+2. **真时戳一直在手边**：`futu_lv3_provider.get_quote` 的快照路径（`:983`）取的 `get_market_snapshot` **同一行**就含 `update_time`（`get_snapshot:1733` 已在用，docstring 还专门注明「含 update_time — 判断成交/报价时点的依据」），但 `get_quote` 把它**丢了**，改写 `"timestamp": time.time()`（`:970`/`:1024`）。
+3. **SSOT 一行都不用改**：`_source_time:141-142` 对 naive 串**本就假定 ET**（`stamp.replace(tzinfo=_ET)`），而 futu `update_time` 实测正是 ET-naive（`'2026-09-15 08:03:50.057'` 对齐 08:03:50 ET）。⇒ 诚实修法＝在 `get_quote` 快照路径透出既有字段，**零 SSOT 改动、零 schema 迁移**。
+
+### 22.3 影子仪器的设计与边界（`scripts/ue_quote_freshness_shadow.py`，新增）
+
+对同一批标的、同一时刻，用 **SSOT 自己的判据**（`evaluate_candidate` + `_source_time`，脚本**一行判据都不抄**）算三个假设：`as_is`（现状，门哑火）/ `alias`（抓取时刻，＝§21 扫描期做法）/ `genuine`（交易所 `update_time`，＝候选修法）。
+
+**刻意不做的事（每条都有理由）**：
+- **不进 inject/scan 生产路径**：真时戳要走 `FutuLV3Provider.get_snapshot`，它按 `_connect_for_historical()` 建历史连接，**冷启实测 ~150s**（20:12 那次），而 cron 给 `scan+inject+push` 整段只有 1800s ⇒ 塞进 21:10 那轮是拿生产窗口赌。故做成**独立只读探针**。
+- **不改 `app/`**：落 `app/*.py` 会触发部署守卫预约一次 09:00–12:00 自动重启（§20.10 规律）——影子阶段不该有这个副作用。
+- **不抄判据、不硬编码阈值**：`threshold_sec` 从 `load_candidate_policy()` 读活配置（实测落盘 `policy_version=da_ue_v1 / threshold=90.0`）；改 policy 即改判定，有钉子 `test_threshold_is_read_from_policy_not_hardcoded` 锁住。
+- **非时间事实刻意留空**（ATR/bid-ask/借券）：本影子只问"时戳口径改变会不会新拒"。缺 ATR ⇒ 三假设**同样**落 `missing` ⇒ 对**差异**无影响，差异全部来自 `quote_age_sec`。这也是三次实跑 `status` 都显示 `UNKNOWN→UNKNOWN` 的原因——**读数要看 `reasons` 与 summary 计数，不是看 status 列**。
+- **降级要响亮**：三条取数/落盘失败路径全部 `print [warn]`，零 `except: pass`（except-pass 棘轮实测：新脚本一度 +1，来源是 `except json.JSONDecodeError: continue`，已改为计数留痕 ⇒ 棘轮回到 950/950 绿）。
+- **跑完必须自退**：实测首版跑完后 futu SDK 的非守护线程让进程**挂着不退**（要外部 SIGTERM），而 OpenD 槽位是**与生产共享**的资源 ⇒ 已加 `finally: _release(provider.disconnect, router.close)`；修后实测 **rc=0 自退、3–13s**。
+- **零落库、零下单、零配置改动、退出参数（OKR 全月冻结）未动**；产物只有 `data/shadow/ue_quote_freshness_shadow.jsonl`（按 `.gitignore:46 data/*` 不入库，与既有影子一致）。回滚＝删两个新文件，**零生产耦合、无调用方**。
+
+### 22.4 时区陷阱与变异实证（这个坑会让整批读数完全失真）
+
+futu `update_time` 是 **ET-naive** 串。若按本机时区（CST=UTC+8）解析，与 ET(UTC−4) 差 **12h** ⇒ 报价龄凭空 +43200s ⇒ **全批假 `stale_quote`** ⇒ 影子会给出"激活门会拒掉一切"的**完全失真**结论，进而否掉一个本该做的修复。脚本因此**不自解析**，直接复用 SSOT `_source_time`（它对 naive 串假定 ET）。钉子 `test_naive_exchange_stamp_is_read_as_et_not_local` + **变异实证**（未触碰仓库文件）：同一枚 `update_time` 样本，SSOT 口径 `age=30.0s`（钉绿），按本机时区解析的变异体 `age=43230.0s`（**钉红**），失真量 **43200s ≈ 12.0h**（阈值仅 90s）。
+
+### 22.5 实跑数据（2026-09-15，ET 盘前，同一批 5 个 surfaced 标的）
+
+| 观测时刻(ET) | 取数耗时 | genuine 龄 中位/最大 | 超阈(>90s) | 会新拒 | 别名洗白 | genuine future_quote |
+|---|---|---|---|---|---|---|
+| 08:03:50（手工探针，含 NVDA n=6） | — | — / **104.6s (AXON)** | **1/6** | 1 | — | — |
+| 08:12:35（影子 run1） | ~150s(冷启) | 7.8s / 48.1s | 0/5 | **0** | 0 | 0 |
+| ~08:19（影子 run2，旧 now 口径） | ~10s | −4.4s / **159.1s (AXON)** | **1/5** | **1** | **1** | 0（但 **2 个 future_quote**） |
+| 08:23:20（影子 run3，修正 now 口径） | **2.1s** | 2.1s / 15.4s | 0/5 | **0** | 0 | **0** |
+
+**交易所时戳可得率 5/5 = 100%**（三次实跑一致）⇒ 诚实修法在数据可得性上**无障碍**。
+
+**AXON 的陈旧度在 20 分钟内剧烈摆动**：104.6s → 48.1s → 159.1s → 15.4s，4 次观测中 **2 次超过 90s**。盘前报价是**阵发**的（同一标的几分钟不更新很正常），而 90s 阈值是按**连续竞价**的直觉定的。
+
+### 22.6 影子跑出来的**第二个陷阱**：朴素 `now` ⇒ 「越新鲜的报价越先被拒」
+
+run2 里 5 个标的有 **3 个 genuine 龄为负**（FPS −4.4s / TRMD −6.5s / COIN −7.2s），其中 TRMD/COIN 因 `quote_age < −5` 被判 **`future_quote` REJECT**。成因与 §21.7 **同源**：`now` 在取数**之前**定型，而活跃标的的 `update_time` 反映的是取数**期间**的最新成交 ⇒ 时戳晚于 `now` ⇒ 负龄。
+
+**这条比"陈旧被拒"更危险**：它专门误杀**最活跃、最新鲜**的标的，而放过了真正陈旧的（AXON 那次同时 159s 陈旧，两种误判方向在同一批里并存）。若影子不分开量两种 `now` 口径，就会把"**实现姿势错了**"误读成"**这道门会拒掉活跃标的**"，从而否掉一个本该做的修复。
+
+**已就地修仪器**：主口径 `now` 改为**取数之后**定型（与 §21 修法③同一原则），同时保留取数前时点为 `naive_now`、**显式量化**朴素实现会多误拒多少（`n_future_quote_under_naive_now`），并落 `collect_latency_sec` 便于归因。run3 实证：主口径 genuine 龄**全部转正**（0.7–15.4s）、`future_quote=0`、朴素口径误拒也 `=0`（因该次取数仅 2.1s < 5s 容差）。钉子 `TestNaiveNowHazard`（4 例）：新鲜时戳在朴素口径下必被 `future_quote` 拒而主口径不拒 / 不传 `naive_now` 就不产出该字段（不凭空造没量过的读数）/ 真陈旧在两口径下都必须是陈旧（朴素口径只**多**误拒、不会**少**判陈旧）/ summary 分开计数。
+
+### 22.7 结论与待裁（**本批不做修复**）
+
+- **可以确认的**：门哑火是真的（全系统）；诚实修法技术上几乎零成本（透出既有字段，SSOT 不改）；交易所时戳可得率 100%；别名口径**会洗白真陈旧**（实测 1/5 命中）⇒ **别名逻辑不得进入任何新鲜度门开着的路径**。
+- **仍不能确认的（n 太小）**：`n=3` 次影子 + 1 次手工探针、每次 5–6 个标的，**不足以给"激活门"定阈值**。AXON 4 次观测 2 次超 90s 只是**强提示**，不是结论。
+- **待裁（三选一，均需用户裁；本批一个都没做）**：
+  **(A)** 透出 `update_time`（`app/data/futu_lv3_provider.py` `get_quote` 快照路径）并**同时**给盘前窗口一个专属 `max_quote_age_sec`（90s 明显不适配阵发报价）——**这是"激活门"的正确姿势，但属 `app/` 行为变更，会预约一次自动重启，且须先攒够影子样本定阈值**；
+  **(B)** 只透出字段、**暂不激活**（即 inject 侧仍按 `REJECT` 拦，而透出后 `stale_quote` 会真开始响）——⚠ **这一项其实等于 (A) 的行为变更**，列出是为了说明"只补字段不动阈值"**不是**中性选项，不要误当安全路径；
+  **(C)** 维持现状（门继续哑火），把 `source_asof` 恒缺这件事**显式登记为已知哑弹**，等参数冻结期（OKR 至 09-30）结束后再动。
+- **建议的下一步（不需改生产）**：给影子挂一条 cron（**属自动化层，按 handoff:1432 纪律须用户裁，本批未加**），在 **21:12 CST（=09:12 ET，紧贴 inject 窗）** 每日采样，攒 ≥10 交易日后按 `n_stale_genuine/n` 与 genuine 龄分布定阈值；判据建议**预注册**为「盘前窗口 genuine 龄 P95 ≤ 阈值 ⇒ 激活不会造成系统性误杀」。
+
+### 22.8 边界与提交卫生
+
+- **本批做了什么**：新增 `scripts/ue_quote_freshness_shadow.py`（只读探针）+ `tests/test_ue_quote_freshness_shadow.py`（19 例，全绿）。**零生产路径改动**：`app/`、`config/`、`scripts/llm_universe_scan.py`、退出参数、`.env`、LIVE、持仓一律未动；未加 cron；未重启服务。
+- **静态门禁全绿**：`check_undefined_names` OK；except-pass 棘轮 950/950；`naive_datetime_now` / `dead_db_literal` / `db_connection_chokepoint` / `no_archive_imports` / `ops_scripts_sync` / `env_separation_shadow` / `app_shared_in_repo` / `dashboard_sim_isolation` 合跑 **84 passed**。
+- **仍未观察任何模拟成交**；本节全部结论来自**只读度量**，不构成"门已修"或"门该开"的裁决。
+- **提交卫生**：只暂存上述 **2 个新文件**；本节与 handoff 增量**只写工作树、不随本批提交**（`handoff.md` / 本 DEB / `docs/CONTROL-LOOP-LEDGER.md` / `.gitignore` 仍带另一会话未提交 WIP）。
+
+## 二十三、2026-09-15 21:10 premarket **主轮**验证回执：三处修全部达标，但覆盖面被主轮**证伪**（1/7）⇒ 单键修上限 30→80；用户裁 (C) 与影子环挂载（**已实跑验证，尚未观察模拟成交**）
+
+> **一句话**：19:40 `da_feed` 那轮的 5/5 **是材料薄的侥幸，不能外推**——21:10 主轮材料具名 68 个（19:40 只有 35），名额 30 个被挤爆，模型 surfaced 7 个里**只有 1 个 (FPS)** 在受检集合内。同时实测证明**真正的瓶颈是上限、不是排序键**：把受检数从 30 提到 68（全覆盖）只多花 **16s**（10.88s→27.17s，cron 给整段 1800s），而 `tradeable` 只从 12→13（**不会灌爆模型**），覆盖面 1/7→7/7。故本批做**单键修** `input_prescreen_max_symbols: 30→80`，排序键保留（超上限的日子仍需一条确定的截断规则）。另按用户裁落地新鲜度门**选项 (C)**：登记为已知哑弹 + 挂日级测量环 + 预注册判据。
+
+### 23.1 21:10 主轮验证：**§21 三处修全部达标**（这是进生产指令的那一轮）
+
+`batch=UE:50b118b6be8f88075b33d573 / window=premarket / prompt=v2.13 / brief=ue_brief_v4 / batch_status=complete`：
+
+| 判据 | 修前（09-14 两轮） | 19:40 da_feed | **21:10 premarket 主轮** |
+|---|---|---|---|
+| `tradeable` | `[]` | 15 | **13**（FPS COE UBER JAZZ BAND GTBP PLSE PBF ASTH LUXE MU SNDK STX） |
+| `ordering` | 无字段 | ✓ | **`mention_count_desc_then_first_seen`** ✓ |
+| `quotes_prefetched` / `source_asof_normalized` | 无字段 | 28/28 | **29/28**（`basis=provider_observation_timestamp`） |
+| `future_quote` 误判 | — | 0 | **0** ✓（修法③在主轮同样成立） |
+| `stale_quote` 新增拒绝 | — | 0 | **0** ✓（SSOT 未动，如预期） |
+| inject 侧 | — | 不进 inject | **`资格初筛: 候选 4 → REJECT 0 reasons={}`**，写入 **4 条** `playbook_instructions`（占额度 4/30） |
+| ERROR / Traceback | — | 0/0 | **0/0**（阳性对照：同模式在 `logs/ftseek_us.log` 命中真 ERROR） |
+| `contract_stats` | — | clean | **clean=true，violations=[]** |
+
+**29 vs 30 的差额同样已解释**：`SNUS-PH`（优先股）被 `_SYMBOL` 挡在预取外，随后由 `evaluate_candidate` 判 `unsupported_security_shape` ⇒ 两条路口径一致（与 §21.8 的 BFH-PB/TFC-PI 同型）。`context_only` 10 个 reasons 全可归因（`low_atr`×4 / `price_floor`×5 / `unsupported_security_shape`×1）。
+
+### 23.2 但覆盖面被主轮**证伪**：`surfaced∩checked = 1/7`
+
+- `named_in_materials=68`、`checked=30`、**`overflow_skipped=38`**。
+- 模型 surfaced 7 个：`FPS COIN MSTR ASML TRMD VERA NOK` ⇒ **只有 FPS 受检**，其余 6 个全在 overflow。
+- 对比：修前 09-14 两轮是 4/10 与 1/6，19:40 是 5/5 ⇒ **主轮的 1/7 与修前同量级，§21 修法② 在主轮没有兑现验收①**。
+- **诚实定性**：19:40 那轮的 5/5 **不能外推**。它是 `da_feed` 早跑（ET 07:40），材料薄（named=35），名额没被挤爆；主轮材料翻倍（named=68）后名额立刻成为约束。**我用一个侥幸样本宣告了修法②生效，这是本批要更正的第二处**（第一处是 §22.1 的"键名错配"定性）。
+
+### 23.3 根因：**提及数降序不是好的名额分配器**，而真正的瓶颈是上限
+
+看 overflow 与 checked 的实际构成就清楚了：
+- **占满名额的是低流动性事件票**：JAZZ BAND GTBP PLSE PBF ASTH LUXE CTEV OBK FEAV CLST INVLW TG CBT FBNC LAES EPM VRA BIOX——它们的提及数高，是因为**同一条 8-K 会同时写进 `sec_8k` + `event_symbols` + `news_headline` 三个源**，一条新闻就刷出 3 次提及。
+- **被挤出的是两类**：①当日真热点/模型实际提名的（COIN MSTR ASML TRMD VERA NOK）；②大盘佐证票（NVDA AAPL META MSFT GOOG TSM AMD ARM AVGO WDC GS JPM MA V XOM CVX ABBV JNJ LLY MRK UNH）。
+- ⇒ **"被几条材料提及"度量的是"一条事件在几个源里被复述"，不是"模型会不会提名它"**。这个排序键与目标变量基本无关，19:40 的 5/5 属巧合。
+
+### 23.4 修法：不再换排序键，而是**让上限不再是竞争**（单键，可回滚）
+
+只读实测（真 router、真 ATR、真配置，今晚 21:2x）：
+
+| 受检数 | 耗时 | `tradeable` | 报价命中/归一 |
+|---|---|---|---|
+| 30 | **10.88s** | 12 | 29/28 |
+| 68（全覆盖） | **27.17s** | 13 | 67/66 |
+
+- **成本 +16s**，而 cron 给 `scan+inject+push` 整段 1800s、给 19:40 `da_feed` 900s ⇒ 余量充足。
+- **`tradeable` 只从 12→13** ⇒ 全覆盖**不会**给模型灌一大串候选（因为大多数具名标的本来就被 `low_atr`/`price_floor`/形状门/缺价挡掉），只是**不再漏掉模型真正会提名的那些**。
+- **覆盖面 1/7 → 7/7**（surfaced 7 个全在 named 68 内，全覆盖即全受检）。
+- ⇒ 已落 `config/unified_config.yaml:2096` **`input_prescreen_max_symbols: 30 → 80`**（80 给 named=68 留余量；单键回滚，零代码改动，代码默认仍是 30 故删键即回退）。
+- **排序键保留不动**：具名数超过上限的日子仍需一条**确定**的截断规则；提及数降序虽不是好预测器，但至少比字典序好（字典序会把今日热点整批丢进 overflow，正是 §17 当初要修的）。**一次只改一个变量**：本批只动上限，排序键的优劣等上限不再约束后再看数据。
+
+### 23.5 副作用**已实测并披露**：DailyK 配额
+
+68 只全覆盖时**撞过一次** Futu DailyK 配额窗口：`[FutuLV3·DailyK] US.INVLW K线配额窗口满 (60次/30s) 等待超时, 返回 None 触发 Router fallback` → `[TwelveData] 404 Not Found (symbol=INVLW)` → `get_daily_bars US.INVLW: 所有数据源均失败`。ATR 日线取数是配额主要消费者，与 handoff 2026-09-15 16:30 增量⑧（盘后配额打满）同源。**含义**：上限若继续放大（如 150+）必须重新评估配额，**不得只看到"+16s"就无脑加**。本轮 80 的上限在实测中未造成任何标的判定失败（INVLW 本就无日线、修前同样落 `unknown`）。
+
+### 23.6 用户裁 (2026-09-15「按照建议执行」) 的两项落地
+
+**(一) 新鲜度门取 (C) 维持现状**（三选一里的第三项，(A)/(B) 均未做）：
+- **不透出** `update_time`、**不动** SSOT、**不动** 90s 阈值（激活属 `app/` 行为变更、会真丢候选、并预约一次 09:00–12:00 自动重启，且须先攒样本定盘前专属阈值）。
+- 已在台账 §5 **登记为 `G9` 已知哑弹**（不再当"待发现的缺陷"），并写明与 G6 的同族关系与差别（G6 是同名双载体掩盖了一条**活**门；G9 是一条**装了从未响过**的门）。
+- **边界纪律一并入档**：`alias`（把我方抓取时刻当行情时点）实测**会洗白真陈旧**（§22.5 命中 1/5）⇒ **只允许存在于新鲜度门关闭的路径**；现役唯一合法用法是 UE 扫描期初筛（`_scan_phase_policy` 设 `1e12` + prescreen 纯读不落库 + 落 `source_asof_basis` 标注），**严禁搬进 inject/执行侧**。
+
+**(二) 挂日级测量环**（属自动化层，本次已获用户裁）：
+- crontab 新增两行（注释 + `15 21 * * 1-5 ... scripts/ue_quote_freshness_shadow.py`，`timeout 600`，日志 `logs/ue_quote_freshness_shadow.log`），crontab 274→276，旧表备份 `/tmp/crontab.bak.20260915`。
+- **时刻选 21:15 而非我原先说的 21:12**（就地更正）：21:12 会与 21:10 的 `scan→inject→push` 抢 OpenD 槽位与 DailyK 配额——今晚 21:11:33 那次手工采样虽与 inject 并存无碍（inject 正常写入 4 条、0 ERROR），但那是**一次侥幸样本**，不该拿来当排期依据。21:15 让生产链先走完，仍在盘前窗内（09:15 ET），距 inject 判定时点仅差数分钟，而**陈旧度是标的报价活性的属性、不是分钟级属性**。
+- 已按台账 §6.1 在 §2 挂 `crontab-ue-quote-freshness-shadow` 行（含载体脚本路径、角色、失效模式六条、预注册判据、回滚）。守卫 `tests/test_control_loop_ledger.py` **10 passed**，且做了**阳性对照**：把台账该行抹掉后守卫确实报出 `ue_quote_freshness_shadow.py` 未入账 ⇒ 入账是真生效、不是假绿；同时确认本环**不是**靠存量棘轮基线豁免（`crontab-loop-baseline.txt` 里没有它）。
+- **预注册判据**（写入台账与 crontab 注释，防事后挑尺子）：**≥10 交易日**后，若盘前 genuine 龄 **P95 ≤ 候选阈值** ⇒ 激活不会系统性误杀，方可提议激活并定盘前专属阈值；**有效轮次 <10 时禁止建议激活**（同 thinking-eval 先例）。
+
+### 23.7 边界、回滚与未做
+
+- **本批改了什么**：`config/unified_config.yaml` **一个键**（30→80，附 22 行实测依据注释）；crontab **+2 行**；台账 §2 **+1 环路行**、§5 **+1 缺口行 (G9)**；本节 + handoff 增量。`app/` **一行未动**、`scripts/` **一行未动**、SSOT **未动**、退出参数（OKR 全月冻结）**未动**、`.env`/LIVE/持仓**未动**、未重启服务。
+- **回滚**：配置键改回 `30`（单键）；cron 删那两行（备份 `/tmp/crontab.bak.20260915`、`/tmp/unified_config.yaml.pre-20260915`）；台账删那两行。三者互不依赖。
+- **仍未观察任何模拟成交**；21:10 主轮写入的 4 条指令走 DA 统一执行轨道，其成交与退出属下一轮复盘范围。
+- **下一观察点**：明日（09-16）19:40 `da_feed` 与 21:10 `premarket` 两轮，看 ①`checked` 是否升到 ~68（上限生效）②`surfaced∩checked` 是否达到 **N/N**（这是本批的唯一验收判据）③耗时增量是否仍在 ~16s 量级 ④DailyK 配额是否出现**新的**判定失败（预期无）⑤21:15 影子环是否自动落一条记录（首个无人值守样本）。
+- **提交卫生**：只暂存 `config/unified_config.yaml`（pre-commit §6 会据此重生成并自动加入 `docs/trading-pipeline-flowchart.md`，属设计内行为）；本节、handoff 增量、**台账两行**均**只写工作树、不随本批提交**——`docs/CONTROL-LOOP-LEDGER.md` 与 `docs/references/crontab-loop-baseline.txt` 当前带另一会话**正在进行**的 WIP（21:2x 观察到 baseline 刚被改脏：对方在退役 `da_glm_shadow` 环路），显式名单以免卷走对方工作。⚠ 由此产生一个**已生效未入库**项（同 §20 P3.2 风险族）：**crontab 那两行与台账登记行都只在运行环境/工作树里**，若他人整文件还原台账，守卫会红——已在此显式登记，不藏。
+
+---
+
+## 二十四、2026-09-15 报价门「90 秒」溯源批：阈值今天是**空转安全网**，真正防线是降级源黑名单；顺带闭合一个**不存在的回滚杠杆**（**零行为变更，已实测证明**）
+
+> **一句话**：用户问"为什么报价超过 90 秒就拒单、盘前是否合理、能否禁掉"。溯源结果是——90 这个数字来自 B4（2026-07-20）实盘前审计，动机真实（富途静默降级到 Finnhub 免费档 = 15 分钟延迟价照常开仓）；但它量的是**"我们刚抓回来的数据有多旧"**，不是**"这只股票多久没成交"**，而富途所有路径都把 `timestamp` 写成 `time.time()`、push 缓存 TTL 还硬编码 5 秒 ⇒ **龄期恒 ≈0，90s 分支结构上走不到**。这道门真正干活的是**先返回**的降级源黑名单。所以：盘前冷门**不会**被误杀；禁掉整道门**不可取**（黑名单是真防线）；单独"禁掉 90 秒"今天**行为零变化**。本批据此只做了一件零风险的事：把 5 个门键按**当前生效值原样**落进 yaml，因为交接文档写的"一键回滚"**此前根本无键可翻**。
+
+### 24.1 三道门的真实分工（更正 §22/§23 与台账 G9 的射程）
+
+前批把病灶写成"新鲜度门全系统哑火"，这个说法**射程过宽，就地更正**。真实结构是三道门，分属两套代码：
+
+| 门 | 位置 | 判据 | 状态 |
+|---|---|---|---|
+| 报价健康门 | `playbook_service.py:1459` → `check_quote_health` (`data_health_guard.py:24`) | 盘口齐备 + spread ≤5% + 龄期 ≤60s | **活**（干活的是盘口/spread；龄期维度空转） |
+| 数据新鲜度门 (B4) | `playbook_service.py:1513` → `check_quote_freshness` (`data_health_guard.py:83`) | ①降级源黑名单 ②龄期 ≤90s | **活**（干活的是①；②空转） |
+| SSOT `stale_quote` | `candidate_eligibility.py:107-113` | 龄期 ≤`max_quote_age_sec` | 扫描期**刻意关**（1e12）；inject 侧**哑**（`source_asof` 恒缺 → UNKNOWN → 只拦 REJECT ⇒ 全放行） |
+
+关键次序：`check_quote_freshness` **先**判黑名单即 `return`（`data_health_guard.py:105`），龄期分支（`:119`）只对非降级源生效；而非降级源就是富途，富途 `timestamp` 恒为抓取时刻（`futu_lv3_provider.py:970`/`:1024`）、push 缓存 TTL 硬编码 **5s**（`market_data_router.py:129`，router 的 `cache_ttl_seconds=900` 只给了 TwelveData/Finnhub/AlphaVantage，**没给**富途）⇒ 龄期分支**不可达**。
+
+### 24.2 就地更正我上一轮给用户的两条错判
+
+诚实留痕，防止下一会话继承错误结论：
+
+1. ❌ 我曾说"初筛侧 `stale_quote` 经 §21 键名归一后**已经活了**"。**错**。扫描期口径 `_scan_phase_policy`（`llm_universe_scan.py:1552-1580`）把 `max_quote_age_sec` 设成 **1e12**、`quote_gate_enabled=False`、`borrow_gate_enabled=False`，新鲜度维度是**刻意关**的，不是被我的归一激活的。归一的真实作用只是让"缺数"不再冒充"未知"（救活 `tradeable` 恒空），**不产生任何新拒绝**。
+2. ❌ 我曾说"初筛侧 90 秒**有牙**，是个 fail-closed 悬崖（富途批量失败→降级 Finnhub→全池 `stale_quote` REJECT→0 条注入）"。**今天不成立**：扫描期 1e12 无牙；inject 侧虽是 90s 但拿不到 `source_asof` ⇒ 也响不了。该悬崖**只在尚未采纳的选项 (A)/(B)（全局透出交易所真时戳）下才存在** —— 而这一点代码注释 `llm_universe_scan.py:1588-1596` 早已写明，是我上一轮没读到就下了结论。
+
+### 24.3 行为级对照（按 G6 纪律：门活性必须看生产拦截计数 + 阳性对照）
+
+- 全量 `logs/*.log`：`数据新鲜度门拒绝开仓` = **0**、`报价健康门拒绝下单` = **0**、两门 `异常` = **0**。
+- **阳性对照（防假绿）**：同窗口 `[playbook]` 335 条、`auto_execute` 每 ~3 分钟正常轮转、09-15 21:46 `US.MU BUY` 真实成交并于 22:03 平仓（净 +$9.63，PDT/归因/钉钉推送齐全）、`实盘已解锁` ⇒ 下单路径**确实穿过**了这两道门。故 0 命中是"门通过"，不是"门没跑"。
+- 影子读数同向印证：`alias`（抓取时刻）龄 ≈**0.001s**；`genuine`（交易所时刻）1.5～159s（AXON 4 次观测 2 次超 90）⇒ "盘前阵发超阈"只属于**尚未接线**的 genuine 口径。
+
+### 24.4 本批唯一改动：5 个门键**原值**落 yaml（零行为变更）
+
+**病灶**：B4 交接（`handoff-archive-pre-2026-08-24.md:1440`）写"回滚：`entry_freshness_gate_enabled: False`（一键）"，但这 5 个键**只活在** `app/playbook/config.py:51-57` 的 `DEFAULTS`，`unified_config.yaml` 里**一个都没有** ⇒ 真出事时**无键可翻**，只能改代码重启。文档与现实分叉（与 G7 同族：注释/文档声称的机制从未成立）。
+
+**改法**：把 5 键按**当前生效值原样**写进 `config/unified_config.yaml` 的 `playbook.execution_parameters`（`vwap_gate_ab_enabled` 与 `min_tp_rr` 之间），附 20 行溯源注释。**不动任何阈值**。取值优先级 yaml > DEFAULTS（`config.py:111-115`）。
+
+**验证（三段，全部实跑）**：
+1. **改前阳性对照**：5/5 键 `in_yaml=False`，生效值 `True / 60.0 / 0.05 / True / 90.0`（来自 DEFAULTS）。
+2. **改后零漂移**：5/5 键 `in_yaml=True`，值与**类型**逐一相同（`True`/`60.0`/`0.05`/`True`/`90.0`）；门实际读到的参数仍是 `max_age_seconds=60.0 / max_spread_pct=0.05 / 90.0`、两开关均 `True` ⇒ **零行为变更断言 PASS**。
+3. **杠杆阳性对照（证明新能力是真的）**：在**临时副本**上复刻 `_load()` 合并逻辑，翻 `entry_freshness_gate_enabled→False` 得 `False`、改 `entry_max_quote_age_sec→300.0` 得 `300.0` ⇒ 一键回滚与阈值可调**均已生效**，且**未碰生产配置**。
+
+**回归**：`tests/test_config_key_census.py` + `test_config_key_reverse_census.py` + `test_config_container.py` + `test_config_consistency_batch_d_contracts.py` = **64 passed**（键普查对新增 5 键无异议）；门与影子定向 `tests/playbook/test_m2_c2_live_quote_gate.py` + `test_ue_quote_freshness_shadow.py` + `test_ue_evidence_index.py` = **125 passed**；全量 `tests/` 见本节末回执。
+
+### 24.5 裁决与边界
+
+- **90 秒阈值：维持原样不动**。理由三条：①今天空转，改它无收益；②它是"provider 将来改回传真时戳"时的唯一兜底，删了会留暗坑；③OKR-2026-09 参数冻结期至 09-30，且退出/入场阈值改动须用户裁。
+- **整道门：不禁**。黑名单是 B4 的真实防线，有 07-19/07-20 事故背书。
+- **选项 (A)/(B)（透出交易所真时戳）：仍不做**，维持 §23.6 用户裁 (C)。等 `crontab-ue-quote-freshness-shadow` 攒够 **≥10 交易日**、按预注册判据（盘前 genuine 龄 P95 ≤ 候选阈值）再裁；有效轮次 <10 **禁止建议激活**。
+- **本批未动**：`app/` 一行、`scripts/` 一行、SSOT、任何阈值、退出参数、`.env`/LIVE/持仓；**未重启服务**（值逐字节相同，无需重启即无行为差异；新键在下次自然重启时被读入，届时回滚杠杆才在运行进程内可用 —— 已在此显式登记为**已生效未加载**项，不藏）。
+- **回滚**：删这 5 个 yaml 键即退回 DEFAULTS（值相同、行为不变）；或按需改值 + 重启。备份 `/tmp/unified_config.yaml.pre-quotegate-20260915`。
+- **提交卫生**：只暂存 `config/unified_config.yaml`；本节与台账 G9 注记**只写工作树、不随本批提交**（`docs/CONTROL-LOOP-LEDGER.md`、本 DEB、`handoff.md` 带另一会话 WIP，沿用 §23.7 的显式名单纪律，禁 `-A`）。
+
+### 24.6 交付回执（提交 `dd049015a`）
+
+- **提交内容**：`config/unified_config.yaml` **1 文件、+22/-0 纯新增**（分支 `rfc-060-phase1-hotfixes`，`ahead 7→8`）。标签 `[ADR-036]`（"在册 ≠ 在跑"原则延伸到配置面 = "文档写的杠杆 ≠ 实际可用的杠杆"，同台账 G7 族）+ `[DEB-20260910 §24]` + `[用户裁"按照建议执行"]`。commit body 含 为何/预期/回滚 三段 + "刻意未做" + "就地更正"。**未用 `--no-verify`**，钩子全走。
+- **全量回归**：`tests/` = **5173 passed, 1 failed, 54 skipped**（8m44s）。唯一失败 `test_control_loop_ledger.py::test_ledger_job_ids_are_real` **与本批无关且已证**：幽灵 `job_id` `45185c0ba742`/`db0a79fec814` 是 `once 2026-09-08` 一次性 job、**已在 HEAD 提交版台账第 91-92 行**；纯内存摘掉本会话 G9 注记后幽灵集合**逐字相同**（`['45185c0ba742','db0a79fec814']`），且本会话注记段落内 **12hex 匹配为 0** ⇒ 先于本批存在（另一会话正在退役环路，活体 Hermes 现 24 个 job）。按纪律**不修、只报告**。 **→ 后续: 用户裁「需要」, 已于 §24.7 修复并单独提交 `1d5cb314f`, 全量回归回绿。**
+- **治理面两个观测（本批未动，登记待裁）**：
+  1. `pre-commit §3` 的 `enabled.*true` 词表对本批**第四次误报**（本批未启用任何 disabled 策略，5 键原值即 `True`，且已实测值+类型零漂移）。交互式确认在 PTY 内**如实应答 `y`**。词表本身按 ADR-041/ADR-042 未决第 1 条仍属"改钩子 = 改治理面，需用户裁"，本批不动。误报序列：ADR-040 → ADR-041 → §23（`c8eb0350`）→ 本批。
+  2. `pre-commit §6` 再次打印「ℹ️ SSOT: 已刷新 `docs/trading-pipeline-flowchart.md` 参数快照并加入本提交」，而 `git show --name-only` 证明本提交**只含 yaml 一个文件**、flowchart 工作树**零改动** ⇒ 与 §23/ADR-042 未决第 2 条同一**假成功**（`scripts/gen_trading_ssot.py` 实测**不存在** + `|| true` 吞错）。第三次复现，仍未修（修复顺序陷阱见 ADR-042：先受控重生成并复核 ~7 周漂移，再恢复引用）。
+- **未重启服务**：5 键值逐字节相同 ⇒ 运行进程行为**零差异**；新键在**下次自然重启**时被 `ConfigContainer` 读入，届时回滚杠杆才在运行进程内可用。已登记为**已生效未加载**项（同 §20 P3.2 / §23.7 风险族），不藏。
+- **工作树留痕（刻意不提交）**：本节 §24 + 台账 §5 `G9` 行的复核更正注记（射程收窄四点）。两文件带另一会话 WIP，沿用 §23.7 显式名单纪律、禁 `-A`。
+
+### 24.7 后续批（用户裁「需要」）：台账守卫回绿 — 提交 `1d5cb314f`
+
+§24.6 报告的那 1 个红灯，用户裁「需要」后已修。**纯文档改动，零交易行为变更，未重启。**
+
+**根因不是环路丢失，是台账自己预声明的处置延迟 7 天未执行**：§2.2 第 91 行的失效模式列原文即写「跑完与 `db0a79fec814` 一并清档入一次性留痕行」。二者是 DEB-20260905 M-7 的 `once 2026-09-08` 开盘首小时在场核验，跑完后 `jobs.json` 记录被销，但 §2.2 表里仍留**裸 id** ⇒ 守卫 `test_ledger_job_ids_are_real` 按设计报「幽灵环路（记载与活体调度脱钩）」。
+
+**生命周期正常的实测佐证**（排除"环路被误删"）：活体 24 job 内无此二 id；同为 `once` 的 `d630ce54fc84`（9/14）仍以 `enabled=False` 留存；二者执行史**各 1 条**确在 `/root/.hermes/cron/executions.db`（`cron_incidents` 0 条）⇒ 清档不丢执行历史，与豁免行既有先例 `ee246069b226` 同口径。
+
+**修法用守卫自己设计的豁免机制，不套错体例**：我原先向用户提议按 §5 的 `~~删除线~~ + 已闭合` 体例（那是**缺口表**的语义），核实后改为台账 §2.4 既有的「留痕不入守卫」豁免行（那才是**一次性已销 job 历史留痕**的正确归宿，守卫注释 `tests/test_control_loop_ledger.py:67-68` 明写此意）。三处联动：
+1. 删 §2.2 的两行已销 job；
+2. 把两 id 连同名称/schedule/角色/判据语义清档进 §2.4 豁免行，并标注「⚠ 非活体环路，勿据本行认为盘中开盘首小时核验仍在线」；
+3. **连带幽灵**：§2.2 第 93 行 `d630ce54fc84`（活体，须留表内）把 `45185c0ba742` 当先例**裸引**，而该行不含豁免标记 ⇒ 只删 91/92 幽灵仍会在。已改写为 `(同 9/8 M-7 一次性核验先例, 见 §2.4 留痕行)`，语义不变、不再落裸 hex。
+
+**五项阳性对照**（逐字复刻守卫判据 `_JOB_ID` + 豁免行过滤，纯内存不改文件）：①现状台账幽灵集合 = **空**；②把 `留痕不入守卫` 标记摘掉 → 幽灵立刻回到 **8 个**（含本二 id）⇒ 证明"绿"来自**豁免机制生效**而非 token 被删掉；③对照成立；④两 id **仍在台账文本中**（历史留痕未销毁）且确已不在活体 `jobs.json`；⑤豁免行内**未混入任何活体 job** ⇒ 守卫覆盖面**零损失**。`tests/test_control_loop_ledger.py` = **10 passed**（修前 1 failed）。
+
+**提交卫生（本批的关键难点）**：台账带另一会话**正在进行**的 WIP（`crontab-cutover-preflight`、`DA glm-5.2 SHORT 供给门`）与上一会话**刻意未入库**的行（`crontab-ue-quote-freshness-shadow`、`G9`），整文件 `git add` 会卷走他们的工作，`git add -p` 又因混合 hunk（`@@ -138,0 +137,2 @@` 同时含他人与我方行）无法干净切分。故改用**「索引单独构造」法**：以 `git show HEAD:` 版为底、只重放本轮三处改动 → `git add` → 再把完整工作树**逐字节还原**（sha256 前后一致 `04c517b0…`）。暂存 diff 实测 **+2/-4、2 个 hunk**，且对 `crontab-cutover-preflight` / `crontab-ue-quote-freshness-shadow` / `DA glm-5.2 SHORT 供给门` / `| G9 |` / `2026-09-15 复核更正` 五个他人标记的命中数**全为 0** ⇒ 未卷走任何一方工作，工作树四方内容全部完好（提交后复核标记计数 1/2/1/1）。
+
+**刻意未做**：①**未修守卫测试本身**——豁免机制是它自己设计的，无需改判据（改判据 = 改尺子，须用户裁）；②**未提交**另一会话 WIP 与上一会话的 §2 环路行 / G9 行，它们仍在工作树，属既有「已生效未入库」项；③**未动** `pre-commit §3` 的 `enabled.*true` 词表与 `§6` 的 SSOT 假成功（ADR-041/042 未决项）。
+
+**回滚**：`git revert 1d5cb314f`（两 id 回到 §2.2 表内，守卫随之重新报红 = 修前状态）；备份 `/tmp/ledger_worktree_full.md`、`/tmp/ledger.pre-phantomfix-20260915`。
 
 ---
 

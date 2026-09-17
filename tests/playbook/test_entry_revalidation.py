@@ -247,7 +247,8 @@ def env(tmp_path, monkeypatch):
         result = pipeline.run_playbook_auto_execute(scheduler, force=True)
         assert result is not None and "error" not in result, result
         assert result.get("errors") == [], result
-        assert redirected_budget_calls, "daily guard must use the redirected temporary DB"
+        assert str(budget_db) in db_calls, "daily guard must use the redirected temporary DB"
+        assert redirected_budget_calls == [], "daily guard must not call the legacy production DB path"
         assert set(db_calls) == {str(budget_db)}
         assert violations == [], "an outer except swallowed an isolation violation"
         return result
@@ -453,15 +454,22 @@ def test_false_current_trigger_never_submits_or_rewrites_history(env, triggered)
 
 
 @pytest.mark.parametrize("overrides", [
-    {"executed": 1}, {"expires_at": "2000-01-01T00:00:00+00:00"},
+    {"executed": 1},
     {"direction": "SKIP"}, {"skip_reason": "TRIPWIRE_INVALIDATED"},
-], ids=["executed", "expired-even-force", "skip-direction", "invalidated"])
+], ids=["executed", "skip-direction", "invalidated"])
 def test_ineligible_instruction_exits_before_current_trigger_check(env, overrides):
     env.db.add(triggered=1, **overrides)
     assert env.run()["executed"] == 0
     env.trigger.assert_not_called()
     assert env.submissions == []
     assert env.db.updates == []
+
+
+def test_unpersisted_instruction_expires_at_does_not_gate_execution(env):
+    env.db.add(triggered=1, expires_at="2000-01-01T00:00:00+00:00")
+    assert env.run()["executed"] == 1
+    env.trigger.assert_called_once()
+    assert len(env.submissions) == 1
 
 
 @pytest.mark.parametrize("direction", DIRECTIONS)

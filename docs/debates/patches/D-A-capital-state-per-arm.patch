@@ -1,0 +1,185 @@
+diff --git a/app/risk/capital_safety.py b/app/risk/capital_safety.py
+--- a/app/risk/capital_safety.py
++++ b/app/risk/capital_safety.py
+@@ -752,8 +752,25 @@
+             conn = sqlite3.connect(self._db_path)
+             conn.row_factory = sqlite3.Row
+             c = conn.cursor()
+-            c.execute("SELECT * FROM capital_state ORDER BY id DESC LIMIT 1")
+-            row = c.fetchone()
++            # D-A (DEB-20260914 §8.4/§九): capital_state **按臂读取**。
++            #   病灶: 原 SELECT 不带 trade_env 过滤, 而 L741 的 per-env 唯一索引明确
++            #   允许两臂各留 1 行 ⇒ 若另一臂的行 id 更大 (更晚写入), 本臂基线会被整份
++            #   丢弃并落到下方"检测到交易环境切换"分支 ⇒ is_locked True→False
++            #   (风险锁定被静默解除, fail-open) + peak_equity/回撤记忆归零。
++            #   live→sim 回切必然踩中: sim 臂先有基线 (id 小), live 臂后写 (id 大)。
++            #   本臂无行才回落旧语义, 保留 L760 的切换告警留痕 ⇒ 现状零行为变化。
++            try:
++                c.execute("SELECT * FROM capital_state WHERE trade_env = ? "
++                          "ORDER BY id DESC LIMIT 1", (self.trade_env,))
++                row = c.fetchone()
++            except sqlite3.OperationalError:
++                # trade_env 列缺失 (未跑过 L723 迁移的旧库): 回落旧语义 —— 原实现靠
++                # L761 的 `"trade_env" in row.keys()` 容忍缺列, 此处保持同一容忍度,
++                # 不让"缺列"升级成 fail-safe 锁仓 (那会改变原行为)。
++                row = None
++            if row is None:
++                c.execute("SELECT * FROM capital_state ORDER BY id DESC LIMIT 1")
++                row = c.fetchone()
+             conn.close()
+             
+             if row:
+diff --git a/tests/test_cutover_infra.py b/tests/test_cutover_infra.py
+--- a/tests/test_cutover_infra.py
++++ b/tests/test_cutover_infra.py
+@@ -431,7 +431,13 @@
+ 
+ 
+ def test_capital_roundtrip_probe_flags_lost_baseline(rehearse, tmp_path):
+-    """当前代码下回切**必判红** (病灶未修). 修好后本钉反转 ⇒ 强制把修复显式记录下来."""
++    """D-A 已修 (DEB-20260914 §九) ⇒ 本钉已从 `is False` **反转**为 `is True`.
++
++    反转史 (刻意留痕, 防"悄悄修"):
++      建钉时 (2026-09-14 15:0x) 断言 `is False` —— 病灶未修, 回切必丢本臂基线;
++      钉内写明"修好后请反转为 True 并在 DEB/handoff 记录" ⇒ 修复无法悄悄发生。
++      本条随 D-A 补丁**同批**反转, 记录见 DEB §九。
++    """
+     db = tmp_path / "cap.db"
+     con = sqlite3.connect(db)
+     con.execute("CREATE TABLE capital_state (id INTEGER PRIMARY KEY, initial_capital REAL,"
+@@ -441,12 +447,129 @@
+                 " last_update TEXT, trade_env INTEGER DEFAULT 1)")
+     con.commit(); con.close()
+     r = rehearse.probe_capital_roundtrip(db)
+-    assert r["seamless_roundtrip"] is False, (
+-        "回切已能恢复本臂基线 ⇒ capital_safety.py:755 的按臂过滤已修; "
+-        "请把本钉反转为 assert True, 并在 DEB/handoff 记录该修复")
+-    # 病灶特征: 捞到的是另一臂 (env=0) 的行 ⇒ 本臂 peak 与 is_locked 双双丢失
+-    assert r["load_state_result"]["peak_equity"] == 0.0
+-    assert r["load_state_result"]["is_locked"] is False
++    assert r["seamless_roundtrip"] is True, (
++        f"回切丢本臂基线 ⇒ capital_safety._load_state 的按臂过滤失效/被回退; "
++        f"probe_state={r['probe_state']} picked={r['load_state_result']}")
++    # 无缝回切: 恢复的是 sim 臂 (env=1) 自己那行, 不是 id 更大的 live 臂 (env=0) 行
++    assert r["load_state_result"]["peak_equity"] == 99127.14
++    assert r["load_state_result"]["is_locked"] is True
++    assert r["load_state_result"]["lock_reason"] == "rehearse_sim_lock"
++
++
++# ─────────────────────────────────────────────────────────────
++# D-A 行为钉 (DEB-20260914 §九) — 与 capital_safety 补丁**同批落地**
++#
++# 钉四件互不替代的事:
++#   1 本臂行优先于 id 更大的另一臂行 (修复目标本体)
++#   2 不得**继承**另一臂的锁 (防过度修正成"总挑锁着的那行")
++#   3 本臂无行时回落旧语义 (保证现状零行为变化)
++#   4 缺 trade_env 列时不得升级成 fail-safe 锁仓 (保留原实现的容忍度)
++# ─────────────────────────────────────────────────────────────
++_CAP_DDL = ("id INTEGER PRIMARY KEY, initial_capital REAL, current_equity REAL,"
++            " peak_equity REAL, cash REAL, market_value REAL, buying_power REAL,"
++            " drawdown_pct REAL, max_drawdown_pct REAL, water_level TEXT,"
++            " is_locked INTEGER, lock_reason TEXT, last_update TEXT")
++
++
++def _mk_capital_db(path: Path, rows, *, with_trade_env: bool = True) -> Path:
++    """rows = [(id, trade_env, peak_equity, is_locked, lock_reason), ...]"""
++    con = sqlite3.connect(path)
++    ddl = _CAP_DDL + (", trade_env INTEGER DEFAULT 1" if with_trade_env else "")
++    con.execute(f"CREATE TABLE capital_state ({ddl})")
++    tail = ", trade_env" if with_trade_env else ""
++    ph = "?,?,?,?,?,?" + (",?" if with_trade_env else "")
++    for rid, env, peak, locked, reason in rows:
++        vals = [rid, 77806.99, 91000.0, peak, locked, reason]
++        if with_trade_env:
++            vals.append(env)
++        con.execute(f"INSERT INTO capital_state (id, initial_capital, current_equity,"
++                    f" peak_equity, is_locked, lock_reason{tail}) VALUES ({ph})", vals)
++    con.commit(); con.close()
++    return path
++
++
++def _mk_capital_system(db: Path, trade_env: int):
++    from app.risk.capital_safety import CapitalSafetySystem
++    return CapitalSafetySystem(db_path=str(db), initial_capital=100_000.0,
++                               trade_env=trade_env)
++
++
++def test_capital_load_prefers_own_arm_over_newer_other_arm(tmp_path):
++    """本臂 (sim) 行 id 更小, 另一臂 (live) 后写 id 更大 ⇒ 必须读回本臂的 peak+lock."""
++    db = _mk_capital_db(tmp_path / "c1.db", [
++        (1, 1, 99127.14, 1, "sim_drawdown_lock"),
++        (2, 0, 500000.0, 0, ""),
++    ])
++    cs = _mk_capital_system(db, trade_env=1)
++    assert cs._state.peak_equity == 99127.14
++    assert cs._state.is_locked is True
++    assert cs._state.lock_reason == "sim_drawdown_lock"
++    assert cs._peak_initialized is True
++
++
++def test_capital_load_does_not_inherit_other_arm_lock(tmp_path):
++    """反向钉: 另一臂锁着且 id 更大 ⇒ 本臂**不得**被传染上锁, 也不得丢自己的 peak.
++
++    没有这条, "按臂读取"可以被实现成"总挑 is_locked=1 的那行"而骗过上一个钉子。
++    """
++    db = _mk_capital_db(tmp_path / "c2.db", [
++        (1, 0, 480000.0, 0, ""),
++        (2, 1, 99127.14, 1, "sim_drawdown_lock"),
++    ])
++    cs = _mk_capital_system(db, trade_env=0)
++    assert cs._state.is_locked is False
++    assert cs._state.lock_reason == ""
++    assert cs._state.peak_equity == 480000.0
++
++
++def test_capital_load_falls_back_when_own_arm_absent(tmp_path):
++    """本臂无行 ⇒ 回落旧语义: 走"检测到交易环境切换"分支, 不加载另一臂基线.
++
++    这是"现状零行为变化"的另一半: live 库今天 0 行, sim 库只有本臂行,
++    唯一会命中回落的形态就是"只有另一臂的行", 而旧代码对此正是重置基准。
++    """
++    db = _mk_capital_db(tmp_path / "c3.db", [(1, 1, 99127.14, 1, "sim_drawdown_lock")])
++    cs = _mk_capital_system(db, trade_env=0)
++    assert cs._peak_initialized is False
++    assert cs._state.peak_equity == 0.0
++    assert cs._state.is_locked is False
++    assert getattr(cs, "_save_failed", False) is False
++
++
++def test_capital_load_tolerates_missing_trade_env_column(tmp_path):
++    """缺 trade_env 列 (未跑过迁移的旧库) ⇒ 不得抛, 不得升级成 fail-safe 锁仓.
++
++    原实现靠 `"trade_env" in row.keys()` 容忍缺列; 若新写法让缺列直接抛
++    OperationalError, 外层 except 会置 _save_failed=True ⇒ **静默禁止一切新开仓**,
++    那是把"读不到臂"变成"不交易", 属行为回退。构造时 _ensure_db_table 会自动补列,
++    所以这里先正常建实例, 再重建一张无该列的表, 直接调 _load_state。
++    """
++    db = tmp_path / "c4.db"
++    cs = _mk_capital_system(_mk_capital_db(db, [(1, 1, 99127.14, 1, "x")]), trade_env=1)
++    con = sqlite3.connect(db)
++    con.execute("DROP TABLE capital_state")
++    con.execute(f"CREATE TABLE capital_state ({_CAP_DDL})")
++    con.execute("INSERT INTO capital_state (id, initial_capital, current_equity,"
++                " peak_equity, is_locked, lock_reason) VALUES (1, 77806.99, 91000.0,"
++                " 55555.55, 1, 'legacy_lock')")
++    con.commit(); con.close()
++    # 注意: _load_state 的成功路径**不**清 _save_failed (只有 _save_state 会清, :823),
++    # 所以这里必须预置 False 再断言仍是 False —— 这才等价于"缺列没有触发外层 except"。
++    cs._save_failed = False
++    cs._load_state()
++    assert getattr(cs, "_save_failed", False) is False
++    assert cs._state.peak_equity == 55555.55
++    assert cs._state.is_locked is True
++    assert cs._state.lock_reason == "legacy_lock"
++
++
++def test_capital_load_empty_table_is_not_an_error(tmp_path):
++    """0 行 (live 库今天的形态) ⇒ 走"无历史记录"分支, 不报错不锁仓."""
++    db = _mk_capital_db(tmp_path / "c5.db", [])
++    cs = _mk_capital_system(db, trade_env=0)
++    assert cs._peak_initialized is False
++    assert getattr(cs, "_save_failed", False) is False
++    assert cs._state.initial_capital == 100_000.0
+ 
+ 
+ def test_report_worst_severity_and_exit_contract(preflight):

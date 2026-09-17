@@ -14,7 +14,18 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 951  # 2026-09-11 DEB-20260910-logging §11.13 调低 (952→951): `app/shared` 符号链接
+BASELINE = 950  # 2026-09-15 DEB-20260914-cutover §十 调低 (951→950): 切换基建批的两个新脚本
+                  #   (`scripts/cutover_preflight.py` 9 处 + `scripts/cutover_rehearse.py` 1 处)
+                  #   曾把计数顶到 960 — 被并行工作流 (DEB-20260914 VIX 批) 全仓回归抓出并
+                  #   归因到本工作流, 就地清剿全部 10 处: 5 处"库文件缺失就跳臂"改为
+                  #   `_open_lane()` 留痕 + main() 汇总显式打印 (诊断器最坏的失效是
+                  #   "数据源打不开"与"查了没查出东西"输出同形 ⇒ 集体假绿);
+                  #   2 处冷却态读/写失败改具名留痕 (失败方向选 fail-loud, 宁重复推送不静默抑制);
+                  #   1 处日志档 OSError 留痕 (否则 P6"零里程"无法区分"没挂过"与"没扫到");
+                  #   1 处 P9 live 库同 `_open_lane`; rehearse 的沙箱守卫由
+                  #   try/relative_to+`except ValueError: pass` 改 parents 判定 (语义等价,
+                  #   不再把"守卫通过"与"守卫异常"共用一条 except 通道) ⇒ 净 −10, 只降不升。
+                  # 2026-09-11 DEB-20260910-logging §11.13 调低 (952→951): `app/shared` 符号链接
                   #   退役后本棘轮**首次看见** market_hours.py (pathlib.rglob 不跟随链接目录,
                   #   此前它的 2 处 `except: pass` 一直在分母外 = 基线是按少算校准的)。
                   #   同批就地清剿那 2 处 (config_center 时段回退 / HK 半日市日历 fail-open,

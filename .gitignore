@@ -46,6 +46,15 @@ data/backups/
 data/*
 !data/config_freeze_v2.json
 
+# 2026-09-14 (DEB-20260914-cutover-bidirectional-seamless): 切换预检的**棘轮基线**是判据种子
+# (与 config_freeze_v2 同性质 — 记录"何时把什么冻结为已知常态"), 须入库以便评审。
+# 同目录 preflight_*.json 逐次快照仍出库 (cron 每日重生成, 入库会把树搞脏)。
+# 丢了基线不会静默: --watch fail-loud(exit 2) 并要求人工 --accept-baseline。
+# 回滚 = 删以下三行
+!data/cutover/
+data/cutover/*
+!data/cutover/preflight_baseline.json
+
 # 2026-08-22 (DEB-20260822): cron 自动重生成的产物出库 — 树常年脏淹没真变更; 回滚=删以下两行+git add
 config/exit_calibration.json
 data/exit_rule_expectancy_latest.json

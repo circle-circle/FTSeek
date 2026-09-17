@@ -324,14 +324,16 @@ def test_missing_account_id_refused(monkeypatch):
 
 def test_report_renders_recon_line(recon_db):
     r = _recon(recon_db)
-    body = das.build_summary_report([], {}, {"trades": 2, "pnl": -350.0, "positions": 0, "errors": 0},
-                                    {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0},
+    # 2026-09-14 同步 34e4a608a: 港股段退役删掉 hk_alerts/hk_summary 两个位置形参,
+    # 本文件当时未跟改 ⇒ 位置实参整体左移一位 (report_date 吃到 summary 字典) →
+    # "got multiple values for argument 'us_equity_recon'"。新签名
+    # (us_alerts, us_summary, report_date, us_equity_recon=None, log_coverage=None)。
+    body = das.build_summary_report([], {"trades": 2, "pnl": -350.0, "positions": 0, "errors": 0},
                                     "2026-08-27", us_equity_recon=r)
     assert "权益对账" in body and "观测, 不进判据" in body
 
 
 def test_report_without_recon_is_unchanged():
-    body = das.build_summary_report([], {}, {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0},
-                                    {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0},
+    body = das.build_summary_report([], {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0},
                                     "2026-08-27")
     assert "权益对账" not in body

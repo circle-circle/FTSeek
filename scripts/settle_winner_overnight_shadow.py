@@ -24,8 +24,15 @@ breakeven/trail 收紧更新) — 真实赢家仓 arm 时刻生效 SL 更紧, �
 unsettled 待补算 (静默死亡族纪律: 每次运行打印未结算积压数)。
 
 用法: venv/bin/python scripts/settle_winner_overnight_shadow.py [--days N]
+
+积压告警 (2026-09-16, B16 测量链路修复): 未结算 arm 超
+--pending-alert-days (默认 3 天) → app/push hub HIGH 告警 + exit 1。
+缘起: 9/4 META arm 因 US_META_2026-09-08.json 1min bar 缺失卡死 12 天,
+cron 每天只打印"未结算积压 1"而无主动通知 = 静默死亡族 (B16 判据
+n≥20 在积压清空前不可信)。回滚: 告警分支独立于结算, 无需回滚键。
 """
 import argparse
+import logging
 import json
 import sys
 from pathlib import Path
@@ -35,6 +42,8 @@ sys.path.insert(0, str(ROOT))
 BAR_DIR = ROOT / "data" / "replay_bars"
 SHADOW = ROOT / "data" / "shadow" / "winner_overnight_shadow.jsonl"
 OUT = ROOT / "data" / "shadow" / "winner_overnight_shadow_latest.json"
+
+logger = logging.getLogger(__name__)
 
 
 def _atomic_write(path: Path, text: str):
@@ -106,9 +115,75 @@ def settle_row(row):
     }
 
 
+def _pending_arms(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if not r.get("settled") and r.get("type") == "arm"]
+
+
+def _stale_pending(rows: list[dict], alert_days: int, today=None) -> list[dict]:
+    """未结算 arm 且 arm_date 距今超 alert_days 天 (arm_date 损坏视为超龄)."""
+    from datetime import date
+    if today is None:
+        today = date.today()
+    stale = []
+    for r in _pending_arms(rows):
+        try:
+            age = (today - date.fromisoformat(str(r.get("arm_date", "")))).days
+        except (TypeError, ValueError):
+            stale.append(r)
+            continue
+        if age > int(alert_days):
+            stale.append(r)
+    return stale
+
+
+def _push_stale_alert(stale: list[dict], pending_n: int, alert_days: int) -> bool:
+    """积压超龄告警 — app/push hub, sync=True (cron 短命进程, 2026-09-16).
+
+    daily_invariant_check W1 直推同款: 推送成败以 hub.push 返回为准;
+    stop() 只关线程池, 关闭异常不影响返回值。
+    """
+    lines = []
+    for r in stale:
+        sym = str(r.get("symbol", "?"))
+        arm_day = str(r.get("arm_date", "?"))
+        try:
+            nxt = next_trading_day(arm_day)
+        except Exception:
+            nxt = None
+        bar_hint = (f"data/replay_bars/{sym.replace('.', '_')}_{nxt}.json"
+                    if nxt else "arm_date 损坏, 无法定位次日 bar")
+        lines.append(f"· {sym} arm_date={arm_day} — 需 {bar_hint}")
+    hub = None
+    try:
+        from app.push import get_push_hub, PushMessage, Level, Category
+        hub = get_push_hub()
+        ok = hub.push(PushMessage(
+            title=f"⚠️ 赢家隔夜影子积压 {len(stale)} 条 (>{alert_days} 天未结算)",
+            body="\n".join(lines) + (
+                f"\n未结算总数 {pending_n}; 结算器每日 06:25 运行, bar 缺失会无限重试。"
+                "修复: 补拉对应次日 1min bar (scripts/exit_replay_backtest.fetch_bars) "
+                "或落档 DEB 注销损坏行。B16 判据 (n≥20) 在积压清空前不可信。"),
+            level=Level.HIGH,
+            category=Category.HEALTH,
+            dedup_key="winner_overnight_pending_stale",
+        ), sync=True)
+        return bool(ok)
+    except Exception as e:
+        logger.error("winner_overnight 积压告警推送异常: %s", e, exc_info=True)
+        return False
+    finally:
+        try:
+            if hub is not None:
+                hub.stop()
+        except Exception as e:
+            logger.warning("积压告警后 push hub 关闭异常 (推送结果不受影响): %s", e)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=0, help="只结算近 N 天 arm 行 (0=全部)")
+    ap.add_argument("--pending-alert-days", type=int, default=3,
+                    help="未结算 arm 超过 N 天未结算 → HIGH 告警 + exit 1 (积压棘轮)")
     args = ap.parse_args(argv)
     if not SHADOW.exists():
         print("无影子文件, 退出 (尚未产生 arm 行)")
@@ -151,6 +226,13 @@ def main(argv=None) -> int:
     print(f"本次结算 {n_set} 笔 | 盈利臂 {len(winners)} (B16样本) / 亏损臂 {len(losers)} (对照) "
           f"| 未结算积压 {summary['pending_n']} | 盈利臂合计delta {tot:+.2f} | 胜率 {summary['win_rate']}")
     print(f"by_outcome(盈利臂): {summary['by_outcome']}")
+    stale = _stale_pending(rows, args.pending_alert_days)
+    if stale:
+        push_ok = _push_stale_alert(stale, summary["pending_n"], args.pending_alert_days)
+        print(f"[winner_overnight] ⚠️ 积压超龄 {len(stale)} 条 "
+              f"(>{args.pending_alert_days} 天, 推送{'成功' if push_ok else '失败'}) — "
+              f"详见上方逐条 bar 缺口")
+        return 1
     return 0
 
 

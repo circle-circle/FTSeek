@@ -160,7 +160,12 @@ def test_d3_split_guard_basic():
 def test_d3_split_anomaly_detection():
     from app.data.split_event_guard import SplitEventGuard
     g = SplitEventGuard()
-    # -90% 跳变 → 自动标记
+    # -90% 跳变只产生观察日志；价格比例本身不是拆股佐证
+    detected = g.detect_split_anomaly("NVDA", current_price=120, prev_close=1200)
+    assert detected is False
+    assert not g.is_split_today("NVDA")
+
+    g.load_static({"NVDA": "10:1"})
     detected = g.detect_split_anomaly("NVDA", current_price=120, prev_close=1200)
     assert detected
     assert g.is_split_today("NVDA")

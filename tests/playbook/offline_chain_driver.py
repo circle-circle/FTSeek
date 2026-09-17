@@ -275,6 +275,7 @@ def run(workdir: Path, db_path: Path) -> dict:
 
     import scripts.llm_universe_scan as ue
     from app.core.atr_provider import ATRProvider
+    from app.utils import daily_active_pool as daily_active_pool_module
 
     undo = []
     # ── 埋点路径全部改道 ──
@@ -291,6 +292,16 @@ def run(workdir: Path, db_path: Path) -> dict:
                    workdir / "data" / "shadow" / "ue_tier_gate_shadow.jsonl"),
              patch("app.playbook.candidate_eligibility.FUNNEL_PATH",
                    workdir / "candidate_funnel.jsonl")]
+    daily_active_pool_module._active_pool_instance = None
+    original_pool_init = daily_active_pool_module.DailyActivePool.__init__
+
+    def sandbox_pool_init(self, *args, **kwargs):
+        original_pool_init(self, *args, **kwargs)
+        self._manual_path = str(workdir / "data" / "daily_active_manual.json")
+        self._pool_path = str(workdir / "data" / "daily_active_pool.json")
+
+    daily_active_pool_module.DailyActivePool.__init__ = sandbox_pool_init
+    undo.append((daily_active_pool_module.DailyActivePool, "__init__", original_pool_init))
     # app/data/rsshub_us_news.py 在 **import 时**执行 logging.basicConfig(
     #   handlers=[FileHandler(logs/rsshub_us.log)]) — 它会替换根 handler, 于是此后
     #   任何一条日志都追加进生产 logs/ (第一轮离线链就是被这个写守卫拦下的)。

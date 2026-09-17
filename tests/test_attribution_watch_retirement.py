@@ -21,6 +21,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import pytest  # noqa: E402
 
+from tests.helpers.invariant_harness import isolate_invariant_check  # noqa: E402
+
 _spec = importlib.util.spec_from_file_location(
     "daily_invariant_check", PROJECT_ROOT / "scripts" / "daily_invariant_check.py"
 )
@@ -69,7 +71,9 @@ def _mk_db(tmp_path, with_attribution_table=False):
 def _run(tmp_path, monkeypatch, db):
     monkeypatch.setattr(dic, "DB", db)
     monkeypatch.setattr(dic, "OUT", tmp_path / "out.json")
-    rc = dic.main()
+    # 2026-09-14: 隔离生产读面 + 关外发 (同 test_invariant_d4_settled_fields._run 注记)。
+    isolate_invariant_check(dic, tmp_path, monkeypatch)
+    rc = dic.main(push_enabled=False)
     return rc, json.loads((tmp_path / "out.json").read_text())
 
 

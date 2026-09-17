@@ -37,20 +37,22 @@ class TestExternalCloseLabel:
 
     def test_source_anchor_insert_uses_variable(self):
         src = PS.read_text(encoding="utf-8")
-        # 标签变量在 external_close 写入块定义
         assert "_trade_mode_label = 'live' if _auto_acc_ec" in src, \
             "external_close trade_mode 标签变量丢失 (RFC-080 demix2)"
-        # INSERT 参数表使用变量, 不再硬编码 'live'
-        m = re.search(r"'external_close', 'POSITION_SYNC', 'manual', (\w+),", src)
-        assert m, "external_close INSERT 参数行未找到 (结构漂移?)"
-        assert m.group(1) == "_trade_mode_label", \
-            f"INSERT 第14参 = {m.group(1)}, 期望 _trade_mode_label (防回归硬编码 'live')"
+        assert "trade_mode=_trade_mode_label" in src, \
+            "external_close 记账调用未传入 _trade_mode_label"
+        assert re.search(r"\"manual\", trade_mode,", src), \
+            "external_close helper 未使用调用方标签"
 
     def test_dedup_guard_not_trade_mode_dependent(self):
         """查重守卫按自然键+exit_price>0 判重, 不得引入 trade_mode 条件
         (标签变更不得破坏 executor↔position_sync 双端去重)."""
         src = PS.read_text(encoding="utf-8")
-        i = src.find("查重守卫 (2026-08-21")
-        assert i >= 0
-        block = src[i:i + 2600]
-        assert "trade_mode" not in block, "查重守卫出现 trade_mode 条件 — 会因两端口径差异漏判重"
+        match = re.search(
+            r"closed = conn\.execute\(\n(.*?)\n    \)\.fetchone\(\)\n    if closed:",
+            src,
+            re.DOTALL,
+        )
+        assert match, "external_close closed-row 查重未找到"
+        assert "trade_mode" not in match.group(1), \
+            "查重守卫出现 trade_mode 条件 — 会因两端口径差异漏判重"

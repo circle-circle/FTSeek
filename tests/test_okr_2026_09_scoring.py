@@ -516,13 +516,26 @@ def test_production_artifact_carries_both_blocks():
 
 
 # ══════════════ 批④ 新增: 注册表补登 + 毕业门禁草案 (真仓只读) ══════════════
+def _registry_entry(reg: str, item_id: str) -> str:
+    """切出注册表中某个条目的源码块 (到下一个 ShadowItem( 之前)。
+
+    2026-09-14 根治定长窗假红: 原断言写 `[:2500]` / `[:1200]`, 而条目的 verdict_history
+    每次裁决都会合法增长 (9/13 二判约 +1.1k 字符) ⇒ `eval_on_demand=True` 这个 kwarg 被
+    挤出窗口, 守卫从"条目缺字段"退化成"条目写长了就报"的假红 (真字段一直在, 见
+    shadow_registry.py 的 kr3 条目)。按条目边界切片后, 判据回到它本来的意思:
+    字段在不在这个条目里。
+    """
+    return reg.split(f'id="{item_id}"', 1)[1].split("ShadowItem(", 1)[0]
+
+
 def test_kr3_shadow_now_registered_in_production_registry():
     """补登已生效: 注册表是影子 SSOT, 未登记 = 无人跟踪 = 等于没做。"""
     reg = (PROJECT_ROOT / sc.SHADOW_REGISTRY).read_text(encoding="utf-8")
     assert 'id="kr3_direction_runup_gate"' in reg and "RFC-072" in reg
-    assert "eval_on_demand=True" in reg.split('id="kr3_direction_runup_gate"')[1][:2500], (
+    entry = _registry_entry(reg, "kr3_direction_runup_gate")
+    assert "eval_on_demand=True" in entry, (
         "报告脚本无 cron (只有采集器有) ⇒ 必须标 on_demand, 否则挂载核对哨兵误报")
-    assert "min_n=30" in reg.split('id="kr3_direction_runup_gate"')[1][:1200]
+    assert "min_n=30" in entry
     from app.playbook.shadow_registry import REGISTRY
     item = next(i for i in REGISTRY if i.id == "kr3_direction_runup_gate")
     assert item.min_n == 30 and item.eval_on_demand is True

@@ -817,9 +817,9 @@ class ExitMonitor:
                     _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
                     _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
                     if _dir_str == 'SHORT': _pnl = -_pnl
-                    # DEB-20260904 #192: 检查平仓返回值, 失败不计入 closed
+                    # DEB-20260904 #192: 只接受显式 True；None/0 不能当成功
                     _ok = execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_HARD_STOP", "close_ratio": 1.0})
-                    if _ok is False:
+                    if _ok is not True:
                         _flat_fail += 1
                         logger.critical(
                             f"[组合止损] FLAT_ALL 平仓 {p.symbol} 返回失败, "
@@ -832,12 +832,12 @@ class ExitMonitor:
                     logger.error(f"[组合止损] 平仓 {p.symbol} 失败: {_e}")
             # DEB-20260904 #192: 冷却锁存改为循环后写入, 且全部失败时不锁存
             # (旧逻辑: 先锁存再平仓 → 全败也被冷却掩盖, 无法重试)
-            if len(closed) > 0 or _flat_fail == 0:
+            if managed_positions and _flat_fail == 0 and len(closed) == len(managed_positions):
                 self._flat_all_last_triggered_ts = time.time()
             else:
                 logger.critical(
-                    f"[组合止损] FLAT_ALL {len(managed_positions)} 仓全部平仓失败, "
-                    f"不锁存冷却, 下轮继续尝试"
+                    f"[组合止损] FLAT_ALL {len(managed_positions)} 仓中 "
+                    f"{len(closed)} 成功/{_flat_fail} 失败, 不锁存冷却, 下轮继续尝试"
                 )
             return closed
         elif portfolio_action == "REDUCE_50":

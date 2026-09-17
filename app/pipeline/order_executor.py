@@ -300,14 +300,20 @@ def _query_broker_open_orders(scheduler, symbol: str) -> Optional[List[Dict[str,
         # (旧逻辑 return [] 被调用方当成"确认无挂单" → 有未知挂单时误判安全继续平仓)
         if not _adapter or not getattr(_adapter, "trade_ctx", None):
             return None
-        from futu import TrdEnv, RET_OK as _RET_OK
-        _trd_env = TrdEnv.SIMULATE if getattr(_adapter, "trade_env", 1) == 1 else TrdEnv.REAL
+        from futu import RET_OK as _RET_OK
+        _trd_env = _resolve_trd_env(scheduler)
         _ret, _data = _adapter.trade_ctx.order_list_query(
             code=symbol,
             trd_env=_trd_env,
             acc_id=int(_adapter.account_id) if getattr(_adapter, "account_id", None) else 0,
         )
-        if _ret != _RET_OK or _data is None or _data.empty:
+        if _ret != _RET_OK or _data is None:
+            logger.warning(
+                f"[平仓·open_orders] {symbol} broker 挂单查询失败 "
+                f"(ret={_ret}), 无法判定, 返回 None"
+            )
+            return None
+        if _data.empty:
             return []
         _open: List[Dict[str, Any]] = []
         # 富途未结订单状态
@@ -1627,6 +1633,40 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
 
         if size <= 0:
             logger.warning(f"[动态仓位] {symbol} 计算仓位为 0, 拒绝下单 (fail-close)")
+            return 0
+
+        # ═══ R06 费用门 (2026-09-16, REVIEW-20260916-full-session-audit §7.1, 用户批准) ═══
+        # 问题: 244 笔 PLAYBOOK_SIM 费用/毛利=70.9% — 小仓位/紧 SL 单的费用吃掉预期利润.
+        # 机制: 下单前估算往返费用 vs 预期毛边际(SL距离×R:R 2.0), 超限拒单.
+        #   预期毛边际用 SL距离×tp_r_mult (=预期 TP 移动), 非历史调优 — 阈值来自成本模型.
+        #   标准仓位实测 fee/gross 仅 1-7%, 门拦的是极小仓/极紧 SL (费用占比畸高区).
+        # fail-closed: 估算异常 → 拒单. 配置 playbook.fee_gate 可调/关.
+        try:
+            from app.core.config_container import get_config as _fg_cfg
+            _fg = _fg_cfg().get_dotted("playbook.fee_gate", {}) or {}
+            _fg_enabled = bool(_fg.get("enabled", True))
+            _fg_max_ratio = float(_fg.get("max_fee_to_gross_ratio", 0.25))  # 费用≤预期毛边际25%
+            _fg_rr = float(_fg.get("rr_mult", 2.0))  # take_profit_r_mult 默认2.0
+            if _fg_enabled and price > 0 and size > 0 and stop_loss_price > 0:
+                from app.execution.fee_model import estimate_round_trip
+                _fdir = "SHORT" if (direction and "SHORT" in str(direction).upper()) else "LONG"
+                _fees = estimate_round_trip(size, price, price, _fdir)["total"]
+                _sl_dist = abs(price - stop_loss_price)
+                _exp_gross = size * _sl_dist * _fg_rr
+                _ratio = (_fees / _exp_gross) if _exp_gross > 0 else 9.9
+                if _ratio > _fg_max_ratio:
+                    logger.warning(
+                        f"🚫 [R06费用门] {symbol} 拒绝: 往返费用 ${_fees:.2f} / "
+                        f"预期毛边际 ${_exp_gross:.2f} = {_ratio*100:.0f}% > {_fg_max_ratio*100:.0f}% "
+                        f"(size={size} sl_dist=${_sl_dist:.2f})"
+                    )
+                    return 0
+                logger.debug(
+                    f"[R06费用门] {symbol} 通过: fee/gross={_ratio*100:.1f}%"
+                )
+        except Exception as _fg_err:
+            # fail-close: 费用估算异常拒单, 不绕过
+            logger.error(f"🚫 [R06费用门] {symbol} 估算异常(拒绝): {_fg_err}")
             return 0
 
         # ═══ SSOT (2026-06-06): 统一安全门禁 — 替代散落 inline 检查 ═══
@@ -3858,58 +3898,6 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         context["_symdir_lock_dir"] = _dir_str
     except Exception as _sde:
         logger.debug(f"[SymbolLock·symdir] acquire 异常 (放行): {_sde}")
-
-    # 0.7 Phase A (2026-05-14): Coordinator 多源信号采集 + 仲裁审计 (无副作用)
-    # T4 (2026-05-16): sandbox enforce — 真实阻断 SymbolLock 冲突
-    # B.8: 让所有已注册 adapter 都生成候选信号 (Phase A: 大多数 adapter 返回 None)
-    #      然后 arbitrate 审计写表.
-    try:
-        _coord = getattr(scheduler, "coordinator", None)
-        if _coord is not None and _coord.enabled:
-            _adapters = getattr(scheduler, "_strategy_adapters", []) or []
-            # 主 adapter 必装 (主线信号已经生成, 直接挂)
-            _main_adapter = next((a for a in _adapters if a.name == "main"), None)
-            if _main_adapter is None:
-                from app.strategy.adapters import MainPipelineAdapter
-                _main_adapter = MainPipelineAdapter()
-            _candidates = [(_main_adapter, signal)]
-            # 其他 adapter (Phase A: 返回 None 不参与, Phase B: 真实生成)
-            for _a in _adapters:
-                if _a.name == "main":
-                    continue
-                try:
-                    _other_sig = _a.generate_signal(symbol, context)
-                    if _other_sig is not None:
-                        _candidates.append((_a, _other_sig))
-                except Exception as _adapter_err:
-                    logger.debug(f"[Coordinator] adapter {_a.name} 信号生成失败 (跳过): {_adapter_err}")
-            # 写审计 (即使 1 候选也写) — T8b: 传 ctx 让 effective_priority 走 regime-aware
-            _coord.arb.arbitrate(symbol, _candidates, ctx=context)
-            if len(_candidates) > 1:
-                logger.info(
-                    f"[Coordinator·multi] {symbol} 多源候选 n={len(_candidates)}: "
-                    f"{[a.name for a, _ in _candidates]}"
-                )
-
-            # T4: enforce 模式下 SymbolLock 真实仲裁
-            # 主 adapter 申请 lock, 已被其他 owner 持有 → DENIED (signal_arbitration 已留痕)
-            if not _coord.is_observe_only():
-                try:
-                    _lock = _coord.lock
-                    _ok = _lock.acquire(symbol, "main")
-                    if not _ok:
-                        _holder = _lock.owner(symbol) or "?"
-                        logger.warning(
-                            f"[T4·SymbolLock·ENFORCE] {symbol} held by {_holder}, "
-                            f"main REJECTED — 跳过主线下单"
-                        )
-                        return  # 拒下单, 不进入 _check_gates_and_conflicts
-                    # R1 (2026-05-16): 标记本次持锁, 出口必释放 (除非 _close_position 接管)
-                    context["_r1_lock_acquired"] = True
-                except Exception as _le:
-                    logger.debug(f"[T4·SymbolLock] 异常 (放行): {_le}")
-    except Exception as _ce:
-        logger.debug(f"[Coordinator] multi-source/arbitrate 审计失败 (放行): {_ce}")
 
     # R1 (2026-05-16): 锁泄漏修复 — 4 个 return 路径必释放 lock
     # 仅 _execute_long/short 成功创建仓位后, lock 归 on_position_closed 释放;

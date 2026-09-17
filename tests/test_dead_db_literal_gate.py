@@ -66,6 +66,26 @@ ALLOWLIST = {
         "W3 防复发守卫: 只读统计两库互污行数 (sim 库 live 行 / live 库 sim 行), "
         "比对而非消费, 与 data_health_check 同类。单库翻转日后 sim 侧检测自动空转、"
         "live 侧继续有效, 改用 mode-aware 解析器反而丢掉守卫意义。",
+    # 2026-09-15 (DEB-20260914-cutover §十): 以下两条同样是**先被本门抓红、后补登记**
+    # (与 env_separation_shadow / daily_invariant_check 同例), 记档以证该门证伪力 ——
+    # 二者是 sim⇄live **双向**切换预检/彩排工具, 产物本身就是"两载体之差"。
+    "scripts/cutover_preflight.py":
+        "切换预检哨兵 (10 探针 P0-P9, cron 每日 06:38 `--watch --push`): **必须**同时"
+        "只读两库才能产出它的判据 —— P2 两库 schema 差集 (实测切 live 触发补列 33 条)、"
+        "P4 两库同标的重叠、P5 `sl_broker_order_id` 语义分臂、P7 `trade_mode` 双向混同、"
+        "P9 live 库分臂台账连续性。改用 mode-aware 解析器只能拿到**一个**载体 ⇒ "
+        "差集恒为空、探针集体假绿 (这正是本工具要防的失效形态)。全程只读: 由 "
+        "`tests/test_cutover_infra.py` 的 AST 只读钉 (只扫真正传给 execute*() 的字面量 SQL) "
+        "+ `_ro()` 强制 `mode=ro` URI (库不存在则抛, 绝不建空库) 双向锁死; "
+        "库缺失不再静默跳臂, 改 `_open_lane()` 留痕并在汇总显式打印。",
+    "scripts/cutover_rehearse.py":
+        "切换彩排器: 把两库 `copy2` 到沙箱后走 app **真实**迁移路径跑一遍切换, "
+        "再比对迁移前后缺口 —— 与 migrate_live_records_to_live_db / demix_* 同类"
+        "双载体工具, 产物正是两载体之差。**生产库零接触**由三重钉锁死: `_copy_db` 只 "
+        "`copy2`+对副本 checkpoint (钉子钉住)、沙箱硬断言不得位于 `data/` 下、"
+        "`tests/test_cutover_infra.py::test_rehearse_touches_production_only_by_copy`。"
+        "实证价值已兑现: 查出切 live 当天会在真钱库执行 2 条 `DROP TABLE` "
+        "(`daemon_heartbeat`/`entry_context_snapshot`), 以及 D-A 回切丢本臂基线。",
 }
 
 

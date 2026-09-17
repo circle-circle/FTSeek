@@ -19,6 +19,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import pytest  # noqa: E402
 
+from tests.helpers.invariant_harness import isolate_invariant_check  # noqa: E402
+
 _spec = importlib.util.spec_from_file_location(
     "daily_invariant_check", PROJECT_ROOT / "scripts" / "daily_invariant_check.py"
 )
@@ -68,7 +70,10 @@ def _row(db, *, source="PLAYBOOK_SIM", realized_pnl=10.0, pnl_net=9.0, fees=1.0,
 def _run(tmp_path, monkeypatch, db):
     monkeypatch.setattr(dic, "DB", db)
     monkeypatch.setattr(dic, "OUT", tmp_path / "out.json")
-    rc = dic.main()
+    # 2026-09-14: 隔离生产读面 + 关外发。只 patch DB/OUT 时 W7 昨收分母哨兵仍读生产影子档,
+    # 09-11 的 2 行实盘分叉让本文件两条"夹具干净应全绿"用例连红 (详见 harness docstring)。
+    isolate_invariant_check(dic, tmp_path, monkeypatch)
+    rc = dic.main(push_enabled=False)
     return rc, json.loads((tmp_path / "out.json").read_text())
 
 

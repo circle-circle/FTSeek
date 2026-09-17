@@ -3,9 +3,9 @@ type: "symbol"
 symbol: "US.ADBE"
 name: ""
 industry: "Technology"
-latest_date: "2026-08-03"
+latest_date: "2026-09-11"
 latest_direction: "SKIP"
-latest_score: 5.0
+latest_score: 3.0
 latest_rating: "观望"
 total_trades: 1
 win_rate: 1.0
@@ -217,4 +217,52 @@ FTC提前终止Topaz收购审查→消除反垄断不确定性→市场情绪回
 - [[US_PANW]]
 - [[US_SNDK]]
 - [[US_XRX]]
+---
+
+## 2026-09-11 | 观望 | 信心中高 | SKIP
+<!-- id:2026-09-11-5b6d -->
+
+> Q3营收创纪录$6.76B但net new ARR下滑引发盘前-4.36%放量杀跌，PE(TTM)仅13.89远低于行业中枢40.41，多空分歧极大(目标价$220-$315)，缺乏右侧确认信号，观望等待企稳。
+
+- **标的**: Adobe (US.ADBE) | 现价: 237.9792 | 评分: 3.0/10
+- **IC ID**: `DA-20260911201505-US.ADBE-5b6d`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.00n=543] 估值极度压缩提供安全边际，PE(TTM)仅13.89远低于Technology行业中枢40.41，且6个月MSPR达2.22显示内部人净买入，盘前-4.36%属对net new ARR下滑的过度反应。 (fundamental)
+  2. [MEDIUM][IC=+0.01n=919] Q3基本面依然稳健，营收创纪录达$6.76B并上调全年指引，ROE高达62.39%且净利率28.69%，证明核心质量未受。 (fundamental)
+
+### 看空论据
+  1. [HIGH][IC=-0.03n=1236] 财报暴露增长隐患，net new ARR因freemium转型下滑，AI变现前景不明朗导致机构下调目标价至$220(卖出评级)，摩根大通亦下调至$315。 (news)
+  2. [HIGH][IC=+0.04n=689] 技术面与资金面共振破位，5日跌幅达-11.1%跌破MA60(243.07)，盘前量比1.969放量下杀，且超大单净流出$156万，大单净流出$610万。 (technical)
+
+### 交易计划
+- 入场: SKIP，不执行入场
+- 止损: N/A
+- 止盈: N/A
+- 支撑: N/A | 阻力: N/A
+
+### 风险
+  - 财报后机构调220至$315)分歧极大，易引发日内高波动与损
+  - 大盘大盘SPY/QQQ趋势向下且Technology板块盘中-1.3%，-1.3%，宏观逆风压制反弹
+  - earnings_calendar降级缺失降级缺失，无法规避后续潜在财报/指引更新窗口
+  - [挑战者] 无实质反证: 当前方向的数据支撑成立
+
+### 因果链
+Q3财报net new ARR下滑 freemium转型下滑 → 机构担忧AI变现下调目标价至$220 → 盘前放量-4.36%跌破MA60引发技术派止损 → 估值双杀
+
+### 论据IC验证
+- 基于1854条历史信号alpha IC验证 (overall_t1=+0.0008)
+
+## 同行业 (Technology)
+- [[US_AAPL]]
+- [[US_ACN]]
+- [[US_APPN]]
+- [[US_CRM]]
+- [[US_CRWD]]
+- [[US_CRWV]]
+- [[US_DDOG]]
+- [[US_DELL]]
+- [[US_ESTC]]
+- [[US_GTLB]]
 ---

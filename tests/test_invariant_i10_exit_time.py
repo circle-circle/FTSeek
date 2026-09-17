@@ -19,6 +19,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import pytest
 
+from tests.helpers.invariant_harness import isolate_invariant_check
+
 _spec = importlib.util.spec_from_file_location(
     "daily_invariant_check", PROJECT_ROOT / "scripts" / "daily_invariant_check.py"
 )
@@ -72,7 +74,11 @@ def _run(tmp_path, monkeypatch, db):
     monkeypatch.setattr(dic, "DB", db)
     monkeypatch.setattr(dic, "OUT", out)
     monkeypatch.setattr(dic, "now_et", lambda: _FROZEN_NOW)
-    rc = dic.main()
+    # 2026-09-14: 隔离生产读面 + 关外发。本文件的 `rc == 0` 判的是"物理自洽行全过",
+    # 只 patch DB/OUT 时 W7 昨收分母哨兵仍读生产影子档 ⇒ 09-11 实盘 2 行分叉把
+    # test_clean_db_passes / test_open_row_not_false_positive 染红 (与本文件议题无关)。
+    isolate_invariant_check(dic, tmp_path, monkeypatch)
+    rc = dic.main(push_enabled=False)
     result = json.loads(out.read_text())
     # 防空转钉放在 harness 里 (不是逐个用例里) ⇒ 新增用例想忘也忘不了
     assert result["checked_at"].startswith(_FROZEN_NOW.date().isoformat()), result["checked_at"]

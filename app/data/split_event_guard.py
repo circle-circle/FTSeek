@@ -70,7 +70,8 @@ class SplitEventGuard:
 
     def detect_split_anomaly(self, symbol: str, current_price: float, prev_close: float) -> bool:
         """
-        启发式拆股检测: 价格突变 > 30% 且有拆股佐证 (静态名单/常见拆股比例吻合) → 怀疑拆股
+        启发式拆股检测: 价格突变 > 30% 且静态名单已登记该标的 → 判定拆股；
+        仅价格比例吻合只输出疑似观察日志，不得屏蔽信号或风控。
 
         如果检测到, 自动标记并返回 True.
         Phase A: 仅日志告警, 不阻塞 (因为可能是真实跳空); Phase B 接 Polygon 实时验证.
@@ -80,21 +81,19 @@ class SplitEventGuard:
         change = abs(current_price - prev_close) / prev_close
         if change <= 0.30:
             return False
-        # DEB-20260904 #147: 仅凭 >30% 突变会把财报暴跌/真实跳空误标拆股
-        # (当日信号全被屏蔽且 FLASH_EXIT 被跳过) — 需佐证才标记:
-        # 静态名单已知事件, 或 prev/current 价格比落在常见拆股比例容差内;
-        # 否则仅告警, 不标记拆股 (保留信号与风控路径)
+        # DEB-20260916 #269: 价格比例由同一组价格推导，不是独立佐证；
+        # 只有静态名单/外部事件源确认才可 mark_split。
         with self._lock:
             known = symbol.upper() in self._static_known
         ratio = prev_close / current_price
         ratio_hit = any(
             abs(ratio - r) / r <= self._SPLIT_RATIO_TOL for r in self._SPLIT_RATIOS
         )
-        if not (known or ratio_hit):
+        if not known:
             logger.warning(
                 f"[SplitGuard·heuristic] {symbol} 价格突变 {change*100:.1f}% "
-                f"(prev=${prev_close:.2f}, now=${current_price:.2f}, ratio={ratio:.3f}) — "
-                f"无拆股佐证, 判定真实跳空/暴跌, 不标记拆股"
+                f"(prev=${prev_close:.2f}, now=${current_price:.2f}, ratio={ratio:.3f}, "
+                f"ratio_hit={ratio_hit}) — 无外部拆股佐证, 仅观察不标记"
             )
             return False
         logger.warning(

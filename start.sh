@@ -47,7 +47,7 @@ fi
 
 if [ ! -x "$PYTHON" ]; then
     echo "❌ venv python 不存在: $PYTHON"
-    echo "   请重建 venv: python3 -m venv $VENV_DIR && $PIP install -r requirements.txt"
+    echo "   请重建 venv: python3 -m venv $VENV_DIR && $PIP install -r requirements.lock"
     exit 1
 fi
 
@@ -62,18 +62,16 @@ if [ "$(command -v python)" != "$PYTHON" ]; then
 fi
 echo "✅ Python venv: $($PYTHON --version 2>&1) @ $VENV_DIR"
 
-# ── 3. 依赖检查（优先使用 lock）──
-if [ -f "requirements.lock" ]; then
-    echo "检查依赖（lock 模式）..."
-    # C2 (2026-08-24, 体检 E1): lock 失败即终止, 不再回退 requirements.txt —
-    # 回退分支会让重建环境静默松掉版本锁定范围漂移, 是比安装失败更危险的状态.
-    if ! $PIP install -q -r requirements.lock; then
-        echo "❌ lock 依赖安装失败 — 环境不完整, 终止启动 (不静默回退)"
-        exit 1
-    fi
-elif [ -f "requirements.txt" ]; then
-    echo "检查依赖..."
-    $PIP install -q -r requirements.txt
+# ── 3. 依赖检查（唯一 manifest = lock）──
+if [ ! -f "requirements.lock" ]; then
+    echo "❌ 未找到 requirements.lock"
+    exit 1
+fi
+echo "检查依赖（lock 模式）..."
+# C2 (2026-08-24, 体检 E1): lock 失败即终止, 不回退松散 manifest。
+if ! $PIP install -q -r requirements.lock; then
+    echo "❌ lock 依赖安装失败 — 环境不完整, 终止启动"
+    exit 1
 fi
 
 # ── 4. 配置文件完整性快速校验 ──

@@ -29,10 +29,22 @@ DB = "/opt/ftseek/FTSeek-US/data/ftseek_us.db"
 con = sqlite3.connect(DB)
 con.row_factory = sqlite3.Row
 _SINCE = sys.argv[1] if len(sys.argv) > 1 else "2026-07-15"   # 可选: 窗口起点
+# ── 量纲声明 (2026-09-14, 修 DEB-20260910 §16.10(b) 的**假缺陷**指控) ──
+# 本文件的 ATR 口径是**百分点** (percentage points, 3.0 = 3%), 别名从 `atr_pct`
+# 改为 `atr_pp` 以根治同名不同尺:
+#   · 本文件: `metadata_json.$.atr` 是**绝对价差**(实测 n=502 min 0 / max 109.43 /
+#     avg 13.21 美元), 故 `atr/entry_price*100` = 百分点 (实测 min 0 / max 6.29 /
+#     avg 3.75)。
+#   · `playbook_instructions.atr_pct` 是**比例** (DEB §16.4 实测 n=728 / min 0.006431 /
+#     max 0.153846 / avg 0.0399) —— 与本文件同名不同尺, 两者互不相干。
+# §16.10(b) 断言"`atr_pct >= 3.0` 恒假"是把后者的比例尺套到了前者的百分点尺上;
+# 实测该判据把样本切成 低中波 n=36 / 高波 n=372 (运行时输出可见), **两桶皆非空**。
+# ⚠️ 若照 §16.10(b) 去"修"(除以 100), 各臂 `clamp(k×ATR, 0.5, 1.5)` 会因 k×0.0375
+#   ≈0.009 被**全部钳到下限 0.5** ⇒ 所有臂退化为同一条, 这把尺子会静默失效。
 rows = con.execute(f"""
     SELECT symbol, direction, entry_price, exit_price, quantity, fees_est,
            mfe_pct, pnl_net, exit_reason, entry_time,
-           CAST(json_extract(metadata_json,'$.atr') AS REAL)/entry_price*100 AS atr_pct
+           CAST(json_extract(metadata_json,'$.atr') AS REAL)/entry_price*100 AS atr_pp
     FROM trade_records
     WHERE date(entry_time) >= '{_SINCE}' AND entry_price > 0 AND exit_price > 0
       AND exit_reason NOT LIKE 'BROKER_GHOST%' AND exit_reason != 'ORPHAN_CLEANUP'
@@ -43,7 +55,7 @@ trades = []
 for r in rows:
     d = dict(r)
     bars = load_bars(d["symbol"], d["entry_time"][:10])
-    if bars is None or not d["atr_pct"] or d["atr_pct"] <= 0:
+    if bars is None or not d["atr_pp"] or d["atr_pp"] <= 0:
         continue
     trades.append((d, bars))
 
@@ -82,11 +94,11 @@ def run_arm(name, be_fn, rt_fn):
     bucket = {"low": 0.0, "high": 0.0}
     bucket_n = {"low": 0, "high": 0}
     for d, bars in trades:
-        net, kind = settle(d, bars, be_fn(d["atr_pct"]), rt_fn(d["atr_pct"]))
+        net, kind = settle(d, bars, be_fn(d["atr_pp"]), rt_fn(d["atr_pp"]))
         tot += net
         if kind == "sim_exit":
             n_exit += 1
-        b = "high" if d["atr_pct"] >= 3.0 else "low"
+        b = "high" if d["atr_pp"] >= 3.0 else "low"   # 3.0 = 3 个百分点 (见文件头量纲声明)
         bucket[b] += net
         bucket_n[b] += 1
     print(f"{name:<42} 总净 {tot:+9.2f} (vs实际{tot-actual_total:+8.2f}) "

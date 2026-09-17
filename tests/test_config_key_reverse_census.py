@@ -164,7 +164,6 @@ def test_declared_switches_match_code_defaults():
         "opend.enable_lv3": True,
         "push.send_retries": 1,
         "risk.position_sizing.method": "fixed_risk",
-        "strategies.fast_lane.priority": 8,
         "exit_policy.use_exit_registry": True,
         "exit_policy.registry_fallback_on_error": True,
     }

@@ -31,6 +31,7 @@ from app.playbook import db as pdb
 from app.playbook import pipeline as pl
 from app.playbook.db import PlaybookDB, _did_trade_date
 from app.playbook.pipeline import BridgeVotingAdapter, _reload_bridge_if_landed
+from tests.helpers.invariant_harness import isolate_invariant_check
 
 TODAY = "2026-09-01"
 YESTERDAY = "2026-08-31"
@@ -343,7 +344,11 @@ def _run_invariant(tmp_path, monkeypatch, inst_rows, frozen_now=None):
     monkeypatch.setattr(dic, "OUT", out)
     if frozen_now is not None:
         monkeypatch.setattr(dic, "now_et", lambda: frozen_now)
-    dic.main()   # 返回码受其他不变量影响, 本组只判 I15 键 (合成夹具口径)
+    # 2026-09-14: 隔离生产读面 + 关外发。本组只判 I15 键 (返回码受其他不变量影响),
+    # 但 main() 默认 push_enabled=True ⇒ W1_* 命中时会**从单测直推钉钉**; 且 W4/W5/W6
+    # 扫描面按 REPO 全仓 AST 解析 (~900 文件/例)。两者都由 harness 收口。
+    isolate_invariant_check(dic, tmp_path, monkeypatch)
+    dic.main(push_enabled=False)
     return json.loads(out.read_text())
 
 

@@ -7,12 +7,53 @@ ic_tracker.py:289 sign 约定)。本测试用临时 sqlite 钉死渲染契约。
 """
 import sqlite3
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import pytest
+
+# 2026-09-14 修: 本文件在 tests/core/ 下, parent.parent 只到 tests/ ⇒ 活体冒烟用例
+# 拼出的 "tests/data/ftseek_us.db" 恒不存在, `if not real.exists(): return` 让它
+# **从未真跑过一行断言** (假绿, 与本仓"只能报健康的守卫"同族)。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import app.pipeline.llm_pipeline as llm_pipeline
 from app.pipeline.llm_pipeline import _build_track_record_context
+
+
+# ── 冻结时钟: 根治夹具日期定时炸弹 (2026-09-14) ────────────────────────────
+# 病灶: 夹具日期是硬编码常量 (08-13/08-14/08-20/08-21), 而
+#   _build_track_record_context 的窗口是 `datetime.now()-30d` 的**滑动窗**
+#   (llm_pipeline.py:827)。2026-09-13 起 cutoff=08-14 ⇒ 08-13/08-14 两行整体出窗,
+#   3 例恒红 (handoff ⚠3 已定性"不是回归, 是时钟"); 08-20/08-21 两例会在 09-20 接力变红。
+#   红着的守卫 = 没有守卫, 且会把真回归淹在噪声里。
+# 修法与同族先例一致 (tests/test_stale_bridge_guard.py 的 _run_invariant(frozen_now=)、
+#   tests/test_invariant_i10_exit_time.py 的 _FROZEN_NOW): 把 now() 钉在夹具窗口内,
+#   判据只由夹具数据决定, 不由翻日历决定。
+# 刻意不冻结的: 活体冒烟 —— 它要验的正是"今天这张真库能不能渲染"。
+_FROZEN_NOW = datetime(2026, 8, 22, 12, 0)
+_OLDEST_FIXTURE_DATE = "2026-08-13"
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(_FROZEN_NOW.year, _FROZEN_NOW.month, _FROZEN_NOW.day,
+                   _FROZEN_NOW.hour, _FROZEN_NOW.minute)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_clock(request, monkeypatch):
+    if request.node.name.startswith("test_real_db_smoke"):
+        return
+    monkeypatch.setattr(llm_pipeline, "datetime", _FrozenDatetime)
+    # 防空转钉 (放 harness 不放用例, 新增用例想忘也忘不了): 冻结日必须真把最老夹具日
+    # 留在窗内, 否则用例会退化成"根本没扫到行"的假绿。
+    cutoff = (_FrozenDatetime.now() - timedelta(days=30)).date().isoformat()
+    assert cutoff <= _OLDEST_FIXTURE_DATE, (
+        f"冻结日 {_FROZEN_NOW:%Y-%m-%d} 使 cutoff={cutoff} 晚于最老夹具日 "
+        f"{_OLDEST_FIXTURE_DATE} ⇒ 夹具行整体出窗, 用例空转")
 
 
 def _make_db(tmp_path: Path, rows: list) -> Path:

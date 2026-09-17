@@ -32,8 +32,22 @@
   ①段界主标记 → `[StartupMode]` (比 [PreFlight] 早 1ms, 且模式一致/不一致/废弃告警三分支都打);
   ②断言 5 → 正则解析语义值 (不再吃文案字面量 ⇒ 下次改文案不会静默解除守卫), 且两个源都查;
   ③任一证据源缺席 → exit 2「判定无效」而非 exit 1, 让"守卫失明"与"确认不安全"可区分。
+
+2026-09-14 修 (跨轮转失明): 本脚本原只读当前档 `logs/ftseek_us.log`, 而
+/etc/logrotate.d/ftseek-us 是 daily + **copytruncate** + dateext, 轮转时刻实测落在
+03:12-03:48 CST ⇒ 进程在轮转**前**启动、轮转**后**再跑本脚本时, 启动段整段躺在轮转档里,
+当前档只剩轮转后的尾巴。实测 2026-09-14 10:17 (进程 00:08:55 启动, 03:31 轮转, 服务健康)
+→ exit=2「日志中未找到启动标记 [StartupMode]/[PreFlight]」, 七条断言**全部无从判定** —
+AGENT.md 军规"重启必跑启动冒烟"在这一形态下当值失明, 且报的是错原因 (真原因是段龄,
+不是没段)。同族病灶日报侧已修 (421e3dcc9 告警日志跨轮转拼接), 本脚本是漏网的那一个。
+拼接语义 SSOT = `scripts/daily_alert_summary.py::resolve_log_sources` (copytruncate 两档
+内容不重叠, 按日期升序拼接即完整时间线; dateext 用**轮转当日**日期命名)。按
+`scripts/error_alert.py:112` 的先例**不 import 那个模块** (它 import 期会 load_dotenv +
+改写 sys.path), 同构实现于此。
+当前档已含启动标记时走原快路径 (只读一个档) ⇒ 重启后立刻跑的行为逐字不变。
 """
 import argparse
+import gzip
 import re
 import sys
 import time
@@ -42,6 +56,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "logs" / "ftseek_us.log"
+# 回溯几天的轮转档 (MAX_BOOT_AGE_HOURS=6 ⇒ 最多跨一个轮转点; 取 2 天留余量:
+# 轮转由 cron.daily 触发, 时刻浮动, 且"今天还没轮转"时要读昨天那档)
+_ROTATE_LOOKBACK_DAYS = 2
+# 最近一次读取的覆盖面 (供 stdout 留痕: 盲区若复发, 读数上直接可见, 不靠事后对账)
+LAST_COVERAGE = {"sources": 0, "spliced": False}
 
 # 断言 5 的证据源: (源名, 正则, 期望值元组)。每个源自带期望值, 缺席者由 run_once 判"守卫失明"。
 _MODE_RE = re.compile(
@@ -105,14 +124,58 @@ def _extract_boot_segment(text: str):
     return seg, boot_time
 
 
+def _read_text(path: Path) -> str:
+    """读一个日志档 (轮转档可能是 .gz — logrotate compress + delaycompress)。"""
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _log_sources() -> list:
+    """覆盖回溯窗的轮转档 + 当前档, 按时间升序 (轮转档在前, 当前档最后)。"""
+    sources = []
+    today = datetime.now().date()
+    for back in range(_ROTATE_LOOKBACK_DAYS, -1, -1):
+        stamp = (today - timedelta(days=back)).strftime("%Y%m%d")
+        for cand in (LOG.parent / f"{LOG.name}-{stamp}.gz", LOG.parent / f"{LOG.name}-{stamp}"):
+            if cand.exists():
+                sources.append(cand)
+                break
+    if LOG.exists():
+        sources.append(LOG)
+    return sources
+
+
+def _read_boot_window() -> str:
+    """返回含最近一次启动段的日志文本 (必要时跨轮转档拼接)。
+
+    快路径: 当前档已有段界标记 → 只读当前档 (重启后立刻跑的常规形态, 行为逐字不变)。
+    慢路径: 当前档没有 (被 copytruncate 截走了) → 升序拼接回溯窗内全部档。
+    `_extract_boot_segment` 取的是 rfind, 所以拼接后仍是"最后一次启动"; 而拼接的
+    真正价值在断言 7 —— 启动段被轮转劈成两半时, Traceback/CRITICAL 扫描不会因为
+    "只看当前档"而漏掉轮转前那半段 (那是假绿, 比假红危险)。
+    """
+    global LAST_COVERAGE
+    if LOG.exists():
+        cur = _read_text(LOG)
+        if BOOT_MARKER in cur or BOOT_MARKER_FALLBACK in cur:
+            LAST_COVERAGE = {"sources": 1, "spliced": False}
+            return cur
+    parts = [_read_text(src) for src in _log_sources()]
+    LAST_COVERAGE = {"sources": len(parts), "spliced": len(parts) > 1}
+    return "\n".join(parts)
+
+
 def run_once():
     """单次判定. 返回 (exit_code, 失败清单, boot_time)"""
-    if not LOG.exists():
-        return 2, [f"日志文件缺失: {LOG}"], None
-    text = LOG.read_text(encoding="utf-8", errors="replace")
+    if not _log_sources():
+        return 2, [f"日志文件缺失: {LOG} (且 {_ROTATE_LOOKBACK_DAYS} 日内无轮转档)"], None
+    text = _read_boot_window()
     seg, boot_time = _extract_boot_segment(text)
     if seg is None:
-        return 2, [f"日志中未找到启动标记 {BOOT_MARKER}/{BOOT_MARKER_FALLBACK}"], None
+        return 2, [f"日志中未找到启动标记 {BOOT_MARKER}/{BOOT_MARKER_FALLBACK} "
+                   f"(已跨轮转拼接 {LAST_COVERAGE['sources']} 档)"], None
     if boot_time and datetime.now() - boot_time > timedelta(hours=MAX_BOOT_AGE_HOURS):
         return 2, [f"最近启动段过旧 ({boot_time}), 本次重启可能未产生日志"], boot_time
     missing = [n for n in _MODE_SOURCES_REQUIRED if n not in _mode_sources(seg)]
@@ -145,7 +208,10 @@ def main():
         time.sleep(5)
 
     print("=" * 60)
-    print(f"启动冒烟检查 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (启动段: {boot_time or '未知'})")
+    _cov = (f"日志档 {LAST_COVERAGE['sources']} 个"
+            + ("·跨轮转拼接" if LAST_COVERAGE["spliced"] else ""))
+    print(f"启动冒烟检查 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+          f"(启动段: {boot_time or '未知'} | {_cov})")
     for name, _ in CHECKS:
         mark = "✗" if name in failed else "✓"
         print(f"  [{mark}] {name}")

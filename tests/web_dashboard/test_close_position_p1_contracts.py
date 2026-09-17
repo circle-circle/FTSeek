@@ -228,6 +228,69 @@ class _ConnWrapper:
         pass
 
 
+def _mk_live_partial_service(*, fill_qty=30.0, levels=(45.0, 55.0)):
+    broker = FakeBrokerCtx(
+        _pos_df(qty=100), fill_status="FILLED_PART", fill_qty=fill_qty
+    )
+    svc = FakeService(broker)
+    svc._is_live = lambda: True
+    svc._read_env = lambda key, default="": (
+        "true" if key == "ALLOW_REAL_TRADING" else default
+    )
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE open_positions (symbol TEXT, current_sl REAL, initial_tp REAL, "
+        "sl_broker_order_id TEXT, tp_broker_order_id TEXT, thesis TEXT, "
+        "entry_context_json TEXT, entry_time TEXT)"
+    )
+    if levels is not None:
+        conn.execute(
+            "INSERT INTO open_positions VALUES "
+            "('US.TEST', ?, ?, 'SL-OLD', 'TP-OLD', 'thesis', '{}', '2026-09-16')",
+            levels,
+        )
+    conn.commit()
+    svc._db = lambda: _ConnWrapper(conn)
+    svc._ensure_sl_column = lambda: None
+    svc._trd_env = lambda: "REAL"
+    svc._acc_id = lambda: 123
+    return svc, broker
+
+
+def test_live_partial_close_requires_db_protection_snapshot():
+    svc, broker = _mk_live_partial_service(levels=None)
+    ret = ex.close_position(
+        svc, "US.TEST", reason="partial", close_qty=30
+    )
+    assert ret["success"] is False
+    assert "SL/TP" in ret["error"]
+    assert broker.place_calls == []
+
+
+def test_live_partial_close_requires_positive_db_protection_levels():
+    svc, broker = _mk_live_partial_service(levels=(0.0, 55.0))
+    ret = ex.close_position(
+        svc, "US.TEST", reason="partial", close_qty=30
+    )
+    assert ret["success"] is False
+    assert "SL/TP" in ret["error"]
+    assert broker.place_calls == []
+
+
+def test_live_partial_close_rebuilds_from_open_positions_levels(monkeypatch):
+    monkeypatch.setattr(ex, "cancel_order_group", lambda service, symbol: None)
+    svc, broker = _mk_live_partial_service(fill_qty=30.0)
+    ret = ex.close_position(
+        svc, "US.TEST", reason="partial", close_qty=30
+    )
+    assert ret["success"] is True
+    assert len(broker.place_calls) == 3
+    close_call, sl_call, tp_call = broker.place_calls
+    assert close_call["qty"] == 30
+    assert sl_call["qty"] == 70 and sl_call["aux_price"] == 45.0
+    assert tp_call["qty"] == 70 and tp_call["price"] == 55.0
+
+
 def test_p1_9_cancel_fail_unknown_status_aborts(monkeypatch):
     """撤旧 STOP 失败且旧单状态非 CANCEL → 不下新 STOP (防裸空头/双 STOP)"""
     svc, broker = _mk_modify_service()

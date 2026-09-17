@@ -12,6 +12,7 @@
 """
 import importlib.util
 import json
+from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -130,3 +131,90 @@ class TestArmHookIsolation:
         after = len(ledger.read_text(encoding="utf-8").splitlines()) if ledger.exists() else 0
         assert after == before, \
             f"pytest 环境下 arm 埋点不得写生产账本 ({before} → {after} 行)"
+
+
+class TestPendingStaleAlert:
+    """W7 积压棘轮 (2026-09-16): 超 N 天未结算 → app/push HIGH 告警 + exit 1.
+
+    缘起: 9/4 META arm 因次日 1min bar 缺失卡死 12 天, cron 每天只打印
+    "未结算积压 1" 而无主动通知 — B16 判据 (n≥20) 在积压清空前不可信。
+    """
+
+    def test_w7_stale_detection_threshold_and_malformed_date(self):
+        rows = [
+            _arm_row(arm_date="2026-09-01"),               # 超龄 → 告警
+            _arm_row(arm_date="2026-09-07"),               # 3 天 → 未超龄
+            _arm_row(arm_date="not-a-date"),               # 损坏 → 同罪告警
+            _arm_row(arm_date="2026-01-01", settled=True), # 已结算 → 永不告警
+        ]
+        stale = sw._stale_pending(rows, alert_days=3, today=date(2026, 9, 10))
+        assert [r["arm_date"] for r in stale] == ["2026-09-01", "not-a-date"]
+
+    def test_w7_main_stale_backlog_alerts_and_exits_1(self, monkeypatch, tmp_path):
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        row = _arm_row(arm_date="2020-01-01")  # 恒超龄 (与运行日期解耦)
+        shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)  # bar 缺失 → 保持 pending
+        alerted = []
+        monkeypatch.setattr(sw, "_push_stale_alert",
+                            lambda stale, pending_n, days: alerted.append((stale, pending_n, days)) or True)
+        rc = sw.main(argv=[])
+        assert rc == 1  # 棘轮: 违反状态对 cron 可见 (exit 1)
+        assert len(alerted) == 1
+        stale, pending_n, days = alerted[0]
+        assert len(stale) == 1 and stale[0]["symbol"] == "TEST"
+        assert pending_n == 1 and days == 3
+        summary = json.loads(out.read_text(encoding="utf-8"))
+        assert summary["pending_n"] == 1 and summary["settled_n"] == 0
+
+    def test_w7_fresh_backlog_does_not_alert(self, monkeypatch, tmp_path):
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        row = _arm_row(arm_date=date.today().isoformat())  # 当日 → 未超龄
+        shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        alerted = []
+        monkeypatch.setattr(sw, "_push_stale_alert",
+                            lambda stale, pending_n, days: alerted.append((stale, pending_n, days)) or True)
+        rc = sw.main(argv=[])
+        assert rc == 0 and alerted == []  # 正常等待次日 bar, 不刷告警
+
+    def test_w7_push_uses_hub_sync_true_and_stops(self, monkeypatch):
+        calls = []
+
+        class FakeHub:
+            def push(self, msg, sync=False):
+                calls.append(("push", msg, sync))
+                return True
+
+            def stop(self):
+                calls.append(("stop", None, None))
+
+        import app.push as push_mod
+        monkeypatch.setattr(push_mod, "get_push_hub", lambda: FakeHub())
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-09-08")
+        ok = sw._push_stale_alert(
+            [{"symbol": "US.META", "arm_date": "2026-09-04"}], pending_n=1, alert_days=3)
+        assert ok is True
+        assert calls[0][0] == "push" and calls[0][2] is True  # sync=True: cron 短命进程必达
+        assert calls[-1][0] == "stop"  # 关线程池防 cron 挂死 (error_alert 同课)
+        msg = calls[0][1]
+        assert "积压 1 条" in msg.title and msg.level is push_mod.Level.HIGH
+        assert "US.META" in msg.body and "US_META_2026-09-08.json" in msg.body
+
+    def test_w7_push_failure_still_exits_1(self, monkeypatch, tmp_path):
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        row = _arm_row(arm_date="2020-01-01")
+        shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        monkeypatch.setattr(sw, "_push_stale_alert", lambda stale, pending_n, days: False)
+        rc = sw.main(argv=[])
+        assert rc == 1  # 推送失败不吞掉违反状态 (下轮 cron 重试告警)
