@@ -768,9 +768,11 @@ def _write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg,
         conn.execute(
             "INSERT INTO trade_records (trade_date, symbol, direction, entry_time, entry_price, "
             " quantity, source_type, trade_mode, mode, owner_strategy, strategy_id, "
-            " futu_order_id, metadata_json, created_at, exit_price, exit_time) "
+            " futu_order_id, metadata_json, created_at, exit_price, exit_time, config_version) "
             "VALUES (?, ?, 'LONG', ?, ?, ?, 'PLAYBOOK_SIM', 'simulate', 'futu_simulate', "
-            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '')",
+            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '', 'v2')",
+            # config_version='v2': 与规范写入方 app/storage/trade_store.py 一致。该表 schema 是
+            # DEFAULT 'v1'，本列不写会落默认值 ⇒ W1 冻结窗出现版本分裂假象 (2026-09-18 F7 修复)。
             (_today_et(), symbol, now, entry_px, qty, buy_order_id, meta, now))
         conn.commit()
         return pos_id

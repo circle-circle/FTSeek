@@ -298,13 +298,13 @@ def record_manual_open(service: "ManualOrderService", order: "ManualOrder") -> N
                 exit_reason, strategy_id, source_type, mode, trade_mode,
                 data_quality, created_at, futu_order_id,
                 signal_strength, signal_id, signal_confidence,
-                owner_strategy
+                owner_strategy, config_version
             ) VALUES (?, ?, ?, ?, NULL,
                       ?, 0, ?, 0, 0,
                       NULL, ?, 'MANUAL', ?, ?,
                       'manual', ?, ?,
                       0, ?, 0.0,
-                      'manual')
+                      'manual', 'v2')
             """,
             (
                 trade_date, order.symbol, order.direction,
@@ -450,8 +450,8 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
                     exit_reason, entry_reason, strategy_id, source_type, mode, trade_mode,
                     data_quality, created_at, close_futu_order_id,
                     signal_strength, signal_id, signal_confidence,
-                    owner_strategy
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    owner_strategy, config_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')
                 """,
                 (
                     trade_date, symbol, direction, entry_time, et_now.isoformat(),

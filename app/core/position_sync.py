@@ -1840,8 +1840,8 @@ class USPositionSync:
                                 "INSERT INTO trade_records "
                                 "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
                                 "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
-                                "trace_id, signal_id, futu_order_id) "
-                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                "trace_id, signal_id, futu_order_id, config_version) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2')",
                                 (_et_now.strftime('%Y-%m-%d'), symbol, _dir_name,
                                  _entry_time_str, _et_now.isoformat(),
                                  _entry, _exit_price, int(_size),

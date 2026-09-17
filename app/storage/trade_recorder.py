@@ -199,8 +199,8 @@ class TradeRecorder:
                     account_type, decision_reason, decision_confidence,
                     strategy_type, emotion_state,
                     stop_loss_planned, position_size_actual, position_size_planned,
-                    confidence_entry, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    confidence_entry, created_at, config_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')
             """, (
                 trade_id,
                 trade_date,

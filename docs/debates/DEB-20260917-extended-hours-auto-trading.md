@@ -1070,3 +1070,38 @@ adaptive trailing 退出臂（caps = 1.2 / 2.5 / 4.0 / 99 即"无上限"；公�
 2. 原回放工具直接跑**返 `gates_passed=0`（2294 候选全拦）**：其与入场执行器共用闸门助手，而 `EXT_ENTRY_ALLOW_SIM=false` 后该助手 fail-closed ⇒ 工具不再复现历史样本。已改为**取它此前成功产出的逐笔明细 + 缓存 bars 重放**（新增 `scripts/replay_trailing_from_report.py`），并在原工具里把 `decide` 改为可选（两个 exit shadow 的 `decide()` 已被本轮退出链重构移除，属**共有文件改动对我工具的真实影响**，已标注 `rule_arm_available` 字段）。
 
 **处置**：`EXT_ADAPTIVE_TRAILING_MAX_DD` 代码保留但**不激活**（默认仍 1.2，行为零变化）；F3 从"待激活"改为**已裁决=放开无据**。
+
+### 23.10 F7 已修（2026-09-18 用户令「修」）—— `config_version` 写方缺口（同病 5 处）
+
+**问题与机制**：`trade_records.config_version` 的 schema 默认是 `TEXT DEFAULT 'v1'`（`app/playbook/db.py:227`），
+规范写入方 `app/storage/trade_store.py` 显式写 `'v2'`，但**若写方漏写该列即静默落 'v1'** ⇒
+① W1 冻结窗出现"版本分裂"假象；② 下游 `edge_weekly_report` 以 `config_version or "v1"` 兜底，把缺口**掩盖成合法值**。
+
+**改动（写方补齐，值统一 `'v2'` = 规范写入方值）**
+| 文件 | 站点 |
+|---|---|
+| `scripts/extended_hours_entry_executor.py:769` | 延长时段开仓写 trade_records（本次 7 行里的 4 行来源） |
+| `app/core/position_sync.py:103` | 持仓同步 external_close 写入（本次 7 行里的 3 行来源） |
+| `app/storage/trade_recorder.py:196` | 另一路开仓写入（护栏扫出） |
+| `app/web_dashboard/order/audit.py:295 / 447` | 仪表盘手工开/平仓写入（护栏扫出 ×2） |
+| `app/storage/trade_store.py` | 原本即显式 `'v2'`（未改，作为基准） |
+
+**数据回填（只限判据窗内）**：`scripts/backfill_config_version_v1.py`（dry 默认；`--apply` 先 SQLite 在线 backup）。
+- ⚠️ **自查修正**：首次统计以"全库 `config_version='v1'`"下判 ⇒ 命中 **359 行**，远超预期。**全库下判是错的** —— 6–7 月旧行（`MAIN_PIPELINE`）的 `'v1'` 可能是**真实历史标签**（v1→v2 换版），不是 schema 默认产物；一律回填等于**篡改历史**。
+- 改为**只回填冻结窗内**（窗口内同期其余 186 行全为 `'v2'`，且写方就是上表漏列的两处）⇒ 实改 **7 行**（1521–1527：CTNT/GIPR/NBIS/AEHL 各开仓行 + 对应 POSITION_SYNC 行），全局版本分布 `v1 359→352 / v2 508→515`，**历史 352 行未动**。
+
+**护栏（防复发）**：新增 `tests/test_config_version_writers.py` —— 扫描全仓 `INSERT [OR REPLACE] INTO trade_records`，
+断言 ① 列清单必须含 `config_version`、② 写入值必须是显式 `'v2'`；并钉住三个补修文件的锚点。
+该测试**当场扫出另外 3 个同病写入点**（`trade_recorder.py`、`audit.py`×2），若只改"本次出问题的两处"则会漏。
+
+**验证**
+| 项 | 结果 |
+|---|---|
+| 编译 | 4 个改动文件 `py_compile` 通过 ✅ |
+| 测试 | 护栏测试 + `test_ext_duplicate_pnl_null.py` → **7 passed** ✅ |
+| 数据 | 冻结窗内 `v1` 残留 **0**；备份 24.3 MB `data/backups/ftseek_us_before_config_version_fix_20260918_072426.db` ✅ |
+| 不变量自检 | **52 → 51 处**；`W1_config_version_drift` **已消除**；余 `W1_kr2_cohort_broken`（判据本身，豁免按设计不适用）✅ |
+
+**回滚**：代码 `git revert`（5 处）；数据用上述备份恢复。
+**并行注**：`position_sync.py` 有他 agent 未提交 WIP ⇒ 提交时用 `hash-object`+`update-index --cacheinfo`
+只注入本行，**不代提交其 WIP**。
