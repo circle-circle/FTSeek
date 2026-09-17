@@ -353,6 +353,72 @@ def test_daily_quota_defaults_to_five():
     assert entry_executor.MAX_PER_DAY == 5
 
 
+def test_new_sources_default_off_until_replay_evidence():
+    """新源默认关(待回放证据), 现役异动榜保持开 —— 用户 9/17「需要」的落地口径, 可 env 开。"""
+    assert entry_executor.SOURCE_RANK_BOARD is True
+    assert entry_executor.SOURCE_BEAT_RANK is False
+    assert entry_executor.SOURCE_WATCHLIST is False
+
+
+def test_beat_rank_symbols_filters_stale_and_microcap(monkeypatch):
+    """事件源: 必须过滤 ①过期披露(不加就是跟 1-2 个月前的事件交易) ②微盘 ③非美股。"""
+    import pandas as pd
+
+    class _Ctx:
+        def get_earnings_beat_rank(self, market, beat_type, count=None):
+            return 0, (1455, pd.DataFrame([
+                {"security": "US.FRESH", "released_date": "2026-09-15", "market_cap": 5e9},
+                {"security": "US.STALE", "released_date": "2026-07-30", "market_cap": 5e9},
+                {"security": "US.TINY", "released_date": "2026-09-15", "market_cap": 5e7},
+                {"security": "HK.00700", "released_date": "2026-09-15", "market_cap": 5e11},
+            ]))
+
+    monkeypatch.setattr(entry_executor, "_now_et",
+                        lambda: datetime(2026, 9, 17, 8, 0, tzinfo=timezone.utc))
+    assert entry_executor._beat_rank_symbols(_Ctx()) == ["US.FRESH"]
+
+
+def test_watchlist_symbols_reads_configured_group_and_keeps_us_only():
+    import pandas as pd
+
+    class _Ctx:
+        def __init__(self):
+            self.group = None
+
+        def get_user_security(self, group_name):
+            self.group = group_name
+            return 0, pd.DataFrame([{"code": "US.AMD"}, {"code": "HK.00700"}, {"code": "US.NVDA"}])
+
+    ctx = _Ctx()
+    assert entry_executor._watchlist_symbols(ctx) == ["US.AMD", "US.NVDA"]
+    assert ctx.group == entry_executor.WATCHLIST_GROUP
+
+
+def test_scan_candidates_merges_sources_in_priority_order_and_dedupes(monkeypatch):
+    """合并器: 源顺序=优先级, 重复标的保留先出现的口径, 已合并的不再补快照 (省接口调用)。"""
+    monkeypatch.setattr(entry_executor, "SOURCE_RANK_BOARD", True)
+    monkeypatch.setattr(entry_executor, "SOURCE_BEAT_RANK", True)
+    monkeypatch.setattr(entry_executor, "SOURCE_WATCHLIST", True)
+    monkeypatch.setattr(entry_executor, "_scan_movers", lambda s, q: [
+        {"symbol": "US.A", "px": 10.0, "chg": 3.0, "vol": 3e5, "prev_close": 9.7}])
+    monkeypatch.setattr(entry_executor, "_beat_rank_symbols", lambda q: ["US.B", "US.A"])
+    monkeypatch.setattr(entry_executor, "_watchlist_symbols", lambda q: ["US.C"])
+
+    seen = {}
+
+    def fake_snap(session, qctx, syms):
+        seen["syms"] = list(syms)
+        return [{"symbol": s, "px": 20.0, "chg": 5.0, "vol": 5e5, "prev_close": 19.0} for s in syms]
+
+    monkeypatch.setattr(entry_executor, "_snapshot_candidates", fake_snap)
+
+    out = entry_executor._scan_candidates("premarket", object())
+
+    assert [c["symbol"] for c in out] == ["US.A", "US.B", "US.C"]
+    assert seen["syms"] == ["US.B", "US.C"]      # US.A 已由异动榜提供, 不重复快照
+    assert out[0]["px"] == 10.0                  # 保留先到源(异动榜)的口径
+
+
 def test_price_gate_blocks_penny_stocks_and_over_budget():
     """2026-09-17 用户裁方案A: 价格下限闸 $5 (挡仙股) + 上限 = 单笔仓位 $5000。"""
     assert entry_executor._price_in_range(0.073) is False   # US.CTNT 实盘样例

@@ -31,7 +31,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +58,19 @@ MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
 #   实证: CTNT $0.073(+75.06%, 量2217万, Finnhub超预期+105%) 与 GIPR $0.435(+19.75%)
 #   曾透过"事件+涨幅+量"三闸 —— 仙股的第1闸(超预期>0)是季末噪声, 第2/3闸对妖股天然放行。
 #   事故代价: 日配额 2 笔被噪声票用尽, 当晚真催化票开不出来。回滚=env EXT_ENTRY_MIN_PRICE=0。
+
+# ── 候选源开关 (2026-09-17 用户令「需要」: 接入常见 watchlist 与财报机会) ──
+#   架构: 每个源只产出候选结构 {symbol,px,chg,vol,prev_close}; 下游四闸/价格下限/配额/下单/
+#   平仓/台账**零改动**。默认只有现役异动榜开; 新源等回放证据
+#   (scripts/replay_ext_entry_sources.py, 用 K_5M+extended_time=True 取历史盘前 bar) 出来再开。
+SOURCE_RANK_BOARD = os.getenv("EXT_ENTRY_SOURCE_RANK", "true").lower() == "true"
+SOURCE_BEAT_RANK = os.getenv("EXT_ENTRY_SOURCE_BEAT_RANK", "false").lower() == "true"
+SOURCE_WATCHLIST = os.getenv("EXT_ENTRY_SOURCE_WATCHLIST", "false").lower() == "true"
+WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
+BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
+BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
+BEAT_MIN_MCAP = float(os.getenv("EXT_ENTRY_BEAT_MIN_MCAP", "1000000000"))
+SNAPSHOT_BATCH = 200
 STOP_PCT = -5.0            # 止损距离 (%) — 开盘写入 initial_sl, 由规则引擎盘中兜底
 SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: 官方榜 top50, 旧为15只活跃股)
 # 2026-09-17 用户裁方案1: SIM 无券商STOP → 接受规则引擎兜底, 开关恢复下单.
@@ -244,6 +257,124 @@ def _scan_movers(session, qctx):
         return out
     except Exception:
         return []
+
+
+def _beat_rank_symbols(qctx):
+    """事件源: 财报**超预期**榜 → 候选代码 (2026-09-17 实弹探针).
+
+    实测: `get_earnings_beat_rank('US', BeatType.EPS)` total=1455 条, 字段含
+    `released_date` / `market_cap` / `beat_ratio` / `earning_day_chg` / `detail_post_period`(BEFORE|AFTER)。
+    取到的 200 条里 200/200 价格≥$5 且市值≥$10B ⇒ 该榜天然是大中盘 (与"异动榜=仙股盘"互补)。
+    两道必须的服务端外过滤: ①`released_date` 近 BEAT_RECENT_DAYS 日 —— 不加就是跟过期事件交易
+    (实测默认前几条是 1-2 个月前披露的 GOOGL/AAPL/NVDA); ②市值下限 —— 挡微盘噪声。
+    """
+    from futu import RET_OK, BeatType
+    try:
+        ret, rd = qctx.get_earnings_beat_rank("US", BeatType.EPS, count=BEAT_TOP_N)
+        if ret != RET_OK or not isinstance(rd, tuple) or len(rd) < 2:
+            return []
+        df = rd[1]
+        if df is None or not hasattr(df, "columns") or df.empty:
+            return []
+        cutoff = (_now_et().date() - timedelta(days=BEAT_RECENT_DAYS)).strftime("%Y-%m-%d")
+        out = []
+        for _, r in df.iterrows():
+            sec = str(r.get("security", ""))
+            if not sec.startswith("US."):
+                continue
+            if str(r.get("released_date", "")) < cutoff:
+                continue
+            try:
+                if float(r.get("market_cap", 0) or 0) < BEAT_MIN_MCAP:
+                    continue
+            except Exception:
+                continue
+            out.append(sec)
+        return out
+    except Exception:
+        return []
+
+
+def _watchlist_symbols(qctx):
+    """自选股源: 用户在富途 App 里的自选分组 (用户 curation, 非发现机制).
+
+    实测: `get_user_security('美股')` ret=0, 51 只, 抽样 50/50 全部 ≥$5 (AMD/NVDA/AAPL/TSLA/MRNA/LITX…)
+    ⇒ 零仙股噪声。注意选择性偏差: 它是你的注意力集合, 适合做"信任池"。
+    """
+    try:
+        ret, df = qctx.get_user_security(WATCHLIST_GROUP)
+        if ret != 0 or df is None or not hasattr(df, "columns") or df.empty:
+            return []
+        col = "code" if "code" in df.columns else df.columns[0]
+        return [str(s) for s in df[col].tolist() if str(s).startswith("US.")]
+    except Exception:
+        return []
+
+
+def _snapshot_candidates(session, qctx, symbols):
+    """把任意代码列表 → 候选结构 {symbol,px,chg,vol,prev_close} (盘前取 pre_* 字段).
+
+    与 `_scan_movers` 的口径一致: px = 盘前/盘后价, chg = vs 昨收 %, vol = 盘前/盘后量。
+    """
+    from futu import RET_OK
+    out, syms = [], [s for s in dict.fromkeys(symbols) if s.startswith("US.")]
+    for i in range(0, len(syms), SNAPSHOT_BATCH):
+        batch = syms[i:i + SNAPSHOT_BATCH]
+        try:
+            ret, snap = qctx.get_market_snapshot(batch)
+        except Exception:
+            continue
+        if ret != RET_OK or snap is None or not hasattr(snap, "columns"):
+            continue
+        for _, r in snap.iterrows():
+            sec = str(r.get("code", ""))
+            if not sec.startswith("US."):
+                continue
+            try:
+                prev = float(r.get("prev_close_price", 0) or 0)
+                if session == "premarket":
+                    px = float(r.get("pre_price", 0) or 0) or float(r.get("last_price", 0) or 0)
+                    vol = float(r.get("pre_volume", 0) or 0)
+                else:
+                    px = float(r.get("after_price", 0) or 0) or float(r.get("last_price", 0) or 0)
+                    vol = float(r.get("after_volume", 0) or 0)
+                chg = ((px / prev - 1) * 100) if (px > 0 and prev > 0) else 0.0
+                out.append({"symbol": sec, "px": px, "chg": chg, "vol": vol, "prev_close": prev})
+            except Exception:
+                continue
+    return out
+
+
+def _scan_candidates(session, qctx):
+    """多源候选合并 + 去重 (2026-09-17). 源顺序 = 优先级 (先到先得, 保留先出现的结构).
+
+    这是"换源"的唯一改动点: 下游四闸 / 价格下限 / 配额 / 下单 / 平仓 / 台账全部复用, 一行不改。
+    """
+    merged, tag_of = [], {}
+
+    def _add(items, tag):
+        for it in items:
+            sym = it.get("symbol")
+            if sym and sym not in tag_of:
+                tag_of[sym] = tag
+                merged.append(it)
+
+    if SOURCE_RANK_BOARD:
+        _add(_scan_movers(session, qctx), "rank")
+    extra = []
+    if SOURCE_BEAT_RANK:
+        extra += _beat_rank_symbols(qctx)
+    if SOURCE_WATCHLIST:
+        extra += _watchlist_symbols(qctx)
+    new_syms = [s for s in dict.fromkeys(extra) if s not in tag_of]
+    if new_syms:
+        _add(_snapshot_candidates(session, qctx, new_syms), "snapshot")
+    if merged:
+        n_extra = sum(1 for v in tag_of.values() if v != "rank")
+        print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "
+              f"财报超预期榜+自选股 {n_extra}) [开关 rank={SOURCE_RANK_BOARD} "
+              f"beat={SOURCE_BEAT_RANK} watchlist={SOURCE_WATCHLIST}]")
+    return merged
 
 
 def _held_symbols():
@@ -436,7 +567,7 @@ def collect(session, dry=False):
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         price_gate_rejects = []
         try:
-            movers = _scan_movers(session, qctx)
+            movers = _scan_candidates(session, qctx)
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -518,7 +649,7 @@ def collect(session, dry=False):
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         try:
-            movers = _scan_movers(session, qctx)
+            movers = _scan_candidates(session, qctx)
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"

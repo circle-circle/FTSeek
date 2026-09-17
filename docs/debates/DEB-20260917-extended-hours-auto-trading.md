@@ -392,3 +392,33 @@
 - **测试**：`pytest` **29 passed**（新增 2 项：打点聚合格式 + 无拦下不打点；端到端断言拦下明细入库）。
 - **首轮实测（2026-09-17 17:41 北京 / 05:41 ET，真实榜单 dry 扫描）**：价格闸一次拦下 **25 只**，例如 CTNT $0.112（+169%）、DAIC $3.92（+95%）、KXIN $2.05（+81%）、DCX $0.579、RETO $2.69、DTSS $0.76、ADBT $0.165、NEXR $1.731 ……；同一轮只有 **US.MEDS $6.829（+12.51%，量 36.8 万）** 越过全部四层闸。
 - **⚠️ 由此暴露的供给事实（供裁决，非本批改动）**：官方盘前榜 top50 里 **25 只 < $5**（占一半）—— 即延长时段的"榜单供给"本身高度仙股化。$5 闸在做实事（把噪声挡在门外），但代价是**可交易候选池被砍掉约一半**。若后续觉得样本太薄，两个方向：① 提高 `SCAN_TOP_N`（现 50，更深的名次里或许有合规催化票）；② 换/加第二个候选源（如按财报日历筛出的标的再做盘前验证）。**未擅自改动**，等观察期数据。
+
+### 16. 候选源扩展：watchlist + 财报机会接入（2026-09-17 用户令「需要」）
+
+**用户问**：「如何合理优化，除了排行榜，常见交易 watchlist 和财报机会是否可以基于已有的筛选逻辑和链路进行」。
+
+#### 16.1 富途可用源的活体探针（全部实测，非文档推测）
+
+| 源 | 接口 | 实测结果 | 过 $5 闸 | 可回放 |
+|---|---|---|---|---|
+| 财报超预期榜 | `get_earnings_beat_rank('US', BeatType.EPS)` | **total 1455**；字段 `released_date`/`market_cap`/`beat_ratio`/`actual`/`estimate`/`earning_day_chg`/`detail_post_period`(BEFORE\|AFTER) | 取 200 条 **200/200** ≥$5 且市值≥$10B | ✅ 有 `released_date` |
+| 自选股 | `get_user_security('美股')` | **51 只**（AMD/NVDA/AAPL/TSLA/MRNA/LITX +23.7%…） | **50/50** ≥$5 | 需按日快照 |
+| 财报日历 | `get_earnings_calendar('US')` | 今日 2 条，带 `earnings_timestamp`/`pub_type(BEFORE\|AFTER)`/`eps_predict`/option IV | — | 日期参数未通过（`SvrFailed`）|
+| 热门榜 | `get_hot_list('US')` | total 5967（trade/search/news heat） | — | ❌ |
+| 涨跌榜 / 隔夜榜 | `get_top_movers_rank` / `get_us_overnight_rank` | total 1806 / **18081** | 低 | ❌ |
+| **历史财报反应** | `get_financials_earnings_price_history` | NVDA **599 行**：`pub_time_str`/`pub_type`/反应日 OHLC+量/`last_close_price`/隐含波动(`option_iv_crush`/`predict_vola_*`) | — | ✅ **事件维度可回放** |
+
+**关键能力发现**：`request_history_kline(ktype=K_5M, extended_time=True)` **可取到历史盘前 bar** —— 实测 412 根（158 根 04:00–09:29 + 96 根 16:00–19:59）⇒ **延长时段路径可完整回放**（此前默认 `extended_time=False` 只有 RTH，0 根盘前）。
+
+#### 16.2 实现（换源层，下游零改动）
+
+- 唯一改动点：`_scan_movers()` → 升级为 `_scan_candidates()`（多源合并 + 去重，源顺序=优先级）。下游四闸 / 价格下限 / 配额 / 下单 / 平仓 / 台账**一行未改**。
+- 三个源函数：`_beat_rank_symbols()`（**带近 `BEAT_RECENT_DAYS` 日 + 市值下限过滤** —— 不加近因过滤就是跟 1–2 个月前的事件交易，实测默认前几条是 GOOGL 7/22、AAPL 7/30）、`_watchlist_symbols()`（按分组名取）、`_snapshot_candidates()`（任意代码列表 → 盘前 `pre_price/pre_volume` 口径，与异动榜一致）。
+- **开关（默认关，待回放证据）**：`EXT_ENTRY_SOURCE_BEAT_RANK=false` / `EXT_ENTRY_SOURCE_WATCHLIST=false`（现役榜 `EXT_ENTRY_SOURCE_RANK=true` 保持）；另有 `EXT_ENTRY_BEAT_RECENT_DAYS`(7) / `EXT_ENTRY_BEAT_MIN_MCAP`(1e9) / `EXT_ENTRY_BEAT_TOP_N`(200) / `EXT_ENTRY_WATCHLIST_GROUP`(美股)。
+- 测试：`pytest` **33 passed**（新增 4：默认关；超预期榜过期+微盘+非美股过滤；自选股按分组且仅美股；合并器优先级+去重+不重复快照）。
+- **三源全开实弹（dry，真实数据）**：候选 **102 只**（异动榜 50 / 超预期榜+自选股 52），价格闸拦下 28 只仙股；过闸候选出现 **US.MEDS $7.871(+29.7%)、US.NVDA** 等。
+
+#### 16.3 待办（本批未做）
+
+- **回放脚本** `scripts/replay_ext_entry_sources.py`：用 `extended_time=True` 5m bar 重建历史盘前路径，对"超预期榜+自选股"候选套四闸 + 模拟退出规则，给出与费用线（~10bps）对比的期望值 —— 出数后再决定是否把两个新源开关打开。
+- 注意口径限制（已核实）：历史 K 线为**日线/qfq 复权**；回放中的"昨收"须用 `prev_close` 字段而非前一日 close（复权口径不同会污染 +2% 闸）。
