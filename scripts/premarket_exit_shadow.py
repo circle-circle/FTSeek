@@ -22,6 +22,11 @@
   - 其余                                              → hold
   - 盘前无成交 (last≤0 或 update_time 非盘前窗)        → no_data
 
+盘前收口强平 (2026-09-17 回放裁决, 详见 DEB §16.5):
+  09:20-09:25 ET 对**今日盘前开的仓**无条件平仓 (action=pre_close_flatten, 覆盖其它信号),
+  因为回放里"什么都不做等到收口"净 +0.78%/+0.26%, 而现役规则 -0.06%/-0.19%、-1.5%止损最差。
+  回滚: EXT_PREMARKET_FLATTEN=false
+
 执行 (2026-09-17 用户裁「方案1」, 详见 DEB-20260917 §12):
   lock_in / breakeven_lock(回本+0.3%有量) / tighten 三信号且窗内 → 调
   extended_hours_exit_executor.py SIM 真平仓 (session=ETH 限价单) + 飞书推结果.
@@ -64,6 +69,20 @@ MIN_PRE_VOLUME = 50000    # 盘前累计量 ≥5万股 才算"有价有量", 薄
 TIGHTEN_AT_PCT = -1.5     # 相对入场价 ≤-1.5% → 建议收紧 (盘前逆向)
 BREAKEVEN_LOCK_PCT = 0.3  # 回本线锁盈 (方案二, 9/17 用户批准): 盘前价>成本+0.3% 且有量 → 推送锁盈
                           # 语义: "回本线以上出现盈利就锁" 而非"涨2%才锁" — 用户原话
+
+# ─ 盘前收口强平 (2026-09-17 回放裁决, 用户令「按建议执行」) ──
+#   回放 (60 交易日, 两套闸门口径, n=46 / n=161):
+#     pre_close(开仓后什么都不做, 09:25 收口强平) 净 **+0.780% / +0.258%**  ← 唯一稳定跑赢费用线(~0.085%)
+#     现役规则(lock_in/breakeven_lock/tighten)     净   -0.057% / -0.192%
+#     sl_only(-1.5% 止损→收口)                     净   -1.176% / -1.017%  (WR 17.4%/24.2%) ← 最差
+#     rth_close(持有到收盘)                        净   -1.170% / -0.826%
+#   ⇒ 盘前跌破 -1.5% 的仓多数在收口前**回归** ⇒ 盘前止损是在收割噪声, 不是控损;
+#     且把盘前仓带进盘中是负期望 (与既有"盘前 spike 开盘蒸发"同向)。
+#   实现范围 (只覆盖被回放验证过的 cohort): 仅 **entry_time ET 日期 == 今日** 的当日在盘前开的仓;
+#     隔夜/legacy 仓回放未覆盖 → 仍走原 decide() 规则。
+#   回滚: EXT_PREMARKET_FLATTEN=false (单 env, 不用改码)。
+FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "true").lower() == "true"
+FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:20 ET 起每次轮询都强平
 
 
 def _today_et() -> str:
@@ -114,6 +133,34 @@ def decide(pnl_pct: float, pre_volume: float) -> str:
     if pnl_pct <= TIGHTEN_AT_PCT:
         return "tighten"
     return "hold"
+
+
+def _entry_et_date(entry_time) -> str:
+    """open_positions.entry_time 是 **CST** (见 memory/时区三格式) → 转 ET 日期再比今日.
+
+    盘前仓 ET 04:00-09:25 == CST 16:00-21:25 (同一日历日), 但隔夜/legacy 仓跨日,
+    必须真转换而不是取字符串前 10 位 (那会把 CST 昨夜 22:00 的仓算成"今日")。
+    """
+    try:
+        from app.utils.timezone import to_et
+        dt = entry_time if isinstance(entry_time, datetime) else datetime.fromisoformat(str(entry_time))
+        et = to_et(dt)
+        return et.strftime("%Y-%m-%d") if et else str(entry_time)[:10]
+    except Exception:
+        return str(entry_time)[:10]
+
+
+def flatten_now(hhmm: int, entry_time, today_et: str, in_window: bool,
+                enabled: bool = None) -> bool:
+    """盘前收口强平是否适用 (纯函数, 可测).
+
+    三个条件都必须满足: 开关开 + 在盘前窗内且 hhmm ≥ 09:20 + 该仓是**今日盘前开的**。
+    """
+    if not (FLATTEN_ENABLED if enabled is None else enabled):
+        return False
+    if not in_window or hhmm < FLATTEN_FROM_HHMM:
+        return False
+    return _entry_et_date(entry_time) == today_et
 
 
 _BE_LOCK_SENT = set()  # (symbol, trade_date) 防重复推送
@@ -197,9 +244,13 @@ def collect(dry: bool) -> int:
             pnl_pct = round((last - entry) / entry * 100 * sign, 3)
             pnl_usd = round((last - entry) * qty * sign, 2)
             action = decide(pnl_pct, pre_vol)
+            _flat = flatten_now(hhmm, entry_time, today_et, in_window)
+            if _flat:
+                # 收口强平**覆盖**原规则信号 (回放: 强平 >> 现役规则 >> 止损)
+                action = "pre_close_flatten"
             # 2026-09-17 用户裁方案1 (SIM真下单+规则引擎兜底): lock_in锁盈 + tighten止损 都调 exit executor 真平仓.
             #   tighten 是 EXT 仓盘前止损的唯一兜底 (盘中 monitor 只管 TRADING 时段).
-            if action in ("lock_in", "breakeven_lock", "tighten") and in_window and not dry:
+            if action in ("lock_in", "breakeven_lock", "tighten", "pre_close_flatten") and in_window and not dry:
                 try:
                     import subprocess as _sp
                     # 2026-09-17 修复(实盘发现): 原为 capture_output=True + except: pass ⇒ 子进程异常/超时
@@ -217,7 +268,8 @@ def collect(dry: bool) -> int:
                         print(f"[shadow_exit] {symbol} {action} exit_executor ok :: {_tail[-200:]}")
                 except Exception as _exc:
                     print(f"[shadow_exit] {symbol} {action} exit_executor 异常: {type(_exc).__name__}: {_exc}")
-                _push_lock_suggestion(symbol, direction, qty, entry, last, pnl_pct, pnl_usd, pre_vol)
+                if action != "pre_close_flatten":
+                    _push_lock_suggestion(symbol, direction, qty, entry, last, pnl_pct, pnl_usd, pre_vol)
         else:
             pnl_pct, pnl_usd, action = None, None, "no_data"
         # 距 pre_high 回撤幅度 (spike 可持续性指标)
@@ -242,6 +294,8 @@ def collect(dry: bool) -> int:
             "pnl_usd": pnl_usd,
             "pullback_from_pre_high_pct": pullback,
             "action": action,
+            "is_today_entry": _entry_et_date(entry_time) == today_et,
+            "flatten_enabled": FLATTEN_ENABLED,
             "settled": False,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }

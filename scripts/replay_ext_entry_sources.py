@@ -36,10 +36,49 @@ except Exception:
 
 REPORT = ROOT / "data" / "reports" / "replay_ext_entry_sources_latest.json"
 FEE_PCT = 0.085          # 往返费用 (用户口径: 7.7bps~$4.27/笔$5000 ⇒ ~0.085%)
-KLINE_MIN_INTERVAL = 0.35
+KLINE_MIN_INTERVAL = 0.5
 ENTRY_HHMM = 405         # 入场时点 04:05 ET (与 cron 盘前首跑一致)
 PREMARKET_END = 925      # 盘前收口 09:25 ET
 _last_call = [0.0]
+CHUNK_DAYS = 9            # 单次请求跨度 (9 日 × ~91 根5m ≈ 820 根 < max_count 1000)
+
+
+CACHE_DIR = ROOT / "data" / "replay_cache"
+
+
+def _kline_cached(ctx, code, start, end, ktype):
+    """带磁盘缓存的取数 —— 同一窗口换配置重跑时不重复请求 (省接口预算与时间)."""
+    key = CACHE_DIR / f"{code.replace('.','_')}_{start}_{end}_{ktype}.json"
+    if key.exists():
+        try:
+            return json.loads(key.read_text())
+        except Exception:
+            pass
+    bars = _kline_chunked(ctx, code, start, end, ktype)
+    if bars:
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            key.write_text(json.dumps(bars))
+        except Exception:
+            pass
+    return bars
+
+
+def _kline_chunked(ctx, code, start, end, ktype):
+    """长窗口分块取数 (不这么做会静默截断到最近 1000 根 = 约 11 个交易日)."""
+    from datetime import datetime as _dt, timedelta as _td
+    t0 = _dt.strptime(start, "%Y-%m-%d")
+    t1 = _dt.strptime(end, "%Y-%m-%d")
+    out, seen = [], set()
+    while t0 <= t1:
+        chunk_end = min(t0 + _td(days=CHUNK_DAYS * 2), t1)   # *2 覆盖周末
+        for b in _kline(ctx, code, t0.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d"), ktype):
+            if b["t"] not in seen:
+                seen.add(b["t"])
+                out.append(b)
+        t0 = chunk_end + _td(days=1)
+    out.sort(key=lambda b: b["t"])
+    return out
 
 
 def _kline(ctx, code, start, end, ktype):
@@ -110,12 +149,41 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
             break
     res["rule_action"] = act
     res["rule_exit_time"] = exit_t
+    # A2) 只用止损、不锁小利 (用户哲学: 留空间, 不被波动扫出): tighten 触发才平, 否则盘前收口平
+    ex2 = None
+    cum2, run2 = {}, 0.0
+    for b in bars_day:
+        run2 += float(b["v"])
+        cum2[b["t"]] = run2
+    for b in bars_day:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        if (b["c"] / entry - 1) * 100 <= -1.5:
+            ex2 = b["c"]
+            break
+    res["sl_only_px"] = ex2
+    # A3) 只用止损 + 让盈利跑到当日收盘 (对比"是否该带进盘中")
+    ex3 = ex2
+    if ex3 is None:
+        ex3 = rth[-1]["c"] if rth else None
+    res["sl_only_rth_px"] = ex3
     # B) 持有到盘前收口 (09:25)
     e2 = pre[-1]["c"] if pre else None
     # C) 持有到当日 RTH 收盘
     e3 = rth[-1]["c"] if rth else (bars_day[-1]["c"] if bars_day else None)
+    # D) 盘中兜底臂: 延用现役 initial_sl(-5%) —— RTH 内触及即按止损价出, 否则持有到收盘
+    e4 = None
+    sl = entry * 0.95
+    for b in rth:
+        if b["l"] <= sl:
+            e4 = sl
+            break
+    if e4 is None:
+        e4 = e3
     for tag, px in (("rule", exit_px if exit_px else (e2 if e2 else entry)),
-                    ("pre_close", e2), ("rth_close", e3)):
+                    ("pre_close", e2), ("rth_close", e3), ("intraday_sl", e4),
+                    ("sl_only", res.get("sl_only_px") or e2),
+                    ("sl_only_rth", res.get("sl_only_rth_px") or e3)):
         if px:
             g = (px / entry - 1) * 100
             res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
@@ -171,7 +239,7 @@ def main():
         print(f"[replay] 候选宇宙 {len(universe)} 只 → 预取 5m 全窗口 bars …")
         bars_by_sym = {}
         for sec in universe:
-            bars_by_sym[sec] = _kline(ctx, sec, days[0], days[-1], KLType.K_5M)
+            bars_by_sym[sec] = _kline_cached(ctx, sec, days[0], days[-1], KLType.K_5M)
         rows = []
         for di, day in enumerate(days[1:], start=1):
             prev_day = days[di - 1]
@@ -215,14 +283,21 @@ def main():
                 rows.append(rec)
 
         passed = [r for r in rows if r["gates_passed"] and "ret_pct" in r.get("rule", {})]
+        src_dist = {}
+        for r in passed:
+            k = r["source"].split(":")[0]
+            src_dist[k] = src_dist.get(k, 0) + 1
         summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "days": len(days) - 1,
                    "source": args.source, "min_chg": args.min_chg, "min_vol": args.min_vol,
-                   "candidates_evaluated": len(rows),
+                   "candidates_evaluated": len(rows), "passed_by_source": src_dist,
                    "gates_passed": len(passed)}
         if passed:
             for tag, label in (("rule", "我们的规则(盘前 decide 触发即平)"),
                                ("pre_close", "持有到盘前收口 09:25"),
-                               ("rth_close", "持有到当日收盘 16:00")):
+                               ("rth_close", "持有到当日收盘 16:00"),
+                               ("intraday_sl", "持有+盘中-5%兜底(现役拓扑)"),
+                               ("sl_only", "仅-1.5%止损→盘前收口强平 (不锁小利)"),
+                               ("sl_only_rth", "仅-1.5%止损→持有到收盘")):
                 rr = [r[tag] for r in passed if tag in r]
                 if not rr:
                     continue
