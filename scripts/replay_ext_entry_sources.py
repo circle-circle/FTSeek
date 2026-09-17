@@ -285,10 +285,19 @@ def main():
     args = ap.parse_args()
 
     import scripts.extended_hours_entry_executor as E
-    if args.session == "afterhours":
-        from scripts.afterhours_exit_shadow import decide
-    else:
-        from scripts.premarket_exit_shadow import decide
+    # 2026-09-18: 两个 exit shadow 的 decide() 已被延长时段退出链重构移除 (共有文件, 非本工具改动)
+    # ⇒ 改为可选; 缺失时 rule 臂退化为"不触发"(等价持有到收口), 报告里显式标注不可用于对现役规则下判.
+    _rule_arm_ok = True
+    try:
+        if args.session == "afterhours":
+            from scripts.afterhours_exit_shadow import decide
+        else:
+            from scripts.premarket_exit_shadow import decide
+    except ImportError:
+        _rule_arm_ok = False
+
+        def decide(pnl_pct, pre_volume=0.0, *_a, **_k):   # noqa: ANN001
+            return "hold"
     from futu import OpenQuoteContext, KLType, BeatType
 
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
@@ -387,7 +396,7 @@ def main():
         for r in passed:
             k = r["source"].split(":")[0]
             src_dist[k] = src_dist.get(k, 0) + 1
-        summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "days": len(days) - 1,
+        summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "rule_arm_available": _rule_arm_ok, "days": len(days) - 1,
                    "source": args.source, "session": args.session, "end": end, "min_chg": args.min_chg, "min_vol": args.min_vol,
                    "candidates_evaluated": len(rows), "passed_by_source": src_dist,
                    "gates_passed": len(passed)}
