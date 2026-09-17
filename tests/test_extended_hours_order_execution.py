@@ -337,6 +337,22 @@ def test_reconciliation_without_today_keeps_legacy_full_scan(tmp_path, monkeypat
     assert calls[0]["qty"] == 68493
 
 
+def test_opened_today_total_merges_sessions_and_ignores_other_dates():
+    """用户 9/17 令"配额提升到 5" = 每日**合计**(盘前+盘后共享同一上限), 不是单时段各 5。"""
+    opened = {"2026-09-17:premarket": 2, "2026-09-17:afterhours": 3, "2026-09-16:premarket": 4}
+    assert entry_executor._opened_today_total(opened, "2026-09-17") == 5
+    assert entry_executor._opened_today_total({}, "2026-09-17") == 0
+    assert entry_executor._opened_today_total(opened, "2026-09-16") == 4   # 跨日残留 key 不计
+
+
+def test_daily_quota_defaults_to_five():
+    """2026-09-17 用户裁「配额可以提升到5，再观察」: 2 → 5 (暴露上限 5×$5000=$25k)。
+
+    回滚 = env EXT_ENTRY_MAX_PER_DAY=2 (常量已改 env 可覆盖)。
+    """
+    assert entry_executor.MAX_PER_DAY == 5
+
+
 def test_price_gate_blocks_penny_stocks_and_over_budget():
     """2026-09-17 用户裁方案A: 价格下限闸 $5 (挡仙股) + 上限 = 单笔仓位 $5000。"""
     assert entry_executor._price_in_range(0.073) is False   # US.CTNT 实盘样例

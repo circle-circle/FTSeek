@@ -13,7 +13,7 @@ dry 模式仅输出候选，不写 state、不下单。
 
 护栏 (开仓风险高于锁盈, 更严):
   - 单笔仓位 $5000 (用户 9/17 拍板; 高低价股都覆盖)
-  - 每日盘前+盘后合计 ≤2 笔新仓 (防连环开仓)
+  - 每日盘前+盘后合计 ≤MAX_PER_DAY 笔新仓 (2026-09-17 用户裁 2→5, 观察期; 防连环开仓)
   - SIM 无券商 STOP/STOP_LIMIT 时真实开仓 fail-closed
   - REAL 环境未授权, 一律拒绝
   - 每标的每日一次 attempt, 失败不消耗开仓配额
@@ -46,7 +46,11 @@ except Exception:
 
 # ── 用户 9/17 拍板参数 ──
 POSITION_USD = 5000        # 单笔仓位
-MAX_PER_DAY = 2            # 盘前+盘后合计每日新仓上限
+MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "5"))
+# ↑ 盘前+盘后**合计**每日新仓上限. 2026-09-17 用户裁: 2 → 5 (原话"配额可以提升到5，再观察").
+#   动机: 延长时段机会面比预期宽(官方榜 top50), 2 笔在盘前窗早段就被用尽 ⇒ 当晚真催化票开不出来;
+#   叠加同日上线的价格下限闸($5 挡仙股)后, 单笔噪声风险已降, 放宽数量换取样本速度。
+#   暴露上限 = 5 × POSITION_USD($5000) = $25k (SIM 总资产 ~$99k)。回滚: env EXT_ENTRY_MAX_PER_DAY=2。
 ENTRY_CHANGE_PCT = 2.0     # 盘前涨幅门槛
 MIN_VOLUME = 200000        # 盘前量门槛
 MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
@@ -156,6 +160,15 @@ def _audit(rec):
     rec["ts"] = datetime.utcnow().isoformat() + "Z"
     with AUDIT.open("a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _opened_today_total(opened_today, today):
+    """当日(ET)已开仓计数 = **盘前 + 盘后合并** (key 形如 '2026-09-17:premarket').
+
+    用户 9/17 令"配额提升到 5"针对的是**每日合计**, 不是单时段各 5 ⇒ 两个时段共享同一个上限。
+    跨日残留 key 必须忽略 (state 里会留历史日期的 key, 用 startswith 过滤)。
+    """
+    return sum(value for key, value in opened_today.items() if key.startswith(today))
 
 
 def _price_in_range(price):
@@ -460,7 +473,7 @@ def collect(session, dry=False):
         attempts = state["attempts"]
         opened_today = state["opened_today"]
         day_key = f"{today}:{session}"
-        total_today = sum(value for key, value in opened_today.items() if key.startswith(today))
+        total_today = _opened_today_total(opened_today, today)
         if total_today >= MAX_PER_DAY:
             return [{"skip": "daily_limit", "total_today": total_today}]
 
