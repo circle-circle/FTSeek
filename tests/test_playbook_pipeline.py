@@ -559,10 +559,24 @@ class TestCheckIntradayTrigger:
         assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_long_price_above_upper_band_no_trigger(self):
-        # 2026-07-11: entry=100, 追涨带 +5% + 重锚上限 4%; price=106 (>6%) 两者皆超 → 未触发
-        scheduler = self._make_scheduler(price=106.0, day_high=107.0, day_low=99.0)
+        # 2026-09-17 对齐 P0 宽松化 (commit 5b9948d06, 距 chase_zone 边界 ±1% 内也触发):
+        #   entry=100 → 追涨带 +5% + 容忍 1% = 上界 +6% 闭区间内触发; 本用例取 +7% 真出带。
+        #   (原用例 price=106.0 恰好落在新闭区间边缘 ⇒ 语义变了, 断言项保留、价位外移)
+        scheduler = self._make_scheduler(price=107.0, day_high=108.0, day_low=99.0)
         inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
+
+    def test_long_price_at_chase_near_miss_edge_trigger(self, monkeypatch):
+        """P0 宽松化边界 (上界含): entry=100, +6% = 追涨带 5% + 容忍 1% 的闭区间边缘 → 触发。
+
+        自密封禁触窗: 本用例断言 True, 而 ET 00:00-09:35 禁触窗会拦掉触发判定
+        (随挂钟漂移), 故在用例内显式密封该门, 不依赖类级夹具补丁。
+        """
+        monkeypatch.setattr("app.playbook.config.get_playbook_config",
+                            lambda: {**self.SEALED_CFG, "entry_open_blackout_enabled": False})
+        scheduler = self._make_scheduler(price=106.0, day_high=107.0, day_low=99.0)
+        inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_long_price_below_upper_band_trigger(self):
         # entry=100, upper=101, price=99 → 触发 (<=101)
@@ -577,10 +591,20 @@ class TestCheckIntradayTrigger:
         assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_short_price_below_lower_band_no_trigger(self):
-        # 2026-07-11: entry=100, 追空带 -5% + 重锚上限 4%; price=94 (>6%) 两者皆超 → 未触发
-        scheduler = self._make_scheduler(price=94.0, day_high=101.0, day_low=93.0)
+        # 2026-09-17 对齐 P0 宽松化 (commit 5b9948d06): entry=100 → 追空带 -5% + 容忍 1%
+        #   = 下界 -6% 闭区间内触发; 本用例取 -7% 真出带 (原 price=94.0 恰落新边界)。
+        scheduler = self._make_scheduler(price=93.0, day_high=101.0, day_low=92.0)
         inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
+
+    def test_short_price_at_chase_near_miss_edge_trigger(self, monkeypatch):
+        """P0 宽松化边界 (下界含): entry=100, -6% = 追空带 5% + 容忍 1% 的闭区间边缘 → 触发。
+        (禁触窗同上一用例自密封。)"""
+        monkeypatch.setattr("app.playbook.config.get_playbook_config",
+                            lambda: {**self.SEALED_CFG, "entry_open_blackout_enabled": False})
+        scheduler = self._make_scheduler(price=94.0, day_high=101.0, day_low=93.0)
+        inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_long_reanchor_within_cap_triggers(self):
         # 2026-07-11 Lever A: entry=100, price=96.5 (跌破 -3% 接飞刀带但 <=4% 重锚上限) → 重锚触发

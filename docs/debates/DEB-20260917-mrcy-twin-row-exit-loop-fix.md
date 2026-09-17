@@ -83,3 +83,18 @@
 **修法（判定改读真实载体，双向可验）**：两处都改为「`total_records > 0` 且**未提取到任何带分数据**（`overall_scores`/`dimension_scores`/旧表五分/`slippage_values` 全空）才报」。
 
 **验证**：9/16 报告重生成 → `improvement_suggestions` 只剩「今日交易执行正常，继续保持」（断言 1 PASS）；`attribution_data` 实测有 10 记录 + 5 维评分（断言 2 PASS）；`IssueDetector.detect` 零 Issue（断言 3 PASS）；反向后（伪造 `{'total_records':5}` 无评分）→ 报告侧报、规则侧（临时启用 `enabled=True` 验证）报「归因数据未填充」，有评分时不报（断言 4/5 PASS）。
+
+## 8. 附录 B · 触发门测试对齐 P0 宽松化 (消除既有红)
+
+**背景**：commit `5b9948d06`（他 agent 的 P0「触发条件宽松化」）给 `_check_intraday_trigger` 加了 `_near_miss_tolerance = 0.01`（距 `chase_zone` 边界 ±1% 内也触发），但**未同步测试** → `TestCheckIntradayTrigger` 2 条红：
+
+| 用例 | 原断言 | 原价位 | 新语义下实际 |
+|---|---|---|---|
+| `test_long_price_above_upper_band_no_trigger` | `is False` | 106.0（+6%） | 落进新闭区间上界 **+6%** → 触发 ⇒ 挂 |
+| `test_short_price_below_lower_band_no_trigger` | `is False` | 94.0（-6%） | 落进新闭区间下界 **-6%** → 触发 ⇒ 挂 |
+
+**修法（保留用例语义，不翻转断言）**：用例名是"…no_trigger"，其意图是"明确出带不触发" ⇒ 把价位外移到 **+7% / -7%**（真出带），并补 2 条边界用例把新契约钉死（**±6% 闭区间边缘含 → 触发**）。边界用例在用例内显式密封 `entry_open_blackout_enabled`（断言 True 的用例会被 ET 00:00-09:35 禁触窗随挂钟拦截）。
+
+**验证**：worktree 版（HEAD + 本改动，不含他 agent 未提交的 +207 行禁触窗测试类）`pytest tests/test_playbook_pipeline.py` → **56 passed**（该类 16 passed）；工作区版（含他 WIP）同类 16 passed。
+
+**提交隔离**：`tests/test_playbook_pipeline.py` 当时含他 agent 未提交改动（新增 `TestEntryOpenBlackoutGate` 类 + 夹具密封键）⇒ 用 worktree + `hash-object` 注入自己的 hunk（staged 校验：`TestEntryOpenBlackoutGate` 出现 0 次），**并把同一改动也写进工作区文件**，防止他后续提交时覆盖回退本改动。
