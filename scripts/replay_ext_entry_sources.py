@@ -180,10 +180,20 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
             break
     if e4 is None:
         e4 = e3
+    # E) 收口分流: 强平 pnl < K 的仓, 只让 ≥K 的强票进盘中 (用户 9/17「要」)
+    for _k in (1.0, 2.0):
+        _lp = pre[-1] if pre else None
+        if _lp:
+            _pnl = (_lp["c"] / entry - 1) * 100
+            res[f"keep_{int(_k)}pct_px"] = e3 if _pnl >= _k else _lp["c"]
+        else:
+            res[f"keep_{int(_k)}pct_px"] = None
     for tag, px in (("rule", exit_px if exit_px else (e2 if e2 else entry)),
                     ("pre_close", e2), ("rth_close", e3), ("intraday_sl", e4),
                     ("sl_only", res.get("sl_only_px") or e2),
-                    ("sl_only_rth", res.get("sl_only_rth_px") or e3)):
+                    ("sl_only_rth", res.get("sl_only_rth_px") or e3),
+                    ("keep_1pct", res.get("keep_1pct_px") or e2),
+                    ("keep_2pct", res.get("keep_2pct_px") or e2)):
         if px:
             g = (px / entry - 1) * 100
             res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
@@ -196,6 +206,52 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
     return res
 
 
+def _simulate_ah(bars_day, next_day_bars, entry_bar_i, decide):
+    """盘后入场模拟 (2026-09-17 用户「要」): 入场 = 16:05 那根 5m bar 收盘;
+    退出臂 = 现役规则(afterhours decide) / 盘后收口 19:55 / 次日开盘 09:35 / 次日收盘 / 仅止损."""
+    entry = bars_day[entry_bar_i]["c"]
+    res = {}
+    ah = [b for b in bars_day if _hhmm(b["t"]) >= 1600]
+    cum, run = {}, 0.0
+    for b in bars_day:
+        run += float(b["v"])
+        cum[b["t"]] = run
+    act, ex = "hold", None
+    for b in bars_day:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        a = decide(round((b["c"] / entry - 1) * 100, 3), cum.get(b["t"], 0.0))
+        if a in ("lock_in", "breakeven_lock", "tighten"):
+            act, ex = a, b["c"]
+            break
+    res["rule_action"] = act
+    ex_sl = None
+    for b in bars_day:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        if (b["c"] / entry - 1) * 100 <= -1.5:
+            ex_sl = b["c"]
+            break
+    sc = ah[-1]["c"] if ah else None
+    no, nc = None, None
+    for b in next_day_bars:
+        if _hhmm(b["t"]) >= 935:
+            no = b["c"]
+            break
+    nx = [b for b in next_day_bars if 930 <= _hhmm(b["t"]) <= 1600]
+    if nx:
+        nc = nx[-1]["c"]
+    for tag, px in (("rule", ex or sc), ("session_close", sc), ("next_open", no),
+                    ("next_rth_close", nc), ("sl_only", ex_sl or sc)):
+        if px:
+            g = (px / entry - 1) * 100
+            res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
+    peak = max((b["h"] for b in ah if b["t"] > bars_day[entry_bar_i]["t"]), default=None)
+    res["mfe_pct"] = round((peak / entry - 1) * 100, 3) if peak else None
+    res["entry_px"] = round(entry, 4)
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=10, help="回看交易日数")
@@ -203,10 +259,14 @@ def main():
     ap.add_argument("--recent-days", type=int, default=7, help="财报披露近因窗口")
     ap.add_argument("--min-chg", type=float, default=None, help="覆盖涨幅门槛(默认用现役 2.0)")
     ap.add_argument("--min-vol", type=float, default=None, help="覆盖量门槛(默认用现役 200000)")
+    ap.add_argument("--session", default="premarket", choices=["premarket", "afterhours"])
     args = ap.parse_args()
 
     import scripts.extended_hours_entry_executor as E
-    from scripts.premarket_exit_shadow import decide
+    if args.session == "afterhours":
+        from scripts.afterhours_exit_shadow import decide
+    else:
+        from scripts.premarket_exit_shadow import decide
     from futu import OpenQuoteContext, KLType, BeatType
 
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
@@ -254,18 +314,31 @@ def main():
                 bars = bars_by_sym.get(sec) or []
                 if not bars:
                     continue
-                pc = [b for b in bars if b["t"][:10] == prev_day and 930 <= _hhmm(b["t"]) <= 1600]
-                if not pc:
-                    continue
-                prev_close = pc[-1]["c"]
                 today = [b for b in bars if b["t"][:10] == day]
-                pre = [b for b in today if _hhmm(b["t"]) <= PREMARKET_END]
-                if not pre:
+                if not today:
                     continue
-                idxs = [i for i, b in enumerate(today) if _hhmm(b["t"]) <= ENTRY_HHMM]
-                if not idxs:
-                    continue
-                ei = idxs[-1]
+                if args.session == "afterhours":
+                    # 盘后: 分母 = **当日** RTH 收盘 (盘后涨跌幅口径); 入场 = 16:05 那根 bar
+                    rth_today = [b for b in today if 930 <= _hhmm(b["t"]) <= 1600]
+                    if not rth_today:
+                        continue
+                    prev_close = rth_today[-1]["c"]
+                    idxs = [i for i, b in enumerate(today) if _hhmm(b["t"]) >= 1605]
+                    if not idxs:
+                        continue
+                    ei = idxs[0]
+                else:
+                    pc = [b for b in bars if b["t"][:10] == prev_day and 930 <= _hhmm(b["t"]) <= 1600]
+                    if not pc:
+                        continue
+                    prev_close = pc[-1]["c"]
+                    pre = [b for b in today if _hhmm(b["t"]) <= PREMARKET_END]
+                    if not pre:
+                        continue
+                    idxs = [i for i, b in enumerate(today) if _hhmm(b["t"]) <= ENTRY_HHMM]
+                    if not idxs:
+                        continue
+                    ei = idxs[-1]
                 entry_px = today[ei]["c"]
                 chg = (entry_px / prev_close - 1) * 100 if prev_close > 0 else 0
                 vol = sum(b["v"] for b in today[:ei + 1])
@@ -277,7 +350,12 @@ def main():
                        "pre_vol": vol, "gates_passed": bool(passed)}
                 if passed:
                     try:
-                        rec.update(_simulate(today, prev_close, ei, decide))
+                        if args.session == "afterhours":
+                            nxt = days[di + 1] if di + 1 < len(days) else None
+                            nb = [b for b in bars if b["t"][:10] == nxt] if nxt else []
+                            rec.update(_simulate_ah(today, nb, ei, decide))
+                        else:
+                            rec.update(_simulate(today, prev_close, ei, decide))
                     except Exception as exc:
                         rec["sim_error"] = str(exc)[:80]
                 rows.append(rec)
@@ -288,24 +366,28 @@ def main():
             k = r["source"].split(":")[0]
             src_dist[k] = src_dist.get(k, 0) + 1
         summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "days": len(days) - 1,
-                   "source": args.source, "min_chg": args.min_chg, "min_vol": args.min_vol,
+                   "source": args.source, "session": args.session, "min_chg": args.min_chg, "min_vol": args.min_vol,
                    "candidates_evaluated": len(rows), "passed_by_source": src_dist,
                    "gates_passed": len(passed)}
         if passed:
-            for tag, label in (("rule", "我们的规则(盘前 decide 触发即平)"),
-                               ("pre_close", "持有到盘前收口 09:25"),
-                               ("rth_close", "持有到当日收盘 16:00"),
-                               ("intraday_sl", "持有+盘中-5%兜底(现役拓扑)"),
-                               ("sl_only", "仅-1.5%止损→盘前收口强平 (不锁小利)"),
-                               ("sl_only_rth", "仅-1.5%止损→持有到收盘")):
-                rr = [r[tag] for r in passed if tag in r]
-                if not rr:
-                    continue
-                gross = sum(x["ret_pct"] for x in rr) / len(rr)
-                net = sum(x["net_pct"] for x in rr) / len(rr)
-                wr = sum(1 for x in rr if x["ret_pct"] > 0) / len(rr) * 100
-                summary[tag] = {"n": len(rr), "avg_gross_pct": round(gross, 3),
-                                "avg_net_pct": round(net, 3), "win_rate_pct": round(wr, 1)}
+            # 2026-09-17 修: 原实现按 (tag,label) 元组顺序打印且**存在重复 tag** ⇒ 行数/标签会错位
+            # (盘后臂与盘前臂共用同一循环)。现按 tag **键名**输出, 并带中位/最差/最好 ⇒ 可看图辨尾部。
+            arms = {}
+            for r in passed:
+                for tag in ("rule", "pre_close", "rth_close", "intraday_sl", "sl_only",
+                            "sl_only_rth", "keep_1pct", "keep_2pct", "session_close",
+                            "next_open", "next_rth_close"):
+                    if tag in r:
+                        arms.setdefault(tag, []).append(r[tag]["net_pct"])
+            summ_arms = {}
+            for tag, v in arms.items():
+                vs = sorted(v)
+                summ_arms[tag] = {"n": len(v), "mean": round(sum(v) / len(v), 3),
+                                  "median": round(vs[len(vs) // 2], 3),
+                                  "worst": round(vs[0], 3), "best": round(vs[-1], 3),
+                                  "win_rate_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 1),
+                                  "total": round(sum(v), 1)}
+            summary["arms"] = summ_arms
         mfe = [r["mfe_pct"] for r in passed if r.get("mfe_pct") is not None]
         if mfe:
             summary["avg_mfe_pct"] = round(sum(mfe) / len(mfe), 3)
