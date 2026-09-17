@@ -60,6 +60,7 @@ class ExitLedger:
                     quantity REAL NOT NULL CHECK(quantity > 0), owner_json TEXT NOT NULL,
                     decision_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'PENDING',
                     result_json TEXT, receipt_json TEXT, last_error TEXT NOT NULL DEFAULT '',
+                    session TEXT NOT NULL DEFAULT 'RTH' CHECK(session IN ('RTH','ETH')),
                     limit_price REAL NOT NULL, limit_timeout_s REAL NOT NULL,
                     broker_qty_before REAL, version INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL, updated_at REAL NOT NULL,
@@ -78,6 +79,9 @@ class ExitLedger:
                     PRIMARY KEY(intent_id, sequence)
                 );
             ''')
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(exit_intents)')}
+            if 'session' not in columns:
+                db.execute("ALTER TABLE exit_intents ADD COLUMN session TEXT NOT NULL DEFAULT 'RTH'")
 
     @contextmanager
     def transaction(self):
@@ -133,7 +137,7 @@ class ExitLedger:
             return unsettled
 
     def request(self, *, account_id, target_env, symbol, direction, quantity, owner,
-                decision, limit_price, limit_timeout_s, now):
+                decision, limit_price, limit_timeout_s, now, session='RTH'):
         owner = dict(owner) if isinstance(owner, dict) else {}
         quantity = number(quantity, positive=True)
         if (not quantity or quantity != number(owner.get('quantity'), positive=True)
@@ -166,6 +170,8 @@ class ExitLedger:
         if (limit_price is None or limit_timeout_s is None
                 or (limit_price > 0 and round(limit_price, 2) <= 0)):
             raise ValueError('exit_order_parameters_invalid')
+        if session not in ('RTH', 'ETH') or (session == 'ETH' and (target_env != 'sim' or limit_price <= 0)):
+            raise ValueError('exit_session_invalid')
         # Serialize before claiming; malformed snapshots must never reach the broker.
         owner_json, decision_json = json_text(owner), json_text(decision)
         with self.transaction() as db:
@@ -175,6 +181,8 @@ class ExitLedger:
             if old:
                 if (old['owner'] != owner or old['direction'] != direction or old['symbol'] != symbol):
                     return None, held('exit_owner_conflict', owner=owner, decision=decision, state='BLOCKED')
+                if old['session'] != session:
+                    return None, held('exit_session_conflict', owner=owner, decision=decision, state='BLOCKED')
                 return old, None
             busy = db.execute("SELECT 1 FROM exit_intents WHERE account_id=? AND target_env=? "
                               "AND symbol=? AND state!='BOOKED'",
@@ -184,10 +192,10 @@ class ExitLedger:
             intent_id = uuid.uuid4().hex
             db.execute('''INSERT INTO exit_intents
                 (intent_id,account_id,target_env,symbol,close_key,direction,quantity,owner_json,
-                 decision_json,limit_price,limit_timeout_s,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 decision_json,session,limit_price,limit_timeout_s,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (intent_id, str(account_id), target_env, symbol, close_key, direction, quantity,
-                 owner_json, decision_json, round(limit_price, 2), limit_timeout_s, now, now))
+                 owner_json, decision_json, session, round(limit_price, 2), limit_timeout_s, now, now))
         return self.get(intent_id), None
 
     def reserve_leg(self, intent, kind, quantity, price, deadline, now, broker_qty_before=None):
@@ -206,7 +214,13 @@ class ExitLedger:
             if not previous and quantity != current['quantity']:
                 return None
             sequence = 2 if previous else 1
-            remark = 'pbe_' + uuid.uuid4().hex[:24]
+            remark_prefix = 'pbe_'
+            candidate = str((intent.get('decision') or {}).get('metadata', {}).get(
+                'broker_remark_prefix', ''))
+            if (intent['session'] == 'ETH' and candidate.startswith('ext_exit_')
+                    and 0 < len(candidate) <= 64 and candidate == candidate.strip()):
+                remark_prefix = candidate
+            remark = remark_prefix + uuid.uuid4().hex[:24]
             db.execute('''INSERT INTO exit_legs
                 (intent_id,sequence,kind,quantity,price,remark,state,deadline,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,'PREPARED',?,?,?)''',
@@ -322,13 +336,18 @@ class ExitLifecycle:
     def __init__(self, adapter, ledger, clock=None):
         self.adapter, self.ledger, self.clock = adapter, ledger, clock or time
 
-    def request(self, symbol, quantity, direction, target_env, limit_price, timeout, owner, decision):
+    def request(self, symbol, quantity, direction, target_env, limit_price, timeout, owner, decision,
+                session='RTH'):
         if target_env not in ('sim', 'real'):
             return held('exit_environment_invalid', owner=owner, decision=decision)
+        if session not in ('RTH', 'ETH'):
+            return held('exit_session_invalid', owner=owner, decision=decision)
+        if session == 'ETH' and (target_env != 'sim' or number(limit_price, positive=True) is None):
+            return held('exit_eth_requires_sim_limit', owner=owner, decision=decision)
         account = getattr(self.adapter, 'real_account_id' if target_env == 'real' else 'sim_account_id', '')
         intent, blocked = self.ledger.request(account_id=account, target_env=target_env, symbol=symbol,
             direction=direction, quantity=quantity, owner=owner, decision=decision,
-            limit_price=limit_price, limit_timeout_s=timeout, now=self.clock.time())
+            limit_price=limit_price, limit_timeout_s=timeout, now=self.clock.time(), session=session)
         return blocked if blocked else self.resume(intent['intent_id'])
 
     def route(self, intent):
@@ -428,12 +447,15 @@ class ExitLifecycle:
         return abs(signed)
 
     def send(self, intent, leg, ctx, scope, lock):
-        from futu import TrdSide, OrderType
+        from futu import TrdSide, OrderType, TimeInForce, Session
+        order_session = Session.RTH if intent['session'] == 'RTH' else Session.ETH
         try:
+            # R04: durable exit orders explicitly declare the claimed session and DAY TIF.
             with lock:
                 _ret, data = ctx.place_order(price=leg['price'], qty=leg['quantity'],
                     code=intent['symbol'], trd_side=TrdSide.SELL if intent['direction'] == 'LONG' else TrdSide.BUY,
                     order_type=OrderType.NORMAL if leg['kind'] == 'LIMIT' else OrderType.MARKET,
+                    time_in_force=TimeInForce.DAY, session=order_session,
                     remark=leg['remark'], **scope)
         except Exception:
             # The committed PREPARED leg also represents a lost send response.
@@ -490,6 +512,9 @@ class ExitLifecycle:
                 if leg['state'] == 'TERMINAL':
                     if leg['kind'] != 'LIMIT':
                         return self.ledger.result(intent_id, self.clock.time(), 'exit_terminal_shortfall', 'HELD')
+                    if intent['session'] == 'ETH':
+                        return self.ledger.result(intent_id, self.clock.time(),
+                                                  'exit_eth_partial_fill_held', 'HELD')
                     if leg['dealt_qty'] is None:
                         return self.ledger.result(intent_id, self.clock.time(), 'exit_final_quantity_unknown', 'HELD')
                     remaining = intent['quantity'] - leg['dealt_qty']

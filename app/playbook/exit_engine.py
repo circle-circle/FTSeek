@@ -137,6 +137,7 @@ def _compute_dynamic_effective_sl(
     exit_cfg: dict,
     fee_cushion_pct: float = 0.0,
     slip_cushion_pct: float = 0.0,
+    adaptive_drawdown_pct: float | None = None,
 ) -> float:
     """根据因子退出规则计算动态 effective stop loss.
 
@@ -208,7 +209,11 @@ def _compute_dynamic_effective_sl(
         return effective_sl
 
     # ── 回撤止损 (新逻辑, 2026-07-09) ──
-    drawdown_pct = float(exit_cfg.get("drawdown_from_peak_pct", 0))
+    drawdown_pct = (
+        float(adaptive_drawdown_pct)
+        if adaptive_drawdown_pct is not None
+        else float(exit_cfg.get("drawdown_from_peak_pct", 0))
+    )
     if drawdown_pct > 0 and peak_profit_pct > breakeven_pct:
         # SL = peak_price × (1 - drawdown_pct/100), 但不低于保本
         if direction == "LONG":
@@ -353,6 +358,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     _overnight_gap_stop_pct = _horizon_cfg.get("overnight_gap_stop_pct", 3.0)
 
     from app.playbook.config import get_playbook_config
+    from app.playbook.adaptive_trailing import (
+        adaptive_trailing_drawdown_pct,
+        adaptive_trailing_snapshot,
+    )
     _pb_cfg = get_playbook_config()
     _factor_exit_rules = _pb_cfg.get_horizon_top("factor_exit_rules", {})
     _default_exit_cfg = _factor_exit_rules.get("default", {})
@@ -418,10 +427,18 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     # ── 滑点垫 (2026-08-20 方案A): 触发线 = 费用线 + slip_cushion. 见 _compute_dynamic_effective_sl.
     #   校准: 8/20 实弹降级市价滑点 21/6.6/43bps → 0.2% 覆盖; 约束 < breakeven_at_pct(0.4).
     _slip_cushion_pct = float(_pb_cfg.get("breakeven_slip_cushion_pct", 0.0))
+    _source_type = str(meta.get("_source_type", "") or "").strip().upper()
+    _adaptive_drawdown_pct = adaptive_trailing_drawdown_pct(
+        peak_profit_pct, _pb_cfg, _source_type
+    )
+    if _adaptive_drawdown_pct is not None:
+        meta["_adaptive_trailing"] = adaptive_trailing_snapshot(
+            peak_profit_pct, _pb_cfg, _source_type
+        )
 
     effective_sl = _compute_dynamic_effective_sl(
         direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg, _fee_cushion_pct,
-        _slip_cushion_pct
+        _slip_cushion_pct, _adaptive_drawdown_pct
     )
     breakeven_triggered = peak_profit_pct >= float(_exit_cfg.get("breakeven_at_pct", 0.5))
 

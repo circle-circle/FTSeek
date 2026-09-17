@@ -86,6 +86,32 @@ def _load_rows():
     return out
 
 
+def _in_source_window(row):
+    source = str(row.get("_source") or row.get("source") or "")
+    try:
+        hhmm = int(row.get("hhmm_et") or 0)
+    except (TypeError, ValueError):
+        return False
+    if source == "premarket_exit":
+        return bool(row.get("in_premarket_window")) and 400 <= hhmm <= 929
+    if source == "afterhours_exit":
+        return bool(row.get("in_afterhours_window")) and 1600 <= hhmm <= 1959
+    return False
+
+
+def _settled_record_in_window(record):
+    source = str(record.get("source") or "")
+    try:
+        hhmm = int(record.get("hhmm_et") or 0)
+    except (TypeError, ValueError):
+        return False
+    if source == "premarket_exit":
+        return 400 <= hhmm <= 929
+    if source == "afterhours_exit":
+        return 1600 <= hhmm <= 1959
+    return False
+
+
 def _already_settled():
     """已结算键 (source,symbol,trade_date,hhmm) 防重复."""
     if not SETTLE_OUT.exists():
@@ -322,8 +348,12 @@ def main():
     settled_rows = []
     n_new = 0
     n_api_unavailable = 0
+    n_out_of_window = 0
     try:
         for r in rows:
+            if not _in_source_window(r):
+                n_out_of_window += 1
+                continue
             if r.get("trade_date", "") < cutoff:
                 continue
             key = (r.get("_source"), r.get("symbol"), r.get("trade_date"), r.get("hhmm_et"))
@@ -351,12 +381,17 @@ def main():
 
     # 聚合 = 历史已结算 + 本轮新结算
     all_settled = []
+    historical_out_of_window = 0
     if SETTLE_OUT.exists():
         for line in SETTLE_OUT.read_text().splitlines():
             try:
-                all_settled.append(json.loads(line))
+                record = json.loads(line)
             except Exception:
                 continue
+            if _settled_record_in_window(record):
+                all_settled.append(record)
+            else:
+                historical_out_of_window += 1
     # 台账用 source:action 聚合
     ledger_src = []
     for rec in all_settled:
@@ -368,6 +403,8 @@ def main():
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "newly_settled": n_new,
         "total_settled": len(all_settled),
+        "out_of_window_skipped": n_out_of_window,
+        "historical_out_of_window_excluded": historical_out_of_window,
         # 接口不可用而未结算的行数 (>0 说明台账本轮有缺口, 下轮重跑自动补)
         "api_unavailable": n_api_unavailable,
         "ledger": ledger,
@@ -377,6 +414,7 @@ def main():
     else:
         REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print(f"[settle] 新结算 {n_new} 行, API不可用跳过 {n_api_unavailable} 行(下轮重跑补), "
+              f"窗外跳过 {n_out_of_window} 行, 历史窗外排除 {historical_out_of_window} 行, "
               f"累计 {len(all_settled)}, 台账 → {REPORT}")
 
 

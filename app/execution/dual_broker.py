@@ -218,11 +218,16 @@ class DualBrokerAdapter:
             futu_order_type = FutuOrderType.MARKET if order.order_type == OrderType.MARKET else FutuOrderType.NORMAL
 
             _place_attempted = True
+            # R04 (2026-09-16, REVIEW-20260916-full-session-audit §7.1, 用户批准):
+            #   显式声明 RTH-only + DAY — 消除订单意图/成交时段语义不确定 (默认 Session.NONE
+            #   可能被 broker 解释为延长时段成交). 未来启用 ETH 再显式 session=ETH+限价单.
+            from futu import TimeInForce, Session
             with lock:
                 ret, data = ctx.place_order(
                     price=order.price, qty=order.quantity, code=order.symbol,
                     trd_side=trd_side, order_type=futu_order_type,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                    time_in_force=TimeInForce.DAY, session=Session.RTH,
                     remark=getattr(order, 'client_order_id', '') or None,
                 )
             try:
@@ -316,7 +321,8 @@ class DualBrokerAdapter:
 
     def close_position(self, symbol: str, qty: float, direction_held: str,
                        target_env: str = "sim", limit_price: float = 0.0,
-                       limit_timeout_s: float = 8.0, *, exit_owner: dict = None,
+                       limit_timeout_s: float = 8.0, session: str = "RTH", *,
+                       exit_owner: dict = None,
                        exit_decision: dict = None) -> Dict[str, Any]:
         """Close only the owned quantity through a durable, recoverable send gate."""
         from app.execution.exit_lifecycle import held
@@ -324,7 +330,7 @@ class DualBrokerAdapter:
             return held('exit_identity_required', owner=exit_owner, decision=exit_decision)
         try:
             return self._exit_lifecycle().request(symbol, qty, direction_held, target_env,
-                limit_price, limit_timeout_s, exit_owner, exit_decision)
+                limit_price, limit_timeout_s, exit_owner, exit_decision, session=session)
         except Exception:
             logger.exception('[DualBroker] durable close failed symbol=%s', symbol)
             return held('exit_ledger_or_identity_error', owner=exit_owner, decision=exit_decision)

@@ -1,5 +1,64 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-18 增量：MFE 自适应 trailing 已接入 —— 仅 PLAYBOOK_SIM，净保本地板优先
+
+> **一句话**：盘中、盘前、盘后共用 `drawdown=clamp(0.4×MFE, 0.4%, 1.2%)` 的动态回撤，目标毛捕获约 60%；`PLAYBOOK_LIVE` 与手动仓不受影响。
+
+- **范围**：`app/playbook/adaptive_trailing.py` 为唯一 helper；盘中 `_check_playbook_exit_rules()` 读取 `meta._source_type`，延长时段由 position scope 返回 `source_type` 并传入决策器。SIM-only 硬编码在 helper，防止实盘误开。
+- **保护**：动态回撤只替换 factor trailing 的 `drawdown_from_peak_pct`；净保本地板、`SL_BREAKEVEN`、`SL_TRAIL_LOCK`、`TAKE_PROFIT`、TP RR/净收益门、延长时段不做亏损止损全部保留。BE/TRAIL 限价地板仍是 `_be_net_line_price`。
+- **配置**：`config/unified_config.yaml` 新增 `adaptive_trailing_enabled/target_capture_pct/min_drawdown_pct/max_drawdown_pct`；当前 `60/0.4/1.2`。回滚只改 `enabled=false` 并重启主服务。
+- **观测**：metadata 与延长时段 JSONL 记录 `_adaptive_trailing` / `adaptive_trailing_drawdown_pct` / `adaptive_trailing_snapshot`（MFE、回撤、目标捕获率），position scope 返回 source_type。
+- **验证**：新增 `tests/playbook/test_adaptive_trailing.py`；adaptive/BE/TP/scope/hold/flatten 相关 **43 passed**，延长时段套件 **55 passed**，盘中退出生命周期 **112 passed**，playbook 相关补充 **121 passed**，`py_compile` 通过。涉及 `app/**`，完成后已重启 `ftseek-us` 并跑启动冒烟。
+
+## 2026-09-18 00:40 增量：延长时段决策勘误 —— 恢复原 BE/Trail/TP，切 executable 净口径
+
+> **一句话**：盘前/盘后不再使用临时净 +0.3% / +2% 规则；改用原 Playbook `SL_BREAKEVEN`、`SL_TRAIL_LOCK`、`TAKE_PROFIT`，决策价 LONG bid / SHORT ask，并扣真实往返费。
+
+- **语义**：`SL_BREAKEVEN` / `SL_TRAIL_LOCK` 是武装后的利润保护线，允许延长时段触发；TP 需过 RR 与净收益门；`SL_INITIAL` 与亏损侧收紧只落 `hold_no_stop`，止损仍归盘中。
+- **参数**：新增 `scripts/extended_hours_profit_exit_rules.py` 复用 `_compute_dynamic_effective_sl()` 与 `playbook_horizon.yaml`，不复制第二套阈值，不启用 adaptive trailing。
+- **状态**：position scope 返回 open trade id；collector 将 peak、breakeven_triggered、fee-aware BE line 合并回 `trade_records.metadata_json`，跨盘前/盘中/盘后连续。
+- **执行**：决策价从 last/pre/after 切为 executable bid/ask；TP 用该价挂限价，BE/TRAIL 用 `_be_net_line_price` 做限价地板；无 bid/ask 则 `no_executable_quote`。仍仅 SIM、ETH 限价、默认 20 秒、无市价兜底、全额成交后才簿记。
+- **验证**：新增 BE/trail/TP/SHORT/持久化/净限价地板规则测试；延长时段/ATR 定向 **103 passed**，`tests/execution/test_exit_lifecycle.py` 单独 **112 passed**；`py_compile` 与本批文件 `git diff --check` 通过。本批未改 `app/**`，无需重启。
+- **回滚**：revert 本批 scripts/tests/docs；JSONL 新字段仅追加，metadata 状态幂等可保留或按备份恢复。
+
+## 2026-09-18 00:20 增量：延长时段单一 durable exit authority 接入 —— ETH 仅 SIM限价，无市价兜底
+
+> **一句话**：盘前/盘后触发后的执行与记账统一走 `DualBrokerAdapter.close_position(session="ETH")` 和 Playbook 簿记；直连交易上下文、直写 `open_positions/trade_records`、ETH 市价兜底与 next_open 补刀均已移除/禁用。
+
+- **Durable 语义**：`exit_intents` 新增 `session` 列并自动迁移，存量默认 `RTH`；ETH 仅允许 `target_env=sim` + 正限价，同 close_key session 不可漂移。
+- **ATR 观测**：collector 读取最新 open trade `metadata_json.atr`（绝对价），落 `atr_abs/atr_pct/atr_source`；trail state 仍未落。
+- **执行安全**：ETH 部分成交/未成交保持 durable pending 并告警，不追加 MARKET；限价默认 20 秒（`EXT_EXIT_LIMIT_TIMEOUT_S`）；broker active close 单/既有 RTH 意图会阻断新请求。
+- **审计/簿记**：ETH leg 保留 `ext_exit_{reason}` 前缀；全额成交经 `_book_playbook_exit_result` 落账并 acknowledge，脚本不再直接写持仓/交易表。
+- **行为边界**：触发判据仍为旧 `last/pre_price/after_price`，尚未切净 +0.3% executable；不新增开仓、不做止损、不启用 adaptive trailing。
+- **验证**：延长时段/生命周期/执行器/ATR/hold-to-open/close-flatten 定向 **174 passed**，执行 broader 子集 **222 passed**，`py_compile` 与 `git diff --check` 通过。
+- **事故披露**：一次早期测试未注入 fake broker，写入 `US.TEST` 测试 intent 并导致首次冒烟 6/7；已停服备份后删除（legs=0），并加测试 fail-safe。备份：`data/backups/playbook_exits_before_us_test_cleanup_20260918_001835.db`。
+- **服务**：清理后重启，启动冒烟 **7/7 通过**，`ftseek-us` active，全局 ledger 中 `US.TEST` intent=0。
+- **下一步**：等下一盘前窗口验证 collector→ETH durable exit→Playbook booking；复跑延长时段对账与 observation cardinality；然后才切 executable 净 +0.3% 决策。
+
+## 2026-09-17 23:55 增量：延长时段 1 分钟 ET 观测调度完成 —— record-only，不改退出行为
+
+> **一句话**：盘前/盘后退出采集已升级为 ET 市场日历 1 分钟调度，并记录 bid/ask/可执行价/点差/quote age/量 delta/R/费用/净收益；退出决策与 executor 仍走旧路径，自适应 trailing 未启用。
+
+- **调度**：`scripts/extended_hours_exit_cron.py` 每分钟由 crontab 触发，经 `scripts/extended_hours_market_session.py` 判定 04:00–09:29 盘前、正式收盘–19:59 盘后（半日 13:00 起）；非阻塞锁 + 120s 超时。
+- **修复**：发现窗外每分钟会连一次 Futu，已加轻量 ET 预筛；窗外 dry run 约 0.19s 且无 Futu 连接。
+- **观测**：两个 collector 写入 `FIELD_UNITS` 声明的报价、点差、quote age、量、R、费用、毛/净可执行收益；LONG 用 bid、SHORT 用 ask，net 只扣估算费用、不加合成滑点。
+- **现状**：新字段 live 样本仍为 0，cardinality 报 `INSUFFICIENT` 属预期；`session_volume_delta` 首条为 null，ATR/trail state 尚未采集。
+- **验证**：`py_compile`、定向测试、`git diff --check` 通过；实际 crontab 窗外返回 `outside_extended_hours`。
+- **回滚**：revert 本批脚本/测试；删除新 crontab 行并恢复旧两条 5 分钟固定北京时间行；JSONL 新字段仅追加，可按 `recorded_at`/字段存在性剔除。
+- **下一步**：等下一盘前/盘后窗口拿到非空样本并复跑 cardinality；然后补 ATR/trail state、单一 durable exit authority、ETH SIM limit、净 +0.3% 可执行价决策。
+
+## 2026-09-17 23:35 增量：延长时段 P0/P1 前置修复完成 —— 台账 0 mismatch / 归属过滤 / 窗口治理
+
+> **一句话**：自适应 trailing 尚未启用；先完成其前置门禁：历史券商/审计/本地台账全部对齐、未知归属不再进入延长时段、结算窗口污染不再进入新聚合。
+
+- **台账**：修复前 6 笔 `ext_exit` 成交中 4 笔 mismatch；修复 `GIPR 1522`，标记 `1523/1525/1527` 为 `duplicate_external_close`，补写 CTNT/GIPR reconciliation 审计。修复后 **6/6 audit+DB matched，0 mismatch**。备份：`data/backups/ftseek_us_before_extended_hours_exit_repair_20260917_232938.db`。
+- **根因**：`position_sync.external_close` 改为幂等 upsert：closed 跳过、open 原行修复、无记录才插入；`ext_entry/ext_exit_` 加入系统单白名单。
+- **范围**：新增 `scripts/extended_hours_position_scope.py`，盘前/盘后只接受正向非手动证据；当前 `US.TSLA/US.NOK` 两只自动仓进入范围。
+- **窗口**：源行 479 中 69 窗外、已结算 376 中 47 窗外；新 settlement 会跳过/排除这些行，不改写历史 JSONL。
+- **工具**：新增只读 `scripts/reconcile_extended_hours_exits.py`、dry-run 默认的 `scripts/repair_extended_hours_exit_books.py`。
+- **验证**：相关测试 **99 passed**；`py_compile` 通过；服务已按规则重启，启动冒烟 **7/7 通过**。
+- **下一步**：ET 市场日历 cron、1 分钟 quote/bid/ask/volume delta 采集、单一 durable exit authority，然后再做 SIM ratchet-only adaptive trailing。
+
 ## 2026-09-17 增量②：关闭盘中再入场生成器 (intraday_reentry) —— 用户裁「按建议执行」
 
 > **一句话**：reentry 毛边际≈0 过不了费用线，供给 0.7笔/天且与 DA 活跃度负相关，DA/UE 供给远超执行能力 → 关闭其**入场**（退出跟踪/隔夜轨不受影响）。
@@ -40,6 +99,113 @@
 
 ---
 
+## 2026-09-16 增量：DA 盘前「干完活不退出 ⇒ 全量重跑」病灶修复（用户裁「病灶修复」）—— **skill 侧 v0.81（三层收尾）+ 自动化层 `timeout 3600`；已四路验证，未提交**
+
+> **一句话**：修掉「DA 盘前 `pipeline.py` 收尾挂死 → cron agent 判挂起 → SIGTERM → 整条管线全量重跑」的根因，白烧的一倍 LLM 预算止住。**skill 侧全在 `__main__` 边界（`main()` 内零改动），cron 侧只加超时+禁令，未动 `schedule`/`enabled`。**
+
+**① 病灶（两条互补泄漏，实证到代码）**：① `futu` SDK 的 `CallbackExecutor` 为**非 daemon** 线程（`SysConfig.ALL_THREAD_DAEMON` 默认 `False`，永久阻塞在 `_queue.get()`）⇒ 任一 `OpenQuoteContext` 未 `close()` 即让解释器收尾的 `threading._shutdown()` join **永不返回**，进程干完活也不退（`NetManager._loop` 是 daemon，不决定退出）；② `FutuLV3Provider` 是**长命单例**（`app/data/futu_lv3_provider.py:442/1697` 建连，模块级 `_futu_lv3_instance`），`close()` 只在异常路径被调 ⇒ 常态泄漏；DA 侧经 Stage 6b `MarketRegimeGate().assess()`（`pipeline.py:1762`）/`signal_gate.py:49` 触达。**症状偶发**（取决于 LV3 连接是否走成功分支），故"没复现"不构成无病证据。
+
+**② 实证**：09-16 第 1 轮 20:02:50 启动 → **20:21 活已干完**（`data/opportunity_scan_2026-09-16.json` + 6 条 instruction UPSERT + Obsidian 归档）→ 25 分钟不退出 → cron agent `process_manage` 轮询 8 次后 **20:46:38 SIGTERM（`PIPELINE_EXIT=143`）** → **20:48:50 整条重跑**（幂等：DB 按 (date,symbol) UPSERT、bridge JSON 按路径覆盖 ⇒ 无重复行，但后一轮覆盖前一轮 plan）。更早：09-11 孤儿进程存活 **2 天 16 小时**，持 `ftseek_us.db`+`-wal`+`-shm` 三句柄 + 一条 `127.0.0.1:11111` ESTAB（取证 `/tmp/orphan_forensics_20260914.txt`）—— 即 DEB-20260910 §16.10(a) 前半的清理对象。
+
+**③ 修法**：**skill 侧**（`~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py`，v0.80→**v0.81**）：**A** `_futu_threads_daemon()`（`set_all_thread_daemon(True)`）＋ **B** `_release_opend_singleton()`（`reset_futu_lv3_provider()`）与 `_futu_console_to_stderr()`（SDK 控制台日志改道 stderr，**保住 `--format json` 的纯 JSON stdout 契约** —— 此前 SDK 日志会插在 `{` 之前，cron Step 4 据此解析）＋ **C** `_cli_teardown()`（释放后对残余非 daemon 线程**有界等待** `DA_EXIT_GRACE_SEC` 默认 10s，超时 `os._exit(退出码原样透传)`）。三者**必须**在 `__main__`、不可进 `main()`：仓内 `tests/test_da_trading_day_guard.py` 进程内 import 并调 `PL.main()`（52 例），写进 `main()` 会打死测试进程。**自动化层**（经用户裁定，按本文件纪律须留痕）：cron 作业 `e0d574cc1a3c` 命令前加 **`timeout 3600`**，提示词补「超时/长耗时**不得盲目重跑**，先查产物是否已落盘」；备份 `~/.hermes/cron/jobs.json.bak-20260916-da-hangfix`（sha256 `232493c7…dd`，补丁前原件），结构化 diff 确认 26 个作业中**仅该作业的 `prompt` 字段**变化。
+
+**④ 验证（四路）**：A 层最小复现（`MarketRegimeGate().assess()` 建 LV3 连接）**改前 exit=124 挂死 → 改后 4.36s 干净退出、非 daemon 线程 0**；C 层人为保持泄漏 **13.09s 强制退出、exit=0** 且打印具名告警；端到端 `pipeline.py --mode analyze`（`--no-db-write --no-pool-write --output-dir /tmp/…`）**EXIT=0 / 99.1s / stdout 合法 JSON / 无强退告警**；`tests/test_da_trading_day_guard.py` **52 passed**。当日第 2 轮（20:48 启动那轮）自行跑完 16 候选/16 指令 + Obsidian 存档 ✅，cron agent 21:21:47 正常结束。**归因**：`PROMPT_HASH` 不变（未触 `llm_synth.py`；`pipeline.py` 零 prompt 文本），但**版本戳切分**（v0.81 起）。回滚：删 `__main__` 块内增量、恢复裸 `main()`。
+
+**⑤ 未动 / 待裁（⇒ 已于同日「一起做掉」批执行，见下条）**：(a) 同目录另两个 enabled 作业（`3a6c83bbd84c` 盘后复盘 / `6af0648e3eb3` alpha-backfill）**仍无 `timeout`**；(b) **仓库侧真泄漏未修** —— `app/data/futu_lv3_provider.py` 的长命单例不 close；(c) crontab 中 49 行未套 `timeout` 的系统性面（§16.10(a) 早记）。
+
+---
+
+## 2026-09-16 增量：「一起做掉」批 —— 收尾挂死病灶的**仓库侧 + 自动化层**收口（用户裁「一起做掉」）—— **`app/` 1 文件 + 6 钉；4 个 cron 作业套 `timeout`；相关测试 391 passed（futu 子集）+ 6 钉 passed + 双变异皆红；服务待盘前重启**
+
+> **一句话**：把昨晚 skill 侧那三层收尾，从"DA 一个 CLI"扩到**全仓进程**（import 即 daemon 化 + 短命进程退出有界释放单例），并把同族 4 个 cron 作业的每步命令套上超时。**没有改任何判据/门禁/退出参数/下单路径。**
+
+**① 仓库侧真泄漏（`app/data/futu_lv3_provider.py`，SSOT 落点）**：**A** 新增 `enable_daemon_threads()` 并在模块级**import 即调用**（与既有 `silence_futu_sdk_logs()` 并列）—— `SysConfig.set_all_thread_daemon(True)`，让 futu SDK 内部线程全 daemon；线程 daemon 标志在**建线程时**读取，故必须早于本进程第一条 futu 连接（同文件已有先例语义）。**B** 新增 `_atexit_release_futu_lv3()` + `atexit.register` —— 短命进程正常退出时**有界**释放单例（daemon 线程跑 `reset_futu_lv3_provider()` + `join(5s)`，超时放弃清理、只留告警），治「DA/UE/审计脚本走完不释放，OpenD 侧订阅留到 TCP 超时」。**C** `import atexit` 一行。
+
+**② 为什么这样切（实证而非推断）**：**A/B 对照**（同一脚本 `get_futu_lv3_provider()` → `get_quote`，只改该标志）：`daemon=False` → **exit 124（挂死）**；`daemon=True` → **exit 0**。**atexit 实证**：`get_futu_lv3_provider()` 建连后不 close 直接退出 → 退出时打印 `[FutuLV3] 连接已关闭` + `[FutuLV3] 单例已重置`，wall **6.10s**、**exit 0**。**主服务不受影响**（两条独立理由）：`main.py::_graceful_shutdown()` 第 4 步已 `data_router.close()` → `FutuLV3Provider.disconnect()` 释放 LV3（注释原文即"释放 Futu LV3 槽位"），且末尾 `os._exit(0)` —— **atexit 在 os._exit 下不执行** ⇒ 新钩子对服务是 no-op、退出语义零变化。**普查口径**（~60 处 `OpenQuoteContext(` 建点）：绝大多数短命脚本已 try/finally close，**仅 2 处不在 finally**（`ops/hermes/premarket_trend_verify.py:78/97`、`scripts/probe_futu_caps_20260805.py`），二者均**不 import 本模块且不在 crontab** ⇒ 属未覆盖的残留（非调度路径，见 ④）。
+
+**③ 钉子（`tests/test_futu_thread_daemon_atexit.py`，6 例）**：模块级调用**必须早于首个 `OpenQuoteContext(`**（源码位置钉）+ 子进程 import 后标志为 True + **子进程行为钉**（假单例 `close()` 写标记文件，退出后断言标记存在 ⇒ 真注册真触发，非只查表）+ **有界钉**（close 阻塞 5s 时钩子必须在 2s 内返回）+ None 时 no-op。**变异验证**：注释掉模块级调用 → 2 例红；`join(timeout)` 改无界 `join()` → 1 例红（`assert 5.06 < 2.0`）；均当场还原并复跑绿。**回归**：futu 相关子集（`test_lv3_push_parse_contract` / `test_ledger_ts_scale_precision` / `test_futu_dailyk_quota` / `test_trivial_rule_control_arm` / `test_ue_*` / `test_playbook_private_router` / `execution/test_exit_lifecycle` / `playbook/test_exit_compensation` / `test_earnings_calendar_et`）**391 passed**。**全量套件**：`5172 passed / 46 failed / 54 skipped`（482s）—— **逐项 A/B 归因**（临时还原 `futu_lv3_provider.py` 后复跑，再还原修复版）：40 例集中在 `tests/playbook/test_exit_recovery.py`，**改前/改后同红** ⇒ 与本批无关（属工作区其他会话未提交 WIP）；另 6 例（`test_control_loop_ledger` 3 / `test_db_connection_chokepoint` 1 / `test_except_pass_ratchet` 1 / `test_w456_log_hygiene_ratchet` 1）**改前/改后同红** ⇒ 既有基线类。**结论：本批新增 0 失败。** 另做**双修复叠加验证**（仓库侧 daemon 化 + skill 侧 `_cli_teardown`，同一进程内 `MarketRegimeGate().assess()` → `PL._cli_teardown(0)`）：`COMPOSED-OK`、残余非 daemon 线程 0、wall 9.56s、exit 0。
+
+**④ 自动化层（4 个作业，经用户裁定，按本文件纪律留痕）**：给每步 python 命令套 `timeout -k 30 N`（SIGTERM 后 30s 不退出即 SIGKILL），并追加一条纪律行「**exit=124 = 超时，不得重跑该步**」。作业与步上限（依据 `cron/executions.db` 历史，留 ≥3× 余量）：`3a6c83bbd84c` 盘后复盘 5 步 120/900/300/600/300s（史 n=14，中位 33s、最大 355s）；`2d69370d5c91` 盘前综合预检 5 步同尺（n=12，中位 169s、最大 242s）；`1e9c597b0262` 周日综合复盘 4 步（n=4，中位 138s、最大 171s）；`9ac3efd8c5e7` Deepulse 情报日报 2 步（n=12，中位 82s、最大 165s）。备份 `~/.hermes/cron/jobs.json.bak-20260916-timeout-family`；结构化 diff：**26 个作业中仅这 4 个的 `prompt` 字段变化**，`schedule`/`enabled`/`next_run_at` 全部未动；逐行核对「未套 timeout 的 python 行 = 0」。**`6af0648e3eb3` alpha-backfill 判定为无需改动**：`no_agent` 脚本模式已**双重边界**（脚本内 `subprocess.run(timeout=600)` ×2 + hermes runner 默认 `_SCRIPT_TIMEOUT=3600`），且 08-18→08-26 六次 `rc=124`（内建超时）均在 **601–603s 干净退出** ⇒ 实证不存在挂死暴露。禁用/已过的一次性作业（`d630ce54fc84` / `90978095b163`）不动。
+
+**⑤ 未做 / 残留**：**(1) 服务未重启** —— 本批对常驻服务是 no-op（见 ②），而当前正是美股盘中（09:4x ET），`9/11` 事故（退出链半部署，成本 ≈−$129）就是盘中动服务的教训 ⇒ **择下一个盘前窗口重启**（重启只为让新代码进服务镜像，无功能收益，故不冒险）；**(2) crontab 49 行未套 `timeout`** 的系统性面仍未动（与 hermes cron 两套机制，另行议题）；**(3) 2 处非 finally 建连点**（`ops/hermes/premarket_trend_verify.py`、`scripts/probe_futu_caps_20260805.py`）未改 —— 均不 import 本模块、均不在 crontab（前者修还需同步 `ops/hermes` ↔ `~/.hermes/scripts` 的 sha256 纪律），列为残留而非静默。回滚：删 `enable_daemon_threads()`/`_atexit_release_futu_lv3` 及注册行 + 删新测试文件 + 删 4 个作业 prompt 的 `timeout -k 30 N` 前缀（恢复 `jobs.json.bak-20260916-timeout-family`）。
+
+---
+
+## 2026-09-16 增量：全链路减法优化执行（PyMuPDF / 隔夜结算器 / deriv_unusual / Phase A / lock manifest）—— **代码已落地、定向测试与最终冒烟通过**
+
+> **一句话**：按优化审查建议执行五项确定性减法：删除零引用 `PyMuPDF`；退役已停用一周的 `settle_overnight_shadow`；删除 KILLED 的 `deriv_unusual` 采集实现；删除 Phase A 元数据适配器；依赖 manifest 收敛为 `requirements.lock`。不改 Playbook 判据、退出参数、下单路由、账户模式或 live 参数。
+
+**① 代码**：`requirements.lock` 删 PyMuPDF；删除 `scripts/settle_overnight_shadow.py`、两份专项测试、调度挂载与 `overnight_hold_settler_enabled` 死开关；`scripts/futu_channel_shadow_collect.py` 删除 deriv 采集函数/常量与开关，历史 JSONL 保留；删除 `app/strategy/adapters/*` 与 `base_adapter.py`，coordinator 资金/锁账本保留；删除 `requirements.txt`，`start.sh` 与 CI 均只认 lock。落档 `docs/debates/DEB-20260916-fullchain-subtraction-optimization.md`。
+
+**② 验证**：`pip check`、`bash -n`、`py_compile` 通过；定向 30 passed；全量 `pytest -q` 为 5,205 passed / 54 skipped / 7 failed（control-loop ledger 4、DB chokepoint 1、except-pass/W6 棘轮 2，均属既有未提交/外部 cron 基线，不是本轮删除对象）。阶段性重启冒烟 18:51/18:52/18:55 均 7/7；19:03 用收敛后的 `start.sh` 最终重启亦 7/7，PID `1578531`，`AUTO_TRADE_ACCOUNT=sim`、`TRADE_ENV=1`、`ALLOW_REAL_TRADING=false`。
+
+**③ 回滚**：逐项恢复对应删除文件/调用块/配置键后重启；PyMuPDF 需恢复 lock 行并重装；manifest 回滚需同时恢复 `requirements.txt` 与 `start.sh`/CI 分支。历史 `data/futu_deriv_unusual.jsonl`、`data/overnight_hold_shadow.jsonl` 均未删除。
+
+**④ 未动**：现役 Playbook 门禁、ORB、legacy `scan_loop`、退出共享设施、top movers 采集（820 快照但评估脚本未建）均保留。
+
+## 2026-09-16 增量：DEB-20260916 P0 风控契约修复（资金状态/FLAT_ALL/挂单查询/拆股佐证）—— **代码已落地、focused tests 通过、已重启且冒烟全绿**
+
+> **一句话**：用户确认后落地 5 个 P0 缺陷修复：`capital_state` 按 `trade_env` 隔离、`reset_capital(None)` 持久化未初始化状态、FLAT_ALL 部分失败不进 1800s 冷却且只认显式 True、broker 挂单查询失败返回 None、SplitGuard 价格比例只观察不标记。同步回写 DEB-20260916 8 项裁决；**15:21 已重启，PID 1553986，冒烟 7/7 通过**。
+
+**① 代码**：`app/risk/capital_safety.py`：`_load_state` 增加 `WHERE trade_env=?`，删除“读到他人环境行即重置”逻辑；`reset_capital(None)` 清空并持久化待同步状态；单例显式 `trade_env` 不一致从 warning 改为 RuntimeError。`app/risk/position_exit_monitor.py`：FLAT_ALL 只把 `_ok is True` 记入 closed，且全部目标成功才锁存冷却。`app/pipeline/order_executor.py`：API 失败/`data=None` 返回 None，仅 RET_OK+empty 返回 []；交易环境复用 `_resolve_trd_env`。`app/data/split_event_guard.py`：只有静态/外部确认才 `mark_split`，价格比例命中仅观察。
+
+**② 测试**：新增 `tests/risk/test_capital_safety_state_contracts.py`（双环境隔离、reset 重启、单例拒绝混用）、`tests/risk/test_position_exit_monitor_flat_all.py`（部分失败不冷却、非 True 失败、全成功才冷却）、`tests/execution/test_order_executor_open_order_contracts.py`（失败/空结果/环境解析）；反转 `tests/test_cutover_infra.py` capital 回切红灯钉为绿灯；修正 `tests/coordinator/test_p0_audit_fixes.py` 拆股测试为“价格比例不自动标记”。`py_compile` 4 个源文件通过；focused suites **55 passed** + 既有退出监控 **33 passed**；`tests/risk + tests/execution` **384 passed/1 warning**；`check_undefined_names.py` 通过。
+
+**③ 裁决回写**：`/opt/llm-eval-harness/results/bug_hunt/DEB-20260916-fullchain-bughunt.md` #321/#325/#276/#269/#322 CONFIRMED（#322 severity=3），#335 CONFIRMED(live 门禁未修)、#299 CONFIRMED(ORB disabled 降 severity=3)、#281 REJECTED。#322 原簇混入 reset 与 singleton 两个根因，已在理由中注明。
+
+**④ 上线/回滚**：用户确认后已于 15:21 执行 `systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90`：ConfigValidator、漂移检测、热重载、SSOT 审计 0 BLOCKING、模拟盘安全、退出快循环、零 Traceback/CRITICAL 全部通过。重启后服务 `active/running`，主日志启动段无新增 ERROR/CRITICAL；系统仍在 sim 模式。回滚：还原上述 4 个源文件、删除 3 个新增测试并还原 2 个测试钉子；外部 DEB 裁决行按本次 patch 反向恢复；回滚后需再次重启并跑同一冒烟。
+
+## 2026-09-16 增量：DEB-20260916 独立复核回写 + 方案B最小滚动读数 + C1 checkpoint 30天 —— **零策略判据/零生产路由/零下单行为改动、未重启**
+
+> **一句话**：用户裁「需要」→ 把独立复核结论强制写回原 DEB：re-price 几何改写结局从「中性」修正为「与0不可分辨」；方案B降级为零采集的 `audit_cross_outcome.py --since` 滚动周读数（含日配对差 + t/MDE80）；C1 找到真实 owner 并把 DA checkpoint 保留期 3→30 天。**判据字典、退出参数、B/D 裁决门槛、生产开关、cron、服务均零改动。**
+
+**① 独立复核关键修正（已写入 DEB 第4层复核）**：数值型 `invalidation_triggers` 在已平仓配对样本中最早 2026-08-26 才出现，7/1 扩窗结构性不可执行；n=18/45 已是可用全历史。7 个双组交易日日配对差（跨−未）= **−$16.76/笔，t=−0.35，MDE(80%)=±$133.61 ⇒ 与0不可分辨**。pooled +$128 由 8/26 单日 SMTC +$444.3 支配；re-priced +$2,200 vs 未 re-price −$955 存在市价偏离/动量代理的选择偏差，只能登记不能作因果证据。
+
+**② 方案A/B 重写**：A = 「证据不足不动 re-price」（不是「无害已验证」），理由对齐宪章一.4「数据不足不强行收敛」；B = 不新增 `geometry_guard_violation` 字段/影子槽位，直接复用 DB `raw_instruction_json` 做 `--since` 滚动周读数。若日聚类 |t|≥2 且方向持续为负，再另开 DEB 提硬约束。
+
+**③ 代码（record-only）**：`ops/audit/audit_cross_outcome.py` 重构为 `--since` + 日配对差 + t/MDE(80%)；`audit_planned_vs_landed.py` / `audit_inv_cross_full.py` 支持 `--since`；`trace_arm_origin.py` / `audit_inputs.py` 历史锚点参数化；新增 `tests/test_audit_cross_outcome.py` 3 例锁「n<3/零方差不可判、MDE披露、日等权配对」。全部 DB 访问仍 `mode=ro`，无落库/推送/生产路径。
+
+**④ 裁决材料回灌**：ADR-035 新增第三批：几何结局与0不可分辨 + TP全史触发率 **0.41% (2/488)** 约束 D案静态几何收益上限 + `confirmation.price_level` 已透传。RFC-081 增补批注三同步三条约束：不为几何另立判据、TP不计预期收益、实施只接线不新增 prompt 字段。
+
+**⑤ C1 真实 owner 与最小改动**：仓内与 `/opt/ftseek/scripts/disk_cleanup.sh` 均无 DA checkpoint 清理规则；实际 owner 是 `/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:583` 的 `_CKPT_KEEP_DAYS`。已由 3 改 30（用户裁「需要」），`python3 -m py_compile pipeline.py` 通过。该脚本属 Hermes DA 独立进程，**无需重启 ftseek-us**；下一轮 DA 落盘后保留30天。
+
+**⑥ 验证**：`ops/audit/*.py` 全部 `py_compile` 通过；`pytest tests/test_audit_cross_outcome.py` **3 passed**；`audit_cross_outcome.py` 默认窗复现实测 `n=18/45`、日聚类 `−16.76/t=-0.35/MDE±133.61`，`--since 2026-09-09` 正确输出「不可判」；`audit_planned_vs_landed.py` / `audit_inv_cross_full.py` / `trace_arm_origin.py` / `audit_inputs.py` 实跑通过；`check_undefined_names.py` 通过。未重启、未跑全量测试（本批仅文档+只读审计脚本+外部缓存保留常量）。
+
+**⑦ 回滚**：仓内文件按 git checkout 还原并删除新增测试；C1 把 `_CKPT_KEEP_DAYS` 30→3（一行）。无数据迁移、无配置键、无 cron、无服务重启；审计脚本只读 DB，不产生需清理的副作用。
+
+## 2026-09-16 增量：ADR-035/RFC-081 裁决读数补强 —— 宪章第9律（日聚类+MDE）+ C3子桶 + ATR口径 + n门槛统一；**零判据改动、零生产路径改动、未重启**
+
+> **一句话**：用户裁「按照建议执行」→ 落地复盘审查的 4 个判据层补充：两个影子读数卡均新增**日聚类 t + MDE(80%)**（宪章第9律硬要求）、C3 可达性**子桶读数**（<0.25/0.25–0.5ATR）、**ATR 口径披露**（real/proxy/unknown）、**n 门槛统一为 40**（消歧三处打架）；B 案落地时 expired 归因遥测与 D 案 partial-fill 费用地板写入 RFC-081 作为实施日验收要求。**全部 record-only：判据数值、门槛、生产开关、cron 表零改动。**
+
+**① 实算出的两个关键新证据（裁决日必读，已写入 RFC-081 增补批注二）**：
+- **B 案 60 天 ALL 头条塌陷**：原「净回避价值 +$1,555」在日聚类下 day_mean **+$1.50/笔（t=0.59, MDE±$7.11）⇒ 与 0 不可分辨** — pooled 头条不能单独作为 B 案背书。
+- **B 案 forward_B_only 方向不利实锤**：day_mean **−$17.56/笔（t=−2.1, n_days=4）⇒ 与 0 可分辨的负值** — 增补批注一的「方向不利」从点估计升级为日聚类可分辨证据（n_days=4 仍脆，已过 |t|≥2 线）。
+- **D 案符号不稳定**：pooled 中位 **−$2.30**（p=0.968）vs 日聚类 day_mean **+$11.18**（t=1.28, MDE±$24.56, 9/10 单日占 24 配对中 10 笔）— 连符号都不稳定，pooled 符号检验不得单独裁决。
+
+**② C3 子桶 + ATR 口径（ADR-035 批注二）**：fill 随距离单调递减 **<0.25ATR 72.7% / 0.25–0.5 25% / ≥0.5 0%** ⇒ 二值归因会把距离梯度误读成「机制整体不足」，子桶给可达性门阈值提案留数据依据；ATR 口径实测 **real:15 / proxy:10 / unknown:10** — real 不主导 ⇒ 0.5ATR 桶界降级方向性（读数卡自动标注）。
+
+**③ n 门槛统一（消歧）**：裁决资格 = **配对 n≥40**（最新预注册、最严优先）；n≥30 = 宪章中间态（可说方向不裁开关）；RFC-081 主表 n≥20 系早期文字已被覆盖 — 防裁决日门槛争议。
+
+**④ 代码（record-only）**：`scripts/cf_pullback_limit_replay.py` +`_day_clustered_t()`/`_c3_reachability_split()`/行级 `atr_basis`/读数卡三行；`scripts/entry_delay_confirm_shadow.py` 每汇总块 +`net_value_usd`/`day_clustered`/披露行；测试 +9 例（`test_cf_pullback_limit_replay_v2.py` 4 + `test_entry_delay_confirm_shadow.py` 5）。
+
+**⑤ 验证**：定向回归 **104 passed**（两影子测试 + archetype 路由 + telemetry 钉）；`check_undefined_names.py` OK；两脚本实跑重建 latest（B: n_days=46 ALL + 4 fwd_B_only；D: 读数卡三新行全出）；`test_except_pass_ratchet` 仍为既有红 950→952（两脚本 HEAD 即各 1 处 except:pass/continue，本批增量 **0**，stash 复核确认）。两脚本为 cron 独立进程、服务不加载 ⇒ **无需重启**。
+
+**⑥ 边界/回滚**：仅改 2 脚本 + 2 测试 + 2 文档 + 影子产物（`data/*` 不入库）；退出参数、`config/`、生产开关、cron、服务全未动。回滚：`git checkout` 4 个仓内文件 + 重跑两影子（latest.json 重建即回到旧读数形态，jsonl 行级 `atr_basis` 字段无害留存）。
+
+## 2026-09-16 增量：9/15 收盘复盘落地 —— `winner_overnight_shadow` 积压卡死修复（B16 测量链路）；**零退出参数改动、零生产路径改动、未重启**
+
+> **一句话**：用户裁「按照建议执行」→ 执行复盘建议第 1 项（修尺子）：补齐 `US_META_2026-09-08.json` 1min bar + 给结算器加积压超龄告警（`app/push` hub, sync=True, exit 1 棘轮）。B16 赢家隔夜影子恢复可结算状态：**pending 12 天的 9/4 META arm 已结算**（反事实 delta −$26.64 ⇒ 锁利出场正确），`pending_n 1→0`。
+
+**① 病灶（静默死亡族实锤）**：`data/shadow/winner_overnight_shadow.jsonl` 9/4 META arm 12 天未结算，根因 = 次日结算所需 `data/replay_bars/US_META_2026-09-08.json` 缺失（position_path_collector 只在平仓日落 bar，9/8 无平仓笔 ⇒ 该日 bar 永不落盘）；cron `25 6 * * 2-6` 每天打印「未结算积压 1」但**无任何主动通知** = AGENT.md 点名的静默死亡形态。B16 判据（赢家持夜, n≥20）在积压清空前不可信。
+
+**② 修复一（数据回填）**：用 `scripts/exit_replay_backtest.fetch_bars`（Futu K_1M, AuType.NONE, 与结算器同缓存格式）补拉 `US.META` 2026-09-08 全天 390 根 1min bar → `data/replay_bars/US_META_2026-09-08.json`（9:31→16:00, 首根 O=616.205 / 末根 C=613.48）。随后实跑结算器：**本次结算 1 笔 | pending 1→0 | 盈利臂 delta −$26.64（EOD_next_day）**——即 9/4 那笔 META 赢家若按反事实持夜将**少赚 $26.64**，PRE_CLOSE 锁利出场是对的。样本 n=1 远低于 B16 n≥20，无判据结论。
+
+**③ 修复二（积压棘轮, 防复发）**：`scripts/settle_winner_overnight_shadow.py` 新增 `--pending-alert-days`（默认 3）：未结算 arm 超 3 天（或 arm_date 损坏）→ `app/push` hub **HIGH/HEALTH 直推**（`sync=True` + `hub.stop()`，daily_invariant W1 同款短命 cron 纪律），正文逐条给出缺失 bar 路径（如 `US_META_2026-09-08.json`）与修复指引；**exit 1**（违反状态对 cron 可见, W2 棘轮同纪律）。实跑验证：积压 0 → 无告警、rc=0。
+
+**④ 验证**：`tests/test_winner_overnight_settle.py` **11/11 绿**（原 6 + 新 `TestPendingStaleAlert` 5：阈值/损坏日期判定、超龄→告警+exit1、新鲜积压→不告警、hub sync=True+stop、推送失败仍 exit1）；`scripts/check_undefined_names.py` OK；生产实跑 rc=0。`test_except_pass_ratchet` **既有红 950→952**（stash 验证：无本批也失败, 本批两文件对该正则贡献 **0**）——属并行会话遗留, 按纪律不越权修。
+
+**⑤ 边界**：仅改 `scripts/settle_winner_overnight_shadow.py` + `tests/test_winner_overnight_settle.py` + 回填 bar/结算产物（`data/*` 均不入库）；**退出参数、`config/`、`app/` 生产路径、cron 表、服务进程全未动**（脚本为 cron 独立进程, 不被服务加载, 无需重启）。回滚：`git checkout` 两文件 + 删回填 bar + 重跑结算器（arm 行 settled 标记可手改回 false）。
+
 ## 2026-09-16 增量：两条用户裁落地 —— ①报价新鲜度门「三处补口」执行完毕 ②`da_glm_shadow` 终态 **SUPERSEDED（不转正/归档）**；**零生产路径改动、零行为变更、未重启**
 
 > **一句话**：用户裁「1. 报价新鲜度门补充的三处请执行 2. 停止 da_glm_shadow 不转正」。**裁决②** 把 9/15 20:50 那条"待裁"收口为终态：注册表 `da_glm_shadow` → **`SUPERSEDED`**（方案 B 归档生效、方案 C 未采纳、A 不转正；**归档留痕非删证** —— 脚本与 116 行 jsonl 原样保留），DEB §六 勾选项/README 状态列/判据字典 B3/注册表钉子四处同步。**裁决①** 把新鲜度影子的"尺子"补成**闭环**（此前挂环只是"有采集、无裁决"的一半）。
@@ -62,6 +228,26 @@
 
 **⑨ 提交（用户裁「请提交」）**：本批**已入库**，与 9/15 两批一并。**只用显式暂存清单，绝无 `git add -A`**；三个混合作者文件（`handoff.md` / `docs/CONTROL-LOOP-LEDGER.md` / `docs/debates/DEB-20260910-…md`）走**索引单独构造**（`git show HEAD:<path>` 取底 → 仅叠加本会话 hunk → `hash-object -w` + `update-index --cacheinfo`），**工作树逐字节未动**。并行会话的在途产物（cutover 工作流的 `scripts/cutover_*.py` 与其台账行、DEB-20260914、`obsidian_vault/**`、`data/cutover/`、其他脚本与测试、`.gitignore`）**一律未卷入、原样留在工作树**。DEB-20260910 的 §21–§24 叙述文本同属对方 WIP ⇒ 本次入库的该文件**从 §20 直接跳到 §25**（已在该节开头加编号说明，非丢档）。
 
+## 2026-09-15 21:40 增量：21:10 **主轮**验证回执 + 覆盖面被证伪后的单键修（上限 30→80）+ 用户裁 (C) 落地（详见 DEB-20260910 §23）
+
+> **一句话**：19:50 那条报的 **5/5 是材料薄的侥幸，不能外推**。21:10 premarket 主轮（才是进生产指令的那轮）三处修**全部达标**（`tradeable` 13、`ordering` ✓、归一 29/28、`future_quote` 0、`stale_quote` 0、inject `REJECT 0`→写入 4 条指令、0 ERROR、`contract_stats.clean`），**但覆盖面只有 1/7**：主轮材料具名 **68** 个（19:40 只有 35），名额 30 被挤爆，模型 surfaced 7 个里只有 FPS 受检，其余 6 个（COIN/MSTR/ASML/TRMD/VERA/NOK）全落 `overflow_skipped` ⇒ 与修前 4/10、1/6 **同量级**，§21 修法② 在主轮**没兑现验收①**。
+
+**① 根因不是排序键选错，是上限成了约束**：占满 30 个名额的全是**低流动性事件票**（JAZZ/BAND/GTBP/PLSE/PBF/ASTH/LUXE/CTEV/OBK/FEAV/CLST/INVLW/TG/CBT/FBNC/LAES/EPM/VRA/BIOX）——它们提及数高，是因为**同一条 8-K 会同时写进 `sec_8k`+`event_symbols`+`news_headline` 三个源**，一条新闻刷出 3 次提及；被挤出的是当日真热点与大盘佐证票（NVDA/AAPL/META/MSFT/GOOG/TSM…）。⇒ **"被几条材料提及"度量的是"一条事件被几个源复述"，不是"模型会不会提名它"**，与目标变量基本无关，19:40 的 5/5 属巧合。
+
+**② 修法＝让上限不再是竞争（单键，已落）**：只读实测（真 router/真 ATR/真配置）受检 30 个 **10.88s**、受检 68 个（全覆盖）**27.17s** ⇒ **仅 +16s**（cron 给 scan+inject+push 整段 1800s、da_feed 900s）；`tradeable` 只从 **12→13**（**不会灌爆模型**，因为多数具名标的本就被 low_atr/price_floor/形状门/缺价挡掉）；**覆盖面 1/7→7/7**。⇒ `config/unified_config.yaml:2096` **`input_prescreen_max_symbols: 30→80`**（80 给 named=68 留余量；单键回滚、零代码改动，代码默认仍 30 故删键即回退）。**排序键保留不动**（超上限的日子仍需一条确定截断规则；提及数降序虽不是好预测器，仍比字典序好——字典序会把今日热点整批丢进 overflow）。**一次一个变量**：排序键优劣等上限不再约束后再看数据。
+
+**③ 副作用已实测并披露（DailyK 配额）**：68 只全覆盖时**撞过一次** `[FutuLV3·DailyK] US.INVLW K线配额窗口满 (60次/30s) 等待超时 → Router fallback → [TwelveData] 404 → get_daily_bars 所有数据源均失败`。ATR 日线取数是配额主要消费者，与本文件 16:30 增量⑧（盘后配额打满）同源。**含义：上限若继续放大（150+）必须重新评估配额，不得只看到"+16s"就无脑加**；本轮 80 未造成任何标的判定失败（INVLW 本就无日线、修前同样落 `unknown`）。
+
+**④ 用户裁「按照建议执行」的两项已落地**：
+- **(C) 新鲜度门维持现状**：**不透出** `update_time`、**不动** SSOT、**不动** 90s 阈值；已在台账 §5 登记为 **`G9` 已知哑弹**（不再当"待发现的缺陷"），并写明与 G6 的差别（G6 是同名双载体掩盖了一条**活**门，G9 是一条**装了从未响过**的门）。**边界纪律入档**：`alias`（抓取时刻当行情时点）实测**会洗白真陈旧**（1/5 命中）⇒ **只允许存在于新鲜度门关闭的路径**，现役唯一合法用法是 UE 扫描期初筛，**严禁搬进 inject/执行侧**。
+- **挂日级测量环**：crontab **+2 行**（`15 21 * * 1-5` → `scripts/ue_quote_freshness_shadow.py`，`timeout 600`，日志 `logs/ue_quote_freshness_shadow.log`），274→276，旧表备份 `/tmp/crontab.bak.20260915`。**⚠ 时刻就地更正为 21:15 而非我先前说的 21:12**：21:12 会与 21:10 链抢 OpenD 槽位/DailyK 配额——今晚 21:11:33 手工采样虽与 inject 并存无碍，但那是**一次侥幸样本**，不该当排期依据；21:15 让生产链先走完，仍在盘前窗（09:15 ET），而**陈旧度是标的报价活性属性、不是分钟级属性**。已按台账 §6.1 在 §2 挂 `crontab-ue-quote-freshness-shadow` 行；守卫 `test_control_loop_ledger.py` **10 passed** + **阳性对照**（抹掉台账行后守卫确实报出未入账 ⇒ 入账真生效、非假绿；且确认**不是**靠存量棘轮基线豁免）。**预注册判据**（已写入台账与 crontab 注释，防事后挑尺子）：**≥10 交易日**后若盘前 genuine 龄 **P95 ≤ 候选阈值** 方可提议激活并定盘前专属阈值，**有效轮次 <10 禁止建议激活**。
+
+**⑤ 影子首批 4 组读数（含 21:11:33 inject 窗那次）**：交易所时戳可得率 **5/5、7/7 = 100%**；08:03 手工探针 AXON **104.6s 超阈(1/6)** · 08:12 中位 7.8s/最大 48.1s、超阈 0 · 08:19 最大 **159.1s(AXON)**、超阈 1/5、**别名洗白 1** · 08:23 中位 2.1s/最大 15.4s、超阈 0 · **09:11（inject 窗）n=7 中位 8.8s/最大 32.5s、超阈 0、future_quote 0、取数 3.14s**。**AXON 4 次观测 2 次超 90s** ⇒ 盘前报价**阵发**，90s 阈值是按连续竞价直觉定的 ⇒ 这正是"不能直接激活门"的量化依据。
+
+**⑥ 边界/回滚/提交卫生**：本批只改 **1 个配置键 + crontab 2 行 + 台账 2 行 + 留痕**；`app/` **一行未动**、`scripts/` **一行未动**、SSOT 未动、退出参数（OKR 全月冻结）未动、`.env`/LIVE/持仓未动、**未重启服务**、**仍未观察任何模拟成交**。回滚三者互不依赖（键改回 30 / 删 cron 两行 / 删台账两行；备份 `/tmp/unified_config.yaml.pre-20260915`、`/tmp/crontab.bak.20260915`）。提交只暂存 `config/unified_config.yaml`（pre-commit §6 会据此重生成并自动加入 `docs/trading-pipeline-flowchart.md`，属设计内）；DEB §23、本条、**台账两行**均**只写工作树不提交**——`docs/CONTROL-LOOP-LEDGER.md` 与 `docs/references/crontab-loop-baseline.txt` 带另一会话**正在进行**的 WIP（21:2x 实测 baseline 刚被改脏：对方在退役 `da_glm_shadow` 环路）。**⚠ 由此产生一个「已生效未入库」项（同 §20 P3.2 风险族）：crontab 两行与台账登记行只存在于运行环境/工作树**，若他人整文件还原台账则守卫会红——已在此显式登记，不藏。
+
+**⑦ 明日（09-16）唯一验收判据与观察点**：19:40 `da_feed` 与 21:10 `premarket` 两轮看 ①`checked` 是否升到 ~68（上限生效）②**`surfaced∩checked` 是否 N/N**（本批唯一验收判据）③耗时增量是否仍 ~16s 量级 ④DailyK 配额是否出现**新的**判定失败（预期无）⑤21:15 影子环是否自动落一条记录（首个无人值守样本）。
+
 ## 2026-09-15 21:15 增量：da_glm_shadow 窗口收口（用户裁「按照建议执行」）——**影子环退役 + 窗口污染堵口 + 立终裁 DEB**；详见 DEB-20260915
 
 > **一句话**：用户 20:50 发现「DA 早已产出并推送指令，却还有进程在跑 `get_kline.py US.CRM --num 60`」→ 溯源确认为 **`da_glm_shadow.py`（cron `30 20 * * 1-5`）**，即 8/30 立项的 **glm-5.2 SHORT 产出意愿影子**（读生产 bridge 候选池 → 生产同款 collector → glm 分析师 Pass1 → append jsonl；**零生产触碰**，故 20:50 那批不是生产分析）。真正的问题是**治理漏收口**：该影子的预注册窗口 **8/31-9/14** 已于今日 06:35 由一次性机械裁决收官（裁决器跑完**自删了自己的 cron 行**），但**采集行没摘** ⇒ 当夜窗口外又采 16 行（n 100→116），且原 eval 吃全部 live 行、`window` 字段还是硬编码字符串 ⇒ **重跑即把窗口外的样算进窗口读数（事后拣选/窗口污染）**。
@@ -77,6 +263,78 @@
 **⑤ 待裁（DEB-20260915，本批只提案不代裁）**：**方案 A 转正**（不支持：③未成立 + 77x 成本级动作无正期望证据 + A4）/ **方案 B 归档（本案建议）** / **方案 C 窄用或新窗口续验**（C2 须重新预注册，**禁补窗口外样凑 n**）；外加**终态翻牌**（GRADUATED/KILLED）。**关联**：`.claude/scheduled_tasks.json` 的 **DA 温度→0 施工单**其前置条件之一即"确认两个在飞影子裁决已落盘、窗口已关闭"——**本项（9/15）已闭合**，另一项 `da_prompt_distill_shadow` 窗口至 **9/16 06:35** 才裁决。
 
 **⑥ 边界与提交卫生**：**零生产路径改动**（`app/` 仅注册表状态字段、`config/`、`.env`、LIVE、持仓、退出参数全未动）；未重启（摘 cron 行无需重启，今夜 20:30 起不再有该环）；改动文件 `app/playbook/shadow_registry.py`、`scripts/da_glm_shadow_eval.py`、`tests/test_da_glm_shadow.py`、`docs/references/crontab-loop-baseline.txt`、`docs/CONTROL-LOOP-LEDGER.md`、`docs/ADJUDICATED-CRITERIA.md`、`docs/debates/README.md` + 新增 `docs/debates/DEB-20260915-da-glm-short-supply-promote.md`。**测试**：`test_da_glm_shadow`(含 3 新钉) + `test_control_loop_ledger`（含原红项）+ `test_shadow_mount_sentinel` = **40 passed**，邻接 `test_shadow_intent_uniqueness`/`test_okr_2026_09_scoring`/`test_dead_db_literal_gate`/`test_except_pass_ratchet` = 63 passed。**未提交**（另一会话 WIP 仍占 `handoff.md`/`CONTROL-LOOP-LEDGER.md` 等工作树，交用户裁后一并入库）。
+
+## 2026-09-15 20:30 增量：报价新鲜度门「哑弹」影子批（用户裁「按照建议执行」）——**只度量、零生产路径改动、零行为变更**；详见 DEB-20260910 §22
+
+> **一句话**：上一条（19:50）把病灶定性为"键名错配"，**这个定性不够准，已就地补正**。真相是三条：①SSOT 新鲜度门 `stale_quote` **全系统从未响过**（全仓无一生产代码给报价写过 `source_asof`/`update_time`；唯一另一处 `app/data/adaptive_polling.py:151` 写的也是 `time.time()`）⇒ `quote_age_sec` 恒 None ⇒ 恒 UNKNOWN，而 inject 只拦 `REJECT` ⇒ **全放行**；②交易所侧真时戳**一直到手边却被丢弃**（`futu_lv3_provider.get_quote:983` 取的就是含 `update_time` 的同一行快照，`:1733` 已在别处用它，`get_quote` 却改写 `timestamp=time.time()`）；③**诚实修法一行就够且 SSOT 一个字不用改**（`_source_time:141` 对 naive 串本就假定 ET，futu `update_time` 实测正是 ET-naive `'2026-09-15 08:03:50.057'`）。但透出真时戳＝**激活一道从未响过的门**＝真丢候选 ⇒ 按 C4 影子先行，本批交付的是**尺子**（`scripts/ue_quote_freshness_shadow.py`），**不是修复**。
+
+**① 对 19:50 那批修复①的定性补正（重要，别照旧说法引用）**：SSOT **是刻意区分**的，不是漏写——`candidate_eligibility.py:246-252` 已从 `timestamp` 派生 `fetched_at`，注释明写「与 source_asof (行情所属时刻) 分开…**但仍不冒充 source_asof**」；且 `timestamp` 是**混合语义**字段（futu 路径＝抓取时刻，finnhub 降级路径＝上游成交时间，见 `futu_lv3_provider.py:1052` B4 注释「覆写为抓取时间会把 **15min 延迟报价洗白成新鲜**」）。⇒ **把 `timestamp` 当 `source_asof` 只在新鲜度门关掉的路径上安全**。19:50 那批之所以安全靠**三个同时成立**的前提：(a) 扫描期 `max_quote_age_sec=1e12`（门是关的）· (b) `_prescreen_input_symbols` **纯读不落库** · (c) 落 `source_asof_basis` 标注口径。**本批影子已把 (a) 的必要性实测坐实**：`alias_washes_stale` 命中 1/5（AXON 别名口径 −10s"很新鲜"、交易所口径 **159.1s 已超阈**）⇒ **同一套别名逻辑若搬进 inject（90s 真执法）就会洗白真陈旧**。
+
+**② 影子仪器（新增，只读）**：对同一批标的用 **SSOT 自己的判据**（`evaluate_candidate`+`_source_time`，**一行判据都不抄**）算三假设 —— `as_is`(现状/门哑火) · `alias`(抓取时刻＝19:50 扫描期做法) · `genuine`(交易所 `update_time`＝候选修法)。**刻意不做**：不进 inject/scan 生产路径（真时戳要走 `get_snapshot`→`_connect_for_historical()`，**冷启实测 ~150s**，而 cron 给 scan+inject+push 整段只有 1800s）· 不改 `app/`（落 `app/*.py` 会触发守卫预约 09:00–12:00 自动重启，§20.10）· 不硬编码阈值（读活配置，实测落盘 `policy_version=da_ue_v1 / threshold=90.0`）· 非时间事实刻意留空（缺 ATR ⇒ 三假设同样落 missing ⇒ **差异全部来自 `quote_age_sec`**；⚠ 因此 status 列恒显示 `UNKNOWN→UNKNOWN`，**读数要看 reasons 与 summary 计数**）。产物只有 `data/shadow/ue_quote_freshness_shadow.jsonl`（`.gitignore:46 data/*` 不入库）。
+
+**③ 时区陷阱 + 变异实证**：`update_time` 是 **ET-naive**；若按本机 CST 解析会凭空多算 **12h** ⇒ 全批假 `stale_quote` ⇒ 影子会给出"激活门会拒掉一切"的**完全失真**结论、进而否掉一个本该做的修复。脚本因此不自解析、直接复用 SSOT `_source_time`。钉子 + **变异实证**（未触碰仓库文件）：同一样本 SSOT 口径 `age=30.0s`（绿）、按本机时区的变异体 `age=43230.0s`（**红**），失真 **43200s≈12.0h**（阈值仅 90s）。
+
+**④ 三次实跑读数（ET 盘前，同一批 5 个 surfaced；交易所时戳可得率 5/5=100%）**：08:03 手工探针 **AXON 104.6s 超阈(1/6)** · 08:12 run1 中位 7.8s/最大 48.1s、**超阈 0/5、新拒 0** · ~08:19 run2（旧 now 口径）最大 **159.1s(AXON)、超阈 1/5、新拒 1、别名洗白 1** · 08:23 run3（修正 now 口径）取数 **2.1s**、中位 2.1s/最大 15.4s、**超阈 0、新拒 0、future_quote 0**。**AXON 陈旧度 20 分钟内 104.6→48.1→159.1→15.4s 剧烈摆动，4 次观测 2 次超 90s** ⇒ 盘前报价是**阵发**的，而 90s 阈值是按**连续竞价**直觉定的。
+
+**⑤ 影子跑出来的第二个陷阱（比"陈旧被拒"更危险）**：run2 有 **3/5 genuine 龄为负**（FPS −4.4/TRMD −6.5/COIN −7.2s），TRMD/COIN 因 `quote_age<−5` 被判 **`future_quote` REJECT** —— 成因与 §21.7 **同源**（`now` 在取数前定型，活跃标的的 `update_time` 晚于 `now`）。**它专门误杀最活跃、最新鲜的标的**，同时放过真陈旧的（AXON 159s 与 TRMD 负龄在同一批并存）。若影子不分口径量，就会把"**实现姿势错了**"误读成"**这道门会拒掉活跃标的**"。**已就地修仪器**：主口径 `now` 改在取数**之后**定型，另保留 `naive_now` **显式量化**朴素实现会多误拒多少（`n_future_quote_under_naive_now`）+ 落 `collect_latency_sec` 归因；run3 实证 genuine 龄**全部转正**、两口径 `future_quote` 均 0。钉子 `TestNaiveNowHazard`（4 例）。
+
+**⑥ 另修两个自身瑕疵（都已实测）**：(a) **跑完不自退** —— 首版跑完后 futu SDK 非守护线程让进程挂着要外部 SIGTERM，而 OpenD 槽位**与生产共享** ⇒ 加 `finally: _release(provider.disconnect, router.close)`，修后 **rc=0 自退、3–13s**；(b) **except-pass 棘轮一度 +1（951>950）** —— 来源是本脚本 `except json.JSONDecodeError: continue`，已改计数留痕 ⇒ 棘轮回 **950/950 绿**。**顺带记一个我自己踩的假阳性**：用 `pgrep -f ue_quote_freshness_shadow` 判进程是否还活着时，**它匹配到了自己所在的 `bash -c` 命令行** ⇒ 误报 `STILL_ALIVE`（实际已退出）。与 §四 记过的 `git status && echo ✅`、16:30 增量⑪的 `' ERROR '` 同族：**判空/判活不能靠"命令成功"，模式必须先做阳性对照**。
+
+**⑦ 待裁（三选一，本批一个都没做）**：**(A)** 透出 `update_time` + **同时**给盘前窗口专属 `max_quote_age_sec`（90s 明显不适配阵发报价）——"激活门"的正确姿势，但属 `app/` 行为变更、会预约自动重启、且须先攒够影子样本定阈值；**(B)** 只透出字段不动阈值 —— ⚠ **这一项其实等于 (A) 的行为变更**（透出后 `stale_quote` 会真开始响），列出是为了说明它**不是**中性选项，别误当安全路径；**(C)** 维持现状，把"`source_asof` 恒缺"显式登记为**已知哑弹**，等 OKR 参数冻结期（至 09-30）结束后再动。**建议下一步（不需改生产）**：给影子挂 cron 在 **21:12 CST（=09:12 ET，紧贴 inject 窗）** 每日采样，攒 ≥10 交易日后定阈值，判据**预注册**为「盘前 genuine 龄 P95 ≤ 阈值 ⇒ 激活不会系统性误杀」——⚠ **加 cron 属自动化层，按 handoff:1432 纪律须用户裁，本批未加**。
+
+**⑧ 边界/门禁/提交卫生**：新增 2 个文件（`scripts/ue_quote_freshness_shadow.py` + `tests/test_ue_quote_freshness_shadow.py` **19 例全绿**）；**零生产路径改动**（`app/`、`config/`、`scripts/llm_universe_scan.py`、退出参数、`.env`、LIVE、持仓全未动），未加 cron、未重启、**仍未观察任何模拟成交**。静态门禁：`check_undefined_names` OK；`naive_datetime_now`/`dead_db_literal`/`db_connection_chokepoint`/`no_archive_imports`/`ops_scripts_sync`/`env_separation_shadow`/`app_shared_in_repo`/`dashboard_sim_isolation`/`except_pass_ratchet` 合跑 **84 passed**。提交只暂存这 2 个新文件；本条与 DEB §22 **只写工作树、不随本批提交**（另一会话 WIP 仍占用 `handoff.md`/DEB/`CONTROL-LOOP-LEDGER.md`/`.gitignore`）。
+
+## 2026-09-15 19:50 增量：P2.2 初筛「`tradeable` 恒空」根因修 + 名额排序 + 取价/`now` 顺序陷阱（**已实跑验证，尚未观察模拟成交**；详见 DEB-20260910 §21）
+
+> **一句话**：§17 落地的 UE 输入初筛，其**正向半边从未生效**（09-14 两轮 `tradeable=[]`，30/30 `missing_fields` 恒含 `source_asof`）。根因**不是缺数据，是键名错配**：供应商给 `timestamp`（unix，我方观测时刻，`app/data/futu_lv3_provider.py:1098`/`:1056`），SSOT `app/playbook/candidate_eligibility.py:134 _source_time` 只认 `source_asof`/`update_time` ⇒ PASS 要求零 missing ⇒ **结构上不可达**。本批修三处（**仅 `scripts/`，免重启即生效**），今晚 **19:40 `da_feed` 轮实跑验证通过**。
+
+**① 修法①：扫描期报价时戳键名归一**（`_prescreen_quotes_with_asof`）——预取一次批量报价，仅在两个 SSOT 键都缺时把 `timestamp` 补写为 `source_asof`，再经 `quotes=` 注入（`screen_candidates` 签名零改动）。三护栏：**fail-open**（预取炸 ⇒ `quotes=None` ⇒ 退回自取价，行为逐字同修前）· **语义诚实**（落 `source_asof_basis="provider_observation_timestamp"`，标明这是"我方观测时刻"**不是**撮合时点）· **取价入参同口径**（按 `_SYMBOL.fullmatch` 过滤，与 `screen_candidates:186` 同一把尺，防一个坏代码拖垮整批）。
+
+**② 为何刻意不改 SSOT `_source_time`（登记待裁）**——全局补键名会同时作用于 **inject 侧**（`llm_universe_scan.py:3289`，按 `status!="REJECT"` **真过滤**，且 `max_quote_age_sec=90`）；UE 在 ET 07:40/09:10 盘前跑、距入场窗约 2h ⇒ 会**新激活 `stale_quote` 拒绝并真丢候选**＝交易路径行为变更，按 AGENT.md C4 须另立影子批。扫描期口径本就**不含**新鲜度门（`_scan_phase_policy` 设 `1e12`）⇒ 本批**只让"缺数"不再冒充"未知"，不产生任何新拒绝、不改任何门**。
+
+**③ 修法②：初筛名额排序改「被几条材料具名」降序（同数保首现）**——修前只保材料索引顺序截断 30 个，09-14 实测受检集合与模型 surfaced 重叠仅 **4/10 与 1/6**，未受检的全落 `overflow_skipped`（**含当日真成交的 AAOI/CRWD**）⇒ 初筛看的和模型选的几乎是两批票。新排序键＝多源交叉提及优先，同提及数**稳定排序**保 gather 传导优先级；仍保 P1.4「先定序后截断」（砍提及数最少的尾巴，不是字典序 Z 开头）。**刻意不动 `input_prescreen_max_symbols=30`**（一次一个变量）。summary 落 `ordering` 便于分段归因。
+
+**④ 本会话新发现的第三个陷阱（比原缺陷更危险）**：`now` 修前在取价**之前**定型，而 `timestamp` 是**取价完成时刻** ⇒ `quote_age` 为负；`evaluate_candidate:110` 的 `quote_age < −5 ⇒ REJECT future_quote` 在扫描期**仍生效**（关掉的只是新鲜度上限，不是未来容差），批量取 30 只一旦走降级源（AlphaVantage 免费档**每只 `sleep 12.0`**）远超 5s。**后果比修前更糟**：修前是"缺时戳 ⇒ UNKNOWN（未定）"，触发本陷阱则变成"**明确不可交易**"写进 brief 反向误导模型 ⇒ 修法①若无本条配套，可能把缺陷从"哑"升级成"错"。**修法③**：`now` 改在取价**之后**定型（调用方显式传值时不改，测试/回放语义不变）。
+
+**⑤ 假绿根因（值得进 AGENT.md 候选）**：既有夹具（`_ps_quote`/`_e2e_router`）一律喂 `source_asof`，**比生产报价形态宽松** ⇒ 键名错配在 88 个测试里**结构上不可见**；`_e2e_router` 把时戳设成 `now−5min` 也正是为避开 `future_quote` ⇒ 该判据此前**已被意识到，却只在夹具层规避、未在生产路径钉住**。这是"夹具形态 vs 生产形态"的**两次分叉**。新增 3 钉：生产形态 `timestamp`-only 回归钉（含"真缺数仍须诚实落 UNKNOWN、不得被归一洗白"）· 预取失败 fail-open 钉 · **取价/`now` 顺序钉**（钉调用顺序而非真 sleep，确定且零耗时）。**变异实证**：内存里构造顺序改回修前的变异体、经 `sys.modules` 注入（**未触碰仓库文件**）⇒ 顺序钉立即红（`order=['now','quotes']`、`assert 1 < 0`）⇒ **不是空钉**。
+
+**⑥ 今晚 19:40 `da_feed` 实跑验证（cron `40 19 * * 1-5`）**：`tradeable` **`[]` → 15 个**（FPS VERA BLSM AXON DRVN QBTS RKLB RIG NOK ASML AXTI TRMD CRCL COIN BMNR）；`missing_fields` 含 `source_asof` **30/30 → 0/30**；`quotes_prefetched`/`source_asof_normalized` = **28/28**（`basis=provider_observation_timestamp`）；`ordering=mention_count_desc_then_first_seen`；**surfaced 5 个全部受检且全判 PASS（5/5，修前 4/10、1/6）**；`future_quote` 误判 **0**；`named/checked/overflow` = 35/30/`[MSTR,CAT,INTC,NFLX,ORCL]`（单提及尾巴）。`context_only` 12 个 reasons 全可归因：`low_atr`×4 · `price_floor`×6 · **`unsupported_security_shape`×2（BFH-PB/TFC-PI 优先股 —— P1.3 形状门首次有实证命中）**；`unknown` 3 个（COE/RCKTW/LUXE，缺 `price`+`screening_atr_ratio`）。**28 vs 30 差额已解释**：两只优先股被 `_SYMBOL`（尾段只容一个字母）挡在预取外，随后由 `evaluate_candidate` 判形状 ⇒ **两条路口径一致**。空转守卫未误跳（surfaced 5、正常落库）。日志新增留痕行 `[prescreen] 报价命中 28/28, 时戳键归一 28 条`。
+
+**⑦ 边界与回滚**：改动仅 `scripts/llm_universe_scan.py` + `tests/test_ue_evidence_index.py`（88→89 例，全绿）；`app/` / `config/` / `.env` / LIVE / 持仓 / **退出参数（OKR 全月冻结）** 一律未动；**尚未观察任何模拟成交**。**回滚**：单键 `universe_expansion.input_prescreen=false`（整段不追加、材料零改动）；代码副本 `/tmp/{llm_universe_scan,test_ue_evidence_index}.py.pre-{20260915,futurequote-20260915}`（⚠ 仍不在夜推覆盖面）。**下一观察点**：**21:10 CST `premarket` 主轮**（scan→inject→push）才是进生产指令的那一轮——本节数据来自 `da_feed` 早跑（不进 inject/push，执行面零变化）；重点看 ①`tradeable` 是否复现非空 ②inject 侧是否因本批出现**任何新的** `stale_quote` 拒绝（预期**零**，因 SSOT 未动）。
+
+**⑧ 提交卫生**：本批只暂存上述 **2 个文件**（显式名单，禁 `-A`）。`handoff.md`（本条）/ DEB-20260910 §21 / `docs/CONTROL-LOOP-LEDGER.md` / `.gitignore` 均**只写工作树、不随本批提交**——它们当前带有**另一会话未提交的 WIP**（16:30 同主题复盘 +32/+15/+1/+9 行，含待裁 (A)–(E)），显式名单以免卷走对方工作。**口径提醒**：该 16:30 复盘记昨日 5 笔为**毛口径 +$200.39 / FCX +$162.24**，与本会话按 DB 口径的 **+178.63 / FCX +157.77** 不是同一个数，引用时须注明口径。
+
+## 2026-09-15 16:30 增量：昨日（09-14）美股交易链路复盘（用户裁「请对昨日美股交易链路和记录、结果进行复盘，确认变更优化逻辑是否正常」）——**纯复盘，零代码改动、未重启、未提交**
+
+> **一句话**：链路**结构上正常**（各道守卫都有实证生效、EOD/影子/因子/Horizon 全部跑完、盘中那次重启 26s 且 0 笔在途订单），但**结果口径有误导**：昨日 5 笔**全胜 +$200.39 是毛口径**，其中 **+$162.24（81%）来自一笔持有 4 天的 FCX 空单**，其余 4 笔是分钟级微盈（+0.04%~+0.40%），按仓内自己的费用口径（往返 10~20bps）**大概率净亏** ⇒ 与就绪报告「净期望 -$15.62/笔」**不矛盾，是同一件事的两个切面**。`fee_unit_economics` 全台账 434 笔**净利仅约 +$36**，且**只有名义额最大的 Q5 分位净为正（+$16.66/笔）**，Q1–Q4 全负；更关键的是 **8–15bps 费用档 n=154 毛利就已经是 -13.7bps** ⇒ 那一档**不是费用问题，是信号问题**。**⚠️ 他人的 VIX 单一源重构已由部署守卫在 09:00 自愈上线（09:06:32 启动完成），昨日美股跑的是重启前代码 ⇒ 今晚 21:30 是新代码的首个美股会话，需重点观察。**
+
+**① 昨日结果（sim 臂，按平仓日归属）**：FCX SHORT 64@70.370→67.835 **+$162.24 (+3.60%)**（09-10 入场、持有 4 天）· AAOI SHORT 60@98.080→97.690 +$23.40 (+0.40%) · CRWD LONG 26@221.920→222.244 +$8.42 (+0.15%) · DELL LONG 5@538.600→539.445 +$4.23 (+0.16%) · AAOI SHORT 60@98.075→98.040 +$2.10 (+0.04%) ⇒ **合计 +$200.39，胜率 5/5**。**近 5 日胜率对比**：09-14 100%(n=5) · 09-11 57.1%(n=7) · 09-10 77.8%(n=9) · 09-09 100%(n=5) · 09-08 66.7%(n=9)。**资金面**：`capital_state` 单行 `initial=77806.99 / equity=98925.95 / peak=99127.14 / drawdown=-0.20% / max_drawdown=-3.33% / water_level=green / is_locked=0 / trade_env=1` ⇒ 累计 **+27.1%**，当前离峰 -0.20%，**未触发任何锁定**。**⚠️ 但"高胜率"与"负期望"并存**：`trade_records.pnl_pct` 是**毛口径、不含费**，而费用档实测往返 10~20bps ⇒ 昨日 4 笔微盈里有 3 笔毛幅（4/15/16bps）**低于或仅略高于成本线**。
+
+**② 指令漏斗（`playbook_instructions`）**：09-14 生成 **76** 条 → **BOOKED 4 / PENDING 72**，执行率 **5.3%**。**先纠正我自己一个读错**：`created_at` 存的是 **UTC**（`+00:00`）不是 ET，所以那 67 条"13:xx"实际是 **09:06 ET 盘前 DA 候选清单**（对应日志 21:05:30 `[SCREENER] 74 candidates passed quality filter`），**不是盘中堆积未执行** ⇒ 属设计内漏斗。**执行率趋势**：09-08 9.9% · 09-09 6.2% · 09-10 14.9% · 09-11 7.6% · **09-14 5.3%**（近 5 日最低），30 日全量 1272 PENDING / 227 BOOKED = **15.1%** ⇒ 昨日约为常态的 1/3。**定性：暂不可动作**（可能是守卫收紧=好事，也可能是信号质量下滑=坏事），但已列为观察项。
+
+**③ 守卫逐条实证生效（这是"变更优化逻辑正常"的正面证据）**：`chase_cap` 拦 US.RUM BUY $8.31/$8.32 越禁追线 $8.28（enforce=ON，7+ 次，每~5min 重评）· 借券池门拦 US.ATEN（`is_short_permit=False`，注释直指"sim 假成交陷阱"）· 开盘禁触窗 0935 生效（CRWD 首笔入场 09:35:48 ET，正好在窗外）· 规则0.5 早期紧SL 对 DELL/AAOI 在 held=5min 收紧（DELL 512.26→525.135、AAOI 103.43→100.532）· 规则3.3 死信号在 held=122min 杀掉 DELL（peak 0.16%<0.2%）· W_WEEK/EOD 豁免按**用户三问Q3 原裁**放行 UBER 持夜 · `exit_lifecycle` 证据未到位时 HELD+重试 · `position_sync` 一致性告警 · `⛔ 交易时段拒绝 stop_auto_loop`。
+
+**④ 9 条 `平仓失败` ERROR + 12 处 Traceback 全部自愈（但暴露一个 P1 告警噪声问题）**：FCX(21:33) / CRWD(21:46) / AAOI(22:03、00:15) 四个 intent 各经历 `EXIT_PENDING → EXIT_HELD×2 → 成交`，**耗时 10~30s**（FCX ERROR 末次 09:33:33 ET → 成交 09:33:43 ET；CRWD 09:46:39 → 09:46:49；AAOI 10:04:03 → 10:04:13）。**成交均有台账落地**（FCX 因 `trade_date`=入场日 09-10，故不在 09-14 计数里，容易误判成"丢单"）。12 处 Traceback **全是同一个刻意抛出的控制流异常** `exit_lifecycle.py:388 raise ValueError('exit_order_evidence_pending')`，被按 ERROR 记全栈。**⚠️ 问题不在机制、在告警口径**：9 条 ERROR 里 **6 条推了钉钉 🚨**，文案是「仓位可能卡住/无止损保护, 需人工核查」，而实际 30s 内全部自愈 ⇒ **典型"狼来了"**，与我昨日给哨兵定的棘轮原则（防告警疲劳）**同一病灶，只是发生在退出链上**。**建议（待裁，未动代码）**：`exit_order_evidence_pending` 前 N 次重试降级为 WARNING、只在**超阈值**（如 >60s 或 >5 次）才升 ERROR+推送，且**只在升级时记栈**。
+
+**⑤ 开盘那条 ERROR 是"看着吓人、实际零影响"**：21:30:26 `[Watchdog·护航] pre_market 轮次跨开盘仍未结束 (已跑 120s) → 入场执行被阻塞` + 推 🚨 钉钉；3s 后 21:30:30 自己给出正确定性 `轮次耗时 123s … 慢轮次, 非卡死`。**实际阻塞约 3 秒，且完全落在 0935 开盘禁触窗内 ⇒ 零笔入场受影响**（当日首笔入场 09:35:48 ET）。**这又是一条"文案级别 > 实际严重度"的告警**，与④同源。
+
+**⑥ 4 次重启（昨日）+ 3 次（今日），盘中那次已核清影响面**：昨日 14:08:02 / 17:33:54 / 18:21:33 / **22:18:08（= 10:18 ET，盘中）**；今日 07:29:35 / **09:00:02（部署守卫自愈）** / 09:06:23。**盘中那次实测无损**：停机 **26s**（22:18:08→22:18:34 重订阅 44 只），`[OrderTracker·restore] 发现 0 笔 pending 订单`、`PostTradeHook stats: {submitted:0, completed:0, failed:0}` ⇒ **无在途订单被截断**；代价按 H-12 是 `trail_state/exit_cooldowns` 内存态清零，而 UBER `trail_state_json` 本就为空（peak=0.00% 从未移动止损）⇒ **实际零状态损失**。**⚠️ 但发现一个"看着像保护、其实拦不住"的守卫**：`⛔ 交易时段拒绝 stop_auto_loop` 在 22:18:08 打了拒绝，22:18:11 却照样 `执行强制退出 (os._exit)` ⇒ **该拒绝只是日志留痕，不能阻止 systemd 级重启**。不是 bug（systemd 本来就是权威），但**文案暗示了一个不存在的保护**，建议改为明说"仅记录，不阻断"。
+
+**⑦ 部署守卫 09:00 自愈 = 他人 VIX 重构的实际上线时刻（本批最重要的时点事实）**：`[20260915_085001] skip: stale_drift=4771s_outside_safe_window` → `[20260915_090001] 🚨 部署断层自愈: 代码比进程新 4770s (最新 app/playbook/pipeline.py) → systemctl restart 成功 | ⚠️ 重启代价: trail_state/exit_cooldowns 内存态清零 (H-12) | G-02`。**守卫按设计在北京 09:00–12:00 安全窗内、美股闭市后动手 ⇒ 时点选择正确**。**上线后健康度实测：09:06:32 → 16:30 期间 ERROR=0 / CRITICAL=0 / Traceback=0**，VIX 链路 `[SharedKernel] 已绑定 VIX 数据源 (market_state)`、监控循环 300s 正常起。**⇒ 昨日美股（21:30→04:00）跑的是重启前代码，新 VIX 单一源尚未经历任何美股会话；今晚 21:30 是首验，建议重点看 VIX 读数是否连续、`market_state` 是否成为唯一源、有无新增 fallback。**
+
+**⑧ EOD/盘后链路完整跑通（04:00:35 CST = 16:00 ET 收盘）**：`EOD 兜底豁免 US.UBER 水下仓 -0.17%(净-0.25%) 持夜 (用户三问Q3)` · `shadow_tracker Tracking 76 instructions for 2026-09-14` · `factor_analyzer Analyzing 900 instructions → single=18/pair=48/combo=18` · `HorizonReturnModel 更新 124 个 feature+horizon 组合` · 钉钉盘后摘要推送成功 ⇒ **研究面数据未断供**。**⚠️ 一处数据面降级**：`[FutuLV3·DailyK] K线配额窗口满 (60次/30s) 等待超时, 返回 None 触发 Router fallback`（LLY/BABA 等）→ 走 TwelveData，其中 **3 次 `Read timed out` ERROR（04:01:21/37/52）** ⇒ 多源路由**部分成功**（LLY 拿到 30 bars），盘后分析跑在**部分数据**上。发生在闭市后、不影响成交，但**若同形态出现在盘中会削弱入场决策输入**，建议列为观察项。
+
+**⑨ UBER 遗留持仓定性：不是漏洞，是用户原裁 + 有硬封顶**：`avg_entry=72.76 / initial_sl=current_sl=stop_loss_price=69.68（-4.23%）/ strategy_id=playbook_sim / is_filled=1 / sync_status=synced`，09-11 09:36 ET 入场，`updated_at` 四天未动是因为**从未移动过止损**（`peak=0.00%`，`trail_state_json` 空）⇒ 不是失联。豁免逻辑在 `app/playbook/overnight_decision.py:57 w_week_loser_exempt`，四条硬条件：开关 ON · **仅 PLAYBOOK_SIM** · **净盈亏水下** · **未达 `loser_overnight_max_hold_days=5` 交易日（交易日历计算）**，且 `任何异常 → False（不豁免）` ⇒ **无无限扛单路径**，UBER 现为**第 3/5 交易日**，约 09-17/18 到期强平，期间 SL 69.68 是唯一盘中杀手。**DELL 与 UBER 的差异已解释清楚**（同一规则、不同分支）：DELL 在 60/103min 获豁免、122min 被杀，是因为**净盈亏在 103→122min 之间由负转正**，豁免条件③失效 ⇒ 正是注释里「毛 0<毛<费用 的微盈仓是净水下」那条 8/17 净口径修复在生效。**⚠️ 但有一条策略层信号值得单独提**：`fee_unit_economics` 个股台账里 **US.UBER n=16、胜率(净) 62.5%、净/笔 -$12.64、合计 -$202.26（去最大单笔 -$339.36）**，是台账里偏差的标的之一 ⇒ **当前正把资金停在一个净期望为负的标的上**，属规则允许但不理想。
+
+**⑩ 我昨日基建的首次自动运行 = 通过**：`logs/cutover_preflight.log` 06:38:05 首跑，`block=1 warn=7 ok=2 na=0 | worst=block` → `[watch] 与基线一致, 静默 (基线冻结于 2026-09-14T15:52:08)`，**exit=0、未发任何告警** ⇒ 棘轮按设计工作。**同时验证了"只比 status 不比 reading"这条取舍是对的**：读数确有漂移（P5 污染 sim 2→1 行、P8 `playbook_instructions` 2151→2227、`trade_records` 823→827、PLAYBOOK_SIM 479→483）但状态未跃迁 ⇒ **若比 reading 今早就会误报**。P5 从 2 行降到 1 行的原因是**另一笔污染仓已平**，剩下的 1 行就是 UBER（`sl_broker_order_id=8173460` 是入场单号）。**哨兵在 06:38 跑、07:29 才重启 ⇒ 未被重启影响。**
+
+**⑪ ⚠️ 自我纠错：我昨日的"ERROR=0"是**数值侥幸对、方法错****：昨日核验用的是 `grep -cE ' ERROR | CRITICAL |Traceback'`，但本仓日志格式是 **`ERROR:`（级别后紧跟冒号，无空格）** ⇒ `' ERROR '` **永远匹配不到任何 ERROR 行**，是**假绿模式**。今日改用 `grep -cE '(ERROR|CRITICAL):'` 才查出盘中窗口 **10 条 ERROR**。**必须说清影响面**：昨日那次核验的窗口是 09-14 03:31→16:46，用**正确模式复算同样是 0 ERROR / 0 Traceback** ⇒ **昨日结论数值正确，但它是运气不是方法**；若当时窗口里有 ERROR，我会漏报。**与 DEB §四 记过的 `git status --porcelain && echo ✅` 是同一类错**（判空/判零不能靠"命令成功"，要靠模式真的能命中）。**已立的规矩**：日志判零一律用 `(ERROR|CRITICAL):` 并**先拿一个已知有 ERROR 的窗口验证模式能命中**（阳性对照），再下"0 条"的结论。**另记一个同类陷阱**：`awk '$0>="…" && $0<="…"'` 做时间窗过滤时，**Traceback 这类无时间戳前缀的续行会被整体滤掉**（"T" > "2" 使上界比较失败）⇒ 数栈必须直接 `grep -c Traceback 全文件` 或用行号区间，不能套时间窗 awk。
+
+**⑫ 待裁清单（本批一行代码未动）**：**(A) 退出链告警分级**（④⑤同源，P1）—— `exit_order_evidence_pending` 重试期降级 WARNING、超阈值才 ERROR+推送+记栈；`pre_market 慢轮次` 在已自判"非卡死"时不应先推 🚨。**(B) `stop_auto_loop` 拒绝文案**（⑥，P2）—— 明说"仅记录不阻断"，别暗示保护。**(C) Futu DailyK 配额**（⑧，P2）—— 盘后批量分析把 60次/30s 窗口打满并触发 TwelveData 超时，建议盘后限流或错峰。**(D) UBER 类"净期望为负标的仍占用资金"**（⑨，策略层，需用户裁是否给个股台账加负期望禁入）。**(E) 执行率 5.3% vs 30日 15.1%**（②，观察项，暂不动作）。**以上均未修**，等用户裁决；本批**未提交**（提交需 `[用户裁"…"]` 标签）。
+
+**⑬ 追补（16:55，复盘顺手抓出并修掉**本批自己造成的 4 例治理门红**；全仓回归 5148 passed / 1 failed）**：复盘时读到并行工作流（DEB-20260914 VIX 批）09-14 18:32 条目里的全仓回归记录 —— **3 例失败被逐例归因到本工作流的在途产物，对方明确「未代改 — 介入会与那条工作流冲突」**。我昨日只跑 `tests/test_cutover_infra.py`(28 passed) 就下了"全绿"结论，**这是漏检**。定向复跑实测 **4 例红**（比对方记的多 1 例），逐条归属与处置见 **DEB §十**：**(1) `test_except_pass_ratchet`** 计数 951→**960**（`cutover_preflight.py` 9 处 + `cutover_rehearse.py` 1 处 `except…: pass/continue`）⇒ **10 处全清剿**、`BASELINE` 按"只降不升"调低 **951→950**；**(2) `test_dead_db_literal_gate`** 两个脚本的 `LIVE_DB = DATA / "ftseek_us_live.db"` 未声明 ⇒ 补进 `ALLOWLIST` 并写明理由（双载体工具，与 `env_separation_shadow`/`daily_invariant_check` 同类；本门历史上 3 次都是"先抓红后补登记"，本次同例）；**(3) `test_control_loop_ledger::crontab_loops_are_ledgered_or_baselined`** crontab 那行调 `cutover_preflight.py` 既未入台账也未登记基线 ⇒ **入台账**（新增 `crontab-cutover-preflight` 行，含层级/测什么/**6 条失效模式与对策**）。**#3 刻意选"入台账"而非"塞存量基线"**：基线是给存量未入账环的棘轮墓地，本哨兵是新环，塞进去等于**一出生就进墓地**，恰是那道守卫要防的事。**(4) `crontab_baseline_has_no_ghost_entries`** 幽灵是 `da_glm_shadow_eval.py` ⇒ **非本批，未代改**（与对方的处置对称）。**清剿不是"把 pass 换成 log"，是把假绿面补掉**：10 处里 6 处是同一形态「某臂库文件不在就 `continue`」—— 对**诊断器**这是最坏失效（库被改名/删除时 P3–P9 **集体报"干净"**），故新增 `_open_lane()` 写 `SKIPPED_SOURCES` + `main()` 汇总**显式打印**「有 N 个数据源打不开而被跳过（读数可能不完整, 不得当作'干净'）」；冷却态读/写失败改具名留痕且失败方向选 fail-loud（宁重复推送不静默抑制）；P6 日志档 `OSError` 留痕（否则"零 STOP 里程"分不清"真没挂过"与"没扫到"）；rehearse 沙箱守卫由 `try/relative_to + except ValueError: pass` 改 `parents` 判定（语义等价，不再把"守卫通过"与"守卫异常"共用一条 except 通道）。**钉子 28→30、变异 8→10 刀全杀**：新钉 `test_missing_lane_is_recorded_not_silently_skipped`（**刀9** 去掉留痕 append 退回静默 → 杀）+ `test_probe_crash_returns_two_so_dingtalk_fallback_fires`（**刀10** `return 2`→`return 1` → 杀）。**刀10 钉的是整条告警链的命门**：cron 兜底只看 `rc>=2`，而 `rc=1` 语义是"有跃迁且**已推飞书**" ⇒ 哨兵崩溃若返回 1 就**双通道全静默**，而"守卫自己崩了"与"零违反"不可区分（与 §8.3 的 `na>ok`、"基线不自动写"是同一条设计脉络的三个面）。新钉一律做**阳性+阴性双向对照**（先造缺库证明留痕真会出现，再造有库证明不误报）—— 沿用 ⑪ 的教训，只断言"不崩"的钉子会被"永远 continue"白拿。**⚠️ 那 1 例幽灵明天会复发，根因不是漏删一行**：`da_glm_shadow_eval.py` 是 `35 6 15 9 *` 一次性作业（今日 06:35 已跑、已被 owner 摘除 cron 行、基线行漏删）；而 `da_prompt_distill_shadow_eval.py` 是 `35 6 16 9 *`（**明日**一次性，仍在 crontab 第 241 行）⇒ 跑完被摘除后会产生**第二个幽灵**。**根因是一次性作业不该进"存量环路基线"**（基线语义=存量未入账的**常驻**环，一次性作业跑完即消失，天然与反向核对冲突）。**建议 DA 工作流 owner 一并处置**：两个一次性 eval 都不入基线，改入台账并用既有「留痕不入守卫」行标记。**若只要立刻转绿的最小动作**：删 `docs/references/crontab-loop-baseline.txt` 第 29 行。**终局读数**：全仓 `pytest tests/` = **5148 passed / 1 failed / 54 skipped（288s）**（唯一失败=上述幽灵）· 四门定向 = 44 passed / 1 failed · 本批钉子 = **30 passed** · 哨兵改后 dry-run 读数与静默行为**完全未变**（`block=1 warn=7 ok=2 na=0`、`[watch] 与基线一致, 静默`、exit=0）⇒ 清剿未改变任何探针语义 · **生产库零接触第四次复核（按臂分开看）：`live` 臂 6 项指纹逐项相同**；`sim` 臂 4 项变化**全部来自真实交易**（FCX 已平 ⇒ symbols `[FCX,UBER]→[UBER]`、`open_positions` 2→1、`trade_records` 823→827、`max_trade_date` 09-11→09-14），且 `max_updated_at` 未变（UBER 从未移动止损）⇒ **判读纪律：指纹"变了"必须先归因再下结论**，本批只开 `mode=ro` 连接（AST 只读钉锁死），变化项与昨日 5 笔成交一一对得上，属**正确的变化**。**本批写盘面**：`scripts/cutover_preflight.py`、`scripts/cutover_rehearse.py`、`tests/test_cutover_infra.py`、`tests/test_except_pass_ratchet.py`(BASELINE 951→950)、`tests/test_dead_db_literal_gate.py`(+2 ALLOWLIST)、`docs/CONTROL-LOOP-LEDGER.md`(+1 行)、DEB §十、本条 ⇒ **`app/` 仍零改动、服务未重启（`MainPID=1429067`/`NRestarts=0`/09:06:32）、未提交**。**教训已立规矩**：新增 cron 行或新增 `scripts/` 文件后**必须跑全仓治理门**，不能只跑自己的钉子 —— 本仓有一批**全仓扫描型**守卫（`test_except_pass_ratchet` / `test_dead_db_literal_gate` / `test_control_loop_ledger` 的 crontab 全解析面 / `test_w456_log_hygiene_ratchet` / `test_ops_scripts_sync`），**任何新文件都可能是它们的输入**，而自己的测试文件天然不会去查这些。
+
+**⑭ 追补（17:10，收尾核验 + **三处口径自我更正** + 待裁 (E) 判死为非问题）**：**（一）⑬ 插入完整性用正确锚点复核通过**：`diff` 段1（`1..29`，①–⑫ 复盘正文）与段2（`## 2026-09-14 18:32` 及更早全部历史）**均零差异** ⇒ 昨日那次 `rc=1` 确系**我的比较写错**（锚点错位 2 行：18:32 在 before 是第 31 行、在新文件是第 33 行），**不是插入失败**；⑬ 干净落在第 30 行，历史逐字节未改写。**（二）终局健康快照（全部实测）**：`MainPID=1429067 / NRestarts=0 / ActiveEnter=09:06:32` 未再重启 · 09:06 后 `(ERROR|CRITICAL):` = **0**、`Traceback` = **0**（**阳性对照**：全量日志同模式 = 3 条，全部落在 **04:01** 的 TwelveData 超时 = 待裁 (C)，均早于重启点 ⇒ 模式本身有效，这个零不是假零）· `app/risk/capital_safety.py` **零 diff** · 本批钉子 **30 passed** · 四门定向 **44 passed / 1 failed** · 全仓回归 **5148 passed / 1 failed / 54 skipped（285s）**，唯一失败仍是那条**非本批**幽灵 · 哨兵 `--watch` dry-run = **`block=1 warn=7 ok=2 na=0` + `[watch] 与基线一致, 静默` + exit=0**，与 09-14 15:52 冻结基线**完全一致** ⇒ ⑬ 那 10 处 `except:pass` 清剿**未改任何探针语义** · `git apply --check` D-A 补丁仍通过 = **未落地** · 足迹按 mtime 圈定：8 个文件全在 16:36–16:54（本批），其余 modified 文件 mtime 全在 09-14（并行工作流，未碰），**`app/` 零足迹且工作区已干净**（VIX 批已提交入库）；`.gitignore` 那 3 行也属本批（为 `data/cutover/preflight_baseline.json` 入库，附回滚说明）。**（三）幽灵复发已取到硬证据（非推测）**：crontab 现仅剩 **1 个**一次性作业 `da_prompt_distill_shadow_eval.py`（`35 6 16 9 *`，crontab 第 241 行，**明日** 06:35），且它**已登记在存量基线**（`docs/references/crontab-loop-baseline.txt:31`）⇒ 明日跑完被 owner 摘 cron 后**必然**成为第二个幽灵；当前那个是 `da_glm_shadow_eval.py`（baseline:1 / cron:0，基线第 29 行）。根因同 ⑬：一次性作业不该进"存量常驻环"基线。crontab 现 **277 行**（比记录多 1），新增的是 HEAD `81a9eb6fc` 的**常驻**周报 `knife_gate_weekly_report.py`（`26 6 * * 6`，**已入台账** ⇒ 三门通过），非一次性作业，**不构成新幽灵**。**（四）⚠️ 自我更正三处（都是本复盘批自己写下的数）**：**(甲)「5 笔全胜」只在毛口径成立** —— `realized_pnl` 合计 **+$200.39**（FCX +162.24 占 **81.0%**），但 `pnl_net` 合计 **+$178.63**，且 **AAOI 第二笔 gross +2.10 → net −2.37**（`fees_est=4.47` 直接吃穿）⇒ **净口径是 4/5 胜**。这一笔正是全篇论点的活体标本：**不是费用高了，是信号毛利太薄** —— 4.47 的费用在 5884 名义额上只有 **7.6bps**（正常水平），是 **2.10 的毛利**不正常。**(乙)「全台账净 ≈ +$36」是误抄** —— 权威口径 `scripts/fee_unit_economics_scorecard.py`（窗口 `since=2026-07-11`, **n=434**, 总名义 $1,918,406）= 毛 **+$1,088.41 (5.7bps)** / 费 **−$2,052.50 (10.7bps)** / 净 **−$964.09 (−5.0bps)**，费用占净亏损 **212.9%**，`毛利<费用` 的单 **192/434 (44.2%)**；`+$36.42` 只是 `>=15bps` **那一档**的净值，被我错当成了全台账。其余关键读数**逐条复算吻合**：Q1..Q5 净/笔 = −8.84 / −10.97 / −7.71 / −0.30 / **+16.66**（只有最大名义额档为正）；`8–15bps` 档 n=154 净 **−$1,589.84**、均毛利 **−13.7bps**（⇒ 该档**毛利本身就是负的**，不是被费用压负，坐实"信号问题不是费用问题"）；UBER n=16 净/笔 **−$12.64**、合计 **−$202.26**（待裁 (D) 证据成立）。**(丙) 待裁 (E)「执行率 5.3% vs 15.1% 观察」判死为非问题 —— 是我的 KPI 口径错了，不是链路退化**：我用 raw `count(*)` 当分母（76），但其中 **67 行 `direction='SKIP'`**（64 行 = 盘前 DA「非当前通道候选(bridge未提名/无方向)」研究行）。权威生产者 `app/analysis/plan_effectiveness.py:207` 的 `_load_battle_plan` **本来就过滤 `direction != 'SKIP'`** ⇒ `planned_count=9`（真候选池），09-14 实际推送 = **「📊 Playbook 指令效果: 命中率 44%, 执行率 44%」**（= 4 成交 / 9 候选）。拉 `data/plan_effectiveness/daily_*.json` 全 **67 份**历史：执行率**全期均值 66.7% / 近 5 日 66.6%**（78→50→73→88→44），**完全平稳、无下滑**；`unplanned_trade_count` **67 天全为 0** ⇒ "⚠️计划外>0=链路异常"从未触发。09-14 的 44% 是窗口最低，但 n=9、多成交 1 笔就是 56%，属噪声。**(E) 撤销，无需任何动作。****（五）⚠️ 差点误修一个没坏的东西（方法论教训，已立规矩）**：我先用 raw 分母算出"执行率在同制度内单调下滑 W34 17.8%→W38 5.3%"，据此**判定 `plan_effectiveness.py` 分母被污染、并准备动手修**；是**先去翻实际推送日志**（`grep 'Playbook 指令效果'`）看到 `planned=9 / 44%` 与假设矛盾，才回头查出 `direction='SKIP'` 这个**我漏掉的过滤维度**。⇒ **新规矩：判读任何指标前，必须先定位它的权威生产者与实际落地读数（日志/JSON/推送），不得用自算 raw SQL 去推断系统口径**；"我算出来的数"与"系统在报的数"不一致时**默认是我错**，先找漏掉的过滤维度再谈缺陷。本批因此**零误改**（`app/analysis/plan_effectiveness.py` 未动，mtime 仍 2026-07-08）。同类风险已排查：`scripts/settlement_cap_f2.py:161` 的 CAP-4 确实用 `COUNT(*)` + `decision_id LIKE 'universe_expansion%'` 当分母（**同污染形态**，会误报"指令洪泛但执行率~0 → 瓶颈在触发不在供给"），但它是**已跑完的一次性结算任务**（cron `9ab9f1812dc4` @09-14 09:00）且 commit 明写「阈值冻结自第12轮，改判据须先改 DEB」⇒ **刻意未代改**，仅登记。**（六）新观察（非退化，但值得记）**：真候选池在收窄 —— `planned_count` 8 月 ~19–25/日（均值 **19.3**）→ 9 月 ~8–15/日，近 5 日均值 **10.2**。在净期望为负（−5.0bps）的前提下，**候选变少是资金保护而非链路退化**；但它与 (D)「负期望标的禁入」是同一问题的两面 —— 真正该问的不是"为什么执行得少"，而是**"为什么放进来的这批期望是负的"**。**（七）live 臂僵尸行实证（坐实 P4 那个唯一 BLOCK 项不是理论风险）**：`data/ftseek_us_live.db` 的 `open_positions` 现有 **8 行 `size=0`** 僵尸持仓（BABA/CVNA/SNDQ/MU/AAPL/NVDA/NTES/CAT），其中 MU 还挂 `current_sl=1168.01`、CAT 挂 `963.0`，而 `capital_state` 表**为空**、09-14 平仓 **0 笔** ⇒ 哨兵 P4 的处置（"切换前用 `live_ledger_sync` 校正 size 清僵尸行"）是切换的**硬前置**，不是可选清理。**（八）资金态（sim 臂，17:02 读数）**：`equity=98,928.38 / peak=99,127.14 / dd=−0.20% / max_dd=−3.33% / water_level=green / is_locked=0`；UBER LONG 81@72.76、`current_sl=69.68`、入场 09-11 09:36 ET，仍在 `w_week_loser_exempt`（`overnight_decision.py:57`）5 交易日硬封顶内（第 3/5 天）。**本条仍未动一行代码、未重启、未提交。**
 
 ## 2026-09-14 18:32 增量：盘前 VIX 口径收敛（用户裁「修复再提交」⇒ 就地裁决 DEB §七.1 的"须另开辩论"）——`app/` 5 文件 + 1 真源判据 + 21 钉 + DEB §八，**已提交 `755ff1d1b`**、**已重启（18:21:39）并取得生产实证：`vix_cache` 由 17.84 → 14.71**
 

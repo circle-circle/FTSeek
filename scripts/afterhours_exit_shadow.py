@@ -11,20 +11,17 @@
               在盘后仍=当日收盘, 与盘前语义一致 — 实测 prev_close 在盘后窗稳定)
   3. 数据源: 盘后 LV3 同样有实时快照 (与盘前同通道, 9/16 已实测)
 
-决策规则 (与盘前 exit 同阈值, 攒样后一起裁决):
-  pnl_vs_entry = (last - entry)/entry × 方向符号 × 100
-  - pnl ≥ LOCK_IN_AT_PCT 且量≥MIN_SESSION_VOL → lock_in (建议兑现)
-  - pnl ≤ TIGHTEN_AT_PCT                      → tighten (建议收紧)
-  - 其余                                       → hold
-
+决策规则 (2026-09-18 用户勘误):
+  复用盘中 Playbook 原规则 — TAKE_PROFIT / SL_BREAKEVEN / SL_TRAIL_LOCK,
+  决策价 = LONG bid / SHORT ask, 并扣真实往返费; 亏损侧只 hold_no_stop.
+  peak/breakeven 状态持久化到 trade_records.metadata_json.
 记录: 与盘前 exit 同构 jsonl, 增 session="afterhours" 标签, 供统一结算器
-      聚合时段收益台账 (盘前/盘后 lock_in 命中+反事实delta).
+      聚合时段收益台账 (盘前/盘后利润保护命中+反事实delta).
 
-执行 (2026-09-17 用户裁「方案1」, 详见 DEB-20260917 §12):
-  lock_in / breakeven_lock(回本+0.3%有量) / tighten 三信号且窗内 → 调
+执行 (2026-09-17 用户裁「方案1」; 2026-09-18 勘误为原利润保护规则):
+  TAKE_PROFIT / SL_BREAKEVEN / SL_TRAIL_LOCK 三信号且窗内 → 调
   extended_hours_exit_executor.py SIM 真平仓 (session=ETH 限价单) + 飞书推结果.
-  tighten 是延长时段止损的**唯一兜底** (盘中 monitor_playbook_sim_exits 只管 TRADING 相位).
-  其余信号仍只落 jsonl. 回滚: 删调用块 (退回 record-only).
+  亏损侧信号仍只落 jsonl. 回滚: 删调用块 (退回 record-only).
 
 用法: PYTHONPATH=. venv/bin/python scripts/afterhours_exit_shadow.py [--dry]
 挂载: crontab 北京 04:00-07:55 每 5min (= ET 16:00-19:55 夏令时), 交易日 gate.
@@ -53,11 +50,8 @@ except Exception:
 DB = ROOT / "data" / "ftseek_us.db"
 OUTPUT = ROOT / "data" / "afterhours_exit_shadow.jsonl"
 
-# ── 决策阈值 (与盘前 exit 同值, 对称攒样一起裁决) ──────────────────
-LOCK_IN_AT_PCT = 2.0       # 相对入场价 ≥+2% → 建议兑现
-MIN_SESSION_VOL = 50000    # 盘后量 ≥5万股 (盘后更薄, 阈值同盘前先攒样)
-BREAKEVEN_LOCK_PCT = 0.3   # 回本线锁盈 (2026-09-17 用户批准, 与盘前对称): 盘后市价>成本+0.3% 且有量
-TIGHTEN_AT_PCT = -1.5      # 相对入场价 ≤-1.5% → 建议收紧
+# 决策参数单一真源 = app/playbook/exit_engine.py + config/playbook_horizon.yaml.
+# 2026-09-18 用户勘误: 不再使用临时 +0.3% breakeven_lock / +2% lock_in 阈值.
 
 # 2026-09-17 用户令「不强止损，直接持有到次日开盘」: 当日在盘后进的仓**停用**上述三信号,
 # 改持到次日开盘兑现 (DEB §16.6: 现役盘后规则净 -0.64%, 持到次日开盘 +3.47%)。
@@ -70,8 +64,6 @@ TIGHTEN_AT_PCT = -1.5      # 相对入场价 ≤-1.5% → 建议收紧
 #     什么都不做(持到盘前收口)                        +0.21%
 #     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
 #       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
-#   回滚: EXT_EXIT_TAKE_PROFIT_ONLY=false
-TAKE_PROFIT_ONLY = os.getenv("EXT_EXIT_TAKE_PROFIT_ONLY", "true").lower() == "true"
 HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
 
 
@@ -102,29 +94,9 @@ def _dir_sign(direction: str) -> int:
     return -1 if str(direction).upper() in ("SHORT", "SELL_SHORT") else 1
 
 
-def decide(pnl_pct: float, sess_vol: float) -> str:
-    if pnl_pct is None:
-        return "no_data"
-    if pnl_pct >= LOCK_IN_AT_PCT and (sess_vol or 0) >= MIN_SESSION_VOL:
-        return "lock_in"
-    # 回本线锁盈 (2026-09-17, 与盘前对称): 回本即锁
-    if pnl_pct >= BREAKEVEN_LOCK_PCT and (sess_vol or 0) >= MIN_SESSION_VOL:
-        return "breakeven_lock"
-    if pnl_pct <= TIGHTEN_AT_PCT:
-        return "tighten"
-    return "hold"
-
-
 def _load_open_positions():
-    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=30)
-    try:
-        rows = conn.execute(
-            "SELECT symbol, direction, size, avg_entry_price, "
-            "       COALESCE(current_sl, 0), entry_time, signal_id "
-            "FROM open_positions WHERE size > 0").fetchall()
-        return [tuple(r) for r in rows]
-    finally:
-        conn.close()
+    from scripts.extended_hours_position_scope import load_non_manual_positions
+    return load_non_manual_positions(DB)
 
 
 def _is_afterhours_entry_today(entry_time, today_et: str) -> bool:
@@ -144,8 +116,22 @@ def collect(dry: bool) -> int:
     today_et = _today_et()
     n_et = _now_et()
     hhmm = n_et.hour * 100 + n_et.minute
-    # 盘后窗 16:00-19:59 ET (夏令时); 窗外 cron 也会拦, 双保险
-    in_window = 1600 <= hhmm <= 1959
+    from scripts.extended_hours_market_session import (
+        atr_metrics,
+        extended_hours_session_for,
+        net_executable_pnl_pct,
+        quote_metrics,
+        risk_r_pct,
+        round_trip_fee_metrics,
+        session_volume_delta,
+    )
+    from scripts.extended_hours_profit_exit_rules import (
+        decide_original_profit_exit,
+        parse_trade_metadata,
+        persist_profit_exit_state,
+    )
+    session = extended_hours_session_for(today_et, hhmm)
+    in_window = session == "afterhours"
 
     positions = _load_open_positions()
     if not positions:
@@ -165,7 +151,12 @@ def collect(dry: bool) -> int:
         ctx.close()
 
     n = 0
-    for symbol, direction, qty, entry, sl, entry_time, signal_id in positions:
+    decision = {}
+    for position in positions:
+        symbol, direction, qty, entry, sl, entry_time, signal_id, trade_metadata = position[:8]
+        trade_id = position[8] if len(position) > 8 else None
+        source_type = position[9] if len(position) > 9 else None
+        metadata = parse_trade_metadata(trade_metadata)
         s = snap_map.get(symbol)
         # 盘后真实价 = after_price (盘后窗内权威); last_price 在盘后滞后停留在盘中收盘
         # (2026-09-17 实测: NOK 盘后 after_price=10.29 vs last=10.14 差1.5%, after_vol在动)
@@ -179,16 +170,40 @@ def collect(dry: bool) -> int:
         sess_vol = float(s.get("after_volume", 0) or 0) if s is not None else 0.0
         upd = str(s.get("update_time", "")) if s is not None else ""
         sign = _dir_sign(direction)
-        if last > 0 and entry > 0:
-            pnl_pct = round((last - entry) / entry * 100 * sign, 3)
-            pnl_usd = round((last - entry) * qty * sign, 2)
-            action = decide(pnl_pct, sess_vol)
+        metrics = quote_metrics(s, direction)
+        volume_delta = session_volume_delta(
+            OUTPUT, symbol, today_et, "afterhours", sess_vol)
+        risk_r = risk_r_pct(entry, sl, direction)
+        atr = atr_metrics(entry, metadata)
+        executable = metrics["executable_price"]
+        executor_price = executable
+        fee_metrics = round_trip_fee_metrics(
+            qty, entry, executable, direction, today_et)
+        fee_pct = fee_metrics["round_trip_fee_pct"] if fee_metrics else None
+        gross_executable = round(
+            (executable - entry) / entry * 100 * sign, 4
+        ) if executable is not None and entry > 0 else None
+        net_executable = net_executable_pnl_pct(
+            entry, executable, direction, fee_pct)
+        if executable is not None and entry > 0:
+            decision = decide_original_profit_exit(
+                direction, entry, executable, sl,
+                metadata.get("peak_price", entry), metadata, fee_pct,
+                source_type,
+            )
+            metadata = decision["metadata"]
+            pnl_pct = decision.get("profit_pct")
+            pnl_usd = round((executable - entry) * qty * sign, 2)
+            action = decision["action"]
+            if not dry:
+                persist_profit_exit_state(DB, trade_id, decision, direction)
             if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et):
                 action = "hold_to_next_open"
-            if TAKE_PROFIT_ONLY and action == "tighten":
-                action = "hold_no_stop"      # 延长时段不做止损 (止损只在盘中)
-            # 2026-09-17 用户裁方案1: lock_in锁盈 + tighten止损 调 exit executor 真平仓 (EXT仓盘后止损兜底).
-            if action in ("lock_in", "breakeven_lock", "tighten") and in_window and not dry:
+            # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
+            if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK")
+                    and in_window and not dry):
+                if action in ("SL_BREAKEVEN", "SL_TRAIL_LOCK"):
+                    executor_price = float(metadata.get("_be_net_line_price") or executable)
                 try:
                     import subprocess as _sp
                     # 2026-09-17 修复(与盘前同批): 原 capture_output=True + except: pass ⇒ 子进程异常/超时
@@ -196,7 +211,7 @@ def collect(dry: bool) -> int:
                     _proc = _sp.run(
                         [sys.executable, str(ROOT / "scripts" / "extended_hours_exit_executor.py"),
                          "--symbol", symbol, "--direction", direction, "--qty", str(qty),
-                         "--price", str(last), "--session", "afterhours", "--reason", action],
+                         "--price", str(executor_price), "--session", "afterhours", "--reason", action],
                         capture_output=True, text=True, timeout=90)
                     _tail = ((_proc.stdout or "")[-300:] + " | " + (_proc.stderr or "")[-300:]).strip()
                     if _proc.returncode != 0:
@@ -206,7 +221,7 @@ def collect(dry: bool) -> int:
                 except Exception as _exc:
                     print(f"[shadow_exit] {symbol} {action} exit_executor 异常: {type(_exc).__name__}: {_exc}")
         else:
-            pnl_pct, pnl_usd, action = None, None, "no_data"
+            pnl_pct, pnl_usd, action = None, None, "no_executable_quote"
         row = {
             "session": "afterhours",
             "line": "exit_lockin",
@@ -224,6 +239,33 @@ def collect(dry: bool) -> int:
             "last_price": last,              # 盘后窗内 = after_price (真实盘后价)
             "after_price": after_px,         # 原始盘后价 (审计留痕)
             "session_volume": sess_vol,
+            "session_volume_delta": volume_delta,
+            "bid_price": metrics["bid_price"],
+            "ask_price": metrics["ask_price"],
+            "mid_price": metrics["mid_price"],
+            "spread": metrics["spread"],
+            "spread_pct": metrics["spread_pct"],
+            "executable_price": executable,
+            "executor_limit_price": executor_price,
+            "quote_age_seconds": metrics["quote_age_seconds"],
+            "risk_r_pct": risk_r,
+            "atr_abs": atr["atr_abs"],
+            "atr_pct": atr["atr_pct"],
+            "atr_source": atr["atr_source"],
+            "round_trip_fee_usd": fee_metrics["round_trip_fee_usd"] if fee_metrics else None,
+            "round_trip_fee_pct": fee_pct,
+            "gross_executable_pnl_pct": gross_executable,
+            "net_executable_pnl_pct": net_executable,
+            "decision_detail": decision.get("detail", "") if executable is not None else "",
+            "effective_sl": decision.get("effective_sl") if executable is not None else None,
+            "adaptive_trailing_drawdown_pct": decision.get(
+                "adaptive_trailing_drawdown_pct") if executable is not None else None,
+            "adaptive_trailing_snapshot": decision.get(
+                "adaptive_trailing_snapshot") if executable is not None else None,
+            "peak_price": decision.get("peak_price") if executable is not None else metadata.get("peak_price"),
+            "peak_profit_pct": decision.get("peak_profit_pct") if executable is not None else None,
+            "breakeven_triggered": decision.get("breakeven_triggered") if executable is not None else bool(metadata.get("breakeven_triggered")),
+            "take_profit_rr": decision.get("take_profit_rr") if executable is not None else None,
             "update_time": upd,
             "pnl_pct_vs_entry": pnl_pct,
             "pnl_usd": pnl_usd,

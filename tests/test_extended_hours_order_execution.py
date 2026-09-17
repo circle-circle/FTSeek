@@ -85,7 +85,7 @@ def _create_db(path):
             exit_reason TEXT, holding_hours REAL, source_type TEXT,
             trade_mode TEXT, mode TEXT, owner_strategy TEXT, strategy_id TEXT,
             futu_order_id TEXT, close_futu_order_id TEXT, metadata_json TEXT,
-            created_at TEXT
+            mfe_pct REAL, mae_pct REAL, max_drawdown REAL, created_at TEXT
         );
         """
     )
@@ -509,23 +509,63 @@ def exit_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(exit_executor, "_push", lambda text: None)
     monkeypatch.setattr(exit_executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(exit_executor, "_in_session_window", lambda session: True)
-    monkeypatch.setattr(exit_executor, "_open_trade_context", lambda: FakeTradeContext())
+
+    def fail_global_broker():
+        raise AssertionError("exit executor tests must inject a durable broker")
+
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", fail_global_broker)
     return db_path
+
+
+class FakeDurableBroker:
+    def __init__(self):
+        self.calls = []
+
+    def close_position(self, symbol, qty, direction, **kwargs):
+        self.calls.append({"symbol": symbol, "qty": qty, "direction": direction, **kwargs})
+        owner = kwargs["exit_owner"]
+        dealt_qty = float(kwargs.pop("_fake_dealt_qty", qty))
+        success = dealt_qty == float(qty)
+        return {
+            "success": success,
+            "order_filled": success,
+            "error": "" if success else "exit_eth_partial_fill_held",
+            "exit_state": "FILLED_UNBOOKED" if success else "HELD",
+            "exit_intent_id": "fake-intent",
+            "futu_order_id": "900003",
+            "filled_price": 11.0,
+            "dealt_qty": dealt_qty,
+            "price_source": "broker_limit_deal",
+            "confirmed_at": 1789238400.0,
+            "broker_qty_before": float(qty),
+            "broker_qty_after": float(qty) - dealt_qty,
+            "owner": owner,
+            "decision": kwargs["exit_decision"],
+        }
+
+    def acknowledge_close(self, intent_id, receipt):
+        return intent_id == "fake-intent" and bool(receipt)
+
+
+def _install_durable_broker(monkeypatch, dealt_qty=None):
+    broker = FakeDurableBroker()
+    if dealt_qty is not None:
+        original_close = broker.close_position
+
+        def close_position(*args, **kwargs):
+            kwargs["_fake_dealt_qty"] = dealt_qty
+            return original_close(*args, **kwargs)
+
+        broker.close_position = close_position
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: broker)
+    return broker
 
 
 def test_exit_full_fill_updates_records_and_removes_position(
     exit_environment, monkeypatch
 ):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
-    monkeypatch.setattr(
-        exit_executor,
-        "wait_order_fill",
-        lambda *args, **kwargs: {
-            "filled": True, "filled_qty": 100, "avg_fill_price": 11.0,
-            "status": "FILLED_ALL", "remaining_qty": 0,
-            "cancel_ok": True, "error": "",
-        },
-    )
+    broker = _install_durable_broker(monkeypatch)
 
     result = exit_executor.execute(
         "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
@@ -541,66 +581,71 @@ def test_exit_full_fill_updates_records_and_removes_position(
     ).fetchone()
     connection.close()
     assert positions == 0
-    assert trade == (11.0, "lock_in", "900001", 100.0)
+    assert trade == (11.0, "lock_in", "900003", 100.0)
     with exit_executor._AUDIT_LOG.open() as handle:
         audit = json.loads(handle.read().splitlines()[-1])
     assert audit["fully_filled"] is True
     assert audit["db_updated"] is True
+    assert broker.calls[0]["session"] == "ETH"
+    assert broker.calls[0]["target_env"] == "sim"
+    assert broker.calls[0]["limit_timeout_s"] == 20.0
+    assert broker.calls[0]["exit_decision"]["metadata"]["extended_hours_exit"] == {
+        "session": "premarket",
+        "requested_limit_price": 11.0,
+        "broker_remark_prefix": "ext_exit_lock_in",
+    }
 
 
-def test_exit_partial_fill_reduces_position_and_records_partial_close(
+def test_exit_partial_fill_stays_durable_pending_without_direct_db_write(
     exit_environment, monkeypatch
 ):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
-    monkeypatch.setattr(
-        exit_executor,
-        "wait_order_fill",
-        lambda *args, **kwargs: {
-            "filled": True, "filled_qty": 40, "avg_fill_price": 11.0,
-            "status": "CANCELLED_PART", "remaining_qty": 60,
-            "cancel_ok": True, "error": "",
-        },
-    )
+    _install_durable_broker(monkeypatch, dealt_qty=40)
 
     result = exit_executor.execute(
         "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert result["fully_filled"] is False
     assert result["remaining_qty"] == 60
+    assert result["error"] == "exit_eth_partial_fill_held"
     connection = sqlite3.connect(exit_environment)
     position_size = connection.execute("SELECT size FROM open_positions").fetchone()[0]
-    open_quantity = connection.execute(
-        "SELECT quantity FROM trade_records WHERE futu_order_id='900001'"
-    ).fetchone()[0]
-    partial = connection.execute(
-        "SELECT quantity, exit_price, exit_reason, close_futu_order_id "
-        "FROM trade_records WHERE close_futu_order_id='900001'"
+    open_trade = connection.execute(
+        "SELECT quantity, exit_price, close_futu_order_id "
+        "FROM trade_records WHERE futu_order_id='900001'"
     ).fetchone()
     connection.close()
-    assert position_size == 60
-    assert open_quantity == 60
-    assert partial == (40, 11.0, "lock_in_partial", "900001")
+    assert position_size == 100
+    assert open_trade == (100, None, None)
 
 
 def test_exit_blocks_when_broker_exit_order_is_active(
     exit_environment, monkeypatch
 ):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
-    context = FakeTradeContext(
-        rows=[{"order_id": "900002", "code": "US.TEST", "order_status": "SUBMITTED",
-               "qty": 100, "dealt_qty": 0, "dealt_avg_price": 0, "price": 11.0,
-               "remark": "ext_exit_lock_in"}]
-    )
-    monkeypatch.setattr(exit_executor, "_open_trade_context", lambda: context)
+    broker = _install_durable_broker(monkeypatch, dealt_qty=0)
 
     result = exit_executor.execute(
         "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
     )
 
-    assert result["skip"] == "active_ext_exit_order"
-    assert context.placed == []
+    assert result["ok"] is False
+    assert result["error"] == "exit_eth_partial_fill_held"
+    assert len(broker.calls) == 1
+
+
+def test_exit_next_open_path_is_disabled(exit_environment, monkeypatch):
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    broker = _install_durable_broker(monkeypatch)
+
+    result = exit_executor.execute(
+        "US.TEST", "LONG", 100, 11.0, "next_open", "next_open_exit", dry=False,
+    )
+
+    assert result == {"ok": False, "skip": "next_open_exit_disabled"}
+    assert not broker.calls
 
 
 def test_entry_change_pct_env_override(monkeypatch):

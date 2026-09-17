@@ -657,3 +657,226 @@ MFE 均值 2.497% / 1.746% ⇒ 各臂对 MFE 的捕获率均 ≤0，**捕获率�
 | 10%+ | 10 | +0.24% | 50.0% | -4.79% |
 
 ⇒ 三个样本（n=60 / n=103 / n=196）一致：**<3% 边际跳空档最弱且扛最差尾部**；闸门提到 +3% 后本窗口 -0.17% → +0.33%。
+
+## 18. 2026-09-17 P0/P1 修复：延长时段台账、归属与窗口治理（自适应 trailing 前置门禁）
+
+**用户裁决**：净利地板 `+0.3%`；弱流动性但可执行即全额落袋；trail 状态跨时段保留；trail 触发但点差恶化时等待；验收至少 30 个干净持仓会话或两周 clean data。自适应 trailing 可直接在 SIM 执行（记录为对影子先行规则的知情豁免），实盘仍禁用。本节只落地前置安全修复，**未启用新 trailing 行为**。
+
+### 18.1 修复前证据
+
+- 券商 SIM 侧共有 6 笔 `ext_exit_*` 全额成交；本地 4 笔 mismatch：
+  - `US.CTNT 8185451`：DB 已按 `close_futu_order_id` 关闭，但 executor 审计缺失。
+  - `US.GIPR 8185461`：券商成交 11,494 股 @0.424，原 `trade_records.id=1522` 仍 open，`1523` 是 `POSITION_SYNC` 重复关闭记录。
+  - `US.NBIS 8185534` / `US.AEHL 8185561`：executor 已正确关闭原记录，但 `POSITION_SYNC` 又插入 `1525/1527` 重复关闭记录。
+- 窗口污染：源台账 479 行中 69 行窗外；已结算 376 行中 47 行窗外。
+- 盘前/盘后 collector 原查询所有 `open_positions`，未做正向非手动证据过滤。
+
+### 18.2 根因与修复
+
+1. **external close 双记账根因**：`position_sync` 只按入场时间近似查重，不看已有 open/closed trade 与券商订单号。新增 `upsert_external_close_trade_record()`：已有 closed 记录则跳过；已有 open 记录则原行更新实际成交价、订单号与 PnL；无记录才插入 `POSITION_SYNC`。
+2. **系统单认领**：remark 白名单补 `ext_entry` / `ext_exit_`，未知仍归 MANUAL。
+3. **持仓范围**：新增 `scripts/extended_hours_position_scope.py`；盘前/盘后 collector 只接受 `PLAYBOOK_SIM/LIVE` 或显式 AUTO+策略归属的正向证据，未知/手动排除。
+4. **窗口过滤**：`settle_extended_hours.py` 新增源行窗口 gate，并对历史已结算聚合排除窗外行；不改写历史 JSONL。
+5. **只读对账**：新增 `scripts/reconcile_extended_hours_exits.py`，输出券商成交、executor 审计、DB close、open trade、重复记录的交叉报告。
+6. **历史修复**：新增 `scripts/repair_extended_hours_exit_books.py`，默认 dry-run；`--apply` 先 SQLite backup 再修复。
+
+### 18.3 历史数据修复结果
+
+- 修复前：`broker_filled_exit_orders=6 / audit_confirmed=4 / db_matched=5 / mismatches=4 / duplicate_close_records=3`。
+- 修复动作：`1522` 按券商成交修复为 11,494 股、exit `0.424`、reason `tighten`、`close_futu_order_id=8185461`、PnL `-80.46`；`1523/1525/1527` 标记 `data_quality='duplicate_external_close'`；为 `8185451/8185461` 补写 `repair_source='historical_reconciliation'` 审计行。
+- 修复后复核：`broker_filled_exit_orders=6 / audit_confirmed=6 / db_matched=6 / mismatches=0 / open_position_conflicts=0 / duplicate_close_records=0`。
+- 备份：`data/backups/ftseek_us_before_extended_hours_exit_repair_20260917_232938.db`（24MB）。
+
+### 18.4 验证
+
+- 相关测试：`99 passed`（延长时段执行、只止盈、结算、持仓范围、对账、修复、external close 幂等等）。
+- Python 编译检查通过。
+- 按运维规则执行 `systemctl restart ftseek-us`，启动冒烟 7/7 通过：ConfigValidator、漂移检测、热重载、SSOT 0 BLOCKING、模拟盘安全、退出快循环、零 Traceback/CRITICAL。
+
+### 18.5 回滚
+
+- 代码回滚：revert 本节涉及文件。
+- 数据回滚：停止服务后用上述 SQLite backup 恢复 `data/ftseek_us.db`，再重启并跑启动冒烟。
+- 审计补写行带 `repair_source='historical_reconciliation'`，可按该字段剔除。
+
+### 18.6 下一步（未做）
+
+1. cron 从固定北京时间改为 ET 市场日历，处理 DST/半日。
+2. 延长时段采集升 1 分钟并落 bid/ask、spread、quote age、volume delta、R、ATR、净收益、trail state。
+3. 延长时段退出接入 durable single exit authority。
+4. 以上门禁全绿后，才在 SIM 实现 ratchet-only adaptive trailing。
+
+## 19. 2026-09-17 观测层落地：ET 日历 1 分钟采样 + 可执行价/费用/流动性字段（不改退出决策）
+
+### 19.1 调度
+
+- 新增 `scripts/extended_hours_market_session.py`：交易日判定使用 ET 市场日历；盘前 04:00–09:29，盘后正式收盘–19:59；半日市自 13:00 起进入盘后。
+- 新增 `scripts/extended_hours_exit_cron.py`：crontab 每分钟触发，内部先做 ET 日历 gate；非候选时段返回 `outside_extended_hours`。
+- wrapper 使用 `logs/extended_hours_exit_cron.lock` 非阻塞互斥，避免上一轮未结束时重叠；单轮默认 `timeout=120s`，超时返回 `collector_timeout_after_120s`。
+- 实测修正：初版在窗外每分钟也会因交易日历刷新连接 Futu。已加轻量 ET 时段预筛；窗外 dry run 从约 5.8s 降到 0.19s，且不再建立 Futu 连接。半日/未知假日仍由权威日历兜底。
+- 当前 crontab：
+  `* * * * * cd /opt/ftseek/FTSeek-US && PYTHONPATH=. venv/bin/python3.11 scripts/extended_hours_exit_cron.py >> logs/extended_hours_exit_cron.log 2>&1`
+
+### 19.2 观测字段与量纲
+
+| 字段 | 单位/枚举 | 语义 |
+|---|---|---|
+| `bid_price` / `ask_price` / `mid_price` / `spread` / `executable_price` | absolute_price | 券商快照原始报价；LONG 卖出取 bid，SHORT 回补取 ask |
+| `spread_pct` | percent | `(ask-bid)/mid*100` |
+| `quote_age_seconds` | seconds | 当前 ET 时间与快照 `update_time` 的非负差 |
+| `session_volume` / `session_volume_delta` | shares | 盘前 `pre_volume`、盘后 `after_volume`；delta 只在找到同标的/日/时段上一条后计算，首条为 null |
+| `risk_r_pct` | percent | 入场价到当前止损的方向化风险 / 入场价 |
+| `atr_abs` / `atr_pct` / `atr_source` | absolute_price / percent / enum | 取最新 open trade `metadata_json.atr`（绝对价）换算为入场价 ATR%；来源标记 `trade_metadata_atr` |
+| `round_trip_fee_usd` / `round_trip_fee_pct` | usd / percent | `estimate_round_trip` 估算；fee_pct 以入场名义本金为分母 |
+| `gross_executable_pnl_pct` / `net_executable_pnl_pct` | percent | 可执行价口径毛/净收益；net 为 gross 减估算费用，**未另加合成滑点** |
+
+字段由 `FIELD_UNITS` 统一声明；`scripts/extended_hours_observation_cardinality.py` 输出 30 天基数、去重数、单位与 `INSUFFICIENT/DEGEN` 判定。当前 n=0/`INSUFFICIENT`，原因尚未进入新代码后的盘前/盘后 live 窗口，不代表失败。
+
+### 19.3 边界（重要）
+
+- 本节是 record-only：`premarket_exit_shadow.py` / `afterhours_exit_shadow.py` 已写新字段，但 `decide()` 与 executor 仍走既有 `last/pre_price/after_price` 路径；**尚未切换净 +0.3%、可执行价、ETH limit 或 adaptive trailing**。
+- `session_volume_delta` 首次观测为 null 是设计而非数据缺失；其质量要等到每个标的至少第二条同会话记录后再评估。
+- quote age 基于快照时间；若券商返回空/无效时间，字段为 null，后续必须计入数据质量统计。
+- ATR 已按 trade metadata 绝对价口径落观测字段；durable trail state 尚未落，待 adaptive trailing 设计实施。
+
+### 19.4 验证与回滚
+
+- 语法：新增/改动脚本与 `app/core/position_sync.py` `py_compile` 通过。
+- 定向测试：延长时段 cron/session/cardinality/scope/window/reconciliation/repair/take-profit-only 子集通过。
+- 窗外行为：实际 crontab 返回 `outside_extended_hours`；轻量预筛后日志不再出现窗外 Futu connect/disconnect。
+- 代码回滚：revert `scripts/extended_hours_market_session.py`、`scripts/extended_hours_exit_cron.py`、两个 collector 的新观测字段与相关测试；服务不用重启（脚本直跑）。
+- 调度回滚：删除上述 crontab 行，并恢复旧的两条固定北京时间 5 分钟 collector 行；需人工确认恢复行覆盖冬令时偏移。
+- 数据回滚：新字段只追加 JSONL，不改旧行；如需清理按 `recorded_at`/字段存在性筛除。
+
+### 19.5 下一道门
+
+1. 在下一个盘前或盘后窗口确认新字段首次非空，并重跑 cardinality。
+2. 样本达到至少 30 个干净持仓会话或 14 天 clean data 后，再评估 `quote_age`、`spread_pct`、`session_volume_delta` 分布和净 +0.3% 触发率。
+3. 在单一 durable exit authority 与 ETH-only SIM limit 通路确认后，才切换可执行价决策。
+
+## 20. 2026-09-18 单一 durable exit authority：ETH 只允许 SIM+限价，禁市价兜底与直写库
+
+### 20.1 设计与落地
+
+1. **持久化 session 语义**：`exit_intents` 新增 `session` 列，枚举 `RTH/ETH`；存量 DB 自动迁移，默认 `RTH`。同一 `close_key` 的 session 不允许漂移，防止先建 RTH 意图再改 ETH。
+2. **ETH 硬门**：`ExitLifecycle` 只接受 `target_env=sim` 且 `limit_price>0` 的 ETH 请求；real 或市价语义 fail-closed。
+3. **无市价兜底**：ETH 限价单部分成交/撤单后不再追加 MARKET 剩余腿，保持 durable pending 并告警，等待后续恢复/人工对账。
+4. **保留延长时段审计标识**：ETH leg 可使用 `ext_exit_{reason}` 前缀，仍被 `position_sync` 系统单白名单与延长时段对账工具识别；普通 Playbook leg 继续用 `pbe_`。
+5. **执行器迁移**：`extended_hours_exit_executor.py` 不再自建交易上下口、不再等待/撤单、不再直接更新 `open_positions/trade_records`；统一调 `DualBrokerAdapter.close_position(session="ETH")`。
+6. **簿记收口**：全额成交后复用 `_book_playbook_exit_result()` 更新 Playbook 原始 trade/open position，并 acknowledge durable intent；部分成交不落半仓账。
+7. **next_open 禁用**：`--session next_open` 返回 `next_open_exit_disabled`。延长时段触发但流动性不足时保持 pending/告警，不在次日开盘自动补一刀。
+8. **限价等待**：`EXT_EXIT_LIMIT_TIMEOUT_S` 默认 20 秒；到时撤单并保留券商证据，不追价、不市价兜底。
+
+### 20.2 行为边界
+
+- 触发判据仍来自 collector 的 `last/pre_price/after_price` 旧路径；**尚未切换净 +0.3% 或 executable bid/ask**。
+- 本批只改变"触发后的执行/记账通路"，不新增开仓、不做止损、不启用 adaptive trailing。
+- ETH 意图与既有 RTH intent 共用 close_key 与 symbol 忙锁；若同一仓位已有未结 RTH 意图，ETH 请求会 BLOCKED，防止双出口。
+- 若 broker 侧已有 active close 单，`ExitLifecycle.preflight` 继续拒绝新单，防重复平仓。
+
+### 20.3 验证与事故披露
+
+- 生命周期/执行器/延长时段定向套件（含 ATR/hold-to-open/close-flatten）：**174 passed**；执行相关 broader 子集此前 **222 passed**。
+- 覆盖：默认 RTH 不变、ETH session 持久化、real/市价 fail-closed、部分成交不发市价剩余腿、`ext_exit_` remark、legacy schema 迁移、执行器不直写库、next_open 禁用。
+- 服务按规则重启。第一次冒烟 6/7：早期一次执行器测试未注入 fake broker，把 `US.TEST` 测试意图写入全局 `data/playbook_exits.db`，触发服务 fast loop 持续告警。
+- 已停服备份并删除该测试意图（`before=1/legs=0 → after=0/0`），备份：
+  `data/backups/playbook_exits_before_us_test_cleanup_20260918_001835.db`。
+- 测试 fixture 已加 fail-safe：未显式注入 durable broker 的测试会直接失败，禁止再写全局 ledger。
+- 清理后重启，启动冒烟 **7/7 通过**，服务 active；`US.TEST` exit intents 复核为 0。
+
+### 20.4 回滚
+
+- 代码回滚：revert `app/execution/exit_lifecycle.py`、`app/execution/dual_broker.py`、`scripts/extended_hours_exit_executor.py` 及两份测试，然后 `systemctl restart ftseek-us` + 启动冒烟。
+- `session` 列是 additive migration；仅 revert 代码可保留该列。如需完全恢复 ledger 文件，必须先确认没有后续新 intent，再恢复上述备份。
+- 执行通路回滚到旧直写脚本不推荐；若必须回滚，同时恢复 collector 调用与旧 executor，并重新执行券商/审计/DB 对账。
+
+### 20.5 下一步
+
+1. 下一盘前窗口验证 collector → durable ETH executor → Playbook booking 全链路。
+2. 复跑 `scripts/reconcile_extended_hours_exits.py`，要求 broker/audit/DB 全匹配。
+3. 观察字段首次非空并复跑 cardinality。
+4. 之后才把决策价切换为 executable bid/ask + 净 +0.3%，再设计 SIM adaptive trailing。
+
+## 21. 2026-09-18 用户勘误：延长时段恢复原 Playbook 利润保护规则（不是 +0.3%/+2%）
+
+### 21.1 用户裁决
+
+> 1和2不符合预期，我需要保留原有的 `SL_TRAIL_LOCK` 以及 `SL_BREAKEVEN`，这个是当期盈利的能力，保持净盈利。3. 盘前和盘中，如果达到了盈利止盈线就可以止盈。
+
+解释口径：
+
+1. `SL_BREAKEVEN` 与 `SL_TRAIL_LOCK` 的 `SL_` 前缀是历史命名；在峰值浮盈武装之后，它们是**利润保护线**，不是亏损止损。延长时段允许触发。
+2. `SL_INITIAL`、亏损侧 tighten/early-tight 仍视为亏损止损，延长时段一律 `hold_no_stop`，交给盘中规则引擎。
+3. 临时 `breakeven_lock=净+0.3%` 与 `lock_in=+2%` 不是最终语义；已从现役 collector 决策中移除。
+4. 盘前/盘后与盘中共用原 `TAKE_PROFIT`、BE、trail-lock 参数来源：`config/playbook_horizon.yaml` + `app/playbook/exit_engine.py`；本批不新增 adaptive trailing。
+
+### 21.2 实现
+
+- 新增 `scripts/extended_hours_profit_exit_rules.py`：
+  - 复用 `_compute_dynamic_effective_sl()`，不复制第二套阈值；
+  - 决策价 LONG 用 bid、SHORT 用 ask；
+  - BE 线包含真实往返费，触发线沿用原 fee + slip cushion；
+  - TP 沿用 metadata `take_profit` 与 `min_tp_rr` 门禁，且要求当前可执行净收益 > 0；
+  - 输出 `TAKE_PROFIT` / `SL_BREAKEVEN` / `SL_TRAIL_LOCK` / `hold_no_stop`。
+- `premarket_exit_shadow.py` 与 `afterhours_exit_shadow.py`：
+  - 删除临时 +0.3%/+2%/-1.5% 决策函数；
+  - 决策价从 `last/pre_price/after_price` 切为 executable bid/ask；`TAKE_PROFIT` 以该价挂限价，BE/TRAIL 则以 `_be_net_line_price` 作为限价地板；
+  - 观测行新增 `effective_sl`、`peak_price`、`peak_profit_pct`、`breakeven_triggered`、`take_profit_rr`、`decision_detail`；
+  - 无 bid/ask 时返回 `no_executable_quote`，不拿 last 价兜底下单。
+- `extended_hours_position_scope.py` 返回 open trade id；collector 将 peak/BE/fee-aware line 合并回 `trade_records.metadata_json`。合并采用重读后 merge，只写状态字段，不覆盖并行写入的其他 metadata。
+- 执行链路保持第 20 节安全边界：仅 SIM、ETH 限价、20 秒默认、无市价兜底、全额成交后才 Playbook 簿记，部分成交 durable pending。
+
+### 21.3 语义示例
+
+- **未武装**：LONG@100，MFE 未达 `breakeven_at_pct`，bid=97 → `hold_no_stop`；跌破初始 SL 也不在延长时段卖出。
+- **BE 武装**：LONG@100，bid 峰值 101；之后 bid 跌到净保本触发线（含费用/滑点垫）→ `SL_BREAKEVEN`，限价地板不低于净费用线。
+- **Trail lock**：LONG@100，bid 峰值 103；按原 `drawdown_from_peak_pct=0.8%` 得保护线约 102.176；bid 跌到该线下方 → `SL_TRAIL_LOCK`。
+- **TP**：bid 达到 metadata `take_profit` 且 RR≥`min_tp_rr` → `TAKE_PROFIT`。
+
+### 21.4 验证与回滚
+
+- 新增 `tests/test_extended_hours_original_profit_rules.py`，钉住：BE 先武装后触发、trail ratchet、TP RR/净费用门、SHORT ask/低点峰值、peak 状态持久化且不覆盖无关 metadata。
+- 延长时段 scope/collector/executor/book-repair/reconciliation/settle/ATR 定向套件 **103 passed**；`tests/execution/test_exit_lifecycle.py` 单独运行 **112 passed**。
+- `py_compile` 通过；本批涉及文件 `git diff --check` 通过（全仓 check 另有既有 unrelated 涨落空白，未处理）。
+- 本批只改 scripts/tests/docs，不改 `app/**`，无需重启服务；下一分钟 cron 自动使用新脚本。
+- 回滚：revert 本节新增/修改的 scripts/tests/docs。历史 JSONL 新字段只追加，可按字段存在性筛除；metadata 中新增的 peak/BE 状态是幂等状态，可保留或由备份恢复。
+
+## 22. 2026-09-18 用户确认：MFE 自适应 trailing 试点（SIM-only）
+
+### 22.1 规则
+
+目标公式：
+
+```text
+drawdown_pct = clamp((100 - target_capture_pct) × MFE / 100,
+                     min_drawdown_pct,
+                     max_drawdown_pct)
+当前参数 = 60% / 0.4% / 1.2%
+```
+
+示例（LONG@100，忽略费用舍入）：
+
+| MFE | 自适应回撤 | 保护线约 | 目标锁定毛收益 |
+|---:|---:|---:|---:|
+| 0.5% | 0.4% | 100.098 | 0.1%（受下限约束） |
+| 1.0% | 0.4% | 100.596 | 0.6% |
+| 2.0% | 0.8% | 101.184 | 1.2% |
+| 3.0% | 1.2% | 101.764 | 1.8% |
+| 5.0% | 1.2% | 103.26 | 3.2% |
+
+保护线仍必须不低于净保本地板；若理论自适应线更低，则实际执行净保本地板。SHORT 对称使用有利方向低点峰值。
+
+### 22.2 接入与边界
+
+- 新增 `app/playbook/adaptive_trailing.py`，SIM-only gate 硬编码为 `PLAYBOOK_SIM`。
+- 盘中 `_check_playbook_exit_rules()` 从 `meta._source_type` 判定，并把 `_adaptive_trailing` 写入 metadata。
+- 延长时段 position scope 追加 `source_type`，盘前/盘后决策器传入 `decide_original_profit_exit()`。
+- 动态回撤只替代 factor trailing 的固定 `drawdown_from_peak_pct`；`SL_BREAKEVEN`、`SL_TRAIL_LOCK`、`TAKE_PROFIT`、RR/净收益门、净保本地板和延长时段不做亏损止损均不变。
+- `trailing_enabled=false` 因子的 profit_override 兜底逻辑保持原语义，本试点不额外扩大。
+- 延长时段 JSONL 输出 `adaptive_trailing_drawdown_pct` 与 `adaptive_trailing_snapshot`；状态持久化只 merge `_adaptive_trailing`，不覆盖其他 metadata。
+
+### 22.3 验证与回滚
+
+- 新增 `tests/playbook/test_adaptive_trailing.py` 覆盖公式分档、clamp、SIM-only、配置禁用、非法配置、盘中/延长时段动态线、JSONL/状态持久化。
+- 验证：adaptive/BE/TP/scope/hold/flatten **43 passed**；延长时段套件 **55 passed**；`tests/execution/test_exit_lifecycle.py` **112 passed**；playbook 相关补充 **121 passed**；`py_compile` 通过。
+- 回滚：`adaptive_trailing_enabled=false` 后 `systemctl restart ftseek-us`，延长时段 collector 下次调用自动回到固定 factor 回撤；不需要改 SIM-only helper。

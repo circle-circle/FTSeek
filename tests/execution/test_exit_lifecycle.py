@@ -264,6 +264,90 @@ def test_query_only_outside_session_never_cancels_or_submits(tmp_path):
     assert len(broker._sim_ctx.orders) == 1
 
 
+def test_durable_close_defaults_to_explicit_rth_session(tmp_path):
+    from futu import Session
+
+    broker = adapter(tmp_path)
+    close(broker, limit_price=100, limit_timeout_s=0)
+    assert broker._sim_ctx.orders[0]['session'] == Session.RTH
+    assert broker.pending_closes()[0]['session'] == 'RTH'
+
+
+def test_eth_close_requires_sim_limit_and_persists_session(tmp_path):
+    from futu import Session
+
+    broker = adapter(tmp_path)
+    result = close(broker, session='ETH', limit_price=100, limit_timeout_s=0)
+    assert not result['success']
+    assert broker._sim_ctx.orders[0]['session'] == Session.ETH
+    assert broker.pending_closes()[0]['session'] == 'ETH'
+
+
+def test_eth_close_preserves_extended_hours_broker_remark_prefix(tmp_path):
+    broker = adapter(tmp_path)
+    result = broker.close_position(
+        'US.TEST', 10, 'LONG', limit_price=100, limit_timeout_s=0, session='ETH',
+        exit_owner=owner(),
+        exit_decision={
+            'reason': 'BREAKEVEN_LOCK',
+            'reference_price': 100,
+            'metadata': {'broker_remark_prefix': 'ext_exit_breakeven_lock'},
+        })
+    legs = broker._exit_lifecycle().ledger.legs(result['exit_intent_id'])
+    assert legs[0]['remark'].startswith('ext_exit_breakeven_lock')
+
+
+def test_eth_partial_terminal_fill_never_sends_market_remainder(tmp_path):
+    broker = adapter(tmp_path)
+    broker._sim_ctx.cancel_status = {'order_status': 'CANCELLED_PART', 'dealt_qty': 4,
+                                      'dealt_avg_price': 100}
+    result = close(broker, session='ETH', limit_price=100, limit_timeout_s=0)
+    assert not result['success'] and not result['order_filled']
+    assert result['exit_state'] == 'HELD'
+    assert result['error'] == 'exit_eth_partial_fill_held'
+    assert result['dealt_qty'] == 4
+    assert [order['qty'] for order in broker._sim_ctx.orders] == [10]
+
+
+@pytest.mark.parametrize('target_env,limit_price,expected_error', [
+    ('real', 100, 'exit_eth_requires_sim_limit'),
+    ('sim', 0, 'exit_eth_requires_sim_limit'),
+])
+def test_eth_close_rejects_real_or_market_semantics(tmp_path, target_env, limit_price, expected_error):
+    broker = adapter(tmp_path)
+    result = close(broker, target_env=target_env, session='ETH', limit_price=limit_price,
+                   limit_timeout_s=0)
+    assert not result['success']
+    assert result['error'] == expected_error
+    assert not broker._sim_ctx.orders
+    assert not broker.pending_closes()
+
+
+def test_existing_exit_ledger_migrates_session_to_rth(tmp_path):
+    from app.execution.exit_lifecycle import ExitLedger
+
+    path = tmp_path / 'legacy-exits.db'
+    with sqlite3.connect(path) as db:
+        db.execute('''CREATE TABLE exit_intents (
+            intent_id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
+            target_env TEXT NOT NULL, symbol TEXT NOT NULL, close_key TEXT NOT NULL,
+            direction TEXT NOT NULL, quantity REAL NOT NULL, owner_json TEXT NOT NULL,
+            decision_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'PENDING',
+            result_json TEXT, receipt_json TEXT, last_error TEXT NOT NULL DEFAULT '',
+            limit_price REAL NOT NULL, limit_timeout_s REAL NOT NULL,
+            broker_qty_before REAL, version INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(account_id, target_env, close_key))''')
+    ExitLedger(path)
+    with sqlite3.connect(path) as db:
+        columns = {row[1] for row in db.execute('PRAGMA table_info(exit_intents)')}
+        default = db.execute(
+            "SELECT dflt_value FROM pragma_table_info('exit_intents') WHERE name='session'"
+        ).fetchone()[0]
+    assert 'session' in columns
+    assert default == "'RTH'"
+
+
 def test_terminal_market_shortfall_is_held_not_replaced(tmp_path):
     broker = adapter(tmp_path)
     first = close(broker)
