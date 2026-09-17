@@ -64,6 +64,9 @@ SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: �
 #   止损保障: ①开盘 monitor_playbook_sim_exits 读 initial_sl 兜底 ②盘前 tighten 信号由 exit executor 平仓.
 ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "true").lower() == "true"
 AUDIT = ROOT / "data" / "extended_hours_entry_executions.jsonl"
+# 价格闸拦下的候选打点 (按**运行**聚合一行: n + 明细). 用户 2026-09-17 令: 回答
+#   "$5 闸到底挡掉了多少噪声票". 逐候选整行会膨胀(同票每 5 分钟重复出现) ⇒ 按运行聚合.
+PRICE_GATE_REJECTS = ROOT / "data" / "extended_hours_price_gate_rejects.jsonl"
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 LOCK = ROOT / "data" / "extended_hours_entry_state.lock"
 DB = ROOT / "data" / "ftseek_us.db"
@@ -169,6 +172,31 @@ def _opened_today_total(opened_today, today):
     跨日残留 key 必须忽略 (state 里会留历史日期的 key, 用 startswith 过滤)。
     """
     return sum(value for key, value in opened_today.items() if key.startswith(today))
+
+
+def _record_price_gate_rejects(session, rejects):
+    """价格闸拦下的候选打点 + 日志一行 (用户 2026-09-17 令: 量化"$5 闸挡掉多少噪声票").
+
+    按**运行**聚合: 一行 = 一次运行, 字段 `n` + `rejects` 明细 (symbol/price/change_pct/volume)。
+    这样既能按日求和(回答"挡了多少"), 又保留标的身份(回答"挡的是谁"), 且不会让 jsonl 因
+    同一只票每 5 分钟重复出现而膨胀。异常不得影响主流程。
+    """
+    if not rejects:
+        return
+    try:
+        PRICE_GATE_REJECTS.parent.mkdir(parents=True, exist_ok=True)
+        with PRICE_GATE_REJECTS.open("a") as f:
+            f.write(json.dumps({
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "session": session,
+                "n": len(rejects),
+                "rejects": rejects,
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    head = ", ".join(f"{r['symbol']} ${r['price']:g}" for r in rejects[:8])
+    more = f" (+{len(rejects) - 8})" if len(rejects) > 8 else ""
+    print(f"[ext_entry] 价格闸(<${MIN_PRICE:g}) 拦下 {len(rejects)} 只: {head}{more}")
 
 
 def _price_in_range(price):
@@ -406,11 +434,16 @@ def collect(session, dry=False):
         from futu import OpenQuoteContext
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
+        price_gate_rejects = []
         try:
             movers = _scan_movers(session, qctx)
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
-                if symbol in held or not _price_in_range(price):
+                if symbol in held:
+                    continue
+                if not _price_in_range(price):
+                    price_gate_rejects.append({"symbol": symbol, "price": price,
+                                               "change_pct": round(change_pct, 2), "volume": volume})
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     continue
@@ -423,6 +456,7 @@ def collect(session, dry=False):
                     "session": session, "change_pct": round(change_pct, 2),
                     "volume": volume, "earnings": earnings,
                 })
+            _record_price_gate_rejects(session, price_gate_rejects)
         finally:
             qctx.close()
         return results or [{"skip": "no_signal_passed_all_gates"}]
@@ -479,6 +513,7 @@ def collect(session, dry=False):
 
         held = _held_symbols()
         results = []
+        price_gate_rejects = []
         from futu import OpenQuoteContext
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
@@ -492,6 +527,8 @@ def collect(session, dry=False):
                 if symbol in held:
                     continue
                 if not _price_in_range(price):
+                    price_gate_rejects.append({"symbol": symbol, "price": price,
+                                               "change_pct": round(change_pct, 2), "volume": volume})
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     continue
@@ -534,6 +571,7 @@ def collect(session, dry=False):
                 _save_state(state)
                 if total_today >= MAX_PER_DAY:
                     break
+            _record_price_gate_rejects(session, price_gate_rejects)
         finally:
             qctx.close()
     return results or [{"skip": "no_signal_passed_all_gates"}]

@@ -366,13 +366,34 @@ def test_price_gate_blocks_penny_stocks_and_over_budget():
     assert entry_executor._price_in_range(5000.01) is False  # 超过单笔仓位, 连 1 股都买不起
 
 
-def test_collect_dry_drops_penny_candidate_before_signal(monkeypatch):
-    """方案A 端到端: 扫描出的仙股必须被价格闸挡掉, 不得进入候选 (实盘 CTNT/GIPR 教训)。"""
+def test_price_gate_reject_recording_is_per_run_aggregate(tmp_path, monkeypatch, capsys):
+    """打点一行 = 一次运行 (n + 明细), 供按日聚合"$5 闸挡掉多少噪声票" (用户 9/17 令)。"""
+    log = tmp_path / "rejects.jsonl"
+    monkeypatch.setattr(entry_executor, "PRICE_GATE_REJECTS", log)
+
+    entry_executor._record_price_gate_rejects("premarket", [])
+    assert not log.exists()  # 没有拦下 = 不打点, 不留噪声
+
+    entry_executor._record_price_gate_rejects("premarket", [
+        {"symbol": "US.CTNT", "price": 0.073, "change_pct": 75.06, "volume": 22167799.0},
+        {"symbol": "US.GIPR", "price": 0.435, "change_pct": 19.75, "volume": 318404.0},
+    ])
+
+    rec = json.loads(log.read_text().strip())
+    assert rec["n"] == 2 and rec["session"] == "premarket"
+    assert [r["symbol"] for r in rec["rejects"]] == ["US.CTNT", "US.GIPR"]
+    assert "价格闸" in capsys.readouterr().out
+
+
+def test_collect_dry_records_penny_candidates_blocked_by_price_gate(tmp_path, monkeypatch):
+    """方案A 端到端: 扫描出的仙股必须被价格闸挡掉, 不得进入候选, 且要留下打点 (实盘 CTNT/GIPR 教训)。"""
 
     class _FakeQuote:
         def close(self):
             pass
 
+    rejects_path = tmp_path / "rejects.jsonl"
+    monkeypatch.setattr(entry_executor, "PRICE_GATE_REJECTS", rejects_path)
     monkeypatch.setattr(entry_executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(entry_executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(entry_executor, "_held_symbols", lambda: [])
@@ -390,6 +411,8 @@ def test_collect_dry_drops_penny_candidate_before_signal(monkeypatch):
 
     assert [r["symbol"] for r in results] == ["US.BIGCO"]
     assert results[0]["qty"] == int(entry_executor.POSITION_USD / 42.0)
+    rec = json.loads(rejects_path.read_text().strip())
+    assert [r["symbol"] for r in rec["rejects"]] == ["US.CTNT", "US.GIPR"]  # 含原因明细
 
 
 @pytest.fixture()
