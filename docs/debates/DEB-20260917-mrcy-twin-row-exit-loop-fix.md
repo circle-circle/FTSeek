@@ -70,3 +70,16 @@
 - 受影响进程：`ftseek-us`（`app/playbook/*` 不走热重载，必须 `systemctl restart ftseek-us`）。
 - 回滚：`git revert` 本 commit；DB 侧无需回滚（已平的孪生行清账为审计留痕）。
 - 未连带提交：工作区中他 agent 的 WIP（`exit_lifecycle.py` R04 时段语义、`daily_review.py` 净口径去重等）保持未提交。
+
+## 7. 附录 A · 日报「归因未填充」误报 (第 4 类瑕疵, 同日修复)
+
+**症状**：日报 `improvement_suggestions` 每日固定产出「trade_attribution 记录存在但评分数据全空，请修复归因写入管线」。
+
+**取证**：
+- `trade_attribution` 表**停写于 2026-06-26**（223 行全部 `overall_score` 非空，9/16 当日 0 行）——平仓路径已改为写 `trade_records.metadata_json.attribution`（playbook 时代每笔必写，9/16 实测 `sources=trade_records.metadata`, `total_records=10`, `dimension_scores=[direction,duration,efficiency,entry,exit]`）。
+- `daily_review.py:1195` 的判据读 `attribution['data_available']` —— **该键 `_analyze_attribution` 从无处写入** ⇒ `not None` 恒真 ⇒ 只要有归因记录就报。
+- `review_loop.py::_check_attribution_empty` 读 `dims['attribution_learning']` —— **该维度在 report v2.0 的 dimensions 里根本不存在** ⇒ `{}` ⇒ 恒真（该规则已 2026-08-27 `enabled:False` 退休，故未外溢成 Issue，但判定逻辑仍是错的）。
+
+**修法（判定改读真实载体，双向可验）**：两处都改为「`total_records > 0` 且**未提取到任何带分数据**（`overall_scores`/`dimension_scores`/旧表五分/`slippage_values` 全空）才报」。
+
+**验证**：9/16 报告重生成 → `improvement_suggestions` 只剩「今日交易执行正常，继续保持」（断言 1 PASS）；`attribution_data` 实测有 10 记录 + 5 维评分（断言 2 PASS）；`IssueDetector.detect` 零 Issue（断言 3 PASS）；反向后（伪造 `{'total_records':5}` 无评分）→ 报告侧报、规则侧（临时启用 `enabled=True` 验证）报「归因数据未填充」，有评分时不报（断言 4/5 PASS）。

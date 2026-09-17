@@ -1193,9 +1193,18 @@ class DailyReviewGenerator:
             if water_level in ('WARNING', 'CRITICAL'):
                 suggestions.append(f"资金水位: {water_level}，触发风控警报")
         
-        # attribution 数据质量
-        if attribution.get('total_records', 0) > 0 and not attribution.get('data_available'):
-            suggestions.append("trade_attribution 记录存在但评分数据全空，请修复归因写入管线")
+        # attribution 数据质量 (2026-09-17 修: 旧条件读 attribution['data_available'] —
+        #   该键 _analyze_attribution 从无处写入 ⇒ `not None` 恒真, 只要当日有归因记录就误报
+        #   "评分数据全空, 请修复归因写入管线"; 实测 9/16 sources=trade_records.metadata 已产出
+        #   dimension_scores/direction_correct_rate。改按"是否真提取到任一带分数据"判定。
+        _attr_scored = bool(
+            attribution.get('overall_scores') or attribution.get('dimension_scores')
+            or attribution.get('signal_scores') or attribution.get('execution_scores')
+            or attribution.get('risk_scores') or attribution.get('timing_scores')
+            or attribution.get('slippage_values')
+        )
+        if attribution.get('total_records', 0) > 0 and not _attr_scored:
+            suggestions.append("当日归因记录存在但未提取到任何评分数据，请检查归因写入")
         
         if not suggestions:
             if not trades:

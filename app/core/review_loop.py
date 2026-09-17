@@ -294,15 +294,24 @@ class IssueDetector:
         return None
     
     def _check_attribution_empty(self, report, dims, summary, funnel, rejections, capital, pva) -> Optional[DetectedIssue]:
+        # 2026-09-17 修: 旧读 dims['attribution_learning'] — 该维度在 report v2.0 里**从不存在**
+        #   (dimensions 只有 signal_quality/voting_consistency/execution_quality/risk_compliance/...),
+        #   `dims.get(k, {})` 返回 {} ⇒ not {}.get('data_available') 恒真 ⇒ 每日误报"归因数据未填充"。
+        #   改读真实载体 attribution_data, 且只在"有记录但零评分"时才报。
         if report.get("report_version") == "2.0":
-            al = dims.get("attribution_learning", {})
-            if not al.get("data_available"):
+            attr = report.get("attribution_data") or {}
+            _scored = bool(
+                attr.get('overall_scores') or attr.get('dimension_scores')
+                or attr.get('signal_scores') or attr.get('execution_scores')
+                or attr.get('risk_scores') or attr.get('timing_scores')
+            )
+            if attr.get('total_records', 0) > 0 and not _scored:
                 return DetectedIssue(
                     category="attribution",
                     title="归因数据未填充",
-                    description="trade_attribution 记录存在但评分数据全空",
-                    evidence=al,
-                    suggested_action="修复归因写入管线"
+                    description="当日归因记录存在但未提取到任何评分数据",
+                    evidence=attr,
+                    suggested_action="检查归因写入 (metadata_json.attribution)"
                 )
         return None
     
