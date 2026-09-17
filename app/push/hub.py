@@ -31,6 +31,15 @@ from .health import HealthMonitor
 logger = logging.getLogger(__name__)
 
 
+def _is_test_symbol(msg: PushMessage) -> bool:
+    """Return True if the message's trade symbol is a test-only symbol."""
+    symbol = (msg.payload or {}).get("symbol")
+    if not isinstance(symbol, str):
+        return False
+    normalized = symbol.strip().upper()
+    return normalized in {"TEST", "US.TEST"} or normalized.endswith(".TEST")
+
+
 class PushHub:
     """统一推送中枢 (单例)"""
 
@@ -91,6 +100,12 @@ class PushHub:
         - sync=True: 绕过异步与去重/聚合, 同步立即送达并返回真实结果
           (用于关键必达推送, 如盘前指令; 调用方据此决定是否重试)
         """
+        if _is_test_symbol(msg):
+            logger.warning(
+                f"[PushHub·test-symbol] 拦截测试标的推送: "
+                f"{(msg.payload or {}).get('symbol')} title={msg.title}"
+            )
+            return True
         try:
             dedup_key = msg.auto_dedup_key()
             if not sync and not self._dedup.should_send(dedup_key):

@@ -78,6 +78,40 @@ def test_trade_exit_large_gain_immediate():
     assert not msg.is_aggregable()
 
 
+@pytest.mark.parametrize("symbol", ["US.TEST", "TEST", "US.FAKE.TEST"])
+def test_hub_blocks_test_symbols(symbol):
+    """测试标的一律不进真实推送通道。"""
+    ch = MockChannel()
+    hub = _make_hub([ch])
+    msg = trade_exit(symbol, "LONG", 1.0, "TEST")
+
+    assert hub.push(msg) is True
+    assert ch.sent == []
+    hub.stop()
+
+
+def test_hub_blocks_test_symbol_entry():
+    """开仓通知同样不得透出测试标的。"""
+    ch = MockChannel()
+    hub = _make_hub([ch])
+    msg = trade_entry("US.TEST", "LONG", 1, 10.0, strategy="main")
+
+    assert hub.push(msg) is True
+    assert ch.sent == []
+    hub.stop()
+
+
+def test_hub_allows_normal_symbols():
+    """正常标的仍照常推送，防止测试过滤误伤。"""
+    ch = MockChannel()
+    hub = _make_hub([ch])
+    msg = trade_exit("US.ARM", "LONG", 1.0, "TP_HIT")
+
+    assert hub.push(msg) is True
+    assert len(ch.sent) == 1
+    hub.stop()
+
+
 def test_critical_alert_helper():
     msg = critical_alert("RISK_OFF", "回撤 5%", dedup_key="risk_off")
     assert msg.level == Level.CRITICAL

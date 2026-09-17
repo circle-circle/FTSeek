@@ -1105,3 +1105,18 @@ adaptive trailing 退出臂（caps = 1.2 / 2.5 / 4.0 / 99 即"无上限"；公�
 **回滚**：代码 `git revert`（5 处）；数据用上述备份恢复。
 **并行注**：`position_sync.py` 有他 agent 未提交 WIP ⇒ 提交时用 `hash-object`+`update-index --cacheinfo`
 只注入本行，**不代提交其 WIP**。
+
+### 23.11 测试标的推送硬闸（2026-09-18 用户令「需要」）
+
+**问题**：`US.TEST` 属于测试虚拟标的，不应进入真实推送通道；此前 `trade_exit`/`trade_entry`
+只做格式化，不做测试标的过滤，导致测试数据有机会透出为真实平仓/开仓通知。
+
+**改动**：
+- `app/push/hub.py` 在统一出口 `PushHub.push()` 增加测试标的硬闸：
+  `TEST`、`US.TEST`、以及任何以 `.TEST` 结尾的标的一律拦截，不进 DingTalk/飞书/flag 通道。
+- 拦截记 `WARNING`，返回 `True`（语义 = 已处理/已抑制，不触发上层失败重试）。
+- 新增回归测试：开仓与平仓两条路径均不得透出 `US.TEST`；正常标的仍照常推送。
+- 清理 `data/trail_state.db` 中残留的 `US.TEST` 快照行，清理前已备份：
+  `data/backups/trail_state_before_us_test_cleanup_20260918_073650.db`。
+
+**验证**：`tests/coordinator/test_push_hub.py` 24 passed；服务重启后 `ftseek-us.service` active。
