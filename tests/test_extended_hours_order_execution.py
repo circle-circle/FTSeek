@@ -246,6 +246,67 @@ def test_entry_reconciliation_restores_attempt_state_from_active_broker_order():
     assert attempt["order_id"] == "8185070"
 
 
+def test_entry_reconciliation_ignores_prior_date_terminal_order():
+    """回归 (2026-09-17 Hermes 复查实证): 跨日已撤旧单**不得**写 {today}:{symbol} attempt.
+
+    病灶: 曾把 ET 9/16 23:14 的旧单记进 9/17 → 采集循环 `if attempt_key in attempts: continue`
+    使该标的被静默永久跳过 (实测 US.NOK)。create_time 不可解析时同理 (宁可漏记不可误封锁)。
+    """
+    context = FakeTradeContext(rows=[
+        {"order_id": "8184987", "code": "US.NOK", "order_status": "CANCELLED_ALL",
+         "qty": 1, "dealt_qty": 0, "dealt_avg_price": 0, "price": 10.4,
+         "remark": "ext_entry", "create_time": "2026-09-16 23:14:45"},
+        {"order_id": "8184000", "code": "US.FOO", "order_status": "CANCELLED_ALL",
+         "qty": 1, "dealt_qty": 0, "dealt_avg_price": 0, "price": 5.0,
+         "remark": "ext_entry", "create_time": ""},
+    ])
+    state = {"version": 2, "opened_today": {}, "attempts": {}}
+
+    active_orders, conflicts = entry_executor._reconcile_broker_entry_orders(
+        context, "SIMULATE", 19930823, "premarket",
+        state=state, today="2026-09-17",
+    )
+
+    assert active_orders == []
+    assert conflicts == []
+    assert state["attempts"] == {}
+
+
+def test_entry_reconciliation_keeps_same_date_terminal_attempt():
+    """同一意图的另一面: **当日**已撤单仍要记 attempt (Codex §13 崩溃恢复意图不得被削弱)。"""
+    context = FakeTradeContext(rows=[
+        {"order_id": "8185069", "code": "US.MEDS", "order_status": "CANCELLED_ALL",
+         "qty": 1237, "dealt_qty": 0, "dealt_avg_price": 0, "price": 4.04,
+         "remark": "ext_entry", "create_time": "2026-09-17 00:06:31"},
+    ])
+    state = {"version": 2, "opened_today": {}, "attempts": {}}
+
+    entry_executor._reconcile_broker_entry_orders(
+        context, "SIMULATE", 19930823, "premarket",
+        state=state, today="2026-09-17",
+    )
+
+    assert state["attempts"]["2026-09-17:US.MEDS"]["status"] == "failed"
+
+
+def test_entry_reconciliation_active_order_still_blocks_across_dates():
+    """活单**无条件**计入 active_orders (拦住新开仓) — 与订单日期无关 (孤儿活单先例)。"""
+    context = FakeTradeContext(rows=[
+        {"order_id": "8185070", "code": "US.TEST", "order_status": "SUBMITTED",
+         "qty": 100, "dealt_qty": 0, "dealt_avg_price": 0, "price": 10.0,
+         "remark": "ext_entry", "create_time": "2026-09-16 23:00:00"},
+    ])
+    state = {"version": 2, "opened_today": {}, "attempts": {}}
+
+    active_orders, _ = entry_executor._reconcile_broker_entry_orders(
+        context, "SIMULATE", 19930823, "premarket",
+        state=state, today="2026-09-17",
+    )
+
+    assert [o["order_id"] for o in active_orders] == ["8185070"]
+    assert state["attempts"] == {}
+
+
 @pytest.fixture()
 def exit_environment(tmp_path, monkeypatch):
     db_path = tmp_path / "exit.db"

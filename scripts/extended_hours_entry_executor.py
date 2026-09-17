@@ -208,6 +208,19 @@ def _open_trade_context():
     )
 
 
+def _order_et_date(create_time):
+    """broker 订单 create_time → ET 日期串.
+
+    2026-09-17 实测钉死时区: 订单 8184987 的 broker create_time = '2026-09-16 23:14:45',
+    对应审计 jsonl 的 UTC '2026-09-17T03:16:16Z' → 两者相差 4h15m ≈ ET(-4) 语义, 故 create_time 是 **ET**。
+    解析失败返回 "" ⇒ 视为非当日 (绝不写 attempt, 宁可漏记不可误封锁)。
+    """
+    try:
+        return datetime.strptime(str(create_time).strip()[:19], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
 def _order_session(row, fallback_session):
     create_time = row.get("create_time", "")
     try:
@@ -236,8 +249,15 @@ def _reconcile_broker_entry_orders(
     active_orders = []
     conflicts = []
     for row in rows:
+        # 2026-09-17 修复 (Hermes 复查实证): 跨日旧单不得写 {today}:{symbol} attempt.
+        #   病灶: 本函数此前对**所有** remark=ext_entry 的历史单无条件写当日 attempt,
+        #   而采集循环 431 行 `if attempt_key in attempts: continue` ⇒ 只要该标的历史上被下过
+        #   ext_entry 单, 今天就被**静默跳过**(实测 US.NOK 因 ET 9/16 23:14 的旧测试单在 9/17 被封锁,
+        #   且因每日重复回填而永久封锁 = 供给静默饿死). 修复: 只看订单自身 ET 日期是否为当日.
+        #   活动单仍**无条件**计入 active_orders — 活单本来就该拦住新开仓, 与日期无关.
+        row_is_today = _order_et_date(row.get("create_time")) == today
         attempt = None
-        if isinstance(state, dict) and today:
+        if row_is_today and isinstance(state, dict) and today:
             attempts = state.setdefault("attempts", {})
             attempt_key = f"{today}:{row['symbol']}"
             attempt = attempts.setdefault(attempt_key, {})
@@ -261,6 +281,12 @@ def _reconcile_broker_entry_orders(
                     "filled_qty": row["filled_qty"],
                 }
             )
+            continue
+        if not row_is_today:
+            # 跨日旧单: 不写 attempt(防静默封锁), 也不按今日回填建仓(entry_time 会是错的).
+            #   本链路未成交单 90s 内即撤, 正常不会有跨日成交; 真出现则只留痕, 由人工处置.
+            print(f"[ext_entry] 对账跳过跨日旧单: {row['symbol']} {row['order_id']} "
+                  f"status={row['status']} create_time={row.get('create_time')}")
             continue
         if row["filled_qty"] <= 0 or row["avg_fill_price"] <= 0:
             if attempt is not None:

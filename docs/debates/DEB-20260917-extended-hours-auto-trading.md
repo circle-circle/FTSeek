@@ -298,3 +298,15 @@
 
 - 未撤/未改 Codex 的其它在途产物（`cutover_preflight` 等属另一工作流）。
 - `settle_extended_hours.py` 的 `SOURCES` 仍列已退役的 momentum 线（恒空不报错），待随台账清理一并收敛。
+
+### 14.5 复查中发现的额外缺陷 + 已修（Codex §13 未覆盖，用户裁「需要」）
+
+**缺陷（静默供给饿死）**：`_reconcile_broker_entry_orders` 对**所有** `remark=ext_entry` 的 broker 单无条件写 `{today}:{symbol}` attempt，**不按订单自身日期过滤**；而采集循环 `if attempt_key in attempts: continue` ⇒ 历史上被下过 ext_entry 单的标的，此后**每天**被静默跳过。
+
+**实证（自备 state dict，未碰生产 state 文件）**：修复前对账后今日 attempts 含 `2026-09-17:US.NOK` — 来源是 **ET 9/16 23:14** 的旧测试单 `8184987`；`active_orders=[]`。
+
+**修复**：新增 `_order_et_date()`（broker `create_time` 时区实测钉死为 **ET**：8184987 建单 ET 9/16 23:14 ↔ 审计 jsonl UTC 03:16）；对账仅对"订单自身 ET 日期 == 当日"的行写 attempt。**活动单仍无条件计入 `active_orders`**（活单本就该拦住新开仓，与日期无关 — 孤儿活单先例）。跨日旧单只 print 留痕，不写 attempt、不按今日回填建仓。
+
+**验证**：`pytest` **19 passed**（新增 3 测试：跨日不写 attempt / 当日仍写 `failed` / 跨日活单仍拦）；真实 broker 只读复验 → attempts = `{2026-09-17:US.MEDS, 2026-09-17:US.TEST}`（两者确为 ET 9/17 当日建单），**US.NOK 不再被封锁**。
+
+**边界（如实声明）**：跨日**已成交**且本地无行的单不再回填建仓（避免写入错误 `entry_time`），只留痕交人工处置 — 本链路未成交单 90s 内即撤，正常不出现该情形。
