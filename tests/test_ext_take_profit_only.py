@@ -6,6 +6,7 @@
 """
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess as _sp
 import sys
@@ -125,3 +126,39 @@ def test_entry_switch_off_blocks_sim_orders(monkeypatch):
     out = EE.collect("premarket", dry=False)
     assert out and out[0].get("skip") == "simulate_stop_unsupported_fail_closed"
     assert out[0].get("ok") is False
+
+
+@pytest.mark.parametrize("module", [PM, AH])
+def test_parent_timeout_always_covers_exit_limit_timeout(monkeypatch, module):
+    """2026-09-18 R2 修正: 父进程上限必须显著大于子进程限价等待, 且旧值 90 是空操作.
+
+    原实现 max(90, t+40) 在 t=20 (默认) 时恒等于 90 = 改动前的硬编码值。
+    """
+    monkeypatch.setenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20")
+    assert module._executor_timeout() == 180.0          # 不再是 90 (空操作)
+    assert module._executor_timeout() > 90.0
+
+    # env 调大子进程限价等待时, 父进程上限必须跟着涨 (旧式 max(90,..) 在 t>50 才动)
+    monkeypatch.setenv("EXT_EXIT_LIMIT_TIMEOUT_S", "120")
+    assert module._executor_timeout() == 210.0
+
+    monkeypatch.setenv("EXT_EXIT_LIMIT_TIMEOUT_S", "400")
+    assert module._executor_timeout() == 490.0
+    assert module._executor_timeout() > float(os.environ["EXT_EXIT_LIMIT_TIMEOUT_S"])
+
+
+def test_timeout_chain_is_monotonic(monkeypatch):
+    """链条单调性: cron(等待 shadow) > shadow(等待 exit_executor) > 子进程限价等待.
+
+    2026-09-18 R2 实锤的反面教训: 只把 shadow 从 90 抬到 180 而不动 cron 的 120,
+    cron 会先杀 shadow ⇒ 孙进程仍在跑 ⇒ 孤儿单 + 零证据, 比不改更糟。
+    """
+    import inspect
+    import scripts.extended_hours_exit_cron as XC
+
+    monkeypatch.setenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20")
+    child_limit = float(os.environ["EXT_EXIT_LIMIT_TIMEOUT_S"])
+    shadow = min(PM._executor_timeout(), AH._executor_timeout())
+    cron = inspect.signature(XC.run_once).parameters["timeout_s"].default
+
+    assert child_limit < shadow < cron, f"链条断裂: child={child_limit} shadow={shadow} cron={cron}"

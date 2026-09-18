@@ -125,6 +125,23 @@ def _now_et_hhmm() -> int:
     return n.hour * 100 + n.minute
 
 
+def _executor_timeout() -> float:
+    """盘前/盘后 shadow 等待 exit_executor 子进程的上限 (秒).
+
+    2026-09-18 修正 (Hermes 复核 §23 R2): 原 `max(90.0, t + 40.0)` 在 t=20 时
+    恒等于 90.0 = 改动前的硬编码值 ⇒ **空操作**; 而实测该子进程确实 >90s 才被杀
+    (logs/premarket_exit_shadow.log-20260918, US.CRM 09:48 ET 那轮), 失败模式原样保留。
+    真实链条: 子进程内部限价等待 20s (env EXT_EXIT_LIMIT_TIMEOUT_S,
+    extended_hours_exit_executor.py) + 连接/撤单/终态确认, 故父进程上限必须
+    显著大于它。现取 max(180, t + 90) = 子限价等待 + 90s 余量。
+    ⚠️ 与 extended_hours_exit_cron.py 的 collector 上限是**同一条链**, 改这里必须
+    同步改那里 (cron 240 > shadow 180 > 子限价 20), 否则 cron 会先杀 shadow,
+    留下仍在跑的孙进程 ⇒ 孤儿单 + 零证据, 比不改更糟。
+    """
+    limit_timeout = float(os.getenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20"))
+    return max(180.0, limit_timeout + 90.0)
+
+
 def _is_trading_day() -> bool:
     try:
         r = subprocess.run(
@@ -314,14 +331,22 @@ def collect(dry: bool) -> int:
                          "--symbol", symbol, "--direction", direction, "--qty", str(qty),
                          "--price", str(executor_price), "--reason", action,
                          "--session", ("next_open" if action == "next_open_exit" else "premarket")],
-                        capture_output=True, text=True, timeout=90)
+                        capture_output=True, text=True, timeout=_executor_timeout())
                     _tail = ((_proc.stdout or "")[-300:] + " | " + (_proc.stderr or "")[-300:]).strip()
                     if _proc.returncode != 0:
                         print(f"[shadow_exit] {symbol} {action} exit_executor rc={_proc.returncode} :: {_tail}")
                     else:
                         print(f"[shadow_exit] {symbol} {action} exit_executor ok :: {_tail[-200:]}")
                 except Exception as _exc:
-                    print(f"[shadow_exit] {symbol} {action} exit_executor 异常: {type(_exc).__name__}: {_exc}")
+                    # 2026-09-18 (R2 修正): 超时时子进程被 kill, 其**部分 stdout/stderr**
+                    #   是"它走到哪一步"的唯一证据 (下单了吗/撤单确认了吗)。原实现只打
+                    #   异常字符串 ⇒ 复核 CRM 那轮 >90s 被杀时无从判断, 只能靠时间吻合度猜。
+                    _partial = ""
+                    if isinstance(_exc, _sp.TimeoutExpired):
+                        _partial = (" | 子进程残留输出: " + (
+                            (_exc.stdout or "")[-300:] + " " + (_exc.stderr or "")[-300:]).strip())
+                    print(f"[shadow_exit] {symbol} {action} exit_executor 异常: "
+                          f"{type(_exc).__name__}: {_exc}{_partial}")
         else:
             pnl_pct, pnl_usd, action = None, None, "no_executable_quote"
         # 距 pre_high 回撤幅度 (spike 可持续性指标)

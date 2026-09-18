@@ -50,7 +50,16 @@ def get_exit_cron_session(now=None):
     return "next_open" if is_next_open_window(now) else None
 
 
-def run_once(dry=False, timeout_s=120, now=None):
+def run_once(dry=False, timeout_s=240, now=None):
+    """单轮收集器 (每 1 分钟由 cron 触发, flock 防叠加).
+
+    timeout_s = 等待 shadow collector 子进程的上限。2026-09-18 (R2) 从 120 → 240:
+    shadow 内部等 exit_executor 的上限已是 180s (见 premarket/afterhours_exit_shadow.
+    _executor_timeout), 若外层仍 120 ⇒ cron 会先杀 shadow, 而 shadow 被杀时它启动的
+    孙进程仍在跑 ⇒ 孤儿单 + 本地零证据 (比不改更糟)。链条必须单调:
+    cron 240 > shadow 180 > 子进程限价等待 20s。
+    240 的构成 (如实): 180 (容忍一个卡住的子进程走完撤单/终态确认) + 60 (同轮其余标的正常返回)。
+    """
     session = get_exit_cron_session(now)
     command = collector_command(session)
     if session is None or command is None:
@@ -91,7 +100,8 @@ def run_once(dry=False, timeout_s=120, now=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true")
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--timeout", type=int, default=240,
+                        help="等待 shadow collector 的上限(秒); 必须 > shadow 的 _executor_timeout()")
     args = parser.parse_args()
     result = run_once(args.dry, args.timeout)
     print(json.dumps(result, ensure_ascii=False))

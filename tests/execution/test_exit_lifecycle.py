@@ -1,4 +1,5 @@
 """Isolated broker exit lifecycle contracts (shares, absolute USD, epoch seconds)."""
+import logging
 import socket
 import sqlite3
 import threading
@@ -435,13 +436,15 @@ def test_position_discrepancy_holds_without_ghost_close(tmp_path, qty):
     assert 'broker_no_position' not in result['error']
 
 
-def test_legacy_active_exit_blocks_without_cancelling_other_orders(tmp_path):
+def test_legacy_active_exit_blocks_without_cancelling_other_orders(tmp_path, caplog):
     broker = adapter(tmp_path)
     broker._sim_ctx.rows['legacy'] = {'code': 'US.TEST', 'qty': 10, 'trd_side': 'SELL',
                                      'order_status': 'SUBMITTED', 'order_id': 'legacy'}
-    result = close(broker)
+    with caplog.at_level(logging.WARNING, logger='app.execution.exit_lifecycle'):
+        result = close(broker)
     assert result['error'] == 'exit_unowned_active_order'
     assert not broker._sim_ctx.orders and not broker._sim_ctx.cancel_calls
+    assert 'order_id=legacy' in caplog.text
 
 
 def test_result_pending_booking_replay_and_new_owner_isolation(tmp_path):

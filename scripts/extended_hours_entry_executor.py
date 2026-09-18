@@ -13,7 +13,8 @@ dry 模式仅输出候选，不写 state、不下单。
 
 护栏 (开仓风险高于锁盈, 更严):
   - 单笔仓位 $5000 (用户 9/17 拍板; 高低价股都覆盖)
-  - 每日盘前+盘后合计 ≤MAX_PER_DAY 笔新仓 (2026-09-17 用户裁 2→5, 观察期; 防连环开仓)
+  - 每日盘前+盘后合计 ≤MAX_PER_DAY 笔新仓 (2026-09-18 观察期=3; 防连环开仓)
+  - 下单前盘口硬闸: spread/买一深度/买一漂移/预估往返费用 (数据缺失 fail-closed)
   - SIM 无券商 STOP/STOP_LIMIT 时真实开仓 fail-closed
   - REAL 环境未授权, 一律拒绝
   - 每标的每日一次 attempt, 失败不消耗开仓配额
@@ -48,11 +49,12 @@ except Exception:
 
 # ── 用户 9/17 拍板参数 ──
 POSITION_USD = 5000        # 单笔仓位
-MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "5"))
+MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "3"))
 # ↑ 盘前+盘后**合计**每日新仓上限. 2026-09-17 用户裁: 2 → 5 (原话"配额可以提升到5，再观察").
 #   动机: 延长时段机会面比预期宽(官方榜 top50), 2 笔在盘前窗早段就被用尽 ⇒ 当晚真催化票开不出来;
 #   叠加同日上线的价格下限闸($5 挡仙股)后, 单笔噪声风险已降, 放宽数量换取样本速度。
-#   暴露上限 = 5 × POSITION_USD($5000) = $25k (SIM 总资产 ~$99k)。回滚: env EXT_ENTRY_MAX_PER_DAY=2。
+#   2026-09-18 观察期: env/代码默认均压到 3, 暴露上限 = 3 × POSITION_USD($5000)。
+#   回滚: env EXT_ENTRY_MAX_PER_DAY=2 或 EXT_ENTRY_ALLOW_SIM=false。
 # 盘前涨幅门槛。2026-09-17 回放: **边际跳空档 (涨幅 <3%) 是唯一负档** ——
 #   现役口径 n=46: <3% 档 均值 -0.65%/WR 42.9%/最差 -6.86%; ≥3% 档 均值 +1.41%(含6-10%档 +3.27%)。
 #   放宽口径 n=161 同向复现: <3% 档 均值 -0.33%/WR 39.4%/最差 -8.93%; ≥3% 档 均值 +1.32%。
@@ -62,6 +64,10 @@ MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "5"))
 ENTRY_CHANGE_PCT = float(os.getenv("EXT_ENTRY_CHANGE_PCT", "2.0"))
 MIN_VOLUME = 200000        # 盘前量门槛
 MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
+MAX_SPREAD_PCT = float(os.getenv("EXT_ENTRY_MAX_SPREAD_PCT", "1.0"))
+MAX_ROUND_TRIP_FEE_PCT = float(os.getenv("EXT_ENTRY_MAX_ROUND_TRIP_FEE_PCT", "1.0"))
+MAX_PRICE_DRIFT_PCT = float(os.getenv("EXT_ENTRY_MAX_PRICE_DRIFT_PCT", "0.5"))
+MIN_ASK_DEPTH_RATIO = float(os.getenv("EXT_ENTRY_MIN_ASK_DEPTH_RATIO", "1.0"))
 # ↑ 价格下限闸 (2026-09-17 用户裁方案A): 挡 $5 以下仙股/妖股.
 #   实证: CTNT $0.073(+75.06%, 量2217万, Finnhub超预期+105%) 与 GIPR $0.435(+19.75%)
 #   曾透过"事件+涨幅+量"三闸 —— 仙股的第1闸(超预期>0)是季末噪声, 第2/3闸对妖股天然放行。
@@ -83,11 +89,17 @@ STOP_PCT = -5.0            # 止损距离 (%) — 开盘写入 initial_sl, 由�
 SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: 官方榜 top50, 旧为15只活跃股)
 # 2026-09-17 用户裁方案1: SIM 无券商STOP → 接受规则引擎兜底, 开关恢复下单.
 #   止损保障: ①开盘 monitor_playbook_sim_exits 读 initial_sl 兜底 ②盘前 tighten 信号由 exit executor 平仓.
-ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "true").lower() == "true"
+# 2026-09-18 (Hermes §23 R8): 代码默认由 "true" 翻为 **"false"** (fail-closed) —
+#   原默认是 fail-open: `.env.us` 缺失/未加载/键名写错 = **静默开仓**。开关现在真的在下单,
+#   故默认方向必须偏安全侧 (宁不交易, 不乱交易)。当前行为不变: `.env.us:135` 显式
+#   `EXT_ENTRY_ALLOW_SIM=true` 且 load_dotenv 先于本行执行 ⇒ 观察期照常开仓;
+#   回滚 = 把本行默认改回 "true"。
+ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"
 AUDIT = ROOT / "data" / "extended_hours_entry_executions.jsonl"
 # 价格闸拦下的候选打点 (按**运行**聚合一行: n + 明细). 用户 2026-09-17 令: 回答
 #   "$5 闸到底挡掉了多少噪声票". 逐候选整行会膨胀(同票每 5 分钟重复出现) ⇒ 按运行聚合.
 PRICE_GATE_REJECTS = ROOT / "data" / "extended_hours_price_gate_rejects.jsonl"
+PRETRADE_GATE_REJECTS = ROOT / "data" / "extended_hours_pretrade_gate_rejects.jsonl"
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 LOCK = ROOT / "data" / "extended_hours_entry_state.lock"
 DB = ROOT / "data" / "ftseek_us.db"
@@ -228,6 +240,88 @@ def _price_in_range(price):
     `price > 0` 在 MIN_PRICE 被 env 调成 0 时仍是必要的兜底。
     """
     return price > 0 and MIN_PRICE <= price <= POSITION_USD
+
+
+def _snapshot_number(row, key):
+    try:
+        return float(row.get(key, 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _liquidity_quote(qctx, symbol):
+    from futu import RET_OK
+    try:
+        ret, snapshot = qctx.get_market_snapshot([symbol])
+    except Exception:
+        return None
+    if ret != RET_OK or snapshot is None or not hasattr(snapshot, "iloc") or snapshot.empty:
+        return None
+    row = snapshot.iloc[0]
+    bid = _snapshot_number(row, "bid_price")
+    ask = _snapshot_number(row, "ask_price")
+    ask_volume = _snapshot_number(row, "ask_vol")
+    if bid <= 0 or ask <= 0 or ask < bid:
+        return None
+    spread_pct = (ask - bid) / ((bid + ask) / 2.0) * 100.0
+    return {
+        "bid": bid,
+        "ask": ask,
+        "ask_volume": ask_volume,
+        "spread_pct": round(spread_pct, 4),
+    }
+
+
+def _rounded_order_price(price):
+    if price <= 0:
+        return 0.0
+    return round(price, 3 if price < 1.0 else 2)
+
+
+def _pretrade_gate(decision_price, qty, quote, trade_date):
+    if not quote:
+        return None, "quote_missing"
+    ask = float(quote["ask"])
+    spread_pct = float(quote["spread_pct"])
+    if spread_pct > MAX_SPREAD_PCT:
+        return None, "spread_too_wide"
+    if decision_price > 0 and ask > decision_price * (1.0 + MAX_PRICE_DRIFT_PCT / 100.0):
+        return None, "price_drift_too_high"
+    if qty > 0 and float(quote["ask_volume"]) < qty * MIN_ASK_DEPTH_RATIO:
+        return None, "insufficient_ask_depth"
+
+    from app.execution.fee_model import estimate_round_trip
+    fee = estimate_round_trip(qty, ask, ask, "LONG", trade_date)
+    notional = qty * ask
+    fee_pct = fee["total"] / notional * 100.0 if notional > 0 else float("inf")
+    if fee_pct > MAX_ROUND_TRIP_FEE_PCT:
+        return None, "round_trip_fee_too_high"
+
+    return {
+        "order_price": _rounded_order_price(ask),
+        "bid": quote["bid"],
+        "ask": ask,
+        "ask_volume": float(quote["ask_volume"]),
+        "spread_pct": spread_pct,
+        "round_trip_fee_est": fee["total"],
+        "round_trip_fee_pct": round(fee_pct, 4),
+    }, None
+
+
+def _record_pretrade_gate_rejects(session, rejects):
+    if not rejects:
+        return
+    try:
+        PRETRADE_GATE_REJECTS.parent.mkdir(parents=True, exist_ok=True)
+        with PRETRADE_GATE_REJECTS.open("a") as handle:
+            handle.write(json.dumps({
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "session": session,
+                "n": len(rejects),
+                "rejects": rejects,
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def _scan_movers(session, qctx):
@@ -509,7 +603,7 @@ def _reconcile_broker_entry_orders(
                 attempt["avg_fill_price"] = row["avg_fill_price"]
             continue
         try:
-            _write_open_position(
+            position_id = _write_open_position(
                 symbol=row["symbol"],
                 qty=row["filled_qty"],
                 entry_px=row["avg_fill_price"],
@@ -520,6 +614,13 @@ def _reconcile_broker_entry_orders(
                 vol=0.0,
                 buy_order_id=row["order_id"],
             )
+            if position_id and isinstance(state, dict) and today:
+                reconciled_session = _order_session(row, fallback_session)
+                state.setdefault("opened_today", {})
+                reconciled_key = f"{today}:{reconciled_session}"
+                state["opened_today"][reconciled_key] = (
+                    state["opened_today"].get(reconciled_key, 0) + 1
+                )
         except Exception as exc:
             if attempt is not None:
                 attempt["status"] = "reconcile_conflict"
@@ -570,6 +671,8 @@ def collect(session, dry=False):
     if dry:
         held = _held_symbols()
         results = []
+        pretrade_rejects = []
+        today = _today_et()
         from futu import OpenQuoteContext
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
@@ -589,13 +692,29 @@ def collect(session, dry=False):
                 earnings = _earnings_surprise(symbol)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
                     continue
+                qty = int(POSITION_USD / price)
+                quote = _liquidity_quote(qctx, symbol)
+                gate, reject_reason = _pretrade_gate(price, qty, quote, today)
+                if gate is None:
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "qty": qty,
+                        "reason": reject_reason,
+                        "quote": quote,
+                    })
+                    continue
+                order_price = gate["order_price"]
+                qty = int(POSITION_USD / order_price)
                 results.append({
                     "ok": True, "dry": True, "symbol": symbol,
-                    "qty": int(POSITION_USD / price), "price": price,
+                    "qty": qty, "price": order_price, "decision_price": price,
                     "session": session, "change_pct": round(change_pct, 2),
                     "volume": volume, "earnings": earnings,
+                    "pretrade": gate,
                 })
             _record_price_gate_rejects(session, price_gate_rejects)
+            _record_pretrade_gate_rejects(session, pretrade_rejects)
         finally:
             qctx.close()
         return results or [{"skip": "no_signal_passed_all_gates"}]
@@ -653,6 +772,7 @@ def collect(session, dry=False):
         held = _held_symbols()
         results = []
         price_gate_rejects = []
+        pretrade_rejects = []
         from futu import OpenQuoteContext
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
@@ -676,13 +796,28 @@ def collect(session, dry=False):
                     continue
 
                 qty = int(POSITION_USD / price)
+                quote = _liquidity_quote(qctx, symbol)
+                gate, reject_reason = _pretrade_gate(price, qty, quote, today)
+                if gate is None:
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "qty": qty,
+                        "reason": reject_reason,
+                        "quote": quote,
+                    })
+                    continue
+                order_price = gate["order_price"]
+                qty = int(POSITION_USD / order_price)
                 attempts[attempt_key] = {
                     "status": "reserved", "session": session, "symbol": symbol,
                     "trade_date": today, "reserved_at": datetime.utcnow().isoformat() + "Z",
                 }
                 _save_state(state)
                 try:
-                    result = _execute(symbol, qty, price, session, change_pct, volume, earnings, dry)
+                    result = _execute(symbol, qty, order_price, session, change_pct, volume, earnings, dry)
+                    result["decision_price"] = price
+                    result["pretrade"] = gate
                 except Exception as exc:
                     result = {
                         "ok": False, "symbol": symbol, "session": session,
@@ -711,6 +846,7 @@ def collect(session, dry=False):
                 if total_today >= MAX_PER_DAY:
                     break
             _record_price_gate_rejects(session, price_gate_rejects)
+            _record_pretrade_gate_rejects(session, pretrade_rejects)
         finally:
             qctx.close()
     return results or [{"skip": "no_signal_passed_all_gates"}]

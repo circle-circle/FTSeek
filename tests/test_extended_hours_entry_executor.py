@@ -13,11 +13,33 @@ class FakeQuoteContext:
     def close(self):
         pass
 
+    def get_market_snapshot(self, symbols):
+        class Row:
+            @staticmethod
+            def get(key, default=0):
+                return {
+                    "bid_price": 9.99,
+                    "ask_price": 10.01,
+                    "ask_vol": 1_000,
+                }.get(key, default)
+
+        class Iloc:
+            def __getitem__(self, _index):
+                return Row()
+
+        class Snapshot:
+            empty = False
+            iloc = Iloc()
+
+        return 0, Snapshot()
+
 
 @pytest.fixture()
 def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "STATE", tmp_path / "state.json")
     monkeypatch.setattr(executor, "LOCK", tmp_path / "state.lock")
+    monkeypatch.setattr(executor, "PRICE_GATE_REJECTS", tmp_path / "price-rejects.jsonl")
+    monkeypatch.setattr(executor, "PRETRADE_GATE_REJECTS", tmp_path / "pretrade-rejects.jsonl")
 
 
 def test_collect_refuses_real_order_when_sim_disabled_via_switch(
@@ -70,9 +92,49 @@ def test_dry_scan_does_not_write_state_and_caps_position_notional(
 
     assert len(result) == 1
     assert result[0]["symbol"] == "US.TEST"
-    assert result[0]["qty"] == 500
+    assert result[0]["qty"] == 499
+    assert result[0]["price"] == 10.01
+    assert result[0]["decision_price"] == 10.0
+    assert result[0]["pretrade"]["spread_pct"] == 0.2
     assert result[0]["dry"] is True
     assert not executor.STATE.exists()
+
+
+def test_pretrade_gate_blocks_missing_quote_spread_depth_and_drift():
+    trade_date = "2026-09-18"
+
+    assert executor._pretrade_gate(10.0, 500, None, trade_date)[1] == "quote_missing"
+
+    wide = {"bid": 9.0, "ask": 11.0, "ask_volume": 1_000, "spread_pct": 10.0}
+    assert executor._pretrade_gate(10.0, 500, wide, trade_date)[1] == "spread_too_wide"
+
+    quote = {"bid": 9.99, "ask": 10.01, "ask_volume": 100, "spread_pct": 0.1999}
+    assert executor._pretrade_gate(10.0, 500, quote, trade_date)[1] == "insufficient_ask_depth"
+
+    quote = {"bid": 10.49, "ask": 10.51, "ask_volume": 1_000, "spread_pct": 0.1903}
+    assert executor._pretrade_gate(10.0, 500, quote, trade_date)[1] == "price_drift_too_high"
+
+
+def test_pretrade_gate_accepts_liquid_quote_and_rounds_price():
+    quote = {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.1999}
+    gate, reason = executor._pretrade_gate(10.0, 500, quote, "2026-09-18")
+
+    assert reason is None
+    assert gate["order_price"] == 10.01
+    assert gate["round_trip_fee_pct"] < executor.MAX_ROUND_TRIP_FEE_PCT
+
+
+def test_pretrade_gate_blocks_excessive_round_trip_fee(monkeypatch):
+    monkeypatch.setattr(
+        "app.execution.fee_model.estimate_round_trip",
+        lambda *_args, **_kwargs: {"total": 100.0},
+    )
+    quote = {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.1999}
+
+    gate, reason = executor._pretrade_gate(10.0, 500, quote, "2026-09-18")
+
+    assert gate is None
+    assert reason == "round_trip_fee_too_high"
 
 
 def test_state_is_atomic_and_unreadable_state_fails_closed(
@@ -126,3 +188,17 @@ def test_execute_rejects_real_environment(isolated_state, monkeypatch):
 
     assert result["ok"] is False
     assert result["skip"] == "real_not_authorized"
+
+
+def test_entry_switch_default_is_fail_closed():
+    """代码默认必须是 fail-closed (2026-09-18 §23 R8).
+
+    原默认 `"true"` = fail-open: `.env.us` 缺失/未加载/键名写错 ⇒ **静默开仓**。
+    开关现在真的在下单, 默认方向必须偏安全侧。此测试钉住源码里的默认字面量。
+    """
+    import inspect
+
+    src = inspect.getsource(executor)
+    assert 'os.getenv("EXT_ENTRY_ALLOW_SIM", "false")' in src, (
+        "ALLOW_SIM_ENTRY 默认值被改回 fail-open: env 缺失时会静默开仓"
+    )

@@ -40,8 +40,33 @@ except Exception:
     pass
 
 REPORT = ROOT / "data" / "reports" / "replay_ext_entry_sources_latest.json"
-FEE_PCT = 0.085          # 往返费用 (用户口径: 7.7bps~$4.27/笔$5000 ⇒ ~0.085%)
+FEE_PCT = 0.085          # 仅作兜底/对照的扁平往返费率 (用户口径: 7.7bps~$4.27/笔$5000 ⇒ ~0.085%)
 KLINE_MIN_INTERVAL = 0.5
+
+
+def _round_trip_fee_pct(entry_price, exit_price, trade_date=None, direction="LONG"):
+    """逐笔真实往返费用 % (占**入场名义额**)。
+
+    2026-09-18 修正 (Hermes 复核 §18.2c / §23 R9): 原实现全表用扁平 FEE_PCT=0.085%,
+    per-share 费用模型下低价档被低估 1.2–6.2× ($5≈0.53% / $0.072≈9.2%)。
+    现与现役链路**共用** extended_hours_market_session.round_trip_fee_metrics
+    (内部调 app.execution.fee_model.estimate_round_trip), 数量口径与实盘一致:
+    qty = int(POSITION_USD / 入场价)。
+    交叉验证: 对 9/17 四笔实弹 (CTNT/GIPR/NBIS/AEHL) 复算 = DB `fees_est`
+    451.26 / 100.86 / 4.22 / 10.50 (逐笔一致)。
+    """
+    try:
+        from scripts.extended_hours_market_session import round_trip_fee_metrics
+        import scripts.extended_hours_entry_executor as _E
+        entry = float(entry_price)
+        exit_ = float(exit_price)
+        if entry <= 0 or exit_ <= 0:
+            return FEE_PCT
+        qty = max(1, int(_E.POSITION_USD / entry))
+        metrics = round_trip_fee_metrics(qty, entry, exit_, direction, trade_date)
+        return float(metrics["round_trip_fee_pct"]) if metrics else FEE_PCT
+    except Exception:
+        return FEE_PCT
 ENTRY_HHMM = 405         # 入场时点 04:05 ET (与 cron 盘前首跑一致)
 PREMARKET_END = 925      # 盘前收口 09:25 ET
 _last_call = [0.0]
@@ -55,11 +80,18 @@ CHUNK_DAYS = 6            # 单次请求跨度 (日历日)
 CACHE_DIR = ROOT / "data" / "replay_cache"
 
 
-def _shared_profit_exit_decider(entry_price, initial_sl):
-    """Wrap the live shared rule for deterministic bar replay."""
+def _shared_profit_exit_decider(entry_price, initial_sl, trade_date=None):
+    """Wrap the live shared rule for deterministic bar replay.
+
+    2026-09-18 (R9): fee_pct 不再传扁平常量, 而是**逐 bar 按该 bar 价**用真实
+    per-share 费用模型算 (与 premarket_exit_shadow 的
+    round_trip_fee_metrics(qty, entry, executable, ...) 同一口径) —— 费用直接决定
+    BE 净线高度, 用错费率会让 rule 臂在低价股上系统性提前锁盈。
+    """
     state = {"metadata": {}, "peak_price": entry_price}
 
     def decide(current_price):
+        fee_pct = _round_trip_fee_pct(entry_price, current_price, trade_date)
         decision = decide_original_profit_exit(
             "LONG",
             entry_price,
@@ -67,7 +99,7 @@ def _shared_profit_exit_decider(entry_price, initial_sl):
             initial_sl,
             state["peak_price"],
             state["metadata"],
-            FEE_PCT,
+            fee_pct,
             "PLAYBOOK_SIM",
         )
         state["metadata"] = decision["metadata"]
@@ -137,6 +169,23 @@ def _hhmm(t):
         return -1
 
 
+def _price_band(price):
+    """价格档 (费用分档用): per-share 费用模型下费率随价格单调下降."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return "unknown"
+    if p < 5:
+        return "<$5"
+    if p < 10:
+        return "$5-10"
+    if p < 20:
+        return "$10-20"
+    if p < 50:
+        return "$20-50"
+    return ">=$50"
+
+
 def _candidate_days(rank_df, day, recent_days):
     """财报超预期榜 → 该日可见的候选 (released_date ∈ [day-recent_days, day])."""
     lo = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=recent_days)).strftime("%Y-%m-%d")
@@ -159,7 +208,8 @@ def _candidate_days(rank_df, day, recent_days):
 def _simulate(bars_day, prev_close, entry_bar_i):
     """在当日 bar 序列上模拟: 入场 → 三条退出策略. 返回 dict."""
     entry = bars_day[entry_bar_i]["c"]
-    decide = _shared_profit_exit_decider(entry, entry * 0.95)
+    day = bars_day[entry_bar_i]["t"][:10]
+    decide = _shared_profit_exit_decider(entry, entry * 0.95, day)
     res = {}
     pre = [b for b in bars_day if _hhmm(b["t"]) < 930]
     rth = [b for b in bars_day if 930 <= _hhmm(b["t"]) <= 1600]
@@ -245,7 +295,9 @@ def _simulate(bars_day, prev_close, entry_bar_i):
                     ("cat_8pct", res.get("cat_8pct_px") or e2)):
         if px:
             g = (px / entry - 1) * 100
-            res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
+            fee = _round_trip_fee_pct(entry, px, day)
+            res[tag] = {"ret_pct": round(g, 3), "fee_pct": round(fee, 3),
+                        "net_pct": round(g - fee, 3)}
     # MFE (入场后至盘前收口的最高冲高)
     if pre:
         peak = max(b["h"] for b in pre if b["t"] > bars_day[entry_bar_i]["t"]) if len(pre) > entry_bar_i else None
@@ -259,7 +311,8 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     """盘后入场模拟 (2026-09-17 用户「要」): 入场 = 16:05 那根 5m bar 收盘;
     退出臂 = 现役规则(afterhours decide) / 盘后收口 19:55 / 次日开盘 09:35 / 次日收盘 / 仅止损."""
     entry = bars_day[entry_bar_i]["c"]
-    decide = _shared_profit_exit_decider(entry, entry * 0.95)
+    day = bars_day[entry_bar_i]["t"][:10]
+    decide = _shared_profit_exit_decider(entry, entry * 0.95, day)
     res = {}
     ah = [b for b in bars_day if _hhmm(b["t"]) >= 1600]
     cum, run = {}, 0.0
@@ -295,7 +348,9 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
                     ("next_rth_close", nc), ("sl_only", ex_sl or sc)):
         if px:
             g = (px / entry - 1) * 100
-            res[tag] = {"ret_pct": round(g, 3), "net_pct": round(g - FEE_PCT, 3)}
+            fee = _round_trip_fee_pct(entry, px, day)
+            res[tag] = {"ret_pct": round(g, 3), "fee_pct": round(fee, 3),
+                        "net_pct": round(g - fee, 3)}
     peak = max((b["h"] for b in ah if b["t"] > bars_day[entry_bar_i]["t"]), default=None)
     res["mfe_pct"] = round((peak / entry - 1) * 100, 3) if peak else None
     res["entry_px"] = round(entry, 4)
@@ -438,6 +493,38 @@ def main():
                                   "win_rate_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 1),
                                   "total": round(sum(v), 1)}
             summary["arms"] = summ_arms
+            # ── 费用分档 (2026-09-18 R9) ────────────────────────────────
+            # 动机: 均值里看不出"费用在低价股直接吃掉全部毛利"(CTNT 类 ≈9%/笔)。
+            # 每档给 n / 平均费率 / rule 与盘前收口净均值, 便于 §4.1/§17.2 归因。
+            bands = {}
+            for r in passed:
+                fee = (r.get("rule") or {}).get("fee_pct")
+                if fee is None:
+                    continue
+                b = _price_band(r["entry_px"])
+                d = bands.setdefault(b, {"n": 0, "_fee": 0.0, "_rule": 0.0, "_pre": 0.0, "_pre_n": 0})
+                d["n"] += 1
+                d["_fee"] += fee
+                if "net_pct" in (r.get("rule") or {}):
+                    d["_rule"] += r["rule"]["net_pct"]
+                if "net_pct" in (r.get("pre_close") or {}):
+                    d["_pre"] += r["pre_close"]["net_pct"]
+                    d["_pre_n"] += 1
+            summary["fee_bands"] = {
+                b: {"n": d["n"], "mean_fee_pct": round(d["_fee"] / d["n"], 3),
+                    "rule_net_mean": round(d["_rule"] / d["n"], 3),
+                    "pre_close_net_mean": round(d["_pre"] / d["_pre_n"], 3) if d["_pre_n"] else None}
+                for b, d in bands.items()
+            }
+            # 扁平 0.085% 对照 (旧口径, 只用于量化"低估了多少")
+            flat = {}
+            for r in passed:
+                for tag in ("rule", "pre_close", "rth_close", "next_open"):
+                    if "ret_pct" in (r.get(tag) or {}):
+                        flat.setdefault(tag, []).append(r[tag]["ret_pct"] - FEE_PCT)
+            summary["arms_flat_fee_net"] = {
+                t: round(sum(v) / len(v), 3) for t, v in flat.items() if v
+            }
         mfe = [r["mfe_pct"] for r in passed if r.get("mfe_pct") is not None]
         if mfe:
             summary["avg_mfe_pct"] = round(sum(mfe) / len(mfe), 3)

@@ -443,6 +443,11 @@ class ExitLifecycle:
             side = token(order.get('trd_side', ''))
             if (order.get('code') == intent['symbol'] and (side == close_side or side not in ('BUY', 'SELL'))
                     and token(order.get('order_status', '')) not in TERMINAL_STATUSES):
+                logger.warning(
+                    'Exit blocked by active order intent=%s symbol=%s order_id=%s status=%s remark=%s',
+                    intent['intent_id'], intent['symbol'], order.get('order_id', ''),
+                    order.get('order_status', ''), order.get('remark', ''),
+                )
                 raise ValueError('exit_unowned_active_order')
         return abs(signed)
 
