@@ -189,3 +189,46 @@ def test_cert_lock_metadata_override_and_priority(monkeypatch):
     )
     assert d["action"] == "SL_CERT_LOCK"
     assert prioritize_profit_exit("SL_CERT_LOCK", "hold_to_next_open") == "SL_CERT_LOCK"
+
+
+# ── 2026-09-19 峰值口径: 只能用**进场之后**的真实 high (用户令) ──
+
+def _bars(spec):
+    def fn(start, end):
+        return [{"t": t, "h": h} for t, h in spec]
+    return fn
+
+
+def test_post_entry_high_excludes_pre_entry_bars():
+    """进场前的高点必须被丢弃 (用户令: 否则是假峰值, 保护线落在不可成交位置)。"""
+    from scripts.extended_hours_market_session import post_entry_high
+    spec = [
+        ("2026-09-18 16:05:00", 30.90),   # 进场前 (虚高峰)
+        ("2026-09-18 18:00:00", 30.55),   # 进场前
+        ("2026-09-18 18:35:00", 29.80),   # 进场当刻
+        ("2026-09-18 18:52:00", 29.94),   # 进场后真实高点
+        ("2026-09-18 19:03:00", 29.86),
+    ]
+    v = post_entry_high("US.WBD", "2026-09-18T18:35:26-04:00", kline_fn=_bars(spec))
+    assert v == 29.94, f"应为进场后最高 29.94, 实得 {v} (30.90 = 进场前高点泄漏)"
+
+
+def test_post_entry_high_none_when_no_post_entry_data():
+    from scripts.extended_hours_market_session import post_entry_high
+    only_pre = [("2026-09-18 16:05:00", 30.90)]
+    assert post_entry_high("US.WBD", "2026-09-18T18:35:26-04:00", kline_fn=_bars(only_pre)) is None
+    assert post_entry_high("US.WBD", None, kline_fn=_bars(only_pre)) is None
+
+
+def test_decider_folds_post_entry_high_only_when_enabled(monkeypatch):
+    """env 关 ⇒ 忽略 (行为不变); env 开 ⇒ 峰值含进场后 high ⇒ 地板同步抬升。"""
+    meta = {"stop_loss": 95.0, "peak_price": 100.0, "session_high_post_entry": 103.0}
+    monkeypatch.delenv("EXT_PEAK_USE_SESSION_HIGH", raising=False)
+    off = decide_original_profit_exit("LONG", 100.0, 100.2, 95.0, 100.0, dict(meta), 0.088)
+    assert off["peak_price"] == pytest.approx(100.2)
+
+    monkeypatch.setenv("EXT_PEAK_USE_SESSION_HIGH", "1")
+    on = decide_original_profit_exit("LONG", 100.0, 100.2, 95.0, 100.0, dict(meta), 0.088)
+    assert on["peak_price"] == pytest.approx(103.0)
+    assert on["peak_profit_pct"] == pytest.approx(3.0)
+    assert on["effective_sl"] > off["effective_sl"]

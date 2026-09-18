@@ -67,6 +67,16 @@ def decide_original_profit_exit(
     else:
         peak = max(peak, current)
 
+    # 2026-09-19 (用户令「峰值 high 必须是入场之后的」): 影子从**进场后**的 1m bar 取真实
+    #   高点写入 metadata.session_high_post_entry (见 market_session.post_entry_high, 已按
+    #   bar 时间戳丢弃进场前高点)。开关 EXT_PEAK_USE_SESSION_HIGH=1 (默认关 ⇒ 行为不变)。
+    #   回放依据: 配对 +0.381pp/笔 (18好/20平/8差); 真实时段高点比可成交峰值平均高 1.192pp
+    #   ⇒ 现役地板被系统性压低。回滚: 去掉 env。
+    if os.getenv("EXT_PEAK_USE_SESSION_HIGH", "0").lower() in {"1", "true", "yes"}:
+        session_high_post_entry = _number(metadata.get("session_high_post_entry"))
+        if session_high_post_entry > 0:
+            peak = max(peak, session_high_post_entry)
+
     profit_pct = (current - entry) / entry * 100 * sign
     peak_profit_pct = (peak - entry) / entry * 100 * sign
 

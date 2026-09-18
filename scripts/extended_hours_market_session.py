@@ -141,6 +141,58 @@ def quote_metrics(snapshot, direction, now=None):
     }
 
 
+def post_entry_high(symbol, entry_time, quote_ctx=None, max_days=5, kline_fn=None):
+    """**进场之后**的真实最高价 (1m bar high, 只取 bar 时间 >= 进场时刻)。
+
+    用户令 2026-09-19: 峰值口径只能用"入场之后"的高点 —— 时段/日内 high 字段
+    (pre_high_price / after_high_price / high_price) 是**全时段累计**值, 含**入场前**的
+    高点。若直接当峰值, 保护线会被推到"从未可成交"的位置 (假峰值 ⇒ 虚高捕获率 +
+    虚假即时出场)。本函数按 bar 时间戳过滤, 天然只用进场后数据。
+
+    取不到数据返回 None —— 调用方保持原峰值口径, **绝不阻断退出链**。
+    """
+    import datetime as _dt
+    entry_dt = _parse_quote_time(entry_time) if isinstance(entry_time, str) else entry_time
+    if entry_dt is None:
+        return None
+    et = _dt.timezone(_dt.timedelta(hours=-4))
+    if entry_dt.tzinfo is None:
+        entry_dt = entry_dt.replace(tzinfo=et)
+    today = _dt.datetime.now(et).date()
+    days, cursor = [], min(entry_dt.date(), today)
+    while cursor <= today and len(days) < max_days:
+        days.append(cursor)
+        cursor += _dt.timedelta(days=1)
+    best = None
+    for day in days:
+        stamp = day.strftime("%Y-%m-%d")
+        try:
+            if kline_fn is not None:
+                bars = kline_fn(stamp, stamp)
+            else:
+                from futu import KLType, RET_OK
+                ret, kl, _ = quote_ctx.request_history_kline(
+                    symbol, start=stamp, end=stamp, ktype=KLType.K_1M,
+                    autype=None, max_count=1000, extended_time=True)
+                bars = [] if ret != RET_OK or kl is None or len(kl) == 0 else [
+                    {"t": str(row["time_key"]), "h": float(row["high"])}
+                    for _, row in kl.iterrows()
+                ]
+        except Exception:
+            bars = []
+        for bar in bars:
+            bar_dt = _parse_quote_time(bar["t"])
+            if bar_dt is None:
+                continue
+            if bar_dt.tzinfo is None:
+                bar_dt = bar_dt.replace(tzinfo=et)
+            if bar_dt < entry_dt:
+                continue          # ← 进场前的高点一律丢弃 (用户令 2026-09-19)
+            if best is None or bar["h"] > best:
+                best = bar["h"]
+    return best
+
+
 def risk_r_pct(entry_price, stop_price, direction):
     entry = _number(entry_price)
     stop = _number(stop_price)

@@ -53,6 +53,8 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# 2026-09-19 用户令: 峰值口径改用"进场之后"的真实 high (env 开关, 默认关)
+PEAK_USE_SESSION_HIGH = os.getenv("EXT_PEAK_USE_SESSION_HIGH", "0").lower() in {"1", "true", "yes"}
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
@@ -223,6 +225,7 @@ def collect(dry: bool) -> int:
         extended_hours_session_for,
         net_executable_pnl_pct,
         quote_metrics,
+    post_entry_high,
         risk_r_pct,
         round_trip_fee_metrics,
         session_volume_delta,
@@ -245,11 +248,20 @@ def collect(dry: bool) -> int:
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                            port=int(os.getenv("FUTU_OPD_PORT", "11111")))
     snap_map = {}
+    post_high_map = {}
     try:
         ret, snap = ctx.get_market_snapshot([p[0] for p in positions])
         if ret == RET_OK:
             for _, r in snap.iterrows():
                 snap_map[r["code"]] = r
+        if PEAK_USE_SESSION_HIGH:      # 必须在 ctx.close() 前取 (v1 静默失败根因)
+            for _p in positions:
+                try:
+                    _h = post_entry_high(_p[0], _p[5], quote_ctx=ctx, max_days=3)
+                    if _h:
+                        post_high_map[_p[0]] = round(float(_h), 4)
+                except Exception as _exc:
+                    print(f"[shadow_exit] {_p[0]} post_entry_high failed: {type(_exc).__name__}: {_exc}")
     finally:
         ctx.close()
 
@@ -260,6 +272,9 @@ def collect(dry: bool) -> int:
         trade_id = position[8] if len(position) > 8 else None
         source_type = position[9] if len(position) > 9 else None
         metadata = parse_trade_metadata(trade_metadata)
+        if PEAK_USE_SESSION_HIGH and post_high_map.get(symbol):
+            if post_high_map[symbol] > float(metadata.get("session_high_post_entry") or 0):
+                metadata["session_high_post_entry"] = post_high_map[symbol]
         s = snap_map.get(symbol)
         # 盘前真实价 = pre_price (盘前窗内权威); last_price 在盘前滞后停留在昨收
         # (2026-09-16 实锤: NOK 盘前 last 全程卡9.84不动, pre_high却从10.35涨到10.47 — 真价在pre_price)

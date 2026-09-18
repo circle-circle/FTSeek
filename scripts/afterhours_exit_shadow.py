@@ -65,6 +65,8 @@ OUTPUT = ROOT / "data" / "afterhours_exit_shadow.jsonl"
 #     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
 #       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
 HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
+# 2026-09-19 用户令: 峰值口径改用"进场之后"的真实 high (env 开关, 默认关)
+PEAK_USE_SESSION_HIGH = os.getenv("EXT_PEAK_USE_SESSION_HIGH", "0").lower() in {"1", "true", "yes"}
 
 
 def _now_et():
@@ -135,6 +137,7 @@ def collect(dry: bool) -> int:
         extended_hours_session_for,
         net_executable_pnl_pct,
         quote_metrics,
+    post_entry_high,
         risk_r_pct,
         round_trip_fee_metrics,
         session_volume_delta,
@@ -157,11 +160,20 @@ def collect(dry: bool) -> int:
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                            port=int(os.getenv("FUTU_OPD_PORT", "11111")))
     snap_map = {}
+    post_high_map = {}
     try:
         ret, snap = ctx.get_market_snapshot([p[0] for p in positions])
         if ret == RET_OK:
             for _, r in snap.iterrows():
                 snap_map[r["code"]] = r
+        if PEAK_USE_SESSION_HIGH:      # 必须在 ctx.close() 前取 (v1 静默失败根因)
+            for _p in positions:
+                try:
+                    _h = post_entry_high(_p[0], _p[5], quote_ctx=ctx, max_days=3)
+                    if _h:
+                        post_high_map[_p[0]] = round(float(_h), 4)
+                except Exception as _exc:
+                    print(f"[shadow_exit] {_p[0]} post_entry_high failed: {type(_exc).__name__}: {_exc}")
     finally:
         ctx.close()
 
@@ -172,6 +184,9 @@ def collect(dry: bool) -> int:
         trade_id = position[8] if len(position) > 8 else None
         source_type = position[9] if len(position) > 9 else None
         metadata = parse_trade_metadata(trade_metadata)
+        if PEAK_USE_SESSION_HIGH and post_high_map.get(symbol):
+            if post_high_map[symbol] > float(metadata.get("session_high_post_entry") or 0):
+                metadata["session_high_post_entry"] = post_high_map[symbol]
         s = snap_map.get(symbol)
         # 盘后真实价 = after_price (盘后窗内权威); last_price 在盘后滞后停留在盘中收盘
         # (2026-09-17 实测: NOK 盘后 after_price=10.29 vs last=10.14 差1.5%, after_vol在动)
