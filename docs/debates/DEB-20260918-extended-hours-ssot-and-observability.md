@@ -644,6 +644,13 @@ Hermes 需要重点复核：
    - 既有 4 笔主行和 3 笔同步行已回填 `premarket`。
    - 使用既有 `scripts/backfill_fee_net.py` 回填 `fees_est` / `pnl_net`，备份为 `data/ftseek_us.db.bak_feenet_20260918_091553`。
 
+5. **`ALLOW_SIM_ENTRY` 代码默认值裁决登记（2026-09-18，复核建议 5 要求落在 §17.1）**
+   - 裁决：代码默认由 `"true"` 翻为 **`"false"`**（fail-open → fail-closed）。
+   - 理由：开关现在真的在下单（SIM 走真下单路线），而 `".env.us:135"` 是显式 `EXT_ENTRY_ALLOW_SIM=true` ⇒
+     运行时行为**不变**；翻默认只影响"`.env.us` 缺失/未加载/键名写错"这一失败模式 —— 那时应当**不开仓**而不是静默开仓。
+   - 回滚：改回 `"true"`（单行）即可；配套测试 `test_entry_switch_default_is_fail_closed` 钉住源码字面量，回滚须同时改测试。
+   - 与 §5.1 `real_enabled: false` 形成双保险（实盘仍被 `ALLOW_REAL_TRADING=false` 全局阻断）。
+
 ### 17.2 修复后 60 交易日回放
 
 > ⚠️ **口径已过时（2026-09-18）**：下列两表的"净均值"用扁平 `FEE_PCT=0.085%`。已按 §23.2
@@ -974,9 +981,9 @@ Hermes 需要重点复核：
 | R2 | §22.2「父进程超时已修复」= **空操作**：`max(90, 20+40) = 90` 与改动前硬编码逐字相同；实测子进程正是 >90s 才被杀 | `premarket_exit_shadow.log-20260918:195`（US.CRM 那轮 TimeoutExpired 90s） | ✅ 改链条 `cron 240 > shadow 180 > 子限价 20` + 残留输出打点 + 链条测试（§22.2 已更正） |
 | R3 | CRM 复盘叙事不准：09:34:53 日志 `price=$242.39 触及 SL=$242.53` ⇒ 是**破 SL 后被执行阻塞**，不是"规则主动离场"；`exit_slippage_bps=-66.01` ⇒ 成交价**高于**触发价 66bps（这次延迟反而"赚"≈+$36.8，但不改变控制失效性质） | CRM 复盘 doc + `trade_records` id=1518 metadata | ✅ 见 CRM 复盘文末更正 |
 | R4 | 14 分钟阻塞的**真实代价 = 205 条 ERROR 日志**（CRM 70 / GIPR 60 / US.TEST 75，同一 intent 反复重试），推送侧去重后 7 条；失败**不止 CRM** ⇒ 与 9/16 的孪生行幻影不同源（这次是真实存活孤儿单） | 影子日志逐行计数 + 钉钉推送记录 | ✅ 见 CRM 复盘文末更正 |
-| R5 | `OVERNIGHT_GAP_STOP` 缺聚合：历史 4 次净 **−1,179.26**（GAP −386.77 / UBER −272.62 / SNDK −251.82 / CRM −268.05），3 次落在 09:30–09:38，只有 CRM 拖到 09:49（即被阻塞那笔） | `trade_records` 按 exit_reason 聚合 | 📋 单笔复盘应挂档位聚合（未做，登记为待办） |
+| R5 | `OVERNIGHT_GAP_STOP` 缺聚合：历史 4 次净 **−1,179.26**（GAP −386.77 / UBER −272.62 / SNDK −251.82 / CRM −268.05），3 次落在 09:30–09:38，只有 CRM 拖到 09:49（即被阻塞那笔） | `trade_records` 按 exit_reason 聚合 | ✅ 单笔复盘已挂档位聚合（CRM 复盘文末 R5）：该原因是**稳定的 ~$270/笔 档位**，不是单笔异常；是否调参留待该档位样本继续累积 |
 | R6 | **无孤儿单回收器**：251.27 卖限价单存续约 4 小时（05:50→09:48:52 券商撤销），期间该多仓**没有有效下行保护**（挂单在价上方，守卫只能 fail-closed） | §22.2 新增的 `Exit blocked by active order` 日志 + 券商订单时间 | ✅ 方案 A 已实施（`scripts/orphan_ext_order_watch.py`，纯观察只告警，见 §23.3）；方案 B（撤单+attempt 清理）未做，需签字 |
-| R7 | 订单级明细**不可独立复核**（旧判：Futu SIM `history_order_list_query` 返回 n=0） | 券商 API 实测 + DB | ⚠️ **2026-09-18 自证伪并更正**：`order_list_query` **能**查到这两个单 —— `8185508` = US.CRM SELL 23 @251.27 / `CANCELLED_ALL` / create **05:50:13 ET** / remark `ext_exit_tighten` / session **ETH**；`8186198` = SELL 23 / `FILLED_ALL` / create **09:48:59 ET** / remark `pbe_…` / session RTH。⇒ 订单级**身份/状态/创建时间可复核**（旧判错在查的是 history 端点）；仍不可复核的是两个时刻：`update_time` 字段为空 ⇒ "09:48:52 被券商撤销"、"09:49:03 成交"（DB 落库 09:49:11.68，差 8.6s 未解释） |
+| R7 | 订单级明细**不可独立复核**（旧判：Futu SIM `history_order_list_query` 返回 n=0） | 券商 API 实测 + DB | ⚠️ **2026-09-18 自证伪并更正**：`order_list_query` **能**查到这两个单 —— `8185508` = US.CRM SELL 23 @251.27 / `CANCELLED_ALL` / create **05:50:13 ET** / remark `ext_exit_tighten` / session **ETH**；`8186198` = SELL 23 / `FILLED_ALL` / create **09:48:59 ET** / remark `pbe_…` / session RTH。⇒ 订单级**身份/状态/创建时间可复核**（旧判错在查的是 history 端点）；**2026-09-18 末次闭环**：两个时刻一个已解释、一个已界定 —— ① `update_time` 为空 ⇒ 券商侧仍不能逐字证实"09:48:52 撤销"，但 app 侧 hold 循环把它界定到 **(09:48:46, 09:49:01] ET**（09:48:46 仍 `Exit held … exit_unowned_active_order`，09:49:01 该 tick 已放行并提交新市价单）；② 8.6s 差**已解释**：`trade_records.exit_time` 记的是**头寸同步(tombstone 确认)时刻**而非券商成交时刻 —— `logs/ftseek_us.log-20260918` `21:49:11,710 [US Sync] tombstone 确认 US.CRM` 与 DB `09:49:11.68` 相差 0.03s |
 | R8 | §22 批次未提交（`exit_lifecycle.py` + 两 shadow + 本 DEB 均为工作区 M，最后一次 DEB 提交是 `ebf5f517d`）；`ALLOW_SIM_ENTRY` 代码默认仍是 `"true"`（fail-open） | `git status` / `git log` | ✅ 代码默认翻 `"false"`（行为不变：`.env.us:135` 显式 true；仅 env 缺失时 fail-closed）+ 测试钉住；提交见 §23.4 |
 | R9 | 回放仍未用真实费用（`replay_ext_entry_sources.py` 只有扁平 `FEE_PCT=0.085`） | 读码 + 复算 | ✅ 已改逐笔 per-share 费用模型（与现役 `round_trip_fee_metrics` 同源）+ 费用分档，读数见 §23.2 |
 
