@@ -1,6 +1,10 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -347,12 +351,26 @@ def test_opened_today_total_merges_sessions_and_ignores_other_dates():
     assert entry_executor._opened_today_total(opened, "2026-09-16") == 4   # 跨日残留 key 不计
 
 
-def test_daily_quota_defaults_to_five():
-    """2026-09-17 用户裁「配额可以提升到5，再观察」: 2 → 5 (暴露上限 5×$5000=$25k)。
-
-    回滚 = env EXT_ENTRY_MAX_PER_DAY=2 (常量已改 env 可覆盖)。
-    """
-    assert entry_executor.MAX_PER_DAY == 5
+def test_daily_quota_env_override_enables_small_batch_observation():
+    """观察期可把日配额压小；测试用子进程隔离，避免本机 .env.us 漂移成假红。"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import scripts.extended_hours_entry_executor as e; print(e.MAX_PER_DAY)",
+        ],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env={
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+            "EXT_ENTRY_MAX_PER_DAY": "3",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "3"
 
 
 def test_new_sources_default_off_until_replay_evidence():
