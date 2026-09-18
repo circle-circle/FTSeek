@@ -33,7 +33,7 @@
 ## 退出延迟与 ownership 守卫
 
 - 09:34 ET 触发止损兜底时，`ExitLifecycle.preflight` 发现 CRM 同方向存在活动卖单，按 `exit_unowned_active_order` fail-closed，未重复下单。
-- 该活动单为 `8185508`，05:50 ET 创建的 `ext_exit_tighten` ETH 限价单，09:48:52 ET 才被券商终态取消；09:48:59 新市价退出单提交，09:49:03 成交。**（订单级明细不可独立复核，见文末 R7）**
+- 该活动单为 `8185508`，05:50 ET 创建的 `ext_exit_tighten` ETH 限价单，09:48:52 ET 才被券商终态取消；09:48:59 新市价退出单提交，09:49:03 成交。**（订单身份/状态/创建时刻已由 `order_list_query` 独立复核；"09:48:52 撤销"与"09:49:03 成交"两个时刻不可复核，见文末 R7）**
 - 根因在旧直连执行链：~~父进程 `subprocess.run(timeout=90)` 与子进程 `wait_order_fill(timeout=90 + cancel 20)` 重叠，父进程可能在子进程开始撤单前终止，留下孤儿 ETH 单。~~
   **2026-09-18 Hermes 复核更正（R2，读码 + 实测）**：与在码不符。子进程的限价等待是 **env 驱动**的
   `EXT_EXIT_LIMIT_TIMEOUT_S`（默认 **20s**，`extended_hours_exit_executor.py:206`），不存在"wait_order_fill 90+20"；
@@ -97,10 +97,19 @@
 
 ⇒ 该退出原因是**稳定的 ~$270/笔 档位**，不是单笔异常；单笔复盘（本文）应挂上档位聚合再看是否要调参数。
 
-### R7 · 证据边界（如实）
+### R7 · 证据边界（如实；2026-09-18 当日自证伪并更正）
 
-- Futu SIM `history_order_list_query` **返回 n=0** ⇒ `8185508`（05:50 创建 / 09:48:52 撤销）、`8186198`（MARKET FILLED_ALL）、
-  "09:48:59 提交 / 09:49:03 成交"这些订单级细节**只能用本文自述 + TimeoutExpired 时间吻合度佐证**，未经独立复核。
-- 本文写"09:49:03 成交"，`trade_records.exit_time` = **09:49:11.68 ET**，差 8.6s 未解释（可能一个是券商回报、一个是本地落库）。
-- 唯一可独立复核的三件：① 09:34:53 ET 止损兜底日志（`ftseek_us.log-20260918:4282`）② DB 20 字段（逐字一致）
+- ~~Futu SIM `history_order_list_query` 返回 n=0 ⇒ `8185508`、`8186198`、"09:48:59 提交 / 09:49:03 成交"不可独立复核。~~
+  **更正（`order_list_query` 探针，2026-09-18）**：
+
+| 订单 | 券商侧实测（`order_list_query`） |
+|---|---|
+| `8185508` | US.CRM **SELL 23 @ 251.27** / `CANCELLED_ALL` / create **2026-09-17 05:50:13** / remark **`ext_exit_tighten`** / session **ETH** |
+| `8186198` | US.CRM **SELL 23** / `FILLED_ALL` / create **2026-09-17 09:48:59** / remark `pbe_d45bcb…` / session **RTH** |
+
+  ⇒ 上一版"不可复核"是**查错端点**（history 端点 n=0）；订单**身份/状态/创建时间可复核**，
+  且"09:48:59 提交"**被券商 create_time 逐字证实**。
+- 仍不可复核的两点：① `update_time` 字段为空 ⇒ "**09:48:52** 才被券商终态取消"无法证实（只知最终 `CANCELLED_ALL`）；
+  ② "**09:49:03** 成交" vs `trade_records.exit_time` = **09:49:11.68 ET**，差 8.6s 未解释。
+- 可独立复核的三件：① 09:34:53 ET 止损兜底日志（`ftseek_us.log-20260918:4282`）② DB 20 字段（逐字一致）
   ③ `playbook_exits.db` 的 intent `ea2149f8…`（created→updated = **858s**，与 14 分钟阻塞吻合）。

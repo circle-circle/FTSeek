@@ -28,6 +28,11 @@ def test_next_open_reuses_premarket_collector(monkeypatch, tmp_path):
         "scripts.extended_hours_exit_cron.LOCK_FILE",
         tmp_path / "exit_cron.lock",
     )
+    # 孤儿单检测走真实账本/券商 ⇒ 测试里桩掉, 保持用例无副作用
+    monkeypatch.setattr(
+        "scripts.extended_hours_exit_cron.scan_orphan_orders",
+        lambda dry=False: {"ok": True, "skip": "stubbed"},
+    )
 
     calls = []
     monkeypatch.setattr(

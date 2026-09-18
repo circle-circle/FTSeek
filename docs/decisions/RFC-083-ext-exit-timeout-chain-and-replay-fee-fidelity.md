@@ -11,9 +11,10 @@
 
 ## 摘要
 
-对 §22「用户确认后的补闸」做独立复核后落地四件：(1) 修掉一处**空操作**修复（父子进程超时链条），
+对 §22「用户确认后的补闸」做独立复核后落地五件：(1) 修掉一处**空操作**修复（父子进程超时链条），
 (2) 把 `trade_records` 净额口径回填进 §4.1 实盘样本表，(3) 把延长时段回放从扁平 8.5bps 换成**逐笔 per-share 费用模型**并出费用分档，
-(4) `ALLOW_SIM_ENTRY` 代码默认由 fail-open 翻 fail-closed。孤儿 ETH 单检测器只出方案（§23.3），未实施。
+(4) `ALLOW_SIM_ENTRY` 代码默认由 fail-open 翻 fail-closed，(5) 新增**孤儿 ETH 单检测器（方案 A：纯观察、只告警、不撤单）**，
+挂载进 exit cron 的会话门控之前。方案 B（撤单 + attempt 清理）仍未做，需另行签字。
 
 ---
 
@@ -56,6 +57,16 @@ cron 240s (run_once timeout_s)  >  shadow 180s (_executor_timeout = max(180, t+9
 
 行为不变（`.env.us:135` 显式 `EXT_ENTRY_ALLOW_SIM=true` 且 `load_dotenv` 先于常量读取）；仅 env 缺失时 fail-closed。
 
+### 5. 孤儿 ETH 单检测器（方案 A，`scripts/orphan_ext_order_watch.py` + exit cron 挂载）
+
+- 触发源 = durable 账本（`exit_intents` 中最近 15 分钟 `state ∈ (PENDING,HELD)` 且 `last_error` 含
+  `exit_unowned_active_order`）⇒ **无事件时零券商调用**；确认 = 复用共享 `query_order_rows` 查**一次**
+  订单表，本地筛 `remark` 前缀 `ext_exit_` + 状态 ∈ `ACTIVE_ORDER_STATUSES` + `create_time` 年龄 ≥ 15 分钟；
+  命中 ⇒ `data/orphan_ext_orders.jsonl`（按 (symbol, order_id) 跨进程去重）+ 飞书告警（每单一次，每日上限 5）。
+- **不撤单、不动 state**：撤当日陈旧孤儿单会消耗该标的当日 attempt ⇒ 会静默掐掉当日机会（方案 B 才处理）。
+- 挂载点在 `run_once` 的**会话门控之前**：阻塞事件在 RTH 09:3x、孤儿单在 ETH 05:50，两者都在 cron 窗外 ⇒
+  放门控之后永远扫不到。检测器异常不阻塞退出链，但错误回填进 `result["orphan"]`（不静默）。
+
 ### 影响范围
 
 - 服务焦点: F1（延长时段退出链）+ F3（候选/费用口径）
@@ -89,6 +100,10 @@ PYTHONPATH=. venv/bin/python scripts/extended_hours_exit_cron.py --dry   # → o
 python -c "from app.execution.fee_model import estimate_round_trip; print(estimate_round_trip(68493,0.072,0.074,'LONG','2026-09-17')['total'])"  # → 451.26 (= fees_est)
 # 4. 回放重跑 (60 交易日, 逐笔费用)
 PYTHONPATH=. venv/bin/python3.11 scripts/replay_ext_entry_sources.py --days 60 --session premarket --end 2026-09-17 --source both
+# 5. 孤儿单检测器 (单元 + 真实券商接线探针)
+PYTHONPATH=. venv/bin/python -m pytest tests/test_orphan_ext_order_watch.py -q      # → 15 passed
+PYTHONPATH=. venv/bin/python scripts/orphan_ext_order_watch.py --dry                # 真实券商: 无触发 ⇒ 不连券商
+PYTHONPATH=. venv/bin/python scripts/extended_hours_exit_cron.py --dry              # → outside_extended_hours + orphan 段
 ```
 
 ---
@@ -100,6 +115,7 @@ PYTHONPATH=. venv/bin/python3.11 scripts/replay_ext_entry_sources.py --days 60 -
 #   shadow: max(180, t+90) → 如需回退到 90s, 改 _executor_timeout 常量; cron 同步改回 120
 # 回放费用: FEE_PCT 常量仍在, 把 _round_trip_fee_pct 调用换回 FEE_PCT 即回到旧口径
 # 开关默认: 把 ALLOW_SIM_ENTRY 默认字面量改回 "true"
+# 孤儿单检测器: env EXT_ORPHAN_WATCH=false 整关 (保留审计行); 或删 run_once 里那次 scan_orphan_orders() 调用
 # 旧回放产物: cp data/reports/backup_20260918_r9/* data/reports/
 ```
 
@@ -107,9 +123,10 @@ PYTHONPATH=. venv/bin/python3.11 scripts/replay_ext_entry_sources.py --days 60 -
 
 ## 未实施（明确登记）
 
-- **§23.3 孤儿 ETH 单检测器**（方案 A 纯观察 / 方案 B 撤单+attempt 清理）：等用户批准。
+- **方案 B**（孤儿单撤单 + `{today}:{symbol}` attempt 清理 + `resume_close` 恢复保护）：需另行签字。
 - R5 `OVERNIGHT_GAP_STOP` 档位聚合进单笔复盘模板。
-- R7 订单级明细不可独立复核（Futu SIM `history_order_list_query` n=0）—— 证据边界已写入文档。
+- R7 的两处时刻证据（"09:48:52 撤销"、"09:49:03 成交"）：`order_list_query.update_time` 为空，不可复核
+  （订单身份/状态/创建时刻已由 `order_list_query` 独立复核，见 DEB §23.1 R7 的自证伪更正）。
 
 ---
 
@@ -117,7 +134,7 @@ PYTHONPATH=. venv/bin/python3.11 scripts/replay_ext_entry_sources.py --days 60 -
 
 | skill | 编辑 | 依据 |
 |---|---|---|
-| `~/.hermes/skills/quantitative-trading/ftseek-extended-hours-trading` | ①新增「超时链条必须单调」节：三层链 `cron 240 > shadow 180 > 子进程 20`、`max(A, env+B)` 类修复**必须代入现役默认值算实数**再与旧值逐字比、“只抬一层更糟”（外层先杀 → 孙进程仍在跑 ⇒ 孤儿单 + 零证据）、超时必须打子进程残留 stdout/stderr；②回放费用节由“不能用扁平费率”改为**已落地**并写入实测读数（−0.013~−0.032pp、$5–10 档 0.279% = 3.3×）；③参考节加本 RFC 与孤儿单检测器提案（标注**待批准**） | 本 RFC §1/§3；DEB §23.2/§23.3 |
+| `~/.hermes/skills/quantitative-trading/ftseek-extended-hours-trading` | ①新增「超时链条必须单调」节：三层链 `cron 240 > shadow 180 > 子进程 20`、`max(A, env+B)` 类修复**必须代入现役默认值算实数**再与旧值逐字比、“只抬一层更糟”（外层先杀 → 孙进程仍在跑 ⇒ 孤儿单 + 零证据）、超时必须打子进程残留 stdout/stderr；②回放费用节由“不能用扁平费率”改为**已落地**并写入实测读数（−0.013~−0.032pp、$5–10 档 0.279% = 3.3×）；③参考节加本 RFC 与孤儿单检测器（方案 A 已实施 / 方案 B 待批）；④「延长时段退出载体」节加孤儿单检测器（挂载点/触发源/阈值/env/只告警不撤单）；⑤「其它坑」加一条：订单级证据查 `order_list_query` 而非 history 端点（后者 SIM 恒 n=0），`update_time` 为空 ⇒ 终态时刻不可复核 | 本 RFC §1/§3/§5；DEB §23.1 R7 自证伪、§23.2、§23.3 |
 | `~/.hermes/skills/engineering-change-protocol` | Anti-Rationalizations 表新增一行「常量推导式空操作」反模式（含逐字对比规程与链条单调性） | 本 RFC §1（R2 实锤） |
 
-**未改动的共享 skill**：`ftseek-trigger-execution-audit` / `backtest-rule-replay` 等未触及（孤儿单检测器只有提案，落地时再补）。
+**未改动的共享 skill**：`ftseek-trigger-execution-audit` / `backtest-rule-replay` 等未触及；孤儿单检测器落地方案 A 时已按上表第 ④⑤ 项补进 extended-hours skill（方案 B 落地时再补）。

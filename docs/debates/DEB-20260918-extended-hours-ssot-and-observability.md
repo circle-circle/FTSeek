@@ -975,8 +975,8 @@ Hermes 需要重点复核：
 | R3 | CRM 复盘叙事不准：09:34:53 日志 `price=$242.39 触及 SL=$242.53` ⇒ 是**破 SL 后被执行阻塞**，不是"规则主动离场"；`exit_slippage_bps=-66.01` ⇒ 成交价**高于**触发价 66bps（这次延迟反而"赚"≈+$36.8，但不改变控制失效性质） | CRM 复盘 doc + `trade_records` id=1518 metadata | ✅ 见 CRM 复盘文末更正 |
 | R4 | 14 分钟阻塞的**真实代价 = 205 条 ERROR 日志**（CRM 70 / GIPR 60 / US.TEST 75，同一 intent 反复重试），推送侧去重后 7 条；失败**不止 CRM** ⇒ 与 9/16 的孪生行幻影不同源（这次是真实存活孤儿单） | 影子日志逐行计数 + 钉钉推送记录 | ✅ 见 CRM 复盘文末更正 |
 | R5 | `OVERNIGHT_GAP_STOP` 缺聚合：历史 4 次净 **−1,179.26**（GAP −386.77 / UBER −272.62 / SNDK −251.82 / CRM −268.05），3 次落在 09:30–09:38，只有 CRM 拖到 09:49（即被阻塞那笔） | `trade_records` 按 exit_reason 聚合 | 📋 单笔复盘应挂档位聚合（未做，登记为待办） |
-| R6 | **无孤儿单回收器**：251.27 卖限价单存续约 4 小时（05:50→09:48:52 券商撤销），期间该多仓**没有有效下行保护**（挂单在价上方，守卫只能 fail-closed） | §22.2 新增的 `Exit blocked by active order` 日志 + 券商订单时间 | 📋 方案见 §23.3（**待批准，未实施**） |
-| R7 | 订单级明细**不可独立复核**：Futu SIM `history_order_list_query` 返回 n=0 ⇒ 8185508 / 8186198、"09:48:59 提交"等细节只能用自述 + 时间吻合度佐证；doc 内 09:49:03 vs DB 09:49:11.68 差 8.6s 未解释 | 券商 API 实测 + DB | ⚠️ 如实标注局限（不改） |
+| R6 | **无孤儿单回收器**：251.27 卖限价单存续约 4 小时（05:50→09:48:52 券商撤销），期间该多仓**没有有效下行保护**（挂单在价上方，守卫只能 fail-closed） | §22.2 新增的 `Exit blocked by active order` 日志 + 券商订单时间 | ✅ 方案 A 已实施（`scripts/orphan_ext_order_watch.py`，纯观察只告警，见 §23.3）；方案 B（撤单+attempt 清理）未做，需签字 |
+| R7 | 订单级明细**不可独立复核**（旧判：Futu SIM `history_order_list_query` 返回 n=0） | 券商 API 实测 + DB | ⚠️ **2026-09-18 自证伪并更正**：`order_list_query` **能**查到这两个单 —— `8185508` = US.CRM SELL 23 @251.27 / `CANCELLED_ALL` / create **05:50:13 ET** / remark `ext_exit_tighten` / session **ETH**；`8186198` = SELL 23 / `FILLED_ALL` / create **09:48:59 ET** / remark `pbe_…` / session RTH。⇒ 订单级**身份/状态/创建时间可复核**（旧判错在查的是 history 端点）；仍不可复核的是两个时刻：`update_time` 字段为空 ⇒ "09:48:52 被券商撤销"、"09:49:03 成交"（DB 落库 09:49:11.68，差 8.6s 未解释） |
 | R8 | §22 批次未提交（`exit_lifecycle.py` + 两 shadow + 本 DEB 均为工作区 M，最后一次 DEB 提交是 `ebf5f517d`）；`ALLOW_SIM_ENTRY` 代码默认仍是 `"true"`（fail-open） | `git status` / `git log` | ✅ 代码默认翻 `"false"`（行为不变：`.env.us:135` 显式 true；仅 env 缺失时 fail-closed）+ 测试钉住；提交见 §23.4 |
 | R9 | 回放仍未用真实费用（`replay_ext_entry_sources.py` 只有扁平 `FEE_PCT=0.085`） | 读码 + 复算 | ✅ 已改逐笔 per-share 费用模型（与现役 `round_trip_fee_metrics` 同源）+ 费用分档，读数见 §23.2 |
 
@@ -1030,30 +1030,36 @@ Hermes 需要重点复核：
 
 > ⚠️ §17.2 的两张表（扁平 8.5bps 口径）**已被本节取代**，引用时以本节为准。
 
-### 23.3 提案：孤儿 ETH 单检测器（**待批准，尚未实施**）
+### 23.3 孤儿 ETH 单检测器（方案 A **已实施**，2026-09-18）
 
 **问题**（R6）：延长时段的卖单在 `ExitLifecycle` 里被 fail-closed 守卫挡住时（`exit_unowned_active_order`），
 孤儿单会一直存活到券商侧自行撤销/成交 —— CRM 那次 **4 小时**（05:50 → 09:48:52），期间该多仓
-**没有任何有效下行保护**（挂单在价上方），而系统每分钟都在重复"被同一张单挡住"的失败。
+**没有任何有效下行保护**（挂单在价上方），而系统每分钟都在重复"被同一张单挡住"的失败（205 条 ERROR 日志）。
 
-**方案 A（推荐，纯观察、零额外轮询）**：
-1. **触发源用已有事件**：`ExitLifecycle.preflight` 的 `Exit blocked by active order intent=… symbol=… order_id=… status=… remark=…`（§22.2 已加）。
-2. 每分钟的 exit cron 读最近 15 分钟内的拦截事件 → 对涉及的 symbol **查一次** `order_list_query(code=…)`，
-   确认三件事：`remark` 前缀 `ext_exit_*`、非终态、`create_time` 早于 15 分钟。
-3. 命中 ⇒ 写 `data/orphan_ext_orders.jsonl`（事件流水，按 (symbol, order_id) 去重）+ 钉钉 P1 告警
-   （**每标的每日 1 次**，避免重演 205 条 ERROR 的刷屏）。
-4. **不自动撤单**（观察期）。理由：撤当日陈旧孤儿单会消耗该标的当日 `attempt`（既有实锤），
-   会静默掐掉该标的当日机会，必须配合 attempt 清理才安全。
+**已落地实现**（`scripts/orphan_ext_order_watch.py`，约 250 行 + 15 个测试）：
 
-**方案 B（完整版，需额外签字）**：命中后 ①`modify_order(CANCEL)` 撤孤儿单 ②按 skill 约定
-清理 `{today}:{symbol}` attempt ③重新 `resume_close(intent_id)` 让持仓恢复有效退出通道。
-代价：动券商 + 动 state；且**撤单不等于恢复保护**——恢复保护要靠重启 intent。
+| 环节 | 实现 | 刻意的约束 |
+|---|---|---|
+| ① 触发 | `exit_intents` 里最近 15 分钟内 `state ∈ (PENDING,HELD)` 且 `last_error` 含 `exit_unowned_active_order` 的标的 | 用 durable 账本而非解析日志（结构化 + 有 intent 身份）；**无事件 ⇒ 零券商调用** |
+| ② 确认 | 复用共享 `query_order_rows` **查一次**订单表，本地筛：`remark` 前缀 `ext_exit_` + 状态 ∈ `ACTIVE_ORDER_STATUSES`（正判据，避免与终态表漂移）+ `create_time` 年龄 ≥ 15 分钟 | 单次查询覆盖全标的（不按标的轮询） |
+| ③ 落账 | `data/orphan_ext_orders.jsonl`，按 (symbol, order_id) 跨进程去重（cron 每轮新进程） | 每日告警上限 5 条，超限仍留痕只是不推 |
+| ④ 告警 | 飞书（与延长时段执行器同通道），含订单号/状态/价格/年龄/intent | 每单只推一次 |
+| ⑤ **不撤单** | 不动券商、不动 state | 撤当日陈旧孤儿单会消耗该标的当日 attempt ⇒ 静默掐掉当日机会（方案 B 才处理） |
 
-**否决的替代**：①"提高守卫耐心/等价格回抽"（= 现状，4 小时无保护）；②"guard 自动重下单"
-（会与孤儿单撞成重复卖单，正是守卫要防的）；③"延长时段挂券商止损"（SIM 不支持 STOP，已钉死）。
+- 挂载点：`extended_hours_exit_cron.run_once` 的**会话门控之前**（阻塞事件在 RTH 09:3x、孤儿单在 ETH 05:50，
+  两者都落在本 cron 窗外 ⇒ 放门控之后就永远扫不到）。检测器异常**不阻塞退出链**，但错误会回填进 `result["orphan"]`（不静默）。
+- env 开关（回滚用）：`EXT_ORPHAN_WATCH=false`（整关）/ `EXT_ORPHAN_MIN_AGE_MIN`（默认 15）/ `EXT_ORPHAN_LOOKBACK_S`（默认 900）/
+  `EXT_ORPHAN_ALERT_MAX_PER_DAY`（默认 5）。另有 `--dry` 与 `--at` 便于回放。
+- 单点回滚：删 `run_once` 里那次 `scan_orphan_orders()` 调用即回到"无检测器"。
 
-**实施前提**：方案 A 也要一次实弹验证（用 9/18 的孤儿单做回放输入：能否仅凭日志 + 一次 order_list_query
-还原出 order_id/年龄/体量）。
+**接线级验证（真实券商，2026-09-18 13:46 ET 01:46）**：探针查得订单表 38 行、其中 `ext_exit_*` 7 行
+（CTNT/GIPR/NBIS/AEHL/CRM 的历史退出单），**全部为终态** ⇒ 检测器判定 **0 只孤儿、0 次写盘、0 次推送**
+（正确的负例：那些单都已了结）。同时验证 `create_time` 年龄解析在真实数据上成立（CRM 单 1196 分钟）。
+初测跑出 15 passed（含"无触发⇒零券商调用""同单不重复告警""新鲜单不算孤儿""终态/他人单不算""每日上限"
+"券商失败可见降级""必须早于会话门控""检测器崩溃不拖垮退出链"）。
+
+**仍未做**：方案 B（撤单 + attempt 清理 + `resume_close` 恢复保护）——需另行签字；
+"人工确认后处理"目前靠告警文本提示值班人。
 
 ### 23.4 提交与台账
 
@@ -1068,4 +1074,6 @@ Hermes 需要重点复核：
 - 部署形态：本批**只动 `scripts/`（cron 每轮新进程 ⇒ 立即生效，无需 restart）+ 测试 + 文档**；
   `app/execution/exit_lifecycle.py` 仅加一条 WARNING 日志，但服务进程（09:00:20 启动）**不会**加载它 ⇒
   下次 app 侧重启后才生效；exit cron 侧行为不受其影响（已在 `--dry` 探针确认窗控未死）。
-- 未闭环（明确登记，不假装已做）：R5 档位聚合、R6 检测器（方案 A/B 待批）、R7 订单级证据缺失。
+- 未闭环（明确登记，不假装已做）：R5 档位聚合、方案 B（撤单+attempt 清理+`resume_close`）、
+  R7 的两处时刻证据（"09:48:52 撤销"、"09:49:03 成交"）。
+- 方案 A 检测器已在同一批落地（`scripts/orphan_ext_order_watch.py` + 挂载进 exit cron + 15 个测试），见 §23.3。

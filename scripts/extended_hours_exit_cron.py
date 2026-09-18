@@ -14,6 +14,7 @@ os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
 from scripts.extended_hours_market_session import get_extended_hours_session
+from scripts.orphan_ext_order_watch import scan as scan_orphan_orders
 
 LOCK_FILE = ROOT / "logs" / "extended_hours_exit_cron.lock"
 NEXT_OPEN_START_MINUTES = 570
@@ -59,20 +60,33 @@ def run_once(dry=False, timeout_s=240, now=None):
     孙进程仍在跑 ⇒ 孤儿单 + 本地零证据 (比不改更糟)。链条必须单调:
     cron 240 > shadow 180 > 子进程限价等待 20s。
     240 的构成 (如实): 180 (容忍一个卡住的子进程走完撤单/终态确认) + 60 (同轮其余标的正常返回)。
+
+    另 (2026-09-18 §23.3 方案 A): 会话门控**之前**先跑孤儿单检测 (观察期只告警不撤单)。
+    它按 durable 账本触发, 无事件时零券商调用; 失败不阻塞退出链 (只把错误回填到结果里)。
     """
+    # 孤儿单检测: 必须**早于** session 门控 —— 阻塞事件(RTH 09:3x)与孤儿单(ETH 05:50 创建)
+    #   都可能落在本 cron 的窗外, 窗外返回 "outside_extended_hours" 就永远扫不到。
+    try:
+        orphan = scan_orphan_orders(dry=dry)
+    except Exception as _exc:      # 显式可见的降级, 不静默 (退出链优先)
+        orphan = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
+
     session = get_exit_cron_session(now)
     command = collector_command(session)
     if session is None or command is None:
-        return {"ok": True, "skip": "outside_extended_hours", "session": session}
+        return {"ok": True, "skip": "outside_extended_hours", "session": session,
+                "orphan": orphan}
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("a+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return {"ok": True, "skip": "previous_run_still_active", "session": session}
+            return {"ok": True, "skip": "previous_run_still_active", "session": session,
+                    "orphan": orphan}
         if dry:
-            return {"ok": True, "dry": True, "session": session, "command": command}
+            return {"ok": True, "dry": True, "session": session, "command": command,
+                    "orphan": orphan}
         try:
             completed = subprocess.run(
                 command,
@@ -87,6 +101,7 @@ def run_once(dry=False, timeout_s=240, now=None):
                 "ok": False,
                 "session": session,
                 "error": f"collector_timeout_after_{timeout_s}s",
+                "orphan": orphan,
             }
         return {
             "ok": completed.returncode == 0,
@@ -94,6 +109,7 @@ def run_once(dry=False, timeout_s=240, now=None):
             "returncode": completed.returncode,
             "stdout_tail": (completed.stdout or "")[-1000:],
             "stderr_tail": (completed.stderr or "")[-1000:],
+            "orphan": orphan,
         }
 
 
