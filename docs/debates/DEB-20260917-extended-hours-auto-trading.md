@@ -1120,3 +1120,35 @@ adaptive trailing 退出臂（caps = 1.2 / 2.5 / 4.0 / 99 即"无上限"；公�
   `data/backups/trail_state_before_us_test_cleanup_20260918_073650.db`。
 
 **验证**：`tests/coordinator/test_push_hub.py` 24 passed；服务重启后 `ftseek-us.service` active。
+
+### 23.12 「US.TEST 持续推送」根因与修复（2026-09-18 用户反馈；与并行 agent 的 §23.11 同题、互相独立）
+
+> 关系说明：并行 agent 的 §23.11 修在**统一推送出口** `app/push/hub.py`（TEST/US.TEST/*.TEST 全通道硬闸）——
+> 覆盖面更广；本节修在**延长时段开仓源头**（不构造该告警）+ **REAL 拦截推送去重**（hub 硬闸不含去重）。
+> 两者互补不冲突（防重仍在源头，去重是本节独有）。
+
+**现象**：用户持续收到 `🚫 延长时段开仓拦截: US.TEST REAL未授权`，且该标的是"虚拟不存在的股"。
+
+**逐层定位（全部实查，非推测）**
+1. 该文案全仓**只有一个出口**：`scripts/extended_hours_entry_executor.py:929` `_execute()` 的 REAL 通道守卫
+   （`FUTU_TRD_ENV != SIMULATE` ⇒ 推文案 + 返 `real_not_authorized`）。
+2. `US.TEST` **不是候选股**：它只出现在对账日志里 —— `[ext_entry] 对账跳过跨日旧单: US.TEST 8185070
+   status=CANCELLED_ALL create_time=2026-09-17 00:08:03`。即**券商 SIM 账户里的一张报废测试单**
+   （remark `ext_entry`，建单即撤），对账路径每轮都会碰到它。当日/非跨日时该单不会走"跳过"分支，
+   进而触达 `_execute`。
+3. **刷屏的直接原因**：`_push()` 是**裸推送、无去重**（`FeishuNotifier().send_text` 直发）⇒ 每轮重复。
+4. 环境侧：`.env.us` / 系统环境 / crontab **均未设** `FUTU_TRD_ENV`（默认 SIMULATE）；而 crontab 的行内开关
+   逻辑（L668 `ALLOW_SIM_ENTRY=false 且 SIMULATE ⇒ 早退`）在 SIM 下**先于对账**返回 ⇒ 常驻 cron 推不出这条。
+   ⇒ 该推送来自**显式带 `FUTU_TRD_ENV=REAL` 的进程**（手动/并行 agent 的 REAL 通道验证跑）。
+   已确认 `app/core/trade_identity.is_test_symbol()` **本来就存在**，但延长时段链路没用它。
+
+**修复（源头过滤 + 告警去重，拦截行为不变）**
+- `_execute()` 入口新增 `is_test_symbol(symbol)` ⇒ 返 `{"skip": "test_symbol"}` 且**不推任何告警**（占位标的在源头挡掉）。
+- REAL 拦截推送改走新增的 `_push_once(key, text)` ⇒ **同一标的一日一次**（`data/ext_entry_push_dedup.json`，原子写）；
+  **拦截本身不变**（仍返 `real_not_authorized`），只是不再每轮刷屏。
+
+**验证**：新增 `tests/test_ext_entry_test_symbol_guard.py` 3 项 —— ① REAL 通道下 `US.TEST`/`TEST`/`US.FAKE.TEST` 均返
+`test_symbol` 且**零推送**；② 同标的连续两次 REAL 拦截只推 1 次、不同标的各 1 次；③ `_push_once` 同日抑制/跨 key 放行 ⇒ **3 passed**。
+
+**并行纪律（本次触发真实场景）**：该文件正被并行 agent 修改（sibling WIP 未提交）⇒ 提交用
+`git show HEAD` + 锚点注入 + `hash-object` + `update-index --cacheinfo`，**staged 仅含我这 3 处**，其 WIP 保留在工作区。

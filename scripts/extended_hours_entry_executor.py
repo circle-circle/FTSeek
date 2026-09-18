@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
-from app.core.trade_identity import ensure_test_symbol_not_in_production_db
+from app.core.trade_identity import ensure_test_symbol_not_in_production_db, is_test_symbol
 
 try:
     from dotenv import load_dotenv
@@ -190,6 +190,33 @@ def _push(text):
         FeishuNotifier().send_text(text)
     except Exception:
         pass
+
+
+_PUSH_DEDUP = ROOT / "data" / "ext_entry_push_dedup.json"
+
+
+def _push_once(key, text):
+    """同一 key **每个 ET 日只推一次** (2026-09-18)。
+
+    病灶: _push 无去重, 而 US.TEST 这类**报废测试单**会被对账路径反复碰到 ⇒ 同一句拦截文案
+    每轮都推 (用户反馈"一直持续推送虚拟标的")。本函数只做通知去重, 不改变拦截行为本身。
+    """
+    today = _today_et()
+    try:
+        data = json.loads(_PUSH_DEDUP.read_text()) if _PUSH_DEDUP.exists() else {}
+    except Exception:
+        data = {}
+    if data.get(key) == today:
+        return False
+    _push(text)
+    data[key] = today
+    try:
+        tmp = _PUSH_DEDUP.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False))
+        tmp.replace(_PUSH_DEDUP)
+    except Exception:
+        pass
+    return True
 
 
 def _audit(rec):
@@ -925,8 +952,14 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
     SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor."""
     trd_env = os.getenv("FUTU_TRD_ENV", "SIMULATE")
     acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "19930823"))
+    # 2026-09-18: 测试占位标的 (TEST/US.TEST/*.TEST) 在**源头**挡掉 —— 它们只可能来自单测 artifact 或
+    #   券商账户里的报废测试单 (如 US.TEST order 8185070), 不是真候选股; 且不推告警(见下)。
+    if is_test_symbol(symbol):
+        return {"ok": False, "skip": "test_symbol"}
     if trd_env.upper() != "SIMULATE":
-        _push(f"🚫 延长时段开仓拦截: {symbol} REAL未授权")
+        # 通知去重: 同一标的一日一次 (原先每轮对账都推 → 用户看到"持续推送");
+        #   拦截行为本身不变, 仍返 real_not_authorized。
+        _push_once(f"real_blocked:{symbol}", f"🚫 延长时段开仓拦截: {symbol} REAL未授权")
         return {"ok": False, "skip": "real_not_authorized"}
 
     rec = {"symbol": symbol, "qty": qty, "price": price, "session": session,
