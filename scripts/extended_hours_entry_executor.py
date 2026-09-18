@@ -184,7 +184,21 @@ def _state_lock():
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _probe_mode():
+    """探针/测试运行的**静默开关**: `FUTSEEK_PROBE=1`。
+
+    2026-09-18 (§23.5): 用户看到的"连续推送虚拟标的"里有一类来自**人工/探针以 REAL 环境跑生产脚本**
+    —— 生产 cron 根本没设 `FUTU_TRD_ENV`（默认 SIMULATE）、审计里也没有占位行。
+    探针验证 REAL 分支时不该把生产 IM 当输出通道：置 `FUTSEEK_PROBE=1` 即静默（并留可见日志）。
+    生产环境 unset ⇒ 行为完全不变（告警照常）。
+    """
+    return os.getenv("FUTSEEK_PROBE", "").strip().lower() in ("1", "true", "yes")
+
+
 def _push(text):
+    if _probe_mode():
+        print(f"[ext_entry][probe] 推送抑制: {text}")
+        return
     try:
         from app.notifier.feishu import FeishuNotifier
         FeishuNotifier().send_text(text)
@@ -200,7 +214,13 @@ def _push_once(key, text):
 
     病灶: _push 无去重, 而 US.TEST 这类**报废测试单**会被对账路径反复碰到 ⇒ 同一句拦截文案
     每轮都推 (用户反馈"一直持续推送虚拟标的")。本函数只做通知去重, 不改变拦截行为本身。
+
+    探针模式 (`FUTSEEK_PROBE=1`) 下**连去重键都不写** —— 否则一次探针会把这个 key 当日名额用掉,
+    反而把生产的真告警静默掉。
     """
+    if _probe_mode():
+        print(f"[ext_entry][probe] 推送抑制(不写去重键): {text}")
+        return False
     today = _today_et()
     try:
         data = json.loads(_PUSH_DEDUP.read_text()) if _PUSH_DEDUP.exists() else {}

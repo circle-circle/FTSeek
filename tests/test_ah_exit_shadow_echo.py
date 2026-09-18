@@ -136,3 +136,29 @@ def test_run_check_stats_line_deduped(caplog, monkeypatch, tmp_summary):
     lines = _info_lines(caplog)
     assert len(lines) == 2
     assert "结算0" in lines[0] and "结算3" in lines[1]
+
+def test_load_open_positions_skips_placeholder_symbol(tmp_path, monkeypatch):
+    """占位标的持仓不得进入 AH 影子观测 (2026-09-18 §23.5)。
+
+    实测该影子曾对 US.TEST 连续输出观测行 —— 数据源里没有真持仓, 纯噪声。
+    """
+    import sqlite3
+
+    db = tmp_path / "shadow.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE open_positions (symbol TEXT, direction TEXT, size REAL, "
+        "avg_entry_price REAL, entry_time TEXT, is_filled INTEGER)"
+    )
+    con.executemany(
+        "INSERT INTO open_positions VALUES (?,?,?,?,?,1)",
+        [
+            ("US.TEST", "LONG", 10, 100.0, "2026-09-17T08:00:00-04:00"),
+            ("US.FAKE", "LONG", 10, 100.0, "2026-09-17T08:00:00-04:00"),
+        ],
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(aes, "DB", db)
+
+    assert [p["symbol"] for p in aes.load_open_positions()] == ["US.FAKE"]

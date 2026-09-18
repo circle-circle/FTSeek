@@ -60,3 +60,28 @@ def test_push_once_is_per_day(tmp_path, monkeypatch):
     assert mod._push_once("k1", "a") is False            # 同日再推被抑制
     assert mod._push_once("k2", "b") is True
     assert calls == ["a", "b"]
+
+def test_probe_mode_silences_push_and_keeps_dedup_slot(tmp_path, monkeypatch):
+    """`FUTSEEK_PROBE=1` ⇒ 不推、也**不写去重键**（2026-09-18 §23.5）。
+
+    病灶: 用户看到的"连续推送虚拟标的"有一类来自**人工/探针以 REAL 环境跑生产脚本**
+    （生产 cron 未设 FUTU_TRD_ENV = 默认 SIMULATE, 审计里也没有占位行）。
+    探针若占掉当日去重名额, 反而会把生产的真告警静默掉 —— 所以探针模式连键都不写。
+    """
+    mod = _load()
+    calls = _arm(mod, tmp_path, monkeypatch)
+    monkeypatch.setenv("FUTSEEK_PROBE", "1")
+    monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
+
+    r1 = mod._execute("US.NVDA", 1, 100.0, "premarket", 1.0, 1_000_000, None, False)
+    r2 = mod._execute("US.NVDA", 1, 100.0, "premarket", 1.0, 1_000_000, None, False)
+
+    assert r1["skip"] == r2["skip"] == "real_not_authorized"   # 拦截行为不变
+    assert calls == [], f"探针模式不得推送, 实推 {calls}"
+    assert not (tmp_path / "dedup.json").exists(), "探针不得占生产去重名额"
+
+    # 摘掉探针 ⇒ 生产路径行为立刻恢复（同日同标的仍能推一次）
+    monkeypatch.delenv("FUTSEEK_PROBE")
+    r3 = mod._execute("US.NVDA", 1, 100.0, "premarket", 1.0, 1_000_000, None, False)
+    assert r3["skip"] == "real_not_authorized"
+    assert len(calls) == 1 and "US.NVDA" in calls[0]

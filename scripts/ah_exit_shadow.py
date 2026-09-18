@@ -93,13 +93,22 @@ def load_open_positions() -> list[dict]:
         "FROM open_positions WHERE is_filled=1 AND avg_entry_price > 0").fetchall()
     con.close()
     out = []
+    skipped_test = []
     for r in rows:
         et = str(r["entry_time"] or "")
         if len(et) < 19:
             continue
+        # 2026-09-18 (§23.5): 占位标的 (US.TEST/*.TEST) 不是真持仓 —— 此前会让本影子每分钟为它
+        #   取行情/算信号并打观测行, 而券商侧根本没有该标的（纯日志噪声 + 误读风险）。
+        from app.core.trade_identity import is_test_symbol
+        if is_test_symbol(r["symbol"]):
+            skipped_test.append(str(r["symbol"]))
+            continue
         out.append(dict(symbol=r["symbol"], direction=r["direction"],
-                        qty=float(r["size"] or 0), entry=float(r["avg_entry_price"]),
+                        qty=float(r["size"] or 0), entry=float(r["avg_entry_price"] or 0),
                         entry_time=et, pos_key=(r["symbol"], r["direction"], et[:19])))
+    if skipped_test:
+        print(f"[ah_shadow] 忽略占位标的持仓: {', '.join(sorted(set(skipped_test)))}")
     return out
 
 
