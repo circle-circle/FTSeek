@@ -87,3 +87,9 @@
 | 1 | P3: 池外传导型 (`transmission_assumed`, 材料未具名) 候选不过输入侧资格预筛 → 可被报作「可交易」再到 inject 才拦 (今日 ZIM 即此型) | 两选一: ①对未具名但被模型浮现的符号补一次 `screen_candidates` 三态; ②推送/permit 层标注「池外未预筛」。属设计缺口, 需用户裁 |
 | 2 | `cooldown 未生效 ... 'SKIP' 无法映射到成交词表` 每日 WARN | 建议降为 DEBUG 或改写措辞 (「SKIP 行不登记冷却」), 避免日志噪声被当异常扫; 待裁 |
 | 3 | 观察项 (非缺陷): 09-17 两窗 glm-5.3 均 `finish_reason=length` (tokens_out 24000/16000) → `downshift_retry` 交 `deepseek-v4.1-flash` 作答, 故 scan 记录 `model_used=deepseek-v4.1-flash`; 09-18 未触发下移 (3637/5280 正常收尾) | 已有 cron `96c8e404f55a` (9/18 21:45 思考预算后验) 覆盖, 本批不动 |
+
+## 6. 共享 skill 编辑台账 (本批)
+
+| skill | 编辑 | 依据 |
+|---|---|---|
+| `~/.hermes/skills/devops/ftseek-verification-audit` | Pitfall 69 新增 **⑧**:「'实际 N 条/已注入 X' 类计数必须与执行面白名单同源」—— 记 `decision_id LIKE '前缀:%'` 计数**含拒收/占位行**的实锤 (本案 1 行 SKIP 被读成"已注入1条"，真值 0)；修法 = 引执行侧白名单 `direction IN ('BUY','SELL_SHORT')`；**且警告不要再叠 `skip_reason` 过滤** (该列在已注入行上会事后被改写为 no_trigger/chase_cap/thesis_drift/TRIPWIRE ⇒ 会误报)；判据 = 先 `GROUP BY date, direction, skip_reason` 看同一列语义再写谓词 | 本 DEB §1-C / §2；同族前科为 Pitfall 69⑦ (快照读数缺下游门标注) |
