@@ -4233,6 +4233,45 @@ def cmd_eval_report(days: int = 14) -> int:
     return 0
 
 
+# [2026-09-18] 推送执行闸分解 (纯读当日 inject 拒绝归因 jsonl; 不重算、不落盘、不改行为)
+_REJECT_LABELS = {
+    "streak_gate": "streak闸",
+    "low_atr": "低ATR闸",
+    "price_floor": "低价闸",
+    "no_quote": "无现价",
+    "conf": "低置信",
+    "already_in_position": "已持仓",
+    "da_or_other_already_written": "已写库",
+    "quota_cap": "超额",
+    "cooldown": "冷却",
+}
+
+
+def _gated_breakdown(target: str) -> str:
+    """当日被执行闸拦下的候选按原因分桶 → 推送附行; 空串 = 无被拦记录 (不占行)。
+
+    direction(SKIP) 桶略去 — 上一条"扫描期可交易"行里的 SKIP{n} 已表达同一批。
+    只读落盘产物 (inject 侧 _log_inject_reject / build 阶段同文件), 不引入新判据。
+    """
+    try:
+        buckets: Dict[str, int] = {}
+        for r in _read_jsonl(_INJECT_REJECT_PATH):
+            if r.get("date") != target or r.get("stage") not in ("filter", "build", "save"):
+                continue
+            key = str(r.get("reject_reason") or "").split("(")[0].strip()
+            if not key or key == "direction":
+                continue
+            label = _REJECT_LABELS.get(key, key)
+            buckets[label] = buckets.get(label, 0) + 1
+        if not buckets:
+            return ""
+        detail = " / ".join(f"{k}{v}" for k, v in sorted(buckets.items(), key=lambda x: (-x[1], x[0])))
+        return f"执行闸: 拦{sum(buckets.values())}只 ({detail})"
+    except Exception as e:
+        print(f"  [warn] 执行闸分解读数失败: {e}")
+        return ""
+
+
 def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     """读今日最新一轮 scan → 钉钉推一条整体汇总 (镜像 da_bridge_dingtalk_push 模式)。
 
@@ -4263,6 +4302,19 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     # [DEB-20260825-ue-audit 复核新增] push 文案说真话 — 病灶: mode 只看 entry_enabled
     #   开关, 不看实际落库数。8/25 实弹: 8只浮现, 7只无现价+1只DA排重 → 实际写0条,
     #   但推送仍打"已注入DB→执行轨道" = 对外宣称与实际相反。改查当日真实落库行数。
+    # [2026-09-18 推送读数对齐真实链路] 计数收窄 + 补执行闸分解行 (两处失真实测):
+    #   ①原计数只按 decision_id 前缀, **把 SKIP 行算成"已注入"** ⇒ 9/18 实况: 当日该前缀
+    #     仅 1 行 = US.ZIM 低ATR 的 SKIP 行, 推送打"已注入DB→执行轨道 (实际1条)", 而真落库
+    #     可交易指令 = **0 条** (两条 LONG 分别被 streak 闸 / 低ATR 闸拦)。现加执行侧同款
+    #     白名单 direction IN ('BUY','SELL_SHORT') (见 app/pipeline/llm_pipeline.py:833)。
+    #     ⚠ 只按方向收窄, **不再过滤 skip_reason**: 9/14 实测 BUY/SELL_SHORT 行上的非空
+    #     skip_reason 是**注入后**状态 (no_trigger/chase_cap/thesis_drift/TRIPWIRE), 它们是
+    #     真注入过的指令; 拒收只发生在 direction='SKIP' 行 (加 skip_reason 过滤会把 9/14 的
+    #     3 条误报成 1 条)。
+    #   ②"可交易: N只"取 scan surfaced 的 LONG/SHORT = **扫描期口径**, 在 streak/ATR 闸之前;
+    #     9/18 两只全被下游拦却仍显示"可交易2只" ⇒ 标签改"扫描期可交易" + 补一行执行闸结果
+    #     (_gated_breakdown 只读当日 inject 拒绝归因 jsonl, 纯观测不重算)。
+    #   回滚: 恢复原 SQL 计数与 "可交易:" 标签即可 — 本函数只读 DB + 推送文案, 零交易行为。
     _ue_injected_n = 0
     if entry_enabled:
         try:
@@ -4270,18 +4322,23 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
             _conn_pb = PlaybookDB()._conn()
             _row_n = _conn_pb.execute(
                 "SELECT COUNT(*) FROM playbook_instructions WHERE date=? "
-                "AND decision_id LIKE ?", (target, f"{STRATEGY_ID}:%")).fetchone()
+                "AND decision_id LIKE ? "
+                "AND direction IN ('BUY','SELL_SHORT')",
+                (target, f"{STRATEGY_ID}:%")).fetchone()
             _ue_injected_n = int(_row_n[0] or 0) if _row_n else 0
             mode = f"已注入DB→执行轨道 (实际{_ue_injected_n}条)" if _ue_injected_n else \
-                f"注入0条 (候选{len(tradeable)}只被现价缺失/排重/冷却等过滤, 见universe_scan.log)"
+                f"注入0条 (候选{len(tradeable)}只未过执行闸)"
         except Exception as _pe2:
             print(f"  [warn] 落库数查询失败: {_pe2}")
             mode = f"注入数未知 (entry_enabled=true 但DB查询失败)"
+    _gate_line = _gated_breakdown(target)
     lines = [
         f"🌌 Universe选股扫描完成 ({target})",
         f"模型={rec.get('model_used','?')} prompt={rec.get('prompt_version','?')} · {mode}",
-        f"可交易: {len(tradeable)}只 (多{n_long}/空{n_short}) · 池外{n_ext} · SKIP{n_skip}",
+        f"扫描期可交易: {len(tradeable)}只 (多{n_long}/空{n_short}) · 池外{n_ext} · SKIP{n_skip}",
     ]
+    if _gate_line:
+        lines.append(_gate_line)
     if tier_cnt:
         lines.append("自评tier: " + " ".join(f"{k}:{v}" for k, v in tier_cnt.items()))
     lines.append("")
