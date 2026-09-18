@@ -176,7 +176,11 @@ def _push_stale_alert(stale: list[dict], pending_n: int, alert_days: int) -> boo
             if hub is not None:
                 hub.stop()
         except Exception as e:
-            logger.warning("积压告警后 push hub 关闭异常 (推送结果不受影响): %s", e)
+            logger.warning(
+                "积压告警后 push hub 关闭异常 (推送结果不受影响): %s",
+                e,
+                exc_info=True,
+            )
 
 
 def main(argv=None) -> int:

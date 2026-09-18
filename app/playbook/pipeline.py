@@ -6300,6 +6300,19 @@ def classify_be_exit(be_net: Optional[float], be_drift: Optional[float]) -> str:
     return "SLIP"
 
 
+def _include_observed_prices_in_extremes(metadata, direction, entry_price, exit_price) -> bool:
+    """(2026-09-18) 实现下沉到 app/core/trade_extremes.include_observed_prices。
+
+    与 scripts/repair_trade_exit_invariants.py 共用同一份 —— 此前那份实现对本函数
+    处理方式不同的输入类 ("极值字段存在但不可解析") 采取相反动作 (此处覆盖, 那边跳过)。
+    留这个薄壳只为调用点 (本文件 1 处) 与既有测试不必改签名; 口径一律以
+    app/core/trade_extremes 为准, 换口径只改那一处。
+    """
+    from app.core.trade_extremes import include_observed_prices
+
+    return include_observed_prices(metadata, direction, entry_price, exit_price)
+
+
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
                         pnl: float, pnl_pct: float, holding_hours: float,
                         inst_id = None, symbol: str = None,
@@ -6391,7 +6404,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         if exit_metadata is not None:
             _meta.update(exit_metadata)
             _meta_parse_ok = True
-        _meta_dirty = exit_metadata is not None
+        _extremes_dirty = _include_observed_prices_in_extremes(
+            _meta, _tr[1], _tr[2], exit_price
+        )
+        _meta_dirty = exit_metadata is not None or _extremes_dirty
         if exit_intent_id is not None:
             _meta["exit_intent_id"] = exit_intent_id
             _meta_parse_ok = _meta_dirty = True
@@ -6454,6 +6470,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             _mfe_pct = 0.0
         if _mae_pct > _MFE_MAE_SANE_MAX:
             _mae_pct = 0.0
+        if _meta_parse_ok:
+            _mfe_pct = round(_mfe_pct, 4)
+            _mae_pct = round(_mae_pct, 4)
+            _meta["mfe_pct"] = _mfe_pct
+            _meta["mae_pct"] = _mae_pct
 
         # ── 根因修复 (2026-07-07): 从 DB 查 entry_time, 用 get_market_hours_us 重算 holding_hours ──
         # 消灭所有调用方传 wall-clock 差值的变体 (naive TypeError, CST时间差, 纯秒数差).

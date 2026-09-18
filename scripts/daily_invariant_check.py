@@ -95,6 +95,11 @@ _FEE_ROLLOUT_DATE = "2026-07-30"
 _DQ_NEUTRAL_PREFIXES = ("duplicate", "outlier", "invalid", "void", "excluded")
 
 
+def _is_neutral_data_quality(value) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized.startswith(_DQ_NEUTRAL_PREFIXES)
+
+
 # ── W1 参数冻结窗守卫 (2026-08-31): KR2 判分公式原为周六周检人工 SQL — 换版只能等
 #    月底结算才作废整月; 现每晚机器对账, 版本分裂当天告警 (损失封顶当天)。
 #    豁免通道 (KR2 例外): P0 bug + DEB 落档 + 用户知会 → 人工把新版本加入
@@ -857,6 +862,7 @@ def main(push_enabled: bool = True) -> int:
 
     viol: Counter = Counter()
     examples: dict = {}
+    sample_exempt = 0
 
     def rec(k: str, rid, sym, msg: str):
         viol[k] += 1
@@ -864,6 +870,9 @@ def main(push_enabled: bool = True) -> int:
 
     for r in rows:
         m = json.loads(r["metadata_json"] or "{}")
+        if _is_neutral_data_quality(_col(r, "data_quality")):
+            sample_exempt += 1
+            continue
         e = float(r["entry_price"] or 0)
         x = float(r["exit_price"] or 0)
         q = float(r["quantity"] or 0)
@@ -1010,7 +1019,7 @@ def main(push_enabled: bool = True) -> int:
             settled_all += 1
             _keys = set(r.keys())
             dq = str(_col(r, "data_quality") or "").strip().lower()
-            if dq and dq.startswith(_DQ_NEUTRAL_PREFIXES):
+            if _is_neutral_data_quality(dq):
                 exempt += 1
                 continue  # 已知坏行豁免 (数量落 settled_exempt_marked)
             e = float(r["entry_price"] or 0)
@@ -1117,6 +1126,7 @@ def main(push_enabled: bool = True) -> int:
 
     result = {
         "checked_at": checked_at, "window_since": since, "sample": len(rows),
+        "sample_exempt_marked": sample_exempt,
         "violations": dict(viol), "examples": examples, "field_health": field_health,
         "caliber_diff": caliber_diff,
         "config_freeze": config_freeze,

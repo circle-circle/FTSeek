@@ -19,10 +19,12 @@ config_validate.py — 配置漂移检测
 
 import sys
 import re
+import argparse
 from pathlib import Path
 from typing import Dict, Set, List
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 YAML_PATH = ROOT / "config" / "unified_config.yaml"
 CODE_DIR = ROOT / "app"
 
@@ -127,7 +129,32 @@ def check_missing_in_yaml(code_refs: Set[str], yaml_keys: Dict[str, str]) -> Lis
     
     return missing
 
-def main():
+
+def run_quick_validation() -> int:
+    import yaml
+    from app.config_mgmt import ConfigValidator
+    from app.core.config_container import get_config
+
+    try:
+        with YAML_PATH.open(encoding="utf-8") as config_file:
+            yaml.safe_load(config_file)
+    except Exception as exc:
+        print(f"YAML 解析失败: {exc}")
+        return 1
+
+    result = ConfigValidator(get_config(), strict_mode=True).validate_all()
+    print(f"[quick] 配置硬校验: {result.summary}")
+    for error in result.errors:
+        print(f"[quick] error: {error}")
+    return 0 if result.is_valid else 1
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--quick", action="store_true")
+    args = parser.parse_args(argv)
+    if args.quick:
+        return run_quick_validation()
+
     print("=== 配置漂移检测 ===")
     print(f"YAML: {YAML_PATH}")
     print(f"Code: {CODE_DIR}")

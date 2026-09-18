@@ -174,6 +174,15 @@ def test_marked_bad_row_is_exempt_but_counted(tmp_path, monkeypatch):
     assert result["settled_exempt_marked"] == 1
 
 
+def test_marked_bad_playbook_row_is_exempt_from_primary_invariants(tmp_path, monkeypatch):
+    db = _mk_db(tmp_path)
+    _row(db, source="PLAYBOOK_SIM", realized_pnl=0.0, pnl_net=None, fees=None,
+         data_quality="duplicate_external_close")
+    rc, result = _run(tmp_path, monkeypatch, db)
+    assert result["violations"] == {}, result["violations"]
+    assert result["sample_exempt_marked"] == 1
+
+
 def test_normal_data_quality_labels_are_not_exempt(tmp_path, monkeypatch):
     """'real'/'clean'/'manual' 是全库常态值 (457/265/1) — 拿它们当豁免 = 守卫零覆盖。"""
     db = _mk_db(tmp_path)

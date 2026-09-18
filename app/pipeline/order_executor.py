@@ -601,7 +601,7 @@ def manual_unblock(
                     logger.debug(f"[manual_unblock] DB 同步失败 (忽略): {_dbe}")
     except Exception as _e:
         _result["reason"] = f"position_store 访问异常: {_e}"
-        logger.warning(f"[manual_unblock] {symbol} {_e}")
+        logger.warning("[manual_unblock] %s %s", symbol, _e, exc_info=True)
 
     _result["unblocked"] = bool(_result["cleared_keys"]) or _result["position_unblocked"]
     logger.warning(

@@ -511,6 +511,10 @@ llm:
       #   处置=抬 max_tokens (官方 Max Output 131072) 或加 thinking_budget 限流.
       extra_body:
         enable_thinking: true
+        # 2026-09-18: GLM-5.3 官方参数 reasoning_effort 未传时默认 max, UE 真实
+        #   brief 会烧满输出预算并 schema_failed; high 实测 3256 completion tok /
+        #   34s / JSON 有效 (low 1727 tok / 18s / JSON 有效但无 reasoning token).
+        reasoning_effort: high
       primary: glm-5.3
       prompt_cache: true
     web_search_fundamental:

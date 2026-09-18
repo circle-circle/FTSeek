@@ -107,6 +107,26 @@ def test_resolve_model_unknown(mock_cfg):
     assert _resolve_model("unknown-alias", mock_cfg) is None
 
 
+# ─── 路由级模型参数 ───
+def test_route_extra_body_is_passed_to_model(mock_yaml, env_keys, mock_cfg):
+    mock_cfg["features"]["thinking_feature"] = {
+        "primary": "qwen-flash",
+        "extra_body": {"enable_thinking": True, "reasoning_effort": "high"},
+    }
+    captured = {}
+
+    def mock_try_single_model(alias, cfg, system, prompt, **kwargs):
+        captured.update(alias=alias, extra_body=kwargs.get("extra_body"))
+        return CallResult(success=True, response="ok", model_used="qwen3.6-flash")
+
+    with patch("app.llm.model_call._try_single_model", side_effect=mock_try_single_model):
+        result = call_llm("thinking_feature", "ping")
+
+    assert result.success is True
+    assert captured["alias"] == "qwen-flash"
+    assert captured["extra_body"] == {"enable_thinking": True, "reasoning_effort": "high"}
+
+
 # ─── 简单调用 (mock HTTP) ───
 def test_simple_call_success(mock_yaml, env_keys):
     with patch("app.llm.model_call._http_call") as m:

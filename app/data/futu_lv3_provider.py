@@ -57,7 +57,7 @@ def silence_futu_sdk_logs() -> None:
         _ft_logger.logger.file_level = logging.WARNING
         _ft_logger.logger.console_level = logging.WARNING
     except Exception as _e:
-        logger.warning(f"[FutuLog] 调整 Futu SDK 日志级别失败: {_e}")
+        logger.warning("[FutuLog] 调整 Futu SDK 日志级别失败: %s", _e, exc_info=True)
     _futu_logger = logging.getLogger("futu")
     _futu_logger.setLevel(logging.CRITICAL)
     _futu_logger.handlers = []
@@ -92,7 +92,7 @@ def enable_daemon_threads() -> None:
         from futu.common.sys_config import SysConfig
         SysConfig.set_all_thread_daemon(True)
     except Exception as _e:
-        logger.warning(f"[FutuThreads] futu 线程 daemon 化失败 (非致命): {_e}")
+        logger.warning("[FutuThreads] futu 线程 daemon 化失败 (非致命): %s", _e, exc_info=True)
 
 
 enable_daemon_threads()
