@@ -454,7 +454,7 @@ def test_call_llm_records_finish_reason_and_usage(restore_call_llm):
 
 
 def test_challenger_fallback_keeps_primary_diagnosis(restore_call_llm):
-    """2026-09-18: fallback (同模型自我辩论) 的原发失败原因不得被丢弃。
+    """2026-09-18: fallback (T2 独立模型档) 的原发失败原因不得被丢弃。
 
     背景: 伪独立率全窗 5/109 (9/18 当日 3/23=13%), 但这批样本笔均净 −$60.92;
     而"为什么 fallback"此前完全不可观测 (result 被覆盖) ⇒ 无法定因, 无法修。
@@ -470,12 +470,63 @@ def test_challenger_fallback_keeps_primary_diagnosis(restore_call_llm):
     assert "429" in res["_challenger_primary_error"]
     assert res["_challenger_primary_finish"] is None
     assert res["_challenger_primary_raw_len"] == 0
+    # T2 = 换家族的独立模型 (不再回落分析师本体)
+    assert res["_challenger_tier"] == "fallback_independent"
+    assert res["_challenger_model_used"] == L.CHALLENGER_FALLBACK_MODEL
+    assert res["_challenger_self_debate"] is False
     # 且必须经由 _merge_debate_results 落到 _debate (消费者才看得到)
     merged = L._merge_debate_results({"symbol": "TEST", "direction": "BUY", "score": 7}, res)
     deb = merged["_debate"]
     assert deb["challenger_fallback"] is True
     assert "429" in deb["challenger_primary_error"]
-    assert deb["challenger_model"] == L.MODEL, "fallback 时模型名须记主模型 (非独立辩论)"
+    assert deb["challenger_tier"] == "fallback_independent"
+    assert deb["challenger_self_debate"] is False
+    assert deb["challenger_model"] == L.CHALLENGER_FALLBACK_MODEL
+    # 独立模型 (换家族) 的一致 ⇒ 仍可升 confidence (2026-09-18 语义对齐)
+    assert "confidence提升" in merged["debate_outcome"]
+
+
+def test_challenger_chain_tier3_and_self_debate(restore_call_llm):
+    """链条深度: T3 (关思考降级档) → T4 (同模型自辩, 必须显式标记)。"""
+    err = {"_error": "HTTP Error 503: Service Unavailable"}
+    # T1 失败 → T2 失败 → T3 成功
+    L._call_llm = _seq_stub([err, err, CHALLENGER], [])
+    res = L._run_challenger({"direction": "BUY", "score": 7}, "d")
+    assert res["_challenger_tier"] == "fallback_independent_nonthinking"
+    assert res["_challenger_model_used"] == L.CHALLENGER_FALLBACK_MODEL_2
+    assert res["_challenger_self_debate"] is False
+
+    # T1/T2/T3 全失败 → T4 同模型自辩 (末位兜底), 且不得升 confidence
+    L._call_llm = _seq_stub([err, err, err, CHALLENGER], [])
+    res2 = L._run_challenger({"direction": "BUY", "score": 7}, "d")
+    assert res2["_challenger_tier"] == "self_debate"
+    assert res2["_challenger_self_debate"] is True
+    assert res2["_challenger_model_used"] == L.MODEL
+    merged = L._merge_debate_results({"symbol": "TEST", "direction": "BUY", "score": 7}, res2)
+    assert merged["_debate"]["challenger_self_debate"] is True
+    assert "confidence提升" not in merged["debate_outcome"], "同模型自辩不得升 confidence"
+
+
+def test_challenger_chain_family_independence():
+    """家族约束守卫: 挑战者链不得出现与分析师同家族的模型 (禁「一个模型自辩自裁」)。
+
+    分析师 MODEL 属阿里 qwen 家族 ⇒ primary 与两档 fallback 都必须是别的家族,
+    且两档 fallback 彼此不同家族; T4 (self_debate) 只在末位兜底出现且带标记。
+    """
+    def fam(m):
+        ml = str(m).lower()
+        for f, keys in (("qwen", ("qwen", "qw")), ("deepseek", ("deepseek",)),
+                        ("glm", ("glm",)), ("kimi", ("kimi", "moonshot"))):
+            if any(k in ml for k in keys):
+                return f
+        return "unknown"
+
+    assert fam(L.MODEL) == "qwen"
+    assert fam(L.CHALLENGER_MODEL) != fam(L.MODEL), "primary 挑战者不得与分析师同家族"
+    assert fam(L.CHALLENGER_FALLBACK_MODEL) not in (fam(L.MODEL), fam(L.CHALLENGER_MODEL))
+    assert fam(L.CHALLENGER_FALLBACK_MODEL_2) not in (fam(L.MODEL), fam(L.CHALLENGER_MODEL))
+    assert fam(L.CHALLENGER_FALLBACK_MODEL) != fam(L.CHALLENGER_FALLBACK_MODEL_2), \
+        "两档 fallback 必须换不同家族 (单点失败不共因)"
 
 
 def test_challenger_primary_diagnosis_absent_on_clean_run(restore_call_llm):
@@ -699,6 +750,6 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.82"
+        assert frontmatter_version == latest_changelog_version == "0.83"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
