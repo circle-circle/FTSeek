@@ -453,6 +453,40 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
     )
 
 
+def _exit_reason_cn(reason: str, tight_sl: bool = False,
+                    be_class: Optional[str] = None) -> str:
+    """平仓原因 → 简短中文标签 (未知原因原样返回 → 不丢信息).
+
+    [2026-09-18 用户令\"其他按建议执行\"第⑤条] 推送可见性闭合: 标题(钉钉 markdown
+    `title` = 通知栏/会话列表摘要)原来只有净额, 读者要展开卡片才知道是哪种出场;
+    `SL_INITIAL` 更分不清\"初始线砍\"还是\"规则0.5 紧SL砍\"。此处只做显示映射,
+    零行为变更 (触发与否仍由 `tight_sl_triggered` 元数据决定, 本函数不判定)。
+    """
+    _raw = str(reason or "").strip()
+    _key = _raw.upper()
+    _label = {
+        "SL_BREAKEVEN": "保本线",
+        "SL_TRAIL_LOCK": "锁利线",
+        "SL_INITIAL": "止损(紧SL)" if tight_sl else "止损(初始线)",
+        "SL_FIXED_PCT": "止损(固定%)",
+        "OVERNIGHT_GAP_STOP": "隔夜跳空止损",
+        "TAKE_PROFIT": "止盈",
+        "PRE_CLOSE_EXIT": "收盘平仓",
+        "PATIENT_EXIT_EOD": "收盘平仓",
+        "EOD_FORCE_CLOSE": "EOD平仓",
+        "TIME_EXIT": "时间退出",
+        "DEAD_SIGNAL_EXIT": "死信号退出",
+        "MFE_STALL_EXIT": "动能枯竭退出",
+        "BROKER_GHOST_CLOSE": "幽灵仓清理",
+        "GHOST_CLEANUP": "幽灵仓清理",
+        "RECONCILE_GHOST_CLEANUP": "幽灵仓清理",
+        "EXTERNAL_CLOSE": "外部平仓",
+    }.get(_key, _raw or "?")
+    if be_class == "GAP":
+        _label += "🪂"
+    return _label
+
+
 def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                strategy: str = "main", trace_id: Optional[str] = None,
                signal_strength: Optional[int] = None,
@@ -468,6 +502,7 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
     mfe_pct/mae_pct/time_to_mfe/capture_pct/e60_ok/cohort/horizon/src_detail。
     fees/pnl_net (2026-07-30, DEB-fee-net-pnl G5): 提供时标题以净额为主口径
     (净$X (毛$Y/费$Z)), 图标按净额着色; pnl 参数始终传毛值。
+    标题尾缀出场原因 (2026-09-18): 见 _exit_reason_cn。
     """
     # 2026-07-16: 移除聚合. 根因: trade_entry 聚合导致7/15成交无通知.
     # 修复: 所有平仓立即推送, 不走聚合桶. 大额亏损也走 NORMAL (不再降级 LOW).
@@ -490,13 +525,15 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
         _payload.get("trade_mode") or _payload.get("mode") or _payload.get("account_type"),
         _payload.get("session") or _payload.get("exit_session") or _payload.get("entry_session"),
     ))
+    _er_s = _exit_reason_cn(exit_reason, bool(_payload.get("tight_sl_triggered")),
+                            _payload.get("be_exit_class"))
     if pnl_net is not None:
         _nsign = "+" if pnl_net >= 0 else ""
         _fee_txt = f"/费${fees:.2f}" if fees is not None else ""
         _title = (f"{'🟢' if pnl_net >= 0 else '🔴'} {symbol} 平仓 "
-                  f"净{_nsign}${pnl_net:.2f} (毛{sign}${pnl:.2f}{_fee_txt})")
+                  f"净{_nsign}${pnl_net:.2f} (毛{sign}${pnl:.2f}{_fee_txt}) · {_er_s}")
     else:
-        _title = f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f}"
+        _title = f"{'🟢' if pnl >= 0 else '🔴'} {symbol} 平仓 {sign}${pnl:.2f} · {_er_s}"
     return PushMessage(
         title=_title,
         body=f"{direction} reason={exit_reason} strategy={strategy}",

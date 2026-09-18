@@ -7,6 +7,11 @@
 - 重启服务统一使用：`systemctl restart ftseek-us`
   - 不要直接用 `python main.py --stop/--start` 或 `./start.sh` 手动重启。
   - Python 源码（`.py`）修改后必须重启才生效；热重载器仅监控 `config/unified_config.yaml` 配置值，不重载代码。
+- **重启按需，不设时段限制**（2026-09-18 用户裁「重启按需 不要严格限制」，否掉「会话内重启须避开 09:30–16:00」的提案）：
+  - 盘中该重启就重启 —— 待生效的改动（含纯展示件）不必压到收盘后。
+  - 保护靠机制不靠时段：**durable exit ledger 跨重启续上在途出场**，交易时段 `stop_auto_loop` 由安全闸拒绝（设计）。实证：2026-09-18 09:46:47 ET 会话中重启，当时 CRM/ARM 在仓、HPE/COIN 出场在途，HPE 09:48:55 正常平掉、账实一致。
+  - 重启前只核两件事：①未平仓/在途出场（`SELECT symbol FROM trade_records WHERE exit_time IS NULL`）；②`git status --porcelain -- app/ scripts/` 里的改动**确实是你自己要上线的**（不许把别的 agent 的在途 WIP 顺带上线）。
+  - 重启后仍必跑启动冒烟（见军规）。
 
 ## 架构：Playbook 为唯一下单/管理管线
 
