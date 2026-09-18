@@ -1070,10 +1070,13 @@ Hermes 需要重点复核：
 
 - 安全门（全过才动手）：① `remark` 前缀 `ext_exit_`（绝不碰别人的单）② 仍非终态 ③ 年龄 ≥15min（与检测器同阈值）
   ④ `--symbol` 一致 ⑤ 部分成交无均价 ⇒ 拒绝；默认 **dry-run**，必须 `--apply`。
-- 撤单后**回查终态**才算成功（撤单 API 成功 ≠ 已撤，历史 #185）：回查仍活 ⇒ 退出码 2 + 审计 `cancel_unconfirmed`。
-- `--clear-attempt` 才清 `{today}:{symbol}` attempt 键（默认不清 + state 备份）—— 因为撤当日孤儿单会消耗当日机会。
+- 撤单后**轮询确认撤销类终态**（默认 20s）才算成功（撤单 API 成功 ≠ 已撤，历史 #185；撤单异步，
+  立即回查常见 `CANCELLING_ALL`）：间隙成交 `FILLED_ALL` ⇒ 退出码 3 + 审计 `filled_during_cancel`；
+  超时仍活/查询失败 ⇒ 退出码 2 + `cancel_unconfirmed`；其他非撤销终态 ⇒ 退出码 2 + `terminal_unexpected`。
+- `--clear-attempt` 才清 `{today}:{symbol}` attempt 键（默认不清 + state 备份，复用执行器
+  state 文件锁 + 原子写）—— 因为撤当日孤儿单会消耗当日机会。
 - 实弹 dry-run（真实券商）：`--order-id 8185508` → 正确识别 `CANCELLED_ALL` 并**拒绝执行**（退出码 1）；
-  不存在的订单同样拒绝（退出码 1）。测试 16 例，含"回查仍活 ⇒ 报失败不宣称成功"。
+  不存在的订单同样拒绝（退出码 1）。测试 22 例，含"回查仍活 / 间隙成交 / 异常终态 ⇒ 均不宣称撤销成功"。
 
 **仍未做**：方案 B 的**自动化**那半（自动撤单 + attempt 清理 + `resume_close`）——需另行签字。
 
@@ -1082,10 +1085,17 @@ Hermes 需要重点复核：
 - 本批（§22 两 shadow + cron + entry executor 默认值 + 回放费用保真 + 两份 DEB 文档 + 测试）已提交：
   **`6f68d15e6 [RFC-083] 延长时段退出链超时链条修复 + 回放费用保真`**（12 文件，+839/−34），
   治理件 `docs/decisions/RFC-083-ext-exit-timeout-chain-and-replay-fee-fidelity.md`（含共享 skill 编辑台账）。
-  **未把工作区里另一主题的未提交改动（`app/playbook/pipeline.py` 的 MFE/MAE 极值、`app/data/futu_lv3_provider.py`、
-  `app/pipeline/order_executor.py`、`config/unified_config.yaml` 的 glm `reasoning_effort`、`scripts/config_validate.py --quick`、
-  `scripts/daily_invariant_check.py`、`scripts/settle_winner_overnight_shadow.py`、`scripts/repair_trade_exit_invariants.py` 及
-  对应测试，共 12 项）连带提交**，其归属留给对应作者。
+  - **未把工作区里另一主题的未提交改动（`app/playbook/pipeline.py` 的 MFE/MAE 极值、`app/data/futu_lv3_provider.py`、
+    `app/pipeline/order_executor.py`、`config/unified_config.yaml` 的 glm `reasoning_effort`、`scripts/config_validate.py --quick`、
+    `scripts/daily_invariant_check.py`、`scripts/settle_winner_overnight_shadow.py`、`scripts/repair_trade_exit_invariants.py` 及
+    对应测试，共 12 项）连带提交**，其归属留给对应作者。
+  - **(2026-09-18 晚) 上述 12 项已完成独立复核、落档并分主题提交** ⇒ 见
+    `docs/debates/DEB-20260918-quality-caliber-and-llm-thinking-budget.md`。复核要点（结论：方向正确、证据成立）：
+    `reasoning_effort=high` 经 **provider 实弹 HTTP 200** 确认不触发"400→静默 fallback"（该失败模式会使改动变空操作），
+    且依据成立（glm-5.3 生产 UE 调用 9 笔中 **6 笔触顶**、错误串全含 `finish_reason=length`）；
+    中性行豁免经同库同窗口 A/B 确认**只豁免已知坏行**（旧 `I1×2+W1×1` → 新 `W1×1`、`sample_exempt_marked=2`、rc 仍 1）。
+    复核另修 3 项：极值**双实现分叉**（合并到 `app/core/trade_extremes`，实盘命中 0 处 ⇒ 行为中性）、
+    `futu_lv3_provider` 缩进/同文件漏改卫生缺口、以及 **MFE/MAE 与截断率两项测量口径切线**（本 DEB §3 即该落档）。
 - `ALLOW_SIM_ENTRY` 默认值翻 false 的裁决登记于本表 R8（行为不变，回滚 = 改回 `"true"`）。
 - 部署形态：本批**只动 `scripts/`（cron 每轮新进程 ⇒ 立即生效，无需 restart）+ 测试 + 文档**；
   `app/execution/exit_lifecycle.py` 仅加一条 WARNING 日志，但服务进程（09:00:20 启动）**不会**加载它 ⇒

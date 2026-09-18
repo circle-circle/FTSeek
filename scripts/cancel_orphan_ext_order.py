@@ -18,8 +18,17 @@
   5. 部分成交但拿不到成交均价 ⇒ 拒绝（不是干净的挂单）;
   6. 默认 **dry-run**，必须显式 `--apply` 才真撤单。
 
-撤销后**回查终态**：撤单 API 成功 ≠ 订单已撤（历史教训 #185），所以 `--apply` 会 `query_order` 复查,
-未变终态则报失败（退出码 2），绝不静默宣称成功。
+撤销后**轮询确认**（默认 20s，`EXT_ORPHAN_CONFIRM_TIMEOUT_S`）：撤单 API 成功 ≠ 订单已撤
+（历史教训 #185），且撤单是异步的 —— 立即回查很可能仍是 `CANCELLING_ALL`。
+只有**撤销类终态**（`CANCELLED_ALL/CANCELLED_PART/FILL_CANCELLED/DELETED`）才算成功;
+撤单间隙成交（`FILLED_ALL`）⇒ 退出码 3 + 审计 `filled_during_cancel`（成交 ≠ 撤销）;
+超时仍活 / 查询失败 ⇒ 退出码 2 + 审计 `cancel_unconfirmed`;
+其他非撤销终态 ⇒ 退出码 2 + 审计 `terminal_unexpected`。绝不静默宣称成功。
+
+退出码: 0=dry-run/撤销确认 1=安全门拒绝 2=未确认/异常终态 3=撤单间隙成交。
+
+`--clear-attempt` 清理 state 时**复用执行器的文件锁 + 原子写**（tmp/fsync/replace）,
+执行器持锁期间 fail-closed 不动文件。
 
 用法:
     PYTHONPATH=. venv/bin/python scripts/cancel_orphan_ext_order.py --order-id 8185508            # dry-run
@@ -33,6 +42,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -50,13 +60,18 @@ from scripts.extended_hours_order_lifecycle import (  # noqa: E402
     ACTIVE_ORDER_STATUSES,
     cancel_order,
     query_order,
-    query_order_rows,
 )
 
 AUDIT = ROOT / "data" / "orphan_ext_orders.jsonl"
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 REMARK_PREFIX = os.getenv("EXT_ORPHAN_REMARK_PREFIX", "ext_exit_")
 MIN_AGE_MIN = float(os.getenv("EXT_ORPHAN_MIN_AGE_MIN", "15"))
+CONFIRM_TIMEOUT_S = float(os.getenv("EXT_ORPHAN_CONFIRM_TIMEOUT_S", "20"))
+CONFIRM_POLL_S = float(os.getenv("EXT_ORPHAN_CONFIRM_POLL_S", "2"))
+CANCEL_CONFIRMED_STATUSES = {
+    "CANCELLED_ALL", "CANCELLED_PART", "FILL_CANCELLED", "DELETED",
+}
+_sleep = time.sleep
 
 
 def _now_et():
@@ -110,7 +125,11 @@ def decide(order, now=None, min_age_min=None, symbol=None, remark_prefix=None):
 
 
 def clear_attempt(symbol, today_et=None, state_path=None, apply=False):
-    """清理 `{today_et}:{symbol}` attempt 键（默认只报不删）。返回 (changed, message)。"""
+    """清理 `{today_et}:{symbol}` attempt 键（默认只报不删）。返回 (changed, message)。
+
+    apply 时复用执行器的 state 文件锁 + 原子写（tmp/fsync/replace）,
+    避免与开仓执行器并发 read-modify-write 丢更新。
+    """
     state_path = Path(state_path or STATE)
     today_et = today_et or _now_et().date().isoformat()
     if not state_path.exists():
@@ -121,15 +140,61 @@ def clear_attempt(symbol, today_et=None, state_path=None, apply=False):
         return False, f"state 解析失败(fail-closed, 不动): {exc}"
     key = f"{today_et}:{symbol}"
     attempts = state.get("attempts") or {}
-    if key not in attempts:
-        return False, f"attempt 键不存在: {key}（无需清理）"
     if not apply:
+        if key not in attempts:
+            return False, f"attempt 键不存在: {key}（无需清理）"
         return False, f"[dry-run] 将删除 attempt 键 {key} = {json.dumps(attempts[key], ensure_ascii=False)}"
-    backup = state_path.with_suffix(f".json.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    shutil.copy2(state_path, backup)
-    removed = attempts.pop(key)
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2))
-    return True, f"已删除 attempt 键 {key}（原值 {json.dumps(removed, ensure_ascii=False)}）; 备份 {backup}"
+
+    from scripts.extended_hours_entry_executor import _save_state, _state_lock
+
+    with _state_lock(state_path) as locked:
+        if not locked:
+            return False, (f"state 锁被执行器持有（{state_path.with_suffix('.lock')}）, "
+                           "稍后重试; 未做任何修改")
+        try:
+            state = json.loads(state_path.read_text())
+        except Exception as exc:
+            return False, f"state 解析失败(fail-closed, 不动): {exc}"
+        attempts = state.setdefault("attempts", {})
+        if key not in attempts:
+            return False, f"attempt 键不存在: {key}（持锁重读后无需清理）"
+        backup = state_path.with_suffix(f".json.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        shutil.copy2(state_path, backup)
+        removed = attempts.pop(key)
+        _save_state(state, state_path)
+        return True, (f"已删除 attempt 键 {key}（原值 {json.dumps(removed, ensure_ascii=False)}）; "
+                      f"备份 {backup}")
+
+
+def _confirm_cancel(ctx, env, acc_id, order_id, timeout_s=None, poll_s=None):
+    """撤单后轮询确认。返回 (最终订单|None, outcome)。
+
+    outcome ∈ cancelled / filled / unexpected_terminal / unconfirmed / query_failed:...
+    撤单是异步的: 立即回查常见 `CANCELLING_ALL`, 误报"未生效"——所以轮询而非单查。
+    """
+    timeout_s = max(float(CONFIRM_TIMEOUT_S if timeout_s is None else timeout_s), 0.0)
+    poll_s = max(float(CONFIRM_POLL_S if poll_s is None else poll_s), 0.1)
+    deadline = time.monotonic() + timeout_s
+    last_order, last_error = None, ""
+    while True:
+        try:
+            last_order = query_order(ctx, env, acc_id, order_id)
+            last_error = ""
+        except Exception as exc:
+            last_order = None
+            last_error = str(exc)
+        status = str((last_order or {}).get("status") or "")
+        if status in CANCEL_CONFIRMED_STATUSES:
+            return last_order, "cancelled"
+        if status == "FILLED_ALL":
+            return last_order, "filled"
+        if status and status not in ACTIVE_ORDER_STATUSES:
+            return last_order, "unexpected_terminal"
+        if time.monotonic() >= deadline:
+            if last_error:
+                return last_order, f"query_failed:{last_error}"
+            return last_order, "unconfirmed"
+        _sleep(poll_s)
 
 
 def _audit(payload, path=None):
@@ -146,6 +211,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="真的撤单（默认只打印）")
     ap.add_argument("--clear-attempt", action="store_true", help="同时清理该标的当日 attempt 键")
     ap.add_argument("--min-age-min", type=float, default=MIN_AGE_MIN)
+    ap.add_argument("--confirm-timeout-s", type=float, default=CONFIRM_TIMEOUT_S,
+                    help="撤单后轮询确认终态的超时秒数（默认 20）")
     args = ap.parse_args(argv)
 
     from scripts.extended_hours_entry_executor import _open_trade_context
@@ -181,24 +248,49 @@ def main(argv=None):
             ctx, env, acc_id, args.order_id,
             qty=order.get("qty", 0), price=order.get("price", 0),
         )
-        after = query_order(ctx, env, acc_id, args.order_id)
+        after, outcome = _confirm_cancel(
+            ctx, env, acc_id, args.order_id, timeout_s=args.confirm_timeout_s
+        )
         after_status = str((after or {}).get("status") or "")
-        terminal = after_status not in ACTIVE_ORDER_STATUSES
-        print(f"撤单请求: cancel_ok={cancel_ok} | 回查状态={after_status or '未找到'}")
-        if not terminal:
-            # 撤单 API 成功 ≠ 订单已撤（历史 #185）⇒ 不宣称成功
-            print("⇒ 撤单未生效（回查仍是活单）—— 视为失败, 请人工到券商端确认")
+        print(f"撤单请求: cancel_ok={cancel_ok} | 回查={outcome} | 状态={after_status or '未找到'}")
+
+        if outcome == "cancelled":
+            # 撤单请求失败但订单确实已撤销（券商异步/他方）⇒ 目标达成, 但归因要如实
+            action = "cancelled_by_operator" if cancel_ok else "cancelled_external"
             _audit({"ts": datetime.now().isoformat(), "order_id": args.order_id,
-                    "action": "cancel_unconfirmed", "cancel_ok": cancel_ok,
-                    "status_after": after_status, "symbol": order["symbol"]})
-            return 2
+                    "action": action, "symbol": order["symbol"],
+                    "cancel_ok": cancel_ok, "age_min": age,
+                    "status_after": after_status})
+            suffix = "" if cancel_ok else "（注意: 本工具撤单请求返回失败, 可能为券商异步或他方撤销）"
+            print(f"⇒ 已确认撤销: {order['symbol']} {args.order_id} → {after_status}{suffix}")
+            if args.clear_attempt:
+                print(clear_attempt(order["symbol"], apply=True)[1])
+            return 0
+
+        if outcome == "filled":
+            print("⇒ 撤单间隙已成交（FILLED_ALL）—— 订单未撤销, 请立即人工核对持仓与下行保护")
+            _audit({"ts": datetime.now().isoformat(), "order_id": args.order_id,
+                    "action": "filled_during_cancel", "symbol": order["symbol"],
+                    "cancel_ok": cancel_ok, "age_min": age,
+                    "status_after": after_status,
+                    "filled_qty": (after or {}).get("filled_qty"),
+                    "avg_fill_price": (after or {}).get("avg_fill_price")})
+            return 3
+
+        # unconfirmed / unexpected_terminal / query_failed:...
+        action = "terminal_unexpected" if outcome == "unexpected_terminal" else "cancel_unconfirmed"
+        if outcome == "unexpected_terminal":
+            print(f"⇒ 订单已达终态但非撤销类: {after_status} —— 不宣称撤销成功, 请人工确认")
+        else:
+            # 撤单 API 成功 ≠ 订单已撤（历史 #185）⇒ 不宣称成功
+            print("⇒ 撤单未确认（轮询后仍是活单/查询失败）—— 视为失败, 请人工到券商端确认")
         _audit({"ts": datetime.now().isoformat(), "order_id": args.order_id,
-                "action": "cancelled_by_operator", "symbol": order["symbol"],
-                "age_min": age, "status_after": after_status})
-        print(f"⇒ 已确认撤销: {order['symbol']} {args.order_id} → {after_status}")
-        if args.clear_attempt:
-            print(clear_attempt(order["symbol"], apply=True)[1])
-        return 0
+                "action": action, "cancel_ok": cancel_ok,
+                "status_after": after_status, "symbol": order["symbol"],
+                "outcome": outcome})
+        if not cancel_ok:
+            print(f"（撤单请求本身返回失败: {data}）")
+        return 2
     finally:
         try:
             ctx.close()

@@ -159,20 +159,22 @@ def _load_state():
     return state
 
 
-def _save_state(s):
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE.with_suffix(f".{os.getpid()}.tmp")
+def _save_state(s, state_path=None):
+    state_path = Path(state_path or STATE)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_path.with_suffix(f".{os.getpid()}.tmp")
     with tmp.open("w") as handle:
         json.dump(s, handle, ensure_ascii=False)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(tmp, STATE)
+    os.replace(tmp, state_path)
 
 
 @contextlib.contextmanager
-def _state_lock():
-    LOCK.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK.open("a+") as handle:
+def _state_lock(state_path=None):
+    lock_path = (state_path or STATE).with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

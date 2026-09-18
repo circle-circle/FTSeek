@@ -112,7 +112,7 @@
   命中才查一次订单表确认（`remark` 前缀 `ext_exit_` + 非终态 + 年龄 ≥15min），落 `data/orphan_ext_orders.jsonl` + 飞书告警
   （每单一次、日上限 5）。**只告警、不撤单**。
 - **残留**：出现孤儿单后**没有自动恢复路径** —— 只能人工介入（2026-09-18 末批已给人工入口
-  `scripts/cancel_orphan_ext_order.py`：安全门 + 默认 dry-run + 撤单后回查终态才算成功 + 可选 attempt 清理），
+  `scripts/cancel_orphan_ext_order.py`：安全门 + 默认 dry-run + 撤单后轮询确认撤销类终态才算成功 + 可选 attempt 清理），
   或等券商在时段结束时自行撤销（本笔 ~09:48:52 ET）。**自动**撤单仍未做（会消耗当日 attempt，需签字）。
   接受前提是"罕见 + 有告警"；若观测到复发频率 >1 次/周，升级为方案 B（撤单 + attempt 清理 + `resume_close`）。
 

@@ -75,9 +75,13 @@ cron 240s (run_once timeout_s)  >  shadow 180s (_executor_timeout = max(180, t+9
 - **`scripts/cancel_orphan_ext_order.py`**（新，人工入口，**不挂任何 cron/循环**）：
   安全门 = ① `remark` 前缀 `ext_exit_`（**绝不碰别人的单**）② 状态仍非终态 ③ 年龄 ≥ `EXT_ORPHAN_MIN_AGE_MIN`（默认 15min，与检测器同阈值）
   ④ `--symbol` 一致 ⑤ 部分成交但拿不到成交均价 ⇒ 拒绝；
-  默认 **dry-run**，必须显式 `--apply`；撤单后**回查终态**才判成功（撤单 API 成功 ≠ 已撤，历史 #185）——
-  回查仍是活单 ⇒ 退出码 2 + 审计 `cancel_unconfirmed`，**绝不宣称成功**。
-  `--clear-attempt` 才清 `{today}:{symbol}` attempt 键（默认不清，附 state 备份）。
+  默认 **dry-run**，必须显式 `--apply`；撤单后**轮询确认**（默认 20s，`EXT_ORPHAN_CONFIRM_TIMEOUT_S`），
+  且只有**撤销类终态**（`CANCELLED_ALL/CANCELLED_PART/FILL_CANCELLED/DELETED`）才判成功
+  （撤单 API 成功 ≠ 已撤，历史 #185；且撤单异步，立即回查常见 `CANCELLING_ALL` 不可一次判死）——
+  间隙成交 `FILLED_ALL` ⇒ 退出码 3 + 审计 `filled_during_cancel`；超时仍活/查询失败 ⇒ 退出码 2 + `cancel_unconfirmed`；
+  其他非撤销终态 ⇒ 退出码 2 + `terminal_unexpected`。**绝不宣称成功**。
+  `--clear-attempt` 才清 `{today}:{symbol}` attempt 键（默认不清，附 state 备份；清理时
+  复用执行器 state 文件锁 + 原子写，持锁失败则不动文件）。
 - **`FUTSEEK_PROBE=1` 探针静默**：`_push` 不推、且**不写去重键**（否则一次探针会吃掉该 key 的当日名额，反而静默掉生产真告警）；
   生产未设该 env ⇒ 行为完全不变。动机：用户看到的"连续推送虚拟标的"里有一类正是**人工/探针以 REAL 环境跑生产脚本**产生的
   （生产 cron 未设 `FUTU_TRD_ENV` ⇒ 默认 SIMULATE，审计里也无占位行）。
