@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-19 04:45 事件: 延长时段退出链「有持仓即崩」已修 (INCIDENT-001, P0)
+
+> **一句话**：`quote_metrics` 对 futu 快照行 (pandas Series) 做真值判定 ⇒ **只要有持仓**，盘前/盘后/next_open 三条退出链每分钟崩在 collect 首行，零告警；已单点修复并在生产实跑恢复。
+
+- **发现路径**：用户令"检查盘后交易链路和记录是否正常" → 券商侧发现 16:30:15 ET 盘后实弹开仓 US.ACN 25股@192.64 (FILLED_ALL) → 退出链随后每分钟 rc=1。
+- **根因**：`scripts/extended_hours_market_session.py:100` `snapshot.get("bid_price") if snapshot else None`，`s` 来自 `snap.iterrows()` = Series → `Series.__bool__` ValueError。引入提交 `66d781dcc` (9/18 延长时段利润保护链路)，被"窗口内无持仓"掩盖。
+- **修复**：新增 `_snapshot_field()` (None-safe)，3 处真值判定改显式 `is None` + try/except；盘前/盘后/next_open 共用助手 ⇒ 一处修三链。回归钉 + 变异反证 + 生产 rc=0 实测。
+- **影响**：本窗口资金影响 0 (ACN 应然动作即 `hold_to_next_open`)；但 ①有浮盈时会失去全部盈利保护 ②`next_open` 兑现路从未在有持仓时真正跑过 ③观测台账 16:32–16:38 与 09:38–09:44 各缺 ~7 行 ④**rc≠0 无告警** (error_alert 只认 `] ERROR:` 字面量)。
+- **验证**：该测试文件 9 passed / 延长时段子集 185 passed；`--dry` 实弹产出 `hold_to_next_open` 行；16:39–16:41 三轮 cron rc=0 各落 1 行。
+- **后续(待裁)**：P1 rc≠0 哨兵缺失；P2 `next_open` 窗对 RTH 仓的评估行 (不下单) 需下个交易日观察；P3 观测空洞不回填。详见 `docs/incidents/INCIDENT-001-extended-hours-exit-chain-pandas-series-crash.md`。
+- **同批另发现(非本事件)**：盘后 entry 链健康 (四闸/配额/双写/state 全闭环)；9/18 RTH 6 笔全平净 −76.19；`2026-09-17:premarket` 走了 4 笔仙股 (CTNT $0.07/GIPR $0.42，价格下限闸落地前)。
+
 ## 2026-09-18 23:55 增量：DA 挑战者「独立档 fallback」接线（用户裁「做」）— skill v0.83
 
 > **一句话**：把挑战者失败后「回落主模型 = 同模型自辩」换成 **T2 kimi-k2.6 → T3 glm-5.2（关思考降级档）→ T4 同模型自辩（显式标记、不升 confidence）** 的三级链；实弹端到端验过整条回落路径，commit `a5ad51e3f`（仅测试同步），skill 侧 v0.83。

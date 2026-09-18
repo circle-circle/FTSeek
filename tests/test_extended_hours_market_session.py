@@ -64,6 +64,39 @@ def test_quote_metrics_use_direction_aware_executable_price_and_units():
     assert FIELD_UNITS["quote_age_seconds"] == "seconds"
 
 
+def test_quote_metrics_accepts_pandas_series_snapshot_and_none():
+    """回归钉 (2026-09-19 P0): futu 快照行是 pandas Series, 旧实现 `if snapshot` 走
+    Series.__bool__ → ValueError, 令延长时段退出链**只要有持仓**就每分钟崩在 collect 首行。
+    断言: ①Series 入力不得抛 (值正确) ②None 入力全 None 不抛 ③dict 与 Series 同值。"""
+    import pandas as pd
+
+    row = pd.Series({"bid_price": 9.98, "ask_price": 10.02,
+                     "update_time": "2026-09-17 09:15:00", "last_price": 10.0})
+    now = datetime(2026, 9, 17, 9, 15, 30, tzinfo=ET)
+    series_metrics = quote_metrics(row, "LONG", now)          # 旧实现此处 ValueError
+    assert series_metrics["bid_price"] == 9.98
+    assert series_metrics["ask_price"] == 10.02
+    assert series_metrics["executable_price"] == 9.98
+    assert series_metrics["quote_age_seconds"] == 30.0
+
+    assert quote_metrics(None, "LONG", now) == {
+        "bid_price": None, "ask_price": None, "mid_price": None, "spread": None,
+        "spread_pct": None, "executable_price": None, "quote_age_seconds": None,
+    }
+
+    # 缺字段/NaN 的 Series 行 (盘前盘后盘口可能为空) 必须静默降级为 None, 不得抛
+    sparse = pd.Series({"bid_price": float("nan"), "ask_price": float("nan")})
+    sparse_metrics = quote_metrics(sparse, "SHORT", now)
+    assert sparse_metrics["bid_price"] is None
+    assert sparse_metrics["ask_price"] is None
+    assert sparse_metrics["executable_price"] is None
+
+    # dict 与 Series 同值 ⇒ Series 不是"另一种口径"
+    assert series_metrics["mid_price"] == quote_metrics(
+        {"bid_price": 9.98, "ask_price": 10.02, "update_time": "2026-09-17 09:15:00"},
+        "LONG", now)["mid_price"]
+
+
 def test_risk_r_pct_is_direction_aware_and_rejects_invalid_stop():
     assert risk_r_pct(100, 95, "LONG") == 5.0
     assert risk_r_pct(100, 105, "SHORT") == 5.0

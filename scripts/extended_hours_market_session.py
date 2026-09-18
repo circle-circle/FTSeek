@@ -96,15 +96,34 @@ def _parse_quote_time(value):
     return parsed
 
 
+def _snapshot_field(snapshot, key):
+    """快照取字段 — **绝不对 snapshot 做真值判定**。
+
+    2026-09-19 P0 (延长时段退出链在"有持仓"时每分钟崩): futu 快照行走 `snap.iterrows()`,
+    传给本模块的是 **pandas Series**, 而旧写法 `snapshot.get(key) if snapshot else None`
+    里的 `if snapshot` 会走 `Series.__bool__` → `ValueError: The truth value of a Series
+    is ambiguous`。崩点在 collect() 的第一行 (试算可执行价), 于是**只要有持仓**:
+    退出决策/观测 jsonl/收口强平/next_open 兑现全部不执行, 且每分钟一轮零告警。
+    无持仓时该路径不被触达 ⇒ 长期被"无持仓"掩盖 (9/18 09:38 起 next_open 7 次 +
+    盘后 16:32 起每分钟)。修法 = 单点 None 判定, 覆盖 3 个调用方 (盘前/盘后/next_open)。
+    """
+    if snapshot is None:
+        return None
+    try:
+        return snapshot.get(key)
+    except Exception:
+        return None
+
+
 def quote_metrics(snapshot, direction, now=None):
-    bid = _number(snapshot.get("bid_price")) if snapshot else None
-    ask = _number(snapshot.get("ask_price")) if snapshot else None
+    bid = _number(_snapshot_field(snapshot, "bid_price"))
+    ask = _number(_snapshot_field(snapshot, "ask_price"))
     mid = (bid + ask) / 2 if bid is not None and ask is not None else None
     spread = ask - bid if bid is not None and ask is not None else None
     spread_pct = spread / mid * 100 if spread is not None and mid else None
     long_position = str(direction or "").upper() not in {"SHORT", "SELL_SHORT", "SELL"}
     executable = bid if long_position else ask
-    quote_time = _parse_quote_time(snapshot.get("update_time")) if snapshot else None
+    quote_time = _parse_quote_time(_snapshot_field(snapshot, "update_time"))
     quote_age = None
     if quote_time is not None:
         if now is None:
