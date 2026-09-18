@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-18 23:55 增量：DA 挑战者「独立档 fallback」接线（用户裁「做」）— skill v0.83
+
+> **一句话**：把挑战者失败后「回落主模型 = 同模型自辩」换成 **T2 kimi-k2.6 → T3 glm-5.2（关思考降级档）→ T4 同模型自辩（显式标记、不升 confidence）** 的三级链；实弹端到端验过整条回落路径，commit `a5ad51e3f`（仅测试同步），skill 侧 v0.83。
+
+- **病灶**：`_run_challenger` 原 fallback 调 `_call_llm(...)` **不传 model ⇒ 落回 `MODEL` = 分析师本体（qwen3.7-max）** ⇒ 违反辩论协议硬规「禁止一个模型自辩自裁」（`multi-model-debate/SKILL.md:39`），信息量为 0 且污染挑战者归因。已转热：全窗 5/109、9/18 当日 3/23=13%，这批样本笔均净 −$60.92（n=4 配对，方向性）。
+- **新链**（`/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py::_run_challenger`）：T1 `deepseek-v4.1-flash`（思考+16000+t300，不动）→ **T2 `kimi-k2.6`**（Moonshot，同参可比口径）→ **T3 `glm-5.2`**（智谱，关思考+2000+t60 = **失败模式多样性**：若病根是"思考下的超时/解析失败"，全档开思考会一起死）→ **T4 `qwen3.7-max` 同模型自辩**，落 `_challenger_self_debate=true`。
+- **选型依据**（实弹探针 5 模型 × 2 参数档）：kimi-k2.6 ✅4.2s/✅1.1s、glm-5.2 ✅5.4s/✅0.8s；**glm-5.3 关思考必 HTTP 400（强制思考）⇒ 不能当关思考档**；deepseek-v4-pro 可用但同 primary 家族 ⇒ 不用；qwen 家族一律不用（同分析师）。成本 ~$0.01/日。
+- **语义对齐**：`_merge_debate_results` 的「一致才升 confidence」闸门 `not _is_fallback` → **`not _self_debate`**（原写法会把换家族的 T2/T3 误判为非独立）；新增归因 `challenger_tier` / `challenger_self_debate`，`challenger_model` 记真实使用模型（IC/判据记账据此排除自辩样本）。
+- **已验证**：单测 **56 passed**（新增 T3/T4 链条深度 + 家族独立性命中守卫 + T2 用例扩断言）；**实弹端到端**（把 T1/T2/T3 置为不存在模型名观察真实回落）① T1 坏 → 真落 kimi-k2.6（`primary_error=HTTP 404` 留痕、模型回显 kimi-k2.6）② T1+T2 坏 → glm-5.2 ③ 全坏 → qwen3.7-max 且 `self_debate=True` + outcome 明写「同模型自辩(非独立), confidence不升」。版本棘轮三处同步 **0.83**（SKILL.md / CHANGELOG / 测试字面量）。
+- **未做**：T1 primary 不动（`challenger_primary_*` 留痕照跑，**下一次 DA 运行起可定因**；若 429 则该加错峰/退避而非换模型）；挑战者否决权/降权不落（裁决载体 = `da_score_overwrite_counterfactual` / `divergence_arbitration_shadow`）。
+- **生效/回滚**：DA 侧为脚本（非 systemd 服务）⇒ 下次 DA cron 运行即生效，无需重启；回滚 = `llm_synth.py.bak-challengerchain-20260918` + `config.py.bak-challengerchain-20260918`（两常量留用无害）。
+
 ## 2026-09-18 23:30 增量：从结果反推溯源（COIN/MFE=0 族四层）→ 采样设计修复 + 伪独立辩论留痕（用户令「按建议」）
 
 > **一句话**：把「结果反推信号/产出/入场价」做成逐笔四层溯源后，**四个入场侧修法全被纪律检查证伪**（跳空轴/追价轴/T19 同族/限价路由本窗不可裁），真正还剩的缺口是**影子采样设计**与**伪独立辩论不可定因** —— 两条都按「零交易行为变更」落地（RFC-084 + DA skill v0.82）。
