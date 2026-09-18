@@ -18,6 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.data.providers.base import BaseDataProvider
+from app.utils.symbol_utils import to_dotted_class_share
 from app.utils.timezone import now_utc
 
 # 抑制 TLS 警告
@@ -124,7 +125,11 @@ class FundamentalProvider(BaseDataProvider):
                 return None
 
             from futu import RET_OK
-            ret, data = svc._quote_ctx.get_market_snapshot([symbol])
+            # 2026-09-18 类股修正: Futu OpenD 只认点号写法 — 传 US.BRK-B 返回
+            #   ret=-1 "未知股票 BRK-B" (实测), 改传 US.BRK.B 后 ret=0。
+            _market, _, _base = str(symbol).partition(".")
+            _snap_symbol = f"{_market}.{to_dotted_class_share(_base)}" if _base else symbol
+            ret, data = svc._quote_ctx.get_market_snapshot([_snap_symbol])
             # 注意: 单例连接常驻, 绝不在此 disconnect (会断掉 dashboard 手动交易的共享连接)
 
             if ret != RET_OK or data.empty:

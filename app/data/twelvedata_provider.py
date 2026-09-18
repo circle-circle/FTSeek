@@ -14,13 +14,15 @@ import os
 import time
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, Any, Optional, List
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env.us")
+
+from app.utils.symbol_utils import to_dotted_class_share  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,10 @@ class TwelveDataProvider:
         )
         # 2026-06-30: 429 熔断时间戳
         self._rate_limited_until: float = 0.0
+
+        # 2026-09-18: 无效符号当日负缓存 {ticker: 'YYYY-MM-DD'} — 404 是永久性错误,
+        #   同日不重复请求、不重复报错 (符号修正或跨日自动失效).
+        self._invalid_symbols: Dict[str, str] = {}
         
         # 缓存
         self._cache: Dict[str, Dict[str, Any]] = {}
@@ -222,14 +228,35 @@ class TwelveDataProvider:
         self._cache_time[key] = datetime.now()
 
     def _to_ticker(self, symbol: str) -> str:
-        """US.NVDA → NVDA"""
-        return symbol.replace("US.", "").replace("HK.", "")
+        """US.NVDA → NVDA; 类股 US.BRK-B → BRK.B (TwelveData 只认点号, 连字符 404)."""
+        return to_dotted_class_share(
+            symbol.replace("US.", "").replace("HK.", "")
+        )
+
+    def _is_invalid_symbol(self, ticker: str) -> bool:
+        """符号是否已被判为无效 (当日负缓存)。"""
+        return self._invalid_symbols.get(str(ticker)) == date.today().isoformat()
+
+    def _mark_invalid_symbol(self, ticker: Optional[str], reason: str) -> None:
+        """登记永久性无效符号: 当日不再请求, 只报一次 WARNING。"""
+        if not ticker:
+            return
+        key = str(ticker)
+        _today = date.today().isoformat()
+        if self._invalid_symbols.get(key) == _today:
+            return
+        self._invalid_symbols[key] = _today
+        logger.warning(f"[TwelveData] {key} 符号无效 (永久性, 当日不再请求): {reason}")
 
     def _get(self, endpoint: str, params: Dict) -> Optional[Dict]:
         """发送 GET 请求，附带 API Key，返回 JSON 或 None。"""
         if not self.api_key:
             return None
-        params["apikey"] = self.api_key
+        _sym = params.get("symbol")
+        # 2026-09-18: 无效符号当日负缓存 — 404 是永久性错误 (符号形式/不存在),
+        #   按次重试只会以"每标的每日 7 条 ERROR"刷噪声基线. 批量请求 (逗号串) 不参与.
+        if isinstance(_sym, str) and "," not in _sym and self._is_invalid_symbol(_sym):
+            return None
         # 2026-06-30: 429 熔断 — 收到429后10分钟内不再请求
         _now = time.monotonic()
         if hasattr(self, '_rate_limited_until') and _now < self._rate_limited_until:
@@ -237,7 +264,13 @@ class TwelveDataProvider:
         try:
             # C3 (2026-08-24, 体检 E2): verify=True 收口 — 实测 api.twelvedata.com
             # TLS 握手 verify=True 正常 (该数据被 position_sync 对账链消费).
-            resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=15, verify=True)
+            # 2026-09-18: API Key 从 query string 移到 Authorization header —
+            #   实测两条端点均可用; requests 异常文本不再含 key (原实现把
+            #   apikey 打在 URL 里 → 403/404 异常文本整条 URL 落日志).
+            resp = requests.get(
+                f"{BASE_URL}/{endpoint}", params=params, timeout=15, verify=True,
+                headers={"Authorization": f"apikey {self.api_key}"},
+            )
             resp.raise_for_status()
             data = resp.json()
             if data.get("status") == "error" or data.get("code") in (400, 401, 429):
@@ -248,12 +281,20 @@ class TwelveDataProvider:
                     logger.warning(f"[TwelveData] API错误: {data.get('message', data)}")
                 return None
             return data
+        except requests.HTTPError as e:
+            _status = getattr(getattr(e, "response", None), "status_code", None)
+            if _status == 404:
+                # 永久性错误: 当日负缓存, 只报一次 (不按次 ERROR)
+                self._mark_invalid_symbol(_sym, f"{endpoint} HTTP 404")
+            else:
+                logger.error(f"[TwelveData] 请求失败 {endpoint}: {type(e).__name__} HTTP {_status}")
+            return None
         except requests.RequestException as e:
             if "429" in str(e) or "Too Many" in str(e):
                 self._rate_limited_until = _now + 600  # 10分钟熔断
                 logger.warning(f"[TwelveData] 429 限流(异常), 熔断10分钟")
             else:
-                logger.error(f"[TwelveData] 请求失败 {endpoint}: {e}")
+                logger.error(f"[TwelveData] 请求失败 {endpoint}: {type(e).__name__}")
             return None
 
     # ── 公开接口 ──────────────────────────────────────────────────

@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 
 import requests
 
+from app.utils.log_sanitize import scrub_secrets
+
 logger = logging.getLogger(__name__)
 
 # API 配置
@@ -158,7 +160,8 @@ class FundamentalFilter:
             if "MarketCapitalization" in data:
                 return data
         except requests.exceptions.RequestException as e:
-            logger.error(f"Alpha Vantage API 请求失败 {symbol}: {e}")
+            # 日志脱敏: 异常文本含完整 URL, 而 apikey 在 query string
+            logger.error(f"Alpha Vantage API 请求失败 {symbol}: {scrub_secrets(e)}")
         except (KeyError, ValueError) as e:
             logger.error(f"解析 Alpha Vantage 数据失败 {symbol}: {e}")
         

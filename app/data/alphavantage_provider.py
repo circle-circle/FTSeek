@@ -23,6 +23,8 @@ from dotenv import load_dotenv
 # 加载环境变量
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env.us")
 
+from app.utils.log_sanitize import scrub_secrets  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # ── 常量 ─────────────────────────────────────────────────────────
@@ -236,8 +238,9 @@ class AlphaVantageProvider:
             logger.error("[AlphaVantage] 请求超时")
             raise AlphaVantageError("请求超时")
         except requests.exceptions.RequestException as e:
-            logger.error(f"[AlphaVantage] 网络错误：{e}")
-            raise AlphaVantageError(f"网络错误：{e}")
+            # 日志脱敏 (2026-09-18): 异常文本含完整 URL, 而 apikey 在 query string
+            logger.error(f"[AlphaVantage] 网络错误：{scrub_secrets(e)}")
+            raise AlphaVantageError(f"网络错误：{scrub_secrets(e)}")
         except ValueError as e:
             logger.error(f"[AlphaVantage] JSON 解析错误：{e}")
             raise AlphaVantageError(f"JSON 解析错误：{e}")

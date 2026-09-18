@@ -34,6 +34,8 @@ from typing import Dict, Any, Optional, List
 
 from futu import CurKlineHandlerBase
 
+from app.utils.symbol_utils import to_dotted_class_share
+
 logger = logging.getLogger("ftseek_us.futu_lv3")
 
 
@@ -510,10 +512,13 @@ class FutuLV3Provider:
                 return False
 
     def _to_futu_symbol(self, symbol: str) -> str:
-        """US.AAPL → US.AAPL (Futu 格式), 兼容无 US. 前缀"""
-        if symbol.startswith("US."):
-            return symbol
-        return f"US.{symbol}"
+        """US.AAPL → US.AAPL (Futu 格式), 兼容无 US. 前缀。
+
+        类股转点号: US.BRK-B → US.BRK.B。Futu OpenD 只认点号写法
+        (实测 2026-09-18: US.BRK-B → ret=-1 未知股票; US.BRK.B → ret=0 快照/K线均通)。
+        """
+        s = symbol if symbol.startswith("US.") else f"US.{symbol}"
+        return s[:3] + to_dotted_class_share(s[3:])
 
     def _strip_prefix(self, symbol: str) -> str:
         """US.AAPL → AAPL"""

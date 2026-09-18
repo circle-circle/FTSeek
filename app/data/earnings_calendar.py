@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 
+from app.utils.log_sanitize import scrub_secrets
 from app.utils.timezone import now_et
 
 logger = logging.getLogger("ftseek.us_pipeline.earnings_calendar")
@@ -228,7 +229,8 @@ class EarningsCalendar:
                     logger.error("Alpha Vantage 请求超时 (已达最大重试次数)")
                     return ""
             except Exception as e:
-                logger.error(f"Alpha Vantage 请求异常: {e}")
+                # 日志脱敏: 异常文本含完整 URL, 而 apikey 在 query string
+                logger.error(f"Alpha Vantage 请求异常: {scrub_secrets(e)}")
                 return ""
     
     def _parse_csv(self, csv_text: str) -> List[Dict]:
@@ -611,7 +613,7 @@ class EarningsCalendar:
                 logger.warning(f"获取 {ticker} 财报历史失败: HTTP {resp.status_code}")
                 return []
         except Exception as e:
-            logger.error(f"获取 {ticker} 财报历史异常: {e}")
+            logger.error(f"获取 {ticker} 财报历史异常: {scrub_secrets(e)}")
             return []
     
     def format_history_for_llm(self, ticker: str) -> str:

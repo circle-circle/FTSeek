@@ -123,6 +123,17 @@ class PlaybookScreener:
             if days_until is not None and days_until < 3:
                 logger.debug(f"[SCREENER] {symbol} excluded: earnings in {days_until} days")
                 continue
+
+            # 3b. 数据可得性硬门 (2026-09-18): 无日线 → MA20/RSI 全缺 = 技术维度是空壳
+            #     (报价由 Finnhub 等兜住 price, quality=partial 仍能过闸), 因子会在空数据上计算。
+            #     案例 US.BRK-B 0 条日线仍在 74 只筛选池内; 实测采样 16 只主流标的仅该形态命中。
+            tech = data.technical
+            if tech.quality != "ok" and tech.ma20 is None and tech.rsi_14 is None:
+                logger.info(
+                    f"[SCREENER] {symbol} excluded: 无日线 (MA20/RSI 全缺, "
+                    f"technical quality={tech.quality})"
+                )
+                continue
             
             # 4. 计算分数 (只使用已验证的条件)
             score, triggered_factors = self._calculate_score(data, positions)

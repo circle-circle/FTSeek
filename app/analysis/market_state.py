@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
 
+from app.utils.log_sanitize import scrub_secrets
+
 logger = logging.getLogger(__name__)
 
 # 从 .env.us 加载 API Keys
@@ -232,7 +234,7 @@ class MarketStateChecker:
                         logger.info(f"VIX 当前值={price:.2f} (AlphaVantage)")
                         return price
             except Exception as e:
-                logger.debug(f"AlphaVantage 获取 VIX 失败: {e}")
+                logger.debug(f"AlphaVantage 获取 VIX 失败: {scrub_secrets(e)}")
 
         # Finnhub 已跳过 (key=*** 无效, 免费版也返回 0)
         # 2026-09-14 (P0-1): 原此处 `return 20.0  # 合理默认值` — 兜底假值使

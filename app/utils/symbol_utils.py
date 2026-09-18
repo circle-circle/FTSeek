@@ -7,7 +7,12 @@
 
 统一在写入咽喉 (playbook 指令、voting 预测) 调用,保证落库符号 canonical。
 """
+import re
 from typing import Optional
+
+# 类股 (class share) 代码: 字母代码 + "-" + 1~2 位类别字母 (BRK-B / BF-B / RDS-A)。
+# 故意不匹配期权代码 (BRK-B260119C500000 后缀为数字) — 期权符号不得改写。
+_CLASS_SHARE_RE = re.compile(r"^([A-Z]{1,6})-([A-Z]{1,2})$")
 
 # 被本系统当作"同一标的"的别名归并。canonical 取 watchlist 既有用法。
 # 注意:GOOGL(Alphabet A类) 与 GOOG(C类) 技术上是两支不同股票,
@@ -41,3 +46,21 @@ def normalize_symbol(sym: Optional[str]) -> Optional[str]:
         base = SYMBOL_ALIASES.get(base, base)
         return f"US.{base}"
     return SYMBOL_ALIASES.get(s, s)
+
+
+def to_dotted_class_share(ticker: Optional[str]) -> Optional[str]:
+    """类股 ticker 由连字符写法转点号写法 (BRK-B → BRK.B); 非类股原样返回。
+
+    各源接受的类股写法实测不同 (2026-09-18 活体探针):
+      TwelveData  : BRK-B → HTTP 404            | BRK.B → 200 (3 bars)
+      Futu OpenD  : US.BRK-B → ret=-1 未知股票   | US.BRK.B → ret=0 (快照/K线均通)
+      Yahoo       : BRK-B → 200                 | BRK.B → Not Found
+      Finnhub     : 连字符可用 (仅报价源)
+    故只在 TwelveData / Futu 的出站符号构造处调用; Yahoo/Finnhub 保持连字符原样。
+    期权代码 (后缀为数字) 与普通 ticker 一律不改写。
+    """
+    if not ticker:
+        return ticker
+    t = str(ticker).strip()
+    m = _CLASS_SHARE_RE.match(t)
+    return f"{m.group(1)}.{m.group(2)}" if m else t
