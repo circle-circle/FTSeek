@@ -46,6 +46,14 @@ def ensure_columns(conn: sqlite3.Connection) -> list[str]:
     return added
 
 
+def repair_duplicate_external_close_rows(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        "UPDATE trade_records SET fees_est=NULL, pnl_net=NULL, fees_source=NULL "
+        "WHERE data_quality='duplicate_external_close' AND realized_pnl IS NULL"
+    )
+    return cursor.rowcount
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="真写 (缺省 dry-run)")
@@ -70,8 +78,9 @@ def main() -> int:
         "SELECT id, symbol, trade_date, direction, entry_price, exit_price, quantity, "
         "realized_pnl, source_type, exit_time, metadata_json FROM trade_records "
         "WHERE exit_time IS NOT NULL AND exit_time != '' AND exit_price > 0 "
-        "AND entry_price > 0 AND quantity > 0"
+        "AND entry_price > 0 AND quantity > 0 AND realized_pnl IS NOT NULL"
     ).fetchall()
+    repaired = repair_duplicate_external_close_rows(conn) if args.apply else 0
 
     n_upd = n_meta = 0
     wl_month = defaultdict(lambda: [0, 0.0, 0.0])  # month -> [n, gross, fees]
@@ -120,6 +129,8 @@ def main() -> int:
     wl_fees = sum(v[2] for v in wl_month.values())
     print(f"\n{'[APPLY]' if args.apply else '[DRY-RUN]'} 全表候选 {len(rows)} 行"
           + (f", 已回填 {n_upd} (白名单明细 {n_meta})" if args.apply else ""))
+    if repaired:
+        print(f"重复外部平仓行净额清理: {repaired} 行")
     print(f"═══ 白名单口径 (source_type IN {WHITELIST}) ═══")
     print(f"全史: n={wl_n} 毛={wl_gross:+.2f} 费={wl_fees:.2f} 净={wl_gross - wl_fees:+.2f}")
     for mo in sorted(wl_month):

@@ -128,6 +128,7 @@ def collect(dry: bool) -> int:
     from scripts.extended_hours_profit_exit_rules import (
         decide_original_profit_exit,
         parse_trade_metadata,
+        prioritize_profit_exit,
         persist_profit_exit_state,
     )
     session = extended_hours_session_for(today_et, hhmm)
@@ -197,8 +198,12 @@ def collect(dry: bool) -> int:
             action = decision["action"]
             if not dry:
                 persist_profit_exit_state(DB, trade_id, decision, direction)
-            if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et):
-                action = "hold_to_next_open"
+            fallback = (
+                "hold_to_next_open"
+                if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et)
+                else None
+            )
+            action = prioritize_profit_exit(action, fallback)
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
             if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK")
                     and in_window and not dry):

@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.extended_hours_profit_exit_rules import (
     decide_original_profit_exit,
+    prioritize_profit_exit,
     persist_profit_exit_state,
 )
 
@@ -21,6 +22,14 @@ META = {
     "conditions": [],
     "peak_price": 100.0,
 }
+
+
+def test_profit_exit_signal_has_priority_over_fallback():
+    assert prioritize_profit_exit("TAKE_PROFIT", "pre_close_flatten") == "TAKE_PROFIT"
+    assert prioritize_profit_exit("SL_BREAKEVEN", "hold_to_next_open") == "SL_BREAKEVEN"
+    assert prioritize_profit_exit("SL_TRAIL_LOCK", "hold_to_next_open") == "SL_TRAIL_LOCK"
+    assert prioritize_profit_exit("hold", "pre_close_flatten") == "pre_close_flatten"
+    assert prioritize_profit_exit("hold") == "hold"
 
 
 def test_breakeven_exits_only_after_arming_and_net_floor_breach():

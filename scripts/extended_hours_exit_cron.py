@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 from scripts.extended_hours_market_session import get_extended_hours_session
 
 LOCK_FILE = ROOT / "logs" / "extended_hours_exit_cron.lock"
+NEXT_OPEN_START_MINUTES = 570
+NEXT_OPEN_END_MINUTES = 585
 
 
 def collector_command(session):
@@ -22,11 +25,33 @@ def collector_command(session):
         return [sys.executable, str(ROOT / "scripts" / "premarket_exit_shadow.py")]
     if session == "afterhours":
         return [sys.executable, str(ROOT / "scripts" / "afterhours_exit_shadow.py")]
+    if session == "next_open":
+        return [sys.executable, str(ROOT / "scripts" / "premarket_exit_shadow.py")]
     return None
 
 
-def run_once(dry=False, timeout_s=120):
-    session = get_extended_hours_session()
+def is_next_open_window(now):
+    from app.utils.holiday_calendar import get_holiday_calendar
+
+    minutes = now.hour * 60 + now.minute
+    return (
+        NEXT_OPEN_START_MINUTES <= minutes < NEXT_OPEN_END_MINUTES
+        and get_holiday_calendar().is_trading_day("US", now.date())
+    )
+
+
+def get_exit_cron_session(now=None):
+    if now is None:
+        from app.utils.timezone import now_et
+        now = now_et()
+    session = get_extended_hours_session(now)
+    if session is not None:
+        return session
+    return "next_open" if is_next_open_window(now) else None
+
+
+def run_once(dry=False, timeout_s=120, now=None):
+    session = get_exit_cron_session(now)
     command = collector_command(session)
     if session is None or command is None:
         return {"ok": True, "skip": "outside_extended_hours", "session": session}

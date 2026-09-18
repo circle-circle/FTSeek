@@ -8,6 +8,14 @@ from pathlib import Path
 PROFIT_EXIT_REASONS = {"TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"}
 
 
+def prioritize_profit_exit(action, fallback=None):
+    """Return an extended-hours action without letting a fallback override profit protection."""
+    action = str(action or "")
+    if action in PROFIT_EXIT_REASONS:
+        return action
+    return fallback if fallback is not None else action
+
+
 def _number(value, default=0.0):
     try:
         parsed = float(value)

@@ -28,6 +28,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from scripts.extended_hours_profit_exit_rules import (
+    decide_original_profit_exit,
+    prioritize_profit_exit,
+)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
@@ -48,6 +53,28 @@ CHUNK_DAYS = 6            # 单次请求跨度 (日历日)
 
 
 CACHE_DIR = ROOT / "data" / "replay_cache"
+
+
+def _shared_profit_exit_decider(entry_price, initial_sl):
+    """Wrap the live shared rule for deterministic bar replay."""
+    state = {"metadata": {}, "peak_price": entry_price}
+
+    def decide(current_price):
+        decision = decide_original_profit_exit(
+            "LONG",
+            entry_price,
+            current_price,
+            initial_sl,
+            state["peak_price"],
+            state["metadata"],
+            FEE_PCT,
+            "PLAYBOOK_SIM",
+        )
+        state["metadata"] = decision["metadata"]
+        state["peak_price"] = decision["peak_price"]
+        return prioritize_profit_exit(decision["action"])
+
+    return decide
 
 
 def _kline_cached(ctx, code, start, end, ktype):
@@ -129,9 +156,10 @@ def _candidate_days(rank_df, day, recent_days):
     return out
 
 
-def _simulate(bars_day, prev_close, entry_bar_i, decide):
+def _simulate(bars_day, prev_close, entry_bar_i):
     """在当日 bar 序列上模拟: 入场 → 三条退出策略. 返回 dict."""
     entry = bars_day[entry_bar_i]["c"]
+    decide = _shared_profit_exit_decider(entry, entry * 0.95)
     res = {}
     pre = [b for b in bars_day if _hhmm(b["t"]) < 930]
     rth = [b for b in bars_day if 930 <= _hhmm(b["t"]) <= 1600]
@@ -147,8 +175,8 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
         if b["t"] <= bars_day[entry_bar_i]["t"]:
             continue
         pnl = (b["c"] / entry - 1) * 100
-        a = decide(round(pnl, 3), cum.get(b["t"], 0.0))
-        if a in ("lock_in", "breakeven_lock", "tighten"):
+        a = decide(b["c"])
+        if a in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"):
             act, exit_px, exit_t = a, b["c"], b["t"]
             break
     res["rule_action"] = act
@@ -227,10 +255,11 @@ def _simulate(bars_day, prev_close, entry_bar_i, decide):
     return res
 
 
-def _simulate_ah(bars_day, next_day_bars, entry_bar_i, decide):
+def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     """盘后入场模拟 (2026-09-17 用户「要」): 入场 = 16:05 那根 5m bar 收盘;
     退出臂 = 现役规则(afterhours decide) / 盘后收口 19:55 / 次日开盘 09:35 / 次日收盘 / 仅止损."""
     entry = bars_day[entry_bar_i]["c"]
+    decide = _shared_profit_exit_decider(entry, entry * 0.95)
     res = {}
     ah = [b for b in bars_day if _hhmm(b["t"]) >= 1600]
     cum, run = {}, 0.0
@@ -241,8 +270,8 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i, decide):
     for b in bars_day:
         if b["t"] <= bars_day[entry_bar_i]["t"]:
             continue
-        a = decide(round((b["c"] / entry - 1) * 100, 3), cum.get(b["t"], 0.0))
-        if a in ("lock_in", "breakeven_lock", "tighten"):
+        a = decide(b["c"])
+        if a in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"):
             act, ex = a, b["c"]
             break
     res["rule_action"] = act
@@ -285,19 +314,7 @@ def main():
     args = ap.parse_args()
 
     import scripts.extended_hours_entry_executor as E
-    # 2026-09-18: 两个 exit shadow 的 decide() 已被延长时段退出链重构移除 (共有文件, 非本工具改动)
-    # ⇒ 改为可选; 缺失时 rule 臂退化为"不触发"(等价持有到收口), 报告里显式标注不可用于对现役规则下判.
     _rule_arm_ok = True
-    try:
-        if args.session == "afterhours":
-            from scripts.afterhours_exit_shadow import decide
-        else:
-            from scripts.premarket_exit_shadow import decide
-    except ImportError:
-        _rule_arm_ok = False
-
-        def decide(pnl_pct, pre_volume=0.0, *_a, **_k):   # noqa: ANN001
-            return "hold"
     from futu import OpenQuoteContext, KLType, BeatType
 
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
@@ -384,9 +401,9 @@ def main():
                         if args.session == "afterhours":
                             nxt = days[di + 1] if di + 1 < len(days) else None
                             nb = [b for b in bars if b["t"][:10] == nxt] if nxt else []
-                            rec.update(_simulate_ah(today, nb, ei, decide))
+                            rec.update(_simulate_ah(today, nb, ei))
                         else:
-                            rec.update(_simulate(today, prev_close, ei, decide))
+                            rec.update(_simulate(today, prev_close, ei))
                     except Exception as exc:
                         rec["sim_error"] = str(exc)[:80]
                 rows.append(rec)
@@ -396,7 +413,8 @@ def main():
         for r in passed:
             k = r["source"].split(":")[0]
             src_dist[k] = src_dist.get(k, 0) + 1
-        summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "rule_arm_available": _rule_arm_ok, "days": len(days) - 1,
+        summary = {"generated_at": datetime.utcnow().isoformat() + "Z", "rule_arm_available": _rule_arm_ok,
+                   "rule_arm_source": "shared_original_profit_exit", "days": len(days) - 1,
                    "source": args.source, "session": args.session, "end": end, "min_chg": args.min_chg, "min_vol": args.min_vol,
                    "candidates_evaluated": len(rows), "passed_by_source": src_dist,
                    "gates_passed": len(passed)}

@@ -10,7 +10,7 @@
 安全护栏 (全自动的代价控制):
   1. 仅 SIMULATE 环境 (ALLOW_REAL_TRADING=false 当前); 实盘需另裁决.
   2. ETH 限价单, 不使用市价兜底; 部分成交保持 durable pending.
-  3. 仅平已有 PLAYBOOK 持仓, 不开仓; next_open 例外路径禁用.
+  3. 仅平已有 PLAYBOOK 持仓, 不开仓; next_open 使用 RTH 限价单.
   4. 重复防护: audit 日防重 + durable close_key 防重.
   5. 失败/异常 → 推送告警, 不静默; 不直接写 open_positions/trade_records.
 
@@ -162,8 +162,6 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         return {"ok": True, "dry": True, "symbol": symbol, "direction": direction,
                 "qty": qty, "price": price, "session": session}
 
-    if session == "next_open":
-        return {"ok": False, "skip": "next_open_exit_disabled"}
     if price <= 0 or qty <= 0 or not reason or len(reason) > 48:
         return {"ok": False, "skip": "invalid_position_or_price"}
     if any(not character.isalnum() and character != "_" for character in reason):
@@ -206,9 +204,10 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         owner = _playbook_exit_owner(DB, trade, metadata)
         decision = _playbook_exit_decision(reason, float(price), metadata, holding_hours)
         timeout = float(os.getenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20"))
+        order_session = "RTH" if session == "next_open" else "ETH"
         close_result = dual.close_position(
             symbol, float(qty), str(direction).upper(), target_env="sim",
-            limit_price=float(price), limit_timeout_s=timeout, session="ETH",
+            limit_price=float(price), limit_timeout_s=timeout, session=order_session,
             exit_owner=owner, exit_decision=decision,
         )
         dealt_qty = float(close_result.get("dealt_qty") or 0)

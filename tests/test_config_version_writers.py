@@ -60,7 +60,7 @@ def test_registry_files_are_consistent():
     """规范写入方 (trade_store) 与两个补修写方必须同值 —— 防日后单边改版本."""
     files = {
         "app/storage/trade_store.py": "'v2',?,?)",
-        "scripts/extended_hours_entry_executor.py": "exit_time, config_version)",
+        "scripts/extended_hours_entry_executor.py": "exit_time, config_version, ",
         "app/core/position_sync.py": "close_futu_order_id, config_version)",
     }
     for rel, needle in files.items():

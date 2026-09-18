@@ -124,8 +124,8 @@ def test_premarket_shadow_hands_over_after_window(monkeypatch, tmp_path):
     assert calls == []
 
 
-def test_afterhours_shadow_suppresses_signals_for_same_day_entries(monkeypatch, tmp_path):
-    """盘后影子: 当日盘后进的仓 → 停用利润保护信号, 只留 hold_to_next_open."""
+def test_afterhours_shadow_keeps_profit_signal_for_same_day_entries(monkeypatch, tmp_path):
+    """盘后影子: 当日盘后进仓也保留有效止盈; hold_to_next_open 只兜底."""
     calls = []
     monkeypatch.setitem(sys.modules, "futu", _futu_stub(
         {"code": "US.FAKE", "last_price": 10.0, "after_price": 12.5, "after_volume": 90000.0,
@@ -133,14 +133,17 @@ def test_afterhours_shadow_suppresses_signals_for_same_day_entries(monkeypatch, 
     monkeypatch.setattr(AH, "_today_et", lambda: "2026-09-17")
     monkeypatch.setattr(AH, "_now_et", lambda: datetime(2026, 9, 17, 18, 0))
     monkeypatch.setattr(AH, "_load_open_positions", lambda: [
-        ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1", '{"stop_loss":9.5}')])
+        ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1",
+         '{"stop_loss":9.5,"take_profit":12.4}')])
     monkeypatch.setattr(AH, "OUTPUT", tmp_path / "ah.jsonl")
     monkeypatch.setattr(_sp, "run", lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(
         returncode=0, stdout="", stderr=""))
     AH.collect(dry=False)
     row = json.loads((tmp_path / "ah.jsonl").read_text().strip())
-    assert row["action"] == "hold_to_next_open"
-    assert calls == []                                 # 关键: 盘后不再下单
+    assert row["action"] == "TAKE_PROFIT"
+    assert len(calls) == 1
+    assert "--session" in calls[0] and "afterhours" in calls[0]
+    assert "TAKE_PROFIT" in calls[0]
 
 
 def test_afterhours_shadow_keeps_rules_for_non_afterhours_entries(monkeypatch, tmp_path):
@@ -167,8 +170,8 @@ def test_afterhours_shadow_keeps_rules_for_non_afterhours_entries(monkeypatch, t
 def test_exit_executor_has_next_open_session():
     src = (ROOT / "scripts" / "extended_hours_exit_executor.py").read_text()
     assert '"next_open": (930, 945)' in src
-    assert '"next_open_exit_disabled"' in src
-    assert 'session="ETH"' in src
+    assert '"next_open_exit_disabled"' not in src
+    assert 'order_session = "RTH" if session == "next_open" else "ETH"' in src
     assert '"premarket", "afterhours", "next_open"' in src
 
 def test_is_afterhours_carry_with_et_aware_timestamp():

@@ -85,7 +85,8 @@ def _create_db(path):
             exit_reason TEXT, holding_hours REAL, source_type TEXT,
             trade_mode TEXT, mode TEXT, owner_strategy TEXT, strategy_id TEXT,
             futu_order_id TEXT, close_futu_order_id TEXT, metadata_json TEXT,
-            mfe_pct REAL, mae_pct REAL, max_drawdown REAL, created_at TEXT
+            mfe_pct REAL, mae_pct REAL, max_drawdown REAL, created_at TEXT,
+            config_version TEXT, entry_session TEXT
         );
         """
     )
@@ -138,11 +139,12 @@ def test_entry_full_fill_writes_position_and_trade_record(
         "SELECT position_id, size, avg_entry_price, initial_sl FROM open_positions"
     ).fetchone()
     trade = connection.execute(
-        "SELECT quantity, entry_price, futu_order_id, exit_price FROM trade_records"
+        "SELECT quantity, entry_price, futu_order_id, exit_price, config_version, "
+        "entry_session FROM trade_records"
     ).fetchone()
     connection.close()
     assert position[1:] == (100, 10.0, 9.5)
-    assert trade == (100, 10.0, "900001", 0)
+    assert trade == (100, 10.0, "900001", 0, "v2", "premarket")
 
 
 def test_entry_partial_fill_writes_actual_filled_quantity(
@@ -636,7 +638,7 @@ def test_exit_blocks_when_broker_exit_order_is_active(
     assert len(broker.calls) == 1
 
 
-def test_exit_next_open_path_is_disabled(exit_environment, monkeypatch):
+def test_exit_next_open_path_uses_rth_session(exit_environment, monkeypatch):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
     broker = _install_durable_broker(monkeypatch)
 
@@ -644,8 +646,9 @@ def test_exit_next_open_path_is_disabled(exit_environment, monkeypatch):
         "US.TEST", "LONG", 100, 11.0, "next_open", "next_open_exit", dry=False,
     )
 
-    assert result == {"ok": False, "skip": "next_open_exit_disabled"}
-    assert not broker.calls
+    assert result["ok"] is True
+    assert result["fully_filled"] is True
+    assert broker.calls[0]["session"] == "RTH"
 
 
 def test_entry_change_pct_env_override(monkeypatch):

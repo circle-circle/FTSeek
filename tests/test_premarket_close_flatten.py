@@ -57,12 +57,13 @@ def test_flatten_skips_overnight_and_legacy_positions():
     assert M.flatten_now(920, "2026-09-10 16:05:00", TODAY, True) is False
 
 
-def test_flatten_action_overrides_rule_signals():
-    """强平优先级高于 TAKE_PROFIT / SL_BREAKEVEN / SL_TRAIL_LOCK."""
-    src = (ROOT / "scripts" / "premarket_exit_shadow.py").read_text()
-    assert 'action = "pre_close_flatten"' in src
-    assert '"TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK",\n                           "pre_close_flatten"' in src
-    assert 'EXT_PREMARKET_FLATTEN' in src
+def test_flatten_is_fallback_to_profit_protection():
+    """有效止盈优先；无有效止盈时，盘前收口仅作为兜底."""
+    from scripts.extended_hours_profit_exit_rules import prioritize_profit_exit
+
+    for action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"):
+        assert prioritize_profit_exit(action, "pre_close_flatten") == action
+    assert prioritize_profit_exit("hold_no_stop", "pre_close_flatten") == "pre_close_flatten"
 
 def test_collect_wires_flatten_to_exit_executor(monkeypatch, tmp_path):
     """接线级验证 (防"纯函数绿但没接上"): 09:25 时今日盘前仓 → 子进程必须收到

@@ -213,6 +213,7 @@ def collect(dry: bool) -> int:
     from scripts.extended_hours_profit_exit_rules import (
         decide_original_profit_exit,
         parse_trade_metadata,
+        prioritize_profit_exit,
         persist_profit_exit_state,
     )
     session = extended_hours_session_for(today_et, hhmm)
@@ -283,17 +284,19 @@ def collect(dry: bool) -> int:
             if not dry:
                 persist_profit_exit_state(DB, trade_id, decision, direction)
             _flat = flatten_now(hhmm, entry_time, today_et, in_window)
-            if _flat:
-                # 收口强平**覆盖**原规则信号 (回放: 强平 >> 现役规则 >> 止损)
-                action = "pre_close_flatten"
+            fallback = None
             if _ah_carry:
-                # 盘后进场仓: 开盘前**一律不动作** (不强止损) → 09:30-09:45 开盘兑现
+                # 盘后进场仓: 仅无有效止盈时等待开盘; 错过窗口由盘中引擎接管.
                 if hhmm < NEXT_OPEN_EXIT_FROM:
-                    action = "hold_to_next_open"
+                    fallback = "hold_to_next_open"
                 elif hhmm <= NEXT_OPEN_EXIT_TO:
-                    action = "next_open_exit"
+                    fallback = "next_open_exit"
                 else:
-                    action = "hold_intraday_takeover"   # 错过窗口 → 盘中引擎接管(不补单)
+                    fallback = "hold_intraday_takeover"
+            elif _flat:
+                # 收口强平只兜底, 不覆盖 TAKE_PROFIT/BE/TRAIL_LOCK.
+                fallback = "pre_close_flatten"
+            action = prioritize_profit_exit(action, fallback)
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
             _exec_ok = in_window or action == "next_open_exit"   # 开盘兑现发生在盘前窗之外
             if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK",
