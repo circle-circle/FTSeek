@@ -480,13 +480,22 @@ def _scan_candidates(session, qctx):
     这是"换源"的唯一改动点: 下游四闸 / 价格下限 / 配额 / 下单 / 平仓 / 台账全部复用, 一行不改。
     """
     merged, tag_of = [], {}
+    skipped_test = []
 
     def _add(items, tag):
         for it in items:
             sym = it.get("symbol")
-            if sym and sym not in tag_of:
-                tag_of[sym] = tag
-                merged.append(it)
+            if not sym or sym in tag_of:
+                continue
+            # 2026-09-18 (DEB-20260918 §23.5, 源头修): 占位标的 (TEST / US.TEST / *.TEST)
+            #   在**候选源汇合口**就挡掉 —— 它们不是真候选股, 只可能来自单测 artifact 或券商
+            #   账户里的报废测试单 (如 US.TEST order 8185070)。此前只在 `_execute` 深处挡,
+            #   占位标的仍会走完四闸、占 attempt 键、进审计/推送路径。
+            if is_test_symbol(sym):
+                skipped_test.append(sym)
+                continue
+            tag_of[sym] = tag
+            merged.append(it)
 
     if SOURCE_RANK_BOARD:
         _add(_scan_movers(session, qctx), "rank")
@@ -498,6 +507,8 @@ def _scan_candidates(session, qctx):
     new_syms = [s for s in dict.fromkeys(extra) if s not in tag_of]
     if new_syms:
         _add(_snapshot_candidates(session, qctx, new_syms), "snapshot")
+    if skipped_test:
+        print(f"[ext_entry] 候选源忽略占位标的: {', '.join(sorted(set(skipped_test)))}")
     if merged:
         n_extra = sum(1 for v in tag_of.values() if v != "rank")
         print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "
@@ -561,10 +572,20 @@ def _reconcile_broker_entry_orders(
     This is read-only for broker state. It never cancels an order. Filled orders
     without a local owner row are written once; conflicts are returned for triage.
     """
-    rows = [
-        row for row in query_order_rows(tctx, env, acc_id)
-        if row.get("remark") == "ext_entry"
-    ]
+    rows = []
+    skipped_test = []
+    for row in query_order_rows(tctx, env, acc_id):
+        if row.get("remark") != "ext_entry":
+            continue
+        # 2026-09-18 (§23.5): 占位标的订单在**对账口**就丢弃 —— 否则它们会被写成当日 attempt
+        #   (静默封锁该标的)、计入 active_orders/conflicts、或在成交路径触发建仓回补。
+        #   实测 US.TEST order 8185070 的报废单每天都出现在这里的全量订单表。
+        if is_test_symbol(row.get("symbol")):
+            skipped_test.append(f"{row.get('symbol')}:{row.get('order_id')}")
+            continue
+        rows.append(row)
+    if skipped_test:
+        print(f"[ext_entry] 对账忽略占位标的订单: {', '.join(skipped_test)}")
     active_orders = []
     conflicts = []
     for row in rows:

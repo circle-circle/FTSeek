@@ -80,3 +80,29 @@ def test_collectors_use_positive_evidence_scope(tmp_path, monkeypatch):
             ("US.AUTO", "LONG", 10, 100, 95, "2026-09-17T10:00:00-04:00",
              "signal-auto", '{"atr":0.5}', 1, "PLAYBOOK_SIM")
         ]
+
+def test_placeholder_positions_are_excluded(tmp_path):
+    """占位标的持仓不得进入延长时段退出链 (2026-09-18 §23.5)。
+
+    实测: AH/盘前影子每分钟为 US.TEST 取行情/算信号/打观测日志, 而券商侧无该持仓 ⇒
+    退出链为假持仓空转, 并沿退出路径产出告警。
+    """
+    path = tmp_path / "positions.db"
+    conn = _create_db(path)
+    rows = [
+        ("US.TEST", "LONG", 10, 100, 95, "2026-09-17T10:00:00-04:00", "sig-t",
+         "auto", "AUTO", "playbook_sim", "scheduler"),
+        ("US.FAKE", "LONG", 10, 100, 95, "2026-09-17T10:00:00-04:00", "sig-f",
+         "auto", "AUTO", "playbook_sim", "scheduler"),
+    ]
+    conn.executemany("INSERT INTO open_positions VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.execute(
+        "INSERT INTO trade_records (id,symbol,exit_time,exit_price,source_type,owner_strategy) "
+        "VALUES (1,'US.TEST','',0,'PLAYBOOK_SIM','playbook_sim')")
+    conn.execute(
+        "INSERT INTO trade_records (id,symbol,exit_time,exit_price,source_type,owner_strategy) "
+        "VALUES (2,'US.FAKE','',0,'PLAYBOOK_SIM','playbook_sim')")
+    conn.commit()
+    conn.close()
+
+    assert [row[0] for row in load_non_manual_positions(path)] == ["US.FAKE"]

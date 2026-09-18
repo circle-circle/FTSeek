@@ -16,6 +16,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Tuple
 from pathlib import Path
 from app.utils.timezone import now_et, to_et
+from app.core.trade_identity import is_test_symbol
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -146,7 +147,9 @@ class PDTGuard:
                     "SELECT trade_date, symbol FROM pdt_trades WHERE trade_date >= ?",
                     (window_start.isoformat(),)
                 )
-                return cursor.fetchall()
+                # 2026-09-18 (§23.5): 读数侧排除占位标的 —— 与写入侧同一个规范判据
+                #   (app.core.trade_identity.is_test_symbol), 不另写 SQL 模式以免语义分叉。
+                return [row for row in cursor.fetchall() if not is_test_symbol(row[1])]
         except Exception as e:
             logger.error(f"[PDT] 查询窗口交易失败: {e}")
             return []
@@ -264,6 +267,12 @@ class PDTGuard:
         是否受限 — sim 余额 <25k 时守 PDT (验证策略 PDT 合规), ≥25k 豁免.
         """
         today = now_et().date().isoformat()
+        # 2026-09-18 (DEB-20260918 §23.5): 占位标的 (TEST/US.TEST/*.TEST) 不写 PDT 台账 ——
+        #   实测生产库 pdt_trades 被单测 artifact 塞进 28 行 US.TEST, 虚增 5 日窗口日内交易计数,
+        #   而 PDT 计数不足会**拒真交易**(fail-closed) ⇒ 假标的能间接卡住真交易。
+        if is_test_symbol(symbol):
+            logger.info(f"[PDT] 跳过占位标的日内交易记录: {symbol}")
+            return
         try:
             with self._connect() as conn:
                 cursor = conn.cursor()

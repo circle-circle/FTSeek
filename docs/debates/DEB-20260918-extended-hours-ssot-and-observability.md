@@ -1077,3 +1077,52 @@ Hermes 需要重点复核：
 - 未闭环（明确登记，不假装已做）：R5 档位聚合、方案 B（撤单+attempt 清理+`resume_close`）、
   R7 的两处时刻证据（"09:48:52 撤销"、"09:49:03 成交"）。
 - 方案 A 检测器已在同一批落地（`scripts/orphan_ext_order_watch.py` + 挂载进 exit cron + 15 个测试），见 §23.3。
+
+### 23.5 占位标的 (US.TEST) 源头治理（用户："另一个 agent 尝试修的问题是**连续推送不真实存在的标的股**"，2026-09-18）
+
+**现象**：连续收到 `🚫 延长时段开仓拦截: US.TEST REAL未授权`；推送/日志里反复出现 US.TEST ——
+一只**不存在于任何真实股票池**的占位标的。
+
+**根因（不是推送去重不够，是占位标的能整条穿过流水线）**：
+
+| 入口 | 实证 | 本批处置 |
+| --- | --- | --- |
+| 券商 SIM 账户报废测试单 | `order_list_query` 实测唯一占位行 `8185070 US.TEST CANCELLED_ALL`（9/17 00:08:03 ET，remark=`ext_entry`），同批还有 `8185071 US.MEDS` | 对账口丢弃 |
+| 生产库 PDT 台账 | `pdt_trades` 被单测 artifact 写入 **28 行 US.TEST**（trade_date 2026-09-17），虚增 5 日窗口日内交易计数 → 可 fail-closed 拒真交易 | 写/读双侧挡 + 清历史 |
+| 单测 fixture 惯例 | 全仓 60+ 处把 `US.TEST` 当 fixture 符号；一旦用例走到真路径，占位标的就被带进生产产物（本条 artifact 的成因） | ETH 链**路径测试**迁 `US.FAKE` |
+| app 侧持仓/意图 | 至 9/18 00:18:22 CST 仍在 `[playbook平仓失败] US.TEST (sim) reason=EXIT_HELD` ×75 + 钉钉推送；库内该行已消失 | 既有守卫已覆盖（`app/push/hub.py` 推送过滤 + `trade_store`/`trade_recorder` 写库守卫），无需新增 |
+
+**四个源头过滤器**（一律复用同一判据 `app.core.trade_identity.is_test_symbol`，不另写 SQL/正则以免语义分叉）：
+
+1. `scripts/extended_hours_entry_executor.py::_scan_candidates._add` —— 候选源汇合口，
+   `rank` / `beat` / `watchlist` / `snapshot` 四条源共用此口；此前占位标的能走完四闸、占 attempt 键、进审计与推送路径。
+2. 同文件 `_reconcile_broker_entry_orders` —— 券商对账口：不再写 `{today}:{symbol}` attempt
+   （否则静默封锁该标的）、不进 `active_orders`/`conflicts`、不触发成交回填补写。
+3. `scripts/extended_hours_position_scope.py::load_non_manual_positions` —— 退出链持仓
+   （盘前/盘后影子共用；假持仓会让退出链每分钟取行情/算信号空转）。
+4. `app/risk/pdt_guard.py` —— `record_day_trade` 写入侧 + `_get_rolling_window_trades` 读数侧。
+
+既存同向守卫（不重复实现）：订单口 `_execute`（`DEB-20260917 §23.12`，兄弟批次）、推送口 `app/push/hub.py`、写库口
+`trade_store` / `trade_recorder` 的 `ensure_test_symbol_not_in_production_db`。
+
+**artifact 清理**：`pdt_trades` 删 28 行占位，403 行真标的**全部保留**（`WHERE id IN (...)` 按 `is_test_symbol` 取 id，
+非模式匹配）；备份 `data/ftseek_us.db.bak_20260918_pdt_placeholder`（24.3 MB）；清理脚本默认 dry-run + 删后自校验。
+
+**接线级实弹验证**（真实券商 + 真实生产库，只读探针 `_write_open_position` 换记录桩，不撤单不下单不落库）：
+券商 `remark=ext_entry` 共 6 行，唯一占位 `US.TEST:8185070` 被丢弃并留可见日志
+（`[ext_entry] 对账忽略占位标的订单: US.TEST:8185070`），其余 5 行真标的照常按跨日旧单规则处理；
+真实异动榜 50 只候选零占位；退出链持仓零占位。
+
+**测试**：新增 8 个占位守卫测试（订单口优先级 / 候选源 / 对账口 / 持仓加载器 / PDT 写读 + 反面"真标的照记"）；
+同时把 ETH 链**路径测试** fixture 由 `US.TEST` 迁到 `US.FAKE`（7 处），让"假标的=测试符号"的惯例不再制造生产 artifact。
+
+**顺带修复的既有红灯（均非本批引入）**：
+① `test_collect_dry_records_penny_candidates_blocked_by_price_gate` —— 内联快照桩只有 `close()`，
+盘前 pretrade 闸取不到报价 ⇒ BIGCO 被判 `quote_missing`，用例恒红（与占位主题无关的真 bug：桩失真）；
+已补 `get_market_snapshot`。
+② 另一 agent 13:47 的 `1313d2ccb` 在订单口加了占位守卫，但**未同步**两个既有断言
+（期望 `real_not_authorized`，实得 `test_symbol`）⇒ 分支 2 红；本批按"占位优先级最高"对齐断言。
+
+**残留（登记，不假装已做）**：`scripts/ah_exit_shadow.py::load_open_positions` 未加占位过滤 ——
+该影子是纯观测（只写自己的影子文件，不下单不推送），且其数据源 `open_positions` 已被写库守卫覆盖，
+理论不会再出现占位行；若要彻底：一行 `if is_test_symbol(r["symbol"]): continue` + 1 个测试。

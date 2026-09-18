@@ -77,7 +77,7 @@ def test_dry_scan_does_not_write_state_and_caps_position_notional(
         executor,
         "_scan_movers",
         lambda session, qctx: [
-            {"symbol": "US.TEST", "px": 10.0, "chg": 3.0, "vol": 300000.0},
+            {"symbol": "US.FAKE", "px": 10.0, "chg": 3.0, "vol": 300000.0},
             {"symbol": "US.EXPENSIVE", "px": 6000.0, "chg": 3.0, "vol": 300000.0},
         ],
     )
@@ -91,7 +91,7 @@ def test_dry_scan_does_not_write_state_and_caps_position_notional(
     result = executor.collect("premarket", dry=True)
 
     assert len(result) == 1
-    assert result[0]["symbol"] == "US.TEST"
+    assert result[0]["symbol"] == "US.FAKE"
     assert result[0]["qty"] == 499
     assert result[0]["price"] == 10.01
     assert result[0]["decision_price"] == 10.0
@@ -170,7 +170,7 @@ def test_execute_refuses_simulate_without_stop(isolated_state, monkeypatch):
     # 真下单路径需 mock futu, 避免测试连真 OpenD — 见 test_execute_sim_real_order_mocked
     monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
     result = executor._execute(
-        "US.TEST", 100, 10.0, "premarket", 3.0, 300000.0,
+        "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
         {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
     )
     assert result["ok"] is False
@@ -182,7 +182,7 @@ def test_execute_rejects_real_environment(isolated_state, monkeypatch):
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
 
     result = executor._execute(
-        "US.TEST", 100, 10.0, "premarket", 3.0, 300000.0,
+        "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
         {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
     )
 
@@ -202,3 +202,46 @@ def test_entry_switch_default_is_fail_closed():
     assert 'os.getenv("EXT_ENTRY_ALLOW_SIM", "false")' in src, (
         "ALLOW_SIM_ENTRY 默认值被改回 fail-open: env 缺失时会静默开仓"
     )
+
+# ---------------------------------------------------------------------------
+# 2026-09-18 §23.5 占位标的源头修 (用户: "[FTSeek-US] 🚫 延长时段开仓拦截: US.TEST
+# REAL未授权" 持续推送 / 含 US.TEST 的假消息流 → 从源头解决)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_rejects_placeholder_symbol_before_env_checks(isolated_state, monkeypatch):
+    """占位标的 (TEST/US.TEST/*.TEST) 必须在**任何环境判定之前**返回 test_symbol。
+
+    优先级钉住: 若后人把 env 判定挪到占位守卫之前, REAL 通道会重新对占位标的推告警。
+    """
+    monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
+    monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.setattr(
+        executor, "_push", lambda text: pytest.fail(f"占位标的不得推送: {text}")
+    )
+
+    result = executor._execute(
+        "US.TEST", 100, 10.0, "premarket", 3.0, 300000.0, None, dry=False,
+    )
+
+    assert result == {"ok": False, "skip": "test_symbol"}
+
+
+def test_scan_candidates_drops_placeholder_symbols(monkeypatch):
+    """占位标的在**候选源汇合口**就被丢弃 —— 不再走完四闸 / 占 attempt 键 / 进推送路径。
+
+    实测 US.TEST 曾整条穿过候选→四闸→attempt→REAL 拦截推送 (用户看到"持续推送");
+    根因是仓库测试普遍把 US.TEST 当 fixture, 而生产路径此前无源头过滤。
+    """
+    monkeypatch.setattr(
+        executor,
+        "_scan_movers",
+        lambda session, qctx: [
+            {"symbol": "US.TEST", "px": 10.0, "chg": 3.0, "vol": 300000.0},
+            {"symbol": "US.FAKE", "px": 10.0, "chg": 3.0, "vol": 300000.0},
+        ],
+    )
+
+    candidates = executor._scan_candidates("premarket", FakeQuoteContext())
+
+    assert [c["symbol"] for c in candidates] == ["US.FAKE"]

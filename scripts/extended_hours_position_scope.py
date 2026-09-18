@@ -42,6 +42,8 @@ def _has_non_manual_evidence(position, trade):
 
 
 def load_non_manual_positions(db_path):
+    from app.core.trade_identity import is_test_symbol
+
     uri = Path(db_path).resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -53,7 +55,14 @@ def load_non_manual_positions(db_path):
             "FROM open_positions WHERE size > 0"
         ).fetchall()
         scoped = []
+        skipped_test = []
         for row in rows:
+            # 2026-09-18 (DEB-20260918 §23.5): 占位标的 (US.TEST/*.TEST) 不得进入延长时段
+            #   退出链 —— 否则影子每分钟为它取行情/算信号/打日志(实测 AH 影子对 US.TEST
+            #   连续输出观测行), 而券商侧根本没有这个持仓。
+            if is_test_symbol(row["symbol"]):
+                skipped_test.append(str(row["symbol"]))
+                continue
             trade = _latest_open_trade(conn, row["symbol"])
             if _has_non_manual_evidence(row, trade):
                 scoped.append(tuple(row[:7]) + (
@@ -61,6 +70,8 @@ def load_non_manual_positions(db_path):
                     trade["id"] if trade else None,
                     trade["source_type"] if trade else None,
                 ))
+        if skipped_test:
+            print(f"[position_scope] 忽略占位标的持仓: {', '.join(sorted(set(skipped_test)))}")
         return scoped
     finally:
         conn.close()

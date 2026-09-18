@@ -133,7 +133,7 @@ def test_entry_full_fill_writes_position_and_trade_record(
     )
 
     result = entry_executor._execute(
-        "US.TEST", 100, 10.0, "premarket", 3.0, 300000.0,
+        "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
         {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
     )
 
@@ -166,7 +166,7 @@ def test_entry_partial_fill_writes_actual_filled_quantity(
     )
 
     result = entry_executor._execute(
-        "US.TEST", 100, 10.0, "premarket", 3.0, 300000.0,
+        "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
         {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
     )
 
@@ -234,7 +234,7 @@ def test_wait_fill_reports_cancel_failure():
 
 def test_entry_reconciliation_restores_attempt_state_from_active_broker_order():
     context = FakeTradeContext(
-        rows=[{"order_id": "8185070", "code": "US.TEST", "order_status": "SUBMITTED",
+        rows=[{"order_id": "8185070", "code": "US.FAKE", "order_status": "SUBMITTED",
                "qty": 100, "dealt_qty": 0, "dealt_avg_price": 0, "price": 10.0,
                "remark": "ext_entry", "create_time": "2026-09-17 08:00:00"}]
     )
@@ -247,7 +247,7 @@ def test_entry_reconciliation_restores_attempt_state_from_active_broker_order():
 
     assert conflicts == []
     assert active_orders[0]["order_id"] == "8185070"
-    attempt = state["attempts"]["2026-09-17:US.TEST"]
+    attempt = state["attempts"]["2026-09-17:US.FAKE"]
     assert attempt["status"] == "broker_active"
     assert attempt["order_id"] == "8185070"
 
@@ -298,7 +298,7 @@ def test_entry_reconciliation_keeps_same_date_terminal_attempt():
 def test_entry_reconciliation_active_order_still_blocks_across_dates():
     """活单**无条件**计入 active_orders (拦住新开仓) — 与订单日期无关 (孤儿活单先例)。"""
     context = FakeTradeContext(rows=[
-        {"order_id": "8185070", "code": "US.TEST", "order_status": "SUBMITTED",
+        {"order_id": "8185070", "code": "US.FAKE", "order_status": "SUBMITTED",
          "qty": 100, "dealt_qty": 0, "dealt_avg_price": 0, "price": 10.0,
          "remark": "ext_entry", "create_time": "2026-09-16 23:00:00"},
     ])
@@ -475,8 +475,33 @@ def test_collect_dry_records_penny_candidates_blocked_by_price_gate(tmp_path, mo
     """方案A 端到端: 扫描出的仙股必须被价格闸挡掉, 不得进入候选, 且要留下打点 (实盘 CTNT/GIPR 教训)。"""
 
     class _FakeQuote:
+        """快照桩 (2026-09-18 §23.5 顺带修): 原桩只有 close(), 盘前 pretrade 闸取不到报价
+        ⇒ BIGCO 被判 quote_missing, 用例自 2026-09-18 起恒红。这里补上行情快照。"""
+
         def close(self):
             pass
+
+        def get_market_snapshot(self, symbols):
+            class Row:
+                @staticmethod
+                def get(key, default=0):
+                    return {
+                        "bid_price": 41.99,
+                        "ask_price": 42.01,
+                        "ask_vol": 100_000,
+                        "last_price": 42.0,
+                        "prev_close_price": 42.0,
+                    }.get(key, default)
+
+            class Iloc:
+                def __getitem__(self, _index):
+                    return Row()
+
+            class Snapshot:
+                empty = False
+                iloc = Iloc()
+
+            return 0, Snapshot()
 
     rejects_path = tmp_path / "rejects.jsonl"
     monkeypatch.setattr(entry_executor, "PRICE_GATE_REJECTS", rejects_path)
@@ -683,3 +708,28 @@ def test_entry_change_pct_env_override(monkeypatch):
     monkeypatch.delenv("EXT_ENTRY_CHANGE_PCT")
     m = importlib.reload(entry_executor)
     assert m.ENTRY_CHANGE_PCT == 2.0
+
+def test_entry_reconciliation_drops_placeholder_orders():
+    """券商账户里的报废占位单 (US.TEST order 8185070) 不得进入对账产物 (2026-09-18 §23.5)。
+
+    真实事故: 该单长期躺在 SIM 账户里, 每轮对账都碰到它 ⇒ 写 attempts / 进 active_orders,
+    并沿订单口触发 REAL 拦截推送 (用户反馈"一直持续推送")。
+    """
+    context = FakeTradeContext(rows=[
+        {"order_id": "8185070", "code": "US.TEST", "order_status": "SUBMITTED",
+         "qty": 100, "dealt_qty": 0, "dealt_avg_price": 0, "price": 10.0,
+         "remark": "ext_entry", "create_time": "2026-09-17 08:00:00"},
+        {"order_id": "8185071", "code": "US.TEST", "order_status": "FILLED_ALL",
+         "qty": 100, "dealt_qty": 100, "dealt_avg_price": 10.0, "price": 10.0,
+         "remark": "ext_entry", "create_time": "2026-09-17 08:05:00"},
+    ])
+    state = {"version": 2, "opened_today": {}, "attempts": {}}
+
+    active_orders, conflicts = entry_executor._reconcile_broker_entry_orders(
+        context, "SIMULATE", 19930823, "premarket",
+        state=state, today="2026-09-17",
+    )
+
+    assert active_orders == []
+    assert conflicts == []
+    assert state["attempts"] == {}
