@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-18 22:05 增量：UE 登记项修复 —— 材料外浮现标的补资格口径标注 + cooldown 告警措辞（用户令「登记问题做修复」）
+
+> **一句话**：把上一批登记的 P3（材料外/传导型浮现标的在输入侧零资格信息，ZIM 型：播报成"可交易"却到 inject 才被低ATR闸拒）落成**补标注**（不新建门），并把每日 `cooldown 未生效` 假告警改成准确措辞；零交易行为变更。
+
+- **为何 / 路线**：用户令「登记问题做修复」。读码实证 brief 初筛段源码已写明"本段只标注已具名标的…你仍可提出材料外的新标的，**它们会在注入前接受同一资格判定**" ⇒ 设计意图就是"材料外候选在 inject 处被同一资格口径裁决"；缺口不是少一道门，而是**读数看不见扫描期已能算出的结论**。在 inject 侧再叠一道门会与 `:3286` 现有低ATR预检形成两份判据漂移 ⇒ 采用补标注。详见 `docs/debates/DEB-20260918-ue-push-readout-alignment.md` §7。
+- **P3 落地**（`scripts/llm_universe_scan.py`）：新增 `_annotate_prescreen_eligibility(surfaced, ps_in)` — 取输入初筛三态 `_LAST_INPUT_PRESCREEN` 定**已覆盖**者，对**未覆盖**者补跑**同一** `_prescreen_input_symbols`（同 policy/同 `screen_candidates`），写回 `prescreen_scope`(in_materials/material_external) + `prescreen_status`(PASS/REJECT/UNKNOWN) + `prescreen_reasons`；**缺数 ≠ 拒绝**（取不到数留 UNKNOWN）＋全程 fail-open。调用点在 `cmd_scan` 紧随 `_annotate_emergence_streak`。推送新增 `_prescreen_marker()` 逐条打 `⛔资格预筛未过(low_atr)`，头部行尾补 `· 结构不可交易N`（仅 N>0）。**未动** inject 判定链/direction/排序/门与阈值。
+- **实弹验证（真数据只读）**：9/18 真记录 + 真初筛摘要跑标注 → `UBER=in_materials/PASS`（无标记）、`ZIM=material_external/REJECT['low_atr']`（带 ⛔ 标记）；补跑开销 `[prescreen] 报价命中 1/1`（1 只未覆盖，无额外 LLM）；端到端 `cmd_push(dry)` 预演 = `扫描期可交易: 2只 … · 结构不可交易1` + `执行闸: 拦2只 (streak闸1 / 低ATR闸1)` + ZIM 行带 ⛔。
+- **cooldown 措辞**：SKIP 方向走 `[cooldown] … 不登记冷却 (SKIP 行无需冷却; 非缺陷)`，**非 SKIP 方向的真映射失败仍保留 `[warn]`**（可见性不降级）。
+- **回归钉**：新文件 `tests/test_ue_push_readout_and_prescreen.py` **13 例**（分桶口径/标记/标注三态/fail-open/`cmd_push` dry 端到端含"注入计数剔除 SKIP 行"）；UE 相关 5 文件 **166 passed**；更宽集实跑 **45 failed/1077 passed**，失败全在 `tests/playbook/test_exit_recovery.py`(40)+`test_breakeven_shadow_c.py`(5)，与基线 worktree @`d284e0e89` 的 FAILED 列表**逐条相同** ⇒ **既有红，本批引入 0 条**（归属另一 agent 批；worktree 已清理）。
+- **生效/回滚**：crontab 直接 exec、无 `/root/.hermes/scripts/` 镜像 ⇒ 下一交易日 21:10 生效，主服务无需重启；回滚 `git revert <本提交>`。
+- **新登记（本批刻意不做）**：影子产物（`ue_tier_gate_shadow.jsonl`/`ue_streak_counterfactual.jsonl`）未加 `prescreen_status` ⇒ 日后若要用"结构可交易"人群切分影子判据，需按改读数三件套（改哪条读数/切线日期/证伪指标）在 inject 侧补字段。
+
 ## 2026-09-18 21:29 增量：UE 扫描推送读数对齐真实链路 —— 计数剔除 SKIP 行 + 扫描期口径标注 + 执行闸分解行
 
 > **一句话**：用户贴当日 21:11 UE 推送问「调用与结果是否正常」，实测调用侧全绿、结果侧当日真注入 **0 条**（两条 LONG 分别被 streak 闸 / 低ATR 闸拦，均设计内），而推送文案有两处失真已修；零交易行为变更。
