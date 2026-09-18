@@ -1154,6 +1154,35 @@ Hermes 需要重点复核：
 ② 另一 agent 13:47 的 `1313d2ccb` 在订单口加了占位守卫，但**未同步**两个既有断言
 （期望 `real_not_authorized`，实得 `test_symbol`）⇒ 分支 2 红；本批按"占位优先级最高"对齐断言。
 
-**残留（登记，不假装已做）**：`scripts/ah_exit_shadow.py::load_open_positions` 未加占位过滤 ——
-该影子是纯观测（只写自己的影子文件，不下单不推送），且其数据源 `open_positions` 已被写库守卫覆盖，
-理论不会再出现占位行；若要彻底：一行 `if is_test_symbol(r["symbol"]): continue` + 1 个测试。
+**残留（登记，不假装已做）**：~~`scripts/ah_exit_shadow.py::load_open_positions` 未加占位过滤~~ ——
+**已于 `4382fbeef` 落地**（AH 影子 `load_open_positions` 加占位过滤 + 回归测试），此行为历史记录。
+
+---
+
+### 23.6 开仓链每轮 per-gate 计数（用户令「需要」，2026-09-18 晚）
+
+**为什么做**：盘前开仓链只在**价格闸**（`data/extended_hours_price_gate_rejects.jsonl`）与**流动性闸**
+（`..._pretrade_gate_rejects.jsonl`，**历史 0 行**）留台账，而 `attempt 已占 / 已持仓 / 动量量能门 / 财报门`
+四处都是**静默 `continue`** ⇒ 日志里"连续多轮 0 笔"与"某一闸卡死"**无法区分**。当天的链路体检正是
+靠临时写的**只读**逐闸探针才归因出 `50 = 价格闸 34 + 动量量能 15 + 财报门 1`（其中财报门杀的那只
+`US.USDE` 确无财报记录，且 Finnhub 客户端在、`US.NBIS` 81.13% / `US.GIPR` 60.78% / `US.AEHL` 7.68% 均可过门
+⇒ **门是活的**，不是死门）。
+
+**改了什么**（纯观测，零判定变化）：`scripts/extended_hours_entry_executor.py` 增 `_print_gate_counts()`，
+在 `collect()` 的 **dry 与 live 两条循环**尾部各打一行：
+
+```
+[ext_entry] 闸计数[premarket] 候选=50 attempt_reserved=0 held=0 price_gate=32 momentum_volume=15 earnings=3 liquidity=0 ordered=0
+```
+
+**上线证明（生产日志实时）**：`logs/ext_entry.log:1578`（**17:45 CST = 05:45 ET** 轮）= 上式，**合计 50 = 候选数**（无未归因项）；
+且与同一轮的价格闸台账行「拦下 32 只」**互为对照**（两个独立仪器同数 ⇒ 计数未失真）。
+
+**测试**：`tests/test_extended_hours_entry_executor.py` 新增 2 例 —— ①dry 路径 7 只候选逐闸归因 +
+`sum(counts) == 候选数` 的不变量断言；②live 路径同样打行、且 `attempt 已占` 被单独计数。
+
+**登记待办（观察期结束后做，用户「需要」的第二半）**：$5 地板的机会成本复盘 ——
+今日 34/50（68%）被地板挡掉，其中**恰好包含昨天净亏最大的两只**（CTNT 净 −314.27、GIPR 净 −181.32，
+费用吃光毛利），方向与 R1 一致；代价是未来真能走的仙股也会被一起挡。
+复盘口径：把 `extended_hours_price_gate_rejects.jsonl` 的被挡池与 `settle_extended_hours` 时段台账按日对齐，
+算"若参与会怎样"（同一时段价差/费用口径），观察期截止时出结论。

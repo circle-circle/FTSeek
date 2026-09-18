@@ -725,6 +725,23 @@ def _earnings_surprise(symbol):
     return None
 
 
+def _print_gate_counts(session, total, counts):
+    """每轮一行 per-gate 计数 (2026-09-18 用户令「需要」; 纯观测, 不参与判定).
+
+    为什么需要: 本链路只有价格闸与盘前流动性闸留台账 (jsonl), 而 attempt 已占 / 已持仓 /
+    动量量能门 / 财报门都是**静默 continue** ⇒ 日志里"连续多轮 0 笔"无法与"某一闸卡死"区分
+    (实测 `extended_hours_pretrade_gate_rejects.jsonl` 历史 0 行, 归因一度只能靠外部只读探针).
+    异常不得影响主流程。
+    """
+    try:
+        keys = ("attempt_reserved", "held", "price_gate", "momentum_volume",
+                "earnings", "liquidity", "ordered")
+        body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
+        print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
+    except Exception:
+        pass
+
+
 def collect(session, dry=False):
     """扫描事件驱动开仓信号；当前 SIM 无券商 STOP 时 fail-closed。"""
     if session not in SESSION_WINDOWS:
@@ -749,23 +766,29 @@ def collect(session, dry=False):
         price_gate_rejects = []
         try:
             movers = _scan_candidates(session, qctx)
+            counts = {}
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
+                    counts["held"] = counts.get("held", 0) + 1
                     continue
                 if not _price_in_range(price):
+                    counts["price_gate"] = counts.get("price_gate", 0) + 1
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
+                    counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
                 earnings = _earnings_surprise(symbol)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                    counts["earnings"] = counts.get("earnings", 0) + 1
                     continue
                 qty = int(POSITION_USD / price)
                 quote = _liquidity_quote(qctx, symbol)
                 gate, reject_reason = _pretrade_gate(price, qty, quote, today)
                 if gate is None:
+                    counts["liquidity"] = counts.get("liquidity", 0) + 1
                     pretrade_rejects.append({
                         "symbol": symbol,
                         "decision_price": price,
@@ -776,6 +799,7 @@ def collect(session, dry=False):
                     continue
                 order_price = gate["order_price"]
                 qty = int(POSITION_USD / order_price)
+                counts["ordered"] = counts.get("ordered", 0) + 1
                 results.append({
                     "ok": True, "dry": True, "symbol": symbol,
                     "qty": qty, "price": order_price, "decision_price": price,
@@ -783,6 +807,7 @@ def collect(session, dry=False):
                     "volume": volume, "earnings": earnings,
                     "pretrade": gate,
                 })
+            _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
         finally:
@@ -848,27 +873,34 @@ def collect(session, dry=False):
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         try:
             movers = _scan_candidates(session, qctx)
+            counts = {}
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
                 if attempt_key in attempts:
+                    counts["attempt_reserved"] = counts.get("attempt_reserved", 0) + 1
                     continue
                 if symbol in held:
+                    counts["held"] = counts.get("held", 0) + 1
                     continue
                 if not _price_in_range(price):
+                    counts["price_gate"] = counts.get("price_gate", 0) + 1
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
+                    counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
                 earnings = _earnings_surprise(symbol)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                    counts["earnings"] = counts.get("earnings", 0) + 1
                     continue
 
                 qty = int(POSITION_USD / price)
                 quote = _liquidity_quote(qctx, symbol)
                 gate, reject_reason = _pretrade_gate(price, qty, quote, today)
                 if gate is None:
+                    counts["liquidity"] = counts.get("liquidity", 0) + 1
                     pretrade_rejects.append({
                         "symbol": symbol,
                         "decision_price": price,
@@ -879,6 +911,7 @@ def collect(session, dry=False):
                     continue
                 order_price = gate["order_price"]
                 qty = int(POSITION_USD / order_price)
+                counts["ordered"] = counts.get("ordered", 0) + 1
                 attempts[attempt_key] = {
                     "status": "reserved", "session": session, "symbol": symbol,
                     "trade_date": today, "reserved_at": datetime.utcnow().isoformat() + "Z",
@@ -915,6 +948,7 @@ def collect(session, dry=False):
                 _save_state(state)
                 if total_today >= MAX_PER_DAY:
                     break
+            _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
         finally:

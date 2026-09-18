@@ -1,3 +1,4 @@
+import contextlib
 import fcntl
 import json
 
@@ -245,3 +246,111 @@ def test_scan_candidates_drops_placeholder_symbols(monkeypatch):
     candidates = executor._scan_candidates("premarket", FakeQuoteContext())
 
     assert [c["symbol"] for c in candidates] == ["US.FAKE"]
+
+
+def _gate_count_line(capsys):
+    lines = [l for l in capsys.readouterr().out.splitlines() if "闸计数" in l]
+    assert lines, "缺少每轮 per-gate 计数行"
+    return lines[-1]
+
+
+def test_gate_counts_line_attributes_every_candidate(isolated_state, monkeypatch, capsys):
+    """每轮一行 per-gate 计数 (2026-09-18 用户令「需要」): 候选必须被逐闸归因, 合计不丢项。
+
+    动机 (实测): 动量/量能门与财报门是静默 `continue`, 且 pretrade 台账历史 0 行 ⇒
+    日志里"连续多轮 0 笔"与"某一闸卡死"无法区分 —— 盘前链路归因一度只能靠外部只读探针
+    (探针读数 50 = 价格闸 34 + 动量量能 15 + 财报门 1)。
+    """
+    monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(executor, "_held_symbols", lambda: {"US.HELD"})
+    monkeypatch.setattr(
+        executor,
+        "_scan_movers",
+        lambda session, qctx: [
+            {"symbol": "US.HELD", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},    # 已持仓
+            {"symbol": "US.PENNY", "px": 2.0, "chg": 5.0, "vol": 1_000_000.0},    # 价格闸
+            {"symbol": "US.SLOW", "px": 10.0, "chg": 1.0, "vol": 1_000_000.0},    # 动量门
+            {"symbol": "US.THIN", "px": 10.0, "chg": 5.0, "vol": 10.0},           # 量能门
+            {"symbol": "US.NOEARN", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},  # 财报门
+            {"symbol": "US.ILQ", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},     # 流动性闸
+            {"symbol": "US.WIN", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},     # 过闸
+        ],
+    )
+    monkeypatch.setattr(
+        executor,
+        "_earnings_surprise",
+        lambda symbol: None if symbol == "US.NOEARN" else {"surprise_pct": 10.0, "period": "2026-06-30"},
+    )
+    monkeypatch.setattr(
+        executor,
+        "_liquidity_quote",
+        lambda qctx, symbol: (
+            {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.2}
+            if symbol == "US.WIN"
+            else {"bid": 9.0, "ask": 11.0, "ask_volume": 1, "spread_pct": 20.0}  # 20% 价差 ⇒ 真闸应拒
+        ),
+    )
+    monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
+
+    result = executor.collect("premarket", dry=True)
+    line = _gate_count_line(capsys)
+
+    assert [r["symbol"] for r in result] == ["US.WIN"]
+    assert "候选=7" in line
+    for expect in ("held=1", "price_gate=1", "momentum_volume=2", "earnings=1",
+                   "liquidity=1", "ordered=1", "attempt_reserved=0"):
+        assert expect in line, (expect, line)
+    counts = {kv.split("=")[0]: int(kv.split("=")[1])
+              for kv in line.split("候选=")[1].split()[1:]}
+    assert sum(counts.values()) == 7, f"有未归因候选: {line}"
+
+
+def test_live_path_prints_gate_counts_and_reserves_attempt(isolated_state, monkeypatch, capsys):
+    """下单路径 (cron 每轮走的那条) 同样打计数行, 且 attempt 已占被单独计数。"""
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(executor, "ALLOW_SIM_ENTRY", True)
+    monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(executor, "_held_symbols", lambda: set())
+    today = executor._today_et()
+    monkeypatch.setattr(
+        executor,
+        "_scan_movers",
+        lambda session, qctx: [
+            {"symbol": "US.PENNY", "px": 1.0, "chg": 9.0, "vol": 9_000_000.0},
+            {"symbol": "US.WIN", "px": 10.0, "chg": 9.0, "vol": 9_000_000.0},
+            {"symbol": "US.WIN2", "px": 10.0, "chg": 9.0, "vol": 9_000_000.0},
+        ],
+    )
+    monkeypatch.setattr(
+        executor, "_earnings_surprise",
+        lambda symbol: {"surprise_pct": 30.0, "period": "2026-06-30"},
+    )
+    monkeypatch.setattr(
+        executor, "_liquidity_quote",
+        lambda qctx, symbol: {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.2},
+    )
+    monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
+    monkeypatch.setattr(executor, "_execute",
+                        lambda *a, **k: {"ok": False, "skip": "stub_no_order"})
+    monkeypatch.setattr(executor, "_audit", lambda result: None)
+    monkeypatch.setattr(executor, "_push", lambda text: None)
+
+    @contextlib.contextmanager
+    def _fake_lock():
+        yield True
+
+    monkeypatch.setattr(executor, "_state_lock", _fake_lock)
+    # US.WIN 已占 attempt ⇒ 本轮应计入 attempt_reserved 而非再下单
+    executor.STATE.write_text(json.dumps(
+        {"version": 2, "opened_today": {}, "attempts": {f"{today}:US.WIN": {"status": "opened"}}}))
+    executor.LOCK.write_text("")
+
+    results = executor.collect("premarket")
+    line = _gate_count_line(capsys)
+
+    assert "候选=3" in line and "attempt_reserved=1" in line and "ordered=1" in line
+    assert len(results) == 1
+    state = json.loads(executor.STATE.read_text())
+    assert f"{today}:US.WIN2" in state["attempts"]
