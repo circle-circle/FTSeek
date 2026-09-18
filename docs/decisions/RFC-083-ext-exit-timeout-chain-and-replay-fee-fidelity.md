@@ -110,3 +110,14 @@ PYTHONPATH=. venv/bin/python3.11 scripts/replay_ext_entry_sources.py --days 60 -
 - **§23.3 孤儿 ETH 单检测器**（方案 A 纯观察 / 方案 B 撤单+attempt 清理）：等用户批准。
 - R5 `OVERNIGHT_GAP_STOP` 档位聚合进单笔复盘模板。
 - R7 订单级明细不可独立复核（Futu SIM `history_order_list_query` n=0）—— 证据边界已写入文档。
+
+---
+
+## 共享 skill 编辑台账（multi-agent-project-collaboration 要求；供他 agent 审计/勿重提被否决改法）
+
+| skill | 编辑 | 依据 |
+|---|---|---|
+| `~/.hermes/skills/quantitative-trading/ftseek-extended-hours-trading` | ①新增「超时链条必须单调」节：三层链 `cron 240 > shadow 180 > 子进程 20`、`max(A, env+B)` 类修复**必须代入现役默认值算实数**再与旧值逐字比、“只抬一层更糟”（外层先杀 → 孙进程仍在跑 ⇒ 孤儿单 + 零证据）、超时必须打子进程残留 stdout/stderr；②回放费用节由“不能用扁平费率”改为**已落地**并写入实测读数（−0.013~−0.032pp、$5–10 档 0.279% = 3.3×）；③参考节加本 RFC 与孤儿单检测器提案（标注**待批准**） | 本 RFC §1/§3；DEB §23.2/§23.3 |
+| `~/.hermes/skills/engineering-change-protocol` | Anti-Rationalizations 表新增一行「常量推导式空操作」反模式（含逐字对比规程与链条单调性） | 本 RFC §1（R2 实锤） |
+
+**未改动的共享 skill**：`ftseek-trigger-execution-audit` / `backtest-rule-replay` 等未触及（孤儿单检测器只有提案，落地时再补）。

@@ -1057,8 +1057,15 @@ Hermes 需要重点复核：
 
 ### 23.4 提交与台账
 
-- 本批（§22 两 shadow + cron + entry executor 默认值 + 回放费用保真 + 两份 DEB 文档 + 测试）单独提交，
-  commit message 带 `[RFC-xxx]`；**未把工作区里另一主题的未提交改动（playbook/pipeline MFE/MAE 极值、
-  `repair_trade_exit_invariants.py`、glm `reasoning_effort` 等）连带提交**，其归属留给对应作者。
+- 本批（§22 两 shadow + cron + entry executor 默认值 + 回放费用保真 + 两份 DEB 文档 + 测试）已提交：
+  **`6f68d15e6 [RFC-083] 延长时段退出链超时链条修复 + 回放费用保真`**（12 文件，+839/−34），
+  治理件 `docs/decisions/RFC-083-ext-exit-timeout-chain-and-replay-fee-fidelity.md`（含共享 skill 编辑台账）。
+  **未把工作区里另一主题的未提交改动（`app/playbook/pipeline.py` 的 MFE/MAE 极值、`app/data/futu_lv3_provider.py`、
+  `app/pipeline/order_executor.py`、`config/unified_config.yaml` 的 glm `reasoning_effort`、`scripts/config_validate.py --quick`、
+  `scripts/daily_invariant_check.py`、`scripts/settle_winner_overnight_shadow.py`、`scripts/repair_trade_exit_invariants.py` 及
+  对应测试，共 12 项）连带提交**，其归属留给对应作者。
 - `ALLOW_SIM_ENTRY` 默认值翻 false 的裁决登记于本表 R8（行为不变，回滚 = 改回 `"true"`）。
+- 部署形态：本批**只动 `scripts/`（cron 每轮新进程 ⇒ 立即生效，无需 restart）+ 测试 + 文档**；
+  `app/execution/exit_lifecycle.py` 仅加一条 WARNING 日志，但服务进程（09:00:20 启动）**不会**加载它 ⇒
+  下次 app 侧重启后才生效；exit cron 侧行为不受其影响（已在 `--dry` 探针确认窗控未死）。
 - 未闭环（明确登记，不假装已做）：R5 档位聚合、R6 检测器（方案 A/B 待批）、R7 订单级证据缺失。
