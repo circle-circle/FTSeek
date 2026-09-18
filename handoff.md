@@ -11,6 +11,9 @@
 - **验证**：该测试文件 9 passed / 延长时段子集 185 passed；`--dry` 实弹产出 `hold_to_next_open` 行；16:39–16:41 三轮 cron rc=0 各落 1 行。
 - **后续(待裁)**：P1 rc≠0 哨兵缺失；P2 `next_open` 窗对 RTH 仓的评估行 (不下单) 需下个交易日观察；P3 观测空洞不回填。详见 `docs/incidents/INCIDENT-001-extended-hours-exit-chain-pandas-series-crash.md`。
 - **同批另发现(非本事件)**：盘后 entry 链健康 (四闸/配额/双写/state 全闭环)；9/18 RTH 6 笔全平净 −76.19；`2026-09-17:premarket` 走了 4 笔仙股 (CTNT $0.07/GIPR $0.42，价格下限闸落地前)。
+- **P1 已落地 (rc≠0 可见性, 用户裁"按建议执行")**：`extended_hours_exit_cron._report_failure()` 失败时另发**契约格式 ERROR 行** (原 JSON 块行首无时间戳 ⇒ error_alert 判 unparsed 跳过, 这是零告警的直接成因) + crontab 补两窗 `*/15 16-20 * * 1-5` / `*/15 5-8 * * 2-6` (ET 盘前/盘后, 原两行只覆盖 ET 09:00-17:45)。双向实测: n=2 静默 / n=3 触发并生成推送正文; 未新建哨兵 (复用 `15min 窗 ≥ max(3,3×基线)` 判据, 做减法)。台账加 `crontab-error-alert` 行。⚠️ 冬令时 11 月重评。
+- **P2 已排程**：Hermes 一次性 job `e9ea6362ebd9` (once 2026-09-21 21:50 CST = ET 09:50) 核 next_open 兑现首考 + 该窗对 RTH 仓的评估行是否只读; 已入台账。
+- **既有红 (非本批)**：`test_control_loop_ledger` 3 条 (他 agent 的 job `e31ad3c8a032` 未入账 / `da_prompt_distill_shadow*.py` 基线幽灵行 / `crontab-cf-pullback-window` 台账行缺载体) + `test_ops_scripts_sync` 1 条 (线上未入库脚本 `ah_shadow_stop_verify.py`/`ue_truncation_readout.py`) —— 均属并行 agent 在途, 本批引入 0 条, 未代改。
 
 ## 2026-09-18 23:55 增量：DA 挑战者「独立档 fallback」接线（用户裁「做」）— skill v0.83
 

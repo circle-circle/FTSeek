@@ -105,7 +105,28 @@ def quote_metrics(snapshot, direction, now=None):
 
 ---
 
-## 教训
+## 后续项执行状态 (2026-09-19 05:00 CST, 用户裁"按建议执行")
+
+**P1 — rc≠0 告警可见性: ✅ 已落地** (复用既有告警链, 未新建哨兵)
+
+| 件 | 内容 | 验证 |
+|---|---|---|
+| 源头 (契约行) | `scripts/extended_hours_exit_cron.py` 新增 `_report_failure()`: 子进程失败时**另发**一行 `YYYY-MM-DD HH:MM:SS [extended_hours_exit_cron] ERROR: …` (JSON 块保留) | 新测试 3 例; 行样例见下 |
+| 覆盖窗 | crontab 补 `*/15 16-20 * * 1-5` (ET 04:00-08:45 盘前) + `*/15 5-8 * * 2-6` (ET 17:00-20:45 盘后); 原两行只覆盖 ET 09:00-17:45 | 安全编辑: 备份 `/tmp/crontab_bak_20260919_045638.txt` → diff `+8/-0` → 应用 → 回读 2/2 ✅ |
+| 判据复用 | 不新建计数器: 现有 `15min 窗计数 ≥ max(3, ⌈3×近 7 日同窗中位数⌉)` 即"连续多轮失败"的等价判据 | 两向: n=2 → `2 条 < 阈值 3` 静默; n=3 → `触发` + 生成推送正文 (dry-run 实跑) ✅ |
+
+实测行样例 (真实代码路径产出):
+```
+2026-09-19 04:53:07 [extended_hours_exit_cron] ERROR: 退出链子进程失败 session=afterhours 16:58ET rc=1 | ValueError: The truth value of a Series is ambiguous @ File ".../afterhours_exit_shadow.py", line 188, in collect (完整 stderr 见本文件 JSON 块)
+```
+生产日志现状反证零告警成因: 崩溃期 **67 个 JSON 块 / 0 条契约 ERROR 行**。
+
+台账: `docs/CONTROL-LOOP-LEDGER.md` 新增 `crontab-error-alert` 行 (含 4 窗调度 + 判据 + 失效模式 + 回滚)。
+⚠️ 冬令时 (11/1 起) CST 相对 ET 右移 1h ⇒ 本批两窗列入 11 月重评清单。
+
+**P2 — next_open 窗作用域观察: ✅ 已排程** (Hermes 一次性 job `e9ea6362ebd9`, once 2026-09-21 21:50 CST = ET 09:50, 紧随 09:30-09:45 窗关闭; 全程只读, 已入台账)。该项同时是 **next_open 兑现路的首考** (此前每次有持仓即崩 ⇒ 从未真正跑过)。
+
+**P3 — 观测空洞: ⛔ 不回填** (崩窗各缺 ~7 行, 无成交, 按持仓日聚合仅轻微低估)。
 
 - **"无数据/无对象"路径长期掩盖真 bug**: 该链自 9/18 引入起从未在有持仓时验证过 (窗口
   内恰好一直空仓)。**新链路上线验收必须造一个"有对象"的真实场景**, 否则等于没验收。

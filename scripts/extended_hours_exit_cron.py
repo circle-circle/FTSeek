@@ -113,6 +113,41 @@ def run_once(dry=False, timeout_s=240, now=None):
         }
 
 
+def _et_hhmm() -> str:
+    """ET 时刻标注 (告警行里带上, 便于与 JSON 块/影子行对齐)。取不到就留空, 不阻塞告警。"""
+    try:
+        from app.utils.timezone import now_et
+
+        return f"{now_et():%H:%M}ET"
+    except Exception:
+        return ""
+
+
+def _report_failure(result: dict) -> None:
+    """把子进程失败显性化为**契约格式 ERROR 行** (供 error_alert 捕获)。
+
+    2026-09-19 INCIDENT-001 (P1): 原实现只把 rc 塞进 JSON 块, 而 JSON 块行首无时间戳
+    ⇒ error_alert 的 `_parse_line` (要求 ^YYYY-MM-DD HH:MM) 视其为 unparsed 跳过;
+    叠加 error_alert 的 cron 窗未覆盖延长时段 ⇒ 退出链每分钟崩、连崩 7 轮 = **零告警**。
+    JSON 块保留 (机读/审计), 另发一行人读且可被 error_alert 扫到的 ERROR 行。
+
+    判据等价性: 持续失败由 error_alert 的「15min 窗内计数 ≥ max(3, 3×近 7 日同窗中位数)」
+    兜住 —— 本轮次即"连续 N 轮 rc≠0"的等价判据, 故不另建计数器 (做减法, 复用既有仪表)。
+    """
+    stderr = (result.get("stderr_tail") or "").strip()
+    reason = (result.get("error") or "").strip()
+    if not reason and stderr:
+        rows = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+        frames = [ln for ln in rows if ln.startswith('File "')]
+        reason = (rows[-1] if rows else "")[:180]
+        if frames:
+            reason = f"{reason} @ {frames[-1][:110]}"
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{stamp} [extended_hours_exit_cron] ERROR: 退出链子进程失败 "
+          f"session={result.get('session')} {_et_hhmm()} rc={result.get('returncode')} "
+          f"| {reason} (完整 stderr 见本文件 JSON 块)")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true")
@@ -122,6 +157,7 @@ def main():
     result = run_once(args.dry, args.timeout)
     print(json.dumps(result, ensure_ascii=False))
     if not result.get("ok"):
+        _report_failure(result)
         raise SystemExit(1)
 
 
