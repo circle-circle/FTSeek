@@ -46,6 +46,19 @@ def test_test_symbol_detection(symbol):
     assert is_test_symbol(symbol)
 
 
+@pytest.mark.parametrize("symbol", ["US.TEST_D4", "TEST_D4", "US.TEST1", "TEST2", "us.test_d4"])
+def test_test_symbol_detection_covers_fixture_variants(symbol):
+    """2026-09-18 扩展: 单测惯用变体 `TEST_<后缀>` / `TEST<数字>` 曾整条穿过滤网,
+    在 4 个影子统计文件里留下 11 行占位行 (实测 `US.TEST_D4` 旧判据=False)。"""
+    assert is_test_symbol(symbol)
+
+
+@pytest.mark.parametrize("symbol", ["US.FAKE", "US.TESTAR", "US.USTEST", "US.AAPL", "US.TESLA", "", None])
+def test_lookalike_symbols_are_not_test_symbols(symbol):
+    """反向: `US.FAKE` 被既有用例当**正常符号**用 (扩展会误伤 8 例), TESTAR/USTEST 像真 ticker。"""
+    assert not is_test_symbol(symbol)
+
+
 def test_test_symbol_is_allowed_in_test_db(tmp_path):
     ensure_test_symbol_not_in_production_db("US.TEST", tmp_path / "test.db")
 

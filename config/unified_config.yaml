@@ -1631,7 +1631,11 @@ playbook:
   #   → data/shadow/ah_exit_shadow.jsonl. 判据 n≥15+p<0.05+净差>0 才议灰度.
   #   回放基线: scripts/ah_exit_replay.py (静态TP/SL挂盘后 0/12 死单已排除).
   #   回滚: false + 重启.
-  ah_exit_shadow_enabled: true
+  # 2026-09-18 停用 (用户令「策略层已变化, AH影子是否可以停止退出了」): 结论与切线见
+  #   DEB-20260918 §23.7 —— 观测臂结论已出 + 唯一决策臂不达标 (n=15, 净差 −891.79, p=0.118) 且与
+  #   "盘后只止盈不做止损" 政策相反 + 实时盘后退出链今日上线使反事实基线失效。
+  #   重新启用前必须先重定义基线, 不能只是把本值翻回 true。
+  ah_exit_shadow_enabled: false
   # 2026-08-27 (组合风控P2·簇浓度影子): 日开仓帽16/并发帽12全是笔数维度无结构维度。
   #   手工簇映射(semis/software_cloud/high_beta/china_adr/gold_miners/pharma/
   #   financial/consumer/industrial_energy/other)+占位区间[entry,exit)重放, 每笔

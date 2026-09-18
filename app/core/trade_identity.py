@@ -21,8 +21,26 @@ _PHASE_ALIASES = {
 
 
 def is_test_symbol(symbol: Optional[str]) -> bool:
+    """占位/测试标的 (单测 artifact、券商账户里的报废测试单)。
+
+    ⚠️ 判据**只认** TEST / US.TEST / *.TEST —— 2026-09-18 曾试图扩展成"末段占位词" (把 US.FAKE 也纳入),
+    但 US.FAKE 在既有测试里被当作**正常符号**使用 (见 tests/test_extended_hours_order_execution.py 等)
+    ⇒ 扩展会误伤 8 个既有用例, 已回退。该推送问题的真正修法是: conftest 封死测试→生产通知出口 +
+    _execute 的 REAL 分支改为环境级一次提示 (见 tests/conftest.py / scripts/extended_hours_entry_executor.py)。
+
+    2026-09-18 二次扩展 (只补**测试惯用变体**, 实测漏网): 既有判据对 `US.TEST_D4` / `TEST_D4` / `US.TEST1`
+    全判 False ⇒ 4 个影子统计文件里残留 11 行占位行 (`breakeven_shadow` 5 + `exit_param_shadow` 2 +
+    `ah_exit_shadow` 1 + `eod_depth_gate_shadow` 1 + `shadow_technical_direction` 3(裸 TEST))。
+    新增规则仅覆盖 `TEST_<后缀>` / `TEST<数字>` 这两种单测命名习惯; **仍不**纳入 US.FAKE / TESTAR / USTEST
+    (前者被既有用例当正常符号, 后两者像真 ticker)。
+    """
     normalized = str(symbol or "").strip().upper()
-    return normalized in {"TEST", "US.TEST"} or normalized.endswith(".TEST")
+    if normalized in {"TEST", "US.TEST"} or normalized.endswith(".TEST"):
+        return True
+    for segment in normalized.split("."):
+        if segment.startswith("TEST_") or (segment.startswith("TEST") and segment[4:].isdigit()):
+            return True
+    return False
 
 
 def trade_identity(

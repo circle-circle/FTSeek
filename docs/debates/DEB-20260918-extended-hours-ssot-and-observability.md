@@ -1186,3 +1186,68 @@ Hermes 需要重点复核：
 费用吃光毛利），方向与 R1 一致；代价是未来真能走的仙股也会被一起挡。
 复盘口径：把 `extended_hours_price_gate_rejects.jsonl` 的被挡池与 `settle_extended_hours` 时段台账按日对齐，
 算"若参与会怎样"（同一时段价差/费用口径），观察期截止时出结论。
+
+---
+
+### 23.7 AH 出场影子**停用** + 统计类产物占位污染清理（用户令「如果策略层已经变化，AH影子是否可以停止退出了 同意剔除影响统计类的数据污染源」，2026-09-18 晚）
+
+#### 23.7.1 结论：**可以停，已停**
+
+停用理由（四条，逐条有据）：
+
+1. **观测臂的结论已经出来了**：累计 22 夜（2026-08-26 → 09-16）里水下 `touch_entry` 38 夜仅触及 3（7.9%）、
+   `touch_be` 触及 1（2.6%）、`touch_tp` **触及 0** ⇒ "盘后见好就收"与"盘后提前 TP"两条路都已被数据否决
+   （与旧回放结论一致：**修复引擎是次日 RTH，不是盘后**）。继续记录不再产生新判断。
+2. **唯一决策臂不达标且方向与政策相反**：`red_cut_1pct`（深红 ≥1% 收盘割 = 盘后止损）已触发 19 / 已结算 15，
+   **净差 −891.79（均值 −26.23）、p=0.118** ⇒ config 判据（n≥15 + p<0.05 + 净差>0）**两条都不达标**；
+   且它与冻结政策"盘后只止盈不做止损"**方向相反** ⇒ 无晋级路径，攒样没有出口。
+3. **实时盘后退出链今日上线，反事实基线失效**：`afterhours_exit_shadow.py` + exit executor 现在**真的会在盘后**
+   做 TP/tighten（提交 `66d781dcc` 01:44 → `bb5a4c3b4` 09:45 → `6f68d15e6` 13:30）。本影子的反事实前提是
+   "无盘后干预下继续持有到 exit"——该前提自 2026-09-17 夜起**不再成立**，继续写同一份 jsonl 只会把
+   两个世界混成一列统计（与 §3.2 MFE 口径切线同类）。
+4. **价值已被真实台账取代**："事件夜提前 TP 值多少"现在可以用**真实成交**回答
+   （`data/afterhours_exit_shadow.jsonl` + `data/extended_hours_exit_executions.jsonl` + `trade_records` 的 AH 出场行），
+   不需要再用反事实影子推断。
+
+**冻结与切线**：既有 22 夜为"**干预前**队列"，**与 09-17 起不可混算**；历史行自带时间戳，数据不改写。
+**重新启用前必须先重定义基线**（或给出"仍需要反事实"的理由），不能只把开关翻回 `true`。
+
+**落地**：`config/unified_config.yaml` → `playbook.ah_exit_shadow_enabled: false`；**app 重启生效**
+（18:19 CST = 06:19 ET，重启前 `open_positions=0`；新 PID 1880347；重启后 app 日志 0 条 error/traceback，
+子系统正常：DualBroker / FutuLV3 ticker+orderbook+push / SignalScanLoop `Signal IC 0.0129 (N=615)`）；
+进程内实测 `scripts/ah_exit_shadow._enabled() == False` ⇒ `run_check()` 立即返回，今晚及以后不再写入。
+**回滚**：把该键改回 `true` + 重启（**但按上段要求，回滚前需先重定义基线**）。
+
+#### 23.7.2 统计类产物占位污染清理（用户批准）
+
+**根因（判据缺口，实锤）**：唯一判据 `app.core.trade_identity.is_test_symbol` 此前只认精确
+`TEST` / `US.TEST` / `*.TEST` —— 实测 `US.TEST_D4` / `TEST_D4` / `US.TEST1` **全判 False**
+（单测惯用变体），于是这些行的占位行**整条穿过滤网**并留在了统计产物里。
+
+**清理（`scripts/purge_placeholder_stats.py`，默认 dry-run；按原始文本行过滤，绝不重新序列化）**：
+剔除 **6 个文件 / 28 行**，备份 `data/backups/placeholder_purge_20260918_181552/`：
+
+| 文件 | 剔除 | 形态 |
+|---|---|---|
+| `data/breakeven_shadow.jsonl` | 7 | `US.TEST_D4` ×5、`US.TEST_SMOKE`、裸 `TEST` |
+| `data/shadow/exit_param_shadow.jsonl` | 4 | 裸 `TEST` ×2、`US.TEST` ×2 |
+| `data/shadow/shadow_technical_direction.jsonl` | 3 | 裸 `TEST` ×3（该文件仅 3 行 ⇒ 清空为 0 行，属正常行日志） |
+| `data/shadow/ah_exit_shadow.jsonl` | 1 | `US.TEST`（night 2026-09-16，伪造 fav 256%，**未结算** ⇒ 未污染 `n_settled=34` 统计） |
+| `data/shadow/eod_depth_gate_shadow.jsonl` | 1 | `US.TEST`（2026-09-17 01:13 ET，占位行当时确实在 DB 里） |
+| `data/shadow/archive_20260826/shadow_technical_direction.jsonl` | 12 | 裸 `TEST`（**误改后已从备份恢复**，见下） |
+
+另清 `data/signal_cooldown.json` 的占位键 `US.TEST`（2026-03-27 残留，备份于同目录）。
+
+**如实登记一处操作失误**：清理脚本的目录豁免最初只看路径**首段**（`rel.parts[0]`），而
+`data/shadow/archive_20260826/` 的 archive 段在**第二层** ⇒ 归档快照被误改 12 行；已用同一批备份**恢复原样**
+（复验 71 行 / 12 个 TEST 行），并把豁免逻辑改为"检查任意一层路径含 `archive*`/`backups`/`_quarantine`"。
+**未动**：`data/backups/**`、`data/_quarantine/20260903_test_pollution/**`（另有 2310 行已隔离归档）、DB（同日已清零并加守卫）。
+
+**汇总产物未受污染**（已核）：`data/**/*summary*.json`、`*report*.json` 全为 0 命中 ⇒ 只需清行日志，
+**无需重算**任何历史统计。
+
+**根治（代码侧）**：判据扩展为同时覆盖单测惯用变体 —— `TEST_<后缀>` 与 `TEST<数字>`
+（`app/core/trade_identity.py`）；**仍不**纳入 `US.FAKE`（既有 8 个用例把它当正常符号）/ `TESTAR` / `USTEST`。
+测试：`tests/core/test_trade_identity.py` 新增 2 组参数化用例（正向覆盖变体 + 反向不误伤）；
+相关集 **213 passed**（含 placeholder 守卫、延长时段开仓/退出、AH 影子回声）
+⇒ 既有的 `US.FAKE` 用例未被误伤。
