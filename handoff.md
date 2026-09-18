@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-18 21:29 增量：UE 扫描推送读数对齐真实链路 —— 计数剔除 SKIP 行 + 扫描期口径标注 + 执行闸分解行
+
+> **一句话**：用户贴当日 21:11 UE 推送问「调用与结果是否正常」，实测调用侧全绿、结果侧当日真注入 **0 条**（两条 LONG 分别被 streak 闸 / 低ATR 闸拦，均设计内），而推送文案有两处失真已修；零交易行为变更。
+
+- **为何**：用户贴推送问「请检查这次 ue 的调用和结果是否正常」→ 逐项核 scan jsonl / 拒绝归因 jsonl / `llm_audit` / `playbook_instructions` / 代码锚点后给出分档建议（P2×2 + P3），用户回「动」。
+- **虫一 (P2)**：`cmd_push` 的"已注入DB→执行轨道 (实际N条)"计数只按 `decision_id LIKE 'universe_expansion:%'`，**把 SKIP 行算成已注入** ⇒ 当日显示"实际1条"，而那 1 条是 `US.ZIM` 低ATR 的 SKIP 行 (`playbook_instructions.id=2985`)，真落库可交易指令 = **0 条**。改加执行侧白名单 `AND direction IN ('BUY','SELL_SHORT')` (同源 `app/pipeline/llm_pipeline.py:833`)；⚠ **只按方向收窄、不过滤 `skip_reason`** —— 9/14 实测 BUY/SELL_SHORT 行上的非空 skip_reason 是**注入后**状态 (no_trigger / chase_cap_enforced / thesis_drift_invalidate / TRIPWIRE_INVALIDATED)，加过滤会把 9/14 的 3 条误报成 1 条 (本人初版即此错，DB 对照后自纠)。
+- **虫二 (P2)**：`可交易: N只` 取 `surfaced` 的 LONG/SHORT = **扫描期口径** (在 streak/ATR 闸**之前**)，当日两只全被拦却仍显示"可交易2只"、读者会当成在执行轨道上 → 标签改 `扫描期可交易:`，并新增 `执行闸: 拦N只 (原因分桶)` 行 (新纯读助手 `_gated_breakdown`：只读当日 `data/shadow/llm_universe_inject.jsonl` 的 filter/build/save 行，`direction(SKIP)` 桶略去避免与上一行重复，空则不出行)。
+- **验证**：`py_compile` 通过；UE 相关 5 测试文件 **166 passed**；实弹 `push --dry` 四日对照且**算术闭合** (注入+拦 = 扫描期可交易) —— 09-18 `0条 / 扫描期2 / 拦2(streak闸1+低ATR闸1)`、09-15 `4 / 7 / 拦3(已写库2+低置信1)`、09-14 `3 / 6 / 拦3`、09-17 `0 / 3 / 拦3(冷却1+已写库1+已持仓1)`；`grep 'Universe选股扫描完成' tests/` 为空 ⇒ 无测试断言该文案。
+- **结果侧定性 (非缺陷，未改)**：当日 0 可执行 = 设计内双闸 —— UBER `streak_gate(3>2)` (9/16→9/18 连续 3 日浮现 vs `max_emergence_streak=2`，OOS 依据 streak≥3 桶前瞻 −0.28%，反事实已登记 `ue_streak_counterfactual.jsonl`)、ZIM `low_atr(0.0262<0.03)` (yaml `playbook.execution_parameters.low_atr_gate_min_atr_pct=0.03`，ATR 日线自算 `atr_reason=ok`)；6 只浮现拒收归因 **6/6 全覆盖**。
+- **生效/回滚**：`llm_universe_scan.py` 由 crontab 直接 exec 且**无 `/root/.hermes/scripts/` 镜像副本** (实查仅两个无关 ue_* 脚本) ⇒ **下一交易日 21:10 即生效，主服务无需重启**；回滚 = `git revert ecb75d142`。详见 `docs/debates/DEB-20260918-ue-push-readout-alignment.md`。
+- **未做 (待裁)**：①P3 —— 池外/**传导型**候选 (`evidence_citation_state=transmission_assumed`，材料未具名) 不进输入侧资格预筛 `_prescreen_input_symbols` (只覆盖 `named_in_materials`)，可被报作"可交易"直到 inject 才被 ATR 闸拦 (今日 ZIM 即此型)；②`[warn] cooldown 未生效 … 'SKIP' 无法映射到成交词表` 每日告警属良性但建议降 DEBUG 或改措辞。
+
 ## 2026-09-18 21:10 增量：盘前预检报告内容对齐真实链路 —— 报告层纠错 + 4 项盘前读数补齐
 
 > **一句话**：盘前综合预检报告 (job `2d69370d5c91`) 修正 3 处与真实链路不符 (5d 空值口径假告警 / 停产管线标签当"当前信号质量" / capital_state CST 墙钟被标 ET)，并补 4 项盘前该看的读数；零交易行为变更。
