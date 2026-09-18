@@ -19,6 +19,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
+from app.core.trade_identity import ensure_test_symbol_not_in_production_db
 from app.utils.timezone import _et_trade_date, now_et, CST, _localize
 
 logger = logging.getLogger(__name__)
@@ -568,6 +569,7 @@ class TradeStore:
         
         # P0 数据质量守卫 (2026-05-22): 关键归因字段完整性检查
         _symbol = record.get("symbol", "")
+        ensure_test_symbol_not_in_production_db(_symbol, self.db_path)
         if not _symbol:
             _logger.error(f"[数据质量守卫] save_trade 缺少 symbol! record keys: {list(record.keys())}")
         _missing_fields = []

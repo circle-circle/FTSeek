@@ -66,6 +66,18 @@ def test_trade_entry_helper():
     assert msg.payload["symbol"] == "NVDA"
 
 
+def test_trade_identity_is_embedded_and_rendered():
+    msg = trade_exit(
+        "US.AAPL", "LONG", 100.0, "SL_BREAKEVEN",
+        source_type="PLAYBOOK_SIM",
+        extra={"session": "premarket"},
+    )
+    assert msg.payload["trade_env"] == "sim"
+    assert msg.payload["trade_phase"] == "premarket"
+    assert "口径: 模拟 · premarket" in msg.render_text()
+    assert "Playbook 模拟盘 (DA/UE)" in msg.render_text()
+
+
 def test_trade_exit_small_loss_immediate():
     msg = trade_exit("NVDA", "LONG", -100.0, "STOP_LOSS")
     assert msg.level == Level.NORMAL  # 小额亏损也立即推 (2026-07-16)

@@ -28,16 +28,9 @@ from .aggregator import Aggregator
 from .dedup import DedupCache
 from .health import HealthMonitor
 
+from app.core.trade_identity import is_test_symbol
+
 logger = logging.getLogger(__name__)
-
-
-def _is_test_symbol(msg: PushMessage) -> bool:
-    """Return True if the message's trade symbol is a test-only symbol."""
-    symbol = (msg.payload or {}).get("symbol")
-    if not isinstance(symbol, str):
-        return False
-    normalized = symbol.strip().upper()
-    return normalized in {"TEST", "US.TEST"} or normalized.endswith(".TEST")
 
 
 class PushHub:
@@ -100,7 +93,7 @@ class PushHub:
         - sync=True: 绕过异步与去重/聚合, 同步立即送达并返回真实结果
           (用于关键必达推送, 如盘前指令; 调用方据此决定是否重试)
         """
-        if _is_test_symbol(msg):
+        if is_test_symbol((msg.payload or {}).get("symbol")):
             logger.warning(
                 f"[PushHub·test-symbol] 拦截测试标的推送: "
                 f"{(msg.payload or {}).get('symbol')} title={msg.title}"

@@ -38,6 +38,8 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+from app.core.trade_identity import ensure_test_symbol_not_in_production_db
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
@@ -721,6 +723,7 @@ def _write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg,
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
     返回 position_id. 幂等且不覆盖既有仓位."""
     import uuid
+    ensure_test_symbol_not_in_production_db(symbol, DB)
     conn = sqlite3.connect(DB, timeout=30)
     try:
         now = _now_et().isoformat()

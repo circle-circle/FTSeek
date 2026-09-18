@@ -12,10 +12,12 @@
 import sqlite3
 import logging
 from datetime import datetime, timedelta
-from app.utils.timezone import now_et, get_trade_date
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import uuid
+
+from app.core.trade_identity import ensure_test_symbol_not_in_production_db
+from app.utils.timezone import now_et, get_trade_date
 
 logger = logging.getLogger("ftseek_us.storage.trade_recorder")
 logger.propagate = False
@@ -175,6 +177,7 @@ class TradeRecorder:
         Returns:
             trade_id: 交易 ID
         """
+        ensure_test_symbol_not_in_production_db(stock_code, self.db_path)
         trade_id = kwargs.get('trade_id', str(uuid.uuid4())[:8])
         trade_date = get_trade_date()
         entry_time = now_et().isoformat()

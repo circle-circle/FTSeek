@@ -132,6 +132,16 @@ def test_source_whitelist_and_outside_visible(db):
     assert by_src["POSITION_SYNC"]["null_pnl"] == 1
 
 
+def test_identity_summary_reuses_existing_fields(db):
+    _row(db, "2026-08-27T10:00:00-04:00", net=10.0, source="PLAYBOOK_SIM")
+    _row(db, "2026-08-27T11:00:00-04:00", net=-2.0, source="PLAYBOOK_SIM")
+    cur = wts.summarize_window(_conn(db), "2026-08-27", "2026-08-27")
+    assert cur["identity"] == [{
+        "trade_env": "sim", "source_type": "PLAYBOOK_SIM", "trade_phase": "unknown",
+        "n": 2, "wins": 1, "pnl": 8.0,
+    }]
+
+
 # ── 交叉表与头条必然自洽 ─────────────────────────────────────────────
 def test_crosstab_sums_to_headline(db):
     for i, (d, r, n) in enumerate([

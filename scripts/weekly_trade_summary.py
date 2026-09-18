@@ -44,6 +44,9 @@ from typing import Dict, List, Optional
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
+
+from app.core.trade_identity import summarize_trade_identity
+
 DB_PATH = os.path.join(PROJECT_DIR, "data", "ftseek_us.db")
 
 # 现役交易链来源 (MAIN_PIPELINE/SCALPING/ORB_ENGINE 均为已冻结历史路径, 不再喂新行)
@@ -83,6 +86,14 @@ GROUP BY 1
 ORDER BY n DESC
 """
 
+_IDENTITY_SQL = """
+SELECT *
+FROM trade_records
+WHERE exit_price > 0
+  AND substr(exit_time, 1, 10) BETWEEN :start AND :end
+ORDER BY id
+"""
+
 
 _SRC_PH = ",".join(f":src_{i}" for i in range(len(TRADE_SOURCES)))
 _SRC_PARAMS = {f"src_{i}": s for i, s in enumerate(TRADE_SOURCES)}
@@ -98,6 +109,10 @@ def summarize_window(conn: sqlite3.Connection, start: str, end: str) -> Dict:
     """一个出场日窗口 [start, end] 的汇总。headline 由交叉表求和得到 (二者必然自洽)."""
     rows = _query(conn, _AGG_SQL, start, end)
     outside = _query(conn, _OUTSIDE_SQL, start, end)
+    conn.row_factory = sqlite3.Row
+    identity_rows = [dict(row) for row in conn.execute(
+        _IDENTITY_SQL, {"start": start, "end": end}
+    )]
     total_n = sum(r["n"] for r in rows)
     total_wins = sum(r["wins"] for r in rows)
     # NULL 盈亏行 (如 POSITION_SYNC 同步行) 计笔数不计盈亏, 单列出来避免"胜率分母"被误读
@@ -106,6 +121,7 @@ def summarize_window(conn: sqlite3.Connection, start: str, end: str) -> Dict:
         "start": start,
         "end": end,
         "rows": rows,
+        "identity": summarize_trade_identity(identity_rows),
         "outside": outside,
         "total_n": total_n,
         "total_wins": total_wins,
@@ -171,6 +187,13 @@ def render(cur: Dict, prev: Optional[Dict], days: int) -> str:
             lines.append(
                 f"{r['direction']:<7} {r['exit_reason']:<26} {r['n']:>4} {r['wins']:>4} {pnl:>12,.2f}"
             )
+    if cur["identity"]:
+        parts = [
+            f"{r['trade_env']}/{r['source_type']}/{r['trade_phase']} {r['n']}笔"
+            for r in cur["identity"]
+        ]
+        lines.append("")
+        lines.append(f"标签: {' | '.join(parts)}")
     if cur["outside_n"]:
         parts = ", ".join(
             f"{o['source_type']} {o['n']}笔"

@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 
 from app.core.paths import get_trade_records_db, get_decisions_db, get_rejections_db, get_reviews_dir
+from app.core.trade_identity import summarize_trade_identity
 from pathlib import Path
 import json
 
@@ -110,6 +111,7 @@ class DailyReviewGenerator:
             # Obsidian postmarket 笔记正文恒为"无交易"。补上已平仓交易行
             # (_save_report 内会做 symbol→code / realized_pnl→pnl 映射)。
             'trades': closed_trades,
+            'trade_identity': summarize_trade_identity(closed_trades),
             # 2026-08-27 收盘审计④: 当日进场但未平仓 (持夜) 的交易 — 供 postmarket
             #   笔记渲染"过夜持仓"段, 消除 total_trades(按进场计) 与明细(按已平计) 口径差。
             'open_trades': [t for t in trades

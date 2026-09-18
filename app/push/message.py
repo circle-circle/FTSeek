@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional
 import time
 import hashlib
 
+from app.core.trade_identity import trade_identity
+
 
 class Level(Enum):
     """优先级: 决定是否走聚合 + fallback 强度"""
@@ -109,6 +111,9 @@ class PushMessage:
         src = _source_cn(p.get("source_type"))
         lines = [self.title, ""]
         lines.append(f"📍 标的: {symbol}  |  方向: {dir_cn}")
+        identity = _identity_line(p)
+        if identity:
+            lines.append(identity)
         if self.category == Category.TRADE_ENTRY:
             lines.append(f"📈 成交价: ${float(p.get('price', 0) or 0):.2f}  数量: {int(p.get('qty', 0) or 0)} 股")
             # 2026-07-23: 计划价与偏离显性化 (DEB 实证: 偏离度与输赢无关, 但可观测防意外滑点)
@@ -217,6 +222,7 @@ class PushMessage:
         is_long = direction.upper() in ("BUY", "LONG")
         dir_cn = "买入/做多" if is_long else "卖出/做空"
         src = _source_cn(p.get("source_type"))
+        identity = _identity_line(p)
         head = "✅ 成交通知" if self.category == Category.TRADE_ENTRY else None
         if head is None:
             # 2026-08-27 (用户核查RIVN净亏显示🟢): 图标按净额着色 — 毛正净负的保本单
@@ -226,6 +232,8 @@ class PushMessage:
             head = "🟢 平仓通知" if _judge >= 0 else "🔴 平仓通知"
         lines = [f"### [FTSeek-US] {head} | 🇺🇸 美股", "",
                  f"**📍 标的**: {symbol}  **📊 方向**: {dir_cn}"]
+        if identity:
+            lines.append(f"**{identity}**")
         if self.category == Category.TRADE_ENTRY:
             lines.append(f"**📈 成交价**: ${float(p.get('price', 0) or 0):.2f}  **📦 数量**: {int(p.get('qty', 0) or 0)} 股")
             _pe = p.get("planned_entry")
@@ -378,13 +386,24 @@ def _source_cn(source_type) -> str:
     """来源代码 → 中文标注. None/空 → 空串; 未知 → 原样返回."""
     if not source_type:
         return ""
+    key = str(source_type).strip().upper()
     return {
         "MAIN_PIPELINE": "主线策略 (LLM投票)",
         "MANUAL": "人工交易",
         "POSITION_SYNC": "🔄 历史仓位同步",
-        "playbook_sim": "Playbook 模拟盘 (DA/UE)",
-        "playbook_live": "Playbook 实盘 (DA/UE)",
-    }.get(str(source_type), str(source_type))
+        "PLAYBOOK_SIM": "Playbook 模拟盘 (DA/UE)",
+        "PLAYBOOK_LIVE": "Playbook 实盘 (DA/UE)",
+    }.get(key, str(source_type))
+
+
+def _identity_line(p: Dict[str, Any]) -> str:
+    env = {"real": "实盘", "sim": "模拟", "test": "测试", "unknown": "未标注"}.get(
+        str(p.get("trade_env") or ""), ""
+    )
+    phase = str(p.get("trade_phase") or "")
+    if env and phase:
+        return f"🏷️ 口径: {env} · {phase}"
+    return f"🏷️ 口径: {env}" if env else ""
 
 
 # 便捷构造器 — 给上游模块提供语义化 API
@@ -417,6 +436,12 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
         for _k, _v in extra.items():
             if _v is not None:
                 _payload[_k] = _v
+    _payload.update(trade_identity(
+        symbol,
+        source_type,
+        _payload.get("trade_mode") or _payload.get("mode") or _payload.get("account_type"),
+        _payload.get("session") or _payload.get("entry_session"),
+    ))
     return PushMessage(
         title=f"✅ {symbol} {direction} 成交",
         body=f"qty={qty} price=${price:.2f} strategy={strategy}",
@@ -459,6 +484,12 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
         for _k, _v in extra.items():
             if _v is not None:
                 _payload[_k] = _v
+    _payload.update(trade_identity(
+        symbol,
+        source_type,
+        _payload.get("trade_mode") or _payload.get("mode") or _payload.get("account_type"),
+        _payload.get("session") or _payload.get("exit_session") or _payload.get("entry_session"),
+    ))
     if pnl_net is not None:
         _nsign = "+" if pnl_net >= 0 else ""
         _fee_txt = f"/费${fees:.2f}" if fees is not None else ""
