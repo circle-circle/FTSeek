@@ -416,6 +416,76 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
             break
     res["trail_floor_px"] = tf_px
     res["trail_floor_action"] = tf_act
+
+    # ── C5) 生产同形"分层动态锁利"档位臂 (2026-09-19 用户: ACN MFE 只拿到 57%, 如何捕获更高) ──
+    #  生产机制 = clamp(让出比例 × MFE, min_dd, max_dd); 让出 40% ⇒ 设计捕获 60%。
+    #  本组按**同一形式**换让出比例 (及上限), 度量捕获率 = 成交收益/峰值收益, 与净收益并看。
+    def _adapt_arm(give_back, min_dd=0.4, cap=1.2, be_at=0.4, initial_sl_pct=5.0):
+        """生产阶梯同形: 峰值未达 BE 线 ⇒ 地板仍是初始 SL(-5%); 达线后地板 = 峰值 - 回撤。
+        (首版漏了这条 ⇒ 地板一开始就在 -0.4% ⇒ 把亏损单砍在噪声里, 数字不可用; 已修正。)
+        """
+        _peak, _hit = entry, None
+        for b in carry:
+            _peak = max(_peak, b["c"])
+            _pp = (_peak / entry - 1) * 100
+            if _pp < be_at:                      # BE 未武装 ⇒ 保护线 = 初始 SL
+                _floor = entry * (1 - initial_sl_pct / 100.0)
+            else:
+                _dd = min(max(give_back * _pp, min_dd), cap)
+                _floor = entry * (1 + (_pp - _dd) / 100.0)
+            if b["c"] <= _floor:                 # 可成交价跌破保护线才出场 (与生产同)
+                _hit = b["c"]
+                break
+        return _hit
+
+    def _adapt_layered(_pp):
+        """分层: 小 MFE 维持 40% 让出 (噪声区不动), 中/大 MFE 逐级收紧到 30%/20%。"""
+        if _pp < 3.0:
+            return 0.40
+        if _pp < 6.0:
+            return 0.30
+        return 0.20
+
+    res["adapt60_px"] = _adapt_arm(0.40)                       # = 现役生产
+    res["adapt70_px"] = _adapt_arm(0.30)                        # 让出 30% ⇒ 捕获 70%
+    res["adapt75_px"] = _adapt_arm(0.25)                        # 让出 25% ⇒ 捕获 75%
+    res["adapt80_px"] = _adapt_arm(0.20, cap=2.0)               # 让出 20% ⇒ 捕获 80%
+    _peak, _hit = entry, None
+    for b in carry:
+        _peak = max(_peak, b["c"])
+        _pp = (_peak / entry - 1) * 100
+        if _pp < 0.4:
+            _dd_floor_px = entry * 0.95
+        else:
+            _dd_floor_px = entry * (1 + (_pp - min(max(_adapt_layered(_pp) * _pp, 0.4), 2.0)) / 100.0)
+        if b["c"] <= _dd_floor_px:
+            _hit = b["c"]
+            break
+    res["adapt_layered_px"] = _hit
+
+    # C6) 峰值口径改为**时段真实 high** (2026-09-19 第二把杠杆): 现役 peak 只跟可成交价序列,
+    #   而延长时段有独立 high (实锤: NOK 盘前 last 卡 9.84 不动, pre_high 10.35→10.47;
+    #   premarket_exit_shadow 已读 pre_high_price 但**未喂给 peak**) ⇒ 用 high 抬峰值 = 地板
+    #   随真实高点抬升 ⇒ 捕获率↑。代价: 地板更高 ⇒ 可能更早出场 (须回放裁决, 故列入本组)。
+    def _adapt_arm_hi(give_back, cap=1.2, be_at=0.4, initial_sl_pct=5.0):
+        _peakh, _hit = entry, None
+        for b in carry:
+            _peakh = max(_peakh, b["h"])
+            _pp = (_peakh / entry - 1) * 100
+            if _pp < be_at:
+                _floor = entry * (1 - initial_sl_pct / 100.0)
+            else:
+                _dd = min(max(give_back * _pp, 0.4), cap)
+                _floor = entry * (1 + (_pp - _dd) / 100.0)
+            if b["c"] <= _floor:
+                _hit = b["c"]
+                break
+        return _hit
+
+    res["adapt60_hi_px"] = _adapt_arm_hi(0.40)
+    res["adapt75_hi_px"] = _adapt_arm_hi(0.25)
+    res["carry_high_pct"] = round((max((b["h"] for b in carry), default=entry) / entry - 1) * 100, 3)
+    res["cap_pct60"] = round((max((b["c"] for b in carry), default=entry) / entry - 1) * 100, 3)
     # C2) 盈利锁臂: 触及 entry×(1+k%) 即以该价落袋(确定性), 否则落到 next_open
     for _k in (3.0, 4.0, 5.0, 6.0):
         _hit = None
@@ -482,7 +552,14 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
                     ("lock_5pct", res.get("lock_5pct_px") or no),
                     ("lock_6pct", res.get("lock_6pct_px") or no),
                     ("dd_1p5pct", res.get("dd_1p5pct_px") or no),
-                    ("dd_2p5pct", res.get("dd_2p5pct_px") or no)):
+                    ("dd_2p5pct", res.get("dd_2p5pct_px") or no),
+                    ("adapt60", res.get("adapt60_px") or no),
+                    ("adapt70", res.get("adapt70_px") or no),
+                    ("adapt75", res.get("adapt75_px") or no),
+                    ("adapt80", res.get("adapt80_px") or no),
+                    ("adapt_layered", res.get("adapt_layered_px") or no),
+                    ("adapt60_hi", res.get("adapt60_hi_px") or no),
+                    ("adapt75_hi", res.get("adapt75_hi_px") or no)):
         if px:
             g = (px / entry - 1) * 100
             fee = _round_trip_fee_pct(entry, px, day)
@@ -641,6 +718,20 @@ def main():
                                   "win_rate_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 1),
                                   "total": round(sum(v), 1)}
             summary["arms"] = summ_arms
+            # ── 捕获率 (2026-09-19): 成交收益/峰值收益, 只在峰值 >0.5% 的笔上算 (比值才有意义) ──
+            cap = {}
+            for tag in ("adapt60", "adapt70", "adapt75", "adapt80", "adapt_layered",
+                        "next_open", "rule", "lock_4pct"):
+                ratios = []
+                for r in passed:
+                    pk = r.get("carry_peak_pct")
+                    v = (r.get(tag) or {}).get("ret_pct")
+                    if pk and pk > 0.5 and v is not None:
+                        ratios.append(v / pk)
+                if ratios:
+                    cap[tag] = {"n": len(ratios),
+                                "mean_capture_pct": round(sum(ratios) / len(ratios) * 100, 1)}
+            summary["capture_ratio"] = cap
             # ── 费用分档 (2026-09-18 R9) ────────────────────────────────
             # 动机: 均值里看不出"费用在低价股直接吃掉全部毛利"(CTNT 类 ≈9%/笔)。
             # 每档给 n / 平均费率 / rule 与盘前收口净均值, 便于 §4.1/§17.2 归因。
