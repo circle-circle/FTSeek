@@ -420,7 +420,7 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     # ── C5) 生产同形"分层动态锁利"档位臂 (2026-09-19 用户: ACN MFE 只拿到 57%, 如何捕获更高) ──
     #  生产机制 = clamp(让出比例 × MFE, min_dd, max_dd); 让出 40% ⇒ 设计捕获 60%。
     #  本组按**同一形式**换让出比例 (及上限), 度量捕获率 = 成交收益/峰值收益, 与净收益并看。
-    def _adapt_arm(give_back, min_dd=0.4, cap=1.2, be_at=0.4, initial_sl_pct=5.0):
+    def _adapt_arm(give_back, min_dd=0.4, cap=1.2, be_at=0.4, initial_sl_pct=5.0, cert=None):
         """生产阶梯同形: 峰值未达 BE 线 ⇒ 地板仍是初始 SL(-5%); 达线后地板 = 峰值 - 回撤。
         (首版漏了这条 ⇒ 地板一开始就在 -0.4% ⇒ 把亏损单砍在噪声里, 数字不可用; 已修正。)
         """
@@ -428,6 +428,9 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
         for b in carry:
             _peak = max(_peak, b["c"])
             _pp = (_peak / entry - 1) * 100
+            if cert and (b["c"] / entry - 1) * 100 >= cert:   # +3% 确定性落袋优先
+                _hit = b["c"]
+                break
             if _pp < be_at:                      # BE 未武装 ⇒ 保护线 = 初始 SL
                 _floor = entry * (1 - initial_sl_pct / 100.0)
             else:
@@ -467,11 +470,14 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     #   而延长时段有独立 high (实锤: NOK 盘前 last 卡 9.84 不动, pre_high 10.35→10.47;
     #   premarket_exit_shadow 已读 pre_high_price 但**未喂给 peak**) ⇒ 用 high 抬峰值 = 地板
     #   随真实高点抬升 ⇒ 捕获率↑。代价: 地板更高 ⇒ 可能更早出场 (须回放裁决, 故列入本组)。
-    def _adapt_arm_hi(give_back, cap=1.2, be_at=0.4, initial_sl_pct=5.0):
+    def _adapt_arm_hi(give_back, cap=1.2, be_at=0.4, initial_sl_pct=5.0, cert=None):
         _peakh, _hit = entry, None
         for b in carry:
             _peakh = max(_peakh, b["h"])
             _pp = (_peakh / entry - 1) * 100
+            if cert and (b["c"] / entry - 1) * 100 >= cert:   # +3% 确定性落袋优先
+                _hit = b["c"]
+                break
             if _pp < be_at:
                 _floor = entry * (1 - initial_sl_pct / 100.0)
             else:
@@ -484,6 +490,9 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
 
     res["adapt60_hi_px"] = _adapt_arm_hi(0.40)
     res["adapt75_hi_px"] = _adapt_arm_hi(0.25)
+    # **生产真实组合** (2026-09-19 上线后): 现役 adaptive 地板 + +3% 确定性落袋 (cert)
+    res["live_prod_px"] = _adapt_arm(0.40, cert=3.0)
+    res["live_prod_hi_px"] = _adapt_arm_hi(0.40, cert=3.0)
     res["carry_high_pct"] = round((max((b["h"] for b in carry), default=entry) / entry - 1) * 100, 3)
 
     # ── C7) 绝对地板阶梯 (2026-09-19 用户核心目标: 每笔净收益不亏损 > 更高更精准收益 > 回撤守住) ──
@@ -512,6 +521,36 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     res["stair_A_px"] = _stair_arm(_stA)
     res["stair_B_px"] = _stair_arm(_stB)
     res["be_only_px"] = _stair_arm(((0.4, _BE_NET),))      # 只保本, 不锁利 (隔离"不亏损"收益)
+
+    # ── C8) 带缓冲地板阶梯 + 与生产已上线机制的**组合臂** (2026-09-19 用户令第 3 项) ──
+    #  实测教训 (本批): "贴成本保本锁"净赚占比仅 31% < 不做(49%) —— 带宽=往返费 ⇒ 必被噪声
+    #  打穿, 打穿即净亏损。故本组每一档地板都是**正收益**(buffered), 并测与 +3% 确定性落袋锁、
+    #  "进场后 high 峰值口径" 的组合 (= **生产当前真实形态**)。
+    def _stair_arm2(bands, use_high=False, cert=None):
+        _peak, _hit = entry, None
+        _peakh = entry
+        for b in carry:
+            _peak = max(_peak, b["c"])
+            _peakh = max(_peakh, b["h"])
+            _pp = ((_peakh if use_high else _peak) / entry - 1) * 100
+            if cert and (b["c"] / entry - 1) * 100 >= cert:      # +3% 确定性落袋优先
+                _hit = b["c"]
+                break
+            _floor_pct = -5.0
+            for _th, _lk in bands:
+                if _pp >= _th:
+                    _floor_pct = max(_floor_pct, _lk)
+            if b["c"] <= entry * (1 + _floor_pct / 100.0):
+                _hit = b["c"]
+                break
+        return _hit
+
+    _stC = ((0.9, 0.5), (1.5, 0.9), (2.5, 1.8), (4.0, 3.0), (6.0, 4.5))       # 每档地板都是正的
+    _stD = ((0.7, 0.45), (1.2, 0.9), (2.0, 1.6), (3.0, 2.5), (5.0, 4.2), (8.0, 7.0))
+    res["stair_C_px"] = _stair_arm2(_stC)
+    res["stair_D_px"] = _stair_arm2(_stD)
+    res["live_combo_px"] = _stair_arm2(_stC, cert=3.0)                 # 落袋锁 +3% + 阶梯C
+    res["live_combo_hi_px"] = _stair_arm2(_stC, use_high=True, cert=3.0)  # = 生产现状(含 high 口径)
     res["carry_peak_pct"] = res.get("carry_peak_pct")
     res["cap_pct60"] = round((max((b["c"] for b in carry), default=entry) / entry - 1) * 100, 3)
     # C2) 盈利锁臂: 触及 entry×(1+k%) 即以该价落袋(确定性), 否则落到 next_open
@@ -592,7 +631,15 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
                     ("stair_B", res.get("stair_B_px") or no),
                     ("be_only", res.get("be_only_px") or no),
                     ("lock_1pct", res.get("lock_1pct_px") or no),
-                    ("lock_2pct", res.get("lock_2pct_px") or no)):
+                    ("lock_2pct", res.get("lock_2pct_px") or no),
+                    ("stair_C", res.get("stair_C_px") or no),
+                    ("stair_D", res.get("stair_D_px") or no),
+                    ("live_combo", res.get("live_combo_px") or no),
+                    ("live_combo_hi", res.get("live_combo_hi_px") or no),
+                    ("live_prod", res.get("live_prod_px") or no),
+                    ("live_prod_hi", res.get("live_prod_hi_px") or no),
+                    ("lock_3pct_c", res.get("lock_3pct_px") or no),
+                    ("trail_floor_c", res.get("trail_floor_px") or no)):
         if px:
             g = (px / entry - 1) * 100
             fee = _round_trip_fee_pct(entry, px, day)
