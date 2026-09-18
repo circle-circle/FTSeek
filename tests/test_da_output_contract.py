@@ -446,8 +446,47 @@ def test_call_llm_records_finish_reason_and_usage(restore_call_llm):
         assert "_error" in out2
         assert out2["_finish_reason"] == "length"
         assert out2["_usage"]["total_tokens"] == 3000
+        # [2026-09-18] 正文尾巴一并带回: 区分"截断"(抬预算) vs "回了废话"(改 prompt)
+        assert out2["_raw_len"] == len('{"direction":"BU')
+        assert out2["_raw_tail"] == '{"direction":"BU'
     finally:
         ur.urlopen = orig
+
+
+def test_challenger_fallback_keeps_primary_diagnosis(restore_call_llm):
+    """2026-09-18: fallback (同模型自我辩论) 的原发失败原因不得被丢弃。
+
+    背景: 伪独立率全窗 5/109 (9/18 当日 3/23=13%), 但这批样本笔均净 −$60.92;
+    而"为什么 fallback"此前完全不可观测 (result 被覆盖) ⇒ 无法定因, 无法修。
+    """
+    log = []
+    primary_err = {"_error": "HTTP Error 429: Too Many Requests",
+                   "_finish_reason": None, "_raw_len": 0}
+    L._call_llm = _seq_stub([primary_err, CHALLENGER], log)
+
+    res = L._run_challenger({"direction": "BUY", "score": 7}, "原始数据段")
+
+    assert res["_challenger_fallback"] is True
+    assert "429" in res["_challenger_primary_error"]
+    assert res["_challenger_primary_finish"] is None
+    assert res["_challenger_primary_raw_len"] == 0
+    # 且必须经由 _merge_debate_results 落到 _debate (消费者才看得到)
+    merged = L._merge_debate_results({"symbol": "TEST", "direction": "BUY", "score": 7}, res)
+    deb = merged["_debate"]
+    assert deb["challenger_fallback"] is True
+    assert "429" in deb["challenger_primary_error"]
+    assert deb["challenger_model"] == L.MODEL, "fallback 时模型名须记主模型 (非独立辩论)"
+
+
+def test_challenger_primary_diagnosis_absent_on_clean_run(restore_call_llm):
+    """正常路径不得凭空填诊断字段 (否则日报会把健康调用误报成 fallback)。"""
+    log = []
+    L._call_llm = _seq_stub([CHALLENGER], log)
+    res = L._run_challenger({"direction": "BUY", "score": 7}, "原始数据段")
+    assert res.get("_challenger_fallback") is None
+    assert res.get("_challenger_primary_error") is None
+    merged = L._merge_debate_results({"symbol": "TEST", "direction": "BUY", "score": 7}, res)
+    assert merged["_debate"]["challenger_primary_error"] is None
 
 
 # ── 8. 修前基线复算入口 (DEB 第13轮 §E 判据用) ────────────────────────────
@@ -660,6 +699,6 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.80"
+        assert frontmatter_version == latest_changelog_version == "0.82"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline

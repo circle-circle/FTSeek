@@ -538,6 +538,43 @@ def _now_et():
 
 _low_atr_logged: set = set()
 
+# short_chase_ban_shadow 对照臂去重 (2026-09-18 采样设计修复): 扫描行每 (指令,ET日) 只写 1 行,
+# 否则逐轮写会灌水 (命中行仍逐轮写, 语义不变)。仅内存态, 重启清空 = 当日最多多写 1 行。
+_scb_scan_logged: set = set()
+
+
+def _short_chase_shadow_row(symbol, chg_pct, threshold, entry_price, current_price,
+                            triggered, entry_path, inst_id, decision_id, date_str, ts_str,
+                            scan=False):
+    """构造 short_chase_ban_shadow 行 (纯函数, 便于单测)。
+
+    2026-09-18 采样设计修复 (用户令"按建议"): 原实现**只在 chg_pct>阈值 时落行** ⇒ 8/24-9/18
+    全窗命中仅 9 条指令 (配到成交 6 笔), 预注册死线 10/31 前到不了 n≥20 ⇒ 判据永不可裁;
+    且**无对照臂** ⇒ 「反事实方向一致率」无法与未命中组对照, 无法算 IC。
+    现改为两类行, 同文件同 schema:
+      - 命中行 (over_threshold=True): 字段与写时机逐字不变 (逐轮写), 仅新增 date/decision_id/
+        over_threshold/scan 四个字段 ⇒ 既有消费者与判据口径不受影响;
+      - 扫描行 (over_threshold=False, scan=True): 每 (指令,ET日) 首轮写 1 行 = 对照组,
+        不参与判据计数 (注册表 count_mode=where:over_threshold=True)。
+    date/decision_id 顺带修 join 键脏数据 (注册表 notes 记载: 行内原无日期、inst_id 有跨方向脏值)。
+    """
+    return {
+        "ts": ts_str,
+        "date": date_str,
+        "symbol": symbol,
+        "direction": "SHORT",
+        "chg_pct": round(float(chg_pct), 3),
+        "threshold": threshold,
+        "entry_price": entry_price,
+        "current_price": round(float(current_price or 0), 4),
+        "triggered": bool(triggered),
+        "entry_path": entry_path,
+        "inst_id": inst_id,
+        "decision_id": decision_id,
+        "over_threshold": bool(not scan),
+        "scan": bool(scan),
+    }
+
 
 def _today_et_str() -> str:
     from datetime import datetime
@@ -5771,25 +5808,33 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
             _chg_now = None
             if ctx and isinstance(ctx, dict):
                 _chg_now = ctx.get("change_percent")
-            if _chg_now is not None and float(_chg_now) > _scb_pct:
+            if _chg_now is not None:
                 import json as _scb_json
                 from pathlib import Path as _scb_path
                 from app.utils.timezone import now_et as _scb_now
-                _scb_row = {
-                    "ts": _scb_now().isoformat(timespec="seconds"),
-                    "symbol": symbol,
-                    "direction": "SHORT",
-                    "chg_pct": round(float(_chg_now), 3),
-                    "threshold": _scb_pct,
-                    "entry_price": entry_price,
-                    "current_price": round(float(current_price or 0), 4),
-                    "triggered": bool(triggered),
-                    "entry_path": _entry_path,
-                    "inst_id": inst.get("id"),
-                }
-                _scb_fp = _scb_path(__file__).resolve().parents[2] / "data" / "short_chase_ban_shadow.jsonl"
-                with open(_scb_fp, "a", encoding="utf-8") as _f:
-                    _f.write(_scb_json.dumps(_scb_row, ensure_ascii=False) + "\n")
+                _scb_ts = _scb_now()
+                _scb_date = _scb_ts.date().isoformat()
+                _scb_inst_id = inst.get("id")
+                _scb_over = float(_chg_now) > _scb_pct
+                _scb_emit = _scb_over
+                if not _scb_over:
+                    # 对照臂扫描行: 每 (指令, ET日) 首轮 1 行 (2026-09-18 采样设计修复,
+                    # 命中行逐轮写语义不变; 扫描行不入判据计数)。
+                    _scb_key = (_scb_inst_id, _scb_date)
+                    if _scb_key not in _scb_scan_logged:
+                        _scb_scan_logged.add(_scb_key)
+                        _scb_emit = True
+                if _scb_emit:
+                    _scb_row = _short_chase_shadow_row(
+                        symbol=symbol, chg_pct=_chg_now, threshold=_scb_pct,
+                        entry_price=entry_price, current_price=current_price,
+                        triggered=triggered, entry_path=_entry_path,
+                        inst_id=_scb_inst_id, decision_id=inst.get("decision_id"),
+                        date_str=_scb_date, ts_str=_scb_ts.isoformat(timespec="seconds"),
+                        scan=not _scb_over)
+                    _scb_fp = _scb_path(__file__).resolve().parents[2] / "data" / "short_chase_ban_shadow.jsonl"
+                    with open(_scb_fp, "a", encoding="utf-8") as _f:
+                        _f.write(_scb_json.dumps(_scb_row, ensure_ascii=False) + "\n")
     except Exception:
         pass  # shadow 纯记录, 绝不影响触发
 

@@ -1016,18 +1016,26 @@ REGISTRY: list[ShadowItem] = [
         status=ShadowStatus.OBSERVING,
         description="DEB-20260808 §8.3 裁定①: 「SHORT 且当日涨>3% 禁入」硬门在 "
                     "post-blackout(1015) 基线残存效应 −$19.80 被否 → 仅 shadow 记录。"
-                    "写者 pipeline.py:5530-5565 (SHORT 触发评估处, ctx.change_percent > "
-                    "short_chase_ban_pct 落一行, 含 triggered/entry_path)。8/15 禁触窗 "
+                    "写者 pipeline.py (SHORT 触发评估处, ctx.change_percent 过阈值 → 命中行; "
+                    "任意值 → 每「指令,ET日」首轮扫描行), 含 triggered/entry_path。8/15 禁触窗 "
                     "1015→0935 (unified_config.yaml:1127, git 1d2b909d) ⇒ 旧否决前提失效, "
-                    "本影子 = 新基线下重测该假设的唯一载体 (2026-09-11 起, DEB-20260911)。",
+                    "本影子 = 新基线下重测该假设的唯一载体 (2026-09-11 起, DEB-20260911)。"
+                    "**2026-09-18 采样设计修复 (用户令「按建议」)**: 原写者只在 chg>阈值 时落行 "
+                    "⇒ 8/24-9/18 命中仅 9 条指令 (配到成交 6 笔), 10/31 死线按节奏到不了 n≥20, "
+                    "判据永不可裁且无对照臂; 现同文件增写**扫描行** (over_threshold=false, "
+                    "每「指令,ET日」首轮 1 行) 作对照组, 命中行语义逐字不变。",
         data_path="data/short_chase_ban_shadow.jsonl",
+        count_mode="distinct_where:over_threshold=True",
         config_key="playbook.execution_parameters.short_chase_ban_shadow_enabled",
         min_n=20,
         graduation_criteria="预注册 (2026-09-09 用户裁, handoff 9/9 批/REVIEW-20260909 §I-8): "
                             "n>=20 ∧ 反事实方向一致>=70% → 提案硬门复活 (另立 DEB + 用户裁); "
                             "**死线 2026-10-31**, 到点不达标 → 裁退役或降纯日志。"
                             "转正前置 (DEB-20260911 C8): 昨收分母分裂修复落地 + 污染期样本"
-                            "处置已裁, 否则到点裁的是废样。",
+                            "处置已裁, 否则到点裁的是废样。"
+                            "(n 口径 = 命中行数 count_mode=where:over_threshold=True, 扫描行"
+                            "不计入; 判据须用扫描行作对照臂: 命中组 vs 未命中组净额差 + 方向"
+                            "一致率, 单看命中组无 IC 意义 — 2026-09-18 补)",
         eval_script=None,
         created="2026-08-08",
         verdict_history=[
@@ -1049,7 +1057,16 @@ REGISTRY: list[ShadowItem] = [
               "(NTES 8/24、MSTR 9/1、DDOG 9/3、BIDU 9/8 ×2) — 按此节奏 10/31 死线大概率裁 "
               "KILLED 而非达标; 且行内无 date 字段 (日期只能从 ts 截)、direction 在写者处硬编码 "
               "'SHORT' (非取自指令), 这两项裁决前须先补。eval_on_demand=True: 无独立结算器, "
-              "裁决日 (或 10/31 死线) 手工结算; n 计数锚 = jsonl 行数 (周检 refresh_counts 读)。"
+              "裁决日 (或 10/31 死线) 手工结算; n 计数锚 = 命中行 (count_mode="
+              "where:over_threshold=True, 2026-09-18 起)。"
+              "**2026-09-18 采样设计修复落地 (用户令「按建议」)**: ①写者改为「过阈值→命中行 "
+              "(逐轮, 语义不变) + 任意值→扫描行 (每指令每日首轮 1 行, over_threshold=false)」, "
+              "扫描行=对照组, 使「命中组 vs 未命中组」净额差可算 (原设计只有命中组 = 无 IC)。"
+              "②存量 121 行原子重写补 date/decision_id/over_threshold=true/scan=false 四字段"
+              "(值未改, 备份 .bak-20260918), 121/121 行 decision_id 可解。③date 字段与 "
+              "decision_id 补齐 ⇒ notes 中「join 键脏数据/无 date」两项告警解除 (仍建议 "
+              "symbol+date+direction 复核)。direction 仍硬编码 'SHORT' (写者处仅 SHORT 分支, "
+              "无歧义)。"
               "**不入 data_freshness_watchdog (9/11 裁)**: 本影子写盘极稀 (18 天 5 行), 小时级"
               "新鲜度阈值会永久误报; 断流由 check_mounting 的 14 天静默哨兵接管。台账行另批补 "
               "(任务 #9)。回滚 = short_chase_ban_shadow_enabled 置 false。",
@@ -1211,6 +1228,27 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                         continue
                 seen.discard(None)
                 return len(seen)
+            if s.count_mode.startswith("distinct_where:"):
+                # "distinct_where:field=value" — 在满足字段条件的行里计**去重后**的样本数。
+                # 2026-09-18 short_chase_ban_shadow 引入: 命中行逐轮写 (同一指令多行) ⇒
+                # 判据的 n 轴是「指令数」而非「行数」, 而 where: 只能计数行 ⇒
+                # 需与 distinct: 组合。参数 = field=value, 去重键另由 distinct_key 隐含为
+                # inst_id (无则退化为 decision_id/ts)。
+                _rest = s.count_mode.split(":", 1)[1]
+                fld, _, val = _rest.partition("=")
+                _seen = set()
+                for _line in open(p, encoding="utf-8"):
+                    if not _line.strip():
+                        continue
+                    try:
+                        _r = _j.loads(_line)
+                    except Exception:
+                        continue
+                    if str(_r.get(fld)) != val:
+                        continue
+                    _seen.add(_r.get("inst_id") or _r.get("decision_id") or _r.get("ts"))
+                _seen.discard(None)
+                return len(_seen)
             if s.count_mode.startswith("where_nonempty:"):
                 # "where_nonempty:field" — 计该字段为真值 (非空 list/str/非零) 的行。
                 # 2026-09-11 premarket_invalidation 登记引入: flagged 口径 = would_invalidate
