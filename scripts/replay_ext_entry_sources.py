@@ -109,6 +109,34 @@ def _shared_profit_exit_decider(entry_price, initial_sl, trade_date=None):
     return decide
 
 
+def _shared_profit_exit_full_decider(entry_price, initial_sl, trade_date=None):
+    """同 `_shared_profit_exit_decider`, 但返回**整个 decision dict** (需要 effective_sl 等字段)。
+
+    2026-09-19 新增 (INCIDENT 后续/用户令「盈利锁+动态回撤锁」): 现有 rule 臂触发
+    SL_TRAIL_LOCK 时把成交价钉在 `_be_net_line_price`(净保本线) ⇒ "锁" 落袋的是 ~0%
+    而不是锁定地板。本 decider 供 `trail_floor` 臂读取 `effective_sl` 做对照。
+    """
+    state = {"metadata": {}, "peak_price": entry_price}
+
+    def decide(current_price):
+        fee_pct = _round_trip_fee_pct(entry_price, current_price, trade_date)
+        decision = decide_original_profit_exit(
+            "LONG",
+            entry_price,
+            current_price,
+            initial_sl,
+            state["peak_price"],
+            state["metadata"],
+            fee_pct,
+            "PLAYBOOK_SIM",
+        )
+        state["metadata"] = decision["metadata"]
+        state["peak_price"] = decision["peak_price"]
+        return decision
+
+    return decide
+
+
 def _kline_cached(ctx, code, start, end, ktype):
     """带磁盘缓存的取数 —— 同一窗口换配置重跑时不重复请求 (省接口预算与时间)."""
     key = CACHE_DIR / f"{code.replace('.','_')}_{start}_{end}_{ktype}.json"
@@ -244,6 +272,25 @@ def _simulate(bars_day, prev_close, entry_bar_i):
             ex2 = b["c"]
             break
     res["sl_only_px"] = ex2
+    # ── 2026-09-19 新增: 盘前入场仓的「锁」臂 (基线 = pre_close 09:25 收口 = §16.6 A +0.78%) ──
+    #  窗口 = 入场后至盘前收口 09:25; 未触发即落到收口价, 故每条臂读作"带上这把锁的全平"。
+    _win = [b for b in bars_day
+            if b["t"] > bars_day[entry_bar_i]["t"] and _hhmm(b["t"]) <= PREMARKET_END]
+    for _k in (2.0, 3.0, 4.0):
+        _hit = None
+        for b in _win:
+            if (b["c"] / entry - 1) * 100 >= _k:
+                _hit = b["c"]
+                break
+        res[f"lock_{int(_k)}pct_px"] = _hit
+    for _dd in (1.5, 2.5):
+        _peak, _hit = entry, None
+        for b in _win:
+            _peak = max(_peak, b["c"])
+            if _peak > entry and b["c"] <= _peak * (1 - _dd / 100.0):
+                _hit = b["c"]
+                break
+        res[f"dd_{str(_dd).replace('.', 'p')}pct_px"] = _hit
     # A3) 只用止损 + 让盈利跑到当日收盘 (对比"是否该带进盘中")
     ex3 = ex2
     if ex3 is None:
@@ -292,7 +339,12 @@ def _simulate(bars_day, prev_close, entry_bar_i):
                     ("keep_2pct", res.get("keep_2pct_px") or e2),
                     ("cat_4pct", res.get("cat_4pct_px") or e2),
                     ("cat_6pct", res.get("cat_6pct_px") or e2),
-                    ("cat_8pct", res.get("cat_8pct_px") or e2)):
+                    ("cat_8pct", res.get("cat_8pct_px") or e2),
+                    ("lock_2pct", res.get("lock_2pct_px") or e2),
+                    ("lock_3pct", res.get("lock_3pct_px") or e2),
+                    ("lock_4pct", res.get("lock_4pct_px") or e2),
+                    ("dd_1p5pct", res.get("dd_1p5pct_px") or e2),
+                    ("dd_2p5pct", res.get("dd_2p5pct_px") or e2)):
         if px:
             g = (px / entry - 1) * 100
             fee = _round_trip_fee_pct(entry, px, day)
@@ -344,13 +396,110 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     nx = [b for b in next_day_bars if 930 <= _hhmm(b["t"]) <= 1600]
     if nx:
         nc = nx[-1]["c"]
+
+    # ── 2026-09-19 新增: carry 仓(盘后进场→次日开盘兑现)的「锁」臂 ─────────────
+    #  用户令「以现有最新策略实现盈利锁以及动态回撤锁, 确保利润确定性落袋, 不是干看着
+    #  死等到开盘」。基线 = next_open (§16.6 B: 均值 +3.47%, n=25) —— 全部锁臂同表对比。
+    #  路径口径 = **真实 carry 路径**: 当日盘后(入场后) + 次日盘前(<09:30); 未触发即落到
+    #  next_open 价, 因此每条锁臂都可读成"带上这把锁的 hold_to_next_open"。
+    carry = [b for b in bars_day
+             if b["t"] > bars_day[entry_bar_i]["t"] and _hhmm(b["t"]) >= 1600]
+    carry += [b for b in next_day_bars if _hhmm(b["t"]) < 930]
+    # C1) 落袋价修正臂: 与 rule 同判定链, 但 TRAIL 触发时按**锁定地板**成交(非净保本线)
+    full = _shared_profit_exit_full_decider(entry, entry * 0.95, day)
+    tf_px, tf_act = None, "hold"
+    for b in carry:
+        d = full(b["c"])
+        if d["action"] in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"):
+            tf_act = d["action"]
+            tf_px = float(d["effective_sl"]) if d["action"] == "SL_TRAIL_LOCK" else b["c"]
+            break
+    res["trail_floor_px"] = tf_px
+    res["trail_floor_action"] = tf_act
+    # C2) 盈利锁臂: 触及 entry×(1+k%) 即以该价落袋(确定性), 否则落到 next_open
+    for _k in (3.0, 4.0, 5.0, 6.0):
+        _hit = None
+        for b in carry:
+            if (b["c"] / entry - 1) * 100 >= _k:
+                _hit = b["c"]
+                break
+        res[f"lock_{int(_k)}pct_px"] = _hit
+    # C3) 动态回撤锁臂: 运行峰值回撤 dd% 即落袋, 否则落到 next_open
+    for _dd in (1.5, 2.5):
+        _peak, _hit = entry, None
+        for b in carry:
+            _peak = max(_peak, b["c"])
+            if _peak > entry and b["c"] <= _peak * (1 - _dd / 100.0):
+                _hit = b["c"]
+                break
+        res["dd_" + str(_dd).replace('.', 'p') + "pct_px"] = _hit
+
+    # C4) 分批落袋臂 (2026-09-19): 用户要"确定性落袋", 但回放显示全量止盈锁牺牲均值
+    #   (砍 best +26.5%) ⇒ 测"锁一半 + 余半持到开盘": 确定性落袋一部分, 保留赢家尾部。
+    #   费用口径: 3 条腿 (1 进场 + 2 出场) ⇒ 取单次往返费的 1.5× (per-share 模型线性近似)。
+    def _so_pct(lock_px, fraction):
+        if not lock_px:
+            return None
+        return (fraction * (lock_px / entry - 1) * 100
+                + (1 - fraction) * (((no / entry - 1) * 100) if no else 0))
+
+    for _k in (3.0, 4.0, 5.0):
+        _hit = None
+        for b in carry:
+            if (b["c"] / entry - 1) * 100 >= _k:
+                _hit = b["c"]
+                break
+        res[f"so50_lock{int(_k)}pct_px"] = _hit
+        if _hit is not None:
+            res[f"so50_lock{int(_k)}pct_ret"] = _so_pct(_hit, 0.5)
+            res[f"so50_lock{int(_k)}pct_legs"] = 2
+        else:
+            # ⚠️ 自纠 (2026-09-19): 未触发时必须**仍入全样本** (= 全量持到开盘), 否则
+            #   聚合只统计触发子集 ⇒ 抽样偏差把均值虚高 (首跑 so50_lock4 报 +5.58%/n=20,
+            #   实际全样本应 ≈ 0.5×lock4 + 0.5×next_open)。承坑 49② 同型, 本臂自身踩中。
+            res[f"so50_lock{int(_k)}pct_ret"] = ((no / entry - 1) * 100) if no else None
+            res[f"so50_lock{int(_k)}pct_legs"] = 1
+    for _dd in (1.5, 2.5):
+        _peak, _hit = entry, None
+        for b in carry:
+            _peak = max(_peak, b["c"])
+            if _peak > entry and b["c"] <= _peak * (1 - _dd / 100.0):
+                _hit = b["c"]
+                break
+        res[f"so50_dd{str(_dd).replace('.', 'p')}pct_px"] = _hit
+        if _hit is not None:
+            res[f"so50_dd{str(_dd).replace('.', 'p')}pct_ret"] = _so_pct(_hit, 0.5)
+            res[f"so50_dd{str(_dd).replace('.', 'p')}pct_legs"] = 2
+        else:
+            res[f"so50_dd{str(_dd).replace('.', 'p')}pct_ret"] = ((no / entry - 1) * 100) if no else None
+            res[f"so50_dd{str(_dd).replace('.', 'p')}pct_legs"] = 1
+
     for tag, px in (("rule", ex or sc), ("session_close", sc), ("next_open", no),
-                    ("next_rth_close", nc), ("sl_only", ex_sl or sc)):
+                    ("next_rth_close", nc), ("sl_only", ex_sl or sc),
+                    ("trail_floor", res.get("trail_floor_px") or no),
+                    ("lock_3pct", res.get("lock_3pct_px") or no),
+                    ("lock_4pct", res.get("lock_4pct_px") or no),
+                    ("lock_5pct", res.get("lock_5pct_px") or no),
+                    ("lock_6pct", res.get("lock_6pct_px") or no),
+                    ("dd_1p5pct", res.get("dd_1p5pct_px") or no),
+                    ("dd_2p5pct", res.get("dd_2p5pct_px") or no)):
         if px:
             g = (px / entry - 1) * 100
             fee = _round_trip_fee_pct(entry, px, day)
             res[tag] = {"ret_pct": round(g, 3), "fee_pct": round(fee, 3),
                         "net_pct": round(g - fee, 3)}
+    res["carry_peak_pct"] = round((max((b["c"] for b in carry), default=entry) / entry - 1) * 100, 3)
+    # C4 结算: 分批落袋臂 — 混合收益 - 1.5×单次往返费 (3 条腿: 1 进场 + 2 出场)
+    for _tag, _ret, _legs in (("so50_lock3pct", res.get("so50_lock3pct_ret"), res.get("so50_lock3pct_legs")),
+                       ("so50_lock4pct", res.get("so50_lock4pct_ret"), res.get("so50_lock4pct_legs")),
+                       ("so50_lock5pct", res.get("so50_lock5pct_ret"), res.get("so50_lock5pct_legs")),
+                       ("so50_dd1p5pct", res.get("so50_dd1p5pct_ret"), res.get("so50_dd1p5pct_legs")),
+                       ("so50_dd2p5pct", res.get("so50_dd2p5pct_ret"), res.get("so50_dd2p5pct_legs"))):
+        if _ret is not None:
+            _mult = 1.5 if (_legs or 1) == 2 else 1.0     # 2 条出场腿 = 1.5×单次往返费
+            _fee = _round_trip_fee_pct(entry, entry * (1 + _ret / 100.0), day) * _mult
+            res[_tag] = {"ret_pct": round(_ret, 3), "fee_pct": round(_fee, 3),
+                         "net_pct": round(_ret - _fee, 3)}
     peak = max((b["h"] for b in ah if b["t"] > bars_day[entry_bar_i]["t"]), default=None)
     res["mfe_pct"] = round((peak / entry - 1) * 100, 3) if peak else None
     res["entry_px"] = round(entry, 4)
@@ -478,12 +627,11 @@ def main():
             # (盘后臂与盘前臂共用同一循环)。现按 tag **键名**输出, 并带中位/最差/最好 ⇒ 可看图辨尾部。
             arms = {}
             for r in passed:
-                for tag in ("rule", "pre_close", "rth_close", "intraday_sl", "sl_only",
-                            "sl_only_rth", "keep_1pct", "keep_2pct",
-                            "cat_4pct", "cat_6pct", "cat_8pct", "session_close",
-                            "next_open", "next_rth_close"):
-                    if tag in r:
-                        arms.setdefault(tag, []).append(r[tag]["net_pct"])
+                # 2026-09-19: 改为**通用聚合** — 凡形如 {"ret_pct","fee_pct","net_pct"} 的臂
+                # 一律入表 (原实现硬编码 tag 列表 ⇒ 新增锁臂会被静默漏报, 旧 bug 同型病灶)。
+                for tag, v in r.items():
+                    if isinstance(v, dict) and "net_pct" in v and isinstance(v.get("net_pct"), (int, float)):
+                        arms.setdefault(tag, []).append(v["net_pct"])
             summ_arms = {}
             for tag, v in arms.items():
                 vs = sorted(v)
