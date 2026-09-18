@@ -2627,6 +2627,75 @@ def _annotate_emergence_streak(surfaced: List[Dict[str, Any]]) -> None:
             s.setdefault("emergence_streak_days", None)
 
 
+def _annotate_prescreen_eligibility(surfaced: List[Dict[str, Any]],
+                                    ps_in: Optional[Dict[str, Any]] = None) -> None:
+    """[2026-09-18 登记项 P3] 给每个浮现标的标注**输入侧资格口径** (纯标注, 零行为变更)。
+
+    背景 (2026-09-18 UE 复核实锤): brief 的「[输入具名标的可交易性初筛]」只覆盖材料里
+    **已具名**的标的 (`named_in_materials`), 而 brief 同时明说"你仍可提出材料外的新标的,
+    它们会在注入前接受同一资格判定"; 材料外标的在**输入侧零资格信息** ⇒ 模型可把它当
+    "可交易"浮现, 直到 21:10 inject 的 ATR/价格地板预检才被拒。9/18 实况: ZIM 由航运业
+    传导浮现 (材料未具名, `evidence_citation_state=transmission_assumed`), 播报成"可交易"
+    却在低ATR闸被拒 (0.0262<0.03) —— 拒收本身是设计内且可归因, 缺的是**读数能提前看见它**。
+
+    本函数对未覆盖的浮现标的补跑**同一** `_prescreen_input_symbols` 三态, 结果写回
+    surfaced 记录 (prescreen_scope / prescreen_status / prescreen_reasons), 供推送逐条
+    标记与扫描期计数使用。**不参与 inject 判定** (inject 侧本就有同款预检, 双写会造成
+    两份判据漂移); fail-open: 任何异常 → 不标注、不崩溃 (缺数 ≠ 拒绝, 计划 P1.3)。
+    """
+    try:
+        ps_in = ps_in if ps_in is not None else (_LAST_INPUT_PRESCREEN or {})
+        # 覆盖集合: 输入初筛三态里出现过的标的 (tradeable 是裸符号串, 另两态是 entry dict)
+        covered: Dict[str, Dict[str, Any]] = {}
+        for _sym in (ps_in.get("tradeable") or []):
+            covered[str(_sym).strip().upper()] = {"status": "PASS", "reasons": []}
+        for _key, _status in (("context_only", "REJECT"), ("unknown", "UNKNOWN")):
+            for _e in (ps_in.get(_key) or []):
+                if isinstance(_e, dict):
+                    covered[str(_e.get("symbol") or "").strip().upper()] = {
+                        "status": _status, "reasons": [r for r in (_e.get("reasons") or []) if r]}
+
+        uncovered = [str(s.get("symbol") or "").strip().upper() for s in surfaced
+                     if str(s.get("symbol") or "").strip()
+                     and str(s.get("symbol") or "").strip().upper() not in covered]
+        extra: Dict[str, Dict[str, Any]] = {}
+        if uncovered:
+            _ps2 = _prescreen_input_symbols(uncovered, ordering="surfaced_order")
+            for _sym in (_ps2.get("tradeable") or []):
+                extra[str(_sym).strip().upper()] = {"status": "PASS", "reasons": []}
+            for _key, _status in (("context_only", "REJECT"), ("unknown", "UNKNOWN")):
+                for _e in (_ps2.get(_key) or []):
+                    if isinstance(_e, dict):
+                        extra[str(_e.get("symbol") or "").strip().upper()] = {
+                            "status": _status, "reasons": [r for r in (_e.get("reasons") or []) if r]}
+
+        n_ext_reject = 0
+        for s in surfaced:
+            sym = str(s.get("symbol") or "").strip().upper()
+            if sym in covered:
+                s["prescreen_scope"] = "in_materials"
+                s["prescreen_status"] = covered[sym]["status"]
+                s["prescreen_reasons"] = covered[sym]["reasons"]
+            elif sym in extra:
+                s["prescreen_scope"] = "material_external"
+                s["prescreen_status"] = extra[sym]["status"]
+                s["prescreen_reasons"] = extra[sym]["reasons"]
+                if extra[sym]["status"] == "REJECT":
+                    n_ext_reject += 1
+            else:
+                s["prescreen_scope"] = "material_external"
+                s["prescreen_status"] = "UNKNOWN"
+                s["prescreen_reasons"] = []
+        if uncovered:
+            print(f"  [prescreen-annotate] 材料外浮现 {len(uncovered)} 只 → 补跑同一资格口径: "
+                  + " / ".join(f"{k}={v['status']}" for k, v in extra.items())
+                  + (f" (结构不可交易 {n_ext_reject} 只)" if n_ext_reject else ""))
+        return
+    except Exception as e:  # 标注失败不阻断 scan 主流程
+        print(f"  [warn] 资格口径标注失败 (fail-open, 零行为变更): {e}")
+        return
+
+
 def _scan_fail_alert(reason: str, midday: bool = False) -> None:
     """[DEB-20260829 第12轮·用户裁"同意"] scan 失败飞书告警 — cron && 链断的可见性补丁.
 
@@ -2835,6 +2904,11 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
 
     # [shadow] 浮现连续天数标注 (必须在 _append_jsonl 前: 只读历史日, 不含今日)
     _annotate_emergence_streak(surfaced)
+
+    # [2026-09-18 登记项 P3] 输入侧资格口径标注 (纯标注): 材料外浮现标的补跑同一
+    #   `_prescreen_input_symbols` 三态 → 推送能提前逐条标"⛔资格预筛未过"。
+    #   零行为变更 (不改 direction/inject 判定), fail-open。
+    _annotate_prescreen_eligibility(surfaced)
 
     # S0 (2026-07-27, DEB-20260727 §六.3): 真实新闻渠道归因 — origin.info_source 此前
     #   恒为常量 LLM_EVENT_REASONING (管线标签), 渠道判分零区分度 ("常量退化"第三例)。
@@ -3649,8 +3723,16 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
                     _cool_dir = to_trade_direction(it.get("direction"))
                     _cutoff_d = (_cdt.now() - _ctd(days=_cool_days)).strftime("%Y-%m-%d")
                     if not _cool_dir:
-                        print(f"  [warn] cooldown 未生效: {it.get('symbol')} 方向 "
-                              f"{it.get('direction')!r} 无法映射到成交词表")
+                        # [2026-09-18 登记项②] 措辞/级别修正: SKIP 行**本就不该**登记冷却
+                        #   (它不是成交方向), 每天打 [warn] 会被当异常扫 (9/18 实测当日唯一
+                        #   告警即此, 属良性)。真映射失败 (非 SKIP 方向却映射不出) 仍必须
+                        #   可见 ⇒ 保留 [warn] 分支。
+                        if str(it.get("direction") or "").upper() == "SKIP":
+                            print(f"  [cooldown] {it.get('symbol')} 方向 SKIP → 不登记冷却 "
+                                  f"(SKIP 行无需冷却; 非缺陷)")
+                        else:
+                            print(f"  [warn] cooldown 未生效: {it.get('symbol')} 方向 "
+                                  f"{it.get('direction')!r} 无法映射到成交词表")
                     else:
                         _cc = _cdb.connect(str(_gmdb()), timeout=3)
                         _cr = _cc.execute(
@@ -4272,6 +4354,19 @@ def _gated_breakdown(target: str) -> str:
         return ""
 
 
+def _prescreen_marker(s: Dict[str, Any]) -> str:
+    """[2026-09-18 登记项 P3] 逐条标记"输入侧资格预筛未过" (仅 REJECT; 其余返回空串)。
+
+    为什么需要: 材料外浮现的标的在推送里此前与已具名且 PASS 的候选**长得一模一样**,
+    读者会当成可交易候选 — 实况是它到 21:10 inject 才被 ATR/价格地板拒 (9/18 ZIM)。
+    这里只**展示**扫描期已算好的三态 (prescreen_status), 不新造判据。
+    """
+    if str(s.get("prescreen_status") or "") != "REJECT":
+        return ""
+    reasons = [str(r) for r in (s.get("prescreen_reasons") or []) if r]
+    return f" ⛔资格预筛未过({','.join(reasons) or 'REJECT'})"
+
+
 def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     """读今日最新一轮 scan → 钉钉推一条整体汇总 (镜像 da_bridge_dingtalk_push 模式)。
 
@@ -4293,6 +4388,10 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     n_short = sum(1 for s in tradeable if s.get("direction") == "SHORT")
     n_ext = sum(1 for s in tradeable if s.get("is_universe_external"))
     n_skip = sum(1 for s in surfaced if s.get("direction") == "SKIP")
+    # [2026-09-18 登记项 P3] 扫描期内即可判定为"结构不可交易"(资格口径 REJECT)
+    #   的 tradeable 只数 — 多为材料外浮现者 (已具名者通常在 brief 的 context_only 段
+    #   就被模型避开, 但不保证)。纯计数, 不参与任何筛选; 缺标注 → 0 (fail-open)。
+    n_ext_reject = sum(1 for s in tradeable if str(s.get("prescreen_status") or "") == "REJECT")
     tier_cnt: Dict[str, int] = {}
     for s in tradeable:
         t = s.get("self_tier") or "-"
@@ -4335,7 +4434,8 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     lines = [
         f"🌌 Universe选股扫描完成 ({target})",
         f"模型={rec.get('model_used','?')} prompt={rec.get('prompt_version','?')} · {mode}",
-        f"扫描期可交易: {len(tradeable)}只 (多{n_long}/空{n_short}) · 池外{n_ext} · SKIP{n_skip}",
+        f"扫描期可交易: {len(tradeable)}只 (多{n_long}/空{n_short}) · 池外{n_ext} · SKIP{n_skip}"
+        + (f" · 结构不可交易{n_ext_reject}" if n_ext_reject else ""),
     ]
     if _gate_line:
         lines.append(_gate_line)
@@ -4357,7 +4457,7 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
         px_str = f" 参考${px:.2f}" if px else ""
         chain = (s.get("causal_chain", "") or "")[:60]
         thesis = (s.get("thesis", "") or "")[:50]
-        lines.append(f"{d} {sym} {ext}{wl} {tier_sem}{px_str}")
+        lines.append(f"{d} {sym} {ext}{wl} {tier_sem}{px_str}{_prescreen_marker(s)}")
         if chain:
             lines.append(f"  链: {chain}")
         if thesis:
