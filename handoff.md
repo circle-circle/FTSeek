@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-18 21:10 增量：盘前预检报告内容对齐真实链路 —— 报告层纠错 + 4 项盘前读数补齐
+
+> **一句话**：盘前综合预检报告 (job `2d69370d5c91`) 修正 3 处与真实链路不符 (5d 空值口径假告警 / 停产管线标签当"当前信号质量" / capital_state CST 墙钟被标 ET)，并补 4 项盘前该看的读数；零交易行为变更。
+
+- **为何**：用户贴当日盘前报告问"链路/流程/策略/数据是否需要结合真实情况做内容更新"，逐行核脚本产物+生产库+代码锚点后定为 A(纠错去噪)+B(补读数) 两档，用户回"按建议动手执行"。
+- **A 档**：①`data_health_check::check_signal_snapshots` 5d 改 **9~30 日前"应结算窗"**(实测 484 条/null=3) —— 旧 7 自然日窗内 T+5 结构恒 100%，天天被报成"5日特征窗口全空"异常项；②`daily_ic_analysis` 策略组按最后信号分流：停产组 (BATTLE_PLAN_FAST_PATH 06-25 / unknown 06-29 / voting_llm 07-12 / technical_fallback 08-21) 移出头条入新 key `retired_strategy_groups`，活跃主链 `deep_analysis`/`universe_expansion` 回位；③cron 提示词时间改 `08:45 ET (北京 20:45 CST)` + 6 条口径纪律 (只引脚本产物 / LV3"延迟<1s"是 `futu_lv3_provider.py:491` 硬编码字面量非实测 / 停产组不得引用 / 5d 新口径 / CST-ET 换算 / 退出策略字段不得裁剪)。
+- **B 档**：`pre_market_check.py` 新增 3 检查项 — `指令方向构成` (BUY/SHORT/SKIP 构成 + 跳过成因 + 生成 regime 与同 regime 历史成交对照；无空头产出即 warning)、`资金与帽余量` (equity/peak/buying_power/水位/dd + `last_update` 双标 CST(=ET) + 三帽值)、`昨日亏损归因` (exit_reason 档位最亏三/最赚两同屏，净额口径标注)。
+- **验证**：`py_compile` 通过；`run_premarket_check()` 实跑 (**不推送**) 13 项全 PASS 且新增项与独立 SQL 复算一致；`analyze_llm_features()` 断言停产组移出/活跃组在位 `ALL OK`；守卫 5 文件 **93 passed / 4 failed**，4 条红在 `0a8362040` worktree 上逐条相同 = **既有红 (他 agent 欠账)，本批引入 0 条**。
+- **勘误**：初判"延迟<1s 系编造"被自身读码推翻 —— 有代码来源但是硬编码字面量，定性降级 (承坑 37/45)。
+- **生效/回滚**：三脚本为 cron 直接 exec，下一交易日 20:45 生效，主服务无需重启；回滚 = revert 本提交 + `jobs.json.bak_20260918_preflight_report_update` (提示词落库后与 workspace 文本 sha 一致)。详见 `docs/debates/DEB-20260918-preflight-report-content-update.md`。
+
 ## 2026-09-18 增量：MFE 自适应 trailing 已接入 —— 仅 PLAYBOOK_SIM，净保本地板优先
 
 > **一句话**：盘中、盘前、盘后共用 `drawdown=clamp(0.4×MFE, 0.4%, 1.2%)` 的动态回撤，目标毛捕获约 60%；`PLAYBOOK_LIVE` 与手动仓不受影响。

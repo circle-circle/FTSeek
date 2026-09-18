@@ -231,6 +231,28 @@ def analyze_factors(trades):
     return results
 
 
+# 策略组活性阈值 (天): 组的最后一条信号早于此天数 ⇒ 判为已停产, 不作"当前信号质量"引用
+#   2026-09-18 (用户令"按建议动手执行"): 此前停产管线标签 (BATTLE_PLAN_FAST_PATH 最后
+#   信号 06-25 / unknown 06-29 / technical_fallback 08-21) 与活跃主链同列 llm_feature_ic,
+#   被 key_findings 打 ✅ 后再由盘前报告转述给决策者 — 而当日活跃主链 deep_analysis 反而
+#   不在头条里。停产组改存 report["retired_strategy_groups"] (仅存档, 不进头条)。
+ACTIVE_STRATEGY_DAYS = 14
+
+
+def _is_retired_strategy(last_seen: str) -> bool:
+    """策略组最后信号是否早于 ACTIVE_STRATEGY_DAYS 天 (日期解析失败=不判停产, 宁留勿误删)"""
+    try:
+        d = datetime.strptime(str(last_seen or "")[:10], "%Y-%m-%d").date()
+    except Exception:
+        return False
+    try:
+        from app.utils.timezone import now_et as _now_et
+        base = _now_et().date()
+    except Exception:
+        base = datetime.now().date()
+    return (base - d).days > ACTIVE_STRATEGY_DAYS
+
+
 def analyze_llm_features(signals, trades):
     """
     LLM 特征分组 IC:
@@ -266,18 +288,25 @@ def analyze_llm_features(signals, trades):
                 "avg_ret": round(float(np.mean(rets)), 4) if rets else None,
             }
 
-    # By strategy
+    # By strategy (2026-09-18 活性分流: 活跃组进头条, 停产组只存档 — 见 ACTIVE_STRATEGY_DAYS)
     strats = set(s.get("strategy_id") or "unknown" for s in signals)
+    retired = {}
     for st in strats:
         group = [s for s in signals if (s.get("strategy_id") or "unknown") == st]
         if len(group) >= 5:
             strengths = [s["strength"] for s in group]
             rets = [s["fwd_ret_t1"] for s in group if s.get("fwd_ret_t1") is not None]
             ic, wr, n = spearman_ic(strengths[:len(rets)], rets) if rets else (None, None, 0)
-            results[f"strategy_{st}"] = {
+            last_seen = max(str(s.get("trade_date") or s.get("created_at") or "")[:10] for s in group)
+            entry = {
                 "n": len(group), "ic_t1": ic, "wr_t1": wr,
                 "avg_ret": round(float(np.mean(rets)), 4) if rets else None,
+                "last_seen": last_seen,
             }
+            if _is_retired_strategy(last_seen):
+                retired[f"strategy_{st}"] = entry
+            else:
+                results[f"strategy_{st}"] = entry
 
     # Trade-level: by strategy PnL
     trade_by_strat = defaultdict(list)
@@ -296,7 +325,7 @@ def analyze_llm_features(signals, trades):
                 "total_pnl": round(float(sum(pnls)), 4),
             }
 
-    return results
+    return results, retired
 
 
 def analyze_monthly_trend(signals, min_n=30):
@@ -411,13 +440,19 @@ def generate_report(days=90):
     print(f"\n{'─'*60}")
     print("4. LLM Feature Group IC")
     print(f"{'─'*60}")
-    llm_ic = analyze_llm_features(signals, trades)
+    llm_ic, retired_strats = analyze_llm_features(signals, trades)
     report["llm_feature_ic"] = llm_ic
+    report["retired_strategy_groups"] = retired_strats
     for k, v in llm_ic.items():
         ic = v.get("ic_t1") or v.get("ic") or "—"
         wr = v.get("wr_t1") or v.get("wr") or "—"
         extra = f"AvgRet={v.get('avg_ret')}" if "avg_ret" in v else f"TotalPnL={v.get('total_pnl', '—')}"
         print(f"  {k}: N={v['n']} IC={ic} WR={wr} {extra}")
+    if retired_strats:
+        # 停产组单列: 供人/报告区分"当前信号质量"与"历史池残渣", 禁止计入头条结论
+        print("  ── 已停产策略组 (不计入当前信号质量, 仅存档) ──")
+        for k, v in retired_strats.items():
+            print(f"  {k}: N={v['n']} IC={v.get('ic_t1')} 最后信号={v.get('last_seen')} [已停产]")
 
     # 5. Regime PnL
     print(f"\n{'─'*60}")

@@ -184,6 +184,54 @@ def run_premarket_check() -> dict:
     except Exception as e:
         results["checks"].append({"name": "当日指令统计", "status": "ERROR", "detail": str(e)})
 
+    # ── 5f. 指令方向构成 (2026-09-18 新增, 用户令"按建议动手执行") ──
+    #   为什么: 报告此前只报"共 N 条", 而多空平衡是"禁纯单向多头"核心原则的第一眼读数;
+    #   另补跳过成因 + 今日指令的**生成时 regime**, 并与历史 regime 盈亏并列 —
+    #   两者同报告不同段曾是自相矛盾无人点出 (IC 段的 regime 段是历史成交统计)。
+    try:
+        import sqlite3 as _sq
+        _con5 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _dirs = _con5.execute(
+            "SELECT COALESCE(direction,'?') d, COUNT(*) n FROM playbook_instructions "
+            "WHERE date=? GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
+        _rg = _con5.execute(
+            "SELECT COALESCE(market_regime,'?') g, COUNT(*) n FROM playbook_instructions "
+            "WHERE date=? GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
+        _sk = _con5.execute(
+            "SELECT COALESCE(NULLIF(TRIM(skip_reason),''),'?') s, COUNT(*) n FROM playbook_instructions "
+            "WHERE date=? AND COALESCE(direction,'')='SKIP' GROUP BY 1 ORDER BY n DESC LIMIT 3",
+            (today_et,)).fetchall()
+        _con5.close()
+        _dir_str = " ".join(f"{r[0]}={r[1]}" for r in _dirs if r[0] != 'SKIP') or "无"
+        _skip_str = (" | 跳过: " + "; ".join(f"{r[0]}×{r[1]}" for r in _sk)) if _sk else ""
+        _rg_str = " ".join(f"{r[0]}={r[1]}" for r in _rg) or "?"
+        _cmp = ""
+        try:
+            _icp = BASE_DIR / "data" / "ic_analysis_latest.json"
+            if _icp.exists():
+                _icd = json.loads(_icp.read_text())
+                _rp = _icd.get("regime_pnl", {})
+                _parts = []
+                for r in _rg:
+                    _rv = _rp.get(r[0])
+                    if _rv:
+                        _parts.append(f"{r[0]}: N={_rv['n']} WR={_rv['wr']:.1%} AvgPnL={_rv['avg_pnl']:+.2%}")
+                if _parts:
+                    _cmp = (" | 同 regime 历史成交 (近%d日窗, 产物%s): " % (
+                        _icd.get("window_days", 90), (_icd.get("generated_at") or "")[:16])) + "; ".join(_parts)
+        except Exception:
+            pass
+        _has_short = any(r[0] == 'SELL_SHORT' for r in _dirs)
+        results["checks"].append({
+            "name": "指令方向构成",
+            "status": "PASS" if _has_short else "WARN",
+            "detail": f"{_dir_str}{_skip_str} | 生成时 regime: {_rg_str}{_cmp}"
+        })
+        if _dirs and not _has_short:
+            results["warnings"].append("今日指令无空头产出 (纯单向多头) — 与核心原则冲突, 请复核")
+    except Exception as e:
+        results["checks"].append({"name": "指令方向构成", "status": "ERROR", "detail": str(e)})
+
     # ── 5d. 持仓遗留 (过夜风险第一眼) ──
     try:
         import sqlite3 as _sq
@@ -211,6 +259,61 @@ def run_premarket_check() -> dict:
             results["checks"].append({"name": "事件文件就绪", "status": "PASS", "detail": _note})
     except Exception as e:
         results["checks"].append({"name": "事件文件就绪", "status": "ERROR", "detail": str(e)})
+
+    # ── 5g. 资金与帽余量 (2026-09-18 新增, 用户令"按建议动手执行") ──
+    #   为什么: 双帽决定当日"最多能开几笔/多大名义", 盘前不报就无法预判今日可执行量;
+    #   且 capital_state.last_update 是**裸 now** (CST 墙钟, 见
+    #   app/risk/capital_safety.py:180), 必须经 parse_ledger_ts (naive→CST) 再 to_et
+    #   换算后展示 — 旧报告把该值标成 "20:39 ET", 实为 08:39 ET。
+    try:
+        import sqlite3 as _sq
+        _con6 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _r6 = _con6.execute(
+            "SELECT current_equity, peak_equity, buying_power, water_level, drawdown_pct, "
+            "is_locked, COALESCE(lock_reason,''), last_update FROM capital_state "
+            "ORDER BY rowid DESC LIMIT 1").fetchone()
+        _con6.close()
+        if _r6 is None:
+            results["checks"].append({"name": "资金与帽余量", "status": "WARN", "detail": "capital_state 0 行"})
+        else:
+            _upd = _r6[7] or "?"
+            _upd_s = _upd
+            try:
+                from app.utils.timezone import parse_ledger_ts, to_et
+                _et = to_et(parse_ledger_ts(_upd))
+                if _et:
+                    _upd_s = f"{str(_upd)[:19]} CST (= {_et.strftime('%m-%d %H:%M')} ET)"
+            except Exception:
+                _upd_s = f"{_upd} (服务器 CST 墙钟, ET 未换算)"
+            # 帽参数 (真实生效值, 读 config; SSOT 说明见 unified_config playbook.execution_parameters)
+            _caps = ""
+            try:
+                from app.core.config_container import get_config as _get_cfg2
+                _pc = _get_cfg2()
+                _mdc = _pc.get_dotted("playbook.execution_parameters.max_daily_positions", None)
+                _mnc = _pc.get_dotted("playbook.execution_parameters.max_new_positions_per_cycle", None)
+                _dnc = _pc.get_dotted("playbook.execution_parameters.daily_notional_cap_pct", None)
+                _cap_bits = []
+                if _mdc is not None:
+                    _cap_bits.append(f"日开仓数帽={_mdc}")
+                if _mnc is not None:
+                    _cap_bits.append(f"单轮新开={_mnc}")
+                if _dnc is not None:
+                    _cap_bits.append(f"日名义帽={_dnc}")
+                if _cap_bits:
+                    _caps = " | " + " ".join(_cap_bits)
+            except Exception:
+                pass
+            _lock = f" | 🔒锁定: {_r6[6] or 'yes'}" if _r6[5] else ""
+            results["checks"].append({
+                "name": "资金与帽余量",
+                "status": "PASS" if (_r6[0] or 0) > 0 else "WARN",
+                "detail": (f"equity=${float(_r6[0] or 0):,.0f} | peak=${float(_r6[1] or 0):,.0f} | "
+                           f"buying_power=${float(_r6[2] or 0):,.0f} | 水位={_r6[3]} | "
+                           f"dd={float(_r6[4] or 0):+.2%} | updated={_upd_s}{_lock}{_caps}")
+            })
+    except Exception as e:
+        results["checks"].append({"name": "资金与帽余量", "status": "ERROR", "detail": str(e)})
 
     # ── 6. 昨日交易回顾 ──
     try:
@@ -241,6 +344,41 @@ def run_premarket_check() -> dict:
         })
     except Exception as e:
         results["checks"].append({"name": "昨日交易回顾", "status": "ERROR", "detail": str(e)})
+
+    # ── 6b. 昨日亏损归因 (2026-09-18 新增, 用户令"按建议动手执行") ──
+    #   为什么: 只给"已实现 PnL 合计"无法判断是机制病还是行情病 — 同 exit_reason 档位
+    #   聚合是复盘最小单位, 且正/负两侧同屏 (防"只看亏损单"的选择性结论, 2026-09-18 复核纪律)。
+    try:
+        import sqlite3 as _sq
+        from app.utils.timezone import now_et as _now_et3, get_last_trade_date as _gltd3
+        from datetime import timedelta as _td3
+        _yd = _gltd3(_now_et3() - _td3(days=1))
+        _con7 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
+        _rk = _con7.execute(
+            "SELECT COALESCE(NULLIF(TRIM(exit_reason),''),'?') r, COUNT(*) n, "
+            "ROUND(SUM(COALESCE(pnl_net, realized_pnl)),2) net FROM trade_records "
+            "WHERE substr(exit_time,1,10)=? AND exit_price > 0 GROUP BY 1 ORDER BY net ASC",
+            (_yd,)).fetchall()
+        _nn = _con7.execute(
+            "SELECT COUNT(*) FROM trade_records WHERE substr(exit_time,1,10)=? "
+            "AND exit_price > 0 AND pnl_net IS NULL", (_yd,)).fetchone()[0]
+        _con7.close()
+        if not _rk:
+            results["checks"].append({"name": "昨日亏损归因", "status": "PASS",
+                                      "detail": f"{_yd} 无已了结成交"})
+        else:
+            _neg = [r for r in _rk if (r[2] or 0) < 0]
+            _pos = [r for r in _rk if (r[2] or 0) > 0]
+            _neg_s = "; ".join(f"{r[0]} {float(r[2] or 0):+,.2f}(n={r[1]})" for r in _neg[:3]) or "无"
+            _pos_s = "; ".join(f"{r[0]} {float(r[2] or 0):+,.2f}(n={r[1]})" for r in _pos[::-1][:2]) or "无"
+            _cal = f" [净额口径 pnl_net; {_nn} 行缺净额按毛额兜底]" if _nn else " [净额口径 pnl_net]"
+            results["checks"].append({
+                "name": "昨日亏损归因",
+                "status": "PASS",
+                "detail": f"{_yd} 最亏三档: {_neg_s} | 最赚两档: {_pos_s}{_cal}"
+            })
+    except Exception as e:
+        results["checks"].append({"name": "昨日亏损归因", "status": "ERROR", "detail": str(e)})
 
     # ── 7. 日志错误扫描 ──
     try:

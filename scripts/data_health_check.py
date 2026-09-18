@@ -109,25 +109,41 @@ def check_signal_snapshots():
         db = sqlite3.connect(str(db_path))
         db.row_factory = sqlite3.Row
         
-        # 最近7天的信号
+        # 2026-09-18 口径修正 (用户令"按建议动手执行"): 原实现用**单一 7 自然日窗**同时算
+        #   1d/5d NULL 率 — 但 5d 的前瞻收益要 T+5 个交易日才结算 (≈7 自然日)，该窗内
+        #   fwd_ret_t5 **结构上恒为 100% NULL** (实测 2026-09-12~09-18 = 142/142)，于是
+        #   每天都把"还没到结算日"报成读数，被盘前报告转述为"5日特征窗口全空"异常项。
+        #   现把 5d 移到"应已结算窗"(9~30 日前, 实测 484 条 / null=3 → 1%) — 该窗仍高 NULL
+        #   才真的是回填断了。1d 仍用 7 日窗 (T+1 在窗内应已结算)。
         rows = db.execute(
             "SELECT COUNT(*) as total, "
-            "SUM(CASE WHEN fwd_ret_t1 IS NULL THEN 1 ELSE 0 END) as null_1d, "
-            "SUM(CASE WHEN fwd_ret_t5 IS NULL THEN 1 ELSE 0 END) as null_5d "
+            "SUM(CASE WHEN fwd_ret_t1 IS NULL THEN 1 ELSE 0 END) as null_1d "
             "FROM signal_snapshots WHERE created_at >= date('now', '-7 days')"
         ).fetchone()
-        
+
         total = rows["total"]
         if total == 0:
             return "🟡 近7天无信号快照"
-        
+
         null_1d_pct = (rows["null_1d"] / total * 100) if total else 0
-        null_5d_pct = (rows["null_5d"] / total * 100) if total else 0
-        
-        # 5d NULL率高是正常的(还没到5天), 1d NULL率高说明回填机制有问题
+
+        settled = db.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN fwd_ret_t5 IS NULL THEN 1 ELSE 0 END) as null_5d "
+            "FROM signal_snapshots "
+            "WHERE created_at >= date('now', '-30 days') AND created_at < date('now', '-9 days')"
+        ).fetchone()
+        t5_total = settled["total"] or 0
+        t5_null = settled["null_5d"] or 0
+        null_5d_pct = (t5_null / t5_total * 100) if t5_total else 0.0
+
         if null_1d_pct > 50 and total > 10:
             return f"🔴 forward_return_1d NULL率={null_1d_pct:.0f}% ({rows['null_1d']}/{total}) → IC回填可能异常"
-        return f"✅ signal_snapshots: {total}条, 1d_null={null_1d_pct:.0f}%, 5d_null={null_5d_pct:.0f}%"
+        if null_5d_pct > 50 and t5_total > 10:
+            return (f"🔴 forward_return_5d NULL率={null_5d_pct:.0f}% ({t5_null}/{t5_total}, "
+                    f"9~30日前应结算窗) → IC回填可能异常")
+        return (f"✅ signal_snapshots: 近7日 {total}条 1d_null={null_1d_pct:.0f}% | "
+                f"9~30日前应结算窗 {t5_total}条 5d_null={null_5d_pct:.0f}%")
     except Exception as e:
         return f"🟡 signal_snapshots检查异常: {e}"
 
