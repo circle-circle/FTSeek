@@ -1215,7 +1215,13 @@ Hermes 需要重点复核：
 **落地**：`config/unified_config.yaml` → `playbook.ah_exit_shadow_enabled: false`；**app 重启生效**
 （18:19 CST = 06:19 ET，重启前 `open_positions=0`；新 PID 1880347；重启后 app 日志 0 条 error/traceback，
 子系统正常：DualBroker / FutuLV3 ticker+orderbook+push / SignalScanLoop `Signal IC 0.0129 (N=615)`）；
-进程内实测 `scripts/ah_exit_shadow._enabled() == False` ⇒ `run_check()` 立即返回，今晚及以后不再写入。
+进程内实测 `scripts/ah_exit_shadow._enabled() == False` ⇒ `run_check()` 立即返回。
+**运行时验证的窗口必须选对（如实登记一次空验证）**：影子的门是 ET 19:50–20:05（= **CST 07:50–08:05**），
+调度器挂载相位也是 ET 的 AFTER_HOURS/OVERNIGHT —— 我最初在 **CST 傍晚**核对是**搭错了窗口**
+（CST 傍晚 = ET 清晨 = PREMARKET；同挂载点的负面对照 `entry_sync_shadow` / `stale_anchor` /
+`refresh_daily_bars` 在该窗口 0 条 ⇒ 调度器根本没进那个分支，那次"0 行"**不构成证据**）。
+真正的运行时核对已排到 **2026-09-19 08:15 CST**（覆盖 07:50–08:05 两个门），且核对脚本要求
+**负面对照非空**才允许下"停用生效且可证伪"的结论。
 **回滚**：把该键改回 `true` + 重启（**但按上段要求，回滚前需先重定义基线**）。
 
 #### 23.7.2 统计类产物占位污染清理（用户批准）
