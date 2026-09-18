@@ -219,7 +219,7 @@ def collect(dry: bool) -> int:
             )
             action = prioritize_profit_exit(action, fallback)
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
-            if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK")
+            if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK", "SL_CERT_LOCK")
                     and in_window and not dry):
                 if action in ("SL_BREAKEVEN", "SL_TRAIL_LOCK"):
                     executor_price = float(metadata.get("_be_net_line_price") or executable)
@@ -283,6 +283,7 @@ def collect(dry: bool) -> int:
             "gross_executable_pnl_pct": gross_executable,
             "net_executable_pnl_pct": net_executable,
             "decision_detail": decision.get("detail", "") if executable is not None else "",
+            "cert_lock_pct": decision.get("cert_lock_pct") if executable is not None else None,
             "effective_sl": decision.get("effective_sl") if executable is not None else None,
             "adaptive_trailing_drawdown_pct": decision.get(
                 "adaptive_trailing_drawdown_pct") if executable is not None else None,

@@ -125,3 +125,67 @@ def test_peak_state_persists_without_overwriting_unrelated_metadata(tmp_path):
     assert metadata["unrelated"] == "keep"
     assert metadata["peak_price"] == pytest.approx(103.0)
     assert metadata["breakeven_triggered"] is True
+
+
+# ── 2026-09-19 确定性落袋锁 (SL_CERT_LOCK): 用户令「首要=每笔净收益不亏损」 ──
+
+def test_cert_lock_off_by_default_keeps_behaviour(monkeypatch):
+    """env 未设 ⇒ 关闭 (生产默认行为不变): +3% 浮盈仍只是 hold。"""
+    monkeypatch.delenv("EXT_CERT_LOCK_PCT", raising=False)
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 103.5, 95.0, 103.5,
+        {"stop_loss": 95.0, "peak_price": 103.5}, 0.15,
+    )
+    assert d["action"] == "hold"
+    assert d["cert_lock_pct"] is None
+
+
+def test_cert_lock_fires_at_line_without_rr_gate(monkeypatch):
+    """env=3.0 ⇒ 触及 +3% 即 SL_CERT_LOCK; 初始 SL -5% 的 RR=0.6 不得拦死它。"""
+    monkeypatch.setenv("EXT_CERT_LOCK_PCT", "3.0")
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 103.2, 95.0, 103.2,
+        {"stop_loss": 95.0, "peak_price": 103.2}, 0.15,
+    )
+    assert d["action"] == "SL_CERT_LOCK"
+    assert d["detail"] == "certainty_lock_line_reached"
+    assert d["cert_lock_pct"] == pytest.approx(3.0)
+    assert d["profit_pct"] == pytest.approx(3.2)
+
+    below = decide_original_profit_exit(
+        "LONG", 100.0, 102.9, 95.0, 102.9,
+        {"stop_loss": 95.0, "peak_price": 102.9}, 0.15,
+    )
+    assert below["action"] == "hold"
+
+
+def test_cert_lock_respects_explicit_take_profit_precedence(monkeypatch):
+    """显式 take_profit 优先: 有 TP 的仓 (DA) 行为不被本机制改写。"""
+    monkeypatch.setenv("EXT_CERT_LOCK_PCT", "3.0")
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 110.2, 95.0, 110.0,
+        {**META, "take_profit": 110.0}, 0.15,
+    )
+    assert d["action"] == "TAKE_PROFIT"
+
+
+def test_cert_lock_requires_net_above_fee(monkeypatch):
+    """阈值低于往返费时不得落袋 (防"纸面落袋")。"""
+    monkeypatch.setenv("EXT_CERT_LOCK_PCT", "0.05")
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 100.1, 95.0, 100.1,
+        {"stop_loss": 95.0, "peak_price": 100.1}, 0.15,
+    )
+    assert d["action"] == "hold"
+    assert d["detail"] == "cert_lock_below_net_fee"
+
+
+def test_cert_lock_metadata_override_and_priority(monkeypatch):
+    """按仓覆盖 metadata.cert_lock_pct; 且它必须能压过 hold_to_next_open 兜底。"""
+    monkeypatch.delenv("EXT_CERT_LOCK_PCT", raising=False)
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 102.5, 95.0, 102.5,
+        {"stop_loss": 95.0, "peak_price": 102.5, "cert_lock_pct": 2.0}, 0.15,
+    )
+    assert d["action"] == "SL_CERT_LOCK"
+    assert prioritize_profit_exit("SL_CERT_LOCK", "hold_to_next_open") == "SL_CERT_LOCK"

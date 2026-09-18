@@ -317,6 +317,7 @@ def collect(dry: bool) -> int:
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
             _exec_ok = in_window or action == "next_open_exit"   # 开盘兑现发生在盘前窗之外
             if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK",
+                           "SL_CERT_LOCK",
                            "pre_close_flatten", "next_open_exit")
                     and _exec_ok and not dry):
                 if action in ("SL_BREAKEVEN", "SL_TRAIL_LOCK"):
@@ -387,6 +388,7 @@ def collect(dry: bool) -> int:
             "gross_executable_pnl_pct": gross_executable,
             "net_executable_pnl_pct": net_executable,
             "decision_detail": decision.get("detail", "") if executable is not None else "",
+            "cert_lock_pct": decision.get("cert_lock_pct") if executable is not None else None,
             "effective_sl": decision.get("effective_sl") if executable is not None else None,
             "adaptive_trailing_drawdown_pct": decision.get(
                 "adaptive_trailing_drawdown_pct") if executable is not None else None,

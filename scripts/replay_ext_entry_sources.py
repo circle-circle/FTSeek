@@ -485,9 +485,37 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
     res["adapt60_hi_px"] = _adapt_arm_hi(0.40)
     res["adapt75_hi_px"] = _adapt_arm_hi(0.25)
     res["carry_high_pct"] = round((max((b["h"] for b in carry), default=entry) / entry - 1) * 100, 3)
+
+    # ── C7) 绝对地板阶梯 (2026-09-19 用户核心目标: 每笔净收益不亏损 > 更高更精准收益 > 回撤守住) ──
+    #  现役 = 让出 MFE 的 40% (相对), 小 MFE 时地板很低 (MFE 1% ⇒ 地板 +0.6%, 仅够覆盖费>;
+    #  MFE 0.5% ⇒ 地板 +0.1% 已被 0.4% 下限截断 ⇒ 事实上"不亏损"得不到保证)。
+    #  阶梯 = 按**已见峰值**给**绝对地板**, 保证: 有肉必锁死不亏, 肉越厚地板越高 (单调只上不下)。
+    _BE_NET = 0.088  # 往返费(%) ⇒ 净保本地板
+    def _stair_arm(bands):
+        _peak, _hit = entry, None
+        for b in carry:
+            _peak = max(_peak, b["c"])
+            _pp = (_peak / entry - 1) * 100
+            _floor_pct = -5.0                       # 未武装 ⇒ 初始 SL
+            for _th, _lk in bands:
+                if _pp >= _th:
+                    _floor_pct = max(_floor_pct, _lk)
+            if b["c"] <= entry * (1 + _floor_pct / 100.0):
+                _hit = b["c"]
+                break
+        return _hit
+
+    # 阶梯A (保守·广覆盖): 0.4%⇒净保本, 1.5%⇒锁+1%, 3%⇒锁+2.5%, 6%⇒锁+4%
+    _stA = ((0.4, _BE_NET), (1.5, 1.0), (3.0, 2.5), (6.0, 4.0))
+    # 阶梯B (激进·更紧): 0.4%⇒净保本+0.3%, 1.5%⇒+1.5%, 3%⇒+3%, 6%⇒+5%
+    _stB = ((0.4, _BE_NET + 0.3), (1.5, 1.5), (3.0, 3.0), (6.0, 5.0))
+    res["stair_A_px"] = _stair_arm(_stA)
+    res["stair_B_px"] = _stair_arm(_stB)
+    res["be_only_px"] = _stair_arm(((0.4, _BE_NET),))      # 只保本, 不锁利 (隔离"不亏损"收益)
+    res["carry_peak_pct"] = res.get("carry_peak_pct")
     res["cap_pct60"] = round((max((b["c"] for b in carry), default=entry) / entry - 1) * 100, 3)
     # C2) 盈利锁臂: 触及 entry×(1+k%) 即以该价落袋(确定性), 否则落到 next_open
-    for _k in (3.0, 4.0, 5.0, 6.0):
+    for _k in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0):
         _hit = None
         for b in carry:
             if (b["c"] / entry - 1) * 100 >= _k:
@@ -559,7 +587,12 @@ def _simulate_ah(bars_day, next_day_bars, entry_bar_i):
                     ("adapt80", res.get("adapt80_px") or no),
                     ("adapt_layered", res.get("adapt_layered_px") or no),
                     ("adapt60_hi", res.get("adapt60_hi_px") or no),
-                    ("adapt75_hi", res.get("adapt75_hi_px") or no)):
+                    ("adapt75_hi", res.get("adapt75_hi_px") or no),
+                    ("stair_A", res.get("stair_A_px") or no),
+                    ("stair_B", res.get("stair_B_px") or no),
+                    ("be_only", res.get("be_only_px") or no),
+                    ("lock_1pct", res.get("lock_1pct_px") or no),
+                    ("lock_2pct", res.get("lock_2pct_px") or no)):
         if px:
             g = (px / entry - 1) * 100
             fee = _round_trip_fee_pct(entry, px, day)

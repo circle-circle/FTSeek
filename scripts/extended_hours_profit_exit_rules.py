@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Original Playbook profit-protection decisions for extended-hours exits."""
 import json
+import os
 import sqlite3
 from pathlib import Path
 
 
-PROFIT_EXIT_REASONS = {"TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK"}
+PROFIT_EXIT_REASONS = {"TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK", "SL_CERT_LOCK"}
 
 
 def prioritize_profit_exit(action, fallback=None):
@@ -139,6 +140,16 @@ def decide_original_profit_exit(
     detail = ""
     take_profit = 0.0
     tp_rr = None
+    # 确定性落袋锁阈值 (2026-09-19): env EXT_CERT_LOCK_PCT 全局开关 (0/未设 ⇒ 关闭,
+    #   生产默认行为不变), metadata.cert_lock_pct 可按仓覆盖。
+    cert_lock_pct = _number(
+        metadata.get("cert_lock_pct", os.getenv("EXT_CERT_LOCK_PCT") or 0.0)
+    )
+    cert_line = entry * (1 + sign * cert_lock_pct / 100.0)
+    cert_lock_reached = bool(
+        cert_lock_pct > 0
+        and (current >= cert_line if long_position else current <= cert_line)
+    )
 
     if protective_line_breached:
         if not breakeven_triggered:
@@ -171,6 +182,19 @@ def decide_original_profit_exit(
             else:
                 action = "TAKE_PROFIT"
                 detail = "take_profit_line_reached"
+        elif cert_lock_pct > 0 and cert_lock_reached:
+            # 2026-09-19 用户令(首要目标: 每笔净收益不亏损; 其次高收益+回撤守住):
+            #   确定性落袋锁 — 触及 +k% 即全量落袋, **不走 RR 门**。RR 门是"风险回报比"
+            #   口径, 与"确定性落袋"目标正交: 初始 SL -5% 时 +3% 的 RR 仅 0.6 <
+            #   min_tp_rr 1.5 ⇒ 走 RR 门必然成为死门(这正是 ext 仓 take_profit 恒 None
+            #   之外的第二个结构性拦截)。优先级: 显式 take_profit > 确定性落袋锁 >
+            #   亏损侧不动作 (盘后不砍亏, 用户 9/17 令)。
+            if profit_pct - fee_cushion_pct <= 0:
+                action = "hold"
+                detail = "cert_lock_below_net_fee"
+            else:
+                action = "SL_CERT_LOCK"
+                detail = "certainty_lock_line_reached"
         elif profit_pct < 0:
             action = "hold_no_stop"
             detail = "underwater_no_extended_loss_stop"
@@ -186,6 +210,7 @@ def decide_original_profit_exit(
         "effective_sl": round(effective_sl, 4),
         "breakeven_triggered": breakeven_triggered,
         "take_profit_rr": round(tp_rr, 6) if take_profit > 0 else None,
+        "cert_lock_pct": cert_lock_pct if cert_lock_pct > 0 else None,
         "adaptive_trailing_drawdown_pct": adaptive_drawdown_pct,
         "adaptive_trailing_snapshot": adaptive_trailing_snapshot_value,
     }
