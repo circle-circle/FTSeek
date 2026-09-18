@@ -99,6 +99,14 @@ AUDIT = ROOT / "data" / "extended_hours_entry_executions.jsonl"
 # 价格闸拦下的候选打点 (按**运行**聚合一行: n + 明细). 用户 2026-09-17 令: 回答
 #   "$5 闸到底挡掉了多少噪声票". 逐候选整行会膨胀(同票每 5 分钟重复出现) ⇒ 按运行聚合.
 PRICE_GATE_REJECTS = ROOT / "data" / "extended_hours_price_gate_rejects.jsonl"
+# 2026-09-19 用户令「按建议执行」: 入口预筛影子 — **只记录不拦**。
+#   动机 (回放 60 日): 42% 的延长时段仓**从未出现 0.4% 浮盈**, 单独贡献 -132pp; 有肉的
+#   25 笔合计 +116pp ⇒ "每笔净收益不亏损"的正解在**入口**, 不在出口。
+#   第一版信号 (观察级 n=43): 进场涨幅>5% 有肉率 83%/均值+3.59%; 价格 $5~20 89%/+3.89;
+#   >$20 仅 50%/-1.49。本影子把每个候选的 (涨幅/价格档/时段量) 与"现役闸 vs 更严闸"的
+#   假设判定逐次落盘, 攒样后与真实结局 join 定阈值。零交易影响 (纯 append + 异常吞掉)。
+PREFILTER_SHADOW = ROOT / "data" / "ext_entry_prefilter_shadow.jsonl"
+PREFILTER_SHADOW_ON = os.getenv("EXT_PREFILTER_SHADOW", "true").lower() == "true"
 PRETRADE_GATE_REJECTS = ROOT / "data" / "extended_hours_pretrade_gate_rejects.jsonl"
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 LOCK = ROOT / "data" / "extended_hours_entry_state.lock"
@@ -254,6 +262,51 @@ def _opened_today_total(opened_today, today):
     跨日残留 key 必须忽略 (state 里会留历史日期的 key, 用 startswith 过滤)。
     """
     return sum(value for key, value in opened_today.items() if key.startswith(today))
+
+
+def prefilter_verdicts(change_pct, price, volume):
+    """入口预筛影子用的**纯函数**判定 (无副作用, 便于测试)。
+
+    返回每个候选在各档门槛下的假设判定 + 分档标签。**不参与交易逻辑**。
+    """
+    chg = float(change_pct or 0.0)
+    px = float(price or 0.0)
+    vol = float(volume or 0.0)
+    price_band = ("penny_lt5" if px < 5 else "$5~20" if px < 20 else "$20~50"
+                  if px < 50 else "$50~200" if px < 200 else "$200+")
+    chg_band = ("<0" if chg < 0 else "0~2" if chg < 2 else "2~3" if chg < 3
+                else "3~5" if chg < 5 else "5~10" if chg < 10 else "10+")
+    return {
+        "chg_band": chg_band,
+        "price_band": price_band,
+        "passes_current_gate": bool(chg >= ENTRY_CHANGE_PCT and vol >= MIN_VOLUME and px >= MIN_PRICE),
+        "passes_chg_3": bool(chg >= 3.0),
+        "passes_chg_5": bool(chg >= 5.0),
+        "passes_price_5_20": bool(5.0 <= px < 20.0),
+    }
+
+
+def _record_prefilter_shadow(session, movers):
+    """一次运行落一行 (与 _record_price_gate_rejects 同风格; 异常绝不影响主流程)。"""
+    if not PREFILTER_SHADOW_ON or not movers:
+        return
+    try:
+        rows = []
+        for item in movers:
+            v = prefilter_verdicts(item.get("chg"), item.get("px"), item.get("vol"))
+            v.update({"symbol": item.get("symbol"), "chg": round(float(item.get("chg") or 0), 2),
+                      "price": item.get("px"), "volume": item.get("vol")})
+            rows.append(v)
+        PREFILTER_SHADOW.parent.mkdir(parents=True, exist_ok=True)
+        with PREFILTER_SHADOW.open("a") as f:
+            f.write(json.dumps({
+                "recorded_at": datetime.utcnow().isoformat() + "Z",
+                "session": session, "n": len(rows), "rows": rows,
+                "thresholds": {"chg": ENTRY_CHANGE_PCT, "min_price": MIN_PRICE,
+                               "min_volume": MIN_VOLUME},
+            }, ensure_ascii=False) + "\n")
+    except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
+        print(f"[ext_entry] prefilter_shadow 落盘失败: {type(exc).__name__}: {exc}")
 
 
 def _record_price_gate_rejects(session, rejects):
@@ -766,6 +819,7 @@ def collect(session, dry=False):
         price_gate_rejects = []
         try:
             movers = _scan_candidates(session, qctx)
+            _record_prefilter_shadow(session, movers)   # 入口预筛影子 (只记录不拦)
             counts = {}
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
@@ -873,6 +927,7 @@ def collect(session, dry=False):
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         try:
             movers = _scan_candidates(session, qctx)
+            _record_prefilter_shadow(session, movers)   # 入口预筛影子 (只记录不拦)
             counts = {}
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
