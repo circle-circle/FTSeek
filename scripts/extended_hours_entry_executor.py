@@ -1034,9 +1034,14 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
     if is_test_symbol(symbol):
         return {"ok": False, "skip": "test_symbol"}
     if trd_env.upper() != "SIMULATE":
-        # 通知去重: 同一标的一日一次 (原先每轮对账都推 → 用户看到"持续推送");
-        #   拦截行为本身不变, 仍返 real_not_authorized。
-        _push_once(f"real_blocked:{symbol}", f"🚫 延长时段开仓拦截: {symbol} REAL未授权")
+        # 2026-09-18 用户令「不要 sim 和 real 有混淆」: 本脚本**只授权 SIM**; env 非 SIMULATE 属
+        #   **配置态**问题, 不是"某标的下单被拦" ⇒ 不再逐标的发文案 (原先每标的每轮一条, 且把
+        #   配置问题说成标的拦截 = 语义混淆)。改为**环境级**一次提示, 一日一次。
+        _push_once(
+            "real_env_misconfigured",
+            "⚠️ 延长时段开仓链路检测到 FUTU_TRD_ENV≠SIMULATE（本脚本仅授权 SIM，已全部拦截；"
+            "若为测试/REAL 验证跑，请显式设 FUTU_TRD_ENV=SIMULATE）",
+        )
         return {"ok": False, "skip": "real_not_authorized"}
 
     rec = {"symbol": symbol, "qty": qty, "price": price, "session": session,

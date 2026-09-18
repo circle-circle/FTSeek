@@ -1152,3 +1152,31 @@ adaptive trailing 退出臂（caps = 1.2 / 2.5 / 4.0 / 99 即"无上限"；公�
   `data/backups/trail_state_before_us_test_cleanup_20260918_073650.db`。
 
 **验证**：`tests/coordinator/test_push_hub.py` 24 passed；服务重启后 `ftseek-us.service` active。
+
+### 23.13 「US.FAKE 仍在推送」真根因 = **测试污染生产通知通道**（2026-09-18 用户令「不要 sim 和 real 有混淆」）
+
+**用户反馈**：会话修复后仍收到 `🚫 延长时段开仓拦截: US.FAKE REAL未授权`。
+
+**真根因（实查，推翻我先前的"券商报废单"推断）**
+- `US.FAKE` **全仓只出现在 `tests/`**（fixture 占位符），券商账户里**没有**这张单（已拉全量订单核对）。
+- `FUTU_TRD_ENV=REAL` **也只出现在 `tests/`**：`tests/test_extended_hours_entry_executor.py` 的
+  `test_execute_refuses_simulate_without_stop` / `test_execute_rejects_real_environment` 用 `US.FAKE + REAL`
+  调 `_execute()`，且**未 mock 推送** ⇒ **每跑一次 pytest 就给生产飞书真发一条**（同类先例：钉钉通知器被真调用污染测试环境）。
+  ⇒ 这就是"一直持续推送虚拟标的"的来源：**跑测试的频率**，不是 cron。
+
+**修复（两层治本，用户令「不要 sim 和 real 有混淆」）**
+1. **`tests/conftest.py` 新增 autouse 夹具 `_block_outbound_notifications`**：把 `FeishuNotifier.send_text` /
+   `DingTalkNotifier.send_text` / push hub 统一换成记录桩（无网络），并把 `FUTU_TRD_ENV` 默认钉在 `SIMULATE`。
+   ⇒ 测试**结构性不可能**再触达生产通知通道；需要断言推送的用例 monkeypatch 自己的缝（`_push`/hub）。
+2. **`_execute` 的 REAL 分支改为「环境级」一次提示**（`_push_once("real_env_misconfigured", …)`）：
+   本脚本**只授权 SIM**，env≠SIMULATE 属**配置态**问题，不是"某标的被拦" ⇒ 文案不再点标的、且一日一次
+   （拦截行为不变，仍返 `real_not_authorized`）。原先把配置问题说成标的拦截 = 语义混淆。
+3. 顺带把那个**自己混淆 SIM/REAL** 的用例拆清：`test_execute_sim_env_is_not_blocked_by_real_guard`
+   （SIM 不得走 REAL 分支，且断言零推送）+ `test_execute_rejects_real_environment`（REAL ⇒ 环境级一条提示、不点标的）。
+
+**自查与回退（过度改动已撤）**：曾把 `is_test_symbol` 扩展为"末段占位词"（让 `US.FAKE` 也算占位）——
+**误伤 8 个把 `US.FAKE` 当正常符号的既有用例**，且对治本无必要 ⇒ **已回退**（判据仍只认 `TEST`/`US.TEST`/`*.TEST`，
+回退理由写进函数 docstring 留痕）。
+
+**验证**：`tests/test_ext_entry_test_symbol_guard.py` 4 项 + `test_extended_hours_entry_executor.py` 15 项 +
+`test_extended_hours_order_execution.py` + `tests/core/test_trade_identity.py` ⇒ **51 passed**（修复前 8 failed/44 passed）。

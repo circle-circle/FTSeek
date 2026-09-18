@@ -213,6 +213,43 @@ def _block_live_llm_http(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _block_outbound_notifications(monkeypatch):
+    """测试**永不**触达生产通知通道 (2026-09-18, 用户实测反馈)。
+
+    病灶: 个别用例 (如 test_execute_rejects_real_environment) 用 FUTU_TRD_ENV=REAL 调 _execute
+    且**未** mock 推送 ⇒ 每跑一次 pytest 就给生产飞书真发一条
+    "🚫 延长时段开仓拦截: US.FAKE REAL未授权"。同类污染先例: 钉钉通知器被真调用致环境污染。
+    处置: 在 conftest 层统一封死出口 (需要断言推送的用例请 monkeypatch 自己的缝: _push / hub)。
+    并默认把 FUTU_TRD_ENV 钉在 SIMULATE —— 测试环境不与 REAL 混淆 (显式要 REAL 的用例自行 setenv)。
+    """
+    recorded = []
+
+    def _record(text, *args, **kwargs):
+        recorded.append(text)
+        return True
+
+    for module_path, class_name in (("app.notifier.feishu", "FeishuNotifier"),
+                                    ("app.notifier.dingtalk", "DingTalkNotifier")):
+        try:
+            module = importlib.import_module(module_path)
+            cls = getattr(module, class_name, None)
+            if cls is not None and hasattr(cls, "send_text"):
+                monkeypatch.setattr(cls, "send_text", _record, raising=False)
+        except Exception:
+            pass
+    try:
+        hub_module = importlib.import_module("app.push.hub")
+        for cls_name in ("PushHub", "Hub"):
+            cls = getattr(hub_module, cls_name, None)
+            if cls is not None and hasattr(cls, "push"):
+                monkeypatch.setattr(cls, "push", lambda self, msg, **kw: True, raising=False)
+    except Exception:
+        pass
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    return recorded
+
+
 def pytest_sessionfinish(session, exitstatus):
     # futu SDK 线程退出兜底 (2026-08-27 修正): 事后置 t._daemonic 对 3.8+ 无效 —
     # threading._shutdown 按线程【启动时】注册的 _shutdown_locks 逐锁 acquire 等

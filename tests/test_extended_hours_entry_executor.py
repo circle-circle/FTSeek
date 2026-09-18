@@ -162,25 +162,36 @@ def test_state_lock_detects_concurrent_executor(isolated_state):
         assert locked is True
 
 
-def test_execute_refuses_simulate_without_stop(isolated_state, monkeypatch):
-    """2026-09-17 用户裁方案1后: SIM 走真下单(规则引擎兜底止损), 不再 fail-closed.
-    本测试改为验证: ALLOW_SIM_ENTRY=false 时 SIM 仍 fail-closed (开关兜底可关)."""
+def test_execute_sim_env_is_not_blocked_by_real_guard(isolated_state, monkeypatch):
+    """SIM/REAL 不混淆 (2026-09-18 用户令): 环境为 SIMULATE 时**不得**走 REAL 拦截分支。
+
+    本测试原先把 SIMULATE 与 REAL 混写在一个用例里 (先 setenv SIMULATE 再覆写 REAL),
+    既没验到 SIM 分支、又把"配置态"说成"标的拦截"。现拆清: SIM ⇒ 不返 real_not_authorized。
+    """
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
-    monkeypatch.setenv("EXT_ENTRY_ALLOW_SIM", "false")  # 关开关 → 应拒绝
-    # _execute 不读 ALLOW_SIM_ENTRY (开关在 collect), 故此处验 REAL 拒绝仍生效即可
-    # 真下单路径需 mock futu, 避免测试连真 OpenD — 见 test_execute_sim_real_order_mocked
-    monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
-    result = executor._execute(
-        "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
-        {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
-    )
-    assert result["ok"] is False
-    assert result["skip"] == "real_not_authorized"
+    monkeypatch.setattr(executor, "_push", lambda text: pytest.fail(f"SIM 环境不得推送: {text}"))
+    called = {}
+
+    def _fake_open_trade_context():
+        called["hit"] = True
+        raise RuntimeError("SIM 分支已越过 REAL 守卫 (本测试只验守卫位置, 不真下单)")
+
+    monkeypatch.setattr(executor, "_open_trade_context", _fake_open_trade_context)
+    with pytest.raises(RuntimeError, match="越过 REAL 守卫"):
+        executor._execute(
+            "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
+            {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
+        )
+    assert called.get("hit") is True
 
 
-def test_execute_rejects_real_environment(isolated_state, monkeypatch):
+def test_execute_rejects_real_environment(isolated_state, tmp_path, monkeypatch):
+    """REAL 环境 = 配置态问题: 拦截 + **环境级一次提示** (不再逐标的发"某标的被拦")。"""
     monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.setattr(executor, "_PUSH_DEDUP", tmp_path / "dedup.json")
+    pushed = []
+    monkeypatch.setattr(executor, "_push", lambda text: pushed.append(text))
 
     result = executor._execute(
         "US.FAKE", 100, 10.0, "premarket", 3.0, 300000.0,
@@ -189,6 +200,8 @@ def test_execute_rejects_real_environment(isolated_state, monkeypatch):
 
     assert result["ok"] is False
     assert result["skip"] == "real_not_authorized"
+    assert len(pushed) == 1 and "FUTU_TRD_ENV" in pushed[0]      # 环境级, 不点标的
+    assert "US.FAKE" not in pushed[0]
 
 
 def test_entry_switch_default_is_fail_closed():
