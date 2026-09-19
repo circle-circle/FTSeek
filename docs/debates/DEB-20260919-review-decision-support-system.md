@@ -1,13 +1,13 @@
 # DEB-20260919 · 复盘决策支持系统 (Review Decision Support) [RFC-088]
 
-> **状态**: **P0–P4 已落码并入库**（§21–§25；`4c529f7f6` 等）· 3 轮独立复查完成（§17 / §19 / §26）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（状态行由第 3 轮复查 agent 于 2026-09-19 修正，见 §26.2 N-1）
+> **状态**: **P0–P4.5 已落码**（§21–§27；P0–P4 已入库于 `4c529f7f6`，P4.5 为本轮工作区交付）· 3 轮独立复查完成（§17 / §19 / §26）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**
 > **日期**: 2026-09-19
 > **作者**: Hermes
 > **目标读者**: ①项目所有者(裁决) ②执行 agent(落码) ③**独立复查 agent(§10 复查清单)**
 > **关联**: `RFC-087`(盘前收口条件豁免预注册 — 本设计的**范例产物**)、`RFC-086`(阶段统计 SSOT)、
 > `DEB-20260918-extended-hours-ssot-and-observability.md`、`app/review/review_orchestrator.py`、
 > `app/playbook/shadow_registry.py`、`app/review/stage_stats.py`
-> **变更类型**: L1 (观测/呈现层; **不触碰 `app/playbook/*` 执行链**)。第 2 轮时间口径预热代码由短命 cron/脚本进程生效；主服务本轮未重启。
+> **变更类型**: L1 (观测/呈现层; **不触碰 `app/playbook/*` 执行链**)。主服务曾于 2026-09-19 21:30 按用户明确指令重启；重启时 DB/内存持仓均为 0，详见 §25.2 S-4。
 > **历史实现计划已作废**: `.hermes/plans/2026-09-19_152656-review-system.md` 仍含 `review_criteria.yaml` 与 `dedup_key` 旧案；以本文 §9/§16 为唯一实现口径。
 
 ---
@@ -1061,3 +1061,128 @@ systemctl is-active ftseek-us   # 保持 active
 | ⑦ P5 开工 | **建议前置三件小事**：N-1 机制建议（头部同步）、N-3（corpus 规则自描述）、N-4（版本溯源 sidecar）；均为 <20 行改动，可与 P5 同批 | 26.2 |
 
 **总评**：三轮自查/复查的自曝文化（R-1…R-5、S-1…S-6、误报平反）在本轮 22 项独立复现中**全部站得住**；该 DEB 的数字可信度已达到可裁决状态。剩余风险集中在 P5 的调度/载体面（未开工）与 N-2/N-4 两个小缺口。
+
+---
+
+## 27. P4.5 决策诊断层执行记录（2026-09-19）
+
+> 裁决：用户按建议执行。范围仍为**只读观测/呈现层**：不改交易行为、不挂 cron、不推送、不写 vault。
+
+### 27.1 交付
+
+1. 新增 `app/review/decision_diagnostics.py`：
+   - 固定三问：哪些指令疑似不该发、哪些入场疑似追高、哪些坑在重复。
+   - 新增阶段 × 方向 × 出场原因切片。
+   - 新增入场价格带 × 费用切片。
+   - MFE=0 且净亏损逐笔列示，标记 `candidate_not_verdict`，不冒充裁决。
+   - 追高审计区分初始计划价、reprice 后有效计划价、实际成交价与 chase cap。
+   - 重复亏损簇按同 prompt 类聚合，条件为 n≥3、≥2 日、≥2 标的、当前连亏≥3、连亏额低于 −$1,000。
+   - SIM↔实盘桥按同 signal/decision 配对，输出近 20 组累计差、$5,000 名义本金折算差与 $500 差异线。
+2. `app/review/bundle_builder.py` 接入 `sections.decision_diagnostics`。
+3. `app/review/bundle_render.py` 新增三问诊断、阶段×方向×出场原因、价格带×费用、SIM↔实盘桥。
+4. `app/review/stage_stats.py` 只扩展读取列：`id/owner_strategy/trade_mode/entry_reason/signal_id/decision_id/entry_price/exit_price`。为兼容最小测试库，按 `PRAGMA table_info` 动态选择存在列。
+5. 证据语义修正：
+   - plan-vs-actual 的 universe 改为 `db:playbook_instructions+db:trade_records`。
+   - derived evidence 增加说明：全日查询无 LIMIT，所选已平仓行均带 exit_time；空日也视为完整性已检查。
+6. 覆盖扫描产物自描述：
+   - `corpus.rules` 写明 `.py/.sh`、排除 `__pycache__`、只取 regular file。
+   - `push_exit_census_meta.categories_are_overlapping=true`，明确分类计数不可相加。
+
+### 27.2 2026-09-18 真库读数
+
+- 三问：
+  - 疑似不该发：1 笔，`US.COIN` / `FADE_SHORT` / MFE=0 / MAE=2.6455% / 净 −$161.65（候选，非裁决）。
+  - 疑似追高：2 笔，`US.UMC` 初始计划 22.6→实际 23.905（+5.8%，净 +$28.10）；`US.ARM` 260.5→267.515（+2.7%，净 +$13.80）。
+  - HPE 初判追高后被 reprice 口径推翻：reprice_from 61.56、实际 61.359，低于有效计划价，不再列为追高。
+  - 重复亏损簇：0 个达到阈值。
+- 阶段×方向×出场原因：
+  - 盘后/做多/`SL_TRAIL_LOCK`：+$110.75。
+  - 盘中/做多/`SL_BREAKEVEN`：+$57.36。
+  - 盘中/做多/`SL_TRAIL_LOCK`：+$28.10。
+  - 盘中/做空/`SL_INITIAL`：−$161.65。
+- 价格带×费用：
+  - `$20-$50`：2 笔，净 +$79.76，费 $11.74。
+  - `$50-$100`：1 笔，净 +$21.80，费 $4.70。
+  - `>= $100`：5 笔，净 −$67.00，费 $21.39。
+- SIM↔实盘桥：同信号配对 0 组；SIM 215、实盘 0。当前不能推断实盘差异，只能报告配对样本不存在。
+
+### 27.3 覆盖扫描新读数
+
+- 当前语料：1,709 个文件（app 478 / scripts 461 / ops 35 / tests 410 / hermes-scripts 32 / hermes-skills 293）。
+- 推送出口命中文件：165。
+- dead producers 仍为 18，producer 总数 58。
+- 该数字包含本轮新增 `decision_diagnostics.py` 与测试文件；§26 的 1699/164 是历史快照，不再代表当前工作区。
+
+### 27.4 验证
+
+- `pytest tests/review -q`：26/26 通过。
+- 既有回归 + ops sync：77/77 通过。
+- `py_compile` 通过。
+- 真实 CLI 连续两次运行，bundle / REVIEW / bundle_latest hash 一致。
+- `git diff --check` 通过。
+- crontab 无 review 行；`ops/hermes/review_bundle_carrier.py` 与 golden 目录仍不存在，P5 未开工。
+
+### 27.5 边界与后续
+
+- “疑似不该发”仅用 MFE=0 + 净亏损做候选筛选；最终裁决必须回看 prompt、标的选择、数据源和入场理由。
+- prompt 类目前来自 raw instruction 的 `strategy_type/entry_archetype/entry_strategy` 回退链，还不是完整 LLM prompt 分类。
+- 追高判据为：越过 chase cap，或高于 reprice 后有效计划价 2%。
+- 重复亏损簇是候选簇，小盈利会计入 weak interruption，但不自动判定策略失败。
+- actionable MFE（有利波动持续≥2根1分钟bar并触发救援动作且净收益≥$50）、regret price、delay-5 反事实、pretrade card 尚未实现，属下一阶段。
+- P5 仍不自动挂 cron；须等用户明确裁决载体与调度。
+
+---
+
+## 28. P4.6 可行动性诊断层执行记录（2026-09-19）
+
+> 裁决：继续只读观测/呈现层。不修改 `app/playbook/*`，不改变交易行为，不挂 cron，不推送，不写 vault。
+
+### 28.1 交付
+
+1. 新增 `app/review/actionability_diagnostics.py`：
+   - **Actionable MFE**：在真实一分钟 path 上找连续≥2根 bar 的有利波动；只有触及既有救援线（breakeven lock / trailing lock / tightened stop 的现存落库代理）且按方向计算、扣除 `fees_est` 与已记录 `exit_slippage_bps` 后净额≥$50，才列为候选。
+   - **Regret price**：对 LONG 取 bar low、SHORT 取 bar high，作为可成交限价候选；若救援触发则用救援出场，否则用实际出场；输出仍能净盈利的最高候选价。该值回答“如果按更合理的限价挂单，是否可能反转”。
+   - **Delay-5**：取实际入场后约5分钟的一分钟 bar close，保持同出场、同数量、同费用与已记录滑点，做方向正确净额对照。
+   - **Pretrade card coverage**：审计 prompt primary/secondary class、置信度、prompt/config 版本、数据源时间、候选Top5、拒绝原因、入选理由、四种场景（趋势延续、冲高失败、直接失败、低波横盘）、invalidation、救援动作。
+2. `app/review/bundle_builder.py` 新增 `sections.actionability`。
+3. `app/review/bundle_render.py` 输出汇总、Regret 候选、Delay-5 对照、Pretrade 字段缺口频率；所有条目均标注 `candidate_not_verdict` / `coverage_audit_not_verdict`。
+4. 新增 `tests/review/test_actionability_diagnostics.py`，覆盖 LONG path、SHORT 方向、缺 bar、pretrade 缺口与渲染接入。
+
+### 28.2 2026-09-18 真库读数
+
+- 已平仓8笔；6笔有一分钟 bar，2笔盘后（ACN/WBD）无 replay bar，显式记为缺 bar，不混入推断。
+- Actionable MFE：0/6。含义是**没有任何一笔同时满足**“有利波动持续≥2根bar + 救援线触发 + 扣费扣滑点后净额≥$50”。这不是“当天没有盈利”，也不是策略裁决。
+- Regret price：5/6 有正净额候选，但金额都很小：
+  - HPE：regret 61.215，净 +$2.23。
+  - UMC：regret 23.89，净 +$2.49。
+  - CRM：regret 240.07，净 +$2.16。
+  - ARM：regret 267.40，净 +$0.23。
+  - ORCL：regret 145.67，净 +$0.21。
+  - COIN：无可盈利限价候选。
+  - 结论：这些“正净额”不构成值得改规则的证据；只说明入场价距盈亏线很近，样本和金额都不足。
+- Delay-5：3笔实际更优、3笔延迟更优、0笔持平。
+  - 实际更优：HPE 实际 +$21.80 vs 延迟 −$18.22（+$40.02）；UMC +$28.10 vs +$8.26（+$19.84）；ORCL +$10.65 vs +$9.65（+$1.00）。
+  - 延迟更优：COIN 实际 −$161.65 vs 延迟 −$88.96（少亏 $72.69）；CRM +$19.03 vs 实际 +$11.11（+$7.92）；ARM +$25.85 vs 实际 +$13.80（+$12.05）。
+  - 读法：不能得出“统一延迟5分钟更好”。真正值得单独复盘的是 COIN——延迟仍亏损，但少亏明显，结合 MFE=0，指向入场时机/方向候选问题。
+- Pretrade card：完整 0/75。
+  - 75/75缺失：candidate_top5、prompt_secondary_class、prompt_version、rejection_reasons、rescue_actions、四种场景。
+  - 60/75缺失：prompt_primary_class、invalidation。
+  - 59/75缺失：selected_symbol_rationale。
+  - 74/75缺失：data_source_time。
+  - 这是最明确的系统缺口：当前能解释已成交结果，但不能在决策前完整回答“为什么是它、为什么不是别的、失败时怎么救”。
+
+### 28.3 边界
+
+- Actionable MFE 的“救援线”来自当前 trade metadata 中已经落库的 breakeven/trailing/effective-stop 线，是**现存动作代理**，不是完整 pretrade 预注册规则。
+- Regret price 假设 bar low/high 可按该价成交，未建模排队、部分成交与成交概率；滑点使用实际记录的 `exit_slippage_bps`，不额外臆造固定值。
+- Delay-5 保持同出场与同成本，只隔离入场时点；不能代表真实延迟后的完整订单生命周期。
+- 盘后无 replay bar 的2笔不推断；后续若补盘后bar，应重跑同日 bundle。
+- 所有输出均为候选证据，不直接触发策略修改、熔断或自动化。
+
+### 28.4 验证
+
+- `pytest tests/review -q`：31/31 通过。
+- 指定回归 + ops sync（review / stage / daily review / review tables / validation accounting / OKR）：108/108 通过。
+- `py_compile`：通过。
+- `git diff --check`：通过。
+- 真实 CLI 连续重跑 `2026-09-18`：bundle / REVIEW / latest 三个 hash 稳定；JSON 与 latest hash 一致；未推送、未写 vault。

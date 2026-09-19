@@ -47,8 +47,17 @@ def load_trades(conn: sqlite3.Connection, start: str, end: str,
 
     require_exit=True 只取**已平仓** (pnl_net 非空), 避免把在场单混进统计。
     """
-    sql = ("select symbol, direction, entry_time, exit_time, exit_reason, entry_session, "
-           "strategy_id, source_type, realized_pnl, pnl_net, fees_est, mfe_pct, mae_pct, quantity "
+    wanted_columns = [
+        "id", "symbol", "direction", "entry_time", "exit_time", "exit_reason", "entry_session",
+        "strategy_id", "owner_strategy", "source_type", "trade_mode", "entry_reason",
+        "signal_id", "decision_id", "entry_price", "exit_price", "realized_pnl",
+        "pnl_net", "fees_est", "mfe_pct", "mae_pct", "quantity",
+    ]
+    available_columns = {
+        row[1] for row in conn.execute("pragma table_info(trade_records)")
+    }
+    selected_columns = [column for column in wanted_columns if column in available_columns]
+    sql = (f"select {', '.join(selected_columns)} "
            "from trade_records where exit_time is not null "
            "and coalesce(data_quality, '') <> 'duplicate_external_close'")
     if require_exit:

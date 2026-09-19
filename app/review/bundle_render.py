@@ -22,6 +22,10 @@ def _ratio(value: Any) -> str:
     return f"{float(value) * 100:.1f}%"
 
 
+def _direction_label(value: Any) -> str:
+    return "做多" if str(value or "").upper() in ("LONG", "BUY") else "做空"
+
+
 def _iter_metric_payload(
     node: Any, path: str = ""
 ):
@@ -43,6 +47,16 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
     headline = payload["headline"]
     slices = payload["sections"]["slices"]
     plan = payload["sections"]["plan_vs_actual"]
+    diagnostics = payload["sections"]["decision_diagnostics"]
+    actionability = payload["sections"]["actionability"]
+    questions = diagnostics["three_questions"]
+    stage_direction_reason = diagnostics["stage_direction_reason"]
+    price_band_fees = diagnostics["price_band_fees"]
+    bridge = diagnostics["sim_real_bridge"]
+    actionable_mfe = actionability["actionable_mfe"]
+    regret_price = actionability["regret_price"]
+    delay_5 = actionability["delay_5"]
+    pretrade_card = actionability["pretrade_card"]
     anomalies = payload["anomalies"]
     pending = payload.get("pending_adjudications", [])
 
@@ -83,6 +97,177 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
     lines.extend(
         [
             "",
+            "## 三问诊断",
+            "",
+            "以下只列证据充分的问题候选，不直接等于策略裁决。",
+            "",
+            f"1. **哪些指令疑似不该发**：{questions['should_not_fire_count']['value']} 笔 MFE=0 且净亏损。",
+            f"2. **哪些入场疑似追高**：{questions['chase_entry_count']['value']} 笔高于计划价 2% 或越过 chase cap。",
+            f"3. **哪些坑在重复**：{questions['repeated_pitfall_count']['value']} 个 prompt 类达到重复亏损簇条件。",
+            "",
+        ]
+    )
+    for case in questions["should_not_fire_cases"]["value"]:
+        lines.append(
+            f"- 疑似错发 `{case['symbol']}` trade_id={case['trade_id']} / "
+            f"{case['stage']} / {case['prompt_class']} / 净 {_money(case['net'])} / "
+            f"MFE={case['mfe_pct']} / MAE={case['mae_pct']}"
+        )
+    for case in questions["chase_entry_cases"]["value"]:
+        lines.append(
+            f"- 疑似追高 `{case['symbol']}` trade_id={case['trade_id']} / "
+            f"{case['prompt_class']} / 初始计划 {case['initial_planned_entry']} → "
+            f"reprice {case['effective_planned_entry']} → 实际 {case['actual_entry']} "
+            f"({case['entry_premium_pct'] * 100:.1f}%) / "
+            f"{'越过 chase cap' if case['above_chase_cap'] else '未越 cap但溢价高'} / "
+            f"净 {_money(case['net'])}"
+        )
+    for cluster in questions["repeated_pitfall_clusters"]["value"]:
+        if cluster["qualifies"]["value"]:
+            lines.append(
+                f"- 重复亏损簇 `{cluster['prompt_class']}` / {cluster['window']} / "
+                f"n={cluster['n']['value']} / 当前连亏 {cluster['current_loss_streak']['value']} 笔 / "
+                f"连亏额 {_money(cluster['current_streak_loss']['value'])} / "
+                f"标的 {', '.join(cluster['symbols']['value'])}"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## 阶段 × 方向 × 出场原因",
+            "",
+        ]
+    )
+    if stage_direction_reason:
+        lines.extend(
+            [
+                "| 阶段 | 方向 | 出场原因 | n | 净额 | 胜率 | MFE=0 |",
+                "|---|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for stage, directions in stage_direction_reason.items():
+            for direction, reasons in directions.items():
+                for reason, row in reasons.items():
+                    lines.append(
+                        f"| {_STAGE_LABEL.get(stage, stage)} | {direction} | {reason} | "
+                        f"{row['n']['value']} | {_money(row['net']['value'])} | "
+                        f"{_ratio(row['win_rate']['value'])} | {row['mfe0']['value']} |"
+                    )
+    else:
+        lines.append("无已平仓样本。")
+
+    lines.extend(["", "## 价格带 × 费用", ""])
+    if price_band_fees:
+        lines.extend(
+            [
+                "| 价格带 | n | 净额 | 毛额 | 费用 | 费毛比 |",
+                "|---|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for band, row in price_band_fees.items():
+            lines.append(
+                f"| {band} | {row['n']['value']} | {_money(row['net']['value'])} | "
+                f"{_money(row['gross']['value'])} | {_money(row['fees']['value'])} | "
+                f"{_ratio(row['fee_to_gross']['value'])} |"
+            )
+    else:
+        lines.append("无可用入场价样本。")
+
+    lines.extend(
+        [
+            "",
+            "## SIM ↔ 实盘桥",
+            "",
+            f"- 同信号配对：{bridge['paired_signal_count']['value']} 组（SIM {bridge['sim_trade_count']['value']} / 实盘 {bridge['real_trade_count']['value']}）。",
+            f"- 近 20 组累计差：{_money(bridge['rolling_20_cumulative_difference']['value'])}，按 $5,000 名义本金折算 {_money(bridge['normalized_per_5000']['value'])}。",
+            f"- 超过 $500 差异线：{'是' if bridge['rolling_20_exceeds_500']['value'] else '否'}。",
+            "",
+            "口径：只按同 signal/decision 配对；无配对时不推断实盘差异。",
+            "",
+            "## 可行动性诊断",
+            "",
+            "以下均为候选证据，不直接改变交易规则。",
+            "",
+            f"- 可行动 MFE：{actionable_mfe['actionable_count']['value']} / {actionable_mfe['evaluated_count']['value']}（缺 bar {actionable_mfe['bar_unavailable_count']['value']}）。",
+            f"- Regret price：{regret_price['profitable_candidate_count']['value']} / {regret_price['evaluated_count']['value']}（缺 bar {regret_price['bar_unavailable_count']['value']}）。",
+            f"- 延迟 5 分钟：实际更优 {delay_5['actual_better_count']['value']}，延迟更优 {delay_5['delayed_better_count']['value']}，持平 {delay_5['neutral_count']['value']}，缺 bar {delay_5['bar_unavailable_count']['value']}。",
+            f"- Pretrade 卡片完整率：{pretrade_card['complete_card_count']['value']} / {pretrade_card['instruction_count']['value']}（{_ratio(pretrade_card['coverage_ratio']['value'])}）。",
+            "",
+        ]
+    )
+    if actionable_mfe["cases"]["value"]:
+        lines.extend(
+            [
+                "### 可行动 MFE 候选",
+                "",
+                "| 标的 | 方向 | 持续bar | 救援动作 | 估算净额 |",
+                "|---|---|---:|---|---:|",
+            ]
+        )
+        for case in actionable_mfe["cases"]["value"][:5]:
+            lines.append(
+                f"| {case['symbol']} | {_direction_label(case['direction'])} | "
+                f"{case['persistent_bars']} | {case['rescue_action']} | "
+                f"{_money(case['estimated_rescue_net'])} |"
+            )
+    if regret_price["cases"]["value"]:
+        lines.extend(
+            [
+                "### Regret price 候选",
+                "",
+                "| 标的 | 方向 | regret价 | 距实际入场 | 估算净额 | 口径 |",
+                "|---|---|---:|---:|---:|---|",
+            ]
+        )
+        for case in regret_price["cases"]["value"][:5]:
+            gap = (
+                _ratio(case["regret_gap_pct"])
+                if case.get("regret_gap_pct") is not None
+                else "—"
+            )
+            net = (
+                _money(case["estimated_net_at_regret"])
+                if case.get("estimated_net_at_regret") is not None
+                else "—"
+            )
+            lines.append(
+                f"| {case['symbol']} | {_direction_label(case['direction'])} | "
+                f"{case.get('regret_price', '—')} | {gap} | {net} | {case['status']} |"
+            )
+    if delay_5["cases"]["value"]:
+        lines.extend(
+            [
+                "### 延迟 5 分钟反事实",
+                "",
+                "| 标的 | 延迟价 | 延迟净额 | 实际-延迟 | 读法 |",
+                "|---|---:|---:|---:|---|",
+            ]
+        )
+        for case in delay_5["cases"]["value"][:5]:
+            lines.append(
+                f"| {case['symbol']} | {case['delayed_entry_price']} | "
+                f"{_money(case['delayed_net'])} | "
+                f"{_money(case['actual_minus_delayed'])} | {case['result']} |"
+            )
+    if pretrade_card["cases"]["value"]:
+        missing_counts = {}
+        for case in pretrade_card["cases"]["value"]:
+            for field in case["missing_fields"]:
+                missing_counts[field] = missing_counts.get(field, 0) + 1
+        lines.extend(
+            [
+                "### Pretrade 卡片缺口",
+                "",
+                "| 缺失字段 | n |",
+                "|---|---:|",
+            ]
+        )
+        for field, count in sorted(
+            missing_counts.items(), key=lambda item: (-item[1], item[0])
+        ):
+            lines.append(f"| {field} | {count} |")
+    lines.extend(
+        [
             "## 计划 vs 实际",
             "",
             f"- 计划指令：{plan['planned_count']['value']}",

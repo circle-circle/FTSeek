@@ -261,10 +261,19 @@ def build_report(
             "roots": [_root_label(root) for root in roots],
             "file_count": len(files),
             "scope_counts": dict(sorted(scope_counts.items())),
+            "rules": {
+                "file_suffixes": [".py", ".sh"],
+                "excluded_path_parts": ["__pycache__"],
+                "selection": "regular files only",
+            },
         },
         "producers": producers,
         "dead_producers": dead_producers,
         "push_exit_census": push_exit_census(files, code_cache),
+        "push_exit_census_meta": {
+            "categories_are_overlapping": True,
+            "note": "A file may use multiple exit classes; category counts must not be summed.",
+        },
     }
 
 

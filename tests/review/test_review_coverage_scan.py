@@ -43,6 +43,12 @@ def test_skill_corpus_is_visible_and_test_refs_do_not_mark_producer_alive(tmp_pa
     assert "skill" not in dead
     assert "dead" in dead
     assert "hermes/skills" in report["corpus"]["roots"]
+    assert report["corpus"]["rules"] == {
+        "file_suffixes": [".py", ".sh"],
+        "excluded_path_parts": ["__pycache__"],
+        "selection": "regular files only",
+    }
+    assert report["push_exit_census_meta"]["categories_are_overlapping"] is True
 
 
 def test_push_exit_census_separates_hub_notifier_and_curl(tmp_path):

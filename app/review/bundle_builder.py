@@ -6,7 +6,9 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping
 
+from app.review.actionability_diagnostics import build_actionability_diagnostics
 from app.review.bundle_schema import Bundle, Evidence, Metric
+from app.review.decision_diagnostics import build_decision_diagnostics
 from app.review.stage_stats import load_trades, stage_breakdown
 from app.utils.timezone import to_et
 
@@ -14,7 +16,14 @@ from app.utils.timezone import to_et
 _DIRECTION_TO_PLAN = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
 
 
-def _derived_evidence(ref: str, report_date: str, sample_n: int) -> Evidence:
+def _derived_evidence(
+    ref: str,
+    report_date: str,
+    sample_n: int,
+    universe: str = "db:trade_records",
+    truncation_checked: bool = True,
+    note: str = "",
+) -> Evidence:
     return Evidence(
         kind="derived",
         ref=ref,
@@ -22,9 +31,10 @@ def _derived_evidence(ref: str, report_date: str, sample_n: int) -> Evidence:
         integrity={
             "n": sample_n,
             "window": f"{report_date}..{report_date}",
-            "universe": "db:trade_records",
-            "truncation_checked": True,
+            "universe": universe,
+            "truncation_checked": truncation_checked,
         },
+        note=note,
     )
 
 
@@ -36,7 +46,11 @@ def _result_metrics(rows: Iterable[Mapping[str, Any]], report_date: str) -> Dict
     ordered_rows = list(rows)
     sample_n = len(ordered_rows)
     evidence = _derived_evidence(
-        "app.review.stage_stats.load_trades then deterministic aggregation", report_date, sample_n
+        "app.review.stage_stats.load_trades then deterministic aggregation",
+        report_date,
+        sample_n,
+        truncation_checked=all(row.get("exit_time") is not None for row in ordered_rows),
+        note="full-day query has no LIMIT and every selected closed trade carries exit_time",
     )
     net = round(math.fsum(float(row.get("net") or 0.0) for row in ordered_rows), 2)
     gross = round(math.fsum(float(row.get("gross") or 0.0) for row in ordered_rows), 2)
@@ -77,6 +91,8 @@ def build_slices(
             "app.review.stage_stats.stage_breakdown over load_trades rows",
             report_date,
             sample_n,
+            truncation_checked=all(row.get("exit_time") is not None for row in rows),
+            note="full-day query has no LIMIT and every selected closed trade carries exit_time",
         )
         stage_n = int(values["n"])
         wins = int(values["wins"])
@@ -152,7 +168,11 @@ def build_plan_vs_actual(
 
     sample_n = len(planned_pairs)
     evidence = _derived_evidence(
-        "playbook_instructions and trade_records pair comparison", report_date, sample_n
+        "playbook_instructions and trade_records pair comparison",
+        report_date,
+        sample_n,
+        universe="db:playbook_instructions+db:trade_records",
+        note="both full-day queries have no LIMIT; pair coverage is built from both sources",
     )
     executed_count = len(executed_pairs)
     execution_rate = round(executed_count / sample_n, 6) if sample_n else 0.0
@@ -235,6 +255,8 @@ def build(connection: sqlite3.Connection, report_date: str) -> Bundle:
         sections={
             "slices": build_slices(connection, report_date),
             "plan_vs_actual": build_plan_vs_actual(connection, report_date),
+            "decision_diagnostics": build_decision_diagnostics(connection, report_date),
+            "actionability": build_actionability_diagnostics(connection, report_date),
         },
         anomalies=build_anomalies(connection, report_date),
         self_audit={

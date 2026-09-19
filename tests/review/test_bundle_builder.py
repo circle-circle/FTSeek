@@ -24,7 +24,14 @@ def _create_db():
           entry_session text,
           exit_reason text,
           strategy_id text,
+          owner_strategy text,
           source_type text,
+          trade_mode text,
+          entry_reason text,
+          signal_id text,
+          decision_id text,
+          entry_price real,
+          exit_price real,
           realized_pnl real,
           pnl_net real,
           fees_est real,
@@ -38,6 +45,8 @@ def _create_db():
           date text not null,
           symbol text not null,
           direction text not null
+          , entry_price real, raw_instruction_json text, metadata_json text,
+          decision_id text
         );
         """
     )
