@@ -860,7 +860,7 @@ class ObsidianWriter:
 """
         return self._write_md("daily/premarket", filename, content)
 
-    def write_daily_postmarket(self, data: Dict) -> Optional[str]:
+    def write_daily_postmarket(self, data: Dict, overwrite: bool = False) -> Optional[str]:
         """写入盘后复盘笔记"""
         date_str = data.get('date', datetime.now().strftime("%Y-%m-%d"))
         market = data.get('market', 'HK')
@@ -932,7 +932,7 @@ class ObsidianWriter:
 ## 次日建议
 <!-- Agent 自动生成 -->
 """
-        return self._write_md("daily/postmarket", filename, content)
+        return self._write_md("daily/postmarket", filename, content, overwrite=overwrite)
 
 
 # ============================================================

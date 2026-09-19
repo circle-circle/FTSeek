@@ -1,4 +1,5 @@
 import json
+import contextlib
 import os
 import sqlite3
 import subprocess
@@ -679,6 +680,144 @@ def test_exit_blocks_when_broker_exit_order_is_active(
     assert result["ok"] is False
     assert result["error"] == "exit_eth_partial_fill_held"
     assert len(broker.calls) == 1
+
+
+@pytest.mark.parametrize("error", [
+    "exit_evidence_pending",
+    "exit_legacy_order_evidence_pending",
+    "exit_order_evidence_pending",
+    "exit_order_pending",
+    "exit_position_evidence_pending",
+    "exit_fill_price_pending",
+    "exit_cancel_pending",
+    "exit_reconciliation_pending",
+])
+def test_exit_pending_evidence_is_awaiting_confirmation_not_failure(
+    exit_environment, monkeypatch, error
+):
+    class PendingBroker:
+        def close_position(self, *args, **kwargs):
+            return {
+                "success": False,
+                "order_filled": False,
+                "error": error,
+                "exit_state": "HELD",
+                "exit_intent_id": "pending-intent",
+                "futu_order_id": "900004",
+                "filled_price": 0.0,
+                "dealt_qty": 0.0,
+                "price_source": "exit_evidence_pending",
+            }
+
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: PendingBroker())
+
+    result = exit_executor.execute(
+        "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "awaiting_confirmation"
+    assert result["awaiting_confirmation"] is True
+    assert result["error"] == error
+    with exit_executor._AUDIT_LOG.open() as handle:
+        audit = json.loads(handle.read().splitlines()[-1])
+    assert audit["awaiting_confirmation"] is True
+    assert audit["status"] == "awaiting_confirmation"
+
+
+def test_exit_executor_exception_has_failure_status(exit_environment, monkeypatch):
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(
+        exit_executor,
+        "_get_dual_broker",
+        lambda: (_ for _ in ()).throw(RuntimeError("ledger unavailable")),
+    )
+
+    result = exit_executor.execute(
+        "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed_or_held"
+    assert result["awaiting_confirmation"] is False
+    assert result["error"] == "durable_exit_failed:ledger unavailable"
+
+
+def test_collect_blocks_extended_open_position_count(monkeypatch):
+    @contextlib.contextmanager
+    def state_lock():
+        yield True
+
+    class TradeContext:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(entry_executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(entry_executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(entry_executor, "_state_lock", state_lock)
+    monkeypatch.setattr(entry_executor, "_load_state", lambda: {"version": 2})
+    monkeypatch.setattr(entry_executor, "_save_state", lambda state: None)
+    monkeypatch.setattr(entry_executor, "_open_trade_context", lambda: TradeContext())
+    monkeypatch.setattr(
+        entry_executor,
+        "_reconcile_broker_entry_orders",
+        lambda *args, **kwargs: ([], []),
+    )
+    monkeypatch.setattr(
+        entry_executor,
+        "_extended_open_exposure",
+        lambda: ([("US.A", 10, 100), ("US.B", 10, 100), ("US.C", 10, 100)], 3000),
+    )
+
+    result = entry_executor.collect("afterhours")
+
+    assert result == [{
+        "skip": "ext_open_position_limit",
+        "open_positions": 3,
+        "limit": entry_executor.MAX_OPEN,
+    }]
+
+
+def test_open_exposure_gate_blocks_notional_projection(monkeypatch):
+    monkeypatch.setattr(
+        entry_executor,
+        "_extended_open_exposure",
+        lambda: ([("US.A", 100, 110), ("US.B", 100, 100)], 11000),
+    )
+
+    result = entry_executor._open_exposure_gate()
+
+    assert result == {
+        "skip": "ext_open_notional_limit",
+        "open_notional_usd": 11000,
+        "next_position_usd": entry_executor.POSITION_USD,
+        "limit_usd": entry_executor.MAX_OPEN_NOTIONAL_USD,
+    }
+
+
+def test_extended_open_exposure_counts_only_extended_positions(tmp_path, monkeypatch):
+    db_path = tmp_path / "open.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "CREATE TABLE open_positions (symbol TEXT, size REAL, avg_entry_price REAL, "
+        "owner_strategy TEXT, strategy_id TEXT, position_id TEXT)"
+    )
+    connection.executemany(
+        "INSERT INTO open_positions VALUES (?,?,?,?,?,?)",
+        [
+            ("US.EXT", 10, 100, "extended_hours_entry", "other", "normal"),
+            ("US.REGULAR", 20, 200, "playbook_sim", "playbook_sim", "normal"),
+        ],
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(entry_executor, "DB", db_path)
+
+    rows, exposure = entry_executor._extended_open_exposure()
+
+    assert rows == [("US.EXT", 10, 100)]
+    assert exposure == 1000
 
 
 def test_exit_next_open_path_uses_rth_session(exit_environment, monkeypatch):

@@ -41,6 +41,16 @@ _AUDIT_LOG = ROOT / "data" / "extended_hours_exit_executions.jsonl"
 DB = ROOT / "data" / "ftseek_us.db"
 SESSION_WINDOWS = {"premarket": (400, 929), "afterhours": (1600, 1959),
                    "next_open": (930, 945)}   # 2026-09-17 用户裁: 盘后仓持到次日开盘兑现 (RTH 已开盘)
+_PENDING_EVIDENCE_ERRORS = {
+    "exit_evidence_pending",
+    "exit_legacy_order_evidence_pending",
+    "exit_order_evidence_pending",
+    "exit_order_pending",
+    "exit_position_evidence_pending",
+    "exit_fill_price_pending",
+    "exit_cancel_pending",
+    "exit_reconciliation_pending",
+}
 
 def _already_executed(symbol, today):
     """跨进程防重: 只有真实全额成交且本地仓位已更新才阻断当日重试."""
@@ -234,10 +244,19 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         db_updated = False
         if close_result.get("success") and close_result.get("order_filled") and fully_filled:
             db_updated = bool(_book_playbook_exit_result(dual, close_result))
+        awaiting_confirmation = bool(
+            not db_updated
+            and close_result.get("exit_intent_id")
+            and close_result.get("exit_state") in ("PENDING", "HELD")
+            and close_result.get("error") in _PENDING_EVIDENCE_ERRORS
+        )
 
         result = {
             "ok": bool(close_result.get("success") and close_result.get("order_filled")
                        and fully_filled and db_updated),
+            "status": ("awaiting_confirmation" if awaiting_confirmation else
+                       "booked" if db_updated else "failed_or_held"),
+            "awaiting_confirmation": awaiting_confirmation,
             "order_id": close_result.get("futu_order_id", ""),
             "exit_intent_id": close_result.get("exit_intent_id", ""),
             "symbol": symbol, "qty": float(qty), "price": float(price),
@@ -254,6 +273,9 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         if result["ok"]:
             _push(f"✅ {_stage(session)}锁盈已成交\n{symbol} {dealt_qty:g}股 @ "
                   f"{result['avg_fill_price']:.2f}\n订单 {result['order_id']} | 原因 {reason}")
+        elif awaiting_confirmation:
+            _push(f"⏳ {_stage(session)}锁盈等待券商回报\n{symbol} {dealt_qty:g}/{qty:g}股\n"
+                  f"intent={result['exit_intent_id']} {result['error']}（非执行失败）")
         else:
             _push(f"⚠️ {_stage(session)}锁盈待确认\n{symbol} {dealt_qty:g}/{qty:g}股\n"
                   f"intent={result['exit_intent_id']} {result['error']}")
@@ -261,6 +283,7 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
     except Exception as exc:
         result = {"ok": False, "symbol": symbol, "qty": qty, "price": price,
                   "session": session, "reason": reason,
+                  "status": "failed_or_held", "awaiting_confirmation": False,
                   "error": f"durable_exit_failed:{exc}"}
         _audit(result)
         _push(f"🚨 延长时段 durable exit 异常\n{symbol}\n{exc}")

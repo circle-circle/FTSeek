@@ -14,6 +14,7 @@
   python3 scripts/eth_stage_daily_report.py                  # 打印 (默认最近已收盘 ET 日)
   python3 scripts/eth_stage_daily_report.py --date 2026-09-18
   python3 scripts/eth_stage_daily_report.py --push           # 有样本才推 (无样本静默, 零噪音)
+  python3 scripts/eth_stage_daily_report.py --push --refresh-postmarket
 """
 from __future__ import annotations
 
@@ -136,6 +137,30 @@ def holding_ext() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def _generate_daily_review(day: str) -> dict:
+    from app.review.daily_review import generate_daily_review
+    return generate_daily_review(day, final_refresh=True)
+
+
+def refresh_postmarket(day: str) -> bool:
+    """20:30 ET 后重跑全日 postmarket 终稿。
+
+    16:00 初稿天然不知道 16:00-20:00 的延长时段成交/平仓结果；本函数复用
+    DailyReviewGenerator 的唯一格式与净额口径，重写 Obsidian postmarket 笔记。
+    """
+    try:
+        review_report = _generate_daily_review(day)
+        summary = review_report.get("summary", {})
+        print(f"[postmarket] 终稿已刷新: {day} "
+              f"total={summary.get('total_trades', 0)} "
+              f"closed={summary.get('closed_trades', 0)} "
+              f"net={summary.get('total_pnl_net', summary.get('total_pnl', 0))}")
+        return True
+    except Exception as exc:
+        print(f"[postmarket][ERROR] 终稿刷新失败: {day} {exc}")
+        return False
+
+
 def render(day: str, push_date_note: str = "") -> str:
     fun = funnel(day)
     trades = rows_from_db(str(DB), day, day)
@@ -178,6 +203,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="延长时段 (盘前/盘后) 阶段日报")
     ap.add_argument("--date", default=None, help="ET 日期 YYYY-MM-DD (默认最近已收盘 ET 日)")
     ap.add_argument("--push", action="store_true", help="推送 (有样本才推, 无样本静默)")
+    ap.add_argument("--refresh-postmarket", action="store_true",
+                    help="有延长时段样本时, 20:30 后重写全日 Obsidian postmarket 终稿")
     ap.add_argument("--json", action="store_true", help="附机器可读 JSON")
     args = ap.parse_args(argv)
 
@@ -189,6 +216,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         or bool(ext_trades) or bool(holding_ext())
     body = render(day)
     print(body)
+
+    if args.refresh_postmarket and has_sample and not refresh_postmarket(day):
+        return 1
 
     if args.json:
         print(json.dumps({"date": day, "funnel": fun,

@@ -60,7 +60,8 @@ class DailyReviewGenerator:
             logger.warning(f"[daily_review] 查询失败 ({target.name}): {e}")
             return []
     
-    def generate(self, date: str = None, account_type: str = None) -> Dict[str, Any]:
+    def generate(self, date: str = None, account_type: str = None,
+                 final_refresh: bool = False) -> Dict[str, Any]:
         """生成每日复盘报告 (v2.0)"""
         if date is None:
             try:
@@ -172,7 +173,7 @@ class DailyReviewGenerator:
             report['dimensions'], signal_funnel, capital_state, attribution_data, closed_trades
         )
 
-        self._save_report(report, date)
+        self._save_report(report, date, overwrite_postmarket=final_refresh)
         logger.info(
             f"每日复盘报告 v2.0 生成完成：{len(closed_trades)} 笔交易, "
             f"{signal_funnel.get('total_decisions', 0)} 条决策, "
@@ -1426,7 +1427,8 @@ class DailyReviewGenerator:
             logger.warning(f"[F22] exit_reason×pnl 分析失败: {e}")
             return {'error': str(e)}
 
-    def _save_report(self, report: Dict, date: str):
+    def _save_report(self, report: Dict, date: str,
+                     overwrite_postmarket: bool = False):
         """保存报告"""
         filename = self.output_dir / f"daily_review_{date}.json"
         with open(filename, 'w', encoding='utf-8') as f:
@@ -1474,7 +1476,7 @@ class DailyReviewGenerator:
                             'pnl': t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0),
                             'id': str(t.get('id', i))}
                            for i, t in enumerate(trades)],
-            })
+            }, overwrite=overwrite_postmarket)
             logger.info(f"[Obsidian] 美股盘后复盘已写入")
         except Exception as _e:
             logger.debug(f"[Obsidian] 美股复盘写入失败: {_e}")
@@ -1488,6 +1490,7 @@ class DailyReviewGenerator:
             return json.load(f)
 
 
-def generate_daily_review(date: str = None, account_type: str = None) -> Dict:
+def generate_daily_review(date: str = None, account_type: str = None,
+                          final_refresh: bool = False) -> Dict:
     generator = DailyReviewGenerator()
-    return generator.generate(date, account_type)
+    return generator.generate(date, account_type, final_refresh=final_refresh)

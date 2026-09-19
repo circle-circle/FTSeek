@@ -220,7 +220,10 @@ def _block_outbound_notifications(monkeypatch):
     病灶: 个别用例 (如 test_execute_rejects_real_environment) 用 FUTU_TRD_ENV=REAL 调 _execute
     且**未** mock 推送 ⇒ 每跑一次 pytest 就给生产飞书真发一条
     "🚫 延长时段开仓拦截: US.FAKE REAL未授权"。同类污染先例: 钉钉通知器被真调用致环境污染。
-    处置: 在 conftest 层统一封死出口 (需要断言推送的用例请 monkeypatch 自己的缝: _push / hub)。
+    处置: 在 conftest 层封死**具体网络出口**，而不是替换 PushHub.push：
+    PushHub.push 是路由/去重/聚合/广播的核心被测行为，整体替换会让既有单测
+    全部变成"恒成功但零送达"的假红。这里保留 Hub 逻辑，只拦截钉钉/飞书/flag
+    网络与磁盘出口；需要断言 Hub 行为的用例照常使用本地 mock channel。
     并默认把 FUTU_TRD_ENV 钉在 SIMULATE —— 测试环境不与 REAL 混淆 (显式要 REAL 的用例自行 setenv)。
     """
     recorded = []
@@ -240,10 +243,19 @@ def _block_outbound_notifications(monkeypatch):
             pass
     try:
         hub_module = importlib.import_module("app.push.hub")
-        for cls_name in ("PushHub", "Hub"):
+        from app.push.channels import DingTalkChannel, FeishuChannel, FlagFileChannel
+
+        def _record_channel(msg, *args, **kwargs):
+            recorded.append(msg.render_text())
+            return True
+
+        for cls_name in ("DingTalkChannel", "FeishuChannel", "FlagFileChannel"):
             cls = getattr(hub_module, cls_name, None)
-            if cls is not None and hasattr(cls, "push"):
-                monkeypatch.setattr(cls, "push", lambda self, msg, **kw: True, raising=False)
+            if cls is None:
+                cls = {"DingTalkChannel": DingTalkChannel,
+                       "FeishuChannel": FeishuChannel,
+                       "FlagFileChannel": FlagFileChannel}[cls_name]
+            monkeypatch.setattr(cls, "send", _record_channel, raising=False)
     except Exception:
         pass
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")

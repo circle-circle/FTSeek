@@ -1,5 +1,37 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-19 10:20 增量: 复查纠偏 — pending 全口径 + 异常审计状态
+
+> 复查发现 `exit_lifecycle` 实际可产生 **8** 种 `exit_*_pending` 证据错误，此前执行器只识别
+> 4 种；已补齐 `exit_evidence_pending` / `exit_order_pending` / `exit_position_evidence_pending`
+> / `exit_legacy_order_evidence_pending`。异常路径审计也补 `status=failed_or_held` 与
+> `awaiting_confirmation=false`，保证字段 schema 稳定。定向回归 **93 passed**；`py_compile`、
+> `git diff --check` 通过；重启前 open_positions=0 / 非 BOOKED exit_intents=0，
+> 10:18:53 CST 重启后启动冒烟 7/7 通过，服务 active/running PID 1993680，启动段零
+> ERROR/CRITICAL/Traceback。
+
+## 2026-09-19 10:12 增量: P1 落地 — pending 证据口径 + EXT 专属敞口硬闸
+
+> 用户令「继续」⇒ 承接上批 P1。①退出执行器审计新增 `status` 与 `awaiting_confirmation`:
+> durable intent 处于 `PENDING/HELD` 且 error 为证据待回证八类时, `ok=false` 仍表示未 booked,
+> 但不再冒充执行失败; 生产 cron `EXT_EXIT_LIMIT_TIMEOUT_S` 20→60 (父链 240>180>60 保持单调)。
+> ②入场链新增 `EXT_ENTRY_MAX_OPEN` / `EXT_ENTRY_MAX_OPEN_NOTIONAL_USD`, 只统计
+> `extended_hours_entry`/`EXT-*` 专属仓; 默认 3 仓/$15,000 与现观察期等价, 价格缺失 fail-closed。
+> 相关回归 **149 passed**; `py_compile`、`git diff --check` 通过; 详见 DEB-20260919 §十四。
+> 重启前 open_positions=0 / 非 BOOKED exit_intents=0, 10:14:02 CST 重启后启动冒烟 7/7 通过,
+> 服务 active/running PID 1992177, 启动段零 ERROR/CRITICAL。
+
+## 2026-09-19 10:00 增量: 复盘终稿刷新 + 推送单测假红根修
+
+> 用户令「继续」⇒ 执行前两项 P0。①`tests/conftest.py` 不再整体替换 `PushHub.push`，改为封死
+> DingTalk/Feishu/FlagFile 具体出口，保留 Hub 路由/去重/聚合被测行为；此前 `test_push_hub.py`
+> 10 failed 的假红消除。②`eth_stage_daily_report.py --refresh-postmarket` 复用
+> `DailyReviewGenerator`，并通过 `write_daily_postmarket(overwrite=True)` 在 20:30 重写 Obsidian
+> 全日终稿；系统 crontab 已追加该参数。9/18 实证：7 笔/ACN 过夜/−76.19 的 16:33 初稿 →
+> 8 笔/8 平/无过夜/+34.56。相关回归 79 passed，`py_compile` 与 `git diff --check` 通过；
+> 重启前核验 open_positions=0 / 非 BOOKED exit_intents=0，10:00:59 CST 重启后启动冒烟 7/7
+> 通过，服务 active/running PID 1990677，启动段零 ERROR/CRITICAL。
+
 ## 2026-09-19 09:17 增量: 交易日历核查 + 6 处盘中守卫缺口修复 (已重启生效)
 
 > 用户问「盘前盘中是否走已有交易日历」⇒ 核查=**走** (延长时段三件套经 SSOT; 实证 9/9 与 Futu 权威一致, 含半日市); **缺口=6 处盘中守卫用 `is_us_holiday` 而它只查硬编码表** ⇒ 已修。commits `f3835c782`(修复+测试) `13f049440`(DEB §十三)。

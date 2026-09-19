@@ -37,6 +37,9 @@
    ①漏斗（价格闸拦 / 预交易闸拦 / 下单尝试 / 成交 + 未成交原因）
    ②该 ET 日已平仓的 阶段×方向×出场原因 ③仍持有的延长时段仓（含 `initial_sl`，过夜风险可见）。
    **无样本日不推送**（`has_sample` = 漏斗/成交/在场任一非空），零噪音。
+   2026-09-19 补 `--refresh-postmarket`：有延长时段样本时同轮重跑
+   `DailyReviewGenerator.generate(day)`，把 16:00 初稿刷新为 20:30 后的全日终稿
+   （避免 Obsidian 仍显示已平仓的 ACN 为过夜、且漏掉 WBD）。
    台账入账 `crontab-eth-stage-daily`，cron `30 8 * * 2-6`（北京 = ET Mon-Fri 20:30，
    盘后收盘后 30min；**冬令时右移 1h，11 月重评**）。
 

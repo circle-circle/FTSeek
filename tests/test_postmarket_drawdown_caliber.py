@@ -92,6 +92,20 @@ def test_doc_line_missing_key_renders_na(tmp_path):
     assert "n/a | 当日 0/2 笔有非零回撤" in text
 
 
+def test_postmarket_final_refresh_overwrites_existing_note(tmp_path):
+    writer = ObsidianWriter(vault_path=str(tmp_path))
+    data = {"date": "2026-09-18", "market": "US", "total_trades": 8,
+            "win_rate": 0.75, "total_pnl": 34.56, "trades": []}
+
+    first = writer.write_daily_postmarket(data)
+    Path(first).write_text("STALE 16:00 INITIAL DRAFT", encoding="utf-8")
+    writer.write_daily_postmarket(data, overwrite=True)
+
+    text = Path(first).read_text(encoding="utf-8")
+    assert "STALE 16:00 INITIAL DRAFT" not in text
+    assert "总交易**: 8" in text
+
+
 def test_source_contract_no_percent_format_on_pp_field():
     src = (REPO / "app" / "core" / "obsidian_writer.py").read_text(encoding="utf-8")
     # 只判代码位 (剥掉整行注释) — 修复说明里逐字引用旧渲染串是留痕需要, 不算"旧代码回来了"

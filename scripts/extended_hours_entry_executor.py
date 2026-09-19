@@ -50,6 +50,10 @@ except Exception:
 # ── 用户 9/17 拍板参数 ──
 POSITION_USD = 5000        # 单笔仓位
 MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "3"))
+MAX_OPEN = int(os.getenv("EXT_ENTRY_MAX_OPEN", str(MAX_PER_DAY)))
+MAX_OPEN_NOTIONAL_USD = float(
+    os.getenv("EXT_ENTRY_MAX_OPEN_NOTIONAL_USD", str(POSITION_USD * MAX_OPEN))
+)
 # ↑ 盘前+盘后**合计**每日新仓上限. 2026-09-17 用户裁: 2 → 5 (原话"配额可以提升到5，再观察").
 #   动机: 延长时段机会面比预期宽(官方榜 top50), 2 笔在盘前窗早段就被用尽 ⇒ 当晚真催化票开不出来;
 #   叠加同日上线的价格下限闸($5 挡仙股)后, 单笔噪声风险已降, 放宽数量换取样本速度。
@@ -677,6 +681,50 @@ def _held_symbols():
         raise RuntimeError(f"open_positions read failed, refusing entry: {exc}") from exc
 
 
+def _extended_open_exposure():
+    """Count/notional owned by the extended-hours entry strategy only."""
+    try:
+        conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=30)
+        rows = conn.execute(
+            "SELECT symbol, size, avg_entry_price FROM open_positions "
+            "WHERE size != 0 AND (owner_strategy='extended_hours_entry' "
+            "OR strategy_id='extended_hours_entry' OR position_id LIKE 'EXT-%') "
+            "ORDER BY symbol"
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        raise RuntimeError(f"extended open_positions read failed, refusing entry: {exc}") from exc
+
+    exposure = 0.0
+    for symbol, size, avg_entry_price in rows:
+        size_value = float(size or 0)
+        price_value = float(avg_entry_price or 0)
+        if size_value == 0 or price_value <= 0:
+            return rows, None
+        exposure += abs(size_value * price_value)
+    return rows, exposure
+
+
+def _open_exposure_gate():
+    rows, exposure = _extended_open_exposure()
+    if len(rows) >= MAX_OPEN:
+        return {
+            "skip": "ext_open_position_limit",
+            "open_positions": len(rows),
+            "limit": MAX_OPEN,
+        }
+    if exposure is None:
+        return {"skip": "ext_open_notional_unavailable", "open_positions": len(rows)}
+    if exposure + POSITION_USD > MAX_OPEN_NOTIONAL_USD:
+        return {
+            "skip": "ext_open_notional_limit",
+            "open_notional_usd": round(exposure, 2),
+            "next_position_usd": POSITION_USD,
+            "limit_usd": MAX_OPEN_NOTIONAL_USD,
+        }
+    return None
+
+
 def _open_trade_context():
     from futu import OpenSecTradeContext, TrdMarket, SecurityFirm
 
@@ -992,6 +1040,10 @@ def collect(session, dry=False):
         total_today = _opened_today_total(opened_today, today)
         if total_today >= MAX_PER_DAY:
             return [{"skip": "daily_limit", "total_today": total_today}]
+        exposure_gate = _open_exposure_gate()
+        if exposure_gate:
+            _save_state(state)
+            return [exposure_gate]
 
         held = _held_symbols()
         results = []

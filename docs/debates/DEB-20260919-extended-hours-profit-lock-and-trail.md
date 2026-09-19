@@ -365,3 +365,29 @@ md5 各异), 合并脚本 /tmp/merge_shards.py 按 (symbol, day) 去重。
 ### 13.4 仍登记待办 (非本次范围)
 crontab 用 CST 小时 (`*/5 16-21` / `*/5 4-7`), DST 切换后相对 ET 右移 1h (11/1 起盘前窗尾部缺
 约 45 分钟) — 已列 **11 月重评**; 退出 cron 为 `* * * * *` 且脚本内按 ET 判窗, 不受影响。
+
+## 十四、P1 复核落地: pending 口径 + 延长时段在场敞口闸 (用户令「继续」)
+
+### 14.1 pending 假负不再冒充执行失败
+`extended_hours_exit_executor.py` 的审计新增:
+- `status`: `booked` / `awaiting_confirmation` / `failed_or_held`;
+- `awaiting_confirmation`: 仅当 durable intent 存在、状态为 `PENDING/HELD` 且 error 属
+  `exit_order_evidence_pending` 等八类证据待回证时为 true;
+- `ok` 仍为 false (语义=尚未完成 booked), 但下游可按 `status` 区分"等券商回报"与"真失败";
+- 复查纠偏: 覆盖 `exit_lifecycle` 全部 8 个 `exit_*_pending`; executor 异常路径也稳定落
+  `status=failed_or_held` / `awaiting_confirmation=false`。
+
+生产 cron 同时把 `EXT_EXIT_LIMIT_TIMEOUT_S` 20→60: 9/18 两笔实际回报约 32/37 秒,
+20 秒会制造假 pending; 父链条仍满足 cron 240 > shadow 180 > 子进程 60 的单调约束。
+
+### 14.2 延长时段专属敞口硬闸
+新增 `EXT_ENTRY_MAX_OPEN` / `EXT_ENTRY_MAX_OPEN_NOTIONAL_USD`; 查询口径仅
+`owner_strategy/strategy_id=extended_hours_entry` 或 `position_id LIKE 'EXT-%'`, 不误伤盘中仓。
+默认 `MAX_OPEN=MAX_PER_DAY=3`、名义 `$15,000`, **与现观察期上限等价, 不暗中改变行为**;
+若后续要收紧到 2 仓/$10,000, 属交易行为变更, 需用户显式裁决。价格/数量缺失时 fail-closed。
+
+### 14.3 验证
+定向回归 93 passed (`test_extended_hours_order_execution.py`、`test_eth_stage_daily_report.py`、
+`test_postmarket_drawdown_caliber.py`、`test_push_hub.py`、`test_push_unified_channel.py`)，
+覆盖 8 类 pending、异常状态、敞口闸、终稿刷新与 Hub 路由；`py_compile`、`git diff --check`
+通过，重启后启动冒烟 7/7 通过。
