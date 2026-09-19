@@ -32,6 +32,13 @@ def test_prefilter_verdicts_bands_and_gates():
     assert penny["price_band"] == "penny_lt5"
     assert not penny["passes_current_gate"]         # $5 价格下限闸
 
+    # 2026-09-19 180 日样本裁决后的候选判据 (唯一两窗口同向为正的维度 = 时段成交量)
+    big = ee.prefilter_verdicts(6.2, 12.5, 3.0e7)
+    assert big["passes_vol_20m"] and big["passes_vol_20m_chg_3"]
+    assert not big["passes_negative_band_risk"]
+    thin = ee.prefilter_verdicts(1.1, 40.0, 3.0e6)
+    assert not thin["passes_vol_20m"] and thin["passes_negative_band_risk"]
+
 
 def test_prefilter_shadow_records_one_line_per_run(tmp_path, monkeypatch):
     ee = _executor_module()

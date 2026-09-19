@@ -205,15 +205,79 @@ def _probe_mode():
     return os.getenv("FUTSEEK_PROBE", "").strip().lower() in ("1", "true", "yes")
 
 
-def _push(text):
+def _stage(session: str) -> str:
+    """阶段中文名 — 委托 app/core/trade_identity.phase_cn (全库唯一 SSOT)。
+
+    原实现把文案硬编码成「盘前…」——而本执行器 `--session afterhours` 时
+    (实测 9/18 US.WBD 18:35 ET 建仓) 推送却说"盘前事件开仓", 阶段说错。
+    """
+    from app.core.trade_identity import phase_cn
+    return phase_cn(session) or "延长时段"
+
+
+def _push(text, level=None, category=None):
+    """统一推送出口 — 走 PushHub (2026-09-18 用户裁「统一推送渠道」)。
+
+    原实现直连 `FeishuNotifier().send_text()` ⇒ 与本系统其余推送
+    (PushHub → 钉钉主通道) 分流: 同一笔交易"成交在飞书、平仓在钉钉",
+    且丢掉 Hub 的去重/聚合/健康检查/失败兜底。
+    """
     if _probe_mode():
         print(f"[ext_entry][probe] 推送抑制: {text}")
-        return
+        return False
     try:
-        from app.notifier.feishu import FeishuNotifier
-        FeishuNotifier().send_text(text)
+        from app.push import push_text_safe
+        from app.push.message import Level, Category
+        return push_text_safe(
+            text,
+            level=level if level is not None else Level.HIGH,
+            category=category if category is not None else Category.RISK_ALERT,
+        )
     except Exception:
-        pass
+        return False
+
+
+def _crit_level():
+    """CRITICAL 级别 (延迟导入 app.push — 与文件内其余 app.* 用法同风格)。"""
+    from app.push.message import Level
+    return Level.CRITICAL
+
+
+def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_id):
+    """建仓成交 → 统一交易富卡 (TRADE_ENTRY, 双发钉钉+飞书)。
+
+    2026-09-18 (用户: 「统一推送渠道, 也要保持盘前和盘后以及盘中的真实内容」):
+    原为飞书专属纯文本 4 行; 现走统一 `trade_entry` 富卡, 并把原有信息
+    (财报超预期 / 阶段涨跌 / EXT 量 / initial_sl 与来源 / SIM 无券商 STOP 兜底)
+    以结构化字段传入 —— 版式统一但内容一行不丢。
+    """
+    if _probe_mode():
+        print(f"[ext_entry][probe] 成交推送抑制: {symbol} {fqty:g}@{fpx}")
+        return False
+    try:
+        from app.push import get_push_hub
+        from app.push.message import trade_entry as _m
+        hub = get_push_hub()
+        return bool(hub.push(_m(
+            symbol=symbol, direction="BUY", qty=int(fqty), price=float(fpx),
+            strategy="extended_hours_entry", trace_id=pos_id,
+            sl=rec.get("initial_sl"), source_type="playbook",
+            session=session,
+            extra={
+                "earnings_surprise_pct": earn.get("surprise_pct"),
+                "ext_change_pct": chg,
+                "ext_volume": vol,
+                "stop_source": "规则引擎 initial_sl (-5%)",
+                "sim_no_broker_stop": True,
+                "planned_entry": plan_px,
+                "entry_dev_pct": ((float(fpx) - float(plan_px)) / float(plan_px) * 100)
+                                 if plan_px else None,
+                "extra_lines": [f"🆔 延长时段持仓: {pos_id}"],
+            },
+        )))
+    except Exception as exc:  # 通知永不阻断建仓
+        print(f"[ext_entry] 成交推送失败(不影响建仓): {exc}")
+        return False
 
 
 _PUSH_DEDUP = ROOT / "data" / "ext_entry_push_dedup.json"
@@ -283,6 +347,15 @@ def prefilter_verdicts(change_pct, price, volume):
         "passes_chg_3": bool(chg >= 3.0),
         "passes_chg_5": bool(chg >= 5.0),
         "passes_price_5_20": bool(5.0 <= px < 20.0),
+        # ── 2026-09-19 180 日分片样本 (n=89) 裁决后的候选判据 ──
+        #  唯一两窗口同向为正的特征是**时段成交量**:
+        #    vol ≥20M 档: P(峰值≥1.5%) 76% / 净赚 81% / 均值 +3.38% (n=34)
+        #    vol ≥20M & chg ≥3%: 全样本均值 +2.74%, 前50% +3.63%, 后50% +1.41% (两窗口同向)
+        #  ⚠️ 已被 180 日**证伪**的 60 日结论 (不得再当判据): "追涨 ≥5% 更好" (均值 -0.53%),
+        #     "$5~20 更好" (均值 -0.49%), ">$20 更差" (>$50 档均值反而 +2.13%)。
+        "passes_vol_20m": bool(vol >= 2.0e7),
+        "passes_vol_20m_chg_3": bool(vol >= 2.0e7 and chg >= 3.0),
+        "passes_negative_band_risk": bool(vol < 2.0e7 and chg < 2.0),  # 落在负贡献段的候选标记
     }
 
 
@@ -1129,7 +1202,7 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
         if ret != RET_OK:
             rec["ok"] = False
             rec["error"] = str(data)[:120]
-            _push(f"❌ 盘前开仓下单失败\n{symbol} {qty}股 @ ${price:.2f}\n{rec['error']}")
+            _push(f"❌ {_stage(session)}开仓下单失败\n{symbol} {qty}股 @ ${price:.2f}\n{rec['error']}")
             _audit(rec)
             return rec
         buy_oid = str(data["order_id"].values[0]) if data is not None else ""
@@ -1141,13 +1214,13 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
         if not fill.get("cancel_ok"):
             rec["ok"] = False
             rec["error"] = f"buy_cancel_failed_{fill.get('status')}:{fill.get('error')}"
-            _push(f"⚠️ 盘前开仓撤单未确认\n{symbol} 订单 {buy_oid}\n状态 {fill.get('status')}")
+            _push(f"⚠️ {_stage(session)}开仓撤单未确认\n{symbol} 订单 {buy_oid}\n状态 {fill.get('status')}")
             _audit(rec)
             return rec
         if not fill.get("filled"):
             rec["ok"] = False
             rec["error"] = f"buy_not_filled_{fill.get('status')}"
-            _push(f"⏳ 盘前开仓未成交已撤单\n{symbol} {qty}股 @ ${price:.2f}\n状态 {fill.get('status')}")
+            _push(f"⏳ {_stage(session)}开仓未成交已撤单\n{symbol} {qty}股 @ ${price:.2f}\n状态 {fill.get('status')}")
             _audit(rec)
             return rec
 
@@ -1159,17 +1232,14 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
         except Exception as exc:
             rec["ok"] = False
             rec["error"] = f"position_db_write_failed:{exc}"
-            _push(f"🚨 盘前开仓已成交但本地建仓失败\n{symbol} 订单 {buy_oid}\n{exc}")
+            _push(f"🚨 {_stage(session)}开仓已成交但本地建仓失败\n{symbol} 订单 {buy_oid}\n{exc}", level=_crit_level())
             _audit(rec)
             return rec
         rec["position_id"] = pos_id
         rec["initial_sl"] = round(fpx * (1 + STOP_PCT / 100), 2)
         rec["ok"] = True
         _audit(rec)
-        _push(f"✅ 盘前事件开仓已成交\n{symbol} {fqty:g}股 @ ${fpx:.2f} (${fqty*fpx:,.0f})\n"
-              f"财报超预期 +{earn['surprise_pct']:.1f}% | 盘前 {chg:+.2f}% 量{vol:,.0f}\n"
-              f"止损(规则引擎) initial_sl=${rec['initial_sl']:.2f} (-5%)\n"
-              f"⚠️ SIM无券商STOP, 盘中由 monitor_playbook_sim_exits 兜底")
+        _push_filled(symbol, fqty, fpx, price, session, earn, chg, vol, rec, pos_id)
         return rec
     finally:
         tctx.close()
