@@ -1,14 +1,14 @@
 # DEB-20260919 · 复盘决策支持系统 (Review Decision Support) [RFC-088]
 
-> **状态**: 提案 (设计稿) / 未落码 · 待用户裁决 + 第二 agent 独立复查
+> **状态**: 提案 (设计稿) / 未落码 · 第 1 轮独立复查 + 第 2 轮复核修正完成 · 待用户裁决
 > **日期**: 2026-09-19
 > **作者**: Hermes
 > **目标读者**: ①项目所有者(裁决) ②执行 agent(落码) ③**独立复查 agent(§10 复查清单)**
 > **关联**: `RFC-087`(盘前收口条件豁免预注册 — 本设计的**范例产物**)、`RFC-086`(阶段统计 SSOT)、
 > `DEB-20260918-extended-hours-ssot-and-observability.md`、`app/review/review_orchestrator.py`、
 > `app/playbook/shadow_registry.py`、`app/review/stage_stats.py`
-> **变更类型**: L1 (观测/呈现层; **不触碰 `app/playbook/*` 执行链** ⇒ 无需重启服务)
-> **工作区实现计划**(任务级、含逐条完整代码): `.hermes/plans/2026-09-19_152656-review-system.md`（`.hermes/` 被 gitignore ⇒ 本 DEB 自含必要接口，为准）
+> **变更类型**: L1 (观测/呈现层; **不触碰 `app/playbook/*` 执行链**)。第 2 轮时间口径预热代码由短命 cron/脚本进程生效；主服务本轮未重启。
+> **历史实现计划已作废**: `.hermes/plans/2026-09-19_152656-review-system.md` 仍含 `review_criteria.yaml` 与 `dedup_key` 旧案；以本文 §9/§16 为唯一实现口径。
 
 ---
 
@@ -31,7 +31,7 @@
 | DEB | `docs/debates/*.md` **165** 个 | `ls \| wc -l` |
 | 推送 | 当日成功 **54** 条（其中 15 条是"通道心跳"） | `grep -c "推送成功\|send_text 成功" logs/ftseek_us.log` |
 
-### 1.2 消费侧：关键 SSOT **零消费者**（本次实测，最硬的证据）
+### 1.2 消费侧：关键 SSOT **生产消费面不足**（周六有消费者，缺每日与裁决闭环）
 
 `app/playbook/shadow_registry.py` 已经是**影子/判据的单一真源**，具备完整决策要素：
 
@@ -40,16 +40,18 @@
 - API: `REGISTRY`(**30+ 项**)、`get_observing()`、`get_ready_to_evaluate()`、`refresh_counts()`、`_count_samples()`、`summary()`、`check_mounting()`(cron 挂载核对)、`check_intent_uniqueness()`
 - 其 docstring 自陈要解决: *"当前有多少影子在跑 / 各自攒了多少样本、离毕业门禁还有多远 / **哪些已经够样本该裁决了但没人裁** / 哪些已废弃但 cron 还在白跑"*
 
-**实测其消费者**：
+**实测其消费者**（第 2 轮复查更正）：
 
 ```bash
 grep -rn "shadow_registry" --include=* . | grep -v "^\\./app/playbook/shadow_registry.py" | grep -vE "\\.pyc|/logs/|\\.git/"
-# → 仅 tests/test_*.py 共 7 个文件（+ scripts/okr_2026_09_scoring.py:390 的**文本子串提及**）
-crontab -l | grep -i "shadow_registry\|check_mounting"     # → 空
-grep -rn "get_ready_to_evaluate\|refresh_counts" app/ scripts/ | grep -v shadow_registry.py  # → 空
+# app/ scripts/ 无程序化调用；ops/hermes/ftseek_weekly_checkpoint.py 周六调用:
+#   refresh_counts + summary + check_mounting + check_intent_uniqueness
+crontab -l | grep -i "shadow_registry\|check_mounting"     # → 空 (不是 Hermes 载体的证据)
+grep -rn "get_ready_to_evaluate\|refresh_counts" app/ scripts/ ops/ | grep -v shadow_registry.py
+# → ops/hermes/ftseek_weekly_checkpoint.py:183-185
 ```
 
-⇒ **判据成熟了没有任何程序会报**；cron 白跑没有任何程序会删；用户只能靠**主动询问**。这正是用户描述的症状，且是**可复现的客观事实**，不是感觉。
+⇒ 判据成熟后**每周六会被报出一次**；但 `refresh_counts()` 只做进程内状态迁移，没有持久 `ready_since/decide_by`，也没有每日汇总、逾期天数或裁决收口。用户仍会被迫在周六之外主动询问，这仍满足本 DEB 要解决的问题，但不能再表述为“零生产消费者”。
 
 > 注：`scripts/okr_2026_09_scoring.py:386-390` 只做 `any(tok in reg_text for tok in ("RFC-072","runup","kr3"))` 的**文本提及**判断，不是程序化消费其状态/计数。
 
@@ -91,7 +93,7 @@ bd = stage_breakdown(rows_from_db('data/ftseek_us.db','2026-08-01','2026-09-18')
 | G1 | **单一产物 + 单一消费面**: 每日 1 个 JSON + 1 页 MD + 1 条推送 + 1 页 vault | `data/reviews/bundle_<date>.json` 存在且校验通过；当日推送新增恰好 1 条 |
 | G2 | **溯源契约**: 产物里每个数字都带可复算证据（缺证据 = 构建失败） | schema 校验测试：去掉任一 evidence → 抛 `EvidenceError` 并**点名指标** |
 | G3 | **周期 × 阶段默认视角**: 日/周/月 三周期，阶段×方向×出场原因、价格带、费用% 分片 | bundle 的 `sections.slices` 含全部阶段；合计 == headline 净额（逐分） |
-| G4 | **判据自动到期上报**: 复用 `shadow_registry` 状态/计数，`READY_TO_EVALUATE` 到点主动推送 | 构造一个 `min_n` 已达标的假条目 → 当日推送含该 id（fixture 测试） |
+| G4 | **判据自动到期上报**: 复用 `shadow_registry` 计数；维护最小 `ready_since` 状态，日推送只给计数 + 最久前 5 项 | 构造一个 `min_n` 已达标的假条目 → 状态文件记录该 id；次日推送含 `ready_count` 与该 id |
 | G5 | **自审与减法**: 每周自动列"死产出/无证据指标/告警噪声/未登记影子/**测试标的进入真实推送**" | `self_audit` + `coverage_<date>.json` 非空且可执行；且 `self_audit.fixture_symbol_pushes == 0`（判据见 §5.8；先例: 2026-09-19 单测 fixture 富卡真发生产 IM） |
 
 ---
@@ -114,8 +116,8 @@ bd = stage_breakdown(rows_from_db('data/ftseek_us.db','2026-08-01','2026-09-18')
 | # | 声称 | 复现命令（仓库根执行） | 期望 |
 |---|---|---|---|
 | E1 | 阶段拆解 (335 笔: 盘前 4/−648.86, 盘中 329/+340.14, 盘后 2/+110.75, 合计 −197.97) | 见 §1.3 片段 | 逐格一致 |
-| E2 | `shadow_registry` 无生产消费者 | `grep -rn "shadow_registry" --include=*.py app/ scripts/ \| grep -v shadow_registry.py` | **空** |
-| E3 | `get_ready_to_evaluate/refresh_counts` 无调用点 | `grep -rn "get_ready_to_evaluate\|refresh_counts" app/ scripts/ \| grep -v shadow_registry.py` | **空** |
+| E2 | `shadow_registry` 在 `app/ scripts/` 无生产消费者，但 Hermes 周检有消费者 | `grep -rn "shadow_registry" --include=*.py app/ scripts/ ops/ \| grep -v shadow_registry.py` | 命中 `ops/hermes/ftseek_weekly_checkpoint.py` |
+| E3 | `get_ready_to_evaluate/refresh_counts` 无日级调用；`refresh_counts` 有周六消费者 | `grep -rn "get_ready_to_evaluate\|refresh_counts" app/ scripts/ ops/ \| grep -v shadow_registry.py` | 仅 `ops/hermes/ftseek_weekly_checkpoint.py` 调 `refresh_counts` |
 | E4 | 注册表条目数 ≥30 | `grep -cE '^\s+id="' app/playbook/shadow_registry.py` | ≥30 |
 | E5 | ADR-035 配对产物**不是** `data/shadow/entry_archetype_routing.jsonl` | `ls data/shadow/entry_archetype_routing.jsonl` | `No such file`（**猜路径会静默归零**的实证；真路径需实现方实测定位，候选 `data/shadow/entry_delay_confirm.jsonl`，见 `shadow_registry.py:947-975`） |
 | E6 | 军规: 禁直连 notifier / 禁自写 webhook | `sed -n '345,352p' scripts/trigger_gate_report.py` | docstring 明写；推送走 `app.push` |
@@ -166,7 +168,7 @@ lessons 表 ─────────┤ app/push                       (唯�
 | 费用 | `fees_est` | 同上 |
 | 归集日 | **出场日**（`date(exit_time)`）— 隔夜仓按出场日计 | `review_orchestrator.py:2011` 修复先例 |
 | 阶段 | `entry_session` 优先 → `phase_from_time(entry_time)` ET 时钟回退 → 空串标"未标注" | `app/review/stage_stats.normalize_stage` |
-| 时区转换 | 一律 `app/utils/et_time`（**禁手写 −12h**） | 项目既有纪律 |
+| 时区转换 | 一律 `app.utils.timezone.to_et` / `scripts.utils.et_time`（**禁手写 −12h**；naive 按 CST） | 项目既有纪律 |
 | 量纲 | `pnl_pct` 是 ratio；`mfe_pct/mae_pct` 是百分点；`max_drawdown` 是**百分点** | `pipeline.py:6631-6635`、`trade_analyzer.py` |
 
 **新增校验（本方案强制）**: `exit_date_mismatches(conn)` —— 用 `et_time` 把每行 `exit_time` 转 ET 日，与 `date(exit_time)` 比对。差异 >0 ⇒ bundle 必须写 `anomalies` 且 `severity=P0`（**宁可显性报错，不静默虚增**）。
@@ -274,7 +276,9 @@ def pending_adjudications() -> list[dict]:
     return out
 ```
 
-**到点推送（复用 §E7 先例）**: `dedup_key=f"criteria_ready:{date}"` + `sync=True` + `Level.NORMAL` + `Category.REVIEW_WEEKLY`，**同日只推一次**，正文点名 `id` 与"到点未裁"天数。
+**READY 状态与防噪（第 2 轮复查补充）**: `refresh_counts()` 的 READY 是本进程内推导，不落盘。CLI 层新增最小状态 `data/reviews/criteria_ready_state.json`，只存 `{id: ready_since}`，不存判据、阈值或计数；在 `fcntl.flock` 独占锁内更新/删除，离开 READY 即销账。日推送只写 `ready_count` 与按 `ready_since` 最久前 5 项；全量清单进 JSON/MD，避免当前 19 项 READY 每日刷屏。
+
+**到点推送**: 只并入 06:35 日报的“待裁决”段，使用 caller 侧按日守卫；**不得**依赖 `dedup_key`。正文给 `ready_count`、最久前 5 项及"到点未裁"天数。
 
 **新增影子必须注册**（既有纪律，本方案把它变成**自动可见**）：`check_mounting()` 报"未登记影子" → 周报必列。
 
@@ -394,13 +398,14 @@ EXT 量 300,000 / 财报超预期 +10.0% / SL $9.50)。生产链不可能产生�
 
 **P3 渲染 + CLI + 推送**
 - `app/review/bundle_render.py`（`render_md(bundle) -> (full_md, push_text)`）+ `scripts/review_bundle.py`（`--date/--push/--vault/--period`；原子写；幂等）
-- 推送: `from app.push import get_push_hub, PushMessage, Level, Category`，`category=Category.REVIEW_DAILY`、`sync=True`；**并且必须先过 caller 侧按日守卫**（读 `bundle_<date>.json:pushed_at` 或独立 state；命中则记 `skip: already pushed` 直接返回）。**不得**依赖 `dedup_key` 实现"同日只推一次" —— `sync=True` 绕过 hub 去重（§16.5 更正 B，`app/push/hub.py:124`）
+- 推送: `from app.push import get_push_hub, PushMessage, Level, Category`，`category=Category.REVIEW_DAILY`、`sync=True`；在 `fcntl.flock(<bundle>.lock)` 独占锁内重读 caller 侧按日状态，未推才发送，发送成功后写 `pushed_at` 并释放锁；失败不得标记已推。**不得**依赖 `dedup_key` 实现"同日只推一次" —— `sync=True` 绕过 hub 去重（§16.5 更正 B，`app/push/hub.py:124`）
 - 验收: `pytest tests/review/test_bundle_render.py tests/review/test_bundle_cli.py -q` → 全绿（含幂等断言）；`venv/bin/python scripts/review_bundle.py --date 2026-09-18` → 打印 headline 摘要
 - 提交: `[RFC-088][review-system] P3: 渲染+CLI+单条推送`
 
 **P4 判据到期上报（复用注册表）**
 - `app/review/criteria_status.py`（§5.6，≤80 行，只读注册表）+ 到点推送
-- 验收: fixture 造一个 `min_n` 已达标的假条目 → 断言当日 push body 含该 `id`；真实读取: `venv/bin/python -c "from app.review.criteria_status import pending_adjudications as p; print(len(p()))"` → ≥30
+- 新增 `data/reviews/criteria_ready_state.json`（只存 id→ready_since；flock 内更新/销账），日推送只报 ready_count + 最久前 5 项
+- 验收: fixture 造一个 `min_n` 已达标的假条目 → 状态文件记录该 id，push body 含 `ready_count` 与该 id；真实读取: `venv/bin/python -c "from app.review.criteria_status import pending_adjudications as p; print(len(p()))"` → ≥30
 - 提交: `[RFC-088][review-system] P4: 判据到期上报(复用 shadow_registry)`
 
 **P5 上线 + 口径漂移回归 + 周期产物**
@@ -427,7 +432,7 @@ venv/bin/python -m py_compile app/review/bundle_schema.py app/review/bundle_buil
 | # | 待查声称 | 复现 | 反例（判为不成立的条件） |
 |---|---|---|---|
 | C1 | 阶段拆解 335/盘前4/−648.86、盘中329/+340.14、合计−197.97 | §1.3 片段 | 任一格不一致 ⇒ 本文档 E1 作废 |
-| C2 | `shadow_registry` **零生产消费者** | E2/E3 两条 grep | 出现任何 app/scripts 的**程序化**调用 ⇒ §5.6 前提削弱（但方案仍成立，改述"消费者过少"） |
+| C2 | `shadow_registry` 在 app/scripts 无生产消费者，Hermes 周检已有消费者 | E2/E3 两条 grep | 若日级/裁决闭环已存在 ⇒ G4 需降级；若仅周六汇总 ⇒ 表述改为“消费面不足” |
 | C3 | 注册表条目 ≥30 且含状态机/min_n/count_mode | E4 + `sed -n '37,80p' app/playbook/shadow_registry.py` | 字段缺失 ⇒ §5.6 需先补字段再加读取 |
 | C4 | 判据真路径**不可猜**（`entry_archetype_routing.jsonl` 不存在） | E5 | 若该路径存在 ⇒ 说明存在多个同名概念，需重新定位 |
 | C5 | 军规: 推送必须走 `app.push` | E6 | 若发现生产脚本直连 notifier/webhook ⇒ 本方案需先处置该违反 |
@@ -501,8 +506,8 @@ systemctl is-active ftseek-us   # 保持 active
 - [ ] P2 `exit_date_mismatches` 存在且差异 >0 时 P0 上报
 - [ ] P2 `Evidence.integrity` 4 键硬约束生效（少一键即构建失败）
 - [ ] P3 幂等（同日重跑逐字相同，除 `generated_at`/`git`）
-- [ ] P3 推送恰好 1 条且走 `app.push`（`dedup_key` 生效）
-- [ ] P4 判据清单 ≥30 项、`READY_TO_EVALUATE` 项被单列
+- [ ] P3 推送恰好 1 条且走 `app.push`（caller 侧 `pushed_at` + `flock` 生效；发送失败不标记已推）
+- [ ] P4 判据清单 ≥30 项；`ready_since` 状态可更新/销账；日推送只列 ready_count + 最久前 5 项
 - [ ] P5 golden 入库且 `git check-ignore` 返回非忽略
 - [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）
 - [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）
@@ -516,7 +521,7 @@ systemctl is-active ftseek-us   # 保持 active
 
 - **2026-09-19 · 用户**: "目前建议系统有很多信息收集和统计，包括散落零散的测试、推送、记录等，但是缺乏一个完整并基于结果，溯源，整合的复盘分析系统，而不是每天被动询问。"
 - **2026-09-19 · 用户（定调）**: "最终目的不是累积数据，而是总结溯源，合理优化，非拍脑袋决策依据，可以按周期，可以统计交易阶段等等。基于项目已有的内容和需要补充的进行完整的规划设计，写入 deb。我还需要另外的 agent 进行分析复查。"
-- **2026-09-19 · Hermes（本稿）**: 按"证据优先"普查后**修正了问题陈述**：记录侧已过剩（330 脚本 / 108 cron / 108 jsonl / 285 lessons / 165 DEB），真正的缺口是**消费者层**——其中 `app/playbook/shadow_registry.py` 这一判据 SSOT **零生产消费者**（E2/E3 实测）。故方案收敛为"一层派生视图 + 四消费面"，并**删除**原设计中的"新建判据 YAML / 新建事件台账"两项（避免与既有 SSOT 双写）。
+- **2026-09-19 · Hermes（本稿）**: 按"证据优先"普查后**修正了问题陈述**：记录侧已过剩（330 脚本 / 108 cron / 108 jsonl / 285 lessons / 165 DEB），真正的缺口是**消费者层**。第 2 轮复查更正：`shadow_registry` 已有 Hermes 周六消费者，但无日级汇总、无持久 READY 时间与裁决收口。故方案收敛为"一层派生视图 + 四消费面"，并**删除**原设计中的"新建判据 YAML / 新建事件台账"两项（避免与既有 SSOT 双写）。
 - **2026-09-19 · Hermes（自曝）**: 本会话早前给出的盘前臂读数（`pre_close −0.402% / rth_close −0.101% / intraday_sl +0.237% / 最差 −7.281%`）**已被 `RFC-087 §3` 更正为待更正数字**（回放工具 chunk 尾部静默截断）。本 DEB 不引用这些数字作为依据；§5.3 的 `integrity` 硬约束即该教训的机制化。
 - **2026-09-19 · 用户（裁决）**: 问"复盘系统产出最终的样式会是 skills 还是其他什么框架合适"，并裁「需要」= 把该决定写成 DEB 新节（载体形态 + 落点清单 + 与 §13.2 的耦合）后提交、再交第二 agent 复查。落成本文 §16。
 - **2026-09-19 · Hermes（第 1 轮独立复查已回）**: 两个只读复查 agent（A 组 C1–C9 数据类 / B 组 C10–C17+§16 对抗）完成后，作者逐条复核，结论落在 **§17**：13 条成立（其中 C9 只需精确化）、3 条不成立或部分不成立（C5 推送军规 / C10 心跳底噪 / C13 功效 σ）、1 条无法判定（C11 未落码）、5 条更正（R-1…R-5）、**1 条复查 agent 的否决被复核推翻并记录在案**（其 jobs.json 解析错误，把 34 个 job 读成 17 个）。**待用户裁决项未变**：§13 五问 + §17.2 R-1 的并入口径前置决定。
@@ -620,7 +625,7 @@ systemctl is-active ftseek-us   # 保持 active
 | # | 复查判定 | 作者复核 | 处置 |
 |---|---|---|---|
 | C1 | 成立 | 一致：`stage_stats.stage_breakdown(rows_from_db(...))` 得 premarket 4/−648.86 · regular 329/+340.14 · afterhours 2/+110.75，合计 335/−197.97 | 原文保留 |
-| C2 | 成立 | 一致：`get_ready_to_evaluate\|refresh_counts` 零非自身命中；`shadow_registry` 仅 3 处**文本子串**（.pyc 与注释不算消费者） | 原文保留（§5.6 前提成立） |
+| C2 | 第 2 轮更正：仅按 app/scripts 范围成立 | `ops/hermes/ftseek_weekly_checkpoint.py` 为 Hermes 周六 job 程序化调用 `refresh_counts/summary/check_mounting`；缺口是日级/裁决闭环，不是零生产消费者 | §1.2/§4/E2/E3/§15 已改述 |
 | C3 | 成立 | 复查实测条目数 **36**（非 30+）；`class ShadowItem` 含 status/min_n/count_mode | 保留，条目数改 36 |
 | C4 | 成立 | 一致：`entry_archetype_routing.jsonl` 不存在；另实测 36 条 `data_path` 里 34 为文件路径、**33 存在 / 1 缺失**（`data/trigger_miss_telemetry.jsonl`，其值带 `(reason=...)` 条件说明）⇒ "猜路径⇒计数静默归零"风险**已有 1 个实例** | 保留并加实例 |
 | C5 | **不成立** | 复核确认（见 R-1） | §4/E6 更正 |
@@ -671,3 +676,63 @@ systemctl is-active ftseek-us   # 保持 active
 1. **确定性**：`bundle_builder` 所有 SQL 必须带 `ORDER BY`；切片排序用显式元组键；禁用 `set()`；浮点聚合固定累加序（否则 golden 比对会随机红）。
 2. **按日守卫的并发面**：同日重跑、时区跨日、回填 30 天都好办；**并发（cron + 手动 + 回填同时）最易漏** —— 两个进程同时读到"未推送"会各推一条。最小实现：`fcntl.flock(<bundle>.lock)` 独占锁内**重读** `pushed_at`，推完写回再释放。
 3. **`test_ops_scripts_sync.py` 报错文案已知误导**：方向1 对新文件漏部署报的是"库内有, 线上已**删除**"（与"未部署"语义相反）⇒ 分诊时勿按字面理解。
+
+---
+
+## 18. 第 2 轮复查执行记录（2026-09-19）
+
+1. **事实更正**：`shadow_registry` 不是零生产消费者；Hermes job `0e87d094dcdf`（`5 9 * * 6`）调度 `ops/hermes/ftseek_weekly_checkpoint.py`，程序化调用 `refresh_counts/summary/check_mounting/check_intent_uniqueness`。缺口改述为：周六有汇总，但无日级闭环、无持久 READY 时间、无裁决收口。
+2. **READY 防噪设计**：P4 将新增最小状态 `data/reviews/criteria_ready_state.json`，仅存 `id→ready_since`，在 flock 内更新/销账；日推送只报 `ready_count` 与最久前 5 项，全量清单留在 JSON/MD。
+3. **推送守卫**：P3 验收改为 caller 侧 `pushed_at` + `fcntl.flock`；发送成功才标记，失败不得标记；Hub `dedup_key` 不作为同日闸。
+4. **时间口径落地**：`phase_from_time()` 对 naive 输入统一按 CST→ET（与 `app.utils.timezone.to_et` 同尺）；`stage_stats.load_trades()` 改为 ET 出场日过滤、显式排除 `duplicate_external_close`、并按 `exit_time,id` 排序。当前 C1 读数不变（335 / −197.97）。
+5. **推送出口预热**：`extended_hours_entry_executor._dedup_reserve()` 增加 `fcntl.flock` 与进程唯一临时文件，避免并发双读/双写；相关守卫测试通过。
+6. **回填闸门**：在上述时间口径测试覆盖稳定前，禁止用现行口径回填历史 `bundle_*`；回填必须另走裁决并附全量差异表。
+7. **验证**：阶段统计/日报/周报/OKR/身份契约/推送守卫/延长时段组合 ⇒ 147 passed；相关文件 `py_compile` 与 `git diff --check` 通过。主服务未重启，避免把工作区并行未提交的延长时段改动一并生效。
+
+
+---
+
+## 19. 第 2 轮复查（外部 agent）核查确认（作者独立复核，2026-09-19）
+
+> 第 2 轮由另一 agent 提交（工作区 `§18` + `app/review/stage_stats.py` / `app/core/trade_identity.py` 改动）。本节是**作者逐条复核**的结果：**确认成立 / 我原判被推翻 / 我补的量化 / 待确认**四类。
+> 纪律同 §17：不采信描述，全部在真库/真文件上重跑。
+
+### 19.1 结论摘要
+
+- **Codex 的核心更正成立，且推翻了我的一处原判**（19.2-A）：我 §1.2 的"`shadow_registry` **零生产消费者**"**在写作当时就是错的** —— 消费者自 **2026-08-23** 起就存在（`ops/hermes/ftseek_weekly_checkpoint.py:181`，docstring 自陈"2026-08-23 接入, **原模块零引用**"）。**我的错误来源**：普查命令范围只写 `app/ scripts/`，漏了 `ops/hermes/` —— 而这正是 §16.2 我自己批评过的同一类**范围盲区**（当时批的是漏 `skills/`）。§1.2/§4/E2/E3 的改述（"消费面不足：周六有汇总，缺日级闭环/持久 READY 时间/裁决收口"）**准确**，且不削弱方案（G4 的日级上报仍是缺口）。
+- 我的 §17 两项更正（R-1 推送军规未落实 / R-2 σ=1.8977% 及派生 n≈1258）**未被第 2 轮推翻**：`grep -c 'R-2（§5.5 功效输入 σ 更正）'` = 1、`1.8977` 出现 3 次、§5.5 的 `§17/R-2` 指针在位 ⇒ 两轮结论可叠加，不冲突。
+- 第 2 轮新增的**设计改进**（作者认可，优于我 §16.6 的原答案）：P4 增加最小状态 `data/reviews/criteria_ready_state.json`（只存 `id→ready_since`），日推只报 `ready_count` + 最久前 5 项。**实测依据**：`REGISTRY=36`、`READY_TO_EVALUATE=19` —— 19 项若每日全量进推送就是刷屏，我原答案只说"折进日报段"没量化这一步。
+
+### 19.2 逐条核实（作者复现命令与结果）
+
+| # | 第 2 轮的声称 | 我的复现 | 判定 |
+|---|---|---|---|
+| A | `shadow_registry` 非零消费者，Hermes 周六 job 调用 `refresh_counts/summary/check_mounting/check_intent_uniqueness` | `sed -n '181,190p' ops/hermes/ftseek_weekly_checkpoint.py`（子进程 `python -c` 调四个 API）+ `git log -S check_shadow_registry` ⇒ 引入于 RFC-060/ADR-036 线，**早于本 DEB** | **确认**（且推翻我原判） |
+| B | 当前 19 项 READY 会刷屏 | `refresh_counts(); len(get_ready_to_evaluate())` ⇒ `REGISTRY 36 / READY 19` | **确认** |
+| C | `phase_from_time` naive 统一按 CST→ET（与 `to_et` 同尺） | `app/utils/timezone.to_et` docstring 明写"naive 视为北京时间"；改动后 `normalize_stage("", naive)` 与 `to_et` 同尺；新增测试 `test_naive_clock_fallback_uses_cst` | **确认** |
+| D | `load_trades` 改为 ET 出场日过滤 + 排除 `duplicate_external_close` + `order by exit_time,id`；"当前 C1 读数不变（335/−197.97）" | 实跑：`stage_breakdown(rows_from_db(...,'2026-08-01','2026-09-18'))` ⇒ `premarket 4/−648.86 · regular 329/+340.14 · afterhours 2/+110.75 · sum 335/−197.97` **逐格不变** | **确认** |
+| E | 测试与回归通过（其称 147 passed） | 我跑 7 个相关文件（阶段统计/日报/复盘表/校验记账/OKR/统一推送/盘后持夜）⇒ **104 passed**；`tests/test_stage_stats.py` 13 passed（含新增 2 例） | **确认**（我核到 104/147 的子集，全绿） |
+| F | P3 守卫加 `fcntl.flock` + 发送成功才标记 | 文档 §9 P3 / §14 已按此改；与 §17.4-2 一致 | **确认** |
+| G | 主服务本轮未重启（改动由短命进程生效） | 服务侧唯一调用方 `app/pipeline/order_executor.py:1285/1328` 调的是 `phase_from_time()` **无参**（dt=None ⇒ 走 `now_et()`）⇒ 本次改动的 naive 分支**对运行中服务不可达**，确实无需重启 | **确认**（该项原本是我要提的疑点，实测不成立） |
+
+### 19.3 第 2 轮未给、由本次核查补上的量化：口径改动的影响面
+
+`load_trades` 的窗口过滤从 SQL `date(exit_time)` 改为 **ET 出场日**。实测影响（`exit_time` 非空且 `pnl_net` 非空，n=870）：
+
+- **201 行**的 `ET 日 ≠ 字符串日`（全部是 naive 行；naive 共 327 行，日期范围 `2026-04-24 … 2026-07-20`）。
+- 该差异**只在窗口端点落在错位日时显形**：逐日窗口扫描 `2026-04-20 … 2026-07-25` 共 97 天 ⇒ **34 天读数改变**，例：
+
+| ET 日 | 旧 `date()` 口径 | 新 ET 口径 |
+|---|---|---|
+| 2026-04-27 | n=1 / −6,034.87 | n=5 / −983.51 |
+| 2026-04-28 | n=4 / +5,051.36 | n=0 / 0.00 |
+| 2026-05-01 | n=7 / +56.66 | n=13 / +1,627.35 |
+
+- **近期窗口不受影响**：`2026-08-01..09-18`（335/−197.97）、`09-16..09-17`、全期 `04-01..09-18`（870/+12,988.21）**新旧逐格相同** —— 因为窗口内无错位行，且 5 条 `duplicate_external_close` 的 `pnl_net`/`realized_pnl` 本就为 NULL（F1 约定成立，显式过滤在**当前数据上是 no-op**，属防御性加固）。
+- ⇒ 结论：**新口径是对的**（naive = 北京时间 ⇒ ET 出场日才是真实交易日），但它**重基了 4–7 月的逐日统计**（34 天）。凡引用该期逐日读数的历史结论都要标注口径或重算；`§18.6 回填闸门`因此更有必要。
+- 附：`_exit_date_et` 解析失败返回 `""` ⇒ 该行被**静默跳过**。当前库内 `exit_time` 无法解析行数 = **0**（旧路径对垃圾值同样取不到日期，非回归），但建议把它计入 `anomalies.unparsed_exit_time`，符合"宁可显性报错"。
+
+### 19.4 待确认 / 建议归位（非否决）
+
+1. **代码是否提交**：`app/review/stage_stats.py`、`app/core/trade_identity.py`、`tests/test_stage_stats.py` 原先**只在工作区**，而 crontab/Hermes job 一律 `cd 仓 && venv/bin/python scripts/...`（**读工作区**）⇒ 属本仓已知的"生产在跑未入库代码"病灶（RFC-060 专为此立）。核查中已按其纪律**单独立提交**（测试随行，可一键 revert）；若判定不该在提案裁决前落地，`git revert` 即可回到旧口径（旧口径影响面见 19.3）。
+2. **§18.5 的归位**：`scripts/extended_hours_entry_executor.py._dedup_reserve()` 的 flock/临时文件改动属**延长时段执行链工作流**（同批还有 `scripts/premarket_exit_shadow.py`、`scripts/afterhours_exit_shadow.py`），不在本 DEB 的 §9 范围。本 DEB 头声明的"不触碰 `app/playbook/*`"仍成立（改动集为 `app/core`、`app/review`、`scripts/`、`tests/`，逐条核过），但 §18.5 宜移入对应 DEB 以免读者误以为本方案改了执行链。
