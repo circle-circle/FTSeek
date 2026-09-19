@@ -92,7 +92,7 @@ bd = stage_breakdown(rows_from_db('data/ftseek_us.db','2026-08-01','2026-09-18')
 | G2 | **溯源契约**: 产物里每个数字都带可复算证据（缺证据 = 构建失败） | schema 校验测试：去掉任一 evidence → 抛 `EvidenceError` 并**点名指标** |
 | G3 | **周期 × 阶段默认视角**: 日/周/月 三周期，阶段×方向×出场原因、价格带、费用% 分片 | bundle 的 `sections.slices` 含全部阶段；合计 == headline 净额（逐分） |
 | G4 | **判据自动到期上报**: 复用 `shadow_registry` 状态/计数，`READY_TO_EVALUATE` 到点主动推送 | 构造一个 `min_n` 已达标的假条目 → 当日推送含该 id（fixture 测试） |
-| G5 | **自审与减法**: 每周自动列"死产出/无证据指标/告警噪声/未登记影子" | `self_audit` + `coverage_<date>.json` 非空且可执行 |
+| G5 | **自审与减法**: 每周自动列"死产出/无证据指标/告警噪声/未登记影子/**测试标的进入真实推送**" | `self_audit` + `coverage_<date>.json` 非空且可执行；且 `self_audit.fixture_symbol_pushes == 0`（判据见 §5.8；先例: 2026-09-19 单测 fixture 富卡真发生产 IM） |
 
 ---
 
@@ -292,6 +292,40 @@ def pending_adjudications() -> list[dict]:
 
 这样：**死产出与"登记了没人读"由代码结构自动暴露**，不依赖人维护清单 —— 这是"做减法"的机制化（对应 `crontab` 里已存在的 `atr_gate_shadow 产出零消费(45KB/日无人读), 停` 先例）。
 
+### 5.8 自审新判据: 测试标的进入真实推送 (`fixture_symbol_pushes`)
+
+**先例 (2026-09-19, 用户实测收到)**: 一条"建仓成交富卡"**逐项等于单测 fixture**
+(`tests/test_extended_hours_order_execution.py:136-141` 的 `US.FAKE` 100 股 @10.0 / 盘前 +3.00% /
+EXT 量 300,000 / 财报超预期 +10.0% / SL $9.50)。生产链不可能产生它 —— `trade_records`、
+`open_positions`、`logs/ftseek_us.log` 三处 `US.FAKE` **均 0 次**，该标的只存在于单测 fixture
+(+ 一个已归档的 `scripts/archive/e2e_smoke_test.py`)。即: **通知出口被测试标的污染**，
+而当时单测**全绿** —— 唯一的告警面是用户的 IM。这正是本系统要消灭的那类"无证据也不报红"的失败。
+
+判据（全部读**已有/已改**产物，不新建台账，不新增写者）:
+
+| # | 数据源 | 命中条件 |
+|---|---|---|
+| 1 | `data/ext_entry_push_dedup.json` | key `ext_entry_filled:<symbol>:<pos_id>` 的 `<symbol>` 段命中 `is_test_symbol()` 或**单测 fixture 常量集**（该键 2026-09-19 起由成交富卡写入 ⇒ 本类泄漏的**唯一持久留痕**） |
+| 2 | `data/critical_alerts.flag`（FlagFileChannel, 仅 HIGH/CRITICAL）+ `data/push_failures.jsonl` | 正文同上 |
+| 3 | `logs/ftseek_us.log` | `[PushHub·test-symbol]` 告警行 |
+
+`fixture 常量集` 不手工维护: 从 `tests/**/*.py` 抽 `US.<大写>` 字面量, 与 `trade_records` /
+`open_positions` **零出现**交叉确认（2026-09-19 判定 US.FAKE 用的就是这条路径）。
+
+**诚实标注的盲区**: `trade_entry` 富卡是 `Level.NORMAL` ⇒ FlagFileChannel 不写 flag 文件,
+`PushHub` 也不落盘"每笔推送"⇒ **若无判据 1, 这类泄漏在生产产物上完全不可见**（本次实测:
+`data/critical_alerts.flag` 连文件都不存在、`logs` 里 0 命中）。所以这条判据的载体是 2026-09-19
+新增的富卡去重键, 不能写成"事后翻日志就能查"。
+
+**源头修法（已落地, 本方案只读其产物）**:
+①`_push_filled` 并入 `_push_once` 的每 ET 日去重（抽出 `_dedup_reserve`, key =
+`ext_entry_filled:<symbol>:<pos_id>` —— 同标的**再入场是新 pos_id**, 不受影响; 收敛掉的只是同一笔
+成交被反复演练/重放 —— 与用户"上午还有这种推送"一致）；
+②`_probe_mode()` 把"进程内在跑 pytest"也算静默（事故时出口封锁只挂在 `tests/conftest.py` 上,
+`--noconftest` / 裸 import 测试模块的跑法完全不受保护）；
+③`tests/conftest.py` 会话结束对"渠道 send 层有留痕"的用例**报红**（白名单
+`@pytest.mark.allow_outbound_notification`），把"用户看 IM 才知道"变成"测试红"。
+
 ---
 
 ## 6. 可观测性（本系统自身也要被观测）
@@ -299,7 +333,7 @@ def pending_adjudications() -> list[dict]:
 - bundle 每次构建写入 `data/reviews/bundle_<date>.json`（`data/*` gitignore），并保留 `bundle_latest.json` 供快速读取。
 - **幂等**: 同日重跑除 `generated_at`/`git` 外**逐字相同**（测试断言）。
 - **原子写**: `tempfile + os.replace`，避免半截产物被消费。
-- **本系统的成败也进自审**: `self_audit = {"dead_producers":[...], "unregistered_shadows":[...], "metrics_without_evidence":0, "error_lines_today":N, "pushes_today":M}`。
+- **本系统的成败也进自审**: `self_audit = {"dead_producers":[...], "unregistered_shadows":[...], "metrics_without_evidence":0, "error_lines_today":N, "pushes_today":M, "fixture_symbol_pushes":0}`（末项判据见 §5.8）。
 - **口径变更审计**: golden 基准 + 任何口径改动必须同批更新 golden 并写 DEB（机制上强制，见 §9 P5）。
 
 ---

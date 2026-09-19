@@ -159,6 +159,52 @@ PYTHONPATH=. venv/bin/python -m pytest tests/test_cancel_orphan_ext_order.py \
 
 ---
 
+## 2026-09-19 补充批 — 推送出口收口 (单测 fixture 真发生产 IM)
+
+**触发**: 用户收到一条"建仓成交富卡", 逐项等于 `tests/test_extended_hours_order_execution.py:136-141`
+的 fixture (`US.FAKE` 100@10.0 / 盘前 +3.00% / EXT 量 300,000 / 财报超预期 +10.0% / SL $9.50)。
+逐项实证生产链不可能产生它: `trade_records` / `open_positions` / `logs/ftseek_us.log` 三处 `US.FAKE`
+**0 次** ⇒ 是**通知出口被测试标的污染**, 不是交易链故障、零交易影响。
+
+**三个真缺口 → 三处修 (全部零交易行为变更)**:
+
+| # | 缺口 | 修法 | 文件 |
+|---|---|---|---|
+| 1 | `_push_filled` 不走 `_push_once` 去重 ⇒ 同一笔成交被反复演练可反复外发 | 抽出 `_dedup_reserve(key)` 供两处复用; 富卡 key = `ext_entry_filled:<symbol>:<pos_id>` | `scripts/extended_hours_entry_executor.py` |
+| 2 | 静默只看 env ⇒ **绕过 conftest 的 pytest 跑法** (`--noconftest` / 裸 import 测试模块) 无任何静默 | `_probe_mode()` 追加"进程内在跑 pytest"判定 (四条推送出口共用同一判据) | 同上 |
+| 3 | 出口没封住时测试**照样全绿**, 泄漏只能靠用户看 IM | conftest 会话结束: 渠道 `send` 层有留痕 ⇒ 置 `exitstatus=FAILED` + 点名; 白名单 `@pytest.mark.allow_outbound_notification` | `tests/conftest.py` + `pytest.ini` |
+
+**为何不用 pytest.ini 的一行 `env =`**（原建议如此）: 它需要 **pytest-env 插件, 本机 venv 未装**
+⇒ 写进 ini 只会得到 `Unknown config option: env` 警告并**静默不生效** = 假修复。判据改放 `_probe_mode()`,
+覆盖全部 pytest 跑法（含 `--noconftest`）且生产进程零变化（`app/`、`scripts/` 无 `import pytest`）。
+
+**验证 (实测, 非推断)**:
+
+```bash
+# 1. 新回归 + 相邻守卫
+venv/bin/python -m pytest tests/test_ext_entry_push_guards.py tests/test_ext_entry_test_symbol_guard.py -q
+#   → 9 passed
+# 2. "放行方向"实测 (只验拦截方向 = 可能把生产告警永久静默): 干净子进程 _probe_mode()=False; FUTSEEK_PROBE=1 → True
+# 3. 报红机制自检: 临时用例打渠道 send 层 → 打印 "1 passed" **但会话退出码 1** + 点名用例 + 首条正文
+# 4. 事故路径复现: probe 关 + 真 Hub(渠道被 conftest 封) ⇒ 渠道层收到 **2 条**(钉钉+飞书双发)富卡,
+#    正文 = `✅ US.FAKE BUY 成交 … 成交价 $10.00 数量 100 股 …`  ← 与原事故同形
+# 5. 相关回归 203 passed (ext_entry / 孤儿单 / 推送 共 16 个文件); 全量套件与改动前基线失败集逐条比对
+```
+
+**回滚**: `git revert <本提交>`（单批: tests/ + pytest.ini + 脚本推送分支 + 文档, 不需重启服务 ——
+脚本由 cron 每轮新起进程）。只想撤第 2 条: 删 `_probe_mode()` 里 `return "pytest" in sys.modules ...`
+一行, 保留 env 分支。
+
+**盲区 / 未做（登记）**:
+
+- `US.FAKE` **不进** `is_test_symbol()`（会误伤 8 个把 US.FAKE 当正常符号的既有用例, 9/18 已回退）
+  ⇒ "演练标的"这一类仍无代码概念, 只能靠"去重 + pytest 静默"收敛, 不是白名单式根治。
+- `trade_entry` 富卡是 `Level.NORMAL` ⇒ FlagFileChannel 不写 `data/critical_alerts.flag`、Hub 也不落盘
+  每笔推送 ⇒ **没有新去重键就查不到痕迹**。该判据已登记进
+  `DEB-20260919-review-decision-support-system.md §5.8`（`self_audit.fixture_symbol_pushes`）。
+
+---
+
 ## 共享 skill 编辑台账（multi-agent-project-collaboration 要求；供他 agent 审计/勿重提被否决改法）
 
 | skill | 编辑 | 依据 |
@@ -166,5 +212,6 @@ PYTHONPATH=. venv/bin/python -m pytest tests/test_cancel_orphan_ext_order.py \
 | `~/.hermes/skills/quantitative-trading/ftseek-extended-hours-trading` | ①新增「超时链条必须单调」节：三层链 `cron 240 > shadow 180 > 子进程 20`、`max(A, env+B)` 类修复**必须代入现役默认值算实数**再与旧值逐字比、“只抬一层更糟”（外层先杀 → 孙进程仍在跑 ⇒ 孤儿单 + 零证据）、超时必须打子进程残留 stdout/stderr；②回放费用节由“不能用扁平费率”改为**已落地**并写入实测读数（−0.013~−0.032pp、$5–10 档 0.279% = 3.3×）；③参考节加本 RFC 与孤儿单检测器（方案 A 已实施 / 方案 B 待批）；④「延长时段退出载体」节加孤儿单检测器（挂载点/触发源/阈值/env/只告警不撤单）；⑤「其它坑」加一条：订单级证据查 `order_list_query` 而非 history 端点（后者 SIM 恒 n=0），`update_time` 为空 ⇒ 终态时刻不可复核；⑥新增「占位标的 (US.TEST) 与探针纪律」节（四入口过滤只用 `is_test_symbol`；PDT 台账污染会间接拒真交易；fixture 别拿 US.TEST 当通用符号；`trade_records.exit_time` = 头寸同步时刻而非成交时刻；人工撤销工具的安全门）；⑦新增「探针/测试不得污染生产」节（`FUTSEEK_PROBE=1` 不推且**不写去重键** —— 否则探针吃掉生产当日告警名额） | 本 RFC §1/§3/§5/§6；DEB §23.1 R7 自证伪、§23.2、§23.3、§23.5 |
 | `~/.hermes/skills/engineering-change-protocol` | Anti-Rationalizations 表新增一行「常量推导式空操作」反模式（含逐字对比规程与链条单调性） | 本 RFC §1（R2 实锤） |
 | `~/.hermes/skills/devops/ftseek-verification-audit` | 新增「复核"改读数"类改动」节：①改读数必落档三件（改哪条读数/切线日期/证伪指标），缺一按 P1 治理缺口报；②A/B 对比搭台纪律（**别把脚本复制到 /tmp** —— REPO 派生常量指向 /tmp 会造出自制 detector_error，误算成被复核方缺陷；worktree 跑基线要 `ln -s 生产仓/data`，别用 fixture 库）；③双实现分叉的合并规程（逐输入类比动作差异 → 算现网命中数 → 0 命中才敢称行为中性 → 加防复活测试）；④新增/变更 LLM 参数必须 provider 级实弹核 HTTP 200 vs 400（本仓 4xx 会静默 fallback ⇒ 改动变空操作），并核 `payload.update(extra_body)` 在 `setdefault` 之前 | 本 RFC §6 工具修订复核；DEB `DEB-20260918-quality-caliber-and-llm-thinking-budget.md` §3/§4 |
+| `~/.hermes/skills/quantitative-trading/ftseek-extended-hours-trading` | 「探针/测试不得污染生产」节由 2 条扩到 5 条：①静默判据唯一落点 = `_probe_mode()`（同时认 `FUTSEEK_PROBE=1` 与"进程内在跑 pytest"，覆盖 `--noconftest` / 裸 import）；②加开关式修法先验插件装了没（`pytest.ini` 的 `env =` 需 pytest-env，未装即**假修复**）；③每个新推送出口必须接 `_dedup_reserve`，key 带 `pos_id`（同标的再入场照发）；④"测试有没有真外发"要能自动报红（conftest 会话结束置败 + 白名单 marker）；⑤渠道桩必须 `staticmethod` 装类上（否则描述符把实例当第一参数） | 本 RFC 2026-09-19 补充批；DEB-20260919-review-decision-support-system §5.8 |
 
 **未改动的共享 skill**：`ftseek-trigger-execution-audit` / `backtest-rule-replay` 等未触及；孤儿单检测器落地方案 A 时已按上表第 ④⑤ 项补进 extended-hours skill（方案 B 落地时再补）。

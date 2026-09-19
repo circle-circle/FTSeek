@@ -199,14 +199,25 @@ def _state_lock(state_path=None):
 
 
 def _probe_mode():
-    """探针/测试运行的**静默开关**: `FUTSEEK_PROBE=1`。
+    """探针/测试运行的**静默开关** (四条推送出口共用的唯一判据)。
 
     2026-09-18 (§23.5): 用户看到的"连续推送虚拟标的"里有一类来自**人工/探针以 REAL 环境跑生产脚本**
     —— 生产 cron 根本没设 `FUTU_TRD_ENV`（默认 SIMULATE）、审计里也没有占位行。
     探针验证 REAL 分支时不该把生产 IM 当输出通道：置 `FUTSEEK_PROBE=1` 即静默（并留可见日志）。
     生产环境 unset ⇒ 行为完全不变（告警照常）。
+
+    2026-09-19 (推送污染收口): 追加"**进程内在跑 pytest** 同样静默"。事故实证 —— 单测 fixture 的
+    建仓成交富卡 (`US.FAKE` 100@10.0, tests/test_extended_hours_order_execution.py:136) 真发到生产 IM,
+    而出口封锁只挂在 `tests/conftest.py` 上: 任何**绕过 conftest 的跑法** (`--noconftest`、裸 import
+    测试模块) 都不受它保护。判据放在本函数 ⇒ `_push` / `_push_once` / `_push_filled` / `_dedup_reserve`
+    同一开关, 不留第二处。
+    (不用 pytest.ini 的 `env =`: 那需要 pytest-env 插件, 本机 venv 未装 ⇒ 写进 ini 只会得到
+     "Unknown config option" 警告并**静默不生效** —— 看似修好实则空操作。)
+    生产服务不加载 pytest (实测 `app/`、`scripts/` 均无 `import pytest`) ⇒ 生产行为零变化。
     """
-    return os.getenv("FUTSEEK_PROBE", "").strip().lower() in ("1", "true", "yes")
+    if os.getenv("FUTSEEK_PROBE", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
 def _stage(session: str) -> str:
@@ -258,6 +269,12 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
     if _probe_mode():
         print(f"[ext_entry][probe] 成交推送抑制: {symbol} {fqty:g}@{fpx}")
         return False
+    # 去重 (2026-09-19): 同一持仓的成交富卡每 ET 日只发一次。pos_id 每次建仓都变 ⇒ 同日真再入场
+    #   不受影响; 会被收敛掉的只可能是**同一笔成交被反复演练/重放** (此前可无限外发 —— 与用户
+    #   "今天上午还有这种推送" 的观察一致)。
+    if not _dedup_reserve(f"ext_entry_filled:{symbol}:{pos_id}"):
+        print(f"[ext_entry] 成交富卡本 ET 日已发过, 跳过: {symbol} {pos_id}")
+        return False
     try:
         from app.push import get_push_hub
         from app.push.message import trade_entry as _m
@@ -289,17 +306,16 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
 _PUSH_DEDUP = ROOT / "data" / "ext_entry_push_dedup.json"
 
 
-def _push_once(key, text):
-    """同一 key **每个 ET 日只推一次** (2026-09-18)。
+def _dedup_reserve(key):
+    """推送去重闸: 同一 key **每个 ET 日只放行一次** (True = 可发, 并**即刻占位**)。
 
-    病灶: _push 无去重, 而 US.TEST 这类**报废测试单**会被对账路径反复碰到 ⇒ 同一句拦截文案
-    每轮都推 (用户反馈"一直持续推送虚拟标的")。本函数只做通知去重, 不改变拦截行为本身。
+    探针模式 (见 `_probe_mode`: `FUTSEEK_PROBE=1` 或进程内在跑 pytest) 下**连键都不写** ——
+    否则一次探针/演练会把这个 key 的当日名额用掉, 反而把生产的真告警静默掉。
 
-    探针模式 (`FUTSEEK_PROBE=1`) 下**连去重键都不写** —— 否则一次探针会把这个 key 当日名额用掉,
-    反而把生产的真告警静默掉。
+    2026-09-19: 由 `_push_once` 内联抽出 (原逻辑逐字保留), 供**成交富卡** (`_push_filled`) 复用 ——
+    此前只有 `_push_once` 走去重, `_push_filled` 每次调用都真发一条。
     """
     if _probe_mode():
-        print(f"[ext_entry][probe] 推送抑制(不写去重键): {text}")
         return False
     today = _today_et()
     try:
@@ -308,7 +324,6 @@ def _push_once(key, text):
         data = {}
     if data.get(key) == today:
         return False
-    _push(text)
     data[key] = today
     try:
         tmp = _PUSH_DEDUP.with_suffix(".tmp")
@@ -316,6 +331,20 @@ def _push_once(key, text):
         tmp.replace(_PUSH_DEDUP)
     except Exception:
         pass
+    return True
+
+
+def _push_once(key, text):
+    """同一 key **每个 ET 日只推一次** (2026-09-18)。
+
+    病灶: _push 无去重, 而 US.TEST 这类**报废测试单**会被对账路径反复碰到 ⇒ 同一句拦截文案
+    每轮都推 (用户反馈"一直持续推送虚拟标的")。本函数只做通知去重, 不改变拦截行为本身。
+    """
+    if not _dedup_reserve(key):
+        if _probe_mode():
+            print(f"[ext_entry][probe] 推送抑制(不写去重键): {text}")
+        return False
+    _push(text)
     return True
 
 

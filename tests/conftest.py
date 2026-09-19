@@ -214,7 +214,7 @@ def _block_live_llm_http(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _block_outbound_notifications(monkeypatch):
+def _block_outbound_notifications(request, monkeypatch):
     """测试**永不**触达生产通知通道 (2026-09-18, 用户实测反馈)。
 
     病灶: 个别用例 (如 test_execute_rejects_real_environment) 用 FUTU_TRD_ENV=REAL 调 _execute
@@ -225,12 +225,19 @@ def _block_outbound_notifications(monkeypatch):
     全部变成"恒成功但零送达"的假红。这里保留 Hub 逻辑，只拦截钉钉/飞书/flag
     网络与磁盘出口；需要断言 Hub 行为的用例照常使用本地 mock channel。
     并默认把 FUTU_TRD_ENV 钉在 SIMULATE —— 测试环境不与 REAL 混淆 (显式要 REAL 的用例自行 setenv)。
+
+    2026-09-19: 两个桩改为 `staticmethod` 装到类上。原写法把普通函数赋给类属性 ⇒ 描述符协议会把
+    实例自身当第一个位置参数塞进来 (`notifier.send_text("x")` 记录到的是**对象 repr**, 渠道桩更会
+    因 channel 实例上没有 `render_text()` 而抛错) ⇒ 留痕内容不可读、"出站留痕报红"没法点名发了什么。
     """
     recorded = []
 
-    def _record(text, *args, **kwargs):
-        recorded.append(text)
+    def _note(text):
+        recorded.append((_outbound_origin(), str(text)))
         return True
+
+    def _record(text, *args, **kwargs):
+        return _note(text)
 
     for module_path, class_name in (("app.notifier.feishu", "FeishuNotifier"),
                                     ("app.notifier.dingtalk", "DingTalkNotifier")):
@@ -238,7 +245,7 @@ def _block_outbound_notifications(monkeypatch):
             module = importlib.import_module(module_path)
             cls = getattr(module, class_name, None)
             if cls is not None and hasattr(cls, "send_text"):
-                monkeypatch.setattr(cls, "send_text", _record, raising=False)
+                monkeypatch.setattr(cls, "send_text", staticmethod(_record), raising=False)
         except Exception:
             pass
     try:
@@ -246,7 +253,10 @@ def _block_outbound_notifications(monkeypatch):
         from app.push.channels import DingTalkChannel, FeishuChannel, FlagFileChannel
 
         def _record_channel(msg, *args, **kwargs):
-            recorded.append(msg.render_text())
+            try:
+                _note(msg.render_text())
+            except Exception:                       # 非 PushMessage: 记 repr 也不许让桩抛错
+                _note(repr(msg))
             return True
 
         for cls_name in ("DingTalkChannel", "FeishuChannel", "FlagFileChannel"):
@@ -255,19 +265,92 @@ def _block_outbound_notifications(monkeypatch):
                 cls = {"DingTalkChannel": DingTalkChannel,
                        "FeishuChannel": FeishuChannel,
                        "FlagFileChannel": FlagFileChannel}[cls_name]
-            monkeypatch.setattr(cls, "send", _record_channel, raising=False)
+            monkeypatch.setattr(cls, "send", staticmethod(_record_channel), raising=False)
     except Exception:
         pass
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
-    return recorded
+    yield recorded
+    # ── 出站留痕 → 会话结束报红 (2026-09-19) ────────────────────────────────────
+    # 上述封锁保证"测试真发不到网络", 但对**绕过封锁的出口/跑法**是哑的: 2026-09-19 实测一条建仓
+    # 成交富卡把单测 fixture (`US.FAKE` 100@10.0, tests/test_extended_hours_order_execution.py:136)
+    # 真发到生产 IM, 而单测**全绿**(用户的 IM 才是唯一告警面)。机制化: 用例跑到渠道 send 层留痕
+    # 就记账, 会话结束置红并点名。故意触达渠道层的用例用 `@pytest.mark.allow_outbound_notification` 豁免。
+    #
+    # 只算 `test`/`hub` 两类来源: 后台 daemon 自发的那条 (PushHub 单例的 HealthMonitor 心跳) 会落在
+    # **恰好当时在跑**的用例头上 —— 不分类就会把无辜用例算成泄漏 (假红), 而假红会把这条纪律废掉。
+    mine = [t for o, t in recorded if o in ("test", "hub")]
+    _OUTBOUND_BACKGROUND.extend(t for o, t in recorded if o == "background")
+    if mine and not request.node.get_closest_marker(_ALLOW_OUTBOUND_MARKER):
+        _OUTBOUND_LEAKS.append((request.node.nodeid, mine[0][:160], len(mine)))
+
+
+def _outbound_origin():
+    """留痕来源分类 (2026-09-19): `test` / `hub` / `background`。
+
+    结构性判据 (不写死发送者名字): 看**调用栈**里有没有 `tests/` 帧 (conftest 自身除外) 或
+    `app/push/hub.py` 帧。两类都算"测试驱动": 前者=测试代码直接打渠道/通知器, 后者=经 PushHub
+    路由 (含 hub 线程池里的异步投递 —— 那种栈里没有 tests 帧, 靠 hub 帧兜住)。
+    都不占 = 生产后台周期线程自发 (如 `app/push/health.py` 每小时的心跳), 只记录不报红。
+    """
+    try:
+        import traceback
+        paths = [f.filename for f in traceback.extract_stack()
+                 if not f.filename.endswith("conftest.py")]
+    except Exception:
+        return "unknown"
+    if any(f"{os.sep}tests{os.sep}" in p for p in paths):
+        return "test"
+    if any(p.endswith(os.path.join("app", "push", "hub.py")) for p in paths):
+        return "hub"
+    return "background"
+
+
+# 会话级出站留痕账 (只在 conftest 进程内, 不落盘)
+_OUTBOUND_LEAKS = []          # [(nodeid, 首条正文, 条数)] —— 测试驱动, 置红
+_OUTBOUND_BACKGROUND = []     # 后台周期线程自发 (HealthMonitor 心跳等) —— 只报不红
+_ALLOW_OUTBOUND_MARKER = "allow_outbound_notification"
 
 
 def pytest_sessionfinish(session, exitstatus):
-    # futu SDK 线程退出兜底 (2026-08-27 修正): 事后置 t._daemonic 对 3.8+ 无效 —
-    # threading._shutdown 按线程【启动时】注册的 _shutdown_locks 逐锁 acquire 等
-    # 线程退出, 不复查 t.daemon (机制实证: 旧 hack 挂死/清锁干净退出)。
-    # 清空 _shutdown_locks = 把已启动的非 daemon 线程事后 daemon 化: 解释器
-    # finalize 阶段照常击杀这些空闲循环线程, 正常退出路径不受影响。
+    if _OUTBOUND_LEAKS or _OUTBOUND_BACKGROUND:
+        _report_outbound_traces(session)
+    if _OUTBOUND_LEAKS:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    _futu_thread_exit_bailout()
+
+
+def _report_outbound_traces(session):
+    """把"出口没封住"从"用户看 IM 才知道"变成"测试红" (明细打到终端摘要)。"""
+    try:
+        tr = session.config.pluginmanager.getplugin("terminalreporter")
+        if tr is None:
+            return
+        tr.write_line("")
+        tr.write_line("=" * 72)
+        if _OUTBOUND_LEAKS:
+            tr.write_line(f"🚨 出站通知泄漏: {len(_OUTBOUND_LEAKS)} 个用例触达了渠道 send 层")
+            tr.write_line("   (渠道若未被 conftest 封住 = 已真外发到生产 IM)")
+            for nodeid, sample, n in _OUTBOUND_LEAKS[:20]:
+                tr.write_line(f"   · {nodeid}  ({n} 条) 首条: {sample!r}")
+            if len(_OUTBOUND_LEAKS) > 20:
+                tr.write_line(f"   · … 其余 {len(_OUTBOUND_LEAKS) - 20} 个同理")
+            tr.write_line("   处置: 测试自身故意打渠道 → @pytest.mark.allow_outbound_notification;"
+                          " 否则 = 有出口绕过封锁, 必须堵住而不是豁免")
+        if _OUTBOUND_BACKGROUND:
+            tr.write_line(f"ℹ️ 另 {len(_OUTBOUND_BACKGROUND)} 条为后台周期线程自发 (如 PushHub 心跳),"
+                          f" 不计红; 首条: {_OUTBOUND_BACKGROUND[0][:100]!r}")
+        tr.write_line("=" * 72)
+    except Exception:
+        pass
+
+
+def _futu_thread_exit_bailout():
+    """futu SDK 线程退出兜底 (2026-08-27 修正): 事后置 t._daemonic 对 3.8+ 无效 —
+    threading._shutdown 按线程【启动时】注册的 _shutdown_locks 逐锁 acquire 等
+    线程退出, 不复查 t.daemon (机制实证: 旧 hack 挂死/清锁干净退出)。
+    清空 _shutdown_locks = 把已启动的非 daemon 线程事后 daemon 化: 解释器
+    finalize 阶段照常击杀这些空闲循环线程, 正常退出路径不受影响。
+    """
     import threading
     for t in threading.enumerate():
         if t is not threading.main_thread():

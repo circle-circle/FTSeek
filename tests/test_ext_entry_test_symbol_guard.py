@@ -15,6 +15,8 @@ import importlib.util
 import pathlib
 import sys
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -31,6 +33,10 @@ def _load():
 
 def _arm(mod, tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_PUSH_DEDUP", tmp_path / "dedup.json")
+    # 2026-09-19: 本文件的用例测的是**去重与推送语义**, 必须在"非探针"分支上跑 ——
+    #   而 `_probe_mode()` 现在对 pytest 进程默认 True (pytest→静默, 见 executor._probe_mode),
+    #   不显式关掉就没有真去重键可断言 (那是静默分支, 不是被测行为)。
+    monkeypatch.setattr(mod, "_probe_mode", lambda: False)
     calls = []
     monkeypatch.setattr(mod, "_push", lambda t: calls.append(t))
     return calls
@@ -68,8 +74,13 @@ def test_push_once_is_per_day(tmp_path, monkeypatch):
     assert calls == ["a", "b"]
 
 
+@pytest.mark.allow_outbound_notification
 def test_conftest_blocks_outbound_notification(monkeypatch):
-    """C) 测试环境封死出口: FeishuNotifier.send_text 已被替换为记录桩 (不发网络)."""
+    """C) 测试环境封死出口: FeishuNotifier.send_text 已被替换为记录桩 (不发网络).
+
+    allow_outbound_notification: 本用例**就是**在验封锁本身 —— 它必须打到渠道层才能断言"打的是桩";
+    留痕是预期产物, 故豁免 conftest 的出站留痕报红。
+    """
     from app.notifier.feishu import FeishuNotifier
     assert FeishuNotifier().send_text("本句不得外发") is True       # 桩返回 True, 无网络副作用
     assert monkeypatch is not None

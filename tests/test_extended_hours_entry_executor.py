@@ -190,6 +190,9 @@ def test_execute_rejects_real_environment(isolated_state, tmp_path, monkeypatch)
     monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
     monkeypatch.setattr(executor, "_PUSH_DEDUP", tmp_path / "dedup.json")
+    # 2026-09-19: 本用例验的是"环境级一次提示"的**去重与文案**, 必须在非探针分支上跑 ——
+    #   `_probe_mode()` 现对 pytest 进程默认 True (pytest→静默), 不关掉就只留一行静默日志、无真推送可断言。
+    monkeypatch.setattr(executor, "_probe_mode", lambda: False)
     pushed = []
     monkeypatch.setattr(executor, "_push", lambda text: pushed.append(text))
 
