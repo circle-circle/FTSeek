@@ -40,7 +40,6 @@ gate_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
 gen_event_symbols.py  # 存量测量/回填环, 台账回填待专项
 ic_health_check.py  # 存量测量/回填环, 台账回填待专项
 ic_weekly_report.py  # 存量测量/回填环, 台账回填待专项
-insider_signal_monitor.py  # 存量测量/回填环, 台账回填待专项
 kr3_runup_shadow.py  # 存量测量/回填环, 台账回填待专项
 limit_entry_shadow_replay.py  # 存量测量/回填环, 台账回填待专项
 live_reconcile_check.py  # 存量测量/回填环, 台账回填待专项

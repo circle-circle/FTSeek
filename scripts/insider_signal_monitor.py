@@ -48,6 +48,15 @@ def parse_insider_signals_from_log(log_file, days_back: int = 1) -> List[Dict]:
         r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+.*?\[InsiderScan\] '
         r'🟢 内部人集群买入: (US\.\w+)'
     )
+    # 2026-09-19 修 (bug #5 同族): 买方数与金额**不在** symbol 行里, 在 provider 行:
+    #   … [ftseek.insider_provider] INFO: [Insider] 🟢 US.UBER cluster buy: 2 buyers, $15,314,016
+    # 旧实现在 symbol 行写死 buyers=0/amount=0 ⇒ 报告恒显 "Avg buyers: 0.0 / Avg amount: $0"
+    # (曾致该报表被判"不可信")。此处同一次扫描内**顺带**收集 symbol→(buyers, amount),
+    # 循环结束后回填; 同一 symbol 多次命中取**最后一次** (最近一次集群披露)。
+    detail_pattern = re.compile(
+        r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+.*?cluster buy: (\d+) buyers, \$([\d,]+)'
+    )
+    details: Dict[str, tuple] = {}
 
     # 处理 Path 对象或文件对象
     if hasattr(log_file, 'exists'):
@@ -62,6 +71,14 @@ def parse_insider_signals_from_log(log_file, days_back: int = 1) -> List[Dict]:
 
     try:
         for line in f:
+            dm = detail_pattern.search(line)
+            if dm:
+                d_ts, d_buyers, d_amount = dm.groups()
+                if datetime.strptime(d_ts, '%Y-%m-%d %H:%M:%S') >= cutoff:
+                    # provider 行里 symbol 在 "cluster buy" 之前: 取该行第一个 US.XXX 记号
+                    sym_m = re.search(r'(US\.\w+) cluster buy:', line)
+                    if sym_m:
+                        details[sym_m.group(1)] = (int(d_buyers), int(d_amount.replace(',', '')))
             match = symbol_pattern.search(line)
             if match:
                 timestamp_str, symbol = match.groups()
@@ -71,13 +88,18 @@ def parse_insider_signals_from_log(log_file, days_back: int = 1) -> List[Dict]:
                     signals.append({
                         'timestamp': timestamp.isoformat(),
                         'symbol': symbol,
-                        'buyers': 0,      # 不在日志行中，留占位
-                        'amount': 0,       # 同上
+                        'buyers': 0,      # 回填见下 (detail 行可能出现在本行之后)
+                        'amount': 0,
                         'source': 'log'
                     })
     finally:
         if close_after:
             f.close()
+
+    # 回填买方数/金额 (2026-09-19); 未命中 detail 行的 symbol 保持 0 = 数据缺口, 不臆造
+    for s in signals:
+        if s['symbol'] in details:
+            s['buyers'], s['amount'] = details[s['symbol']]
 
     return signals
 
