@@ -2,11 +2,17 @@
 import json
 
 FILES = [
-    ("W1-盘前 60日 (Jun24-Sep16)", "data/reports/replay_ext_entry_sources_20260919_premarket_fixed.json"),
-    ("W1-盘后 60日", "data/reports/replay_ext_entry_sources_20260919_afterhours_fixed.json"),
+    ("W1-盘前 60日 (Jun24-Sep16) 紧闸门 n=56", "data/reports/replay_ext_entry_sources_20260919_premarket_fixed.json"),
+    ("W1-盘前 60日 宽闸门 (复算 9/17 依据)", "data/reports/replay_ext_entry_sources_20260919_premarket_loose60.json"),
+    ("W1-盘后 60日 (紧闸门)", "data/reports/replay_ext_entry_sources_20260919_afterhours_fixed.json"),
+    ("W1-盘后 60日 宽闸门 (复算 §16.6 依据)", "data/reports/replay_ext_entry_sources_20260919_afterhours_loose60.json"),
+    ("W2-盘前 Jan-Mar (独立窗口)", "data/reports/replay_ext_entry_sources_20260919_premarket_janmar.json"),
+    ("W3-盘前 05-15→06-20 (DEB §16.9 第二窗口)", "data/reports/replay_ext_entry_sources_20260919_premarket_loose_win2.json"),
     ("W2-盘后 Jan-Mar (独立窗口)", "data/reports/replay_ext_entry_sources_20260919_ah_janmar.json"),
 ]
-SHOW = ("rule", "read_0920", "pre_close", "a_cond", "b_band", "intraday_sl", "rth_close", "next_open", "sl_only")
+import os
+FILES = [f for f in FILES if os.path.exists(f[1])]
+SHOW = ("prod_like", "prod_like_925", "no_flatten", "no_flatten_gap", "rule", "read_0920", "pre_close", "a_cond", "b_band", "intraday_sl", "rth_close", "next_open", "sl_only")
 
 for label, path in FILES:
     d = json.load(open(path))

@@ -413,8 +413,53 @@ def _simulate(bars_day, prev_close, entry_bar_i):
     res["flatten_armed"] = bool(_armed)
     res["a_cond_px"] = e2 if (_read_pnl > 0 or _armed) else e4
     res["b_band_px"] = e2 if (_read_pnl > 0 or _armed or _read_pnl <= DEEP_LOSS_BAND) else e4
+    # ── 2026-09-19 口径补钉 (复核发现 arm 与生产语义可能不对齐, 必须先量再判) ──
+    #  生产实际语义 (premarket_exit_shadow.collect): 先算原 Playbook 利润信号, 有信号就执行
+    #  (prioritize_profit_exit 让利润信号胜出), 无信号才由 **09:20 起的收口兜底平**。
+    #  而 `rule` 臂是"信号可在**全时段**触发, 未触发才落 09:25 价" ⇒ 比生产更宽; `pre_close`
+    #  臂是"无条件收口"(覆盖信号) ⇒ 比生产更窄。两者都不是生产, 故补两条:
+    #    prod_like  = 信号窗口截至 09:20 + 无信号则按 09:20 读数兜底平 (≈ 现役实装)
+    #    no_flatten = 信号优先后**不兜底**, 亏损仓交 RTH (−5% initial_sl 或收盘) (≈ 删门语义)
+    _fd2 = _shared_profit_exit_full_decider(entry, entry * 0.95, day)
+    _pl = None
+    for b in pre:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        if _hhmm(b["t"]) > FLATTEN_READ_HHMM:
+            break
+        _d2 = _fd2(b["c"])
+        if _d2.get("action") in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK", "SL_CERT_LOCK"):
+            _pl = b["c"]
+            break
+    res["prod_like_px"] = _pl if _pl is not None else _read_px
+    # prod_like_925: 现役语义但**兜底平推到 09:25** (= 我上一条的"保守替代: 收口窗后移"),
+    #   信号窗口随之延长到 09:25 —— 三窗可配对, 是对"收口本身该不该留"的最小改动回答。
+    _fd3 = _shared_profit_exit_full_decider(entry, entry * 0.95, day)
+    _pl3 = None
+    for b in pre:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        _d3 = _fd3(b["c"])
+        if _d3.get("action") in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK", "SL_CERT_LOCK"):
+            _pl3 = b["c"]
+            break
+    res["prod_like_925_px"] = _pl3 if _pl3 is not None else e2
+    res["no_flatten_px"] = exit_px if exit_px else e4
+    # no_flatten_gap: 同 no_flatten, 但把 −5% 止损的成交改成**跳空穿线实价** (bar 开在该线下方 ⇒
+    #   按 open 成交, 否则按线成交)。用途: `intraday_sl`/`no_flatten` 按恰好 −5.00% 成交是**结构性
+    #   乐观** —— 真实尾部由这笔"穿线"决定, 必须先量差多少, 再谈"撤掉收口"值不值。
+    _gap_exit = None
+    for b in rth:
+        if b["l"] <= sl:
+            _gap_exit = min(float(b["o"]), sl) if b["o"] < sl else sl
+            break
+    res["no_flatten_gap_px"] = exit_px if exit_px else (_gap_exit if _gap_exit is not None else e3)
     for tag, px in (("rule", exit_px if exit_px else (e2 if e2 else entry)),
                     ("read_0920", _read_px),
+                    ("prod_like", res.get("prod_like_px") or e2),
+                    ("prod_like_925", res.get("prod_like_925_px") or e2),
+                    ("no_flatten", res.get("no_flatten_px") or e2),
+                    ("no_flatten_gap", res.get("no_flatten_gap_px") or e2),
                     ("a_cond", res.get("a_cond_px") or e2),
                     ("b_band", res.get("b_band_px") or e2),
                     ("pre_close", e2), ("rth_close", e3), ("intraday_sl", e4),
