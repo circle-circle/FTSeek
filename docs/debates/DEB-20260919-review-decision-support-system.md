@@ -1,6 +1,6 @@
 # DEB-20260919 · 复盘决策支持系统 (Review Decision Support) [RFC-088]
 
-> **状态**: 提案 (设计稿) / 未落码 · 第 1 轮独立复查 + 第 2 轮复核修正完成 · 待用户裁决
+> **状态**: **P0–P4 已落码并入库**（§21–§25；`4c529f7f6` 等）· 3 轮独立复查完成（§17 / §19 / §26）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（状态行由第 3 轮复查 agent 于 2026-09-19 修正，见 §26.2 N-1）
 > **日期**: 2026-09-19
 > **作者**: Hermes
 > **目标读者**: ①项目所有者(裁决) ②执行 agent(落码) ③**独立复查 agent(§10 复查清单)**
@@ -501,21 +501,23 @@ systemctl is-active ftseek-us   # 保持 active
 
 ## 14. 验收清单
 
-- [ ] P0 覆盖扫描可跑，产出 `data/reviews/coverage_<date>.json`，含 `dead_producers`
-- [ ] P1 schema 五测全绿，含"缺证据点名指标"用例
-- [ ] P2 结果层与 `sqlite3` 直接查询**逐分一致**（≥1 次人工对账留痕）
-- [ ] P2 切片净值之和 == headline 净额（测试断言）
-- [ ] P2 `exit_date_mismatches` 存在且差异 >0 时 P0 上报
-- [ ] P2 `Evidence.integrity` 4 键硬约束生效（少一键即构建失败）
-- [ ] P3 幂等（同日重跑逐字相同，除 `generated_at`/`git`）
-- [ ] P3 推送恰好 1 条且走 `app.push`（caller 侧 `pushed_at` + `flock` 生效；发送失败不标记已推）
-- [ ] P4 判据清单 ≥30 项；`ready_since` 状态可更新/销账；日推送只列 ready_count + 最久前 5 项
-- [ ] P5 golden 入库且 `git check-ignore` 返回非忽略
-- [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）
-- [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）
-- [ ] §16 更正 B：同日重跑**不产生第 2 条推送**（caller 侧按日守卫生效；实测：手工跑第 2 次 → 日志记 `skip: already pushed <date>`）
-- [ ] 全量回归通过（`tests/review/` + 5 个既有文件）
-- [ ] 第二 agent §10 清单逐条给出结论（成立/不成立 + 证据）
+> 勾选由第 3 轮独立复查 agent 于 2026-09-19 按 §26 实测证据执行；未勾项均属 P5（未开工）。
+
+- [x] P0 覆盖扫描可跑，产出 `data/reviews/coverage_<date>.json`，含 `dead_producers`（§26.1：`coverage_2026-09-19.json` 实测 producers=58 / dead_producers=18）
+- [x] P1 schema 五测全绿，含"缺证据点名指标"用例（§26.1：`tests/review` 22/22；反证实验独立重跑 ⇒ `headline.y: evidence is required` / `... integrity is missing universe`）
+- [x] P2 结果层与 `sqlite3` 直接查询**逐分一致**（≥1 次人工对账留痕）（§26.1：第 3 轮重跑 SQL `34.56|8|7` == headline）
+- [x] P2 切片净值之和 == headline 净额（测试断言）（§26.1：110.75+(−76.19)=34.56 实测）
+- [x] P2 `exit_date_mismatches` 存在且差异 >0 时 P0 上报（专项测试 `tests/review/test_bundle_builder.py:148-162` 断言 `severity=="P0"`；当前库差异=0）
+- [x] P2 `Evidence.integrity` 4 键硬约束生效（少一键即构建失败）（§26.1：独立遍历 28 指标缺失=0 + 反证实验抛错点名）
+- [x] P3 幂等（同日重跑逐字相同，除 `generated_at`/`git`）（§26.1：第 3 次重跑三产物 md5 逐字一致；注意实现将 `generated_at=""`/`git={}` 恒空 ⇒ "除"字空转，见 §26.2 N-4）
+- [x] P3 推送恰好 1 条且走 `app.push`（caller 侧 `pushed_at` + `flock` 生效；发送失败不标记已推）（§25.2 S-1 生产实证 1 条送达 + 用户确认；`_push_once` 代码核过 flock 内重读/成功才标记；FakeHub 失败不落状态测试绿）
+- [x] P4 判据清单 ≥30 项；`ready_since` 状态可更新/销账；日推送只列 ready_count + 最久前 5 项（§26.1：36/19/19 实测；真实推送文本实证"待裁决 19：…前 5 项"）
+- [ ] P5 golden 入库且 `git check-ignore` 返回非忽略（P5 未开工：`tests/review/golden/` 不存在）
+- [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）（P5 未开工：crontab 0 行、Hermes 无 review_bundle job）
+- [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）（P5 未开工：载体文件不存在；`test_ops_scripts_sync` 现状 3/3 绿）
+- [x] §16 更正 B：同日重跑**不产生第 2 条推送**（caller 侧按日守卫生效）（§26.1：带 `--push` 手工重跑实测 ⇒ 结果 JSON `"pushed": "already"`、`push.json` 未变、无新失败记录；⚠️ 实际行为是结果 JSON 字段而非日志行 `skip: already pushed <date>`，验收文案与实现不符见 §26.2 N-7）
+- [x] 全量回归通过（`tests/review/` + 5 个既有文件）（§26.1：22/22 + 74/74 独立重跑绿）
+- [x] 第二 agent §10 清单逐条给出结论（成立/不成立 + 证据）（第 1 轮 §17、第 2 轮 §19、第 3 轮 §26 均已完成并入库）
 
 ---
 
@@ -1004,3 +1006,58 @@ systemctl is-active ftseek-us   # 保持 active
 1. **§14 G5 未达成**：`self_audit` 当前只有 `exit_date_mismatch_count`（且 `anomalies: []`），未含 G5 要求的"死产出 / 无证据指标 / 告警噪声 / 未登记影子 / 测试标的进入推送"。建议 §24.4 边界补一句"G5 属 P5 范围、当前未达成"，避免验收清单被读成已通过。
 2. **`_exit_date_et` 静默丢行**（§19.3 已提）：bundle 的 `self_audit` 建议加 `unparsed_exit_time` 计数（当前库 0 行，属预防）。
 3. **逾期升级（>14 天 P1）未实现**（§24.4 已诚实说明）：与 §20.2④ 一致，等 `ready_since` 有真实观察时长再启用 —— 这条边界写法正确，保留。
+
+---
+
+## 26. 第 3 轮独立复查（外部 agent，2026-09-19，用户授权后追加）
+
+> 复查方式：纪律同 §10/§17/§25 —— **不采信文档自述**，全部在真库/真文件/真运行上重跑（含 2 次真实 CLI 执行与 1 次带 `--push` 的守卫验证；未产生第 2 条推送）。结论分三类：**确认**（独立复现一致）/ **新发现**（N-x，文档未记录的增量）/ **裁决意见**（对 §20）。
+> 本节作者仅追加本节并修正头部状态行与 §14 勾选（N-1），未改动 §1–§25 任何结论。
+
+### 26.1 确认摘要（22 项独立复现，全部一致）
+
+| # | 项 | 第 3 轮实测 |
+|---|---|---|
+| 1 | C1/E1 阶段拆解 | `stage_breakdown` 重跑 ⇒ premarket 4/−648.86 · regular 329/+340.14 · afterhours 2/+110.75 · 合计 335/−197.97 **逐格一致** |
+| 2 | P2 生产对账（§22.2） | SQL 直查 09-18 ⇒ `34.56\|8\|7` == bundle headline `net_pnl=34.56/win_rate=0.875`；切片 110.75+(−76.19)=34.56 ✓ |
+| 3 | P1 证据覆盖（§25.1-4） | 独立遍历 bundle ⇒ **28 指标、缺 ref=0、integrity 四键缺失=0** |
+| 4 | P1 硬强制（§25.1-5） | 反证实验独立重跑：缺 `integrity.universe` ⇒ `EvidenceError: headline.x: evidence.integrity is missing universe`；缺 evidence ⇒ `headline.y: evidence is required` —— **均抛错且点名指标** |
+| 5 | P3 幂等（§23.2） | 第 3 次重跑 `scripts/review_bundle.py --date 2026-09-18` ⇒ bundle/`bundle_latest`/REVIEW 三件 **md5 逐字一致**；DB 以 `mode=ro` 打开（CLI 无写库能力）✓ |
+| 6 | §16 更正 B 守卫 | 带 `--push` 手工重跑 ⇒ 结果 JSON `"pushed": "already"`、`push.json` 未变、`push_failures.jsonl` 无新增 ⇒ **不双推**（生产端实证） |
+| 7 | P4 判据层（§24.2） | `REGISTRY=36 / READY=19 / criteria_ready_state.json 19 条` ✓ |
+| 8 | C16 hub 绕过 | `app/push/hub.py` 实证 `if not sync and not should_send(...)` + sync 路径 `_send_and_mark(msg, None)` ⇒ sync 不去重、连 `mark_sent` 都不调 ✓ |
+| 9 | R-2 σ 更正 | `pnl_pct`（ratio 存储）全量已平仓 n=870 ⇒ σ=**0.018977 = 1.8977%** ✓；原 1.18% 确不可复现 |
+| 10 | R-3 时区分布 | SQL 分组 ⇒ `-04:00`=547 / naive=327 / `+00:00`=1 ✓ |
+| 11 | S-1 真实推送 | `push.json`（`pushed_at=2026-09-19T13:27:53+00:00`）在、failures 零命中、用户确认原文已入档（`0089c73be`）✓ |
+| 12 | §17.3 误报 1 平反 | `jobs.json` 顶层为 `{jobs:[...], updated_at}` ⇒ **34 个 job**；`2254de46fe64/6af0648e3eb3/7d448f79c410/0e87d094dcdf` 均在册 `enabled+no_agent`；`alpha-backfill` 确在 06:30 dow2-6 ✓（**本轮复查 agent 首次解析同样误读为 2**，亲身体会"子代理解析不可直采"教训） |
+| 13 | §20.2② 时刻论据 | crontab `^30 6` 3 行（exit_calibration_refresh / settle_eod_depth_gate_shadow / settle_extended_hours）+ Hermes alpha-backfill ⇒ 同分钟 4 作业；`^35 6` **0 行** ⇒ 06:35 空档成立 |
+| 14 | §21.1 覆盖扫描 | `producers=58 / dead_producers=18 / push_exit_census=164 文件`；分类 **webhook=77 / app.push=54 / notifier=48 / curl=17**（合计 196>164 ⇒ S-2"不得相加"成立）；corpus `file_count=1699`（app 474/scripts 460/ops 35/hermes-scripts 32/hermes-skills 293）✓ |
+| 15 | 测试 | `tests/review` **22/22** + 既有 5 文件 **74/74** + `test_ops_scripts_sync` **3/3** 绿（独立重跑） |
+| 16 | §19.2-G | `order_executor.py:1314/1332` 两处均**无参**调用 `phase_from_time()` ⇒ naive 分支对服务不可达 ✓ |
+| 17 | E5 | `data/shadow/entry_archetype_routing.jsonl` 不存在 ✓ |
+| 18 | E9 | `duplicate_external_close` ⇒ `5\|0` ✓ |
+| 19 | S-4 重启取证 | 日志 `21:30:32 收到停止信号` → `21:31:14 [调度器] 服务启动`；`持仓恢复 DB 无未平仓` + `对账 DB=0/内存=0/差异=0` ✓（时刻细节见 N-5） |
+| 20 | S-5 入库 | `4c529f7f6` 提交在案；`git status` 中 review 交付物不再 untracked ✓ |
+| 21 | 边界（§25.1-8） | crontab 0 行 review、Hermes 无 review_bundle job、`ops/hermes/review_bundle_carrier.py` 不存在、`obsidian_vault/daily/review` 不存在、`tests/review/golden/` 不存在 ⇒ **P5 确未开工** ✓ |
+| 22 | 产物结构 | `REVIEW_2026-09-18.md` 六节（结果/阶段切片/计划vs实际/待裁决/异常/证据）**105 行** ✓；S-6 的 `sort_keys=True` 锚点（`scripts/review_bundle.py:101-103`）准确 |
+
+### 26.2 新发现（N-1 … N-7；文档此前未记录）
+
+- **N-1（P1 · 文档卫生，本轮已修）**：头部状态行原为"提案(设计稿)/**未落码**/待用户裁决"、§14 十五项**全部未勾**——与 §21–§25（P0–P4 已交付入库 + 一次真实推送）矛盾。以文档为入口的 agent 会误判"还没开工"。本轮已更新状态行并按实测勾选 §14（未勾 3 项均属 P5）。**机制建议**：每轮交付记录（§2x）提交时，同批更新头部状态行，避免"正文前进、头部滞留"。
+- **N-2（P2 · §5.8 判据 1 载体当前不存在）**：`data/ext_entry_push_dedup.json` 实测缺失——该文件为**懒创建**（首笔成交富卡经 `_dedup_reserve` 才写；`b4e46c363` 部署后尚无成交推送）。不是缺陷，但 G5 `fixture_symbol_pushes` 的实现必须显式容忍"文件不存在=0"而非报错；§5.8"唯一持久留痕"表述宜加注该前提。
+- **N-3（P2 · S-3 未闭环）**：`coverage_*.json` 的 `corpus` 只含 `file_count/roots/scope_counts`，**无后缀白名单与排除项规则**；本轮独立 `find` 总数与 1699 仍差 ~0.5%，复核者无法对齐。S-3 自己提出的建议在 P0 产物中未落地，建议 P5 前补进产物。
+- **N-4（P3 · 产物无代码版本溯源）**：幂等的实现是 `generated_at=""`、`git={}` **恒空**（md5 稳定依赖此）。代价：bundle 无法回答"这份数字出自哪个 commit 的口径"，§6"口径变更审计"在 golden（P5）落地前无载体。建议 P5 把 git 信息写旁路 `bundle_<date>.meta.json`（不参与幂等比对），而非永久置空。
+- **N-5（P3 · S-4 时刻更正）**：`[调度器] 服务启动` 实测 **21:31:14**（S-4 写 21:31:08；停止信号 21:30:32 一致）。无实质影响，按"逐字证据"纪律记录。
+- **N-6（边界观察，非本 DEB 责任）**：`scripts/extended_hours_entry_executor.py`（+38 行）等 4 文件仍在工作区**未提交**（并行延长时段工作流）；cron 读工作区 ⇒ 该链路"生产在跑未入库代码"病灶（RFC-060 立项之本）仍在。§19.4.2 的"移入对应 DEB"尚未执行，宜在对应 DEB（DEB-20260917/20260919 延长时段系列）内收口。
+- **N-7（P3 · 验收文案与实现不符）**：§14/§16 更正 B 的验收措辞是"日志记 `skip: already pushed <date>`"，实现的实际行为是**结果 JSON `"pushed": "already"`**（本轮实测）。语义等价、载体不同；已按实测措辞勾选 §14，建议后续文案统一。
+
+### 26.3 对 §20 待裁决建议的独立意见（第 3 轮）
+
+| §20 项 | 意见 | 实测依据 |
+|---|---|---|
+| ② 06:35 | **同意** | 06:30 同分钟 4 作业、06:35 两载体均 0 占用（26.1-13）；上线前按 §20.3.3 再核一次 |
+| ③ READY 只进日报 | **同意，且已有生产实证** | S-1 用户收到的真实推送即"待裁决 19：…前 5 项"单行摘要 ⇒ 防噪设计在生产里生效 |
+| ① 不做全量回填 | **同意** | σ 重算（26.1-9）与 §19.3 重基 34 天均表明口径刚变动，回填=事后合理化风险 |
+| ⑦ P5 开工 | **建议前置三件小事**：N-1 机制建议（头部同步）、N-3（corpus 规则自描述）、N-4（版本溯源 sidecar）；均为 <20 行改动，可与 P5 同批 | 26.2 |
+
+**总评**：三轮自查/复查的自曝文化（R-1…R-5、S-1…S-6、误报平反）在本轮 22 项独立复现中**全部站得住**；该 DEB 的数字可信度已达到可裁决状态。剩余风险集中在 P5 的调度/载体面（未开工）与 N-2/N-4 两个小缺口。
