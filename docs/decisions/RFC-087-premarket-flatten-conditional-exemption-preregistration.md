@@ -315,3 +315,44 @@ PY
 **判据未满足的诚实表述**: ①②都是"三窗同向 + 尾部不劣"的读数, 但**都在噪声内**(t 全 < 1.1),
 所以本批不构成"会赚钱"的证据; 它构成的是"**现役形态被替代形态支配**"的证据 —— 这条对
 "要不要继续留 09:20 这个时点"是足够的, 对"能不能加收益"是不够的。
+
+---
+
+## 14. 上线回执 (2026-09-19, 用户令「改」)
+
+**变更**: crontab 第 293 行 (退出链唯一调度器 `extended_hours_exit_cron.py`) 内联增加
+`EXT_PREMARKET_FLATTEN_FROM=925` (即 ① 兜底收口窗 09:20 → 09:25, 信号窗同步延到 09:25)。
+消费方唯一: `scripts/premarket_exit_shadow.py:85` (`int(os.getenv("EXT_PREMARKET_FLATTEN_FROM","920"))`);
+`.env.us` 无同名键 ⇒ 无覆盖风险 (且 `load_dotenv` 不覆盖既有 env)。
+
+**前置检查**: `trade_records` 未平 PLAYBOOK 仓 **0** / `open_positions` **0** ⇒ 无在途仓受影响。
+
+**变更方式**: `scripts/rfc087_apply_flatten_window.py --apply` (默认 dry-run; 安全门 = 唯一匹配行 /
+防重复注入 / 锚点必须存在 / 改前备份 / 改后回读断言行数不变且仅 1 行变化且旧内容逐字保留)。
+
+| 项 | 值 |
+|---|---|
+| 备份 | `/root/crontab_backup_rfc087_20260919_135457.txt` (sha256 前缀 `e38994980e83abbe`, 297 行) |
+| 回读校验 | 行数 **297 不变**, 实际变化行 **[293]**, 旧内容逐字保留 ✅ |
+| 旧→新 | `… EXT_CERT_LOCK_PCT=3.0 EXT_EXIT_LIMIT_TIMEOUT_S=60 …` → `… EXT_CERT_LOCK_PCT=3.0 **EXT_PREMARKET_FLATTEN_FROM=925** EXT_EXIT_LIMIT_TIMEOUT_S=60 …` + 行尾注记 |
+
+**接线验证 (4 条, 全过)**
+
+| # | 验证 | 结果 |
+|---|---|---|
+| A | 与 crontab 同形 env 前缀下读常量+判据 | `FLATTEN_FROM_HHMM=925`; 09:19→False / **09:20→False** / **09:25→True** / 隔夜仓→False ✅ |
+| B | 去掉 env (回滚态) 必须回默认 | `FLATTEN_FROM_HHMM=920`, 09:20→True ✅ |
+| C | 真实数据 `collect(dry=True)` | 返回 0, 不崩 (⚠️ 此刻无持仓 ⇒ **空仓=假绿**, 只证不崩) |
+| D | 回归测试 | `tests/test_premarket_close_flatten.py` **10 passed** ✅ |
+
+**生效时点**: 下一交易日 (**2026-09-21 周一**) 盘前 04:00 ET 起; 今日周六 ⇒ 退出 cron 每轮返回
+`outside_extended_hours`, 变更零副作用。
+
+**回滚**: 删除该 env 段 (`crontab -l | sed` 或恢复备份文件 `crontab /root/crontab_backup_rfc087_20260919_135457.txt`)。
+
+**复查日 = 2026-09-26 (一周)**, 必核三件:
+1. 影子行里收口动作时点是否真为 09:25 (证明 env 被真实 cron tick 读到 — 手动跑会自证成功, 故必须取**cron 自写的行**);
+2. 真实成交价 vs 09:20/09:25 两档读数 (核对"晚 5 分钟"是否拿到那 0.007~0.05pp 量级);
+3. `thin_book` 分布 + 收口限价单的成交/未成交比 (09:25 更薄 = E 薄盘闸的证据基础)。
+
+**仍未闭合**: A/E 影子需真实盘前持仓才有样本; `thin_book` 目前只记录不判定。
