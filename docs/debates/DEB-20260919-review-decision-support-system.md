@@ -238,7 +238,7 @@ REQUIRED_INTEGRITY = ("n", "window", "universe", "truncation_checked")
 | 3 | 主判据 | 费用后净均值**配对**优于基线，且**双窗口同向** |
 | 4 | 尾部判据 | 最差 5% 不劣化 > 1pp（跳空尾部单列） |
 | 5 | 机制诊断 | 至少 1 个机制性读数（如 `reversal_after_cut_pct` / `capture_mean_pct` / 阶段分档归因） |
-| 6 | 功效声明 | 写明"能判方向/尾部，还是能判 0.1pp 级"（单笔净 σ≈1.18% ⇒ 检出 +0.15% 需 **n≈481**；n=56 的 CI 半宽 ±0.31pp） |
+| 6 | 功效声明 | 写明"能判方向/尾部，还是能判 0.1pp 级"（单笔净 σ≈1.18% ⇒ 检出 +0.15% 需 **n≈481**；n=56 的 CI 半宽 ±0.31pp）<br>⚠️ **该 σ 输入已被 §17/R-2 更正**：`pnl_pct` 口径实测 σ=**1.8977%**（全量已平仓 n=870，无任何切面接近 1.18%）⇒ **n≈1258**、n=56 CI **±0.498pp**；且 σ 按阶段差近 1.6 倍 ⇒ 功效必须**按阶段分报** |
 | 7 | 预注册与回滚 | 落 `shadow_registry` 条目（`min_n` / `graduation_criteria` / `count_mode` / `eval_script`）+ env 级回滚方式 |
 | 8 | 复现命令 | 逐条可粘贴（含 `--out` 路径与读哪几个 `summary.*` 字段） |
 
@@ -485,7 +485,7 @@ systemctl is-active ftseek-us   # 保持 active
 - **2026-09-19 · Hermes（本稿）**: 按"证据优先"普查后**修正了问题陈述**：记录侧已过剩（330 脚本 / 108 cron / 108 jsonl / 285 lessons / 165 DEB），真正的缺口是**消费者层**——其中 `app/playbook/shadow_registry.py` 这一判据 SSOT **零生产消费者**（E2/E3 实测）。故方案收敛为"一层派生视图 + 四消费面"，并**删除**原设计中的"新建判据 YAML / 新建事件台账"两项（避免与既有 SSOT 双写）。
 - **2026-09-19 · Hermes（自曝）**: 本会话早前给出的盘前臂读数（`pre_close −0.402% / rth_close −0.101% / intraday_sl +0.237% / 最差 −7.281%`）**已被 `RFC-087 §3` 更正为待更正数字**（回放工具 chunk 尾部静默截断）。本 DEB 不引用这些数字作为依据；§5.3 的 `integrity` 硬约束即该教训的机制化。
 - **2026-09-19 · 用户（裁决）**: 问"复盘系统产出最终的样式会是 skills 还是其他什么框架合适"，并裁「需要」= 把该决定写成 DEB 新节（载体形态 + 落点清单 + 与 §13.2 的耦合）后提交、再交第二 agent 复查。落成本文 §16。
-- **待补**: 第二 agent 独立复查结论（请在本节追加"第 N 轮 · <agent>"小节，逐条对应 §10）。
+- **2026-09-19 · Hermes（第 1 轮独立复查已回）**: 两个只读复查 agent（A 组 C1–C9 数据类 / B 组 C10–C17+§16 对抗）完成后，作者逐条复核，结论落在 **§17**：15 条成立、2 条不成立（C5 推送军规、C13 功效 σ）、1 条无法判定（C11 未落码）、5 条更正（R-1…R-5）、**1 条复查 agent 的否决被复核推翻并记录在案**（其 jobs.json 解析错误，把 34 个 job 读成 17 个）。**待用户裁决项未变**：§13 五问 + §17.2 R-1 的并入口径前置决定。
 
 ---
 
@@ -573,3 +573,67 @@ systemctl is-active ftseek-us   # 保持 active
 # skill 面: 删 ~/.hermes/skills/devops/ftseek-review-bundle/
 # 代码/产物面: 见 §12
 ```
+
+---
+
+## 17. 第 1 轮独立复查结论（两个复查 agent + 作者逐条复核）
+
+> 复查方式：两个**只读** agent 并行，A 组跑 C1–C9（数据类），B 组跑 C10–C17 与 §16 对抗审查（代码/基础设施类）；两份报告回来后**由作者逐条复核**（本仓纪律：子代理自报约 25% 误报，声称必查 DB/源码结局）。
+> 结论分三类：**成立**（原文保留）/ **更正**（R-x，本节给出实测新值，受影响节以 R-x 为准）/ **误报**（复查 agent 的判定被复核推翻，记录在案防止后续 agent 采信）。
+
+### 17.1 逐条判定
+
+| # | 复查判定 | 作者复核 | 处置 |
+|---|---|---|---|
+| C1 | 成立 | 一致：`stage_stats.stage_breakdown(rows_from_db(...))` 得 premarket 4/−648.86 · regular 329/+340.14 · afterhours 2/+110.75，合计 335/−197.97 | 原文保留 |
+| C2 | 成立 | 一致：`get_ready_to_evaluate\|refresh_counts` 零非自身命中；`shadow_registry` 仅 3 处**文本子串**（.pyc 与注释不算消费者） | 原文保留（§5.6 前提成立） |
+| C3 | 成立 | 复查实测条目数 **36**（非 30+）；`class ShadowItem` 含 status/min_n/count_mode | 保留，条目数改 36 |
+| C4 | 成立 | 一致：`entry_archetype_routing.jsonl` 不存在；另实测 36 条 `data_path` 里 34 为文件路径、**33 存在 / 1 缺失**（`data/trigger_miss_telemetry.jsonl`，其值带 `(reason=...)` 条件说明）⇒ "猜路径⇒计数静默归零"风险**已有 1 个实例** | 保留并加实例 |
+| C5 | **不成立** | 复核确认（见 R-1） | §4/E6 更正 |
+| C6 | 成立 | 复核确认（见 R-3）：分布 **547 `-04:00` / 327 无偏移 / 1 `+00:00`**（共 875） | §5.2 影响面更正 |
+| C7 | 成立 | 一致：`duplicate_external_close` 5 行、带净额 0 行 | 原文保留 |
+| C8 | 成立 | 一致：2026-09-18 四类 `skip_reason` 均存在（`非当前通道候选` 59 / `方向偏斜超限` 7 / `chase_cap_enforced` 1 / `admission: PRICE_TOO_LOW` 1 / `low_atr` 1） | 原文保留 |
+| C9 | 成立（约数需精确化） | 一致且逐值相同（5→26.304 / 10→13.204 / 20→6.653 / 30→5.112 / 50→4.703）；精确比值 **5.59×** 非 6×；$30 档名义实为 4980（`int(5000/30)=166`） | 保留，比值写 5.6× |
+| C10 | 部分不成立 | 54 总数成立；**心跳底噪实测 16（非 15）** | 数字更正 |
+| C11 | 无法判定 | 设计稿未落码，无产物可测；风险点见 17.3(3) | 保留待 P3 实测 |
+| C12 | 成立 | 一致：本轮提交仅动 `docs/debates/*.md`；§5.6/§9 P4 对注册表是**只读 import**，不改其源码 ⇒ 不算触碰 `app/playbook/*` | 原文保留 |
+| C13 | **不成立** | 复核确认（见 R-2） | §5.5 输入更正 |
+| C14 | 成立 | 一致：`git check-ignore` 返回空（`tests/` 未忽略）；`data/*` 由 `.gitignore:46` 忽略 | 原文保留 |
+| C15 | 成立 | 一致：语料元组原文 `(REPO/"scripts", REPO/"app", REPO/"ops", HERMES/"scripts", REPO/"tests")`；skill-dir `.py` = **279** | §16.2 判据 2 成立 |
+| C16 | 成立 | 一致且更强：复核另见 `hub.py:146` `self._send_and_mark(msg, dedup_key if not sync else None)` —— **sync 路径连 `mark_sent` 都不调**，靠"发送成功后占窗"兜底也不可能生效 | §16.5 更正 B 加固 |
+| C17 | 成立 | 一致：(a) `ops/hermes/weekly_scorecard_carrier.py` 调两张记分牌且 Hermes job `705a1f2019d1` enabled；(b) `shadow_registry.py:516` = `overnight_kill_criterion`（OBSERVING, min_n=20）的 `eval_script`；(c) `fee_unit_economics` 不在注册表、仅 3 处注释文本 ⇒ **退役候选 4→1** | §16.5 更正 A 成立 |
+
+### 17.2 更正（R-1 … R-5，均经作者复核）
+
+- **R-1（推翻"推送军规已落实"）§4/E6**：军规原文只存在于 `scripts/trigger_gate_report.py` 的 docstring，**仓库实际违反面 25+ 处**：20 个生产脚本直连 `app.notifier.feishu.send_text`（不经 `app.push` hub），5 个脚本自建 `requests.post` / `urllib.request.urlopen`，crontab 另有 2 行 `curl` 直连钉钉 webhook 兜底（`data_freshness_watchdog` / `cutover_preflight`）。
+  **复核证据（作者实查）**：`scripts/da_chain_health_report.py:174` `from app.notifier.feishu import send_text` —— 而 `app/notifier/feishu.py` 是**直接发 webhook** 的模块（`send_text` → `self._send(payload)`），不是 hub。
+  **后果**：§13.1 拟并入的两条候选（`da_chain_health_report` 06:05、`daily_llm_token_report` 06:20）**本身就是违反者**。并入前必须先决定：是改这两条的推送路径、还是承认"单一消费面"只能对新模块成立（旧模块继续绕 hub）。**该决定不在本 DEB 授权内**。
+- **R-2（§5.5 功效输入 σ 更正）**：原文"单笔净 σ≈1.18% ⇒ 检出 +0.15% 需 n≈481；n=56 CI 半宽 ±0.31pp"**不可复现**。实测（口径 `pnl_pct` 百分数、已平仓 `exit_time IS NOT NULL AND pnl_net IS NOT NULL`、排除 `duplicate_external_close`）：
+
+  | 切面 | n | σ |
+  |---|---|---|
+  | 全量已平仓 | 870 | **1.8977%** |
+  | 2026-06-27 后（playbook 时代） | 526 | 1.5422% |
+  | 最近 56 笔 | 56 | 1.3723% |
+  | 窗口 08-01..09-18 | 335 | 1.5440% |
+  | 空 `entry_session` | 398 | 2.3103% |
+  | 盘前 / 盘后 | 4 / 2 | 2.6033% / 0.1202% |
+
+  **没有任何切面接近 1.18%**（美元口径 σ/平均名义 = 4.95%，也不是它）。按 σ=1.8977% 重算：检出 +0.15% 需 **n≈1258（非 481）**；n=56 的 95% CI 半宽 **±0.498pp（非 ±0.31pp）**，即 **n=56 连 ±0.5pp 都判不准**。且 σ 按阶段差异近 1.6 倍 ⇒ **功效声明必须按阶段分报**，不得全仓一个 σ。
+- **R-3（§5.2 `exit_date_mismatches` 影响面）**：`exit_time` 实测三种格式混存 —— `-04:00` **547** / 无偏移（naive，样例 `2026-04-24T23:30:43.102159`）**327** / `+00:00` **1**（共 875）。naive 行若被 `date(exit_time)` 直接取日，与 ET 日**系统性偏 12–13h、可跨日** ⇒ 该校验的影响面是 **37% 的行**，不是 §4/E8 举的 1 行；维持 **P0 必报**，且建议同时给出"naive 行占比"作为口径健康度字段。
+- **R-4（告警噪声底噪）**：当日推送 54 条成立，其中**心跳 16 条**（非 15）⇒ §8 起点条件 3 的基线按 16 计。
+- **R-5（费用率精确比值）**：$5/$50 档费率比 **5.59×**（文档写"6 倍"）；$30 档名义 4980 非 5000（复现命令的整数截断）——写文档时按 5.6× 与"名义≈5000"表述。
+
+### 17.3 复查 agent 的误报（记录在案，后续 agent 勿采信）
+
+- **误报 1（其唯一"否决"项，被作者复核推翻）**：复查 agent 判定 §16.3 的"`dc双口径` 05:40 / `alpha-backfill` 06:30 / `spy_crash_watch` 06:55"是**过时台账引用**，理由是"当前 `jobs.json` 仅 17 个 job，id `2254de46fe64`/`6af0648e3eb3` 不在其中"。
+  **作者复核**：`~/.hermes/cron/jobs.json` 实有 **34** 个 job；上述三个 id **均在册且 `enabled=True, no_agent=True`**（`2254de46fe64` = dc双口径日对比推送 / `6af0648e3eb3` = alpha-backfill / `7d448f79c410` = spy_crash_watch）。⇒ 该否决**不成立**，§16.3 保留；其"幽灵碰撞"结论作废。
+  **反向加强**：`06:30 CST`（dow `2-6`）另有 **3 条 crontab**（`exit_calibration_refresh` / `settle_eod_depth_gate_shadow` / `settle_extended_hours`）+ Hermes `alpha-backfill` ⇒ **同分钟 4 个作业**，"改 06:35"的动机比原文更强（不是"理由错结论对"）。
+  **教训**：复查 agent 的"实测"也可能来自错误解析（此处疑似只解析到 jobs.json 的局部）—— **子代理的否决不能直接采纳，必须由作者在真文件上重跑一遍**。
+- **误报 2（其建议未被采纳，理由如下）**：建议把 §16.1 的"薄 skill"替换为 `docs/review-bundle-usage.md`。**不采纳**：该建议的立论是"markdown 同样能让 agent 知道路径/命令，且进 git 可 diff"，但它自己承认代价是"agent 需手动 read_file" —— 而本系统的原始诉求正是**不再每天被动询问**，把读数入口从"自动加载"降级为"记得去读"等于回到原点。**采纳其缓解部分**：skill 内不写命令模板全文，只放路径常量 + 一行 `scripts/review_bundle.py --help` 指针（脚本自描述），以消除"模板随 schema 漂移"的失效模式。
+
+### 17.4 复查提出的、本 DEB 接受的三项设计约束（并入 §9/§14）
+
+1. **确定性**：`bundle_builder` 所有 SQL 必须带 `ORDER BY`；切片排序用显式元组键；禁用 `set()`；浮点聚合固定累加序（否则 golden 比对会随机红）。
+2. **按日守卫的并发面**：同日重跑、时区跨日、回填 30 天都好办；**并发（cron + 手动 + 回填同时）最易漏** —— 两个进程同时读到"未推送"会各推一条。最小实现：`fcntl.flock(<bundle>.lock)` 独占锁内**重读** `pushed_at`，推完写回再释放。
+3. **`test_ops_scripts_sync.py` 报错文案已知误导**：方向1 对新文件漏部署报的是"库内有, 线上已**删除**"（与"未部署"语义相反）⇒ 分诊时勿按字面理解。
