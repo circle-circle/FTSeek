@@ -167,5 +167,13 @@ git revert <RFC-089 commit>      # 单文件判据 + 测试 + ledger 行, 工作
 ## 12. 实施记录
 
 **实施日期**: 2026-09-19
-**Commit**: `<待填>`
-**验证结果**: 定向 33 passed / 目标文件 20 passed / wrapper 端到端 rc=0 逐字一致; 全量回归结果见提交说明
+**Commit**: `e34423ae4` (branch `rfc-060-phase1-hotfixes`; 5 文件: 1 脚本 + 1 测试 + RFC + ledger 行 + handoff 行)
+**验证结果**: 目标文件 20 passed / 守卫 3 文件 33 passed / wrapper 端到端 rc=0 且与直跑 `cmp` 逐字一致 / 新旧输出 diff 仅含新增行。
+**全量回归 (2026-09-19)**: `pytest tests/ -q --continue-on-collection-errors` = **64 failed / 5528 passed / 58 skipped / 5 errors**。
+逐条归因: **全部与本变更无关**, 均落在并行工作流的未提交 WIP 上 (读断言原文取证): `test_hermes_job_prompts`
+指向 job `0cb47309cc88` 的 prompt 内嵌 SQL (他 agent 的 job); `test_except_pass_ratchet` 950→**1013**
+(+63 来自 app/ 未提交改动; 本变更的两处 except 均为 `return`/赋值, 不匹配该正则的 pass/continue 模式);
+`test_config_key_census` 指向 `unified_config.yaml:reasoning_effort` 死键; `test_db_connection_chokepoint`
+只点 `ops/audit/*` 与 `ops/hermes/ue_glm53_first_run_verify.py` 两处**他 agent 新文件**。
+本变更 blast radius 内的三条守卫 (目标文件 / `test_ops_scripts_sync` / `test_control_loop_ledger`) 全绿。
+**已知未做**: ①Gate 6 线上首跑观察 = 2026-09-26 09:20 CST (自然触发); ②RFC-077 六道门禁仍为草案, 本轮只做「数字同档 + 抬头指向」, 未把六门搬进周检。
