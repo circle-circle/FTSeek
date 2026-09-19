@@ -183,6 +183,52 @@ def test_hub_text_adapter_keeps_legacy_shapes():
         hubmod.get_push_hub = orig
 
 
+def test_hub_text_adapter_delegates_unknown_methods():
+    """注入点收口的安全前提: 只收口三个文本出口, 其余方法必须原样委派。
+
+    `container.notifier()` 被全仓当 DingTalkNotifier 用 (~30 处), 缺方法 = AttributeError
+    打断主流程 ⇒ 透明代理是硬要求, 不是便利。
+    """
+    class _Real:
+        enabled = True
+
+        def send_order_notification(self, *a, **k):
+            return "delegated"
+
+        def some_property(self):
+            return 7
+
+    a = HubTextAdapter(category=Category.SYSTEM, inner=_Real())
+    assert a.enabled is True                       # 属性委派
+    assert a.send_order_notification() == "delegated"   # 方法委派
+    assert a.some_property() == 7
+    # 缺 inner 时按普通缺属性处理 (不静默返回 None)
+    bare = HubTextAdapter()
+    with pytest.raises(AttributeError):
+        bare.no_such_attr
+
+
+def test_di_container_notifier_is_hub_adapter():
+    """DIContainer.notifier() 必须返回 Hub 适配器 (单点回收 ~30 处 self.notifier.send_text)。"""
+    from app.core.di_container import DIContainer
+    c = DIContainer()
+    n = c.notifier()
+    assert isinstance(n, HubTextAdapter)
+    assert n is c.notifier(), "身份必须稳定 (scheduler.notifier 会被多处持有并比较)"
+    assert "DingTalkNotifier" in type(n._inner).__name__
+
+
+def test_adapter_send_text_routes_through_hub(monkeypatch):
+    """适配器的 send_text 必须真的经 PushHub 出口 (而非直连旧通知器)。"""
+    calls = []
+    from app.push import hub as _hub
+    monkeypatch.setattr(_hub, "push_text_safe",
+                        lambda text, **kw: calls.append((text, kw)) or True)
+    a = HubTextAdapter(category=Category.SYSTEM)
+    assert a.send_text("review loop msg") is True
+    assert calls and calls[0][0] == "review loop msg"
+
+
 def test_phase_cn_ssot():
     from app.core.trade_identity import phase_cn
     assert phase_cn("premarket") == "盘前"

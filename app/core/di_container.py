@@ -228,8 +228,14 @@ class DIContainer:
     # ================================================================
     #  通知层
     # ================================================================
-    def notifier(self) -> "DingTalkNotifier":
-        """钉钉通知器"""
+    def notifier(self) -> "HubTextAdapter":
+        """钉钉通知器 —— 2026-09-18 起返回 **HubTextAdapter(inner=DingTalkNotifier)**。
+
+        为什么包一层: 该对象被注入到 scheduler / review_loop / llm_pipeline 等 ~30 处并
+        以 `self.notifier.send_text(...)` 直连发送, 全部绕过 PushHub。包一层即在**注入点**
+        单点收口 (vs 逐个改调用点, 漏一处就是隐患); 其余方法由 __getattr__ 原样委派,
+        调用形状与通道行为不变 (Hub 主通道仍是钉钉)。
+        """
         from app.notifier.dingtalk import DingTalkNotifier
         cfg = self.config()
         try:
@@ -239,9 +245,20 @@ class DIContainer:
         except Exception:
             webhook = os.getenv("DINGTALK_WEBHOOK_URL_US", "")
             secret = os.getenv("DINGTALK_SECRET_US", "")
-        return self._get_or_create("notifier", lambda: DingTalkNotifier(
-            webhook_url=webhook,
-            secret=secret,
+        # 2026-09-18 续 (用户令「回收全部直连通知器」): 注入点也必须收口 ——
+        # `container.notifier()` 被 scheduler.notifier / review_loop.notifier / llm_pipeline
+        # 等 ~30 处按对象持有后 `self.notifier.send_text(...)`, 只数"实例化点"会漏掉这一大批
+        # (首版 14 处 = 实例化点; 按调用点数应为 ~40)。
+        # 返回 HubTextAdapter(inner=钉钉): 三个文本出口走 PushHub (主通道仍是钉钉 ⇒ 通道行为不变,
+        # 另得去重/健康检查/失败兜底), 其余方法由 __getattr__ 原样委派, 不破坏既有调用形状。
+        from app.push import HubTextAdapter
+        from app.push.message import Category
+        return self._get_or_create("notifier_hub", lambda: HubTextAdapter(
+            category=Category.SYSTEM,
+            inner=self._get_or_create("notifier", lambda: DingTalkNotifier(
+                webhook_url=webhook,
+                secret=secret,
+            )),
         ))
 
     # ================================================================

@@ -38,6 +38,34 @@
 
 `git revert <本提交>` + `systemctl restart ftseek-us`（纯展示层，回滚无数据影响）。
 
+## 追加 (同日续): "14 处"是**实例化点**口径, 按调用点漏了一半
+
+首版清点是 `grep "DingTalkNotifier()\|FeishuNotifier()"` = **实例化点 14 处**。续查发现
+真正绕过 Hub 的还有两大类, 都是**按对象持有后直连**（不在实例化点清单里）:
+
+| 类 | 数量 | 形态 | 收口方式 |
+|---|---|---|---|
+| 注入对象 | ~30 处 | `container.notifier()` → `scheduler.notifier` / `review_loop.notifier` / `llm_pipeline` / `position_monitor` / `scheduler_triggers` / `review_orchestrator` 等 `self.notifier.send_text(...)` | `DIContainer.notifier()` **单点**返回 `HubTextAdapter(inner=DingTalkNotifier)` |
+| 异名 sender | 4 处 | `scripts/api_limit_monitor.py` 的 `DingTalkSender()` (`send_markdown`) | 同法包适配器 (`category=HEALTH`) |
+
+**为什么用适配器而不是逐个改调用点**: 调用点散在 10+ 文件, 漏一处即隐患; 注入点是唯一收敛处。
+安全前提 = `HubTextAdapter.__getattr__` **透明委派** —— 该对象被全仓当 `DingTalkNotifier` 用,
+只收口 `send_text`/`send_markdown`/`notify_system_alert` 三个文本出口, 其余方法原样转发,
+否则缺方法即 `AttributeError` 打断主流程。
+
+**通道行为不变**(选这条路的核心理由): `container.notifier()` 的真实类型就是 `DingTalkNotifier`
+(DI 定义), 而 PushHub 主通道也是钉钉 ⇒ 收口后仍是钉钉单发, **没有静默换通道**。
+若真实对象与 Hub 主通道不同(如前例: 对象是飞书、主通道是钉钉), 此类收口会**静默迁移通道**,
+必须显式告知用户再动手。
+
+**新增两个副作用 (如实记账)**:
+1. 这批文本此后受 Hub **去重**约束 (`category|title|body前100` MD5, `dedup_ttl=60s`):
+   60 秒内完全相同内容只发一条 (原直连是每调必发)。
+2. 失败不再上抛 (原直连调用点的 try/except 由 `push_text_safe` 统一承接), 换来失败降级到备用通道。
+
+**仍未收口 (登记, 不静默)**: `app/reports/feishu_push_service.py` (自身即通知器实现)、
+`scheduler.dingtalk` 属性 (全仓无赋值点, 疑为历史残留)、`app/notifier/*` 内部调用。
+
 ## 未做（留给后续）
 
 - 日报/周报的阶段维度与独立阶段日报：本轮只落**推送层**；统计层改动随 RFC-086（阶段统计与报告）另批落地。

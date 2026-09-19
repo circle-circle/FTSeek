@@ -126,7 +126,10 @@ class APILimitMonitor:
     
     def __init__(self, state_file: Path = STATE_FILE):
         self.state_file = state_file
-        self.dingtalk = DingTalkSender()
+        # 2026-09-18 (用户令「回收全部直连通知器」): 直连 sender → PushHub 单出口
+        from app.push import HubTextAdapter
+        from app.push.message import Category as _Cat
+        self.dingtalk = HubTextAdapter(category=_Cat.HEALTH, inner=DingTalkSender())
         self.state = self._load_state()
         
         # 当前数据源

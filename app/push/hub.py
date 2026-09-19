@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from .message import PushMessage, Level, Category
 from .channels import Channel, DingTalkChannel, FeishuChannel, FlagFileChannel
@@ -353,9 +353,22 @@ class HubTextAdapter:
     默认 level/category 由构造参数决定; 不传则用 PushHub 的 NORMAL/SYSTEM。
     """
 
-    def __init__(self, level: Optional[Level] = None, category: Optional[Category] = None):
+    def __init__(self, level: Optional[Level] = None, category: Optional[Category] = None,
+                 inner: Any = None):
         self._level = level
         self._category = category
+        # 2026-09-18 续: `inner` = 被包装的真实通知器。注入点 (`container.notifier()`) 在
+        # 全仓被广泛持有 (scheduler.notifier / review_loop.notifier / llm_pipeline ...),
+        # 只收口 send_text/send_markdown/notify_system_alert 三个文本出口, **其余方法原样委派**
+        # —— 注入对象一旦缺方法就是 AttributeError 打断主流程, 这条是安全前提。
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        """透明代理: 未收口的方法/属性委派给 `inner` (缺 inner 时按普通缺属性处理)。"""
+        inner = self.__dict__.get("_inner")
+        if inner is None:
+            raise AttributeError(name)
+        return getattr(inner, name)
 
     def send_text(self, text: str, *_a, **_kw) -> bool:
         return push_text_safe(text, level=self._level, category=self._category)
