@@ -202,6 +202,17 @@ def render(cur: Dict, prev: Optional[Dict], days: int) -> str:
         )
         lines.append("")
         lines.append(f"口径外已了结行 (不计入上方汇总): {parts}")
+    # 2026-09-18 (用户裁「周报加阶段×方向×出场原因 + 延长时段单列, ETH 单列」):
+    #   与上面"方向×退出原因"表同窗口同来源白名单, 只多一个阶段维度。
+    try:
+        from app.review.stage_stats import rows_from_db, render_stage_section
+        _rows = [r for r in rows_from_db(DB_PATH, cur["start"], cur["end"])
+                 if str(r.get("source_type") or "") in TRADE_SOURCES]
+        if _rows:
+            lines.append("")
+            lines.append(render_stage_section(_rows, f"分阶段成交统计 ({cur['start']} ~ {cur['end']})"))
+    except Exception as _e:
+        lines.append(f"(阶段维度渲染失败: {_e})")
     return "\n".join(lines)
 
 

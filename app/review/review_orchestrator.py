@@ -1496,6 +1496,23 @@ class ReviewRenderer:
     """
     
     @staticmethod
+    @staticmethod
+    def _stage_section(trades: List) -> str:
+        """阶段统计段 (唯一口径 app/review/stage_stats) — 失败即返回空串, 绝不阻断报告。
+
+        窗口 = 报告自己的成交列表; 库路径取项目内 data/ftseek_us.db (报告本就读它)。
+        """
+        try:
+            import os as _os
+            from app.review.stage_stats import rows_for_closed_trades, render_stage_section
+            _db = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__)))), "data", "ftseek_us.db")
+            _rows = rows_for_closed_trades(trades, _db)
+            return render_stage_section(_rows) if _rows else ""
+        except Exception:
+            return ""
+
+    @staticmethod
     def render_daily(data: Dict, analysis: Dict) -> str:
         """渲染日报 — 支持结构化提案的人类可读展示"""
         trades = data.get("closed_trades", [])
@@ -1557,7 +1574,14 @@ class ReviewRenderer:
                 lines.append("\n🔍 空头审计补充:")
                 for i, ci in enumerate(cli_insights[:2], 1):
                     lines.append(f"  {i}. {ci}")
-        
+
+        # 2026-09-18 (用户裁「日报/周报加阶段×方向×出场原因 + 延长时段单列」):
+        #   阶段差异会被混算稀释 (实测盘中 329 笔 +$340 掩盖盘前 4 笔 −$649)。
+        _stage = ReviewRenderer._stage_section(trades)
+        if _stage:
+            lines.append("")
+            lines.append(_stage)
+
         return "\n".join(lines)
     
     @staticmethod
@@ -1582,7 +1606,13 @@ class ReviewRenderer:
                 lines.append("\n💡 周度洞察:")
                 for i, insight in enumerate(insights[:3], 1):
                     lines.append(f"  {i}. {insight}")
-        
+
+        # 2026-09-18 (用户裁「日报/周报加阶段×方向×出场原因 + 延长时段单列」)
+        _stage = ReviewRenderer._stage_section(trades)
+        if _stage:
+            lines.append("")
+            lines.append(_stage)
+
         return "\n".join(lines)
     
     @staticmethod
