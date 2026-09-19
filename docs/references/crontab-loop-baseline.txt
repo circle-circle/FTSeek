@@ -25,8 +25,6 @@ config_key_census.py  # 存量测量/回填环, 台账回填待专项
 da_blocked_signal_cf_eval.py  # 存量测量/回填环, 台账回填待专项
 da_bridge_dingtalk_push.py  # 存量测量/回填环, 台账回填待专项
 da_chain_health_report.py  # 存量测量/回填环, 台账回填待专项
-da_prompt_distill_shadow.py  # 存量测量/回填环, 台账回填待专项
-da_prompt_distill_shadow_eval.py  # 存量测量/回填环, 台账回填待专项
 da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
 daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
 data_quality_census.py  # 存量测量/回填环, 台账回填待专项
