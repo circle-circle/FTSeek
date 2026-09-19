@@ -803,3 +803,189 @@ systemctl is-active ftseek-us   # 保持 active
 2. **`ready_since` 的实际新到期速率**（我估"一周 1–3 个"）**未经历史验证** —— 注册表现在只记 `last_evaluated`，没有状态迁移时间线，无法回算。P4 落地后才有真数据；③④的门槛可能要按真实速率调一次。
 3. **06:35 是"空档"**的说法基于 crontab + Hermes jobs 的**当前**快照；延长时段链路正在被别的 agent 改造（§19.4），上线前需再核一次该分钟。
 4. **§5.5 功效门槛**在 σ 更正后（§17.2 R-2）尚无"按阶段"的完整口径 —— 建议 P2 出数时同时打印各阶段 σ 与 n，供你判断哪些阶段只能"方向性"读。
+
+---
+
+## 21. P0+P1 执行记录（2026-09-19）
+
+> 裁决：用户授权"先 P0+P1，且不改交易行为"。本节只记录已执行事实；后续 P2–P5 仍需按 §20.7 的顺序另行落地。
+
+### 21.1 交付与验证
+
+1. **P0 覆盖扫描**：新增 `scripts/review_coverage_scan.py`。语料为 `app/`、`scripts/`、`ops/`、`tests/`、`/root/.hermes/scripts/`、`/root/.hermes/skills/`；测试引用会出现在 refs 里，但 `tests` scope 不计入生产消费者。产物原子写入 `data/reviews/coverage_<date>.json`，stdout 输出紧凑摘要。
+2. **P1 证据契约**：新增 `app/review/bundle_schema.py` 与 `tests/review/`。契约固定 `SCHEMA_VERSION="review_bundle/1"`；证据 kind 只允许 `sql/artifact/log/derived`；指标单位只允许 `usd/pct/pp/count/ratio/text/bool`；每个 Metric 必须有证据，缺失报错携带完整路径（如 `headline.net_pnl`）；`artifact/derived` 必须带 `n/window/universe/truncation_checked` 且逐项校验类型。
+3. **测试**：`venv/bin/python -m pytest tests/review -q` 通过 **8/8**；`py_compile` 通过；`git diff --check` 无问题。
+4. **真实扫描**：`time venv/bin/python scripts/review_coverage_scan.py` 约 **13 秒**完成；共 **1,699** 个代码文件（`app=474`、`scripts=460`、`ops=35`、`tests=405`、`hermes/scripts=32`、`hermes/skills=293`）。生成 `data/reviews/coverage_2026-09-19.json`。
+5. **生产者普查**：`shadow_registry=36`（无 dead）、review-like crontab 输出 `22`，其中 **18 个 crontab 日志无代码消费者**；合计 producer `58`、dead `18`。
+6. **推送出口普查**：命中文件 **164**；分类计数 `webhook=77`、`app.push=54`、`notifier=48`、`curl=17`。该计数是静态可见面，不代表每条路径都在同一执行链中实际发送。
+
+### 21.2 复查修正
+
+- 首版缓存实现后仍保留了旧版 `find_refs/push_exit_census/build_report`，后者覆盖前者导致重复读文件与高 CPU；已删除旧定义，只保留缓存版。
+- 原根标签把 `/root/.hermes/scripts` 显示为普通 `scripts`，与仓内 `scripts/` 混淆；已改为 `hermes/scripts`、`hermes/skills`，并补防回归测试。
+
+### 21.3 边界与未做
+
+- **零交易行为变更**：未启动/停止服务，未改 cron、推送路径、`app/playbook/*`、历史回填、判据退役或任何交易参数。
+- `dead_producers` 仅表示"当前代码语料中未找到非 tests 引用"，不是立即退役指令；18 个 crontab 日志需按消费价值逐项裁决。
+- 当前扫描是静态字符串引用扫描，不能识别运行时动态拼接、数据库读取或尚未在工作区中的消费者；后续若发现漏报，必须补对应语料或显式白名单，不能静默放宽。
+- `data/reviews/coverage_2026-09-19.json` 为运行产物，用于本轮审计，不作为历史口径锚点。
+
+---
+
+## 22. P2 执行记录（2026-09-19）
+
+> 用户继续授权后按 §9 顺序推进。P2 仍为**结果层构建**：不落盘、不渲染、不推送、不改 cron 与交易行为。
+
+### 22.1 交付
+
+1. 新增 `app/review/bundle_builder.py`：
+   - `build()` 生成 `Bundle`，headline 覆盖净额 / 毛额 / 费用 / 费毛比 / 笔数 / 胜场 / 胜率 / MFE=0。
+   - `build_slices()` 复用 `app/review/stage_stats.py` 的阶段 SSOT，输出阶段 n / net / gross / wins / win_rate / mfe0。
+   - `build_plan_vs_actual()` 按 `(symbol, direction)` 对齐 `playbook_instructions` 与 `trade_records`，报告执行、错过、计划外与方向错配。
+   - `exit_date_mismatches()` / `build_anomalies()` 用 `app.utils.timezone.to_et` 校验 raw exit date 与 ET 出场日；错配为 `severity=P0`。
+   - 所有 headline / slices / plan 指标均带 evidence；derived evidence 带 `n/window/universe/truncation_checked`。
+2. 新增 `tests/review/test_bundle_builder.py`，使用临时 in-memory SQLite DDL，不写生产库。
+
+### 22.2 生产对账（2026-09-18）
+
+- 直查 SQL：`round(sum(pnl_net),2) = 34.56`。
+- `build()` headline：`net_pnl = 34.56`。
+- 阶段切片合计：`110.75 + (-76.19) = 34.56`。
+- 样本：8 笔（盘后 2 笔 / +110.75；盘中 6 笔 / −76.19）；当日无 exit-date P0 异常。
+- plan-vs-actual：计划 7，执行 6，错过 1，计划外 2，方向错配 0。
+
+### 22.3 验证
+
+- `pytest tests/review/test_bundle_builder.py -q`：5/5 通过。
+- `pytest tests/review -q`：13/13 通过。
+- `pytest tests/test_stage_stats.py -q`：13/13 通过。
+- DEB 指定既有回归（stage / daily review / review tables / validation accounting / OKR）：74/74 通过。
+- `py_compile` 与 `git diff --check` 通过。
+
+### 22.4 边界
+
+- P2 只提供构建函数；`bundle_<date>.json` 的原子写、幂等、渲染、CLI 与单条推送属 P3，尚未执行。
+- plan-vs-actual 的“计划外 2”是 `US.ACN`、`US.WBD`，需 P3 报告中作为链路对账问题显性展示，不得静默吞掉。
+
+---
+
+## 23. P3 执行记录（2026-09-19）
+
+> 继续按 §9 推进。P3 完成**渲染 + CLI + 原子幂等产物 + 可选推送闸**；本轮没有真实推送、没有写 vault、没有改 cron。
+
+### 23.1 交付
+
+1. 新增 `app/review/bundle_render.py`：
+   - `render_md(bundle) -> (full_md, push_text)`。
+   - full MD 包含结果、阶段切片、计划 vs 实际、P0 异常、逐指标 evidence 溯源。
+   - push text 为短摘要：净额 / 笔数 / 胜率 / 阶段净额 / 计划执行 / P0 异常计数。
+2. 新增 `scripts/review_bundle.py`：
+   - 支持 `--date`、`--period day`、`--push`、`--vault`。
+   - 原子写 `data/reviews/bundle_<date>.json`、`REVIEW_<date>.md`、`bundle_latest.json`。
+   - 同日重跑除运行产物时间外逐字相同：本实现不写 `generated_at`，JSON/MD hash 稳定。
+   - `--vault` 时才写 `obsidian_vault/daily/review/<date>_review.md`。
+   - `--push` 走 `app.push.daily_review`，`sync=True`；caller 侧 `fcntl.flock` + `<date>.push.json` 状态，发送成功才标记，失败不标记。
+   - `week/month` 参数显式拒绝，留待 P5，避免半成品周期口径。
+
+### 23.2 真实运行（2026-09-18，无推送）
+
+- 命令：`venv/bin/python scripts/review_bundle.py --date 2026-09-18`。
+- 产物：
+  - `data/reviews/bundle_2026-09-18.json`
+  - `data/reviews/REVIEW_2026-09-18.md`
+  - `data/reviews/bundle_latest.json`
+- 两次运行 hash 完全一致；JSON 与 latest hash 一致。
+- 报告显性给出：盘中 6 笔 / −$76.19，盘后 2 笔 / +$110.75；计划 7 / 执行 6 / 错过 1 / 计划外 2（`US.ACN`、`US.WBD`）；P0 异常 0。
+
+### 23.3 验证
+
+- `pytest tests/review/test_bundle_render.py tests/review/test_bundle_cli.py -q`：6/6 通过。
+- `pytest tests/review -q`：19/19 通过。
+- DEB 指定既有回归：74/74 通过。
+- `py_compile` 与 `git diff --check` 通过。
+- 推送测试使用 FakeHub：失败不落状态；成功落 `pushed_at`；重跑返回 already 且不再调用 Hub。
+
+### 23.4 边界
+
+- 本轮未执行 `--push` / `--vault`，未创建 push 状态，未改 Hermes job 或 crontab。**⚠️ 更正（§25.2 S-1）**：实测 21:27:53 CST 存在 `bundle_2026-09-18.push.json`（`pushed_at` 非空）且 `push_failures.jsonl` 无对应失败行 ⇒ **P3 阶段有过一次真实推送**；本句"未创建 push 状态"不成立。
+- 当前 CLI 只实现 day；weekly/monthly 属 P5，不做假周期产物。
+
+---
+
+## 24. P4 执行记录（2026-09-19）
+
+> 继续按 §9 推进。P4 完成**判据待裁决层**；仍不真实推送、不上 cron、不改任何交易参数。
+
+### 24.1 交付
+
+1. 新增 `app/review/criteria_status.py`（63 行，满足 ≤80 行约束）：
+   - `pending_adjudications()` 只读 `shadow_registry.REGISTRY`，调用既有 `refresh_counts()` 在本进程内刷新计数与 READY 状态。
+   - 输出 36 项待裁决清单，含 `id/status/n/min_n/progress/ready/criteria/artifact/eval_script/count_mode/evidence`。
+   - `update_ready_state()` 在 `fcntl.flock` 内维护 `data/reviews/criteria_ready_state.json`，只存 `id → ready_since`；离开 READY 自动销账。
+2. `scripts/review_bundle.py` 将待裁决清单写入 `Bundle.pending_adjudications`，并把状态合并回每行。
+3. `app/review/bundle_render.py`：
+   - full MD 列全量待裁决清单。
+   - push 摘要只列 `ready_count` 与 `ready_since` 最久前 5 项，避免 19 项 READY 刷屏。
+
+### 24.2 真实读取
+
+- `pending_adjudications()`：**36 项**，满足 ≥30 验收。
+- `refresh_counts()` 后：**19 项 READY_TO_EVALUATE**。
+- 首次运行前 registry 静态状态里 READY 为 0；19 是进程内按数据文件刷新得到的当前计数，不写回 registry。
+- 状态文件记录 19 项，`ready_since=2026-09-19`。
+- **诚实口径**：`ready_since` 表示"系统首次观察到 READY"，不是历史真实转 READY 时间；registry 无状态迁移时间线，不能回填。首次落状态前的历史时长不得拿去裁决逾期。
+
+### 24.3 验证
+
+- `pytest tests/review/test_criteria_status.py tests/review/test_bundle_render.py -q`：5/5 通过。
+- `pytest tests/review -q`：22/22 通过。
+- DEB 指定既有回归：74/74 通过。
+- `py_compile` 与 `git diff --check` 通过。
+- 真实 CLI 重跑仍不推送；`criteria_ready_state.json` 幂等，READY 离开后会销账。
+
+---
+
+### 24.4 边界
+
+- 本轮没有执行 `--push`，没有向用户发送 19 项 READY；只在代码与产物中具备防噪摘要能力。**⚠️ 更正（见 §25.2 S-1）**：P3 阶段确有一次真实 `--push`（21:27:53 CST 落 `bundle_2026-09-18.push.json`），该句仅对 P4 本轮成立。
+- `refresh_counts()` 只改变当前 Python 进程内的 registry 对象，不写交易库、不写 registry 文件。
+- 逾期升级（>14 天 P1）尚未实现；等 `ready_since` 有真实观察时长后再启用，避免用首日回看伪造逾期。
+
+---
+
+## 25. P0–P4 交付核查与补充（作者独立复核，2026-09-19）
+
+> 复核方式：不信文档自述。全部结论来自**独立复现**：真库对账、哈希比对、契约反证实验、产物遍历、日志/状态文件取证。
+> 结论分三类：**确认**（实测一致）/ **补充**（文档未写的量化或更正，S-x）/ **待办**（未达验收，需显式化）。
+
+### 25.1 确认（实跑通过）
+
+| # | 项 | 我的复现（原始证据） |
+|---|---|---|
+| 1 | 幂等（§23.2 "两次运行 hash 一致"） | 重跑前后 `md5sum` **完全相同**（bundle/`bundle_latest`/`REVIEW` 三件）；`generated_at=""`、`git={}` ⇒ 无不稳定字段 |
+| 2 | 结果层与 SQL 逐分一致（§22.2） | 直查 SQL：`net=34.56 / gross=72.39 / fees=37.83 / n=8 / wins=7`；bundle headline `net_pnl=34.56`、`win_rate=0.875` ⇒ 一致；切片 `盘中 6/−76.19 + 盘后 2/+110.75 = 34.56` ✓ |
+| 3 | plan-vs-actual（§22.2） | SQL：非 SKIP 指令 **7**、`executed=1` **6**、非 SKIP 未执行 **1**；当日 8 笔成交中 `US.ACN`/`US.WBD` **无任何指令行** ⇒ 计划 7 / 执行 6 / 错过 1 / 计划外 2 **逐格一致** |
+| 4 | 证据覆盖 100%（§5.3 契约） | 独立遍历 bundle：**28 个指标，缺 `ref` = 0**；`artifact/derived` 类**缺 `integrity` 四键 = 0**（`integrity` 为嵌套对象，与 §5.3 写法一致） |
+| 5 | "缺证据 = 构建失败"是真强制（非文档约定） | 4 次反证实验全部抛错并**点名指标路径**：删 `evidence` ⇒ `headline.a: evidence is required`；缺 `integrity.universe` ⇒ `... is missing universe`；`integrity.n` 传字符串 ⇒ `must be a non-negative integer`；`unit` 传 `dollars` ⇒ `metric.unit is invalid` |
+| 6 | 判据层（§24.2） | `REGISTRY=36`、`refresh_counts()` 后 `READY=19` ⇒ 与文档一致；`criteria_ready_state.json` 实测 **19 条**；pending 行含文档声明的全部 11 字段；**`evidence.ref` 指向注册表条目本身**（`app/playbook/shadow_registry.py :: id=...`）而非猜出来的产物路径 ✓ |
+| 7 | 防噪摘要真实现（§24.1.3） | `render_md` 的 push 段实测含 `待裁决 {len(ready_rows)}：{id@ready_since 最久前 5 项}`；全量清单只在 MD/JSON ⇒ **19 项不会刷屏** |
+| 8 | 边界（§21.3/§23.4/§24.4） | `crontab -l` 无 review 行；`app/push/*` 与 `app/playbook/*` **零改动**；`obsidian_vault/daily/review` **不存在** ⇒ `--vault` 确未执行；`--period week` 实测 `rc=2` 并提示留待 P5 ⇒ 无假周期产物 |
+| 9 | 语料范围含我的 §20.7 要求 | 脚本语料含 `ops/`、`/root/.hermes/scripts`、`/root/.hermes/skills` ⇒ **未复犯 §19.1 的范围盲区**；skills 计数 293 = `*.py+*.sh`（我 §16.2/§17 用的 279 是 **`.py` only**，两者不冲突，但表述需带后缀口径） |
+| 10 | 产物结构（§14） | `REVIEW_2026-09-18.md` 含 结果 / 阶段切片 / 计划 vs 实际 / 待裁决 / 异常 / 证据 六节（105 行） |
+
+### 25.2 补充（S-x；其中 S-1 是与文档矛盾的事实）
+
+- **S-1（与 §23.4 矛盾，需更正）**：§23.4 写"本轮未执行 `--push` / `--vault`，**未创建 push 状态**"，但实测 `data/reviews/bundle_2026-09-18.push.json` **存在**，内容 `{"report_date":"2026-09-18","pushed_at":"2026-09-19T13:27:53+00:00","category":"REVIEW_DAILY"}`（mtime 21:27:53 CST）。
+  按 `app/push/hub.py` 的语义，`sync=True` 路径返回 `_immediate_send()` 的 `sent_count > 0`：**返回 True 只可能来自某个频道真实发送成功**（全失败会 `logger.error("[PushHub] 所有 channel 失败!")` 并落 `data/push_failures.jsonl`）；实测 `push_failures.jsonl` 中**无** `daily_review/REVIEW_DAILY` 记录 ⇒ 非失败路径。
+  ⇒ **结论：21:27:53 CST 有一条"每日复盘 2026-09-18"推送真实送达**（请确认是否收到）。两个后果：①§23.4/§24.4 的"未真实推送"表述须更正为"P3 阶段曾有一次真实 `--push`（21:27:53）"；②该状态文件使 09-18 的**后续真推被判 `already`** —— 因 09-18 是历史日、生产首个真推是上线日的当日复盘，影响有限，但性质属"**验证动作静默消费了首次推送名额**"，与本仓 8/13 那次"单测写生产报告"同类：**验证路径必须与生产状态文件隔离**（建议：`--push` 增加 `--dry-run`/`--state-dir` 参数，或在 §23.4 这类记录里先落"已验证/已真实推送"两态）。
+- **S-2（分类计数非互斥）**：§21.1.6 的 `webhook=77 / app.push=54 / notifier=48 / curl=17`，四类合计 **196 > 命中文件 164** ⇒ 一个文件可落多类，读表**不得相加**。建议产物加 `classes_are_overlapping: true`，或改成互斥分档（优先级：`app.push` > `notifier` > `webhook` > `curl`）。
+- **S-3（计数口径需自描述）**：§21.1.4 的分档计数与我的独立 `find` 有 ±1% 差（app 474 vs 477、scripts 460 vs 461、tests 405 vs 409、skills 293 = 293 一致；总量 1699 vs 1707）。差在"后缀集合/是否含 `__pycache__`"这类规则上 ⇒ 建议产物里**打印语料规则**（后缀白名单 + 排除项），否则复核者无法对齐。
+- **S-4（重启未归因）**：`logs/ftseek_us.log` 显示 **21:30:32 收到停止信号 → 21:31:08 服务启动**（优雅关闭后重启）。§21.3/§23.4/§24.4 的边界记录（写于 21:0x–21:2x）均未涵盖该事件，需补一句归因。缓解事实（我实查）：重启时 `[持仓恢复] DB 无未平仓记录`、`持仓对账完成 | DB=0 | 内存=0 | 差异=0` ✓；`logs/deploy_freshness.log` 同期为 `skip: outside_safe_window`（即**不是**部署新鲜度看门狗自动重启）。**副作用**：重启后服务进程加载了工作区新版 `app/core/trade_identity.py`；我核过服务侧唯一调用点 `order_executor` 传 `None`（走 `now_et()`）⇒ 该分支不可达、**无行为变更**，但"代码已进服务进程"这一点应记录在案（口径两态在重启后归一）。
+- **S-5（治理：交付物未入库）**：P0–P4 的 6 个模块 + `tests/review/` 原为 **untracked**（`git status` 全为 `??`）。按 RFC-060 纪律（未入库代码 = 复核者看不到、随时丢），本次核查**已随之单独立提交**（测试随行，可一键 revert）。
+
+### 25.3 待办（未达验收，建议在文档里显式写成"未达成"而非留白）
+
+1. **§14 G5 未达成**：`self_audit` 当前只有 `exit_date_mismatch_count`（且 `anomalies: []`），未含 G5 要求的"死产出 / 无证据指标 / 告警噪声 / 未登记影子 / 测试标的进入推送"。建议 §24.4 边界补一句"G5 属 P5 范围、当前未达成"，避免验收清单被读成已通过。
+2. **`_exit_date_et` 静默丢行**（§19.3 已提）：bundle 的 `self_audit` 建议加 `unparsed_exit_time` 计数（当前库 0 行，属预防）。
+3. **逾期升级（>14 天 P1）未实现**（§24.4 已诚实说明）：与 §20.2④ 一致，等 `ready_since` 有真实观察时长再启用 —— 这条边界写法正确，保留。
