@@ -83,6 +83,46 @@ OUTPUT = ROOT / "data" / "premarket_exit_shadow.jsonl"
 FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "true").lower() == "true"
 FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:20 ET 起每次轮询都强平
 
+# ─ 收口豁免预注册 (2026-09-19, RFC-087; 用户令「按建议做」) ──
+#   本批**只落影子**: `EXT_PREMARKET_FLATTEN_MODE` 默认 `unconditional` ⇒ 逐字等于现役行为;
+#   每个 tick 额外记录"若切 conditional/band 会判成什么", 供回放读数与后续裁决 join。
+#   实现要点: 现役与候选模式**共用同一条代码路径** (只换判据函数), 避免"影子版与生产版
+#   两套分支各自漂移" (本仓既有病灶: 同一逻辑内联两份必然分叉)。
+#   A 条件收口: 有浮盈 或 利润保护已武装 (BE/TRAIL 线越过成本) 才收口; 否则交 RTH 引擎。
+#   B 分档豁免: A + 深亏破位 (≤ deep_loss) 仍收口 (深亏档回放里"持有到收盘"最差 -13.41%)。
+#   E 豁免期 = 时间窗 × 价格类型: 09:20-09:45 **只许限价离场** (本链从无市价分支 ⇒ 这是
+#     不变量, 记进影子行只为可审计), 到期交 RTH 规则; 不采用"给亏损仓免死金牌"那样的写法。
+FLATTEN_MODE = (os.getenv("EXT_PREMARKET_FLATTEN_MODE", "unconditional") or "").strip().lower()
+FLATTEN_DEEP_LOSS_PCT = float(os.getenv("EXT_PREMARKET_FLATTEN_DEEP_LOSS_PCT", "-6.0"))
+LIMIT_ONLY = os.getenv("EXT_PREMARKET_LIMIT_ONLY", "true").lower() == "true"
+# 薄盘价差闸 (保守替代 A 的配套项, 现为**只记录**): 价差超过该值时, 收口可能只是挂着不成交。
+THIN_BOOK_SPREAD_PCT = float(os.getenv("EXT_PREMARKET_THIN_BOOK_SPREAD_PCT", "1.0"))
+
+
+def conditional_flatten_verdict(pnl_pct, armed, mode=None, deep_loss_pct=None):
+    """条件收口判定 (纯函数, 可测). 返回 (是否收口, 原因码).
+
+    unconditional → 恒收口 (现役语义, 逐字不变);
+    conditional   → 有浮盈 或 利润保护已武装才收口, 否则交 RTH 引擎;
+    band          → conditional + 深亏破位 (pnl ≤ deep_loss_pct) 仍收口。
+    未识别模式一律按 unconditional 处理 (fail-safe: 拼错开关名不会意外放宽风控)。
+    "武装" 由调用方从 decision 的 breakeven_triggered / effective_sl 推出 (方向感知),
+    保证**影子与回放用同一套语义**。
+    """
+    m = (mode if mode is not None else FLATTEN_MODE) or "unconditional"
+    if m not in ("conditional", "band"):
+        return True, "unconditional"
+    if pnl_pct is None:
+        return True, "no_quote"          # 缺报价 ⇒ 保守收口 (不因缺数据放宽)
+    if pnl_pct > 0:
+        return True, "profit"
+    if armed:
+        return True, "armed"
+    _thr = deep_loss_pct if deep_loss_pct is not None else FLATTEN_DEEP_LOSS_PCT
+    if m == "band" and pnl_pct <= _thr:
+        return True, "deep_loss"
+    return False, ("shallow_loss" if pnl_pct >= -3.0 else "mid_loss")
+
 # ─ 盘后进场仓: 不强止损, 持有到次日开盘兑现 (2026-09-17 用户令「不强止损，直接持有到次日开盘」) ──
 #   依据 (DEB §16.6 盘后回放 60 交易日): 现役盘后规则净 -0.64%(负); 盘后收口平 +0.94%;
 #   **持有到次日开盘 +3.47%/中位+4.84%/WR 76%/合计+86.7%** = 最强臂; 持有到次日收盘 -1.14%。
@@ -303,6 +343,9 @@ def collect(dry: bool) -> int:
         net_executable = net_executable_pnl_pct(
             entry, executable, direction, fee_pct)
         _ah_carry = is_afterhours_carry(entry_time, today_et)
+        # RFC-087: 三者在无报价分支下也必须已定义 (行字典是两分支共用的) — 否则 NameError
+        # 会让整轮 collect 崩掉 (该 tick 所有持仓都不落行)。
+        _cond_verdict, _cond_reason, _armed = None, None, False
         if executable is not None and entry > 0:
             decision = decide_original_profit_exit(
                 direction, entry, executable, sl,
@@ -316,6 +359,20 @@ def collect(dry: bool) -> int:
             if not dry:
                 persist_profit_exit_state(DB, trade_id, decision, direction)
             _flat = flatten_now(hhmm, entry_time, today_et, in_window)
+            # RFC-087: 现役与候选模式共用一条路径 —— 只换判据函数. unconditional 时
+            # conditional_flatten_verdict 恒返回 True ⇒ fallback 与改动前逐字相同。
+            _armed = bool(decision.get("breakeven_triggered"))
+            try:
+                _esl = float(decision.get("effective_sl") or 0)
+                if sign > 0:
+                    _armed = _armed or _esl > entry
+                else:
+                    _armed = _armed or (0 < _esl < entry)
+            except (TypeError, ValueError):
+                pass
+            _cond_verdict, _cond_reason = (None, None)
+            if _flat:
+                _cond_verdict, _cond_reason = conditional_flatten_verdict(pnl_pct, _armed)
             fallback = None
             if _ah_carry:
                 # 盘后进场仓: 仅无有效止盈时等待开盘; 错过窗口由盘中引擎接管.
@@ -325,7 +382,7 @@ def collect(dry: bool) -> int:
                     fallback = "next_open_exit"
                 else:
                     fallback = "hold_intraday_takeover"
-            elif _flat:
+            elif _flat and _cond_verdict:
                 # 收口强平只兜底, 不覆盖 TAKE_PROFIT/BE/TRAIL_LOCK.
                 fallback = "pre_close_flatten"
             action = prioritize_profit_exit(action, fallback)
@@ -421,6 +478,14 @@ def collect(dry: bool) -> int:
             "is_today_entry": _entry_et_date(entry_time) == today_et,
             "is_afterhours_carry": _ah_carry,
             "flatten_enabled": FLATTEN_ENABLED,
+            # RFC-087 影子字段 (mode=unconditional 时这些只是"若切模式会怎样", 不参与执行)
+            "flatten_mode": FLATTEN_MODE,
+            "cond_flatten_verdict": _cond_verdict,
+            "cond_flatten_reason": _cond_reason,
+            "cond_armed": bool(_armed) if executable is not None else None,
+            "limit_only": bool(LIMIT_ONLY),
+            "thin_book": (metrics.get("spread_pct") is not None
+                          and float(metrics["spread_pct"]) > THIN_BOOK_SPREAD_PCT),
             "settled": False,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }

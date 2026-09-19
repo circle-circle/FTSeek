@@ -69,6 +69,9 @@ def _round_trip_fee_pct(entry_price, exit_price, trade_date=None, direction="LON
         return FEE_PCT
 ENTRY_HHMM = 405         # 入场时点 04:05 ET (与 cron 盘前首跑一致)
 PREMARKET_END = 925      # 盘前收口 09:25 ET
+# ── 收口豁免预注册 (RFC-087, 2026-09-19): 生产锚点 = premarket_exit_shadow.flatten_now() ──
+FLATTEN_READ_HHMM = 920  # 现役收口窗起点 (EXT_PREMARKET_FLATTEN_FROM 默认 920): 豁免判据的读数时点
+DEEP_LOSS_BAND = -6.0    # B 分档豁免的"破位"界 (深亏档现役持有最差 -13.41%)
 _last_call = [0.0]
 CHUNK_DAYS = 6            # 单次请求跨度 (日历日)
 # 2026-09-17 实测修正: 开 extended_time 后每个交易日约 **192** 根 5m (04:00-20:00),
@@ -138,38 +141,89 @@ def _shared_profit_exit_full_decider(entry_price, initial_sl, trade_date=None):
 
 
 def _kline_cached(ctx, code, start, end, ktype):
-    """带磁盘缓存的取数 —— 同一窗口换配置重跑时不重复请求 (省接口预算与时间)."""
+    """带磁盘缓存的取数 —— 同一窗口换配置重跑时不重复请求 (省接口预算与时间).
+
+    2026-09-19: 读缓存前先过 `_cache_is_complete()` —— 旧缓存里 7 个交易日被截断
+    (04:05–07:20), 直接被这次重跑继承会把臂读数再污染一遍。不完整 ⇒ 重取并覆写。
+    """
     key = CACHE_DIR / f"{code.replace('.','_')}_{start}_{end}_{ktype}.json"
     if key.exists():
         try:
-            return json.loads(key.read_text())
+            cached = json.loads(key.read_text())
+            if _cache_is_complete(cached, end):
+                return cached
+            print(f"[replay] 缓存不完整, 重取: {key.name}")
         except Exception:
             pass
     bars = _kline_chunked(ctx, code, start, end, ktype)
-    if bars:
+    if bars and _cache_is_complete(bars, end):
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             key.write_text(json.dumps(bars))
         except Exception:
             pass
+    elif bars:
+        print(f"[replay] ⚠️ 重取后仍不完整, 不覆写缓存: {key.name} (末尾 {bars[-1]['t']})")
     return bars
 
 
+def _cache_is_complete(bars, end):
+    """缓存文件的**完整性**判定 (2026-09-19 修复, 见 §修复记录).
+
+    旧缓存是用 `CHUNK_DAYS*2` (12 日历日 ≈ 8-9 交易日 ≈ 1,700 根) 分块取的, 每块
+    都撞 `max_count=1000` 上限 ⇒ **每块尾部被静默截断**: 实测 7 个交易日
+    (06-30/07-13/07-27/08-10/08-21/09-03/09-16) 全局只剩 04:05–07:20 的 bar
+    ⇒ 盘前收口/RTH/盘中兜底三条臂在这些日子上读到**同一个 07:20 价格**
+    (56 笔里有 9 笔), 臂对照因此被污染。
+    判据: ①最后一根 bar 必须覆盖到 19:00 之后 (extended_time 全时段到 20:00 收尾);
+          ②最后一日距窗口 end 不超过 5 个日历日 (容纳周末/假日缺口)。
+    """
+    if not bars:
+        return False
+    last = str(bars[-1].get("t") or "")
+    if _hhmm(last) < 1900:
+        return False
+    try:
+        gap = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(last[:10], "%Y-%m-%d")).days
+    except Exception:
+        return False
+    return gap <= 5
+
+
 def _kline_chunked(ctx, code, start, end, ktype):
-    """长窗口分块取数 (不这么做会静默截断到最近 1000 根 = 约 11 个交易日)."""
+    """长窗口分块取数 (不这么做会静默截断到最近 1000 根 = 约 5 个交易日).
+
+    2026-09-19 修复 (原实现的两个漏): ①块跨度 `CHUNK_DAYS*2` = 12 日历日 ≈ 8-9 交易日
+    ≈ 1,700 根 > max_count ⇒ **每块尾部静默丢失** (正是本文件当日 9 笔臂读数被污染的根因);
+    ②没有"触顶即是我被截断了"的判定。现改 `CHUNK_DAYS` 且**触顶后二分重取** (自愈):
+    返回根数 >= 1000 时把该窗口一分为二再取, 直到每块都不触顶或不可再分。
+    """
     from datetime import datetime as _dt, timedelta as _td
     t0 = _dt.strptime(start, "%Y-%m-%d")
     t1 = _dt.strptime(end, "%Y-%m-%d")
     out, seen = [], set()
     while t0 <= t1:
-        chunk_end = min(t0 + _td(days=CHUNK_DAYS * 2), t1)   # *2 覆盖周末
-        for b in _kline(ctx, code, t0.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d"), ktype):
+        chunk_end = min(t0 + _td(days=CHUNK_DAYS), t1)
+        for b in _kline_window(ctx, code, t0, chunk_end, ktype, 0):
             if b["t"] not in seen:
                 seen.add(b["t"])
                 out.append(b)
         t0 = chunk_end + _td(days=1)
     out.sort(key=lambda b: b["t"])
     return out
+
+
+def _kline_window(ctx, code, t0, t1, ktype, depth):
+    """单窗口取数; 触顶 (>=1000 根) 即二分重取 (上限 6 层, 防死循环)."""
+    from datetime import timedelta as _td
+    bars = _kline(ctx, code, t0.strftime("%Y-%m-%d"), t1.strftime("%Y-%m-%d"), ktype)
+    if len(bars) >= 1000 and t0 < t1 and depth < 6:
+        mid = t0 + _td(days=max(1, (t1 - t0).days // 2))
+        return (_kline_window(ctx, code, t0, mid, ktype, depth + 1)
+                + _kline_window(ctx, code, mid + _td(days=1), t1, ktype, depth + 1))
+    if len(bars) >= 1000:
+        print(f"[replay] ⚠️ {code} {t0.date()}~{t1.date()} 仍触顶 (depth={depth}) ⇒ 该段可能不完整")
+    return bars
 
 
 def _kline(ctx, code, start, end, ktype):
@@ -331,7 +385,38 @@ def _simulate(bars_day, prev_close, entry_bar_i):
             res[f"keep_{int(_k)}pct_px"] = e3 if _pnl >= _k else _lp["c"]
         else:
             res[f"keep_{int(_k)}pct_px"] = None
+    # ── 2026-09-19 A/B 预注册 (RFC-087): 「收口豁免」臂 —— 只回答"09:20 该不该无脑平" ──
+    #  生产锚点 = premarket_exit_shadow.flatten_now(): 09:20 起对**今日盘前开的仓**无条件
+    #  强平 (action=pre_close_flatten, 覆盖其它信号)。两条候选臂把"09:20 的读数"变成判据:
+    #    a_cond : 有浮盈 或 利润保护已武装 (effective_sl 越过成本) ⇒ 收口; 否则转 RTH 引擎
+    #    b_band : a_cond + 深亏破位 (≤ DEEP_LOSS_BAND) 仍收口
+    #  转交 RTH 的代理口径 = intraday_sl (现役 initial_sl -5% 触及即出, 否则持到收盘);
+    #  ⚠️ 真实链是 RTH 引擎 09:35 起接管 ⇒ **09:30-09:35 无止损缝未被建模** (上限, 不是下限)。
+    _fd = _shared_profit_exit_full_decider(entry, entry * 0.95, day)
+    _read_px, _armed = None, False
+    for b in pre:
+        if b["t"] <= bars_day[entry_bar_i]["t"]:
+            continue
+        if _hhmm(b["t"]) > FLATTEN_READ_HHMM:
+            continue
+        _d = _fd(b["c"])
+        _read_px = b["c"]
+        try:
+            _esl = float(_d.get("effective_sl") or 0)
+        except (TypeError, ValueError):
+            _esl = 0.0
+        _armed = bool(_d.get("breakeven_triggered")) or _esl > entry
+    if _read_px is None:
+        _read_px, _armed = entry, False
+    _read_pnl = (_read_px / entry - 1) * 100
+    res["flatten_read_pnl_pct"] = round(_read_pnl, 3)
+    res["flatten_armed"] = bool(_armed)
+    res["a_cond_px"] = e2 if (_read_pnl > 0 or _armed) else e4
+    res["b_band_px"] = e2 if (_read_pnl > 0 or _armed or _read_pnl <= DEEP_LOSS_BAND) else e4
     for tag, px in (("rule", exit_px if exit_px else (e2 if e2 else entry)),
+                    ("read_0920", _read_px),
+                    ("a_cond", res.get("a_cond_px") or e2),
+                    ("b_band", res.get("b_band_px") or e2),
                     ("pre_close", e2), ("rth_close", e3), ("intraday_sl", e4),
                     ("sl_only", res.get("sl_only_px") or e2),
                     ("sl_only_rth", res.get("sl_only_rth_px") or e3),
@@ -672,21 +757,48 @@ def main():
     ap.add_argument("--min-vol", type=float, default=None, help="覆盖量门槛(默认用现役 200000)")
     ap.add_argument("--session", default="premarket", choices=["premarket", "afterhours"])
     ap.add_argument("--end", default=None, help="窗口结束日 YYYY-MM-DD (默认今天) —— 用于换一段窗口做样本外")
+    ap.add_argument("--universe-from", default=None,
+                    help="复用某份回放产物的样本宇宙 (固定样本: 保证换臂/换窗口可配对, 不再每次新样本)")
+    ap.add_argument("--pair-base", default=None,
+                    help="配对基准臂 (默认 premarket=pre_close / afterhours=next_open)")
+    ap.add_argument("--split-half", action="store_true",
+                    help="附前半/后半交易日分片汇总 (双窗口一致性检查)")
+    ap.add_argument("--out", default=None, help="产物路径 (默认 data/reports/replay_ext_entry_sources_latest.json)")
     args = ap.parse_args()
 
     import scripts.extended_hours_entry_executor as E
     _rule_arm_ok = True
     from futu import OpenQuoteContext, KLType, BeatType
 
+    # 固定样本 (可选): 从既有产物读 (day, symbol) 配对 + 各自 gates_passed, 并沿用其窗口参数
+    fixed_pairs, fixed_src, fixed_end, fixed_days = None, {}, None, None
+    if args.universe_from:
+        _rep = json.loads(Path(args.universe_from).read_text())
+        _rows = _rep.get("all_candidates") or []
+        if not _rows:
+            raise SystemExit(f"--universe-from {args.universe_from} 无 all_candidates 行")
+        fixed_pairs = {(r["day"], r["symbol"]): bool(r.get("gates_passed")) for r in _rows}
+        fixed_src = {(r["day"], r["symbol"]): r.get("source") for r in _rows}
+        _sum = _rep.get("summary") or {}
+        fixed_end, fixed_days = _sum.get("end"), _sum.get("days")
+        if fixed_end:
+            args.end = fixed_end
+        if fixed_days:
+            args.days = int(fixed_days)
+        if not args.session:
+            args.session = _sum.get("session") or "premarket"
+        print(f"[replay] 固定样本: {len(fixed_pairs)} 个 (日,标的) 对 / "
+              f"{len({s for _, s in fixed_pairs})} 只 / 窗口 end={fixed_end} days={fixed_days}")
+
     ctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                            port=int(os.getenv("FUTU_OPD_PORT", "11111")))
     try:
         rank_df = None
-        if args.source in ("beat", "both"):
+        if args.source in ("beat", "both") and fixed_pairs is None:
             r = ctx.get_earnings_beat_rank("US", BeatType.EPS, count=200)
             rank_df = r[1][1] if r[0] == 0 and isinstance(r[1], tuple) else None
         watch = []
-        if args.source in ("watchlist", "both"):
+        if args.source in ("watchlist", "both") and fixed_pairs is None:
             watch = E._watchlist_symbols(ctx)
 
         # 交易日序列: 以宽基 SPY 的日线为准 (最近 N+1 个交易日)
@@ -696,15 +808,23 @@ def main():
         days = [b["t"][:10] for b in days_bars][-(args.days + 1):]
         print(f"[replay] 交易日窗口: {days[0]} → {days[-1]} ({len(days)} 日); 源={args.source} "
               f"(beat={len(rank_df) if rank_df is not None else 0} 行, watchlist={len(watch)} 只)")
+        if fixed_pairs is not None:
+            _miss = sorted({d for d, _ in fixed_pairs} - set(days))
+            if _miss:
+                print(f"[replay] ⚠️ 固定样本含 {len(_miss)} 个不在 SPY 窗口内的交易日 "
+                      f"(前5: {_miss[:5]}) ⇒ 这些笔不会被重算")
 
         # 全窗口一次性预取 (原逐日取数 = days×symbols 次调用, 会被限频; 见 DEB §14.6)
         universe = {}
-        for di, day in enumerate(days[1:], start=1):
-            if rank_df is not None:
-                for sec, rd in _candidate_days(rank_df, day, args.recent_days):
-                    universe.setdefault(sec, f"beat:{rd}")
-            for sec in watch:
-                universe.setdefault(sec, "watchlist")
+        if fixed_pairs is not None:
+            universe = {s: (fixed_src.get((d, s)) or "fixed") for d, s in fixed_pairs}
+        else:
+            for di, day in enumerate(days[1:], start=1):
+                if rank_df is not None:
+                    for sec, rd in _candidate_days(rank_df, day, args.recent_days):
+                        universe.setdefault(sec, f"beat:{rd}")
+                for sec in watch:
+                    universe.setdefault(sec, "watchlist")
         print(f"[replay] 候选宇宙 {len(universe)} 只 → 预取 5m 全窗口 bars …")
         bars_by_sym = {}
         for sec in universe:
@@ -713,7 +833,9 @@ def main():
         for di, day in enumerate(days[1:], start=1):
             prev_day = days[di - 1]
             for sec, src in universe.items():
-                if rank_df is not None:
+                if fixed_pairs is not None and (day, sec) not in fixed_pairs:
+                    continue
+                if fixed_pairs is None and rank_df is not None:
                     # 事件源按日重建: 只有 released_date 落在该日近因窗内才算当日候选
                     cand_days = {s2 for s2, _ in _candidate_days(rank_df, day, args.recent_days)}
                     if src.startswith("beat") and sec not in cand_days:
@@ -753,10 +875,15 @@ def main():
                 vol = sum(b["v"] for b in today[:ei + 1])
                 min_chg = args.min_chg if args.min_chg is not None else E.ENTRY_CHANGE_PCT
                 min_vol = args.min_vol if args.min_vol is not None else E.MIN_VOLUME
-                passed = E._price_in_range(entry_px) and chg >= min_chg and vol >= min_vol
+                gates_now = bool(E._price_in_range(entry_px) and chg >= min_chg and vol >= min_vol)
+                # 固定样本: 用产物里的 gates_passed 作为判据 (换成"今天重算"会让样本随
+                # 现役闸门常量漂移, 配对就断了); 同时记录重算值以便发现漂移。
+                passed = fixed_pairs[(day, sec)] if fixed_pairs is not None else gates_now
                 rec = {"day": day, "symbol": sec, "source": src, "entry_px": round(entry_px, 4),
                        "prev_close": round(prev_close, 4), "chg_pct": round(chg, 2),
-                       "pre_vol": vol, "gates_passed": bool(passed)}
+                       "pre_vol": vol, "gates_passed": bool(passed),
+                       "gates_recomputed": gates_now,
+                       "gates_drift": bool(fixed_pairs is not None and gates_now != passed)}
                 if passed:
                     try:
                         if args.session == "afterhours":
@@ -778,7 +905,10 @@ def main():
                    "rule_arm_source": "shared_original_profit_exit", "days": len(days) - 1,
                    "source": args.source, "session": args.session, "end": end, "min_chg": args.min_chg, "min_vol": args.min_vol,
                    "candidates_evaluated": len(rows), "passed_by_source": src_dist,
-                   "gates_passed": len(passed)}
+                   "gates_passed": len(passed),
+                   "universe_from": args.universe_from,
+                   "fixed_pairs": len(fixed_pairs) if fixed_pairs is not None else None,
+                   "gates_drift_rows": sum(1 for r in rows if r.get("gates_drift"))}
         if passed:
             # 2026-09-17 修: 原实现按 (tag,label) 元组顺序打印且**存在重复 tag** ⇒ 行数/标签会错位
             # (盘后臂与盘前臂共用同一循环)。现按 tag **键名**输出, 并带中位/最差/最好 ⇒ 可看图辨尾部。
@@ -798,6 +928,71 @@ def main():
                                   "win_rate_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 1),
                                   "total": round(sum(v), 1)}
             summary["arms"] = summ_arms
+            # ── 臂诊断 (2026-09-19, RFC-087 预注册的四条主判据) ──────────────────
+            #  ①净均值/中位/最差 → 已在 arms; ②尾部最差 5%; ③被割在负而当日收盘转正率
+            #  (＝"收口割在反转之前"的量化口径); ④MFE 捕获率 (成交收益/峰值收益, 峰值>0.5% 的笔上才是比值)。
+            diag = {}
+            for tag, v in arms.items():
+                vs = sorted(v)
+                k5 = max(1, int(round(len(vs) * 0.05)))
+                losers = rev = 0
+                ratios = []
+                for r in passed:
+                    a = r.get(tag) or {}
+                    if "net_pct" not in a:
+                        continue
+                    if a["net_pct"] < 0:
+                        losers += 1
+                        rc = (r.get("rth_close") or {}).get("ret_pct")
+                        if rc is not None and rc > 0:
+                            rev += 1
+                    pk = r.get("mfe_pct")
+                    if pk and pk > 0.5:
+                        ratios.append(a["ret_pct"] / pk)
+                diag[tag] = {"n": len(vs),
+                             "worst5_mean": round(sum(vs[:k5]) / k5, 3),
+                             "losers": losers,
+                             "reversal_after_cut_pct": round(rev / losers * 100, 1) if losers else None,
+                             "capture_mean_pct": round(sum(ratios) / len(ratios) * 100, 1) if ratios else None,
+                             "capture_n": len(ratios)}
+            summary["arm_diagnostics"] = diag
+            # ── 配对 (同一批笔, base 臂为基准): 新增臂的**增量**必须是配对读数 ──
+            base = args.pair_base or ("pre_close" if args.session == "premarket" else "next_open")
+            paired = {}
+            for tag in arms:
+                ds = []
+                for r in passed:
+                    a = (r.get(tag) or {}).get("net_pct")
+                    b0 = (r.get(base) or {}).get("net_pct")
+                    if a is not None and b0 is not None:
+                        ds.append(a - b0)
+                if ds:
+                    m = sum(ds) / len(ds)
+                    sd = (sum((x - m) ** 2 for x in ds) / (len(ds) - 1)) ** 0.5 if len(ds) > 1 else 0.0
+                    t = (m / (sd / len(ds) ** 0.5)) if sd > 0 else None
+                    paired[tag] = {"n": len(ds), "delta_mean_pp": round(m, 3),
+                                   "better": sum(1 for x in ds if x > 0.001),
+                                   "same": sum(1 for x in ds if abs(x) <= 0.001),
+                                   "worse": sum(1 for x in ds if x < -0.001),
+                                   "t": round(t, 2) if t is not None else None}
+            summary["paired_vs_base"] = {"base": base, "arms": paired}
+            # ── 分片 (双窗口一致性): 按交易日分前后半, 逐臂各算一份 ──
+            if args.split_half:
+                _dset = sorted({r["day"] for r in passed})
+                _mid = _dset[len(_dset) // 2]
+                sh = {}
+                for tag in ("pre_close", "a_cond", "b_band", "intraday_sl", "rth_close", "rule"):
+                    if tag not in arms:
+                        continue
+                    out = {}
+                    for lbl, sel in (("h1", lambda d: d < _mid), ("h2", lambda d: d >= _mid)):
+                        vals = [r[tag]["net_pct"] for r in passed
+                                if tag in r and "net_pct" in r[tag] and sel(r["day"])]
+                        if vals:
+                            out[lbl] = {"n": len(vals), "mean": round(sum(vals) / len(vals), 3),
+                                        "worst": round(min(vals), 3)}
+                    sh[tag] = out
+                summary["split_half"] = {"split_day": _mid, "arms": sh}
             # ── 捕获率 (2026-09-19): 成交收益/峰值收益, 只在峰值 >0.5% 的笔上算 (比值才有意义) ──
             cap = {}
             for tag in ("adapt60", "adapt70", "adapt75", "adapt80", "adapt_layered",
@@ -847,11 +1042,12 @@ def main():
         mfe = [r["mfe_pct"] for r in passed if r.get("mfe_pct") is not None]
         if mfe:
             summary["avg_mfe_pct"] = round(sum(mfe) / len(mfe), 3)
-        REPORT.parent.mkdir(parents=True, exist_ok=True)
-        REPORT.write_text(json.dumps({"summary": summary, "trades": passed,
-                                      "all_candidates": rows}, ensure_ascii=False, indent=1))
+        report_path = Path(args.out) if args.out else REPORT
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps({"summary": summary, "trades": passed,
+                                           "all_candidates": rows}, ensure_ascii=False, indent=1))
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        print(f"[replay] 明细 → {REPORT}")
+        print(f"[replay] 明细 → {report_path}")
         for r in passed[:12]:
             print(f"   {r['day']} {r['symbol']:10s} {r['source']:22s} 入场{r['entry_px']:>9} "
                   f"chg{r['chg_pct']:>7}% 规则={r['rule']['net_pct']:>7}% "

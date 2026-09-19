@@ -143,3 +143,100 @@ def test_collect_does_not_flatten_before_0920(monkeypatch, tmp_path):
     row = _json.loads((tmp_path / "out.jsonl").read_text().strip())
     # 09:19 未被强平覆盖; 延长时段亏损侧只能 hold_no_stop.
     assert row["action"] == "hold_no_stop"
+
+
+# ── RFC-087 (2026-09-19) 收口豁免预注册: 条件收口判据 + 影子字段 ──────────────
+
+def test_conditional_flatten_verdict_boundaries():
+    """纯函数边界表: unconditional 恒收口; conditional/band 的四个分支; 拼错模式 fail-safe."""
+    # unconditional (现役默认) ⇒ 恒收口, 与浮盈/武装无关
+    for pnl in (5.0, 0.0, -0.1, -2.9, -3.0, -5.9, -6.0, -20.0):
+        assert M.conditional_flatten_verdict(pnl, False, mode="unconditional") == (True, "unconditional")
+    # 未识别模式 ⇒ 按 unconditional (拼错开关名不得意外放宽风控)
+    assert M.conditional_flatten_verdict(-4.0, False, mode="conditonal")[0] is True
+    # conditional: 盈利 / 已武装 ⇒ 收口
+    assert M.conditional_flatten_verdict(0.01, False, mode="conditional") == (True, "profit")
+    assert M.conditional_flatten_verdict(-4.0, True, mode="conditional") == (True, "armed")
+    # conditional: 浅亏 (-3~0) / 中亏 (-6~-3) ⇒ 豁免 (交 RTH)
+    assert M.conditional_flatten_verdict(-0.5, False, mode="conditional") == (False, "shallow_loss")
+    assert M.conditional_flatten_verdict(-3.0, False, mode="conditional") == (False, "shallow_loss")
+    assert M.conditional_flatten_verdict(-3.01, False, mode="conditional") == (False, "mid_loss")
+    assert M.conditional_flatten_verdict(-5.99, False, mode="conditional") == (False, "mid_loss")
+    # conditional: 深亏也豁免 (无条件豁免的极端版本 —— 这正是"不该无条件豁免"的那档)
+    assert M.conditional_flatten_verdict(-6.5, False, mode="conditional")[0] is False
+    # band: 深亏 (≤ -6) 仍收口; -6.0 含等号
+    assert M.conditional_flatten_verdict(-6.0, False, mode="band") == (True, "deep_loss")
+    assert M.conditional_flatten_verdict(-6.5, False, mode="band") == (True, "deep_loss")
+    assert M.conditional_flatten_verdict(-5.9, False, mode="band") == (False, "mid_loss")
+    # 缺报价 ⇒ 保守收口 (不因缺数据放宽)
+    assert M.conditional_flatten_verdict(None, False, mode="conditional") == (True, "no_quote")
+    # 深亏界可覆盖
+    assert M.conditional_flatten_verdict(-4.0, False, mode="band", deep_loss_pct=-4.0) == (True, "deep_loss")
+
+
+def _snap_row(bid):
+    class _FakeSnap:
+        def iterrows(self):
+            yield 0, dict({"code": "US.FAKE", "last_price": bid, "pre_price": bid,
+                           "bid_price": bid, "ask_price": round(bid * 1.001, 4),
+                           "pre_volume": 90000.0, "prev_close_price": 10.0,
+                           "pre_high_price": 9.9, "update_time": "2026-09-18 09:25:00"})
+    return _FakeSnap()
+
+
+def _run_collect(monkeypatch, tmp_path, bid, mode):
+    """跑一轮 collect, 返回 (调用记录, 影子行)."""
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    import types
+
+    calls = {}
+    fake_futu = types.ModuleType("futu")
+    fake_futu.RET_OK = 0
+    fake_futu.OpenQuoteContext = lambda **kw: types.SimpleNamespace(
+        get_market_snapshot=lambda syms: (0, _snap_row(bid)), close=lambda: None)
+    monkeypatch.setitem(_sys.modules, "futu", fake_futu)
+    monkeypatch.setattr(M, "FLATTEN_MODE", mode)
+    monkeypatch.setattr(M, "_today_et", lambda: TODAY)
+    monkeypatch.setattr(M, "_now_et_hhmm", lambda: 925)
+    monkeypatch.setattr(M, "_load_open_positions", lambda: [
+        ("US.FAKE", "LONG", 100, 10.0, 9.5, "2026-09-18 16:30:00", "sig1", None)])
+    monkeypatch.setattr(M, "OUTPUT", tmp_path / "out.jsonl")
+
+    def _fake_run(cmd, **kw):
+        calls["cmd"] = cmd
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    M.collect(dry=False)
+    row = _json.loads((tmp_path / "out.jsonl").read_text().strip())
+    return calls, row
+
+
+def test_collect_conditional_mode_hands_off_shallow_loss(monkeypatch, tmp_path):
+    """A 条件收口: 浅亏 (-3%) 未武装 ⇒ 不收口 (action 落回亏损侧 hold_no_stop), 且
+    影子行必须写明 verdict=False / reason=shallow_loss — 这是后续 join 的唯一凭据。"""
+    calls, row = _run_collect(monkeypatch, tmp_path, 9.7, "conditional")
+    assert "cmd" not in calls, "conditional 模式下浅亏仓不得调 exit executor"
+    assert row["action"] == "hold_no_stop"
+    assert row["cond_flatten_verdict"] is False
+    assert row["cond_flatten_reason"] == "shallow_loss"
+    assert row["flatten_mode"] == "conditional"
+    assert row["limit_only"] is True
+
+
+def test_collect_band_mode_still_flattens_deep_loss(monkeypatch, tmp_path):
+    """B 分档豁免: 深亏 (-6.5%, 破位档) **仍收口** — 免得把最大单笔损失类别放进来。"""
+    calls, row = _run_collect(monkeypatch, tmp_path, 9.35, "band")
+    assert "pre_close_flatten" in calls.get("cmd", [])
+    assert row["action"] == "pre_close_flatten"
+    assert row["cond_flatten_reason"] == "deep_loss"
+
+
+def test_collect_conditional_mode_keeps_profit_flatten(monkeypatch, tmp_path):
+    """A 条件收口对**盈利仓**零变化: 仍收口 (锁盈语义不变)。"""
+    calls, row = _run_collect(monkeypatch, tmp_path, 10.3, "conditional")
+    assert "pre_close_flatten" in calls.get("cmd", [])
+    assert row["action"] == "pre_close_flatten"
+    assert row["cond_flatten_reason"] == "profit"
