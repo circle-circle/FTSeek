@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections import OrderedDict
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.core.trade_identity import phase_cn, phase_from_time
+from app.utils.timezone import to_et
 
 # 展示顺序: 盘前 → 盘中 → 盘后 → 未标注 (未标注恒在末尾, 不许混进任何阶段)
 _STAGE_ORDER = ["premarket", "regular", "afterhours", ""]
@@ -34,6 +36,8 @@ def normalize_stage(entry_session: Optional[str], entry_time: Optional[str]) -> 
         if cn:
             return raw if raw in _STAGE_LABEL else {"盘前": "premarket", "盘中": "regular",
                                                     "盘后": "afterhours"}[cn]
+    if not entry_time:
+        return ""
     return phase_from_time(entry_time)
 
 
@@ -45,11 +49,16 @@ def load_trades(conn: sqlite3.Connection, start: str, end: str,
     """
     sql = ("select symbol, direction, entry_time, exit_time, exit_reason, entry_session, "
            "strategy_id, source_type, realized_pnl, pnl_net, fees_est, mfe_pct, mae_pct, quantity "
-           "from trade_records where exit_time is not null and date(exit_time) between ? and ?")
+           "from trade_records where exit_time is not null "
+           "and coalesce(data_quality, '') <> 'duplicate_external_close'")
     if require_exit:
         sql += " and pnl_net is not null"
+    sql += " order by exit_time, id"
     rows: List[Dict[str, Any]] = []
-    for r in conn.execute(sql, (start, end)):
+    for r in conn.execute(sql):
+        exit_date = _exit_date_et(r["exit_time"])
+        if not start <= exit_date <= end:
+            continue
         d = dict(r) if not isinstance(r, sqlite3.Row) else {k: r[k] for k in r.keys()}
         d["stage"] = normalize_stage(d.get("entry_session"), d.get("entry_time"))
         d["net"] = float(d.get("pnl_net") or 0.0)
@@ -57,6 +66,16 @@ def load_trades(conn: sqlite3.Connection, start: str, end: str,
         d["dir_cn"] = "做多" if str(d.get("direction") or "").upper() in ("BUY", "LONG") else "做空"
         rows.append(d)
     return rows
+
+
+def _exit_date_et(exit_time: Optional[str]) -> str:
+    if not exit_time:
+        return ""
+    try:
+        value = datetime.fromisoformat(str(exit_time).replace("Z", "+00:00"))
+        return to_et(value).date().isoformat()
+    except (TypeError, ValueError):
+        return ""
 
 
 def stage_breakdown(rows: Iterable[Dict[str, Any]]) -> "OrderedDict[str, Dict[str, Any]]":

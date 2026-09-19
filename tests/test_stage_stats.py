@@ -16,8 +16,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.review.stage_stats import (  # noqa: E402
-    MIN_N_FOR_READING, normalize_stage, render_stage_section, stage_breakdown, window_of,
-    rows_for_closed_trades,
+    MIN_N_FOR_READING, load_trades, normalize_stage, render_stage_section, stage_breakdown,
+    window_of, rows_for_closed_trades,
 )
 
 
@@ -40,10 +40,46 @@ def test_falls_back_to_clock_when_session_empty():
     assert normalize_stage("", "2026-09-18T11:00:00-04:00") == "regular"
 
 
+def test_naive_clock_fallback_uses_cst():
+    assert normalize_stage("", "2026-09-18T23:30:00") == "regular"
+    assert normalize_stage("", "2026-09-18T18:30:00") == "premarket"
+    assert normalize_stage("", "2026-09-18T09:00:00") == ""
+
+
 def test_offhours_never_invented():
     assert normalize_stage("", "2026-09-18T22:30:00-04:00") == ""      # 盘外
     assert normalize_stage("", None) == ""
     assert normalize_stage("garbage", "2026-09-18T22:30:00-04:00") == ""
+
+
+def test_load_trades_uses_et_exit_date_and_excludes_duplicate():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+      create table trade_records (
+        id integer primary key, symbol text, direction text, entry_time text,
+        exit_time text, exit_reason text, entry_session text, strategy_id text,
+        source_type text, realized_pnl real, pnl_net real, fees_est real,
+        mfe_pct real, mae_pct real, quantity integer, data_quality text
+      );
+    """)
+    rows = [
+      ("US.B", "LONG", "2026-09-18T23:20:00", "2026-09-18T23:30:00", None),
+      ("US.C", "LONG", "2026-09-18T14:00:00+08:00", "2026-09-19T15:00:00+08:00", None),
+      ("US.A", "LONG", "2026-09-18T18:30:00-04:00", "2026-09-18T18:40:00-04:00", None),
+      ("US.D", "LONG", "2026-09-18T18:35:00-04:00", "2026-09-18T18:41:00-04:00", "duplicate_external_close"),
+    ]
+    conn.executemany(
+      "insert into trade_records(symbol,direction,entry_time,exit_time,exit_reason,"
+      "entry_session,strategy_id,source_type,realized_pnl,pnl_net,fees_est,mfe_pct,"
+      "mae_pct,quantity,data_quality) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [(s, d, e, x, "TEST", "", "test", "TEST", 10.0, 10.0, 0.0, 1.0, 0.0, 1, q)
+       for s, d, e, x, q in rows],
+    )
+    got = load_trades(conn, "2026-09-18", "2026-09-18")
+    assert [r["symbol"] for r in got] == ["US.A", "US.B"]
+    assert got[0]["stage"] == "afterhours"
+    assert got[1]["stage"] == "regular"
 
 
 # ── 2. 聚合 ─────────────────────────────────────────────────────────────────

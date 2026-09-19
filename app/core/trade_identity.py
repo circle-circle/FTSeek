@@ -62,13 +62,13 @@ def phase_from_time(dt: Any = None) -> str:
             d = _dt.datetime.fromisoformat(d.replace("Z", "+00:00"))
         if not isinstance(d, _dt.datetime):
             return ""
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=_dt.timezone.utc)
         try:
             from app.utils.timezone import to_et as _to_et
             d = _to_et(d)
         except Exception:
             from zoneinfo import ZoneInfo
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
             d = d.astimezone(ZoneInfo("America/New_York"))
         hm = d.hour * 60 + d.minute
         if 4 * 60 <= hm < 9 * 60 + 30:
