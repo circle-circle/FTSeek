@@ -34,7 +34,7 @@
 |---|---|---|
 | 模式判定 SSOT (含授权门) | `app/core/trading_mode.py:150-169` `_detect_mode()` | 每次读 `.env.us` (热加载), 判定源 = `AUTO_TRADE_ACCOUNT` (+`ALLOW_REAL_TRADING` 门) → `SIMULATE / LIVE_CONSERVATIVE / LIVE_NORMAL` |
 | 启动校验 | `trading_mode.read_startup_mode_snapshot()` + `validate_startup_mode_config()` | 现被 `app/playbook/candidate_eligibility.py:52-66` 以 **fail-runtime** 方式使用 (不通过即抛错) |
-| 启动硬门 (带授权) | `app/core/config_container.py:41-67` `_resolve_trade_mode()` | `TRADE_ENV=0` 且 `ALLOW_REAL_TRADING!=true` → 忽略并强制 `SIMULATE` (仅 `warnings.warn`) |
+| 启动硬门 (带授权) | `app/core/config_container.py:41-64` `_resolve_trade_mode()` | `TRADE_ENV=0` 且 `ALLOW_REAL_TRADING!=true` → 忽略并强制 `SIMULATE` (仅 `warnings.warn`) |
 | 切换 UI | `app/web_dashboard/mode_switch_service.py:199-305` | 写 `.env.us` (4-5 键, 带 fcntl 锁 + 备份) + `CONFIRM` + `REAL_ACCOUNT_ID`/`FUTU_UNLOCK_PWD_MD5` 前置 + 毕业门禁 + **自动 `systemctl restart ftseek-us`** + 60s 就绪轮询 |
 | 双账户 + 实盘券商 STOP | `app/execution/dual_broker.py:492-528` | real 分支真挂 `OrderType.STOP` (`remark=pb_stop_*`); sim 直接 `skipped` (由规则引擎兜底) |
 | live STOP 接线现状 | `app/playbook/playbook_service.py:2053-2060` | 已接线, 但**失败只 `logger.warning`** → 见 §3.5 |
@@ -111,12 +111,23 @@ grep -nE "TRADE_ENV|AUTO_TRADE_ACCOUNT|ALLOW_REAL_TRADING|LIVE_CONSERVATIVE" .en
 ```bash
 sqlite3 data/ftseek_us.db      "SELECT trade_mode, COUNT(*), MIN(trade_date), MAX(trade_date) FROM trade_records GROUP BY 1;"
 # → simulate | 867 | 2026-04-24 | 2026-09-18
-#   sim      |   8 | 2026-07-20 | 2026-09-17   ← 全部来自 position_sync:200
+#   sim      |   8 | 2026-07-20 | 2026-09-17   ← 7 行来自 position_sync:200, 1 行来自 archive/adopt_position_to_playbook.py:100
 sqlite3 data/ftseek_us_live.db "SELECT trade_mode, COUNT(*) FROM trade_records GROUP BY 1;"   # → live | 14
 ```
 **消费者字面量 (抽样)**: `app/plan/plan_feedback.py:246` `trade_mode != 'simulate'` (**那 8 行 `'sim'` 会被当成"非 sim"计入**)、`app/plan/llm_validator.py:502` (注释记录过 `!= 'simulate'` 曾把 313 笔 `PLAYBOOK_SIM` 全挡在门外)、`app/review/weekly_review.py:67` `trade_mode != 'live'`、`app/diagnostics/shadow_account.py:143`、`app/web_dashboard/routes/analytics.py:374` 与 `data_service.py:1187` (`COALESCE(trade_mode,'simulate')='live'`)。
 
+**来源逐一核对 (2026-09-20 复查后精确化)**:
+```bash
+sqlite3 data/ftseek_us.db "SELECT id, symbol, entry_reason FROM trade_records WHERE trade_mode='sim' ORDER BY id;"
+# 7 行 entry_reason='sync_recovery_backfill' (position_sync.py:200)
+# 1 行 US.EOG 2026-07-20 entry_reason='adopt_to_playbook' (archive/adopt_position_to_playbook.py:100, 硬编码 'sim')
+```
+
+**附带缺口 (复查发现)**: 那唯一非 `position_sync` 来源的行出自一次性脚本 `scripts/archive/adopt_position_to_playbook.py`; 而**活跃代码仍在指引人工执行已不存在的路径** —— `app/core/position_sync.py:136` 与 `:223` 写「请人工执行 `scripts/adopt_position_to_playbook.py <symbol>`」, 实测该路径**不存在** (文件已在 `scripts/archive/` 下) ⇒ 幽灵仓/两不管仓的人工收编出口在文档层即失效 (列 §4-P1-13)。
+
 **同族地雷 — `data_quality` 默认值**: 两库 DDL 均 `data_quality TEXT DEFAULT 'real'`, 实测 sim 库 `data_quality='real'` **603 行** (clean 265 / duplicate_external_close 5 / outlier_external 1 / direction_mismatch 1), live 库 `real` 仅 2 行 (`manual` 12 行)。⇒ 该列今天几乎不承载"真钱"语义, 任何「按 data_quality='real' 取实盘」的写法都会吞掉 600+ 行模拟数据。
+
+**该地雷已有活体消费者 (复查实锤, 非假设)**: `scripts/daily_violation_scan.py:160` 的 `WHERE t.data_quality = 'real'`, 库路由走 `get_main_db()` (`:72`) ⇒ 现网 `TRADE_ENV=1` 下它扫的是 **sim 库**, 即每天把 603 行模拟成交当作真实成交做追高违规/熔断扫描; 调用方是 **enabled** 的 Hermes job「FTSeek-US 盘后综合复盘」(`0 4 * * 2-6`) 的 bash 块, 并与 `scripts/intraday_loss_breaker_shadow.py` 共写 `data/violation_segment_heartbeat.log` 作毕业判据 (DEB-20260904, 目标 ≥10/14 天) ⇒ **判据输入本身建立在错标的列上** (`data_quality` 修正因此是判据前置, 不只是整洁性问题)。
 
 **现网可复现?** **是** (两值共存已在库中)。
 
@@ -145,7 +156,9 @@ sqlite3 data/ftseek_us_live.db "SELECT trade_mode, COUNT(*) FROM trade_records G
 | 止损兜底 | sim **无券商 STOP**, 靠 20s 轮询 | `dual_broker.py:503-505` (sim → skipped) | 变**券商挂单**: 入场即挂, 服务断连仍有效 |
 | 实盘挂单失败策略 | 仅 `logger.warning`, 不撤回不降级 | `playbook_service.py:2053-2060` | **裸仓风险**: 挂着 warning 的不设防真钱仓 |
 
-**附**: 我此前提到「延长时段开仓链 `EXT_ENTRY_ALLOW_SIM` 只覆盖 SIM」——**实测该键在代码中无读取点**, 只出现在两处注释/说明 (`scripts/extended_hours_entry_executor.py:62`, `scripts/replay_trailing_from_report.py:4`) ⇒ 这条**撤回** (注释承诺的开关不存在, 反而说明注释不可作为开关存在的证据)。
+**附 (撤回作废, 见 §12-2)**: 上一稿曾以「该键在代码中无读取点」为由**撤回**「延长时段开仓链 `EXT_ENTRY_ALLOW_SIM` 只覆盖 SIM」。独立复查实测**该撤回是错的**:
+`scripts/extended_hours_entry_executor.py:102` 是活跃读取点 —— `ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"` (2026-09-18 起默认值改为 `"false"` fail-closed; 现网 `.env.us:135` 显式 `EXT_ENTRY_ALLOW_SIM=true`), 该脚本由系统 crontab 每 5 分钟运行 (`*/5 16-21 * * 1-5` 盘前 + `*/5 4-7 * * 2-6` 盘后, 已在 `docs/CONTROL-LOOP-LEDGER.md:95` 在册)。
+⇒ **原说法恢复成立**: 延长时段开仓是 SIM 专属语义的一部分 (开关名与语义双重限定 SIM), 切盘后该链的开仓前提必须单独重审, 不能跟着盘中链一起翻。
 
 **现网可复现?** 不适用 (切盘日才暴露), 但**风向已在**: 实盘挂 STOP 失败的处置今天是 warning 级 (§3.5 末行), 与「风控路径异常必须 CRITICAL + fallback」的既有纪律冲突。
 
@@ -193,6 +206,8 @@ sqlite3 data/ftseek_us_live.db "SELECT trade_mode, COUNT(*) FROM trade_records G
 7. **前置能力演练清单** (每项先在 SIM 演练留证): `unlock_trade` 交易密码 (`FUTU_UNLOCK_PWD_MD5`)、行情权限 (LV1/LV2/RT_DATA)、借券/做空可得性、停牌/公司行动/熔断、`FTSEEK_LIVE_DEAL_PUSH` 订阅、PDT 口径复核 (RFC-062 A1: 富途香港实体不适用 — 若试点账户为 moomoo US 实体则**恢复**该判据)。
 8. **报告/台账全带 mode 维度**: 新复盘 bundle / OKR / scorecard 一律按 `mode` 分片, sim 与 live **永不同池统计**; golden 基线标注 `sim-only` (与 `RFC-086` 阶段统计 SSOT 对齐)。
 9. **费用/滑点校准**: 用真实成交回填 `fees_est`, 用实测滑点替换 5bps 模型。既有铁律不变: 费用 ≈ 毛利 42×, edge 必须 > ~10bps。
+13. **收编路径修复**: `position_sync.py:136/223` 指引的 `scripts/adopt_position_to_playbook.py` 实测不存在 (实为 `scripts/archive/` 下一次性脚本, 且它就是 `trade_mode='sim'` 那 1 行的历史来源) ⇒ 更正指引或恢复可用入口, 否则幽灵仓/两不管仓无人能按文档收编。
+14. **`data_quality` 错标修正前置化**: `scripts/daily_violation_scan.py:160` 每日按 `data_quality='real'` 扫 sim 库 603 行 (见 §3.3), 其毕业判据输入被污染 ⇒ 在 P0-3 落地前, 该判据的读数需标注"口径待修", 不得据其裁决。
 
 **P2 (可持续)**
 10. 三态机 (`sim` / `live_conservative` / `live_normal`, `LIVE_CONSERVATIVE` 键已存在) + **自动降级** (触发条件 → 自动回落 sim 并告警)。
@@ -217,7 +232,7 @@ LIVE_CONSERVATIVE=1    # 首期保守 (0 为全量)
 1. 模式判定 = `LIVE_CONSERVATIVE`; 2. 库路由 = live 库 (5 个解析点一致); 3. broker 账户 = REAL 且 `unlock_trade` 成功; 4. 行情权限 (LV1/RT_DATA) 在位; 5. 在仓归属: 每个 live 行 `account_type='real'` 且监护链可见; 6. 毕业门禁读到 live 证据 (A' 第 2 步) 或走"试点攒样中"语义; 7. `FTSEEK_LIVE_DEAL_PUSH` 订阅活体; 8. 日限额 (P2-12 日内熔断) 生效断言。
 **首日**: 最小暴露 (§6) + sim 影子对照留证。
 **回滚 (T+any)**: 键组同翻回 `sim`/`false`/`1`/`1` → 重启 → 自检 (模式=sim、库=sim、broker=SIMULATE、在仓归属不跨库) → 与 RFC-062 kill 条件同等即时, 无需裁决。
-**⚠️ 回滚的授权锁不对称 (实测, 需修)**: 看板 `mode_switch_service.py:210-215` 的 **simulate 分支不写 `ALLOW_REAL_TRADING=false`** (只写 3 键), 而 live 分支的前置检查 (`:254-256`) **要求它已是 `true`** ⇒ 两条后果: (a) 从 `false` 出发**无法用 UI 切实盘**, 必须手改 `.env.us` ——正是本 RFC 要消灭的动作; (b) 回切 sim 后授权锁**留开**, 手动实盘平仓路径 (`app/web_dashboard/order/executor.py:406-412`) 的锁被留在 open 态。建议: UI 切实盘改为「写入 4 键 + 重启 + 自检」的原子动作 (授权锁不在写入前判定), 回切时显式写 `false`。
+**⚠️ 回滚的授权锁不对称 (实测, 需修)**: 看板 `mode_switch_service.py:210-215` 的 **simulate 分支不写 `ALLOW_REAL_TRADING=false`** (只写 3 键), 而 live 分支的前置检查 (`:254-256`) **要求它已是 `true`**; 同文件 `set_auto_account` (`:552-600`) 是**同款结构** (sim 分支 `:584-587` 只写 3 键, real 分支前置 `:565-566` 要求已为 true), 全文件**没有** `_apply_env_updates` 之类统一写入口 (复查实测 grep 为空) ⇒ 两条后果: (a) 从 `false` 出发**无法用 UI 切实盘**, 必须手改 `.env.us` ——正是本 RFC 要消灭的动作; (b) 回切 sim 后授权锁**留开**, 手动实盘平仓路径 (`app/web_dashboard/order/executor.py:406-412`) 的锁被留在 open 态。建议: UI 切实盘改为「写入 4 键 + 重启 + 自检」的原子动作 (授权锁不在写入前判定), 回切时显式写 `false`。
 
 ---
 
@@ -335,6 +350,8 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 | C13 | §7「不新增台账/配置/cron」成立 | 检查 P0-1..P0-6 是否真的只改既有解析器 | 任一 P0 项隐含新建文件 ⇒ 违反 |
 | C14 | 与既有文档不冲突 (尤其 CUTOVER 决策包 A' 与单库翻转模型) | 读 `CUTOVER-DECISION-PACKAGE §一` + `PROPOSAL §三·五` 对齐 | 存在与本 RFC §4-P0-1「库路由派生」冲突的既有裁决 |
 
+**本次复查已行使 (2026-09-20, 两个只读 agent 并行)** —— 逐条判定见 §15: C1/C2/C5/C6/C7/C8/C9/C11/C13/C14 **成立**; C3 **数字不符 (来源需精确化, 已改)**; C4 **成立且升级** (发现活体消费者, 已补); C10 **作者撤回作废** (原说法恢复); C12 **两处行号微漂** (已改 1 处)。
+
 **复查纪律 (沿用本仓既有教训)**: 复查 agent 的报告是**自报告**, 作者须逐条在真文件上复核; 复查者的**否决性结论**尤其要由作者重跑 (§3.6 就是一次自我更正, 记录在案)。误报与更正都要留痕, 防后续 agent 采信。
 
 ---
@@ -342,7 +359,7 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 ## 12. 自曝与局限
 
 1. **§3.6 是我上一轮口头结论的更正**: "position_sync 合并两账户"不成立 (注释陈旧)。原表述若已进入任何下游讨论, 以本节为准。
-2. **§3.5 撤回** `EXT_ENTRY_ALLOW_SIM` 那条 (代码无读取点)。
+2. **§3.5 的「撤回」本身是错的, 已作废并恢复原说法** (独立复查实锤 + 作者亲自复跑确认, 见 §15-C10)。根因三层, **全属我的检索纪律问题**, 记录以防再犯: ① 宽口径 grep (`grep -rn "EXT_ENTRY" app/ config/ scripts/`) 的输出被 `head -15` **截断**, 第 102 行落在截断之外; ② 随后的精确 grep 路径清单写成 `app/ config/ .env.us`, **漏了 `scripts/` 与 `ops/`**; ③ 同一条 grep 的 `--include=*.py --include=*.yaml` 又把**无扩展名的 `.env.us`** 挡在门外 (现值就在 `.env.us:135`)。⇒ **纪律**: 「找不到」与「撤回」和「声称」同权 —— 结论前必须确认路径清单覆盖 `app/ scripts/ ops/ ~/.hermes/scripts/`、`--include` 未排除点文件、且**不得在输出被截断的情况下下否定结论**。
 3. **行号会漂移**: 本文件所有行号基于 commit `e656c4893` (2026-09-20 实测), 复查者若在更晚 commit 上核对, 请以**语义**为准并以 `grep` 重定位。
 4. **未验证项 (不列入 P0 结论)**: ① 看板手动单与 auto-live 同标的并存时的 `open_positions` 行为 (PK 单列) 我只做了结构分析, 未做实证冲突; ② 券商 STOP 单在 OpenD 断连期间的实际可靠性 (只能实盘测); ③ 佣金/滑点实测分布 (无实盘成交样本)。
 5. **本 RFC 不含任何收益预测**, 也不承诺实盘结果; 所有金额类判据由用户签字。
@@ -366,6 +383,42 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 
 ---
 
-## 15. 独立复查结论
+## 15. 独立复查结论 (2026-09-20, 两个只读 agent 并行 + 作者逐条复跑)
 
-**待填** — 由独立复查 agent (只读, 两组并行) 按 §11 清单执行后, 由作者逐条复核写入本节 (格式沿用 `DEB-20260919 §17`: 成立 / 更正 R-x / 误报留痕)。
+> 复查方式: 两个**只读** agent 并行 (A 组 = 数据/DB 类 C3/C4/C6/C7/C11; B 组 = 代码/配置/流程类 C1/C2/C5/C8/C9/C10/C12-C14), 两份报告回来后**由作者在真文件上逐条复跑**(本仓纪律: 子代理自报存在误报; 否决/撤回类结论尤其必须作者重跑)。
+> 判定分三类: **成立** / **更正 (R-x)** / **误报留痕** (本次误报发生在**作者自己身上**, 记 R-1 以警示后续 agent 勿采信上一稿措辞)。
+
+### 15.1 逐条判定
+
+| # | 复查判定 | 作者复跑复核 | 处置 |
+|---|---|---|---|
+| C1 | 成立 | 一致: 6 个裸读点**全部**真参与库文件选择 (`config_container.py:117` / `paths.py:74` / `db_pool.py:45` / `position_intelligence.py:118` / `daily_ic_analysis.py:53` / `update_signal_lifecycle.py:34`); 授权门 4 处; 唯一额外同款裸读在 `scripts/archive/shadow_eod_replay.py` (已废弃, `scripts/shadow_board.py:14` 标注) ⇒ 无活跃漏报 | 原文保留 |
+| C2 | 成立 | 一致: 进程族 4 处 / 文件族 3 处; `systemctl cat ftseek-us` 确证 `EnvironmentFile=/opt/ftseek/FTSeek-US/.env.us`; 另查 `os.environ` 直改 23 处**均不触及**这两键, `load_dotenv` 20+ 处**无一处 `override=True`** ⇒ "启动冻结"成立且无第三条路径 | 原文保留 (补"无第三条路径"结论) |
+| C3 | **数字不符 (来源)** | 复核确认: 总数 867+8 正确, 但 8 行中 **1 行** (US.EOG 2026-07-20, `entry_reason='adopt_to_playbook'`) 出自 `scripts/archive/adopt_position_to_playbook.py:100` 而非 `position_sync.py:200` | §3.3 已精确化 (7+1) + 连带发现幽灵指引路径 (§4-P1-13) |
+| C4 | **成立且升级** | 复核确认更强: `scripts/daily_violation_scan.py:160` 按 `data_quality='real'` 扫 sim 库, 且作者另行实证**该脚本由 enabled 的 Hermes job「FTSeek-US 盘后综合复盘」每日调用** (jobs.json 内 bash 块 + `intraday_loss_breaker_shadow.py` 共写心跳台账) ⇒ 活体污染而非潜在风险 | §3.3 已补活体消费者 + §4-P1-14 要求该判据读数标"口径待修" |
+| C5 | 成立 | 一致: 两库 `pk=1` 仅 `symbol`, **无** `(symbol, account_type)` 复合唯一索引 (仅 `sqlite_autoindex` + `idx_open_owner`); `position_sync.py:1177-1184` 硬编码 `account_type='real'` 确认 | 原文保留 |
+| C6 | 成立 | 一致: `_envs_to_query` 恒单元素 (`position_sync.py:794-810`), 9 处 `position_list_query` 调用点全部单 env (commit `ec90678d3a`, 2026-07-06), **无其它合并路径** ⇒ 我已作的 §3.6 更正成立 | 原文保留 |
+| C7 | 成立 | 一致: 全仓 (含 `getattr`/反射/看板路由/ops) **无调用方**; live 库 14 行 `trade_records` + 8 行 `open_positions` 确认 | 原文保留 |
+| C8 | 成立 (严重度维持) | 一致且更细: `scripts/live_reconcile_check.py` (190 行) **不读 `sl_broker_order_id`、不补挂 STOP**; `position_sync` 无该调用; `order/executor.py:1842` 只管手动单部分平仓后的重建; `pipeline.py:6793` 仅用该列做身份去重 ⇒ **无任何下游补偿, fail-open 裸仓** | 原文保留 |
+| C9 | 成立 | 一致: simulate 分支 3 键 / live 分支 5 键 / 前置要求已 true; 并多查一处 **同款结构** `set_auto_account` (`:552-600`) | §5 已补同款位置 |
+| C10 | **不成立 (作者撤回本身是错的)** | 复核确认: `scripts/extended_hours_entry_executor.py:102` 有活跃 `os.getenv("EXT_ENTRY_ALLOW_SIM","false")`, 默认 fail-closed, `.env.us:135` 显式 `=true`, 脚本 systemd crontab 每 5 分钟运行且在 `CONTROL-LOOP-LEDGER.md:95` 在册 ⇒ **原说法 (SIM 专属开仓开关) 恢复** | **R-1**: §3.5 撤回作废并恢复原说法; §12-2 记录根因 (head 截断 + 路径清单漏 `scripts/` + `--include` 滤掉 `.env.us`) |
+| C11 | 成立 | 一致: `.env.us` / systemd 注入 / EnvironmentFile / `/etc/environment` / crontab / `start.sh` 全路径无 `FTSEEK_ALLOW_RUNTIME_TRADE_ENV_SWITCH` | 原文保留 |
+| C12 | 基本成立, 1 处行号微漂 | 逐项核对 9 行, 仅 `_resolve_trade_mode()` 实为 `:41-64` (原写 41-67); 其余行号在 ±2 行内 | §2 已改 |
+| C13 | 成立 | 一致: P0-1..P0-6 均为"新增函数 + 改既有调用点", 无新表/新配置/cron (§5 自检脚本属 runbook 脚本, 不违反三项) | 原文保留 |
+| C14 | 成立 | 一致: P0-1「库路由从模式判定派生」= 单库翻转模型的代码化, 与 A'「不跨库复制」不矛盾 (前者管路由指向, 后者管搬运禁令) | 原文保留 |
+
+### 15.2 更正 (R-x, 均经作者复跑)
+
+- **R-1 (§3.5 / §12-2)**: 上一稿对 `EXT_ENTRY_ALLOW_SIM` 的"撤回"作废 —— 该键有活跃读取点且**每天在跑**。教训: 一次被 `head` 截断的 grep + 一次漏 `scripts/` 的路径清单, 就足以把"存在的开关"写成"不存在", 而这与"声称不存在"是同一类错误。已在 §12-2 落为纪律。
+- **R-2 (§3.3)**: 8 行 `'sim'` 的来源是 **7 + 1** (非"全部来自 position_sync:200"), 并因此发现活跃代码指引的收编脚本路径已不存在 → 新增 §4-P1-13。
+- **R-3 (§3.3 升级)**: `data_quality='real'` 不是"潜在语义地雷", 而是**每天被一个 enabled job 当真实成交使用** (`daily_violation_scan.py:160`) → 该判据 (熔断/违规扫描毕业判据) 的读数在 P0-3 之前不得用于裁决。
+- **R-4 (§2)**: `_resolve_trade_mode()` 行号为 `41-64`。
+
+### 15.3 误报留痕
+
+| 来源 | 声称 | 复核结论 |
+|---|---|---|
+| 作者上一稿 (自误报) | "`EXT_ENTRY_ALLOW_SIM` 在代码中无读取点, 故撤回原说法" | **错** (见 R-1)。原说法成立, 撤回作废。后续 agent 若引用"该键不存在", 以本节为准。 |
+| 复查 agent | 无被推翻的结论 (两条待精确化项 C3/C4 经复核**成立方向正确**, 只是数字/严重度需改) | — |
+
+**纪律提醒**: 复查 agent 的 C3/C4 两条都是"作者写得太窄/太轻"的方向 —— 与常见"子代理夸大"相反。说明**作者自查也有系统性偏向**, 独立复查的价值不在于是否有误报, 而在于是否覆盖了作者的口径盲区。
