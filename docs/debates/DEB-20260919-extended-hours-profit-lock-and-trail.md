@@ -323,3 +323,45 @@ md5 各异), 合并脚本 /tmp/merge_shards.py 按 (symbol, day) 去重。
 `prefilter_verdicts()` 增三列 (纯函数, 只记录不拦): `passes_vol_20m` / `passes_vol_20m_chg_3` /
 `passes_negative_band_risk` (vol<20M 且 chg<2% ⇒ 落在负贡献段的候选标记)。测试同步更新, 3 passed。
 旧判据 (chg≥3/5、$5~20) 保留记录但**已标注为未复现**, 防以后被误用。
+
+---
+
+## 十三、交易日历核查与修复 (用户问「盘前盘中是否走已有交易日历」)
+
+### 13.1 核查结论: **是, 且已实证**
+- SSOT = `app/utils/holiday_calendar.py`: 主源 **Futu `request_trading_days`** (批量缓存 [−30d,+60d],
+  miss 自动扩展) → 硬编码表 (2026-2028, 离线兜底) → 仅周末 (最终兜底); 半日市
+  `get_us_close_minutes_et()` = **780 (13:00 ET)** vs 960; 无参调用统一 ET 口径。
+- **实证 9/9 与 Futu 权威一致** (含半日市): 周六/劳动节/感恩节/圣诞/元旦/独立日观察 = 非交易日;
+  感恩节次日 11/27 = **交易日 + 780**; **平安夜 12/24 = 交易日 + 780** (硬编码表保守标整休,
+  API 主源实测覆盖 ✅ 与代码注释承诺一致)。
+- 覆盖: 延长时段三件套 (退出 cron/入场通道/两影子) 走 `trading_day_check.py` 或
+  `is_trading_day("US",…)` ✅; 盘中走 `get_us_close_minutes_et` + 各守卫。
+- 前例 (2026-09-07 已修): `trading_day_check.py` exit code 恒 0 ⇒ **9 个消费方假日分支全是死代码**,
+  全系统退化为"只排周末"; 改 0/1 语义后一次性修复。
+
+### 13.2 缺口 (本次修复): `is_us_holiday` 只查硬编码表
+6 处盘中守卫 (trade_guard / scheduler_triggers / **position_exit_monitor** / pdt_guard /
+**futu_lv3_provider** / timezone.is_market_open) 用它当唯一判据, 而原实现 `d in US_HOLIDAYS`
+⇒ ①非表内临时休市 (国丧日/临时闭市) ②2029+ 表外年份 会被当交易日。
+
+**修复 (改 1 处修 6 处)**: `is_us_holiday`/`is_hk_holiday` 委托新判定
+`_non_trading_day` = 周末 → **SSOT 热缓存** → 硬编码表 → fail-open(False);
+并新增 `_cached_trading_day()` **只读缓存不触网** (is_trading_day 缓存 miss 会连 OpenD 拉 90 天
+日历 ⇒ 不得进热路径)。语义变更 (="非交易日") 对 6 个消费方均安全: 它们全为"停止门"用法,
+周末返回 True 与各自已有的周末分支同向; `get_last_trade_date` 自带 `_is_wknd` 前置。
+
+### 13.3 验证
+- 测试 +4 例: 周末/硬编码命中; **缓存权威覆盖硬编码** (模拟临时休市); **不发网络**
+  (monkeypatch 断言 `_refresh_cache`/`_futu_request_trading_days` 未被调用); HK 同构。
+- `test_holiday_calendar_horizon.py`+`test_trading_day_check_contract.py` **39 passed**;
+  守卫相关子集 **339 passed / 1 skipped**。
+- 行为实证: 周六 12:00 `is_market_open=False`; 周一盘中 `True`; 感恩节 `False`;
+  半日市 11/27 12:00 `True` / 14:00 `False` (13:00 早收生效); 当前 `get_market_phase()=OVERNIGHT`。
+- **已重启 `ftseek-us.service` 使新码生效** (前置: 无在途仓 ✅ + 改动已提交 ✅ + 美股已收盘):
+  重启后 active/running (PID 1982398), OpenD 探针 OK (AAPL=$336.13), 近 3 分钟 0 ERROR;
+  代码 mtime 09:11:48 < 进程启动 09:16:38 ⇒ 新码已加载。
+
+### 13.4 仍登记待办 (非本次范围)
+crontab 用 CST 小时 (`*/5 16-21` / `*/5 4-7`), DST 切换后相对 ET 右移 1h (11/1 起盘前窗尾部缺
+约 45 分钟) — 已列 **11 月重评**; 退出 cron 为 `* * * * *` 且脚本内按 ET 判窗, 不受影响。
