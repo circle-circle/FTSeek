@@ -548,10 +548,12 @@ def _send_manual_alert(message: str, position) -> None:
     try:
         logger.warning(f"[ManualSafetyNet] {message}")
         try:
-            from app.notifier.dingtalk import DingTalkNotifier
-            DingTalkNotifier().send_text(message)
+            # 2026-09-18 统一推送渠道: 直连 DingTalkNotifier → PushHub 单一出口
+            from app.push import push_text_safe
+            from app.push.message import Level as _Lv, Category as _Ct
+            push_text_safe(message, level=_Lv.HIGH, category=_Ct.RISK_ALERT)
         except Exception as e:
-            logger.debug(f"[ManualSafetyNet] 钉钉告警发送失败: {e}")
+            logger.debug(f"[ManualSafetyNet] 告警发送失败: {e}")
     except Exception as e:
         logger.warning(f"[ManualSafetyNet] Failed to send alert: {e}")
 

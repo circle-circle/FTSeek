@@ -1145,10 +1145,12 @@ class ExitMonitor:
                             f"(prev_ts_age={time.time() - _prev_ts:.0f}s), 跳过本轮监控"
                         )
                         try:
-                            from app.notifier.dingtalk import DingTalkNotifier
-                            DingTalkNotifier().send_text(
+                            from app.push import push_text_safe as _pts
+                            from app.push.message import Level as _Lv, Category as _Ct
+                            _pts(
                                 f"🚨 [紧急] {symbol} 无有效报价且备用价过旧, 本轮退出监控跳过 "
-                                f"(age={time.time() - _prev_ts:.0f}s)"
+                                f"(age={time.time() - _prev_ts:.0f}s)",
+                                level=_Lv.CRITICAL, category=_Ct.RISK_ALERT,
                             )
                         except Exception as _silent_e:
                             logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
@@ -1160,12 +1162,13 @@ class ExitMonitor:
                     )
                     # 发送紧急告警
                     try:
-                        from app.notifier.dingtalk import DingTalkNotifier
-                        notifier = DingTalkNotifier()
-                        notifier.send_text(
+                        from app.push import push_text_safe as _pts
+                        from app.push.message import Level as _Lv, Category as _Ct
+                        _pts(
                             f"🚨 [紧急] {symbol} 价格类型异常\n"
                             f"type={type(current_price).__name__}, value={current_price!r}\n"
-                            f"已使用备用价格 ${_fallback_price:.2f} 继续监控止损"
+                            f"已使用备用价格 ${_fallback_price:.2f} 继续监控止损",
+                            level=_Lv.CRITICAL, category=_Ct.RISK_ALERT,
                         )
                     except Exception as _silent_e:
                         logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")

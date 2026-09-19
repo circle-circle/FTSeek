@@ -4470,9 +4470,10 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
         print("\n[dry-run] 未推送")
         return 0
     try:
-        from app.notifier.dingtalk import DingTalkNotifier
-        DingTalkNotifier().send_text(msg)
-        print("\n[ok] 钉钉已推送")
+        from app.push import push_text_safe
+        from app.push.message import Level as _Lv, Category as _Ct
+        push_text_safe(msg, level=_Lv.HIGH, category=_Ct.SYSTEM)
+        print("\n[ok] 已推送 (PushHub)")
     except Exception as e:
         print(f"\n[warn] 钉钉推送失败(不影响链路): {e}")
     return 0

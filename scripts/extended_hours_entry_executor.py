@@ -269,6 +269,8 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
                 "ext_volume": vol,
                 "stop_source": "规则引擎 initial_sl (-5%)",
                 "sim_no_broker_stop": True,
+                # 本链路按构造仅 SIM (trd_env 守卫在 _execute 内), 口径标 sim 与落库一致
+                "trade_mode": "sim",
                 "planned_entry": plan_px,
                 "entry_dev_pct": ((float(fpx) - float(plan_px)) / float(plan_px) * 100)
                                  if plan_px else None,

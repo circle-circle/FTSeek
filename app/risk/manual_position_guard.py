@@ -88,9 +88,10 @@ def _calc_pnl_pct(entry_price: float, current_price: float, is_long: bool) -> fl
 def _send_alert(message: str):
     """发送钉钉告警"""
     try:
-        from app.notifier.dingtalk import DingTalkNotifier
-        notifier = DingTalkNotifier()
-        notifier.send_text(message)
+        # 2026-09-18 统一推送渠道: 直连钉钉 → PushHub 单一出口
+        from app.push import push_text_safe
+        from app.push.message import Level as _Lv, Category as _Ct
+        push_text_safe(message, level=_Lv.HIGH, category=_Ct.RISK_ALERT)
     except Exception as e:
         logger.warning(f"[ManualGuard] 钉钉告警发送失败: {e}")
 

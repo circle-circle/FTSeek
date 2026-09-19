@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.data.market_data_router import MarketDataRouter
 from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-from app.notifier.dingtalk import DingTalkNotifier
+from app.push import HubTextAdapter
+from app.push.message import Category as _CtOpen
 
 logger = logging.getLogger("ftseek.us_pipeline.open_checker")
 
@@ -30,7 +31,8 @@ class USOpenChecker:
     """美股开盘确认器"""
 
     def __init__(self):
-        self.notifier = DingTalkNotifier()
+        # 2026-09-18 统一推送渠道: 直连钉钉 → PushHub 单一出口 (适配器保留调用形状)
+        self.notifier = HubTextAdapter(category=_CtOpen.PLAN_OPEN_CHECK)
         self.plan_manager = USBattlePlanManager()
         # P0 修复 (2026-04-23): 读取路径对齐到项目根目录/data/
         # premarket_planner 写入为 FTSeek-US/data/daily_battle_plan_us.json，

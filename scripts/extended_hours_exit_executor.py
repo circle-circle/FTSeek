@@ -79,13 +79,31 @@ def _today_et() -> str:
     return _now_et().strftime("%Y-%m-%d")
 
 
-def _push(text: str):
-    """推送结果通知 (成功或失败都推)."""
+def _stage(session: str) -> str:
+    """阶段中文名 — 委托 app/core/trade_identity.phase_cn (唯一 SSOT)。"""
     try:
-        from app.notifier.feishu import FeishuNotifier
-        FeishuNotifier().send_text(text)
+        from app.core.trade_identity import phase_cn
+        return phase_cn(session) or "延长时段"
     except Exception:
-        pass
+        return "延长时段"
+
+
+def _push(text: str, level=None):
+    """推送结果通知 (成功或失败都推) — 走 PushHub 统一出口。
+
+    2026-09-18 (用户裁「统一推送渠道」): 原直连 `FeishuNotifier().send_text()`,
+    与盘中链 (PushHub→钉钉) 分流 ⇒ 同一事件在两个平台各出现一半。
+    """
+    try:
+        from app.push import push_text_safe
+        from app.push.message import Level, Category
+        return push_text_safe(
+            text,
+            level=level if level is not None else Level.HIGH,
+            category=Category.RISK_ALERT,
+        )
+    except Exception:
+        return False
 
 
 def _audit(result):
@@ -155,7 +173,7 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
     trd_env = os.getenv("FUTU_TRD_ENV", "SIMULATE")
     acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "19930823"))
     if trd_env.upper() != "SIMULATE":
-        _push(f"🚫 盘前锁盈拦截: {symbol} 仅允许 SIMULATE")
+        _push(f"🚫 {_stage(session)}锁盈拦截: {symbol} 仅允许 SIMULATE")
         return {"ok": False, "skip": "real_not_authorized"}
 
     if dry:
@@ -234,10 +252,10 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         }
         _audit(result)
         if result["ok"]:
-            _push(f"✅ 延长时段锁盈已成交\n{symbol} {dealt_qty:g}股 @ "
+            _push(f"✅ {_stage(session)}锁盈已成交\n{symbol} {dealt_qty:g}股 @ "
                   f"{result['avg_fill_price']:.2f}\n订单 {result['order_id']} | 原因 {reason}")
         else:
-            _push(f"⚠️ 延长时段锁盈待确认\n{symbol} {dealt_qty:g}/{qty:g}股\n"
+            _push(f"⚠️ {_stage(session)}锁盈待确认\n{symbol} {dealt_qty:g}/{qty:g}股\n"
                   f"intent={result['exit_intent_id']} {result['error']}")
         return result
     except Exception as exc:

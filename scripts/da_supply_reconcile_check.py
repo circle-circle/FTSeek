@@ -209,9 +209,10 @@ def main():
             print("[dry-run] 不推送")
         else:
             try:
-                from app.notifier.dingtalk import DingTalkNotifier
-                DingTalkNotifier().send_text(f"[FTSeek-US告警] {msg}")
-                print("[ok] 钉钉已推送")
+                from app.push import push_text_safe
+                from app.push.message import Level as _Lv, Category as _Ct
+                push_text_safe(f"[FTSeek-US告警] {msg}", level=_Lv.CRITICAL, category=_Ct.RISK_ALERT)
+                print("[ok] 已推送 (PushHub)")
             except Exception as e:
                 print(f"[warn] 钉钉推送失败: {e}")
         sys.exit(1)

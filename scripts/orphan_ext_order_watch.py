@@ -162,10 +162,15 @@ def _record(row):
 
 
 def _push(text):
+    """统一出口 — 走 PushHub (2026-09-18 用户裁「统一推送渠道」)。
+
+    原直连 `FeishuNotifier().send_text()`: 与盘中链 (PushHub→钉钉) 分流, 同一
+    类事件在两个平台各出现一半, 且丢掉 Hub 的去重/失败兜底。
+    """
     try:
-        from app.notifier.feishu import FeishuNotifier
-        FeishuNotifier().send_text(text)
-        return True
+        from app.push import push_text_safe
+        from app.push.message import Level, Category
+        return push_text_safe(text, level=Level.CRITICAL, category=Category.RISK_ALERT)
     except Exception:
         return False
 

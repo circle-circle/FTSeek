@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.us_pipeline.battle_plan_manager import USBattlePlanManager
 from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
-from app.notifier.dingtalk import DingTalkNotifier
+from app.push import HubTextAdapter
+from app.push.message import Category as _CtEmerg, Level as _LvEmerg
 from app.llm.unified_service import UnifiedLLMService
 from app.llm.prompts.emergency import EMERGENCY_SYSTEM_PROMPT, EMERGENCY_DESTRUCTIVE_PROMPT
 
@@ -169,7 +170,8 @@ class USEmergencyInterceptor:
         self.scheduler = scheduler
         self.execution_engine = execution_engine
         self.state_machine = RiskStateMachine()
-        self.notifier = DingTalkNotifier()
+        # 2026-09-18 统一推送渠道: 直连钉钉 → PushHub 单一出口 (适配器保留调用形状)
+        self.notifier = HubTextAdapter(level=_LvEmerg.HIGH, category=_CtEmerg.RISK_ALERT)
 
         # 配置
         self.check_interval = 30  # 每 30 秒检查一次 (行情监控需要更高频率)

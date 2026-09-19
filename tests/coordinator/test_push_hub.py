@@ -74,7 +74,9 @@ def test_trade_identity_is_embedded_and_rendered():
     )
     assert msg.payload["trade_env"] == "sim"
     assert msg.payload["trade_phase"] == "premarket"
-    assert "口径: 模拟 · premarket" in msg.render_text()
+    # 2026-09-18 (用户裁「统一推送渠道 + 保持各阶段真实内容」): 阶段渲染改为中文
+    # 「阶段: 盘前」而非裸英文 premarket —— 用户在 App 里看到的就是阶段本身。
+    assert "口径: 模拟 · 阶段: 盘前" in msg.render_text()
     assert "Playbook 模拟盘 (DA/UE)" in msg.render_text()
 
 

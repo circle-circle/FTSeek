@@ -47,6 +47,11 @@ class PushHub:
         async_workers: int = 4,
         # 3a (2026-07-17): 单通道发送失败后的额外重试次数 (间隔 1s, 在 async worker 内 sleep 不阻塞主线)
         send_retries: int = 1,
+        # 2026-09-18 (用户裁「交易类事件双发钉钉+飞书」): 这些 category 的消息**不走"主通道
+        #   成功即停"**, 而是广播到全部可用通道 (消除"成交在飞书、平仓在钉钉"的平台盲区)。
+        #   只对"钱动"的交易类事件生效, 日报/告警等仍走主通道优先, 避免噪音翻倍。
+        #   传 None = 用 yaml push.broadcast_trade_events 的实际值 (默认 True)。
+        broadcast_trade_events: Optional[bool] = None,
     ):
         # 默认 channel 优先级: DingTalk > Feishu > FlagFile
         self.channels: List[Channel] = channels or [
@@ -56,6 +61,21 @@ class PushHub:
         ]
         # 排序: priority 升序
         self.channels.sort(key=lambda c: c.priority)
+        # 2026-09-18: 交易类双发开关 (默认 True — 用户裁「成交+平仓双发钉钉+飞书」)
+        if broadcast_trade_events is None:
+            _bte = True
+            try:
+                from app.core.config_container import get_config as _gc
+                _bte = bool(_gc().get_dotted("push.broadcast_trade_events", True))
+            except Exception:
+                pass
+            broadcast_trade_events = _bte
+        self._broadcast_trade_events = bool(broadcast_trade_events)
+        # 上线可验证: 重启后 grep 本行即可确认双发开关的实际取值 (2026-09-18)
+        logger.info(
+            f"[PushHub·路由] 交易类(成交/平仓)双发={'on' if self._broadcast_trade_events else 'off'}"
+            f" · 其余类别主通道优先: {[c.name for c in self.channels]}"
+        )
         self._dedup = DedupCache(ttl_sec=dedup_ttl_sec)
         self._aggregator = Aggregator(
             window_sec=aggregate_window_sec,
@@ -130,8 +150,18 @@ class PushHub:
             return False
 
     def push_text(self, text: str, level: Level = Level.NORMAL,
-                  category: Category = Category.SYSTEM) -> bool:
-        """向后兼容: 旧 send_text(content) 等价调用"""
+                  category: Category = Category.SYSTEM,
+                  title: Optional[str] = None) -> bool:
+        """向后兼容: 旧 send_text(content) 等价调用
+
+        2026-09-18: 新增 title=(...) 参数供具名标题的多行告警使用; 不传时保持
+        旧行为 (前 60 字符作 title, 其余作 body — render_text() 会拼回完整原文,
+        内容不丢)。
+        """
+        if title:
+            return self.push(PushMessage(
+                title=title, body=text, level=level, category=category,
+            ))
         return self.push(PushMessage(
             title=text[:60], body=text[60:] if len(text) > 60 else "",
             level=level, category=category,
@@ -192,8 +222,11 @@ class PushHub:
     def _immediate_send(self, msg: PushMessage) -> bool:
         """按优先级遍历 channels, 任一成功即停; 全失败时 flag 文件兜底"""
         sent_count = 0
-        # CRITICAL 走全通道 (主+备同推), 其他走主 channel 优先
-        broadcast_all = msg.level == Level.CRITICAL
+        # CRITICAL 走全通道 (主+备同推); 交易类 (成交/平仓) 按 2026-09-18 用户裁决同样全通道
+        #   (消除"成交在飞书、平仓在钉钉"的平台盲区); 其余走主 channel 优先.
+        broadcast_all = msg.level == Level.CRITICAL or (
+            self._broadcast_trade_events
+            and msg.category in (Category.TRADE_ENTRY, Category.TRADE_EXIT))
         for ch in self.channels:
             try:
                 if not ch.is_available():
@@ -308,3 +341,79 @@ def reset_push_hub():
             except Exception:
                 pass
         _singleton = None
+
+
+class HubTextAdapter:
+    """统一文本出口适配器 (2026-09-18 用户裁「统一推送渠道」)。
+
+    用途: 代码里把通知器当对象传递/持有的地方 (`self.notifier = DingTalkNotifier()`
+    然后 `self.notifier.send_text(...)`), 保留原调用形状但实际走 PushHub ——
+    单点替换即可回收, 不必逐个改散落的 send_text 调用点 (漏改一处就是隐患)。
+
+    默认 level/category 由构造参数决定; 不传则用 PushHub 的 NORMAL/SYSTEM。
+    """
+
+    def __init__(self, level: Optional[Level] = None, category: Optional[Category] = None):
+        self._level = level
+        self._category = category
+
+    def send_text(self, text: str, *_a, **_kw) -> bool:
+        return push_text_safe(text, level=self._level, category=self._category)
+
+    def send_markdown(self, title: str, text: str = "", *_a, **_kw) -> bool:
+        body = f"{text}" if text else ""
+        return push_text_safe(body or title, title=title,
+                              level=self._level, category=self._category)
+
+    def notify_system_alert(self, title: str = "", message: str = "",
+                            level: str = "WARN", *_a, **_kw) -> bool:
+        """兼容 `DingTalkNotifier.notify_system_alert(title, message, level)` 形状。
+
+        level 是旧接口的字符串档位 (INFO/WARN/ERROR/CRITICAL) → 映射到 PushHub Level;
+        **逐次调用的档位优先于构造默认** (调用点比对象更清楚本次事件的严重度),
+        字符串无法识别时才用构造默认, 都没有则 NORMAL。
+        """
+        lv = {
+            "INFO": Level.INFO, "WARN": Level.HIGH, "WARNING": Level.HIGH,
+            "ERROR": Level.CRITICAL, "CRITICAL": Level.CRITICAL,
+        }.get(str(level or "").strip().upper())
+        if lv is None:
+            lv = self._level or Level.NORMAL
+        return push_text_safe(f"{message}".strip() or title, title=title or None,
+                              level=lv, category=self._category)
+
+    def __repr__(self) -> str:  # pragma: no cover - 调试用
+        return f"<HubTextAdapter level={self._level} category={self._category}>"
+
+
+def push_text_safe(
+    text: str,
+    level: Optional[Level] = None,
+    category: Optional[Category] = None,
+    title: Optional[str] = None,
+) -> bool:
+    """安全文本推送 — 全库**唯一**的非交易类文本出口 (SSOT)。
+
+    2026-09-18 (用户裁「统一推送渠道」): 回收 14 处绕过 PushHub、直连
+    `DingTalkNotifier().send_text()` / `FeishuNotifier().send_text()` 的调用点。
+    其中 3 处飞书直连全在延长时段链 ⇒ 同一事件在"盘中→钉钉、盘前/盘后→飞书"
+    分流的根因; 且直连调用丢掉了 Hub 的去重/聚合/健康检查/失败兜底。
+
+    语义:
+      - 统一走 PushHub 路由 (交易类双发, 其余主通道优先 + 失败降级);
+      - **异常永不上抛**: 通知失败绝不允许影响交易/风控主流程 (原直连调用点
+        多处用 try/except 裸吞, 这里统一收口)。
+    """
+    try:
+        from .message import Level as _L, Category as _C
+        return bool(
+            get_push_hub().push_text(
+                text,
+                level=level or _L.NORMAL,
+                category=category or _C.SYSTEM,
+                title=title,
+            )
+        )
+    except Exception as e:  # pragma: no cover - 兜底路径
+        logger.warning(f"[PushHub·push_text_safe] 推送失败 (不影响主流程): {e}")
+        return False

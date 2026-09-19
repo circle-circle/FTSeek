@@ -484,8 +484,9 @@ def push_notification(report: str, results: dict):
     """推送通知到钉钉/飞书"""
     try:
         # 尝试钉钉推送
-        from app.notifier.dingtalk import DingTalkNotifier
-        dingtalk = DingTalkNotifier()
+        from app.push import HubTextAdapter
+        from app.push.message import Category as _Ct
+        dingtalk = HubTextAdapter(category=_Ct.PLAN_PREMARKET)
         dingtalk.notify_system_alert(
             title="FTSeek-US 盘前预检",
             message=report[:500] + ("..." if len(report) > 500 else ""),
@@ -493,15 +494,15 @@ def push_notification(report: str, results: dict):
         )
         logger.info("钉钉推送成功")
     except Exception as e:
-        logger.warning(f"钉钉推送失败: {e}")
+        # 2026-09-18 统一推送渠道: 原"回退到飞书直连"改为 PushHub 出口 —— hub 内部
+        #   本就有主通道优先 + 降级 + 失败兜底 (CRITICAL 还全通道广播), 无需在此另接一条。
+        logger.warning(f"盘前预检推送异常, 转 PushHub 兜底: {e}")
         try:
-            # 回退到飞书
-            from app.notifier.feishu import FeishuNotifier
-            feishu = FeishuNotifier()
-            feishu.send_text(report[:1000])
-            logger.info("飞书推送成功")
+            from app.push import push_text_safe
+            from app.push.message import Level as _Lv, Category as _Ct
+            push_text_safe(report[:1000], level=_Lv.HIGH, category=_Ct.PLAN_PREMARKET)
         except Exception as e2:
-            logger.error(f"飞书推送也失败: {e2}")
+            logger.error(f"PushHub 兜底推送也失败: {e2}")
 
 
 if __name__ == "__main__":

@@ -6,11 +6,11 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import time
 import hashlib
 
-from app.core.trade_identity import trade_identity
+from app.core.trade_identity import trade_identity, phase_cn as _phase_cn_shared
 
 
 class Level(Enum):
@@ -212,6 +212,8 @@ class PushMessage:
         strat = p.get("strategy")
         if strat:
             lines.append(f"策略: {strat}")
+        for _el in _extra_lines(p):
+            lines.append(_el)
         return "\n".join(lines)
 
     def _render_trade_markdown(self) -> str:
@@ -329,6 +331,8 @@ class PushMessage:
         strat = p.get("strategy")
         if strat:
             lines.append(f"- 策略: {strat}")
+        for _el in _extra_lines(p):
+            lines.append(_el)
         return "\n".join(lines)
 
     def _icon(self) -> str:
@@ -396,13 +400,61 @@ def _source_cn(source_type) -> str:
     }.get(key, str(source_type))
 
 
+def _phase_cn(p: Dict[str, Any]) -> str:
+    """阶段中文名 — 解析 payload 的相位字段后委托 `app/core/trade_identity.phase_cn`
+    (唯一 SSOT, 与落库/日报同源口径, 不再在本文件复制别名表)。
+
+    优先 payload.trade_phase (由 trade_identity 归一), 次选 session/entry_session/
+    exit_session 原文。返回空串 = 无阶段信息, 不臆造。
+    """
+    raw = (p or {}).get("trade_phase")
+    if not raw:
+        raw = ((p or {}).get("session") or (p or {}).get("entry_session")
+               or (p or {}).get("exit_session"))
+    return _phase_cn_shared(raw)
+
+
+def _extra_lines(p: Dict[str, Any]) -> List[str]:
+    """阶段专属补充行 — 统一渲染, 内容不丢 (2026-09-18 用户裁「保持各阶段真实内容」)。
+
+    来源一: 已知结构化字段自动成行 (延长时段链的 财报超预期/阶段涨跌/EXT 量/止损来源/
+            SIM 无券商 STOP 兜底提示) —— 这样延长时段开仓走统一 `trade_entry` 富卡后
+            **原有信息不丢**, 不必各调用点手搓文案。
+    来源二: `extra_lines` 显式行 (调用方自己给的补充行, 原样透传)。
+    未知字段一律不渲染 (不臆造); 任何异常都不得打断渲染 (通知不能被内容问题吞掉)。
+    """
+    out: List[str] = []
+    try:
+        es = p.get("earnings_surprise_pct")
+        if es is not None:
+            out.append(f"📰 财报超预期: +{float(es):.1f}%")
+        ec = p.get("ext_change_pct")
+        if ec is not None:
+            out.append(f"🕒 {_phase_cn(p) or '延长时段'}涨跌: {float(ec):+.2f}%")
+        ev = p.get("ext_volume")
+        if ev:
+            out.append(f"📊 延长时段量: {float(ev):,.0f}")
+        if p.get("stop_source"):
+            out.append(f"🛡️ 止损来源: {p.get('stop_source')}")
+        if p.get("sim_no_broker_stop"):
+            out.append("⚠️ SIM 无券商 STOP, 盘中由 monitor_playbook_sim_exits 兜底")
+        for _el in (p.get("extra_lines") or []):
+            if _el:
+                out.append(str(_el))
+    except Exception:
+        pass
+    return out
+
+
 def _identity_line(p: Dict[str, Any]) -> str:
     env = {"real": "实盘", "sim": "模拟", "test": "测试", "unknown": "未标注"}.get(
         str(p.get("trade_env") or ""), ""
     )
-    phase = str(p.get("trade_phase") or "")
+    phase = _phase_cn(p)
     if env and phase:
-        return f"🏷️ 口径: {env} · {phase}"
+        return f"🏷️ 口径: {env} · 阶段: {phase}"
+    if phase:
+        return f"🏷️ 阶段: {phase}"
     return f"🏷️ 口径: {env}" if env else ""
 
 
@@ -414,6 +466,7 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
                 signal_confidence: Optional[float] = None,
                 voting: Optional[Dict] = None,
                 source_type: Optional[str] = None,
+                session: Optional[str] = None,
                 extra: Optional[Dict[str, Any]] = None) -> PushMessage:
     """成交开仓 (NORMAL + 立即推送 — 成交是关键事件, 不聚合).
 
@@ -429,7 +482,7 @@ def trade_entry(symbol: str, direction: str, qty: int, price: float,
                 "price": price, "strategy": strategy, "kind": "entry"}
     for _k, _v in (("sl", sl), ("tp", tp), ("signal_strength", signal_strength),
                    ("signal_confidence", signal_confidence), ("voting", voting),
-                   ("source_type", source_type)):
+                   ("source_type", source_type), ("session", session)):
         if _v is not None:
             _payload[_k] = _v
     if extra:
@@ -492,6 +545,7 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
                signal_strength: Optional[int] = None,
                signal_confidence: Optional[float] = None,
                source_type: Optional[str] = None,
+               session: Optional[str] = None,
                extra: Optional[Dict[str, Any]] = None,
                fees: Optional[float] = None,
                pnl_net: Optional[float] = None) -> PushMessage:
@@ -512,6 +566,7 @@ def trade_exit(symbol: str, direction: str, pnl: float, exit_reason: str,
     for _k, _v in (("signal_strength", signal_strength),
                    ("signal_confidence", signal_confidence),
                    ("source_type", source_type),
+                   ("session", session),
                    ("fees", fees), ("pnl_net", pnl_net)):
         if _v is not None:
             _payload[_k] = _v

@@ -20,6 +20,68 @@ _PHASE_ALIASES = {
 }
 
 
+_PHASE_CN = {"premarket": "盘前", "regular": "盘中", "afterhours": "盘后"}
+
+
+def phase_cn(value: Any) -> str:
+    """阶段中文名 — 全库唯一 SSOT (2026-09-18 用户裁「统一推送渠道 + 保持各阶段真实内容」)。
+
+    `premarket/regular/afterhours` 三个规范相位 (见 _PHASE_ALIASES) 的展示名,
+    供推送、日报、周报共用, 避免各处自行硬编码「盘前」而把盘后事件说成盘前
+    (实测 9/18 US.WBD 18:35 ET 盘后建仓, 推送文案却是"盘前事件开仓")。
+
+    入参可为原始 session 串 (含别名, 如 intraday/after-hours) 或规范相位;
+    无法识别 → 返回空串 (**不臆造**阶段)。
+    """
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    return _PHASE_CN.get(_PHASE_ALIASES.get(raw, raw), "")
+
+
+def phase_from_time(dt: Any = None) -> str:
+    """按 ET 时钟判定交易阶段 → 规范相位 (premarket/regular/afterhours)。
+
+    2026-09-18 (用户裁「保持各阶段真实内容」): 推送/统计需要阶段, 而多数 trade_records
+    的 metadata 里**没有** session 字段 ⇒ 按成交时刻判定 (与延长时段链的
+    SESSION_WINDOWS: 盘前 04:00–09:29 / 盘后 16:00–19:59 同源口径)。
+
+    盘外时段 (20:00–03:59 ET) 返回空串 —— **不臆造**阶段 (隔夜单既不属盘前也不属盘后)。
+    """
+    try:
+        import datetime as _dt
+        d = dt
+        if d is None:
+            try:
+                from app.utils.timezone import now_et as _now_et
+                d = _now_et()
+            except Exception:
+                from zoneinfo import ZoneInfo
+                d = _dt.datetime.now(ZoneInfo("America/New_York"))
+        if isinstance(d, str):
+            d = _dt.datetime.fromisoformat(d.replace("Z", "+00:00"))
+        if not isinstance(d, _dt.datetime):
+            return ""
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=_dt.timezone.utc)
+        try:
+            from app.utils.timezone import to_et as _to_et
+            d = _to_et(d)
+        except Exception:
+            from zoneinfo import ZoneInfo
+            d = d.astimezone(ZoneInfo("America/New_York"))
+        hm = d.hour * 60 + d.minute
+        if 4 * 60 <= hm < 9 * 60 + 30:
+            return "premarket"
+        if 9 * 60 + 30 <= hm < 16 * 60:
+            return "regular"
+        if 16 * 60 <= hm < 20 * 60:
+            return "afterhours"
+        return ""
+    except Exception:
+        return ""
+
+
 def is_test_symbol(symbol: Optional[str]) -> bool:
     """占位/测试标的 (单测 artifact、券商账户里的报废测试单)。
 

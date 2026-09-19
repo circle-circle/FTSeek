@@ -1282,6 +1282,7 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
     #   解耦写入, 与通知无关, 移除通知不影响数据链路。
     try:
         from app.push import get_push_hub, trade_entry as _tx_entry
+        from app.core.trade_identity import phase_from_time as _phase_from_time
         _meta = getattr(position, "metadata", {}) or {}
         _sl = None
         try:
@@ -1308,6 +1309,9 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             signal_confidence=_meta.get("signal_confidence") or None,
             voting=_meta.get("voting_result") or None,
             source_type=_meta.get("source_type") or "MAIN_PIPELINE",
+            # 2026-09-18 (用户裁「保持各阶段真实内容」): 阶段入推送。
+            # 优先落库 session (延长时段链会写), 否则按成交时刻判 ET 相位。
+            session=(_meta.get("session") or _phase_from_time()),
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:
@@ -1321,8 +1325,17 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
     """
     try:
         from app.push import get_push_hub, trade_exit as _tx_exit
+        from app.core.trade_identity import phase_from_time as _phase_from_time
+        from app.core.trade_identity import phase_cn as _phase_cn_of
         _reason_str = reason.value if hasattr(reason, "value") else str(reason)
         _meta = getattr(position, "metadata", {}) or {}
+        _exit_phase = _phase_from_time()
+        # 2026-09-18 (用户裁「保持各阶段真实内容」): 平仓推送标**出场时刻**的阶段;
+        # 若与入场阶段不同 (如盘前建仓→盘中平掉), 用补充行显式说明, 避免被读成同一阶段。
+        _entry_phase = _meta.get("session")
+        _extra = None
+        if _entry_phase and _entry_phase != _exit_phase:
+            _extra = {"extra_lines": [f"🕐 入场阶段: {_phase_cn_of(_entry_phase) or _entry_phase}"]}
         _hub_msg = _tx_exit(
             symbol=position.symbol,
             direction=position.direction.value if hasattr(position.direction, "value") else str(position.direction),
@@ -1333,6 +1346,9 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
             signal_strength=_meta.get("signal_strength") or None,
             signal_confidence=_meta.get("signal_confidence") or None,
             source_type=_meta.get("source_type") or "MAIN_PIPELINE",
+            # 2026-09-18 (用户裁「保持各阶段真实内容」): 平仓推送标**出场时刻**的阶段 (见上)
+            session=_exit_phase,
+            extra=_extra,
         )
         get_push_hub().push(_hub_msg)
     except Exception as _pe:
@@ -3263,12 +3279,15 @@ def record_flash_exit():
         )
         # 发送钉钉告警
         try:
-            from app.notifier.dingtalk import DingTalkNotifier
-            DingTalkNotifier().send_text(
+            # 2026-09-18 统一推送渠道: 直连 DingTalkNotifier → PushHub 单一出口
+            from app.push import push_text_safe
+            from app.push.message import Level as _Lv, Category as _Ct
+            push_text_safe(
                 f"🚨 FLASH_EXIT 熔断触发\n"
                 f"{_count} 次闪退 / 10min ≥ {_FLASH_EXIT_THRESHOLD}\n"
                 f"全局暂停开仓 {_FLASH_EXIT_PAUSE_SEC//60} 分钟\n"
-                f"请检查市场波动率和入场信号质量"
+                f"请检查市场波动率和入场信号质量",
+                level=_Lv.CRITICAL, category=_Ct.RISK_ALERT,
             )
         except Exception:
             pass
