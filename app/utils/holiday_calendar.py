@@ -355,13 +355,57 @@ class TradingHolidayCalendar:
         # 3. 非周末 + 非已知假日 → 视为交易日
         return True
 
+    def _cached_trading_day(self, market: str, d: date) -> Optional[bool]:
+        """**只读缓存**判定 (不发起网络请求)。
+
+        Returns: True=缓存内是交易日 / False=缓存内非交易日 / None=缓存未覆盖该日
+        (调用方应回落到硬编码表 + fail-open)。
+
+        为什么单独一个不发网的方法: `is_us_holiday` 的 6 个消费方里有**热路径**
+        (position_exit_monitor 逐轮 / futu_lv3_provider 逐请求), 而 is_trading_day()
+        在缓存 miss 时会连 OpenD 拉 ~90 天批量日历 ⇒ 不能塞进热路径。
+        """
+        date_str = d.isoformat()
+        with self._lock:
+            if market in self._trading_days_cache and date_str in self._trading_days_cache[market]:
+                return True
+            for lo, hi in self._cache_ranges.get(market, []):
+                if lo <= date_str <= hi:
+                    return False      # 在已覆盖区间内但不在交易日集合 ⇒ 非交易日
+        return None
+
+    def _non_trading_day(self, market: str, d: date, fallback_holidays: Set[date]) -> bool:
+        """非交易日判定 (周末 → SSOT 热缓存 → 硬编码表 → fail-open)。**不发网络请求**。"""
+        if d is None:
+            try:
+                from app.utils.timezone import now_et
+                d = now_et().date()
+            except Exception:
+                d = date.today()
+        if d.weekday() >= 5:
+            return True
+        cached = self._cached_trading_day(market, d)
+        if cached is not None:
+            return not cached
+        return d in fallback_holidays
+
     def is_us_holiday(self, d: date) -> bool:
-        """判断是否为美股节假日 (兼容旧接口)"""
-        return d in US_HOLIDAYS
+        """判断**不是美股交易日** (兼容旧接口; 语义 2026-09-19 起 = 非交易日)。
+
+        ⚠️ 语义变更 (用户令 2026-09-19, DEB-20260919 §十三): 原实现只 `d in US_HOLIDAYS`
+        —— 硬编码表**兜底层**被当成权威层, 于是
+          ①非表内临时休市 (国丧日/临时闭市) ②2029 年及以后表外年份
+        会被判成"交易日"; 而它正是 6 处盘中守卫的唯一判据:
+          trade_guard / scheduler_triggers(市场阶段) / position_exit_monitor /
+          pdt_guard / futu_lv3_provider / timezone.is_rth_open。
+        现改为委托 SSOT: 周末→True; API 已热缓存→按缓存; 未覆盖→硬编码表; 都不命中→False
+        (fail-open, 与 is_trading_day 的降级语义一致)。**只读缓存, 不引网络调用**。
+        """
+        return self._non_trading_day("US", d, US_HOLIDAYS)
 
     def is_hk_holiday(self, d: date) -> bool:
-        """判断是否为港股节假日 (兼容旧接口)"""
-        return d in HK_HOLIDAYS
+        """判断**不是港股交易日** (兼容旧接口; 语义同上, 委托 SSOT 热缓存, 不发网络)。"""
+        return self._non_trading_day("HK", d, HK_HOLIDAYS)
 
     def next_trading_day(self, market: str, from_date: Optional[date] = None, max_days: int = 14) -> Optional[date]:
         """获取下一个交易日"""

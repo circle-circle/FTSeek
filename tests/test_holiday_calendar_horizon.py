@@ -128,3 +128,52 @@ def test_empty_fetch_treated_as_failure(monkeypatch):
     TradingHolidayCalendar._instance = None
     cal = TradingHolidayCalendar()
     assert cal.is_trading_day(US, date(2027, 3, 10)) is True  # 回落硬编码
+
+
+# ── C. 2026-09-19 (DEB-20260919 §十三): is_us_holiday 委托 SSOT ─────────
+#   病灶: 原实现只查硬编码表, 而它是 6 处盘中守卫 (含 position_exit_monitor /
+#   futu_lv3_provider 等热路径) 的唯一判据 ⇒ ①非表内临时休市 ②2029+ 表外年份
+#   会被当交易日。修后: 周末→True; SSOT 热缓存→权威; 未覆盖→硬编码表; 都不中→fail-open。
+
+def test_is_us_holiday_covers_weekend_and_hardcoded():
+    cal = _fresh_calendar()
+    assert cal.is_us_holiday(date(2026, 9, 19)) is True      # 周六
+    assert cal.is_us_holiday(date(2026, 9, 20)) is True      # 周日
+    assert cal.is_us_holiday(date(2026, 11, 26)) is True     # 感恩节 (硬编码表)
+    assert cal.is_us_holiday(date(2026, 9, 21)) is False     # 普通周一 + 无缓存 ⇒ fail-open
+
+
+def test_is_us_holiday_uses_authoritative_cache_even_if_not_in_hardcoded():
+    """核心新增能力: API 缓存说"非交易日"就必须判非交易日 —— 即使它不在硬编码表内。
+
+    用 2026-12-30 (周三, 非表内) 模拟"临时休市/国丧日"被权威源标为非交易日的情况。
+    """
+    cal = _fresh_calendar()
+    d = date(2026, 12, 30)
+    assert d not in US_HOLIDAYS
+    assert cal.is_us_holiday(d) is False                     # 无缓存 ⇒ 回退硬编码表
+    cal._cache_ranges[US] = [("2026-01-01", "2026-12-31")]
+    cal._trading_days_cache[US] = {"2026-12-29", "2026-12-31"}   # 未含 d
+    assert cal.is_us_holiday(d) is True                      # 缓存权威 ⇒ 非交易日
+    assert cal.is_us_holiday(date(2026, 12, 29)) is False    # 缓存内是交易日
+
+
+def test_is_us_holiday_never_calls_the_network(monkeypatch):
+    """热路径契约: 缓存 miss 时**不得**触发 Futu 查询 (否则给秒级/请求级路径塞网络)。"""
+    cal = _fresh_calendar()
+    called = []
+
+    def _boom(*a, **k):
+        called.append(1)
+        raise AssertionError("is_us_holiday 不应触发网络/刷新")
+    monkeypatch.setattr(cal, "_refresh_cache", _boom)
+    monkeypatch.setattr(hc, "_futu_request_trading_days", _boom)
+    cal.is_us_holiday(date(2026, 9, 21))
+    cal.is_us_holiday(date(2026, 11, 26))
+    assert called == []
+
+
+def test_is_hk_holiday_delegates_same_way():
+    cal = _fresh_calendar()
+    assert cal.is_hk_holiday(date(2026, 10, 1)) is True       # 国庆 (硬编码表)
+    assert cal.is_hk_holiday(date(2026, 9, 19)) is True       # 周六
