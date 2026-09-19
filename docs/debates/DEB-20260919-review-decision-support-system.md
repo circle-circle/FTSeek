@@ -314,6 +314,8 @@ def pending_adjudications() -> list[dict]:
 
 ⚠️ 两个必须实测的点：①crontab 内 `%` 需转义为 `\%`；②命令替换 `$()` 在部分 cron 实现下不执行 ⇒ **上线后必须 `grep review_bundle logs/review_bundle.log` 验证真实产出**（不许假设生效）。
 
+> **载体与时刻以 §16 为准**：调度载体改为 **Hermes cron no_agent**（`ops/hermes/review_bundle_carrier.py` + 线上副本）；日环时刻 **06:30 → 06:35 CST**（06:30 与 `alpha-backfill` 同分钟，§16.3 实测）。下列三行的语义（日/周/月 + 回滚注释）不变。
+
 ---
 
 ## 8. 停止条件与通过标准
@@ -358,7 +360,7 @@ def pending_adjudications() -> list[dict]:
 
 **P3 渲染 + CLI + 推送**
 - `app/review/bundle_render.py`（`render_md(bundle) -> (full_md, push_text)`）+ `scripts/review_bundle.py`（`--date/--push/--vault/--period`；原子写；幂等）
-- 推送: `from app.push import get_push_hub, PushMessage, Level, Category`，`dedup_key=f"review_bundle:{date}"`、`sync=True`
+- 推送: `from app.push import get_push_hub, PushMessage, Level, Category`，`category=Category.REVIEW_DAILY`、`sync=True`；**并且必须先过 caller 侧按日守卫**（读 `bundle_<date>.json:pushed_at` 或独立 state；命中则记 `skip: already pushed` 直接返回）。**不得**依赖 `dedup_key` 实现"同日只推一次" —— `sync=True` 绕过 hub 去重（§16.5 更正 B，`app/push/hub.py:124`）
 - 验收: `pytest tests/review/test_bundle_render.py tests/review/test_bundle_cli.py -q` → 全绿（含幂等断言）；`venv/bin/python scripts/review_bundle.py --date 2026-09-18` → 打印 headline 摘要
 - 提交: `[RFC-088][review-system] P3: 渲染+CLI+单条推送`
 
@@ -452,6 +454,8 @@ systemctl is-active ftseek-us   # 保持 active
 4. **有效期**：`pending_adjudications` 是否要引入"到点未裁即升级"（如 `decide_by` 逾期 → P1 告警）？这会把"被动询问"变成"系统催办"，但也会增加噪声。
 5. **历史起点**：是否要把上线日之前的日子做一次性回填（用现行口径重算 30 天 `bundle_*.json`），还是只从上线日起？（回填会用今天的口径解释过去，存在"事后合理化"风险。）
 
+> **§16（载体形态决定）已就上列问题给出耦合结论**：第 1 问的时刻需改（06:30 与 `alpha-backfill` 撞分钟）与归并边界（只并报表类两条）；第 2/4 问的去重机制改为 **caller 侧按日状态**（§16.5 更正 B：`sync=True` 绕过 hub 去重）；第 3 问候选 **4 → 1**（§16.5 更正 A）；第 5 问回填须只写产物不推送。
+
 ---
 
 ## 14. 验收清单
@@ -467,6 +471,8 @@ systemctl is-active ftseek-us   # 保持 active
 - [ ] P4 判据清单 ≥30 项、`READY_TO_EVALUATE` 项被单列
 - [ ] P5 golden 入库且 `git check-ignore` 返回非忽略
 - [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）
+- [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）
+- [ ] §16 更正 B：同日重跑**不产生第 2 条推送**（caller 侧按日守卫生效；实测：手工跑第 2 次 → 日志记 `skip: already pushed <date>`）
 - [ ] 全量回归通过（`tests/review/` + 5 个既有文件）
 - [ ] 第二 agent §10 清单逐条给出结论（成立/不成立 + 证据）
 
@@ -478,4 +484,92 @@ systemctl is-active ftseek-us   # 保持 active
 - **2026-09-19 · 用户（定调）**: "最终目的不是累积数据，而是总结溯源，合理优化，非拍脑袋决策依据，可以按周期，可以统计交易阶段等等。基于项目已有的内容和需要补充的进行完整的规划设计，写入 deb。我还需要另外的 agent 进行分析复查。"
 - **2026-09-19 · Hermes（本稿）**: 按"证据优先"普查后**修正了问题陈述**：记录侧已过剩（330 脚本 / 108 cron / 108 jsonl / 285 lessons / 165 DEB），真正的缺口是**消费者层**——其中 `app/playbook/shadow_registry.py` 这一判据 SSOT **零生产消费者**（E2/E3 实测）。故方案收敛为"一层派生视图 + 四消费面"，并**删除**原设计中的"新建判据 YAML / 新建事件台账"两项（避免与既有 SSOT 双写）。
 - **2026-09-19 · Hermes（自曝）**: 本会话早前给出的盘前臂读数（`pre_close −0.402% / rth_close −0.101% / intraday_sl +0.237% / 最差 −7.281%`）**已被 `RFC-087 §3` 更正为待更正数字**（回放工具 chunk 尾部静默截断）。本 DEB 不引用这些数字作为依据；§5.3 的 `integrity` 硬约束即该教训的机制化。
+- **2026-09-19 · 用户（裁决）**: 问"复盘系统产出最终的样式会是 skills 还是其他什么框架合适"，并裁「需要」= 把该决定写成 DEB 新节（载体形态 + 落点清单 + 与 §13.2 的耦合）后提交、再交第二 agent 复查。落成本文 §16。
 - **待补**: 第二 agent 独立复查结论（请在本节追加"第 N 轮 · <agent>"小节，逐条对应 §10）。
+
+---
+
+## 16. 载体形态决定（用户 2026-09-19 裁决「需要」后补；**结论：不是 skill**）
+
+> 本节回答"复盘系统产出的最终样式是什么载体"。结论：**按消费者分层，一层一个载体**；skill 只承担最后一层（agent 怎么读），不承载产物、不承载代码。
+> **本节与 §5.1/§7/§13/§14 冲突处，以本节为准**（依据是 16.5 的两处实测更正）。
+
+### 16.1 分层载体表（一层一个载体，落点逐条可核）
+
+| 层 | 载体（落点） | 消费者 | 为什么不是别的载体 |
+|---|---|---|---|
+| 计算 + 证据契约 | `app/review/{bundle_schema,bundle_builder,bundle_render,criteria_status}.py` + `tests/review/`（**入库**） | 测试 / CI / 其他 agent | 必须调 `app/review/stage_stats.py` 口径 SSOT（§5.2）；离仓即成第二套 SQL |
+| 执行体 | `scripts/review_bundle.py`（`--date/--push/--vault/--period`，原子写、幂等） | cron | — |
+| 调度 | **Hermes cron no_agent**：载体 `ops/hermes/review_bundle_carrier.py` + 线上副本 `/root/.hermes/scripts/`（`tests/test_ops_scripts_sync.py` 双向 sha256 **自动**纳入方向1/2） | 系统 | 与 9-19「载体迁移」②③批同形态：Hermes 侧有 `executions.db` 执行账本 + 非零退出记 failed；crontab 环"死亡不可见"正是那两批要修的病灶 |
+| 产物 | `data/reviews/bundle_<date>.json`（原子写）+ `REVIEW_<date>.md` | 脚本 / 复查 agent | 逐日增长的数据不能进任何"常驻"载体 |
+| 人读面 | `app.push` **1 条/日** + `obsidian_vault/daily` 一页 | 用户 | 单一消费面（§5.1） |
+| **agent 读面** | **薄 skill** `~/.hermes/skills/devops/ftseek-review-bundle/SKILL.md`（~60–100 行，**零每日数字**） | agent 会话 | 只有"不变的操作规程"适合常驻注入（16.2） |
+| 判据到点 | `app/playbook/shadow_registry.py`（**只读**）+ 消费者 `app/review/criteria_status.py` | 程序 | 已是 SSOT（§5.6），不新建 |
+| 决策留痕 | DEB / RFC（git） | 人 + 复查 agent | 一次性，不随日增长 |
+
+薄 skill 只装四节：①产物路径与 `schema_version`；②evidence 复算命令模板（含 `validate()` 调用）；③口径纪律（阶段必拆 / 净额列 / `n<40` 只写证据不足）；④禁止事项（禁引无 evidence 数字 / 禁猜路径 / 禁拿整体口径下结论）。触发词 = "复盘 / 最近表现 / 哪些判据到点了"。
+**不并入**既有 `review-system-design` skill：那是**设计时**加载的方法论，与**运行时**读数接口混装会让每次会话都加载双份。
+
+### 16.2 产物与代码为什么不能做成 skill（三条判据，含实测）
+
+1. **skill = 上下文注入。** 每日 bundle 进 skill ⇒ 每次相关会话都注入一份会过期的数字，与既有 `hermes-context-budget-audit` 的结论直接冲突；且 skill 一旦承载"今天读数"，就变成每天必须被改的文件 —— 改它的人/agent 成为新单点。
+2. **代码放 skill 目录 = 自己变成下一个孤儿（实测）。** `scripts/carrier_orphan_census.py:26` 的可执行体语料是 `(REPO/scripts, REPO/app, REPO/ops, ~/.hermes/scripts, REPO/tests)` —— **不含 `skills/`**。全库 **279** 个 skill-dir `.py`（`deep-stock-analysis/scripts` 一项 **6.9M**）对"死亡不可见"普查完全隐形。把本 DEB 要修的病灶（判据静默成熟 / 环停了无人察觉）复制到新系统上，代价最高。
+3. **口径必须同轴。** 只能调 `stage_stats` / `trade_identity` / `et_time`；skill-dir 副本会在 NULL / 时区 / 排除行上与 repo 分叉，产出"两个都真但对不上"的数字（违反 §5.2 铁律）。
+
+**反方（保留原案的条件）**：`deep-stock-analysis` / `deepulse` 确实是"整条管线 + skill 目录脚本"形态。不照抄的理由是**消费者不同**（那两个的消费者是 agent 会话，核心是 LLM 编排知识，须与脚本同处）；且该形态已付代价：skill-dir 代码不进 repo 测试、不进孤儿普查、审计需跨两处查。若仍要走该形态，**前置条件是**把 builder 的测试留在 `tests/review/` 并在 skill 里逐字声明口径来源 —— 成本高于收益，故不推荐。
+
+### 16.3 载体 stdout 契约：**成功静默**（与 `gate_liveness_carrier` 相反，必须显式声明）
+
+- 推送军规（C5）+ 单一消费面 ⇒ 推送**只**由 `app.push` 发出（`scripts/review_bundle.py --push`）。
+- 故载体 wrapper 成功路径**不输出**（Hermes 侧记静默/未投递），只在 rc≠0 时输出载体级异常行 ⇒ Hermes 记 failed。
+- 与 `gate_liveness_carrier`（rc=0 原样投递 13 行探针输出）**相反**的原因：那个子脚本**不自推**，输出本体即产物；本环子脚本**自推**，wrapper 再输出就是双推（`387aa5e6a18b` 行的"零 stdout = 不推送"同族）。
+- **实测（2026-09-19，`crontab -l` 逐行 + `~/.hermes/cron/jobs.json` 逐 job）**：每交易日 CST 05:40–06:35 已有 **8 个投递槽位** —— 报表/推送类 4 条 `da_chain_health 06:05 · shadow_board 06:15 · llm_token 06:20 · data_freshness 06:25`（dow 均 `2-6`）+ Hermes 侧 4 条 `dc双口径 05:40 · insider 06:00（常态静默、异常才出声）· D2'影子 06:10 · alpha-backfill 06:30`。周六另有 `trigger_gate 06:24 · 记分牌合集 06:25 · knife_gate 06:26`。
+  ⇒ §7 定的 **06:30 与 `alpha-backfill`（Hermes job，每交易日投递一行摘要）撞同一分钟**，且该窗口已不是"再加一条"的量级。**建议改 06:35 CST**（06:26 之后、`spy_crash_watch 06:55` 之前），或按 16.6 归并。
+
+### 16.4 落点清单（逐条可核，供复查 agent 按行核）
+
+| # | 落点 | 谁在管它 |
+|---|---|---|
+| 1 | `app/review/{bundle_schema,bundle_builder,bundle_render,criteria_status}.py` | `tests/review/` + §9 全量回归（5 个既有测试文件不得变红） |
+| 2 | `scripts/review_bundle.py`、`scripts/review_coverage_scan.py` | §9 P0/P3 验收命令 + C14 golden |
+| 3 | `ops/hermes/review_bundle_carrier.py` + 线上副本 | `tests/test_ops_scripts_sync.py` 双向 sha256（新文件不回库即方向2报警） |
+| 4 | Hermes cron job 3 条（日/周/月） | `~/.hermes/cron/jobs.json` + `docs/CONTROL-LOOP-LEDGER.md` 入账行（照 `705a1f2019d1` / `387aa5e6a18b` 写法：id / 调度 / 判据零变更声明 / 失效模式 / 回滚） |
+| 5 | `data/reviews/*`（runtime，不入库；`data/*` 已 gitignore） | 无 |
+| 6 | `~/.hermes/skills/devops/ftseek-review-bundle/SKILL.md` | 人工评审（膨胀即视为失效） |
+| 7 | 本文 + RFC-088 预注册 | git |
+
+### 16.5 连带更正（**两处自曝**，均在写本节时实测发现）
+
+- **更正 A —— §13.3 的退役候选 4 项里 3 项站不住**：
+  - `exit_scorecard` / `direction_hit_scorecard`：已于同日 15:29（`15cf56963`；台账 `docs/CONTROL-LOOP-LEDGER.md:148` 行 `705a1f2019d1`）由「载体迁移②批」升格为**有投递面的周六记分牌合集**（Hermes no_agent；crontab 两行并行保留）。本 DEB 写于其后，却仍按"只 `>> logs` 无读者"列为可退役 ⇒ **必须剔除**，否则等于撤销刚落地且已批准的载体迁移。
+  - `overnight_arm_report`：它是 `shadow_registry` 中 **`overnight_kill_criterion`（状态 `OBSERVING`, `min_n=20`）** 的 `eval_script`（`app/playbook/shadow_registry.py:516`），其 stdout JSON 正是该条目的计数锚（`data_path=data/shadow/overnight_arm_report_latest.json`）。退役它 = **废掉一个在册判据的 eval_script 与计数锚**，并与 §5.6"复用 registry 到点上报"自相矛盾（那正是本系统第一件该报的事）。
+  - 真候选只剩 **`fee_unit_economics_scorecard`**：全仓读者面实测仅两处**口径注释文本**（`scripts/t5_hold_counterfactual.py:16`、`scripts/ticket_size_breakeven.py:71/389`），不在注册表，产物 `data/fee_unit_economics_latest.json` 无读者 ⇒ 符合"只 `>> logs` 僵尸尺子"判据（`crontab -l:180`）。
+- **更正 B —— "按日 dedup"这一机制在 `app.push` 里不存在**：`app/push/hub.py:124` 为 `if not sync and not self._dedup.should_send(dedup_key)` ⇒ **`sync=True` 完全绕过去重**；`dedup_key` 本身只是 `app/push/dedup.py` 的 **60s 进程内 LRU**。真正的"同日只推一次"由**调用方自有状态**实现 —— `scripts/trigger_gate_report.py:376-380` 是先在自有历史里查 `day in prior_anchor_days` 才推。
+  ⇒ §5.1/§7/§14 中"`dedup_key` 生效 ⇒ 推送恰好 1 条"**不成立**；`scripts/review_bundle.py` 必须自带按日守卫（读 `bundle_<date>.json` 的 `pushed_at`，或独立 state 文件），否则同日重跑 = 第 2 条推送，且 P3 幂等验收会因此**假绿**。
+
+### 16.6 与 §13 待决项的耦合（不改写原问题，只给耦合事实与建议）
+
+| §13 | 本节结论 |
+|---|---|
+| 1 推送节奏 | 06:30 已是早间第 9 个槽位且与 `alpha-backfill` 撞分钟（16.3 实测）⇒ **建议 06:35**。宜并入的**只有报表类两条**：`da_chain_health_report --push`(06:05)、`daily_llm_token_report --push`(06:20)；`shadow_board`(06:15，影子盘面) 与 `data_freshness_watchdog`(06:25，**告警类**) **不并** —— 告警并进日报会延迟其到达。并入方式 = 关掉这两条 `--push`、其输出作为 bundle 的两个 section；属**独立变更**，不在本 DEB 授权范围，需单独裁决。 |
+| 2 READY 即时单推 | 载体已定为"按日 1 条 + caller 侧按日守卫" ⇒ 即时单推 = 当日再 +1 条。**建议只进 06:35 那条的"待裁决"段**；仅当 §13.4 批准"逾期升级"时，才对逾期项另发（`Level.HIGH` + 独立 caller 侧日期守卫）。 |
+| 3 首批退役 | 见 16.5 更正 A：候选 **4 → 1**（仅 `fee_unit_economics_scorecard`）。 |
+| 4 逾期升级 | 与 2 同源：升级告警必须有 caller 侧状态（否则每日重发同一条），不能靠 hub dedup。 |
+| 5 回填 30 天 | 无载体耦合；但回填时 `pushed_at` 守卫必须对历史日**只写产物不推送**，否则一次性积压 30 条。 |
+
+### 16.7 新增复查项（并入 §10 清单，编号续 C14）
+
+| # | 待查声称 | 复现 | 反例（判为不成立） |
+|---|---|---|---|
+| C15 | "死亡不可见"普查语料**不含 skills/** ⇒ 代码放 skill 目录即隐形 | `sed -n '25,27p' scripts/carrier_orphan_census.py`；`find /root/.hermes/skills -name '*.py' \| wc -l` | 语料含 `skills` ⇒ 16.2 判据 2 削弱 |
+| C16 | `sync=True` **绕过** hub 去重，`dedup_key` 仅 60s 进程内 | `sed -n '107,130p' app/push/hub.py`；`grep -n 'ttl_sec' app/push/dedup.py`；对照 `scripts/trigger_gate_report.py:376-380` 找"同日只推一次"的**实际**实现位置 | 若 sync 路径仍查 dedup ⇒ 16.5 更正 B 作废（但 §14 的"恰好 1 条"仍须实测） |
+| C17 | §13.3 的四项退役候选里 3 项有活读者/哨兵 | `grep -n 'exit_scorecard' ops/hermes/weekly_scorecard_carrier.py`；`grep -n 'overnight_arm_report' app/playbook/shadow_registry.py`（应命中 516 行 `eval_script`）；`python3 -c "import json;print([x['name'] for x in json.load(open('/root/.hermes/cron/jobs.json'))])"` | 三者皆无读者且不在注册表 ⇒ §13.3 原判定成立、16.5 更正 A 作废 |
+
+### 16.8 回滚（本节引入的额外面）
+
+```bash
+# 载体面: 删 Hermes job 3 条 + 删 ops/hermes/review_bundle_carrier.py 与线上副本
+#         (必须两处同删, 否则 tests/test_ops_scripts_sync.py 方向1 立刻红)
+# skill 面: 删 ~/.hermes/skills/devops/ftseek-review-bundle/
+# 代码/产物面: 见 §12
+```
