@@ -21,6 +21,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -150,21 +151,21 @@ def test_per_trade_series_ordered_by_exit_time(trade_db, monkeypatch):
     assert per == [55.0, -300.0, 100.0]
 
 
-# ── ③ 四判据结论: 无 agent 代读也必须给出 go/no-go ──────────────────────── #
+# ── ③ 判据结论: 无 agent 代读也必须给出 go/no-go ────────────────────────── #
 def test_verdict_reports_not_qualified_when_sample_short(capsys):
-    """OOS 不足 15 日 → 明确"未达标", 且不得出现"四项全满足"."""
+    """OOS 不足 15 日 → 明确"未达标", 且不得出现绿灯口径."""
     adf.graduation_verdict(
         ["2026-08-10", "2026-08-11"], [10.0, 20.0],
         ["2026-08-10", "2026-08-11"], [30.0, 40.0])
     out = capsys.readouterr().out
-    assert "未达标" in out and "四项全满足" not in out
+    assert "未达标" in out and "五项全满足" not in out
     assert "[❌] OOS ≥15 日" in out
 
 
 def test_verdict_handles_empty_window(capsys):
     adf.graduation_verdict([], [], [], [])
     out = capsys.readouterr().out
-    assert "无法判定" in out and "四项全满足" not in out
+    assert "无法判定" in out and "五项全满足" not in out
 
 
 def test_main_end_to_end_on_fixture(capsys, trade_db, monkeypatch):
@@ -172,7 +173,90 @@ def test_main_end_to_end_on_fixture(capsys, trade_db, monkeypatch):
     monkeypatch.setattr(adf, "DB", trade_db)
     adf.main()
     out = capsys.readouterr().out
-    assert "日净盈亏" in out and "实盘化门槛四判据" in out and "未达标" in out
+    assert "日净盈亏" in out and "实盘化门槛判据" in out and "未达标" in out
+
+
+# ── ④ RFC-089 判据加严 (2026-09-19): 号为正但不可分辨 ≠ 达标 ────────────── #
+def _oos_days(n=20):
+    return [f"2026-08-{10 + i:02d}" for i in range(n)]
+
+
+def _rows(n=20, net_per_trade=1.0, fee_per_trade=0.0, notional=5000.0):
+    """合成逐笔: (出场日, 名义额, 净额, 费用, 标的)."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    dev = rng.normal(0, 1, n)
+    return [(f"2026-08-{10 + i:02d}", notional,
+             notional * net_per_trade / 1e4 + dev[i], fee_per_trade, "US.TST")
+            for i in range(n)]
+
+
+def test_net_mean_criterion_requires_significance(capsys):
+    """号为正但 t<2 (与 0 不可分辨) → c2 必须 ❌ (旧口径只看符号 ⇒ t=+0.01 也达标)."""
+    net = np.array([30.0] * 4 + [-29.5] * 4 + [30.0] * 4 + [-29.5] * 4 + [30.0] * 4)
+    assert net.mean() > 0                                  # 号确实为正
+    adf.graduation_verdict(_oos_days(20), net, _oos_days(20), net + 10.0, rows=[])
+    out = capsys.readouterr().out
+    assert "[❌] 日净均值 > 0 且 t ≥ 2.00" in out
+    assert "日净均值显著性" in out and "未达标" in out
+
+
+def test_strong_edge_passes_net_mean_and_cost_cover(capsys):
+    """放行方向 (安全门禁双向审计): 净均显著为正 + 净 bps 盖过滑点 ⇒ c2/c5 双 ✅.
+
+    净额刻意给足 (每日 +$60 ± $0.3 → t 巨大; 名义 $5000 ⇒ 120bps/笔 ≫ 30bps 滑点).
+    """
+    net = 60.0 + np.random.default_rng(11).normal(0, 0.3, 20)
+    gross = net + 3.0
+    adf.graduation_verdict(_oos_days(20), net, _oos_days(20), gross, rows=_rows(20, net_per_trade=120.0))
+    out = capsys.readouterr().out
+    assert "[✅] 日净均值 > 0 且 t ≥ 2.00" in out
+    assert "[✅] 成本覆盖 (RFC-077 G2)" in out
+
+
+def test_cost_cover_fails_when_fee_eats_edge(capsys):
+    """净 bps 只比滑点低一点也要判 ❌ (成本覆盖是绝对量门槛, 不是符号门槛)."""
+    net = np.array([30.0] * 4 + [-29.5] * 4 + [30.0] * 4 + [-29.5] * 4 + [30.0] * 4)
+    adf.graduation_verdict(_oos_days(20), net, _oos_days(20), net + 5.0,
+                           rows=_rows(20, net_per_trade=25.0, fee_per_trade=25.0))
+    out = capsys.readouterr().out
+    assert "[❌] 成本覆盖 (RFC-077 G2)" in out and "成本覆盖" in out.split("未达标项")[-1]
+
+
+def test_high_fee_trades_flagged_record_only(capsys):
+    """碎价股/高股数票: 往返费用/名义 > 1% 必须出现在告警行 (record-only, 只报不改)."""
+    rows = _rows(19, net_per_trade=50.0, fee_per_trade=80.0, notional=5000.0)
+    rows.append(("2026-08-31", 4900.0, -314.0, 451.0, "US.CTNT"))   # 9.2% 费率
+    net = np.array([2.0 + 0.1 * (i % 5) for i in range(20)])
+    adf.graduation_verdict(_oos_days(20), net, _oos_days(20), net + 1.0, rows=rows)
+    out = capsys.readouterr().out
+    assert "高费率笔" in out and "US.CTNT" in out and "9.20%" in out and "record-only" in out
+
+
+def test_adf_block_summary_flags_lag_dependence():
+    """ADF 多阶结论不一致时必须给保守侧总结行, 且平稳结论附"通过≠有edge"边界注."""
+    trend = np.linspace(-100.0, -200.0, 30) + np.random.default_rng(1).normal(0, 3, 30)
+    lines, summ = adf.adf_lag_block(trend, (0, 1, 2))
+    assert lines and "ADF(lag=0)" in lines[0]
+    assert summ and "非平稳" in summ          # 亏损逐日加深 → 不得报"平稳", 也不得只给三行无总结
+    lines2, summ2 = adf.adf_lag_block(np.random.default_rng(3).normal(0, 10, 60), (0, 1))
+    assert summ2 and ("平稳" in summ2 or "lag 依赖" in summ2)
+    assert "≠ 有 edge" in summ2 or "lag 依赖" in summ2
+
+
+def test_per_trade_rows_degrades_on_minimal_schema(trade_db, monkeypatch):
+    """夹具缺 quantity/symbol 列 → 降级返回 [] (展示层 fail-open, 不得抛异常打断整条投递)."""
+    monkeypatch.setattr(adf, "DB", trade_db)
+    assert adf.per_trade_rows() == []
+
+
+def test_day_bps_is_day_equal_weighted():
+    """按日等权: 每日 净/名义×1e4 后再对日取均值 (RFC-077 G1 口径)."""
+    rows = [("2026-08-10", 1000.0, 10.0, 0.0, "A"),      # +100bps
+            ("2026-08-11", 10000.0, 10.0, 0.0, "B")]      # +10bps
+    days, bps = adf.day_bps(rows)
+    assert days == ["2026-08-10", "2026-08-11"]
+    assert bps.tolist() == [100.0, 10.0]                 # 非笔等权 (笔等权会得 +55bps)
 
 
 def test_main_survives_empty_sample(tmp_path, capsys, monkeypatch):
