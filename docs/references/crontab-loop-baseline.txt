@@ -29,17 +29,14 @@ da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
 daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
 data_quality_census.py  # 存量测量/回填环, 台账回填待专项
 direction_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
-direction_hit_scorecard.py  # 存量测量/回填环, 台账回填待专项
 exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
 exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项
-exit_scorecard.py  # 存量测量/回填环, 台账回填待专项
 factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
 fee_unit_economics_scorecard.py  # 存量测量/回填环, 台账回填待专项
 freeze_sentinel.py  # 存量测量/回填环, 台账回填待专项
 gap_alignment_shadow.py  # 存量测量/回填环, 台账回填待专项
 gap_chase_gate_eval.py  # 存量测量/回填环, 台账回填待专项
 gate_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
-gate_liveness_probe.py  # 存量测量/回填环, 台账回填待专项
 gen_event_symbols.py  # 存量测量/回填环, 台账回填待专项
 ic_health_check.py  # 存量测量/回填环, 台账回填待专项
 ic_weekly_report.py  # 存量测量/回填环, 台账回填待专项
