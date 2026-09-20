@@ -1,5 +1,38 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 07:00 增量: 服务重启 (用户令「请重启再观察」) + 两个观察载体
+
+> **重启**: 2026-09-21 06:52:32 CST, MainPID 2112578 → **2191125** (旧进程运行 19h)。
+> 前置核对: `open_positions = 0` (**空仓, 零持仓管理状态**), 分支 `rfc-060-phase1-hotfixes`,
+> 工作区干净, 改动归属 = 本会话 5 个提交。时点 = 周一 06:52 CST, **不在任何交易窗口**
+> (ETH 盘前 16:00 CST 起) ⇒ 最安全切点。
+>
+> **生效核对**: `app/execution/broker_adapter.py` mtime 06:40:50 < 进程启动 06:52:32
+> ⇒ §7.2 的 REAL 会计口径修正已载入进程 (源码含 `_cash_source` 标记, sha256 e615862c82f7f5d9)。
+>
+> **启动后验证 (全部实测)**:
+> - 日志 `ERROR|Traceback|CRITICAL|Exception` = **0 条** (全文件);
+> - 9 条 WARNING 全为已知启动态, 其中一条正好印证本轮收敛:
+>   `[StartupMode] FUTU_TRADE_ENV=1 已废弃，不参与 broker/DB 模式判定`;
+> - 线程 29, CPU 2.2%, RSS 172MB; 循环全启 (PositionMonitor / LLM策略 / VIX / InsiderScan /
+>   **PlaybookExit 快循环 10s** / 订阅 auto+watchdog / ManualGuard / SignalScan);
+> - SIM: equity **99,392.093** (与重启前逐点一致), `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=False`
+>   / `execute_mode=futu_simulate` (开关未动);
+> - `scripts/live_switch_audit.py --assert-ready` → **exit 0, BLOCKER 0**。
+> - ETH entry/exit `--dry` 均返回 `outside_trading_window` (窗口未开, 零下单)。
+>
+> **crontab 事实 (支持"开关清单化"的有效性)**: 全 crontab **没有任何** `FUTU_TRD_ENV`/
+> `FUTU_TRADE_ENV`; 每分钟 ETH 行只带 `EXT_*` 键 ⇒ 旧 ETH 守卫一直在跟一个**没人设的键**比较
+> (默认 SIMULATE → 恒放行), 收敛到 `TradingMode` 后语义等价但**依据变成真实配置源**。
+>
+> **观察载体 (一次性, 只读, 已注册)**: 脚本 `~/.hermes/scripts/ftseek_post_restart_observe.py`
+> (服务活性 / 日志错误数 / 开关审计 / ETH entry+exit `--dry` / capital_state / 未平仓 / 审计尾行):
+> - job `6753c4014e99` @ **2026-09-21 16:20 CST** (盘前 ETH cron 首批实跑后)
+> - job `cd7bd81a1c89` @ **2026-09-21 22:20 CST** (RTH 盘中)
+> 交付 `origin` + `attach_to_session`; 移除用 `cronjob remove <job_id>`。
+>
+> 未做: 任何 REAL 下单/开关切换; 总敞口帽阈值 (待用户裁, 见 §7.4)。
+
 ## 2026-09-21 01:00 增量: REAL 账户会计口径修正 (fx/净值/现金) + 切盘硬阻塞
 
 > 承接「开关清单化」。**当日只读取证**发现 REAL 账户 (HKD 计价 + 本币负腿) 的折算三处错,
