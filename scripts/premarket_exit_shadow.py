@@ -27,7 +27,8 @@
   回滚: EXT_PREMARKET_FLATTEN=false
 
 盘后进场仓 (2026-09-17 用户令「不强止损，直接持有到次日开盘」):
-  盘后窗内进的仓在**开盘前一律不动作** (既不锁盈也不止损), 09:30-09:45 ET 开盘兑现
+  盘后 carry 仓在次日盘前仍先计算原 Playbook 利润保护; 触发止盈/回本/trailing/cert lock
+  时直接用 ETH 限价单落袋。未触发利润保护则不强止损, 09:30-09:45 ET 开盘兑现
   (调 exit executor --session next_open = RTH 单)。回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
 
 执行 (2026-09-17 用户裁「方案1」; 2026-09-18 勘误为原利润保护规则):

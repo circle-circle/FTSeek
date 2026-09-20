@@ -32,6 +32,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -318,19 +319,34 @@ def _dedup_reserve(key):
     if _probe_mode():
         return False
     today = _today_et()
+    lock_path = _PUSH_DEDUP.with_suffix(".lock")
     try:
-        data = json.loads(_PUSH_DEDUP.read_text()) if _PUSH_DEDUP.exists() else {}
+        with lock_path.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                data = json.loads(_PUSH_DEDUP.read_text()) if _PUSH_DEDUP.exists() else {}
+            except Exception:
+                data = {}
+            if data.get(key) == today:
+                return False
+            data[key] = today
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f"{_PUSH_DEDUP.name}.", suffix=".tmp", dir=_PUSH_DEDUP.parent
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                    json.dump(data, tmp, ensure_ascii=False, sort_keys=True)
+                os.replace(tmp_name, _PUSH_DEDUP)
+            except Exception:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except Exception:
-        data = {}
-    if data.get(key) == today:
-        return False
-    data[key] = today
-    try:
-        tmp = _PUSH_DEDUP.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False))
-        tmp.replace(_PUSH_DEDUP)
-    except Exception:
-        pass
+        return True
     return True
 
 

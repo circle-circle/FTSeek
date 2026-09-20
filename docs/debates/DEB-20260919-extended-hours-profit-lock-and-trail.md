@@ -391,3 +391,11 @@ crontab 用 CST 小时 (`*/5 16-21` / `*/5 4-7`), DST 切换后相对 ET 右移 
 `test_postmarket_drawdown_caliber.py`、`test_push_hub.py`、`test_push_unified_channel.py`)，
 覆盖 8 类 pending、异常状态、敞口闸、终稿刷新与 Hub 路由；`py_compile`、`git diff --check`
 通过，重启后启动冒烟 7/7 通过。
+
+### 14.4 语义钉: 盘后 carry 到次日盘前仍可利润落袋
+用户追问「盘后再到盘前，可否基于当前止盈策略执行落袋」。核查结果: **现行代码已是该语义**:
+`prioritize_profit_exit()` 使 `TAKE_PROFIT` / `SL_BREAKEVEN` / `SL_TRAIL_LOCK` /
+`SL_CERT_LOCK` 覆盖 `hold_to_next_open`; 只有未触发利润保护时才等待 09:30-09:45 开盘兑现。
+本批零交易行为变更，仅修正两处 9/17 旧注释，并新增回归测试钉住「盘后 carry 在次日 09:20
+触发 TAKE_PROFIT 时必须走 `--session premarket`」。
+验证: 相关回归 31 passed；`py_compile`、`git diff --check` 通过；重启后启动冒烟 7/7 通过。

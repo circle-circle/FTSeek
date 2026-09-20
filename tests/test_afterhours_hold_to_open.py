@@ -66,7 +66,7 @@ def test_is_afterhours_carry_requires_window_and_previous_day():
 
 
 def test_premarket_shadow_holds_afterhours_carry_before_open(monkeypatch, tmp_path):
-    """09:20 ET (开盘前) 对 carry 仓**不得**动作: 既不锁盈也不止损."""
+    """09:20 ET carry 仓未触发利润保护时不强止损, 继续等待开盘."""
     calls = []
     monkeypatch.setitem(sys.modules, "futu", _futu_stub(
         {"code": "US.FAKE", "last_price": 9.0, "pre_price": 9.0, "pre_volume": 90000.0,
@@ -83,6 +83,32 @@ def test_premarket_shadow_holds_afterhours_carry_before_open(monkeypatch, tmp_pa
     assert row["action"] == "hold_to_next_open"
     assert row["is_afterhours_carry"] is True
     assert calls == []                       # 关键: 没有下任何单
+
+
+def test_premarket_shadow_exits_afterhours_carry_on_profit_signal(monkeypatch, tmp_path):
+    """盘后 carry 到次日盘前: 利润保护优先于 hold_to_next_open."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "futu", _futu_stub(
+        {"code": "US.FAKE", "last_price": 12.5, "pre_price": 12.5,
+         "pre_volume": 90000.0, "prev_close_price": 10.0,
+         "pre_high_price": 12.6, "update_time": "2026-09-18 09:20:00"}))
+    monkeypatch.setattr(PM, "_today_et", lambda: TODAY)
+    monkeypatch.setattr(PM, "_now_et_hhmm", lambda: 920)
+    monkeypatch.setattr(PM, "_load_open_positions", lambda: [
+        ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1",
+         '{"stop_loss":9.5,"take_profit":12.4}')])
+    monkeypatch.setattr(PM, "OUTPUT", tmp_path / "out.jsonl")
+    monkeypatch.setattr(_sp, "run", lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(
+        returncode=0, stdout="", stderr=""))
+
+    PM.collect(dry=False)
+
+    row = json.loads((tmp_path / "out.jsonl").read_text().strip())
+    assert row["action"] == "TAKE_PROFIT"
+    assert row["is_afterhours_carry"] is True
+    assert len(calls) == 1
+    assert "--session" in calls[0] and "premarket" in calls[0]
+    assert "TAKE_PROFIT" in calls[0]
 
 
 def test_premarket_shadow_exits_at_next_open(monkeypatch, tmp_path):
