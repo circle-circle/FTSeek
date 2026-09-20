@@ -448,3 +448,78 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 | — | **新增**：管线退休三步（§12.2 P0/P1/P2），P0 为 1 行、今天行为零变化 |
 
 **终局结论维持：改后执行**——骨架不变；工作量的形状已从"改设计"收敛为"1 行收窄 + 一批删除 + 一次判据表决 + 补齐引用"。
+
+
+---
+
+## 十三、用户终裁落档 + 执行记录（2026-09-20 第三轮 · 用户令「按建议同意」）
+
+> 用户对 §12.6 / 上一轮三问的原话：**「按建议同意」** ⇒ 视为对以下三项的终裁：
+> ① 管线退休按 §12.2 的 P0→P1→P2 建议执行；② 门1 haircut 分层重裁**进 10/11 议程**（本条即用户签字）；
+> ③ T5 终判线 `≥ −$2/笔` **签字采纳**，但按建议附加口径钉（见 §13.3）。
+> 未签项：退出改动准入门槛 `双窗口 ≥ +0.3pp/笔` —— 按 §12.4 建议**缓签**，等 T4 第一批双窗口读数出来再定。
+
+### 13.1 ① 管线退休：P0 + P1 已完成（commit `90de5a1c7`）
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| P0 | `order_executor._submit_order` 允许清单由 `(PLAYBOOK_SIM, PLAYBOOK_LIVE, ORB_ENGINE)` 收窄为**仅两个 PLAYBOOK 来源** | ✅ 已入库（今天行为零变化） |
+| P1 | 删 `app/orb/{__init__,config,engine,exits}.py`（**2735 行**）+ `scheduler_core` 三处接线与 ORB ETF 订阅块 + `risk_stage` ORB 上限闸 + `orb` 配置整节（26 键）+ 台账 P8 行退役标注 + 两处契约测试扫描面同步 | ✅ 已入库 |
+| P2 | 主线 `MAIN_PIPELINE` 死枝：**按建议不动**（那些是兜底默认值与标签，删会牵动数十处赋值） | ⏸️ 维持现状 |
+
+**如实标注的两处边界（不得被后续引用成"闸已全封"）**：
+1. `order_executor` 那道闸只覆盖**经该路径**的下单；ORB 当年是**直连** `execution_engine.submit_order`（`app/orb/engine.py:2341`，其 `:2276` 注释自述"不受 RiskStateMachine/PDT/cooldown 保护"）⇒ 真正的关闭靠**模块退役**，不靠改闸。
+2. **刻意保留**：`source_type` 标签映射（`order_executor:125` / `metrics.NON_PLAYBOOK` / `positions.source.AUTO_ORB`）、`position_monitor:1072` 的 `ORB_ENGINE` 读取面、`cohort_ab` SQL、`position_exit_monitor._is_orb_position` —— 历史行仍需可读，删它们会让老账本读不出归属。
+
+**验证（等基对比，两侧同命令）**：
+- `py_compile` 3/3；导入链 `scheduler_core` / `order_executor` / `risk_stage` / `position_monitor` 全通
+- YAML：`orb` 节消失、其余 **56 键**完整；`config_validate` 输出**不含** orb 相关项（其 2 项失败为既有，与本次无关）
+- 窄选择回归（同基线命令）**337 passed**，与改动前逐条一致
+- 宽回归 `tests/{execution,playbook,risk,coordinator}`：基线 **55 failed → 现 45 failed**，差集 **0 条新增失败**（10 条差异为裸 worktree 缺 `data/` 的环境性失败，已逐条列出核对）
+- 残留扫描：`app.orb` / `self.orb_engine` / `get_dotted('orb')` / `orb.enabled` 在执行面**零命中**（仅 tombstone 注释）
+- 事实核查：ORB 在仓 **0**；最后成交 **2026-06-22**（`ORB_ENGINE` 11 行）
+- **Gate 6**：重启前在仓 sim=0 / live=8（均为 `size=0` 陈旧手动行，不受影响）→ `systemctl restart ftseek-us` → `active`（09:20:57 CST）→ 启动冒烟：全线程正常拉起、`ImportError|ModuleNotFoundError` 计数 **0**
+
+### 13.2 ② 门1 haircut 分层重裁 —— 已进议程，**本文件即签字留痕**
+
+**提案（生效时点 = 10/11 议程表决后，在此之前一切读数只作 record-only）**：
+
+| 项 | 现役 | 拟改为 | 依据 |
+|---|---|---|---|
+| 滑点 haircut | 全池统一 **15 bps/边（往返 30）**，`exit_scorecard.payoff.slip_haircut_bps` | **分层**：盘中 ≈ **5.94**（交叉校 5.37）/ 盘后 ≈ **26.96** / 盘前 待前向攒样 | `data/slippage_calibration_latest.json`（T2 首跑，2026-09-20） |
+
+**为什么必须走议程而不是直接改**：该 haircut 是门1 G1-1/G1-4 的**输入**，直接改等于搬动门柱。折算（名义中位 $5,481）：
+`现役 +$5.00 − 30bps = −$11.44/笔`；`盘中按实测 = +$1.74`；`盘后按实测 = −$9.78` ⇒ **同一批 221 笔的 slip-adj 期望随盘中/盘后占比反号**。
+**生效条件（三条同时满足）**：① 10/11 议程表决通过；② 盘中读数补到**实际成交标的**口径（现为影子宇宙：`intraday_reentry_shadow` n=1621 / `entry_timing_shadow` n=2422）；③ 盘后口径注明其样本为真实持仓决策点但薄量、价差结构性宽。
+**边界声明（不许越位）**：报价价差 = 往返成本**下界**，不含排队/部分成交/冲击/SSR 拒单/券商 STOP 触发质量；盘前臂当前 n=0（代码已写 `bid_price/ask_price`，等新行）。
+**回滚**：判据入参为单点（`slip_haircut_bps`）⇒ 恢复 15 即回滚，须留痕。
+
+**复算命令（产物 `data/slippage_calibration_latest.json` 属 runtime 目录不入库 ⇒ 命令必须自含）**：
+```bash
+cd /opt/ftseek/FTSeek-US
+# 盘中（两独立样本）
+python3 -c "import json,statistics as st;r=[json.loads(l) for l in open('data/intraday_reentry_shadow.jsonl') if l.strip()];v=sorted(x['spread_bps'] for x in r if isinstance(x.get('spread_bps'),(int,float)));print('n=%d median=%.2f p25=%.2f p75=%.2f'%(len(v),st.median(v),v[len(v)//4],v[3*len(v)//4]))"
+python3 -c "import json,statistics as st;r=[json.loads(l) for l in open('data/entry_timing_shadow.jsonl') if l.strip()];v=sorted(m['spread_bps'] for m in (x.get('micro') for x in r) if isinstance(m,dict) and isinstance(m.get('spread_bps'),(int,float)));print('n=%d median=%.2f'%(len(v),st.median(v)))"
+# 盘后
+python3 -c "import json,statistics as st;r=[json.loads(l) for l in open('data/afterhours_exit_shadow.jsonl') if l.strip()];v=sorted(x['spread_pct']*100 for x in r if isinstance(x.get('spread_pct'),(int,float)));print('n=%d median=%.2f bps'%(len(v),st.median(v)))"
+# 盘前（应为 0 行含买卖价 ⇒ 前向攒样）
+grep -c '"bid_price"' data/premarket_exit_shadow.jsonl
+```
+期望读数：`1621 / 5.94`、`2422 / 5.37`、`114 / 26.96`、`0`。
+
+### 13.3 ③ T5 终判线 `≥ −$2/笔` —— 已签，附口径钉
+
+**签字文本（按 §12.4 建议）**：T5 终判采用 `slip-adj 期望 ≥ −$2/笔`（机制级读数），**并同时报出**：分时段实测 haircut、日聚类 `t` 与 `MDE`（`size_normalized.net_bps_day_clustered` 现成键）。
+**理由（为什么要那三样一起报）**：`−$2/笔` 是**单一数字门**，而它的分母/输入（haircut、样本窗口、聚类口径）都可由上游选择改变 ⇒ 只报单值就能"用口径把线刷过去"。把三项钉在同一张判据卡上，等于给这条线装上**不可单独搬动的输入**。
+**诚实边界（沿用 §八）**：414 笔（口径待统一，见 §11 R-x）测不出 6.59bps 的 edge，需约 4,500 笔量级；本线是机制级判据，不是 P&L 显著性判据。
+**未签项**：`双窗口 ≥ +0.3pp/笔` —— 缓签（9 月冻结期只回放不改参数，缓签三周零成本；先看 T4 的数、后定线）。
+
+### 13.4 本轮遗留（按归属分派，均不影响 T1 启动）
+
+| # | 事项 | 归属 | 说明 |
+|---|---|---|---|
+| L1 | §11 的 R-1/R-2/R-3/R-5/R-6/R-7/R-9 措辞与引用更正落进正文（R-4 已按 F-2 降级） | Codex（执行前） | 含 §五 B 补"延长时段 180 日 n=89"宇宙标注、C6 换 `trade_records` 复跑源、DEB 引用写全名、C12 拥堵分钟改 06:25/06:30、补 `cutover_preflight` 为备刀测量面 |
+| L2 | `_dedup_reserve` 的 flock 并发回归钉子 | 任一 agent | 本次代提交暴露：该锁无专测 |
+| L3 | `exit_scorecard` 分层读数的落点实现（挂 `size_normalized` 旁，record-only） | 10/11 生效前 | **在判据表决前不改判据输入**，故只落 artifact、不动 scorecard 入参 |
+| L4 | `scripts/okr_status.py:71-95` 并列 bps 算式收敛为读 `exit_scorecard` 产物 | 后续 | 防瀑布成为第三处同口径实现（反重复造轮子 ③） |
+| L5 | 414 笔口径统一（现 scorecard n=221；414 无出处） | T1 口径对账时 | 功效声明的输入必须同轴，否则"需 4,500 笔"跟着错 |
