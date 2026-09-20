@@ -101,6 +101,27 @@ def check_edge_vs_fee():
     return out
 
 
+def check_fee_gate_shadow():
+    """T3 fee-gate forward shadow summary (2026-09-20 three-week plan).
+
+    The weekly checkpoint is the decision-side consumer: it reports the current
+    production gate, the safe incremental notional proposal, and whether the
+    raw candidate would loosen the existing price floor. It is read-only.
+    """
+    try:
+        from scripts.fee_gate_shadow_report import build_report, render_report
+        report = build_report()
+        return {
+            "status": report["status"],
+            "n": report["n"],
+            "min_n": report["min_n"],
+            "excluded_rows": report["excluded_rows"],
+            "lines": render_report(report).splitlines(),
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:120]}
+
+
 def check_graduation():
     """毕业门禁实测 (打标状态)。异常按 fail-close 报。
 
@@ -258,6 +279,15 @@ def main():
             out.append(f"  ⚠️ 告警: 本月净edge {_tm['net_bps']:+.2f}bps < 0 — 毛edge 未覆盖费用线")
         elif _tm:
             out.append(f"  余量 {_tm['net_bps']:+.2f}bps (净edge<0 即系统亏损; 9月修复后 +3.64bps)")
+
+    # 2c. T3 费用门影子 (2026-09-20 三周计划): 净利诊断与现行生产门对照
+    fee_gate = check_fee_gate_shadow()
+    if fee_gate.get("error"):
+        out.append(f"⚠️ T3费用门影子: {fee_gate['error']}")
+    else:
+        out.append(f"✓ T3费用门影子: n={fee_gate['n']}/{fee_gate['min_n']} "
+                    f"status={fee_gate['status']} excluded={fee_gate['excluded_rows']}")
+        out.extend(f"  {line}" for line in fee_gate["lines"][1:3])
 
     # 3. 证伪门
     g = check_gate()

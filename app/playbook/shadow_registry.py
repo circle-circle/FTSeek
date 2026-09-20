@@ -1148,6 +1148,32 @@ REGISTRY: list[ShadowItem] = [
               "回滚 = 删 crontab 两行 + 删本条目 + 删两个文件 (零生产耦合、无调用方)。",
         eval_on_demand=True,
     ),
+    ShadowItem(
+        id="fee_gate_shadow",
+        name="T3 费用 C 影子门槛",
+        status=ShadowStatus.OBSERVING,
+        description="费用路径 C 的前向反事实影子: 对 2026-09-20 起入场且已平仓的 "
+                    "PLAYBOOK 交易 (trade_date=入场日, 入场门反事实按入场日选样), "
+                    "逐笔记录 entry_price/quantity/notional/fees_est/fee_bps/"
+                    "pnl_net 与价格门、名义额门、组合门的 would_block。只读采集, "
+                    "不改入场、仓位、订单、配置或退出参数。",
+        data_path="data/fee_gate_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        count_mode="distinct:trade_id",
+        graduation_criteria="n≥30 (distinct trade_id) 后机械产出各候选门 blocked/kept "
+                            "净期望、胜率、费用 bps 与 n-loss; 10/11 结合影子读数与"
+                            "双窗口回放终裁真门槛。样本不足或读数反向时禁止提议转正。",
+        eval_script="scripts/fee_gate_shadow.py",
+        created="2026-09-20",
+        current_n=0,
+        notes="cron `45 6 * * 2-6`; 前向汇总落 data/fee_gate_shadow_latest.json。"
+              "$9,950 已被 §十六证伪, 不作为候选; 本影子只并记价格<$1、名义<$4k、"
+              "<$5k 与价格≥$1+名义≥$4k 组合。回滚=删 cron 行+注册条目+两个数据产物。",
+        eval_on_demand=False,
+        intent="fee_floor_cost_guard",
+        cross_ref=(),
+    ),
 ]
 
 
