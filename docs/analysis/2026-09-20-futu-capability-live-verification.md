@@ -128,3 +128,45 @@ cd /opt/ftseek/FTSeek-US && ./venv/bin/python scripts/futu_capability_live_probe
   都不足以宣称"任何单都吻合"（唯一 1 张 1.2% 偏差即例）。
 - `get_option_chain` 首次调用曾出现一次 `PacketErr.Timeout`，重试即成功；
   探针把"首次超时"计为 FAIL，属偏保守（宁可误报不可漏报）。
+
+---
+
+## §8 执行延迟：存在，但位置/代价与上一轮报告不同（2026-09-20 补测）
+
+取证源：`data/playbook_exits.db`（exit_intents/exit_legs，9/11–9/18）、
+`data/ftseek_us.db` trade_records（8/1–9/20，335 笔已平仓）、
+`data/extended_hours_exit_executions.jsonl`（15 行）、`crontab -l`、`exit_lifecycle.py`。
+
+| 观测 | 实测值 |
+| --- | --- |
+| 入场滑点（参考价→成交） | n=327，中位 0.0bps，中位绝对值 4.0bps，p90 绝对值 15.8bps，成交更差占 48% |
+| 出场滑点 | n=329，中位 0.0bps，中位绝对值 2.9bps，p90 绝对值 16.4bps |
+| RTH 限价腿超时 | 48 单中 5 单"限价撤单→MARKET 补腿补齐"（账本例：`LIMIT d=0 → MARKET d=24`） |
+| 保本/回撤锁路径（BE telemetry） | 177 笔中 146 笔（82%）限价未成交→转市价；`drift_from_be_line` 中位 +18bps |
+| **转市价的**经济方向** | 有利 133 笔 / 不利 13 笔；净 **+$3,937**（LONG +$3,076、SHORT +$861）= 兜底成交价优于限价 |
+| ETH 出场追价 | **设计上不追价**：`exit_lifecycle.py:519-522` 对 `session=='ETH'` 直接返回 HELD（`exit_eth_partial_fill_held`）；日志中该事件 **0 次** |
+| EXT 限价超时现值 | crontab 实值 `EXT_EXIT_LIMIT_TIMEOUT_S=60`（非报告所写 20），每分钟跑 `extended_hours_exit_cron.py` |
+| EXT 执行记录 | 15 行：ok=true 7 / ok=false 8。其中 ACN（执行 21:38:26Z→成交 21:38:52Z，pnl_net +59.09）、WBD（23:29:18Z→23:29:49Z，+51.66）为**成交确认延迟造成的假负**，非未成交 |
+
+**对上一轮"五、速度审计 🔴"的更正（分时段）**：
+
+- "盘前收口限价 20s 到期撤单不追价、薄盘可能根本没卖掉" → RTH 侧**不成立**（有
+  市价补腿）；ETH 侧**成立**（设计即不追价）但该分支 **0 次触发**，且 15 行执行
+  记录中**无 1 例"未卖掉"**。超时值 20 也已不是现网值（现 60），且每分钟重试。
+- **符号陷阱（自证伪）**：`drift_from_be_line` 是**未按方向调整**的原始差值
+  （写入方 `pipeline.py:7038/8529+`），直接按正负读会得出相反结论——我第一遍读反了。
+  按 `direction` 换算经济方向后，结论从"兜底代价 ~$2.3k"反转为"兜底有利 ~+$3.9k"。
+  教训：**解释 telemetry 符号前必须先读写入方**。
+
+**诚实边界（SIM）**：上列滑点与"兜底有利"均在 SIM 成交引擎下测得，SIM 不建模真实
+点差与部分成交，实盘不可外推；真实盘口下"转市价"很可能变成成本项。
+
+## §9 多源冗余冲突：部分存在，部分是本轮误报
+
+| 项 | 实测 | 判定 |
+| --- | --- | --- |
+| 符号形式（BRK-B / BRK.B） | `app/utils/symbol_utils.py` 的 `normalize_symbol` / `to_dot_style`，注释含三源实测差异表（TwelveData 认 BRK-B→404、Futu 认 BRK.B、Yahoo 认 BRK-B） | **已处理**；上一轮当"未处理缺陷"报 = 误报 |
+| 分析师共识双源 | 富途 `get_research_analyst_consensus` vs finnhub `stock/recommendation`。实测 NVDA：富途 buy 100%（n=30，9/19）vs finnhub 强买+买 94%（n=69，period 9/1）；MU 96.6%(n=29) vs 92%(n=58)；BABA 100%(n=12) vs 90%(n=40) | **结构性双源存在**：口径（百分比 vs 分档家数）、基数（12–30 vs 40–69）、时效（9/19 vs 9/1）三重不同；两源**方向一致**（皆多头） |
+| 是否同字段覆盖 | 落库键不同：playbook/盘前 = `futu_analyst`（`premarket_enrichment.py:149`）；DA = `analyst_cluster`（`deep_research_pipeline.py:142`） | **无同字段覆盖**，不构成静默冲突；LLM 同时见到两种口径时的权衡**未度量** |
+| 昨收（快照 vs 日K） | 今日 3/3 Δ=0bps（NVDA/MU/BABA：快照 `prev_close_price` == 日K 真昨收） | 无非冲突证据；**今日休市，不能代表盘前窗口**（该问题的取证窗口是盘前时段） |
+| 成本重复 | 同一概念确有两次调用，但富途侧接入动机正是"替代 Finnhub 付费 API" | 存在，属优化方向 |
