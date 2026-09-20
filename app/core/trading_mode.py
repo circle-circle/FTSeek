@@ -208,6 +208,38 @@ class TradingMode:
         return "normal"
 
     # ------------------------------------------------------------------ #
+    # 账户 / 环境解析 (切实盘开关清单化的唯一入口, 2026-09-20)
+    #
+    # 背景: 延长时段(ETH)链路此前自带一套 legacy 判定 —— ext_entry 里是常量
+    # `TrdEnv.SIMULATE`、ext_exit 里读 `FUTU_TRD_ENV` + `SIMULATE_ACCOUNT_ID` ——
+    # 与主链路(di_container/AUTO_TRADE_ACCOUNT)不同源。切实盘时会出现"主链路已 real、
+    # ETH 链路仍 sim"或反之的错配, 故统一收敛到本类。
+    # ------------------------------------------------------------------ #
+    def target_env(self) -> str:
+        """'real' | 'sim' — 与 di_container.py broker 路由同源。"""
+        return "real" if self.is_live else "sim"
+
+    def account_id(self, target_env: Optional[str] = None) -> int:
+        """按目标环境解析富途账户号 (REAL_ACCOUNT_ID / SIMULATE_ACCOUNT_ID)。
+
+        解析失败返回 0 (调用方 fail-close, 不得回落到另一个环境的账户号)。
+        """
+        env = (target_env or self.target_env()).strip().lower()
+        key = "REAL_ACCOUNT_ID" if env == "real" else "SIMULATE_ACCOUNT_ID"
+        raw = str(_read_env_file(key, "") or "").strip().strip('"').strip("'")
+        try:
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            logger.warning("[TradingMode] %s 解析失败 (raw=%r) → 0 (fail-close)", key, raw)
+            return 0
+
+    def futu_trd_env(self, target_env: Optional[str] = None):
+        """富途 TrdEnv 枚举 (SSOT 派生) —— 替代散落的 FUTU_TRD_ENV/常量 SIMULATE 读取。"""
+        from futu import TrdEnv
+
+        return TrdEnv.REAL if (target_env or self.target_env()) == "real" else TrdEnv.SIMULATE
+
+    # ------------------------------------------------------------------ #
     # 风控适配
     # ------------------------------------------------------------------ #
     def get_risk_multiplier(self) -> float:
@@ -296,4 +328,14 @@ class TradingMode:
         return f"<TradingMode mode={self.mode.value} label={self.mode_label}>"
 
 
-__all__ = ["TradingMode", "TradingModeEnum"]
+def ext_channel_real_authorized() -> bool:
+    """延长时段(ETH)链路的**实盘独立闸** (默认 false)。
+
+    ETH 链从未在实盘跑过 (薄盘无追价 / 限价超时 60s / 成交确认 26–31s 实测), 故切实盘当天
+    仅切 TradingMode 不足以放行 ETH 真钱下单: 还需显式 `EXT_REAL_AUTHORIZED=true`。
+    回滚 = 删除该键 (或置 false), ETH 链路立即回到"仅模拟"。
+    """
+    return _read_env_file("EXT_REAL_AUTHORIZED", "false").strip().lower() == "true"
+
+
+__all__ = ["TradingMode", "TradingModeEnum", "ext_channel_real_authorized"]

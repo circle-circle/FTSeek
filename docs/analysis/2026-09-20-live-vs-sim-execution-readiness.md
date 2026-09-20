@@ -65,11 +65,13 @@
 
 ### P0 — 切盘前必须完成（都为小改 + 可 dry-run 验证）
 
-1. **SIM→REAL 开关清单化**：把 4 类硬编码点收敛为单一配置源（`broker_adapter.trade_env`
-   为真相源，DEB-20260904 #S3 已确立）——含 `ext_entry` 的 `env` 常量、
-   `ext_exit` 的 `real_not_authorized` 闸 + `target_env="sim"`、账号环境变量命名
-   （`SIMULATE_ACCOUNT_ID` → 双账户各一）、`app/web_dashboard/order/executor.py`
-   12 处 `TrdEnv.SIMULATE`。验收：`--dry` 全绿 + 券商侧无新订单。
+1. ✅ **SIM→REAL 开关清单化（2026-09-20 已完成，见 §6）**：ETH 链已从"自带一套 legacy 判定"
+   收敛到与主链路同源的 `TradingMode`；新增可执行验收 `scripts/live_switch_audit.py`。
+   ~~含 `ext_entry` 的 `env` 常量、`ext_exit` 的 `real_not_authorized` 闸 + `target_env="sim"`、
+   账号环境变量命名、`app/web_dashboard/order/executor.py` 12 处 `TrdEnv.SIMULATE`~~
+   —— 更正：dashboard 侧**本就是** `TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE`
+   ＋`REAL_ACCOUNT_ID/SIMULATE_ACCOUNT_ID`（已是 SSOT 模式），不属于待改项；上一轮
+   "12 处硬编码"的说法不准确。
 2. **REAL 专属下单前硬门（fail-close）**：①`acctradinginfo_query` 真实购买力
    ②做空前的可借量/保证金 ③ETH 断言"必须限价"。三项都在 broker 前，且**只对 REAL 生效**。
 3. **STOP 单实盘语义先实测再当主止损**：`place_stop_order` 未传 `session/time_in_force`
@@ -106,3 +108,44 @@
 - 本文结论基于**代码静态取证**（未在 REAL 账户上实弹）；STOP 单在 US 的真实触发/有效期、
   REAL 回报延迟分布、部分成交率均**未实测**，需切盘前用最小额探针补齐。
 - 滑点/成交率数字全部来自 SIM，已在 §2 第 4 条标注不可外推。
+
+## §6 本批落地（2026-09-20，开关清单化 + 可执行验收）
+
+**代码改动（SIM 行为零变化，已回归）**
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/core/trading_mode.py` | 新增 `target_env()` / `account_id()` / `futu_trd_env()`（沿用既有 SSOT：`.env.us` 热读 + `AUTO_TRADE_ACCOUNT`+`ALLOW_REAL_TRADING`）；新增 `ext_channel_real_authorized()`（ETH 链路实盘**独立闸**，默认 false） |
+| `scripts/extended_hours_entry_executor.py` | 5 处 legacy 收敛：`env` 常量 → `_mode().futu_trd_env()`；对账调用 → `_mode().account_id()`；两处"仅 SIM"守卫 → `_mode().is_live and not _ext_real_authorized()` |
+| `scripts/extended_hours_exit_executor.py` | 裸读 `FUTU_TRD_ENV` + 裸读 `SIMULATE_ACCOUNT_ID`（且除守卫外**无他用**）→ SSOT；`target_env="sim"` → SSOT 解析 |
+| `scripts/live_switch_audit.py` | **新增**：打印当前模式 + 全仓解析点分类（SSOT/映射 / BLOCKER 常量 / LEGACY 裸读 / INFO）；`--assert-ready` 退出码门 |
+| `scripts/real_order_probe.py` | **新增**：实盘最小额探针。只读档 `--probe buying-power` 可直接跑；下单档 `--probe stop-order` 需 `TradingMode=live` ＋ `--confirm-real-order <REAL_ACCOUNT_ID>` 完全一致，qty 恒 1 股，止损价强制距现价 ≥15%（保证不可能成交），下单后立即撤单并回读终态 |
+
+**验收证据**
+
+- `live_switch_audit.py --assert-ready` → **EXIT 0**：BLOCKER **0**、LEGACY **0**、SSOT/映射点 225。
+- 行为等价：`extended_hours_entry_executor --session premarket --dry` 与
+  `extended_hours_exit_executor ... --dry` 均返回 `outside_trading_window`（周日，零下单）。
+- 回归：`test_ops_scripts_sync` + `test_control_loop_ledger` + `test_extended_hours_order_execution`
+  **51 passed**。
+
+**REAL 账户实测（只读，2026-09-20 Sunday）**
+
+| | SIM (19930823) | **REAL (281756480166019917)** |
+| --- | --- | --- |
+| `currency` | N/A | **HKD** |
+| `total_assets` | 99,392.09 | 660,457.63 |
+| `cash` | 99,392.09 | 84,157.63 |
+| `market_val` | 0.0 | **576,300.0**（已有在手持仓） |
+| `power` | 198,784.19 | 494,450.72 |
+| `hkd_assets / usd_assets` | N/A | **−63,947.15 / 92,339.62** |
+
+推论（切盘注意点，新增）：
+1. **REAL 是 HKD 计价且币种余额一正一负**（HKD 负、USD 正）→ 净值/购买力必须走
+   `broker_adapter.get_account_info` 的 HKD→USD 换算路径（`usd_assets/hkd_assets` 优先、
+   固定 7.80 兜底）。`broker_adapter.py:885` 那句"美股账户 HKD 分支本就不可达"**已过时**。
+2. **实盘账户已有在手持仓**（HKD 576,300）→ 切实盘第一天的"总敞口/单笔名义帽"必须把既有
+   持仓计入，否则 30% 名义帽会被错误地当成"空闲额度"。
+3. `acctradinginfo_query` 的 `max_cash_buy`（SIM 496 / REAL 375）**口径未定谳**（与
+   `power` 相差两个数量级，疑为按 price=200 手数或分币种口径）→ 接硬门前必须先定口径，
+   禁止拿它直接当"能买多少股"。

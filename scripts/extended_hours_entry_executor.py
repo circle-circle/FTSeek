@@ -129,6 +129,25 @@ SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: �
 #   `EXT_ENTRY_ALLOW_SIM=true` 且 load_dotenv 先于本行执行 ⇒ 观察期照常开仓;
 #   回滚 = 把本行默认改回 "true"。
 ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"
+
+
+# ── 交易模式/账户: 单一真相源 (2026-09-20 切实盘开关清单化) ──────────────────
+# 旧实现自带一套 legacy 判定 (`FUTU_TRD_ENV` + 常量 `TrdEnv.SIMULATE` + 裸读
+# `SIMULATE_ACCOUNT_ID`), 与主链路 (di_container / AUTO_TRADE_ACCOUNT) 不同源 →
+# 切实盘时会错配。现全部经 `TradingMode` 解析; ETH 真钱另需 `EXT_REAL_AUTHORIZED=true`
+# (ETH 链从未在实盘跑过)。回滚 = 删本块并还原 FUTU_TRD_ENV 读取。
+def _mode():
+    from app.core.trading_mode import TradingMode
+
+    return TradingMode()
+
+
+def _ext_real_authorized() -> bool:
+    from app.core.trading_mode import ext_channel_real_authorized
+
+    return ext_channel_real_authorized()
+
+
 AUDIT = ROOT / "data" / "extended_hours_entry_executions.jsonl"
 # 价格闸拦下的候选打点 (按**运行**聚合一行: n + 明细). 用户 2026-09-17 令: 回答
 #   "$5 闸到底挡掉了多少噪声票". 逐候选整行会膨胀(同票每 5 分钟重复出现) ⇒ 按运行聚合.
@@ -280,7 +299,8 @@ def _probe_mode():
     """探针/测试运行的**静默开关** (四条推送出口共用的唯一判据)。
 
     2026-09-18 (§23.5): 用户看到的"连续推送虚拟标的"里有一类来自**人工/探针以 REAL 环境跑生产脚本**
-    —— 生产 cron 根本没设 `FUTU_TRD_ENV`（默认 SIMULATE）、审计里也没有占位行。
+    —— 生产 cron 从未设过该 SIM/REAL 环境键（历史键名 FUTU_TRD_ENV，现已废弃并由
+    `TradingMode` 取代）、审计里也没有占位行。
     探针验证 REAL 分支时不该把生产 IM 当输出通道：置 `FUTSEEK_PROBE=1` 即静默（并留可见日志）。
     生产环境 unset ⇒ 行为完全不变（告警照常）。
 
@@ -1288,7 +1308,7 @@ def collect(session, dry=False):
     # Futu SIM 已实测拒绝 STOP 与 STOP_LIMIT（DEB-20260805 §5.1）。
     # 2026-09-17 用户裁方案1: 接受规则引擎兜底止损, ALLOW_SIM_ENTRY 开关恢复下单.
     #   券商 STOP 不可用 → 止损改由 ①开盘规则引擎读 initial_sl ②盘前 tighten 由 exit executor 平仓.
-    if not dry and not ALLOW_SIM_ENTRY and os.getenv("FUTU_TRD_ENV", "SIMULATE").upper() == "SIMULATE":
+    if not dry and not ALLOW_SIM_ENTRY and _mode().is_simulate:
         return [{"ok": False, "skip": "simulate_stop_unsupported_fail_closed"}]
 
     if dry:
@@ -1423,8 +1443,9 @@ def collect(session, dry=False):
             qctx.close()
         return results or [{"skip": "no_signal_passed_all_gates"}]
 
-    # REAL 通道当前未被本脚本授权；避免误用 SIM account 下 REAL 单。
-    if os.getenv("FUTU_TRD_ENV", "SIMULATE").upper() != "SIMULATE":
+    # ETH 真钱下单需双条件: TradingMode=live (AUTO_TRADE_ACCOUNT+ALLOW_REAL_TRADING)
+    #   **且** EXT_REAL_AUTHORIZED=true (ETH 链从未实盘跑过, 独立闸)。
+    if _mode().is_live and not _ext_real_authorized():
         return [{"ok": False, "skip": "real_not_authorized"}]
 
     today = _today_et()
@@ -1435,12 +1456,11 @@ def collect(session, dry=False):
         state.setdefault("version", 2)
         state.setdefault("attempts", {})
         state.setdefault("opened_today", {})
-        from futu import TrdEnv
         reconciliation_tctx = _open_trade_context()
         try:
             active_orders, reconcile_conflicts = _reconcile_broker_entry_orders(
-                reconciliation_tctx, TrdEnv.SIMULATE,
-                int(os.getenv("SIMULATE_ACCOUNT_ID", "19930823")), session,
+                reconciliation_tctx, _mode().futu_trd_env(),
+                _mode().account_id(), session,
                 state=state, today=today,
             )
         except Exception as exc:
@@ -1749,20 +1769,18 @@ def _execute(
 ):
     """SIM 真下单: 买入→等成交→写 open_positions(含 initial_sl 规则引擎兜底). 用户裁方案1.
     SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor."""
-    trd_env = os.getenv("FUTU_TRD_ENV", "SIMULATE")
-    acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "19930823"))
+    acc_id = _mode().account_id()
     # 2026-09-18: 测试占位标的 (TEST/US.TEST/*.TEST) 在**源头**挡掉 —— 它们只可能来自单测 artifact 或
     #   券商账户里的报废测试单 (如 US.TEST order 8185070), 不是真候选股; 且不推告警(见下)。
     if is_test_symbol(symbol):
         return {"ok": False, "skip": "test_symbol"}
-    if trd_env.upper() != "SIMULATE":
-        # 2026-09-18 用户令「不要 sim 和 real 有混淆」: 本脚本**只授权 SIM**; env 非 SIMULATE 属
-        #   **配置态**问题, 不是"某标的下单被拦" ⇒ 不再逐标的发文案 (原先每标的每轮一条, 且把
-        #   配置问题说成标的拦截 = 语义混淆)。改为**环境级**一次提示, 一日一次。
+    if _mode().is_live and not _ext_real_authorized():
+        # 2026-09-18 用户令「不要 sim 和 real 有混淆」: 本脚本的 REAL 通道默认不授权;
+        #   ld 属**配置态**问题 ⇒ **_环境级**一次提示, 一日一次 (不逐标的刷屏)。
         _push_once(
             "real_env_misconfigured",
-            "⚠️ 延长时段开仓链路检测到 FUTU_TRD_ENV≠SIMULATE（本脚本仅授权 SIM，已全部拦截；"
-            "若为测试/REAL 验证跑，请显式设 FUTU_TRD_ENV=SIMULATE）",
+            "⚠️ 延长时段开仓链路: TradingMode=实盘但 EXT_REAL_AUTHORIZED≠true"
+            "（ETH 链路实盘闸未放行，已全部拦截；如需放行请显式设 EXT_REAL_AUTHORIZED=true）",
         )
         return {"ok": False, "skip": "real_not_authorized"}
 
@@ -1774,7 +1792,7 @@ def _execute(
     from futu import TrdSide, OrderType, TrdEnv, TimeInForce, Session, RET_OK
     tctx = _open_trade_context()
     try:
-        env = TrdEnv.SIMULATE
+        env = _mode().futu_trd_env()
         # 显式传当日: 下单前安全闸只对**当日**已成交无主的单做建仓回补/冲突检测,
         #   跨日旧单不回补(entry_time 会是错的) — 与 collect() 同一口径。
         active_orders, reconcile_conflicts = _reconcile_broker_entry_orders(

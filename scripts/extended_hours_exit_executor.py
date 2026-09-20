@@ -179,11 +179,16 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
     if _already_executed(symbol, today):  # P0-1: 跨进程防重 (读审计文件)
         return {"ok": False, "skip": "already_executed_today"}
 
-    # 环境守卫: 仅模拟
-    trd_env = os.getenv("FUTU_TRD_ENV", "SIMULATE")
-    acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "19930823"))
-    if trd_env.upper() != "SIMULATE":
-        _push(f"🚫 {_stage(session)}锁盈拦截: {symbol} 仅允许 SIMULATE")
+    # 交易模式/账户: 单一真相源 (2026-09-20 切实盘开关清单化) —— 与主链路
+    # (di_container / AUTO_TRADE_ACCOUNT + ALLOW_REAL_TRADING) 同源; ETH 真钱另需
+    # EXT_REAL_AUTHORIZED=true (ETH 链从未实盘跑过)。旧实现在此裸读 FUTU_TRD_ENV
+    # + SIMULATE_ACCOUNT_ID, 与主链路不同源 → 切实盘会错配; 且两变量除本守卫外无他用。
+    from app.core.trading_mode import TradingMode, ext_channel_real_authorized
+
+    _tm = TradingMode()
+    target_env = _tm.target_env()
+    if _tm.is_live and not ext_channel_real_authorized():
+        _push(f"🚫 {_stage(session)}锁盈拦截: {symbol} ETH 实盘闸未放行 (EXT_REAL_AUTHORIZED≠true)")
         return {"ok": False, "skip": "real_not_authorized"}
 
     if dry:
@@ -234,7 +239,7 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
         timeout = float(os.getenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20"))
         order_session = "RTH" if session == "next_open" else "ETH"
         close_result = dual.close_position(
-            symbol, float(qty), str(direction).upper(), target_env="sim",
+            symbol, float(qty), str(direction).upper(), target_env=target_env,
             limit_price=float(price), limit_timeout_s=timeout, session=order_session,
             exit_owner=owner, exit_decision=decision,
         )

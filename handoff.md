@@ -1,5 +1,32 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 00:10 增量: 切实盘开关清单化 (用户令「同意」) — SIM 行为零变化
+
+> 承接上一条切实盘审计的 P0-1。**代码改动**: `app/core/trading_mode.py` 新增
+> `target_env()` / `account_id()` / `futu_trd_env()` / `ext_channel_real_authorized()`;
+> ETH 链 5+2 处 legacy 判定 (`FUTU_TRD_ENV` / 常量 `TrdEnv.SIMULATE` / 裸读
+> `SIMULATE_ACCOUNT_ID` / `target_env="sim"`) 全部收敛到 SSOT; 新增
+> `scripts/live_switch_audit.py` (**可执行验收**: `--assert-ready` 现 EXIT 0, BLOCKER 0 /
+> LEGACY 0 / SSOT 点 225) 与 `scripts/real_order_probe.py` (实盘最小额探针; 只读档
+> `--probe buying-power` 可跑, 下单档需 live + `--confirm-real-order` 一致 + qty=1 +
+> 止损距现价≥15% 且立即撤单)。
+>
+> 验收: `ext_entry/ext_exit --dry` 均返回 `outside_trading_window` (周日, 零下单);
+> `test_ops_scripts_sync` + `test_control_loop_ledger` + `test_extended_hours_order_execution`
+> **51 passed**。
+>
+> **只读实测 (新增切盘注意点)**: REAL 账户(281756480166019917) **currency=HKD**,
+> total_assets 660,457.63 / cash 84,157.63 / **market_val 576,300 (已有在手持仓)** /
+> power 494,450.72 / hkd_assets **−63,947.15** vs usd_assets 92,339.62 →
+> ①净值/购买力必须走 `broker_adapter.get_account_info` 的 HKD→USD 换算
+> (其 §885 "美股账户 HKD 分支不可达" 注释已过时); ②切盘首日 30% 名义帽必须把既有持仓计入;
+> ③`acctradinginfo_query.max_cash_buy` (SIM 496 / REAL 375) 与 `power` 差两个数量级,
+> **口径未定谳** → 接硬门前先定口径, 禁当"能买多少股"。
+>
+> 未做(仍在清单): REAL 专属下单前硬门 (购买力/可借量)、STOP 单实盘实测、ETH 退出延迟建模。
+> 下一动作建议: 走 `scripts/real_order_probe.py --probe buying-power` 之后, 在**下一交易日**
+> 用 `--probe stop-order` 补 STOP 语义实测 (需先切 `.env.us` 到 real 并明确授权)。
+
 ## 2026-09-20 23:00 增量: 切实盘 执行链路/滑点 审计 + SIM↔REAL 差异清单 (只读取证, 零行为变更)
 
 > 用户问「按未来切实盘要求, 链路流程和滑点如何优化, 实盘与 SIM 差距在哪」。产出
