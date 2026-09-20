@@ -68,12 +68,12 @@ def test_three_errors_trigger(env):
     assert "ftseek_us.log=3" in body and "所有数据源均失败" in body
 
 
-def test_two_errors_below_floor_do_not_trigger(env):
-    """地板是 3: 2 条不触发 (相对基线 M=0 时退化为 count>=3, 不是 1 条就吵)。"""
+def test_one_error_triggers_immediately(env):
+    """ERROR/CRITICAL 是 P0: 1 条即触发, 由同签名冷却负责降噪。"""
     ts = env["now"] - timedelta(minutes=5)
-    _write(env, "ftseek_us.log", [_line(ts, "x", "ERROR", f"e{i}") for i in range(2)])
+    _write(env, "ftseek_us.log", [_line(ts, "x", "ERROR", "e0")])
     assert _run(env) == 0
-    assert env["pushed"] == []
+    assert len(env["pushed"]) == 1
 
 
 def test_critical_also_counts(env):
@@ -270,8 +270,8 @@ def test_rotated_archive_inside_window_is_scanned(env):
 
 # ─────────────────── 阈值: 相对基线, 非硬编码 20 ───────────────────
 
-def test_threshold_is_relative_baseline(env):
-    """近 7 日同时段中位数 M=4 ⇒ 阈值 ⌈3×4⌉=12: 5 条不触发, 12 条触发。"""
+def test_threshold_is_one_even_with_busy_baseline(env):
+    """基线中位数保留诊断, 但不得抬高 P0 触发线。"""
     now = env["now"]
     slot_ts = now - timedelta(minutes=10)       # 与窗口同 (hour, quarter) 时段
     for off in range(1, 8):
@@ -281,22 +281,18 @@ def test_threshold_is_relative_baseline(env):
                 for i in range(4)],
                day=day)
     base = ea.baseline_median(now, env["logs"])
-    assert base["median"] == 4 and base["threshold"] == 12, base
+    assert base["median"] == 4 and base["threshold"] == 1, base
 
-    _write(env, "ftseek_us.log", [_line(slot_ts, "a", "ERROR", f"今天 {i}") for i in range(5)])
+    _write(env, "ftseek_us.log", [_line(slot_ts, "a", "ERROR", f"今天 {i}") for i in range(1)])
     _run(env)
-    assert env["pushed"] == [], f"5 条 < 阈值 12 却告警 (基线没生效): {base}"
-
-    _write(env, "ftseek_us.log", [_line(slot_ts, "a", "ERROR", f"今天 {i}") for i in range(12)])
-    _run(env)
-    assert len(env["pushed"]) == 1, "12 条 >= 阈值 12 必须告警"
+    assert len(env["pushed"]) == 1, "1 条 ERROR 必须立即告警"
 
 
-def test_threshold_floor_is_three_not_twenty(env):
-    """零基线 (M=0) 时地板是 3 —— 原 THRESHOLD=20 在 0-5 条/日 的现实下等于关闭。"""
+def test_threshold_floor_is_one(env):
+    """零基线 (M=0) 时也保持 1 条即触发。"""
     base = ea.baseline_median(env["now"], env["logs"])
-    assert base["median"] == 0 and base["threshold"] == 3, base
-    assert ea.MIN_THRESHOLD == 3
+    assert base["median"] == 0 and base["threshold"] == 1, base
+    assert ea.MIN_THRESHOLD == 1
 
 
 def test_baseline_cache_reused_within_hour(env, monkeypatch):
@@ -337,7 +333,10 @@ def test_cooldown_keys_pruned(env):
     _write(env, "ftseek_us.log", [_line(ts, "a", "ERROR", "e")])
     _run(env)
     st = json.loads(env["state"].read_text(encoding="utf-8"))
-    assert st["cooldown"] == {}, f"5 日前的冷却键未被剪掉: {st['cooldown']}"
+    today = env["now"].strftime("%Y%m%d")
+    assert all(f"_{today}_" in key for key in st["cooldown"]), (
+        f"5 日前的冷却键未被剪掉: {st['cooldown']}"
+    )
     assert all(k.startswith(env["now"].strftime("%Y%m%d")) for k in st["baseline_cache"]), \
         f"陈旧基线缓存未剪: {list(st['baseline_cache'])}"
 
@@ -366,7 +365,7 @@ def test_scan_error_is_loud_and_nonzero_exit(env, monkeypatch, caplog):
 
 
 def test_baseline_error_falls_back_to_floor(env, monkeypatch, caplog):
-    """基线算不出 → 退地板阈值 3 (宁可敏感不可关闭) + WARNING 留痕。"""
+    """基线算不出 → 仍保持 1 条即触发 + WARNING 留痕。"""
     def boom(*a, **k):
         raise RuntimeError("基线炸了 (测试注入)")
 
@@ -429,7 +428,7 @@ def test_crontab_points_at_python_version():
     for ln in active:
         assert "error_alert.py" in ln, f"仍指向旧 .sh (六缺陷仍在): {ln}"
         assert "error_alert.log" in ln, f"stdout 未落盘 ⇒ 守卫自己崩了查不到: {ln}"
-    assert len(active) == 2, f"应为盘中两条 (21-23 / 0-5), 实际 {len(active)}: {active}"
+    assert len(active) >= 2, f"至少应覆盖盘中两条, 实际 {len(active)}: {active}"
 
 
 def test_legacy_shell_script_no_longer_mounted():

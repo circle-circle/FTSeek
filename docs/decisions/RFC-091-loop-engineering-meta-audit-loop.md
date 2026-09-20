@@ -1,6 +1,6 @@
 # RFC-091: Loop Engineering 落地 — 元环 findings 归宿环 (试点第 1 个 loop, L1 只读)
 
-> **状态**: 已落地入库 (契约钉 11 例绿; 载体四路实测; 台账已入账) · **Gate 6 观察窗待开** (首个真实调度窗 = 2026-09-22 07:20 CST)
+> **状态**: v2 裁决闭环已落地入库 (契约钉 21 例绿; 相关守卫 62 例绿; 台账已入账) · **Gate 6 观察窗待开** (首个真实调度窗 = 2026-09-22 07:20 CST)
 > **日期**: 2026-09-20
 > **作者**: Hermes
 > **审批人**: 项目所有者 (用户令「按建议执行」= 全权委托: 先起候选 B 纯只读审计环, 跑稳后再上候选 A; 编号顺延 — `RFC-089` 已被 ADF 周检加严占用, 故本设计落 RFC-091)
@@ -203,3 +203,66 @@ Job fcc7301f2e47                  20 7 * * 2-6  (周二~周六 CST)
 2. `detector:*` finding 的关闭条件过窄 (只认周期源) ⇒ 按需源的该 finding 永久 OPEN = **一个永不收敛的 finding**, 正是本环要防的病。
 
 契约钉从 11 例增至 **14 例**。首轮读数随之更新: 未决 **10** (4 死门 + 1 watchdog + 5 invariant), `LOOP_DONE=True` (config_census 两项按按需源语义关闭并留证据)。
+
+---
+
+## 13. v2 裁决闭环 (2026-09-20 用户授权试跑)
+
+### 13.1 语义修正
+
+用户裁决: `LOOP_DONE` 的目标语义是 **还有没有未决问题**。因此 v1 的
+“OPEN 全有 owner+decide_by 即 TRUE” 被判定为语义错误。v2 停止条件:
+
+```text
+无 OPEN / UNVERIFIABLE / DECIDED / ACTION_PENDING / VERIFY_PENDING / REVIEW_DUE / BACKLOG
+∧ 探测器健康
+∧ CLOSED 全带证据
+```
+
+`CONTROLLED` 未到期不算未决; 到期后没有验证结果则转 `REVIEW_DUE`; 验证失败 reopen 原项并升级。
+
+### 13.2 无幻觉零问题
+
+`{}` 不再等价于零问题。源产物必须携带 expected 字段和内部生成时间;
+`intraday_health_latest.json` 必须显式携带 `schema_version` / `generated_at` /
+`no_findings` / `findings` / `counts`。缺字段或字段类型错一律产生
+`detector:*` finding, 旧 finding 转 `UNVERIFIABLE`。
+
+### 13.3 盘中异常收敛
+
+新增 `scripts/intraday_health_snapshot.py`: 扫描近 24 小时活跃与当日轮转日志,
+只识别字面量 `] ERROR:` / `] CRITICAL:`; 每条聚合为 normalized signature,
+输出 `data/intraday_health_latest.json`。任一 ERROR/CRITICAL 即 P0,
+`pnl_path=capital_preservation`。现有 `error_alert` 负责实时推送, 且阈值已改为
+**1 条 ERROR/CRITICAL 即触发** (同签名小时级冷却降噪); 本环负责次日收敛、归档和裁决,
+不替代实时告警。
+
+### 13.4 裁决与关闭
+
+新增 append-only `data/loops/meta_audit/decisions.jsonl` 与
+`scripts/meta_audit_decide.py`。支持:
+
+```text
+FIX_NOW / ACTION_DONE / VERIFY_PASS / VERIFY_FAIL
+ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
+```
+
+测试通过只能进入 `VERIFY_PENDING`; `CLOSED` 必须源侧回读不再报该项,
+或显式 `RETIRE / OUT_OF_SCOPE / INVALID_SOURCE`。bundle 默认 `closure_mode=ALL`,
+主问题关闭前所有 linked findings 必须已关闭或有显式终态。
+
+### 13.5 注意力与维护批
+
+- WIP 上限 3; 超限时新 P2/P3 进入 `BACKLOG`, 不丢弃, 且 `LOOP_DONE=False`。
+- SLA: P0 当日 / P1 24h+3d / P2 7d+14d / P3 30d。
+- 摘要显示 P0-P3、`pnl_path`、WIP、BACKLOG 和最紧急项。
+- 盘中 ERROR/CRITICAL、风险、冻结破坏、执行盲区立即升级。
+
+### 13.6 实测
+
+- `pytest -q tests/test_meta_audit_loop.py tests/test_error_alert.py tests/test_control_loop_ledger.py tests/test_ops_scripts_sync.py`
+  → **62 passed**。
+- 生产快照: `intraday_health_latest.json` `no_findings=true`,
+  近 24h ERROR/CRITICAL = 0, 扫描 267 个日志文件。
+- v2 首轮状态: `LOOP_DONE=FALSE`, 未决 10 = P0 2 / P1 7 / P2 1,
+  WIP 0/3, BACKLOG 0。

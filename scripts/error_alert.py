@@ -24,9 +24,8 @@
     intraday_heartbeat.py:244 同口径, 单一真源) —— 不做行内任意位置子串匹配。
   · 时间窗 = `line[:16]` 字符串比较 (同 intraday_heartbeat); 无时间戳行**显式跳过并计数**
     (多行 record 的续行属此类, 计数进诊断而不进判据)。
-  · 阈值 = **相对基线**: 近 7 日同一 15 分钟时段 (hour, minute//15) 的 ERROR+CRITICAL 计数
-    中位数 M, 触发 `count >= max(3, ⌈3M⌉)`; M=0 时退化为 `count >= 3`。硬编码 20 在 0-5/日
-    的现实下等于关闭。
+  · 阈值 = **1 条即触发** (2026-09-20 用户裁: ERROR/CRITICAL 均为 P0)。近 7 日同时段
+    中位数保留为诊断, 不抬高触发线; 同签名小时级冷却负责降噪。
   · 覆盖面 = logs/ 下**全部**活跃 `.log` + 当日轮转档 (含 logs/invariant_check.log) ——
     修掉告警链断裂, 且新增日志文件自动纳管, 不需要登记 (登记表 = 下一次断裂)。
     唯一排除: 本脚本自己的 logs/error_alert.log (自扫会形成反馈环)。
@@ -75,8 +74,8 @@ SELF_LOG_STEM = "error_alert.log"
 
 WINDOW_MIN = 15
 BASELINE_DAYS = 7          # 近 7 日同时段中位数
-MIN_THRESHOLD = 3          # M=0 时的地板 (DEB §4.2: 硬编码 20 等于关闭)
-THRESHOLD_MULT = 3         # count >= ⌈3M⌉
+MIN_THRESHOLD = 1          # ERROR/CRITICAL 是 P0, 1 条即触发
+THRESHOLD_MULT = 0         # 基线只做诊断, 不抬高 P0 触发线
 LEVEL_MARKERS = ("] ERROR:", "] CRITICAL:")
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 _TAIL_BYTES = 2_000_000    # 当前档只读尾部 2MB (15min 窗实测 ~12KB; 轮转档全读)
@@ -265,7 +264,7 @@ def slot_of(now: datetime, window_min: int = WINDOW_MIN) -> tuple:
 
 def baseline_median(now: datetime, logs_dir: Path = LOG_DIR,
                     window_min: int = WINDOW_MIN) -> dict:
-    """近 7 日同时段中位数 M + 阈值 T = max(MIN_THRESHOLD, ⌈THRESHOLD_MULT × M⌉)。
+    """近 7 日同时段中位数 M; P0 判定阈值恒为 1。
 
     样本 = 有数据覆盖的那几天 (covered) 在同一 (hour, quarter) 时段的计数, 缺桶记 0。
     只取今天之前的日期 (今天的数据正是被判定对象, 混进基线会自我抬阈值)。
@@ -277,7 +276,7 @@ def baseline_median(now: datetime, logs_dir: Path = LOG_DIR,
     days = sorted(d for d in got["covered"] if d < today)[-BASELINE_DAYS:]
     samples = [got["slots"].get((d, hour, quarter), 0) for d in days]
     median = statistics.median(samples) if samples else 0.0
-    threshold = max(MIN_THRESHOLD, int(math.ceil(THRESHOLD_MULT * median)))
+    threshold = MIN_THRESHOLD
     return {"median": median, "threshold": threshold, "samples": samples,
             "days": days, "slot": [hour, quarter], "files": len(srcs),
             "total_errors": got["count"]}
@@ -412,7 +411,7 @@ def run(now: datetime = None, window_min: int = WINDOW_MIN, state_path: Path = S
         try:
             base = baseline_median(now, logs_dir, window_min)
         except Exception as e:
-            # 基线算不出来 → 退到地板阈值 3 (宁可敏感, 不可关闭); 失败必须留痕
+            # 基线算不出来 → 仍保持 1 条即触发; 失败必须留痕
             logger.warning("[error_alert] 基线计算失败 (%s) → 用地板阈值 %d",
                            e, MIN_THRESHOLD)
             base = {"median": -1, "threshold": MIN_THRESHOLD, "days": [],
