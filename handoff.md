@@ -1,5 +1,28 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-20 23:00 增量: 切实盘 执行链路/滑点 审计 + SIM↔REAL 差异清单 (只读取证, 零行为变更)
+
+> 用户问「按未来切实盘要求, 链路流程和滑点如何优化, 实盘与 SIM 差距在哪」。产出
+> `docs/analysis/2026-09-20-live-vs-sim-execution-readiness.md` (10 项差异 + P0/P1 清单)。
+>
+> 硬事实: ①**ETH 链有"仅模拟"硬闸** —— `extended_hours_exit_executor.py:183-189`
+> 非 SIMULATE 即 `real_not_authorized` 跳过, `target_env="sim"` 硬编码, `acc_id` 取自
+> `SIMULATE_ACCOUNT_ID`; `extended_hours_entry_executor.py:1778` `env = TrdEnv.SIMULATE`
+> 为**常量**(非配置)。②**券商 STOP 单 SIM 不支持** → `broker_stop_guard` 在 SIM 是 no-op,
+> 止损全靠软件轮询: RTH `playbook_exit_fast_loop` 20s(端到端 ~25s), ETH 1 分钟 cron +
+> `EXT_EXIT_LIMIT_TIMEOUT_S=60` 且**不转市价**(`exit_eth_partial_fill_held`, 日志 0 次触发)。
+> ③RTH 下单后**单次**订单查询不 sleep, 延迟拒单靠 position_sync 30s 兜底; EXT 实测成交确认
+> 26s/31s (原 20s 超时 → 8/15 条 ok=false 假负), 现网已改 60s。④滑点**已接线但仅告警**
+> (metadata 有 signal_price/fill_price/slippage_pct/execution_latency_ms; >0.5% 仅 warn;
+> `slippage_control.is_acceptable` 在 broker 前未用于拦截)。⑤下单价走 adapter 实时价 →
+> 降级 `data_router.get_quote` **bid/ask 中价** → 最后 last_price; 股数一律 `int()`, 库内 0 行小数股。
+> ⑥`acctradinginfo_query`(max_cash_buy) 已验证可用但 **0 处调用** → REAL 购买力硬门缺失。
+> ⑦**SIM 执行层结论不可外推**: 82% 保本出场限价未成交转市价且 SIM 下"有利 +$3,937" ——
+> 真实盘口很可能翻成成本。
+>
+> 切盘红线: 最小额度起步(1 股/单标的/单时段) + 三处回读对齐(券商订单 / ext_exit jsonl /
+> trade_records) + "确认延迟≠未成交"判据 + 超时重试前必须先查券商活动单(重复下单是头号风险)。
+
 ## 2026-09-20 22:10 增量: 多源同指标一致性抽样 (只读工具 + 定谳报告, 零行为变更)
 
 > 用户令「需要」——同意做「几十只标的跨源同指标对照抽样, 把冗余冲突从结构性存在
