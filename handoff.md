@@ -1,5 +1,33 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 01:00 增量: REAL 账户会计口径修正 (fx/净值/现金) + 切盘硬阻塞
+
+> 承接「开关清单化」。**当日只读取证**发现 REAL 账户 (HKD 计价 + 本币负腿) 的折算三处错,
+> 已修 (`app/execution/broker_adapter.py::get_account_info` 非 USD 分支):
+> ① fx 旧用 `usd_assets/total_assets` = 0.1398 (**USD 侧占比, 不是汇率**) → 改由 Futu 自洽式
+> `FX = (total_assets − 本币子账户资产)/usd_assets` 推导 = 7.8452 (与 `us_avl_withdrawal_cash ==
+> avl_withdrawal_cash/FX` 精确互证); ② 净值旧取 `usd_assets` 92,339.62 (**毛侧, 未扣本币负腿**)
+> → 改 `total_assets(本币)×fx` = **84,188.48** (旧值高估 **+9.68%**, 而净值是水位/回撤/30% 兜底帽
+> 的基准); ③ `cash` 旧无条件优先 `us_cash` = 92,339.62 → 该账户 `us_cash == usd_assets`
+> (≠ cash/fx), 真值 **10,729.55** (**8.6×** 之差) → 改为折算值与 `us_cash` 交叉校验 (≤1% 才采信),
+> 记 `_cash_source`。`buying_power` (`usd_net_cash_power` 31,513.56) 经互证正确, 保留。
+> **SIM (`currency='N/A'`) 不进该分支 → 行为逐点不变** (before/after 快照 diff 已验)。
+>
+> **口径定谳**: `acctradinginfo_query.max_cash_buy` = **股数** (given price), 非金额
+> (SIM 1987→993→496→248 / REAL 1500→750→375→187 @price 50/100/200/400 → 比值 ≈4)。
+>
+> **切盘硬阻塞 (新增, 须操作者本人处理)**: `.env.us` **未配置 `FUTU_UNLOCK_PWD_MD5`/
+> `FUTU_UNLOCK_PWD`** → `FutuBrokerAdapter.connect()` (trade_env=0) 直接拒绝 →
+> **即使打开 AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING 也连不上/下不了单** (fail-close)。
+> 凭证不得代填代传; 只读行情/账户查询不需要它。
+>
+> **敞口提醒**: 实盘已有持仓 `market_val` 576,300 HKD ≈ $73,459 = **87% 净值**。
+> `risk_base` 取 `buying_power` (已扣持仓) ✅, 但 `_notional_sanity_check` 30% 帽只看 equity,
+> 不看既有敞口 → 切盘首日总敞口可被推到 ~117% equity。**建议新增总敞口帽, X 值待用户裁** (未擅设)。
+>
+> 测试: `tests/test_accinfo_fx_conversion.py` (录下券商原始行做桩, 5 项) + 既有 8 个文件 **89 passed**。
+> 未做: 总敞口帽阈值、REAL 专属下单前硬门、STOP 单实盘语义实测 (后两者需 live 会话 + 解锁密码)。
+
 ## 2026-09-21 00:10 增量: 切实盘开关清单化 (用户令「同意」) — SIM 行为零变化
 
 > 承接上一条切实盘审计的 P0-1。**代码改动**: `app/core/trading_mode.py` 新增

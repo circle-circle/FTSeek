@@ -944,39 +944,62 @@ class FutuBrokerAdapter:
                     },
                 }
 
-                # ── 币种转换 (2026-06-15 修复): HKD → USD ──
-                # 优先使用账户内置汇率 (usd_assets/total_assets), 回退到固定 7.80
+                # ── 币种转换 (2026-06-15 建 / 2026-09-21 修正): 账户币种 → USD ──
+                # 2026-09-21 修正根因 (REAL 账户实测, currency=HKD; SIM 走不到本分支):
+                #   ① fx 不能用 usd_assets/total_assets —— 那是"USD 侧占本币总资产的比重",
+                #      不是汇率 (实测 92339.62/660473.79 = 0.1398, 真汇率 ≈0.1275)。
+                #      Futu 字段自洽式: total_assets(本币) = usd_assets × FX + hkd_assets
+                #      → FX = (total_assets − hkd_assets) / usd_assets, 本币→USD 取其倒数。
+                #      实测 7.8452, 且与 `us_avl_withdrawal_cash == avl_withdrawal_cash/FX`
+                #      (31513.55 == 247229.47/7.8452) 精确互证。
+                #   ② total_assets 不能用 usd_assets —— 那是 USD **毛**侧资产, 未扣本币负腿;
+                #      实测 92339.62 vs 净权益 660473.79/7.8452 = 84188.48, **高估 +9.68%**。
+                #      净值是风险基准 (水位/回撤/30% 名义兜底帽), 高估=帽子放大。
+                #   ③ cash 不再无条件优先 us_cash —— 本账户 us_cash == usd_assets == 92339.62,
+                #      而 cash 折算 = 10730.4 (**8.6×** 之差); SIM 下二者相等才使该分支看似正确。
+                #      现改为: 仅当 us_cash 与折算值一致 (≤1%) 才采用, 否则用折算值, 并记来源。
                 acct_currency = result["currency"]
                 if acct_currency != "USD" and acct_currency != "N/A":
-                    # 计算实际汇率: HKD total_assets / USD usd_assets
-                    _usd_assets = sf(row.get("usd_assets"))
-                    _hkd_assets = sf(row.get("total_assets"))
-                    if _usd_assets > 0 and _hkd_assets > 0:
-                        fx_rate = 1.0 / (_hkd_assets / _usd_assets)  # HKD→USD = usd/hkd
-                    else:
+                    _acct_total = sf(row.get("total_assets"))     # 本币总资产 (净值口径)
+                    _acct_same_ccy = sf(row.get("hkd_assets"))    # 同币种子账户资产 (可为负)
+                    _usd_assets = sf(row.get("usd_assets"))       # USD 子账户毛资产
+                    _usd_cash = sf(row.get("us_cash"))
+                    _usd_avl = sf(row.get("us_avl_withdrawal_cash"))
+                    _usd_power = sf(row.get("usd_net_cash_power"))
+
+                    fx_rate = 0.0
+                    _gross_base = _acct_total - _acct_same_ccy
+                    if _usd_assets > 0 and _gross_base > 0:
+                        fx_rate = _usd_assets / _gross_base      # 本币 → USD
+                    if not fx_rate or fx_rate <= 0:
                         fx_rate = self._get_fx_rate(acct_currency, "USD")
 
                     if fx_rate and fx_rate > 0:
                         result["_fx_rate"] = fx_rate
                         result["_original_currency"] = acct_currency
+                        result["_usd_side_assets"] = _usd_assets   # 审计: 券商 USD 毛侧
+                        result["_usd_cash_field"] = _usd_cash      # 审计: 券商 us_cash 原值
 
-                        # 核心字段: 优先使用 USD 子账户字段 (更精准)
-                        _usd_cash = sf(row.get("us_cash"))
-                        _usd_avl = sf(row.get("us_avl_withdrawal_cash"))
-                        _usd_power = sf(row.get("usd_net_cash_power"))
+                        # 净值: 本币总资产折算 (含本币负腿) —— 不用 usd_assets
+                        result["total_assets"] = round(_acct_total * fx_rate, 2)
 
-                        if _usd_assets > 0:
-                            result["total_assets"] = round(_usd_assets, 2)
+                        # 现金: 折算值 vs 券商 us_cash 交叉校验 (一致才采信券商字段)
+                        _cash_fx = round(result["cash"] * fx_rate, 2)
+                        if _usd_cash > 0 and abs(_usd_cash - _cash_fx) <= max(1.0, abs(_cash_fx) * 0.01):
+                            result["cash"] = round(_usd_cash, 2)
+                            result["_cash_source"] = "us_cash(与折算值一致)"
                         else:
-                            result["total_assets"] = round(result["total_assets"] * fx_rate, 2)
+                            result["cash"] = _cash_fx
+                            result["_cash_source"] = f"cash×{fx_rate:.4f}(us_cash 不一致, 弃用)"
 
-                        result["cash"] = round(_usd_cash * 1 if _usd_cash > 0 else result["cash"] * fx_rate, 2)
                         result["avl_withdrawal_cash"] = round(_usd_avl if _usd_avl > 0 else result["avl_withdrawal_cash"] * fx_rate, 2)
 
                         if _usd_power > 0:
                             result["buying_power"] = round(_usd_power, 2)
+                            result["_buying_power_source"] = "usd_net_cash_power"
                         else:
                             result["buying_power"] = round(result["buying_power"] * fx_rate, 2)
+                            result["_buying_power_source"] = f"power×{fx_rate:.4f}"
 
                         # 其余字段按比例折算
                         for key in ["market_val", "frozen_cash",
@@ -988,6 +1011,8 @@ class FutuBrokerAdapter:
                         logger.info(
                             f"[富途] 币种转换 {acct_currency}→USD (rate={fx_rate:.4f}): "
                             f"total_assets=${result['total_assets']:,.0f} "
+                            f"cash=${result['cash']:,.0f} "
+                            f"market_val=${result['market_val']:,.0f} "
                             f"buying_power=${result['buying_power']:,.0f}"
                         )
 

@@ -146,6 +146,65 @@
    固定 7.80 兜底）。`broker_adapter.py:885` 那句"美股账户 HKD 分支本就不可达"**已过时**。
 2. **实盘账户已有在手持仓**（HKD 576,300）→ 切实盘第一天的"总敞口/单笔名义帽"必须把既有
    持仓计入，否则 30% 名义帽会被错误地当成"空闲额度"。
-3. `acctradinginfo_query` 的 `max_cash_buy`（SIM 496 / REAL 375）**口径未定谳**（与
-   `power` 相差两个数量级，疑为按 price=200 手数或分币种口径）→ 接硬门前必须先定口径，
-   禁止拿它直接当"能买多少股"。
+3. `acctradinginfo_query` 的 `max_cash_buy` —— **已定谳，见 §7.1**。
+
+## §7 REAL 账户会计口径修正 + 切盘硬阻塞（2026-09-21 同日落地）
+
+### 7.1 定谳：`acctradinginfo_query.max_cash_buy` 的单位是**股数**（given price）
+
+同账户同标的改 `price` 观察缩放：SIM 1987→993→496→248（price 50/100/200/400，比值 4.01）、
+REAL 1500→750→375→187（比值 4.00）→ **股数**（金额假设下应不变）。
+故它可作"该价位最多能买几股"，**不是**"可用金额"，接硬门时勿混用。
+
+### 7.2 修正：非 USD 账户的 fx / 净值 / 现金口径（旧实现三处错）
+
+REAL 账户是 **HKD 计价且带本币负腿**（`hkd_assets = −63,947.15`），旧实现系统性偏差：
+
+| 字段 | 旧实现 | 实测真值 | 偏差 |
+| --- | --- | --- | --- |
+| `_fx_rate` | `usd_assets/total_assets` = 0.1398（**USD 侧占比，不是汇率**） | 0.12747（隐含 7.8452 HKD/USD） | +9.68% |
+| `total_assets`（净值=风险基准） | 取 `usd_assets` = 92,339.62（USD **毛**侧，未扣本币负腿） | `660,473.79 × fx` = **84,188.48** | **+9.68%** |
+| `cash` | 优先 `us_cash` = 92,339.62 | `84,173.79 × fx` = **10,729.55** | **+8.6×** |
+| `market_val` | 576,300 × 0.1398 = 80,564 | **73,459.12** | +9.68% |
+| `buying_power` | `usd_net_cash_power` = 31,513.56 | 同左（与 `avl_withdrawal_cash/fx` 精确互证） | 0（保留） |
+
+推导依据（两条独立互证，非猜测）：
+1. Futu 字段自洽式 `total_assets(本币) = usd_assets × FX + hkd_assets` →
+   FX = (660,473.79 + 63,947.15)/92,339.62 = **7.8452**（回代误差 0.00）；
+2. `us_avl_withdrawal_cash`(31,513.55) == `avl_withdrawal_cash`(247,229.47)/7.8452 = 31,513.6 ✅
+   → 证明 `us_*` 本义是"对应字段的 USD 折算"，而本账户 `us_cash` 却等于 `usd_assets`
+   （≠ `cash/fx`）→ **`us_cash` 在此账户下语义不可信**（SIM 下二者恰好相等，使旧分支看似正确）。
+
+**为什么必须修**：净值是水位/回撤/`_notional_sanity_check`（30% equity 兜底帽）的基准，高估 9.68%
+= 帽子放大 9.68%；`cash` 高估 8.6× 会让"现金 < 5% 初始资金"的告警/锁定阈值失真。
+
+**改动**：`app/execution/broker_adapter.py::get_account_info` 非 USD 分支 —— fx 改由上述自洽式推导
+（退化到 `_get_fx_rate` 固定值）；净值改 `total_assets(本币) × fx`；`cash` 改为"折算值 vs `us_cash`
+交叉校验（≤1% 才采信券商字段）"，并记 `_cash_source`；新增审计键 `_usd_side_assets` /
+`_usd_cash_field` / `_buying_power_source`。
+**SIM（`currency='N/A'`）不进该分支 → 行为逐点不变**（`accinfo_before/after.json` 快照 diff 已验）。
+**回归**：新增 `tests/test_accinfo_fx_conversion.py`（录下券商原始行做桩，5 项断言锁死口径）；
+连同 `test_extended_hours_order_execution` / `test_playbook_position_sizing` / `test_daily_loss_circuit`
+等 **89 passed**。
+
+### 7.3 切盘硬阻塞（新增，必须由操作者处理）
+
+`FUTU_UNLOCK_PWD_MD5`（或 `FUTU_UNLOCK_PWD`）**当前未配置** → `FutuBrokerAdapter.connect()`
+（`trade_env=0`）直接拒绝连接：
+
+```
+[富途·实盘] ❌ 解锁密码未设置！无法解锁真实交易账户，下单将被拒绝。
+```
+
+含义：**即使把 `AUTO_TRADE_ACCOUNT=real` + `ALLOW_REAL_TRADING=true` 全打开，实盘链路依然连不上、
+下不了单**（fail-close —— 安全，但"切了也没用"）。凭证须由操作者本人写入 `.env.us`（不得代填/代传），
+并计入切盘开关清单。只读行情/账户查询不需要它（本批取证即如此完成）。
+
+### 7.4 既有持仓与敞口（切盘注意）
+
+- 实盘账户**已有在手持仓**：`market_val` = 576,300 HKD ≈ **$73,459 = 87% 净值**。
+- 仓位基准 `risk_base` 取 `buying_power`（= `usd_net_cash_power` $31,513，已扣持仓占用）→ 这点是对的；
+  但 `_notional_sanity_check` 的 30% 帽只看 equity，**不看既有敞口**。
+- ⇒ 切盘首日沿用 30% 单笔帽，理论上可把总敞口推到 equity 的 ~117%。**建议**新增"总敞口帽
+  =（既有 `market_val` + 新笔名义）≤ equity × X%"，X 由用户定（候选：100% 保守 / 150% 允许融资）。
+  **未擅自设定**——这是风控数字，须用户裁决后预注册再落地。
