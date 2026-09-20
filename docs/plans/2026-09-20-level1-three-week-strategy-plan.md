@@ -899,3 +899,10 @@ PY
 **R-16（小注记，不阻塞）**：① push 无 flock——state 文件守卫 + `sync=True` 绕过 hub 去重，cron 每日单实例风险低，P5 建议对齐 review_bundle 的 flock+push.json 模式；② `from scripts.fee_gate_shadow import _arm_stats` 跨脚本引用私有函数（签名变更会双爆，建议转正为公共 API 或内联）；③ 攒样期每日晨推为 §19.2 明示设计（n 每日变⇒每日推），用户应有「每天一条 T3 通知」的预期，若嫌噪可把非 URGENT 触发从「n 变」收紧为「n 跨过 min_n 或周级聚合」。
 
 **核查副产物说明**：本轮复跑覆盖/新增了 `data/reviews/` 下 9/18 三产物与 `coverage_2026-09-20.json`（均为可再生日常产物，未推送、未写 vault）；bundle hash 跨世界态不稳的发现与 P5 golden 约束记录于 DEB §29.2 N-9。
+
+### 19.5 R-16 后续执行（2026-09-20，用户令「继续」）
+
+- **R-16① 已清（flock 守卫）**：推送路径加 `flock` + **锁内重读 state**（对齐 review_bundle `_push_once` 模式），`LOCK_PATH=data/fee_gate_shadow_push.lock`；新增竞态测试 `test_push_guard_rereads_state_under_lock`（模拟锁外陈旧读取→锁内重读挡住双推）。插曲：旧 push 测试因默认 lock 路径落生产 `data/` 被 **conftest 生产数据写守卫当场拦截**（REVIEW-20260903 §四.8 机制实证生效），按守卫指路修法 (a) 参数化传 `tmp_path` 修复；生产目录零泄漏（lock 文件实测不存在，仅真实 `--push` 时创建）。
+- **R-16② 已清（私有引用转正）**：`_arm_stats` → 公共 `arm_stats`（采集器/报告两脚本 14 处引用同步更新，消除跨脚本私有导入）。
+- **R-16③ 不动**：每日晨推维持 §19.2 明示设计；降噪选项（非 URGENT 触发改为 n 跨 min_n 或周级聚合）留待用户偏好，不擅自更改。
+- **验证**：`tests/test_fee_gate_shadow*.py` 14/14 绿（5 采集 + 9 报告含新竞态测试）+ `tests/review` 31/31 绿 + `test_ops_scripts_sync` 3/3 绿；报告干跑读数不变（现行门 $5/$2500 active、INSUFFICIENT_N、excluded=0）。

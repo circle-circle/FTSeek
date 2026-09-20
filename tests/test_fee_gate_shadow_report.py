@@ -149,6 +149,7 @@ def test_push_dispatch_is_stateful_and_uses_push_hub_sync(monkeypatch, tmp_path)
     rows = [_row(1, 6.0, 834)]
     jsonl, latest = _artifacts(tmp_path, rows)
     state = tmp_path / "push_state.json"
+    lock = tmp_path / "push.lock"
     hub = _Hub()
     monkeypatch.setattr(report_mod, "get_push_hub", lambda: hub)
 
@@ -157,6 +158,7 @@ def test_push_dispatch_is_stateful_and_uses_push_hub_sync(monkeypatch, tmp_path)
         latest_path=latest,
         config_path=_config(tmp_path),
         state_path=state,
+        lock_path=lock,
         push=True,
     )
     second = run_report(
@@ -164,6 +166,7 @@ def test_push_dispatch_is_stateful_and_uses_push_hub_sync(monkeypatch, tmp_path)
         latest_path=latest,
         config_path=_config(tmp_path),
         state_path=state,
+        lock_path=lock,
         push=True,
     )
 
@@ -186,3 +189,40 @@ def test_weekly_checkpoint_reads_fee_gate_shadow_section():
     ).read_text(encoding="utf-8")
     assert "def check_fee_gate_shadow():" in source
     assert "check_fee_gate_shadow()" in source
+
+
+def test_push_guard_rereads_state_under_lock(monkeypatch, tmp_path):
+    """R-16①: 竞态进程在外层读取后、拿锁前完成推送 ⇒ 锁内重读必须挡住双推。"""
+    rows = [_row(1, 6.0, 834)]
+    jsonl, latest = _artifacts(tmp_path, rows)
+    state = tmp_path / "push_state.json"
+    lock = tmp_path / "push.lock"
+    # 竞态进程已推送并写好 state (n=1/INSUFFICIENT_N 与本进程报告相同)
+    state.write_text(
+        json.dumps({"last_n": 1, "last_status": "INSUFFICIENT_N"}),
+        encoding="utf-8",
+    )
+    hub = _Hub()
+    monkeypatch.setattr(report_mod, "get_push_hub", lambda: hub)
+    real_load = report_mod._load_state
+    calls = {"n": 0}
+
+    def stale_first_load(path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {}  # 锁外的陈旧读取: 假装竞态进程还没推
+        return real_load(path)
+
+    monkeypatch.setattr(report_mod, "_load_state", stale_first_load)
+    result = run_report(
+        jsonl_path=jsonl,
+        latest_path=latest,
+        config_path=_config(tmp_path),
+        state_path=state,
+        lock_path=lock,
+        push=True,
+    )
+    assert calls["n"] == 2  # 锁内确实重读了 state
+    assert result["pushed"] is False
+    assert result["should_push"] is False
+    assert hub.messages == []

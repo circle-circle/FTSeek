@@ -142,7 +142,7 @@ def append_new_rows(rows: list[dict], path: Path) -> int:
     return len(new_rows)
 
 
-def _arm_stats(rows: list[dict]) -> dict:
+def arm_stats(rows: list[dict]) -> dict:
     if not rows:
         return {
             "n": 0,
@@ -173,8 +173,8 @@ def summarize(rows: list[dict], updated_at: str, excluded_rows: int = 0) -> dict
         blocked = [row for row in rows if row["would_block"][gate]]
         kept = [row for row in rows if not row["would_block"][gate]]
         gates[gate] = {
-            "blocked": _arm_stats(blocked),
-            "kept": _arm_stats(kept),
+            "blocked": arm_stats(blocked),
+            "kept": arm_stats(kept),
             "n_loss_pct": round(len(blocked) / total_n * 100.0, 2)
             if total_n
             else None,
@@ -185,7 +185,7 @@ def summarize(rows: list[dict], updated_at: str, excluded_rows: int = 0) -> dict
         "start_date": START_DATE,
         "n_total": total_n,
         "excluded_rows": excluded_rows,
-        "baseline": _arm_stats(rows),
+        "baseline": arm_stats(rows),
         "gates": gates,
         "decision_boundary": "All values are net PnL after fees; data is observational.",
     }

@@ -512,6 +512,9 @@ systemctl is-active ftseek-us   # 保持 active
 - [x] P3 幂等（同日重跑逐字相同，除 `generated_at`/`git`）（§26.1：第 3 次重跑三产物 md5 逐字一致；注意实现将 `generated_at=""`/`git={}` 恒空 ⇒ "除"字空转，见 §26.2 N-4）
 - [x] P3 推送恰好 1 条且走 `app.push`（caller 侧 `pushed_at` + `flock` 生效；发送失败不标记已推）（§25.2 S-1 生产实证 1 条送达 + 用户确认；`_push_once` 代码核过 flock 内重读/成功才标记；FakeHub 失败不落状态测试绿）
 - [x] P4 判据清单 ≥30 项；`ready_since` 状态可更新/销账；日推送只列 ready_count + 最久前 5 项（§26.1：36/19/19 实测；真实推送文本实证"待裁决 19：…前 5 项"）
+- [x] P4.5 三问诊断与切片真库逐位对账（§29.1 #3–#5：COIN 候选 MFE=0/−161.65、UMC +5.77%/ARM +2.69% 追高、亏损簇 0；价格带与阶段×方向×出场逐分复现）
+- [x] P4.6 可行动性反事实口径独立复现（§29.1 #6：actionable MFE 0/6、regret 5/6、delay-5 3/3/0、pretrade 0/75、桥 SIM 215/实盘 0；费+滑点扣减、方向感知）
+- [x] P4.5/P4.6 L1 边界与渲染接入（`e656c4893` 零 `app/playbook/*` 改动、未推送未写 vault；§29.1 #7/#9）
 - [ ] P5 golden 入库且 `git check-ignore` 返回非忽略（P5 未开工：`tests/review/golden/` 不存在）
 - [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）（P5 未开工：crontab 0 行、Hermes 无 review_bundle job）
 - [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）（P5 未开工：载体文件不存在；`test_ops_scripts_sync` 现状 3/3 绿）
@@ -1223,3 +1226,11 @@ systemctl is-active ftseek-us   # 保持 active
 - **R-15**：周检 repo 副本领先线上 30 行，ops-sync SSOT 测试红；今日 10:00 周日综合复盘用旧副本跑（无 T3 段）。**已修复（2026-09-20，用户授权）：cp repo→live 部署一致，`test_ops_scripts_sync` 3/3 绿**。
 
 **总评**：P4.5/P4.6 的**数字全部站得住**（真库逐分复现、口径干净、时区免疫、边界守住）；风险集中在交付 hygiene——头部失守复发（N-8）、golden 前置约束（N-9）与批 B 的 S-1 复发/SSOT 红灯（R-14/R-15）。P5 开工前先清 R-15 + N-9 约束入设计。
+
+### 29.4 后续执行（2026-09-20，用户令「继续」；P5 前置小事清账）
+
+- **N-11 已清**：§14 补 P4.5/P4.6 验收勾 3 项（证据锚 §29.1）。
+- **N-4 已清**：`scripts/review_bundle.py` 产出版本溯源 sidecar `bundle_<date>.meta.json`（`git_commit`+`git_dirty`；本次实测 `6088fb5d8`/dirty=true 如实反映当时工作区）。bundle 本体 `git={}` 保持恒空 ⇒ hash 幂等不受影响（连续两跑 `4038499d` 不变，`tests/review` 31/31 绿，结果 JSON 新增 `meta` 键）。
+- **N-9 维持**：golden fixture 约束留 P5 设计输入；本轮仅确认 sidecar 落地后 bundle 本体 hash 不变。
+- **06:35 空档复核（§20.3.3）**：crontab 实测 06:35 = 0 行（邻位 06:34 周六专跑 / 06:38 每日切换预检哨兵），P5 候选位仍空。
+- **头部同步机制**（N-1 首立、N-8 再失守）：本轮未做自动化守卫；建议 P5 同批加「头部状态行 vs 最高 § 编号」lint 测试，防三犯。

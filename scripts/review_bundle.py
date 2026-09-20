@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,29 @@ def _default_hub_factory():
     from app.push import get_push_hub
 
     return get_push_hub()
+
+
+def _git_provenance() -> dict:
+    """N-4 (§26.2): 代码版本溯源 sidecar。
+
+    bundle 本体的 `git={}` 恒空是幂等设计 (hash 不随提交漂移), 版本信息落
+    独立 meta 文件 `bundle_<date>.meta.json`, 不参与 bundle hash。
+    """
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=5,
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=5,
+        )
+        return {
+            "git_commit": commit.stdout.strip() or None,
+            "git_dirty": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None,
+        }
+    except Exception:
+        return {"git_commit": None, "git_dirty": None}
 
 
 def _push_once(
@@ -105,6 +129,15 @@ def run(
     atomic_write_text(markdown_path, full_md)
     atomic_write_text(latest_path, payload_text)
 
+    # N-4 (§26.2): 版本溯源 sidecar — 独立文件, 不进 bundle hash, 幂等不受影响
+    meta_path = output_dir / f"bundle_{report_date}.meta.json"
+    atomic_write_text(meta_path, json.dumps({
+        "report_date": report_date,
+        "schema_note": "version provenance sidecar (DEB-20260919 §26.2 N-4); "
+                       "bundle body keeps git={} for hash idempotency",
+        **_git_provenance(),
+    }, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
     if vault_dir is not None:
         atomic_write_text(vault_dir / f"{report_date}_review.md", full_md)
 
@@ -122,6 +155,7 @@ def run(
         "bundle": str(bundle_path),
         "markdown": str(markdown_path),
         "latest": str(latest_path),
+        "meta": str(meta_path),
         "pushed": pushed,
     }
 

@@ -10,6 +10,7 @@ chain/data-quality anomalies.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import logging
 import sys
@@ -21,12 +22,13 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from app.push import Category, Level, PushMessage, get_push_hub
-from scripts.fee_gate_shadow import _arm_stats
+from scripts.fee_gate_shadow import arm_stats
 
 ROOT = Path(__file__).resolve().parents[1]
 JSONL_PATH = ROOT / "data" / "fee_gate_shadow.jsonl"
 LATEST_PATH = ROOT / "data" / "fee_gate_shadow_latest.json"
 STATE_PATH = ROOT / "data" / "fee_gate_shadow_push_state.json"
+LOCK_PATH = ROOT / "data" / "fee_gate_shadow_push.lock"
 CONFIG_PATH = ROOT / "config" / "unified_config.yaml"
 MIN_N = 30
 STALE_HOURS = 26
@@ -152,21 +154,21 @@ def _classify_rows(rows: list[dict[str, Any]], gate: dict[str, Any]) -> dict[str
 
     return {
         "current_active": active,
-        "current_blocked": _arm_stats(current_blocked),
-        "current_kept": _arm_stats(current_kept),
+        "current_blocked": arm_stats(current_blocked),
+        "current_kept": arm_stats(current_kept),
         "safe_incremental_by_floor": {
             floor: {
-                "blocked": _arm_stats(arms["blocked"]),
-                "kept": _arm_stats(arms["kept"]),
+                "blocked": arm_stats(arms["blocked"]),
+                "kept": arm_stats(arms["kept"]),
             }
             for floor, arms in safe_by_floor.items()
         },
-        "safe_incremental_blocked": _arm_stats(safe_by_floor["4000"]["blocked"]),
-        "safe_incremental_kept": _arm_stats(safe_by_floor["4000"]["kept"]),
+        "safe_incremental_blocked": arm_stats(safe_by_floor["4000"]["blocked"]),
+        "safe_incremental_kept": arm_stats(safe_by_floor["4000"]["kept"]),
         "unsafe_loosened_by_floor": {
-            floor: _arm_stats(rows) for floor, rows in unsafe_by_floor.items()
+            floor: arm_stats(rows) for floor, rows in unsafe_by_floor.items()
         },
-        "unsafe_loosened": _arm_stats(unsafe_by_floor["4000"]),
+        "unsafe_loosened": arm_stats(unsafe_by_floor["4000"]),
         "unsafe_loosened_rows": unsafe_by_floor["4000"],
         "current_bypass_rows": current_blocked,
         "sessions": sessions,
@@ -270,7 +272,7 @@ def build_report(
         "n": len(rows),
         "min_n": MIN_N,
         "gate": gate,
-        "baseline": _arm_stats(rows),
+        "baseline": arm_stats(rows),
         "classification": _classify_rows(rows, gate),
         "candidate": {
             "price_floor": CANDIDATE_PRICE,
@@ -378,6 +380,7 @@ def run_report(
     latest_path: Path = LATEST_PATH,
     config_path: Path = CONFIG_PATH,
     state_path: Path = STATE_PATH,
+    lock_path: Path = LOCK_PATH,
     push: bool = False,
     force: bool = False,
 ) -> dict[str, Any]:
@@ -390,18 +393,30 @@ def run_report(
     should_send = should_push(report, state, force=force)
     pushed = False
     if push and should_send:
-        try:
-            pushed = bool(get_push_hub().push(_message(report), sync=True))
-        except Exception as exc:
-            logger.error("[fee_gate_shadow_report] PushHub dispatch failed: %s", exc)
-            pushed = False
-        if pushed:
-            _write_state(state_path, {
-                "last_n": report["n"],
-                "last_status": report["status"],
-                "last_pushed_at": report["generated_at"],
-                "last_push_key": _message(report).dedup_key,
-            })
+        # R-16① (三周计划 §19.4): flock + 锁内重读 state, 对齐 review_bundle
+        # _push_once 模式。sync=True 绕过 hub 去重 ⇒ caller 侧守卫是并发
+        # 双推的唯一防线; 锁内重读兜住 "外层读到陈旧 state" 的竞态窗口。
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                state = _load_state(state_path)
+                should_send = should_push(report, state, force=force)
+                if should_send:
+                    try:
+                        pushed = bool(get_push_hub().push(_message(report), sync=True))
+                    except Exception as exc:
+                        logger.error("[fee_gate_shadow_report] PushHub dispatch failed: %s", exc)
+                        pushed = False
+                    if pushed:
+                        _write_state(state_path, {
+                            "last_n": report["n"],
+                            "last_status": report["status"],
+                            "last_pushed_at": report["generated_at"],
+                            "last_push_key": _message(report).dedup_key,
+                        })
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     return {
         "report": report,
         "rendered": render_report(report),
