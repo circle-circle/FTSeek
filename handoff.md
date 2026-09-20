@@ -1,5 +1,57 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-20 20:20 增量: 富途通道活体可用性验证 + 上一轮审计更正 (测量层, 零行为变更)
+
+> 用户令「确认是否真实可用，如无误且有价值可直接应用，如无必须可跳过影子阶段，更新写入文件」
+> ——针对 9/20 数据面审计报告那张「未接入的富途能力」表。
+>
+> **做法**: 不再用 `grep 0 调用` 定性，改为**活体探针**（新增
+> `scripts/futu_capability_live_probe.py`，只读，退出码 0/1，产物
+> `data/futu_capability_probe_latest.json`）。今日实测：`verdict=ALL_CORE_PASS
+> core_failures=[]` —— capital_distribution / capital_flow / rt_ticker(订阅后) /
+> rt_data(订阅后) / option_chain(窗口≤30d, 998 合约) / option_volatility(须传合约代码) /
+> underlying_his_volatility / stock_filter(121 StockField, US all_count=7701) /
+> acctradinginfo_query(SIM) / margin_ratio(short_fee_rate=3.0) / order_fee_query(REAL)
+> **全部真能取到数**；唯一不可得是 `history_deal_list_query(SIM)`（`模拟交易不支持成交数据`，
+> DEB-20260730 层1 已裁的**设计如此**，非缺陷）。
+>
+> **独立重跑费用金标准**（非引用 8/24）：REAL 8/1–9/20 共 30 张美股权订单逐单比对
+> `fee_model.estimate_fee` vs 券商 `fee_amount` ⇒ **29/30 落在 ±$0.02，max|Δ|=$0.0382**
+> （$3.08 的 1.2%）。⇒ 模型不"不可靠"，`fees_est` 无需替换；真缺口是 $1.99/单佣金地板在小
+> 名义额上的占比，且**并行 T3 批次**（`fee_gate_shadow.py`，9/20 起攒样→10/11 终裁）正在做
+> —— 本批**未碰费用路径**，避免两套判据漂移。
+>
+> **自证伪 5 处**（全部写入 `docs/analysis/2026-09-20-futu-capability-live-verification.md`）：
+> ①❌「这些影子产物无任何读方/白占 39MB」**错** —— `data/futu_capital_flow.jsonl` 有**生产
+> 消费方**：`app/playbook/intraday_reentry.py` 盘中资金背离门（`:742/:787` 索引、`:441-446`
+> 判定、`:882/:965` 调用），另 4 个脚本在读；上一轮只 grep 了注册表与采集脚本，**漏了生产
+> 决策路径**。②⚠️「get_order_fee 0 调用→最该接」前提错（真名 `order_fee_query`，SIM 结构性
+> 不可得，REAL 已验证准确）。③⚠️ 标的级前瞻 IV **已接**（通道 D，今日实测 250 行 iv/hv）；
+> 缺的是**合约级链 + IV crush 事件研究**。④⚠️ 选股器实测 **121 个 StockField**（原文"244+"
+> 无据），字段名与 App 侧不同（`VOLUME` 不支持）。⑤⚠️ `rt_data/rt_ticker` 是**未订阅**不是
+> 未接入。另更正注册表计数："当前 258 行"→ 实测 `capital_flow_daily.jsonl` **483 行**。
+> **口径警示**：该条目 FAIL_INTERIM 是**日级聚合增量 IC**，与生产盘中背离门不是同一口径
+> （门自有读数 `reentry_gate_effect_report.json`: would_block n=9 avg −6.63 vs pass n=44
+> avg −17.77），禁互相冒充。
+>
+> **落地**: ①探针脚本 + 产物（on-demand，**未挂 cron**，不新增影子/不看板/不推送）；
+> ②`app/playbook/shadow_registry.py` 该条目补注（生产消费方 + 计数 + 口径警示，**状态/判据/
+> 采样面一律未动**）；③本文档留痕。**明确不做**：把 capital_distribution / stock_filter /
+> option_chain 接进任何门（无预注册可证伪假设 = 给零做运算）、新建影子通道、动费用路径、
+> KILL capital_flow（原始采集有生产消费方，且该决定用户保留）。
+>
+> **验证**: 探针实跑 exit 0 / `ALL_CORE_PASS`；`py_compile` 通过；registry 加载并回读新注
+> 成功；定向回归 `tests/test_control_loop_ledger.py tests/test_da_blocked_cf_eval.py`
+> **16 passed**。**未重启服务**（未动 app 运行路径逻辑：仅改注册表文案常量，进程内文案旧值
+> 无行为差异）。
+>
+> **回滚**: 删 `scripts/futu_capability_live_probe.py` + 产物 json + 分析文档；
+> `git checkout -- app/playbook/shadow_registry.py`。
+>
+> **待用户裁 (2 项)**: ①`futu_channel_capital_flow` 日级 IC 通道判据 FAIL_INTERIM、样本
+> 483/540 —— 建议标 `RETIRED_NO_PROMOTION`（保留采集与生产消费，永不再提请转正），**不 KILL**；
+> ②选股器/资金分布是否接 —— 若要接先给可证伪假设，否则维持不动。
+
 ## 2026-09-19 10:35 增量: 盘后 carry 盘前落袋语义钉 (零行为变更)
 
 > 用户追问「盘后仓到盘前能否按当前止盈策略落袋」。核查: 现行 `prioritize_profit_exit`

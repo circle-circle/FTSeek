@@ -164,8 +164,17 @@ REGISTRY: list[ShadowItem] = [
             {"date": "2026-08-29", "verdict": "FAIL_INTERIM",
              "evidence": "ic=0.0511 t=0.595 n_pairs=137 较8/24衰减; OOS双窗异号(+0.134/-0.051) "
                          "→ 毕业判据FAIL; 未达min_n=540继续攒样, 但若下次IC继续衰减/OOS仍异号 → 建议提前裁KILLED"}],
-        notes="行数口径: ~18标的×30交易日≈540行 (当前258); 分钟级原料 data/futu_capital_flow.jsonl; "
-              "OFI基线已就位(7817行, overlap 91对, flow_ofi_rank_corr=0.089 低共线)",
+        notes="行数口径: ~18标的×30交易日≈540行 (2026-09-20 活体核查实测 capital_flow_daily.jsonl=483行, "
+              "原记(当前258)已过期); 分钟级原料 data/futu_capital_flow.jsonl; "
+              "OFI基线已就位(7817行, overlap 91对, flow_ofi_rank_corr=0.089 低共线) "
+              "⚠️ 2026-09-20 活体核查补注 (防'零消费→KILL'误裁): 原始 jsonl 有**生产消费方** — "
+              "app/playbook/intraday_reentry.py 盘中资金背离门读它取当日大单净流方向 "
+              "(_capital_flow_today_index :742/:787, 判定 :441-446, 调用 :882/:965); 另有 "
+              "gate_liveness_probe.py:145 / reentry_gate_effect_tracker.py:44 / "
+              "capital_flow_daily_aggregate.py / futu_channel_shadow_eval.py 消费。⇒ 本条目判据 FAIL "
+              "只针对**日级聚合增量 IC**, 与盘中背离门不是同一口径 (门的独立影子读数 "
+              "reentry_gate_effect_report.json: would_block n=9 avg −6.63 vs pass n=44 avg −17.77), "
+              "两者禁互相冒充; KILL 采集会断该门的料 (fail-open 后退化为无门)。",
     ),
     ShadowItem(
         id="futu_channel_deriv_unusual",
