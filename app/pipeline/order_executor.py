@@ -3393,15 +3393,23 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     所有新仓必须走 PLAYBOOK_SIM 路径 (playbook_service._execute_via_dual_broker)。
     此开关确保即使 _skip_execution_in_trading 未覆盖的路径 (如盘前信号) 也无法通过 main 路径下单。
     平仓操作不受此限制 (通过 close_position 路径, 不经过 _submit_order)。
+
+    2026-09-20 (用户裁「Playbook 成为唯一自动交易下单管线, 其他管线都是历史」):
+      允许清单由 (PLAYBOOK_SIM, PLAYBOOK_LIVE, ORB_ENGINE) **收窄为仅两个 PLAYBOOK 来源**。
+      今天行为零变化 (ORB 已 orb.enabled=false, 最后成交 2026-06-22); 目的 = 关掉
+      「把 orb.enabled 翻回 true 就能重新进入统一链路」这条可复活路径。
+      ⚠️ 注意: 本闸只覆盖经 order_executor 的路径 —— ORB 引擎当年是**直连**
+      execution_engine.submit_order (app/orb/engine.py:2341, 见其 :2276 注释「不受
+      RiskStateMachine/PDT/cooldown 保护」) ⇒ 真正的关闭靠 ORB 模块整体退役, 不靠本行。
     """
-    # ── 硬开关: MAIN_PIPELINE 禁止新开仓 (2026-07-02 冻结期) ──
+    # ── 硬开关: 非 Playbook 路径禁止新开仓 (2026-07-02 冻结; 2026-09-20 收窄为 Playbook-only) ──
     _source = (voting_result or {}).get('source_type', '')
     if not _source:
         _meta = getattr(signal, 'metadata', None) or {}
         _source = _meta.get('source_type', '')
-    if _source != 'PLAYBOOK_SIM' and _source != 'PLAYBOOK_LIVE' and _source != 'ORB_ENGINE':
+    if _source not in ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE'):
         logger.info(f"[链路统一] {symbol} 非playbook路径下单被拦截 (source_type={_source or 'MAIN_PIPELINE'}), "
-                    f"冻结期仅允许 PLAYBOOK_SIM 执行新仓")
+                    f"Playbook 为唯一自动下单管线")
         return None
 
     # ── P0 (2026-06-20): pending 防重锁 — 防止 broker_sync 5s 窗口期重复开仓 ──

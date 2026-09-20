@@ -1014,41 +1014,6 @@ options:
   stop_loss_ratio: 0.5
   take_profit_ratio: 2.0
   time_decay_warning: 0.1
-orb:
-  breakout_buffer_pct: 0.1
-  capital_pct: 0.2
-  enabled: false
-  entry_end_et: '10:45'
-  entry_start_et: 09:50
-  eod_exit_time: '15:55'
-  low_vol_short_bias_quality: 0.85
-  max_daily_trades: 5
-  max_positions: 2
-  max_range_width_pct: 2.5
-  min_hold_seconds: 300
-  min_quality_score: 0.75
-  min_range_width_pct: 0.2
-  min_volume_ratio: 1.2
-  mode: active
-  polling_interval_seconds: 5
-  position_risk_pct: 0.01
-  range_minutes: 15
-  regime_long_bias_quality: 0.85
-  regime_short_bias_quality: 0.85
-  same_symbol_loss_cooldown: true
-  stop_loss_atr_mult: 1.5
-  take_profit_r_mult: 2.0
-  universe:
-  - US.SPY
-  - US.QQQ
-  - US.IWM
-  - US.DIA
-  - US.XLE
-  - US.XLF
-  - US.XLK
-  - US.XLV
-  - US.XLY
-  - US.XLI
 paths:
   battle_plan: data/daily_battle_plan_us.json
   config_path: config/unified_config.yaml

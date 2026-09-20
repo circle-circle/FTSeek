@@ -72,7 +72,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | P5 | ManualGuardLoop | — | 手动仓保护规则 | 持仓快照 | — |
 | P6 | NewsV2Loop / VIXMonitorLoop | 120-300s | 数据新鲜度阈值 | 外部源 | 外部源死亡 → data_freshness_watchdog (中环) 兜底 |
 | P7 | InsiderScanLoop | 日级 | 集群买入阈值 | insider 数据 | — |
-| P8 | ORB 辅线引擎 | 自管 | ORB 参数 | 开盘区间 | daemon 自管 EOD → scheduler 级兜底 (历史修复) |
+| P8 | ~~ORB 辅线引擎~~ **已退役 (2026-09-20)** | 自管 | ORB 参数 | 开盘区间 | daemon 自管 EOD → scheduler 级兜底 (历史修复)。**退役**: 用户裁「Playbook 为唯一自动下单管线」⇒ `app/orb/`(2735 行)+scheduler 接线+`orb` 配置节+risk_stage ORB 上限闸整体删除; 当年 `orb.enabled=false`, 最后成交 2026-06-22, 在仓 0; 标签映射与历史行读取面保留 |
 | P9 | position_sync | ~30s | DB == Broker 镜像 | Broker API | 幽灵仓根因防线 (broker-first) |
 | P10 | Coordinator reconcile | 300s | 多通道一致性 | 各引擎状态 | — |
 | P11 | LiveDealPush (RFC-078 批E 实盘成交推送) | 事件驱动 (Futu deal push, 零轮询) | REAL-only 过滤 (sim 同账户 SIMULATE 成交不入实盘账本) | OpenD 成交推送 | 推送漏 (重启窗口/OpenD 断线) → 每日 live_ledger_sync cron 幂等兜底; 双 ctx 双收 → deal_id 幂等去重 |

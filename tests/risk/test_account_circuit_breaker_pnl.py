@@ -145,6 +145,10 @@ def test_liquidate_tier_claims_match_wired_behavior():
     ② 头注必须带"从未接线"免责声明 (防声明悄悄漂回);
     ③ 消费方注释不得再宣称"3% 强制全平" (orb/exits.py 的 15:55 EOD 全平是
        真实行为, 不在此列; 纠偏免责行带"从未接线"标记亦豁免).
+
+    [2026-09-20 ORB 退役] 扫描面原含 `app/orb/engine.py`; 用户裁「Playbook 成为唯一自动
+    交易下单管线, 其他管线都是历史」⇒ 该文件随 `app/orb/`(2735 行) 整体退役, 已从扫描面移除
+    (其 `orb/exits.py` 15:55 EOD 全平属历史行为, 亦随模块退役)。
     """
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
@@ -153,8 +157,7 @@ def test_liquidate_tier_claims_match_wired_behavior():
     offenders = []
     for rel in ("app/risk/account_circuit_breaker.py",
                 "app/pipeline/order_executor.py",
-                "app/playbook/playbook_service.py",
-                "app/orb/engine.py"):
+                "app/playbook/playbook_service.py"):
         text = (root / rel).read_text(encoding="utf-8")
         for line in text.splitlines():
             s = line.strip()

@@ -686,34 +686,10 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("[SharedKernel] 初始化失败 (将使用默认 VIX 值): %s", e)
 
-        # ── RFC-075 (2026-06-01): ORB 辅线引擎 ──
-        # Opening Range Breakout: ETF 专属标的池, 5 秒轮询, 独立退出栈
-        # 与主线零重叠, 渐进上线: observe → shadow → active
-        self.orb_engine = None
-        try:
-            from app.core.config_container import get_config as _get_cfg
-            _cfg = _get_cfg()
-            orb_cfg = _cfg.get_dotted("orb", {}) if _cfg else {}
-            if orb_cfg.get("enabled", False):
-                from app.orb.engine import get_orb_engine
-                self.orb_engine = get_orb_engine(
-                    config=orb_cfg,
-                    execution_engine=self.execution_engine,
-                    data_router=self.data_router,
-                    position_store=self.position_store,
-                    notifier=self.notifier,
-                    open_position_lock=self._open_position_lock,
-                    scheduler=self,  # DEB-20260904 #173: 冷却门禁依赖 _is_in_cooldown
-                )
-                logger.info(
-                    "[ORB] 引擎已初始化 | mode=%s | universe=%d只",
-                    orb_cfg.get("mode", "observe"),
-                    len(orb_cfg.get("universe", [])),
-                )
-            else:
-                logger.debug("[ORB] 未启用 (orb.enabled=false)")
-        except Exception as e:
-            logger.warning("[ORB] 初始化失败 (不影响主线): %s", e)
+        # ── RFC-075 ORB 辅线引擎: 2026-06-01 上线 → **2026-09-20 退役** ──
+        # 用户裁「Playbook 成为唯一自动交易下单管线, 其他管线都是历史」⇒ app/orb/ 整体删除
+        # (当年 orb.enabled=false, 最后成交 2026-06-22)。ORB 曾**直连** execution_engine
+        # (不经 order_executor 闸), 故关闭靠模块退役而非改闸。回滚: git revert 本批。
 
         # ── 智能自适应轮询控制器 (2026-04-15 新增) ──
         # 解决免费 API 限流 + 美股高波动的矛盾
@@ -1568,23 +1544,6 @@ class TradingScheduler:
             self.data_router.futu.subscribe(etfs, sub_types=['QUOTE', 'K_1M', 'K_15M'])
             logger.info(f"[FutuLV3] ✅ ETF Push 订阅: {len(etfs)} 只 (QUOTE+K_1M+K_15M)")
 
-        # ORB ETF 订阅 (RFC-075: 确保 ORB 标的池有 K 线数据)
-        try:
-            from app.core.config_container import get_config as _gc_orb
-            _cfg_orb = _gc_orb()
-            orb_cfg = _cfg_orb.get_dotted("orb", {}) or {} if _cfg_orb else {}
-            # 2026-08-28 (D3 反向普查): 原点号路径 'strategies.orb' 配置面不存在 → enabled 恒 False,
-            #   ORB ETF 订阅块静默不跑 (真因是读错命名空间, 不是配置关掉)。改读 orb 节后语义与
-            #   app/orb/config.py / 本文件 :2752 (orb.universe) 一致; 今日 orb.enabled=false 行为不变。
-            if orb_cfg.get("enabled", False):
-                orb_symbols = orb_cfg.get("universe", [])
-                # 过滤已订阅标的 (SPY/QQQ 可能已在 etfs 中)
-                orb_new = [s for s in orb_symbols if s not in etfs]
-                if orb_new:
-                    self.data_router.futu.subscribe(orb_new, sub_types=['QUOTE', 'K_1M', 'K_15M'])
-                    logger.info(f"[ORB] ✅ Futu 订阅: {len(orb_new)} 只 ETF ({orb_new})")
-        except Exception as e:
-            logger.warning(f"[ORB] ⚠️ Futu 订阅失败: {e}")
 
         total_slots = (len(tier1) + len(tier2)) * len(_stock_sub_types) + len(etfs) * 3
         logger.info(
@@ -1881,9 +1840,6 @@ class TradingScheduler:
             self._playbook_exit_thread.start()
             logger.info(f"[PlaybookExit] 独立快循环线程已启动 (interval={self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC}s)")
 
-        # RFC-075: ORB 辅线引擎 (循环内部自带 sleep_if_market_closed 守卫)
-        if self.orb_engine:
-            self.orb_engine.start()
 
         # 若启动时正处于交易时间，立即触发一次扫描（不等 30 分钟冷启动）
         if self._is_market_open():
@@ -1970,10 +1926,6 @@ class TradingScheduler:
                 if t.is_alive():
                     logger.warning(f"[调度器] 线程 {t.name} 未能在 {t_timeout}s 内退出，跳过")
 
-        # RFC-075: 停止 ORB 辅线引擎
-        if self.orb_engine:
-            self.orb_engine.stop()
-            logger.info("[ORB] 引擎已停止")
 
         # 2026-08-27 退役⑦: C5 跨策略归因 jsonl (attribution_daily.jsonl) 已删 —
         # 主线/ORB 仅 sim 研究 (策略隔离 2026-07-15) 后 main_total_trades 恒 0,

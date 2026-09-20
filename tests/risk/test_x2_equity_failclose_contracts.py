@@ -79,11 +79,15 @@ class TestX2EquityUnavailableFailClose:
 
 
 class TestX2SourceContract:
-    """order_executor / orb 两处为巨型函数内联块, 用源码锚点锁语义."""
+    """order_executor 一处为巨型函数内联块, 用源码锚点锁语义.
+
+    [2026-09-20 ORB 退役] 原 `_SITES` 含 `app/orb/engine.py`; 用户裁「Playbook 成为唯一
+    自动交易下单管线, 其他管线都是历史」⇒ `app/orb/`(2735 行) 整体退役, 该站点已不存在,
+    故从 _SITES 移除 (X2 语义本身不变: 剩下站点的 fail-close 分支仍被本测试钉住)。
+    """
 
     _SITES = (
         "app/pipeline/order_executor.py",
-        "app/orb/engine.py",
     )
 
     def test_all_sites_have_failclose_branch(self):

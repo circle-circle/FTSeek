@@ -140,28 +140,6 @@ def process(candidate: SignalCandidate,
                     f"({current_tf}/{max_pos}), 拒绝入场"
                 )
                 return None
-        # ── 0.06 ORB 持仓上限 (统一计数: orb_pipeline + orb_engine) ──
-        if strategy_id == 'orb' and position_store is not None:
-            from app.core.config_container import get_config
-            # 2026-08-28 (D3 反向普查): 原读 'strategies.orb' — 该点号路径在配置面根本不存在
-            #   (ORB 参数 SSOT = unified_config.yaml::orb, app/orb/config.py 由它构造,
-            #    scheduler_core.py:2752 读的也是 orb.universe) → 本闸门恒落代码默认 3,
-            #    与声明值 orb.max_positions=2 长期不一致 (今天 orb.enabled=false 故仅潜伏)。
-            #    下方 max_positions 默认值保留 3 仅作"整节缺失"兜底, 正常路径读声明值。
-            orb_cfg = get_config().get_dotted('orb') or {}
-            max_pos = int(orb_cfg.get('max_positions', 3))
-            current_orb = 0
-            for pos in (position_store.all() if hasattr(position_store, 'all') else []):
-                owner = str(getattr(pos, 'owner_strategy', '') or getattr(pos, 'strategy_id', '') or '')
-                # 2026-06-01: 统一计数 orb_pipeline + orb_engine + 旧 "orb" 标签
-                if owner in ('orb', 'orb_pipeline', 'orb_engine'):
-                    current_orb += 1
-            if current_orb >= max_pos:
-                logger.warning(
-                    f"[RiskStage] {symbol} ORB 持仓已达上限 "
-                    f"({current_orb}/{max_pos}, 含pipeline+engine), 拒绝入场"
-                )
-                return None
     except Exception as e:
         logger.debug(f"[RiskStage] trend_first 持仓限制检查异常(放行): {e}")
 
