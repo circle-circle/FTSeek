@@ -105,7 +105,7 @@ Job fcc7301f2e47                  20 7 * * 2-6  (周二~周六 CST)
 
 | # | finding | 证据 | 处置 |
 |---|---|---|---|
-| 1 | **反向配置普查无载体** (台账 §2.5 D3 行曾声称"cron 40 7 * * 0 与正向普查同班") | 该 crontab 行跑的是**正向** `config_key_census.py`; 反向普查在 `crontab -l` + `jobs.json` **双查皆无载体**; 产物停在 2026-08-29 (22 天) | 台账行已**更正**; 归 `维护批` (补周频载体 或 按其自身口径退役), 不自动执行 |
+| 1 | **反向配置普查无载体** (台账 §2.5 D3 行曾声称"cron 40 7 * * 0 与正向普查同班") | 该 crontab 行跑的是**正向** `config_key_census.py`; 反向普查在 `crontab -l` + `jobs.json` **双查皆无载体**; 产物停在 2026-08-29 (22 天) | 台账行已**更正**; 用户裁「如果无用就退役」⇒ 实测判定**不退役判定本身** (它有活消费者: 回归测试在真仓上跑门禁), **退役"把它当周期传感器"的假设**; 不补周期载体 (见 §12) |
 | 2 | 4 道死门待裁 (`short_squeeze` / `analyst_divergence` / `sec_event` / `ticker_sentiment`) | 门活性探针 C2 命中率判据: 17 交易日零命中 | 归 `用户(裁决)`, `decide_by=2026-10-04` (首次出现 + 14 自然日) |
 | 3 | watchdog D1 `open_positions:never_fed` | 11 个写入方零行落库 | 归 `维护批` |
 | 4 | invariant I1/I4/W1/W6/W7 五项 | 见 `data/invariant_check_latest.json` | W7 → `用户(裁决)`; 其余 → `维护批` |
@@ -180,3 +180,26 @@ Job fcc7301f2e47                  20 7 * * 2-6  (周二~周六 CST)
 **载体在真调度器下的实弹 (作者侧, 复查者未覆盖)**: 手工触发 job `fcc7301f2e47` →
 `executions.db` 行 `status=completed` / `delivery_outcome=suppressed` / `source=direct` / `scheduled_instant=NULL`(手工触发标记);
 `logs/meta_audit.log` 落 `[carrier …] rc=0 dur=0.1s out_lines=0`; `last_digest.json` 签名未变 ⇒ 未推送。
+
+---
+
+## 12. 后续处置: 反向配置普查 (D3) — 「如果无用就退役」实测裁定 (2026-09-20)
+
+**用户口径**: 「如果无用就退役」。**处置 = 判据先实测, 再裁**:
+
+| 问题 | 实测答案 |
+|---|---|
+| 判定本身有用吗? | **有**。它有**活消费者** = `tests/test_config_key_reverse_census.py::test_real_repo_has_no_new_invisible_switch`(每次全量回归在**真仓**上跑门禁, 新增隐形开关即红) + `test_declared_switches_match_code_defaults`; 冻结基线仅剩 1 条二级面 (规则本身已停用) |
+| 缺的是什么? | 缺的是**周期挂载**, 不是判定; 台账原行声称的 cron 从未存在 (文档声称≠实物) |
+| 该补 cron 吗? | **不补** (做减法): 一个"已有活消费者 + 慢漂移"的配置面守卫, 不需要再养一条周期环。若日后要周更读数, 一行开关即得: 周日正向普查行末 `&& … config_key_reverse_census.py --gate` |
+
+**由此产生的代码变更 (本环首轮就暴露了自己的一处设计错)**:
+把"按需工具"当"周期传感器"是错的 —— 会给用户**每天**报一条"探测器停更"的假阳, 而那是既定设计。
+故引入**按需源语义**: 第 5 列写消费者路径 ⇒ ①产物陈旧**不判失明**, 陈旧读数也不作为 live finding (避免拿 22 天前的读点当今天的问题);
+②只有**消费者消失**才算失明; ③该源的 `detector:*` finding 在消费者复活时关闭 (首版只认"产物恢复新鲜" ⇒ 按需源的 detector finding **永不收敛**)。
+
+**本轮新增两个实测缺陷 (都靠实跑抓出)**:
+1. `SOURCES` 升 5 元组后 `main()` 一处仍按 4 元组解包 ⇒ 环崩溃 —— **但崩溃被环自身的异常路径如实报成 rc=2 + 具体错误**, 未被读成"零 finding"(该路径因此首获实战验证)。
+2. `detector:*` finding 的关闭条件过窄 (只认周期源) ⇒ 按需源的该 finding 永久 OPEN = **一个永不收敛的 finding**, 正是本环要防的病。
+
+契约钉从 11 例增至 **14 例**。首轮读数随之更新: 未决 **10** (4 死门 + 1 watchdog + 5 invariant), `LOOP_DONE=True` (config_census 两项按按需源语义关闭并留证据)。

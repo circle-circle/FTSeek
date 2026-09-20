@@ -66,12 +66,19 @@ def put(repo, rel, doc, age_h=0.0):
     return p
 
 
-def seed_fresh_sources(repo, gate_doc=GATE_DOC_WITH_DEAD):
+def seed_fresh_sources(repo, gate_doc=GATE_DOC_WITH_DEAD, consumer=True):
     put(repo, "data/gate_liveness_latest.json", gate_doc)
     put(repo, "data/watchdog_liveness_latest.json", {"alarms": []})
     put(repo, "data/invariant_check_latest.json", {"violations": {}, "examples": {}})
     put(repo, "data/config_key_reverse_census_latest.json",
         {"undeclared_literal": [], "undeclared_second_surface": []})
+    # 反向配置普查是**按需源**: 判定由这个测试文件承载 (消费者), 不是周期传感器
+    stub = repo / "tests" / "test_config_key_reverse_census.py"
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    if consumer:
+        stub.write_text("# consumer stub\n", encoding="utf-8")
+    elif stub.exists():
+        stub.unlink()
 
 
 def run(repo, *args, capsys=None):
@@ -232,3 +239,46 @@ def test_no_trading_side_imports():
     src = SCRIPT.read_text(encoding="utf-8")
     for banned in ("import futu", "from futu", "import sqlite3", "from app", "import app."):
         assert banned not in src, "L1 只读环不得引入交易侧依赖: %s" % banned
+
+# ── 按需源语义 (2026-09-20 用户令「如果无用就退役」实测后新增) ──────────────
+# 判据: 反向配置普查无周期载体, 但判定**有活消费者** (回归测试) ⇒ 判定不退役,
+# 退役的是"把它当周期传感器"这个错误假设: 产物陈旧 ≠ 失明; 只有消费者消失才算失明。
+
+def test_on_demand_source_stale_artifact_is_not_a_sensor_failure(repo, capsys):
+    seed_fresh_sources(repo)
+    put(repo, "data/config_key_reverse_census_latest.json",
+        {"undeclared_literal": ["some.new.key"], "undeclared_second_surface": []}, age_h=600)
+    _, out, _ = run(repo, "--force-print", capsys=capsys)
+    fs = findings(repo)["findings"]
+    assert "detector:config_census" not in fs, "按需源的产物陈旧被误判成探测器失明"
+    assert "config_census:some.new.key" not in fs, "22 天前的读点不得当 live finding 报出"
+    assert "④探测器产物全新鲜=True" in out, "按需源消费者在册 ⇒ 该条判据不应为假"
+
+
+def test_on_demand_source_lost_consumer_is_a_finding(repo, capsys):
+    seed_fresh_sources(repo, consumer=False)
+    _, out, _ = run(repo, "--force-print", capsys=capsys)
+    fs = findings(repo)["findings"]
+    assert "detector:config_census" in fs, "消费者(判定载体)消失必须报失明"
+    assert "消费者消失" in fs["detector:config_census"]["title"]
+    assert "④探测器产物全新鲜=False" in out
+
+
+def test_ondemand_detector_finding_closes_when_consumer_alive(repo, capsys):
+    """回归钉: 首版只认"产物恢复新鲜"才能关 detector:* ⇒ 按需源的 detector finding 永久 OPEN
+    (一个永不收敛的 finding)。消费者复活必须能关闭它, 且关闭后不得自行复发。"""
+    seed_fresh_sources(repo, consumer=False)
+    run(repo, capsys=capsys)
+    key = "detector:config_census"
+    assert findings(repo)["findings"][key]["status"] == "OPEN"
+
+    (repo / "tests" / "test_config_key_reverse_census.py").write_text("# back\n", encoding="utf-8")
+    _, out, _ = run(repo, "--force-print", capsys=capsys)
+    f = findings(repo)["findings"][key]
+    assert f["status"] == "CLOSED", "消费者复活未能关闭该 finding = 永不收敛"
+    assert "按需源语义" in f["close_evidence"]
+    assert "✅ 关闭 %s" % key in out
+
+    _, out2, _ = run(repo, capsys=capsys)
+    assert out2 == ""
+    assert findings(repo)["findings"][key]["status"] == "CLOSED"

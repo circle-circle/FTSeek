@@ -134,16 +134,23 @@ def _extract_config_census(doc: dict):
 
 
 SOURCES = [
-    # (源名, 产物路径, 阈值h, 抽取函数)
+    # (源名, 产物路径, 阈值h, 抽取函数, 消费者路径 | None)
     # 阈值口径 = 该载体**调度面自带的最长自然间隔 + 1 个 tick 容差**, 不是"新鲜度判据"的重新预注册:
     #   gate_liveness / watchdog / invariant 均 `* * 2-6` (周二~周六 CST) ⇒ 最长间隔 = 周六跑 → 周二跑
     #   = 72h (周日/周一 CST 不在调度面) ⇒ 阈值 96h。**首版用 26h 在周日实测误报 3 源**
     #   (30h/31h 是周末的正常间隔, 不是停更) — 误报会把真信号淹掉, 故按调度面而非"日频直觉"定阈值。
-    #   config_census 周频 (周日 40 7 * * 0) ⇒ 最长间隔 7d ⇒ 阈值 192h。
-    ("gate_liveness", "data/gate_liveness_latest.json", 96, _extract_gate_liveness),
-    ("watchdog", "data/watchdog_liveness_latest.json", 96, _extract_watchdog),
-    ("invariant", "data/invariant_check_latest.json", 96, _extract_invariant),
-    ("config_census", "data/config_key_reverse_census_latest.json", 192, _extract_config_census),
+    #
+    # 第 5 列为 **消费者路径** ⇒ 该源是**按需工具**而非周期传感器 (2026-09-20 用户令「如果无用就退役」实测后的处置):
+    #   `scripts/config_key_reverse_census.py` 无周期载体 (台账原声称的 cron 不存在), 但判定**有活消费者**
+    #   = `tests/test_config_key_reverse_census.py::test_real_repo_has_no_new_invisible_switch`
+    #   (每次全量回归在真仓上跑门禁: 新增隐形开关即红)。⇒ 判定不退役 (退役会删掉一条在役守卫),
+    #   **退役的是"把它当周期传感器"这个错误假设**: 产物陈旧**不是失明**, 故不产 `detector:*` 停更 finding;
+    #   只有**消费者消失**(测试被删)才算失明。产物 fresh 时它的读数仍可作 live finding。
+    ("gate_liveness", "data/gate_liveness_latest.json", 96, _extract_gate_liveness, None),
+    ("watchdog", "data/watchdog_liveness_latest.json", 96, _extract_watchdog, None),
+    ("invariant", "data/invariant_check_latest.json", 96, _extract_invariant, None),
+    ("config_census", "data/config_key_reverse_census_latest.json", 192, _extract_config_census,
+     "tests/test_config_key_reverse_census.py"),
 ]
 
 
@@ -151,11 +158,25 @@ def collect():
     """返回 (findings, source_state)。findings: [(key,title,evidence,source)]。
     source_state[source] = {"fresh": bool, "why": str, "n": int}"""
     findings, src_state = [], {}
-    for name, rel, max_age_h, extract in SOURCES:
+    for name, rel, max_age_h, extract, consumer in SOURCES:
         p = BASE / rel
+        on_demand = bool(consumer)
+        consumer_alive = (not on_demand) or (BASE / consumer).exists()
+        if on_demand and not consumer_alive:
+            src_state[name] = {"fresh": False, "on_demand": True, "n": 0, "consumer": consumer,
+                               "why": "按需源的消费者缺失 (%s)" % consumer}
+            findings.append(("detector:%s" % name, "按需源的消费者消失: %s" % name,
+                             "判定载体 %s 不存在 ⇒ 该源的判定已无执行者 (产物的新旧不代表判定在跑)" % consumer,
+                             "detector"))
+            continue
         if not p.exists():
-            src_state[name] = {"fresh": False,
-                               "why": "产物不存在 (%s)" % rel, "n": 0}
+            if on_demand:
+                # 按需源无周期载体: 产物缺失不是失明 (判定在消费者), 不产 detector finding
+                src_state[name] = {"fresh": True, "on_demand": True, "n": 0, "consumer": consumer,
+                                   "why": "按需源: 判定由 %s 承载 (无产物, 不判停更)" % consumer}
+                continue
+            src_state[name] = {"fresh": False, "on_demand": False, "n": 0,
+                               "why": "产物不存在 (%s)" % rel}
             findings.append(("detector:%s" % name, "探测器产物缺失: %s" % name,
                              "期望产物 %s 不存在 ⇒ 该探测器读数不可用 (不得读成零 finding)" % rel,
                              "detector"))
@@ -164,16 +185,25 @@ def collect():
         try:
             doc = json.loads(p.read_text(encoding="utf-8"))
         except Exception as e:                                   # noqa: BLE001
-            src_state[name] = {"fresh": False, "why": "产物解析失败 (%s)" % type(e).__name__, "n": 0}
+            src_state[name] = {"fresh": False, "on_demand": on_demand, "n": 0,
+                               "why": "产物解析失败 (%s)" % type(e).__name__}
             findings.append(("detector:%s" % name, "探测器产物不可解析: %s" % name,
                              "%s 解析失败: %s" % (rel, e), "detector"))
             continue
-        items = extract(doc)
         fresh = age <= max_age_h
-        src_state[name] = {"fresh": fresh, "why": "age=%.1fh (阈值 %sh)" % (age, max_age_h), "n": len(items)}
+        # 按需源: 产物陈旧≠失明; 陈旧读数是**过期读数**, 不作为 live finding (避免拿 22 天前的读点当今天的问题)
+        take_items = fresh or not on_demand
+        items = extract(doc) if take_items else []
+        if on_demand:
+            src_state[name] = {"fresh": True, "on_demand": True, "n": len(items), "consumer": consumer,
+                               "why": "按需源: 消费者 %s 存在 | 产物 age=%.1fh%s"
+                                      % (consumer, age, "" if fresh else " (>阈值 ⇒ 过期读数不取)")}
+        else:
+            src_state[name] = {"fresh": fresh, "on_demand": False, "n": len(items),
+                               "why": "age=%.1fh (阈值 %sh)" % (age, max_age_h)}
         for key, title, ev in items:
             findings.append(("%s:%s" % (name, key), title, ev, name))
-        if not fresh:
+        if not fresh and not on_demand:
             findings.append(("detector:%s" % name, "探测器产物停更: %s (%.0fh > %sh)" % (name, age, max_age_h),
                              "%s mtime 距今 %.0f 小时 (阈值 %sh) ⇒ 该探测器本轮读数不可用; 停更不等于零 finding"
                              % (rel, age, max_age_h), "detector"))
@@ -246,9 +276,19 @@ def reconcile(state, collected, src_state):
             continue
         src = f.get("source")
         if src == "detector":
-            # 探测器级 finding 只能由"该探测器产物恢复新鲜"关闭: 其 key 会重新出现在 seen_keys。
-            # 本轮没出现 = 源仍不新鲜 ⇒ 保持, 不改状态 (允许它自己在下一轮消失)。
-            f["status"] = "OPEN" if f.get("status") == "OPEN" else f["status"]
+            # 探测器级 finding 的关闭条件 = 它所报的那个源恢复"可在册":
+            #   · 周期源: 产物恢复新鲜 ⇒ 下轮 detector:* key 不再出现 (走上面 seen_keys 分支), 此处只管按需源;
+            #   · 按需源: 消费者复活 ⇒ 关闭 (2026-09-20 实测: 首版只认"产物新鲜", 会把按需源的
+            #     detector:config_census 永久钉成 OPEN — 一个**永不收敛**的 finding, 正是本环要防的病)。
+            tgt = key.split("detector:", 1)[1] if "detector:" in key else ""
+            st = src_state.get(tgt) or {}
+            if st.get("on_demand") and st.get("fresh"):
+                f["status"] = "CLOSED"
+                f["closed_at"] = today
+                f["close_evidence"] = ("按需源语义: 判定由 %s 承载且消费者存在 ⇒ '产物停更'判定不适用 "
+                                       "(非周期传感器) | 关闭日 %s" % (st.get("consumer", "?"), today))
+                hist.append({"ts": ts, "key": key, "event": "CLOSED", "evidence": f["close_evidence"]})
+                closed.append(f)
             continue
         if not (src_state.get(src) or {}).get("fresh"):
             if f.get("status") != "UNVERIFIABLE":
@@ -257,10 +297,17 @@ def reconcile(state, collected, src_state):
                              "why": "源产物不可用/不新鲜 ⇒ 禁止自动关闭 (关=把尺子坏掉读成修好)"})
             unverifiable.append(f)
             continue
+        st = src_state.get(src) or {}
+        if st.get("on_demand"):
+            ev = ("按需源语义: 判定由 %s 承载 (非周期传感器), 陈旧产物不作 live 读数 ⇒ "
+                  "关闭不再报该项**不是**'已修好', 而是该源不承载周期性归宿 | 关闭日 %s"
+                  % (st.get("consumer", "?"), today))
+        else:
+            ev = ("源侧回读: %s 当日产物不再报该项 (age %.1fh, 阈值内) | 关闭日 %s"
+                  % (src, st.get("_age_h", -1), today))
         f["status"] = "CLOSED"
         f["closed_at"] = today
-        f["close_evidence"] = ("源侧回读: %s 当日产物不再报该项 (age %.1fh, 阈值内) | 关闭日 %s"
-                               % (src, (src_state.get(src) or {}).get("_age_h", -1), today))
+        f["close_evidence"] = ev
         hist.append({"ts": ts, "key": key, "event": "CLOSED", "evidence": f["close_evidence"]})
         closed.append(f)
 
@@ -402,7 +449,7 @@ def main(argv):
     LOOP_DIR.mkdir(parents=True, exist_ok=True)
 
     collected, src_state = collect()
-    for name, rel, max_age_h, _ in SOURCES:
+    for name, rel, max_age_h, _extract, _consumer in SOURCES:
         p = BASE / rel
         if p.exists():
             src_state[name]["_age_h"] = _age_h(p.stat().st_mtime)
