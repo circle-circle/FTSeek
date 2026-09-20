@@ -308,7 +308,10 @@ def record_manual_open(service: "ManualOrderService", order: "ManualOrder") -> N
             """,
             (
                 trade_date, order.symbol, order.direction,
-                order.timestamp or datetime.now().isoformat(),
+                # T4 钩子拆弹 (2026-09-20, 变种4写入侧清剿): order.timestamp 是 naive 北京
+                # (executor.py:253 约定), 原样入 entry_time 破坏"前 10 位=ET 日"下游约定;
+                # 兜底也不再用裸 datetime.now()。经 parse_ledger_ts(naive=CST) 归一 aware-ET。
+                _earliest_ledger_iso([order.timestamp]) or et_now.isoformat(),
                 order.price or 0, order.quantity,
                 strategy_id,
                 service._get_mode_label(),
@@ -440,7 +443,10 @@ def record_manual_close(service: "ManualOrderService", symbol: str, direction: s
                 except Exception:
                     pass
             if not entry_time:
-                entry_time = now.isoformat()
+                # 变种4同族拆弹 (2026-09-20): 兜底原写 now(naive CST).isoformat(),
+                # 与上方 R-12 口径 (aware-ET 入账本列) 自相矛盾 ⇒ 兜底触发时仍泄漏
+                # naive-CST 进 trade_records.entry_time。改用同作用域 et_now。
+                entry_time = et_now.isoformat()
 
             conn.execute(
                 """

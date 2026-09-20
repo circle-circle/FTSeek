@@ -840,7 +840,7 @@ PY
 
 ### 18.3 新事实（超出 Codex 自报面）
 
-1. **`trade_records.entry_time` 同列混存 `−04:00` 与 `+08:00` 两种时区偏移**（实测 id 1320/1511/1513/1536 为 +08:00，其余为 −04:00）——R-10 的根因，**新时钟病灶变种**，已记台账。任何按 entry_time 分时段/分时区的下游必须先做 ET 归一，禁止裸取 wall-clock。
+1. **`trade_records.entry_time` 同列混存 `−04:00` 与 `+08:00` 两种时区偏移**（实测 id 1320/1511/1513/1536 为 +08:00，其余为 −04:00）——R-10 的根因，**新时钟病灶变种**，已记台账（**写入侧 2026-09-20 已拆弹，见 §19.6**）。任何按 entry_time 分时段/分时区的下游必须先做 ET 归一，禁止裸取 wall-clock。
 2. **handoff.md 的 RFC-089「四判据变五判据」条目在工作区被删**（该内容属已提交 `e34423ae4`，全文无迁移痕迹，删除使周检口径印象回退到旧四判据）——已恢复；若属有意精简，需用户裁决后再删。
 
 ### 18.4 遗留（不阻塞攒样，10/11 前处理）
@@ -906,3 +906,16 @@ PY
 - **R-16② 已清（私有引用转正）**：`_arm_stats` → 公共 `arm_stats`（采集器/报告两脚本 14 处引用同步更新，消除跨脚本私有导入）。
 - **R-16③ 不动**：每日晨推维持 §19.2 明示设计；降噪选项（非 URGENT 触发改为 n 跨 min_n 或周级聚合）留待用户偏好，不擅自更改。
 - **验证**：`tests/test_fee_gate_shadow*.py` 14/14 绿（5 采集 + 9 报告含新竞态测试）+ `tests/review` 31/31 绿 + `test_ops_scripts_sync` 3/3 绿；报告干跑读数不变（现行门 $5/$2500 active、INSUFFICIENT_N、excluded=0）。
+
+### 19.6 变种 4 写入侧拆弹（2026-09-20，用户令「继续」）
+
+§18.3-1（entry_time 混存 +08:00）写入侧溯源收口。全仓扫 `INSERT INTO trade_records` 共 7 点，逐点定时钟来源：
+
+- **真凶实锤**：`position_sync.py::_backfill_playbook_trade_record`（P3 sync_recovery_backfill）原 `datetime.now().astimezone()` = 服务器 CST。DB 取证：4 行 +08:00（id 1320/1511/1513/1536）**全部** `entry_reason='sync_recovery_backfill'`、trace 前缀 `sync-`/`playbook-reconcile-`；同路径 7 月更早形态为 naive CST（id 1092/1094/1095）且 `trade_date` 跨日 +1 错位（违反「trade_date=入场 ET 日」不变量）。修复 → `now_et()`（兜底 `ZoneInfo("America/New_York")`，不回退服务器本地钟）；`trade_date=now_iso[:10]` 随之恢复 ET 日。
+- **同族 #1**：`audit.py:443` 兜底 `entry_time = now(naive CST)`，与同函数 R-12 注释（aware-ET 入账本列）自相矛盾 → `et_now`。
+- **同族 #2（T4 钩子局部拆弹）**：`audit.py:311` 将 `order.timestamp`（naive 北京，executor.py:253 约定）原样写 entry_time → 经 `_earliest_ledger_iso`（`parse_ledger_ts` naive=CST 契约）归一 aware-ET，兜底 `et_now`。手动单路径休眠 ⇒ 生产零风险。
+- **同族 #3**：`position_sync.py:1046` `_oexit` naive CST——`orphan_autoclose_enabled=true` 回滚路径下写 `trade_records.exit_time`（台账「exit_time 327 naive」生产者之一）→ `now_et()`。
+- **余点排查免改**：`trade_recorder.py:199`（主路径 now_et ✓）、`extended_hours_entry_executor.py:1239`（`_now_et` ✓）、`trade_store.py:750`（passthrough，尺度随上游）、`position_sync.py:103`（`upsert_external_close_trade_record` 全仓无调用方，死路径）、`demix2_broker_verified.py`（一次性迁移搬行，不造时钟）。`open_positions` 写点（1246/1396/2007 等）naive-CST 属已登记约定（消费端 `_to_et_ghost` naive=北京归一 + updated_at 混存三尺度已在册），不动。
+- **既有红灯同车修**：`test_external_close_book_reconciliation` fixture 缺 `config_version` 列（helper INSERT 已含该列；生产靠历史 ALTER，`TradeStore._init_db:403` 走迁移）→ fixture 补列。**stash 实证**该红灯在干净 HEAD 上同样复现，与本批改动无关。
+- **验证**：新增 `tests/test_position_sync_backfill_clock.py` 3/3 绿（ET 偏移断言 + trade_date=ET 日不变量 + 防重幂等 + 源码契约「不得再现 `datetime.now().astimezone().isoformat()`」）；相邻套件 133/133 绿（含 ratchet/ledger-scale/ops-sync）+ audit 覆盖套件 27/27 绿；import 健全。
+- **历史坏行不回改**（留痕纪律）：7 行（4 aware-CST + 3 naive-July）保持原样，读侧 ET 归一纪律（§18.3-1 下游规则）已覆盖；时钟台账变种 4 更新为**已拆弹**。

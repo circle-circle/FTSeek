@@ -149,7 +149,17 @@ class USPositionSync:
                 conn.close()
             if existing:
                 return True
-            now_iso = datetime.now().astimezone().isoformat()
+            # 时钟病灶变种4拆弹 (2026-09-20): 原 datetime.now().astimezone() = 服务器 CST,
+            # 导致 trade_records.entry_time 混入 +08:00 (id 1320/1511/1513/1536, 更早的
+            # naive 形态 id 1092/1094/1095 且 trade_date 跨日错位)。下游约定 entry_time
+            # 前 10 位 = ET 日 (trade_date 不变量) 且时段分桶按 ET (三周计划 §18.2 R-10),
+            # 统一改 now_et(); 兜底也必须是 ET 钟, 不得回退服务器本地时区。
+            try:
+                from app.utils.timezone import now_et as _now_et_p3
+                now_iso = _now_et_p3().isoformat()
+            except Exception:  # pragma: no cover - now_et 不可用时的 ET 兜底
+                from zoneinfo import ZoneInfo
+                now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
             # ③ 防重 (2026-09-16): 同 symbol+direction+price 且入场时间差<60s 的 open 记录已存在则跳过
             # (防 playbook 簿记失败后 P3 补录与 playbook 重试写入产生重复行, 如 1511/1512)
             try:
@@ -1033,7 +1043,15 @@ class USPositionSync:
                 else:
                     # 无 entry_time → 无法判定保护窗 → 保守跳过
                     continue
-                _oexit = datetime.now().isoformat()
+                # 变种4同族拆弹 (2026-09-20): _oexit 会以 naive CST 写 trade_records.exit_time
+                # (orphan_autoclose_enabled=true 回滚路径), 是台账"exit_time 327 naive"生产者之一。
+                # 统一 ET 钟 (与 trade_recorder 主路径 now_et() 同尺), 兜底也不回退服务器本地。
+                try:
+                    from app.utils.timezone import now_et as _now_et_oexit
+                    _oexit = _now_et_oexit().isoformat()
+                except Exception:  # pragma: no cover - now_et 不可用时的 ET 兜底
+                    from zoneinfo import ZoneInfo
+                    _oexit = datetime.now(ZoneInfo("America/New_York")).isoformat()
                 # ── R-2 (2026-08-23 DEB-20260823): 默认不再自动伪造平仓 ──
                 # 原实现直接 UPDATE exit_price=entry_price, realized_pnl=0。三个前置判据
                 # (broker 无 / open_positions 无 / 非 playbook 仓) 全是单点判断, 且 broker

@@ -15,7 +15,9 @@ def _create_conn():
         "direction TEXT, entry_time TEXT, exit_time TEXT, entry_price REAL, exit_price REAL, "
         "quantity INTEGER, realized_pnl REAL, pnl_pct REAL, exit_reason TEXT, source_type TEXT, "
         "mode TEXT, trade_mode TEXT, created_at TEXT, trace_id TEXT, signal_id TEXT, "
-        "futu_order_id TEXT, close_futu_order_id TEXT)"
+        # 2026-09-20: 补 config_version — helper INSERT 列表已含该列 (生产靠历史 ALTER,
+        # TradeStore._init_db 走 :403 迁移), fixture 陈旧导致既有红灯, 与变种4批同车修复
+        "futu_order_id TEXT, close_futu_order_id TEXT, config_version TEXT)"
     )
     return conn
 
