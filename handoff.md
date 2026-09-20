@@ -16,10 +16,15 @@
 > **口径定谳**: `acctradinginfo_query.max_cash_buy` = **股数** (given price), 非金额
 > (SIM 1987→993→496→248 / REAL 1500→750→375→187 @price 50/100/200/400 → 比值 ≈4)。
 >
-> **切盘硬阻塞 (新增, 须操作者本人处理)**: `.env.us` **未配置 `FUTU_UNLOCK_PWD_MD5`/
-> `FUTU_UNLOCK_PWD`** → `FutuBrokerAdapter.connect()` (trade_env=0) 直接拒绝 →
-> **即使打开 AUTO_TRADE_ACCOUNT=real + ALLOW_REAL_TRADING 也连不上/下不了单** (fail-close)。
-> 凭证不得代填代传; 只读行情/账户查询不需要它。
+> **切盘前置(更正)**: 首轮探针曾报"`.env.us` 未配置 FUTU_UNLOCK_PWD_MD5 → 实盘连不上" ——
+> **该结论错误并已撤回**: `.env.us` 中该键**已配置且非空**, systemd 经
+> `EnvironmentFile=/opt/ftseek/FTSeek-US/.env.us` 注入生产进程 (实测 `/proc/<MainPID>/environ` 命中)。
+> 真相是**独立进程探针未加载 `.env.us`** → `os.getenv` 读不到 → `connect()`(real) 拒绝。属探针配方坑
+> (实盘探针须先 `. ./.env.us`, 且不打印凭证值), **生产侧无需动作**。
+>
+> **端到端复验 (加载 .env.us 后走真实代码路径)**: REAL 净值 92,339.62 → **84,188.45**;
+> cash 92,339.62 → **10,729.05** (`_cash_source`=us_cash 不一致弃用); market_val → **73,459.40**;
+> buying_power 31,518.33; fx 0.12747; 30% 兜底帽 27,701.89 → **25,256.53**; SIM 逐点不变。
 >
 > **敞口提醒**: 实盘已有持仓 `market_val` 576,300 HKD ≈ $73,459 = **87% 净值**。
 > `risk_base` 取 `buying_power` (已扣持仓) ✅, 但 `_notional_sanity_check` 30% 帽只看 equity,

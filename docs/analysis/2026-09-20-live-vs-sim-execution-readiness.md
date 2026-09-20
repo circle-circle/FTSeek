@@ -187,24 +187,45 @@ REAL 账户是 **HKD 计价且带本币负腿**（`hkd_assets = −63,947.15`）
 连同 `test_extended_hours_order_execution` / `test_playbook_position_sizing` / `test_daily_loss_circuit`
 等 **89 passed**。
 
-### 7.3 切盘硬阻塞（新增，必须由操作者处理）
+### 7.3 更正：解锁密码**不是**生产阻塞（自证伪，同日撤回）
 
-`FUTU_UNLOCK_PWD_MD5`（或 `FUTU_UNLOCK_PWD`）**当前未配置** → `FutuBrokerAdapter.connect()`
-（`trade_env=0`）直接拒绝连接：
+初次只用 `python script.py` 直接跑探针时，`FutuBrokerAdapter.connect()`（`trade_env=0`）拒绝：
 
 ```
 [富途·实盘] ❌ 解锁密码未设置！无法解锁真实交易账户，下单将被拒绝。
 ```
 
-含义：**即使把 `AUTO_TRADE_ACCOUNT=real` + `ALLOW_REAL_TRADING=true` 全打开，实盘链路依然连不上、
-下不了单**（fail-close —— 安全，但"切了也没用"）。凭证须由操作者本人写入 `.env.us`（不得代填/代传），
-并计入切盘开关清单。只读行情/账户查询不需要它（本批取证即如此完成）。
+我当时判为"切盘硬阻塞"。**该结论是错的**（同日自证伪）：
+
+- `.env.us` 中 `FUTU_UNLOCK_PWD_MD5` **已配置且非空**（32 位 MD5）；
+- systemd 单元含 `EnvironmentFile=/opt/ftseek/FTSeek-US/.env.us` → 生产进程 env 里确有该键
+  （实测 `tr '\0' '\n' < /proc/<MainPID>/environ` 命中）；
+- 该键由 `os.getenv` 读取，**只认进程环境**；我的探针没加载 `.env.us` 才读不到。
+- 加载后（`set -a && . ./.env.us`）REAL `connect()` **成功**，端到端取证通过（见 §7.5）。
+
+⇒ 正确结论：**这是自建探针的配方坑，不是切盘阻塞**。凡是要在独立进程里连 REAL 的脚本，
+必须先注入 `.env.us`（且**不得打印任何凭证值**）。生产侧无需额外动作。
 
 ### 7.4 既有持仓与敞口（切盘注意）
 
 - 实盘账户**已有在手持仓**：`market_val` = 576,300 HKD ≈ **$73,459 = 87% 净值**。
-- 仓位基准 `risk_base` 取 `buying_power`（= `usd_net_cash_power` $31,513，已扣持仓占用）→ 这点是对的；
+- 仓位基准 `risk_base` 取 `buying_power`（= `usd_net_cash_power` ≈ $31,518，已扣持仓占用）→ 这点是对的；
   但 `_notional_sanity_check` 的 30% 帽只看 equity，**不看既有敞口**。
 - ⇒ 切盘首日沿用 30% 单笔帽，理论上可把总敞口推到 equity 的 ~117%。**建议**新增"总敞口帽
   =（既有 `market_val` + 新笔名义）≤ equity × X%"，X 由用户定（候选：100% 保守 / 150% 允许融资）。
   **未擅自设定**——这是风控数字，须用户裁决后预注册再落地。
+
+### 7.5 端到端复验（加载 `.env.us` 后走真实代码路径）
+
+| 字段 | 修正前（实测） | 修正后（实测） |
+| --- | --- | --- |
+| `total_assets`（净值） | 92,339.62 | **84,188.45** |
+| `cash` | 92,339.62 | **10,729.05**（`_cash_source` = "cash×0.1275(us_cash 不一致, 弃用)"） |
+| `market_val` | 80,564（经伪汇率折算） | **73,459.40** |
+| `buying_power` | 31,513.56 | 31,518.33（券商 `usd_net_cash_power`，保留） |
+| `_fx_rate` | 0.1398（伪汇率） | **0.12747** |
+| 30% 兜底帽 | 27,701.89 | **25,256.53** |
+| SIM 侧 | 99,392.093 / 198,784.186 | **逐点不变**（快照 diff） |
+
+注：`market_val` 修正前是经伪汇率 0.1398 折算的 80,564（≈636,006 HKD 口径下的口径混用读数）；
+修正后 = 576,300 × 0.12747 = 73,459.40，与"净值 ≈ 现金 + 持仓市值"恒等式自洽。
