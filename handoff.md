@@ -1,5 +1,24 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-20 22:10 增量: 多源同指标一致性抽样 (只读工具 + 定谳报告, 零行为变更)
+
+> 用户令「需要」——同意做「几十只标的跨源同指标对照抽样, 把冗余冲突从结构性存在
+> 定谳到数值性冲突率」。产出: `scripts/multisource_consistency_sample.py` (只读工具,
+> 阈值预注册在 `TOL`) + `docs/analysis/2026-09-20-multisource-conflict-sample.md`。
+>
+> 样本 112 只 (8/1 以来实际交易过); 源: futu / finnhub / TwelveData / AlphaVantage。
+> 实测: ①**昨收与当日涨跌零冲突** (futu vs finnhub n=112 Δ=0bps; vs TwelveData n=15;
+> futu快照 vs futu日K n=20; 涨跌 n=109) —— 上轮"多源不一致"对这两类不成立。
+> ②**PE(TTM) 真冲突 13% (11/87), p90 14.7%, 离群方是 finnhub**; 第三方仲裁 (AV):
+> IBKR futu/AV=35.99 而 finnhub=136.6 (~3.8x), GS/FPS futu≈AV。③共识方向 8/73 不一致:
+> 6 例阈值边界翻转, 2 例真对立 (UMC/WEAV) 根因是**富途覆盖家数小致比例取极值**
+> (UMC 富途 n=2 → buy 0% vs finnhub n=33 → 61%); 覆盖中位 **0.50x**; 时效 futu 9/19
+> vs finnhub period 9/1。④`fundamental_provider.get_data()` 是**显式降级链
+> Futu(主)→Finnhub→Yahoo→AV** → 稳态即单一权威源, 剩余风险只是**降级时的静默口径切换**
+> (finnhub 走 `peNormalizedAnnual`, 消费方不校验 `source`)。
+> ⑤额度: AlphaVantage 用 14/25 (周日非交易时段, 生产侧 AV 仅降级链末位)。
+> 建议复测窗口: **盘前** (昨收/涨跌一致性的最强检验窗, 本批为周日休市快照)。
+
 ## 2026-09-20 21:05 增量: 执行延迟 + 多源冗余 复查 (测量层, 零行为变更)
 
 > 用户追问「执行延迟和多源冗余冲突问题是否存在？提升精准度和获取速度能否更快获益/止损」。
