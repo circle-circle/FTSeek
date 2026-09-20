@@ -45,7 +45,15 @@ _TOP_N = 10
 
 
 def _now_et() -> datetime:
-    return datetime.now(timezone.utc) - timedelta(hours=4)
+    # 2026-09-20 时钟台账变种1清剿: 原硬编码 UTC-4 (永久EDT假钟) 冬令时快 1 小时
+    # ⇒ _today_et() 日期错位 ⇒ 产物 event_symbols_{ET}.json 落错日 + 交易日守卫查错日。
+    # 委托 app.utils.timezone.now_et (DST 安全); 兜底也是 ET 钟, 不回退硬编码偏移。
+    try:
+        from app.utils.timezone import now_et
+        return now_et()
+    except Exception:  # pragma: no cover - app 不可导入时的 ET 兜底
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
 
 
 def _today_et() -> str:

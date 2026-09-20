@@ -78,8 +78,19 @@ ETF_NAME = {
 
 # ── 通用小工具 ────────────────────────────────────────────────
 def _now_et() -> datetime:
-    """近似 ET (UTC-4, 夏令时). 仅用于日期戳, 精度足够."""
-    return datetime.now(timezone.utc) - timedelta(hours=4)
+    """ET 钟 (DST 安全)。
+
+    2026-09-20 时钟台账变种1清剿: 原硬编码 UTC-4 是"永久EDT假钟"——冬令时
+    (EST=UTC-5) 全程快 1 小时, ET 23:00-24:00 窗内日期戳落到次日 (旧注释
+    "精度足够"不成立, 日期错位即产物归日错)。委托 app.utils.timezone.now_et
+    (pytz→zoneinfo→固定偏移链); 独立运行兜底也必须是 ET 钟, 不回退硬编码偏移。
+    """
+    try:
+        from app.utils.timezone import now_et
+        return now_et()
+    except Exception:  # pragma: no cover - app 不可导入时的 ET 兜底
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
 
 
 def _today_et_str() -> str:

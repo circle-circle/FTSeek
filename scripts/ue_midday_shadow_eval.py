@@ -105,8 +105,15 @@ def main():
     n_days = len({sc.get("date") for sc in scans})
 
     # 盘中守卫 (2026-08-14 Qoder): K_DAY 当日 bar 未成形时 "close"=最新价 → 判读偏早。
-    #   ET 16:00 前运行时剔除当日候选, 收盘后重跑即可评 (与 llm_universe_scan 同 UTC-4 惯例)。
-    _now_et = datetime.now(timezone.utc) - timedelta(hours=4)
+    #   ET 16:00 前运行时剔除当日候选, 收盘后重跑即可评。
+    # 2026-09-20 时钟台账变种1清剿: 原裸 UTC-4 假钟冬令时快 1 小时 ⇒ ET 15:00-16:00
+    #   被读成 ≥16 ⇒ 守卫失效 (当日未成形 bar 混入评估, 正是守卫要防的)。改 now_et()。
+    try:
+        from app.utils.timezone import now_et as _now_et_fn
+        _now_et = _now_et_fn()
+    except Exception:  # pragma: no cover - app 不可导入时的 ET 兜底
+        from zoneinfo import ZoneInfo
+        _now_et = datetime.now(ZoneInfo("America/New_York"))
     _today_et = _now_et.strftime("%Y-%m-%d")
     if _now_et.hour < 16:
         _skip = [c for c in cands if c["date"] == _today_et]
