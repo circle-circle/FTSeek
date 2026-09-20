@@ -147,3 +147,36 @@ Job fcc7301f2e47                  20 7 * * 2-6  (周二~周六 CST)
 - **Gate 6**: 首个真实调度窗 2026-09-22 07:20 CST; 观察 ≥2 周 (至 2026-10-04, 与 4 道死门的 `decide_by` 同日)。
 - 复盘三问: ①有没有静默死亡 (心跳缺口) ②有没有假阳 (误报 forcing 用户注意力) ③`decide_by` 到期时用户是否**真的被提醒到并能一次裁决**。
 - 满足后: 开候选 A (优化环) 的 RFC; 不满足则先修本环 (环路自身也要过"外部可验"这关)。
+---
+
+## 11. 独立复查回执 (异模型, Gate 5 证据)
+
+**复查者**: 独立 agent (模型族 = glm-5.2, 与本环作者 Hermes 不同族 — 满足"生成用 A / 验证用 B");
+**方法**: 读码 + **自建临时仓实跑证伪** (不采信本文叙述) + `git show` 回读; 全程只读, 未改任何文件。
+**结论**: `verdict = 确认 — 实现与其声称一致, 逐条实测通过, 无 P0/P1 缺陷`; `defects = []`。
+
+逐条 (每条附命令/返回):
+
+| 复查项 | 结果 |
+|---|---|
+| 契约钉 + 台账守卫 + 对账守卫 | ✅ 实跑 **24/24 绿** (11 meta_audit + 10 ledger + 3 ops_sync) |
+| 规则(a) 停更源 + 该项消失 → 非 CLOSED | ✅ 临时仓把产物 mtime 改 200h 并移除 dead gate → `UNVERIFIABLE` |
+| 规则(b) CLOSED 必须带回读证据 | ✅ `close_evidence="源侧回读: …(age 0.1h, 阈值内)"` |
+| 规则(c) 探测产物缺失/损坏必产 finding | ✅ 4 产物全缺 → 4 个 `detector:*`; 坏 JSON → "不可解析" finding |
+| 规则(d) 静默契约 hash 不含时间戳 | ✅ 连跑 3 轮 hash 恒定, 第 2/3 轮 stdout 长度 0 |
+| 逾期 → `LOOP_DONE=False` | ✅ 手改 `decide_by=2026-09-01` → 判据②=False |
+| REOPEN 复发可见 | ✅ `closed_at=None` + history 记 REOPEN |
+| L1 边界 (文件 + import) | ✅ 快照比对零越界; 仅 stdlib, 零 `app/futu/sqlite3` |
+| 载体 rc 三态 | ✅ rc0 静默 / rc2 超时 / rc3 缺失 逐路实弹; 两副本 sha256 一致 |
+| 台账 D3 更正 | ✅ 与实物相符 (周日行跑正向 census, 反向普查双查无载体, 产物停更 22 天) |
+| §5/§6 数字 | ✅ 12 未决 (4+7+1) / 4 死门 / invariant 5 项 与 `findings.json`·`gate_liveness_latest.json` 精确一致 |
+| §7 四缺陷 | ✅ 均已在码中修复 (96h/192h 阈值、hash 去时间戳、逾期独立判据、`(标签, 布尔)` 对) |
+
+**复查者未能验证的部分 (诚实登记)**: ① Gate 6 真实调度窗 (2026-09-22 07:20 未到);
+② 观察窗内长期行为 (≥2 周静默死亡/假阳); ③ `META_AUDIT_FORCE=1` 路径的载体级实弹 (它刻意不在生产仓上跑以免污染 state)
+—— ①②属时间未到, ③**作者侧已实弹** (2026-09-20 12:29 生产仓 `META_AUDIT_FORCE=1` 跑载体 → rc=0 + 4 行摘要落 `logs/meta_audit.log`),
+此条为复查者视角的留白, 非未测项。
+
+**载体在真调度器下的实弹 (作者侧, 复查者未覆盖)**: 手工触发 job `fcc7301f2e47` →
+`executions.db` 行 `status=completed` / `delivery_outcome=suppressed` / `source=direct` / `scheduled_instant=NULL`(手工触发标记);
+`logs/meta_audit.log` 落 `[carrier …] rc=0 dur=0.1s out_lines=0`; `last_digest.json` 签名未变 ⇒ 未推送。
