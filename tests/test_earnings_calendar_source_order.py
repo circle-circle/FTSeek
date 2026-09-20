@@ -77,6 +77,18 @@ def test_dual_source_empty_warns(ec, monkeypatch, caplog):
         "双源皆空必须产生断流告警 — 静默空列表正是 G6 死表误判的同族失明")
 
 
+def test_status_api_distinguishes_dual_source_empty(ec, monkeypatch):
+    """双源皆空不再是普通 []: 新 API 必须显式返回源错误供 fail-closed 消费方使用."""
+    monkeypatch.setattr(ec, "_fetch_futu_calendar_primary", lambda **kw: [])
+    monkeypatch.setattr(ec, "_fetch_raw_calendar", lambda horizon="3month": "")
+
+    rows, error = ec.get_earnings_calendar_with_status(force_refresh=True)
+
+    assert rows == []
+    assert error == "futu_and_av_empty"
+    assert ec.get_earnings_calendar() == []
+
+
 def test_futu_window_segments_within_api_limit():
     """窗口分段合规: 富途 API 硬限制单次 ≤7 天含端点 (实测超限报
     '日期范围不能超过7天'). 主源必须拆段且每段 ≤7 天含端点."""

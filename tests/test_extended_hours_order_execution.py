@@ -152,6 +152,38 @@ def test_entry_full_fill_writes_position_and_trade_record(
     assert trade == (100, 10.0, "900001", 0, "v2", "premarket")
 
 
+def test_entry_grade_controls_certainty_lock_metadata(
+    entry_environment, monkeypatch
+):
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(
+        entry_executor,
+        "wait_order_fill",
+        lambda *args, **kwargs: {
+            "filled": True, "filled_qty": 50, "avg_fill_price": 10.0,
+            "status": "FILLED_ALL", "remaining_qty": 0,
+            "cancel_ok": True, "error": "",
+        },
+    )
+
+    result = entry_executor._execute(
+        "US.FAKEA", 50, 10.0, "premarket", 3.0, 300000.0,
+        {"surprise_pct": 10.0, "period": "2026-06-30"}, dry=False,
+        position_usd=5000.0, grade="A", structure={"vwap": 10.0},
+    )
+
+    assert result["ok"] is True
+    connection = sqlite3.connect(entry_environment)
+    metadata = json.loads(connection.execute(
+        "SELECT metadata_json FROM trade_records WHERE symbol='US.FAKEA'"
+    ).fetchone()[0])
+    connection.close()
+    assert metadata["entry_grade"] == "A"
+    assert metadata["entry_position_usd"] == 5000.0
+    assert metadata["cert_lock_pct"] == 0.0
+    assert metadata["entry_structure"] == {"vwap": 10.0}
+
+
 def test_entry_partial_fill_writes_actual_filled_quantity(
     entry_environment, monkeypatch
 ):
@@ -492,6 +524,7 @@ def test_collect_dry_records_penny_candidates_blocked_by_price_gate(tmp_path, mo
                         "ask_vol": 100_000,
                         "last_price": 42.0,
                         "prev_close_price": 42.0,
+                        "total_market_val": 5_000_000_000,
                     }.get(key, default)
 
             class Iloc:
@@ -515,7 +548,19 @@ def test_collect_dry_records_penny_candidates_blocked_by_price_gate(tmp_path, mo
         {"symbol": "US.BIGCO", "px": 42.0, "chg": 6.10, "vol": 900000.0},
     ])
     monkeypatch.setattr(entry_executor, "_earnings_surprise",
-                        lambda symbol: {"surprise_pct": 10.0, "period": "2026-06-30"})
+                        lambda symbol, session: (
+                            {"surprise_pct": 10.0, "period": "2026-06-30"}, None))
+    monkeypatch.setattr(entry_executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        entry_executor,
+        "_entry_structure_gate",
+        lambda qctx, symbol, session, price: (
+            {"vwap": 42.0, "last_close": 42.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0}, None,
+            {"vwap": 42.0, "last_close": 42.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0},
+        ),
+    )
     import futu
     monkeypatch.setattr(futu, "OpenQuoteContext", lambda **kw: _FakeQuote())
 

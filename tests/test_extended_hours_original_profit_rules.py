@@ -191,6 +191,18 @@ def test_cert_lock_metadata_override_and_priority(monkeypatch):
     assert prioritize_profit_exit("SL_CERT_LOCK", "hold_to_next_open") == "SL_CERT_LOCK"
 
 
+def test_cert_lock_zero_metadata_overrides_env_default(monkeypatch):
+    """A 级写入 0.0 必须覆盖 cron 环境 3.0, 不得因 falsy-zero 回退."""
+    monkeypatch.setenv("EXT_CERT_LOCK_PCT", "3.0")
+    d = decide_original_profit_exit(
+        "LONG", 100.0, 103.5, 95.0, 103.5,
+        {"stop_loss": 95.0, "peak_price": 103.5, "cert_lock_pct": 0.0}, 0.15,
+    )
+
+    assert d["action"] == "hold"
+    assert d["cert_lock_pct"] is None
+
+
 # ── 2026-09-19 峰值口径: 只能用**进场之后**的真实 high (用户令) ──
 
 def _bars(spec):

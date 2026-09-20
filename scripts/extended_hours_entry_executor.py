@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""盘前/盘后事件驱动开仓安全入口 (2026-09-17, SIM fail-closed).
+"""盘前/盘后事件驱动开仓安全入口 (2026-09-20, SIM direct-gate).
 
-信号四层过滤 (宁缺毋滥, 用户原话"确定性因素第一时间执行"):
-  1. 事件: Finnhub company_earnings 最近财报超预期 (surprisePercent>0) — "确定性"
-  2. 价格: pre/after_price 相对昨收涨 ≥ +2% — 市场认可事件
-  3. 量:   pre/after_volume ≥ 200,000 股 — 非薄量假动作
-  4. 价格下限: ≥ MIN_PRICE ($5, 2026-09-17 用户裁方案A) — 挡仙股/妖股
-     (实证: CTNT $0.073 +75.06% / GIPR $0.435 +19.75% 曾透过前 3 层; 仙股的"超预期>0"是季末噪声,
-      而涨幅/量闸对妖股天然放行 ⇒ 日配额被噪声票用尽, 当晚真催化票开不出来)
+信号过滤 (宁缺毋滥):
+  same-session positive earnings surprise + price/change/volume floor
+  + market cap + extended dollar turnover + maturity window
+  + extended VWAP/volume confirmation. Candidates are graded A/B before sizing.
 当前 Futu SIM 不支持 STOP/STOP_LIMIT。没有券商侧止损时本脚本拒绝真实开仓；
 dry 模式仅输出候选，不写 state、不下单。
+
+2026-09-20 direct SIM update:
+  same-session earnings + market cap + extended turnover + maturity window
+  + extended VWAP/volume confirmation + A/B grade sizing/liquidity.
 
 护栏 (开仓风险高于锁盈, 更严):
   - 单笔仓位 $5000 (用户 9/17 拍板; 高低价股都覆盖)
@@ -28,6 +29,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -50,7 +52,11 @@ except Exception:
 
 # ── 用户 9/17 拍板参数 ──
 POSITION_USD = 5000        # 单笔仓位
+POSITION_B_USD = float(os.getenv("EXT_ENTRY_POSITION_B_USD", "2500"))
+GRADE_A_CERT_LOCK_PCT = float(os.getenv("EXT_GRADE_A_CERT_LOCK_PCT", "0.0"))
+GRADE_B_CERT_LOCK_PCT = float(os.getenv("EXT_GRADE_B_CERT_LOCK_PCT", "3.0"))
 MAX_PER_DAY = int(os.getenv("EXT_ENTRY_MAX_PER_DAY", "3"))
+PREMARKET_MAX_PER_DAY = int(os.getenv("EXT_ENTRY_PREMARKET_MAX_PER_DAY", "2"))
 MAX_OPEN = int(os.getenv("EXT_ENTRY_MAX_OPEN", str(MAX_PER_DAY)))
 MAX_OPEN_NOTIONAL_USD = float(
     os.getenv("EXT_ENTRY_MAX_OPEN_NOTIONAL_USD", str(POSITION_USD * MAX_OPEN))
@@ -60,6 +66,8 @@ MAX_OPEN_NOTIONAL_USD = float(
 #   叠加同日上线的价格下限闸($5 挡仙股)后, 单笔噪声风险已降, 放宽数量换取样本速度。
 #   2026-09-18 观察期: env/代码默认均压到 3, 暴露上限 = 3 × POSITION_USD($5000)。
 #   回滚: env EXT_ENTRY_MAX_PER_DAY=2 或 EXT_ENTRY_ALLOW_SIM=false。
+# PREMARKET_MAX_PER_DAY 在合计 3 笔内为盘后保留至少 1 笔启动额度:
+#   盘前最多 2 笔, 盘后仍可 1~3 笔; 全日合计仍不超过 3 笔.
 # 盘前涨幅门槛。2026-09-17 回放: **边际跳空档 (涨幅 <3%) 是唯一负档** ——
 #   现役口径 n=46: <3% 档 均值 -0.65%/WR 42.9%/最差 -6.86%; ≥3% 档 均值 +1.41%(含6-10%档 +3.27%)。
 #   放宽口径 n=161 同向复现: <3% 档 均值 -0.33%/WR 39.4%/最差 -8.93%; ≥3% 档 均值 +1.32%。
@@ -69,10 +77,31 @@ MAX_OPEN_NOTIONAL_USD = float(
 ENTRY_CHANGE_PCT = float(os.getenv("EXT_ENTRY_CHANGE_PCT", "2.0"))
 MIN_VOLUME = 200000        # 盘前量门槛
 MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
+MIN_EXT_TURNOVER_USD = float(os.getenv("EXT_ENTRY_MIN_TURNOVER_USD", "10000000"))
+A_GRADE_TURNOVER_USD = float(os.getenv("EXT_ENTRY_A_TURNOVER_USD", "20000000"))
+MIN_MARKET_CAP_USD = float(os.getenv("EXT_ENTRY_MIN_MARKET_CAP_USD", "1000000000"))
+MAX_SPREAD_PCT_A = float(os.getenv("EXT_ENTRY_MAX_SPREAD_PCT_A", "0.5"))
+MIN_ASK_DEPTH_RATIO_A = float(os.getenv("EXT_ENTRY_MIN_ASK_DEPTH_RATIO_A", "2.0"))
+MAX_VWAP_DISTANCE_PCT = float(os.getenv("EXT_ENTRY_MAX_VWAP_DISTANCE_PCT", "0.8"))
+MIN_VOLUME_CONFIRM_RATIO = float(os.getenv("EXT_ENTRY_MIN_VOLUME_CONFIRM_RATIO", "0.5"))
 MAX_SPREAD_PCT = float(os.getenv("EXT_ENTRY_MAX_SPREAD_PCT", "1.0"))
 MAX_ROUND_TRIP_FEE_PCT = float(os.getenv("EXT_ENTRY_MAX_ROUND_TRIP_FEE_PCT", "1.0"))
 MAX_PRICE_DRIFT_PCT = float(os.getenv("EXT_ENTRY_MAX_PRICE_DRIFT_PCT", "0.5"))
 MIN_ASK_DEPTH_RATIO = float(os.getenv("EXT_ENTRY_MIN_ASK_DEPTH_RATIO", "1.0"))
+# ── 2026-09-20 二轮加固 (DEB-20260920 §10, 独立复核 P0/P1 落地) ──
+# P0-1 Finnhub surprise 新鲜度守卫: company_earnings(limit=1) 的 e[0] 在**今日 actual 尚未
+#   入库**时是上一季的记录 — "最近 surprise>0" 只证明上季 beat, 不证明今日 beat。
+#   miss + 盘前先涨 2% (好 guidance/市场误读) 会透过旧闸 ⇒ "财报高开回落"病灶变种。
+#   守卫: e[0].period (财季末) 距今必须在 [-7, N] 天内; 缺失/不可解析/超龄一律 fail-closed。
+#   N=150 依据: 财季末→披露常规滞后 30~90 天, 150 天已容纳晚披露者, 而上一季记录
+#   (距今 ~170-270 天) 必被拦下。回滚/调参: env EXT_EARNINGS_MAX_PERIOD_AGE_DAYS。
+EARNINGS_MAX_PERIOD_AGE_DAYS = int(os.getenv("EXT_EARNINGS_MAX_PERIOD_AGE_DAYS", "150"))
+# P1-4 盘前保留额度条件化: PREMARKET_MAX_PER_DAY 的目的是"盘后可能还有机会";
+#   当日日历**没有任何 after/post 相位财报**时, 保留是纯机会成本 ⇒ 释放盘前第 3 笔。
+#   日历源故障/空 → 保守视为"有" (继续保留)。回滚: EXT_PREMARKET_RESERVE_CONDITIONAL=false。
+PREMARKET_RESERVE_CONDITIONAL = (
+    os.getenv("EXT_PREMARKET_RESERVE_CONDITIONAL", "true").lower() == "true"
+)
 # ↑ 价格下限闸 (2026-09-17 用户裁方案A): 挡 $5 以下仙股/妖股.
 #   实证: CTNT $0.073(+75.06%, 量2217万, Finnhub超预期+105%) 与 GIPR $0.435(+19.75%)
 #   曾透过"事件+涨幅+量"三闸 —— 仙股的第1闸(超预期>0)是季末噪声, 第2/3闸对妖股天然放行。
@@ -111,8 +140,14 @@ PRICE_GATE_REJECTS = ROOT / "data" / "extended_hours_price_gate_rejects.jsonl"
 #   >$20 仅 50%/-1.49。本影子把每个候选的 (涨幅/价格档/时段量) 与"现役闸 vs 更严闸"的
 #   假设判定逐次落盘, 攒样后与真实结局 join 定阈值。零交易影响 (纯 append + 异常吞掉)。
 PREFILTER_SHADOW = ROOT / "data" / "ext_entry_prefilter_shadow.jsonl"
-PREFILTER_SHADOW_ON = os.getenv("EXT_PREFILTER_SHADOW", "true").lower() == "true"
+PREFILTER_SHADOW_ON = os.getenv("EXT_PREFILTER_SHADOW", "false").lower() == "true"
 PRETRADE_GATE_REJECTS = ROOT / "data" / "extended_hours_pretrade_gate_rejects.jsonl"
+# P0-2 earnings 闸拒绝台账 (2026-09-20, DEB-20260920 §10): 每次运行聚合一行,
+#   counts=子原因计数, details=除 calendar_missing 外的逐票明细 (罕见且有诊断价值)。
+#   §9 的"10 日 0 笔先归因" 判断依据此文件区分: 市场无事件(calendar_missing 主导) vs
+#   源故障(calendar_source_error/finnhub_error) vs 相位字段不匹配(calendar_phase_*) vs
+#   surprise 过期(surprise_stale)。没有它, 闸计数只有一个 earnings=N, 无法裁决放不放宽。
+EARNINGS_GATE_REJECTS = ROOT / "data" / "extended_hours_earnings_gate_rejects.jsonl"
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 LOCK = ROOT / "data" / "extended_hours_entry_state.lock"
 DB = ROOT / "data" / "ftseek_us.db"
@@ -120,6 +155,26 @@ SESSION_WINDOWS = {
     "premarket": (400, 929),
     "afterhours": (1600, 1959),
 }
+ENTRY_WINDOWS = {
+    "premarket": {"A": (730, 915), "B": (815, 915)},
+    "afterhours": {"A": (1620, 1830), "B": (1620, 1730)},
+}
+# P1-3 VWAP 锚点 (2026-09-20, DEB-20260920 §10.2/§10.7): 旧口径从 4:00 起算全时段 VWAP,
+#   凌晨薄量 bar 把锚拖在旧水位 ⇒ 平稳爬升的强势票到成熟窗时距 VWAP 常 >0.8%,
+#   被 vwap_extended 误拒 — 恰好拒掉动量延续型 (主盈利形态)。
+#   锚点 = "流动性可接受的时段起点": 盘前 07:00 (排除 4:00-7:00 凌晨死区; 7:00+ 对
+#   今日有财报的候选普遍有真实事件量), 盘后 16:00 (= 全时段起点: 盘后无凌晨病灶,
+#   且 16:00-16:20 是发布后量最重/价格发现最真的 20 分钟, 排除它 VWAP 反而失代表性,
+#   还会在 A/B 窗开头制造 bars<4 预热拒绝, 把盘后 B 有效窗压到 50min — 见 §10.7 用户质询)。
+#   此锚点下四段入场窗的预热拒绝均归零 (盘前 A 07:30 时已有 ≥6 根 bar; 盘后 16:20 时 ≥4 根)。
+#   回滚: EXT_VWAP_ANCHOR_MATURITY=false (回到全时段窗, 旧行为)。
+VWAP_ANCHOR_MATURITY = os.getenv("EXT_VWAP_ANCHOR_MATURITY", "true").lower() == "true"
+VWAP_ANCHOR_WINDOWS = {
+    "premarket": (700, 929),
+    "afterhours": (1600, 1959),
+}
+
+_EARNINGS_CALENDAR_CACHE = {}
 
 from scripts.extended_hours_order_lifecycle import (
     ACTIVE_ORDER_STATUSES,
@@ -136,6 +191,28 @@ def _now_hhmm_et():
 def _in_session_window(session):
     start, end = SESSION_WINDOWS[session]
     return start <= _now_hhmm_et() <= end
+
+
+def _entry_window_reason(session, grade):
+    windows = ENTRY_WINDOWS.get(session, {})
+    start, end = windows.get(grade, (0, 0))
+    if not start <= _now_hhmm_et() <= end:
+        return "entry_window_not_mature"
+    return None
+
+
+def _entry_grade(price, volume, market_cap):
+    market_cap = float(market_cap or 0)
+    if market_cap <= 0:
+        return None, "market_cap_missing"
+    if market_cap < MIN_MARKET_CAP_USD:
+        return None, "market_cap_too_low"
+    turnover = float(price or 0) * float(volume or 0)
+    if turnover < MIN_EXT_TURNOVER_USD:
+        return None, "turnover_too_low"
+    if turnover >= A_GRADE_TURNOVER_USD or volume >= 20_000_000:
+        return "A", None
+    return "B", None
 
 
 def _is_trading_day():
@@ -470,7 +547,8 @@ def _price_in_range(price):
 
 def _snapshot_number(row, key):
     try:
-        return float(row.get(key, 0) or 0)
+        value = float(row.get(key, 0) or 0)
+        return value if math.isfinite(value) else 0.0
     except (TypeError, ValueError, OverflowError):
         return 0.0
 
@@ -487,6 +565,7 @@ def _liquidity_quote(qctx, symbol):
     bid = _snapshot_number(row, "bid_price")
     ask = _snapshot_number(row, "ask_price")
     ask_volume = _snapshot_number(row, "ask_vol")
+    market_cap = _snapshot_number(row, "total_market_val")
     if bid <= 0 or ask <= 0 or ask < bid:
         return None
     spread_pct = (ask - bid) / ((bid + ask) / 2.0) * 100.0
@@ -494,6 +573,7 @@ def _liquidity_quote(qctx, symbol):
         "bid": bid,
         "ask": ask,
         "ask_volume": ask_volume,
+        "market_cap": market_cap,
         "spread_pct": round(spread_pct, 4),
     }
 
@@ -504,16 +584,23 @@ def _rounded_order_price(price):
     return round(price, 3 if price < 1.0 else 2)
 
 
-def _pretrade_gate(decision_price, qty, quote, trade_date):
+def _pretrade_gate(
+    decision_price, qty, quote, trade_date,
+    max_spread_pct=None, min_ask_depth_ratio=None,
+):
     if not quote:
         return None, "quote_missing"
     ask = float(quote["ask"])
     spread_pct = float(quote["spread_pct"])
-    if spread_pct > MAX_SPREAD_PCT:
+    spread_limit = max_spread_pct if max_spread_pct is not None else MAX_SPREAD_PCT
+    depth_ratio = (
+        min_ask_depth_ratio if min_ask_depth_ratio is not None else MIN_ASK_DEPTH_RATIO
+    )
+    if spread_pct > spread_limit:
         return None, "spread_too_wide"
     if decision_price > 0 and ask > decision_price * (1.0 + MAX_PRICE_DRIFT_PCT / 100.0):
         return None, "price_drift_too_high"
-    if qty > 0 and float(quote["ask_volume"]) < qty * MIN_ASK_DEPTH_RATIO:
+    if qty > 0 and float(quote["ask_volume"]) < qty * depth_ratio:
         return None, "insufficient_ask_depth"
 
     from app.execution.fee_model import estimate_round_trip
@@ -534,6 +621,85 @@ def _pretrade_gate(decision_price, qty, quote, trade_date):
     }, None
 
 
+def _extended_vwap_metrics(qctx, symbol, session):
+    try:
+        from futu import KLType, RET_OK
+        trade_date = _today_et()
+        ret, bars, _ = qctx.request_history_kline(
+            symbol,
+            start=trade_date,
+            end=trade_date,
+            ktype=KLType.K_5M,
+            autype=None,
+            max_count=1000,
+            extended_time=True,
+        )
+        if ret != RET_OK or bars is None or not hasattr(bars, "iterrows") or not len(bars):
+            return None
+        if VWAP_ANCHOR_MATURITY:
+            session_start, session_end = VWAP_ANCHOR_WINDOWS[session]
+        else:
+            session_start, session_end = SESSION_WINDOWS[session]
+        rows = []
+        for _, row in bars.iterrows():
+            time_key = str(row.get("time_key", ""))
+            if len(time_key) < 11:
+                continue
+            try:
+                hhmm = int(time_key[11:13]) * 100 + int(time_key[14:16])
+                close = float(row.get("close", 0) or 0)
+                volume = float(row.get("volume", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if session_start <= hhmm <= session_end and close > 0 and volume > 0:
+                rows.append({"close": close, "volume": volume})
+        if len(rows) < 4:
+            return None
+        notional_volume = sum(row["close"] * row["volume"] for row in rows)
+        total_volume = sum(row["volume"] for row in rows)
+        vwap = notional_volume / total_volume if total_volume > 0 else 0
+        if vwap <= 0:
+            return None
+        last = rows[-1]
+        prior = rows[-4:-1]
+        prior_avg = sum(row["volume"] for row in prior) / len(prior)
+        volume_ratio = last["volume"] / prior_avg if prior_avg > 0 else 0
+        vwap_dev_pct = (last["close"] - vwap) / vwap * 100.0
+        return {
+            "vwap": round(vwap, 4),
+            "last_close": round(last["close"], 4),
+            "last_volume": last["volume"],
+            "volume_ratio": round(volume_ratio, 4),
+            "vwap_dev_pct": round(vwap_dev_pct, 4),
+            "bars": len(rows),
+            "anchor": "maturity" if VWAP_ANCHOR_MATURITY else "full_session",
+        }
+    except Exception as exc:
+        print(f"[ext_entry] extended VWAP metrics failed: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _entry_structure_gate(qctx, symbol, session, price):
+    """返回 (metrics|None, reason|None, metrics|None)。
+
+    被拒时第 3 元携带实测 metrics (数据缺失时为 None), 调用方须落台账 ——
+    被拒候选的 vwap_dev/volume_ratio 影子分布由此积累 (P1-3: 先攒拒绝分布
+    样本, 再回看 0.8% 距离 / 0.5 量比阈值是否误杀动量延续型)。
+    """
+    metrics = _extended_vwap_metrics(qctx, symbol, session)
+    if not metrics:
+        return None, "structure_data_missing", None
+    vwap = float(metrics["vwap"])
+    if price <= vwap:
+        return None, "below_vwap", metrics
+    vwap_dev_pct = (price - vwap) / vwap * 100.0
+    if abs(vwap_dev_pct) > MAX_VWAP_DISTANCE_PCT:
+        return None, "vwap_extended", metrics
+    if float(metrics["volume_ratio"]) < MIN_VOLUME_CONFIRM_RATIO:
+        return None, "volume_confirmation_missing", metrics
+    return metrics, None, metrics
+
+
 def _record_pretrade_gate_rejects(session, rejects):
     if not rejects:
         return
@@ -545,6 +711,28 @@ def _record_pretrade_gate_rejects(session, rejects):
                 "session": session,
                 "n": len(rejects),
                 "rejects": rejects,
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _record_earnings_gate_rejects(session, trade_date, reason_counts, details):
+    """earnings 闸拒绝台账 (P0-2, DEB-20260920 §10). 每次运行聚合一行。
+
+    details 只收非 calendar_missing 的子原因 (calendar_missing 是常态: 多数异动票
+    今日不发财报, 逐票记录会每 5 分钟膨胀一次; 计数已足够)。异常不得影响主流程。
+    """
+    if not reason_counts:
+        return
+    try:
+        EARNINGS_GATE_REJECTS.parent.mkdir(parents=True, exist_ok=True)
+        with EARNINGS_GATE_REJECTS.open("a") as handle:
+            handle.write(json.dumps({
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "session": session,
+                "trade_date": trade_date,
+                "counts": reason_counts,
+                "details": details[:50],
             }, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -926,24 +1114,146 @@ def _reconcile_broker_entry_orders(
     return active_orders, conflicts
 
 
-def _earnings_surprise(symbol):
-    """Finnhub 最近财报超预期% (positive=beat). 事件门: 超预期>0 即过 (挡无财报的妖股).
-    2026-09-17 用户裁方案A: 删新鲜度门 — period 是季度末非披露日, 新鲜度会误拒真催化;
-    "当下正在反应"由价格门(涨≥2%)+量门(≥20万)承载, 财报只需证明"有基本面支撑"."""
+def _earnings_calendar_rows():
+    """当日财报日历行 (进程内缓存; cron 每 tick 新进程 ⇒ 源故障只影响本 tick, 下轮自动重试).
+
+    返回 (rows, error)。源异常时**不再静默等同于"今日无财报"** (旧病灶: except → [],
+    "源挂了"与"真没事件"在读数上不可区分) — 返回 error 供子原因归因, 并打显式警告。
+    """
+    today = _today_et()
+    cached = _EARNINGS_CALENDAR_CACHE.get(today)
+    if cached is None:
+        try:
+            from app.data.earnings_calendar import EarningsCalendar
+            rows, source_error = EarningsCalendar().get_earnings_calendar_with_status()
+            cached = {"rows": rows or [], "error": source_error}
+        except Exception as exc:
+            cached = {"rows": [], "error": f"{type(exc).__name__}: {exc}"}
+            print(
+                "[ext_entry] earnings calendar SOURCE FAILED "
+                f"(fail-closed this tick, will retry next run): {cached['error']}"
+            )
+        _EARNINGS_CALENDAR_CACHE[today] = cached
+    return cached.get("rows") or [], cached.get("error")
+
+
+def _parse_earnings_phase(row):
+    """日历相位 → (before, after)。空/未知相位两者皆 False (fail-closed, 子原因单列)。"""
+    phase = str(row.get("timeOfTheDay", "") or row.get("pub_type", "")).lower()
+    before = "before" in phase or "pre" in phase or "bmo" in phase
+    after = "after" in phase or "post" in phase or "amc" in phase
+    return before, after
+
+
+def _earnings_calendar_event(symbol, session):
+    """同日同相位财报事件。返回 (row|None, sub_reason|None)。
+
+    子原因 (P0-2, 落 earnings 拒绝台账):
+      calendar_source_error   — 日历源本 tick 拉取失败 (fail-closed)
+      calendar_missing        — 今日日历无此票 (常态)
+      calendar_phase_mismatch — 今日有财报但相位与本 session 不符
+      calendar_phase_unknown  — 今日有财报但相位字段为空/不可识别 (数据源契约漂移的信号)
+    与旧版差异: 扫完所有 symbol+date 匹配行再定论 (旧版首行相位不符即拒, 不看后续行)。
+    """
+    rows, error = _earnings_calendar_rows()
+    if error:
+        return None, "calendar_source_error"
+    today = _today_et()
+    ticker = symbol.replace("US.", "").upper()
+    saw_mismatch = False
+    saw_unknown = False
+    for row in rows:
+        if str(row.get("symbol", "")).upper() != ticker:
+            continue
+        if str(row.get("reportDate", "")) != today:
+            continue
+        before, after = _parse_earnings_phase(row)
+        if not before and not after:
+            saw_unknown = True
+            continue
+        if before == (session == "premarket") and after == (session == "afterhours"):
+            return row, None
+        saw_mismatch = True
+    if saw_mismatch:
+        return None, "calendar_phase_mismatch"
+    if saw_unknown:
+        return None, "calendar_phase_unknown"
+    return None, "calendar_missing"
+
+
+def _afterhours_earnings_expected():
+    """当日日历是否存在 after/post 相位财报 (P1-4 盘前保留额度的条件化依据)。
+
+    源故障/空日历 → 视为"有" (保守: 宁可放弃盘前第 3 笔的机会成本, 不改变暴露节奏)。
+    """
+    rows, error = _earnings_calendar_rows()
+    if error or not rows:
+        return True
+    today = _today_et()
+    for row in rows:
+        if str(row.get("reportDate", "")) != today:
+            continue
+        _before, after = _parse_earnings_phase(row)
+        if after:
+            return True
+    return False
+
+
+def _surprise_period_age_days(period):
+    """Finnhub period (财季末日期) 距今 ET 天数; 缺失/不可解析返回 None (调用侧 fail-closed)."""
+    try:
+        period_date = datetime.strptime(str(period)[:10], "%Y-%m-%d").date()
+        today_date = datetime.strptime(_today_et(), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (today_date - period_date).days
+
+
+def _earnings_surprise(symbol, session):
+    """同日同相位 earnings beat + Finnhub surprise 新鲜度守卫 (P0-1)。
+
+    返回 (earnings|None, sub_reason|None)。新增子原因:
+      finnhub_client_unavailable / finnhub_no_data / finnhub_error — 源侧
+      surprise_nonpositive — 最新 actual ≤ 0
+      surprise_stale       — e[0].period 超龄 (今日 actual 尚未入库, 读到的是上一季)
+    新鲜度守卫理由: 财报**刚发布**时 Finnhub 常未更新, e[0] 是上季记录;
+    "上季 beat + 今日盘前涨 2% (好 guidance/误读)" 会透过旧闸, 今日实际 miss ⇒ 回落踩雷,
+    与 9/17 首跑 4 笔"财报高开→回落"病灶同型。period 距今 [-7, 150] 天外一律拒。
+    """
+    event, calendar_reason = _earnings_calendar_event(symbol, session)
+    if event is None:
+        return None, calendar_reason
     try:
         from app.data.premarket_enrichment import _get_finnhub_client
         c = _get_finnhub_client()
         if c is None:
-            return None
+            return None, "finnhub_client_unavailable"
         tick = symbol.replace("US.", "")
         e = c.company_earnings(tick, limit=1)
-        if e and isinstance(e, list):
-            sp = e[0].get("surprisePercent")
-            period = e[0].get("period")
-            return {"surprise_pct": sp, "period": period}
-    except Exception:
-        pass
-    return None
+        if not (e and isinstance(e, list)):
+            return None, "finnhub_no_data"
+        sp = e[0].get("surprisePercent")
+        period = e[0].get("period")
+        if sp is None or sp <= 0:
+            return None, "surprise_nonpositive"
+        age_days = _surprise_period_age_days(period)
+        if age_days is None or age_days > EARNINGS_MAX_PERIOD_AGE_DAYS or age_days < -7:
+            print(
+                f"[ext_entry] {symbol} surprise STALE rejected: period={period!r} "
+                f"age_days={age_days} limit={EARNINGS_MAX_PERIOD_AGE_DAYS} "
+                "(今日 actual 疑似尚未入 Finnhub, fail-closed)"
+            )
+            return None, "surprise_stale"
+        return {
+            "surprise_pct": sp,
+            "period": period,
+            "period_age_days": age_days,
+            "report_date": event.get("reportDate"),
+            "report_phase": event.get("timeOfTheDay") or event.get("pub_type"),
+        }, None
+    except Exception as exc:
+        print(f"[ext_entry] {symbol} finnhub earnings failed: {type(exc).__name__}: {exc}")
+        return None, "finnhub_error"
 
 
 def _print_gate_counts(session, total, counts):
@@ -955,8 +1265,13 @@ def _print_gate_counts(session, total, counts):
     异常不得影响主流程。
     """
     try:
-        keys = ("attempt_reserved", "held", "price_gate", "momentum_volume",
-                "earnings", "liquidity", "ordered")
+        keys = (
+            "attempt_reserved", "held", "price_gate", "momentum_volume",
+            "earnings", "earnings_phase", "earnings_stale", "earnings_src_err",
+            "market_cap_missing", "market_cap_too_low",
+            "turnover_too_low", "entry_window", "liquidity", "structure",
+            "position_too_small", "ordered",
+        )
         body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
         print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
     except Exception:
@@ -987,8 +1302,9 @@ def collect(session, dry=False):
         price_gate_rejects = []
         try:
             movers = _scan_candidates(session, qctx)
-            _record_prefilter_shadow(session, movers)   # 入口预筛影子 (只记录不拦)
             counts = {}
+            earnings_reason_counts = {}
+            earnings_reject_details = []
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -1002,13 +1318,52 @@ def collect(session, dry=False):
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                earnings = _earnings_surprise(symbol)
+                earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                    earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
+                    earnings_reason_counts[earnings_reason] = (
+                        earnings_reason_counts.get(earnings_reason, 0) + 1
+                    )
+                    if earnings_reason != "calendar_missing":
+                        earnings_reject_details.append({
+                            "symbol": symbol,
+                            "sub_reason": earnings_reason,
+                            "price": price,
+                            "change_pct": round(change_pct, 2),
+                            "volume": volume,
+                        })
                     continue
-                qty = int(POSITION_USD / price)
                 quote = _liquidity_quote(qctx, symbol)
-                gate, reject_reason = _pretrade_gate(price, qty, quote, today)
+                grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+                if grade is None:
+                    counts[grade_reason] = counts.get(grade_reason, 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "reason": grade_reason,
+                        "quote": quote,
+                    })
+                    continue
+                window_reason = _entry_window_reason(session, grade)
+                if window_reason:
+                    counts["entry_window"] = counts.get("entry_window", 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "reason": window_reason,
+                        "grade": grade,
+                    })
+                    continue
+                position_usd = POSITION_USD if grade == "A" else POSITION_B_USD
+                qty = int(position_usd / price)
+                spread_limit = MAX_SPREAD_PCT_A if grade == "A" else MAX_SPREAD_PCT
+                depth_ratio = MIN_ASK_DEPTH_RATIO_A if grade == "A" else MIN_ASK_DEPTH_RATIO
+                gate, reject_reason = _pretrade_gate(
+                    price, qty, quote, today,
+                    max_spread_pct=spread_limit,
+                    min_ask_depth_ratio=depth_ratio,
+                )
                 if gate is None:
                     counts["liquidity"] = counts.get("liquidity", 0) + 1
                     pretrade_rejects.append({
@@ -1020,18 +1375,50 @@ def collect(session, dry=False):
                     })
                     continue
                 order_price = gate["order_price"]
-                qty = int(POSITION_USD / order_price)
+                structure, structure_reason, structure_metrics = _entry_structure_gate(
+                    qctx, symbol, session, order_price
+                )
+                if structure is None:
+                    counts["structure"] = counts.get("structure", 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "qty": qty,
+                        "reason": structure_reason,
+                        "grade": grade,
+                        "structure_metrics": structure_metrics,
+                    })
+                    continue
+                qty = int(position_usd / order_price)
+                if qty < 1:
+                    counts["position_too_small"] = counts.get("position_too_small", 0) + 1
+                    continue
                 counts["ordered"] = counts.get("ordered", 0) + 1
                 results.append({
                     "ok": True, "dry": True, "symbol": symbol,
                     "qty": qty, "price": order_price, "decision_price": price,
                     "session": session, "change_pct": round(change_pct, 2),
                     "volume": volume, "earnings": earnings,
+                    "position_usd": position_usd, "grade": grade,
+                    "structure": structure,
                     "pretrade": gate,
                 })
+            counts["earnings_phase"] = (
+                earnings_reason_counts.get("calendar_phase_mismatch", 0)
+                + earnings_reason_counts.get("calendar_phase_unknown", 0)
+            )
+            counts["earnings_stale"] = earnings_reason_counts.get("surprise_stale", 0)
+            counts["earnings_src_err"] = (
+                earnings_reason_counts.get("calendar_source_error", 0)
+                + earnings_reason_counts.get("finnhub_error", 0)
+                + earnings_reason_counts.get("finnhub_client_unavailable", 0)
+            )
             _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
+            _record_earnings_gate_rejects(
+                session, today, earnings_reason_counts, earnings_reject_details
+            )
         finally:
             qctx.close()
         return results or [{"skip": "no_signal_passed_all_gates"}]
@@ -1083,8 +1470,23 @@ def collect(session, dry=False):
         opened_today = state["opened_today"]
         day_key = f"{today}:{session}"
         total_today = _opened_today_total(opened_today, today)
+        session_today = int(opened_today.get(day_key, 0) or 0)
         if total_today >= MAX_PER_DAY:
             return [{"skip": "daily_limit", "total_today": total_today}]
+        # P1-4: 保留额度条件化 — 当日日历无盘后相位财报时, 盘前可用满全天额度。
+        premarket_limit = PREMARKET_MAX_PER_DAY
+        reserved_for_afterhours = True
+        if session == "premarket" and PREMARKET_RESERVE_CONDITIONAL:
+            reserved_for_afterhours = _afterhours_earnings_expected()
+            if not reserved_for_afterhours:
+                premarket_limit = MAX_PER_DAY
+        if session == "premarket" and session_today >= premarket_limit:
+            return [{
+                "skip": "premarket_session_limit",
+                "session_today": session_today,
+                "limit": premarket_limit,
+                "reserved_for_afterhours": reserved_for_afterhours,
+            }]
         exposure_gate = _open_exposure_gate()
         if exposure_gate:
             _save_state(state)
@@ -1099,8 +1501,9 @@ def collect(session, dry=False):
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         try:
             movers = _scan_candidates(session, qctx)
-            _record_prefilter_shadow(session, movers)   # 入口预筛影子 (只记录不拦)
             counts = {}
+            earnings_reason_counts = {}
+            earnings_reject_details = []
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
@@ -1118,14 +1521,53 @@ def collect(session, dry=False):
                 if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                earnings = _earnings_surprise(symbol)
+                earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                    earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
+                    earnings_reason_counts[earnings_reason] = (
+                        earnings_reason_counts.get(earnings_reason, 0) + 1
+                    )
+                    if earnings_reason != "calendar_missing":
+                        earnings_reject_details.append({
+                            "symbol": symbol,
+                            "sub_reason": earnings_reason,
+                            "price": price,
+                            "change_pct": round(change_pct, 2),
+                            "volume": volume,
+                        })
                     continue
 
-                qty = int(POSITION_USD / price)
                 quote = _liquidity_quote(qctx, symbol)
-                gate, reject_reason = _pretrade_gate(price, qty, quote, today)
+                grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+                if grade is None:
+                    counts[grade_reason] = counts.get(grade_reason, 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "reason": grade_reason,
+                        "quote": quote,
+                    })
+                    continue
+                window_reason = _entry_window_reason(session, grade)
+                if window_reason:
+                    counts["entry_window"] = counts.get("entry_window", 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "reason": window_reason,
+                        "grade": grade,
+                    })
+                    continue
+                position_usd = POSITION_USD if grade == "A" else POSITION_B_USD
+                qty = int(position_usd / price)
+                spread_limit = MAX_SPREAD_PCT_A if grade == "A" else MAX_SPREAD_PCT
+                depth_ratio = MIN_ASK_DEPTH_RATIO_A if grade == "A" else MIN_ASK_DEPTH_RATIO
+                gate, reject_reason = _pretrade_gate(
+                    price, qty, quote, today,
+                    max_spread_pct=spread_limit,
+                    min_ask_depth_ratio=depth_ratio,
+                )
                 if gate is None:
                     counts["liquidity"] = counts.get("liquidity", 0) + 1
                     pretrade_rejects.append({
@@ -1137,7 +1579,24 @@ def collect(session, dry=False):
                     })
                     continue
                 order_price = gate["order_price"]
-                qty = int(POSITION_USD / order_price)
+                structure, structure_reason, structure_metrics = _entry_structure_gate(
+                    qctx, symbol, session, order_price
+                )
+                if structure is None:
+                    counts["structure"] = counts.get("structure", 0) + 1
+                    pretrade_rejects.append({
+                        "symbol": symbol,
+                        "decision_price": price,
+                        "qty": qty,
+                        "reason": structure_reason,
+                        "grade": grade,
+                        "structure_metrics": structure_metrics,
+                    })
+                    continue
+                qty = int(position_usd / order_price)
+                if qty < 1:
+                    counts["position_too_small"] = counts.get("position_too_small", 0) + 1
+                    continue
                 counts["ordered"] = counts.get("ordered", 0) + 1
                 attempts[attempt_key] = {
                     "status": "reserved", "session": session, "symbol": symbol,
@@ -1145,7 +1604,10 @@ def collect(session, dry=False):
                 }
                 _save_state(state)
                 try:
-                    result = _execute(symbol, qty, order_price, session, change_pct, volume, earnings, dry)
+                    result = _execute(
+                        symbol, qty, order_price, session, change_pct, volume, earnings, dry,
+                        position_usd=position_usd, grade=grade, structure=structure,
+                    )
                     result["decision_price"] = price
                     result["pretrade"] = gate
                 except Exception as exc:
@@ -1171,13 +1633,29 @@ def collect(session, dry=False):
                 results.append(result)
                 if result.get("ok"):
                     total_today += 1
-                    opened_today[day_key] = opened_today.get(day_key, 0) + 1
+                    session_today += 1
+                    opened_today[day_key] = session_today
                 _save_state(state)
-                if total_today >= MAX_PER_DAY:
+                if total_today >= MAX_PER_DAY or (
+                    session == "premarket" and session_today >= premarket_limit
+                ):
                     break
+            counts["earnings_phase"] = (
+                earnings_reason_counts.get("calendar_phase_mismatch", 0)
+                + earnings_reason_counts.get("calendar_phase_unknown", 0)
+            )
+            counts["earnings_stale"] = earnings_reason_counts.get("surprise_stale", 0)
+            counts["earnings_src_err"] = (
+                earnings_reason_counts.get("calendar_source_error", 0)
+                + earnings_reason_counts.get("finnhub_error", 0)
+                + earnings_reason_counts.get("finnhub_client_unavailable", 0)
+            )
             _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
+            _record_earnings_gate_rejects(
+                session, today, earnings_reason_counts, earnings_reject_details
+            )
         finally:
             qctx.close()
     return results or [{"skip": "no_signal_passed_all_gates"}]
@@ -1186,7 +1664,10 @@ def collect(session, dry=False):
 
 
 
-def _write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg, vol, buy_order_id=""):
+def _write_open_position(
+    symbol, qty, entry_px, decision_px, session, earn, chg, vol,
+    buy_order_id="", position_usd=None, grade="B", structure=None,
+):
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
     返回 position_id. 幂等且不覆盖既有仓位."""
     import uuid
@@ -1200,7 +1681,18 @@ def _write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg,
                            "position_id": pos_id, "entry_order_id": buy_order_id,
                            "earnings_surprise_pct": earn.get("surprise_pct"),
                            "earnings_period": earn.get("period"),
+                           "earnings_period_age_days": earn.get("period_age_days"),
+                           "earnings_report_date": earn.get("report_date"),
+                           "earnings_report_phase": earn.get("report_phase"),
                            "ext_change_pct": chg, "ext_volume": vol,
+                           "ext_turnover_usd": float(entry_px or 0) * float(vol or 0),
+                           "entry_grade": grade,
+                           "entry_position_usd": float(position_usd or POSITION_USD),
+                           "entry_structure": structure,
+                           "cert_lock_pct": (
+                               GRADE_A_CERT_LOCK_PCT if grade == "A"
+                               else GRADE_B_CERT_LOCK_PCT
+                           ),
                            "cohort": "B",  # 2026-09-17 用户裁: EXT 仓可隔夜 (cohort B + PLAYBOOK_SIM 默认允许, 盈利跳过 PRE_CLOSE_EXIT)
                            "stop_loss": init_sl,           # 盘中 monitor_playbook_sim_exits 读此键做 SL
                            "stop_source": "rule_engine_initial_sl"}, ensure_ascii=False)
@@ -1251,7 +1743,10 @@ def _write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg,
         conn.close()
 
 
-def _execute(symbol, qty, price, session, chg, vol, earn, dry):
+def _execute(
+    symbol, qty, price, session, chg, vol, earn, dry,
+    position_usd=None, grade="B", structure=None,
+):
     """SIM 真下单: 买入→等成交→写 open_positions(含 initial_sl 规则引擎兜底). 用户裁方案1.
     SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor."""
     trd_env = os.getenv("FUTU_TRD_ENV", "SIMULATE")
@@ -1271,8 +1766,11 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
         )
         return {"ok": False, "skip": "real_not_authorized"}
 
+    requested_position_usd = float(position_usd or POSITION_USD)
     rec = {"symbol": symbol, "qty": qty, "price": price, "session": session,
-           "change_pct": round(chg, 2), "volume": vol, "earnings": earn, "position_usd": POSITION_USD}
+           "change_pct": round(chg, 2), "volume": vol, "earnings": earn,
+           "position_usd": requested_position_usd, "entry_grade": grade,
+           "entry_structure": structure}
     from futu import TrdSide, OrderType, TrdEnv, TimeInForce, Session, RET_OK
     tctx = _open_trade_context()
     try:
@@ -1327,7 +1825,10 @@ def _execute(symbol, qty, price, session, chg, vol, earn, dry):
         rec.update({"filled_qty": fqty, "avg_fill_price": fpx})
         # 成交 → 写 open_positions + trade_records (盘中监控闭环; metadata.stop_loss 供 SL 判定)
         try:
-            pos_id = _write_open_position(symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid)
+            pos_id = _write_open_position(
+                symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid,
+                position_usd=requested_position_usd, grade=grade, structure=structure,
+            )
         except Exception as exc:
             rec["ok"] = False
             rec["error"] = f"position_db_write_failed:{exc}"

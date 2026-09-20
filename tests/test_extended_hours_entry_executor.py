@@ -1,6 +1,7 @@
 import contextlib
 import fcntl
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -22,6 +23,7 @@ class FakeQuoteContext:
                     "bid_price": 9.99,
                     "ask_price": 10.01,
                     "ask_vol": 1_000,
+                    "total_market_val": 5_000_000_000,
                 }.get(key, default)
 
         class Iloc:
@@ -35,12 +37,44 @@ class FakeQuoteContext:
         return 0, Snapshot()
 
 
+class FakeKlineFrame:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __len__(self):
+        return len(self.rows)
+
+    def iterrows(self):
+        return iter(enumerate(self.rows))
+
+
+class FakeKlineContext:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def request_history_kline(self, symbol, **kwargs):
+        self.calls.append((symbol, kwargs))
+        return 0, FakeKlineFrame(self.rows), None
+
+
 @pytest.fixture()
 def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "STATE", tmp_path / "state.json")
     monkeypatch.setattr(executor, "LOCK", tmp_path / "state.lock")
     monkeypatch.setattr(executor, "PRICE_GATE_REJECTS", tmp_path / "price-rejects.jsonl")
     monkeypatch.setattr(executor, "PRETRADE_GATE_REJECTS", tmp_path / "pretrade-rejects.jsonl")
+    monkeypatch.setattr(executor, "EARNINGS_GATE_REJECTS", tmp_path / "earnings-rejects.jsonl")
+
+
+def _seed_earnings_calendar(monkeypatch, rows, error=None, today=None):
+    """把日历缓存换成测试内容 (新格式 {"rows": [...], "error": ...}).
+
+    所有会走 premarket collect 的用例都必须 seed — 否则 P1-4 的
+    `_afterhours_earnings_expected()` 会尝试真实 EarningsCalendar (触网/开 OpenD)。
+    """
+    day = today or executor._today_et()
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {day: {"rows": rows, "error": error}})
 
 
 def test_collect_refuses_real_order_when_sim_disabled_via_switch(
@@ -78,14 +112,25 @@ def test_dry_scan_does_not_write_state_and_caps_position_notional(
         executor,
         "_scan_movers",
         lambda session, qctx: [
-            {"symbol": "US.FAKE", "px": 10.0, "chg": 3.0, "vol": 300000.0},
+            {"symbol": "US.FAKE", "px": 10.0, "chg": 3.0, "vol": 2_000_000.0},
             {"symbol": "US.EXPENSIVE", "px": 6000.0, "chg": 3.0, "vol": 300000.0},
         ],
     )
     monkeypatch.setattr(
         executor,
         "_earnings_surprise",
-        lambda symbol: {"surprise_pct": 10.0, "period": "2026-06-30"},
+        lambda symbol, session: ({"surprise_pct": 10.0, "period": "2026-06-30"}, None),
+    )
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor,
+        "_entry_structure_gate",
+        lambda qctx, symbol, session, price: (
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0}, None,
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0},
+        ),
     )
     monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
 
@@ -125,6 +170,293 @@ def test_pretrade_gate_accepts_liquid_quote_and_rounds_price():
     assert gate["round_trip_fee_pct"] < executor.MAX_ROUND_TRIP_FEE_PCT
 
 
+def test_entry_grade_requires_market_cap_and_turnover_then_scales_position():
+    assert executor._entry_grade(10.0, 2_000_000, 5_000_000_000) == ("A", None)
+    assert executor._entry_grade(10.0, 1_200_000, 5_000_000_000) == ("B", None)
+    assert executor._entry_grade(10.0, 2_000_000, 0) == (None, "market_cap_missing")
+    assert executor._entry_grade(10.0, 2_000_000, 500_000_000) == (None, "market_cap_too_low")
+    assert executor._entry_grade(10.0, 900_000, 5_000_000_000) == (None, "turnover_too_low")
+
+
+def test_entry_window_reason_uses_grade_maturity(monkeypatch):
+    monkeypatch.setattr(
+        executor, "_now_et", lambda: datetime(2026, 9, 18, 7, 45, tzinfo=timezone.utc)
+    )
+    assert executor._entry_window_reason("premarket", "A") is None
+    assert executor._entry_window_reason("premarket", "B") == "entry_window_not_mature"
+
+    monkeypatch.setattr(
+        executor, "_now_et", lambda: datetime(2026, 9, 18, 17, 45, tzinfo=timezone.utc)
+    )
+    assert executor._entry_window_reason("afterhours", "A") is None
+    assert executor._entry_window_reason("afterhours", "B") == "entry_window_not_mature"
+
+
+def test_pretrade_gate_applies_grade_a_spread_and_depth():
+    quote = {"bid": 9.98, "ask": 10.02, "ask_volume": 999, "spread_pct": 0.3999}
+
+    gate, reason = executor._pretrade_gate(
+        10.0, 500, quote, "2026-09-18",
+        max_spread_pct=0.5, min_ask_depth_ratio=2.0,
+    )
+
+    assert reason == "insufficient_ask_depth"
+    assert gate is None
+
+    quote.update(ask_volume=2_000)
+    tight = dict(quote, spread_pct=0.51)
+    assert executor._pretrade_gate(
+        10.0, 500, tight, "2026-09-18",
+        max_spread_pct=0.5, min_ask_depth_ratio=2.0,
+    )[1] == "spread_too_wide"
+
+
+def test_extended_vwap_metrics_uses_same_session_bars(monkeypatch):
+    rows = [
+        {"time_key": "2026-09-18 07:30:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:35:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:40:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:45:00", "close": 10.30, "volume": 10_000},
+    ]
+    monkeypatch.setattr(
+        executor, "_today_et", lambda: "2026-09-18"
+    )
+    context = FakeKlineContext(rows)
+
+    metrics = executor._extended_vwap_metrics(context, "US.FAKE", "premarket")
+
+    assert metrics["vwap"] == 10.2625
+    assert metrics["volume_ratio"] == 1.0
+    assert metrics["bars"] == 4
+    assert metrics["anchor"] == "maturity"
+    assert context.calls[0][1]["extended_time"] is True
+
+
+def test_extended_vwap_maturity_anchor_excludes_predawn_bars(monkeypatch):
+    """P1-3: 凌晨死区 (4:00-7:00) bar 不得拖锚; 7:00+ 事件量 bar 必须参与 (§10.6 边界)."""
+    rows = [
+        {"time_key": "2026-09-18 04:05:00", "close": 9.00, "volume": 100},      # 凌晨死区
+        {"time_key": "2026-09-18 05:00:00", "close": 9.00, "volume": 100},
+        {"time_key": "2026-09-18 06:55:00", "close": 9.00, "volume": 100},      # 边界外
+        {"time_key": "2026-09-18 07:05:00", "close": 10.25, "volume": 10_000},  # 边界内
+        {"time_key": "2026-09-18 07:30:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:35:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:40:00", "close": 10.25, "volume": 10_000},
+        {"time_key": "2026-09-18 07:45:00", "close": 10.30, "volume": 10_000},
+    ]
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
+    context = FakeKlineContext(rows)
+
+    metrics = executor._extended_vwap_metrics(context, "US.FAKE", "premarket")
+    assert metrics["bars"] == 5             # 07:05 起, 3 根 9.00 的死区 bar 未参与
+    assert metrics["vwap"] == 10.26
+    assert metrics["volume_ratio"] == 1.0
+
+    monkeypatch.setattr(executor, "VWAP_ANCHOR_MATURITY", False)  # 回滚开关 = 旧口径
+    legacy = executor._extended_vwap_metrics(context, "US.FAKE", "premarket")
+    assert legacy["bars"] == 8
+    assert legacy["anchor"] == "full_session"
+    assert legacy["vwap"] < metrics["vwap"]   # 死区 bar 把旧口径的锚拖低
+
+
+def test_extended_vwap_afterhours_anchor_starts_at_session_open(monkeypatch):
+    """§10.6: 盘后锚 = 16:00 (全时段起点, 无凌晨病灶; 16:00-16:20 是发布后量最重的
+    价格发现段, 排除它 VWAP 失代表性且会把 A/B 窗开头打成 bars<4 预热拒绝)."""
+    rows = [
+        {"time_key": "2026-09-18 16:05:00", "close": 42.0, "volume": 50_000},
+        {"time_key": "2026-09-18 16:10:00", "close": 42.1, "volume": 40_000},
+        {"time_key": "2026-09-18 16:15:00", "close": 42.2, "volume": 30_000},
+        {"time_key": "2026-09-18 16:20:00", "close": 42.3, "volume": 20_000},
+    ]
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
+    context = FakeKlineContext(rows)
+
+    metrics = executor._extended_vwap_metrics(context, "US.FAKE", "afterhours")
+
+    assert metrics is not None              # 16:20 (A/B 入场窗起点) 即有 4 根 bar, 无预热拒绝
+    assert metrics["bars"] == 4
+    assert metrics["anchor"] == "maturity"
+
+
+def test_entry_structure_gate_requires_vwap_reclaim_and_volume(monkeypatch):
+    metrics = {"vwap": 10.0, "vwap_dev_pct": 0.0, "volume_ratio": 1.0}
+    monkeypatch.setattr(
+        executor, "_extended_vwap_metrics", lambda qctx, symbol, session: metrics
+    )
+
+    passed = executor._entry_structure_gate(object(), "US.FAKE", "premarket", 10.01)
+    assert passed[1] is None and passed[0] == metrics
+    rejected = executor._entry_structure_gate(object(), "US.FAKE", "premarket", 9.99)
+    assert rejected[1] == "below_vwap"
+    assert rejected[2] == metrics   # P1-3: 被拒时也携带实测 metrics 供台账记录
+
+    monkeypatch.setattr(
+        executor, "_extended_vwap_metrics", lambda qctx, symbol, session: None
+    )
+    missing = executor._entry_structure_gate(object(), "US.FAKE", "premarket", 10.01)
+    assert missing[1] == "structure_data_missing" and missing[2] is None
+
+    extended = dict(metrics, vwap_dev_pct=1.0)
+    monkeypatch.setattr(
+        executor, "_extended_vwap_metrics", lambda qctx, symbol, session: extended
+    )
+    assert executor._entry_structure_gate(object(), "US.FAKE", "premarket", 10.15)[1] == "vwap_extended"
+
+    quiet = dict(metrics, volume_ratio=0.1)
+    monkeypatch.setattr(
+        executor, "_extended_vwap_metrics", lambda qctx, symbol, session: quiet
+    )
+    assert executor._entry_structure_gate(object(), "US.FAKE", "premarket", 10.01)[1] == "volume_confirmation_missing"
+
+
+def test_earnings_calendar_event_requires_today_and_matching_phase(monkeypatch):
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [
+            {"symbol": "FAKE", "reportDate": "2026-09-18", "timeOfTheDay": "pre-market"},
+            {"symbol": "OLD", "reportDate": "2026-09-17", "timeOfTheDay": "pre-market"},
+        ], "error": None},
+    })
+
+    assert executor._earnings_calendar_event("US.FAKE", "premarket")[0] is not None
+    assert executor._earnings_calendar_event("US.FAKE", "afterhours") == (None, "calendar_phase_mismatch")
+    assert executor._earnings_calendar_event("US.OLD", "premarket") == (None, "calendar_missing")
+
+
+def test_earnings_calendar_event_sub_reasons_distinguish_source_and_phase(monkeypatch):
+    """P0-2: "源挂了" / "无事件" / "相位不符" / "相位字段不可识别" 必须可区分.
+
+    §9 观察期第 10 日判断"市场无事件 vs 硬闸过窄/字段错配"依赖这些子原因;
+    旧实现全部塌缩成 None, 归因不可能。
+    """
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
+
+    # 源故障 (不得静默当"今日无财报")
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [], "error": "Timeout: av"},
+    })
+    assert executor._earnings_calendar_event("US.FAKE", "premarket") == (None, "calendar_source_error")
+
+    # 相位字段为空/不可识别 → fail-closed 且单列子原因 (数据源契约漂移的信号)
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [
+            {"symbol": "FAKE", "reportDate": "2026-09-18", "timeOfTheDay": ""},
+        ], "error": None},
+    })
+    assert executor._earnings_calendar_event("US.FAKE", "premarket") == (None, "calendar_phase_unknown")
+
+    # 同 symbol 多行: 首行相位不符不得终判, 须扫完所有匹配行 (旧版首行即拒)
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [
+            {"symbol": "FAKE", "reportDate": "2026-09-18", "timeOfTheDay": "post-market"},
+            {"symbol": "FAKE", "reportDate": "2026-09-18", "timeOfTheDay": "pre-market"},
+        ], "error": None},
+    })
+    row, reason = executor._earnings_calendar_event("US.FAKE", "premarket")
+    assert reason is None and row["timeOfTheDay"] == "pre-market"
+
+
+def test_earnings_calendar_rows_propagate_normalized_empty_source_error(monkeypatch):
+    """入口不得把底层双源空误归因为 calendar_missing."""
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {})
+
+    class Calendar:
+        def get_earnings_calendar_with_status(self):
+            return [], "futu_and_av_empty"
+
+    monkeypatch.setattr("app.data.earnings_calendar.EarningsCalendar", lambda: Calendar())
+
+    assert executor._earnings_calendar_rows() == ([], "futu_and_av_empty")
+
+
+def test_earnings_surprise_rejects_stale_prior_quarter_period(monkeypatch):
+    """P0-1 新鲜度守卫: 今日 actual 未入库时 e[0] 是上一季记录 — 上季 beat 不得放行今日入场.
+
+    病灶同型: 9/17 首跑 4 笔"财报高开→回落" (miss + 盘前先涨 2% 透过旧闸)。
+    """
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-20")
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-20": {"rows": [
+            {"symbol": "FAKE", "reportDate": "2026-09-20", "timeOfTheDay": "pre-market"},
+        ], "error": None},
+    })
+
+    class FakeClient:
+        def __init__(self, period):
+            self._period = period
+
+        def company_earnings(self, tick, limit=1):
+            return [{"surprisePercent": 12.0, "period": self._period}]
+
+    def _patch_client(period):
+        import app.data.premarket_enrichment as enrichment
+        monkeypatch.setattr(
+            enrichment, "_get_finnhub_client", lambda: FakeClient(period)
+        )
+
+    _patch_client("2026-03-31")   # 距今 173 天 = 上一季记录 → stale
+    assert executor._earnings_surprise("US.FAKE", "premarket") == (None, "surprise_stale")
+
+    _patch_client("2026-06-30")   # 距今 82 天 = 本季 (Q2 晚披露) → 放行
+    earn, reason = executor._earnings_surprise("US.FAKE", "premarket")
+    assert reason is None
+    assert earn["surprise_pct"] == 12.0
+    assert earn["period_age_days"] == 82
+    assert earn["report_date"] == "2026-09-20"
+    assert earn["report_phase"] == "pre-market"
+
+    _patch_client(None)           # period 缺失 → fail-closed
+    assert executor._earnings_surprise("US.FAKE", "premarket") == (None, "surprise_stale")
+
+
+def test_afterhours_earnings_expected_reads_today_calendar(monkeypatch):
+    """P1-4 依据函数: 源故障/空日历保守视为"有盘后财报" (继续保留额度)."""
+    monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
+
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [
+            {"symbol": "A", "reportDate": "2026-09-18", "timeOfTheDay": "post-market"},
+        ], "error": None},
+    })
+    assert executor._afterhours_earnings_expected() is True
+
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [
+            {"symbol": "A", "reportDate": "2026-09-18", "timeOfTheDay": "pre-market"},
+            {"symbol": "B", "reportDate": "2026-09-19", "timeOfTheDay": "post-market"},  # 非今日
+        ], "error": None},
+    })
+    assert executor._afterhours_earnings_expected() is False
+
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [], "error": "Timeout: av"},
+    })
+    assert executor._afterhours_earnings_expected() is True
+
+    monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
+        "2026-09-18": {"rows": [], "error": None},
+    })
+    assert executor._afterhours_earnings_expected() is True
+
+
+def test_record_earnings_gate_rejects_writes_one_aggregated_line(tmp_path, monkeypatch):
+    path = tmp_path / "earnings-rejects.jsonl"
+    monkeypatch.setattr(executor, "EARNINGS_GATE_REJECTS", path)
+
+    executor._record_earnings_gate_rejects(
+        "premarket", "2026-09-21",
+        {"calendar_missing": 40, "surprise_stale": 1},
+        [{"symbol": "US.FAKE", "sub_reason": "surprise_stale"}],
+    )
+    executor._record_earnings_gate_rejects("premarket", "2026-09-21", {}, [])  # 空轮不写
+
+    lines = path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["counts"] == {"calendar_missing": 40, "surprise_stale": 1}
+    assert rec["details"] == [{"symbol": "US.FAKE", "sub_reason": "surprise_stale"}]
+
+
 def test_pretrade_gate_blocks_excessive_round_trip_fee(monkeypatch):
     monkeypatch.setattr(
         "app.execution.fee_model.estimate_round_trip",
@@ -160,6 +492,198 @@ def test_state_lock_detects_concurrent_executor(isolated_state):
 
     with executor._state_lock() as locked:
         assert locked is True
+
+
+def _quota_test_environment(monkeypatch, opened_today):
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(executor, "ALLOW_SIM_ENTRY", True)
+    monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(executor, "_state_lock", contextlib.contextmanager(lambda: (yield True)))
+    monkeypatch.setattr(
+        executor, "_load_state",
+        lambda: {"version": 2, "opened_today": opened_today, "attempts": {}},
+    )
+    monkeypatch.setattr(executor, "_save_state", lambda state: None)
+    # P1-4 默认场景: 当日**有**盘后财报 ⇒ 保留额度维持旧行为 (盘前限 2)。
+    # 不 seed 会让 `_afterhours_earnings_expected()` 触真实日历源 (触网/开 OpenD)。
+    _seed_earnings_calendar(monkeypatch, [
+        {"symbol": "AFTER", "reportDate": executor._today_et(), "timeOfTheDay": "post-market"},
+    ])
+
+    class TradeContext:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(executor, "_open_trade_context", lambda: TradeContext())
+    monkeypatch.setattr(
+        executor, "_reconcile_broker_entry_orders",
+        lambda *args, **kwargs: ([], []),
+    )
+
+
+def test_collect_blocks_premarket_after_two_positions(isolated_state, monkeypatch):
+    today = executor._today_et()
+    _quota_test_environment(monkeypatch, {f"{today}:premarket": 2})
+    monkeypatch.setattr(
+        executor, "_open_exposure_gate",
+        lambda: pytest.fail("盘前段内配额已达 2, 不应继续进入暴露度闸"),
+    )
+
+    result = executor.collect("premarket")
+
+    assert result == [{
+        "skip": "premarket_session_limit",
+        "session_today": 2,
+        "limit": executor.PREMARKET_MAX_PER_DAY,
+        "reserved_for_afterhours": True,
+    }]
+
+
+def test_collect_releases_premarket_third_slot_without_afterhours_earnings(
+    isolated_state, monkeypatch
+):
+    """P1-4: 当日日历无盘后相位财报 ⇒ 保留是纯机会成本, 盘前第 3 笔放行."""
+    today = executor._today_et()
+    _quota_test_environment(monkeypatch, {f"{today}:premarket": 2})
+    _seed_earnings_calendar(monkeypatch, [
+        {"symbol": "PRE", "reportDate": today, "timeOfTheDay": "pre-market"},
+    ])
+    exposure_gate = {"skip": "next_gate_reached"}
+    monkeypatch.setattr(executor, "_open_exposure_gate", lambda: exposure_gate)
+
+    result = executor.collect("premarket")
+
+    assert result == [exposure_gate]   # 未被 premarket_session_limit 拦下
+
+
+def test_collect_keeps_premarket_reserve_when_calendar_source_fails(
+    isolated_state, monkeypatch
+):
+    """P1-4 保守方向: 日历源故障时**保留**额度 (宁机会成本, 不改暴露节奏)."""
+    today = executor._today_et()
+    _quota_test_environment(monkeypatch, {f"{today}:premarket": 2})
+    _seed_earnings_calendar(monkeypatch, [], error="Timeout: av")
+    monkeypatch.setattr(
+        executor, "_open_exposure_gate",
+        lambda: pytest.fail("源故障时盘前第 3 笔不得放行"),
+    )
+
+    result = executor.collect("premarket")
+
+    assert result == [{
+        "skip": "premarket_session_limit",
+        "session_today": 2,
+        "limit": executor.PREMARKET_MAX_PER_DAY,
+        "reserved_for_afterhours": True,
+    }]
+
+
+def test_collect_keeps_afterhours_slot_after_two_premarket_positions(
+    isolated_state, monkeypatch
+):
+    today = executor._today_et()
+    _quota_test_environment(monkeypatch, {f"{today}:premarket": 2})
+    exposure_gate = {"skip": "next_gate_reached"}
+    monkeypatch.setattr(executor, "_open_exposure_gate", lambda: exposure_gate)
+
+    result = executor.collect("afterhours")
+
+    assert result == [exposure_gate]
+
+
+def test_collect_allows_third_afterhours_position_when_premarket_unused(
+    isolated_state, monkeypatch
+):
+    today = executor._today_et()
+    _quota_test_environment(monkeypatch, {f"{today}:afterhours": 2})
+    exposure_gate = {"skip": "next_gate_reached"}
+    monkeypatch.setattr(executor, "_open_exposure_gate", lambda: exposure_gate)
+
+    result = executor.collect("afterhours")
+
+    assert result == [exposure_gate]
+
+
+def test_collect_daily_total_limit_still_blocks_three_opened_positions(
+    isolated_state, monkeypatch
+):
+    today = executor._today_et()
+    _quota_test_environment(
+        monkeypatch,
+        {f"{today}:premarket": 2, f"{today}:afterhours": 1},
+    )
+    monkeypatch.setattr(
+        executor, "_open_exposure_gate",
+        lambda: pytest.fail("全天合计配额已达 3, 不应继续进入暴露度闸"),
+    )
+
+    result = executor.collect("afterhours")
+
+    assert result == [{"skip": "daily_limit", "total_today": 3}]
+
+
+def test_collect_stops_premarket_loop_when_second_position_fills(
+    isolated_state, monkeypatch
+):
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(executor, "ALLOW_SIM_ENTRY", True)
+    monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(executor, "_state_lock", contextlib.contextmanager(lambda: (yield True)))
+    monkeypatch.setattr(executor, "_open_trade_context", lambda: type("T", (), {"close": lambda self: None})())
+    monkeypatch.setattr(
+        executor, "_reconcile_broker_entry_orders",
+        lambda *args, **kwargs: ([], []),
+    )
+    monkeypatch.setattr(executor, "_open_exposure_gate", lambda: None)
+    monkeypatch.setattr(executor, "_held_symbols", lambda: set())
+    today = executor._today_et()
+    day_key = f"{today}:premarket"
+    state = {"version": 2, "opened_today": {day_key: 1}, "attempts": {}}
+    monkeypatch.setattr(executor, "_load_state", lambda: state)
+    _seed_earnings_calendar(monkeypatch, [
+        {"symbol": "AFTER", "reportDate": today, "timeOfTheDay": "post-market"},
+    ])
+    monkeypatch.setattr(executor, "_scan_movers", lambda session, qctx: [
+        {"symbol": "US.FIRST", "px": 10.0, "chg": 9.0, "vol": 9_000_000.0},
+        {"symbol": "US.SECOND", "px": 10.0, "chg": 9.0, "vol": 9_000_000.0},
+    ])
+    monkeypatch.setattr(
+        executor, "_earnings_surprise",
+        lambda symbol, session: ({"surprise_pct": 30.0, "period": "2026-06-30"}, None),
+    )
+    monkeypatch.setattr(
+        executor, "_liquidity_quote",
+        lambda qctx, symbol: {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000,
+                              "spread_pct": 0.2, "market_cap": 5_000_000_000},
+    )
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda qctx, symbol, session, price: (
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0}, None,
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0},
+        ),
+    )
+    monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
+    executed = []
+    monkeypatch.setattr(
+        executor, "_execute",
+        lambda *args, **kwargs: executed.append(args) or {"ok": True, "buy_order_id": "SIM-1"},
+    )
+    monkeypatch.setattr(executor, "_audit", lambda result: None)
+    monkeypatch.setattr(executor, "_push", lambda text: None)
+
+    results = executor.collect("premarket")
+
+    assert len(executed) == 1
+    assert len(results) == 1
+    assert state["opened_today"][day_key] == 2
+    assert f"{today}:US.FIRST" in state["attempts"]
+    assert f"{today}:US.SECOND" not in state["attempts"]
 
 
 def test_execute_sim_env_is_not_blocked_by_real_guard(isolated_state, monkeypatch):
@@ -289,22 +813,38 @@ def test_gate_counts_line_attributes_every_candidate(isolated_state, monkeypatch
             {"symbol": "US.SLOW", "px": 10.0, "chg": 1.0, "vol": 1_000_000.0},    # 动量门
             {"symbol": "US.THIN", "px": 10.0, "chg": 5.0, "vol": 10.0},           # 量能门
             {"symbol": "US.NOEARN", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},  # 财报门
-            {"symbol": "US.ILQ", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},     # 流动性闸
-            {"symbol": "US.WIN", "px": 10.0, "chg": 5.0, "vol": 1_000_000.0},     # 过闸
+            {"symbol": "US.ILQ", "px": 10.0, "chg": 5.0, "vol": 2_000_000.0},     # 流动性闸
+            {"symbol": "US.WIN", "px": 10.0, "chg": 5.0, "vol": 2_000_000.0},     # 过闸
         ],
     )
     monkeypatch.setattr(
         executor,
         "_earnings_surprise",
-        lambda symbol: None if symbol == "US.NOEARN" else {"surprise_pct": 10.0, "period": "2026-06-30"},
+        lambda symbol, session: (
+            (None, "calendar_missing") if symbol == "US.NOEARN"
+            else ({"surprise_pct": 10.0, "period": "2026-06-30"}, None)
+        ),
     )
     monkeypatch.setattr(
         executor,
         "_liquidity_quote",
         lambda qctx, symbol: (
-            {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.2}
+            {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.2,
+             "market_cap": 5_000_000_000}
             if symbol == "US.WIN"
-            else {"bid": 9.0, "ask": 11.0, "ask_volume": 1, "spread_pct": 20.0}  # 20% 价差 ⇒ 真闸应拒
+            else {"bid": 9.0, "ask": 11.0, "ask_volume": 1, "spread_pct": 20.0,
+                  "market_cap": 5_000_000_000}  # 20% 价差 ⇒ 真闸应拒
+        ),
+    )
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor,
+        "_entry_structure_gate",
+        lambda qctx, symbol, session, price: (
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0}, None,
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0},
         ),
     )
     monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
@@ -319,7 +859,10 @@ def test_gate_counts_line_attributes_every_candidate(isolated_state, monkeypatch
         assert expect in line, (expect, line)
     counts = {kv.split("=")[0]: int(kv.split("=")[1])
               for kv in line.split("候选=")[1].split()[1:]}
-    assert sum(counts.values()) == 7, f"有未归因候选: {line}"
+    # earnings_phase/stale/src_err 是 earnings 的子集聚合 (P0-2 观测列), 不参与归因求和
+    derived = ("earnings_phase", "earnings_stale", "earnings_src_err")
+    attributed = sum(v for k, v in counts.items() if k not in derived)
+    assert attributed == 7, f"有未归因候选: {line}"
 
 
 def test_live_path_prints_gate_counts_and_reserves_attempt(isolated_state, monkeypatch, capsys):
@@ -330,6 +873,9 @@ def test_live_path_prints_gate_counts_and_reserves_attempt(isolated_state, monke
     monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(executor, "_held_symbols", lambda: set())
     today = executor._today_et()
+    _seed_earnings_calendar(monkeypatch, [
+        {"symbol": "AFTER", "reportDate": today, "timeOfTheDay": "post-market"},
+    ])
     monkeypatch.setattr(
         executor,
         "_scan_movers",
@@ -341,11 +887,23 @@ def test_live_path_prints_gate_counts_and_reserves_attempt(isolated_state, monke
     )
     monkeypatch.setattr(
         executor, "_earnings_surprise",
-        lambda symbol: {"surprise_pct": 30.0, "period": "2026-06-30"},
+        lambda symbol, session: ({"surprise_pct": 30.0, "period": "2026-06-30"}, None),
     )
     monkeypatch.setattr(
         executor, "_liquidity_quote",
-        lambda qctx, symbol: {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000, "spread_pct": 0.2},
+        lambda qctx, symbol: {"bid": 9.99, "ask": 10.01, "ask_volume": 1_000,
+                              "spread_pct": 0.2, "market_cap": 5_000_000_000},
+    )
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor,
+        "_entry_structure_gate",
+        lambda qctx, symbol, session, price: (
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0}, None,
+            {"vwap": 10.0, "last_close": 10.0, "volume_ratio": 1.0,
+             "vwap_dev_pct": 0.0},
+        ),
     )
     monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
     monkeypatch.setattr(executor, "_execute",

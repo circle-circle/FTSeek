@@ -20,7 +20,7 @@ import io
 import logging
 import requests
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 from app.utils.log_sanitize import scrub_secrets
@@ -191,6 +191,7 @@ class EarningsCalendar:
         self.base_url = "https://www.alphavantage.co/query"
         self._cache = None
         self._cache_time = None
+        self._cache_error = None
         self._cache_ttl_seconds = 3600  # 缓存 1 小时
         
     def _fetch_raw_calendar(self, horizon: str = "3month") -> str:
@@ -250,16 +251,19 @@ class EarningsCalendar:
             logger.error(f"CSV 解析失败: {e}")
             return []
     
-    def get_earnings_calendar(self, horizon: str = "3month", force_refresh: bool = False) -> List[Dict]:
+    def get_earnings_calendar_with_status(
+        self, horizon: str = "3month", force_refresh: bool = False
+    ) -> Tuple[List[Dict], Optional[str]]:
         """
-        获取财报日历 (带缓存)
+        获取财报日历及源状态 (带缓存)
         
         Args:
             horizon: 时间范围
             force_refresh: 强制刷新缓存
             
         Returns:
-            财报日历列表，每个元素包含 symbol, name, reportDate, estimate 等
+            (财报日历列表, 源错误)。双源皆空按源不可用处理，
+            供 fail-closed 消费方区分断流与真实无事件。
         """
         # 检查缓存
         now = datetime.now()
@@ -268,7 +272,7 @@ class EarningsCalendar:
             self._cache_time is not None and
             (now - self._cache_time).total_seconds() < self._cache_ttl_seconds):
             logger.debug("使用财报日历缓存")
-            return self._cache
+            return self._cache, self._cache_error
         
         logger.info(f"获取财报日历 (horizon={horizon})...")
         # 2026-08-29 源序反转 (用户裁"2直接做"): 富途原生升主源, AV 降备源。
@@ -280,11 +284,13 @@ class EarningsCalendar:
         #   断流告警: 双源皆空 → WARNING 显式标记 (此前静默返回空列表, 门空转无人知
         #   —— 正是 G6 死表误判的同族失明)。
         rows = self._fetch_futu_calendar_primary()
+        source_error = None
         if not rows:
             csv_text = self._fetch_raw_calendar(horizon)
             rows = self._parse_csv(csv_text)
 
         if not rows:
+            source_error = "futu_and_av_empty"
             logger.warning(
                 "[财报日历] ⚠️ 断流告警: 富途主源与 AV 备源均返回空 — "
                 "财报禁建门/财报期风控将空转 (is_earnings_blackout 恒放行)。"
@@ -293,9 +299,16 @@ class EarningsCalendar:
         # 缓存结果
         self._cache = rows
         self._cache_time = now
+        self._cache_error = source_error
 
         logger.info(f"获取到 {len(rows)} 条财报数据")
-        return rows
+        return rows, source_error
+
+    def get_earnings_calendar(self, horizon: str = "3month", force_refresh: bool = False) -> List[Dict]:
+        """兼容旧契约: 只返回财报日历列表。"""
+        return self.get_earnings_calendar_with_status(
+            horizon=horizon, force_refresh=force_refresh
+        )[0]
     
     def _fetch_futu_calendar_primary(self, days_ahead: int = 7, days_back: int = 2) -> List[Dict]:
         """
