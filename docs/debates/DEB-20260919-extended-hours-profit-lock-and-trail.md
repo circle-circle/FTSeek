@@ -399,3 +399,109 @@ crontab 用 CST 小时 (`*/5 16-21` / `*/5 4-7`), DST 切换后相对 ET 右移 
 本批零交易行为变更，仅修正两处 9/17 旧注释，并新增回归测试钉住「盘后 carry 在次日 09:20
 触发 TAKE_PROFIT 时必须走 `--session premarket`」。
 验证: 相关回归 31 passed；`py_compile`、`git diff --check` 通过；重启后启动冒烟 7/7 通过。
+
+## 十五、首跑测试批口径预注册（标注排除留痕 · 2026-09-20 用户裁「同意」）
+
+> 关联: DEB-20260918 §4.1（4 笔净额表 + 毛口径更正的 R1）、§8.1/§8.2（延长时段停止条件与通过标准）；
+> `docs/ADJUDICATED-CRITERIA.md` A9（本条的口径入口）。
+> 本次**零交易代码改动**：只加行内标签 + 本预注册；DB 交易字段（价格/数量/费用/净额/data_quality）**一个字节未改**。
+
+### 15.1 为什么必须现在预注册
+
+9/17 盘前 4 笔是延长时段自动交易的**首跑测试批**（当时配置：无 `$5` 价格闸、无往返费用闸、无方向校验）。
+它们当日的净额 **−648.86**、费用 **566.84**、费用/名义 **2.88%**（CTNT 单笔 **9.15%**）是当日最大亏损来源。
+这 4 笔会被反复引用进「策略表现」类读数（净均值/胜率/IC/回放基线）。**口径若不预注册**，
+排不排、按哪几笔排就成了**按结果决定**（p-hacking）；先注册再引用，才是可证伪的留痕。
+
+### 15.2 打标实物（已落地，可复算）
+
+**行**（唯一集合，别的行一律不碰）：
+`trade_records.id ∈ {1521 US.CTNT, 1522 US.GIPR, 1524 US.NBIS, 1526 US.AEHL}`
+（限制条件：`trade_date='2026-09-17'` ∧ `source_type='PLAYBOOK_SIM'` ∧ `owner_strategy='extended_hours_entry'` ∧ `session=premarket` ∧ 原 `data_quality='real'`）。
+同伴 `POSITION_SYNC` 行 1523/1525/1527 早已是 `data_quality='duplicate_external_close'`（已被既有谓词排除），**无需另标**。
+
+**标记**：`metadata_json.exclusion_reason = 'first_run_test_2026-09-17'`（`json_set` 只增一键；实测回读：新增键=1、丢失键=0、变动键=0）。
+
+```sql
+-- 复算（完整 WHERE，勿简化——改谓词就是改口径）
+SELECT id, symbol, entry_price, quantity, realized_pnl, fees_est, pnl_net,
+       ROUND(100.0*fees_est/NULLIF(entry_price*quantity,0),2) AS fee_pct,
+       json_extract(metadata_json,'$.exclusion_reason') AS exclusion_reason, data_quality
+FROM trade_records
+WHERE id IN (1521,1522,1524,1526) AND trade_date='2026-09-17'
+  AND source_type='PLAYBOOK_SIM' AND owner_strategy='extended_hours_entry';
+
+-- 回滚（单条，幂等）
+UPDATE trade_records SET metadata_json = json_remove(metadata_json,'$.exclusion_reason')
+WHERE id IN (1521,1522,1524,1526);
+```
+
+备份与哈希（本次实操，随提交留痕）：
+`data/backups/first_run_test_marking_20260920/rows_1521_1522_1524_1526_before.sql`
+= `39b81e898dc7342e2000b8ba253ef1a932de6878ab2fe4ef769e818cc84a574a`；
+`metadata_before.txt` = `463b920d784a4c02511e1fd313a1d34f2ccfcff9739b1492e2e1500fc78f7cc2`。
+
+**为什么标记不落在 `data_quality`（本条的机械理由，不是口味）**：三个既有消费者按 `data_quality`
+**正向白名单**取样 —— `scripts/expectancy_ic_backtest.py`（`IN ('clean','real')`）、
+`scripts/daily_violation_scan.py`（`= 'real'`，审计/违例扫描面）。把 `real` 改成一个新值 =
+这 4 行**静默**退出审计扫描器与 IC 面（「正向白名单 + 新值 = 静默丢弃」是本仓已记录的反模式）。
+另有反向陷阱：`scripts/daily_invariant_check.py` 的豁免表按**前缀**命中（`duplicate/outlier/invalid/void/excluded`），
+落在表外才「照判不经豁免」——若为顺手把值写成 `excluded_*`，反而会把这 4 行从**不变量自检**里豁免掉，方向完全相反。
+实测（打标前后同脚本逐字段比对）：`daily_violation_scan --no-write --days 7` 的
+`daily.n_trades`（9/17 = 13）与 `label_totals_window` **完全一致** ⇒ 零消费者扰动。
+
+### 15.3 口径（预注册，改口径 = 重新裁决，禁静默改写）
+
+**谓词（全仓唯一）**：生产口径 = `COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'') = ''`；
+测试笔 = `= 'first_run_test_2026-09-17'`（逐字照抄，勿改写为 `IS NULL`——字段缺失与空串在既有行上不可混）。
+
+| # | 规则 |
+|---|------|
+| R1 | 报「策略表现」类读数（净均值 / 胜率 / IC / expectancy / 回放基线）**必须并列**「含测试笔 / 不含测试笔」两个口径。只报好看的那个 = 违规。 |
+| R2 | **费用/成本模型标定不得剔除这 4 行** —— CTNT 的 9.15% 费用率是低价格带最宝贵的实测样本；剔除 = 把教训一起删掉。 |
+| R3 | 标注是**口径留痕，不是业绩变好**；不得用于任何「系统在赚钱」的论证（survivorship 自欺）。 |
+| R4 | 只标注不删除（本批零 DELETE、零 UPDATE 交易字段）；历史行的「当时判定」不追溯改写。 |
+
+**两个口径的读数（8/1–9/18，本次复算，完整 WHERE 见下）**：
+
+| 口径 | n | 毛 | 费 | 净 | 胜率 |
+|---|---:|---:|---:|---:|---:|
+| 含测试笔 | 335 | +1,997.37 | 2,195.34 | **−197.97** | 63.0% |
+| 不含测试笔 | 331 | +2,079.39 | 1,628.50 | **+450.89** | 63.4% |
+| 差值 | −4 | +82.02 | −566.84 | **+648.86** | **+0.4pp** |
+
+差值本身即结论：**这 4 笔的病在成本不在方向**（CTNT 毛利为正）。引用 +450.89 而不带这句 = 失真。
+
+```sql
+SELECT COUNT(*) n, ROUND(SUM(realized_pnl),2) gross, ROUND(SUM(fees_est),2) fee, ROUND(SUM(pnl_net),2) net,
+       ROUND(100.0*SUM(CASE WHEN COALESCE(pnl_net,realized_pnl)>0 THEN 1 ELSE 0 END)/COUNT(*),1) wr
+FROM trade_records
+WHERE trade_date BETWEEN '2026-08-01' AND '2026-09-18'
+  AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE','PLAYBOOK_SHADOW','MANUAL_PLAYBOOK')
+  AND trade_mode != 'live'
+  AND COALESCE(data_quality,'') <> 'duplicate_external_close'
+  -- 含测试笔: 删本行 / 不含: AND COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'') = ''
+```
+（`data_quality='real'` 之外的 `clean/manual/direction_mismatch/outlier_external` 行不在本窗；上述谓词实测 = 335/331，
+与 §4.1 的 4 笔逐笔数一致，非新的取数面。）
+
+### 15.4 判据计数：这 4 笔**算不算**（用户明确要求的口径钉）
+
+| 判据 / 载体 | 算不算 | 依据（实测） |
+|---|---|---|
+| DEB-20260918 §8.2 延长时段通过标准「至少 30 笔 SIM 样本」 | **不计入** | 这 4 笔是**闸门前**配置（无 `$5` 价格闸/费用闸/方向校验），其读数已由两道闸封死；计入 = 用旧配置的病污染新配置的样本。清口径现况：**n=2**（9/18 ACN +59.09 / WBD +51.66，净 +110.75、净均值 +113.43bps，门槛 15bps）——**n 远不足 30，任何"通过"表述都无效** |
+| DEB-20260918 §8.1 停止条件「累计 10 笔后净均值 < −0.3%」 | 历史判定**不追溯改写**（当时无闸、无预注册，停新开仓已执行并留痕） | R4；本口径**前向**生效 |
+| RFC-077 G5「单版本 cohort 已结算 n ≥ 200」 | **本来就不在分母内** | 实测这 4 行 `metadata_json` 无 `exit-` 哈希 ⇒ 落 `config_freeze.cohort.hash_missing_rows`（现库：cohort 面 438 行 / hash_missing 90 行），不入 `exit_versions` ⇒ 无需为它们改判 |
+| A1 影子攒样门槛（n≥30 / n≥60） | 不适用 | 这 4 行不是影子行 |
+| IC / expectancy 面（`data_quality ∈ ('clean','real')`） | **仍计入**（打标未动 `data_quality`） | 若某次分析要排除，必须在该次**显式**加 15.3 谓词并注明；不得指望自动生效 |
+
+### 15.5 未做与开放项（如实登记）
+
+1. **没有任何 `app/`/`scripts/` 消费者读 `exclusion_reason`** ⇒ 标注目前是**显式口径**，不是自动过滤。
+   `app/review/stage_stats.py`、`app/review/actionability_diagnostics.py`、`app/review/bundle_builder.py`
+   三处仍是 `<> 'duplicate_external_close'` ⇒ 复盘总量**仍含**这 4 行，除非调用方按 15.3 谓词。
+   接线属独立变更（Gate 4/5 + 测试 + 重启评估），**本批未授权、未动**。
+2. **方向类仍无闸**（事件驱动：涨幅只有下限、不接 LLM/DA 校验）⇒「财报高开→回落」可重演；
+   现有 `7cf4fb41a`（180 日入口特征）与 `caa331c7c`（入口预筛）只记录不拦，属正确做法但**等于目前没有拦**。
+3. **退出侧仍是软约束**（盘前收口限价单 + 到期撤单不追价）⇒ 薄盘可能没卖掉，成本侧仍有漏点。
+   （2、3 属上一轮建议的第 2、3 项：先影子攒样再裁决，未落。）
