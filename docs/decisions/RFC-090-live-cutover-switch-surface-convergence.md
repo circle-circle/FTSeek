@@ -1,6 +1,6 @@
 # RFC-090: 实盘切换「开关面收敛」+ 原子切换协议 (P0 前置清单)
 
-> **状态**: 设计先行 / 待用户裁决 (四项, 见 §8)。**零行为改动** (本文件不翻任何开关, 不触碰执行链)。
+> **状态**: 设计先行 / 待用户裁决 (六项, 见 §8; 第二轮复查 §16 新增 8-6)。**零行为改动** (本文件不翻任何开关, 不触碰执行链)。
 > **日期**: 2026-09-20
 > **作者**: Hermes (用户 9/20 令「需要」→ 落成文档走独立复查流程)
 > **红线**: 维持 C2「打标前严格不切实盘」。切换本身仍按 RFC-062 两门一梯 + 用户签字 + `CUTOVER-DECISION-PACKAGE-20260909` §一 runbook。
@@ -105,7 +105,7 @@ grep -nE "TRADE_ENV|AUTO_TRADE_ACCOUNT|ALLOW_REAL_TRADING|LIVE_CONSERVATIVE" .en
 | `app/core/position_sync.py:1824` | `'live'` / `'simulate'` | `trade_records` (外部平仓) |
 | `app/playbook/playbook_service.py:1274` | `'live'` / `'simulate'` | `trade_records` / `open_positions` |
 | `app/playbook/candidate_eligibility.py:260` | 硬编码 `"sim"` | 候选批次 |
-| `app/orb/engine.py:1753` | 固定 `"simulate"` | `trade_records` / `signal_lifecycle` |
+| ~~`app/orb/engine.py:1753`~~ | 固定 `"simulate"` | `trade_records` / `signal_lifecycle` — **已退役** (`90de5a1c7` 删 app/orb/ 整目录, 实测目录不存在; 仅历史行, 见 §16-F-5) |
 
 **实测落库分布 (2026-09-20)**:
 ```bash
@@ -140,6 +140,8 @@ sqlite3 data/ftseek_us.db "SELECT id, symbol, entry_reason FROM trade_records WH
 - `CUTOVER-DECISION-PACKAGE §一 A'` 要求它是翻转后**唯一实盘账本** (两账本永久物理分离)。
 
 **后果**: 同一文件四种身份。翻转日若沿用旧描述 (「废弃」) 而实际路由已指向它, 会出现"半本账": 一部分读方绕开它, 一部分写方写进去。**切换前必须定死唯一表述**: `data/ftseek_us_live.db` = 实盘唯一账本 (看板手动 + 翻转后 auto-live), `data/ftseek_us.db` = sim 研究账本 (翻转后冻结为只读档案, 零跨库复制)。
+
+**⚠️ 第二轮复查 (§16-F-2)**: 上句「翻转后冻结为只读档案」与 §6「延长时段/主线仍 sim」**矛盾** —— 延长时段链 `scripts/extended_hours_entry_executor.py:118` **硬编码** `DB = data/ftseek_us.db` (不经任何 `TRADE_ENV` 解析器, 属第三族路由), 现网 crontab 每 5 分钟持续写 sim 库。翻转后 sim 库要么只读不了 (档案语义空话), 要么该链当场报错。已升级为待裁决项 **8-6**。
 
 **现网可复现?** 描述冲突**是** (文档/注释层面); 行为冲突**否** (下线的 plan_feedback 分支不执行)。
 
@@ -227,11 +229,14 @@ ALLOW_REAL_TRADING=true
 TRADE_ENV=0            # P0-1 后: 不再参与判定, 仅作兼容镜像 (由派生值写入)
 LIVE_CONSERVATIVE=1    # 首期保守 (0 为全量)
 ```
+**⚠️ 键组不完备 (第二轮复查新发现, §16-F-1)**: UI 切实盘实际写**第 5 键** `playbook.live_trial` (`mode_switch_service.py:225/234`, 点号键写入 `.env.us`), 但仓位 ×0.5 缩放的消费点 `playbook_service.py:1266` 经 `config_container.get_dotted` **只读 YAML** (`config_container.py:382` 实测仅查 `_yaml_raw`, 无 env 合并; 现值 `unified_config.yaml:1483` `live_trial: true`) ⇒ `.env.us` 里的 `playbook.live_trial` **不控制实际仓位系数**, 只喂 UI 标签推导 (`mode_switch_service.py:173-175`)。「保守模式」现有**三个表示** (`LIVE_CONSERVATIVE` / env `playbook.live_trial` / YAML `playbook.live_trial`), 且现网 `.env.us` 尚无该点号键 (首次 UI 切换才会出现) ⇒ 更隐蔽。修复 (F-1 收敛, 建议并入 P0-2 批) 前, 本节"4 键同翻"**不是**完整的原子面。
+
 **翻转前 (T-1)**: ① 未平仓 = 0 或已登记归属 ② `git status` 改动归属确认 ③ 自检脚本 pre-flight (含 `FTSEEK_ALLOW_RUNTIME_TRADE_ENV_SWITCH` 缺席断言, `_clear_live_db` 已删/加前置)。
 **翻转 (T)**: UI `/api/mode/switch` (`CONFIRM`) → 自动重启 → 启动自检 8 项:
 1. 模式判定 = `LIVE_CONSERVATIVE`; 2. 库路由 = live 库 (5 个解析点一致); 3. broker 账户 = REAL 且 `unlock_trade` 成功; 4. 行情权限 (LV1/RT_DATA) 在位; 5. 在仓归属: 每个 live 行 `account_type='real'` 且监护链可见; 6. 毕业门禁读到 live 证据 (A' 第 2 步) 或走"试点攒样中"语义; 7. `FTSEEK_LIVE_DEAL_PUSH` 订阅活体; 8. 日限额 (P2-12 日内熔断) 生效断言。
 **首日**: 最小暴露 (§6) + sim 影子对照留证。
 **回滚 (T+any)**: 键组同翻回 `sim`/`false`/`1`/`1` → 重启 → 自检 (模式=sim、库=sim、broker=SIMULATE、在仓归属不跨库) → 与 RFC-062 kill 条件同等即时, 无需裁决。
+**⚠️ 回滚硬前置 (第二轮复查新增, §16-F-3)**: 退出监控 `monitor_playbook_sim_exits` 经 `get_trade_records_db()` (`paths.py:71`) 的裸 `TRADE_ENV` 路由选库 ⇒ 回切 sim 后, live 库中**未平仓**真钱仓的规则引擎退出链 (SL 兜底 / TIME_EXIT / PRE_CLOSE_EXIT) **全部失去可见性**, 只剩券商 STOP 单保护 —— 即 `db_utils.py:76-82` 自述"静默失去止损监控"路径的镜像版本; 且回滚多发生在出事当天, 恰最可能有持仓。故增加硬前置: **回滚前 live 库 `open_positions` = 0, 否则先 FLAT_ALL** (沿用 CUTOVER 决策包既有 runbook, 不新造); 若用户裁决允许"带仓回滚", 必须显式接受"仅剩券商 STOP + 人工盯盘清单"并落 CRITICAL 告警。
 **⚠️ 回滚的授权锁不对称 (实测, 需修)**: 看板 `mode_switch_service.py:210-215` 的 **simulate 分支不写 `ALLOW_REAL_TRADING=false`** (只写 3 键), 而 live 分支的前置检查 (`:254-256`) **要求它已是 `true`**; 同文件 `set_auto_account` (`:552-600`) 是**同款结构** (sim 分支 `:584-587` 只写 3 键, real 分支前置 `:565-566` 要求已为 true), 全文件**没有** `_apply_env_updates` 之类统一写入口 (复查实测 grep 为空) ⇒ 两条后果: (a) 从 `false` 出发**无法用 UI 切实盘**, 必须手改 `.env.us` ——正是本 RFC 要消灭的动作; (b) 回切 sim 后授权锁**留开**, 手动实盘平仓路径 (`app/web_dashboard/order/executor.py:406-412`) 的锁被留在 open 态。建议: UI 切实盘改为「写入 4 键 + 重启 + 自检」的原子动作 (授权锁不在写入前判定), 回切时显式写 `false`。
 
 ---
@@ -291,6 +296,13 @@ LIVE_CONSERVATIVE=1    # 首期保守 (0 为全量)
 
 ### 8-5 是否落 RFC-090 并为 P0-1..P0-6 单独开实施 commit?
 **建议: 是** (P0 各项独立 Gate + 独立回滚, 顺序 P0-3 → P0-2 → P0-1 → P0-6 → P0-5 → P0-4, 理由: 先统一戳与读入口, 再动路由, 最后碰退出链)。
+**第二轮复查补充 (§16.2)**: 顺序维持; 但 F-1 (`live_trial` 三表示收敛) 并入 P0-2 批次、F-4 (周期性 authority 比对 + 紧急去授权单命令脚本) 并入 P0-2 验收判据。另对 §5 建议的「UI 切实盘不再前置判定授权锁」**持保留意见**: 手改 `.env.us` 预授权虽是本 RFC 要消灭的动作, 但客观上起"两步仪式"作用; 建议改为**保留两步** —— 新增带独立 CONFIRM 的"预授权"UI 动作 (写 `ALLOW_REAL_TRADING=true` + 重启), 切换动作再原子写其余键, 回切分支显式写 `false`。一步到位会把"武装"与"开火"合并成一次点击。
+
+### 8-6 (第二轮新增, §16-F-2) 翻转后 sim 库是「只读档案」还是「研究臂活账本」?
+**矛盾**: §3.4 要求翻转后 `data/ftseek_us.db` 冻结为只读档案; §6 说延长时段/主线仍 sim。延长时段链硬编码写 sim 库 (crontab 每 5 分钟, 现网 `EXT_ENTRY_ALLOW_SIM=true`), 主线研究臂也持续产数 ⇒ 二者不可同真。
+**选项 A (建议)**: sim 库 = 研究臂**活账本**, 不设只读; "档案"语义改为「报表永不同池」(与 P1-8 对齐), A' 的「零跨库复制」不变。理由: 研究臂 IC/OKR 样本不断供 (与 8-4 的保守替代一致); 熔断毕业判据 (DEB-20260904) 的输入也不断。
+**选项 B**: 翻转日暂停延长时段链 + 主线 sim 写入, sim 库真只读。代价: 研究臂断样三周起, 且与 §6"仍 sim"承诺冲突。
+**风险**: A 的风险是"活账本"宽松化可能诱发跨库混用 (缓解: P0-3 统一戳 + P1-8 报表分片 + P0-4 账户维度); B 的风险是研究裁决失去数据供给。
 
 ---
 
@@ -349,8 +361,10 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 | C12 | §2 表格中 8 项"已有资产"逐条属实 | 逐项 `sed -n` 读源码确认行号与语义 | 任一行号/语义不符 |
 | C13 | §7「不新增台账/配置/cron」成立 | 检查 P0-1..P0-6 是否真的只改既有解析器 | 任一 P0 项隐含新建文件 ⇒ 违反 |
 | C14 | 与既有文档不冲突 (尤其 CUTOVER 决策包 A' 与单库翻转模型) | 读 `CUTOVER-DECISION-PACKAGE §一` + `PROPOSAL §三·五` 对齐 | 存在与本 RFC §4-P0-1「库路由派生」冲突的既有裁决 |
+| **C15 (常设, 第二轮新增)** | **搜索作者未列出的同类开关面** (§16 教训: 第一轮锚定 C1-C14, 只验"写了的对不对", 漏了"有没有没写的") | 全键面 `grep -rn "getenv\|get_dotted" app/ scripts/ ops/` 与 §2/§3 各表求**差集**; 硬编码 DB 路径 `grep -rn "ftseek_us.*\.db" scripts/ app/` 逐一核对是否经统一路由 | 存在未入册的模式/授权/账户/库路由开关点 ⇒ 裂缝清单不完备 (本轮即由此发现 F-1/F-2) |
 
 **本次复查已行使 (2026-09-20, 两个只读 agent 并行)** —— 逐条判定见 §15: C1/C2/C5/C6/C7/C8/C9/C11/C13/C14 **成立**; C3 **数字不符 (来源需精确化, 已改)**; C4 **成立且升级** (发现活体消费者, 已补); C10 **作者撤回作废** (原说法恢复); C12 **两处行号微漂** (已改 1 处)。
+**第二轮复查已行使 (2026-09-20, Claude Code 主会话, 全部结论经复查者本人实跑)** —— 新增常设项 C15; 新发现 F-1..F-5 (四项实质缺口 + 一项文档陈旧) 见 §16, 已就地回填 §3.3/§3.4/§5/§8。
 
 **复查纪律 (沿用本仓既有教训)**: 复查 agent 的报告是**自报告**, 作者须逐条在真文件上复核; 复查者的**否决性结论**尤其要由作者重跑 (§3.6 就是一次自我更正, 记录在案)。误报与更正都要留痕, 防后续 agent 采信。
 
@@ -372,7 +386,7 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 |---|---|
 | Gate 0 宪法对齐 | 待查 `SYSTEM_OBJECTIVE.md` 当前 Top 3 (本 RFC 为准备性文档 + 零行为改动, 未越权执行) |
 | Gate 1 分类 | **L5 (纯文档)**; 其中 P0 各项为 L1-L2, 各自另走 Gate |
-| Gate 2 方案评审 | 本文件即方案; 独立复查见 §14/§15 |
+| Gate 2 方案评审 | 本文件即方案; 独立复查见 §15 (第一轮) / §16 (第二轮) |
 | Gate 3-6 | 未开始 (P0 待裁决后逐项走) |
 
 ---
@@ -422,3 +436,35 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 | 复查 agent | 无被推翻的结论 (两条待精确化项 C3/C4 经复核**成立方向正确**, 只是数字/严重度需改) | — |
 
 **纪律提醒**: 复查 agent 的 C3/C4 两条都是"作者写得太窄/太轻"的方向 —— 与常见"子代理夸大"相反。说明**作者自查也有系统性偏向**, 独立复查的价值不在于是否有误报, 而在于是否覆盖了作者的口径盲区。
+
+---
+
+## 16. 第二轮独立复查 (2026-09-20, Claude Code 主会话; 全部结论经复查者本人实跑, 非转述)
+
+> **与第一轮 (§15) 的方法差异**: 第一轮逐条验证**作者已写下的声称** (C1-C14); 本轮专搜**作者没列进来的开关面** (口径盲区, 即 §15.3 纪律提醒预言的方向)。新发现五项 (F-1..F-4 实质缺口 / F-5 文档陈旧), 证据均已就地回填 §3.3 / §3.4 / §5 / §8; 按 §15 纪律, 裁决前仍建议作者逐条在真文件上复跑。
+
+### 16.1 逐条
+
+| # | 发现 | 证据 (可复跑) | 后果 | 处置 |
+|---|---|---|---|---|
+| **F-1** | **`playbook.live_trial` 分裂脑 —— 事实上的第八条裂缝**: "保守模式"有三个表示共存: `LIVE_CONSERVATIVE` (env, `trading_mode` 三态) / `playbook.live_trial` (`.env.us` 点号键, 仅喂 UI 标签) / `playbook.live_trial` (**YAML**, 实际控制仓位 ×0.5) | `mode_switch_service.py:225/234` UI 写 `.env.us` + `:173-175` 标签推导; vs `playbook_service.py:1266` `get_dotted` → `config_container.py:382` **只读 `_yaml_raw`** (实测源码无 env 合并) → `unified_config.yaml:1483` `live_trial: true`; 现网 `.env.us` **尚无**该点号键 (`grep -n live_trial .env.us` 空, 首次 UI 切换才写入 ⇒ 更隐蔽) | ① UI 切 `live_normal` (env 写 `false` + `LIVE_CONSERVATIVE=0`) **不会解除实际 ×0.5 缩放** —— 看板显示"全量"、代码跑"半量" (标签撒谎, 方向安全); ② 反向 (改 YAML `false` 而 env 未动) 标签保守、实际全量 (**方向危险**); ③ §5"4 键同翻"漏第 5 键、更漏 YAML 维度 ⇒ 原子协议照文执行**仍会半翻** | §5 已加警示; **并入 P0-2 批**: `live_trial` SSOT 定 YAML (消费点在那), UI 改写 YAML 或由唯一读取入口映射, 删 `.env.us` 点号键; §8-2 的"分层"以本项收敛为前提 |
+| **F-2** | **延长时段链是"第三族路由"** (硬编码 DB + `FUTU_TRD_ENV`), 且 §3.4"sim 库冻结只读"与 §6"延长时段仍 sim"**直接矛盾** | `scripts/extended_hours_entry_executor.py:118` `DB = ROOT/"data"/"ftseek_us.db"` 硬编码; 券商侧 `:1257` 读 **`FUTU_TRD_ENV`** (默认 SIMULATE, 现网未设此键; 与 `.env.us:26` DEPRECATED 的 `FUTU_TRADE_ENV` 是**不同键名**) + `:1258` 硬编码 `SIMULATE_ACCOUNT_ID`; `:1263` 非 SIMULATE 全拦 (该脚本自身安全, 值得肯定); crontab 每 5 分钟在跑 | 翻转后该链持续写 sim 库 ⇒ "只读档案"要么空话、要么该链当场报错; P0-1 的"5 个解析点"验收**不覆盖**此硬编码路径, 复查者易误以为路由收敛完成 | 升级为裁决项 **8-6** (A: sim 库=研究臂活账本不设只读, 建议; B: 翻转日停链真只读); P0-1 验收判据须显式声明排除面 |
+| **F-3** | **回滚方向的退出监控真空**: §5 回滚自检只查"在仓归属不跨库", 不查"在仓还有没有监控" | `pipeline.py` `monitor_playbook_sim_exits` 经 `get_trade_records_db()` → `paths.py:71` (裸 `TRADE_ENV` 路由) 选库; 单 SQL 同管 `PLAYBOOK_SIM/PLAYBOOK_LIVE` (P0-5 ② 已知) | 带仓回滚后, live 库未平仓真钱仓的规则引擎退出链 (SL 兜底/TIME_EXIT/PRE_CLOSE_EXIT) **全部失去可见性**, 只剩券商 STOP —— `db_utils.py:76-82` 自述"静默失去止损监控"路径的**镜像版本**; 且回滚多发生在出事当天, 恰最可能有持仓 | §5 回滚已加硬前置: live 库清仓 (FLAT_ALL, 沿用 CUTOVER 包) 或用户显式接受"仅剩券商 STOP + 人工盯盘" + CRITICAL 告警; 验收判据与 P0-5 共用 |
+| **F-4** | **P0-2 只在启动期比对 ⇒ "紧急去授权"半日失效窗口** | P0-2 的 `MODE_AUTHORITY_MISMATCH` 为启动期检查; 进程族读 systemd 冻结值 (§3.2/§15-C2 已证); 文件族手动实盘路径 `order/executor.py:406-412` 实时读 `.env.us` | 盘中事故手改 `ALLOW_REAL_TRADING=false`: 进程族仍读 `true` ⇒ **自动下单链继续跑**; 文件族手动平仓通道**立即被锁** ⇒ 想停的没停、想用的先被锁。P2-12"ALLOW=false + 重启"的"重启"半句在事故压力下最易被省略 | **并入 P0-2 验收**: ① 周期性 (5-10 min, 挂既有 heartbeat/monitor 循环) 文件 vs 进程**双向**比对 → CRITICAL + 拒入 live 分支; ② 紧急去授权做成**单命令脚本** (写文件 + `systemctl restart` 原子完成), 纳入 §5 协议 |
+| **F-5** | §3.3 写方表仍列 ORB (文档陈旧) | `90de5a1c7` 已删 `app/orb/` 整目录 (`ls` 实测不存在) | P0-3 迁移范围缩小: 活跃写方仅剩 `position_sync` ×2 / `playbook_service` / `candidate_eligibility` 四处; 867 行历史 `simulate` 含 ORB 行 (迁移属"只改戳不改语义", 无风险, 但迁移脚本须显式列出) | §3.3 表已标注退役; P0-3 的 grep 基线按新面更新 |
+
+### 16.2 对 §8 裁决项的立场 (第二轮)
+
+- **8-1 同意降级**。补充: 降级后 `.env.us:21-22` 注释 ("TRADE_ENV 现仅控制 DB 路由, 保持 1 以保留 OKR 数据") 必须同步改 —— §3.1 已证明"注释不能替代断言", 陈旧注释本身就是下一个漂移点。
+- **8-2 同意分层, 前提 = 先修 F-1**。三表示不收敛, "两层映射单点定义"只是给第四个表示腾地方。
+- **8-3 同意沿用门 2, 不新立数字**。补期望管理: 1 笔/日 ⇒ 门 2 的 20 笔需 ~20 交易日, **10/11 三周计划 T5 瀑布终算时实盘样本必然不足**; 无冲突 (T5 裁决的是 sim 口径), 但两份文档应互相引用, 防 10/11 当天有人拿"实盘才 N 笔"质疑裁决合法性。
+- **8-4 同意维持**。ORB 退役 (`90de5a1c7`) 后已半事实化; 延长时段链定位按 8-6 裁决。
+- **8-5 同意顺序, 两点修正** (已回填 §8-5): F-1/F-4 并入 P0-2; §5"UI 切实盘不再前置判定授权锁"建议改为**保留两步仪式** (独立 CONFIRM 预授权动作 + 原子切换动作), 不把"武装"与"开火"合并成一次点击。
+
+### 16.3 纪律观察 (给后续复查者)
+
+第一轮漏掉 F-1/F-2 的共同原因: **复查范围锚定在作者自给的 C1-C14 清单上** —— 逐条验证"写了的对不对", 没有人搜"有没有没写的"。与 §15.3 的结论 (作者自查有口径盲区) 同构: **复查者对着作者的清单打假, 同样继承作者的口径盲区**。已立 C15 (常设): 全键面与 §2/§3 表求差集 + 硬编码 DB 路径核对。该条对 P0-1..P0-6 实施 commit 的复查同样适用。
+
+### 16.4 本轮未推翻的第一轮结论
+
+§15 的 C1-C14 判定本轮抽查了 C9 (mode_switch 分支 3 键/5 键不对称, `sed -n '199,260p'` 复核属实)、C11 (`.env.us` 现值五键复核属实: `TRADE_ENV=1` / `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=false` / `LIVE_CONSERVATIVE=1` / `EXT_ENTRY_ALLOW_SIM=true`)、C8 相关面 (`monitor_playbook_sim_exits` 单 SQL 两臂属实), **均与第一轮一致, 无更正**。

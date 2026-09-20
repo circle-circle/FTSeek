@@ -1,6 +1,6 @@
 # DEB-20260919 · 复盘决策支持系统 (Review Decision Support) [RFC-088]
 
-> **状态**: **P0–P4.5 已落码**（§21–§27；P0–P4 已入库于 `4c529f7f6`，P4.5 为本轮工作区交付）· 3 轮独立复查完成（§17 / §19 / §26）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**
+> **状态**: **P0–P4.6 已落码入库**（§21–§28；P0–P4 于 `4c529f7f6`，P4.5/P4.6 于 `e656c4893`）· 4 轮独立复查完成（§17 / §19 / §26 / §29）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（头部由第 4 轮核查 agent 于 2026-09-20 更正，见 §29.2 N-8）
 > **日期**: 2026-09-19
 > **作者**: Hermes
 > **目标读者**: ①项目所有者(裁决) ②执行 agent(落码) ③**独立复查 agent(§10 复查清单)**
@@ -1186,3 +1186,40 @@ systemctl is-active ftseek-us   # 保持 active
 - `py_compile`：通过。
 - `git diff --check`：通过。
 - 真实 CLI 连续重跑 `2026-09-18`：bundle / REVIEW / latest 三个 hash 稳定；JSON 与 latest hash 一致；未推送、未写 vault。
+
+---
+
+## 29. P4.5/P4.6 交付独立核查回执（2026-09-20 · 第 4 轮）
+
+> 核查者：独立复查 agent（用户令「请核查」）。纪律同 §17/§19/§26：全部断言独立重跑，不采信自报；
+> 本轮同时覆盖同工作区出现的 Codex 批 B（三周计划 §十九，回执在 §19.4，交叉发现两处均留痕）。
+
+### 29.1 复跑通过项（逐位一致）
+
+| # | 断言（出处） | 独立复跑结果 |
+|---|---|---|
+| 1 | `tests/review` 31/31（§28.4） | ✅ 31 passed in 2.12s |
+| 2 | 指定回归+ops sync 108/108（§28.4） | ⚠️ 超集 114 项（review/stage_stats/daily_review/review_tables/validation_accounting/exit_day_date_fn/okr_2026_09/ops_sync）= **113 passed + 1 failed**；唯一红 `test_ops_scripts_sync` 系**批 B** 改周检 repo 副本未部署线上所致（R-15，见三周计划 §19.4），与 P4.5/P4.6 无关；批 A 提交时点该测试为绿，108/108 在其时点成立 |
+| 3 | §27.2 价格带×费用 | ✅ sqlite 只读直查 9/18 已平仓 8 笔：`$20-$50` 2/+79.76/费11.74、`$50-$100` 1/+21.80/4.70、`>=$100` 5/−67.00/21.39 逐分一致 |
+| 4 | §27.2 阶段×方向×出场 | ✅ 盘后/多/TRAIL_LOCK +110.75=ACN 59.09+WBD 51.66；盘中/多/BREAKEVEN +57.36=ARM 13.80+CRM 11.11+HPE 21.80+ORCL 10.65；盘中/多/TRAIL +28.10=UMC；盘中/空/INITIAL −161.65=COIN |
+| 5 | §27.2 三问 | ✅ bundle JSON：COIN FADE_SHORT MFE=0/MAE 2.6455%/−161.65（`candidate_not_verdict`）；追高 UMC 22.6→23.905(+5.77%)/ARM 260.5→267.515(+2.69%)，chase_cap 24.5/270 未越；重复亏损簇 0 |
+| 6 | §28.2 可行动性全量 | ✅ actionable MFE 0/6+缺bar 2(ACN/WBD)；regret 正净额 5/6（HPE 61.215/+2.23、UMC 23.89/+2.49、CRM 240.07/+2.16、ARM 267.40/+0.23、ORCL 145.67/+0.21）；delay-5 实际优3/延迟优3/持平0；pretrade 完整 0/75；桥 SIM 215/实盘 0/配对 0 |
+| 7 | 幂等（§27.4/§28.4） | ✅ 连续两跑 hash 逐跑一致（bundle `4038499d`×2 / REVIEW `432c7cab`×2）；未推送、未写 vault；**但跨世界态不稳**，见 N-9 |
+| 8 | 口径与时区 | ✅ stage_stats `net=pnl_net` 费后；`phase_from_time` 保留 ISO 偏移→`to_et` 归一 ⇒ 对 `entry_time` 混存 +08:00（时钟台账变种 4，9/20 立项）**免疫**；naive 按 Asia/Shanghai 显式注释，非静默 |
+| 9 | L1 边界 + P5 未开工 | ✅ `e656c4893` 只触 app/review/scripts/tests/DEB，零 `app/playbook/*`；无 carrier、无 `tests/review/golden/`、crontab 零 review 行；`git diff --check` clean |
+| 10 | N-3 修复落地（§26.2 建议） | ✅ coverage 产物实测自带 `corpus.rules`（.py/.sh、排 __pycache__、regular only）+ `categories_are_overlapping=true` |
+
+### 29.2 更正与新发现（N-8…N-12，续 §26 编号）
+
+- **N-8 头部状态行过时复发**：同一提交内头部写「P0–P4.5 已落码（§21–§27）」而 §28（P4.6）同批入库——§26.2 N-1 建立的头部同步机制在自己的批次里再次失守。**本轮已更正**头部为 P0–P4.6（§21–§28，入库 `e656c4893`）。
+- **N-9 bundle hash 跨世界态不稳（P5 golden 设计约束）**：bundle 内嵌影子注册表状态；`fee_gate_shadow` 条目 9/19 22:48 后入册 ⇒ 9/18 bundle 于 9/20 重跑 hash `8ff560e6`→`4038499d`（读数 section 逐位不变，仅 registry/criteria 段漂移）。「连续重跑 hash 稳定」断言只在同世界态成立。**P5 golden 必须钉 fixture DB/注册表或排除易变段**，否则注册表每加一条目 golden 必误报。（本轮核查重跑覆盖了 `data/reviews/` 9/18 三产物——可再生，读数已验证与 §27/§28 等价。）
+- **N-10 coverage 读数漂移（可解释，非缺陷）**：§27.3 的 1,709/165/18/58 → 9/20 实测 **1,711/167/19/60**；Δ= Codex 批 B 新增（+2 文件、+2 推送出口、+1 dead producer=`fee_gate_shadow_report.log` 首次 cron 跑后自愈、+2 producers=两条新 crontab 行）。「当前工作区」快照语义如实，历史数字不代表今日。
+- **N-11 §14 验收清单未随 P4.5/P4.6 扩展**：12 勾全部锚 P0–P4/P5；新层无验收勾选项。建议 P5 批补三条：三问诊断逐位对账、actionability 反事实口径（费+滑点扣减）、渲染接入不双推。
+- **N-12 提交尾注缺失**：`e656c4893` 无 Co-Authored-By 尾注（归属纪律），留痕不阻塞。
+
+### 29.3 交叉发现（批 B，详见三周计划 §19.4）
+
+- **R-14 = S-1 复发**：费用门报告脚本验证时再次真实推送（11:15:26，state 文件实证）。**已结案：用户确认收到（2026-09-20）**。
+- **R-15**：周检 repo 副本领先线上 30 行，ops-sync SSOT 测试红；今日 10:00 周日综合复盘用旧副本跑（无 T3 段）。**已修复（2026-09-20，用户授权）：cp repo→live 部署一致，`test_ops_scripts_sync` 3/3 绿**。
+
+**总评**：P4.5/P4.6 的**数字全部站得住**（真库逐分复现、口径干净、时区免疫、边界守住）；风险集中在交付 hygiene——头部失守复发（N-8）、golden 前置约束（N-9）与批 B 的 S-1 复发/SSOT 红灯（R-14/R-15）。P5 开工前先清 R-15 + N-9 约束入设计。

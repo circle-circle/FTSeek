@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-19 10:35 增量: 盘后 carry 盘前落袋语义钉 (零行为变更)
+
+> 用户追问「盘后仓到盘前能否按当前止盈策略落袋」。核查: 现行 `prioritize_profit_exit`
+> 已让 `TAKE_PROFIT` / `SL_BREAKEVEN` / `SL_TRAIL_LOCK` / `SL_CERT_LOCK` 覆盖
+> `hold_to_next_open`; 未触发利润保护才等待 next_open。本批只修正 premarket/afterhours
+> 两个脚本头部过期注释，并新增回归测试：盘后 carry 在次日 09:20 触发 TAKE_PROFIT 时
+> 必须以 `--session premarket` 落袋。未改阈值、执行路径或交易行为。定向回归 **31 passed**；
+> `py_compile`、`git diff --check` 通过；重启前无仓/无未结算 intent，10:38:47 CST 重启后
+> 启动冒烟 7/7 通过，服务 active/running。
+
 ## 2026-09-19 10:20 增量: 复查纠偏 — pending 全口径 + 异常审计状态
 
 > 复查发现 `exit_lifecycle` 实际可产生 **8** 种 `exit_*_pending` 证据错误，此前执行器只识别

@@ -9,7 +9,7 @@
 > **红线（全部维持，本计划不解锁任何一条）**:
 > - C2：打标前严格不切实盘（用户 8/23 终裁）
 > - 禁止提频/加仓追盈亏（OKR-2026-09 guardrail 1/2）
-> - 双窗口采信纪律（DEB-20260919：60 日结论已被 180 日改写三例）
+> - 双窗口采信纪律（DEB-20260919-extended-hours-profit-lock-and-trail.md：60 日结论已被 180 日改写三例）
 > - 单假设纪律（KR3：只许一个假设进检验，防链式 fishing）
 > - C1：退出参数冻结至 9/30
 
@@ -34,7 +34,7 @@
 
 ```
 主轨「磨刃」：期望瀑布 + 三级阶梯（有 deadline，本计划主体）
-副轨「备刀」：RFC-090 P0-1..P0-6 + DEB-20260914 D-A..D-D（无 deadline，永不阻塞主轨）
+副轨「备刀」：RFC-090 P0-1..P0-6 + DEB-20260914-cutover-bidirectional-seamless.md D-A..D-D（无 deadline，永不阻塞主轨）
 ```
 
 - **两轨永不混账**：备刀解决「切得安全」（工程），磨刃解决「该不该切」（证据）。
@@ -76,11 +76,13 @@
 1. 定谳一个悬案：`pnl_net` 的成交价是否已含模拟滑点？
    - 证据初判（**自纠 R-1**）：`app/playbook/playbook_service.py:921` 注释明写
      「Playbook 不经 order_executor（dual_broker 直连）」；`_apply_sim_slippage`
-     （`app/execution/engine.py:171`，7bps/边）只被 ExecutionEngine 调用，
-     而 Playbook 是唯一下单管线 → **playbook 成交价大概率是 Futu SIM 零滑点撮合价，
-     30bps haircut 是唯一滑点计费，无双重扣减**。此前「双重扣减」怀疑按更正留痕纪律记录，T1 定谳。
-   - 定谳方法：抽查 `trade_records` 中 PLAYBOOK_SIM 行的 `metadata.sim_slippage_bps`
-     存在性 + 成交价 vs 决策时点盘口的对拍。
+     （`app/execution/engine.py:171`，7bps/边 = `simulate_slippage_bps 5.0 +
+     simulate_depth_cost_bps 2.0`）**只作用于 ExecutionEngine 使用者**（更正 R-3）；
+     scorecard 宇宙（`PLAYBOOK_*` 四类）全部经 Playbook→dual_broker 直连，
+     不经该引擎。**C7 已定谳（§11.1）：PLAYBOOK_SIM 528 行 `sim_slippage_bps` 命中 0
+     ⇒ 30bps haircut 是该宇宙唯一被建模的滑点，无 engine 层双重扣减**。
+     T1 剩余焦点转为 **N-2（§14.3）**：`exit_slippage_bps`（实测退出偏差，384/528 行）
+     是否已含在 `pnl_net` 的成交价里——若是，分层 haircut 只准扣**未建模**部分。
 2. 统一「净盈利」SSOT：**净 = 毛收益 − 费用 − 滑点（分时段标定值）**，
    bps 与美元双口径，单位声明入契约测试（军规：新字段必带量纲）。
 3. 若发现漏扣/双扣 → 只修**判分面**（scorecard/瀑布产物），不碰交易行为。
@@ -91,16 +93,24 @@
 
 **任务**：把门1那个独自决定生死的 15bps/边 假设，换成**分时段实测**。
 
-**数据源（全部已存在）**：
-- 60s tick 可成交价序列（回放器已在用）；
-- Futu `pre_high_price` / `after_high_price` 时段高点字段；
-- `premarket_exit_shadow.jsonl` / `afterhours_exit_shadow.jsonl`；
+**数据源（更正 R-4 + F-2 后的实况）**：
+- ~~60s tick 可成交价序列~~ **不存在**——官方回放引擎 `exit_replay_backtest.fetch_bars()`
+  取的是 Futu `K_1M` 1 分钟 OHLC（缓存 `data/replay_bars_1m/`）；
+- Futu `pre_high_price` / `after_high_price` 为**全时段累计值、含入场前**，
+  不得直接当「进场后可成交价」（`extended_hours_market_session.py:148`）；
+- `afterhours_exit_shadow.jsonl`：**已有全套价差字段**
+  （`bid/ask/mid/spread/spread_pct/executable_price`，263 行）；
+- `premarket_exit_shadow.jsonl`：存量 330 行无 bid/ask，但
+  `premarket_exit_shadow.py:447-448` **已写 `bid_price/ask_price`** ⇒ 盘前臂零开发，
+  前向攒样至 n≥30（F-2）；
 - 6 笔 `SL_TRAIL_LOCK` SIM 成交（ACN/INTC/QCOM/AMD/UMC/WBD）：价差+轮询延迟可测
   （ACN 实测：过冲 0.04% + 价差 0.13%），**但 SIM 撮合无排队/部分成交 → 只能当标定下界**；
-- 盘中：交易宇宙的 LV1 报价抽样。
+- 盘中：`intraday_reentry_shadow.jsonl::spread_bps`（n=1621）+
+  `entry_timing_shadow.jsonl::micro.spread_bps`（n=2422）两独立样本。
 
 **产出**：`data/slippage_calibration_latest.json`——分「盘前 / 盘中 / 盘后」三层的
 往返成本中位数 + IQR，及各层建议 haircut。
+**首跑已完成（§12.3 / §13.2）**：盘中 5.94 / 交叉校 5.37 / 盘后 26.96 / 盘前 n=0 待前向攒样。
 
 **验收**：若与 15bps/边 偏差 > 5bps → 提请门1判据重裁（**改判据须落档 + 用户签字**，
 防「口径放水」；实测证据每时段 n≥30 才准提）。
@@ -117,8 +127,8 @@
 - 用 60 日 + 180 日双窗口回放：模拟门槛砍单后的 **n 损失 %、每笔期望变化、周净变化**；
 - 重点验证费用诊断的警告「不误杀高胜率小单」：被砍单的 WR/期望 vs 保留单对照。
 
-**落地方式（守 C4 影子先行）**：10/1 起门槛先**影子 1–2 周**（只记录不拦）→
-10/11 用影子数据 + 双窗口回放做真门槛裁决。
+**落地方式（守 C4 影子先行）**：2026-09-20 挂环、9/21 起攒样至 10/11
+（比原 10/1 提前，但零行为改动、不改冻结纪律）→ 10/11 用影子数据 + 双窗口回放做真门槛裁决。
 
 **验收（判定卡 T3）**：`fee_bps` 14.45 → **≤10**；n 损失已量化且用户明示接受
 （C 与「样本量优先」存在张力，n 损失数字必须摆在裁决桌上）。
@@ -131,6 +141,9 @@
 - **双窗口同向 ≥ +0.3pp/笔** 的改动才准提生产，否则维持现状（沿用 9/19 纪律）；
 - **分层判，不许混**：延长时段 180 日「rule 差于什么都不做 +1.07pp」与全链
   exit_scorecard「executed WR 79% vs held 49%」方向相反——不同宇宙，各自裁决；
+- **口径关系（更正 R-6）**：全链 scorecard 宇宙
+  （`PLAYBOOK_SOURCE_TYPES` 四类 + `trade_mode != 'live'`，实测 NULL 丢行 = 0）
+  **⊃** 延长时段回放子集——子集结论不得直接外推到全链；
 - 9 月冻结期内**只回放不改参数**（C1）。
 
 **验收**：一份分层退出结论（延长时段 / 盘中 / 全链三个口径分列），含双窗口读数。
@@ -154,7 +167,7 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 | 情形 | 瀑布证据 | 裁决方向 | 下一个（唯一）假设 |
 |---|---|---|---|
 | A | 实测滑点 < 10bps/边（15bps 高估） | 重裁门1 haircut | 修改须预注册 + 用户签；每时段 n≥30 支持才准提 |
-| B | 「从不见肉」笔（MFE<1.5%）仍是最大负贡献（当前 31% 笔数贡献 −117pp） | **入场侧**，退出侧停止调参 | 候选：时段量 ≥20M 预筛（影子已在跑，n=34 小样本）/ negative-band 拦截 |
+| B | 「从不见肉」笔（MFE<1.5%）仍是最大负贡献（当前 31% 笔数贡献 −117pp，**延长时段 180 日 n=89 口径**，更正 R-2） | **入场侧**，退出侧停止调参 | 候选：时段量 ≥20M 预筛（影子已在跑，n=34 小样本）/ negative-band 拦截 |
 | C | 费用地板仍 >30% 毛利 | C 门槛收紧或复查 B | 回放先行，双窗口验证 |
 | D | 退出反事实差距 > 滑点+费用之和 | 退出简化 | rule → hold-to-open / trail_floor 单臂 |
 
@@ -178,7 +191,11 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 ## 七、备刀轨道（并行，无 deadline，永不阻塞主轨）
 
 - **RFC-090 P0-1..P0-6**（建议顺序 P0-3 → P0-2 → P0-1 → P0-6 → P0-5 → P0-4）；
-- **DEB-20260914 D-A**（capital_state 按臂读取，回切致命，P0）+ D-B/D-C/D-D；
+- **DEB-20260914-cutover-bidirectional-seamless.md 的 D-A**（capital_state 按臂读取，回切致命，P0）+ D-B/D-C/D-D；
+- **测量面（更正 R-9）**：`cutover_preflight --watch`（日级哨兵，cron `38 6 * * *`，
+  P0–P9 已覆盖半翻检测 / capital_state 分臂 / open_positions 臂判别与 PK 碰撞 /
+  `sl_broker_order_id` 语义碰撞 / STOP 兜底里程 / trade_mode 双向混同）——
+  RFC-090 P0 项的验收读数**直接读该哨兵**，不新写体检脚本；D-A 优先级可读其 P3 基线；
 - 全部走独立 Gate + 独立回滚；C2 红线不因备刀进度松动一毫米。
 
 ---
@@ -197,10 +214,14 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 
 ## 九、验收清单
 
-- [ ] **共识门**：Hermes 审核回执（§10.4 契约）+ 用户终裁「可执行」
-- [ ] T1 口径对账结论落档（含 sim_slippage_bps 存在性抽查 + 成交价对拍）
+- [x] **共识门**：Hermes 审核回执（§十一）+ 用户终裁（§十三「按建议同意」）+ Codex 复查（§十四）
+- [x] T1 口径对账结论落档（§十五：C7 无双扣定谳 + N-2 三问答 + 净盈利 SSOT + 复算命令）
 - [ ] T2 `slippage_calibration_latest.json` 三时段读数 + 偏差 >5bps 时提请门1重裁
-- [ ] T3 双窗口回放 + 10/1 影子上线 + n-loss 量化
+      （首跑已出：盘中 5.94 / 盘后 26.96 / 盘前 n=0 待攒样；重裁已进 10/11 议程 §13.2——
+      勾选条件 = 盘前 n≥30 并并入提案）
+- [ ] T3 双窗口回放 + 影子挂环 + n-loss 量化
+      （前置回放已出 §十六：$9,950 证伪、价格门+$4k 名义门组合胜出、根因=交收费；
+      影子已于 2026-09-20 挂环、9/21 起攒样；勾选条件 = 10/11 门槛终裁）
 - [ ] T4 分层退出结论（延长时段 / 盘中 / 全链三分列）
 - [ ] T5 瀑布终算 ≥ −$2/笔 或触发 §五 分叉
 - [ ] 10 月开跑会五项议程全部带到裁决桌
@@ -218,11 +239,11 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 | # | 本计划声称 | 复跑方式 | 打假成功的判据 |
 |---|---|---|---|
 | C1 | WR 77.8% / R:R 0.35 / 毛 21.04 / 费 14.45 / 净 6.59bps / slip-adj −$11.44 | 读 `data/exit_scorecard_latest.json` 的 `payoff` + `size_normalized` 块 | 任一数值不符或口径标注失真 |
-| C2 | 「毛期望=0 已证、440 候选 / 1,813 信号全零」 | `docs/OKR-2026-09.md` KR3 诚实先验 + DEB-20260823 三判决 | 引用断章或数字漂移 |
-| C3 | 「31% 从不见肉笔贡献 −117pp」 | DEB-20260919 §12（180 日 n=89） | **口径只覆盖延长时段子集**——若被引用成全链结论即失真，须标注宇宙边界 |
+| C2 | 「毛期望=0 已证、440 候选 / 1,813 信号全零」 | `docs/OKR-2026-09.md` KR3 诚实先验 + `DEB-20260823-full-chain-review-and-safety-patches.md` 三判决（更正 R-5：4 个同名文件，须写全名） | 引用断章或数字漂移 |
+| C3 | 「31% 从不见肉笔贡献 −117pp」 | DEB-20260919-extended-hours-profit-lock-and-trail.md §12（180 日 n=89） | **口径只覆盖延长时段子集**——若被引用成全链结论即失真，须标注宇宙边界 |
 | C4 | $1.99 地板 100% 触发 / ≤2bp 需 ≥$9,950 名义 | `docs/analysis/2026-08-24-fee-structure-diagnosis.md` §一/§四 | — |
 | C5 | ~46 笔/周 / $210–256 周成本 | `docs/OKR-2026-09.md` KR5 | — |
-| C6 | 6 笔 `SL_TRAIL_LOCK` + 价差/过冲读数 | `data/extended_hours_exit_executions.jsonl` + DEB-20260919 §一/§6.1 | 台账行数或字段不符 |
+| C6 | 6 笔 `SL_TRAIL_LOCK` + 价差/过冲读数 | `trade_records` 按 `exit_reason='SL_TRAIL_LOCK' AND trade_date BETWEEN '2026-09-16' AND '2026-09-18'` 查 6 行（更正 R-1：执行台账只有 2 行；更正 R-12：不带窗口命中全历史 120 行）+ `DEB-20260919-extended-hours-profit-lock-and-trail.md` §一/§6.1 | 台账行数或字段不符 |
 
 ### 10.2 设计挑战（防错 + 防重复建设）
 
@@ -233,7 +254,7 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 | C9 | 回放器支持「最低名义门槛」臂（费用 C） | 读 `scripts/replay_ext_entry_sources.py` 是否支持 min-notional 过滤 | 不支持则给**最小扩展面**评估（禁止临时硬塞） |
 | C10 | 延长时段回放宇宙 vs 全链 scorecard 宇宙的可比性 | 两边样本定义/SQL 对照 | §四 T4「分层不许混」是否已守住；给出各自宇宙声明 |
 | C11 | 期望瀑布与既有量具是否重复建设 | 对照 `exit_scorecard` size_normalized / `app/analysis/trade_attribution.py` / `docs/REPLAY-SCRIPT-LEDGER.md` | 瀑布应**复用**哪些件、只新增哪些件（口径 SSOT 只许一处） |
-| C12 | 时间表与 cron / 冻结纪律冲突 | ① T3 在 9/30 前只回放不改参数；② 周六 09:05 周检时点；③ 06:35 时段拥堵（DEB-20260919 §20.2② 实测 4 作业同分钟） | 排期修正建议 |
+| C12 | 时间表与 cron / 冻结纪律冲突 | ① T3 在 9/30 前只回放不改参数；② 周六 09:05 周检时点；③ 拥堵分钟为 **06:25（4 作业）/ 06:30（3）**，06:35 无活跃作业（更正 R-7；出处 DEB-20260919-review-decision-support-system.md §20.2②） | 排期修正建议 |
 | C13 | 判定卡阈值出处 | 逐个查：≥−$2/笔、fee_bps ≤10、双窗口 ≥+0.3pp、每时段 n≥30 | 哪些有既有出处、哪些是**新立**（新立须用户签认，不许默认生效） |
 | C14 | C 门槛影子的注册方式 | 读 `shadow_registry.py` 现有形态是否适配「门槛影子」 | 落点建议 + 判据字典登记项 |
 | C15 | 备刀轨道排序 | D-A（回切致命）vs 主轨无 deadline 的相对优先级 | 是否应把 D-A 提前，理由与风险 |
@@ -267,8 +288,8 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 
 四轮问答全文要点已浓缩进 §一裁决快照。关键实数出处：
 `exit_scorecard_latest.json`（n=221，WR 77.8% / R:R 0.35 / 毛 21.04 / 费 14.45 / 净 6.59bps）、
-`DEB-20260914`（graduated=False，G1-1 −$15.62/笔）、`OKR-2026-07`（$1,000/周 KR 失败史）、
-`OKR-2026-09`（不设盈利目标 / 单假设 / $210–256 周成本）、`DEB-20260919`（180 日双窗口 / 三次自纠）、
+`DEB-20260914-cutover-bidirectional-seamless.md`（graduated=False，G1-1 −$15.62/笔）、`OKR-2026-07`（$1,000/周 KR 失败史）、
+`OKR-2026-09`（不设盈利目标 / 单假设 / $210–256 周成本）、`DEB-20260919-extended-hours-profit-lock-and-trail.md`（180 日双窗口 / 三次自纠）、
 `2026-08-24-fee-structure-diagnosis.md`（$1.99 地板 / C 路径）。
 
 
@@ -292,7 +313,7 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 | C3 | **成立**（宇宙标注只在 §10.1，未进 §五） | `DEB-20260919-extended-hours-profit-lock-and-trail.md:289` 标题 = 「入口特征 → 「能否摸到 1.5%」预测力分析 (**180 日 n=89**)」；`:292`「从未见肉 <0.4% 占 22%/−75.8pp；小肉 0.4~1.5% 占 9%/−40.9pp ⇒ 合计 **31% 的笔贡献 −117pp**」 | 数字成立且**该文件本身即延长时段专档** ⇒ §五 情形 B 的行内文字必须补宇宙边界（R-2） |
 | C4 | **成立** | `docs/analysis/2026-08-24-fee-structure-diagnosis.md:19`「**100% 订单触发 $1.99 最低佣金地板**」；`:47`「≤2bp/边需 **≥$9,950** 名义额」 | 原文保留 |
 | C5 | **成立** | `docs/OKR-2026-09.md:76`「~46 笔/周 × $4.54 ≈ **$210/周**」；`:98` KR5 实测「$4.96/笔 × 51.6 笔/周 ≈ **$256/周**」 | 「$210–256」区间即取自「预估 vs 实测」，原文保留 |
-| C6 | **数字成立 / 复跑方式不成立** | 6 笔确实存在，但**不在** `data/extended_hours_exit_executions.jsonl`：该文件 15 行、`SL_TRAIL_LOCK` 仅 **2** 行（ACN/WBD）。真源是 `trade_records.exit_reason='SL_TRAIL_LOCK'` 的 **6 行**：ACN/UMC/WBD(9-18)、AMD/INTC(9-17)、QCOM(9-16)；价差/过冲读数出处 `DEB-20260919 §6.1:126`「60s 轮询过冲 0.04% + 买一价成交 价差 0.13%」✅ | 复跑方式改用 `trade_records`（R-1） |
+| C6 | **数字成立 / 复跑方式不成立** | 6 笔确实存在，但**不在** `data/extended_hours_exit_executions.jsonl`：该文件 15 行、`SL_TRAIL_LOCK` 仅 **2** 行（ACN/WBD）。真源是 `trade_records.exit_reason='SL_TRAIL_LOCK'` 的 **6 行**：ACN/UMC/WBD(9-18)、AMD/INTC(9-17)、QCOM(9-16)（**9/16–9/18 簇**；全历史该 exit_reason 共 120 行，复跑必须带窗口过滤——更正 R-12）；价差/过冲读数出处 `DEB-20260919 §6.1:126`「60s 轮询过冲 0.04% + 买一价成交 价差 0.13%」✅ | 复跑方式改用 `trade_records`（R-1） |
 | C7 | **成立 = 定谳「正确（无双扣）」** | ① `_apply_sim_slippage` 仅定义于 `app/execution/engine.py:171`，**唯一写 `sim_slippage_bps` 的地方是 `:202`**；② 调用面仅 `engine.py:461/521/530`（ExecutionEngine 内部撮合路径）；③ Playbook 下单走 `playbook_service.py:1567 _dual.submit_order()`，全链路**无 ExecutionEngine 引用**（`grep ExecutionEngine app/playbook/` = 仅 `:921` 注释）；④ 实测 `trade_records` 全表按 source_type 统计 metadata 含 slippage 键的行：**PLAYBOOK_SIM 528 行中 436 行命中的是 `exit_slippage_bps`（实测退出偏差），`sim_slippage_bps` 命中 0 行**；MAIN_PIPELINE/SCALPING/ORB 亦 0 行 ⇒ **30bps haircut 是 PLAYBOOK 宇宙唯一被建模的滑点，无双重扣减** | 结论可用；两处措辞须精确（R-3） |
 | C8 | **不成立（按现网数据源无法照原设计跑）** | ① 「60s tick 可成交价序列」**不存在**：`data/` 无任何 tick/quote 序列，官方回放引擎 `exit_replay_backtest.fetch_bars()` 取的是 **Futu `KLType.K_1M` 1 分钟 OHLC**（`autype=NONE`，缓存 `data/replay_bars_1m/` **45** 个标的 + `data/replay_bars/` **1981** 个标的日档）；② `pre_high_price/after_high_price` 读取点在 `manual_order_service.py:268/270`、`premarket_exit_shadow.py:328`，且 `extended_hours_market_session.py:148` 自述二者是**全时段累计值, 含入场前** ⇒ 直接当"进场后可成交价"会错；③ **盘前 shadow 无买卖价字段**（`premarket_exit_shadow.jsonl` 330 行 keys 只有 last_price/pre_high/pre_volume/prev_close…），**盘后 shadow 有**（`afterhours_exit_shadow.jsonl` 263 行含 `bid_price/ask_price/mid_price/spread/spread_pct/executable_price/quote_age_seconds/session_volume_delta`） | **T2 盘前臂必须改设计**（R-4）：盘后可用现成字段直测价差；盘前只能「前向攒样新增字段」或「1m bar 近似 + 声明为上/下界」 |
 | C9 | **不成立（回放器不支持）** | `scripts/replay_ext_entry_sources.py` argparse 全部选项 = `--days/--source/--recent-days/--min-chg/--min-vol/--session/--end/--universe-from/--pair-base/--split-half/--out`，**无任何 notional/门槛过滤**；全文件 `grep notional` = 0 命中 | §10.3-3 已给最小扩展面（见 11.3） |
@@ -305,7 +326,7 @@ MDE ~22bps，靠瀑布归因，不靠 P&L 置信度）。
 
 ### 11.2 更正（R-x，均经实测）
 
-- **R-1（C6 复跑方式）**: `extended_hours_exit_executions.jsonl` 只有 2 行 `SL_TRAIL_LOCK`；6 笔在 `trade_records`。**原句「台账行数或字段不符」是真的，但被查的对象本身选错了** —— 若按原方式复跑会得「不成立」的假否定。
+- **R-1（C6 复跑方式）**: `extended_hours_exit_executions.jsonl` 只有 2 行 `SL_TRAIL_LOCK`；6 笔在 `trade_records`。**原句「台账行数或字段不符」是真的，但被查的对象本身选错了** —— 若按原方式复跑会得「不成立」的假否定。**R-12 补充（第五轮复查）**: 复跑必须带窗口 `trade_date BETWEEN '2026-09-16' AND '2026-09-18'`——不带窗口的 `exit_reason='SL_TRAIL_LOCK'` 命中**全历史 120 行**（自 2026-07-14），照 R-1 原文复跑会把文档误判为造假；那 6 笔特指 9/16–9/18 簇（QCOM 9/16、AMD+INTC 9/17、ACN+UMC+WBD 9/18，与 §四 T2 标的清单一致）。
 - **R-2（§五 情形 B 宇宙）**: 本计划 §10.1 C3 自己已写明该口径「只覆盖延长时段子集」，但 **§五 情形 B 的行内只有数字没有宇宙**。二者不一致时必须让**执行处**（§五）带上边界，否则 10/11 分叉会拿延长时段的读值去决定入场侧方向。应写：「（延长时段 180 日 n=89 口径）」。
 - **R-3（C7 两处措辞精确化）**: ① 「`_apply_sim_slippage`（7bps/边）」正确（= `simulate_slippage_bps 5.0 + simulate_depth_cost_bps 2.0`，`unified_config.yaml:297-301`），但须注明**它只作用于 ExecutionEngine 使用者**；② 「**Playbook 是唯一下单管线**」**不成立** —— 实测 `trade_records` 还有 MAIN_PIPELINE 179 / SCALPING 129 / ORB_ENGINE 11 行也在下单。正确表述为：**scorecard 宇宙（`PLAYBOOK_*` 四类）全部经 Playbook→dual_broker 直连**，故该宇宙不受 engine 滑点模型影响。
 - **R-4（T2 数据源）**: 见 C8 —— 「60s tick 可成交价序列（回放器已在用）」不成立（实为 **K_1M 1 分钟 OHLC**，无 tick 序列）；`pre_high_price/after_high_price` 是**全时段累计含入场前**；盘前 shadow **无 bid/ask**，盘后 shadow 有全套价差字段。T2 若照原设计跑盘前臂 = 无数据可测。
@@ -523,3 +544,358 @@ grep -c '"bid_price"' data/premarket_exit_shadow.jsonl
 | L3 | `exit_scorecard` 分层读数的落点实现（挂 `size_normalized` 旁，record-only） | 10/11 生效前 | **在判据表决前不改判据输入**，故只落 artifact、不动 scorecard 入参 |
 | L4 | `scripts/okr_status.py:71-95` 并列 bps 算式收敛为读 `exit_scorecard` 产物 | 后续 | 防瀑布成为第三处同口径实现（反重复造轮子 ③） |
 | L5 | 414 笔口径统一（现 scorecard n=221；414 无出处） | T1 口径对账时 | 功效声明的输入必须同轴，否则"需 4,500 笔"跟着错 |
+
+---
+
+## 十四、Codex 复查回执（对 §十一–§十三 · 2026-09-20 第四轮）
+
+> **复查者**: Codex（本计划 §一–§十 作者；本节只复核 Hermes 增量，身份对调）。
+> **方式**: 实跑核验（git / sqlite / JSON 复算），另做两项独立读数；零交易行为改动。
+
+### 14.1 Hermes 增量逐项核验（全部复跑通过）
+
+| # | 声称 | 复跑方式 | 判定 |
+|---|---|---|---|
+| R-A | commits `0cd6ab9af`（代提交 9/19 批次）与 `90de5a1c7`（ORB 退役）存在且内容相符 | `git log --oneline -8` + `git show --stat` | 成立 |
+| R-B | C7 无双重扣减：PLAYBOOK_SIM 528 行 `sim_slippage_bps` 命中 **0** | `SELECT source_type, SUM(metadata_json LIKE '%sim_slippage_bps%')` → 0/528 | 成立（N-2 补充，见 §14.3） |
+| R-C | T2 读数：盘中 1621/**5.94**（IQR 3.37–9.31）、交叉校 2422/**5.37**、盘后 114/**26.96**、盘前 bid_price **0** | 逐位复现 | 成立 |
+| R-D | ORB 退役：`app/orb/` 不存在；执行面残留仅 3 处 tombstone 注释；允许清单 `order_executor.py:3410` 仅两 PLAYBOOK | `rg` + `ls` | 成立 |
+| R-E | 判据未越权：haircut 只进 10/11 议程、`slippage_calibration_latest.json` 只读产物、T5 线签字附口径钉 | 文本核 | 成立 |
+
+### 14.2 新读数 N-1（把 §13.2 的「随占比反号」量化到账）
+
+按 scorecard 同口径（since 2026-08-20、PLAYBOOK 宇宙、`trade_mode != 'live'`、`exit_reason` 非空）实跑：
+
+| entry_session | n | 平均净 pnl |
+|---|---|---|
+| regular | **215（96.4%）** | +$7.65 |
+| premarket | 4（1.8%） | −$162.21 |
+| afterhours | 2（0.9%） | +$55.38 |
+| （剔除：P3_DUP_CLEANUP 清理行） | 2 | — |
+
+（合计 223 行；scorecard 缓存 n=221，差 2 笔为缓存生成后新增平仓。）
+
+> **更正 R-10（第五轮复查，2026-09-20，Claude Code 实跑）**: 上表为**修正版**。原版
+> （regular 213/95.5%/+$6.89、空 4/+$88.57）的分桶把 4 行 `entry_time` 为 **+08:00 偏移格式**
+> 的行归入「空」——其中 BULL（`2026-08-20T21:47+08:00` → ET 09:47）与 NOK
+> （`2026-09-17T23:04+08:00` → ET 11:04）**实为盘中单**，另 2 行（MRCY/SNDK）是
+> `P3_DUP_CLEANUP` 清理行（§15.2 已裁"读数时剔除"，原版将其计入「空」桶且均值分母只算
+> 非 NULL 的 2 行，n=4 与分母不一致）。根因 = **`trade_records.entry_time` 同列混存
+> `−04:00` 与 `+08:00` 两种时区偏移**（新时钟病灶，已记台账）；修正版按 ET 换算后分桶，
+> 清理行独立剔除。**结论方向不变且更强**（盘中占比 95.5%→96.4%）。
+
+**推论**：窗口内 **96.4% 是盘中入场**。若按 §13.2 提案分层（盘中 5.94 / 盘后 26.96 / 盘前待攒样），
+混合往返 haircut ≈ 0.964×5.94 + 少量盘前盘后 ≈ **6–7bps**，对应 slip-adj 期望 ≈ **+$4.5/笔**
+（现役统一 30bps ⇒ −$11.44/笔）。
+⇒ 门1 当前负读数的**主要构成**是统一 30bps 对 95% 盘中仓的过度惩罚——这不是「让数字变好看」，
+是判据输入与宇宙结构的错配实锤。
+**仍不构成已改判据**：§13.2 三条生效条件（10/11 表决 / 盘中补实际成交标的口径 / 盘前攒样）原样有效；
+本读数只把「为什么值得排队表决」算清楚了。
+
+### 14.3 新读数 N-2（T1 验收必须补的口径钉）
+
+- PLAYBOOK_SIM 528 行中 **384 行** `metadata_json` 含 `exit_slippage_bps`（实测退出偏差）；
+  窗口内 215 行：中位 **0.00bps**、均值 **−2.12bps**、IQR [−4.41, +2.50]。
+- 若 `pnl_net` 的成交价已含这层实测偏差（需 T1 定谳），则分层 haircut 落地时必须声明
+  「quote-spread haircut 只扣**未建模**部分」——否则会造出**新的双重扣减**（量级 ~2–4bps，小但必须钉死）。
+- **处置：并入 T1 验收条款**——对账结论必须同时回答三件事：
+  ① `pnl_net` 已含哪些执行偏差（入场/出场/两腿）；
+  ② 分层 haircut 应扣的**剩余**部分是多少；
+  ③ 修正后的口径写进 §13.2 提案，10/11 表决时一并呈交。
+
+### 14.4 复查结论
+
+- **§十一–§十三 合格**：数字逐位复现、执行留痕完整、边界声明诚实、判据零越权。
+- **执行就绪度**：T1 可启动。前置仅剩两项——
+  1. §13.4-L1 措辞/引用更正（Codex 自留作业，doc-only）；
+  2. N-2 并入 T1 验收（本节已写入，执行时照此验收）。
+- **共识闭环**：Hermes 回执（改后执行）→ 用户终裁（按建议同意）→ 本复查回执（合格）。
+  按 §十 交接条款，Codex 下一步 = **L1 更正 → T1 口径对账（含 N-2）→ T2 盘前前向攒样监控**。
+
+---
+
+## 十五、T1 口径对账执行记录（2026-09-20 · Codex，纯只读）
+
+> L1 措辞更正（§13.4-L1：R-1/R-2/R-3/R-5/R-6/R-7/R-9，R-4 已按 F-2 降级）已同步落进
+> §四/§五/§七/§十与附录；本节为 T1 执行留痕。零交易行为改动。
+
+### 15.1 定谳结论（N-2 三问三答，全部实跑）
+
+**① `pnl_net` 的成交价里已含哪些执行偏差？**
+
+代码链（逐环锚点）：
+- `pnl_net = realized_pnl − fees_est`（`app/playbook/pipeline.py:6717-6722`，注释自述
+  「2026-07-30 DEB-fee-net-pnl」；日级不变量 I8 强制 ±0.02）；
+- `realized_pnl` 两腿均为券商真实回报成交价：入场 = `filled_price`
+  （`playbook_service.py:1607-1620`），出场 = close result 成交价（`pipeline.py:6690-6710`）；
+- engine 7bps/边模拟滑点在 PLAYBOOK 宇宙 0/528 命中（C7，已复核）⇒ **无双扣**；
+- **已含的执行偏差只有一层**：决策→成交的时延漂移——`exit_slippage_bps` 是它的量化
+  （`pipeline.py:7828-7832`：`(reference − fill)/reference`，reference = 决策时点
+  `quote.last`，`pipeline.py:8127`），**它是测量、不是费用**，天然已在 `realized_pnl` 里。
+
+实测（窗口内 215 行带 `exit_slippage_bps`）：中位 **0.00bps**、均值 −2.12、IQR [−4.41, +2.50]；
+按 `exit_price_source` 分组：`broker_deal` 151 行均值 **+0.33**（≈零不利偏差）、
+`broker_weighted_deal` 33 行 −5.11、`broker_limit_deal` 31 行 −10.88（限价等更优价，方向合理）。
+⇒ **Futu SIM 撮合 ≈ 决策时点 last 价，无系统性价差穿越。**
+
+**② 分层 haircut 应扣的剩余部分是多少？**
+
+- **未实现的报价价差**（SIM 没付、live 要付）：盘中实测 5.94bps 往返（quote-spread，下界）；
+- **SIM 无法建模的排队/部分成交/冲击**：报价测不到，live-only（门2 职责）；
+- **已含的决策→成交漂移（IQR ±4bps）禁止重复扣**。
+
+**③ 修正后的口径写进 §13.2 提案（见 §15.3）。**
+
+### 15.2 统一「净盈利」SSOT（判分面唯一口径）
+
+```
+净盈利 = realized_pnl − fees_est − 分层滑点折算
+分层滑点折算 = 未实现报价价差（分时段实测，声明为下界）
+             + 排队/冲击（不可测，显式声明缺席）
+单位: bps（1bp = 0.01%）与 $ 双报；realized_pnl 已含决策→成交漂移，禁止二次扣减
+```
+
+- 现役 scorecard `COALESCE(pnl_net, realized_pnl)` 保留；窗口内 223 行 I8 违例 **0**，
+  `pnl_net` NULL 仅 2 行（`P3_DUP_CLEANUP` 清理行，非真实成交，读数时剔除）。
+
+### 15.3 对 §13.2 提案的一处精确化
+
+- 分层 haircut 定义从「分时段实测值」精确为「**未实现**报价价差 + 声明缺席的排队/冲击」；
+- 由于 SIM 撮合 ≈ last 价（无价差穿越），**quote-spread 不构成双重扣减**——N-2 的担忧
+  被边界化到 ±4bps 漂移层，已由「禁止二次扣减」条款钉死；
+- 盘中 5.94 仍是**下界**：30bps 与 5.94 之间约 24bps 的差，其中多少属于排队/冲击不可知
+  ——这正是 10/11 表决时要摆在桌上的诚实边界（不是「改小 haircut」，是「拆开 haircut」）。
+
+### 15.4 T2 盘前前向攒样监控（现状确认）
+
+- `premarket_exit_shadow.py` 由 `extended_hours_exit_cron.py`（每分钟、会话门控）驱动，
+  在册且 enabled（`CONTROL-LOOP-LEDGER.md` crontab-ext-exit-cron 行）；
+- 代码已写 `bid_price/ask_price`（F-2）⇒ **下个交易日盘前窗（ET 04:00–09:25）自动开始攒样**，
+  无需新增开发；攒样至 n≥30 后并入 §13.2 提案。
+
+### 15.5 复算命令
+
+```bash
+cd /opt/ftseek/FTSeek-US
+# I8 不变量 + NULL 行识别（期望: 223 / 0 违例 / 2 清理行）
+sqlite3 data/ftseek_us.db "SELECT COUNT(*), SUM(CASE WHEN ABS(COALESCE(pnl_net,realized_pnl)-(realized_pnl-COALESCE(fees_est,0)))>0.02 THEN 1 ELSE 0 END), SUM(CASE WHEN pnl_net IS NULL THEN 1 ELSE 0 END) FROM trade_records WHERE trade_date>='2026-08-20' AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE','PLAYBOOK_SHADOW','MANUAL_PLAYBOOK') AND trade_mode!='live' AND exit_reason IS NOT NULL AND exit_reason!='';"
+# exit_slippage 分布（期望: 215 行 / 中位 0.00 / IQR −4.41..+2.50）
+python3 -c "import sqlite3,json,statistics;c=sqlite3.connect('data/ftseek_us.db');v=[json.loads(r[0])['exit_slippage_bps'] for r in c.execute(\"SELECT metadata_json FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND trade_date>='2026-08-20' AND metadata_json LIKE '%exit_slippage_bps%'\")];v=[x for x in v if isinstance(x,(int,float))];s=sorted(v);print(len(v),statistics.median(v),s[len(v)//4],s[3*len(v)//4])"
+# 按 price_source 分组（期望: broker_deal 151/+0.33, weighted 33/−5.11, limit 31/−10.88）
+sqlite3 data/ftseek_us.db "SELECT json_extract(metadata_json,'$.exit_price_source'),COUNT(*),ROUND(AVG(json_extract(metadata_json,'$.exit_slippage_bps')),2) FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND trade_date>='2026-08-20' AND metadata_json LIKE '%exit_slippage_bps%' GROUP BY 1;"
+```
+
+---
+
+## 十六、T3 费用路径 C 前置回放执行记录（2026-09-20 · Codex，纯只读）
+
+### 16.1 回放设定
+
+- **宇宙**：PLAYBOOK 四类、`trade_mode != 'live'`、已平仓、剔除 2 行 `P3_DUP_CLEANUP`；
+- **窗口**：
+  - 全窗 2026-06-22→09-18（n=549）——**只作参考，不作裁决**：8/6 sizing 抬升使名义额与时间
+    强混杂（全窗分半检验中，前半段 thr=4k 的保留单反而比被砍单更差 ⇒ 全窗结论不可用）；
+  - **裁决窗 = 现行 regime（since 2026-08-06）**：n=306、31 交易日、~49 笔/周；
+  - 180 日窗口不存在（playbook 首笔 2026-06-22）⇒ 以 **regime 内时间对半切分**替代双窗口；
+- **门槛变量**：名义额（`entry_price×quantity`）/ 入场价 / 费用率（`fees_est/notional`）。
+
+### 16.2 主结果（现行 regime，基线 exp +$0.22、WR 65.4%、fee 13.24bps）
+
+| 门 | kept | n 损失 | exp_kept | fee_bps | WR_kept vs WR_cut | 分半稳定性 |
+|---|---|---|---|---|---|---|
+| 基线 | 306 | 0% | +$0.22 | 13.24 | — | — |
+| 名义 ≥ **$9,950**（费用诊断建议值） | **0** | **100%** | —（无单可留） | — | — | ✗ regime 窗内**零幸存**（更正 R-11，见下注） |
+| 名义 ≥ $5,000 | 250 | 18.3% | +$2.78 | **8.92** | 65.2% ≈ 66.1% | ✓ 双半同向 |
+| **价格 ≥ $1 + 名义 ≥ $4,000** | 288 | **5.9%** | **+$2.87** | 9.04 | 66.0% > 55.6% | ✓ 双半同向 |
+| 费用率 > 10bps 拦截 | 258 | 15.7% | +$1.88 | — | 65.9% vs 62.5% | ✗ 分半翻转（前半被拦单 exp **+22.62** 反而更好） |
+
+> **更正 R-11（第五轮复查，2026-09-20，Claude Code 实跑）**: `$9,950` 行原版读数
+> （kept 7 / 98.7% / −$282.29 / fee 2.34 / WR 28.6% vs 55.9%）经复跑证实是**全窗（n=549）**
+> 数字——那 7 笔全部是 6–7 月的大名义单（TSM/PG/LMT/XOM/ORCL/UNH/MSFT，$12k–$30k），
+> 混入了声明为「现行 regime（n=306）」的本表，违反 §16.1 自家规则「全窗只作参考不作裁决」
+> （且原行内部不自洽：7/306 ⇒ 97.7%≠98.7%）。**regime 窗内实测 kept=0**：8/6 sizing
+> 变更后没有任何一笔名义额达到 $9,950 ⇒ 「一票否决」结论在裁决窗口径下**更强**
+> （该门在现行 regime 等于关停全部交易）。表内其余四行 regime 数字逐位复现无误。
+
+组合门分半读数（价格≥$1 + 名义≥$4,000）：前半 kept **+5.29** vs cut **−16.60**；
+后半 kept **+0.39** vs cut **−58.44** —— 方向两半一致。
+
+### 16.3 根因定谳（比费用诊断更深一层）
+
+**真怪物是交收费 $0.003/股，不是 $1.99 佣金地板**：
+
+| 标的 | 入场价 | 股数 | 交收费/价 | 往返费用 | 费用率 | pnl |
+|---|---|---|---|---|---|---|
+| US.CTNT | $0.072 | 68,493 | **417bps/边** | $451.26 | 915.1bps | **−$314.27** |
+| US.GIPR | $0.431 | 11,494 | 70bps/边 | $100.86 | 203.6bps | **−$181.32** |
+
+- 佣金 0.3% 上限正常生效（`fee_model.py:95-96` 先 cap 后 floor）——但**交收费无上限**，
+  「低股价 × 大股数」是结构性毒；
+- $1.99 地板只影响小名义单（<4k 桶 fee 20.6bps），量级温和；
+- 费用诊断的 $9,950 建议值只算了佣金地板、没看成交分布——**回放证伪**。
+
+### 16.4 裁决建议（进前向影子，10/11 定门槛）
+
+1. **必上：价格门 `entry_price ≥ $1`**——杀 settlement 怪物（n 损失 0.7%，exp +0.22→+1.85，
+   fee 13.24→9.65；机制先验成立：settlement/price）；
+2. **候选：名义门 $4,000 或 $5,000**（4k 组合：exp +2.87 / fee 9.04 / n 损失 5.9%；
+   5k：exp +2.78 / fee 8.92 / n 损失 18.3%）——影子期用真实决策点数据定；
+3. **不上：费用率门**（分半不稳定，且会误杀 BULL/NOK 赢家 +$80~+$178）；
+4. **$9,950 一票否决**。
+
+周净估计：4k 组合 ≈ **+$133/周** vs 基线 +$11/周（×12；诚实声明：仍远离 $1,000/周，
+与阶梯判断一致——费用门是止血，不是 edge）。
+
+### 16.5 诚实边界
+
+1. 过滤历史 ≠ 因果保证（门槛改的是未来入场分布）；
+2. 被拦单释放的资金/槽位（二阶效应）未建模；
+3. 本回放已扫多个门槛——**最优点不可直接当判据**，防回放过拟合：最终阈值必须由
+   2026-09-21–10/11 影子期的真实决策点数据裁决；
+4. 8/6 sizing 变更本身是混杂；现行 regime 分析已控制。
+
+### 16.6 复算命令
+
+```bash
+cd /opt/ftseek/FTSeek-US
+python3 - <<'PY'
+import sqlite3, statistics as st
+conn = sqlite3.connect('data/ftseek_us.db'); conn.row_factory = sqlite3.Row
+rows = conn.execute("""
+SELECT trade_date, symbol, entry_price, entry_price*quantity AS notional,
+       COALESCE(pnl_net, realized_pnl) AS pnl, fees_est,
+       fees_est/(entry_price*quantity)*10000 AS fee_bps
+FROM trade_records
+WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE','PLAYBOOK_SHADOW','MANUAL_PLAYBOOK')
+  AND trade_mode != 'live' AND exit_reason IS NOT NULL AND exit_reason != ''
+  AND pnl_net IS NOT NULL AND exit_reason != 'P3_DUP_CLEANUP'
+  AND trade_date >= '2026-08-06' ORDER BY trade_date, exit_time""").fetchall()
+n=len(rows); weeks=len(set(r['trade_date'] for r in rows))/5.0
+def report(label, pred):
+    kept=[r for r in rows if pred(r)]; cut=[r for r in rows if not pred(r)]
+    wk=st.mean(r['pnl'] for r in kept); fc=st.mean(r['fees_est']/r['notional']*10000 for r in kept)
+    print(f"{label:22s} kept={len(kept):3d} cut={len(cut):3d} loss={100*len(cut)/n:5.1f}% "
+          f"exp={wk:+7.2f} fee={fc:6.2f}")
+report("baseline", lambda r: True)
+report("price>=1", lambda r: r['entry_price']>=1)
+report("notional>=5000", lambda r: r['notional']>=5000)
+report("price>=1+not>=4000", lambda r: r['entry_price']>=1 and r['notional']>=4000)
+PY
+```
+
+## 十七、T3 影子挂环执行记录（2026-09-20 · Codex，record-only）
+
+### 17.1 落地面
+
+- **采集器**：`scripts/fee_gate_shadow.py`（只读 DB，`trade_id=trade_records.id`；
+  幂等按 `distinct:trade_id` 去重追加）；
+- **数据**：`data/fee_gate_shadow.jsonl`，前向汇总 `data/fee_gate_shadow_latest.json`；
+- **注册**：`app/playbook/shadow_registry.py::fee_gate_shadow`，`min_n=30`，
+  `count_mode=distinct:trade_id`，`intent=fee_floor_cost_guard`；
+- **挂载**：cron `45 6 * * 2-6`（避开 06:25/06:30 拥堵分钟）；
+- **台账**：`docs/CONTROL-LOOP-LEDGER.md::crontab-fee-gate-shadow`。
+
+### 17.2 采集与判读口径
+
+- **宇宙**：四类 PLAYBOOK、`trade_mode != 'live'`、已平仓、剔除 `P3_DUP_CLEANUP`、
+  `trade_date >= 2026-09-20`；
+- **收益口径**：逐笔 `pnl_net = realized_pnl − fees_est`，不混毛收益；
+- **候选门**：`price < $1`、`notional < $4,000`、`notional < $5,000`、
+  组合门 `price < $1 or notional < $4,000`；
+- **汇总**：各门 blocked/kept 的 n、净期望、胜率、加权费用 bps 与 n-loss；
+- **裁决**：样本不足 30 禁提转正；$9,950 维持一票否决；最终阈值须与双窗口回放同看。
+
+### 17.3 行为边界
+
+- **零交易行为改动**：不进 `app/push/`、不下单、不改配置、不改参数；
+- scripts/ 侧为纯新增；`shadow_registry.py` 注册项需按军规重启并跑启动冒烟；
+- 首次实跑会产出 n=0 汇总；9/21 起（下一交易日）由 cron 自动攒样。
+
+---
+
+## 十八、第五轮独立复查回执（对 Codex §十四–§十七 落地批 · 2026-09-20 · Claude Code）
+
+> **方式**: 全部关键声称由复查者本人实跑复核（sqlite / grep / crontab / systemctl / pytest），不采信自报告；沿用 §15-C15 常设纪律（搜作者未列出的面）。
+> **总裁决**: **工程面合格，影子挂环可直接投产攒样；判读面 4 处口径问题** —— 均已就地修正（R-10..R-13），**结论方向全部不受影响**（$9,950 否决在 regime 口径下更强、盘中占比更高、6 笔簇仍在）。
+
+### 18.1 复跑通过项（逐位一致）
+
+| 项 | 复核结果 |
+|---|---|
+| §15 T1 全部读数 | I8 不变量 **223/0/2** ✓；exit_slippage **384 行全史 / 窗口 215 行 / 中位 0.00 / IQR −4.41..+2.50** ✓；price_source 分组 **broker_deal 151/+0.33、weighted 33/−5.11、limit 31/−10.88** ✓ |
+| §15 代码锚点 | `pipeline.py:6717-6722`（pnl_net=毛−费）、`:7828-7832`（(reference−fill)/reference×10⁴ 含方向修正）、`:8127`（reference=quote.last）、`premarket_exit_shadow.py:447-448`（bid/ask 已写）全部属实 ✓ |
+| §16 回放主表 | regime n=306、基线 +0.22/13.24/WR65.4、价格门 0.7%/+1.85/9.65、5k 门 18.3%/+2.78/8.92、组合门 5.9%/+2.87/9.04、费用率门 15.7%/+1.88/65.9vs62.5 —— **除 $9,950 行外逐位复现** ✓；周净 +10.9≈+$11 ✓；4k 组合 +$133/周算术核对 ✓（2.87×288/6.2） |
+| §16.3 根因两行 | CTNT 915.1bps/−$314.27、GIPR 203.6bps/−$181.32 直查一致；交收费无上限机制核对（$0.003×68,493=$205.48/边=417bps）✓ |
+| 影子脚本 | `mode=ro` URI 只读、**零 futu 依赖**（守"非交易路径不抢 OpenD 槽位"纪律）、幂等 distinct:trade_id、tmp+replace 原子写、UTC 时钟、sort_keys 惯例；**测试 5/5 通过** ✓ |
+| 挂环三件套 | crontab 299 行 `45 6 * * 2-6`（PYTHONPATH + timeout 300 + 日志）✓；06:45 无碰撞、06:25=4 作业/06:30=3/06:35=0 与 R-7 一致 ✓；注册契约合法（`distinct:trade_id` 有既有先例）✓ |
+| 重启时序 | 服务 ActiveEnter 10:15:22 **晚于** registry mtime 10:11:38 ⇒ 哨兵已生效；首跑产物 `fee_gate_shadow.jsonl`(0B) + `fee_gate_shadow_latest.json`(n=0, schema 正常) 与 §17.3 声明一致 ✓ |
+| 过滤安全 | PLAYBOOK 宇宙 `trade_mode IS NULL` = **0 行** ⇒ `!= 'live'` 当前无静默丢行 ✓ |
+
+### 18.2 更正（R-10..R-13，均已就地落档）
+
+- **R-10（§14.2 N-1 分桶伪影）**: 原「空」桶 4 行 = `entry_time` 为 +08:00 格式的行；按 ET 换算 BULL/NOK 实为盘中单、MRCY/SNDK 为清理行。修正后 **regular 215（96.4%）/+$7.65**（原 213/95.5%/+$6.89），结论更强。
+- **R-11（§16.2 $9,950 行窗口污染）**: 原行读数（7/98.7%/−$282.29）是**全窗 n=549** 数字，regime 窗内 **kept=0（损失 100%）**；且原行内部不自洽（7/306⇒97.7%≠98.7%）。违反 §16.1「全窗只作参考」自家规则。否决结论在裁决窗口径下更强（该门=关停全部交易）。
+- **R-12（C6/R-1 复跑命令缺窗口）**: 见 §11.2 R-1 补充与 §10.1 C6 行，均已加 `trade_date BETWEEN '2026-09-16' AND '2026-09-18'`。
+- **R-13（注册表描述措辞）**: `trade_date` 实测 = **入场日**（306/306 等于 entry 日、仅 270/306 等于 exit 日）；过滤器按入场日选样对"入场门反事实"是**正确设计**，但 registry 描述「新平仓」应改「入场且已平仓」。已改 `shadow_registry.py` 描述，并给 `fee_gate_shadow.py` 补 excluded-rows 诊断日志（静默跳过的 NULL pnl/fees 行计数，当前为 0）。
+
+### 18.3 新事实（超出 Codex 自报面）
+
+1. **`trade_records.entry_time` 同列混存 `−04:00` 与 `+08:00` 两种时区偏移**（实测 id 1320/1511/1513/1536 为 +08:00，其余为 −04:00）——R-10 的根因，**新时钟病灶变种**，已记台账。任何按 entry_time 分时段/分时区的下游必须先做 ET 归一，禁止裸取 wall-clock。
+2. **handoff.md 的 RFC-089「四判据变五判据」条目在工作区被删**（该内容属已提交 `e34423ae4`，全文无迁移痕迹，删除使周检口径印象回退到旧四判据）——已恢复；若属有意精简，需用户裁决后再删。
+
+### 18.4 遗留（不阻塞攒样，10/11 前处理）
+
+- 影子 jsonl 追加无 flock（cron 单实例 + 哨兵按 trade_id 去重兜底，风险可接受）；
+- 影子行在追加时刻冻结（后续 fees_est 修正不回写）——对 record-only 语义可接受，判读时知悉；
+- 盘前臂 bid/ask 攒样自 9/21（周一）盘前窗自动开始（§15.4 已核，零开发）。
+
+## 十九、T3 → 系统化复盘 / 精准推送接入（2026-09-20 · Codex）
+
+### 19.1 关联逻辑
+
+- **诊断总线**：`trade_records` → `fee_gate_shadow.py` → `fee_gate_shadow_report.py` →
+  PushHub / 周六周检；
+- **净利口径**：所有推送只读 `pnl_net`，不允许用毛收益刷结果；
+- **现行门对照**：生产门已是 `price≥$5 & notional≥$2,500`
+  (`config/unified_config.yaml::playbook.admission`)；
+- **安全增量语义**：候选不是“把价格门从 $5 放宽到 $1”，而是
+  **保持现行价格门，只测试名义额 $2,500→$4,000/$5,000 两档**；
+- **链路诊断**：低价绕行 → admission/enforcement；名义额不足 →
+  `admission.min_notional_usd`；费用不再是主漏损 → 转向退出/信号质量。
+
+### 19.2 推送治理
+
+- **每日**：06:47 采集后运行，经 PushHub 推 `SHADOW_COMPARE`；
+- **触发**：新样本、状态跃迁、断流/坏行、现行门绕过、候选门会放宽现行门；
+  无新样本且状态不变时不推，避免噪声；
+- **周检**：周六周检并列 T3 摘要，与经济边际、影子注册表同场呈报；
+- **级别**：链路/数据质量/安全风险用 HIGH；普通攒样进度用 NORMAL；
+- **禁止自动生效**：报告最多给 `READY_TO_EVALUATE` / 诊断方向，参数变更仍等 10/11 用户终裁。
+
+### 19.3 回滚
+
+- 删除 cron `47 6 * * 2-6` 与台账行；
+- 删除 `scripts/fee_gate_shadow_report.py`、推送状态文件和本节；
+- 周检删除 `check_fee_gate_shadow()` 调用；采集器本身无需回滚。
+
+### 19.4 独立核查回执（2026-09-20 · 第 6 轮，用户令「请核查」；纪律同 §18：全量独立重跑）
+
+**复跑通过项**：
+
+- 测试：`test_fee_gate_shadow.py` + `test_fee_gate_shadow_report.py` **13/13 绿**（0.44s）；
+- 干跑（无 `--push`）：现行门读数 `price≥$5 & notional≥$2500 (active)` 与 `unified_config.yaml::playbook.admission` 实值一致；状态 `INSUFFICIENT_N`（n=0/30，excluded=0），方向「继续攒样，不改参数」✓；
+- **R-13 端到端接线成立**：采集器 `count_excluded_rows` → `summarize(excluded_rows=…)` → `fee_gate_shadow_latest.json` → 报告 `DATA_QUALITY_WARNING` 状态位 → 周检 `excluded=` 显示；NULL pnl/fees 静默跳行从此可观测；
+- 采集脚本实跑（11:09 版）`total=0 appended=0 excluded=0`，只读（`mode=ro`）、幂等 ✓；
+- 周检消费端 `check_fee_gate_shadow()` 实测返回 `{status,n,min_n,excluded_rows,lines}`，`lines[1:3]` 切片=样本行+现行门行 ✓；周检脚本 stdlib-only，报告脚本依赖=yaml+app.push，**全链无 futu/OpenD**（干跑实证）✓；
+- 台账两行（06:45 采集 / 06:47 报告）与实现一致，风险列含「候选 price≥$1 误读为放宽现行 $5 门」告警，与 §19.1 安全增量语义互为印证 ✓；
+- `should_push` 语义与 §19.2 逐条对应：n 变或状态变才推；URGENT 集（断链/断流/门未执法/门绕过/数据质量/候选放宽现行门）跃迁即推 HIGH ✓；
+- cron 06:47 无拥塞（06:41/06:44/06:45/06:47 各 1 行，错峰成立）；下次触发周二 06:47 CST=周一美股收盘后 ✓；
+- `_entry_session` 用 `fromisoformat`+`astimezone(ET)`，对 `entry_time` 混存 +08:00（时钟台账变种 4）免疫 ✓。
+
+**R-14（= DEB S-1 复发，已结案：用户确认收到 2026-09-20）**：验证路径**又真实推送了一次**。证据：`data/fee_gate_shadow_push_state.json` 实录 `last_pushed_at=2026-09-20T03:15:26+00:00`（11:15:26 CST）、`last_push_key=fee_gate_shadow:0:INSUFFICIENT_N`——状态文件仅在 `pushed=True` 时落盘，故推送已成功送达通道，用户端应收到一条「T3 费用门影子诊断 · 样本 0/30」NORMAL 级通知，~~请按 S-1 同流程确认收到~~ **用户已确认收到（2026-09-20，S-1 同流程结案）**。副作用评估：state 被预置 ⇒ 首次 cron 推送顺延至首个 n/状态变化（预期周二 06:47），语义无损；但 DEB §25.2 S-1 的教训（验证路径与生产状态文件未隔离）在新脚本上原样复发——脚本的无 `--push` 模式即天然干跑（打印且不落 state），本次是直接带 `--push` 验证所致。改进建议（P5 前）：`--push` 路径加显式确认旗标，或验证时用 `--state /tmp/...` 隔离。
+
+**R-15（ops-sync SSOT 红灯，已修复）**：repo `ops/hermes/ftseek_weekly_checkpoint.py` 领先线上 `/root/.hermes/scripts/` 副本 **+30 行**（即 §19 的 `check_fee_gate_shadow()` + main 消费段），`tests/test_ops_scripts_sync.py::test_repo_and_live_scripts_in_sync` **FAILED**（本轮 114 项超集回归唯一红）。影响：今日 10:00「周日综合复盘」用旧线上副本执行（无 T3 段，损失限一周展示）；下次周六周检前须部署。修复=单向 `cp` repo→live + 复跑该测试至绿。**已修复（2026-09-20，用户授权）：cp 部署一致，`test_ops_scripts_sync` 3/3 复跑绿**；下次周六周检（9/26）起线上副本含 T3 段。
+
+**R-16（小注记，不阻塞）**：① push 无 flock——state 文件守卫 + `sync=True` 绕过 hub 去重，cron 每日单实例风险低，P5 建议对齐 review_bundle 的 flock+push.json 模式；② `from scripts.fee_gate_shadow import _arm_stats` 跨脚本引用私有函数（签名变更会双爆，建议转正为公共 API 或内联）；③ 攒样期每日晨推为 §19.2 明示设计（n 每日变⇒每日推），用户应有「每天一条 T3 通知」的预期，若嫌噪可把非 URGENT 触发从「n 变」收紧为「n 跨过 min_n 或周级聚合」。
+
+**核查副产物说明**：本轮复跑覆盖/新增了 `data/reviews/` 下 9/18 三产物与 `coverage_2026-09-20.json`（均为可再生日常产物，未推送、未写 vault）；bundle hash 跨世界态不稳的发现与 P5 golden 约束记录于 DEB §29.2 N-9。
