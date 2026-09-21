@@ -102,7 +102,14 @@ def test_registry_pins_phase_c():
     ]:
         it = items.get(iid)
         assert it is not None, f"{iid} 未注册 (防散落纪律)"
-        assert it.status in (ShadowStatus.OBSERVING, ShadowStatus.READY_TO_EVALUATE)
+        # 2026-09-21 (RFC-092 清账批): pullback_limit_shadow 的 ADR-035 预注册判据实测
+        # 2/4 (成交率 27.1%<50% / mfe=0 占比未下降) ⇒ 判据明文"任一条显著劣化 → 撤回,
+        # 证据留档" ⇒ 结案 KILLED。此处把该 id 的状态钉到具体值 (比原"活跃态"白名单更严,
+        # 未来任何状态漂移都会红), 其余两项仍要求处于活跃态。
+        _pinned = {"pullback_limit_shadow": ShadowStatus.KILLED}.get(iid)
+        _allowed = (_pinned,) if _pinned else (
+            ShadowStatus.OBSERVING, ShadowStatus.READY_TO_EVALUATE)
+        assert it.status in _allowed, f"{iid} 状态漂移: {it.status} not in {_allowed}"
         assert it.min_n == min_n and it.eval_script == script
         assert (Path(__file__).resolve().parents[1] / script).exists()
     assert items["gap_alignment"].count_mode == "distinct:trade_id"

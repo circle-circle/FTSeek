@@ -65,6 +65,11 @@ class ShadowItem:
     # eval 执行方式: False=应有 cron/调度挂载 (挂载核对话语权); True=按需手工/
     # 裁决日触发 (哨兵跳过挂载核对, 2026-09-01 挂载核对哨兵引入)
     eval_on_demand: bool = False
+    # 判据不可裁决时的显式挂账原因 (2026-09-21 清账批 RFC-092 引入): 非空 ⇒
+    # refresh_counts 不迁移 READY_TO_EVALUATE (防周检把"样本量达标但无判据可跑"的项
+    # 当成"待用户裁决")。取值形如 "PERMANENT_MEASURE: ..." (无毕业门, 永久测量项) /
+    # "NO_EVAL_SCRIPT: ..." (判据已预注册但无执行体, 待建脚本或退役)。
+    no_adjudication_reason: str = ""
     # 意图归组 + 互引 (2026-09-11, DEB-20260911 共识 C9/N3, 用户裁「按建议执行」):
     #   立起理由 — A_short_chase (盘前快照口径) 与 short_chase_ban_shadow (触发时刻口径)
     #   同意图「逆势追空禁入」同阈值 +3%, 双影子独立攒样独立裁决、台账零互引, 且已在真实
@@ -127,7 +132,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="p1_1_capital_flow",
         name="资金流背离 record-only",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="大单净流逆方向 → 背离。回放四关门全不过(p=0.85), 纯 record-only。",
         data_path="data/falsification_gate_shadow.jsonl",
         config_key="playbook.execution_parameters.falsification_gate_capital_flow_shadow",
@@ -135,7 +140,16 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="同四关门判据 (capital_flow_replay_verdict.json): inflow/outflow t≤-2 + IS-OOS 同号 + placebo p<0.05",
         eval_script=None,
         created="2026-08-23",
-        notes="capital_flow_replay_verdict: 四关全不过, 用户裁决不得拦单",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "KILLED",
+                          "evidence": "清账批 (RFC-092): 判据产物 data/capital_flow_replay_verdict.json "
+                                      "(2026-08-22) 四关门 all_gates_pass=False — inflow t=-0.48 / "
+                                      "outflow t=-0.71 均不显著, IS/OOS 异号, placebo p=0.85; "
+                                      "且用户已裁'不得拦单' ⇒ 该假设已判死, 注册表未同步。归档退役。"}],
+        notes="capital_flow_replay_verdict: 四关全不过, 用户裁决不得拦单。"
+              "2026-09-21 清账: 已裁未归档 → 退役, 退出待裁队列; "
+              "采样行仍由 playbook.execution_parameters.falsification_gate_capital_flow_shadow "
+              "在写 (本项退役不改采写行为, 停采需另关开关)。",
     ),
 
     # ── 富途通道影子 (采集 8/12 已上线, 2026-08-29 补登记 — 未登记=无人跟踪) ──
@@ -239,6 +253,9 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="预注册: 异动榜Top100入选 → 后续30min/日内窗口超额收益配对基线, "
                             "IC 显著才评估接候选池发现通道; 评估脚本待建 (先攒样)。",
         eval_script=None,
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册但无执行体 (2026-09-21 清账 RFC-092) — "
+                               "样本已 1043/540, 注册表原先机械迁移 READY 属'虚假待裁'; "
+                               "处置二选一待裁: 建 eval_script 或退役。无交易行为影响 (纯影子采集)。",
         created="2026-08-29",
         notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
               "与盘前榜(premarket_enrichment futu_premarket_rank)互补: 盘前榜接决策上下文, 本通道纯影子",
@@ -258,6 +275,9 @@ REGISTRY: list[ShadowItem] = [
                             "IV/HV 于交易日 join trade_records, 桶内增量显著才毕业。"
                             "首日回补 250 日历史 → 历史残存效应立即可跑。",
         eval_script=None,
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据可跑但无执行体 (2026-09-21 清账 RFC-092) — "
+                               "样本 87/30, 原先机械迁移 READY 属'虚假待裁'; "
+                               "处置二选一待裁: 建 eval_script (残存效应 join trade_records) 或退役。",
         created="2026-08-29",
         notes="count_mode=distinct:collected_at — 首日回补 250 日历史 (~5000 行) 只算 1 个攒样日, "
               "回补行保留供历史残存效应分析; min_n=30 攒样日",
@@ -408,7 +428,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="da_prompt_distill_shadow",
         name="DA 系统提示词蒸馏影子 (DEB-20260901c 阶段二)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="2026-09-01 用户裁'批准两阶段方案'。阶段一 (行为等价审计) 已过: "
                     "37/37 行为标记全保留, 减重 19.0% (2867→2323 字符), 产物=仓外 "
                     "skills/deep-stock-analysis/scripts/prompt_distill_v2.py。"
@@ -432,7 +452,7 @@ REGISTRY: list[ShadowItem] = [
                             "自删行, 2026-09-01 红队复查批)。",
         eval_script="scripts/da_prompt_distill_shadow_eval.py",
         created="2026-09-01",
-        last_evaluated=None,
+        last_evaluated="2026-09-21",
         verdict_history=[{"date": "2026-09-01", "verdict": "BASELINE_NO_DATA",
                           "evidence": "注册基线: 影子脚本落地, 首个采集夜 9/1 (raw.json "
                                       "首产夜), 评估脚本与一次性裁决 cron 随窗口收口批落地"},
@@ -445,7 +465,14 @@ REGISTRY: list[ShadowItem] = [
                                       "(DA-DISTILL-ONE-SHOT-ADJUDICATION) 落地, 悬空清零; "
                                       "③采集同批起捕获 V1 归因三元 (finish_reason/契约违约/"
                                       "entry_price) + 双臂 tokens_out — 生产检查点 "
-                                      "_CKPT_KEEP_DAYS=3 自删, 判据①③评估不再依赖窗口末重读"}],
+                                      "_CKPT_KEEP_DAYS=3 自删, 判据①③评估不再依赖窗口末重读"},
+                         {"date": "2026-09-21", "verdict": "KILLED (ARCHIVE)",
+                          "evidence": "清账批 (RFC-092): 逐字重跑预注册判据 "
+                                      "evaluate(load_rows()) — n_live=198, ①契约违约率 v2=6.06%% "
+                                      "vs V1=1.52%% ✗, ④token 降幅 2.57%% < 15%% ✗, ②漂移 5.1pp/2.0pp ✓, "
+                                      "③T+1 配对 n=123 差值 +0.016%% ✓ ⇒ 任一不过 → ARCHIVE (判据明文)。"
+                                      "采集 cron 已于 2026-09-17 用户裁'停镜像'注释摘除; "
+                                      "本次只是把注册表状态同步到已执行的决定。"}],
         notes="计数口径=live 行数; cron '40 21 * * 1-5' 是唯一采集线也是唯一 kill switch "
               "(思考模式下 DA 全轮延后, 21:40 发车留足完成余量)。eval 脚本与一次性裁决 "
               "cron 已于 2026-09-01 红队复查批落地 (悬空清零)。DEB-20260901b (思考模式) "
@@ -509,7 +536,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="overnight_kill_criterion",
         name="隔夜臂判罪线 (w_week 生产跟踪)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.SUPERSEDED,
         description="overnight_hold 毕业后的生产判罪线 (2026-08-29 用户裁'5批' 预注册): "
                     "w_week 臂已平仓 n≥20 且修复率(结局 pnl>0)<40% → 裁排除 "
                     "loser_overnight_enabled。2026-09-01 复查收口立项: 此前判据只在 "
@@ -524,6 +551,13 @@ REGISTRY: list[ShadowItem] = [
                             "SUPERSEDED 留痕; n<20 攒样, 周检机械跟踪不重置。",
         eval_script="scripts/overnight_arm_report.py",
         created="2026-09-01",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "SUPERSEDED (维持 loser_overnight_enabled)",
+                          "evidence": "判据 B15 实测: w_week 臂已平 n=23 (门 20, ✓) 修复率 69.6%% "
+                                      "(门 <40%%, ✗ 未触发排除线) → 判据明文'维持, 翻 SUPERSEDED 留痕'; "
+                                      "汇总落盘 data/shadow/overnight_arm_report_latest.json "
+                                      "verdict=REPAIR_RATE_OK (2026-09-21 07:34 重跑复核一致)。"
+                                      "SUPERSEDED 在此为『结案』语义 (无替代项), 非被新版取代。"}],
         notes="2026-08-29 注册表 verdict 'PROD_KILL_CRITERION_REGISTERED' 的执行落地; "
               "cron 20 6 * * 2-6 判罪线进度 JSON 落盘 (顶层 n=已平仓数, 注册表计数锚); "
               "原 overnight_hold 项保持 GRADUATED (毕业案历史), 本项只管毕业后生产表现。",
@@ -597,7 +631,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="pullback_limit_shadow",
         name="确认位限价入场影子 (PULLBACK_LIMIT)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="DEB-20260901 Phase C 观察点①: 带确认位的 PULLBACK_LIMIT/FADE_SHORT 指令, "
                     "执行层按现状执行 (零行为变更) 同时落触发上下文影子 "
                     "(type=trigger/chase_cap_violation, _shadow_dedup_ok 文件级防重), "
@@ -611,6 +645,16 @@ REGISTRY: list[ShadowItem] = [
                             "(翻 entry_archetype_routing_enabled=true, 需用户裁决); 任一条显著劣化 → 撤回, 证据留档。",
         eval_script="scripts/cf_pullback_limit_replay.py",
         created="2026-09-01",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "KILLED (撤回接线)",
+                          "evidence": "清账批 (RFC-092) 实测窗 9/8-9/18 (产物 "
+                                      "data/shadow/pullback_limit_replay_v2_latest.json, 9/19 生成): "
+                                      "n_paired=49 ≥20 ✓ | ①净期望改善 84.2%% ≥30%% ✓ | "
+                                      "②成交率 27.1%% <50%% ✗ | ③mfe=0 占比 0.0→0.0 未下降 ✗ "
+                                      "⇒ adr035_verdict 2/4, wire_routing=false; 另 D 误杀率 54.9%%>40%% ✗, "
+                                      "日聚类 t=0.62 MDE ±20.5 ⇒ 与 0 不可分辨。判据明文'任一条显著劣化 → "
+                                      "撤回, 证据留档' ⇒ 结案。若未来重启该假设, 必须新预注册 "
+                                      "(读数卡已给可达性门方向的数据依据), 不得挪用本判据。"}],
         notes="首个生产夜=9/1 盘 (结构化字段首夜); 8/31 指令无结构化字段重放 n=0 合预期; "
               "首批判读 9/2 05:47; count_mode=lines。"
               "双口径窗口 (2026-09-02 DEB-20260902 议题二补): 判据 n≥20 可配对样本自 "
@@ -803,6 +847,9 @@ REGISTRY: list[ShadowItem] = [
               "05:35 之后); 幂等 trade_id 去重; 状态四分类 ok/ah_exit/bar_truncated/no_bars "
               "(P1 口径 2026-09-04 晚: replay_bars 多写入者混杂目录, 截断 bar 自主补拉全天写回, "
               "台账 crontab-post-exit-path 条); 夜盘出场走 ah_exit + next_open_gap 隔夜量化。",
+        no_adjudication_reason="PERMANENT_MEASURE: 判据字段自述'无毕业门 (永久测量项)' "
+                               "(2026-09-21 清账 RFC-092) — min_n=100 只是呈报门槛, 不是裁决门; "
+                               "原先机械迁移 READY 属误标 (无判据可跑)。服务退出判分对照臂, 继续采集。",
         count_mode="where:type=post_exit",
     ),
     ShadowItem(
@@ -836,7 +883,7 @@ REGISTRY: list[ShadowItem] = [
                             "(另立 DEB+用户裁); n>=30 顺延为毕业门槛。",
         eval_script="scripts/intraday_loss_breaker_shadow.py",
         created="2026-09-05",
-        last_evaluated="2026-09-13",
+        last_evaluated="2026-09-21",
         verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING_FORWARD_ONLY",
                          "evidence": "判据实测(B18: 被挡笔期望≤-10 ∧ n≥30): n=194 ✓ 但期望 "
                                      "**+46.83** ✗ (被挡单净 +$9,084, 132亏/62盈)。"
@@ -846,7 +893,13 @@ REGISTRY: list[ShadowItem] = [
                                      "根因: eval_script 自 9/5 创建起**从未挂 cron**, forward "
                                      "永远攒不动。2026-09-13 补挂 28 6 * * 6 (周跑, 全量重建幂等) "
                                      "+ 悬空告警随之消除。裁决须等 forward n≥30 后重测。"},
-                        ],
+                         {"date": "2026-09-21", "verdict": "KEEP_SAMPLING_FORWARD_ONLY (重申)",
+                          "evidence": "清账批 (RFC-092) 复核: 全期 n=204 被挡笔期望 **+45.0** (门 ≤-10, "
+                                      "方向相反), 被挡笔累计净 **+$9,180**; last30d n=14 仍 +$146.75 "
+                                      "(同号)。两口径同号说明'熔断会挡掉赚钱笔'的指向稳定, 但 forward "
+                                      "样本 14 < 30 ⇒ 按 2026-09-13 已记录的规则 (backfill 有前视偏差, "
+                                      "期望符号不可作裁决依据) **本次不裁**, 只叠加读数。"
+                                      "结构建议留待 forward n≥30 重测时一并呈裁。"}],
         notes="口径: trade_mode=simulate 且 pnl_net NOT NULL, ET 日, exit 事件流 "
               "(tie 时 exit 先结)。持久化=ftseek_us.db 派生表 cb_shadow_daily/"
               "cb_shadow_blocked (全量重建幂等) + JSON 汇总。首日回补即证伪预验证量级 "
@@ -1211,7 +1264,8 @@ def refresh_counts() -> list[str]:
         n = _count_samples(s, _base)
         if n is not None:
             s.current_n = n
-        if s.status == ShadowStatus.OBSERVING and s.current_n >= s.min_n:
+        if (s.status == ShadowStatus.OBSERVING and not s.no_adjudication_reason
+                and s.current_n >= s.min_n):
             s.status = ShadowStatus.READY_TO_EVALUATE
             notifications.append(
                 f"🔔 影子 [{s.id}] {s.name} 样本量已达 {s.current_n}/{s.min_n} → "
