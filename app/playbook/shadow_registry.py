@@ -138,8 +138,13 @@ ADJUDICATED: dict[str, dict] = {
         "note": "基线穿透率 97.4%; 假设集 None (未调 LLM) ⇒ 不判 (判据字典 B17)。",
     },
     "premarket_invalidation": {
-        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "A/C 已按 DEB-20260911 处置 RETIRED_NO_PROMOTION; B 执行 n=4<20 ⇒ 攒样中。",
+        # needs_user=True: 实测相位与判据文字不符 (§3) ⇒ 口径定谳须用户裁, 不设重看闹钟 = 立即待裁
+        "read_at": "2026-09-21", "recheck_after": "", "needs_user": True,
+        "note": "A/C 已按 DEB-20260911 处置 RETIRED_NO_PROMOTION; B 执行 n=4<20 ⇒ 攒样中。"
+                "⚠️ 口径待定谳 (2026-09-21 实测): 产物 396 条全部落在 09:35–09:47 ET (即开盘后 5–17 分钟,"
+                " 用的是盘中价), 而本条目判据文字说的是\"盘前口径增量\" ⇒ 该影子积累的证据回答的不是它登记的问题;"
+                " 盘前时段未被采样。裁决 B 之前必须先定谳相位 (改判据文字=重新裁决, 须留痕;"
+                " 见 docs/analysis/2026-09-21-realtime-price-authority-audit.md §3)。",
     },
     "da_blocked_cf": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,

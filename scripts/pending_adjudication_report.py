@@ -99,7 +99,9 @@ CURATED: dict[str, dict] = {
     },
     "premarket_invalidation": {
         "plain": "盘前证伪条件 A/B/C（跳空/方向失效就作废这单）",
-        "conclusion": "A/C 已按 2026-09-11 处置为『不转正』; B 执行样本 n=4<20 ⇒ 攒样中",
+        "conclusion": "A/C 已按 2026-09-11 处置为『不转正』; B 执行样本 n=4<20 ⇒ 攒样中。"
+                      "⚠️ 但实测发现相位不符: 产物 396 条全在开盘后 5–17 分钟 (用盘中价), 判据文字说的是『盘前』"
+                      "⇒ 裁决前须先定谳口径",
         "cls": "AUTO_WATCH",
     },
     "reentry_quick_tp_gate": {
