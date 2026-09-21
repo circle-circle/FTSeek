@@ -8283,6 +8283,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 meta["_log_tag"] = "playbook sim"
                 meta["_symbol"] = symbol
                 meta["_qty"] = qty  # 2026-07-30 D4: 保本线费用感知需股数换算每股往返成本
+                meta["_trade_id"] = r["id"]  # RFC-095 (2026-09-22): 影子打点身份锚 (trade_records.id)
 
                 # ── 耐心出场 (2026-08-13, DEB-20260813 §18.3): armed 等待态评估 ──
                 #   armed 仓位跳过正常规则链 (防等待期被 TIME_EXIT/MFE_STALL/PRE_CLOSE
@@ -8842,7 +8843,8 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                                 _edg_emit("sweeper", symbol, direction, r["source_type"],
                                           entry_price, qty, r["entry_time"], _rp,
                                           _rpnl_net if _rpnl_net is not None else _rpnl,
-                                          track=_eod_track)
+                                          track=_eod_track,
+                                          trade_id=r["id"])  # RFC-095 身份锚
                             except Exception as _edg_err:
                                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕,
                                 #   否则「影子零样本」与「打点链路断了」不可区分 (2026-09-09 棘轮清剿)

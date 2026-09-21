@@ -106,3 +106,34 @@ def test_emit_swallows_internal_errors(shadow_tmp, monkeypatch):
     monkeypatch.setattr("app.playbook.config.get_playbook_config", _boom)
     _emit()  # 不抛 = 通过
     assert not shadow_tmp.exists()
+
+
+# ── RFC-095 (2026-09-22) 身份锚字段契约 ────────────────────────────────────────
+# 消费方 = scripts/settle_eod_depth_gate_shadow.py::match_trade (结算侧按行认仓)。
+# 单位/量纲声明 (军规: 新增落库字段必带单位声明 + 契约断言):
+#   trade_ref  : 整数 = trade_records.id (最强锚); 缺失时 None (旧调用方未传)
+#   entry_time : 字符串 = 该仓 entry_time **原样透传** (ISO 时间串, 三格式混存,
+#                结算侧只做逐字比对, 不解析时区)
+def test_identity_anchor_fields_present(shadow_tmp, monkeypatch):
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(trade_id=1503, entry_time_str="2026-09-15T10:48:09.508934-04:00")
+    r = json.loads(shadow_tmp.read_text().splitlines()[0])
+    assert r["trade_ref"] == 1503 and isinstance(r["trade_ref"], int)
+    assert r["entry_time"] == "2026-09-15T10:48:09.508934-04:00"
+
+
+def test_identity_anchor_absent_is_none(shadow_tmp, monkeypatch):
+    # 旧调用方 (未传 trade_id) → trade_ref=None, 结算侧退化到 entry_time/价量锚
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(entry_time_str="")
+    r = json.loads(shadow_tmp.read_text().splitlines()[0])
+    assert r["trade_ref"] is None
+    assert r["entry_time"] == ""
+
+
+def test_identity_anchor_bad_type_falls_back_to_none(shadow_tmp, monkeypatch):
+    # trade_id 传不可转 int 的值 → trade_ref 退化为 None, **行照常落盘** (度量连续性优先)
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(trade_id="not-a-number")
+    r = json.loads(shadow_tmp.read_text().splitlines()[0])
+    assert r["trade_ref"] is None

@@ -178,6 +178,20 @@ from pathlib import Path as _EdgPath
 _EDG_SHADOW_PATH = _EdgPath(__file__).resolve().parents[2] / "data" / "shadow" / "eod_depth_gate_shadow.jsonl"
 
 
+def _anchor_int(v):
+    """身份锚 trade_ref 安全转换 (RFC-095): 无法转 int → None, 绝不让打点整行丢失。
+
+    度量连续性优先于锚纯度: 锚坏了退化为 None (结算侧再退化到 entry_time/价量锚),
+    而不是因为一个类型错误把该笔豁免记录整行吞掉。
+    """
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _edg_pytest_guard() -> bool:
     """pytest 哨兵 (先例 RFC-074 winner shadow): 单测触发豁免路径不得污染生产账本。
     独立函数以便单测 monkeypatch (pytest 会在 call 阶段重设 PYTEST_CURRENT_TEST,
@@ -188,13 +202,15 @@ def _edg_pytest_guard() -> bool:
 def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
                                source_type: str, entry_price: float, qty,
                                entry_time_str: str, decision_price: float,
-                               profit_pct: float, track=None) -> None:
-    """EOD 豁免成立后的深水闸影子打点。任何异常 → debug 日志, 绝不影响豁免主链。
+                               profit_pct: float, track=None, trade_id=None) -> None:
+    """EOD 豁免成立后的深水闸影子打点。任何异常 → debug 日志，绝不影响豁免主链。
 
     Args:
         decision_point: "poll_pre_close" (规则[3] 15:52) / "sweeper" (EOD 兜底)
         profit_pct: 决策时刻净盈亏% (与豁免判定同口径 _profit_net_pct)
         track: 豁免臂标签 (sweeper 传 overnight_arm.source; poll 侧无标签传 None)
+        trade_id: **身份锚** (RFC-095, 2026-09-22) = 该仓在 trade_records.id。
+            None (旧调用方未传) → 行内 trade_ref 为空, 结算侧退化到 entry_time/价量锚。
     去重键 = (arm_date_et, symbol): 同日 poll+sweeper 对同一仓双评估只落首行。
     """
     try:
@@ -240,6 +256,14 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
             "source_type": source_type,
             "track": track,
             "decision_point": decision_point,
+            # ── RFC-095 (2026-09-22) 身份锚 ──────────────────────────────────
+            #   结算侧必须能认出"这个 arm 行对应哪一笔仓"。旧结算按
+            #   symbol+trade_date 取"最新已平"会配到同日另一笔 (实测 US.MU
+            #   1503 被配成 1501) 并永久冻结。两个锚: trade_ref = trade_records.id
+            #   (单位=整数行号, 最强); entry_time = 该行 entry_time 原样透传
+            #   (单位=ISO 时间串, 三格式混存不在此解析, 仅做逐字比对)。
+            "trade_ref": _anchor_int(trade_id),
+            "entry_time": str(entry_time_str or ""),
             "entry_price": float(entry_price or 0),
             "entry_date_et": _entry_date,
             "qty": float(qty or 0),

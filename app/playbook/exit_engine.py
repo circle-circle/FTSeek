@@ -718,7 +718,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 from app.playbook.overnight_decision import emit_eod_depth_gate_shadow as _edg_emit
                 _edg_emit("poll_pre_close", _symbol, direction,
                           meta.get("_source_type", ""), entry_price, meta.get("_qty"),
-                          entry_time_str, current_price, _profit_net_pct)
+                          entry_time_str, current_price, _profit_net_pct,
+                          trade_id=meta.get("_trade_id"))  # RFC-095 身份锚
             except Exception as _edg_err:
                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕 (2026-09-09 棘轮清剿)
                 logger.warning(f"[exit_engine] EOD深水闸影子打点兜底异常 {_symbol}: {_edg_err}")
