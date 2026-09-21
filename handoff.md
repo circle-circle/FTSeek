@@ -1,5 +1,48 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 12:58 增量: 六项待裁用户批准落地 (用户令「按建议批准」) + ADR-043 补账
+
+> **① thinking-eval（更正上午报告）**: 该实验实际已于 **9/17 由用户裁结题**（crontab 注释：
+> 「thinking_eval 收口归档 — glm-5.3 强制思考, off臂物理消失」），并非"明早待裁"。今日发现的
+> 真问题是 9/22 09:30 的提醒 hermes job `1e96c03c945e` 仍 armed（会对已死实验发起一次无对象
+> 裁决）→ 按批准的"删除提醒 cron"以官方 `hermes cron remove` 移除（jobs.json 先备份
+> `.bak-20260921-thinking-eval-archive`）。9 轮攒样摘要（9<10 轮、4 模板版本、3 模型混窗、
+> ON 臂延迟 10-20x 而决策清单两臂基本一致）与"glm-5.3 enable_thinking=true 是模型强制要求
+> ≠ 生产开关"澄清已归档 `docs/analysis/2026-09-21-ue-thinking-eval-archive-note.md`。
+> **生产思考开关零改动。**
+> **② premarket_invalidation**: 用户裁「口径随实现」——判据文字"盘前口径增量"更正为"开盘后
+> 早段盘中 (09:35–09:59 ET) 口径"（B 规则判开盘后跌>5%事件，盘前无该相位；实现本正确，登记
+> 文字过窄）。shadow_registry 三处留痕：ADJUDICATED 条目（needs_user→False, recheck 2026-10-21）
+> + graduation_criteria 内【口径更正】标记。B 已攒 n=4 均盘中采集，更正后仍有效**不清零**。
+> "盘前数据独立增量"如要问须另立预注册（本次未开）。
+> **③ futu_channel_top_movers**: 程序性裁决落地——recheck_after=2026-09-30（判据字典 B13 禁改
+> 窗满日），needs_user 保持 True（用途三选一到时仍须用户裁）；闹钟前零实质改动、不启动反向池论证。
+> **④ DA temp0 已落地**（9/14 授权、逾期 4 天，障碍实证消除：蒸馏影子与 thinking-eval 采集
+> 均 9/17 停用、进程 0）：hermes skill `llm_synth.py` 三处调用点字面量（0.2@1393 契约修补 /
+> 0.3@1787 分析师 / 0.4@2140 挑战者链；施工单第 4 处已被 9/18 挑战者链重构合并进 2140 单点）
+> + `_call_llm` 签名缺省值，全部收口 `config.LLM_TEMPERATURE` 单一旋钮
+> （`= float(_read_env("DA_LLM_TEMPERATURE") or "0.0")`）。基线断点：`_SAMPLING_TAG="t0"`
+> 纳入分析师/挑战者/override 三处指纹，PROMPT_HASH `2cdcd4fa624e`→`85602fc7d09e`（旧数据保留
+> 旧哈希勿回改；verify_da_ue_batch_20260831 对新数据失败属按设计）。**施工单验收 4/4**：
+> py_compile ✓ / 温度字面量残留 0 ✓ / 桩化端到端 replay 直查 payload temperatures=[0.0, 0.0]
+> （US.AMD 9/18 checkpoint，非自证）✓ / llm_audit 近 24h 仅 is_test=1（83 行，无生产行）✓。
+> 备份 `config.py.bak-temp0-20260921` + `llm_synth.py.bak-temp0-20260921`；运行时回滚 =
+> `.env.us` 写 `DA_LLM_TEMPERATURE=0.3`（无需改代码）。**今晚 DA 盘前作业即生效**（skill 脚本
+> 每次运行新进程，无需重启 gateway）；今晚起 DA 输出为 temp=0 独立窗口。
+> **⑤ RFC-088 P5**: 用户确认**暂缓**，切实盘稳定后再排。
+> **⑥ main 分支**: 已 ff-only 快进合并至本批提交（main 原停在 8/24、落后 514 commits、系本分支
+> 直系祖先，零冲突零代码变化）并推送 origin，消除回滚悬崖。
+> **⑦ ADR-043 已补**（覆盖 483f7375f 会计收口批 + eb8cd1301 hotfix 批，兑现 [hotfix] 事后补
+> ADR 承诺）：`docs/adr/ADR-043-real-accounting-ssot-and-premarket-audit-hotfixes-2026-09-21.md`。
+> **⑧ 新发现（非本日引入，移交 ADR-043 未决#3）**: 存量测试腐化——`test_exit_recovery`(8)/
+> `test_breakeven_shadow_c`(5)/`test_trade_recorder`(2)/`test_daily_llm_token_report_da_direct`(1)
+> 直跑 4 文件 51 failed / 大套件 -k 扫下 16 failed；**基线 48ba2043e（今日两批之前）同环境同状
+> 失败** ⇒ 与今日改动无关。根因同上午 config_version 一族：测试 schema/mock 与生产 lazy-ALTER
+> 漂移 + 孤立直跑缺共享固件。待专项批清理。
+> **验证**: registry 相关 51 例（pending_adjudication_report/ue_quote_freshness/distill_shadow）
+> 全过；shadow_registry py_compile ✓。本增量仅动 registry 元数据/文档，交易路径零改动；
+> 服务重启使 registry 内存态与磁盘一致（见下方重启记录）。
+
 ## 2026-09-21 12:16 增量: 盘前全链路复查批 (用户令「复查整个链路…盘前解决明显异常/bug/冲突」)
 
 > **补入库**: 10:43/11:38 两批会计修复此前已部署未提交，本会话复核 diff + 复跑 209 例后
