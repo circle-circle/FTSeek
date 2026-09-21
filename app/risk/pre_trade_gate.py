@@ -215,6 +215,9 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
             try:
                 _positions = broker_adapter.get_positions() or []
                 for _p in _positions:
+                    _symbol = str(_p.get("symbol", "") or "")
+                    if not _symbol.startswith("US."):
+                        continue
                     if abs(float(_p.get("qty", 0) or 0)) > 0:
                         unrealized_pnl += float(_p.get("unrealized_pnl", 0) or 0)
             except Exception as e:

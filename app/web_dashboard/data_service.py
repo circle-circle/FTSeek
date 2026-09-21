@@ -23,6 +23,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from app.execution.futu_accounting import normalize_futu_account
+
 logger = logging.getLogger("ftseek_us.data_service")
 
 # ── 时间辅助 (美股以 ET 为准) ──
@@ -281,66 +283,33 @@ class DataService:
     def to_usd(raw: dict) -> dict:
         """将 Futu accinfo_query 原始行统一转换为 USD。
 
-        HKD 账户: 使用 usd_assets/us_cash/usd_net_cash_power 等 USD 子账户字段，
-                  其余字段按实际汇率 (hkd_assets / usd_assets) 折算。
-        USD 账户: 直接返回原始值。
+        与 broker_adapter 共享同一转换器: 净值扣本币负腿, cash 与 us_cash
+        交叉校验, debt/利息/保证金/功率等全部统一为 USD。
 
         返回 dict 所有金额字段均为 USD。
         """
         if not raw:
             return {}
-        currency = str(raw.get("currency", "")).upper()
-        is_hkd = currency == "HKD"
-
-        if not is_hkd:
-            return {
-                "total_assets": safe_float(raw.get("total_assets")),
-                "cash": safe_float(raw.get("cash")),
-                "avl_cash": safe_float(raw.get("avl_withdrawal_cash")),
-                "power": safe_float(raw.get("power")),
-                "market_val": safe_float(raw.get("market_val")),
-                "long_mv": safe_float(raw.get("long_mv")),
-                "short_mv": abs(safe_float(raw.get("short_mv"))),
-                "initial_margin": safe_float(raw.get("initial_margin")),
-                "maintenance_margin": safe_float(raw.get("maintenance_margin")),
-                "frozen_cash": safe_float(raw.get("frozen_cash")),
-                "currency": "USD",
-                "fx": 1.0,
-                "_raw": raw,
-            }
-
-        # HKD → USD 转换
-        hkd_assets = safe_float(raw.get("total_assets"))
-        usd_assets = safe_float(raw.get("usd_assets"))
-        # DEB-20260904 #196: hkd_assets=0 且 usd_assets>0 时 fx=0 → 下方 6 处 /fx
-        # 全炸 ZeroDivisionError; 派生汇率非正一律回退联系汇率 7.8
-        fx = hkd_assets / usd_assets if usd_assets > 0 else 7.8
-        if fx <= 0:
-            fx = 7.8
-
-        # 可用现金: 优先 us_avl_withdrawal_cash (扣除保证金后)
-        avl_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
-        if avl_cash <= 0:
-            avl_cash = safe_float(raw.get("us_cash"))
-
-        # 购买力: 优先 usd_net_cash_power
-        power = safe_float(raw.get("usd_net_cash_power"))
-        if power <= 0:
-            power = safe_float(raw.get("power")) / fx
+        try:
+            converted = normalize_futu_account(raw)
+        except ValueError as e:
+            logger.warning(f"[DataService] Futu 账户币种转换失败: {e}")
+            return {}
 
         return {
-            "total_assets": usd_assets,
-            "cash": safe_float(raw.get("us_cash")),
-            "avl_cash": avl_cash,
-            "power": power,
-            "market_val": safe_float(raw.get("market_val")) / fx,
-            "long_mv": safe_float(raw.get("long_mv")) / fx,
-            "short_mv": abs(safe_float(raw.get("short_mv"))) / fx,
-            "initial_margin": safe_float(raw.get("initial_margin")) / fx,
-            "maintenance_margin": safe_float(raw.get("maintenance_margin")) / fx,
-            "frozen_cash": safe_float(raw.get("frozen_cash")) / fx,
+            "total_assets": converted["total_assets"],
+            "cash": converted["cash"],
+            "avl_cash": converted["avl_withdrawal_cash"],
+            "power": converted["power"],
+            "market_val": converted["market_val"],
+            "long_mv": converted["long_mv"],
+            "short_mv": converted["short_mv"],
+            "initial_margin": converted["initial_margin"],
+            "maintenance_margin": converted["maintenance_margin"],
+            "frozen_cash": converted["frozen_cash"],
             "currency": "USD",
-            "fx": round(fx, 4),
+            "account_scope": converted["account_scope"],
+            "fx": converted["fx"],
             "_raw": raw,
         }
 

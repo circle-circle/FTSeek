@@ -9,12 +9,18 @@ SIM (currency='N/A') 必须逐点不变: 它根本不进本分支。
 """
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 import time
 
 import pandas as pd
 import pytest
+from fastapi import FastAPI
 
 from app.execution.broker_adapter import FutuBrokerAdapter
+from app.risk.futu_risk import calc_futu_risk
+from app.web_dashboard.data_service import DataService
+from app.web_dashboard.routes.dashboard import _parse_account
 from futu import RET_OK
 
 # ── 券商原始行 (2026-09-21 实盘只读 accinfo_query 实录, 字符串保留原样) ──
@@ -33,6 +39,8 @@ RAW_REAL_HKD = {
     "us_avl_withdrawal_cash": "31513.55", "usd_net_cash_power": "31513.55919218",
     "avl_withdrawal_cash": "247229.47", "frozen_cash": "2832.9141666",
     "securities_assets": "660473.7899999999",
+    "debt": "10000.0", "interest_debt": "500.0",
+    "short_sell_power": "100000.0", "net_assets_power": "600000.0",
 }
 
 
@@ -97,3 +105,78 @@ def test_real_hkd_buying_power_prefers_broker_usd_field():
     assert info["buying_power"] == pytest.approx(31513.55919218, abs=0.01)
     assert info["_buying_power_source"] == "usd_net_cash_power"
     assert info["avl_withdrawal_cash"] == pytest.approx(31513.55, abs=0.01)
+
+
+def test_real_hkd_risk_fields_are_usd_and_survive_futu_risk():
+    """FutuRisk 消费的债务/利息/功率字段不得遗留本币单位。"""
+    info = _adapter(RAW_REAL_HKD, trade_env=0).get_account_info()
+    fx = info["_fx_rate"]
+    for field, native in (
+        ("debt", 10000.0),
+        ("interest_debt", 500.0),
+        ("short_sell_power", 100000.0),
+        ("net_assets_power", 600000.0),
+    ):
+        assert info[field] == pytest.approx(native * fx, abs=0.02)
+
+    risk = calc_futu_risk(info)
+    assert risk.net_liquidation == pytest.approx(
+        info["total_assets"] - info["debt"], abs=0.02
+    )
+
+
+def test_dashboard_account_paths_share_broker_hkd_caliber():
+    """DataService/dashboard route 不得重新引入 usd_assets 毛侧净值或 us_cash 毛现金。"""
+    info = _adapter(RAW_REAL_HKD, trade_env=0).get_account_info()
+    rows = [info, DataService.to_usd(RAW_REAL_HKD), _parse_account(RAW_REAL_HKD)]
+
+    for row in rows:
+        assert row["account_scope"] == "global"
+        assert row["total_assets"] == pytest.approx(84188.48, abs=0.02)
+        assert row["cash"] == pytest.approx(10729.36, abs=0.02)
+        assert row["market_val"] == pytest.approx(73459.12, abs=0.02)
+
+    assert DataService.to_usd(RAW_REAL_HKD)["power"] == pytest.approx(
+        31513.55919218, abs=0.01
+    )
+    assert _parse_account(RAW_REAL_HKD)["avl_cash"] == pytest.approx(
+        31513.55, abs=0.01
+    )
+
+
+def test_order_capacity_route_uses_shared_hkd_caliber(monkeypatch):
+    """order-capacity 端点不得残留旧的 hkd_assets/usd_assets 汇率口径。"""
+    import app.web_dashboard.manual_order_service as manual_order_service
+    from app.web_dashboard.routes import trade
+
+    class FakeBrokerCtx:
+        def accinfo_query(self, **kwargs):
+            return RET_OK, pd.DataFrame([RAW_REAL_HKD])
+
+        def position_list_query(self, **kwargs):
+            return RET_OK, pd.DataFrame()
+
+    fake_service = SimpleNamespace(
+        connect=lambda: True,
+        _is_live=lambda: False,
+        _read_env=lambda key, default: "0",
+        get_quote=lambda symbol: {"cur_price": 100.0},
+        _broker_ctx=FakeBrokerCtx(),
+    )
+    monkeypatch.setattr(
+        manual_order_service, "get_manual_order_service", lambda: fake_service
+    )
+
+    app = FastAPI()
+    trade.register(app, object())
+    route = next(
+        item for item in app.routes
+        if getattr(item, "path", "") == "/api/order-capacity/{symbol}"
+    )
+    result = asyncio.run(route.endpoint("AAPL"))
+
+    assert "error" not in result
+    assert result["account_currency"] == "HKD"
+    assert result["cash"] == pytest.approx(31513.55, abs=0.01)
+    assert result["power"] == pytest.approx(31513.56, abs=0.01)
+    assert result["cash_can_buy"] == 315

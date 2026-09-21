@@ -14,6 +14,7 @@ import threading
 from typing import Optional, Dict, Any, List
 
 from app.core.models import Order, OrderState, Direction, OrderType
+from app.execution.futu_accounting import normalize_futu_account
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,9 @@ class FutuBrokerAdapter:
             if self.trade_env == 1:
                 logger.info("[富途] 模拟交易环境，无需解锁")
                 # 自动探测模拟账户 ID（防止 OpenD 重启后 ID 变化）
-                self._discover_simulate_account()
+                if not self._discover_simulate_account():
+                    self.disconnect()
+                    return False
             else:
                 # 实盘: 必须先解锁交易账户
                 if not self._unlock_pwd:
@@ -236,38 +239,51 @@ class FutuBrokerAdapter:
             logger.error(f"[富途] 连接失败: {e}")
             return False
 
-    def _discover_simulate_account(self):
+    def _discover_simulate_account(self) -> bool:
         """自动探测模拟账户 ID，防止 OpenD 重启后 ID 变化导致下单失败"""
         try:
             from futu import TrdEnv, RET_OK
             ret, data = self.trade_ctx.get_acc_list()
             if ret != RET_OK:
                 logger.warning(f"[富途] 无法获取账户列表，使用配置值: {self.account_id}")
-                return
+                return True
             sim_rows = data[data['trd_env'] == TrdEnv.SIMULATE]
             if sim_rows.empty:
-                logger.warning(f"[富途] 未找到模拟账户，使用配置值: {self.account_id}")
-                return
-            actual_sim_id = str(sim_rows.iloc[0]['acc_id'])
-            if not self.account_id:
-                self.account_id = actual_sim_id
-                logger.info(f"[富途] 自动探测模拟账户: {actual_sim_id}")
-            elif self.account_id != actual_sim_id:
-                logger.warning(
-                    f"[富途] 配置的模拟账户 {self.account_id} 不存在，"
-                    f"自动切换为实际账户: {actual_sim_id}"
-                )
-                self.account_id = actual_sim_id
-            else:
-                logger.info(f"[富途] 模拟账户验证通过: {self.account_id}")
+                logger.error("[富途] ❌ 未找到模拟账户")
+                return False
+
+            sim_ids = [str(r) for r in sim_rows['acc_id'].tolist()]
+            target_id = self.account_id or os.getenv("SIMULATE_ACCOUNT_ID", "").strip()
+            if target_id:
+                if target_id not in sim_ids:
+                    logger.error(
+                        f"[富途] ❌ 指定模拟账户 {target_id} 不存在！"
+                        f"可用模拟账户: {sim_ids}"
+                    )
+                    return False
+                self.account_id = target_id
+                logger.info(f"[富途] ✅ 模拟账户验证通过: {target_id}")
+                return True
+
+            if len(sim_ids) == 1:
+                self.account_id = sim_ids[0]
+                logger.info(f"[富途] 自动探测模拟账户: {sim_ids[0]}")
+                return True
+
+            logger.error(
+                f"[富途] ❌ 发现 {len(sim_ids)} 个模拟账户，"
+                f"必须显式配置 SIMULATE_ACCOUNT_ID。可用账户: {sim_ids}"
+            )
+            return False
         except Exception as e:
             logger.warning(f"[富途] 自动探测账户异常: {e}，使用配置值: {self.account_id}")
+            return True
 
     def _discover_real_account(self) -> bool:
         """自动探测真实账户 ID，优先使用 REAL_ACCOUNT_ID 环境变量指定的账户
 
         DEB-20260904 #183: 返回 False 仅当"显式指定了 REAL_ACCOUNT_ID 但它不在
-        可用真实账户列表" (= 阻断连接); 其余路径 (获取失败/无真实账户/异常)
+        可用真实账户列表"或多账户未显式指定 (= 阻断连接); 查询失败/异常
         维持原有宽松行为返回 True.
         """
         try:
@@ -279,11 +295,10 @@ class FutuBrokerAdapter:
             real_rows = data[data['trd_env'] == TrdEnv.REAL]
             if real_rows.empty:
                 logger.error("[富途·实盘] ❌ 未找到真实账户，请确认 OpenD 已登录真实账户")
-                return True
+                return False
 
             real_ids = [str(r) for r in real_rows['acc_id'].tolist()]
-            # 优先使用 REAL_ACCOUNT_ID 环境变量（多账户时明确指定）
-            target_id = os.getenv("REAL_ACCOUNT_ID", "").strip()
+            target_id = os.getenv("REAL_ACCOUNT_ID", "").strip() or self.account_id
             if target_id and target_id in real_ids:
                 self.account_id = target_id
                 logger.info(f"[富途·实盘] ✅ 使用指定账户: {target_id}")
@@ -296,14 +311,16 @@ class FutuBrokerAdapter:
                 self.connected = False
                 return False
             else:
-                # 未指定则用第一个（向后兼容，但多账户时不安全）
-                actual_real_id = str(real_rows.iloc[0]['acc_id'])
-                self.account_id = actual_real_id
-                logger.warning(
-                    f"[富途·实盘] ⚠️ 未设置 REAL_ACCOUNT_ID，"
-                    f"自动使用第一个真实账户: {actual_real_id} "
-                    f"(可用账户: {real_ids})"
+                if len(real_ids) == 1:
+                    self.account_id = real_ids[0]
+                    logger.info(f"[富途·实盘] 自动使用唯一真实账户: {real_ids[0]}")
+                    return True
+
+                logger.error(
+                    f"[富途·实盘] ❌ 发现 {len(real_ids)} 个真实账户，"
+                    f"必须显式配置 REAL_ACCOUNT_ID。可用账户: {real_ids}"
                 )
+                return False
             return True
         except Exception as e:
             logger.warning(f"[富途·实盘] 自动探测真实账户异常: {e}，使用配置值: {self.account_id}")
@@ -769,7 +786,7 @@ class FutuBrokerAdapter:
 
     def get_positions(self) -> List[Dict[str, Any]]:
         """
-        查询持仓列表
+        查询美股持仓列表。综合账户可能返回跨市场持仓，此处必须按代码前缀隔离。
 
         Returns:
             [{"symbol", "qty", "cost_price", "current_price", "unrealized_pnl"}, ...]
@@ -790,13 +807,16 @@ class FutuBrokerAdapter:
             if ret == RET_OK and len(data) > 0:
                 positions = []
                 for _, row in data.iterrows():
+                    symbol = str(row.get("code", ""))
+                    if not symbol.startswith("US."):
+                        continue
                     _qty = float(row.get("qty", 0))
                     # DEB-20260904 #186: 空头 qty<0 时 max(1,qty)=1 → current_price
                     # 变成 market_val 市值本身; 改用 abs 且防 0
                     _mkt_val = float(row.get("market_val", 0))
                     _cur_price = abs(_mkt_val) / abs(_qty) if abs(_qty) > 0 else 0.0
                     positions.append({
-                        "symbol": str(row.get("code", "")),
+                        "symbol": symbol,
                         "qty": _qty,
                         "cost_price": float(row.get("cost_price", 0)),
                         "current_price": _cur_price,
@@ -933,6 +953,7 @@ class FutuBrokerAdapter:
                     "net_assets_power": sf(row.get("net_assets_power")),
                     # 币种信息
                     "currency": str(row.get("currency", "USD")),
+                    "account_scope": "global",
                     # 元数据
                     "_trade_env": self.trade_env,
                     "_raw": {
@@ -944,77 +965,32 @@ class FutuBrokerAdapter:
                     },
                 }
 
-                # ── 币种转换 (2026-06-15 建 / 2026-09-21 修正): 账户币种 → USD ──
-                # 2026-09-21 修正根因 (REAL 账户实测, currency=HKD; SIM 走不到本分支):
-                #   ① fx 不能用 usd_assets/total_assets —— 那是"USD 侧占本币总资产的比重",
-                #      不是汇率 (实测 92339.62/660473.79 = 0.1398, 真汇率 ≈0.1275)。
-                #      Futu 字段自洽式: total_assets(本币) = usd_assets × FX + hkd_assets
-                #      → FX = (total_assets − hkd_assets) / usd_assets, 本币→USD 取其倒数。
-                #      实测 7.8452, 且与 `us_avl_withdrawal_cash == avl_withdrawal_cash/FX`
-                #      (31513.55 == 247229.47/7.8452) 精确互证。
-                #   ② total_assets 不能用 usd_assets —— 那是 USD **毛**侧资产, 未扣本币负腿;
-                #      实测 92339.62 vs 净权益 660473.79/7.8452 = 84188.48, **高估 +9.68%**。
-                #      净值是风险基准 (水位/回撤/30% 名义兜底帽), 高估=帽子放大。
-                #   ③ cash 不再无条件优先 us_cash —— 本账户 us_cash == usd_assets == 92339.62,
-                #      而 cash 折算 = 10730.4 (**8.6×** 之差); SIM 下二者相等才使该分支看似正确。
-                #      现改为: 仅当 us_cash 与折算值一致 (≤1%) 才采用, 否则用折算值, 并记来源。
+                # ── 币种转换 (2026-09-21 收口): 账户币种 → USD ──
+                # 共享转换器同时覆盖 debt/interest_debt/short_sell_power/net_assets_power,
+                # 防止 FutuRisk 用 USD 净值减本币债务造成混币。SIM (currency='N/A') 不进本分支。
                 acct_currency = result["currency"]
                 if acct_currency != "USD" and acct_currency != "N/A":
-                    _acct_total = sf(row.get("total_assets"))     # 本币总资产 (净值口径)
-                    _acct_same_ccy = sf(row.get("hkd_assets"))    # 同币种子账户资产 (可为负)
-                    _usd_assets = sf(row.get("usd_assets"))       # USD 子账户毛资产
-                    _usd_cash = sf(row.get("us_cash"))
-                    _usd_avl = sf(row.get("us_avl_withdrawal_cash"))
-                    _usd_power = sf(row.get("usd_net_cash_power"))
-
-                    fx_rate = 0.0
-                    _gross_base = _acct_total - _acct_same_ccy
-                    if _usd_assets > 0 and _gross_base > 0:
-                        fx_rate = _usd_assets / _gross_base      # 本币 → USD
-                    if not fx_rate or fx_rate <= 0:
-                        fx_rate = self._get_fx_rate(acct_currency, "USD")
-
-                    if fx_rate and fx_rate > 0:
-                        result["_fx_rate"] = fx_rate
-                        result["_original_currency"] = acct_currency
-                        result["_usd_side_assets"] = _usd_assets   # 审计: 券商 USD 毛侧
-                        result["_usd_cash_field"] = _usd_cash      # 审计: 券商 us_cash 原值
-
-                        # 净值: 本币总资产折算 (含本币负腿) —— 不用 usd_assets
-                        result["total_assets"] = round(_acct_total * fx_rate, 2)
-
-                        # 现金: 折算值 vs 券商 us_cash 交叉校验 (一致才采信券商字段)
-                        _cash_fx = round(result["cash"] * fx_rate, 2)
-                        if _usd_cash > 0 and abs(_usd_cash - _cash_fx) <= max(1.0, abs(_cash_fx) * 0.01):
-                            result["cash"] = round(_usd_cash, 2)
-                            result["_cash_source"] = "us_cash(与折算值一致)"
-                        else:
-                            result["cash"] = _cash_fx
-                            result["_cash_source"] = f"cash×{fx_rate:.4f}(us_cash 不一致, 弃用)"
-
-                        result["avl_withdrawal_cash"] = round(_usd_avl if _usd_avl > 0 else result["avl_withdrawal_cash"] * fx_rate, 2)
-
-                        if _usd_power > 0:
-                            result["buying_power"] = round(_usd_power, 2)
-                            result["_buying_power_source"] = "usd_net_cash_power"
-                        else:
-                            result["buying_power"] = round(result["buying_power"] * fx_rate, 2)
-                            result["_buying_power_source"] = f"power×{fx_rate:.4f}"
-
-                        # 其余字段按比例折算
-                        for key in ["market_val", "frozen_cash",
-                                    "initial_margin", "maintain_margin"]:
-                            if key in result and isinstance(result[key], (int, float)):
-                                result[f"_raw_{key}_{acct_currency}"] = result[key]
-                                result[key] = round(result[key] * fx_rate, 2)
-
-                        logger.info(
-                            f"[富途] 币种转换 {acct_currency}→USD (rate={fx_rate:.4f}): "
-                            f"total_assets=${result['total_assets']:,.0f} "
-                            f"cash=${result['cash']:,.0f} "
-                            f"market_val=${result['market_val']:,.0f} "
-                            f"buying_power=${result['buying_power']:,.0f}"
+                    try:
+                        converted = normalize_futu_account(
+                            row,
+                            fallback_rate=self._get_fx_rate(acct_currency, "USD"),
                         )
+                    except ValueError as e:
+                        logger.error(f"[富途] 账户币种转换失败: {e}")
+                        return {}
+
+                    for key, value in converted.items():
+                        if key in result or key.startswith("_"):
+                            result[key] = value
+
+                    logger.info(
+                        f"[富途] 币种转换 {acct_currency}→USD "
+                        f"(rate={converted['fx']:.4f}, source={converted['_fx_source']}): "
+                        f"total_assets=${result['total_assets']:,.0f} "
+                        f"cash=${result['cash']:,.0f} "
+                        f"market_val=${result['market_val']:,.0f} "
+                        f"buying_power=${result['buying_power']:,.0f}"
+                    )
 
                 return result
         except ImportError:
@@ -1277,6 +1253,9 @@ class FutuBrokerAdapter:
 
             positions = []
             for _, row in data.iterrows():
+                code = str(row.get("code", ""))
+                if not code.startswith("US."):
+                    continue
                 sec_type = str(row.get("security_type", "")).upper()
                 if sec_type != "OPTION":
                     continue
@@ -1287,7 +1266,7 @@ class FutuBrokerAdapter:
                 mval  = float(row.get("market_val", 0))
                 cur_p = mval / max(1, qty * 100)  # 期权市值 / 份数/100
                 positions.append({
-                    "option_code":         str(row.get("code", "")),
+                    "option_code":         code,
                     "qty":                 int(qty),
                     "cost_price":          cost,
                     "current_price":       round(cur_p, 4),

@@ -8,9 +8,12 @@ B2 (2026-08-24, OKR-2026-09 基建, 体检 M1 收窄版): 原仅 16 行初始化
   3. _simulate_fill 返回结构契约
 """
 import os
+import time
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
+from futu import TrdEnv
 
 from app.core.models import Direction, Order, OrderType
 from app.execution.broker_adapter import FutuBrokerAdapter
@@ -31,6 +34,32 @@ def _mk_order(symbol="US.AAPL", qty=10, price=100.0, is_exit=False):
 def _fake_capital(equity):
     """伪造 capital_safety 单例 (只暴露 _state.current_equity)."""
     return SimpleNamespace(_state=SimpleNamespace(current_equity=equity))
+
+
+class _FakePositionCtx:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def position_list_query(self, **kwargs):
+        return 0, pd.DataFrame(self._rows)
+
+
+class _FakeAccountCtx:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def get_acc_list(self):
+        return 0, pd.DataFrame(self._rows)
+
+
+def _connected_adapter(trade_env=1, account_id=""):
+    adapter = FutuBrokerAdapter(
+        host="127.0.0.1", port=11111,
+        trade_env=trade_env, account_id=account_id,
+    )
+    adapter.connected = True
+    adapter._last_heartbeat_time = time.time()
+    return adapter
 
 
 # ----------------------------------------------------------------------
@@ -124,6 +153,73 @@ class TestSimulateFillContract:
         assert result["order_id"] == order.order_id
         assert result["status"] == "simulated_fill"
         assert result["futu_order_id"] == f"SIM_{order.order_id[:8]}"
+
+
+class TestCrossMarketPositionIsolation:
+    def test_get_positions_filters_non_us_rows(self):
+        adapter = _connected_adapter()
+        adapter.trade_ctx = _FakePositionCtx([
+            {"code": "HK.00700", "qty": 300, "cost_price": 439.6,
+             "market_val": 125700, "pl_val": -6180, "pl_ratio": -4.69},
+            {"code": "US.AAPL", "qty": 10, "cost_price": 100,
+             "market_val": 1000, "pl_val": 100, "pl_ratio": 10},
+        ])
+
+        positions = adapter.get_positions()
+
+        assert [p["symbol"] for p in positions] == ["US.AAPL"]
+
+    def test_get_option_positions_filters_non_us_rows(self):
+        adapter = _connected_adapter()
+        adapter.trade_ctx = _FakePositionCtx([
+            {"code": "HK.00700", "qty": 1, "cost_price": 1,
+             "market_val": 1, "pl_val": 0, "pl_ratio": 0,
+             "security_type": "OPTION"},
+            {"code": "US.AAPL260918C00100000", "qty": 1, "cost_price": 1,
+             "market_val": 100, "pl_val": 0, "pl_ratio": 0,
+             "security_type": "OPTION"},
+        ])
+
+        positions = adapter.get_option_positions()
+
+        assert [p["option_code"] for p in positions] == [
+            "US.AAPL260918C00100000"
+        ]
+
+
+class TestAccountDiscoveryAmbiguity:
+    def test_real_multiple_accounts_without_explicit_id_fails(self, monkeypatch):
+        monkeypatch.delenv("REAL_ACCOUNT_ID", raising=False)
+        adapter = _connected_adapter(trade_env=0)
+        adapter.trade_ctx = _FakeAccountCtx([
+            {"acc_id": 111, "trd_env": TrdEnv.REAL},
+            {"acc_id": 222, "trd_env": TrdEnv.REAL},
+        ])
+
+        assert adapter._discover_real_account() is False
+        assert adapter.account_id == ""
+
+    def test_real_explicit_id_is_validated(self, monkeypatch):
+        monkeypatch.setenv("REAL_ACCOUNT_ID", "222")
+        adapter = _connected_adapter(trade_env=0)
+        adapter.trade_ctx = _FakeAccountCtx([
+            {"acc_id": 111, "trd_env": TrdEnv.REAL},
+            {"acc_id": 222, "trd_env": TrdEnv.REAL},
+        ])
+
+        assert adapter._discover_real_account() is True
+        assert adapter.account_id == "222"
+
+    def test_simulate_multiple_accounts_without_explicit_id_fails(self, monkeypatch):
+        monkeypatch.delenv("SIMULATE_ACCOUNT_ID", raising=False)
+        adapter = _connected_adapter(account_id="")
+        adapter.trade_ctx = _FakeAccountCtx([
+            {"acc_id": 111, "trd_env": TrdEnv.SIMULATE},
+            {"acc_id": 222, "trd_env": TrdEnv.SIMULATE},
+        ])
+
+        assert adapter._discover_simulate_account() is False
+        assert adapter.account_id == ""
 
 
 # ----------------------------------------------------------------------

@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from app.web_dashboard.data_service import get_data_service
 from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 from app.web_dashboard.order.gates import collect_manual_gates
+from app.execution.futu_accounting import normalize_futu_account
 
 logger = logging.getLogger("ftseek_us.routes.trade")
 router = APIRouter()
@@ -382,28 +383,20 @@ def register(app, templates):
                 return {"symbol": symbol, "cur_price": cur_price, "error": "账户查询失败"}
 
             row = funds.iloc[0]
-            currency = str(row.get("currency", "")).upper()
-            is_usd = currency in ("USD", "")
+            try:
+                converted = normalize_futu_account(row)
+            except ValueError as e:
+                logger.warning(f"[Trade] Futu 账户币种转换失败: {e}")
+                return {"symbol": symbol, "cur_price": cur_price, "error": "账户币种转换失败"}
 
-            if is_usd:
-                cash = safe_float(row.get("cash", 0))
-                power = safe_float(row.get("power", 0))
-                max_short_power = safe_float(row.get("max_power_short", 0))
-            else:
-                # HKD 账户: 用 Futu 官方 USD 字段
-                # 可用现金 = us_avl_withdrawal_cash (扣除保证金后的真实可用)
-                cash = safe_float(row.get("us_avl_withdrawal_cash", 0))
-                if cash <= 0:
-                    cash = safe_float(row.get("us_cash", 0))  # fallback
-                power = safe_float(row.get("usd_net_cash_power", 0))
-                hkd_assets = safe_float(row.get("total_assets", 0))
-                usd_assets = safe_float(row.get("usd_assets", 0))
-                fx = hkd_assets / usd_assets if usd_assets > 0 else 7.8
-                max_short_power = safe_float(row.get("max_power_short", 0)) / fx
-                if power <= 0:
-                    power = safe_float(row.get("power", 0)) / fx
-                if max_short_power <= 0:
-                    max_short_power = power
+            # 下单容量用扣除保证金后的可用现金; 展示口径的 account cash 由共享转换器保留。
+            cash = converted["avl_withdrawal_cash"]
+            if cash <= 0:
+                cash = converted["cash"]
+            power = converted["buying_power"]
+            max_short_power = converted["max_power_short"]
+            if max_short_power <= 0:
+                max_short_power = power
 
             ret2, positions = svc._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
             held_qty = 0
@@ -434,7 +427,7 @@ def register(app, templates):
                 "cash": round(cash, 2),
                 "power": round(power, 2),
                 "max_short_power": round(max_short_power, 2),
-                "account_currency": currency,
+                "account_currency": converted["raw_currency"],
             }
         except Exception as e:
             logger.error(f"[order-capacity] {symbol}: {e}")

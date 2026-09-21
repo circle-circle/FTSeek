@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.web_dashboard.data_service import (
     get_data_service, safe_float, et_today,
 )
+from app.execution.futu_accounting import normalize_futu_account
 from app.metrics import SourceTaxonomy
 
 logger = logging.getLogger("ftseek_us.routes.dashboard")
@@ -476,63 +477,40 @@ def _parse_account(raw: dict) -> dict:
     if not raw:
         return {}
 
-    currency = str(raw.get("currency", "")).upper()
-    is_hkd = currency == "HKD"
+    try:
+        converted = normalize_futu_account(raw)
+    except ValueError as e:
+        logger.warning(f"[Dashboard] Futu 账户币种转换失败: {e}")
+        return {}
 
-    # 使用 Futu 官方 USD 字段计算实际汇率 (而非硬编码 7.8)
-    fx_estimated = False  # Phase A (2026-07-12): 标记购买力是否走了汇率估算路径
-    if is_hkd:
-        hkd_assets = safe_float(raw.get("total_assets"))
-        usd_assets_raw = safe_float(raw.get("usd_assets"))
-        if usd_assets_raw > 0:
-            fx = hkd_assets / usd_assets_raw
-        else:
-            fx = 7.8              # 官方 USD 资产字段缺失 → 硬编码汇率估算
-            fx_estimated = True
-        usd_assets = usd_assets_raw
-        usd_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
-        if usd_cash <= 0:
-            usd_cash = safe_float(raw.get("us_cash"))  # fallback
-        usd_power = safe_float(raw.get("usd_net_cash_power"))
-        if usd_power <= 0:
-            usd_power = safe_float(raw.get("power")) / fx   # 官方 USD 购买力缺失 → 汇率折算
-            fx_estimated = True
-    else:
-        fx = 1.0
-        usd_assets = safe_float(raw.get("total_assets"))
-        usd_cash = safe_float(raw.get("cash"))
-        usd_power = safe_float(raw.get("power"))
-
-    long_mv = safe_float(raw.get("long_mv"))
-    short_mv = abs(safe_float(raw.get("short_mv")))
-    if is_hkd:
-        long_mv = long_mv / fx
-        short_mv = short_mv / fx
-
-    init_margin = round(safe_float(raw.get("initial_margin")) / fx, 2)
-    maint_margin = round(safe_float(raw.get("maintenance_margin")) / fx, 2)
-
-    # 保证金使用率: initial_margin / total_assets * 100
-    margin_usage = round(init_margin / usd_assets * 100, 1) if usd_assets > 0 else 0
+    market_val = converted["market_val"]
+    if market_val == 0:
+        market_val = converted["long_mv"] + converted["short_mv"]
+    margin_usage = (
+        round(converted["initial_margin"] / converted["total_assets"] * 100, 1)
+        if converted["total_assets"] > 0 else 0
+    )
 
     return {
-        "total_assets": round(usd_assets, 2),
-        "cash": round(usd_cash, 2),
-        "market_val": round(long_mv + short_mv, 2),
-        "power": round(usd_power, 2),
-        "long_mv": round(long_mv, 2),
-        "short_mv": round(short_mv, 2),
-        "initial_margin": init_margin,
-        "maintenance_margin": maint_margin,
-        "margin_call_margin": round(safe_float(raw.get("margin_call_margin")) / fx, 2),
-        "frozen_cash": round(safe_float(raw.get("frozen_cash")) / fx, 2),
+        "total_assets": converted["total_assets"],
+        "cash": converted["cash"],
+        "avl_cash": converted["avl_withdrawal_cash"],
+        "market_val": round(market_val, 2),
+        "power": converted["power"],
+        "long_mv": converted["long_mv"],
+        "short_mv": converted["short_mv"],
+        "initial_margin": converted["initial_margin"],
+        "maintenance_margin": converted["maintenance_margin"],
+        "margin_call_margin": converted["margin_call_margin"],
+        "frozen_cash": converted["frozen_cash"],
         "margin_usage": margin_usage,
         "risk_status": str(raw.get("risk_status", "N/A")),
-        "interest_charged": round(safe_float(raw.get("interest_charged_amount")) / fx, 2),
+        "interest_charged": converted["interest_charged_amount"],
         "currency": "USD",
-        "raw_currency": currency,
-        # Phase A (2026-07-12): True 表示购买力等 USD 数字走了汇率估算 (官方字段缺失), 前端加"估算"标记
-        "fx_estimated": fx_estimated,
+        "account_scope": converted["account_scope"],
+        "raw_currency": converted["raw_currency"],
+        "fx": converted["fx"],
+        "fx_estimated": converted["_fx_source"] == "fallback",
     }
 
 

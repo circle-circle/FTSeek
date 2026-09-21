@@ -2257,13 +2257,17 @@ class USPositionSync:
                     ret, data = self._futu_ctx.accinfo_query(trd_env=trd_env, acc_id=_acc_id)
                     if ret == RET_OK and len(data) > 0:
                         row = data.iloc[0]
-                        sf = lambda v: float(v) if v and str(v) not in ("N/A", "nan", "None") else 0.0
-                        broker_data = {
-                            'cash': sf(row.get("cash")),
-                            'market_value': sf(row.get("market_val")),
-                            'total_assets': sf(row.get("total_assets")),
-                            'buying_power': sf(row.get("power")),
-                        }
+                        from app.execution.futu_accounting import normalize_futu_account
+                        try:
+                            converted = normalize_futu_account(row)
+                            broker_data = {
+                                'cash': converted['cash'],
+                                'market_value': converted['market_val'],
+                                'total_assets': converted['total_assets'],
+                                'buying_power': converted['buying_power'],
+                            }
+                        except ValueError as e:
+                            logger.warning("[US Sync Capital] 账户币种转换失败: %s", e)
                 except Exception as e:
                     logger.debug("[US Sync Capital] accinfo_query 失败: %s", e)
 

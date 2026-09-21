@@ -1,5 +1,43 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 11:38 增量: REAL 综合账户跨市场隔离 (用户令「按照建议处理」)
+
+> **修复范围**: REAL 综合账户可能同时返回美股/港股持仓，不能依赖 `filter_trdmarket=TrdMarket.US`
+> 推断行级市场。`FutuBrokerAdapter.get_positions()` 与 `get_option_positions()` 现按 `code.startswith("US.")`
+> 过滤；`pre_trade_gate` 日回撤的未实现盈亏同样只统计 `US.` 行，防止 HKD/USD 直接相加。
+> 多 REAL/SIM 账户且未显式指定账户 ID 时改为 fail-close，不再自动选第一个；账户 ID 配置错误也阻断。
+> `normalize_futu_account` / broker / DataService / dashboard 显式透出 `account_scope="global"`，
+> 提醒消费方：accinfo 是综合账户总口径，不等同美股策略专用权益；美股下单容量继续优先使用
+> `usd_net_cash_power` / `us_avl_withdrawal_cash`。
+
+> **验证**: `tests/execution/test_broker_adapter.py` + `tests/risk` + `tests/test_accinfo_fx_conversion.py`
+> 共 209 passed；`check_undefined_names`、`py_compile`、`git diff --check` 全过。
+
+> **上线观察**: `systemctl restart ftseek-us` 后 MainPID=2233634 (11:38:13 CST)，启动冒烟 7/7 通过；
+> 观察 60 秒服务 active、NRestarts=0、ERROR/CRITICAL/Traceback/Exception=0、未平仓 DB/内存均为 0；
+> `live_switch_audit.py --assert-ready` exit=0，仍为 simulate (`AUTO_TRADE_ACCOUNT=sim`,
+> `ALLOW_REAL_TRADING=False`)。未切实盘、未下单。
+
+## 2026-09-21 10:43 增量: REAL HKD 会计口径共享转换器收口 (用户令「需要」)
+
+> **修复范围**: 新增 `app/execution/futu_accounting.py` 作为 Futu accinfo 币种转换 SSOT；
+> `broker_adapter` / `DataService.to_usd` / dashboard `_parse_account` / trade 容量查询 /
+> `position_sync` raw fallback 全部改走同一转换器。非 USD 账户的 `debt`、`interest_debt`、
+> `short_sell_power`、`net_assets_power` 一并折算，消除 FutuRisk "USD 净值 − 本币债务" 的混币风险。
+> Dashboard 不再回退到 `usd_assets` 毛侧净值 / `us_cash` 毛现金；trade 下单容量仍使用
+> `us_avl_withdrawal_cash`（扣除保证金后的可用现金）。
+>
+> **验证**: `tests/test_accinfo_fx_conversion.py` 8 例通过（新增债务混币、Dashboard 三链路同轴、
+> order-capacity 端点同轴）；position_sync / dashboard / trade UI 相关定向 51 例通过。
+> `tests/web_dashboard` 全组 139 passed（仅剔除本批前已存在的 audit config_version 存量失败 1 例）。
+>
+> **上线观察 (2026-09-21 11:05)**: 重启前核对未平仓=0、待上线改动仅本批会计修复。
+> `systemctl restart ftseek-us` 后 MainPID=2229791 (11:05:22 CST)；启动冒烟七项全过
+> (ConfigValidator/漂移/热重载/SSOT/模拟盘/退出快循环/零 Traceback)。重启后观察 60 秒：
+> 服务 active、ERROR/CRITICAL/Traceback/Exception=0、未平仓=0、SIM equity=$99,392 不变、
+> Push 心跳正常；`live_switch_audit.py --assert-ready` exit=0 (BLOCKER=0, 仍 simulate)。
+> 未切实盘、未下单。
+
 ## 2026-09-21 07:00 增量: 服务重启 (用户令「请重启再观察」) + 两个观察载体
 
 > **重启**: 2026-09-21 06:52:32 CST, MainPID 2112578 → **2191125** (旧进程运行 19h)。

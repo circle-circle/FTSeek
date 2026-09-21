@@ -118,10 +118,24 @@ def test_broker_unrealized_still_adds(dd_env):
 
     class _Broker:
         def get_positions(self):
-            return [{"qty": 100, "unrealized_pnl": -2500.0},
-                    {"qty": 0, "unrealized_pnl": -9999.0}]
+            return [{"symbol": "US.AMD", "qty": 100, "unrealized_pnl": -2500.0},
+                    {"symbol": "US.FLAT", "qty": 0, "unrealized_pnl": -9999.0}]
 
     assert ptg._check_daily_drawdown(_EQUITY, _Broker())[0] is False
+
+
+def test_broker_unrealized_ignores_non_us_market_rows(dd_env):
+    """REAL 综合账户可能同时返回美股与港股，日回撤不得把 HKD 盈亏当 USD 相加。"""
+    _closed(dd_env, "US.AMD", _TODAY, -1000.0)
+
+    class _Broker:
+        def get_positions(self):
+            return [
+                {"symbol": "US.AMD", "qty": 100, "unrealized_pnl": -1500.0},
+                {"symbol": "HK.00700", "qty": 300, "unrealized_pnl": -999999.0},
+            ]
+
+    assert ptg._check_daily_drawdown(_EQUITY, _Broker())[0] is True
 
 
 def test_cache_hit_avoids_second_query(dd_env, monkeypatch):
