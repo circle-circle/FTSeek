@@ -60,5 +60,5 @@ eff = base(config/playbook_screening.yaml) + ic_adj(data/factor_ic_latest.json) 
 
 ## 5. 契约测试
 
-`tests/test_factor_weight_reconcile.py`（6 例）：首跑全量 / 同面静默 / 签名变化重抬 / 七类判据逐类可检出 /
+`tests/test_factor_weight_reconcile.py`（6 例）：静默契约（首跑全量 + 同面零输出）/ 签名变化重抬 / 七类判据逐类可检出 /
 disabled 不进 A 类 / 探测失败 rc=2 可见 / 源码级只读钉（`mode=ro`、无 `yaml.dump`、无台账写语句）。

@@ -18,7 +18,7 @@ Usage:
 import logging
 import json
 import hashlib
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from collections import defaultdict
 
@@ -412,48 +412,9 @@ class FactorAnalyzer:
             },
         }
 
-    def get_patterns_for_prompt(self) -> Tuple[str, str]:
-        """
-        获取用于 LLM prompt 的 pattern 文本
-
-        Returns:
-            (active_patterns_text, retired_patterns_text)
-        """
-        report = self.generate_factor_report()
-
-        active_lines = []
-        for f in report["positive_singles"][:5]:
-            active_lines.append(
-                f"  - [single] {f['factor_key']}: "
-                f"贝叶斯胜率{f.get('bayesian_win_rate', 0):.0%} "
-                f"(CI {f.get('bayesian_lower', 0):.0%}-{f.get('bayesian_upper', 0):.0%}), "
-                f"平均${f.get('avg_pnl', 0):+.0f}, {f.get('total_trades', 0)}笔"
-            )
-        for f in report["positive_pairs"][:5]:
-            active_lines.append(
-                f"  - [pair] {f['factor_key']}: "
-                f"贝叶斯胜率{f.get('bayesian_win_rate', 0):.0%}, "
-                f"平均${f.get('avg_pnl', 0):+.0f}, {f.get('total_trades', 0)}笔"
-            )
-
-        retired_lines = []
-        for f in report["negative_singles"][:5]:
-            retired_lines.append(
-                f"  - [single] {f['factor_key']}: "
-                f"胜率{f.get('bayesian_win_rate', 0):.0%}, "
-                f"平均${f.get('avg_pnl', 0):+.0f}"
-            )
-        for f in report["negative_pairs"][:5]:
-            retired_lines.append(
-                f"  - [pair] {f['factor_key']}: "
-                f"胜率{f.get('bayesian_win_rate', 0):.0%}, "
-                f"平均${f.get('avg_pnl', 0):+.0f}"
-            )
-
-        active_text = "\n".join(active_lines) if active_lines else "  (暂无足够数据)"
-        retired_text = "\n".join(retired_lines) if retired_lines else "  (暂无)"
-
-        return active_text, retired_text
+    # 2026-09-21 退役 get_patterns_for_prompt (DEB-20260921 局限9, 用户裁「请修复」):
+    #   生产路径零调用方 (app/scripts/ops 全仓 grep 实证), 唯一引用是其契约测试 (同批删);
+    #   其输出面 (active/retired pattern 文本注入 LLM prompt) 从未接线。回滚: git revert 本段。
 
     @staticmethod
     def _parse_conditions(val) -> List[str]:

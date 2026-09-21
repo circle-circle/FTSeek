@@ -302,13 +302,4 @@ class TestFactorReport:
         if len(all_singles) >= 2:
             assert all_singles[0]["total_trades"] >= all_singles[1]["total_trades"]
 
-    def test_get_patterns_for_prompt(self, analyzer, db):
-        """生成 LLM prompt 文本"""
-        for i in range(5):
-            _save_result(db, f"US.P{i}", ["above_ma20"], "win", 100,
-                         date=f"2026-06-{14+i:02d}")
-        analyzer.update_all_stats()
-
-        active_text, retired_text = analyzer.get_patterns_for_prompt()
-        assert isinstance(active_text, str)
-        assert isinstance(retired_text, str)
+    # 2026-09-21: test_get_patterns_for_prompt 随方法退役同批删除 (DEB-20260921 局限9, 用户裁「请修复」)

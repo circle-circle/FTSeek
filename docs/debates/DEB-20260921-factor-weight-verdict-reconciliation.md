@@ -10,6 +10,13 @@
 > `docs/ADJUDICATED-CRITERIA.md` (判据字典)
 > **修订记录**: 本文件初稿写完即被自己的复查推翻一条核心结论（台账 verdict 的"负证据"由**分母口径**造出）——
 > 已就地改写 §0/§3/§4.1/§5/§8，不留旧版以免下游继续引用错排序。
+> **二轮复查 (2026-09-21 晚, 独立复核)**: §9 十项打假全部执行且**全部复现成功**（§2 全表逐行一致、§4.1 分解逐行一致、
+> §4.4 九条双计逐条一致、零 config/app 改动、6 测试全绿、载体 sha256 双侧一致、投递通路火验 delivered）。
+> 修正三处小疵：`compute_trade_stats` 行号 L128-158→**L138-159**（§1 表 + 复算命令③）；negative 判据补 **`PF>0` 守卫**
+> （§1 表 + §9）；新增局限 9（组合层同分母病 + `get_patterns_for_prompt` 死代码）。核心结论与 T1-T7 排序**无变化**。
+> **修复批 (2026-09-21 晚, 用户裁「请修复」)**: ①退役 `get_patterns_for_prompt` + 其契约测试（局限 9）；
+> ②screener 两处陈旧注释 `N<10`→`N<30`（与实现对齐，行数中性 ⇒ 本文件与对账器脚本头引用的 L200-243/L265/L352-359/L365-373
+> 全部不漂移）。组合层分母病本身**仍留 T1 裁决**（改判据属 L2+，本批未动）。
 
 ---
 
@@ -43,9 +50,9 @@
 | `base` / `enabled` | `config/playbook_screening.yaml` → `screening_factors` | 因子级基础分与开关 |
 | `ic_adj` | `app/playbook/screener.py::_load_factor_ic_adjustments` (L200-243)，调用点 L265 | `|IC|>0.05 且 n≥30` → ±1；**无条件生效**，不受 `ic_feedback_to_screener` 开关控制（该 flag 只门控 strategy 级 `_get_strategy_ic_bonus`，L365-373） |
 | `Σhist` | `screener.py::_calculate_score` L352-359 | `weight_adjustments` **全量逐条** `score += delta`（只在因子触发时加） |
-| 台账 verdict | `app/playbook/factor_analyzer.py::classify_factor` (L118-135) | 贝叶斯下界>55% 且 PF>1.2 → positive；上界<45% 或 PF<0.8 → negative；否则 observing |
+| 台账 verdict | `app/playbook/factor_analyzer.py::classify_factor` (L118-135) | 贝叶斯下界>55% 且 PF>1.2 → positive；上界<45% 或 **(PF<0.8 且 PF>0)** → negative；否则 observing（金额腿有 `PF>0` 守卫 ⇒ PF=0 的因子如 `rsi_oversold` 不因该腿落 negative） |
 | 台账样本 | `db.py::get_instructions_with_outcome` (L971-982) | `outcome IS NOT NULL AND outcome!='holding' AND direction!='SKIP'`，按 date DESC **最近 900 行**（`days_back*10`：名为 90 天、实为行数上限）⇒ **`missed`/`already_held`/`void`/`closed` 全进分母** |
-| 台账胜率 | `factor_analyzer.compute_trade_stats` (L128-158) | `WR = wins/total`（`total` 含非结果行）；`wins` = outcome=='win' 或 pnl>0 |
+| 台账胜率 | `factor_analyzer.compute_trade_stats` (L138-159) | `WR = wins/total`（`total` 含非结果行）；`wins` = outcome=='win' 或 pnl>0 |
 | 台账金额口径 | `pipeline.py` L6773 附近 + `shadow_tracker` | 2026-08-20 用户裁"切"起 `instruction.pnl` = **净口径**（费用后）|
 
 **复算命令**（跑一遍即可独立复现本文件所有数字）：
@@ -54,7 +61,7 @@
 cd /opt/ftseek/FTSeek-US
 venv/bin/python scripts/factor_weight_reconcile.py --force          # ① eff 分解 + 七类错配全表 (含剔零WR)
 sed -n '200,243p;352,359p' app/playbook/screener.py                 # ② ic_adj 判据 + Σhist 全量相加
-sed -n '118,136p;128,158p' app/playbook/factor_analyzer.py          # ③ verdict 判据 + WR 分母
+sed -n '118,159p' app/playbook/factor_analyzer.py                   # ③ verdict 判据 (L118-135) + WR 分母 (L138-159)
 sed -n '971,982p' app/playbook/db.py                                # ④ 台账窗口 (非结果行进分母的入口)
 sqlite3 -readonly data/ftseek_us.db \
   "select factor_key,total_trades,wins,losses,win_rate,total_pnl,profit_factor,verdict \
@@ -312,6 +319,13 @@ PY
 7. **`void` 是否该从分母剔除未定谳**：它是幽灵仓清理产物（已有专门防护），本轮只把它计入"非结果行"呈现，未单独下结论。
 8. **`missed` 的含义未深挖**：380 行 `missed` 是"价格未进触发带"还是"其他未成交"，本轮未追；若其中含系统性偏差
    （如某类因子天然更常 missed），则 §4.1 的结论还要再收一层。
+9. **组合/pattern 层同病未裁**（2026-09-21 二轮复查补记）：`factor_analyzer` 组合层判据（L310-320，`active/retired/observing`）
+   与单层同阈值且同用 `bayesian_binomial(wins, total)` —— §4.1 的分母稀释同样作用于组合层 ⇒ **T1 口径定谳时须一并覆盖，
+   否则判据只修一半**。消费者均为读数面（`generate_factor_report` / `db.get_patterns` / `playbook_service.get_patterns`），
+   不进打分；~~`get_patterns_for_prompt` 是否退役留待 T1~~ **已退役（2026-09-21 用户裁「请修复」）**：该方法生产路径
+   零调用方（app/scripts/ops 全仓 grep 实证；初记"全仓零调用方"不确——另有契约测试 `test_get_patterns_for_prompt`
+   钉之，已随方法同批删除），其输出面（pattern 文本注入 LLM prompt）从未接线。本批对账器只读
+   `analysis_level='single'`，组合层未纳入七类错配探测。
 
 ## 8. 自曝（对上一轮结论的修正）
 
@@ -332,7 +346,7 @@ PY
 |---|---|---|
 | `eff = base + ic_adj + Σhist` 三处相加 | 读 `screener.py` L265/L275-316/L352-359 + 跑 `--force` 对表 | 找到第四处写入或某处并未相加 ⇒ 表列失效 |
 | 台账胜率分母含 `missed`/`already_held`/`void`（窗口 44%） | 跑 §4.1 复现脚本 | 分解出的非结果行占比明显不同 ⇒ §4.1 作废 |
-| `classify_factor` 的 negative ＝ 贝叶斯上界<45% **或** PF<0.8 | 读 L118-135 | 判据另有实现 ⇒ F/G 类命名错 |
+| `classify_factor` 的 negative ＝ 贝叶斯上界<45% **或** (PF<0.8 **且 PF>0**) | 读 L118-135 | 判据另有实现 ⇒ F/G 类命名错 |
 | 剔零后 4 项不再 negative | 用 `wins/(wins+losses)` 重算贝叶斯区间；或跑 §4.1 脚本看 56–60% | 剔零后仍在 0.45 上界以下 ⇒ 该条应从 G 类撤 |
 | `ic_adj` 不受 `ic_feedback_to_screener` 控制 | 读 L265（无条件）与 L365-373（只门控 strategy） | flag 能门控 factor 级 ⇒ §4.3 结论错 |
 | 7/8 批 9 条 delta 双计 | 跑 §4.4 复现脚本 | 任一条 Δbase≠Δdelta ⇒ 该条应撤 |

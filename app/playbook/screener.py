@@ -202,7 +202,7 @@ class PlaybookScreener:
         
         IC > 0.05 → delta = +1 (强化正alpha因子)
         IC < -0.05 → delta = -1 (弱化负alpha因子)
-        |IC| <= 0.05 or N < 10 → delta = 0 (不调整)
+        |IC| <= 0.05 or N < 30 → delta = 0 (不调整; 2026-06-30 门槛由 10 提至 30, 与下方实现一致)
         """
         import time as _time
         if self._ic_adj_cache is not None and (_time.time() - self._ic_adj_cache_ts) < 300:
@@ -261,7 +261,7 @@ class PlaybookScreener:
         # 2026-06-30 Phase 3: 加载因子IC动态调整
         # 因子IC为正 → weight加成（强化正alpha因子）
         # 因子IC为负 → weight衰减（弱化负alpha因子）
-        # 样本不足(<10) → 不调整（冷启动安全）
+        # 样本不足(<30) → 不调整（冷启动安全; 门槛 2026-06-30 由 10 提至 30）
         _ic_adjustments = self._load_factor_ic_adjustments()
         
         # 先评估 insider 相关因子（互斥逻辑）
