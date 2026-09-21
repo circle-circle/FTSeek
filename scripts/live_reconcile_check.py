@@ -134,7 +134,10 @@ def _alert(msg: str):
     try:
         from app.push import get_push_hub
         from app.push.message import Level, Category
-        get_push_hub().push_text(msg, level=Level.HIGH, category=Category.HEALTH)
+        # [RFC-085·续2 2026-09-21] sync=True 必须: __main__ 末尾 os._exit() 会在异步
+        #   send worker 投递前杀掉进程 ⇒ 漂移告警静默丢失 (与 UE 推送同根因)。
+        get_push_hub().push_text(msg, level=Level.HIGH, category=Category.HEALTH,
+                                 sync=True)
     except Exception:
         pass
 

@@ -164,8 +164,10 @@ def test_hub_text_adapter_keeps_legacy_shapes():
     msgs = []
 
     class _FakeHub:
-        def push_text(self, text, level=None, category=None, title=None):
-            msgs.append((text, title, level, category))
+        # sync 参数镜像 2026-09-21 的真实签名 (RFC-085·续2): 默认必须为 False —
+        #   14 处旧调用点 (非硬退出场景) 的异步行为不得被改动。
+        def push_text(self, text, level=None, category=None, title=None, sync=False):
+            msgs.append((text, title, level, category, sync))
             return True
 
     import app.push.hub as hubmod
@@ -179,8 +181,31 @@ def test_hub_text_adapter_keeps_legacy_shapes():
         assert msgs[-1][1] == "标题"
         assert ad.notify_system_alert(title="T", message="M", level="ERROR") is True
         assert msgs[-1][2] == Level.CRITICAL, "旧 level 字符串 ERROR 未映射到 CRITICAL"
+        assert msgs[-1][4] is False, "适配器不传 sync ⇒ 必须保持异步默认"
     finally:
         hubmod.get_push_hub = orig
+
+
+def test_push_text_safe_sync_passthrough(monkeypatch):
+    """sync=True 必须真传到 hub.push_text。
+
+    末尾 `os._exit()` 的脚本 (llm_universe_scan push / live_reconcile_check) 靠它同步
+    送达 —— 异步 fire-and-forget 会被硬退出在 worker 投递前杀掉 (10 次丢 2-3 次)。
+    """
+    seen = {}
+
+    class _FakeHub:
+        def push_text(self, text, level=None, category=None, title=None, sync=False):
+            seen.update(text=text, level=level, category=category, title=title, sync=sync)
+            return True
+
+    import app.push.hub as hubmod
+    monkeypatch.setattr(hubmod, "get_push_hub", lambda: _FakeHub())
+    assert push_text_safe("x", level=Level.HIGH, category=Category.SYSTEM,
+                          title="T", sync=True) is True
+    assert seen["sync"] is True and seen["level"] is Level.HIGH and seen["title"] == "T"
+    assert push_text_safe("y") is True
+    assert seen["sync"] is False, "不传 sync 时必须保持异步默认"
 
 
 def test_hub_text_adapter_delegates_unknown_methods():

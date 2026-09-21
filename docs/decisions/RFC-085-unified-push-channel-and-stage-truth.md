@@ -69,3 +69,38 @@
 ## 未做（留给后续）
 
 - 日报/周报的阶段维度与独立阶段日报：本轮只落**推送层**；统计层改动随 RFC-086（阶段统计与报告）另批落地。
+
+## 续2 (2026-09-21, 用户报"UE 没收到钉钉通知"): 硬退出脚本的推送被 `os._exit()` 静默截断
+
+**症状**: 09-21（RFC-085 上线后第一个交易日）21:10 CST 的 UE 推送
+（`scripts/llm_universe_scan.py push`）日志明写 `[ok] 已推送 (PushHub)`，用户**未收到**任何钉钉通知；
+`data/push_failures.jsonl` 无新行、`data/critical_alerts.flag` 不存在（全通道失败的痕迹都没有）。
+
+**根因**（收口改动与调用方退出形态不匹配）:
+1. 本 RFC 把 UE 推送从 `DingTalkNotifier().send_text(msg)`（**同步**直发，返回值被忽略但确实发出去了）
+   改成 `push_text_safe(...)` → `PushHub.push()` 默认 **async fire-and-forget**（提交给 4 worker 线程池）。
+2. `scripts/llm_universe_scan.py::__main__` 末尾是 `os._exit(...)`（2026-07-16 为 futu SDK 非 daemon
+   线程加的**硬退出**）—— 该调用**绕过 atexit、不 join worker**，把在飞的 send 线程连同进程一起杀掉。
+3. 调用方日志 `print("[ok] 已推送 (PushHub)")` 是**无条件**的（`push_text_safe` 只返回"已入队"= True）
+   ⇒ 失败当天零痕迹，属于典型**假绿日志**。
+
+**实弹证据**（本地假 webhook 收 HTTP，同 cron 命令行、同代码路径，N=10 两次独立复现）:
+| 批次 | 未发出次数 | POST 发出时刻 |
+|---|---|---|
+| 修复前 (async) | **3/10** 与 **2/10** | t+1.46~1.95s，进程退出前 **0.00~0.01s**（与 `os._exit` 赛跑） |
+| 修复后 (sync=True) | **0/10** | 全部实收 |
+
+生产端更糟: 钉钉 `oapi.dingtalk.com` 的 TLS 握手实测 ~330ms（21:43 那次），而预算只有 ~10ms ⇒
+POST 基本不可能写完。**同根因第二处**: `scripts/live_reconcile_check.py`（30min cron，末尾同样
+`os._exit`）的 `_alert()` 走 `push_text()` 异步 ⇒ 对账漂移告警同样会静默丢失，一并修。
+
+**修复**（最小面，不改任何既有调用点行为）:
+- `PushHub.push_text(..., sync=False)` / `push_text_safe(..., sync=False)` 新增可选参数，
+  透传 `PushHub.push(sync=True)`（同步送达 + 返回**真实**结果，绕过 dedup/聚合语义已在 hub 内定义）。
+- 两处硬退出调用点用 `sync=True`；UE 推送改为按返回值打印真话（`同步送达确认` / `全通道失败`)。
+- 契约测试 `test_push_text_safe_sync_passthrough` + fake hub 镜像新签名（默认必须是 False）。
+- **未做**: 不动 `os._exit`（futu 线程教训仍在），不全局改 async 默认（14 处非硬退出调用点行为不变）。
+
+**判据/验收**: 下一次 UE 推送（次日 21:10 CST）应实际到达钉钉；`grep '同步送达确认' logs/universe_scan.log`。
+**回滚**: `git revert <本提交>`（推送层，无数据影响，无需重启 —— cron 脚本每次新进程，改后立即生效；
+常驻服务保持内存中旧代码，因新增参数有默认值，向后兼容）。

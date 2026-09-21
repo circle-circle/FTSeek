@@ -4472,8 +4472,15 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     try:
         from app.push import push_text_safe
         from app.push.message import Level as _Lv, Category as _Ct
-        push_text_safe(msg, level=_Lv.HIGH, category=_Ct.SYSTEM)
-        print("\n[ok] 已推送 (PushHub)")
+        # [RFC-085·续2 2026-09-21] sync=True 必须: 本脚本 __main__ 末尾 os._exit()
+        #   (futu SDK 非 daemon 线程) 会在 PushHub 的异步 send worker 投递前杀掉进程
+        #   ⇒ 消息静默丢失, 而日志照打"[ok] 已推送"= 假绿。实弹复现: 走同一路径
+        #   10 次, 本地假 webhook 实收 7~8 次。返回值 = **真实**送达结果。
+        _ok = push_text_safe(msg, level=_Lv.HIGH, category=_Ct.SYSTEM, sync=True)
+        if _ok:
+            print("\n[ok] 已推送 (PushHub, 同步送达确认)")
+        else:
+            print("\n[warn] PushHub 全通道失败(未送达) — 见 data/push_failures.jsonl")
     except Exception as e:
         print(f"\n[warn] 钉钉推送失败(不影响链路): {e}")
     return 0

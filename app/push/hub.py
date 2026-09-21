@@ -151,21 +151,29 @@ class PushHub:
 
     def push_text(self, text: str, level: Level = Level.NORMAL,
                   category: Category = Category.SYSTEM,
-                  title: Optional[str] = None) -> bool:
+                  title: Optional[str] = None,
+                  sync: bool = False) -> bool:
         """向后兼容: 旧 send_text(content) 等价调用
 
         2026-09-18: 新增 title=(...) 参数供具名标题的多行告警使用; 不传时保持
         旧行为 (前 60 字符作 title, 其余作 body — render_text() 会拼回完整原文,
         内容不丢)。
+
+        2026-09-21 (RFC-085·续2): 新增 sync=True 供**末尾硬退出**的调用方使用。
+        默认异步 fire-and-forget 把 send 交给 worker 线程, 而 scripts/*.py 末尾的
+        `os._exit()` (futu SDK 非 daemon 线程教训) 会在 worker 发完之前杀掉进程
+        ⇒ 消息静默丢失 (2026-09-21 实弹: UE 推送复现 10 次丢 2-3 次, 而调用方日志
+        仍打 "[ok] 已推送" = 假绿)。sync=True 同步送达并返回**真实**结果
+        (绕过 dedup/聚合, 与 PushHub.push(sync=True) 同语义)。
         """
         if title:
             return self.push(PushMessage(
                 title=title, body=text, level=level, category=category,
-            ))
+            ), sync=sync)
         return self.push(PushMessage(
             title=text[:60], body=text[60:] if len(text) > 60 else "",
             level=level, category=category,
-        ))
+        ), sync=sync)
 
     def flush_aggregated(self):
         """立即刷出所有聚合桶 (例: shutdown)"""
@@ -404,6 +412,7 @@ def push_text_safe(
     level: Optional[Level] = None,
     category: Optional[Category] = None,
     title: Optional[str] = None,
+    sync: bool = False,
 ) -> bool:
     """安全文本推送 — 全库**唯一**的非交易类文本出口 (SSOT)。
 
@@ -415,7 +424,9 @@ def push_text_safe(
     语义:
       - 统一走 PushHub 路由 (交易类双发, 其余主通道优先 + 失败降级);
       - **异常永不上抛**: 通知失败绝不允许影响交易/风控主流程 (原直连调用点
-        多处用 try/except 裸吞, 这里统一收口)。
+        多处用 try/except 裸吞, 这里统一收口);
+      - sync=True (2026-09-21 RFC-085·续2): 同步送达并返回真实结果 — 末尾
+        `os._exit()` 的脚本必须用, 否则异步 send 会被硬退出杀掉 (静默丢消息)。
     """
     try:
         from .message import Level as _L, Category as _C
@@ -425,6 +436,7 @@ def push_text_safe(
                 level=level or _L.NORMAL,
                 category=category or _C.SYSTEM,
                 title=title,
+                sync=sync,
             )
         )
     except Exception as e:  # pragma: no cover - 兜底路径
