@@ -57,6 +57,11 @@ class ShadowItem:
     created: str = ""
     last_evaluated: Optional[str] = None
     verdict_history: list = field(default_factory=list)
+    # 采集退役标记 (2026-09-21): True = 该通道**不再采集** (由采集脚本 _collector_gate 执行)。
+    # 刻意与判据状态分开: 判据退役 (KILLED/FAIL) **不等于**没有消费者 —— 实锤 capital_flow
+    # 的原料在喂生产门 (intraday_reentry 盘中资金背离门), 若按判据状态自动停采会断料。
+    # 停采必须**显式**声明 (本字段或该通道独立开关), 并在 notes 写理由; 数据一律保留不删。
+    collection_retired: bool = False
     notes: str = ""
     # 计数口径: "lines" (默认, jsonl 行数) | "distinct:<field>" (按字段去重计数,
     # 用于首日回补大量历史数据的事项 — 回补行只算 1 个样本, 防立即超 min_n
@@ -281,6 +286,7 @@ REGISTRY: list[ShadowItem] = [
             {"date": "2026-08-29", "verdict": "FAIL_INTERIM",
              "evidence": "ic=0.0511 t=0.595 n_pairs=137 较8/24衰减; OOS双窗异号(+0.134/-0.051) "
                          "→ 毕业判据FAIL; 未达min_n=540继续攒样, 但若下次IC继续衰减/OOS仍异号 → 建议提前裁KILLED"}],
+        collection_retired=False,
         notes="行数口径: ~18标的×30交易日≈540行 (2026-09-20 活体核查实测 capital_flow_daily.jsonl=483行, "
               "原记(当前258)已过期); 分钟级原料 data/futu_capital_flow.jsonl; "
               "OFI基线已就位(7817行, overlap 91对, flow_ofi_rank_corr=0.089 低共线) "
@@ -291,7 +297,13 @@ REGISTRY: list[ShadowItem] = [
               "capital_flow_daily_aggregate.py / futu_channel_shadow_eval.py 消费。⇒ 本条目判据 FAIL "
               "只针对**日级聚合增量 IC**, 与盘中背离门不是同一口径 (门的独立影子读数 "
               "reentry_gate_effect_report.json: would_block n=9 avg −6.63 vs pass n=44 avg −17.77), "
-              "两者禁互相冒充; KILL 采集会断该门的料 (fail-open 后退化为无门)。",
+              "两者禁互相冒充; KILL 采集会断该门的料 (fail-open 后退化为无门)。"
+              "🔒 2026-09-21 (用户裁'无效就停' 时复核, 差点误停): **决定不停采** — "
+              "collection_retired 保持 False, 新增独立开关 futu_channels.capital_flow_collect_enabled=true。"
+              "理由: (a) 原料有生产消费者 (上条); (b) 判 FAIL 的是日级聚合增量**研究判据**, "
+              "判据退役≠采集退役, 二者禁互相反推 (本字段与 status 刻意分开, 见 dataclass 注释); "
+              "(c) 39MB 是累计体积而非单日成本 (实测 1.15–1.88MB/交易日, 消费侧已做尾部 4MB 增量读)。"
+              "要动的是**这条判据** (8/29 FAIL_INTERIM 后未再裁决) 与**盘中门自身**的方向问题, 不是采集。",
     ),
     ShadowItem(
         id="futu_channel_deriv_unusual",
@@ -417,7 +429,11 @@ REGISTRY: list[ShadowItem] = [
                                       "+$35.74 但 **日聚类 t=2.029 且 MDE±52.4 > 效应 ⇒ 不可分辨** | "
                                       "high n=269 差 +$4.68 t=-0.026 MDE±23.8 ⇒ NO_RESIDUAL | extreme n=0。"
                                       "任何桶均未达'桶内增量显著' ⇒ 判据未达; 计数锚改指 latest.json。"}],
-        notes="count_mode=distinct:collected_at — 首日回补 250 日历史 (~5000 行) 只算 1 个攒样日, "
+        notes="🔒 2026-09-21 停采 (用户裁'无效就停'): futu_channels.iv_collect_enabled=false — 已注册的假设"
+              " (桶内残存效应) 结论为无残存效应, 且产物除本条目 eval 外无任何消费者 ⇒ 继续采只是继续长文件。"
+              " 数据保留 (32,007 行) 不删; 登记状态仍 OBSERVING (终态留给 10/21 重看裁决)。"
+              " 重开 = 新假设 + 新预注册判据 + 翻开关 (留痕), 不许只翻开关。"
+              "count_mode=distinct:collected_at — 首日回补 250 日历史 (~5000 行) 只算 1 个攒样日, "
               "回补行保留供历史残存效应分析; min_n=30 攒样日",
         count_mode="distinct:collected_at",
     ),

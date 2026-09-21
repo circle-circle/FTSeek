@@ -3217,17 +3217,41 @@ futu_channels:
   # movers_shadow=盘中异动榜影子采集 (先攒样不进门禁)。独立回滚: 置 false+重启。
   premarket_rank_enabled: true
   movers_shadow_enabled: true
+  # 2026-09-21 决定**继续采** (差点误停成 false, 记此为戒): 用户 9/21 已裁"继续"并把处置
+  #   改判③ (同轴并入既有追高族, 不新增硬门)。而 ③ 的**唯一瓶颈就是覆盖**: join 上 130/864 笔,
+  #   榜窗仅 18 会话 —— 入场时刻有没有榜观测, 只能靠**持续在线采集**才有; 停采等于把 ③ 卡死。
+  #   读数本身绝非"无效": 榜内横截面 IC=−0.44/t=−13 显著; rank≤10 n=11 笔均 +$15.20 (WR .636),
+  #   51-100 n=16 −0.32, 入场无榜观测 n=96 −$4.03 ⇒ 是"有用但用途要选"的问题, 不是"没用的数据"。
   earnings_beat_enabled: true  # 财报日历 beat 榜 enrichment (get_recently_reported 叠加实际EPS/超预期幅度)
   # 2026-08-21 (DEB-20260818 P2 重排): 通道 C OFI 基线快照 — capital_flow 增量
   # IC 裁决需 OFI 基线口径 (预注册'禁裸边际'的解法). HTTP get_order_book 免订阅,
   # 不碰 ADR-013 CPU 红线. 独立回滚: ofi_collect_enabled=false + 重启.
   ofi_collect_enabled: true
+  # 留采理由 (2026-09-21 复核): 它**自身**的预测力尚未单独测过 ("资金流相对它无增量" ≠
+  #   它没用) ⇒ 它有一条写得出判据的开放问题, 属"有消费者的问题", 不是"先攒着"。
+  # ── 2026-09-21 停采决策 (用户裁"无效就停") ────────────────────────────────────
+  # 判据 (由脚本内 _collector_gate 执行, 两道都必须显式): ①登记 collection_retired=True;
+  #   ②该通道开关置 false。刻意**不**从判据状态反推 —— 见下 capital_flow 的实锤教训。
+  # 停采时数据一律保留不删; 重开 = 改登记/开关 + 说明新假设 (留痕)。
+  capital_flow_collect_enabled: true
+  # ⚠️ 2026-09-21 决定**不停采** (差点误停, 记此为戒): 原料 data/futu_capital_flow.jsonl
+  #   (~1.5MB/交易日, 现值 39MB) **有生产消费者** — app/playbook/intraday_reentry.py 盘中
+  #   资金背离门读它取当日大单净流方向 (_capital_flow_today_index, 已做尾部 4MB 增量读优化);
+  #   另有 gate_liveness_probe / reentry_gate_effect_tracker / capital_flow_daily_aggregate /
+  #   futu_channel_shadow_eval 消费。停采 ⇒ 门断料 fail-open 退化为无门。
+  #   登记里判 FAIL 的是**日级聚合增量 IC** 这条研究判据 (8/24 WEAK ic=0.1188 → 8/29 FAIL
+  #   ic=0.0511, OOS 双窗异号), 与盘中门**不是同一口径, 禁互相冒充**; 要动的是那条判据, 不是采集。
+  #   断面: 门自身的独立影子读数 (reentry_gate_effect_report.json: would_block n=9 avg −6.63 vs
+  #   pass n=44 avg −17.77) 方向反直觉 (拦掉的比放过的亏得少) ⇒ 已列入待裁, 但**不能靠停采解决**。
   # 2026-08-29 (用户裁"4也做"): 通道 D IV/HV 日序列影子 — 富途
   # get_option_underlying_his_volatility (股票级 IV+HV 250日序列, 无需期权合约).
   # 目的: 影子攒样验证 IV/HV 在已落地 atr_pct vol_buckets 上有无桶内残存效应
   # (前瞻波动率补后视). 仅 AFTER_HOURS 每日1次, 按 (symbol, time) 去重防轮询放大.
   # 独立回滚: iv_collect_enabled=false + 重启.
-  iv_collect_enabled: true
+  iv_collect_enabled: false
+  # 2026-09-21 停采: 判据结论=三个波动桶均无桶内残存效应 (medium 差 +$35.7 但日聚类 t=2.03 /
+  #   MDE±52 不可分辨; high 无效应) ⇒ 就已注册的假设而言**无效**。32K 行数据保留不删。
+  #   登记状态仍为 OBSERVING (终态留给 10/21 重看裁决), 但采集已停 ⇒ 状态不会自己前进。
 
 # 2026-08-12 (financial-data-query 数据源评估): 美国宏观日历影子采集 (record-only).
 #   regime识别目前只有SPY价格行为+VIX, 对宏观披露日零感知 → 本采集攒样.

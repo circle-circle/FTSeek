@@ -44,6 +44,46 @@ def _enabled() -> bool:
         return True
 
 
+# ── 采集前置闸 (2026-09-21) ────────────────────────────────────────────────────
+# 病根: 通道"要不要继续采"过去没有任何显式判断点 —— 只有总闸 (shadow_collect_enabled)
+#   和几条零散子开关, 于是出现两种坏态: (a) 判据已 FAIL 的通道继续花 IO (iv_hv/异动榜);
+#   (b) "判据 FAIL"被误当成"数据没用" ⇒ 差点停掉**有生产消费者**的料 (capital_flow 实锤:
+#   原料喂 app/playbook/intraday_reentry.py 盘中资金背离门, 停采会让门 fail-open 退化)。
+# 治法 (两道, 都必须**显式**才不会误停):
+#   ① 登记里显式写 collection_retired=True (+ 理由) ⇒ 该通道不再采集;
+#   ② 该通道独立开关 futu_channels.<channel>_collect_enabled=false ⇒ 停采。
+# 刻意**不**从"判据状态"反推是否停采 (KILLED/FAIL ≠ 无消费者): 判据退役与采集退役是两件事,
+#   同一条料可以既在喂生产门、又是某条已被证伪的研究判据的输入 (capital_flow 就是)。
+# 停采时数据一律保留不删; 重开 = 改登记/开关 + 说明新假设 (留痕)。
+def _registry_entry(channel_id: str):
+    try:
+        from app.playbook.shadow_registry import REGISTRY
+        for it in REGISTRY:
+            if it.id == channel_id:
+                return it
+        logger.warning("[futu通道影子] 注册表无此通道 id (%s) ⇒ 采集闸放行", channel_id)
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning("[futu通道影子] 注册表读取失败 (%s): %s ⇒ 采集闸放行", channel_id, e)
+    return None
+
+
+def _collector_gate(channel_id: str, switch_key: str, default: bool = True) -> bool:
+    """返回 True = 允许采集。停采时记一行 INFO (可见, 不静默)。"""
+    it = _registry_entry(channel_id)
+    if it is not None and bool(getattr(it, "collection_retired", False)):
+        logger.info("[futu通道影子] 停采 %s — 登记 collection_retired=True (数据保留)", channel_id)
+        return False
+    try:
+        from app.core.config_container import get_config
+        on = bool(get_config().get_dotted(switch_key, default))
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning("[futu通道影子] 开关读取失败 %s: %s ⇒ 按默认 %s", switch_key, e, default)
+        on = default
+    if not on:
+        logger.info("[futu通道影子] 停采 %s — 开关 %s=false", channel_id, switch_key)
+    return on
+
+
 def _interval_sec() -> int:
     try:
         from app.core.config_container import get_config
@@ -358,17 +398,26 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         logger.warning("[futu通道影子] OpenD 不可达, 跳过本轮采集")
         return
     try:
-        n_flow = _collect_capital_flow(ctx, symbols)
+        # 2026-09-21: 四路采集全部过闸 (登记终态 ⇒ 自动停采; 每路独立开关)。
+        n_flow = (_collect_capital_flow(ctx, symbols)
+                  if _collector_gate("futu_channel_capital_flow",
+                                     "futu_channels.capital_flow_collect_enabled") else 0)
         # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
         # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
-        n_ofi = _collect_ofi_baseline(ctx, symbols)
+        n_ofi = (_collect_ofi_baseline(ctx, symbols)
+                 if _collector_gate("futu_channel_ofi_baseline",
+                                    "futu_channels.ofi_collect_enabled") else 0)
         # 2026-08-29: 通道 D IV/HV 日序列 (用户裁"4也做"). 日级数据仅盘后
         # 每日 1 次; 独立开关 futu_channels.iv_collect_enabled.
-        n_iv = _collect_iv_hv(ctx, symbols) if is_after_hours else 0
+        n_iv = (_collect_iv_hv(ctx, symbols)
+                if is_after_hours and _collector_gate("futu_channel_iv_hv",
+                                                      "futu_channels.iv_collect_enabled") else 0)
         # 2026-08-29: 通道 E 全市场盘中异动榜 (能力利用率审计, 用户裁'全做').
         # 市场级快照不依赖 watchlist; 盘中每轮 1 行. 独立开关
         # futu_channels.movers_shadow_enabled.
-        n_movers = _collect_top_movers(ctx) if not is_after_hours else 0
+        n_movers = (_collect_top_movers(ctx)
+                    if not is_after_hours and _collector_gate("futu_channel_top_movers",
+                                                              "futu_channels.movers_shadow_enabled") else 0)
     finally:
         try:
             ctx.close()
