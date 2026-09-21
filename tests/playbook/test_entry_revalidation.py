@@ -43,7 +43,8 @@ BUCKETS = {
 class Config(dict):
     def __init__(self):
         super().__init__(auto_execute=True, premarket_invalidation_hard_gate=False,
-                         max_new_positions_per_cycle=3, max_daily_positions=16,
+                         max_new_positions_per_cycle=5, max_open_positions=5,
+                         max_daily_positions=16,
                          daily_notional_cap_pct=0.8, risk_base_capital=100000.0,
                          max_position_pct=0.06, risk_pct=0.5)
         self.horizon = {"vol_buckets": copy.deepcopy(BUCKETS), "rr_ratio": 1.5,
@@ -257,7 +258,7 @@ def env(tmp_path, monkeypatch):
                           pipeline=pipeline, generator=generator, data=data,
                           scheduler=scheduler, router=router, trigger=trigger,
                           atr_provider=atr_provider, audit=audit, run=run,
-                          violations=violations)
+                          budget_db=budget_db, violations=violations)
     assert violations == [], "an application exception handler swallowed an external call"
 
 
@@ -440,6 +441,48 @@ def test_historical_trigger_is_rechecked_after_cycle_capacity_deferral(env):
     assert env.trigger.call_count == 3
     trigger_writes = [values for _, values in env.db.updates if "triggered" in values]
     assert trigger_writes == [{"triggered": 1}]
+
+
+def test_open_position_cap_recalculates_after_exit(env):
+    env.db.add()
+    second = env.db.add()
+    env.cfg["max_new_positions_per_cycle"] = 5
+    env.cfg["max_open_positions"] = 5
+    with sqlite3.connect(env.budget_db) as conn:
+        for index in range(4):
+            conn.execute(
+                "INSERT INTO trade_records "
+                "(entry_price, quantity, source_type, entry_time, exit_time) "
+                "VALUES (100, 10, 'PLAYBOOK_SIM', '2026-09-10 09:30:00', NULL)"
+            )
+
+    assert env.run()["executed"] == 1
+    with sqlite3.connect(env.budget_db) as conn:
+        conn.execute(
+            "INSERT INTO trade_records "
+            "(entry_price, quantity, source_type, entry_time, exit_time) "
+            "VALUES (100, 40, 'PLAYBOOK_SIM', '2026-09-10 10:00:00', NULL)"
+        )
+
+    assert env.run()["executed"] == 0
+    assert any(call.kwargs.get("action") == "skipped_open_position_cap"
+               for call in env.audit.call_args_list)
+    assert env.db.rows[second["id"]]["executed"] == 0
+
+    with sqlite3.connect(env.budget_db) as conn:
+        row_id = conn.execute(
+            "SELECT rowid FROM trade_records WHERE entry_time='2026-09-10 09:30:00' "
+            "ORDER BY rowid LIMIT 1"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE trade_records SET exit_time='2026-09-10 10:05:00' "
+            "WHERE rowid=?",
+            (row_id,)
+        )
+
+    assert env.run()["executed"] == 1
+    assert env.db.rows[second["id"]]["executed"] == 1
+    assert len(env.submissions) == 2
 
 
 @pytest.mark.parametrize("triggered", [0, 1])

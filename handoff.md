@@ -1,5 +1,21 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 15:26 增量: Playbook 在仓帽 5 + 清仓槽位动态重算 (用户令「上限为5个」)
+
+> **行为**: `max_new_positions_per_cycle` 3→5；新增 `max_open_positions=5`。每轮
+> auto_execute 按 `trade_records.exit_time IS NULL` 重算在仓标的，平仓后下轮（180s）
+> 释放槽位。日累计 16、名义/预算/单名/质量门不变；不改退出参数与实盘开关。
+>
+> **落档/验证**: `docs/debates/DEB-20260921-playbook-open-position-cap.md`；
+> `py_compile` 通过，`test_entry_revalidation.py` + `test_daily_guardrail_db_contract.py`
+> + `test_offline_full_chain.py` = 200 passed。新增测试钉住“开满后拦新仓、清仓后下轮重算”。
+>
+> **归因**: 15:26 CST 起为新容量 cohort，勿与旧 3-cap 窗口混算。回滚：
+> `max_new_positions_per_cycle=3`、`max_open_positions=999` + 重启。
+>
+> **上线**: 15:27:50 CST 重启生效，MainPID=2252619，active/NRestarts=0；
+> 启动冒烟 7/7 通过，重启段错误 0；重启前未平仓=0。
+
 ## 2026-09-21 13:01 运维·重启 (裁决落地批生效)
 
 > `systemctl restart ftseek-us` 13:01:44 CST, MainPID 2238706 → **2242071** (磁盘 registry

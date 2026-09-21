@@ -3811,12 +3811,14 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         # 修复: 每轮最多新开 N 笔, 剩余 triggered 指令顺延下轮 (auto_execute 间隔300s
         #   → 梯度入场每5分钟一档), 同源回撤不再同时止损。排序已按 source_priority+
         #   confidence 降序, cap 天然保留最强信号。回滚: 配置改 999 即等同解除。
-        _max_new_per_cycle = int(pb_cfg.get("max_new_positions_per_cycle", 3))
+        _max_new_per_cycle = int(pb_cfg.get("max_new_positions_per_cycle", 5))
+        _max_open_positions = int(pb_cfg.get("max_open_positions", 5))
         _cycle_new_count = 0
 
         # 2026-07-09: 从DB查当日已开仓notional/count，替代每次调用从0开始 (P0修复)
         _today_opened_notional = 0.0
         _today_opened_count = 0
+        _open_positions_count = 0
         try:
             from app.core.db_utils import safe_sqlite_connect
             from app.core.paths import get_trade_records_db as _get_guardrail_db
@@ -3836,6 +3838,12 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 ).fetchone()
                 _today_opened_notional = float(_row[0] or 0)
                 _today_opened_count = int(_row[1] or 0)
+                _open_row = _db_conn.execute(
+                    "SELECT COUNT(*) FROM trade_records "
+                    "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                    "AND (exit_time IS NULL OR exit_time = '')"
+                ).fetchone()
+                _open_positions_count = int(_open_row[0] or 0)
             finally:
                 _db_conn.close()
         except Exception as _e:
@@ -3852,7 +3860,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             f"[playbook] 单日 guardrail: notional_cap=${_daily_notional_cap:,.0f} "
             f"({_daily_notional_cap_pct*100:.0f}% of ${_risk_base_capital:,.0f}), "
             f"max_daily_positions={_max_daily_positions}, "
-            f"已开仓: ${_today_opened_notional:,.0f}/{_today_opened_count}笔"
+            f"已开仓: ${_today_opened_notional:,.0f}/{_today_opened_count}笔, "
+            f"在仓标的={_open_positions_count}/{_max_open_positions}"
         )
 
         # 按来源优先级 + confidence 降序 — 购买力优先分配给高优先来源的最强信号.
@@ -4638,6 +4647,16 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 skipped_count += 1
                 continue
 
+            if _open_positions_count >= _max_open_positions:
+                logger.info(
+                    f"[playbook] {inst['symbol']} 跳过 — 在仓标的数上限 "
+                    f"(在仓 {_open_positions_count}/{_max_open_positions}, 平仓后下轮重算)"
+                )
+                _emit_exec_gate_audit(inst, action="skipped_open_position_cap", entry=_entry,
+                                      size=_size, notional=_new_notional)
+                skipped_count += 1
+                continue
+
             # 2026-08-14 水坝效应修复: 单轮新开仓上限 (超出顺延下轮, triggered 状态不丢)
             if _cycle_new_count >= _max_new_per_cycle:
                 logger.info(
@@ -4663,6 +4682,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     _max_deploy += _new_notional  # 累加已用额度
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
+                    _open_positions_count += 1
                     _audit_action = "executed"
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
                 else:
