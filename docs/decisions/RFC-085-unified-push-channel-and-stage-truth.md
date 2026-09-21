@@ -104,3 +104,7 @@ POST 基本不可能写完。**同根因第二处**: `scripts/live_reconcile_che
 **判据/验收**: 下一次 UE 推送（次日 21:10 CST）应实际到达钉钉；`grep '同步送达确认' logs/universe_scan.log`。
 **回滚**: `git revert <本提交>`（推送层，无数据影响，无需重启 —— cron 脚本每次新进程，改后立即生效；
 常驻服务保持内存中旧代码，因新增参数有默认值，向后兼容）。
+
+**Skill-Edit Ledger** (multi-agent-project-collaboration 要求): `~/.hermes/skills/devops/ftseek-push-governance/SKILL.md`
+新增一节「硬退出脚本 (`os._exit`) 里的 Hub 推送必须 `sync=True`」= 接受 (本 RFC 续2 的根因与定量审计法);
+无被否决改法, 未删除任何既有条文。
