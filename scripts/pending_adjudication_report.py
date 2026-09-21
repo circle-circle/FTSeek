@@ -162,14 +162,23 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
     ready = [r for r in rows if r.get("ready")]
     held = [r for r in rows if not r.get("ready")]
 
-    needs, watch, window, unknown = [], [], [], []
+    needs, watch, window = [], [], []
     for r in ready:
         cur = CURATED.get(r["id"])
-        if cur is None:
-            unknown.append(r)          # 新条目: 未收录 ⇒ 抬到待裁面 (不静默吞掉)
-            continue
-        item = dict(r, **cur)
-        (needs if cur["cls"] == "NEEDS_USER" else window if cur["cls"] == "WINDOW" else watch).append(item)
+        # 待裁面以 SSOT 为准 (`criteria_status.needs_adjudication` —— 已算进"已读判据登记 + 重看闹钟");
+        # 本脚本只补白话名与结论。旧 schema/打桩无该键时回落到人工分类 (cls == NEEDS_USER)。
+        decided = r.get("needs_adjudication")
+        if decided is None:
+            decided = bool(cur) and cur["cls"] == "NEEDS_USER"
+        fallback = {"plain": f"{r['id']}（未收录白话名）",
+                    "conclusion": "（未收录白话结论 — 请跑 " + str(r.get("eval_script") or "无 eval 脚本") + " 取读数）"}
+        item = dict(r, **(cur or fallback))
+        if decided:
+            needs.append(item)
+        elif cur is None or cur["cls"] == "WINDOW":
+            window.append(item)
+        else:
+            watch.append(dict(r, **cur))
 
     # 状态变化面: 上轮之后有新条目落终态 (KILLED/SUPERSEDED/GRADUATED) 也要抬 (结论已出)
     state = {}
@@ -178,7 +187,9 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
             state = json.loads(STATE.read_text(encoding="utf-8"))
         except Exception:                                         # noqa: BLE001
             state = {}
-    sig_now = {r["id"]: f"{r['status']}|{CURATED.get(r['id'], {}).get('cls', 'UNKNOWN')}" for r in rows}
+    sig_now = {r["id"]: f"{r['status']}|{r.get('needs_adjudication')}|{r.get('recheck_after')}|"
+                         f"{CURATED.get(r['id'], {}).get('cls', 'UNKNOWN')}"
+                for r in rows}
     changed = sorted(k for k, v in sig_now.items() if state.get(k) != v)
     first_run = not state
 
@@ -192,16 +203,11 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
          "不代表判据过），所以清单越长越没人看。这条通知只在**待裁面有变化**时出现，不是日报。",
          ""]
 
-    if needs or unknown:
-        L.append(f"**① 需要你决定（{len(needs) + len(unknown)} 项）**")
+    if needs:
+        L.append(f"**① 需要你决定（{len(needs)} 项）**")
         for it in needs:
             L.append(f"- **{it['plain']}**（`{it['id']}`，样本 {it['progress']}）")
             L.append(f"  结论：{it['conclusion']}")
-        for r in unknown:
-            v = _artifact_verdict(r["artifact"])
-            L.append(f"- **{r['id']}**（新条目, 未收录白话名；样本 {r['progress']}）")
-            L.append(f"  判据：{str(r['criteria'])[:120]}")
-            L.append(f"  读数：{VERDICT_PLAIN.get(v, v) or '尚未取到裁决码 — 需跑 ' + str(r.get('eval_script') or '（无 eval 脚本）')}")
         L.append("")
     else:
         L.append("**① 需要你决定：当前 0 项** ✅（我不会自己动任何治理变更）")
@@ -210,7 +216,8 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
     if watch:
         L.append(f"**② 判据已读完、自动续观（{len(watch)} 项，不用你管）**")
         for it in watch:
-            L.append(f"- `{it['id']}`（{it['progress']}）：{it['conclusion'][:96]}")
+            due = it.get("recheck_after") or "未登记"
+            L.append(f"- `{it['id']}`（{it['progress']}，重看 {due}）：{it['conclusion'][:96]}")
         L.append("")
     if window:
         L.append(f"**③ 等预注册窗口到期自动结算（{len(window)} 项，窗内禁改）**")
@@ -226,7 +233,9 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
             for r in moved:
                 cur = CURATED.get(r["id"], {})
                 note = cur.get("conclusion", "（未收录白话结论 — 见注册表 notes）")
-                L.append(f"- `{r['id']}` → **{r['status']}**：{note[:110]}")
+                v = _artifact_verdict(r.get("artifact", ""))
+                extra = f"（产物裁决码：{VERDICT_PLAIN.get(v, v)}）" if v else ""
+                L.append(f"- `{r['id']}` → **{r['status']}**：{note[:100]}{extra}")
             L.append("")
 
     if first_run:

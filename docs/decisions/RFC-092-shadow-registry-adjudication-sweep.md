@@ -288,3 +288,29 @@
 **遗留（明写，避免被读成"已全清"）**：①停采 capital_flow 采集（§10.1-2，待裁）；
 ②`adjudicated_at`/`recheck_after` 字段级修法仍未做 —— 本批只治"人眼"这一面，
 其他消费 `pending_adjudications()` 的读者仍会看到 15 项 READY。
+
+### 10.3 批次 4b：把 §8.6-2 的字段级修法落到 SSOT（2026-09-21）
+
+§10.2 只治了"人眼"这一面。本批补 SSOT：`READY_TO_EVALUATE`（= 样本量够）与"待裁"
+（= 判据已出且需要人拍板）在代码里分开，不再靠通知脚本的人工分类。
+
+- `app/playbook/shadow_registry.py` 新增**已读判据登记** `ADJUDICATED: dict[id, {read_at,
+  recheck_after, needs_user, note}]` + 纯函数 `adjudication_state(item)`（返回
+  `adjudicated / overdue / needs_user / read_at / recheck_after`）。15 项 READY 全部登记，
+  出处 = 本文件 §3/§5/§8/§9 的实测读数（`read_at=2026-09-21`）；`recheck_after` 默认 +30 天
+  （`2026-10-21`，纯重看闹钟），窗口类填窗口结束日（`reentry_quick_tp_gate` → `2026-09-30`），
+  `futu_channel_top_movers` 为 `needs_user=True`（用途待裁，不设闹钟 = 立即待裁）。
+- `app/review/criteria_status.py::pending_adjudications()` 每行新增
+  `adjudicated_at` / `recheck_after` / `needs_adjudication`（= 样本量达标 ∧ 无挂账 ∧
+  (从未读过 ∨ 待用户裁 ∨ 闹钟已到)）；**`ready` 字段语义与取值未动**（向后兼容既有消费方）。
+- `scripts/pending_adjudication_report.py` 改为**以 SSOT 判定待裁面**（人工分类降级为旧 schema 的兜底），
+  并在②段显示"重看 <日期>"；签名含 `needs_adjudication`/`recheck_after`
+  ⇒ 闹钟到期当天会自动重新抬到①段。
+- **纪律**（写进代码注释）：改判据 = 重新裁决；**不许靠改登记的日期把"待裁"改成"已裁"**，
+  日期只是重看闹钟。登记不得出现幽灵 id（`tests/test_pending_adjudication_report.py` 新增守卫：
+  `ADJUDICATED` 的键必须存在于 `REGISTRY`，缺 `read_at` 即红）。
+- 实测：`pending_adjudications()` 现在 `READY(样本量达标)=15` 而 `真待裁=1`（仅
+  `futu_channel_top_movers`）；所有 READY 项都已登记（无"未登记 = 静默吞掉"的漏项）。
+  定向测试 4 文件 **48 passed**；通知脚本第 1 跑输出（签名升级触发一次）、第 2 跑 0 字节静默。
+- 未动：`app/review/bundle_render.py` 仍按 `ready` 显示 READY/OBSERVING
+  （它已可取 `needs_adjudication` 改显示，属另一处消费面，留给该面负责人）。

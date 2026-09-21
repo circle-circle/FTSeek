@@ -13,6 +13,8 @@ class FakeItem:
     data_path = "data/fixture.jsonl"
     eval_script = None
     count_mode = "lines"
+    # 与真实 dataclass 对齐 (RFC-092 + §10.3): 缺失会让 pending_adjudications 直接 AttributeError
+    no_adjudication_reason = ""
 
 
 def test_pending_adjudications_reads_registry_without_new_ledger(monkeypatch):
@@ -31,6 +33,10 @@ def test_pending_adjudications_reads_registry_without_new_ledger(monkeypatch):
             "min_n": 30,
             "progress": "30/30",
             "ready": True,
+            # 样本量达标但**判据从未读过** ⇒ 这正是"待裁面" (RFC-092 §10.3 语义):
+            "adjudicated_at": "",
+            "recheck_after": "",
+            "needs_adjudication": True,
             "criteria": "fixture criteria",
             "artifact": "data/fixture.jsonl",
             "eval_script": None,

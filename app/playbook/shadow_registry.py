@@ -81,6 +81,104 @@ class ShadowItem:
     cross_ref: tuple = ()
 
 
+# ── 已读判据登记 (2026-09-21 RFC-092 清账批 + §10.3 字段级修法) ──────────────────
+# 为什么需要它: `refresh_counts()` 只按 `current_n >= min_n` 机械迁移 READY_TO_EVALUATE,
+# 而该状态的真实语义是"**样本量**达标" —— 判据可能早被测过且**未达标**(自动续观即可),
+# 于是"READY"在通知面/呈现面上被读成"待人裁决的欠账"。
+# 本登记把"已经读过判据"这件事写进 SSOT: 有登记且未到 `recheck_after` ⇒ 该项是"已读数待攒样",
+# 不构成待裁; `needs_user=True` ⇒ 判据已有读数但**处置需要用户裁决**(如通道用途未定)。
+# 纪律: 改判据 = 重新裁决, 不许靠改本登记的日期把"待裁"改成"已裁"; 日期只是重看闹钟。
+# 取值口径: read_at = 判据被实测读出结论的日期 (须能追到 RFC/DEB 或实跑记录);
+#           recheck_after = 下次应重看的日期 (默认 +30 天; 观察窗类填窗口结束日);
+#           needs_user = 判据读数已出但处置待用户裁 (与"自动续观"区分)。
+ADJUDICATED: dict[str, dict] = {
+    "futu_channel_top_movers": {
+        "read_at": "2026-09-21", "recheck_after": "", "needs_user": True,
+        "note": "榜内横截面 IC=-0.44/t=-13 (榜首续跌) 与笔级 top10 +$15.20/笔 符号相反 ⇒ 用途待裁 "
+                "(RFC-092 §8.2/§9.1)。用途三条路 (排除/反向池/并入 kr3) 均需另立预注册。",
+    },
+    "reentry_quick_tp_gate": {
+        "read_at": "2026-09-21", "recheck_after": "2026-09-30", "needs_user": False,
+        "note": "n=13/10 达标; 判据点名 9/1-9/30 窗内禁改, 到期一次性结算 (判据字典 B13)。",
+    },
+    "gap_chase_gate": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "n=31 ✓ / 笔均 -16.6 ✓ / 符号检验 p=0.93 ✗ ⇒ 3 项过 2, 继续攒样 (判据字典 B1)。",
+    },
+    "vwap_gate_ab": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "补齐按日聚类后被拦组 +0.176% 但 MDE±0.39 ⇒ 不可分辨, 不改门 (§8.4)。",
+    },
+    "entry_delay_confirm": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "全样本过线但前瞻子样本全不过 + 日聚类 MDE±7.95 ⇒ 不可分辨, 不呈裁。",
+    },
+    "exit_disable_cf": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "每规则 MFE n=31<50 / DEAD n=33<50 ⇒ 每规则 n 门未达。",
+    },
+    "extreme_gap_ban_shadow": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "被拦 n=58 净 -1826 ✓ 但误杀率 53%>40% ✗ ⇒ 判据未过, 维持纯观测。",
+    },
+    "gap_alignment": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "各格 n=5/10/22/9… 多 <30 ⇒ 格内 n 门未达。",
+    },
+    "intraday_loss_breaker_a_prime": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "被挡笔期望 +45.0 (门 ≤-10, 方向相反) 但 forward 仅 14<30 ⇒ 按已记录规则不下结论。",
+    },
+    "kr3_direction_runup_gate": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "LONG blocked n=36 均值 -1.9/中位 +1.1 (尾部驱动); SHORT blocked n=16<30 ⇒ 延长观察。",
+    },
+    "penetration_shadow": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "基线穿透率 97.4%; 假设集 None (未调 LLM) ⇒ 不判 (判据字典 B17)。",
+    },
+    "premarket_invalidation": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "A/C 已按 DEB-20260911 处置 RETIRED_NO_PROMOTION; B 执行 n=4<20 ⇒ 攒样中。",
+    },
+    "da_blocked_cf": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "T+1 mean -0.051% 未越 ±0.15% ⇒ KEEP_SAMPLING (判据字典 B14)。",
+    },
+    "futu_channel_iv_hv": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "三桶无残存效应 (medium +35.74 但 MDE±52 不可分辨; high 无效应) ⇒ NO_RESIDUAL (§8.1)。",
+    },
+    "futu_channel_ofi_baseline": {
+        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "只测到 capital_flow 相对它无增量 (-0.1192); OFI **自身** IC 未单独测 ⇒ 无 KILL 依据。",
+    },
+}
+
+
+def adjudication_state(item: "ShadowItem") -> dict:
+    """该事项的裁决面状态 (供通知/呈现消费; 只读, 不改状态机)。
+
+    返回 {"read_at", "recheck_after", "needs_user", "adjudicated": bool, "overdue": bool}。
+    未登记 ⇒ adjudicated=False (真正没读过判据 = 待裁面)。
+    """
+    from datetime import date
+
+    rec = ADJUDICATED.get(item.id)
+    if not rec:
+        return {"read_at": "", "recheck_after": "", "needs_user": False,
+                "adjudicated": False, "overdue": False}
+    due = str(rec.get("recheck_after") or "")
+    overdue = False
+    if due:
+        try:
+            overdue = date.fromisoformat(due) <= date.today()
+        except ValueError:
+            overdue = False
+    return {"read_at": str(rec.get("read_at") or ""), "recheck_after": due,
+            "needs_user": bool(rec.get("needs_user")), "adjudicated": True, "overdue": overdue}
+
+
 REGISTRY: list[ShadowItem] = [
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(

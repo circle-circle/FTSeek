@@ -85,6 +85,49 @@ def test_status_change_raises_again(monkeypatch, tmp_path):
     assert out and "gap_chase_gate" in out, "条目落终态后必须再次抬出 (结论出来了要让人看见)"
 
 
+def test_ssot_adjudicated_item_is_not_raised_until_recheck(monkeypatch, tmp_path):
+    """已读判据 + 重看闹钟未到 ⇒ 不算待裁 (SSOT 路径, 即 RFC-092 §8.6-2 的字段级修法)。"""
+    rows = _rows()
+    for r in rows:
+        r["needs_adjudication"] = r["id"] == "futu_channel_top_movers"
+        r["recheck_after"] = "" if r["id"] == "futu_channel_top_movers" else "2099-01-01"
+        r["adjudicated_at"] = "2026-09-21"
+    m = _prep(monkeypatch, tmp_path, rows)
+    out = m.build_report()
+    assert "涨幅榜前 100" in out, "needs_adjudication=True 的项必须抬到待裁面"
+    head = out.split("②")[0]
+    assert "gap_chase_gate" not in head, "已读判据且闹钟未到 ⇒ 不算待裁, 不该出现在 ① 段"
+
+
+def test_overdue_recheck_raises_again(monkeypatch, tmp_path):
+    rows = _rows()
+    for r in rows:
+        r["needs_adjudication"] = False
+        r["recheck_after"] = "2000-01-01"      # 闹钟早已过 ⇒ SSOT 会置 needs_adjudication=True
+        r["adjudicated_at"] = "2026-09-21"
+    rows[1]["needs_adjudication"] = True        # 模拟 SSOT 的 overdue 判定结果
+    m = _prep(monkeypatch, tmp_path, rows)
+    out = m.build_report()
+    assert "gap_chase_gate" in out.split("②")[0], "重看闹钟到期后必须重新抬到待裁面"
+
+
+def test_adjudicated_registry_ids_are_real_and_typed():
+    """已读判据登记的 id 必须真实存在 (防打字错的"幽灵已裁"把真待裁项静默吞掉)。"""
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    from app.playbook.shadow_registry import ADJUDICATED, REGISTRY, adjudication_state
+    ids = {i.id for i in REGISTRY}
+    ghosts = sorted(set(ADJUDICATED) - ids)
+    assert not ghosts, f"ADJUDICATED 引用了不存在的注册表 id (幽灵已裁): {ghosts}"
+    for i in REGISTRY:
+        st = adjudication_state(i)
+        if i.id in ADJUDICATED:
+            assert st["adjudicated"] is True and st["read_at"], f"{i.id} 登记缺 read_at"
+    # 未登记的条目一律 adjudicated=False ⇒ 仍会被抬到待裁面 (不静默)
+    assert adjudication_state(type("X", (), {"id": "__nope__"})())["adjudicated"] is False
+
+
 def test_dry_does_not_write_state(monkeypatch, tmp_path):
     m = _prep(monkeypatch, tmp_path, _rows())
     assert m.build_report(dry=True)
