@@ -3811,8 +3811,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         # 修复: 每轮最多新开 N 笔, 剩余 triggered 指令顺延下轮 (auto_execute 间隔300s
         #   → 梯度入场每5分钟一档), 同源回撤不再同时止损。排序已按 source_priority+
         #   confidence 降序, cap 天然保留最强信号。回滚: 配置改 999 即等同解除。
-        _max_new_per_cycle = int(pb_cfg.get("max_new_positions_per_cycle", 5))
-        _max_open_positions = int(pb_cfg.get("max_open_positions", 5))
+        _max_new_per_cycle = int(pb_cfg.get("max_new_positions_per_cycle", 3))
+        _max_open_positions = int(pb_cfg.get("max_open_positions", 999))
         _cycle_new_count = 0
 
         # 2026-07-09: 从DB查当日已开仓notional/count，替代每次调用从0开始 (P0修复)

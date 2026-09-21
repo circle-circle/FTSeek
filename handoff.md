@@ -1,5 +1,22 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 16:40 修订: 在仓帽 5 移到盘前/盘后, 盘中解除 (用户复核裁决)
+
+> **裁决**: `max_open_positions=5` 只针对盘前/盘后交易阶段, 盘中不受此限制。首版
+> hotfix (15:26) 把帽装在了盘中专属的 `run_playbook_auto_execute`, 位置错误。
+>
+> **行为**: ① 盘中 `max_open_positions=999`(等效解除, 代码/审计/契约测试保留)、
+> `max_new_positions_per_cycle` 5→3 回退原梯度值; ② EXT 执行器
+> `EXT_ENTRY_MAX_OPEN=5`(只数 EXT 自有仓位) + 日配额 `EXT_ENTRY_MAX_PER_DAY=5`/
+> 盘前 `4`; 名义帽自动随扩 $25k。三层默认 (yaml/config.py/pipeline.get) 同步 3/999 防漂移。
+>
+> **落档/验证**: DEB-20260921「修订裁决」节; py_compile 通过; 配置实测 盘中=3/999、
+> EXT=5/4/5/$25k; 三执行链套件 200 passed。
+>
+> **生效**: EXT cron 每轮重读 .env.us → ≤5 分钟自动生效; 盘中改动重启 ftseek-us 生效。
+> **回滚**: 盘中改回 5/5 + 重启; EXT 改回 3/2/3。
+> **归因**: 16:4x CST 起 EXT 窗进入 5帽/5配额 regime, 盘中恢复单轮 3 帽。
+
 ## 2026-09-21 15:26 增量: Playbook 在仓帽 5 + 清仓槽位动态重算 (用户令「上限为5个」)
 
 > **行为**: `max_new_positions_per_cycle` 3→5；新增 `max_open_positions=5`。每轮

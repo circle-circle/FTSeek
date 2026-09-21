@@ -68,9 +68,10 @@ class PlaybookConfig:
         # C4 (2026-08-24): 10→16 对齐 yaml SSOT (execution_parameters.max_daily_positions).
         # 本默认仅在 unified_config.yaml 读取失败时使用; 三层默认漂移曾达 5/10/16.
         "max_daily_positions": 16,
-        # 2026-09-21: 与 yaml SSOT 对齐; open 帽按未平仓动态重算.
-        "max_new_positions_per_cycle": 5,
-        "max_open_positions": 5,
+        # 2026-09-21 用户裁决修订: 盘中无在仓帽(999), 单轮梯度帽回退3;
+        #   盘前/盘后 5 帽由 EXT 执行器 env 承担. 本默认仅 yaml 读取失败时兜底.
+        "max_new_positions_per_cycle": 3,
+        "max_open_positions": 999,
         # horizon defaults
         "short_rr_ratio": 1.0,
         "long_rr_ratio": 2.5,
