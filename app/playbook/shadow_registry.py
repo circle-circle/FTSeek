@@ -255,6 +255,8 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/top_movers_eval.py",
         created="2026-08-29",
         last_evaluated="2026-09-21",
+        intent="chase_high_ban",
+        cross_ref=("kr3_direction_runup_gate",),
         verdict_history=[{"date": "2026-09-21", "verdict": "IC_SIGNIFICANT_但方向为反 → 呈裁 (不自动毕业)",
                           "evidence": "清账批 (RFC-092) 建 scripts/top_movers_eval.py 并实跑 (bar 配对不可行: "
                                       "replay_bars 对 (mover,day) 覆盖率仅 2%=87/5372, 该目录只对系统看过的标的落盘; "
@@ -267,8 +269,23 @@ REGISTRY: list[ShadowItem] = [
                                       "⇒ 判据字面达标 (IC 显著), 但**方向与'追涨幅榜发现候选'用途相反**: 榜首续跌、榜尾续涨。"
                                       "⚠️ 选择偏差: 只有仍在榜的标的被再次观测 (出榜样本截断); 窗口仅 14 会话单 regime。"
                                       "处置建议 (待用户裁): ①作'追高排除/冷却'信号 ②反向用作回调入场候选池 "
-                                      "③并入既有追高族 (同轴, 勿新增硬门) — 均需另立预注册, 本项不自动生效。"}],
+                                      "③并入既有追高族 (同轴, 勿新增硬门) — 均需另立预注册, 本项不自动生效。"},
+                         {"date": "2026-09-21b", "verdict": "①被实测否决 → 改判③ (同轴并入, 不新增)",
+                          "evidence": "用户裁'继续'后落地①的可量口径 (scripts/top_movers_trade_join.py): "
+                                      "把榜单与已成交笔对齐 (入场前最后一次榜观测的 rank, 结局=pnl_net 实盘口径)。"
+                                      "join 上 130/864 笔 (榜窗 8/29-9/19 仅 18 会话)。分桶: **rank<=10 n=11 笔均 +15.20 "
+                                      "(WR .636)** | 11-50 n=7 +18.46 | 51-100 n=16 -0.32 | 入场时无榜观测 n=96 -4.03。"
+                                      "⇒ ①的反事实**不成立**: '冷却榜前10' 会躲掉 **+167.21 净盈利** (盈利笔 Σ+611.80 "
+                                      "vs 亏损笔 Σ-444.59), 日聚类差 +10.55 t=0.263 MDE±112 不可分辨, 且 n=11<30 "
+                                      "(§三.5 样本门未达)。**关键结构发现: top10 的 11 笔中 10 笔与 kr3 would_block 同批** "
+                                      "⇒ ①≡kr3 的同一假设, 落地即重复; 且榜级 IC(-0.44) 与笔级(+15.2) 符号相反, "
+                                      "说明'追高吃亏'在**已成交笔**上不成立 (与 kr3 自身'LONG blocked 胜率 73%、"
+                                      "尾部支配'一致)。**处置: 做减法 — 不新增门/影子, 轴归 kr3 (③)**; "
+                                      "本项只保留其特有面 (榜内横截面 IC, kr3 不覆盖) 继续观测。"}],
         notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
+              "可量口径二: scripts/top_movers_trade_join.py (榜单 × 已成交笔, 用于评估'冷却'类用法); "
+              "**同轴声明 (RFC-092b §9)**: 本榜'追高排除/冷却'用法与 kr3 测同一批笔 (rank≤10 的 11 笔中 10 笔落在 "
+              "kr3 would_block 面内) ⇒ 不得独立转正, 裁决路径并入 kr3; 本项特有待裁面 = 榜内横截面 IC (kr3 不覆盖); "
               "与盘前榜(premarket_enrichment futu_premarket_rank)互补: 盘前榜接决策上下文, 本通道纯影子",
     ),
     ShadowItem(
@@ -969,6 +986,8 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/kr3_runup_report.py",
         created="2026-09-02",
         last_evaluated="2026-09-13",
+        intent="chase_high_ban",
+        cross_ref=("futu_channel_top_movers",),
         verdict_history=[{"date": "2026-09-04", "verdict": "NO_ADJUDICATION",
                           "evidence": "首判 (data/shadow/kr3_runup_verdict_latest.json): n_collected=44 / "
                                      "n_eval=41; LONG|blocked n=15 mean +6.19 median +14.88 vs pass "
