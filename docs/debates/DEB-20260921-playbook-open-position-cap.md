@@ -64,7 +64,7 @@ playbook:
 | 项 | 裁决 | 落点 |
 |---|---|---|
 | 盘前/盘后 5 帽计数口径 | 只数 EXT 自有仓位（沿用现闸，与盘中在仓正交） | `.env.us: EXT_ENTRY_MAX_OPEN=5`，零代码改动 |
-| EXT 单日新开配额 | 同步 3→5（盘前 2→4，为盘后保留 ≥1） | `.env.us: EXT_ENTRY_MAX_PER_DAY=5 / EXT_ENTRY_PREMARKET_MAX_PER_DAY=4` |
+| EXT 单日新开配额 | 同步 3→5；**追加裁决**：盘前/盘后共享总额、不再单窗限制（盘前配额=总配额=5 → 单窗闸永不先触发，每日剩多少用多少） | `.env.us: EXT_ENTRY_MAX_PER_DAY=5 / EXT_ENTRY_PREMARKET_MAX_PER_DAY=5` |
 | 盘中路径 | 在仓帽解除、单轮梯度帽回退原值 | `unified_config.yaml: max_open_positions=999 / max_new_positions_per_cycle=3`；`config.py`、`pipeline.py` 三层默认同步 3/999 防漂移 |
 
 **生效方式**：EXT cron 每次启动重读 `.env.us` → 下一轮（≤5 分钟）即生效，无需重启；
@@ -77,5 +77,5 @@ playbook:
 **归因修订**：新容量 cohort 分界仍为 15:26 CST；16:4x CST 起盘中恢复单轮 3 帽、
 EXT 窗进入 5 帽/5 配额 regime，报表切分时以本节点为准。
 
-**验证**：py_compile 通过；配置加载实测 盘中=3/999、EXT=5/4/5/$25k；
+**验证**：py_compile 通过；配置加载实测 盘中=3/999、EXT=5/5/5/$25k（总配额/盘前配额/在仓帽）；
 三套件复跑 200 passed。

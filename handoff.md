@@ -7,11 +7,13 @@
 >
 > **行为**: ① 盘中 `max_open_positions=999`(等效解除, 代码/审计/契约测试保留)、
 > `max_new_positions_per_cycle` 5→3 回退原梯度值; ② EXT 执行器
-> `EXT_ENTRY_MAX_OPEN=5`(只数 EXT 自有仓位) + 日配额 `EXT_ENTRY_MAX_PER_DAY=5`/
-> 盘前 `4`; 名义帽自动随扩 $25k。三层默认 (yaml/config.py/pipeline.get) 同步 3/999 防漂移。
+> `EXT_ENTRY_MAX_OPEN=5`(只数 EXT 自有仓位) + 日配额 `EXT_ENTRY_MAX_PER_DAY=5`,
+> 盘前/盘后**共享总额不再单窗限制**(`EXT_ENTRY_PREMARKET_MAX_PER_DAY=5`=总配额,
+> 单窗闸永不先触发, 每日剩多少用多少); 名义帽自动随扩 $25k。
+> 三层默认 (yaml/config.py/pipeline.get) 同步 3/999 防漂移。
 >
 > **落档/验证**: DEB-20260921「修订裁决」节; py_compile 通过; 配置实测 盘中=3/999、
-> EXT=5/4/5/$25k; 三执行链套件 200 passed。
+> EXT=5/5/5/$25k; 三执行链套件 200 passed。
 >
 > **生效**: EXT cron 每轮重读 .env.us → ≤5 分钟自动生效; 盘中改动重启 ftseek-us 生效。
 > **回滚**: 盘中改回 5/5 + 重启; EXT 改回 3/2/3。
