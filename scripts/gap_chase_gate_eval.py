@@ -8,9 +8,10 @@
   n>=30 且 拦截组笔均PnL<0 且 单侧符号检验 p<=0.05 → GRADUATE_CANDIDATE (转硬门待用户裁决)
   否则 KEEP_SAMPLING (继续攒样不重置)
 
-只读, 幂等, 零副作用。挂载: 周检/盘后复盘按需。
+只读, 幂等。除自己的 latest.json (注册表计数锚) 外零副作用。挂载: 周检/盘后复盘按需。
 """
 import argparse
+import datetime
 import json
 import sqlite3
 from math import comb
@@ -96,6 +97,20 @@ def main() -> int:
         "✓" if (blocked and sum(blocked) / len(blocked) < 0) else "✗",
         SIGN_P, "✓" if p <= SIGN_P else "✗"))
     print("裁决: %s" % v)
+
+    # 注册表计数锚 (2026-09-21 RFC-092 清账批): 本项注册表 data_path 原指向 .db, 而
+    # refresh_counts 的 _count_samples 对非 json/jsonl 路径返回 None ⇒ current_n 恒 0,
+    # 被误读成"0 样本断供"。落一份带 "n" 的产物, 让注册表计数与判据同轴 (n=拦截组笔数)。
+    out = Path(__file__).resolve().parents[1] / "data" / "shadow" / "gap_chase_gate_latest.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({
+        "n": len(blocked), "since": args.since, "gate_pct": GATE_PCT,
+        "blocked_mean": (sum(blocked) / len(blocked)) if blocked else None,
+        "rest_mean": (sum(rest) / len(rest)) if rest else None,
+        "sign_p": p, "verdict": v, "coverage": cov,
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("→ %s" % out)
     return 0
 
 

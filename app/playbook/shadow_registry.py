@@ -247,16 +247,27 @@ REGISTRY: list[ShadowItem] = [
                     "全市场实时异动榜快照 (~1832标的, 每轮1行含Top100涨幅/换手/量比)。"
                     "此前系统盘中无异动发现通道 — 影子先行攒样评估 "
                     "'盘中异动 → 后续窗口收益' 有无信号, 不进门禁。",
-        data_path="data/futu_top_movers_shadow.jsonl",
+        data_path="data/shadow/top_movers_eval_latest.json",
         config_key="futu_channels.movers_shadow_enabled",
         min_n=540,
         graduation_criteria="预注册: 异动榜Top100入选 → 后续30min/日内窗口超额收益配对基线, "
                             "IC 显著才评估接候选池发现通道; 评估脚本待建 (先攒样)。",
-        eval_script=None,
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册但无执行体 (2026-09-21 清账 RFC-092) — "
-                               "样本已 1043/540, 注册表原先机械迁移 READY 属'虚假待裁'; "
-                               "处置二选一待裁: 建 eval_script 或退役。无交易行为影响 (纯影子采集)。",
+        eval_script="scripts/top_movers_eval.py",
         created="2026-08-29",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "IC_SIGNIFICANT_但方向为反 → 呈裁 (不自动毕业)",
+                          "evidence": "清账批 (RFC-092) 建 scripts/top_movers_eval.py 并实跑 (bar 配对不可行: "
+                                      "replay_bars 对 (mover,day) 覆盖率仅 2%=87/5372, 该目录只对系统看过的标的落盘; "
+                                      "改用快照自足口径: 入场=当日首次入榜的 change_pct, 结局=同日末次观测, "
+                                      "fwd=(1+c_exit/100)/(1+c_entry/100)-1)。14 个 ET 会话 3291 对: "
+                                      "**逐日 IC 均值 -0.4435, t=-13.18, MDE±0.094 (可分辨), 14/14 天同号**; "
+                                      "剔除'change_pct 全程未更新'冻结配对 (11%) 后仍 -0.422, t=-10.74; "
+                                      "时段切片 ≤10:00 t=-8.4 / 10:00-12:00 t=-17.1 / >12:00 t=-6.0 全同向。"
+                                      "榜内 rank 对照: top10 fwd -0.19% vs 11-50 +0.52% vs 51-100 +0.73% (单调递减)。"
+                                      "⇒ 判据字面达标 (IC 显著), 但**方向与'追涨幅榜发现候选'用途相反**: 榜首续跌、榜尾续涨。"
+                                      "⚠️ 选择偏差: 只有仍在榜的标的被再次观测 (出榜样本截断); 窗口仅 14 会话单 regime。"
+                                      "处置建议 (待用户裁): ①作'追高排除/冷却'信号 ②反向用作回调入场候选池 "
+                                      "③并入既有追高族 (同轴, 勿新增硬门) — 均需另立预注册, 本项不自动生效。"}],
         notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
               "与盘前榜(premarket_enrichment futu_premarket_rank)互补: 盘前榜接决策上下文, 本通道纯影子",
     ),
@@ -268,17 +279,24 @@ REGISTRY: list[ShadowItem] = [
                     "股票级 IV (前瞻) + HV 250 日序列, 无需期权合约。用途: 影子攒样验证 "
                     "IV/HV 在已落地 atr_pct vol_buckets 上有无桶内残存效应 (前瞻补后视)。"
                     "AFTER_HOURS 每日1次, 按 (symbol, time) 去重防轮询放大。",
-        data_path="data/futu_iv_hv_shadow.jsonl",
+        data_path="data/shadow/iv_hv_residual_latest.json",
         config_key="futu_channels.iv_collect_enabled",
         min_n=30,
         graduation_criteria="残存效应分析 (基线纪律: 在已落地 atr_pct 分桶上算残存, 不另起炉灶): "
                             "IV/HV 于交易日 join trade_records, 桶内增量显著才毕业。"
                             "首日回补 250 日历史 → 历史残存效应立即可跑。",
-        eval_script=None,
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据可跑但无执行体 (2026-09-21 清账 RFC-092) — "
-                               "样本 87/30, 原先机械迁移 READY 属'虚假待裁'; "
-                               "处置二选一待裁: 建 eval_script (残存效应 join trade_records) 或退役。",
+        eval_script="scripts/iv_hv_residual_eval.py",
         created="2026-08-29",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "NO_RESIDUAL (判据未达, 效应不可分辨)",
+                          "evidence": "清账批 (RFC-092) 建 scripts/iv_hv_residual_eval.py 并实跑: "
+                                      "落桶用已落地 playbook_horizon.yaml short_horizon.vol_buckets 边界, "
+                                      "atr_pct=metadata.atr/entry_price, 结局=pnl_net; 实盘已结算 473 笔 "
+                                      "join 上 317 (67%)。桶内 IV/HV≥1 组 vs 其余: low n=7 "
+                                      "(INSUFFICIENT_N) | medium n=41 HI +$4.66 / LO -$31.08 → pooled 差 "
+                                      "+$35.74 但 **日聚类 t=2.029 且 MDE±52.4 > 效应 ⇒ 不可分辨** | "
+                                      "high n=269 差 +$4.68 t=-0.026 MDE±23.8 ⇒ NO_RESIDUAL | extreme n=0。"
+                                      "任何桶均未达'桶内增量显著' ⇒ 判据未达; 计数锚改指 latest.json。"}],
         notes="count_mode=distinct:collected_at — 首日回补 250 日历史 (~5000 行) 只算 1 个攒样日, "
               "回补行保留供历史残存效应分析; min_n=30 攒样日",
         count_mode="distinct:collected_at",
@@ -326,6 +344,17 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="双臂净差 t-test + 按日聚类 MDE",
         eval_script="scripts/eval_vwap_gate.py",
         created="2026-08-07",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "不可分辨 (判据补齐后原'倾向拦错'不成立)",
+                          "evidence": "清账批 (RFC-092) 补齐判据要求的按日聚类统计 (原 eval 只出均值+中位): "
+                                      "处理组(被拦 wrong_side) 反事实 n=130 笔均 +0.1765% → **按日聚类 (41 天) "
+                                      "day_mean +0.1403%, t=1.012, MDE(80%)=±0.3882 ⇒ 不可分辨** "
+                                      "(MDE 是效应的 2.2 倍; 最大单日占比 6.2% 非单日驱动; drop-3-largest "
+                                      "后 +0.1553% 稳健)。对照组(放行) 已实现 n=359 笔均 -0.0051%, "
+                                      "t=0.304, MDE±0.2178 亦不可分辨。两臂日聚类差 +0.159% t=1.029 MDE±0.431 "
+                                      "(且两臂测量基不同: 处理组分钟级反事实未持到收盘, 对照组全持仓期 ⇒ "
+                                      "不可当因果推断)。⇒ 门'扼杀盈利'的说法在本标准下**不成立** (点估计为正但功效不足), "
+                                      "维持 OBSERVING 继续攒样, 不改门。"}],
         eval_on_demand=True,  # eval=裁点触发 (样本到量才跑双臂t检验), 非周期挂载; 挂载哨兵豁免 (2026-09-01)
     ),
     ShadowItem(
@@ -336,15 +365,23 @@ REGISTRY: list[ShadowItem] = [
                     "反事实拦截影子。回溯基线(7/1起): n=10, 笔均PnL -$28.3 (全场最差档); 导火索=GAP 8/28 "
                     "+18.95% gap 追入(thesis自注'严禁追涨'仍成交), MFE+5.9%→当日-3.6%过夜。"
                     "数据源=trade_records.metadata_json.entry_gap (入场时已采集, 零新采集线)。",
-        data_path="data/ftseek_us.db (trade_records.metadata_json.entry_gap)",
+        data_path="data/shadow/gap_chase_gate_latest.json",
         config_key=None,
         min_n=30,
         graduation_criteria="预注册 (2026-08-29): n≥30 且 拦截组(aligned_gap≥5%)笔均PnL<0 且 "
                             "单侧符号检验 p≤0.05 → 毕业转硬门; 否则继续攒样不重置, 随周检机械判定。",
         eval_script="scripts/gap_chase_gate_eval.py",
         created="2026-08-29",
-        last_evaluated="2026-08-29",
-        verdict_history=[{"date": "2026-08-29", "verdict": "BASELINE_KEEP_SAMPLING",
+        last_evaluated="2026-09-21",
+        verdict_history=[{"date": "2026-09-21", "verdict": "KEEP_SAMPLING",
+                          "evidence": "清账批 (RFC-092) 实跑 eval: 覆盖率 80%, 拦截组 n=31 (门 30 ✓) "
+                                      "笔均 **-$16.6** (门 <0 ✓) vs 对照组 n=384 笔均 -$0.3; "
+                                      "单侧符号检验 p=0.9252 (门 ≤0.05 ✗) ⇒ 判据 2/3, 继续攒样。"
+                                      "⚠️ 同时修正一个计数假象: 本项 data_path 原指向 .db, "
+                                      "refresh_counts 对非 json/jsonl 路径返回 None ⇒ current_n 恒 0, "
+                                      "被清账误读成'0 样本断供' — 实际喂数方正常 (415/864 笔含 "
+                                      "entry_gap.aligned_gap_pct)。已改指 latest.json 计数锚。"},
+                         {"date": "2026-08-29", "verdict": "BASELINE_KEEP_SAMPLING",
                          "evidence": "注册基线(7/1起): 拦截组 n=10 WR=50% 笔均-$28.3 累计-$283; "
                                      "对照组 gap<2% n=252 笔均-$3.6。n<30 且亏损笔数5/10未达显著 → 攒样中"}],
         notes="计数口径=拦截组交易笔数 (eval 脚本从 DB 现算); 与 gap_dive_halve (逆势深跌减半) 互补不对称: "
