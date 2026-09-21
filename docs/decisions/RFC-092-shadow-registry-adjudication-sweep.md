@@ -232,3 +232,59 @@
 **撤回 §8.2 中"我倾向 ①（最保守）"的建议** —— 实测表明 ① 既无正收益证据（n=11 不可分辨、反事实为负）
 又与 kr3 重复。原推荐依据是"不新增硬门=保守"，但在**同轴**情形下"新增一条平行通道"本身即风险，
 保守动作是**什么也不新增**（③）。
+
+---
+
+## 10. 追记 (批次 4, 2026-09-21) — 独立复查回执 + 待裁决触发通知落地
+
+### 10.1 独立复查（另一会话对 §1–§9 的复核，逐条实跑，非读文档）
+
+复核方式：不读结论读证据 —— 看 diff + 重跑 eval + 重跑守卫测试。
+
+| 复核项 | 方法 | 结果 |
+|---|---|---|
+| 状态迁移落在正确条目 | `git diff a8e2c5001^..5e68a2537 -- shadow_registry.py` 按 hunk 定位 id | ✓ `p1_1_capital_flow` / `da_prompt_distill_shadow` / `pullback_limit_shadow` → KILLED；`overnight_kill_criterion` → SUPERSEDED |
+| **无静默判据改写**（治理红线） | diff 中 `graduation_criteria=` / `min_n=` 变更计数 | ✓ 0 处；改动仅 `data_path` / `eval_script` / `notes` / `intent` / `cross_ref` + 新字段 |
+| 挂账守卫真生效 | `refresh_counts()` 实跑 + `no_adjudication_reason` 出现面 | ✓ 仅 `post_exit_path` 一处（PERMANENT_MEASURE），不再机械迁 READY |
+| 强制同轴机制 | `check_intent_uniqueness()` 实跑 | ✓ 返回 `[]` |
+| `.db 计数假象` 诊断 | 读 `_count_samples` 实现 | ✓ 非 json/jsonl 路径确实 `return None` ⇒ 原"0 样本断供"诊断纠正成立（§8.3） |
+| `gap_chase_gate` 读数 | 重跑 `scripts/gap_chase_gate_eval.py` | ✓ n=31 / 被拦 −16.6 / 对照 −0.3 / p=0.9252 / 覆盖 80% 逐字一致 |
+| `futu_channel_top_movers` 读数 | 重跑 `scripts/top_movers_eval.py` | ✓ 3291 对 / 逐日 IC −0.4435 / t=−13.176 / MDE 0.0943 一致 |
+| 榜单×笔 join | 重跑 `scripts/top_movers_trade_join.py` | ✓ §9.1 表逐字一致；kr3 交集 10/11 一致 |
+| `futu_channel_iv_hv` 残存效应 | 重跑 `scripts/iv_hv_residual_eval.py` | ✓ 473 结算/317 join；medium +35.74 t=2.029 MDE 52.4；high +4.68 t=−0.026 ⇒ NO_RESIDUAL |
+| 守卫测试 | 定向 6 文件 | ✓ 58–59 passed（本 agent 实跑） |
+
+**两处偏差（均已确认不影响结论，但要写下来）**：
+
+1. **§4 的状态分布已过期**：文档写 `READY 12 / OBSERVING 12`；实测现在 `READY 15 / OBSERVING 9`
+   （KILLED 9 / GRADUATED 2 / SUPERSEDED 2）。原因 = 批次 2/3 给三项建了 `eval_script` 并把
+   `data_path` 改指 json 产物 ⇒ 计数锚恢复 ⇒ 三项重新迁回 READY（§8.6-2 已预告该副作用，但 §4 表未同步）。
+   **读 §4 必须配 §8.6-2 一起读**，否则会以为待裁面是 12。
+2. **"退役"≠"停采"**：§6 自述未动 cron 载体，实测确认 —— `p1_1_capital_flow` 注册表已 KILLED，
+   但其采集脚本 `scripts/futu_channel_shadow_collect.py` 仍由 `futu_channels.shadow_collect_enabled: true`
+   开启（该开关同时覆盖已 KILLED 的 derivative_unusual）。⇒ **39MB/日原料仍在按交易日增长**，
+   与"该裁不裁"的原始问题只解决了一半（裁决面已清，采集面未停）。停采需 `shadow_collect_enabled=false`
+   + 重启（属配置/治理动作，**待用户裁**，本批不动）。
+
+### 10.2 批次 4：把"触发人"补上（§8.6-2 的下一批）
+
+§8.6-2 记的缺口是"READY_TO_EVALUATE 仍是误名 ⇒ 周检会重复通知待裁"。本批**不动注册表状态机**
+（避免扩大变更面），改从**通知面**收敛：
+
+- 新增 `scripts/pending_adjudication_report.py`：把 READY 面蒸馏成三行白话 ——
+  ①**需要你决定**（人工分类 `NEEDS_USER`）②**判据已读完/自动续观** ③**等预注册窗口到期**；
+  外加 ④条目落终态时的"结论已出"段与"未收录的新条目不得被吞"路径。
+  输出仅在**待裁面签名变化**时产生（state `data/shadow/pending_adjudication_state.json`）；
+  无变化 = 零 stdout。
+- 新增 `ops/hermes/pending_adjudication_carrier.py`（Hermes no_agent 静默类契约：rc=0 空 stdout ⇒ 不推送；
+  rc≠0 先插载体级异常行再以同 rc 退出；超时 rc2 / 子脚本缺失 rc3；取证落 `logs/pending_adjudication.log`），
+  线上副本同 sha256，job `4378c93a89e6`，`15 9 * * 6`（周六 09:15 CST，紧随 09:05 周检），
+  已按 §6.1 入账 `docs/CONTROL-LOOP-LEDGER.md`。
+- 结论快照出处：本文件 §3/§5/§8/§9 的实测读数（本 agent 同日重跑复现 4 项，见 §10.1）。
+- 实测：首跑输出全量 ✓ / 二跑 rc=0 且 **0 字节**（静默）✓ / 子脚本缺失 rc=3 ✓；
+  `tests/test_pending_adjudication_report.py` 4 例钉住"静默契约 / 首跑全量 / 状态变化重抬 / `--dry` 不写 state"。
+- 零交易行为变更：只读注册表 + 读产物 json + 写一份被 gitignore 的 state；未动门/参数/cron 载体。
+
+**遗留（明写，避免被读成"已全清"）**：①停采 capital_flow 采集（§10.1-2，待裁）；
+②`adjudicated_at`/`recheck_after` 字段级修法仍未做 —— 本批只治"人眼"这一面，
+其他消费 `pending_adjudications()` 的读者仍会看到 15 项 READY。
