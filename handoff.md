@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 13:01 运维·重启 (裁决落地批生效)
+
+> `systemctl restart ftseek-us` 13:01:44 CST, MainPID 2238706 → **2242071** (磁盘 registry
+> 与内存态同步)。重启前核对未平仓=0；重启后观察 45s：active、NRestarts=0、
+> ERROR/CRITICAL/Traceback/Exception=0；冒烟 7/7 exit=0。main 分支已 ff 至 5bf2ca60a
+> 并 push origin（含本分支），回滚悬崖消除。仍 simulate，未下单。
+
 ## 2026-09-21 12:58 增量: 六项待裁用户批准落地 (用户令「按建议批准」) + ADR-043 补账
 
 > **① thinking-eval（更正上午报告）**: 该实验实际已于 **9/17 由用户裁结题**（crontab 注释：
