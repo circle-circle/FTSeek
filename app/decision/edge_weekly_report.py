@@ -178,7 +178,7 @@ def build_loop_health(days: int = 7) -> Dict[str, Any]:
       3. feedback : 反馈生效 (trade_records 本周 vs 上周 WR/PnL)
       4. mixed_neg_edge: 混合含负因子信号 edge (playbook_factor_stats pair 级, 供 Phase1)
     """
-    health: Dict[str, Any] = {"record": {}, "freshness": {}, "feedback": {}, "mixed_neg_edge": []}
+    health: Dict[str, Any] = {"record": {}, "freshness": {}, "feedback": {}, "mixed_neg_edge": [], "low_sample_factors": {}}
 
     # 1. 记录完整性
     try:
@@ -290,6 +290,28 @@ def build_loop_health(days: int = 7) -> Dict[str, Any]:
     except Exception as e:
         logger.debug(f"[EdgeWeekly] 混合负因子 edge 失败: {e}")
 
+    # 5. 因子台账低样本护栏 (2026-09-21 用户裁): n<30 的因子不得据 verdict 上调权重.
+    #    insider_cluster_buy 单因子 n=1 却 verdict=observing; insider_cluster_buy|pe_below_industry
+    #    n=5 却 verdict=positive —— 低样本 positive 会被误当"有效因子"调权, 此处显式暴露.
+    try:
+        conn = _ro_conn(_MAIN_DB)
+        rows = conn.execute(
+            "SELECT factor_key, analysis_level, total_trades, verdict "
+            "FROM playbook_factor_stats WHERE total_trades < 30 AND verdict <> 'negative' "
+            "ORDER BY total_trades DESC"
+        ).fetchall()
+        conn.close()
+        low = [{"factor": r[0], "level": r[1], "n": r[2] or 0, "verdict": r[3]} for r in rows]
+        health["low_sample_factors"] = {
+            "count": len(low),
+            "positives": [
+                f"{x['factor']}({x['level']},n={x['n']})"
+                for x in low if x["verdict"] == "positive"
+            ],
+        }
+    except Exception as e:
+        logger.debug(f"[EdgeWeekly] 低样本因子护栏失败: {e}")
+
     return health
 
 
@@ -349,6 +371,15 @@ def format_loop_health_text(h: Dict[str, Any]) -> str:
             lines.append(f"  {mark} {m.get('pair')}: WR{wr:.0%} avg_pnl${m.get('avg_pnl', 0):+.0f} "
                          f"(n={m.get('n')}, {m.get('verdict')})")
         lines.append("  → WR 跨度大: 一刀切降仓会误伤高 WR 组合; 仅净负者是 Phase1 降仓候选")
+
+    # 5. 因子台账低样本护栏
+    lsf = h.get("low_sample_factors") or {}
+    if lsf:
+        cnt = lsf.get("count", 0)
+        lines.append(f"• 因子台账低样本护栏: n<30 且非 negative 因子 {cnt} 个 → 禁止据此上调权重")
+        pos = lsf.get("positives") or []
+        if pos:
+            lines.append(f"  ⚠️ 低样本 positive (n<30 却判 positive, 上调权重须等 n≥30): {', '.join(pos)}")
 
     return "\n".join(lines)
 

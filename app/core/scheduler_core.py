@@ -172,6 +172,61 @@ def _warn_strength_key_divergence(cfg, effective_key: str, legacy_keys: tuple) -
         logger.debug(f"[config-diff] 强度键分歧检查失败(忽略): {e}")
 
 
+def _insider_push_dedup_path() -> Path:
+    """内部人集群推送事件去重账本路径 (走统一 data 目录, 不依赖 CWD)."""
+    try:
+        from app.core.paths import get_data_dir
+        return Path(str(get_data_dir())) / "insider_push_dedup.json"
+    except Exception:
+        return Path("data") / "insider_push_dedup.json"
+
+
+def _insider_push_seen(key: str, path: Optional[Path] = None) -> bool:
+    """该集群事件是否已推送过 (只读).
+
+    键 = "<symbol>:<first_buy_date>:<latest_buy_date>" — 与 pure/insider.py 的
+    cluster 指纹同形; 同一集群在 30 天窗口内跨日只推一次 (2026-09-21 用户裁:
+    原实现只有"当日已扫"哨兵, 无跨日去重 ⇒ 同一事件每天盘前重复推送).
+    """
+    import json as _json
+    p = path or _insider_push_dedup_path()
+    try:
+        if not p.exists():
+            return False
+        seen = _json.loads(p.read_text(encoding="utf-8")) or {}
+        return isinstance(seen, dict) and key in seen
+    except Exception:
+        return False
+
+
+def _insider_push_mark(key: str, date_str: str, path: Optional[Path] = None) -> None:
+    """记录该集群事件已推送 (原子写; 顺带清理 >120 天旧键防无限增长)."""
+    import json as _json
+    p = path or _insider_push_dedup_path()
+    try:
+        seen = {}
+        if p.exists():
+            seen = _json.loads(p.read_text(encoding="utf-8")) or {}
+            if not isinstance(seen, dict):
+                seen = {}
+    except Exception:
+        seen = {}
+    try:
+        _cut = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
+        seen = {k: v for k, v in seen.items() if isinstance(v, str) and v >= _cut}
+    except Exception:
+        pass
+    seen[key] = date_str
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.parent / (p.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(seen, f, ensure_ascii=False)
+        os.replace(tmp, p)
+    except Exception:
+        pass
+
+
 class TradingScheduler:
     """
     交易调度器主类
@@ -2936,18 +2991,42 @@ class TradingScheduler:
 
                 if clusters:
                     logger.info(f"[InsiderScan] 🟢 发现 {len(clusters)} 个集群买入信号!")
+                    _scan_date = _now_scan.strftime("%Y-%m-%d")
                     for c in clusters:
+                        # 事件年龄 (便于区分新事件 vs 陈旧集群; 原正文只有 days_span=集群跨度,
+                        #   易被误读为"距今 Nd"). 2026-09-21 用户裁.
+                        try:
+                            _age_days = (
+                                _now_scan.date()
+                                - datetime.strptime(c.latest_buy_date, "%Y-%m-%d").date()
+                            ).days
+                        except Exception:
+                            _age_days = None
+                        _age_txt = (
+                            f"最近买入 {c.latest_buy_date} ({_age_days}天前)"
+                            if _age_days is not None else f"最近买入 {c.latest_buy_date}"
+                        )
                         msg = (
                             f"🟢 内部人集群买入: {c.symbol}\n"
                             f"   {c.rationale}\n"
-                            f"   Score: {c.score:.2f}"
+                            f"   Score: {c.score:.2f} | {_age_txt}"
                         )
                         logger.info(f"[InsiderScan] {msg}")
+                        # 事件级去重 (跨日持久化): 同一集群只推一次, 防 30 天窗口内每天重推.
+                        _evt_key = f"{c.symbol}:{c.first_buy_date}:{c.latest_buy_date}"
+                        if _insider_push_seen(_evt_key):
+                            logger.info(
+                                f"[InsiderScan] {c.symbol} 同一集群事件已推送, 跳过 (键 {_evt_key})"
+                            )
+                            continue
                         if self.notifier:
                             try:
                                 self.notifier.send_text(msg)
+                                _insider_push_mark(_evt_key, _scan_date)
                             except Exception as _e:
-                                logger.debug(f"[InsiderScan] 通知失败: {_e}")
+                                logger.debug(f"[InsiderScan] 通知失败(下次续推): {_e}")
+                        else:
+                            _insider_push_mark(_evt_key, _scan_date)
                 else:
                     logger.info(f"[InsiderScan] 扫描完成, 未发现集群买入信号")
 
