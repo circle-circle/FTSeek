@@ -207,7 +207,7 @@ class USPositionSync:
                 "strategy_id": "playbook_live" if broker_env == "real" else "playbook_sim",
                 "market_regime": "RANGE",
                 "mode": "normal",
-                "trade_mode": "live" if broker_env == "real" else "sim",
+                "trade_mode": "live" if broker_env == "real" else "simulate",
                 "signal_id": trace_id,
                 "metadata_json": json.dumps({
                     "stop_loss": sl,

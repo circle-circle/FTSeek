@@ -223,6 +223,79 @@ class TestAccountDiscoveryAmbiguity:
 
 
 # ----------------------------------------------------------------------
+# 4. REAL HKD 会计转换 overlay 契约 (2026-09-21 全链路复查 P0-1 回归防护)
+# ----------------------------------------------------------------------
+
+class _FakeAccinfoCtx:
+    def __init__(self, row):
+        self._row = row
+
+    def accinfo_query(self, **kwargs):
+        return 0, pd.DataFrame([self._row])
+
+
+class TestRealHkdAccountingOverlay:
+    """get_account_info() REAL HKD 转换后必须完整 overlay 共享转换器输出.
+
+    P0-1 本体: 旧实现 `if key in result or key.startswith("_")` 会把
+    long_mv/short_mv/fx/raw_currency/maintenance_margin/max_power_short/
+    margin_call_margin/interest_charged_amount 静默丢弃。
+    合成行: total=100000 HKD, hkd_assets=22000, usd_assets=10000
+    → fx = 10000/(100000-22000) = 0.1282051…
+    """
+
+    _HKD_ROW = {
+        "currency": "HKD",
+        "total_assets": 100000.0,
+        "hkd_assets": 22000.0,
+        "usd_assets": 10000.0,
+        "cash": 7800.0,
+        "us_cash": 5000.0,          # 与折算值 1000.0 不一致 → 弃用
+        "market_val": 50000.0,
+        "long_mv": 60000.0,
+        "short_mv": -10000.0,
+        "power": 20000.0,
+        "usd_net_cash_power": 0.0,
+        "avl_withdrawal_cash": 15000.0,
+        "us_avl_withdrawal_cash": 0.0,
+        "max_power_short": 8000.0,
+        "margin_call_margin": 0.0,
+        "interest_charged_amount": 78.0,
+        "maintain_margin": 5000.0,
+        "debt": 2000.0,
+    }
+
+    def _info(self, row=None):
+        adapter = _connected_adapter(trade_env=0, account_id="28170000")
+        adapter.trade_ctx = _FakeAccinfoCtx(row or self._HKD_ROW)
+        return adapter.get_account_info()
+
+    def test_overlay_exposes_full_converted_contract(self):
+        result = self._info()
+        assert result["currency"] == "USD"
+        assert result["raw_currency"] == "HKD"
+        assert result["account_scope"] == "global"
+        assert abs(result["fx"] - 10000.0 / 78000.0) < 1e-9
+        assert result["total_assets"] == 12820.51
+        assert result["cash"] == 1000.0
+        assert "弃用" in result["_cash_source"]
+        # P0-1 本体: 曾被条件 overlay 静默丢弃的字段
+        assert result["long_mv"] == 7692.31
+        assert result["short_mv"] == 1282.05
+        assert result["max_power_short"] == 1025.64
+        assert result["interest_charged_amount"] == 10.0
+        assert result["maintenance_margin"] == 641.03
+        assert result["market_val"] == 6410.26
+        assert result["debt"] == 256.41
+        assert result["buying_power"] == 2564.1
+
+    def test_unknown_currency_without_rate_fails_close(self):
+        # SGD 无派生路径 (sgd_assets 缺失) 且无固定汇率兜底 → ValueError → {}
+        result = self._info(dict(self._HKD_ROW, currency="SGD"))
+        assert result == {}
+
+
+# ----------------------------------------------------------------------
 # 原有测试 (保留)
 # ----------------------------------------------------------------------
 

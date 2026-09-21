@@ -449,7 +449,13 @@ class DualBrokerAdapter:
             with lock:
                 ret, data = ctx.position_list_query(trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0)
             if ret == 0 and not data.empty:
-                return data.to_dict("records")
+                # 2026-09-21 全链路复查修复 (P0-2): 与 broker_adapter.get_positions()
+                # 同口径 — REAL 综合账户可能返回港股等跨市场持仓, 按 code 前缀隔离美股行。
+                # 消费方 (playbook 按 US.XXX 精确匹配) 在 SIM 下行为零变化。
+                return [
+                    r for r in data.to_dict("records")
+                    if str(r.get("code", "")).startswith("US.")
+                ]
             return []
         except Exception as e:
             logger.warning(f"[DualBroker] get_positions {target_env} 失败: {e}")

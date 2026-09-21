@@ -2059,6 +2059,14 @@ service:
     enabled: true
     secret: ${FEISHU_APP_SECRET}
     webhook_url: ${FEISHU_WEBHOOK_URL_US}
+signal_fusion:
+  # 2026-09-21 全链路复查修复 (P1-3): 显式登记三个融合权重键 — 此前 YAML 缺键,
+  # 每次启动 config_audit 告警并回退代码默认值 (config_defaults.py FUSION_*)。
+  # 登记值与当前生效兜底值完全一致 (0.5/0.2/0.3), 零行为变更; 未来调权改这里。
+  us:
+    technical_weight: 0.5
+    sentiment_weight: 0.2
+    macro_weight: 0.3
 signal_quality:
   confluence_bonus:
     '0': -0.1

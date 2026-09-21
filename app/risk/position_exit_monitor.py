@@ -178,10 +178,10 @@ def is_us_market_open() -> bool:
     现在统一调用 holiday_calendar，与 scheduler_triggers 保持一致。
     """
     try:
-        if ET:
-            now_et = datetime.now(ET)
-        else:
-            now_et = datetime.now()
+        # 2026-09-21 全链路复查修复 (P1): 原 ET=None fallback 用服务器 CST 墙钟,
+        # 09:30-16:00 ET 窗口判断会整体错位 (时区病灶)。统一走 app.utils.timezone
+        # 的 now_et() (pytz/zoneinfo/fixed-offset 三级 fallback), 不再裸 datetime.now()。
+        now_et = _now_et()
         if now_et.weekday() >= 5:
             return False
         # 节假日检查 — 统一入口

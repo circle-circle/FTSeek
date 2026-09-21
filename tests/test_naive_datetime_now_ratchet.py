@@ -145,7 +145,13 @@ import sys
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-BASELINE_NOW = 445     # 2026-09-05 §十三 精度批: 446 → 445 — 只降不升。本阶 −1:
+BASELINE_NOW = 435     # 2026-09-21 全链路复查: 445 → 435 (实测) — 本批 −2:
+                       #   position_monitor manual_order_audit 日期查询 fallback (原裸 CST
+                       #   墙钟, ET 盘中 12:00 后日期错位一天) 改 zoneinfo ET→UTC 降级;
+                       #   position_exit_monitor.is_us_market_open 的 ET=None fallback
+                       #   (原裸 CST 墙钟, 09:30-16:00 窗口判断整体错位) 改走 now_et()。
+                       #   其余 −8 为 2026-09-05 钉基线后各批已清剿但未收紧的存量, 本次一并钉死。
+                       # 2026-09-05 §十三 精度批: 446 → 445 — 只降不升。本阶 −1:
                        #   `position_intelligence._calc_hold_days` 的裸 now 被 `now_et()` 取代
                        #   (该处正是缺陷1 的 +12h 偏置源头: 截断偏移后的 naive ET 墙钟与
                        #   naive CST 墙钟相减)。同批新增的 2 处 docstring 提及按头注边界①

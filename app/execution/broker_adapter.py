@@ -979,9 +979,12 @@ class FutuBrokerAdapter:
                         logger.error(f"[富途] 账户币种转换失败: {e}")
                         return {}
 
-                    for key, value in converted.items():
-                        if key in result or key.startswith("_"):
-                            result[key] = value
+                    # 2026-09-21 全链路复查修复 (P0-1): 原 `key in result` 条件会把
+                    # 转换器输出中 result 未预声明的字段 (long_mv/short_mv/fx/
+                    # raw_currency/maintenance_margin/max_power_short/margin_call_margin/
+                    # interest_charged_amount) 静默丢弃, REAL HKD 下违反共享转换器契约。
+                    # 改为全量覆盖: 新增键对既有消费方纯增量, SIM 不进本分支零影响。
+                    result.update(converted)
 
                     logger.info(
                         f"[富途] 币种转换 {acct_currency}→USD "

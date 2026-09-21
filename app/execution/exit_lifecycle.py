@@ -417,7 +417,13 @@ class ExitLifecycle:
             ret, positions = ctx.position_list_query(**scope)
         if ret != 0 or positions is None:
             raise ValueError('exit_position_evidence_pending')
-        matches = [r for r in positions.to_dict('records') if r.get('code') == intent['symbol']]
+        # 2026-09-21 全链路复查加固 (P1-4): 美股退出意图不得匹配综合账户下的跨市场行
+        # (若 intent.symbol 被污染为非 US. 前缀, 宁可 ownership_conflict 拒退也不误碰他市场仓位)。
+        matches = [
+            r for r in positions.to_dict('records')
+            if r.get('code') == intent['symbol']
+            and str(r.get('code', '')).startswith('US.')
+        ]
         if len(matches) != 1:
             raise ValueError('exit_position_ownership_conflict')
         row = matches[0]

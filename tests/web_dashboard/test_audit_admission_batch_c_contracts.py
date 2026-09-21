@@ -44,7 +44,12 @@ def _make_db(tmp_path):
             data_quality TEXT, created_at TEXT,
             futu_order_id TEXT, close_futu_order_id TEXT,
             signal_strength REAL, signal_id TEXT, signal_confidence REAL,
-            owner_strategy TEXT
+            owner_strategy TEXT,
+            -- 2026-09-21 全链路复查修复 (P1-1): 对齐生产 lazy-ALTER 清单
+            -- (trade_store.py "P0 2026-07-26 扫尾"), 否则 audit 写入路径报
+            -- "no column named config_version" 使本组测试存量失败。
+            config_version TEXT, entry_session TEXT, entry_vix REAL,
+            mae_pct REAL, mfe_pct REAL
         )
     """)
     conn.execute("CREATE TABLE open_positions (symbol TEXT, owner TEXT, updated_at TEXT)")

@@ -795,7 +795,14 @@ def _check_positions(scheduler):
                     from app.utils.timezone import now_et as _now_et_pm
                     _today = _now_et_pm().strftime("%Y-%m-%d")
                 except Exception:
-                    _today = datetime.now().strftime("%Y-%m-%d")
+                    # 2026-09-21 全链路复查修复 (P1): fallback 不再用服务器 CST 墙钟
+                    # (ET 盘中 12:00 后 CST 日期错位一天); 降级 zoneinfo ET → UTC。
+                    try:
+                        from zoneinfo import ZoneInfo
+                        _today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                    except Exception:
+                        from datetime import timezone as _tz_utc
+                        _today = datetime.now(_tz_utc.utc).strftime("%Y-%m-%d")
                 _manual_cnt = _conn.execute(
                     "SELECT COUNT(*) FROM manual_order_audit WHERE symbol=? AND timestamp LIKE ?",
                     (_sym, f"{_today}%")

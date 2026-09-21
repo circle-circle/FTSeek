@@ -1,5 +1,54 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-21 12:16 增量: 盘前全链路复查批 (用户令「复查整个链路…盘前解决明显异常/bug/冲突」)
+
+> **补入库**: 10:43/11:38 两批会计修复此前已部署未提交，本会话复核 diff + 复跑 209 例后
+> 提交为 `483f7375f`（消除"已上线代码无版本溯源"风险）。
+>
+> **审计方式**: 4 个只读 agent 并行（执行/风控、DA/UE 盘前链路+时钟、服务/运维/DB、
+> 记录/待裁一致性），全程未触 OpenD 槽位。结论：**无阻断周一盘前的 P0**；发现并修复
+> 下列"REAL 就绪缺口 + 存量病灶"（SIM 行为零变化）:
+> 1. **P0-1** `broker_adapter.get_account_info()` overlay 条件 `key in result` 静默丢弃转换器
+>    输出的 long_mv/short_mv/fx/raw_currency/maintenance_margin/max_power_short/
+>    margin_call_margin/interest_charged_amount → 改 `result.update(converted)` 全量覆盖。
+> 2. **P0-2** `dual_broker.get_positions()` 缺 "US." 前缀过滤（此前靠消费方精确匹配巧合安全）
+>    → 与 broker_adapter 同口径补齐。
+> 3. **P1-4** `exit_lifecycle.preflight()` 加跨市场守卫：intent.symbol 被污染为非 US. 时
+>    宁拒退（ownership_conflict）不误碰他市场仓位。
+> 4. **P1** 两处裸 `datetime.now()` fallback 翻 ET：`position_exit_monitor.is_us_market_open`
+>    （ET=None 时原用 CST 墙钟判 09:30-16:00 窗口）、`position_monitor` manual_order_audit
+>    日期查询（原 CST 日期在 ET 盘中 12:00 后错位一天）→ zoneinfo/now_et 降级链。
+>    棘轮基线 445→435（本批 −2 + 历史未收紧 −8，tests/test_naive_datetime_now_ratchet.py）。
+> 5. **P1** `position_sync.py:210` trade_mode 写 `'sim'` 与全域 `'simulate'`（DEFAULT/主
+>    pipeline/手动路径）不一致 → 改正；存量 8 行 UPDATE 归一（875 行全 simulate；先备份
+>    `data/backups/manual/ftseek_us_pre_trademode_fix_20260921_121215.db`；live DB 未污染）。
+> 6. **P1** `unified_config.yaml` 补 `signal_fusion.us` 三权重键（值=代码兜底 0.5/0.2/0.3，
+>    零行为变更；重启后启动告警消失已实证）。
+> 7. **P1** 测试 audit schema 补 lazy-ALTER 列（config_version 等）— 消除存量失败 1 例。
+> 新增回归防护：HKD overlay 契约 2 例 + dual_broker 隔离 4 例 + preflight 守卫 2 例。
+>
+> **验证**: tests/execution+risk+accinfo+web_dashboard **555 passed / 0 failed**（含原存量
+> 失败例）；ratchet 组 87+11 passed；pyflakes 无新增（3 告警均为 HEAD 存量）。
+> **治理**: 本批按军规走 `[hotfix]` 标签（盘前紧急修复，用户令授权）；**ADR 事后补**——
+> 待裁清单 ⑥ 合并 main 时一并补 ADR 归档（含 483f7375f 会计收口批）。
+> **上线观察**: 12:13:13 CST `systemctl restart ftseek-us`，MainPID=2238706；启动日志
+> ConfigValidator 全过、SSOT 审计无漂移、模式一致 broker=sim db=sim；冒烟 7/7 exit=0；
+> 重启后 60s+ ERROR/CRITICAL/Traceback=0、NRestarts=0；`live_switch_audit.py --assert-ready`
+> exit=0（仍 simulate，未切实盘、未下单）。
+>
+> **待用户裁决（均 fail-open 不阻塞交易）**: ① premarket_invalidation 相位口径（立即待裁，
+> 产物全落 09:35-09:47 盘中而判据登记的是盘前口径 — 证据答非所问）；② futu_channel_top_movers
+> （立即待裁，但 B13 规定 9/30 前禁改）；③ **9/22 09:30 CST thinking-eval A/B 读数裁决**
+> （hermes cron 1e96c03c945e 提醒；裁决前勿动 UE 生产思考开关）；④ RFC-088 P5 是否启动；
+> ⑤ DA temp0 已授权但逾期 4 天未落地 — 建议 9/22 裁决后作为独立窗口落地（避免混窗）；
+> ⑥ main 分支落后本分支 514 commits（生产跑本分支；建议择期合并回 main 消除回滚悬崖）。
+>
+> **P2 记录（不修）**: decisions.db 停写于 7/12（消费方均有兜底，需确认投票系统是否设计下线）；
+> `candidate_eligibility.py:260` screening 元数据硬编码 `trade_mode:"sim"`（切实盘后标签失真，
+> JSON 元数据不影响交易）；`.env.us` FUTU_TRADE_ENV=1 废弃键可删；config-diff 死键
+> strategies.defaults.min_strength / scheduler.min_signal_strength 应清理；REAL 切实盘前需
+> 实证 Futu `pl_val`（持仓浮盈亏）币种口径为 USD（pre_trade_gate 日回撤依赖，SIM 不受影响）。
+
 ## 2026-09-21 11:38 增量: REAL 综合账户跨市场隔离 (用户令「按照建议处理」)
 
 > **修复范围**: REAL 综合账户可能同时返回美股/港股持仓，不能依赖 `filter_trdmarket=TrdMarket.US`
