@@ -316,9 +316,13 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
 3. **点破误导点**: 「待裁决 N」必须写明 "样本攒够 ≠ 判据通过" 并给最久等待日期 —
    否则读者会把它读成"判据已过"或"系统卡住"。
 
-实现面: 日环载体 (`e86cd69ed2be`) 转交 `review_bundle.py --print-push` 的白话判决书 (**日推**, 用户令);
-回滚 `REVIEW_BUNDLE_QUIET=1` 回严格静默。**代价已知**: 与 04:07 盘后综合复盘头条同源, 存在重复 —— 用户明示要推。
+实现面与**落点 (2026-09-22 当日改裁, 以此为准)**: 用户令「**如果有推送的机制就不重复推了**」⇒ **不新增推送**;
+白话注释挂到**既有** 04:07 盘后综合复盘的 prompt (`Step 12`: 原样粘贴 `review_bundle.py --print-push` 的 stdout),
+新增的 06:35 判决书日推已撤、载体回默认不推。理由: 04:07 那条本就给当日口径数字, 同源日推 = 重复。
+⚠️ 改写既有 job 的长 prompt 用 `hermes cron edit <id> --prompt "$(cat <文件>)"` —— 文件由**原 prompt 追加**生成,
+禁止手打重录 (7850 字手打必漂移); 改后回读 `jobs.json` 比对前缀未变 + 长度净增。
 子脚本出口纪律: `--print-push` 时 stdout **只有**推送文本 (JSON 摘要禁混入, 否则污染投递)。
+判据 (外部可验): ① `jobs.json` 中该 job 的 prompt 尾部含 `Step 12`; ② 该命令 stdout 与本机同款渲染一致; ③ 载体 `e86cd69ed2be` 仍 rc0 零字节。
 
 ### 14.5 RFC-088 P5 载体补齐 (判决书证据面)
 
