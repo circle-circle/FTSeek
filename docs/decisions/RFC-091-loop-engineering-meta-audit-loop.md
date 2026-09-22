@@ -315,4 +315,6 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
 - **周环已挂** (2026-09-22 同日): job `1264a1421f20` `45 6 * * 6`, 载体 `ops/hermes/review_coverage_carrier.py`。
   该扫描 stdout 是整块 JSON ⇒ 取"签名变化才出声" (与 `4378c93a89e6` 同形), 另加 rc4 = "rc0 但零产物/摘要不可解析"。
   实测: 首跑出声 3 行 / 二跑 0 字节 / rc3 / rc4 / 真调度实弹 (rc=0 dur=12.4s, delivery suppressed)。
+- **W7 分叉溯源已定论 + 抓包载体落地** (2026-09-22): ctx 侧 `change_percent` = 前一交易日涨跌幅 (3 样本 ≤0.003pp, 与交易所日K对表);
+  取数面三选一未定 ⇒ 限时只读 job `8a989cf4501d` (`33 21 * * 1-5`, 盘前窗, 只抓 2 只) 判定, 裁决落地即删。证据档 `data/audit/w7_denominator_probe.jsonl`。
 - **月环不是载体缺口, 是本体未实现**: `review_bundle.py --period month` 直接 `error: … arrive with P5` ⇒ 只能在 "单开一批实现月度双窗口+判据总账" 与 "把 §7/§16 该行标注未实现" 之间选。台账已加显式注释行防误读。

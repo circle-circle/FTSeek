@@ -133,8 +133,11 @@ finally:
 EOF
 # ③ ctx 隐含"它用的昨收" = pm 价/(1+cp/100); 与日K比一眼见真章
 # ④ 若要走 append 基线: 先落档再改 data/chg_denominator_baseline.json 的 divergent + refs (改基线=改判据)
-# ⑤ 盘前抓包 (定死三选一): 09:33 ET 对 1-2 只标的一次 snapshot, 记录 last_price/prev_close_price/pre_price/update_time
-#    + 路由器产出的 change_percent ⇒ 与"前一日涨跌幅"对表即判死; 只抓 1-2 只以避开交易环路 snapshot 预算
+# ⑤ 盘前抓包 (定死三选一) — **已落地为限时 job `8a989cf4501d`** (`33 21 * * 1-5` = 09:33 ET 盘前/开盘窗)
+python3 /root/.hermes/scripts/w7_denominator_probe.py   # 壳体 → scripts/w7_denominator_probe.py (只读)
+#   抓 RIVN/NOK 的 last_price/prev_close_price/pre_price/update_time + 日K对表; 诊断档 data/audit/w7_denominator_probe.jsonl
+#   首跑 (2026-09-22 11:28 CST, 盘后): 2 只均"未命中" ⇒ 快照字段本身与交易所一致 (盘后窗口无法区分, 需盘前那次)
+#   ⚠️ 冬令时 (11 月起) 同一 crontab 时刻右移 1h ⇒ 变成 08:33 EST, 仍在盘前窗, 但列入 11 月重评
 ```
 
 ## 7. 四个选项与预注册判据
