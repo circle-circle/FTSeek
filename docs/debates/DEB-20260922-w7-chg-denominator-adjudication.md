@@ -61,18 +61,37 @@
 1. **符号都翻了** (pmi 正 / ctx 负) ⇒ 不是舍入、不是窗宽、不是日内漂移能解释的;
 2. `US.RUM 09-14` 同一标的同一天, ctx 侧**同时存在 −2.65 与 +16.46 两种读数** ⇒ ctx 侧读数本身在日内不自洽。
 
-## 4. 溯源 (哪一方的分母可疑)
+## 4. 溯源（**已实证: 错在 ctx 侧, 它报的是"前一交易日的涨跌幅"**）
 
-把 ctx 侧读数反推"它用的昨收" = `premarket_price / (1 + cp/100)`, 与 pmi 历史序列比:
+先用交易所日K（Futu `request_history_kline` K_DAY/autype=NONE, 只读）做地面真值:
 
-| 键 | ctx 隐含昨收 | pmi 历史 prev_close | 命中 |
+| 键 | pmi `prev_close` | 交易所前一日收盘 (日K) | 一致? |
 |---|---|---|---|
-| `09-21 RIVN` | **16.08** | 08-27 16.33 / 09-01 16.06 / **09-10 16.005** / 09-16 15.54 / 09-21 14.99 | 落在**一周前**的簇里 (09-10 16.005) |
-| `09-15 NOK` | **11.46** | 09-14 11.13 / 09-15 9.65 | ≈ **前一日 (09-14) 的 prev_close** |
-| `09-14 RUM` | 8.65 | 仅 09-14 7.17 | 无命中 (疑似另一口径) |
+| `09-21 RIVN` | 14.99 | 9/18 收盘 **14.99** | ✓ |
+| `09-15 NOK` | 9.65 | 9/14 收盘 **9.65** | ✓ |
+| `09-14 RUM` | 7.17 | 9/11 收盘 **7.17** | ✓ |
 
-⇒ 与 `DEB-20260911 C6` 立档的机制**同族**: "push 缓存昨收跨日不更新" (当时实测 pmi −7.65% vs ctx +4.07%, 7 秒内差 11.72pp, `change_percent` 全日冻结)。
-**这是推断, 不是定论** — §6 给了能一次判死的复现命令。
+⇒ **pmi 侧分母与交易所一致, 错的是 ctx 侧。** 再把 ctx 读数与"前一交易日的涨跌幅"比:
+
+| 键 | 前一交易日涨跌幅 (日K算) | ctx 实报 | 差 |
+|---|---|---|---|
+| `09-21 RIVN` | (14.99−15.40)/15.40 = **−2.66%** | −2.66 | **0.002pp** |
+| `09-15 NOK` | (9.65−11.13)/11.13 = **−13.30%** | −13.30 | **0.003pp** |
+| `09-14 RUM` | (7.17−7.365)/7.365 = **−2.65%** | −2.65 | **0.002pp** |
+
+三个独立样本全部精确吻合（差 ≤0.003pp）⇒ **ctx 侧的 `change_percent` 是"滞后一日的读法": 它拿到的 (price, prev_close) 是 (前一日收盘, 前前一日收盘) 这一对**，不是当日的。这解释了 §3 的全部现象: 符号翻转 (当日 +4.4% vs 前一日 −2.66%)、同日 ctx 自相矛盾 (−2.66 与 +16.46 并存: 一个是陈旧对、一个是当日对)。
+
+**取数嫌疑面（三选一, 需盘前一次抓包定死）** — `ctx.change_percent` 由 `market_data_router.py:432` / `:723` 直接抄 `futu_quote["change_percent"]`, 该值在 `app/data/futu_lv3_provider.py` 内产生:
+
+| 面 | 位置 | 机制假设 |
+|---|---|---|
+| push 通道 | `:951-962` + 缓存写入 `:561` (`price=row["last_price"]`, `prev_close=row["prev_close_price"]`) | push 行里的这两个字段本身就滞后一个会话 (盘前 `last_price` 未更新 + `prev_close_price` 已是前收) |
+| 快照通道 | `:986-998` (`prev_close=row.get("prev_close_price", last_price)`) | 盘前快照的 `last_price`/`prev_close_price` 成对滞后 |
+| 路由器缓存 | `:432/:723` 抄值 | 抄到的是一份跨会话未失效的旧 quote |
+
+**未定的就是"哪一个"**: 三个面都会产出同样的数字对, 需在**盘前 09:33 ET (21:33 CST) 对 1-2 个标的抓一次原始快照**, 记录 `last_price / prev_close_price / pre_price / update_time` 与路由器最终给出的 `change_percent`, 即可一次判死 (成本: 1 次 snapshot 调用, 只读; 须避开交易环路的 snapshot 预算 ⇒ 只抓 1-2 只)。
+
+**机制层面的既有先例**仍未变: `DEB-20260911 C6` 立档的 "push 缓存昨收跨日不更新" (当时实测 pmi −7.65% vs ctx +4.07%, 7 秒内差 11.72pp, `change_percent` 全日冻结) 与本文同族; 区别是本文给出了 **ctx 值 = 前一日涨跌幅** 的定量身份, 把"缓存脏了"从形容词变成了等式。
 
 ## 5. 影响面 (谁在读这个字段)
 
@@ -100,16 +119,29 @@ info = dic._check_chg_denominator(lambda *a: calls.append(a))
 print({k: v for k, v in info.items() if k != "divergent"})
 for a in calls: print(a[2], "|", a[3][:110])
 EOF
-# ② 溯源: ctx 隐含昨收 vs pmi 历史 prev_close (按 §4 的表)
-grep -o '"symbol": "US.RIVN"[^}]*' data/premarket_invalidation_shadow.jsonl | tail -6
-# ③ 若要走 append 基线: 先落档再改 data/chg_denominator_baseline.json 的 divergent + refs (改基线=改判据)
+# ② 地面真值: 交易所日K (只读; 直接判 pmi 的 prev_close 对不对)
+venv/bin/python - <<'EOF'
+from futu import OpenQuoteContext, KLType, AuType, RET_OK
+q = OpenQuoteContext(host="127.0.0.1", port=11111)
+try:
+    for code in ("US.RIVN", "US.NOK", "US.RUM"):
+        ret, d, _ = q.request_history_kline(code=code, ktype=KLType.K_DAY, autype=AuType.NONE,
+                                           start="2026-09-04", end="2026-09-22", max_count=100)
+        print(code, [(r["time_key"][:10], r["close"]) for r in d.to_dict("records")][-6:] if ret == RET_OK else d)
+finally:
+    q.close()
+EOF
+# ③ ctx 隐含"它用的昨收" = pm 价/(1+cp/100); 与日K比一眼见真章
+# ④ 若要走 append 基线: 先落档再改 data/chg_denominator_baseline.json 的 divergent + refs (改基线=改判据)
+# ⑤ 盘前抓包 (定死三选一): 09:33 ET 对 1-2 只标的一次 snapshot, 记录 last_price/prev_close_price/pre_price/update_time
+#    + 路由器产出的 change_percent ⇒ 与"前一日涨跌幅"对表即判死; 只抓 1-2 只以避开交易环路 snapshot 预算
 ```
 
 ## 7. 四个选项与预注册判据
 
 | 选项 | 做什么 | 预注册判据 (怎么算达成) | 风险 |
 |---|---|---|---|
-| **A 先修分母** (维护批建议) | 定位 ctx 侧 `change_percent` 的昨收来源 (push 缓存 / quote `pre_price`) 并使其**同源或当日刷新**; 期间 38 键**不 append**, 保持可见 | 修后 `_check_chg_denominator` 的 `healed` 列出这 38 键, 或 `new=0` **连续 3 个交易日** | 改动触及取数路径 ⇒ 须按 `ADAPTATION-CONTROL-LAW` 走变更 (判据/口径类改动先落档) |
+| **A 先修分母** (维护批建议, **§4 已实证支持**) | 病灶已定量: ctx 的 `change_percent` 拿的是 (前一日收盘, 前前一日收盘) 对; 修点锁定 `futu_lv3_provider` 取数面 (push `:951-962` / 快照 `:986-998` / 路由器 `:432,:723`), 先 §6⑤ 抓包定死是哪一面, 再让当日读数必须来自当日会话。期间 38 键**不 append**, 保持可见 | ① 抓包定死单一面; ② 修后新样本 ctx 值 == 当日涨跌幅 (差 <0.1pp) **连续 3 个交易日**; ③ `_check_chg_denominator` 的 `healed` 列出这 38 键 或 `new=0` | 改动触及取数路径 ⇒ 按 `ADAPTATION-CONTROL-LAW` 走变更 (口径类改动先落档); 须验 fallback 路径 (snapshot 预算/限流) 不被新守卫打回 |
 | B append 基线 | 把 38 键写入 `chg_denominator_baseline.json` 的 `divergent` + `refs` 写裁决出处 ⇒ 静默 | 无 (落地即静默) | **会静默一条在跑的日频分叉**; 且 §3 已证 ctx 侧日内不自洽 ⇒ 现在 append 会把可疑读数合法化 |
 | C 收紧判据 | 只报 pp>5 或只报当日新增 | 需重新预注册阈值 + 双窗口验证 | 治噪声不治因; 分叉在 2-5pp 段同样可能是错分母 |
 | D 维持无行动 | 不动 | — | 每天一条 P1 (+ 盘中签名归并) 噪声, 且消费者读数继续不可信 |
@@ -118,8 +150,9 @@ grep -o '"symbol": "US.RIVN"[^}]*' data/premarket_invalidation_shadow.jsonl | ta
 
 ## 8. 局限 (明说)
 
-- 溯源是**反推** (由 cp 与 price 反算昨收), 未直接读到 push 缓存内部状态的实值; 判死需 §6 ③ 或直接读缓存实现。
-- `US.RUM 09-14` 的隐含昨收无历史命中 ⇒ 36 键里至少有个别键的成因可能与 RIVN/NOK 不同, 不宜一个修法套全部。
+- 溯源已从"反推"升级为**等式实证** (3 样本 ≤0.003pp, 且 pmi 侧与交易所日K逐一对齐); 但**"三个取数面里哪一个"仍未定**, 需 §6⑤ 盘前抓包。
+- 3 个样本都命中"前一日涨跌幅", 但 38 键里未逐键验证 ⇒ **不宜假设一个修法覆盖全部 38 键** (RUM 同日的 +16.46 读数就说明同日两种读法并存)。
+- 诊断面可加固 (等裁决): 不变量 W7 在报分叉时**附带分类** ("等于前一日涨跌幅" / "其他") ⇒ 下次同类问题不必再人工溯源 3 小时。这会改探测器输出文案 (不改阈值/不改键集), 属诊断增强, 仍提请一并裁决。
 - 本文只读: 未改任何判据/参数/基线; 未动 38 键在环里的状态。
 
 ## 9. 裁决记录
