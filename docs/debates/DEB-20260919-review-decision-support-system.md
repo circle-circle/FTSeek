@@ -348,7 +348,14 @@ EXT 量 300,000 / 财报超预期 +10.0% / SL $9.50)。生产链不可能产生�
 |---|---|---|
 | 每交易日 06:30 | `--date $(TZ=America/New_York date -d yesterday +\%F) --push --vault` | 日复盘（收盘后、既有 06:20 LLM 报告与 06:20+ 复盘链之后） |
 | 周六 06:45 | `scripts/review_coverage_scan.py` | 每周自审（死产出/未登记影子） |
-| 每月 1 日 07:00 | `--period month` | 月度双窗口对照 + 判据总账 |
+| 每月 1 日 07:00 | `--period month` | 月度双窗口对照 + 判据总账 — **⚠️ 2026-09-22 核查: 未实现** (CLI 实测 `error: P3 implements daily bundles only; weekly/monthly arrive with P5`, rc≠0) |
+
+> **2026-09-22 落地状态更正 (维护批核查回执)**: 本三行中 **日环** (`e86cd69ed2be`, `35 6 * * 2-6`) 与
+> **周环** (`1264a1421f20`, `45 6 * * 6`) 已于 2026-09-22 补齐 carrier 并四路实弹 (见 `CONTROL-LOOP-LEDGER.md` 对应两行);
+> **月环不是载体缺口而是本体未实现** (`scripts/review_bundle.py --period month` 直接 error, 与 §889-894 / §917 的
+> "week/month 留待 P5" 一致) ⇒ 该行属 **P5 欠账**, 不可按本表假设它在跑。
+> 另: §7 第 2 行的周环在补 carrier 时**追加了静默契约** (该扫描 stdout 是整块 JSON, 原样投递=刷屏; 取"签名变化才出声"),
+> 并核实其 `dead_producers` 语义是"**无代码引用**"而非"停更" (实测 19 条全为 0.1~2.3 天新鲜) — 载体文案已按此去歧义。
 
 ⚠️ 两个必须实测的点：①crontab 内 `%` 需转义为 `\%`；②命令替换 `$()` 在部分 cron 实现下不执行 ⇒ **上线后必须 `grep review_bundle logs/review_bundle.log` 验证真实产出**（不许假设生效）。
 
