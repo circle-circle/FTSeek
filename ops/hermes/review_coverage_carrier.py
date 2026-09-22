@@ -70,7 +70,7 @@ def _signature(summary: dict) -> tuple:
 def _render(summary: dict, sig: str, dead: list, unreg: list, prev: dict | None) -> list:
     lines = [f"[复盘覆盖扫描] {datetime.now():%Y-%m-%d} | 生产者 {summary.get('producer_count')} "
              f"| push-exit 产物 {summary.get('push_exit_file_count')} "
-             f"| 无代码引用(死产出) {len(dead)}" + (f" | 未登记影子 {len(unreg)}" if unreg else "")]
+             f"| 无代码引用 {len(dead)} (≠停更判定, 停更由 data_freshness_watchdog 判)" + (f" | 未登记影子 {len(unreg)}" if unreg else "")]
     if prev:
         old_dead = set(prev.get("dead") or [])
         old_unreg = set(prev.get("unreg") or [])
