@@ -312,4 +312,7 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
   job `e86cd69ed2be`, `35 6 * * 2-6`, 子脚本 `scripts/review_bundle.py --date <ET当日> --vault`。
 - 四路实弹各一次: rc0 **零字节** ✓ / 子脚本缺失 rc3 ✓ / 超时 rc2 ✓ / rc0 但零产物 rc4 ✓。
 - 一处**显式偏离 §7** (待裁): 默认不 `--push` (理由与开关见载体 docstring 与台账行)。
-- 仍缺口 (未做, 等裁): 周环 `review_coverage_scan.py` (周六) 与月环 `--period month` 未挂载体。
+- **周环已挂** (2026-09-22 同日): job `1264a1421f20` `45 6 * * 6`, 载体 `ops/hermes/review_coverage_carrier.py`。
+  该扫描 stdout 是整块 JSON ⇒ 取"签名变化才出声" (与 `4378c93a89e6` 同形), 另加 rc4 = "rc0 但零产物/摘要不可解析"。
+  实测: 首跑出声 3 行 / 二跑 0 字节 / rc3 / rc4 / 真调度实弹 (rc=0 dur=12.4s, delivery suppressed)。
+- **月环不是载体缺口, 是本体未实现**: `review_bundle.py --period month` 直接 `error: … arrive with P5` ⇒ 只能在 "单开一批实现月度双窗口+判据总账" 与 "把 §7/§16 该行标注未实现" 之间选。台账已加显式注释行防误读。

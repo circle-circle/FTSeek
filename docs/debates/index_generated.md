@@ -3,11 +3,11 @@
 > **本文件由 `scripts/build_debate_index.py` 生成** (2026-09-22), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **166** 个 DEB 文件。
+共 **167** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **20** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **21** 个近 14 天新文件未在 README 索引收录 (需补登):
 
 - `DEB-20260909-exit-params-multi-model-debate.md`
 - `DEB-20260909-sl-initial-rootcause-and-entry-gate.md`
@@ -29,6 +29,7 @@
 - `DEB-20260920-loop-engineering-landing.md`
 - `DEB-20260921-factor-weight-verdict-reconciliation.md`
 - `DEB-20260921-playbook-open-position-cap.md`
+- `DEB-20260922-w7-chg-denominator-adjudication.md`
 
 📦 历史归档 **129** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
@@ -329,6 +330,7 @@
 | [DEB-20260919-extended-hours-profit-lock-and-trail](DEB-20260919-extended-hours-profit-lock-and-trail.md) | 2026-09-19 | (未标注) | - | 508 |
 | [DEB-20260919-review-decision-support-system](DEB-20260919-review-decision-support-system.md) | 2026-09-19 | P0–P4.6 已落码入库**（§21–§28；P0–P4 于 `4c529f7f6`，P4.5/P4.6 于 `e656c4893`）· 4 轮独立复查完成（§17 / §19 / §26 / §29）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（头部由第 4 轮核… | 4 | 1237 |
 | [DEB-20260920-extended-hours-sim-direct-gates](DEB-20260920-extended-hours-sim-direct-gates.md) | 2026-09-20 | 已直接落地 SIM；独立复核第一轮意见已落地（§10 二轮加固 + §10.6 三轮核查补强 + §10.7 四批锚点修订 + §10.8/§10.9 互核回执，待下个交易日实盘验证） | - | 559 |
-| [DEB-20260920-loop-engineering-landing](DEB-20260920-loop-engineering-landing.md) | 2026-09-20 | 候选 B 已落地入库** (commit `7b1d2d550` / `1329832af` / `e4d438d6a` + 本轮按需源语义批) · 独立复查完成 (异模型, verdict=确认, defects=0, 见 RFC-091 §11) · **候选 A 未启动** (闸: 本环观察窗至 2026-10-… | - | 164 |
+| [DEB-20260920-loop-engineering-landing](DEB-20260920-loop-engineering-landing.md) | 2026-09-20 | 候选 B 已落地入库** (commit `7b1d2d550` / `1329832af` / `e4d438d6a` + 本轮按需源语义批) · 独立复查完成 (异模型, verdict=确认, defects=0, 见 RFC-091 §11) · **候选 A 未启动** (闸: 本环观察窗至 2026-10-… | - | 165 |
 | [DEB-20260921-factor-weight-verdict-reconciliation](DEB-20260921-factor-weight-verdict-reconciliation.md) | 2026-09-21 | 对账已实测 (本文件) · 只读告警已上线 (job `241c896213eb`) · **权重处置待裁 (本批一分未改) | - | 356 |
 | [DEB-20260921-playbook-open-position-cap](DEB-20260921-playbook-open-position-cap.md) | 2026-09-21 | (未标注) | - | 102 |
+| [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 129 |
