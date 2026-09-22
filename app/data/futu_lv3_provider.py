@@ -2285,6 +2285,13 @@ class FutuLV3Provider:
         logger.info(f"[FutuLV3] 开始退订 {len(symbols_list)} 只美股 (释放槽位)...")
         success = 0
         failed = 0
+        # 2026-09-22: 区分"良性拒退"与"真退订失败"。SDK 客户端侧会直接拒绝两类无意义的退订:
+        #   ① 未订阅过 <sym> 的 <type> ② <sym>的<type>订阅时间过短 (ORDER_BOOK 硬规则 ≥1min)。
+        #   两者都**不占 OpenD 槽位** (前者从未订阅, 后者由 OpenD 自行结束) = 不是故障,
+        #   却在聚合行里被计成 ERROR, 污染 ERROR 计数 (9/22 停机窗口实测: ORDER_BOOK+TICKER
+        #   报此两类, 而 QUOTE/K_1M 均退订成功)。故仅"真失败"才 ERROR, 否则 WARNING。
+        _benign_marks = ("未订阅过", "订阅时间过短")
+        benign_failed = 0
 
         for st_name in sub_types:
             sub_type = sub_type_map.get(st_name)
@@ -2296,6 +2303,8 @@ class FutuLV3Provider:
                     success += 1
                 else:
                     failed += 1
+                    if any(_m in str(msg) for _m in _benign_marks):
+                        benign_failed += 1
                     logger.warning(f"[FutuLV3] 退订 {st_name} 失败: {msg}")
             except Exception as e:
                 failed += 1
@@ -2319,11 +2328,17 @@ class FutuLV3Provider:
                 self._push_orderbook_cache.clear()
             logger.info(f"[FutuLV3] 退订完成: 成功={success}, 失败={failed} | 槽位已释放")
         else:
-            logger.error(
-                f"[FutuLV3] 退订部分失败: 成功={success}, 失败={failed} | "
-                f"保留 _subscribed_symbols 与 push 缓存供后续补退订, "
-                f"OpenD 侧槽位可能仍被占用 (需人工/重试)"
+            _real_failed = failed - benign_failed
+            _agg_msg = (
+                f"[FutuLV3] 退订部分失败: 成功={success}, 失败={failed}"
+                f"(其中良性拒退={benign_failed}, 真失败={_real_failed}) | "
+                f"保留 _subscribed_symbols 与 push 缓存供后续补退订"
             )
+            if _real_failed > 0:
+                logger.error(_agg_msg + ", OpenD 侧槽位可能仍被占用 (需人工/重试)")
+            else:
+                # 全部失败项都是 SDK 客户端侧拒退 (未订阅过/订阅过短) = 无槽位泄漏, 非故障
+                logger.warning(_agg_msg + ", 无槽位泄漏 (良性拒退, 无需人工介入)")
 
 
 # ── 全局单例 ──────────────────────────────────────────────────────

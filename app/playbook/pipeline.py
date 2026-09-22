@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -7937,6 +7938,87 @@ def _resume_playbook_exits(*, allow_submit):
     return closed, blocked, True
 
 
+# ── 退出链取价有界化 (2026-09-22 开盘 OpenD 行情瞬断实证) ────────────────────
+# 实证: ET 09:31:09 OpenD 行情连接瞬断 (全历史首次) → 退出快循环 09:30:53~09:32:54
+#   在取价链上**无上界阻塞 121s** (watchdog 120s 阈值告警 `playbook_exit_loop`),
+#   期间该仓 SL/TP 一轮未评。取价链 = Futu(push 缓存已被重连清空)→批量快照→
+#   Finnhub→TwelveData 逐个回落，每层都可能长时间阻塞在坏连接/HTTP 上；且批量
+#   miss 后逐仓还会再走一次单原取价 → 阻塞可叠加。
+# 修法: 取价一律在**有界线程**内执行 (超时即放弃本轮), 并用最近一次成功价兜底 →
+#   快循环心跳恒 ≤ interval (现役 10s), 连接故障期也不停摆; 取价成功即刷新兜底价。
+# 兜底价只"迟到"不"捏造": 旧价只在**已跌破线**时才可能触发退出, 不会凭空造出触发。
+# 回滚: 删除本块 + 把调用点还原为直接 data_router.get_batch_quotes/get_quote。
+_PB_EXIT_PRICE_CACHE: Dict[str, Any] = {}        # symbol -> 最近一次成功报价
+_PB_EXIT_PRICE_CACHE_TS: Dict[str, float] = {}   # symbol -> 该报价取到时刻
+_PB_EXIT_PRICE_CACHE_MAX_AGE = 120.0             # 兜底价可用上限 (秒); 超龄按无价
+_PB_EXIT_FETCH_TIMEOUT = 6.0                     # 批量取价上界 (秒)
+_PB_EXIT_FETCH_SINGLE_TIMEOUT = 2.0              # 逐仓回落上界 (秒)
+_PB_EXIT_FETCH_INFLIGHT: Dict[str, Any] = {}     # label -> 在途取价线程 (单飞, 防堆积)
+_PB_EXIT_FETCH_BOX: Dict[str, Dict[str, Any]] = {}  # label -> 在途线程的结果盒 (超时后收编)
+_PB_EXIT_STALE_ALERT_SEC = 30.0                  # 兜底价"可感陈旧"门槛 (仅告警用)
+
+
+def _pb_exit_price_cache_update(quotes: Dict[str, Any]) -> None:
+    """把本轮成功取到的报价并入兜底缓存 (仅接受有正价的 dict)。"""
+    now = time.time()
+    for sym, q in (quotes or {}).items():
+        if isinstance(q, dict) and (q.get("last") or q.get("price")):
+            _PB_EXIT_PRICE_CACHE[sym] = q
+            _PB_EXIT_PRICE_CACHE_TS[sym] = now
+
+
+def _pb_exit_price_cache_view(symbols: List[str]) -> Dict[str, Any]:
+    """取兜底缓存视图 (仅未超龄的标的; 超龄视为无价, 与"无价跳过"旧行为一致)。"""
+    now = time.time()
+    out: Dict[str, Any] = {}
+    for sym in symbols:
+        q = _PB_EXIT_PRICE_CACHE.get(sym)
+        if q and (now - _PB_EXIT_PRICE_CACHE_TS.get(sym, 0.0)) <= _PB_EXIT_PRICE_CACHE_MAX_AGE:
+            out[sym] = q
+    return out
+
+
+def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
+    """在有界时间内执行取价调用。
+
+    返回 (value, timed_out, error):
+      value     = fn() 的返回值; 超时/异常时为 None
+      timed_out = 超时仍在途 (线程被放弃, 由缓存兜底; 线程自行结束, 不再被等待)
+      error     = fn() 抛出的异常 (不静默: 由调用方决定日志级别)
+
+    单飞: 同名 label 的上一轮取价仍在途 → 本轮直接返回 (None, True, None),
+      不重复发起 — 防连接故障期每轮堆积一个阻塞线程; 若上一轮超时线程已结束,
+      先收编其结果入兜底缓存 (不白丢一次成功取价), 再发起本轮。
+    """
+    prev = _PB_EXIT_FETCH_INFLIGHT.get(label)
+    if prev is not None:
+        if prev.is_alive():
+            return None, True, None
+        _prev_r = (_PB_EXIT_FETCH_BOX.pop(label, None) or {}).get("r")
+        if isinstance(_prev_r, dict):
+            _pb_exit_price_cache_update(_prev_r)
+        _PB_EXIT_FETCH_INFLIGHT.pop(label, None)
+
+    box: Dict[str, Any] = {}
+
+    def _run():
+        try:
+            box["r"] = fn()
+        except Exception as _e:  # 取价失败 = 本轮无价, 交给缓存/告警路径
+            box["e"] = _e
+
+    th = threading.Thread(target=_run, name="PBExitFetch", daemon=True)
+    _PB_EXIT_FETCH_INFLIGHT[label] = th
+    _PB_EXIT_FETCH_BOX[label] = box
+    th.start()
+    th.join(timeout_s)
+    if th.is_alive():
+        return None, True, None   # 超时: 线程留作下一轮收编, 本轮不阻塞
+    _PB_EXIT_FETCH_INFLIGHT.pop(label, None)
+    _PB_EXIT_FETCH_BOX.pop(label, None)
+    return box.get("r"), False, box.get("e")
+
+
 def monitor_playbook_sim_exits(scheduler) -> int:
     """盘中监控 PLAYBOOK_SIM 真实模拟仓位的退出.
 
@@ -8003,13 +8085,38 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         #   (原单轮 ~48s, 20s 快循环节奏下会打爆 Finnhub 限额). 缺失标的循环内回落单原取价.
         #   回滚: 删除本块, 并把循环内 quote 来源改回 data_router.get_quote(symbol) 即可.
         _batch_quotes: dict = {}
+        _pb_syms = [r["symbol"] for r in rows]
         try:
-            _bq = data_router.get_batch_quotes([r["symbol"] for r in rows])
+            # 2026-09-22: 批量取价加**上界** (原直调 get_batch_quotes 在 OpenD 瞬断时
+            #   无上界阻塞 121s, 见模块上方 _pb_exit_* 说明)。超时/失败 → 兜底缓存。
+            _bq, _bq_to, _bq_err = _pb_exit_bounded_fetch(
+                "batch", lambda: data_router.get_batch_quotes(_pb_syms), _PB_EXIT_FETCH_TIMEOUT)
             if isinstance(_bq, dict):
-                _batch_quotes = _bq
-                logger.debug(f"[playbook dual] 批量取价: {len(_batch_quotes)}/{len(rows)} 命中")
+                _pb_exit_price_cache_update(_bq)
+                logger.debug(f"[playbook dual] 批量取价: {len(_bq)}/{len(rows)} 命中")
+            if _bq_err is not None:
+                logger.debug(f"[playbook dual] 批量取价失败, 本轮回落逐仓取价: {_bq_err}")
+            elif _bq_to:
+                logger.warning(
+                    f"[playbook dual] 批量取价超时 (>{_PB_EXIT_FETCH_TIMEOUT:.0f}s, 报价源/连接故障?) "
+                    f"→ 本轮用兜底价, 快循环不停摆"
+                )
         except Exception as _bq_e:
-            logger.debug(f"[playbook dual] 批量取价失败, 本轮回落逐仓取价: {_bq_e}")
+            logger.debug(f"[playbook dual] 批量取价异常, 本轮回落逐仓取价: {_bq_e}")
+        # 兜底: 并入最近一次成功价 (仅未超龄; 超龄按无价 = 旧行为)
+        _batch_quotes = _pb_exit_price_cache_view(_pb_syms)
+        _pb_oldest_age = 0.0
+        for _pb_s in _batch_quotes:
+            _pb_oldest_age = max(_pb_oldest_age, time.time() - _PB_EXIT_PRICE_CACHE_TS.get(_pb_s, 0.0))
+        if _pb_oldest_age > _PB_EXIT_STALE_ALERT_SEC:
+            if not getattr(monitor_playbook_sim_exits, "_pb_stale_alerted", False):
+                monitor_playbook_sim_exits._pb_stale_alerted = True
+                logger.warning(
+                    f"[playbook dual] 取价降级: 本轮用兜底价评估退出 (最旧 {_pb_oldest_age:.0f}s) "
+                    f"— 快循环不停摆, 报价恢复即自动切回实时"
+                )
+        else:
+            monitor_playbook_sim_exits._pb_stale_alerted = False
 
         # 市场时段 (ET) — 复用 scheduler_triggers.ET (pytz, 处理夏令时)
         now_et = datetime.now(_et)
@@ -8141,8 +8248,21 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 try:
                     quote = _batch_quotes.get(symbol)
                     if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
-                        quote = data_router.get_quote(symbol)
-                        _quote_src = "single_fallback"
+                        # 2026-09-22: 逐仓回落同样加界 (原 data_router.get_quote 直调无上界,
+                        #   与批量取价叠加 = 本次开盘 OpenD 瞬断时 121s 停摆的另一半)。
+                        #   超时 → 用兜底价; 两者都没有 → 走下方 R2 连续取价失败告警。
+                        _q1, _q1_to, _q1_err = _pb_exit_bounded_fetch(
+                            f"single:{symbol}", lambda _s=symbol: data_router.get_quote(_s),
+                            _PB_EXIT_FETCH_SINGLE_TIMEOUT)
+                        if isinstance(_q1, dict) and _q1:
+                            _pb_exit_price_cache_update({symbol: _q1})
+                            quote = _q1
+                            _quote_src = "single_fallback"
+                        else:
+                            quote = _pb_exit_price_cache_view([symbol]).get(symbol)
+                            _quote_src = "cached_fallback" if quote else ""
+                        if _q1_err is not None:
+                            logger.debug(f"[playbook sim] {symbol} 逐仓取价异常: {_q1_err}")
                     if quote and isinstance(quote, dict):
                         current_price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
                         if not _quote_src:
