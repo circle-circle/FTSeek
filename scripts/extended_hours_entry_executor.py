@@ -836,6 +836,7 @@ def _scan_movers(session, qctx):
             try:
                 out.append({
                     "symbol": sec,
+                    "name": str(r.get("name", "")),
                     "px": float(r.get(pk, 0) or 0),
                     "chg": float(r.get(ck, 0) or 0),
                     "vol": float(r.get(vk, 0) or 0),
@@ -928,7 +929,8 @@ def _snapshot_candidates(session, qctx, symbols):
                     px = float(r.get("after_price", 0) or 0) or float(r.get("last_price", 0) or 0)
                     vol = float(r.get("after_volume", 0) or 0)
                 chg = ((px / prev - 1) * 100) if (px > 0 and prev > 0) else 0.0
-                out.append({"symbol": sec, "px": px, "chg": chg, "vol": vol, "prev_close": prev})
+                out.append({"symbol": sec, "name": str(r.get("name", "")), "px": px,
+                            "chg": chg, "vol": vol, "prev_close": prev})
             except Exception:
                 continue
     return out
@@ -941,6 +943,7 @@ def _scan_candidates(session, qctx):
     """
     merged, tag_of = [], {}
     skipped_test = []
+    skipped_etf = []
 
     def _add(items, tag):
         for it in items:
@@ -953,6 +956,15 @@ def _scan_candidates(session, qctx):
             #   占位标的仍会走完四闸、占 attempt 键、进审计/推送路径。
             if is_test_symbol(sym):
                 skipped_test.append(sym)
+                continue
+            # 2026-09-22 (零成交归因): ETF 在"必须有当日同相位财报事件"的 earnings 门下是
+            #   **结构性死票** —— ETF 永远没有财报事件, 必然走完四闸后被 calendar_missing 拒。
+            #   实测当日异动榜 50 只里 6 只是 ETF (IMVP/GRAG/WRTH/ARGT/KSA/RKX), 每轮白白
+            #   占用 12% 候选位并把 dead-count 灌进 earnings 台账 (污染 coverage 归因)。
+            #   判据 = 榜单自带 name 字段含 "ETF" (futu 美股 ETF 命名惯例; 实测 6/6 命中,
+            #   同榜个股 0 误伤)。与 is_test_symbol 同级, 放在汇合口。
+            if "ETF" in str(it.get("name") or "").upper():
+                skipped_etf.append(sym)
                 continue
             tag_of[sym] = tag
             merged.append(it)
@@ -969,6 +981,9 @@ def _scan_candidates(session, qctx):
         _add(_snapshot_candidates(session, qctx, new_syms), "snapshot")
     if skipped_test:
         print(f"[ext_entry] 候选源忽略占位标的: {', '.join(sorted(set(skipped_test)))}")
+    if skipped_etf:
+        print(f"[ext_entry] 候选源忽略 ETF: {len(set(skipped_etf))} 只 "
+              f"(无财报事件 ⇒ 结构性死票, 不进四闸/台账)")
     if merged:
         n_extra = sum(1 for v in tag_of.values() if v != "rank")
         print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "
