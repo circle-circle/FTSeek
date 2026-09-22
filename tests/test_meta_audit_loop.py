@@ -383,10 +383,106 @@ def test_intraday_error_is_p0_capital_preservation(repo, capsys):
                    "logs_scanned": 1, "lines_without_timestamp": 0},
     })
     _, out, _ = run(repo, "--force-print", capsys=capsys)
-    finding = findings(repo)["findings"]["intraday_health:ERROR:abc"]
+    store = findings(repo)["findings"]
+    keys = [k for k in store if k.startswith("intraday_health:rc")]
+    assert len(keys) == 1, store.keys()          # v2.1: 键 = 稳定族键 (数字归一化), 不再用文本签名
+    finding = store[keys[0]]
     assert finding["severity"] == "P0"
     assert finding["pnl_path"] == "capital_preservation"
     assert "LOOP_DONE=FALSE" in out
+
+
+def _intraday_doc(*items, generated_at=None):
+    return {
+        "schema_version": 1, "generated_at": generated_at or datetime.now().isoformat(),
+        "no_findings": False, "findings": list(items),
+        "counts": {"error_or_critical": len(items), "distinct_signatures": len(items),
+                   "logs_scanned": 1, "lines_without_timestamp": 0},
+    }
+
+
+def _item(evidence, key="intraday_health:ERROR:deadbeef"):
+    return {"key": key, "title": "盘中日志 ERROR ×1", "evidence": evidence,
+            "severity": "P0", "pnl_path": "capital_preservation"}
+
+
+# ── v2.1 收口: 根因归并 (2026-09-22 实测病灶: 签名漂移天天新生 P0 / 同根因 P0+P1 双记) ──
+
+def test_signature_drift_reuses_one_finding(repo, capsys):
+    """同一根因、文本仅数字变化 (违反计数/耗时每天都变) ⇒ 仍是一条, 不新生 P0。"""
+    seed_fresh_sources(repo)
+    msg = "⚠️ [Watchdog] pre_market 轮次跨开盘仍未结束 (已跑 {n}s) → 入场执行被阻塞"
+    put(repo, "data/intraday_health_latest.json", _intraday_doc(_item(msg.format(n=120))))
+    run(repo, capsys=capsys)
+    first = [k for k in findings(repo)["findings"] if k.startswith("intraday_health:rc")]
+    put(repo, "data/intraday_health_latest.json", _intraday_doc(_item(msg.format(n=118))))
+    run(repo, capsys=capsys)
+    store = findings(repo)["findings"]
+    now = [k for k in store if k.startswith("intraday_health:rc")]
+    assert len(first) == 1 and now == first, now          # 数字漂移不改变族键
+    assert store[first[0]]["status"] == "OPEN"
+    assert store[first[0]]["evidence"].endswith("118s) → 入场执行被阻塞")   # 读数被刷新
+
+
+def test_structured_root_cause_is_merged_not_duplicated(repo, capsys):
+    """日志签名点名了已在册的结构化根因 (W7_...) ⇒ 不新建条, 挂到该条 (一因一条, 不升 P0)。"""
+    seed_fresh_sources(repo)
+    put(repo, "data/invariant_check_latest.json", {
+        "checked_at": datetime.now().isoformat(),
+        "violations": {"W7_chg_denominator_divergence": 38},
+        "examples": {"W7_chg_denominator_divergence": "两影子昨收分叉 8.01pp"},
+    })
+    put(repo, "data/intraday_health_latest.json", _intraday_doc(_item(
+        "[不变量自检] 51 处违反: W7_chg_denominator_divergence×38 (昨收分母口径分叉)")))
+    run(repo, capsys=capsys)
+    store = findings(repo)["findings"]
+    assert [k for k in store if k.startswith("intraday_health:rc")] == []   # 未新生 P0
+    host = store["invariant:W7_chg_denominator_divergence"]
+    assert host["severity"] == "P1"
+    assert host["merged_signatures"], host
+    assert "W7_chg_denominator_divergence" in host["merged_signatures"][-1]
+
+
+def test_brand_new_root_cause_is_p0_due_today(repo, capsys):
+    """全新根因 (无结构化对应) ⇒ 保持 P0 + 当日到期 (设计意图不变)。"""
+    seed_fresh_sources(repo)
+    put(repo, "data/intraday_health_latest.json", _intraday_doc(_item("exit loop exception")))
+    run(repo, capsys=capsys)
+    store = findings(repo)["findings"]
+    key = [k for k in store if k.startswith("intraday_health:rc")][0]
+    assert store[key]["severity"] == "P0"
+    assert store[key]["pnl_path"] == "capital_preservation"
+    assert store[key]["decide_by"] == datetime.now().strftime("%Y-%m-%d")
+
+
+def test_legacy_signature_key_migration_is_not_a_false_close(repo, capsys):
+    """旧签名键迁移: 根因命中结构化源 ⇒ 显式关成归并并写明'非修复' (不许出现'源不再报该项')。"""
+    seed_fresh_sources(repo)
+    put(repo, "data/invariant_check_latest.json", {
+        "checked_at": datetime.now().isoformat(),
+        "violations": {"W7_chg_denominator_divergence": 38},
+        "examples": {"W7_chg_denominator_divergence": "两影子昨收分叉 8.01pp"},
+    })
+    loop_dir = repo / "data/loops/meta_audit"
+    loop_dir.mkdir(parents=True, exist_ok=True)
+    legacy = "intraday_health:ERROR:177a3510b29f"
+    (loop_dir / "findings.json").write_text(json.dumps({"findings": {
+        legacy: {"key": legacy, "source": "intraday_health", "title": "盘中日志 ERROR ×1",
+                 "evidence": "[不变量自检] 51 处违反: W7_chg_denominator_divergence×38",
+                 "status": "OPEN", "severity": "P0", "pnl_path": "capital_preservation",
+                 "owner": "用户(裁决)", "first_seen": "2026-09-22", "last_seen": "2026-09-22",
+                 "decide_by": "2026-09-22", "action_due_by": "2026-09-22",
+                 "review_by": "2026-09-23", "recurrence_count": 0,
+                 "closed_at": None, "close_evidence": None},
+    }, "applied_decisions": {}}, ensure_ascii=False), encoding="utf-8")
+    run(repo, capsys=capsys)
+    store = findings(repo)["findings"]
+    closed = store[legacy]
+    assert closed["status"] == "CLOSED"
+    assert closed["suppression"] == "MERGED_DUPLICATE"
+    assert "归并, 不是修复" in closed["close_evidence"]
+    assert "源侧回读" not in closed["close_evidence"]      # 关键: 不许把改名当修好
+    assert legacy in store["invariant:W7_chg_denominator_divergence"]["merged_from_keys"]
 
 
 def test_corrupt_state_fails_closed(repo, capsys):

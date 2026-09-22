@@ -266,3 +266,50 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
   近 24h ERROR/CRITICAL = 0, 扫描 267 个日志文件。
 - v2 首轮状态: `LOOP_DONE=FALSE`, 未决 10 = P0 2 / P1 7 / P2 1,
   WIP 0/3, BACKLOG 0。
+
+---
+
+## 14. v2.1 收口: 盘中日志签名归并 + 判决书载体补齐 (2026-09-22, 用户裁「按建议执行」)
+
+### 14.1 实测病灶 (两条, 都有实物)
+
+1. **同根因双记**: 2026-09-22 生产 `findings.json` 里, `intraday_health:ERROR:177a3510b29f`
+   (P0, due 当日) 的 evidence 原文就是 invariant 那条日志行 `[不变量自检] 51 处违反:
+   W7_chg_denominator_divergence×38 …`, 而同一事项已作为
+   `invariant:W7_chg_denominator_divergence` (P1, due 2026-10-04) 在册 ⇒ 一因两条, 严重度还不同。
+2. **签名漂移 ⇒ 天天新生 P0**: 该源 key = 日志文本哈希 (§13.3 设计), 而违反计数/耗时每天都变
+   ⇒ 每天都是"新签名" ⇒ 每天新生一条 P0 且当日到期 (§13.5 SLA)。观察窗复盘三问之②
+   ("有没有假阳 forcing 用户注意力") 在首日就给出答案: 有。
+
+### 14.2 修法 (做减法, 不新增门)
+
+| # | 改动 | 位置 |
+|---|---|---|
+| ① | **稳定族键**: evidence 数字归一化后取 sha1(10) ⇒ `intraday_health:rc<hex>`; 复现落在同一条 finding, 不新生 P0 | `_intraday_family` |
+| ② | **根因归并**: evidence 点名了已在册结构化根因 (`W1_/W4_/W6_/W7_/I4_/D1:`) ⇒ 不新建条, 把签名追加到该条 (`merged_signatures`, 去重写入), 不升 P0 | `_structured_roots` + `collect()` |
+| ③ | **归并项永不入库**: `@append@` 项只走挂载路径 (首版曾把它当新条创建, 紧接着被读成"源不再报该项" ⇒ **自我制造的假关闭**, 见 §14.3) | `reconcile()` |
+| ④ | **旧键迁移不假关闭**: 旧 `intraday_health:ERROR:*` 键 ⇒ 命中结构化根因的**显式**关成 `MERGED_DUPLICATE` 并写明"这是归并, 不是修复", 无根因可挂的原地改名为族键 (生命周期照常) | `_migrate_intraday_keys` |
+
+保留: 全新根因仍是 **P0 + 当日到期** (设计意图不变 —— 真新事必须抬到人眼)。
+
+### 14.3 开发中自造的两个缺陷 (都靠实跑抓出, 披露留痕)
+
+1. **归并项被创建** → 同轮又被判"源不再报该项" ⇒ 假关闭记录 (已回滚该轮产物 + 清 2 条 history 伪事件, 修法见 ③)。
+2. **键改名未同步 `finding["key"]`** ⇒ 摘要/STATE 仍印旧键名 (`intraday_health:ERROR:691c…`),
+   而 store 里已是 `…:rc64370b7228` —— 不查就看不见 (已修 + 回读确认)。
+
+### 14.4 收口后的生产读数 (2026-09-22 实跑, 幂等复跑三次同结果)
+
+- 未决 **12 → 11** (P0 2 / P1 8 / P2 1); 双记消失: `intraday_health` 那条 P0 关成
+  `MERGED_DUPLICATE`, 签名挂到 `invariant:W7_chg_denominator_divergence` (`merged_from_keys` 已登记);
+  盘前跨界那条改名为 `intraday_health:rc64370b7228` (P0, 当日到期 —— 首次出现的真新事, 不变)。
+- 契约钉 14 → **18 例**, 连同台账/载体同步共 **38 passed**。
+
+### 14.5 RFC-088 P5 载体补齐 (判决书证据面)
+
+- 核查实测: DEB-20260919 §16 声称的 `ops/hermes/review_bundle_carrier.py` + 线上副本 + Hermes job
+  **三者皆无** ⇒ P5 从未落地, 产物停在 `bundle_2026-09-18`。本次按声称形态补齐:
+  job `e86cd69ed2be`, `35 6 * * 2-6`, 子脚本 `scripts/review_bundle.py --date <ET当日> --vault`。
+- 四路实弹各一次: rc0 **零字节** ✓ / 子脚本缺失 rc3 ✓ / 超时 rc2 ✓ / rc0 但零产物 rc4 ✓。
+- 一处**显式偏离 §7** (待裁): 默认不 `--push` (理由与开关见载体 docstring 与台账行)。
+- 仍缺口 (未做, 等裁): 周环 `review_coverage_scan.py` (周六) 与月环 `--period month` 未挂载体。

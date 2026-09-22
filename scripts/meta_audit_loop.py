@@ -17,6 +17,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,52 @@ LOCK_FILE = LOOP_DIR / "run.lock"
 
 MAX_WIP = 3
 MAX_DIGEST_ITEMS = 8
+
+# ── 盘中健康源的根因归并 (2026-09-22, RFC-091 v2.1) ──────────────────────────
+# 病灶 (实测 2026-09-22): 签名键 = 日志文本哈希 ⇒ 违反计数/耗时每天微变 = 每天"新签名"
+#   ⇒ 每天新生一条 P0 且当日到期; 同时同一根因在结构化源里已有一条 (P0+P1 双记)。
+# 修法 (做减法, 不新增门): ① 数字归一化得稳定"族键" ⇒ 复现落在同一条 finding;
+#                          ② evidence 点名了已在册结构化根因 (W7_/W6_/W1_/I4_ ...) ⇒ 不新建,
+#                             追加到该条 evidence (一因一条)。
+INTRA_FAMILY_RE = re.compile(r"intraday_health:(?:ERROR:)?[0-9a-f]{8,}")
+STRUCTURED_RC_RE = re.compile(r"\b(?:I|W|D)\d{1,2}_[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*")
+STRUCTURED_SOURCES = ("invariant", "watchdog", "gate_liveness")
+APPEND_MARK = "@append@"
+
+
+def _intraday_family(evidence: str) -> str:
+    """同根因家族键: 数字归一化 (计数值/耗时/序号每天都变), 只认文本骨架。"""
+    norm = re.sub(r"\d+", "#", evidence or "")
+    return hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+def _structured_roots(evidence: str) -> list:
+    """evidence 里点名的结构化根因名 (按首次出现顺序去重)。"""
+    seen, out = set(), []
+    for m in STRUCTURED_RC_RE.finditer(evidence or ""):
+        name = m.group(0)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _record_merged(host: dict, note: str):
+    """把归并来的签名挂到宿主条上; 同一签名 (前 120 字) 只记一次。"""
+    rec = host.setdefault("merged_signatures", [])
+    head = note[:120]
+    if any(head in old for old in rec):
+        return
+    host["merged_signatures"] = rec[-4:] + [note]
+
+
+def _store_structured_keys() -> list:
+    """已在册的结构化源键 (即使本轮产物没报它, 也认它是"已在册")。"""
+    try:
+        store = _load().get("findings") or {}
+    except Exception:
+        return []
+    return [k for k in store if k.split(":", 1)[0] in STRUCTURED_SOURCES]
 
 ACTIVE_STATUSES = {
     "OPEN", "UNVERIFIABLE", "DECIDED", "ACTION_PENDING",
@@ -325,6 +372,21 @@ def collect():
                 "n": len(items), "why": f"age={age:.1f}h (阈值 {source['max_age_h']}h)",
             }
 
+        if name == "intraday_health":
+            rc_index = {k.split(":", 1)[1]: k for k, _, _, src in findings if src in STRUCTURED_SOURCES}
+            for extra in _store_structured_keys():
+                rc_index.setdefault(extra.split(":", 1)[1], extra)
+            mapped = []
+            for key, title, evidence in items:
+                hits = [rc_index[n] for n in _structured_roots(evidence) if n in rc_index]
+                if hits:
+                    # 根因已在结构化源在册 ⇒ 不新建, 把日志签名挂到该条 (一因一条, 不升 P0)
+                    note = f"另见盘中日志签名 ({_today()}): 命中 {', '.join(hits)} | {evidence[:400]}"
+                    mapped.append((APPEND_MARK + hits[0], title, note))
+                else:
+                    mapped.append((f"rc{_intraday_family(evidence)}", title, evidence))
+            items = mapped
+
         for key, title, evidence in items:
             findings.append((f"{name}:{key}", title, evidence, name))
 
@@ -487,6 +549,66 @@ def _apply_decisions(state: dict, decisions: list, history: list):
         })
 
 
+def _migrate_intraday_keys(state: dict, history: list, collected: list = ()):
+    """旧签名键 → 族键/归并形 (2026-09-22 RFC-091 v2.1)。
+
+    不做这一步的话: 键改名会被 reconcile 读成"源不再报该项" ⇒ **假关闭** (把改名
+    当修好), 正是本仓最忌讳的错。故: 根因命中结构化源 ⇒ 显式关成 MERGED_DUPLICATE
+    并写明"非修复"; 无结构化根因 ⇒ 原地改名为稳定族键, 生命周期照常。
+    """
+    store = state["findings"]
+    # 目标索引: 在册 + 本轮即将建的结构化条 (二者都算"已在册", 否则首轮会退化成改名而非归并)
+    target_index = {k.split(":", 1)[1]: k for k in store if k.split(":", 1)[0] in STRUCTURED_SOURCES}
+    for k, _, _, src in collected:
+        if src in STRUCTURED_SOURCES:
+            target_index.setdefault(k.split(":", 1)[1], k)
+    for key in list(store):
+        if not INTRA_FAMILY_RE.match(key) or key.startswith("intraday_health:rc"):
+            continue
+        finding = store[key]
+        evidence = finding.get("evidence") or ""
+        roots = _structured_roots(evidence)
+        hosts = [target_index[h] for h in roots if h in target_index]
+        if hosts:
+            target = hosts[0]
+            host = store.get(target)
+            if host is None:
+                # 宿主本轮才建 ⇒ 记录归并去向 (证据不丢); **仍必须显式关成归并** —
+                # 不关的话本段之后会被读成"源不再报该项" ⇒ 自我制造的假关闭。
+                history.append({"ts": _now().isoformat(timespec="seconds"), "key": key,
+                                "event": "MERGE_PENDING", "to": target,
+                                "evidence": evidence[:400]})
+                state.setdefault("pending_merges", []).append([key, target])
+            else:
+                host["merged_from_keys"] = (host.get("merged_from_keys") or [])[-4:] + [key]
+                _record_merged(host, evidence)
+            finding["status"] = "CLOSED"
+            finding["closed_at"] = _today()
+            finding["suppression"] = "MERGED_DUPLICATE"
+            finding["close_evidence"] = (
+                f"根因去重 (RFC-091 v2.1): 该日志签名与 {target} 同根因 ⇒ 不重复记账; "
+                f"这是**归并, 不是修复** — 根因未消, 仍由 {target} 跟踪")
+            history.append({"ts": _now().isoformat(timespec="seconds"), "key": key,
+                            "event": "MERGED_DUPLICATE", "to": target,
+                            "evidence": finding["close_evidence"]})
+            continue
+        new_key = f"intraday_health:rc{_intraday_family(evidence)}"
+        if new_key in store:
+            finding["status"] = "CLOSED"
+            finding["closed_at"] = _today()
+            finding["suppression"] = "MERGED_DUPLICATE"
+            finding["close_evidence"] = f"与 {new_key} 同族重复 ⇒ 归并, 非修复"
+            history.append({"ts": _now().isoformat(timespec="seconds"), "key": key,
+                            "event": "MERGED_DUPLICATE", "to": new_key})
+            continue
+        finding["renamed_from"] = key
+        finding["key"] = new_key          # 键改名必须同步改 finding["key"], 否则摘要/STATE 仍印旧名
+        del store[key]
+        store[new_key] = finding
+        history.append({"ts": _now().isoformat(timespec="seconds"), "key": new_key,
+                        "event": "RENAMED", "from": key})
+
+
 def _migrate_finding(finding: dict):
     finding.setdefault("status", "OPEN")
     finding.setdefault("first_seen", _today())
@@ -557,9 +679,14 @@ def reconcile(state: dict, collected: list, source_state: dict, decisions: list)
 
     history = []
     _apply_decisions(state, decisions, history)
-    seen = {key for key, _, _, _ in collected}
+    _migrate_intraday_keys(state, history, collected)
+    seen = {key for key, _, _, _ in collected if APPEND_MARK not in key}
 
     for key, title, evidence, source in collected:
+        if APPEND_MARK in key:
+            # 归并项永不入库: 只把签名挂到已在册的结构化条 (否则会被当成"新条"创建,
+            # 再被下一段读成"源不再报该项" ⇒ 自我制造的假关闭)
+            continue
         if key not in store:
             store[key] = _new_finding(key, title, evidence, source)
             history.append({"ts": _now().isoformat(timespec="seconds"), "key": key,
@@ -624,6 +751,31 @@ def reconcile(state: dict, collected: list, source_state: dict, decisions: list)
         )
         history.append({"ts": _now().isoformat(timespec="seconds"), "key": key,
                         "event": "CLOSED", "evidence": finding["close_evidence"]})
+
+    # 归并项: 不新建条, 只把日志签名追加到已在册的结构化条上 (可回读, 不产生新 P0)
+    for key, title, evidence, source in collected:
+        if APPEND_MARK not in key:
+            continue
+        target = key.split(APPEND_MARK, 1)[1]
+        host = store.get(target)
+        if host is None:
+            continue
+        _record_merged(host, evidence)
+        host["last_seen"] = _today()
+        history.append({"ts": _now().isoformat(timespec="seconds"), "key": target,
+                        "event": "EVIDENCE_MERGED", "evidence": evidence})
+
+    # 归并来源回填 (宿主可能本轮才建 ⇒ 迁移期先记 pending_merges, 此处统一销账)
+    rest = []
+    for src_key, dst in (state.get("pending_merges") or []):
+        host = store.get(dst)
+        if host is None:
+            rest.append([src_key, dst])
+            continue
+        known = host.get("merged_from_keys") or []
+        if src_key not in known:
+            host["merged_from_keys"] = known[-4:] + [src_key]
+    state["pending_merges"] = rest
 
     for finding in store.values():
         if (finding.get("status") == "DECIDED"
