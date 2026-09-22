@@ -172,6 +172,12 @@ PRETRADE_GATE_REJECTS = ROOT / "data" / "extended_hours_pretrade_gate_rejects.js
 #   源故障(calendar_source_error/finnhub_error) vs 相位字段不匹配(calendar_phase_*) vs
 #   surprise 过期(surprise_stale)。没有它, 闸计数只有一个 earnings=N, 无法裁决放不放宽。
 EARNINGS_GATE_REJECTS = ROOT / "data" / "extended_hours_earnings_gate_rejects.jsonl"
+# 2026-09-22 零成交复盘: 记录"价格/动量/量能/成交额已通过, 仅因 calendar_missing 被拒"
+# 的 near-miss。按 (trade_date, session, symbol) 去重, 只做观察, 不参与交易判定。
+EARNINGS_NEAR_MISSES = ROOT / "data" / "ext_entry_earnings_near_miss.jsonl"
+EARNINGS_NEAR_MISS_ON = (
+    os.getenv("EXT_ENTRY_EARNINGS_NEAR_MISS", "true").lower() == "true"
+)
 STATE = ROOT / "data" / "extended_hours_entry_state.json"
 LOCK = ROOT / "data" / "extended_hours_entry_state.lock"
 DB = ROOT / "data" / "ftseek_us.db"
@@ -811,6 +817,79 @@ def _record_earnings_gate_rejects(session, trade_date, reason_counts, details, c
         pass
 
 
+def _record_earnings_near_misses(session, trade_date, candidates):
+    """Record deterministic base-gate passes rejected by a missing calendar event."""
+    if not candidates or not EARNINGS_NEAR_MISS_ON:
+        return
+    try:
+        EARNINGS_NEAR_MISSES.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = EARNINGS_NEAR_MISSES.with_suffix(".lock")
+        with lock_path.open("a+") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            seen = set()
+            if EARNINGS_NEAR_MISSES.exists():
+                with EARNINGS_NEAR_MISSES.open() as handle:
+                    for line in handle:
+                        try:
+                            row = json.loads(line)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            continue
+                        key = (
+                            row.get("trade_date"), row.get("session"),
+                            row.get("symbol")
+                        )
+                        if (
+                            all(key)
+                            and row.get("base_gate")
+                            == "price_momentum_volume_turnover_passed"
+                        ):
+                            seen.add(key)
+
+            new_rows = []
+            for candidate in candidates:
+                symbol = str(candidate.get("symbol") or "")
+                if not symbol:
+                    continue
+                price = float(candidate.get("price") or 0)
+                change_pct = float(candidate.get("change_pct") or 0)
+                volume = float(candidate.get("volume") or 0)
+                turnover_usd = price * volume
+                if (
+                    not _price_in_range(price)
+                    or change_pct < ENTRY_CHANGE_PCT
+                    or volume < MIN_VOLUME
+                    or turnover_usd < MIN_EXT_TURNOVER_USD
+                ):
+                    continue
+                key = (trade_date, session, symbol)
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_rows.append({
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "trade_date": trade_date,
+                    "session": session,
+                    "symbol": symbol,
+                    "base_gate": "price_momentum_volume_turnover_passed",
+                    "reject_reason": "calendar_missing",
+                    "price": price,
+                    "change_pct": round(change_pct, 2),
+                    "volume": volume,
+                    "turnover_usd": round(turnover_usd, 2),
+                })
+            if not new_rows:
+                return
+            with EARNINGS_NEAR_MISSES.open("a") as handle:
+                for row in new_rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+
+
 def _scan_movers(session, qctx):
     """全市场盘前/盘后榜 (富途官方接口, 2026-09-17 实测). 返回 [{symbol,px,chg,vol,prev_close}].
     替代旧"近5日活跃股"扫描 — 覆盖面从 15 只 → 全市场真实盘前/盘后异动榜.
@@ -1393,6 +1472,7 @@ def collect(session, dry=False):
             counts = {}
             earnings_reason_counts = {}
             earnings_reject_details = []
+            earnings_near_misses = []
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -1419,6 +1499,13 @@ def collect(session, dry=False):
                             "sub_reason": earnings_reason,
                             "price": price,
                             "change_pct": round(change_pct, 2),
+                            "volume": volume,
+                        })
+                    else:
+                        earnings_near_misses.append({
+                            "symbol": symbol,
+                            "price": price,
+                            "change_pct": change_pct,
                             "volume": volume,
                         })
                     continue
@@ -1508,6 +1595,7 @@ def collect(session, dry=False):
                 session, today, earnings_reason_counts, earnings_reject_details,
                 candidates=[str(m.get("symbol") or "") for m in movers],
             )
+            _record_earnings_near_misses(session, today, earnings_near_misses)
         finally:
             qctx.close()
         return results or [{"skip": "no_signal_passed_all_gates"}]
@@ -1593,6 +1681,7 @@ def collect(session, dry=False):
             counts = {}
             earnings_reason_counts = {}
             earnings_reject_details = []
+            earnings_near_misses = []
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
@@ -1623,6 +1712,13 @@ def collect(session, dry=False):
                             "sub_reason": earnings_reason,
                             "price": price,
                             "change_pct": round(change_pct, 2),
+                            "volume": volume,
+                        })
+                    else:
+                        earnings_near_misses.append({
+                            "symbol": symbol,
+                            "price": price,
+                            "change_pct": change_pct,
                             "volume": volume,
                         })
                     continue
@@ -1746,6 +1842,7 @@ def collect(session, dry=False):
                 session, today, earnings_reason_counts, earnings_reject_details,
                 candidates=[str(m.get("symbol") or "") for m in movers],
             )
+            _record_earnings_near_misses(session, today, earnings_near_misses)
         finally:
             qctx.close()
     return results or [{"skip": "no_signal_passed_all_gates"}]

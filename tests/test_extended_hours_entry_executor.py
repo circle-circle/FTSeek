@@ -65,6 +65,9 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "PRICE_GATE_REJECTS", tmp_path / "price-rejects.jsonl")
     monkeypatch.setattr(executor, "PRETRADE_GATE_REJECTS", tmp_path / "pretrade-rejects.jsonl")
     monkeypatch.setattr(executor, "EARNINGS_GATE_REJECTS", tmp_path / "earnings-rejects.jsonl")
+    monkeypatch.setattr(
+        executor, "EARNINGS_NEAR_MISSES", tmp_path / "earnings-near-misses.jsonl"
+    )
 
 
 def _seed_earnings_calendar(monkeypatch, rows, error=None, today=None):
@@ -497,6 +500,10 @@ def test_state_lock_detects_concurrent_executor(isolated_state):
 def _quota_test_environment(monkeypatch, opened_today):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
     monkeypatch.setattr(executor, "ALLOW_SIM_ENTRY", True)
+    monkeypatch.setattr(executor, "MAX_PER_DAY", 3)
+    monkeypatch.setattr(executor, "PREMARKET_MAX_PER_DAY", 2)
+    monkeypatch.setattr(executor, "MAX_OPEN", 3)
+    monkeypatch.setattr(executor, "MAX_OPEN_NOTIONAL_USD", 15000)
     monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(executor, "_state_lock", contextlib.contextmanager(lambda: (yield True)))
@@ -520,6 +527,80 @@ def _quota_test_environment(monkeypatch, opened_today):
         executor, "_reconcile_broker_entry_orders",
         lambda *args, **kwargs: ([], []),
     )
+
+
+def test_earnings_near_miss_shadow_dedupes_by_day_session_symbol(
+        tmp_path, monkeypatch
+):
+    path = tmp_path / "earnings-near-misses.jsonl"
+    monkeypatch.setattr(executor, "EARNINGS_NEAR_MISSES", path)
+    monkeypatch.setattr(executor, "EARNINGS_NEAR_MISS_ON", True)
+    monkeypatch.setattr(executor, "MIN_EXT_TURNOVER_USD", 10_000_000.0)
+    legacy_row = {
+        "trade_date": "2026-09-21",
+        "session": "afterhours",
+        "symbol": "US.AAA",
+        "base_gate": "price_momentum_volume_passed",
+    }
+    path.write_text(json.dumps(legacy_row) + "\n")
+    candidates = [
+        {"symbol": "US.LOW_TURNOVER", "price": 10.2, "change_pct": 6.1, "volume": 300000},
+        {"symbol": "US.AAA", "price": 10.2, "change_pct": 6.1, "volume": 1_000_000},
+        {"symbol": "US.BBB", "price": 12.4, "change_pct": 4.3, "volume": 900000},
+    ]
+
+    executor._record_earnings_near_misses("afterhours", "2026-09-21", candidates)
+    executor._record_earnings_near_misses(
+        "afterhours", "2026-09-21", [
+            candidates[0],
+            {"symbol": "US.CCC", "price": 9.8, "change_pct": 3.2, "volume": 1_100_000},
+        ]
+    )
+
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [row["symbol"] for row in rows] == [
+        "US.AAA", "US.AAA", "US.BBB", "US.CCC"
+    ]
+    assert rows[0]["base_gate"] == "price_momentum_volume_passed"
+    assert all(row["reject_reason"] == "calendar_missing" for row in rows[1:])
+    assert all(
+        row["base_gate"] == "price_momentum_volume_turnover_passed"
+        for row in rows[1:]
+    )
+    assert all(row["turnover_usd"] >= 10_000_000 for row in rows[1:])
+
+
+def test_collect_dry_scan_records_turnover_qualified_earnings_near_miss(
+        isolated_state, monkeypatch
+):
+    near_miss_path = executor.EARNINGS_NEAR_MISSES
+    monkeypatch.setattr(executor, "EARNINGS_NEAR_MISS_ON", True)
+    monkeypatch.setattr(executor, "MIN_EXT_TURNOVER_USD", 10_000_000.0)
+    monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(executor, "_held_symbols", lambda: set())
+    monkeypatch.setattr(
+        executor,
+        "_scan_candidates",
+        lambda session, qctx: [
+            {"symbol": "US.NEAR", "px": 10.0, "chg": 5.0, "vol": 1_200_000.0},
+            {"symbol": "US.LOW_TURNOVER", "px": 10.0, "chg": 5.0, "vol": 300_000.0},
+        ],
+    )
+    monkeypatch.setattr(
+        executor,
+        "_earnings_surprise",
+        lambda symbol, session: (None, "calendar_missing"),
+    )
+    monkeypatch.setattr("futu.OpenQuoteContext", FakeQuoteContext)
+
+    result = executor.collect("premarket", dry=True)
+
+    assert result == [{"skip": "no_signal_passed_all_gates"}]
+    rows = [json.loads(line) for line in near_miss_path.read_text().splitlines()]
+    assert [row["symbol"] for row in rows] == ["US.NEAR"]
+    assert rows[0]["base_gate"] == "price_momentum_volume_turnover_passed"
+    assert rows[0]["turnover_usd"] == 12_000_000.0
 
 
 def test_collect_blocks_premarket_after_two_positions(isolated_state, monkeypatch):
@@ -628,6 +709,10 @@ def test_collect_stops_premarket_loop_when_second_position_fills(
 ):
     monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
     monkeypatch.setattr(executor, "ALLOW_SIM_ENTRY", True)
+    monkeypatch.setattr(executor, "MAX_PER_DAY", 3)
+    monkeypatch.setattr(executor, "PREMARKET_MAX_PER_DAY", 2)
+    monkeypatch.setattr(executor, "MAX_OPEN", 3)
+    monkeypatch.setattr(executor, "MAX_OPEN_NOTIONAL_USD", 15000)
     monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(executor, "_state_lock", contextlib.contextmanager(lambda: (yield True)))
@@ -711,8 +796,16 @@ def test_execute_sim_env_is_not_blocked_by_real_guard(isolated_state, monkeypatc
 
 def test_execute_rejects_real_environment(isolated_state, tmp_path, monkeypatch):
     """REAL 环境 = 配置态问题: 拦截 + **环境级一次提示** (不再逐标的发"某标的被拦")。"""
-    monkeypatch.setenv("FUTU_TRD_ENV", "REAL")
-    monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+
+    class LiveMode:
+        is_live = True
+
+        def account_id(self):
+            return 1
+
+    monkeypatch.setattr(executor, "_mode", lambda: LiveMode())
+    monkeypatch.setattr(executor, "_ext_real_authorized", lambda: False)
+    monkeypatch.setattr(executor, "AUDIT", tmp_path / "entry-audit.jsonl")
     monkeypatch.setattr(executor, "_PUSH_DEDUP", tmp_path / "dedup.json")
     # 2026-09-19: 本用例验的是"环境级一次提示"的**去重与文案**, 必须在非探针分支上跑 ——
     #   `_probe_mode()` 现对 pytest 进程默认 True (pytest→静默), 不关掉就只留一行静默日志、无真推送可断言。
@@ -727,7 +820,7 @@ def test_execute_rejects_real_environment(isolated_state, tmp_path, monkeypatch)
 
     assert result["ok"] is False
     assert result["skip"] == "real_not_authorized"
-    assert len(pushed) == 1 and "FUTU_TRD_ENV" in pushed[0]      # 环境级, 不点标的
+    assert len(pushed) == 1 and "EXT_REAL_AUTHORIZED" in pushed[0]  # 环境级, 不点标的
     assert "US.FAKE" not in pushed[0]
 
 

@@ -800,6 +800,8 @@ def test_collect_blocks_extended_open_position_count(monkeypatch):
 
     monkeypatch.setattr(entry_executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(entry_executor, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(entry_executor, "MAX_OPEN", 3)
+    monkeypatch.setattr(entry_executor, "MAX_OPEN_NOTIONAL_USD", 15000)
     monkeypatch.setattr(entry_executor, "_state_lock", state_lock)
     monkeypatch.setattr(entry_executor, "_load_state", lambda: {"version": 2})
     monkeypatch.setattr(entry_executor, "_save_state", lambda state: None)
@@ -825,6 +827,7 @@ def test_collect_blocks_extended_open_position_count(monkeypatch):
 
 
 def test_open_exposure_gate_blocks_notional_projection(monkeypatch):
+    monkeypatch.setattr(entry_executor, "MAX_OPEN_NOTIONAL_USD", 15000)
     monkeypatch.setattr(
         entry_executor,
         "_extended_open_exposure",
@@ -839,6 +842,26 @@ def test_open_exposure_gate_blocks_notional_projection(monkeypatch):
         "next_position_usd": entry_executor.POSITION_USD,
         "limit_usd": entry_executor.MAX_OPEN_NOTIONAL_USD,
     }
+
+
+def test_open_exposure_gate_allows_four_positions_under_current_ext_cap(monkeypatch):
+    monkeypatch.setattr(entry_executor, "MAX_OPEN", 5)
+    monkeypatch.setattr(entry_executor, "MAX_OPEN_NOTIONAL_USD", 25000)
+    monkeypatch.setattr(
+        entry_executor,
+        "_extended_open_exposure",
+        lambda: (
+            [
+                ("US.A", 10, 100),
+                ("US.B", 10, 100),
+                ("US.C", 10, 100),
+                ("US.D", 10, 100),
+            ],
+            20000,
+        ),
+    )
+
+    assert entry_executor._open_exposure_gate() is None
 
 
 def test_extended_open_exposure_counts_only_extended_positions(tmp_path, monkeypatch):
