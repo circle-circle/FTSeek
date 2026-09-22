@@ -284,6 +284,50 @@ def _block_outbound_notifications(request, monkeypatch):
         _OUTBOUND_LEAKS.append((request.node.nodeid, mine[0][:160], len(mine)))
 
 
+# ── 券商写口封锁 (2026-09-22) ────────────────────────────────────────────────
+# 实锤: tests/test_ext_entry_test_symbol_guard.py::test_real_env_notice_is_env_level_and_deduped
+#   用 legacy 键 FUTU_TRD_ENV=REAL 驱动 REAL 守卫, 而守卫判据已于 2026-09-20 迁到
+#   TradingMode(SSOT) ⇒ is_live=False ⇒ 守卫跳过 ⇒ **代码直落 place_order**, 每跑一次该文件
+#   就往 SIM 账户真下 1 笔 US.NVDA BUY qty=1 @$100 remark=ext_entry (券商流水:
+#   9/20 8191435/8191447/8192065, 9/21 8195391/8195420/8195497, 全 CANCELLED_ALL; 9/22 又见 8197138),
+#   随后 wait_order_fill 还会真 modify_order 同一张单。
+#   代价不止噪声: 9/21 19:25 ET 那轮生产 afterhours 执行器读到活单 ⇒ skip=active_ext_entry_order
+#   ⇒ **压制了该轮真实入场** (在途单门按 symbol-无关的全局口径拦), 且每轮对账刷"跨日旧单"日志。
+#   与"生产 data/ 写入硬闸""真 LLM 出口封锁""出站通知封锁"同纪律: 把"测试不该有的副作用"
+#   从"事后翻券商流水才发现"变成"当场红"。**测试必须打桩券商, 不许打真券商。**
+#   只拦写口 (place_order/modify_order/cancel_order), 不拦查询 (查持仓/订单是对账类用例的正常输入);
+#   确需真发单的用例加 @pytest.mark.allow_live_broker_order 并注明理由。
+_BROKER_WRITE_METHODS = ("place_order", "modify_order", "cancel_order")
+
+
+@pytest.fixture(autouse=True)
+def _block_live_broker_orders(request, monkeypatch):
+    if request.node.get_closest_marker("allow_live_broker_order"):
+        yield
+        return
+    try:
+        import futu
+        cls = futu.OpenSecTradeContext
+    except Exception:                     # futu 不可用时无该出口可封 (与其余封锁同容错)
+        yield
+        return
+
+    def _blocked(self, *args, **kwargs):
+        raise RuntimeError(
+            f"测试触达券商写口被拦 ({self.__class__.__name__}): 参数 {kwargs!r} — "
+            f"单测必须打桩券商 (先例: tests/test_extended_hours_order_execution.py 的 "
+            f"FakeTradeContext + monkeypatch _open_trade_context), 而不是打真券商。"
+            f"2026-09-22 实锤: 一个用例因判据迁移而静默直落 place_order, 每次 pytest 都往 SIM "
+            f"账户真下一笔 NVDA qty=1 @$100, 并压制了生产延长时段的一轮真实入场。"
+            f"确需真发单: @pytest.mark.allow_live_broker_order 并注明理由。"
+        )
+
+    for name in _BROKER_WRITE_METHODS:
+        if hasattr(cls, name):
+            monkeypatch.setattr(cls, name, _blocked, raising=False)
+    yield
+
+
 def _outbound_origin():
     """留痕来源分类 (2026-09-19): `test` / `hub` / `background`。
 

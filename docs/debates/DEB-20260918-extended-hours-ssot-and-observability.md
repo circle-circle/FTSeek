@@ -1258,3 +1258,64 @@ Hermes 需要重点复核：
 测试：`tests/core/test_trade_identity.py` 新增 2 组参数化用例（正向覆盖变体 + 反向不误伤）；
 相关集 **213 passed**（含 placeholder 守卫、延长时段开仓/退出、AH 影子回声）
 ⇒ 既有的 `US.FAKE` 用例未被误伤。
+---
+
+## 24. 2026-09-22 测试→券商真下单事故（legacy `FUTU_TRD_ENV` 判据迁移的副作用，Hermes 复查）
+
+**症状（用户侧不可见，券商流水可见）**：SIM 账户 19930823 反复出现 `US.NVDA BUY qty=1 @$100
+remark=ext_entry` 的**报废单**，且当天几次对账刷"跳过跨日旧单"。用户/我方均未下过该单。
+
+**定位（逐层，全部实测）**：
+
+| 层 | 证据 |
+|---|---|
+| 券商流水 | 本次查询（23 单窗口）内 `remark=ext_entry` 单 **5 笔**：9/21 `8195391/8195420/8195497`（ET 19:24/19:36/19:41）+ 9/22 `8197135/8197138`（ET 04:51/04:54 —— **本次复查自查时自己又下的 2 笔**，用于取红状态/基线对照）；9/22 的对账日志另列出 9/20 三笔 `8191435/8191447/8192065`。全部 `CANCELLED_ALL`、`filled_qty=0`、无盈亏、无建仓 |
+| 订单参数 | `code=US.NVDA, qty=1, price=100.0, trd_side=BUY, order_type=NORMAL, trd_env=SIMULATE, time_in_force=DAY, session=ETH, remark=ext_entry` |
+| 来源 | `tests/test_ext_entry_test_symbol_guard.py::test_real_env_notice_is_env_level_and_deduped` 的**两次** `_execute("US.NVDA"/"US.AMD", 1, 100.0, "premarket", ...)` |
+| 真值链 | 装"假券商桩"复刻该调用 ⇒ 打印 `到达 place_order!` 且参数与券商侧逐字一致 |
+| 生产影响 | `logs/ext_entry.log:672`（ET 9/21 19:25 那轮 afterhours）与 `:998`（ET 9/22 04:55 那轮 premarket）出现 `{"skip":"active_ext_entry_order"}` —— 在途单门按**全局**口径拦，**该轮真实入场被压制** |
+| 状态污染 | `data/extended_hours_entry_state.json` 被写入 `2026-09-21:US.NVDA`(8195391) 与 `2026-09-22:US.NVDA`(8197135) 两条 `attempt`（`failed/broker_CANCELLED_ALL`）⇒ 该标的两日再入场被静默封锁 |
+| 未受影响 | `data/extended_hours_entry_executions.jsonl` 无 NVDA 行（该路径写审计前即被 conftest 的生产数据硬闸拦下），`open_positions`/`trade_records` 无新增 |
+
+**根因（判据迁移 + 用例仍驱动 legacy 键 ⇒ 守卫永不触发）**：`_execute` 的 REAL 守卫
+`if _mode().is_live and not _ext_real_authorized()` 于 **2026-09-20 SSOT 重构**中把真源迁到
+`TradingMode`（读 `.env.us` 的 `AUTO_TRADE_ACCOUNT`/`ALLOW_REAL_TRADING`），**不再消费**
+`FUTU_TRD_ENV`。而该用例仍用 `monkeypatch.setenv("FUTU_TRD_ENV", "REAL")` 制造"实盘环境"⇒
+`is_live=False` ⇒ 守卫被跳过 ⇒ 代码直落 `_open_trade_context()` + `place_order`
+（其后 `wait_order_fill` 还会真 `modify_order` 同一张单）。
+
+**为什么长期没被看见**：`_probe_mode()` 只静默**推送**（`tests/conftest.py` 只管"出站通知"和
+"生产 data/ 写入"），**下单口没有任何测试级挡板**；且该用例的断言（`skip == "real_not_authorized"`）
+在真下单之后才失败，失败信息只指向断言，不指向"你刚下了一单"。
+
+**处置（三层，均不碰交易逻辑/不改生产行为）**：
+
+1. **用例侧（治本①）**：`tests/test_ext_entry_test_symbol_guard.py`
+   - 新增 `_no_broker()`：本文件所有用例统一钉死 `_open_trade_context`（走到券商口即 `AssertionError` 并点名），不再依赖"下次记得 mock"；
+   - 新增 `_live_mode()`：REAL 守卫的判据只由 **SSOT**（`_mode()` → `is_live=True`）驱动，删掉 legacy 键驱动；
+   - 环境级提示的断言文案从 `FUTU_TRD_ENV` 改为现行文案 `EXT_REAL_AUTHORIZED`；
+   - 新增 `test_real_guard_reads_ssot_not_legacy_env_key`：**源码契约钉** —— `_execute` 必须含
+     `_mode().is_live and not _ext_real_authorized()` 且不含 `FUTU_TRD_ENV`（谁把 legacy 键加回守卫即红）。
+2. **类级（治本②）**：`tests/conftest.py` 新增 autouse `_block_live_broker_orders` —— 在真
+   `futu.OpenSecTradeContext` 的**写口**（`place_order`/`modify_order`/`cancel_order`）装挡板，当场 `RuntimeError`
+   并指路打桩先例；查询口不拦（对账类用例的正常输入）。豁免阀 `@pytest.mark.allow_live_broker_order`
+   （已在 `pytest.ini` 登记，需注明理由）。与"生产 data/ 写入硬闸""真 LLM 出口封锁""出站通知封锁"同纪律。
+   自检用例 `test_conftest_pins_broker_write_port` 用**哑 `self`** 调类方法验挡板在位 —— 不用真下单来验。
+3. **残留清理（一次性）**：券商侧无活单（5 笔全 `CANCELLED_ALL`，**无需撤单**）；
+   state 的两条污染 `attempt` 键经 `scripts/cancel_orphan_ext_order.clear_attempt`（持锁 + 原子写 + 备份
+   `data/extended_hours_entry_state.json.bak_20260922_165957`）删除，删除前的 `order_id` 与测试单逐一核对一致。
+
+**验证**：改后 `tests/test_ext_entry_test_symbol_guard.py` **6 passed**；用"券商写口探针"（记录任何到达
+`place_order/modify_order/cancel_order` 的调用）复跑该文件 **0 命中**；改前同一探针在券商相关测试面（entry/exit
+执行器、订单生命周期、孤儿单、退出补偿、退出生命周期、权益对账）测得的写口命中**只有该文件**，
+即挡板的爆炸半径 = 这 1 个用例（已被治本①修掉）。
+
+**顺带更正一处我此前的错报（如实登记）**：`crontab` 注释并**没有**"日配额3笔(2026-09-18观察期)"的漂移 ——
+现行两行 entry cron 注释均为「EXT在仓5/日流10(.env.us生效)」，与 `.env.us`
+（`EXT_ENTRY_MAX_PER_DAY=10` / `EXT_ENTRY_MAX_OPEN=5`）**一致**。我此前读到的旧文案来自
+`logs/ic_health_check.log`（该脚本 `crontab -l` 输出**落盘的快照**，9/20 之后未再运行）与
+`DEB-20260918 §21.2` 的历史行，不是 `crontab -l` 实值。**故本批不改 crontab**。
+（教训：凡"现行配置"结论一律以载体实物为准 —— `crontab -l` / `jobs.json` / 注册表文件，不看日志快照、不看文档措辞。）
+
+**未改**：`scripts/` 下任何生产代码（含 `extended_hours_entry_executor.py`）零改动；REAL 守卫的
+**行为**不变（拦截逻辑与文案一字未动），本次只修"用例怎么驱动它 + 测试不得触达真券商"。
