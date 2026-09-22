@@ -741,11 +741,58 @@ def _record_pretrade_gate_rejects(session, rejects):
         pass
 
 
-def _record_earnings_gate_rejects(session, trade_date, reason_counts, details):
+def _calendar_coverage(session, candidates):
+    """当日日历覆盖 + 候选∩日历交集 (2026-09-22 零成交归因缺口补齐)。
+
+    缺口实证: 台账 421 条 100% 落 `calendar_missing` —— 该桶把三件完全不同的事压成一个读数:
+      (a) 今日确无该票事件 (财报季空窗);
+      (b) 日历源当日覆盖过窄 (2026-09-22 实测: 主源 futu 当日 6 只 / 备源 AV 18 只);
+      (c) 候选池与事件池不相交 (异动榜 50 只 ∩ 两侧日历 = ∅, 19 只 ≥$5 无一在册)。
+    没有这组读数时"季空窗"与"口径互斥"在台账上不可区分 —— 当天必须手工跑三方交集探针
+    (movers ∩ futu日历 ∩ AV日历) 才能定性, 而探针不落盘 ⇒ 下次归零又要重跑一遍。
+    只读、无副作用、无网络增量 (`_earnings_calendar_rows` 进程内已缓存); 异常一律吞掉
+    (观测面不得影响交易主流程), 失败时写 coverage_error 供归因。
+    """
+    try:
+        rows, error = _earnings_calendar_rows()
+        today = _today_et()
+        day_rows = [r for r in rows if str(r.get("reportDate")) == today]
+        by_source = {}
+        same_phase = set()
+        for row in day_rows:
+            source = str(row.get("source") or "unknown")
+            by_source[source] = by_source.get(source, 0) + 1
+            before, after = _parse_earnings_phase(row)
+            if (session == "premarket" and before) or (session == "afterhours" and after):
+                same_phase.add(str(row.get("symbol") or "").upper())
+        all_symbols = {str(r.get("symbol") or "").upper() for r in day_rows}
+        cand = {str(c or "").replace("US.", "").upper() for c in (candidates or [])}
+        cand.discard("")
+        return {
+            # 日历规模: 该日有几行 / 各源几行 / 与本 session 同相位几行
+            "calendar_rows_today": len(day_rows),
+            "calendar_by_source": by_source,
+            "calendar_same_phase": len(same_phase),
+            # 交集: 候选池规模 / 落在日历里的候选数 / 落在"同相位日历"里的候选数
+            #   (后两项恒 0 = 门对本 session 结构性不可能通过, 与"市场空窗"是两回事)
+            "candidates": len(cand),
+            "candidates_in_calendar": len(cand & all_symbols),
+            "candidates_in_calendar_same_phase": len(cand & same_phase),
+            "calendar_source_error": error,
+        }
+    except Exception as exc:
+        return {"coverage_error": f"{type(exc).__name__}: {exc}"}
+
+
+def _record_earnings_gate_rejects(session, trade_date, reason_counts, details, candidates=None):
     """earnings 闸拒绝台账 (P0-2, DEB-20260920 §10). 每次运行聚合一行。
 
     details 只收非 calendar_missing 的子原因 (calendar_missing 是常态: 多数异动票
     今日不发财报, 逐票记录会每 5 分钟膨胀一次; 计数已足够)。异常不得影响主流程。
+
+    2026-09-22 补 `coverage` 块 (见 `_calendar_coverage`): `calendar_missing` 一个桶
+    同时装了"季空窗/源覆盖窄/候选与事件池不相交"三种情形, 单纯 counts 无法归因。
+    candidates 可选 (不传则交集读数记 0), 缺席不得影响原有字段。
     """
     if not reason_counts:
         return
@@ -758,6 +805,7 @@ def _record_earnings_gate_rejects(session, trade_date, reason_counts, details):
                 "trade_date": trade_date,
                 "counts": reason_counts,
                 "details": details[:50],
+                "coverage": _calendar_coverage(session, candidates),
             }, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -1442,7 +1490,8 @@ def collect(session, dry=False):
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
             _record_earnings_gate_rejects(
-                session, today, earnings_reason_counts, earnings_reject_details
+                session, today, earnings_reason_counts, earnings_reject_details,
+                candidates=[str(m.get("symbol") or "") for m in movers],
             )
         finally:
             qctx.close()
@@ -1679,7 +1728,8 @@ def collect(session, dry=False):
             _record_price_gate_rejects(session, price_gate_rejects)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
             _record_earnings_gate_rejects(
-                session, today, earnings_reason_counts, earnings_reject_details
+                session, today, earnings_reason_counts, earnings_reject_details,
+                candidates=[str(m.get("symbol") or "") for m in movers],
             )
         finally:
             qctx.close()
