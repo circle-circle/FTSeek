@@ -70,6 +70,16 @@ def isolated_state(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _research_arm_pinned_off(monkeypatch):
+    """Hermetic 钉 (2026-09-22, DEB-20260920 §12): .env.us 已带 EXT_ENTRY_RESEARCH_MOMENTUM=true
+    (研究臂生产启用), executor 模块 import 期读 env ⇒ 本文件 (严格臂行为面) 一律显式钉关,
+    防生产 env 漂移进断言 (实测: 钉前 test_gate_counts_line_attributes_every_candidate 因
+    research_pool 子集标签破坏归因求和而红)。研究臂行为用例见 tests/test_ext_entry_research_arm.py
+    (自行显式钉开, 双向 hermetic)。"""
+    monkeypatch.setattr(executor, "RESEARCH_ARM_ON", False)
+
+
 def _seed_earnings_calendar(monkeypatch, rows, error=None, today=None):
     """把日历缓存换成测试内容 (新格式 {"rows": [...], "error": ...}).
 

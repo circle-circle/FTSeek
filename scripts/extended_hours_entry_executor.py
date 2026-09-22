@@ -135,6 +135,39 @@ SCAN_TOP_N = 50            # 盘前/盘后榜扫描深度 (9/17 扩覆盖面: �
 #   回滚 = 把本行默认改回 "true"。
 ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"
 
+# ── SIM 研究臂 (2026-09-22 用户裁「SIM 研究臂」; DEB-20260920 §12 预注册) ──────────
+# 背景: 财报季空窗 × "当日同相位事件"门 ⇒ 供给结构性饿死 (9/21-9/22 零成交;
+#   三源日历(futu 6/AV 18/Finnhub 8)与候选池交集恒 ∅, 见 carry 影子脚本头)。
+# 用户裁: 更早恢复 SIM 交易, 用真实成交攒数据 + 打磨入场→持仓→退出→结算全链。四条纪律:
+#   ① 严格臂优先 — 先跑现行财报门吃满配额, 研究臂只吃剩余 (财报季回归零挤占);
+#   ② 全链打标 — attempts/audit/open_positions/trade_records.metadata_json/推送
+#      带 gate_mode=research_momentum, 样本与严格臂永不混算, 研究臂读数不构成转正证据;
+#   ③ SIM-only 硬连线 — _mode().is_simulate=False (含异常) 即 fail-closed, 与
+#      EXT_REAL_AUTHORIZED 双闸并列, REAL 下研究臂物理不可达;
+#   ④ 预注册退场线 — EXT_RESEARCH_ARM_UNTIL (默认 2026-10-31) 过期自动停 (日期闸在
+#      代码里, 不靠人工撤); 早退条款: 严格臂连续 5 个交易日有成交 → 裁决降级/退役。
+# 人群定义 (宁缺毋滥): 仅 **calendar_missing** (当日日历完全无事件) 被拒候选入研究池 —
+#   与 near-miss 台账同人群; calendar_phase_mismatch/unknown、surprise_*、源故障
+#   一律仍 fail-closed (事件不确定/数据缺失票不是"非财报动量"研究对象)。
+# 在仓帽加严: 研究臂**每单前**复查 _open_exposure_gate (严格臂为每轮一次) —
+#   研究臂是补充供给, 不得把 EXT 总敞口推过 MAX_OPEN/MAX_OPEN_NOTIONAL。
+# 回滚: EXT_ENTRY_RESEARCH_MOMENTUM=false (一键; cron 每 tick 新进程, 无需重启)。
+RESEARCH_ARM_ON = os.getenv("EXT_ENTRY_RESEARCH_MOMENTUM", "false").lower() == "true"
+RESEARCH_ARM_UNTIL = os.getenv("EXT_RESEARCH_ARM_UNTIL", "2026-10-31")
+RESEARCH_GATE_MODE = "research_momentum"
+
+
+def _research_arm_active():
+    """研究臂本轮是否启用: env 开关 + 未过预注册死线 + SIM 环境, 任一不满足即 False。"""
+    if not RESEARCH_ARM_ON:
+        return False
+    if _today_et() > RESEARCH_ARM_UNTIL:   # ISO 日期串可直接字典序比较
+        return False
+    try:
+        return bool(_mode().is_simulate)   # SIM-only 硬连线; 判定异常 fail-closed
+    except Exception:
+        return False
+
 
 # ── 交易模式/账户: 单一真相源 (2026-09-20 切实盘开关清单化) ──────────────────
 # 旧实现自带一套 legacy 判定 (`FUTU_TRD_ENV` + 常量 `TrdEnv.SIMULATE` + 裸读
@@ -388,15 +421,26 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
         from app.push import get_push_hub
         from app.push.message import trade_entry as _m
         hub = get_push_hub()
+        # 研究臂打标 (2026-09-22, DEB-20260920 §12 纪律②): 卡片 strategy 与 extra_lines
+        #   双标, IM 里与严格臂一眼可分; 落库 owner_strategy 不变 (退出链复用)。
+        gate_mode = rec.get("gate_mode") or "strict"
+        is_research = gate_mode == RESEARCH_GATE_MODE
+        extra_lines = [f"🆔 延长时段持仓: {pos_id}"]
+        if is_research:
+            extra_lines.insert(0, "🧪 研究臂·非财报动量 (SIM 样本, 不入严格臂台账)")
         return bool(hub.push(_m(
             symbol=symbol, direction="BUY", qty=int(fqty), price=float(fpx),
-            strategy="extended_hours_entry", trace_id=pos_id,
+            strategy=(
+                "extended_hours_research" if is_research else "extended_hours_entry"
+            ),
+            trace_id=pos_id,
             sl=rec.get("initial_sl"), source_type="playbook",
             session=session,
             extra={
                 "earnings_surprise_pct": earn.get("surprise_pct"),
                 "ext_change_pct": chg,
                 "ext_volume": vol,
+                "gate_mode": gate_mode,
                 "stop_source": "规则引擎 initial_sl (-5%)",
                 "sim_no_broker_stop": True,
                 # 本链路按构造仅 SIM (trd_env 守卫在 _execute 内), 口径标 sim 与落库一致
@@ -404,7 +448,7 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
                 "planned_entry": plan_px,
                 "entry_dev_pct": ((float(fpx) - float(plan_px)) / float(plan_px) * 100)
                                  if plan_px else None,
-                "extra_lines": [f"🆔 延长时段持仓: {pos_id}"],
+                "extra_lines": extra_lines,
             },
         )))
     except Exception as exc:  # 通知永不阻断建仓
@@ -888,6 +932,180 @@ def _record_earnings_near_misses(session, trade_date, candidates):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
+
+
+def _research_downstream_gates(item, session, today, qctx, counts, pretrade_rejects):
+    """SIM 研究臂: earnings 闸之后的全部下游闸 (与严格臂内联管线**同构同阈值**)。
+
+    2026-09-22 用户裁「SIM 研究臂」(DEB-20260920 §12)。本函数是严格臂内联管线的
+    **有界复制** — 研究臂 2026-10-31 死线自动退役, 退役时整块删除即可, 严格臂内联
+    代码全程零改动 (样本隔离纪律同样适用于代码面)。存活期内严格臂下游闸若有变更,
+    本函数必须同步 (§12 台账已登记该维护义务)。
+    计数键全部 research_* 前缀, 拒绝明细带 gate_mode 落 pretrade 台账 — 严格臂读数零污染。
+    返回 (qty, order_price, position_usd, grade, structure, pretrade_gate) 或 None。
+    """
+    symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
+    quote = _liquidity_quote(qctx, symbol)
+    grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+    if grade is None:
+        counts[f"research_{grade_reason}"] = counts.get(f"research_{grade_reason}", 0) + 1
+        pretrade_rejects.append({
+            "symbol": symbol, "decision_price": price,
+            "reason": grade_reason, "quote": quote, "gate_mode": RESEARCH_GATE_MODE,
+        })
+        return None
+    window_reason = _entry_window_reason(session, grade)
+    if window_reason:
+        counts["research_entry_window"] = counts.get("research_entry_window", 0) + 1
+        pretrade_rejects.append({
+            "symbol": symbol, "decision_price": price, "reason": window_reason,
+            "grade": grade, "gate_mode": RESEARCH_GATE_MODE,
+        })
+        return None
+    position_usd = POSITION_USD if grade == "A" else POSITION_B_USD
+    qty = int(position_usd / price)
+    spread_limit = MAX_SPREAD_PCT_A if grade == "A" else MAX_SPREAD_PCT
+    depth_ratio = MIN_ASK_DEPTH_RATIO_A if grade == "A" else MIN_ASK_DEPTH_RATIO
+    gate, reject_reason = _pretrade_gate(
+        price, qty, quote, today,
+        max_spread_pct=spread_limit,
+        min_ask_depth_ratio=depth_ratio,
+    )
+    if gate is None:
+        counts["research_liquidity"] = counts.get("research_liquidity", 0) + 1
+        pretrade_rejects.append({
+            "symbol": symbol, "decision_price": price, "qty": qty,
+            "reason": reject_reason, "quote": quote, "gate_mode": RESEARCH_GATE_MODE,
+        })
+        return None
+    order_price = gate["order_price"]
+    structure, structure_reason, structure_metrics = _entry_structure_gate(
+        qctx, symbol, session, order_price
+    )
+    if structure is None:
+        counts["research_structure"] = counts.get("research_structure", 0) + 1
+        pretrade_rejects.append({
+            "symbol": symbol, "decision_price": price, "qty": qty,
+            "reason": structure_reason, "grade": grade,
+            "structure_metrics": structure_metrics, "gate_mode": RESEARCH_GATE_MODE,
+        })
+        return None
+    qty = int(position_usd / order_price)
+    if qty < 1:
+        counts["research_position_too_small"] = (
+            counts.get("research_position_too_small", 0) + 1
+        )
+        return None
+    return qty, order_price, position_usd, grade, structure, gate
+
+
+def _research_pass_dry(pool, session, today, qctx, counts, results, pretrade_rejects):
+    """研究臂 dry 通道: 只列候选, 不写 state 不下单 (与严格臂 dry 对称, 无配额模拟)。"""
+    ordered = 0
+    for item in pool:
+        passed = _research_downstream_gates(
+            item, session, today, qctx, counts, pretrade_rejects
+        )
+        if passed is None:
+            continue
+        qty, order_price, position_usd, grade, structure, gate = passed
+        ordered += 1
+        results.append({
+            "ok": True, "dry": True, "symbol": item["symbol"],
+            "qty": qty, "price": order_price, "decision_price": item["px"],
+            "session": session, "change_pct": round(item["chg"], 2),
+            "volume": item["vol"], "earnings": None,
+            "gate_mode": RESEARCH_GATE_MODE,
+            "position_usd": position_usd, "grade": grade,
+            "structure": structure, "pretrade": gate,
+        })
+    counts["research_ordered"] = ordered
+
+
+def _research_pass_real(
+    pool, session, today, qctx, state, attempts, opened_today, day_key,
+    total_today, session_today, premarket_limit, results, pretrade_rejects, counts,
+):
+    """研究臂真单通道: 严格臂循环收口后跑, 只吃剩余配额 (纪律①)。
+
+    配额与在仓帽**每单前复查** (在仓帽严于严格臂的每轮一次 — 见 §12/配置块注释)。
+    attempt 键与严格臂同机制 (每标的每日一 attempt, failed 不占配额), 记录带 gate_mode。
+    返回 (total_today, session_today)。
+    """
+    ordered = 0
+    for item in pool:
+        if total_today >= MAX_PER_DAY or (
+            session == "premarket" and session_today >= premarket_limit
+        ):
+            break
+        exposure_gate = _open_exposure_gate()
+        if exposure_gate:
+            exposure_gate = dict(exposure_gate)
+            exposure_gate["gate_mode"] = RESEARCH_GATE_MODE
+            counts["research_exposure_blocked"] = (
+                counts.get("research_exposure_blocked", 0) + 1
+            )
+            results.append(exposure_gate)
+            break
+        passed = _research_downstream_gates(
+            item, session, today, qctx, counts, pretrade_rejects
+        )
+        if passed is None:
+            continue
+        qty, order_price, position_usd, grade, structure, gate = passed
+        symbol = item["symbol"]
+        attempt_key = f"{today}:{symbol}"
+        ordered += 1   # 与严格臂 counts["ordered"] 同口径: 发起下单即计数
+        attempts[attempt_key] = {
+            "status": "reserved", "session": session, "symbol": symbol,
+            "trade_date": today, "gate_mode": RESEARCH_GATE_MODE,
+            "reserved_at": datetime.utcnow().isoformat() + "Z",
+        }
+        _save_state(state)
+        # earnings 位: 研究臂无财报事件 — 存根显式标注 gate_mode, surprise 字段为 None
+        #   (下游 metadata_json.earnings_* 落 null, 分析面按 gate_mode 过滤, 不混算)。
+        earnings_stub = {
+            "gate_mode": RESEARCH_GATE_MODE, "surprise_pct": None, "period": None,
+            "period_age_days": None, "report_date": None, "report_phase": None,
+        }
+        try:
+            result = _execute(
+                symbol, qty, order_price, session, item["chg"], item["vol"],
+                earnings_stub, False,
+                position_usd=position_usd, grade=grade, structure=structure,
+                gate_mode=RESEARCH_GATE_MODE,
+            )
+            result["decision_price"] = item["px"]
+            result["pretrade"] = gate
+        except Exception as exc:
+            result = {
+                "ok": False, "symbol": symbol, "session": session,
+                "error": f"executor_exception:{exc}",
+            }
+            _push(f"❌ 延长时段开仓执行器异常 (研究臂)\n{symbol}\n{exc}")
+            _audit(result)
+        result["symbol"] = symbol
+        result["session"] = session
+        result["gate_mode"] = RESEARCH_GATE_MODE
+        attempts[attempt_key] = {
+            "status": "opened" if result.get("ok") else "failed",
+            "session": session, "trade_date": today,
+            "gate_mode": RESEARCH_GATE_MODE,
+            "order_id": result.get("buy_order_id"),
+            "stop_order_id": result.get("stop_order_id"),
+            "filled_qty": result.get("filled_qty"),
+            "avg_fill_price": result.get("avg_fill_price"),
+            "error": result.get("error") or result.get("skip"),
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        }
+        results.append(result)
+        if result.get("ok"):
+            total_today += 1
+            session_today += 1
+            opened_today[day_key] = session_today
+        _save_state(state)
+    counts["research_ordered"] = counts.get("research_ordered", 0) + ordered
+    return total_today, session_today
 
 
 def _scan_movers(session, qctx):
@@ -1438,6 +1656,8 @@ def _print_gate_counts(session, total, counts):
             "market_cap_missing", "market_cap_too_low",
             "turnover_too_low", "entry_window", "liquidity", "structure",
             "position_too_small", "ordered",
+            # 研究臂摘要 (2026-09-22): 池大小与实际下单数; 细分类拒绝在 research_* 计数键
+            "research_pool", "research_ordered",
         )
         body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
         print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
@@ -1473,6 +1693,8 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
+            research_pool = []
+            research_active = _research_arm_active()
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -1508,6 +1730,9 @@ def collect(session, dry=False):
                             "change_pct": change_pct,
                             "volume": volume,
                         })
+                        # 研究臂池 (纪律③人群): 仅 calendar_missing, 与 near-miss 台账同人群。
+                        if research_active:
+                            research_pool.append(item)
                     continue
                 quote = _liquidity_quote(qctx, symbol)
                 grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
@@ -1578,6 +1803,13 @@ def collect(session, dry=False):
                     "structure": structure,
                     "pretrade": gate,
                 })
+            # 研究臂 dry 通道: 严格臂候选列完后补列 (无配额模拟, 与严格臂 dry 对称)。
+            if research_pool:
+                counts["research_pool"] = len(research_pool)
+                _research_pass_dry(
+                    research_pool, session, today, qctx, counts, results,
+                    pretrade_rejects,
+                )
             counts["earnings_phase"] = (
                 earnings_reason_counts.get("calendar_phase_mismatch", 0)
                 + earnings_reason_counts.get("calendar_phase_unknown", 0)
@@ -1682,6 +1914,8 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
+            research_pool = []
+            research_active = _research_arm_active()
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
@@ -1721,6 +1955,10 @@ def collect(session, dry=False):
                             "change_pct": change_pct,
                             "volume": volume,
                         })
+                        # 研究臂池 (纪律③人群): 仅 calendar_missing, 与 near-miss 台账同人群。
+                        #   attempt/held/价/动量/量闸已在本循环上方排除, 池内皆为四闸全过者。
+                        if research_active:
+                            research_pool.append(item)
                     continue
 
                 quote = _liquidity_quote(qctx, symbol)
@@ -1825,6 +2063,15 @@ def collect(session, dry=False):
                     session == "premarket" and session_today >= premarket_limit
                 ):
                     break
+            # 研究臂真单通道 (纪律①严格臂优先): 只有严格臂循环收口后仍有剩余配额才跑。
+            #   每单前复查配额+在仓帽 (_open_exposure_gate), 全链 gate_mode 打标。
+            if research_pool:
+                counts["research_pool"] = len(research_pool)
+                total_today, session_today = _research_pass_real(
+                    research_pool, session, today, qctx, state, attempts,
+                    opened_today, day_key, total_today, session_today,
+                    premarket_limit, results, pretrade_rejects, counts,
+                )
             counts["earnings_phase"] = (
                 earnings_reason_counts.get("calendar_phase_mismatch", 0)
                 + earnings_reason_counts.get("calendar_phase_unknown", 0)
@@ -1854,9 +2101,12 @@ def collect(session, dry=False):
 def _write_open_position(
     symbol, qty, entry_px, decision_px, session, earn, chg, vol,
     buy_order_id="", position_usd=None, grade="B", structure=None,
+    gate_mode="strict",
 ):
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
-    返回 position_id. 幂等且不覆盖既有仓位."""
+    返回 position_id. 幂等且不覆盖既有仓位.
+    gate_mode 落两表 metadata_json (2026-09-22 研究臂样本隔离): 退出链只增键零影响,
+    分析面按 metadata_json.gate_mode 过滤, research_momentum 与严格臂永不混算."""
     import uuid
     ensure_test_symbol_not_in_production_db(symbol, DB)
     conn = sqlite3.connect(DB, timeout=30)
@@ -1874,6 +2124,7 @@ def _write_open_position(
                            "ext_change_pct": chg, "ext_volume": vol,
                            "ext_turnover_usd": float(entry_px or 0) * float(vol or 0),
                            "entry_grade": grade,
+                           "gate_mode": gate_mode,
                            "entry_position_usd": float(position_usd or POSITION_USD),
                            "entry_structure": structure,
                            "cert_lock_pct": (
@@ -1932,10 +2183,12 @@ def _write_open_position(
 
 def _execute(
     symbol, qty, price, session, chg, vol, earn, dry,
-    position_usd=None, grade="B", structure=None,
+    position_usd=None, grade="B", structure=None, gate_mode="strict",
 ):
     """SIM 真下单: 买入→等成交→写 open_positions(含 initial_sl 规则引擎兜底). 用户裁方案1.
-    SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor."""
+    SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor.
+    gate_mode (2026-09-22 研究臂): "strict"=财报门严格臂(默认, 缺省不打标即严格臂);
+    "research_momentum"=SIM 研究臂 — 随 rec 落审计、随 metadata_json 落仓/交易记录 (样本永不混算)."""
     acc_id = _mode().account_id()
     # 2026-09-18: 测试占位标的 (TEST/US.TEST/*.TEST) 在**源头**挡掉 —— 它们只可能来自单测 artifact 或
     #   券商账户里的报废测试单 (如 US.TEST order 8185070), 不是真候选股; 且不推告警(见下)。
@@ -1955,7 +2208,7 @@ def _execute(
     rec = {"symbol": symbol, "qty": qty, "price": price, "session": session,
            "change_pct": round(chg, 2), "volume": vol, "earnings": earn,
            "position_usd": requested_position_usd, "entry_grade": grade,
-           "entry_structure": structure}
+           "entry_structure": structure, "gate_mode": gate_mode}
     from futu import TrdSide, OrderType, TrdEnv, TimeInForce, Session, RET_OK
     tctx = _open_trade_context()
     try:
@@ -2013,6 +2266,7 @@ def _execute(
             pos_id = _write_open_position(
                 symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid,
                 position_usd=requested_position_usd, grade=grade, structure=structure,
+                gate_mode=gate_mode,
             )
         except Exception as exc:
             rec["ok"] = False

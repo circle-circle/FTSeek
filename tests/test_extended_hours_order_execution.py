@@ -99,6 +99,14 @@ def _create_db(path):
     connection.close()
 
 
+@pytest.fixture(autouse=True)
+def _research_arm_pinned_off(monkeypatch):
+    """Hermetic 钉 (2026-09-22, DEB-20260920 §12): .env.us 已带 EXT_ENTRY_RESEARCH_MOMENTUM=true,
+    executor import 期读 env ⇒ 本文件 (严格臂订单执行面) 显式钉关; 研究臂用例见
+    tests/test_ext_entry_research_arm.py (自行钉开)。"""
+    monkeypatch.setattr(entry_executor, "RESEARCH_ARM_ON", False)
+
+
 @pytest.fixture()
 def entry_environment(tmp_path, monkeypatch):
     db_path = tmp_path / "entry.db"

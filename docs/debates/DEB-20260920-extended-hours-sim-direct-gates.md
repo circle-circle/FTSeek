@@ -610,3 +610,77 @@ watchlist/beat_rank 备选源，两源当前均关）；若开 `EXT_ENTRY_SOURCE
 提交入库，作为 carry 影子 9/25 前后裁决（n≥3 交易日 ∧ 上界≥2 只/日 → 立 DEB 提请放宽
 「同日」语义；<0.5 只/日 → 停采）的并行证据面。文件内 9/22 早段存在旧 schema 行
 （`base_gate=price_momentum_volume_passed`，无 turnover 字段），分析时按 base_gate 过滤。
+
+## 12. SIM 研究臂预注册（2026-09-22 用户裁「SIM 研究臂」）
+
+**动机**：财报季空窗 × 「当日同相位事件」门 ⇒ 严格臂供给结构性饿死（§11 复查证实：
+三源日历与候选池交集恒 ∅，9/21-9/22 零成交；carry 影子空窗期上界读数也为 0）。
+用户裁决：**更早恢复 SIM 交易，用真实成交攒数据 + 打磨入场→持仓→退出→结算全链**。
+方案对比（当日均为实测）：T-1 carry 提前放宽 0~1 笔/日、beat_rank/watchlist 源 +0 笔、
+**研究臂（earnings 闸对 calendar_missing 人群降级为记录）1~2 笔/日** ⇒ 选研究臂。
+
+**四条纪律（代码硬连线，非口头约定）**：
+
+1. **严格臂优先**：严格臂（现行财报门）先吃满配额；研究臂只在轮末仍有剩余配额时下单
+   （`_research_pass_real` 每单前复查日配额/盘前限额）。财报季回归零挤占。
+2. **全链打标**：`gate_mode=research_momentum` 贯通 attempts（state）、AUDIT jsonl、
+   open_positions/trade_records 的 metadata_json、成交推送（strategy=extended_hours_research
+   + 卡片首行「🧪 研究臂」）。严格臂缺省 `gate_mode=strict`。**样本永不混算**：
+   §9 十字段归档、结算与任何转正裁决只取 strict 样本；研究臂读数单列。
+3. **SIM-only fail-closed**：`_research_arm_active()` 要求 `_mode().is_simulate=True`
+   （判定异常同样 False）；REAL 下另有 `_execute` 的 `EXT_REAL_AUTHORIZED` 双闸，研究臂物理不可达。
+4. **预注册退场线**：`EXT_RESEARCH_ARM_UNTIL`（默认 **2026-10-31**）过期自动停用（日期闸
+   在代码内，不靠人工撤）。早退条款：严格臂连续 5 个交易日有成交（财报季自然回归）⇒ 提请裁降级/退役。
+
+**人群定义（宁缺毋滥）**：仅 `calendar_missing`（当日日历完全无事件，与 near-miss 台账同人群）
+入研究池；`calendar_phase_mismatch/unknown`、`surprise_*`、`finnhub_*`、源故障一律仍 fail-closed
+——事件不确定/数据缺失票不是「非财报动量」研究对象。**其余全部闸不变**：≥$5、≥2% 动量、
+≥20 万量、≥$10M 成交额、≥$1B 市值、A/B 分级、成熟窗、点差/深度/漂移/费用、VWAP 结构闸、
+每标的每日一 attempt、90s 未成交即撤。在仓帽**加严**：研究臂每单前复查 `_open_exposure_gate`
+（严格臂为每轮一次）——研究臂是补充供给，不得把 EXT 总敞口推过 MAX_OPEN=5 / $25k。
+
+**预注册判据（写死在此，读数不得事后改）**：
+
+- **流程打磨判据（本臂主目的）**：研究臂真单 ≥10 笔走完「下单→成交回补→持仓落库→退出链
+  （initial_sl/锁盈/收口）→settle→日评审」全链且零 P0 链路事故 ⇒ 判「流程就绪迎接财报季」；
+  任何链路事故 ⇒ 登记 incident 修复后继续攒样。
+- **数据面判据（仅归档，不作转正证据）**：研究臂净收益按 tag 单独归档。n≥10 后：
+  单均净期望 < -1% ⇒ 与 9/17 回放「<3% 涨幅档唯一负档」互证，作为 carry 影子裁决的反面输入；
+  ≥ 0 ⇒ 记录「非财报动量在 SIM 可交易」，**仍不得提议转正**（转正证据只认严格臂/carry 影子 DEB）。
+- **供给面读数**：`research_pool`/`research_ordered` 计数逐轮落闸计数行；与 near-miss 台账
+  （严格臂视角反事实）交叉核对，供 carry 影子 9/25 裁决引用。
+
+**维护义务**：`_research_downstream_gates` 是严格臂内联管线的**有界复制**（退役时整块删除，
+严格臂零改动）。存活期内严格臂下游闸（分级/窗口/盘口/结构/费用）任何变更**必须同步**该函数，
+并在本节补记一行。
+
+**落点**：`extended_hours_entry_executor.py`（配置块 + `_research_arm_active` +
+`_research_downstream_gates/_research_pass_dry/_research_pass_real` + collect 两路径接线 +
+`_execute/_write_open_position/_push_filled` 打标）；`.env.us`（EXT_ENTRY_RESEARCH_MOMENTUM=true,
+EXT_RESEARCH_ARM_UNTIL=2026-10-31）；`tests/test_ext_entry_research_arm.py`（19 例：默认关
+fail-closed 源码契约、SIM-only、死线、严格优先、剩余配额、人群排除 ×6、在仓帽复查、
+DB/audit/推送打标、strict 缺省、闸计数行子集标签语义）。
+**Hermetic 钉（本批实测教训）**：`.env.us` 写入 `EXT_ENTRY_RESEARCH_MOMENTUM=true` 后，
+executor import 期读 env ⇒ 存量严格臂用例暴露于生产 env（`test_gate_counts_line_attributes_every_candidate`
+因 research_pool 子集标签破坏归因求和当场红；另一 near-miss 用例仅因结构闸恰好被 Fake 挡住而侥幸绿）。
+处置：两个 collect 级测试文件加 autouse `_research_arm_pinned_off`，研究臂文件自行显式钉开 —
+**生产 env 开关新增时必须同步排查存量用例的 hermetic 面**（与配额常量钉同一条纪律）。
+
+**回滚**：`EXT_ENTRY_RESEARCH_MOMENTUM=false`（一键，cron 每 tick 新进程即生效，无需重启）；
+完整回滚 = revert 本批 commit（严格臂代码零改动，删除即净）。
+
+**验证记录**：
+
+```bash
+PYTHONPATH=. venv/bin/python3.11 -m pytest -q \
+  tests/test_extended_hours_entry_executor.py tests/test_extended_hours_order_execution.py \
+  tests/test_ext_entry_prefilter_shadow.py tests/test_extended_hours_original_profit_rules.py \
+  tests/test_afterhours_hold_to_open.py tests/test_ext_take_profit_only.py \
+  tests/test_extended_hours_exit_cron.py tests/test_config_version_writers.py \
+  tests/test_earnings_calendar_source_order.py tests/test_ext_entry_test_symbol_guard.py \
+  tests/test_cancel_orphan_ext_order.py
+# 152 passed（研究臂批前基线，autouse 钉关后全绿 = 严格臂零漂移）
+
+PYTHONPATH=. venv/bin/python3.11 -m pytest -q tests/test_ext_entry_research_arm.py
+# 19 passed（合计 171）
+```
