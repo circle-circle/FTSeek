@@ -11,10 +11,14 @@
 故 `--date` = **ET 当日** (刚刚收盘的那天), 不是 "ET 昨日" (§7 的 `date -d yesterday`
 在 06:35 这个时刻会算到周末, 实测 2026-09-22: ET 9/21 18:35 → yesterday=9/20 非交易日)。
 
-**与 §7 的一处显式偏离 (待裁)**: 本载体默认 **不推送** (`--push` 关), 只产 bundle + vault 页。
-理由: bundle 的 headline 与 04:07 盘后综合复盘的头条同源, 日推一条属重复刷屏 (用户注意力面);
-待裁决提醒已由 `pending_adjudication_carrier.py` (周六 09:15) 承担。
-开关: 环境变量 `REVIEW_BUNDLE_PUSH=1` 即恢复 §7 的 `--push` 行为, 无需改码。
+**投递语义 (2026-09-22 用户令「需要推送 添加容易理解的注释」后定义)**: 本载体**日推判决书** —
+把 `review_bundle.py --print-push` 的白话版推送文本原样交给 Hermes 投递 (stdout 即投递内容)。
+所推送文本自带白话注释 (`bundle_render._push_glossary`: 净=毛−费 + 本日毛/费 + 计划外/错过/P0/待裁裁决就地翻译),
+理由: 收货人不在终端, 无法 grep/PRAGMA ⇒ 推送面必须自解释。
+两条独立开关:
+  · `REVIEW_BUNDLE_QUIET=1` → 回到严格静默 (只产 bundle + vault 页, 不推) — 本载体的回滚开关;
+  · `REVIEW_BUNDLE_PUSH=1` → 额外走 app 推送通道 `--push` (既有 §7 行为; 与上面互不影响)。
+**已知代价 (记下不掩饰)**: 本条日推与 04:07 盘后综合复盘的头条同源, 存在重复; 用户明示要推, 故按令执行。
 
 stdout 契约 (静默类, 与告警类载体相反):
   · rc == 0 且 stdout 为空 → 静默 (产物已落盘: bundle_<date>.json / REVIEW_<date>.md / vault 页)
@@ -65,6 +69,9 @@ def main() -> int:
         return 3
     date = _report_date()
     argv = [str(PYTHON) if PYTHON.exists() else sys.executable, str(CHILD), "--date", date, "--vault"]
+    quiet = os.environ.get("REVIEW_BUNDLE_QUIET") == "1"
+    if not quiet:
+        argv.append("--print-push")      # 子脚本只印推送文本 ⇒ stdout 即投递内容
     if os.environ.get("REVIEW_BUNDLE_PUSH") == "1":
         argv.append("--push")
     env = dict(os.environ, PYTHONPATH=str(REPO), PYTHONUNBUFFERED="1")
@@ -96,6 +103,13 @@ def main() -> int:
         print(f"[review_bundle_carrier] 载体级异常: rc=0 但产物未落盘/未刷新 {produced} "
               f"⇒ 判决书断更 (不得读成'无待裁项')")
         return 4
+    if quiet:
+        return 0                        # 回滚态: 严格静默 (旧语义)
+    text = (out or "").strip()
+    if not text:
+        print("[review_bundle_carrier] 载体级异常: rc=0 但推送文本为空 ⇒ 判决书断更 (不得读成'无待裁项')")
+        return 4
+    print(text)                         # ← stdout 即投递内容 (判决书日推)
     return 0
 
 

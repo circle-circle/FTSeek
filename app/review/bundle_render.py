@@ -332,7 +332,7 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
         for stage, row in slices.items()
     ) or "无已平仓样本"
     push_lines = [
-        f"FTSeek-US 复盘 {report_date}",
+        f"FTSeek-US 复盘 {report_date}（已平仓·按退出日·美元）",
         f"净 {_money(headline['net_pnl']['value'])} / {headline['trade_count']['value']}笔"
         f" / 胜率 {_ratio(headline['win_rate']['value'])}",
         stage_text,
@@ -351,6 +351,34 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
         oldest = "; ".join(
             f"{row['id']}@{row.get('ready_since', '?')}" for row in ready_rows[:5]
         )
-        push_lines.append(f"待裁决 {len(ready_rows)}：{oldest}")
+        oldest_since = str(ready_rows[0].get("ready_since") or "?")
+        push_lines.append(f"待裁决 {len(ready_rows)}（最久 {oldest_since} 起）：{oldest}")
+    # 白话注释 (2026-09-22, 用户令「需要推送 添加容易理解的注释」):
+    #   推送面必须自解释 — 收货人不在终端, 无法 grep/PRAGMA; 术语一律就地翻译, 数字就地给口径.
+    #   与 shadow 验收清单同风格 (背景 30 秒 + 白话行), 两处口径一致: "待裁决" ≠ 判据通过.
+    glossary = _push_glossary(headline, ready_rows)
+    if glossary:
+        push_lines.append("——")
+        push_lines.append(glossary)
     push_text = "\n".join(push_lines)
     return full_md, push_text
+
+
+def _push_glossary(headline: dict, ready_rows: list) -> str:
+    """推送白话注释: 术语就地翻译 + 口径就地标注 (缺失即省, 绝不为文案编数)."""
+    parts = []
+    gross = (headline.get("gross_pnl") or {}).get("value")
+    fees = (headline.get("fees") or {}).get("value")
+    if gross is not None and fees is not None:
+        parts.append(
+            f"「净」=毛利−费用（本日 毛 {_money(gross)} / 费 {_money(fees)}）"
+        )
+    else:
+        parts.append("「净」=毛利−费用")
+    parts.append("「计划外」=系统自己加的单（越权警示），「错过」=计划了但没成交")
+    parts.append("「P0 异常」=当日数据自审发现的严重不一致（0=无）")
+    if ready_rows:
+        parts.append(
+            "「待裁决」=影子试验样本攒够了，等你决定留/停/转正（样本够 ≠ 判据通过；白话版见「影子验收清单」通知，周六 09:15 有变化才发）"
+        )
+    return "白话：" + "；".join(parts) + "。"

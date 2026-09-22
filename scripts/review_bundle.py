@@ -103,6 +103,7 @@ def run(
     vault_dir: Optional[Path] = None,
     push: bool = False,
     hub_factory: Callable[[], Any] = _default_hub_factory,
+    print_push: bool = False,
 ) -> dict[str, Any]:
     bundle = build(connection, report_date)
     pending = pending_adjudications()
@@ -151,13 +152,18 @@ def run(
             hub_factory,
         )
 
-    return {
+    result = {
         "bundle": str(bundle_path),
         "markdown": str(markdown_path),
         "latest": str(latest_path),
         "meta": str(meta_path),
         "pushed": pushed,
     }
+    if print_push:
+        # 载体投递面 (2026-09-22): 只把推送文本交出去, 不带 JSON 摘要 —
+        # 载体 (Hermes no_agent) 的 stdout 即投递内容, 混入 JSON 会污染推送.
+        result["push_text"] = push_text
+    return result
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -166,6 +172,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--period", choices=("day", "week", "month"), default="day")
     parser.add_argument("--push", action="store_true", help="send one caller-guarded daily push")
     parser.add_argument("--vault", action="store_true", help="write the review page to vault")
+    parser.add_argument("--print-push", action="store_true",
+                        help="只打印推送文本 (载体投递面; 与 --push 互不影响: 只印不发)")
     args = parser.parse_args(argv)
 
     if args.period != "day":
@@ -183,11 +191,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             OUTPUT_DIR,
             vault_dir=VAULT_DIR if args.vault else None,
             push=args.push,
+            print_push=args.print_push,
         )
     finally:
         connection.close()
 
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    if args.print_push:
+        print(result["push_text"])
+    else:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
 
