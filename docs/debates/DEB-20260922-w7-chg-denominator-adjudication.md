@@ -89,7 +89,7 @@
 | 快照通道 | `:986-998` (`prev_close=row.get("prev_close_price", last_price)`) | 盘前快照的 `last_price`/`prev_close_price` 成对滞后 |
 | 路由器缓存 | `:432/:723` 抄值 | 抄到的是一份跨会话未失效的旧 quote |
 
-### 4.1 已钉死: 快照字段语义面 (代码 + 先例双重确认)
+### 4.1 ~~已钉死: 快照字段语义面~~ (⚠️ 本节结论已被 §4.4 更正 — 保留以留痕)
 
 读码与先例把"哪一个"定死了, 且**仓库里已有同形修法**:
 
@@ -121,13 +121,48 @@ if _pc_clean and _px_now and float(_pc_clean) > 0:
 - 加 `change_percent_source` 溯源键 ⇒ 日后再出分歧可直接分辨是谁算的 (W7 也可据此区分);
 - 影响面即 §5 的消费方; 不改阈值、不改键集、不动交易链路结构。
 
-### 4.3 抓包降级为"确认性测试" (预注册预测)
+### 4.4 更正 + 真病灶 (行级, 2026-09-22 用户裁「先修分母」后读码所得)
+
+**§4.1 的钉点是错的, 在此更正。** 我先前把病灶钉在"快照 `prev_close_price` 语义"上, 依据是 RFC-068 注释里
+"盘前概率性返回两天前收盘, 62% 实测" — 但那是 `prev_close` **键**的旧病史, 不是 `change_percent` 的生产者。
+读码到行级后, 真链路是:
+
+| 步 | 位置 | 行为 |
+|---|---|---|
+| ① | `app/data/lv3_technical_calculator.py:339-351` `_calc_change_percent` | `prev_close = df["close"].iloc[-2]`, `curr_price = result["price"]` (= `df["close"].iloc[-1]`), `change_percent = (curr_price − prev_close)/prev_close×100` |
+| ② | 同一函数 `:68` | `result["price"] = float(df["close"].iloc[-1])` — 分子分母**都来自日K序列相邻两根 bar** |
+| ③ | `app/data/market_data_router.py:544` "用快照价覆盖 K 线价" | 只把 `ts_ctx["price"]` 换成实时价, **没有重算 `change_percent`** |
+
+⇒ 当日盘前/盘中, 日K序列的最后一根 bar 是**最近一个已收盘交易日** ⇒ ①算出的比值 **恒等于"前一交易日的涨跌幅"**;
+③把价格换成实时价之后, ctx 输出的是 **"实时价 + 昨日涨跌幅"混装**。这就是 §4 三样本 (≤0.003pp) 的成因,
+也解释了为什么它**整日不变**、以及 `US.RUM 09-14` 同日为何同时存在 −2.65 (主路径) 与 +16.46 (另一路径/时点) 两种读法。
+
+**修法 (已落地, 用户 2026-09-22 裁「先修分母」)**: `market_data_router.py` Step 8 之后追加一处重算
+(与 RFC-068 同一处收口点, 路径共同、fail-open 同语义):
+
+```python
+_pc_rf = float(ts_ctx.get("prev_close") or 0)     # RFC-068 日K自算真昨收
+_px_rf = float(ts_ctx.get("price") or 0)          # 已被实时价覆盖
+if _pc_rf > 0 and _px_rf > 0:
+    ts_ctx["change_percent"] = round((_px_rf - _pc_rf) / _pc_rf * 100.0, 3)
+    ts_ctx["change_percent_source"] = "router_recomputed_daily_close"
+```
+
+守卫 (3 条, 均落在 `tests/test_router_prev_close_injection.py`):
+`test_calculator_change_percent_is_prior_session_move` (根因钉住: 计算器口径 = 相邻 bar 涨跌幅, 且**不得**等于当日涨幅)、
+`test_change_percent_recomputed_from_live_price_and_true_prev_close` (主守卫: 脏值 −0.93 不得存活, 须出 −5.401 + 溯源键)、
+`test_change_percent_untouched_when_prev_close_or_price_missing` (fail-open: 不写溯源键、不改数、不编造昨收)。
+**残余 (明说)**: 真昨收不可得的分支 (日K全挂) 仍是旧口径原值 — 属已知 fail-open, 与 RFC-068 同; 该分支由 W7 继续可见。
+
+### 4.3 抓包降级为"确认性测试" (预注册预测 — **其中 P1 已被 §4.4 证伪**)
 
 `8a989cf4501d` (09:33 ET) 仍是必要取证, 但性质已变——**它能被证伪**:
 - **预测 P1**: 盘前窗内至少 1 只标的的快照 `prev_close_price` == **前前一日收盘 (c2)** 而非前一日收盘 (c1)
   ⇒ 该标的"陈旧对命中 (stale_pair_hit)"为真, 且 `cp_from_snapshot_fields` == 前一日涨跌幅;
 - **预测 P2**: 同一时刻日K `c1` 与 pmi 侧 `prev_close` 一致 (pmi 干净);
-- **若两只都不命中 P1**: 则快照语义面被证伪, 病灶回到 push 缓存/路由器抄值面 (§4 表第 1/3 行), 修点随之前移。
+- **若两只都不命中 P1**: 快照语义面被证伪 — **这已经发生**: §4.4 读码把病灶钉到"日K序列口径 + 覆盖 price 不重算",
+  既不是快照字段面, 也不在 §4.3 列的两个备选里 (预注册的备选清单不完整, 据实记下)。抓包 job 因此**转为回归取证**:
+  它的价值变成"修复上线后, 盘前窗内是否还有陈旧对" — 有则说明另有残余面。
 
 **机制层面的既有先例**仍未变: `DEB-20260911 C6` 立档的 "push 缓存昨收跨日不更新" (当时实测 pmi −7.65% vs ctx +4.07%, 7 秒内差 11.72pp, `change_percent` 全日冻结) 与本文同族; 区别是本文给出了 **ctx 值 = 前一日涨跌幅** 的定量身份, 把"缓存脏了"从形容词变成了等式。
 
@@ -182,7 +217,7 @@ python3 /root/.hermes/scripts/w7_denominator_probe.py   # 壳体 → scripts/w7_
 
 | 选项 | 做什么 | 预注册判据 (怎么算达成) | 风险 |
 |---|---|---|---|
-| **A 先修分母** (维护批建议, **§4 已实证支持**) | 病灶已定量: ctx 的 `change_percent` 拿的是 (前一日收盘, 前前一日收盘) 对; 修点锁定 `futu_lv3_provider` 取数面 (push `:951-962` / 快照 `:986-998` / 路由器 `:432,:723`), 先 §6⑤ 抓包定死是哪一面, 再让当日读数必须来自当日会话。期间 38 键**不 append**, 保持可见 | ① 抓包定死单一面; ② 修后新样本 ctx 值 == 当日涨跌幅 (差 <0.1pp) **连续 3 个交易日**; ③ `_check_chg_denominator` 的 `healed` 列出这 38 键 或 `new=0` | 改动触及取数路径 ⇒ 按 `ADAPTATION-CONTROL-LAW` 走变更 (口径类改动先落档); 须验 fallback 路径 (snapshot 预算/限流) 不被新守卫打回 |
+| **A 先修分母 — ✅ 用户 2026-09-22 裁定并已落地** (见 §4.4) | 病灶已定量: ctx 的 `change_percent` 拿的是 (前一日收盘, 前前一日收盘) 对; 修点锁定 `futu_lv3_provider` 取数面 (push `:951-962` / 快照 `:986-998` / 路由器 `:432,:723`), 先 §6⑤ 抓包定死是哪一面, 再让当日读数必须来自当日会话。期间 38 键**不 append**, 保持可见 | ① 抓包定死单一面; ② 修后新样本 ctx 值 == 当日涨跌幅 (差 <0.1pp) **连续 3 个交易日**; ③ `_check_chg_denominator` 的 `healed` 列出这 38 键 或 `new=0` | 改动触及取数路径 ⇒ 按 `ADAPTATION-CONTROL-LAW` 走变更 (口径类改动先落档); 须验 fallback 路径 (snapshot 预算/限流) 不被新守卫打回 |
 | B append 基线 | 把 38 键写入 `chg_denominator_baseline.json` 的 `divergent` + `refs` 写裁决出处 ⇒ 静默 | 无 (落地即静默) | **会静默一条在跑的日频分叉**; 且 §3 已证 ctx 侧日内不自洽 ⇒ 现在 append 会把可疑读数合法化 |
 | C 收紧判据 | 只报 pp>5 或只报当日新增 | 需重新预注册阈值 + 双窗口验证 | 治噪声不治因; 分叉在 2-5pp 段同样可能是错分母 |
 | D 维持无行动 | 不动 | — | 每天一条 P1 (+ 盘中签名归并) 噪声, 且消费者读数继续不可信 |
@@ -201,4 +236,10 @@ python3 /root/.hermes/scripts/w7_denominator_probe.py   # 壳体 → scripts/w7_
 
 | 日期 | 裁决人 | 决定 | 依据/理由 |
 |---|---|---|---|
-| (待) | 用户 | | |
+| 2026-09-22 | 用户 | **「先修分母」** (选项 A) | 判决书 §1-§4.4 实证: 38 键在跑的日频分叉 + ctx 值 = 前一交易日涨跌幅 (≤0.003pp) + 影响面含生产 fallback 路径; append 基线会静默在跑的错读数 |
+
+**执行回执 (2026-09-22)**: 修法已落 `app/data/market_data_router.py` (Step 8 后重算 + 溯源键);
+3 条守卫落 `tests/test_router_prev_close_injection.py` (7 passed); 相关面回归 281 passed (另 5 个 `test_trade_recorder` 失败
+为**既有夹具 schema 漂移**: 夹具库缺 `trade_records.config_version` 列, 真库有 — 与本改动无关, 未处置, 已记录);
+服务 `ftseek-us.service` 重启后生效。**达成判据** (§7 A): 新样本 ctx 值 == 当日涨跌幅 (差 <0.1pp) 连续 3 个交易日, 且 W7 `new=0`
+或 `healed` 列出这 38 键 — 观察窗自 2026-09-23 起算。

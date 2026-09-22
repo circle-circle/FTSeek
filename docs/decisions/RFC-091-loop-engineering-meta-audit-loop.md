@@ -317,4 +317,10 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
   实测: 首跑出声 3 行 / 二跑 0 字节 / rc3 / rc4 / 真调度实弹 (rc=0 dur=12.4s, delivery suppressed)。
 - **W7 分叉溯源已定论 + 抓包载体落地** (2026-09-22): ctx 侧 `change_percent` = 前一交易日涨跌幅 (3 样本 ≤0.003pp, 与交易所日K对表);
   取数面三选一未定 ⇒ 限时只读 job `8a989cf4501d` (`33 21 * * 1-5`, 盘前窗, 只抓 2 只) 判定, 裁决落地即删。证据档 `data/audit/w7_denominator_probe.jsonl`。
+- **W7 分母相位修复已落地** (2026-09-22, 用户裁「先修分母」; 详见 `DEB-20260922` §4.4):
+  病灶行级 = `LV3TechnicalCalculator._calc_change_percent` 从日K序列相邻两根 bar 算涨跌幅 ⇒ 盘前/盘中恒等于**前一交易日涨跌幅**,
+  而 `market_data_router.py` "用快照价覆盖 K 线价"只换 `price`、**没重算 `change_percent`** ⇒ ctx 输出"实时价 + 昨日涨跌幅"。
+  修法 = Step 8 后按 (实时价, RFC-068 真昨收) 重算 + `change_percent_source` 溯源键, fail-open 缺任一则保留原值。
+  3 条守卫 (`tests/test_router_prev_close_injection.py`), 相关面回归 281 passed。
+  **教训 (已入 skill)**: 同一次口径修复只修了半个字典 (RFC-068 8/29 只修 `prev_close`), 派生量漏在门外 ⇒ 覆盖基准量时必须扫同族派生字段。
 - **月环不是载体缺口, 是本体未实现**: `review_bundle.py --period month` 直接 `error: … arrive with P5` ⇒ 只能在 "单开一批实现月度双窗口+判据总账" 与 "把 §7/§16 该行标注未实现" 之间选。台账已加显式注释行防误读。

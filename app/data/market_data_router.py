@@ -874,6 +874,27 @@ class MarketDataRouter:
         if not ts_ctx.get("prev_close") and float(ts_ctx.get("previous_close", 0) or 0) > 0:
             ts_ctx["prev_close"] = float(ts_ctx["previous_close"])
 
+        # ── RFC-091 / DEB-20260922 §4.4 修复 (2026-09-22, 用户裁「先修分母」) ──
+        # 病灶 (行级): ts_ctx["change_percent"] 由 LV3TechnicalCalculator._calc_change_percent
+        #   从**日K序列**算出 = (最后完整bar − 其前一根bar)/前一根bar ⇒ 在当日盘前/盘中它恒等于
+        #   **前一交易日的涨跌幅**; 而上方"用快照价覆盖 K 线价"只换了 price、没重算 change_percent
+        #   ⇒ ctx 输出"实时价 + 昨日涨跌幅"混装。
+        #   实证 (DEB-20260922 §4): RIVN 9/21 ctx −2.66% == 9/18 涨跌幅 (14.99 vs 15.40),
+        #   NOK 9/15 −13.30% == 9/14 涨跌幅, RUM 9/14 −2.65% == 9/11 涨跌幅, 差 ≤0.003pp;
+        #   且 W7 不变量 (chg 分母分叉) 自 9/11 起每个交易日报 38 键基线外新增。
+        # 修法: 真昨收 (RFC-068 日K自算) 与实时价同时可得时重算, 并写溯源键; 缺任一则保留原值
+        #   (fail-open, 与 RFC-068 prev_close 注入同语义, 不打新守卫)。
+        # 影响面: intraday_scorer:494/610 (slope_5m 不可用时的 fallback 路径), pipeline.py:5830,
+        #   market_data_stage:168, entry_timing_shadow 的 features.change_percent。
+        try:
+            _pc_rf = float(ts_ctx.get("prev_close") or 0)
+            _px_rf = float(ts_ctx.get("price") or 0)
+            if _pc_rf > 0 and _px_rf > 0:
+                ts_ctx["change_percent"] = round((_px_rf - _pc_rf) / _pc_rf * 100.0, 3)
+                ts_ctx["change_percent_source"] = "router_recomputed_daily_close"
+        except Exception as _cp_rf_err:
+            logger.debug(f"[Router] change_percent重算跳过 {symbol}: {_cp_rf_err}")
+
         # 添加时间戳
         # DEB-20260903 #22: 用 ET naive 替代服务器本地 datetime.now() —
         # 同函数 L522/L560/L633 均按 US/Eastern 推"今日", timestamp 须同口径,
