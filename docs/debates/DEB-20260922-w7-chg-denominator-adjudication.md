@@ -89,7 +89,45 @@
 | 快照通道 | `:986-998` (`prev_close=row.get("prev_close_price", last_price)`) | 盘前快照的 `last_price`/`prev_close_price` 成对滞后 |
 | 路由器缓存 | `:432/:723` 抄值 | 抄到的是一份跨会话未失效的旧 quote |
 
-**未定的就是"哪一个"**: 三个面都会产出同样的数字对, 需在**盘前 09:33 ET (21:33 CST) 对 1-2 个标的抓一次原始快照**, 记录 `last_price / prev_close_price / pre_price / update_time` 与路由器最终给出的 `change_percent`, 即可一次判死 (成本: 1 次 snapshot 调用, 只读; 须避开交易环路的 snapshot 预算 ⇒ 只抓 1-2 只)。
+### 4.1 已钉死: 快照字段语义面 (代码 + 先例双重确认)
+
+读码与先例把"哪一个"定死了, 且**仓库里已有同形修法**:
+
+1. **脏字段**: `futu_lv3_provider` 用快照/推送的 `prev_close_price` 当分母算 `change_percent` —
+   push 通道 `:957-961` (`prev_close = float(quote.get("prev_close") or 0)`), 快照通道 `:986-988`
+   (`prev_close = row.get("prev_close_price", last_price)`)。盘前窗里 `last_price` 还停在**最近一个已收盘日**的收盘,
+   而 `prev_close_price` **概率性地返回"两天前收盘"** ⇒ 比值恰好 = **前一交易日的涨跌幅** (§4 三样本 ≤0.003pp 全中)。
+2. **该字段的毛病仓库早就量过**: `market_data_router.py:509-534` 的 RFC-068 审计修复 (2026-08-29) 注释原文 ——
+   *"昨收口径: 日K自算真昨收 (承 de13b8d0 教训; **不用快照 prev_close_price — 盘前概率性返回两天前收盘, 62% 实测**)"*。
+   即 `prev_close` 这个键早在 8/29 就被换成日K自算真昨收 (B 门由此才不再结构性短路)。
+3. **但 RFC-068 只修了 `prev_close` 这一个键, `change_percent` 漏在门外**: router `:432` / `:723` /
+   其余非期权主路径仍原样抄 `futu_quote["change_percent"]` (由 §1 的脏分母算出)。
+   ⇒ 这不是新 bug, 是**同一次修复的漏项**; 08-29 之后 W7 每天报的分叉, 就是这条漏项在产。
+
+### 4.2 修法 (与 RFC-068 同形, 待裁后落)
+
+在 router 注入真昨收的同一位置, **当 `prev_close` 被日K真昨收替换时, 用真昨收重算 `change_percent`**:
+
+```python
+# 紧随 RFC-068 prev_close 注入 (market_data_router.py:533 之后)
+_pc_clean = ts_ctx.get("prev_close")            # 日K自算真昨收 (RFC-068 产物)
+_px_now = ts_ctx.get("price")
+if _pc_clean and _px_now and float(_pc_clean) > 0:
+    ts_ctx["change_percent"] = round((float(_px_now) - float(_pc_clean)) / float(_pc_clean) * 100, 3)
+    ts_ctx["change_percent_source"] = "router_recomputed_daily_close"
+```
+
+- 只在真昨收可得时重算 (日K全不可得 ⇒ 保留原值, 与 RFC-068 的 fail-open 同语义);
+- 加 `change_percent_source` 溯源键 ⇒ 日后再出分歧可直接分辨是谁算的 (W7 也可据此区分);
+- 影响面即 §5 的消费方; 不改阈值、不改键集、不动交易链路结构。
+
+### 4.3 抓包降级为"确认性测试" (预注册预测)
+
+`8a989cf4501d` (09:33 ET) 仍是必要取证, 但性质已变——**它能被证伪**:
+- **预测 P1**: 盘前窗内至少 1 只标的的快照 `prev_close_price` == **前前一日收盘 (c2)** 而非前一日收盘 (c1)
+  ⇒ 该标的"陈旧对命中 (stale_pair_hit)"为真, 且 `cp_from_snapshot_fields` == 前一日涨跌幅;
+- **预测 P2**: 同一时刻日K `c1` 与 pmi 侧 `prev_close` 一致 (pmi 干净);
+- **若两只都不命中 P1**: 则快照语义面被证伪, 病灶回到 push 缓存/路由器抄值面 (§4 表第 1/3 行), 修点随之前移。
 
 **机制层面的既有先例**仍未变: `DEB-20260911 C6` 立档的 "push 缓存昨收跨日不更新" (当时实测 pmi −7.65% vs ctx +4.07%, 7 秒内差 11.72pp, `change_percent` 全日冻结) 与本文同族; 区别是本文给出了 **ctx 值 = 前一日涨跌幅** 的定量身份, 把"缓存脏了"从形容词变成了等式。
 
@@ -153,7 +191,8 @@ python3 /root/.hermes/scripts/w7_denominator_probe.py   # 壳体 → scripts/w7_
 
 ## 8. 局限 (明说)
 
-- 溯源已从"反推"升级为**等式实证** (3 样本 ≤0.003pp, 且 pmi 侧与交易所日K逐一对齐); 但**"三个取数面里哪一个"仍未定**, 需 §6⑤ 盘前抓包。
+- 溯源已从"反推"升级为**等式实证** (3 样本 ≤0.003pp, 且 pmi 侧与交易所日K逐一对齐); 取数面已按
+  §4.1 **钉死到快照字段语义** (代码路径 + RFC-068 注释的 62% 实测双重确认), 并由 §4.3 给出可证伪的盘前预测。
 - 3 个样本都命中"前一日涨跌幅", 但 38 键里未逐键验证 ⇒ **不宜假设一个修法覆盖全部 38 键** (RUM 同日的 +16.46 读数就说明同日两种读法并存)。
 - 诊断面可加固 (等裁决): 不变量 W7 在报分叉时**附带分类** ("等于前一日涨跌幅" / "其他") ⇒ 下次同类问题不必再人工溯源 3 小时。这会改探测器输出文案 (不改阈值/不改键集), 属诊断增强, 仍提请一并裁决。
 - 本文只读: 未改任何判据/参数/基线; 未动 38 键在环里的状态。

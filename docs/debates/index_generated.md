@@ -333,4 +333,4 @@
 | [DEB-20260920-loop-engineering-landing](DEB-20260920-loop-engineering-landing.md) | 2026-09-20 | 候选 B 已落地入库** (commit `7b1d2d550` / `1329832af` / `e4d438d6a` + 本轮按需源语义批) · 独立复查完成 (异模型, verdict=确认, defects=0, 见 RFC-091 §11) · **候选 A 未启动** (闸: 本环观察窗至 2026-10-… | - | 165 |
 | [DEB-20260921-factor-weight-verdict-reconciliation](DEB-20260921-factor-weight-verdict-reconciliation.md) | 2026-09-21 | 对账已实测 (本文件) · 只读告警已上线 (job `241c896213eb`) · **权重处置待裁 (本批一分未改) | - | 356 |
 | [DEB-20260921-playbook-open-position-cap](DEB-20260921-playbook-open-position-cap.md) | 2026-09-21 | (未标注) | - | 102 |
-| [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 129 |
+| [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 204 |
