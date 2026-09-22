@@ -9,9 +9,14 @@
 
 空stdout = 不推送 (no_agent 静默语义)。
 状态文件 dual_caliber_state.json 记已推配对/历史聚合 (幂等, 漏跑自愈补推)。
+
+2026-09-23: 截留率改报 Σ/Σ 为主 + 中位 (原 mean(strat/close) 被小分母笔拉飞,
+  同一子集 均值0.47 / 中位0.11 / Σ/Σ0.19); 上游 collector 同步改口径。
+  历史 state 里 2026-09-23 及以前的 capture 是均值比口径, 不与新值比较。
 """
 import json
 import pathlib
+import statistics
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -69,7 +74,13 @@ def agg(pairs):
     if not pairs:
         return None
     n = len(pairs)
-    caps = [p["strat_pct"] / p["close_pct"] for p in pairs if p["close_pct"] > 0.1]
+    # 2026-09-23 口径修正: 截留率原为 mean(v_i/d_i) — 小分母笔拉飞 (实测同一子集
+    #   均值 0.47 / 中位 0.11 / Σ/Σ 0.19)。改报 Σ/Σ 为主 + 中位, 两者并存。
+    pos = [p for p in pairs if p["close_pct"] > 0.1]
+    capture = capture_med = None
+    if pos:
+        capture = round(sum(p["strat_pct"] for p in pos) / sum(p["close_pct"] for p in pos), 2)
+        capture_med = round(statistics.median(p["strat_pct"] / p["close_pct"] for p in pos), 2)
     return {
         "n": n,
         "close_mean": round(sum(p["close_pct"] for p in pairs) / n, 3),
@@ -77,14 +88,20 @@ def agg(pairs):
         "close_wr": round(sum(1 for p in pairs if p["close_pct"] > 0) / n, 3),
         "strat_wr": round(sum(1 for p in pairs if p["strat_pct"] > 0) / n, 3),
         "agree_pct": round(sum(1 for p in pairs if p["agree"]) / n * 100, 1),
-        "capture": round(sum(caps) / len(caps), 2) if caps else None,
+        "capture": capture,          # Σ/Σ 口径 (2026-09-23 起; 此前状态文件里存的是均值比)
+        "capture_med": capture_med,
+        "capture_n": len(pos),
     }
 
 
 def fmt_agg(a, label=""):
     if not a:
         return f"{label}无数据"
-    cap = f" | 截留率 {a['capture']}" if a.get("capture") is not None else ""
+    cap = ""
+    if a.get("capture") is not None:
+        cap = f" | 截留率Σ/Σ {a['capture']}"
+        if a.get("capture_med") is not None:
+            cap += f"(中位{a['capture_med']})"
     return (f"{label}n={a['n']} | 收盘口径 {a['close_mean']:+.2f}%/WR{a['close_wr']*100:.0f}%"
             f" vs 策略退出 {a['strat_mean']:+.2f}%/WR{a['strat_wr']*100:.0f}%"
             f" | 方向一致 {a['agree_pct']:.0f}%{cap}")
