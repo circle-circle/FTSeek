@@ -556,3 +556,57 @@ PYTHONPATH=. venv/bin/python -m pytest -q -m "not live" <同上文件集>
    `period_age` 推断放行。
 3. 在新闸落地前，不得单纯调低 `EXT_EARNINGS_MAX_PERIOD_AGE_DAYS`；那会把快速披露的真人
    beat 一并误拒。
+
+## 11. 零成交归因批独立复查回执（2026-09-22，用户裁「按照建议执行」）
+
+**复查范围**：工作区未提交改动（near-miss 台账 + 测试迁移）、已提交批（488a41847 券商写口挡板 /
+87ad952c4 coverage 台账 / b58f24080 ETF 滤除 / 129c93243 carry 影子）、生产面（cron、.env.us、
+9/21-9/22 ext_entry.log、entry_state、券商订单痕迹）。
+
+**结论**：机制健康可交易；9/21-9/22 零成交 = 财报季空窗 ×「当日同相位事件」门的结构性无供给
+（9/22 实测候选 42-46 只 × 日历同日仅 6 行，交集恒 ∅，三源同证），非执行故障。归因批
+（台账/滤除/影子/near-miss）符合 §9.1「先归因不得直接放宽」纪律，全部核收。
+
+**验证记录**：
+
+```bash
+PYTHONPATH=. venv/bin/python3.11 -m pytest -q \
+  tests/test_extended_hours_entry_executor.py tests/test_extended_hours_order_execution.py
+# 76 passed
+
+PYTHONPATH=. venv/bin/python3.11 -m pytest -q \
+  tests/test_ext_entry_test_symbol_guard.py tests/test_cancel_orphan_ext_order.py
+# 28 passed
+```
+
+本次复查全程 pytest 零真实下单：conftest `_block_live_broker_orders` 封的
+`futu.OpenSecTradeContext` 写口与 `_open_trade_context()` 实用类精确同类。配额用例已钉死
+常量（MAX_PER_DAY/PREMARKET/MAX_OPEN/敞口帽），不再随 `.env.us`（现 10/10/5）漂移。
+
+**NVDA 泄漏事故残留裁决**：state 中 `2026-09-22:US.NVDA`(failed) 系 16:59 清理后对账按
+当日 ET 泄漏单 8197135 合法回填——无害（failed 不占配额、NVDA 当日无财报事件本就不入选、
+attempt 键次日过期），**不重复人工清理**。全局 active-order 闸的"外来活单压制入场"风险
+随写口挡板落地而源头封闭；外来单处置工具仍为 `cancel_orphan_ext_order`（exit cron 只告警不撤单）。
+
+**DST 免疫扩段（本批落地，crontab 4 行）**：冬令时 2026-11-01 起 ET 窗右移 1h，原固定 CST
+时段将丢盘前 09:00-09:29 ET（流动性最好段，含 A/B 级窗尾 9:15）与盘后 19:00-19:59 ET。
+处置：entry premarket `16-21→16-22`、entry afterhours `4-7→4-8`、carry shadow 两行同步扩段
+（备份 `/tmp/crontab.bak_20260922`）。窗外 tick 在 `_in_session_window` /
+`get_extended_hours_session` 判定即返回（先于任何 futu 连接），夏令时行为零变化；
+此举同时取代 carry shadow 脚本头「11 月两行各推后 1h」的手工操作。回滚=时段改回原值。
+
+**10 月财报季观察项（登记，零代码变更）**：开季（约 10 月中旬）后盯
+`extended_hours_earnings_gate_rejects.jsonl` 子原因迁移——`calendar_missing` 退潮后
+`finnhub_no_data`/`surprise_stale` 不得成为新瓶颈（Finnhub 免费版 surprise 覆盖 6-18 只/日
+是已知第二道 fail-closed；§10.9 的 period_age 残留边界在高披露密度下暴露面变大）。
+
+**已知小漂移（本批不处置）**：`config/watchlist_us.json` 缺失 → earnings_calendar 走静态
+KEY_US_SYMBOLS fallback。不影响 EXT 入场闸（该表仅用于 enrichment 行业映射与
+watchlist/beat_rank 备选源，两源当前均关）；若开 `EXT_ENTRY_SOURCE_WATCHLIST` 须先补文件，
+且注意文件路径的 sector 经 `_SECTOR_MAPPING` 再映射，直接倒灌静态表值会落 Unknown。
+
+**数据源定版**：near-miss 台账（`ext_entry_earnings_near_miss.jsonl`，record-only、
+按 (trade_date, session, symbol) 去重、env `EXT_ENTRY_EARNINGS_NEAR_MISS` 可关）随本回执
+提交入库，作为 carry 影子 9/25 前后裁决（n≥3 交易日 ∧ 上界≥2 只/日 → 立 DEB 提请放宽
+「同日」语义；<0.5 只/日 → 停采）的并行证据面。文件内 9/22 早段存在旧 schema 行
+（`base_gate=price_momentum_volume_passed`，无 turnover 字段），分析时按 base_gate 过滤。
