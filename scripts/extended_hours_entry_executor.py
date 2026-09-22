@@ -119,6 +119,14 @@ PREMARKET_RESERVE_CONDITIONAL = (
 SOURCE_RANK_BOARD = os.getenv("EXT_ENTRY_SOURCE_RANK", "true").lower() == "true"
 SOURCE_BEAT_RANK = os.getenv("EXT_ENTRY_SOURCE_BEAT_RANK", "false").lower() == "true"
 SOURCE_WATCHLIST = os.getenv("EXT_ENTRY_SOURCE_WATCHLIST", "false").lower() == "true"
+# 事件源: **当日同相位财报日历名单** (2026-09-23 供给归因).
+#   起因: 严格臂的准入集合 = "当日同相位财报事件", 而候选池 = 按涨跌幅排序的异动榜 ⇒ 两者
+#   交集靠运气。实测 2026-09-22 盘后: 榜 42 只与日历交集 0, 而当日盘后财报票 US.KBH
+#   (after $49.39/+3.19%/盘后量 26.1 万/市值 2.98B) 四条地板全过却**不在榜内** (榜被 +20%
+#   仙股挤掉) ⇒ 合格票从未进闸。本源把日历本身并入候选池: **语义与准入集合对齐, 不放松
+#   任何一道闸** (价/动量/量/市值/成交额/分级/结构/费用/盘口/仓位帽全部照旧)。
+#   默认 false (扩容方向的安全侧); 开关与回滚点: `.env.us: EXT_ENTRY_SOURCE_CALENDAR`.
+SOURCE_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_CALENDAR", "false").lower() == "true"
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -1233,6 +1241,33 @@ def _snapshot_candidates(session, qctx, symbols):
     return out
 
 
+def _calendar_symbols(session):
+    """事件源: **当日同相位财报日历名单** → 候选代码 (2026-09-23 供给归因).
+
+    相位判据与 `_earnings_calendar_event` **逐字同式** ⇒ 本源入选者必然通过 earnings 门第①道
+    (当日同相位), 只在 ②Finnhub 最新一期 beat>0 / ③period 龄 上才可能被拒 —— 即"让合格票
+    有机会进闸", 而不是让不合格票进闸。
+
+    只读、无网络增量 (`_earnings_calendar_rows` 进程内已缓存, 与判定同源); 源故障时返回 []
+    并打显式警告 (fail-open 跳过本源, 不影响异动榜等其他源)。
+    """
+    rows, error = _earnings_calendar_rows()
+    if error:
+        print(f"[ext_entry] 日历候选源不可用 (跳过本源, 其他源不受影响): {error}")
+        return []
+    today = _today_et()
+    out = []
+    for row in rows:
+        if str(row.get("reportDate", "")) != today:
+            continue
+        before, after = _parse_earnings_phase(row)
+        if before == (session == "premarket") and after == (session == "afterhours"):
+            ticker = str(row.get("symbol", "")).upper()
+            if ticker:
+                out.append(f"US.{ticker}")
+    return out
+
+
 def _scan_candidates(session, qctx):
     """多源候选合并 + 去重 (2026-09-17). 源顺序 = 优先级 (先到先得, 保留先出现的结构).
 
@@ -1273,6 +1308,11 @@ def _scan_candidates(session, qctx):
         extra += _beat_rank_symbols(qctx)
     if SOURCE_WATCHLIST:
         extra += _watchlist_symbols(qctx)
+    cal_syms = _calendar_symbols(session) if SOURCE_CALENDAR else []
+    if cal_syms:
+        extra += cal_syms
+        print(f"[ext_entry] 日历候选源 (当日同相位财报): {len(set(cal_syms))} 只 "
+              f"{', '.join(sorted(set(cal_syms))[:8])}")
     new_syms = [s for s in dict.fromkeys(extra) if s not in tag_of]
     if new_syms:
         _add(_snapshot_candidates(session, qctx, new_syms), "snapshot")
@@ -1284,8 +1324,9 @@ def _scan_candidates(session, qctx):
     if merged:
         n_extra = sum(1 for v in tag_of.values() if v != "rank")
         print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "
-              f"财报超预期榜+自选股 {n_extra}) [开关 rank={SOURCE_RANK_BOARD} "
-              f"beat={SOURCE_BEAT_RANK} watchlist={SOURCE_WATCHLIST}]")
+              f"财报超预期榜+自选股+日历 {n_extra}) [开关 rank={SOURCE_RANK_BOARD} "
+              f"beat={SOURCE_BEAT_RANK} watchlist={SOURCE_WATCHLIST} "
+              f"calendar={SOURCE_CALENDAR}]")
     return merged
 
 
@@ -1661,6 +1702,18 @@ def _print_gate_counts(session, total, counts):
         )
         body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
         print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
+        # 2026-09-23 (盘后核查): 研究臂的**细分类**拒绝键此前只写不报 ⇒ "研究臂开着却 0 单"
+        #   与"研究臂卡死"在日志面不可区分 (复算只能自己 import 手调 `_research_downstream_gates`)。
+        #   细分类键集是动态的 (`research_<grade_reason>`), 无法静态列进 keys, 且把 `{...}` 塞进
+        #   上面那行会破坏其"空格分隔 k=int"契约 (用例按此解析) ⇒ 单独一行, 键名与主行不交叉。
+        detail = {
+            k: int(v) for k, v in counts.items()
+            if k.startswith("research_") and k not in ("research_pool", "research_ordered")
+        }
+        if detail:
+            print(f"[ext_entry] 研究臂拒绝细分[{session}] 池={int(counts.get('research_pool', 0))} "
+                  f"下单={int(counts.get('research_ordered', 0))} "
+                  f"rejects={json.dumps(detail, ensure_ascii=False, sort_keys=True)}")
     except Exception:
         pass
 
