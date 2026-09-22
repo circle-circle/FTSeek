@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.11
-"""FTSeek ERROR/CRITICAL 告警链的 **Hermes no_agent 载体**旁路 (落地面 = 窗1/窗3/窗4 三 job,
+"""FTSeek ERROR/CRITICAL 告警链的 **Hermes no_agent 载体**旁路 (落地面 = 窗1/窗2/窗3/窗4 四 job,
 判据零变更, 见 `docs/decisions/RFC-094-error-alert-carrier-window-migration.md` 与台账
-`docs/CONTROL-LOOP-LEDGER.md` §2 的 `crontab-error-alert` / `9a97c815cf6a` / `902765730698` /
+`docs/CONTROL-LOOP-LEDGER.md` §2 的 `crontab-error-alert` / `9a97c815cf6a` / `f09e6a812d69` / `902765730698` /
 `8327d30e6b24` 行)。
 
 背景 (为什么存在): `scripts/error_alert.py` 的旧载体是系统 crontab 四行 `*/15 … >> logs/error_alert.log 2>&1`。
@@ -30,8 +30,8 @@ stdout 契约 (Hermes no_agent: 空 stdout = 静默成功; 非零退出 = 失败
 用法 (Hermes job: script=error_alert_carrier.py, no_agent):
   python3 error_alert_carrier.py [--timeout 180] [--log PATH] [-- <error_alert.py 参数透传>]
 手工核验: `-- --dry-run` 走 error_alert.py 的"算但不推不写状态"路径。
-回滚: 删 Hermes job (crontab 四行**并行保留, 无需恢复**); 本脚本与线上副本为窗1/3/4 三 job
-**共用** ⇒ 删文件须三 job 全撤 (完整回滚命令见 RFC-094 §4)。
+回滚: 删 Hermes job (crontab 四行**并行保留, 无需恢复**); 本脚本与线上副本为窗1/2/3/4 四 job
+**共用** ⇒ 删文件须四 job 全撤 (完整回滚命令见 RFC-094 §4; 窗2 批② 见 §9)。
 """
 from __future__ import annotations
 
