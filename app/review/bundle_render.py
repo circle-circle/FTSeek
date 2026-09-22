@@ -41,6 +41,46 @@ def _iter_metric_payload(
             yield from _iter_metric_payload(value, f"{path}[{index}]")
 
 
+def _shadow_lexicon() -> dict:
+    """影子白话词典 (SSOT: app/review/shadow_lexicon.py)。
+
+    取不到 ⇒ 返回空 dict, 调用方一律回落到该影子的**注册判据原文** ——
+    绝不因为词典缺失就编一句白话 (禁自造叙事)。
+    """
+    try:
+        from app.review.shadow_lexicon import SHADOW_LEXICON
+
+        return SHADOW_LEXICON
+    except Exception:  # 词典缺失不是致命错误: 回落判据原文即可, 不得中断判决书构建
+        return {}
+
+
+def _clip(text: str, limit: int = 90) -> str:
+    """推送用截断: 优先落在句读边界, 并留「…」标记 —— 截断要看得见, 全文在 MD/清单里。"""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    window = text[: limit + 30]
+    cut = max(window.rfind("。"), window.rfind("；"), window.rfind("，"), window.rfind(" "))
+    if cut < limit // 2:
+        cut = limit
+    return window[:cut].rstrip("。；， ") + "…"
+
+
+def _shadow_plain_lines(row: dict, lexicon: dict, *, width: int | None) -> list[str]:
+    """一条待裁项的「是什么 / 在问什么 / 现在读数」两行白话。缺词典 ⇒ 回落判据原文并标注。"""
+    entry = lexicon.get(row.get("id") or "") or {}
+    plain = entry.get("plain")
+    if not plain:
+        plain = f"{row.get('id')}（未收录白话名 — 下面给注册判据原文）"
+    reading = entry.get("conclusion") or (
+        f"注册判据: {row.get('criteria') or '（无判据文本）'}"
+    )
+    if width is not None:
+        plain, reading = _clip(plain, width), _clip(reading, width + 30)
+    return [f"   {plain}", f"   读数: {reading}"]
+
+
 def render_md(bundle: Bundle) -> Tuple[str, str]:
     payload = bundle.to_dict()
     report_date = payload["report_date"]
@@ -59,6 +99,7 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
     pretrade_card = actionability["pretrade_card"]
     anomalies = payload["anomalies"]
     pending = payload.get("pending_adjudications", [])
+    _lexicon = _shadow_lexicon()
 
     lines = [
         f"# FTSeek-US 每日复盘 {report_date}",
@@ -294,6 +335,9 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
                 f"- {ready_text} `{row['id']}` {row['progress']}{ready_since} — "
                 f"{row['criteria']}"
             )
+            if row["ready"]:
+                for plain_line in _shadow_plain_lines(row, _lexicon, width=None):
+                    lines.append(f"  {plain_line.strip()}")
     else:
         lines.append("无待裁决事项。")
 
@@ -348,11 +392,27 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
         key=lambda row: str(row.get("ready_since", "")),
     )
     if ready_rows:
-        oldest = "; ".join(
-            f"{row['id']}@{row.get('ready_since', '?')}" for row in ready_rows[:5]
-        )
         oldest_since = str(ready_rows[0].get("ready_since") or "?")
-        push_lines.append(f"待裁决 {len(ready_rows)}（最久 {oldest_since} 起）：{oldest}")
+        push_lines.append(
+            f"待裁决 {len(ready_rows)} 项（最久 {oldest_since} 起）· 白话：这些影子是什么 / 在问什么 / 现在读数"
+        )
+        # 用户 2026-09-22 令: 「待裁决的影子背景和问题以及结论是不清楚的, 白话主要是对这些影子的解释」
+        #   ⇒ 推送面按「每个影子讲三件事」排: 是什么(plain) / 在问什么(含在 plain 里) / 现读数(conclusion).
+        #   只报最久等待前 3 项 (防刷屏, 与 DEB §279「只给计数 + 最久前 N」的防噪设计同宗),
+        #   全文白话在 MD 与「影子验收清单」里; 词典缺项一律回落注册判据原文, 不编白话.
+        for index, row in enumerate(ready_rows[:3], start=1):
+            push_lines.append(f"{'①②③'[index - 1]} {row['id']}（{row['progress']}）")
+            push_lines.extend(_shadow_plain_lines(row, _lexicon, width=90))
+        if len(ready_rows) > 3:
+            push_lines.append(
+                f"（其余 {len(ready_rows) - 3} 项白话版见「影子验收清单」通知, 周六 09:15 有变化才发; "
+                f"全量 {len(ready_rows)} 项逐条见判决书 MD）"
+            )
+        else:
+            push_lines.append(
+                "（全量逐条白话见判决书 MD; 「影子验收清单」周六 09:15 有变化才发）"
+            )
+        push_lines.append("样本攒够 ≠ 判据通过 —— 上面是读数, 留/停/转正要你裁。")
     # 白话注释 (2026-09-22, 用户令「需要推送 添加容易理解的注释」):
     #   推送面必须自解释 — 收货人不在终端, 无法 grep/PRAGMA; 术语一律就地翻译, 数字就地给口径.
     #   与 shadow 验收清单同风格 (背景 30 秒 + 白话行), 两处口径一致: "待裁决" ≠ 判据通过.
@@ -377,8 +437,4 @@ def _push_glossary(headline: dict, ready_rows: list) -> str:
         parts.append("「净」=毛利−费用")
     parts.append("「计划外」=系统自己加的单（越权警示），「错过」=计划了但没成交")
     parts.append("「P0 异常」=当日数据自审发现的严重不一致（0=无）")
-    if ready_rows:
-        parts.append(
-            "「待裁决」=影子试验样本攒够了，等你决定留/停/转正（样本够 ≠ 判据通过；白话版见「影子验收清单」通知，周六 09:15 有变化才发）"
-        )
     return "白话：" + "；".join(parts) + "。"

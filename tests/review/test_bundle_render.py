@@ -63,10 +63,13 @@ def test_render_reports_ready_adjudications_without_flooding_push():
     assert "ready-0" in full_md
     assert "ready-5" in full_md
     assert "observing" in full_md
-    assert "待裁决 6" in push_text
-    assert "ready-0" in push_text
-    assert "ready-4" in push_text
-    assert "ready-5" not in push_text
+    # 契约 (2026-09-22 用户令「白话主要是对这些影子的解释」): 推送只讲最久等待前 3 项,
+    # 每项两行白话; 第 4 项起只报计数, 逐条全量留在 MD/影子验收清单 (防刷屏).
+    assert "待裁决 6 项" in push_text
+    assert "ready-0" in push_text and "ready-2" in push_text
+    assert "ready-3" not in push_text and "ready-5" not in push_text
+    assert "其余 3 项" in push_text, "被折叠的条数必须写明 (读者要知道还有多少)"
+    assert "样本攒够 ≠ 判据通过" in push_text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +117,56 @@ def test_glossary_never_invents_numbers_when_headline_lacks_gross_or_fees():
     assert "「待裁决」" not in text, "无 ready 行时不该解释待裁决"
 
 
+def test_push_explains_each_shadow_in_plain_language(monkeypatch):
+    """词典命中时: 逐条给「是什么 + 现在读数」, 且抬头说明这三件事 (用户 2026-09-22 令)."""
+    from app.review import bundle_render
+
+    monkeypatch.setattr(bundle_render, "_shadow_lexicon", lambda: {
+        "ready-0": {"plain": "白话名A(这是什么/在问什么)", "conclusion": "读数A ⇒ 结论A", "cls": "NEEDS_USER"},
+    })
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "ready-0", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "ready_since": "2026-09-15", "criteria": "注册判据原文"},
+    ]
+
+    full_md, push_text = render_md(bundle)
+
+    assert "是什么 / 在问什么 / 现在读数" in push_text, "抬头须说明白话讲哪三件事"
+    assert "白话名A(这是什么/在问什么)" in push_text
+    assert "读数: 读数A ⇒ 结论A" in push_text
+    assert "白话名A(这是什么/在问什么)" in full_md, "MD 侧也要有白话 (全文不截断)"
+
+
+def test_push_falls_back_to_registered_criteria_and_never_invents_plain_language(monkeypatch):
+    """词典缺项: 回落**注册判据原文**并标注未收录 —— 不得为推文编一句白话 (禁自造叙事)."""
+    from app.review import bundle_render
+
+    monkeypatch.setattr(bundle_render, "_shadow_lexicon", lambda: {})
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "brand-new-shadow", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "ready_since": "2026-09-15", "criteria": "注册的判据原文 text"},
+    ]
+
+    _full, push_text = render_md(bundle)
+
+    assert "未收录白话名" in push_text, "缺词典必须可见 (否则读者以为那行就是白话解释)"
+    assert "注册判据: 注册的判据原文 text" in push_text
+
+
 def test_glossary_explains_pending_and_points_to_plain_list():
     connection = _create_db()
     _insert_trade(
@@ -127,7 +180,7 @@ def test_glossary_explains_pending_and_points_to_plain_list():
          "ready": True, "ready_since": "2026-09-15", "criteria": "c"},
     ]
     _full, push_text = render_md(bundle)
-    assert "「待裁决」" in push_text and "样本够 ≠ 判据通过" in push_text, (
+    assert "样本攒够 ≠ 判据通过" in push_text, (
         "必须点破 ready 只代表样本量够 (否则读者以为判据已过)")
     assert "最久 2026-09-15 起" in push_text, "须给出最久等待日期 (urgency)"
-    assert "影子验收清单" in push_text, "须指向白话清单出处"
+    assert "影子验收清单" in push_text, "须指向全量白话清单出处"
