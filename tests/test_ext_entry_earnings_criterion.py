@@ -155,3 +155,44 @@ def test_no_shadow_write_when_disabled(monkeypatch, tmp_path):
     _wire(mod, monkeypatch, _today_rows("KBH", 1.05, 0.9022), tmp_path=tmp_path, shadow=False)
     mod._earnings_surprise("US.KBH", "afterhours")
     assert not (tmp_path / "shadow.jsonl").exists()
+
+# ── 覆盖补强源: 当日 Finnhub 日历 → 候选池 (2026-09-23 供给归因) ──────────────
+executor = _load()
+
+
+def _fh_cal(monkeypatch, by_ticker):
+    monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda: (by_ticker, None))
+
+
+def test_finnhub_source_phase_mapping(monkeypatch):
+    """bmo → 盘前窗; amc → 盘后窗; dmh(盘中) 与未标定不进延长时段池。"""
+    _fh_cal(monkeypatch, {
+        "CTAS": {"hour": "bmo", "date": TODAY, "epsEstimate": 1.38},
+        "FUL": {"hour": "amc", "date": TODAY, "epsEstimate": 1.47},
+        "DMH1": {"hour": "dmh", "date": TODAY, "epsEstimate": 1.0},
+        "NONE": {"hour": None, "date": TODAY, "epsEstimate": 1.0},
+    })
+    assert executor._finnhub_calendar_symbols("premarket") == ["US.CTAS"]
+    assert executor._finnhub_calendar_symbols("afterhours") == ["US.FUL"]
+
+
+def test_finnhub_source_skips_other_dates(monkeypatch):
+    """端点契约可能漂 (返回跨日行) ⇒ 非当日行必须挡掉。"""
+    _fh_cal(monkeypatch, {"CTAS": {"hour": "bmo", "date": "2026-09-24"}})
+    assert executor._finnhub_calendar_symbols("premarket") == []
+
+
+def test_finnhub_source_fails_open_on_error(monkeypatch, capsys):
+    """源故障 ⇒ 跳过本源 (不影响其他源), 且留显式日志 (禁静默)。"""
+    monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda: (None, "finnhub_error"))
+    assert executor._finnhub_calendar_symbols("premarket") == []
+    assert "不可用" in capsys.readouterr().out
+
+
+def test_finnhub_source_does_not_widen_eligibility(monkeypatch):
+    """**零资格变更**的机械保证: 本源只产候选代码, 判据① 仍只认 futu/AV 日历 ——
+    即 CTAS 进池后仍会因 futu 标 REGULAR(空相位) 被 calendar_phase_unknown 拒。"""
+    _fh_cal(monkeypatch, {"CTAS": {"hour": "bmo", "date": TODAY}})
+    assert executor._finnhub_calendar_symbols("premarket") == ["US.CTAS"]
+    monkeypatch.setattr(executor, "_earnings_calendar_rows", lambda: ([], None))   # futu/AV 无 CTAS
+    assert executor._earnings_surprise("US.CTAS", "premarket") == (None, "calendar_missing")

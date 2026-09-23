@@ -159,6 +159,15 @@ SOURCE_WATCHLIST = os.getenv("EXT_ENTRY_SOURCE_WATCHLIST", "false").lower() == "
 #   任何一道闸** (价/动量/量/市值/成交额/分级/结构/费用/盘口/仓位帽全部照旧)。
 #   默认 false (扩容方向的安全侧); 开关与回滚点: `.env.us: EXT_ENTRY_SOURCE_CALENDAR`.
 SOURCE_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_CALENDAR", "false").lower() == "true"
+# Finnhub 日历候选源 (2026-09-23 供给归因第二源): 当日 Finnhub 日历中**同相位**票并入候选池。
+#   起因: 生产主源 (futu 原生日历) 7 日窗只覆盖 Finnhub 的 39% (实测 34 vs 87 只), 且
+#   `pub_type=REGULAR` 的票相位未标定 ⇒ 结构性缺席 (ET 9/23 最大 bmo 票 US.CTAS $79.7B 因此进不了池;
+#   实测 7 日窗 34 行里 4 行 REGULAR = 11.8%)。
+#   **零资格变更**: 本源只让票"进闸", 判据① 的相位判据仍只认 futu/AV 日历 ⇒ 不产生新入场;
+#   作用是让 calendar_phase_unknown / calendar_missing 这些票进入 reject 台账, 攒出
+#   "若做相位交叉回补 (futu 未标定 ⇒ 取 Finnhub 相位) 能多放多少"的实测证据。
+#   回滚: 删/置 false (本源独立开关, 不影响其他源)。
+SOURCE_FINNHUB_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_FINNHUB_CALENDAR", "false").lower() == "true"
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -1310,6 +1319,36 @@ def _calendar_symbols(session):
     return out
 
 
+def _finnhub_calendar_symbols(session):
+    """覆盖补强源: 当日 Finnhub 日历中**同相位**的票 → 候选代码 (2026-09-23 供给归因)。
+
+    为什么需要: 生产主源 (futu 原生日历) 覆盖只有 Finnhub 的 39%, 且 `pub_type=REGULAR`
+    (测得 7 日窗 4/34 = 11.8%) 被映射成空相位 ⇒ 这些票连候选池都进不去, 也就无法被观测。
+    **零资格变更**: 让票进闸 ≠ 放行 —— 判据① 仍只认 futu/AV 日历的相位, so 本源不会产生新入场;
+    其价值是让 `calendar_phase_unknown`/`calendar_missing` 的票进入 reject 台账 (实测证据源)。
+
+    只读、零新增网络 (复用 `_finnhub_today_calendar` 的进程内缓存, 与判据②同源)。
+    """
+    cal, error = _finnhub_today_calendar()
+    if not cal:
+        if error:
+            print(f"[ext_entry] Finnhub 日历候选源不可用 (跳过本源, 其他源不受影响): {error}")
+        return []
+    want = {"premarket": "bmo", "afterhours": "amc"}.get(session)
+    if not want:
+        return []
+    today = _today_et()
+    out = []
+    for tick, row in cal.items():
+        if str(row.get("hour") or "").strip().lower() != want:
+            continue
+        if str(row.get("date") or today) != today:   # 双保险 (端点已按当日查, 契约可能漂)
+            continue
+        if tick:
+            out.append(f"US.{tick}")
+    return out
+
+
 def _scan_candidates(session, qctx):
     """多源候选合并 + 去重 (2026-09-17). 源顺序 = 优先级 (先到先得, 保留先出现的结构).
 
@@ -1356,6 +1395,13 @@ def _scan_candidates(session, qctx):
         print(f"[ext_entry] 日历候选源 (当日同相位财报): {len(set(cal_syms))} 只 "
               f"{', '.join(sorted(set(cal_syms))[:8])}")
     new_syms = [s for s in dict.fromkeys(extra) if s not in tag_of]
+    if SOURCE_FINNHUB_CALENDAR:
+        fh_syms = _finnhub_calendar_symbols(session)
+        if fh_syms:
+            extra += fh_syms
+            print(f"[ext_entry] Finnhub 日历候选源 (当日同相位, 覆盖补强): {len(set(fh_syms))} 只 "
+                  f"{', '.join(sorted(set(fh_syms))[:8])}")
+            new_syms = [s for s in dict.fromkeys(extra) if s not in tag_of]
     if new_syms:
         _add(_snapshot_candidates(session, qctx, new_syms), "snapshot")
     if skipped_test:
@@ -1368,7 +1414,7 @@ def _scan_candidates(session, qctx):
         print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "
               f"财报超预期榜+自选股+日历 {n_extra}) [开关 rank={SOURCE_RANK_BOARD} "
               f"beat={SOURCE_BEAT_RANK} watchlist={SOURCE_WATCHLIST} "
-              f"calendar={SOURCE_CALENDAR}]")
+              f"calendar={SOURCE_CALENDAR} finnhub_calendar={SOURCE_FINNHUB_CALENDAR}]")
     return merged
 
 

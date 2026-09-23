@@ -11,6 +11,8 @@ import importlib.util
 import pathlib
 import sys
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TODAY = "2026-09-22"          # 固定 ET 日, 避免跨日 flake
 
@@ -24,6 +26,15 @@ def _load():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(autouse=True)
+def _finnhub_calendar_source_pinned_off(monkeypatch):
+    """Hermetic 钉 (2026-09-23): `.env.us` 开了 `EXT_ENTRY_SOURCE_FINNHUB_CALENDAR=true`
+    (覆盖补强源, 生产), 而本文件每个用例都自己 `_load()` 一次 executor (import 期读 env)
+    ⇒ 必须在**加载前**把 env 钉成 false, 否则第二源会真调 Finnhub 并污染候选断言 (实测 4 例红)。
+    第二源自身契约见 tests/test_ext_entry_earnings_criterion.py (显式钉开 + 打桩)。"""
+    monkeypatch.setenv("EXT_ENTRY_SOURCE_FINNHUB_CALENDAR", "false")
 
 
 CAL_ROWS = [
