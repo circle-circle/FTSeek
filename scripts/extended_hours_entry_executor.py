@@ -168,6 +168,18 @@ SOURCE_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_CALENDAR", "false").lower() == "tr
 #   "若做相位交叉回补 (futu 未标定 ⇒ 取 Finnhub 相位) 能多放多少"的实测证据。
 #   回滚: 删/置 false (本源独立开关, 不影响其他源)。
 SOURCE_FINNHUB_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_FINNHUB_CALENDAR", "false").lower() == "true"
+# 判据① 事件源 (2026-09-23 用户令「先可见再打磨优化」): calendar (默认, 现行为) | calendar_finnhub_union
+#   union = futu/AV 日历优先; futu **无该票行**或**相位未标定**(REGULAR → 空相位) 时, 回落到
+#   Finnhub 当日日历行 (存在性 + 相位)。futu 明确标了不同相位 ⇒ 仍以 futu 为准 (保守, 不覆盖已知相位)。
+#   为什么必须并源: 主源只覆盖 Finnhub 的 39%, 相位未标定 11.8% (活例 US.CTAS $79.7B) ⇒ 生产候选池
+#   远小于**入场规则读数的票池**(回放池 = Finnhub 口径全量) ⇒ 实测每轮 0 单, 通道空转。
+#   影响面: 只放宽"事件存在性/相位"这一条; 市值/价/成交额/价差/深度/费用/涨幅带/量闸全不变,
+#   判据② (当日 actual vs est > 0) 仍是硬门 ⇒ 仍必须真出财报且超预期。
+#   回滚: 置 calendar / 删 .env.us 该键 (一行回滚, 无数据迁移)。
+EARNINGS_EVENT_SOURCE = os.getenv("EXT_EARNINGS_EVENT_SOURCE", "calendar").lower()
+# 事件源观测 (每轮打印后清空): 让"这条票是哪个源认出来的"可见 — 纯观测, 不参与判定。
+#   按**票去重** (集合) —— 早期用计数会随调用次数放大 (实测同一 tick 内一票被调两次 ⇒ 读数 ×2)。
+_EVENT_SRC_OBS = {"futu": set(), "finnhub": set()}
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -1686,13 +1698,38 @@ def _earnings_calendar_event(symbol, session):
             saw_unknown = True
             continue
         if before == (session == "premarket") and after == (session == "afterhours"):
+            _EVENT_SRC_OBS["futu"].add(ticker)
             return row, None
         saw_mismatch = True
     if saw_mismatch:
         return None, "calendar_phase_mismatch"
-    if saw_unknown:
+    result = (None, "calendar_phase_unknown" if saw_unknown else "calendar_missing")
+    if EARNINGS_EVENT_SOURCE == "calendar_finnhub_union":
+        return _finnhub_event_fallback(ticker, session, today, result[1])
+    return result
+
+
+def _finnhub_event_fallback(ticker, session, today, futu_reason):
+    """判据① 回落源 (union 模式): futu 无行/相位未标定时, 用 Finnhub 当日日历行定存在性与相位。
+
+    返回与 futu 行**同形**的合成行 (带 `_source="finnhub"`), 供判据②取 reportDate/相位。
+    相位非同窗 ⇒ mismatch; 相位缺失 (dmh/None) ⇒ unknown; 票不在 Finnhub 当日日历 ⇒ 保留 futu 原判
+    (calendar_missing/unknown) —— 这样台账口径不变, 只是"少拦一部分"。
+    """
+    cal, err = _finnhub_today_calendar()
+    if cal is None:
+        return None, "calendar_source_error"
+    row = cal.get(ticker)
+    if row is None:
+        return None, futu_reason
+    hour = str(row.get("hour") or "").strip().lower()
+    if hour not in ("bmo", "amc"):
         return None, "calendar_phase_unknown"
-    return None, "calendar_missing"
+    if hour != ("bmo" if session == "premarket" else "amc"):
+        return None, "calendar_phase_mismatch"
+    _EVENT_SRC_OBS["finnhub"].add(ticker)
+    return ({"symbol": ticker, "reportDate": today, "pub_type": hour.upper(), "_source": "finnhub",
+             "timeOfTheDay": "pre-market" if hour == "bmo" else "post-market"}, None)
 
 
 def _afterhours_earnings_expected():
@@ -1940,6 +1977,13 @@ def _print_gate_counts(session, total, counts):
         )
         body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
         print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
+        # 事件源可见性 (2026-09-23 用户令「先可见」): 独立一行, 不进主行 (主行是既有解析契约)。
+        #   union 模式下的 finnhub 计数 = "靠回落源才认出来的票" ⇒ 直接反映并源到底多放了多少。
+        if EARNINGS_EVENT_SOURCE != "calendar":
+            print(f"[ext_entry] 事件源[{session}] mode={EARNINGS_EVENT_SOURCE} "
+                  f"futu={len(_EVENT_SRC_OBS['futu'])} finnhub={len(_EVENT_SRC_OBS['finnhub'])}")
+        _EVENT_SRC_OBS["futu"].clear()
+        _EVENT_SRC_OBS["finnhub"].clear()
         # 2026-09-23 (盘后核查): 研究臂的**细分类**拒绝键此前只写不报 ⇒ "研究臂开着却 0 单"
         #   与"研究臂卡死"在日志面不可区分 (复算只能自己 import 手调 `_research_downstream_gates`)。
         #   细分类键集是动态的 (`research_<grade_reason>`), 无法静态列进 keys, 且把 `{...}` 塞进

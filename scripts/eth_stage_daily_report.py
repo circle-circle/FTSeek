@@ -196,7 +196,53 @@ def render(day: str, push_date_note: str = "") -> str:
                          f"靠规则引擎 + 开盘兜底")
     else:
         lines.append("- 无")
+    digest = recent_rounds()
+    if digest:
+        lines += ["", "**④ 最近轮次 闸计数摘要 (本卡新增, 让「在跑但 0 单」可见)**", "", digest]
     return "\n".join(lines)
+
+
+def recent_rounds(n: int = 8) -> str:
+    """最近 n 轮 闸计数/事件源摘要 —— 直接聚合执行器 stdout 的真实行, 不估算。
+
+    为什么加 (2026-09-23 用户令「先可见再打磨优化」): 成交类日报是**有样本才推**, 于是
+    "通道在跑但每轮 0 单"与"通道根本没跑"从卡面上不可区分 (实测连续多轮 0 单 ⇒ 用户看不到任何东西)。
+    日志行**无时间戳** (cron 直接 >>) ⇒ 只能标为"最近 n 轮", 不得冒充"某 ET 日"。
+    """
+    import re
+    log = ROOT / "logs" / "ext_entry.log"
+    if not log.exists():
+        return ""
+    try:
+        lines = log.read_text(errors="ignore").splitlines()
+    except OSError:
+        return ""
+    gates = [l for l in lines if "闸计数[" in l][-n:]
+    if not gates:
+        return ""
+    agg: Dict[str, int] = {}
+    cands, sessions = [], []
+    for l in gates:
+        m = re.search(r"闸计数\[(\w+)\]\s+候选=(\d+)\s+(.*)$", l)
+        if not m:
+            continue
+        sessions.append(m.group(1))
+        cands.append(int(m.group(2)))
+        for k, v in re.findall(r"(\w+)=(\d+)", m.group(3)):
+            agg[k] = agg.get(k, 0) + int(v)
+    if not agg:
+        return ""
+    keys = ("price_gate", "momentum_volume", "earnings", "earnings_phase", "earnings_stale",
+            "market_cap_too_low", "turnover_too_low", "liquidity", "ordered", "research_ordered")
+    tail = " ".join(f"{k}={agg.get(k, 0)}" for k in keys if k in agg)
+    out = [f"- 轮次 {len(gates)} (最近) · 阶段 {sorted(set(sessions))} · "
+           f"候选/轮 {min(cands)}~{max(cands)} · 合计 {tail}"]
+    src = [l for l in lines if "事件源[" in l][-n:]
+    if src:
+        fh = sum(int(m.group(1)) for m in (re.search(r"finnhub=(\d+)", l) for l in src) if m)
+        ft = sum(int(m.group(1)) for m in (re.search(r"futu=(\d+)", l) for l in src) if m)
+        out.append(f"- 判据① 事件源 (并源模式, 按票去重/轮): 累计 futu={ft} · finnhub(靠回落源认出)={fh}")
+    return "\n".join(out)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -206,6 +252,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--refresh-postmarket", action="store_true",
                     help="有延长时段样本时, 20:30 后重写全日 Obsidian postmarket 终稿")
     ap.add_argument("--json", action="store_true", help="附机器可读 JSON")
+    ap.add_argument("--always", action="store_true",
+                    help="无成交样本也推 (漏斗+最近轮次可见性) —— 用户令「先可见」(2026-09-23)")
     args = ap.parse_args(argv)
 
     day = args.date or default_date()
@@ -227,9 +275,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                           "holding": holding_ext()}, ensure_ascii=False, indent=2))
 
     if args.push:
-        if not has_sample:
+        if not has_sample and not args.always:
             print(f"[skip-push] {day} 无延长时段样本 (零噪音策略), 不推送")
             return 0
+        if not has_sample:
+            body += ("\n\n_该 ET 日无成交样本 —— 通道在跑但 0 单时本卡仍推 (用户令「先可见」), "
+                     "便于肉眼确认链路活着; 不想看到可在 crontab 去掉 --always_")
         try:
             from app.push import push_text_safe
             from app.push.message import Level, Category

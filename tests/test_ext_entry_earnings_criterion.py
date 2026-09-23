@@ -190,9 +190,73 @@ def test_finnhub_source_fails_open_on_error(monkeypatch, capsys):
 
 
 def test_finnhub_source_does_not_widen_eligibility(monkeypatch):
-    """**零资格变更**的机械保证: 本源只产候选代码, 判据① 仍只认 futu/AV 日历 ——
-    即 CTAS 进池后仍会因 futu 标 REGULAR(空相位) 被 calendar_phase_unknown 拒。"""
+    """**候选源零资格变更**的机械保证: 只产候选代码, 判据① 仍只认 futu/AV 日历。
+    注: 必须显式钉 `EARNINGS_EVENT_SOURCE=calendar` —— 生产 `.env.us` 已开并源(union),
+    那会**故意**让 CTAS 类票过判据① (见下方 union 用例组); 本用例只验候选源那一层的独立性。"""
     _fh_cal(monkeypatch, {"CTAS": {"hour": "bmo", "date": TODAY}})
+    monkeypatch.setattr(executor, "EARNINGS_EVENT_SOURCE", "calendar")
     assert executor._finnhub_calendar_symbols("premarket") == ["US.CTAS"]
     monkeypatch.setattr(executor, "_earnings_calendar_rows", lambda: ([], None))   # futu/AV 无 CTAS
     assert executor._earnings_surprise("US.CTAS", "premarket") == (None, "calendar_missing")
+
+
+# ── 判据① 事件源并源 (union 模式, 2026-09-23「先可见再打磨」) ──────────────────
+def _wire_union(mod, monkeypatch, futu_rows, fh_rows, tmp_path, session_case="premarket"):
+    _wire(mod, monkeypatch, fh_rows, tmp_path=tmp_path)
+    monkeypatch.setattr(mod, "_earnings_calendar_rows", lambda: (futu_rows, None))
+    monkeypatch.setattr(mod, "EARNINGS_EVENT_SOURCE", "calendar_finnhub_union")
+    return session_case
+
+
+def test_union_accepts_finnhub_only_event(monkeypatch, tmp_path):
+    """futu 日历**根本没有这只票** + Finnhub 当日标 bmo ⇒ 盘前窗放行 (并源的核心价值)。"""
+    mod = _load()
+    sess = _wire_union(mod, monkeypatch, [], [{"symbol": "CTAS", "hour": "bmo",
+                                               "epsActual": 2.1, "epsEstimate": 1.38}], tmp_path)
+    got, reason = mod._earnings_surprise("US.CTAS", sess)
+    assert reason is None and got is not None, (got, reason)
+    assert got["report_date"] == TODAY and got["report_phase"] in ("bmo", "pre-market")
+    assert "CTAS" in mod._EVENT_SRC_OBS["finnhub"]
+
+
+def test_union_accepts_when_futu_phase_unlabeled(monkeypatch, tmp_path):
+    """病灶原型 US.CTAS: futu 标 REGULAR (相位空) 而 Finnhub 标 bmo ⇒ 并源放行。"""
+    mod = _load()
+    futu = [{"symbol": "CTAS", "reportDate": TODAY, "timeOfTheDay": "", "pub_type": "REGULAR"}]
+    sess = _wire_union(mod, monkeypatch, futu, [{"symbol": "CTAS", "hour": "bmo",
+                                                 "epsActual": 2.1, "epsEstimate": 1.38}], tmp_path)
+    got, reason = mod._earnings_surprise("US.CTAS", sess)
+    assert reason is None and got is not None, (got, reason)
+
+
+def test_union_does_not_override_futu_mismatch(monkeypatch, tmp_path):
+    """futu **明确**标了不同相位 ⇒ 不覆盖 (保守): afterhours 票在盘前窗仍拒。"""
+    mod = _load()
+    futu = [{"symbol": "CBRL", "reportDate": TODAY, "timeOfTheDay": "post-market"}]
+    sess = _wire_union(mod, monkeypatch, futu, [{"symbol": "CBRL", "hour": "bmo",
+                                                 "epsActual": 2.1, "epsEstimate": 1.38}], tmp_path)
+    got, reason = mod._earnings_surprise("US.CBRL", sess)
+    assert got is None and reason == "calendar_phase_mismatch", (got, reason)
+    assert not mod._EVENT_SRC_OBS["finnhub"]
+
+
+def test_union_off_keeps_fail_close(monkeypatch):
+    """开关关闭 (默认) ⇒ 逐字保留旧语义 (futu 无行 = calendar_missing)。"""
+    mod = _load()
+    _wire(mod, monkeypatch, [{"symbol": "CTAS", "hour": "bmo",
+                              "epsActual": 2.1, "epsEstimate": 1.38}])
+    monkeypatch.setattr(mod, "_earnings_calendar_rows", lambda: ([], None))
+    monkeypatch.setattr(mod, "EARNINGS_EVENT_SOURCE", "calendar")
+    got, reason = mod._earnings_surprise("US.CTAS", "premarket")
+    assert got is None and reason == "calendar_missing", (got, reason)
+
+
+def test_union_finnhub_down_fails_closed(monkeypatch, tmp_path):
+    """并源的兜底源故障 ⇒ fail-close (calendar_source_error), 不回退成放行。"""
+    mod = _load()
+    _wire_union(mod, monkeypatch, [], [], tmp_path)
+    import app.data.premarket_enrichment as pe
+    monkeypatch.setattr(pe, "_get_finnhub_client", lambda: None)
+    monkeypatch.setattr(mod, "_FINNHUB_TODAY_CAL_CACHE", {})
+    got, reason = mod._earnings_surprise("US.CTAS", "premarket")
+    assert got is None and reason == "calendar_source_error", (got, reason)
