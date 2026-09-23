@@ -52,7 +52,6 @@ position_path_collector.py  # 存量测量/回填环, 台账回填待专项
 premarket_data_check.py  # 存量测量/回填环, 台账回填待专项
 premarket_peer_shadow.py  # 存量测量/回填环, 台账回填待专项
 premarket_reprice_shadow.py  # 存量测量/回填环, 台账回填待专项
-reentry_gate_effect_tracker.py  # 存量测量/回填环, 台账回填待专项
 regime_divergence_shadow.py  # 存量测量/回填环, 台账回填待专项
 rotate_data_backups.py  # 存量测量/回填环, 台账回填待专项
 sector_pulse.py  # 存量测量/回填环, 台账回填待专项
