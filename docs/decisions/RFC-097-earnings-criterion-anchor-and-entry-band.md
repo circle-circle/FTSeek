@@ -147,3 +147,35 @@ echo 'EXT_EARNINGS_CRITERION_SHADOW=false' >> .env.us
   现值以 `.env.us` 为准, 变更留痕即本 RFC）。
 - 生效：cron `*/5` 延长时段 tick，下一 tick 起（无需重启）。
 - **未入库**：另一 agent 在 `docs/debates/DEB-20260923-*.md` / `README.md` 的未提交改动（本批一字未碰）。
+---
+
+## 补充 (2026-09-23 晚, `e087984ae`): 候选源补强 — 供给归因的第二源
+
+**触发**：用户问"为何候选源漏了 US.CTAS"。不是覆盖 bug，是**相位标签**问题，且面比单票大。
+
+**实测对撞（futu 主源 vs Finnhub，7 日窗 9/22–9/28）**
+
+| 面 | futu 主源 | Finnhub | 结论 |
+| --- | --- | --- | --- |
+| 覆盖票数 | 34 | 87 | 主源只覆盖 **39%**（64 只票 futu 完全没有） |
+| 相位未标定 (`pub_type=REGULAR`) | 4 / 34 = **11.8%** | — | 经 `_PUB_MAP` 成空相位 ⇒ **结构性进不了延长时段通道** |
+| 要害票 | CTAS = REGULAR → 空相位 → 缺席 | `hour=bmo` | 当日最大 bmo 财报票（$79.7B）被静默排除 |
+
+跨源可回补率：4 只 REGULAR 中 **2 只**（CTAS/TBN）Finnhub 有明确相位；BB/IVA 两源皆未标定 ⇒ 真不可判。
+
+**已落地（第一层，零资格变更）**
+- 新增 `SOURCE_FINNHUB_CALENDAR`（`.env.us: EXT_ENTRY_SOURCE_FINNHUB_CALENDAR`，代码默认 false）+
+  `_finnhub_calendar_symbols(session)`：复用判据②的 `_finnhub_today_calendar()` 进程内缓存 ⇒ **零新增网络调用**；
+  bmo→盘前、amc→盘后；dmh/未标定不入池；源故障 fail-open + 显式日志。
+- **零资格变更的机械保证**：判据① 的相位判据**不改**（仍只认 futu/AV）⇒ 进池 ≠ 放行。实弹验证：
+  CTAS 进池后仍被 `calendar_phase_unknown` 拒。有专门测试锁定该性质。
+- 价值：把 `calendar_phase_unknown` / `calendar_missing` 的票送进 reject 台账 ⇒ 为第二层裁决攒证据。
+- 实弹 dry 预演（ET 9/23 盘前，只读）：候选源 5 → **50 只（+CTAS）**。
+- 回滚：`EXT_ENTRY_SOURCE_FINNHUB_CALENDAR=false` 或删该行（独立开关，不影响其他源）。
+
+**第二层（待裁决，会扩资格）**：判据① 相位交叉回补（futu 未标定/REGULAR ⇒ 取 Finnhub 相位）。
+- 依据：同相位窗前该票财报**必须已发布**（判据② `actual_missing` fail-close）⇒ 逻辑自洽（真 post-report 入场，非抢跑）。
+- 反向风险：Finnhub 相位标错（实际盘中发布）⇒ 在"报告前"入场，退化为普通票。
+- 裁决门槛：先攒 `calendar_phase_unknown` 票数 + 跨源相位一致率（建议到 2026-10-10）；保守替代 = 维持现状。
+- 已知局限（诚实披露）：reject 台账写在 **带/量闸之后** ⇒ 早盘量未起来时这些票走不到 earnings 分支，
+  证据只在**真窗且量达标**的票上积累 ⇒ 样本稀少，裁决可能比预期慢。
