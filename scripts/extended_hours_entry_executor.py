@@ -101,6 +101,38 @@ MIN_ASK_DEPTH_RATIO = float(os.getenv("EXT_ENTRY_MIN_ASK_DEPTH_RATIO", "1.0"))
 #   N=150 依据: 财季末→披露常规滞后 30~90 天, 150 天已容纳晚披露者, 而上一季记录
 #   (距今 ~170-270 天) 必被拦下。回滚/调参: env EXT_EARNINGS_MAX_PERIOD_AGE_DAYS。
 EARNINGS_MAX_PERIOD_AGE_DAYS = int(os.getenv("EXT_EARNINGS_MAX_PERIOD_AGE_DAYS", "150"))
+
+# ── 2026-09-23 P0 判据②口径修正 (DEB-20260923 §2.1/§14.3, RFC-097) ──
+# 旧判据②把 company_earnings[0].period (Finnhub 归一化的**日历**季度末) 当"披露新鲜度"锚:
+#   实际披露日早于该标签 >7 天的票被判 age_days < -7 ⇒ **当日真 beat 被拒**。
+# 实测 (近 14 天已披露票, 9/22 快照): 123 只中 103 只负龄 (83.7%); 生产活例 US.KBH
+#   (actual 1.05 / est 0.9022 / +16.38%) 于 2026-09-22 盘后被闸②拒 (logs/ext_entry.log:220)。
+# 新判据②直接看"今天这组数字": 当日 Finnhub 日历行 epsActual vs epsEstimate > 0,
+#   锚 = 判据①已保证的同日同相位事件; 不再用 period 做新鲜度。
+# 回滚: EXT_EARNINGS_CRITERION=legacy_period (一行; cron 每 tick 新进程即生效)。
+EARNINGS_CRITERION = (os.getenv("EXT_EARNINGS_CRITERION", "calendar_actual") or "").strip().lower()
+EARNINGS_CRITERION_SHADOW = (
+    os.getenv("EXT_EARNINGS_CRITERION_SHADOW", "true").lower() == "true"
+)
+# 入场涨幅带 (2026-09-23 DEB-20260923 §3.3): 空 = 沿用 ENTRY_CHANGE_PCT 下限 (旧行为)。
+# 设 "0.5,2.0" ⇒ 温和票档 (回放 31 笔/18 日, 成本 0.53%: 温和票 +$23.09/笔 vs 追高 -$57.76/笔)。
+ENTRY_CHG_BAND = (os.getenv("EXT_ENTRY_CHG_BAND", "") or "").strip()
+
+
+def _entry_chg_ok(change_pct):
+    """入场涨幅闸: 有 ENTRY_CHG_BAND ⇒ 带内通过; 无 ⇒ 旧口径 (>= ENTRY_CHANGE_PCT)。
+
+    解析失败 fail-safe 回旧口径 (不得因配置笔误把入场闸放开)。
+    """
+    if ENTRY_CHG_BAND:
+        parts = ENTRY_CHG_BAND.split(",")
+        if len(parts) == 2:
+            try:
+                lo, hi = float(parts[0]), float(parts[1])
+                return lo <= change_pct <= hi
+            except (TypeError, ValueError):
+                print(f"[ext_entry] EXT_ENTRY_CHG_BAND 解析失败 ({ENTRY_CHG_BAND!r}) → 回退 ENTRY_CHANGE_PCT")
+    return change_pct >= ENTRY_CHANGE_PCT
 # P1-4 盘前保留额度条件化: PREMARKET_MAX_PER_DAY 的目的是"盘后可能还有机会";
 #   当日日历**没有任何 after/post 相位财报**时, 保留是纯机会成本 ⇒ 释放盘前第 3 笔。
 #   日历源故障/空 → 保守视为"有" (继续保留)。回滚: EXT_PREMARKET_RESERVE_CONDITIONAL=false。
@@ -213,6 +245,7 @@ PRETRADE_GATE_REJECTS = ROOT / "data" / "extended_hours_pretrade_gate_rejects.js
 #   源故障(calendar_source_error/finnhub_error) vs 相位字段不匹配(calendar_phase_*) vs
 #   surprise 过期(surprise_stale)。没有它, 闸计数只有一个 earnings=N, 无法裁决放不放宽。
 EARNINGS_GATE_REJECTS = ROOT / "data" / "extended_hours_earnings_gate_rejects.jsonl"
+EARNINGS_CRITERION_SHADOW_PATH = ROOT / "data" / "ext_entry_earnings_criterion_shadow.jsonl"
 # 2026-09-22 零成交复盘: 记录"价格/动量/量能/成交额已通过, 仅因 calendar_missing 被拒"
 # 的 near-miss。按 (trade_date, session, symbol) 去重, 只做观察, 不参与交易判定。
 EARNINGS_NEAR_MISSES = ROOT / "data" / "ext_entry_earnings_near_miss.jsonl"
@@ -911,7 +944,7 @@ def _record_earnings_near_misses(session, trade_date, candidates):
                 turnover_usd = price * volume
                 if (
                     not _price_in_range(price)
-                    or change_pct < ENTRY_CHANGE_PCT
+                    or not _entry_chg_ok(change_pct)
                     or volume < MIN_VOLUME
                     or turnover_usd < MIN_EXT_TURNOVER_USD
                 ):
@@ -1635,51 +1668,193 @@ def _surprise_period_age_days(period):
     return (today_date - period_date).days
 
 
-def _earnings_surprise(symbol, session):
-    """同日同相位 earnings beat + Finnhub surprise 新鲜度守卫 (P0-1)。
+def _earnings_surprise_legacy_finnhub(ticker):
+    """旧判据②的 Finnhub 部分: company_earnings[0] surprise>0 + period 龄窗 [-7, 150]。
 
-    返回 (earnings|None, sub_reason|None)。新增子原因:
-      finnhub_client_unavailable / finnhub_no_data / finnhub_error — 源侧
-      surprise_nonpositive — 最新 actual ≤ 0
-      surprise_stale       — e[0].period 超龄 (今日 actual 尚未入库, 读到的是上一季)
-    新鲜度守卫理由: 财报**刚发布**时 Finnhub 常未更新, e[0] 是上季记录;
-    "上季 beat + 今日盘前涨 2% (好 guidance/误读)" 会透过旧闸, 今日实际 miss ⇒ 回落踩雷,
-    与 9/17 首跑 4 笔"财报高开→回落"病灶同型。period 距今 [-7, 150] 天外一律拒。
+    2026-09-23 起只作回滚路径 (EXT_EARNINGS_CRITERION=legacy_period) 与对照台账的 legacy 读数。
+    旧口径的自伤 (period = Finnhub 归一化**日历**季度末被当披露锚 ⇒ off-calendar 财年票
+    被判 age_days < -7) 见 DEB-20260923 §2.1/§14.3。
     """
-    event, calendar_reason = _earnings_calendar_event(symbol, session)
-    if event is None:
-        return None, calendar_reason
     try:
         from app.data.premarket_enrichment import _get_finnhub_client
         c = _get_finnhub_client()
         if c is None:
             return None, "finnhub_client_unavailable"
-        tick = symbol.replace("US.", "")
-        e = c.company_earnings(tick, limit=1)
+        e = c.company_earnings(ticker, limit=1)
         if not (e and isinstance(e, list)):
             return None, "finnhub_no_data"
         sp = e[0].get("surprisePercent")
         period = e[0].get("period")
+        age_days = _surprise_period_age_days(period)
+        _LEGACY_PERIOD_OBS[ticker] = {"period": period, "period_age_days": age_days}
         if sp is None or sp <= 0:
             return None, "surprise_nonpositive"
-        age_days = _surprise_period_age_days(period)
         if age_days is None or age_days > EARNINGS_MAX_PERIOD_AGE_DAYS or age_days < -7:
             print(
-                f"[ext_entry] {symbol} surprise STALE rejected: period={period!r} "
-                f"age_days={age_days} limit={EARNINGS_MAX_PERIOD_AGE_DAYS} "
-                "(今日 actual 疑似尚未入 Finnhub, fail-closed)"
+                f"[ext_entry] {ticker} surprise STALE rejected (legacy): period={period!r} "
+                f"age_days={age_days} limit={EARNINGS_MAX_PERIOD_AGE_DAYS}"
             )
             return None, "surprise_stale"
-        return {
-            "surprise_pct": sp,
-            "period": period,
-            "period_age_days": age_days,
-            "report_date": event.get("reportDate"),
-            "report_phase": event.get("timeOfTheDay") or event.get("pub_type"),
-        }, None
+        return {"surprise_pct": sp, "period": period, "period_age_days": age_days}, None
     except Exception as exc:
-        print(f"[ext_entry] {symbol} finnhub earnings failed: {type(exc).__name__}: {exc}")
+        print(f"[ext_entry] {ticker} finnhub earnings failed: {type(exc).__name__}: {exc}")
         return None, "finnhub_error"
+
+
+_FINNHUB_TODAY_CAL_CACHE = {}
+
+
+def _finnhub_today_calendar():
+    """当日 Finnhub 全市场财报日历 (per-process 缓存)。返回 (by_ticker|None, sub_reason|None)。
+
+    一次调用覆盖当日全市场 (替代逐票 company_earnings 的新判据②数据源), cron 每 tick 新进程
+    ⇒ 缓存天然按 tick 失效。源侧失败 fail-closed。
+    """
+    today = _today_et()
+    cached = _FINNHUB_TODAY_CAL_CACHE.get(today)
+    if cached is not None:
+        return cached
+    try:
+        from app.data.premarket_enrichment import _get_finnhub_client
+        c = _get_finnhub_client()
+        if c is None:
+            return None, "finnhub_client_unavailable"
+        resp = c.earnings_calendar(today, today, None)
+        rows = (resp or {}).get("earningsCalendar") or []
+    except Exception as exc:
+        print(f"[ext_entry] finnhub earnings_calendar failed: {type(exc).__name__}: {exc}")
+        return None, "finnhub_error"
+    by_ticker = {}
+    for row in rows:
+        tick = str(row.get("symbol") or "").upper()
+        if tick and tick not in by_ticker:
+            by_ticker[tick] = row
+    _FINNHUB_TODAY_CAL_CACHE[today] = (by_ticker, None)
+    return by_ticker, None
+
+
+def _earnings_surprise_calendar_actual(ticker):
+    """新判据② (2026-09-23 口径修正): 当日 Finnhub 日历行的 epsActual vs epsEstimate > 0。
+
+    fail-close 三态 (DEB-20260923 §14.4): actual_missing / estimate_missing / estimate_zero。
+    """
+    cal, err = _finnhub_today_calendar()
+    if cal is None:
+        return None, err
+    row = cal.get(ticker)
+    if row is None:
+        return None, "actual_missing"
+    actual = row.get("epsActual")
+    est = row.get("epsEstimate")
+    if actual is None:
+        return None, "actual_missing"
+    if est is None or isinstance(est, bool) or not isinstance(est, (int, float)):
+        return None, "estimate_missing"
+    if float(est) == 0:
+        return None, "estimate_zero"
+    try:
+        surp = (float(actual) - float(est)) / abs(float(est)) * 100.0
+    except (TypeError, ValueError):
+        return None, "actual_missing"
+    if surp <= 0:
+        return None, "surprise_nonpositive"
+    quarter, year = row.get("quarter"), row.get("year")
+    return {
+        "surprise_pct": surp,
+        "actual": float(actual),
+        "estimate": float(est),
+        "period": f"{year}-Q{quarter}" if quarter and year else None,
+        "period_age_days": None,
+        "report_phase": row.get("hour"),
+    }, None
+
+
+_EARNINGS_CRITERION_SHADOW_KEYS = None
+# 旧判据最近一次观测到的 period/龄 (即使被判 stale 也留读数, 供对照台账诊断"为什么被拦")。
+_LEGACY_PERIOD_OBS = {}
+
+
+def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new):
+    """新旧判据②对照台账 (2026-09-23, 按 票-ET日 去重一行)。
+
+    为什么需要: "旧判据在生产上误拦多少" 目前只有人群几何读数 (83.7% = 日历标签口径的**上界**),
+    生产口径 (company_earnings) 从未实测 ⇒ 本台账给「legacy 拦而 new 放」的真实日计数,
+    供 10 月财报季裁决修口径的收益 (DEB-20260923 §7.1 对照计数的落地载体)。
+    异常必须留痕不得静默 (except:pass 棘轮守卫)。
+    """
+    global _EARNINGS_CRITERION_SHADOW_KEYS
+    try:
+        today = _today_et()
+        if _EARNINGS_CRITERION_SHADOW_KEYS is None:
+            keys = set()
+            if EARNINGS_CRITERION_SHADOW_PATH.exists():
+                with EARNINGS_CRITERION_SHADOW_PATH.open() as handle:
+                    for line in handle:
+                        try:
+                            row = json.loads(line)
+                        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                            print(f"[ext_entry] criterion shadow 行解析失败: {type(exc).__name__}")
+                            continue
+                        keys.add(f"{row.get('symbol')}|{row.get('et_date')}")
+            _EARNINGS_CRITERION_SHADOW_KEYS = keys
+        key = f"{ticker}|{today}"
+        if key in _EARNINGS_CRITERION_SHADOW_KEYS:
+            return
+        legacy_res, legacy_reason = legacy
+        new_res, new_reason = new
+        EARNINGS_CRITERION_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with EARNINGS_CRITERION_SHADOW_PATH.open("a") as handle:
+            handle.write(json.dumps({
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "et_date": today,
+                "session": session,
+                "symbol": symbol,
+                "criterion": EARNINGS_CRITERION,
+                "legacy_pass": legacy_res is not None,
+                "legacy_reason": legacy_reason,
+                "new_pass": new_res is not None,
+                "new_reason": new_reason,
+                "legacy_blocked_new_pass": bool(legacy_res is None and new_res is not None),
+                "new_surprise_pct": (new_res or {}).get("surprise_pct"),
+                "actual": (new_res or {}).get("actual"),
+                "estimate": (new_res or {}).get("estimate"),
+                "legacy_period": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period"),
+                "legacy_period_age_days": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period_age_days"),
+            }, ensure_ascii=False) + "\n")
+        _EARNINGS_CRITERION_SHADOW_KEYS.add(key)
+    except Exception as exc:
+        print(f"[ext_entry] criterion shadow 写入失败: {type(exc).__name__}: {exc}")
+
+
+def _earnings_surprise(symbol, session):
+    """同日同相位 earnings beat 判定 (2026-09-23 判据②口径修正, RFC-097)。
+
+    结构: 判据①事件存在 (同日同相位, futu/AV 日历) → 判据② beat 证明
+      · calendar_actual (默认/新): 当日 Finnhub 日历行 epsActual vs epsEstimate > 0
+      · legacy_period (回滚): company_earnings[0] surprise>0 + period 龄窗 [-7,150]
+
+    返回 (earnings|None, sub_reason|None)。判据①子原因见 `_earnings_calendar_event`;
+    判据②新子原因: finnhub_client_unavailable / finnhub_error / actual_missing /
+      estimate_missing (一致预期缺失) / estimate_zero (预期为 0, 防除零) / surprise_nonpositive。
+    """
+    event, calendar_reason = _earnings_calendar_event(symbol, session)
+    if event is None:
+        return None, calendar_reason
+    ticker = symbol.replace("US.", "").upper()
+    if EARNINGS_CRITERION == "legacy_period":
+        legacy = _earnings_surprise_legacy_finnhub(ticker)
+        res, reason = legacy
+        new = _earnings_surprise_calendar_actual(ticker) if EARNINGS_CRITERION_SHADOW else (None, None)
+    else:
+        new = _earnings_surprise_calendar_actual(ticker)
+        legacy = _earnings_surprise_legacy_finnhub(ticker) if EARNINGS_CRITERION_SHADOW else (None, None)
+        res, reason = new
+    if res is not None:
+        res.setdefault("report_date", event.get("reportDate"))
+        res.setdefault("report_phase", event.get("timeOfTheDay") or event.get("pub_type"))
+    if EARNINGS_CRITERION_SHADOW:
+        _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new)
+    return res, reason
 
 
 def _print_gate_counts(session, total, counts):
@@ -1758,7 +1933,7 @@ def collect(session, dry=False):
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
-                if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
+                if not _entry_chg_ok(change_pct) or volume < MIN_VOLUME:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
@@ -1983,7 +2158,7 @@ def collect(session, dry=False):
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
-                if change_pct < ENTRY_CHANGE_PCT or volume < MIN_VOLUME:
+                if not _entry_chg_ok(change_pct) or volume < MIN_VOLUME:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
