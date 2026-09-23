@@ -662,6 +662,21 @@ def _sec_eth_short_family():
                    + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
     else:
         out.append("  ③ UE空头增强: (无样本)")
+    r = _read_jsonl(ROOT / "data" / "earnings_direction_path_shadow.jsonl")
+    if r:
+        days = sorted({x.get("date") for x in r})
+        a = _age_days(days[-1])
+        nb = sum(1 for x in r if x.get("beat_miss") == "beat")
+        nm = sum(1 for x in r if x.get("beat_miss") == "miss")
+        ns = sum(1 for x in r if x.get("plan_dir") == "SHORT")
+        nl = sum(1 for x in r if x.get("plan_dir") == "LONG")
+        nets = [x["plan_net_usd"] for x in r if x.get("plan_net_usd") is not None]
+        sn = f" 计划净 ${sum(nets):+.0f} ({len(nets)} 笔)" if nets else ""
+        out.append(f"  ④ 财报全量路径(beat+miss): {len(r)} 事件/{len(days)} 日 | beat {nb} miss {nm} "
+                   f"| 计划 SHORT {ns} LONG {nl}{sn}"
+                   + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
+    else:
+        out.append("  ④ 财报全量路径(beat+miss): (尚无样本 — cron 20 4 * * 2-6)")
     return out
 
 
