@@ -13,7 +13,9 @@
 ## 附带: 通道就绪度 (转正前必须先确认"钱能落地")
 - **禁追线语义** (`app/playbook/entry_routing.py:chase_cap_violated`): SHORT 的 cap 是价格**下限**,
   违例判据 `price < cap` = "**低卖**"。⇒ shorting a +3% gap-up (高价卖出) **不违例**, fade 规则
-  与禁追线**不碰撞** (实读代码, 非推测; 且 `chase_cap_enforce_enabled` 默认 false = record-only)。
+  与禁追线**不碰撞** (实读代码, 非推测)。注 (2026-09-23 复查批更正): `chase_cap_enforce_enabled`
+  在 `config/unified_config.yaml:1530` 实际为 **true (enforce 已激活)**, 代码缺省值才是 false ——
+  早前本文写"默认 false = record-only"描述的是代码缺省, 与生产配置不符, 已勘误。
 - **落地方案**: 走 RTH 空头通道 (= 已存在、已在成交的那条), **不需要**延长时段开空成交能力。
   实测该通道 (trade_records, 剔 P3_DUP_CLEANUP/external_close, 8/25 起) 有真实成交与净额。
 - 另一条路 (ETH 开空) 仍是**未证实项** ⇒ 本规则的执行不依赖它。
@@ -34,7 +36,17 @@ MIN_WIN, MIN_LEAVE = 55.0, 0.0
 def load():
     if not LED.exists():
         return []
-    return [json.loads(l) for l in LED.read_text().splitlines() if l.strip()]
+    rows = [json.loads(l) for l in LED.read_text().splitlines() if l.strip()]
+    # 读取侧幂等防线 (2026-09-23 复查批): 生产侧 rth_fade_shadow.py 已按
+    # (symbol, rth_day) 去重, 此处再兜一层 —— 历史重复行不膨胀毕业门计数。
+    seen, out = set(), []
+    for r in rows:
+        k = (r.get("symbol"), r.get("rth_day"))
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
 
 
 def channel_readiness():

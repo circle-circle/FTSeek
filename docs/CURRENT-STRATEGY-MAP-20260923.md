@@ -69,7 +69,7 @@ SL/TP **由 DA 逐单生成**(非固定百分比), TP 另有硬门 **RR ≥ 1.5*
 **入场门** `[源: app/playbook/pipeline.py + config/unified_config.yaml]`
 - VWAP 方向一致硬门 (`entry_vwap_gate_enabled: true`, 容差 0.003, **开盘 VWAP 未就绪时 fail-open**)
 - 追入区 +5% (`CHASE_ZONE_PCT`), 极端 gap 8% 过滤
-- 禁追线 `chase_cap` (方向感知: BUY 上限 / SHORT 下限), 违规当前 **record-only** (`chase_cap_enforce_enabled` 默认 false)
+- 禁追线 `chase_cap` (方向感知: BUY 上限 / SHORT 下限), **enforce 已激活** (`unified_config.yaml:1530` `chase_cap_enforce_enabled: true`, 违例指令终态跳过不下单, 遥测带 enforced=true; 回滚=置 false 热重载即退回 record-only)
 - B 门 (接飞刀硬门)、UE tier 门、min_confidence (档位 0.45~0.7)
 - 开盘前 15 分钟 SL 放宽到 `cooldown_sl_pct: 4.0`
 

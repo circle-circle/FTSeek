@@ -182,10 +182,29 @@ def main(argv=None) -> int:
               f"  ‖ 平行臂(−3.5%止) 净 ${r['net_usd_sl35']:+7.2f}{' [触发]' if r['sl35_hit'] else ''}")
     if recs and not args.dry:
         OUT.parent.mkdir(parents=True, exist_ok=True)
-        with OUT.open("a") as f:
-            for r in recs:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"[rth_fade] 已追加 {len(recs)} 行 → {OUT}")
+        # 幂等 (2026-09-23 复查批 P1-5): 按 (symbol, rth_day) 去重 —— 同日重跑若直接
+        # 追加会翻倍样本, 下游毕业裁定器 (rth_fade_graduation_check.py) load 全量行,
+        # 笔数/胜率/净笔全部被污染。已在册的键跳过, 只追加新键。
+        seen = set()
+        if OUT.exists():
+            with OUT.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                        seen.add((row.get("symbol"), row.get("rth_day")))
+                    except json.JSONDecodeError:
+                        continue
+        fresh = [r for r in recs if (r["symbol"], r["rth_day"]) not in seen]
+        if fresh:
+            with OUT.open("a") as f:
+                for r in fresh:
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            print(f"[rth_fade] 已追加 {len(fresh)} 行 → {OUT}")
+        if len(fresh) < len(recs):
+            print(f"[rth_fade] 幂等去重跳过 {len(recs) - len(fresh)} 行 (已在册)")
     if args.push and recs:
         try:
             from app.push import push_text_safe
