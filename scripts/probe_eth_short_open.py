@@ -88,6 +88,12 @@ def _price_ok(px):
     return isinstance(px, (int, float)) and 0 < float(px) <= PRICE_CAP_USD
 
 
+def _quote_ok(bid, ask):
+    """报价有效性: 防"上一时段残留的空/倒挂报价"被判成"标的不可空" (归因污染)。"""
+    return (isinstance(bid, (int, float)) and isinstance(ask, (int, float))
+            and float(bid) > 0 and float(ask) >= float(bid) and _price_ok(ask))
+
+
 def _attempts_today(et_date_str):
     """当日 (ET 日) 已执行次数, 失败/成功都算 — 防试探性重试。"""
     n = 0
@@ -131,7 +137,7 @@ def _select_candidate(tctx, qctx, TrdEnv, OrderType, ret_ok, log=print):
             bid = float(snap.iloc[0].get("bid_price") or 0)
             ask = float(snap.iloc[0].get("ask_price") or 0)
         log("[probe] %s shortable=%s permit=%s last=%s bid=%s ask=%s" % (sym, shortable, permit, last, bid, ask))
-        if shortable >= 1 and permit and _price_ok(last):
+        if shortable >= 1 and permit and _price_ok(last) and _quote_ok(bid, ask):
             return {"code": sym, "shortable": shortable, "last": last, "bid": bid, "ask": ask}
     return None
 

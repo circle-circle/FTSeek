@@ -71,6 +71,16 @@ def isolated_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _chg_band_pinned_off(monkeypatch):
+    """Hermetic 钉 (2026-09-23, RFC-097): `.env.us` 已带 `EXT_ENTRY_CHG_BAND=0.5,2.0`
+    (入场温和票带), executor 模块 import 期读 env ⇒ **本文件**(闸/计数/近失行为面)一律显式钉空,
+    回到"旧阈值 chg>=2.0"语义, 防生产配置漂移进断言 (实测: 不钉则 8 个用例因带把 chg≥2 的
+    fixture 票全挡掉而红)。涨幅带自身行为见 tests/test_ext_entry_observation_decoupling.py
+    与 tests/test_ext_entry_earnings_criterion.py (那里显式钉带)。"""
+    monkeypatch.setattr(executor, "ENTRY_CHG_BAND", "")
+
+
+@pytest.fixture(autouse=True)
 def _research_arm_pinned_off(monkeypatch):
     """Hermetic 钉 (2026-09-22, DEB-20260920 §12): .env.us 已带 EXT_ENTRY_RESEARCH_MOMENTUM=true
     (研究臂生产启用), executor 模块 import 期读 env ⇒ 本文件 (严格臂行为面) 一律显式钉关,
@@ -386,7 +396,12 @@ def test_earnings_surprise_rejects_stale_prior_quarter_period(monkeypatch):
     """P0-1 新鲜度守卫: 今日 actual 未入库时 e[0] 是上一季记录 — 上季 beat 不得放行今日入场.
 
     病灶同型: 9/17 首跑 4 笔"财报高开→回落" (miss + 盘前先涨 2% 透过旧闸)。
+
+    ⚠️ 2026-09-23 (RFC-097): 本用例测的是**旧口径 (period 龄窗)**, 现已是回滚路径
+    (`EXT_EARNINGS_CRITERION=legacy_period`); 生产默认走 calendar_actual ⇒ 此处必须
+    显式钉住判据, 否则它测的东西随默认值漂移 (2026-09-23 实测: 不钉则红)。
     """
+    monkeypatch.setattr(executor, "EARNINGS_CRITERION", "legacy_period")
     monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-20")
     monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
         "2026-09-20": {"rows": [

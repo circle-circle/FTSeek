@@ -22,6 +22,14 @@ import pytest
 import scripts.extended_hours_entry_executor as executor
 
 
+@pytest.fixture(autouse=True)
+def _chg_band_pinned_off(monkeypatch):
+    """Hermetic 钉 (2026-09-23, RFC-097): `.env.us` 已带 `EXT_ENTRY_CHG_BAND=0.5,2.0`,
+    executor 模块 import 期读 env ⇒ 本文件用例按"旧阈值 chg>=2.0"语义写 (fixture 票 chg=6~9),
+    必须显式钉空带, 否则生产配置漂移进断言 (实测不钉则 6 个用例红)。带自身行为另测。"""
+    monkeypatch.setattr(executor, "ENTRY_CHG_BAND", "")
+
+
 # ── 最小桩件 ──────────────────────────────────────────────────────────────────
 
 

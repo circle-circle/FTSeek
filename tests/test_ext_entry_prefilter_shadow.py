@@ -25,8 +25,10 @@ def test_prefilter_verdicts_bands_and_gates():
 
     lukewarm = ee.prefilter_verdicts(1.4, 30.0, 900_000)
     assert lukewarm["chg_band"] == "0~2" and lukewarm["price_band"] == "$20~50"
-    assert not lukewarm["passes_current_gate"]      # 涨幅低于现役闸 2.0
     assert not lukewarm["passes_chg_3"]
+    # 2026-09-23 (RFC-097): `passes_current_gate` 必须跟**生产现役闸**走 —— 现役 = 涨幅带
+    # [0.5,2.0] ⇒ 1.4% 的温和票**现在过** (旧阈值 chg>=2.0 的口径已废; 本文件禁止写死旧口径)。
+    assert lukewarm["passes_current_gate"] == bool(ee._entry_chg_ok(1.4))
 
     penny = ee.prefilter_verdicts(19.7, 0.42, 5000)
     assert penny["price_band"] == "penny_lt5"

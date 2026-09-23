@@ -380,6 +380,15 @@ def _state_lock(state_path=None):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _probe_env_only():
+    """**显式**探针标志: 只认 `FUTSEEK_PROBE=1`, 不含 pytest 检测。
+
+    与 `_probe_mode()`(推送静默, 含 pytest) 刻意分开: 下单口的短路必须只由人工显式置位触发,
+    否则任何 pytest 进程都会封死下单路径 ⇒ 测试对下单链的断言全灭 (2026-09-23 实测)。
+    """
+    return os.getenv("FUTSEEK_PROBE", "").strip().lower() in ("1", "true", "yes")
+
+
 def _probe_mode():
     """探针/测试运行的**静默开关** (四条推送出口共用的唯一判据)。
 
@@ -587,7 +596,7 @@ def prefilter_verdicts(change_pct, price, volume):
     return {
         "chg_band": chg_band,
         "price_band": price_band,
-        "passes_current_gate": bool(chg >= ENTRY_CHANGE_PCT and vol >= MIN_VOLUME and px >= MIN_PRICE),
+        "passes_current_gate": bool(_entry_chg_ok(chg) and vol >= MIN_VOLUME and px >= MIN_PRICE),
         "passes_chg_3": bool(chg >= 3.0),
         "passes_chg_5": bool(chg >= 5.0),
         "passes_price_5_20": bool(5.0 <= px < 20.0),
@@ -1772,9 +1781,13 @@ def _earnings_surprise_calendar_actual(ticker):
 _EARNINGS_CRITERION_SHADOW_KEYS = None
 # 旧判据最近一次观测到的 period/龄 (即使被判 stale 也留读数, 供对照台账诊断"为什么被拦")。
 _LEGACY_PERIOD_OBS = {}
+# 入场侧上下文 (票, 相位) → {change_pct, volume, in_band, vol_ok} — 由 collect() 在调用
+# 判据②**之前**写入, 供对照台账落库。用旁路而非改函数签名: 既有测试对 `_earnings_surprise`
+# 打的是 2 参 stub, 改签名会一次性炸掉 5 个测试文件里的桩 (2026-09-23 实测 23 红)。
+_ENTRY_CTX_OBS = {}
 
 
-def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new):
+def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new, extra=None):
     """新旧判据②对照台账 (2026-09-23, 按 票-ET日 去重一行)。
 
     为什么需要: "旧判据在生产上误拦多少" 目前只有人群几何读数 (83.7% = 日历标签口径的**上界**),
@@ -1820,6 +1833,9 @@ def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new):
                 "estimate": (new_res or {}).get("estimate"),
                 "legacy_period": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period"),
                 "legacy_period_age_days": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period_age_days"),
+                # 入场侧上下文 (2026-09-23): 带/量闸状态 — 让 10 月能**分离**评估
+                # "旧判据误拦" 与 "涨幅带挡掉", 二者否则混在一个样本里不可归因。
+                **(extra or {}),
             }, ensure_ascii=False) + "\n")
         _EARNINGS_CRITERION_SHADOW_KEYS.add(key)
     except Exception as exc:
@@ -1853,7 +1869,8 @@ def _earnings_surprise(symbol, session):
         res.setdefault("report_date", event.get("reportDate"))
         res.setdefault("report_phase", event.get("timeOfTheDay") or event.get("pub_type"))
     if EARNINGS_CRITERION_SHADOW:
-        _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new)
+        _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new,
+                                             extra=_ENTRY_CTX_OBS.get((symbol, session)))
     return res, reason
 
 
@@ -1933,10 +1950,19 @@ def collect(session, dry=False):
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
-                if not _entry_chg_ok(change_pct) or volume < MIN_VOLUME:
+                # 观测与决策解耦 (2026-09-23): 判据②评估**先于**涨幅带/量闸。
+                # 带只该挡下单, 不该挡观测 —— 否则对照台账 (旧判据在生产误拦多少) 的样本
+                # 被带截断, 且最典型的"当日财报 pop 票"(跳空 >2%) 全看不到。
+                # 计数语义不变: 带/量不达标仍在 momentum_volume 分支 continue。
+                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= MIN_VOLUME
+                _ENTRY_CTX_OBS[(symbol, session)] = {
+                    "change_pct": round(change_pct, 2), "volume": volume,
+                    "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
+                }
+                earnings, earnings_reason = _earnings_surprise(symbol, session)
+                if not _chg_ok or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
                     earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
@@ -2158,10 +2184,19 @@ def collect(session, dry=False):
                     price_gate_rejects.append({"symbol": symbol, "price": price,
                                                "change_pct": round(change_pct, 2), "volume": volume})
                     continue
-                if not _entry_chg_ok(change_pct) or volume < MIN_VOLUME:
+                # 观测与决策解耦 (2026-09-23): 判据②评估**先于**涨幅带/量闸。
+                # 带只该挡下单, 不该挡观测 —— 否则对照台账 (旧判据在生产误拦多少) 的样本
+                # 被带截断, 且最典型的"当日财报 pop 票"(跳空 >2%) 全看不到。
+                # 计数语义不变: 带/量不达标仍在 momentum_volume 分支 continue。
+                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= MIN_VOLUME
+                _ENTRY_CTX_OBS[(symbol, session)] = {
+                    "change_pct": round(change_pct, 2), "volume": volume,
+                    "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
+                }
+                earnings, earnings_reason = _earnings_surprise(symbol, session)
+                if not _chg_ok or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
                     earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
@@ -2457,6 +2492,14 @@ def _execute(
             rec.update({
                 "ok": False, "skip": "active_ext_entry_order", "orders": active_orders,
             })
+            _audit(rec)
+            return rec
+        if _probe_env_only():
+            # 2026-09-23 (P1 类级治本): **显式探针**下单口短路 (仅认 FUTSEEK_PROBE, 不认 pytest);
+            # 生产 unset ⇒ 行为完全不变。刻意不复用 `_probe_mode()`: 它把"进程内在跑 pytest"
+            # 也算静默 ⇒ 会连带封死**测试对下单路径的正常断言**(实测 8 个 research_arm 用例
+            # 期望 executed 非空而拿空) —— "测试不该真下单"该由 conftest/桩负责, 不该由生产代码替它决定。
+            rec.update({"ok": False, "skip": "probe_mode", "symbol": symbol})
             _audit(rec)
             return rec
         ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=TrdSide.BUY,
