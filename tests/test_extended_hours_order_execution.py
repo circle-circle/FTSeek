@@ -110,6 +110,11 @@ def _research_arm_pinned_off(monkeypatch):
     # (如 BIGCO +6.1%) 在 dry 观测臂被判 SHORT 方向, 触达未打桩的 `_earnings_calendar_event`
     # 被事件门拒 (实测 KeyError: 'symbol')。空侧用例见 tests/test_ext_entry_short_arm.py。
     monkeypatch.setattr(entry_executor, "SHORT_ALLOW", False)
+    # 同因 hermetic 钉 (2026-09-23 RFC-101 取证批): `EXT_ENTRY_ALLOW_SIM=false` 时
+    # collect() 会 fail_closed (2026-09-22 安全门), 而本文件的订单执行面用例期望
+    # position_limit 分支 ⇒ 断言随操作者 env 漂移。取证: env EXT_ENTRY_ALLOW_SIM=false
+    # 时 test_collect_blocks_extended_open_position_count 由绿转红 (实测)。
+    monkeypatch.setattr(entry_executor, "ALLOW_SIM_ENTRY", True)
 
 
 @pytest.fixture()

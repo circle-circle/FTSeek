@@ -44,6 +44,19 @@ FEE_PCT = 0.085          # 仅作兜底/对照的扁平往返费率 (用户口�
 KLINE_MIN_INTERVAL = 0.5
 
 
+_FEE_FALLBACK_WARNED = {"done": False}
+
+
+def _warn_fee_fallback():
+    """兜底费率 0.085% 是**旧扁平口径** (per-share 费用模型下 $5 档真实往返 ≈0.53%) ——
+    静默退化会让净额读数乐观 ~6 倍 (RFC-101 §11 N5)。退化必须留痕, 且只喊一次。"""
+    if _FEE_FALLBACK_WARNED["done"]:
+        return
+    _FEE_FALLBACK_WARNED["done"] = True
+    print("[replay_ext_entry_sources] ⚠️ 真实费用模型不可用 ⇒ 退化为旧扁平口径 "
+          f"{FEE_PCT}% (线上费闸 0.5%/真实≈0.53%) ⇒ 净额读数偏乐观, 请勿用于裁决)")
+
+
 def _round_trip_fee_pct(entry_price, exit_price, trade_date=None, direction="LONG"):
     """逐笔真实往返费用 % (占**入场名义额**)。
 
@@ -64,8 +77,11 @@ def _round_trip_fee_pct(entry_price, exit_price, trade_date=None, direction="LON
             return FEE_PCT
         qty = max(1, int(_E.POSITION_USD / entry))
         metrics = round_trip_fee_metrics(qty, entry, exit_, direction, trade_date)
+        if not metrics:
+            _warn_fee_fallback()
         return float(metrics["round_trip_fee_pct"]) if metrics else FEE_PCT
     except Exception:
+        _warn_fee_fallback()
         return FEE_PCT
 ENTRY_HHMM = 405         # 入场时点 04:05 ET (与 cron 盘前首跑一致)
 PREMARKET_END = 925      # 盘前收口 09:25 ET

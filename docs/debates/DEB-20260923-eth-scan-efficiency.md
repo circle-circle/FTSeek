@@ -324,3 +324,25 @@
 | 死区降频 | 04:00–07:00 改 `*/10` | 与 RFC-100（早段放宽）方向相反，等 2026-10-08 读数 |
 
 > **一次性的边界（明说）**：本批 = L1+L2+L3+N1–N5 **同批落地、同批验证**（改动集中在"看谁/记什么/怎么记"三件事，属同一变更目标）；L4/棘轮/降频**不同批**，理由是它们各自改变不同变量，混批会让归因失效——这正是历史教训里"一次只改一个变量"的正面用法。
+
+---
+
+## 11.5 取证更正（本批落地时逐条回读原文 / 实弹取证的结果）
+
+> 纪律：§11 是**机械横扫**的产物，落批时必须逐条取证。以下三项在落地过程中被**证伪或收窄**，在此更正（原判据不得当结论引用）。
+
+| 原 §11 判定 | 取证结果 | 更正后 |
+| --- | --- | --- |
+| **N1**「单测污染生产**仍未修**」 | **证伪**：`488a41847`（[hotfix] 测试真下券商单治本）已落地 —— `tests/test_ext_entry_test_symbol_guard.py` 全用例钉 `_no_broker` 桩（走到券商口即红）、REAL 守卫判据改用 SSOT (`_live_mode`)、并加源码契约「`_execute` 不得读 legacy `FUTU_TRD_ENV`」；`tests/conftest._block_live_broker_orders` 在真 `OpenSecTradeContext` 写口装了挡板（带 `allow_live_broker_order` 显式豁免标记）。本文件 6 用例实测全绿。**我的横扫命中来自 docstring 文本**（机械正则误报） | **已完成，无需动作**（P1 三步清单：①已修 ②券商侧未终结 0 单 ⇒ 自动关闭 ③crontab 注释已同步 ⇒ 自动关闭） |
+| **N4**「6 个测试文件缺钉」 | **收窄**：实弹取证 = 逐个把生产派生键置反值跑该文件（`n4_env_flip_probe.sh`，7 文件 × 8 键）。**唯一真实案例 = 1 个文件 1 个键**：`tests/test_extended_hours_order_execution.py` 依赖 `EXT_ENTRY_ALLOW_SIM`（置 false 时 `test_collect_blocks_extended_open_position_count` 由绿转红，因 `collect()` 走 `simulate_stop_unsupported_fail_closed`）。其余 5 个"缺钉"文件**实测与 env 无关** ⇒ 机械正则在数**提及**而非**依赖** | **已修**：该文件补钉 `ALLOW_SIM_ENTRY=True`；取证复跑 —— 置 false 时 **39 passed**（与正常 env 一致）⇒ 判据已 hermetic |
+| **N5**「费用兜底口径」 | **成立，且比原判更该修**：兜底值 `0.085%` 只在 `app.execution.fee_model.estimate_round_trip` 不可用/返回空时生效 —— 即**静默退化**，净额会乐观约 6 倍却无任何痕迹 | **已修**：新增 `_warn_fee_fallback()`（一次性打印「真实费用模型不可用 ⇒ 退化为旧扁平口径 0.085%，净额偏乐观，请勿用于裁决」）。`exit_shadow_report.py`/`shadow_board.py` 的 `0.08` 属**报告侧历史口径**（改它会改历史读数）⇒ **不动**，仅在本文标注 |
+
+**本批实测（ET 2026-09-23 07:5x，盘前窗内，SIM）**
+
+| 臂 | 闸计数主行 | 扫描状态行 | 状态文件 |
+| --- | --- | --- | --- |
+| `EXT_SCAN_STATE_CACHE=true`（A） | `候选=43 price_gate=22 momentum_volume=13 earnings=7 turnover_too_low=1 ordered=0` | `mode=on 条目=0 命中=0 … 省调用≈0` | 已建 `data/loops/ext_entry_scan/state.json` |
+| 关闭（B，默认/回滚态） | **逐键完全相同** | **无此行** | 未新建 |
+
+- `条目=0` 是**成本模型的必然结果**（今日 43 只候选全部死在昂贵门之前 ⇒ 没有可缓存的昂贵结论）—— 与 RFC-101 §1 的修正一致：**省连接要等链路真正产出，或走 L4 常驻载体**。
+- 券商侧真值：持仓 `US.RIVN 382`（+ 探针遗留的 `US.CTAS 0` 零股行，无敞口）、未终结委托 **0**、`ext_entry` 近期单 **0** ⇒ 本批零污染。
