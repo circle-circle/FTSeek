@@ -3,8 +3,12 @@
 
 对 data/early_dead_signal_shadow.jsonl 中未结算行, 配对 trade_records 最终结局:
   - 命中定义: 30min 检查点 MFE<0.2% (主规则) / 15min 检查点 MFE<0.15% (辅助)
-  - 死单定义: exit_reason ∈ {TIME_EXIT, MFE_STALL_EXIT}
+  - 死单定义: exit_reason ∈ {TIME_EXIT, MFE_STALL_EXIT}   ← 预注册词表, 判决口径不动
   - 差集对照: 命中行中 DEAD_SIGNAL_EXIT(60min) 未触发者 = "提前量独立价值"样本
+  - 现役词表读法 (2026-09-23 加, **只印不判**): 预注册词表在现役退出栈下基率仅 ~1%
+    ⇒ 只印预注册口径会让"死单率"看着恒 ≈0 (实为词语表漂移, 非影子无效)。
+    逐条并列 现役死信号 / +耐心出场 / +收口跳空 三档的命中组率 vs 同期基率 + lift。
+    不写回任何字段 (is_dead 仍按预注册词表落库), 判据改动须另立 DEB。
 裁决预注册 (攒样≥30 命中后评估):
   ①双窗口死单率均≥55% ②命中组实际净PnL<0 ③差集结局为负
 用法: PYTHONPATH=. venv/bin/python scripts/early_dead_signal_report.py
@@ -19,6 +23,24 @@ SHADOW = ROOT / "data" / "early_dead_signal_shadow.jsonl"
 DB = ROOT / "data" / "ftseek_us.db"
 DEAD = {"TIME_EXIT", "MFE_STALL_EXIT"}
 THRESH = {15: 0.15, 30: 0.2}
+# 现役退出栈的"死"语义三档 (只印不判; 档位选择本身就是判据问题, 见 DEB-20260811 复议)
+VOCAB_BUNDLES = (
+    ("现役死信号", {"DEAD_SIGNAL_EXIT"}),
+    ("死信号+耐心出场", {"DEAD_SIGNAL_EXIT", "PATIENT_EXIT_STOP",
+                        "PATIENT_EXIT_EOD", "PATIENT_EXIT_FILL"}),
+    ("上述+收口/跳空", {"DEAD_SIGNAL_EXIT", "PATIENT_EXIT_STOP", "PATIENT_EXIT_EOD",
+                       "PATIENT_EXIT_FILL", "PRE_CLOSE_EXIT", "OVERNIGHT_GAP_STOP"}),
+)
+
+
+def baseline_reasons(conn, since):
+    """同期基线 (同口径: 已平仓、入场时间 ≥ 影子首日), 用于把绝对率折算成 lift。"""
+    try:
+        return [(r["exit_reason"] or "") for r in conn.execute(
+            "SELECT exit_reason FROM trade_records WHERE exit_price>0 AND entry_time>=?",
+            (since,)).fetchall()]
+    except Exception:
+        return []
 
 
 def main():
@@ -95,9 +117,24 @@ def main():
         net_diff = sum(r["final_pnl_net"] or 0 for r in diff_set)
         print(f"\n[{cp}min 检查点] 总行 {len(seg)} | 命中(MFE<{thr}%) {n_hit}")
         if n_hit:
-            print(f"  死单率: {dead_hit}/{n_hit} = {100*dead_hit/n_hit:.0f}%  (裁决线 ≥55%)")
+            print(f"  死单率(预注册词表): {dead_hit}/{n_hit} = {100*dead_hit/n_hit:.0f}%  (裁决线 ≥55%; 词表基率见下行)")
             print(f"  命中组净PnL: {net_hit:+.1f}$  (裁决线 <0)")
             print(f"  差集(30min命中但60min DEAD_SIGNAL未触发): {len(diff_set)}笔 净{net_diff:+.1f}$")
+            # 2026-09-23: 现役词表读法 (只印不判)。预注册词表 {TIME_EXIT,MFE_STALL_EXIT}
+            #   在现役退出栈下基率≈1% (8/11 预注册当时为 30%) ⇒ 只印上一行会把
+            #   "口径漂移"读成"影子无效/判据不可达"。绝对率同时给基率与 lift, 便于
+            #   按预注册的**相对**意图 (55% 线 ≈ 当时基率 30% 的 1.8×) 复核。
+            _since = min((r.get("entry_time") or "")[:10] for r in done) or "2026-08-11"
+            _base = baseline_reasons(conn, _since)
+            if _base:
+                print(f"  基率(同期已平仓 {len(_base)} 笔, 入场≥{_since}):")
+                for _name, _b in VOCAB_BUNDLES:
+                    _hr = 100.0 * sum(1 for r in hit if r.get("final_exit_reason") in _b) / n_hit
+                    _br = 100.0 * sum(1 for x in _base if x in _b) / len(_base)
+                    _lift = (_hr / _br) if _br else 0.0
+                    print(f"    [只印不判] {_name}: 命中组 {_hr:.1f}% vs 基率 {_br:.1f}% ⇒ lift {_lift:.2f}×")
+                _dbr = 100.0 * sum(1 for x in _base if x in DEAD) / len(_base)
+                print(f"    [对照] 预注册词表基率 {_dbr:.1f}% (预注册当时 30%)")
     if settled_ct == 0 and not done:
         print("(全部未平仓, 待交易结束后再跑)")
 

@@ -407,14 +407,18 @@ def _sec_early_dead():
         sub = [r for r in recs if _within(r.get("ts"), days)]
         c30 = [r for r in sub if r.get("checkpoint") == 30]
         c15 = [r for r in sub if r.get("checkpoint") == 15]
-        h30 = [r for r in c30 if (r.get("mfe_pct") or 99) < 0.2]
-        h15 = [r for r in c15 if (r.get("mfe_pct") or 99) < 0.15]
+        # 2026-09-23 (用户裁「按建议执行」): ①`or 99` 把 mfe_pct==0.0 的行当缺失丢掉
+        #   (最死的一批恰是 0.0) ⇒ 命中数比结算器少算; 改用"There is not None"判缺失。
+        #   ②死单率标签注明词表口径: 预注册词表在现役退出栈基率仅 ~1%, 不标注会被读成
+        #   "零死单⇒影子无效" (实为词语表漂移, 现役词表读法见结算器输出)。
+        h30 = [r for r in c30 if (r.get("mfe_pct") if r.get("mfe_pct") is not None else 99) < 0.2]
+        h15 = [r for r in c15 if (r.get("mfe_pct") if r.get("mfe_pct") is not None else 99) < 0.15]
         # 已结算行带 final_pnl_net/is_dead (由结算脚本回填)
         settled30 = [r for r in h30 if r.get("settled")]
         dead30 = sum(1 for r in settled30 if r.get("is_dead"))
         net30 = sum(r.get("final_pnl_net") or 0 for r in settled30)
         s = (f"30min行{len(c30)} 命中{len(h30)}"
-             + (f" 已结算{len(settled30)} 死单率{100*dead30/len(settled30):.0f}% 净{net30:+.0f}$" if settled30 else " 待结算")
+             + (f" 已结算{len(settled30)} 死单率(预注册词表){100*dead30/len(settled30):.0f}% 净{net30:+.0f}$" if settled30 else " 待结算")
              + f" | 15min命中{len(h15)}/{len(c15)}")
         return s
 
@@ -521,7 +525,10 @@ def _sec_post_exit():
             dg = statistics.median([r["close_gap_pct"] for r in deep])
             deep_s = f" | 深回撤V反日{len(deep)}笔 gap中位{dg:+.2f}%"
         # 坑底附近割 (距当日低<1%) 且深回撤日 — MU 9/3 形态
-        pit = [r for r in deep if (r.get("exit_dist_from_low_pct") or 99) < 1.0]
+        # 2026-09-23: 同批修的 `or 99` 陷阱 (exit_dist_from_low_pct==0.0 = 正好割在当日低点,
+        #   恰是最该被数出来的一批, 原写法把它们当缺失丢掉)
+        pit = [r for r in deep
+               if (r.get("exit_dist_from_low_pct") if r.get("exit_dist_from_low_pct") is not None else 99) < 1.0]
         pit_s = f" 其中坑底附近割{len(pit)}笔" if pit else ""
         return (f"n={len(sub)} 出场后同向空间中位{fav:+.2f}% | 到收盘 gap中位{gm:+.2f}%"
                 f"(均值{ga:+.2f}%) 错过>1%: {100*miss:.0f}%{deep_s}{pit_s}")
