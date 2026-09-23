@@ -82,3 +82,26 @@
 | THO | bmo | +3.70% | 72.53 | 73.80 | −1.75% | −$114.05 |
 
 当日合计 **+$15.05** (3 笔) — 与回放"单日可正可负、靠多数日累积"的形态一致。
+## 5. 转正路径与通道就绪度 (2026-09-23 用户裁「按最优建议执行」)
+
+**毕业裁定器 (只读)**: `scripts/rth_fade_graduation_check.py` —— 四项预注册判据一键裁定,
+输出「达标/未达门槛 + 还差多少」+ 通道就绪度复核。**禁止在读数未达标时挑臂或改判据**。
+首跑 (2026-09-23): 1 个 RTH 日 / 3 笔 ⇒ 未达门槛 (还差 14 日 / 27 笔)。
+
+**落地通道 = RTH 空头通道 (已存在、已在成交的), 不是延长时段开空 (未证实项)**。
+实测 (trade_records, 剔 P3_DUP_CLEANUP/external_close, 8/25 起): **35 笔, 均 +0.23%/笔,
+净 +$229, 胜 27/35 (77%)** ⇒ 通道活着, 本规则不依赖 ETH 开空成交能力。
+
+**碰撞审查 (转正前必过的一关, 逐条实读代码而非推测)**:
+- 禁追线 `chase_cap_violated` (`app/playbook/entry_routing.py`): SHORT 的 cap 是价格**下限**,
+  违例判据 `price < cap` = 「低卖」。⇒ **高价做空 fade 不碰撞**; 且 `chase_cap_enforce_enabled`
+  默认 false (当前 record-only)。
+- `premarket_invalidation` 方向×涨幅证伪 (A/B/C) 仍是 record-only ⇒ 不拦 SHORT。
+- 空头追高影子 `short_chase_ban_shadow` 记录 `over_threshold/triggered` (为"禁追线要不要扩到空侧"攒样)
+  ⇒ **本规则若转正, 必须在 DEB 里写明它与该影子结论的关系, 不得两边各说一套**。
+
+**执行形态 (转正时择一, 转正前不写任何生产代码)**:
+- **A 独立执行器** (对偶 ETH executor: 定时扫当日财报票 RTH 跳空 ≥+3% → 直写 SHORT 指令)。无 LLM 依赖、
+  确定性; 有 ETH 通道先例。需自带 remark 命名空间 (**禁复用 ext_entry** — P1 事故机制)、日内笔数帽、
+  收盘强平 (RTH 侧退出栈)。
+- **B 走 playbook/DA 通道**。有现成退出栈 (SL/TP/trailing) 与 broker 镜像, 但引入 LLM 产出不确定性。

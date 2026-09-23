@@ -596,7 +596,8 @@ def _sec_rth_fade():
     done = len(days) >= need_d and len(recs) >= need_n
     lines.append(f"  转正进度: 需 ≥{need_d} 日 且 ≥{need_n} 笔 → 还差 {max(0, need_d-len(days))} 日 / "
                  f"{max(0, need_n-len(recs))} 笔"
-                 + ("；**已达样本门槛, 待 净/笔>0 且 胜率≥55% 且 留一口≥0 三项裁决**" if done else ""))
+                 + ("；**已达样本门槛, 待 净/笔>0 且 胜率≥55% 且 留一口≥0 三项裁决**"
+                    if done else " (裁据: scripts/rth_fade_graduation_check.py)"))
     latest = max((r.get("date") or "") for r in recs)
     try:
         from datetime import date as _d
