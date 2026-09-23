@@ -1428,6 +1428,7 @@ REGISTRY: list[ShadowItem] = [
     # 背景: 本链 6 个台账此前**一个都没注册**, 毕业判据/样本计数/停摆守卫全靠各脚本手搓,
     #   于是"记录器停摆无人知"这类历史坑只能靠人工巡检发现。注册后由本注册表的
     #   check_mounting()/refresh_counts() 统一承担 (框架能力, 不再重复造)。
+    #   注: 同批的 L2 状态缓存 (RFC-101) 已于同日回滚 ⇒ 不注册该项。
     ShadowItem(
         id="eth_rth_fade",
         name="RTH fade 事件空头影子",
@@ -1500,19 +1501,6 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/extended_hours_exit_cron.py",
         created="2026-09-23",
         notes="盘后窗 16:00–19:59 ET; 收口强平 EXT_PREMARKET_FLATTEN_FROM=925 只作用于当日进场仓。",
-    ),
-    ShadowItem(
-        id="eth_scan_state_cache",
-        name="扫描状态缓存 (RFC-101 L2) 观测",
-        status=ShadowStatus.OBSERVING,
-        description="跨轮昂贵门结论复用: 命中/到期/失效/省调用 计数 (开关默认关, 影子档只记账)。",
-        data_path="data/loops/ext_entry_scan/state.json",
-        config_key="EXT_SCAN_STATE_CACHE",
-        min_n=14,
-        graduation_criteria="复核日 2026-10-08: 漏票反事实=0 + 观测行无缺行 + 命中率不过高 (失效判据未失灵) ⇒ 允许常开",
-        eval_script="scripts/eth_stage_daily_report.py",
-        created="2026-09-23",
-        notes="与 RFC-100 同期读数; 回滚=两开关置 false + 删 data/loops/ext_entry_scan/。",
     ),
 ]
 

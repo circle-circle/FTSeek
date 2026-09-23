@@ -44,7 +44,6 @@ os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
 from app.core.trade_identity import ensure_test_symbol_not_in_production_db, is_test_symbol
-from scripts import ext_entry_scan_state as _scan_state  # RFC-101 L2: 昂贵门跨轮状态缓存 (开关默认关)
 
 try:
     from dotenv import load_dotenv
@@ -2370,7 +2369,6 @@ def collect(session, dry=False):
         results = []
         price_gate_rejects = []
         pretrade_rejects = []
-        _scan_state.reset_stats()      # RFC-101 L2: 观测计数按轮清零 (状态跨轮持久)
         from futu import OpenQuoteContext
         qctx = OpenQuoteContext(host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
@@ -2473,22 +2471,6 @@ def collect(session, dry=False):
                             research_pool.append(item)
                     continue
 
-                # RFC-101 L2 命中点: 在**第一个逐票昂贵调用**(快照)之前查缓存。
-                #   只复用"昂贵且按类别可证稳定"的结论 (quote_quality / structure); 廉价门
-                #   (价格/带/量) 不进缓存 —— 用榜单行字段重算本身就是免费的, 缓存只会多一次 I/O。
-                #   失效优先于命中: 价格跳 >10% / 量跳 >50% / 涨跌幅跳 >1.5pp / 到期 ⇒ 模块内判未命中。
-                _scan_hit = _scan_state.lookup(
-                    symbol, session, today, {"px": price, "vol": volume, "chg": change_pct})
-                if _scan_hit and not _scan_hit.get("shadow"):
-                    _hit_key = _scan_hit.get("gate_key") or "liquidity"
-                    counts[_hit_key] = counts.get(_hit_key, 0) + 1
-                    pretrade_rejects.append({
-                        "symbol": symbol, "decision_price": price,
-                        "reason": _scan_hit.get("reason"), "cached": True,
-                        "cached_at": _scan_hit.get("cached_at"),
-                        "cache_class": _scan_hit.get("class"),
-                    })
-                    continue
                 quote = _liquidity_quote(qctx, symbol)
                 grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
                 if grade is None:
@@ -2500,9 +2482,6 @@ def collect(session, dry=False):
                         "quote": quote,
                     })
                     continue
-                _scan_state.record(symbol, session, today, grade_reason,
-                                   {"px": price, "vol": volume, "chg": change_pct},
-                                   gate_key="grade_reason")
                 window_reason = _entry_window_reason(session, grade)
                 if window_reason:
                     counts["entry_window"] = counts.get("entry_window", 0) + 1
@@ -2513,9 +2492,6 @@ def collect(session, dry=False):
                         "grade": grade,
                     })
                     continue
-                _scan_state.record(symbol, session, today, window_reason,
-                                   {"px": price, "vol": volume, "chg": change_pct},
-                                   gate_key="entry_window")
                 position_usd = POSITION_USD if grade == "A" else POSITION_B_USD
                 qty = int(position_usd / price)
                 spread_limit = MAX_SPREAD_PCT_A if grade == "A" else MAX_SPREAD_PCT
@@ -2535,9 +2511,6 @@ def collect(session, dry=False):
                         "quote": quote,
                     })
                     continue
-                _scan_state.record(symbol, session, today, reject_reason,
-                                   {"px": price, "vol": volume, "chg": change_pct},
-                                   gate_key="liquidity")
                 order_price = gate["order_price"]
                 structure, structure_reason, structure_metrics = _entry_structure_gate(
                     qctx, symbol, session, order_price
@@ -2553,9 +2526,6 @@ def collect(session, dry=False):
                         "structure_metrics": structure_metrics,
                     })
                     continue
-                _scan_state.record(symbol, session, today, structure_reason,
-                                   {"px": price, "vol": volume, "chg": change_pct},
-                                   gate_key="structure")
                 qty = int(position_usd / order_price)
                 if qty < 1:
                     counts["position_too_small"] = counts.get("position_too_small", 0) + 1
@@ -2632,9 +2602,6 @@ def collect(session, dry=False):
                 candidates=[str(m.get("symbol") or "") for m in movers],
             )
             _record_earnings_near_misses(session, today, earnings_near_misses)
-            if _scan_state.active():
-                _scan_state.flush(today)
-                print(_scan_state.observe_line(session, _scan_state._state(today)))
         finally:
             qctx.close()
     return results or [{"skip": "no_signal_passed_all_gates"}]
