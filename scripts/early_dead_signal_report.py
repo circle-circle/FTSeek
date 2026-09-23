@@ -59,9 +59,25 @@ def main():
         settled_ct += 1
 
     if settled_ct:
+        # 2026-09-23 (挂 cron 前置加固): 写回前重读一次。本脚本是"读全量→改内存→
+        #   整文件覆写", 而服务在结算期间可能又 append 了新的检查点行 (持仓跨
+        #   15/30min 检查点即落行), 直接覆写会把它吞掉 (静默丢数据)。按
+        #   (symbol, ts, checkpoint) 合并: 期间新增的行原样追加, 不结算不丢。
+        _seen = {(r.get("symbol"), r.get("ts"), r.get("checkpoint")) for r in rows}
+        try:
+            _now = [json.loads(l) for l in SHADOW.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+        except Exception:
+            _now = []
+        _extra = [r for r in _now
+                  if (r.get("symbol"), r.get("ts"), r.get("checkpoint")) not in _seen]
         with open(SHADOW, "w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            for r in _extra:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        if _extra:
+            print(f"[note] 写回期间新增 {len(_extra)} 行 (未结算) 已原样保留")
 
     # 汇总
     done = [r for r in rows if r.get("settled")]

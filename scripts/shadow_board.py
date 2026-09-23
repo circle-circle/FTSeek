@@ -81,15 +81,37 @@ def _read_jsonl(path):
 #   消费方零影响。若未来恢复投票制再重新挂段。
 
 
-# ── 段3: SL/TP 影子 (复用 sltp_shadow_pnl_report) ─────────────
+# ── 段3: SL/TP 影子 (= LLM×代码 SL/TP 分歧校准; pnl 只是关联结果) ──
 def _sec_sltp():
-    lines = ["【SL/TP 影子 pnl】"]
+    """2026-09-23 (用户裁「按建议执行」): 补印判据行 sl_agree/tp_agree/|分歧|。
+
+    只印 pnl 看不出本影子在测什么 (实测 mean≈0/win51% 读不出结论); 本意是
+    "LLM 给的 SL/TP 与代码波动率分桶算出的差多少" — 一致率与 |分歧| 中位是判据,
+    pnl 是按分歧分组后的关联结果。缺了判据行, 段内只剩一个近乎无信号的均值。
+    口径: 一致率在【全量影子行】上算 (reprice 时刻属性, 与 pnl join 无关)。
+    """
+    import statistics
+    lines = ["【SL/TP 影子 (本意: LLM×代码 SL/TP 分歧校准; pnl=关联结果)】"]
     try:
         import sltp_shadow_pnl_report as sl
         rows = sl._load_shadow()
         if not rows:
             lines.append("  暂无样本 (reprice 未触发 / flag 未开) — 产出后自动显示")
             return lines
+        _parts = []
+        for _lbl, _agf, _dvf in (("SL", "sl_agree", "sl_div_pct"),
+                                 ("TP", "tp_agree", "tp_div_pct")):
+            _ag = [r for r in rows if r.get(_agf) is not None]
+            _dv = [r[_dvf] for r in rows if r.get(_dvf) is not None]
+            if not _ag:
+                continue
+            _seg = (f"{_lbl} 一致{100*sum(1 for r in _ag if r[_agf])/len(_ag):.0f}%"
+                    f"(n={len(_ag)})")
+            if _dv:
+                _seg += f" 分歧中位{statistics.median(_dv):.2f}%"
+            _parts.append(_seg)
+        if _parts:
+            lines.append("  判据: " + " | ".join(_parts))
         ids = [r.get("inst_id") or r.get("id") for r in rows]
         pnl = sl._pnl_by_inst(ids)
         vals = [v["pnl_pct"] for v in pnl.values() if v.get("pnl_pct") is not None]
@@ -298,40 +320,78 @@ def _sec_exec_gate():
         src_s = " ".join(f"{k}:{v}" for k, v in src.most_common())
         execed = [r for r in sub if r.get("action") == "executed"]
         skipped = [r for r in sub if str(r.get("action", "")).startswith("skipped")]
+        # 2026-09-23 (用户裁「按建议执行」): 三项分列。原先只印"执行/跳过",
+        #   deferred_cycle_cap 两头都不计 ⇒ 行内 候选 ≠ 执行+跳过 (实测 679 vs 666,
+        #   差额 13 条看着像丢数据)。现在 候选 = 执行+跳过+延后+其他 恒等。
+        deferred = [r for r in sub if str(r.get("action", "")).startswith("deferred")]
+        other = n - len(execed) - len(skipped) - len(deferred)
         # 核心: 已执行单里 edge 判 BLOCK 的 (edge 门若实装会拦掉的实盘单)
         edge_block_exec = [r for r in execed if r.get("edge_verdict") == "BLOCK"]
-        s = f"候选{n} 执行{len(execed)} 跳过{len(skipped)} | 来源[{src_s}]"
+        s = (f"候选{n} 执行{len(execed)} 跳过{len(skipped)} 延后{len(deferred)}"
+             + (f" 其他{other}" if other else "")
+             + f" | 来源[{src_s}]")
         if execed:
             s += (f" | edge门若实装会拦{len(edge_block_exec)}/{len(execed)}执行单"
                   f"({len(edge_block_exec)/len(execed)*100:.0f}%)")
         return s
 
     def outcome_blk(days):
-        """BLOCK vs PASS 已执行单的真实结局 (反事实裁决依据)。"""
+        """BLOCK vs PASS 已执行单的真实结局 (反事实裁决依据)。
+
+        2026-09-23 (用户裁「按建议执行」) 两处纠偏:
+          ① 显示 n (笔数) — 只印两个 $ 均值必误判: BLOCK 组 n 远小于 PASS 组
+             (7d 14 vs 24 / 30d 46 vs 136), 均值方差完全不可比;
+          ② 方向由本窗实数判, 不再写死结论。原行尾括号 "(BLOCK笔均≥PASS=门在筛
+             更差的单)" 是 8/26 那次读数的快照, 与现读数方向相反。
+        口径: 键 = 唯一 (symbol, ET日); 同键多候选行只计一次 (否则同一
+        trade_records 组被重复计入, 30d PASS 会被虚增 154 笔 vs 实 136 笔)。
+        笔数 = 该键在 trade_records 的行数 (按 symbol+入场日聚合)。
+        返回 (显示串, {verdict: 笔均})。
+        """
         sub = [r for r in recs if _within(r.get("date"), days)
                and r.get("action") == "executed"]
         if not sub or not _pnl_by_key:
-            return ""
-        parts = []
+            return "", {}
+        parts, means = [], {}
         for verdict in ("BLOCK", "PASS"):
-            vs = [r for r in sub if r.get("edge_verdict") == verdict]
-            if not vs:
-                continue
-            matched = [_pnl_by_key[(r.get("symbol"), str(r.get("date", ""))[:10])]
-                       for r in vs]
+            keys = {(r.get("symbol"), str(r.get("date", ""))[:10])
+                    for r in sub if r.get("edge_verdict") == verdict}
+            matched = [_pnl_by_key[k] for k in keys if k in _pnl_by_key]
             matched = [m for m in matched if m]
             if not matched:
                 continue
             n_tr = sum(m[0] for m in matched)
-            pnl = sum(m[1] for m in matched)
-            parts.append(f"{verdict}实际笔均{pnl/n_tr:+.2f}$")
-        return " | ".join(parts)
+            if not n_tr:
+                continue
+            means[verdict] = sum(m[1] for m in matched) / n_tr
+            parts.append(f"{verdict}笔均{means[verdict]:+.2f}$(n={n_tr})")
+        if len(means) == 2:
+            _gap = means["BLOCK"] - means["PASS"]
+            parts.append(f"差{_gap:+.2f}$"
+                         + ("(门在筛更差的单)" if _gap < 0 else "(门拦的是更赚的单)"))
+        return " | ".join(parts), means
 
     lines.append(f"  近7天: {blk(7)}")
     lines.append(f"  (今日 : {blk(1)})")
-    _ob7 = outcome_blk(7)
-    if _ob7:
-        lines.append(f"          结局回填: {_ob7} (BLOCK笔均≥PASS=门在筛更差的单)")
+    # 结局回填: 两窗并列 (2026-09-23)。单窗读数会翻转裁决方向, 必须两窗一起看;
+    #   两窗方向相反 = 门对该拦的单无稳定区分力 ⇒ 不给"实装"读数。
+    _wmeans = {}
+    for _d, _lbl in ((7, "近7天"), (30, "近30天")):
+        _ob, _m = outcome_blk(_d)
+        if _ob:
+            _wmeans[_lbl] = _m
+            lines.append(f"  结局回填{_lbl}: {_ob}")
+    if all(set(m) >= {"BLOCK", "PASS"} for m in _wmeans.values()) and len(_wmeans) == 2:
+        _g7 = _wmeans["近7天"]["BLOCK"] - _wmeans["近7天"]["PASS"]
+        _g30 = _wmeans["近30天"]["BLOCK"] - _wmeans["近30天"]["PASS"]
+        if _g7 * _g30 < 0:
+            lines.append("  ⇒ 两窗方向相反 (7d 拦对 / 30d 拦错) → 门对哪些单该拦无稳定"
+                         "区分力, 数据不支持实装 edge 门 (待 DEB)")
+        elif _g7 < 0:
+            lines.append("  ⇒ 两窗同向 (BLOCK 更低) → 门在筛更差的单 (待 DEB 裁决)")
+        else:
+            lines.append("  ⇒ 两窗同向 (BLOCK 更高) → 门拦的是更赚的单, 数据不支持实装"
+                         " edge 门 (待 DEB)")
     return lines
 
 
@@ -360,13 +420,26 @@ def _sec_early_dead():
 
     lines.append(f"  今日 : {blk(1)}")
     lines.append(f"  近7天: {blk(7)}")
+    # 2026-09-23 (用户裁「按建议执行」): 结算面守卫行。此前全历史 0 行有真值
+    #   (settler scripts/early_dead_signal_report.py 从未挂 cron), 本段却每天照印
+    #   "30min行/命中N" 一大行 = 假活跃 (看着在攒样, 其实永远裁不了)。守卫行让
+    #   "结算面停摆" 与 "统计口径变更" 一样当天可见, 不再靠人想起来去查。
+    _n_all = len(recs)
+    _n_settled = sum(1 for r in recs if r.get("settled"))
+    if _n_settled == 0:
+        lines.append(f"  ⚠️ 结算面停摆: 0/{_n_all} 行有真值 — settler "
+                     "(scripts/early_dead_signal_report.py) 未跑 ⇒ 本段无裁决力")
+    else:
+        lines.append(f"  结算面: 已结算{_n_settled}/{_n_all} 行 (settler="
+                     "scripts/early_dead_signal_report.py; 未结算=未平仓或 "
+                     "entry_time 无法配对)")
     return lines
 
 
 # ── 段11: 保本线穿透影子 (2026-09-03, DEB-20260903 议题二后续, 用户裁"A") ──
 def _sec_penetration():
     recs = _read_jsonl(SHADOW_DIR / "penetration_shadow.jsonl")
-    lines = ["【保本线穿透影子 (快跌vsV回判别器攒样, 毕业门20例)】"]
+    lines = ["【保本线穿透影子 (快跌vsV回判别器: 总≥20 且每类≥8 才可训)】"]
     evs = [r for r in recs if r.get("type") == "penetration"]
     ocs = [r for r in recs if r.get("type") == "outcome" and r.get("status") == "labeled"]
     if not evs:
@@ -382,11 +455,33 @@ def _sec_penetration():
 
     n_labeled = len(ocs)
     v5_all = sum(1 for r in ocs if r.get("recovered_5m") is True)
+    n_nonv = n_labeled - v5_all          # 少数类 = 未V回 (真"快跌"候选)
     lines.append(f"  今日 : {blk(1)}")
     lines.append(f"  近7天: {blk(7)}")
-    lines.append(f"  攒样: {n_labeled}/20 带标签"
+    # 2026-09-23 (用户裁「按建议执行」): 毕业判据改按类计 + 类别计数上板。
+    #   旧文案只数总样本量 (n_labeled≥20 → "已达毕业门"), 实测 86 例里 84 是 V回 /
+    #   仅 2 未回 ⇒ 判别器正负类 84:2, precision≥0.7 门在 0.977 基线上形同虚设
+    #   (= 数量误导, 会让"该不该开 DEB"的裁决走反)。每类下限取脚本内 SSOT 常量,
+    #   不在此处另写一份 (改门只改一处)。
+    try:
+        import penetration_llm_analysis as _pen
+        _minority_min, _grad_n = _pen.GRAD_MINORITY, _pen.GRAD_N
+    except Exception:
+        _minority_min, _grad_n = 8, 20
+    lines.append(f"  类别: V回{v5_all} / 未V回{n_nonv} (每类须 ≥{_minority_min})")
+    if n_labeled and v5_all / n_labeled >= 0.95 and n_nonv < _minority_min:
+        lines.append(f"  ⇒ V型率{100*v5_all/n_labeled:.0f}% (穿透后绝大多数回摆): 支持"
+                     "不加「穿透即早砍」—— 砍在穿透点会错在所测的绝大多数")
+    if n_labeled < _grad_n:
+        _tail = " — 继续攒样"
+    elif n_nonv < _minority_min:
+        _tail = (f" — 样本量达门但少数类 {n_nonv}<{_minority_min} ⇒ 判别器不可训练"
+                 " (V型率高时 precision 门在基线上即过)")
+    else:
+        _tail = " — 样本量与类别平衡均达门, 周六分析环评估开DEB"
+    lines.append(f"  攒样: {n_labeled}/{_grad_n} 带标签"
                  + (f" (V型率{100*v5_all/n_labeled:.0f}%)" if n_labeled else "")
-                 + (" — 已达毕业门, 周六分析环评估开DEB" if n_labeled >= 20 else ""))
+                 + _tail)
     return lines
 
 

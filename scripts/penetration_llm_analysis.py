@@ -9,8 +9,10 @@
      (conditions: 允许字段 × gt/lt/ge/le/eq × 阈值 → predict V|DOWN)
   4. 每个假设立刻用确定性 evaluator 在【全部】带标签样本上判分
      (命中率/precision=V型率/平均cf挽回) — LLM 自说自话不算数
-  5. 毕业门控: n_labeled>=20 且某假设 matched>=8 且 precision>=0.7
-     → 自动开 DEB 草稿 (立案待裁) + 飞书推送呈用户裁决; 否则只出观察报告
+  5. 毕业门控: n_labeled>=20 且某假设 matched>=8 且 precision>=0.7 且命中集内
+     少数类 (未V回) >=GRAD_MINORITY=8 (2026-09-23 加; 类别失衡时 precision 门
+     在基线上即过, 无鉴别力) → 自动开 DEB 草稿 (立案待裁) + 飞书推送呈用户裁决;
+     否则只出观察报告
 里程碑提醒: n_labeled 首达 10/20/30 → 飞书一次性推送 (state 文件去重)。
 
 record-only 生态, 不碰任何交易路径。LLM 路由: llm.features.penetration_pattern_analysis。
@@ -30,9 +32,14 @@ MILESTONE_STATE = REPO / "data" / "shadow" / "penetration_milestones.json"
 DEB_DIR = REPO / "docs" / "debates"
 
 MIN_LLM_SAMPLES = 8        # 低于此数不调 LLM (防止小样本过度解读)
-GRAD_N = 20                # DEB 毕业样本门
+GRAD_N = 20                # DEB 毕业样本门 (总量)
 GRAD_MATCHED = 8
 GRAD_PRECISION = 0.7
+# 2026-09-23 (用户裁「按建议执行」): 少数类下限 — 判别器要能训/能验, 除总量外
+#   还必须两类都有足够样本。实测 86 例 = V回84/未回2 (V型率 98%), 此时任何
+#   "宽条件"假设都能在基线上拿到 precision≈0.98 ⇒ 只在总量上设门 = 数量误导。
+#   未回 (recovered_5m=False) 是"快跌"类, 它不足则判别器无对照臂。
+GRAD_MINORITY = 8
 MILESTONES = (10, 20, 30)
 
 NUM_FIELDS = ("depth_bps", "mfe_pct", "giveback_bps", "held_minutes",
@@ -116,6 +123,7 @@ def score_hypothesis(hyp, samples):
     cfs = [s["cf_floor_fill_saved_bps"] for s in matched
            if isinstance(s.get("cf_floor_fill_saved_bps"), (int, float))]
     return {"matched": len(matched),
+            "v_count": len(v), "nonv_count": len(matched) - len(v),
             "v_rate": round(len(v) / len(matched), 3),
             "avg_cf_saved_bps": round(sum(cfs) / len(cfs), 1) if cfs else None}
 
@@ -156,7 +164,7 @@ def check_milestones(n_labeled):
     for m in MILESTONES:
         if n_labeled >= m and m not in fired:
             _push(f"📈 穿透影子攒样里程碑: 带标签样本已达 {n_labeled} (≥{m})。"
-                  f"{'已达毕业门, 本周六分析环将评估是否开DEB' if m >= GRAD_N else '继续攒样'}。")
+                  f"{'样本量达总量门 (是否毕业还看少数类是否达标/判据实测)' if m >= GRAD_N else '继续攒样'}。")
             fired.append(m)
     try:
         MILESTONE_STATE.write_text(json.dumps({"fired": fired}, ensure_ascii=False))
@@ -203,12 +211,15 @@ def ask_llm(samples):
 
 
 def maybe_open_deb_draft(scored, samples):
-    """毕业门控: n>=GRAD_N 且最佳假设过门 → DEB 草稿 (立案待裁) + 推送。"""
+    """毕业门控: 总量 n>=GRAD_N 且最佳假设过门 (matched/精度/少数类) → DEB 草稿
+    (立案待裁) + 推送。2026-09-23: 加 GRAD_MINORITY 少数类下限 — 样本总量达门但
+    类别失衡 (实测 84:2) 时 precision 门在基线上即过, 判据无鉴别力, 不开草稿。"""
     if len(samples) < GRAD_N:
         return None
     cands = [h for h in scored
              if h.get("matched", 0) >= GRAD_MATCHED
-             and (h.get("v_rate") or 0) >= GRAD_PRECISION]
+             and (h.get("v_rate") or 0) >= GRAD_PRECISION
+             and (h.get("nonv_count") or 0) >= GRAD_MINORITY]
     if not cands:
         return None
     best = max(cands, key=lambda h: (h.get("v_rate") or 0) * h["matched"])
@@ -219,7 +230,8 @@ def maybe_open_deb_draft(scored, samples):
     body = f"""# DEB-{today}-penetration-discriminator — 穿透性质判别器毕业评审 (自动草稿)
 
 状态: **立案待裁** (由 penetration_llm_analysis.py 毕业门控自动生成, 待用户裁决)
-样本: 带标签 {len(samples)} 条 (≥{GRAD_N} 毕业门)
+样本: 带标签 {len(samples)} 条 (总量门 ≥{GRAD_N}) | 未V回(快跌类)
+{sum(1 for s in samples if s.get("recovered_5m") is not True)} 条 (少数类门 ≥{GRAD_MINORITY})
 
 ## 过门假设 (LLM 提出, 确定性 replay 判分)
 
@@ -240,7 +252,8 @@ def maybe_open_deb_draft(scored, samples):
 """
     path.write_text(body, encoding="utf-8")
     _push(f"🎓 穿透判别器毕业门触发: 最佳假设 v_rate={best.get('v_rate')} "
-          f"matched={best.get('matched')} → DEB 草稿 {path.name} 已立案待裁")
+          f"matched={best.get('matched')} 少数类={best.get('nonv_count')} → "
+          f"DEB 草稿 {path.name} 已立案待裁")
     return str(path)
 
 
@@ -263,7 +276,8 @@ def main():
               "llm_called": hyps is not None, "hypotheses_scored": scored,
               "deb_draft": deb,
               "graduation_gate": {"n": GRAD_N, "matched": GRAD_MATCHED,
-                                  "precision": GRAD_PRECISION}}
+                                  "precision": GRAD_PRECISION,
+                                  "minority": GRAD_MINORITY}}
     OUT_LATEST.write_text(json.dumps(report, ensure_ascii=False, indent=1))
     md = [f"# 穿透影子分析报告 ({report['generated_at']})", "",
           f"带标签样本: **{n}** | LLM已调: {hyps is not None} | DEB草稿: {deb or '无'}", "",

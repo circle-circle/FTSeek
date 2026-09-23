@@ -933,7 +933,8 @@ REGISTRY: list[ShadowItem] = [
         config_key="llm_features.penetration_shadow.enabled",
         min_n=20,
         graduation_criteria="判据字典 B17: n_labeled≥20 ∧ 某假设 matched≥8 ∧ precision≥0.7 "
-                            "→ 自动开 DEB 草稿 + 推送呈裁 (仅立案, 写执行代码须用户裁); "
+                            "∧ 命中集内少数类(未V回)≥8 [2026-09-23 收紧, 类别失衡时 precision "
+                            "门在基线上即过] → 自动开 DEB 草稿 + 推送呈裁 (仅立案, 写执行代码须用户裁); "
                             "议题二机制判据 (死等秒数=0 / 撤单转市价=0 / 成交滑点≤pad+容差) "
                             "逐事件即判, 不等 n; 回滚线见 DEB-20260903 §十二。",
         eval_script="scripts/penetration_llm_analysis.py",
