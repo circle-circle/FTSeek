@@ -80,7 +80,16 @@ MAX_OPEN_NOTIONAL_USD = float(
 #   ⚠️ 两样本**同窗口**(06-22→09-16) ⇒ 非真样本外; 按既定转正门槛(双窗口)未擅自改默认值。
 #   开: EXT_ENTRY_CHANGE_PCT=3.0 (无需改码/重启)
 ENTRY_CHANGE_PCT = float(os.getenv("EXT_ENTRY_CHANGE_PCT", "2.0"))
-MIN_VOLUME = 200000        # 盘前量门槛
+MIN_VOLUME = 200000        # 盘前量门槛 (未分档时的全时段默认)
+# 量闸按时段分档 (RFC-100, 2026-09-23 用户裁「中」): 格式 "4-7:20000,8-9:200000" (ET 小时闭区间)。
+#   动机 (实测 4 个交易日 / 402 轮候选池): 04:00-07:59 ET 的候选量中位仅 398~2,640 股,
+#   200,000 门槛在该时段约是 p88 分位 (只有 12~26% 能过) ⇒ 盘前早段**结构性不下单**,
+#   而 bmo 财报 (常 07:00-08:30 发) 的盘前跳空正好落在这里。分档 = 让"活跃"在各时段指同一分位。
+#   未配置 (默认空) ⇒ 全时段 MIN_VOLUME, 行为 byte 级不变。回滚 = 删掉 .env.us 该键 (一个词)。
+#   执行质量由既有 MAX_SPREAD_PCT (1.0%) 闸兜底 —— 早段价差大时它会把票拦下 (实测 CBRL 盘前 12.4%)。
+MIN_VOLUME_BUCKETS_RAW = os.getenv("EXT_ENTRY_MIN_VOLUME_BUCKETS", "").strip()
+# 影子分档 (record-only, 默认空): 只用于反事实读数 ("若这些时段也分档会多放行几只"), 不参与判定。
+MIN_VOLUME_BUCKETS_SHADOW_RAW = os.getenv("EXT_ENTRY_MIN_VOLUME_BUCKETS_SHADOW", "").strip()
 MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
 MIN_EXT_TURNOVER_USD = float(os.getenv("EXT_ENTRY_MIN_TURNOVER_USD", "10000000"))
 A_GRADE_TURNOVER_USD = float(os.getenv("EXT_ENTRY_A_TURNOVER_USD", "20000000"))
@@ -188,6 +197,8 @@ EARNINGS_EVENT_SOURCE = os.getenv("EXT_EARNINGS_EVENT_SOURCE", "calendar").lower
 # 事件源观测 (每轮打印后清空): 让"这条票是哪个源认出来的"可见 — 纯观测, 不参与判定。
 #   按**票去重** (集合) —— 早期用计数会随调用次数放大 (实测同一 tick 内一票被调两次 ⇒ 读数 ×2)。
 _EVENT_SRC_OBS = {"futu": set(), "finnhub": set()}
+# RFC-100 量闸分档反事实累加器 (每轮打印后清零; 纯观测)
+_VOL_BUCKET_CF = {"live": 0, "shadow": 0, "thr": None, "symbols": []}
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -368,6 +379,50 @@ def _now_et():
 
 def _today_et():
     return _now_et().strftime("%Y-%m-%d")
+
+
+def _et_hour_now() -> int:
+    """当前 ET 小时 (0-23); 取不到返回 -1 (调用方据此回落默认门槛)。"""
+    try:
+        return int(_now_et().hour)
+    except Exception:
+        return -1
+
+
+def _volume_buckets(raw=None) -> list:
+    """解析 "4-7:20000,8-9:200000" ⇒ [(4,7,20000),(8,9,200000)]。
+
+    解析失败的片段**忽略** (fail-safe ⇒ 回落到 MIN_VOLUME, 不会因手误把门槛调到 0)。
+    """
+    out = []
+    text = MIN_VOLUME_BUCKETS_RAW if raw is None else raw
+    for part in str(text or "").split(","):
+        rng, _, thr = part.partition(":")
+        lo, _, hi = rng.partition("-")
+        try:
+            lo_i, hi_i, thr_i = int(lo), int(hi or lo), int(float(thr))
+        except Exception:
+            continue
+        if 0 <= lo_i <= 23 and lo_i <= hi_i <= 23 and thr_i > 0:
+            out.append((lo_i, hi_i, thr_i))
+    return out
+
+
+def _min_volume_for(raw, hour) -> int:
+    """按 ET 小时取门槛; 无命中/参数非法 ⇒ MIN_VOLUME (即未分档行为)。"""
+    try:
+        h = int(hour)
+    except Exception:
+        return MIN_VOLUME
+    for lo, hi, thr in _volume_buckets(raw):
+        if lo <= h <= hi:
+            return thr
+    return MIN_VOLUME
+
+
+def _min_volume_now(session=None, hour=None) -> int:
+    """当前应生效的量闸门槛 (RFC-100 分档; 无配置 ⇒ MIN_VOLUME)。"""
+    return _min_volume_for(None, _et_hour_now() if hour is None else hour)
 
 
 def _load_state():
@@ -1992,6 +2047,15 @@ def _print_gate_counts(session, total, counts):
                   f"futu={len(_EVENT_SRC_OBS['futu'])} finnhub={len(_EVENT_SRC_OBS['finnhub'])}")
         _EVENT_SRC_OBS["futu"].clear()
         _EVENT_SRC_OBS["finnhub"].clear()
+        # RFC-100 量闸分档读数 (独立一行; 主行的"空格分隔 k=int"契约不动)。
+        if _VOL_BUCKET_CF["live"] or _VOL_BUCKET_CF["shadow"]:
+            print(f"[ext_entry] 量闸分档[{session}] live门槛={_VOL_BUCKET_CF['thr'] or _min_volume_now()} "
+                  f"旧门槛={int(MIN_VOLUME)} 分档放行={_VOL_BUCKET_CF['live']} "
+                  f"影子分档会放行={_VOL_BUCKET_CF['shadow']} "
+                  f"标的={','.join(sorted(set(_VOL_BUCKET_CF['symbols']))[:8])}")
+        _VOL_BUCKET_CF["live"] = 0
+        _VOL_BUCKET_CF["shadow"] = 0
+        _VOL_BUCKET_CF["symbols"].clear()
         # 2026-09-23 (盘后核查): 研究臂的**细分类**拒绝键此前只写不报 ⇒ "研究臂开着却 0 单"
         #   与"研究臂卡死"在日志面不可区分 (复算只能自己 import 手调 `_research_downstream_gates`)。
         #   细分类键集是动态的 (`research_<grade_reason>`), 无法静态列进 keys, 且把 `{...}` 塞进
@@ -2052,7 +2116,18 @@ def collect(session, dry=False):
                 # 带只该挡下单, 不该挡观测 —— 否则对照台账 (旧判据在生产误拦多少) 的样本
                 # 被带截断, 且最典型的"当日财报 pop 票"(跳空 >2%) 全看不到。
                 # 计数语义不变: 带/量不达标仍在 momentum_volume 分支 continue。
-                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= MIN_VOLUME
+                _min_vol = _min_volume_now(session)   # RFC-100: 分档门槛 (未配置=MIN_VOLUME 原值)
+                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= _min_vol
+                # RFC-100 反事实观测 (纯观测, 不参与判定): 分档放行了多少票次、影子分档还会放行多少。
+                #   位置在"判完门槛"处、与后续走哪条支路无关 —— 放在分支里会漏掉"过闸后死在
+                #   下一道门"的票 (实测 05:2x 一轮分档放行 0 条读数 = 恰恰是这种漏计)。
+                if _vol_ok and volume < MIN_VOLUME:
+                    _VOL_BUCKET_CF["live"] += 1
+                    _VOL_BUCKET_CF["thr"] = _min_vol
+                    _VOL_BUCKET_CF["symbols"].append(symbol)
+                elif not _vol_ok and volume >= _min_volume_for(
+                        MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
+                    _VOL_BUCKET_CF["shadow"] += 1
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
@@ -2313,7 +2388,18 @@ def collect(session, dry=False):
                 # 带只该挡下单, 不该挡观测 —— 否则对照台账 (旧判据在生产误拦多少) 的样本
                 # 被带截断, 且最典型的"当日财报 pop 票"(跳空 >2%) 全看不到。
                 # 计数语义不变: 带/量不达标仍在 momentum_volume 分支 continue。
-                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= MIN_VOLUME
+                _min_vol = _min_volume_now(session)   # RFC-100: 分档门槛 (未配置=MIN_VOLUME 原值)
+                _chg_ok, _vol_ok = _entry_chg_ok(change_pct), volume >= _min_vol
+                # RFC-100 反事实观测 (纯观测, 不参与判定): 分档放行了多少票次、影子分档还会放行多少。
+                #   位置在"判完门槛"处、与后续走哪条支路无关 —— 放在分支里会漏掉"过闸后死在
+                #   下一道门"的票 (实测 05:2x 一轮分档放行 0 条读数 = 恰恰是这种漏计)。
+                if _vol_ok and volume < MIN_VOLUME:
+                    _VOL_BUCKET_CF["live"] += 1
+                    _VOL_BUCKET_CF["thr"] = _min_vol
+                    _VOL_BUCKET_CF["symbols"].append(symbol)
+                elif not _vol_ok and volume >= _min_volume_for(
+                        MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
+                    _VOL_BUCKET_CF["shadow"] += 1
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
