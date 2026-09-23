@@ -15,6 +15,13 @@ sim_acc_type=STOCK_AND_OPTION); 延长时段**买**单 6 笔 FILLED_ALL (session
 - 标的序 (执行前只读预检确认有券, 2026-09-23 读数):
   US.CBRL (max_sell_short 3535) → US.PAYX (1404) → US.CTAS (808) → US.FUL (3148) → US.MANU (7840);
   每只都必须当轮 `max_sell_short >= 1` 且 `is_short_permit=True`, 否则顺延。
+
+预注册修订 (留痕):
+  #1 2026-09-23 首跑: 挂价口径 = ask ⇒ 券商接受 (order 8200483 SUBMITTED) 但 dealt=0
+     ⇒ 结论只到 "eth_short_accepted_no_fill" (能下单, 未证成交)。
+  #2 2026-09-23 (用户批「需要」): 新增 `--fill-check` ⇒ 挂 **bid 侧 marketable 价**,
+     目标从"能否下单"推进到"**能否成交/建空仓**"; 其余判据 (SIM-only / 窗内 / 1 股 /
+     remark=eth_probe / 价格帽 / 成交即买回 / ≤2 次每 ET 日) 全部不变。
 - 时段: 必须落在延长时段窗内 (premarket 04:00-09:30 ET / afterhours 16:00-20:00 ET), 窗外拒跑。
 - 模式: 必须 SIM (`is_live=False`) + `futu_trd_env=SIMULATE` + `acc_id=19930823`; 否则硬退出 (不下单)。
 - 成功判据 (任一即"机制通过"): ① 挂单被接受 (非拒单码) 且 60s 内 `FILLED_ALL`; ② 被接受且账户出现负持仓 (-1 股)。
@@ -45,7 +52,9 @@ REMARK = "eth_probe"
 LEDGER = os.path.join(ROOT, "data", "eth_short_probe.jsonl")
 PRICE_CAP_USD = 400.0          # 单股价格上限 (防选到异常标的把名义额放大)
 WAIT_FILL_S = 60
-MAX_ATTEMPTS_PER_DAY = 2
+# 预注册修订 #3 (2026-09-23): 成交验证需第 3 次 —— #1 挂 ask 不成交 / #2 挂 bid 但标的
+#   (CBRL, 价差 12%) 无流动性 ⇒ 两次都 dealt=0 且原因不在挂价。仍为 1 股 SIM 单, 无残留。
+MAX_ATTEMPTS_PER_DAY = 3
 
 
 def _et_now():
@@ -119,11 +128,13 @@ def _write_ledger(row):
         print("[probe] 台账写入失败: %s: %s" % (type(exc).__name__, exc))
 
 
-def _select_candidate(tctx, qctx, TrdEnv, OrderType, ret_ok, log=print):
+def _select_candidate(tctx, qctx, TrdEnv, OrderType, ret_ok, log=print, prefer_liquid=False,
+                      spread_max_pct=None):
     """按预注册顺序选标: 券源 max_sell_short>=1 + is_short_permit + 价格合理。返回 dict 或 None。
 
     `ret_ok` 由调用方传入 (futu 符号只在 main 内导入, 模块级函数不得引用)。
     """
+    eligible = []
     for sym in CANDIDATES:
         ret_ti, ti = tctx.acctradinginfo_query(order_type=OrderType.NORMAL, code=sym, price=1.0,
                                                trd_env=TrdEnv.SIMULATE, acc_id=ACC_ID)
@@ -138,7 +149,22 @@ def _select_candidate(tctx, qctx, TrdEnv, OrderType, ret_ok, log=print):
             ask = float(snap.iloc[0].get("ask_price") or 0)
         log("[probe] %s shortable=%s permit=%s last=%s bid=%s ask=%s" % (sym, shortable, permit, last, bid, ask))
         if shortable >= 1 and permit and _price_ok(last) and _quote_ok(bid, ask):
-            return {"code": sym, "shortable": shortable, "last": last, "bid": bid, "ask": ask}
+            mid = (float(bid) + float(ask)) / 2
+            spread_pct = (float(ask) - float(bid)) / mid * 100 if mid > 0 else 999.0
+            cand = {"code": sym, "shortable": shortable, "last": last, "bid": bid, "ask": ask,
+                    "spread_pct": round(spread_pct, 3)}
+            if not prefer_liquid:
+                return cand
+            # 预注册修订 #3: 成交验证要求**真流动性** —— 否则空簿挂单永远 dealt=0,
+            #   把"标的没对手盘"误判成"盘前不能成交"。
+            if spread_max_pct is None or spread_pct <= spread_max_pct:
+                eligible.append(cand)
+    if eligible:
+        best = min(eligible, key=lambda x: x["spread_pct"])
+        log("[probe] 选流动性最优: %s 价差 %.2f%% (候选 %d 只)" % (best["code"], best["spread_pct"], len(eligible)))
+        return best
+    if prefer_liquid:
+        log("[probe] 无价差 ≤%s%% 的可空标的 ⇒ 本期不判成交" % spread_max_pct)
     return None
 
 
@@ -146,6 +172,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--execute", action="store_true", help="真下 1 股 (默认只读 dry-run)")
     ap.add_argument("--select-only", action="store_true", help="只跑到选标 (只读, 暂不执行)")
+    ap.add_argument("--fill-check", action="store_true",
+                    help="成交验证路径 (预注册修订#2, 2026-09-23): 挂 bid 侧 marketable 价, "
+                         "验证能**成交/建空仓**; 不加则沿用原口径 (挂 ask = 只证能下单)")
     args = ap.parse_args()
 
     from dotenv import load_dotenv
@@ -184,7 +213,8 @@ def main():
         ret_p, pos = tctx.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=ACC_ID)
         ret_o, orders = tctx.order_list_query(trd_env=TrdEnv.SIMULATE, acc_id=ACC_ID)
         result["pre_positions"] = [] if ret_p != RET_OK else [
-            {"code": r["code"], "qty": float(r["qty"])} for _, r in pos.iterrows()]
+            {"code": r["code"], "qty": float(r["qty"]),
+             "side": str(r.get("position_side"))} for _, r in pos.iterrows()]
         result["pre_open_orders"] = [] if ret_o != RET_OK else [
             {"code": r["code"], "side": str(r["trd_side"]), "status": str(r["order_status"])}
             for _, r in orders.iterrows()
@@ -193,7 +223,9 @@ def main():
         print("[probe] 前态在途:", result["pre_open_orders"])
 
         # 选标的 (券源 precheck)
-        pick = _select_candidate(tctx, qctx, TrdEnv, OrderType, RET_OK)
+        pick = _select_candidate(tctx, qctx, TrdEnv, OrderType, RET_OK,
+                                 prefer_liquid=bool(args.fill_check),
+                                 spread_max_pct=1.0 if args.fill_check else None)
         result["pick"] = pick
         if pick is None:
             result["verdict"] = "no_eligible_candidate"
@@ -204,7 +236,16 @@ def main():
             print("[probe] --select-only: 选到 %s (未下单)" % pick["code"])
             return
 
-        price = pick["ask"] if _price_ok(pick["ask"]) else pick["last"]
+        if args.fill_check:
+            # 预注册修订 #2 (2026-09-23, 用户批「需要」): 成交验证路径 —— 挂 **bid 侧 marketable 价**。
+            #   原口径挂 ask ⇒ 永远不成交 (2026-09-23 首跑 dealt=0, 只证"能下单"不证"能建空仓")。
+            ref = pick["bid"] if _price_ok(pick["bid"]) else pick["last"]
+            price = round(min(ref, PRICE_CAP_USD), 2)
+            result["fill_check"] = True
+            print("[probe] fill-check: 挂 bid 侧 %s (bid=%s ask=%s last=%s)"
+                  % (price, pick["bid"], pick["ask"], pick["last"]))
+        else:
+            price = pick["ask"] if _price_ok(pick["ask"]) else pick["last"]
         leg = {"price": price, "qty": 1}
         if not args.execute:
             result["verdict"] = "dry_run_ok"
@@ -266,7 +307,8 @@ def main():
 
         ret_p2, pos2 = tctx.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=ACC_ID)
         result["post_positions"] = [] if ret_p2 != RET_OK else [
-            {"code": r["code"], "qty": float(r["qty"])} for _, r in pos2.iterrows()]
+            {"code": r["code"], "qty": float(r["qty"]),
+             "side": str(r.get("position_side"))} for _, r in pos2.iterrows()]
         print("[probe] 后态持仓:", result["post_positions"])
         result["verdict"] = ("eth_short_fills" if dealt >= 1 else
                              "eth_short_accepted_no_fill" if status in ("SUBMITTED", "SUBMITTING", "WAITING_SUBMIT")

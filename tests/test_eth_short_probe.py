@@ -138,7 +138,8 @@ _SNAP_OK = {"last_price": 45.0, "bid_price": 44.9, "ask_price": 45.1}
 def test_select_takes_first_eligible(monkeypatch):
     pick = _pick({"US.AAA": {"max_sell_short": 3535}}, {"US.AAA": {"is_short_permit": True}},
                  {"US.AAA": _SNAP_OK}, monkeypatch)
-    assert pick == {"code": "US.AAA", "shortable": 3535, "last": 45.0, "bid": 44.9, "ask": 45.1}
+    assert pick == {"code": "US.AAA", "shortable": 3535, "last": 45.0, "bid": 44.9, "ask": 45.1,
+                    "spread_pct": 0.444}   # spread_pct: 预注册修订 #3 (成交验证选标用)
 
 
 def test_select_skips_no_borrow_and_no_permit(monkeypatch):
@@ -181,3 +182,31 @@ def test_probe_orders_gated_by_execute_flag():
     assert "args.execute" in CODE.split("place_order")[0]
     assert "Session.ETH" in CODE and "TrdSide.SELL" in CODE
     assert "TrdSide.SELL" not in CODE.split("if not args.execute:")[0]
+
+# ── 预注册修订 #3 (2026-09-23): 成交验证选标 —— 价差最窄优先 + 价差闸 ────────────
+def test_fill_check_prefers_tightest_spread(monkeypatch):
+    """fill-check 模式: 不取第一个合格票, 取**价差最窄**的 —— 否则空簿挂单永远 dealt=0,
+    把"标的没对手盘"误判成"盘前不能成交" (2026-09-23 实测 CBRL 价差 12.4% ⇒ dealt=0;
+    CTAS 价差 0.49% ⇒ FILLED_ALL)。"""
+    info = {"US.AAA": {"max_sell_short": 100}, "US.BBB": {"max_sell_short": 100}}
+    ratio = {"US.AAA": {"is_short_permit": True}, "US.BBB": {"is_short_permit": True}}
+    snaps = {"US.AAA": {"last_price": 45.0, "bid_price": 44.9, "ask_price": 45.1},        # 0.44%
+             "US.BBB": {"last_price": 100.0, "bid_price": 99.0, "ask_price": 101.0}}      # 2.00%
+    monkeypatch.setattr(probe, "CANDIDATES", ["US.AAA", "US.BBB"])
+    pick = probe._select_candidate(_FakeTctx(info, ratio), _FakeQctx(snaps), _FakeEnv,
+                                   _FakeOrderType, 0, log=lambda *_: None,
+                                   prefer_liquid=True, spread_max_pct=1.0)
+    assert pick["code"] == "US.AAA" and pick["spread_pct"] < 1.0
+
+
+def test_fill_check_returns_none_when_no_liquid_candidate(monkeypatch):
+    """全部候选价差 > 闸 ⇒ None (不下一张注定不成交的单), 且不影响默认口径。"""
+    info = {"US.BBB": {"max_sell_short": 100}}
+    ratio = {"US.BBB": {"is_short_permit": True}}
+    snaps = {"US.BBB": {"last_price": 100.0, "bid_price": 98.0, "ask_price": 102.0}}      # 4.00%
+    monkeypatch.setattr(probe, "CANDIDATES", ["US.BBB"])
+    t, q = _FakeTctx(info, ratio), _FakeQctx(snaps)
+    assert probe._select_candidate(t, q, _FakeEnv, _FakeOrderType, 0, log=lambda *_: None,
+                                   prefer_liquid=True, spread_max_pct=1.0) is None
+    assert probe._select_candidate(t, q, _FakeEnv, _FakeOrderType, 0,
+                                   log=lambda *_: None)["code"] == "US.BBB"   # 默认口径不受影响
