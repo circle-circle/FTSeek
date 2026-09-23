@@ -119,7 +119,14 @@ def build_cohort(session, rows, today_et):
     return uniq, picked
 
 
-def evaluate(session, cohort, qctx, today_et):
+def evaluate(session, cohort, qctx, today_et, hour=None):
+    # 量闸口径对齐 (2026-09-23): 生产用**按时段分档**的量门槛 (`_min_volume_now`:
+    #   盘前 04-07 → 2 万, 08-09 → 20 万), 本影子此前固定用 `EXEC.MIN_VOLUME` (20 万)
+    #   ⇒ 早段读数被系统性低估 (把生产会放行的票读成 volume_below_min = 假红),
+    #   观测量与它要影子的那道闸不同口径 ⇒ 一律走 `EXEC._min_volume_now` 同一个真源。
+    hour_et = EXEC._et_hour_now() if hour is None else hour
+    vol_floor = EXEC._min_volume_now(session, hour_et)
+
     """逐票取延长时段报价 → 对照现行闸 (价/涨/量/市值) 算上界可否过闸。
 
     口径 (2026-09-22 干跑实测教训): futu 快照在**该票当日延长时段无成交**时,
@@ -177,7 +184,7 @@ def evaluate(session, cohort, qctx, today_et):
         mc = q["market_cap"] or 0.0
         if chg >= EXEC.ENTRY_CHANGE_PCT:
             n_chg += 1
-        if vol >= EXEC.MIN_VOLUME:
+        if vol >= vol_floor:
             n_vol += 1
         reasons = []
         if q["stale_quote"]:
@@ -188,7 +195,7 @@ def evaluate(session, cohort, qctx, today_et):
             reasons.append("price_below_min")
         if chg < EXEC.ENTRY_CHANGE_PCT:
             reasons.append("change_below_min")
-        if vol < EXEC.MIN_VOLUME:
+        if vol < vol_floor:
             reasons.append("volume_below_min")
         if mc and mc < EXEC.MIN_MARKET_CAP_USD:
             reasons.append("market_cap_below_min")
@@ -196,7 +203,8 @@ def evaluate(session, cohort, qctx, today_et):
         if row["passes_floors"]:
             n_pass += 1
         items.append(row)
-    return items, {"n_chg_ge_min": n_chg, "n_vol_ge_min": n_vol, "n_passes_floors": n_pass}
+    return items, {"n_chg_ge_min": n_chg, "n_vol_ge_min": n_vol, "n_passes_floors": n_pass,
+                   "et_hour": hour_et, "min_volume_applied": vol_floor}
 
 
 def main():
@@ -230,7 +238,8 @@ def main():
     qctx = OpenQuoteContext(host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
                             port=int(os.getenv("FUTU_OPEND_PORT", "11111")))
     try:
-        items, stats = evaluate(session, cohort, qctx, now.date().isoformat())
+        items, stats = evaluate(session, cohort, qctx, now.date().isoformat(),
+                                            int(now.strftime("%H")))
     finally:
         qctx.close()
 
@@ -242,7 +251,9 @@ def main():
         "n_chg_ge_min": stats["n_chg_ge_min"],
         "n_vol_ge_min": stats["n_vol_ge_min"],
         "floors": {"min_price": EXEC.MIN_PRICE, "min_change_pct": EXEC.ENTRY_CHANGE_PCT,
-                   "min_volume": EXEC.MIN_VOLUME, "min_market_cap_usd": EXEC.MIN_MARKET_CAP_USD},
+                   "min_volume": EXEC.MIN_VOLUME, "min_market_cap_usd": EXEC.MIN_MARKET_CAP_USD,
+                   "min_volume_applied": stats["min_volume_applied"],
+                   "et_hour_applied": stats["et_hour"]},
     }
     row = {"ts": now.isoformat(), "et_date": now.date().isoformat(),
            "et_time": now.strftime("%H:%M"), "session": session, "forced": forced,
@@ -252,7 +263,7 @@ def main():
     passed = [i["symbol"] for i in items if i.get("passes_floors")]
     print("[carry-shadow] %s cohort=%d(%s) 报价=%d 涨≥%.1f%%=%d 量≥%d=%d ★过闸上界=%d %s"
           % (session, len(cohort), cohort_date, summary["quoted"], EXEC.ENTRY_CHANGE_PCT,
-             stats["n_chg_ge_min"], EXEC.MIN_VOLUME, stats["n_vol_ge_min"],
+             stats["n_chg_ge_min"], summary["floors"]["min_volume_applied"], stats["n_vol_ge_min"],
              stats["n_passes_floors"], passed))
     return 0
 
