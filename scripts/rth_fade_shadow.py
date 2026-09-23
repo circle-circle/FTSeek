@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""RTH fade 影子 (D 项转正前的攒样器, 2026-09-23 用户批「按建议执行」) —— **零下单, 只记录**.
+
+## 预注册判据 (读前写死; 读数出来前不得改本段)
+
+规则 R: **财报票 + RTH 开盘跳空 ≥ +3.0% ⇒ 开盘虚拟做空, 当日 RTH 收盘虚拟平仓** (单价 $5,000, 费 0.53%).
+  为什么是这条: 回放 (scripts/rth_fade_replay.py, 2026-08-28..09-22, 12 RTH 日) ——
+    顺跳空(延续) 净 −$73.16/笔 (n=84, 胜 39%) vs **fade 做空侧 +$48.01/笔 (n=50, 胜 62%)**,
+    安慰剂 (同标的非财报日, 同 |跳空| 档) −$18.06/笔 ⇒ 增量 +$66.06; 市场基准日内均值 −0.00% (非 β).
+  为什么只做空侧: 做多侧 (跳空跌 → 做多) 回放 −$32.22/笔 ⇒ 现役纯多头通道**不可做**。
+  为什么不直接上线: 50 笔/12 日、剔最强日收益砍半 (+$48→+$23.5)、未计流动性/价差、
+    3 个强化趋势日单笔 −$300~−$420 (尾部在空侧) ⇒ 先攒真数据。
+
+判据 (攒样 → 转正):
+  - 样本门槛: **≥ 15 个 RTH 交易日 且 ≥ 30 笔** (达不到就继续攒, 不提前裁决)
+  - 转正条件 (三条全满足): ① 净/笔 > 0 ② 胜率 ≥ 55% ③ **留一口** (剔除最强单日) 净/笔 ≥ 0
+  - 否决条件 (任一即否): 净/笔 < 0 / 留一口翻负 / 空侧单日 ≤ −$400 的日数 ≥ 3 (尾部失控)
+  - 期间**不下任何真单**; 只写 data/rth_fade_shadow.jsonl (本脚本唯一产物)
+  - 记录字段含 gap/entry/exit/ret/net + 市值/价格上下文 ⇒ 事后可加闸复算, 不需重抓
+
+## 口径
+入场价 = 当日 RTH **开盘价** (09:30 即可得, 无未来信息); 出场价 = 当日 RTH **收盘价**。
+跳空 = 开盘/前收 − 1 (前收取日K上一交易日收盘)。做空收益 = (开盘−收盘)/开盘 (分母=卖出价)。
+票源 = Finnhub 当日日历 (bmo/amc) ∪ futu 日历经 rows; bmo → **当日** RTH 日, amc → **次日** RTH 日。
+跑法: 每日 ET 收盘后一次 (cron 04:10 CST = 16:10 ET), `--date` 默认最近已收盘 ET 日。
+     `--dry` 只打印不落盘; `--push` 附一行摘要 (默认静默, 避免刷屏)。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(ROOT / ".env.us", override=True)
+
+OUT = ROOT / "data" / "rth_fade_shadow.jsonl"
+SIZE, FEE, GAP_MIN = 5000.0, float(os.getenv("FEE_PCT", "0.53")), 3.0
+ET = timezone(timedelta(hours=-4))       # EDT; 11 月转 EST 需复评 (见 skill: 冬令时提醒)
+
+
+def et_today() -> str:
+    return datetime.now(ET).date().isoformat()
+
+
+def prev_trading_day(d: str, days) -> str | None:
+    older = [x for x in days if x < d]
+    return older[-1] if older else None
+
+
+def day_bars(ctx, code: str, start: str, end: str) -> dict:
+    from futu import KLType
+    from scripts.replay_ext_entry_sources import _kline_cached
+    out = {}
+    for b in _kline_cached(ctx, code, start, end, KLType.K_DAY) or []:
+        t = str(b.get("t") or "")[:10]
+        if t and b.get("o") and b.get("c"):
+            out[t] = {"o": float(b["o"]), "c": float(b["c"]), "h": float(b.get("h") or 0), "l": float(b.get("l") or 0)}
+    return out
+
+
+def finnhub_rows(day: str) -> list:
+    import requests
+    key = os.getenv("FINNHUB_API_KEY")
+    if not key:
+        return []
+    try:
+        r = requests.get("https://finnhub.io/api/v1/calendar/earnings",
+                         params={"from": day, "to": day, "token": key}, timeout=30)
+        return r.json().get("earningsCalendar", []) or []
+    except Exception as exc:
+        print(f"[rth_fade] finnhub 拉取失败 {day}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return []
+
+
+def futu_rows(start: str, end: str) -> list:
+    from futu import OpenQuoteContext, RET_OK
+    ctx = OpenQuoteContext(host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+                           port=int(os.getenv("FUTU_OPEND_PORT", "11111")))
+    try:
+        ret, data = ctx.get_earnings_calendar(market="US", begin_date=start, end_date=end)
+        if ret != RET_OK or data is None:
+            return []
+        return [{"symbol": str(r.get("security")).replace("US.", ""), "date": str(r.get("earnings_date"))[:10],
+                 "hour": {"BEFORE": "bmo", "AFTER": "amc"}.get(str(r.get("pub_type")), None),
+                 "src": "futu"} for _, r in data.iterrows()]
+    finally:
+        ctx.close()
+
+
+def collect_tickets(day: str) -> list:
+    """当日 + 前一日的财报票 (bmo/amc) —— 合并两源, 按 (symbol, date) 去重, hora 取首个非空。"""
+    prev = (datetime.strptime(day, "%Y-%m-%d").date() - timedelta(days=1)).isoformat()
+    acc: dict = {}
+    for r in finnhub_rows(prev) + finnhub_rows(day):
+        sym = str(r.get("symbol") or "").upper()
+        if not sym:
+            continue
+        d10 = str(r.get("date"))[:10]
+        acc.setdefault((sym, d10), {"symbol": sym, "date": d10,
+                                                  "hour": str(r.get("hour") or "").lower() or None, "src": "finnhub"})
+    for r in futu_rows(prev, day):
+        k = (r["symbol"], r["date"])
+        cur = acc.setdefault(k, {"symbol": r["symbol"], "date": r["date"], "hour": None, "src": "futu"})
+        if not cur.get("hour") and r.get("hour"):
+            cur["hour"] = r["hour"]
+            cur["src"] = "futu"
+    return [v for v in acc.values() if v["hour"] in ("bmo", "amc")]
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="RTH fade 影子 (零下单)")
+    ap.add_argument("--date", default=None, help="ET 日期 YYYY-MM-DD (默认最近已收盘 ET 日)")
+    ap.add_argument("--dry", action="store_true", help="只打印不落盘")
+    ap.add_argument("--push", action="store_true", help="附一行摘要推送 (默认静默)")
+    args = ap.parse_args(argv)
+
+    day = args.date or et_today()
+    tickets = collect_tickets(day)
+    if not tickets:
+        print(f"[rth_fade] {day} 无财报票 (两源皆空) ⇒ 不记录")
+        return 0
+
+    from futu import OpenQuoteContext
+    ctx = OpenQuoteContext(host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+                           port=int(os.getenv("FUTU_OPEND_PORT", "11111")))
+    recs, skipped = [], []
+    try:
+        for t in tickets:
+            start = (datetime.strptime(t["date"], "%Y-%m-%d").date() - timedelta(days=8)).isoformat()
+            end = (datetime.strptime(day, "%Y-%m-%d").date() + timedelta(days=2)).isoformat()
+            bars = day_bars(ctx, f"US.{t['symbol']}", start, end)
+            if not bars:
+                skipped.append((t["symbol"], "无日K"))
+                continue
+            days = sorted(bars)
+            if t["hour"] == "bmo":
+                rth = t["date"] if t["date"] in bars else None
+            else:
+                rth = next((d for d in days if d > t["date"]), None)
+            if not rth or rth > day:
+                skipped.append((t["symbol"], f"RTH日未到({rth})"))
+                continue
+            pc = prev_trading_day(rth, days)
+            if not pc:
+                skipped.append((t["symbol"], "无前收"))
+                continue
+            o, c, prev_close = bars[rth]["o"], bars[rth]["c"], bars[pc]["c"]
+            gap = (o / prev_close - 1) * 100
+            if gap < GAP_MIN:
+                skipped.append((t["symbol"], f"跳空 {gap:+.2f}% < {GAP_MIN}%"))
+                continue
+            ret = (o - c) / o * 100                      # 做空: 开盘卖 → 收盘买回
+            recs.append({"date": day, "rth_day": rth, "symbol": t["symbol"], "hour": t["hour"],
+                         "src": t["src"], "gap_pct": round(gap, 3), "entry": o, "exit": c,
+                         "prev_close": prev_close, "ret_pct": round(ret, 4),
+                         "net_usd": round(SIZE * (ret - FEE) / 100, 2),
+                         "high": bars[rth]["h"], "low": bars[rth]["l"], "size_usd": SIZE, "fee_pct": FEE})
+    finally:
+        ctx.close()
+
+    print(f"[rth_fade] {day} 票 {len(tickets)} ⇒ 入账 {len(recs)} 笔 | 略过 {len(skipped)}")
+    for s, why in skipped[:12]:
+        print(f"   略过 {s}: {why}")
+    for r in recs:
+        print(f"   {r['symbol']:<6} [{r['hour']}] 跳空 {r['gap_pct']:+6.2f}% 开盘 {r['entry']:.2f} → "
+              f"收盘 {r['exit']:.2f} 收益 {r['ret_pct']:+6.2f}% 净 ${r['net_usd']:+7.2f}")
+    if recs and not args.dry:
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        with OUT.open("a") as f:
+            for r in recs:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"[rth_fade] 已追加 {len(recs)} 行 → {OUT}")
+    if args.push and recs:
+        try:
+            from app.push import push_text_safe
+            from app.push.message import Level, Category
+            tot = sum(r["net_usd"] for r in recs)
+            body = (f"**RTH fade 影子 · {day}**\n\n入账 {len(recs)} 笔 虚拟净 ${tot:+.0f} "
+                    f"(口径: 跳空≥+{GAP_MIN}% 财报票 开盘做空→收盘, 费 {FEE}%)\n\n"
+                    + "\n".join(f"- {r['symbol']} 跳空 {r['gap_pct']:+.2f}% → 净 ${r['net_usd']:+.2f}"
+                                for r in recs)
+                    + "\n\n_零下单, 仅记录; 转正判据见 scripts/rth_fade_shadow.py docstring_")
+            ok = push_text_safe(body, level=Level.NORMAL, category=Category.REVIEW_DAILY,
+                                title=f"📉 RTH fade 影子 · {day}")
+            print(f"[rth_fade] push {'已推送' if ok else '失败'} · 双发/主通道由 PushHub 路由")
+        except Exception as exc:
+            print(f"[rth_fade][warn] push 失败(不阻断): {exc}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
