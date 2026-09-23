@@ -563,10 +563,60 @@ def _sec_post_exit():
     return lines
 
 
+# ── 段12: RTH fade 影子 (RFC-098; 跳空≥+3% 财报票 开盘做空→收盘, 零下单) ──
+def _sec_rth_fade():
+    """D 项唯一正期望路线的攒样进度。
+
+    2026-09-23 用户问「另外也有影子 请核查是否可融合」⇒ **并入本看板**, 停独立推送
+    (项目既有约定: 「同内容 15min 内双推冗余」⇒ 由 shadow_board 段复用, 见 cron 注释)。
+    """
+    recs = _read_jsonl(ROOT / "data" / "rth_fade_shadow.jsonl")
+    lines = ["【RTH fade 影子 (RFC-098; 跳空≥+3% 财报票 开盘做空→收盘, 零下单)】"]
+    if not recs:
+        lines.append("  (尚无样本)")
+        return lines
+    days = sorted({r.get("rth_day") for r in recs if r.get("rth_day")})
+    nets = [r.get("net_usd") or 0 for r in recs]
+    win = sum(1 for n in nets if n > 0)
+    day_tot = {}
+    for r in recs:
+        day_tot[r.get("rth_day")] = day_tot.get(r.get("rth_day"), 0) + (r.get("net_usd") or 0)
+    best = max(day_tot, key=lambda d: day_tot[d]) if day_tot else None
+    rest = [r.get("ret_pct") or 0 for r in recs if r.get("rth_day") != best]
+    leave = (sum(rest) / len(rest)) if rest else 0.0
+    lines.append(f"  累计: {len(recs)} 笔 / {len(days)} 个 RTH 日 | 净/笔 ${sum(nets)/len(nets):+.2f} "
+                 f"胜率 {100*win/len(nets):.0f}% 合计 ${sum(nets):+.0f} | 留一口 {leave:+.2f}%")
+    sl = [r.get("net_usd_sl35") for r in recs if r.get("net_usd_sl35") is not None]
+    if sl:
+        slw = sum(1 for x in sl if x > 0)
+        hit = sum(1 for r in recs if r.get("sl35_hit"))
+        lines.append(f"  平行臂(−3.5%止 · 只对照不决策): 净/笔 ${sum(sl)/len(sl):+.2f} 胜率 "
+                     f"{100*slw/len(sl):.0f}% 触发 {hit}/{len(recs)}")
+    need_d, need_n = 15, 30
+    done = len(days) >= need_d and len(recs) >= need_n
+    lines.append(f"  转正进度: 需 ≥{need_d} 日 且 ≥{need_n} 笔 → 还差 {max(0, need_d-len(days))} 日 / "
+                 f"{max(0, need_n-len(recs))} 笔"
+                 + ("；**已达样本门槛, 待 净/笔>0 且 胜率≥55% 且 留一口≥0 三项裁决**" if done else ""))
+    latest = max((r.get("date") or "") for r in recs)
+    try:
+        from datetime import date as _d
+        stale = (_d.fromisoformat(str(_today_et())[:10]) - _d.fromisoformat(latest)).days
+    except Exception:
+        stale = None
+    if stale is not None and stale > 4:
+        lines.append(f"  ⚠️ 记录器停摆: 最新入账 {latest} ({stale} 天前) — cron 的 "
+                     "scripts/rth_fade_shadow.py 未跑 ⇒ 本段无新证据")
+    else:
+        lines.append("  最近: " + " | ".join(
+            f"{r['symbol']} 跳空{r.get('gap_pct', 0):+.1f}%→{r.get('ret_pct', 0):+.1f}% "
+            f"${r.get('net_usd', 0):+.0f}" for r in recs[-3:]))
+    return lines
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit):
+    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit, _sec_rth_fade):
         try:
             body += sec() + [""]
         except Exception as e:

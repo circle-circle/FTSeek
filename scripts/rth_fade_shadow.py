@@ -155,11 +155,20 @@ def main(argv=None) -> int:
             if gap < GAP_MIN:
                 skipped.append((t["symbol"], f"跳空 {gap:+.2f}% < {GAP_MIN}%"))
                 continue
-            ret = (o - c) / o * 100                      # 做空: 开盘卖 → 收盘买回
+            ret = (o - c) / o * 100                      # 做空: 开盘卖 → 收盘买回 (主口径)
+            # 平行臂 (2026-09-23 用户裁「同意」): 同票同日加一条 −3.5% 止损读数。
+            #   依据 scripts/rth_fade_protection_arms.py: 止损 −3.5% 净/笔 +$101.65 (vs 无保护 +$75.80),
+            #   而 −1.5% 把胜率打到 35% (被噪音打掉) ⇒ 若将来上保险, 宽止损才对。
+            #   **决策口径不变** (主口径仍是收盘平), 这条只作对照, 防事后挑臂。
+            sl = 3.5
+            sl_hit = bars[rth]["h"] >= o * (1 + sl / 100)
+            ret_sl = -sl if sl_hit else ret
             recs.append({"date": day, "rth_day": rth, "symbol": t["symbol"], "hour": t["hour"],
                          "src": t["src"], "gap_pct": round(gap, 3), "entry": o, "exit": c,
                          "prev_close": prev_close, "ret_pct": round(ret, 4),
                          "net_usd": round(SIZE * (ret - FEE) / 100, 2),
+                         "ret_pct_sl35": round(ret_sl, 4), "sl35_hit": bool(sl_hit),
+                         "net_usd_sl35": round(SIZE * (ret_sl - FEE) / 100, 2),
                          "high": bars[rth]["h"], "low": bars[rth]["l"], "size_usd": SIZE, "fee_pct": FEE})
     finally:
         ctx.close()
@@ -169,7 +178,8 @@ def main(argv=None) -> int:
         print(f"   略过 {s}: {why}")
     for r in recs:
         print(f"   {r['symbol']:<6} [{r['hour']}] 跳空 {r['gap_pct']:+6.2f}% 开盘 {r['entry']:.2f} → "
-              f"收盘 {r['exit']:.2f} 收益 {r['ret_pct']:+6.2f}% 净 ${r['net_usd']:+7.2f}")
+              f"收盘 {r['exit']:.2f} 收益 {r['ret_pct']:+6.2f}% 净 ${r['net_usd']:+7.2f}"
+              f"  ‖ 平行臂(−3.5%止) 净 ${r['net_usd_sl35']:+7.2f}{' [触发]' if r['sl35_hit'] else ''}")
     if recs and not args.dry:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         with OUT.open("a") as f:
