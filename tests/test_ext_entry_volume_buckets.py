@@ -106,6 +106,10 @@ def test_shadow_bucket_reading_is_attributed():
     assert "影子放行中事件票=" in src and "影子标的=" in src
     # 末位清理 (防跨轮串味)
     assert src.count('_VOL_BUCKET_CF["shadow_symbols"].clear()') == 1
+    # RFC-103 Q2: 影子放行后**还过不过涨幅带**必须可读 (否则"放宽"可能只是把人送到下一堵墙)
+    assert src.count('if _chg_ok:   # 影子放行后') == 2, "两处影子分支都要统计带内"
+    assert "影子放行且在带内=" in src
+    assert src.count('_VOL_BUCKET_CF["shadow_in_band"] = 0') == 1, "末位清理防跨轮串味"
 
 
 def test_shadow_reading_functional(capsys, monkeypatch):
@@ -114,7 +118,7 @@ def test_shadow_reading_functional(capsys, monkeypatch):
     mod = importlib.import_module("scripts.extended_hours_entry_executor")
     monkeypatch.setattr(mod, "EARNINGS_EVENT_SOURCE", "calendar", raising=False)
     cf = mod._VOL_BUCKET_CF
-    cf["live"], cf["shadow"], cf["thr"] = 0, 2, 200000
+    cf["live"], cf["shadow"], cf["shadow_in_band"], cf["thr"] = 0, 2, 1, 200000
     cf["symbols"][:] = []
     cf["shadow_symbols"][:] = ["US.AAAA", "US.BBBB"]
     obs = mod._EVENT_SRC_OBS
@@ -124,3 +128,4 @@ def test_shadow_reading_functional(capsys, monkeypatch):
     assert "影子分档会放行=2" in out
     assert "影子标的=US.AAAA,US.BBBB" in out
     assert "影子放行中事件票=1" in out, out
+    assert "影子放行且在带内=1" in out, out

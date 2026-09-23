@@ -231,7 +231,8 @@ EARNINGS_EVENT_SOURCE = os.getenv("EXT_EARNINGS_EVENT_SOURCE", "calendar").lower
 #   按**票去重** (集合) —— 早期用计数会随调用次数放大 (实测同一 tick 内一票被调两次 ⇒ 读数 ×2)。
 _EVENT_SRC_OBS = {"futu": set(), "finnhub": set()}
 # RFC-100 量闸分档反事实累加器 (每轮打印后清零; 纯观测)
-_VOL_BUCKET_CF = {"live": 0, "shadow": 0, "thr": None, "symbols": [], "shadow_symbols": []}
+_VOL_BUCKET_CF = {"live": 0, "shadow": 0, "shadow_in_band": 0, "thr": None,
+                  "symbols": [], "shadow_symbols": []}
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -2166,11 +2167,13 @@ def _print_gate_counts(session, total, counts):
                   f"影子分档会放行={_VOL_BUCKET_CF['shadow']} "
                   f"标的={','.join(sorted(set(_VOL_BUCKET_CF['symbols']))[:8])} "
                   f"影子标的={','.join(sorted(set(_VOL_BUCKET_CF['shadow_symbols']))[:8])} "
-                  f"影子放行中事件票={sum(1 for x in set(_VOL_BUCKET_CF['shadow_symbols']) if x.replace('US.', '') in _evt_names)}")
+                  f"影子放行中事件票={sum(1 for x in set(_VOL_BUCKET_CF['shadow_symbols']) if x.replace('US.', '') in _evt_names)} "
+                  f"影子放行且在带内={_VOL_BUCKET_CF['shadow_in_band']}")
         _VOL_BUCKET_CF["live"] = 0
         _VOL_BUCKET_CF["shadow"] = 0
         _VOL_BUCKET_CF["symbols"].clear()
         _VOL_BUCKET_CF["shadow_symbols"].clear()
+        _VOL_BUCKET_CF["shadow_in_band"] = 0
         # 2026-09-23 (盘后核查): 研究臂的**细分类**拒绝键此前只写不报 ⇒ "研究臂开着却 0 单"
         #   与"研究臂卡死"在日志面不可区分 (复算只能自己 import 手调 `_research_downstream_gates`)。
         #   细分类键集是动态的 (`research_<grade_reason>`), 无法静态列进 keys, 且把 `{...}` 塞进
@@ -2244,6 +2247,8 @@ def collect(session, dry=False):
                         MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
                     _VOL_BUCKET_CF["shadow"] += 1
                     _VOL_BUCKET_CF["shadow_symbols"].append(symbol)
+                    if _chg_ok:   # 影子放行后**还过不过涨幅带** (RFC-103 Q2: 放宽不能只把人送到下一堵墙)
+                        _VOL_BUCKET_CF["shadow_in_band"] += 1
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
@@ -2517,6 +2522,8 @@ def collect(session, dry=False):
                         MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
                     _VOL_BUCKET_CF["shadow"] += 1
                     _VOL_BUCKET_CF["shadow_symbols"].append(symbol)
+                    if _chg_ok:   # 影子放行后**还过不过涨幅带** (RFC-103 Q2: 放宽不能只把人送到下一堵墙)
+                        _VOL_BUCKET_CF["shadow_in_band"] += 1
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
