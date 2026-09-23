@@ -204,4 +204,7 @@ cp high_atr_stall_shadow.orig.jsonl    ../../high_atr_stall_shadow.jsonl      # 
 | 3 | Anti-Rationalizations | 新增 "只读回放不会写生产文件" 反模式: 相对路径影子文件 = 生产污染入口 (锚定 `__file__` / `_SP()`) + 常量值分布审计法 | 本批 §3 的直接教训 | 已接受 (本次自用) |
 | 4 | 等基对比章节 | 补第 ④ 条: 读活 `data/` 的用例在裸 worktree 会 skip ⇒ 基线侧假绿; 归因法 = worktree@HEAD 绿 + 活仓红 ⇒ 环境面非 diff | 本批 §6 归因过程的教训 | 已接受 (本次自用) |
 
+| 5 | Anti-Rationalizations | 新增 "判据恒 0 = 影子无效" 反模式: **第四条死门路径 = 词语表漂移** (枚举改名 ⇒ 基率 30%→1.3% ⇒ 读数恒 0%) + 三步判别 (查基率/按现役词表重算+lift/换算相对口径) + "先修实现再谈判据" | 本批 §4 的直接教训 | 已接受 (本次自用) |
+| 6 | Anti-Rationalizations | 新增 "`x or 默认值` 无副作用" 反模式: 0 是合法最值时 `or` 静默丢行 (mfe_pct==0.0 被当缺失 ⇒ 命中数少算近半) + `x if x is not None else 默认` + grep 扫法 | 本批 ⑨⑩ 的直接教训 | 已接受 (本次自用) |
+
 无一处改动放松既有纪律 (均为新增反模式/补陷阱), 不影响任何 skill 中的判据/口径文本。
