@@ -90,3 +90,37 @@ def test_counterfactual_accumulates_and_prints(mod):
     assert src.count('_VOL_BUCKET_CF["live"] += 1') == 2
     assert src.count('_VOL_BUCKET_CF["shadow"] += 1') == 2
     assert '量闸分档[{session}]' in src and src.count("_VOL_BUCKET_CF[\"live\"] = 0") == 1
+
+# ── RFC-103: 影子档读数的**可解读性** (2026-09-23) ──────────────────────────
+def test_shadow_bucket_reading_is_attributed():
+    """影子档放行的票必须能区分"是不是事件票"。
+
+    为什么: 量闸只是门链中间一道, 非事件票在判据① 必死。实测 08:1x 一轮影子放行 5 只
+    (全是异动榜小票) —— 不作归因就会把读数误读成"放宽能放行这么多票"。
+    """
+    src = (ROOT / "scripts" / "extended_hours_entry_executor.py").read_text()
+    assert src.count('_VOL_BUCKET_CF["shadow_symbols"].append(symbol)') == 2, \
+        "两处影子分支都要记标的 (dry + live)"
+    assert "_evt_names = set(_EVENT_SRC_OBS[\"futu\"]) | set(_EVENT_SRC_OBS[\"finnhub\"])" in src, \
+        "事件名集必须在观测集被 clean 前取出"
+    assert "影子放行中事件票=" in src and "影子标的=" in src
+    # 末位清理 (防跨轮串味)
+    assert src.count('_VOL_BUCKET_CF["shadow_symbols"].clear()') == 1
+
+
+def test_shadow_reading_functional(capsys, monkeypatch):
+    """功能钉: 影子放行 2 只 (其中 1 只是事件票) ⇒ 打印行必须如实反映。"""
+    import importlib
+    mod = importlib.import_module("scripts.extended_hours_entry_executor")
+    monkeypatch.setattr(mod, "EARNINGS_EVENT_SOURCE", "calendar", raising=False)
+    cf = mod._VOL_BUCKET_CF
+    cf["live"], cf["shadow"], cf["thr"] = 0, 2, 200000
+    cf["symbols"][:] = []
+    cf["shadow_symbols"][:] = ["US.AAAA", "US.BBBB"]
+    obs = mod._EVENT_SRC_OBS
+    obs["futu"].add("AAAA")
+    mod._print_gate_counts("premarket", 7, {})
+    out = capsys.readouterr().out
+    assert "影子分档会放行=2" in out
+    assert "影子标的=US.AAAA,US.BBBB" in out
+    assert "影子放行中事件票=1" in out, out

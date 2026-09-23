@@ -231,7 +231,7 @@ EARNINGS_EVENT_SOURCE = os.getenv("EXT_EARNINGS_EVENT_SOURCE", "calendar").lower
 #   按**票去重** (集合) —— 早期用计数会随调用次数放大 (实测同一 tick 内一票被调两次 ⇒ 读数 ×2)。
 _EVENT_SRC_OBS = {"futu": set(), "finnhub": set()}
 # RFC-100 量闸分档反事实累加器 (每轮打印后清零; 纯观测)
-_VOL_BUCKET_CF = {"live": 0, "shadow": 0, "thr": None, "symbols": []}
+_VOL_BUCKET_CF = {"live": 0, "shadow": 0, "thr": None, "symbols": [], "shadow_symbols": []}
 WATCHLIST_GROUP = os.getenv("EXT_ENTRY_WATCHLIST_GROUP", "美股")
 BEAT_TOP_N = int(os.getenv("EXT_ENTRY_BEAT_TOP_N", "200"))
 BEAT_RECENT_DAYS = int(os.getenv("EXT_ENTRY_BEAT_RECENT_DAYS", "7"))
@@ -2153,6 +2153,10 @@ def _print_gate_counts(session, total, counts):
         if EARNINGS_EVENT_SOURCE != "calendar":
             print(f"[ext_entry] 事件源[{session}] mode={EARNINGS_EVENT_SOURCE} "
                   f"futu={len(_EVENT_SRC_OBS['futu'])} finnhub={len(_EVENT_SRC_OBS['finnhub'])}")
+        # 影子档放行的票里有多少**同时是事件票** —— 只有这部分才可能真的走到下单
+        #   (量闸只是门链中间一道; 非事件票在判据① 必死)。不区分会让读数被误读成"放宽能放行这么多票"
+        #   (实测 08:1x 一轮影子放行 5 只, 全是异动榜小票)。
+        _evt_names = set(_EVENT_SRC_OBS["futu"]) | set(_EVENT_SRC_OBS["finnhub"])
         _EVENT_SRC_OBS["futu"].clear()
         _EVENT_SRC_OBS["finnhub"].clear()
         # RFC-100 量闸分档读数 (独立一行; 主行的"空格分隔 k=int"契约不动)。
@@ -2160,10 +2164,13 @@ def _print_gate_counts(session, total, counts):
             print(f"[ext_entry] 量闸分档[{session}] live门槛={_VOL_BUCKET_CF['thr'] or _min_volume_now()} "
                   f"旧门槛={int(MIN_VOLUME)} 分档放行={_VOL_BUCKET_CF['live']} "
                   f"影子分档会放行={_VOL_BUCKET_CF['shadow']} "
-                  f"标的={','.join(sorted(set(_VOL_BUCKET_CF['symbols']))[:8])}")
+                  f"标的={','.join(sorted(set(_VOL_BUCKET_CF['symbols']))[:8])} "
+                  f"影子标的={','.join(sorted(set(_VOL_BUCKET_CF['shadow_symbols']))[:8])} "
+                  f"影子放行中事件票={sum(1 for x in set(_VOL_BUCKET_CF['shadow_symbols']) if x.replace('US.', '') in _evt_names)}")
         _VOL_BUCKET_CF["live"] = 0
         _VOL_BUCKET_CF["shadow"] = 0
         _VOL_BUCKET_CF["symbols"].clear()
+        _VOL_BUCKET_CF["shadow_symbols"].clear()
         # 2026-09-23 (盘后核查): 研究臂的**细分类**拒绝键此前只写不报 ⇒ "研究臂开着却 0 单"
         #   与"研究臂卡死"在日志面不可区分 (复算只能自己 import 手调 `_research_downstream_gates`)。
         #   细分类键集是动态的 (`research_<grade_reason>`), 无法静态列进 keys, 且把 `{...}` 塞进
@@ -2236,6 +2243,7 @@ def collect(session, dry=False):
                 elif not _vol_ok and volume >= _min_volume_for(
                         MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
                     _VOL_BUCKET_CF["shadow"] += 1
+                    _VOL_BUCKET_CF["shadow_symbols"].append(symbol)
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
@@ -2508,6 +2516,7 @@ def collect(session, dry=False):
                 elif not _vol_ok and volume >= _min_volume_for(
                         MIN_VOLUME_BUCKETS_SHADOW_RAW, _et_hour_now()):
                     _VOL_BUCKET_CF["shadow"] += 1
+                    _VOL_BUCKET_CF["shadow_symbols"].append(symbol)
                 _ENTRY_CTX_OBS[(symbol, session)] = {
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),

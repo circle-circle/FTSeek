@@ -52,10 +52,13 @@ def _stub_cal(monkeypatch, by_day):
                         lambda day=None: (by_day.get(day or TODAY, {}), None))
 
 
-def test_default_off_and_pairing_tables():
-    import os
-    assert EXEC.PREMARKET_AMC_PAIRING is False, "开关必须默认关 (生产行为不变)"
-    assert os.getenv("EXT_ENTRY_PREMARKET_AMC_PAIRING") in (None, "", "false")
+def test_code_default_is_off_and_pairing_tables(monkeypatch):
+    """**代码默认**必须关 —— 断言源码默认值, 不断言运行时常量 (后者随操作员 .env.us 变,
+    会让仓库里的测试结果依环境而红/绿, 属 N4 类环境耦合)。"""
+    src = (ROOT / "scripts" / "extended_hours_entry_executor.py").read_text()
+    assert 'PREMARKET_AMC_PAIRING = os.getenv("EXT_ENTRY_PREMARKET_AMC_PAIRING", "false")' in src
+    assert 'os.getenv("EXT_ENTRY_PREMARKET_AMC_PAIRING", "true")' not in src
+    monkeypatch.setattr(EXEC, "PREMARKET_AMC_PAIRING", False)
     assert EXEC._session_event_pairs("premarket") == [(0, "before")]
     assert EXEC._session_event_pairs("afterhours") == [(0, "after")]
 

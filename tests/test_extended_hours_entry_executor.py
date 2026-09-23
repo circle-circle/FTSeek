@@ -337,6 +337,9 @@ def test_entry_structure_gate_requires_vwap_reclaim_and_volume(monkeypatch):
 
 
 def test_earnings_calendar_event_requires_today_and_matching_phase(monkeypatch):
+    # 钉死配对开关 (RFC-102): 本用例验的是**默认单日配对**语义; 不钉则生产 .env.us 一开
+    #   `EXT_ENTRY_PREMARKET_AMC_PAIRING=true` 就把它改名成 phase_mismatch (N4 类环境耦合)。
+    monkeypatch.setattr(executor, "PREMARKET_AMC_PAIRING", False)
     monkeypatch.setattr(executor, "_today_et", lambda: "2026-09-18")
     monkeypatch.setattr(executor, "_EARNINGS_CALENDAR_CACHE", {
         "2026-09-18": {"rows": [
