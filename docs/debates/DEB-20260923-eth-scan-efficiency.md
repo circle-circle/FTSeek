@@ -280,3 +280,47 @@
 | 6 | L4 载体（另立 RFC / 复用载体迁移技能） | 单独立项 |
 
 **回滚**：`EXT_SCAN_QUALIFIED_FIRST=false` + `EXT_SCAN_STATE_CACHE=false`（两个词，下一 tick 生效）+ 删 `data/loops/ext_entry_scan/`（无残留副作用）。
+
+---
+
+## 11. 一次性做到位：横扫"历史坑类别"后的补充清单（用户令「再检查是否还有其它需调整/优化，吸取历史教训避免重复踩坑」）
+
+方法：对当前工作树**机械横扫历史坑类别**（脚本 `sweep_historical_pitfalls.py` / 逐条取证 `verify_sweep_hits.py`），**每条命中都回头读原文**再定性（机械扫描误报率高，本次 9 条命中里 5 条是误报）。
+
+### 11.1 本批必修（与 §10 的 L1–L3 同批，避免二次动同一批文件）
+
+| # | 项 | 证据（实读） | 修法 | 判据 |
+| --- | --- | --- | --- | --- |
+| N1 | **单测污染生产仍未修**（历史 P1） | `tests/test_ext_entry_test_symbol_guard.py` 仍在 `monkeypatch.setenv("FUTU_TRD_ENV","REAL")` 后直调真 `_execute("US.NVDA", 1, 100.0, …)`；而模式真源早已是 `TradingMode`（legacy 键不再被消费）⇒ `is_live=False` ⇒ REAL 守卫**静默跳过** ⇒ 直落 `place_order` | mock 券商路径（`monkeypatch.setattr(mod, "_open_trade_context", <桩>)`）+ 判据改 SSOT；**类级兜底**：新增一条断言"测试进程内不得触达真 `OpenSecTradeContext`"（下单口已有 `_probe_env_only()` 短路，见下） | 该用例转绿且断言"未走到下游"；全树 grep `_execute("US.<真票>"` 逐点核 |
+| N2 | **棘轮不得由本批增加** | 我在 `_volume_buckets` 写了 `except Exception: continue` ⇒ 计数 1019→1020；`tests/test_except_pass_ratchet.py::test_except_pass_not_growing` **已红**（BASELINE 950 / 实测 1020） | 改为 `_parse_bucket_triple()` 返回 `None`、调用方判定 ⇒ **已落地**，实测回到 **1019**（本批贡献 0） | 本批新增行不得使计数上升（1019 = 非本批欠账） |
+| N3 | **影子未注册进 `shadow_registry`** | 实测 ETH 链 6 个台账（rth_fade / earnings_direction_path / ext_entry_prefilter / eth_short_probe / premarket_exit_shadow / afterhours_exit_shadow）**一个都没注册**；框架的 `min_n`/`graduation_criteria`/`eval_script`/`count_mode`/`check_mounting()` 全没用上 | 按 §10-L3 注册 6+1 项，`eval_script` 指向既有裁定器，停摆守卫交框架 | `refresh_counts()` 无停摆告警；`check_mounting()` 通过 |
+| N4 | **测试 hermetic 钉缺口** | 6 个 ETH 测试文件（calendar_source / earnings_criterion / research_arm / volume_buckets / entry_executor / order_execution）加载 `.env.us` 但未钉生产派生键（`EXT_ENTRY_CHG_BAND` / `ALLOW_SHORT` / `MIN_VOLUME_BUCKETS` / `EARNINGS_CRITERION` / `EVENT_SOURCE` / `ALLOW_SIM`）⇒ 改 env 会**静默改测试语义**（历史同款坑，技能有专节） | 各文件补 autouse 钉（沿用既有 `_research_arm_pinned_off` 模式） | 逐个置反值跑通；env 改动不再影响断言 |
+| N5 | **费用兜底口径与线上不同源** | `replay_ext_entry_sources.py:43 FEE_PCT=0.085`（旧扁平 8.5bps 兜底）、`exit_shadow_report.py:36 0.08`、`shadow_board.py:183 0.08` vs 线上费闸 `EXT_ENTRY_MAX_ROUND_TRIP_FEE_PCT=0.5`（真实往返 ≈0.53%）⇒ 兜底生效时**低估约 6 倍** | 兜底值改读线上实值；若必须保留旧口径则显式 fail-loud 打印"真实费用模型不可用，净额口径已退化为旧扁平" | 兜底路径被触发时日志必须出现该 warning；净额读数与线上口径一致 |
+
+### 11.2 已核清、**无需动作**（防下次重复排查）
+
+| 项 | 结论（证据） |
+| --- | --- |
+| 下单口探针短路 | **已接线**：`_probe_env_only()`（仅认 `FUTSEEK_PROBE=1`）在 `place_order` 之前（执行器 L2739），且**刻意不挂** `_probe_mode()`（后者含 pytest 检测会封死测试断言）✓ |
+| crontab 注释漂移 | **已同步**：两条 ETH 行现写明"EXT在仓5/日流10(.env.us生效)"，无陈旧"3 笔"；DST 扩段（`16-22` / `4-8`）注释齐 ✓ |
+| 券商侧残留单 | **未终结 0 条**；NVDA/AMD 历史单已不可见（SIM 订单查询只给近期）⇒ "清理残留单"一项自动关闭 ✓ |
+| `rth_fade_shadow` 幂等 | **已实现**（L185–200 按 `(symbol, rth_day)` 去重，写入侧+读取侧双防）✓ |
+| 告警链覆盖 ETH 班次 | **按设计覆盖**：`error_alert` 用 `logs/*.log` glob（放弃登记表 = 当年"登记表断裂"的治本修法）⇒ ETH 各日志天然在扫描面 ✓ |
+| 时区 `to_et` 绕过 | 抽检 6/6 命中**全是误报**（`_now_et()` / ET-aware strptime / Finnhub `period` 标签，均非时区字段）⇒ 规则整体合规 ✓ |
+| pandas `Series.__bool__` 陷阱 | 抽检 3/3 命中**全是误报**（`sqlite3.Row` / dict 上取字段）✓ |
+| `load_dotenv` 顺序 | 正确（load 早于首个 `os.getenv`）✓ |
+
+### 11.3 观测口径残余（低优先，随 L2 顺带或单列）
+
+- `_record_earnings_gate_rejects` 的 `details` 仍只在"过了带/量闸"的票上累积（写入点在两 pass 末尾，L2280/L2590）⇒ 早盘量未起来时源票走不到 earnings 分支，**reject 台账的证据被截断**。判据①②的**对照影子**（`_ENTRY_CTX_OBS`）已全量（2026-09-23 解耦批），故这条只影响"拒绝原因"的覆盖面，不影响判据对照结论。
+- 处理：随 L2 一起把"拒绝原因"记在**评估发生处**（不依赖下游是否到达），或明确标注为已知口径差异。
+
+### 11.4 另立批次（不同变量，不混批）
+
+| 批 | 内容 | 为什么单独 |
+| --- | --- | --- |
+| L4 载体 | 入场链并入分钟级常驻载体（连接 113→1） | 改**进程模型**，与 L1–L3 的"看谁/记什么"不同变量 |
+| 棘轮清剿 | `except:pass/continue` 1019 vs 基线 950（+69） | 全仓静态清剿，非本链专属；本批已保证贡献 0 |
+| 死区降频 | 04:00–07:00 改 `*/10` | 与 RFC-100（早段放宽）方向相反，等 2026-10-08 读数 |
+
+> **一次性的边界（明说）**：本批 = L1+L2+L3+N1–N5 **同批落地、同批验证**（改动集中在"看谁/记什么/怎么记"三件事，属同一变更目标）；L4/棘轮/降频**不同批**，理由是它们各自改变不同变量，混批会让归因失效——这正是历史教训里"一次只改一个变量"的正面用法。

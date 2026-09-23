@@ -399,13 +399,23 @@ def _volume_buckets(raw=None) -> list:
     for part in str(text or "").split(","):
         rng, _, thr = part.partition(":")
         lo, _, hi = rng.partition("-")
-        try:
-            lo_i, hi_i, thr_i = int(lo), int(hi or lo), int(float(thr))
-        except Exception:
-            continue
-        if 0 <= lo_i <= 23 and lo_i <= hi_i <= 23 and thr_i > 0:
-            out.append((lo_i, hi_i, thr_i))
+        parsed = _parse_bucket_triple(lo, hi, thr)
+        if parsed is not None:
+            out.append(parsed)
     return out
+
+
+def _parse_bucket_triple(lo, hi, thr):
+    """"4","7","20000" ⇒ (4,7,20000); 任一非法 ⇒ None (调用方跳过该片段)。
+
+    刻意**不用** `except: continue` 形态: 仓库 `tests/test_except_pass_ratchet.py` 的棘轮
+    把该形态计为新增静默异常 (§新增代码不得再增计数) ⇒ 这里 return None, 由调用方判定。
+    """
+    try:
+        lo_i, hi_i, thr_i = int(lo), int(hi or lo), int(float(thr))
+    except (TypeError, ValueError):
+        return None
+    return (lo_i, hi_i, thr_i) if (0 <= lo_i <= 23 and lo_i <= hi_i <= 23 and thr_i > 0) else None
 
 
 def _min_volume_for(raw, hour) -> int:
