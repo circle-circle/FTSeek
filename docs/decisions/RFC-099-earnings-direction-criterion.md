@@ -49,9 +49,16 @@
 - **我方仍未证 (今日 16:10 CST 探针)**: `scripts/probe_eth_short_open.py --execute`（Hermes job `b109e64a36eb`）
   —— 预注册判据写死在该脚本头: SIM-only / 窗内 / **1 股** / 限价 / `remark=eth_probe`（**禁 `ext_entry`** — P1 事故机制）
   / 成功=挂单被接受且 60s 内 `FILLED_ALL` 或出现负持仓; 失败=拒单或自动撤单 ⇒ 记 `eth_short_unsupported`。
-- **落地形态 (转正时择一, 现在不写执行代码)**:
-  - **A** 延长时段执行器加 **SHORT 分支**（对偶现有多头带: 跳空 ≥+3% ⇒ SELL_SHORT, 自带 remark 命名空间 / 日内笔数帽 / 09:25 收口强平）
-  - **B** 走 **RTH 空头通道**（已存在且在成交: 35 笔净 +$229 / 胜 77%, 8/25 起）
+- **落地形态 = 复用同一条链, 不新开链路**（用户 2026-09-23 追问「为什么还要单独写?」⇒ 答案是本就不该单独写）:
+  代码已落 (`scripts/extended_hours_entry_executor.py`, 2026-09-23 `07dd9559e`), 方向耦合只 4 处参数化:
+  ① 下单口 `trd_side` ② 落库 `direction` (open_positions + trade_records) ③ 带判据 ④ SL 方向;
+  其余全部**共用**: 价/市值/换手/价差/深度/费用/漂移闸 · 档位 · 仓位算法 · 日内帽/在仓帽 · 在途单门 ·
+  券商对账 · 成交等待与撤单 · 孤儿单 · 09:25 收口 · 离场窗 · **退出链**（`_dir_sign` 早已支持 SHORT）。
+  进下单口前**券源逐票预检**（`max_sell_short≥1` + `is_short_permit`, 与探针同一方法）⇒ 券源不足
+  `skip=short_borrow_unavailable`, **绝不裸卖**。
+  开关: `EXT_ENTRY_ALLOW_SHORT` 默认 **false**（实测 OFF ⇒ 空侧不可达、`place_order` 恒 BUY、生产行为 byte 级不变）。
+- **另一条现成的空侧出口**: **RTH 空头通道**（已存在且在成交: 35 笔净 +$229 / 胜 77%, 8/25 起）——
+  空侧**不依赖** ETH 成交能力, 探针失败也不阻塞这条路。
 - **碰撞审查 (已过)**: 禁追线对 SHORT 的语义是价格**下限**、违例=**低卖** ⇒ 高价做空不碰撞
   (`app/playbook/entry_routing.py:chase_cap_violated`); `premarket_invalidation` 与 `short_chase_ban_shadow` 均为 record-only。
 
