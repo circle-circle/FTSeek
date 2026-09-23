@@ -101,12 +101,10 @@ def test_calendar_source_error_is_fail_open_with_warning(monkeypatch, capsys):
     assert "日历候选源不可用" in capsys.readouterr().out
 
 
-def test_phase_predicate_is_verbatim_same_as_earnings_gate():
-    """源码契约: 相位判据必须与 `_earnings_calendar_event` 逐字同式。
-
-    否则"入选者必过 earnings 门第①道"只是注释承诺 —— 两处一旦漂移, 本源就会往里灌
-    calendar_phase_mismatch 的票 (白占候选位, 且台账归因被污染)。
-    """
     src = (ROOT / "scripts" / "extended_hours_entry_executor.py").read_text()
-    pred = 'if before == (session == "premarket") and after == (session == "afterhours"):'
+    # RFC-102: 相位配对改为"配对表"形式 ⇒ 两处仍须**逐字同式**, 且都从 `_session_event_pairs` 取表。
+    pred = 'if before == ("before" in phases) and after == ("after" in phases):'
     assert src.count(pred) == 2, "候选源与 earnings 门必须用同一条相位判据"
+    build = "allowed.setdefault(_shift_et_day(today, offset), set()).add(phase)"
+    assert src.count(build) == 2, "两处必须共用 _session_event_pairs 的配对表 (唯一真源)"
+    assert "def _session_event_pairs(session):" in src

@@ -176,6 +176,39 @@ SOURCE_WATCHLIST = os.getenv("EXT_ENTRY_SOURCE_WATCHLIST", "false").lower() == "
 #   任何一道闸** (价/动量/量/市值/成交额/分级/结构/费用/盘口/仓位帽全部照旧)。
 #   默认 false (扩容方向的安全侧); 开关与回滚点: `.env.us: EXT_ENTRY_SOURCE_CALENDAR`.
 SOURCE_CALENDAR = os.getenv("EXT_ENTRY_SOURCE_CALENDAR", "false").lower() == "true"
+
+
+# 盘前配对扩展 (2026-09-23, RFC-102; 用户裁「A」= 预注册后直接转正):
+#   实测 9/23 盘前: 只认「当日 BMO」事件, 而当日 BMO 的 actual 在盘前窗内**结构性不可得**
+#   (6 只事件票 5 只到 08:10 ET 仍 actual_missing; 唯一放行的 CBRL 也迟到至 08:10;
+#    交叉验第二源 Nasdaq 同日同票同样 eps=None)。而「昨日 AMC」票的 actual 次日早晨已入库
+#   (9/22 日历 8 行有 7 行 actual) ⇒ 把昨日 AMC 纳入盘前人群 (人群与数据可得性对齐)。
+#   默认 false ⇒ 生产行为 byte 级不变; 开 = `.env.us: EXT_ENTRY_PREMARKET_AMC_PAIRING=true`;
+#   回滚 = 改回 false (下一 tick 生效, 无需重启)。
+PREMARKET_AMC_PAIRING = os.getenv("EXT_ENTRY_PREMARKET_AMC_PAIRING", "false").lower() == "true"
+
+
+def _shift_et_day(day_str, offset):
+    """ET 日历日字符串 ± 天数 (不可解析 ⇒ 返回原值, fail-safe)。"""
+    try:
+        base = datetime.strptime(str(day_str)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return str(day_str)[:10]
+    return (base + timedelta(days=offset)).isoformat()
+
+
+def _session_event_pairs(session):
+    """session → 允许的 (日偏移, 相位) 列表 —— 相位配对的唯一真源。
+
+    日偏移: 0=当日, -1=前一日 (ET 日历日)。相位: "before"=BMO, "after"=AMC。
+    盘后仍只认当日 AMC (与线上一致); 盘前在开关开启时追加「昨日 AMC」。
+    """
+    if session == "premarket":
+        pairs = [(0, "before")]
+        if PREMARKET_AMC_PAIRING:
+            pairs.append((-1, "after"))
+        return pairs
+    return [(0, "after")]
 # Finnhub 日历候选源 (2026-09-23 供给归因第二源): 当日 Finnhub 日历中**同相位**票并入候选池。
 #   起因: 生产主源 (futu 原生日历) 7 日窗只覆盖 Finnhub 的 39% (实测 34 vs 87 只), 且
 #   `pub_type=REGULAR` 的票相位未标定 ⇒ 结构性缺席 (ET 9/23 最大 bmo 票 US.CTAS $79.7B 因此进不了池;
@@ -1380,9 +1413,10 @@ def _snapshot_candidates(session, qctx, symbols):
 def _calendar_symbols(session):
     """事件源: **当日同相位财报日历名单** → 候选代码 (2026-09-23 供给归因).
 
-    相位判据与 `_earnings_calendar_event` **逐字同式** ⇒ 本源入选者必然通过 earnings 门第①道
-    (当日同相位), 只在 ②Finnhub 最新一期 beat>0 / ③period 龄 上才可能被拒 —— 即"让合格票
-    有机会进闸", 而不是让不合格票进闸。
+    相位判据与 `_earnings_calendar_event` **逐字同式** (两处共用 `_session_event_pairs` 配对表,
+    由 `tests/test_ext_entry_calendar_source.py` 的源码契约钉住) ⇒ 本源入选者必然通过 earnings 门
+    第①道, 只在 ②beat 证明 / ③actual 可得性 上才可能被拒 —— 即"让合格票有机会进闸",
+    而不是让不合格票进闸。RFC-102 开配对后, 本源同时供给**昨日 AMC** 票 (盘前)。
 
     只读、无网络增量 (`_earnings_calendar_rows` 进程内已缓存, 与判定同源); 源故障时返回 []
     并打显式警告 (fail-open 跳过本源, 不影响异动榜等其他源)。
@@ -1392,12 +1426,16 @@ def _calendar_symbols(session):
         print(f"[ext_entry] 日历候选源不可用 (跳过本源, 其他源不受影响): {error}")
         return []
     today = _today_et()
+    allowed = {}
+    for offset, phase in _session_event_pairs(session):
+        allowed.setdefault(_shift_et_day(today, offset), set()).add(phase)
     out = []
     for row in rows:
-        if str(row.get("reportDate", "")) != today:
+        phases = allowed.get(str(row.get("reportDate", "")))
+        if not phases:
             continue
         before, after = _parse_earnings_phase(row)
-        if before == (session == "premarket") and after == (session == "afterhours"):
+        if before == ("before" in phases) and after == ("after" in phases):
             ticker = str(row.get("symbol", "")).upper()
             if ticker:
                 out.append(f"US.{ticker}")
@@ -1414,23 +1452,26 @@ def _finnhub_calendar_symbols(session):
 
     只读、零新增网络 (复用 `_finnhub_today_calendar` 的进程内缓存, 与判据②同源)。
     """
-    cal, error = _finnhub_today_calendar()
-    if not cal:
-        if error:
-            print(f"[ext_entry] Finnhub 日历候选源不可用 (跳过本源, 其他源不受影响): {error}")
-        return []
-    want = {"premarket": "bmo", "afterhours": "amc"}.get(session)
-    if not want:
-        return []
     today = _today_et()
     out = []
-    for tick, row in cal.items():
-        if str(row.get("hour") or "").strip().lower() != want:
+    pairs = _session_event_pairs(session)
+    if not pairs:
+        return []
+    for offset, phase in pairs:
+        day = _shift_et_day(today, offset)
+        want = "bmo" if phase == "before" else "amc"   # 相位→hour 映射由**配对相位**决定
+        cal, error = _finnhub_today_calendar(day)
+        if not cal:
+            if error:
+                print(f"[ext_entry] Finnhub 日历候选源不可用 (跳过本源, 其他源不受影响): {error}")
             continue
-        if str(row.get("date") or today) != today:   # 双保险 (端点已按当日查, 契约可能漂)
-            continue
-        if tick:
-            out.append(f"US.{tick}")
+        for tick, row in cal.items():
+            if str(row.get("hour") or "").strip().lower() != want:
+                continue
+            if str(row.get("date") or day) != day:   # 双保险 (端点已按该日查, 契约可能漂)
+                continue
+            if tick:
+                out.append(f"US.{tick}")
     return out
 
 
@@ -1752,25 +1793,32 @@ def _earnings_calendar_event(symbol, session):
       calendar_missing        — 今日日历无此票 (常态)
       calendar_phase_mismatch — 今日有财报但相位与本 session 不符
       calendar_phase_unknown  — 今日有财报但相位字段为空/不可识别 (数据源契约漂移的信号)
-    与旧版差异: 扫完所有 symbol+date 匹配行再定论 (旧版首行相位不符即拒, 不看后续行)。
+    配对表 (RFC-102): 由 `_session_event_pairs(session)` 唯一决定 —— 默认「当日同相位」
+    (盘前↔当日 BMO / 盘后↔当日 AMC); 开 `EXT_ENTRY_PREMARKET_AMC_PAIRING` 后, 盘前同时接受
+    **昨日 AMC** (其 actual 次日早晨已入库, 与盘前窗的数据可得性对齐)。
+    与旧版差异: 扫完所有 symbol+日期匹配行再定论 (旧版首行相位不符即拒, 不看后续行)。
     """
     rows, error = _earnings_calendar_rows()
     if error:
         return None, "calendar_source_error"
     today = _today_et()
     ticker = symbol.replace("US.", "").upper()
+    allowed = {}
+    for offset, phase in _session_event_pairs(session):
+        allowed.setdefault(_shift_et_day(today, offset), set()).add(phase)
     saw_mismatch = False
     saw_unknown = False
     for row in rows:
         if str(row.get("symbol", "")).upper() != ticker:
             continue
-        if str(row.get("reportDate", "")) != today:
+        phases = allowed.get(str(row.get("reportDate", "")))
+        if not phases:
             continue
         before, after = _parse_earnings_phase(row)
         if not before and not after:
             saw_unknown = True
             continue
-        if before == (session == "premarket") and after == (session == "afterhours"):
+        if before == ("before" in phases) and after == ("after" in phases):
             _EVENT_SRC_OBS["futu"].add(ticker)
             return row, None
         saw_mismatch = True
@@ -1789,20 +1837,31 @@ def _finnhub_event_fallback(ticker, session, today, futu_reason):
     相位非同窗 ⇒ mismatch; 相位缺失 (dmh/None) ⇒ unknown; 票不在 Finnhub 当日日历 ⇒ 保留 futu 原判
     (calendar_missing/unknown) —— 这样台账口径不变, 只是"少拦一部分"。
     """
-    cal, err = _finnhub_today_calendar()
-    if cal is None:
-        return None, "calendar_source_error"
-    row = cal.get(ticker)
-    if row is None:
-        return None, futu_reason
-    hour = str(row.get("hour") or "").strip().lower()
-    if hour not in ("bmo", "amc"):
+    unknown = False
+    mismatch = False
+    for offset, want in _session_event_pairs(session):
+        day = _shift_et_day(today, offset)
+        cal, err = _finnhub_today_calendar(day)
+        if cal is None:
+            return None, "calendar_source_error"
+        row = cal.get(ticker)
+        if row is None:
+            continue
+        hour = str(row.get("hour") or "").strip().lower()
+        if hour not in ("bmo", "amc"):
+            unknown = True
+            continue
+        if hour != ("bmo" if want == "before" else "amc"):
+            mismatch = True
+            continue
+        _EVENT_SRC_OBS["finnhub"].add(ticker)
+        return ({"symbol": ticker, "reportDate": day, "pub_type": hour.upper(), "_source": "finnhub",
+                 "timeOfTheDay": "pre-market" if hour == "bmo" else "post-market"}, None)
+    if unknown:
         return None, "calendar_phase_unknown"
-    if hour != ("bmo" if session == "premarket" else "amc"):
+    if mismatch:
         return None, "calendar_phase_mismatch"
-    _EVENT_SRC_OBS["finnhub"].add(ticker)
-    return ({"symbol": ticker, "reportDate": today, "pub_type": hour.upper(), "_source": "finnhub",
-             "timeOfTheDay": "pre-market" if hour == "bmo" else "post-market"}, None)
+    return None, futu_reason
 
 
 def _afterhours_earnings_expected():
@@ -1869,13 +1928,15 @@ def _earnings_surprise_legacy_finnhub(ticker):
 _FINNHUB_TODAY_CAL_CACHE = {}
 
 
-def _finnhub_today_calendar():
-    """当日 Finnhub 全市场财报日历 (per-process 缓存)。返回 (by_ticker|None, sub_reason|None)。
+def _finnhub_today_calendar(day=None):
+    """指定 ET 日历日的 Finnhub 全市场财报日历 (per-process, 按日缓存)。
 
-    一次调用覆盖当日全市场 (替代逐票 company_earnings 的新判据②数据源), cron 每 tick 新进程
+    返回 (by_ticker|None, sub_reason|None)。默认当日; 传 `day` 可读历史日 —— RFC-102:
+    盘前配对「昨日 AMC」时读昨日行取 actual (该日 actual 次日早晨通常已入库)。
+    一次调用覆盖该日全市场 (替代逐票 company_earnings 的新判据②数据源), cron 每 tick 新进程
     ⇒ 缓存天然按 tick 失效。源侧失败 fail-closed。
     """
-    today = _today_et()
+    today = day or _today_et()
     cached = _FINNHUB_TODAY_CAL_CACHE.get(today)
     if cached is not None:
         return cached
@@ -1898,12 +1959,13 @@ def _finnhub_today_calendar():
     return by_ticker, None
 
 
-def _earnings_surprise_calendar_actual(ticker):
-    """新判据② (2026-09-23 口径修正): 当日 Finnhub 日历行的 epsActual vs epsEstimate > 0。
+def _earnings_surprise_calendar_actual(ticker, day=None):
+    """新判据② (2026-09-23 口径修正): Finnhub 日历行的 epsActual vs epsEstimate > 0。
 
+    `day` = 事件的 reportDate (RFC-102: 昨日 AMC 事件读昨日行), 缺省当日。
     fail-close 三态 (DEB-20260923 §14.4): actual_missing / estimate_missing / estimate_zero。
     """
-    cal, err = _finnhub_today_calendar()
+    cal, err = _finnhub_today_calendar(day)
     if cal is None:
         return None, err
     row = cal.get(ticker)
@@ -1934,6 +1996,36 @@ def _earnings_surprise_calendar_actual(ticker):
     }, None
 
 
+def _actual_with_day_union(ticker, session, event_day):
+    """判据② 取 actual: **事件日优先, 配对表里的其它日期兜底** (RFC-102 §2.6)。
+
+    为什么需要: 源之间会对同一事件的**日期/相位**打架。实测 2026-09-23: futu 日历把 WOR 记成
+    "当日 BMO", 而 Finnhub(9/22 行) 与 Nasdaq(9/22 日历) **一致记为 9/22 AMC**
+    (actual 0.82 vs est 0.7575 ≈ +8.3%) ⇒ 老逻辑取"事件日=今日"的 actual 落空, 把一只
+    "+8% beat + 盘前 +19% 跳空" 的票读成 actual_missing 拦掉。取数日只在**配对表内**兜底
+    (默认单日 ⇒ 与旧行为 byte 级一致; 盘前开配对 ⇒ {今日, 昨日}), 命中日写入 `actual_day` 供审计。
+    返回 (res|None, reason) —— 与 `_earnings_surprise_calendar_actual` **同形**, 便于下游无缝替换;
+    命中时 `res["actual_day"]` = 真实取数日 (审计用)。reason 取**首个**失败原因 (事件日的最重要)。
+    """
+    days = []
+    for offset, _phase in _session_event_pairs(session):
+        day = _shift_et_day(_today_et(), offset)
+        if day not in days:
+            days.append(day)
+    if event_day and event_day not in days:
+        days.insert(0, event_day)
+    reason = None
+    for day in days:
+        res, sub = _earnings_surprise_calendar_actual(ticker, day)
+        if res is not None:
+            res["actual_day"] = day
+            res["event_date"] = event_day
+            return res, None
+        if reason is None:
+            reason = sub
+    return None, reason
+
+
 _EARNINGS_CRITERION_SHADOW_KEYS = None
 # 旧判据最近一次观测到的 period/龄 (即使被判 stale 也留读数, 供对照台账诊断"为什么被拦")。
 _LEGACY_PERIOD_OBS = {}
@@ -1943,7 +2035,8 @@ _LEGACY_PERIOD_OBS = {}
 _ENTRY_CTX_OBS = {}
 
 
-def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new, extra=None):
+def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new, extra=None,
+                                        event_date=None):
     """新旧判据②对照台账 (2026-09-23, 按 票-ET日 去重一行)。
 
     为什么需要: "旧判据在生产上误拦多少" 目前只有人群几何读数 (83.7% = 日历标签口径的**上界**),
@@ -1984,6 +2077,8 @@ def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new, extr
                 "new_pass": new_res is not None,
                 "new_reason": new_reason,
                 "legacy_blocked_new_pass": bool(legacy_res is None and new_res is not None),
+                "report_date": event_date,
+                "actual_day": (new_res or {}).get("actual_day"),
                 "new_surprise_pct": (new_res or {}).get("surprise_pct"),
                 "actual": (new_res or {}).get("actual"),
                 "estimate": (new_res or {}).get("estimate"),
@@ -2013,12 +2108,14 @@ def _earnings_surprise(symbol, session):
     if event is None:
         return None, calendar_reason
     ticker = symbol.replace("US.", "").upper()
+    # RFC-102: actual 一律取**事件所属日**的日历行 (昨日 AMC 的 actual 在昨日行里, 今日行没有)。
+    event_day = str(event.get("reportDate") or _today_et())
     if EARNINGS_CRITERION == "legacy_period":
         legacy = _earnings_surprise_legacy_finnhub(ticker)
         res, reason = legacy
-        new = _earnings_surprise_calendar_actual(ticker) if EARNINGS_CRITERION_SHADOW else (None, None)
+        new = _actual_with_day_union(ticker, session, event_day) if EARNINGS_CRITERION_SHADOW else (None, None)
     else:
-        new = _earnings_surprise_calendar_actual(ticker)
+        new = _actual_with_day_union(ticker, session, event_day)
         legacy = _earnings_surprise_legacy_finnhub(ticker) if EARNINGS_CRITERION_SHADOW else (None, None)
         res, reason = new
     if res is not None:
@@ -2026,7 +2123,8 @@ def _earnings_surprise(symbol, session):
         res.setdefault("report_phase", event.get("timeOfTheDay") or event.get("pub_type"))
     if EARNINGS_CRITERION_SHADOW:
         _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new,
-                                             extra=_ENTRY_CTX_OBS.get((symbol, session)))
+                                             extra=_ENTRY_CTX_OBS.get((symbol, session)),
+                                             event_date=event_day)
     return res, reason
 
 

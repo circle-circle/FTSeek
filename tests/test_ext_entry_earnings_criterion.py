@@ -160,8 +160,11 @@ def test_no_shadow_write_when_disabled(monkeypatch, tmp_path):
 executor = _load()
 
 
-def _fh_cal(monkeypatch, by_ticker):
-    monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda: (by_ticker, None))
+def _fh_cal(monkeypatch, by_ticker, by_day=None):
+    # RFC-102: `_finnhub_today_calendar(day=None)` 已按日参数化 ⇒ 桩必须接受 day 形参;
+    # 未给 by_day 时, 任何日期都返回同一份 (单日开关关闭时只有今日被查, 行为等价)。
+    monkeypatch.setattr(executor, "_finnhub_today_calendar",
+                        lambda day=None: ((by_day.get(day) if by_day else by_ticker), None))
     # 日期锚定 (与上方 _wire 用例同法): `_finnhub_calendar_symbols` 内部会实读
     # `_today_et()` 与行内 date 双保险比对 —— 不钉死则隔日跑即把"当日行"判成跨日行 (2026-09-23 实测 2 红)。
     monkeypatch.setattr(executor, "_today_et", lambda: TODAY)
@@ -187,7 +190,7 @@ def test_finnhub_source_skips_other_dates(monkeypatch):
 
 def test_finnhub_source_fails_open_on_error(monkeypatch, capsys):
     """源故障 ⇒ 跳过本源 (不影响其他源), 且留显式日志 (禁静默)。"""
-    monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda: (None, "finnhub_error"))
+    monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda day=None: (None, "finnhub_error"))
     assert executor._finnhub_calendar_symbols("premarket") == []
     assert "不可用" in capsys.readouterr().out
 
