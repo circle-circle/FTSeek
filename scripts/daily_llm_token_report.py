@@ -267,9 +267,73 @@ def _query_trunc_7d(conn: sqlite3.Connection, day: str) -> list:
     return sorted(out, key=lambda x: x["rate"], reverse=True)
 
 
+# 2026-09-24 (RFC-105): UE 思考预算**常驻**读数。原一次性 job `96c8e404f55a`
+#   (载体 ops/hermes/ue_truncation_readout.py, 9/18 21:45 跑完) `delivery_outcome=failed`
+#   且 repeat=1 已消耗 ⇒ 那次「改善/未改善」结论从未送达 (executions.db 实证), 验证链断。
+#   用户裁「并入每日 LLM 日报常驻一行, 不再依赖一次性 job」。
+#   ⚠ 判据与锚点与那次预注册**逐字相同** (改判据＝改尺子须用户裁):
+#     锚 = `reasoning_effort: high` 落库时刻 (commit 982895f21, CST 2026-09-18 15:51) 的保守整点;
+#     判定 n<3 样本不足 / 触顶率 <1/3 改善 / ≥1/2 未改善 / 其余临界;
+#     改前基线 = CST 9/15–9/18 15:51 glm-5.3 主调用 6/9 触顶 (llm_audit id 11686/11719/11721/
+#     11751/11779/11782 — 其中 11779/11782 为 24000 上限时代, 即「抬上限」单独无效).
+#   ⚠ created_at 是 **UTC** (CST-8): 该锚在 CST 口径 ≈ 9/19 00:00, 比修复时刻晚 8h ⇒ 偏保守
+#     (漏计 9/18 20:01/21:10 两次修复后干净调用), 与 ue_truncation_readout.py 同源不漂移
+#     (守卫: tests/test_daily_llm_token_report_ue_budget.py::test_anchor_matches_standalone_readout)。
+UE_BUDGET_ANCHOR = "2026-09-18 16:00:00"
+UE_FEATURE = "universe_expansion_reasoning"
+UE_BUDGET_BASELINE = "改前基线 6/9=67%"
+
+
+def _query_ue_budget(conn: sqlite3.Connection) -> dict:
+    """UE 修复后**累计**读数 (特征唯一大额 LLM 消费方, glm-5.3 强制思考).
+
+    口径 (2026-09-24, RFC-105):
+      · primary = glm 主调用; `downshift_retry` 行是同一轮的重试臂 ⇒ 单独计数不入分母
+        (否则一次触顶被记两次, 7 日截断率虚增 — 实测 5 行只对应 3 次事件);
+      · 兜底行 (非 glm 模型) 单独计数 —— 主模型触顶/失败后由 fallback 作答, 对下游不可见;
+      · 触顶 = error_msg 含 finish_reason=length; 延迟取主调用中位数 (触顶行延迟含烧穿预算, 更慢).
+    """
+    rows = conn.execute(
+        "SELECT model, tokens_out, latency_ms, success, COALESCE(error_msg,'') err "
+        "FROM llm_calls WHERE feature=? AND COALESCE(is_test,0)=0 AND created_at >= ?",
+        (UE_FEATURE, UE_BUDGET_ANCHOR),
+    ).fetchall()
+    b = {"n": 0, "trunc": 0, "fail": 0, "max_out": 0, "retry": 0, "fallback": 0,
+         "lat": [], "models": set()}
+    for model, tok, lat, ok, err in rows:
+        model = model or "?"
+        if "downshift_retry" in err:
+            b["retry"] += 1
+            continue
+        if "glm" not in model:
+            b["fallback"] += 1
+            continue
+        b["n"] += 1
+        b["models"].add(model)
+        b["trunc"] += 1 if "finish_reason=length" in err else 0
+        b["fail"] += 1 if not ok else 0
+        b["max_out"] = max(b["max_out"], int(tok or 0))
+        if ok and lat:
+            b["lat"].append(float(lat) / 1000.0)
+    b["lat"].sort()
+    b["p50_lat"] = b["lat"][len(b["lat"]) // 2] if b["lat"] else 0.0
+    b["models"] = sorted(b["models"])
+    b["rate"] = (b["trunc"] / b["n"]) if b["n"] else None
+    if b["n"] < 3:
+        b["verdict"] = "样本不足"
+    elif b["rate"] < 1 / 3:
+        b["verdict"] = "改善"
+    elif b["rate"] >= 1 / 2:
+        b["verdict"] = "未改善/证伪"
+    else:
+        b["verdict"] = "临界"
+    return b
+
+
 def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
                    da_direct: dict | None = None, da_prev: dict | None = None,
-                   shadow: dict | None = None, shadow_prev: dict | None = None) -> str:
+                   shadow: dict | None = None, shadow_prev: dict | None = None,
+                   ue_budget: dict | None = None) -> str:
     t = today["total"]
     calls = t["calls"]
     da = da_direct or {}
@@ -373,6 +437,20 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
             mark = " 🔴>5% 复核 max_tokens" if r["rate"] > 0.05 else ""
             lines.append(f"{r['feature']}: {r['trunc']}/{r['calls']} ({r['rate']*100:.1f}%){mark}")
 
+    # 2026-09-24 (RFC-105): 常驻一行 — 结论由本行实数推导, 不写死方向; 均值/率旁边永远带 n。
+    if ue_budget is not None:
+        lines.append("")
+        lines.append("── UE 思考预算 (glm-5.3 强制思考, 修复锚 9/18 起累计) ──")
+        ub = ue_budget
+        if ub["n"] == 0 and ub["fallback"] == 0 and ub["retry"] == 0:
+            lines.append("修复锚后无生产调用 — 扫描未跑或全为测试流量 (判定: 样本不足)")
+        else:
+            _rate = f"{ub['rate']*100:.0f}%" if ub["rate"] is not None else "n/a"
+            lines.append(
+                f"主调用 {ub['n']} 次 | 触顶 {ub['trunc']} ({_rate}) | 最大 out={ub['max_out']} | "
+                f"中位延迟 {ub['p50_lat']:.0f}s | 失败 {ub['fail']} | 兜底 {ub['fallback']} 次 | "
+                f"降档重试 {ub['retry']} 次 → 判定: {ub['verdict']} ({UE_BUDGET_BASELINE})")
+
     return "\n".join(lines)
 
 
@@ -392,6 +470,7 @@ def main(date=None, days_back=1, push=False, dry=False):
         today = _query_day(conn, target)
         prev = _query_day(conn, prev_day)
         trunc_7d = _query_trunc_7d(conn, target)
+        ue_budget = _query_ue_budget(conn)   # [RFC-105] UE 思考预算常驻读数 (累计, 非当日)
     finally:
         conn.close()
 
@@ -402,7 +481,8 @@ def main(date=None, days_back=1, push=False, dry=False):
     shadow = _query_shadow(target)
     shadow_prev = _query_shadow(prev_day)
 
-    msg = _build_message(today, prev, trunc_7d, da_direct, da_prev, shadow, shadow_prev)
+    msg = _build_message(today, prev, trunc_7d, da_direct, da_prev, shadow, shadow_prev,
+                         ue_budget)
     print("=" * 60)
     print(msg)
     print("=" * 60)
@@ -411,6 +491,7 @@ def main(date=None, days_back=1, push=False, dry=False):
     try:
         today["da_direct"] = da_direct
         today["shadow"] = shadow
+        today["ue_budget"] = ue_budget
         out = DATA / f"llm_token_daily_{target}.json"
         out.write_text(json.dumps(today, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[saved] {out}")
