@@ -119,6 +119,14 @@ EARNINGS_CRITERION_SHADOW = (
 ENTRY_CHG_BAND = (os.getenv("EXT_ENTRY_CHG_BAND", "") or "").strip()
 
 
+# 做空侧 (2026-09-23 RFC-099): 方向由**幅度**定, 不由财报好坏定 (118 条实测: 超预期幅度 vs
+#   报告日涨跌 r=-0.006; 超预期票当日仅 47% 上涨) ⇒ 空侧判据 = 跳空 ≥ SHORT_GAP_MIN。
+#   **不新开链路**: 同一执行器 / 同一闸链 / 同一落库 / 同一退出链 (`premarket_exit_shadow._dir_sign`
+#   早已支持 SHORT)。默认 false ⇒ 生产行为 byte 级不变; 开 = `.env.us: EXT_ENTRY_ALLOW_SHORT=true`。
+SHORT_ALLOW = os.getenv("EXT_ENTRY_ALLOW_SHORT", "false").lower() == "true"
+SHORT_GAP_MIN = float(os.getenv("EXT_ENTRY_SHORT_GAP_MIN", "3.0") or 3.0)
+
+
 def _entry_chg_ok(change_pct):
     """入场涨幅闸: 有 ENTRY_CHG_BAND ⇒ 带内通过; 无 ⇒ 旧口径 (>= ENTRY_CHANGE_PCT)。
 
@@ -2283,11 +2291,18 @@ def collect(session, dry=False):
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
                 }
+                # 方向 (RFC-099): LONG=现役温和带; SHORT=跳空 ≥ SHORT_GAP_MIN。
+                #   默认 OFF ⇒ _direction 恒为 LONG ⇒ 下行闸/计数语义 byte 级不变。
+                #   注: 上方观测 pass (2033~2262) 不动 —— 它只记观测台账, 不下单。
+                _direction = "SHORT" if (SHORT_ALLOW and change_pct >= SHORT_GAP_MIN) else "LONG"
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
-                if not _chg_ok or not _vol_ok:
+                if (_direction == "LONG" and not _chg_ok) or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                # 空侧**不**要求超预期为正 (RFC-099 §8 禁项 1: 禁 beat/miss 定方向); 幅度即判据。
+                if _direction == "LONG" and (
+                        not earnings or not earnings.get("surprise_pct")
+                        or earnings["surprise_pct"] <= 0):
                     earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
                     earnings_reason_counts[earnings_reason] = (
@@ -2381,8 +2396,10 @@ def collect(session, dry=False):
                 _save_state(state)
                 try:
                     result = _execute(
-                        symbol, qty, order_price, session, change_pct, volume, earnings, dry,
+                        symbol, qty, order_price, session, change_pct, volume,
+                        earnings or {}, dry,
                         position_usd=position_usd, grade=grade, structure=structure,
+                        side=_direction,
                     )
                     result["decision_price"] = price
                     result["pretrade"] = gate
@@ -2454,7 +2471,7 @@ def collect(session, dry=False):
 def _write_open_position(
     symbol, qty, entry_px, decision_px, session, earn, chg, vol,
     buy_order_id="", position_usd=None, grade="B", structure=None,
-    gate_mode="strict",
+    gate_mode="strict", side="LONG",
 ):
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
     返回 position_id. 幂等且不覆盖既有仓位.
@@ -2466,10 +2483,12 @@ def _write_open_position(
     try:
         now = _now_et().isoformat()
         pos_id = f"EXT-{uuid.uuid4().hex[:12]}"
-        init_sl = round(entry_px * (1 + STOP_PCT / 100), 2)  # 规则引擎盘中兜底读这个
+        # 空头 SL 在**上方** (STOP_PCT<0 ⇒ 取反), 否则盘中兜底会把空头当多头扫掉。
+        init_sl = round(entry_px * (1 + STOP_PCT / 100 * (1 if side == "LONG" else -1)), 2)
         meta = json.dumps({"session": session, "decision_px": decision_px,
                            "position_id": pos_id, "entry_order_id": buy_order_id,
-                           "earnings_surprise_pct": earn.get("surprise_pct"),
+                           "direction": side,
+                           "earnings_surprise_pct": (earn or {}).get("surprise_pct"),
                            "earnings_period": earn.get("period"),
                            "earnings_period_age_days": earn.get("period_age_days"),
                            "earnings_report_date": earn.get("report_date"),
@@ -2513,21 +2532,21 @@ def _write_open_position(
             " strategy_id, source, owner_strategy, owner, mode, account_type, trader_type, "
             " is_filled, version, updated_at, metadata_json, sync_status, "
             " initial_sl, current_sl, stop_loss_price) "
-            "VALUES (?, ?, 'LONG', ?, ?, ?, 'extended_hours_entry', 'extended_hours_entry', "
+            "VALUES (?, ?, ?, ?, ?, ?, 'extended_hours_entry', 'extended_hours_entry', "
             " 'extended_hours_entry', 'extended_hours_entry', 'normal', 'simulate', 'AUTO', 1, 1, ?, ?, 'pending', "
             " ?, ?, ?)",
-            (pos_id, symbol, qty, entry_px, now, now, meta, init_sl, init_sl, init_sl))
+            (pos_id, symbol, side, qty, entry_px, now, now, meta, init_sl, init_sl, init_sl))
         # P0-3 完整闭环: 写 trade_records — 盘中退出监控只读此表 (source_type PLAYBOOK_SIM 未平仓)
         conn.execute(
             "INSERT INTO trade_records (trade_date, symbol, direction, entry_time, entry_price, "
             " quantity, source_type, trade_mode, mode, owner_strategy, strategy_id, "
             " futu_order_id, metadata_json, created_at, exit_price, exit_time, config_version, "
             " entry_session) "
-            "VALUES (?, ?, 'LONG', ?, ?, ?, 'PLAYBOOK_SIM', 'simulate', 'futu_simulate', "
+            "VALUES (?, ?, ?, ?, ?, ?, 'PLAYBOOK_SIM', 'simulate', 'futu_simulate', "
             " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '', 'v2', ?)",
             # config_version='v2': 与规范写入方 app/storage/trade_store.py 一致。该表 schema 是
             # DEFAULT 'v1'，本列不写会落默认值 ⇒ W1 冻结窗出现版本分裂假象 (2026-09-18 F7 修复)。
-            (_today_et(), symbol, now, entry_px, qty, buy_order_id, meta, now, session))
+            (_today_et(), symbol, side, now, entry_px, qty, buy_order_id, meta, now, session))
         conn.commit()
         return pos_id
     finally:
@@ -2537,6 +2556,7 @@ def _write_open_position(
 def _execute(
     symbol, qty, price, session, chg, vol, earn, dry,
     position_usd=None, grade="B", structure=None, gate_mode="strict",
+    side="LONG",
 ):
     """SIM 真下单: 买入→等成交→写 open_positions(含 initial_sl 规则引擎兜底). 用户裁方案1.
     SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor.
@@ -2558,7 +2578,7 @@ def _execute(
         return {"ok": False, "skip": "real_not_authorized"}
 
     requested_position_usd = float(position_usd or POSITION_USD)
-    rec = {"symbol": symbol, "qty": qty, "price": price, "session": session,
+    rec = {"symbol": symbol, "qty": qty, "price": price, "session": session, "side": side,
            "change_pct": round(chg, 2), "volume": vol, "earnings": earn,
            "position_usd": requested_position_usd, "entry_grade": grade,
            "entry_structure": structure, "gate_mode": gate_mode}
@@ -2592,7 +2612,34 @@ def _execute(
             rec.update({"ok": False, "skip": "probe_mode", "symbol": symbol})
             _audit(rec)
             return rec
-        ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=TrdSide.BUY,
+        trd_side = TrdSide.BUY
+        if side == "SHORT":
+            # 券源逐票预检 (与 scripts/probe_eth_short_open.py 同一方法):
+            #   acctradinginfo_query.max_sell_short>=1 + get_margin_ratio.is_short_permit。
+            #   SHORT_ALLOW=false ⇒ 本段不可达, place_order 恒为 BUY (行为不变)。
+            if not SHORT_ALLOW:
+                rec.update({"ok": False, "skip": "short_not_enabled"})
+                _audit(rec)
+                return rec
+            try:
+                ret_ti, ti = tctx.acctradinginfo_query(
+                    order_type=OrderType.NORMAL, code=symbol, price=price,
+                    trd_env=env, acc_id=acc_id)
+                short_able = (int(ti.iloc[0].get("max_sell_short", 0))
+                              if ret_ti == RET_OK and not ti.empty else 0)
+                ret_mr, mr = tctx.get_margin_ratio([symbol])
+                permit = (bool(mr.iloc[0].get("is_short_permit"))
+                          if ret_mr == RET_OK and not mr.empty else False)
+            except Exception as exc:
+                short_able, permit = 0, False
+                rec["short_check_error"] = str(exc)[:100]
+            rec.update({"max_sell_short": short_able, "is_short_permit": permit})
+            if short_able < 1 or not permit:
+                rec.update({"ok": False, "skip": "short_borrow_unavailable"})
+                _audit(rec)
+                return rec
+            trd_side = TrdSide.SELL_SHORT
+        ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=trd_side,
                                      order_type=OrderType.NORMAL, trd_env=env, acc_id=acc_id,
                                      time_in_force=TimeInForce.DAY, session=Session.ETH, remark="ext_entry")
         if ret != RET_OK:
@@ -2627,7 +2674,7 @@ def _execute(
             pos_id = _write_open_position(
                 symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid,
                 position_usd=requested_position_usd, grade=grade, structure=structure,
-                gate_mode=gate_mode,
+                gate_mode=gate_mode, side=side,
             )
         except Exception as exc:
             rec["ok"] = False
@@ -2636,7 +2683,8 @@ def _execute(
             _audit(rec)
             return rec
         rec["position_id"] = pos_id
-        rec["initial_sl"] = round(fpx * (1 + STOP_PCT / 100), 2)
+        # 空头 SL 在**上方** (STOP_PCT 为负 ⇒ 取反); 退出链 _dir_sign 另行判向。
+        rec["initial_sl"] = round(fpx * (1 + STOP_PCT / 100 * (1 if side == "LONG" else -1)), 2)
         rec["ok"] = True
         _audit(rec)
         _push_filled(symbol, fqty, fpx, price, session, earn, chg, vol, rec, pos_id)

@@ -136,10 +136,10 @@ def _research_environment(monkeypatch, movers=None, earnings=None,
 
     def default_execute(symbol, qty, price, session, chg, vol, earn, dry,
                         position_usd=None, grade="B", structure=None,
-                        gate_mode="strict"):
+                        gate_mode="strict", side="LONG"):   # side: 2026-09-23 RFC-099
         executed.append({
             "symbol": symbol, "qty": qty, "price": price, "session": session,
-            "earn": earn, "grade": grade, "gate_mode": gate_mode,
+            "earn": earn, "grade": grade, "gate_mode": gate_mode, "side": side,
         })
         return {"ok": True, "buy_order_id": f"OID-{symbol}",
                 "filled_qty": qty, "avg_fill_price": price}

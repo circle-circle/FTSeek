@@ -43,7 +43,10 @@ CODE = _code_without_docstring(SRC)
 def test_earnings_eval_precedes_band_gate():
     """判据②评估在带/量闸之前 ⇒ 带外票也进对照台账 (样本不被带截断)。"""
     calls = [i for i, line in enumerate(SRC.splitlines()) if "earnings, earnings_reason = _earnings_surprise(" in line]
-    gates = [i for i, line in enumerate(SRC.splitlines()) if "if not _chg_ok or not _vol_ok:" in line]
+    # 闸判定行按语义匹配 (2026-09-23 RFC-099: 决策 pass 的闸带方向前缀
+    #   `if (_direction == "LONG" and not _chg_ok) or not _vol_ok:` ⇒ 字面量匹配会漏), 两处都必须钉住。
+    gates = [i for i, line in enumerate(SRC.splitlines())
+             if line.strip().startswith("if ") and "_chg_ok" in line and "_vol_ok" in line]
     assert len(calls) == 2 and len(gates) == 2, (len(calls), len(gates))
     for call, gate in zip(calls, gates):
         assert call < gate, "判据②评估必须早于带/量闸"
@@ -51,13 +54,11 @@ def test_earnings_eval_precedes_band_gate():
 
 def test_gate_count_semantics_unchanged():
     """带/量不达标仍计 momentum_volume (计数语义不变, 看板/测试解析不受影响)。"""
-    for line in SRC.splitlines():
-        if 'if not _chg_ok or not _vol_ok:' in line:
-            break
-    else:
-        raise AssertionError("闸判定行缺失")
-    idx = SRC.splitlines().index(line)
-    assert 'counts["momentum_volume"]' in SRC.splitlines()[idx + 1]
+    hits = [i for i, line in enumerate(SRC.splitlines())
+            if line.strip().startswith("if ") and "_chg_ok" in line and "_vol_ok" in line]
+    assert hits, "闸判定行缺失"
+    for idx in hits:                      # 两处 (观测 pass + 决策 pass) 计数语义都必须不变
+        assert 'counts["momentum_volume"]' in SRC.splitlines()[idx + 1], SRC.splitlines()[idx]
 
 
 def test_shadow_row_carries_entry_context(tmp_path, monkeypatch):
