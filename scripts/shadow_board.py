@@ -613,10 +613,61 @@ def _sec_rth_fade():
     return lines
 
 
+def _age_days(s):
+    try:
+        from datetime import date as _d
+        return (_d.fromisoformat(str(_today_et())[:10]) - _d.fromisoformat(str(s)[:10])).days
+    except Exception:
+        return None
+
+
+# ── 段13: 延长时段/空头族 融合批 (2026-09-23 用户裁「按建议实施执行」) ──
+def _sec_eth_short_family():
+    """把"同人群/同方向、且**生产者活着**"的几个影子并到一张卡上 (原本各自攒样、无人看)。
+
+    只融活的: 生产者已死的 (gap_semantics 26 天无写入; band_vol/entry_sync/stale_anchor/
+    stall_entry 同批 26 天; intraday_loss_breaker 无台账) **一律不融** —— 融死影子 =
+    让看板替僵尸背书 (本项目「生产者死消费者仍读」病灶), 已列清单待退役。
+    """
+    out = ["【延长时段/空头族 (融合批 · 均 record-only, 零下单)】"]
+    r = _read_jsonl(ROOT / "data" / "overnight_earnings_carry_shadow.jsonl")
+    if r:
+        last = r[-1]
+        s = last.get("summary") or {}
+        today = str(_today_et())[:10]
+        pk = max((x.get("summary", {}).get("n_passes_floors", 0)
+                  for x in r if x.get("et_date") == today), default=0)
+        out.append(f"  ① 隔夜财报carry [{last.get('session', '?')}] cohort {s.get('cohort', 0)} "
+                   f"报价 {s.get('quoted', 0)} 陈旧 {s.get('stale_quotes', 0)} | 今日过闸上界 {pk} "
+                   f"| 最近 {last.get('et_date')} {last.get('et_time')} ET")
+    else:
+        out.append("  ① 隔夜财报carry: (无样本)")
+    r = _read_jsonl(ROOT / "data" / "short_funnel_shadow.jsonl")
+    if r:
+        last = r[-1]
+        a = _age_days(last.get("date"))
+        out.append(f"  ② 空头漏斗 [{last.get('date')}] 分析 {last.get('analyzed_n')} 只 → 看空 "
+                   f"{last.get('rated_bearish_n')} → 空头指令 {last.get('short_instructions')} → "
+                   f"执行 {last.get('short_executed')} (闸阻塞提示 {last.get('gate_block_hints')})"
+                   + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
+    else:
+        out.append("  ② 空头漏斗: (无样本)")
+    r = _read_jsonl(ROOT / "data" / "ue_short_boost_shadow.jsonl")
+    if r:
+        days = sorted({x.get("date") for x in r})
+        a = _age_days(days[-1])
+        syms = ", ".join(x.get("symbol") for x in r if x.get("date") == days[-1])
+        out.append(f"  ③ UE空头增强 累计 {len(r)} 只/{len(days)} 日 | 最近 {days[-1]}: {syms}"
+                   + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
+    else:
+        out.append("  ③ UE空头增强: (无样本)")
+    return out
+
+
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit, _sec_rth_fade):
+    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit, _sec_rth_fade, _sec_eth_short_family):
         try:
             body += sec() + [""]
         except Exception as e:
