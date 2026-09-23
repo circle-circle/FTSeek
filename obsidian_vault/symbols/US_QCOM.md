@@ -3,10 +3,10 @@ type: "symbol"
 symbol: "US.QCOM"
 name: "高通"
 industry: "Semiconductors"
-latest_date: "2026-09-16"
-latest_direction: "BUY"
-latest_score: 8.0
-latest_rating: "看多"
+latest_date: "2026-09-22"
+latest_direction: "SKIP"
+latest_score: 5.0
+latest_rating: "观望"
 total_trades: 1
 win_rate: 1.0
 tags: [symbol, US]
@@ -55,6 +55,49 @@ AI算力需求向边缘与定制硅片延伸 → 高通携手亚马逊及Corneli
 
 ### 论据IC验证
 - 基于1899条历史信号alpha IC验证 (overall_t1=-0.0060)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ARM]]
+- [[US_ASML]]
+- [[US_AVGO]]
+- [[US_CRDO]]
+- [[US_INTC]]
+- [[US_LRCX]]
+- [[US_MRVL]]
+---
+
+## 2026-09-22 | 观望 | 信心低 | SKIP
+<!-- id:2026-09-22-dfa9 -->
+
+> LLM分析失败: LLM synthesis failed
+
+- **标的**:  (US.QCOM) | 现价: 0 | 评分: 5.0/10
+- **IC ID**: `DA-20260922203047-US.QCOM-dfa9`
+- **数据质量**: 数据源 18/19 (95%)
+
+### 看多论据
+- 无
+
+### 看空论据
+- 无
+
+### 交易计划
+- 入场: N/A
+- 止损: N/A
+- 止盈: N/A
+- 支撑: N/A | 阻力: N/A
+
+### 风险
+  - LLM不可用
+
+### 因果链
+N/A
+
+### 论据IC验证
+- IC缓存不可用
 
 ## 同行业 (Semiconductors)
 - [[US_ALAB]]

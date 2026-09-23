@@ -3,10 +3,10 @@ type: "symbol"
 symbol: "US.COIN"
 name: "Coinbase"
 industry: "Financial Services"
-latest_date: "2026-09-18"
-latest_direction: "SELL_SHORT"
-latest_score: 6.0
-latest_rating: "看空"
+latest_date: "2026-09-21"
+latest_direction: "SKIP"
+latest_score: 3.0
+latest_rating: "观望"
 total_trades: 7
 win_rate: 1.0
 tags: [symbol, US]
@@ -2503,6 +2503,56 @@ CLARITY Act参议院投票失败→加密监管清晰化预期落空叠加宏观
 
 ### 论据IC验证
 - 基于1947条历史信号alpha IC验证 (overall_t1=-0.0039)
+
+## 同行业 (Financial Services)
+- [[US_AFRM]]
+- [[US_BLK]]
+- [[US_BNY]]
+- [[US_BULL]]
+- [[US_BX]]
+- [[US_CHYM]]
+- [[US_CME]]
+- [[US_COF]]
+- [[US_ENVA]]
+- [[US_FUTU]]
+---
+
+## 2026-09-21 | 观望 | 信心中高 | SKIP
+<!-- id:2026-09-21-8d8d -->
+
+> 盘前+5.49%属SEC代币化与AI Agent利好的趋势延续，但信息已被价格充分反映，追高无增量edge，叠加TTM亏损(PE -50.19)与内部人净卖出(MSPR -60.16)，观望等回踩179.26分2批建仓
+
+- **标的**: Coinbase (US.COIN) | 现价: 204.905 | 评分: 3.0/10
+- **IC ID**: `DA-20260921202812-US.COIN-8d8d`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.03n=1281] 分析师共识看多与目标价上调提供下行阻力 (news)
+  2. [MEDIUM][IC=-0.03n=1281] AI Agent应用落地与代币化政策预期催化业务增量 (news)
+
+### 看空论据
+  1. [HIGH][IC=-0.00n=1015] 基本面持续亏损且估值显著高于行业中枢 (fundamental)
+  2. [HIGH][IC=+0.01n=902] 内部人持续净卖出显示管理层对当前估值缺乏信心 (sentiment)
+  3. [MEDIUM][IC=-0.03n=262] 监管法案受阻与营收下滑构成中期压制 (macro)
+
+### 交易计划
+- 入场: SKIP观望，右侧回补计划：等待回踩MA5(179.26)分2批低吸，禁止在204.90以上追涨
+- 止损: 170.0
+- 止盈: 224.0
+- 支撑: 194.25, 179.26, 165.73 | 阻力: 224.0, 240.0, 402.16
+
+### 风险
+  - 追高风险：盘前已大涨+5.49%，且历史大涨>5%后5日守成率仅41.9%，均涨幅-0.38%，短期回吐概率高
+  - 基本面亏损：TTM PE为-50.193，净利润率-15.72%，营收YoY -10.35%，盈利尚未企稳
+  - 监管不确定性：CLARITY Act参议院受阻，加密监管环境仍存变数
+  - [挑战者] 机会成本风险: 分析师bull_case未纳入Barron's『比特币为1月以来最高价』这一驱动层面事实, 若加密资产维持强势, 唯一的参与路径(回踩179.26)可能永不触发, SKIP
+  - [挑战者] 内部人数据强度存疑: MSPR=-60.16被列为HIGH强度bear_case, 但Finnhub内部人交易明细中Jones Jennifer N.(2026-08-24, price=
+
+### 因果链
+SEC代币化政策预期与AI Agent应用落地 → 盘前资金抢筹推升股价+5.49% → 利好被价格充分反映且基本面TTM亏损/内部人净卖出未改善 → 追高缺乏增量edge且面临历史高回吐率风险 → 观望等待回踩确认
+
+### 论据IC验证
+- 基于1973条历史信号alpha IC验证 (overall_t1=-0.0034)
 
 ## 同行业 (Financial Services)
 - [[US_AFRM]]
