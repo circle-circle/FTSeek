@@ -265,18 +265,30 @@ def _sec_universe_expansion():
         surf = sum(len(x.get("surfaced", [])) for x in c)
         uniq = len({r["symbol"] for x in c for r in x.get("surfaced", [])})
         s = [r for r in scs if _within(r.get("capture_date"), days)]
-        fwd = [z["fwd_pct"] for r in s for z in r.get("results", [])]
-        hit = [z["hit"] for r in s for z in r.get("results", [])]
-        part = f"capture={len(c)} 浮现{surf}人次/{uniq}只"
-        if hit:
-            # 2026-09-23 (用户裁「按建议执行」后续): 标注口径 —— ①窗口按 **capture_date** 取
-            #   (评分日窗口会多出 capture 更早但近 7 天才评分的样本: 7d 18 → 24 只), 与
-            #   report 子命令/人工复算的 "按 scored_on" 口径不同, 不标注会被当成算错;
-            #   ②命中率/前瞻**已按方向校正** (fwd = LONG 取原价, SHORT 取反向; 命中=前瞻≥1%),
-            #   SHORT 占比近半, 不标注会被读成"标的在跌"。
-            part += (f" | 命中率(按方向,前瞻≥1%){round(sum(hit)/len(hit),3)}"
-                     f" 平均前瞻{round(sum(fwd)/len(fwd),2):+}% [窗口按capture日]")
-        else:
+        # 2026-09-23 (用户裁「按建议执行」后续): horizon 拆批。8/26 有一次**一次性回填**
+        #   (26 个 capture 日, horizon 1..43 天, 207 只全混在同一个 scored_on) —— 与日常批
+        #   (horizon 1-3 天) 混算 = 把长窗走势当 1 日读数的证据。分开印, 不合并。
+        def _horizon(r):
+            try:
+                return (date.fromisoformat(str(r.get("scored_on"))[:10])
+                        - date.fromisoformat(str(r.get("capture_date"))[:10])).days
+            except Exception:
+                return None
+
+        def _agg(rows, label):
+            fwd = [z["fwd_pct"] for r in rows for z in r.get("results", [])]
+            hit = [z["hit"] for r in rows for z in r.get("results", [])]
+            if not hit:
+                return ""
+            return (f" {label}{len(hit)}只 命中率(按方向,前瞻≥1%){round(sum(hit)/len(hit),3)}"
+                    f" 平均前瞻{round(sum(fwd)/len(fwd),2):+}%")
+
+        daily = [r for r in s if (_horizon(r) is not None and _horizon(r) <= 3)]
+        batch = [r for r in s if not (_horizon(r) is not None and _horizon(r) <= 3)]
+        part = f"capture={len(c)} 浮现{surf}人次/{uniq}只 [窗口按capture日]"
+        part += _agg(daily, "日常批(≤3日)")
+        part += _agg(batch, "回填/长窗批(>3日)")
+        if not daily and not batch:
             part += " | 未评分(待 score)"
         return part
 
