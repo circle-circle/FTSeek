@@ -15,7 +15,7 @@
 | ③ | 段3 SL/TP **补印判据行** (sl_agree/tp_agree + \|分歧\| 中位) | 同上 `_sec_sltp()` | 展示 |
 | ④ | 段10 **结算环补挂 cron** + 结算面守卫行 + 写回防吞行 | crontab `2 6 * * 2-6` + `scripts/early_dead_signal_report.py` + 看板段10 | 数据面 |
 | ⑤ | 段11 毕业判据**按类计** (总量≥20 ∧ 每类≥8) + 类别计数上板 | `scripts/penetration_llm_analysis.py`(GRAD_MINORITY) + 看板段11 + 判据字典 B17 + 注册表 | **判据收紧** |
-| ⑥ | 段8 UE 扩池负 α 记录并案 | 本文件 §2.4 | 记录 |
+| ⑥ | 段8 UE 扩池 α 记录并案 (**已升级**: 8/26=回填批, 日常批 LONG 负 alpha) + `score` 行落 `horizon_days`/`batch` 字段 | 本文件 §2.4 + `scripts/universe_expansion_shadow.py` | 记录 |
 | ⑦ | 顺手清一个**存量真红**: `test_short_chase_shadow_scan_rows::test_backfilled_rows_have_required_fields` 断言"全部行 over_threshold=True" 与 9/18 落地的扫描行语义冲突 (扫描行按设计 `over_threshold=False`) ⇒ 文件里 9/18/9/21 各 1 行扫描行后恒红 | `tests/test_short_chase_shadow_scan_rows.py` | 测试修正 (不放松) |
 | ⑧ | 结算器加**现役词表并列读数** (只印不判 + 基率 + lift) | `scripts/early_dead_signal_report.py` | 展示 (判据不动) |
 | ⑨ | 看板段10 `or 99` 陷阱: `mfe_pct == 0.0` 被当缺失丢掉 (最死的一批恰是 0.0) ⇒ 命中数少算近半 (7d 5→10) | `scripts/shadow_board.py` | 修口径 |
@@ -154,6 +154,23 @@ cp high_atr_stall_shadow.orig.jsonl    ../../high_atr_stall_shadow.jsonl      # 
 
 ---
 
+### 3.1 驱动方定案 (2026-09-23 续查, 证据闭合 → 非服务缺陷)
+
+驱动方 = **agent 一次性回放脚本 (guardrail/baseline 双臂)**, 全部在 `/tmp` (仓外):
+
+| 时刻 CST | 文件 | 证据 |
+|---|---|---|
+| 02:32 | `/tmp/hermes_guardrail_prefetch.py` | `~/.hermes/logs/process-results/proc_*.json` 记 `jobs=57 ok=57`, 落 `data/replay_cache/hermes_guardrail/` (目录 mtime 02:32) |
+| 02:34 / 02:39 | `hermes_guardrail_replay{,2}.py` | 脚本 mtime + 头注 |
+| 05:48 | `hermes_baseline_prefetch.py` | `jobs=210 ok=210` → `data/replay_cache/hermes_baseline/` (mtime 05:48) |
+| 05:52 / 05:53 | `hermes_baseline_replay.py` / `hermes_guardrail_replay3.py` | 污染行窗口 14:35:11–17:53:46 ET 在此闭合 |
+
+机制 (verbatim): 脚本 `os.chdir("/opt/ftseek/FTSeek-US")` ⇒ exit_engine 内两处**相对路径**埋点解析到生产 `data/`;
+脚本**已封 2 个副作用** (`EX._overnight_eod_exempt`、`RTP.note_gate_swallowed_touch`) **但漏封两个影子埋点**;
+`entry_time_str="2026-01-01T09:36:00-04:00"` 是"合成仓位无真实入场时刻"的**占位字面量** (假日期+真小时) ⇒ 2814 行常量;
+脚本设了 `PYTEST_CURRENT_TEST` 想让写隔离生效, 但仓内隔离只在 `tests/conftest.py` (pytest 内) ⇒ 落空。
+⇒ 处置不变 (隔离已做), 复现风险 = 同类 agent 回放脚本, 归 §7①/⑥。
+
 ## 4. 判据①的真问题 = **词语表漂移**, 不是"结构性不可达" (2026-09-23 修正)
 
 对已结算命中行跑预注册三判据 (DEB-20260811 脚本头写死), 30min 命中 84 / 15min 命中 106:
@@ -212,12 +229,29 @@ cp high_atr_stall_shadow.orig.jsonl    ../../high_atr_stall_shadow.jsonl      # 
 
 | # | 事项 | 建议 |
 |---|------|------|
-| ① | 9/21 那批污染 (2814+209 行) 的**驱动方**未定位 (仓外双臂回放, 非服务非 pytest), 已隔离 | 若他 agent 认领 → 让其声明"离线回放"并走隔离缝; 否则建议给两个埋点加**在职写入闸** (需裁, 因触及 live 写入路径) |
+| ① | 9/21 污染驱动方 **已定案** = agent 双臂回放脚本 `/tmp/hermes_{guardrail,baseline}_replay*.py` (见 §3.1); 已隔离 | **待裁 = 是否加埋点写侧闸** (见 §7⑥ 的拟改法): 6 行, 认既有信号 `PYTEST_CURRENT_TEST`(非生产) + `FTSEEK_NO_SHADOW_WRITE=1` ⇒ 生产零行为变更 (活服务不设这两个变量), 下次同类回放写不进来 |
 | ② | DEB-20260811 判据① **词语表漂移** (§4): 预注册词表基率 30%→1.3%, 读数恒 0% | 复议: 固定"死信号+耐心出场"档 + 判据改**相对口径** `lift≥1.8× 且绝对率≥50%`, 再攒 15–20 命中后双窗复核; 复议前不得毕业 (但现在**不应**再按 0% 判定"影子无效") |
 | ③ | B17 毕业门收紧 (§5) 是否保留 | 默认保留 (只收紧); 若要恢复原判据, 一句话即可回滚 |
 | ④ | edge 门是否实装 | **数据不支持, 且证据已升级为"负预测力"** (§2.1 分桶复核: 实际笔均与 bucket 无单调关系, rank IC 两窗皆负 −0.396/−0.172) ⇒ 现门**不放开也不实装**; 若要做, 必须重新拟合 expectancy 模型并预注册 IC/单调性判据 |
 | ⑤ | UE 扩池侧 (§2.4 拆批后稳定读数) | **日常批 LONG 方向负 alpha (t −3.91/−3.28 双加权一致), SHORT 无 edge**; 最早的"负 α"与中段的"翻转"都是批次混装产物, 已作废。建议: ①**复核扩池 LONG 方向入池条件** (负 alpha 稳定, 不是样本噪声); ②`universe_expansion_shadow.py score` 加**回填批标记** (horizon>3 天写 `batch: backfill`) 防再混算; ③查 8/26 为何积压 26 个 capture 日未评分 (**已答**: crontab 第 100 行注释自述 "8/26 接电, 43 天积压根因 = 只挂 capture 未挂 score"; 残留 2026-09-22 未评分 = 评分环的同日守卫 `capture日 < 当日ET` 未到期, 非断裂); ④并案 UE 报价陈旧议题 (11 月重评) |
-| ⑥ | 两个埋点写侧防线 (`_EARLY_DEAD_SHADOW_PATH` 与 `_SP("data/high_atr_stall_shadow.jsonl")` 均按 cwd 解析相对路径 + 外层 `except: pass`) | 建议: 路径锚定 `__file__` + 写前在行级做"入口时间合理性"判 (缺/占位 → 不写并计数), 使同类污染下次**写不进来**; 需裁 (触 live 写入路径) |
+| ⑥ | 两个埋点写侧防线 (`_EARLY_DEAD_SHADOW_PATH` 与 `_SP("data/high_atr_stall_shadow.jsonl")` 均按 cwd 解析相对路径 + 外层 `except: pass`) | 建议: 路径锚定 `__file__` + 写前在行级做"入口时间合理性"判 (缺/占位 → 不写并计数), 使同类污染下次**写不进来**; 需裁 (触 live 写入路径)。
+
+**拟改 (待批, 6 行; 2026-09-23 证据升级后给出)**: `app/playbook/exit_engine.py` 两处影子写前加统一闸:
+
+```python
+def _shadow_writable() -> bool:
+    """非生产进程不得写生产影子 (9/3 pytest 事件 + 9/21 agent 回放事件)。
+    活服务 systemd 单元不设这两个变量 ⇒ 生产恒 True (零行为变更)。"""
+    if os.environ.get("FTSEEK_NO_SHADOW_WRITE", "").strip() in ("1", "true", "yes"):
+        return False
+    return not os.environ.get("PYTEST_CURRENT_TEST")
+
+# 两处 append 前: if _shadow_writable(): <原 append>  (else: 进程内只记一次日志)
+```
+
+**验收**: ①`grep -n "PYTEST_CURRENT_TEST\|FTSEEK_NO_SHADOW_WRITE" /etc/systemd/system/ftseek-us*.service` 为空 ⇒ 生产 no-op;
+②单测: 设 `PYTEST_CURRENT_TEST` 后调埋点 → 文件字节数不变; ③用 `/tmp/hermes_guardrail_replay3.py` 的头部
+(chdir + 两次 monkeypatch) 复跑一次 → 生产影子文件 0 新行。**回滚**: 删掉两次 `if` 即可。 |
 
 ---
 

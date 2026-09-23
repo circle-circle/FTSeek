@@ -45,6 +45,21 @@ _POOL_PATH = _ROOT / "data" / "daily_active_pool.json"
 STRONG_SECTOR_PCT = 1.0    # 板块 ETF 涨/跌 ≥ 此值 → 视为轮入/轮出
 MOVER_PCT = 2.0            # 成分股同向异动 ≥ 此值 → 浮现为候选
 HIT_PCT = 1.0             # 评分时: 前瞻收益 (按方向) ≥ 此值 → 记为命中
+BACKFILL_HORIZON_DAYS = 3  # 2026-09-23: horizon > 此值 → 记为回填/长窗批 (见 cmd_score 注释)
+
+
+def _horizon_days(scored_on, capture_date):
+    """(scored_on − capture_date).days; 解析失败 → None (2026-09-23: horizon 批次标记用)。"""
+    try:
+        return (datetime.strptime(str(scored_on)[:10], "%Y-%m-%d")
+                - datetime.strptime(str(capture_date)[:10], "%Y-%m-%d")).days
+    except Exception:
+        return None
+
+
+def _batch_of(horizon_days):
+    """horizon > BACKFILL_HORIZON_DAYS 或不可解析 → "backfill" (长窗/回填批), 否则 "daily"。"""
+    return "backfill" if (horizon_days is None or horizon_days > BACKFILL_HORIZON_DAYS) else "daily"
 MAX_SURFACED_PER_SECTOR = 6  # 每板块最多浮现数 (控制噪音)
 
 # ── 归因分类 (2026-07-14) ─────────────────────────────────────
@@ -327,19 +342,26 @@ def cmd_score() -> int:
                 "origin": r.get("origin"),
             })
         n = len(results)
+        # 2026-09-23 (用户裁「按建议执行」后续): horizon 批次标记。8/26 首启 score 时
+        #   一次性回填了 26 个 capture 日 (horizon 1..43 天, 207 只), 与日常批 (1-3 天)
+        #   混在同一文件里 → 下游按 scored_on 聚合会把长窗走势当 1 日读数 (实测把
+        #   LONG/SHORT 的方向结论整个翻转)。落字段使下游可切片, 不改任何既有字段。
+        _h = _horizon_days(today, cdate)
         summary = {
             "n": n,
             "hit_rate": round(hits / n, 3) if n else None,
             "avg_fwd_pct": round(sum(fwd_list) / len(fwd_list), 2) if fwd_list else None,
             "best": max(fwd_list) if fwd_list else None,
             "worst": min(fwd_list) if fwd_list else None,
+            "horizon_days": _h,
+            "batch": _batch_of(_h),
         }
         _append_jsonl({
             "type": "score", "capture_date": cdate, "scored_at": _now_et().isoformat(),
             "scored_on": today, "results": results, "summary": summary,
         })
-        print(f"[score] capture={cdate} 评分 {n} 标的 命中率="
-              f"{summary['hit_rate']} 平均前瞻={summary['avg_fwd_pct']}%")
+        print(f"[score] capture={cdate} horizon={_h}d batch={summary['batch']} "
+              f"评分 {n} 标的 命中率={summary['hit_rate']} 平均前瞻={summary['avg_fwd_pct']}%")
     return 0
 
 
@@ -383,7 +405,16 @@ def cmd_report(days: int = 30) -> int:
         sc = score_by_date.get(d)
         if sc and sc.get("summary", {}).get("n"):
             sm = sc["summary"]
-            line += f"  → 命中率{sm['hit_rate']} 平均{sm['avg_fwd_pct']:+}%"
+            # 2026-09-23: 标批次, 防把回填批的长窗读数当日常读数读。历史行无字段 ⇒ 由
+            #   (scored_on − capture_date) 现算, 避免老回填行被默认成 daily 骗人。
+            _hd = sm.get("horizon_days")
+            if _hd is None:
+                _hd = _horizon_days(sc.get("scored_on"), sc.get("capture_date"))
+            _batch = sm.get("batch") or _batch_of(_hd)
+            _tag = str(_batch) + (f",{_hd}d" if _hd is not None else "")
+            line += f"  → 命中率{sm['hit_rate']} 平均{sm['avg_fwd_pct']:+}% [{_tag}]"
+            if _batch == "backfill":
+                line += " ⚠回填批(混合horizon, 勿与日常批混算)"
         print(line)
         for r in surf[:8]:
             tag = ""
