@@ -16,6 +16,7 @@
 | ④ | 段10 **结算环补挂 cron** + 结算面守卫行 + 写回防吞行 | crontab `2 6 * * 2-6` + `scripts/early_dead_signal_report.py` + 看板段10 | 数据面 |
 | ⑤ | 段11 毕业判据**按类计** (总量≥20 ∧ 每类≥8) + 类别计数上板 | `scripts/penetration_llm_analysis.py`(GRAD_MINORITY) + 看板段11 + 判据字典 B17 + 注册表 | **判据收紧** |
 | ⑥ | 段8 UE 扩池负 α 记录并案 | 本文件 §2.4 | 记录 |
+| ⑦ | 顺手清一个**存量真红**: `test_short_chase_shadow_scan_rows::test_backfilled_rows_have_required_fields` 断言"全部行 over_threshold=True" 与 9/18 落地的扫描行语义冲突 (扫描行按设计 `over_threshold=False`) ⇒ 文件里 9/18/9/21 各 1 行扫描行后恒红 | `tests/test_short_chase_shadow_scan_rows.py` | 测试修正 (不放松) |
 
 **④ 的 cron 明细** (台账 §2.3 `crontab-early-dead-settle` 行, 已入账):
 ```
@@ -101,6 +102,7 @@
 - **零交易行为变更**: 未改 `app/` 交易路径 (唯一 `app/` 改动 = 注册表的**元数据字符串**), 未改 YAML/`.env`/LIVE/持仓, 未重启服务, 未加/改任何入场·退出·风控逻辑。新增 cron 是**只读结算器** (读 jsonl + 只读 DB, 写回仅 jsonl)。
 - **测试**: `test_control_loop_ledger` + `test_penetration_shadow` + `test_production_data_write_isolation` **46 passed**; `test_rfc073_dead_signal_overnight` + `test_patient_exit` + `test_shadow_mount_sentinel` + `test_shadow_tracker` + `test_shadow_intent_uniqueness` + `test_exit_path_replay` **182 passed**; `py_compile` 4 文件 OK; 看板实跑全段正常 (上方读数即实测输出)。
 - **回滚**: 展示类改动 = `git revert` 本提交; ④ = 删 crontab 三行 + 台账行 (数据保留); ⑤ = 见 §5。
+- **已知红 (不是我造成的, 如实留痕)**: `tests/test_extended_hours_entry_executor.py::test_earnings_near_miss_shadow_dedupes_by_day_session_symbol` 在**活仓**红、在 **worktree@HEAD 干净检出绿** (同 commit 同选择器实测 1 passed) ⇒ 差异来自活仓的 env/data 面 (`data/ext_entry_earnings_near_miss.lock` 等), 与本批 7 个文件无交集 (该 executor 最近改动 = DEB-20260920/RFC-097 他批)。另: `test_short_chase_*` 在裸 worktree 因缺 `data/` 自动 skip ⇒ 用裸 worktree 做基线对比时, 数据面断言会假绿 (等基对比的已知陷阱)。
 - **索引**: `docs/debates/README.md` 有并行会话未提交改动, **本批未触碰** (避纠缠), 待其入库后补索引行。
 
 ---

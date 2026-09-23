@@ -91,7 +91,12 @@ def test_registry_item_registered_axis_and_no_false_ready():
 
 
 def test_backfilled_rows_have_required_fields():
-    """存量行补字段: 121 行全部 over_threshold=True 且带 date (值未被改写)。"""
+    """存量行字段补齐且值未被改写: 每行要么是命中行 (over_threshold=True ∧ scan=False),
+    要么是扫描行对照臂 (over_threshold=False ∧ scan=True)。
+    2026-09-23 修: 原断言"全部行 over_threshold=True" 与 9/18 落地的扫描行语义冲突
+    (扫描行按设计落 over_threshold=False), 文件里 9/18/9/21 各 1 行扫描行 ⇒ 恒红。
+    改为一律按行内自洽判 (命中行被写成 over_threshold=False 或扫描行被当作命中行仍会红),
+    断言不放松。"""
     fp = REPO / "data" / "short_chase_ban_shadow.jsonl"
     if not fp.exists():
         pytest.skip("影子数据文件不存在 (测试环境)")
@@ -99,5 +104,6 @@ def test_backfilled_rows_have_required_fields():
     assert rows, "影子文件不应为空"
     for r in rows:
         assert r.get("date"), "date 字段缺失 (join 键修复回归)"
-        assert r["over_threshold"] is True, "存量行均为命中口径"
-        assert r["scan"] is False
+        assert r["over_threshold"] is (not r["scan"]), (
+            f"{r.get('symbol')} {r.get('date')} 行内口径自相矛盾: "
+            f"over_threshold={r['over_threshold']} scan={r['scan']}")
