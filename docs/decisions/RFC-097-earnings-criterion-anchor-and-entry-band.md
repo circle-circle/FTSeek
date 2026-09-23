@@ -143,6 +143,7 @@ echo 'EXT_EARNINGS_CRITERION_SHADOW=false' >> .env.us
 - 代码：`scripts/extended_hours_entry_executor.py`（+200/−29，判据② 四函数 + 涨幅带 helper + 对照台账）。
 - 测试：`tests/test_ext_entry_earnings_criterion.py`（10 例）。
 - 证据脚本：`scripts/verify_earnings_criterion.py`（判据层复算入库，补 DEB §14.1 的复现层缺口）。
-- 配置：`.env.us` 增 `EXT_ENTRY_CHG_BAND=0.5,2.0`（hook 拦 .env ⇒ `--no-verify`，已批）。
+- 配置：`.env.us` 增 `EXT_ENTRY_CHG_BAND=0.5,2.0`（**该文件被 .gitignore 忽略, 属运行时配置不入库**；
+  现值以 `.env.us` 为准, 变更留痕即本 RFC）。
 - 生效：cron `*/5` 延长时段 tick，下一 tick 起（无需重启）。
 - **未入库**：另一 agent 在 `docs/debates/DEB-20260923-*.md` / `README.md` 的未提交改动（本批一字未碰）。
