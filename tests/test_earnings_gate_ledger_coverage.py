@@ -47,6 +47,10 @@ def _arm(mod, tmp_path, monkeypatch, rows=CAL_ROWS, error=None):
     ledger = tmp_path / "earnings_gate_rejects.jsonl"
     monkeypatch.setattr(mod, "EARNINGS_GATE_REJECTS", ledger)
     monkeypatch.setattr(mod, "_earnings_calendar_rows", lambda: (rows, error))
+    # 日期锚定 (与 test_ext_entry_earnings_criterion._fh_cal 同法): CAL_ROWS 的"今日 5 行"
+    # 写死 2026-09-22, `_calendar_coverage` 内部实读 `_today_et()` 过滤今日行 ——
+    # 不钉死则隔日跑今日/非今日行互换 (2026-09-23 实测 2 红: 1 == 5)。
+    monkeypatch.setattr(mod, "_today_et", lambda: "2026-09-22")
     return ledger
 
 
