@@ -269,7 +269,13 @@ def _sec_universe_expansion():
         hit = [z["hit"] for r in s for z in r.get("results", [])]
         part = f"capture={len(c)} 浮现{surf}人次/{uniq}只"
         if hit:
-            part += f" | 命中率{round(sum(hit)/len(hit),3)} 平均前瞻{round(sum(fwd)/len(fwd),2):+}%"
+            # 2026-09-23 (用户裁「按建议执行」后续): 标注口径 —— ①窗口按 **capture_date** 取
+            #   (评分日窗口会多出 capture 更早但近 7 天才评分的样本: 7d 18 → 24 只), 与
+            #   report 子命令/人工复算的 "按 scored_on" 口径不同, 不标注会被当成算错;
+            #   ②命中率/前瞻**已按方向校正** (fwd = LONG 取原价, SHORT 取反向; 命中=前瞻≥1%),
+            #   SHORT 占比近半, 不标注会被读成"标的在跌"。
+            part += (f" | 命中率(按方向,前瞻≥1%){round(sum(hit)/len(hit),3)}"
+                     f" 平均前瞻{round(sum(fwd)/len(fwd),2):+}% [窗口按capture日]")
         else:
             part += " | 未评分(待 score)"
         return part
