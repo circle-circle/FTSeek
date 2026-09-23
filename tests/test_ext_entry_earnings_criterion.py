@@ -162,6 +162,9 @@ executor = _load()
 
 def _fh_cal(monkeypatch, by_ticker):
     monkeypatch.setattr(executor, "_finnhub_today_calendar", lambda: (by_ticker, None))
+    # 日期锚定 (与上方 _wire 用例同法): `_finnhub_calendar_symbols` 内部会实读
+    # `_today_et()` 与行内 date 双保险比对 —— 不钉死则隔日跑即把"当日行"判成跨日行 (2026-09-23 实测 2 红)。
+    monkeypatch.setattr(executor, "_today_et", lambda: TODAY)
 
 
 def test_finnhub_source_phase_mapping(monkeypatch):

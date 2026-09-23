@@ -168,7 +168,7 @@ def test_short_blocks_when_no_short_permit(tmp_path, monkeypatch):
 
 
 # ── ③ 开 + 券源过关 ⇒ 复用同一条下单/落库链, 只是方向不同 ─────────────────────
-def test_short_reuses_same_chain_with_sell_short(tmp_path, monkeypatch):
+def test_short_reuses_same_chain_with_sell(tmp_path, monkeypatch):
     mod = _load()
     ctx = FakeTradeContext(short_able=5, permit=True)
     opened = []
@@ -176,7 +176,8 @@ def test_short_reuses_same_chain_with_sell_short(tmp_path, monkeypatch):
     r = _exec(mod, side="SHORT")
     assert r.get("ok") is True, r
     o = ctx.orders[0]
-    assert o["trd_side"] == TrdSide.SELL_SHORT
+    # 富途下单入参只有 BUY/SELL (DEB-20260923 §4.3: SELL_SHORT 仅存在于查询/回报侧)
+    assert o["trd_side"] == TrdSide.SELL
     assert o["remark"] == "ext_entry"           # 与多侧同一命名空间 ⇒ 在途单门照旧保护
     assert o["session"] == Session.ETH
     assert o["qty"] == 10 and o["price"] == 100.0
@@ -206,6 +207,24 @@ def test_direction_comes_from_magnitude_not_surprise():
     assert "surprise_pct\"]] > 0 and" not in src.replace(" ", ""), "不得把 surprise 用于定方向"
 
 
+def test_short_requires_earnings_event_not_beat():
+    """RFC-099 §4: 财报定「有没有事件可交易」, 幅度定「做哪一边」。
+
+    空侧必须过**事件门**(同日同相位财报存在) —— +$75.80/笔 的证据人群是
+    "财报票 + 跳空≥3%", 不是任意异动票; 但不看 beat/miss (禁项 1)。
+    """
+    import inspect
+
+    mod = _load()
+    src = inspect.getsource(mod.collect)
+    assert 'if _direction == "SHORT":' in src, "空侧事件门缺失"
+    assert "_earnings_calendar_event(symbol, session)" in src, "空侧必须查事件门(判据①)"
+    # 事件门必须在空侧分支内生效, 且早于流动性/结构闸 (人群先定, 再谈执行质量)
+    short_gate = src.index('if _direction == "SHORT":')
+    event_call = src.index("_earnings_calendar_event(symbol, session)", short_gate)
+    assert event_call < src.index("_liquidity_quote", short_gate), "空侧事件门必须先于流动性闸"
+
+
 def test_inserts_are_direction_parameterized():
     """落库契约: 两处 INSERT 的 direction 必须是绑定参数, 不得再把 'LONG' 写死。"""
     mod = _load()
@@ -214,3 +233,94 @@ def test_inserts_are_direction_parameterized():
     src = inspect.getsource(mod._write_open_position)
     assert "'LONG', ?" not in src, "open_positions/trade_records 的 direction 仍写死"
     assert "side" in inspect.signature(mod._write_open_position).parameters
+
+
+# ── ⑤ dry 观测臂必须看到空侧人群 (2026-09-23 复查批 P1-1) ─────────────────────
+def _stub_dry(mod, monkeypatch, tmp_path, events, surprises):
+    """把 collect(dry=True) 的非方向依赖全部打桩, 只留方向/事件门逻辑被真正执行。
+
+    events:    {symbol: (event, reason)}  —— `_earnings_calendar_event` 的返回
+    surprises: {symbol: (earnings, reason)} —— `_earnings_surprise` 的返回
+    """
+    monkeypatch.setattr(mod, "SHORT_ALLOW", True)
+    monkeypatch.setattr(mod, "SHORT_GAP_MIN", 3.0)
+    monkeypatch.setattr(mod, "ENTRY_CHG_BAND", "")        # 钉空带, 防生产 0.5~2.0 漂移进断言
+    monkeypatch.setattr(mod, "ENTRY_CHANGE_PCT", 2.0)
+    monkeypatch.setattr(mod, "MIN_VOLUME", 100_000)
+    monkeypatch.setattr(mod, "RESEARCH_ARM_ON", False)
+    monkeypatch.setattr(mod, "_today_et", lambda: "2026-09-23")
+    monkeypatch.setattr(mod, "_is_trading_day", lambda: True)
+    monkeypatch.setattr(mod, "_in_session_window", lambda session: True)
+    monkeypatch.setattr(mod, "_held_symbols", lambda: [])
+    monkeypatch.setattr(mod, "_price_in_range", lambda px: True)
+    monkeypatch.setattr(mod, "PRICE_GATE_REJECTS", tmp_path / "price.jsonl")
+    monkeypatch.setattr(mod, "PRETRADE_GATE_REJECTS", tmp_path / "pretrade.jsonl")
+    monkeypatch.setattr(mod, "EARNINGS_GATE_REJECTS", tmp_path / "earnings.jsonl")
+    monkeypatch.setattr(mod, "EARNINGS_NEAR_MISSES", tmp_path / "nearmiss.jsonl")
+    monkeypatch.setattr(mod, "_scan_candidates", lambda session, qctx: [
+        {"symbol": "US.SHORTY", "px": 42.0, "chg": 5.0, "vol": 500_000.0},   # 跳空≥3 ⇒ SHORT
+        {"symbol": "US.LONGY", "px": 42.0, "chg": 2.5, "vol": 500_000.0},    # 带内 ⇒ LONG
+        {"symbol": "US.NOEVT", "px": 42.0, "chg": 4.0, "vol": 500_000.0},    # SHORT 但无事件 ⇒ 拒
+    ])
+    monkeypatch.setattr(mod, "_earnings_surprise", lambda s, sess: surprises[s])
+    monkeypatch.setattr(mod, "_earnings_calendar_event", lambda s, sess: events[s])
+    monkeypatch.setattr(mod, "_liquidity_quote",
+                        lambda qctx, s: {"market_cap": 5_000_000_000})
+    monkeypatch.setattr(mod, "_entry_grade", lambda px, vol, mc: ("A", None))
+    monkeypatch.setattr(mod, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(mod, "_pretrade_gate",
+                        lambda *a, **k: ({"order_price": a[0]}, None))
+    monkeypatch.setattr(mod, "_entry_structure_gate",
+                        lambda qctx, s, sess, px: ({"vwap": px}, None, {"vwap": px}))
+    monkeypatch.setattr(mod, "_print_gate_counts", lambda *a, **k: None)
+
+    class _Q:
+        def close(self):
+            pass
+
+    import futu
+    monkeypatch.setattr(futu, "OpenQuoteContext", lambda **kw: _Q())
+
+
+def test_dry_arm_sees_short_candidates(tmp_path, monkeypatch):
+    """dry 观测臂与 live 臂同人群: 空侧候选不得在观测面消失。
+
+    缺陷背景 (2026-09-23 复查批 P1-1): 生产 SHORT_ALLOW=true 后, dry 臂仍是纯 LONG
+    逻辑 —— miss+跳空≥3% 的票被 surprise_nonpositive 拒掉, 研究影子/日报/闸计数
+    空侧全盲, 违背「先可见再打磨优化」。
+    """
+    mod = _load()
+    _stub_dry(mod, monkeypatch, tmp_path,
+              events={"US.SHORTY": ({"symbol": "SHORTY", "phase": "bmo"}, None),
+                      "US.LONGY": ({"symbol": "LONGY", "phase": "bmo"}, None),
+                      "US.NOEVT": (None, "calendar_missing")},
+              surprises={"US.SHORTY": (None, "surprise_nonpositive"),   # miss 票: 空侧合法人群
+                         "US.LONGY": ({"surprise_pct": 10.0}, None),
+                         "US.NOEVT": (None, "surprise_nonpositive")})
+
+    results = mod.collect("premarket", dry=True)
+    by_symbol = {r["symbol"]: r for r in results if r.get("ok")}
+
+    assert "US.SHORTY" in by_symbol, f"空侧候选在 dry 臂消失: {results}"
+    assert by_symbol["US.SHORTY"]["direction"] == "SHORT"
+    assert by_symbol["US.SHORTY"]["dry"] is True
+    assert "US.LONGY" in by_symbol and by_symbol["US.LONGY"]["direction"] == "LONG"
+    assert "US.NOEVT" not in by_symbol, "无财报事件的空侧候选必须被事件门拒"
+
+
+def test_dry_arm_short_off_semantics_unchanged(tmp_path, monkeypatch):
+    """SHORT_ALLOW=false ⇒ dry 臂恒 LONG 语义 (miss+大跳空票照旧被 earnings 拒, 不入 results)。"""
+    mod = _load()
+    _stub_dry(mod, monkeypatch, tmp_path,
+              events={"US.SHORTY": ({"symbol": "SHORTY", "phase": "bmo"}, None),
+                      "US.LONGY": ({"symbol": "LONGY", "phase": "bmo"}, None),
+                      "US.NOEVT": (None, "calendar_missing")},
+              surprises={"US.SHORTY": (None, "surprise_nonpositive"),
+                         "US.LONGY": ({"surprise_pct": 10.0}, None),
+                         "US.NOEVT": (None, "surprise_nonpositive")})
+    monkeypatch.setattr(mod, "SHORT_ALLOW", False)
+
+    results = mod.collect("premarket", dry=True)
+    by_symbol = {r["symbol"]: r for r in results if r.get("ok")}
+    assert list(by_symbol) == ["US.LONGY"], by_symbol
+    assert by_symbol["US.LONGY"]["direction"] == "LONG"

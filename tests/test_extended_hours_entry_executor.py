@@ -78,6 +78,10 @@ def _chg_band_pinned_off(monkeypatch):
     fixture 票全挡掉而红)。涨幅带自身行为见 tests/test_ext_entry_observation_decoupling.py
     与 tests/test_ext_entry_earnings_criterion.py (那里显式钉带)。"""
     monkeypatch.setattr(executor, "ENTRY_CHG_BAND", "")
+    # 同因 (2026-09-23 空侧开启): fixture 票 chg=9% 在 SHORT_ALLOW=true 下会走空侧路径
+    # (事件门/SELL 下单), 与本文件的 LONG 语义断言冲突 ⇒ 钉回多侧。空侧行为见
+    # tests/test_ext_entry_short_arm.py (那里显式开)。
+    monkeypatch.setattr(executor, "SHORT_ALLOW", False)
 
 
 @pytest.fixture(autouse=True)

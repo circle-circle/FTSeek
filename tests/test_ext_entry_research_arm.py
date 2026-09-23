@@ -28,6 +28,9 @@ def _chg_band_pinned_off(monkeypatch):
     executor 模块 import 期读 env ⇒ 本文件用例按"旧阈值 chg>=2.0"语义写 (fixture 票 chg=6~9),
     必须显式钉空带, 否则生产配置漂移进断言 (实测不钉则 6 个用例红)。带自身行为另测。"""
     monkeypatch.setattr(executor, "ENTRY_CHG_BAND", "")
+    # 同因 (2026-09-23 空侧开启): fixture 票 chg=5~9% 在 SHORT_ALLOW=true 下会被
+    # 空侧事件门拦 (研究臂按 LONG 语义写) ⇒ 钉回多侧。空侧行为见 test_ext_entry_short_arm.py。
+    monkeypatch.setattr(executor, "SHORT_ALLOW", False)
 
 
 # ── 最小桩件 ──────────────────────────────────────────────────────────────────

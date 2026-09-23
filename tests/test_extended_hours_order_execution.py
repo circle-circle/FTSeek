@@ -105,6 +105,11 @@ def _research_arm_pinned_off(monkeypatch):
     executor import 期读 env ⇒ 本文件 (严格臂订单执行面) 显式钉关; 研究臂用例见
     tests/test_ext_entry_research_arm.py (自行钉开)。"""
     monkeypatch.setattr(entry_executor, "RESEARCH_ARM_ON", False)
+    # 同因 hermetic 钉 (2026-09-23 复查批): .env.us 已带 EXT_ENTRY_ALLOW_SHORT=true,
+    # executor import 期读 env ⇒ 本文件显式钉回多侧 —— 否则 chg≥3% 的 fixture 票
+    # (如 BIGCO +6.1%) 在 dry 观测臂被判 SHORT 方向, 触达未打桩的 `_earnings_calendar_event`
+    # 被事件门拒 (实测 KeyError: 'symbol')。空侧用例见 tests/test_ext_entry_short_arm.py。
+    monkeypatch.setattr(entry_executor, "SHORT_ALLOW", False)
 
 
 @pytest.fixture()
@@ -460,6 +465,10 @@ def test_scan_candidates_merges_sources_in_priority_order_and_dedupes(monkeypatc
     monkeypatch.setattr(entry_executor, "SOURCE_RANK_BOARD", True)
     monkeypatch.setattr(entry_executor, "SOURCE_BEAT_RANK", True)
     monkeypatch.setattr(entry_executor, "SOURCE_WATCHLIST", True)
+    # 隔离日历源 (2026-09-23 生产 .env.us 已开 calendar/finnhub_calendar 两源):
+    # 本用例只测合并器优先级/去重 —— 不关闸则真日历票(US.CBRL 等)漏进桩池, 隔日必红。
+    monkeypatch.setattr(entry_executor, "SOURCE_CALENDAR", False)
+    monkeypatch.setattr(entry_executor, "SOURCE_FINNHUB_CALENDAR", False)
     monkeypatch.setattr(entry_executor, "_scan_movers", lambda s, q: [
         {"symbol": "US.A", "px": 10.0, "chg": 3.0, "vol": 3e5, "prev_close": 9.7}])
     monkeypatch.setattr(entry_executor, "_beat_rank_symbols", lambda q: ["US.B", "US.A"])
@@ -550,6 +559,15 @@ def test_collect_dry_records_penny_candidates_blocked_by_price_gate(tmp_path, mo
     monkeypatch.setattr(entry_executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(entry_executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(entry_executor, "_held_symbols", lambda: [])
+    # 同上: 生产 .env.us 开了日历双源 ⇒ 不关闸则真财报票绕过 _scan_movers 桩直灌候选
+    # (实测 Finnhub 4 只 + 静态日历 5 只, 且其中部分行缺 symbol 键致断言 KeyError)。
+    monkeypatch.setattr(entry_executor, "SOURCE_CALENDAR", False)
+    monkeypatch.setattr(entry_executor, "SOURCE_FINNHUB_CALENDAR", False)
+    # 同因第三处: 生产 .env.us 现设 EXT_ENTRY_CHG_BAND=0.5,2.0 ⇒ BIGCO(+6.10%) 会落带外
+    # 被 momentum_volume 拒 (ordered=0)。本用例锚的是"仙股被价格闸挡、正常票进执行",
+    # 与涨幅带无关 ⇒ 钉回旧下限口径 (空带 → ≥ ENTRY_CHANGE_PCT)。
+    monkeypatch.setattr(entry_executor, "ENTRY_CHG_BAND", "")
+    monkeypatch.setattr(entry_executor, "ENTRY_CHANGE_PCT", 2.0)
     monkeypatch.setattr(entry_executor, "_scan_movers", lambda session, qctx: [
         {"symbol": "US.CTNT", "px": 0.073, "chg": 75.06, "vol": 22167799.0},
         {"symbol": "US.GIPR", "px": 0.435, "chg": 19.75, "vol": 318404.0},

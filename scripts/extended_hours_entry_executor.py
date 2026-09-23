@@ -2057,11 +2057,35 @@ def collect(session, dry=False):
                     "change_pct": round(change_pct, 2), "volume": volume,
                     "in_band": bool(_chg_ok), "vol_ok": bool(_vol_ok),
                 }
+                # 方向判定与 live 臂同步 (RFC-099, 2026-09-23 复查批 P1-1): 生产已开
+                # SHORT_ALLOW ⇒ dry 观测臂必须看到同一人群, 否则研究影子/日报/闸计数
+                # 的空侧全盲 (违背「先可见再打磨优化」)。默认 OFF ⇒ 恒 LONG ⇒ 语义不变。
+                _direction = "SHORT" if (SHORT_ALLOW and change_pct >= SHORT_GAP_MIN) else "LONG"
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
-                if not _chg_ok or not _vol_ok:
+                if (_direction == "LONG" and not _chg_ok) or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                if not earnings or not earnings.get("surprise_pct") or earnings["surprise_pct"] <= 0:
+                # 空侧事件门 (与 live 臂同一口径): 财报事件必须存在, 不看 beat/miss。
+                if _direction == "SHORT":
+                    event, event_reason = _earnings_calendar_event(symbol, session)
+                    if event is None:
+                        earnings_reason = event_reason or earnings_reason or "calendar_missing"
+                        counts["earnings"] = counts.get("earnings", 0) + 1
+                        earnings_reason_counts[earnings_reason] = (
+                            earnings_reason_counts.get(earnings_reason, 0) + 1
+                        )
+                        if earnings_reason != "calendar_missing":
+                            earnings_reject_details.append({
+                                "symbol": symbol,
+                                "sub_reason": earnings_reason,
+                                "price": price,
+                                "change_pct": round(change_pct, 2),
+                                "volume": volume,
+                            })
+                        continue
+                if _direction == "LONG" and (
+                        not earnings or not earnings.get("surprise_pct")
+                        or earnings["surprise_pct"] <= 0):
                     earnings_reason = earnings_reason or "surprise_nonpositive"
                     counts["earnings"] = counts.get("earnings", 0) + 1
                     earnings_reason_counts[earnings_reason] = (
@@ -2154,6 +2178,9 @@ def collect(session, dry=False):
                     "position_usd": position_usd, "grade": grade,
                     "structure": structure,
                     "pretrade": gate,
+                    # 观测面方向标 (2026-09-23 复查批): dry 台账按方向可分列,
+                    # 空侧候选不再与多侧混在同一个 "ordered" 里无法归因。
+                    "direction": _direction,
                 })
             # 研究臂 dry 通道: 严格臂候选列完后补列 (无配额模拟, 与严格臂 dry 对称)。
             if research_pool:
@@ -2299,7 +2326,26 @@ def collect(session, dry=False):
                 if (_direction == "LONG" and not _chg_ok) or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
                     continue
-                # 空侧**不**要求超预期为正 (RFC-099 §8 禁项 1: 禁 beat/miss 定方向); 幅度即判据。
+                # 空侧 (RFC-099 §4/§8): 财报**事件**必须存在 —— "财报定有没有事件可交易,
+                # 幅度定做哪一边" ⇒ 证据人群 = 财报票 + 跳空≥3%, 不是任意异动票;
+                # 但不看 beat/miss (禁项 1: 财报好坏不得定方向)。
+                if _direction == "SHORT":
+                    event, event_reason = _earnings_calendar_event(symbol, session)
+                    if event is None:
+                        earnings_reason = event_reason or earnings_reason or "calendar_missing"
+                        counts["earnings"] = counts.get("earnings", 0) + 1
+                        earnings_reason_counts[earnings_reason] = (
+                            earnings_reason_counts.get(earnings_reason, 0) + 1
+                        )
+                        if earnings_reason != "calendar_missing":
+                            earnings_reject_details.append({
+                                "symbol": symbol,
+                                "sub_reason": earnings_reason,
+                                "price": price,
+                                "change_pct": round(change_pct, 2),
+                                "volume": volume,
+                            })
+                        continue
                 if _direction == "LONG" and (
                         not earnings or not earnings.get("surprise_pct")
                         or earnings["surprise_pct"] <= 0):
@@ -2638,7 +2684,9 @@ def _execute(
                 rec.update({"ok": False, "skip": "short_borrow_unavailable"})
                 _audit(rec)
                 return rec
-            trd_side = TrdSide.SELL_SHORT
+            # 富途官方语义: 下单入参只有 BUY/SELL; SELL_SHORT/BUY_BACK 只出现在
+            # 查询/回报侧 (DEB-20260923 §4.3)。开空 = SELL, 平空 = BUY (exit_lifecycle 已如此)。
+            trd_side = TrdSide.SELL
         ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=trd_side,
                                      order_type=OrderType.NORMAL, trd_env=env, acc_id=acc_id,
                                      time_in_force=TimeInForce.DAY, session=Session.ETH, remark="ext_entry")
