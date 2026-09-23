@@ -209,3 +209,74 @@
 - 待第二代理复查重点：① E 的"输出等价"论证是否成立（门链实读）；② A 的失效判据（榜单 chg 跳变阈值）是否够灵敏；③ 是否遗漏"榜票在其它方向/未来规则下的价值"。
 
 ### 第 2 轮（待）
+---
+
+## 10. 定稿方案（用户令「彻底一次性的修复，基于已有的框架能力，避免重复造轮子」）
+
+### 10.1 先列"已有的轮子"（复用它，不新写）
+
+| 既有能力 | 位置 | 本次修复用在哪 |
+| --- | --- | --- |
+| `atomic_write_json` / `atomic_write_text` / `atomic_read_with_mtime` | `app/utils/atomic_write.py` | 所有跨轮状态落盘（**禁止**再手写 open+write） |
+| `ShadowItem` + `refresh_counts()` + `check_mounting()`（声明式影子注册 + 停摆/挂载核对） | `app/playbook/shadow_registry.py` | 新增观测项与**毕业判据的声明式注册**；⚠️ 实测 ETH 链现有 4 个台账（rth_fade / earnings_direction_path / ext_entry_prefilter / eth_short_probe）**一个都没注册** ⇒ 顺手补齐，停摆守卫由框架统一提供 |
+| `data/loops/<name>/` + `LOOP_DONE` 语义 + fcntl 独占 | `scripts/meta_audit_loop.py` 既定约定（`data/loops/` 已存在） | 跨轮状态目录 `data/loops/ext_entry_scan/` |
+| 载体模式：`flock` + `subprocess` + 超时链 + `get_extended_hours_session` 会话门控 | `scripts/extended_hours_exit_cron.py`（+ skill `scheduled-chain-carrier-migration`） | 阶段二载体改造（省连接）时照抄，不新造调度器 |
+| 事件池并源助手 `_calendar_symbols` / `_finnhub_calendar_symbols` | `scripts/extended_hours_entry_executor.py`（已存在） | 直接作为"资格集合"（L1 的输入） |
+| `pre_market_ranker.get_top_candidates(watchlist, max_count)` + `data/kline_cache` | `app/signals/pre_market_ranker.py` | 事件池内的排序与取数（不新写排序器） |
+| `TradingMode` / `get_extended_hours_session` / `extended_hours_market_session` | `app/core/trading_mode.py` / `scripts/` | 环境与时段判定（已用，保持不变） |
+
+### 10.2 三层 + 一层（同批做 L1+L2+L3；L4 单独立项）
+
+**L1 人群 —— 资格审查倒推（qualified-first）**
+- 候选组织改为：**事件池（既有并源，实测 5–6 只/日）→ 逐票取数 → 评估**；榜单**保留拉取与落账但不进逐票评估**（只喂 prefilter 影子 + 新增一行"事件池外但过价格闸的票数"）。
+- 事件池内排序复用 `pre_market_ranker.get_top_candidates(pool, max_count)`。
+- 开关 `EXT_SCAN_QUALIFIED_FIRST`（默认 **false** = 现行行为），一行回滚。
+- 预期：每轮逐票评估 42 → 5–6（**−86%**）；**输出等价**（"当日同相位事件存在"是门链必要条件，§1-d 实读）。
+
+**L2 状态 —— 跨轮缓存（`atomic_write_json` + `data/loops/ext_entry_scan/state.json`）**
+- 结构：`{et_date, session, event_pool:{symbols[], ts}, symbol_state:{sym: {verdict_class, reason, snapshot{px,chg,vol}, next_check_at}}}`。
+- 类别与 TTL（按"输入可变性"定，不自造）：
+
+| 类别 | TTL / 失效 | 依据 |
+| --- | --- | --- |
+| 结构性（价格远低 / 市值远低 / 无当日事件） | 整段 session；榜单或事件池行 px/chg/vol 跳变即重评 | 实测这批票最高价 100% <$5 |
+| 单调类（量 / 换手不足） | `next_check_at` **由差额反推**（`max(5min, (门槛−当前量)/上轮增量速率)`） | 量只增不减 ⇒ 到期必看，不是拍 TTL |
+| fail-close（`actual_missing` 等） | **10 分钟** | 防把"数据迟到"钉成"永久拒绝"（C3） |
+| 其它（带内/价差/深度） | 不缓存 | 输入每轮都变 |
+
+- 写盘用 `atomic_write_json`；读失败/损坏 ⇒ 忽略缓存走现行为（C5）。
+- 开关 `EXT_SCAN_STATE_CACHE`（默认 false）。
+- 预期：评估次数 11,698 → ~2,000/5 日（**−83%**）；叠加 L1 后主要是"事件池自身的重复"。
+
+**L3 观测与毕业 —— 注册进 `shadow_registry`**
+- 把 ETH 链的 4 个既有台账 + 本次"扫描效率"读数注册为 `ShadowItem`（填 `data_path` / `min_n` / `graduation_criteria` / `eval_script`，指向既有裁定器 `rth_fade_graduation_check.py` 等），**停摆守卫改由框架 `check_mounting()` 承担**（现在靠各脚本自己写"记录器停摆"段）。
+- 新增读数仍走**独立打印行**（闸计数主行契约不动，C6）。
+- 预期：一次修掉"影子没注册、停摆无人知、毕业判据散落"的欠账。
+
+**L4 载体（单独立项，不同批）**
+- 复用 `extended_hours_exit_cron.py` 的载体模式（flock + 子进程 + 超时链 + 会话门控），把入场链并入分钟级常驻载体 ⇒ **连接 113 次/日 → 1 次**，进程内缓存直接生效。
+- **为什么不同批**：L1–L3 改的是"看谁/记什么"（行为等价可证），L4 改的是**调度载体**（进程模型变了，故障面与归因面都变）—— 按"一次只改一个变量"分开，否则出问题时无法归因。
+
+### 10.3 验证（必须全过才允许开；对应 §3 硬约束）
+
+| # | 项 | 判据 |
+| --- | --- | --- |
+| V1 | 同轮 A/B（L1/L2 各自开关） | 闸计数逐键相等、`ordered` 相等 |
+| V2 | 跳过台账 | 每轮独立行：跳过 N（按类别）/ 失效重评 K / 节省调用 M |
+| V3 | 漏票反事实 | 跳过集合的"最终资格"逐日对账 = 0 例（结构性类别成立）；单调类看 `next_check_at` 是否按期回看 |
+| V4 | 故障注入 | state 损坏 / 不可写 ⇒ 评估数回升到现水平，**不得少评估** |
+| V5 | 观测契约 | 闸计数主行、研究臂细分行、价格闸台账逐字不变；新读数独立行 |
+| V6 | 7 日复算 | 同一脚本复算重复倍数：**~10x → ≤2x**；registry `refresh_counts()` 无停摆告警 |
+
+### 10.4 工作量与落地顺序（同批一个变更目标）
+
+| 步 | 内容 | 规模 |
+| --- | --- | --- |
+| 1 | RFC-101 预注册（开关、判据、回滚、复核日） | 1 文档 |
+| 2 | L2 状态模块 `scripts/ext_entry_scan_state.py`（用 `atomic_write_json`）+ 用例 | ~120 行 + ~10 例 |
+| 3 | L1 执行器候选组织改造（保留榜单落账、新增一行计数） | ~60 行改 + ~8 例 |
+| 4 | L3 registry 注册 5 项 + 指向既有裁定器 | ~40 行 |
+| 5 | 同轮 A/B + 故障注入 + 11 套件回归 | 验证 |
+| 6 | L4 载体（另立 RFC / 复用载体迁移技能） | 单独立项 |
+
+**回滚**：`EXT_SCAN_QUALIFIED_FIRST=false` + `EXT_SCAN_STATE_CACHE=false`（两个词，下一 tick 生效）+ 删 `data/loops/ext_entry_scan/`（无残留副作用）。

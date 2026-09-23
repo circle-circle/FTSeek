@@ -337,7 +337,7 @@
 | [DEB-20260921-factor-weight-verdict-reconciliation](DEB-20260921-factor-weight-verdict-reconciliation.md) | 2026-09-21 | 对账已实测 (本文件) · 只读告警已上线 (job `241c896213eb`) · **权重处置待裁 (本批一分未改) | - | 356 |
 | [DEB-20260921-playbook-open-position-cap](DEB-20260921-playbook-open-position-cap.md) | 2026-09-21 | (未标注) | - | 102 |
 | [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 245 |
-| [DEB-20260923-eth-scan-efficiency](DEB-20260923-eth-scan-efficiency.md) | 2026-09-23 | 进行中 / **待决策**（本文只出方案与实证，不落地） | 2 | 211 |
+| [DEB-20260923-eth-scan-efficiency](DEB-20260923-eth-scan-efficiency.md) | 2026-09-23 | 进行中 / **待决策**（本文只出方案与实证，不落地） | 2 | 283 |
 | [DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility](DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility.md) | 2026-09-23 | 调研与回放完成，**未改动任何交易逻辑**；候选方案 A/B/C 待用户裁决（§6 / §10）；独立复核分析与裁决建议见 **§12**（2026-09-23 追加）；第三轮实证复核 + 生产活例见 **§13**（2026-09-23 追加）；第四轮独立复算 + 实现语义钉死见 **§14**（2026-09-23… | - | 401 |
 | [DEB-20260923-shadow-board-caliber-fixes](DEB-20260923-shadow-board-caliber-fixes.md) | 2026-09-23 | (未标注) | - | 362 |
 | [DEB-20260923-ue-long-cut-replay](DEB-20260923-ue-long-cut-replay.md) | 2026-09-23 | (未标注) | - | 72 |
