@@ -46,6 +46,12 @@ class _FakeCfgSlipZero:
     def get(self, key, default=None):
         if key == "breakeven_slip_cushion_pct":
             return 0.0
+        # adaptive_trailing_enabled (生产 2026-09 开启, drawdown 0.8→0.4%)
+        # 收紧 effective_sl 到 100.596 > current 100.5 → SL_TRAIL_LOCK 先于影子
+        # 锚触发, 破坏本测试的价格带假设. 本契约测的是影子C记录逻辑, 不是
+        # trailing stop 参数, 关掉 adaptive 保留原语义 (与 slip=0 同理).
+        if key == "adaptive_trailing_enabled":
+            return False
         return self._real.get(key, default)
 
     def get_horizon_top(self, key, default=None):

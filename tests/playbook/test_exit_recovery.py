@@ -138,7 +138,8 @@ def recovery(entry_env, tmp_path, monkeypatch):
                 futu_order_id TEXT, decision_id TEXT, exit_price REAL, exit_time TEXT,
                 exit_reason TEXT, realized_pnl REAL, pnl_pct REAL, holding_hours REAL,
                 close_futu_order_id TEXT, mfe_pct REAL, mae_pct REAL, max_drawdown REAL,
-                fees_est REAL, pnl_net REAL, fees_source TEXT);
+                fees_est REAL, pnl_net REAL, fees_source TEXT,
+                trade_date TEXT, trade_mode TEXT DEFAULT 'simulate');
             CREATE TABLE playbook_instructions (
                 id INTEGER PRIMARY KEY, outcome TEXT, exit_price REAL, exit_time TEXT,
                 exit_reason TEXT, pnl REAL, pnl_pct REAL, holding_period_hours REAL,
@@ -197,11 +198,18 @@ def recovery(entry_env, tmp_path, monkeypatch):
         "TrdSide": SimpleNamespace(BUY="BUY", SELL="SELL"),
         "OrderType": SimpleNamespace(NORMAL="NORMAL", MARKET="MARKET"),
         "ModifyOrderOp": SimpleNamespace(CANCEL="CANCEL"), "RET_OK": 0,
+        # exit_lifecycle.send() (3957d85d3 退出链持久化) imports these for
+        # RTH/ETH session routing; real futu SDK exports both enums.
+        "TimeInForce": SimpleNamespace(DAY="DAY"),
+        "Session": SimpleNamespace(RTH="RTH", ETH="ETH"),
     }.items():
         monkeypatch.setattr(futu, name, value, raising=False)
     lifecycle = load("app.execution.exit_lifecycle", "app/execution/exit_lifecycle.py")
     broker_module = load("app.execution.dual_broker", "app/execution/dual_broker.py")
     fees = load("app.execution.fee_model", "app/execution/fee_model.py")
+    # _close_trade_record (pipeline.py:6377) lazily imports include_observed_prices
+    # from app.core.trade_extremes (SSOT merge, 2026-09-18). Pure-Python, no deps.
+    load("app.core.trade_extremes", "app/core/trade_extremes.py")
     sim = ScopedContext(42, "SIMULATE")
     real = ScopedContext(99, "REAL")
     holder = SimpleNamespace()
