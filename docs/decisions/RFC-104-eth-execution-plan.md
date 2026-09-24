@@ -121,3 +121,86 @@ planned ──(相位窗到)──▶ armed ──(数据未到)──▶ waitin
 | Q-C | 榜单归宿 | **保留观测 + 补漏**，10/08 跨日读数证明恒 0 再谈关 |
 | Q-D | 计划是否带费用/可执行性字段 | **先不带**（防止"看起来能做"的数字） |
 | Q-E | 实现方式 | **先本文（RFC-104）→ 再实现阶段 0** |
+
+---
+
+## Addendum: 9/24 阶段 0 补齐批（用户批准）
+
+**日期**：2026-09-24 | **状态**：已落地（工作区改动，未 commit）
+**载体**：`scripts/eth_event_plan.py`（升级为单一真源 + 多源生产 + 刷新轮 + actual 到达观测 + 每日对账）
+
+### 改动摘要
+
+#### A. 单一真源（消灭双实现漂移面）
+- `parse_earnings_phase = EXEC._parse_earnings_phase`（同一函数对象，非拷贝）
+- `session_event_pairs = EXEC._session_event_pairs`（同一函数对象，非拷贝）
+- 契约测试：`assert plan_mod.parse_earnings_phase is EXEC._parse_earnings_phase`
+- 删除本地拷贝（旧 l.157/173），彻底消除 RFC-104 §5 所列"双实现漂移"历史坑
+
+#### B. 多源并集（默认 futu ∪ Finnhub）
+- 默认多源生产（`--finnhub-only` 保留作离线降级）
+- futu 连接模式照抄 `rth_fade_shadow.py:futu_rows()`（短生命周期 OpenQuoteContext + finally close）
+- Finnhub 复用 `EXEC._finnhub_today_calendar`（共享缓存与客户端）
+
+#### C. 刷新模式（`--refresh`，RFC §2.4 T-0 刷新轮）
+- 重拉多源日历 → 与既有计划合并
+- 合并语义硬不变量：
+  1. state/attempts/state_since **只前进不回退**（按 `_STATE_ORDER` 序数）
+  2. ambiguous 行拿到新相位证据 → 迁 planned（记 resolution 来源）
+  3. 新发现的票 append 为 planned
+  4. plan_hash 幂等（同数据重跑不变）；refreshed_at 更新
+- 刷新时顺带推进状态机（advance_state）
+
+#### D. actual 到达观测（新增字段，观测非策略）
+- 计划行新增 `actual_arrived_at`（初始 null）与 `actual_value`
+- 生成/刷新时查 Finnhub actual（复用 `EXEC._finnhub_today_calendar`）
+- **只记第一次**：已有非 null 值时后续刷新不覆盖
+- 与 §2.2"宁少勿多"的关系：到达时间是**观测字段**（服务 RFC-102 复核判据与 DEB-20260923 A 十月对照），**不是策略字段**（不影响放行/拒绝判定）
+
+#### E. 每日对账（`--reconcile`）
+- 读 executor 真实台账（earnings_gate_rejects / price_gate_rejects / entry_executions）
+- 提取"当日实际出现的事件票"集合，与计划比较
+- 产物：`data/loops/ext_entry_plan/reconcile_<date>.json` + `reconcile_ledger.jsonl`（累计）
+- 判据：missed==[] ⇒ PASS；任何漏票 ⇒ FAIL（exit code 非 0）
+- **只读**：不修改任何生产台账
+
+### CLI 用法示例
+
+```bash
+# 生成（多源）
+PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --dry
+
+# 生成（离线降级）
+PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --finnhub-only
+
+# 刷新（T-0 04:00/07:00 ET）
+PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --refresh
+
+# 对账
+PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --reconcile --date 2026-09-24
+```
+
+### cron 行建议（ET → CST 换算，含夏令时注记）
+
+| 时刻 (ET) | CST (冬令 UTC-6) | CST (夏令 UTC-5) | 模式 | 说明 |
+|---|---|---|---|---|
+| 20:30 T-1 | 08:30 T (周二-六) | 07:30 T | 生成 | T-1 晚间首次生成 |
+| 04:00 T-0 | 16:00 T-1 (周一-五) | 15:00 T-1 | 刷新 | 盘前第一轮刷新（ambiguous 自愈窗口） |
+| 07:00 T-0 | 19:00 T-1 (周一-五) | 18:00 T-1 | 刷新 | 盘前第二轮刷新（actual 开始到达 BMO 票） |
+| 15:45 T-0 | 03:45 T (周二-六) | 02:45 T | 生成 | 盘后计划生成（BMO actual 已可得） |
+| 21:00 T-0 | 09:00 T (周二-六) | 08:00 T | 对账 | 收盘后对账（所有事件票已定论） |
+
+**夏令时注记**：CST = UTC-6（11 月初 ~ 3 月中）；CDT = UTC-5（3 月中 ~ 11 月初）。cron 以 ET 为准，系统时区换算自动处理 DST 跳变。
+
+### 禁区（未改动）
+- `scripts/extended_hours_entry_executor.py`：零改动（只读 import）
+- crontab / CONTROL-LOOP-LEDGER：不动（主会话统一改）
+- 无交易行为变更（计划只读工件）
+
+### 测试覆盖
+- 契约同一性（2 例）
+- 刷新合并语义（6 例：state 不回退 / ambiguous 自愈 / append 新票 / 幂等 / actual 保留 / sources 更新）
+- actual_arrived_at 只记首次（2 例）
+- 对账 PASS/FAIL 两路 + missed 检出 + arrival stats + ledger append + execution 计入（6 例）
+- query_actual_value（5 例：actual present / missing / ticket not found / error / US. prefix）
+- 既有 40 例适配重构（REQUIRED_FIELDS 新增 actual_arrived_at/actual_value）

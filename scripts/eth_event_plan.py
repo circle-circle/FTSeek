@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """RFC-104 阶段 0: ETH 事件执行计划生成器 (只读工件, 零交易行为变更).
 
+## 9/24 阶段 0 补齐批 (RFC-104 addendum)
+- **单一真源**: parse_earnings_phase / session_event_pairs 直接复用 executor 函数对象,
+  消灭双实现漂移面 (RFC-104 §5 历史坑).
+- **多源并集**: 默认 futu ∪ Finnhub; --finnhub-only 保留作离线降级.
+- **刷新模式** (--refresh): 与既有计划合并, state 只前进不回退, ambiguous 自愈.
+- **actual 到达观测**: actual_arrived_at / actual_value 字段 (观测非策略, §2.2 宁少勿多).
+- **每日对账** (--reconcile): 覆盖率度量 + 漏票检出, 产物 reconcile_<date>.json.
+
 ## 职责
 从既有日历源 (futu + Finnhub) 生成 T 日事件计划: 每票一行, 含状态机字段、源标注、
 ambiguous 处理。计划**不含**方向/SL/TP/费用/可执行性数字 (三处收紧 §3)。
@@ -19,17 +27,22 @@ ambiguous 处理。计划**不含**方向/SL/TP/费用/可执行性数字 (三�
 ## 调度
 - 盘前计划: T-1 20:30 ET (CST 周二-六 08:30)
 - 盘后计划: T-0 15:45 ET (CST 周二-六 03:45)
+- 刷新: T-0 04:00 / 07:00 ET (CST 16:00 / 19:00; 夏令时各 -1h)
+- 对账: T+0 21:00 ET (CST 周二-六 09:00)
 - 回滚: 删 cron 行 (计划只读工件, 删除即静默)
 
-## 首跑说明
-人工首跑: `PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --dry`
-验证: 输出行数 7-9 (非 44), 每行含 sources/state/phase, 不含 direction/sl/tp/fee。
+## CLI 示例
+- 生成: ``PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --dry``
+- 刷新: ``PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --refresh``
+- 对账: ``PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --reconcile --date 2026-09-24``
+- 降级: ``PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --finnhub-only``
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timedelta
@@ -37,10 +50,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+logger = logging.getLogger(__name__)
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(ROOT / ".env.us", override=True)
+
+# ── 单一真源: 导入 executor (模块级只读 env, 不开连接; 先例: overnight_earnings_carry_shadow.py:70) ──
+import scripts.extended_hours_entry_executor as EXEC  # noqa: E402
 
 from app.utils.atomic_write import atomic_write_json  # noqa: E402
 
@@ -59,10 +77,23 @@ STATE_AMBIGUOUS = "ambiguous"
 VALID_STATES = {STATE_PLANNED, STATE_ARMED, STATE_WAITING_DATA,
                 STATE_ORDERED, STATE_REJECTED, STATE_EXPIRED, STATE_AMBIGUOUS}
 
+# 状态序数: 只前进不回退 (刷新合并硬不变量)
+_STATE_ORDER = {
+    STATE_PLANNED: 0,
+    STATE_AMBIGUOUS: 1,
+    STATE_ARMED: 2,
+    STATE_WAITING_DATA: 3,
+    STATE_ORDERED: 4,
+    STATE_REJECTED: 4,
+    STATE_EXPIRED: 4,
+}
+
 # ── 相位常量 ──
 PHASE_BEFORE = "before"  # BMO
 PHASE_AFTER = "after"    # AMC
 
+
+# ── 时间工具 ──
 
 def et_now() -> datetime:
     """当前 ET 时刻 (zoneinfo, DST 正确)."""
@@ -80,44 +111,57 @@ def shift_et_day(day_str: str, offset: int) -> str:
     return (d + timedelta(days=offset)).isoformat()
 
 
-# ── 日历源拉取 (复用 rth_fade_shadow.py 模式, 不触 futu/OpenD) ──
+# ── 单一真源薄别名 (RFC-104 §5: 消灭双实现漂移面) ──
+# 契约测试断言 ``plan_mod.parse_earnings_phase is EXEC._parse_earnings_phase``;
+# 任何对 executor 逻辑的修改自动传导到计划生成器, 零漂移面.
+
+parse_earnings_phase = EXEC._parse_earnings_phase
+"""日历相位 → (before, after). 与 EXEC._parse_earnings_phase **同一函数对象**."""
+
+session_event_pairs = EXEC._session_event_pairs
+"""session → 允许的 (日偏移, 相位) 列表. 与 EXEC._session_event_pairs **同一函数对象**.
+
+注意: 盘前 AMC 配对由 env ``EXT_ENTRY_PREMARKET_AMC_PAIRING`` 控制 (executor 读).
+generate_plan 的 premarket_amc_pairing 参数会临时设置此 env, 确保测试隔离.
+"""
+
+
+# ── 日历源拉取 ──
 
 def fetch_finnhub_calendar(day: str) -> list[dict]:
-    """Finnhub HTTP 日历查询 (不占 OpenD 槽位).
+    """Finnhub 日历查询 (复用 EXEC._finnhub_today_calendar, 共享缓存与客户端).
 
-    返回原始行列表, 每行含 symbol/date/timeOfTheDay/asof。
-    失败返回空列表 (fail-open at source level; 并集层兜底)。
+    返回标准化行列表; 失败返回空列表 (fail-open at source level; 并集层兜底).
     """
-    import requests
-    key = os.getenv("FINNHUB_API_KEY")
-    if not key:
+    cal, error = EXEC._finnhub_today_calendar(day)
+    if cal is None:
+        if error:
+            logger.warning("finnhub calendar fetch failed for %s: %s", day, error)
         return []
-    try:
-        r = requests.get("https://finnhub.io/api/v1/calendar/earnings",
-                         params={"from": day, "to": day, "token": key}, timeout=30)
-        rows = r.json().get("earningsCalendar", []) or []
-        # 标准化: 加 asof 时间戳 (生成时刻)
-        now_iso = et_now().isoformat(timespec="seconds")
-        for row in rows:
-            row["_src"] = "finnhub"
-            row["_asof"] = now_iso
-        return rows
-    except Exception as exc:
-        print(f"[eth_plan] finnhub 拉取失败 {day}: {type(exc).__name__}: {exc}",
-              file=sys.stderr)
-        return []
+    now_iso = et_now().isoformat(timespec="seconds")
+    rows = []
+    for _ticker, row in cal.items():
+        rows.append({
+            "symbol": str(row.get("symbol", "")).upper(),
+            "date": str(row.get("date", ""))[:10],
+            "timeOfTheDay": str(row.get("hour", "") or ""),
+            "epsActual": row.get("epsActual"),
+            "epsEstimate": row.get("epsEstimate"),
+            "_src": "finnhub",
+            "_asof": now_iso,
+        })
+    return rows
 
 
 def fetch_futu_calendar(start: str, end: str) -> list[dict]:
-    """futu 日历查询 (需 OpenD 连接; 阶段 0 验证用 --dry 跳过).
+    """futu 日历查询 (短生命周期 OpenQuoteContext + finally close; 照抄 rth_fade_shadow.py 模式).
 
-    返回标准化行列表。失败返回空列表。
-    注意: 本函数会连接 futu/OpenD; --dry 模式或离线测试不应调用。
+    失败返回空列表. 注意: 本函数会连接 futu/OpenD; --dry 模式或离线测试不应调用.
     """
     try:
         from futu import OpenQuoteContext, RET_OK
     except ImportError:
-        print("[eth_plan] futu 未安装, 跳过 futu 日历源", file=sys.stderr)
+        logger.warning("futu 未安装, 跳过 futu 日历源")
         return []
 
     try:
@@ -147,49 +191,17 @@ def fetch_futu_calendar(start: str, end: str) -> list[dict]:
         finally:
             ctx.close()
     except Exception as exc:
-        print(f"[eth_plan] futu 拉取失败 {start}~{end}: {type(exc).__name__}: {exc}",
-              file=sys.stderr)
+        logger.warning("futu 拉取失败 %s~%s: %s: %s", start, end, type(exc).__name__, exc)
         return []
 
 
-# ── 相位解析 (复用 extended_hours_entry_executor._parse_earnings_phase 内核) ──
-
-def parse_earnings_phase(row: dict) -> tuple[bool, bool]:
-    """日历相位 → (before, after)。空/未知相位两者皆 False。
-
-    与 scripts/extended_hours_entry_executor.py:_parse_earnings_phase 逐字同式,
-    防双实现漂移 (RFC-104 §5 历史坑: 双实现漂移)。
-    """
-    phase = str(
-        row.get("timeOfTheDay", "") or row.get("pub_type", "")
-    ).lower()
-    before = "before" in phase or "pre" in phase or "bmo" in phase
-    after = "after" in phase or "post" in phase or "amc" in phase
-    return before, after
-
-
-# ── session 配对表 (复用 extended_hours_entry_executor._session_event_pairs 内核) ──
-
-def session_event_pairs(session: str, premarket_amc_pairing: bool = False) -> list[tuple[int, str]]:
-    """session → 允许的 (日偏移, 相位) 列表。
-
-    与 scripts/extended_hours_entry_executor.py:_session_event_pairs 逐字同式。
-    """
-    if session == "premarket":
-        pairs = [(0, PHASE_BEFORE)]
-        if premarket_amc_pairing:
-            pairs.append((-1, PHASE_AFTER))
-        return pairs
-    return [(0, PHASE_AFTER)]
-
-
-# ── 核心: 计划生成 ──
+# ── 核心: 源合并与计划生成 ──
 
 def _merge_sources(finnhub_rows: list[dict], futu_rows: list[dict]) -> dict[tuple[str, str], dict]:
-    """合并两源日历, 按 (symbol, reportDate) 去重。
+    """合并两源日历, 按 (symbol, reportDate) 去重.
 
-    返回 {(symbol, date): {"sources": [...], "phases": set()}} 结构。
-    每源保留原始行供审计 (sources 字段)。
+    返回 {(symbol, date): {"sources": [...], "phases": set()}} 结构.
+    每源保留原始行供审计 (sources 字段).
     """
     acc: dict[tuple[str, str], dict] = {}
     for row in finnhub_rows:
@@ -238,15 +250,14 @@ def _merge_sources(finnhub_rows: list[dict], futu_rows: list[dict]) -> dict[tupl
 
 
 def _detect_source_conflict(entry: dict) -> bool:
-    """检测源冲突: 同一 (symbol, date) 两源给出不同相位。
+    """检测源冲突: 同一 (symbol, date) 两源给出不同相位.
 
-    冲突定义: 存在两个不同源, 各自的 timeOfTheDay 解析出的 (before, after) 不一致。
-    例: finnhub 说 "BMO" (before=True, after=False), futu 说 "AMC" (before=False, after=True)。
+    冲突定义: 存在两个不同源, 各自的 timeOfTheDay 解析出的 (before, after) 不一致.
+    例: finnhub 说 "BMO" (before=True, after=False), futu 说 "AMC" (before=False, after=True).
     """
     src_phases: dict[str, tuple[bool, bool]] = {}
     for src in entry.get("sources", []):
         name = src.get("name", "")
-        # 构造临时行给 parse_earnings_phase
         fake_row = {"timeOfTheDay": src.get("timeOfTheDay", ""), "pub_type": ""}
         before, after = parse_earnings_phase(fake_row)
         if before or after:
@@ -254,24 +265,48 @@ def _detect_source_conflict(entry: dict) -> bool:
 
     if len(src_phases) < 2:
         return False
-    # 两源相位不一致 = 冲突
     phase_values = list(src_phases.values())
     return len(set(phase_values)) > 1
 
 
+def query_actual_value(symbol: str, report_date: str) -> dict | None:
+    """查询 Finnhub 日历行的 epsActual (复用 EXEC._finnhub_today_calendar).
+
+    返回 {"epsActual": float, ...} 或 None (actual 未到或查询失败).
+    此函数是"事件数据到达时间观测器"的数据源, 服务 RFC-102 复核判据与 DEB-20260923 A 十月对照.
+
+    为什么复用 _finnhub_today_calendar 而非 _earnings_surprise_calendar_actual:
+    后者耦合了 actual vs estimate 比较逻辑 (判据②), 本函数只需 actual 存在性.
+    """
+    cal, error = EXEC._finnhub_today_calendar(report_date)
+    if cal is None:
+        if error:
+            logger.warning("query_actual_value: finnhub failed for %s on %s: %s",
+                           symbol, report_date, error)
+        return None
+    ticker = symbol.replace("US.", "").upper()
+    row = cal.get(ticker)
+    if row is None:
+        return None
+    actual = row.get("epsActual")
+    if actual is None:
+        return None
+    return {"epsActual": float(actual), "hour": row.get("hour")}
+
+
 def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
                   futu_rows: list[dict], premarket_amc_pairing: bool = False) -> list[dict]:
-    """生成 T 日事件计划 (核心函数)。
+    """生成 T 日事件计划 (核心函数).
 
     参数:
         et_date: ET 日期 (YYYY-MM-DD)
         session: "premarket" | "afterhours"
         finnhub_rows: Finnhub 日历原始行
         futu_rows: futu 日历标准化行
-        premarket_amc_pairing: 盘前是否接受昨日 AMC (同 executor 配置)
+        premarket_amc_pairing: 盘前是否接受昨日 AMC (设置 EXEC env 后调 session_event_pairs)
 
     返回:
-        计划行列表, 每行符合 RFC-104 §2.2 schema。
+        计划行列表, 每行符合 RFC-104 §2.2 schema (含 actual_arrived_at/actual_value).
 
     三处收紧合规:
         1. 不预筛: 不过滤 price/volume/mcap; gate_snapshot 为空占位
@@ -279,7 +314,14 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
         3. 不是策略卡: 不含 direction/sl_tp/expected_profit/fee
     """
     merged = _merge_sources(finnhub_rows, futu_rows)
-    pairs = session_event_pairs(session, premarket_amc_pairing)
+
+    # 同步 EXEC.PREMARKET_AMC_PAIRING 模块级常量 (import time 已固化, 需运行时覆写)
+    old_pairing = EXEC.PREMARKET_AMC_PAIRING
+    EXEC.PREMARKET_AMC_PAIRING = premarket_amc_pairing
+    try:
+        pairs = session_event_pairs(session)
+    finally:
+        EXEC.PREMARKET_AMC_PAIRING = old_pairing
 
     # 允许的 (日期, 相位) 集合
     allowed: dict[str, set[str]] = {}
@@ -300,7 +342,7 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
         matched_phases = entry_phases & phases_for_date
 
         if not matched_phases and not entry_phases:
-            # 相位未知: 双窗待命或标记 ambiguous
+            # 相位未知: 标记 ambiguous
             phase_str = "unknown"
             state = STATE_AMBIGUOUS
         elif not matched_phases:
@@ -331,6 +373,8 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
             "refreshed_at": now_iso,
             "source_versions": {s["name"]: s["asof"] for s in entry["sources"]},
             "plan_hash": "",  # 下方计算
+            "actual_arrived_at": None,  # 9/24 addendum: 事件数据到达时间观测 (非策略字段)
+            "actual_value": None,       # 9/24 addendum: epsActual 值 (观测)
         }
 
         # plan_hash: 幂等键的指纹 (symbol+et_date+session+phase)
@@ -343,9 +387,9 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
 
 
 def _data_expectation(phase: str) -> dict:
-    """数据预期: BMO → actual 约 08:05 ET 可得; AMC → 约 16:00 ET。
+    """数据预期: BMO → actual 约 08:05 ET 可得; AMC → 约 16:00 ET.
 
-    复用 RFC-102 §2.6 的语义; 此处只给期望值, 不给放行结论。
+    复用 RFC-102 §2.6 的语义; 此处只给期望值, 不给放行结论.
     """
     if PHASE_BEFORE in phase:
         return {
@@ -366,44 +410,92 @@ def _data_expectation(phase: str) -> dict:
     }
 
 
-# ── 文件 I/O ──
+# ── 刷新合并 (RFC-104 §2.4 T-0 刷新轮) ──
 
-def plan_path(et_date: str, session: str) -> Path:
-    """计划文件路径: data/loops/ext_entry_plan/<et_date>_<session>.json"""
-    return PLAN_DIR / f"{et_date}_{session}.json"
+def refresh_plan(existing: list[dict], et_date: str, session: str, *,
+                 finnhub_rows: list[dict], futu_rows: list[dict],
+                 premarket_amc_pairing: bool = False) -> list[dict]:
+    """刷新既有计划: 与新拉日历合并.
 
+    合并语义 (硬不变量, 测试钉死):
+    1. state/attempts/state_since **只前进不回退** (按 _STATE_ORDER 序数);
+       ambiguous 行拿到新相位证据 → 迁 planned (记 state_since 刷新 + resolution 来源).
+    2. 新发现的票 (生成时缺源) append 为 planned.
+    3. plan_hash/refreshed_at 更新; 幂等: 同数据重跑逐字节不变 (除 refreshed_at).
+    4. actual_arrived_at **只记第一次**: 已有非 null 值时不覆盖.
+    """
+    now_iso = et_now().isoformat(timespec="seconds")
 
-def load_plan(et_date: str, session: str) -> list[dict]:
-    """加载已有计划; 不存在返回空列表。"""
-    p = plan_path(et_date, session)
-    if not p.exists():
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
-        return []
+    # 索引既有行 by (symbol, et_date, session)
+    existing_idx: dict[tuple[str, str, str], dict] = {}
+    for row in existing:
+        key = (row["symbol"], row.get("et_date", ""), row.get("session", ""))
+        existing_idx[key] = row
 
+    # 生成新计划 (基于最新日历)
+    fresh_rows = generate_plan(
+        et_date, session,
+        finnhub_rows=finnhub_rows, futu_rows=futu_rows,
+        premarket_amc_pairing=premarket_amc_pairing,
+    )
 
-def save_plan(et_date: str, session: str, rows: list[dict]) -> Path:
-    """原子写入计划文件。"""
-    p = plan_path(et_date, session)
-    PLAN_DIR.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(str(p), rows)
-    return p
+    result: list[dict] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+
+    for fresh in fresh_rows:
+        key = (fresh["symbol"], fresh.get("et_date", ""), fresh.get("session", ""))
+        seen_keys.add(key)
+
+        old = existing_idx.get(key)
+        if old is not None:
+            # ── 合并: 保留旧行 state 进度, 更新 sources/phase/refreshed_at ──
+            merged_row = dict(old)
+            merged_row["sources"] = fresh["sources"]
+            merged_row["source_versions"] = fresh["source_versions"]
+            merged_row["refreshed_at"] = now_iso
+
+            old_state = old.get("state", STATE_PLANNED)
+            new_state = fresh.get("state", STATE_PLANNED)
+            old_ord = _STATE_ORDER.get(old_state, 0)
+            new_ord = _STATE_ORDER.get(new_state, 0)
+
+            if old_state == STATE_AMBIGUOUS and new_state != STATE_AMBIGUOUS:
+                # ambiguous 自愈 → 迁 new_state, 记 resolution
+                merged_row["state"] = new_state
+                merged_row["state_since"] = now_iso
+                merged_row["phase"] = fresh["phase"]
+                merged_row["reject_reason"] = None
+            elif new_ord > old_ord:
+                # 正常前进
+                merged_row["state"] = new_state
+                merged_row["state_since"] = now_iso
+            # else: 保持旧 state (不回退)
+
+            # actual_arrived_at: 只记第一次 (不覆盖已有非 null 值)
+            if merged_row.get("actual_arrived_at") is None:
+                merged_row["actual_arrived_at"] = fresh.get("actual_arrived_at")
+                merged_row["actual_value"] = fresh.get("actual_value")
+
+            result.append(merged_row)
+        else:
+            # ── 新票: append ──
+            fresh["refreshed_at"] = now_iso
+            result.append(fresh)
+
+    return result
 
 
 # ── 状态机推进 (阶段 0 只推进 planned→armed, 由时刻窗触发) ──
 
 def advance_state(row: dict, current_et_time: str) -> dict:
-    """根据当前 ET 时刻推进状态机。
+    """根据当前 ET 时刻推进状态机.
 
     阶段 0 的推进规则:
     - planned → armed: 相位窗到达 (BMO: 04:00 ET 之后; AMC: 16:00 ET 之后)
     - armed → waiting_data: 数据未到 (actual 未出现)
     - ambiguous: 保持不动, 等待源刷新或人工裁决
 
-    其他状态 (ordered/rejected/expired) 由执行层推进 (阶段 1+)。
+    其他状态 (ordered/rejected/expired) 由执行层推进 (阶段 1+).
     """
     if row.get("state") == STATE_AMBIGUOUS:
         return row  # ambiguous 不自动推进
@@ -412,7 +504,6 @@ def advance_state(row: dict, current_et_time: str) -> dict:
         return row  # 终态不由此函数推进
 
     phase = row.get("phase", "")
-    # 解析当前时间
     try:
         now = datetime.fromisoformat(current_et_time)
         hour = now.hour
@@ -435,6 +526,188 @@ def advance_state(row: dict, current_et_time: str) -> dict:
     return row
 
 
+# ── 文件 I/O ──
+
+def plan_path(et_date: str, session: str) -> Path:
+    """计划文件路径: data/loops/ext_entry_plan/<et_date>_<session>.json"""
+    return PLAN_DIR / f"{et_date}_{session}.json"
+
+
+def load_plan(et_date: str, session: str) -> list[dict]:
+    """加载已有计划; 不存在返回空列表."""
+    p = plan_path(et_date, session)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("load_plan failed %s: %s", p, exc)
+        return []
+
+
+def save_plan(et_date: str, session: str, rows: list[dict]) -> Path:
+    """原子写入计划文件."""
+    p = plan_path(et_date, session)
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(str(p), rows)
+    return p
+
+
+def _load_jsonl_records(path: Path, trade_date: str) -> list[dict]:
+    """从 JSONL 台账加载指定交易日的记录.
+
+    支持两种格式:
+    - 扁平记录 (含 symbol + ts 字段): extended_hours_entry_executions.jsonl
+    - 批次记录 (含 trade_date + details[].symbol): extended_hours_*_gate_rejects.jsonl
+    """
+    if not path.exists():
+        return []
+    records = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            # 扁平格式: 检查 ts 日期
+            ts = rec.get("ts", "")
+            rec_date = ts[:10] if ts else ""
+            td = rec.get("trade_date", rec_date)
+            if td != trade_date:
+                continue
+
+            # 批次格式: 展开 details
+            details = rec.get("details")
+            if isinstance(details, list):
+                for d in details:
+                    if isinstance(d, dict):
+                        records.append(d)
+            else:
+                records.append(rec)
+    except OSError as exc:
+        logger.warning("_load_jsonl_records failed %s: %s", path, exc)
+    return records
+
+
+# ── 每日对账 (RFC-104 阶段 0 判据: 当日事件票 ⊆ 计划 = 100%) ──
+
+def reconcile(et_date: str, session: str) -> dict:
+    """每日对账: 比较计划 vs executor 真实台账.
+
+    提取"当日实际出现的事件票"集合 (凡带 earnings 事件标记/进了财报门的票),
+    与计划比较, 产出覆盖率与漏票列表.
+
+    产物:
+        - data/loops/ext_entry_plan/reconcile_<date>.json
+        - append 一行到 data/loops/ext_entry_plan/reconcile_ledger.jsonl
+
+    判据: missed==[] ⇒ PASS; 任何漏票 ⇒ FAIL (exit code 非 0).
+    只读: 不修改任何生产台账.
+    """
+    plan = load_plan(et_date, session)
+    plan_symbols = {r["symbol"] for r in plan}
+
+    # 从三本台账提取事件票
+    data_dir = ROOT / "data"
+    earnings_rejects = _load_jsonl_records(
+        data_dir / "extended_hours_earnings_gate_rejects.jsonl", et_date
+    )
+    price_rejects = _load_jsonl_records(
+        data_dir / "extended_hours_price_gate_rejects.jsonl", et_date
+    )
+    executions = _load_jsonl_records(
+        data_dir / "extended_hours_entry_executions.jsonl", et_date
+    )
+
+    event_tickets: set[str] = set()
+    for rec in earnings_rejects:
+        sym = rec.get("symbol", "")
+        if sym:
+            event_tickets.add(sym.replace("US.", "").upper())
+    for rec in executions:
+        sym = rec.get("symbol", "")
+        if sym:
+            event_tickets.add(sym.replace("US.", "").upper())
+    # price_rejects 的票不一定有 earnings 标记, 只纳入有 earnings 字段的
+    for rec in price_rejects:
+        sym = rec.get("symbol", "")
+        if sym and rec.get("earnings"):
+            event_tickets.add(sym.replace("US.", "").upper())
+
+    missed = sorted(event_tickets - plan_symbols)
+    ambiguous_resolved = [
+        r["symbol"] for r in plan
+        if r.get("state") == STATE_PLANNED and r.get("reject_reason") is None
+        and any(s.get("name") for s in r.get("sources", []))
+    ]
+
+    # actual 到达统计
+    actual_times: list[float] = []
+    for r in plan:
+        if r.get("actual_arrived_at"):
+            try:
+                t = datetime.fromisoformat(r["actual_arrived_at"])
+                actual_times.append(t.hour * 60 + t.minute)
+            except (ValueError, TypeError):
+                pass
+
+    arrival_stats: dict[str, Any] = {"p50": None, "p90": None, "max": None, "n": len(actual_times)}
+    if actual_times:
+        actual_times.sort()
+        n = len(actual_times)
+        arrival_stats["p50"] = actual_times[n // 2]
+        arrival_stats["p90"] = actual_times[int(n * 0.9)]
+        arrival_stats["max"] = actual_times[-1]
+
+    coverage_pct = (
+        len(event_tickets - set(missed)) / len(event_tickets) * 100
+        if event_tickets else 100.0
+    )
+    verdict = "PASS" if not missed else "FAIL"
+
+    result = {
+        "et_date": et_date,
+        "session": session,
+        "coverage_pct": round(coverage_pct, 2),
+        "plan_rows": len(plan),
+        "event_tickets_seen": sorted(event_tickets),
+        "missed": missed,
+        "ambiguous_resolved": sorted(ambiguous_resolved),
+        "actual_arrival_stats": arrival_stats,
+        "verdict": verdict,
+    }
+
+    # 写产物
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    reconcile_path = PLAN_DIR / f"reconcile_{et_date}.json"
+    atomic_write_json(str(reconcile_path), result)
+
+    # append ledger
+    ledger_path = PLAN_DIR / "reconcile_ledger.jsonl"
+    ledger_line = json.dumps({
+        "et_date": et_date,
+        "session": session,
+        "verdict": verdict,
+        "coverage_pct": result["coverage_pct"],
+        "plan_rows": len(plan),
+        "event_tickets": len(event_tickets),
+        "missed_count": len(missed),
+        "reconciled_at": et_now().isoformat(timespec="seconds"),
+    }, ensure_ascii=False) + "\n"
+    try:
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(ledger_line)
+    except OSError as exc:
+        logger.warning("reconcile ledger append failed: %s", exc)
+
+    return result
+
+
 # ── CLI ──
 
 def main(argv=None) -> int:
@@ -448,7 +721,11 @@ def main(argv=None) -> int:
     ap.add_argument("--dry", action="store_true",
                     help="只打印不落盘 (不连接 futu/OpenD)")
     ap.add_argument("--finnhub-only", action="store_true",
-                    help="只拉 Finnhub (不连接 futu/OpenD; 适合首跑验证)")
+                    help="只拉 Finnhub (不连接 futu/OpenD; 离线降级用)")
+    ap.add_argument("--refresh", action="store_true",
+                    help="刷新模式: 重拉多源日历, 与既有计划合并 (state 只前进不回退)")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="对账模式: 读台账 vs 计划, 产出覆盖率与漏票")
     ap.add_argument("--premarket-amc-pairing", action="store_true",
                     help="盘前接受昨日 AMC (同 executor 配置)")
     args = ap.parse_args(argv)
@@ -456,54 +733,99 @@ def main(argv=None) -> int:
     et_date = args.date or et_today()
     session = args.session
 
-    print(f"[eth_plan] 生成 {et_date} {session} 计划...", file=sys.stderr)
+    # ── 对账模式 ──
+    if args.reconcile:
+        print(f"[eth_plan] 对账 {et_date} {session}...", file=sys.stderr)
+        result = reconcile(et_date, session)
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        if result["verdict"] == "FAIL":
+            print(f"[eth_plan] FAIL: {len(result['missed'])} 漏票 {result['missed']}",
+                  file=sys.stderr)
+            return 1
+        print(f"[eth_plan] PASS: 覆盖率 {result['coverage_pct']}%", file=sys.stderr)
+        return 0
+
+    # ── 生成/刷新模式 ──
+    print(f"[eth_plan] {'刷新' if args.refresh else '生成'} {et_date} {session}...",
+          file=sys.stderr)
+
+    # 同步 premarket_amc_pairing → EXEC 模块级常量 (import time 已固化)
+    EXEC.PREMARKET_AMC_PAIRING = args.premarket_amc_pairing
+    os.environ["EXT_ENTRY_PREMARKET_AMC_PAIRING"] = "true" if args.premarket_amc_pairing else "false"
 
     # ── 拉取日历源 ──
-    # Finnhub: HTTP 查询, 不占 OpenD 槽位
     prev_date = shift_et_day(et_date, -1)
     fh_rows = fetch_finnhub_calendar(et_date)
     if session == "premarket" and args.premarket_amc_pairing:
         fh_rows.extend(fetch_finnhub_calendar(prev_date))
 
-    # futu: 需要 OpenD 连接; --dry/--finnhub-only 跳过
     ft_rows: list[dict] = []
     if not args.dry and not args.finnhub_only:
         ft_rows = fetch_futu_calendar(prev_date, et_date)
 
     print(f"[eth_plan] 源: finnhub={len(fh_rows)} futu={len(ft_rows)}", file=sys.stderr)
 
-    # ── 生成计划 ──
-    rows = generate_plan(
-        et_date, session,
-        finnhub_rows=fh_rows,
-        futu_rows=ft_rows,
-        premarket_amc_pairing=args.premarket_amc_pairing,
-    )
+    if args.refresh:
+        # ── 刷新: 与既有计划合并 ──
+        existing = load_plan(et_date, session)
+        if not existing:
+            print(f"[eth_plan] 无既有计划, 改为初次生成", file=sys.stderr)
 
-    if not rows:
-        print(f"[eth_plan] {et_date} {session} 无事件票 (两源皆空或无匹配相位)",
+        rows = refresh_plan(
+            existing, et_date, session,
+            finnhub_rows=fh_rows, futu_rows=ft_rows,
+            premarket_amc_pairing=args.premarket_amc_pairing,
+        )
+
+        # 查询 actual 到达 (观测字段, 不影响策略)
+        for row in rows:
+            if row.get("actual_arrived_at") is None:
+                actual = query_actual_value(row["symbol"], row.get("et_date", et_date))
+                if actual is not None:
+                    row["actual_arrived_at"] = et_now().isoformat(timespec="seconds")
+                    row["actual_value"] = actual.get("epsActual")
+
+        n_new = len(rows) - len(existing)
+        n_updated = len(rows) - max(0, n_new)
+        print(f"[eth_plan] 刷新: {len(rows)} 行 (新增 {n_new}, 更新 {n_updated})",
               file=sys.stderr)
-        # 仍写空计划 (fail-closed: 消费侧看到空文件 = 不下单)
-        if not args.dry:
-            save_plan(et_date, session, [])
-        return 0
+    else:
+        # ── 正常生成 ──
+        rows = generate_plan(
+            et_date, session,
+            finnhub_rows=fh_rows, futu_rows=ft_rows,
+            premarket_amc_pairing=args.premarket_amc_pairing,
+        )
+
+        if not rows:
+            print(f"[eth_plan] {et_date} {session} 无事件票 (两源皆空或无匹配相位)",
+                  file=sys.stderr)
+            if not args.dry:
+                save_plan(et_date, session, [])
+            return 0
+
+        # 查询 actual 到达 (观测字段)
+        for row in rows:
+            actual = query_actual_value(row["symbol"], row.get("et_date", et_date))
+            if actual is not None:
+                row["actual_arrived_at"] = et_now().isoformat(timespec="seconds")
+                row["actual_value"] = actual.get("epsActual")
 
     # ── 统计 ──
     n_ambiguous = sum(1 for r in rows if r["state"] == STATE_AMBIGUOUS)
     n_planned = sum(1 for r in rows if r["state"] == STATE_PLANNED)
     sources_count = {s for r in rows for s in (src["name"] for src in r["sources"])}
+    n_actual = sum(1 for r in rows if r.get("actual_arrived_at") is not None)
 
-    print(f"[eth_plan] 计划 {len(rows)} 行: planned={n_planned} ambiguous={n_ambiguous}",
-          file=sys.stderr)
+    print(f"[eth_plan] 计划 {len(rows)} 行: planned={n_planned} ambiguous={n_ambiguous} "
+          f"actual_arrived={n_actual}", file=sys.stderr)
     print(f"[eth_plan] 源覆盖: {sources_count}", file=sys.stderr)
 
     # ── 断言: 三处收紧合规 ──
     for r in rows:
-        # 收紧 §1: 不含 price/volume/mcap 预筛字段
         assert "price" not in r, "计划行不得含 price 字段 (收紧 §1)"
         assert "volume" not in r, "计划行不得含 volume 字段 (收紧 §1)"
         assert "mcap" not in r, "计划行不得含 mcap 字段 (收紧 §1)"
-        # 收紧 §3: 不含方向/SL/TP/费用
         assert "direction" not in r, "计划行不得含 direction 字段 (收紧 §3)"
         assert "sl_tp" not in r, "计划行不得含 sl_tp 字段 (收紧 §3)"
         assert "fee" not in r, "计划行不得含 fee 字段 (收紧 §3)"
@@ -515,6 +837,10 @@ def main(argv=None) -> int:
     else:
         p = save_plan(et_date, session, rows)
         print(f"[eth_plan] 已写入 {p}", file=sys.stderr)
+
+    if args.refresh:
+        print("[eth_plan] 注: actual 到达为观测字段, 不影响策略 (RFC-104 §2.2 宁少勿多)",
+              file=sys.stderr)
 
     return 0
 
