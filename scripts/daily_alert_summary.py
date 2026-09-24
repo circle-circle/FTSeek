@@ -33,6 +33,7 @@ Karpathy 原则:
 import os
 import sys
 import re
+import gzip
 import json
 import sqlite3
 import requests
@@ -151,6 +152,21 @@ def _is_noise_alert(content: str, dt: datetime) -> bool:
 
 # ================== 日志解析 ==================
 
+def _open_log(path: str):
+    """按扩展名打开日志档: .gz 走 gzip, 否则普通文本。单一真源, 两个读取点共用。
+
+    2026-09-24 修 (静默丢数据): 此前两个读取点都用普通 `open()`, 而
+    `resolve_log_sources` 会优先返回 `*-YYYYMMDD.gz`（logrotate compress 产物）
+    ⇒ gz 档被当文本读, 二进制头解析不出任何时间戳行, **静默返回 0 条告警**,
+    而诊断行只写「xxx.gz=0」, 读者无从判断是「窗外」还是「读不了」。
+    影响面: 任何跨 ≥1 次轮转的窗口 (周报/补跑/晚跑) 会丢掉整段归档期的告警;
+    日常 21:00→06:00 窗恰好只用未压缩的最近轮转档, 所以一直没暴露。
+    """
+    if path.endswith(".gz"):
+        return gzip.open(path, "rt", errors="ignore")
+    return open(path, "r", errors="ignore")
+
+
 def parse_log_alerts(log_path: str, since: datetime, until: datetime = None) -> List[Dict]:
     """从日志文件中提取告警类事件 (美股单一市场)
 
@@ -170,7 +186,7 @@ def parse_log_alerts(log_path: str, since: datetime, until: datetime = None) -> 
         if not os.path.exists(log_path):
             return alerts
 
-        with open(log_path, "r", errors="ignore") as f:
+        with _open_log(log_path) as f:
             for line in f:
                 # 只取目标日期范围内的行
                 try:
@@ -249,6 +265,39 @@ def resolve_log_sources(log_path: str, since: datetime, until: datetime) -> List
     return sources
 
 
+def _file_time_range(path: str) -> Tuple[str, str]:
+    """读日志档**自身**的首/末时间戳 (gzip 感知)。观测用, 不参与判级。
+
+    2026-09-24 增: 覆盖诊断此前只报「逐档条数」, 一个**完全在窗外的档**会被读成
+    「该档 0 条 ⇒ 归档文件无告警 ⇒ 覆盖不全」的假告警 —— 9/23 报告实证:
+    ftseek_us.log-20260923.gz 自身范围 09-22 03:29→09-23 03:26, 而窗口是 09-23 21:00→09-24 06:00,
+    两者**根本不相交**, 0 条是必然、不是缺口。同时「告警跨度」是告警时间戳的 min/max,
+    也不等于档的覆盖范围, 二者混读会继续误判。故此处把档自身范围与窗内/窗外属性一并读出。
+    返回 (首, 末) 原始字符串; 解析不到返回 ("", "")。
+    """
+    import re as _re
+    pat = _re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+    first = last = ""
+    try:
+        with _open_log(path) as fh:
+            for line in fh:
+                m = pat.match(line)
+                if m:
+                    if not first:
+                        first = m.group(1)
+                    last = m.group(1)
+    except OSError:
+        return "", ""
+    return first, last
+
+
+def _to_dt(s: str):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def parse_log_alerts_window(log_path: str, since: datetime,
                             until: datetime = None) -> Tuple[List[Dict], List[str]]:
     """跨轮转档解析一个会话窗的告警; 返回 (告警列表, 覆盖诊断行)。
@@ -262,11 +311,16 @@ def parse_log_alerts_window(log_path: str, since: datetime,
     **推送正文的总结区** (紧邻「✅ 盘中系统运行正常」那句) —— 只进 stdout 的话,
     读者看到的推送正文里那句「无异常告警」仍可能在覆盖不全时说谎 (9/8 实证)。
     纯观测行, 不进任何判据、不改判级。
+
+    2026-09-24 增: 逐档补报**档自身时间范围**与「窗内/窗外」属性, 并给出**盲区定论**
+    (窗内档最早起点是否 ≤ 窗起) —— 直接把「某档 0 条」与「真盲区」区分开, 让读者/LLM
+    不必自己推断 (9/23 报告据「归档档 0 条」写了一条假告警, 见 _file_time_range docstring)。
     """
     sources = resolve_log_sources(log_path, since, until or (since + timedelta(days=1)))
     alerts: List[Dict] = []
     seen = set()
     per_source: List[str] = []
+    in_window_starts: List[datetime] = []
     for src in sources:
         got = parse_log_alerts(src, since, until)
         added = 0
@@ -277,12 +331,31 @@ def parse_log_alerts_window(log_path: str, since: datetime,
             seen.add(key)
             alerts.append(a)
             added += 1
-        per_source.append(f"{Path(src).name}={added}")
+        f, l = _file_time_range(src)
+        df, dl = _to_dt(f), _to_dt(l)
+        inside = bool(df and dl and df < until and dl >= since)
+        if inside and df:
+            in_window_starts.append(df)
+        tag = "" if inside else f"[窗外 {f[5:16] or '?'}→{l[5:16] or '?'}]"
+        if inside and not added:
+            tag = f"[窗内无告警 {f[5:16]}→{l[5:16]}]"
+        per_source.append(f"{Path(src).name}={added}{tag}")
     alerts.sort(key=lambda a: a["time"])
     span = f"{alerts[0]['time'][11:19]}→{alerts[-1]['time'][11:19]}" if alerts else "无告警"
+    # 盲区定论: 窗内档最早起点必须 ≤ 窗起 (容差 5min: copytruncate 轮转瞬间的空隙)
+    if in_window_starts:
+        earliest = min(in_window_starts)
+        if earliest <= since + timedelta(minutes=5):
+            verdict = f"窗内档 {len(in_window_starts)} 个, 最早档起 {earliest.strftime('%m-%d %H:%M')} ≤ 窗起 ⇒ 无盲区"
+        else:
+            verdict = (f"⚠️ 覆盖盲区: 窗内档最早起点 {earliest.strftime('%m-%d %H:%M')} "
+                       f"晚于窗起 {since.strftime('%m-%d %H:%M')} (缺口 "
+                       f"{(earliest - since).total_seconds() / 3600:.1f}h)")
+    else:
+        verdict = "⚠️ 覆盖盲区: 窗口内无任何日志档"
     diag = (f"US 日志源 {len(sources)} 个 ({', '.join(per_source) or '无'}) "
-            f"| 告警跨度 {span} | 窗 {since.strftime('%m-%d %H:%M')}→"
-            f"{(until or since).strftime('%m-%d %H:%M')}")
+            f"| 告警时间跨度(非覆盖) {span} | 窗 {since.strftime('%m-%d %H:%M')}→"
+            f"{(until or since).strftime('%m-%d %H:%M')} | {verdict}")
     return alerts, [diag]
 
 

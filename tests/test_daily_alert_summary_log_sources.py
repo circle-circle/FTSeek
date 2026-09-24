@@ -14,6 +14,7 @@ daily + copytruncate + dateext(-%Y%m%d), 由 /etc/cron.daily/logrotate 触发, �
 parse_log_alerts(us_log, ...) 单文件调用。
 """
 import importlib.util
+import gzip
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -62,14 +63,24 @@ def test_rotated_file_inside_window_is_discovered_and_ordered(logdir):
 
 
 def test_gz_rotated_variant_is_discovered(logdir):
-    """compress + delaycompress: 隔日档是 .gz, 必须同样被发现。"""
+    """compress + delaycompress: 隔日档是 .gz, 必须同样被发现 —— 且**内容要能被读出来**。
+
+    2026-09-24 补强: 原版只写空字节 b"" 就断言文件名被发现 ⇒ 覆盖了「发现」却漏掉「可读」,
+    于是 resolve_log_sources 返回 .gz 而 parse_log_alerts 用普通 open 读不出任何时间戳行
+    (**静默 0 条**) 这个真 bug 长期绿着。现写真实 gzip 内容并断言条数。
+    """
     cur = logdir / "ftseek_us.log"
     cur.write_text(_line("2026-09-09 03:50:00", "当前档"), encoding="utf-8")
-    (logdir / "ftseek_us.log-20260909.gz").write_bytes(b"")
+    with gzip.open(logdir / "ftseek_us.log-20260909.gz", "wt", encoding="utf-8") as f:
+        f.write(_line("2026-09-08 22:30:00", "gz档里的告警"))
 
     srcs = das.resolve_log_sources(str(cur), SINCE, UNTIL)
 
     assert any(s.endswith("-20260909.gz") for s in srcs)
+    alerts, diag = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
+    assert any("gz档里的告警" in a["content"] for a in alerts), \
+        "gz 档内容必须真被解析 (旧实现用普通 open ⇒ 恒 0 条)"
+    assert "=1" in diag[0], "gz 档命中数必须非 0"
 
 
 def test_no_rotation_yet_returns_only_current(logdir):
@@ -142,6 +153,46 @@ def test_coverage_diagnostic_exposes_source_count_and_span(logdir):
     assert "ftseek_us.log-20260909=1" in line and "ftseek_us.log=1" in line
     assert "21:35:00→03:50:00" in line
     assert "09-08 21:00→09-09 06:00" in line
+
+
+def test_out_of_window_source_tagged_and_no_blind_spot_verdict(logdir):
+    """窗外档的 0 条必须被标注为「窗外」, 且诊断要自己下「无盲区」定论。
+
+    2026-09-24 增 (9/23 报告假告警实证): 报告看到 `ftseek_us.log-20260923.gz=0` 就写
+    「归档文件无告警 ⇒ 覆盖可能不全」—— 而该档自身范围 09-22 03:29→09-23 03:26 与窗口
+    09-23 21:00→09-24 06:00 **根本不相交**, 0 条是必然。诊断必须把「窗外」与「窗内无告警」
+    分开, 并给出盲区定论, 否则读者只能自己猜 (且多半猜错)。
+    """
+    cur = logdir / "ftseek_us.log"
+    cur.write_text(_line("2026-09-09 03:50:00", "本会话告警"), encoding="utf-8")
+    # 窗内轮转档: 自身范围跨过窗起 (20:00 < 21:00), 故窗口起点被真覆盖
+    (logdir / "ftseek_us.log-20260909").write_text(
+        _line("2026-09-08 20:00:00", "窗前的行(应被时间过滤掉)")
+        + _line("2026-09-09 03:00:00", "窗内轮转档告警"), encoding="utf-8")
+    # 窗外档: 全部内容在 since 之前
+    (logdir / "ftseek_us.log-20260908").write_text(
+        _line("2026-09-08 03:20:00", "上一会话"), encoding="utf-8")
+
+    _, diag = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
+    line = diag[0]
+
+    assert "[窗外" in line, "窗外档必须显式标注, 否则 0 条会被读成缺口"
+    assert "窗内档 2 个" in line
+    assert "无盲区" in line, "诊断必须自己下结论, 不把判定推给读者"
+    assert "⚠️" not in line, "覆盖完整时不得出现盲区告警"
+
+
+def test_blind_spot_verdict_when_window_start_uncovered(logdir):
+    """只剩当前档且其起点晚于窗起 ⇒ 必须报盲区 + 缺口小时数 (9/8 原发病形态)。"""
+    cur = logdir / "ftseek_us.log"
+    cur.write_text(_line("2026-09-09 03:00:00", "轮转后才有日志"), encoding="utf-8")
+
+    _, diag = das.parse_log_alerts_window(str(cur), SINCE, UNTIL)
+    line = diag[0]
+
+    assert "⚠️ 覆盖盲区" in line
+    assert "6.0h" in line, "缺口小时数必须给出 (09-08 21:00 → 09-09 03:00 = 6h)"
+    assert "无盲区" not in line
 
 
 def test_missing_log_file_does_not_raise(logdir):
