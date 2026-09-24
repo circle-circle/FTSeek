@@ -1,6 +1,8 @@
 # DEB-20260923 · 延长时段财报通道: 判据口径缺陷 / 多空回放裁决 / 做空可行性调研
 
-> **状态**：调研与回放完成，**未改动任何交易逻辑**；候选方案 A/B/C 待用户裁决（§6 / §10）；独立复核分析与裁决建议见 **§12**（2026-09-23 追加）；第三轮实证复核 + 生产活例见 **§13**（2026-09-23 追加）；第四轮独立复算 + 实现语义钉死见 **§14**（2026-09-23 追加）。
+> **状态**：调研与回放完成；**用户 2026-09-24 裁决：A/B/D 全部批准**（§15）。A 已落地（口径修正 + 温和票带 + 四态 stale + 对照台账）；B 探针脚本就位 + crontab 调度已配（下一 ETH 窗触发，不自动执行）；D 独立回放验证脚本就位。C 不批（用户选 A 绑温和票约束，优于 C 的"只观测"）。
+>
+> 此前状态：调研与回放完成，**未改动任何交易逻辑**；候选方案 A/B/C 待用户裁决（§6 / §10）；独立复核分析与裁决建议见 **§12**（2026-09-23 追加）；第三轮实证复核 + 生产活例见 **§13**（2026-09-23 追加）；第四轮独立复算 + 实现语义钉死见 **§14**（2026-09-23 追加）。
 >
 > 日期：2026-09-23 · 作者：Hermes(Agent) · 数据窗口：**2026-08-28 ~ 2026-09-22（ET，18 个交易日）**
 >
@@ -398,3 +400,57 @@ KBH 生产活例的一个被 §13 遗漏的细节：`surprise STALE` 只在 04:5
 - **B（ETH 开空探针）**：无新增证据，维持 §12.3/§13.4 建议。
 - **D（RTH 只读回放）**：无新增证据，维持"支持只读、独立排期、不接下单链"。
 - **复现层**：建议把判据层复算脚本（日历端点 + 120/191 计数）与最终 JSON 入库，逐 tick 器留在 scratch；否则本档回放数字对后续 Agent 是"采信链"而非"复算链"。
+
+## 15. 用户裁决与落地记录（2026-09-24 追加）
+
+> **用户 2026-09-24 裁决：A/B/D 全部批准**。C 不批（用户选 A 绑温和票约束，优于 C 的"只观测不下单"）。
+
+### 15.1 方案 A（修口径 + 不追高，同批）——已落地
+
+| 项 | 落地位置 | 说明 |
+|---|---|---|
+| 判据②口径修正 (`calendar_actual`) | `scripts/extended_hours_entry_executor.py:122` | `EXT_EARNINGS_CRITERION=calendar_actual` (默认); 回滚 `=legacy_period` |
+| 新判据函数 | `_earnings_surprise_calendar_actual()` :1984 | 当日 Finnhub 日历 actual vs est; fail-close 三态 (§14.4) |
+| 旧判据保留 | `_earnings_surprise_legacy_finnhub()` :1917 | 回滚路径 + shadow 对照 |
+| §14.4 除零防御 | :2000-2003 | `estimate_missing` / `estimate_zero` / `actual_missing` |
+| 温和票带 (不追高) | :128 `EXT_ENTRY_CHG_BAND` | 设 `0.5,2.0` ⇒ 温和票档; 空 = 旧行为 |
+| 新旧判据对照台账 | `_record_earnings_criterion_shadow()` :2060 | 按 票-日 去重 (§14.5); 含 `legacy_stale_state` 四态 |
+| §13.3.2/§14.2 四态 stale 分类 | `_classify_legacy_stale_state()` :1917 | `endpoint_empty` / `period_unparseable` / `stale_gt_150` / `future_lt_-7` |
+| 契约测试 | `tests/test_ext_entry_deb20260923_contract.py` | 严格超集 + 不追高 + 四态 + shadow 落盘 |
+| RFC-102 盘前 AMC 配对 | `PREMARKET_AMC_PAIRING` :188 | 昨日 AMC 票纳入盘前人群 |
+
+**严格超集保证**: 新判据放行的票 ⊇ 旧判据放行的票 (§3.2: 102 放出 / 0 丢失)。由 `test_new_criterion_is_strict_superset_of_legacy` 契约测试机械保证。
+
+### 15.2 方案 B（SIM ETH 开空可行性探针）——脚本就位，调度已配
+
+| 项 | 位置 | 说明 |
+|---|---|---|
+| 探针脚本 | `scripts/probe_eth_short_open.py` | SIM-only, 1 股, 限价, 成交即平, ≤3 次/日 |
+| 台账 | `data/eth_short_probe.jsonl` | 3 笔 (2026-09-23): 2× accepted_no_fill + 1× **eth_short_fills** ✅ |
+| crontab 备份 | `/tmp/crontab_backup_20260924_deb23.txt` | 改动前完整备份 |
+| crontab 调度 | `5 16 25 9 *` + `5 4 26 9 *` (CST) | 盘前 04:05 ET (Sep 25) + 盘后 16:05 ET (Sep 25) |
+| 预注册判据 | §4.6 | ret=0 且 status ∈ {SUBMITTED, FILLED_PART, FILLED_ALL} ⇒ 支持 |
+
+**已达成结论**: 探针 #3 (US.CTAS, bid 挂单, FILLED_ALL, dealt=1, 建空仓 -1 → 买回平仓) 满足预注册成功判据。SIM ETH 开空**可行**。后续探针验证跨日稳定性。
+
+**执行纪律**: 探针通过 **≠** 空头通道获批。§7.3 仍需 ≥40 笔/≥15 交易日回放 + 小额实跑门槛。
+
+### 15.3 方案 D（RTH 侧独立回放验证）——脚本就位
+
+| 项 | 位置 | 说明 |
+|---|---|---|
+| 独立回放脚本 | `scripts/deb20260923_rth_independent_replay.py` | 零下单, 只读既有数据 |
+| 已有回放 (参考) | `scripts/rth_fade_replay.py` | fade +$75.80/笔 (n=26, 8 日) |
+| 影子攒样 | `scripts/rth_fade_shadow.py` (cron 每日) | `data/rth_fade_shadow.jsonl` |
+| 毕业裁定 | `scripts/rth_fade_graduation_check.py` | 净额 = pnl_net_after_borrow 优先 |
+
+**净额口径**: realized_pnl 是毛盈亏; 净额 = `pnl_net_after_borrow` 优先 (含借券费, RFC-060), 否则 `net_usd` (只扣佣金)。与 `rth_fade_graduation_check._net_usd()` 逐字同口径。
+
+**不接下单链**: D 的独立回放仅用于复核 §3.3/§3.4/§3.6 方向性读数, 不作为任何交易决策的输入。RTH 已有 playbook 在管, fade 通道转正须走独立 RFC。
+
+### 15.4 数据纪律声明
+
+- `realized_pnl` 是毛盈亏, 净额 = `pnl_net` 优先否则 `realized_pnl - fees_est`; 混淆会反转结论。
+- 新增观测面已在 `app/playbook/shadow_registry.py` 注册 (rth_fade / short_probe 等)。
+- 所有改动不触 `app/review/*`、`ops/hermes/review_*`、存量腐化测试文件、`scripts/overnight_earnings_carry_shadow.py` (已退役)。
+- `2d24da0a8` (pretrade gate 方向感知) 未被回退; 本批改动与之兼容。

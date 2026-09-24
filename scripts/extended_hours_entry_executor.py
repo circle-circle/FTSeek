@@ -1914,6 +1914,39 @@ def _surprise_period_age_days(period):
     return (today_date - period_date).days
 
 
+def _classify_legacy_stale_state(legacy_reason, legacy_result):
+    """旧判据 surprise_stale 四态分类 (DEB-20260923 §13.3.2 / §14.2, DEB-20260924 裁决 A)。
+
+    为什么需要: 旧判据的 `surprise_stale` 混装三态 (period 缺失/不可解析、age>150、age<-7)
+    共用同一 sub_reason 与同一句打印。10 月财报季对照期间若 `surprise_stale` 上升, 无法区分
+    "Finnhub 端点不稳定" 与 "口径在误拦" ⇒ 观测失真。本函数把四态拆成显式标签, 写入
+    对照台账的 `legacy_stale_state` 字段; 主闸原因仍为 `surprise_stale` (零行为变更)。
+
+    四态:
+      endpoint_empty       — company_earnings 空返回 (端点不稳定/回填中, §14.2 KBH 实测)
+      period_unparseable   — period 字段缺失或不可解析为日期 (源数据质量问题)
+      stale_gt_150         — 龄 > 150 天 (真陈旧, 守卫原始目标: 上季 beat 透旧闸)
+      future_lt_-7         — 龄 < -7 天 (未来财季, **口径误拦**的主体)
+      other                — 非 stale 类原因 (直接返回 None, 不分类)
+    """
+    if legacy_reason != "surprise_stale":
+        return None
+    period = (legacy_result or {}).get("period")
+    age_days = (legacy_result or {}).get("period_age_days")
+    # 端点空返回: company_earnings 返回空列表 ⇒ period/age 都 None, 且 _LEGACY_PERIOD_OBS
+    #   不会被写入 (在 company_earnings 空分支已返回 finnhub_no_data); 但 _LEGACY_PERIOD_OBS
+    #   里的 period=None 也可能是 period 字段本身缺失 ⇒ 用 age_days 与 period 的组合分辨。
+    if period is None and age_days is None:
+        return "endpoint_empty"
+    if age_days is None:
+        return "period_unparseable"
+    if age_days > EARNINGS_MAX_PERIOD_AGE_DAYS:
+        return "stale_gt_150"
+    if age_days < -7:
+        return "future_lt_-7"
+    return "other"
+
+
 def _earnings_surprise_legacy_finnhub(ticker):
     """旧判据②的 Finnhub 部分: company_earnings[0] surprise>0 + period 龄窗 [-7, 150]。
 
@@ -2106,6 +2139,12 @@ def _record_earnings_criterion_shadow(symbol, session, ticker, legacy, new, extr
                 "estimate": (new_res or {}).get("estimate"),
                 "legacy_period": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period"),
                 "legacy_period_age_days": (legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}).get("period_age_days"),
+                # 旧判据 stale 四态 (DEB-20260923 §13.3.2/§14.2, DEB-20260924 裁决 A):
+                #   endpoint_empty / period_unparseable / stale_gt_150 / future_lt_-7。
+                #   非 stale 原因时为 None。10 月财报季对照裁决必需字段。
+                "legacy_stale_state": _classify_legacy_stale_state(
+                    legacy_reason, legacy_res or _LEGACY_PERIOD_OBS.get(ticker) or {}
+                ),
                 # 入场侧上下文 (2026-09-23): 带/量闸状态 — 让 10 月能**分离**评估
                 # "旧判据误拦" 与 "涨幅带挡掉", 二者否则混在一个样本里不可归因。
                 **(extra or {}),
