@@ -362,6 +362,22 @@ def main():
         hi = boots[min(int(0.975 * len(boots)), len(boots) - 1)]
         pv = 2 * min(sum(1 for x in boots if x <= 0), sum(1 for x in boots if x >= 0)) / len(boots)
         print(f"  配对差(开盘基准): {round(point,5)} CI95 [{round(lo,5)}, {round(hi,5)}] p={round(min(pv,1),4)}")
+        # 判据 (b) 双半窗同号 / (d) 留一日符号稳健 (预注册四条的后两条; 首跑时漏算,
+        # 已按同一判据以 ad-hoc 命令补读后回填本实现 — 判据文本未动, 见 DEB §三.8/R5)
+        _days = [p["date"] for p in pair_rows]
+        _mid = len(_days) // 2
+        _h1 = _mean([p["diff"] for p in pair_rows[:_mid]])
+        _h2 = _mean([p["diff"] for p in pair_rows[_mid:]])
+        _loo = [(_mean([p["diff"] for p in pair_rows if p["date"] != dd]), dd) for dd in _days]
+        _sign = 1 if point > 0 else -1
+        _stable = all((x * _sign) > 0 for x, _ in _loo)
+        print(f"  双半窗: {round(_h1,5) if _h1 is not None else None} / {round(_h2,5) if _h2 is not None else None}"
+              f"; 留一日稳健={_stable} 极值={sorted(round(x,5) for x,_ in _loo)[:1]}"
+              f"…{sorted(round(x,5) for x,_ in _loo)[-1:]}")
+        _ca = lo > 0 or hi < 0
+        _cb = (_h1 is not None and _h2 is not None and _h1 * _sign > 0 and _h2 * _sign > 0)
+        _cc = len(pair_rows) >= 6
+        print(f"  判据自检: (a)CI不含0={_ca} (b)双半窗同号={_cb} (c)配对日≥6={_cc} (d)留一日稳健={_stable}")
         # 对照列示: 旧锚基准 (禁与新口径混算)
         anchor_pairs = []
         by_day_arch2 = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -375,7 +391,11 @@ def main():
         print(f"  [对照·旧锚基准, 仅列示] 配对日 {len(anchor_pairs)}: 均值差 "
               f"{round(sum(anchor_pairs)/len(anchor_pairs),5) if anchor_pairs else None}")
         out["T3"] = {"pair_days": len(pair_rows), "diff_open_basis": round(point, 5),
-                     "ci95": [round(lo, 5), round(hi, 5)], "p": round(min(pv, 1), 4)}
+                     "ci95": [round(lo, 5), round(hi, 5)], "p": round(min(pv, 1), 4),
+                     "halves": [round(_h1, 5) if _h1 is not None else None,
+                                round(_h2, 5) if _h2 is not None else None],
+                     "loo_stable": _stable,
+                     "criteria": {"a": _ca, "b": _cb, "c": _cc, "d": _stable}}
     else:
         print("  配对日 <6 ⇒ 按预注册记「不可达」, 不读显著性")
         out["T3"] = {"pair_days": len(pair_rows), "verdict": "不可达(配对日<6)"}
