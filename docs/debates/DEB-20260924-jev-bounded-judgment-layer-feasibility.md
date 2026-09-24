@@ -1,10 +1,10 @@
 # DEB-20260924: Jev（TypeSafe System One）作为 FTSeek「有界判断部件」— 可行性与 Phase 0 规格
 
 > **状态**: 提案，**未落码**（本文 = L5 纯文档，零行为变更；Phase 0 若获裁，另立实现批次）
-> **待裁**: 用户（§10 的 F1–F5，每条附推荐 + 保守替代）
+> **待裁**: 用户（§10 的 F1–F7，每条附推荐 + 保守替代）
 > **类型**: 立项提案（若 Phase 0 落码则为 L1；本文本身零代码）
 > **目标读者分层**:
-> - **裁决者（用户）**: 读 §0 结论 / §10 待裁五问
+> - **裁决者（用户）**: 读 §0 结论 / §10 待裁七问
 > - **执行者（下一会话的本人）**: 读 §5 规格 / §8 步骤与回滚
 > - **复查者（第二 agent）**: 读 §3 证据表 / §9 复查清单 / §11 自曝，按 §9 逐条跑命令
 > **前置**: 承接 2026-09-21 的 Jev 一手资料核查轮；仓内 `grep -rli "typesafe\|\bjev\b" app/ scripts/ docs/ config/` = **0 命中** ⇒ 无既有实现、无既有裁决冲突（§3 E1）
@@ -27,6 +27,7 @@
 2. 唯一站得住的理由是 **70–500ms 可进热路径** + **概率作为显式不确定性口径**（三路分叉：自动 / 升级 / 转人工）；
 3. 但**裁决带宽瓶颈（19 个 READY 影子）不是"缺一个裁判"，是缺消费方与结算面**——换更便宜的裁判不解决"没人裁"（§12 反方 §12.1）；
 4. 因此推荐：**Phase 0 先做本地可回放基线（零外发、零依赖、当天可跑），用历史标签问"这个判断到底有没有可测信号空间"**；只有基线显示"有空间"，才值得付"数据外发 + 早期厂商依赖"的代价去测 Jev 本体。
+5. **交易前评估「要不要下单」（用户 2026-09-24 追加议题，§5.4）**：同轴已有两次不利读数（edge gate rank IC 双窗负 −0.396/−0.172；被拦候选反事实 T+1 +0.113% → `KEEP_SAMPLING`），且**语义判断的合法作用域只有 10.5%、去重后 0.5 个/交易日** ⇒ **不新开并列影子**，若要做只按 §5.4.4 挂同轴增量臂；并且**先裁时点**（F7）——若允许把评估提前到计划阶段，Jev 的唯一技术理由（延迟）随之归零。
 
 ---
 
@@ -89,6 +90,11 @@
 | E13 | 现行裁决口径（必须引用，不许另立） | `sed -n '1,20p' docs/ADJUDICATED-CRITERIA.md` | `A1 影子攒样最小样本 n≥30 才评估; n≥60 才谈裁决`；`A7 促进/转正双窗口 双窗口 ≥40% 才采信`；`A8 转正四判据 OOS≥15日 ∧ 净均值>0 ∧ 毛利 t>1 ∧ ADF 平稳` |
 | E14 | 新增调度/脚本的入账守卫 | `grep -n "def test_" tests/test_control_loop_ledger.py tests/test_ops_scripts_sync.py` | 台账文件 **10** 条，入账相关 4 条：`test_enabled_job_is_in_ledger` / `test_crontab_loops_are_ledgered_or_baselined` / `test_ledger_names_carrier_script_for_crontab_rows` / `test_crontab_baseline_has_no_ghost_entries`；同步文件 **3** 条（含 `test_repo_and_live_scripts_in_sync` 双向 sha256） |
 | E15 | **本提案作者的一次口径事故（自曝）** | 见 §11 | 用 epoch 浮点与**文本时间列**比较，得到"近 7 天 `risk_blocked` = 5223"；实为**全历史** 5223，且最后一条在 `2026-05-22T03:40:54` ⇒ 该数字已作废，不再引用 |
+| E16 | 执行门审计：拦截构成（**下单前判断的合法作用域**） | 见代码块 ⑤ | 窗口 7/17–9/23 / **49 个交易日** / 3824 行：`executed 432` / **资金·物理帽 2991（78.2%）**（chase_cap 1074 + notional_cap 919 + max_positions 779 + cycle_cap 214 + bp_cap 3 + duplicate 2）/ **信号质量类 401（10.5%）**（knife_gate 219 + fail 182） |
+| E17 | 执行门前**去重真实体量**（唯一键 = `inst_id`） | 见代码块 ⑤ | `distinct inst_id` 全量 **473** = **9.7 个/交易日**；`executed` 去重 422（8.8 行/日 → 去重后 422）；**信号质量类拦截去重后仅 26 个 inst_id（≈0.5 个/交易日）** ⇒ 401 行主要是**逐轮重复计数**（轮询放大），不是 401 个事件 |
+| E18 | 已成交笔的**真值回填路径已验证** | 见代码块 ⑥ | `executed` 行含 `decision_id` 427 条（去重后仍 427）→ **427/427 全部 join 到 `trade_records`**（100%）；`trade_records` 894 笔中 885 笔有 `pnl_net` |
+| E19 | 同轴已有的**否定读数 ①**（下单前评分） | `sed -n '61p;319p' docs/debates/DEB-20260923-shadow-board-caliber-fixes.md` | `rank IC (预测期望 vs 实际笔均) 两窗皆负: 近7天 −0.396 (键数 24) / 近30天 −0.172 (键数 174)`；④ edge 门 `不放开也不实装` |
+| E20 | 同轴已有的**未定读数 ②**（被拦候选反事实） | 代码块 ⑦ | `data/shadow/da_blocked_cf_history.jsonl` 末行：`n_signals=191, n=178`；`T+1 mean_signed_pct=+0.113%`、`win_rate=0.438`、`p_under=0.0576` → `verdict=KEEP_SAMPLING`（**被拦候选并不显著更差**，未越 ±0.15% 费用线） |
 
 ```python
 # ① 影子注册表活体读数（只读：refresh_counts 不写盘，仅内存置 current_n）
@@ -114,6 +120,26 @@ print(len(lab), collections.Counter(bool(r.get("recovered_5m")) for r in lab))
 for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jsonl"]:
     rs = [json.loads(x) for x in open(f, encoding="utf-8") if x.strip()]
     print(f, len(rs), collections.Counter(str(r.get("settled")) for r in rs if "settled" in r))
+
+# ⑤ 下单前判断的作用域与**去重**体量 (exec_gate_audit)
+rows = [json.loads(x) for x in open("data/shadow/exec_gate_audit.jsonl", encoding="utf-8") if x.strip()]
+c = collections.Counter(r.get("action") for r in rows)
+days = {r.get("date") for r in rows}
+print(len(rows), len(days), c)                                    # 3824 49 {...}
+print("全量去重 inst:", len({r.get("inst_id") for r in rows}))     # 473
+q = [r for r in rows if r.get("action") in ("skipped_knife_gate", "skipped_fail")]
+print("质量类行:", len(q), "去重 inst:", len({r.get("inst_id") for r in q}))   # 401 / 26
+
+# ⑥ 真值回填可行性 (executed → trade_records)
+import sqlite3
+ids = {r.get("decision_id") for r in rows if r.get("action") == "executed" and r.get("decision_id")}
+db = sqlite3.connect("data/ftseek_us.db")
+q = f"select count(*) from trade_records where decision_id in ({','.join('?' * len(ids))})"
+print(len(ids), db.execute(q, tuple(ids)).fetchone()[0])           # 427 427
+
+# ⑦ 同轴既有反事实读数 (被拦候选)
+last = [json.loads(x) for x in open("data/shadow/da_blocked_cf_history.jsonl", encoding="utf-8") if x.strip()][-1]
+print(last["n_signals"], last["n"], last["verdict"], last["horizons"]["T+1"])
 ```
 
 ---
@@ -182,6 +208,54 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 
 ---
 
+### 5.4 追加议题（用户 2026-09-24 追加）：**交易前评估「要不要下单」能否做影子判断**
+
+**结论先行**：技术可行（record-only、零风险），但**合法作用域极小 + 先验不利 + 前向攒样功效不足**。三项实测如下；若仍要做，唯一合规形态是**挂在同轴既有读数面上的增量臂**（5.4.4），不是新开一条并列影子。（上轮映射把它列为"🟢 干净赢面"，**此处下调**，见 §11 ⑦。）
+
+#### 5.4.1 合法作用域：语义判断能碰的只有 10.5%，去重后 ≈0.5 个/交易日
+
+| 拦截构成（`exec_gate_audit.jsonl`，7/17–9/23，3824 行 / 49 交易日） | 行数 | 占比 | 去重 `inst_id` | 语义判断可否翻案 |
+|---|---|---|---|---|
+| 资金 / 物理帽（chase_cap 1074 + notional_cap 919 + max_positions 779 + cycle_cap 214 + bp_cap 3 + duplicate 2） | 2991 | **78.2%** | — | ❌ **禁止**：翻案 = 让模型决定超帽加仓 / 绕持仓上限 |
+| 信号质量类（knife_gate 219 + fail 182） | 401 | **10.5%** | **26** | ✅ 唯一合法作用域 |
+| 实际执行 `executed`（真值来源，非拦截） | 432 | 11.3% | 422 | — |
+
+⇒ **两个独立的事实在此同时成立**：①入口去重后 **9.7 个/交易日**；②语义判断真正能碰的那一类，49 个交易日里只有 **26 个 inst_id ≈ 0.5 个/交易日**（401 行是**逐轮重复计数**——轮询放大，不是 401 个事件）。
+
+#### 5.4.2 体量与功效：前向攒样不可行 ⇒ 必须走历史回放
+
+- 单靠前向采集：按 A1（n≥30 才评估）需 **≈60 个交易日（3 个月）**；n≥60 需 **≈120 个交易日**。
+- 真值回填路径**已验证可通**：`executed` 的 427 个 `decision_id` → **427/427 join 到 `trade_records`**（E18）。
+- ⇒ 唯一务实路线是**历史回放**（合用户 8/14 偏好"能回测就别攒样"），且必须**在现役门链基线上算增量**（承 post-blackout 基线纪律）。
+
+#### 5.4.3 先验证据：这条轴上已有两次"否定 / 未定"读数
+
+| # | 既有读数（同轴） | 含义 |
+|---|---|---|
+| ① | `edge_gate_shadow`（**本身就是一个"下单前期望值评估器"**）rank IC **两窗皆负**：近 7 天 −0.396（键 24）/ 近 30 天 −0.172（键 174）；且分桶与实际笔均无单调关系 | "用评分决定要不要下单"在这条轴上**已被测过一次，结论是负预测力**（DEB-20260923 §2.1/§8④：不放开也不实装） |
+| ② | `da_blocked_cf`（被拦候选 T+1/T+3/T+5 反事实）：`n_eval=178`，**T+1 mean = +0.113%**、win_rate 0.438、`p_under=0.0576` → `KEEP_SAMPLING` | **被拦的候选并不显著更差**（未越 ±0.15% 费用线）⇒ "再拦一次"没有先验空间 |
+
+⇒ 引 Jev 进来必须先回答"**为什么这次会不一样**"。目前唯一可能的答案：既有 edge gate 是**从历史拟合的数值模型**，Jev 是**零样本 + 校准概率**——但第三方扑克实测恰恰显示它**不能从原始状态推结论、必须把结论喂进 state**，所以这个答案**未经验证且方向不利**。
+
+#### 5.4.4 若仍要做：唯一合规形态（同轴增量臂）
+
+1. **不新开影子文件**：在既有 `data/shadow/exec_gate_audit.jsonl` **同轴加字段**（承"同轴同文件、加字段区分"纪律），避免第二套账本与 T14 同轴打架。
+2. **判据必须是增量**：只在**已被现役门链放行**的子集上算 lift/AUC（残存效应），不是全量 lift。
+3. **真值两臂分列**：`executed` 臂用真 `pnl_net`（E18，100% 可回填）；**被拦候选臂必须显式标 `synthetic=true`**（bar 回放构造，复用 `scripts/penetration_outcome_backfill.py` 同法 + `data/replay_bars/`），产物带 integrity 四键；两臂**不得混算成一个数字**。
+4. **时点纪律（as-of）**：输入只许用**决策时点可得**的值 —— 直接受 DEB-20260914 定谳约束（"时点不清的值被当成实时值"是已实锤病灶），否则回放出的 lift 是假的。
+5. 预注册判据：增量 lift ≥1.3× ∧ 两窗同向 ∧ 被拦组净均显著差于放行组（否则门在筛更差的单）∧ 增量臂 `n≥30`。
+
+#### 5.4.5 先裁**时点**，再裁**模型**（本议题最关键的一问）
+
+| 评估时点 | 可用模型 | Jev 的技术理由 |
+|---|---|---|
+| **门链检查那一刻**（毫秒级窗口，价格会漂移） | 只有 70–500ms 类快模型 | ✅ **唯一成立的位置**：现有 LLM 实测均 59.5s / 106.9s，物理上进不去 |
+| **扫描 / 计划阶段**（提前几十秒~几分钟） | 现役 LLM 即可（qwen-flash / deepseek） | ❌ **消失**：延迟不再是理由，只剩成本 —— 而 7 天全部 LLM 花销 $0.8675（E4），成本理由已按 §11⑥ 删除 |
+
+⇒ **若允许把"要不要下单"提前到计划阶段评估，本议题对 Jev 的需求自动归零**；反之若坚持在下单前那一刻，则必须承认这是一个**作用域 10.5%（去重 0.5 个/日）、已有两次不利读数**的小口子，且验证只能靠回放。
+
+---
+
 ## 6. 方案对比（含"不做"）
 
 | 方案 | 内容 | 赚什么 | 代价/风险 | 结论 |
@@ -192,6 +266,7 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | **D. 不做** | 维持硬阈值 + 人肉裁决 | 零成本 | "灰区无出口""裁决带宽"两个缺口原样保留 | 若 F1 选"不做"，须接受此后果并写进文档 |
 
 **推荐路径**：`B →（有信号空间）→ A 小样对照 →（A 与 B 无差异且成本/延迟有真收益）→ C`。
+若目标改为**交易前 veto**（用户 2026-09-24 追加议题）⇒ 不进本表的 A/B/C/D，走 §5.4.4 的**同轴增量臂**形态，并先裁时点（F7）。
 
 ---
 
@@ -246,10 +321,11 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | C9 | 我的口径事故（§11 E15）确实作废 | `./venv/bin/python -c "import sqlite3;c=sqlite3.connect('data/ftseek_us.db');print(c.execute(\"select count(*),max(timestamp) from events where event_type='risk_blocked'\").fetchone())"` | 若真存在近 7 天大量 `risk_blocked` ⇒ 我的"作废"结论过头 |
 | C10 | §4 的 `[厂商]/[第三方]` 标注与来源一致 | 抽查 §4 任一行，用其来源类型复核原始出处 | 出现"厂商数字当第三方实测"或反之 ⇒ 标注体系失效 |
 
-**点名请复查者挑战这 3 点**（不点名 = 复查退化为确认作者叙事）：
+**点名请复查者挑战这 4 点**（不点名 = 复查退化为确认作者叙事）：
 1. **§12.1 的"换裁判不解决没人裁"**——如果我说错，Phase 0 的顺序就要反转（先上 Jev，先做元环）；
 2. **§5.3 的 lift 口径与校准分箱门限**——这是我首次预注册，可能把一个行业惯例写成了过严/过松的门；
-3. **§6 推荐路径 B→A→C**——是否存在更省的路（例如直接用现役 `qwen-flash` 打同一批 state 做对照，而不必引入任何新模型）。
+3. **§6 推荐路径 B→A→C**——是否存在更省的路（例如直接用现役 `qwen-flash` 打同一批 state 做对照，而不必引入任何新模型）；
+4. **§5.4.3 的"先验不利"结论（新增）**——我据此把"下单前 veto"从干净赢面下调；若我对 edge gate / da_blocked_cf 两条既有读数的**同轴性**判断有误（例如它们测的根本不是同一个判断），F6 应直接反转成立案。
 
 ---
 
@@ -262,6 +338,8 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | **F3** | §5.3 的**校准门限**是否照此预注册？ | 照此预注册 | 校准是本模式唯一卖点，必须自己验，不许采信厂商 | 先只记录不判定（`[只印不判]`），攒够 60 再定门 |
 | **F4** | 是否允许**数据外发**给第三方 API？ | **先不许**；仅 B 通过后按最小充分集字段外发 | 交易状态外发涉合规/ToS；先外发字段白名单 | 全程不外发（走 C：本地自训） |
 | **F5** | 影子裁决带宽（19 READY）怎么办？ | **用确定性代码出"证据表"**，不引 Jev | 元环无客观真值，判断形状是"整理"不是"概率" | 人肉逐条读（维持现状） |
+| **F6** | 交易前评估「要不要下单」（下单前 veto）是否立案？ | **不新开并列影子**；若要做，只按 §5.4.4 挂**同轴增量臂** | 作用域仅 10.5%（去重 0.5 个/日）、体量 9.7/日、同轴已有两次不利读数；新开并列影子 = 第二套账本 | 先只做 §5.4.1/5.4.2 的"作用域 + 功效"复算（只读，零产物，当天可交） |
+| **F7** | 「要不要下单」的评估**时点**放哪？ | **计划 / 扫描阶段**（提前） | 放这里 Jev 的必要性归零、可用现役 LLM、体量从 0.5/日 提到 70+/日 | 坚持"下单前那一刻"：接受 §5.4.5 的全部约束，并承认只能靠回放验证 |
 
 ---
 
@@ -275,6 +353,7 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | ④ | "Jev 比 LLM 贵 ~1000×"、"Noul + 概率 + 校准置信度" | 厂商声明是 **40–400×**（二手转述才有 1000×）；`Noul` **没有独立 confidence 字段**（Choice/Score 才有） | §4 已按来源分层更正；采信区间取 40–400× |
 | ⑤ | 上一轮映射把"影子裁决（元环）"列为 **✅✅ 最匹配** | 元环**缺客观真值回填**，不满足"每判断必配真值"纪律；其判断形状是"整理证据"而非"概率判断" | 降级为 F5：用确定性代码做，不引 Jev（§12.1） |
 | ⑥ | "Jev 便宜 1000× ⇒ 值得引入"（隐含的成本理由） | 7 天全部 LLM 花销 **$0.8675** | 成本理由**删除**；改以延迟（70–500ms 进热路径）+ 显式不确定性为唯一理由（§0） |
+| ⑦ | 上一轮把「入场门/守卫（这笔候选是否 suspect）」列为 **🟢 A 类干净赢面** | 实测该轴：① 合法作用域仅 **10.5%**（78.2% 的拦截是资金/物理帽，翻案=让模型超帽加仓，**禁止**）② 去重体量 **0.5 个/交易日**（49 交易日仅 26 个 inst_id）③ 已有两次不利读数（edge gate rank IC 双窗负 −0.396/−0.172；da_blocked_cf T+1 +0.113% → KEEP_SAMPLING） | 下调为"**先验不利，须先证增量**"；立案形态限定为同轴增量臂（§5.4），并先裁时点（F7） |
 
 ---
 
@@ -295,6 +374,7 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | **数据外发 / 厂商绑定** | 交易状态外发第三方；早期厂商无 SLA、waitlist | F4 默认不外发；路径 B/C 不依赖厂商 |
 | **输入错配（喂太多）** | 官方自曝"无关上下文掉准确率" | 最小充分集（§5.1 输入列）+ `state_hash` 可回放 |
 | **算术/日期被当判断** | 官方自曝算术/计数/日期不可靠 | §1 非目标已列为禁入 |
+| **语义判断翻案资金帽（新增，承 §5.4）** | 若把 veto 接到门链上游或不限定作用域，模型可"说服"系统超 `notional_cap` / 绕 `max_positions` → 直接放大风险敞口 | §5.4.1 白名单：作用域只许 `knife_gate` / `fail` 两类，产物记 `scope="quality_only"`；越界即回滚 |
 
 ### 12.3 与已回滚 / 已证伪方案的关系（防重走）
 
@@ -316,6 +396,16 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 - **Hermes（本提案）**: 落码前先做普查；普查推翻初始映射的三处（新闻链首选、84:2 读数、元环最匹配），并把"成本理由"整条删除（7 天 LLM 花销 $0.8675）。给出 F1–F5 待裁，推荐 B（本地回放基线）先行。
 - **待补**: 用户裁决 F1–F5；如选 Phase 0 落码，另立实现批次并按 §8 分步提交。
 
+### 第 2 轮（2026-09-24 同日晚，交易前评估议题）
+
+- **用户**: 追加需求——"想利用它在交易前做一轮评估要不要下单，是否可以做影子判断，先分析再加入 DEB 文档"。
+- **Hermes（本提案 §5.4）**: 先分析后落文档，分析结论三条实测：
+ 1. **合法作用域只有 10.5%**（78.2% 的拦截是资金/物理帽，翻案=让模型超帽加仓，禁止）；去重后该类 **26 个 inst_id / 49 交易日 ≈ 0.5 个/日**（401 行是逐轮重复计数）；
+ 2. **前向攒样不可行** ⇒ 只能历史回放；真值路径已验证（executed 427/427 join `trade_records`）；
+ 3. **同轴已有两次不利读数**：`edge_gate_shadow` rank IC 两窗皆负（−0.396/−0.172）、`da_blocked_cf` 被拦候选 T+1 **+0.113%** → `KEEP_SAMPLING`（被拦的并不更差）。
+ ⇒ 新增 **F6**（不新开并列影子，只做同轴增量臂）与 **F7**（先裁时点：若允许提前到计划阶段评估，Jev 的必要性归零）；自曝 ⑦ 下调上轮"入场门/守卫＝干净赢面"的判断；§12.2 新增失败模式"语义判断翻案资金帽"。
+- **待补**: 用户裁 F6 / F7；若仍要立案，另一批执行 §5.4.4 五条约束。
+
 ---
 
 ## 附: 与既有文件的关系（防第二套账本）
@@ -328,3 +418,7 @@ for f in ["data/early_dead_signal_shadow.jsonl", "data/high_atr_stall_shadow.jso
 | `docs/decisions/RFC-104-*.md` | ETH 微观结构三影子（判据先于读数） | 不重裁其判据 | §5.3 "判据先于读数写死" |
 | `docs/PROMPT-CLAIM-REGISTRY.md` | Prompt 断言 ↔ 真实代码消费方登记表 | 不重裁 | §12.1：该表即"新闻链无消费方"同类问题的既有人工机制 |
 | `docs/CONTROL-LOOP-LEDGER.md` + `tests/test_control_loop_ledger.py` | 调度载体入账 SSOT | 不新增第二套台账 | §8 P0-c 入账步骤 |
+| `DEB-20260923-shadow-board-caliber-fixes.md` §2.1 / §8④ | **edge 门**（下单前期望值评分）分桶复核与"不放开也不实装"结论 | 不重裁其结论 | §5.4.3 先验证据 ①（同轴负预测力） |
+| `app/decision/edge_shadow_gate.py` + `data/shadow/exec_gate_audit.jsonl` | 现役下单前评分器与执行门审计产物 | 不重裁其口径 | §5.4.1 作用域表 / §5.4.4 同轴加字段对象 |
+| 影子 `da_blocked_cf`（判据字典 B14） | 被拦候选 T+1/T+3/T+5 反事实 | 不重裁 | §5.4.3 先验证据 ② |
+| `DEB-20260914-premarket-data-validity-audit.md` | 数据**时点**口径定谳（time-of-point 混用是实锤病灶） | 不重裁 | §5.4.4 第 4 条 as-of 纪律 |
