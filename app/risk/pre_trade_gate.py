@@ -219,6 +219,20 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
                     if not _symbol.startswith("US."):
                         continue
                     if abs(float(_p.get("qty", 0) or 0)) > 0:
+                        # 2026-09-24 pl_val 币种防御 (切实盘前置项): adapter 已钉
+                        # currency=USD 查询并透传行币种; 若仍见非 USD ⇒ pl_val 量纲
+                        # 错 ~7.8x (HKD), 回撤读数不可信 ⇒ fail-close (与浮亏不可知同语义)。
+                        # 缺 currency 字段 (老 adapter/其他来源) 保持旧行为, 向后兼容。
+                        _ccy = str(_p.get("currency", "") or "").upper()
+                        if _ccy and _ccy != "USD":
+                            logger.error(
+                                f"[pre_trade_gate] 🚨 持仓 {_symbol} 币种={_ccy} 非 USD — "
+                                f"pl_val 量纲不可信, fail-close (拒绝交易)"
+                            )
+                            return False, (
+                                f"DB_ERROR: position currency {_ccy} != USD for {_symbol} "
+                                f"(unrealized_pnl 量纲不可信)"
+                            )
                         unrealized_pnl += float(_p.get("unrealized_pnl", 0) or 0)
             except Exception as e:
                 # 浮亏不可知时 fail-close — 无法评估真实回撤就不放行

@@ -797,15 +797,26 @@ class FutuBrokerAdapter:
 
         try:
             from futu import TrdEnv, RET_OK
+            try:
+                from futu import Currency as _FutuCurrency
+            except ImportError:
+                _FutuCurrency = None  # 老 SDK 无 Currency 枚举 → 退回 SDK 默认 (USD)
 
             trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
-            ret, data = self.trade_ctx.position_list_query(
+            # 2026-09-24 pl_val 币种防御 (切实盘前置项): 显式钉 currency=USD,
+            # 不依赖 SDK 默认值; 返回行透传 currency 供下游 (pre_trade_gate 回撤)
+            # 校验。若行币种非 USD, pl_val 量纲错 ~7.8x (HKD) 会静默污染回撤熔断。
+            _q_kwargs = dict(
                 trd_env=trd_env,
                 acc_id=int(self.account_id) if self.account_id else 0,
             )
+            if _FutuCurrency is not None:
+                _q_kwargs["currency"] = _FutuCurrency.USD
+            ret, data = self.trade_ctx.position_list_query(**_q_kwargs)
 
             if ret == RET_OK and len(data) > 0:
                 positions = []
+                _non_usd_seen = set()
                 for _, row in data.iterrows():
                     symbol = str(row.get("code", ""))
                     if not symbol.startswith("US."):
@@ -815,6 +826,9 @@ class FutuBrokerAdapter:
                     # 变成 market_val 市值本身; 改用 abs 且防 0
                     _mkt_val = float(row.get("market_val", 0))
                     _cur_price = abs(_mkt_val) / abs(_qty) if abs(_qty) > 0 else 0.0
+                    _ccy = str(row.get("currency", "") or "")
+                    if _ccy and _ccy.upper() != "USD":
+                        _non_usd_seen.add(_ccy.upper())
                     positions.append({
                         "symbol": symbol,
                         "qty": _qty,
@@ -822,7 +836,13 @@ class FutuBrokerAdapter:
                         "current_price": _cur_price,
                         "unrealized_pnl": float(row.get("pl_val", 0)),
                         "unrealized_pnl_ratio": float(row.get("pl_ratio", 0)),
+                        "currency": _ccy.upper() or "USD",
                     })
+                if _non_usd_seen:
+                    logger.error(
+                        f"[富途] 🚨 持仓币种非 USD: {sorted(_non_usd_seen)} — pl_val 量纲可疑, "
+                        f"下游回撤计算将 fail-close (currency 字段已透传)"
+                    )
                 return positions
             return []
 

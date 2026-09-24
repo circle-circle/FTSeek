@@ -155,3 +155,31 @@ def test_db_error_fail_close(dd_env, tmp_path, monkeypatch):
     monkeypatch.setattr(dbu, "get_main_db", lambda: bogus)
     allowed, reason = ptg._check_daily_drawdown(_EQUITY)
     assert allowed is False and "DB_ERROR" in reason
+
+
+def test_non_usd_position_currency_fails_close(dd_env):
+    """pl_val 币种防御 (2026-09-24): 行币种非 USD ⇒ 量纲不可信 ⇒ fail-close。
+
+    与"非美市场行剔除"不同: US. 前缀行带 currency=HKD 说明 pl_val 可能按 HKD
+    返回 (~7.8x), 静默相加会污染回撤读数 — 宁可拒单也不放行错误量纲。
+    """
+    _closed(dd_env, "US.AMD", _TODAY, -100.0)
+
+    class _Broker:
+        def get_positions(self):
+            return [{"symbol": "US.AMD", "qty": 100, "unrealized_pnl": -500.0,
+                     "currency": "HKD"}]
+
+    allowed, reason = ptg._check_daily_drawdown(_EQUITY, _Broker())
+    assert allowed is False and "currency" in reason
+
+
+def test_missing_currency_field_keeps_legacy_behavior(dd_env):
+    """向后兼容: 老 adapter/其他来源无 currency 字段 ⇒ 保持旧求和行为不误伤。"""
+    _closed(dd_env, "US.AMD", _TODAY, -1000.0)
+
+    class _Broker:
+        def get_positions(self):
+            return [{"symbol": "US.AMD", "qty": 100, "unrealized_pnl": -200.0}]
+
+    assert ptg._check_daily_drawdown(_EQUITY, _Broker())[0] is True
