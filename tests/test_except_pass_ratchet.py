@@ -14,7 +14,19 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 950  # 2026-09-15 DEB-20260914-cutover §十 调低 (951→950): 切换基建批的两个新脚本
+BASELINE = 925  # 2026-09-24 用户裁「清剿新增点位」 调低 (950→925):
+                  #   9/15 基线后新增 ~70 处 (多批次累积, 无单一罪魁), 本批全量清剿:
+                  #   ① 新文件 39 处 (review_coverage_scan 5, orphan_ext_order_watch 6,
+                  #      cancel_orphan_ext_order 3, carrier_orphan_census 1, 等 20+ 新脚本);
+                  #   ② 存量文件增长 10 处 (scheduler_core +1, shadow_registry +1, hub +1,
+                  #      message +1, extended_hours_entry_executor +5, premarket_exit_shadow +1);
+                  #   ③ 顺带清剿 baseline 内 20 处 (futu_channel_shadow_collect 13,
+                  #      data_freshness_watchdog 7, scheduler_core +8, hub +3, message +2,
+                  #      shadow_registry +2, premarket_exit_shadow +1) 使基线收紧;
+                  #   全改 logger.debug/warning 留痕 (exc_info=True), 零控制流变更,
+                  #   高频循环/预期内静默用 debug 降噪; dotenv 加载统一 debug。
+                  #   净 −25 (950→925), 只降不升。
+                  # 2026-09-15 DEB-20260914-cutover §十 调低 (951→950): 切换基建批的两个新脚本
                   #   (`scripts/cutover_preflight.py` 9 处 + `scripts/cutover_rehearse.py` 1 处)
                   #   曾把计数顶到 960 — 被并行工作流 (DEB-20260914 VIX 批) 全仓回归抓出并
                   #   归因到本工作流, 就地清剿全部 10 处: 5 处"库文件缺失就跳臂"改为

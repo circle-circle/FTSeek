@@ -24,6 +24,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import logging
 import math
 import sqlite3
 from collections import defaultdict
@@ -36,6 +37,8 @@ KR3 = REPO / "data" / "shadow" / "kr3_direction_runup_gate.jsonl"
 OUT = REPO / "data" / "shadow" / "top_movers_trade_join_latest.json"
 MIN_N = 30
 BUCKETS = ("rank<=10", "rank 11-50", "rank 51-100", "入场时无榜观测")
+
+_log = logging.getLogger(__name__)
 
 
 def _load_eval_module():
@@ -171,6 +174,7 @@ def evaluate() -> Dict:
             try:
                 r = json.loads(line)
             except Exception:
+                _log.warning("kr3 jsonl parse failed", exc_info=True)
                 continue
             overlap["n_kr3_lines"] += 1
             if r.get("would_block"):
@@ -183,7 +187,7 @@ def evaluate() -> Dict:
                 try:
                     wb_all.add(json.loads(line).get("trade_id"))
                 except Exception:
-                    pass
+                    _log.warning("kr3 jsonl parse failed", exc_info=True)
         overlap["n_kr3_trades"] = len(wb_all)
         overlap["n_top10_within_kr3_coverage"] = len(top10_ids & wb_all)
         overlap["n_intersection_top10_x_kr3_would_block"] = len(top10_ids & wb)

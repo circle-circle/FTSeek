@@ -23,6 +23,7 @@
 """
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -33,11 +34,13 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 from scripts.extended_hours_order_lifecycle import ACTIVE_ORDER_STATUSES, query_order_rows
 
@@ -130,10 +133,11 @@ def _recorded_keys():
                 try:
                     row = json.loads(line)
                 except Exception:
+                    _log.warning("_recorded_keys: malformed jsonl line", exc_info=True)
                     continue
                 keys.add((row.get("symbol"), row.get("order_id")))
     except Exception:
-        pass
+        _log.warning("_recorded_keys: audit file read failed", exc_info=True)
     return keys
 
 
@@ -147,11 +151,12 @@ def _alerts_today(today):
                 try:
                     row = json.loads(line)
                 except Exception:
+                    _log.warning("_alerts_today: malformed jsonl line", exc_info=True)
                     continue
                 if row.get("trade_date") == today and row.get("alerted"):
                     count += 1
     except Exception:
-        pass
+        _log.warning("_alerts_today: audit file read failed", exc_info=True)
     return count
 
 
@@ -221,7 +226,7 @@ def scan(now=None, dry=False):
             try:
                 ctx.close()
             except Exception:
-                pass
+                _log.warning("scan: ctx.close() failed", exc_info=True)
 
     found, alerted, skipped = [], 0, []
     for row in rows:

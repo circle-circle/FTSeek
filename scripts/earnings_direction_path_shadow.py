@@ -18,6 +18,7 @@
 """
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timedelta
@@ -27,6 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(ROOT / ".env.us", override=True)
+
+_log = logging.getLogger(__name__)
 
 from scripts.rth_fade_shadow import (  # noqa: E402  复用取数 (不新增一套)
     day_bars, et_today, finnhub_rows, futu_rows, prev_trading_day)
@@ -143,7 +146,7 @@ def main(argv=None) -> int:
                         x = json.loads(line)
                         seen.add((x.get("rth_day"), x.get("symbol")))
                     except Exception:
-                        pass
+                        _log.warning("jsonl parse failed", exc_info=True)
         new = [r for r in recs if (r["rth_day"], r["symbol"]) not in seen]
         OUT.parent.mkdir(parents=True, exist_ok=True)
         with OUT.open("a") as f:

@@ -11,12 +11,15 @@
 输出四类: 执行环(必留 crontab) / 有哨兵 / 有读者 / **孤儿**(仅日志, 无人读, 无哨兵).
 只读扫描。
 """
+import logging
 import pathlib
 import re
 import subprocess
 
 REPO = pathlib.Path("/opt/ftseek/FTSeek-US")
 HERMES = pathlib.Path("/root/.hermes")
+
+_log = logging.getLogger(__name__)
 
 cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
 lines = [l for l in cron.splitlines() if l.strip() and not l.strip().startswith("#")]
@@ -29,7 +32,7 @@ for d in (REPO / "scripts", REPO / "app", REPO / "ops", HERMES / "scripts", REPO
             try:
                 exec_blobs[f] = f.read_text(errors="replace")
             except Exception:
-                pass
+                _log.warning("file read failed", exc_info=True)
 registry = (REPO / "app" / "playbook" / "shadow_registry.py").read_text(errors="replace") \
     if (REPO / "app" / "playbook" / "shadow_registry.py").exists() else ""
 

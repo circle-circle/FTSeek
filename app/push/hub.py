@@ -68,7 +68,7 @@ class PushHub:
                 from app.core.config_container import get_config as _gc
                 _bte = bool(_gc().get_dotted("push.broadcast_trade_events", True))
             except Exception:
-                pass
+                logger.warning("broadcast config read failed", exc_info=True)
             broadcast_trade_events = _bte
         self._broadcast_trade_events = bool(broadcast_trade_events)
         # 上线可验证: 重启后 grep 本行即可确认双发开关的实际取值 (2026-09-18)
@@ -200,7 +200,7 @@ class PushHub:
             if self._executor is not None:
                 self._executor.shutdown(wait=True, cancel_futures=False)
         except Exception:
-            pass
+            logger.warning("hub shutdown failed", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────
     # 内部
@@ -215,7 +215,7 @@ class PushHub:
             try:
                 self._send_and_mark(msg, dedup_key)
             except Exception:
-                pass
+                logger.warning("sync fallback send failed", exc_info=True)
 
     def _send_and_mark(self, msg: PushMessage, dedup_key=None) -> bool:
         """发送并在成功后确认 dedup 占窗 (DEB-20260903 #110).
@@ -347,7 +347,7 @@ def reset_push_hub():
             try:
                 _singleton.stop()
             except Exception:
-                pass
+                logger.warning("push hub stop failed", exc_info=True)
         _singleton = None
 
 

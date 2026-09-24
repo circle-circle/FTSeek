@@ -22,6 +22,7 @@
   SUPERSEDED:          被新版取代 (指向替代项)
 """
 from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,8 @@ from enum import Enum
 # 不能只看 crontab -l。测试可 monkeypatch 这两个常量注入临时目录。
 _ETC_CRONTAB = Path("/etc/crontab")
 _ETC_CRON_D = Path("/etc/cron.d")
+
+_log = logging.getLogger(__name__)
 
 
 class ShadowStatus(str, Enum):
@@ -1589,6 +1592,7 @@ def _count_samples(s: ShadowItem, base) -> int | None:
             try:
                 r = _j.loads(line)
             except Exception:
+                _log.warning("jsonl parse failed", exc_info=True)
                 continue
             if reason and r.get("reason") != reason:
                 continue
@@ -1609,6 +1613,7 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                     try:
                         seen.add(_j.loads(_line).get(fld))
                     except Exception:
+                        _log.warning("jsonl parse failed", exc_info=True)
                         continue
                 seen.discard(None)
                 return len(seen)
@@ -1627,6 +1632,7 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                     try:
                         _r = _j.loads(_line)
                     except Exception:
+                        _log.warning("jsonl parse failed", exc_info=True)
                         continue
                     if str(_r.get(fld)) != val:
                         continue

@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
+_log = logging.getLogger(__name__)
 IV_HV = REPO / "data" / "futu_iv_hv_shadow.jsonl"
 DB = REPO / "data" / "ftseek_us.db"
 OUT = REPO / "data" / "shadow" / "iv_hv_residual_latest.json"
@@ -57,6 +59,7 @@ def load_iv_hv(path: Path = IV_HV) -> Dict[Tuple[str, str], Dict[str, float]]:
             try:
                 r = json.loads(line)
             except Exception:
+                _log.warning("jsonl parse failed", exc_info=True)
                 continue
             sym, dt = r.get("symbol"), r.get("time")
             iv, hv = r.get("iv"), r.get("hv")

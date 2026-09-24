@@ -30,12 +30,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
+_log = logging.getLogger(__name__)
 SRC = REPO / "data" / "futu_top_movers_shadow.jsonl"
 OUT = REPO / "data" / "shadow" / "top_movers_eval_latest.json"
 MIN_DAYS = 10      # 按日聚类要的会话数下限
@@ -109,6 +111,7 @@ def load_panel(src: Path) -> Dict[str, Dict[str, List[Tuple[str, float, int]]]]:
             try:
                 r = json.loads(line)
             except Exception:
+                _log.warning("jsonl parse failed", exc_info=True)
                 continue
             day = et_session(str(r.get("ts", "")))
             if not day:

@@ -8,6 +8,7 @@
      判据: 窗口内必须看到**负面对照**(同挂载点的 entry_sync/stale_anchor/refresh_daily_bars 影子)
      被调度过, 才能说"调度器进了那个分支而影子没写"。
 """
+import logging
 import re
 import subprocess
 from datetime import datetime, timedelta
@@ -18,6 +19,8 @@ JSONL = REPO / "data" / "shadow" / "ah_exit_shadow.jsonl"
 LOG = REPO / "logs" / "ftseek_us.log"
 PURGE_MTIME = datetime(2026, 9, 18, 18, 16)   # 清理写回时刻 (之后若无写入 = 停用生效)
 TS = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+
+_log = logging.getLogger(__name__)
 
 
 def _window(cutoff: datetime) -> list[str]:
@@ -31,6 +34,7 @@ def _window(cutoff: datetime) -> list[str]:
             if datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S") >= cutoff:
                 out.append(line)
         except ValueError:
+            _log.warning("timestamp parse failed", exc_info=True)
             continue
     return out
 

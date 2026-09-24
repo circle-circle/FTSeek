@@ -1,11 +1,15 @@
 """RFC-087 通俗说明用: 920→925 到底改了哪些笔、改了多少钱 (只读产物)."""
 import json
+import logging
+
+_log = logging.getLogger(__name__)
 
 for label, path in (("紧口径 n=56", "data/reports/replay_ext_entry_sources_20260919_premarket_fixed.json"),
                     ("宽口径 n=345", "data/reports/replay_ext_entry_sources_20260919_premarket_loose60.json")):
     try:
         d = json.load(open(path))
     except Exception:
+        _log.warning("report load failed", exc_info=True)
         continue
     print("=" * 88)
     print(label)

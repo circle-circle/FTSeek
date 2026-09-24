@@ -39,6 +39,7 @@
 """
 import argparse
 import json
+import logging
 import os
 import shutil
 import sys
@@ -50,11 +51,13 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 from scripts.extended_hours_order_lifecycle import (  # noqa: E402
     ACTIVE_ORDER_STATUSES,
@@ -93,6 +96,7 @@ def _age_minutes(create_time, now=None):
         try:
             dt = datetime.strptime(raw, fmt)
         except ValueError:
+            _log.warning("age parse failed", exc_info=True)
             continue
         return (now.replace(tzinfo=None) - dt).total_seconds() / 60.0
     return None
@@ -295,7 +299,7 @@ def main(argv=None):
         try:
             ctx.close()
         except Exception:
-            pass
+            _log.warning("context close failed", exc_info=True)
 
 
 if __name__ == "__main__":

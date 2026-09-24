@@ -4,6 +4,7 @@
 输出 = 紧凑摘要 (no_agent 载体直接投递)。只读: 不写 DB / 不下单 / 不重启 / 不改配置。
 """
 import json
+import logging
 import os
 import re
 import subprocess
@@ -15,6 +16,8 @@ ROOT = Path("/opt/ftseek/FTSeek-US")
 PY = ROOT / "venv/bin/python"
 LOG = ROOT / "logs/ftseek_us.log"
 lines_out = []
+
+_log = logging.getLogger(__name__)
 
 
 def sh(cmd, cwd=ROOT, timeout=120, env=None):
@@ -84,7 +87,7 @@ if out.strip():
         j = json.loads(out.strip())
         add(f"⑧ ETH entry 最近审计行: {j.get('ts','?')} {j.get('symbol','?')} ok={j.get('ok')} skip={j.get('skip','')}")
     except Exception:
-        pass
+        _log.warning("json parse failed", exc_info=True)
 
 # 6) 日志尾部 (看是否真有窗口内活动)
 rc, out = sh("tail -3 logs/ftseek_us.log | cut -c1-150")

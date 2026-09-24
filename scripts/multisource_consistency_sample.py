@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sqlite3
 import statistics as st
@@ -36,6 +37,8 @@ OUT = ROOT / "data" / "multisource_consistency_latest.json"
 
 # (key, 单位, 相对?, 阈值, K线/子集说明) —— 预注册, 勿改
 TOL = {"bps": 5.0, "pe_rel": 10.0, "pp": 0.10, "target_rel": 5.0}
+
+_log = logging.getLogger(__name__)
 
 
 def env_key(name: str) -> str:
@@ -100,7 +103,7 @@ def universe(limit: int) -> list[str]:
     try:
         syms += [r[0] for r in con.execute("SELECT DISTINCT symbol FROM open_positions WHERE symbol LIKE 'US.%'")]
     except Exception:
-        pass
+        _log.warning("open positions query failed", exc_info=True)
     syms = sorted({s for s in syms if re.match(r"^US\.[A-Z.\-]{1,8}$", s)})
     return syms[:limit] if limit else syms
 
@@ -136,7 +139,7 @@ def collect(syms, td_limit, av_limit):
                     if r == RET_OK and len(kl) >= 2:
                         kprev[s] = float(kl.iloc[-2]["close"])
                 except Exception:
-                    pass
+                    _log.warning("kline request failed", exc_info=True)
                 time.sleep(0.2)
             save("futu_kprev", kprev)
         qt.close()

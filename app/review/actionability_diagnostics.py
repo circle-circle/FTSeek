@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BARS_DIR = ROOT / "data" / "replay_bars"
 MIN_ACTIONABLE_NET = 50.0
 DELAY_MINUTES = 5
+
+_log = logging.getLogger(__name__)
 
 
 def _derived_evidence(
@@ -151,6 +154,7 @@ def _load_bars(
         try:
             values = [float(item[1]), float(item[2]), float(item[3]), float(item[4])]
         except (TypeError, ValueError):
+            _log.warning("bar parse failed", exc_info=True)
             continue
         bars.append(
             {

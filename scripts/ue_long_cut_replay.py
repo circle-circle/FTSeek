@@ -28,6 +28,7 @@ Arm 口径 (两臂并列): A 资金不回流 ΔA = −Σ(拦截净); B 资金回
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
 import sqlite3
@@ -43,6 +44,8 @@ N_PLACEBO = 200
 SEED = 20260923
 WINDOW_DAYS = 90
 UPSTREAM_GATE_DATE = date(2026, 9, 5)  # R1 禁追高闸/相关落地 (切窗用, T17)
+
+_log = logging.getLogger(__name__)
 
 
 def src_of(r: dict) -> str | None:
@@ -215,6 +218,7 @@ def main() -> int:
             try:
                 vals.append(float(pre_scalar(r, key)))
             except (TypeError, ValueError):
+                _log.warning("axis value parse failed", exc_info=True)
                 continue
         return (st.median(vals), len(vals), st.pstdev(vals) if len(vals) > 1 else 0.0) if vals else (None, 0, 0.0)
 
@@ -234,6 +238,7 @@ def main() -> int:
         try:
             gaps.append((float(pre_scalar(r, "entry_gap")), r))
         except (TypeError, ValueError):
+            _log.warning("entry gap parse failed", exc_info=True)
             continue
     buckets: dict[str, dict] = {}
     if len(gaps) >= 20:

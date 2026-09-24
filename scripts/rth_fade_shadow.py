@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timedelta
@@ -39,6 +40,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(ROOT / ".env.us", override=True)
+
+_log = logging.getLogger(__name__)
 
 OUT = ROOT / "data" / "rth_fade_shadow.jsonl"
 SIZE, FEE, GAP_MIN = 5000.0, float(os.getenv("FEE_PCT", "0.53")), 3.0
@@ -265,6 +268,7 @@ def main(argv=None) -> int:
                         row = json.loads(line)
                         seen.add((row.get("symbol"), row.get("rth_day")))
                     except json.JSONDecodeError:
+                        _log.warning("jsonl parse failed", exc_info=True)
                         continue
         fresh = [r for r in recs if (r["symbol"], r["rth_day"]) not in seen]
         if fresh:

@@ -36,12 +36,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+_log = logging.getLogger(__name__)
 
 SHADOW_PATH = ROOT / "data" / "rth_fade_shadow.jsonl"
 PROBE_PATH = ROOT / "data" / "eth_short_probe.jsonl"
@@ -58,6 +61,7 @@ def _load_jsonl(path: Path) -> list[dict]:
         try:
             rows.append(json.loads(line))
         except (json.JSONDecodeError, ValueError):
+            _log.warning("jsonl parse failed", exc_info=True)
             continue
     return rows
 

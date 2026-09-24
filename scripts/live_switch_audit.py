@@ -18,11 +18,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_log = logging.getLogger(__name__)
 
 SCAN_DIRS = ["app", "scripts"]
 SKIP_PARTS = ("__pycache__", "archive", "probe_sim_stop", "futu_capability_live_probe",
@@ -61,6 +64,7 @@ def scan():
         try:
             lines = p.read_text(errors="ignore").splitlines()
         except Exception:
+            _log.warning("file read failed", exc_info=True)
             continue
         in_doc = False
         for i, line in enumerate(lines, 1):

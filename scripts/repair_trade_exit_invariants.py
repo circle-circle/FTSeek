@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+_log = logging.getLogger(__name__)
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 # 2026-09-18 SSOT: 极值口径只有一份实现 (app/core/trade_extremes), 禁本地副本 ——
@@ -104,6 +106,7 @@ def repair_exit_extremes(conn: sqlite3.Connection, window_start: str = WINDOW_ST
             peak = float(metadata.get("peak_price", 0) or 0)
             trough = float(metadata.get("trough_price", 0) or 0)
         except (TypeError, ValueError):
+            _log.warning("price parse failed", exc_info=True)
             continue
         if entry <= 0 or peak <= 0 or trough <= 0:
             continue

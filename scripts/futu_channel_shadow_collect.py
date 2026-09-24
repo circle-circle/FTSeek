@@ -98,7 +98,7 @@ def _load_state() -> Dict:
         if _STATE.exists():
             return json.loads(_STATE.read_text())
     except Exception:
-        pass
+        logger.warning("_load_state: state file read failed", exc_info=True)
     return {}
 
 
@@ -106,7 +106,7 @@ def _save_state(st: Dict) -> None:
     try:
         _STATE.write_text(json.dumps(st, ensure_ascii=False))
     except Exception:
-        pass
+        logger.warning("_save_state: state file write failed", exc_info=True)
 
 
 def _max_item_time_per_symbol() -> Dict[str, str]:
@@ -122,9 +122,10 @@ def _max_item_time_per_symbol() -> Dict[str, str]:
                 if sym and t and t > out.get(sym, ""):
                     out[sym] = t
             except Exception:
+                logger.warning("_max_item_time_per_symbol: jsonl parse", exc_info=True)
                 continue
     except Exception:
-        pass
+        logger.warning("_max_item_time_per_symbol: file read failed", exc_info=True)
     return out
 
 
@@ -214,7 +215,7 @@ def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
                 "futu_channels.ofi_collect_enabled", True)):
             return 0
     except Exception:
-        pass
+        logger.warning("_collect_ofi_baseline: config read failed", exc_info=True)
     rows = []
     from datetime import timezone
     from app.utils.timezone import ET
@@ -239,6 +240,7 @@ def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
                     "last": float(row.get("last_price", 0) or 0),
                 })
             except Exception:
+                logger.warning("_collect_ofi_baseline: row parse failed", exc_info=True)
                 continue
     except Exception as e:
         logger.warning(f"[futu通道影子] ofi_baseline snapshot 异常: {e}")
@@ -271,7 +273,7 @@ def _collect_iv_hv(ctx, symbols: List[str]) -> int:
                 "futu_channels.iv_collect_enabled", True)):
             return 0
     except Exception:
-        pass
+        logger.warning("_collect_iv_hv: config read failed", exc_info=True)
 
     # 已存 (symbol, time) 集合 — 增量合并基准 (API 返回全量 250 日序列)
     seen = set()
@@ -282,9 +284,10 @@ def _collect_iv_hv(ctx, symbols: List[str]) -> int:
                     r = json.loads(line)
                     seen.add((r.get("symbol"), r.get("time")))
                 except Exception:
+                    logger.warning("_collect_iv_hv: jsonl parse", exc_info=True)
                     continue
         except Exception:
-            pass
+            logger.warning("_collect_iv_hv: iv file read failed", exc_info=True)
 
     rows_buf = []
     for sym in symbols:
@@ -309,6 +312,7 @@ def _collect_iv_hv(ctx, symbols: List[str]) -> int:
                             "%Y-%m-%d %H:%M:%S"),
                     })
                 except Exception:
+                    logger.warning("_collect_iv_hv: row parse failed", exc_info=True)
                     continue
         except Exception as e:
             logger.warning(f"[futu通道影子] iv_hv 采集异常 {sym}: {e}")
@@ -338,7 +342,7 @@ def _collect_top_movers(ctx) -> int:
                 "futu_channels.movers_shadow_enabled", True)):
             return 0
     except Exception:
-        pass
+        logger.warning("_collect_top_movers: config read failed", exc_info=True)
     try:
         from futu import Market
         ret, out = ctx.get_top_movers_rank(Market.US, count=100)
@@ -357,6 +361,7 @@ def _collect_top_movers(ctx) -> int:
                     "volume_ratio": round(float(r.get("volume_ratio", 0) or 0), 2),
                 })
             except Exception:
+                logger.warning("_collect_top_movers: row parse failed", exc_info=True)
                 continue
         if not movers:
             return 0
@@ -422,7 +427,7 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
         try:
             ctx.close()
         except Exception:
-            pass
+            logger.warning("run_collect: ctx.close() failed", exc_info=True)
     st["last_collect_ts"] = now
     if is_after_hours:
         st["last_afterhours_date"] = str(date.today())

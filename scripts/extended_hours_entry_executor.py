@@ -30,6 +30,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -45,11 +46,13 @@ sys.path.insert(0, str(ROOT))
 
 from app.core.trade_identity import ensure_test_symbol_not_in_production_db, is_test_symbol
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 # ── 用户 9/17 拍板参数 ──
 POSITION_USD = 5000        # 单笔仓位
@@ -671,7 +674,7 @@ def _dedup_reserve(key):
                 try:
                     os.unlink(tmp_name)
                 except OSError:
-                    pass
+                    _log.warning("push dedup tmp unlink failed", exc_info=True)
                 raise
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -782,7 +785,7 @@ def _record_price_gate_rejects(session, rejects):
                 "rejects": rejects,
             }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _log.warning("price gate reject audit write failed", exc_info=True)
     head = ", ".join(f"{r['symbol']} ${r['price']:g}" for r in rejects[:8])
     more = f" (+{len(rejects) - 8})" if len(rejects) > 8 else ""
     print(f"[ext_entry] 价格闸(<${MIN_PRICE:g}) 拦下 {len(rejects)} 只: {head}{more}")
@@ -923,6 +926,7 @@ def _extended_vwap_metrics(qctx, symbol, session):
                 close = float(row.get("close", 0) or 0)
                 volume = float(row.get("volume", 0) or 0)
             except (TypeError, ValueError):
+                _log.warning("VWAP data parse: bad close/volume", exc_info=True)
                 continue
             if session_start <= hhmm <= session_end and close > 0 and volume > 0:
                 rows.append({"close": close, "volume": volume})
@@ -986,7 +990,7 @@ def _record_pretrade_gate_rejects(session, rejects):
                 "rejects": rejects,
             }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _log.warning("spread gate reject audit write failed", exc_info=True)
 
 
 def _calendar_coverage(session, candidates):
@@ -1056,7 +1060,7 @@ def _record_earnings_gate_rejects(session, trade_date, reason_counts, details, c
                 "coverage": _calendar_coverage(session, candidates),
             }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _log.warning("calendar gate audit write failed", exc_info=True)
 
 
 def _record_earnings_near_misses(session, trade_date, candidates):
@@ -1078,6 +1082,7 @@ def _record_earnings_near_misses(session, trade_date, candidates):
                         try:
                             row = json.loads(line)
                         except (TypeError, ValueError, json.JSONDecodeError):
+                            _log.warning("earnings near miss jsonl parse", exc_info=True)
                             continue
                         key = (
                             row.get("trade_date"), row.get("session"),
@@ -1129,7 +1134,7 @@ def _record_earnings_near_misses(session, trade_date, candidates):
                     handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except Exception:
-        pass
+        _log.warning("earnings near miss file I/O failed", exc_info=True)
 
 
 def _research_downstream_gates(item, session, today, qctx, counts, pretrade_rejects):
@@ -1339,6 +1344,7 @@ def _scan_movers(session, qctx):
                     "prev_close": float(r.get("close_price", 0) or 0),
                 })
             except Exception:
+                _log.warning("earnings beat row parse failed", exc_info=True)
                 continue
         return out
     except Exception:
@@ -1374,6 +1380,7 @@ def _beat_rank_symbols(qctx):
                 if float(r.get("market_cap", 0) or 0) < BEAT_MIN_MCAP:
                     continue
             except Exception:
+                _log.warning("earnings market_cap parse failed", exc_info=True)
                 continue
             out.append(sec)
         return out
@@ -1409,6 +1416,7 @@ def _snapshot_candidates(session, qctx, symbols):
         try:
             ret, snap = qctx.get_market_snapshot(batch)
         except Exception:
+            _log.warning("get_market_snapshot batch failed", exc_info=True)
             continue
         if ret != RET_OK or snap is None or not hasattr(snap, "columns"):
             continue
@@ -1428,6 +1436,7 @@ def _snapshot_candidates(session, qctx, symbols):
                 out.append({"symbol": sec, "name": str(r.get("name", "")), "px": px,
                             "chg": chg, "vol": vol, "prev_close": prev})
             except Exception:
+                _log.warning("snapshot row parse failed for %s", sec, exc_info=True)
                 continue
     return out
 
@@ -1653,7 +1662,7 @@ def _order_session(row, fallback_session):
         if 16 <= hour < 20:
             return "afterhours"
     except (ValueError, IndexError):
-        pass
+        _log.warning("_classify_session: bad create_time %r", create_time, exc_info=True)
     return fallback_session
 
 
@@ -2247,7 +2256,7 @@ def _print_gate_counts(session, total, counts):
                   f"下单={int(counts.get('research_ordered', 0))} "
                   f"rejects={json.dumps(detail, ensure_ascii=False, sort_keys=True)}")
     except Exception:
-        pass
+        _log.warning("research arm reject detail print failed", exc_info=True)
 
 
 def collect(session, dry=False):

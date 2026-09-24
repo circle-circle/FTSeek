@@ -4,6 +4,7 @@
 旧 send_text / notify_order_filled 等接口保留, 内部转换为 PushMessage.
 """
 from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,8 @@ import time
 import hashlib
 
 from app.core.trade_identity import trade_identity, phase_cn as _phase_cn_shared
+
+_log = logging.getLogger(__name__)
 
 
 class Level(Enum):
@@ -86,7 +89,7 @@ class PushMessage:
                 if rich:
                     return rich
             except Exception:
-                pass
+                _log.warning("render trade text failed", exc_info=True)
         icon = self._icon()
         return f"{icon} {self.title}\n{self.body}"
 
@@ -98,7 +101,7 @@ class PushMessage:
                 if md:
                     return md
             except Exception:
-                pass
+                _log.warning("render trade markdown failed", exc_info=True)
         return self.render_text()
 
     def _render_trade_text(self) -> str:
@@ -442,7 +445,7 @@ def _extra_lines(p: Dict[str, Any]) -> List[str]:
             if _el:
                 out.append(str(_el))
     except Exception:
-        pass
+        _log.warning("exit format failed", exc_info=True)
     return out
 
 

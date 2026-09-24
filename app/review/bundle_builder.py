@@ -1,6 +1,7 @@
 """Evidence-bearing result layer for the daily review bundle."""
 from __future__ import annotations
 
+import logging
 import math
 import sqlite3
 from datetime import datetime
@@ -14,6 +15,8 @@ from app.utils.timezone import to_et
 
 
 _DIRECTION_TO_PLAN = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
+
+_log = logging.getLogger(__name__)
 
 
 def _derived_evidence(
@@ -215,6 +218,7 @@ def exit_date_mismatches(connection: sqlite3.Connection) -> List[Dict[str, Any]]
         try:
             parsed = datetime.fromisoformat(str(raw_exit_time).replace("Z", "+00:00"))
         except (TypeError, ValueError):
+            _log.warning("exit time parse failed", exc_info=True)
             continue
         et_date = to_et(parsed).date().isoformat()
         if sqlite_date != et_date:

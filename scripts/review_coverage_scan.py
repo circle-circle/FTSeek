@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import os
 import re
 import subprocess
@@ -19,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+
+_log = logging.getLogger(__name__)
 
 REPO = Path(os.environ.get("FTSEEK_REPO", Path(__file__).resolve().parents[1]))
 HERMES = Path(os.environ.get("HERMES_HOME", "/root/.hermes"))
@@ -41,6 +44,7 @@ def _scope(path: Path, roots: Sequence[Path]) -> str:
             if path.resolve().is_relative_to(root.resolve()):
                 return _root_label(root)
         except OSError:
+            _log.warning("_scope: resolve failed for %s", path, exc_info=True)
             continue
     return "other"
 
@@ -95,7 +99,7 @@ def _code_only(path: Path) -> str:
                     kept.append(token.string)
             return " ".join(kept)
         except (tokenize.TokenError, IndentationError, SyntaxError):
-            pass
+            _log.warning("_code_only: tokenize failed for %s", path, exc_info=True)
     return "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("#")
     )
@@ -107,6 +111,7 @@ def _load_code_cache(files: Sequence[Path]) -> dict[Path, tuple[str, list[str]]]
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
+            _log.warning("_load_code_cache: read failed for %s", path, exc_info=True)
             continue
         if path.suffix == ".sh":
             code = "\n".join(
@@ -142,6 +147,7 @@ def find_refs(
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
+                _log.warning("find_refs: read failed for %s", path, exc_info=True)
                 continue
             code = _simple_code(lines)
         if target in code or (len(target_name) > 4 and target_name in code):
@@ -182,6 +188,7 @@ def push_exit_census(
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
+                _log.warning("push_exit_census: read failed for %s", path, exc_info=True)
                 continue
         for number, line in enumerate(lines, start=1):
             if line.lstrip().startswith("#"):

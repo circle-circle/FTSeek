@@ -28,10 +28,13 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import logging
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+_log = logging.getLogger(__name__)
 
 PRICE_FIELDS = {"last_price", "price", "price_val", "last_traded_price"}
 # 已认可的实时价获取链 (出现即算 AUTHORITY): 文件 → 函数名集合 (空集 = 该文件整体算权威层)
@@ -98,6 +101,7 @@ def audit(base: Path) -> list[dict]:
             src = py.read_text(encoding="utf-8", errors="replace")
             tree = ast.parse(src)
         except SyntaxError:
+            _log.warning("syntax error", exc_info=True)
             continue
         lines = src.splitlines()
         fmap = _enclosing(tree)

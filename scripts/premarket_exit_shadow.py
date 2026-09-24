@@ -46,6 +46,7 @@
 """
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -59,11 +60,13 @@ PEAK_USE_SESSION_HIGH = os.getenv("EXT_PEAK_USE_SESSION_HIGH", "0").lower() in {
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 DB = ROOT / "data" / "ftseek_us.db"
 OUTPUT = ROOT / "data" / "premarket_exit_shadow.jsonl"
@@ -370,7 +373,7 @@ def collect(dry: bool) -> int:
                 else:
                     _armed = _armed or (0 < _esl < entry)
             except (TypeError, ValueError):
-                pass
+                _log.warning("effective sl parse failed", exc_info=True)
             _cond_verdict, _cond_reason = (None, None)
             if _flat:
                 _cond_verdict, _cond_reason = conditional_flatten_verdict(pnl_pct, _armed)

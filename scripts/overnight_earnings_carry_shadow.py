@@ -45,6 +45,7 @@ carry_shadow.jsonl 保留归档不删 — 若 10 月财报季要重启, **须重
 """
 import argparse
 import json
+import logging
 import math
 import os
 import sys
@@ -56,11 +57,13 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 from app.utils.timezone import now_et                      # noqa: E402
 from scripts.extended_hours_market_session import get_extended_hours_session  # noqa: E402
@@ -156,6 +159,7 @@ def evaluate(session, cohort, qctx, today_et, hour=None):
         try:
             ret, snap = qctx.get_market_snapshot(batch)
         except Exception:
+            _log.warning("market snapshot failed", exc_info=True)
             continue
         if ret != RET_OK or snap is None or not hasattr(snap, "columns"):
             continue

@@ -220,7 +220,7 @@ def run_premarket_check() -> dict:
                     _cmp = (" | 同 regime 历史成交 (近%d日窗, 产物%s): " % (
                         _icd.get("window_days", 90), (_icd.get("generated_at") or "")[:16])) + "; ".join(_parts)
         except Exception:
-            pass
+            logger.warning("regime history lookup failed", exc_info=True)
         _has_short = any(r[0] == 'SELL_SHORT' for r in _dirs)
         results["checks"].append({
             "name": "指令方向构成",
@@ -303,7 +303,7 @@ def run_premarket_check() -> dict:
                 if _cap_bits:
                     _caps = " | " + " ".join(_cap_bits)
             except Exception:
-                pass
+                logger.warning("capital cap parse failed", exc_info=True)
             _lock = f" | 🔒锁定: {_r6[6] or 'yes'}" if _r6[5] else ""
             results["checks"].append({
                 "name": "资金与帽余量",

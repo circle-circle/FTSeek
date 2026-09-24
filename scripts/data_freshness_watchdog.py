@@ -34,18 +34,21 @@ import argparse
 import json
 import re
 import time
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 
+_log = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
     load_dotenv(ROOT / ".env.us")
 except Exception:
-    pass
+    _log.warning("dotenv load failed", exc_info=True)
 
 # ── 监控清单: (相对路径, 最大静默小时, 说明, 仅工作日) ──
 #   max_age_hours: 超过此时长未更新 → 告警
@@ -190,6 +193,7 @@ def _main_db() -> Path:
             import importlib
             return Path(str(getattr(importlib.import_module(mod), fn)()))
         except Exception:
+            _log.warning("_resolve_db_path: importlib import failed", exc_info=True)
             continue
     return DATA / "ftseek_us.db"
 
@@ -205,6 +209,7 @@ def _repo_write_targets() -> dict:
         try:
             txt = p.read_text(errors="ignore")
         except Exception:
+            _log.warning("_table_writers: file read failed for %s", p, exc_info=True)
             continue
         for m in _WRITE_SQL_RE.finditer(txt):
             out.setdefault(m.group(1).lower(), set()).add(p.name)
@@ -229,6 +234,7 @@ def _age_days(raw) -> int:
         try:
             return (datetime.now() - datetime.strptime(s[:26], f)).days
         except Exception:
+            _log.warning("_age_days: strptime parse failed", exc_info=True)
             continue
     try:  # epoch 秒 (idempotency_keys.created_at 等)
         return (datetime.now() - datetime.fromtimestamp(float(s))).days
@@ -258,6 +264,7 @@ def _check_table_liveness(baseline: dict):
                 try:
                     n = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
                 except Exception:
+                    _log.warning("_check_table: COUNT query failed for %s", t, exc_info=True)
                     continue
                 w = sorted(writers.get(t.lower(), ()))
                 col = _pick_time_col(cols) if n else None
@@ -769,7 +776,7 @@ def main(push=False, dry=False, update_baseline=False):
         (DATA / "watchdog_liveness_latest.json").write_text(
             json.dumps(live, ensure_ascii=False, indent=1))
     except Exception:
-        pass
+        _log.warning("watchdog liveness write failed", exc_info=True)
 
     msg = _build_message(stale, missing, live)
     if msg and push and not dry:
@@ -786,7 +793,7 @@ def main(push=False, dry=False, update_baseline=False):
                 if _prev.get("msg_hash") == _hash_msg(msg) and _now - _prev.get("ts", 0) < 1800:
                     _suppress = True
         except Exception:
-            pass
+            _log.warning("cooldown state read failed", exc_info=True)
         if _suppress:
             print("[cooldown] 30min 内同告警已推过, 跳过")
         else:

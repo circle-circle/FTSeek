@@ -215,7 +215,7 @@ def _insider_push_mark(key: str, date_str: str, path: Optional[Path] = None) -> 
         _cut = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
         seen = {k: v for k, v in seen.items() if isinstance(v, str) and v >= _cut}
     except Exception:
-        pass
+        logger.warning("signal cooldown filter failed", exc_info=True)
     seen[key] = date_str
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -224,7 +224,7 @@ def _insider_push_mark(key: str, date_str: str, path: Optional[Path] = None) -> 
             _json.dump(seen, f, ensure_ascii=False)
         os.replace(tmp, p)
     except Exception:
-        pass
+        logger.warning("signal cooldown write failed", exc_info=True)
 
 
 class TradingScheduler:
@@ -354,7 +354,7 @@ class TradingScheduler:
                 from app.core.config_container import get_config as _gc_fb
                 _fb_mode = str(_gc_fb().get_dotted("playbook.fallback_when_no_bridge", "technical")).lower()
             except Exception:
-                pass
+                logger.warning("fallback config read failed", exc_info=True)
             if _fb_mode == "technical":
                 from app.playbook.pipeline import TechnicalFallbackAdapter
                 self.voting_coordinator = TechnicalFallbackAdapter()
@@ -497,7 +497,7 @@ class TradingScheduler:
             from app.core.config import get_config as _gc_nv2
             _nv2_retired = not bool(_gc_nv2().get_dotted("news_v2.enabled", True))
         except Exception:
-            pass
+            logger.warning("news v2 config read failed", exc_info=True)
         try:
             if _nv2_retired:
                 raise RuntimeError("NewsV2 已退役 (news_v2.enabled=false, DEB-20260731 C2)")
@@ -890,7 +890,7 @@ class TradingScheduler:
                         restored = to_et(restored)
                     self._signal_cooldown[sym] = restored
                 except (ValueError, TypeError):
-                    pass
+                    logger.warning("cooldown restore failed", exc_info=True)
             if rows:
                 logger.info(
                     f"[Cooldown·DB恢复] 从 trade_records 恢复 {len(rows)} 个标的冷却 "
@@ -1187,7 +1187,7 @@ class TradingScheduler:
                 async_mode=True,
             )
         except Exception:
-            pass
+            logger.warning("premarket cross-open alert failed", exc_info=True)
         return True
 
     def _load_scheduler_params(self):
@@ -2883,7 +2883,7 @@ class TradingScheduler:
                     from app.observability.watchdog import get_watchdog
                     get_watchdog().ping("playbook_exit_loop")
                 except Exception:
-                    pass
+                    logger.warning("watchdog ping failed", exc_info=True)
                 # [DEB-20260902 E0 · 2026-09-02 裁决实施] 外部心跳 touch — 与内部 watchdog ping 同点:
                 #   循环活 = 心跳新; 冻结 (9/1 GIL 形态) → mtime 停滞 → 外部 cron 监督
                 #   (scripts/freeze_sentinel.py, 420s = 内部 heal 360s + 60s 余量裁决值)
@@ -2963,7 +2963,7 @@ class TradingScheduler:
                     try:
                         _scanned_today = _sentinel_file.read_text().strip()
                     except Exception:
-                        pass
+                        logger.warning("insider sentinel read failed", exc_info=True)
 
                 if today == _scanned_today:
                     # 等待 1 小时后再次检查
@@ -3032,7 +3032,7 @@ class TradingScheduler:
                     _sentinel_file.parent.mkdir(parents=True, exist_ok=True)
                     _sentinel_file.write_text(today)
                 except Exception:
-                    pass
+                    logger.warning("insider scan sentinel write failed", exc_info=True)
 
             except Exception as e:
                 logger.warning(f"[InsiderScan] 扫描异常: {e}")

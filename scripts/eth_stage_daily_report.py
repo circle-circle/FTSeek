@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -29,6 +30,8 @@ from typing import Any, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+_log = logging.getLogger(__name__)
 
 from app.core.trade_identity import phase_cn, phase_from_time  # noqa: E402
 from app.review.stage_stats import render_stage_section, rows_from_db  # noqa: E402
@@ -85,6 +88,7 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
         try:
             out.append(json.loads(ln))
         except Exception:
+            _log.warning("jsonl parse failed", exc_info=True)
             continue
     return out
 
