@@ -112,17 +112,40 @@ def load_instructions(since, until):
     c.row_factory = sqlite3.Row
     rows = [dict(r) for r in c.execute(
         """select date, symbol, decision_id, fwd_return_intraday, fwd_return_t1_adj,
-                  outcome, pnl_pct, confidence, model_used, thesis
+                  outcome, pnl_pct, confidence, model_used, thesis, raw_instruction_json
            from playbook_instructions
            where direction='BUY' and date>=? and date<=?""", (since, until))]
-    tr = {r["decision_id"]: dict(r) for r in c.execute(
-        """select decision_id, realized_pnl, pnl_net, fees_est, exit_reason
-           from trade_records where decision_id is not null and decision_id!=''""")}
+    # [DEB-20260924-indexcaliber R4-C] 净$按 decision_id **聚合** (原缺陷: dict 推导式
+    # 同 decision_id 多行只保留最后一行 ⇒ 分批成交(恰是"分2批低吸"形态)的 pnl_net 被
+    # 系统性低估。当前 6/1 后窗口无多成交 decision_id(6 个全在 5 月旧主线), 属必然复发的
+    # 预防性修复)。exit_reason 取最后一笔; 全 NULL 列保持 None 语义。
+    tr = {}
+    for r in c.execute(
+            """select decision_id, realized_pnl, pnl_net, fees_est, exit_reason
+               from trade_records where decision_id is not null and decision_id!=''
+               order by id"""):
+        d = tr.setdefault(r["decision_id"], {
+            "fills": 0, "realized_pnl": None, "pnl_net": None,
+            "fees_est": None, "exit_reason": None})
+        d["fills"] += 1
+        for k in ("realized_pnl", "pnl_net", "fees_est"):
+            if r[k] is not None:
+                d[k] = (d[k] or 0.0) + float(r[k])
+        if r["exit_reason"]:
+            d["exit_reason"] = r["exit_reason"]
     for r in rows:
         t = tr.get(r.get("decision_id") or "", {})
         r["realized_pnl"] = t.get("realized_pnl")
         r["pnl_net"] = t.get("pnl_net")
         r["fees_est"] = t.get("fees_est")
+        r["fills"] = t.get("fills")
+        # [R4-C] 结构化入场原型 (llm_synth 枚举 BREAKOUT/PULLBACK_LIMIT/FADE_SHORT,
+        # 经 raw_instruction_json 落库, DEB-20260901) — 供 archetype() 优先使用。
+        try:
+            _raw = json.loads(r.pop("raw_instruction_json") or "{}") or {}
+        except Exception:
+            _raw = {}
+        r["entry_archetype"] = _raw.get("entry_archetype")
     c.close()
     return rows
 
@@ -250,8 +273,23 @@ _ARCH_BREAK = ("突破入场", "突破追入", "追入", "站上", "breakout")
 
 
 def archetype(row) -> str:
-    """按 thesis/entry_strategy 文本分原型 (DB 无 archetype 列; 规则与 llm_synth 回显语义一致)。"""
-    txt = str(row.get("thesis") or "") + " " + str(row.get("_entry_strategy") or "")
+    """按结构化 entry_archetype 优先分原型, 缺失才回退 thesis 文本.
+
+    [DEB-20260924-indexcaliber R4-C] 原缺陷: ① 只挖 thesis 文本, 而该列是混合血统
+    (6/1 以来 BUY: 自由文本 658 / 模板 131), 模板行 "趋势回调: …, 提供低风险入场机会"
+    不含低吸关键词 ⇒ 被系统性误分 OTHER; ② row["_entry_strategy"] 从未被 select, 恒 None
+    (死代码)。修法: entry_archetype 枚举 (PULLBACK_LIMIT/BREAKOUT, llm_synth 回显分类)
+    为第一优先级; 模板前缀为第二; 关键词兜底保持原样。"""
+    ea = str(row.get("entry_archetype") or "").upper()
+    if ea == "PULLBACK_LIMIT":
+        return "PULLBACK"
+    if ea == "BREAKOUT":
+        return "BREAKOUT"
+    txt = str(row.get("thesis") or "")
+    if txt.startswith("突破入场"):
+        return "BREAKOUT"
+    if txt.startswith("趋势回调"):
+        return "PULLBACK"
     if any(k in txt for k in _ARCH_BREAK):
         return "BREAKOUT"
     if any(k in txt for k in _ARCH_PULL):

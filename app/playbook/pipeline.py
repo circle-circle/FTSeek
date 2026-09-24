@@ -1918,7 +1918,14 @@ def _build_instructions_from_votes(
             risk_reward=values.get("risk_reward", 0),
             confidence=confidence,
             thesis=thesis,
-            conditions=decision["selected_conditions"],
+            # [DEB-20260924-indexcaliber R4] 落库 conditions 列优先取 DA 投票条件 (记录保真):
+            # 原缺陷 — 恒取 scanner 因子 keys, AXTI SELL_SHORT 落库 conditions=
+            # [above_ma20, macd_golden_cross] (多头因子) 与 DA 真实投票条件
+            # [pe_above_industry, insider_net_sell, below_ma20] 相矛盾。
+            # 注意: 仅改 Instruction 持久化字段; decision["selected_conditions"] (scanner
+            # 因子) 仍原样供 compute_confidence/compute_instruction_values 使用 ⇒ 数值零变更。
+            conditions=(list(vote_result.get("conditions") or [])
+                        or decision["selected_conditions"]),
             data_quality=data_quality,
             risks=risks,
             sector=data.fundamental.industry or "",
@@ -1982,20 +1989,32 @@ def _build_instructions_from_votes(
 
 
 def _select_thesis_template(factors: Dict[str, Any], direction: str) -> str:
-    """根据触发因子选择 thesis 模板"""
+    """根据触发因子选择 thesis 模板.
+
+    [DEB-20260924-indexcaliber R4] 方向感知: SELL_SHORT 不得再落多头文案模板。
+    原缺陷 (9/24 AXTI 实例): SHORT + macd_golden_cross → "mean_reversion"
+    ⇒ thesis="均值回归: …, 超跌反弹机会" (多头叙事) 挂在空单上, 与 DA 真实空方
+    依据 (FADE_SHORT: 利好兑现+PE2432x+盘前-4.36%) 相矛盾。BUY 侧映射保持不变。
+    """
+    _dir = str(direction or "").upper()
+    if _dir == "SKIP":
+        return "skip"
+    _short = _dir != "BUY"  # SELL_SHORT / SHORT / SELL 一律走空头模板
+
     if not factors:
-        return "momentum_continuation" if direction == "BUY" else "mean_reversion"
+        return "trend_short" if _short else "momentum_continuation"
 
     factor_keys = set(factors.keys())
 
     if "insider_cluster_buy" in factor_keys or "insider_net_buy" in factor_keys:
-        return "insider_confidence"
+        # 内部人净买入却做空 = 逆技术/内部人信号的衰退做空 (原缺陷: SHORT 也返回多头文案)
+        return "fade_short" if _short else "insider_confidence"
     if "macd_golden_cross" in factor_keys:
-        return "breakout" if direction == "BUY" else "mean_reversion"
+        return "fade_short" if _short else "breakout"
     if any("rsi" in k for k in factor_keys):
-        return "trend_pullback" if direction == "BUY" else "value_reversal"
+        return "mean_reversion_short" if _short else "trend_pullback"
 
-    return "momentum_continuation" if direction == "BUY" else "mean_reversion"
+    return "trend_short" if _short else "momentum_continuation"
 
 
 # ── Vault industry 缓存 (2026-08-21 sector guardrail 复活, DEB §44 定案修法) ──
@@ -3622,6 +3641,13 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
             "edge_verdict": _edge.get("edge_verdict"),
             "edge_reason": _edge.get("reason"),
         }
+        # [DEB-20260924-indexcaliber R4-D] 飞刀门判定值显式字段 (评估即留痕, 无论是否拦截):
+        # knife_gate={evaluated, fired, rt_price, prev_close, chg_pct, threshold_pct[, error]}。
+        # 仅 LONG 且 premarket_invalidation_hard_gate=true 时存在 (门评估发生在同一轮循环);
+        # 缺字段 = 该门当轮未评估, 不再需要由 action 间接反推。消费方按 .get("knife_gate") 读, 纯增量。
+        _kg_audit_row = inst.get("_knife_audit")
+        if isinstance(_kg_audit_row, dict):
+            _row["knife_gate"] = dict(_kg_audit_row)
         if extra:
             _row.update(extra)
 
@@ -4025,6 +4051,15 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     "premarket_invalidation_hard_gate", True):
                 _kg_block = False
                 _chg_kg = None
+                # [DEB-20260924-indexcaliber R4-D] 门判定值显式留痕 — 原缺陷: 审计行无
+                # 飞刀门字段, 「未触门」只能由 action=executed 间接反推 (DEB §三.2 复查附注①,
+                # E16 的间接性)。本 dict 挂到 inst (内存态, 不落库), 由 _emit_exec_gate_audit
+                # 统一并入当轮所有 action 行 ⇒ executed/skipped_chase_cap 等也带门读数。
+                _kg_audit: Dict[str, Any] = {
+                    "evaluated": True, "fired": False, "rt_price": None,
+                    "prev_close": None, "chg_pct": None, "threshold_pct": -5.0,
+                }
+                inst["_knife_audit"] = _kg_audit
                 try:
                     _dr_kg = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
                     _ctx_kg = _dr_kg.get_full_market_context(inst["symbol"]) if _dr_kg is not None else None
@@ -4033,14 +4068,19 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                         _pc_kg = float(_ctx_kg.get("prev_close") or 0)
                         if _px_kg > 0 and _pc_kg > 0:
                             _chg_kg = (_px_kg - _pc_kg) / _pc_kg * 100.0
+                            _kg_audit.update(rt_price=round(_px_kg, 4),
+                                             prev_close=round(_pc_kg, 4),
+                                             chg_pct=round(_chg_kg, 2))
                             from app.playbook.premarket_invalidation import evaluate_rules as _kg_eval
                             if "B_long_knife" in _kg_eval(inst.get("direction"), _chg_kg):
                                 _kg_block = True
+                                _kg_audit["fired"] = True
                                 logger.info(
                                     f"[playbook] 🚫 {inst['symbol']} B门硬门拦截: 现价{_px_kg:.2f} vs "
                                     f"昨收{_pc_kg:.2f} ({_chg_kg:+.1f}% < -5%) 接飞刀拒入场 (下轮复评)"
                                 )
                 except Exception as _kg_err:
+                    _kg_audit["error"] = str(_kg_err)[:120]
                     logger.warning(f"[playbook] {inst['symbol']} B门硬门评估异常 (放行): {_kg_err}")
                 if _kg_block:
                     # 2026-09-15 (用户裁「都做」批②): skip_reason 精确回写 — 照抄 chase_cap

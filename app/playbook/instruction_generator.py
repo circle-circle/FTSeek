@@ -89,6 +89,13 @@ THESIS_TEMPLATES = {
     "momentum_continuation": "动量延续: {conditions}, 趋势持续",
     "insider_confidence": "内部人信心: {conditions}, 管理层用行动投票",
     "mean_reversion": "均值回归: {conditions}, 超跌反弹机会",
+    # [DEB-20260924-indexcaliber R4] 空头侧模板 — 原缺陷: 六个非 skip 模板全是多头文案,
+    # SELL_SHORT 被迫落入多头叙事 (实例: 9/24 AXTI 空单 thesis="均值回归: above_ma20,
+    # macd_golden_cross, 超跌反弹机会", 与 DA 真实空方依据 PE2432x/below_ma20/盘前-4.36%
+    # 利好出尽 相矛盾) ⇒ 指令记录语义自相矛盾, 且污染一切按 thesis 文本做的分型分析。
+    "trend_short": "趋势做空: {conditions}, 下行趋势延续, 顺势做空",
+    "fade_short": "反弹做空: {conditions}, 技术面偏多但估值/事件面偏空, 反弹分批做空",
+    "mean_reversion_short": "均值回归做空: {conditions}, 超买回落机会",
     "skip": "跳过: {skip_reason}",
 }
 

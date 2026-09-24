@@ -272,6 +272,35 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 （分型 PULLBACK 269 / OTHER 476 / BREAKOUT 43）。**注意方向**：同一天内**低吸侧毛收益更高**，与「低吸是错的方向」相反。
 但按对抗批评 C3，这极可能是**入场价基准差异**（低吸侧报价更低 ⇒ 假设收益从更低位起算）。**下一步（若要做）**：
 ① 全部指令统一用信号时刻价重算收益；② 成交子集按原型的 **净** \$ 对照；③ 配对日仅 13/70 ⇒ 多重比较说明。**在此之前不得据其动作。**
+（**R4 注**：上述分型计数出自旧文本分类器；§三.7 F-C 修复后同窗分布为 PULLBACK 327 / BREAKOUT 29 / OTHER 433，
+配对读数复跑时必须整体重算，**不得与旧值混算**。）
+
+### 三.7 独立复查单元 F（2026-09-24 晚，外部复查 agent；只读取证 → 用户授权「修复」后落码 R4）
+
+**对本文件既有结论的复核**：
+- **F-1 关闭判决成立，无异议**。§三.6 三口径 null 同向、净 \$ 口径不受 C3 基准混杂污染、扩窗由 D 单元更正后合规执行。
+  但须钉住关闭的**精确语义**：Q1-vs-其余 CI [−1.234, +1.926]pp 排除的是 **≥1.2pp 量级**的负面效应，不是「证明零效应」——下游引用不得升格。
+- **F-2 当日「方向不准」在已实现口径下不成立**（实测 `trade_records`，净值口径）：已平仓 4 笔净 **+46.13**
+  （ORCL −83.97 SL_INITIAL / SNDK +82.58 / FTNT +36.98 / ARM 空 +10.54），方向命中 3/4。痛感来自 ORCL 单笔（−4.2% 缺口入场后止损）+ 红盘日指令流观感。
+  ⇒ 优化目标不应是「普跌日少喊 BUY」（本轴已关闭，且长窗 Q1 毛 +1.059% 为最高桶之一），而是下面 F-B/F-C/F-D 的记录与度量病灶 + F-A 的执行层机制。
+
+**新发现（本文件未覆盖）与处置**：
+
+| # | 发现 | 证据 | 处置（用户 2026-09-24 授权「修复」） |
+|---|---|---|---|
+| **F-A** | **缺口日执行层逆向选择（新机制假设，登记不落码）**：「低吸」指令 + 「追高闸+轮询」执行语义 ⇒ 弹回来的买不到、继续跌的才成交。当日实例：AMD 低吸单（admission 锚 591.7，chase_cap 605.0=锚×1.0225）盘前 598.2 无人挂单，10:49 轮询到 V 型回 615.69 → `skipped_chase_cap`×8（META ×10 同型）；ORCL 是唯一没反弹的 → 09:38 成交于 −4.21% 后止损。与 §三.6 Q1 毛 +1.059% / 净 −12.59 的背离同构（成交子集系统性差于全指令集）——C3 只把它当毛口径偏倚讨论了一半，未升级为执行层机制 | `exec_gate_audit.jsonl`（repriced_entry/chase_cap_price 字段）+ admission 锚 + 当日分时 | 登记 **F11**：并入 F9 只读补算扩围三件套——① 统一信号时刻价基准（原文已有）② **executed vs skipped_chase_cap 两臂 fwd 对照**（直接检验逆向选择）③ 成交基差（成交价 vs 指令锚）与结局相关。若②成立，候选动作是低吸单开盘早期挂 band 内限价（`entry_routing` 已有 limit 路径，同批核查其覆盖面），属 F8「叙事投影」的正解：让执行语义与指令语义一致，而非改叙事 |
+| **F-B** | **指令记录语义自相矛盾（P0 级记录保真缺陷）**：AXTI SELL_SHORT 落库 thesis=「均值回归: above_ma20, macd_golden_cross, 超跌反弹机会」+ conditions=[above_ma20, macd_golden_cross]（全多头），而 DA checkpoint 真实决策=FADE_SHORT（PE 2432x / below_ma20 / 盘前 −4.36% 利好出尽，conditions=[pe_above_industry, insider_net_sell, below_ma20]）——连 above/below_ma20 都相反。根因三条：① `THESIS_TEMPLATES` 六个非 skip 模板**全是多头文案、无空头变体**（`instruction_generator.py:85-93`）② `_select_thesis_template` 对非 BUY 一律映射多头模板（`pipeline.py:1984`，SHORT+macd_golden_cross→mean_reversion）③ conditions 列恒取 scanner 因子 keys 而非 DA 投票条件（`pipeline.py:1741`）。影响：指令流可读性自相矛盾（放大「方向不准」观感）+ 污染一切 thesis 文本分析（C9 与回放分型均读此列） | DB 行 vs `data/da_checkpoint/2026-09-24/US.AXTI.json`；源码三处行号 | ✅ **已修（R4）**：① 新增空头模板 `trend_short`/`fade_short`/`mean_reversion_short` ② `_select_thesis_template` 方向感知（BUY 侧逐条零回归、SKIP 显式化）③ 落库 conditions 改「DA 投票条件优先」——**仅改 Instruction 持久化字段**，`decision["selected_conditions"]` 原样供 `compute_confidence`/`compute_instruction_values`（`pipeline.py:1805`）⇒ **数值/判据链零变更**。测试 `tests/test_thesis_direction_consistency.py` 29 例钉住 |
+| **F-C** | **回放脚本两处度量缺陷**：① 净 \$ 关联用 `dict(decision_id→row)`，同 decision_id 多行成交**只保留最后一行** ⇒ 分批成交（恰是「分 2 批低吸」形态）净 \$ 被系统性低估；实测 6/1–9/24 窗口**零**多成交（6 个全在 5 月旧主线 DEC- 前缀）⇒ **§三.3/三.6 已发布读数未受污染**，属必然复发的预防性修复 ② `archetype()` 读 `_entry_strategy` 但 `load_instructions` 从未 select（死代码）；且 thesis 列混合血统（6/1 以来 BUY：自由文本 658 / 模板 131），模板行「趋势回调: …, 提供低风险入场机会」不含低吸关键词 ⇒ 被系统性误分 OTHER | 脚本 :118-120/:252-260；`select decision_id,count(*) … having n>1` 实测 | ✅ **已修（R4）**：净 \$ 改 `SUM GROUP BY decision_id` + `fills` 列（全 NULL 保持 None 语义）；分型改**结构化 `entry_archetype` 优先**（raw_instruction_json 已落库，DEB-20260901 枚举 PULLBACK_LIMIT/BREAKOUT/FADE_SHORT）+ 模板前缀第二 + 关键词兜底。同窗新分布 **PULLBACK 269→327 / BREAKOUT 43→29 / OTHER 477→433** ⇒ 旧配对读数的分型基础已被替换，F9/F11 复跑须整体重算（见 §三.6 R4 注） |
+| **F-D** | **exec_gate_audit 无飞刀门显式判定字段**：E16「未触门」只能由 `action=executed` 间接反推（§三.2 复查附注①的根源） | 审计行字段清单 | ✅ **已修（R4）**：门评估即把 `knife_gate={evaluated, fired, rt_price, prev_close, chg_pct, threshold_pct[, error]}` 挂内存态 inst，由 `_emit_exec_gate_audit` 并入当轮**所有** action 行（executed/skipped_chase_cap 等均带门读数；不落库、纯增量、消费方 `.get` 兼容）。缺字段=当轮未评估（SHORT 或硬门开关关）。测试钉住 2 例 |
+| **F-E** | **P0 观察缺口**：回滚触发器（SKIP +20pp / LONG <50%）只抓**过度压制**的极端形态，抓不到温和退化——若模型见「大盘在跌」后 SKIP 掉的恰是长窗证明毛为正的缺口日买单（§三.6 Q1 毛 +1.059%），计数触发器无感 | §六 回滚表 vs §三.6 桶表 | 登记 **F12**（观察项，不落码）：P0 落地后第 5 个交易日，对「红盘日被新增 SKIP 的指令」算反事实 fwd 毛收益，与放行单同窗对照 |
+
+**明确不做（R4 同批重申）**：不重开指数 regime 轴（尊重 §三.6 关闭判决）；不调 −5% 飞刀阈值（无证据，ORCL 案例是个股缺口不是指数 regime；若 F11 后仍需处理深缺口入场，合规路径是**新特征**——个股级入场稳定化条件——走只读回放+预注册）；不据同日配对 p<0.001 动作（C3 基准统一未完成）。
+
+**R4 落地清单（全部为记录/审计/度量层，判据与数值链零改动）**：
+`app/playbook/instruction_generator.py`（+3 空头模板）、`app/playbook/pipeline.py`（方向感知映射 / conditions 落库保真 / knife_gate 审计字段 ×2 处）、
+`scripts/premarket_index_regime_replay.py`（净 \$ 聚合 / 结构化分型）、`tests/test_thesis_direction_consistency.py`（新增 29 例）。
+验证：新测试 31 passed；受影响既有套件（playbook_pipeline / entry_archetype_routing / chase_cap_enforce / instruction_generator_horizon / da_output_contract）**178 passed**；
+回放脚本 789 行母体只读冒烟通过。**生效条件：pipeline 改动需下次重启 ftseek-us 生效（当日盘中未重启）；脚本/测试即时生效。**
 
 ## 四、方案设计
 
@@ -437,6 +466,8 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 | F5 | 兄弟项：`MarketRegimeGate` 的 `spy_price` 盘前同为昨收，是否同批修 | **先只记档，后裁** | 今日实际影响=0（同侧 MA20）；但它与 P0 同型，值得一次独立复核后再定 |
 | F6 | 若回放显示「普跌桶净均更差」，下一步动作 | **首读未达门槛 ⇒ 该轴冻结（无判别力），不建影子不加门** | 同族先例 E2 momentum 门被裁 KILLED；本次三口径 CI 全含 0 + 净 \$ 跨窗符号翻转 ⇒ 无立即可动的动作 |
 | F7 | P1 主判据用连续分桶还是事件桶 | **连续分桶为主，事件桶为辅** | 事件桶 30 日内不可达（E13/E14）；连续分桶 n=327 一次到位 |
+| F11 | 执行逆向选择轴（§三.7 F-A）：三件套只读补算是否并入 F9 同批 | **建议并入 F9 同批，只读先行** | 两臂对照若成立，病灶在执行时序而非方向预测；候选动作（低吸单 limit-at-open）须先查 `entry_routing` 既有 limit 路径覆盖面再议，不直接落码 |
+| F12 | P0 反事实观察（§三.7 F-E）：第 5 交易日对「红盘日新增 SKIP 的指令」算反事实毛收益 | **登记，到期触发，只读** | 既有回滚触发器只抓极端压制，抓不到「SKIP 掉的恰是毛为正买单」的温和退化 |
 
 **反方三问（自答，必须直说）**:
 1. **会不会多出单/多赚钱？** —— **不会**。P0 买到的是语义正确（防模型在「大盘健康」错觉下批量低吸），
@@ -496,3 +527,4 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
   ④ **P0（F1）已落地**（skill v0.85，§4.1 落地表），143 passed，版本棘轮三处同步；
   ⑤ 下一步：按 D 单元结论**扩窗至 ≈70 交易日重跑**（不需等），长窗读数到位后再论该轴去留。
 - **R2（2026-09-24 22:2x, Hermes）**: ① 用户裁「同意」⇒ 执行 Phase 0；② Phase 0 落码（`72a8b67db`）并出首读：**三口径日聚类 CI 全含 0、毛·T+1 方向相反、净 \$ 跨窗符号翻转 ⇒ 该轴判「无判别力」，不建影子不加门**，判据冻结至窗口 ≥70 交易日；③ 独立复查（三 agent 并行）回来：**C1–C9 全部「成立」**（功能性 9/9），对抗性单元超时无产出，已重派；④ 由 C9 触发新增 §一#4（低吸叙事成因口径改述：非指令权重，而是输入侧解读 + 入场带/追高闸的叙事投影）+ §十#6/#7 两条自曝（脚本周一 bug、判据初版过松）；⑤ P0（F1）仍**未落码**——先让重派的对抗复查读完 `data_collector.py` 因果链，避免边查边改。
+- **R4（2026-09-24 晚, 独立复查 agent〔外部〕+ 用户授权「修复」）**: ① 单元 F 复查（§三.7）：**关闭判决复核成立**（附精确语义钉：CI 排除的是 ≥1.2pp 量级效应，非零效应证明）+ 当日已实现净值校准（4 笔净 +46.13，「方向不准」在已实现口径不成立）；② 四项本文件未覆盖的新发现：**F-B 指令记录语义矛盾（AXTI 空单挂多头文案+多头条件）/ F-C 回放脚本净 \$ 丢同胞成交+分型死代码与混合血统 / F-D 飞刀门无显式审计字段** 三项经用户授权已修落地（记录/审计/度量层，判据与数值链零改动；新测试 29 例 + 受影响套件 178 passed；pipeline 改动**待下次重启生效**，盘中未重启）；**F-A 执行逆向选择（缺口日弹回的买不到、续跌的才成交）与 F-E P0 反事实观察缺口**登记为 F11/F12，不落码；③ §三.6 配对分型计数加 R4 注（旧分类器口径，复跑须整体重算）；④ 重申不做项：不重开 regime 轴、不调 −5% 阈值、不据配对 p<0.001 动作。
