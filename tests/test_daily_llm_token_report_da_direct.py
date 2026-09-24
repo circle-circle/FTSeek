@@ -66,7 +66,11 @@ def test_da_direct_aggregates_usage_and_cost(tmp_data):
     assert out["cached"] == 1800
     assert out["trunc"] == 1  # finish_reason=length 计数
     assert out["challenger_calls"] == 2
-    assert out["cost"] == pytest.approx(17.0 * 0.008 + 4.5 * 0.024, rel=1e-6)
+    # 价格随 config/unified_config.yaml llm.models.qwen 变动 (2026-08-27 qwen-max→flash 降档
+    # 后成本口径已迁; 硬编码 0.008/0.024 是旧价, 读 SSOT 对齐避免下次调价又红).
+    costs = rep._llm_model_costs()
+    cin, cout = costs.get("qwen3.7-max", (0.0, 0.0))
+    assert out["cost"] == pytest.approx(17.0 * cin + 4.5 * cout, rel=1e-6)
 
 
 def test_da_direct_tolerates_corrupt_file(tmp_data):

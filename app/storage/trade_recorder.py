@@ -124,7 +124,8 @@ class TradeRecorder:
                     review_notes TEXT,
                     
                     created_at TEXT NOT NULL,
-                    updated_at TEXT
+                    updated_at TEXT,
+                    config_version TEXT DEFAULT 'v1'
                 )
             """)
             

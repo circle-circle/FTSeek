@@ -193,6 +193,20 @@ def test_weekly_checkpoint_reads_fee_gate_shadow_section():
 
 def test_push_guard_rereads_state_under_lock(monkeypatch, tmp_path):
     """R-16①: 竞态进程在外层读取后、拿锁前完成推送 ⇒ 锁内重读必须挡住双推。"""
+    # 冻结时钟到 _artifacts 的 updated_at 附近: run_report 不传 now → build_report
+    # 用 datetime.now(utc), 数据超过 STALE_HOURS=26h 即 CHAIN_STALE → 与 state 的
+    # INSUFFICIENT_N 不匹配 → should_push 恒 True → pushed=True 假阳 (2026-09-24 实证).
+    from datetime import datetime as _dt, timezone as _tz
+    _frozen = _dt(2026, 9, 21, 2, 47, tzinfo=_tz.utc)
+    _real_dt = report_mod.datetime
+
+    class _FrozenDT(_real_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _frozen.astimezone(tz) if tz else _frozen.replace(tzinfo=None)
+
+    monkeypatch.setattr(report_mod, "datetime", _FrozenDT)
+
     rows = [_row(1, 6.0, 834)]
     jsonl, latest = _artifacts(tmp_path, rows)
     state = tmp_path / "push_state.json"

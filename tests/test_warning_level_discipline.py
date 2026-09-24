@@ -69,13 +69,23 @@ def test_separator_lines_gone(reconciler, caplog):
         "纯分隔符行仍在 — 它零信息量且占日志体积"
 
 
-def test_config_audit_non_blocking_is_info(caplog):
-    """判据 2: 自带 `[INFO]`/`[DRIFT]` 标签的非阻断项降为 INFO (改前 logger.warning)。"""
+def test_config_audit_non_blocking_is_info(caplog, monkeypatch):
+    """判据 2: 自带 `[INFO]`/`[DRIFT]` 标签的非阻断项降为 INFO (改前 logger.warning)。
+
+    2026-09-24: 真实配置非阻断项已归零 (配置纪律持续收敛), 按本用例原断言提示
+    "若已归零, 本用例需改用注入桩" 切换到 monkeypatch 注入, 与
+    test_blocking_still_critical_and_raises 同款。注入内容仍覆盖 [INFO]/[DRIFT]
+    两类标签, 验证 print_config_audit 的 INFO 输出路径不随真实配置清洁而退化。"""
+    injected = [
+        "⚠️ [INFO] 注入桩: 非阻断项 A (测试注入, 验证 INFO 输出路径)",
+        "⚠️ [DRIFT] 注入桩: 非阻断项 B (测试注入, 验证 DRIFT 标签走 INFO)",
+    ]
+    monkeypatch.setattr(config_audit, "audit_config_consistency", lambda _d: list(injected))
     yaml_data = _lower_keys(yaml.safe_load(
         open("config/unified_config.yaml", encoding="utf-8")))
     warnings = config_audit.audit_config_consistency(yaml_data)
     non_blocking = [w for w in warnings if "[BLOCKING]" not in w]
-    assert non_blocking, "真实配置当前应有非阻断项 (若已归零, 本用例需改用注入桩)"
+    assert non_blocking, "注入桩必须产出非阻断项 (否则本测试零覆盖)"
 
     with caplog.at_level(logging.INFO, logger=AUDIT_LOGGER):
         n_blocking = config_audit.print_config_audit(yaml_data, strict=True)
