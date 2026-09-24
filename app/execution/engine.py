@@ -140,7 +140,9 @@ class ExecutionEngine(BaseExecutionEngine):
     # ── 方案B: 标的级互斥 (2026-06-03) ──────────────────────────────────
     # 每个标的永久归属一个引擎，物理上消除方向冲突。
     # ORB 只能交易这 8 只 ETF，Main 绝不碰它们。
-    # 来源: unified_config.yaml::orb.universe (SSOT)
+    # 来源: 本 frozenset (2026-09-24 勘误: 原注 "unified_config.yaml::orb.universe
+    #   (SSOT)" 已失效 — ORB 于 RFC-090 退役, config orb: 节整段删除, 此处成为唯一存留;
+    #   互斥排除语义保持不变, 勿因 ORB 退役而删本集合, 删了主线会开始碰这 8 只 ETF)
     # 注释: SPY/QQQ 在主线 watchlist 中，ORB 已移除避免冲突
     ORB_SYMBOLS = frozenset({
         "US.IWM", "US.DIA", "US.XLE", "US.XLF",

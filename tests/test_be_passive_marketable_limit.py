@@ -11,6 +11,7 @@ DELL 9/2) 0 回摆成交, 全负 (净均值 ≈ -$19.7/案)。
 主动侧 (8/20 方案A 贴线几何) 行为完全不变。回滚: 键改 0 = 回旧保本限价行为。
 """
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -106,4 +107,10 @@ def test_new_exit_version_registered_in_freeze_baseline():
     v = get_playbook_config().get_exit_config_version()
     note = bl.get("exit_versions", {}).get(v, "")
     assert note, f"当前退出参数版本 {v} 未登记冻结基线豁免清单 (KR2 周检将告警)"
-    assert "DEB-20260909" in note, "豁免说明必须携带 DEB 裁决依据"
+    # 2026-09-24 修测试自身基线过期: 原硬编码 "DEB-20260909" — 断言意图是"豁免说明
+    # 必须携带 DEB 裁决依据", 不是"必须引用某一个特定 DEB"。9/17 bb5a4c3b4/2d0bcf60f
+    # (DEB-20260917 §23.8 adaptive trailing) 产生新哈希后 note 正确引用新裁决, 旧硬编码
+    # 反而把合法登记判红。改为任意 DEB-<8位日期> 引用即满足意图。
+    assert re.search(r"DEB-\d{8}", note), (
+        f"豁免说明必须携带 DEB 裁决依据 (任意 DEB-YYYYMMDD 引用), 实际 note: {note[:120]}"
+    )

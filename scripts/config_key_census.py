@@ -119,6 +119,18 @@ FILE_EXEMPT = {
 #   "含敏感形字段, 建议随下批死键清除"→删), 豁免条目随之注销 — 哨兵口径:
 #   键消失而豁免还挂着 = 注册表与配置脱节, 必须同步。
 LEAF_EXEMPT = {
+    # 2026-09-24 登记 (982895f21, DEB-20260918 质检口径批引入, 当时漏登记):
+    # reasoning_effort 是**嵌套消费** — 它位于 llm.features.universe_expansion_reasoning
+    # .extra_body 内, extra_body 整字典经 app/llm/unified_service.py 原样透传给 LLM API
+    # (DashScope/GLM thinking 参数), 普查扫描器按叶子名找 get()/[] 直接消费看不到它。
+    # 实证: unified_config.yaml:512-517 (extra_body.enable_thinking+reasoning_effort),
+    # unified_service.py:50/77/94/111 (extra_body 透传), daily_llm_token_report.py:275
+    # (以该键落库时刻为锚)。勿删该键 (GLM-5.3 未传时默认 max ⇒ UE brief 烧满输出预算
+    # schema_failed, 见 unified_config 行内注释与 [[ue-thinking-ab-control-arm]] 教训)。
+    "unified_config.yaml:reasoning_effort": (
+        "extra_body 嵌套透传消费 (unified_service.py → LLM API), 扫描器盲区非死键; "
+        "982895f21 DEB-20260918 质检口径批引入"
+    ),
 }
 
 # 自验证集 (普查口径漂移哨兵):

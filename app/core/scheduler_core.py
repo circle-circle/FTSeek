@@ -2973,15 +2973,12 @@ class TradingScheduler:
                         time.sleep(1)
                     continue
 
-                # 收集扫描列表: watchlist + ORB universe
+                # 收集扫描列表: watchlist
+                # 2026-09-24: 移除 orb.universe 死读 — ORB 已于 RFC-090 (90de5a1c7) 退役,
+                # unified_config.yaml 的 orb: 节已整段删除, 此后 get_dotted 恒回退 [] ⇒
+                # 该块为零效果隐形开关 (config reverse census 点名)。InsiderScan 人群
+                # 自 orb 节删除起即 = watchlist, 本次清理零行为变更。
                 symbols_to_scan = list(set(self.watchlist))
-                try:
-                    from app.core.config_container import get_config
-                    _cfg = get_config()
-                    orb_universe = _cfg.get_dotted("orb.universe", [])
-                    symbols_to_scan = list(set(symbols_to_scan + orb_universe))
-                except Exception:
-                    pass
 
                 logger.info(f"[InsiderScan] 开始扫描 {len(symbols_to_scan)} 只标的...")
 
