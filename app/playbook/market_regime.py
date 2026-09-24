@@ -50,6 +50,13 @@ class RegimeContext:
     position_multiplier: float  # 仓位倍率
     min_strength: int  # 最低信号强度要求
     vix_uncertain: bool = False  # RFC-060: VIX 取不到真实值时为 True, regime 判定不可信
+    # [DEB-20260924 F5-B'影子] 盘前 spy_price 口径遥测 (record-only, 不影响主判定):
+    #   spy_price 现为日K口径 (盘前=昨收, regime_log 4/4 逐日实证 + 9/21 距MA20 0.11% 翻转实例)。
+    #   影子字段双算"若用盘前 pre_price 会怎样", 攒 5-10 个交易日后裁决是否 enforce。
+    spy_price_basis: str = "kline_last_close"   # kline_last_close | pre_price(仅遥测标注, 主判定不变)
+    spy_pre_price: float = 0.0                  # 盘前时段快照 pre_price (0=不可用)
+    score_shadow: Optional[int] = None          # 用 pre_price 重算的 score (None=无双算/无差异)
+    regime_shadow: Optional[str] = None         # score_shadow 对应的 regime 值
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -65,7 +72,49 @@ class RegimeContext:
             "position_multiplier": self.position_multiplier,
             "min_strength": self.min_strength,
             "vix_uncertain": self.vix_uncertain,
+            "spy_price_basis": self.spy_price_basis,
+            "spy_pre_price": self.spy_pre_price,
+            "score_shadow": self.score_shadow,
+            "regime_shadow": self.regime_shadow,
         }
+
+
+def shadow_score_delta(spy_price: float, spy_pre_price: float,
+                       spy_ma20: float, spy_ma200: float) -> int:
+    """[DEB-20260924 F5] 纯函数: 盘前价替换昨收后, score 中 SPY 相关两项 (±2/±1) 的变化量。
+
+    与 assess() 主路径的组件 1 (SPY vs MA20, ±2) 和组件 3 (SPY vs MA200, ±1) 同式;
+    MA20/MA50/MA200 保持日K口径不变 (均线是历史序列, 与"今天用什么价"无关)。
+    独立成纯函数供单测 (9/21 实例: spy=761.69/ma20=762.50/pre=763.x → delta=+4, cautious→risk_on)。
+    """
+    if not (spy_price > 0 and spy_pre_price > 0):
+        return 0
+    delta = 0
+    if spy_ma20 > 0:
+        delta += (2 if spy_pre_price > spy_ma20 else -2) - (2 if spy_price > spy_ma20 else -2)
+    if spy_ma200 > 0:
+        delta += (1 if spy_pre_price > spy_ma200 else -1) - (1 if spy_price > spy_ma200 else -1)
+    return delta
+
+
+def score_to_regime_value(score: int, vix_uncertain: bool = False) -> str:
+    """[DEB-20260924 F5] 纯函数: score → regime 值 (镜像 assess() 主路径映射, 仅供影子遥测)。
+
+    ⚠️ 阈值与主路径 (>=5 RISK_ON / >=0 CAUTIOUS / >=-5 RISK_OFF / else NO_TRADE) 及
+    RFC-060 vix_uncertain 降级 (RISK_ON→CAUTIOUS) 保持一致; 主路径改阈值时此处必须同改
+    (tests/test_market_regime_f5_shadow.py 钉住两者一致性)。
+    """
+    if score >= 5:
+        r = "risk_on"
+    elif score >= 0:
+        r = "cautious"
+    elif score >= -5:
+        r = "risk_off"
+    else:
+        r = "no_trade"
+    if vix_uncertain and r == "risk_on":
+        r = "cautious"
+    return r
 
 
 class MarketRegimeGate:
@@ -299,6 +348,34 @@ class MarketRegimeGate:
             f"VIX={vix:.2f}{'(uncertain)' if vix_uncertain else ''} | top_n={top_n} multiplier={position_multiplier}"
         )
 
+        # ── [DEB-20260924 F5-B'影子] 盘前 pre_price 双算遥测 (record-only, 主判定不变) ──
+        # 病根: spy_price 盘前=昨收 (regime_log 4/4 逐日实证; 9/21 距MA20 0.11% → -2分 → cautious,
+        #   而当日实际收涨 +1.5% — 边界日占比 33%, 见 DEB §三.9 证据3)。
+        # 修法分两步: 本步只**记录**"若用盘前 pre_price, score/regime 会变成什么"(影子字段);
+        #   enforce (spy_price 直接换 pre_price) 属行为变更, 须影子攒 5-10 交易日后另行裁决 (F5-B')。
+        # 数据源: get_quote 快照路径已带 pre_price (8/25 修复); push/订阅路径无盘前字段 (置0),
+        #   pre_price<=0 时影子字段保持 None/0 = "本轮不可双算", 不猜不补。
+        spy_pre_price = 0.0
+        score_shadow = None
+        regime_shadow = None
+        if self.router and spy_price > 0 and spy_ma20 > 0:
+            try:
+                _q = self.router.get_quote("US.SPY") or {}
+                spy_pre_price = float(_q.get("pre_price") or 0.0)
+            except Exception as _e_pre:
+                logger.debug(f"[Regime] F5影子 pre_price 获取失败 (影子跳过, 主判定不受影响): {_e_pre}")
+        if spy_pre_price > 0:
+            _delta = shadow_score_delta(spy_price, spy_pre_price, spy_ma20, spy_ma200)
+            if _delta:
+                score_shadow = score + _delta
+                regime_shadow = score_to_regime_value(score_shadow, vix_uncertain)
+                if regime_shadow != regime.value:
+                    # 影子与主判定不同档 = F5 缺陷的真实暴露日, WARNING 级留痕 (可 grep 攒证据)
+                    logger.warning(
+                        f"[Regime][F5影子] 盘前价双算翻转 regime: {regime.value}(score={score}, "
+                        f"spy_price=昨收{spy_price:.2f}) → {regime_shadow}(score={score_shadow}, "
+                        f"pre_price={spy_pre_price:.2f}) | 主判定不变(record-only, enforce 待裁决)")
+
         ctx = RegimeContext(
             regime=regime,
             vix=vix,
@@ -312,6 +389,9 @@ class MarketRegimeGate:
             top_n=top_n,
             position_multiplier=position_multiplier,
             min_strength=min_strength,
+            spy_pre_price=spy_pre_price,
+            score_shadow=score_shadow,
+            regime_shadow=regime_shadow,
         )
         MarketRegimeGate._assess_cache = (_now_mono, ctx)
         return ctx

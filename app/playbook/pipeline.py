@@ -1734,11 +1734,13 @@ def _build_instructions_from_votes(
             _horizon_reasoning = {"source": "error_fallback", "error": str(e)}
 
         # 构造 LLM decision dict (compute_instruction_values 期望的格式)
+        # [DEB-20260924 F14] thesis 模板与结构化 archetype 同源 (bridge 有则透传, 无则 None=因子兜底)
         decision = {
             "symbol": symbol,
             "direction": direction,
             "selected_conditions": list(factors.keys()) if factors else [],
-            "thesis_template": _select_thesis_template(factors, direction),
+            "thesis_template": _select_thesis_template(
+                factors, direction, entry_archetype=vote_result.get("entry_archetype")),
         }
 
         # 数值计算 (确定性, LLM 不参与)
@@ -1988,18 +1990,39 @@ def _build_instructions_from_votes(
     return instructions
 
 
-def _select_thesis_template(factors: Dict[str, Any], direction: str) -> str:
+def _select_thesis_template(factors: Dict[str, Any], direction: str,
+                            entry_archetype: Optional[str] = None) -> str:
     """根据触发因子选择 thesis 模板.
 
     [DEB-20260924-indexcaliber R4] 方向感知: SELL_SHORT 不得再落多头文案模板。
     原缺陷 (9/24 AXTI 实例): SHORT + macd_golden_cross → "mean_reversion"
     ⇒ thesis="均值回归: …, 超跌反弹机会" (多头叙事) 挂在空单上, 与 DA 真实空方
-    依据 (FADE_SHORT: 利好兑现+PE2432x+盘前-4.36%) 相矛盾。BUY 侧映射保持不变。
+    依据 (FADE_SHORT: 利好兑现+PE2432x/盘前-4.36%) 相矛盾。BUY 侧映射保持不变。
+
+    [DEB-20260924 F14] 结构化 archetype 优先: thesis 叙事必须与**执行语义**一致 —
+    entry_archetype 驱动 entry_routing (限价/市价路由), 是机器可执行真值;
+    而因子模板映射只是叙事猜测。矛盾实例 (9月实测 14 条): thesis="突破入场: above_ma20,
+    macd_golden_cross…" 而 raw.entry_archetype=PULLBACK_LIMIT + confirmation.side=below
+    ⇒ routing 开启时突破叙事单会被按回踩限价路由 (等不到回踩 → 流单), 且污染一切
+    按 thesis 文本做的分型分析 (F13-① BREAKOUT 臂灭绝的直接成因)。
+    修法: archetype 有值时按 archetype 选模板 (同源), 因子映射仅作 archetype 缺失时兜底。
+    行为层零变更: thesis 是纯记录字段, compute_instruction_values 不消费它 (已 grep 验证)。
     """
     _dir = str(direction or "").upper()
     if _dir == "SKIP":
         return "skip"
     _short = _dir != "BUY"  # SELL_SHORT / SHORT / SELL 一律走空头模板
+
+    # F14: 结构化 archetype 优先 (与方向一致性守卫: 多头 archetype 不落空头单, 反之亦然)
+    _arch = str(entry_archetype or "").upper()
+    if _arch == "FADE_SHORT":
+        if _short:
+            return "fade_short"
+        logger.warning(f"[playbook][F14] 矛盾: BUY 单带 FADE_SHORT archetype — 按因子兜底")
+    elif _arch == "PULLBACK_LIMIT":
+        return "fade_short" if _short else "trend_pullback"
+    elif _arch == "BREAKOUT":
+        return "trend_short" if _short else "breakout"
 
     if not factors:
         return "trend_short" if _short else "momentum_continuation"
@@ -2285,6 +2308,12 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
 
         # Layer 0: 市场环境门禁
         regime_ctx = MarketRegimeGate().assess()
+        # [DEB-20260924 F5-B'影子] notes 附带盘前双算遥测 (schema 零改动, 消费方按文本读):
+        #   pre=<盘前价> 影子score=<n> 影子regime=<v> —— 攒 5-10 交易日后按此裁决是否 enforce。
+        _f5_shadow = ""
+        if getattr(regime_ctx, "score_shadow", None) is not None:
+            _f5_shadow = (f", F5影子: pre={regime_ctx.spy_pre_price:.2f} "
+                          f"score'={regime_ctx.score_shadow} regime'={regime_ctx.regime_shadow}")
         db.save_regime_log({
             "date": today,
             "regime": regime_ctx.regime.value,
@@ -2293,7 +2322,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
             "spy_ma20": regime_ctx.spy_ma20,
             "spy_ma50": regime_ctx.spy_ma50,
             "score": regime_ctx.score,
-            "notes": f"top_n={regime_ctx.top_n}, pos_mult={regime_ctx.position_multiplier}",
+            "notes": f"top_n={regime_ctx.top_n}, pos_mult={regime_ctx.position_multiplier}{_f5_shadow}",
         })
         logger.info(f"[playbook] Layer0 regime={regime_ctx.regime.value} VIX={regime_ctx.vix}")
 
