@@ -638,11 +638,14 @@ def _sec_eth_short_family():
         today = str(_today_et())[:10]
         pk = max((x.get("summary", {}).get("n_passes_floors", 0)
                   for x in r if x.get("et_date") == today), default=0)
-        out.append(f"  ① 隔夜财报carry [{last.get('session', '?')}] cohort {s.get('cohort', 0)} "
+        # 2026-09-24 标签诚实化: carry 影子已退役 (用户裁「彻底停采不重启」, 判据
+        # <0.5只/日达成, 见 docs/analysis/2026-09-24-carry-shadow-adjudication.md)。
+        # 末行数据保留展示仅作归档, 必须带退役标 — 看板不得替死影子背书。
+        out.append(f"  ① 隔夜财报carry [⛔已退役9/24, 末行系停采前归档] [{last.get('session', '?')}] cohort {s.get('cohort', 0)} "
                    f"报价 {s.get('quoted', 0)} 陈旧 {s.get('stale_quotes', 0)} | 今日过闸上界 {pk} "
                    f"| 最近 {last.get('et_date')} {last.get('et_time')} ET")
     else:
-        out.append("  ① 隔夜财报carry: (无样本)")
+        out.append("  ① 隔夜财报carry: (⛔已退役 2026-09-24 用户裁停采, 无样本)")
     r = _read_jsonl(ROOT / "data" / "short_funnel_shadow.jsonl")
     if r:
         last = r[-1]
