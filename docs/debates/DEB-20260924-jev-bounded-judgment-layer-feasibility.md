@@ -1,8 +1,9 @@
 # DEB-20260924: Jev（TypeSafe System One）作为 FTSeek「有界判断部件」— 可行性与 Phase 0 规格
 
 > **状态**: 提案，**未落码**（本文 = L5 纯文档，零行为变更；Phase 0 若获裁，另立实现批次）
-> **待裁**: 用户（§10 的 **F1–F9**，每条附推荐 + 保守替代）
-> **2026-09-24 深夜更新（第 3 轮）**: 追查发现**阿里云百炼当天已上线同协议族模型** `decision-model-preview`（§4.5，E21–E26）；原"美国早期厂商 + waitlist + 数据外发"门槛**更正为一次控制台操作**（§11⑧）。**注意：仍未成功实弹调用过一次**，平台能力描述全部属自述。
+> **待裁**: 用户（§10 的 **F1–F7 + F10–F11**（F8/F9 已闭环），每条附推荐 + 保守替代）
+> **2026-09-24 深夜更新（第 3 轮）**: 追查发现**阿里云百炼当天已上线同协议族模型** `decision-model-preview`（§4.5，E21–E26）；原"美国早期厂商 + waitlist + 数据外发"门槛**更正为一次控制台操作**（§11⑧）。
+> **2026-09-24 深夜更新（第 4 轮，实弹）**: 用户给出 `WorkspaceId`，**F9 三连全部通过**（§4.5.1，E27–E30），并新增证伪层结论 **E31/E32**（字段敏感性 + 序列化敏感性）⇒ §5.2 增**序列化纪律**、§10 增 **F10/F11**、自曝 ⑨。**此刻它已从"平台自述"升级为"本地实测可用"，但仍只是可用 ≠ 有用**（校准与判断力一律未验）。
 > **类型**: 立项提案（若 Phase 0 落码则为 L1；本文本身零代码）
 > **目标读者分层**:
 > - **裁决者（用户）**: 读 §0 结论 / §10 待裁九问（F1–F9；新增 F8 开通申请、F9 首次实弹三连）
@@ -30,6 +31,7 @@
 4. 因此推荐：**Phase 0 先做本地可回放基线（零外发、零依赖、当天可跑），用历史标签问"这个判断到底有没有可测信号空间"**；只有基线显示"有空间"，才值得付"数据外发 + 早期厂商依赖"的代价去测 Jev 本体。
 5. **交易前评估「要不要下单」（用户 2026-09-24 追加议题，§5.4）**：同轴已有两次不利读数（edge gate rank IC 双窗负 −0.396/−0.172；被拦候选反事实 T+1 +0.113% → `KEEP_SAMPLING`），且**语义判断的合法作用域只有 10.5%、去重后 0.5 个/交易日** ⇒ **不新开并列影子**，若要做只按 §5.4.4 挂同轴增量臂；并且**先裁时点**（F7）——若允许把评估提前到计划阶段，Jev 的唯一技术理由（延迟）随之归零。
 6. **可用性前提已变（2026-09-24 追查，§4.5）**：**阿里云百炼今天 15:24 上线了同名协议族的 `decision-model-preview`（"决策模型（预览版）"，System One 协议，限时免费，RPM 1200）**，且我们账号**已有该平台的 key**。⇒ 原先把"美国早期厂商 + waitlist + 数据外发"当作前置代价的判断**不再成立**；现在只差**一个业务空间 ID（WorkspaceId）**（§4.5 实测三态）。**但注意：仍未完成任何一次成功的实弹调用**——能力描述目前全是平台自述。
+7. **实弹已通过（2026-09-24 深夜，用户给出 WorkspaceId 后，§4.5.1）**：连通性 200、三原语字段与文档逐项一致、**幂等 6/6**、空 state fail-closed、服务端 **p50 87.4ms**/端到端 **282ms**、**成本 $0**；证伪层同时给出两条硬约束——**① 并非所有字段都参与判断**（`rr_ratio`/`dist_from_high` 实测几乎不敏感）**② 同一内容仅键序不同 → 三个不同答案（0.76/0.52/0.40，各自稳定）** ⇒ 序列化必须锁死（新增 F10/F11）。
 
 ---
 
@@ -103,6 +105,13 @@
 | E24 | **对照臂：区分"模型不存在"与"无权限"** | 同 ⑧ 的同一端点逐个换 model | 自造名 `definitely-not-a-real-model-xyz-123` / `decision-model` / `qwen-decision` / `decision-preview` / `bailian-decision-model-preview` → **`model_not_found`**；而 `decision-model-preview` → **`access_denied`**（**错误码不同 ⇒ 该模型在平台确实存在**，不是我们编出来的名字） |
 | E25 | 承载的是 **TypeSafe System One 协议**（文档指示用 TypeSafe 官方 SDK） | `curl -s https://pypi.org/pypi/typesafe-sdk/json` | 包存在：`typesafe-sdk 0.7.1`，summary = "Python SDK for TypeSafe AI API"，homepage `typesafe.ai`；百炼文档直接指示 `TypeSafeClient(base_url="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode")` |
 | E26 | **无新增厂商/密钥依赖** | `grep -oE "^[A-Z_0-9]*(DASHSCOPE\|BAILIAN)[A-Z_0-9]*" .env.us \| sort -u` | 已有 `DASHSCOPE_API_KEY` / `BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` / 8 个 `BAILIAN_MODEL_*`；`config/unified_config.yaml` 中 10+ 个 `llm.models` 走同一 key |
+| E27 | **实弹连通性（首次成功）** | 代码块 ⑨① | `POST https://llm-nbhpc6wqt1x6i8bw.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone` → **HTTP 200**；文档原例返回与文档示例**逐字段一致** |
+| E28 | **字段真实性** | 代码块 ⑨② | `noul`→仅 `noul`（0.76/0.52）；`choice`→`choice`+`confidence`+`probabilities`；`score`→`score`+`confidence`+`legend`+`probabilities`；**`noul` 无 confidence** |
+| E29 | **幂等 6/6** | 代码块 ⑨③ + ⑩ D | 同 state ×5、20s 后 ×1 → 全部数值一致 ⇒ 确定性函数（非采样） |
+| E30 | **延迟 / 成本实测** | 代码块 ⑩ E | 服务端 p50 **87.4ms**（75.8–96.2）；端到端 wall p50 **282ms**（258–581）；`input_tokens` 125/168/248，单价 0 ⇒ **$0** |
+| E31 | **敏感 vs 不敏感字段** | 代码块 ⑩ A/A2/A3/B | `chg_pct` −0.28→−6.0：net_loss 0.76→0.90 单调、quality 1.35→1.09 单调；`direction` LONG→SHORT：knife **0.52→0.13**；但 `rr_ratio` 0.8→3.0 仅动 0.04、`dist_from_high` −1→−12 仅动 0.02 ⇒ **并非所有字段都参与判断** |
+| E32 | **序列化敏感性（决定性）** | 代码块 ⑩ C + ⑪ | 语义等价、仅键序反转 → net_loss **0.76→0.40**（×3 稳定）；`sort_keys` 版 **0.52**（×2 稳定）；空白/`ensure_ascii` **不影响**；加 1 无关字段 0.63、包一层 0.50 ⇒ **键序决定答案，且影响大于业务字段变动（14pp）** |
+| E33 | 边界 + 对照臂 | 代码块 ⑨④⑥ | 自造模型名 → 404 `model_not_found`；空 state → 400 `InvalidParameter: state must not be empty` |
 
 ```python
 # ① 影子注册表活体读数（只读：refresh_counts 不写盘，仅内存置 current_n）
@@ -166,6 +175,46 @@ print(probe("decision-model-preview", "https://dashscope.aliyuncs.com/compatible
 print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone"))
 ```
 
+```python
+# ⑨ F9 三连：连通性 / 字段真实性 / 幂等 (2026-09-24 实跑, raw HTTP, 合成 state)
+URL = "https://llm-nbhpc6wqt1x6i8bw.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone"
+STATE = {"instrument":"US.SYNTH1","et_date":"2026-09-24","session":"regular","direction":"LONG",
+         "plan_entry":242.78,"last":242.10,"chg_pct_today":-0.28,"atr_pct":5.5,"intraday_low_pct":-4.1,
+         "dist_from_high_pct":-6.3,"regime":"chop","minutes_to_close":133,"rr_ratio":1.7,
+         "spread_bps":9,"rel_volume":0.8,"note":"回落至日内均价下方，量能未放大"}
+Q = {"net_loss":{"type":"noul","instructions":"这笔订单若现在成交，扣掉手续费后这一轮交易会不会是净亏损？"},
+     "knife":   {"type":"noul","instructions":"这个候选是否像在急跌中追多（接飞刀）？"},
+     "action":  {"type":"choice","instructions":"系统现在应该怎么做？",
+                 "criteria":{"place":"立即下单","escalate":"升级人工复核","skip":"不下单"}},
+     "quality": {"type":"score","instructions":"这个入场点的质量如何？",
+                 "criteria":["很差","较差","一般","较好","很好"]}}
+# ① 连通性: 文档原例 → 200 且逐字段等于文档示例
+# ② 字段: answers.net_loss={"type":"noul","noul":0.76}(无 confidence);
+#          answers.action={...,"choice":"skip","confidence":0.87,"probabilities":{...}};
+#          answers.quality={...,"score":1.35,"confidence":0.86,"legend":{...},"probabilities":{...}}
+# ③ 幂等: 同 STATE ×5 + 20s 后 ×1 → 6/6 数值完全一致
+# ④ 对照臂: model="decision-model-xyz-not-real" → 404 model_not_found
+# ⑥ 边界: state="" → 400 InvalidParameter: state must not be empty
+
+# ⑩ 证伪层：单字段敏感性 / 方向翻转 / 序列化 / 时间漂移 / 延迟分布
+#    A  chg_pct_today: -0.28/-2/-3.5/-5/-6/+1.5 → net_loss 0.76/0.83/0.87/0.90/0.90/0.67 (单调)
+#    A2 dist_from_high_pct: -1/-6.3/-12      → 0.74/0.76/0.76       (几乎不敏感)
+#    A3 rr_ratio: 0.8/1.7/3.0                → 0.78/0.76/0.74       (几乎不敏感, 方向微弱反向)
+#    B  direction: LONG/SHORT                → knife 0.52 / 0.13    (语义正确)
+#    D  同 state t0 vs t+20s                 → 0.76 / 0.76          (确定性)
+#    E  同 state ×12 → 服务端 latency_ms min/p50/max = 75.8/87.4/96.2;
+#       端到端 wall_ms = 258/282/581; input_tokens 恒 248
+
+# ⑪ 序列化敏感性（决定性）: 语义内容完全相同, 只换序列化
+import json
+rev = {k: STATE[k] for k in reversed(list(STATE))}      # 键序反转 → net_loss 0.40 (×3 稳定)
+srt = {k: STATE[k] for k in sorted(STATE)}              # 字典序    → net_loss 0.52 (×2 稳定)
+# json.dumps(state, indent=2) / ensure_ascii=True         → 0.76 不变 ⇒ 空白/转义被规范化, 不影响
+# state["irrelevant_noise"]="..."                         → 0.63
+# {"context": state, "extra_note":"..."}                  → 0.50
+# ⇒ 采集器必须固定 canonical_state_bytes, 见 §5.2 序列化纪律
+```
+
 ---
 
 ## 4. Jev 是什么 / 不是什么（来源分层，**含"未实跑"声明）
@@ -220,6 +269,52 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 3. **纪律不变**：平台自述的能力**不等于**校准成立；第三方对 Jev 的 64–65% 读数**不能直接搬给这个模型**（同一协议族 ≠ 同一权重）。⇒ §5.3 的"自验校准"判据、§5.4 的同轴增量臂纪律，一个字都不放松。
 4. **取证方式合规**：本次探测全程 raw HTTP（curl/urllib），**未经 `app.llm`**，故 `llm_audit.db` 零新增（唯一近 1 小时新增行是 21:12:41 的 UE 生产调用，与本探测无关）。
 
+### 4.5.1 实弹结果（2026-09-24 深夜，用户给出 `WorkspaceId=llm-nbhpc6wqt1x6i8bw` 后立即执行）
+
+**环境**：`POST https://llm-nbhpc6wqt1x6i8bw.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone`，`model=decision-model-preview`，`Bearer $DASHSCOPE_API_KEY`（**现有 key，无需新凭证**）；**全程 raw HTTP，不经 `app.llm`**（`llm_audit.db` 零新增）；state 一律**合成**（真候选外发仍待 F4）；脚本见代码块 ⑨⑩⑪。
+
+| # | 测什么 | 实测结果 | 判定 |
+|---|---|---|---|
+| 1 | **连通性**（文档原例） | HTTP 200；返回与文档示例**逐字段一致**（`department=billing`/conf 0.88/prob 0.94:0.06、`escalate noul=0.99`、`severity score=2.25`/conf 0.91） | ✅ **可用** |
+| 2 | **字段真实性**（三原语一次请求） | `noul` → 只有 p（0.76 / 0.52）；`choice` → `choice`+`confidence`+`probabilities`（skip/0.87/{place .03, escalate .05, skip .92}）；`score` → `score`+`confidence`+`legend`+`probabilities`（1.35/0.86） | ✅ 与文档一致；**`noul` 无 confidence 字段** ⇒ 判据不许给 noul 设 confidence 门 |
+| 3 | **幂等性**（同 state ×5 + 20s 后再 ×1） | **6/6 完全一致** | ✅ **确定性函数**（不是采样） |
+| 4 | 对照臂：自造模型名 | 404 `model_not_found` | ✅ 说明是**本工作空间已授权**该模型，而非"任何名字都放行" |
+| 5 | 边界：空 `state` | 400 `InvalidParameter: state must not be empty` | ✅ fail-closed |
+| 6 | **延迟** | 服务端 `latency_ms` p50 **87.4ms**（75.8–96.2）；**端到端 wall p50 282ms**（258–581，含公网 RTT） | ✅ 用户"70–500ms"成立，但须区分**服务端 ~85ms ≠ 端到端 ~280ms**（后者才决定热路径） |
+| 7 | **成本** | `usage.input_tokens` 125 / 168 / 248；单价 0 ⇒ **$0** | ✅ 免费实测确认 |
+
+**证伪层**（幂等 6/6 一致 ⇒ 必须排除"它其实返回常量"）：逐字段扰动
+
+| 扰动（其余字段不变） | net_loss | knife | quality | 读法 |
+|---|---|---|---|---|
+| 基线 | 0.76 | 0.52 | 1.35 | — |
+| `chg_pct_today` −0.28→−2.0→−3.5→−5.0→−6.0 | 0.83→0.87→0.90→0.90 | 0.57→0.61→0.63→0.63 | 1.27→1.20→1.10→1.09 | ✅ **单调**（跌越深 → 净亏/接飞刀概率越高、质量越低） |
+| `chg_pct_today`=+1.5（唯一上涨点） | **0.67** | 0.50 | 1.38 | ✅ 方向自洽 |
+| `direction` LONG→SHORT | 0.76→0.78 | **0.52→0.13** | 1.35→1.58 | ✅ **语义正确**（做空不叫接飞刀） |
+| `dist_from_high_pct` −1/−6.3/−12 | 0.74/0.76/0.76 | 0.50/0.52/0.52 | 1.39/1.35/1.34 | ⚠️ **几乎不敏感** |
+| `rr_ratio` 0.8/1.7/3.0 | 0.78/0.76/0.74 | 0.52/0.52/0.53 | 1.31/1.35/1.35 | ⚠️ **几乎不敏感**（且方向微弱反向） |
+
+⇒ 它确实是 state 的函数、部分语义正确；**但不是你给的每个字段都参与判断**（`rr_ratio`/`dist_from_high` 基本被忽略）⇒ §5.1 的"最小充分集"应按**实测敏感字段**收缩，而不是按"我猜它该看什么"。
+
+**⚠️ 序列化敏感性（本轮最重要发现，直接改写 §5.2 纪律）**：
+
+| 变体（**语义内容完全相同**） | net_loss | knife | quality | 复现性 |
+|---|---|---|---|---|
+| 原键序 | 0.76 | 0.52 | 1.35 | ×3 稳定 |
+| **键序反转** | **0.40** | 0.30 | 1.65 | ×3 稳定 |
+| `sort_keys=True`（字典序） | **0.52** | 0.49 | 1.65 | ×2 稳定 |
+| 紧凑 vs `indent=2` vs `ensure_ascii=True` | 0.76（不变） | 不变 | 不变 | 空白/转义被规范化 ⇒ **不影响** |
+| 加 1 个无关字段 | 0.63 | 0.40 | 1.31 | 1 次观测 |
+| 包一层 `{"context":{...}}` | 0.50 | 0.30 | 1.57 | 1 次观测 |
+
+**要点：同一语义内容、只换键序，答案从 0.76 变到 0.40（跨过 0.5 分界，36 个百分点），且每种都稳定复现 ⇒ 是确定性的映射，不是噪声。** 对比之下，业务字段 `chg_pct` 从 −0.28% 变到 −6% 只让 net_loss 动 **14 个百分点**。
+⇒ **"state 怎么摆"对答案的影响，大于"仓位事实怎么变"的影响。** 不锁死序列化，我们测到的就不是"判断效应"而是"排版效应"。
+
+**由此新增三条硬纪律（写入 §5.2；未获裁前不得绕过）**：
+1. **`state_hash` = sha1(实际发出的 canonical state 字节)**，canonical 固定 `json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",",":"))` —— **禁止**对 dict 直接 hash、**禁止**用"语义等价"当同一条；
+2. **state 字段白名单 + 单一固定键序**（采集器里一个常量列表）；**多余字段一律不塞**（实测"加 1 个无关字段"让 net_loss 掉 13 个百分点）；
+3. **幂等体检**：settler 每次重打一条已知答案的回放；若同一 canonical 字节出现两个答案 ⇒ 当污染处理，不解释、不重跑（承 9/21 污染事故纪律）。
+
 ---
 
 ## 5. 方案设计（Phase 0 规格）
@@ -234,6 +329,8 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 
 **为什么是这三个**：Q1 体量与真值都最硬（候选 70+/日、`pnl_net` 权威）；Q2 有现成的 backfill 管线可照抄；Q3 有 `issue_registry` 既有指纹去重可作对照臂（§3 E14 之外的 `app/core/issue_registry.py::is_duplicate`）。
 
+**输入列按实测敏感度收缩（依据 E31）**：实弹显示 `chg_pct_today`（单调）、`direction`（语义正确）**真参与判断**，而 `rr_ratio`（0.8→3.0 仅动 0.04）、`dist_from_high_pct`（−1→−12 仅动 0.02）**几乎不敏感** ⇒ Q1 的"最小充分集"以**实测敏感字段为准**，不敏感的字段**宁可先不放**（少放字段既省 token 也少一个键序风险面）。**注意这不等于"那些字段没价值"**，只等于"这个模型不从它们里读信息"。
+
 **走 A′（百炼 System One）时的落形态（§4.5）**：三个问题**可并进同一次请求**（`questions` 是 map，加问题几乎不加延迟）——`Q1 → {\"type\":\"noul\"}`、`Q2 → noul`、`Q3 → {\"type\":\"choice\", \"criteria\":{\"benign\":\"良性噪声\",\"real\":\"真故障\",\"watch\":\"待观察\"}}`；`state` 只放三问**并集**的最小充分集。返回物里 **`choice`/`score` 带 confidence、`noul` 只有 p**（E22）⇒ §5.2 schema 的 `confidence` 列对 Q1/Q2 恒为 `null`，判据里**不许**给 noul 设 confidence 门。
 **为什么不是"影子裁决"**：见 §12.1——元环裁决**没有客观真值**，它属"确定性地把证据整理成表"，不该走概率判断（这是我上一轮映射里的错项，见 §11）。
 
@@ -242,9 +339,11 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 - 产物：`data/shadow/jev_judgment_shadow.jsonl`（追加，一条 = 一次判断）
   ```json
   {"ts":"2026-10-01T13:31:02","et_date":"2026-10-01","q":"Q1","subject_id":"<decision_id|trade_id>",
-   "state_hash":"<sha1(最小充分集)>","answer":0/1,"p":0.73,"confidence":null,
-   "rule_result":"PASS|BLOCK","truth":null,"settled":false,"model":"local-baseline|jev|llm"}
+   "state_hash":"<sha1(canonical_state_bytes)>","state_bytes":379,"answer":0/1,"p":0.73,"confidence":null,
+   "rule_result":"PASS|BLOCK","truth":null,"settled":false,"gateway":"local-baseline|bailian-systemone|llm"}
   ```
+- **序列化纪律（2026-09-24 实弹新增，依据 E32）**：`canonical_state_bytes := json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",",":"))`；state 字段白名单 + 键序写成**常量列表**；**禁止**塞"顺手带上"的字段（实测让 net_loss 掉 13 个百分点）；`state_hash` 必须对**实际发出的字节**取 hash——**不许**对 dict 或"语义等价物"取 hash（E32：同一内容仅键序不同 = **0.76 / 0.52 / 0.40 三个答案**，各自稳定复现）。
+- **幂等体检**：settler 每轮重打 1 条已知答案的回放；同一 canonical 字节若出现两个答案 ⇒ **当污染处理**，不解释不重跑（承 9/21 污染事故纪律）。
 - 采样口径：**每条候选落一行 + 每条成交落一行**（不许只落"命中阈值"的行——否则无对照臂、判据永不可裁，承 RFC-084 教训）
 - `count_mode`：该影子必须用 `distinct:<subject_id>`（防逐轮落行虚增 `current_n`）
 - 真值回填：settler 与**同一批**入 `shadow_registry` + 台账（承 E11/E12 死影子教训）
@@ -349,10 +448,11 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 
 | 阶段 | 动作 | 验证命令与期望 | 回滚 |
 |---|---|---|---|
+| ~~**P0-0**~~（✅ 已完成 2026-09-24） | F9 三连 + 证伪层（§4.5.1） | 代码块 ⑨⑩⑪ | 无副作用（raw HTTP，零生产写入） |
 | **P0-a**（只读） | 复算 Q1 的历史 lift/AUC/校准（**不落新文件，先出一次性报告**） | `./venv/bin/python scripts/jev_q1_baseline.py --dry-run` → 打印 `n= / lift= / 分箱表`；若 `n<30` 直接停 | 无副作用（只读） |
 | **P0-b** | 注册影子到 `shadow_registry.py`（`count_mode="distinct:subject_id"`、`min_n=60`、`graduation_criteria` 抄 §5.3 原文） | `./venv/bin/python -c "import app.playbook.shadow_registry as m;print([ (s.id,s.count_mode,s.min_n) for s in m.REGISTRY if 'jev' in s.id])"` | 删注册项 |
 | **P0-c** | 采集器 + settler 同批落地；**同批入** `docs/CONTROL-LOOP-LEDGER.md` + 脚本回库 `ops/hermes/` | `./venv/bin/python -m pytest tests/test_control_loop_ledger.py tests/test_ops_scripts_sync.py -q` → 全绿 | 摘 cron + 删台账行 + `collection_retired=True` |
-| **P0-d**（可选，需 F4+F8 批） | 同一批 state 同时打**百炼 `/systemone`**（`gateway="bailian-systemone"`，走 A′）与本地基线（`gateway="local-baseline"`） | 同文件出现两种 `gateway` 值；对比 lift/一致率/延迟 | 关 config 开关（`llm_features.jev_shadow.enabled=false`）**＋** 采集器不再发请求（网关侧零调用） |
+| **P0-d**（需 **F4/F11** 批；F8 已闭环） | 同一批 state 同时打**百炼 `/systemone`**（`gateway="bailian-systemone"`，走 A′；**canonical bytes 固定**）与本地基线（`gateway="local-baseline"`） | 同文件出现两种 `gateway` 值；对比 lift/一致率/延迟 | 关 config 开关（`llm_features.jev_shadow.enabled=false`）**＋** 采集器不再发请求（网关侧零调用） |
 
 **回滚两层**：
 - **法子**：删 `shadow_registry` 注册项 → 摘 cron → 删台账行 → `collection_retired=True`（数据一律保留不删）
@@ -380,6 +480,8 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 | C10 | §4 的 `[厂商]/[第三方]` 标注与来源一致 | 抽查 §4 任一行，用其来源类型复核原始出处 | 出现"厂商数字当第三方实测"或反之 ⇒ 标注体系失效 |
 | C11 | 百炼确有 `decision-model-preview`（且协议是 System One） | 代码块 ⑧ 前两条 + `GET https://dashscope.aliyuncs.com/api/v1/models?page_no=1&page_size=100`（翻完 518 条） | 若模型列表里查不到该条目，或 `decision-model-preview` 也返回 `model_not_found` ⇒ 我的"平台已上线"结论不成立（可能只是某条转述里的名字凑巧被风控拦下） |
 | C12 | 该模型的正确入口是**工作空间网关**（非通用域名） | 代码块 ⑧ 第三/四条：通用域名 `/systemone` → 404；`<任意ws>.cn-beijing.maas.aliyuncs.com` → 400 `Workspace endpoint is invalid.` | 若通用域名其实也能调通（例如需要额外 header / 新版本已合并入口）⇒ §4.5 的"缺 WorkspaceId 是唯一缺口"结论过强，应改为"换入口即可" |
+| C13 | **幂等 6/6**（同 state ×5 + 20s 后 ×1 完全一致） | 代码块 ⑨③（自行重跑同一 state ≥5 次，比对全部数值） | 若同一 state 两次答案不同 ⇒ 我的幂等结论错，"确定性函数"判定作废 |
+| C14 | **键序决定答案**（同内容：原序 0.76 / 反转 0.40 / 字典序 0.52，各稳定） | 代码块 ⑪（自行构造 `reversed`/`sorted` 两版 state 各打 ≥3 次） | 若键序反转后答案**不变** ⇒ E32 不成立，§5.2 序列化纪律可整体撤销（那会反过来简化规格） |
 
 **点名请复查者挑战这 4 点**（不点名 = 复查退化为确认作者叙事）：
 1. **§12.1 的"换裁判不解决没人裁"**——如果我说错，Phase 0 的顺序就要反转（先上 Jev，先做元环）；
@@ -387,6 +489,7 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 3. **§6 推荐路径 B→A→C**——是否存在更省的路（例如直接用现役 `qwen-flash` 打同一批 state 做对照，而不必引入任何新模型）；
 4. **§5.4.3 的"先验不利"结论（新增）**——我据此把"下单前 veto"从干净赢面下调；若我对 edge gate / da_blocked_cf 两条既有读数的**同轴性**判断有误（例如它们测的根本不是同一个判断），F6 应直接反转成立案。
 5. **§4.5 的端点是排他的（新增）**——我据 404/400 断言"正确入口只有工作空间网关"。若百炼早已把 `/systemone` 合进通用域名（或需要不同 header/区域域名），则"只差一个 WorkspaceId"的结论要弱化为"只差一次正确调用"。
+6. **E32 的"序列化决定答案"（新增，最该被证伪）**——它是我**自己脚本**跑出来的，若复查者发现是脚本 bug（例如构造 `reversed` 版本时丢了字段/改了值类型/嵌套被拍平），则"序列化敏感性"是假发现，F10 应立即撤销。**反例判据**：把两个变体的 `state` 各自 `json.dumps(..., sort_keys=True)` 后逐字节 diff——若两者除键序外**确实还有别的差异**，我就错了。
 
 ---
 
@@ -397,12 +500,14 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 | **F1** | Phase 0 载体选 **B（本地回放基线）** 还是直接 **A（云 API）**？ | **B 先做** | 零外发/零依赖，当天可跑；若连历史回放都无 lift，则 A 不必测 | 若用户希望直接看真机：A 的 Q1 单点小样（n=200，成本 ≈$0.08） |
 | **F2** | 首个打点选 **Q1/Q2/Q3** 中的哪个？ | **Q1**（入场后是否净亏） | 体量 70+/日、真值 `pnl_net` 权威、现役门链天然作对照臂 | Q3（告警噪声，零交易风险，但真值弱） |
 | **F3** | §5.3 的**校准门限**是否照此预注册？ | 照此预注册 | 校准是本模式唯一卖点，必须自己验，不许采信厂商 | 先只记录不判定（`[只印不判]`），攒够 60 再定门 |
-| **F4** | 是否允许**数据外发**给第三方 API？ | **先不许**；仅 B 通过后按最小充分集字段外发 | 交易状态外发涉合规/ToS；先外发字段白名单 | 全程不外发（走 C：本地自训） |
+| **F4** | 是否允许**数据外发**给第三方 API？ | **仍先不许**（外发对象已由 A′ 收敛为"我们已在用的同一云厂商"，但"交易状态出域"本身仍需白名单把关） | 交易状态外发涉合规/ToS；**具体到 Q1 的一次性小样回放见 F11** | 全程不外发（走 C：本地自训） |
 | **F5** | 影子裁决带宽（19 READY）怎么办？ | **用确定性代码出"证据表"**，不引 Jev | 元环无客观真值，判断形状是"整理"不是"概率" | 人肉逐条读（维持现状） |
 | **F6** | 交易前评估「要不要下单」（下单前 veto）是否立案？ | **不新开并列影子**；若要做，只按 §5.4.4 挂**同轴增量臂** | 作用域仅 10.5%（去重 0.5 个/日）、体量 9.7/日、同轴已有两次不利读数；新开并列影子 = 第二套账本 | 先只做 §5.4.1/5.4.2 的"作用域 + 功效"复算（只读，零产物，当天可交） |
 | **F7** | 「要不要下单」的评估**时点**放哪？ | **计划 / 扫描阶段**（提前） | 放这里 Jev 的必要性归零、可用现役 LLM、体量从 0.5/日 提到 70+/日 | 坚持"下单前那一刻"：接受 §5.4.5 的全部约束，并承认只能靠回放验证 |
-| **F8** | 是否**开通/申请**百炼 `decision-model-preview`（§4.5）？ | **是——成本为 0，且这一步只解锁"能不能测"，不解锁"能不能用"** | 限时免费、同一 key、同一厂商、RPM 1200；唯一代价是**一次控制台操作**（拿 WorkspaceId + 如需要则在模型广场点「立即申请」） | 不开通：则 §4.5 永远停在"平台自述"，Phase 0 的 D 步（真机对照）无法执行 |
-| **F9** | 若开通成功，**首次实弹**打什么？ | **只打"连通性 + 形态"三连**（不碰生产语义）：① `state` 里塞一段真候选 JSON 看是否 200；② 同一 `state` 问 3 个 `noul` 看返回的概率/置信度字段是否真存在；③ 同一 `state` 重发 3 次看**幂等性**（判断是否稳定） | 在**校准**之前必须先证明"它返回的东西就是文档说的东西"；③ 尤其重要——若同一输入三次答案不同，则"同一 state 可回放"这条纪律立刻失效 | 直接进 §5.1 三问的正式影子（跳过连通性三连）——不推荐，会把"接口问题"混进"能力读数" |
+| ~~**F8**~~ | 是否**开通/申请**百炼 `decision-model-preview`？ | **✅ 已闭环（用户 2026-09-24 给出 `WorkspaceId=llm-nbhpc6wqt1x6i8bw`，实弹 HTTP 200）** | 无需再裁 | — |
+| ~~**F9**~~ | 首次实弹打什么？ | **✅ 已执行并通过（§4.5.1：连通性/字段/幂等 6/6/边界/延迟/成本七项）**；**且证伪层挖出 E32 序列化敏感性** | 无需再裁 | — |
+| **F10** | §5.2 的**序列化纪律**（canonical bytes 固定键序 + `state_hash=sha1(字节)` + 字段白名单）是否照此预注册？ | **照此预注册** | E32 实测：同内容仅键序不同 = 0.76/0.52/0.40 三个答案且各自稳定 ⇒ 不锁序列化，影子测的是"排版效应" | 先只记录 `ser_variant` 不判定（则收集期内数据不可回放，不建议） |
+| **F11** | 是否授权把**真候选 state**（Q1 最小充分集白名单字段）外发做**小样回放**（n≈200，实测成本 $0）？ | **授权，但限白名单字段 + 一次性 n=200 + 只读** | 这是**唯一能回答"它对我们这批候选到底有没有信号"**的动作；实弹已证明接口可用、免费、~87ms | 继续只跑合成 state（则 Phase 0 永远拿不到真读数） |
 
 ---
 
@@ -416,6 +521,7 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 | ④ | "Jev 比 LLM 贵 ~1000×"、"Noul + 概率 + 校准置信度" | 厂商声明是 **40–400×**（二手转述才有 1000×）；`Noul` **没有独立 confidence 字段**（Choice/Score 才有） | §4 已按来源分层更正；采信区间取 40–400× |
 | ⑤ | 上一轮映射把"影子裁决（元环）"列为 **✅✅ 最匹配** | 元环**缺客观真值回填**，不满足"每判断必配真值"纪律；其判断形状是"整理证据"而非"概率判断" | 降级为 F5：用确定性代码做，不引 Jev（§12.1） |
 | ⑥ | "Jev 便宜 1000× ⇒ 值得引入"（隐含的成本理由） | 7 天全部 LLM 花销 **$0.8675** | 成本理由**删除**；改以延迟（70–500ms 进热路径）+ 显式不确定性为唯一理由（§0） |
+| ⑨ | 我在 F9 规格里把"**幂等性**"预判为首次实弹的**最关键风险**（"若三次答案不同，可回放纪律立刻失效"） | 实测幂等 **6/6 成立**（含 20s 后重打）；真正的风险在别处——**同一语义内容只换键序就得到 0.76/0.52/0.40 三个答案**，且各自稳定复现（E32） | 关键风险更正为**序列化敏感性**；§5.2 新增序列化三纪律、§10 新增 F10；**幂等仍保留为体检项**（settler 每轮回放 1 条已知答案） |
 | ⑧ | 全文（含 §0 旧版、§6 方案 A、§12.2"数据外发"行）把"**美国早期厂商 + waitlist + 数据外发**"当作引入 Jev 的**前置门槛** | 2026-09-24 追查发现**阿里云百炼当天已上线同协议族的 `decision-model-preview`**（System One 协议 + TypeSafe 官方 SDK，限时免费，RPM 1200），**且我们账号已在用该平台 key** | **前提更正**：门槛从"等 waitlist + 数据出境"降为"**一次控制台操作拿 WorkspaceId**"；§4.5 为新增章节，§6 增 **A′**，§0 增第 6 点，F8/F9 新增。**但纪律与结论不变**：仍未成功实弹调用过任何一次；平台自述能力≠校准成立 |
 | ⑦ | 上一轮把「入场门/守卫（这笔候选是否 suspect）」列为 **🟢 A 类干净赢面** | 实测该轴：① 合法作用域仅 **10.5%**（78.2% 的拦截是资金/物理帽，翻案=让模型超帽加仓，**禁止**）② 去重体量 **0.5 个/交易日**（49 交易日仅 26 个 inst_id）③ 已有两次不利读数（edge gate rank IC 双窗负 −0.396/−0.172；da_blocked_cf T+1 +0.113% → KEEP_SAMPLING） | 下调为"**先验不利，须先证增量**"；立案形态限定为同轴增量臂（§5.4），并先裁时点（F7） |
 
@@ -439,6 +545,8 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
 | **输入错配（喂太多）** | 官方自曝"无关上下文掉准确率" | 最小充分集（§5.1 输入列）+ `state_hash` 可回放 |
 | **算术/日期被当判断** | 官方自曝算术/计数/日期不可靠 | §1 非目标已列为禁入 |
 | **语义判断翻案资金帽（新增，承 §5.4）** | 若把 veto 接到门链上游或不限定作用域，模型可"说服"系统超 `notional_cap` / 绕 `max_positions` → 直接放大风险敞口 | §5.4.1 白名单：作用域只许 `knife_gate` / `fail` 两类，产物记 `scope="quality_only"`；越界即回滚 |
+| **序列化漂移 ⇒ 测到"排版效应"而非"判断效应"（新增，依据 E32）** | state 键序/字段集合一变，答案就变（0.76/0.52/0.40），而业务字段全幅变动的幅度只有 14pp ⇒ 我们可能把"换了个 dict 组织方式"误读成"模型有判断力"，或者反过来把同一事实的两个呈现当成两条独立证据 | §5.2 序列化三纪律：canonical bytes 固定（`sort_keys` + 白名单 + 常量键序）、`state_hash=sha1(字节)`、settler 幂等体检；采集器**只许**走一个封装函数 |
+| **字段幻觉：以为它看了我给的字段（新增，依据 E31）** | 把 `rr_ratio`/`dist_from_high` 当作"已纳入判断"写进判据 → 判据解释力虚假 | §5.1 输入列按实测敏感度收缩；任何"新增字段"必须先在合成 state 上做单字段扰动，**动不了就不许进最小充分集** |
 
 ### 12.3 与已回滚 / 已证伪方案的关系（防重走）
 
@@ -479,6 +587,16 @@ print(probe("decision-model-preview", "https://no-such-ws-test123.cn-beijing.maa
  2. **尚未实弹成功**——通用域名 403/404，正确入口是工作空间网关但**缺 WorkspaceId**，且预览版可能还需「立即申请」（E23）；
  3. **原判断的前提更正**（自曝 ⑧）："美国早期厂商 + waitlist + 数据外发"不再是引入门槛；§6 新增 **A′** 与 F8/F9。
 - **待补**: 用户裁 **F8**（是否开通/申请）；开通后由 Hermes 执行 **F9** 三连探测（连通性/字段/幂等），**未通过 F9 之前不写任何正式影子**。
+
+### 第 4 轮（2026-09-24 深夜，实弹：F8 闭环 + F9 通过）
+
+- **用户**: 给出**业务空间 ID** `llm-nbhpc6wqt1x6i8bw`。
+- **Hermes（本提案 §4.5.1）**: 立即实弹，**七项通过**——连通性 200（文档原例逐字段复现）、三原语字段与文档逐项一致、**幂等 6/6**、空 state fail-closed、对照组 404 `model_not_found`、服务端 p50 **87.4ms** / 端到端 p50 **282ms**、**成本 $0**（`input_tokens` 125–248 × 单价 0）。
+- **证伪层两条（比通过项更重要）**：
+ 1. **E31**：`chg_pct` 单调（0.76→0.90）、`direction` 语义正确（knife 0.52→0.13），但 `rr_ratio`/`dist_from_high` **几乎不敏感** ⇒ "最小充分集"按实测收缩（§5.1）；
+ 2. **E32（决定性）**：同一语义内容、**仅键序不同 → 0.76 / 0.52 / 0.40 三个答案**，各自稳定复现；而空白/转义差异不影响 ⇒ **"state 怎么摆"的影响大于"仓位怎么变"**（业务字段全幅变动只 14pp） ⇒ §5.2 新增**序列化三纪律**，§10 新增 **F10**（是否照此预注册）与 **F11**（是否授权真候选 state 小样回放 n≈200、成本 $0）。
+- **一句定性**：它已从"**平台自述**"升级为"**本地实测可用**"；但**可用 ≠ 有用**——校准与判断力**一个字都还没验**（那是 §5.3 的事）。
+- **待补**: 用户裁 **F10/F11**（以及仍未裁的 F1–F7）；**未过 F10 不写采集器，未过 F11 不碰真数据**。
 
 ---
 
