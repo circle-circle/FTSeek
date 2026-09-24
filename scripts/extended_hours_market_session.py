@@ -155,7 +155,7 @@ def post_entry_high(symbol, entry_time, quote_ctx=None, max_days=5, kline_fn=Non
     entry_dt = _parse_quote_time(entry_time) if isinstance(entry_time, str) else entry_time
     if entry_dt is None:
         return None
-    et = _dt.timezone(_dt.timedelta(hours=-4))
+    et = ZoneInfo("America/New_York")
     if entry_dt.tzinfo is None:
         entry_dt = entry_dt.replace(tzinfo=et)
     today = _dt.datetime.now(et).date()

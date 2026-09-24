@@ -5,7 +5,11 @@ import argparse
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
-ET = timezone(timedelta(hours=-4))
+try:
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
+except Exception:
+    ET = timezone(timedelta(hours=-4))  # 兜底: 无 DST 感知
 DEFAULT_CHECKPOINT_DATE = "2026-09-15"
 DEFAULT_DB_SINCE = "2026-09-13"
 _parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
