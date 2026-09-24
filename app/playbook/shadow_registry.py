@@ -1502,6 +1502,35 @@ REGISTRY: list[ShadowItem] = [
         created="2026-09-23",
         notes="盘后窗 16:00–19:59 ET; 收口强平 EXT_PREMARKET_FLATTEN_FROM=925 只作用于当日进场仓。",
     ),
+
+    # ── RFC-104 阶段 0: ETH 事件执行计划 (只读工件, 2026-09-24 用户裁立项) ──
+    ShadowItem(
+        id="rfc104_eth_event_plan",
+        name="RFC-104 ETH 事件执行计划 (阶段 0 只读影子)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-104 阶段 0: 从 futu+Finnhub 日历源生成 T 日事件计划 "
+                    "(data/loops/ext_entry_plan/<et_date>_<session>.json), 每票一行含状态机字段/"
+                    "源标注/ambiguous 处理。零交易行为变更; 计划**不含**方向/SL/TP/费用/"
+                    "可执行性数字 (三处收紧 §3); 不预筛 price/volume/mcap (收紧 §1); "
+                    "源冲突不投票不择优 → state=ambiguous (收紧 §2)。"
+                    "消费侧接入是阶段 1+ (本阶段不修改 extended_hours_entry_executor.py)。",
+        data_path="data/loops/ext_entry_plan/",
+        config_key=None,
+        min_n=7,  # 7 个交易日覆盖 = 阶段 0 通过判据 (当日事件票 ⊆ 计划 = 100%)
+        graduation_criteria="RFC-104 §3 阶段 0 通过判据: "
+                            "①当日事件票 ⊆ 计划 = 100% (覆盖率) "
+                            "②计划条数 7-9 (非 44, 即去无用功生效) "
+                            "③连续 7 个交易日无漏票 ⇒ 阶段 1 (影子消费) 立项; "
+                            "回滚: 删 cron 行 (计划只读工件, 删除即静默)。",
+        eval_script="scripts/eth_event_plan.py",
+        created="2026-09-24",
+        notes="调度: 盘前 T-1 20:30 ET (CST 08:30 Tue-Sat) + 盘后 T-0 15:45 ET (CST 03:45 Tue-Sat); "
+              "幂等键=(et_date, symbol, session, phase); 原子写 app/utils/atomic_write.py; "
+              "三处收紧 (REVIEW-20260924 §3): ①不预筛 ②不择优 ③不是策略卡; "
+              "状态机: planned→armed→waiting_data→ordered/rejected/expired; "
+              "回滚=删 cron 两行 + 计划目录 (计划只读工件, 删除即静默); "
+              "注册表 hash 漂移: 本条目新增会使 review bundle hash 变化 (已知 N-9 现象)。",
+    ),
 ]
 
 
