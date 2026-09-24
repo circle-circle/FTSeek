@@ -544,9 +544,9 @@ systemctl is-active ftseek-us   # 保持 active
 - [x] P4.5 三问诊断与切片真库逐位对账（§29.1 #3–#5：COIN 候选 MFE=0/−161.65、UMC +5.77%/ARM +2.69% 追高、亏损簇 0；价格带与阶段×方向×出场逐分复现）
 - [x] P4.6 可行动性反事实口径独立复现（§29.1 #6：actionable MFE 0/6、regret 5/6、delay-5 3/3/0、pretrade 0/75、桥 SIM 215/实盘 0；费+滑点扣减、方向感知）
 - [x] P4.5/P4.6 L1 边界与渲染接入（`e656c4893` 零 `app/playbook/*` 改动、未推送未写 vault；§29.1 #7/#9）
-- [ ] P5 golden 入库且 `git check-ignore` 返回非忽略（P5 未开工：`tests/review/golden/` 不存在）
-- [ ] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）（P5 未开工：crontab 0 行、Hermes 无 review_bundle job）
-- [ ] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）（P5 未开工：载体文件不存在；`test_ops_scripts_sync` 现状 3/3 绿）
+- [ ] P5 golden 入库且 `git check-ignore` 返回非忽略（**仍未落**，2026-09-24 复核：`tests/review/golden/` 不存在；阻塞于 N-9 — bundle hash 跨世界态不稳，须先钉 fixture DB/注册表或排除易变段。P5 其余子项已落，见下两行）
+- [x] P5 cron 三行生效且**次日有真实产出**（`grep review_bundle logs/review_bundle.log`）（2026-09-24 销账，**载体形态变更**：不走系统 crontab，走 §16 Hermes 载体 — job「复盘判决书」cron `35 6 * * 2-6` + 周环 job「复盘覆盖扫描·周环」`45 6 * * 6`；实证产出 `data/reviews/bundle_2026-09-{21,22,23}.json` 连续三天 06:35 落盘 + meta sidecar 含 git_commit/git_dirty（N-4 一并销）。验收判据由"log 行"改为"bundle 产物连续性"）
+- [x] §16 载体：`ops/hermes/review_bundle_carrier.py` 入库且与线上副本 sha256 一致（`pytest tests/test_ops_scripts_sync.py -q` 绿）；载体成功路径**零 stdout**（不双推）（2026-09-24 销账：`review_bundle_carrier.py`（`6ce0854bf`）+ `review_coverage_carrier.py`（`c2ccbb94b`）均入库，与 `/root/.hermes/scripts/` 副本 sha256 双向逐字节一致（8d478a49…/c75ca62f…）；sync test 3/3 绿（通用扫描已自动覆盖两载体））
 - [x] §16 更正 B：同日重跑**不产生第 2 条推送**（caller 侧按日守卫生效）（§26.1：带 `--push` 手工重跑实测 ⇒ 结果 JSON `"pushed": "already"`、`push.json` 未变、无新失败记录；⚠️ 实际行为是结果 JSON 字段而非日志行 `skip: already pushed <date>`，验收文案与实现不符见 §26.2 N-7）
 - [x] 全量回归通过（`tests/review/` + 5 个既有文件）（§26.1：22/22 + 74/74 独立重跑绿）
 - [x] 第二 agent §10 清单逐条给出结论（成立/不成立 + 证据）（第 1 轮 §17、第 2 轮 §19、第 3 轮 §26 均已完成并入库）
