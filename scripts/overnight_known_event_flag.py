@@ -284,15 +284,15 @@ def _net_pnl(row: dict) -> float | None:
     if pn is not None:
         try:
             return float(pn)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as _exc:
+            _log.warning("_net_pnl: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     rp = row.get("realized_pnl")
     fe = row.get("fees_est")
     if rp is not None:
         try:
             return float(rp) - float(fe or 0)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as _exc:
+            _log.warning("_net_pnl: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return None
 
 
@@ -410,7 +410,8 @@ def report(et_date: str | None = None) -> int:
         # Check if this trade's symbol was flagged/unflagged on td or td-1
         try:
             td_date = datetime.strptime(td, "%Y-%m-%d").date()
-        except ValueError:
+        except ValueError as _exc:
+            _log.warning("report: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
             continue
         prev_d = (td_date - timedelta(days=1)).isoformat()
 

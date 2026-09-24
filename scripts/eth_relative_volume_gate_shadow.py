@@ -185,7 +185,8 @@ def _load_volume_history(symbol: str, session: str) -> list[dict]:
                     continue
                 try:
                     row = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("_load_volume_history: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
                 if (str(row.get("symbol", "")) == sym_key
                         and str(row.get("session", "")) == session
@@ -195,8 +196,8 @@ def _load_volume_history(symbol: str, session: str) -> list[dict]:
                         and str(row.get("session", "")) == session
                         and row.get("turnover_approx") is not None):
                     history.append(row)
-    except OSError:
-        pass
+    except OSError as _exc:
+        _log.warning("_load_volume_history: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return history
 
 
@@ -229,15 +230,16 @@ def _load_subsequent_executions(symbol: str, session: str, et_date: str,
                     continue
                 try:
                     row = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("_load_subsequent_executions: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
                 if (str(row.get("symbol", "")) in (sym_key, symbol)
                         and str(row.get("session", "")) == session):
                     ts = str(row.get("ts", ""))
                     if ts > after_ts:
                         results.append(row)
-    except OSError:
-        pass
+    except OSError as _exc:
+        _log.warning("_load_subsequent_executions: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return results
 
 
@@ -299,10 +301,11 @@ def _load_seen_keys() -> set[tuple[str, str, str, str]]:
                            str(row.get("session", "")),
                            str(row.get("round_ts", "")))
                     seen.add(key)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("_load_seen_keys: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
-    except OSError:
-        pass
+    except OSError as _exc:
+        _log.warning("_load_seen_keys: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return seen
 
 

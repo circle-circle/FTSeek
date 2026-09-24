@@ -644,7 +644,8 @@ def _load_jsonl_records(path: Path, trade_date: str) -> list[dict]:
                 continue
             try:
                 rec = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as _exc:
+                logger.warning("_load_jsonl_records: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                 continue
 
             # 扁平格式: 检查 ts 日期
@@ -697,20 +698,41 @@ def reconcile(et_date: str, session: str) -> dict:
         data_dir / "extended_hours_entry_executions.jsonl", et_date
     )
 
-    event_tickets: set[str] = set()
+    # ── 事件票集合 (P1-1 修复, 2026-09-24 复核) ──────────────────────────
+    # 原实现读 `rec["symbol"]`, 但两本 *_gate_rejects 台账是**批次记录**
+    # (票在 details[] / rejects[] 里, 无顶层 symbol) ⇒ 集合恒空 ⇒ 覆盖率恒
+    # 100.0 / verdict 恒 PASS ⇒ 验收仪器失活, 且该假 PASS 会被三影子的
+    # 「reconcile PASS 日数 ≥ 7」自门控消费。现改为三路取票 + 日历同相位锚点。
+    ledger_seen: set[str] = set()
     for rec in earnings_rejects:
-        sym = rec.get("symbol", "")
+        for d in (rec.get("details") or []):
+            sym = str((d or {}).get("symbol", "")).replace("US.", "").upper()
+            if sym:
+                ledger_seen.add(sym)
+        sym = str(rec.get("symbol", "")).replace("US.", "").upper()  # 兼容扁平记录
         if sym:
-            event_tickets.add(sym.replace("US.", "").upper())
+            ledger_seen.add(sym)
     for rec in executions:
-        sym = rec.get("symbol", "")
+        sym = str(rec.get("symbol", "")).replace("US.", "").upper()
         if sym:
-            event_tickets.add(sym.replace("US.", "").upper())
-    # price_rejects 的票不一定有 earnings 标记, 只纳入有 earnings 字段的
+            ledger_seen.add(sym)
+
+    # 日历同相位锚点: 计划中已带**具体相位**的行 = 本 session 的应见事件票
+    # (计划行本就由生产配对表+相位判据产出 ⇒ 此处不引入第三处相位实现)。
+    calendar_tickets: set[str] = {
+        str(r.get("symbol", "")).replace("US.", "").upper()
+        for r in plan
+        if r.get("state") == STATE_PLANNED
+        and str(r.get("phase", "")) not in ("", "unknown")
+    }
+    # 价格闸拦下的票: rejects[] 无 earnings 字段 ⇒ 用与日历锚点的交集补回
     for rec in price_rejects:
-        sym = rec.get("symbol", "")
-        if sym and rec.get("earnings"):
-            event_tickets.add(sym.replace("US.", "").upper())
+        for d in (rec.get("rejects") or []):
+            sym = str((d or {}).get("symbol", "")).replace("US.", "").upper()
+            if sym and sym in calendar_tickets:
+                ledger_seen.add(sym)
+
+    event_tickets: set[str] = ledger_seen | calendar_tickets
 
     missed = sorted(event_tickets - plan_symbols)
     ambiguous_resolved = [
@@ -726,8 +748,8 @@ def reconcile(et_date: str, session: str) -> dict:
             try:
                 t = datetime.fromisoformat(r["actual_arrived_at"])
                 actual_times.append(t.hour * 60 + t.minute)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _exc:
+                logger.warning("reconcile: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
 
     arrival_stats: dict[str, Any] = {"p50": None, "p90": None, "max": None, "n": len(actual_times)}
     if actual_times:
@@ -739,9 +761,26 @@ def reconcile(et_date: str, session: str) -> dict:
 
     coverage_pct = (
         len(event_tickets - set(missed)) / len(event_tickets) * 100
-        if event_tickets else 100.0
+        if event_tickets else 0.0
     )
-    verdict = "PASS" if not missed else "FAIL"
+    # NO_DATA 与 PASS 必须分开 (P1-1): 空真 PASS 会喂给三影子的
+    # 「reconcile PASS 日数 ≥ 7」自门控 ⇒ 用"当日无可验票"打开影子。
+    if missed:
+        verdict = "FAIL"
+    elif not event_tickets:
+        verdict = "NO_DATA"
+    else:
+        verdict = "PASS"
+
+    # 仪器自检 (可见告警, 不改 verdict): 日历有应见票但台账零命中 ⇒
+    # 要么 executor 当日没评估到任何应见事件票, 要么提取链又失活。
+    if calendar_tickets and not ledger_seen:
+        print(
+            f"[eth_plan] ⚠️ 仪器自检: 日历应见 {len(calendar_tickets)} 只 "
+            f"{sorted(calendar_tickets)}, 台账命中 0 只 — 提取链可疑或当日未评估到; "
+            f"计数已落台账供复查",
+            file=sys.stderr,
+        )
 
     # ── 9/24 增强批: counterfactual 统计 ──
     # habit_hint_would_resolve: 本日 ambiguous 行中习惯先验可解的只数
@@ -761,6 +800,9 @@ def reconcile(et_date: str, session: str) -> dict:
         "coverage_pct": round(coverage_pct, 2),
         "plan_rows": len(plan),
         "event_tickets_seen": sorted(event_tickets),
+        # ── P1-1 修复: 分开记录两路来源, 使"仪器是否活着"可复查 ──
+        "ledger_seen": sorted(ledger_seen),
+        "calendar_tickets": sorted(calendar_tickets),
         "missed": missed,
         "ambiguous_resolved": sorted(ambiguous_resolved),
         "actual_arrival_stats": arrival_stats,
@@ -784,6 +826,8 @@ def reconcile(et_date: str, session: str) -> dict:
         "coverage_pct": result["coverage_pct"],
         "plan_rows": len(plan),
         "event_tickets": len(event_tickets),
+        "ledger_seen": len(ledger_seen),          # P1-1: 台账命中数 (仪器活性)
+        "calendar_tickets": len(calendar_tickets),  # P1-1: 日历应见数 (真分母)
         "missed_count": len(missed),
         "reconciled_at": et_now().isoformat(timespec="seconds"),
     }, ensure_ascii=False) + "\n"
@@ -830,7 +874,13 @@ def main(argv=None) -> int:
             print(f"[eth_plan] FAIL: {len(result['missed'])} 漏票 {result['missed']}",
                   file=sys.stderr)
             return 1
-        print(f"[eth_plan] PASS: 覆盖率 {result['coverage_pct']}%", file=sys.stderr)
+        if result["verdict"] == "NO_DATA":
+            # P1-1: 当日无应见事件票 ⇒ 不是 PASS (不计入三影子的 PASS 日数)
+            print("[eth_plan] NO_DATA: 当日无应见事件票 — 不计入 PASS 日数 "
+                  "(仪器自检见 stderr)", file=sys.stderr)
+            return 0
+        print(f"[eth_plan] PASS: 覆盖率 {result['coverage_pct']}% "
+              f"(应见 {len(result['event_tickets_seen'])} 只, 漏 0)", file=sys.stderr)
         return 0
 
     # ── 生成/刷新模式 ──

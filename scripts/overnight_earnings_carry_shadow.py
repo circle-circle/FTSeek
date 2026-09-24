@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """隔夜财报 carry 影子 (2026-09-22, 用户裁「按建议」— **record-only, 零下单**)。
 
-**⛔ 已退役 (2026-09-24, 用户裁「彻底停采不重启」)**: 预注册停采判据达成 —
-实测 3 个交易日 (9/22-9/24) n_passes_floors=0/日 < 0.5 阈值 (9 月非财报淡季,
-候选池∩财报门=∅ 结构性零供给), 且采集面存在数据质量缺陷 (jsonl 190 行明细键值
-全 null, 仅 cohort summary 可用)。两条 cron 行已删 (原文留档
+**⛔ 已退役 (2026-09-24, 用户裁「彻底停采不重启」)**: 实测 **2 个交易日**
+(9/22-9/23; 9/24 采集行在当日裁决时删, 无 9/24 数据) n_passes_floors=0/日 < 0.5 阈值
+(9 月非财报淡季, 候选池∩财报门=∅ 结构性零供给), 且采集面存在数据质量缺陷 (jsonl 190 行明细键值
+全 null, 仅 cohort summary 可用)。**判据字面要求 n≥3 交易日, 本次实采 2 日 ⇒ 记为提前停采
+(例外, 见 docs/analysis/2026-09-24-carry-shadow-adjudication.md §2 判据达成度披露), 判据文字零改动。**两条 cron 行已删 (原文留档
 docs/analysis/2026-09-24-carry-shadow-adjudication.md; 备份
 /tmp/crontab_backup_20260924_carry.txt)。脚本与台账 data/overnight_earnings_
 carry_shadow.jsonl 保留归档不删 — 若 10 月财报季要重启, **须重新预注册**

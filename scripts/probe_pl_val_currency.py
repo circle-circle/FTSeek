@@ -66,11 +66,13 @@ def probe(trd_env_name: str) -> dict:
                 "cost_price": float(row.get("cost_price", 0) or 0),
                 "currency": str(row.get("currency", "<字段不存在>")) if has_ccy else "<字段不存在>",
             }
-            # 量纲交叉验证: pl_ratio 是无量纲比率 = pl_val / 成本。
-            # 若 pl_val 与 (market_val - cost) 同币种, 则 pl_val ≈ pl_ratio × cost_total。
+            # 量纲交叉验证: pl_ratio 是**百分数** (futu 实测 -1.18 / -2.04 = -1.18% / -2.04%,
+            # 非无量纲比率), 故须 /100 还原比率。若 pl_val 与成本同币种,
+            # 则 pl_val ≈ (pl_ratio/100) × cost_total。
             cost_total = r["cost_price"] * abs(r["qty"])
+            r["pl_ratio_as_pct"] = True
             r["pl_val_vs_ratio_x_cost"] = (
-                round(r["pl_val"] / (r["pl_ratio"] * cost_total), 4)
+                round(r["pl_val"] / ((r["pl_ratio"] / 100.0) * cost_total), 4)
                 if r["pl_ratio"] and cost_total else None
             )
             out["rows"].append(r)

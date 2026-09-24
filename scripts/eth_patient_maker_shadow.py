@@ -184,7 +184,8 @@ def _load_all_rejects_for_session(et_date: str, session: str) -> list[dict]:
                     continue
                 try:
                     row = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("_load_all_rejects_for_session: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
                 ts = str(row.get("ts", ""))
                 if not ts.startswith(target_prefix):
@@ -194,8 +195,8 @@ def _load_all_rejects_for_session(et_date: str, session: str) -> list[dict]:
                 for rj in row.get("rejects", []):
                     rj["_ts"] = ts
                     results.append(rj)
-    except OSError:
-        pass
+    except OSError as _exc:
+        _log.warning("_load_all_rejects_for_session: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return results
 
 
@@ -217,10 +218,11 @@ def _load_seen_keys() -> set[tuple[str, str, str, str]]:
                            str(row.get("session", "")),
                            str(row.get("round_ts", "")))
                     seen.add(key)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("_load_seen_keys: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
-    except OSError:
-        pass
+    except OSError as _exc:
+        _log.warning("_load_seen_keys: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
     return seen
 
 
@@ -456,7 +458,8 @@ def graduation_check() -> dict:
                     continue
                 try:
                     records.append(json.loads(line))
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as _exc:
+                    _log.warning("graduation_check: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
                     continue
     except OSError:
         return {"verdict": "READ_ERROR", "n": 0}

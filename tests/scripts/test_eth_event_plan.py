@@ -927,7 +927,12 @@ class TestReconcile:
         assert result["actual_arrival_stats"]["max"] is not None
 
     def test_reconcile_empty_plan_empty_ledger(self, plan_mod, tmp_path, monkeypatch):
-        """空计划 + 空台账 → PASS (无事件票 = 无漏票)."""
+        """空计划 + 空台账 → **NO_DATA** (P1-1 复核修复: 原为假 PASS).
+
+        原语义「无事件票 = 无漏票 ⇒ PASS / 100%」是空真: 它会喂给三个微观结构
+        影子的「reconcile PASS 日数 ≥ 7」自门控 ⇒ 用空证据打开影子。现分开:
+        无票可验 ⇒ NO_DATA (不计入 PASS 日数)。
+        """
         monkeypatch.setattr(plan_mod, "PLAN_DIR", tmp_path)
         monkeypatch.setattr(plan_mod, "ROOT", tmp_path)
 
@@ -940,8 +945,8 @@ class TestReconcile:
         (data_dir / "extended_hours_price_gate_rejects.jsonl").write_text("")
 
         result = plan_mod.reconcile("2026-09-24", "premarket")
-        assert result["verdict"] == "PASS"
-        assert result["coverage_pct"] == 100.0
+        assert result["verdict"] == "NO_DATA"
+        assert result["coverage_pct"] == 0.0
 
     def test_reconcile_ledger_appended(self, plan_mod, tmp_path, monkeypatch):
         """对账后 reconcile_ledger.jsonl 追加一行."""
@@ -963,7 +968,7 @@ class TestReconcile:
         lines = [l for l in ledger.read_text().splitlines() if l.strip()]
         assert len(lines) == 1
         entry = json.loads(lines[0])
-        assert entry["verdict"] == "PASS"
+        assert entry["verdict"] == "NO_DATA"   # P1-1: 空证据不再计 PASS
         assert entry["et_date"] == "2026-09-24"
 
     def test_reconcile_execution_ticket_counted(self, plan_mod, tmp_path, monkeypatch):
@@ -1181,3 +1186,111 @@ class TestReconcileWouldResolve:
 
         result = plan_mod.reconcile("2026-09-24", "premarket")
         assert result["habit_hint_would_resolve"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# P1-1 复核修复回归钉 (2026-09-24, 独立复核发现)
+#
+# 缺陷: reconcile() 的事件票提取读 `rec["symbol"]`, 而两本 *_gate_rejects
+#       台账是**批次记录** (票在 details[]/rejects[] 里, 无顶层 symbol)
+#       ⇒ 集合恒空 ⇒ coverage 恒 100.0 / verdict 恒 PASS ⇒ 验收仪器失活,
+#       且该假 PASS 会被三影子的「reconcile PASS 日数 ≥ 7」自门控消费。
+# 修复: 三路取票 (details[] / executions / price-rejects∩日历锚点) +
+#       日历同相位锚点 (计划中带具体相位的行) + 空证据 ⇒ NO_DATA + 仪器自检告警。
+# ══════════════════════════════════════════════════════════════════════
+
+class TestReconcileExtractionP1Fix:
+    """P1-1 修复的行为钉: 批次台账可提取 / 空证据 NO_DATA / 日历锚点作真分母."""
+
+    def _setup(self, plan_mod, tmp_path, monkeypatch, plan_rows=()):
+        monkeypatch.setattr(plan_mod, "PLAN_DIR", tmp_path)
+        monkeypatch.setattr(plan_mod, "ROOT", tmp_path)
+        plan_mod.save_plan("2026-09-24", "premarket", list(plan_rows))
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        for f in ("extended_hours_earnings_gate_rejects.jsonl",
+                  "extended_hours_entry_executions.jsonl",
+                  "extended_hours_price_gate_rejects.jsonl"):
+            (data_dir / f).write_text("")
+        return data_dir
+
+    @staticmethod
+    def _planned(sym, phase="before"):
+        return {"symbol": sym, "et_date": "2026-09-24", "session": "premarket",
+                "phase": phase, "state": "planned", "sources": [{"name": "futu"}],
+                "reject_reason": None}
+
+    def test_batch_ledger_details_are_extracted(self, plan_mod, tmp_path, monkeypatch):
+        """批次台账 details[] 的票必须被提取 —— 原实现读顶层 symbol, 此处恒漏."""
+        data_dir = self._setup(plan_mod, tmp_path, monkeypatch)
+        (data_dir / "extended_hours_earnings_gate_rejects.jsonl").write_text(
+            json.dumps({
+                "ts": "2026-09-24T12:05:00Z", "session": "premarket",
+                "trade_date": "2026-09-24", "counts": {"actual_missing": 1},
+                "details": [{"symbol": "US.CBRL", "sub_reason": "actual_missing",
+                             "price": 50.0, "change_pct": -1.2}],
+                "coverage": {},
+            }) + "\n"
+        )
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["ledger_seen"] == ["CBRL"], "批次台账 details[] 未被提取 ⇒ 仪器失活回归"
+        assert "CBRL" in result["event_tickets_seen"]
+        # executor 见到但计划没有 ⇒ 真漏票 ⇒ FAIL (原实现恒 PASS)
+        assert result["verdict"] == "FAIL"
+        assert result["missed"] == ["CBRL"]
+
+    def test_empty_evidence_is_no_data_not_pass(self, plan_mod, tmp_path, monkeypatch):
+        """当日无可验票 ⇒ NO_DATA, 且 coverage 不再谎报 100%."""
+        self._setup(plan_mod, tmp_path, monkeypatch)
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["verdict"] == "NO_DATA"
+        assert result["coverage_pct"] == 0.0
+        assert result["event_tickets_seen"] == []
+
+    def test_calendar_anchor_is_real_denominator(self, plan_mod, tmp_path, monkeypatch, capsys):
+        """计划中带具体相位的行 = 应见事件票 (真分母) ⇒ 覆盖率不再 0/0."""
+        self._setup(plan_mod, tmp_path, monkeypatch, [self._planned("DRI")])
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["calendar_tickets"] == ["DRI"]
+        assert result["verdict"] == "PASS"
+        assert result["coverage_pct"] == 100.0
+        # 仪器自检: 日历应见 1 只而台账 0 命中 ⇒ 必须可见告警 (不改变 verdict)
+        assert "仪器自检" in capsys.readouterr().err
+
+    def test_unknown_phase_rows_are_not_anchor(self, plan_mod, tmp_path, monkeypatch):
+        """phase=unknown / state=ambiguous 的行不算锚点 (宁多勿少的票不是应见票)."""
+        row = self._planned("AFB", phase="unknown")
+        row["state"] = "ambiguous"
+        self._setup(plan_mod, tmp_path, monkeypatch, [row])
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["calendar_tickets"] == []
+        assert result["verdict"] == "NO_DATA"
+
+    def test_price_gate_reject_of_calendar_ticket_counted(self, plan_mod, tmp_path, monkeypatch):
+        """价格闸拦下的日历票 (rejects[] 无 earnings 字段) 也须计入台账命中."""
+        data_dir = self._setup(plan_mod, tmp_path, monkeypatch, [self._planned("SFIX")])
+        (data_dir / "extended_hours_price_gate_rejects.jsonl").write_text(
+            json.dumps({
+                "ts": "2026-09-24T20:05:00Z", "session": "premarket", "n": 1,
+                "rejects": [{"symbol": "US.SFIX", "price": 2.32,
+                             "change_pct": -22.4, "volume": 1371128.0}],
+            }) + "\n"
+        )
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["ledger_seen"] == ["SFIX"]
+        assert result["verdict"] == "PASS"      # 在计划内 ⇒ 无漏票
+        assert result["missed"] == []
+
+    def test_flat_execution_row_still_counted(self, plan_mod, tmp_path, monkeypatch):
+        """扁平执行记录 (有顶层 symbol) 提取不被回归破坏."""
+        data_dir = self._setup(plan_mod, tmp_path, monkeypatch, [self._planned("NOK")])
+        (data_dir / "extended_hours_entry_executions.jsonl").write_text(
+            json.dumps({
+                "ts": "2026-09-24T13:00:00Z", "session": "premarket",
+                "symbol": "US.NOK", "earnings": {"surprise_pct": 5.0},
+                "ok": True, "fill": True, "qty": 100, "price": 5.0,
+            }) + "\n"
+        )
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["ledger_seen"] == ["NOK"]
+        assert result["verdict"] == "PASS"

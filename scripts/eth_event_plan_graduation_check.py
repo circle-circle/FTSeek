@@ -29,11 +29,14 @@
 ``PYTHONPATH=. venv/bin/python scripts/eth_event_plan_graduation_check.py``
 """
 from __future__ import annotations
+import logging
 
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -64,7 +67,8 @@ def _load_ledger() -> list[dict]:
             continue
         try:
             records.append(json.loads(line))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as _exc:
+            logger.warning("_load_ledger: 忽略异常继续 (复核修复 2026-09-24, 控制流零变更): %s", _exc, exc_info=True)
             continue
     return records
 
