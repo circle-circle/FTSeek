@@ -324,7 +324,7 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 
 **证据 3（暴露率量化）**：近 81 个交易日中 `|昨收 − MA20| < 0.6%`（今日盘前实测幅度量级）的**边界日 = 27 天（33%）**；距离中位 0.97%、p90 2.56% ⇒ 约 1/3 的交易日里「昨收 vs 盘前价」的口径差足以翻转 SPY-vs-MA20 分项。
 
-**证据 4（路径活体探针，盘中跑只证路径）**：`get_spy_context().spy_price=767.27`（=9/24 RTH 收盘，LV3 push 缓存），与 snapshot `prev_close=767.81 / pre_price=763.96` 三值互异 ⇒ router 路径吃的是 push 缓存价，盘前时段该缓存=昨收（证据 1 已钉死）。探针脚本 `/root/.hermes/cache/scratch/f5_spy_price_probe.py`（判据见数前写死在脚本头）。
+**证据 4（路径活体探针，盘中跑只证路径）**：`get_spy_context().spy_price=767.27`（=9/24 RTH 收盘，LV3 push 缓存），与 snapshot `prev_close=767.81 / pre_price=763.96` 三值互异 ⇒ router 路径吃的是 push 缓存价，盘前时段该缓存=昨收（证据 1 已钉死）。探针脚本 `scripts/f5_spy_price_probe.py`（判据见数前写死在脚本头）。
 
 **与 DA P0 的差异（为什么不能照抄 F1 修法）**：DA 的修法是「标注 + 附盘前腿」零行为变更；而 regime 的 `spy_price` **直接参与打分**（vs MA20 ±2 分），改成盘前价 = **行为变更**（regime 档位会变 ⇒ pos_mult/top_n 变）。这不是输入保真批，是判据输入语义批 ⇒ 必须单独裁决。
 
