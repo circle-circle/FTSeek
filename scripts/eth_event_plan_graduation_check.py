@@ -5,15 +5,17 @@
 读 data/loops/ext_entry_plan/reconcile_ledger.jsonl, 按 shadow_registry
 ``rfc104_eth_event_plan`` 的预注册判据逐条判, 输出终端报告 + JSON 工件.
 
-## 预注册判据 (shadow_registry REGISTRY 原文)
+## 预注册判据 (shadow_registry REGISTRY; ③ 经 2026-09-24 用户裁决修订)
 - ① ≥ 7 个交易日对账记录 (min_n=7)
 - ② 每日 coverage 100% (missed_count == 0)
-- ③ 计划条数带 7-9 (graduation_criteria 原文: "计划条数 7-9, 非 44")
+- ③ 计划条数带 [0, 44] — **修订留痕**: 原带 7-9 系 RFC-104 起草时单源估算,
+  多源并集生产实测 16 行即超带; 用户 2026-09-24 裁「裁」批准修订 (修订发生在
+  7 日验收窗结束**之前**, 非读数后改判): 下界 0 (无财报日合法, 事件存在性由
+  判据②承载), 上界 44 (盲扫时代票次基线, 防计划爆炸退化成盲扫)
 
 ## 诚实纪律
-- 判据按预注册字面判, 不为凑绿改判据
-- 条数超带 (实测多源并集 16 行已超 7-9 带) → 如实 ❌ + 附注
-  "多源并集使条数超起草时估算带, 判据带是否修订须用户裁决, 裁定器不自行放宽"
+- 判据按预注册字面判, 不为凑绿改判据; 判据修订只能由用户裁决并留痕 (本文件 ③ 即先例)
+- 超带 → 如实 ❌ + 附注 (超上界 = 计划层可能退化盲扫, 须人工复核源并集逻辑)
 - 任何 ❌ → 打印差多少
 
 ## 产物
@@ -40,11 +42,15 @@ PLAN_DIR = ROOT / "data" / "loops" / "ext_entry_plan"
 LEDGER_PATH = PLAN_DIR / "reconcile_ledger.jsonl"
 OUTPUT_PATH = PLAN_DIR / "graduation_check_latest.json"
 
-# ── 预注册判据 (shadow_registry rfc104_eth_event_plan 原文) ──
+# ── 预注册判据 (shadow_registry rfc104_eth_event_plan; ③ 经 2026-09-24 用户裁决修订) ──
 MIN_TRADING_DAYS = 7       # ① ≥7 个交易日对账记录
 MIN_COVERAGE_PCT = 100.0   # ② 每日 coverage 100%
-PLAN_ROWS_MIN = 7          # ③ 计划条数带下界
-PLAN_ROWS_MAX = 9          # ③ 计划条数带上界
+# ③ 条数带修订 (2026-09-24 用户裁「裁」, 修订先于 7 日验收窗结束, 非读数后改判):
+#   原带 7-9 系 RFC 起草时**单源**估算; 多源并集生产模式实测 16 行即超带。
+#   修订为: 下界 0 (无财报日 0 行合法, 事件存在性由判据② coverage 承载) +
+#   上界 44 (盲扫时代票次基线, 防计划爆炸回退成盲扫)。
+PLAN_ROWS_MIN = 0          # ③ 计划条数带下界 (修订后)
+PLAN_ROWS_MAX = 44         # ③ 计划条数带上界 (修订后, 盲扫基线防爆)
 
 
 def _load_ledger() -> list[dict]:
@@ -75,9 +81,10 @@ def _all_coverage_100(records: list[dict]) -> tuple[bool, list[dict]]:
 
 
 def _plan_rows_in_band(records: list[dict]) -> tuple[bool, list[dict], str]:
-    """计划条数带 7-9. 返回 (pass, out_of_band_records, note).
+    """计划条数带 [0, 44] (2026-09-24 用户裁修订, 原 7-9 系单源起草估算).
 
-    诚实纪律: 实测多源并集超带时如实输出 ❌ + 附注, 不自行放宽.
+    上界 44 = 盲扫时代票次基线 (防计划爆炸回退成盲扫); 下界 0 = 无财报日合法,
+    事件存在性由判据② coverage 100% 承载。历史附注纪律保留: 超带仍如实 ❌。
     """
     out = [r for r in records
            if r.get("plan_rows", 0) < PLAN_ROWS_MIN
@@ -92,8 +99,8 @@ def _plan_rows_in_band(records: list[dict]) -> tuple[bool, list[dict], str]:
     if over and not under:
         avg_rows = sum(r.get("plan_rows", 0) for r in over) / len(over)
         note = (
-            f"多源并集使条数超起草时估算带 (实测均值 {avg_rows:.1f} > 上界 {PLAN_ROWS_MAX}); "
-            f"判据带是否修订须用户裁决, 裁定器不自行放宽"
+            f"计划条数超防爆上界 (实测均值 {avg_rows:.1f} > {PLAN_ROWS_MAX}, 盲扫基线) — "
+            f"计划层可能正在退化成盲扫, 须人工复核源并集逻辑"
         )
     elif under:
         note = f"部分交易日计划条数低于下界 {PLAN_ROWS_MIN}"

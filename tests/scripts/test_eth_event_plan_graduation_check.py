@@ -101,15 +101,27 @@ class TestCoverageGap:
         assert "2026-09-18" in report["criteria"]["coverage_100pct"]["fail_dates"]
 
 
-# ── 3. 条数超带 (诚实纪律) ──
+# ── 3. 条数带 (2026-09-24 用户裁修订: 7-9 → [0,44]) ──
 
-class TestPlanRowsOverBand:
-    """实测条数超预注册带 → 如实 ❌ + 附注, 不自行放宽."""
+class TestPlanRowsBand:
+    """修订带 [0,44]: 16 行入带; 超 44 如实 ❌ (防计划爆炸退化盲扫)."""
 
-    def test_over_band_honest(self, grad_mod, tmp_path, monkeypatch):
+    def test_16_rows_in_revised_band(self, grad_mod, tmp_path, monkeypatch):
         records = [
             _make_record(f"2026-09-{17 + i:02d}", plan_rows=16)
-            for i in range(7)  # 7 天全 16 行 (超 7-9 带)
+            for i in range(7)  # 多源并集实测常态 16 行 — 修订后入带
+        ]
+        _write_ledger(tmp_path, records, monkeypatch, grad_mod)
+
+        report = grad_mod.run_check()
+        band = report["criteria"]["plan_rows_band"]
+        assert band["pass"], "16 行应在修订带 [0,44] 内 (原 7-9 带系单源起草估算, 9/24 用户裁修订)"
+        assert report["verdict"] == "GRADUATE"
+
+    def test_over_44_band_honest(self, grad_mod, tmp_path, monkeypatch):
+        records = [
+            _make_record(f"2026-09-{17 + i:02d}", plan_rows=50)
+            for i in range(7)  # 超防爆上界 44 (盲扫基线)
         ]
         _write_ledger(tmp_path, records, monkeypatch, grad_mod)
 
@@ -117,9 +129,8 @@ class TestPlanRowsOverBand:
         assert report["verdict"] == "NOT_READY"
         band = report["criteria"]["plan_rows_band"]
         assert not band["pass"]
-        assert "不自行放宽" in band["note"] or "用户裁决" in band["note"]
-        # 如实报告: 条数不在 7-9 带
-        assert 16 in band["actual"]
+        assert "盲扫" in band["note"]  # 附注点明退化风险
+        assert 50 in band["actual"]
 
 
 # ── 4. 空台账 ──

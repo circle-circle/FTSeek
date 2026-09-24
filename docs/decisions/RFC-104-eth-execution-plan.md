@@ -234,3 +234,15 @@ PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --rec
 - `test_eth_edgar_source.py`：30 例（8-K 筛选 / items 缺失降级 / 习惯先验 8/8+5/3+不足 / fail-soft / 缓存命中 / UA / env 开关 / phase evidence）
 - `test_eth_event_plan.py` 增补 7 例（edgar 字段只记首次 / env=false 零调用 / habit_hint 不改 state / would_resolve 计数 / fail-soft）
 - `test_eth_event_plan_graduation_check.py`：8 例（全过 / 覆盖缺 / 条数超带如实❌ / 空台账 / 交易日不足 / 终端报告）
+
+### 判据修订裁决留痕（2026-09-24，用户裁「裁」）
+
+阶段 0 判据②「计划条数 7-9」经用户裁决修订为「**[0, 44]**」：
+- **修订理由**：原带系本 RFC 起草时**单源**（futu 窗口 40 行/7 日 ≈ 7-9 行/日）估算；阶段 0 补齐批落地多源并集（futu ∪ Finnhub，§6.4 纪律）后实测 16 行/日即超带——超带原因恰是 RFC 自己要求的"单源缺失不得导致空计划"，判据与纪律自相矛盾。
+- **时点合法性**：修订发生在 7 日验收窗**结束之前**（台账仅 1 日记录），非读数后改判；裁定器此前按字面判 ❌ 并拒绝自行放宽（诚实纪律留痕于 graduation_check_latest.json）。
+- **新带语义**：下界 0（无财报日 0 行合法，事件存在性由判据① coverage 100% 承载）；上界 44（§1 盲扫时代票次基线——计划条数逼近盲扫规模 = 计划层退化，须人工复核）。
+- **同步改动**：shadow_registry `rfc104_eth_event_plan.graduation_criteria` + graduation_check 常量与测试（16 行入带 / 50 行如实 ❌）。
+
+### 三影子立项裁决留痕（2026-09-24，用户裁「批」）
+
+`docs/analysis/2026-09-24-eth-microstructure-shadow-preregistrations.md` 的 ⑤相对量闸 / ⑥耐心挂单方 / ⑦隔夜已知事件标记 三影子**全批立项**（判据以该提案文档写死文本为准，先于任何读数）；⑤⑥ 自门控待阶段 0 对账满 7 日后自动开采，⑦ 即时。
