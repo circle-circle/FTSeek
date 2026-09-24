@@ -20,7 +20,7 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -391,6 +391,8 @@ class TestSchema:
         "generated_at", "refreshed_at", "source_versions", "plan_hash",
         # 9/24 addendum 新增字段
         "actual_arrived_at", "actual_value",
+        # 9/24 增强批: EDGAR 观测源
+        "edgar_8k_filed_at", "habit_hint",
     }
 
     def test_required_fields_present(self, plan_mod):
@@ -436,14 +438,17 @@ class TestSchema:
             assert "fallback_days" in de
 
     def test_actual_fields_default_null(self, plan_mod):
-        """actual_arrived_at / actual_value 初始为 null."""
-        rows = plan_mod.generate_plan(
-            "2026-09-24", "premarket",
-            finnhub_rows=FINNHUB_ROWS_BMO, futu_rows=FUTU_ROWS_BMO,
-        )
+        """actual_arrived_at / actual_value / edgar_8k_filed_at / habit_hint 初始为 null."""
+        with patch.object(plan_mod, "_enrich_edgar", lambda rows: rows):
+            rows = plan_mod.generate_plan(
+                "2026-09-24", "premarket",
+                finnhub_rows=FINNHUB_ROWS_BMO, futu_rows=FUTU_ROWS_BMO,
+            )
         for r in rows:
             assert r["actual_arrived_at"] is None
             assert r["actual_value"] is None
+            assert r["edgar_8k_filed_at"] is None
+            assert r["habit_hint"] is None
 
 
 # ── 8. 文件 I/O ──
@@ -594,6 +599,42 @@ class TestRefreshMerge:
         aapl = [r for r in result if r["symbol"] == "AAPL"][0]
         assert aapl["state"] == "planned"  # ambiguous → planned (自愈)
         assert aapl["phase"] == "before"
+
+    def test_source_withdrawn_row_kept_not_dropped(self, plan_mod):
+        """不变量5: 新源未覆盖的旧行保留 + source_withdrawn_at 标记, 禁止静默删行.
+
+        回归背景 (2026-09-24 实测): finnhub 免费层波动使 1 只 ambiguous 票从源消失,
+        旧版 refresh 静默丢行 (16→15) — 计划行只能以显式状态退场。
+        """
+        existing = [
+            self._make_row(plan_mod, symbol="AAPL", state="planned"),
+            self._make_row(plan_mod, symbol="GONE", state="ambiguous", phase="unknown"),
+        ]
+        fresh_fh = [
+            {"symbol": "AAPL", "date": "2026-09-24", "timeOfTheDay": "BMO",
+             "_src": "finnhub", "_asof": "t2"},
+        ]  # GONE 不在新源里
+        result = plan_mod.refresh_plan(
+            existing, "2026-09-24", "premarket",
+            finnhub_rows=fresh_fh, futu_rows=[],
+        )
+        assert len(result) == 2, "刷新不得删行"
+        gone = [r for r in result if r["symbol"] == "GONE"][0]
+        assert gone["state"] == "ambiguous"          # 状态原样保留, 不代为裁决
+        assert gone.get("source_withdrawn_at")        # 打上撤单标记 (只记首次)
+        aapl = [r for r in result if r["symbol"] == "AAPL"][0]
+        assert not aapl.get("source_withdrawn_at")    # 仍在源里的票不打标
+
+    def test_source_withdrawn_idempotent(self, plan_mod):
+        """撤单标记只记首次: 二次刷新不覆盖 source_withdrawn_at (幂等纪律)."""
+        row = self._make_row(plan_mod, symbol="GONE", state="ambiguous", phase="unknown")
+        row["source_withdrawn_at"] = "2026-09-24T01:00:00-04:00"
+        result = plan_mod.refresh_plan(
+            [row], "2026-09-24", "premarket",
+            finnhub_rows=[], futu_rows=[],
+        )
+        assert len(result) == 1
+        assert result[0]["source_withdrawn_at"] == "2026-09-24T01:00:00-04:00"
 
     def test_append_new_ticket(self, plan_mod):
         """新发现的票 append 为 planned."""
@@ -955,3 +996,188 @@ class TestReconcile:
         result = plan_mod.reconcile("2026-09-24", "premarket")
         assert "NOK" in result["event_tickets_seen"]
         assert result["verdict"] == "PASS"
+
+
+# ── 16. EDGAR 观测源集成 (9/24 增强批) ──
+
+class TestEdgarIntegration:
+    """EDGAR 观测源薄接入: edgar_8k_filed_at 只记首次 + habit_hint 不改 state."""
+
+    def test_edgar_filed_at_populated(self, plan_mod):
+        """EDGAR 有数据时 edgar_8k_filed_at 被填充."""
+        mock_arrival = {"filed_at": "2026-07-30T16:30:28-04:00", "accession": "0000320193-26-000050"}
+        with patch.object(plan_mod.EDGAR, "edgar_8k_arrival", return_value=mock_arrival), \
+             patch.object(plan_mod.EDGAR, "edgar_phase_habit", return_value=None):
+            rows = plan_mod.generate_plan(
+                "2026-09-24", "premarket",
+                finnhub_rows=FINNHUB_ROWS_BMO, futu_rows=FUTU_ROWS_BMO,
+            )
+        aapl = [r for r in rows if r["symbol"] == "AAPL"]
+        assert len(aapl) == 1
+        assert aapl[0]["edgar_8k_filed_at"] == "2026-07-30T16:30:28-04:00"
+
+    def test_edgar_disabled_no_calls(self, plan_mod, monkeypatch):
+        """ETH_PLAN_EDGAR_ENABLED=false → 零 EDGAR 调用且计划照常."""
+        monkeypatch.setenv("ETH_PLAN_EDGAR_ENABLED", "false")
+        mock_arrival = MagicMock()
+        mock_habit = MagicMock()
+        with patch.object(plan_mod.EDGAR, "edgar_8k_arrival", mock_arrival), \
+             patch.object(plan_mod.EDGAR, "edgar_phase_habit", mock_habit):
+            rows = plan_mod.generate_plan(
+                "2026-09-24", "premarket",
+                finnhub_rows=FINNHUB_ROWS_BMO, futu_rows=FUTU_ROWS_BMO,
+            )
+        mock_arrival.assert_not_called()
+        mock_habit.assert_not_called()
+        # 计划照常生成
+        assert len(rows) > 0
+        for r in rows:
+            assert r["edgar_8k_filed_at"] is None
+            assert r["habit_hint"] is None
+
+    def test_habit_hint_on_ambiguous(self, plan_mod):
+        """ambiguous 行: habit_hint 被填充但不改 state."""
+        fh = [
+            {"symbol": "AMBIG", "date": "2026-09-24", "timeOfTheDay": "",
+             "_src": "finnhub", "_asof": "t"},
+        ]
+        mock_habit = {
+            "phase": "amc", "n_history": 8, "consistency": 1.0,
+            "basis": "edgar_8k_history",
+        }
+        with patch.object(plan_mod.EDGAR, "edgar_8k_arrival", return_value=None), \
+             patch.object(plan_mod.EDGAR, "edgar_phase_habit", return_value=mock_habit):
+            rows = plan_mod.generate_plan(
+                "2026-09-24", "premarket",
+                finnhub_rows=fh, futu_rows=[],
+            )
+        ambig = [r for r in rows if r["symbol"] == "AMBIG"]
+        if ambig:
+            assert ambig[0]["state"] == "ambiguous"  # state 未变
+            assert ambig[0]["habit_hint"] is not None
+            assert ambig[0]["habit_hint"]["phase"] == "amc"
+
+    def test_edgar_filed_at_only_first(self, plan_mod):
+        """刷新时 edgar_8k_filed_at 只记首次 (已有非 null 不覆盖)."""
+        existing = [{
+            "symbol": "AAPL", "et_date": "2026-09-24", "session": "premarket",
+            "phase": "before", "state": "planned", "state_since": "t0",
+            "sources": [{"name": "finnhub", "reportDate": "2026-09-24",
+                         "timeOfTheDay": "BMO", "asof": "t1"}],
+            "data_expectation": {"basis": "test"}, "gate_snapshot": {},
+            "attempts": 0, "reject_reason": None,
+            "generated_at": "t0", "refreshed_at": "t0",
+            "source_versions": {"finnhub": "t1"}, "plan_hash": "h",
+            "actual_arrived_at": None, "actual_value": None,
+            "edgar_8k_filed_at": "2026-09-24T08:00:00",  # 已有值
+            "habit_hint": None,
+        }]
+        fresh_fh = [
+            {"symbol": "AAPL", "date": "2026-09-24", "timeOfTheDay": "BMO",
+             "_src": "finnhub", "_asof": "t2"},
+        ]
+        new_arrival = {"filed_at": "2026-09-24T09:00:00", "accession": "new"}
+        with patch.object(plan_mod.EDGAR, "edgar_8k_arrival", return_value=new_arrival), \
+             patch.object(plan_mod.EDGAR, "edgar_phase_habit", return_value=None):
+            result = plan_mod.refresh_plan(
+                existing, "2026-09-24", "premarket",
+                finnhub_rows=fresh_fh, futu_rows=[],
+            )
+        aapl = [r for r in result if r["symbol"] == "AAPL"][0]
+        assert aapl["edgar_8k_filed_at"] == "2026-09-24T08:00:00"  # 保持旧值
+
+    def test_edgar_fail_soft(self, plan_mod):
+        """EDGAR 失败 → 字段为 null, 计划照常."""
+        with patch.object(plan_mod.EDGAR, "edgar_8k_arrival",
+                          side_effect=Exception("EDGAR down")), \
+             patch.object(plan_mod.EDGAR, "edgar_phase_habit",
+                          side_effect=Exception("EDGAR down")):
+            rows = plan_mod.generate_plan(
+                "2026-09-24", "premarket",
+                finnhub_rows=FINNHUB_ROWS_BMO, futu_rows=FUTU_ROWS_BMO,
+            )
+        # 计划照常生成
+        assert len(rows) > 0
+        for r in rows:
+            assert r["edgar_8k_filed_at"] is None
+            assert r["habit_hint"] is None
+
+
+# ── 17. reconcile habit_hint_would_resolve ──
+
+class TestReconcileWouldResolve:
+    """reconcile 的 habit_hint_would_resolve 计数."""
+
+    def test_would_resolve_count(self, plan_mod, tmp_path, monkeypatch):
+        """ambiguous 行中 habit_hint consistency ≥ 0.75 且 n_history ≥ 3 → 计入."""
+        monkeypatch.setattr(plan_mod, "PLAN_DIR", tmp_path)
+        monkeypatch.setattr(plan_mod, "ROOT", tmp_path)
+
+        plan_rows = [
+            {"symbol": "AMB1", "et_date": "2026-09-24", "session": "premarket",
+             "phase": "unknown", "state": "ambiguous", "sources": [],
+             "data_expectation": {}, "gate_snapshot": {},
+             "state_since": "t0", "attempts": 0, "reject_reason": None,
+             "generated_at": "t0", "refreshed_at": "t0",
+             "source_versions": {}, "plan_hash": "h1",
+             "actual_arrived_at": None, "actual_value": None,
+             "edgar_8k_filed_at": None,
+             "habit_hint": {"phase": "amc", "n_history": 8, "consistency": 1.0,
+                            "basis": "edgar_8k_history"}},
+            {"symbol": "AMB2", "et_date": "2026-09-24", "session": "premarket",
+             "phase": "unknown", "state": "ambiguous", "sources": [],
+             "data_expectation": {}, "gate_snapshot": {},
+             "state_since": "t0", "attempts": 0, "reject_reason": None,
+             "generated_at": "t0", "refreshed_at": "t0",
+             "source_versions": {}, "plan_hash": "h2",
+             "actual_arrived_at": None, "actual_value": None,
+             "edgar_8k_filed_at": None,
+             "habit_hint": {"phase": "bmo", "n_history": 4, "consistency": 0.5,
+                            "basis": "edgar_8k_history"}},  # consistency < 0.75
+            {"symbol": "AMB3", "et_date": "2026-09-24", "session": "premarket",
+             "phase": "unknown", "state": "ambiguous", "sources": [],
+             "data_expectation": {}, "gate_snapshot": {},
+             "state_since": "t0", "attempts": 0, "reject_reason": None,
+             "generated_at": "t0", "refreshed_at": "t0",
+             "source_versions": {}, "plan_hash": "h3",
+             "actual_arrived_at": None, "actual_value": None,
+             "edgar_8k_filed_at": None,
+             "habit_hint": None},  # 无 hint
+        ]
+        plan_mod.save_plan("2026-09-24", "premarket", plan_rows)
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "extended_hours_earnings_gate_rejects.jsonl").write_text("")
+        (data_dir / "extended_hours_entry_executions.jsonl").write_text("")
+        (data_dir / "extended_hours_price_gate_rejects.jsonl").write_text("")
+
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["ambiguous_count"] == 3
+        assert result["habit_hint_would_resolve"] == 1  # 只 AMB1 满足条件
+
+    def test_would_resolve_zero_when_no_hints(self, plan_mod, tmp_path, monkeypatch):
+        """无 habit_hint → would_resolve == 0."""
+        monkeypatch.setattr(plan_mod, "PLAN_DIR", tmp_path)
+        monkeypatch.setattr(plan_mod, "ROOT", tmp_path)
+
+        plan_rows = [
+            {"symbol": "AMB1", "et_date": "2026-09-24", "session": "premarket",
+             "phase": "unknown", "state": "ambiguous", "sources": [],
+             "data_expectation": {}, "gate_snapshot": {},
+             "state_since": "t0", "attempts": 0, "reject_reason": None,
+             "generated_at": "t0", "refreshed_at": "t0",
+             "source_versions": {}, "plan_hash": "h1",
+             "actual_arrived_at": None, "actual_value": None,
+             "edgar_8k_filed_at": None, "habit_hint": None},
+        ]
+        plan_mod.save_plan("2026-09-24", "premarket", plan_rows)
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "extended_hours_earnings_gate_rejects.jsonl").write_text("")
+        (data_dir / "extended_hours_entry_executions.jsonl").write_text("")
+        (data_dir / "extended_hours_price_gate_rejects.jsonl").write_text("")
+
+        result = plan_mod.reconcile("2026-09-24", "premarket")
+        assert result["habit_hint_would_resolve"] == 0

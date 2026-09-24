@@ -204,3 +204,33 @@ PYTHONPATH=. venv/bin/python scripts/eth_event_plan.py --session premarket --rec
 - 对账 PASS/FAIL 两路 + missed 检出 + arrival stats + ledger append + execution 计入（6 例）
 - query_actual_value（5 例：actual present / missing / ticket not found / error / US. prefix）
 - 既有 40 例适配重构（REQUIRED_FIELDS 新增 actual_arrived_at/actual_value）
+
+---
+
+### 9/24 增强批：EDGAR 观测源 + 习惯先验 hint（只读，不升格）+ 毕业裁定器
+
+**新增模块**（零交易行为变更，零 cron）：
+- `scripts/eth_edgar_source.py`：SEC EDGAR 8-K Item 2.02 观测源（ticker→CIK 映射 + submissions 筛选 + 习惯先验计算）
+- `scripts/eth_event_plan_graduation_check.py`：阶段 0 毕业裁定器（读 reconcile_ledger.jsonl → 按预注册判据逐条判）
+
+**接入点**（`scripts/eth_event_plan.py` 薄接入，`_enrich_edgar()` 函数）：
+- 新增字段 `edgar_8k_filed_at`：8-K Item 2.02 提交时刻 ET（只记首次，与 actual_arrived_at 并列不覆盖）
+- 新增字段 `habit_hint`：ambiguous 行的习惯先验 `{phase, n_history, consistency, basis:"edgar_8k_history"}`（只记录不改 state）
+- reconcile 新增 `habit_hint_would_resolve`：本日 ambiguous 中习惯先验可解的只数（升格裁决的读数载体）
+- env 开关 `ETH_PLAN_EDGAR_ENABLED`（默认 true，置 false 一键断源回退）
+
+**纪律**：
+- EDGAR 任何失败只 warning 留痕并返回空，绝不让生成/刷新/对账崩溃或阻塞
+- habit_hint 只记录不改 state（ambiguous 仍 fail-closed，习惯先验是否升格为正式源属后续裁决）
+- 毕业裁定器按预注册字面判（条数带 7-9），不为凑绿改判据（实测多源并集 16 行超带 → 如实 ❌ + 附注）
+- SEC EDGAR Fair Access Rules：UA 声明身份（`EDGAR_UA` env 覆写）；≤10 req/s；缓存日级 TTL
+
+**EDGAR submissions JSON 实测结论**（AAPL CIK=320193，2026-09-24 冒烟）：
+- `items` 字段 **存在** ✅（`filings.recent.items`，逗号分隔字符串如 `"2.02,9.01"`）
+- `acceptanceDateTime` 给精确 UTC 时间戳（如 `"2026-07-30T20:30:28.000Z"` → 16:30 ET = AMC）
+- 8-K Item 2.02 = Results of Operations and Financial Condition = 业绩发布法律事实
+
+**测试覆盖**：
+- `test_eth_edgar_source.py`：30 例（8-K 筛选 / items 缺失降级 / 习惯先验 8/8+5/3+不足 / fail-soft / 缓存命中 / UA / env 开关 / phase evidence）
+- `test_eth_event_plan.py` 增补 7 例（edgar 字段只记首次 / env=false 零调用 / habit_hint 不改 state / would_resolve 计数 / fail-soft）
+- `test_eth_event_plan_graduation_check.py`：8 例（全过 / 覆盖缺 / 条数超带如实❌ / 空台账 / 交易日不足 / 终端报告）

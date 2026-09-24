@@ -60,6 +60,9 @@ load_dotenv(ROOT / ".env.us", override=True)
 # ── 单一真源: 导入 executor (模块级只读 env, 不开连接; 先例: overnight_earnings_carry_shadow.py:70) ──
 import scripts.extended_hours_entry_executor as EXEC  # noqa: E402
 
+# ── EDGAR 8-K 观测源 (9/24 增强批: 只读, 不升格, 习惯先验 hint) ──
+import scripts.eth_edgar_source as EDGAR  # noqa: E402
+
 from app.utils.atomic_write import atomic_write_json  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
@@ -294,6 +297,47 @@ def query_actual_value(symbol: str, report_date: str) -> dict | None:
     return {"epsActual": float(actual), "hour": row.get("hour")}
 
 
+# ── EDGAR 观测源薄接入 (9/24 增强批: 只读, 不升格, fail-soft) ──
+
+def _enrich_edgar(plan_rows: list[dict]) -> list[dict]:
+    """为计划行追加 EDGAR 观测字段 (fail-soft: 任何异常只 warning 不崩).
+
+    新增字段:
+    - edgar_8k_filed_at: 该票该日 8-K 2.02 提交时刻 ET (只记首次, 与 actual_arrived_at 并列)
+    - habit_hint: ambiguous 行的习惯先验 {phase, n_history, consistency, basis}
+                  (只记录不改 state — ambiguous 仍 fail-closed)
+
+    env ETH_PLAN_EDGAR_ENABLED=false → 跳过全部 EDGAR 调用 (一键断源).
+    """
+    if os.getenv("ETH_PLAN_EDGAR_ENABLED", "true").lower() == "false":
+        return plan_rows
+
+    for row in plan_rows:
+        sym = row.get("symbol", "")
+        et_date = row.get("et_date", "")
+        if not sym or not et_date:
+            continue
+
+        try:
+            # edgar_8k_filed_at: 只记首次 (已有非 null 值时不覆盖)
+            if row.get("edgar_8k_filed_at") is None:
+                arrival = EDGAR.edgar_8k_arrival(sym, et_date)
+                if arrival is not None:
+                    row["edgar_8k_filed_at"] = arrival.get("filed_at")
+
+            # habit_hint: 只给 ambiguous 行 (只记录不改 state)
+            if row.get("state") == STATE_AMBIGUOUS and row.get("habit_hint") is None:
+                habit = EDGAR.edgar_phase_habit(sym)
+                if habit is not None:
+                    row["habit_hint"] = habit
+        except Exception as exc:
+            # fail-soft: 任何 EDGAR 异常只 warning, 不崩不阻塞计划生成
+            logger.warning("EDGAR enrich failed for %s: %s: %s", sym, type(exc).__name__, exc,
+                           exc_info=True)
+
+    return plan_rows
+
+
 def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
                   futu_rows: list[dict], premarket_amc_pairing: bool = False) -> list[dict]:
     """生成 T 日事件计划 (核心函数).
@@ -375,6 +419,9 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
             "plan_hash": "",  # 下方计算
             "actual_arrived_at": None,  # 9/24 addendum: 事件数据到达时间观测 (非策略字段)
             "actual_value": None,       # 9/24 addendum: epsActual 值 (观测)
+            # ── 9/24 增强批: EDGAR 观测源 (只读, 不升格) ──
+            "edgar_8k_filed_at": None,  # 8-K Item 2.02 提交时刻 ET (只记首次, 与 actual_arrived_at 并列)
+            "habit_hint": None,         # ambiguous 行的习惯先验 (只记录不改 state)
         }
 
         # plan_hash: 幂等键的指纹 (symbol+et_date+session+phase)
@@ -382,6 +429,9 @@ def generate_plan(et_date: str, session: str, *, finnhub_rows: list[dict],
         plan_row["plan_hash"] = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
         plan_rows.append(plan_row)
+
+    # ── 9/24 增强批: EDGAR 观测源薄接入 (fail-soft) ──
+    _enrich_edgar(plan_rows)
 
     return plan_rows
 
@@ -423,6 +473,8 @@ def refresh_plan(existing: list[dict], et_date: str, session: str, *,
     2. 新发现的票 (生成时缺源) append 为 planned.
     3. plan_hash/refreshed_at 更新; 幂等: 同数据重跑逐字节不变 (除 refreshed_at).
     4. actual_arrived_at **只记第一次**: 已有非 null 值时不覆盖.
+    5. 新源未覆盖的旧行**保留** + `source_withdrawn_at` 只记首次 — 禁止静默删行
+       (计划行只能以显式状态退场; 删行不可审计且违 fail-closed 哲学).
     """
     now_iso = et_now().isoformat(timespec="seconds")
 
@@ -476,12 +528,33 @@ def refresh_plan(existing: list[dict], et_date: str, session: str, *,
                 merged_row["actual_arrived_at"] = fresh.get("actual_arrived_at")
                 merged_row["actual_value"] = fresh.get("actual_value")
 
+            # edgar_8k_filed_at: 只记第一次 (与 actual_arrived_at 并列不覆盖)
+            if merged_row.get("edgar_8k_filed_at") is None:
+                merged_row["edgar_8k_filed_at"] = fresh.get("edgar_8k_filed_at")
+
+            # habit_hint: 保留旧值 (ambiguous 行的习惯先验不覆盖)
+            if merged_row.get("habit_hint") is None:
+                merged_row["habit_hint"] = fresh.get("habit_hint")
+
             result.append(merged_row)
         else:
             # ── 新票: append ──
             fresh["refreshed_at"] = now_iso
             result.append(fresh)
 
+    # ── 不变量5: 新源未覆盖的旧行**保留+标记**, 禁止静默删行 ──
+    # 日历源波动 (免费层抖动/财报改期/窗口滚动) 会让票从源里消失; 计划行只能以
+    # 显式状态 (expired/rejected) 退场, 静默消失 = fail-closed 哲学违例且不可审计
+    # (2026-09-24 实测: 16 行刷新后变 15 行, 1 只 ambiguous 票被静默丢弃 — 本段为修复)。
+    for key, old in existing_idx.items():
+        if key not in seen_keys:
+            kept = dict(old)
+            if kept.get("source_withdrawn_at") is None:
+                kept["source_withdrawn_at"] = now_iso  # 只记首次
+            kept["refreshed_at"] = now_iso
+            result.append(kept)
+
+    result.sort(key=lambda r: str(r.get("symbol", "")))  # 确定性序 → plan_hash 稳定
     return result
 
 
@@ -670,6 +743,18 @@ def reconcile(et_date: str, session: str) -> dict:
     )
     verdict = "PASS" if not missed else "FAIL"
 
+    # ── 9/24 增强批: counterfactual 统计 ──
+    # habit_hint_would_resolve: 本日 ambiguous 行中习惯先验可解的只数
+    # (consistency ≥ 0.75 且 n_history ≥ 3 — 先验足够强, 可作为升格裁决的读数载体)
+    n_ambiguous = sum(1 for r in plan if r.get("state") == STATE_AMBIGUOUS)
+    n_would_resolve = 0
+    for r in plan:
+        if r.get("state") != STATE_AMBIGUOUS:
+            continue
+        hint = r.get("habit_hint")
+        if isinstance(hint, dict) and hint.get("consistency", 0) >= 0.75 and hint.get("n_history", 0) >= 3:
+            n_would_resolve += 1
+
     result = {
         "et_date": et_date,
         "session": session,
@@ -680,6 +765,9 @@ def reconcile(et_date: str, session: str) -> dict:
         "ambiguous_resolved": sorted(ambiguous_resolved),
         "actual_arrival_stats": arrival_stats,
         "verdict": verdict,
+        # ── 9/24 增强批 ──
+        "ambiguous_count": n_ambiguous,
+        "habit_hint_would_resolve": n_would_resolve,
     }
 
     # 写产物
@@ -785,10 +873,13 @@ def main(argv=None) -> int:
                     row["actual_arrived_at"] = et_now().isoformat(timespec="seconds")
                     row["actual_value"] = actual.get("epsActual")
 
-        n_new = len(rows) - len(existing)
-        n_updated = len(rows) - max(0, n_new)
-        print(f"[eth_plan] 刷新: {len(rows)} 行 (新增 {n_new}, 更新 {n_updated})",
-              file=sys.stderr)
+        existing_keys = {(r["symbol"], r.get("et_date", ""), r.get("session", "")) for r in existing}
+        n_new = sum(1 for r in rows
+                    if (r["symbol"], r.get("et_date", ""), r.get("session", "")) not in existing_keys)
+        n_withdrawn = sum(1 for r in rows if r.get("source_withdrawn_at"))
+        n_updated = len(rows) - n_new
+        print(f"[eth_plan] 刷新: {len(rows)} 行 (新增 {n_new}, 合并 {n_updated}, "
+              f"源撤单保留 {n_withdrawn})", file=sys.stderr)
     else:
         # ── 正常生成 ──
         rows = generate_plan(
