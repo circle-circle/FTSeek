@@ -1,8 +1,8 @@
 # DEB-20260924 · 盘前大盘环境口径缺陷 + 「普跌日」regime 裁决路径
 
-> **性质**: 溯源取证 + 提案（**未改一行代码**）。含 ① 一处输入口径缺陷的修复提案（P0）
-> ② 「普跌日」regime 是否值得成为信号的**裁决路径**提案（P1，默认先回放、不先攒样）。
-> **状态**: 提案待裁决（F1–F7）。
+> **性质**: 溯源取证 + 提案 + 修复落地记录。含 ① 输入口径缺陷修复（P0，已落地）
+> ② 「普跌日」regime 裁决路径（P1，已回放并关闭该轴）③ 衍生缺陷修复（F5 影子双算 / F14 同源映射，已落地）。
+> **状态**: **R8（2026-09-25）**——P0 落地（skill v0.85）；普跌日轴终局关闭（71 交易日扩窗）；F5/F14 已落码（`05fa9e441`）；剩 F5-enforce（影子攒 5-10 交易日后裁）/ F12（第 5 交易日触发）/ F3 / T3 解锁观察。
 > **立案人**: Hermes（应用户令「把这份溯源落成 DEB，并按规矩走独立复查」）。
 > **目标读者**: ① **裁决者**（用户）——只需读 §一/§四/§八；② **执行者**——§六；
 > ③ **复查者（第二 agent）**——§三 证据表逐格可跑、§七 点名挑战项。
@@ -510,13 +510,13 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 | F8 | 「低吸叙事」是否需独立处置（成因④：入场带+追高闸的叙事投影） | **不处置，只登记** | 若投影假设成立，它是**硬约束的正确表达**而非缺陷；要动的是约束本身（F6 轴），不能去改叙事 |
 | F3 | 是否新增「今日板块盘前强弱」（用 SOXX/SMH 盘前价做代理） | **先不做** | 属**新增输入**不是修 bug；且板块代理与 F4 的高度相关，应与 F4 同批裁 |
 | F4 | 是否批准 Phase 0 回放 | ✅ **已执行**（commit `72a8b67db`，首读见 §三.3） | 用户既有偏好「能回放就别攒样」；E12 证明输入可重建 |
-| F5 | 兄弟项：`MarketRegimeGate` 的 `spy_price` 盘前同为昨收 | **独立复核已完成（§三.9）：缺陷确证（4/4 逐日+9/21 真实翻转实例+33% 边界日暴露）⇒ 升级为待裁修复批（B'/A'/维持三案）** | 与 DA P0 同型但**不能照抄修法**：spy_price 直接参与 ±2 分打分，改值=行为变更须单独裁决 |
+| F5 | 兄弟项：`MarketRegimeGate` 的 `spy_price` 盘前同为昨收 | ✅ **已落地第一步**（用户裁「按建议执行」2026-09-25，commit `05fa9e441`）：采 B' 的 **record-only 双算** — RegimeContext 加 `spy_pre_price/score_shadow/regime_shadow/spy_price_basis` 影子字段 + 纯函数 `shadow_score_delta`/`score_to_regime_value`（9/21 翻转实例钉死 delta=+4 cautious→risk_on）；主判定/enforce 零变更，影子≠主判定日 WARNING + regime_log.notes 遥测（schema 零改动）。21 项新测试 + 69 项回归全绿；盘后冒烟 basis=kline_last_close、影子=None（预期：盘后无 pre_price 不猜不补）。**enforce（spy_price 换 pre_price）待影子攒 5-10 交易日另裁** | 与 DA P0 同型但**不能照抄修法**：spy_price 直接参与 ±2 分打分，改值=行为变更 ⇒ 先影子双算攒证，再裁 enforce |
 | F6 | 若回放显示「普跌桶净均更差」，下一步动作 | **首读未达门槛 ⇒ 该轴冻结（无判别力），不建影子不加门** | 同族先例 E2 momentum 门被裁 KILLED；本次三口径 CI 全含 0 + 净 \$ 跨窗符号翻转 ⇒ 无立即可动的动作 |
 | F7 | P1 主判据用连续分桶还是事件桶 | **连续分桶为主，事件桶为辅** | 事件桶 30 日内不可达（E13/E14）；连续分桶 n=327 一次到位 |
 | F11 | 执行逆向选择轴（§三.7 F-A）：三件套只读补算是否并入 F9 同批 | **建议并入 F9 同批，只读先行** | 两臂对照若成立，病灶在执行时序而非方向预测；候选动作（低吸单 limit-at-open）须先查 `entry_routing` 既有 limit 路径覆盖面再议，不直接落码 |
 | F12 | P0 反事实观察（§三.7 F-E）：第 5 交易日对「红盘日新增 SKIP 的指令」算反事实毛收益 | **登记，到期触发，只读** | 既有回滚触发器只抓极端压制，抓不到「SKIP 掉的恰是毛为正买单」的温和退化 |
 | F13 | T3 裁决前补完三项 | ✅ **已补完（§三.10）**：① BREAKOUT 消失=标签层灭绝（9月 BREAKOUT 结构化标签 0 条，14 条「突破入场」thesis 全被打 PULLBACK_LIMIT）② 净 \$ 日聚类差 p=0.052 含 0 ③ 扩样在标签修复前不可能 ⇒ **T3 维持不落动作 + 追加断代声明**，解锁条件=F14 修复后 ≥15 交易日新配对数据 | 统计显著 ≠ 可外推；人群止于 8/21 |
-| F14 | **新缺陷（§三.10-① 挖出）**：thesis 模板映射与 LLM 结构化 `entry_archetype` 互相矛盾且无守卫（「突破入场」文案 + PULLBACK_LIMIT 标签 + side=below 确认位）；routing 开关打开时会把突破单路由成回踩限价流单。另 `model_used='deterministic'` 实为缺失默认值，历史引用需重读 | **建议：修一致性（模板选择吃结构化 archetype 同源）+ 矛盾守卫；record 层小改，行为层零变更（routing 现 false）** | 与 R4 F-B（空头模板方向感知）同族收口；不修则一切按 thesis/archetype 做的分析持续被污染 |
+| F14 | 新缺陷（§三.10-① 挖出）：thesis 模板映射与 LLM 结构化 `entry_archetype` 互相矛盾且无守卫（「突破入场」文案 + PULLBACK_LIMIT 标签 + side=below 确认位）；routing 开关打开时会把突破单路由成回踩限价流单。另 `model_used='deterministic'` 实为缺失默认值，历史引用需重读 | ✅ **已落地**（用户裁「按建议执行」2026-09-25，commit `05fa9e441`）：`_select_thesis_template` 吃结构化 `entry_archetype`（同源），因子映射仅 archetype 缺失时兜底 + 方向一致性守卫（BUY 带 FADE_SHORT→WARNING+兜底）。行为层零变更（thesis 纯记录字段，compute_instruction_values 不消费；routing enabled=false 未开启）。**F13-① 的 T3 轴解锁条件（≥15 交易日新配对数据）自本提交起开始积累** | 与 R4 F-B（空头模板方向感知）同族收口；已修 ⇒ 按 thesis/archetype 做的分析自 9/25 起不再被污染 |
 
 **F11 预注册判据（2026-09-24 深夜，见数前写死；样本规模摸底仅查 n 不查结局）**
 
@@ -616,6 +616,7 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
   ① **F5 独立复核完成**（§三.9）：regime_log 4/4 逐日 `spy_price`=前一交易日收盘（台账级实锤）+ 9/21 真实翻转实例（距 MA20 0.11% ⇒ −2 分 ⇒ cautious）+ 33% 边界日暴露 ⇒ 缺陷确证，从「只记档」升级为**待裁修复批**（B'/A'/维持）；与 DA P0 的关键差异=spy_price 直接参与打分，改值是行为变更。
   ② **F13 三项补完**（§三.10）：BREAKOUT「消失」的真因=**标签层灭绝**——9 月结构化 BREAKOUT 0 条，14 条「突破入场」thesis 全部被标 PULLBACK_LIMIT+side=below ⇒ **T3 轴数据基础已断**，其 p<0.001 读数人群止于 8/21，对现役指令流无外推性；净 \$ 对照 p=0.052 含 0；扩样在标签修复前不可能 ⇒ T3 维持不落动作，解锁条件改为 F14 修复后 ≥15 交易日。
   ③ **登记 F14 新缺陷**：thesis 模板 × 结构化 archetype 矛盾无守卫（routing 开启时会把突破单路由成回踩限价流单）；顺带钉死 `model_used='deterministic'` 是缺失默认值（`pipeline.py:3069`）非独立通道，历史引用按此重读。
+- **R8（2026-09-25 07:4x, Hermes）**: 用户裁「按建议执行 — 如果是真问题, 从解决问题角度做修复」⇒ **F5 + F14 落码**（commit `05fa9e441`，分支 rfc-060-phase1-hotfixes）：① **F5 第一步 = B' 的 record-only 双算**（`market_regime.py` +80 行）：RegimeContext 新增 `spy_pre_price/score_shadow/regime_shadow/spy_price_basis` 影子字段；纯函数 `shadow_score_delta`（只重算 SPY 相关 ±2/±1 两项，均线保持日K口径）与 `score_to_regime_value`（镜像主路径映射含 vix_uncertain 降级）；assess() 末尾经 `router.get_quote("US.SPY").pre_price` 双算，**主判定/enforce 零变更**，影子≠主判定日 WARNING 留痕 + `regime_log.notes` 附带遥测（schema 零改动，消费方按文本读）；pre_price 拿不到（盘后/push 路径）= 影子跳过，不猜不补。② **F14 = thesis×archetype 同源**（`pipeline.py`）：`_select_thesis_template` 增加 `entry_archetype` 参数，有值时按 archetype 选模板（PULLBACK_LIMIT→trend_pullback/fade_short、BREAKOUT→breakout/trend_short、FADE_SHORT→fade_short），因子映射仅缺失时兜底；方向一致性守卫（BUY 带 FADE_SHORT → WARNING + 因子兜底）；调用点透传 `vote_result.get("entry_archetype")`（BridgeVotingAdapter 已透传该键，9 月 raw 实测存在）。**行为层零变更**：thesis 是纯记录字段（compute_instruction_values 不消费，grep 验证）；routing enabled=false 未开启；返回值全在 THESIS_TEMPLATES enum 内（DECISION_SCHEMA 校验不违约）。③ 验证：新测试 `tests/test_market_regime_f5_shadow.py` **21 passed**（9/21 翻转实例钉死 delta=+4 cautious→risk_on、映射一致性、F14 同源/兜底/守卫/enum）；回归 test_market_regime + test_thesis_direction_consistency + test_instruction_generator_horizon **69 passed**；提交后 `systemctl restart ftseek-us`（前置已核：未平仓 AVGO/MU LONG、盘后 ET 19:4x、启动零 ERROR、仓位 synced 恢复、盘后冒烟 assess() basis=kline_last_close 影子=None 符合预期）。④ 后续钩子：**F5 enforce 待影子攒 5-10 交易日另裁**（判据：影子≠主判定的翻转日占比与方向正确率，见 `scripts/f5_spy_price_probe.py` 头注）；**T3 轴解锁条件（≥15 交易日新配对数据）自 `05fa9e441` 起开始积累**。⑤ 自曝：F5 影子双算的 pre_price 与主判定 spy_price 来自**不同快照时刻**（get_quote 两次调用间 SPY 可能跳动），delta 是「约同时刻」近似——影子攒样裁决时若翻转日集中在边界带（|昨收−MA20|<0.6%）需人工复核快照时间差。
 - **R3（2026-09-24 22:5x, Hermes）**: ① 对抗复查收窄重派后两单元完成（§三.4）：归因**被独立确认**（含两条反证），
   但 **D 单元推翻我 R2 的冻结前提**（额度≠深度，可立即扩窗）⇒ §四 P1 第 4 条改写 + 自曝 #9；
   ② E 单元 5 条批评（C2/C4 **成立**、C1/C3/C5 部分成立），最严重项=「见数后收紧 + 对照臂混杂 + 毛口径选择偏倚」三重叠加
