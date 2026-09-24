@@ -28,6 +28,7 @@
 import argparse
 import collections
 import datetime as _dt
+import random
 import json
 import os
 import sqlite3
@@ -45,7 +46,15 @@ PREREG = {
     "QQQ<=-0.8 & SOXX<=-1.5": lambda q, s: q <= -0.8 and s <= -1.5,
     "QQQ<=-0.5 & SOXX<=-1.5": lambda q, s: q <= -0.5 and s <= -1.5,
 }
-W2_START = "2026-09-09"  # 双窗切点 (见数前定; W1 < 切点 ≤ W2)
+W2_START = None  # 双窗切点: 由 main() 按**交易日中位数**运行时切分 (对抗复查 C4: 原固定 9/09
+                 #   在 27 日窗口下是 15:12 而非中点, 且窗口一扩就失效 ⇒ 改为中位数切分)
+
+
+def set_split(sorted_days):
+    """交易日中位数切分 (W1 = 前半, W2 = 后半), 保证随窗口自适应且各半交易日数相等。"""
+    global W2_START
+    W2_START = sorted_days[len(sorted_days) // 2] if sorted_days else None
+    return W2_START
 
 
 def _kline(sym, start, end):
@@ -103,7 +112,7 @@ def load_instructions(since, until):
     c.row_factory = sqlite3.Row
     rows = [dict(r) for r in c.execute(
         """select date, symbol, decision_id, fwd_return_intraday, fwd_return_t1_adj,
-                  outcome, pnl_pct, confidence, model_used
+                  outcome, pnl_pct, confidence, model_used, thesis
            from playbook_instructions
            where direction='BUY' and date>=? and date<=?""", (since, until))]
     tr = {r["decision_id"]: dict(r) for r in c.execute(
@@ -197,13 +206,16 @@ def spearman(idx, vals):
 def summarize(label, rows):
     g = lambda k: [r[k] for r in rows]
     n_exec = sum(1 for r in rows if r.get("pnl_net") is not None)
+    # 对抗复查 C3: 毛口径(fwd_return_*)含**未成交**样本, 普跌日被追高闸拦掉的更多 ⇒
+    #   成交率是选择偏倚的直接度量, 必须与毛均值同框报告, 否则无法判断毛口径是否被假设收益拉高。
+    exec_rate = round(n_exec / len(rows), 3) if rows else None
     w1 = [r for r in rows if r["date"] < W2_START]
     w2 = [r for r in rows if r["date"] >= W2_START]
     d = {
         "bucket": label, "n": len(rows), "days": len({r["date"] for r in rows}),
         "fwd_intraday_mean_pct": None, "fwd_t1_mean_pct": None,
         "fwd_intraday_median_pct": None, "fwd_intraday_worst5_pct": None,
-        "n_exec": n_exec, "realized_pnl_mean": _mean(g("realized_pnl")),
+        "n_exec": n_exec, "exec_rate": exec_rate, "realized_pnl_mean": _mean(g("realized_pnl")),
         "pnl_net_mean": _mean(g("pnl_net")), "fees_mean": _mean(g("fees_est")),
         "w1_n": len(w1), "w1_fwd_intraday_mean_pct": _mean([r["fwd_return_intraday"] for r in w1]),
         "w2_n": len(w2), "w2_fwd_intraday_mean_pct": _mean([r["fwd_return_intraday"] for r in w2]),
@@ -228,6 +240,73 @@ def summarize(label, rows):
     d["two_windows_same_direction"] = same_dir
     return d
 
+
+# ── 对抗复查 (2026-09-24) 指定重设计用的工具 ────────────────────────────────
+# 批评点 C1/C2/C5: 五分位分桶在 27 交易日下 = 4-6 日/桶 ⇒ 单日主导 + 桶界窥探 +
+#   20 个隐含比较(5桶×3口径×双窗)。下面两条把分析单位换成**交易日**:
+#   ① 日级回归 (不设桶, 每交易日一个观测) ② 同日配对 (同日内 低吸 vs 突破, 消除日级混杂)。
+_ARCH_PULL = ("低吸", "回踩", "承接", "企稳接", "分批接")
+_ARCH_BREAK = ("突破入场", "突破追入", "追入", "站上", "breakout")
+
+
+def archetype(row) -> str:
+    """按 thesis/entry_strategy 文本分原型 (DB 无 archetype 列; 规则与 llm_synth 回显语义一致)。"""
+    txt = str(row.get("thesis") or "") + " " + str(row.get("_entry_strategy") or "")
+    if any(k in txt for k in _ARCH_BREAK):
+        return "BREAKOUT"
+    if any(k in txt for k in _ARCH_PULL):
+        return "PULLBACK"
+    return "OTHER"
+
+
+def _ols_slope(xs, ys):
+    """单变量 OLS 斜率 (无截距项需要时也返回; 用于日级回归, 不做推断——推断交给 bootstrap)。"""
+    n = len(xs)
+    if n < 3:
+        return float("nan")
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx == 0:
+        return float("nan")
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+
+
+def _boot_slope(pairs, B=2000, seed=20260924):
+    """日聚类 bootstrap: 重抽单位=交易日 (每个观测本身已是一天)。返回 CI95 与双侧 p。"""
+    rnd = random.Random(seed)
+    n = len(pairs)
+    if n < 5:
+        return (float("nan"), float("nan"), None)
+    out = []
+    for _ in range(B):
+        s = [pairs[rnd.randrange(n)] for _ in range(n)]
+        sl = _ols_slope([x * 100 for x, _ in s], [y * 100 for _, y in s])
+        if sl == sl:
+            out.append(sl)
+    if not out:
+        return (float("nan"), float("nan"), None)
+    out.sort()
+    lo, hi = out[int(0.025 * len(out))], out[int(0.975 * len(out)) - 1]
+    neg = sum(1 for v in out if v <= 0) / len(out)
+    return (round(lo, 3), round(hi, 3), round(2 * min(neg, 1 - neg), 3))
+
+
+def _boot_mean(vals, B=2000, seed=20260924):
+    """日聚类 bootstrap 均值 CI (样本单位已是交易日: 同日配对差 / 日级均值)。"""
+    rnd = random.Random(seed)
+    n = len(vals)
+    if n < 5:
+        return {"n_days": n, "mean": round(_mean(vals), 3) if vals else None,
+                "ci95": None, "p_two_sided": None, "contains_zero": None}
+    out = []
+    for _ in range(B):
+        s = [vals[rnd.randrange(n)] for _ in range(n)]
+        out.append(sum(s) / n)
+    out.sort()
+    lo, hi = out[int(0.025 * len(out))], out[int(0.975 * len(out)) - 1]
+    neg = sum(1 for v in out if v <= 0) / len(out)
+    return {"n_days": n, "mean": round(_mean(vals), 3), "ci95": [round(lo, 3), round(hi, 3)],
+            "p_two_sided": round(2 * min(neg, 1 - neg), 3), "contains_zero": lo <= 0 <= hi}
 
 def fmt(rows, keys, hdr=None):
     print(" | ".join(hdr or keys))
@@ -259,6 +338,7 @@ def main():
     # ── 连续分桶 (主判据): qqq_pre_chg_0800 五分位 ──
     qs = sorted(r["date"] for r in matched)
     uniq_days = sorted(set(qs))
+    set_split(uniq_days)  # 双窗切点=交易日中位数 (对抗复查 C4)
     f_q = {d: feats[d].get("qqq_pre_chg_0800") for d in uniq_days}
     dayvals = sorted(v for v in f_q.values() if v is not None)
     cuts = [dayvals[int(len(dayvals) * p)] for p in (0.2, 0.4, 0.6, 0.8)] if len(dayvals) >= 5 else []
@@ -277,13 +357,55 @@ def main():
             buckets[b].append(r)
     quint = [summarize(f"Q{b+1}(QQQ盘前)", buckets[b]) for b in sorted(buckets)]
     print("\n== 主判据: QQQ 08:00 盘前涨跌 五分位 ==")
-    fmt(quint, ["bucket", "n", "days", "fwd_intraday_mean_pct", "fwd_t1_mean_pct",
+    fmt(quint, ["bucket", "n", "days", "exec_rate", "fwd_intraday_mean_pct", "fwd_t1_mean_pct",
                 "fwd_intraday_median_pct", "fwd_intraday_worst5_pct", "n_exec",
                 "realized_pnl_mean", "pnl_net_mean", "w1_fwd_intraday_mean_pct",
                 "w2_fwd_intraday_mean_pct", "two_windows_same_direction"])
     rho = spearman([i for i in range(len(quint))],
                    [q["fwd_intraday_mean_pct"] for q in quint])
     print(f"单调性 (桶序号 vs 均值秩相关) rho={rho}  [|rho|>=0.5 才算形状成立]")
+
+    # ── 对抗复查(2026-09-24) 指定重设计①: 日级回归 (分析单位 = 交易日, 不设桶) ──
+    #   批评 C1/C5: 5 桶 × 3 口径 × 双窗 = 约 20 个隐含比较, 且 4-6 日/桶 = 单日主导。
+    #   改为每交易日一个观测, 单斜率单检验 (无多重比较), 单位天然是日 (无伪重复)。
+    d_x = [feats[d].get("qqq_pre_chg_0800") for d in uniq_days]
+    d_y = [_mean([r["fwd_return_intraday"] for r in matched
+                  if r["date"] == d and r.get("fwd_return_intraday") is not None]) for d in uniq_days]
+    d_pairs = [(x, y) for x, y in zip(d_x, d_y) if x is not None and y is not None]
+    if len(d_pairs) >= 5:
+        _xs = [x * 100 for x, _ in d_pairs]
+        _ys = [y * 100 for _, y in d_pairs]
+        _sl = _ols_slope(_xs, _ys)
+        _blo, _bhi, _bp = _boot_slope(d_pairs)
+        print(f"\n== 重设计① 日级回归 (n={len(d_pairs)} 交易日; 每观测=当日 LONG 毛日内均值) ==")
+        print(f"  斜率 = {_sl:+.3f} pp/pp (QQQ 盘前每跌 1pp → 当日 LONG 毛日内 {_sl:+.3f}pp)")
+        print(f"  日聚类 bootstrap CI95 = [{_blo:+.3f}, {_bhi:+.3f}]  p={_bp}  含0={_blo <= 0 <= _bhi}")
+        print(f"  Spearman rho = {spearman(_xs, _ys)}")
+
+    # ── 对抗复查指定重设计②: 同日配对 (同一天内 低吸 vs 突破) —— 消除日级混杂 ──
+    #   批评 C2: 「Q1 vs 其余」比较的是「跌多 vs 跌少的日子」, 波动率/宽度/板块全在变,
+    #   差异无法归因于盘前涨跌本身。同日配对让两侧共享同一市场环境 ⇒ 干净的对照。
+    pair_diffs, arch_cnt = [], collections.Counter()
+    for d in uniq_days:
+        day = [r for r in matched if r["date"] == d]
+        for r in day:
+            arch_cnt[archetype(r)] += 1
+        lo = [r["fwd_return_intraday"] for r in day
+              if archetype(r) == "PULLBACK" and r.get("fwd_return_intraday") is not None]
+        bo = [r["fwd_return_intraday"] for r in day
+              if archetype(r) == "BREAKOUT" and r.get("fwd_return_intraday") is not None]
+        if lo and bo:
+            pair_diffs.append(100 * (_mean(lo) - _mean(bo)))
+    print(f"\n== 重设计② 同日配对: 低吸 vs 突破 (thesis 文本分型 {dict(arch_cnt)}) ==")
+    if pair_diffs:
+        _pb = _boot_mean(pair_diffs)
+        print(f"  有效配对日 n={_pb['n_days']}  毛日内差(低吸-突破) 均值 = {_pb['mean']:+.3f}pp  "
+              f"CI95={_pb['ci95']} p={_pb['p_two_sided']}  含0={_pb['contains_zero']}")
+        print(f"  未配对日 (当日只有单一原型) = {len(uniq_days) - _pb['n_days']}")
+    else:
+        print("  无有效配对日 (当日两原型未同时出现) — 该设计在本窗口不可用, 记『无法判定』")
+
+
 
     # ── 主对比: 最普跌桶(Q1) vs 其余四桶, 日聚类 + bootstrap CI (决策级读数) ──
     q1 = buckets[min(buckets)]
