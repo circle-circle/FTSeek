@@ -32,7 +32,9 @@ direction_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专�
 exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
 exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项
 factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
-fee_unit_economics_scorecard.py  # 存量测量/回填环, 台账回填待专项
+# fee_unit_economics_scorecard.py — 2026-09-24 退役 (DEB-20260919 §13.3 用户裁「按 §20 建议」:
+#   无消费者+产物无读者, cron 注释观察期至 2026-10-24, 30 天无反弹再删脚本; 环已下线故删基线行 —
+#   若回滚取消注释, 守卫会报未入账, 届时重新登记)
 freeze_sentinel.py  # 存量测量/回填环, 台账回填待专项
 gap_alignment_shadow.py  # 存量测量/回填环, 台账回填待专项
 gap_chase_gate_eval.py  # 存量测量/回填环, 台账回填待专项
