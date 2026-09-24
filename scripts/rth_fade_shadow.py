@@ -31,8 +31,9 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -41,7 +42,10 @@ load_dotenv(ROOT / ".env.us", override=True)
 
 OUT = ROOT / "data" / "rth_fade_shadow.jsonl"
 SIZE, FEE, GAP_MIN = 5000.0, float(os.getenv("FEE_PCT", "0.53")), 3.0
-ET = timezone(timedelta(hours=-4))       # EDT; 11 月转 EST 需复评 (见 skill: 冬令时提醒)
+# 2026-09-24 时钟病灶变种1收口: 原 timezone(timedelta(hours=-4)) 是永久EDT假钟,
+# 11/1 转 EST 后 et_today() 归日错位。zoneinfo 纯本地 (不触 futu/OpenD), DST 正确,
+# 与 app/utils/timezone.py R-13 fallback 链同款正例。
+ET = ZoneInfo("America/New_York")
 
 
 def et_today() -> str:

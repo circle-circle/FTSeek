@@ -26,6 +26,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -36,12 +37,14 @@ from scripts.eth_stage_daily_report import (  # noqa: E402
 
 DATA = ROOT / "data"
 EARN_GATE = DATA / "extended_hours_earnings_gate_rejects.jsonl"
-ET = timedelta(hours=-4)
+# 2026-09-24 时钟病灶变种1收口: 原 timedelta(hours=-4) 是永久EDT假钟, 11/1 转 EST 后
+# default_end() 的 "20:00 前算前一天" 判定错位一天。zoneinfo 纯本地, DST 正确。
+ET = ZoneInfo("America/New_York")
 
 
 def default_end() -> str:
     """最近已收盘 ET 日 (20:00 前算前一天)."""
-    now = datetime.utcnow() + ET
+    now = datetime.now(ET)
     return (now.date() if now.hour >= 20 else now.date() - timedelta(days=1)).isoformat()
 
 
