@@ -192,6 +192,12 @@ def screen_candidates(candidates, router, *, source, batch_id, now=None, quotes=
             quotes = {}
     quotes = {canonical_symbol(k): v for k, v in (quotes or {}).items() if isinstance(v, dict)}
     provider = atr_provider if atr_provider is not None else ATRProvider(router)
+    # 2026-09-24 (切实盘前置遗留 P2): 原硬编码 "sim" — 切实盘后 screening 标签失真。
+    # 改用 config_container._resolve_trade_mode (TRADE_ENV SSOT, 解析失败安全回落
+    # SIMULATE)。词汇保持 "sim"/"live": 下游 daily_ic_analysis 按 trade_mode 分桶,
+    # 历史行全是 "sim", SIM 环境输出不变 ⇒ 桶连续性不断。
+    from app.core.config_container import TradeMode, _resolve_trade_mode
+    _trade_mode_label = "sim" if _resolve_trade_mode() == TradeMode.SIMULATE else "live"
     atr_cache, results = {}, []
     for candidate in candidates:
         row = dict(candidate)
@@ -257,7 +263,7 @@ def screen_candidates(candidates, router, *, source, batch_id, now=None, quotes=
             **facts, **verdict, "policy_version": POLICY_VERSION,
             "input_hash": _fingerprint([fingerprint_facts, policy]),
             "candidate_id": f"{batch_id}:{symbol}:{direction or 'UNDECIDED'}",
-            "batch_id": batch_id, "source": source, "trade_mode": "sim",
+            "batch_id": batch_id, "source": source, "trade_mode": _trade_mode_label,
             "observed_at": now.isoformat(), "fetched_at": fetched_at,
             "policy": dict(policy),
         }

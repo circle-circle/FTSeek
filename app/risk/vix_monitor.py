@@ -169,23 +169,27 @@ class VIXMonitor:
         phase = get_market_phase()
 
         # 两种尝试顺序 (首个非 None 者胜) — 顺序由单一判据决定, 不再各写一份 if/else
+        # 2026-09-24: (名称, 函数) 对 — source 字段从常数串改为记录**实际胜出源**,
+        # 否则缓存里分不清 FRED 日频真值 vs VIXY×0.85 代理 (台账遗留 P1)。
         _vixy_first = (
-            self._fetch_vix_finnhub,        # VIXY 实时代理 (×0.85 单一真源)
-            self._fetch_vix_fred,           # FRED 日频 fallback
-            self._fetch_vix_alphavantage,
-            self._fetch_vix_fallback,       # Yahoo ^VIX (最后兜底, 失败返回 None)
+            ("finnhub_vixy_proxy", self._fetch_vix_finnhub),  # VIXY 实时代理 (×0.85 单一真源)
+            ("fred", self._fetch_vix_fred),                    # FRED 日频 fallback
+            ("alphavantage", self._fetch_vix_alphavantage),
+            ("yahoo_fallback", self._fetch_vix_fallback),      # Yahoo ^VIX (最后兜底, 失败返回 None)
         )
         _fred_first = (
-            self._fetch_vix_fred,           # FRED 日频 (T-1 收盘, 盘后/隔夜/周末此刻是真值)
-            self._fetch_vix_alphavantage,
-            self._fetch_vix_finnhub,
-            self._fetch_vix_fallback,
+            ("fred", self._fetch_vix_fred),           # FRED 日频 (T-1 收盘, 盘后/隔夜/周末此刻是真值)
+            ("alphavantage", self._fetch_vix_alphavantage),
+            ("finnhub_vixy_proxy", self._fetch_vix_finnhub),
+            ("yahoo_fallback", self._fetch_vix_fallback),
         )
         _order = _vixy_first if is_vixy_proxy_window(phase) else _fred_first
         vix = None
-        for _fetch in _order:
+        _src_name = None
+        for _name, _fetch in _order:
             vix = _fetch()
             if vix is not None:
+                _src_name = _name
                 break
 
         if vix:
@@ -194,7 +198,8 @@ class VIXMonitor:
                 self._cache = {
                     "vix": vix,
                     "timestamp": time.time(),
-                    "source": "fred/alphavantage/finnhub/fallback",
+                    "source": _src_name or "unknown",
+                    "source_chain": "vixy_first" if _order is _vixy_first else "fred_first",
                 }
             self._save_cache(self._cache)
         else:

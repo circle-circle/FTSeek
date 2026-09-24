@@ -613,6 +613,24 @@ class TestScreenCandidates:
         assert sc["candidate_id"] == "UE:b1:US.AAA:UNDECIDED"
         assert sc["status"] == "PASS"
 
+    def test_trade_mode_label_follows_trade_env(self, monkeypatch):
+        """trade_mode 标签跟随 TRADE_ENV SSOT (切实盘前置, 2026-09-24).
+
+        原硬编码 "sim" ⇒ 切实盘后 screening 标签失真。SIM 环境必须仍输出
+        "sim" (历史行全是 "sim", daily_ic_analysis 按 trade_mode 分桶不断桶);
+        REAL 环境 (TRADE_ENV=0 + ALLOW_REAL_TRADING=true) 输出 "live"。
+        """
+        router = FakeRouter(self.QUOTES, {"US.AAA": daily_bars(20)})
+        rows = screen_candidates([{"symbol": "AAA"}], router, source="UE",
+                                 batch_id="b", now=NOW, policy=policy())
+        assert rows[0]["candidate_screening"]["trade_mode"] == "sim"
+
+        monkeypatch.setenv("TRADE_ENV", "0")
+        monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+        rows = screen_candidates([{"symbol": "AAA"}], router, source="UE",
+                                 batch_id="b2", now=NOW, policy=policy())
+        assert rows[0]["candidate_screening"]["trade_mode"] == "live"
+
     def test_caller_effective_price_wins(self):
         """资格判定必须用调用方的锚价, 否则"筛过的价"与"写进指令的价"分叉。"""
         router = FakeRouter(self.QUOTES, {"US.AAA": daily_bars(20)})
