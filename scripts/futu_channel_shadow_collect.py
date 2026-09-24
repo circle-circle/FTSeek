@@ -63,7 +63,7 @@ def _registry_entry(channel_id: str):
                 return it
         logger.warning("[futu通道影子] 注册表无此通道 id (%s) ⇒ 采集闸放行", channel_id)
     except Exception as e:                                            # noqa: BLE001
-        logger.warning("[futu通道影子] 注册表读取失败 (%s): %s ⇒ 采集闸放行", channel_id, e)
+        logger.warning("[futu通道影子] 注册表读取失败 (%s): %s ⇒ 采集闸放行", channel_id, e, exc_info=True)
     return None
 
 

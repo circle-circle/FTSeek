@@ -230,7 +230,7 @@ class TradingMode:
         try:
             return int(raw or 0)
         except (TypeError, ValueError):
-            logger.warning("[TradingMode] %s 解析失败 (raw=%r) → 0 (fail-close)", key, raw)
+            logger.warning("[TradingMode] %s 解析失败 (raw=%r) → 0 (fail-close)", key, raw, exc_info=True)
             return 0
 
     def futu_trd_env(self, target_env: Optional[str] = None):

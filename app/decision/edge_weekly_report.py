@@ -51,7 +51,7 @@ def _load_shadow(days: int) -> List[Dict[str, Any]]:
                 except Exception:
                     continue
     except Exception as e:
-        logger.debug(f"[EdgeWeekly] 读影子日志失败: {e}")
+        logger.warning(f"[EdgeWeekly] 读影子日志失败: {e}", exc_info=True)
     return rows
 
 

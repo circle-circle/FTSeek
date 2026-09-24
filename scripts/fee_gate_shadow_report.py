@@ -73,7 +73,7 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:
-            logger.warning("Skipping malformed fee gate report row")
+            logger.warning("Skipping malformed fee gate report row", exc_info=True)
     return rows
 
 
@@ -406,7 +406,7 @@ def run_report(
                     try:
                         pushed = bool(get_push_hub().push(_message(report), sync=True))
                     except Exception as exc:
-                        logger.error("[fee_gate_shadow_report] PushHub dispatch failed: %s", exc)
+                        logger.error("[fee_gate_shadow_report] PushHub dispatch failed: %s", exc, exc_info=True)
                         pushed = False
                     if pushed:
                         _write_state(state_path, {

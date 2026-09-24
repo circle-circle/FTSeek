@@ -835,7 +835,7 @@ class MarketDataRouter:
                     f"ma200=${spy_ctx.get('spy_ma200', 0):.2f}"
                 )
         except Exception as e:
-            logger.debug(f"[Router] get_spy_context() 失败: {e}")
+            logger.warning(f"[Router] get_spy_context() 失败: {e}", exc_info=True)
 
         if not spy_ctx and self.td:
             try:

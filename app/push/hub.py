@@ -440,5 +440,5 @@ def push_text_safe(
             )
         )
     except Exception as e:  # pragma: no cover - 兜底路径
-        logger.warning(f"[PushHub·push_text_safe] 推送失败 (不影响主流程): {e}")
+        logger.warning(f"[PushHub·push_text_safe] 推送失败 (不影响主流程): {e}", exc_info=True)
         return False

@@ -33,7 +33,7 @@ try:
     from scripts.api_limit_monitor import should_use_twelvedata, record_twelvedata_call
     API_LIMIT_MONITOR_ENABLED = True
 except Exception as e:
-    logger.warning(f"[TwelveData] API 限流监控导入失败：{e}")
+    logger.warning(f"[TwelveData] API 限流监控导入失败：{e}", exc_info=True)
     API_LIMIT_MONITOR_ENABLED = False
 
 # ── 常量 ─────────────────────────────────────────────────────────

@@ -233,7 +233,7 @@ class FutuBrokerAdapter:
             return True
 
         except ImportError:
-            logger.error("[富途] futu-api 未安装，请运行: pip install futu-api")
+            logger.error("[富途] futu-api 未安装，请运行: pip install futu-api", exc_info=True)
             return False
         except Exception as e:
             logger.error(f"[富途] 连接失败: {e}")

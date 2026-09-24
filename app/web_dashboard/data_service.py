@@ -293,7 +293,7 @@ class DataService:
         try:
             converted = normalize_futu_account(raw)
         except ValueError as e:
-            logger.warning(f"[DataService] Futu 账户币种转换失败: {e}")
+            logger.warning(f"[DataService] Futu 账户币种转换失败: {e}", exc_info=True)
             return {}
 
         return {

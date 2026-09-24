@@ -346,7 +346,7 @@ def register(app, templates):
             logger.info(f"[审计归档] 归档 {moved} 条记录 (早于 {cutoff[:10]})")
             return api_ok({"archived": moved, "cutoff_date": cutoff[:10]})
         except Exception as e:
-            logger.error(f"[审计归档] 失败: {e}")
+            logger.error(f"[审计归档] 失败: {e}", exc_info=True)
             return api_error("ARCHIVE_ERROR", "操作失败，请稍后重试", 500, retryable=True)
         finally:
             conn.close()

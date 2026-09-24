@@ -118,7 +118,7 @@ def load_rows(path: Path) -> list[dict]:
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
-                logger.warning("Skipping malformed fee gate shadow row")
+                logger.warning("Skipping malformed fee gate shadow row", exc_info=True)
     return rows
 
 
