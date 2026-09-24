@@ -19,7 +19,12 @@ if str(ROOT) not in sys.path:
 
 from app.review.bundle_builder import build
 from app.review.bundle_render import render_md
-from app.review.criteria_status import pending_adjudications, update_ready_state
+from app.review.criteria_status import (
+    escalation_candidates,
+    guard_escalation,
+    pending_adjudications,
+    update_ready_state,
+)
 from app.utils.atomic_write import atomic_write_json, atomic_write_text
 from app.utils.timezone import now_et
 
@@ -107,18 +112,29 @@ def run(
 ) -> dict[str, Any]:
     bundle = build(connection, report_date)
     pending = pending_adjudications()
+    today = now_et().date().isoformat()
     ready_state = update_ready_state(
         pending,
         output_dir / "criteria_ready_state.json",
         output_dir / "criteria_ready_state.lock",
-        now_et().date().isoformat(),
+        today,
     )
     for row in pending:
         if row["id"] in ready_state:
             row["ready_since"] = ready_state[row["id"]]["ready_since"]
     bundle.pending_adjudications = pending
+    # ── 逾期升级双门槛 (DEB-20260919 §13.4 / §20.2④) ──────────────────────────
+    # READY 且逾期 >14 天的项进催办候选; 每天最多 1 条 (caller 侧限流 + flock)。
+    # 产物只挂在推送面 (不进 bundle hash, 不影响幂等性); 状态文件单独存。
+    esc_candidates = escalation_candidates(pending, ready_state, today)
+    escalated = guard_escalation(
+        esc_candidates,
+        output_dir / "criteria_escalation_state.json",
+        output_dir / "criteria_escalation_state.lock",
+        today,
+    )
     payload = bundle.to_dict()
-    full_md, push_text = render_md(bundle)
+    full_md, push_text = render_md(bundle, escalated=escalated)
 
     bundle_path = output_dir / f"bundle_{report_date}.json"
     markdown_path = output_dir / f"REVIEW_{report_date}.md"

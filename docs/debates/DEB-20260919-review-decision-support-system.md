@@ -516,11 +516,18 @@ systemctl is-active ftseek-us   # 保持 active
 
 ## 13. 待决问题（需用户裁决；勿自行决定）
 
-1. **推送节奏**：每日 06:30 CST 一条是否可接受？是否把现有 `daily_llm_token_report --push`（LLM 成本日报）与 `da_chain_health_report --push` **并入**这一条摘要（日推送 1 条原则），还是并存？
-2. **`READY_TO_EVALUATE` 是否即时单推**（§10 挑战点 1）？还是只进周报？
-3. **首批退役授权**：当前无消费者候选（`exit_scorecard` / `direction_hit_scorecard` / `fee_unit_economics_scorecard` / `overnight_arm_report`，均只 `>> logs/*.log`）是否授权按"先注释 cron、30 天无反弹再删脚本"处置？
-4. **有效期**：`pending_adjudications` 是否要引入"到点未裁即升级"（如 `decide_by` 逾期 → P1 告警）？这会把"被动询问"变成"系统催办"，但也会增加噪声。
-5. **历史起点**：是否要把上线日之前的日子做一次性回填（用现行口径重算 30 天 `bundle_*.json`），还是只从上线日起？（回填会用今天的口径解释过去，存在"事后合理化"风险。）
+> **2026-09-24 用户裁决**: §13 五问按 §20 建议一揽子批准（详见 §15 讨论记录末条 + 下方各项标注）。
+
+1. **推送节奏** `【✅ 2026-09-24 裁决: 按 §20.2② 留痕确认 — 现状已满足】`：每日 06:30 CST 一条是否可接受？是否把现有 `daily_llm_token_report --push`（LLM 成本日报）与 `da_chain_health_report --push` **并入**这一条摘要（日推送 1 条原则），还是并存？
+   > 落地: 现状已是 06:35 CST (Hermes job `复盘判决书` cron `35 6 * * 2-6`)，不并入两条日报；**零改动, 只留痕**。`§13-commit`
+2. **`READY_TO_EVALUATE` 是否即时单推**（§10 挑战点 1）`【✅ 2026-09-24 裁决: 按 §20.2③ 留痕确认 — 现状已满足】`？还是只进周报？
+   > 落地: 现状无即时单推路径 (`pending_adjudication_carrier` 周六 09:15 有变化才推; 判决书推送默认关); **零改动, 只留痕**。`§13-commit`
+3. **首批退役授权** `【✅ 2026-09-24 裁决: 按 §20.2⑤, 仅退 fee_unit_economics_scorecard】`：当前无消费者候选（`exit_scorecard` / `direction_hit_scorecard` / `fee_unit_economics_scorecard` / `overnight_arm_report`，均只 `>> logs/*.log`）是否授权按"先注释 cron、30 天无反弹再删脚本"处置？
+   > 落地: crontab 191 行注释 (不删), 观察期 2026-09-24 → 2026-10-24; 备份 `/tmp/crontab_backup_20260924_s13.txt`。`§13-commit`
+4. **有效期** `【✅ 2026-09-24 裁决: 按 §20.2④, 双门槛 (READY >14 天 + 每日最多 1 条)】`：`pending_adjudications` 是否要引入"到点未裁即升级"（如 `decide_by` 逾期 → P1 告警）？这会把"被动询问"变成"系统催办"，但也会增加噪声。
+   > 落地: `app/review/criteria_status.py` 新增 `escalation_candidates` (>14 天筛选) + `guard_escalation` (caller 侧每日 1 条限流 + flock); `bundle_render.py` 推送面新增 `⏰ 逾期催办` 行 (仅当有逾期项时出现, 否则零噪声)。`§13-commit`
+5. **历史起点** `【✅ 2026-09-24 裁决: 按 §20.2①, 不做全量回填, 只做锚定 + 对照单】`：是否要把上线日之前的日子做一次性回填（用现行口径重算 30 天 `bundle_*.json`），还是只从上线日起？（回填会用今天的口径解释过去，存在"事后合理化"风险。）
+   > 落地: 新 `scripts/review_backfill_anchor.py` (默认 dry-run: 锚定 `bundle_2026-09-18.json` + `REVIEW_backfill_30d.md` 对照单, 口径标签写死"以今日口径重算, 非当时口径", 零推送零 vault)。`§13-commit`
 
 > **§20 给出作者对上述各项的明确建议**（每项：建议 / 理由(实测) / 风险 / 保守替代 + 能否现在做），请对着 §20 裁；§20.3 另列我尚未验证的依赖项。
 >
@@ -562,6 +569,12 @@ systemctl is-active ftseek-us   # 保持 active
 - **2026-09-19 · 用户（裁决）**: 问"复盘系统产出最终的样式会是 skills 还是其他什么框架合适"，并裁「需要」= 把该决定写成 DEB 新节（载体形态 + 落点清单 + 与 §13.2 的耦合）后提交、再交第二 agent 复查。落成本文 §16。
 - **2026-09-19 · 用户（裁决）**: 第 2 轮核查后令「请将你的建议更新到 deb」⇒ 落成 **§20**：对 §13 五问 + §17.2 R-1 前置 + 开工范围逐项给明确建议（建议/理由/风险/保守替代），并把"现在能做"与"有前置"分开标注。
 - **2026-09-19 · Hermes（第 1 轮独立复查已回）**: 两个只读复查 agent（A 组 C1–C9 数据类 / B 组 C10–C17+§16 对抗）完成后，作者逐条复核，结论落在 **§17**：13 条成立（其中 C9 只需精确化）、3 条不成立或部分不成立（C5 推送军规 / C10 心跳底噪 / C13 功效 σ）、1 条无法判定（C11 未落码）、5 条更正（R-1…R-5）、**1 条复查 agent 的否决被复核推翻并记录在案**（其 jobs.json 解析错误，把 34 个 job 读成 17 个）。**待用户裁决项未变**：§13 五问 + §17.2 R-1 的并入口径前置决定。
+- **2026-09-24 · 用户（裁决）**: §13 五问按 §20 建议**一揽子批准**（carry 影子同日另裁停采，见 `docs/analysis/2026-09-24-carry-shadow-adjudication.md`）。落地明细（commit 占位 `§13-commit` 由主会话补）：
+  - ① 推送节奏 = 06:35、不并入两条日报 — 现状已满足（Hermes job `复盘判决书` cron `35 6 * * 2-6`），**留痕确认**
+  - ② READY_TO_EVALUATE 只进日报那一条、不即时单推 — 现状已满足（无即时单推路径，`pending_adjudication_carrier` 仅周六 09:15），**留痕确认**
+  - ③ 首批退役仅 `fee_unit_economics_scorecard` — crontab 191 行注释（不删）+ 观察期至 2026-10-24（备份 `/tmp/crontab_backup_20260924_s13.txt`）
+  - ④ 逾期升级双门槛（READY >14 天 + 每日最多 1 条催办）— 落地 `app/review/criteria_status.py`（`escalation_candidates` + `guard_escalation`）+ `bundle_render.py` 推送面 `⏰ 逾期催办` 行
+  - ⑤ 历史回填不做全量 — 新 `scripts/review_backfill_anchor.py`（默认 dry-run：锚定 + 30 天对照单、零推送零 vault）
 
 ---
 

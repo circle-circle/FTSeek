@@ -184,3 +184,49 @@ def test_glossary_explains_pending_and_points_to_plain_list():
         "必须点破 ready 只代表样本量够 (否则读者以为判据已过)")
     assert "最久 2026-09-15 起" in push_text, "须给出最久等待日期 (urgency)"
     assert "影子验收清单" in push_text, "须指向全量白话清单出处"
+
+
+# ── 逾期升级催办渲染 (DEB-20260919 §13.4 / §20.2④) ─────────────────────────
+
+
+def test_push_contains_escalation_line_when_overdue_candidate_provided():
+    """escalated 非 None 时推送面出现催办行 (含 id / 天数 / 门槛提示)."""
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "old-shadow", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "ready_since": "2026-09-01", "criteria": "c"},
+    ]
+    escalated = {"id": "old-shadow", "ready_since": "2026-09-01", "days_ready": 23}
+
+    _full, push_text = render_md(bundle, escalated=escalated)
+
+    assert "⏰ 逾期催办" in push_text
+    assert "`old-shadow`" in push_text
+    assert "23 天" in push_text
+    assert "14 天门槛" in push_text
+
+
+def test_push_omits_escalation_block_when_no_candidate():
+    """escalated=None 时整块不出现 (零噪声; 无逾期项不假装有事)."""
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "recent-shadow", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "ready_since": "2026-09-20", "criteria": "c"},
+    ]
+
+    _full, push_text = render_md(bundle, escalated=None)
+
+    assert "⏰ 逾期催办" not in push_text, "无候选时不得出现催办块"
+

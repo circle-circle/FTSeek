@@ -1,7 +1,7 @@
 """Human-readable rendering for the evidence-bearing review bundle."""
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from app.review.bundle_schema import Bundle
 
@@ -81,7 +81,7 @@ def _shadow_plain_lines(row: dict, lexicon: dict, *, width: int | None) -> list[
     return [f"   {plain}", f"   读数: {reading}"]
 
 
-def render_md(bundle: Bundle) -> Tuple[str, str]:
+def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
     payload = bundle.to_dict()
     report_date = payload["report_date"]
     headline = payload["headline"]
@@ -413,6 +413,15 @@ def render_md(bundle: Bundle) -> Tuple[str, str]:
                 "（全量逐条白话见判决书 MD; 「影子验收清单」周六 09:15 有变化才发）"
             )
         push_lines.append("样本攒够 ≠ 判据通过 —— 上面是读数, 留/停/转正要你裁。")
+    # ── 逾期升级催办 (DEB-20260919 §13.4 / §20.2④, 2026-09-24 落地) ──────────
+    # 每天最多 1 条 (caller 侧限流), 只点最久的那一项; 不替代上面的待裁清单,
+    # 而是置顶一条"该裁了"的硬提醒。escalated=None 时整块不出现 (零噪声)。
+    if escalated:
+        push_lines.append("")
+        push_lines.append(
+            f"⏰ 逾期催办: `{escalated['id']}` 已 READY {escalated['days_ready']} 天"
+            f"（自 {escalated['ready_since']}）— 超 14 天门槛, 请裁决 (留/停/转正)"
+        )
     # 白话注释 (2026-09-22, 用户令「需要推送 添加容易理解的注释」):
     #   推送面必须自解释 — 收货人不在终端, 无法 grep/PRAGMA; 术语一律就地翻译, 数字就地给口径.
     #   与 shadow 验收清单同风格 (背景 30 秒 + 白话行), 两处口径一致: "待裁决" ≠ 判据通过.
