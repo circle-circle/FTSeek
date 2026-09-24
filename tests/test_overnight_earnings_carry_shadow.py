@@ -96,7 +96,11 @@ def test_rejections_and_stale_flag():
         _snap("US.OLD", 12.00, 10.00, 0.0, 500_000, 2e9,
               update="2026-09-21 20:01:23.898"),                            # 昨盘后陈旧价
     ])
-    items, stats = mod.evaluate("premarket", cohort, q, "2026-09-22")
+    items, stats = mod.evaluate("premarket", cohort, q, "2026-09-22", hour=9)
+    # 钉死 hour (N4 类纪律, 2026-09-24): `evaluate` 的量门槛走生产分档
+    # `EXEC._min_volume_now(session, hour)` (盘前 04-07h → 2 万 / 其余 → 20 万),
+    # 不传 hour 时取**运行时刻** ⇒ 同一份 fixture 的结论随钟而变 (07h 跑绿、09h 跑红)。
+    # 本用例的"量不足"语义取 08-09h 档 (20 万): 5 万 < 20 万 ⇒ 仍应判 volume_below_min。
     assert items[0]["reject"] == ["volume_below_min"]
     assert items[1]["quote"]["stale_quote"] is True
     assert "stale_quote" in items[1]["reject"], "陈旧报价不得计入过闸上界"
