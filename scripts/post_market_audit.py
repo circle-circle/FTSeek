@@ -676,14 +676,14 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         L.append("## 💰 费用净额总览 (毛/费/净)")
         if ft["cnt"]:
             L.append(
-                f"  **今日**: {ft['cnt']}笔 毛${ft['gross']:+,.2f} "
+                f"  **今日**(出场日口径, substr(exit_time,1,10)): {ft['cnt']}笔 毛${ft['gross']:+,.2f} "
                 f"费${ft['fees']:,.2f} → **净${ft['net']:+,.2f}** "
                 f"| 净胜率{ft['net_win_rate']:.0f}%"
                 + (f" | ⚠️假盈利{ft['fake_wins']}笔" if ft["fake_wins"] else "")
             )
         if fw["cnt"]:
             L.append(
-                f"  **近{fee_net['window_days']}日**: {fw['cnt']}笔 毛${fw['gross']:+,.2f} "
+                f"  **近{fee_net['window_days']}日**(入场日口径, trade_date 分桶): {fw['cnt']}笔 毛${fw['gross']:+,.2f} "
                 f"费${fw['fees']:,.2f} → **净${fw['net']:+,.2f}** "
                 f"| 净胜率{fw['net_win_rate']:.0f}%"
                 + (f" | ⚠️假盈利{fw['fake_wins']}笔" if fw["fake_wins"] else "")
@@ -758,7 +758,11 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
     L.append("")
 
     # ─── 退出归因 ───
-    L.append("## 🚪 退出归因 (近7日)")
+    # 口径点名 (2026-09-24): 本表 SQL 是 `WHERE trade_date >= ?` = **按入场日分桶**,
+    #   与同一份报告里"今日/近7日"头条的出场日口径 (attribution_fee_net 用 substr(exit_time,1,10))
+    #   是两把尺子。此前段标题只写"(近7日)", 9/23 报告据此把本表标成"出场日口径"并写出
+    #   "48笔 净-$644.34", 复算时按出场日找不到同一组数字 ⇒ 标题必须自带口径, 不得省。
+    L.append("## 🚪 退出归因 (近7日·按入场日 trade_date 分桶, 非出场日)")
     total_exit_pnl = 0
     total_exit_cnt = 0
     for e in exit_attr:
@@ -770,6 +774,21 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         )
         total_exit_pnl += e['total_pnl']
         total_exit_cnt += e['cnt']
+    # 退出桶口径注记 (2026-09-24): 名字与实际判据不一致的桶必须自带定义, 否则复盘会去查
+    #   不存在的字段。实证 9/23 报告 P0 = "查 OVERNIGHT_GAP_STOP 的 gap%、核对触发条件",
+    #   而该桶两个产出点 (exit_engine.py 规则2 / pipeline.py _sl_fallback_exit_reason)
+    #   判据都只是"持仓过夜 且 亏损 ≥ overnight_gap_stop_pct(默认3%)", **没有任何 gap 校验**,
+    #   metadata 里也不落 gap 字段 —— 5 笔里 CRM(09:49)/RIVN(10:23) 是盘中触发, 不是开盘跳空。
+    _EXIT_REASON_LEGEND = {
+        "OVERNIGHT_GAP_STOP": (
+            "隔夜深亏止损 (判据=持仓过夜 且 亏损≥overnight_gap_stop_pct, 默认3%); "
+            "含开盘跳空打穿与盘中触发两类 ⇒ 无 gap% 字段可查, 不要按\"跳空\"解读"
+        ),
+    }
+    for e in exit_attr:
+        _lg = _EXIT_REASON_LEGEND.get(e["reason"])
+        if _lg:
+            L.append(f"    ⓘ {e['reason']} 口径: {_lg}")
     L.append(
         f"  **合计**: {total_exit_cnt}笔 PnL=${total_exit_pnl:+,.0f}"
     )

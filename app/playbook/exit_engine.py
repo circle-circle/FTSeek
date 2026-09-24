@@ -49,7 +49,8 @@ def _now_et():
 def _is_overnight_position(entry_time_str: str) -> bool:
     """RFC-061 #6: 仓位是否隔夜 (entry 在之前的交易日, 非今日入场).
 
-    用于隔夜跳空止损: cohort B 持夜仓次日开盘若跳空 >3% 快平 (OVERNIGHT_GAP_STOP).
+    用于隔夜深亏快平 (OVERNIGHT_GAP_STOP): 持仓过夜 且 亏损 ≥ 阈值 即快平。
+    2026-09-24 勘误: 名称里的 "GAP" 是历史命名 — 判据里没有 gap 校验, 开盘跳空只是其中一种触发。
     用 ET 日期判断. 异常返回 False (不触发, 保守).
     """
     if not entry_time_str:
@@ -298,7 +299,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
       [0.5] 早期紧SL: 入场后30min内未浮盈达标 → SL收紧到1% (防方向全错慢性失血)
       [1] SL_INITIAL/SL_BREAKEVEN/SL_TRAIL_LOCK: effective_sl 触及 (按初始止损/保本/锁利区分)
       [1.5] TAKE_PROFIT: 触及止盈价 (RR≥1.5 才生效)
-      [2] OVERNIGHT_GAP_STOP: cohort B 隔夜仓跳空 >3%
+      [2] OVERNIGHT_GAP_STOP (名不副实, 2026-09-24 勘误): 持仓过夜 且 亏损 ≥
+          overnight_gap_stop_pct 的快平 —— **无 gap 校验**, 开盘跳空只是其中一种触发方式
+          (metadata 也不落 gap 字段, 复盘不要去查 gap%)
       [3] PRE_CLOSE_EXIT: 收盘前 8min (cohort B 盈利可跳过)
       [3.4] MFE_STALL_EXIT: 持仓≥150min 且 峰值浮盈<0.5% 且 当前水下 → 提前离场 (2026-07-24)
       [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific;

@@ -81,8 +81,12 @@ def analyze_direction(days: int = 7) -> dict:
         win_rets = [s["fwd_ret_t1"] * 100 for s in signals if s["fwd_ret_t1"] > 0]
         loss_rets = [abs(s["fwd_ret_t1"]) * 100 for s in signals if s["fwd_ret_t1"] <= 0]
         avg_win = sum(win_rets) / len(win_rets) if win_rets else 0
-        avg_loss = sum(loss_rets) / len(loss_rets) if loss_rets else 0.001
-        pnl_ratio = avg_win / avg_loss if avg_loss > 0 else 99
+        avg_loss = sum(loss_rets) / len(loss_rets) if loss_rets else 0.0
+        # 指标自净 (2026-09-24): 分母为 0 (本组无败笔, 或败笔 fwd 全为 0.00%) 时盈亏比在数学上
+        #   无定义。旧写法回退分母 0.001 → 渲染出 "4360x" 这类伪极值, 9/23 报告据此写
+        #   "⚠️ SHORT 盈亏比 4360x 为极端值/单笔贡献占 ~100%" —— 把一个 2 笔全胜小样本的
+        #   退化读数讲成了异常事件。此处返回 None, 由渲染层印 N/A。
+        pnl_ratio = (avg_win / avg_loss) if avg_loss > 0 else None
         
         # 期望值
         wr = wins_t1 / n
@@ -129,7 +133,7 @@ def analyze_direction(days: int = 7) -> dict:
         win_rets = [s["fwd_ret_t1"] * 100 for s in dir_signals if s["fwd_ret_t1"] > 0]
         loss_rets = [abs(s["fwd_ret_t1"]) * 100 for s in dir_signals if s["fwd_ret_t1"] <= 0]
         avg_win = sum(win_rets) / len(win_rets) if win_rets else 0
-        avg_loss = sum(loss_rets) / len(loss_rets) if loss_rets else 0.001
+        avg_loss = sum(loss_rets) / len(loss_rets) if loss_rets else 0.0
         
         dir_summary[direction] = {
             "n": n,
@@ -137,7 +141,8 @@ def analyze_direction(days: int = 7) -> dict:
             "avg_ret_t1": avg_ret,
             "avg_win": avg_win,
             "avg_loss": avg_loss,
-            "pnl_ratio": avg_win / avg_loss if avg_loss > 0 else 99,
+            # 无败笔 ⇒ 比率无定义 ⇒ None (印 N/A); 不得回退一个假分母 (指标自净 2026-09-24)
+            "pnl_ratio": (avg_win / avg_loss) if avg_loss > 0 else None,
             "expectancy": (wins/n) * avg_win - (1 - wins/n) * avg_loss,
         }
     
@@ -150,6 +155,14 @@ def analyze_direction(days: int = 7) -> dict:
         "by_strategy": results,
         "by_direction": dir_summary,
     }
+
+
+def _fmt_ratio(v) -> str:
+    """盈亏比渲染 (指标自净 2026-09-24): 无败笔 ⇒ 比率无定义 ⇒ 印 N/A。
+
+    旧路径用分母回退 0.001 伪造出 4360x 这类读数, 被下游当成"极端异常值"解读。
+    """
+    return "N/A" if v is None else f"{v:.2f}x"
 
 
 def format_report(data: dict) -> str:
@@ -174,7 +187,7 @@ def format_report(data: dict) -> str:
         icon = "📈" if d == "LONG" else "📉"
         lines.append(
             f"{icon}{d:4s} {s['n']:6d} {s['win_rate']:7.1%} "
-            f"{s['avg_ret_t1']:+9.3f}% {s['pnl_ratio']:7.2f}x {s['expectancy']:+9.3f}%"
+            f"{s['avg_ret_t1']:+9.3f}% {_fmt_ratio(s['pnl_ratio']):>8s} {s['expectancy']:+9.3f}%"
         )
     
     lines.append("")
@@ -200,7 +213,7 @@ def format_report(data: dict) -> str:
         lines.append(
             f"  {icon} {s['direction']:5s} {s['strategy']:30s} "
             f"n={s['n']:3d} WR={s['win_rate_t1']:.0%} "
-            f"ret={s['avg_ret_t1']:+.3f}% W/L={s['pnl_ratio']:.2f}x{t5_info}{alert}"
+            f"ret={s['avg_ret_t1']:+.3f}% W/L={_fmt_ratio(s['pnl_ratio'])}{t5_info}{alert}"
         )
     
     lines.append("")
@@ -215,7 +228,8 @@ def format_report(data: dict) -> str:
             anomalies.append(
                 f"🔴 LONG+{s['strategy']} 胜率={s['win_rate_t1']:.0%} (<45%), n={s['n']}"
             )
-        if s["direction"] == "LONG" and s["pnl_ratio"] < 0.85 and s["n"] >= 20:
+        if (s["direction"] == "LONG" and s["pnl_ratio"] is not None
+                and s["pnl_ratio"] < 0.85 and s["n"] >= 20):
             anomalies.append(
                 f"⚠️ LONG+{s['strategy']} 盈亏比={s['pnl_ratio']:.2f} (<0.85), "
                 f"分层止盈可能未生效"
@@ -237,10 +251,10 @@ def format_report(data: dict) -> str:
     short_tech = data["by_strategy"].get("SHORT|TECHNICAL_MULTI_FACTOR")
     
     if long_tech:
-        pnl_ok = long_tech["pnl_ratio"] >= 1.1
+        pnl_ok = long_tech["pnl_ratio"] is not None and long_tech["pnl_ratio"] >= 1.1
         wr_ok = long_tech["win_rate_t1"] >= 0.48
         lines.append(
-            f"  LONG盈亏比 ≥1.1x: {long_tech['pnl_ratio']:.2f}x "
+            f"  LONG盈亏比 ≥1.1x: {_fmt_ratio(long_tech['pnl_ratio'])} "
             f"{'✅' if pnl_ok else '❌'}"
         )
         lines.append(

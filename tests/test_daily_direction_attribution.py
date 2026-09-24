@@ -100,3 +100,41 @@ def test_report_renders_covered_dates(tmp_path, monkeypatch):
     monkeypatch.setattr(dda, "DB_PATH", _make_db(tmp_path, _race_rows()))
     text = dda.format_report(dda.analyze_direction(days=1))
     assert "2026-08-27" in text, "报告必须自述覆盖哪些已结算日 (防'数据新鲜度'误读)"
+
+
+def test_zero_loser_group_reports_na_not_fake_ratio(tmp_path, monkeypatch):
+    """指标自净回归 (2026-09-24): 全胜组无败笔 ⇒ 盈亏比无定义 ⇒ 必须印 N/A。
+
+    旧写法把分母回退成 0.001, 渲染出 4360x 这类伪极值; 9/23 报告据此写
+    "⚠️ SHORT 盈亏比 4360x 为极端值 (单笔贡献占 ~100%)" —— 把 2 笔全胜小样本的
+    退化读数讲成了异常事件。本测试对旧口径必红。
+    """
+    rows = [
+        ("US.AAA", "2026-08-26", "SHORT", "deep_analysis", 70, 0.7, 0.010, 0.012, "2026-08-26T09:00:00-04:00"),
+        ("US.BBB", "2026-08-26", "SHORT", "deep_analysis", 70, 0.7, 0.0436, 0.0500, "2026-08-26T09:05:00-04:00"),
+    ]
+    monkeypatch.setattr(dda, "DB_PATH", _make_db(tmp_path, rows))
+    data = dda.analyze_direction(days=1)
+
+    s = data["by_direction"]["SHORT"]
+    assert s["win_rate"] == pytest.approx(1.0)
+    assert s["pnl_ratio"] is None, (
+        "无败笔时盈亏比必须为 None (无定义), 不得回退假分母伪造极值")
+    assert s["avg_loss"] == 0.0, "无败笔时平均亏损必须为 0.0, 不得回退 0.001"
+
+    text = dda.format_report(data)
+    assert "N/A" in text, "渲染层必须印 N/A"
+    assert "4360" not in text and "436" not in text, "不得出现伪造的极值盈亏比"
+
+
+def test_ratio_still_computed_when_losers_exist(tmp_path, monkeypatch):
+    """对照组: 有败笔时必须照常算出比率 (防'修一个坏一个')。"""
+    rows = [
+        ("US.AAA", "2026-08-26", "SHORT", "deep_analysis", 70, 0.7, 0.020, None, "2026-08-26T09:00:00-04:00"),
+        ("US.BBB", "2026-08-26", "SHORT", "deep_analysis", 70, 0.7, -0.010, None, "2026-08-26T09:05:00-04:00"),
+    ]
+    monkeypatch.setattr(dda, "DB_PATH", _make_db(tmp_path, rows))
+    data = dda.analyze_direction(days=1)
+    s = data["by_direction"]["SHORT"]
+    assert s["pnl_ratio"] == pytest.approx(2.0), "2.0% / 1.0% = 2.00x"
+    assert "N/A" not in dda.format_report(data)

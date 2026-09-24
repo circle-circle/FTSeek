@@ -7513,6 +7513,11 @@ def _sl_fallback_exit_reason(pnl_pct: float, entry_time_str: str, horizon: str,
     这里用与规则2 相同的尺子重贴标签: 隔夜仓 且 亏损幅度已达该 horizon 的
     overnight_gap_stop_pct → OVERNIGHT_GAP_STOP; 其余 (含任何异常) 保持 SL_INITIAL。
 
+    ⚠️ 2026-09-24 勘误: 本判据**没有 gap 校验** (只是"持仓过夜 + 亏损≥3%"), 所以该桶混着
+    真开盘跳空与纯盘中触发两类 (实测 9/23 桶内 5 笔: GAP/UBER 在开盘 09:30 出场, CRM 09:49 /
+    RIVN 10:23 是盘中触发)。归因只到"隔夜仓尾部"这一层, 不得当成 gap 事件读, metadata 里
+    也没有 gap% 字段可查。
+
     只影响记账归因, 不影响平仓动作; 两值同在 intraday_reentry._HARD_STOP_REASONS,
     再入场门行为中性。
     """

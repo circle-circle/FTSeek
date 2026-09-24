@@ -137,7 +137,7 @@ class ExitReason(str, Enum):
     DAY_TRADE_TIMEOUT = "DAY_TRADE_TIMEOUT"  # 2026-06-03: 日内超时退出 (day_trade 规则超时触发)
     MAX_HOLD_T5 = "MAX_HOLD_T5"  # RFC-061 (2026-06-24): cohort B 持仓≥5 交易日强平
     TIME_EXIT = "TIME_EXIT"  # RFC-061 (2026-06-24): 持仓>2h 且亏损保本退出
-    OVERNIGHT_GAP_STOP = "OVERNIGHT_GAP_STOP"  # RFC-061 (2026-06-24): cohort B 持夜仓隔夜跳空>3% 快平
+    OVERNIGHT_GAP_STOP = "OVERNIGHT_GAP_STOP"  # RFC-061 (2026-06-24) 快平桶; 2026-09-24 勘误: 实际判据 = 持仓过夜 且 亏损 ≥ overnight_gap_stop_pct, **无 gap 校验** (见 exit_engine 规则2) ⇒ "GAP" 只是历史命名, 不要按"跳空"解读或去查 gap% 字段。
 
 
 class FailureType(str, Enum):
