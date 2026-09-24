@@ -37,7 +37,12 @@ def _db_with_trade():
     return connection
 
 
-def test_run_writes_atomic_and_idempotent_bundle_and_markdown(tmp_path):
+def test_run_writes_atomic_and_idempotent_bundle_and_markdown(tmp_path, monkeypatch):
+    # 隔离: run() 调用 pending_adjudications() → refresh_counts() 会读真实
+    # data/shadow/ 并修改全局 REGISTRY 的 status (OBSERVING→READY_TO_EVALUATE),
+    # 污染后续 test_penetration_shadow.py 的 item.status 断言 (2026-09-24 修复)。
+    from app.review import criteria_status as _cs
+    monkeypatch.setattr(_cs, "refresh_counts", lambda: [])
     module = _load_module()
     output_dir = tmp_path / "reviews"
     connection = _db_with_trade()
@@ -54,7 +59,9 @@ def test_run_writes_atomic_and_idempotent_bundle_and_markdown(tmp_path):
     assert "净收益" in first_md
 
 
-def test_push_guard_marks_only_after_successful_sync_push(tmp_path):
+def test_push_guard_marks_only_after_successful_sync_push(tmp_path, monkeypatch):
+    from app.review import criteria_status as _cs
+    monkeypatch.setattr(_cs, "refresh_counts", lambda: [])
     module = _load_module()
     connection = _db_with_trade()
     output_dir = tmp_path / "reviews"
@@ -84,7 +91,9 @@ def test_push_guard_marks_only_after_successful_sync_push(tmp_path):
     assert state["pushed_at"]
 
 
-def test_vault_write_is_opt_in_and_idempotent(tmp_path):
+def test_vault_write_is_opt_in_and_idempotent(tmp_path, monkeypatch):
+    from app.review import criteria_status as _cs
+    monkeypatch.setattr(_cs, "refresh_counts", lambda: [])
     module = _load_module()
     connection = _db_with_trade()
     output_dir = tmp_path / "reviews"
