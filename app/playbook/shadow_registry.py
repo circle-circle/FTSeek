@@ -1536,6 +1536,75 @@ REGISTRY: list[ShadowItem] = [
               "回滚=删 cron 两行 + 计划目录 (计划只读工件, 删除即静默); "
               "注册表 hash 漂移: 本条目新增会使 review bundle hash 变化 (已知 N-9 现象)。",
     ),
+
+    # ── ETH 微观结构三影子 (提案 2026-09-24 用户裁「批」, 判据先于读数写死于
+    #    docs/analysis/2026-09-24-eth-microstructure-shadow-preregistrations.md) ──
+    ShadowItem(
+        id="eth_relative_volume_gate",
+        name="事件相对量闸影子 (提案⑤)",
+        status=ShadowStatus.OBSERVING,
+        description="对计划内事件票被**绝对量闸**拒绝的票-轮, 记录相对自身近 20 交易日"
+                    "同时段周转中位的比值 (阈值 1.5 写死, 1.2/2.0 仅敏感性) + would_pass_relative"
+                    " + cf_net_usd 反事实 (taker 语义含全费, 上界披露; 不可靠构造则 null+cf_basis 不硬算)。"
+                    "对冲量闸墙 (RFC-104 §1 出单第一卡点); 与 RFC-103 绝对放宽影子互为对照臂。"
+                    "自门控: RFC-104 阶段0 reconcile PASS <7 日时 dormant。record-only 零下单。",
+        data_path="data/shadow/eth_relative_volume_gate_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="提案§⑤预注册 (读数前写死): ≥15 交易日 ∧ would_pass_relative 样本 n≥30 ⇒ "
+                            "①cf_net_usd/笔中位数>0 ②胜率≥55% ③剔除最强单日仍>0 → 立 DEB 提请相对量通道; "
+                            "任一不满足 → 弃案停采留档。死线 2026-11-30 自动停采 (防僵尸影子)。",
+        eval_script="scripts/eth_relative_volume_gate_shadow.py",
+        created="2026-09-24",
+        notes="median basis=前向自积累 (延长时段量历史不可得 — carry 影子先例+本次探查双确认; "
+              "禁 RTH 全天量冒充盘前量); turnover_approx=decision_price×ask_volume 为近似口径如实披露 "
+              "(gate 真实 volume 未落拒绝台账), ratio 判据自参照故口径一致即可比; 反事实无排队/冲击建模=上界。",
+    ),
+    ShadowItem(
+        id="eth_patient_maker",
+        name="耐心挂单方入场影子 (提案⑥)",
+        status=ShadowStatus.OBSERVING,
+        description="对计划内、除价差/深度外全闸通过的票-轮, 纸面模拟 maker 入场: 买入挂 bid+1tick/"
+                    "卖出挂 ask−1tick, 撤单=窗尾或不利漂移>0.5% (写死), 成交判定=后续可观测价穿越挂单价"
+                    "(乐观上界, 无排队建模, 行内披露); 记 fill_rate/成交后窗内逆行/spread_captured/net_econ。"
+                    "价差从成本变利润 — 对冲盘前价差墙 (CBRL 12.4% 实测 taker 数学不可做)。"
+                    "颗粒度=既有台账原生 5min (granularity 字段如实记), 零新增 futu 轮询。"
+                    "自门控同⑤ (reconcile PASS ≥7 日)。record-only 零下单。",
+        data_path="data/shadow/eth_patient_maker_shadow.jsonl",
+        config_key=None,
+        min_n=20,
+        graduation_criteria="提案§⑥预注册 (读数前写死): 模拟入场 n≥20 ⇒ ①fill_rate≥40% "
+                            "②成交后窗内逆行中位数<捕获价差 ③净经济/笔中位数>0 → 提请 1 股 SIM 实弹探针"
+                            " (沿 DEB-20260923 B 模式另行触发; 探针通过≠通道获批, §7.3 ≥40笔/≥15日回放门同款); "
+                            "任一不满足 → 弃 maker 通道停采留档。死线 2026-11-30。",
+        eval_script="scripts/eth_patient_maker_shadow.py",
+        created="2026-09-24",
+        notes="数据面=pretrade_gate_rejects 的 spread_too_wide/insufficient_depth 行 quote{bid,ask,spread_pct}"
+              " + executions 台账; 穿越即成交是乐观上界 (排队位置未建模) — 判据过上界仍须实弹复核。",
+    ),
+    ShadowItem(
+        id="overnight_known_event_flag",
+        name="隔夜已知事件标记影子 (提案⑦)",
+        status=ShadowStatus.OBSERVING,
+        description="每日 CST 08:45 (--next-day) join open_positions (owner_strategy IN playbook_sim/"
+                    "extended_hours_entry, sqlite ro) × 次日盘前计划 (RFC-104 工件): 命中→flag "
+                    "overnight_into_known_event, 未命中→对照行 overnight_no_known_event, 计划断供→plan_missing "
+                    "如实留痕。零干预 (不写 DB/不推送/不触退出链) — 纯标记攒样 (RIVN 9/23 隔夜跳空 −$319 教训: "
+                    "计划层提前知道事件日历, 持仓穿越已知事件此前是不可见风险状态)。无自门控 (只依赖计划存在性)。",
+        data_path="data/shadow/overnight_known_event_flags.jsonl",
+        config_key=None,
+        min_n=20,
+        graduation_criteria="提案§⑦预注册 (读数前写死): ≥20 个隔夜持仓观察 (flagged≥8) ⇒ "
+                            "flagged cohort 单笔 p10 < −2% (尾部显著劣于 unflagged 同分位) → 提请"
+                            "「事件穿越隔夜仓风险处置」DEB (收紧/减仓/显式 carry 理由, 届时另裁不预设结论); "
+                            "否则维持现状留档结题。死线 2026-12-31 (隔夜样本低频, 死线放宽一档)。",
+        eval_script="scripts/overnight_known_event_flag.py",
+        created="2026-09-24",
+        notes="运行时刻语义: cron CST 08:45 = ET 20:45 (T-1) ⇒ --next-day 目标 ET 日 T 的盘前窗 "
+              "(计划 CST 08:30 刚生成, 距盘前开 CST 16:00 约 7h); plan_scope=premarket (盘后计划此时"
+              "合法不存在, 不算 missing); 幂等键 (et_date, symbol); PnL 读数器 --report 净额铁律 "
+              "(pnl_net 优先否则 realized_pnl−fees_est)。",
+    ),
 ]
 
 
