@@ -42,10 +42,55 @@ load_dotenv(ROOT / ".env.us", override=True)
 
 OUT = ROOT / "data" / "rth_fade_shadow.jsonl"
 SIZE, FEE, GAP_MIN = 5000.0, float(os.getenv("FEE_PCT", "0.53")), 3.0
+# 借券费参数 (2026-09-24 RFC-060 净额口径补全):
+#   BORROW_FEE_RATE_PCT: 年化借券费率 (%). 缺省 1.0 = ESB (easy-to-borrow) 保守值;
+#     HTB 票通常 5–50+%, 可 env 覆写做敏感性分析.
+#   BORROW_FEE_BASIS: 计息基准天数, 缺省 365 (与 fee_model 一致).
+#   BORROW_FEE_MIN_DAYS: 最小计费天数, 缺省 0 (券商自然日惯例: 日内=0天=不收费).
+#     设 1 可模拟「最低 1 日借券费」的经纪商口径.
+# 注意: RTH fade 影子严格日内 (开盘→收盘, ~6.5h), int(6.5/24)=0 ⇒ 默认口径下
+#   borrow_fee_est 恒为 $0; 此字段为毕业裁决净额口径完整性 + 未来多日持仓扩展预留.
+BORROW_FEE_RATE_PCT = float(os.getenv("BORROW_FEE_RATE_PCT", "1.0"))
+BORROW_FEE_BASIS = int(os.getenv("BORROW_FEE_BASIS", "365"))
+BORROW_FEE_MIN_DAYS = int(os.getenv("BORROW_FEE_MIN_DAYS", "0"))
+RTH_HOLD_HOURS = 6.5  # 09:30→16:00 ET
 # 2026-09-24 时钟病灶变种1收口: 原 timezone(timedelta(hours=-4)) 是永久EDT假钟,
 # 11/1 转 EST 后 et_today() 归日错位。zoneinfo 纯本地 (不触 futu/OpenD), DST 正确,
 # 与 app/utils/timezone.py R-13 fallback 链同款正例。
 ET = ZoneInfo("America/New_York")
+
+
+def estimate_borrow_fee_usd(size_usd: float, entry_price: float, direction: str,
+                             hold_hours: float = RTH_HOLD_HOURS) -> dict:
+    """影子回放借券费估算 (纯本地, 不触 futu).
+
+    复用 app.execution.fee_model.accrue_borrow_fee 的计算内核, 但费率走参数化
+    (影子回放无法查历史实时借券费率, 用 env/常量保守值; 输出字段 `borrow_fee_rate_used`
+    留痕, 毕业裁决可据此做敏感性分析).
+
+    日内持仓 (hold_hours < 24 ⇒ int(hold_days)=0) 按券商自然日惯例收费 $0;
+    BORROW_FEE_MIN_DAYS 可覆写下限 (模拟最低 1 日收费口径).
+    """
+    if str(direction or "").upper() not in ("SHORT", "SELL"):
+        return {"borrow_fee_est": 0.0, "borrow_fee_rate_used": None,
+                "borrow_fee_hold_days": 0, "borrow_fee_min_days_applied": False}
+    if entry_price <= 0 or size_usd <= 0:
+        return {"borrow_fee_est": 0.0, "borrow_fee_rate_used": BORROW_FEE_RATE_PCT,
+                "borrow_fee_hold_days": 0, "borrow_fee_min_days_applied": False}
+    qty = size_usd / entry_price
+    hold_days_raw = hold_hours / 24.0
+    hold_days = max(hold_days_raw, BORROW_FEE_MIN_DAYS / 1.0)
+    # int 截断: 日内=0, 隔夜从 1 起算 (fee_model 内核同语义)
+    days_int = int(hold_days)
+    min_applied = bool(BORROW_FEE_MIN_DAYS > 0 and days_int > int(hold_days_raw))
+    if days_int <= 0 or BORROW_FEE_RATE_PCT <= 0:
+        return {"borrow_fee_est": 0.0, "borrow_fee_rate_used": BORROW_FEE_RATE_PCT,
+                "borrow_fee_hold_days": round(hold_days, 4),
+                "borrow_fee_min_days_applied": min_applied}
+    fee_usd = round(qty * entry_price * (BORROW_FEE_RATE_PCT / 100.0) * days_int / BORROW_FEE_BASIS, 4)
+    return {"borrow_fee_est": fee_usd, "borrow_fee_rate_used": BORROW_FEE_RATE_PCT,
+            "borrow_fee_hold_days": round(hold_days, 4),
+            "borrow_fee_min_days_applied": min_applied}
 
 
 def et_today() -> str:
@@ -167,13 +212,30 @@ def main(argv=None) -> int:
             sl = 3.5
             sl_hit = bars[rth]["h"] >= o * (1 + sl / 100)
             ret_sl = -sl if sl_hit else ret
+            # 借券费估算 (2026-09-24 RFC-060: 净额口径补全, 空侧毕业裁决前置项):
+            #   纯本地, 费率参数化 (BORROW_FEE_RATE_PCT env); 日内 int(hold_days)=0 ⇒
+            #   默认口径下 borrow_fee_est 恒 $0 (券商自然日计息惯例).
+            #   向后兼容: 不改既有字段语义, 只新增字段; 多侧(若未来扩展)恒 0 但字段在.
+            bf = estimate_borrow_fee_usd(SIZE, o, "SHORT", RTH_HOLD_HOURS)
+            bf_est = bf["borrow_fee_est"]
+            net_main = round(SIZE * (ret - FEE) / 100, 2)
+            net_sl35 = round(SIZE * (ret_sl - FEE) / 100, 2)
+            # 止损臂借券费: 若触发, 持仓更短 (开盘→触价), 但保守仍用全日口径 (不减少费用)
+            # ⇒ 净额口径不会高估收益. 若未触发, 与主口径同.
             recs.append({"date": day, "rth_day": rth, "symbol": t["symbol"], "hour": t["hour"],
                          "src": t["src"], "gap_pct": round(gap, 3), "entry": o, "exit": c,
                          "prev_close": prev_close, "ret_pct": round(ret, 4),
-                         "net_usd": round(SIZE * (ret - FEE) / 100, 2),
+                         "net_usd": net_main,
                          "ret_pct_sl35": round(ret_sl, 4), "sl35_hit": bool(sl_hit),
-                         "net_usd_sl35": round(SIZE * (ret_sl - FEE) / 100, 2),
-                         "high": bars[rth]["h"], "low": bars[rth]["l"], "size_usd": SIZE, "fee_pct": FEE})
+                         "net_usd_sl35": net_sl35,
+                         "high": bars[rth]["h"], "low": bars[rth]["l"], "size_usd": SIZE, "fee_pct": FEE,
+                         # --- 新增字段 (RFC-060 借券费净额口径) ---
+                         "borrow_fee_est": bf_est,
+                         "borrow_fee_rate_used": bf["borrow_fee_rate_used"],
+                         "borrow_fee_hold_days": bf["borrow_fee_hold_days"],
+                         "borrow_fee_min_days_applied": bf["borrow_fee_min_days_applied"],
+                         "pnl_net_after_borrow": round(net_main - bf_est, 2),
+                         "pnl_net_after_borrow_sl35": round(net_sl35 - bf_est, 2)})
     finally:
         ctx.close()
 
@@ -181,9 +243,12 @@ def main(argv=None) -> int:
     for s, why in skipped[:12]:
         print(f"   略过 {s}: {why}")
     for r in recs:
+        bf_note = f" 借券${r['borrow_fee_est']:.2f}" if r['borrow_fee_est'] > 0 else ""
         print(f"   {r['symbol']:<6} [{r['hour']}] 跳空 {r['gap_pct']:+6.2f}% 开盘 {r['entry']:.2f} → "
               f"收盘 {r['exit']:.2f} 收益 {r['ret_pct']:+6.2f}% 净 ${r['net_usd']:+7.2f}"
-              f"  ‖ 平行臂(−3.5%止) 净 ${r['net_usd_sl35']:+7.2f}{' [触发]' if r['sl35_hit'] else ''}")
+              f" 含借券${r['borrow_fee_est']:.2f}⇒净净额${r['pnl_net_after_borrow']:+7.2f}"
+              f"  ‖ 平行臂(−3.5%止) 净 ${r['net_usd_sl35']:+7.2f}"
+              f"{' [触发]' if r['sl35_hit'] else ''}")
     if recs and not args.dry:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         # 幂等 (2026-09-23 复查批 P1-5): 按 (symbol, rth_day) 去重 —— 同日重跑若直接
