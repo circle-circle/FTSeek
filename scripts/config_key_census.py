@@ -247,7 +247,7 @@ def load_corpus():
 
 
 def build_index(corpus):
-    """倒排索引: \w+ 词元 → [(path, line)]. 只作候选生成器, 终判仍用
+    r"""倒排索引: \w+ 词元 → [(path, line)]. 只作候选生成器, 终判仍用
     word-boundary 正则复核 (见 classify_leaf), 保证与逐行扫描语义一致."""
     idx = defaultdict(list)
     tok = re.compile(r"\w+")
