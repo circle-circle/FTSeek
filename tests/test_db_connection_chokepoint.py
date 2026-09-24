@@ -10,7 +10,12 @@
 扫描域: app/ ops/ scripts/ (排除 archive/_tmp); tests 不管。
 
 祖父名单 (2026-08-31 实测 10 个, 全在 scripts/; app/ 当时已全净):
-收编一批 = 从名单移除一批; 名单只减不增。
+收编一批 = 从名单移除一批; 名单默认只减不增 — **唯一例外通道 = 用户/DEB 裁决登记**
+(断言文案预留)。2026-09-24 首次使用该通道: 用户裁「祖父化登记 7 文件」—
+ops/audit/* ×6 (DEB-20260916 DA 源头回溯审计批 65ce3713e/f9a84b644 入库) +
+ops/hermes/ue_glm53_first_run_verify.py (d5a64bb9b chore 批入库), 均为 record-only
+分析/核验脚本 (不写生产 DB, 多数只读 mode=ro), 入库时本守卫未拦 (守卫红由
+2026-09-24 全量回归首次暴露); 收编到 db_pool/db_utils SSOT 列为后续专项。
 回滚: 删本文件。
 """
 import pathlib
@@ -29,6 +34,15 @@ GRANDFATHER = frozenset({
     "scripts/verify_deb0815_ic_daily.py",
     "scripts/verify_deb0815_ic_layers.py",
     "scripts/verify_deb0815_ic_variants.py",
+    # ── 2026-09-24 用户裁「祖父化登记」(本名单唯一例外通道的首次使用, 见 docstring) ──
+    # record-only 审计/核验脚本, 不写生产 DB; SSOT 收编列后续专项
+    "ops/audit/audit_da_pricing_quality.py",   # DEB-20260916 审计批 65ce3713e
+    "ops/audit/audit_inputs.py",               # DEB-20260916 审计批
+    "ops/audit/audit_inv_cross_full.py",       # DEB-20260916 审计批 f9a84b644
+    "ops/audit/audit_planned_vs_landed.py",    # DEB-20260916 审计批
+    "ops/audit/drill_chase_zero.py",           # DEB-20260916 审计批
+    "ops/audit/trace_arm_origin.py",           # DEB-20260916 审计批
+    "ops/hermes/ue_glm53_first_run_verify.py", # d5a64bb9b chore 批 (一次性核验)
 })
 
 _LITERAL_DB_CONNECT = re.compile(r'sqlite3\.connect\(\s*f?"[^"]*(?:\.db|/)[^"]*"')
