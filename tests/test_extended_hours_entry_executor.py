@@ -22,6 +22,7 @@ class FakeQuoteContext:
                 return {
                     "bid_price": 9.99,
                     "ask_price": 10.01,
+                    "bid_vol": 1_000,
                     "ask_vol": 1_000,
                     "total_market_val": 5_000_000_000,
                 }.get(key, default)
@@ -195,6 +196,60 @@ def test_pretrade_gate_accepts_liquid_quote_and_rounds_price():
     assert reason is None
     assert gate["order_price"] == 10.01
     assert gate["round_trip_fee_pct"] < executor.MAX_ROUND_TRIP_FEE_PCT
+
+
+def test_pretrade_gate_uses_direction_aware_executable_side_and_depth():
+    quote = {
+        "bid": 9.99,
+        "ask": 10.01,
+        "bid_volume": 1_000,
+        "ask_volume": 100,
+        "spread_pct": 0.1999,
+    }
+
+    gate, reason = executor._pretrade_gate(
+        10.0, 500, quote, "2026-09-18", side="SHORT"
+    )
+
+    assert reason is None
+    assert gate["order_price"] == 9.99
+    assert gate["side"] == "SHORT"
+    assert gate["executable_volume"] == 1_000
+    assert gate["bid_volume"] == 1_000
+    assert gate["ask_volume"] == 100
+
+    shallow = dict(quote, bid_volume=100, ask_volume=1_000)
+    assert executor._pretrade_gate(
+        10.0, 500, shallow, "2026-09-18", side="SHORT"
+    )[1] == "insufficient_bid_depth"
+
+
+def test_pretrade_gate_checks_adverse_drift_only():
+    favorable_short = {
+        "bid": 10.06,
+        "ask": 10.08,
+        "bid_volume": 1_000,
+        "ask_volume": 1_000,
+        "spread_pct": 0.1984,
+    }
+    adverse_short = dict(favorable_short, bid=9.94, ask=9.96)
+    favorable_long = {
+        "bid": 9.94,
+        "ask": 9.96,
+        "bid_volume": 1_000,
+        "ask_volume": 1_000,
+        "spread_pct": 0.2012,
+    }
+
+    assert executor._pretrade_gate(
+        10.0, 500, favorable_short, "2026-09-18", side="SHORT"
+    )[1] is None
+    assert executor._pretrade_gate(
+        10.0, 500, adverse_short, "2026-09-18", side="SHORT"
+    )[1] == "price_drift_too_high"
+    assert executor._pretrade_gate(
+        10.0, 500, favorable_long, "2026-09-18", side="LONG"
+    )[1] is None
 
 
 def test_entry_grade_requires_market_cap_and_turnover_then_scales_position():

@@ -817,6 +817,7 @@ def _liquidity_quote(qctx, symbol):
     row = snapshot.iloc[0]
     bid = _snapshot_number(row, "bid_price")
     ask = _snapshot_number(row, "ask_price")
+    bid_volume = _snapshot_number(row, "bid_vol")
     ask_volume = _snapshot_number(row, "ask_vol")
     market_cap = _snapshot_number(row, "total_market_val")
     if bid <= 0 or ask <= 0 or ask < bid:
@@ -825,6 +826,7 @@ def _liquidity_quote(qctx, symbol):
     return {
         "bid": bid,
         "ask": ask,
+        "bid_volume": bid_volume,
         "ask_volume": ask_volume,
         "market_cap": market_cap,
         "spread_pct": round(spread_pct, 4),
@@ -840,10 +842,16 @@ def _rounded_order_price(price):
 def _pretrade_gate(
     decision_price, qty, quote, trade_date,
     max_spread_pct=None, min_ask_depth_ratio=None,
+    side="LONG",
 ):
     if not quote:
         return None, "quote_missing"
+    short = str(side or "").upper() in {"SHORT", "SELL_SHORT", "SELL"}
+    bid = float(quote["bid"])
     ask = float(quote["ask"])
+    executable_price = bid if short else ask
+    executable_volume_key = "bid_volume" if short else "ask_volume"
+    executable_volume = float(quote.get(executable_volume_key, 0) or 0)
     spread_pct = float(quote["spread_pct"])
     spread_limit = max_spread_pct if max_spread_pct is not None else MAX_SPREAD_PCT
     depth_ratio = (
@@ -851,23 +859,35 @@ def _pretrade_gate(
     )
     if spread_pct > spread_limit:
         return None, "spread_too_wide"
-    if decision_price > 0 and ask > decision_price * (1.0 + MAX_PRICE_DRIFT_PCT / 100.0):
-        return None, "price_drift_too_high"
-    if qty > 0 and float(quote["ask_volume"]) < qty * depth_ratio:
-        return None, "insufficient_ask_depth"
+    if decision_price > 0:
+        max_adverse_drift = decision_price * (1.0 + MAX_PRICE_DRIFT_PCT / 100.0)
+        min_adverse_drift = decision_price * (1.0 - MAX_PRICE_DRIFT_PCT / 100.0)
+        adverse_drift = (
+            executable_price < min_adverse_drift
+            if short
+            else executable_price > max_adverse_drift
+        )
+        if adverse_drift:
+            return None, "price_drift_too_high"
+    if qty > 0 and executable_volume < qty * depth_ratio:
+        depth_reason = "insufficient_bid_depth" if short else "insufficient_ask_depth"
+        return None, depth_reason
 
     from app.execution.fee_model import estimate_round_trip
-    fee = estimate_round_trip(qty, ask, ask, "LONG", trade_date)
-    notional = qty * ask
+    fee = estimate_round_trip(qty, executable_price, executable_price, side, trade_date)
+    notional = qty * executable_price
     fee_pct = fee["total"] / notional * 100.0 if notional > 0 else float("inf")
     if fee_pct > MAX_ROUND_TRIP_FEE_PCT:
         return None, "round_trip_fee_too_high"
 
     return {
-        "order_price": _rounded_order_price(ask),
-        "bid": quote["bid"],
+        "order_price": _rounded_order_price(executable_price),
+        "side": "SHORT" if short else "LONG",
+        "bid": bid,
         "ask": ask,
-        "ask_volume": float(quote["ask_volume"]),
+        "bid_volume": float(quote.get("bid_volume", 0) or 0),
+        "ask_volume": float(quote.get("ask_volume", 0) or 0),
+        "executable_volume": executable_volume,
         "spread_pct": spread_pct,
         "round_trip_fee_est": fee["total"],
         "round_trip_fee_pct": round(fee_pct, 4),
@@ -1148,6 +1168,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
         price, qty, quote, today,
         max_spread_pct=spread_limit,
         min_ask_depth_ratio=depth_ratio,
+        side="LONG",
     )
     if gate is None:
         counts["research_liquidity"] = counts.get("research_liquidity", 0) + 1
@@ -2335,6 +2356,7 @@ def collect(session, dry=False):
                     price, qty, quote, today,
                     max_spread_pct=spread_limit,
                     min_ask_depth_ratio=depth_ratio,
+                    side=_direction,
                 )
                 if gate is None:
                     counts["liquidity"] = counts.get("liquidity", 0) + 1
@@ -2614,6 +2636,7 @@ def collect(session, dry=False):
                     price, qty, quote, today,
                     max_spread_pct=spread_limit,
                     min_ask_depth_ratio=depth_ratio,
+                    side=_direction,
                 )
                 if gate is None:
                     counts["liquidity"] = counts.get("liquidity", 0) + 1
