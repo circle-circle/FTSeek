@@ -349,6 +349,26 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 **③ 扩样/多重比较说明**：扩样在标签层修复（F14）前**不可能**（BREAKOUT 臂无新数据）；T3 历史读数涉及 ≥3 个口径（旧锚/开盘基准/净\$）× 2 个分型版本 ⇒ 按 Bonferroni α≈0.008，T3 的 p<0.001 名义上仍过线，**但人群断代（止于 8/21）使其不满足「对现役有效」的前提** —— 统计显著 ≠ 可外推。
 
 **⇒ F13 处置**：三项形式上补完，结论 = **T3 轴维持「不落任何动作」并追加断代声明**；解锁条件改为「F14 修复落地 + 修复后 ≥15 个交易日新配对数据」，而非单纯扩样。
+### 三.11 主动全链路审计（2026-09-25，用户令「再对全链路客观真实检查是否还有这类问题」）
+
+> 方法：`proactive-codebase-audit` 铁律 0（分域深挖）——2 个并行子代理（FTSeek 仓 16 个 `quote['price']/last_price` 消费点 + DA skill 6 个 realtime 日K `closes[-1]` 调用点），立案人逐条亲验（铁律 1：子代理 ~25% 误报）。
+
+**结论：盘前价格口径族在决策/执行链上无新增 P0；一处立案人自己的 P0 声称被证伪撤回。**
+
+**① 撤回（证伪源=DB 实证）**：审计中曾报「盘前 bid/ask=0 回退昨收 ⇒ SL/TP/仓位挂昨收」为 P0。证伪：
+- 生成时刻 admission 用的是**快照 ask 而非昨收**（META 9/24: `admission.metrics.entry_price=736.60`=生成时 ask，`entry_price_source` 记录 `price=744.10, bid=736.00, ask=736.60`）；
+- DB `entry_price` 是**执行时点 reprice 值**而非生成值（META `reprice_audit`: from 769.73→to 770.16 at 13:58 ET，SL 同步重算 731.24→731.65=5%；ORCL 成交笔 from 138.0→to 138.48 at 09:38 ET）——G-06 真实下单价 SSOT（DEB-20260903）已覆盖此路径；
+- 回退腿实测触发率：近 20 交易日 298 条非 SKIP 指令，带 `entry_price_source` 的 50 条中 **bid=ask=0 触发 0 次**；有 `reprice_audit` 84 条。
+- 「entry vs 当日开盘偏差 +3.47%」的比较是**口径错误**：entry 是下单时点价（META 盘中确实涨到 ~770），不是开盘价。教训：比价格先对齐时点语义。
+
+**② 子代理误报纠正**：Task 1 将 F5（regime spy_price）报为新 P0——实为 R8 已落地影子项（`05fa9e441`）；其 11 条「无法判定」经亲验全部无恙（TOMBSTONE 死代码 / main.py:614 退役线程 / `legacy_battle_plan_enabled: false`(config:321) / TRADING 门禁盘前不调用）。
+
+**③ 真实但低危（登记不修，理由）**：
+- P2 `market_scanner.py:338/818` momentum 评分盘前用昨收当现价（榜单层；L320-322 prev_close 口径已修；影响=可能漏选盘前异动股进深分析池，深分析会重采）；
+- P2 `llm_synth.py:432-442` 技术面段 chg5/chg20/MA 无「截至昨日」asof 标注（与头部 last_price ⚠️标注不对称；随下次 prompt 批补）；
+- P3 `data_collector.py:1012` 行业 peer chg_5d 同型（5 日窗口误差小）；
+- **验证无恙**：`pipeline.py:304` ATR 筛选（`compute_screening_atr` 显式交易日截断+口径注释，同族唯一已正确处理的点）；`market_regime_filter._check_consecutive_down`（TOMBSTONE 死代码）；`spy_change_pct`（只透传不进打分）。
+
 ## 四、方案设计
 
 ### 4.1 P0 — DA 大盘环境口径修复（建议先做；纯输入保真）
@@ -608,6 +628,7 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
 11. **R3 里「扩窗后若四条件全达才进入下一次裁决」的说法也已经过期**：扩窗（71 日）当天就做完了，
     结论是**在该窗口上仍全不达** ⇒ 该轴已由「冻结」改为「关闭」。留着"待窗口变长"的措辞会诱导后人重提。
 12. **对抗性复查单元超时无产出**（600s，23 次调用）⇒ §三.2 只有功能性复查（C1–C9）背书，**对抗性结论缺位**；已收窄范围重派，其结果与本文件后续修订绑定。
+13. **（R9）立案人自己的 P0 声称也会错，撤回注明证伪源**：主动审计中曾报「盘前 bid/ask=0 回退昨收 ⇒ SL/TP/仓位挂昨收」为 P0 并请用户裁决修法——取证后**证伪**：① 生成时刻 admission 用的是**快照 ask**（META 9/24 `admission.metrics.entry_price=736.60`，`entry_price_source` 记录 `price=744.10, bid=736.00, ask=736.60`）；② DB `entry_price` 是**执行时点 reprice 值**而非生成值（META `reprice_audit` from 769.73→to 770.16 at 13:58 ET，SL 同步重算；ORCL 成交笔 from 138.0→to 138.48 at 09:38 ET），G-06 真实下单价 SSOT（DEB-20260903）已覆盖；③ 回退腿近 20 交易日 298 条非 SKIP 中**触发 0 次**。错因：把「entry vs 当日开盘 +3.47%」当缺陷读数，未对齐时点语义（entry=下单时点价，META 盘中确实涨到 ~770）。教训：**比价格先对齐时点语义**；立案人自己的高危声称同样须 DB 实证后才报（memory「声称必核」条款适用于自己）。
 
 ## 十一、讨论记录
 
@@ -616,6 +637,7 @@ cd /opt/ftseek/FTSeek-US && PYTHONPATH=. ./venv/bin/python3.11 scripts/premarket
   ① **F5 独立复核完成**（§三.9）：regime_log 4/4 逐日 `spy_price`=前一交易日收盘（台账级实锤）+ 9/21 真实翻转实例（距 MA20 0.11% ⇒ −2 分 ⇒ cautious）+ 33% 边界日暴露 ⇒ 缺陷确证，从「只记档」升级为**待裁修复批**（B'/A'/维持）；与 DA P0 的关键差异=spy_price 直接参与打分，改值是行为变更。
   ② **F13 三项补完**（§三.10）：BREAKOUT「消失」的真因=**标签层灭绝**——9 月结构化 BREAKOUT 0 条，14 条「突破入场」thesis 全部被标 PULLBACK_LIMIT+side=below ⇒ **T3 轴数据基础已断**，其 p<0.001 读数人群止于 8/21，对现役指令流无外推性；净 \$ 对照 p=0.052 含 0；扩样在标签修复前不可能 ⇒ T3 维持不落动作，解锁条件改为 F14 修复后 ≥15 交易日。
   ③ **登记 F14 新缺陷**：thesis 模板 × 结构化 archetype 矛盾无守卫（routing 开启时会把突破单路由成回踩限价流单）；顺带钉死 `model_used='deterministic'` 是缺失默认值（`pipeline.py:3069`）非独立通道，历史引用按此重读。
+- **R9（2026-09-25 08:5x, Hermes）**: 用户令「被动发现的问题，主动全链路再查」⇒ §三.11 分域审计（2 子代理 + 逐条亲验）：盘前价格口径族**无新增 P0**；立案人自己的「bid/ask=0 回退昨收」P0 声称被 DB 实证**证伪撤回**（admission 用快照 ask、entry_price 是执行时点 reprice 值、回退腿近 20 日触发 0 次）；子代理 F5 重复报告纠正；4 条 P2/P3 登记不修 + 3 条验证无恙留档。
 - **R8（2026-09-25 07:4x, Hermes）**: 用户裁「按建议执行 — 如果是真问题, 从解决问题角度做修复」⇒ **F5 + F14 落码**（commit `05fa9e441`，分支 rfc-060-phase1-hotfixes）：① **F5 第一步 = B' 的 record-only 双算**（`market_regime.py` +80 行）：RegimeContext 新增 `spy_pre_price/score_shadow/regime_shadow/spy_price_basis` 影子字段；纯函数 `shadow_score_delta`（只重算 SPY 相关 ±2/±1 两项，均线保持日K口径）与 `score_to_regime_value`（镜像主路径映射含 vix_uncertain 降级）；assess() 末尾经 `router.get_quote("US.SPY").pre_price` 双算，**主判定/enforce 零变更**，影子≠主判定日 WARNING 留痕 + `regime_log.notes` 附带遥测（schema 零改动，消费方按文本读）；pre_price 拿不到（盘后/push 路径）= 影子跳过，不猜不补。② **F14 = thesis×archetype 同源**（`pipeline.py`）：`_select_thesis_template` 增加 `entry_archetype` 参数，有值时按 archetype 选模板（PULLBACK_LIMIT→trend_pullback/fade_short、BREAKOUT→breakout/trend_short、FADE_SHORT→fade_short），因子映射仅缺失时兜底；方向一致性守卫（BUY 带 FADE_SHORT → WARNING + 因子兜底）；调用点透传 `vote_result.get("entry_archetype")`（BridgeVotingAdapter 已透传该键，9 月 raw 实测存在）。**行为层零变更**：thesis 是纯记录字段（compute_instruction_values 不消费，grep 验证）；routing enabled=false 未开启；返回值全在 THESIS_TEMPLATES enum 内（DECISION_SCHEMA 校验不违约）。③ 验证：新测试 `tests/test_market_regime_f5_shadow.py` **21 passed**（9/21 翻转实例钉死 delta=+4 cautious→risk_on、映射一致性、F14 同源/兜底/守卫/enum）；回归 test_market_regime + test_thesis_direction_consistency + test_instruction_generator_horizon **69 passed**；提交后 `systemctl restart ftseek-us`（前置已核：未平仓 AVGO/MU LONG、盘后 ET 19:4x、启动零 ERROR、仓位 synced 恢复、盘后冒烟 assess() basis=kline_last_close 影子=None 符合预期）。④ 后续钩子：**F5 enforce 待影子攒 5-10 交易日另裁**（判据：影子≠主判定的翻转日占比与方向正确率，见 `scripts/f5_spy_price_probe.py` 头注）；**T3 轴解锁条件（≥15 交易日新配对数据）自 `05fa9e441` 起开始积累**。⑤ 自曝：F5 影子双算的 pre_price 与主判定 spy_price 来自**不同快照时刻**（get_quote 两次调用间 SPY 可能跳动），delta 是「约同时刻」近似——影子攒样裁决时若翻转日集中在边界带（|昨收−MA20|<0.6%）需人工复核快照时间差。
 - **R3（2026-09-24 22:5x, Hermes）**: ① 对抗复查收窄重派后两单元完成（§三.4）：归因**被独立确认**（含两条反证），
   但 **D 单元推翻我 R2 的冻结前提**（额度≠深度，可立即扩窗）⇒ §四 P1 第 4 条改写 + 自曝 #9；
