@@ -15,9 +15,18 @@
 用法: PYTHONPATH=. venv/bin/python scripts/breakeven_shadow_settle.py
 落盘: data/breakeven_shadow_settlement.json
 
-⚠️ T6 钩子 (TZ 审计 2026-08-30, 复活前必修, 不在 cron 零调度): partial_day 判定
-    `exit_dt.date() == datetime.now().date()` (A/B 两处) — exit_dt 是 ET 口径,
-    右侧是服务器 CST 墙钟, 跨 ET 午夜错分日。再启用前须统一 ET 口径并重跑结算。
+T6 钩子已修 (2026-09-25 复活批, 用户裁「按最佳建议实施」): 原 partial_day 判定
+    `exit_dt.date() == datetime.now().date()` 右侧为服务器 CST 墙钟 (跨 ET 午夜错分日)
+    → 统一 now_et() (zoneinfo America/New_York, DST 自适, 不引入固定偏移假钟)。
+同批三项 (停更 37 天根因 = 结算器从未挂 cron + bar 覆盖缺口):
+  ① 挂 cron 38 6 * * 2-6 (台账 crontab-be-shadow-settle), 幂等可重跑;
+  ② load_bars 增加 data/replay_bars/{SYM}_{day}.json 逐日全天文件兜底 —
+     replay_bars_1m 全量文件仅 45 票 (fetch_minute_bars/pangan 日更名单), 而 A 行
+     跨 ~50 票; 不兜底则 ~38% 样本静默 nobars 丢弃。逐日文件要求 ≥180 根 (半天市
+     ≥210 根, 全天 390 根), 排除同目录的离场窗口小文件 (P1 口径污染先例);
+  ③ 武装线 era 感知: be_0.4 于 2026-08-18 落地 (commit 43d2cda21, 用户裁「直接落地
+     be_0.4」), W 节基线武装线按入场日分层 (之前 0.5 / 之后 0.4), A 节配对按触发日
+     分 era 呈报 — 混合两个配置时期的数据会产生幻影模式 (Gate 1 分层纪律)。
 """
 import json
 import math
@@ -25,29 +34,62 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 DATA = ROOT / "data"
 BARS_1M = DATA / "replay_bars_1m"
+BARS_DAY = DATA / "replay_bars"   # 逐日全天文件 {SYM}_{day}.json (多写入者混杂目录, 用根数闸过滤)
 DB = DATA / "ftseek_us.db"
 
-BE_ARM_PCT = 0.5          # 线上 breakeven_at_pct (config 未覆写, 代码默认)
+BE_ARM_PCT = 0.5          # be_0.4 落地前的线上 breakeven_at_pct
+BE_ARM_PCT_04 = 0.4       # 现行线上值 (2026-08-18 生效)
+BE04_ERA_START = "2026-08-18"  # commit 43d2cda21, 用户裁「直接落地be_0.4」, ET 8/18 开盘起生效
 A_ARM_PCT = 0.8           # 影子A变体武装线
 COOLDOWN_SL_PCT = 4.0     # 规则0 开盘冷却放宽
 WINDOW_END_HHMM = 9 * 60 + 45  # 冷却窗 = 开盘前15min → 09:45
 DEFAULT_CUSHION_PCT = 0.08
+MIN_DAY_BARS = 180        # 逐日文件根数闸: 全天390根/半天市≥210根; 排除离场窗口小文件 (P1口径污染先例)
 
 
-def load_bars(sym):
+def _now_et():
+    """ET 当前时间 (zoneinfo, DST 自适) — T6 钩子修复: partial_day 判定禁 CST 墙钟."""
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+def entry_key_day(t):
+    """该仓入场日 (ET, YYYY-MM-DD) — era 分层用 (be_0.4 于 2026-08-18 生效)."""
+    return t["entry_dt"].strftime("%Y-%m-%d") if t["entry_dt"] else ""
+
+
+def load_bars(sym, day=None):
+    """返回 [(ts, close)] 升序. day 给定时: 全史文件缺该日则兜底逐日全天文件.
+
+    兜底动机 (2026-09-25): replay_bars_1m 全量文件仅 45 票 (pangan 日更名单),
+    而 A 行跨 ~50 票 → 不兜底则 ~38% 配对样本静默 nobars 丢弃。
+    口径注记: 1m 全史文件为 QFQ 前复权, 逐日文件 (exit_replay_backtest.fetch_bars)
+    为 AuType.NONE 原始价 — 后者与成交原值逐字一致, 跨除息日反而更准。
+    """
     p = BARS_1M / (sym.replace(".", "_") + ".json")
-    if not p.exists():
-        return None
-    try:
-        raw = json.loads(p.read_text())
-        return [(b[0], float(b[4])) for b in raw]  # (ts, close)
-    except Exception:
-        return None
+    if p.exists():
+        try:
+            raw = json.loads(p.read_text())
+            out = [(b[0], float(b[4])) for b in raw]  # (ts, close)
+            if day is None or any(ts[:10] == day for ts, _ in out):
+                return out
+        except Exception:
+            pass
+    if day:
+        pd_ = BARS_DAY / (sym.replace(".", "_") + "_" + day + ".json")
+        if pd_.exists():
+            try:
+                raw = json.loads(pd_.read_text())
+                if len(raw) >= MIN_DAY_BARS:
+                    return [(b[0], float(b[4])) for b in raw]
+            except Exception:
+                pass
+    return None
 
 
 def profit_pct(direction, entry, price):
@@ -230,7 +272,7 @@ def main():
         if t is None:
             a_unmatched.append(rec)
             continue
-        bars = load_bars(rec["symbol"])
+        bars = load_bars(rec["symbol"], day=t["exit_dt"].strftime("%Y-%m-%d"))
         if not bars:
             a_nobars.append(rec["symbol"])
             continue
@@ -261,22 +303,41 @@ def main():
             else:
                 continue
         counter_net = profit_pct(direction, entry, exit_px) - cush
+        trigger_day = rec["ts"][:10]
         a_pairs.append({
             "symbol": rec["symbol"], "direction": direction, "trade_id": t["id"],
             "real_reason": t["exit_reason"], "mfe": rec.get("mfe_at_trigger"),
             "counter_exit_why": exit_why,
             "counter_net_pct": round(counter_net, 3), "real_net_pct": round(t["net_pct"], 3),
             "diff_pp": round(counter_net - t["net_pct"], 3),
-            "partial_day": t["exit_dt"].date() == datetime.now().date(),
+            "era": "be0.4" if trigger_day >= BE04_ERA_START else "be0.5",
+            # T6 修复: ET 口径比较 (原 datetime.now() = CST 墙钟, 跨 ET 午夜错分日)
+            "partial_day": t["exit_dt"].date() == _now_et().date(),
         })
     a_diffs = [p["diff_pp"] for p in a_pairs]
+    a_diffs_cur = [p["diff_pp"] for p in a_pairs if p["era"] == "be0.4"]
+    # 预注册翻开关判据 (DEB-20260819 §37.1, 写死不得事后改): n≥30 AND 单侧p<0.05 AND 均值>0 三条全满足才翻
+    # 裁决层 = era=be0.4 (现行武装线时代): 混合 be0.5 时代样本违反分层纪律 (幻影模式)
+    st = sign_test_p(a_diffs_cur)
+    mean_cur = sum(a_diffs_cur) / len(a_diffs_cur) if a_diffs_cur else 0.0
+    flip_verdict = (
+        "FLIP_CANDIDATE" if (len(a_diffs_cur) >= 30 and st and st["p_one_sided"] < 0.05
+                             and mean_cur > 0)
+        else ("KEEP_CURRENT_0.4" if len(a_diffs_cur) >= 30 else "SAMPLE_INSUFFICIENT")
+    )
     a_out = {
-        "summary": agg(a_diffs, "A变体(武装0.8%) vs 真实 (当日SL-or-EOD近似)"),
+        "summary": agg(a_diffs, "A变体(武装0.8%) vs 真实 (当日SL-or-EOD近似, 全era混合)"),
+        "by_era": [
+            agg([p["diff_pp"] for p in a_pairs if p["era"] == e],
+                f"era={e} ({'现行0.4武装线时代, 有效对照' if e == 'be0.4' else '旧0.5基线, 描述性'})")
+            for e in ("be0.4", "be0.5")],
+        "flip_criteria": "n>=30 AND 单侧符号检验p<0.05 AND 均值>0 (三条全满足才翻; era=be0.4 为裁决层)",
+        "flip_verdict": flip_verdict,
         "exit_why_dist": {},
         "n_records": len([r for r in shadow if r.get("variant") == "A_no_be_yet" and r.get("symbol") != "TEST"]),
         "n_nobars": a_nobars, "n_unmatched": len(a_unmatched),
         "pairs": a_pairs,
-        "caveats": "bar收盘近似轮询报价; 忽略TIME_EXIT/trail锁利/隔夜续持(W_WEEK); 当日未触发按收盘平; 8/19为盘中部分日",
+        "caveats": "bar收盘近似轮询报价; 忽略TIME_EXIT/trail锁利/隔夜续持(W_WEEK); 当日未触发按收盘平; partial_day=true 的行为盘中部分日 (EOD腿截断)",
     }
     for p in a_pairs:
         a_out["exit_why_dist"][p["counter_exit_why"]] = a_out["exit_why_dist"].get(p["counter_exit_why"], 0) + 1
@@ -302,7 +363,8 @@ def main():
     w_pairs = []
     for case in w_cases:
         t = next(x for x in trades if x["id"] == case["trade_id"])
-        bars = load_bars(t["symbol"])
+        exit_day = t["exit_dt"].strftime("%Y-%m-%d")
+        bars = load_bars(t["symbol"], day=exit_day)
         if not bars or t["net_pct"] is None:
             case["sim"] = "no_bars_or_net"
             continue
@@ -312,8 +374,9 @@ def main():
         cush = t["cushion_pct"]
         be_line = entry * (1 - cush / 100) if is_short else entry * (1 + cush / 100)
         cooldown_sl = entry * (1 + COOLDOWN_SL_PCT / 100) if is_short else entry * (1 - COOLDOWN_SL_PCT / 100)
+        # era 感知武装线: be_0.4 于 2026-08-18 落地, 之前的仓基线武装线是 0.5
+        arm_pct = BE_ARM_PCT_04 if entry_key_day(t) >= BE04_ERA_START else BE_ARM_PCT
         entry_key = t["entry_dt"].strftime("%Y-%m-%d %H:%M:%S")
-        exit_day = t["exit_dt"].strftime("%Y-%m-%d")
         armed = False
         exit_px = None
         exit_why = ""
@@ -322,7 +385,7 @@ def main():
                 continue
             hhmm = int(ts[11:13]) * 60 + int(ts[14:16])
             in_window = hhmm < WINDOW_END_HHMM
-            if not in_window and not armed and profit_pct(direction, entry, p) >= BE_ARM_PCT:
+            if not in_window and not armed and profit_pct(direction, entry, p) >= arm_pct:
                 armed = True
             if in_window:
                 sl = cooldown_sl
@@ -343,20 +406,29 @@ def main():
             "counter_exit_why": exit_why,
             "counter_net_pct": round(counter_net, 3),
             "diff_pp": round(counter_net - t["net_pct"], 3),
-            "partial_day": t["exit_dt"].date() == datetime.now().date(),
+            "partial_day": t["exit_dt"].date() == _now_et().date(),  # T6 修复: ET 口径
+            "arm_pct": arm_pct,
         }
         w_pairs.append(case)
     w_out = {
         "n_window_armed": len(w_cases), "n_normal_armed": len(w_normal),
         "summary": agg([c["sim"]["diff_pp"] for c in w_pairs if isinstance(c.get("sim"), dict)],
-                       "开盘窗武装案例: gating反事实 vs 真实"),
+                       "开盘窗武装案例: gating反事实 vs 真实 (全era混合)"),
+        "by_era": [
+            agg([c["sim"]["diff_pp"] for c in w_pairs
+                 if isinstance(c.get("sim"), dict) and c["sim"]["arm_pct"] == ap],
+                f"era={era} (武装线{ap}%)")
+            for era, ap in (("be0.5(<8/18)", BE_ARM_PCT), ("be0.4(现行)", BE_ARM_PCT_04))],
         "cases": w_cases,
-        "caveats": "gating=冷却窗(<09:45)内bar峰值不武装; 窗内SL=冷却放宽4%; 近似同[A]",
+        "caveats": "gating=冷却窗(<09:45)内bar峰值不武装; 窗内SL=冷却放宽4%; 近似同[A]; era按入场日分层",
     }
 
-    out = {"meta": {"generated": datetime.now().isoformat(), "be_arm_pct": BE_ARM_PCT,
+    out = {"meta": {"generated": datetime.now().isoformat(), "generated_et": _now_et().isoformat(),
+                    "be_arm_pct": BE_ARM_PCT, "be_arm_pct_current": BE_ARM_PCT_04,
+                    "be04_era_start": BE04_ERA_START,
                     "a_arm_pct": A_ARM_PCT, "cooldown_sl_pct": COOLDOWN_SL_PCT,
-                    "c_gate_min": 60},
+                    "c_gate_min": 60,
+                    "flip_criteria_A": "n>=30 AND 单侧符号检验p<0.05 AND 均值>0 (era=be0.4 为裁决层)"},
            "B": b_out, "C": c_out, "A": a_out, "W": w_out}
     outp = DATA / "breakeven_shadow_settlement.json"
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1))
