@@ -6555,6 +6555,7 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         #   修复: mfe_pct 缺失/为0时, 用真峰值 peak_price + entry_price/direction 反算真实 MFE%.
         #   历史无 intraday 缓存无法回填, 此修复对新平仓的单子向前生效 (纯 surgical, 不碰热路径).
         _mfe_pct = 0.0
+        _mfe_accum = 0.0
         _mae_pct = 0.0
         try:
             # #6: 复用顶部行快照 _tr/_meta (原此处独立 SELECT metadata_json/direction/entry_price)
@@ -6562,30 +6563,36 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 _mfe_pct = float(_meta.get("mfe_pct", 0) or 0)
                 _mae_pct = float(_meta.get("mae_pct", 0) or 0)
                 # mfe_pct 缺失 → 从 peak_price 反算 (peak_price 是持久化的真峰值)
-                if _mfe_pct <= 0:
-                    _peak = float(_meta.get("peak_price", 0) or 0)
-                    _entry = float(_tr[2] or 0)
-                    _dir = (_tr[1] or "LONG").upper()
+                # 2026-09-25 P2口径修 (MU 9/25 盘前BE案, 用户裁「按建议执行」): 原"仅缺失(<=0)才补"
+                #   会保留 bar/轮询累积值 — 该累积冻结在 bar_covered_until, ETH tick 不进 bar,
+                #   推送 "MFE 0.36%/capture 100%" 低于真峰值 (tick 0.4219%/bar 0.4375%)。改为恒取 max:
+                #   peak_price (tick级, 含 ETH 轮询) 与 peak_price_bar (1min bar) 都参与, 与下方
+                #   _realized_fav 兜底同型。影响面: mfe_pct 列交易侧唯一消费者 = symbol_streak_ban
+                #   (mfe<0.5 才计低MFE连败), mfe 更真只会缩小误封禁; 其余(推送/看板/周报)皆观测。
+                _mfe_accum = _mfe_pct  # 累积口径基线, 供 time_to_mfe 陈旧判定
+                _entry = float(_tr[2] or 0)
+                _dir = (_tr[1] or "LONG").upper()
+                for _pk_key in ("peak_price", "peak_price_bar"):
+                    _peak = float(_meta.get(_pk_key, 0) or 0)
                     if _peak > 0 and _entry > 0:
                         if _dir == "LONG":
                             _calc_mfe = (_peak - _entry) / _entry * 100
                         else:
                             _calc_mfe = (_entry - _peak) / _entry * 100
-                        if _calc_mfe > 0:
+                        if _calc_mfe > _mfe_pct:
                             _mfe_pct = round(_calc_mfe, 4)
                 # 2026-07-16: MAE 对称反算 — 与 MFE 同理, mae_pct 缺失时从 trough_price 反算.
                 #   根因: trough_price 入场写入 + 每轮更新 (与 peak 对称), 但 close 时从未回算成 mae_pct,
                 #   导致 MAE 常年为 0, 无法评估止损距离/浮亏承受度. 纯 surgical, 对新平仓向前生效.
-                if _mae_pct <= 0:
-                    _trough = float(_meta.get("trough_price", 0) or 0)
-                    _entry = float(_tr[2] or 0)
-                    _dir = (_tr[1] or "LONG").upper()
+                # 2026-09-25 P2口径修: MAE 侧对称 — 恒取 max(累积, trough_price, trough_price_bar)。
+                for _tr_key in ("trough_price", "trough_price_bar"):
+                    _trough = float(_meta.get(_tr_key, 0) or 0)
                     if _trough > 0 and _entry > 0:
                         if _dir == "LONG":
                             _calc_mae = (_entry - _trough) / _entry * 100
                         else:
                             _calc_mae = (_trough - _entry) / _entry * 100
-                        if _calc_mae > 0:
+                        if _calc_mae > _mae_pct:
                             _mae_pct = round(_calc_mae, 4)
                 # 定义兜底: MFE 必须 ≥ 已落袋的有利变动 (pnl_pct 为分数, 转百分比).
                 #   处理采样粒度问题: 峰值轮询未抓到最高点 (如 META peak<exit) 时不至低估 MFE.
@@ -7108,14 +7115,21 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             try:
                 _entry_px = float(_tr[2] or 0) if _tr is not None else 0
                 _mfe = float(_meta.get("mfe_pct", 0) or 0)
+                # 2026-09-25 P2口径修 (MU 9/25 案): 最终 mfe 若来自峰谷重算/落袋兜底 (大于累积值),
+                #   meta 里的 time_to_mfe 对应的仍是旧累积峰 (如 9/23 早段小峰), 时点已失真
+                #   → 推送不再显示 "(Xmin到峰)", 防把到达时点与新口径峰值混读。
+                _t2m_push = _meta.get("time_to_mfe")
+                _t2m_tr_push = _meta.get("time_to_mfe_trading_min")
+                if _mfe > _mfe_accum + 1e-9:
+                    _t2m_push = _t2m_tr_push = None
                 _px_extra = {
                     "entry_price": _entry_px or None,
                     "exit_price": float(exit_price or 0) or None,
                     "held_h": round(float(holding_hours or 0), 1),
                     "mfe_pct": _mfe if _meta.get("mfe_pct") is not None else None,
                     "mae_pct": float(_meta.get("mae_pct", 0) or 0),
-                    "time_to_mfe": _meta.get("time_to_mfe"),
-                    "time_to_mfe_trading_min": _meta.get("time_to_mfe_trading_min"),
+                    "time_to_mfe": _t2m_push,
+                    "time_to_mfe_trading_min": _t2m_tr_push,
                     "cohort": _meta.get("cohort"),
                     "horizon": _meta.get("horizon"),
                     "inv_price": _meta.get("alite_inv_price"),

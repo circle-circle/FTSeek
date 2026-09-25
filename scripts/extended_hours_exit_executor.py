@@ -225,6 +225,12 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
             "requested_limit_price": float(price),
             "broker_remark_prefix": f"ext_exit_{reason}",
         }
+        # 2026-09-25 P2口径修 (MU 9/25 案, 用户裁「按建议执行」): exit_lifecycle.reserve_leg
+        #   只认 decision.metadata 的**顶层** broker_remark_prefix (且 intent session=ETH),
+        #   嵌套在 extended_hours_exit 下它读不到 ⇒ ETH 单实际落 pbe_ 前缀, 使
+        #   reconcile_extended_hours_exits / orphan_ext_order_watch (按 remark
+        #   startswith ext_exit_ 过滤) 对这类单失明。补顶层键对齐契约; 嵌套键保留不动。
+        metadata["broker_remark_prefix"] = f"ext_exit_{reason}"
         try:
             holding_hours = max(
                 0.0,
