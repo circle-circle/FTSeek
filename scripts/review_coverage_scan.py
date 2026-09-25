@@ -29,6 +29,82 @@ REVIEW_LINE = re.compile(
     r"review|scorecard|report|settle|invariant|lesson|attribution", re.IGNORECASE
 )
 MAX_TOKENIZE_BYTES = 2_000_000
+# Cron-redirected logs are never referenced by code (the crontab line is the
+# only writer), so a code-reference liveness test is the wrong axis for them:
+# it flagged all 25 review-line cron logs as dead on 2026-09-26 while every
+# producer was in fact running.  Liveness for these artifacts = mtime within
+# the schedule's own max natural interval + 1 tick (ftseek-loop-engineering:
+# daily `* * 2-6` => 4d, weekly => 8d).
+DEFAULT_CRON_LOG_THRESHOLD_DAYS = 8
+
+
+def _cron_dow_set(field: str) -> set[int] | None:
+    """Expand a cron day-of-week field to {0..6}; None if unparseable/'*'."""
+    if field == "*":
+        return None
+    days: set[int] = set()
+    for part in field.split(","):
+        match = re.match(r"^(\d)(?:-(\d))?$", part)
+        if not match:
+            return set()
+        start = int(match.group(1)) % 7
+        end = (int(match.group(2)) % 7) if match.group(2) else start
+        if start <= end:
+            days.update(range(start, end + 1))
+        else:
+            days.update(range(start, 7), range(0, end + 1))
+    return days
+
+
+def _cron_log_threshold_days(cron_line: str) -> int:
+    """Max natural gap between runs implied by the schedule, + 1 tick."""
+    fields = cron_line.split()[:5]
+    if len(fields) < 5:
+        return DEFAULT_CRON_LOG_THRESHOLD_DAYS
+    minute, hour, dom, _month, dow = fields
+    days = _cron_dow_set(dow)
+    if days is None:
+        if dom != "*":
+            return 32  # monthly-style schedule
+        return 2  # daily (+1 tick covers late runs / DST edges)
+    if not days:
+        return DEFAULT_CRON_LOG_THRESHOLD_DAYS
+    max_gap = 1
+    for day in range(7):
+        if day in days:
+            gap = 1
+            while (day + gap) % 7 not in days:
+                gap += 1
+            max_gap = max(max_gap, gap)
+    return max_gap + 1
+
+
+def _cron_log_alive(cron_line: str, artifact: str, now: float | None = None) -> tuple[bool, dict]:
+    """Freshness-based liveness for cron-redirected log artifacts."""
+    import time as _time
+
+    now = _time.time() if now is None else now
+    path = Path(artifact)
+    if not path.is_absolute():
+        cd_match = re.search(r"\bcd\s+(\S+)", cron_line)
+        base = Path(cd_match.group(1)) if cd_match else REPO
+        path = base / path
+    threshold = _cron_log_threshold_days(cron_line)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False, {
+            "alive_basis": "mtime_freshness",
+            "age_days": None,
+            "threshold_days": threshold,
+            "note": "file_missing",
+        }
+    age_days = (now - mtime) / 86400.0
+    return age_days <= threshold, {
+        "alive_basis": "mtime_freshness",
+        "age_days": round(age_days, 2),
+        "threshold_days": threshold,
+    }
 
 
 def _root_label(root: Path) -> str:
@@ -251,13 +327,19 @@ def build_report(
             continue
         artifact = redirect.group(1)
         refs = find_refs(artifact, files, roots, code_cache)
+        # Liveness axis = mtime freshness against the schedule's own max
+        # natural interval, NOT code references (cron-redirected logs are
+        # written by the crontab line alone and are never imported/read by
+        # code; the old axis produced 25/25 false 'dead' on 2026-09-26).
+        alive, alive_detail = _cron_log_alive(stripped, artifact)
         producers.append(
             {
                 "id": f"cron:{artifact}",
                 "source": "crontab",
                 "artifact": artifact,
                 "refs": refs,
-                "alive": any(ref["scope"] != "tests" for ref in refs),
+                "alive": alive,
+                "alive_detail": alive_detail,
             }
         )
 

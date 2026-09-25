@@ -72,9 +72,13 @@ def test_cron_review_output_is_scanned(tmp_path):
     module = _load()
     repo = tmp_path / "repo"
     _write(repo / "app" / "reader.py", 'LOG = "logs/review.log"\n')
+    # cron-redirected logs are never read by code; liveness is mtime
+    # freshness against the schedule's own max natural interval (+1 tick).
+    _write(repo / "logs" / "review.log", "run output\n")
 
     report = module.build_report(
-        cron_text="30 6 * * 2-6 cd /repo && python scripts/review.py >> logs/review.log 2>&1\n",
+        cron_text="30 6 * * 2-6 cd /repo && python scripts/review.py >> logs/review.log 2>&1\n"
+        .replace("/repo", str(repo)),
         registry_items=[],
         roots=[repo / "app"],
         today="2026-09-19",
@@ -82,3 +86,44 @@ def test_cron_review_output_is_scanned(tmp_path):
 
     assert report["producers"][0]["id"] == "cron:logs/review.log"
     assert report["producers"][0]["alive"] is True
+    assert report["producers"][0]["alive_detail"]["alive_basis"] == "mtime_freshness"
+
+
+def test_cron_log_liveness_uses_schedule_threshold(tmp_path):
+    module = _load()
+    repo = tmp_path / "repo"
+    log = repo / "logs" / "weekly.log"
+    _write(log, "x\n")
+    cron_line = f"0 9 * * 6 cd {repo} && python scripts/w.py >> logs/weekly.log 2>&1"
+
+    # fresh -> alive
+    alive, detail = module._cron_log_alive(cron_line, "logs/weekly.log")
+    assert alive is True
+    assert detail["threshold_days"] == 8  # weekly: max gap 7 + 1 tick
+
+    # stale beyond schedule threshold -> dead
+    import os as _os
+    import time as _time
+    old = _time.time() - 10 * 86400
+    _os.utime(log, (old, old))
+    alive, detail = module._cron_log_alive(cron_line, "logs/weekly.log")
+    assert alive is False
+    assert detail["age_days"] > detail["threshold_days"]
+
+    # missing file -> dead with explicit note (never silently alive)
+    alive, detail = module._cron_log_alive(cron_line, "logs/nope.log")
+    assert alive is False
+    assert detail["note"] == "file_missing"
+
+
+def test_cron_threshold_matches_schedule_family():
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("rcs", SCRIPT)
+    module = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # trading-day daily `* * 2-6`: longest natural gap = 3d (Fri->Mon) + 1 = 4
+    assert module._cron_log_threshold_days("2 6 * * 2-6 cd /r && python s.py >> logs/a.log 2>&1") == 4
+    # plain daily
+    assert module._cron_log_threshold_days("0 8 * * * cd /r && python s.py >> logs/a.log 2>&1") == 2
+    # weekly single day
+    assert module._cron_log_threshold_days("0 9 * * 6 cd /r && python s.py >> logs/a.log 2>&1") == 8
