@@ -235,11 +235,15 @@ def load(since, until):
 
 def load_events(audit_since, until, inst):
     blocked, executed = [], []
-    n_rows = n_join_miss = 0
+    n_rows = n_join_miss = n_bad_json = 0
     for line in open(AUDIT, encoding="utf-8"):
         try:
             e = json.loads(line)
         except Exception:
+            # 2026-09-25 (RFC-107 §3C, 棘轮清剿): 原 `continue` 静默跳行 ⇒ "审计文件全是坏行"
+            #   与 "查了没有匹配事件" 输出同形 = 集体假绿 (同 DEB-20260914 诊断器教训)。
+            #   改为计数并回传, 由 main() 的完整性哨兵显式打印 (零控制流变更)。
+            n_bad_json += 1
             continue
         if e.get("date", "") < audit_since or e.get("date", "") > until:
             continue
@@ -257,7 +261,7 @@ def load_events(audit_since, until, inst):
               "r_close": i["close0"] / px - 1.0,
               "r_t1": (i["close_t1"] / px - 1.0) if i.get("close_t1") else None}
         (executed if act == "executed" else blocked).append(ev)
-    return blocked, executed, n_rows, n_join_miss
+    return blocked, executed, n_rows, n_join_miss, n_bad_json
 
 
 def main():
@@ -269,14 +273,16 @@ def main():
     args = ap.parse_args()
 
     rows, inst = load(args.since, args.until)
-    blocked, executed, n_rows, n_join_miss = load_events(args.audit_since, args.until, inst)
+    blocked, executed, n_rows, n_join_miss, n_bad_json = load_events(args.audit_since, args.until, inst)
 
     print("== 完整性哨兵 ==")
     print(f"指令母体 BUY {args.since}..{args.until}: {len(rows)} 条; "
           f"fwd_intraday 非空 {sum(1 for r in rows if r.get('fwd_return_intraday') is not None)}; "
           f"fwd_open 非空 {sum(1 for r in rows if r.get('fwd_return_intraday_open') is not None)}")
     print(f"审计事件 {args.audit_since}..{args.until}: 两 action 共 {n_rows} 行, "
-          f"不可关联/缺 close0 {n_join_miss}; BLOCKED 事件 {len(blocked)} / EXEC 事件 {len(executed)}")
+          f"不可关联/缺 close0 {n_join_miss}; BLOCKED 事件 {len(blocked)} / EXEC 事件 {len(executed)}; "
+          f"JSON 解析失败跳行 {n_bad_json}"
+          + ("  ⚠️ 坏行>0: 结论建立在残缺样本上, 先查 audit 文件" if n_bad_json else ""))
     b_days = len({e['date'] for e in blocked})
     e_days = len({e['date'] for e in executed})
     print(f"事件覆盖交易日: BLOCKED {b_days} / EXEC {e_days}")

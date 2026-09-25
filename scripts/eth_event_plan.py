@@ -164,7 +164,7 @@ def fetch_futu_calendar(start: str, end: str) -> list[dict]:
     try:
         from futu import OpenQuoteContext, RET_OK
     except ImportError:
-        logger.warning("futu 未安装, 跳过 futu 日历源")
+        logger.warning("futu 未安装, 跳过 futu 日历源", exc_info=True)
         return []
 
     try:
@@ -194,7 +194,7 @@ def fetch_futu_calendar(start: str, end: str) -> list[dict]:
         finally:
             ctx.close()
     except Exception as exc:
-        logger.warning("futu 拉取失败 %s~%s: %s: %s", start, end, type(exc).__name__, exc)
+        logger.warning("futu 拉取失败 %s~%s: %s: %s", start, end, type(exc).__name__, exc, exc_info=True)
         return []
 
 
@@ -615,7 +615,7 @@ def load_plan(et_date: str, session: str) -> list[dict]:
         data = json.loads(p.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("load_plan failed %s: %s", p, exc)
+        logger.warning("load_plan failed %s: %s", p, exc, exc_info=True)
         return []
 
 
@@ -664,7 +664,7 @@ def _load_jsonl_records(path: Path, trade_date: str) -> list[dict]:
             else:
                 records.append(rec)
     except OSError as exc:
-        logger.warning("_load_jsonl_records failed %s: %s", path, exc)
+        logger.warning("_load_jsonl_records failed %s: %s", path, exc, exc_info=True)
     return records
 
 
@@ -835,7 +835,7 @@ def reconcile(et_date: str, session: str) -> dict:
         with open(ledger_path, "a", encoding="utf-8") as f:
             f.write(ledger_line)
     except OSError as exc:
-        logger.warning("reconcile ledger append failed: %s", exc)
+        logger.warning("reconcile ledger append failed: %s", exc, exc_info=True)
 
     return result
 

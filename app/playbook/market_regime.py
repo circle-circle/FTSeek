@@ -363,7 +363,9 @@ class MarketRegimeGate:
                 _q = self.router.get_quote("US.SPY") or {}
                 spy_pre_price = float(_q.get("pre_price") or 0.0)
             except Exception as _e_pre:
-                logger.debug(f"[Regime] F5影子 pre_price 获取失败 (影子跳过, 主判定不受影响): {_e_pre}")
+                # 2026-09-25 W4棘轮清剿 (RFC-107 §3D): debug→warning+栈 — 影子取价失败必须可见;
+                #   频率=regime评估周期(非热循环), 主判定不受影响的语义保留在消息文本。
+                logger.warning(f"[Regime] F5影子 pre_price 获取失败 (影子跳过, 主判定不受影响): {_e_pre}", exc_info=True)
         if spy_pre_price > 0:
             _delta = shadow_score_delta(spy_price, spy_pre_price, spy_ma20, spy_ma200)
             if _delta:

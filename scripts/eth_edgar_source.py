@@ -95,7 +95,7 @@ def _cache_read(path: Path, ttl_seconds: int) -> dict | list | None:
             return None  # 过期
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("cache read failed %s: %s", path, exc)
+        logger.warning("cache read failed %s: %s", path, exc, exc_info=True)
         return None
 
 
@@ -105,7 +105,7 @@ def _cache_write(path: Path, data: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError as exc:
-        logger.warning("cache write failed %s: %s", path, exc)
+        logger.warning("cache write failed %s: %s", path, exc, exc_info=True)
 
 
 # ── ticker → CIK ──

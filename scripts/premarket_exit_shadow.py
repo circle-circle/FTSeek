@@ -9,11 +9,18 @@
   - premarket_reprice_shadow: 09:02 单点问"该不该重定价 be/SL" (持有中保护)
   - 本 shadow: 04:00-09:30 高频轮询问"该不该盘前直接平仓兑现" (退出决策)
 
-数据源 (LV3 实测 2026-09-16 06:25 ET):
-  get_market_snapshot.last_price = 盘前实时可成交价 (非昨收, update_time=当前分钟)
+数据源 (2026-09-16 首测; 2026-09-25 复核更正 — RFC-107 §3B):
+  get_market_snapshot.**pre_price** = 盘前真实价 (窗内权威); last_price 盘前**滞后卡在昨收**
+    (9/16 NOK 实锤 last 全程卡 9.84 不动而 pre_high 在涨; 9/25 06:00 ET 复测 MU last=1080.53
+    = 9/24 收盘而盘前真价已 1092) ⇒ 取价见 collect() 的 pre_price 优先分支, 勿信 last_price。
+  bid_price/ask_price = 盘前实时可成交盘口 (executable_price 由此算, LONG 取 bid)。
   pre_volume = 盘前累计成交量 (薄量 spike 过滤用)
   prev_close_price = 昨收 (分母, 盘前窗稳定)
-  无需订阅推送 — 盘前逐笔太稀疏, 轮询快照即得准实时价.
+  订阅推送无增益 (9/25 08:32 ET 活体实测): LV3 TICKER 盘前每标的 60s 仅 1 tick 且 price=昨收,
+    不含 ETH 成交 ⇒ 快照 pre_price 即盘前权威源, 提速只能加快轮询频率。
+  ⚠️ 报价密度是**标的属性不是时段属性** (原注"盘前逐笔太稀疏"已证伪, 勿再引用):
+    MU/AVGO/ORCL 快照龄 p95 ≤35s 且相邻分钟 bid 变化率 71-100%; MPC p95=1017s / RIVN=573s
+    (bid 变化率 9-19%) ⇒ 低流动票的陈旧报价风险由 B22 判据测量 (quote_age_seconds 已逐行采集)。
 
 决策规则 (2026-09-18 用户勘误):
   复用盘中 Playbook 原规则 — TAKE_PROFIT / SL_BREAKEVEN / SL_TRAIL_LOCK,
