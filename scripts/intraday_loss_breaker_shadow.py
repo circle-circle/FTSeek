@@ -239,16 +239,30 @@ def main(argv=None):
                    encoding="utf-8")
 
     # ── stdout 报告段 (04:00 日报可原样引用) ──
+    # 2026-09-25 判读防呆 (REVIEW-20260925 P2 实锤: 报告层把 期望+43.98 vs 判据≤-10
+    #   读成"已达标", 方向反了 ⇒ 若照它裁决会启用一个平均挡掉 +$44/笔盈利单的熔断)。
+    #   纪律: 判定行由本脚本算好印出, 下游报告只许照抄"判据判定"行, 禁止自行比较数字下结论。
+    #   "假想节损"标签同步更名"被挡笔净PnL" — 正值语义是"启用熔断会放弃这些盈利", 不是节省。
+    _exp = summary["blocked_expectancy"]
+    if summary["graduation_ready"]:
+        _verdict = f"MET (期望 {_exp} ≤ {GRAD_MAX_EXPECT} 且 n≥{GRAD_MIN_N}) → READY 呈裁"
+    elif _exp is not None and _exp > GRAD_MAX_EXPECT:
+        _verdict = (f"NOT_MET·方向相反 (期望 {_exp} > 判据≤{GRAD_MAX_EXPECT}: "
+                    f"被挡笔在赚钱 ⇒ 启用熔断=放弃盈利, 不得呈裁)")
+    else:
+        _verdict = f"NOT_MET (n={summary['n']} < {GRAD_MIN_N}) 攒样中"
     print(f"[GLM-A' 熔断影子] 阈值 {THRESHOLD} (预注册冻结) | 口径: {CALIBER}")
     print(f"触发日 {summary['n_trigger_days']} 个; 被挡 settled n={summary['n']}"
-          f"/{GRAD_MIN_N}; 被挡笔期望={summary['blocked_expectancy']}"
-          f" (判据≤{GRAD_MAX_EXPECT}); 假想节损合计={summary['blocked_pnl_net_total']}")
-    print(f"近30天: n={summary['last30d']['n']}, 假想节损={summary['last30d']['blocked_pnl_net']}")
+          f"/{GRAD_MIN_N}; 被挡笔期望={_exp}"
+          f" (判据≤{GRAD_MAX_EXPECT}); 被挡笔净PnL合计={summary['blocked_pnl_net_total']}"
+          f" (正=熔断会挡掉盈利)")
+    print(f"判据判定: {_verdict}")
+    print(f"近30天: n={summary['last30d']['n']}, 被挡笔净PnL={summary['last30d']['blocked_pnl_net']}")
     if skipped:
         print(f"(跳过 entry_time 无法解析 {skipped} 笔)")
     for d in summary["recent_trigger_days"]:
         print(f"  {d['trade_date']}: 触发@{d['trigger_time']} 累计{d['cum_at_trigger']}"
-              f" → 挡{d['n_blocked']}笔 假想节损{d['blocked_pnl_net']}"
+              f" → 挡{d['n_blocked']}笔 被挡笔净{d['blocked_pnl_net']}"
               f" (当日实际净{d['day_pnl_net_actual']})")
     print(f"毕业状态: {'READY — 呈裁' if summary['graduation_ready'] else 'OBSERVING 攒样中'}"
           f" | 明细表 ftseek_us.db: cb_shadow_daily/cb_shadow_blocked | {out}")

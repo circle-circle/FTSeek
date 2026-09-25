@@ -792,6 +792,22 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
     L.append(
         f"  **合计**: {total_exit_cnt}笔 PnL=${total_exit_pnl:+,.0f}"
     )
+    # 2026-09-25 (REVIEW-20260925 P0): 最大亏损桶占比由本脚本算好印出, 报告层禁止自行求比。
+    #   9/24 报告写 "OVERNIGHT_GAP -$720 占7日窗口全部亏损的 76%" — 76.2% = 720/净亏944
+    #   (净额分母), 而占**亏损笔合计**(gross losers, -1789) 仅 40.2%。两个口径都真但语义
+    #   完全不同, "全部亏损"字样必须对应亏损笔合计分母, 否则亏损集中度被虚增近一倍。
+    _neg_buckets = [e for e in exit_attr if e['total_pnl'] < 0]
+    if _neg_buckets:
+        _loss_total = sum(e['total_pnl'] for e in _neg_buckets)
+        _worst_bucket = min(_neg_buckets, key=lambda e: e['total_pnl'])
+        L.append(
+            f"  **最大亏损源**: {_worst_bucket['reason']} {_worst_bucket['cnt']}笔 "
+            f"${_worst_bucket['total_pnl']:+,.0f} | 占亏损笔合计"
+            f"({_loss_total:+,.0f})的{abs(_worst_bucket['total_pnl']/_loss_total*100):.0f}%"
+            + (f" | 占窗口净额({total_exit_pnl:+,.0f})的{abs(_worst_bucket['total_pnl']/total_exit_pnl*100):.0f}%"
+               if total_exit_pnl < 0 else "")
+            + " (两分母口径不同, 引用时必须带口径名)"
+        )
     L.append("")
 
     # ─── 环境归因 ───
