@@ -53,6 +53,36 @@ _CARRIER_RE = re.compile(
     r"data_path|eval_script|data/[\w./-]+\.jsonl|data/[\w./-]+\.json\b"
     r"|结算器\s*scripts/|count_mode", re.I)
 
+# D 段 = 「运维噪音与动作登记 (已知现象 → 不再逐次立案)」, 字典 §D 抬头自述
+# "与 A-C 的差别: 这里登记**不是交易判据**" ⇒ 其条目不是影子判据, 不进影子可见性守卫。
+# 为什么按**段**排除而不是往 NON_SHADOW_IDS 逐个加 id: D 段每条都是"设计内现象"登记,
+# 判据文里常散文提及"须影子+用户裁"(讲处置路径), 逐条加白名单 = 每写一条运维登记就改一次
+# 测试 ⇒ 守卫疲劳。源头过滤 > 层层白名单 (memory: 做减法)。
+# ⚠️ 防后门: D 段条目若含**具体观测载体证据** (_CARRIER_RE) 仍须在注册表可见 —
+# 否则"把真影子塞进 D 段"就绕过守卫 (与 NON_SHADOW_IDS 滥用检测同一条纪律)。
+_OPS_NOISE_SECTION = re.compile(r"^##\s+D\.", re.M)
+
+
+def _ops_noise_ids(text: str) -> set[str]:
+    """判据字典 D 段(运维噪音登记)的 id 集合。
+
+    段边界: 从 `## D.` 段头起, 到下一个 `## ` 段头 (或 EOF) 止。
+    阳性对照 fixture 无段头 ⇒ 返回空集 ⇒ 注入项照常被抓 (不误排除)。
+    """
+    m = _OPS_NOISE_SECTION.search(text)
+    if not m:
+        return set()
+    rest = text[m.end():]
+    nxt = re.search(r"^##\s+", rest, re.M)
+    block = rest[: nxt.start()] if nxt else rest
+    return {
+        cells[1]
+        for ln in block.split("\n")
+        if ln.startswith("|")
+        for cells in [[c.strip() for c in ln.split("|")]]
+        if len(cells) >= 4 and _ID_RE.fullmatch(cells[1] or "")
+    }
+
 
 def _criteria_rows() -> list[tuple[str, str]]:
     """判据字典表格行 → [(判据id, 整行文本)]。"""
@@ -92,6 +122,8 @@ def test_shadow_criteria_are_visible_in_registry():
         for s in REGISTRY
     )
     reg_src = REGISTRY_PY.read_text(encoding="utf-8")
+    criteria_text = CRITERIA.read_text(encoding="utf-8")
+    ops_noise = _ops_noise_ids(criteria_text)
 
     gaps = []
     for cid, ln in _criteria_rows():
@@ -99,6 +131,10 @@ def test_shadow_criteria_are_visible_in_registry():
             continue
         if not _SHADOW_HINT.search(ln):
             continue  # 非影子类判据 (硬门/口径/纪律), 不进注册表
+        # D 段(运维噪音登记)条目: 字典自定义"不是交易判据" ⇒ 豁免, 但含具体观测载体
+        # 证据的除外 (防"真影子塞 D 段"后门, 与 NON_SHADOW_IDS 滥用检测同一纪律)。
+        if cid in ops_noise and not _CARRIER_RE.search(ln):
+            continue
         m = _SLUG_RE.search(ln.split("|")[2] or "")
         slug = m.group(1) if m else ""
         if not slug:
@@ -191,6 +227,54 @@ def test_guard_actually_fires_on_whitelist_abuse(monkeypatch, tmp_path):
     with pytest.raises(AssertionError) as ei:
         test_non_shadow_whitelist_is_not_abused()
     assert "Y7" in str(ei.value), f"滥用检测没点名注入项: {str(ei.value)[:200]}"
+
+
+def test_guard_fires_when_real_shadow_hidden_in_ops_noise_section(monkeypatch, tmp_path):
+    """阳性对照④: D 段豁免不得成后门 — 含观测载体证据的 D 段条目仍须被抓 (2026-09-26 加).
+
+    背景: D3 登记 (quality_score 零 gating) 判据文散文提及"须影子+用户裁" ⇒ 被 _SHADOW_HINT
+    命中而误报。修法是**按段豁免** (D 段字典自定义"不是交易判据") 而非逐个加白名单。
+    但段豁免必须带防后门钉: 真影子若被塞进 D 段 (判据文含 data_path/.jsonl 等**具体载体证据**),
+    守卫仍须红 — 否则 D 段就成了 NON_SHADOW_IDS 之外的第二个绕过口。
+    """
+    import sys
+
+    import pytest
+
+    fake = tmp_path / "CRITERIA.md"
+    fake.write_text(
+        "# 判据字典\n\n"
+        "## C. 纪律红线\n\n| # | 红线 | 状态 | 出处 |\n|---|---|---|---|\n"
+        "| C9 | 无害项 | 恒真 | 测试 |\n\n---\n\n"
+        "## D. 运维噪音与动作登记\n\n"
+        "> 与 A-C 的差别: 这里登记**不是交易判据**\n\n"
+        "| # | 现象 | 判定 | 复评触发条件 | 出处 |\n|---|---|---|---|---|\n"
+        # D90: 纯散文提及"影子"(处置路径) ⇒ 应豁免, 不得报
+        "| D90 | 某字段零 gating | 设计内; 若要改须影子+用户裁 | 若被接进 gating → 重开 | DEB-X §1 |\n"
+        # D91: 藏在 D 段的**真影子** (含 data_path + .jsonl 载体证据) ⇒ 必须被抓
+        "| D91 | 假运维登记 (zzz_hidden_shadow_slug) | data_path=data/foo.jsonl, 影子 n≥20 | — | DEB-X §2 |\n",
+        encoding="utf-8",
+    )
+    mod = sys.modules[__name__]
+    monkeypatch.setattr(mod, "CRITERIA", fake)
+    with pytest.raises(AssertionError) as ei:
+        test_shadow_criteria_are_visible_in_registry()
+    msg = str(ei.value)
+    assert "D91" in msg, f"D 段豁免成了后门 — 真影子未被抓: {msg[:200]}"
+    assert "zzz_hidden_shadow_slug" in msg, "守卫应回显 slug 供定位"
+    assert "D90" not in msg, f"D 段纯散文登记应豁免, 不得误报: {msg[:200]}"
+
+
+def test_ops_noise_ids_requires_section_header(monkeypatch, tmp_path):
+    """阳性对照⑤: 无 `## D.` 段头时 _ops_noise_ids 返回空集 — 阳性对照 fixture 不被误豁免.
+
+    本守卫自身依赖"D 段有段头"这一格式约定; 若格式漂移 (段头改名/被删), 豁免会静默失效
+    或静默过宽。此用例钉死: 无段头 ⇒ 空集 ⇒ 注入项照常被抓 (失败模式偏向"更严"而非"更松")。
+    """
+    assert _ops_noise_ids("| D5 | x | 影子 | y |\n") == set()
+    assert _ops_noise_ids("## D. 运维噪音\n| D5 | x | 影子 | y |\n## E. 其他\n") == {"D5"}
+    # D 段是最后一段 (无后继段头) 时仍须解析到
+    assert _ops_noise_ids("## C. 红线\n| C9 | a | b | c |\n\n## D. 运维噪音\n| D7 | a | 影子 | b |\n") == {"D7"}
 
 
 def test_guard_does_not_fire_on_prose_mention_of_carrier_words(monkeypatch, tmp_path):
