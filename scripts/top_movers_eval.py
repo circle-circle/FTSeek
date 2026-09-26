@@ -218,6 +218,17 @@ def main() -> int:
     print("榜内十分位前向收益: %s" % res["decile_fwd_mean"])
     print("30min 窗口均值: %s%%" % res["fwd30_mean_pct"])
     print("裁决: %s" % res["verdict"])
+    # [只印不判] IC 方向读数 (2026-09-26 RFC-109④): 上方 verdict 的显著性判据是
+    # abs(t)>=2 ⇒ **负 IC (榜首续跌=反向信号) 同样印 GRADUATE_CANDIDATE**, 照抄裁决行
+    # 会把"该反向用"读成"可接候选池发现通道"(同向)。判决字段一字不动 (改判据=重新裁决),
+    # 只并列印方向与十分位, 由裁决人自行判读。
+    _icm = (res.get("daily_ic") or {}).get("mean")
+    _dec = res.get("decile_fwd_mean") or {}
+    if _icm is not None:
+        _dirn = "榜首续跌 (负IC ⇒ 反向信号, 接候选池=接反)" if _icm < 0 \
+            else "榜首续涨 (正IC ⇒ 同向)"
+        print("[只印不判] IC 方向: mean=%s ⇒ %s | 十分位前向 top10=%s mid=%s bottom10=%s"
+              % (_icm, _dirn, _dec.get("top10"), _dec.get("mid"), _dec.get("bottom10")))
     print("偏差注记: %s" % res["known_bias"])
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

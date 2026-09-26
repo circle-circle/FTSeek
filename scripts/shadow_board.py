@@ -782,7 +782,7 @@ def build_board():
             body += seg + [""]
         except Exception as e:
             body += [f"⚠️ {sec.__name__} 整段异常: {e}", ""]
-    tail = ["注: 只读汇总; 看板=唯一影子推送出口 (RFC-109⑦: 独立 --push 已撤, 段注册面取自 shadow_registry)。"]
+    tail = ["注: 只读汇总; 各段注册面 (status/n/判据/挂账/停采标) 取自 shadow_registry SSOT (RFC-109②③)。"]
     return "\n".join(head + [""] + body + tail)
 
 

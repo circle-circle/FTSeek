@@ -107,7 +107,13 @@ ADJUDICATED: dict[str, dict] = {
         "read_at": "2026-09-21", "recheck_after": "2026-09-30", "needs_user": True,
         "note": "榜内横截面 IC=-0.44/t=-13 (榜首续跌) 与笔级 top10 +$15.20/笔 符号相反 ⇒ 用途待裁 "
                 "(RFC-092 §8.2/§9.1)。用途三条路 (排除/反向池/并入 kr3) 均需另立预注册。"
-                "2026-09-21 用户裁: 9/30 窗满后一次裁, 在此之前维持现状 (榜单继续做参考层输入)。",
+                "2026-09-21 用户裁: 9/30 窗满后一次裁, 在此之前维持现状 (榜单继续做参考层输入)。"
+                "│9/26 重跑读数追加 (RFC-109④, 裁决与闹钟不变): 20 会话/4609 对/逐日IC有效19天, "
+                "IC 均值 **-0.4474 t=-15.877** MDE 0.0789 ⇒ 可分辨; 十分位前向 top10 -0.2004 / "
+                "mid +0.6875 / bottom10 +0.7093 (榜首组最弱=反向); 30min 窗均值 +0.4286%。"
+                "⚠️ 尺子缺陷已修: 该脚本 verdict 判据是 abs(t)>=2 ⇒ 负 IC 也印 "
+                "IC_SIGNIFICANT_GRADUATE_CANDIDATE, 照抄会把「该反向用」读成「可接候选池(同向)」; "
+                "已在 stdout 加 [只印不判] IC 方向行并列十分位 (判决字段一字未动, 改判据=重新裁决)。",
     },
     "reentry_quick_tp_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-09-30", "needs_user": False,
@@ -173,6 +179,96 @@ ADJUDICATED: dict[str, dict] = {
     "futu_channel_ofi_baseline": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
         "note": "只测到 capital_flow 相对它无增量 (-0.1192); OFI **自身** IC 未单独测 ⇒ 无 KILL 依据。",
+    },
+
+    # ── 2026-09-26 RFC-109④ 清账批: 9 条待裁面逐项实跑 eval 后的读数登记 ──────────
+    # 纪律: 每项都是**本批实跑**得出的读数 (非引注册表状态/🔔 横幅); read_at=实跑日。
+    # 不改任何 graduation_criteria/min_n (改判据=重新裁决)。needs_user=True 仅用于
+    # 判据达成但处置需用户裁的项。
+    "futu_channel_capital_flow": {
+        # 补登欠账: 9/21 用户裁「不停采」已写在本条 notes (🔒 段), 但从未入 ADJUDICATED
+        # ⇒ 周检每周把这条已裁项重复通知为「待裁」(skill 明载病灶: 已出读数不改状态
+        # ⇒ 通知面 ≠ 真实待裁面)。本行只把既有裁决登记进 SSOT, 判据与采集均零改动。
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "9/26 重跑 futu_channel_shadow_eval: rank_ic_marginal=-0.1447 (t=-1.52, "
+                "n_pairs=110) 不显著; 增量 vs OFI=-0.1326; OOS 双窗同号 (-0.1953/-0.0971) "
+                "但均为负; verdict_candidate=WEAK_EVIDENCE ⇒ 毕业判据 (双窗 OOS ≥40% 或 "
+                "ρ≥0.15) **不过**。采集维持不停 (9/21 用户裁 + 原料喂生产盘中背离门 "
+                "intraday_reentry, 见本条 notes 🔒 段)。要动的是判据/门方向, 不是采集。",
+    },
+    "exit_param_shadow": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "9/26 实跑 exit_shadow_graduation (N=495, 三门: N≥30 / 均值改善 / 一致性≥55%): "
+                "BE/DD 族 5 变体全 FAIL (最好 be0.3_dd0.3 Δ+0.191 但一致性 38.2%<55%); "
+                "30min-abort FAIL (mean_saved -0.0299%); early_tight 族 5 变体全 FAIL "
+                "(一致性 45.9-47.5%, 均值虽正 +0.20~0.26% 但不过一致性门) ⇒ **无新变体可毕业**。"
+                "唯二 PASS = dead_signal_60m_mfe0.2 (N=465, triggered -0.915% vs not +0.296%, "
+                "分离 +1.212pp) 与 mfe0.3 (+1.157pp) — 对应**已毕业的生产退出腿** "
+                "(dead_signal_exit_enabled=true/60min, 8/10-9/21 实跑 36 笔 -$309) ⇒ 属既成"
+                "事实确认, 非新提案。判据不过的变体维持纯观测, 不改任何退出参数。",
+    },
+    "early_dead_signal_shadow": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
+        "note": "9/26 实跑 early_dead_signal_report (已结算 389): 判据①双窗死单率均≥55% ⇒ "
+                "**FAIL** (预注册词表 15min 1/111=1%, 30min 0/86=0%; 词表现役基率仅 1.3% "
+                "vs 预注册当时 30% = 词表漂移, engineering-change-protocol 2026-09-23 实锤). "
+                "判据②命中组净 PnL<0 ⇒ **PASS** (15min -$3245 / 30min -$2763). "
+                "判据③差集结局为负 ⇒ **PASS** (73 笔 -$2517 / 43 笔 -$1986). "
+                "现役词表 lift 只印不判: 30min 命中组 40.7% vs 基率 11.0% = **3.71×**, "
+                "15min 2.55×。⇒ 判据①按预注册词表不可能达成 (漂移非影子失效), 而按现役词表"
+                "lift 3.7× 强过线 ⇒ **处置需用户裁**: 改判据词表 (=重新裁决, 须留痕) 或维持"
+                "纯观测。本批不动判据文字。",
+    },
+    "eth_premarket_exit_shadow": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "9/26 实跑真结算器 settle_extended_hours (新结算 270 行, 累计 5479): "
+                "判据「水下保本族/时间退出族净额>0 且样本≥30」⇒ 盘前 tighten n=125 "
+                "avg_t0_close_ret **+0.369%** (>0 ✓) / hold n=139 **-0.302%** (✗) / "
+                "hold_no_stop n=2312 -0.301% (✗); lock_in n=2 与 breakeven_lock n=2 "
+                "样本不足。⇒ tighten 族过线但其余族净额为负 ⇒ 不构成「提案」条件 "
+                "(判据要求族净额>0)。⚠️ 尺子挂错轴已发现: 注册表 eval_script 填的是"
+                "**每分钟采集器** extended_hours_exit_cron.py (实跑返回 "
+                "skip=outside_extended_hours, 非评估器), 真结算器是 settle_extended_hours.py "
+                "(cron 30 6 * * 2-6)。另 avg_capture_pct 出现 -599%/-317% = mean-of-ratios "
+                "被小 mfe 行放大, 属报表口径瑕疵, 不可当判据读数。",
+    },
+    "eth_afterhours_exit_shadow": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "同上批结算 (settle_extended_hours 9/26): 盘后 hold_to_next_open n=112 "
+                "avg_t0_close_ret **-6.992%** / best_holdout -2.307% / avg_mfe **-4.237%** "
+                "(负 MFE = 全窗未翻绿); hold_no_stop n=2640 -0.028% / best_holdout +0.051% / "
+                "mfe +2.138% / flip_rate 15.7%。⇒ 判据「净额>0 且 n≥30」**不过** "
+                "(盘后无一族净额>0; hold_to_next_open 显著为负 = 再证「盘后是惯性时段"
+                "非修复时段」ah_exit_shadow 8/27 裁决)。两时段合并评估前置条件 "
+                "(分布无系统性差异) 亦不成立: 盘前 tighten +0.369% vs 盘后同族为负。",
+    },
+    "eth_earnings_direction_path": {
+        # 挂账而非裁决: eval_script 崩在读 scratch 临时路径, 取不到判据读数。
+        "read_at": "2026-09-26", "recheck_after": "2026-10-10", "needs_user": False,
+        "note": "9/26 实跑 earnings_direction_check.py **失败** (FileNotFoundError: "
+                "/root/.hermes/cache/scratch/replay_earnings_criterion_final.json — 脚本依赖"
+                "一次性回放产物, 该目录 72h 自动清理 ⇒ eval 结构性不可重跑 = 尺子坏了, "
+                "非影子断供)。产物本体健康 (32 事件/4 日, cron 20 4 * * 2-6 在跑)。"
+                "⇒ 无判据读数, 不得裁决; 待办 = 把 eval 改读入库产物或补挂回放。"
+                "脚本头自述结论 (r=-0.006 零相关 / 上涨占比 47% / 无 miss 票路径) 系 "
+                "9/23 一次性回放, 本批未能复现, 不引为裁决证据。",
+    },
+    "eth_short_probe": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-07", "needs_user": False,
+        "note": "**未跑 eval_script** — probe_eth_short_open.py 静态扫描命中 ORDER ×7 "
+                "(真下 1 股 SIM 单), 按 skill「命中副作用一律绕开 main」纪律只读产物: "
+                "4 行 attempt 全部 execute=true / trd_env=SIMULATE (9/23 盘前 ×3 + 9/25 盘后 ×1), "
+                "n=4/3 达样本量但判据=RFC-099 §10 五条回滚触发 + **复核日 2026-10-07** "
+                "(逐日 attempt 上限=额度, 非样本量目标) ⇒ 复核窗未到, 不裁决, 闹钟设 10/7。",
+    },
+    "short_funnel_shadow": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
+        "note": "补登后首次入待裁面 (30/10 交易日, 8/16 起早已达标却从未被通知 = "
+                "「注册表非 SSOT」实锤)。**无 eval_script** ⇒ 按 skill 纪律不替裁决人选处置, "
+                "只出既有产物读数: 最新 9/25 分析 21 只 → 看空 5 → 空头指令 3 → 执行 1 "
+                "(闸阻塞提示 0) ⇒ 断点仍在 LLM 分析层转化率 (5/21=24% 看空, 3/21=14% 出指令, "
+                "1/21=5% 执行), 与 8/16 立项诊断同型。判据「n≥10 交易日再裁分层 gate」"
+                "已达成 ⇒ **处置需用户裁**: 立分层 gate 提案 (须另走 DEB) 或退役本影子。",
     },
 }
 
@@ -1489,7 +1585,7 @@ REGISTRY: list[ShadowItem] = [
         data_path="data/premarket_exit_shadow.jsonl",
         min_n=30,
         graduation_criteria="水下保本族/时间退出族净额>0 且样本 ≥30 ⇒ 提案; 与 EXT_CERT_LOCK_PCT 现行裁决对账",
-        eval_script="scripts/extended_hours_exit_cron.py",
+        eval_script="scripts/settle_extended_hours.py",
         created="2026-09-23",
         notes="现行裁决: 延长时段只做利润保护, 亏损侧不执行止损 (underwater_no_extended_loss_stop)。",
     ),
@@ -1501,7 +1597,7 @@ REGISTRY: list[ShadowItem] = [
         data_path="data/afterhours_exit_shadow.jsonl",
         min_n=30,
         graduation_criteria="同盘前退出影子; 两时段合并评估需先证分布无系统性差异",
-        eval_script="scripts/extended_hours_exit_cron.py",
+        eval_script="scripts/settle_extended_hours.py",
         created="2026-09-23",
         notes="盘后窗 16:00–19:59 ET; 收口强平 EXT_PREMARKET_FLATTEN_FROM=925 只作用于当日进场仓。",
     ),
