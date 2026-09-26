@@ -168,6 +168,13 @@ class PushMessage:
                 _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
                 _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
                 lines.append(f"🛡️ 触发线: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
+            # 2026-09-25 P3 (TDOC 9/25 案): BE 几何退化提示 — fee+slip≥武装阈值 ⇒ 武装即触发,
+            #   净利上限=MFE−fee 只剩几 bps, 读到「保本线出场 净亏」时需要知道这不是执行失误。
+            if p.get("be_degenerate"):
+                _hr = p.get("be_headroom_pct")
+                # headroom 以 bps 显示 (百分号下 -0.239% 只有一位小数, 看不出量级)
+                _hr_s = f" (headroom {float(_hr) * 100:+.1f}bps)" if _hr is not None else ""
+                lines.append(f"⚠️ 保本几何退化: 费+滑点垫 ≥ 武装阈值 ⇒ 武装即触发{_hr_s} · 净利上限≈MFE−费")
             _e60 = p.get("e60_ok")
             if _e60 is not None:
                 lines.append("⏱️ 60min表态: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))
@@ -288,6 +295,11 @@ class PushMessage:
                 _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
                 _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
                 lines.append(f"**🛡️ 触发线**: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
+            # 2026-09-25 P3 (TDOC 9/25 案): BE 几何退化提示 (同飞书文本口径)
+            if p.get("be_degenerate"):
+                _hr = p.get("be_headroom_pct")
+                _hr_s = f" (headroom {float(_hr) * 100:+.1f}bps)" if _hr is not None else ""
+                lines.append(f"**⚠️ 保本几何退化**: 费+滑点垫 ≥ 武装阈值 ⇒ 武装即触发{_hr_s} · 净利上限≈MFE−费")
             _e60 = p.get("e60_ok")
             if _e60 is not None:
                 lines.append("**⏱️ 60min表态**: " + ("✓ 已表态" if _e60 else "⚠️ 未表态(MFE<0.3%)"))

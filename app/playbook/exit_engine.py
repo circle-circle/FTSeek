@@ -430,6 +430,21 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     # ── 滑点垫 (2026-08-20 方案A): 触发线 = 费用线 + slip_cushion. 见 _compute_dynamic_effective_sl.
     #   校准: 8/20 实弹降级市价滑点 21/6.6/43bps → 0.2% 覆盖; 约束 < breakeven_at_pct(0.4).
     _slip_cushion_pct = float(_pb_cfg.get("breakeven_slip_cushion_pct", 0.0))
+
+    # ── BE 几何退化标记 (2026-09-25 P3 遥测, TDOC 9/25 案; 用户裁「要」) ──
+    #   本文件上方注释早已声明不变式 fee_cushion + slip < breakeven_at_pct, 但只约束
+    #   **回退值** BE_FALLBACK_FEE_CUSHION_PCT(0.15); fee-aware 实算值无运行时检测。
+    #   违反后果 = 「武装即触发」: 触发线(费+垫) ≥ 武装线(0.4) ⇒ 价格一到武装线就已越过
+    #   触发线, 同轮出场, BE 失去「让利润跑一段再保护」的语义。
+    #   TDOC 9/25 实弹: fee 43.9bps + slip 20 = 63.9 > 40 ⇒ 10:07 武装同分钟触发, 净利
+    #   上限仅 +6.1bps(MFE 50 − fee 43.9), 任何执行损耗都翻负 (实净 −$1.31)。
+    #   纯观测: 只写 meta 标记, 不改任何阈值/触发逻辑。有了标记才能按退化分组判分。
+    _be_arm_pct = float(_exit_cfg.get("breakeven_at_pct", 0.5))
+    _be_headroom_pct = _be_arm_pct - (_fee_cushion_pct + _slip_cushion_pct)
+    if _be_headroom_pct <= 0:
+        meta["be_geometry_degenerate"] = True
+        meta["_be_headroom_pct"] = round(_be_headroom_pct, 4)
+
     _source_type = str(meta.get("_source_type", "") or "").strip().upper()
     _adaptive_drawdown_pct = adaptive_trailing_drawdown_pct(
         peak_profit_pct, _pb_cfg, _source_type

@@ -36,6 +36,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# ── 完整性哨兵计数 (2026-09-25 except:pass 棘轮清剿, RFC-107 §3E) ──
+#   原 3 处 `except Exception: pass` 静默吞掉 bar 文件解析失败与 metadata JSON 失败。
+#   本脚本的结论建立在「配对样本完整性」上 (docstring 自陈: 不兜底则 ~38% 样本静默
+#   nobars 丢弃) — 吞错 = 结论可能建立在残缺样本上而无人知。
+#   修法: 零控制流变更 (仍走原 fallback 路径), 只计数并在 main 汇总显式打印。
+BAD_BARS: list[str] = []   # bar 文件解析失败 (路径)
+BAD_META: list[int] = []   # trade_records.metadata_json 解析失败 (trade id)
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 DATA = ROOT / "data"
@@ -78,8 +86,13 @@ def load_bars(sym, day=None):
             out = [(b[0], float(b[4])) for b in raw]  # (ts, close)
             if day is None or any(ts[:10] == day for ts, _ in out):
                 return out
-        except Exception:
-            pass
+        except Exception as _e:
+            BAD_BARS.append(f"{p.name}: {type(_e).__name__}")  # 仍走逐日兜底 (原行为)
+    return _bars_fallback(sym, day)
+
+
+def _bars_fallback(sym, day):
+    """逐日全天文件兜底 (原 load_bars 尾段, 提取以便解析失败路径复用)."""
     if day:
         pd_ = BARS_DAY / (sym.replace(".", "_") + "_" + day + ".json")
         if pd_.exists():
@@ -87,8 +100,8 @@ def load_bars(sym, day=None):
                 raw = json.loads(pd_.read_text())
                 if len(raw) >= MIN_DAY_BARS:
                     return [(b[0], float(b[4])) for b in raw]
-            except Exception:
-                pass
+            except Exception as _e:
+                BAD_BARS.append(f"{pd_.name}: {type(_e).__name__}")  # 仍返回 None (原行为)
     return None
 
 
@@ -147,8 +160,9 @@ def main():
         m = {}
         try:
             m = json.loads(r["metadata_json"] or "{}")
-        except Exception:
-            pass
+        except Exception as _e:
+            BAD_META.append(int(r["id"]))  # 仍按空 meta 继续 (原行为), 但留痕
+            print(f"⚠️ trade {r['id']} metadata_json 解析失败 ({type(_e).__name__}), 按空 meta 计入", file=sys.stderr)
         trades.append({
             "id": r["id"], "symbol": r["symbol"], "direction": r["direction"],
             "entry": float(r["entry_price"] or 0), "qty": float(r["quantity"] or 0),
@@ -424,6 +438,7 @@ def main():
     }
 
     out = {"meta": {"generated": datetime.now().isoformat(), "generated_et": _now_et().isoformat(),
+                    "parse_failures": {"bars": len(BAD_BARS), "metadata": len(BAD_META)},
                     "be_arm_pct": BE_ARM_PCT, "be_arm_pct_current": BE_ARM_PCT_04,
                     "be04_era_start": BE04_ERA_START,
                     "a_arm_pct": A_ARM_PCT, "cooldown_sl_pct": COOLDOWN_SL_PCT,
@@ -436,6 +451,13 @@ def main():
             for k, v in out.items() if k != "meta"}
     print(json.dumps(slim, ensure_ascii=False, indent=1))
     print(f"\n落盘: {outp}")
+    # 完整性哨兵 (2026-09-25): 吞错留痕 — 结论建立在样本完整性上, 解析失败必须可见
+    if BAD_BARS or BAD_META:
+        print(f"\n⚠️ 完整性哨兵: bar解析失败 {len(BAD_BARS)} 处 {BAD_BARS[:5]}{'...' if len(BAD_BARS)>5 else ''}"
+              f"; metadata解析失败 {len(BAD_META)} 笔 {BAD_META[:5]}{'...' if len(BAD_META)>5 else ''}"
+              f" → 结论可能建立在残缺样本上", file=sys.stderr)
+    else:
+        print("完整性哨兵: 0 解析失败 ✓")
 
 
 if __name__ == "__main__":

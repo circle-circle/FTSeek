@@ -7142,6 +7142,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     #   消除"保本名义亏损"歧义. drift 仅 GAP 路径有意义 (bps, 负=坠穿).
                     "be_exit_class": _meta.get("be_exit_class"),
                     "be_drift_bps": (_meta.get("_be_close_telemetry") or {}).get("drift_from_be_line"),
+                    # 2026-09-25 P3 (TDOC 9/25 案; 用户裁「要」): BE 几何退化标记上推送。
+                    #   fee+slip ≥ breakeven_at_pct ⇒ 武装即触发, 净利上限=MFE−fee 常只剩几 bps。
+                    #   推送不提示时, 读到「保本线出场 净-$1.31」无法知道它从武装那刻就注定触发。
+                    "be_degenerate": bool(_meta.get("be_geometry_degenerate")) or None,
+                    "be_headroom_pct": _meta.get("_be_headroom_pct"),
                 }
                 if _mfe > 0:
                     _px_extra["capture_pct"] = round(
@@ -8333,6 +8338,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 # 当前价 (2026-07-21: 批量快照优先, 缺失/无价的标的回落单原取价)
                 current_price = None
                 _quote_src = ""  # 2026-08-18 报价源遥测 (WDC/AMD 案: 触发价与1分K线矛盾待对账)
+                _be_q_bid = 0.0  # 2026-09-25 P3: 初始化, 防 quote 缺失路径下 telemetry 构建 NameError
+                _be_q_ask = 0.0
                 try:
                     quote = _batch_quotes.get(symbol)
                     if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
@@ -8355,6 +8362,13 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         current_price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
                         if not _quote_src:
                             _quote_src = str(quote.get("data_source", "batch"))
+                        # 2026-09-25 P3 遥测 (TDOC 9/25 案; 用户裁「要」): 侧判定审计 —
+                        #   _be_side 用 current_price(=quote.last) 比地板, 但 SHORT 回补真要吃
+                        #   **ask**、LONG 卖出真要吃 **bid**。实测判定 active 的 166 笔里 88%
+                        #   仍 3s 超时降级市价 ⇒ 历史无法区分「误判侧」与「薄盘口 3s 吃不到」。
+                        #   DEB-20260903 议题二毕业判分按侧分组 ⇒ 标尺必须可审计。纯观测, 不改下单。
+                        _be_q_bid = float(quote.get("bid", 0) or 0)
+                        _be_q_ask = float(quote.get("ask", 0) or 0)
                 except Exception:
                     pass
                 if not current_price or current_price <= 0:
@@ -8783,7 +8797,14 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                             "path": _be_path,
                             "floor_px": _be_floor_px,
                             "pad_bps": _mkt_pad_bps,
-                        }
+                            # P3 侧判定审计三件 (设计缘由见上方 _be_q_bid 取价处注释)
+                            "bid": _be_q_bid,
+                            "ask": _be_q_ask,
+                            "spread_bps": (round((_be_q_ask - _be_q_bid) / current_price * 1e4, 2)
+                                           if (_be_q_bid and _be_q_ask and current_price > 0
+                                               and _be_q_ask >= _be_q_bid) else None),
+                            "side_basis": "last_price",
+                        }  # _be_close_telemetry (+bid/ask/spread 侧判定审计)
                         # 2026-09-03 (DEB-20260903 议题二后续, 用户裁"A"): 穿透影子 record-only
                         #   埋点 — 触发瞬间采集"快跌 vs V回"判别特征, 夜间回填离场后结局。
                         #   零执行变更: marketable limit 保持默认; 任何异常静默。
