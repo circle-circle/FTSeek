@@ -10,7 +10,7 @@ cron 运行时刻: **CST 08:45 * * 2-6** (即 ET 20:45 Mon-Fri, 前一日)。
   — 在 08:45 时点盘后文件合法不存在。
 
 `--next-day` 模式 (cron 专用):
-  et_date = et_today() + 1 天 (ZoneInfo ET 纯日期加法);
+  et_date = et_today() 之后第 1 个**交易日** (SSOT nth_trading_day_after, 跳过周末/假日);
   **只扫 premarket 计划文件** (盘后文件此时合法不存在, 不算 missing, 不触发 plan_missing);
   plan_missing 仅当 premarket 文件缺失才记 (CST 08:30 生成轮失败 = 真断供);
   行内字段 plan_scope = "premarket"。
@@ -80,8 +80,23 @@ def et_today() -> str:
 
 
 def et_next_day() -> str:
-    """ET today + 1 day (cron --next-day target: T+1 premarket window)."""
-    return (datetime.now(ET).date() + timedelta(days=1)).isoformat()
+    """ET today 之后第 1 个**交易日** (cron --next-day target: 下一个盘前窗口).
+
+    2026-09-26 实测 bug: 原实现是纯日历加法 `today + timedelta(days=1)`, 不跳非交易日 ⇒
+    周五(9/25)跑得到周六(9/26), 但周五持仓实际过夜到周一(9/28); 而 RFC-104 计划文件按
+    交易日命名 (data/loops/ext_entry_plan/ 下只有 9/24、9/25, 无 9/28 之前的周末文件),
+    ⇒ 周五持仓永远命中 plan_missing, **结构性进不了 known-event cohort**, 两 cohort PnL
+    对比被系统性少采。改用既有 SSOT nth_trading_day_after (RFC-061), 不本地手写日历。
+    """
+    today = datetime.now(ET).date()
+    try:
+        from app.utils.holiday_calendar import nth_trading_day_after
+        nxt = nth_trading_day_after("US", today, 1)
+        if nxt is not None:
+            return nxt.isoformat()
+    except Exception as exc:  # 日历不可用 ⇒ fail-open 退回纯日历加法 (宁可标错日, 不停采)
+        _log.warning("交易日推算失败, 退回 +1 日历日: %s", exc, exc_info=True)
+    return (today + timedelta(days=1)).isoformat()
 
 
 def _db_ro() -> sqlite3.Connection:
@@ -173,12 +188,19 @@ def build_flags(et_date: str, dry: bool = False, premarket_only: bool = False) -
     for pr in plan_rows:
         plan_by_sym.setdefault(pr["symbol"], []).append(pr)
 
+    # Load existing keys for idempotency — 必须在 plan_missing 提前 return **之前**,
+    # 否则哨兵分支完全不去重 (2026-09-26 实测根因之二)。
+    seen = _load_seen_keys()
+
     # plan_missing: all *expected* files are missing AND no plan rows loaded.
     #   premarket_only=True: only premarket expected → 1 missing = plan_missing
     #   premarket_only=False: both expected → 2 missing = plan_missing
     expected_count = 1 if premarket_only else 2
     all_missing = len(missing_files) == expected_count and not plan_rows
     if all_missing:
+        # 哨兵行 symbol=None ⇒ 幂等键归一为 (et_date, ""); 同日已有则不重复追加
+        if (et_date, "") in seen:
+            return []
         return [{
             "et_date": et_date,
             "symbol": None,
@@ -193,9 +215,6 @@ def build_flags(et_date: str, dry: bool = False, premarket_only: bool = False) -
             "missing_files": missing_files,
             "recorded_at": now_iso,
         }]
-
-    # Load existing keys for idempotency
-    seen = _load_seen_keys()
 
     flags: list[dict] = []
     for pos in positions:
@@ -257,8 +276,12 @@ def _load_seen_keys() -> set[tuple[str, str]]:
                     row = json.loads(line)
                     ed = row.get("et_date")
                     sym = row.get("symbol")
-                    if ed and sym:
-                        seen.add((str(ed), str(sym).upper()))
+                    if ed:
+                        # symbol=None 的 plan_missing 哨兵行同样要进 seen —
+                        # 旧条件 `ed and sym` 把 None 当假 ⇒ 哨兵行永不去重,
+                        # 同日重跑必追加重复行 (2026-09-26 实测: 9/26 出现 2 行)。
+                        # 幂等键 (et_date, symbol) 中 None 归一为空串。
+                        seen.add((str(ed), str(sym).upper() if sym else ""))
                 except json.JSONDecodeError:
                     _log.warning("jsonl parse failed", exc_info=True)
                     continue

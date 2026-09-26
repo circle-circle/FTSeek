@@ -530,3 +530,26 @@ def get_holiday_calendar() -> TradingHolidayCalendar:
 def nth_trading_day_after(market: str, from_date: date, n: int, max_days: int = 30) -> Optional[date]:
     """RFC-061 便捷函数: 从 from_date 起第 n 个交易日后的日期 (模块级, 复用单例)."""
     return get_holiday_calendar().nth_trading_day_after(market, from_date, n, max_days)
+
+
+def is_trading_day_str(market: str, date_str: str, *, fail_open: bool = True) -> bool:
+    """字符串日期版交易日判定 (模块级 SSOT, 复用单例).
+
+    为什么需要: 影子采集脚本一律按 `"YYYY-MM-DD"` 字符串传日期, 各自解析 + 各自
+    try/except 会把同一段日历判定复制 N 份 (2026-09-26 实测: premarket_peer_shadow /
+    borrow_rate_snapshot / sector_pulse 三处同型缺口)。此函数是唯一入口, 消费方不得再
+    本地手写假日表或复制判定块。
+
+    fail_open=True (默认): 日历不可用时返回 True (照常采集)。理由 — 影子采集漏一个交易日
+    会永久缺样本, 而多采一个非交易日只是多一行可判别的陈旧数据 (且下游 stale 标记仍在);
+    宁可多采不可漏采。仅当调用方明确要"拿不到日历就别写"时才传 fail_open=False。
+    """
+    try:
+        y, m, d = (int(x) for x in str(date_str)[:10].split("-"))
+        return bool(get_holiday_calendar().is_trading_day(market, date(y, m, d)))
+    except Exception:
+        # fail-open 必须留痕 (禁静默吞 — 影子/采集静默死亡的根因), 否则日历挂掉时
+        # 所有采集脚本会无声地在假日照采, 又回到本函数要修的污染态。
+        logger.warning("is_trading_day_str(%s, %s) 判定失败, fail_open=%s",
+                       market, date_str, fail_open, exc_info=True)
+        return fail_open

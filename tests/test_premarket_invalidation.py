@@ -83,13 +83,36 @@ def test_hook_placed_in_trading_branch():
 # 判定逻辑复用 evaluate_rules (SSOT), 不另写阈值。
 
 
+# B门块锚点 — 必须锚**注释块标记**而非裸 "RFC-068" 字符串。
+# 2026-09-26 实测两个同型失效 (由 [RFC-111] 在 docstring 写了一句散文「与 B门硬门
+# RFC-068 的数据缺失处置一致」触发, 位置 156575, 早于真 B门块 183432):
+#   ① test_knife_gate_wired_before_execution 直接红 (index() 取到散文 ⇒ 顺序断言翻车);
+#   ② test_knife_gate_uses_ssot_rule_definition **假绿** — seg 从散文起算跨 31803 字节
+#      (几乎整个 pipeline), 任何 evaluate_rules 都会命中 ⇒ 断言零判别力 (死门)。
+# 真锚点 `# ── RFC-068` 全文件唯一, seg 只跨 4946 字节。任何人在别处写 "RFC-068" 散文
+# 都不会再撞翻守卫; 守卫失效时必须红或假绿被这条注释拦住, 不得静默漂移。
+_GATE_ANCHOR = "# ── RFC-068"
+
+
+def test_gate_anchor_is_unique():
+    """锚点自身守护: 若 `# ── RFC-068` 不再唯一 (或被删), 下面两个守卫同时失去意义。"""
+    from pathlib import Path
+    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    assert src.count(_GATE_ANCHOR) == 1, (
+        f"B门锚点 {_GATE_ANCHOR!r} 出现 {src.count(_GATE_ANCHOR)} 次 (须恰 1) — "
+        "锚点漂移会让顺序/SSOT 两个守卫静默失效"
+    )
+
+
 def test_knife_gate_uses_ssot_rule_definition():
     """硬门判定必须复用 evaluate_rules (阈值唯一定义源), 不得在 pipeline 内联 -5.0。"""
     from pathlib import Path
     src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
-    i_gate = src.index("RFC-068")
+    i_gate = src.index(_GATE_ANCHOR)
     i_reprice = src.index("2026-06-29: 触发后重新定价")
     seg = src[i_gate:i_reprice]
+    # seg 必须有界 — 无上界时任何无关 evaluate_rules 都能命中 (死门假绿)
+    assert 0 < len(seg) < 12000, f"B门 seg 长度 {len(seg)} 超界 ⇒ 锚点漂移, 断言已失去判别力"
     assert "evaluate_rules" in seg, "B门硬门必须复用 evaluate_rules (SSOT), 禁止内联阈值"
     assert '"B_long_knife" in' in seg, "硬门只取 B_long_knife 命中转正"
 
@@ -99,7 +122,7 @@ def test_knife_gate_wired_before_execution():
     from pathlib import Path
     src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
     i_trigger = src.index("盘中触发")
-    i_gate = src.index("RFC-068")
+    i_gate = src.index(_GATE_ANCHOR)
     i_exec = src.index("result = service.execute_instruction")
     assert i_trigger < i_gate < i_exec, "B门硬门必须挂在触发判定后、下单前"
     # 拦截须记入统一收口审计并计入 skipped (可追溯)

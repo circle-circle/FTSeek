@@ -59,6 +59,18 @@ def _today_et():
     return datetime.now(ET).strftime("%Y-%m-%d")
 
 
+def _is_trading_day_et(d: str) -> bool:
+    """交易日判定 — 走模块级 SSOT `is_trading_day_str`, 不本地手写假日表/判定块.
+
+    2026-09-26 实测缺口: cron `5 21 * * 1-5` 只按星期排, **不含假日** ⇒ 2026-09-07
+    (Labor Day, 美股休市) 仍采集并落盘 1 行。该行 last/prev_close/volume_ratio 与
+    9/8 逐只完全相同 (休市日不可能有成交量比), 是陈旧快照; 而注册表计数轴
+    `distinct:date` 把它算成一个交易日 ⇒ 虚增 n 且污染峰群一致性统计。
+    """
+    from app.utils.holiday_calendar import is_trading_day_str
+    return is_trading_day_str("US", d)
+
+
 # ── 1. 盘前取数 (富途优先) ────────────────────────────────────────────
 def _fetch_futu(symbols):
     """返回 {sym(裸): {pre_change, volume_ratio, last, prev_close}} 或 {}。"""
@@ -319,6 +331,10 @@ def _rejoin_existing(date):
 
 def main(push=False, refresh_join=False):
     date = _today_et()
+    if not _is_trading_day_et(date):
+        # 源头拦: 非交易日不采集不落盘 (cron 只按星期排, 假日会写陈旧快照假行)
+        print(f"[skip] {date} 非美股交易日 (假日/周末) — 不采集, 零落盘")
+        return
     if refresh_join:
         rec = _rejoin_existing(date)
         if rec is None:

@@ -37,6 +37,14 @@ def setup_logger():
 
 def main() -> int:
     logger = setup_logger()
+    today_et = now_et().strftime("%Y-%m-%d")
+    # 源头拦: 非交易日不采集不落盘。cron `5 21 * * 1-5` 只按星期排, **不含美股假日** ⇒
+    # 2026-09-07 (Labor Day, 休市) 落了 36 行, 其中 35 行费率与 9/4 完全相同 (陈旧沿用)。
+    # 纯 append 模式 ⇒ 陈旧行永久留在时序里, 被 load_borrow_rates() 当"最近一条"返回。
+    from app.utils.holiday_calendar import is_trading_day_str
+    if not is_trading_day_str("US", today_et):
+        logger.info("借券费率采集: %s 非美股交易日 (假日/周末), 跳过 — 零落盘", today_et)
+        return 0
     plan_path = BASE_DIR / "data" / "daily_active_pool.json"
     if not plan_path.exists():
         logger.warning("daily_active_pool.json 不存在, 跳过")

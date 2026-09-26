@@ -43,6 +43,14 @@ SECTOR_ETFS = {
 
 
 def main() -> int:
+    # 源头拦: 非交易日不采集不落盘。cron `*/30 22-23 * * 1-5` / `*/30 0-3 * * 2-6` 只按
+    # 星期排, **不含美股假日** ⇒ 2026-09-07 (Labor Day, 休市) 落了 12 行板块脉冲, 其
+    # changes 全为 ±0.01 的陈旧报价 (休市日无成交)。纯 append ⇒ 污染 ③板块 veto 攒料。
+    from app.utils.holiday_calendar import is_trading_day_str
+    _d = now_et().strftime("%Y-%m-%d")
+    if not is_trading_day_str("US", _d):
+        print(f"[sector-pulse] {_d} 非美股交易日 (假日/周末), 跳过 — 零落盘")
+        return 0
     from app.data.market_data_router import MarketDataRouter
     router = MarketDataRouter()
     try:

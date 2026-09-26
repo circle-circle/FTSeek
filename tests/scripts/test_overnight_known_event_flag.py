@@ -249,6 +249,35 @@ class TestIdempotency:
         lines = [l for l in mod.OUT.read_text().strip().split("\n") if l.strip()]
         assert len(lines) == 3
 
+    def test_plan_missing_sentinel_idempotent(self, fixture_db, tmp_path):
+        """plan_missing 哨兵行 (symbol=None) 同日重跑不得重复 — 2026-09-26 实测 bug 回归.
+
+        根因两层: ① _load_seen_keys 的 `if ed and sym` 把 symbol=None 当假 ⇒ 哨兵行
+        永不进 seen; ② build_flags 的 plan_missing 分支提前 return, 绕过去重。
+        实测后果: 生产 jsonl 的 et_date=2026-09-26 出现 2 行完全相同哨兵。
+        """
+        plan_dir = tmp_path / "empty_plans"
+        plan_dir.mkdir()
+        _patch_paths(fixture_db, plan_dir, tmp_path)
+
+        n1 = mod.append_flags(mod.build_flags("2026-09-26"))
+        assert n1 == 1
+        # 同日第二次重跑 — 哨兵行必须被 seen 挡住, 不得再追加
+        n2 = mod.append_flags(mod.build_flags("2026-09-26"))
+        assert n2 == 0, "plan_missing 哨兵行重跑仍重复 ⇒ 幂等键未覆盖 symbol=None"
+
+        rows = [json.loads(l) for l in mod.OUT.read_text().strip().split("\n") if l.strip()]
+        assert len(rows) == 1
+        assert rows[0]["flag"] == "plan_missing"
+        assert rows[0]["symbol"] is None
+
+        # 次日仍要能正常追加 (去重键含日期, 不得一刀切永久封杀)
+        n3 = mod.append_flags(mod.build_flags("2026-09-29"))
+        assert n3 == 1
+        rows = [json.loads(l) for l in mod.OUT.read_text().strip().split("\n") if l.strip()]
+        assert len(rows) == 2
+        assert {r["et_date"] for r in rows} == {"2026-09-26", "2026-09-29"}
+
 
 # ---------------------------------------------------------------------------
 # --report cohort PnL + 净额口径
@@ -401,10 +430,46 @@ class TestNextDayMode:
     """Tests for --next-day flag: date calc, premarket-only, narrowed plan_missing."""
 
     def test_next_day_date_calculation(self, fixture_db, fixture_plan_dir, tmp_path):
-        """et_next_day() returns ET today + 1."""
-        from datetime import timedelta
-        expected = (mod.datetime.now(mod.ET).date() + timedelta(days=1)).isoformat()
-        assert mod.et_next_day() == expected
+        """et_next_day() 返回 ET today 之后第 1 个**交易日** (跳过周末/假日).
+
+        原断言 `today + timedelta(days=1)` 把 bug 编码成了预期 — 2026-09-26 (周六) 实测:
+        旧实现给周日 9/27, 而 RFC-104 计划文件按交易日命名, 周六/周日均无文件 ⇒ 周五持仓
+        永远命中 plan_missing, 结构性进不了 known-event cohort。
+        """
+        from app.utils.holiday_calendar import nth_trading_day_after
+        today = mod.datetime.now(mod.ET).date()
+        expected = nth_trading_day_after("US", today, 1)
+        assert expected is not None, "日历不可用 ⇒ 本用例无法验证交易日语义"
+        assert mod.et_next_day() == expected.isoformat()
+        # 结果必须真是交易日 (不得落在周末/假日)
+        from app.utils.holiday_calendar import is_trading_day_str
+        assert is_trading_day_str("US", mod.et_next_day()) is True
+
+    def test_next_day_skips_weekend_and_holiday(self, fixture_db, fixture_plan_dir, tmp_path):
+        """固定日期用例 (不依赖跑测当天): 周五→周一, 假日前→假日后."""
+        from unittest.mock import patch
+        from app.utils.timezone import ET as _ET
+        cases = [
+            ("2026-09-24", "2026-09-25"),   # Thu → Fri
+            ("2026-09-25", "2026-09-28"),   # Fri → Mon (跳周末)
+            ("2026-09-04", "2026-09-08"),   # Fri → Tue (跳 Labor Day 9/7 + 周末)
+            ("2026-11-25", "2026-11-27"),   # Wed → Fri (跳 Thanksgiving 11/26)
+        ]
+        for fake, want in cases:
+            dt = mod.datetime.fromisoformat(fake + "T12:00:00").replace(tzinfo=_ET)
+            with patch.object(mod, "datetime", wraps=mod.datetime) as md:
+                md.now.return_value = dt
+                got = mod.et_next_day()
+            assert got == want, f"{fake}: 期望 {want} (交易日), 实得 {got}"
+
+    def test_next_day_fail_open_when_calendar_broken(self, fixture_db, tmp_path):
+        """日历不可用 ⇒ 退回 +1 日历日 (宁标错日不停采), 且 warning 留痕."""
+        from unittest.mock import patch
+        with patch("app.utils.holiday_calendar.nth_trading_day_after",
+                   side_effect=RuntimeError("calendar down")):
+            got = mod.et_next_day()
+        expected = (mod.datetime.now(mod.ET).date() + __import__("datetime").timedelta(days=1)).isoformat()
+        assert got == expected
 
     def test_next_day_no_false_plan_missing(self, fixture_db, tmp_path):
         """premarket file exists, afterhours absent → NOT plan_missing (no false alarm).
