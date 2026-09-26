@@ -3595,6 +3595,55 @@ def _check_graduation_gate() -> Dict[str, Any]:
         return {"graduated": False, "checks": {}, "reason": f"门禁异常: {e}"}
 
 
+def _check_same_day_hard_stop_cooldown(symbol: str, direction: str,
+                                       today: str) -> Optional[Dict[str, Any]]:
+    """RFC-111 (2026-09-26 用户批准): 同日硬止损冷却闸 — 当日该标的已按
+    intraday_reentry._HARD_STOP_REASONS (SSOT 复用, 不新建机制) 出场过,
+    拒绝同向重开。
+
+    教训 (9/24 ORCL 实证): 09:30:35 OVERNIGHT_GAP_STOP 割肉 -$400.14 →
+    09:38:27 DA 同向 BUY 重开 → 09:51:47 SL_INITIAL 再 -$83.97。
+    _HARD_STOP_REASONS 当时只被 intraday_reentry (再入场通道) 消费,
+    DA 主通道 auto_execute 执行前零查询。
+
+    口径:
+    - 只拦同向 (BUY↔LONG / SELL_SHORT↔SHORT); 反手由 same_day_reversal_block
+      (再入场通道) 管, 本门不越界。
+    - 只算 playbook 自身成交 (source_type IN PLAYBOOK_SIM/PLAYBOOK_LIVE,
+      与 S3 日名义帽同口径)。
+    - 日期口径 substr(exit_time,1,10) vs ET today, 与日名义帽查询一致。
+    - fail-open: 查询异常 → 放行 + WARNING (质量门非安全门, 下游仍有 SL 兜底;
+      与 B门硬门 RFC-068 的数据缺失处置一致)。
+
+    Returns: 命中 → {"prior_exit_reason", "prior_exit_time"}; 未命中/异常 → None。
+    """
+    try:
+        from app.playbook.intraday_reentry import _HARD_STOP_REASONS
+        from app.core.db_utils import safe_sqlite_connect
+        from app.core.paths import get_trade_records_db as _get_cd_db
+        _dir_norm = "LONG" if str(direction).upper() in ("BUY", "LONG") else "SHORT"
+        _conn = safe_sqlite_connect(_get_cd_db(), timeout=5)
+        try:
+            _rows = _conn.execute(
+                "SELECT exit_reason, exit_time FROM trade_records "
+                "WHERE symbol = ? AND substr(exit_time,1,10) = ? "
+                "AND UPPER(direction) = ? "
+                "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "AND exit_time IS NOT NULL AND exit_time != ''",
+                (symbol, today, _dir_norm),
+            ).fetchall()
+        finally:
+            _conn.close()
+        for _r in _rows:
+            _reason = str(_r[0] or "").upper()
+            if _reason in _HARD_STOP_REASONS:
+                return {"prior_exit_reason": _reason,
+                        "prior_exit_time": str(_r[1] or "")}
+    except Exception as _cd_err:
+        logger.warning(f"[playbook] 同日硬止损冷却闸查询异常 (fail-open 放行): {_cd_err}")
+    return None
+
+
 def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
                           size: float, notional: float, extra: Optional[Dict[str, Any]] = None) -> None:
     """统一收口审计 (2026-07-17): 记录每个到达执行漏斗的候选单 → data/shadow/exec_gate_audit.jsonl.
@@ -4060,6 +4109,38 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             if not inst.get("triggered"):
                 db.update_instruction_tracking(inst["id"], {"triggered": 1})
                 logger.info(f"[playbook] 盘中触发: {inst['symbol']} {inst['direction']}")
+
+            # ── RFC-111 (2026-09-26 用户批准): 同日硬止损冷却闸 — 当日已按
+            #    _HARD_STOP_REASONS 出场的标的, 拒绝同向重开 (9/24 ORCL 教训:
+            #    09:30 隔夜跳空割肉 -$400 → 09:38 同向重开 → 09:51 再割 -$84).
+            #    复用再入场通道现成常量 (SSOT), 主通道执行前首次挂门。
+            #    回滚: playbook.same_day_hard_stop_cooldown 置 false + restart ftseek-us.
+            if _playbook_cfg("same_day_hard_stop_cooldown", True):
+                _cd_hit = _check_same_day_hard_stop_cooldown(
+                    inst.get("symbol", ""), inst.get("direction", ""), today)
+                if _cd_hit:
+                    _cd_reason = (
+                        f"same_day_hard_stop_cooldown({_cd_hit['prior_exit_reason']},"
+                        f"禁同向重开,当日有效)")
+                    logger.info(
+                        f"[playbook] 🚫 {inst['symbol']} 同日硬止损冷却闸拦截: 当日已 "
+                        f"{_cd_hit['prior_exit_reason']} 出场 "
+                        f"({_cd_hit['prior_exit_time']}), 拒绝同向重开 {inst.get('direction')}")
+                    try:
+                        db.update_instruction_tracking(inst["id"], {"skip_reason": _cd_reason})
+                    except Exception as _cd_sr_err:
+                        logger.warning(
+                            f"[playbook] cooldown skip_reason 回写失败 "
+                            f"{inst.get('symbol')} (不影响拦截): {_cd_sr_err}")
+                    _emit_exec_gate_audit(inst, action="skipped_hard_stop_cooldown",
+                                          entry=float(inst.get("entry_price") or 0),
+                                          size=float(inst.get("position_size") or 0),
+                                          notional=0.0,
+                                          extra={"gate": "same_day_hard_stop_cooldown",
+                                                 "prior_exit_reason": _cd_hit["prior_exit_reason"],
+                                                 "prior_exit_time": _cd_hit["prior_exit_time"]})
+                    skipped_count += 1
+                    continue
 
             # ── RFC-068 (2026-08-29, 用户批准): B门硬门 — 接飞刀拒入场 ──
             # 证据 (8/10-8/28 影子×成交对账, RFC-068文档+8/29勘误节为准):

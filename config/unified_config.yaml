@@ -1114,6 +1114,12 @@ playbook:
   #   不触发; 已修 (market_data_router 注入日K真昨收), 见 RFC-068 勘误节.
   #   回滚: 置 false + systemctl restart ftseek-us.
   premarket_invalidation_hard_gate: true
+  # RFC-111 (2026-09-26 用户批准): 同日硬止损冷却闸 — 当日该标的已按
+  #   intraday_reentry._HARD_STOP_REASONS (SSOT 复用) 出场 → auto_execute 拒绝同向重开.
+  #   教训: 9/24 ORCL 09:30 隔夜跳空割肉 -$400 → 09:38 同向重开 → 09:51 SL 再 -$84.
+  #   只拦同向; 反手由 same_day_reversal_block (再入场通道) 管. fail-open (质量门).
+  #   回滚: 置 false + systemctl restart ftseek-us.
+  same_day_hard_stop_cooldown: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
   # 2026-09-01 信息供应链审计建议②: 负向论据警示前置注入开关 (窄口径: 只负向/只语义论据/
