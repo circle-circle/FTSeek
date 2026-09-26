@@ -26,6 +26,12 @@ from app.playbook.db import PlaybookDB
 
 logger = logging.getLogger(__name__)
 
+# [RFC-112] 有明确盈亏方向的 outcome — 与 horizon_return_model.py:64 同源同口径
+#   (那里显式 "只保留真实交易结果，排除 missed / void / skipped 等伪结果")。
+#   注意 void 不含: 实测 void 19 笔中 9 笔 pnl≠0 (真实盈亏, 靠 compute_trade_stats 的
+#   `or pnl != 0` 兜住进 wins/losses)、10 笔 pnl=0 (非结果行) → 不能整类划入。
+_DECIDED_OUTCOMES = {"win", "loss"}
+
 
 @dataclass
 class BayesianEstimate:
@@ -37,10 +43,23 @@ class BayesianEstimate:
 
 @dataclass
 class TradeStats:
-    """交易统计汇总"""
+    """交易统计汇总
+
+    口径 (2026-09-26 RFC-112 分母污染修复):
+      total       = 全部指令数 (含未成交) — 仅作"信号出现次数"与 min-sample 门槛用
+      nonoutcome  = 非结果行数 (outcome=missed/already_held/void, 从未成交, pnl=0)
+      n_decided   = wins + losses = 真实成交且有盈亏方向的笔数 ← 胜率/贝叶斯/均笔的分母
+    旧版 win_rate = wins/total、bayesian(wins, total) 把 nonoutcome 计入分母
+    (贝叶斯内部 losses = total - wins ⇒ 未成交被当成亏损), 实测压低 WR 8~24pp,
+    令 5 个真实 WR≥50% 的因子被错判 verdict=negative。
+    本口径与仓内既有两处一致: app/metrics/unified_trade_metrics.py:116
+    (win_rate = wins/(wins+losses)) 与 app/playbook/horizon_return_model.py:64
+    (显式排除 missed/void/skipped 伪结果)。
+    """
     total: int = 0
     wins: int = 0
     losses: int = 0
+    nonoutcome: int = 0
     total_pnl: float = 0.0
     gross_profit: float = 0.0
     gross_loss: float = 0.0
@@ -49,12 +68,17 @@ class TradeStats:
     pnls: List[float] = field(default_factory=list)
 
     @property
+    def n_decided(self) -> int:
+        """有真实盈亏方向的笔数 (胜率/贝叶斯/均笔的唯一合法分母)"""
+        return self.wins + self.losses
+
+    @property
     def win_rate(self) -> float:
-        return self.wins / self.total if self.total > 0 else 0
+        return self.wins / self.n_decided if self.n_decided > 0 else 0
 
     @property
     def avg_pnl(self) -> float:
-        return self.total_pnl / self.total if self.total > 0 else 0
+        return self.total_pnl / self.n_decided if self.n_decided > 0 else 0
 
     @property
     def avg_pnl_pct(self) -> float:
@@ -136,7 +160,14 @@ def classify_factor(bayesian: BayesianEstimate, stats: TradeStats) -> str:
 
 
 def compute_trade_stats(trades: List[Dict]) -> TradeStats:
-    """从交易记录列表计算统计数据"""
+    """从交易记录列表计算统计数据
+
+    [RFC-112] 分母污染修复: 非结果行 (outcome=missed/already_held 等从未成交、pnl=0)
+      计入 stats.total (信号出现次数) 但计入 nonoutcome, 不进 wins/losses ⇒
+      win_rate / avg_pnl / 贝叶斯分母只用 n_decided。
+      pnl≠0 的行即使 outcome 非 win/loss (实测 void 8 笔有真实盈亏) 仍计入 wins/losses,
+      口径修复不得丢真实盈亏。
+    """
     stats = TradeStats()
 
     for t in trades:
@@ -145,16 +176,20 @@ def compute_trade_stats(trades: List[Dict]) -> TradeStats:
 
         stats.total += 1
         stats.total_pnl += pnl
-        stats.pnls.append(pnl)
 
-        if outcome == "win" or pnl > 0:
-            stats.wins += 1
-            stats.gross_profit += pnl
-            stats.max_win = max(stats.max_win, pnl)
-        elif outcome == "loss" or pnl < 0:
-            stats.losses += 1
-            stats.gross_loss += abs(pnl)
-            stats.max_loss = min(stats.max_loss, pnl)
+        if outcome in _DECIDED_OUTCOMES or pnl != 0:
+            if outcome == "win" or pnl > 0:
+                stats.wins += 1
+                stats.gross_profit += pnl
+                stats.max_win = max(stats.max_win, pnl)
+            else:
+                stats.losses += 1
+                stats.gross_loss += abs(pnl)
+                stats.max_loss = min(stats.max_loss, pnl)
+            stats.pnls.append(pnl)
+        else:
+            # 从未成交 / 无盈亏方向 → 不得进入胜率分母 (旧版把它当亏损算)
+            stats.nonoutcome += 1
 
     return stats
 
@@ -211,7 +246,7 @@ class FactorAnalyzer:
         count = 0
         for factor_key, trades in factor_trades.items():
             stats = compute_trade_stats(trades)
-            bayesian = bayesian_binomial(stats.wins, stats.total)
+            bayesian = bayesian_binomial(stats.wins, stats.n_decided)
             verdict = classify_factor(bayesian, stats)
 
             self.db.upsert_factor_stat({
@@ -229,7 +264,7 @@ class FactorAnalyzer:
                 "bayesian_win_rate": bayesian.mean,
                 "bayesian_lower": bayesian.lower_95,
                 "bayesian_upper": bayesian.upper_95,
-                "effective_sample_size": stats.total,
+                "effective_sample_size": stats.n_decided,
                 "verdict": verdict,
             })
             count += 1
@@ -254,7 +289,7 @@ class FactorAnalyzer:
                 continue  # 样本太少, 跳过
 
             stats = compute_trade_stats(trades)
-            bayesian = bayesian_binomial(stats.wins, stats.total)
+            bayesian = bayesian_binomial(stats.wins, stats.n_decided)
             verdict = classify_factor(bayesian, stats)
 
             co_factors = pair_key.split("|")
@@ -275,7 +310,7 @@ class FactorAnalyzer:
                 "bayesian_win_rate": bayesian.mean,
                 "bayesian_lower": bayesian.lower_95,
                 "bayesian_upper": bayesian.upper_95,
-                "effective_sample_size": stats.total,
+                "effective_sample_size": stats.n_decided,
                 "verdict": verdict,
             })
             count += 1
@@ -308,7 +343,7 @@ class FactorAnalyzer:
                 continue  # 样本不足
 
             stats = compute_trade_stats(all_trades)
-            bayesian = bayesian_binomial(stats.wins, stats.total)
+            bayesian = bayesian_binomial(stats.wins, stats.n_decided)
 
             # 判定状态
             pf = stats.profit_factor
