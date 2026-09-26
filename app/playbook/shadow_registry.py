@@ -628,7 +628,13 @@ REGISTRY: list[ShadowItem] = [
                          "evidence": "注册基线(7/1起): 拦截组 n=10 WR=50% 笔均-$28.3 累计-$283; "
                                      "对照组 gap<2% n=252 笔均-$3.6。n<30 且亏损笔数5/10未达显著 → 攒样中"}],
         notes="计数口径=拦截组交易笔数 (eval 脚本从 DB 现算); 与 gap_dive_halve (逆势深跌减半) 互补不对称: "
-              "本项管顺向追极端缺口。",
+              "本项管顺向追极端缺口。"
+              "🔗 2026-09-26 RFC-109⑥ 标同轴: 与 extreme_gap_ban_shadow 的**顺向腿 (ag≥+4)** 测同一"
+              "假设的同一批笔 (顺向追极端缺口), 但阈值 (≥5% vs ≥+4%) 与判据 (本项要符号检验 p≤0.05, "
+              "彼项要误杀率≤40%) 均不同 ⇒ 同批笔挂两个判据 = 双转正打架风险高于共用文件那对。"
+              "裁决纪律: 三条**不得独立转正**, 顺向缺口禁入只允许一条胜出 (归属待用户裁)。",
+        intent="gap_direction_alignment",
+        cross_ref=("gap_alignment", "extreme_gap_ban_shadow"),
     ),
     ShadowItem(
         id="da_glm_shadow",
@@ -960,8 +966,14 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/gap_alignment_shadow.py",
         created="2026-09-01",
         notes="count_mode=distinct:trade_id — 重跑/回填不重复计数, 每笔交易只算 1 样本 "
-              "(390 回填系合法历史样本=§0.3 证据基线, 非刷样); by_source 切片读 latest summary",
+              "(390 回填系合法历史样本=§0.3 证据基线, 非刷样); by_source 切片读 latest summary。"
+              "🔗 2026-09-26 RFC-109⑥ 标同轴: 与 extreme_gap_ban_shadow **共用同一 data_path** "
+              "(gap_alignment_shadow.jsonl, n 完全相同) ⇒ 同一批笔挂两个判据。裁决纪律: "
+              "两条**不得独立转正** (双转正会打架), 归属先裁 — 执行侧门归 gap_chase_gate (B1), "
+              "禁入提案归 extreme_gap_ban_shadow (D1'), 本条只做分源切片观测不另立门。",
         count_mode="distinct:trade_id",
+        intent="gap_direction_alignment",
+        cross_ref=("extreme_gap_ban_shadow", "gap_chase_gate"),
     ),
     ShadowItem(
         id="da_blocked_cf",
@@ -1286,7 +1298,12 @@ REGISTRY: list[ShadowItem] = [
               "**未达毕业线维持攒样**。计数口径注意: 注册表 current_n 是共享 jsonl 行数 "
               "(>min_n 属预期, READY≠毕业), 毕业 n 数的是**每腿被拦子集** (裁决时以当日报告 "
               "D1' 小节冻结值为准, 同 kr3 子集计数先例)。data_path 与 gap_alignment 影子共享 "
-              "= 心跳由 52 5 cron 保证。回滚=删本条目 (读数小节属 unit_cell 脚本, 另案)。",
+              "= 心跳由 52 5 cron 保证。回滚=删本条目 (读数小节属 unit_cell 脚本, 另案)。"
+              "🔗 2026-09-26 RFC-109⑥ 标同轴: 与 gap_alignment 共用 data_path 且 n 完全相同 "
+              "(524/30) ⇒ 同一批笔挂两个判据, **不得独立转正**; 归属: 本条=禁入提案 (D1'), "
+              "gap_alignment=分源切片观测 (不另立门), 执行侧门=gap_chase_gate (B1)。",
+        intent="gap_direction_alignment",
+        cross_ref=("gap_alignment", "gap_chase_gate"),
     ),
     ShadowItem(
         id="entry_delay_confirm",
