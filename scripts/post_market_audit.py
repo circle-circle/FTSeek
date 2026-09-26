@@ -35,6 +35,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from dotenv import load_dotenv
+
+# A9 首跑测试批排除口径 (SSOT = app.core.db_utils.A9_CLEAN_PERFORMANCE_WHERE;
+# docs/ADJUDICATED-CRITERIA.md A9, 判据 2026-09-20 用户裁「同意」)。
+# 表现类读数 (胜率/PnL/归因/连亏) 必须排除 9/17 盘前首跑 4 笔 (trade_records
+# 1521/1522/1524/1526, metadata_json.exclusion_reason='first_run_test_2026-09-17')。
+# attribution_fee_net 是费用/成本标定视图 — A9 明令**不得剔除** (CTNT 9.15% 费用率
+# 是低价带唯一实测样本), 故该函数保持含污染口径, 见其函数内注释。
+try:
+    from app.core.db_utils import a9_clean_where
+except Exception:  # pragma: no cover - 裸跑兜底 (纯 SQL 常量, 与 SSOT 逐字一致)
+    _A9_SQL = (
+        "AND (NOT json_valid(COALESCE(metadata_json,'')) "
+        "OR COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'') = '')"
+    )
+
+    def a9_clean_where(conn):  # pragma: no cover - 裸跑兜底 (与 SSOT 逐字一致)
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_records)")}
+        except Exception:
+            cols = set()
+        return _A9_SQL if "metadata_json" in cols else ""
 load_dotenv(BASE_DIR / ".env.us")
 
 DB_PATH = BASE_DIR / "data" / "ftseek_us.db"
@@ -71,6 +92,9 @@ def get_db():
 # 归因视角 0: 费用净额总览 (2026-07-30, DEB-fee-net-pnl G5)
 # ════════════════════════════════════════════════════════════
 def attribution_fee_net(db, today, window_days=7):
+    # A9 例外视图: 本函数是费用/成本标定 (gross/fees/fee_coverage), 判据明令不得剔除
+    # 首跑测试批 (CTNT 9.15% 费用率是低价带唯一实测样本) ⇒ 保持含污染口径。
+    # 净 PnL 字段仅作毛-费自洽校验用, 不作表现结论; 表现读数见 attribution_* 各视图 (已排除)。
     """毛/费/净三列 — 净利才是真实盈利 (最低佣金$1.99×双边 → 每单固定成本≈$4-5,
     毛利<$5皆白干)。假盈利单 = 毛>0 但净<=0。"""
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
@@ -114,8 +138,9 @@ def attribution_fee_net(db, today, window_days=7):
 # ════════════════════════════════════════════════════════════
 def attribution_strategy(db, today, window_days=7):
     """按策略维度拆分: 笔数/胜率/PnL/均持时间"""
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT strategy_id, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
@@ -123,15 +148,17 @@ def attribution_strategy(db, today, window_days=7):
                AVG(holding_hours) as avg_hold
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY strategy_id ORDER BY total_pnl DESC
     """, (since,)).fetchall()
 
-    today_rows = db.execute("""
+    today_rows = db.execute(f"""
         SELECT strategy_id, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
         WHERE substr(exit_time, 1, 10) = ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY strategy_id ORDER BY total_pnl DESC
     """, (today,)).fetchall()
     today_map = {r['strategy_id']: dict(r) for r in today_rows}
@@ -157,8 +184,9 @@ def attribution_strategy(db, today, window_days=7):
 # ════════════════════════════════════════════════════════════
 def attribution_signal(db, today, window_days=30):
     """信号强度 vs PnL 校准: 高强度信号是否真的更赚钱"""
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT
             CASE
                 WHEN signal_strength >= 90 THEN '90+极高'
@@ -176,6 +204,7 @@ def attribution_signal(db, today, window_days=30):
             AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY strength_bucket
         ORDER BY COALESCE(signal_strength, -1) DESC
     """, (since,)).fetchall()
@@ -198,8 +227,9 @@ def attribution_exit(db, today, window_days=7):
     Bug fix (2026-05-27): exit_reason 含嵌入百分比 (如 QUICK_EXIT_🛑 硬止损触发 (-63.0% <= -)
     导致 GROUP BY 过细。需归一化到前缀后再聚合。
     """
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT exit_reason, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
@@ -207,6 +237,7 @@ def attribution_exit(db, today, window_days=7):
                AVG(holding_hours) as avg_hold
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL AND exit_reason IS NOT NULL
+              {_A9_WHERE}
         GROUP BY exit_reason ORDER BY total_pnl DESC
     """, (since,)).fetchall()
 
@@ -257,14 +288,16 @@ def attribution_exit(db, today, window_days=7):
 # ════════════════════════════════════════════════════════════
 def attribution_regime(db, today, window_days=7):
     """市场regime vs 胜率/PnL: 哪些regime下策略有效"""
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT market_regime, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
                AVG(COALESCE(pnl_net, realized_pnl)) as avg_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY market_regime ORDER BY cnt DESC
     """, (since,)).fetchall()
 
@@ -295,8 +328,9 @@ def attribution_regime(db, today, window_days=7):
 # ════════════════════════════════════════════════════════════
 def attribution_trend(db, today):
     """今日 vs 近5日均值: 是改善还是恶化"""
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since_5d = (us_eastern_now() - timedelta(days=7)).strftime("%Y-%m-%d")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT trade_date, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl,
@@ -305,6 +339,7 @@ def attribution_trend(db, today):
                MIN(COALESCE(pnl_net, realized_pnl)) as worst
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY trade_date ORDER BY trade_date DESC
     """, (since_5d,)).fetchall()
 
@@ -338,6 +373,7 @@ def attribution_trend(db, today):
 # ════════════════════════════════════════════════════════════
 def attribution_execution(db, today, window_days=7):
     """系统健康: 失败率/ghost/orphan/failures"""
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
 
     # failures
@@ -348,25 +384,27 @@ def attribution_execution(db, today, window_days=7):
     """, (since,)).fetchall()
 
     # ghost/orphan 占比
-    total_trades = db.execute("""
+    total_trades = db.execute(f"""
         SELECT COUNT(*) FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
     """, (since,)).fetchone()[0]
 
-    ghost_orphan = db.execute("""
+    ghost_orphan = db.execute(f"""
         SELECT COUNT(*) FROM trade_records
-        WHERE trade_date >= ? AND exit_reason IN
+        WHERE trade_date >= ? {_A9_WHERE} AND exit_reason IN
             ('ghost_cleanup_cruise', 'ghost_cleanup', 'orphan_cleaned',
              'stale_scalping_cleanup', 'sync_ghost_cleaned')
     """, (since,)).fetchone()[0]
 
     # 方向分布
-    direction = db.execute("""
+    direction = db.execute(f"""
         SELECT direction, COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(COALESCE(pnl_net, realized_pnl)) as total_pnl
         FROM trade_records
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         GROUP BY direction
     """, (since,)).fetchall()
 
@@ -404,6 +442,7 @@ def attribution_shadow(db, today, window_days=7):
 def attribution_risk(db, today):
     """风控: 回撤/资金/持仓/scalping预算"""
     # 资金曲线
+    _A9_WHERE = a9_clean_where(db)   # A9 schema 探测 (无该列→空串)
     capital = db.execute("""
         SELECT current_equity, peak_equity, cash, market_value,
                drawdown_pct, max_drawdown_pct, water_level, trade_env
@@ -431,9 +470,10 @@ def attribution_risk(db, today):
     scalping = db.execute("SELECT * FROM scalping_budget_state").fetchone()
 
     # 最大连续亏损
-    recent_trades = db.execute("""
+    recent_trades = db.execute(f"""
         SELECT realized_pnl FROM trade_records
         WHERE trade_date >= date(?, '-7 days') AND realized_pnl IS NOT NULL AND exit_time IS NOT NULL
+              {_A9_WHERE}
         ORDER BY entry_time
     """, (today,)).fetchall()
 
@@ -983,19 +1023,32 @@ def run_audit():
             window_start=trend.get("window_start")
         )
 
-        # 推送
-        ok_feishu, ok_dingtalk = notify(report)
-
-        if ok_feishu or ok_dingtalk:
-            logger.info(f"✅ 归因辩论报告已推送 (飞书:{'✓' if ok_feishu else '✗'} 钉钉:{'✓' if ok_dingtalk else '✗'})")
-        else:
-            logger.warning("⚠️ 推送失败，报告已保存到日志")
-            print(report)
-
-        # 同时保存完整报告到文件
+        # 推送 (当日幂等守卫, 2026-09-26)
+        # 根因: 本脚本无 --dry-run, 任何"验证性实跑"都会真推飞书+钉钉; PushHub 的
+        # dedup_ttl=60s 只挡秒级重复, 挡不住数小时后的重跑 ⇒ 用户当天收到两份同款报告
+        # (2026-09-26 09:34 实证: cron 04:03 已推, 复核时又推一次)。
+        # 修法 = 源头去重: 报告文件已存在即视为"今日已推过", 默认只重生成文件不再推。
+        # 需要强制重推 (如报告内容修订后要覆盖通知) → FTSEEK_AUDIT_FORCE_PUSH=1。
         report_dir = BASE_DIR / "logs" / "audit"
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / f"attribution_debate_{today}.md"
+        _already_pushed = report_path.exists()
+        _force = os.environ.get("FTSEEK_AUDIT_FORCE_PUSH", "").strip().lower() in ("1", "true", "yes")
+        if _already_pushed and not _force:
+            logger.info(
+                "⏭️ 跳过推送: %s 已存在 ⇒ 今日报告已推送过 (当日幂等守卫)。"
+                "仅重写报告文件。强制重推: FTSEEK_AUDIT_FORCE_PUSH=1", report_path.name
+            )
+            print(report)
+        else:
+            ok_feishu, ok_dingtalk = notify(report)
+            if ok_feishu or ok_dingtalk:
+                logger.info(f"✅ 归因辩论报告已推送 (飞书:{'✓' if ok_feishu else '✗'} 钉钉:{'✓' if ok_dingtalk else '✗'})")
+            else:
+                logger.warning("⚠️ 推送失败，报告已保存到日志")
+                print(report)
+
+        # 同时保存完整报告到文件
         report_path.write_text(report, encoding="utf-8")
         logger.info(f"📄 报告已保存: {report_path}")
 

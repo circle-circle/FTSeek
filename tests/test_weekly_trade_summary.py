@@ -38,7 +38,8 @@ CREATE TABLE trade_records (
     exit_price REAL,
     realized_pnl REAL,
     pnl_net REAL,
-    source_type TEXT
+    source_type TEXT,
+    metadata_json TEXT
 )
 """
 
@@ -55,16 +56,17 @@ def db(tmp_path):
 
 def _row(db, exit_time, *, entry_time=None, trade_date=None, exit_price=100.0,
          realized=10.0, net=None, direction="LONG", exit_reason="SL_TRAIL_LOCK",
-         source="PLAYBOOK_SIM"):
+         source="PLAYBOOK_SIM", metadata_json=None):
     if trade_date is None:
         trade_date = (entry_time or exit_time or "1970-01-01")[:10]
     conn = sqlite3.connect(str(db))
     conn.execute(
         "INSERT INTO trade_records (symbol, trade_date, direction, exit_reason, "
-        "entry_time, exit_time, exit_price, realized_pnl, pnl_net, source_type) "
-        "VALUES ('US.X', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "entry_time, exit_time, exit_price, realized_pnl, pnl_net, source_type, "
+        "metadata_json) "
+        "VALUES ('US.X', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (trade_date, direction, exit_reason,
-         entry_time, exit_time, exit_price, realized, net, source),
+         entry_time, exit_time, exit_price, realized, net, source, metadata_json),
     )
     conn.commit()
     conn.close()
@@ -257,3 +259,87 @@ def test_script_is_referenced_by_nothing_but_cron():
     """脚本口径唯一调用方=Hermes cron prompt; 若将来有代码 import 它, 白名单需两处同步."""
     src = (PROJECT_ROOT / "scripts" / "weekly_trade_summary.py").read_text(encoding="utf-8")
     assert "PLAYBOOK_LIVE" in src and "substr(exit_time, 1, 10)" in src
+
+
+# ── A9 首跑测试批排除口径 (判据 2026-09-20 用户裁「同意」; 2026-09-25 接线) ──
+# 死门实证: 判据落档后全库 238 个 trade_records 查询排除方命中 0 个 ⇒ 报表一直含污染。
+# 影响: 9 月净利 −$476(含) vs +$173(不含), 月度结论符号翻转。
+_A9_MARK = '{"exclusion_reason": "first_run_test_2026-09-17"}'
+
+
+def test_a9_predicate_is_ssot_wired():
+    """周报必须从 app.core.db_utils 取 SSOT 谓词, 不得各自 inline 一份 (漂移源)."""
+    src = (PROJECT_ROOT / "scripts" / "weekly_trade_summary.py").read_text(encoding="utf-8")
+    assert "from app.core.db_utils import a9_clean_where" in src
+    assert "a9=a9_clean_where(conn)" in src          # 两个消费点 (_query / identity) 都走探测
+    from app.core.db_utils import A9_CLEAN_PERFORMANCE_WHERE as SSOT
+    assert "exclusion_reason" in SSOT and "'first_run_test" not in SSOT
+    # 谓词必须是纯 SQL 片段 (可直接拼进 WHERE), 不含 Python 占位符
+    assert "{" not in SSOT
+
+
+def test_a9_first_run_batch_excluded_from_performance(db):
+    """9/17 首跑测试批 (标 exclusion_reason) 不计入周报表现读数."""
+    _row(db, "2026-09-19T10:00:00-04:00", net=100.0)                 # 正常赢单
+    _row(db, "2026-09-19T11:00:00-04:00", net=-314.27, realized=136.99,
+         metadata_json=_A9_MARK)                                       # CTNT 首跑污染
+    cur = wts.summarize_window(_conn(db), "2026-09-15", "2026-09-21")
+    assert cur["total_n"] == 1                 # 只算正常那笔
+    assert cur["total_pnl"] == pytest.approx(100.0)
+    assert cur["total_wins"] == 1
+    assert cur["win_rate_pct"] == pytest.approx(100.0)
+
+
+def test_a9_exclusion_applies_to_identity_and_outside(db):
+    """identity (逐笔明细) 与 outside (口径外来源) 两条查询同样排除首跑批."""
+    _row(db, "2026-09-19T10:00:00-04:00", net=5.0)
+    _row(db, "2026-09-19T11:00:00-04:00", net=-200.0, source="POSITION_SYNC",
+         metadata_json=_A9_MARK)
+    cur = wts.summarize_window(_conn(db), "2026-09-15", "2026-09-21")
+    assert len(cur["identity"]) == 1           # identity 是逐笔行列表, 污染行不进
+    assert cur["outside_n"] == 0               # 污染行不进 outside 计数
+    assert cur["total_pnl"] == pytest.approx(5.0)
+
+
+def test_a9_missing_or_empty_metadata_not_excluded(db):
+    """metadata_json 为 NULL / 空串 / 无该键 的正常行必须保留 (宁漏排除不可误杀)."""
+    _row(db, "2026-09-19T10:00:00-04:00", net=10.0, metadata_json=None)
+    _row(db, "2026-09-19T11:00:00-04:00", net=20.0, metadata_json="")
+    _row(db, "2026-09-19T12:00:00-04:00", net=30.0, metadata_json='{"cohort": "A"}')
+    cur = wts.summarize_window(_conn(db), "2026-09-15", "2026-09-21")
+    assert cur["total_n"] == 3
+    assert cur["total_pnl"] == pytest.approx(60.0)
+
+
+def test_post_market_audit_performance_views_wired_but_fee_view_exempt():
+    """盘后审计: 表现类视图必须排除; 费用标定视图 A9 明令不得剔除 (CTNT 9.15% 样本)."""
+    src = (PROJECT_ROOT / "scripts" / "post_market_audit.py").read_text(encoding="utf-8")
+    # SSOT = a9_clean_where(conn) 函数 (schema 无 metadata_json 列时返回空串, fail-open);
+    # 禁止各脚本 inline 谓词副本 (漂移源)。
+    assert "from app.core.db_utils import a9_clean_where" in src
+    assert src.count("{_A9_WHERE}") >= 9      # 表现类查询已接线 (strategy/signal/exit/regime/trend/exec/risk)
+    # 每个用到谓词的函数必须先做 schema 探测 (局部赋值在使用前)
+    assert src.count("_A9_WHERE = a9_clean_where(db)") >= 7
+    # fee_net 函数体内不得出现排除谓词 (费用标定例外)
+    i = src.find("def attribution_fee_net(")
+    j = src.find("\ndef ", i + 1)
+    fee_body = src[i:j]
+    assert "{_A9_WHERE}" not in fee_body
+    assert "A9 例外视图" in fee_body           # 例外必须留痕, 防止后人误当遗漏补上
+
+
+def test_a9_where_is_schema_tolerant():
+    """无 metadata_json 列的载体 (旧库/异构 fixture) 不得让报表崩 — 谓词退化为空串."""
+    import sqlite3 as _sq
+    from app.core.db_utils import a9_clean_where, A9_CLEAN_PERFORMANCE_WHERE
+    old = _sq.connect(":memory:")
+    old.execute("CREATE TABLE trade_records (id INTEGER, realized_pnl REAL)")
+    assert a9_clean_where(old) == ""
+    new = _sq.connect(":memory:")
+    new.execute("CREATE TABLE trade_records (id INTEGER, metadata_json TEXT)")
+    assert a9_clean_where(new) == A9_CLEAN_PERFORMANCE_WHERE
+    # 空串路径: 拼接后 SQL 仍可执行 (不产生语法错误)
+    rows = old.execute(
+        "SELECT COUNT(*) FROM trade_records WHERE realized_pnl IS NOT NULL " + a9_clean_where(old)
+    ).fetchone()
+    assert rows == (0,)

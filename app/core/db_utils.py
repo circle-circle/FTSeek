@@ -30,6 +30,54 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Default paths
+# ══════════════════════════════════════════════════════════════════════════
+# A9 首跑测试批口径 (SSOT, 2026-09-25 接线 — 判据 2026-09-20 用户裁「同意」)
+# ══════════════════════════════════════════════════════════════════════════
+# docs/ADJUDICATED-CRITERIA.md A9: trade_records 1521/1522/1524/1526 (9/17 盘前
+# 延长时段入场首跑批, 含 CTNT $0.072 / GIPR $0.431 仙股) 已标
+# metadata_json.exclusion_reason='first_run_test_2026-09-17'。
+#
+# 判据要求: **表现类**读数 (净均值/胜率/IC/expectancy/回放基线) 必须排除, 且
+# 并列「含/不含」两口径; **费用/成本标定不得剔除** (CTNT 9.15% 费用率是低价带
+# 唯一实测样本)。
+#
+# 死门实证 (2026-09-25): 判据落档后全库 238 个 `FROM trade_records` 查询中
+# 排除方命中 **0** 个 ⇒ 周报/盘后审计/OKR 一直在含污染口径上报数。影响量级:
+# 9 月净利 −$476 (含) vs +$173 (不含) —— **月度结论符号翻转**; 全库净
+# −$2,843 (含) vs −$2,194 (不含), 差 −$648.86 = 29.6%。
+#
+# 用法 (拼进 WHERE, 已含前导 AND):
+#     db.execute(f"SELECT ... FROM trade_records WHERE exit_price>0 {A9_CLEAN_PERFORMANCE_WHERE}")
+# 需要「含污染」对照口径时不要拼本常量, 另算一遍并显式标注。
+#
+# ⚠️ json_valid 守卫是必需的, 不是防御性冗余: 裸 `json_extract(metadata_json, …)` 遇到
+# 空串或非 JSON 文本会抛 `sqlite3.OperationalError: malformed JSON` ⇒ **整张报表崩掉**
+# (2026-09-25 接线时测试实证; 生产库当时 134 行 NULL + 770 行合法 JSON, 未踩雷属侥幸)。
+# NULL 本身安全 (json_extract(NULL,…) = NULL → COALESCE → '' → 保留)。
+# 语义 = fail-open: 元数据损坏的行**保留**在表现口径里 (宁漏排除一笔测试批, 不可让
+# 报表因一行脏数据崩掉, 也不可误杀正常交易)。
+A9_CLEAN_PERFORMANCE_WHERE = (
+    "AND (NOT json_valid(COALESCE(metadata_json,'')) "
+    "OR COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'') = '')"
+)
+
+def a9_clean_where(conn) -> str:
+    """返回可直接拼进 WHERE 的 A9 排除谓词; 表无 metadata_json 列时返回空串。
+
+    fail-open 语义 (与 A9_CLEAN_PERFORMANCE_WHERE 的 json_valid 守卫同一取舍):
+    宁漏排除测试批, 不可让报表因 schema 差异整张崩掉 (2026-09-26 实证: 接线后
+    4 个盘后审计用例因 fixture schema 无该列报 `no such column: metadata_json`;
+    旧库/异构载体同样会踩)。
+
+    不缓存: PRAGMA table_info 开销 <1ms, 而按 id(conn) 缓存有对象回收后 id 复用
+    ⇒ 跨载体串味的正确性风险。调用方每连接取一次即可 (报表脚本量级完全无感)。
+    """
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_records)")}
+    except Exception:  # pragma: no cover - 载体不可读时不崩报表
+        cols = set()
+    return A9_CLEAN_PERFORMANCE_WHERE if "metadata_json" in cols else ""
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 

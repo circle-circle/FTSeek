@@ -52,6 +52,24 @@ DB_PATH = os.path.join(PROJECT_DIR, "data", "ftseek_us.db")
 # 现役交易链来源 (MAIN_PIPELINE/SCALPING/ORB_ENGINE 均为已冻结历史路径, 不再喂新行)
 TRADE_SOURCES = ("PLAYBOOK_SIM", "PLAYBOOK_LIVE")
 
+# A9 首跑测试批排除口径 (SSOT = app.core.db_utils; 判据 2026-09-20 用户裁)
+# 表现类读数必须排除 9/17 盘前首跑 4 笔 (1521/1522/1524/1526); 并列「含」口径供对照。
+try:
+    from app.core.db_utils import a9_clean_where
+except Exception:  # pragma: no cover - 仓外裸跑兜底 (与 SSOT 逐字一致)
+    _A9_SQL = (
+        "AND (NOT json_valid(COALESCE(metadata_json,'')) "
+        "OR COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'') = '')"
+    )
+
+    def a9_clean_where(conn):
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_records)")}
+        except Exception:
+            cols = set()
+        return _A9_SQL if "metadata_json" in cols else ""
+
+
 _AGG_SQL = """
 SELECT COALESCE(direction, 'N/A')    AS direction,
        COALESCE(exit_reason, 'N/A')  AS exit_reason,
@@ -65,6 +83,7 @@ FROM (
     WHERE exit_price > 0
       AND source_type IN ({src})
       AND substr(exit_time, 1, 10) BETWEEN :start AND :end
+      {a9}
 )
 GROUP BY 1, 2
 ORDER BY total_pnl ASC
@@ -81,6 +100,7 @@ FROM (
     WHERE exit_price > 0
       AND source_type NOT IN ({src})
       AND substr(exit_time, 1, 10) BETWEEN :start AND :end
+      {a9}
 )
 GROUP BY 1
 ORDER BY n DESC
@@ -91,6 +111,7 @@ SELECT *
 FROM trade_records
 WHERE exit_price > 0
   AND substr(exit_time, 1, 10) BETWEEN :start AND :end
+  {a9}
 ORDER BY id
 """
 
@@ -102,7 +123,8 @@ _SRC_PARAMS = {f"src_{i}": s for i, s in enumerate(TRADE_SOURCES)}
 def _query(conn: sqlite3.Connection, sql: str, start: str, end: str) -> List[Dict]:
     conn.row_factory = sqlite3.Row
     params = dict(_SRC_PARAMS, start=start, end=end)
-    return [dict(r) for r in conn.execute(sql.format(src=_SRC_PH), params)]
+    return [dict(r) for r in conn.execute(
+        sql.format(src=_SRC_PH, a9=a9_clean_where(conn)), params)]
 
 
 def summarize_window(conn: sqlite3.Connection, start: str, end: str) -> Dict:
@@ -111,7 +133,7 @@ def summarize_window(conn: sqlite3.Connection, start: str, end: str) -> Dict:
     outside = _query(conn, _OUTSIDE_SQL, start, end)
     conn.row_factory = sqlite3.Row
     identity_rows = [dict(row) for row in conn.execute(
-        _IDENTITY_SQL, {"start": start, "end": end}
+        _IDENTITY_SQL.format(a9=a9_clean_where(conn)), {"start": start, "end": end}
     )]
     total_n = sum(r["n"] for r in rows)
     total_wins = sum(r["wins"] for r in rows)
