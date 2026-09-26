@@ -239,10 +239,20 @@ def test_feature_flag_default_on():
 
 
 def test_shadow_board_section_registered():
-    src = (REPO / "scripts" / "shadow_board.py").read_text(encoding="utf-8")
-    assert "_sec_penetration" in src
-    idx = src.find("def build_board")
-    assert "_sec_penetration" in src[idx:idx + 600], "段必须注册进 build_board"
+    """penetration 段必须注册进看板 (RFC-109③: 段改表驱动 _SECTION_TABLE, 由
+    build_board 迭代渲染; 原「build_board 后 600 字符内出现」的源码邻近锚点随重构失效,
+    改为功能性断言 — 加载模块核对段确在渲染表内, 意图不变)。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_sb_pen", REPO / "scripts" / "shadow_board.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    m._init_table()
+    secs = [sec for sec, _entries in m._SECTION_TABLE]
+    assert m._sec_penetration in secs, "penetration 段必须注册进看板渲染表"
+    # 且该段挂的注册 id 必须真实存在于 shadow_registry (SSOT)
+    pen_entries = dict(m._SECTION_TABLE)[m._sec_penetration]
+    assert any(rid == "penetration_shadow" for rid, _a, _t in pen_entries)
 
 
 # ── 6. 写读契约 (2026-09-03 复盘批): 落盘行必须带 status, 否则研究环/看板结构性静默零 ──

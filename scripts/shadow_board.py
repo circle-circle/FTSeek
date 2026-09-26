@@ -622,6 +622,91 @@ def _age_days(s):
         return None
 
 
+# ── 注册表驱动 + 生产者停摆守卫 (2026-09-26, RFC-109③) ──────────────────
+# 根因 (RFC-109 审计): 看板 11 段曾绕过 shadow_registry 硬编码 ⇒ 段面无
+# status/min_n/停采通道, 生产者死了与「正常无触发」在看板上不可区分。
+# 修法 (做减法): 不重写各段读数逻辑 (数字与注册表一致), 由 build_board 统一
+# 从 SSOT 追加两类行 — ①注册面行 (status/n/min_n/挂账/停采标, 取自 REGISTRY,
+# 计数走 refresh_counts 只读现算) ②停摆守卫行 (artifact mtime 超阈 ⇒ 显式警告;
+# 终态/已停采项**豁免**陈旧警告 — 停更属预期)。未登记 id ⇒ 显式告警行, 不静默。
+_REG_CACHE = {}
+
+
+def _reg_item(reg_id):
+    if not _REG_CACHE:
+        try:
+            from app.playbook.shadow_registry import REGISTRY, refresh_counts
+            refresh_counts()  # 只读现算 current_n (内存态, 不落盘不改文件)
+            _REG_CACHE.update({s.id: s for s in REGISTRY})
+        except Exception as e:
+            _REG_CACHE["__error__"] = str(e)
+    if "__error__" in _REG_CACHE:
+        return None
+    return _REG_CACHE.get(reg_id)
+
+
+def _guard_lines(entries):
+    """entries: [(reg_id, artifact_rel, stale_days), ...] — stale_days=None 跳过陈旧判定。"""
+    out = []
+    import time as _t
+    now = _t.time()
+    for reg_id, artifact, stale_days in entries:
+        s = _reg_item(reg_id)
+        if s is None:
+            out.append(f"  ⚠️ 注册面缺失[{reg_id}] — 不在 shadow_registry (无裁决/退役通道)")
+        else:
+            st = s.status.value if hasattr(s.status, "value") else str(s.status)
+            extra = ""
+            if s.collection_retired:
+                extra += " ·已停采"
+            if s.no_adjudication_reason:
+                extra += f" ·挂账={s.no_adjudication_reason.split(':')[0]}"
+            out.append(f"  注册[{reg_id}] {st} n={s.current_n}/{s.min_n}{extra}")
+        p = ROOT / artifact
+        if not p.exists():
+            out.append(f"  ⚠️ 生产者缺产物: {artifact} 不存在 ⇒ 本段无证据 (≠正常无触发)")
+            continue
+        try:
+            age = (now - p.stat().st_mtime) / 86400.0
+        except OSError:
+            continue
+        terminal = s is not None and (
+            s.collection_retired
+            or (s.status.value if hasattr(s.status, "value") else str(s.status))
+            in ("KILLED", "SUPERSEDED", "GRADUATED"))
+        if stale_days is not None and age > stale_days and not terminal:
+            out.append(f"  ⚠️ 生产者停摆: {artifact} 最新写入 {age:.1f} 天前 "
+                       f"(>{stale_days}d 阈) ⇒ 本段无新证据, 查对应 cron/写方")
+    return out
+
+
+# 段 → (注册表 id, 产物, 停摆阈值天数)。融合段(13)挂多条; 阈值=调度面最长自然间隔
+# +1 tick (交易日日频⇒4d; 事件驱动低频⇒8d, 同 review_coverage_scan 口径)。
+_SECTION_TABLE = None  # 在 build_board 前由 _init_table() 填充 (函数需先定义)
+
+
+def _init_table():
+    global _SECTION_TABLE
+    _SECTION_TABLE = (
+        (_sec_sltp, (("sltp_verify_shadow", "data/shadow/sltp_verify_shadow.jsonl", 4),)),
+        (_sec_edge, (("edge_gate_shadow", "data/shadow/edge_gate_shadow.jsonl", 4),)),
+        (_sec_premarket_peer, (("premarket_peer_shadow", "data/shadow/premarket_peer_shadow.jsonl", 4),)),
+        (_sec_exit_param, (("exit_param_shadow", "data/shadow/exit_param_shadow.jsonl", 4),)),
+        (_sec_universe_expansion, (("universe_expansion_shadow", "data/shadow/universe_expansion_shadow.jsonl", 4),)),
+        (_sec_exec_gate, (("exec_gate_audit", "data/shadow/exec_gate_audit.jsonl", 4),)),
+        (_sec_early_dead, (("early_dead_signal_shadow", "data/early_dead_signal_shadow.jsonl", 4),)),
+        (_sec_penetration, (("penetration_shadow", "data/shadow/penetration_shadow.jsonl", 4),)),
+        (_sec_post_exit, (("post_exit_path", "data/shadow/post_exit_path.jsonl", 4),)),
+        (_sec_rth_fade, (("eth_rth_fade", "data/rth_fade_shadow.jsonl", 8),)),
+        (_sec_eth_short_family, (
+            ("overnight_earnings_carry", "data/overnight_earnings_carry_shadow.jsonl", None),
+            ("short_funnel_shadow", "data/short_funnel_shadow.jsonl", 4),
+            ("ue_short_boost_shadow", "data/ue_short_boost_shadow.jsonl", 4),
+            ("eth_earnings_direction_path", "data/earnings_direction_path_shadow.jsonl", 4),
+        )),
+    )
+
+
 # ── 段13: 延长时段/空头族 融合批 (2026-09-23 用户裁「按建议实施执行」) ──
 def _sec_eth_short_family():
     """把"同人群/同方向、且**生产者活着**"的几个影子并到一张卡上 (原本各自攒样、无人看)。
@@ -686,12 +771,18 @@ def _sec_eth_short_family():
 def build_board():
     head = [f"🌓 FTSeek-US 影子看板 | {_today_et()} (ET) | 单日 / 近7天", "=" * 46]
     body = []
-    for sec in (_sec_sltp, _sec_edge, _sec_premarket_peer, _sec_exit_param, _sec_universe_expansion, _sec_exec_gate, _sec_early_dead, _sec_penetration, _sec_post_exit, _sec_rth_fade, _sec_eth_short_family):
+    _init_table()
+    for sec, entries in _SECTION_TABLE:
         try:
-            body += sec() + [""]
+            seg = sec()
+            try:
+                seg += _guard_lines(entries)
+            except Exception as ge:
+                seg += [f"  ⚠️ 守卫行异常: {ge}"]
+            body += seg + [""]
         except Exception as e:
             body += [f"⚠️ {sec.__name__} 整段异常: {e}", ""]
-    tail = ["注: 只读汇总; 现与 sltp日报/edge周报并存, 稳定后收敛为唯一影子推送。"]
+    tail = ["注: 只读汇总; 看板=唯一影子推送出口 (RFC-109⑦: 独立 --push 已撤, 段注册面取自 shadow_registry)。"]
     return "\n".join(head + [""] + body + tail)
 
 
