@@ -1605,6 +1605,250 @@ REGISTRY: list[ShadowItem] = [
               "合法不存在, 不算 missing); 幂等键 (et_date, symbol); PnL 读数器 --report 净额铁律 "
               "(pnl_net 优先否则 realized_pnl−fees_est)。",
     ),
+
+    # ── 2026-09-26 RFC-109② 看板段补登批 (用户裁「按合理建议顺序执行」) ──────────
+    # 根因: shadow_board 的产物绕过注册表硬编码 ⇒ 无 status/判据/停采开关, 既不能裁决
+    # 也不能退役 (永久采集)。本批把看板 10 个未登记产物 (审计点名的 9 段 + 段4
+    # edge_gate_shadow, 2026-09-26 实测同病) 纳入同一生命周期。
+    # 补登纪律: 已有预注册判据的**逐字抄录**出处; 无判据的如实挂 NO_CRITERIA /
+    # PERMANENT_MEASURE (补登时**不得虚构数值门** = 事后判据); 已退役的登终态留痕
+    # (markout_capture 2026-09-04 补登先例)。
+    ShadowItem(
+        id="sltp_verify_shadow",
+        name="SL/TP 验证影子 (LLM×代码分歧校准)",
+        status=ShadowStatus.OBSERVING,
+        description="reprice 决定最终 SL/TP 的瞬间记录 LLM 原始值 vs 代码波动率分桶值的分歧 "
+                    "(SL_TOL 0.2/TP_TOL 0.3 一致口径), 连同 regime/bucket/atr_pct 落盘, "
+                    "供与 pnl 联合校准。看板段3 数据面; record-only, feature flag 控制。",
+        data_path="data/shadow/sltp_verify_shadow.jsonl",
+        config_key="llm_features.sltp_verify_shadow.enabled",
+        min_n=0,
+        graduation_criteria="未预注册 — 生产者头部仅自述目的「回答分歧时该信 LLM 还是信代码」。"
+                            "若要裁决须先立 DEB 预注册数值门。",
+        eval_script="scripts/sltp_shadow_pnl_report.py",
+        created="2026-07-12",
+        eval_on_demand=True,
+        notes="补登 (2026-09-26 RFC-109②): 看板段3 复用 report 脚本 import (7/17 独立 --push "
+              "已撤, crontab 注释在案; board 06:15 cron 每日 import 调用 = 实际挂载面, "
+              "哨兵按 .py 字面量匹配不到 import ⇒ eval_on_demand 豁免)。写方=pipeline reprice 埋点。",
+        no_adjudication_reason="NO_CRITERIA: 无预注册数值门 (补登不得事后造判据) — 裁决前先立 DEB",
+    ),
+    ShadowItem(
+        id="exec_gate_audit",
+        name="下单前统一收口审计 (全来源)",
+        status=ShadowStatus.OBSERVING,
+        description="每个到达执行漏斗的候选 (DA/UE/内部全覆盖) 的来源+最终动作+EdgeShadowGate "
+                    "判定 (pipeline._emit_exec_gate_audit, 2026-07-17)。看板段9 数据面: "
+                    "候选=执行+跳过+延后 恒等 + BLOCK/PASS 结局回填两窗对照。",
+        data_path="data/shadow/exec_gate_audit.jsonl",
+        config_key=None,
+        min_n=0,
+        graduation_criteria="无毕业门 (永久测量项): edge 门本体 DEPRECATED-SHADOW (DEB-20260723 "
+                            "C-1: 唯一特征 confidence 已实证反指, 永不激活为 live gate; 任何激活"
+                            "提案须先过 INTC 测试+独立 DEB)。本产物=执行漏斗审计留痕 + per-trade "
+                            "重建的对照基线。",
+        eval_script=None,
+        created="2026-07-17",
+        notes="补登 (2026-09-26 RFC-109②): 看板段9 自带结局回填/两窗方向合成读数 (9/23 批)。"
+              "写方无条件落盘 (审计面, 非假设攒样)。",
+        no_adjudication_reason="PERMANENT_MEASURE: 审计留痕面, 无毕业门 (edge 门 DEPRECATED-SHADOW, DEB-20260723 C-1)",
+    ),
+    ShadowItem(
+        id="exit_param_shadow",
+        name="退出参数影子 (更紧 breakeven/drawdown 变体 capture 对照)",
+        status=ShadowStatus.OBSERVING,
+        description="盘中每轮巡检用与 _compute_dynamic_effective_sl 一致的纯逻辑回放【比现行更紧】"
+                    "的变体 (be/dd/profit_override/dead_signal/30min-abort/early_tight), close 时"
+                    "对比各变体 vs 实盘 capture_ratio。看板段7 数据面 (净口径=毛−0.08% 往返费)。",
+        data_path="data/shadow/exit_param_shadow.jsonl",
+        config_key="llm_features.exit_param_shadow.enabled",
+        min_n=30,
+        graduation_criteria="exit_shadow_graduation.py 头部预注册逐字 (2026-07-20): 毕业门禁"
+                            "(三项全过=PASS): 1.样本量 N≥30 2.均值改善: 变体 capture > baseline "
+                            "capture (或 counterfactual_saved>0) 3.一致性: 变体优于 baseline 的"
+                            "比例≥55%。n 轴=**每变体**配对样本, 非 jsonl 总行数。",
+        eval_script="scripts/exit_shadow_graduation.py",
+        created="2026-07-13",
+        eval_on_demand=True,
+        notes="补登 (2026-09-26 RFC-109②): 写方=app/playbook/exit_shadow.py (feature flag 控制)。"
+              "eval 无 cron (按需/裁决日跑, 哨兵豁免)。⚠️ 与 breakeven_aw_variants 同族不同轴: "
+              "本项测多变体 capture, 彼项测 A/W 武装线反事实 — 裁决不互替。",
+    ),
+    ShadowItem(
+        id="universe_expansion_shadow",
+        name="选股宇宙扩张影子 (板块轮动→宇宙外异动)",
+        status=ShadowStatus.OBSERVING,
+        description="轮入板块→拉成分股→筛宇宙外异动名 capture, 次日 score 前瞻收益+命中率 "
+                    "(验证「看得见能源轮入却打不着」缺口)。看板段8 数据面 (horizon 拆批: "
+                    "日常批≤3日 vs 回填/长窗批, 9/23 起分印不合并)。",
+        data_path="data/shadow/universe_expansion_shadow.jsonl",
+        config_key=None,
+        min_n=0,
+        graduation_criteria="未预注册 — 生产者头部仅自述「验证有数据后, 再决定是否让它真正驱动 "
+                            "daily_active_pool 扩池」, 无数值门。裁决前先立 DEB 预注册。",
+        eval_script="scripts/universe_expansion_shadow.py",
+        created="2026-07-14",
+        notes="补登 (2026-09-26 RFC-109②): capture cron 30 12 * * 1-5 + score cron 10 7 * * 2-6 "
+              "(8/26 接电)。count_mode=where:type=capture (score 行是派生读数不另计样本)。",
+        no_adjudication_reason="NO_CRITERIA: 无预注册数值门 (补登不得事后造判据) — 裁决前先立 DEB",
+        count_mode="where:type=capture",
+    ),
+    ShadowItem(
+        id="early_dead_signal_shadow",
+        name="死单早期识别影子 (15/30min MFE 快照)",
+        status=ShadowStatus.OBSERVING,
+        description="持仓 15/30min 检查点 MFE 快照 (30min<0.2%=候选死单 / 15min<0.15% 辅助), "
+                    "settler 配对 trade_records 终局回填 settled/is_dead/final_pnl_net。"
+                    "看板段10 数据面 (含结算面守卫行, 9/23 批)。DEB-20260811。",
+        data_path="data/early_dead_signal_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="early_dead_signal_report.py 头部预注册逐字: 攒样≥30 命中后评估: "
+                            "①双窗口死单率均≥55% ②命中组实际净PnL<0 ③差集结局为负。"
+                            "死单定义=exit_reason∈{TIME_EXIT, MFE_STALL_EXIT} (预注册词表, 判决"
+                            "口径不动)。⚠️ 词表漂移已在案 (2026-09-23): 预注册词表现役基率仅~1%, "
+                            "现役词表三档只印不判; 改判据须另立 DEB。",
+        eval_script="scripts/early_dead_signal_report.py",
+        created="2026-08-11",
+        notes="补登 (2026-09-26 RFC-109②): 写方=exit_engine 检查点埋点 (相对路径陷阱已修, "
+              "engineering-change-protocol 2026-09-21 实锤批)。settler cron 2 6 * * 2-6 (9/22 补挂)。"
+              "count_mode=where:settled=True — 判据 n 轴是**已结算命中**, 非总行数。",
+        count_mode="where:settled=True",
+    ),
+    ShadowItem(
+        id="premarket_peer_shadow",
+        name="盘前存储峰群影子 (MU/SNDK/WDC/STX 同向+放量)",
+        status=ShadowStatus.OBSERVING,
+        description="富途盘前趋势+成交量对存储峰群做「同向+放量」双条件确认, 与 DA 指令方向对照 "
+                    "join pnl_pct (假设: 峰群确认时胜率/收益更好? 背离时更该 SKIP?)。看板段6 数据面。",
+        data_path="data/shadow/premarket_peer_shadow.jsonl",
+        config_key=None,
+        min_n=0,
+        graduation_criteria="未预注册 — 生产者头部仅列假设问句, 无数值门。裁决前先立 DEB 预注册 "
+                            "(打法自述同 divergence_arbitration: 先攒证据, 有 edge 再切执行前置闸门)。",
+        eval_script="scripts/premarket_peer_shadow.py",
+        created="2026-07-13",
+        notes="补登 (2026-09-26 RFC-109②): cron 5 21 * * 1-5 采集 + 12 6 * * 2-6 --refresh-join "
+              "回填 pnl。按 date upsert ⇒ count_mode=distinct:date (行数=交易日数)。",
+        no_adjudication_reason="NO_CRITERIA: 无预注册数值门 (补登不得事后造判据) — 裁决前先立 DEB",
+        count_mode="distinct:date",
+    ),
+    ShadowItem(
+        id="short_funnel_shadow",
+        name="空头转化漏斗影子打标 (LLM 分析层转化率)",
+        status=ShadowStatus.OBSERVING,
+        description="盘后解析 DA stderr 日志: 深度分析评级分布 × playbook 指令方向对照 → "
+                    "空头转化漏斗 analyzed_n→rated_bearish→short_instructions→executed + "
+                    "三问gate痕迹。看板段13② 数据面。8/16 用户裁「真正有空头产出是最核心问题」。",
+        data_path="data/short_funnel_shadow.jsonl",
+        config_key="playbook.short_funnel_shadow_enabled",
+        min_n=10,
+        graduation_criteria="unified_config.yaml 预注册注逐字 (2026-08-16): n≥10 交易日再裁分层 "
+                            "gate。判据达成 ⇒ 处置待用户裁 (立分层 gate 提案须另走 DEB / 或退役)。",
+        eval_script=None,
+        created="2026-08-16",
+        notes="补登 (2026-09-26 RFC-109②): 写方=scripts/short_funnel_shadow_tag.py "
+              "(scheduler AFTER_HOURS 挂载)。按 date 幂等 ⇒ count_mode=distinct:date。"
+              "⚠️ 补登时实测 30/10 交易日早已达标而从未入待裁面 = 本批要治的「注册表非 SSOT」实锤。",
+        count_mode="distinct:date",
+    ),
+    ShadowItem(
+        id="ue_short_boost_shadow",
+        name="UE×SHORT 加码影子 (S0, ×1.25 假设队列)",
+        status=ShadowStatus.OBSERVING,
+        description="UE 注入的 SELL_SHORT 指令登记「若 ×1.25 加码」假设队列成员, T+1 与未加码"
+                    "同池对照。看板段13③ 数据面。DEB-20260805-supply 终裁② (2026-08-06 用户裁同意)。",
+        data_path="data/ue_short_boost_shadow.jsonl",
+        config_key="universe_expansion.short_boost_shadow",
+        min_n=60,
+        graduation_criteria="写方注释预注册逐字 (llm_universe_scan S0 段): 主门 n=60 单侧 "
+                            "α=0.025 δ=2pp, 敏感性 Bonferroni n=85, 毕业前不动真仓 "
+                            "(停止规则见 DEB-20260805-supply §四.3)。",
+        eval_script=None,
+        created="2026-08-06",
+        notes="补登 (2026-09-26 RFC-109②): 写方=llm_universe_scan 指令写入环 (开关只读一次)。"
+              "count_mode=distinct:decision_id (每指令一样本, 防重跑灌水)。",
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (主门 n=60, 补登时 52/60) 但无结算执行体 — 达门前建 eval 或届时人工结算",
+        count_mode="distinct:decision_id",
+    ),
+    ShadowItem(
+        id="overnight_earnings_carry",
+        name="隔夜财报 carry 影子 (⛔已退役 2026-09-24)",
+        status=ShadowStatus.KILLED,
+        description="EXT 候选池×财报门 cohort 的隔夜 carry 可行性 (record-only 零下单)。"
+                    "看板段13① 数据面 (末行系停采前归档, 看板已带退役标)。",
+        data_path="data/overnight_earnings_carry_shadow.jsonl",
+        config_key=None,
+        min_n=3,
+        graduation_criteria="生产者头部预注册逐字 (2026-09-22 立): n≥3 交易日 ∧ 过闸上界≥2 只/日 "
+                            "⇒ 值得立 DEB 提请放宽门的「同日」语义; 过闸上界持续 <0.5 只/日 ⇒ "
+                            "该路不成立, 停采 (删 cron 行)。",
+        eval_script=None,
+        created="2026-09-22",
+        last_evaluated="2026-09-24",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-09-24", "verdict": "KILLED (彻底停采不重启, 用户明示裁决)",
+                          "evidence": "2/2 交易日 n_passes_floors=0 (<0.5/日); 9 月淡季 EXT 候选池∩"
+                                      "财报门=∅ 结构性零供给; 判据字面 n≥3 未满足 ⇒ 记提前停采例外 "
+                                      "(判据文字零改动), 详见 docs/analysis/"
+                                      "2026-09-24-carry-shadow-adjudication.md §2。数据质量披露: "
+                                      "190 行明细键全 null 仅 cohort 汇总可用。"}],
+        notes="补登终态 (2026-09-26 RFC-109②): 9/24 用户裁时两条采集 cron 行已删 (原文留档裁决"
+              "文档附录) 但注册表从未登记 ⇒ 看板段13① 带退役标而 SSOT 无痕。jsonl 保留归档不删; "
+              "10 月财报季重启须**重新预注册** (判据/口径/采集字段一并重写), 不得直接恢复 cron。"
+              "count_mode=distinct:et_date (行数=轮次, 判据 n 轴=交易日)。",
+        count_mode="distinct:et_date",
+    ),
+    ShadowItem(
+        id="edge_gate_shadow",
+        name="Edge 闸门影子 (DEPRECATED-SHADOW 对照基线)",
+        status=ShadowStatus.OBSERVING,
+        description="EdgeShadowGate 按 confidence 桶的风险归一期望 would_pass/would_block 判定 "
+                    "落盘 (app/decision/edge_shadow_gate.py)。看板段4 数据面 (edge_weekly_report "
+                    "一致率/更严更松)。",
+        data_path="data/shadow/edge_gate_shadow.jsonl",
+        config_key=None,
+        min_n=0,
+        graduation_criteria="无毕业门 (DEB-20260723 C-1 裁决逐字): 本门永不激活为 live gate "
+                            "(当前形态) — 唯一特征 confidence 已实证反指 (IC 为负), 桶级期望"
+                            "±0.001~0.009 噪声级随 latest.json 每日翻转。保留 shadow 记录供 "
+                            "per-trade 评分重建 (独立 DEB) 对照基线; 任何激活提案必须先过 INTC "
+                            "测试 (07-22 回放不得拦 INTC)。",
+        eval_script=None,
+        created="2026-07-11",
+        notes="补登 (2026-09-26 RFC-109②): 看板段4 复用 edge_weekly_report.build_edge_weekly_summary "
+              "(import, 无独立 --push cron)。exec_gate_audit 的 edge_verdict 字段与本产物同源同门。",
+        no_adjudication_reason="PERMANENT_MEASURE: DEPRECATED-SHADOW (DEB-20260723 C-1 永不激活), 仅作 per-trade 重建对照基线",
+    ),
+    ShadowItem(
+        id="breakeven_aw_variants",
+        name="保本 A/W 变体影子 (RFC-108 结算环, 2026-09-26 结案)",
+        status=ShadowStatus.KILLED,
+        description="A 变体 (武装 0.8% 更早保本) / W 变体 (开盘窗 gating 不武装) 对真实退出的"
+                    "反事实对照, era 分层 (be_0.4 裁决层 / be_0.5 描述层)。写方=exit_engine "
+                    "保本触发埋点 (3 处), 结算=breakeven_shadow_settle.py (RFC-108 复活批, "
+                    "cron 38 6 * * 2-6)。",
+        data_path="data/breakeven_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="结算器 flip_criteria 逐字 (脚本算好落盘, 下游只许照抄): "
+                            "n>=30 AND 单侧符号检验 p<0.05 AND 均值>0 — 三条全满足才翻 "
+                            "(era=be0.4 为裁决层); W 节同判据评估开盘窗 gating 反事实。",
+        eval_script="scripts/breakeven_shadow_settle.py",
+        created="2026-07-29",
+        last_evaluated="2026-09-26",
+        verdict_history=[{"date": "2026-09-26", "verdict": "KEEP_CURRENT_0.4 (A 不翻) + W 开盘窗武装维持",
+                          "evidence": "9/26 06:41 结算 (data/breakeven_shadow_settlement.json): "
+                                      "A era=be0.4 n=108 mean+0.030pp 中位−0.247 符号检验 p=0.9998 "
+                                      "(36 wins/108) ⇒ n✓ 均值✓ p✗ 三条不全过, flip_verdict="
+                                      "KEEP_CURRENT_0.4 (脚本判定照抄); W n=32 (be0.4 层 25: "
+                                      "mean−0.46pp p=0.9967 胜率 24%) ⇒ gating 反事实为负, "
+                                      "不加开盘窗 gating (再证 8/19 P1-b 撤回)。结案=维持 be_0.4, "
+                                      "RFC-108 判据口径, 用户批准顺序单第 8 项。"}],
+        notes="补登+结案 (2026-09-26 RFC-109②/⑧): 影子本体 7/29 起采集从未入注册表; RFC-108 "
+              "(9/25) 复活结算器后今晨首跑即出终局读数。collection_retired=False — 采集+settler "
+              "保留作轻量回归监测 (若变体假设重提须新预注册); 停采与否另行裁决, 数据不删。",
+    ),
 ]
 
 
