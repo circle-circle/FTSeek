@@ -232,6 +232,25 @@ ADJUDICATED: dict[str, dict] = {
                 "(dead_signal_exit_enabled=true/60min, 8/10-9/21 实跑 36 笔 -$309) ⇒ 属既成"
                 "事实确认, 非新提案。判据不过的变体维持纯观测, 不改任何退出参数。",
     },
+    "universe_expansion_shadow": {
+        # 2026-09-26 用户裁「退役」(判据 FAIL_CRITERIA_MET) ⇒ status KILLED, needs_user=False
+        # 退出待裁面; recheck_after=None = **已终裁不周期性推回** (同 eth_exit_forgone_upside 先例:
+        # 未来若重启须新预注册判据, 复用本判据 = 阈值购物)。
+        # ⚠️ 不设 no_adjudication_reason (会永久屏蔽重看窗, 且本项已终裁无需该字段)。
+        # 🔴 capture cron 未摘 (UE 生产 prompt 原料) ⇒ 本登记**不代表采集已停**, 详见注册表 notes。
+        "read_at": "2026-09-26", "recheck_after": None, "needs_user": False,
+        "note": "判据 (逐字借用 ue_midday_shadow_eval §13.3, 2026-08-14 用户裁) 裁决桶 h=1: "
+                "ALL n=98/19日 命中率 38.8% (门55%) ✗ 均值 −0.481% (门+0.5%) ✗ p=0.9902; "
+                "LONG n=33 命中率 12.1% 均值 −2.043% p=1.0000 ⇒ 样本轴双过但效果不达标 "
+                "= FAIL_CRITERIA_MET ⇒ 用户裁退役。0.5%/1.0% 双阈值同判 (非阈值挑选)。"
+                " 执行: score+eval cron 已摘, **capture 保留** (llm_universe_scan "
+                "_gather_market_corroboration fallback 只读 type=capture, DEB-20260914 实测 "
+                "da_feed 窗结构上永远早于 DA ⇒ 次次走回退, 且 inject+entry_enabled=true ⇒ "
+                "摘它=改 UE 交易行为超授权)。写者无 config 开关 ⇒ 摘 cron 是唯一真停采机制; "
+                "不设 collection_retired (语义矛盾 ⇒ 会变成假停采+抑制告警)。"
+                " **未处置**: UE 通道方向不对称 (LONG −$841/SHORT +$276) 不在本裁决范围 "
+                "(人群重叠仅 9 标的/23.3% 笔数), 归 ue_tier_gate 备证线。",
+    },
     "early_dead_signal_shadow": {
         # 2026-09-26 用户裁 **A 案: 维持纯观测, 不接线, 不改判据词表** ⇒ needs_user 落 False
         # (已裁完, 退出待裁面); recheck_after 保留 10/26 = 届时重看现役词表基率与反事实读数
@@ -2227,7 +2246,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="universe_expansion_shadow",
         name="选股宇宙扩张影子 (板块轮动→宇宙外异动)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="轮入板块→拉成分股→筛宇宙外异动名 capture, 次日 score 前瞻收益+命中率 "
                     "(验证「看得见能源轮入却打不着」缺口)。看板段8 数据面 (horizon 拆批: "
                     "日常批≤3日 vs 回填/长窗批, 9/23 起分印不合并)。",
@@ -2288,6 +2307,35 @@ REGISTRY: list[ShadowItem] = [
                          " ⚠️ 归属口径教训: 查 UE 通道必须用 `decision_id LIKE 'universe_expansion%'`, "
                          "用 `strategy_id LIKE 'universe_expansion%'` 得 **0 笔** (strategy_id 实为 playbook_sim / "
                          "extended_hours_entry 落库标签) — 首次查询即因此得出「0 笔」的错误前提。"},
+            {"date": "2026-09-26", "verdict": "KILLED (判据退役已执行: score+eval cron 已摘; capture 保留 — 见 evidence)",
+             "evidence": "用户裁「退役」, 按本判据原文「否则 → 退役 (删 cron + 开关置 false, 零残留)」执行。"
+                         " 🔴 **执行时实测发现原文两处与仓内现实不符, 已按实测更正 (判据阈值一字未动, 非放宽)**: "
+                         "① 「开关置 false」**无处可置** — 写者 scripts/universe_expansion_shadow.py 不读任何 config 键 "
+                         "(grep `_cfg|enabled` 无命中), config `universe_expansion:` 段下亦无该影子专属开关 ⇒ "
+                         "摘 cron 行是本影子**唯一**真停采机制 (与本文件 collection_retired 字段注释列的先例②同型, "
+                         "如 overnight_earnings_carry 靠删 cron 冻结产物)。已摘: score `10 7 * * 2-6` + "
+                         "eval `40 7 * * 6` (crontab 357→355 行, 备份 "
+                         "cron_backup_before_ue_retire_20260926_213518.txt)。"
+                         " ② 「零残留」**不可达** — capture `30 12 * * 1-5` **必须保留**: "
+                         "llm_universe_scan.py `_gather_market_corroboration` 的 fallback 只读本文件 "
+                         "`caps = [r for r in recs if r.get(\"type\") == \"capture\"]`, "
+                         "而 DEB-20260914 §一 P1-3 已实测: UE 的 da_feed 窗 (ET 07:40) **结构上永远早于** "
+                         "生产者 DA (ET 08:00) ⇒ 该窗**次次落到 capture 回退**; 盘中脉搏在生产两窗 "
+                         "(ET 07:40/09:10) **结构上永不成立** (sector_pulse.py 在 ET 10:00-15:30 才写) ⇒ "
+                         "capture 是 UE **生产 prompt「市场佐证」段的常态原料**, 不是纸面观察物。"
+                         " 且 crontab 有 `llm_universe_scan.py inject` ∧ config `entry_enabled: true` ⇒ "
+                         "UE 真下单 ⇒ **摘 capture = 改 UE 交易行为, 超出「判据退役」的授权范围**, 故不摘。"
+                         " 这正是本文件 collection_retired 字段注释预警的形态: 「判据退役 (KILLED/FAIL) "
+                         "**不等于**没有消费者 — 实锤 capital_flow 的原料在喂生产门」。"
+                         " ⇒ 同理**不设 collection_retired=True**: 该字段语义是「不再采集」, 而 capture 恰恰要"
+                         "继续采 ⇒ 设 True 会变成注释警告的「假停采: 产物照样每天写, 看板显示已停采并**抑制停摆"
+                         "告警** ⇒ 账面说停了、实际没停、还把证据藏起来 (活谎言结构, 比不设更危险)」。"
+                         " 连带面已核: score 行冻结在 2026-09-25, KILLED ∈ shadow_board `terminal` 判定 ⇒ "
+                         "跳过「生产者停摆」告警 (不刷屏); capture 仍日更 ⇒ mtime 新鲜。"
+                         " 🔴 **本裁决未处置**: UE 交易通道本身 (LONG 净 −$841 / SHORT 净 +$276 的方向不对称) "
+                         "**不在本裁决范围** (见上一条 evidence 的适用范围自纠: 人群重叠仅 9 标的 / 23.3% 笔数) ⇒ "
+                         "不得据本 KILLED 停 UE 通道或禁 UE LONG; 该问题归 ue_tier_gate 台账「方向分层只并列呈报"
+                         "不另设门」的备证线, 须用 decision_id 归属的 86 笔实盘盈亏另立预注册判据。"},
         ],
         notes="补登 (2026-09-26 RFC-109②): capture cron 30 12 * * 1-5 + score cron 10 7 * * 2-6 "
               "(8/26 接电)。count_mode=where:type=capture (score 行是派生读数不另计样本)。"
@@ -2298,7 +2346,17 @@ REGISTRY: list[ShadowItem] = [
               " ⚠️ 尺子残留缺陷 (零行为变更, 未修): 写者 cmd_report **汇总段** (all_fwd/all_hits, "
               "line 380-394) 仍混 horizon 批 ⇒ 顶部「命中率/平均前瞻收益」读数被长窗回填批污染 "
               "(现印 34.9%/+0.023%, 正确 h=1 口径是 38.8%/−0.481%); 逐日行自 9/23 起已正确标 "
-              "[daily/backfill,Nd] 批次。裁决一律走 eval 产物, 勿读 report 汇总段。",
+              "[daily/backfill,Nd] 批次。裁决一律走 eval 产物, 勿读 report 汇总段。"
+              " ✅**2026-09-26 用户裁「退役」已执行 (FAIL_CRITERIA_MET → KILLED)**: "
+              "score cron `10 7 * * 2-6` + eval cron `40 7 * * 6` **已摘** (crontab 357→355); "
+              "**capture cron `30 12 * * 1-5` 保留** — 它是 UE 生产 prompt 佐证段的常态原料, "
+              "摘它=改交易行为超授权 (详见 verdict_history 同日 KILLED 条 evidence ②)。"
+              "写者无 config 开关 ⇒ 摘 cron 是唯一真停采机制; **不设 collection_retired** "
+              "(语义与 capture 继续采矛盾, 设 True = 假停采+抑制告警+藏证据)。"
+              "判据原文「开关置 false, 零残留」按实测更正为「摘 cron, capture 因生产依赖不可摘」。"
+              "产物一律保留不删 (jsonl 仍是 UE 佐证原料; eval 产物留档为反证)。"
+              " ⚠️ 勿复活: 重启 score/eval 须先有新预注册判据 (本判据已裁 FAIL, 复用=阈值购物); "
+              "要评 UE 通道方向不对称走 ue_tier_gate 线, 别拿本影子的纸面人群当证据。",
         count_mode="where:type=capture",
     ),
     ShadowItem(
