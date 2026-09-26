@@ -52,6 +52,17 @@ class ShadowItem:
     status: ShadowStatus
     description: str
     data_path: str
+    # 🔴 config_key **可能是生产键, 不是影子开关** (2026-09-26 RFC-109⑤-C, 用户审计陷阱实证):
+    # 照 config_key「停采」前必须验**该键是否真门控 data_path 的影子写方** (grep 写方源码),
+    # 两种翻车形态都有实锤:
+    #   ① volume_gate_vwap_relative (p1_3_vol_p50) = **生产量能门** (现 true) ⇒ 照它停采 = 关生产闸;
+    #   ② mfe_stall_exit_enabled (mfe_stall_exit) = **生产退出腿** (现 false) 且**不门控**影子写方
+    #      (写方 exit_engine:860 在 ATR≥4%∧peak<0.3%∧profit<0 分支内无条件写) ⇒ 它 false ≠ 影子已停。
+    # 当日实测教训: 盘点脚本按「config_key 现值 false ⇒ 真停」判, 把 ② 误报成已停 —
+    # notes 里的自由文本警告没拦住 ⇒ 规则必须放字段级。
+    # 真影子开关的正例 (可安全用): falsification_gate_capital_flow_shadow (pipeline:6274 真门控写方,
+    # false 后产物冻结 1594 行) / limit_entry_shadow_observe (pipeline:6310) / llm_features.*_shadow.enabled /
+    # reentry_quick_tp_shadow_enabled (reentry_tp_shadow.py:42)。
     config_key: Optional[str] = None
     min_n: int = 30
     current_n: int = 0
