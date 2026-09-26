@@ -2782,6 +2782,39 @@ def summary() -> str:
 _STALE_DAYS = 14      # 产出超龄阈值 (日更影子两周无产出 = 疑似断流)
 _GRACE_DAYS = 10      # 初生豁免: 新注册事项等首夜产出, 不报文件缺失
 
+# ── check_artifact_consumers 口径常量 (2026-09-26, 坑2「哨兵单向」守卫) ──────────
+_TERMINAL_STATUS = (ShadowStatus.KILLED, ShadowStatus.SUPERSEDED, ShadowStatus.GRADUATED)
+# 展示面: 只读产物渲染看板/词表, 不喂生产决策 ⇒ 不算「生产消费者」(否则每条影子都命中)
+_DISPLAY_ONLY_SOURCES = ("shadow_board.py", "shadow_lexicon.py")
+# 已显式认领的「终态但产物仍喂生产链」— **必须写理由**, 否则守卫失去意义。
+# 刻意用模块级常量而非 notes 自由文本: 本文件 collection_retired 注释已实证
+# 「notes 里的自由文本警告没拦住 ⇒ 规则必须放字段级」(2026-09-26 RFC-109⑤-B)。
+_CONSUMER_ACK: dict[str, str] = {
+    "universe_expansion_shadow": (
+        "2026-09-26 用户裁「退役」时实测确认: 只摘 score+eval cron, **capture cron "
+        "`30 12 * * 1-5` 必须保留** — llm_universe_scan.py `_gather_market_corroboration` "
+        "的 fallback 只读 type=='capture' 行, 且 DEB-20260914 实测「da_feed 窗 ET 07:40 "
+        "结构上永远早于生产者 DA ET 08:00 ⇒ 次次落到 capture 回退」+ 盘中脉搏在生产两窗 "
+        "结构上永不成立 ⇒ capture 是 UE 生产 prompt「市场佐证」段的**常态原料**; "
+        "crontab 有 inject ∧ entry_enabled=true ⇒ 摘 capture = 改 UE 交易行为, 超授权。"
+        "详见本条 verdict_history 同日 KILLED 记录 evidence ②。"),
+    # ── 存量棘轮 (2026-09-26 守卫首跑即命中的 3 条, 逐条实测认领, 非批量豁免) ──
+    # 判据: 消费者脚本是**终点报表** — 其产物无其他脚本读 (grep 全仓仅自身), 且只 print/push
+    #       飞书 ⇒ 停采只会让报表数字停增, **不会断生产料**, 与 universe_expansion_shadow
+    #       (喂 LLM prompt ⇒ 改交易行为) 性质不同。故降级为已认领, 不占周检噪音预算。
+    "limit_entry": (
+        "消费者 scripts/limit_entry_shadow_replay.py (cron 35 5 * * 2-6) 是**终点回放报表**: "
+        "产物 OUT_SUMMARY/明细 jsonl 全仓无其他脚本读 (grep 实测), 只 print。"
+        "⇒ 停采只让回放数字停增, 不断生产料。"),
+    "da_glm_shadow": (
+        "消费者 scripts/daily_llm_token_report.py (cron 20 6 * * 2-6 --push) 是**终点 token 成本报表**: "
+        "读该影子只为统计 glm_tokens_in/out 累进成本表, 产物 push 飞书, 无脚本读其输出。"
+        "⇒ 停采只让成本表少一行, 不断生产料。"),
+    "da_prompt_distill_shadow": (
+        "同上 daily_llm_token_report.py 终点报表 (读 v2_tokens_in/out 统计蒸馏增量成本)。"
+        "⇒ 停采只让成本表少一行, 不断生产料。"),
+}
+
 
 def _code_only(text: str) -> str:
     """挂载核对用: 剥离 # 注释与行首 docstring 后的代码文本 (token 级)。
@@ -2922,6 +2955,70 @@ def check_mounting() -> list[str]:
             warnings.append(
                 f"🪝 产出超龄 [{s.id}] {s.name}: {p.name} 已 {age} 天未更新 "
                 f"(阈值 {_STALE_DAYS} 天, 疑似采集断流)")
+    return warnings
+
+
+def check_artifact_consumers() -> list[str]:
+    """🔵 反向挂载哨兵: 终态影子的产物仍有**cron 活跃消费者** = 停采/摘 cron 会断生产料.
+
+    立起理由 (2026-09-26 实测, 我自己差点踩): `check_mounting` 是**单向**的 —
+    只查「eval_script 存在但没挂 cron ⇒ 悬空」, **不查**「你要摘的那条 cron 有没有生产读方」。
+    实例: `universe_expansion_shadow` 判据 FAIL 用户裁退役, 我照判据原文「删 cron + 开关置 false,
+    零残留」准备摘 capture cron `30 12 * * 1-5` —— 但 `llm_universe_scan.py`
+    `_gather_market_corroboration` 的 fallback **只读** `type=='capture'` 行, 且 DEB-20260914 已实测
+    「UE 的 da_feed 窗 (ET 07:40) 结构上永远早于生产者 DA (ET 08:00) ⇒ 该窗**次次落到 capture 回退**」,
+    而 crontab 有 `llm_universe_scan.py inject` ∧ `entry_enabled: true` ⇒ UE 真下单
+    ⇒ 摘 capture = **改 UE 交易行为**, 远超「判据退役」授权。靠人工 grep 才发现, 本该是哨兵的活。
+    这正是本文件 `collection_retired` 字段注释预警的形态: 「判据退役 (KILLED/FAIL) **不等于**
+    没有消费者 — 实锤 capital_flow 的原料在喂生产门」。
+
+    判定口径 (刻意收窄, 防噪音风暴 — 原型全量命中 36 条/22 条 cron 活跃, 不可接受):
+      ① 只报**终态** (KILLED/SUPERSEDED/GRADUATED): 现役项有消费者是正常的 (影子本该有读方);
+      ② 消费者必须在 **cron 活跃面** (非注释行): 仅静态引用 = 报表/研究脚本读历史数据, 不断料;
+      ③ 排除: 写者 (与产物同名的脚本) / 该项自己的 eval_script / 展示面 (shadow_board,
+         shadow_lexicon) / 注册表自身 — 否则 4 条里 3 条是假阳;
+      ④ 豁免走**模块级常量** `_CONSUMER_ACK` (不走 notes 自由文本: 本文件
+         `collection_retired` 注释已实证「notes 里的自由文本警告没拦住 ⇒ 规则必须放字段级」)。
+    口径复用 `check_mounting` 的既有件: `_code_only` (剥注释/docstring, 纯注释提及不算引用)
+    + `_mounted_sources` (crontab + /etc/crontab + /etc/cron.d 全解析面, 401bedcb 教训)。
+    性能: 原型对每文件跑 tokenize = 111s (周检 subprocess timeout=90s ⇒ 会超时, 守卫自己变死门);
+    改为「廉价 `bn in text` 粗筛 → 只对命中文件跑 _code_only」= **1.09s** (提速 102×, 结果一致)。
+    """
+    cron_text, sources = _mounted_sources()
+    cron_active = "\n".join(
+        l for l in cron_text.splitlines() if not l.lstrip().startswith("#"))
+    warnings = []
+    for s in REGISTRY:
+        if s.status not in _TERMINAL_STATUS:
+            continue                      # ① 只管终态 (判据退役 ≠ 采集退役 的防呆面)
+        if s.id in _CONSUMER_ACK:
+            continue                      # ④ 已显式认领 (理由写在该常量旁)
+        bn = s.data_path.split(" (")[0].strip().split("/")[-1]
+        if not bn or bn.endswith(".db"):
+            continue                      # DB 内口径由各自 eval 现算, 无产物文件可断供
+        stem = bn[:-6] if bn.endswith(".jsonl") else Path(bn).stem
+        own_eval = (s.eval_script or "").split("/")[-1]
+        consumers = []
+        for path, text in sources.items():
+            pbn = Path(path).name
+            if pbn == own_eval or pbn in _DISPLAY_ONLY_SOURCES or pbn == "shadow_registry.py":
+                continue                  # ③ 自身 eval / 展示面 / 注册表
+            if Path(pbn).stem == stem:
+                continue                  # ③ 写者 (与产物同名脚本) 不算消费者
+            if bn not in text:
+                continue                  # 廉价粗筛 (省 tokenize, 见性能注)
+            if bn not in _code_only(text):
+                continue                  # 精筛: 纯注释/docstring 提及不算
+            if pbn in cron_active:
+                consumers.append(pbn)     # ② 只认 cron 活跃面的消费者
+        if consumers:
+            warnings.append(
+                f"🔗 终态产物仍有生产消费者 [{s.id}] {s.name} (status={s.status.value}): "
+                f"{s.data_path} 被 cron 活跃脚本读 → {', '.join(sorted(consumers))}。"
+                f"⇒ **判据退役 ≠ 采集退役**: 摘该产物的采集 cron 会断这些脚本的料; "
+                f"若确属合法保留 (产物是生产链原料), 在 _CONSUMER_ACK 显式认领并写明理由, "
+                f"否则先拆依赖再停采 (先例: universe_expansion_shadow 的 capture 喂 "
+                f"llm_universe_scan 佐证段 fallback, DEB-20260914 实测为常态路径)。")
     return warnings
 
 
