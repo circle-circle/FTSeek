@@ -41,6 +41,9 @@ STATE = REPO / "data" / "shadow" / "pending_adjudication_state.json"
 # 白话词典已提为 SSOT: app/review/shadow_lexicon.py (判决书推送与影子验收清单共用一份)。
 # 本模块只做分类与排版, 不再自带白话 —— 两处各写一份会导致同一影子两种说法。
 from app.review.shadow_lexicon import SHADOW_LEXICON as CURATED  # noqa: E402
+# 推送截断 SSOT (RFC-109④收口): 原裸切片 conclusion[:96]/[:100] 无句读边界也无「…」标记
+# ⇒ 长结论被拦腰截成半句且读者看不出被截断 (实测 exit_param_shadow/premarket_invalidation 两条)。
+from app.review.bundle_render import clip_for_push  # noqa: E402
 
 VERDICT_PLAIN = {
     "KEEP_SAMPLING": "还看不出结论, 继续攒样",
@@ -140,7 +143,7 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
         L.append(f"**② 判据已读完、自动续观（{len(watch)} 项，不用你管）**")
         for it in watch:
             due = it.get("recheck_after") or "未登记"
-            L.append(f"- `{it['id']}`（{it['progress']}，重看 {due}）：{it['conclusion'][:96]}")
+            L.append(f"- `{it['id']}`（{it['progress']}，重看 {due}）：{clip_for_push(it['conclusion'], 96)}")
         L.append("")
     if window:
         L.append(f"**③ 等预注册窗口到期自动结算（{len(window)} 项，窗内禁改）**")
@@ -158,7 +161,7 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
                 note = cur.get("conclusion", "（未收录白话结论 — 见注册表 notes）")
                 v = _artifact_verdict(r.get("artifact", ""))
                 extra = f"（产物裁决码：{VERDICT_PLAIN.get(v, v)}）" if v else ""
-                L.append(f"- `{r['id']}` → **{r['status']}**：{note[:100]}{extra}")
+                L.append(f"- `{r['id']}` → **{r['status']}**：{clip_for_push(note, 100)}{extra}")
             L.append("")
 
     if first_run:

@@ -55,8 +55,14 @@ def _shadow_lexicon() -> dict:
         return {}
 
 
-def _clip(text: str, limit: int = 90) -> str:
-    """推送用截断: 优先落在句读边界, 并留「…」标记 —— 截断要看得见, 全文在 MD/清单里。"""
+def clip_for_push(text: str, limit: int = 90) -> str:
+    """推送用截断: 优先落在句读边界, 并留「…」标记 —— 截断要看得见, 全文在 MD/清单里。
+
+    2026-09-26 提为公开名 (RFC-109④收口): 本函数是**推送截断的唯一实现** (SSOT),
+    scripts/pending_adjudication_report.py 也复用它 —— 该处原先用裸切片 `conclusion[:96]`
+    / `[:100]`, 既无句读边界也无「…」标记 ⇒ 长结论被**拦腰截成半句**且读者看不出被截断
+    (违反本函数 docstring 自己写的纪律)。别名 `_clip` 保留向后兼容。
+    """
     text = " ".join(str(text or "").split())
     if len(text) <= limit:
         return text
@@ -65,6 +71,9 @@ def _clip(text: str, limit: int = 90) -> str:
     if cut < limit // 2:
         cut = limit
     return window[:cut].rstrip("。；， ") + "…"
+
+
+_clip = clip_for_push  # 向后兼容别名 (本模块内旧调用点 + 可能的跨模块私有引用)
 
 
 def _shadow_plain_lines(row: dict, lexicon: dict, *, width: int | None) -> list[str]:
