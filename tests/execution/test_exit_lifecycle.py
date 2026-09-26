@@ -2,6 +2,7 @@
 import logging
 import socket
 import sqlite3
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -16,9 +17,18 @@ from app.execution.dual_broker import DualBrokerAdapter
 def isolated(monkeypatch):
     violations = []
     original_connect = sqlite3.connect
+    # 允许的临时根必须与 pytest 同轴: pytest 的 tmp_path/basetemp 跟随 TMPDIR, 本机
+    # TMPDIR=/root/.hermes/cache/scratch (不在 /tmp 下)。原写法硬编码 '/tmp/' 前缀 ⇒
+    # 该环境下**全部 112 个退出链用例恒红** (violations=[('sqlite',
+    # '.../pytest-of-root/pytest-N/test_x_0/exits.db')]), 隔离守卫实际失效 —— 真回归会被
+    # 淹没在环境噪音里 (2026-09-27 实测: 默认 TMPDIR 下 102 failed/110 errors,
+    # TMPDIR=/tmp 下同一 worktree 112 passed ⇒ 与代码无关)。
+    # 守卫强度不变: 生产路径 (/opt/ftseek/FTSeek-US/data/*.db) 不在任何临时根下 ⇒ 照样拦。
+    _tmp_roots = (str(Path(tempfile.gettempdir()).resolve()).rstrip('/'), '/tmp')
 
     def sql_connect(path, *args, **kwargs):
-        if str(path) != ':memory:' and not str(Path(path).resolve()).startswith('/tmp/'):
+        _p = str(Path(path).resolve())
+        if str(path) != ':memory:' and not any(_p.startswith(r + '/') for r in _tmp_roots):
             violations.append(('sqlite', str(path)))
             raise AssertionError('non-test database')
         return original_connect(path, *args, **kwargs)
