@@ -129,6 +129,12 @@ def run_check() -> dict:
     coverage_ok, coverage_fails = _all_coverage_100(records)
     band_ok, band_out, band_note = _plan_rows_in_band(records)
 
+    # 全行 PASS 的交易日集 (2026-09-26 RFC-109⑥): ledger 一行 = 一个 (et_date, session) 对账,
+    # 同一日可有多行 (实测 9/24 有 5 行) ⇒ 「日」轴须按 et_date 聚合, 不能用行数冒充天数。
+    _fail_day_set = {r.get("et_date") for r in coverage_fails if r.get("et_date")}
+    _all_days = {r.get("et_date") for r in records if r.get("et_date")}
+    _all_pass_dates = _all_days - _fail_day_set
+
     criteria = {
         "trading_days": {
             "required": f">= {MIN_TRADING_DAYS}",
@@ -138,9 +144,18 @@ def run_check() -> dict:
         },
         "coverage_100pct": {
             "required": "每日 missed_count == 0",
-            "actual": f"{len(records) - len(coverage_fails)}/{len(records)} 日 PASS",
+            # ⚠️ 轴更正 (2026-09-26 RFC-109⑥, 实弹跑发现): 原文案 "N/M 日 PASS" 里的 N/M 是
+            # **对账行数** (每行 = 一个 (et_date, session) 对账), 不是交易日数 —— 实测 ledger
+            # 7 行只覆盖 **2 个交易日** (9/24 premarket×4 + afterhours×1, 9/25 premarket + afterhours),
+            # 却印成「5/7 日 PASS」; fail_dates 也未按日去重 ⇒ 印出 ['2026-09-24','2026-09-24']。
+            # 判定逻辑本身正确 (任一行 missed_count>0 ⇒ FAIL, 与轴无关), 错的只是**显示**,
+            # 但显示错会让人误读进度 (把 2 天当 7 天) ⇒ 双轴同印 + fail_dates 去重。
+            # 测试 fixture 每行一个日期 (7 行=7 日) ⇒ 天然测不出本混淆, 故此处显式标注。
+            "actual": (f"{len(records) - len(coverage_fails)}/{len(records)} 行 PASS "
+                       f"(全行 PASS 的交易日 {len(_all_pass_dates)}/{n_days} 日)"),
             "pass": coverage_ok,
-            "fail_dates": [r.get("et_date") for r in coverage_fails],
+            "fail_dates": sorted({r.get("et_date") for r in coverage_fails if r.get("et_date")}),
+            "fail_rows": len(coverage_fails),
         },
         "plan_rows_band": {
             "required": f"{PLAN_ROWS_MIN}-{PLAN_ROWS_MAX}",
