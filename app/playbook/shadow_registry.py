@@ -342,7 +342,12 @@ REGISTRY: list[ShadowItem] = [
                                      "在跑行为不受影响: volume_gate_vwap_relative=true 系 reentry+UE 侧 "
                                      "既有行为, 本裁杀仅停观察跟踪; DA 对比组写盘随 da_enforce 现状。"}],
         notes="按源分流: reentry+UE 走 p50, DA 走线性; 核心桶 [0.6,0.8) WR 20% 方向强。"
-              "2026-09-01 裁杀: 5 天 3 样本=触发近乎不存在, 攒样无意义",
+              "2026-09-01 裁杀: 5 天 3 样本=触发近乎不存在, 攒样无意义。"
+              "🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 影子发射块 pipeline:5757 "
+              "`if _vol_use_p50 is False:` **无独立开关** (该条件是生产分流本身, 非影子开关) "
+              "⇒ 停采须改 pipeline.py 加 shadow-only 键 + systemctl restart; "
+              "⚠️ config_key=volume_gate_vwap_relative 是**生产量能门**(现true), 照它停采=关生产闸。"
+              "负载实测 172K/624行, 近7日+118 ⇒ 收益微小, 不值当改生产码。",
     ),
     ShadowItem(
         id="p1_1_capital_flow",
@@ -364,7 +369,12 @@ REGISTRY: list[ShadowItem] = [
         notes="capital_flow_replay_verdict: 四关全不过, 用户裁决不得拦单。"
               "2026-09-21 清账: 已裁未归档 → 退役, 退出待裁队列; "
               "采样行仍由 playbook.execution_parameters.falsification_gate_capital_flow_shadow "
-              "在写 (本项退役不改采写行为, 停采需另关开关)。",
+              "在写 (本项退役不改采写行为, 停采需另关开关)。"
+              "🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 5 条里**唯一有真 shadow-only "
+              "开关**的 — pipeline:6193 实读该键 (record-only 不拦单), 且产物**零读方** "
+              "(intraday_reentry 资金背离门读的是 data/futu_capital_flow.jsonl 分钟级原料, "
+              "**不是本 jsonl** ⇒ fail-open 陷阱属 futu_channel_capital_flow, 不适用本条)。"
+              "关开关即可停, 但键在 playbook.* ⇒ 必重启。负载 416K/1594行, 近7日+412。",
     ),
 
     # ── 富途通道影子 (采集 8/12 已上线, 2026-08-29 补登记 — 未登记=无人跟踪) ──
@@ -844,7 +854,12 @@ REGISTRY: list[ShadowItem] = [
                                       "汇总落盘 data/shadow/overnight_arm_report_latest.json "
                                       "verdict=REPAIR_RATE_OK (2026-09-21 07:34 重跑复核一致)。"
                                       "SUPERSEDED 在此为『结案』语义 (无替代项), 非被新版取代。"}],
-        notes="2026-08-29 注册表 verdict 'PROD_KILL_CRITERION_REGISTERED' 的执行落地; "
+        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): data_path 指向的 "
+              "overnight_arm_report_latest.json **不是采集产物** — 是 scripts/overnight_arm_report.py "
+              "的只读报表输出, 且**同时是本条注册表计数锚** (顶层 n=已平仓数, n≥20 翻 READY) 与 "
+              "B15 判罪线可见面 ⇒「停采」=撤 cron 20 6 * * 2-6, 会连带断计数锚与判罪线 "
+              "(不是减负载, 是断证据)。负载 4K/15行, 近7日+0 ⇒ 停采收益≈0, 建议不停。"
+              "2026-08-29 注册表 verdict 'PROD_KILL_CRITERION_REGISTERED' 的执行落地; "
               "cron 20 6 * * 2-6 判罪线进度 JSON 落盘 (顶层 n=已平仓数, 注册表计数锚); "
               "原 overnight_hold 项保持 GRADUATED (毕业案历史), 本项只管毕业后生产表现。",
     ),
@@ -862,6 +877,10 @@ REGISTRY: list[ShadowItem] = [
         last_evaluated="2026-08-15",
         verdict_history=[{"date": "2026-08-15", "verdict": "KILLED",
                          "evidence": "p=0.17 捕获率14% n=31 否决; 7/1起实跑-$1353"}],
+        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 写方 exit_engine:860 **无门控** "
+              "(在 ATR≥4%∧peak<0.3%∧profit<0 分支内无条件写) ⇒ 停采须加 shadow-only 键 + 重启; "
+              "⚠️ config_key=mfe_stall_exit_enabled 是**生产退出腿**(现false), 不门控影子写方 — 禁碰。"
+              "负载 92K/300行, 近7日+34 (5 条里最轻)。",
     ),
 
     # ── 退出策略核查批 (2026-08-31, 用户裁"影子先行") ──
@@ -941,7 +960,13 @@ REGISTRY: list[ShadowItem] = [
                                       "日聚类 t=0.62 MDE ±20.5 ⇒ 与 0 不可分辨。判据明文'任一条显著劣化 → "
                                       "撤回, 证据留档' ⇒ 结案。若未来重启该假设, 必须新预注册 "
                                       "(读数卡已给可达性门方向的数据依据), 不得挪用本判据。"}],
-        notes="首个生产夜=9/1 盘 (结构化字段首夜); 8/31 指令无结构化字段重放 n=0 合预期; "
+        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行 — **本条最易误伤**): 产物有"
+              "**两个语义共用的写方** — ①pipeline:6276 受 pullback_limit_shadow_enabled 门控 "
+              "(Phase B trigger 行); ②playbook_service._append_routed_shadow (DEB-20260901 选项1② "
+              "archetype 路由遥测, **活跃且不受该开关门控**) ⇒ 关开关只停一半, 且路由遥测行断供 "
+              "= 次日重放脚本按 type 取行的路由归因失效。真要停须先拆 type/拆文件。"
+              "负载 436K/1257行, 近7日+258。"
+              "首个生产夜=9/1 盘 (结构化字段首夜); 8/31 指令无结构化字段重放 n=0 合预期; "
               "首批判读 9/2 05:47; count_mode=lines。"
               "双口径窗口 (2026-09-02 DEB-20260902 议题二补): 判据 n≥20 可配对样本自 "
               "9/1 起算 (指令侧 DB 重构可信); chase_cap 违例率维度自 9/2 起算 (9/1 "
