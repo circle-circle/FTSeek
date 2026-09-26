@@ -33,7 +33,22 @@ capture 日 (horizon 1..43 天), 与日常批 (1-3 天) 混在同一文件里 �
 产物: data/shadow/universe_expansion_eval_latest.json (atomic write)。
 用法: venv/bin/python scripts/universe_expansion_shadow_eval.py [--min-days 10] [--min-n 30]
 
-零行为变更: 只读 jsonl + DB, 不改写者、不改 config、不动执行链。
+🔴 **裁决适用范围 (2026-09-26 同日自纠, 撤回原 overclaim)** — 读 verdict 前必看:
+本器测的人群 = 写者「板块轮入 → 拉成分股 → **宇宙外浮现名**」(61 只, 板块成分蓝筹为主:
+ABBV/ABT/BA/COST/CVX/DIS/DOW…), 而**实盘 UE 通道成交的是另一批票** (ADBE/ARM/ASML/AVGO/
+CRWD/DDOG/BIDU…)。symbol 归一化 (去 `US.` 前缀) 后实测重叠仅 **9 只 = 占 UE 14% / 占影子 15%**,
+按笔数 **20/86 = 23.3%**; 且重叠子集 LONG −$180.88 (n=13) vs **非重叠** LONG −$660.37 (n=38)
+⇒ 实盘 UE LONG 的出血主要在影子**没浮现过**的标的上。
+⇒ 本器 verdict=FAIL 只证明「**宇宙外扩张浮现能力**」无预测力 (前瞻命中率 38.8% < 55%,
+   LONG 腿 12.1% / −2.043% / p=1.0), **不能**外推成「UE 通道该停」或「UE LONG 该禁」。
+   后者须用 `decision_id LIKE 'universe_expansion%'` 归属的 86 笔实盘盈亏单独走判据
+   (已在 ue_tier_gate 台账留「方向分层只并列呈报不另设门」的备证, 防多重比较挪门柱)。
+⚠️ 归属口径: 查 UE 通道**必须**用 `decision_id LIKE 'universe_expansion%'`;
+   用 `strategy_id LIKE 'universe_expansion%'` 得 **0 笔** (strategy_id 实为 playbook_sim /
+   extended_hours_entry 落库标签, memory 已有此纪律: 归属先看 decision_id 前缀)。
+⚠️ symbol join 必须归一化去 `US.` 前缀 — 未归一化时重叠误得 0%, 会得出「两人群完全无关」的错结论。
+
+零行为变更: 只读 jsonl (不连 DB), 不改写者、不改 config、不动执行链。
 """
 from __future__ import annotations
 
