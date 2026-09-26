@@ -735,10 +735,22 @@ def _sec_eth_short_family():
     if r:
         last = r[-1]
         a = _age_days(last.get("date"))
+        # 2026-09-26 (RFC-109②-A): 原印「闸阻塞提示 gate_block_hints」= 死列 (30 天恒 0, 已从采集
+        # 脚本删除) ⇒ 连带清理此处, 否则永远印 None。改印同轴转化链 (历史行无新键 ⇒ 一律 .get(),
+        # 缺键印「(旧行无同轴键)」而非 None, 与「真 0」区分)。
+        if last.get("bear_with_short_n") is None:
+            chain = "(旧行无同轴键, 9/26 后新增)"
+        else:
+            chain = (f"看空→指令 {last.get('bear_with_short_n')} → 成交 {last.get('bear_short_exec_n')}"
+                     f" | 旁路(非看空评级)空头 {last.get('short_from_non_bearish_n')} 只")
         out.append(f"  ② 空头漏斗 [{last.get('date')}] 分析 {last.get('analyzed_n')} 只 → 看空 "
                    f"{last.get('rated_bearish_n')} → 空头指令 {last.get('short_instructions')} → "
-                   f"执行 {last.get('short_executed')} (闸阻塞提示 {last.get('gate_block_hints')})"
+                   f"执行 {last.get('short_executed')} | {chain}"
                    + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
+        rsn = last.get("bearish_no_short_reasons") or {}
+        if rsn:
+            top = "; ".join(f"{k}×{v}" for k, v in list(rsn.items())[:3])
+            out.append(f"     看空却未出空头指令的主因: {top}")
     else:
         out.append("  ② 空头漏斗: (无样本)")
     r = _read_jsonl(ROOT / "data" / "ue_short_boost_shadow.jsonl")

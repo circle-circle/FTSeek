@@ -10,7 +10,11 @@
   1. "深度分析 N/M: US.XXX" + "评级: X (Y/10)" 配对 → 每标的评级分布
   2. 与 playbook_instructions 当日方向对照 → 空头转化漏斗:
      analyzed_n → rated_bearish → short_instructions → executed
-  3. 三问gate痕迹: thesis/skip_reason 含"三问/逼空/催化剂时效" → gate_block标记
+  3. 同轴转化链 (2026-09-26 RFC-109②-A 修轴): 按 (trade_date, symbol) JOIN ⇒
+     rated_bearish → bear_with_short → bear_short_exec, 并分列「非当日看空评级」的旁路空头。
+     原 3.「三问gate痕迹」已删: 正则 `三问|逼空|催化剂时效` 在同期 1853 条 skip_reason 命中 0
+     ⇒ 门恒不触发 (生产文案里没这三个词, 代码中的「三问」全指用户三问 Q1/Q2/Q3 决策留痕)。
+     死测量替换为真实拦截原因分布 bearish_no_short_reasons。
   落 data/short_funnel_shadow.jsonl, 按 (date) 幂等。
 
 注意 rotation 日期陷阱: 文件名 .log-YYYYMMDD 装的是前一日那轮 (DA 19:00 CST 盘前跑)。
@@ -107,17 +111,40 @@ def main():
         insts = conn.execute(
             "SELECT symbol, direction, executed, skip_reason FROM playbook_instructions "
             "WHERE substr(created_at,1,10) = ?", (trade_date,)).fetchall()
+        # 2026-09-26 (RFC-109②-A 修轴): inst_by_sym 原本建了却从未被使用 ⇒ 「看空评级→空头指令」
+        # 这条链**答不出来**, 因为 rated_bearish_n(评级看空的股票数) 与 short_instructions(当日全部
+        # SELL_SHORT 指令数) 不同分母, 相除无意义 (实测 108/67=161% 的假「转化率」就是这么来的)。
+        # 补上按 symbol 的同轴 JOIN — 这才是判据「n≥10 交易日再裁分层 gate」要问的东西。
         inst_by_sym = {}
         for i in insts:
             inst_by_sym.setdefault(i["symbol"], []).append(dict(i))
 
         short_insts = [i for i in insts if i["direction"] == "SELL_SHORT"]
-        # 三问gate痕迹
-        gate_blocks = 0
-        for i in insts:
-            sr = i["skip_reason"] or ""
-            if re.search(r"三问|逼空|催化剂时效", sr):
-                gate_blocks += 1
+        short_syms = {i["symbol"] for i in short_insts}
+        bear_set = set(bearish_syms)
+        # 同轴转化链: 看空评级 ∩ 当日出了空头指令 ∩ 真成交
+        bear_with_short = sorted(bear_set & short_syms)
+        bear_short_exec = sorted(s for s in bear_with_short
+                                 if any(i["executed"] for i in inst_by_sym[s]
+                                        if i["direction"] == "SELL_SHORT"))
+        # 旁路: 空头指令但当日 DA 未评看空 (扫描层 top_bearish 按 conviction 合并进池, pipeline L243)
+        short_from_non_bearish = sorted(short_syms - bear_set)
+        # 看空评级却没出空头指令 → 真实拦截原因 (取代下面的死列)
+        bearish_no_short_reasons = Counter()
+        for s in sorted(bear_set - short_syms):
+            others = inst_by_sym.get(s) or []
+            if not others:
+                bearish_no_short_reasons["(当日无任何指令)"] += 1
+            for i in others:
+                bearish_no_short_reasons[
+                    f"{i['direction']}: {(i['skip_reason'] or '(空)')[:60]}"] += 1
+
+        # 2026-09-26 (RFC-109②-A 删死列): 原 `gate_block_hints` 用正则 `三问|逼空|催化剂时效`
+        # 去数「被三问门拦掉的空头」, 实测 **30 天恒为 0** — 在同期 1853 条非空 skip_reason 里
+        # 搜这三个词命中 0 条。根因: 生产 skip_reason 文案里根本没有这三个词 (代码中的「三问」全指
+        # 用户三问 Q1/Q2/Q3 的决策留痕, 不是一个门) ⇒ 门恒不触发 = 死测量, 占看板一格却答不了问题。
+        # 按「死门三路径全中→删门非加守卫」删除, 并连带清理下游 (看板段②、词典 conclusion、
+        # 注册表 description); 替换为真实拦截原因分布 bearish_no_short_reasons。
 
         rec = {
             "date": trade_date,
@@ -128,8 +155,13 @@ def main():
             "rated_bearish_syms": bearish_syms[:10],
             "short_instructions": len(short_insts),
             "short_executed": sum(1 for i in short_insts if i["executed"]),
-            "gate_block_hints": gate_blocks,
             "total_instructions": len(insts),
+            # ── 同轴转化链 (2026-09-26 RFC-109②-A 新增; 历史行无这些键 ⇒ 消费方一律 .get()) ──
+            "bear_with_short_n": len(bear_with_short),
+            "bear_with_short_syms": bear_with_short[:10],
+            "bear_short_exec_n": len(bear_short_exec),
+            "short_from_non_bearish_n": len(short_from_non_bearish),
+            "bearish_no_short_reasons": dict(bearish_no_short_reasons.most_common(8)),
             # R7 (DEB-20260816 §10.3): [ScoreConsistency] 矛盾率判据的聚合数据
             "consistency_flagged_n": len(consistency_flagged),
             "consistency_flagged_syms": [c["symbol"] for c in consistency_flagged][:10],

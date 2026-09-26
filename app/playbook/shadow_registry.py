@@ -208,7 +208,19 @@ ADJUDICATED: dict[str, dict] = {
                 "事实确认, 非新提案。判据不过的变体维持纯观测, 不改任何退出参数。",
     },
     "early_dead_signal_shadow": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
+        # 2026-09-26 用户裁 **A 案: 维持纯观测, 不接线, 不改判据词表** ⇒ needs_user 落 False
+        # (已裁完, 退出待裁面); recheck_after 保留 10/26 = 届时重看现役词表基率与反事实读数
+        # 是否漂移 (overdue 会把它重新推回待裁面), 不是重开裁决。
+        # ⚠️ 不设 no_adjudication_reason: 该字段在本注册表的既有语义是**结构性挂账**
+        #   (NO_CRITERIA / PERMANENT_MEASURE / NO_EVAL_SCRIPT), 且 refresh_counts 的提升条件含
+        #   `not s.no_adjudication_reason` ⇒ 一旦设上就**永久屏蔽重看窗**, 与上面保留的 10/26 冲突。
+        #   「已裁完待重看」用 needs_user=False + recheck_after 表达即可 (capital_flow / exit_param /
+        #   eth_premarket 等已裁项同型)。
+        # ⚠️ status 保持磁盘上的 OBSERVING, **不要**试图改成 READY: refresh_counts() 对
+        #   「OBSERVING ∧ current_n≥min_n ∧ 无挂账原因」会运行时自动提升为 READY_TO_EVALUATE
+        #   (代码注释明写「READY 仅表示样本量达标, 不代表判据通过」) ⇒ 本项运行时读数就是 READY,
+        #   与其余 needs_user=False 的已裁项完全一致, 属既有设计不是不一致。
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
         "note": "9/26 实跑 early_dead_signal_report (已结算 389): 判据①双窗死单率均≥55% ⇒ "
                 "**FAIL** (预注册词表 15min 1/111=1%, 30min 0/86=0%; 词表现役基率仅 1.3% "
                 "vs 预注册当时 30% = 词表漂移, engineering-change-protocol 2026-09-23 实锤). "
@@ -236,7 +248,12 @@ ADJUDICATED: dict[str, dict] = {
                 "(反事实与词表选择无关: 无论用哪个词表定义「死」, 早退净期望都是负的) ⇒ 属为过线"
                 "而过线, 不建议; C 案缩窄门需新预注册+新攒样, 且「亏→盈」与「亏→亏」在检查点"
                 "不可区分 ⇒ 现有数据无事前分层变量, 要做须先证明存在能区分两类的**事前**特征 "
-                "(入场时 ATR/regime 等), 那是新研究不是裁决。本批不动判据文字。",
+                "(入场时 ATR/regime 等), 那是新研究不是裁决。本批不动判据文字。│"
+                "**2026-09-26 用户裁 A 案 (维持纯观测, 不接线, 不改判据词表)** ⇒ 本项已裁完, "
+                "不再入待裁面。留痕: 采集与 settler cron (2 6 * * 2-6) 均**不动** (纯观测就是"
+                "继续采), 生产退出腿零改动; 10/26 重看窗只核「现役词表基率 / 反事实净额」是否漂移, "
+                "漂移才重开。若日后要接线, 前置是先证明存在能区分「亏→盈」与「亏→亏」的**事前**特征 "
+                "(B/C 案的共同前提), 那是新研究须另立 DEB。",
     },
     "eth_premarket_exit_shadow": {
         "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
@@ -283,11 +300,36 @@ ADJUDICATED: dict[str, dict] = {
     "short_funnel_shadow": {
         "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
         "note": "补登后首次入待裁面 (30/10 交易日, 8/16 起早已达标却从未被通知 = "
-                "「注册表非 SSOT」实锤)。**无 eval_script** ⇒ 按 skill 纪律不替裁决人选处置, "
-                "只出既有产物读数: 最新 9/25 分析 21 只 → 看空 5 → 空头指令 3 → 执行 1 "
-                "(闸阻塞提示 0) ⇒ 断点仍在 LLM 分析层转化率 (5/21=24% 看空, 3/21=14% 出指令, "
-                "1/21=5% 执行), 与 8/16 立项诊断同型。判据「n≥10 交易日再裁分层 gate」"
-                "已达成 ⇒ **处置需用户裁**: 立分层 gate 提案 (须另走 DEB) 或退役本影子。",
+                "「注册表非 SSOT」实锤)。│**9/26 二批 (用户裁 A 案: 修轴 + 删死列) 落地后重出读数** — "
+                "建 eval_script=scripts/short_funnel_shadow_eval.py (填 NO_EVAL_SCRIPT 缺口), 并按 "
+                "用户 8/14 口径「历史可行直接回测, 不默认攒样」把 gz 轮转日志回算的 26 个交易日"
+                "**同轴回填**进产物 (双守卫: 评级数与看空数都须与原采集值一致才回填; 行数 30→30, "
+                "既有键 0 改动; 8/14-8/19 四日日志已清理不可回算 ⇒ 无新键, 消费方印「旧行无同轴键」)。"
+                "同轴链 (按 symbol JOIN): DA 分析 578 → 评级看空 62 (10.7%) → **看空真出空头指令 35 "
+                "(转化 56.5%)** → 真成交 19 (54.3%); 全源空头指令 98 条 / 成交 48 笔, 其中**旁路 "
+                "(当日 DA 未评看空, 走扫描层 top_bearish) 54 只**。"
+                "🔴**撤回并证伪本条 9/26 首批写的「断点仍在 LLM 分析层转化率 (5/21=24% 看空, "
+                "3/21=14% 出指令)」**: 证伪源 = 那两个数**不同轴** — rated_bearish_n 是评级看空的"
+                "**股票数**, short_instructions 是当日**全部** SELL_SHORT 指令数 (与评级无 JOIN), "
+                "相除无意义 (同口径下 108/67=161% 的假「转化率」); 且它只取了 9/25 单日 (分析 8 只的"
+                "小样本日)。按 symbol 同轴回算 26 日后, 看空→指令转化 **56.5% 过半**, 8/16 立项诊断"
+                "「断点在 LLM 分析层转化率低」**不成立**。真正的最大漏斗口 = **评级→指令层 (掐掉 27 只)**, "
+                "主因 `SKIP: 非当前通道候选(bridge未提名/无方向)` ×17, 其次 admission 价量门 ×4 "
+                "(PRICE_TOO_LOW/NOTIONAL_TOO_SMALL)、sector 集中度 ×1、当日无任何指令 ×4; "
+                "指令→成交层只掐掉 16 只。"
+                "│**另删死列** gate_block_hints (30 天恒 0): 采集脚本用正则 `三问|逼空|催化剂时效` 数"
+                "「被三问门拦掉的空头」, 实测同期 **1853 条非空 skip_reason 命中 0 条** — 生产文案里"
+                "根本没这三个词 (代码中的「三问」全指用户三问 Q1/Q2/Q3 决策留痕, 不是一个门) ⇒ 门恒"
+                "不触发 = 死测量。按「死门三路径全中→删门非加守卫」删除并连带清理下游 (看板段②改印"
+                "同轴链 + 主因分布; 词典 conclusion 重写; 本条 description 去掉「三问gate痕迹」), "
+                "替换为真实拦截原因分布 bearish_no_short_reasons。"
+                "│**[只印不判] 仍待用户裁**: 判据「n≥10 交易日再裁分层 gate」已达成 (30/10), 但"
+                "「立分层 gate」= 生产行为变更 (改 pipeline 加门) = L3 ⇒ eval 只出读数不判决, 须用户裁 "
+                "+ 另走 DEB。读数指向: 若要立门, **该立在 bridge/通道候选层** (最大漏斗口 27 只), "
+                "立错层就是第二个恒不触发的死门。另须一并裁: 旁路空头占 55% (54/98) ⇒ DA 评级只解释"
+                "约四成空头产出, 判据原文假设的「LLM 分析层 → 指令」单层漏斗并不完整。"
+                "关联用户 8/16 四原则「核心=真正有空头产出、禁纯单向多头」: **有产出已被证实** "
+                "(26 日 48 笔空头成交), 待裁的是「要不要为那 27 只被 bridge 掐掉的看空单开门」。",
     },
     # ── 2026-09-26 补登记批 (B19/B21/B22): 判据字典有、注册表查无 ⇒ 周检/哨兵/意图守卫全盲 ──
     # 同型缺口第二次实锤 (首次 = 上条 short_funnel_shadow「8/16 起达标却从未被通知」):
@@ -2085,21 +2127,36 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="short_funnel_shadow",
-        name="空头转化漏斗影子打标 (LLM 分析层转化率)",
+        name="空头转化漏斗影子打标 (评级看空→指令→成交 同轴链)",
         status=ShadowStatus.OBSERVING,
         description="盘后解析 DA stderr 日志: 深度分析评级分布 × playbook 指令方向对照 → "
-                    "空头转化漏斗 analyzed_n→rated_bearish→short_instructions→executed + "
-                    "三问gate痕迹。看板段13② 数据面。8/16 用户裁「真正有空头产出是最核心问题」。",
+                    "空头转化漏斗。2026-09-26 (RFC-109②-A) 修轴: 原 analyzed_n→rated_bearish→"
+                    "short_instructions→executed 是**不同分母相除** (rated_bearish=评级看空股票数, "
+                    "short_instructions=当日全部 SELL_SHORT 指令数, 无 JOIN) ⇒ 现按 (date,symbol) "
+                    "同轴 JOIN 出 rated_bearish→bear_with_short→bear_short_exec, 并分列旁路空头 "
+                    "(short_from_non_bearish)。原「三问gate痕迹」列已删 (正则三问|逼空|催化剂时效 "
+                    "在 1853 条 skip_reason 命中 0 = 死测量), 换真实拦截原因分布。看板段13② 数据面。"
+                    "8/16 用户裁「真正有空头产出是最核心问题」。",
         data_path="data/short_funnel_shadow.jsonl",
         config_key="playbook.short_funnel_shadow_enabled",
         min_n=10,
         graduation_criteria="unified_config.yaml 预注册注逐字 (2026-08-16): n≥10 交易日再裁分层 "
                             "gate。判据达成 ⇒ 处置待用户裁 (立分层 gate 提案须另走 DEB / 或退役)。",
-        eval_script=None,
+        eval_script="scripts/short_funnel_shadow_eval.py",
+        # eval_on_demand=True (2026-09-26 RFC-109②-A): 本 eval 是**待裁项出读数用**的按需评估器
+        # (判据 n≥10 已达标, 读数不随日变化, 只在裁决日/周检时跑), 不挂 cron — 同 sltp_verify_shadow
+        # (「报告脚本无 cron, 手动/裁决日触发」) 与 iv_hv_residual_eval 先例。采集侧另有 scheduler
+        # AFTER_HOURS 挂载 (short_funnel_shadow_tag.py), 不受本豁免影响。
+        eval_on_demand=True,
         created="2026-08-16",
         notes="补登 (2026-09-26 RFC-109②): 写方=scripts/short_funnel_shadow_tag.py "
               "(scheduler AFTER_HOURS 挂载)。按 date 幂等 ⇒ count_mode=distinct:date。"
-              "⚠️ 补登时实测 30/10 交易日早已达标而从未入待裁面 = 本批要治的「注册表非 SSOT」实锤。",
+              "⚠️ 补登时实测 30/10 交易日早已达标而从未入待裁面 = 本批要治的「注册表非 SSOT」实锤。"
+              "│9/26 二批 (用户裁 A 案): 建 eval_script=scripts/short_funnel_shadow_eval.py "
+              "(只印不判, 「立分层 gate」是 L3 生产变更须另走 DEB) + 修同轴链 + 删死列 "
+              "gate_block_hints + 把 gz 轮转日志回算的 26 日同轴链回填进产物 (双守卫校验, "
+              "既有键 0 改动)。读数见 ADJUDICATED: 看空→指令转化 56.5% ⇒ 证伪 8/16「断点在 "
+              "LLM 分析层转化率低」; 最大漏斗口在评级→指令层 (bridge 未提名 ×17); 旁路空头占 55%。",
         count_mode="distinct:date",
     ),
     ShadowItem(
