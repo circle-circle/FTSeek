@@ -2000,7 +2000,20 @@ REGISTRY: list[ShadowItem] = [
         created="2026-09-24",
         notes="median basis=前向自积累 (延长时段量历史不可得 — carry 影子先例+本次探查双确认; "
               "禁 RTH 全天量冒充盘前量); turnover_approx=decision_price×ask_volume 为近似口径如实披露 "
-              "(gate 真实 volume 未落拒绝台账), ratio 判据自参照故口径一致即可比; 反事实无排队/冲击建模=上界。",
+              "(gate 真实 volume 未落拒绝台账), ratio 判据自参照故口径一致即可比; 反事实无排队/冲击建模=上界。"
+              "💤**n=0/产物缺失 = 刻意 dormant, 非断供非「触发不存在」(2026-09-26 RFC-109④-B 核实)**: "
+              "本影子自门控 — 写方脚本 scripts/eth_relative_volume_gate_shadow.py:320 `_check_reconcile_gate()` "
+              "要求 data/loops/ext_entry_plan/reconcile_ledger.jsonl 的 PASS 日数 ≥7 才开跑, 未满则打印 "
+              "`[eth_vol_gate] dormant: reconcile PASS 日数 N/7` 后直接退出 (不写产物)。实测: cron 在跑 "
+              "(0 22 * * 1-5 premarket / 20 9 * * 2-6 afterhours), 日志 9/26 09:20 = `dormant: 2/7` ⇒ "
+              "门控正常推进 (reconcile_ledger 7 行: PASS 2 / FAIL 2 / NO_DATA 3), 只是还没到 7 日。"
+              "⇒ **不得据此裁退役** (原审计 B 项把「产物文件不存在」归为「触发不存在, 可裁退役」对此条不成立: "
+              "created=2026-09-24 仅 2 天, 判据自带死线 2026-11-30 自动停采, 提前退役会砍掉正在等门控的影子)。"
+              "⚠️**关联真缺陷 (非本条, 属 rfc104_eth_event_plan 计数锚)**: 门控的实时源 reconcile_ledger.jsonl "
+              "每日 09:04 更新 (现 2/7), 但注册表 rfc104 的计数锚 data_path 读的是 "
+              "graduation_check_latest.json — 该产物**停在 9/24 17:32 且写方 eth_event_plan_graduation_check.py "
+              "无 cron 挂载** ⇒ 计数锚 n 永远停在 1/7 (陈旧快照), 与实时 2/7 脱节。此缺陷在并行 agent "
+              "未提交的 rfc104 hunk 范围内, 本批不碰, 已上报用户待裁。",
     ),
     ShadowItem(
         id="eth_patient_maker",
@@ -2022,7 +2035,15 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/eth_patient_maker_shadow.py",
         created="2026-09-24",
         notes="数据面=pretrade_gate_rejects 的 spread_too_wide/insufficient_depth 行 quote{bid,ask,spread_pct}"
-              " + executions 台账; 穿越即成交是乐观上界 (排队位置未建模) — 判据过上界仍须实弹复核。",
+              " + executions 台账; 穿越即成交是乐观上界 (排队位置未建模) — 判据过上界仍须实弹复核。"
+              "💤**n=0/产物缺失 = 刻意 dormant, 非断供非「触发不存在」(2026-09-26 RFC-109④-B 核实)**: "
+              "与 eth_relative_volume_gate 同一自门控 — scripts/eth_patient_maker_shadow.py:80 "
+              "`RECONCILE_PASS_MIN_DAYS=7` + :371 `_check_reconcile_gate()` 要求 "
+              "reconcile_ledger.jsonl PASS 日数 ≥7 才开跑, 未满则打 `[eth_maker] dormant: N/7` 后退出 (不写产物)。"
+              "实测: cron 在跑 (5 22 * * 1-5 premarket / 25 9 * * 2-6 afterhours), 日志 9/26 09:25 = `dormant: 2/7`。"
+              "⇒ **不得据此裁退役** (原审计 B 项「产物不存在=触发不存在, 可裁退役」对此条不成立: "
+              "created=2026-09-24 仅 2 天, 判据死线 2026-11-30 自动停采)。门控推进后两影子会同时开写。"
+              "关联真缺陷 (rfc104 计数锚读陈旧快照) 见 eth_relative_volume_gate notes, 不重复。",
     ),
     ShadowItem(
         id="overnight_known_event_flag",
