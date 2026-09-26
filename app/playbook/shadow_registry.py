@@ -2309,6 +2309,42 @@ REGISTRY: list[ShadowItem] = [
 ]
 
 
+# ── last_evaluated 从 ADJUDICATED.read_at 派生 (2026-09-26, RFC-109④-B) ──────────
+# 为什么需要: 同一个事实("判据最近一次被实测读出结论的日期")此前要**手工写两处** —
+# ShadowItem.last_evaluated 与 ADJUDICATED[id]["read_at"]。裁决落档时只写了 ADJUDICATED
+# (它是待裁面的真实判据源), 注册项字段漏改 ⇒ 实测 **18/26 条失同步**, 其中 7 条
+# last_evaluated 仍是 None。
+# 后果不是纯账面: 以 "last_evaluated=None 且 status=READY" 为轴的欠账盘点会把这些
+# **已裁决**项报成 "从未评估过的僵尸尺子" (2026-09-26 实锤: 报出 "9 条从未评估",
+# 逐条查 ADJUDICATED 后 12/12 全已裁决) ⇒ 假信号会让人重复跑已裁完的评估。
+# 修法 = 删根因 (单点派生), 不是手工同步 18 行 (下次落档照样会漏):
+#   · 模块加载时按 ADJUDICATED 覆盖 last_evaluated, 该字段从此**派生**, 不需人工维护;
+#   · 取 max(两者) 而非直接覆盖: 保护 ADJUDICATED 里**没有**登记的项 (如 da_glm_shadow
+#     2026-09-15, tests/test_da_glm_shadow.py 钉住) 与"已评估但尚未落 ADJUDICATED"的项,
+#     日期只前进不回退;
+#   · 消费方无需改: 该字段此前**零生产代码消费** (实测: summary() 不印它, 待裁面
+#     criteria_status 读的是 ADJUDICATED/adjudication_state, 全仓唯一读方是一个测试断言),
+#     所以修它零行为变更 — 修的是**人看注册表时的可读性**与欠账盘点的正确性。
+def _sync_last_evaluated_from_adjudicated() -> int:
+    """用 ADJUDICATED.read_at 补齐/前进各注册项 last_evaluated。返回被更新的条数。"""
+    n_updated = 0
+    for _s in REGISTRY:
+        _adj = ADJUDICATED.get(_s.id)
+        if not _adj:
+            continue
+        _read_at = _adj.get("read_at")
+        if not _read_at:
+            continue
+        # 只前进不回退 (ISO 日期字符串可直接字典序比较)
+        if not _s.last_evaluated or str(_read_at) > str(_s.last_evaluated):
+            _s.last_evaluated = str(_read_at)
+            n_updated += 1
+    return n_updated
+
+
+_sync_last_evaluated_from_adjudicated()
+
+
 def get_observing() -> list[ShadowItem]:
     return [s for s in REGISTRY if s.status == ShadowStatus.OBSERVING]
 
