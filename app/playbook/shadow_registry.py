@@ -279,13 +279,29 @@ ADJUDICATED: dict[str, dict] = {
                 "(分布无系统性差异) 亦不成立: 盘前 tighten +0.369% vs 盘后同族为负。",
     },
     "eth_earnings_direction_path": {
-        # 挂账而非裁决: eval_script 崩在读 scratch 临时路径, 取不到判据读数。
+        # 已读数待攒样: 尺子修好后出了真读数, 判据未过 ⇒ 维持攒样, 不到用户面前。
         "read_at": "2026-09-26", "recheck_after": "2026-10-10", "needs_user": False,
-        "note": "9/26 实跑 earnings_direction_check.py **失败** (FileNotFoundError: "
+        "note": "9/26 首轮实跑 earnings_direction_check.py **失败** (FileNotFoundError: "
                 "/root/.hermes/cache/scratch/replay_earnings_criterion_final.json — 脚本依赖"
                 "一次性回放产物, 该目录 72h 自动清理 ⇒ eval 结构性不可重跑 = 尺子坏了, "
-                "非影子断供)。产物本体健康 (32 事件/4 日, cron 20 4 * * 2-6 在跑)。"
-                "⇒ 无判据读数, 不得裁决; 待办 = 把 eval 改读入库产物或补挂回放。"
+                "非影子断供)。产物本体健康 (cron 20 4 * * 2-6 在跑)。"
+                "当时挂账「待办 = 把 eval 改读入库产物或补挂回放」。"
+                "✅ **待办已于同日 (9/26 RFC-109④-D) 完成**: 新建 "
+                "scripts/earnings_direction_path_eval.py 改读入库产物 "
+                "data/earnings_direction_path_shadow.jsonl (可无限重跑, 只读零副作用), "
+                "注册项 eval_script 已改指 + eval_on_demand=True ⇒ 挂载哨兵「悬空观察」告警 "
+                "解除 (mount 告警 1→0)。原 check.py 的三个结构性问题 (scratch 72h 清理 / "
+                "无 main() 保护 import 即跑 / 读的 118 条回放与本影子不是同一数据源) 见注册项 notes。"
+                "📐**修好尺子后的真读数 (9/26)**: n=32 行 / 仅 4 个 distinct 日 (9/22~9/25)。"
+                "①相位标定正确率 32/32=100% (gap≥+3% 10/10 SHORT, +0.5~2% 2/2 LONG, 其它 20/20 NONE) "
+                "但 4 天判不了「覆盖率**稳定**」。②预注册门槛 (每方向≥30笔 且 净/笔>0): "
+                "SHORT n=10 净均值+3.17% 胜率50% (净>0✓ 但 n<30✗); LONG n=2 净中位−1.30% (双✗) "
+                "⇒ **判据未过, 不提案转正, 生产参数不动, 维持攒样**。"
+                "⚠️ 计数轴错配已披露但未擅改 (min_n=30 数总行数 vs 预注册门槛数每方向笔数 ⇒ "
+                "总行数 32≥30 被 refresh_counts 机械提升 READY, 但两方向都远未达 30)。"
+                "**不改 min_n 的理由**: 新 eval 已如实分方向报 n 并明判「总行数达标≠判据达标」, "
+                "判决不受错轴影响 ⇒ 改门槛属改判据=重裁, 无必要不动 (做减法); 10/10 recheck 到期会 "
+                "自动推回待裁面 (overdue 机制), 届时按攒样进度再判是否需要改轴。"
                 "脚本头自述结论 (r=-0.006 零相关 / 上涨占比 47% / 无 miss 票路径) 系 "
                 "9/23 一次性回放, 本批未能复现, 不引为裁决证据。",
     },
@@ -1893,10 +1909,33 @@ REGISTRY: list[ShadowItem] = [
         description="BMO/AMC 相位 × 跳空方向分档的路径读数 (RFC-099 判据来源), 逐日一行。",
         data_path="data/earnings_direction_path_shadow.jsonl",
         min_n=30,
-        graduation_criteria="相位标定覆盖率稳定 + 分档方向一致性成立 ⇒ 提案转正; 与 RFC-099 §5 判据逐条对账",
-        eval_script="scripts/earnings_direction_check.py",
+        graduation_criteria="相位标定覆盖率稳定 + 分档方向一致性成立 ⇒ 提案转正; 与 RFC-099 §5 判据逐条对账。"
+                            "攒样器头部预注册读数门槛 (逐字): **每方向 ≥30 笔 且 每方向净/笔 > 0**; "
+                            "分档按 RFC-099 §4: gap≥+3.0%⇒SHORT / +0.5%≤gap≤+2.0%⇒LONG / 其它⇒NONE。"
+                            "⚠️ 注意 min_n=30 数的是 jsonl **总行数**, 与「每方向 ≥30 笔」是两个轴 (见 notes)。",
+        eval_script="scripts/earnings_direction_path_eval.py",
+        eval_on_demand=True,
         created="2026-09-23",
-        notes="零下单; 相位来源 futu 日历 ∪ Finnhub (并源), 空相位实测 11.8%。",
+        notes="零下单; 相位来源 futu 日历 ∪ Finnhub (并源), 空相位实测 11.8%。"
+              "🔧**eval_script 换体 (2026-09-26 RFC-109④-D)**: 原指 scripts/earnings_direction_check.py "
+              "= RFC-099 的**一次性判据实证**脚本 (9/23 为回答「财报日如何选多空」而写), 三个结构性问题: "
+              "①它读 /root/.hermes/cache/scratch/replay_earnings_criterion_final.json (118 条回放产物), "
+              "而 scratch **72h 自动清理** ⇒ 实测 FileNotFoundError ⇒ eval 结构性不可重跑 (尺子坏了); "
+              "②该脚本**无 main() 保护** (顶层直接执行) ⇒ import 即跑, 不是可复用评估器; "
+              "③它读的 118 条回放与本影子入库产物**不是同一数据源** ⇒ 就算能跑也不是在评这条影子。"
+              "新器 scripts/earnings_direction_path_eval.py 改读入库产物 (cron 20 4 * * 2-6 攒样), "
+              "可无限重跑; 只读零副作用 (不推送/不写库/不写盘/不下单); eval_on_demand=True "
+              "(按需评估不挂 cron, 同 sltp_verify_shadow / iv_hv / short_funnel 等 11 条先例) "
+              "⇒ 挂载哨兵的「悬空观察」告警解除 (该告警报的正是原 eval 不在 cron 面)。"
+              "📐**实测读数 (9/26, 判据未过 ⇒ 维持攒样)**: n=32 行 / 4 个 distinct 日 (9/22~9/25)。"
+              "①相位标定正确率 **32/32=100%** (gap≥+3% 10/10 SHORT, +0.5~2% 2/2 LONG, 其它 20/20 NONE) "
+              "但 distinct 日仅 4 天 ⇒ 「覆盖率**稳定**」判不了 (只是单批一致)。"
+              "②分档方向一致性: SHORT n=10 净中位+0.80% 净均值+3.17% 胜率 50% (净>0 ✓ 但 n<30 ✗); "
+              "LONG n=2 净中位−1.30% (n<30 ✗ 且净<0 ✗)。⇒ **两方向都未达门槛, 不提案转正, 生产参数不动**。"
+              "⚠️**计数轴错配 (如实披露, 未擅改)**: min_n=30 数总行数 (现 32 ⇒ refresh_counts 机械提升 "
+              "READY_TO_EVALUATE), 而预注册门槛是**每方向 ≥30 笔** (SHORT 10 / LONG 2) ⇒ "
+              "**总行数达标 ≠ 判据达标**。改 min_n = 改判据门槛 = 重裁, 须用户裁, 本批不动。"
+              "按当前速率 (4 天攒 32 行, 其中应标定 12 行) LONG 档攒到 30 笔需较长时间 ⇒ 已挂 recheck 窗。",
     ),
     ShadowItem(
         id="eth_ext_entry_prefilter",
