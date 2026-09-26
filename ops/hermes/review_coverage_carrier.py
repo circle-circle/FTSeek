@@ -13,8 +13,11 @@ stdout 契约:
   · rc != 0 → 先输出载体级异常行 (含尾部证据), 再投递子进程输出, 同 rc 退出
   · 超时 → 杀子进程 rc 2; 子脚本缺失 rc 3; rc0 但产物未落盘/未刷新 → rc 4
 签名 (state `data/reviews/coverage_carrier_state.json`): sha1 over 排序后的
-(dead id 集, 未登记/无引用 id 集, producer_count). **只取状态维度** — 产物 mtime 不进签名
+(dead id 集, 未登记/无引用 id 集, producer_count, **liveness_rule**)。**只取状态维度** — 产物 mtime 不进签名
 (每跑一次 mtime 都变 ⇒ 每周都推, 静默契约形同虚设)。
+`liveness_rule` 为什么必须进签名 (2026-09-26, RFC-109①换轴后补): alive 判据换轴会让 dead 条目集
+**整体变化** (实测 21→0), 若不纳入签名, 播报会把「尺子修好了」说成「✅ 死产出消失 21」=
+假信号 (读起来像僵尸被清理了)。变动时 _render 优先印一行口径变动警告。
 取证面: 子进程输出 + `[carrier …] rc= dur= out_lines= sig=` 头追加到 `logs/review_coverage_scan.log`。
 回滚: 删 Hermes job + 删本文件与线上副本 + 删 state (无 crontab 行依赖, 删除即静默)。
 """
@@ -63,15 +66,25 @@ def _signature(summary: dict) -> tuple:
     # 子脚本当前 schema 只给 dead_producers; 未登记影子面若日后并入 summary 会自动生效。
     counts = (summary.get("producer_count"), summary.get("dead_producer_count"),
               summary.get("push_exit_file_count"))
-    raw = json.dumps([dead, unreg, counts], ensure_ascii=False, sort_keys=True)
-    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12], dead, unreg, counts
+    # alive 判据口径版本必须进签名: 换轴会让 dead 条目集整体变化 (实测 21→0), 若不纳入
+    # 签名, 播报会把「尺子修好了」说成「21 个僵尸被清理了」= 假信号。缺键按 "?" 处理
+    # (旧子脚本无此字段), 首次见到真值即视为口径变动。
+    rule = str(summary.get("liveness_rule") or "?")
+    raw = json.dumps([dead, unreg, counts, rule], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:12], dead, unreg, counts, rule
 
 
-def _render(summary: dict, sig: str, dead: list, unreg: list, prev: dict | None) -> list:
+def _render(summary: dict, sig: str, dead: list, unreg: list, rule: str, prev: dict | None) -> list:
     lines = [f"[复盘覆盖扫描] {datetime.now():%Y-%m-%d} | 生产者 {summary.get('producer_count')} "
              f"| push-exit 产物 {summary.get('push_exit_file_count')} "
-             f"| 无代码引用 {len(dead)} (≠停更判定, 停更由 data_freshness_watchdog 判)" + (f" | 未登记影子 {len(unreg)}" if unreg else "")]
+             f"| 死产出 {len(dead)} (判据 {rule}: log 类按 mtime+调度新鲜度, 其余按代码引用; "
+             f"停更另由 data_freshness_watchdog 判)"]
     if prev:
+        prev_rule = str(prev.get("liveness_rule") or "?")
+        if prev_rule != rule:
+            # 口径变动优先播报 — 否则下面的「消失 N 条」会被读成僵尸被清理。
+            lines.append(f"⚠️ **alive 判据口径变动** {prev_rule} → {rule}: 下面的条目增减是"
+                         f"**尺子换轴**造成的, 不是僵尸被清理/新增。换轴前后的数字不可直接比。")
         old_dead = set(prev.get("dead") or [])
         old_unreg = set(prev.get("unreg") or [])
         new_dead, gone_dead = sorted(set(dead) - old_dead), sorted(old_dead - set(dead))
@@ -117,7 +130,7 @@ def main() -> int:
         return rc
     try:
         summary = _load_summary(out)
-        sig, dead, unreg, _ = _signature(summary)
+        sig, dead, unreg, counts, rule = _signature(summary)
     except Exception as exc:                                     # noqa: BLE001
         _append_log(CHILD_LOG, f"[carrier {datetime.now():%Y-%m-%d %H:%M:%S}] rc={rc} dur={dur:.1f}s "
                                f"out_lines={len(lines)} sig=UNPARSED\n{out}")
@@ -141,11 +154,18 @@ def main() -> int:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({"sig": sig, "ts": datetime.now().isoformat(timespec="seconds"),
                                  "dead": dead, "unreg": unreg,
-                                 "counts": summary.get("counts") or {}}, ensure_ascii=False, indent=1),
+                                 # liveness_rule 必须落 state: _render 靠 prev 里的它判断
+                                 # 「口径变了」还是「僵尸真增减」, 不落就等于每次都当没变。
+                                 "liveness_rule": rule,
+                                 # 原写 summary.get("counts") — summary 无此键 ⇒ 恒 {} (实测
+                                 # state 里 counts 一直是空的), 改用 _signature 已算好的 counts。
+                                 "counts": dict(zip(("producer_count", "dead_producer_count",
+                                                     "push_exit_file_count"), counts))},
+                                ensure_ascii=False, indent=1),
                      encoding="utf-8")
     if not changed:
         return 0                                    # 静默契约: 无变化一字不出
-    print("\n".join(_render(summary, sig, dead, unreg, prev)))
+    print("\n".join(_render(summary, sig, dead, unreg, rule, prev)))
     return 0
 
 

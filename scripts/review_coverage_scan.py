@@ -37,6 +37,14 @@ MAX_TOKENIZE_BYTES = 2_000_000
 # daily `* * 2-6` => 4d, weekly => 8d).
 DEFAULT_CRON_LOG_THRESHOLD_DAYS = 8
 
+# alive 判据口径版本 — 进 summary["liveness_rule"] 并被载体纳入签名。
+# v2 (2026-09-26, RFC-109①): log 类 artifact 按 mtime + 调度自身最大自然间隔判活,
+#   不再要求「有代码引用该 artifact 路径」; 非 log 类仍按代码引用 (tests 不算引用)。
+#   换轴实测效果: dead 21 → 0 (19 个假阳消失, 真缺 2 个中 1 个 eth_weekly_gate.log
+#   于当日 09:00 首跑自愈)。
+# 改判据必须同步改这个常量, 否则载体无法区分「僵尸被清理」与「尺子换了轴」。
+LIVENESS_RULE = "v2:mtime-freshness-for-cron-logs"
+
 
 def _cron_dow_set(field: str) -> set[int] | None:
     """Expand a cron day-of-week field to {0..6}; None if unparseable/'*'."""
@@ -415,6 +423,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dead_producer_count": len(report["dead_producers"]),
         "push_exit_file_count": len(report["push_exit_census"]),
         "dead_producers": report["dead_producers"],
+        # alive 判据口径版本 (RFC-109①换轴: log 类改 mtime+调度新鲜度, 不再要求代码引用)。
+        # 为什么必须显式带版本: 载体按 dead 条目集的变化推「🆕/✅ 死产出」, 而**换轴本身**
+        # 会让条目集整体变化 (实测 21→0) ⇒ 若不区分, 会把「尺子修好了」播报成「21 个僵尸被
+        # 清理了」的假信号。载体把本值纳入签名, 变动时改口径变动播报 (见 ops/hermes
+        # /review_coverage_carrier.py::_render)。改判据就要改这个常量。
+        "liveness_rule": LIVENESS_RULE,
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0

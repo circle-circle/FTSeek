@@ -1166,7 +1166,22 @@ REGISTRY: list[ShadowItem] = [
                          "evidence": "体检发现悬空 (标记停在 7/31): 补挂 cron 25 6 * * 2-6 + "
                                      "回填 8/25-8/31 共 16 条标记 (3 触及: 8/25×1, 8/31×2 含 PCG)"}],
         notes="计数口径同 gap_chase_gate (DB 内标记, 注册表不计数, eval 现算); "
-              "脚本自带 MarketDataRouter 拉日K, 盘后任意时点可跑",
+              "脚本自带 MarketDataRouter 拉日K, 盘后任意时点可跑。"
+              "📐**真 n 读数 2026-09-26 (RFC-109⑤-B, 只读 SQL 复算)**: 注册面显示 n=0 "
+              "**不是断供也不是尺子坏** — `_count_samples` 对 `.db` 型 data_path 返回 None "
+              "(shadow_registry.py:2453, 刻意不伪装成 0/断供), 0 是 dataclass 默认值。"
+              "按注册项声明的轴 (playbook_instructions.raw_instruction_json 含 ssr_shadow 键) "
+              "只读复算 = **95 行标记 / 27 个日期** (2026-07-27 ~ 09-25), 判据「SHORT 指令日标记"
+              "累计≥30」**早已达标 (95≫30)**。同期 direction 分布: SKIP 1849 / BUY 796 / "
+              "SELL_SHORT 230。⚠️ eval 的 main **写库** (scripts/ssr_shadow_daily.py:103 "
+              "`UPDATE playbook_instructions SET raw_instruction_json=?`) ⇒ 按副作用纪律**不整跑**, "
+              "真 n 走只读 SQL。"
+              "🔑**为什么不修计数器 (不建 DB 计数轴)**: ①判据自述「**无独立毕业门** — 先验分布采集」, "
+              "达标 ≠ 要转正/接线, 它是给未来 RFC-062 G2-2 (合规拒单门) 实盘化时提供触及率分布的"
+              "**原料面**, 不是一道要裁决的门 ⇒ 给它一个 READY 状态反而会造出一条永不结案的假待裁项; "
+              "②给 `_count_samples` 加 DB 轴 = 新机制 (违反做减法), 且该函数正被并行 agent 改 "
+              "(json_key 点号嵌套), 同期改同函数必冲突; ③现设计 (eval 现算 + notes 记真读数) "
+              "已能让读数可见。⇒ 处置 = 留痕真读数, 不动计数器/不加轴/不改 status。",
     ),
 
     # ── DEB-20260903 议题二后续 (2026-09-03 用户裁"A") — 三登记之①注册表本体;
