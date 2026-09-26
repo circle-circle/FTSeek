@@ -339,8 +339,18 @@ ADJUDICATED: dict[str, dict] = {
                 "(逐日 attempt 上限=额度, 非样本量目标) ⇒ 复核窗未到, 不裁决, 闹钟设 10/7。",
     },
     "short_funnel_shadow": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
-        "note": "补登后首次入待裁面 (30/10 交易日, 8/16 起早已达标却从未被通知 = "
+        # ✅ 2026-09-26 用户裁「2 按建议执行」⇒ 维持观测, 不在本批立 bridge 层门
+        # (立门 = 改 pipeline 加门 = 生产行为变更 = L3, 须另立 DEB 预注册后再裁)。
+        # needs_user=False 退出待裁面; recheck_after=2026-10-26 保留重看窗 (不用
+        # no_adjudication_reason — 那会永久屏蔽裁决通道, early_dead 批同一坑)。
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "✅**已裁 (2026-09-26 用户裁「按建议执行」)**: 维持观测继续攒样; **不立 bridge 层门** — "
+                "26 日同轴回算指向若立门该立在 bridge/通道候选层 (最大漏斗口 27 只, 主因 "
+                "`SKIP: 非当前通道候选(bridge未提名/无方向)` ×17), 但立门 = 改 pipeline 加门 = "
+                "**生产行为变更 = L3**, 须另立 DEB 预注册 (含误杀预算与对照臂) 后再裁, 本批不做。"
+                "eval 继续只印不判; 10/26 重看窗到点自动推回待裁面 (overdue 机制)。"
+                "────────────────────\n"
+                "补登后首次入待裁面 (30/10 交易日, 8/16 起早已达标却从未被通知 = "
                 "「注册表非 SSOT」实锤)。│**9/26 二批 (用户裁 A 案: 修轴 + 删死列) 落地后重出读数** — "
                 "建 eval_script=scripts/short_funnel_shadow_eval.py (填 NO_EVAL_SCRIPT 缺口), 并按 "
                 "用户 8/14 口径「历史可行直接回测, 不默认攒样」把 gz 轮转日志回算的 26 个交易日"
@@ -383,8 +393,16 @@ ADJUDICATED: dict[str, dict] = {
                 "(gap_chase_gate 同型假象), 现补顶层 n=n_trig (判据轴=去重仓数, 非 arm 行数)。",
     },
     "eth_exit_forgone_upside": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
-        "note": "B21 实跑三门: ①n≥20 ✓ ②均值 −0.2249% > 0.085% ✗ ③正值率 18.2% ≥60% ✗ "
+        # ✅ 2026-09-26 用户裁 **A 案** (n 轴口径: 维持字面集合含 tighten, 不重注册不重攒) ⇒
+        # 判据三门 1/3 未过线, 按 criteria 原文转 KILLED 留档为反证; 已退出待裁面。
+        # recheck_after=None: 已终裁, 不再周期性推回 (若未来重启 grace window 假设须新预注册)。
+        "read_at": "2026-09-26", "recheck_after": None, "needs_user": False,
+        "note": "✅**已裁 (2026-09-26 用户裁 A 案)**: n 轴口径维持字面集合 (含 tighten), 不重注册不重攒; "
+                "判据三门 1/3 未过线 ⇒ status 转 KILLED, 「触线即出」语义维持, 本判据留档为反证。"
+                "选 A 的依据: 真出场轴 (剔 tighten) 仅 8 笔, 稳态速率下攒到 n≥20 需 ≈336 天 (0.9 年) "
+                "⇒ B 案在可见期内无法裁决; 且两口径三门结果同向 ⇒ 结论不受口径影响。"
+                "────────────────────\n"
+                "B21 实跑三门: ①n≥20 ✓ ②均值 −0.2249% > 0.085% ✗ ③正值率 18.2% ≥60% ✗ "
                 "⇒ 判据未过线, 现行「触线即出」语义维持 (本判据留档为反证)。"
                 "📐**两个 n 口径 (2026-09-26 逐行复算精确化; 原 note 曾把两口径混写一句已更正)**: "
                 "计数锚 b21_exec_settled_n=276 是 **ledger 快照口径** (extended_hours_settle_latest.json "
@@ -491,7 +509,7 @@ REGISTRY: list[ShadowItem] = [
                                      "既有行为, 本裁杀仅停观察跟踪; DA 对比组写盘随 da_enforce 现状。"}],
         notes="按源分流: reentry+UE 走 p50, DA 走线性; 核心桶 [0.6,0.8) WR 20% 方向强。"
               "2026-09-01 裁杀: 5 天 3 样本=触发近乎不存在, 攒样无意义。"
-              "🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 影子发射块 pipeline:5757 "
+              "✅**已裁维持不停 (2026-09-26 用户裁「5 不停」, 依据 RFC-109⑤ 盘点: 停采须改生产码/拆写方, 而负载微小 ⇒ 风险>收益)。** 原盘点 (L3 提案, 未执行): 影子发射块 pipeline:5757 "
               "`if _vol_use_p50 is False:` **无独立开关** (该条件是生产分流本身, 非影子开关) "
               "⇒ 停采须改 pipeline.py 加 shadow-only 键 + systemctl restart; "
               "⚠️ config_key=volume_gate_vwap_relative 是**生产量能门**(现true), 照它停采=关生产闸。"
@@ -1028,7 +1046,7 @@ REGISTRY: list[ShadowItem] = [
                                       "汇总落盘 data/shadow/overnight_arm_report_latest.json "
                                       "verdict=REPAIR_RATE_OK (2026-09-21 07:34 重跑复核一致)。"
                                       "SUPERSEDED 在此为『结案』语义 (无替代项), 非被新版取代。"}],
-        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): data_path 指向的 "
+        notes="✅**已裁维持不停 (2026-09-26 用户裁「5 不停」, 依据 RFC-109⑤ 盘点: 停采须改生产码/拆写方, 而负载微小 ⇒ 风险>收益)。** 原盘点 (L3 提案, 未执行): data_path 指向的 "
               "overnight_arm_report_latest.json **不是采集产物** — 是 scripts/overnight_arm_report.py "
               "的只读报表输出, 且**同时是本条注册表计数锚** (顶层 n=已平仓数, n≥20 翻 READY) 与 "
               "B15 判罪线可见面 ⇒「停采」=撤 cron 20 6 * * 2-6, 会连带断计数锚与判罪线 "
@@ -1051,7 +1069,7 @@ REGISTRY: list[ShadowItem] = [
         last_evaluated="2026-08-15",
         verdict_history=[{"date": "2026-08-15", "verdict": "KILLED",
                          "evidence": "p=0.17 捕获率14% n=31 否决; 7/1起实跑-$1353"}],
-        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 写方 exit_engine:860 **无门控** "
+        notes="✅**已裁维持不停 (2026-09-26 用户裁「5 不停」, 依据 RFC-109⑤ 盘点: 停采须改生产码/拆写方, 而负载微小 ⇒ 风险>收益)。** 原盘点 (L3 提案, 未执行): 写方 exit_engine:860 **无门控** "
               "(在 ATR≥4%∧peak<0.3%∧profit<0 分支内无条件写) ⇒ 停采须加 shadow-only 键 + 重启; "
               "⚠️ config_key=mfe_stall_exit_enabled 是**生产退出腿**(现false), 不门控影子写方 — 禁碰。"
               "负载 92K/300行, 近7日+34 (5 条里最轻)。",
@@ -1134,7 +1152,7 @@ REGISTRY: list[ShadowItem] = [
                                       "日聚类 t=0.62 MDE ±20.5 ⇒ 与 0 不可分辨。判据明文'任一条显著劣化 → "
                                       "撤回, 证据留档' ⇒ 结案。若未来重启该假设, 必须新预注册 "
                                       "(读数卡已给可达性门方向的数据依据), 不得挪用本判据。"}],
-        notes="🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行 — **本条最易误伤**): 产物有"
+        notes="✅**已裁维持不停 (2026-09-26 用户裁「5 不停」, 依据 RFC-109⑤ 盘点: 停采须改生产码/拆写方, 而负载微小 ⇒ 风险>收益)。** 原盘点 (L3 提案, 未执行 — **本条最易误伤**): 产物有"
               "**两个语义共用的写方** — ①pipeline:6276 受 pullback_limit_shadow_enabled 门控 "
               "(Phase B trigger 行); ②playbook_service._append_routed_shadow (DEB-20260901 选项1② "
               "archetype 路由遥测, **活跃且不受该开关门控**) ⇒ 关开关只停一半, 且路由遥测行断供 "
@@ -1790,7 +1808,12 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="eth_exit_forgone_upside",
         name="延长时段利润保护出场后「错失上行」影子 (B21)",
-        status=ShadowStatus.OBSERVING,
+        # 2026-09-26 用户裁 A 案 (n 轴口径维持字面集合) ⇒ 判据三门 1/3 未过线,
+        # 按 graduation_criteria 原文「不过线 → 维持现行『触线即出』语义, 本判据留档为反证」转 KILLED。
+        # 注: refresh_counts 只对 OBSERVING/READY 迁移 (终态 continue) ⇒ 不会被拉回 READY。
+        # 采集面: 载体是复用既有两条影子 + 结算器 cron (30 6 * * 2-6), 本项无独立写方
+        # ⇒ 转 KILLED 不停任何采集, 结算器继续给读数 (留档为反证需要持续证据)。
+        status=ShadowStatus.KILLED,
         description="B21: 量化「BE/锁盈触线即出」是否卖早了。载体复用既有两条影子 "
                     "(premarket_exit_shadow.jsonl / afterhours_exit_shadow.jsonl) + 既有"
                     "结算器 settle_extended_hours.py holdout (决策价→T+0收盘/T+1收盘…, "
