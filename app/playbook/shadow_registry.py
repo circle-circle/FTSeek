@@ -60,10 +60,24 @@ class ShadowItem:
     created: str = ""
     last_evaluated: Optional[str] = None
     verdict_history: list = field(default_factory=list)
-    # 采集退役标记 (2026-09-21): True = 该通道**不再采集** (由采集脚本 _collector_gate 执行)。
+    # 采集退役标记 (2026-09-21): True = 该通道**不再采集**。
     # 刻意与判据状态分开: 判据退役 (KILLED/FAIL) **不等于**没有消费者 —— 实锤 capital_flow
     # 的原料在喂生产门 (intraday_reentry 盘中资金背离门), 若按判据状态自动停采会断料。
     # 停采必须**显式**声明 (本字段或该通道独立开关), 并在 notes 写理由; 数据一律保留不删。
+    #
+    # 🔴 **适用面警告 (2026-09-26 RFC-109⑤-B 实测更正 — 原注释承诺过宽)**:
+    # 本字段的**执行者全仓只有 1 个**: scripts/futu_channel_shadow_collect.py:70 `_collector_gate()`
+    # (它同时服务 futu_channel_* 四条通道)。实测 `grep -rl collection_retired app/ scripts/ ops/`
+    # ⇒ 只有该采集器 + shadow_board.py (后者只**读来显示**「·已停采」并抑制停摆告警, 不停任何东西)。
+    # ⇒ 对其余 13 条终态影子 (写方在 pipeline.py / exit_engine.py / 独立 scripts) 设 True 是
+    #   **假停采**: 产物照样每天写, 而看板会显示「已停采」且**抑制停摆告警** ⇒ 账面说停了、
+    #   实际没停、还把证据藏起来 (活谎言结构, 比不设更危险)。
+    # ⇒ 非 futu_channel 影子的真停采路径只有两条 (实测已生效的 2 条先例):
+    #   ① 该影子自己的 config 键置 false (如 p1_1_capital_flow 靠
+    #      falsification_gate_capital_flow_shadow=false, 产物冻结在 1594 行);
+    #   ② 摘 cron 行 (如 overnight_earnings_carry 靠删 cron, 产物冻结在 9/23)。
+    #   两条都必须在 notes 写明**实际生效的机制**, 本字段只作账面标记 (并让看板不再误报停摆)。
+    # ⇒ 设本字段前必须验: 该项写方是否读它 (grep 写方源码), 或另有真机制。
     collection_retired: bool = False
     notes: str = ""
     # 计数口径: "lines" (默认, jsonl 行数) | "distinct:<field>" (按字段去重计数,
