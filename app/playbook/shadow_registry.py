@@ -585,6 +585,12 @@ REGISTRY: list[ShadowItem] = [
                             "IV/HV 于交易日 join trade_records, 桶内增量显著才毕业。"
                             "首日回补 250 日历史 → 历史残存效应立即可跑。",
         eval_script="scripts/iv_hv_residual_eval.py",
+        # eval_on_demand=True (2026-09-26 RFC-109⑤收口): 采集已于 9/21 真停
+        #   (iv_collect_enabled=false, 产物 futu_iv_hv_shadow.jsonl 最后写入 9/19 = 停更吻合),
+        #   eval 是**按需一次性重跑**脚本 (10/21 重看裁决时才跑), 本就不该有 cron 挂载 ⇒
+        #   check_mounting 报的「悬空观察」是**假告警**, 非真断供。与 earnings_direction_path
+        #   (eval 结构性崩、告警准确指向待办) 性质不同, 故本条豁免、那条**不加**豁免。
+        eval_on_demand=True,
         created="2026-08-29",
         last_evaluated="2026-09-21",
         verdict_history=[{"date": "2026-09-21", "verdict": "NO_RESIDUAL (判据未达, 效应不可分辨)",
