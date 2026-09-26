@@ -21,6 +21,24 @@ llm_universe_scan._log_tier_gate_shadow, 每扫描日 1 行, rows[]=当日候选
   - 被拦桶 = would_block=true 行; 放行桶 = would_block=false 行。
   - 影子零成交 (enforce=false) → 全部行都是"放行后实际发生", 被拦桶的 fwd 是反事实口径。
 
+🔵 通道级经济性备证 (2026-09-26 用户裁「按建议执行」= 建议1: 登记备证不立门, record-only):
+  **只印不判** — 新增 `channel_economics` 段, `gating=False`, **不参与 verdict 计算**。
+  为什么加: 本轮实测 UE 通道 86 笔 (decision_id LIKE 'universe_expansion%') 显示
+    毛利 −$40.38 / 费用 $524.88 / 净 −$565.27 ⇒ **毛利率 −1.02bps < 费率 13.25bps**,
+    即「费用归零仍不赚」= 没有毛利来源, 与用户 8/22 证伪「执行纪律可保底」同型
+    (那次费=毛利 42 倍, 本次更彻底: 毛利≈0)。前瞻 t 检验 LONG t=+0.109 / SHORT t=+0.874
+    ⇒ **两方向皆零 alpha**, 故「禁 UE LONG / 不对称限流」在数据上无依据
+    (且用户 8/2 明令「市场双向, 反对不对称限流」, 本判据亦禁「方向分层另设门」)。
+  为什么**不立门**: ① UE 整体净亏 t=−0.827 **不显著** (n=86, 均 −6.57, sd 73.72);
+    ② 9 月净仅 −$56.41 (7月 −104 / 8月 −404) ⇒ 金额小且无趋势;
+    ③ SHORT 腿实盘毛利率 **+30.57bps** 是正 edge, 停通道会连带砍掉赚钱的腿。
+  ⇒ 结论: 病灶不是「选错方向」而是「无毛利来源」, 而钱是退出机制赚的
+    (LONG 与 SHORT 前瞻皆零 alpha, 实盘毛利却一负一正 ⇒ 差异在退出侧),
+    退出参数已被 DEB-20260819 终裁「近似最优, 执行层不再改」⇒ 该杠杆合规上锁死。
+  ⚠️ 审计局限 (判读时必读, 勿当强证据): `fees_est` 是**估算列** (伴 `fees_source` 标记来源),
+    未逐笔对账; tier 维度对实盘成交覆盖率仅 **21/86=24.4%** (影子 9/08 起, 成交回溯 7/14);
+    前瞻 vs 实盘相关 r=+0.403 (t=+4.01, n=85) ⇒ 尺子有效但不强 (符号一致率 63%)。
+
 挂载: crontab 52 5 * * 6 (周六, fwd 回填 05:30 之后; ue_tier_shadow_eval 05:50 同窗)。
 产物: data/shadow/ue_tier_gate_eval_latest.json (atomic write)。
 用法: venv/bin/python scripts/ue_tier_gate_shadow_eval.py [--min-days 15] [--min-n 30]
@@ -73,6 +91,102 @@ def _bucket_stats(rows: list) -> dict:
             "fwd_mean_pct": round(mean * 100, 3) if mean is not None else None}
 
 
+def _channel_economics(conn) -> dict:
+    """🔵 UE 通道级经济性备证 — **只印不判**, 不参与 verdict (2026-09-26 用户裁建议1).
+
+    为什么是通道级而不是方向级: 前瞻 t 检验两方向皆零 alpha (LONG t=+0.109 / SHORT
+    t=+0.874) ⇒ 「禁 UE LONG / 不对称限流」无数据依据, 且撞用户 8/2「反对不对称限流」
+    与本判据「方向分层只并列呈报不另设门」禁令。方向读数只作并列披露。
+    口径 (memory 纪律):
+      - 归属用 `decision_id LIKE 'universe_expansion%'` — **不是** strategy_id
+        (后者是 playbook_sim / extended_hours_entry 落库标签, 查它得 0 笔 = 假前提);
+      - 量纲: pnl_pct / fwd_return_t1 均为**小数比率** (实测 |x|<1 占 99.9%/100%),
+        转百分数一律 ×100, 两者必须同法处理 (混用会造出 100× 假落差);
+      - symbol join 必归一化 US. 前缀。
+    局限: fees_est 是估算列 (伴 fees_source), 未逐笔对账。
+    """
+    out: dict = {"gating": False, "adjudication_role": "record-only 备证, 不设门不改判据"}
+
+    def _t(vals):
+        n = len(vals)
+        if n < 3:
+            return None
+        m = sum(vals) / n
+        var = sum((x - m) ** 2 for x in vals) / (n - 1)
+        sd = var ** 0.5
+        return round(m / (sd / n ** 0.5), 3) if sd else None
+
+    # ── 通道整体: 毛利 / 费用 / 净 + bps 口径 ──
+    r = conn.execute("""
+        SELECT COUNT(*) n, SUM(COALESCE(realized_pnl,0)) gross, SUM(COALESCE(fees_est,0)) fee,
+               SUM(COALESCE(pnl_net,0)) net, AVG(COALESCE(pnl_pct,0)) avg_pct,
+               AVG(entry_price*quantity) notional
+        FROM trade_records WHERE decision_id LIKE 'universe_expansion%'
+    """).fetchone()
+    n = r["n"] or 0
+    if n:
+        notional = r["notional"] or 0
+        gross_bps = (r["gross"] / n / notional * 10000) if notional else None
+        fee_bps = (r["fee"] / n / notional * 10000) if notional else None
+        pnl = [x[0] for x in conn.execute(
+            "SELECT pnl_net FROM trade_records WHERE decision_id LIKE 'universe_expansion%' "
+            "AND pnl_net IS NOT NULL")]
+        out["all"] = {
+            "n": n,
+            "gross": round(r["gross"] or 0, 2), "fee": round(r["fee"] or 0, 2),
+            "net": round(r["net"] or 0, 2),
+            "gross_bps": round(gross_bps, 2) if gross_bps is not None else None,
+            "fee_bps": round(fee_bps, 2) if fee_bps is not None else None,
+            "net_t": _t(pnl),
+            "net_zero_fee": round(r["gross"] or 0, 2),
+        }
+        out["verdict_note"] = (
+            "毛利率 < 费率 ⇒ 结构性无毛利来源 (费用归零仍不赚), 非「选错方向」; "
+            "net_t 不显著 (|t|<2) ⇒ 86 笔不足以证明系统性亏钱 ⇒ 不立门, 只登记备证。")
+
+    # ── 方向并列 (只披露, 禁据此设门) ──
+    dirs = {}
+    for d in ("LONG", "SHORT"):
+        x = conn.execute("""
+            SELECT COUNT(*) n, SUM(COALESCE(realized_pnl,0)) gross, SUM(COALESCE(fees_est,0)) fee,
+                   SUM(COALESCE(pnl_net,0)) net
+            FROM trade_records WHERE decision_id LIKE 'universe_expansion%' AND direction=?
+        """, (d,)).fetchone()
+        if not (x["n"] or 0):
+            continue
+        notional = r["notional"] or 0
+        dirs[d] = {
+            "n": x["n"], "gross": round(x["gross"] or 0, 2), "fee": round(x["fee"] or 0, 2),
+            "net": round(x["net"] or 0, 2),
+            "gross_bps": round((x["gross"] or 0) / x["n"] / notional * 10000, 2) if notional else None,
+        }
+    if dirs:
+        out["by_direction_disclose_only"] = dirs
+
+    # ── 前瞻 alpha t 检验 (证「两方向皆零 alpha」) ──
+    fwd = {}
+    for d in ("LONG", "SHORT"):
+        v = [x[0] * 100 for x in conn.execute("""
+            SELECT i.fwd_return_t1 FROM trade_records t
+            JOIN playbook_instructions i ON i.decision_id = t.decision_id
+            WHERE t.decision_id LIKE 'universe_expansion%' AND t.direction=?
+              AND i.fwd_return_t1 IS NOT NULL
+        """, (d,))]
+        if len(v) >= 3:
+            fwd[d] = {"n": len(v), "mean_pct": round(sum(v) / len(v), 3), "t": _t(v)}
+    if fwd:
+        out["fwd_alpha_t"] = fwd
+        out["fwd_note"] = ("两方向 |t|<2 ⇒ 皆零 alpha ⇒ 方向不是病灶; 实盘毛利一负一正 "
+                           "而前瞻皆零 ⇒ 差异在退出侧 (DEB-20260819 已终裁不再改)。")
+
+    # ── tier 覆盖率 (为何 tier×盈亏 不能裁) ──
+    out["tier_coverage_note"] = (
+        "tier 影子对实盘成交覆盖率仅 ~24% (影子 9/08 起, 成交回溯 7/14) ⇒ "
+        "任何 tier×实盘盈亏 结论都是小样本, 不得据此立判据。")
+    return out
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-days", type=int, default=MIN_DAYS)
@@ -102,6 +216,12 @@ def main() -> int:
                 "executed": bool(inst["executed"]) if inst else False,
                 "inst_dir": (inst["direction"] if inst else None),
             })
+    # 🔵 通道级经济性备证 (只印不判) — 必须在 conn.close() 前取 (2026-09-26 用户裁建议1)
+    try:
+        chan_econ = _channel_economics(conn)
+    except Exception as e:  # 备证失败不得拖垮门结算主链
+        chan_econ = {"gating": False, "error": f"channel_economics 计算失败 (不影响 verdict): {e}"}
+        print(f"[ue_tier_gate_eval] ⚠️ 通道经济性备证失败 (verdict 不受影响): {e}", file=sys.stderr)
     conn.close()
 
     n_days = len({d.get("date") for d in days})
@@ -125,6 +245,8 @@ def main() -> int:
             "SHORT": {"blocked": _slice(blocked, "SHORT"), "passed": _slice(passed, "SHORT")},
         },
         "verdict": "KEEP_SAMPLING",
+        # 🔵 只印不判 (gating=False): 通道级经济性备证, 不参与上面 verdict 的任何计算分支
+        "channel_economics": chan_econ,
     }
 
     b_all, p_all = report["buckets"]["ALL"]["blocked"], report["buckets"]["ALL"]["passed"]
@@ -147,6 +269,23 @@ def main() -> int:
         print(f"  {k:5s} 被拦: n_fwd={bk['n_fwd']:3d} fwd均值={bk['fwd_mean_pct']}% | "
               f"放行: n_fwd={pk['n_fwd']:3d} fwd均值={pk['fwd_mean_pct']}%")
     print(f"  verdict: {report['verdict']}")
+    # 🔵 [只印不判] 通道级经济性备证 (不参与 verdict; 前缀防把披露读成裁决)
+    ce = chan_econ
+    if "all" in ce:
+        a = ce["all"]
+        print(f"  [只印不判] UE 通道经济性: n={a['n']} 毛利={a['gross']:+.2f} 费用={a['fee']:.2f} "
+              f"净={a['net']:+.2f} | 毛利率={a['gross_bps']:+.2f}bps 费率={a['fee_bps']:.2f}bps "
+              f"⇒ {'结构性无毛利来源' if (a['gross_bps'] or 0) < (a['fee_bps'] or 0) else '毛利可覆盖费用'}"
+              f" | 净t={a['net_t']} ({'不显著⇒不立门' if a['net_t'] is not None and abs(a['net_t']) < 2 else '显著'})"
+              f" | 费用归零则净={a['net_zero_fee']:+.2f}")
+        for d, v in (ce.get("by_direction_disclose_only") or {}).items():
+            print(f"  [只印不判]   {d:5s} n={v['n']:3d} 毛利率={v['gross_bps']:+7.2f}bps "
+                  f"净={v['net']:+9.2f}  (方向并列披露, 禁据此设门)")
+        for d, v in (ce.get("fwd_alpha_t") or {}).items():
+            print(f"  [只印不判]   前瞻 {d:5s} n={v['n']:3d} 均={v['mean_pct']:+.3f}% "
+                  f"t={v['t']:+.3f} ({'零alpha' if v['t'] is not None and abs(v['t']) < 2 else '有信号'})")
+    elif "error" in ce:
+        print(f"  [只印不判] 通道经济性备证不可用: {ce['error']}")
     return 0
 
 
