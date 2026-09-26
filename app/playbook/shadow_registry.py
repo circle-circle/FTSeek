@@ -453,20 +453,40 @@ REGISTRY: list[ShadowItem] = [
         eval_script=None,
         created="2026-08-23",
         last_evaluated="2026-09-21",
+        # 2026-09-26 用户裁「现在重启一次性解决」⇒ 停采已执行 (详见 notes 与台账 G10)。
+        # 注意: collection_retired 对本项**不是**停采的执行机制 (pipeline.py 不读该字段), 真停采
+        # 靠 config 键 falsification_gate_capital_flow_shadow=false; 这里设 True 的作用是让看板
+        # (shadow_board.py:660,674) 给本条打退役标 ⇒ 免得「已停采却仍印历史数据」误导读者。
+        collection_retired=True,
         verdict_history=[{"date": "2026-09-21", "verdict": "KILLED",
                           "evidence": "清账批 (RFC-092): 判据产物 data/capital_flow_replay_verdict.json "
                                       "(2026-08-22) 四关门 all_gates_pass=False — inflow t=-0.48 / "
                                       "outflow t=-0.71 均不显著, IS/OOS 异号, placebo p=0.85; "
                                       "且用户已裁'不得拦单' ⇒ 该假设已判死, 注册表未同步。归档退役。"}],
         notes="capital_flow_replay_verdict: 四关全不过, 用户裁决不得拦单。"
-              "2026-09-21 清账: 已裁未归档 → 退役, 退出待裁队列; "
-              "采样行仍由 playbook.execution_parameters.falsification_gate_capital_flow_shadow "
-              "在写 (本项退役不改采写行为, 停采需另关开关)。"
-              "🛑停采盘点 2026-09-26 RFC-109⑤ (L3 提案, 未执行): 5 条里**唯一有真 shadow-only "
-              "开关**的 — pipeline:6193 实读该键 (record-only 不拦单), 且产物**零读方** "
-              "(intraday_reentry 资金背离门读的是 data/futu_capital_flow.jsonl 分钟级原料, "
-              "**不是本 jsonl** ⇒ fail-open 陷阱属 futu_channel_capital_flow, 不适用本条)。"
-              "关开关即可停, 但键在 playbook.* ⇒ 必重启。负载 416K/1594行, 近7日+412。",
+              "2026-09-21 清账: 已裁未归档 → 退役, 退出待裁队列。"
+              "✅**停采已执行 2026-09-26** (RFC-109⑤/G10, 用户裁「现在重启一次性解决」): "
+              "`playbook.execution_parameters.falsification_gate_capital_flow_shadow` true→false, "
+              "`systemctl restart ftseek-us` 于 16:17:27 CST 完成 (新 PID 2995319, active/running, "
+              "journalctl 16:17 起 **0 条** ERROR/Traceback, 订阅循环+watchdog+ManualGuard 均恢复, "
+              "16:18:36 钉钉心跳成功)。config 无第二份、无 .env 覆盖 ⇒ 启动时读到的就是 false。"
+              "生效链核验: 本项 9/21 已判 KILLED (四关门 p=0.85) 且用户已裁不得拦单 ⇒ 判据已判死, "
+              "「攒样后重裁是否转生产」的预期已终结, 继续采集无裁决价值; 裁决证据在 "
+              "data/capital_flow_replay_verdict.json (2026-08-22), **不依赖**持续采集 ⇒ 停采不断证据。"
+              "零交易行为变更: 该键**唯一读点** pipeline:6274 只包 shadow 写盘 (注释明写「不得拦单」), "
+              "产物 falsification_gate_shadow.jsonl **零读方** (intraday_reentry:742 的资金背离门读 "
+              "data/futu_capital_flow.jsonl 分钟级原料, **不是**本 jsonl ⇒ fail-open 陷阱属 "
+              "futu_channel_capital_flow, 不适用本条)。负载省下 416K/1594行 (近7日+412)。"
+              "⚠️**尚待观测确认**: 停采日 9/26 是周六 (ET 04:1x 非交易时段), 产物最后写入停在 "
+              "9/25 21:46 ⇒「重启后无新增行」与非交易日不可区分 ⇒ 须下周一 (9/28 ET) 开盘后核 "
+              "产物行数仍为 1594 才算行为面确认 (回滚: 键改回 true + 重启)。"
+              "│其余 4 条终态影子**未停** (建议维持): p1_3_vol_p50 / mfe_stall_exit 须改生产码 "
+              "(无 shadow-only 开关); pullback_limit_shadow 两个语义共用写方 (第二写方 "
+              "playbook_service._append_routed_shadow 是活跃的 archetype 路由遥测, 关开关只停一半 "
+              "且断下游按 type 取行的重放归因); overnight_kill_criterion 的 data_path 指报表输出"
+              "兼注册表计数锚 ⇒ 停采=断证据非减负载 (近7日 +0 行, 收益≈0)。"
+              "陷阱划清: 原审计点名的两个生产键确认禁碰且已复核未动 "
+              "(volume_gate_vwap_relative=True 生产量能门 / mfe_stall_exit_enabled=False 生产退出腿)。",
     ),
 
     # ── 富途通道影子 (采集 8/12 已上线, 2026-08-29 补登记 — 未登记=无人跟踪) ──
