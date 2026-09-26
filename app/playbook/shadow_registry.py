@@ -289,6 +289,37 @@ ADJUDICATED: dict[str, dict] = {
                 "1/21=5% 执行), 与 8/16 立项诊断同型。判据「n≥10 交易日再裁分层 gate」"
                 "已达成 ⇒ **处置需用户裁**: 立分层 gate 提案 (须另走 DEB) 或退役本影子。",
     },
+    # ── 2026-09-26 补登记批 (B19/B21/B22): 判据字典有、注册表查无 ⇒ 周检/哨兵/意图守卫全盲 ──
+    # 同型缺口第二次实锤 (首次 = 上条 short_funnel_shadow「8/16 起达标却从未被通知」):
+    # B21 n 轴实测 276 (门 20) 早已达标, 但因不在注册表 ⇒ 一个月从未被读过。
+    # 三条登记当日已实跑判据 (见各自 verdict_history), 故 read_at=登记日; 不是"没读就登记"。
+    "eod_depth_gate": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "B19 实跑 n=2/8 ΣΔ=+28.40 误杀=1 ⇒ 判据 2/3, n 不足自动续观 (不待裁)。"
+                "同批修计数锚: report 原无 n/n_total/n_events/stats 任一键 ⇒ current_n 恒 0 "
+                "(gap_chase_gate 同型假象), 现补顶层 n=n_trig (判据轴=去重仓数, 非 arm 行数)。",
+    },
+    "eth_exit_forgone_upside": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": True,
+        "note": "B21 实跑三门: ①n=276≥20 ✓ ②均值 −0.2249% > 0.085% ✗ ③正值率 18.2% ≥60% ✗ "
+                "⇒ 判据未过线, 现行「触线即出」语义维持 (本判据留档为反证)。"
+                "**needs_user=True 的原因不是判据待裁, 是 n 轴口径待裁**: 276 笔里 tighten 占 "
+                "97.5% (277/285), 而 tighten 是「收紧止损参数」不是实际出场 ⇒ 判据文把它列进"
+                "执行类集合属登记时未分辨语义; 剔 tighten 后真出场子集 n=8 (均值 −13.12% "
+                "正值率 12.5%, 同样未过线但 n<20)。两口径**同向**(都不提案)故本次结论稳健, "
+                "但**改判据集合=重裁**, 须用户裁: (A) 维持字面集合(含 tighten, n 轴虚高但结论"
+                "同向) / (B) 剔 tighten 重注册(真出场轴, 需重攒 n≥20)。本 agent 不擅自改。"
+                "另 94 个 t0_close_ret_pct=0 行全是 tighten (决策价=收盘价, 疑无实际出场时点"
+                "可结算) 属同一口径问题, 佐证 (B)。",
+    },
+    "eth_exit_quote_age": {
+        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "note": "B22 实跑 n=6/20, 分桶 {>120s: 0, <=30s: 6} ⇒ 落判据分支②方向(维持现状不加"
+                "龄门), n 不足自动续观。**攒样预期**: 十天仅 6 行 ⇒ 到 n=20 约需一月, 且分支①"
+                "要求「>120s 的执行行≥1」而 >120s 迄今 100% 落在不执行的 hold_no_stop 行 ⇒ "
+                "本项可能长期停在分支②(留档反证), 这是判据文写明的预期结局之一, 不是断供。"
+                "本条是本 agent 上一轮自己登记的判据, 同型欠账 (登判据字典时漏同步注册表)。",
+    },
 }
 
 
@@ -1558,6 +1589,162 @@ REGISTRY: list[ShadowItem] = [
               "回滚 = 删 crontab 两行 + 删本条目 + 删两个文件 (零生产耦合、无调用方)。",
         eval_on_demand=True,
     ),
+    # ── 2026-09-26 补登记批: 判据字典有、注册表查无的三条影子 (B19/B21/B22) ──
+    # 立起理由 (实测危害, 非假想): 扫描判据字典「影子类」13 条 vs 注册表 58 条,
+    # 三条有判据 + 有 cron + 有结算器却**注册表查无** ⇒ 周检 refresh_counts /
+    # 挂载哨兵 / check_intent_uniqueness / pending_adjudication_report 全部看不到它们。
+    # 实锤: B21 判据 n 轴实测 276 (门 20) 早已达标, 但因不在注册表 ⇒ **一个月从未被读过**
+    # (本次补登记时实跑才得出「未过线」结论)。B22 是本 agent 上一轮自己登记的判据,
+    # 同型欠账 — 说明缺口是结构性的 (登记判据字典时无人被强制同步注册表), 不是偶发。
+    # 本批只补**可见性** (登记 + 计数锚同轴), 判据文/阈值逐字照抄不改 (改=重裁)。
+    ShadowItem(
+        id="eod_depth_gate",
+        name="EOD 深水闸影子 (would_revoke record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="B19 (RFC-079): EOD 豁免判定时刻净水深 ≤-2.5% 记 would_revoke "
+                    "(record-only, 真仓照常豁免持夜); 次日结算 Δ=反事实EOD平−实际结局 "
+                    "(费两边抵消=纯价差)。打点 app/playbook/overnight_decision."
+                    "emit_eod_depth_gate_shadow, 结算 scripts/settle_eod_depth_gate_shadow.py "
+                    "(crontab 30 6 * * 2-6, 台账 §2 `crontab-eod-depth-gate`)。"
+                    "2026-09-22 RFC-095 身份锚定 v2 (判据零变更, 只修测量口径): 旧结算按"
+                    "「最新已平仓」配仓 ⇒ MU 真仓 1503 被配成同日先平的 1501 且永久冻结 "
+                    "(Δ −36.51 记成 −73.23); 另有未持夜行被计成隔夜样本、同仓多夜多行使 "
+                    "n 轴(行数)与判据轴(仓数)不同轴。现改身份锚定 + 未持夜排除 + 按仓去重。",
+        data_path="data/shadow/eod_depth_gate_report_latest.json",
+        config_key="playbook.eod_depth_gate_pct",
+        min_n=8,   # 单位 = would_revoke **已结算去重仓数** (n_trig), 不是 arm 行数
+        count_mode="lines",  # .json 路径走 _count_samples 的 n 键分支 (本项 report 顶层 n=n_trig)
+        graduation_criteria="B19: would_revoke 结算 n≥8 ∧ ΣΔ>0 ∧ 误杀赢家(abs(Δ)>费地板$5)≤1 "
+                            "→ **提请转硬闸 (另立DEB+用户裁, 影子不自动生效)**; 不过线 → "
+                            "维持豁免机制原状。窗内禁改: loser_overnight_max_depth_pct "
+                            "(99=8/21 已裁决禁用, 永不复用) / EOD 豁免链行为; 阈值 -2.5% "
+                            "预注册冻结 (改=重裁)。",
+        eval_script="scripts/settle_eod_depth_gate_shadow.py",
+        created="2026-09-08",
+        last_evaluated="2026-09-26",
+        verdict_history=[
+            {"date": "2026-09-26", "verdict": "KEEP_SAMPLING (n=2/8)",
+             "evidence": "补登记当日实跑: trigger_settled_n=2 (门 8, ✗) ΣΔ=+28.40 误杀=1 "
+                         "(门 ≤1, ✓) ⇒ 判据 2/3, n 不足继续攒样。rows_total=29 (arm 行, "
+                         "含同仓多夜), unsettled_backlog=6, not_held_n=1, "
+                         "match_by={entry_price_qty:18, trade_ref:5}。"
+                         "旁证 (不入判据): DB 侧 overnight_arm 深水下(≥2.5%) 5 笔 "
+                         "ΣΔ=+422 (UBER 8/26 +121.55 / GAP 8/28 +173.49 / UBER 9/3 +105.70 "
+                         "/ M 9/10 −110.50 / RIVN 9/21 +131.79), 与判据字典回溯证据 "
+                         "(8/1-9/8 24笔 ΣΔ=+$410 误杀0) 同向, 但其中 3 笔在影子窗前 "
+                         "(arm_date 最早 9/8) ⇒ 只能作背景, 不得当判据样本。"},
+        ],
+        intent="overnight_loser_exempt",
+        cross_ref=("overnight_kill_criterion",),
+        notes="🔗 与 overnight_kill_criterion (B15) 同意图族「水下仓该不该给隔夜豁免」, "
+              "但**不同轴不互斥**: B15 管 w_week 臂整体修复率 (已 9/21 裁「维持」结案), "
+              "本项只管其中**深水子集** (≤-2.5%) 是否该撤豁免。B15 聚合结论由浅水组撑起 "
+              "(浅水下<1% 9笔差+380 / 中水下1-3% 16笔差+1289 / 深水下≥3% 5笔差**−422**, "
+              "扛更优 1/5) ⇒ 本项是 B15 的残存子集, 不是替代。cross_ref 指 SUPERSEDED 项"
+              "供裁决日对照, 意图守卫只对现役项强制互引故不触发告警。"
+              "**计数锚同轴修复 (本批)**: report 原无 n/n_total/n_events/stats 任一键 ⇒ "
+              "_count_samples 返回 None ⇒ current_n 恒 0 (gap_chase_gate 9/21 同型假象: "
+              "被清账误读成「0 样本断供」)。现已在结算器补顶层 `n`=n_trig (判据轴=去重仓数, "
+              "**不是** arm 行数 — 同仓多夜落多行, 用行数会虚假达标迁 READY)。"
+              "回滚 = eod_depth_gate_shadow_enabled false + 重启 (热重载可读)。",
+    ),
+    ShadowItem(
+        id="eth_exit_forgone_upside",
+        name="延长时段利润保护出场后「错失上行」影子 (B21)",
+        status=ShadowStatus.OBSERVING,
+        description="B21: 量化「BE/锁盈触线即出」是否卖早了。载体复用既有两条影子 "
+                    "(premarket_exit_shadow.jsonl / afterhours_exit_shadow.jsonl) + 既有"
+                    "结算器 settle_extended_hours.py holdout (决策价→T+0收盘/T+1收盘…, "
+                    "cron 30 6 * * 2-6 已挂, **零新代码**)。首样本 = MU 9/25 04:04 "
+                    "SL_BREAKEVEN (决策价 1090.64)。背景: MU 案退出后盘前继续上行, 但富途"
+                    "历史K线/快照均无盘前数据 (request_history_kline 9/25=0行), tick 级路径"
+                    "唯一持久源 = 影子 jsonl ⇒ 错失上行只能由本环量化, 无法事后补拉。",
+        data_path="data/extended_hours_settle_latest.json",
+        config_key=None,
+        min_n=20,
+        count_mode="json_key:b21_exec_settled_n",
+        graduation_criteria="B21 (预注册, 改=重裁): 执行类已结算 n≥20 ∧ d0_close_ret_pct "
+                            "均值 > 费用线(~0.085%往返) ∧ ≥60% 为正 → **提案**「BE/锁盈出场后 "
+                            "hold/trailing 宽限窗 (grace window)」另立 DEB+用户裁 (影子不自动"
+                            "生效); 不过线 → 维持现行「触线即出」语义, 本判据留档为反证。"
+                            "窗内禁改: breakeven_at_pct / 触发线公式 / 9-17 延长时段裁决"
+                            "(只服务盘中持仓、只止盈不止损)。",
+        eval_script="scripts/settle_extended_hours.py",
+        created="2026-09-25",
+        last_evaluated="2026-09-26",
+        verdict_history=[
+            {"date": "2026-09-26", "verdict": "NOT_MET (判据 1/3, 但 n 轴口径需重裁)",
+             "evidence": "补登记当日实跑三门: ①n≥20 ⇒ **n=276 ✓**; ②d0_close 均值>0.085% ⇒ "
+                         "实测 **−0.2249% ✗** (ledger 加权 −0.2364%); ③≥60%为正 ⇒ 实测 "
+                         "**18.2% ✗** (正52/零94/负139, n=285) ⇒ 判据未过线, 维持「触线即出」。"
+                         "⚠️ **n 轴虚达标 (诚实披露, 不得当达标证据)**: 276 笔里 "
+                         "**tighten 占 277/285 = 97.5%** — tighten 是「收紧止损参数」不是实际"
+                         "出场, 判据文把它列进执行类集合属登记时未分辨语义。剔 tighten 后"
+                         "**真出场子集 n=8** (lock_in 3 / breakeven_lock 2 / SL_TRAIL_LOCK 2 / "
+                         "SL_BREAKEVEN 1), 均值 −13.12% 正值率 12.5% — 同样未过线但 **n<20 "
+                         "不足裁**。两口径同向 (都指向不提案) 故本次结论稳健; 但②③门若按真出场"
+                         "口径重算需 n≥20 ⇒ **判据集合是否剔 tighten 须用户裁 (改判据=重裁, "
+                         "本 agent 不擅自改)**。另 94 个 t0_close_ret_pct=0 行全是 tighten "
+                         "(决策价=收盘价, 疑似无实际出场时点可结算), 亦属同一口径问题。"},
+        ],
+        intent="eth_exit_semantics",
+        cross_ref=("eth_exit_quote_age",),
+        notes="🔗 与 eth_exit_quote_age (B22) 同载体同结算器同意图族「延长时段出场语义」, "
+              "互指防双转正打架: 本项若过线提案 grace window (放宽触线即出), B22 若过线提案"
+              "报价龄门 (超龄不执行/降级 record-only) — 两者都改同一条出场链, 同时过线须先裁"
+              "归属, 不得各自独立生效。**计数锚同轴 (本批新增 json_key:)**: 源 jsonl 5739 行里 "
+              "89% 是 hold_no_stop (亏损侧按 9-17 裁决本不执行) ⇒ count_mode=lines 会让 "
+              "current_n 立刻虚假达标迁 READY; 改由结算器算 `b21_exec_settled_n` (执行类 ∧ "
+              "已结算) 当轴, 注册表用 json_key: 取。**只印不判**: 结算器只给计数与分桶读数, "
+              "不写 verdict (防「报告写死方向性结论随数据翻转把裁决带反」9/23 实锤)。",
+    ),
+    ShadowItem(
+        id="eth_exit_quote_age",
+        name="延长时段退出「报价龄」测量判据 (B22)",
+        status=ShadowStatus.OBSERVING,
+        description="B22: 测延长时段出场时的报价陈旧度是否造成成交劣化 (决策价 vs 实际成交价"
+                    "偏离 / exit_slippage_bps)。样本 = 两条 ETH 退出影子 jsonl 中**执行类** "
+                    "action 行 ∧ quote_age_seconds 非空 (该字段 9/18 起采集, 语义=futu 快照 "
+                    "update_time 距采集时刻的秒龄, 交易所侧时戳口径, 同 B20)。结算复用既有 "
+                    "settle_extended_hours.py, **零新代码**。",
+        data_path="data/extended_hours_settle_latest.json",
+        config_key=None,
+        min_n=20,
+        count_mode="json_key:b22_exec_aged_n",
+        graduation_criteria="B22 (预注册, 改=重裁): 执行类带龄行 n≥20 时读数 — ①龄>120s 的"
+                            "执行行数 ≥1 **且** 其成交劣化较龄≤30s 组中位差 >20bps → **提案**"
+                            "报价龄门 (超龄不执行/降级为 record-only; 另立 DEB+用户裁, 影子不"
+                            "自动生效); ②龄>120s 执行 = 0 或两组无差异 → 维持现状 (不加龄门), "
+                            "本判据留档为反证。窗内禁改: quote_age_seconds 采集语义 / 9-17 "
+                            "延长时段裁决。",
+        eval_script="scripts/settle_extended_hours.py",
+        created="2026-09-25",
+        last_evaluated="2026-09-26",
+        verdict_history=[
+            {"date": "2026-09-26", "verdict": "KEEP_SAMPLING (n=6/20, 分支②方向)",
+             "evidence": "补登记当日实跑: 执行类带龄行 n=6 (门 20, ✗) 分桶 {>120s: 0, "
+                         "<=30s: 6} ⇒ **龄>120s 执行 = 0**, 落判据分支② (维持现状不加龄门) "
+                         "方向, 但 n<20 不足裁, 继续攒样。既有读数 (9/16-9/25, 判据字典留档): "
+                         "MU 2.2s / WDC 2.9s / ACN 28.9s / WBD 21.9s 全部≤30s; 龄>120s 的 586 "
+                         "行 100%=hold_no_stop (亏损侧按裁决本不执行) ⇒ 超龄只发生在"
+                         "**不执行**的行上, 与「超龄致成交劣化」假设天然无交集。"
+                         "龄>120s 集中于低流动票 (MPC 54.8%/RIVN 34.4% 行), MU/AVGO/ORCL=0% "
+                         "⇒ 报价密度是**标的属性非时段属性** (9/25 活体探针: MU/AVGO/ORCL "
+                         "快照龄<4s, MPC 12min/AEHL 21min; LV3 TICKER 盘前推昨收不含 ETH 成交, "
+                         "快照 pre_price 即盘前权威源)。"},
+        ],
+        intent="eth_exit_semantics",
+        cross_ref=("eth_exit_forgone_upside",),
+        notes="🔗 与 eth_exit_forgone_upside (B21) 同载体同结算器同意图族, 互指见该条 notes。"
+              "**本项 n 轴与 B21 刻意不同** (B21=执行类∧已结算 / B22=执行类∧带龄, 且 B22 判据"
+              "文的 action 集合另含 pre_close_flatten 比 B21 多一值) ⇒ 同一 report 需两个键, "
+              "这是本批给 _count_samples 加 `json_key:` 的直接原因 (固定四键只能取一个, 无法"
+              "同轴服务两条判据)。集合差异逐字照判据文, 不做「顺手统一」(改集合=改判据=重裁)。"
+              "**攒样预期诚实披露**: 执行类带龄行 9/16-9/26 十天仅 6 行 ⇒ 按此速率到 n=20 需"
+              "约一个月, 且分支①要求「>120s 的执行行 ≥1」— 而 >120s 迄今 100% 落在不执行的 "
+              "hold_no_stop 行上 ⇒ 本项**可能长期停在分支②**(留档反证)而非攒到可裁, 这是"
+              "判据设计本身的预期结局之一 (判据文已写明②=维持现状留档为反证), 不是断供。",
+    ),
     ShadowItem(
         id="fee_gate_shadow",
         name="T3 费用 C 影子门槛",
@@ -2149,6 +2336,16 @@ def _count_samples(s: ShadowItem, base) -> int | None:
     if path_str.endswith(".json"):
         try:
             d = _j.loads(p.read_text(encoding="utf-8"))
+            if s.count_mode.startswith("json_key:"):
+                # "json_key:<key>" — 读 .json 产物里**指定键**的整数当计数锚
+                # (2026-09-26 B21/B22 登记引入)。为什么需要: 下面四个固定键只能取一个,
+                # 而同一 report 需服务两条**不同 n 轴**的判据 (B21=执行类已结算行数,
+                # B22=执行类 ∧ quote_age 非空行数), 固定键无法同轴表达两条 ⇒ 必须显式指定。
+                # 同 gap_chase_gate 教训: 键不存在时返回 None (保持原值), 不返回 0
+                # 伪装"断供", 也不 fallback 到别的键 (会静默换轴)。
+                _k = s.count_mode.split(":", 1)[1].strip()
+                _v = d.get(_k) if isinstance(d, dict) else None
+                return int(_v) if isinstance(_v, int) else None
             if isinstance(d, dict):
                 for k in ("n", "n_total", "n_events", "stats"):
                     if k in d:

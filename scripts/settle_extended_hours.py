@@ -409,6 +409,35 @@ def main():
         "api_unavailable": n_api_unavailable,
         "ledger": ledger,
     }
+    # ── B21/B22 判据 n 轴计数锚 (2026-09-26 登记; 零行为变更, 纯只读统计) ──
+    # 为什么放这里而不是让注册表数 jsonl 行数: 两条判据的 n 轴都是**执行类 action 子集**
+    # (B21 且需已结算 / B22 且需 quote_age 非空), 而源 jsonl 5739 行里 89% 是
+    # hold_no_stop (亏损侧按 9-17 裁决本不执行) ⇒ count_mode=lines 会让 current_n
+    # 立刻虚假达标迁 READY_TO_EVALUATE (gap_chase_gate 同型假象)。
+    # 注册表用 count_mode="json_key:<本处键名>" 取轴, 见 shadow_registry._count_samples。
+    _EXEC_B21 = frozenset({"SL_BREAKEVEN", "SL_TRAIL_LOCK", "TAKE_PROFIT",
+                           "lock_in", "tighten", "breakeven_lock"})
+    # B22 判据文另含 pre_close_flatten (与 B21 集合刻意不同, 差一个值 — 逐字照判据,
+    # 不做"顺手统一"; 改集合 = 改判据 = 重裁)
+    _EXEC_B22 = _EXEC_B21 | {"pre_close_flatten"}
+    report["b21_exec_settled_n"] = sum(
+        1 for _r in all_settled if str(_r.get("action") or "") in _EXEC_B21)
+    report["b22_exec_aged_n"] = sum(
+        1 for _r in rows
+        if str(_r.get("action") or "") in _EXEC_B22
+        and _r.get("quote_age_seconds") is not None)
+    # 只印不判: 两条判据的判决权在 eval/裁决日 (min_n=20), 本处只给计数与既有读数,
+    # 不写 verdict — 避免"报告里写死方向性结论随数据翻转把裁决带反" (9/23 实锤)。
+    report["b22_aged_by_bucket"] = {
+        ">120s": sum(1 for _r in rows
+                     if str(_r.get("action") or "") in _EXEC_B22
+                     and _r.get("quote_age_seconds") is not None
+                     and float(_r["quote_age_seconds"]) > 120),
+        "<=30s": sum(1 for _r in rows
+                     if str(_r.get("action") or "") in _EXEC_B22
+                     and _r.get("quote_age_seconds") is not None
+                     and float(_r["quote_age_seconds"]) <= 30),
+    }
     if args.dry:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

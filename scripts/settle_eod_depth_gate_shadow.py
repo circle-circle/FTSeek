@@ -292,6 +292,12 @@ def main():
     verdict = _verdict(n_trig, sum_delta, miskill)
 
     report = {
+        # "n" = 注册表计数锚 (shadow_registry._count_samples 读 .json 时只认
+        # n/n_total/n_events/stats 四键)。必须指向 **B19 判据 n 轴 = 触发组去重仓数**
+        # (n_trig), 不是 arm 行数 — 同仓多夜会落多行, 用行数当计数锚会让 current_n
+        # 虚假达标迁 READY_TO_EVALUATE (gap_chase_gate 9/21 踩过的同型假象:
+        # data_path 指向无 n 键的产物 ⇒ current_n 恒 0, 被清账误读成"断供")。
+        "n": n_trig,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "rows_total": len(rows),
         "newly_settled": n_settled,
