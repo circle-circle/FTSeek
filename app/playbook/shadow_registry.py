@@ -2210,14 +2210,58 @@ REGISTRY: list[ShadowItem] = [
                     "日常批≤3日 vs 回填/长窗批, 9/23 起分印不合并)。",
         data_path="data/shadow/universe_expansion_shadow.jsonl",
         config_key=None,
-        min_n=0,
-        graduation_criteria="未预注册 — 生产者头部仅自述「验证有数据后, 再决定是否让它真正驱动 "
-                            "daily_active_pool 扩池」, 无数值门。裁决前先立 DEB 预注册。",
-        eval_script="scripts/universe_expansion_shadow.py",
+        # min_n 轴差 (2026-09-26 补判据时显式标注, 防 current_n 被当裁决证据读):
+        #   registry current_n 轴 = count_mode `where:type=capture` ⇒ **capture 行数** (供给面);
+        #   判据裁决 n 轴 = **horizon==1 日常批的 score results 条数** (证据面)。两者不同源。
+        #   裁决一律以 eval 产物 (universe_expansion_eval_latest.json) 为准, current_n 只作供给
+        #   进度参考。现读数: capture 49 行 / h=1 results 98 条 ⇒ 双轴均已过 30, 不会误判。
+        min_n=30,
+        graduation_criteria="预注册 (2026-09-26 用户裁「补判据」; 判据**逐字借用** "
+                            "scripts/ue_midday_shadow_eval.py §13.3 = 2026-08-14 用户裁, 早于本轮"
+                            "读数 ⇒ 不自创阈值, 遵守阈值购物禁令): ≥10 交易日 ∧ n≥30 ∧ "
+                            "命中率(方向调整后前瞻 ≥+0.5%) ≥55% ∧ 均值 ≥+0.5% → 提请用户裁决开启 "
+                            "inject (带全套既有守卫); **否则 → 退役** (删 cron + 开关置 false, 零残留)。"
+                            " 🔴 裁决口径 = **horizon==1 日常批**; h 2-3 与 h>=5 只披露**不参与裁决** "
+                            "(防多重比较挪门柱, 与 ue_tier_gate「方向分层只并列呈报不另设门」同纪律)。"
+                            " 为什么必须分批: 写者 8/26 首启一次性回填 26 个 capture 日 (horizon 1..43), "
+                            "与日常批 (1-3 天) 混写同一文件 ⇒ 按 scored_on 聚合会把长窗走势当 1 日读数, "
+                            "**实测把 LONG/SHORT 方向结论整个翻转** (混批 LONG +2.089% vs h=1 LONG "
+                            "−2.043%, 符号相反); 且实测 **h>=5 回填批 LONG 会全过本判据** (命中率 58.1% / "
+                            "均值 +3.453% / p=0.048) ⇒ 不分批则判据上线即被污染批假阳性通过。"
+                            " ⚠️ 单位换算陷阱: midday 脚本 fwd 是**小数比率** (HIT_THRESHOLD=0.005), 本表 "
+                            "fwd_pct 是**百分数** (写者 HIT_PCT=1.0 即 +1.0%) ⇒ 本判据阈值取 **0.5 百分点**; "
+                            "命中率一律按 fwd_pct>=0.5 **自算**, 不用写者 hit 字段 (其阈值 1.0% ≠ 判据 0.5%)。"
+                            " 阈值稳健性已验: 0.5% 与 1.0% 双阈值对 ALL/LONG/SHORT **同判** ⇒ 结论对阈值"
+                            "选择不敏感 (排除「挑了宽松阈值才 FAIL」的可能)。"
+                            " ⚠️ verdict 三态 (非二态): 样本不足 → KEEP_SAMPLING (真需攒); 样本足∧效果过 → "
+                            "PASS_TO_USER_ADJUDICATION; 样本足∧效果不达标 → **FAIL_CRITERIA_MET** (判据已可裁, "
+                            "提请退役裁决)。写成「全过→PASS 否则→KEEP_SAMPLING」会让该项**永久停在攒样** = "
+                            "用无限攒样规避裁决, 与僵尸尺子同族。",
+        eval_script="scripts/universe_expansion_shadow_eval.py",
         created="2026-07-14",
+        last_evaluated="2026-09-26",
+        verdict_history=[
+            {"date": "2026-09-26", "verdict": "FAIL_CRITERIA_MET (样本足∧效果不达标 ⇒ 判据已可裁, 处置待用户裁)",
+             "evidence": "补判据当日首跑 (scripts/universe_expansion_shadow_eval.py, 裁决桶 h=1): "
+                         "ALL n=98/19 capture日 命中率 38.8% (门 55%) ✗ 均值 −0.481% (门 +0.5%) ✗ p=0.9902; "
+                         "LONG n=33/11日 命中率 **12.1%** 均值 **−2.043%** p=1.0000; "
+                         "SHORT n=65/16日 命中率 52.3% 均值 +0.312% p=0.4022 (均未过门)。"
+                         " 样本轴双过 (n 98≥30, 日 19≥10) ⇒ 非「攒不够」而是「效果不达标」。"
+                         " 交叉验证: 实盘 UE 通道同期 LONG 净 −$841 / SHORT 净 +$276 ⇒ 与 h=1 口径**同向**, "
+                         "两条独立证据链 (前瞻评分 vs 已成交盈亏) 一致。"
+                         " ⚠️ 混批口径 (report 汇总段现输出) 会给 LONG +2.089% / SHORT −2.108% = **反向**结论, "
+                         "禁用。披露桶 h>=5 回填批 LONG 命中率 58.1%/均值 +3.453% 会假阳性过门, 已隔离。"},
+        ],
         notes="补登 (2026-09-26 RFC-109②): capture cron 30 12 * * 1-5 + score cron 10 7 * * 2-6 "
-              "(8/26 接电)。count_mode=where:type=capture (score 行是派生读数不另计样本)。",
-        no_adjudication_reason="NO_CRITERIA: 无预注册数值门 (补登不得事后造判据) — 裁决前先立 DEB",
+              "(8/26 接电)。count_mode=where:type=capture (score 行是派生读数不另计样本)。"
+              " 2026-09-26 用户裁「补判据」: 判据逐字借用 ue_midday_shadow_eval (2026-08-14 用户裁) + "
+              "新建 eval 执行体; **清空 no_adjudication_reason** (原 NO_CRITERIA 非空会永久屏蔽 "
+              "refresh_counts 的 READY 提升与重看窗 — 见 early_dead_signal_shadow 块同型教训, 有判据后"
+              "必须清, 否则判据不上账 = 攒着永远没有裁决日)。"
+              " ⚠️ 尺子残留缺陷 (零行为变更, 未修): 写者 cmd_report **汇总段** (all_fwd/all_hits, "
+              "line 380-394) 仍混 horizon 批 ⇒ 顶部「命中率/平均前瞻收益」读数被长窗回填批污染 "
+              "(现印 34.9%/+0.023%, 正确 h=1 口径是 38.8%/−0.481%); 逐日行自 9/23 起已正确标 "
+              "[daily/backfill,Nd] 批次。裁决一律走 eval 产物, 勿读 report 汇总段。",
         count_mode="where:type=capture",
     ),
     ShadowItem(
