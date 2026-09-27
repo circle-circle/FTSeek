@@ -27,6 +27,10 @@ SINCE = "2026-08-01"
 TODAY = dt.date(2026, 9, 28)
 WINDOWS = (5, 10, 20)          # 交易日桶
 NET_PAD = 0.001                # 净口径垫 0.1% (往返费用线量级)
+BE_ARM = 1.004                 # BE 武装口径: high >= entry×(1+breakeven_at_pct/100), config 实值 0.4
+# 已禁用策略标注 (config/unified_config.yaml 实值 + DB 最后出现日双源核):
+#   mfe_stall_exit_enabled: false (L1282, DEB-20260815 P0-B §15 重放否决), 最后离场 8/11
+DEAD_REASONS = {"MFE_STALL_EXIT": "已禁用 8/15 (config L1282=false), 仅历史样本"}
 _N_BAD = [0]                   # R5: 坏缓存/坏行计数留痕
 
 
@@ -96,13 +100,16 @@ def main():
         post = [b for b in bars if b[0] > ex_d]           # 离场次日起
         ep = float(r["entry_price"])
         loss_pct = (float(r["exit_price"]) / ep - 1) * 100 if r["exit_price"] else None
-        ttr_c = ttr_t = None
+        ttr_c = ttr_t = ttr_be = None
         for i, b in enumerate(post, 1):
             if ttr_c is None and b[4] >= ep:
                 ttr_c = i
             if ttr_t is None and b[2] >= ep:
                 ttr_t = i
-            if ttr_c is not None and ttr_t is not None:
+            # BE 武装口径: 若扛着不动, 现行 BE (breakeven_at_pct=0.4, config 实值) 何时可武装
+            if ttr_be is None and b[2] >= ep * BE_ARM:
+                ttr_be = i
+            if ttr_c is not None and ttr_t is not None and ttr_be is not None:
                 break
         max_close = max((b[4] for b in post), default=None)
         out.append(dict(
@@ -110,7 +117,7 @@ def main():
             reason=r["exit_reason"] or "?", net=round(float(r["net"]), 2),
             loss_pct=round(loss_pct, 2) if loss_pct is not None else None,
             bkt=bucket(loss_pct) if loss_pct is not None else "?",
-            win_avail=len(post), ttr_close=ttr_c, ttr_touch=ttr_t,
+            win_avail=len(post), ttr_close=ttr_c, ttr_touch=ttr_t, ttr_be_arm=ttr_be,
             max_close_gain_pct=round((max_close / ep - 1) * 100, 2) if max_close else None,
             net_recov=bool(ttr_c is not None and any(
                 b[4] >= ep * (1 + NET_PAD) for b in post[:ttr_c + 5])) if ttr_c else False,
@@ -122,19 +129,25 @@ def main():
         if not n:
             return
         line = [f"\n  【{label}】 n={n}"]
-        for k in WINDOWS:
-            det = [x for x in group if x["win_avail"] >= k]   # 右删失: 只算窗口够的
-            rec = [x for x in det if x["ttr_close"] is not None and x["ttr_close"] <= k]
-            rate = len(rec) / len(det) * 100 if det else float("nan")
-            line.append(f"    ≤{k:>2d}交易日回翻: {len(rec):>3d}/{len(det):<3d} = {rate:5.1f}%")
-        ttrs = sorted(x["ttr_close"] for x in group if x["ttr_close"] is not None)
+        # 三口径: 日内触碰(high≥entry) / 收盘回翻(close≥entry) / BE可武装(high≥entry×1.004)
+        # (用户 9/28 指正: 回翻不一定等收盘 — touch 口径上轮算了未聚合, be_arm 是"扛着的话
+        #  现行 BE 何时能武装净保本出场"的反事实口径)
+        for crit, cname in (("ttr_touch", "日内触碰 high≥entry "),
+                            ("ttr_close", "收盘回翻 close≥entry"),
+                            ("ttr_be_arm", "BE可武装 high≥×1.004")):
+            parts = []
+            for k in WINDOWS:
+                det = [x for x in group if x["win_avail"] >= k]   # 右删失: 只算窗口够的
+                rec = [x for x in det if x[crit] is not None and x[crit] <= k]
+                parts.append(f"≤{k}日 {len(rec)}/{len(det)}={len(rec)/len(det)*100:.0f}%"
+                             if det else f"≤{k}日 -")
+            tt = sorted(x[crit] for x in group if x[crit] is not None)
+            line.append(f"    {cname}  " + "  ".join(parts)
+                        + f"  中位{tt[len(tt)//2] if tt else '-'}日(n={len(tt)})")
         never = [x for x in group if x["ttr_close"] is None and x["win_avail"] >= 20]
-        line.append(f"    回翻耗时: 中位 {ttrs[len(ttrs)//2] if ttrs else '-'} 日 "
-                    f"(n={len(ttrs)}); ≥20日窗口内从未回翻 {len(never)} 笔")
         if never:
             mg = sorted(x["max_close_gain_pct"] for x in never if x["max_close_gain_pct"] is not None)
-            line.append(f"    从未回翻笔的窗内最高收盘: 中位 {mg[len(mg)//2]:+.2f}% "
-                        f"(距入场价还差多少)")
+            line.append(f"    ≥20日窗口从未收盘回翻 {len(never)} 笔, 窗内最高收盘中位 {mg[len(mg)//2]:+.2f}%")
         print("\n".join(line))
 
     print("\n═══ ① 全体亏损离场 ═══")
@@ -145,20 +158,23 @@ def main():
         byb[x["bkt"]].append(x)
     for b in ("small(<1%)", "mid(1-3%)", "deep(>3%)"):
         agg(byb.get(b, []), b)
-    print("\n═══ ③ 按 exit_reason ═══")
+    print("\n═══ ③ 按 exit_reason (⚠️先查现役状态: config 开关 + DB 最后出现日) ═══")
     byr = defaultdict(list)
     for x in out:
         byr[x["reason"]].append(x)
     for rs, g in sorted(byr.items(), key=lambda kv: -len(kv[1])):
+        tag = f" ⚠️{DEAD_REASONS[rs]}" if rs in DEAD_REASONS else ""
         if len(g) >= 3:
-            agg(g, f"{rs} (n={len(g)})")
+            agg(g, f"{rs} (n={len(g)}){tag}")
         else:
-            print(f"\n  【{rs}】 n={len(g)} <3 不聚合 (逐笔: "
+            print(f"\n  【{rs}】 n={len(g)} <3 不聚合{tag} (逐笔: "
                   + ", ".join(f"{x['symbol']} ttr={x['ttr_close']}" for x in g) + ")")
 
     print("\n═══ ⚠️ 判读边界 ═══")
     print("  · 9月窗口大盘上行, 回翻率天然偏高 — 这是描述统计, 不构成'该扛不砍'的裁决依据")
-    print("  · 毛口径 close>=entry; 净口径(+0.1%费用垫)差异极小, net_recov 字段在产物里")
+    print("  · 三口径: touch=日内触碰(high≥entry,不等收盘) / close=收盘回翻 / be_arm=BE可武装")
+    print("    (be_arm 是'扛着的话现行 BE 何时能武装净保本出场'的反事实, ×1.004=config breakeven_at_pct=0.4)")
+    print("  · MFE_STALL_EXIT 已禁用(config L1282=false, 8/15 DEB-20260815否决) ⇒ 其行仅历史, 不代表现行系统")
     print("  · 右删失已处理: ≤k日桶只算窗口≥k日的笔 (n_eff 印在分母)")
     fp = REPO / f"data/loss_exit_recovery_{TODAY.isoformat()}.json"
     fp.write_text(json.dumps(dict(generated_at=dt.datetime.now().isoformat(timespec="seconds"),
