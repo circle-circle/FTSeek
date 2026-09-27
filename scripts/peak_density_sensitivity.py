@@ -126,7 +126,7 @@ for r in rows:
 print(f"配对样本 {len(jobs)} 笔")
 print(f"实盘粒度: playbook_exit_fast_loop_interval_sec=10 ⇒ 1min bar 内 **6** 次取价")
 print("=" * 96)
-print(f"{'密度':>6s}{'序':>6s}{'quote总净':>13s}{'bar总净':>13s}{'差(bar-quote)':>15s}{'仅bar武装':>10s}{'其差':>10s}{'t(日聚类)':>11s}")
+print(f"{'密度':>6s}{'序':>6s}{'quote总净':>13s}{'bar总净':>13s}{'差(bar-quote)':>15s}{'仅bar武装':>10s}{'其差':>10s}{'t(分歧日)':>9s}{'t(全部日)':>9s}{'分歧天/总天':>11s}")
 print("=" * 96)
 
 results = {}
@@ -164,15 +164,34 @@ for n_pts in (2, 6, 12):
             t = m / (sd / len(vals) ** 0.5) if sd else float("inf")
         else:
             t = float("nan")
-        results[(n_pts, ordering)] = dict(tot=tot, oba=len(oba), oba_d=oba_d, t=t)
+        # t_all: 把**零分歧日**也算进聚类 (它们本来就是样本的一部分)。
+        # 只用 by_day.values() 时, 无分歧日不进样本 ⇒ n 变小 + sd 变小 ⇒ t 被系统性推高
+        # (实测 N=6 opt: 总差仅 +$30.52 却 t=+4.91 = "一致但可忽略", 不是"显著更好")。
+        by_day_all = {j["day"]: 0.0 for j in jobs}
+        for j in jobs:
+            i = j["r"]["id"]
+            by_day_all[j["day"]] += per[i]["bar"]["net"] - per[i]["quote"]["net"]
+        va = list(by_day_all.values())
+        ma, sda = statistics.mean(va), statistics.stdev(va)
+        t_all = ma / (sda / len(va) ** 0.5) if sda else float("inf")
+        results[(n_pts, ordering)] = dict(tot=tot, oba=len(oba), oba_d=oba_d, t=t,
+                                          t_all=t_all, n_div_days=len(vals), n_days=len(va))
         print(f"{n_pts:>5d}p{ordering:>6s}{tot['quote']:>+13,.2f}{tot['bar']:>+13,.2f}"
-              f"{tot['bar']-tot['quote']:>+15,.2f}{len(oba):>10d}{oba_d:>+10,.2f}{t:>+11.2f}")
+              f"{tot['bar']-tot['quote']:>+15,.2f}{len(oba):>10d}{oba_d:>+10,.2f}"
+              f"{t:>+9.2f}{t_all:>+9.2f}{len(vals):>7d}/{len(va):<4d}")
 
 print("=" * 96)
 print()
-print("判读:")
-print("  · N=2 是 RFC-116 已提交的口径 (30s 采样, 路径假设不同故与已提交数略有差)")
-print("  · **N=6 = 实盘 10s 粒度** ⇒ 这一行才是与实盘可比的读数")
-print("  · 若 N=2→6 时「差」显著缩小 ⇒ RFC-116 的 −$1,370.83 高估了切换损害 (仪器偏保守)")
-print("  · 若 N=6 下「差」仍显著为负 (|t|>=2) ⇒ 裁决「不切换」稳健")
+print("判读 (⛔ 2026-09-27 已按实测教训改写 — 原版判据把 RFC-116 引向了错误裁决):")
+print("  · N=2 是 RFC-116 原裁决口径 (30s 采样); **N=6 = 实盘 10s 粒度** ⇒ 只有这行可比")
 print("  · pess/opt 双序区间 = bar 内 high/low 先后不可知的诚实表达")
+print()
+print("  ⛔ 原版判据「N=6 下差仍显著为负 (|t|>=2) ⇒ 裁决不切换稳健」是**错的**, 两个理由:")
+print("     ① 双序**反号**时, 单看任一个 t 都不合法 (符号由路径顺序假设决定, 不由策略决定)")
+print("     ② `t(分歧日)` 的分母只含**有分歧的天** ⇒ 零分歧日被整体剔除 ⇒ n 与 sd 同时变小")
+print("        ⇒ t 被系统性推高。实测 N=6 opt: 总差仅 **+$30.52** 却 t=**+4.91** —")
+print("        那是\"分歧一致但金额可忽略\", 不是\"显著更好\"。故必须并读 `t(全部日)` 与 `分歧天/总天`。")
+print("     正确判据: 反号 或 t(全部日) 与 t(分歧日) 不同号 ⇒ **不可判**, 禁止出裁决。")
+print()
+print("  ⇒ 当前结论: 该轴**不可用 bar 内折线采样裁** (真实轮询是独立于 bar 的随机相位采样)。")
+print("     维持 quote 峰现状, 但状态是「未裁决⇒不动」, 不是「已裁⇒不切换」。详见 RFC-116 文首。")
