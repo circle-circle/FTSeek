@@ -15,10 +15,29 @@ bar:   Futu request_history_kline K_1M (常规时段, 深度实测 ≥2026-01).
 
 保真度边界 (如实报告):
   1. 1min bar 内 high/low 先后不可知 → 双序假设 (pess=不利先触, opt=有利先触) 各跑, 报区间.
-  2. SL/TP 成交按触发价 ± slippage_bps (实盘=市价单滑点); 时间类退出按 bar close.
-  3. 回放跳过入场 bar (实盘 ~60s 轮询, 等效粒度).
+  2. SL/TP/BE 成交按**生效线** eff ± slippage_bps (见 replay_trade L388 exit_price=eff*(1∓slip),
+     eff 复用生产 SSOT _compute_dynamic_effective_sl); 时间类退出按 bar close.
+     ⚠️ (2026-09-27 勘误) 旧文写"按触发价±滑点(实盘=市价单)"**不准**: 生产 SL_BREAKEVEN
+     走**限价单@净保本线**(成交价物理≥线, net-breakeven-caliber-switch-20260817), 引擎按 eff 线
+     结算是近似, 且**不模拟限价被动侧有利成交** ⇒ BE 桶偏悲观. MU id=1561 校准单: 引擎 +2.40
+     vs 实际 +15.67. 另一侧引擎用**固定 fee_cushion**(params) > 生产 fee-aware 实弹(avg 0.109%)
+     ⇒ BE 线偏高偏乐观. 两侧**反向**, 净方向见 scripts/replay_engine_be_fidelity.py 聚合对账.
+  3. 回放跳过入场 bar. ⚠️ (2026-09-27 勘误) 旧文写"实盘 ~60s 轮询"**错**: 退出快循环实测
+     playbook_exit_fast_loop_interval_sec=**10** (unified_config, 2026-07-22 a4c1207e9 引入).
+     ⇒ 本引擎按 1min bar 粒度采样, 比实盘 10s 轮询**粗 6 倍** ⇒ 峰值/触发时点保真度受限,
+     与 RFC-116 §7 的 peak 口径分叉同源 (实盘 quote 峰 vs 引擎 bar 极值抬峰).
   4. 入场选择偏差: 结论只外推到"同入场分布"; 三门/入场门不可回放 (属路径2).
-  5. sl_floor 网格不在 v1 (需重建 ATR, 误差大); dd/be/tiered/early_tight/mfe_stall 可忠实回放.
+  5. sl_floor 网格不在 v1 (需重建 ATR, 误差大); dd/tiered/early_tight/mfe_stall 可回放.
+     ⛔ **be/dd 阈值变体受「参数时代混算」污染, 读数不可直接裁** (2026-09-27 实锤):
+     live_baseline 读**现行 config** 回放整窗, 若窗口跨该参数落地日 (如 be_0.4 于 8/17),
+     则窗口主体的实盘成交是在**旧参数时代**(be_0.5)发生的 ⇒ 引擎把旧时代本不该武装的笔也
+     武装了. 聚合对账实测 (窗 6/24~8/17): 引擎 BE 桶 103笔/净+519 vs 实盘 59笔/净−130,
+     笔数虚增 +74.6%, BE占比 37.7% vs 20.3%; validation.reason_match_pct=0.542 主因也是它.
+     ⇒ 违反 skill「参数 era 分层」纪律: **裁 be/dd 须 baseline 按入场日取当时参数值, 或
+     只取现行参数时代样本**; 跨参数落地日的窗口回放只能看方向不能定值.
+  6. ⛔ **reason_match_pct < 0.80 时, 本引擎的变体裁决一律冻结** (项目自定门, 与影子尺子同源):
+     baseline 回放与实盘出场码一致率 < 0.80 ⇒ 触发面本身没对齐, 变体间相对比较也失去意义.
+     跑完先看 validation.reason_match_pct, < 0.80 就停, 别读 variants.
 
 用法:
   ./venv/bin/python scripts/exit_replay_backtest.py [--since 2026-06-24] [--until DATE]
