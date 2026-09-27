@@ -80,7 +80,8 @@ if __name__ == "__main__":
     con.row_factory = sqlite3.Row
     cur = con.cursor()
     rows = cur.execute("""
-        SELECT symbol, direction, entry_price, exit_price, mfe_pct, pnl_net, exit_reason, entry_time
+        SELECT symbol, direction, entry_price, exit_price, mfe_pct,
+               COALESCE(pnl_net, realized_pnl, 0) AS pnl_net, exit_reason, entry_time
         FROM trade_records
         WHERE date(entry_time) >= '2026-07-15' AND entry_price > 0 AND exit_price > 0
           AND exit_reason NOT LIKE 'BROKER_GHOST%' AND exit_reason != 'ORPHAN_CLEANUP'
