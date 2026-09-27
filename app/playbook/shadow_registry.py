@@ -2083,9 +2083,10 @@ REGISTRY: list[ShadowItem] = [
                     "可执行性数字 (三处收紧 §3); 不预筛 price/volume/mcap (收紧 §1); "
                     "源冲突不投票不择优 → state=ambiguous (收紧 §2)。"
                     "消费侧接入是阶段 1+ (本阶段不修改 extended_hours_entry_executor.py)。",
-        data_path="data/loops/ext_entry_plan/",
+        data_path="data/loops/ext_entry_plan/graduation_check_latest.json",
         config_key=None,
         min_n=7,  # 7 个交易日覆盖 = 阶段 0 通过判据 (当日事件票 ⊆ 计划 = 100%)
+        count_mode="json_key:criteria.trading_days.actual",
         graduation_criteria="RFC-104 §3 阶段 0 通过判据: "
                             "①当日事件票 ⊆ 计划 = 100% (覆盖率) "
                             "②计划条数带 [0,44] (2026-09-24 用户裁修订: 原 7-9 系单源起草估算, "
@@ -2732,11 +2733,19 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                 # (2026-09-26 B21/B22 登记引入)。为什么需要: 下面四个固定键只能取一个,
                 # 而同一 report 需服务两条**不同 n 轴**的判据 (B21=执行类已结算行数,
                 # B22=执行类 ∧ quote_age 非空行数), 固定键无法同轴表达两条 ⇒ 必须显式指定。
+                # 2026-09-26 扩展: 支持**点号嵌套路径** ("a.b.c") — rfc104_eth_event_plan 的
+                # n 轴是判据产物里 criteria.trading_days.actual (交易日覆盖数), 顶层无 n 键。
                 # 同 gap_chase_gate 教训: 键不存在时返回 None (保持原值), 不返回 0
                 # 伪装"断供", 也不 fallback 到别的键 (会静默换轴)。
                 _k = s.count_mode.split(":", 1)[1].strip()
-                _v = d.get(_k) if isinstance(d, dict) else None
-                return int(_v) if isinstance(_v, int) else None
+                _cur: object = d
+                for _part in _k.split("."):
+                    if not isinstance(_cur, dict) or _part not in _cur:
+                        return None
+                    _cur = _cur[_part]
+                if isinstance(_cur, bool):          # bool 是 int 子类, 必须排除
+                    return None
+                return int(_cur) if isinstance(_cur, int) else None
             if isinstance(d, dict):
                 for k in ("n", "n_total", "n_events", "stats"):
                     if k in d:
