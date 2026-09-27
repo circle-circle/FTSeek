@@ -776,8 +776,22 @@ REGISTRY: list[ShadowItem] = [
         config_key="playbook.execution_parameters.entry_band_widen_shadow_enabled",
         min_n=60,
         graduation_criteria="预注册见 RFC-065: sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门",
-        eval_script="scripts/limit_entry_shadow_replay.py",
+        # 2026-09-27 [RFC-115] 摘除错轴 eval_script (原挂 limit_entry_shadow_replay.py):
+        # 该重放器读的是**别族影子的源** data/limit_entry_shadow.jsonl (189 行, 属 `limit_entry`
+        # 影子, 8/29 用户裁 KILLED 停采 ⇒ 8/28 23:20 后零新增), 而本条 data_path 指的是活源
+        # entry_band_widen_shadow.jsonl (30 行, 8/19→9/25 在写)。两文件字段几乎无交集
+        # (交集仅 date/direction/inst_id/symbol/ts; 重放器依赖的 anchor/trigger_price/entry_path
+        # 全是死源独有) ⇒ 重放器**读不到本条影子**, 其产物 variants (chase_5m +3.88 /
+        # chase_30m −2.08) 是 `limit_entry` 那族的读数, 与本条 RFC-065 判据 (双事件 new/changed
+        # + widen/flat path) 无关。挂错 eval_script 比不挂更坏: 待裁面会拿别族死源数字当本条
+        # 证据。改为 NO_EVAL_SCRIPT 挂账 (照 ue_short_boost_shadow 惯例), 达门前建真结算器。
+        eval_script=None,
         created="2026-08-06",
+        no_adjudication_reason="NO_EVAL_SCRIPT: RFC-065 判据已预注册 (sign-flip B=10000 α=0.025 "
+                               "双条件+符号共门, min_n=60, 现 n=30) 但无结算执行体 — 2026-09-27 "
+                               "摘除错轴的 limit_entry_shadow_replay.py (读 limit_entry 影子的死源, "
+                               "非本条 data_path), 达门前建读 entry_band_widen_shadow.jsonl 的结算器 "
+                               "或届时人工结算",
     ),
     ShadowItem(
         id="limit_entry",

@@ -85,10 +85,11 @@ def _d(s):
         return None
 
 
-def _load() -> tuple[list, list]:
+def _load() -> tuple[list, list, int]:
     if not SHADOW.exists():
-        return [], []
+        return [], [], 0
     scores, rows = [], []
+    n_bad = 0                     # 2026-09-27 棘轮清剿: 坏行计数, 禁静默 continue
     for ln in SHADOW.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
         if not ln:
@@ -96,6 +97,7 @@ def _load() -> tuple[list, list]:
         try:
             rec = json.loads(ln)
         except Exception:
+            n_bad += 1            # 结算器吞坏行 = 样本静默丢失 (R5/DEB-20260831 P1③)
             continue
         if rec.get("type") != "score":
             continue
@@ -116,7 +118,7 @@ def _load() -> tuple[list, list]:
             rr["_h"] = marked if isinstance(marked, int) else h_self
             rr["_cd"] = rec.get("capture_date")
             rows.append(rr)
-    return scores, rows
+    return scores, rows, n_bad
 
 
 def _bucket(sub: list) -> dict:
@@ -188,10 +190,14 @@ def main() -> int:
     ap.add_argument("--min-n", type=int, default=MIN_N)
     args = ap.parse_args()
 
-    scores, rows = _load()
+    scores, rows, n_bad = _load()
     if not rows:
         print(f"[ue_shadow_eval] 无 score 行 — {SHADOW}")
         return 0
+    if n_bad:
+        # 结算器禁静默吞行 (R5/DEB-20260831 P1③): 坏行剔除必须进产物, 否则
+        # n_score_rows/n_results 看着完整而实际残缺
+        print(f"[ue_shadow_eval] ⚠️ {n_bad} 行 JSON 解析失败已剔除 — 样本非完整")
 
     adj = [r for r in rows if r["_h"] == ADJ_DAYS]
     out = {
@@ -206,6 +212,7 @@ def main() -> int:
                          "scored_on-capture_date 自算。"),
         "n_score_rows": len(scores),
         "n_results": len(rows),
+        "n_bad_json_skipped": n_bad,   # 2026-09-27: 坏行剔除计数进产物 (禁静默吞行)
         "horizon_coverage": {
             "marked": sum(1 for r in rows if r["_h_marked"] is not None),
             "self_computed": sum(1 for r in rows if r["_h_marked"] is None and r["_h_self"] is not None),

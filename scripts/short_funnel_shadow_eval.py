@@ -29,21 +29,27 @@ MIN_TRADING_DAYS = 10
 
 def _load():
     if not SRC.exists():
-        return []
+        return [], 0
     out = []
+    n_bad = 0                     # 2026-09-27 棘轮清剿: 坏行计数, 禁静默 pass
     for ln in SRC.read_text(encoding="utf-8").splitlines():
         if ln.strip():
             try:
                 out.append(json.loads(ln))
             except json.JSONDecodeError:
-                pass
-    return out
+                n_bad += 1        # 裁决器吞坏行 = 同轴链样本静默残缺
+    return out, n_bad
 
 
-def evaluate(rows=None) -> dict:
-    rows = rows if rows is not None else _load()
+def evaluate(rows=None, n_bad_json=None) -> dict:
+    if rows is None:
+        rows, n_bad_json = _load()
     if not rows:
         return {"ok": False, "reason": "NO_ARTIFACT", "days": 0}
+    if n_bad_json:
+        # 裁决器禁静默吞行 (DEB-20260831 P1③ / R5): 坏行剔除必须进产物, 否则
+        # "同轴链 n 天"的分母悄悄少几天, 读数看起来完整而实际残缺
+        print(f"[short_funnel_eval] ⚠️ {n_bad_json} 行 JSON 解析失败已剔除 — 样本非完整")
 
     # 同轴链只在带新键的行上可算 (9/26 回填 26 日 + 此后新采集; 8/14-8/19 日志已清理不可回算)
     axial = [r for r in rows if r.get("bear_with_short_n") is not None]

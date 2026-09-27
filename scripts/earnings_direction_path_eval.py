@@ -65,13 +65,18 @@ def main(argv=None) -> int:
         return 1
 
     rows = []
+    n_bad = 0                     # 2026-09-27 棘轮清剿: 坏行必须计数并披露, 禁静默 continue
     for ln in DATA.read_text(encoding="utf-8").splitlines():
         ln = ln.strip()
         if ln:
             try:
                 rows.append(json.loads(ln))
             except json.JSONDecodeError:
-                continue
+                n_bad += 1        # 裁决器吞坏行 = 样本静默丢失, 结论建在看不见的残缺数据上
+
+    if n_bad:
+        print(f"[ern_dir_eval] ⚠️ {n_bad} 行 JSON 解析失败已剔除 — 样本非完整, n 口径按可用行计 "
+              f"(裁决器禁静默吞行: 见 DEB-20260831 P1③ / R5)")
 
     if not rows:
         print(f"[ern_dir_eval] 产物为空: {DATA}")
