@@ -150,31 +150,31 @@ ADJUDICATED: dict[str, dict] = {
     },
     "vwap_gate_ab": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "补齐按日聚类后被拦组 +0.176% 但 MDE±0.39 ⇒ 不可分辨, 不改门 (§8.4)。",
+        "note": "补齐按日聚类后被拦组 +0.176% 但 MDE±0.39 ⇒ 不可分辨, 不改门 (RFC-092 §8.4)。",
     },
     "entry_delay_confirm": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "全样本过线但前瞻子样本全不过 + 日聚类 MDE±7.95 ⇒ 不可分辨, 不呈裁。",
+        "note": "全样本过线但前瞻子样本全不过 + 日聚类 MDE±7.95 ⇒ 不可分辨, 不呈裁。 (读数出处: RFC-092 §5)",
     },
     "exit_disable_cf": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "每规则 MFE n=31<50 / DEAD n=33<50 ⇒ 每规则 n 门未达。",
+        "note": "每规则 MFE n=31<50 / DEAD n=33<50 ⇒ 每规则 n 门未达。 (读数出处: RFC-092 §5)",
     },
     "extreme_gap_ban_shadow": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "被拦 n=58 净 -1826 ✓ 但误杀率 53%>40% ✗ ⇒ 判据未过, 维持纯观测。",
+        "note": "被拦 n=58 净 -1826 ✓ 但误杀率 53%>40% ✗ ⇒ 判据未过, 维持纯观测。 (读数出处: RFC-092 §5)",
     },
     "gap_alignment": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "各格 n=5/10/22/9… 多 <30 ⇒ 格内 n 门未达。",
+        "note": "各格 n=5/10/22/9… 多 <30 ⇒ 格内 n 门未达。 (读数出处: RFC-092 §5)",
     },
     "intraday_loss_breaker_a_prime": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "被挡笔期望 +45.0 (门 ≤-10, 方向相反) 但 forward 仅 14<30 ⇒ 按已记录规则不下结论。",
+        "note": "被挡笔期望 +45.0 (门 ≤-10, 方向相反) 但 forward 仅 14<30 ⇒ 按已记录规则不下结论。 (读数出处: RFC-092 §3 #5)",
     },
     "kr3_direction_runup_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "LONG blocked n=36 均值 -1.9/中位 +1.1 (尾部驱动); SHORT blocked n=16<30 ⇒ 延长观察。",
+        "note": "LONG blocked n=36 均值 -1.9/中位 +1.1 (尾部驱动); SHORT blocked n=16<30 ⇒ 延长观察。 (读数出处: RFC-092 §5)",
     },
     "penetration_shadow": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -199,11 +199,11 @@ ADJUDICATED: dict[str, dict] = {
     },
     "futu_channel_iv_hv": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "三桶无残存效应 (medium +35.74 但 MDE±52 不可分辨; high 无效应) ⇒ NO_RESIDUAL (§8.1)。",
+        "note": "三桶无残存效应 (medium +35.74 但 MDE±52 不可分辨; high 无效应) ⇒ NO_RESIDUAL (RFC-092 §8.1)。",
     },
     "futu_channel_ofi_baseline": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "只测到 capital_flow 相对它无增量 (-0.1192); OFI **自身** IC 未单独测 ⇒ 无 KILL 依据。",
+        "note": "只测到 capital_flow 相对它无增量 (-0.1192); OFI **自身** IC 未单独测 ⇒ 无 KILL 依据。 (读数出处: RFC-092 §5)",
     },
 
     # ── 2026-09-26 RFC-109④ 清账批: 9 条待裁面逐项实跑 eval 后的读数登记 ──────────
@@ -218,7 +218,7 @@ ADJUDICATED: dict[str, dict] = {
         "note": "9/26 重跑 futu_channel_shadow_eval: rank_ic_marginal=-0.1447 (t=-1.52, "
                 "n_pairs=110) 不显著; 增量 vs OFI=-0.1326; OOS 双窗同号 (-0.1953/-0.0971) "
                 "但均为负; verdict_candidate=WEAK_EVIDENCE ⇒ 毕业判据 (双窗 OOS ≥40% 或 "
-                "ρ≥0.15) **不过**。采集维持不停 (9/21 用户裁 + 原料喂生产盘中背离门 "
+                "ρ≥0.15) **不过**。可复跑: scripts/futu_channel_shadow_eval.py。采集维持不停 (9/21 用户裁 + 原料喂生产盘中背离门 "
                 "intraday_reentry, 见本条 notes 🔒 段)。要动的是判据/门方向, 不是采集。",
     },
     "exit_param_shadow": {
@@ -229,7 +229,7 @@ ADJUDICATED: dict[str, dict] = {
                 "(一致性 45.9-47.5%, 均值虽正 +0.20~0.26% 但不过一致性门) ⇒ **无新变体可毕业**。"
                 "唯二 PASS = dead_signal_60m_mfe0.2 (N=465, triggered -0.915% vs not +0.296%, "
                 "分离 +1.212pp) 与 mfe0.3 (+1.157pp) — 对应**已毕业的生产退出腿** "
-                "(dead_signal_exit_enabled=true/60min, 8/10-9/21 实跑 36 笔 -$309) ⇒ 属既成"
+                "(dead_signal_exit_enabled=true/60min, 8/10-9/21 实跑 36 笔 -$309; 可复跑: scripts/exit_shadow_graduation.py) ⇒ 属既成"
                 "事实确认, 非新提案。判据不过的变体维持纯观测, 不改任何退出参数。",
     },
     "universe_expansion_shadow": {
@@ -309,7 +309,7 @@ ADJUDICATED: dict[str, dict] = {
                 "(判据要求族净额>0)。⚠️ 尺子挂错轴已发现: 注册表 eval_script 填的是"
                 "**每分钟采集器** extended_hours_exit_cron.py (实跑返回 "
                 "skip=outside_extended_hours, 非评估器), 真结算器是 settle_extended_hours.py "
-                "(cron 30 6 * * 2-6)。另 avg_capture_pct 出现 -599%/-317% = mean-of-ratios "
+                "(cron 30 6 * * 2-6; 可复跑: scripts/settle_extended_hours.py)。另 avg_capture_pct 出现 -599%/-317% = mean-of-ratios "
                 "被小 mfe 行放大, 属报表口径瑕疵, 不可当判据读数。",
     },
     "eth_afterhours_exit_shadow": {
@@ -318,7 +318,7 @@ ADJUDICATED: dict[str, dict] = {
                 "avg_t0_close_ret **-6.992%** / best_holdout -2.307% / avg_mfe **-4.237%** "
                 "(负 MFE = 全窗未翻绿); hold_no_stop n=2640 -0.028% / best_holdout +0.051% / "
                 "mfe +2.138% / flip_rate 15.7%。⇒ 判据「净额>0 且 n≥30」**不过** "
-                "(盘后无一族净额>0; hold_to_next_open 显著为负 = 再证「盘后是惯性时段"
+                "(可复跑: scripts/settle_extended_hours.py; 盘后无一族净额>0; hold_to_next_open 显著为负 = 再证「盘后是惯性时段"
                 "非修复时段」ah_exit_shadow 8/27 裁决)。两时段合并评估前置条件 "
                 "(分布无系统性差异) 亦不成立: 盘前 tighten +0.369% vs 盘后同族为负。",
     },
@@ -366,7 +366,7 @@ ADJUDICATED: dict[str, dict] = {
         "note": "✅**已裁 (2026-09-26 用户裁「按建议执行」)**: 维持观测继续攒样; **不立 bridge 层门** — "
                 "26 日同轴回算指向若立门该立在 bridge/通道候选层 (最大漏斗口 27 只, 主因 "
                 "`SKIP: 非当前通道候选(bridge未提名/无方向)` ×17), 但立门 = 改 pipeline 加门 = "
-                "**生产行为变更 = L3**, 须另立 DEB 预注册 (含误杀预算与对照臂) 后再裁, 本批不做。"
+                "**生产行为变更 = L3**, 须另立 DEB 预注册 (含误杀预算与对照臂) 后再裁, 本批不做。 (裁决出处: [RFC-109] commit 47f30ff74, 用户裁「按建议执行」)"
                 "eval 继续只印不判; 10/26 重看窗到点自动推回待裁面 (overdue 机制)。"
                 "────────────────────\n"
                 "补登后首次入待裁面 (30/10 交易日, 8/16 起早已达标却从未被通知 = "
@@ -409,7 +409,7 @@ ADJUDICATED: dict[str, dict] = {
         "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
         "note": "B19 实跑 n=2/8 ΣΔ=+28.40 误杀=1 ⇒ 判据 2/3, n 不足自动续观 (不待裁)。"
                 "同批修计数锚: report 原无 n/n_total/n_events/stats 任一键 ⇒ current_n 恒 0 "
-                "(gap_chase_gate 同型假象), 现补顶层 n=n_trig (判据轴=去重仓数, 非 arm 行数)。",
+                "(gap_chase_gate 同型假象), 现补顶层 n=n_trig (判据轴=去重仓数, 非 arm 行数)。 (读数出处: 判据字典 B19, docs/ADJUDICATED-CRITERIA.md)",
     },
     "eth_exit_forgone_upside": {
         # ✅ 2026-09-26 用户裁 **A 案** (n 轴口径: 维持字面集合含 tighten, 不重注册不重攒) ⇒
@@ -417,7 +417,7 @@ ADJUDICATED: dict[str, dict] = {
         # recheck_after=None: 已终裁, 不再周期性推回 (若未来重启 grace window 假设须新预注册)。
         "read_at": "2026-09-26", "recheck_after": None, "needs_user": False,
         "note": "✅**已裁 (2026-09-26 用户裁 A 案)**: n 轴口径维持字面集合 (含 tighten), 不重注册不重攒; "
-                "判据三门 1/3 未过线 ⇒ status 转 KILLED, 「触线即出」语义维持, 本判据留档为反证。"
+                "判据三门 1/3 未过线 ⇒ status 转 KILLED, 「触线即出」语义维持, 本判据留档为反证 (读数出处: 判据字典 B21, docs/ADJUDICATED-CRITERIA.md)。"
                 "选 A 的依据: 真出场轴 (剔 tighten) 仅 8 笔, 稳态速率下攒到 n≥20 需 ≈336 天 (0.9 年) "
                 "⇒ B 案在可见期内无法裁决; 且两口径三门结果同向 ⇒ 结论不受口径影响。"
                 "────────────────────\n"

@@ -1,6 +1,6 @@
 # RFC-114: 已裁结论证据锚点守卫 (ADJUDICATED note evidence anchor)
 
-> **状态**: 提案 (待用户裁 F1–F3 后实施)
+> **状态**: 已执行 (2026-09-27, 用户裁「按建议执行」; 执行记录+自曝见 §8)
 > **类型**: L1 (1 个新守卫测试 + ≤12 条 note 追注; 零交易行为变更, 零 schema 变更)
 > **来源**: 2026-09-27 会话「Muse 主动思考机制对照」第七节 🟢 三条的落地评估
 > **前置**: RFC-092 (ADJUDICATED 登记机制) / RFC-109④ (清账批「每项都是本批实跑」纪律) /
@@ -200,3 +200,46 @@ A: 可能: 清账批当天实跑了判据但 RFC 还没写完 → note 暂无文
 - 不新建台账/产物/推送/cron (守卫走既有 pytest 面)。
 - 不校验锚点语义正确性 (Q6-a 限度, 写进测试 docstring)。
 - 不搬 Muse 的每小时校验环: 本系统裁决频率是周/月级, 每日级证据校验无消费面。
+---
+
+## 8. 执行记录 (2026-09-27, 用户裁「按建议执行」= F1 全量回填 / F2 不混轴 / F3 不强制日期)
+
+**状态: 提案 → 已执行** (阶段 0 + 阶段 1 同批落地, commit 见 git log `[RFC-114]`)
+
+### 8.1 落地内容
+
+- 阶段 0: `tests/test_adjudicated_note_anchor.py` — 守卫 + 反向牙齿测试, 2 passed。
+- 阶段 1: ADJUDICATED 16 条 note 回填回源锚 (RFC-092 §3/§5/§8.1/§8.4 ×9、判据字典 B19/B21 ×2、
+  [RFC-109] commit 47f30ff74 ×1、可复跑脚本路径 ×4)。回填后 strict doc 锚 12/27 → **23/27**;
+  余 4 条 (capital_flow / exit_param / eth_premarket / eth_afterhours) 靠 script-in-note 锚
+  (`可复跑: scripts/*.py`, 文件在盘已验证)。EXEMPTIONS 豁免表 = **空** (零豁免落地)。
+
+### 8.2 自曝: 执行中发现的三处设计修正 (与本 RFC 原案不同, 就地登记不悄悄改)
+
+1. **守卫口径从「doc 锚必须」放宽为「三选一锚」** (doc / script-in-note / eval_script 均在盘可验)。
+   动因: 严格扫描 (裸 § 不算 doc 锚) 实测 untraceable=**0/27** — 15 条无 doc 锚的 note 全部有
+   注册表 `eval_script` 锚 (脚本在盘 = 读数可复跑重现, 证据强度高于文档指针)。原案「doc 锚必须」
+   会迫使给这 15 条补纯装饰性文档引用 (为过守卫而写锚 = Q6-b 回填造假的温和形态)。
+   三选一口径守住本质目标「可回源」, 且弱 § 锚 (vwap_gate_ab/futu_channel_iv_hv 仅 "§8.4"/"§8.1")
+   已由本批补齐文档名 (RFC-092 §8.x)。
+2. **回填量 12 → 16 条**: 原案 12 = 宽松正则 (裸 § 算 doc 锚) 下的 8+4; 严格口径 + 9/26 新登记批
+   (eod_depth_gate / eth_exit_forgone_upside 等) 实测扩到 16。F1「全量」语义不变: 全部缺锚项回填。
+3. **v1 回填脚本事故 (被预注册验证器捕获, 未入库)**: v1 的 (kind,old,delta) 转换逻辑缺陷把
+   16 条 note **整体替换**成锚点串 (判据读数全丢)。阶段 1 预注册判据「diff 面只含追加」的
+   语义验证器 (cmp_adj.py: 剥锚后与 HEAD 版逐字比对) 当场红 12 条 ⇒ 整批丢弃, v2 重写
+   (纯插入断言 `_is_pure_insertion` + 幂等判前置) 后 16/16 applied、violations=0。
+   教训: 「只追加」不能靠 diff 行数看, 必须剥锚后语义比对。
+
+### 8.3 验证清单 (全部实跑)
+
+- 回填纯净性: cmp_adj2.py — 27 键集不变; read_at/recheck_after/needs_user 三字段零变更;
+  16 条 note 剥锚后与 HEAD 版**逐字相同** (violations=0)。
+- py_compile OK (worktree + 主仓工作区双验)。
+- 守卫测试: test_adjudicated_note_anchor (2) + test_pending_adjudication_report (5) +
+  test_criteria_registry_visibility + test_criteria_status = 27 passed。
+- 回归等基对比 (裸 worktree HEAD vs 回填后, `-k 'registry or adjudicat or shadow or criteria or
+  control_loop'`): 基线 FAILED/ERROR 7 = 现在 7, **新增失败 = 0** (comm -13 空)。
+  基线 7 条为环境性失败 (裸 worktree 缺 data/), 两侧同数。
+- 并行纪律: shadow_registry.py 他 agent WIP (ext_entry_plan count_mode 扩展) 在工作区原样保留
+  (grep 实测 `json_key:criteria.trading_days.actual` 仍在); 提交走 HEAD 基线 worktree + blob 注入,
+  未 checkout/覆写工作区。
