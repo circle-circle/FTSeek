@@ -716,6 +716,13 @@ def test_exit_full_fill_updates_records_and_removes_position(
         "requested_limit_price": 11.0,
         "broker_remark_prefix": "ext_exit_lock_in",
     }
+    # RFC-107 §2.2: 顶层键是 exit_lifecycle.reserve_leg **唯一认**的位置 (它只读
+    # decision.metadata 顶层, 读不到嵌套的 extended_hours_exit.*)。少了它 ⇒ remark 回退
+    # pbe_* ⇒ reconcile_extended_hours_exits.py 与 orphan_ext_order_watch.py (均按
+    # remark.startswith("ext_exit_") 过滤) 对 ETH 单**失明**。MU 9/25 04:04 盘前 BE 案实测:
+    # metadata 只有嵌套键 ⇒ 券商单 remark=pbe_, 对账环看不见它。
+    # 契约侧三向钉在 tests/execution/test_exit_lifecycle.py::test_reserve_leg_remark_prefix_*
+    assert broker.calls[0]["exit_decision"]["metadata"]["broker_remark_prefix"] == "ext_exit_lock_in"
 
 
 def test_exit_partial_fill_stays_durable_pending_without_direct_db_write(

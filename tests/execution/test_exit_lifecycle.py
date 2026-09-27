@@ -903,3 +903,55 @@ def test_corrupt_snapshot_does_not_starve_healthy_exits_or_release_evidence(
                           (bad_id,)).fetchone() == raw_intent_before
         assert db.execute('SELECT * FROM exit_legs WHERE intent_id=? ORDER BY sequence',
                           (bad_id,)).fetchall() == raw_legs_before
+
+
+@pytest.mark.parametrize('session,metadata,expected_prefix,visible_to_reconcile', [
+    # ① ETH + 顶层键 (RFC-107 §2.2 修后形态): remark 落 ext_exit_*, 对账环/孤儿监测可见
+    ('ETH',
+     {'broker_remark_prefix': 'ext_exit_SL_BREAKEVEN',
+      'extended_hours_exit': {'session': 'premarket',
+                              'broker_remark_prefix': 'ext_exit_SL_BREAKEVEN'}},
+     'ext_exit_SL_BREAKEVEN', True),
+    # ② ETH + 仅嵌套键 (修前形态, MU 9/25 04:04 案的实物): reserve_leg 读不到 ⇒ 回退 pbe_
+    ('ETH',
+     {'extended_hours_exit': {'session': 'premarket',
+                              'broker_remark_prefix': 'ext_exit_SL_BREAKEVEN'}},
+     'pbe_', False),
+    # ③ RTH + 顶层键: session 前置条件未动 ⇒ 仍 pbe_ (证明修复未扩大 RTH 行为)
+    ('RTH', {'broker_remark_prefix': 'ext_exit_SL_BREAKEVEN'}, 'pbe_', False),
+], ids=['eth_top_level_fixed', 'eth_nested_only_pre_fix', 'rth_top_level_unchanged'])
+def test_reserve_leg_remark_prefix_reads_top_level_metadata_only(
+        tmp_path, session, metadata, expected_prefix, visible_to_reconcile):
+    """RFC-107 §2.2 契约: remark 前缀**只**认 decision.metadata 的顶层 broker_remark_prefix。
+
+    为什么值得钉 (2026-09-27 实测): 修前 executor 把前缀写在嵌套
+    metadata["extended_hours_exit"]["broker_remark_prefix"], reserve_leg 读不到 ⇒ ETH 单
+    实际落 pbe_*。后果不是纯观测字段: reconcile_extended_hours_exits.py 与
+    orphan_ext_order_watch.py 均按 remark.startswith("ext_exit_") 过滤 ⇒ ETH 单对
+    对账环与孤儿单监测**失明** (MU 9/25 04:04 盘前 BE 案实物: 顶层键缺失, 券商单 remark=pbe_)。
+
+    生产侧 (executor 真写顶层键) 钉在
+    tests/test_extended_hours_order_execution.py::test_exit_full_fill_updates_records_and_removes_position。
+    本测试钉契约侧 (reserve_leg 真读它), 两侧合起来才是闭环: 只钉一侧时,
+    另一侧回归仍会静默回到失明态。
+    """
+    from app.execution.exit_lifecycle import ExitLedger
+
+    ledger = ExitLedger(tmp_path / 'exits.db')
+    now = 1700000000
+    symbol = f'US.REMARK{session}'
+    intent, blocked = ledger.request(
+        account_id='42', target_env='sim', symbol=symbol, direction='LONG', quantity=10,
+        owner=owner(f'remark-{session}', symbol=symbol),
+        decision={'reason': 'SL_BREAKEVEN', 'reference_price': 100, 'metadata': metadata},
+        limit_price=101.5, limit_timeout_s=20, now=now, session=session)
+    assert blocked is None
+
+    leg = ledger.reserve_leg(intent, 'LIMIT', 10, 101.5, now + 20, now, broker_qty_before=10)
+    assert leg is not None
+    remark = str(leg['remark'])
+    assert remark.startswith(expected_prefix), (
+        f'{session} + metadata={sorted(metadata)} ⇒ remark={remark!r}, '
+        f'期望前缀 {expected_prefix!r}')
+    # 对账环可见性 = 两个消费者的实际过滤谓词 (startswith), 不是"有没有前缀"
+    assert remark.startswith('ext_exit_') is visible_to_reconcile
