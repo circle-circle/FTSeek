@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""BE/trailing 的 peak 输入源 A/B 回放 (RFC-116, 2026-09-27 裁决: **维持 quote 不切换**).
+"""BE/trailing 的 peak 输入源 A/B 回放 (RFC-116).
+
+⛔ **本脚本的 A/B 读数不可用于裁决** — 2026-09-27 同日撤回, 详见
+   `docs/decisions/RFC-116-peak-input-source-ab-verdict.md` 文首撤回段。
+   根因: quote arm 的采样密度 (30s) 与实盘退出快循环 (10s,
+   `playbook_exit_fast_loop_interval_sec`) 不同轴, 且 N=6 对口径下 pess/opt 反号
+   ⇒ 区间横跨 0 = 不可判。**先跑 `scripts/peak_density_sensitivity.py`**。
+   保留本脚本是为了留证: §2 的漏峰面统计 (metadata 实测落库值, 不经模拟) 仍成立。
 
 只读 DB + 只读 data/replay_bars/ ⇒ 零交易行为变更、零产物写入 (只 print)。
 背景: `peak_price_bar` 采集器 (`app/playbook/pipeline.py:7451+`) docstring 预注册了
 「周度对比 bar 版 vs quote 版, 再决定是否切换决策输入」, 但该对比从未落地
-(crontab 零命中、无产物)。本脚本把它跑完并给出裁决读数。
+(crontab 零命中、无产物)。本脚本跑了一版, 但仪器不足以裁决 (见上)。
 
 单变量设计 (唯一变量 = bar 极值是否并入 peak):
   - 实盘真值取自 `config/playbook_horizon.yaml` default 段 (**不用代码默认值**):
@@ -319,10 +326,18 @@ def main() -> int:
 
     print()
     print("=" * 92)
-    print("裁决 (RFC-116 §5): **不切换** peak 输入源, 维持 quote 轮询峰; "
-          "`peak_price_bar` 维持 record-only 不参与决策")
-    print("  依据: 单变量配对回测 bar 版显著更差, 且「仅 bar 武装」(漏峰修复本身) 只值 "
-          f"${sum(p['q']['bar']['net']-p['q']['quote']['net'] for p in oba):+,.2f}")
+    print("⛔ 本脚本的 A/B 读数**不可用于裁决** (RFC-116 文首撤回段)")
+    print("  原因: quote arm 用 30s 采样点 (N=2), 而实盘退出快循环是 10s")
+    print("        (config playbook_exit_fast_loop_interval_sec: 10, 2026-07-22 引入)")
+    print("        ⇒ N=2 时采样点 [(o+c)/2, c] 完全不触及 bar 内 high/low = 人为放大漏峰;")
+    print("          N>=6 时采样点包含极值 ⇒ quote arm 退化成 bar arm = 人为消除漏峰。")
+    print("        ⇒ 两头都不是真 quote 口径 (真实轮询是独立于 bar 结构的随机相位采样)。")
+    print("  且 N=6 (对口径) 下 pess/opt 反号 (−$1,059 vs +$31) ⇒ 区间横跨 0 = 不可判")
+    print("  ⇒ 先跑 scripts/peak_density_sensitivity.py 看密度敏感性, 再谈这个轴")
+    print()
+    print("  仍成立的部分 (§2 漏峰面统计取自 metadata 实测落库值, 不经模拟):")
+    print("  quote 峰确实系统性低于 bar 峰, 且集中在出血堆 — 那是**测量事实**, 与仪器无关。")
+    print("  不成立的: 「不切换」这个裁决、「仅 bar 武装 19 笔只值 +$58」这个分解。")
     print("=" * 92)
     return 0
 
