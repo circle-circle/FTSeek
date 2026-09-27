@@ -21,6 +21,8 @@
 | ⑨ | 看板段10 `or 99` 陷阱: `mfe_pct == 0.0` 被当缺失丢掉 (最死的一批恰是 0.0) ⇒ 命中数少算近半 (7d 5→10) | `scripts/shadow_board.py` | 修口径 |
 | ⑩ | 同批修段9 同型陷阱 (`exit_dist_from_low_pct == 0.0` = 正好割在当日低点) | `scripts/shadow_board.py` | 修口径 |
 | ⑪ | 9/21 污染行隔离 (early_dead 2814 + high_atr 209) + 五条证据取证 README (原档留全, 可整文件还原) | `data/_quarantine/20260923_offline_replay_pollution/` | 数据面 |
+| ⑫ | 平仓推送 `MFE x% capture y%` **标注 bar 口径** (mfe 列按 1min bar, `bar_covered_until` 之后的盘前 tick 峰值不进 bar; MU 9/25 实测 bar 口径 capture=100% vs tick 口径 86%) + `time_to_mfe` 同为 bar 口径, 与 BE 武装时刻 (盘前 tick) 不是一回事 ⇒ 推送文案/看板分段时**两者禁混印** | `scripts/shadow_board.py` (平仓摘要段) + 推送模板 | 展示 (零行为变更) |
+| ⑬ | `metadata.broker_remark_prefix="ext_exit_SL_BREAKEVEN"` vs 实际券商单 `remark=pbe_` 不一致: 盘前 executor 委托主链 `exit_lifecycle` 下单, 前缀记录与实际下单路径分叉 ⇒ 登记为**纯观测字段失真** (remark 前缀仅用于人眼溯源, 不参与任何判定; 修 = 记录实际委托路径或删该字段, 二选一待排期) | `app/playbook/` 盘前 executor metadata 写入点 | 观测字段 (零行为变更) |
 
 **④ 的 cron 明细** (台账 §2.3 `crontab-early-dead-settle` 行, 已入账):
 ```
