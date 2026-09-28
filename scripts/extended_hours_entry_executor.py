@@ -94,6 +94,13 @@ MIN_VOLUME_BUCKETS_RAW = os.getenv("EXT_ENTRY_MIN_VOLUME_BUCKETS", "").strip()
 # 影子分档 (record-only, 默认空): 只用于反事实读数 ("若这些时段也分档会多放行几只"), 不参与判定。
 MIN_VOLUME_BUCKETS_SHADOW_RAW = os.getenv("EXT_ENTRY_MIN_VOLUME_BUCKETS_SHADOW", "").strip()
 MIN_PRICE = float(os.getenv("EXT_ENTRY_MIN_PRICE", "5.0"))
+EXEC_PRICE_SHADOW_ON = os.getenv("EXT_ENTRY_EXEC_PRICE_SHADOW", "false").lower() == "true"
+EXEC_PRICE_SHADOW_MIN_PREMARKET = float(
+    os.getenv("EXT_ENTRY_EXEC_MIN_PRICE_PREMARKET", "50.0")
+)
+EXEC_PRICE_SHADOW_MIN_AFTERHOURS = float(
+    os.getenv("EXT_ENTRY_EXEC_MIN_PRICE_AFTERHOURS", "50.0")
+)
 MIN_EXT_TURNOVER_USD = float(os.getenv("EXT_ENTRY_MIN_TURNOVER_USD", "10000000"))
 A_GRADE_TURNOVER_USD = float(os.getenv("EXT_ENTRY_A_TURNOVER_USD", "20000000"))
 MIN_MARKET_CAP_USD = float(os.getenv("EXT_ENTRY_MIN_MARKET_CAP_USD", "1000000000"))
@@ -307,6 +314,7 @@ AUDIT = ROOT / "data" / "extended_hours_entry_executions.jsonl"
 # 价格闸拦下的候选打点 (按**运行**聚合一行: n + 明细). 用户 2026-09-17 令: 回答
 #   "$5 闸到底挡掉了多少噪声票". 逐候选整行会膨胀(同票每 5 分钟重复出现) ⇒ 按运行聚合.
 PRICE_GATE_REJECTS = ROOT / "data" / "extended_hours_price_gate_rejects.jsonl"
+EXEC_PRICE_SHADOW = ROOT / "data" / "ext_entry_exec_price_shadow.jsonl"
 # 2026-09-19 用户令「按建议执行」: 入口预筛影子 — **只记录不拦**。
 #   动机 (回放 60 日): 42% 的延长时段仓**从未出现 0.4% 浮盈**, 单独贡献 -132pp; 有肉的
 #   25 笔合计 +116pp ⇒ "每笔净收益不亏损"的正解在**入口**, 不在出口。
@@ -789,6 +797,73 @@ def _record_price_gate_rejects(session, rejects):
     head = ", ".join(f"{r['symbol']} ${r['price']:g}" for r in rejects[:8])
     more = f" (+{len(rejects) - 8})" if len(rejects) > 8 else ""
     print(f"[ext_entry] 价格闸(<${MIN_PRICE:g}) 拦下 {len(rejects)} 只: {head}{more}")
+
+
+def _execution_price_shadow_threshold(session):
+    if session == "afterhours":
+        return EXEC_PRICE_SHADOW_MIN_AFTERHOURS
+    return EXEC_PRICE_SHADOW_MIN_PREMARKET
+
+
+def _record_execution_price_shadow(session, movers):
+    """Record-only counterfactual for a higher EXT execution-pool price floor.
+
+    This shadow never changes gate order, candidate supply, or order submission.
+    It reuses the already-fetched rank/snapshot prices, so enabling it in cron
+    adds zero Futu requests.
+    """
+    if not EXEC_PRICE_SHADOW_ON or not movers:
+        return
+    try:
+        threshold = _execution_price_shadow_threshold(session)
+        current_pool = []
+        execution_pool = []
+        prefiltered_out = []
+        for item in movers:
+            try:
+                price = float(item.get("px") or 0)
+                change_pct = round(float(item.get("chg") or 0), 2)
+                volume = float(item.get("vol") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not _price_in_range(price):
+                continue
+            detail = {
+                "symbol": item.get("symbol"),
+                "decision_price": price,
+                "change_pct": change_pct,
+                "volume": volume,
+            }
+            current_pool.append(detail)
+            if price >= threshold:
+                execution_pool.append(detail)
+            else:
+                prefiltered_out.append(detail)
+        row = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "trade_date": _today_et(),
+            "session": session,
+            "mode": "record_only",
+            "price_threshold": threshold,
+            "price_unit": "USD",
+            "volume_unit": "shares",
+            "candidates_n": len(movers),
+            "current_price_pool_n": len(current_pool),
+            "shadow_execution_pool_n": len(execution_pool),
+            "prefiltered_out_n": len(prefiltered_out),
+            "prefiltered_out": prefiltered_out,
+            "shadow_execution_pool": execution_pool,
+        }
+        EXEC_PRICE_SHADOW.parent.mkdir(parents=True, exist_ok=True)
+        with EXEC_PRICE_SHADOW.open("a") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(
+            f"[ext_entry] 执行池价格影子[{session}] 阈值=${threshold:g} "
+            f"现行价池={len(current_pool)} 影子价池={len(execution_pool)}"
+        )
+    except Exception as exc:
+        _log.warning("execution price shadow write failed", exc_info=True)
+        print(f"[ext_entry] 执行池价格影子落盘失败: {type(exc).__name__}: {exc}")
 
 
 def _price_in_range(price):
@@ -2467,6 +2542,7 @@ def collect(session, dry=False):
             )
             _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
+            _record_execution_price_shadow(session, movers)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
             _record_earnings_gate_rejects(
                 session, today, earnings_reason_counts, earnings_reject_details,
@@ -2781,6 +2857,7 @@ def collect(session, dry=False):
             )
             _print_gate_counts(session, len(movers), counts)
             _record_price_gate_rejects(session, price_gate_rejects)
+            _record_execution_price_shadow(session, movers)
             _record_pretrade_gate_rejects(session, pretrade_rejects)
             _record_earnings_gate_rejects(
                 session, today, earnings_reason_counts, earnings_reject_details,
