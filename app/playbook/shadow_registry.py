@@ -2049,6 +2049,37 @@ REGISTRY: list[ShadowItem] = [
         notes="观测与决策解耦: 判据评估已前移到涨幅带/量闸之前, 否则样本被下游闸截断。",
     ),
     ShadowItem(
+        id="ext_entry_exec_price_shadow",
+        name="EXT 执行池价格 $50 影子 (record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="EXT 候选池运行成本/干扰观测 (非绩效影子): $5→$50 执行池价格下限的"
+                    "逐轮反事实计数 — 复用已取榜单/快照价记 candidates_n / "
+                    "current_price_pool_n / shadow_execution_pool_n + prefiltered_out 明细。"
+                    "零新增富途请求, 零交易行为变更 (记录器在全部生产闸之后, "
+                    "EXT_ENTRY_MIN_PRICE 仍 $5)。立案 = DEB-20260928-ext-exec-price50-shadow。",
+        data_path="data/ext_entry_exec_price_shadow.jsonl",
+        config_key="EXT_ENTRY_EXEC_PRICE_SHADOW",
+        min_n=60,
+        graduation_criteria="DEB §三 预注册 (逐字): 观测窗 2026-09-28 18:05 CST 起, 至少 "
+                            "3 个交易日 / ≥60 行; 必须报告: ①candidates_n/current_price_pool_n/"
+                            "shadow_execution_pool_n 的中位数与分布 ②每轮 $5→$50 的候选池缩减比例 "
+                            "③实际 EXT 成交中 entry_price<$50 的占比 (被排除人群) ④影子价池与"
+                            "实际下单/成交的交集。禁止: 本影子自动改 EXT_ENTRY_MIN_PRICE; "
+                            "n<30 成交样本裁绩效; 把「影子价池更小」单独解释为「富途请求减少」。"
+                            "切换生产须另立 DEB + 用户裁。死线 2026-11-30 自动停采 "
+                            "(防僵尸影子, eth_relative_volume_gate 同型先例)。",
+        created="2026-09-28",
+        notes="P0.5 同轴枚举 (2026-09-28 复核后补登, 立案时漏查注册表违反当日 template 新增"
+              "强制项): ①eth_ext_entry_prefilter — 同人群(盘前入场候选)同轴(price_band 五档含 "
+              "$50~200)且粒度更细, 但末行 2026-09-18、EXT_PREFILTER_SHADOW 默认 false 且 "
+              "crontab 未传 ⇒ 已停采 (n=5/30 幽灵在册, 其处置属另案裁决面); 本案非其复活 — "
+              "本案按轮聚合记 $5→$50 二分反事实, 开关走 crontab 行内联真在采。"
+              "②ticket_size_breakeven — 费用地板随价格递减的机制推导已定案 ($5 档 52.6bps "
+              "全表最贵), 本案不在费用/绩效轴重复攒样 (DEB §三 禁止2)。"
+              "③DEB-20260928-supply-price-tier-shadow 已撤回, 本案不复活供给配额。"
+              "count_mode=lines: 一行=一轮 cron 运行聚合, 天然按轮去重。",
+    ),
+    ShadowItem(
         id="eth_short_probe",
         name="盘前做空通道探针",
         status=ShadowStatus.OBSERVING,
