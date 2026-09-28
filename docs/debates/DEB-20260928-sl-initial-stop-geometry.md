@@ -2,7 +2,7 @@
 
 - **立案日**: 2026-09-28
 - **发起人**: 用户（"从提升收益的目标出发给出优化建议"→ 同意立案）
-- **状态**: **提案（待用户裁 F1–F2）**；零行为变更——冻结期内**只做归因，不提参数**
+- **状态**: **测量缺陷阻断（回翻方向语义待修；不毕业、不改参数）**；§九第三方复查：复跑差 1 行删失（STX 仅 2 根 post bar）+ **方向语义 bug 在脚本中原样未修（活地雷）**；修正后点估计已反假设（noise ≤ breakdown），建议修脚本→钉快照重算一次→若维持则**直接结题**（判据原文未动）；零行为变更——冻结期内**只做归因，不提参数**
 - **类型**: 只读归因 → 若假设成立，9/30 冻结结束后另立"stop ≥ k×ATR"影子
 - **来源**: DEB-20260928 §五/§十四 + DA 笔记挑战者行（止损几何问题）+ loss_exit_recovery
 - **关联**: 判据字典 C1（退出参数冻结至 9/30）；DEB-20260928 底牌7（回翻分层）
@@ -22,7 +22,7 @@
 | # | 事实 | 读数 | 证据锚 |
 |---|---|---|---|
 | 1 | 日内 SL_INITIAL 16 笔 **−$2,080.86**（−$130.05/笔）；另隔夜 1 笔（UBER 8/26）−$307.13 | 日期分散 8/28→9/24；层分布 <$20 3 笔 −$325 / $20–100 3 笔 −$598 / ≥$100 10 笔 −$1,158 | trade_records SQL（§附） |
-| 2 | 回翻分层：SL_INITIAL ≤5 日触碰 **59%**（13/22）→ ≤20 日衰减 **38%**（3/8） | 快回的是浅亏、死的是深亏（deep>3% 桶仅 20%）——**回≠该扛**，但"过半快回"提示部分触发在噪音区 | scripts/loss_exit_recovery_check.py 实跑 |
+| 2 | 回翻分层（旧方向口径）：SL_INITIAL ≤5 日触碰 **59%**（13/22）→ ≤20 日衰减 **38%**（3/8）；§八方向感知修正后 5 日改 **45.5%**（10/22） | 快回的是浅亏、死的是深亏（deep>3% 桶仅 20%）——**回≠该扛**；旧“过半快回”不再成立，方向感知重算后不足半数 | scripts/loss_exit_recovery_check.py 实跑 + §八复核 |
 | 3 | 逐仓 ATR 已落库 | metadata `atr`（**绝对价**）+ `atr_basis`（=proxy）+ `stop_loss`——量纲可声明、无需新拉行情 | trade_records.metadata_json |
 | 4 | 全量 16 笔 ratio 已读出（本会话附录命令实测） | 14/16 聚在 **0.93–1.04**（止损系统性贴 **1×ATR** 放置）；1 离群 LLY **16.17**（ATR 3.13 vs 止损距 50.61）；**noise（ratio<1）=10/16=62.5%**；7/16 行 `atr_basis` 缺失（旧行）须分层 | §附 SQL（已实跑） |
 
@@ -81,6 +81,22 @@ sl_initial_stop_geometry 归因门 (一次读数, 无攒样):
 - **🟡 §15.5 判据第一条边界未预注册精度（敏感性极高）**：15/16 笔 ratio 落在 **[0.93, 1.04]** 极窄带，门 `ratio<1.0` 正切在带**中央**。敏感性实测：边界 0.93→noise 0%、0.95→12.5%、0.98→37.5%（均 FAIL）；**1.00→75.0%（浮点）/ 68.8%（Decimal 严格）**；1.02→87.5%、1.04→93.8%（PASS）。三口径分叉根因 = SAIC `dist==atr` 精确相等（浮点 x/x 可得 0.9999…）。禁改条款只写"ratio 边界 1.0 / noise 定义"，**未写比较精度与舍入规则** ⇒ 结论由小数第二位决定。建议补一句"ratio 用 Decimal 严格比较，`<1.0` 不含相等"（结论 PASS 不变，但口径须先写死）。
 - **归因发现本身很硬**：15/16 笔贴 1×ATR（0.93–1.04）说明止损是**系统性按 1×ATR 放置**（非逐票定制），这正是 DA 笔记挑战者多次点名的"止损距离 < 单日振幅"结构问题的量化实锤。零攒样、一次读数、成本最低 ⇒ 三份新案中**性价比最高**，建议修完上述两条判据缺陷后优先做。
 
+## 八、Codex 复核修正（2026-09-28；原判据暂停，不就地挪门柱）
+
+- **§15.4 “Fisher 数学死门”证伪**：`fisher_exact([[12,0],[0,4]])` 双侧 p=**0.000549**，不是 1.0；p=1.0 的表是 `[[12,0],[4,0]]`。按旧 `high≥entry` 但修正“事件先于删失则计入”的口径，严格 Decimal 分类触碰表为 `[[10,1],[3,2]]`，p=**0.214**。正确问题是当前功效不足，不是数学不可达。
+- **严格 Decimal 分类修正**：`ratio<1.0` 且不含相等时为 **noise 11 笔 / breakdown 5 笔**；SAIC `dist==atr` 归 breakdown。§15.5 的浮点 12/16、Decimal 11/16 只适用于边界敏感性，不应再把 SAIC 计入 noise 后写成 12/4 分桶。
+- **🔴 新发现：回翻方向语义反了**：`scripts/loss_exit_recovery_check.py` 对 LONG/SHORT 一律用 `high≥entry`。本 16 笔中 6 笔 SHORT 全部因此旧 `ttr_touch=1`；SHORT 的回翻应测 `low≤entry`。按严格 Decimal 分桶和“已观察事件先于删失则计入，未事件且窗口<5 才剔除”重算：noise ≤5 日触碰 **6/11=54.5%**，breakdown **3/5=60.0%**，Fisher p=**1.000**。原“noise 100% vs breakdown 66.7%”不可用。
+- **全量底牌同步降级**：8/1 起 22 笔 SL_INITIAL 在原删失口径下，方向感知 5 日触碰由 13/22=59.1% 改 **10/22=45.5%**；20 日仍 3/8=37.5%。底牌2 的“59%”只保留为错误口径历史，不得再引用。
+- **处置**：本 DEB 的触碰率半场和 §十五建议排序作废；不把判据改成“效应量+CI”来迁就修正后读数（那是看到数据后挪门柱）。当前只保留 15/16 贴 1×ATR 的几何事实；若继续验证，需先修方向感知测量并另立/重裁前向判据。
+
+## 九、第三方复查追加（2026-09-28，kimi-k3 独立重跑，不引用前文数字；判据原文未动）
+
+- **既有结论 CONFIRMED**：16 笔 −$2,080.86、LLY 离群 16.17、7/16 basis 缺失、15/16 贴 1×ATR 带（§15.1 的 SAIC=1.000 修正对）、严格 Decimal 分桶 noise 11/breakdown 5、6 笔 SHORT——逐位吻合。Fisher 修正独立复算：`fisher_exact([[12,0],[0,4]])` 双侧 p=**0.000549**（§16.2 对，§15.4"死门"确为算术错误，返回 1.0 的退化表是 `[[12,0],[4,0]]`）。
+- **🔴 新发现 1（可复现性缺陷）**：用本 DEB 附录脚本原样复跑，方向感知表 = **noise 6/10=60.0% vs breakdown 3/5=60.0%（p=1.0）**，与 §16.3 的 6/11=54.5% **差 1 行删失判定**——STX（9/24 离场）在缓存中仅 2 根 post bar（9/25、9/28），按"未事件且窗口<5 剔除"应删，§16.3 计入了。且 `data/replay_bars/postexit_*` 缓存**每晨刷新**（mtime 09-28 05:07）⇒ 同一脚本同一判据、不同日期跑出不同读数。**"一次读数"设计必须钉死缓存快照日期 + 删失边界写成精确不等式**，否则复查者永远对不上。
+- **🔴 新发现 2（活地雷）**：两个复查提交（f59a8e6ca/fe3cdd926）均为纯文档，`scripts/loss_exit_recovery_check.py:103-110` 的方向语义 bug **原样未修**（LONG/SHORT 一律 `high≥entry`，无 direction 分支）。父 DEB 底牌7 引用的是修正后数字，任何人重跑该脚本会再产出旧错误数字——正是"防第三套数字"纪律要防的事，且该脚本已被多个底牌引用。**建议立即修脚本（只读分析工具、零生产行为）+ 文件头标注口径变更 + 重跑一次生成正典产物**。
+- **🟡 比 §16.4 更强的结论**：修正方向语义后**点估计已反对原假设**——noise 桶触碰率 54.5–60.0%（删失口径 wobble）≤ breakdown 60.0%，两个口径下都不存在"noise 桶更常回翻"。15/16 贴 1×ATR 的几何事实为真，但它本身不蕴含"过紧"——没有恢复率差，就没有钱留在桌上。**建议路径收紧为：修脚本 → 钉缓存快照重算一次 → 若 noise ≤ breakdown 维持，直接结题**（"1×ATR 对日内噪音过紧"判为无证据），不另立前向攒样——16 笔历史样本点不出方向的假设，前向攒样先验不值得占影子位。
+- **杂项**：LLY ratio 16.17（stop 距 50.61 vs atr 3.13、basis 缺失）单列**数据质量 ticket**，不进几何结论；桶名 `noise`/`breakdown` 预支结论（"是否噪音"正是测量未能证明的事），建议改 `tight`/`wide`。
+
 ## 附：可复现命令
 
 ```bash
@@ -94,4 +110,51 @@ FROM trade_records WHERE date(entry_time)>='2026-08-25' AND exit_time IS NOT NUL
 AND exit_reason='SL_INITIAL'
 AND CAST(julianday(date(exit_time))-julianday(date(entry_time)) AS INT)=0
 ORDER BY date(entry_time);"
+```
+
+方向感知复核（2026-09-28，只读 DB + 既有日K缓存）：
+
+```bash
+./venv/bin/python - <<'PY'
+import glob, json, sqlite3
+from decimal import Decimal
+from scipy.stats import fisher_exact
+
+ids = [1391,1394,1405,1407,1408,1413,1418,1434,1448,1449,
+       1460,1476,1499,1538,1558,1564]
+con = sqlite3.connect("file:data/ftseek_us.db?mode=ro", uri=True)
+con.row_factory = sqlite3.Row
+rows = con.execute(f"""
+SELECT id,symbol,direction,entry_price,exit_time,
+       json_extract(metadata_json,'$.atr') atr,
+       json_extract(metadata_json,'$.stop_loss') stop
+FROM trade_records WHERE id IN ({','.join('?' * len(ids))})
+""", ids).fetchall()
+cache = {p.split("postexit_")[1].split("_2026")[0]: json.load(open(p))
+         for p in glob.glob("data/replay_bars/postexit_*")}
+
+def table(direction_aware):
+    buckets = {"noise": [0, 0], "breakdown": [0, 0]}
+    for row in rows:
+        ratio = (abs(Decimal(str(row["entry_price"])) - Decimal(str(row["stop"])))
+                 / Decimal(str(row["atr"])))
+        bucket = "noise" if ratio < 1 else "breakdown"
+        post = [b for b in cache[row["symbol"].replace(".", "_")]
+                if b[0] > row["exit_time"][:10]]
+        entry = float(row["entry_price"])
+        if direction_aware and row["direction"] == "SHORT":
+            touch = next((i for i, b in enumerate(post, 1) if b[3] <= entry), None)
+        else:
+            touch = next((i for i, b in enumerate(post, 1) if b[2] >= entry), None)
+        valid = touch is not None or len(post) >= 5
+        hit = touch is not None and touch <= 5
+        if valid:
+            buckets[bucket][0 if hit else 1] += 1
+    matrix = [buckets["noise"], buckets["breakdown"]]
+    return matrix, fisher_exact(matrix).pvalue
+
+print("old-direction:", table(False))
+print("direction-aware:", table(True))
+print("extreme:", fisher_exact([[12, 0], [0, 4]]).pvalue)
+PY
 ```

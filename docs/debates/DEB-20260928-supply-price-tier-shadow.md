@@ -2,7 +2,7 @@
 
 - **立案日**: 2026-09-28
 - **发起人**: 用户（"从提升收益的目标出发给出优化建议"→ 同意立案）
-- **状态**: **提案（待用户裁 F1–F3）**；零实盘行为变更
+- **状态**: **复查后建议撤回/并入既有 `ticket_size_breakeven`（待用户终裁）**；§十第三方复查追加**结构性否证**（exit_reason 分解后无残余价格轴现象）；零实盘行为变更
 - **类型**: 只读分层影子（无任何门、无任何供给干预）
 - **来源**: DEB-20260928 §五/§十四 + Codex 价格层切片
 - **关联**: 判据字典 C8（禁方向否决门——本 DEB 是**价格/费用轴**，须正面论证边界）；
@@ -84,6 +84,32 @@ supply_price_tier 影子毕业门 (仅前向窗, 周分层):
 - **🔴 §15.3 判据门槛在立项窗即 FAIL**：`Top-3 符号净额占比 < 50%` 实测 **69.1% FAIL**（SMTC **n=1 单笔 +$444.33 独占 34.9%**、INTC 19.6%、META 14.6%）；层内 50 符号中 **n=1 单笔符号 23 个、合计占 58.4%** ⇒ 指标对小 n 极敏感，前向窗 n 更小时天然更高（只看 n≥3 符号时 Top3 反达 97.3%）。剔极值并报：≥$100 层剔 Top3 后 **+$393.58**（仍正但薄）；$20-100 → **−$1,135.67**、<$20 → **−$1,184.60**（均更负）⇒ **分层方向稳健，但"≥$100 层独赚"幅度高度依赖 3 个符号**。建议判据改用按日/周聚类中位 + 剔极值并报，弃单点 Top3 占比。
 - **建议**：撤回或缩窄为观察项 —— 把"≥$100 层剔极值仍正"这一条观察**并入既有 `ticket_size_breakeven` 影子**（它已有 `gross_bps_notional_weighted_excl_top3` 口径），不立新影子。
 
+## 九、Codex 复核采纳（2026-09-28）
+
+- **§15.2 CONFIRMED**：`ticket_size_breakeven_latest.json` 确认 since 2026-07-11、read_only、机制推导结论与 handoff “勿重复实现 / 不下该拦结论”均存在；本 DEB 的 <$20 费用轴与该影子同源，前向攒样属重复劳动。
+- **§15.3 CONFIRMED**：≥$100 层 Top3 净额占比 69.1%（SMTC 34.9%、INTC 19.6%、META 14.6%）；50 个符号中 23 个 n=1，其净额合计 $744.32，占层净额 58.4%；剔 Top3 后三层净额 +$393.58/−$1,135.67/−$1,184.60。原 Top3 门槛在立项窗即 FAIL。
+- **处置**：在用户终裁前不建 `supply_price_tier` 新影子、不新增 cron/注册表；若用户不同意撤回，也必须先重写判据（按日/周聚类 + 剔极值并报），并说明其相对 `ticket_size_breakeven` 的唯一增量。
+
+## 十、第三方复查追加（2026-09-28，kimi-k3 独立重跑，不引用前文数字）：结构性否证——分解后无残余现象
+
+- **既有结论 CONFIRMED**：三层 n/net/gross_bps/fee_bps 逐位吻合；SMTC 8/26 单笔 +$444.33（≥$100 层最大赢家）实锤；`ticket_size_breakeven_latest.json` 的 since 2026-07-11 / read_only / 双地板公式 / handoff"勿重复实现、不下该拦结论"逐字存在。
+- **🔴 新测量（比 §15.3 统计否证更硬）：$20–100 层 −$698.97 按 exit_reason 分解**：
+
+  | exit_reason | n | net | 归属 |
+  |---|---|---|---|
+  | SL_INITIAL | 4 | −$904.74 | **DEB③ 止损几何出血口** |
+  | OVERNIGHT_GAP | 2 | −$659.39 | **父DEB底牌3 / B19 / overnight_known_event_flag 出血口** |
+  | tighten | 1 | −$99.37 | |
+  | DEAD_SIGNAL | 5 | +$0.32 | |
+  | SL_BREAKEVEN | 12 | +$42.54 | |
+  | PRE_CLOSE | 2 | +$212.93 | |
+  | SL_TRAIL_LOCK | 12 | **+$708.74** | +$59/笔，系统最强引擎在该层工作正常 |
+  | 合计 | 38 | −$698.97 | ✓ 与层总额闭合 |
+
+  两个既有出血口合计 **−$1,564.13 > 层亏损的 100%**，其余出场方式合计 +$865.16。符号轴同样集中：UBER 8 笔 −$524.55、GAP 1 笔 −$386.77。⇒ **"价格层信号质量"轴在分解后没有残余现象可测**——它是止损几何（DEB③）与隔夜跳空（B19/known_event_flag）两个已有载体在该价格带的投影，叠加 UBER 单票集中。
+- **处置建议升级**：撤回理由从"§15.2 同源 + §15.3 判据立项窗即 FAIL"追加第三句："层亏损按 exit_reason 分解后 100%+ 由两个已有载体出血口构成，无残余价格轴现象"。唯一残余问题是 **UBER 8 连亏**（符号级），正确载体是符号级复盘，不是价格层影子。
+- **流程教训（建议入 DEB 模板）**：本案 P0.5 漏查 `ticket_size_breakeven` 是结构性必然——27 个在册影子已超人脑枚举能力 ⇒ **立案节应加强制行"同轴既有影子枚举"，写不出同轴清单不准立案**。
+
 ## 附：可复现命令
 
 ```bash
@@ -95,4 +121,15 @@ ROUND(AVG(fees_est/(entry_price*quantity)*10000),2) fee_bps,
 ROUND(AVG(realized_pnl/(entry_price*quantity)*10000),2) gross_bps
 FROM trade_records WHERE date(entry_time)>='2026-08-25' AND exit_time IS NOT NULL
 AND pnl_net IS NOT NULL GROUP BY tier ORDER BY tier;"
+```
+
+§十复查新增（$20–100 层 exit_reason 分解）：
+
+```bash
+sqlite3 -header -column "file:data/ftseek_us.db?mode=ro" "
+SELECT exit_reason, COUNT(*) n, ROUND(SUM(pnl_net),2) net
+FROM trade_records WHERE date(entry_time)>='2026-08-25' AND exit_time IS NOT NULL
+AND pnl_net IS NOT NULL AND entry_price>=20 AND entry_price<100
+GROUP BY exit_reason ORDER BY net;"
+# 期望: SL_INITIAL 4/-904.74, OVERNIGHT_GAP_STOP 2/-659.39, ..., SL_TRAIL_LOCK 12/+708.74; 合计闭合 -698.97
 ```

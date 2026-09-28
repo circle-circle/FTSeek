@@ -2,7 +2,7 @@
 
 - **立案日**: 2026-09-28
 - **发起人**: 用户（"如何识别提升可盈利，降低不该亏损的，从策略和链路以及逻辑上是否有明确可调整优化的点，需要立 DEB 提案文件，需要另外 agent 分析"）
-- **状态**: **进行中 / 独立复查两轮完成 + 作者复核闭合**（第一轮三窄单元 5 CONFIRMED + 2 PARTIAL 见§十一；第二轮 Codex 复算 S1–S7 全命中并修正浅水带读数错误见§十二；作者对 Codex 修正逐条重跑核验全部吻合 + 补三处新发现见§十三；本文只出盘点与证据，零实盘行为变更；待裁=F1/F2/F3）
+- **状态**: **进行中 / §15–16 已由 Codex 复核修正三份新案处置 / §17 第三方复查（kimi-k3）已入库：既有链全 CONFIRMED + 三处新增测量（DEB① 判据层 100% 破帽且零余量 7/18；DEB② 结构分解无残余现象；DEB③ 删失 wobble+脚本 bug 活地雷，点估计反假设），处置建议更新，仍待用户终裁**（本文只出盘点与证据，零实盘行为变更；待裁=F1/F2/F3+三份新案终裁）
 - **关联**: DEB-20260904-dead-signal-exit（待裁决，本提案第四路证据挂靠）；判据字典 B19/C8（9/28 判据维持裁决已留痕）；DEB-20260916-fullchain-subtraction（已执行）；`exit_disable_cf` / `post_exit_path` 影子（在跑）；`scripts/overnight_expectancy_check.py`、`scripts/b19_wweek_miskill_replay.py`、`scripts/loss_exit_recovery_check.py`（本会话入库的三只读脚本）；**衍生新提案（2026-09-28 用户同意立案，均零行为）**：`DEB-20260928-trail-lock-pyramid-shadow` / `DEB-20260928-supply-price-tier-shadow` / `DEB-20260928-sl-initial-stop-geometry`
 
 ---
@@ -22,9 +22,9 @@
 | 2 | **全部净亏来自隔夜桶**：隔夜(≥1夜) 31 笔净 **−$1,344.60**；日内(0夜) 181 笔净 **+$1,245.83**（扣完 $1,442 费用仍净赚） | 优化重心在隔夜侧，不在日内侧、不在费用侧 | 同上（日历夜口径；timedelta.days 口径 bug 已修） |
 | 3 | 隔夜桶内最大出血 = `OVERNIGHT_GAP_STOP` 6 笔 **−$1,898.95**（=全窗净亏 19 倍） | 其中 B19 门（depth>2.5%∧w_week）**只触及 3 笔**（GAP −387/UBER −273/RIVN −320）；触及不到 3 笔：ORCL −400（arm depth −1.99%）、CRM −268（−1.92%）、SNDK −252（reentry_first_night 轨） | 本文 §四表B（DB+journal 逐笔核对） |
 | 4 | B19 影子攒样 n=**2/8**、ΣΔ=+28.40、误杀 **1/1 满额**、KEEP_SAMPLING；速率 0.82/周 ⇒ 还需 ~7 周 | 判据会自然收敛（n=8 时：miskill≤1∧ΣΔ>0→毕业；再 1 笔误杀→GATE_NOT_WORTH，两向都出裁决），**非死锁**；等待机会成本 ≈ **$727**（门周省额仅 ~$99，因触及面 3/6） | `data/shadow/eod_depth_gate_report_latest.json`；`scripts/b19_wweek_miskill_replay.py`（commit 5a80fcdb7）；判据字典 B19 行 9/28 留痕 |
-| 5 | DEAD_SIGNAL_EXIT **两条质量门已过、只差 n**：exit_disable_cf n=34/50（折中门 40；§十二补注：settled 口径=raw 36 行−2 笔无后续 bar），saved 中位 **0.2204%**>0.15% ✓，持有更优率 **82.4%**≥65% ✓，saved 累计 +$283.19 | 第四路证据（本会话新）：20 笔亏损离场后 **≤5日 BE 可武装 16/19=84.2%**（右删失口径：剔 1 笔 win=4 不可判定；删失计入则 16/20=80%）、中位 **1 日** ⇒ 与 cf 的 82.4% 方向收敛。**⚠️复查修正（§十一 S7）：触碰率是 5 日 binary 口径，与 close_gap 连续期望量纲不同——扛到收盘净期望扣费后仅 +0.032%（mean 0.182−0.15），且 saved 均值 0.1385% 在费用线下（预注册判据用中位故未违门）⇒ edge 薄，A1 价值须按此降级读** | `data/shadow/exit_disable_cf_latest.json`（9/26 生成）；`scripts/loss_exit_recovery_check.py` + 产物 `data/loss_exit_recovery_2026-09-28.json` |
+| 5 | DEAD_SIGNAL_EXIT **两条质量门已过、只差 n**：exit_disable_cf n=34/50（折中门 40；§十二补注：settled 口径=raw 36 行−2 笔无后续 bar），saved 中位 **0.2204%**>0.15% ✓，持有更优率 **82.4%**≥65% ✓，saved 累计 +$283.19 | 第四路证据（本会话新）：20 笔亏损离场后 **≤5日 BE 可武装 17/19=89.5%**（§16.3 方向感知修正；旧错误口径 16/19=84.2%；删失计入则 17/20=85%）、中位 **1 日** ⇒ 与 cf 的 82.4% 方向收敛。**⚠️复查修正（§十一 S7）：触碰率是 5 日 binary 口径，与 close_gap 连续期望量纲不同——扛到收盘净期望扣费后仅 +0.032%（mean 0.182−0.15），且 saved 均值 0.1385% 在费用线下（预注册判据用中位故未违门）⇒ edge 薄，A1 价值须按此降级读** | `data/shadow/exit_disable_cf_latest.json`（9/26 生成）；`scripts/loss_exit_recovery_check.py` + 产物 `data/loss_exit_recovery_2026-09-28.json` |
 | 6 | MFE_STALL_EXIT **已禁用**（`mfe_stall_exit_enabled: false`，unified_config.yaml:1282，DEB-20260815 P0-B 否决）；DB 最后出现 8/11 吻合 | 其历史样本（含 92.9% 回翻读数）与现行系统无关 | config L1282 + DB exit_reason 分布 |
-| 7 | 亏损离场回翻**强分层**：浅亏(<1%) 触碰 5日 83% / 中亏(1-3%) 75% / **深亏(>3%) 仅 20%**；GAP 离场后 5 日 **0/4 零触碰**；SL_INITIAL ≤5日 59% 但 ≤20日衰减到 38% | "回翻"集中在浅亏与 DEAD_SIGNAL 类；深亏与跳空类不回翻 ⇒ **砍深亏是对的、砍动能死单是错的**，两类不可混谈 | `scripts/loss_exit_recovery_check.py` 三口径输出（touch/close/be_arm，用户 9/28 指正收盘口径后补全） |
+| 7 | 亏损离场回翻**强分层**：浅亏(<1%) 触碰 5日 83% / 中亏(1-3%) 75% / **深亏(>3%) 仅 20%**；GAP 离场后 5 日 **0/4 零触碰**；SL_INITIAL ≤5日 59% 但 ≤20日衰减到 38%。**⚠️§16.3 方向感知修正**：SHORT 须用 `low≤entry` 重算后，浅亏 66/77=85.7%、中亏 22/32=68.8%、深亏 3/15=20%、GAP 0/4，总体同删失口径仍 91/124；SL_INITIAL 5日改 **10/22=45.5%**（原 59% 不可用），≤20日仍 3/8=37.5% | "回翻"集中在浅亏与 DEAD_SIGNAL 类；深亏与跳空类不回翻 ⇒ **砍深亏是对的、砍动能死单是错的**，两类不可混谈；方向修正后该定性不变，但 SL_INITIAL 数值降级 | `scripts/loss_exit_recovery_check.py` 三口径输出（touch/close/be_arm，用户 9/28 指正收盘口径后补全；方向缺陷见 §16.3） |
 | 8 | 仙股费用洞**已闭合**：`EXT_ENTRY_MIN_PRICE=5.0` 9/17 生效（ce54f64eb，CTNT/GIPR 教训 ≈$500 费用） | 勿重开 | `scripts/extended_hours_entry_executor.py` |
 | 9 | B19 阈值敏感性网格（W_WEEK 27 笔回放）：gate 1.0→误杀率 70% / 1.5→64.7% / 2.0→50% / **2.5→20%** / 3.0→20% | −2.5% 是网格上误杀率的断崖点（2.5 与 3.0 之间零样本）；**看到读数后不得下调阈值**（=阈值购物），本行仅登记 | `b19_wweek_miskill_replay.py` grid 输出 |
 | 10 | B19 journal 里**浅水带（−1.5~−2.5%）已结算 11 笔** cf_delta：正 3 笔（ORCL 9/23 +275.0 / CRM 9/16 +154.79 / UBER 9/11 +10.53），负 8 笔（NOK×2 −487.01 / FCX −231.36 / MPC −139.35 / MU −105.75 / CRM 9/10 −91.8 / UBER×2 −34.83）；**Σ=−649.78、中位=−91.8、3/11 正** | **⚠️§十二修正**：原记"5 笔 Σ+382"与锚点不符（2 笔 SNDK depth −0.82/−0.92 不在带内、漏带内 8 笔）⇒ 全带口径下**拦整带反而多亏 ~$650**；浅水带"该不该拦"数据在 journal **天然攒着**（would_revoke=False 行也结算 cf_delta），当前读数离"中位>0"很远——重裁=用户裁，本 DEB 不提议 | `data/shadow/eod_depth_gate_shadow.jsonl`（29 行） |
@@ -309,3 +309,110 @@ R2 只写"portfolio_backstop 触发面变大（中风险）"，未量化这一�
 | 1 | **③ 止损几何** | **修判据后做**（最高价值） | 归因发现硬（15/16 贴 1×ATR = 止损系统性放置规则，AMD 例证 DA 笔记早有挑战）；零攒样、一次读数、成本最低；只需修死门（§15.4）+ 写死精度（§15.5） |
 | 2 | **① 金字塔** | **加帽内可行性列后做** | 引擎数据扎实、9/17 分层纪律好、n≥40 18 天可达；但必须先解 §15.6 可执行性，否则测不可执行方案 |
 | 3 | **② 价格分层** | **撤回或缩窄为观察项** | <$20 层已被机制推导定案（§15.2，攒样=重复劳动）；判据门槛立项窗即 FAIL（§15.3）；真实增量只剩 $20-100 层且 post 仅 5 笔 ⇒ 建议把"≥$100 层剔极值仍正"一条观察**并入既有 `ticket_size_breakeven` 影子**（它已有 excl_top3 口径），不立新影子 |
+
+## 十六、Codex 对 §15 的复核记录（2026-09-28）
+
+> 复核方式：只读重跑 SQL/JSON/SciPy，不引用 §15 数字。零代码、零配置、零行为变更。
+
+### 16.1 核验结果
+
+- **§15.2 CONFIRMED**：`ticket_size_breakeven_latest.json` 的 since/read_only、双地板公式、<$20 费率地板、$5=52.6bps、escape_hatches 与“勿重复实现/不下该拦结论”均逐项存在。
+- **§15.3 CONFIRMED**：≥$100 层 Top3=69.1%（SMTC +$444.33/34.9%、INTC 19.6%、META 14.6%）；50 符号中 23 个 n=1、净额 $744.32、占 58.4%；剔 Top3 后 +$393.58/−$1,135.67/−$1,184.60；$20–100 post-9/17 为 5 笔。
+- **§15.6 CONFIRMED**：207 行可评 PnL 名义均值 $5,474.84、区间 $2,280.01–$6,076.48；当前净值 $98,777.71×6%=$5,926.66；196/207=94.69% 在 1.4×名义后破帽。trail pre/post 逐笔净/名义均值 +1.229%/+0.679%（`pnl_pct` 毛口径为 +1.32%/+0.76%）。
+- **§15.7 CONFIRMED**：DEB-20260808 原文为“每两周最多一个 A/B 变量，其余一律 shadow；插队先说清挤掉谁的样本”；`data/shadow/*latest.json` 为 27 个，其中 5 个含 KEEP_SAMPLING。
+- **§15.5 PARTIAL CONFIRMED**：必须用 Decimal 严格比较且 `<1.0` 不含相等；但严格分桶为 **noise 11 / breakdown 5**（SAIC 等值归 breakdown），不是 §15.4 的 12/4。
+
+### 16.2 修正：Fisher“数学死门”不成立
+
+`fisher_exact([[12,0],[0,4]], two-sided)` 实测 **p=0.0005494505**；返回 p=1.0 的退化表是 `[[12,0],[4,0]]`。当前严格 Decimal 分类、方向未修正前的触碰表为 `[[10,1],[3,2]]`，p=**0.214**。因此 §15.4 的“数学不可达”撤回；真实问题只是当前样本功效不足。更重要的是，下节的测量缺陷使该触碰表本身不可用。
+
+### 16.3 新发现：loss_exit_recovery 的方向语义缺陷
+
+`scripts/loss_exit_recovery_check.py:103-110` 对 LONG/SHORT 一律用 `high≥entry` 判触碰/回翻；SHORT 的正确回翻应为 `low≤entry`。本 16 笔日内 SL_INITIAL 中有 **6 笔 SHORT**，旧产物全部 `ttr_touch=1`，方向语义天然偏真。按 Decimal 严格 ratio、方向感知触碰、事件先于删失则计入的口径重算：noise **6/11=54.5%**、breakdown **3/5=60.0%**、Fisher p=**1.000**（复现命令见止损几何 DEB §八附录）。全量 22 笔 SL_INITIAL 在原删失口径下亦由 13/22=59.1% 降为 **10/22=45.5%**。DEAD_SIGNAL 20 笔的 BE 可武装由旧 16/19 改 **17/19**（2 笔 SHORT 方向修正后更早武装），A1 方向结论不变。⇒ §15.4 的实测触碰率和“③ 最高价值/修判据后优先做”排序作废。
+
+DEAD_SIGNAL 复核口径：同一 DB/日K缓存，人群换成 `exit_reason='DEAD_SIGNAL_EXIT'`；BE 判定 LONG 为 `high≥entry×1.004`，SHORT 为 `low≤entry×0.996`；删失规则同上。
+
+### 16.4 三案处置更新
+
+| DEB | 处置 | 依据 |
+|---|---|---|
+| ① 金字塔 | 判据改为帽内可执行口径，`add_ratio>0` 事件才计 n；40% 仅作上限 | §15.6 成立；不可执行全额虚拟腿会测假方案 |
+| ② 价格分层 | 建议撤回/并入既有影子，待用户终裁；不建新影子 | §15.2/15.3 均成立 |
+| ③ 止损几何 | 测量缺陷阻断，不毕业、不就地改门柱；先修方向感知测量再由用户重裁 | Fisher死门证伪 + 回翻方向语义反了 |
+
+### 16.5 修订后排序（供裁决）
+
+1. **① 金字塔**：帽内可执行口径已闭合，仍为三案中唯一可继续攒样的提案。
+2. **③ 止损几何**：先修测量（方向感知 + 删失规则），策略结论暂无资格排序。
+3. **② 价格分层**：撤回/并入 `ticket_size_breakeven`，不新增台账。
+
+## 十七、第三方独立复查（2026-09-28，kimi-k3）：既有复核链全部成立 + 三处新增测量
+
+> 方法：不引用 §11–§16 任何数字，全部自跑 SQL/SciPy/源码核对。零代码、零配置、零行为变更；三案判据原文一律未动。
+
+### 17.1 既有复核链核验（全部 CONFIRMED）
+
+| 项 | 独立重跑结果 |
+|---|---|
+| DEB① 底牌（58 笔/+$3,420.77、pre 40/$68.46、post 18/$37.92） | 逐位吻合 ✓ |
+| DEB② 三层读数 + SMTC 8/26 单笔 +$444.33（层内最大赢家） | 逐位吻合 ✓ |
+| DEB③ 16 笔/−$2,080.86/LLY 16.17/7 行 basis 缺失/15/16 贴 1×ATR/严格 Decimal 分桶 noise 11∶breakdown 5/6 笔 SHORT | 逐位吻合 ✓ |
+| §16.2 Fisher 修正（`[[12,0],[0,4]]` 双侧 p=**0.000549**；§15.4"死门"=算术错误，退化表是 `[[12,0],[4,0]]`） | 复算成立 ✓ |
+| §16.3 方向语义 bug（`scripts/loss_exit_recovery_check.py:103-110` 对 SHORT 误用 `high≥entry`） | 源码实锤，**且至今未修（见 17.4）** |
+| §15.2 P0.5 漏查（`ticket_size_breakeven` since 2026-07-11、read_only、handoff"勿重复实现/不下该拦结论"） | 逐字存在 ✓ |
+| §15.7 治理普查（27 个 latest 影子 / 5 个 KEEP_SAMPLING；变更预算权威条款=DEB-20260808 每两周 1 变量） | 27/5 吻合 ✓ |
+| config 锚点（0.8/1.0 @L1478-1479、mfe_stall=false @L1282、max_position_pct=0.06 @L248/L1514、`app/playbook/exit_engine.py:580`、`app/playbook/shadow_registry.py:2187`） | 全部吻合 ✓（注意两代码锚实际路径在 `app/playbook/` 下） |
+
+### 17.2 新发现 A（DEB①）：判据层帽内可执行口径比 §15.6 更紧——影子测的是帽政策，不是加仓
+
+§15.6 的 95% 破帽是全 207 笔口径；判据只认 post-9/17 层，该层 18 笔独立重算：名义 $4,816–$5,996（均 $5,693），arm 时名义（×1.008）后 **18/18 = 100% 破帽于 1.4×**；**零余量事件 7/18**（add_ratio=0 不进判据 n）⇒ 有效攒样速率 ~1.38/日，n≥40 需 **~29 天**（DEB① §九"18 天"为乐观下界；12/31 死线内仍可达）；可执行 add_ratio 均值 **3.80%**（最新净值 $98,654.64 @9/28 09:00，取自 `capital_state`；§15.6 用的 $98,777.71 实为 `ticket_size_breakeven` 内 **9/7 快照**，已陈化 3 周）。⇒ 每事件新增名义 ≈ **$218**，单事件期望 $0.5–1.5、n=40 总期望 $20–60，MDE(80%) 与可信效应同量级 ⇒ 判据大概率落"测不出"。**决策问题应重述为"武装赢家是否值得单名帽让路"**；另发现设计缺口：虚拟腿自身 trail 武装前（0→+0.8% 段）下行保护未定义（详见 DEB① §十一）。
+
+### 17.3 新发现 B（DEB②）：exit_reason 结构分解后，"价格层信号质量"无残余现象
+
+$20–100 层 −$698.97 按 exit_reason 分解：**SL_INITIAL 4 笔 −$904.74 + OVERNIGHT_GAP 2 笔 −$659.39 = −$1,564.13 > 层亏损的 100%**；其余出场方式合计 +$865.16（含 SL_TRAIL_LOCK 12 笔 +$708.74 = +$59/笔，系统最强引擎在该层工作正常）；符号轴 UBER 8 笔 −$524.55、GAP 1 笔 −$386.77。⇒ 层亏损是两个已有载体出血口（DEB③ 止损几何 + B19/known_event_flag 隔夜跳空）在该价格带的投影 + 单票集中，**无独立价格轴可测**。撤回理由由统计否证升级为结构否证（详见 DEB② §十，含可复现 SQL）。
+
+### 17.4 新发现 C（DEB③）：删失 wobble + 方向 bug 未修（活地雷）；点估计已反假设
+
+附录脚本原样复跑得 noise **6/10=60.0%** vs breakdown 3/5=60.0%（p=1.0），与 §16.3 的 6/11=54.5% 差 1 行删失判定（STX 9/24 离场，缓存仅 2 根 post bar）；`data/replay_bars/postexit_*` **每晨刷新**（mtime 09-28 05:07）⇒ 同一脚本不同日期跑出不同读数，"一次读数"必须钉死缓存快照日期。两个口径下点估计均**不支持**"noise 桶更常回翻"（54.5–60.0% ≤ 60.0%）。且方向语义 bug 在 `scripts/loss_exit_recovery_check.py:103-110` **原样未修**——本文底牌7 引用修正后数字、脚本产出旧数字，第三套数字风险是活的。建议：修脚本（只读分析工具、零生产行为）→ 钉快照重算一次 → 若 noise ≤ breakdown 维持则**直接结题**，不另立前向攒样（详见 DEB③ §九）。
+
+### 17.5 处置建议（供用户终裁；相对 §16.5 的变化）
+
+| 案 | 建议 | 相对 §16.5 |
+|---|---|---|
+| ① 金字塔 | 修口径后立项可做，但预注册补两条：**期望量级声明**（$0.5–1.5/事件，防"测不出"被读成证伪）+ **决策问题重述**（帽政策而非 40% sizing）；落地前写死虚拟腿武装前下行保护口径；攒样估计改 ~29 天 | 方向不变，量级与决策框架修正 |
+| ② 价格分层 | **撤回/并入 `ticket_size_breakeven`**，理由追加结构分解否证；残余问题仅 UBER 符号级（正确载体=符号级复盘） | 方向不变，论据升级（统计否证→结构否证） |
+| ③ 止损几何 | 修脚本（测量修复）→ 钉缓存快照重算一次 → 点估计若维持反假设则**结题**，不另立前向判据；LLY 列数据质量 ticket；桶名改 tight/wide | "修测量后重裁"收紧为"修测量后大概率结题" |
+
+### 17.6 流程建议（复核链治理）
+
+1. **先裁后审**：五轮复核全部实质命中（浅水带反转/NULL 陷阱/Fisher 算术/方向语义/帽可行性），多 Agent 异模型复核价值是实的；但 frontier 全挂"待用户裁"——**复核增速已超过裁决消化能力**。本轮增量全部来自新测量而非复读。建议按 §17.5 直接终裁三案；后续复核轮门槛化：只许带新数据进场，不再对同一窗口复读。
+2. **立案前置 P0.5**：DEB② 漏查 `ticket_size_breakeven` 是结构性必然（27 个在册影子超人脑枚举能力）⇒ DEB 模板立案节加强制行"**同轴既有影子枚举**"，写不出同轴清单不准立案。
+
+### 17.7 自曝（本轮过程错误）
+
+- 初查按 `scripts/exit_engine.py` / `scripts/shadow_registry.py` 找不到文件——实际路径在 `app/playbook/` 下（既有 DEB 锚点只写文件名，行号经核正确）。
+- 口头复核初稿直接引用 §15.6 的 95% 破帽，未注意其为全 207 笔口径；补跑 post-9/17 判据层后得 100%/零余量 7/18，属分层加严而非推翻 §15.6。
+
+### 附：本轮关键可复现命令
+
+```bash
+# 17.2 帽内可执行（post-9/17 判据层；帽=最新净值×6%）
+sqlite3 -header -column "file:data/ftseek_us.db?mode=ro" "
+WITH t AS (SELECT entry_price*quantity AS notional FROM trade_records
+  WHERE date(entry_time)>='2026-09-17' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL
+  AND exit_reason='SL_TRAIL_LOCK')
+SELECT COUNT(*) n, ROUND(MIN(notional),0) min_no, ROUND(MAX(notional),0) max_no,
+SUM(CASE WHEN notional*1.008 >= 5919.28 THEN 1 ELSE 0 END) zero_headroom,
+ROUND(AVG(MAX(0,MIN(0.40,(5919.28-notional*1.008)/(notional*1.008))))*100,2) avg_add_pct FROM t;"
+# 期望: 18 | 4816 | 5996 | 7 | 3.80
+
+# 17.3 $20-100 层 exit_reason 分解（期望合计闭合 -698.97）
+sqlite3 -header -column "file:data/ftseek_us.db?mode=ro" "
+SELECT exit_reason, COUNT(*) n, ROUND(SUM(pnl_net),2) net FROM trade_records
+WHERE date(entry_time)>='2026-08-25' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL
+AND entry_price>=20 AND entry_price<100 GROUP BY exit_reason ORDER BY net;"
+
+# 17.1 Fisher 核验
+./venv/bin/python -c "from scipy.stats import fisher_exact; print(fisher_exact([[12,0],[0,4]]).pvalue)"
+# 期望: 0.0005494505494505495
+```
