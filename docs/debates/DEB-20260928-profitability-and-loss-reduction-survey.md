@@ -579,3 +579,55 @@ AND entry_price>=20 AND entry_price<100 GROUP BY exit_reason ORDER BY net;"
 ### 20.5 复核链治理结论（§17.6 已议，落地）
 
 五轮复核全部实质命中且全部来自新测量；同一窗口已无复读价值。本 DEB 家族**关闭复核轮**——后续只对 ① 影子的前向读数（到期呈裁）与 F1 到期事件响应，不再对历史窗发起新复核。
+
+## 二十一、第六轮作者复核（2026-09-28）：§二十 **落地物**的代码级核查
+
+> 与 §20.5 不冲突：本节关闭的是"对历史窗发起新复核"，而本轮是对**刚落地的生产代码**做首轮核查（新测量，非重读文档）。结果证明二者不可替代——见 21.5。
+
+### 21.1 落地物逐项实跑/实读验证（不只读 Codex 的验收声称）
+
+| 落地物 | 核查方式 | 结果 |
+| --- | --- | --- |
+| `app/playbook/pyramid_shadow.py` 采集器 | 读 `observe()` 全文 | ✓ record-only：只 `_append` 台账 + `meta["_pyr_armed"]` 墓碑；无下单、无退出判定、无交易表写入 |
+| `pipeline.py:8670-8685` 钩子 | 读调用点 + `_be` 三处赋值来源 | ✓ 在实时判定（L8638）**之后**调用，用当轮武装态（非陈旧 meta）；`try/except` 全包 + R5 warn 留痕不违反棘轮 |
+| 生产代码是否真生效 | `systemctl show` + `ps -o lstart` | ✓ 提交 15:07 → 服务 **15:10:14 重启**（`playbook.*` 须重启，HotReloader 穿不透） |
+| crontab 完整性 | `diff /tmp/cron_backup_20260928.txt <(crontab -l)` | ✓ 356→357 **仅 +1 行**，原有 356 行逐行完好 |
+| cron 时区 | CST→ET 换算 | ✓ `41 6 * * 2-6` = ET 周一~五 **18:41 EDT**（每交易日收盘后）；P3：注释未标 ET 等价，11 月冬令时等价变 17:41 EST 仍不失效 |
+| `trail_lock_pyramid_settle.py` | 空台账干跑 + 合成台账三场景 | ✓ `verdict=KEEP_SAMPLING` 零值正典 rc=0；详见 21.2 |
+| 注册表登记 | grep `shadow_registry.py` + git diff | ✓ `trail_lock_pyramid`(OBSERVING, min_n=40) 与 `ticket_size_breakeven` 补登均真实存在于 `de387233f` |
+| `CONTROL-LOOP-LEDGER.md` | 读新登记行 | ✓ 失效模式三态 + 回滚路径（删 cron 行 + pipeline 5 行，台账保留）齐备 |
+| §十九 事件优先删失 | 从产物独立复算 | ✓ 全体 94/127=74.0%、SL_INITIAL 11/23=47.8% & 14/19=73.7%、DEAD_SIGNAL BE可武装 17/19=89.5%、GAP touch 1/5 逐位吻合；`agg()` 内规则确已落地（`censor_rule="event_first_else_window"`），**并修正了我 §十八 的疏漏**（我只改了 /tmp 分桶脚本、没改主脚本 `agg()`） |
+
+### 21.2 🔴 判据级口径错配（§十二/§十三 五轮文档复核均未发现）
+
+**采集人群 ⊃ SL_TRAIL_LOCK**：`exit_engine.py:576-580` 要求 `SL_TRAIL_LOCK` 必先 `breakeven_triggered=True`（0.4% 线，L461），而采集钩子传的正是 `_be` ⇒ 影子采**全部 BE 武装仓**（含最终出 `SL_BREAKEVEN`）。
+
+实测 post-9/17：TL 18 笔（母仓每笔 **+37.92**、回吐中位 **0.456%**）+ SB 18 笔（+10.55、0.159%）= 采集人群 36 笔（**+24.23**、**0.314%**）。
+
+⇒ **判据第 4 条的母仓基准被换掉**（0.456%→0.314%，门槛放宽 31%）；`add_notional` 均值 $216→$193、零余量 3/18→6/36 ⇒ §十三.7 期望声明应下调至 **$15–50**（"测不出"的风险更强）；§十三.9 速率 1.875/日 → 实测 **4.29/日**（n≥40 约 9.3 天）。
+
+处置与裁决建议详见 DEB① **§14.1**（settle 已加 `by_parent_exit_reason` 分层诊断，判据门原文未动；建议毕业判据只认 TL 子集，与底牌同源）。
+
+### 21.3 🟡 settle 折叠重复 arm 行取末条 ⇒ `arm_price` 静默漂移（已修）
+
+`_load_ledger` 原写法对同一母仓的多条 arm 行**静默覆盖为末行**且无哨兵 ⇒ 虚拟腿 fill/stop 全错。合成台账实测：旧行为 `arm_price=105.0/exit_how=leg_stop/leg_net=−1.67`，新行为（取首条+`dup_arm` 哨兵）`arm_price=100.0/eod_tick/+1.38` ✓。已核实**墓碑持久化当前可靠**（写回门虽不含 `_pyr_armed`，但武装轮 `_cur_mfe>0` 必触发门，且写回的是 `meta` 本体）⇒ 本修复属纵深防御，非现症。
+
+### 21.4 撤回我自己 §十八 开的 LLY ticket（根因已由 DEB③ 查明）
+
+§十八 我登记"`LLY id=1413 atr=3.13` vs 止损距 `50.61`（量级差 375 倍）⇒ ATR 写入侧疑似混用 symbol 或复权口径"。独立实测确认 **DEB③ 的归因成立**：`ratio>3` 离群 **9/2 前 2/67**（LLY 16.17、META 7.89）、**9/2 后 0/136**（最大 2.00）⇒ 单位混装旧 bug 已由 `cd481b1b6`（RFC-072，9/2）修复，`atr_basis` 打标 9/2 后仅缺 3/136。**ticket 关闭**，无需另立。
+
+### 21.5 治理结论：文档复核 ≠ 代码复核（建议入流程）
+
+前五轮（§十五~§二十）全部实质命中，但**全部在读文档与 SQL**；本轮第一次读**已落地的采集器代码**，就查出五轮都没发现的判据级错配（21.2）——因为"触发线用 0.4 还是 0.8"在文档里是一句更正，在代码里是 `be_armed=bool(_be)` 一行传参，只有对读两边才能发现二者所指人群不同。
+
+⇒ §20.5"关闭复核轮"应精确化为：**关闭对历史窗的复核轮**；**任何 DEB 落地生产代码后，必须做一次代码级首轮核查**（读钩子传参 vs 判据人群定义、读折叠/去重逻辑、实跑合成台账）。建议写入 `docs/debates/template.md` 的落地检查节。
+
+### 21.6 本轮验收
+
+合成台账三场景全过（重复 arm 哨兵 / 双母仓分层 / 空台账零值正典）；测试 LEDGER/OUT 全重定向 /tmp，生产台账当时尚不存在 ⇒ **生产产物零污染**；`pytest tests/test_except_pass_ratchet.py` 2 passed、`tests/test_ops_scripts_sync.py`+`tests/test_criteria_registry_visibility.py` 12 passed；`py_compile` ✓；crontab 357 行；服务 active；`app/`、`config/` 本轮**一行未动**（唯一代码改动 = `scripts/trail_lock_pyramid_settle.py`，结算侧 record-only）。
+
+### 21.7 自曝 16：我上一轮声称跑过一个**不存在**的测试文件
+
+§十八 我在对话中声称 `tests/test_docs_debate_index.py`、`tests/test_ops_scripts_sync.py` "通过"。本轮 `find` 证实 **`test_docs_debate_index.py` 不存在**（`test_ops_scripts_sync.py` 真存在）。成因：pytest 对不存在的文件输出 `no tests ran in 0.01s` 而非报错（exit_code 仍 0），我按"守卫通过"笼统带过，未核文件名是否存在。
+
+⇒ 纪律：**声称某测试通过前，必须 `ls`/`find` 证文件存在**；把 `no tests ran` 当作 FAIL 而非 PASS 处理。同类风险：`pytest a.py b.py` 中只要有一个文件不存在就会整体 `no tests ran`，掩盖另一个文件的真实结果 ⇒ 多个测试文件应分开跑或先核存在性（已记入 skill `ftseek-independent-review` 坑37）。

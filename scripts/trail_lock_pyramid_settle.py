@@ -47,6 +47,7 @@ BAD_JSONL: list[int] = []   # 行号
 NO_EQUITY: list[str] = []   # symbol@ts
 NO_BARS: list[str] = []     # symbol@date
 BAD_META: list[int] = []    # trade id
+DUP_ARM: list[str] = []     # "symbol@entry_time" — 同一母仓落了多条 arm 行 (墓碑未持久化 ⇒ arm_price 被末行覆盖)
 
 SLIP = 0.001          # 0.10% 滑点垫 (方向感知)
 FEE_RT = 0.0015       # 0.15% 往返费线
@@ -139,6 +140,12 @@ def _load_ledger() -> dict:
             continue
         key = (row.get("symbol"), row.get("entry_time"))
         if row.get("t") == "arm":
+            if key in events:
+                # 墓碑未持久化 (metadata 写回门未触发) ⇒ 同一母仓多落 arm 行。
+                # 取【首条】= 真正的首次武装价 (触发语义: 首次进入武装态);
+                # 旧写法覆盖为末行 ⇒ arm_price 静默漂到末轮价, fill/stop 全错且无告警。
+                DUP_ARM.append(f"{key[0]}@{key[1]}")
+                continue
             events.setdefault(key, {"arm": row, "ticks": []})["arm"] = row
         elif row.get("t") == "tick" and key in events:
             events[key]["ticks"].append(row)
@@ -286,6 +293,31 @@ def main() -> None:
 
     leg_gb = sorted(s["leg_giveback_pct"] for s in ex)
     par_gb = sorted(s["parent_giveback_pct"] for s in ex if s["parent_giveback_pct"] is not None)
+
+    # ── 分层诊断 (2026-09-28 DEB①§14.1 复核追加; 不进判据门, 纯观测) ──
+    # 动因: 采集触发线 = 0.4% BE 武装 (§十二 更正), 故人群 ⊃ SL_TRAIL_LOCK
+    #   (exit_engine L580: SL_TRAIL_LOCK 需 breakeven_triggered=True ⇒ 真子集)。
+    #   实测 post-9/17: 全武装 36 笔 (TL 18 + SB 18), 而 DEB① 底牌 $37.92/笔 只来自 TL 18 笔;
+    #   混合人群母仓每笔净额仅 +$24.23, 母仓回吐中位 0.456%→0.314% ⇒ 判据第4条基准被改。
+    #   毕业裁决时必须能分开读两个子集, 否则"腿 vs 母仓"比的是混人群。
+    by_reason: dict = {}
+    for s in ex:
+        rr = s.get("parent_exit_reason") or "(none)"
+        by_reason.setdefault(rr, []).append(s)
+    reason_diag = {}
+    for rr, grp in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
+        gn = sorted(x["leg_net_usd"] for x in grp)
+        gb = sorted(x["leg_giveback_pct"] for x in grp)
+        pb = sorted(x["parent_giveback_pct"] for x in grp
+                    if x["parent_giveback_pct"] is not None)
+        reason_diag[rr] = {
+            "n_executable": len(grp),
+            "leg_net_median_usd": gn[len(gn) // 2] if gn else None,
+            "leg_net_sum_usd": round(sum(gn), 2),
+            "leg_giveback_median_pct": gb[len(gb) // 2] if gb else None,
+            "parent_giveback_median_pct": pb[len(pb) // 2] if pb else None,
+        }
+
     gates = {
         "n_executable>=40": len(ex) >= N_GATE,
         "median_leg_net>0": (med is not None and med > 0),
@@ -307,10 +339,11 @@ def main() -> None:
         "leg_giveback_median_pct": leg_gb[len(leg_gb) // 2] if leg_gb else None,
         "parent_giveback_median_pct": par_gb[len(par_gb) // 2] if par_gb else None,
         "daily_cluster": {"k_days": k, "t": t_stat, "mde80_usd_per_day": mde80},
+        "by_parent_exit_reason": reason_diag,
         "gates": gates, "verdict": verdict,
-        "expectation_preregistered": "单事件期望≈$0.5–1.5 / n=40总期望$20–60 (§十一); 测不出≠证伪; 决策问题=武装赢家帽政策",
+        "expectation_preregistered": "单事件期望≈$0.5–1.5 / n=40总期望 (TL子集$20–60, 全武装人群$15–50, §14.1分层); 测不出≠证伪; 决策问题=武装赢家帽政策",
         "sentinels": {"bad_jsonl": BAD_JSONL, "no_equity": NO_EQUITY,
-                      "no_bars": NO_BARS, "bad_meta": BAD_META},
+                      "no_bars": NO_BARS, "bad_meta": BAD_META, "dup_arm": DUP_ARM},
         "events": settled,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -319,9 +352,13 @@ def main() -> None:
           f"executable={len(ex)} truncated={len(settled) - len(ex)} "
           f"median={med} sum={tot} verdict={verdict}")
     print(f"[pyramid-settle] gates={gates} daily_t={t_stat} mde80={mde80}")
-    if BAD_JSONL or NO_EQUITY or NO_BARS or BAD_META:
+    if BAD_JSONL or NO_EQUITY or NO_BARS or BAD_META or DUP_ARM:
         print(f"[pyramid-settle] ⚠️sentinels: bad_jsonl={len(BAD_JSONL)} "
-              f"no_equity={len(NO_EQUITY)} no_bars={len(NO_BARS)} bad_meta={len(BAD_META)}")
+              f"no_equity={len(NO_EQUITY)} no_bars={len(NO_BARS)} bad_meta={len(BAD_META)} "
+              f"dup_arm={len(DUP_ARM)}")
+        if DUP_ARM:
+            print(f"[pyramid-settle] ⚠️dup_arm 非零 ⇒ 墓碑 meta['_pyr_armed'] 未持久化 "
+                  f"(metadata 写回门未触发), arm_price 已按【首条】取值; 查 pipeline L8822 写回条件")
     print(f"[saved] {OUT}")
 
 
