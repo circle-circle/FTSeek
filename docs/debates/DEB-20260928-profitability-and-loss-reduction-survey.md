@@ -2,7 +2,7 @@
 
 - **立案日**: 2026-09-28
 - **发起人**: 用户（"如何识别提升可盈利，降低不该亏损的，从策略和链路以及逻辑上是否有明确可调整优化的点，需要立 DEB 提案文件，需要另外 agent 分析"）
-- **状态**: **进行中 / §18 作者复核 + §19 Codex 复核修正已入库：回翻脚本方向与删失口径已修，Fisher 死门撤回；三案建议=①帽政策待裁、②撤回/并入、③直接结题待终裁**（本文只出盘点与证据，零实盘行为变更；待裁=F1/F2/F3+三份新案终裁）
+- **状态**: **三案已终裁（2026-09-28 用户授权代理终裁，见 §二十）**：①金字塔=立项并落地 record-only 影子（采集+结算已在跑）；②价格分层=撤回并入 `ticket_size_breakeven`（已补登注册表）；③止损几何=结题（假设不成立，保留几何硬发现）。F1 等到期自动呈裁、F2 观察判据已设。本文档自此归档为证据基线
 - **关联**: DEB-20260904-dead-signal-exit（待裁决，本提案第四路证据挂靠）；判据字典 B19/C8（9/28 判据维持裁决已留痕）；DEB-20260916-fullchain-subtraction（已执行）；`exit_disable_cf` / `post_exit_path` 影子（在跑）；`scripts/overnight_expectancy_check.py`、`scripts/b19_wweek_miskill_replay.py`、`scripts/loss_exit_recovery_check.py`（本会话入库的三只读脚本）；**衍生新提案（2026-09-28 用户同意立案，均零行为）**：`DEB-20260928-trail-lock-pyramid-shadow` / `DEB-20260928-supply-price-tier-shadow` / `DEB-20260928-sl-initial-stop-geometry`
 
 ---
@@ -539,3 +539,43 @@ AND entry_price>=20 AND entry_price<100 GROUP BY exit_reason ORDER BY net;"
 - DEB①：帽政策问题与“效应量低于 MDE”结论不变；判据不得使用固定系数代理。
 - DEB②：结构否证成立，维持撤回/并入建议。
 - DEB③：正典 16 笔表仍为 noise 6/10、breakdown 3/5、p=1.0，维持“直接结题待终裁”。
+
+## 二十、终裁记录（2026-09-28，用户授权代理终裁："基于盈利目标和优化调整的合理性出发，授权你执行"）
+
+> 授权链：用户 9/28 指示原文。裁决依据 = §15–§19 五轮复核链（全部数字经 ≥2 个独立 agent 重跑吻合）。
+> 执行边界：影子一律 record-only；未动任何生产参数/阈值/方向门；C1 退出参数冻结（至 9/30）未触碰。
+
+### 20.1 三案终裁
+
+| 案 | 裁决 | 依据（复核链最终态） |
+|---|---|---|
+| ① trail-lock 金字塔 | **立项并落地 record-only 影子**（采集 hook + nightly 结算 + 注册表 + cron） | 引擎数据扎实（post-9/17 +$37.92/笔现行口径）；判据层 18/18 破帽于 1.4×、可执行 add_ratio 均值 4.15% ⇒ 决策问题已重述为"武装赢家帽政策"；期望量级预注册（$0.5–1.5/事件，"测不出"≠证伪）；结算口径 §十三写死（EOD-only、武装前保护=arm 价、日K 保守尾段） |
+| ② 供给价格分层 | **撤回**，唯一残余观察（"≥$100 层剔极值仍正"）**并入 `ticket_size_breakeven`**（该影子已补登注册表——它 7/11 起产出了 78 天却从未登记，这正是本案 P0.5 漏查的结构性根因） | §15.2 机制推导已定案（<$20 费拖=数学必然）+ §15.3 判据立项窗即 FAIL + §17.3 结构否证（$20–100 层亏损 100%+ 由 SL_INITIAL/OVERNIGHT_GAP 两个已有载体构成，无残余价格轴） |
+| ③ SL_INITIAL 止损几何 | **结题**：原假设"1×ATR 对日内噪音过紧"**数据不支持**（方向感知+事件优先删失正典：noise 6/10=60.0% vs breakdown 3/5=60.0%，p=1.0，点估计不方向支持） | 保留硬发现：15/16 笔 ratio∈[0.93,1.04] ⇒ 止损系统性按 1×ATR 放置（事实成立但无可测噪音误伤）；LLY 离群已查明=9/2 前单位混装旧 bug（见 20.3）；后续动止损几何须另找论据（如 MAE 分布），不得引用本归因 |
+
+### 20.2 Frontier 处置
+
+- **F1（DEAD_SIGNAL 折中门）**：维持"到期自动呈裁"——折中门是 DEB-20260904 预注册条款（n≥40∧双源同号），非挪门柱；当前 n=34 且 9/21 起休眠 ⇒ 按实际计数滚动核，不锚定日期。到达即呈裁，无需新证据。
+- **F2（B1 浅水带观察判据）**：**设立**（纯攒样零行为，数据已在 B19 journal 天然累积）：`would_revoke=False ∧ depth∈[−2.5%,−1.5%]` 的 cf_delta 结算样本 **n≥12 ∧ 中位>0** ⇒ 才允许提"重裁 B19 阈值"DEB；当前 11 笔 Σ=−649.78、中位=−91.8，离门很远；双源（journal + 回放网格全负）已确认"降阈值亏更多"。
+- **F3（按批评修订本文）**：已执行（§11→§19 五轮全部落成修订）。
+
+### 20.3 LLY 数据质量 ticket — 查明并关闭
+
+- **根因**：`trade_records.metadata_json.atr` 单位混装——instruction_generator 新格式 `atr_pct=3.13%`（百分比）落入绝对价槽，LLY（entry $1,177.50）因此 atr=3.13（0.27%），ratio 16.17 离群。**该 bug 已于 2026-09-02 修复**（commit cd481b1b6，`_extract_atr_with_basis` 按 "atr_pct=" 键名识别百分比并乘入场价转绝对值；docstring 里 LLY 正是当年触发案例）。LLY 1413 入场于 9/1（修复前一天）⇒ 历史遗留行，非现役写入侧缺陷。
+- **验证**：9/2 后入场 148 行中 136 行有 atr_basis，缺失 12 行全部来自非 `playbook_service` 路径（sync_recovery_backfill 3 + 空 entry_reason 9，量纲自检 0 异常）；全库 atr/entry ∈ [0.5%,10%] 之外 0 行。
+- **结论**：ticket 关闭，无需修码。DEB③ 判据层若未来重启，LLY 行按 basis 缺失分层剔除即可。
+
+### 20.4 落地清单（本裁决的执行物）
+
+| 项 | 内容 | 行为面 |
+|---|---|---|
+| `app/playbook/pyramid_shadow.py` | 武装事件+逐轮价格轨迹采集器（record-only，墓碑去重经既有 metadata 写回持久化；equity 武装时刻读 capital_state 单行镜像，每仓至多一次） | 零行为变更 |
+| `app/playbook/pipeline.py` | monitor 循环内 5 行调用点（try/except 全包，异常静默） | 零行为变更 |
+| `scripts/trail_lock_pyramid_settle.py` | nightly 结算：tick 精确回放 + 日K 保守尾段 + 帽内可执行结算 + 四道判据门 + 日聚类 t/MDE + 哨兵计数 | 零行为变更 |
+| `app/playbook/shadow_registry.py` | 新登记 `trail_lock_pyramid`（OBSERVING，判据逐字预注册）+ 补登 `ticket_size_breakeven` | 注册表可见性 |
+| crontab | `41 6 * * 2-6` 结算任务（备份 /tmp/cron_backup_20260928.txt，回滚=删行） | 只读任务 |
+| `docs/debates/template.md` | 立案前强制检查新增"同轴既有影子枚举"（DEB② 教训制度化） | 流程 |
+
+### 20.5 复核链治理结论（§17.6 已议，落地）
+
+五轮复核全部实质命中且全部来自新测量；同一窗口已无复读价值。本 DEB 家族**关闭复核轮**——后续只对 ① 影子的前向读数（到期呈裁）与 F1 到期事件响应，不再对历史窗发起新复核。

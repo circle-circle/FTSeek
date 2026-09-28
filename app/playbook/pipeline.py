@@ -8667,6 +8667,23 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                                 f"deadline={int(_pb_cfg_m.get('patient_exit_deadline_hhmm', 1550)):04d}"
                             )
 
+                # ── DEB-20260928① 金字塔影子采集 (record-only, 2026-09-28 用户裁决落地) ──
+                #   武装事件+逐轮价格轨迹 → data/shadow/trail_lock_pyramid.jsonl;
+                #   零行为变更, 任何异常静默 (结算=scripts/trail_lock_pyramid_settle.py).
+                try:
+                    from app.playbook import pyramid_shadow as _pyr
+                    _pyr.observe(symbol=symbol, direction=direction,
+                                 entry_price=entry_price, current_price=current_price,
+                                 qty=r["quantity"], entry_time_str=r["entry_time"],
+                                 be_armed=bool(_be), peak_price=peak_price, meta=meta,
+                                 now_et=now_et, exiting=bool(exit_reason))
+                except Exception as _pyr_e:
+                    # R5 模式 (except:pass 棘轮): warn 留痕但进程级只报一次, 防 20s 循环刷屏
+                    if not getattr(monitor_playbook_sim_exits, "_pyr_warned", False):
+                        monitor_playbook_sim_exits._pyr_warned = True
+                        logger.warning(f"[pyramid影子] 采集钩子异常 (本进程只报一次): {_pyr_e}",
+                                       exc_info=True)
+
                 # 2026-07-16 P1 修复: MFE/MAE/peak/trough 在每一轮都采集 (含退出轮).
                 #   旧逻辑: 这段代码在 `if not exit_reason:` 内, 退出轮跳过 →
                 #   peak_price/trough_price 从未在退出轮写回 → _close_trade_record 读到旧值 →

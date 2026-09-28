@@ -2563,6 +2563,65 @@ REGISTRY: list[ShadowItem] = [
               "(9/25) 复活结算器后今晨首跑即出终局读数。collection_retired=False — 采集+settler "
               "保留作轻量回归监测 (若变体假设重提须新预注册); 停采与否另行裁决, 数据不删。",
     ),
+
+    # ── 2026-09-28 DEB-20260928① 用户裁决落地 (§二十 授权代理终裁) ──────────
+    ShadowItem(
+        id="trail_lock_pyramid",
+        name="trail-lock 赢家金字塔加仓影子 (DEB-20260928①)",
+        status=ShadowStatus.OBSERVING,
+        description="持仓首次进入 trail-lock 武装态 (breakeven_triggered) 时, record-only 登记"
+                    "「帽内可执行加仓腿」: arm 价/qty/equity 全实测 (app/playbook/pyramid_shadow.py, "
+                    "monitor 每轮 observe; 去重墓碑=meta['_pyr_armed'] 经既有 metadata 写回持久化), "
+                    "武装后逐轮价格轨迹同档。结算=trail_lock_pyramid_settle.py (cron  nightly): "
+                    "腿不跨日 (EOD 兜底), 武装前保护=arm 价 (继承母仓净保本线), 自身 trail 复用 "
+                    "0.8/1.0, 滑点 0.10% 方向感知 + 费 0.15% 往返, 判据只按帽内可执行 "
+                    "add_ratio=min(40%,(cap−arm名义)/arm名义) 结算 (无帽 40% 仅诊断列)。"
+                    "零干预: 不碰退出判定/不下单/不写交易表。",
+        data_path="data/shadow/trail_lock_pyramid.jsonl",
+        config_key=None,
+        min_n=40,
+        graduation_criteria="DEB① §七预注册 (读数前写死, 死线 2026-12-31): 仅 post-9/17 config 层; "
+                            "n≥40 帽内可执行武装事件 (add_ratio>0) ∧ 虚拟腿净额中位>0 ∧ Σ净额>0 ∧ "
+                            "腿回吐中位 ≤ 母仓回吐中位 ∧ 日聚类 t + MDE(80%) 并报 "
+                            "→ 另立 DEB 提请上 sim (用户裁); 否则维持现状结题。"
+                            "禁改: 40% 上限 / 0.10% 滑点垫 / 独立 trail 复用参数 / add_ratio 公式 — 改=重裁。"
+                            "⚠️期望量级预注册 (§十一/§十三): 单事件期望≈$0.5–1.5、n=40 总期望 $20–60, "
+                            "MDE 与效应同量级 ⇒ 「测不出」≠证伪; 本影子真正回答的决策问题是"
+                            "「武装赢家是否值得单名帽让路」, 非「开 40% 加仓」。",
+        eval_script="scripts/trail_lock_pyramid_settle.py",
+        created="2026-09-28",
+        notes="攒样速率估计 (§十二 更正后): post-9/17 trail-lock 18 笔/8 天 × add_ratio>0 占比 "
+              "15/18 ⇒ ~1.875/日, n≥40 约 21 个历日 (按实际计数滚动核)。裁决链: §十五作者复查 → "
+              "§十六 Codex → §十七 kimi-k3 (帽内口径实测: 18/18 破帽于1.4×, 均值 4.15%) → "
+              "§十九 Codex (方向感知 ±0.4% BE 代理更正: 零余量 3/18)。判据原文见 DEB① 文档。",
+        intent="",
+        cross_ref=(),
+    ),
+
+    # ── 2026-09-28 补登 (DEB-20260928② 教训: 未登记 ⇒ P0.5 普查漏查, 重复立案) ──
+    #   该影子 7/11 起生产 latest.json 却从未入注册表 (RFC-109② 补登批遗漏),
+    #   DEB② 价格分层提案因此重复造轮子后被撤回。机制推导结论与 handoff 边界
+    #   ("勿重复实现 / 不下该拦结论") 逐字摘自其产物, 判据照抄 handoff 原口径。
+    ShadowItem(
+        id="ticket_size_breakeven",
+        name="票档盈亏平衡分析 (费用地板/可达名义带)",
+        status=ShadowStatus.OBSERVING,
+        description="只读机制推导 (非攒样影子): fee_bps ≈ max(39800/N, 262/P) + 0.21 双地板; "
+                    "股价 <$20 在任何名义额下压不到 13.3bps 以下; min_entry_price=$5 恰落渐近线 "
+                    "52.6bps=全表最贵档; escape_hatches 三选一 (净值缺口 15.6% / 单名帽 6.0→6.94% / "
+                    "毛边际提到 7.04bps)。handoff 原文: 档位反事实归口 scripts/admission_replay.py "
+                    "(既有, 勿重复实现); 不下「该拦」的结论 — 只给档位算数字。",
+        data_path="data/shadow/ticket_size_breakeven_latest.json",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="机制推导已结案 (mechanical_certain), 无攒样判据; 含 "
+                            "gross_bps_notional_weighted_excl_top3 剔极值口径 — DEB② 撤回后, "
+                            "「≥$100 层剔极值仍正」观察项并入本产物跟踪。",
+        eval_script="scripts/ticket_size_breakeven.py",
+        created="2026-07-11",
+        notes="补登 (2026-09-28): 产物 since 2026-07-11、read_only。DEB-20260928② (供给价格分层) "
+              "因 P0.5 普查未见本项而重复立案, §15.2/§17.3 双重确认后撤回并入本项。",
+    ),
 ]
 
 

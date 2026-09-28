@@ -1,5 +1,27 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-28 DEB-20260928 三案终裁执行批 (kimi-k3, 用户授权「基于盈利目标和优化调整的合理性出发，授权你执行」)
+
+> **裁决** (父 DEB §二十): ①金字塔=立项落地 record-only 影子 / ②价格分层=撤回并入 ticket_size_breakeven /
+> ③止损几何=结题 (假设不成立: noise 6/10=60% vs breakdown 3/5=60%, p=1.0)。F1 等到期自动呈裁;
+> F2 观察判据已设 (浅水带 n≥12∧cf_delta 中位>0 才准提重裁); LLY ticket 关闭 (根因=9/2前单位混装, cd481b1b6 已修)。
+>
+> **落地物**: `app/playbook/pyramid_shadow.py` (采集器, record-only, 墓碑=meta["_pyr_armed"]) +
+> pipeline.py monitor 5 行调用点 (try/except R5 模式, 进程级一次告警) +
+> `scripts/trail_lock_pyramid_settle.py` (nightly 结算, cron 41 6 * * 2-6, 备份 /tmp/cron_backup_20260928.txt) +
+> 注册表双条目 (trail_lock_pyramid 新登 + ticket_size_breakeven 补登——它 7/11 起产出 78 天未登记,
+> 正是 DEB② P0.5 漏查根因) + CONTROL-LOOP-LEDGER 挂行 + template.md 立案强制「同轴既有影子枚举」。
+>
+> **关键设计裁决** (DEB① §十三): 腿不跨日 EOD 兜底 / 武装前保护=arm 实录价 / 母仓先退后日K保守尾段 /
+> equity 必须武装时刻实录 (capital_state 是单行镜像无历史, 事后 join 不可得——实测踩坑) /
+> 期望量级预注册 ($0.5-1.5/事件, 测不出≠证伪) / 决策问题=武装赢家帽政策。
+>
+> **验证**: 全量测试 6273 passed/0 failed (含三守卫: except:pass 棘轮/W4 日志卫生/cron 台账);
+> 合成事件端到端 (arm→trail→母仓退出→nobars 兜底) add_ratio 0.178 vs 手算 0.1779 吻合;
+> 采集器墓碑去重/重启持久化 ✓。**明日 (9/29) 起盘中自动攒样, ~21 历日可达 n=40 判据门。**
+>
+> **回滚**: 删 cron 行 + pipeline.py 5 行调用点 + pyramid_shadow.py; 台账与 latest.json 保留不删。
+
 ## 2026-09-28 DEB §19 第五轮复核: §18两处落地缺陷已修 (测量侧, 零交易行为)
 
 > **触发**: 用户令「另外多Agent进行了复查和更新，请核查」。
