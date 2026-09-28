@@ -12,7 +12,7 @@
   · bar 源 = 富途日K (K_DAY autype=NONE, 与 e1_preview_replay/b19 回放同配方), 缓存 data/replay_bars/
     ⚠️ 缓存**每晨刷新** (postexit_*_<start>_<today>.json) ⇒ 同一脚本不同日期跑出不同读数 (右删失窗
     每天变长)。**引用本脚本读数必须同时报缓存快照日期** (产物内 cache_snapshot 字段), 否则第三套数字。
-  · 右删失: 离场太近窗口不足 k 日的笔, 在 "≤k日" 桶里只算可判定的 (印 n_eff)
+  · 右删失: 事件已发生则可判定（无论窗口长短）; 未发生且窗口不足 k 日才删失 (印 n_eff)
 只读: sqlite mode=ro, 只写 bar 缓存 + 产物 json。零交易行为变更。
 已知偏差 (印在输出里, 不藏): ①9月大盘上行期回翻率天然偏高 ②BE/费用级小亏离场的回翻是平凡的
 (价格本来就在入场价附近) ⇒ 按亏损幅度分桶: small(<1%) / mid(1-3%) / deep(>3%)。
@@ -153,7 +153,8 @@ def main():
                             ("ttr_be_arm", "BE可武装 long×1.004/short×0.996")):
             parts = []
             for k in WINDOWS:
-                det = [x for x in group if x["win_avail"] >= k]   # 右删失: 只算窗口够的
+                # 右删失: 已观察到事件即可判定；未观察到事件且窗口不足 k 日才删失。
+                det = [x for x in group if x[crit] is not None or x["win_avail"] >= k]
                 rec = [x for x in det if x[crit] is not None and x[crit] <= k]
                 parts.append(f"≤{k}日 {len(rec)}/{len(det)}={len(rec)/len(det)*100:.0f}%"
                              if det else f"≤{k}日 -")
@@ -201,12 +202,13 @@ def main():
     print("    (be_arm 是'扛着的话现行 BE 何时能武装净保本出场'的反事实, 0.4%=config breakeven_at_pct)")
     print("  · SHORT 样本小 (本人群 22/132) ⇒ SHORT 层读数只作方向参考, 不做裁决依据")
     print("  · MFE_STALL_EXIT 已禁用(config L1282=false, 8/15 DEB-20260815否决) ⇒ 其行仅历史, 不代表现行系统")
-    print("  · 右删失已处理: ≤k日桶只算窗口≥k日的笔 (n_eff 印在分母)")
+    print("  · 右删失已处理: 事件已发生即计入; 未事件且窗口<k才剔除 (n_eff 印在分母)")
     print(f"  · ⚠️引用本产物读数必须同报缓存快照日期 = {TODAY.isoformat()} (bar 每晨刷新, 删失窗每天变长)")
     fp = REPO / f"data/loss_exit_recovery_{TODAY.isoformat()}.json"
     fp.write_text(json.dumps(dict(generated_at=dt.datetime.now().isoformat(timespec="seconds"),
                                   n=len(out), windows=WINDOWS, net_pad=NET_PAD,
                                   be_arm_pad=BE_ARM_PAD, direction_aware=True,
+                                  censor_rule="event_first_else_window",
                                   cache_snapshot=TODAY.isoformat(),
                                   n_short=sum(1 for x in out if x["direction"] == "SHORT"),
                                   r5_bad=_N_BAD[0], trades=out),
