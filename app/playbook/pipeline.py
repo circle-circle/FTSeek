@@ -7193,14 +7193,18 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             #   持有时长、60min表态判定(E shadow 同源)、cohort/horizon 分桶。
             #   全部取自 _meta 已有字段, 组装失败降级为原精简版, 不影响平仓。
             _px_extra = {}
-            # [观察点1 2026-09-29] 跨夜数 (ET 日历日差): held_h 是 RTH-only 口径,
+            # [观察点1 2026-09-29, 修 v2] 跨夜数 (ET 日历日差): held_h 是 RTH-only 口径,
             #   隔夜单通知需显式标注防误读为日内单 (MU 9/29 案: 6.1h 实跨 19h)。
+            #   ⚠️ v1 曾读 _tr[7] (exit_time 列) — 但 _tr 在本函数 UPDATE 之前 SELECT
+            #   (L6571), 此刻 exit_time 列仍为 NULL → 恒 0 → 标注永不出现 (COIN 9/29
+            #   08:21ET 隔夜单实证补丁是死的)。正确退出时刻 = 局部变量 now_iso
+            #   (L6884 UPDATE exit_time 用的同值), 入场 = _tr[3] (UPDATE 不碰它)。
             #   解析失败/同日 → 0 (渲染端不加标注, 外观与旧版一致)。
             _overnights_et = 0
             try:
                 from app.utils.timezone import parse_iso_safe as _pt, to_et as _to_et
                 _et_entry = _to_et(_pt(_tr[3])) if _tr is not None and _tr[3] else None
-                _et_exit = _to_et(_pt(_tr[7])) if _tr is not None and _tr[7] else None
+                _et_exit = _to_et(_pt(now_iso))
                 if _et_entry and _et_exit:
                     _overnights_et = max(0, (_et_exit.date() - _et_entry.date()).days)
             except Exception:

@@ -222,6 +222,36 @@ class TestCloseTradeRecord:
         dt = datetime.fromisoformat(row["exit_time"])
         assert dt.year == datetime.utcnow().year
 
+    # ── [观察点1 修v2 2026-09-29] 跨夜标注功能级回归 ──
+    # v1 bug: overnights 读 _tr[7] (exit_time 列), 但 _tr 在 UPDATE 前 SELECT,
+    # 列恒 NULL → 标注永不出现。COIN 9/29 08:21ET 隔夜单实弹实证补丁是死的。
+    # 本测试真调 _close_trade_record 并截获推送 payload — v1 代码下必红。
+    def _book_with_push(self, conn, sealed, entry_time, exit_time):
+        conn.execute("UPDATE trade_records SET entry_time=? WHERE id=1", (entry_time,))
+        conn.commit()
+        _close_trade_record(
+            conn, trade_id=1, exit_price=196.34, exit_reason="SL_BREAKEVEN",
+            pnl=9.2, pnl_pct=0.002, holding_hours=6.0, symbol="US.TEST",
+            exit_time=exit_time,
+        )
+        push_mock = sealed.callbacks["push"]
+        assert push_mock.call_args_list, "平仓推送未发出"
+        return push_mock.call_args_list[-1].args[0]
+
+    def test_push_marks_overnight_for_next_day_exit(self, conn, sealed_close_callbacks):
+        """COIN 9/29 真实时间戳: 入场 9/28 09:59 ET, 出场 9/29 08:21 ET → 跨夜1晚。"""
+        msg = self._book_with_push(
+            conn, sealed_close_callbacks,
+            "2026-09-28T09:59:12-04:00", "2026-09-29T08:21:38-04:00")
+        assert msg["extra"]["overnights"] == 1
+
+    def test_push_no_overnight_for_same_day_exit(self, conn, sealed_close_callbacks):
+        """同日单 → overnights=0 (渲染端不加标注, 外观与旧版一致)。"""
+        msg = self._book_with_push(
+            conn, sealed_close_callbacks,
+            "2026-09-28T09:59:12-04:00", "2026-09-28T15:00:00-04:00")
+        assert msg["extra"]["overnights"] == 0
+
     def test_close_trade_record_updates_playbook_instruction(self, conn):
         """验证关联的 playbook_instructions 行被同步更新."""
         _close_trade_record(
