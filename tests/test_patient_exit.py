@@ -63,6 +63,22 @@ class TestPatientExitArmEligible:
         assert patient_exit_arm_eligible("DEAD_SIGNAL_EXIT", -0.5, meta, CFG_ON) is False
 
 
+def test_patient_exit_trigger_telemetry_window_and_armed():
+    telemetry = pipeline_mod.patient_exit_trigger_telemetry(
+        "DEAD_SIGNAL_EXIT", -0.7, CFG_ON, True)
+    assert telemetry["profit_pct_at_trigger"] == -0.7
+    assert telemetry["in_arm_window"] is True
+    assert telemetry["armed"] is True
+
+    telemetry = pipeline_mod.patient_exit_trigger_telemetry(
+        "DEAD_SIGNAL_EXIT", -1.5, CFG_ON, False)
+    assert telemetry["in_arm_window"] is False
+    assert telemetry["armed"] is False
+
+    assert pipeline_mod.patient_exit_trigger_telemetry(
+        "TIME_EXIT", -0.7, CFG_ON, False) == {}
+
+
 class TestPatientExitEvalWait:
     CFG = CFG_ON
 
@@ -321,6 +337,8 @@ class TestMonitorPatientExitStateMachine:
         assert meta["patient_exit"]["armed_profit_pct"] == pytest.approx(-0.7, abs=0.02)
         assert meta["patient_exit"]["stop_pct"] == 1.5
         assert meta["patient_exit"]["immediate_exit_price"] == pytest.approx(99.3, abs=0.01)
+        assert meta["patient_exit_trigger_telemetry"]["in_arm_window"] is True
+        assert meta["patient_exit_trigger_telemetry"]["armed"] is True
 
     # ── 场景 2: armed 仓价格回入场价上方 → PATIENT_EXIT_FILL + 双口径 delta ──
     def test_armed_position_fills_at_entry_price(self, env):

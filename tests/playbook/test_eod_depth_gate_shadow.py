@@ -12,6 +12,7 @@
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -137,3 +138,93 @@ def test_identity_anchor_bad_type_falls_back_to_none(shadow_tmp, monkeypatch):
     _emit(trade_id="not-a-number")
     r = json.loads(shadow_tmp.read_text().splitlines()[0])
     assert r["trade_ref"] is None
+
+
+def test_earnings_night_info_amc_bmo_and_missing_guard():
+    guard = type("Guard", (), {})()
+    guard._earnings_symbols = {
+        "US.MU": {"report_date": "2026-09-30", "time_of_day": "amc"},
+        "US.TEST": {"report_date": "2026-10-01", "time_of_day": "bmo"},
+    }
+    assert od._earnings_night_info("US.MU", guard, "2026-09-30") == (True, "2026-09-30", "AMC")
+    assert od._earnings_night_info("US.TEST", guard, "2026-09-30") == (True, "2026-10-01", "BMO")
+    assert od._earnings_night_info("US.MU", None, "2026-09-30") == (None, None, None)
+
+
+# ── §14.1 结构性死字段回归 (DEB-20260929 round2) ──────────────────────────
+#   上方测试用合成 'amc'/'bmo' 字面量, 恰好绕过生产真实值域 → 72 passed 是假绿:
+#   富途源给的 time_of_day 是 'pre-market'/'post-market'/''，旧实现 .upper() 后与
+#   'BMO'/'AMC' 比较永不命中 → is_earnings_night 恒 False (实测 19/19 只全 False)。
+#   本组用**生产真实值域**钉死, 并钉住与单一真源 _parse_earnings_phase 同口径。
+PROD_PHASE_VALUES = ("pre-market", "post-market", "", "N/A")
+
+
+def test_production_phase_values_are_recognized_not_all_false():
+    """生产真实值域下 is_earnings_night 必须能出 True — 防死字段复发。"""
+    guard = type("Guard", (), {})()
+    guard._earnings_symbols = {
+        # AMC(盘后发) + arm 当日 == report_date → 财报夜成立
+        "US.AIR": {"report_date": "2026-09-30", "time_of_day": "post-market"},
+        # BMO(盘前发) + report_date == 次交易日 → 财报夜成立
+        "US.KMX": {"report_date": "2026-10-01", "time_of_day": "pre-market"},
+    }
+    assert od._earnings_night_info("US.AIR", guard, "2026-09-30") == (
+        True, "2026-09-30", "AMC")
+    assert od._earnings_night_info("US.KMX", guard, "2026-09-30") == (
+        True, "2026-10-01", "BMO")
+
+
+def test_unknown_phase_fails_closed():
+    """空值/不可识别相位 → UNKNOWN, fail-closed 不当财报夜 (含 CCL 型空值票)。"""
+    guard = type("Guard", (), {})()
+    guard._earnings_symbols = {
+        "US.CCL": {"report_date": "2026-09-30", "time_of_day": ""},
+        "US.NA": {"report_date": "2026-09-30", "time_of_day": "N/A"},
+    }
+    for sym in ("US.CCL", "US.NA"):
+        is_night, rd, tod = od._earnings_night_info(sym, guard, "2026-09-30")
+        assert is_night is False and tod == "UNKNOWN" and rd == "2026-09-30"
+
+
+def test_normalize_matches_executor_single_source():
+    """钉死与单一真源同口径 — 防两处归一逻辑漂移 (契约: 同一映射)。"""
+    import scripts.extended_hours_entry_executor as EXEC
+    for v in PROD_PHASE_VALUES + ("BMO", "AMC", "before-market",
+                                  "after-hours", "PRE-MARKET", "post_market"):
+        got = od._normalize_earnings_phase(v)
+        before, after = EXEC._parse_earnings_phase(
+            {"timeOfTheDay": v, "pub_type": ""})
+        want = ("BMO" if before and not after else
+                "AMC" if after and not before else "UNKNOWN")
+        assert got == want, f"{v!r}: 本模块={got} 真源={want}"
+
+
+def test_earnings_night_field_live_on_production_domain(shadow_tmp, monkeypatch):
+    """端到端: 生产真实值域经 emit 落盘后 is_earnings_night 必须为 True。"""
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    fixed_now = datetime(2026, 9, 30, 15, 52, tzinfo=timezone(timedelta(hours=-4)))
+    monkeypatch.setattr("app.utils.timezone.now_et", lambda: fixed_now)
+    guard = type("Guard", (), {})()
+    guard._earnings_symbols = {
+        "US.TESTX": {"report_date": "2026-09-30", "time_of_day": "post-market"}}
+    _emit(profit_pct=-1.0, earnings_guard=guard)
+    row = json.loads(shadow_tmp.read_text().splitlines()[0])
+    assert row["is_earnings_night"] is True
+    assert row["earnings_time_of_day"] == "AMC"
+
+
+
+def test_earnings_night_fields_are_record_only(shadow_tmp, monkeypatch):
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    fixed_now = datetime(2026, 9, 30, 15, 52, tzinfo=timezone(timedelta(hours=-4)))
+    monkeypatch.setattr("app.utils.timezone.now_et", lambda: fixed_now)
+    guard = type("Guard", (), {})()
+    guard._earnings_symbols = {
+        "US.TESTX": {"report_date": "2026-09-30", "time_of_day": "amc"}}
+    _emit(profit_pct=-1.0, earnings_guard=guard)
+    row = json.loads(shadow_tmp.read_text().splitlines()[0])
+    assert row["is_earnings_night"] is True
+    assert row["earnings_report_date"] == "2026-09-30"
+    assert row["earnings_time_of_day"] == "AMC"
+    assert row["earnings_night_would_revoke"] is True
+    assert row["would_revoke"] is False

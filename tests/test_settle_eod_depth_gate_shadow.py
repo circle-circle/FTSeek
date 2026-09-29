@@ -177,6 +177,31 @@ class TestNotHeldAndDelta:
         assert ok and f["status"] == "bad_row"
 
 
+def test_earnings_night_summary_is_deduped_and_not_b19_mixed():
+    rows = [
+        {"trade_id": 1, "arm_date": "2026-09-30", "symbol": "US.MU",
+         "is_earnings_night": True, "status": "settled", "held_overnight": True,
+         "cf_delta": 20.0},
+        {"trade_id": 1, "arm_date": "2026-10-01", "symbol": "US.MU",
+         "is_earnings_night": True, "status": "settled", "held_overnight": True,
+         "cf_delta": 99.0},
+        {"trade_id": 2, "arm_date": "2026-10-01", "symbol": "US.AAA",
+         "is_earnings_night": True, "status": "settled", "held_overnight": True,
+         "cf_delta": -12.0},
+        {"trade_id": 3, "arm_date": "2026-10-01", "symbol": "US.BBB",
+         "is_earnings_night": None, "status": "settled", "held_overnight": True,
+         "cf_delta": 50.0},
+    ]
+    result = sp.earnings_night_summary(rows)
+    assert result["n"] == 2
+    assert result["sum_delta"] == 8.0
+    assert result["median_delta"] == 4.0
+    assert result["eod_better_n"] == 1
+    assert result["hold_better_n"] == 1
+    assert result["unknown_n"] == 1
+    assert result["verdict"] == "KEEP_SAMPLING"
+
+
 # ── 6: 触发组去重 + 判据方向 ─────────────────────────────────────────────────
 class TestTriggerDedupeAndVerdict:
     def _row(self, tid, arm_date, delta, revoke=True, held=True, status="settled"):

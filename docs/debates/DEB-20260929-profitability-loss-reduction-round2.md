@@ -3,7 +3,7 @@
 - **立案日**: 2026-09-29
 - **发起人**: 用户（"身份对调…你不断抛出高质量问题摸清底牌…把漏洞和可能的问题点做修复，核心提升盈利降低损失" → "先写 deb 文件"）
 - **性质**: 战略参谋式底牌盘点 + 提案。**不新立任何门、不改任何参数**——所有"改"的入口指向既有预注册判据或用户重裁。
-- **状态**: 草稿（§十 第二轮自查已完成：§9 层2 证伪关闭 / 层3 部分撞 8/5 冻结轴 / runner 升格 P1；待第二 agent 复查 + 用户裁决 F1–F8）
+- **状态**: 执行中（§10/§11 复查完成；§12 用户确认后已落地 P0/P1/P3 观测——runner 离线回放 **FAIL 关闭**；F1–F8 待后续裁决）
 - **关联既有裁决（P0.5 强制）**:
   - `DEB-20260923-ue-long-cut-replay`（**5/8 门未过 → 不落地**，本 DEB 不重开）
   - `DEB-20260928-profitability-and-loss-reduction-survey`（**三案已终裁**：金字塔=影子落地 / 价格分层=撤回并入 / 止损几何=结题；本文档为其证据基线的第二轮）
@@ -132,8 +132,10 @@
 - **阶段 1（enforce，须用户裁 + 判据达标）**：`overnight_decision.py` 豁免入口加"财报夜不豁免"分支，config 开关 `earnings_night_exempt_revoke_enabled`（默认 false）。
 
 **预注册判据（写死于结算器头部，见数前定稿，禁事后挪）**：
-> 从 eod_depth_gate_shadow 行中取 `is_earnings_night=True` 子集：n≥10 个已结算豁免夜 ∧ cf_delta 中位 ≤ −$50（豁免持夜系统性差于 EOD 平）∧ 误杀赢家（cf_delta 为正且 >费地板$5）≤2 ⇒ 提请阶段 1 enforce（另立裁决 + 用户裁）。
-> n<10 或中位 > −$50 ⇒ 维持豁免现状，字段仅记录。**10 月财报季供给预估**：watchlist ~48 只 × 每季一次财报 ≈ 每周 3-5 个财报夜决策点，n≥10 约需 3-4 周（比 B19 的 0.82/周快一个量级）。
+> 从 eod_depth_gate_shadow 行中取 `is_earnings_night=True` 子集：n≥10 个已结算豁免夜 ∧ cf_delta 中位 **≥ +$50** ∧ 误杀赢家（cf_delta < −$5，即"若 EOD 强平、持夜其实更优且幅度过费地板"）≤2 ⇒ 提请阶段 1 enforce（另立裁决 + 用户裁）。
+> n<10 或中位 < +$50 ⇒ 维持豁免现状，字段仅记录。**10 月财报季供给预估**：watchlist ~48 只 × 每季一次财报 ≈ 每周 3-5 个财报夜决策点，n≥10 约需 3-4 周（比 B19 的 0.82/周快一个量级）。
+>
+> **符号勘误（2026-09-30 §十三核查更正，见数前、合法）**：本判据初稿误写"中位 ≤ −$50 / 误杀=cf_delta 为正"，与结算脚本实际口径相反——脚本口径自 2026-09-09 B19 上线起为 `cf_delta = sign×(EOD决策价 − 次日实际出场价)×qty`，**>0 = EOD 平更优（持夜更差）**，B19 预注册判据 `sum_delta>0 → GRADUATION` 与此同向自洽。本段已按脚本口径改正方向；n≥10、$50、$5 三阈值绝对值未动。更正时已结算财报夜样本 n=0（§12.3 实测 unknown_n=32 全为旧 schema），不构成见数后挪判据。
 
 **与 B19 判据的关系（防混轴）**：B19 管"深水（≤−2.5%）该不该撤豁免"（水深轴）；本提案管"财报夜该不该撤豁免"（事件轴）。两轴正交，可同夜同时命中（如 MU 9/30 若水深 −2.6% 且是财报夜）。结算器须分轴报告，**禁止把财报夜子集的 cf_delta 混进 B19 的 ΣΔ 判据**（B19 判据原文字节不变）。
 
@@ -512,3 +514,186 @@ positive_non_inferiority:
 | 滑点尾部 5 笔 | 见 §10.6 ③（本节独立复算逐笔一致） |
 
 > 归属：§11 由第二 agent 于 2026-09-30 凌晨独立复核写入；复算脚本 `/root/.hermes/cache/scratch/verify_deb9.py`、`adjudicate_layer2.py`、`read_existing_dead_shadows.py`（只读，未改动生产码）。§9/§10 原文保留不动。
+
+---
+
+## 十二、执行落地记录（2026-09-29 23:58，用户确认后执行）
+
+### 12.1 实施内容
+
+| 项 | 落地点 | 行为 |
+|---|---|---|
+| P0 财报夜字段 | `app/playbook/overnight_decision.py` 新增 `_earnings_night_info` 与 `is_earnings_night` / `earnings_report_date` / `earnings_time_of_day` / `earnings_night_would_revoke`；poll 与 sweeper 两条 EOD 打点链均传入 scheduler 的 `earnings_risk_guard` | record-only |
+| P0 结算分轴 | `scripts/settle_eod_depth_gate_shadow.py` 新增 `earnings_night_summary`；B19 原判据、阈值、触发组计数不变 | record-only |
+| P1 runner 回放 | 新增 `scripts/runner_exit_counterfactual.py`，只读 `post_exit_path.jsonl`、`trade_records` 与本地 1min bar；输出 `data/shadow/trail_lock_runner_cf*.json*` | offline，零行为 |
+| P3 样本枯竭 | `scripts/exit_disable_cf_shadow.py` 新增 `sample_supply_snapshot`：`n≥50` 或最新触发后连续 20 个交易日零样本则以现有 n 出置信受限终读 | 汇总口径 |
+| P3 patient_exit 遥测 | `app/playbook/pipeline.py` 在每次 `DEAD_SIGNAL_EXIT` 触发时写 `patient_exit_trigger_telemetry`（`profit_pct_at_trigger` / `in_arm_window` / `armed`） | metadata 观测 |
+
+### 12.2 P1 runner 实测：FAIL，轴关闭
+
+离线回放覆盖 `SL_TRAIL_LOCK` 母仓 127 笔；119 笔有 ATR，8 笔缺 ATR，9 个变式（腿 25/30/40% × 拖尾 0.25/0.30/0.35×ATR）全部未过预注册门：
+
+| 变式范围 | n/组 | 总差 | 中位差 | 胜率 | 95% CI | 门 |
+|---|---|---|---|---|---|---|
+| 25% / 0.25×ATR（最佳） | 119 | **−$95.51** | **−$2.85** | 37.8% | [−$3.06, +$1.69] | FAIL |
+| 40% / 0.35×ATR（最差） | 119 | **−$357.30** | **−$7.35** | 37.8% | [−$7.36, +$1.68] | FAIL |
+
+结论：
+
+1. §10.4 的 `+$500-$1,000/5周` 是“post_fav 峰值上界”，不是可交易 runner 收益；加入 ATR 拖尾与 1min 路径后全部为负。
+2. **不进入分批平仓台账工程**，不修改 `adaptive_trailing` 参数，不做任何 SIM enforce。
+3. 该轴按本轮预注册网格关闭；如未来重开，必须携带新的论据与新网格，不得引用本轮已 FAIL 的 9 个参数点。
+
+### 12.3 P0/P3 当前读数
+
+- 财报夜字段：历史 32 行均为旧 schema，`unknown_n=32`、`is_earnings_night=True` 的已结算样本 `n=0`，符合预期；从下一轮 EOD 打点开始生效。
+- B19 主轴保持原判据：本轮结算后 `n=3/8`、ΣΔ `−$131.76`、误杀 `2/1`，继续 `KEEP_SAMPLING`；财报夜子集不混入 B19。
+- `exit_disable_cf` 供给：`MFE_STALL_EXIT` n=31、最新触发 8/11、20 交易日零样本条件已满足，状态 `EXHAUSTED_FINAL_READOUT`（置信受限）；`DEAD_SIGNAL_EXIT` n=34、最新触发 9/21，状态 `ACTIVE`，到 10/19 若仍零样本则自动进入同款结案口径。
+- patient_exit 遥测从下一次 `DEAD_SIGNAL_EXIT` 触发开始区分“不在 arm 窗口”与“在窗口但未 armed”。
+
+### 12.4 验证
+
+```bash
+venv/bin/python -m py_compile \
+  app/playbook/overnight_decision.py \
+  app/playbook/exit_engine.py \
+  app/playbook/pipeline.py \
+  scripts/settle_eod_depth_gate_shadow.py \
+  scripts/exit_disable_cf_shadow.py \
+  scripts/runner_exit_counterfactual.py
+
+venv/bin/python -m pytest \
+  tests/playbook/test_eod_depth_gate_shadow.py \
+  tests/test_settle_eod_depth_gate_shadow.py \
+  tests/test_patient_exit.py \
+  tests/test_exit_disable_cf_shadow.py \
+  tests/test_runner_exit_counterfactual.py -q
+```
+
+实测：新增/直接相关契约 `72 passed`；退出链兼容回归另跑 `61 passed`。回放产物：`data/shadow/trail_lock_runner_cf_latest.json`；EOD 分轴产物：`data/shadow/eod_depth_gate_report_latest.json`。
+
+服务生效验证（2026-09-30 00:01 CST）：`systemctl restart ftseek-us` 后服务 `active (running)`，主进程重启成功；启动日志显示财报日历加载 `19` 只、Playbook 退出快循环启动，未出现 `ERROR/Traceback`。
+
+---
+
+## 十三、落地执行核查（2026-09-30，第三 agent 对 §11 复核 + §12 落地的验证）
+
+> 方法：只读核查——diff 全读、测试重跑、产物重读、DB 复算；未改生产代码、未重启服务、未重新跑会写库的脚本（结算产物以落盘件为准）。核查结论：**落地整体忠实于 §10/§11 决议，数字逐位可复现；发现 1 处必须修的预注册判据缺陷（已勘误）+ 2 处注记。**
+
+### 13.1 落地符合性（§12 声称 → 实测复核）
+
+| §12 声称 | 核查路径 | 结果 |
+|---|---|---|
+| P0 财报夜字段 record-only | `overnight_decision.py::_earnings_night_info`：guard 缺失→全 null、票不在历→False、BMO=次交易日是财报日/AMC=当日（语义正确）；emit 全程 try 包裹（末行 except→debug）、pytest 哨兵在位、去重键 (arm_date,symbol) 未变 ⇒ **B19 计数轴零变更成立**；poll（pipeline.py:8684）与 sweeper（pipeline.py:9226）两条打点链均传 `scheduler.earnings_risk_guard`（属性实存 scheduler_core.py:697/703） | ✅ |
+| B19 轴不受污染 | `eod_depth_gate_report_latest.json`：trigger_settled_n=3、ΣΔ=−131.76、误杀 2（max 1）、KEEP_SAMPLING，与 §12.3 逐位一致；earnings_night 独立子轴 n=0 / unknown_n=32，物理隔离 ✅（n=2→3 系正常逐日结算推进，非字段追加所致） | ✅ |
+| runner 9 变式全 FAIL | `trail_lock_runner_cf_latest.json`：n_parent=127、119 有 ATR；最佳 25%/0.25×ATR sum=−$95.51/中位−$2.85/CI[−3.06,+1.69]，最差 40%/0.35×ATR −$357.30 — 与 §12.2 表逐位一致；门禁（n≥30 ∧ 中位>0 ∧ CI 下界>0）与预注册同向，**未见见数后放宽**；数据源 = 本地既有 1min bar（`data/replay_bars/` 1378 个单票单日文件），脚本零抓取 | ✅ |
+| runner 回放偏差方向审计（本节主动加做） | fill-at-stop（顺 runner：急穿时实价更差）、fee-neutral（顺 runner：第二腿费用未计）、bar 内 stop-check-first（逆 runner，幅度受 trail 距离×腿比例约束，单笔有界）⇒ 净偏差偏 runner 有利，**FAIL 结论对偏差稳健**；单一 bar 内排序未做悲观/乐观双序（DEB-20260805 R2 惯例），留作重开时的方法注记 | ✅（带注记） |
+| P3 枯竭豁免 | `exit_disable_cf_latest.json`：MFE_STALL n=31、最新 8/11、枯竭线 9/9 → EXHAUSTED_FINAL_READOUT（置信受限）；DEAD_SIGNAL n=34、最新 9/21、枯竭线 10/19 → ACTIVE — 与 §12.3 逐位一致 | ✅ |
+| patient_exit 触发遥测 | `pipeline.py::patient_exit_trigger_telemetry`：DEAD_SIGNAL 触发即写 `{profit_pct_at_trigger, in_arm_window, armed, max_underwater_pct, ts}`，**在 arm 判定之前无条件落 meta** ⇒ 与 §11.3 建议②逐字对应，可分辨"不在窗"vs"在窗未 arm" | ✅ |
+| 测试 72 passed | 重跑 5 个直接相关文件：**72 passed** ✅；另跑 11 个触及变更函数的既有套件（winner_overnight/reentry_tp/atr/patient_exit/early_tight_sl/exit_path_replay/rfc073/pipeline_horizon/sl_fallback/breakeven_shadow_c/production_data_write_isolation）：**129 passed**，签名扩展（`earnings_guard=None` 关键字默认）向后兼容实证 | ✅ |
+| 服务 00:01 重启 active | `systemctl is-active` = active ✅；启动加载财报日历 19 只（与 `earnings_guard_feed.json` n_symbols=19 一致——注意该 json 只是 liveness 标记，不含逐票数据，真载体是 guard 内存态） | ✅ |
+| F1（MU 9/30 EOD 处置） | **失效（市场自行解决）**：MU 已于 9/29 04:55 ET 经 SL_TRAIL_LOCK 净 +$35.64 离场（延长时段止盈），未持进 9/30 财报夜。§五 阶段2 的 9/30 15:45 ET 提醒若触发，以"已不在仓"销账 | ✅ 关闭 |
+
+### 13.2 发现的问题与处置
+
+**P1 — §3.3 预注册判据符号翻转（已在 §3.3 原地勘误）**：初稿"cf_delta 中位 ≤ −$50 / 误杀=cf_delta 为正"与结算脚本口径相反（脚本：`cf_delta>0 = EOD 平更优`，B19 判据同向）。若不勘误，10 月攒样达标时会按**相反方向**触发 enforce 提请。因已结算财报夜样本 n=0，属见数前更正，不动阈值绝对值，不构成 criteria-shopping。已在 §3.3 改为：中位 **≥ +$50** ∧ 误杀赢家（cf_delta < −$5）≤ 2。附带注记：`earnings_night_summary` 目前只报 `hold_better_n`（cf_delta<0 计数），未直接产出"$5 费地板过滤后的误杀计数"这条腿——裁决时需从行级 cf_delta 补算，或后续给摘要加字段（治理层增强，非行为变更）。
+
+**P3a — §11.3 内部口径不一致（注记，不改 §11 原文）**：正文"DEAD_SIGNAL n=36"与其 §11.5 自附复现命令输出（34 = saved_pct 非空子集）及落地供给快照（n=34）不一致；以 34 为准（命令与产物互洽），36 疑为含 NULL 的总行数。不影响更正 5 的方向性结论（34<50 同样枯竭）。
+
+**P3b — holiday_calendar 的 futu 腿（注记，非阻塞）**：`_earnings_night_info` 经 `nth_trading_day_after` 进入 `is_trading_day`，其缓存 miss 时会触发 futu 刷新（`_futu_request_trading_days`）。近端日期恒在已覆盖缓存区间内（`_ensure_cache` 区间命中即返，不触 futu），且本路径在生产交易进程内（futu 长连已在），打点频率为每仓每夜最多一次——实际风险可忽略；与"futu-free 交易日源"纪律（非交易脚本禁用 holiday_calendar）不冲突，但若未来把该函数移入盘前/夜间非交易脚本须重新评估。
+
+### 13.3 自我更正（§10.4 上界被 §12.2 证伪）
+
+我在 §10.4 给出的 runner 上界 "+$500~1,000/5周" 是 **post_fav 峰值口径**（出场后日内最高点），当时已标注"路径依赖打 5 折"。§12.2 的 1min 路径回放实测：真实路径竞争（先到峰还是先触拖尾）吃掉的不是 50%，是 **100%+**——9 变式总差 −$95.51~−$357.30 全负、中位全负、37.8% 胜率。教训登记：**post_fav 峰值均值（1.385%）对拖尾类策略系统性偏高，凡引用 post_fav 作可交易收益依据，一律先跑路径回放再报价**。这正是"先离线反事实再动台账"纪律的价值：零成本证伪了一个我亲手升格为 P1 的轴。
+
+### 13.4 核查后状态总表
+
+| 项 | 状态 |
+|---|---|
+| F1 MU 处置 | **关闭（失效）**——9/29 04:55 ET 已止盈离场，未进财报夜 |
+| F2 / P0 财报夜影子 | **已上线攒样**（record-only）；判据符号已勘误（§13.2）；下一个 EOD 豁免夜起 `is_earnings_night` 开始积累 |
+| F6 runner | **已执行 → FAIL → 轴关闭**（§12.2 有效）；重开须新论据+新网格，不得引用本轮 9 个已 FAIL 参数点 |
+| F7 死单早退关闭 | 维持关闭 |
+| F8 中档捕获 65% | 维持缓议（runner 已关后，此为捕获侧唯一留存轴，仍须先过噪声带张力评估） |
+| P3 exit_disable_cf 枯竭豁免 / patient_exit 遥测 | **已上线**；STALL 轴可以现有 n=31 出置信受限终读（另立裁决），DEAD_SIGNAL 至 10/19 观察窗 |
+| git 状态 | **落地代码与本文档改动尚未提交**（工作区；服务已在运行该代码）。提交/推送待用户指令 |
+
+---
+
+## 十四、第二 agent 落地复查（2026-09-30 00:40 CST，对 §12 落地 + §13 核查的再核查）
+
+> 缘起：用户"另外agent已更新落地 请复查"。方法：只读核查 + **端到端活体探针**（不采信"语义正确"的描述，用生产真实 guard 跑通 emit 全链看落盘值）。**发现 1 处三审全漏的 P0 结构性死字段**（§14.1），并对 §12.2/§13.3 的 runner FAIL 补独立宽网格证据（§14.2）。零生产码改动；探针副作用已自纠（§14.5）。
+
+### 14.1 P0 — `is_earnings_night` 是结构性死字段（恒 False），F2 财报夜影子实质失效
+
+**铁证**（端到端活体探针，非静态读码）：用生产真实喂数路径（`EarningsCalendar.get_watchlist_earnings(days_ahead=7)` → `EarningsRiskGuard.update_earnings_calendar`，与 `scheduler_core.py:707-717` 同序）构造 guard，对**全部 19 只真实财报票**在其 `report_date` 当天调 `emit_eod_depth_gate_shadow`，落盘行（重定向到 tmp，不污染生产账本）：
+
+```
+US.KMX  tod='PRE-MARKET'   report_date=2026-09-29 → is_earnings_night=False
+US.AIR  tod='POST-MARKET'  report_date=2026-09-29 → is_earnings_night=False
+... 合计 19 行: True=0  False=19  null=0
+```
+
+**根因**（值域错配，非逻辑错）：`overnight_decision.py:219/221` 判 `time_of_day.strip().upper() == "BMO"` / `== "AMC"`，但生产富途源（`earnings_calendar.py:539` `entry.get("timeOfTheDay")`）真实值域是 **`'pre-market'` / `'post-market'` / `''`**（实测 19 只 = 11 pre + 7 post + 1 空）。`'pre-market'.upper()='PRE-MARKET' ≠ 'BMO'`，`'post-market'.upper()='POST-MARKET' ≠ 'AMC'` ⇒ 两个分支永不命中 ⇒ 恒走末尾 `return False`。
+
+**为何三审全漏**：
+- §12.3 自报"`is_earnings_night=True` 的已结算样本 n=0，符合预期"——把死字段的恒 False 误读成"历史无财报夜样本"的正常态。
+- §13.1 第三 agent 核"BMO=次交易日是财报日/AMC=当日（**语义正确**）"——只验了**分支逻辑**（若输入是 BMO 则判断对），没验**生产实际喂进来的值域**（输入根本不是 BMO/AMC 字面量）。这是"列存在≠有数据""假绿测试"的又一次实证。
+- 测试没抓到：`tests/playbook/test_eod_depth_gate_shadow.py:143/144/163` 用合成 `time_of_day="amc"`/`"bmo"`（小写字面量），恰好绕过真实值域 ⇒ 72 passed 是假绿。
+
+**后果**（定性准确：record-only，**零交易影响**，但功能实质死亡）：`earnings_night_summary` 的 `n` 恒 0 → 永远 `KEEP_SAMPLING`（到不了 `min_n=10`）→ **F2 财报夜豁免提案攒的是恒 False 废数据，永远无法裁决**。本轮 DEB 的核心 P0 增量（§三 F2 / §10.5 P0）交付了一个不工作的影子。
+
+**修复**（最小改动，复用既有单一真源口径，不反向依赖 scripts）：在 `overnight_decision.py` 内联与 `scripts/extended_hours_entry_executor._parse_earnings_phase` **同口径**的归一（该函数已是全仓财报相位单一真源，`tests/scripts/test_eth_event_plan.py:535` 契约钉住同一函数对象），替代字面量比较：
+
+```python
+def _normalize_earnings_phase(time_of_day) -> str:
+    """与 EXEC._parse_earnings_phase 同口径。生产富途源值域='pre-market'/'post-market'/'',
+    非 'BMO'/'AMC' 字面量。空/双相/不可识别 → 'UNKNOWN' (fail-closed, 不当财报夜)。"""
+    phase = str(time_of_day or "").lower()
+    before = "before" in phase or "pre" in phase or "bmo" in phase
+    after = "after" in phase or "post" in phase or "amc" in phase
+    if before and not after: return "BMO"
+    if after and not before: return "AMC"
+    return "UNKNOWN"
+```
+
+`_earnings_night_info` 把 `time_of_day = ....strip().upper()` 改为 `_normalize_earnings_phase(...)`，BMO/AMC 两分支不动，末尾 `return False`（UNKNOWN，含 CCL 空值票）保持 fail-closed。**必补真值域回归测试**：断言对 `('pre-market','post-market','')` 三种生产真实值分别得 `(True/False, ...)` 非全 False，且与 `EXEC._parse_earnings_phase` 输出一致（钉死口径，防再漂移）。彻底方案（后续重构，非本轮）：把归一上提到 `app/data/earnings_calendar.py`，令 EXEC 反向复用，消除两处维护。
+
+### 14.2 runner FAIL 补强：不是网格局限，是机制无肉（独立宽网格）
+
+§12.2/§13.3 已正确证伪 runner（9 变式全负、轴关闭），但只测了 **0.25-0.35×ATR**（全部 < 本系统已证的 0.5×ATR 噪声门）。我复用其原函数 `settle_runner_leg` 跑**宽网格到 5×ATR**（n=119 同母仓），排除"网格太窄"的替代解释：
+
+| 腿30% × trail | 净额和 | 中位 | stop率 | | 腿30% × trail | 净额和 | 中位 | stop率 |
+|---|---|---|---|---|---|---|---|---|
+| 0.25×ATR | −$114.6 | −$3.42 | 80% | | 1.0×ATR | −$476.9 | −$3.24 | 11% |
+| 0.5×ATR | −$539.9 | −$5.37 | 41% | | 2.0×ATR | −$440.6 | −$2.64 | 3% |
+| 0.75×ATR | −$529.5 | −$4.04 | 21% | | **5.0×ATR** | **−$405.0** | **−$2.64** | **0%** |
+
+**决定性**：trail 放到 5×ATR（stop 率 0% = 等价"持到收盘"）仍 **−$405**。交叉验证自洽——独立读 `post_exit_path` 的 `close_gap_pct` mean **−0.3025%**（出场→收盘平均为负），理论 runner delta = 0.3 腿 × close_gap × 均名义$4833 = **−$4.39/笔**，与宽网格 5×ATR 组实测 −$3.40/笔同向同量级。⇒ **runner 负值源于底层 close_gap 为负，非拖尾噪声扫损；任何"留腿持到更晚"都是负期望。轴关闭对网格稳健，重开不得归咎参数范围。**
+
+### 14.3 自我更正（§11.4 P1 runner 背书错误，与 §13.3 同因）
+
+我在 §11.4 把 runner 列为"当前唯一有正期望且未被锁定的杠杆"并背书 P1——**此判断错误**，与 §10.4 同因：引用了 `post_fav_pct` 峰值口径（实测 min=+0.0306%、**100% >0 = 定义性恒非负**，是"出场后到日终最高点"的上界，不携带方向信息、不可交易），而非可实现的 `close_gap`（mean −0.30%）。§12.2 路径回放已证伪，我的宽网格独立确认。**教训同 §13.3：凡引用 post_fav 作可交易收益依据，一律先跑路径回放再报价。** 此条与 §13.3 互为印证，§11.4 P1 行应作废。
+
+### 14.4 次要注记
+
+- **`earnings_night_would_revoke` 名不符实**：`overnight_decision.py:311` 其值直接 `= _earnings_night`（即 `is_earnings_night` 别名），未结合深水闸 `would_revoke` 或 cf_delta。"would_revoke"语义应是"财报夜 **AND** 深水 → 该撤销豁免"，现缺深水条件。修复 §14.1 死字段后它仍只是 `is_earnings_night` 副本——建议要么补 `AND would_revoke` 逻辑，要么改名 `is_earnings_night_dup` 避免误读为独立判据。
+- **§13.2 P3a（n=36 vs 34）已确认**：34 = `saved_pct` 非空子集（我 §11.5 复现命令输出口径），36 = 含 NULL 总行数；以 34 为准，不影响更正 5 方向（34<50 同样枯竭）。
+- **P0/P3 其余落地忠实**：`sample_supply_snapshot` 枯竭豁免（= §11.3 建议①）、`patient_exit_trigger_telemetry` 在 arm 判定前无条件落 meta（= §11.3 建议②，可分辨"不在窗"vs"在窗未 arm"）——两者逐字对应我的建议，实现正确；B19 主轴判据/阈值/计数零变更，earnings_night 物理隔离不混入 ✅。
+
+### 14.5 探针副作用自纠（诚实登记）
+
+§14.1 活体探针调 `update_earnings_calendar` 时，该函数内部会写 `data/liveness/earnings_guard_feed.json`（gitignored 遥测标记，`liveness_probe.py:84` 消费，`max_age_hours=26`），导致我覆写了其 `last_update`。**影响评估：无害**——①我用生产等价路径（`get_watchlist_earnings`+ATR 注入）重写，`n_symbols=19` 与生产 00:01 值一致；②生产 scheduler 约每小时自刷（日志 22:02/22:52/23:56/00:01），下次刷新即覆盖我的时刻戳；③该文件不含逐票数据，真载体是 guard 内存态。**教训登记：对会写遥测/liveness 的生产函数做探针，须先重定向其输出路径或事后核对自愈**（本次 `emit_eod_depth_gate_shadow` 已重定向 `_EDG_SHADOW_PATH` 到 tmp，但 `update_earnings_calendar` 的 liveness 写未拦截）。
+
+### 14.6 复查结论与待裁
+
+| 项 | 状态 | 处置 |
+|---|---|---|
+| P0 财报夜字段 | ❌ **结构性死字段**（19/19 恒 False，三审全漏） | **须修**（§14.1 补丁 + 真值域回归测试）；record-only 零交易影响，不紧急到盘中重启，建议**盘后修+重启**（损失≤1 晚影子样本，可接受） |
+| P1 runner | ✅ 已 FAIL 关闭（§12.2）；我补宽网格证其对网格稳健 | 维持关闭，重开须新论据 |
+| P3 枯竭豁免 / patient_exit 遥测 | ✅ 实现忠实于 §11.3 建议 | 维持 |
+| earnings_night_would_revoke | ⚠️ 名不符实（is_earnings_night 别名） | 随 §14.1 一并修或改名 |
+| §13.2 P1 判据符号勘误 | ✅ 第三 agent 已原地修（见数前，非 criteria-shopping） | 确认 |
+| git 状态 | §12 代码 + §12/13/14 文档**均未提交**（服务已运行该代码） | 同 §13.4：待用户指令统一提交 |
+
+> 归属：§14 由第二 agent 于 2026-09-30 00:40 CST 复查写入；探针/宽网格脚本 `/root/.hermes/cache/scratch/wide_grid_runner_cf.py`（只读，复用生产函数）。**未改任何生产码、未提交、未重启**（§14.1 修复补丁待用户裁决后落地）。

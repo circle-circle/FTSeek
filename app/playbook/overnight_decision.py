@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,60 @@ def _anchor_int(v):
         return None
 
 
+def _normalize_earnings_phase(time_of_day):
+    """日历相位 → 'BMO' / 'AMC' / 'UNKNOWN'。
+
+    与 scripts/extended_hours_entry_executor._parse_earnings_phase **同口径**
+    (该函数是全仓财报相位单一真源, tests/scripts/test_eth_event_plan.py:535
+    契约钉住)。此处内联而非 import: app/ 不得反向依赖 scripts/。
+
+    为何必需: 富途源 (earnings_calendar.py:539 entry.get("timeOfTheDay")) 的
+    生产真实值域是 'pre-market' / 'post-market' / ''，**不是** 'BMO'/'AMC' 字面量。
+    旧实现直接 .strip().upper() 比较 → 两分支永不命中 → is_earnings_night 恒
+    False (实测 19/19 只真实财报票全 False = 结构性死字段, DEB-20260929 §14.1)。
+    空/双相/不可识别 → 'UNKNOWN'，调用方 fail-closed 不当财报夜。
+    """
+    phase = str(time_of_day or "").lower()
+    before = "before" in phase or "pre" in phase or "bmo" in phase
+    after = "after" in phase or "post" in phase or "amc" in phase
+    if before and not after:
+        return "BMO"
+    if after and not before:
+        return "AMC"
+    return "UNKNOWN"
+
+
+def _earnings_night_info(symbol, earnings_guard, arm_date):
+    """Return (is_earnings_night, report_date, time_of_day), or Nones when unavailable.
+
+    Risk night is the overnight session that ends after the event:
+    BMO on the next trading day, or AMC on the decision day. The field is
+    record-only; calendar unavailability degrades to null instead of blocking.
+    """
+    if earnings_guard is None:
+        return None, None, None
+    info = getattr(earnings_guard, "_earnings_symbols", {}).get(symbol)
+    if not info:
+        return False, None, None
+    report_date = str(info.get("report_date") or "")
+    # §14.1: 归一到单一真源口径, 不再假设上游给 'BMO'/'AMC' 字面量
+    time_of_day = _normalize_earnings_phase(info.get("time_of_day"))
+    if len(report_date) != 10 or len(str(arm_date)) != 10:
+        return None, None, time_of_day
+    try:
+        from app.utils.holiday_calendar import nth_trading_day_after
+        next_trading_date = nth_trading_day_after(
+            "US", date.fromisoformat(str(arm_date)), 1)
+        next_trading_date = next_trading_date.isoformat() if next_trading_date else None
+    except ValueError:
+        return None, None, time_of_day
+    if time_of_day == "BMO":
+        return report_date == next_trading_date, report_date, time_of_day
+    if time_of_day == "AMC":
+        return report_date == str(arm_date), report_date, time_of_day
+    return False, report_date, time_of_day
+
+
 def _edg_pytest_guard() -> bool:
     """pytest 哨兵 (先例 RFC-074 winner shadow): 单测触发豁免路径不得污染生产账本。
     独立函数以便单测 monkeypatch (pytest 会在 call 阶段重设 PYTEST_CURRENT_TEST,
@@ -202,7 +257,8 @@ def _edg_pytest_guard() -> bool:
 def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
                                source_type: str, entry_price: float, qty,
                                entry_time_str: str, decision_price: float,
-                               profit_pct: float, track=None, trade_id=None) -> None:
+                               profit_pct: float, track=None, trade_id=None,
+                               earnings_guard=None) -> None:
     """EOD 豁免成立后的深水闸影子打点。任何异常 → debug 日志，绝不影响豁免主链。
 
     Args:
@@ -247,6 +303,8 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
             _entry_date = _et.strftime("%Y-%m-%d")
         except Exception:
             _entry_date = str(entry_time_str or "")[:10]
+        _earnings_night, _earnings_report_date, _earnings_time = _earnings_night_info(
+            symbol, earnings_guard, _arm_date)
         _row = {
             "shadow": "eod_depth_gate",
             "ts": _now.isoformat(),
@@ -271,6 +329,15 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
             "depth_net_pct": round(float(profit_pct), 4) if profit_pct is not None else None,
             "gate_pct": _gate_pct,
             "would_revoke": bool(profit_pct is not None and float(profit_pct) <= -_gate_pct),
+            "is_earnings_night": _earnings_night,
+            "earnings_report_date": _earnings_report_date,
+            "earnings_time_of_day": _earnings_time,
+            # ⚠️ §14.4 注记: 当前是 is_earnings_night 的**纯别名**(不含深水条件),
+            #   与上方 would_revoke(=profit_pct≤-gate_pct)不是同一判据。名字易被误读为
+            #   "财报夜 AND 该撤销"。结算侧 settle_eod_depth_gate_shadow.py **不消费**此字段
+            #   (grep 全仓仅测试断言它), 故保留别名以免撞既有契约; 若将来结算侧要做
+            #   "财报夜∩深水"分轴, 届时再补 AND would_revoke 逻辑并同步测试。
+            "earnings_night_would_revoke": _earnings_night,
         }
         _EDG_SHADOW_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(_EDG_SHADOW_PATH, "a") as _f:

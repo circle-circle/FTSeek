@@ -36,6 +36,7 @@
 import argparse
 import json
 import sqlite3
+import statistics
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -220,6 +221,39 @@ def _verdict(n_trig, sum_delta, miskill):
     return "KEEP_SAMPLING"
 
 
+def earnings_night_rows(rows):
+    """Event-axis subset: settled, held overnight, is_earnings_night=True; dedupe by trade."""
+    by_trade = {}
+    for row in rows:
+        if row.get("is_earnings_night") is not True or row.get("status") != "settled":
+            continue
+        if not row.get("held_overnight") or row.get("cf_delta") is None:
+            continue
+        key = row.get("trade_id") or (row.get("symbol"), row.get("arm_date"))
+        current = by_trade.get(key)
+        if current is None or str(row.get("arm_date")) < str(current.get("arm_date")):
+            by_trade[key] = row
+    return sorted(by_trade.values(), key=lambda row: str(row.get("arm_date")))
+
+
+def earnings_night_summary(rows):
+    subset = earnings_night_rows(rows)
+    deltas = [float(row.get("cf_delta") or 0) for row in subset]
+    unknown = sum(1 for row in rows if row.get("is_earnings_night") is None)
+    return {
+        "n": len(subset),
+        "min_n": 10,
+        "sum_delta": round(sum(deltas), 2) if deltas else None,
+        "median_delta": round(statistics.median(deltas), 2) if deltas else None,
+        "eod_better_n": sum(1 for value in deltas if value > 0),
+        "hold_better_n": sum(1 for value in deltas if value < 0),
+        "unknown_n": unknown,
+        "verdict": "READY_FOR_REVIEW" if len(subset) >= 10 else "KEEP_SAMPLING",
+        "sign_convention": "cf_delta>0 = EOD close better than holding; cf_delta<0 = holding better",
+        "behavior": "record-only; never mixed into B19 trigger criteria",
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=0, help="只处理 arm_date 在最近 N 天内的行 (0=全部)")
@@ -290,6 +324,7 @@ def main():
             k = str(r.get("match_by") or "legacy_unverified")
             match_by[k] = match_by.get(k, 0) + 1
     verdict = _verdict(n_trig, sum_delta, miskill)
+    earnings_night = earnings_night_summary(rows)
 
     report = {
         # "n" = 注册表计数锚 (shadow_registry._count_samples 读 .json 时只认
@@ -312,6 +347,7 @@ def main():
         "trigger_miskill_n": miskill,
         "min_n": MIN_N, "max_miskill": MAX_MISKILL,
         "verdict": verdict,
+        "earnings_night": earnings_night,
         "criteria_ref": "B19 (docs/ADJUDICATED-CRITERIA.md)",
         "settle_rule": "RFC-095 身份锚定 v2: trade_ref(trade_records.id) > entry_time 精确 > "
                        "entry_price±0.5%+qty(出场晚于决策时刻); "

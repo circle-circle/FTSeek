@@ -7617,6 +7617,26 @@ def patient_exit_arm_eligible(exit_reason, profit_pct, meta, pb_cfg) -> bool:
         return False
 
 
+def patient_exit_trigger_telemetry(exit_reason, profit_pct, pb_cfg, armed):
+    """Record why a DEAD_SIGNAL trigger did or did not enter the patient-exit arm."""
+    if exit_reason != "DEAD_SIGNAL_EXIT":
+        return {}
+    try:
+        max_underwater = float(pb_cfg.get("patient_exit_max_underwater_pct", 1.0))
+        profit = float(profit_pct)
+        in_window = -max_underwater <= profit <= 0.0
+    except (TypeError, ValueError):
+        max_underwater = None
+        profit = None
+        in_window = None
+    return {
+        "profit_pct_at_trigger": round(profit, 4) if profit is not None else None,
+        "in_arm_window": in_window,
+        "armed": bool(armed),
+        "max_underwater_pct": max_underwater,
+    }
+
+
 def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, pb_cfg):
     """纯函数: 评估耐心等待中仓位的三条退出腿.
 
@@ -7673,14 +7693,15 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
 
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
                                peak_price, meta, held_minutes, minutes_to_close,
-                               minutes_from_open, entry_time_str):
+                               minutes_from_open, entry_time_str, earnings_guard=None):
     """共用退出规则判断 — P2a (2026-09-06) 起本体在 app.playbook.exit_engine
     (711 行逐字迁入, 零行为变更)。本转发器保留: 10+ 既有测试文件直引本路径,
     生产调用点 monitor_playbook_sim_exits 经本转发器到达, 判定语义不变。
     """
     from app.playbook.exit_engine import _check_playbook_exit_rules as _impl
     return _impl(direction, entry_price, current_price, initial_sl, peak_price, meta,
-                 held_minutes, minutes_to_close, minutes_from_open, entry_time_str)
+                 held_minutes, minutes_to_close, minutes_from_open, entry_time_str,
+                 earnings_guard=earnings_guard)
 
 
 def _load_horizon_config(horizon: str) -> Dict[str, Any]:
@@ -8660,6 +8681,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         direction, entry_price, current_price, stop_loss,
                         peak_price, meta, held_minutes, minutes_to_close,
                         minutes_from_open, r["entry_time"],
+                        earnings_guard=getattr(scheduler, "earnings_risk_guard", None),
                     )
                     # ── 耐心出场 arm (§18.3-1): DEAD_SIGNAL_EXIT + 浅水下 → 转等待不立即平 ──
                     if exit_reason == "DEAD_SIGNAL_EXIT":
@@ -8667,7 +8689,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                             _pe_arm_profit = (current_price - entry_price) / entry_price * 100
                         else:
                             _pe_arm_profit = (entry_price - current_price) / entry_price * 100
-                        if patient_exit_arm_eligible(exit_reason, _pe_arm_profit, meta, _pb_cfg_m):
+                        _pe_armed = patient_exit_arm_eligible(
+                            exit_reason, _pe_arm_profit, meta, _pb_cfg_m)
+                        meta["patient_exit_trigger_telemetry"] = {
+                            **patient_exit_trigger_telemetry(
+                                exit_reason, _pe_arm_profit, _pb_cfg_m, _pe_armed),
+                            "ts": now_et.isoformat(),
+                            "exit_reason": exit_reason,
+                        }
+                        if _pe_armed:
                             meta["patient_exit"] = {
                                 "armed_at": now_et.isoformat(),
                                 "armed_day": now_et.strftime("%Y-%m-%d"),
@@ -9192,7 +9222,8 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                                           entry_price, qty, r["entry_time"], _rp,
                                           _rpnl_net if _rpnl_net is not None else _rpnl,
                                           track=_eod_track,
-                                          trade_id=r["id"])  # RFC-095 身份锚
+                                          trade_id=r["id"],
+                                          earnings_guard=getattr(scheduler, "earnings_risk_guard", None))  # RFC-095 身份锚
                             except Exception as _edg_err:
                                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕,
                                 #   否则「影子零样本」与「打点链路断了」不可区分 (2026-09-09 棘轮清剿)

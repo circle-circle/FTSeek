@@ -20,7 +20,7 @@ import argparse
 import json
 import sqlite3
 import statistics
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -30,6 +30,8 @@ OUT = REPO / "data" / "shadow" / "exit_disable_cf.jsonl"
 OUT_LATEST = REPO / "data" / "shadow" / "exit_disable_cf_latest.json"
 
 RULES = ("MFE_STALL_EXIT", "DEAD_SIGNAL_EXIT")
+MIN_N = 50
+EXHAUSTION_TRADING_DAYS = 20
 # 反事实链参数 (对齐现行 default 因子规则 + 生产保本触发线近似):
 #   be=0.4 (playbook_horizon default, 2026-08-17), dd=0.8, 初始SL经 tighten_sl_by_beta
 #   (β=0.5 下限1.5%, 与实盘同源); 触发线垫 = fee-aware(~0.147%)+slip(0.2%) ≈ 0.35%。
@@ -108,6 +110,42 @@ def replay_cf(direction: str, entry: float, initial_sl: float, peak_pct0: float,
 
 def _signed_pct(direction, entry, px):
     return ((px - entry) if direction == "LONG" else (entry - px)) / entry * 100
+
+
+def sample_supply_snapshot(conn, counts, today=None):
+    """Classify each rule as active, min-n met, or exhausted with a limited-confidence readout."""
+    today = today or date.today()
+    result = {}
+    for rule in RULES:
+        row = conn.execute(
+            "SELECT MAX(SUBSTR(CAST(exit_time AS TEXT),1,10)) AS latest "
+            "FROM trade_records WHERE exit_reason=? AND exit_time IS NOT NULL",
+            (rule,)).fetchone()
+        latest = str(row["latest"]) if row and row["latest"] else None
+        exhausted_after = None
+        try:
+            if latest:
+                from app.utils.holiday_calendar import nth_trading_day_after
+                deadline = nth_trading_day_after(
+                    "US", date.fromisoformat(latest), EXHAUSTION_TRADING_DAYS)
+                exhausted_after = deadline.isoformat() if deadline else None
+        except Exception:
+            exhausted_after = None
+        exhausted = bool(exhausted_after and today.isoformat() >= exhausted_after)
+        n = int(counts.get(rule, 0))
+        if n >= MIN_N:
+            status = "MIN_N_MET"
+        elif exhausted:
+            status = "EXHAUSTED_FINAL_READOUT"
+        else:
+            status = "ACTIVE"
+        result[rule] = {
+            "n": n, "min_n": MIN_N, "latest_exit_date": latest,
+            "exhausted_after": exhausted_after, "exhausted": exhausted,
+            "status": status,
+            "confidence": "limited" if exhausted and n < MIN_N else "normal",
+        }
+    return result
 
 
 def main(days: int = 60, only_date: str | None = None) -> int:
@@ -219,8 +257,21 @@ def main(days: int = 60, only_date: str | None = None) -> int:
                     all_rows.append(rr)
             except Exception as e:
                 print(f"[exit-disable-cf] 汇总读取脏行跳过: {e}", file=sys.stderr)
+    supply_conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    supply_conn.row_factory = sqlite3.Row
+    supply = sample_supply_snapshot(
+        supply_conn,
+        {rule: sum(1 for row in all_rows if row.get("exit_reason") == rule) for rule in RULES},
+    )
+    supply_conn.close()
     summary = {"generated_at": datetime.now().isoformat(timespec="seconds"),
-               "n_total_labeled": len(all_rows), "by_rule": {}}
+               "n_total_labeled": len(all_rows), "by_rule": {},
+               "sample_supply": supply,
+               "exhaustion_policy": {
+                   "min_n": MIN_N,
+                   "consecutive_zero_sample_trading_days": EXHAUSTION_TRADING_DAYS,
+                   "action": "close with existing n and limited confidence; no behavior change",
+               }}
     for rule in RULES:
         g = [x for x in all_rows if x.get("exit_reason") == rule]
         if not g:

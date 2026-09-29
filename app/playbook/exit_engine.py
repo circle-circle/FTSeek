@@ -290,7 +290,7 @@ def overnight_master_switch_on() -> bool:
 
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
                                peak_price, meta, held_minutes, minutes_to_close,
-                               minutes_from_open, entry_time_str):
+                               minutes_from_open, entry_time_str, earnings_guard=None):
     """共用退出规则判断 — 被 monitor_playbook_sim_exits 调用.
 
     计算盈利百分比 → peak tracking → breakeven ratchet / trailing stop (factor-specific) → 6 条退出规则.
@@ -737,7 +737,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 _edg_emit("poll_pre_close", _symbol, direction,
                           meta.get("_source_type", ""), entry_price, meta.get("_qty"),
                           entry_time_str, current_price, _profit_net_pct,
-                          trade_id=meta.get("_trade_id"))  # RFC-095 身份锚
+                          trade_id=meta.get("_trade_id"),
+                          earnings_guard=earnings_guard)  # RFC-095 身份锚
             except Exception as _edg_err:
                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕 (2026-09-09 棘轮清剿)
                 logger.warning(f"[exit_engine] EOD深水闸影子打点兜底异常 {_symbol}: {_edg_err}")
