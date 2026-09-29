@@ -7193,6 +7193,18 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             #   持有时长、60min表态判定(E shadow 同源)、cohort/horizon 分桶。
             #   全部取自 _meta 已有字段, 组装失败降级为原精简版, 不影响平仓。
             _px_extra = {}
+            # [观察点1 2026-09-29] 跨夜数 (ET 日历日差): held_h 是 RTH-only 口径,
+            #   隔夜单通知需显式标注防误读为日内单 (MU 9/29 案: 6.1h 实跨 19h)。
+            #   解析失败/同日 → 0 (渲染端不加标注, 外观与旧版一致)。
+            _overnights_et = 0
+            try:
+                from app.utils.timezone import parse_iso_safe as _pt, to_et as _to_et
+                _et_entry = _to_et(_pt(_tr[3])) if _tr is not None and _tr[3] else None
+                _et_exit = _to_et(_pt(_tr[7])) if _tr is not None and _tr[7] else None
+                if _et_entry and _et_exit:
+                    _overnights_et = max(0, (_et_exit.date() - _et_entry.date()).days)
+            except Exception:
+                _overnights_et = 0
             try:
                 _entry_px = float(_tr[2] or 0) if _tr is not None else 0
                 _mfe = float(_meta.get("mfe_pct", 0) or 0)
@@ -7207,6 +7219,11 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "entry_price": _entry_px or None,
                     "exit_price": float(exit_price or 0) or None,
                     "held_h": round(float(holding_hours or 0), 1),
+                    # [RFC-117 P2 复核观察点1 2026-09-29, 用户裁"继续"落地] 跨夜标注:
+                    #   held_h 是 RTH-only 口径 (holding_hours 列), 隔夜单墙钟差远大于它
+                    #   (MU 9/29 案: 显示 6.1h 实际跨 19h), 用户易误读为当日日内单。
+                    #   按 entry/exit 的 ET 日历日差算跨夜数; 0=同日单不加标注 (外观不变)。
+                    "overnights": _overnights_et,
                     "mfe_pct": _mfe if _meta.get("mfe_pct") is not None else None,
                     "mae_pct": float(_meta.get("mae_pct", 0) or 0),
                     "time_to_mfe": _t2m_push,

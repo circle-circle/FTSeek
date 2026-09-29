@@ -153,7 +153,13 @@ class PushMessage:
             # 2026-07-23: 平仓路径画像显性化 (MFE/MAE/表态时点/capture — E shadow 同源口径)
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
-                _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
+                _held_s = f" (持有 {float(_held):.1f}h" if _held is not None else ""
+                # [观察点1 2026-09-29] 跨夜标注: held_h 为 RTH 口径, 隔夜单显式标出防误读
+                _ovn = int(p.get("overnights") or 0)
+                if _held_s and _ovn > 0:
+                    _held_s += f", 跨夜{_ovn}晚)"
+                elif _held_s:
+                    _held_s += ")"
                 lines.append(f"📈 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
             if p.get("mfe_pct") is not None:
                 _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
@@ -280,7 +286,13 @@ class PushMessage:
                 lines.append(f"**💰 实现盈亏**: {_psign}${abs(_pnl):.2f}  **📉 原因**: {_er}")
             if p.get("entry_price") and p.get("exit_price"):
                 _held = p.get("held_h")
-                _held_s = f" (持有 {float(_held):.1f}h)" if _held is not None else ""
+                _held_s = f" (持有 {float(_held):.1f}h" if _held is not None else ""
+                # [观察点1 2026-09-29] 跨夜标注 (同飞书文本口径)
+                _ovn = int(p.get("overnights") or 0)
+                if _held_s and _ovn > 0:
+                    _held_s += f", 跨夜{_ovn}晚)"
+                elif _held_s:
+                    _held_s += ")"
                 lines.append(f"**📈 路径**: 入场 ${float(p['entry_price']):.2f} → 出场 ${float(p['exit_price']):.2f}{_held_s}")
             if p.get("mfe_pct") is not None:
                 _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
