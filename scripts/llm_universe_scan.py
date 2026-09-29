@@ -525,6 +525,76 @@ def _eligibility_skip_reason(reason_codes: List[str], screening: Dict[str, Any],
     return f"candidate_ineligible({','.join(codes) or 'unknown'})"
 
 
+# ── [RFC-117 2026-09-29] UE LONG 破位硬买拦截 (与 DA 择时闸同口径) ──────────
+#   病灶 (用户 9/29 问"UE 产出能否基于 DA 管线多轮分析"): UE LONG 走 cmd_inject
+#   **直写**指令, 从不过 DA 深分析/择时闸; 而 UE SHORT 自 2026-08-03 起有
+#   da_candidate_feed 通道进 DA。反事实实测 (≥9/5 UE LONG n=12, 净 −$245):
+#   三笔大亏 QCOM −$228 / UBER −$99 / RIVN −$320 全部是 premarket 窗直写,
+#   其中 UBER(空头排列 69.26<70.09<72.05, 价 68.16) 与 RIVN(15.14<15.22<15.56,
+#   价 14.79) 会被 DA 破位硬买拦截 SKIP ⇒ 拦对 2 笔 −$419, **误杀 0 笔**
+#   (NOK/FPS/ASML/STX/WDC 五笔 TRAIL_LOCK 盈利腿全部放行)。QCOM 拦不到
+#   (多头排列但价跌破 MA5 = "短期偏多", 择时闸按设计不判冲突) — 诚实边界。
+#   口径**逐字对齐** DA: deep_analyzer.py:200-209 的 trend 分档 (MA 用 round(...,2),
+#   价格用最近**已完成**日线收盘 = 盘前可见的昨收, 不含当日未完成 bar),
+#   拦截语义 = signal_gate.py:424-430 的 "破位硬买拦截: 空头排列 + BUY → SKIP"。
+#   只对 LONG: DA 侧 SHORT 无此硬门 (多头排列做空走降档不 SKIP), 且 UE SHORT 是
+#   在产正 alpha 源, 不加门。缺数 fail-open (bars 不足/取数失败 → 放行, 与
+#   screening UNKNOWN "缺数≠拒绝" 同纪律, 不因取数故障误杀)。
+#   回滚: unified_config.yaml universe_expansion.long_momentum_gate_enabled=false。
+def _long_breakdown_trend(router: Any, symbol: str, asof_date: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """算 UE LONG 候选的真实动量 trend (DA deep_analyzer 同口径)。
+
+    Returns:
+        (trend, detail) — trend ∈ {"空头排列","多头排列","短期偏多","短期偏空","震荡","no_data"};
+        detail = {"ma5","ma10","ma20","close","bars_used","bars_asof"} 或 None (缺数)。
+        缺数/异常一律返回 ("no_data", None) ⇒ 调用方 fail-open 放行。
+    """
+    try:
+        bars = router.get_daily_bars(symbol, count=60) if router else None
+    except Exception:
+        return "no_data", None
+    if not bars:
+        return "no_data", None
+    # 只用严格早于 asof 的已完成日线 (与 compute_screening_atr 同口径), 同日去重取最后一条
+    parsed: Dict[str, float] = {}
+    for bar in bars:
+        if not isinstance(bar, dict):
+            continue
+        raw_date = str(bar.get("time") or bar.get("date") or "")[:10]
+        if len(raw_date) != 10 or (asof_date and raw_date >= asof_date):
+            continue
+        try:
+            parsed[raw_date] = float(bar.get("close"))
+        except (TypeError, ValueError):
+            continue
+    series = [parsed[k] for k in sorted(parsed)]
+    if len(series) < 20:
+        return "no_data", None
+
+    def _ma(data: List[float], period: int) -> Optional[float]:
+        # deep_analyzer.py:183-186 逐字同口径: 不足 period 返回 None, 否则 round 2 位
+        if len(data) < period:
+            return None
+        return round(sum(data[-period:]) / period, 2)
+
+    ma5, ma10, ma20 = _ma(series, 5), _ma(series, 10), _ma(series, 20)
+    price = round(series[-1], 2)
+    detail = {"ma5": ma5, "ma10": ma10, "ma20": ma20, "close": price,
+              "bars_used": len(series), "bars_asof": sorted(parsed)[-1]}
+    # deep_analyzer.py:200-209 trend 分档逐字复刻
+    trend = "震荡"
+    if ma5 and ma10 and ma20:
+        if ma5 > ma10 > ma20 and price > ma5:
+            trend = "多头排列"
+        elif ma5 < ma10 < ma20 and price < ma5:
+            trend = "空头排列"
+        elif ma5 > ma10:
+            trend = "短期偏多"
+        elif ma5 < ma10:
+            trend = "短期偏空"
+    return trend, detail
+
+
 def _log_inject_loop_reject(s: Dict[str, Any], reason: str) -> None:
     """[UE-B2] inject 指令构造循环内的拒绝分支 (无现价/entry_zone 无效) 落盘。"""
     if not bool(_cfg("universe_expansion.inject_reject_log", True)):
@@ -3469,6 +3539,19 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
             print(f"  [skip] {s['symbol']} 无现价")
             _log_inject_loop_reject(s, "no_quote(无现价)")
             continue
+        # ── [RFC-117 2026-09-29] LONG 破位硬买拦截 (DA 择时闸同口径, 见函数头注释) ──
+        #   反事实 (≥9/5 UE LONG): 拦 UBER/RIVN 两笔 −$419, 误杀 0。缺数 fail-open。
+        #   只对 LONG; SHORT 不设此门 (与 DA signal_gate 语义一致)。
+        #   回滚: yaml universe_expansion.long_momentum_gate_enabled=false。
+        if s["direction"] == "LONG" and bool(_cfg("universe_expansion.long_momentum_gate_enabled", True)):
+            _trend, _tdetail = _long_breakdown_trend(router, f"US.{s['symbol']}", today)
+            if _trend == "空头排列":
+                _reason = ("long_breakdown(空头排列+LONG→SKIP, DA择时闸同口径 "
+                           f"MA5={_tdetail['ma5']}<MA10={_tdetail['ma10']}<MA20={_tdetail['ma20']} "
+                           f"close={_tdetail['close']})")
+                print(f"  [skip] {s['symbol']} {_reason}")
+                _log_inject_loop_reject(s, _reason)
+                continue
         nums = _compute_numbers(float(px), s["direction"])
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")

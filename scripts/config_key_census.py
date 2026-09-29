@@ -79,6 +79,12 @@ EXTERNAL_CONSUMED = {
         "/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:168 读 "
         "universe_expansion.da_candidate_feed 作 UE→DA 注入总开关 (false 即跳过)"
     ),
+    # [RFC-117 2026-09-29] UE LONG 接入 DA feed 的独立回滚开关 (仓外 skill 消费)
+    "unified_config.yaml:da_candidate_feed_long": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:799 读 "
+        "universe_expansion.da_candidate_feed_long 作 UE LONG 腿进 DA 深分析池的"
+        "独立开关 (false 恢复 2026-08-03 只取 SHORT 语义)"
+    ),
     "unified_config.yaml:symbol_card_prompt_enabled": (
         "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py:1169 读 "
         "playbook.symbol_card_prompt_enabled 作股性卡进 prompt 开关"

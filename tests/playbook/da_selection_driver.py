@@ -361,7 +361,10 @@ def _ue_feed():
         write([])
         out["no_records"] = PL._load_ue_short_candidates()
         write([rec("da_feed", 10, [s("DDD", direction="LONG"), s("EEE")])])
-        out["only_short_kept"] = [o["symbol"] for o in PL._load_ue_short_candidates()]
+        # [RFC-117 2026-09-29] feed 双向: LONG+SHORT 都进 (修前只取 SHORT, DDD 被丢)。
+        #   ue_direction 透传决定 DA 侧 direction_hint 口径 (LONG→LONG, SHORT→SHORT)。
+        out["both_directions_kept"] = [
+            (o["symbol"], o["ue_direction"]) for o in PL._load_ue_short_candidates()]
         write([rec("da_feed", 10, [s("FFF", short_check={"provided": True,
                                                           "borrow_feasible": False})])])
         out["borrow_infeasible_filtered"] = PL._load_ue_short_candidates()

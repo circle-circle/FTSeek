@@ -2157,6 +2157,17 @@ universe_expansion:
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.
   da_candidate_feed: true
+  # [RFC-117 2026-09-29, 用户裁"3 不用影子模式,有助于提升交易质量的可以直接上"]
+  #   UE LONG 双向接入: ①da_candidate_feed_long — DA 侧 _load_ue_short_candidates
+  #   同时取 LONG 候选进深分析池 (修前只取 SHORT, "DA LONG 过量供给"是 8/3 旧口径);
+  #   ②long_momentum_gate_enabled — cmd_inject 直写通道 (premarket 窗, DA 已跑完
+  #   时序拦不到) 对 LONG 候选加破位硬买拦截 (DA signal_gate 同口径: 空头排列+BUY
+  #   →SKIP, 缺数 fail-open)。反事实实测 (≥9/5 UE LONG n=12): 拦 UBER/RIVN 两笔
+  #   −$419, 误杀 0 笔 (五笔 TRAIL_LOCK 盈利腿全放行); QCOM −$228 拦不到 (多头
+  #   排列价跌破MA5="短期偏多", 择时闸按设计不判冲突) — 诚实边界。
+  #   回滚: 各自改 false (①恢复 8/3 只取 SHORT 语义; ②直写通道恢复无动量闸)。
+  da_candidate_feed_long: true
+  long_momentum_gate_enabled: true
   premarket_anchor: true
   short_boost_shadow: true
   prompt_version: v2

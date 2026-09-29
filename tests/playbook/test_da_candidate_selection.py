@@ -415,9 +415,10 @@ class TestUeFeedBatch:
         assert case(driver_result, "ue_feed")["no_records"] == []
 
     def test_only_short_and_source_filters_preserved(self, driver_result):
-        """原有消费端过滤 (只取 SHORT / 不可借券 / streak 硬闸) 语义不变。"""
+        """[RFC-117 2026-09-29 语义更新] feed 双向 (LONG+SHORT) 后, 消费端过滤
+        (不可借券 SHORT / streak 硬闸) 语义不变; LONG 不再被丢。"""
         ue = case(driver_result, "ue_feed")
-        assert ue["only_short_kept"] == ["US.EEE"]
+        assert ue["both_directions_kept"] == [["US.DDD", "LONG"], ["US.EEE", "SHORT"]]
         assert ue["borrow_infeasible_filtered"] == []
         assert ue["streak_filtered"] == []
 
