@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 
 from app.core.paths import get_trade_records_db, get_decisions_db, get_rejections_db, get_reviews_dir
+from app.review.source_attribution import aggregate_source_direction, playbook_source_sql
 from app.core.trade_identity import summarize_trade_identity
 from pathlib import Path
 import json
@@ -960,8 +961,9 @@ class DailyReviewGenerator:
         """
         try:
             rows = self._query(
-                "SELECT direction, executed, COUNT(*) as cnt FROM playbook_instructions "
-                "WHERE date = ? GROUP BY direction, executed",
+                f"SELECT direction, executed, ({playbook_source_sql()}) AS source, "
+                "COUNT(*) as cnt FROM playbook_instructions "
+                "WHERE date = ? GROUP BY direction, executed, source",
                 (date,)
             )
             total = sum(r['cnt'] for r in rows)
@@ -973,7 +975,9 @@ class DailyReviewGenerator:
             return {
                 'total_decisions': total,
                 'by_direction_strength': by_direction,
+                'by_source_direction': aggregate_source_direction(rows),
                 'source': 'playbook_instructions',
+                'source_attribution_version': 'rfc117_v1',
             }
         except Exception as e:
             return {'total_decisions': 0, 'error': str(e)}

@@ -290,6 +290,10 @@ def run(workdir: Path, db_path: Path) -> dict:
                    workdir / "data" / "shadow" / "ue_direction_structure.jsonl"),
              patch("scripts.llm_universe_scan._TIER_GATE_SHADOW_PATH",
                    workdir / "data" / "shadow" / "ue_tier_gate_shadow.jsonl"),
+             # [RFC-117] LONG 动量闸三态埋点 (conftest 缝表已登记, 但本驱动自带
+             #   改道清单不读缝表 — 漏改道 = 真跑 inject 时直写生产 jsonl)。
+             patch("scripts.llm_universe_scan._LONG_GATE_LOG_PATH",
+                   workdir / "data" / "shadow" / "ue_long_momentum_gate.jsonl"),
              patch("app.playbook.candidate_eligibility.FUNNEL_PATH",
                    workdir / "candidate_funnel.jsonl")]
     daily_active_pool_module._active_pool_instance = None

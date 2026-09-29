@@ -29,7 +29,7 @@ def trend_from_kline(sym, entry_date):
     if not kl:
         return 'no_kline', None
     # 取 entry_date 之前(不含当日)的日线 — 盘前可见
-    bars = [b for b in kl if str(b.get('time_key') or b.get('date') or '')[:10] < entry_date]
+    bars = [b for b in kl if str(b.get('time') or b.get('time_key') or b.get('date') or '')[:10] < entry_date]
     if len(bars) < 20:
         return 'insufficient', len(bars)
     closes = [float(b['close']) for b in bars[-20:]]

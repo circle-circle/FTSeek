@@ -335,7 +335,16 @@ def _ue_feed():
                 fh.write(json.dumps(r) + "\n")
 
     original_path = PL._UE_SCAN_JSONL
+    original_config = PL._UE_CONFIG_PATH
     PL._UE_SCAN_JSONL = feed
+    config = os.path.join(WORKDIR, "ue_config.yaml")
+    with open(config, "w", encoding="utf-8") as fh:
+        fh.write(
+            "universe_expansion:\n"
+            "  da_candidate_feed: true\n"
+            "  da_candidate_feed_long: false\n"
+            "  max_emergence_streak: 99\n"
+        )
     out = {}
     try:
         write([rec("da_feed", 20, [s("AAA")]), rec("premarket", 5, [s("BBB")])])
@@ -365,6 +374,10 @@ def _ue_feed():
         #   ue_direction 透传决定 DA 侧 direction_hint 口径 (LONG→LONG, SHORT→SHORT)。
         out["both_directions_kept"] = [
             (o["symbol"], o["ue_direction"]) for o in PL._load_ue_short_candidates()]
+        PL._UE_CONFIG_PATH = config
+        out["long_disabled_kept"] = [
+            (o["symbol"], o["ue_direction"]) for o in PL._load_ue_short_candidates()]
+        PL._UE_CONFIG_PATH = original_config
         write([rec("da_feed", 10, [s("FFF", short_check={"provided": True,
                                                           "borrow_feasible": False})])])
         out["borrow_infeasible_filtered"] = PL._load_ue_short_candidates()
@@ -381,6 +394,7 @@ def _ue_feed():
         out["naive_timestamp_rejected"] = PL._load_ue_short_candidates()
     finally:
         PL._UE_SCAN_JSONL = original_path
+        PL._UE_CONFIG_PATH = original_config
     return out
 
 

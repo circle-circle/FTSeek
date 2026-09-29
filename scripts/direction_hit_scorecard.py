@@ -21,9 +21,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "ftseek_us.db"
 OUT = ROOT / "data" / "direction_scorecard_latest.json"
+LONG_GATE_LOG = ROOT / "data" / "shadow" / "ue_long_momentum_gate.jsonl"
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from app.review.source_attribution import playbook_source_sql, source_labels
 
 
 def q(conn, where: str, params=(), exec_only: bool = False):
@@ -49,11 +52,8 @@ def q(conn, where: str, params=(), exec_only: bool = False):
 
 
 def src_expr():
-    """来源切分: raw_instruction_json 的 source 标记 (DA=deep_analysis默认无标/UE/topup)."""
-    return """CASE
-        WHEN raw_instruction_json LIKE '%topup_pool%' THEN 'topup'
-        WHEN raw_instruction_json LIKE '%universe_expansion%' THEN 'UE'
-        ELSE 'DA' END"""
+    """来源切分: DA自选 / DA-UE确认 / UE直写 / topup."""
+    return playbook_source_sql()
 
 
 def main() -> int:
@@ -94,8 +94,8 @@ def main() -> int:
     emit("headline_exec", "已执行·全部", "1=1", exec_only=True)
     emit("headline_exec", "已执行·BUY", "direction='BUY'", exec_only=True)
     emit("headline_exec", "已执行·SELL_SHORT", "direction='SELL_SHORT'", exec_only=True)
-    for s in ("DA", "UE", "topup"):
-        emit("headline_exec", f"已执行·{s}", f"({src_expr()})=?", (s,), exec_only=True)
+    for source in source_labels():
+        emit("headline_exec", f"已执行·{source}", f"({src_expr()})=?", (source,), exec_only=True)
     # ── 2026-08-03 (用户裁 "direction scorecard 加 DA-SHORT"): 来源×方向交叉矩阵 ──
     #   背景: DA SHORT 供给=0 (07-20以来 140 BUY / 0 SHORT), UE SHORT 是唯一在产正 edge;
     #   单来源切片与单方向切片都掩盖交叉结构。n=0 也打印 —
@@ -103,7 +103,7 @@ def main() -> int:
     def _fmt(v):
         return "-" if v is None else str(v)
 
-    for _s in ("DA", "UE"):
+    for _s in source_labels():
         for _d, _dl in (("BUY", "BUY"), ("SELL_SHORT", "SHORT")):
             _lab = f"已执行·{_s}·{_dl}"
             _dd = q(conn, f"date>=? AND ({src_expr()})=? AND direction=?",
@@ -116,6 +116,17 @@ def main() -> int:
             _tail = "  ← 无样本(轴已接线, 待供给)" if not _dd["n"] else ""
             print(f"{_lab:<26} {_dd['n']:>5} {_fmt(_dd['hit_t1']):>9} {_fmt(_dd['dir_ret_t1']):>12} "
                   f"{_fmt(_dd['hit_t3']):>9} {_fmt(_dd['dir_ret_t3']):>9}{_adj}{_tail}")
+    try:
+        from scripts.ue_long_gate_observation import summarize as summarize_long_gate
+        gate = summarize_long_gate(path=LONG_GATE_LOG, since=since)
+        report["sections"]["ue_long_momentum_gate"] = gate
+        print(f"{'UE·LONG动量闸':<26} {gate['valid_rows']:>5} "
+              f"blocked={gate['by_decision']['blocked']} "
+              f"passed={gate['by_decision']['passed']} "
+              f"no_data={gate['by_decision']['no_data']}")
+    except Exception as gate_error:
+        report.setdefault("warnings", []).append(f"ue_long_momentum_gate_error:{gate_error}")
+        print(f"  ⚠ UE LONG动量闸读取失败: {gate_error}")
     _mix = q(conn, "date>=? AND 1=1", (since,))
     _exe = report["sections"]["headline_exec"]["已执行·全部"]
     if _mix["n"] and _exe["n"] and _mix["hit_t1"] is not None and _exe["hit_t1"] is not None:
@@ -133,8 +144,8 @@ def main() -> int:
     emit("direction", "BUY", "direction='BUY'")
     emit("direction", "SELL_SHORT", "direction='SELL_SHORT'")
     # 来源切分 (跨策略污染纪律: topup/UE/DA 分开看)
-    for s in ("DA", "UE", "topup"):
-        emit("source", f"来源:{s}", f"({src_expr()})=?", (s,))
+    for source in source_labels():
+        emit("source", f"来源:{source}", f"({src_expr()})=?", (source,))
     # D4 (2026-07-24, DEB §十-b): topup 盘前/盘中窗切分 — 盘中窗预注册判据:
     #   n≥30 前不下结论; 命中<48% 或期望显著负 → 关盘中窗 (intraday_start=end 一行回滚)
     emit("source", "topup·盘中",

@@ -45,6 +45,8 @@ for _p in (str(_ROOT), str(_SCRIPTS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from app.playbook.momentum import classify_ma_trend
+
 _SCAN_PATH = _ROOT / "data" / "shadow" / "llm_universe_scan.jsonl"
 # DEB-20260814 §十三 (2026-08-14, 用户裁): 午间影子扫描独立落盘 —
 #   主链路 (inject/push/score/DA供料 _load_ue_short_candidates) 全部只读 _SCAN_PATH,
@@ -422,6 +424,8 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
 #   无法归因。每个被拒候选落一行结构化记录, 连续10交易日后首次成表分解衰减漏斗。
 #   纯观测, 零行为影响。回滚: 配置设 universe_expansion.inject_reject_log: false。
 _INJECT_REJECT_PATH = _ROOT / "data" / "shadow" / "llm_universe_inject.jsonl"
+# [RFC-117 P1] UE LONG 动量闸三态审计: blocked / passed / no_data。
+_LONG_GATE_LOG_PATH = _ROOT / "data" / "shadow" / "ue_long_momentum_gate.jsonl"
 # [P1.5 2026-09-12, proud-slope-falcon] inject 额度进程间锁载体 (flock)。
 #   覆盖"读取当日额度 → 资格筛选 → 写后确认"整段, 防 cron 与手动重跑并发超额;
 #   锁键语义 = 自动账户模式/来源/ET 日期 (本文件即 UE 自动源, 每日一条链)。
@@ -568,31 +572,49 @@ def _long_breakdown_trend(router: Any, symbol: str, asof_date: str) -> Tuple[str
         except (TypeError, ValueError):
             continue
     series = [parsed[k] for k in sorted(parsed)]
-    if len(series) < 20:
-        return "no_data", None
-
-    def _ma(data: List[float], period: int) -> Optional[float]:
-        # deep_analyzer.py:183-186 逐字同口径: 不足 period 返回 None, 否则 round 2 位
-        if len(data) < period:
-            return None
-        return round(sum(data[-period:]) / period, 2)
-
-    ma5, ma10, ma20 = _ma(series, 5), _ma(series, 10), _ma(series, 20)
-    price = round(series[-1], 2)
-    detail = {"ma5": ma5, "ma10": ma10, "ma20": ma20, "close": price,
-              "bars_used": len(series), "bars_asof": sorted(parsed)[-1]}
-    # deep_analyzer.py:200-209 trend 分档逐字复刻
-    trend = "震荡"
-    if ma5 and ma10 and ma20:
-        if ma5 > ma10 > ma20 and price > ma5:
-            trend = "多头排列"
-        elif ma5 < ma10 < ma20 and price < ma5:
-            trend = "空头排列"
-        elif ma5 > ma10:
-            trend = "短期偏多"
-        elif ma5 < ma10:
-            trend = "短期偏空"
+    detail = None
+    if series:
+        trend, detail = classify_ma_trend(series)
+        if detail is not None:
+            detail["bars_asof"] = sorted(parsed)[-1]
+    else:
+        trend = "no_data"
     return trend, detail
+
+
+def _long_momentum_gate(s: Dict[str, Any], router: Any, today: str,
+                        enabled: bool) -> Tuple[bool, str, str, Optional[Dict[str, Any]]]:
+    """Return (should_skip, reason, trend, detail) for the UE LONG momentum gate."""
+    if s.get("direction") != "LONG" or not enabled:
+        return False, "", "disabled", None
+    trend, detail = _long_breakdown_trend(router, f"US.{s['symbol']}", today)
+    if trend == "空头排列":
+        reason = (
+            "long_breakdown(空头排列+LONG→SKIP, DA择时闸同口径 "
+            f"MA5={detail['ma5']}<MA10={detail['ma10']}<MA20={detail['ma20']} "
+            f"close={detail['close']})"
+        )
+        return True, reason, trend, detail
+    return False, "", trend, detail
+
+
+def _log_long_momentum_gate(s: Dict[str, Any], trend: str,
+                            detail: Optional[Dict[str, Any]], decision: str) -> None:
+    """Log blocked / passed / no_data for every gate-enabled LONG candidate."""
+    try:
+        row = {
+            "date": _today(),
+            "symbol": s.get("symbol", ""),
+            "direction": s.get("direction", ""),
+            "decision": decision,
+            "trend": trend,
+            "detail": detail or {},
+        }
+        _LONG_GATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _LONG_GATE_LOG_PATH.open("a") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"  [warn] UE LONG 动量闸日志落盘失败: {exc}")
 
 
 def _log_inject_loop_reject(s: Dict[str, Any], reason: str) -> None:
@@ -3543,12 +3565,15 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
         #   反事实 (≥9/5 UE LONG): 拦 UBER/RIVN 两笔 −$419, 误杀 0。缺数 fail-open。
         #   只对 LONG; SHORT 不设此门 (与 DA signal_gate 语义一致)。
         #   回滚: yaml universe_expansion.long_momentum_gate_enabled=false。
-        if s["direction"] == "LONG" and bool(_cfg("universe_expansion.long_momentum_gate_enabled", True)):
-            _trend, _tdetail = _long_breakdown_trend(router, f"US.{s['symbol']}", today)
-            if _trend == "空头排列":
-                _reason = ("long_breakdown(空头排列+LONG→SKIP, DA择时闸同口径 "
-                           f"MA5={_tdetail['ma5']}<MA10={_tdetail['ma10']}<MA20={_tdetail['ma20']} "
-                           f"close={_tdetail['close']})")
+        if s["direction"] == "LONG":
+            _gate_enabled = bool(_cfg("universe_expansion.long_momentum_gate_enabled", True))
+            _should_skip, _reason, _trend, _tdetail = _long_momentum_gate(
+                s, router, today, _gate_enabled)
+            if _gate_enabled:
+                _decision = "blocked" if _should_skip else (
+                    "no_data" if _trend == "no_data" else "passed")
+                _log_long_momentum_gate(s, _trend, _tdetail, _decision)
+            if _should_skip:
                 print(f"  [skip] {s['symbol']} {_reason}")
                 _log_inject_loop_reject(s, _reason)
                 continue
@@ -4437,6 +4462,33 @@ def _gated_breakdown(target: str) -> str:
         return ""
 
 
+def _long_gate_breakdown(target: str) -> str:
+    """RFC-117: 当日 UE LONG 动量闸三态摘要 (去重重跑行, 保留最后判定)."""
+    try:
+        rows = [
+            row for row in _read_jsonl(_LONG_GATE_LOG_PATH)
+            if row.get("date") == target
+        ]
+        if not rows:
+            return ""
+        deduped = {
+            (str(row.get("date", "")), str(row.get("symbol", ""))): row
+            for row in rows
+        }
+        decisions = {"blocked": 0, "passed": 0, "no_data": 0}
+        for row in deduped.values():
+            decision = str(row.get("decision") or "")
+            if decision in decisions:
+                decisions[decision] += 1
+        return (
+            f"LONG动量闸: 拦{decisions['blocked']}/过{decisions['passed']}/"
+            f"缺{decisions['no_data']} (去重{len(deduped)}/{len(rows)}行)"
+        )
+    except Exception as exc:
+        print(f"  [warn] LONG动量闸推送分解读数失败: {exc}")
+        return ""
+
+
 def _prescreen_marker(s: Dict[str, Any]) -> str:
     """[2026-09-18 登记项 P3] 逐条标记"输入侧资格预筛未过" (仅 REJECT; 其余返回空串)。
 
@@ -4522,6 +4574,9 @@ def cmd_push(dry: bool = False, date: Optional[str] = None) -> int:
     ]
     if _gate_line:
         lines.append(_gate_line)
+    _long_gate_line = _long_gate_breakdown(target)
+    if _long_gate_line:
+        lines.append(_long_gate_line)
     if tier_cnt:
         lines.append("自评tier: " + " ".join(f"{k}:{v}" for k, v in tier_cnt.items()))
     lines.append("")

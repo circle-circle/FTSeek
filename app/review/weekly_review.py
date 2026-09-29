@@ -21,6 +21,7 @@ from pathlib import Path
 import json
 
 from app.core.paths import get_trade_records_db
+from app.review.source_attribution import aggregate_source_direction, playbook_source_sql
 
 logger = logging.getLogger("ftseek_us.review.weekly")
 logger.propagate = False
@@ -181,8 +182,10 @@ class WeeklyReviewGenerator:
         07-12 停写, 周决策数恒 0 系伪读数)"""
         try:
             rows = self._query(
-                "SELECT date, direction, executed, COUNT(*) as cnt FROM playbook_instructions "
-                "WHERE date >= ? AND date <= ? GROUP BY date, direction, executed",
+                "SELECT date, direction, executed, "
+                f"({playbook_source_sql()}) AS source, COUNT(*) as cnt "
+                "FROM playbook_instructions "
+                "WHERE date >= ? AND date <= ? GROUP BY date, direction, executed, source",
                 (week_start, week_end)
             )
             total = sum(r['cnt'] for r in rows)
@@ -198,7 +201,9 @@ class WeeklyReviewGenerator:
                 'total_decisions': total,
                 'by_day': by_day,
                 'by_direction_strength': by_direction,
+                'by_source_direction': aggregate_source_direction(rows),
                 'source': 'playbook_instructions',
+                'source_attribution_version': 'rfc117_v1',
             }
         except Exception as e:
             return {'total_decisions': 0, 'error': str(e)}

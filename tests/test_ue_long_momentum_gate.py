@@ -11,6 +11,7 @@
 """
 import sys
 from pathlib import Path
+import json
 
 import pytest
 
@@ -18,6 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from scripts import llm_universe_scan as ue  # noqa: E402
+from app.playbook.momentum import classify_ma_trend  # noqa: E402
 
 
 def _bars(closes, start_day=1):
@@ -134,6 +136,79 @@ class TestLongBreakdownTrend:
         assert len(str(detail["ma5"]).split(".")[-1]) <= 2   # 至多两位小数
 
 
+class TestSharedMomentumTrend:
+    def test_bearish_and_bullish_and_no_data(self):
+        bearish = [100 - i * 0.5 for i in range(15)] + [92, 90, 88, 86, 84]
+        bullish = [80 + i * 0.8 for i in range(20)]
+        assert classify_ma_trend(bearish)[0] == "空头排列"
+        assert classify_ma_trend(bullish)[0] == "多头排列"
+        assert classify_ma_trend([100] * 19) == ("no_data", None)
+
+
+class TestLongMomentumGate:
+    def test_gate_disabled_returns_false(self):
+        s = {"direction": "LONG", "symbol": "UBER"}
+        should_skip, reason, trend, detail = ue._long_momentum_gate(
+            s, _FakeRouter(_bars([100 - i * 0.5 for i in range(15)] + [92, 90, 88, 86, 84])),
+            ASOF, False,
+        )
+        assert should_skip is False
+        assert reason == ""
+        assert trend == "disabled"
+        assert detail is None
+
+    def test_gate_enabled_blocks_bearish_long(self):
+        closes = [100 - i * 0.5 for i in range(15)] + [92, 90, 88, 86, 84]
+        s = {"direction": "LONG", "symbol": "UBER"}
+        should_skip, reason, trend, detail = ue._long_momentum_gate(
+            s, _FakeRouter(_bars(closes)), ASOF, True,
+        )
+        assert should_skip is True
+        assert "空头排列" in reason
+        assert trend == "空头排列"
+        assert detail["ma5"] < detail["ma10"] < detail["ma20"]
+
+    def test_gate_ignores_short(self):
+        s = {"direction": "SHORT", "symbol": "UBER"}
+        should_skip, reason, trend, detail = ue._long_momentum_gate(
+            s, _FakeRouter([]), ASOF, True,
+        )
+        assert should_skip is False
+        assert trend == "disabled"
+        assert detail is None
+
+    def test_long_gate_log_records_tri_state(self, tmp_path, monkeypatch):
+        path = tmp_path / "ue_long_momentum_gate.jsonl"
+        monkeypatch.setattr(ue, "_LONG_GATE_LOG_PATH", path)
+        s = {"direction": "LONG", "symbol": "UBER"}
+        detail = {"ma5": 88.0, "ma10": 91.0, "ma20": 94.38, "close": 84.0}
+        ue._log_long_momentum_gate(s, "空头排列", detail, "blocked")
+        row = json.loads(path.read_text(encoding="utf-8"))
+        assert row["symbol"] == "UBER"
+        assert row["direction"] == "LONG"
+        assert row["decision"] == "blocked"
+        assert row["trend"] == "空头排列"
+        assert row["detail"] == detail
+
+
+class TestLongGatePushBreakdown:
+    def test_push_summary_dedups_rerun_rows_keep_last(self, tmp_path, monkeypatch):
+        path = tmp_path / "ue_long_momentum_gate.jsonl"
+        rows = [
+            {"date": ASOF, "symbol": "UBER", "decision": "passed", "trend": "短期偏多"},
+            {"date": ASOF, "symbol": "RIVN", "decision": "blocked", "trend": "空头排列"},
+            {"date": ASOF, "symbol": "UBER", "decision": "no_data", "trend": "no_data"},
+            {"date": "2099-01-01", "symbol": "NOK", "decision": "blocked", "trend": "空头排列"},
+        ]
+        path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(ue, "_LONG_GATE_LOG_PATH", path)
+        line = ue._long_gate_breakdown(ASOF)
+        assert line == f"LONG动量闸: 拦1/过0/缺1 (去重2/3行)"
+
+
 class TestInjectWiringContract:
     """源级契约钉 (与 test_ue_funnel_batch.py 同款 inspect 手法): 拦截必须接在
     _cmd_inject_impl 的 LONG 分支, 且带 config 回滚开关 + 归因日志。"""
@@ -141,9 +216,9 @@ class TestInjectWiringContract:
     def test_gate_wired_in_inject_loop(self):
         import inspect
         src = inspect.getsource(ue._cmd_inject_impl)
-        assert "_long_breakdown_trend(" in src
+        assert "_long_momentum_gate(" in src
         assert "long_momentum_gate_enabled" in src
-        assert "空头排列" in src
+        assert "_log_long_momentum_gate(" in src
         assert "_log_inject_loop_reject(" in src   # 拦截必须落归因行
 
     def test_gate_only_applies_to_long(self):

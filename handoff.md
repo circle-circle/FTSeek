@@ -1,5 +1,34 @@
 # FTSeek-US · HANDOFF
 
+## 2026-09-29 RFC-117 P1 复核修订批 (用户裁「继续」, 行为口径零变化)
+
+> **触发**: 用户要求复查多 Agent 执行的 UE/DA 调整 (RFC-117 破位闸 + DA feed 双向 + 共享 momentum 重构)。复查结论: 整体合理, 落地 1×P1 + 1×P2 修正。
+
+**已落地**:
+- **P1 — DA 跨仓 import fail-open**: skill `deep_analyzer.py` 顶部 `from app.playbook.momentum import classify_ma_trend` 原为裸 import (仓路径变动即炸整条 DA 盘前链, 与同文件 anomaly_parse 降级纪律不一致) → 改 try/except + 同口径本地降级副本; 仓内测试补 `co_filename` 前缀断言 (走降级臂即转红报警)。
+- **P2 — 三态汇总器去重**: inject 候选循环在 `if dry: return 0` 之前且重跑幂等 ⇒ 闸日志 append 重复行会污染 §4.2 分母; `scripts/ue_long_gate_observation.py` 现按 (date,symbol) 去重保留最后判定, 报告新增 `raw_rows`/`dup_rows` (生产写入侧不改)。
+- **版本棘轮**: DA skill v0.87 → v0.88 三处同步 (SKILL.md/CHANGELOG/test_da_output_contract)。
+- RFC-117 §1b 补 QFQ 边界注记 (重放含入场后复权因子, 理论二阶失真不翻案) + 重放脚本绕配额门警示 (勿与 EOD 批量同跑); §8 记录本批。
+
+**验证**: `venv/bin/python -m pytest tests/test_ue_long_momentum_gate.py tests/test_ue_long_gate_observation.py tests/playbook/test_da_candidate_selection.py tests/test_config_key_census.py tests/test_da_output_contract.py` 全绿。
+
+**回滚**: 见 RFC-117 §8; 两生产开关 (`long_momentum_gate_enabled` / `da_candidate_feed_long`) 不受影响。
+
+## 2026-09-28 EXT `$50` 执行池价格影子落地 (用户确认, 零行为变更)
+
+> **触发**: 用户问盘前/盘后能否直接选 `>$50` 以减少低价股与无效富途请求，并确认建议。
+
+**已落地**:
+- `scripts/extended_hours_entry_executor.py` 新增 record-only 影子: `EXT_ENTRY_EXEC_PRICE_SHADOW` 默认 false, cron 显式 true; 分 session 阈值 `EXT_ENTRY_EXEC_MIN_PRICE_PREMARKET/AFTERHOURS=50`。
+- 产物 `data/ext_entry_exec_price_shadow.jsonl`: 每轮记录候选数、现行 `$5` 价池、`$50` 影子价池、被排除明细; 复用已取价格, **零新增富途请求**。
+- 两条 EXT entry cron 已加影子前缀; 生产价格闸仍为 `$5`, 不改候选顺序/闸顺序/下单/配额/平仓。
+- 现有 `scripts/eth_event_plan.py` 事件计划链保持只读, 本轮未切换消费。
+- 冒烟: 06:02 ET dry-run 47 候选 → 现行价池 11, `$50` 影子价池 2 (该行仅冒烟, 判读从 18:05 CST cron 起算)。
+
+**验证**: `pytest tests/test_ext_entry_exec_price_shadow.py tests/test_extended_hours_entry_executor.py tests/test_extended_hours_order_execution.py -q` → **82 passed**; `py_compile` 通过; 手动 dry-run 落盘成功。18:05 CST cron 已实测落盘: 47 候选 / 现行价池 11 / `$50` 影子价池 2。cron 每轮新进程, 无需重启主服务。
+
+**判读/回滚**: 见 `docs/debates/DEB-20260928-ext-exec-price50-shadow.md`; 至少 3 交易日/≥60 行后汇总, 不自动改 `EXT_ENTRY_MIN_PRICE`。回滚=删 cron 两个影子 env 前缀 + revert 代码/测试 + 删影子 JSONL。
+
 ## 2026-09-28 DEB④ §十一 第八轮复核: Phase 0 结题裁定独立复现 ⇒ CONFIRMED (零行为变更)
 
 > 不引用 §九/§十 的数字, 从 DB + 产物独立重算。**结题成立**, 且量化出一条比"regime 伪相关"更强的教训。
@@ -17,15 +46,20 @@
 
 **验收**：零代码零配置零 cron；所有读数只读 `data/ftseek_us.db`(`mode=ro`) + 既有产物；§九/§十 原文未动, 仅追加 §十一；`git diff --cached --numstat` = +52/-0（纯追加, 无删改他人行）。
 
-## 2026-09-28 DEB④ 补仓可分离性 Phase 0 读出 ⇒ 结题 (用户批准 Phase 0 + 推送)
+## 2026-09-28 DEB④ 补仓可分离性 Phase 0 正典读出 ⇒ 结题 (用户批准 Phase 0 + Codex 代码级修正)
 
-> **读出** (`scripts/averaging_down_separability.py`, 判据含 §8.2 分桶冻结补写): k=2.0% 触发 39 笔,
-> 8 特征轴全报 —— F3/F4/F5/direction FAIL (CI 跨0), F6/F7 DEAD_AXIS, F1 历史窗零覆盖;
-> 唯一机械过闸的 F2 (隔夜73% vs 日内35%, 差37.4pp CI不跨0) 经泄漏诊断出局: F2×exit_reason 交叉显示
-> 真分离变量="是否被止损" (非止损类 16/16=100% vs 止损类 0/16=0%), F2 只是其稀释代理,
-> 且分类需 exit 日期=未来数据 ⇒ 判据门④不满足。**结论=不可分⇒不补, 话题归档**。
+> **初版读出** (`scripts/averaging_down_separability.py`, 判据含 §8.2 分桶冻结补写): k=2.0% 触发 39 笔。
+> 初版唯一机械过闸的 F2 (隔夜73% vs 日内35%, 差37.4pp CI不跨0) 存在代码级缺陷：用 `exit_time`
+> 冒充触发时刻，属于未来数据/存活者泄漏；原 §九先靠人工诊断将其出局。
+>
+> **Codex 修正**: F2 改用 `metadata.time_to_mae` 回推触发 ET 时刻，正典变为隔夜 8/12=66.7%
+> vs 日内 14/26=53.8%，差 12.8pp、CI 跨0 ⇒ FAIL；`time_to_mae` 中位二分也 FAIL。另补 F1 事件
+> 旗标归一（覆盖 1/39，DEAD_AXIS）、F6 严格交易时段（open 38 笔，DEAD_AXIS）、direction/F3当日
+> 方向仅 diagnostic、F7 signal_strength 未预注册边界不进判据；产物新增 coverage 审计
+> (207/57/14/136/39/38/38/1)。**正典 features_passed=[]，结论=不可分⇒不补, 话题归档**。
 > 遗留假设(非判据): "已隔夜+无已知事件"变体本窗不可算, 挂靠 overnight_known_event_flag 影子。
 > 帽内可执行上限按笔实算仅 $72.51/5周 (§8.6), 进一步支持结题。
+> 验证: `py_compile` ✓、脚本实跑 ✓、sentinels 空；零配置/零 cron/零实盘行为。
 
 ## 2026-09-28 DEB §21 第六轮复核: §二十 **落地物**的代码级核查 → 查出判据级口径错配 (零交易行为)
 

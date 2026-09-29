@@ -54,7 +54,7 @@ def run_arm(alias: str, rnd: int):
         "prompt_version": ue.PROMPT_VERSION, "prompt_hash": prompt_hash,
         "temperature": 0.2, "max_tokens": 24000,
         "enable_thinking": (route_eb or {}).get("enable_thinking"),
-        "reasoning_effort": (route_eb or {}).get("reasoning_effort"),
+        "route_extra_body": dict(route_eb) if route_eb else None,
         "latency_s": round(dt, 1),
         "success": bool(res and res.success),
         "model_reported": getattr(res, "model_used", ""),

@@ -27,9 +27,12 @@
  11. deps 不可导入 → fail-open (只标注 UNKNOWN 不拒绝), 不静默改判定口径。
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+from app.playbook.momentum import classify_ma_trend
 
 import pytest
 
@@ -37,6 +40,7 @@ REPO = Path(__file__).resolve().parents[2]
 DRIVER = Path(__file__).with_name("da_selection_driver.py")
 SKILL = Path("/root/.hermes/skills/deep-stock-analysis/scripts")
 SKILL_PIPELINE = SKILL / "pipeline.py"
+SKILL_IC_WRITER = SKILL / "ic_writer.py"
 SKILL_SCANNER = SKILL / "market_scanner.py"
 
 CASES = ("thresholds", "atr", "main_pool", "backfill", "dedup_budgets",
@@ -89,6 +93,47 @@ class TestDriverHealth:
         """驱动器只用伪造 K 线: 未登记 symbol 取数会抛, 因此无 traceback 即无真取数。"""
         assert "unexpected kline fetch" not in driver_result["_stderr"]
         assert "Traceback" not in driver_result["_stderr"]
+
+
+class TestRfc117SharedMomentum:
+    def test_da_uses_repo_classifier_from_skill_cwd(self):
+        closes = [100 - index * 0.5 for index in range(15)] + [92, 90, 88, 86, 84]
+        expected_trend, expected_detail = classify_ma_trend(closes)
+        code = (
+            "import json; import deep_analyzer; "
+            "from app.playbook.momentum import classify_ma_trend; "
+            "print(json.dumps({"
+            "'module': deep_analyzer.classify_ma_trend.__module__, "
+            "'file': deep_analyzer.classify_ma_trend.__code__.co_filename, "
+            "'result': classify_ma_trend(closes)}, ensure_ascii=False, default=list))"
+        ).replace("closes", repr(closes))
+        env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        proc = subprocess.run([sys.executable, "-c", code], cwd=str(SKILL), env=env,
+                              capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        payload = json.loads(proc.stdout)
+        assert payload["module"] == classify_ma_trend.__module__
+        # __module__ 字符串相等不能证明文件同源 (同名 app.playbook.momentum 可来自
+        # 路径上另一个 app 包) — 必须钉 __file__ 在本仓内; deep_analyzer 的
+        # fail-open 降级臂 (本地副本) 模块名是 deep_analyzer, 走降级即转红报警。
+        assert payload["file"].startswith(str(REPO) + os.sep)
+        assert payload["result"] == [expected_trend, expected_detail]
+
+    def test_ue_candidate_context_is_direction_aware(self):
+        source = SKILL_PIPELINE.read_text(encoding="utf-8")
+        assert '_ue_dirn = str(_cand.get("ue_direction")' in source
+        assert "{_ue_dirn}候选" in source
+        assert "可以确认/加厚/翻转" in source
+
+    def test_ue_candidate_record_fields_survive_bridge_and_db(self):
+        source = SKILL_PIPELINE.read_text(encoding="utf-8")
+        for field in ("ue_direction", "ue_confidence", "ue_scanned_at"):
+            assert f'candidate.get("{field}"' in source
+
+    def test_ue_candidate_metadata_reaches_signal_snapshots(self):
+        source = SKILL_IC_WRITER.read_text(encoding="utf-8")
+        for field in ("ue_origin", "ue_direction", "ue_confidence", "ue_scanned_at"):
+            assert f'analysis.get("_{field}"' in source
 
 
 # ══ 1. 阈值单一真源 + 2.9→3.0 显式变更 ══════════════════════════════════
@@ -421,6 +466,11 @@ class TestUeFeedBatch:
         assert ue["both_directions_kept"] == [["US.DDD", "LONG"], ["US.EEE", "SHORT"]]
         assert ue["borrow_infeasible_filtered"] == []
         assert ue["streak_filtered"] == []
+
+    def test_da_candidate_feed_long_false_restores_short_only(self, driver_result):
+        """Rollback switch: da_candidate_feed_long=false drops only the LONG leg."""
+        ue = case(driver_result, "ue_feed")
+        assert ue["long_disabled_kept"] == [["US.EEE", "SHORT"]]
 
     def test_field_passthrough_and_symbol_normalization(self, driver_result):
         ue = case(driver_result, "ue_feed")

@@ -93,6 +93,8 @@ _PRODUCTION_DATA_SEAMS = (
     #   except 吞掉硬闸 = 隔离形同虚设, 故按 (b) 方案登记为缝。
     ("scripts.llm_universe_scan", "_INJECT_REJECT_PATH", "path",
      "llm_universe_inject.jsonl"),
+    ("scripts.llm_universe_scan", "_LONG_GATE_LOG_PATH", "path",
+     "ue_long_momentum_gate.jsonl"),
 )
 
 

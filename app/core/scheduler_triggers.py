@@ -1097,6 +1097,11 @@ def _format_daily_review(report: dict) -> str:
     _bd = funnel.get('by_direction_strength') or {}
     if _bd:
         funnel_text += " (" + ", ".join(f"{k}:{v}" for k, v in sorted(_bd.items())) + ")"
+    _source_breakdown = funnel.get('by_source_direction') or {}
+    if _source_breakdown:
+        funnel_text += "\n• 来源: " + ", ".join(
+            f"{source}:{count}" for source, count in _source_breakdown.items()
+        )
     
     # 拒绝分析
     rejections = report.get('rejection_analysis') or {}
@@ -1290,6 +1295,11 @@ def _format_weekly_review(report: dict) -> str:
     funnel = report.get('signal_funnel', {})
     _wdec_label = "周指令数" if funnel.get('source') == 'playbook_instructions' else "周决策数"
     funnel_text = f"• {_wdec_label}: {funnel.get('total_decisions', 0)} 条"
+    _wsource_breakdown = funnel.get('by_source_direction') or {}
+    if _wsource_breakdown:
+        funnel_text += "\n• 来源: " + ", ".join(
+            f"{source}:{count}" for source, count in _wsource_breakdown.items()
+        )
     
     # 拒绝趋势
     rejections = report.get('rejection_trend') or {}
