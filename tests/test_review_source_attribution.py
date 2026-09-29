@@ -17,12 +17,18 @@ RAW_SOURCES = [
 
 def test_playbook_source_sql_separates_da_ue_confirmation():
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE t (raw_instruction_json TEXT)")
-    connection.executemany("INSERT INTO t VALUES (?)", [(raw,) for raw, _ in RAW_SOURCES])
+    # [rfc117_v2] decision_id 列: UE SKIP 行 raw_json 无 universe_expansion 字面量,
+    #   仅靠 decision_id 前缀归因 (真实 DB 9 条历史行实证)。
+    connection.execute("CREATE TABLE t (raw_instruction_json TEXT, decision_id TEXT)")
+    connection.executemany(
+        "INSERT INTO t VALUES (?, ?)",
+        [(raw, f"other:{i}") for i, (raw, _) in enumerate(RAW_SOURCES)]
+        + [('{"admission": {"verdict": "PASS"}}', "universe_expansion:2026-09-02:ADBT")],
+    )
     rows = connection.execute(
         f"SELECT ({playbook_source_sql()}) AS source FROM t ORDER BY rowid"
     ).fetchall()
-    assert [row[0] for row in rows] == [expected for _, expected in RAW_SOURCES]
+    assert [row[0] for row in rows] == [expected for _, expected in RAW_SOURCES] + ["UE直写"]
     assert src_expr() == playbook_source_sql()
 
 
@@ -42,25 +48,32 @@ def test_daily_signal_funnel_reports_source_direction(tmp_path, monkeypatch):
     connection = sqlite3.connect(db_path)
     connection.execute(
         "CREATE TABLE playbook_instructions "
-        "(date TEXT, direction TEXT, executed INTEGER, raw_instruction_json TEXT)"
+        "(date TEXT, direction TEXT, executed INTEGER, raw_instruction_json TEXT, "
+        "decision_id TEXT)"
     )
     connection.execute(
         "INSERT INTO playbook_instructions VALUES "
-        "('2026-09-29', 'BUY', 1, '{\"source\":\"deep_analysis\",\"origin\":\"ue_candidate\"}')"
+        "('2026-09-29', 'BUY', 1, '{\"source\":\"deep_analysis\",\"origin\":\"ue_candidate\"}', 'DA-x')"
     )
     connection.execute(
         "INSERT INTO playbook_instructions VALUES "
-        "('2026-09-29', 'SELL_SHORT', 0, '{\"source\":\"universe_expansion\"}')"
+        "('2026-09-29', 'SELL_SHORT', 0, '{\"source\":\"universe_expansion\"}', 'universe_expansion:2026-09-29:XYZ')"
+    )
+    # [rfc117_v2] UE SKIP 行: raw_json 无源字面量, 仅 decision_id 前缀可归因
+    connection.execute(
+        "INSERT INTO playbook_instructions VALUES "
+        "('2026-09-29', 'SKIP', 0, '{\"admission\": {\"verdict\": \"PASS\"}}', 'universe_expansion:2026-09-29:ADBT')"
     )
     connection.commit()
     connection.close()
     generator = DailyReviewGenerator()
     monkeypatch.setattr(generator, "db_path", db_path)
     funnel = generator._get_signal_funnel("2026-09-29")
-    assert funnel["source_attribution_version"] == "rfc117_v1"
+    assert funnel["source_attribution_version"] == "rfc117_v2"
     assert funnel["by_source_direction"] == {
         "DA-UE确认·BUY": 1,
         "UE直写·SELL_SHORT(未执行)": 1,
+        "UE直写·SKIP(未执行)": 1,
     }
 
 
@@ -69,11 +82,12 @@ def test_weekly_signal_funnel_reports_source_direction(tmp_path, monkeypatch):
     connection = sqlite3.connect(db_path)
     connection.execute(
         "CREATE TABLE playbook_instructions "
-        "(date TEXT, direction TEXT, executed INTEGER, raw_instruction_json TEXT)"
+        "(date TEXT, direction TEXT, executed INTEGER, raw_instruction_json TEXT, "
+        "decision_id TEXT)"
     )
     connection.execute(
         "INSERT INTO playbook_instructions VALUES "
-        "('2026-09-28', 'BUY', 1, '{\"source\":\"deep_analysis\",\"origin\":\"ue_candidate\"}')"
+        "('2026-09-28', 'BUY', 1, '{\"source\":\"deep_analysis\",\"origin\":\"ue_candidate\"}', 'DA-y')"
     )
     connection.commit()
     connection.close()
@@ -81,7 +95,7 @@ def test_weekly_signal_funnel_reports_source_direction(tmp_path, monkeypatch):
     monkeypatch.setattr(generator, "db_path", db_path)
     monkeypatch.setattr(generator, "output_dir", tmp_path)
     funnel = generator._get_weekly_signal_funnel("2026-09-28", "2026-09-29")
-    assert funnel["source_attribution_version"] == "rfc117_v1"
+    assert funnel["source_attribution_version"] == "rfc117_v2"
     assert funnel["by_source_direction"] == {"DA-UE确认·BUY": 1}
 
 

@@ -203,7 +203,7 @@ class WeeklyReviewGenerator:
                 'by_direction_strength': by_direction,
                 'by_source_direction': aggregate_source_direction(rows),
                 'source': 'playbook_instructions',
-                'source_attribution_version': 'rfc117_v1',
+                'source_attribution_version': 'rfc117_v2',
             }
         except Exception as e:
             return {'total_decisions': 0, 'error': str(e)}
