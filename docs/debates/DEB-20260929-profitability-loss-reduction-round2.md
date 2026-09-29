@@ -697,3 +697,22 @@ def _normalize_earnings_phase(time_of_day) -> str:
 | git 状态 | §12 代码 + §12/13/14 文档**均未提交**（服务已运行该代码） | 同 §13.4：待用户指令统一提交 |
 
 > 归属：§14 由第二 agent 于 2026-09-30 00:40 CST 复查写入；探针/宽网格脚本 `/root/.hermes/cache/scratch/wide_grid_runner_cf.py`（只读，复用生产函数）。**未改任何生产码、未提交、未重启**（§14.1 修复补丁待用户裁决后落地）。
+
+### 14.7 §14.1 修复落地记录（2026-09-30 06:30 CST，用户"继续"授权）
+
+| 项 | 内容 |
+|---|---|
+| 修法 | `overnight_decision.py` 内联 `_normalize_earnings_phase`（与 `EXEC._parse_earnings_phase` **同口径**，app/ 不反向依赖 scripts/）；`_earnings_night_info` 用它替代 `.strip().upper()` 字面量比较。空/双相 → `UNKNOWN`，末尾 fail-closed 不当财报夜 |
+| 新增测试 | 4 个真值域回归（`test_eod_depth_gate_shadow.py`）：生产值域出 True / UNKNOWN fail-closed / 与单一真源同口径契约 / 端到端 emit 落盘 |
+| `earnings_night_would_revoke` | **不改语义**——grep 全仓零下游消费者（仅他 agent 测试断言），改名/改逻辑无收益且撞既有契约；只在 payload 处加注释澄清"纯别名，不含深水条件" |
+| 归一一致性 | 10/10 同口径（`pre-market→BMO`、`post-market→AMC`、`''`/`N/A`→`UNKNOWN`、大小写与 `post_market`/`after-hours` 变体全覆盖） |
+| **端到端实证** | 生产真实 guard + 19 只财报票：修复前 **True=0/False=19** → 修复后 **True=8/False=11/null=0** |
+| False=11 语义分解 | 11 只 BMO（report 当日 arm → 风险夜是**前一晚**，当日不算财报夜 = 设计正确）+ 1 只 UNKNOWN（CCL 空值 fail-closed）。**零未解释项** |
+| **测试有效性验证** | 临时回退旧实现 → **3 FAILED**（新测试真能抓死字段，非装饰）；恢复 → 全绿 |
+| 回归 | 15 passed（该文件）/ 76 passed（5 个直接相关）/ **1096 passed**（`tests/playbook/` + overnight_annotation + patient_exit + `tests/scripts/test_eth_event_plan.py`，含单一真源契约钉） |
+| 提交 | `db3c0589f`（含他 agent §12 落地一并入库，归属在 commit message 逐行标明；`README.md` 是他的，未 add） |
+| 重启 | 06:30:29 CST，PID 3360870，前置核过（18:29 ET 盘后 / ALK 距 SL −5.1%、COIN −4.9% 非临近 / 归属已核）。启动 ERROR/Traceback **真实计数 0**（awk 有输出，非空输入假绿）；财报日历 19 只加载、ALK/COIN reconciler 识别为 playbook 自管跳过补录、position_sync ✓、优雅关闭退订 14 只无槽位泄漏 |
+| §14.5 副作用自愈 | 生产重启已刷新 `earnings_guard_feed.json`（`last_update=2026-09-29T18:30:42-04:00`、`n_symbols=19`），与我的"下次刷新即覆盖"评估一致 |
+| 生效 | F2 财报夜豁免影子从下一个 EOD arm 起开始积累**有效**样本（`is_earnings_night` 可出 True），轴恢复可裁决 |
+
+> 教训登记（已写入 memory 死门检测第④型）：**判据字面量 ≠ 生产值域 ⇒ 恒 False**；合成测试用"对"的值会绕过缺陷（72 passed 假绿）。凡"语义正确"的核查结论，必须用**端到端活体探针看落盘真值**背书，不能只验分支逻辑。
