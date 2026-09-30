@@ -74,3 +74,40 @@ def compute_entry_band(
         low = e * (1 - knife)
         high = e * (1 + chase)
     return round(low, 4), round(high, 4)
+
+
+def normalize_chase_cap(direction: str, entry_price, cap) -> Tuple[object, bool]:
+    """[RFC-120 2026-09-30] chase_cap 语义倒挂归一化 — DA skill 写入侧与执行层
+    chase 门共用的 SSOT (双侧必须同源, 防归一口径漂移)。
+
+    规格语义 (entry_routing.chase_cap_violated): BUY cap=上限(价>cap拦, 必须>入场);
+    SHORT cap=下限(价<cap拦, 必须<入场)。病灶: LLM 常把 SHORT 的 cap 填成
+    invalidation 的上破失效位 (上界语义) → 下单价天然低于它 → 出生即违例 =
+    结构性死锁 (9/4 enforce 上线后 born-violated 空头 18/18 零执行, 对照合规组
+    33/24; 9/30 实证 BE cap=302/entry=298, KMX 63/60.5, TSLA 358/355, TSLA
+    单指令空转 37+ 轮)。倒挂值零信息增量 — 上破失效位已由 stop_loss/invalidation
+    承担 → 确定性退回入场带顺势沿 (与 UE 约定 LONG=entry_high/SHORT=entry_low
+    同口径的扁平带): BUY→entry×(1+CHASE), SHORT→entry×(1-CHASE)。
+
+    Returns:
+        (effective_cap, normalized)。cap/entry 缺失或畸形 → 原样返回不判
+        (与无 cap 指令现状行为一致, 零行为变更); 已合规 → 原样返回。纯函数。
+    """
+    try:
+        c = float(cap) if cap not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        c = None
+    if c is None or c <= 0:
+        return cap, False
+    try:
+        e = float(entry_price) if entry_price not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        e = None
+    if e is None or e <= 0:
+        return cap, False
+    d = str(direction or "").upper()
+    if d in ("BUY", "LONG") and c <= e:
+        return round(e * (1 + CHASE_ZONE_PCT), 4), True
+    if d in ("SHORT", "SELL_SHORT") and c >= e:
+        return round(e * (1 - CHASE_ZONE_PCT), 4), True
+    return cap, False

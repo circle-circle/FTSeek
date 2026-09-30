@@ -45,6 +45,12 @@ _BAR_STALL_SINCE: Dict[str, float] = {}
 _CHASE_CAP_ROUNDS: Dict[str, int] = {}
 _CHASE_CAP_ROUNDS_MAX = 512
 
+# [RFC-120 2026-09-30] 倒挂 cap 归一化日志防重集 (每指令进程内只报一次 warning,
+#   否则逐轮刷屏 — 归一化本身逐轮幂等, 只有首次值得报)。有界同 _CHASE_CAP_ROUNDS 思路,
+#   指令量级 ~10²/日, 进程重启清零可接受 (重启后重报一次)。
+_CC_NORM_LOGGED: set = set()
+_CC_NORM_LOGGED_MAX = 1024
+
 
 def _chase_cap_round_bump(inst_id) -> int:
     """该指令**进程内累计**被 chase_cap 拦截的轮次 (从 1 起)。见上方"刻意不写 try/except"。"""
@@ -54,6 +60,30 @@ def _chase_cap_round_bump(inst_id) -> int:
         _CHASE_CAP_ROUNDS.pop(next(iter(_CHASE_CAP_ROUNDS)), None)
     _CHASE_CAP_ROUNDS[key] = rounds
     return rounds
+
+
+def _write_round_skip_reason(inst: Dict[str, Any], reason: str) -> None:
+    """[RFC-120 P1-4 2026-09-30] 逐轮拦截门的 skip_reason 回写 (非终态, 下轮复评)。
+
+    根因: VWAP方向门/证伪斜率门拦截只发遥测不落库 → EOD shadow_tracker 兜底盖
+      "未触发 (no_trigger)" 误导标签, 诊断报告分不清"门拦截"与"价格未到"
+      (9/30 LITE 被 VWAP 门拦 13 轮 skip_reason 全程空白, 审计靠翻日志才归因)。
+    纪律: ① 值不入 INVALIDATED_SKIP_REASONS (非终态, 头检精确匹配不受影响);
+      ② 既有值同前缀则跳过 (每轮重评不重复写库); ③ 执行成交时 db 层不变式
+      (executed=1 → skip_reason 清空) 照常兜底; ④ 异常只 warn 不影响拦截。
+    """
+    try:
+        _cur = str(inst.get("skip_reason") or "")
+        _prefix = reason.split("(")[0]
+        if _cur.startswith(_prefix):
+            return
+        from app.playbook.db import PlaybookDB as _PBDB
+        _PBDB().update_instruction_tracking(inst["id"], {"skip_reason": reason})
+        inst["skip_reason"] = reason
+    except Exception as _sr_err:
+        logger.warning(
+            f"[playbook] 门拦截 skip_reason 回写失败 {inst.get('symbol')} "
+            f"(不影响拦截): {_sr_err}")
 
 # 2026-08-06 (DEB-20260806 终裁): 锚限价影子幂等集 ((inst_id, date) — 每指令触发只落一行).
 _LIMIT_SHADOW_EMITTED: set = set()
@@ -4657,6 +4687,69 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 _dir = inst.get("direction", "")
                 _new_entry = float((_reprice_params or {}).get("entry_price")
                                    or inst.get("entry_price") or 0.0)
+                # ── [RFC-120 2026-09-30] 倒挂 cap 归一化 (执行层防线, 与 DA skill 写入侧同源) ──
+                # 病灶: LLM 把 SHORT 的 cap 填成 invalidation 上破失效位 (上界语义) →
+                #   下单价天然低于它 → 出生即违例死锁 (9/4 后 born-violated 空头 18/18
+                #   零执行 vs 合规组 24/33; 9/30 BE/KMX/TSLA 全灭, TSLA 空转 37+ 轮)。
+                #   BUY 侧同病 18 条零执行 (cap<=entry 恒违例) — 归一化方向对称。
+                # 处置: 倒挂值零信息增量 (上破失效位已由 stop_loss/invalidation 承担) →
+                #   确定性退回入场带顺势沿 (=生成入场价×(1∓CHASE), 与 UE 约定同口径)。
+                # 锚纪律: 必须用**生成时**入场价, 不可用 DB entry_price 列 (reprice 逐轮
+                #   覆盖, UE P3.1 实证) — 用现价当锚会让 cap 追着价格跑 → 门恒放行 = 静默
+                #   废闸; 也不可用 band 沿当锚直接喂归一 (entry_low 已含 ×0.95, 二次折价,
+                #   且倒挂判定必须对生成入场价而非 band 沿, 否则合规 cap∈(entry_low,entry)
+                #   被误判)。优先级: ① raw.planned_entry (生成值, DA直写/UE P3.1 后落库)
+                #   ② band 沿反推生成价 (entry_low/(1-CHASE) | entry_high/(1+CHASE),
+                #   "reprice 永不覆盖"列) ③ confirmation.price_level (首批限价≈生成入场)。
+                #   全部缺失 → 不归一 (维持原 cap 原行为, 宁可继续拦也不静默放行)。
+                # 异常 fail-open 到原值 (归一失败维持现状拦截, 不放行未判定单)。
+                _cc_orig = _cc_f
+                _cc_normed = False
+                if _cc_f is not None:
+                    try:
+                        from app.playbook.entry_band import (
+                            normalize_chase_cap as _cc_norm,
+                            CHASE_ZONE_PCT as _cc_chase_pct,
+                        )
+                        _rawj_cc = inst.get("raw_instruction_json")
+                        if isinstance(_rawj_cc, str):
+                            try:
+                                _rawj_cc = json.loads(_rawj_cc or "{}")
+                            except Exception:
+                                _rawj_cc = {}
+                        if not isinstance(_rawj_cc, dict):
+                            _rawj_cc = {}
+                        _is_short_cc = "SHORT" in str(_dir or "").upper()
+                        _gen_cc = _rawj_cc.get("planned_entry")
+                        if not _gen_cc:
+                            _edge_cc = (inst.get("entry_low") if _is_short_cc
+                                        else inst.get("entry_high"))
+                            try:
+                                _gen_cc = (float(_edge_cc) / (1 - _cc_chase_pct)
+                                           if _is_short_cc
+                                           else float(_edge_cc) / (1 + _cc_chase_pct)
+                                           ) if _edge_cc else None
+                            except (TypeError, ValueError):
+                                _gen_cc = None
+                        if not _gen_cc:
+                            _conf_cc = _sem_cc.get("confirmation") or {}
+                            if isinstance(_conf_cc, dict):
+                                _gen_cc = _conf_cc.get("price_level")
+                        if _gen_cc:
+                            _cc_f, _cc_normed = _cc_norm(_dir, _gen_cc, _cc_f)
+                        if _cc_normed and str(inst.get("id")) not in _CC_NORM_LOGGED:
+                            if len(_CC_NORM_LOGGED) >= _CC_NORM_LOGGED_MAX:
+                                _CC_NORM_LOGGED.clear()  # 有界防增长, 清空重报可接受
+                            _CC_NORM_LOGGED.add(str(inst.get("id")))
+                            logger.warning(
+                                f"[playbook] chase_cap倒挂归一: {inst.get('symbol')} {_dir} "
+                                f"原cap=${_cc_orig} (违反方向语义: "
+                                f"{'SHORT cap必须<入场' if _is_short_cc else 'BUY cap必须>入场'}) "
+                                f"→ 归一为入场带顺势沿 ${_cc_f} (RFC-120, 每指令只报一次)")
+                    except Exception as _ccn_err:
+                        logger.warning(
+                            f"[playbook] chase_cap 归一化异常 {inst.get('symbol')} "
+                            f"(维持原 cap 判定): {_ccn_err}")
                 if _cc_violated(_dir, _new_entry, _cc_f):
                     from pathlib import Path as _Pcc
                     from datetime import datetime as _dtcc
@@ -4669,7 +4762,9 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     #   "chase_cap_violation" 不变 (replay 按存在性判, 零改动)。
                     logger.warning(
                         f"[playbook] chase_cap违例遥测: {inst['symbol']} 下单价=${_new_entry:.2f} "
-                        f"越过禁追线 ${_cc_f:.2f} (enforce={'ON' if _cc_enforce else 'OFF'}"
+                        f"越过禁追线 ${_cc_f:.2f}"
+                        f"{f' (倒挂cap已归一, 原cap=${_cc_orig:.2f})' if _cc_normed else ''}"
+                        f" (enforce={'ON' if _cc_enforce else 'OFF'}"
                         f"{'' if _reprice_params else ', re-price未生效判定用DB原值'})")
                     # G-06: 遥测写盘独立 try — 写盘失败 (磁盘满/权限) 不得冒泡到外层 except,
                     #   否则 _cc_gate_ok=False 会让下方 fail-close 误杀一笔"已判定未违例"或
@@ -4688,6 +4783,10 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                 "symbol": inst.get("symbol"), "direction": _dir,
                                 "entry_archetype": _sem_cc["entry_archetype"],
                                 "chase_cap_price": _cc_f,
+                                # [RFC-120] 归一化留痕: cap_inverted=出生倒挂, orig_cap=归一前原值 —
+                                #   replay/月报可切分"真追价违例"与"倒挂归一后仍违例"两人群。
+                                "cap_inverted": bool(_cc_normed),
+                                "orig_cap_price": (_cc_orig if _cc_normed else None),
                                 "repriced_entry": round(_new_entry, 4),
                                 # P0-A: 行级标记违例时 enforce 是否生效 —
                                 #   replay/月报可区分"记录期违例"与"拦截期违例"。
@@ -4720,13 +4819,19 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             entry=_new_entry, size=inst.get("position_size") or 0,
                             notional=0.0,
                             extra={"chase_cap_price": _cc_f,
+                                   "cap_inverted": bool(_cc_normed),
                                    "repriced_entry": round(_new_entry, 4)})
                         # 轮次计数在 enforce 动作**之后**取 (纯观测, 不得影响上面的判定/落痕)
                         _cc_rounds = _chase_cap_round_bump(inst["id"])
+                        # [RFC-120] 文案方向分流: 原「回落帽下即放行」对 SHORT 说反 —
+                        #   SHORT cap=下限, 要**涨回帽上**才放行。误导文案让值班人把
+                        #   结构性死锁误读成"等回落"。
+                        _cc_release = ("涨回帽上即放行" if str(_dir).upper() != "BUY"
+                                       else "回落帽下即放行")
                         logger.warning(
                             f"[playbook] chase_cap拦截: {inst['symbol']} {_dir} "
                             f"下单价=${_new_entry:.2f} 越过禁追线 ${_cc_f:.2f} "
-                            f"→ 本轮跳过 (每~5min重评, 回落帽下即放行; "
+                            f"→ 本轮跳过 (每~5min重评, {_cc_release}; "
                             f"同指令累计第{_cc_rounds}轮; P0-A enforce)")
                         skipped_count += 1
                         continue
@@ -6225,6 +6330,14 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 f"dev={_vwap_dev:+.4f} dir={'SHORT' if is_short else 'BUY'} (当日VWAP逆侧)"
             )
             _emit_trigger_miss("vwap_gate_block", current_price)
+            # [RFC-120 P1-4] skip_reason 回写 (非终态, 下轮复评) — 修复 LITE 9/30 型
+            #   归因黑洞: 门拦 13 轮 DB 全程空白 → EOD 兜底盖 "未触发 (no_trigger)"
+            #   误导标签。值不入 INVALIDATED_SKIP_REASONS, 头检/成交清库不变式不受影响。
+            if inst.get("id") is not None:
+                _write_round_skip_reason(
+                    inst,
+                    f"vwap_gate_blocked(dev={round(_vwap_dev * 100, 2)}%,"
+                    f"{'逆SHORT' if is_short else '逆BUY'},下轮复评)")
             # 影子组合 (2026-08-09): VWAP 门拦下的本会触发单 → 影子入场 (A/B gated 臂全覆盖)
             _shadow_portfolio_emit(inst, symbol, is_short, "vwap_gate", _entry_path,
                                    current_price, entry_price, _vwap_dev)
@@ -6259,6 +6372,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                     if _do_block:
                         triggered = False
                         _fals_blocked = True
+                        # [RFC-120 P1-4] skip_reason 回写 (非终态) — 同 VWAP 门, 修 JBL 9/30 型归因黑洞
+                        if inst.get("id") is not None:
+                            _write_round_skip_reason(
+                                inst,
+                                f"falsification_slope_blocked(slope={_fals_slope:+.4f},"
+                                f"下轮复评)")
                     logger.info(
                         f"[playbook] 证伪门·VWAP斜率: {symbol} slope={_fals_slope:+.4f} "
                         f"逆 {'SHORT' if is_short else 'BUY'} (tol={_slope_tol}) "

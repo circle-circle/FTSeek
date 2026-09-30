@@ -161,9 +161,17 @@ def test_helper_is_exception_free_and_io_free():
 
 
 def test_enforce_decision_untouched():
-    """零行为变更钉: 判定/落痕/终态三件套的原文案与次序一字未动。"""
+    """零行为变更钉: 判定/落痕/终态三件套的原文案与次序一字未动。
+
+    [RFC-120 2026-09-30] 放行文案升级为方向分流: SHORT cap=下限, "回落帽下即放行"
+    对空单方向说反 → 值班人把结构性死锁误读成"等回落"。改钉新契约: 两个方向
+    文案字面量都必须在源码中, 且由 _dir 分流选择。
+    """
     assert "if _cc_violated(_dir, _new_entry, _cc_f):" in _SRC_PIPE
     assert 'chase_cap_enforced(reprice=' in _SRC_PIPE
     assert '"enforced": bool(_cc_enforce)' in _SRC_PIPE
-    assert "→ 本轮跳过 (每~5min重评, 回落帽下即放行; " in _SRC_PIPE
+    assert "→ 本轮跳过 (每~5min重评, {_cc_release}; " in _SRC_PIPE
+    assert '"涨回帽上即放行"' in _SRC_PIPE   # SHORT 分支
+    assert '"回落帽下即放行"' in _SRC_PIPE   # BUY 分支
+    assert 'if str(_dir).upper() != "BUY"' in _SRC_PIPE  # 方向分流判据
     assert "P0-A enforce)" in _SRC_PIPE
