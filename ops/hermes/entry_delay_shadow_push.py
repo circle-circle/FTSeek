@@ -28,7 +28,7 @@ CF_LATEST = REPO / "data/shadow/pullback_limit_replay_v2_latest.json"
 DB = REPO / "data/ftseek_us.db"
 
 GRAVE_MFE = 0.3          # 墓地线: MFE<0.3% = 入场即错族
-FORWARD_START = "2026-09-09"  # DEB-20260909 影子落地日, forward 攒样窗起点 (裁决日以 forward 冻结值为准)
+FORWARD_START = "2026-09-10"  # forward 攒样窗起点 — 与结算脚本 FORWARD_SINCE 冻结口径对齐 (RFC-081 §六盲区1第4点: 2026-09-10=DEB §5.2 预注册攒样日, 常量锁死; 2026-09-30 复核修正, 原 09-09 系落地日误当起点, 致日报 forward 行与 latest.json 冻结值口径分裂)
 STALE_HOURS = 26         # 结算 cron 05:58, 推送 06:10; >26h = 昨晨结算缺失
 D_TARGET_N = 40          # D案配对裁决门槛 (RFC-081 批注二②: 统一 n≥40 最严优先, 溯源 DEB-20260907 §4.9; 30=中间态只说方向不得提请裁决)
 B_TARGET_N = 20          # B案 forward 毕业门槛 (DEB §5.2: n≥20)
@@ -68,8 +68,10 @@ def main() -> int:
     d_dl = [r for r in day if r.get("still_triggers")]
     saved = -sum(r.get("pnl_net") or 0 for r in d_av)
     opp = sum((r.get("opp_cost_pct") or 0) / 100 * (r.get("notional") or 0) for r in d_dl)
-    lines.append(f"结算日 {batch_day}: n={len(day)} | 回避 {len(d_av)} 笔(净省{_fmt_usd(saved)})"
-                 f" / 照进 {len(d_dl)} 笔(多付{_fmt_usd(opp)}) → 假想差 {_fmt_usd(saved - opp)}")
+    # 标签语义 (纪律7·8/9 实锤): saved=-Σ回避笔pnl_net, 正=回避的全是亏损单(门省钱),
+    # 负=回避笔是盈利单(门=放弃利润)。原「净省$-144」自相矛盾, 改印Σpnl原值+同句方向注记。
+    lines.append(f"结算日 {batch_day}: n={len(day)} | 回避 {len(d_av)} 笔(回避笔净PnL{_fmt_usd(-saved)}: 正=门放弃盈利/负=门省钱)"
+                 f" / 照进 {len(d_dl)} 笔(多付{_fmt_usd(opp)}) → 假想差 {_fmt_usd(saved - opp)} (负=门净亏)")
     if not day:
         lines[-1] += " (零成交日)"
 
