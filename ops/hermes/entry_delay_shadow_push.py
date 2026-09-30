@@ -147,6 +147,28 @@ def main() -> int:
             # 裁决窗口开启提醒 (n 达门槛 → 提请用户裁决, 不自动接线)
             if n_p >= D_TARGET_N:
                 lines.append(f"🔔 D案配对样本已达门槛 n={n_p}≥{D_TARGET_N} — 裁决材料齐备, 提请裁决 (读 RFC-081 §六 + ADR-035 §五.2 判读规则)")
+            # [RFC-118 2026-09-30 用户裁「按建议执行」] 可达性门模拟臂 forward 攒样行
+            #   (record-only 观测, 门未接线; G3 门槛=费用缺口bp 动态算, 同屏防手算错尺)
+            gs = s.get("rfc118_gate_sim") or {}
+            if gs.get("legs"):
+                try:
+                    _db2 = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+                    _r = _db2.execute(
+                        "SELECT COUNT(*), SUM(pnl_net), AVG(entry_price*quantity)"
+                        " FROM trade_records WHERE trade_date>=date('now','-30 day')"
+                        " AND source_type='PLAYBOOK_SIM' AND entry_price>0 AND quantity>0").fetchone()
+                    _db2.close()
+                    gap_bp = (round(-_r[1] / _r[0] / _r[2] * 10000, 1)
+                              if _r and _r[0] and _r[2] else None)
+                except Exception:  # noqa: BLE001
+                    gap_bp = None
+                _legs_txt = " | ".join(
+                    f"θ={th}: n={(_fw or {}).get('n_paired', 0)}/40"
+                    f" {(_fw or {}).get('bp_per_trade_vs_market') if (_fw or {}).get('bp_per_trade_vs_market') is not None else '–'}bp"
+                    for th, _blk in sorted(gs["legs"].items())
+                    for _fw in [(_blk or {}).get("forward")])
+                lines.append(f"RFC118可达性门(模拟未接线): {_legs_txt}"
+                             + (f" | G3门槛=近30d费用缺口{gap_bp}bp" if gap_bp is not None else ""))
         else:
             lines.append("D案限价路由: latest 无 n_paired 字段 (replay cron 05:47 待跑?)")
     except FileNotFoundError:

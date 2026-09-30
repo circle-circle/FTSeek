@@ -149,6 +149,14 @@ git revert <shadow-commit>   # 影子阶段: 删 gated_arm 读数, 生产路径�
 
 ## 实施记录
 
-**实施日期**: 待裁决
-**Commit**: 待填
-**验证结果**: 待填
+**影子阶段实施日期**: 2026-09-30 (用户裁「按建议执行」= 批准影子阶段; 接线仍另裁)
+**Commit**: 见 git log [RFC-118] 影子实施提交
+**实施内容 (全部 record-only, 生产路径零触碰)**:
+1. `scripts/cf_pullback_limit_replay.py`: `_rfc118_gate_sim()` 模拟臂 (θ=0.25/0.5 双腿 × forward≥2026-09-30 / 参照窗分层; 门内限价过期=放弃, 门外+ATR缺失 fail-open 回退市价; G2 官方分母 / G5 RFC-081 冻结分母 / G6 双口径) + 行级 `notional` 字段 (bp 换算分母) + summary `rfc118_gate_sim` 块 + 读数卡两行观测 (只印不判)
+2. `ops/hermes/entry_delay_shadow_push.py`: 日报加 RFC118 双腿 forward 攒样行 + G3 门槛 (近30d PLAYBOOK_SIM 费用缺口 bp, DB 动态算) — 生产镜像 sha256 同步
+3. `tests/test_cf_pullback_limit_replay_v2.py`: +4 契约钉 (臂语义/fail-open与人群过滤/θ双腿与forward分离/summary+读数卡接线+adr035_criteria 判据零改动钉), 48 passed
+4. 台账 `docs/CONTROL-LOOP-LEDGER.md`: crontab-cf-pullback-window 行 + dac32b02d402 行扩展留痕
+
+**验证结果**: ①窗模式实跑 rc=0, 参照窗读数与 R1 离线预验证逐字吻合 (θ0.25 +2.62$/4.8bp/fill0.706, θ0.5 +8.14$/15.0bp/fill0.5); ②forward 腿 n=0 (窗起点 2026-09-30, 明日 cron 起攒样, 按 9 月节奏 ~4笔/日 → n≥40 约需 3-4 周); ③推送脚本实跑输出正常, G3 门槛动态值 8.3bp; ④守卫+契约测试 89 passed (test_ops_scripts_sync 3 + control_loop_ledger 10 + cf_pullback_v2 48 + entry_archetype_routing 21+7); ⑤`adr035_criteria` 仍恰为 C1-C4 四条 (契约钉锁死, 判据零改动)
+
+**注**: 接线阶段 (pipeline L4272 消费点 gate + entry_routing.reachability_gate 纯函数 + instruction_generator H3 源头校验) 按本 RFC「详细设计」节待 forward 判据过门后另走裁决, 本次未实施。

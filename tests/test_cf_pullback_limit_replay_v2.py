@@ -660,3 +660,98 @@ def test_readout_card_says_nothing_can_be_concluded_without_pairs():
     row = _v2row(symbol="US.UBER", cf_net=152.22, act_net=None, db_net=None, paired=False)
     card = "\n".join(M.summarize_v2([row], _money_pairs(bias=8.0))["readout_card"])
     assert "什么都不能下结论" in card and "没测到" in card
+
+
+# ── RFC-118 可达性门模拟臂契约 (2026-09-30, 用户裁「按建议执行」) ──────────
+# 锁的是模拟语义与口径纪律, 不是数值: ①门内限价(过期=放弃,绝不降级市价) ②门外/ATR缺失
+# fail-open 回退市价臂 ③只在 paired 群上算 ④G2 官方分母 ⑤G5 冻结分母 ⑥θ双腿+forward/参照分离
+
+def _gate_row(symbol, date, dist, status, cf_net, act_net, db_net, notional=5000.0):
+    r = _v2row(symbol=symbol, date=date, status=status,
+               cf_net=(cf_net if cf_net is not None else 0.0),
+               act_net=act_net, db_net=db_net,
+               paired=(act_net is not None))
+    r["reach_dist_atr"] = dist
+    r["notional"] = notional
+    if status == "expired_unfilled":
+        r["v2"]["cf_net"] = None  # expired 臂无 cf 成交 (paired_diff 字段本模拟不消费)
+    return r
+
+
+def test_rfc118_gate_sim_arms_semantics():
+    """门内entered=cf_net / 门内expired=放弃记0 / 门外=act回退 — 差值逐笔可对账。"""
+    rows = [
+        _gate_row("US.A", "2026-10-01", 0.2, "entered", 20.0, 10.0, 10.0),   # 门内成交: diff=+10
+        _gate_row("US.B", "2026-10-01", 0.3, "expired_unfilled", None, -5.0, 8.0),  # 门内过期: diff=0-(-5)=+5
+        _gate_row("US.C", "2026-10-01", 0.9, "expired_unfilled", None, 30.0, 30.0),  # 门外回退: diff=0
+        _gate_row("US.D", "2026-10-01", 0.9, "entered", 3.0, 3.0, 3.0),       # 门外entered也回退市价: diff=0
+    ]
+    sim = M._rfc118_gate_sim(rows, thetas=(0.5,), forward_since="2026-09-30")
+    fw = sim["legs"]["0.5"]["forward"]
+    assert fw["n_paired"] == 4
+    # (10 + 5 + 0 + 0)/4 = 3.75
+    assert fw["per_trade_usd"] == 3.75
+    ig = fw["in_gate"]
+    assert (ig["n_entered"], ig["n_expired"], ig["n_routed"]) == (1, 1, 2)
+    assert ig["c3_fill_official_denom"] == 0.5  # 官方分母 = 门内路由腿
+    assert fw["outside_gate_n"] == 2
+    # G5: 门内 expired 且 actual_net>0 → 1/1 (US.B db_net=8>0)
+    assert ig["miskill_expired"]["n_win"] == 1 and ig["miskill_expired"]["pass"] is False
+    # G6 双口径: DB 账本 +8 / 同尺 -5 (act_replay_net=-5<0 → 0)
+    assert ig["forgone_actual_net_usd"] == 8.0 and ig["forgone_same_ruler_usd"] == 0.0
+    # bp 换算: 3.75/5000*1e4 = 7.5
+    assert fw["bp_per_trade_vs_market"] == 7.5
+
+
+def test_rfc118_gate_fail_open_and_population_filters():
+    """ATR缺失(dist=None)→fail-open回退市价; skip_no_level 与未paired 不进人群。"""
+    rows = [
+        _gate_row("US.X", "2026-10-01", None, "expired_unfilled", None, 12.0, 12.0),  # ATR缺失
+        _v2row(symbol="US.Y", date="2026-10-01", status="skip_no_level",
+               cf_net=0.0, act_net=4.0, db_net=4.0),  # 无确认位不进池
+        _v2row(symbol="US.Z", date="2026-10-01", status="entered",
+               cf_net=9.0, act_net=None, db_net=None, paired=False),  # 未paired不进池
+    ]
+    rows[0]["notional"] = 4000.0
+    sim = M._rfc118_gate_sim(rows, thetas=(0.5,), forward_since="2026-09-30")
+    fw = sim["legs"]["0.5"]["forward"]
+    assert fw["n_paired"] == 1          # 只有 US.X
+    assert fw["per_trade_usd"] == 0.0   # fail-open 回退 = diff 恒 0
+    assert fw["outside_gate_n"] == 1    # 计入门外(回退), 不计入门内
+
+
+def test_rfc118_gate_theta_legs_and_forward_split():
+    """θ双腿结构齐全; forward_since 之前的行只进参照窗不进 forward (防 in-sample 冒充攒样)。"""
+    rows = [
+        _gate_row("US.OLD", "2026-09-15", 0.4, "entered", 30.0, 0.0, 0.0),   # 参照窗内
+        _gate_row("US.NEW", "2026-10-01", 0.4, "entered", 10.0, 0.0, 0.0),    # forward 内
+    ]
+    sim = M._rfc118_gate_sim(rows, thetas=(0.25, 0.5), forward_since="2026-09-30")
+    assert set(sim["legs"]) == {"0.25", "0.5"}
+    # θ=0.25: 两行 dist=0.4 均门外 → diff=0
+    l25 = sim["legs"]["0.25"]
+    assert l25["forward"]["per_trade_usd"] == 0.0
+    assert l25["full_window_insample_reference"]["n_paired"] == 2
+    # θ=0.5: 两行门内 entered → diff=cf-act
+    l5 = sim["legs"]["0.5"]
+    assert l5["forward"]["n_paired"] == 1 and l5["forward"]["per_trade_usd"] == 10.0
+    assert l5["full_window_insample_reference"]["n_paired"] == 2
+    assert l5["full_window_insample_reference"]["per_trade_usd"] == 20.0  # (30+10)/2
+    assert "不得作裁决依据" in sim["note"] and "禁窗内选边" in sim["rule"]
+
+
+def test_rfc118_gate_sim_wired_into_summary_and_card():
+    """summarize_v2 输出 rfc118_gate_sim 块, 读数卡含 RFC118 观测行 (只印不判, 不新增判据)。"""
+    rows = _rowsN(25, date="2026-10-01")
+    for r in rows:
+        r["reach_dist_atr"] = 0.3
+        r["notional"] = 5000.0
+    s = M.summarize_v2(rows, _money_pairs(bias=1.0))
+    assert "rfc118_gate_sim" in s
+    assert set(s["rfc118_gate_sim"]["legs"]) == {"0.25", "0.5"}
+    assert "G1" in s["rfc118_gate_sim"]["criteria"]
+    card = "\n".join(s["readout_card"])
+    assert "RFC118门θ=0.25(模拟,未接线)" in card and "RFC118门θ=0.5" in card
+    # 判据零改动钉: adr035_criteria 仍恰为 C1-C4 四条
+    assert set(s["adr035_criteria"]) == {"C1_n_ge_20", "C2_expectancy_improve_ge_30pct",
+                                         "C3_fill_rate_ge_50pct", "C4_mfe0_share_down"}

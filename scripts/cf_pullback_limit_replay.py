@@ -171,6 +171,102 @@ def _reachability(level, ref_price, atr_pct):
     return dist_atr, dev_pct, (ref_source or "unknown")
 
 
+def _rfc118_gate_sim(results, thetas=(0.25, 0.5), forward_since="2026-09-30"):
+    """[RFC-118 2026-09-30 用户裁「按建议执行」] 可达性门模拟臂 — record-only 读数, 不改判据不挪门槛.
+
+    模拟规则 V1 (ADR-035 合规): dist≤θ → 限价臂 (entered=cf_net, 过期=放弃记0, 绝不降级市价);
+    dist>θ 或 dist 不可判 (ATR缺失 fail-open) → 回退现状市价臂 (act_replay_net, 双臂同尺 L1a 口径)。
+    θ 双腿并行 (0.25=ADR-035 §五.2 子桶读数 / 0.5=§五.2 冻结桶界), 窗内禁选边 (DEB-20260930 R2)。
+    forward_since = 影子落地日, 之前的窗只作 in-sample 参照 (θ 腿离线预验证已用过该数据)。
+    G2 分母 = 门内路由腿 entered/(entered+expired), 与官方 C3=0.317 同源 (排除 skip_no_level)。
+    G5 误杀分母 = 门内 expired 且 actual_net>0 (RFC-081 §六冻结口径); G6 放弃经济双口径同屏。
+    """
+    legs = {}
+    for th in thetas:
+        def _leg(rows):
+            diffs, day_diffs, notionals = [], {}, []
+            in_entered = in_expired = 0
+            exp_n = exp_win = 0
+            forgone_db = forgone_sr = 0.0
+            outside_n = 0
+            for r in rows:
+                if r.get("status") == "skip_no_level":
+                    continue
+                v2 = r.get("v2") or {}
+                act = v2.get("act_replay_net")
+                if act is None:
+                    continue  # 只在 paired 群 (两臂同尺皆有) 上算, 口径纪律同 summarize_v2
+                if r.get("notional"):
+                    notionals.append(r["notional"])
+                d = r.get("reach_dist_atr")
+                inside = (d is not None and d <= th)  # ATR缺失 → fail-open 回退市价
+                if inside:
+                    if r.get("status") == "entered":
+                        in_entered += 1
+                        net = v2.get("cf_net")
+                        net = net if net is not None else 0.0
+                    else:
+                        in_expired += 1
+                        net = 0.0  # 门内过期=放弃 (ADR-035 绝不降级市价)
+                        exp_n += 1
+                        an = r.get("actual_net")
+                        if an is not None and an > 0:
+                            exp_win += 1
+                            forgone_db += an
+                        if act > 0:
+                            forgone_sr += act
+                else:
+                    outside_n += 1
+                    net = act
+                diff = net - act
+                diffs.append(diff)
+                day_diffs.setdefault(str(r.get("date"))[:10], []).append(diff)
+            n = len(diffs)
+            mean_notional = (sum(notionals) / len(notionals)) if notionals else None
+            per_trade = (sum(diffs) / n) if n else None
+            return {
+                "n_paired": n,
+                "per_trade_usd": round(per_trade, 2) if per_trade is not None else None,
+                "median_usd": round(sorted(diffs)[n // 2] if n % 2 else
+                                    (sorted(diffs)[n // 2 - 1] + sorted(diffs)[n // 2]) / 2, 2) if n else None,
+                "bp_per_trade_vs_market": (round(per_trade / mean_notional * 10000, 1)
+                                           if per_trade is not None and mean_notional else None),
+                "mean_notional_usd": round(mean_notional, 0) if mean_notional else None,
+                "day_clustered": _day_clustered_t(
+                    [sum(v) / len(v) for v in day_diffs.values()] if day_diffs else []),
+                "in_gate": {
+                    "n_routed": in_entered + in_expired,
+                    "n_entered": in_entered, "n_expired": in_expired,
+                    "c3_fill_official_denom": (round(in_entered / (in_entered + in_expired), 3)
+                                               if (in_entered + in_expired) else None),
+                    "miskill_expired": {"n_expired": exp_n, "n_win": exp_win,
+                                        "rate": round(exp_win / exp_n, 3) if exp_n else None,
+                                        "threshold_le": 0.40,
+                                        "pass": (exp_n == 0 or exp_win / exp_n <= 0.40)},
+                    "forgone_actual_net_usd": round(forgone_db, 2),
+                    "forgone_same_ruler_usd": round(forgone_sr, 2),
+                },
+                "outside_gate_n": outside_n,
+            }
+        legs[str(th)] = {
+            "forward": _leg([r for r in results
+                             if str(r.get("date"))[:10] >= forward_since]),
+            "full_window_insample_reference": _leg(results),
+        }
+    return {
+        "rule": ("dist≤θ→限价(过期=放弃,绝不降级市价); dist>θ或ATR缺失→回退现状市价臂 "
+                 "(RFC-118 V1, ADR-035合规); θ双腿并行禁窗内选边 (DEB-20260930 R2)"),
+        "forward_since": forward_since,
+        "criteria": ("G1 forward paired n≥40(每腿) | G2 门内C3 fill≥0.5(官方分母) | "
+                     "G3 bp_per_trade≥费用缺口bp(推送层动态算,同屏) | G4 日聚类df校正临界 | "
+                     "G5 门内expired误杀≤0.40(RFC-081冻结分母) | G6 forgone_same_ruler≤0; "
+                     "双腿各自独立过全门才呈裁, 窗内改θ=重新裁决"),
+        "legs": legs,
+        "note": ("record-only 模拟臂: 门未接线 (entry_archetype_routing_enabled=false 维持), "
+                 "full_window 腿系 in-sample 参照 (θ 腿选择已用该窗数据, 不得作裁决依据)"),
+    }
+
+
 def _day_clustered_t(daily_values):
     """[2026-09-16 用户裁「按照建议执行」] 宪章第 9 律读数 — 日聚类 t + MDE(80%).
 
@@ -400,6 +496,11 @@ def build_rows(db, date):
         row["reach_dist_atr"] = _dist_atr
         row["reach_dev_pct"] = _dev_pct
         row["reach_ref_source"] = (_ref_src if _dist_atr is not None or _dev_pct is not None else None)
+        # [RFC-118] bp 换算分母 (F6/H4 度量层): 名义额 = 实际成交价×数量 (缺则指令价×数量)
+        _np = r["actual_entry_price"] or r["entry_price"]
+        _nq = qty or meta.get("_qty")
+        row["notional"] = (round(float(_np) * float(_nq), 2)
+                           if _np and _nq else None)
 
         # ── v2: 双臂同尺重放 ──
         did = r["decision_id"] or ""
@@ -811,6 +912,17 @@ def _readout_card(s):
             f"│ D误杀(expired口径,门≤40%): {_mk['n_miskilled']}/{_mk['n_expired']}={_mk['miskill_rate']}"
             f"{' ✅' if _mk['pass'] else ' ❌'} | 不成交腿放弃实盘净利 {_mk['forgone_actual_net_usd']:+.2f}"
             f"{' (净放弃利润,躲烂单叙事打折)' if (_mk['forgone_actual_net_usd'] or 0) > 0 else ''}")
+    # [RFC-118 2026-09-30] 可达性门模拟臂读数 (record-only 观测行, 不新增判据不挪门槛)
+    _gs = s.get("rfc118_gate_sim") or {}
+    for _th, _legblk in sorted((_gs.get("legs") or {}).items()):
+        _fw = (_legblk or {}).get("forward") or {}
+        _ins = (_legblk or {}).get("full_window_insample_reference") or {}
+        _ig = _ins.get("in_gate") or {}
+        lines.append(
+            f"│ RFC118门θ={_th}(模拟,未接线): forward n={_fw.get('n_paired', 0)}/40 "
+            f"{_fw.get('bp_per_trade_vs_market', '?')}bp/笔 | 参照窗(样本内,不作裁决): "
+            f"n={_ins.get('n_paired')} {_ins.get('per_trade_usd', '?')}$/笔={_ins.get('bp_per_trade_vs_market', '?')}bp "
+            f"门内fill={_ig.get('c3_fill_official_denom')} 误杀={(_ig.get('miskill_expired') or {}).get('rate')}")
     # [2026-09-16 宪章第 9 律] pooled 与日聚类必须同屏 — 缺日聚类的裁决读数不完整。
     _dc = s.get("paired_diff_day_clustered")
     if _dc:
@@ -1080,6 +1192,8 @@ def summarize_v2(results, fidelity_pairs):
         #   区分"限价机制成交能力不足"(可达桶也败) vs "DA 确认位定价不可达"(仅不可达桶败)。
         #   可达定义 = reach_dist_atr ≤ 0.5 (预注册于 ADR-035 批注§五.2, 桶界不得事后调)。
         "c3_reachability_split": _c3_reachability_split(results),
+        # [RFC-118 2026-09-30 用户裁「按建议执行」] 可达性门模拟臂 (record-only, 不改判据)
+        "rfc118_gate_sim": _rfc118_gate_sim(results),
         # [2026-09-16 RFC-081盲区2/3 用户裁"要"] D分支误杀率 + expired 腿放弃经济 —
         #   盲区2: 误杀率分母**冻结为 expired_unfilled** (RFC-081 增补"误杀率≤40%"
         #   原文未定分母; expired 口径 = 限价没成交而实盘赚钱 = 真"错过", 全配对口径
