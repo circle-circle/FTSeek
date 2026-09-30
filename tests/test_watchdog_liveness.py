@@ -12,6 +12,7 @@ D4 (2026-09-14) 补 D3 的另一半: 那次挂死的 DA 进程被 reparent 后**
 回滚: 删本文件即可, 零生产代码依赖。
 """
 import importlib.util
+import logging
 import json
 import sqlite3
 import sys
@@ -135,6 +136,56 @@ def test_latch_table_entries_are_all_declared_with_reason():
     for table, reason in wf.LATCH_TABLES.items():
         assert table == table.lower(), f"{table}: 键必须小写 (判据按 t.lower() 匹配)"
         assert isinstance(reason, str) and len(reason.strip()) >= 10, f"{table}: 理由过短"
+
+
+def test_event_driven_table_long_gap_is_healthy(tmp_path, monkeypatch):
+    """manual_order_audit 无新行 = 无人手动下单, 不是生产器死亡。"""
+    today = datetime.now()
+    db = _mk_db(tmp_path, {
+        "manual_order_audit": [
+            {"trade_date": (today - timedelta(days=60)).strftime("%Y-%m-%d")}
+        ]
+    })
+    monkeypatch.setattr(wf, "_main_db", lambda: db)
+    monkeypatch.setattr(wf, "_repo_write_targets",
+                        lambda: {"manual_order_audit": {"manual_order_service.py"}})
+    findings, _, observed = wf._check_table_liveness({})
+    assert not any("manual_order_audit" in f["key"] for f in findings)
+    assert any(o["table"] == "manual_order_audit" for o in observed)
+
+
+def test_event_driven_exemption_does_not_leak_to_other_tables(tmp_path, monkeypatch):
+    """防过修: 未声明的事件态表仍照告, 豁免只覆盖显式登记表。"""
+    today = datetime.now()
+    db = _mk_db(tmp_path, {
+        "manual_order_audit": [{"trade_date": (today - timedelta(days=60)).strftime("%Y-%m-%d")}],
+        "stalled_carrier": [{"trade_date": (today - timedelta(days=60)).strftime("%Y-%m-%d")}],
+    })
+    monkeypatch.setattr(wf, "_main_db", lambda: db)
+    monkeypatch.setattr(wf, "_repo_write_targets", lambda: {
+        "manual_order_audit": {"manual_order_service.py"},
+        "stalled_carrier": {"writer.py"},
+    })
+    findings, _, _ = wf._check_table_liveness({})
+    keys = {f["key"] for f in findings}
+    assert "D1:stalled_carrier:stalled" in keys
+    assert not any("manual_order_audit" in key for key in keys)
+
+
+def test_event_driven_table_entries_are_all_declared_with_reason():
+    assert wf.EVENT_DRIVEN_TABLES
+    for table, reason in wf.EVENT_DRIVEN_TABLES.items():
+        assert table == table.lower()
+        assert isinstance(reason, str) and len(reason.strip()) >= 10, f"{table}: 理由过短"
+
+
+def test_age_days_parses_valid_formats_without_intermediate_warnings(caplog):
+    with caplog.at_level(logging.WARNING, logger=wf._log.name):
+        assert wf._age_days(datetime.now().strftime("%Y-%m-%d")) >= 0
+        assert wf._age_days(str(datetime.now().timestamp())) >= 0
+        assert wf._age_days("not-a-timestamp") == -1
+    assert len(caplog.records) == 1
+    assert "timestamp unparseable" in caplog.records[0].getMessage()
 
 
 def test_missing_authoritative_db_is_flagged(tmp_path, monkeypatch):

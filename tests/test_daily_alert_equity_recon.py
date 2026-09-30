@@ -57,6 +57,26 @@ def _put_trade(db, symbol, exit_time, exit_price, realized_pnl, fees_est, pnl_ne
     conn.close()
 
 
+def _mirror_series_to_history_and_collapse_current(db):
+    """模拟新 schema: 历史序列进入 append-only 表, capital_state 只保留最新 SSOT 行."""
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE capital_state_history ("
+        "id INTEGER PRIMARY KEY, current_equity REAL, snapshot_time TEXT NOT NULL, "
+        "trade_env INTEGER NOT NULL DEFAULT 1)"
+    )
+    conn.execute(
+        "INSERT INTO capital_state_history (current_equity, snapshot_time, trade_env) "
+        "SELECT current_equity, last_update, trade_env FROM capital_state"
+    )
+    conn.execute(
+        "DELETE FROM capital_state "
+        "WHERE id NOT IN (SELECT MAX(id) FROM capital_state GROUP BY trade_env)"
+    )
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def recon_db(tmp_path):
     """合成一个可精确闭合的交易日: C=-500 = G(-300) + U(-200).
@@ -118,6 +138,26 @@ def test_bridge_closes_on_closing_prints(recon_db):
     assert r["realized_net"] == pytest.approx(-350.0)      # 日报净额口径
     assert r["residual"] == pytest.approx(0.0)
     assert r["within_tolerance"] is True
+
+
+def test_single_row_current_with_history_completes_bridge(recon_db):
+    _mirror_series_to_history_and_collapse_current(recon_db)
+    r = _recon(recon_db)
+    assert r["verdict"] == "ok"
+    assert r["equity_change"] == pytest.approx(-500.0)
+    assert r["residual"] == pytest.approx(0.0)
+    with sqlite3.connect(str(recon_db)) as conn:
+        current_rows = conn.execute("SELECT COUNT(*) FROM capital_state").fetchone()[0]
+    assert current_rows == 1
+
+
+def test_legacy_capital_state_series_still_supported(recon_db):
+    with sqlite3.connect(str(recon_db)) as conn:
+        has_history = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='capital_state_history'"
+        ).fetchone()
+    assert has_history is None
+    assert _recon(recon_db)["verdict"] == "ok"
 
 
 def test_residual_over_tolerance_flagged(recon_db):

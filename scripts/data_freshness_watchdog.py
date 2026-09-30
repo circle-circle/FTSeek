@@ -147,6 +147,13 @@ LATCH_TABLES = {
     "playbook_risk_state": "熔断锁存表: 零行 = 从未熔断 = 健康 (读侧无行→None=未熔断)",
 }
 
+# 事件驱动表: 有行但长时间无新行 = 条件未再成立, 不是生产者死亡。
+# manual_order_audit 只在人工下单/面板审计时写入; 9/30 实证 25 天无手动单被 D1
+# 误报 stalled。豁免不是放弃监控: 手动单链路另有提交/回报错误与对账监控。
+EVENT_DRIVEN_TABLES = {
+    "manual_order_audit": "人工下单审计表: 无新行 = 无人手动下单 = 健康",
+}
+
 _WRITE_SQL_RE = re.compile(
     r"(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE)\s+[`\"\[]?([A-Za-z_]\w*)",
     re.I,
@@ -229,17 +236,27 @@ def _pick_time_col(cols):
 
 def _age_days(raw) -> int:
     s = str(raw).strip()
+    parsed = None
+    last_err = None
     for f in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f",
               "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return (datetime.now() - datetime.strptime(s[:26], f)).days
-        except Exception:
-            _log.warning("_age_days: strptime parse failed", exc_info=True)
-            continue
+            parsed = datetime.strptime(s[:26], f)
+            break
+        except Exception as _fe:
+            # 逐格式失败是预期路径 (5 选 1), 不留痕; 全部失败才在下方统一告警一次。
+            # 注: except 体写成裸 pass/continue 会计入 except:pass 棘轮 (只降不升)。
+            last_err = _fe
+    if parsed is not None:
+        return (datetime.now() - parsed).days
     try:  # epoch 秒 (idempotency_keys.created_at 等)
         return (datetime.now() - datetime.fromtimestamp(float(s))).days
-    except Exception:
-        return -1  # 不可解析 → 不判 (宁漏不误)
+    except Exception as _ee:
+        last_err = _ee
+    # 告警放在 except 块外: W6 要求 except 内告警必带栈; 此处每值统一告警一次,
+    # 噪声与留痕兼得 (更早的实现每试一个格式告一次, 单值最多刷 6 条)。
+    _log.warning("_age_days: timestamp unparseable: %r (err=%s)", s, last_err)
+    return -1  # 不可解析 → 不判 (宁漏不误)
 
 
 def _check_table_liveness(baseline: dict):
@@ -280,6 +297,8 @@ def _check_table_liveness(baseline: dict):
                 observed.append(obs)
                 if not w:
                     continue  # 无现役写入方 → 人工裁决面, 不自动告
+                if t.lower() in EVENT_DRIVEN_TABLES:
+                    continue  # 事件未发生 = 健康态, 见 EVENT_DRIVEN_TABLES
                 if n == 0:
                     if t.lower() in LATCH_TABLES:
                         continue  # 锁存表零行是健康态, 不是生产者死亡 (见 LATCH_TABLES)

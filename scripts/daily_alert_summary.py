@@ -435,7 +435,7 @@ def _prev_us_trade_date(trade_date: str) -> str:
     return d.strftime("%Y-%m-%d")
 
 
-def _equity_at(conn, boundary_cst: str):
+def _equity_at(conn, boundary_cst: str, trade_env=None):
     """取收盘后第一个权益样本 (收盘印) — boundary 起 +_EQUITY_SAMPLE_WINDOW_MIN 内, 无 → None.
 
     只取 boundary **之后**的样本: ET 收盘 16:00:00 的收盘价才是当日权益的定价基准, 边界前
@@ -444,14 +444,25 @@ def _equity_at(conn, boundary_cst: str):
     窗内无样本一律 None (→ not_judgeable), 不做"再往前找个最近的"兜底: 放宽到盘中样本
     量级的漂移远大于费用模型误差, 宁可报不可判也不给一个看着闭合、实则假数拼出来的桥。
     """
+    window_end = (datetime.strptime(boundary_cst, "%Y-%m-%dT%H:%M:%S")
+                  + timedelta(minutes=_EQUITY_SAMPLE_WINDOW_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+    if trade_env is not None:
+        has_history = conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='capital_state_history'"
+        ).fetchone()
+        if has_history:
+            row = conn.execute(
+                "SELECT current_equity FROM capital_state_history "
+                "WHERE trade_env = ? AND snapshot_time >= ? AND snapshot_time <= ? "
+                "ORDER BY snapshot_time, id LIMIT 1",
+                (trade_env, boundary_cst, window_end),
+            ).fetchone()
+            return None if row is None else float(row[0])
     row = conn.execute(
         "SELECT last_update, current_equity FROM capital_state "
         "WHERE last_update >= ? AND last_update <= ? ORDER BY last_update LIMIT 1",
-        (
-            boundary_cst,
-            (datetime.strptime(boundary_cst, "%Y-%m-%dT%H:%M:%S")
-             + timedelta(minutes=_EQUITY_SAMPLE_WINDOW_MIN)).strftime("%Y-%m-%dT%H:%M:%S"),
-        ),
+        (boundary_cst, window_end),
     ).fetchone()
     return None if row is None else float(row[1])
 
@@ -550,15 +561,21 @@ def get_us_equity_reconciliation(trade_date: str, db_path: Path = None, broker_f
         # 则按 .env.us 解析账户。AUTO_TRADE_ACCOUNT 一旦翻 real 而库里仍有 sim 历史行,
         # 权益序列就是两个账户混在一起 — C 与 U 不同源, 桥接必然假闭合/假超差 (8/11 对账
         # 拿错账户的同一课)。多于一个 env → 不判, 不去猜哪个是"当前"。
-        if conn.execute("SELECT COUNT(DISTINCT COALESCE(trade_env, -1)) FROM capital_state").fetchone()[0] > 1:
+        trade_envs = conn.execute(
+            "SELECT trade_env FROM capital_state "
+            "WHERE trade_env IS NOT NULL GROUP BY trade_env ORDER BY trade_env"
+        ).fetchall()
+        if not trade_envs:
+            out["reason"] = "capital_state 无可判定 trade_env → 权益序列账户归属不明"
+            return out
+        if len(trade_envs) > 1:
             out["reason"] = "capital_state 含多个 trade_env → 权益序列跨账户, 不可归因"
             return out
-        # 依赖注: 本对账需要 capital_state 是**时间序列**。capital_safety.py:_save_state 的
-        # "INSERT OR REPLACE 保持 1 行/env" P0 注释从未成立 (trade_env 无 UNIQUE, 实测 42k 行),
-        # 正因如此才有收盘样本可查。若将来真去实现单行 UPSERT, 必须同时保留历史表, 否则
-        # 本桥接静默退化为"样本缺失"。
-        today_close = _equity_at(conn, _cst_close_boundary(trade_date))
-        prev_close = _equity_at(conn, _cst_close_boundary(_prev_us_trade_date(trade_date)))
+        trade_env = trade_envs[0][0]
+        # capital_state 已收敛为 1 行/env SSOT; 收盘桥接读 append-only 的
+        # capital_state_history。无历史表的旧库仍回退到 legacy capital_state 时间序列。
+        today_close = _equity_at(conn, _cst_close_boundary(trade_date), trade_env)
+        prev_close = _equity_at(conn, _cst_close_boundary(_prev_us_trade_date(trade_date)), trade_env)
         if today_close is None or prev_close is None:
             miss = []
             if prev_close is None:

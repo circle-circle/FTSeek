@@ -30,6 +30,10 @@ from enum import Enum
 
 logger = logging.getLogger("ftseek.capital_safety")
 
+# DEB-20260930: capital_state 保持 1 行/env SSOT 后, 收盘桥接需要独立时间序列。
+# 历史表按 env 裁剪, 避免 2026-06-21 之前的无限增长问题回归。
+CAPITAL_STATE_HISTORY_RETENTION = 20_000
+
 # P3 优化 2026-04-29: 中概 ADR 集中度限制
 # 中概 ADR 共享同一政策风险因子，视为单一风险敞口
 CHINA_ADRS = {
@@ -741,6 +745,29 @@ class CapitalSafetySystem:
                 c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_capital_state_trade_env ON capital_state(trade_env)")
             except Exception as _ie:
                 logger.debug(f"[资本安全] 创建 trade_env 唯一索引失败: {_ie}")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS capital_state_history (
+                    id INTEGER PRIMARY KEY,
+                    initial_capital REAL,
+                    current_equity REAL,
+                    peak_equity REAL,
+                    cash REAL,
+                    market_value REAL,
+                    buying_power REAL,
+                    drawdown_pct REAL,
+                    max_drawdown_pct REAL,
+                    water_level TEXT,
+                    is_locked INTEGER,
+                    lock_reason TEXT,
+                    last_update TEXT,
+                    trade_env INTEGER NOT NULL DEFAULT 1,
+                    snapshot_time TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_capital_state_history_env_time
+                ON capital_state_history(trade_env, snapshot_time, id)
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
@@ -814,9 +841,11 @@ class CapitalSafetySystem:
         修复: 用trade_env作为唯一键UPSERT, 保持1行/env
         """
         self._save_failed = False
+        conn = None
         try:
             conn = sqlite3.connect(self._db_path)
             c = conn.cursor()
+            c.execute("BEGIN IMMEDIATE")
             c.execute("""
                 INSERT OR REPLACE INTO capital_state 
                 (initial_capital, current_equity, peak_equity, cash, market_value, 
@@ -838,11 +867,51 @@ class CapitalSafetySystem:
                 self._state.last_update,
                 self.trade_env,
             ))
+            # last_update 为空 = 无时间语义的保存 (reset_capital / 首更前 BLACKOUT):
+            # SSOT 照写, 但不产历史快照 — 无时间戳的行只会污染 history 的排序与窗口查询。
+            # 此处不得用裸 now 兜底 (naive-now 棘轮只降不升)。
+            snapshot_time = (self._state.last_update or "").strip()
+            if snapshot_time:
+                c.execute("""
+                    INSERT INTO capital_state_history
+                    (initial_capital, current_equity, peak_equity, cash, market_value,
+                     buying_power, drawdown_pct, max_drawdown_pct, water_level,
+                     is_locked, lock_reason, last_update, trade_env, snapshot_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    self._state.initial_capital,
+                    self._state.current_equity,
+                    self._state.peak_equity,
+                    self._state.cash,
+                    self._state.market_value,
+                    self._state.buying_power,
+                    self._state.drawdown_pct,
+                    self._state.max_drawdown_pct,
+                    self._state.water_level.value,
+                    int(self._state.is_locked),
+                    self._state.lock_reason,
+                    self._state.last_update,
+                    self.trade_env,
+                    snapshot_time,
+                ))
+                c.execute("""
+                    DELETE FROM capital_state_history
+                    WHERE trade_env = ? AND id NOT IN (
+                        SELECT id FROM capital_state_history
+                        WHERE trade_env = ?
+                        ORDER BY snapshot_time DESC, id DESC
+                        LIMIT ?
+                    )
+                """, (self.trade_env, self.trade_env, CAPITAL_STATE_HISTORY_RETENTION))
             conn.commit()
-            conn.close()
         except Exception as e:
+            if conn is not None:
+                conn.rollback()
             self._save_failed = True
             logger.warning(f"[资本安全] 保存状态失败 (fail-safe 将拦截新开仓): {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
     def reset_capital(self, new_capital: float = None):
         """
