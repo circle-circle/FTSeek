@@ -103,6 +103,18 @@ def main() -> int:
     else:
         lines.append(f"forward({FORWARD_START[5:]}起): n=0/20 攒样中")
 
+    # ── MFE<0.3% 死亡族分层 (record-only 观测, 不参与 D2' 判据) ──
+    mfe_blk = latest.get("delays", {}).get("2", {}).get("mfe_cohort", {}).get("forward", {})
+    death = mfe_blk.get("death_mfe_lt_0_3", {})
+    alive = mfe_blk.get("alive_mfe_ge_0_3", {})
+    if death.get("n") is not None:
+        lines.append(
+            f"死亡族forward(MFE<0.3%,观测): n={death.get('n')} | 回避 {death.get('n_avoided')}"
+            f"({(death.get('avoidance_rate') or 0) * 100:.0f}%) 误杀 {death.get('n_miskilled')}"
+            f"/{death.get('n_avoided')} | 假想差 {_fmt_usd(death.get('net_value_usd'))}"
+            f" | 非死亡族 n={alive.get('n')} 假想差 {_fmt_usd(alive.get('net_value_usd'))}"
+            " (正=省钱,负=误杀/多付)")
+
     # ── 全窗判据 (latest.json 冻结值, 仅作参照) ──
     grad = latest.get("graduation", {}).get("2", {})
     g2 = latest.get("delays", {}).get("2", {}).get("ALL", {})
@@ -168,7 +180,8 @@ def main() -> int:
                     for th, _blk in sorted(gs["legs"].items())
                     for _fw in [(_blk or {}).get("forward")])
                 lines.append(f"RFC118可达性门(模拟未接线): {_legs_txt}"
-                             + (f" | G3门槛=近30d费用缺口{gap_bp}bp" if gap_bp is not None else ""))
+                             + (f" | G3参照门槛=近30d全PLAYBOOK_SIM费用缺口{gap_bp}bp"
+                                if gap_bp is not None else ""))
         else:
             lines.append("D案限价路由: latest 无 n_paired 字段 (replay cron 05:47 待跑?)")
     except FileNotFoundError:

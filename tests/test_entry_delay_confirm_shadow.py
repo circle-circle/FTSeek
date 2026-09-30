@@ -148,11 +148,11 @@ def _mk_db(path):
     con.execute(
         "CREATE TABLE trade_records (id INTEGER PRIMARY KEY, symbol TEXT, direction TEXT,"
         " entry_time TEXT, entry_price REAL, exit_price REAL, quantity REAL,"
-        " exit_reason TEXT, pnl_net REAL, source_type TEXT)")
+        " exit_reason TEXT, pnl_net REAL, source_type TEXT, mfe_pct REAL)")
     con.execute("INSERT INTO trade_records VALUES (1,'US.AAA','LONG','2026-09-08 09:35:00',"
-                "100.0,98.0,50,'SL_INITIAL',-80.0,'PLAYBOOK_SIM')")
+                "100.0,98.0,50,'SL_INITIAL',-80.0,'PLAYBOOK_SIM',0.0)")
     con.execute("INSERT INTO trade_records VALUES (2,'US.BBB','SHORT','2026-09-08 10:00:00',"
-                "50.0,49.0,100,'SL_TRAIL_LOCK',40.0,'PLAYBOOK_SIM')")
+                "50.0,49.0,100,'SL_TRAIL_LOCK',40.0,'PLAYBOOK_SIM',0.5)")
     con.commit()
     con.close()
 
@@ -202,6 +202,13 @@ class TestMainIntegration:
         assert latest["graduation"]["2"]["ALL_pass"] is False   # opp None → 不过
         sl2 = latest["delays"]["2"]["SL_INITIAL"]
         assert sl2["n"] == 1 and sl2["avoidance_rate"] == 1.0
+        mfe2 = latest["delays"]["2"]["mfe_cohort"]["full_window"]
+        assert mfe2["death_mfe_lt_0_3"]["n"] == 1
+        assert mfe2["death_mfe_lt_0_3"]["avoided_value_usd"] == 80.0
+        assert mfe2["alive_mfe_ge_0_3"]["n"] == 1
+        assert mfe2["alive_mfe_ge_0_3"]["avoided_value_usd"] == -40.0
+        assert mfe2["mfe_zero_le_0_001"]["n"] == 1
+        assert latest["delays"]["2"]["mfe_cohort"]["forward"]["death_mfe_lt_0_3"]["n"] == 0
         d5 = latest["delays"]["5"]["ALL"]
         assert d5["n"] == 2 and d5["n_avoided"] == 0
         assert d5["opp_cost_mean_pct"] == 1.5 and d5["opp_cost_usd"] == 150.0

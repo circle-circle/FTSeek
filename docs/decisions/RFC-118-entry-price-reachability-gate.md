@@ -159,4 +159,11 @@ git revert <shadow-commit>   # 影子阶段: 删 gated_arm 读数, 生产路径�
 
 **验证结果**: ①窗模式实跑 rc=0, 参照窗读数与 R1 离线预验证逐字吻合 (θ0.25 +2.62$/4.8bp/fill0.706, θ0.5 +8.14$/15.0bp/fill0.5); ②forward 腿 n=0 (窗起点 2026-09-30, 明日 cron 起攒样, 按 9 月节奏 ~4笔/日 → n≥40 约需 3-4 周); ③推送脚本实跑输出正常, G3 门槛动态值 8.3bp; ④守卫+契约测试 89 passed (test_ops_scripts_sync 3 + control_loop_ledger 10 + cf_pullback_v2 48 + entry_archetype_routing 21+7); ⑤`adr035_criteria` 仍恰为 C1-C4 四条 (契约钉锁死, 判据零改动)
 
+**2026-09-30 复核修正 (观测口径, 判据零改动)**:
+1. G1 经济读数改用 `v2.paired && actual_net 非空` 过滤, 未结算实盘重放行不再进入配对样本; 参照窗修正为 θ0.25 n=86/+$2.65/4.9bp, θ0.5 n=86/+$8.23/15.2bp。
+2. G2 改按全部门内 `entered+expired` 路由腿计算, 不要求经济配对; 参照窗官方 fill 为 θ0.25 29/39=0.744, θ0.5 39/78=0.500。
+3. G5 按 RFC-081 冻结语义改为全部门内 `expired_unfilled` 分母, `actual_net>0` 为误杀; 参照窗 θ0.25 9/10=0.900, θ0.5 26/39=0.667 (披露 `n_actual_known`)。
+4. G4 输出补 `p_two_sided`, `distinguishable` 同时要求 `|t|≥2` 且双侧 p≤0.05 (df=n_days-1); 参照窗 θ0.5 t=1.88/p=0.0799, 仍不可分辨。
+5. 日报 G3 标签改为“近30d全PLAYBOOK_SIM费用缺口”, 明示该参照门槛与 G1 配对人群不同尺; 判据与阈值均未改变。
+
 **注**: 接线阶段 (pipeline L4272 消费点 gate + entry_routing.reachability_gate 纯函数 + instruction_generator H3 源头校验) 按本 RFC「详细设计」节待 forward 判据过门后另走裁决, 本次未实施。

@@ -64,6 +64,8 @@ GRAD_MIN_AVOID_RATE = 0.30
 GRAD_MAX_OPP_COST_PCT = 0.3   # %, 严格小于
 # [RFC-081盲区1] forward 新窗起点 = DEB §5.2 预注册攒样日 (9/10 影子落地次日)
 FORWARD_SINCE = "2026-09-10"
+GRAVE_MFE_PCT = 0.3
+MFE_ZERO_PCT = 0.001
 
 DISCLOSURES = [
     "confirm_gate 反向先验: 等待确认历史成本 +0.50%/笔 (t=5.67, n=8轮); "
@@ -147,6 +149,15 @@ def _load_routable_map(con) -> dict:
     except Exception as e:
         _log(f"trade→decision 映射失败: {e}")
     return m
+
+
+def _load_mfe_map(con) -> dict:
+    try:
+        return {int(tid): float(mfe) for tid, mfe in con.execute(
+            "SELECT id, mfe_pct FROM trade_records WHERE mfe_pct IS NOT NULL")}
+    except Exception as e:
+        _log(f"MFE 映射查询失败(死亡族分层块将为空): {e}")
+        return {}
 
 
 def _hhmm_to_min(hhmm: str) -> int:
@@ -256,6 +267,7 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
     done = _load_done()
     sources = _load_sources()
     routable_map = _load_routable_map(con)  # [RFC-081盲区1] trade_id→D分支候选
+    mfe_map = _load_mfe_map(con)
 
     where = ("entry_time >= datetime('now', ?) " if not only_date else "date(entry_time) = ? ")
     params = (only_date,) if only_date else (f"-{days} day",)
@@ -327,6 +339,8 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
                     # (jsonl 本体不重写; 行级标签以本次运行映射为准, 幂等无副作用)
                     if rr.get("routable_candidate") is None and rr.get("trade_id") in routable_map:
                         rr["routable_candidate"] = routable_map[rr["trade_id"]]
+                    if rr.get("trade_id") in mfe_map:
+                        rr["mfe_pct"] = mfe_map[rr["trade_id"]]
                     all_rows.append(rr)
             except Exception as e:
                 _log(f"汇总读取脏行跳过: {e}")
@@ -355,6 +369,32 @@ def main(days: int = 60, only_date: str | None = None, allow_fetch: bool = True)
                                       and r.get("routable_candidate") is False]),
                 "D_candidate": _agg_block([r for r in recs if r.get("date", "") >= FORWARD_SINCE
                                            and r.get("routable_candidate") is True]),
+            },
+            "mfe_cohort": {
+                "full_window": {
+                    "death_mfe_lt_0_3": _agg_block(
+                        [r for r in recs if r.get("mfe_pct") is not None
+                         and r["mfe_pct"] < GRAVE_MFE_PCT]),
+                    "alive_mfe_ge_0_3": _agg_block(
+                        [r for r in recs if r.get("mfe_pct") is not None
+                         and r["mfe_pct"] >= GRAVE_MFE_PCT]),
+                    "mfe_zero_le_0_001": _agg_block(
+                        [r for r in recs if r.get("mfe_pct") is not None
+                         and r["mfe_pct"] <= MFE_ZERO_PCT]),
+                },
+                "forward": {
+                    "death_mfe_lt_0_3": _agg_block(
+                        [r for r in recs if r.get("date", "") >= FORWARD_SINCE
+                         and r.get("mfe_pct") is not None and r["mfe_pct"] < GRAVE_MFE_PCT]),
+                    "alive_mfe_ge_0_3": _agg_block(
+                        [r for r in recs if r.get("date", "") >= FORWARD_SINCE
+                         and r.get("mfe_pct") is not None and r["mfe_pct"] >= GRAVE_MFE_PCT]),
+                    "mfe_zero_le_0_001": _agg_block(
+                        [r for r in recs if r.get("date", "") >= FORWARD_SINCE
+                         and r.get("mfe_pct") is not None and r["mfe_pct"] <= MFE_ZERO_PCT]),
+                },
+                "note": ("record-only 观测分层: MFE 为事后标签, 不得进入在线判定; "
+                         "本块不改变 D2' 原毕业判据。"),
             },
             "by_source": {s: _agg_block([r for r in recs if r.get("source") == s])
                           for s in sorted({r.get("source") for r in recs})},

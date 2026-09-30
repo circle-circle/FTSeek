@@ -178,49 +178,65 @@ def _rfc118_gate_sim(results, thetas=(0.25, 0.5), forward_since="2026-09-30"):
     dist>θ 或 dist 不可判 (ATR缺失 fail-open) → 回退现状市价臂 (act_replay_net, 双臂同尺 L1a 口径)。
     θ 双腿并行 (0.25=ADR-035 §五.2 子桶读数 / 0.5=§五.2 冻结桶界), 窗内禁选边 (DEB-20260930 R2)。
     forward_since = 影子落地日, 之前的窗只作 in-sample 参照 (θ 腿离线预验证已用过该数据)。
-    G2 分母 = 门内路由腿 entered/(entered+expired), 与官方 C3=0.317 同源 (排除 skip_no_level)。
-    G5 误杀分母 = 门内 expired 且 actual_net>0 (RFC-081 §六冻结口径); G6 放弃经济双口径同屏。
+    G1 经济读数只在 v2.paired 且实盘已结算的配对群上算; G2 分母 = 全部门内
+    entered+expired 路由腿 (不看经济配对), 与官方 C3=0.317 同源 (排除 skip_no_level)。
+    G5 误杀分母 = 门内 expired_unfilled 全腿, actual_net>0 为误杀 (RFC-081 §六冻结口径);
+    G6 放弃经济双口径同屏, 同尺口径仅要求 act_replay_net 可得。
     """
     legs = {}
     for th in thetas:
         def _leg(rows):
             diffs, day_diffs, notionals = [], {}, []
-            in_entered = in_expired = 0
-            exp_n = exp_win = 0
+            in_entered = in_expired = outside_paired_n = 0
+            expired_rows = []
+            same_ruler_n = 0
             forgone_db = forgone_sr = 0.0
-            outside_n = 0
             for r in rows:
                 if r.get("status") == "skip_no_level":
                     continue
-                v2 = r.get("v2") or {}
-                act = v2.get("act_replay_net")
-                if act is None:
-                    continue  # 只在 paired 群 (两臂同尺皆有) 上算, 口径纪律同 summarize_v2
-                if r.get("notional"):
-                    notionals.append(r["notional"])
                 d = r.get("reach_dist_atr")
-                inside = (d is not None and d <= th)  # ATR缺失 → fail-open 回退市价
-                if inside:
+                inside = (d is not None and d <= th)
+                if inside and r.get("status") in ("entered", "expired_unfilled"):
                     if r.get("status") == "entered":
                         in_entered += 1
-                        net = v2.get("cf_net")
-                        net = net if net is not None else 0.0
                     else:
                         in_expired += 1
+                        expired_rows.append(r)
+                v2 = r.get("v2") or {}
+                act = v2.get("act_replay_net")
+                paired = bool(v2.get("paired") and act is not None
+                              and r.get("actual_net") is not None)
+                if not paired:
+                    continue
+                if r.get("notional"):
+                    notionals.append(r["notional"])
+                if inside:
+                    if r.get("status") == "entered":
+                        net = v2.get("cf_net")
+                        net = net if net is not None else 0.0
+                    elif r.get("status") == "expired_unfilled":
                         net = 0.0  # 门内过期=放弃 (ADR-035 绝不降级市价)
-                        exp_n += 1
-                        an = r.get("actual_net")
-                        if an is not None and an > 0:
-                            exp_win += 1
-                            forgone_db += an
-                        if act > 0:
-                            forgone_sr += act
+                    else:
+                        continue
                 else:
-                    outside_n += 1
+                    outside_paired_n += 1
                     net = act
                 diff = net - act
                 diffs.append(diff)
                 day_diffs.setdefault(str(r.get("date"))[:10], []).append(diff)
+            exp_n = len(expired_rows)
+            exp_actual_known = sum(1 for r in expired_rows
+                                   if r.get("actual_net") is not None)
+            exp_win = sum(1 for r in expired_rows if (r.get("actual_net") or 0) > 0)
+            for r in expired_rows:
+                an = r.get("actual_net")
+                if an is not None and an > 0:
+                    forgone_db += an
+                exp_act = (r.get("v2") or {}).get("act_replay_net")
+                if exp_act is not None:
+                    same_ruler_n += 1
+                    if exp_act > 0:
+                        forgone_sr += exp_act
             n = len(diffs)
             mean_notional = (sum(notionals) / len(notionals)) if notionals else None
             per_trade = (sum(diffs) / n) if n else None
@@ -237,16 +253,23 @@ def _rfc118_gate_sim(results, thetas=(0.25, 0.5), forward_since="2026-09-30"):
                 "in_gate": {
                     "n_routed": in_entered + in_expired,
                     "n_entered": in_entered, "n_expired": in_expired,
+                    "denominator": "entered+expired (官方C3口径, 不要求经济配对)",
                     "c3_fill_official_denom": (round(in_entered / (in_entered + in_expired), 3)
                                                if (in_entered + in_expired) else None),
-                    "miskill_expired": {"n_expired": exp_n, "n_win": exp_win,
+                    "miskill_expired": {"n_expired": exp_n,
+                                        "n_actual_known": exp_actual_known,
+                                        "n_win": exp_win,
                                         "rate": round(exp_win / exp_n, 3) if exp_n else None,
                                         "threshold_le": 0.40,
-                                        "pass": (exp_n == 0 or exp_win / exp_n <= 0.40)},
+                                        "pass": (exp_n == 0 or
+                                                 (exp_actual_known == exp_n
+                                                  and exp_win / exp_n <= 0.40))},
                     "forgone_actual_net_usd": round(forgone_db, 2),
                     "forgone_same_ruler_usd": round(forgone_sr, 2),
+                    "n_same_ruler": same_ruler_n,
                 },
-                "outside_gate_n": outside_n,
+                "outside_gate_n": outside_paired_n,
+                "outside_gate_population": "economic paired rows",
             }
         legs[str(th)] = {
             "forward": _leg([r for r in results
@@ -267,6 +290,60 @@ def _rfc118_gate_sim(results, thetas=(0.25, 0.5), forward_since="2026-09-30"):
     }
 
 
+def _student_t_two_sided_p(t_value, df):
+    if df <= 0:
+        return None
+    if not math.isfinite(t_value):
+        return None
+    x = df / (df + t_value * t_value)
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    a, b = df / 2.0, 0.5
+    log_beta = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b))
+    front = math.exp(log_beta + a * math.log(x) + b * math.log1p(-x))
+
+    def betacf(aa, bb, xx):
+        max_iterations = 200
+        epsilon = 3e-14
+        minimum = 1e-300
+        qab, qap, qam = aa + bb, aa + 1.0, aa - 1.0
+        c, d = 1.0, 1.0 - qab * xx / qap
+        if abs(d) < minimum:
+            d = minimum
+        d = 1.0 / d
+        h = d
+        for iteration in range(1, max_iterations + 1):
+            twice = 2 * iteration
+            factor = iteration * (bb - iteration) * xx / ((qam + twice) * (aa + twice))
+            d = 1.0 + factor * d
+            if abs(d) < minimum:
+                d = minimum
+            c = 1.0 + factor / c
+            if abs(c) < minimum:
+                c = minimum
+            d = 1.0 / d
+            h *= d * c
+            factor = -(aa + iteration) * (qab + iteration) * xx / ((aa + twice) * (qap + twice))
+            d = 1.0 + factor * d
+            if abs(d) < minimum:
+                d = minimum
+            c = 1.0 + factor / c
+            if abs(c) < minimum:
+                c = minimum
+            d = 1.0 / d
+            delta = d * c
+            h *= delta
+            if abs(delta - 1.0) < epsilon:
+                break
+        return h
+
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * betacf(a, b, x) / a
+    return 1.0 - front * betacf(b, a, 1.0 - x) / b
+
+
 def _day_clustered_t(daily_values):
     """[2026-09-16 用户裁「按照建议执行」] 宪章第 9 律读数 — 日聚类 t + MDE(80%).
 
@@ -274,7 +351,8 @@ def _day_clustered_t(daily_values):
     动机 (RFC-081 窗实算): pooled 中位 −$2.30 (p=0.968) vs 日聚类 day_mean +$11.18
     (t=1.28, n_days=6), 且 9/10 单日占 24 笔配对中的 10 笔 — 同日相关使 pooled 读数
     既不稳定也不可采信。单位声明: t 无量纲; day_mean / mde_80pct 与入参同量纲
-    (本调用 = 美元/笔)。n_days<3 或零方差 → None (不可判, 不得当成 0 或 PASS)。
+    (本调用 = 美元/笔)。distinguishable = |t|≥2 且双侧 p≤0.05 (df=n_days-1)。
+    n_days<3 或零方差 → None (不可判, 不得当成 0 或 PASS)。
     """
     if not daily_values:
         return None
@@ -286,12 +364,14 @@ def _day_clustered_t(daily_values):
     if sd == 0:
         return None
     t = day_mean / (sd / math.sqrt(n_days))
+    p_two_sided = _student_t_two_sided_p(t, n_days - 1)
     return {
         "t": round(t, 2),
         "n_days": n_days,
+        "p_two_sided": round(p_two_sided, 4),
         "day_mean": round(day_mean, 2),
         "mde_80pct": round(2.802 * sd / math.sqrt(n_days), 2),
-        "distinguishable": bool(abs(t) >= 2.0),
+        "distinguishable": bool(abs(t) >= 2.0 and p_two_sided <= 0.05),
         "unit": "usd_per_trade (day_mean/mde_80pct; t 无量纲)",
     }
 

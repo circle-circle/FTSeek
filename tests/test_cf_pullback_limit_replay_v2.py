@@ -84,6 +84,15 @@ def test_day_clustered_t_math_and_gates():
     assert dc["mde_80pct"] > 0 and dc["unit"].startswith("usd_per_trade")
 
 
+def test_day_clustered_t_uses_df_corrected_p_value():
+    assert M._student_t_two_sided_p(8.66, 3) == pytest.approx(0.003239, abs=1e-6)
+    daily_values = [-0.9364916731037404] * 8 + [2.9364916731037404] * 8
+    dc = M._day_clustered_t(daily_values)
+    assert dc["t"] == 2.0 and dc["n_days"] == 16
+    assert dc["p_two_sided"] == pytest.approx(0.0639, abs=1e-4)
+    assert dc["distinguishable"] is False
+
+
 def test_summarize_v2_day_clustered_pairs_by_date():
     rows = [_v2row(symbol=f"US.D{i}", date=f"2026-09-{8 + i // 2:02d}",
                    cf_net=10.0 + i, act_net=5.0) for i in range(6)]
@@ -718,6 +727,28 @@ def test_rfc118_gate_fail_open_and_population_filters():
     assert fw["n_paired"] == 1          # 只有 US.X
     assert fw["per_trade_usd"] == 0.0   # fail-open 回退 = diff 恒 0
     assert fw["outside_gate_n"] == 1    # 计入门外(回退), 不计入门内
+
+
+def test_rfc118_gate_separates_economic_and_official_populations():
+    rows = [
+        _gate_row("US.P", "2026-10-01", 0.2, "entered", 20.0, 10.0, 10.0),
+        _gate_row("US.U", "2026-10-01", 0.2, "entered", 99.0, 5.0, 5.0),
+        _gate_row("US.E", "2026-10-01", 0.2, "expired_unfilled", None, None, 7.0),
+        _gate_row("US.N", "2026-10-01", 0.2, "expired_unfilled", None, None, None),
+    ]
+    rows[1]["v2"]["paired"] = False
+    rows[1]["v2"]["paired_diff"] = None
+    sim = M._rfc118_gate_sim(rows, thetas=(0.5,), forward_since="2026-09-30")
+    fw = sim["legs"]["0.5"]["forward"]
+    assert fw["n_paired"] == 1 and fw["per_trade_usd"] == 10.0
+    ig = fw["in_gate"]
+    assert (ig["n_entered"], ig["n_expired"], ig["n_routed"]) == (2, 2, 4)
+    assert ig["c3_fill_official_denom"] == 0.5
+    assert ig["miskill_expired"]["n_win"] == 1
+    assert ig["miskill_expired"]["n_actual_known"] == 1
+    assert ig["miskill_expired"]["pass"] is False
+    assert ig["forgone_actual_net_usd"] == 7.0
+    assert ig["forgone_same_ruler_usd"] == 0.0 and ig["n_same_ruler"] == 0
 
 
 def test_rfc118_gate_theta_legs_and_forward_split():
