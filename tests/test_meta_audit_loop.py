@@ -516,3 +516,90 @@ def test_intraday_snapshot_explicit_zero_or_p0_finding(repo, tmp_path):
     assert doc["no_findings"] is False
     assert doc["findings"][0]["severity"] == "P0"
     assert doc["findings"][0]["pnl_path"] == "capital_preservation"
+
+
+# ── 2026-09-30 核查修复批: 三处环自身缺陷的契约钉 ──────────────────────────
+# 病灶 (实测 9/26~9/30 生产数据):
+#   A. 已归并关闭的旧键每轮被重新关闭 ⇒ closed_at 刷成当天 ⇒ 进签名 ⇒ 每日假推送
+#      (9/30 推送与 9/29 实质同板, 唯一差异 = 归并关闭日 +1)。
+#   B. REOPEN 只重置 decide_by, action_due_by/review_by 留首开旧值 ⇒ 复发项
+#      看似逾期 N 天 (rc64370b7228 9/29 重开却显示 due=9/22)。
+#   C. 签名不含"逾期"维度 ⇒ 时间流逝使某项新变逾期时永不推送 (此前被 A 的
+#      每日 churn 掩盖; 单修 A 会暴露 C)。
+
+def test_merged_duplicate_close_is_idempotent(repo, capsys):
+    """A: 已 CLOSED+MERGED_DUPLICATE 的旧键不再被重复关闭 ⇒ closed_at 不刷新 ⇒ 二轮静默。"""
+    seed_fresh_sources(repo)
+    put(repo, "data/invariant_check_latest.json", {
+        "checked_at": datetime.now().isoformat(),
+        "violations": {"W7_chg_denominator_divergence": 38},
+        "examples": {"W7_chg_denominator_divergence": "两影子昨收分叉 8.01pp"},
+    })
+    put(repo, "data/intraday_health_latest.json", _intraday_doc(_item(
+        "[不变量自检] 51 处违反: W7_chg_denominator_divergence×38 (昨收分母口径分叉)")))
+    loop_dir = repo / "data/loops/meta_audit"
+    loop_dir.mkdir(parents=True, exist_ok=True)
+    legacy = "intraday_health:ERROR:177a3510b29f"
+    (loop_dir / "findings.json").write_text(json.dumps({"findings": {
+        legacy: {"key": legacy, "source": "intraday_health", "title": "盘中日志 ERROR ×1",
+                 "evidence": "[不变量自检] 51 处违反: W7_chg_denominator_divergence×38",
+                 "status": "OPEN", "severity": "P0", "pnl_path": "capital_preservation",
+                 "owner": "用户(裁决)", "first_seen": "2026-09-22", "last_seen": "2026-09-22",
+                 "decide_by": "2026-09-22", "action_due_by": "2026-09-22",
+                 "review_by": "2026-09-23", "recurrence_count": 0,
+                 "closed_at": None, "close_evidence": None},
+    }, "applied_decisions": {}}, ensure_ascii=False), encoding="utf-8")
+    run(repo, capsys=capsys)                                    # 首轮: 归并关闭
+    hist = (loop_dir / "findings_history.jsonl").read_text(encoding="utf-8")
+    n_merged = hist.count("MERGED_DUPLICATE")
+    assert n_merged >= 1
+    closed_at_first = findings(repo)["findings"][legacy]["closed_at"]
+
+    _, out2, _ = run(repo, capsys=capsys)                       # 二轮: 必须静默
+    assert out2 == "", "归并关闭不得每轮刷新 closed_at 制造假推送"
+    hist2 = (loop_dir / "findings_history.jsonl").read_text(encoding="utf-8")
+    assert hist2.count("MERGED_DUPLICATE") == n_merged, "已归并键不得被重复关闭"
+    assert findings(repo)["findings"][legacy]["closed_at"] == closed_at_first
+
+
+def test_reopen_resets_all_sla_axes(repo, capsys):
+    """B: REOPEN 必须重置 decide_by/action_due_by/review_by 全部三轴, 不留首开旧值。"""
+    seed_fresh_sources(repo)
+    run(repo, capsys=capsys)
+    p = repo / "data/loops/meta_audit/findings.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    f = doc["findings"]["gate_liveness:dead_gate"]
+    f["status"] = "CLOSED"
+    f["closed_at"] = "2020-01-04"
+    f["close_evidence"] = "源侧回读: 旧关闭"
+    f["decide_by"] = "2020-01-01"
+    f["action_due_by"] = "2020-01-02"
+    f["review_by"] = "2020-01-03"
+    p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    run(repo, capsys=capsys)                                    # 源仍报 ⇒ REOPEN
+    f = findings(repo)["findings"]["gate_liveness:dead_gate"]
+    assert f["status"] == "OPEN"
+    today = datetime.now()
+    expect = {  # P1 SLA: decide=+1 action=+3 review=+7
+        "decide_by": 1, "action_due_by": 3, "review_by": 7,
+    }
+    for field, days in expect.items():
+        assert f[field] == (today + timedelta(days=days)).strftime("%Y-%m-%d"), \
+            f"REOPEN 未重置 {field}: {f[field]}"
+
+
+def test_newly_overdue_breaks_silence_without_store_change(repo, capsys):
+    """C: store 一字未变、仅时间流逝使某项新变逾期 ⇒ 必须打破静默 (逾期是独立签名维度)。"""
+    seed_fresh_sources(repo)
+    run(repo, capsys=capsys)
+    _, out_quiet, _ = run(repo, capsys=capsys)
+    assert out_quiet == ""
+
+    mod = load_mod()
+    mod._today = lambda: (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+    rc = mod.main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "gate_liveness:dead_gate" in out, \
+        "时间流逝产生新逾期项时必须推送, 不得静默"

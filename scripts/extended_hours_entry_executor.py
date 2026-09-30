@@ -819,12 +819,14 @@ def _record_execution_price_shadow(session, movers):
         current_pool = []
         execution_pool = []
         prefiltered_out = []
+        n_bad_rows = 0
         for item in movers:
             try:
                 price = float(item.get("px") or 0)
                 change_pct = round(float(item.get("chg") or 0), 2)
                 volume = float(item.get("vol") or 0)
             except (TypeError, ValueError, OverflowError):
+                n_bad_rows += 1   # 留痕 (except:pass 棘轮清剿 2026-09-30): 坏行计数披露, 控制流不变
                 continue
             if not _price_in_range(price):
                 continue
@@ -848,6 +850,7 @@ def _record_execution_price_shadow(session, movers):
             "price_unit": "USD",
             "volume_unit": "shares",
             "candidates_n": len(movers),
+            "bad_rows_n": n_bad_rows,
             "current_price_pool_n": len(current_pool),
             "shadow_execution_pool_n": len(execution_pool),
             "prefiltered_out_n": len(prefiltered_out),

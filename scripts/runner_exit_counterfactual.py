@@ -42,19 +42,21 @@ BOOTSTRAP_SEED = 42
 
 def _load_post_exit_rows(path=POST_EXIT):
     rows = []
+    n_bad_json = 0
     if not path.exists():
-        return rows
+        return rows, n_bad_json
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
+            n_bad_json += 1   # 留痕 (棘轮清剿 2026-09-30): 坏行计数由 main() 披露, 控制流不变
             continue
         if (row.get("type") == "post_exit" and row.get("status") == "ok"
                 and row.get("exit_reason") == "SL_TRAIL_LOCK"):
             rows.append(row)
-    return rows
+    return rows, n_bad_json
 
 
 def _load_trade_details(trade_ids):
@@ -198,7 +200,7 @@ def main():
     parser.add_argument("--iterations", type=int, default=BOOTSTRAP_ITERATIONS)
     args = parser.parse_args()
 
-    post_rows = _load_post_exit_rows()
+    post_rows, n_bad_json = _load_post_exit_rows()
     details = _load_trade_details([row["trade_id"] for row in post_rows])
     records = []
     skipped = {"missing_trade": 0, "missing_atr": 0, "missing_bars": 0}
@@ -254,6 +256,7 @@ def main():
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "n_parent_exits": len(post_rows), "n_rows": len(records),
+        "n_bad_json": n_bad_json,
         "skipped_parent_exits": skipped, "variants": summary,
         "behavior_change": False,
         "net_delta_note": "gross=net by fee-neutral paired-close approximation; enforce requires a separate ledger design",
@@ -266,7 +269,7 @@ def main():
     _atomic_write(OUT, "\n".join(json.dumps(row, ensure_ascii=False) for row in records) + "\n")
     _atomic_write(OUT_LATEST, json.dumps(report, ensure_ascii=False, indent=1))
     print(f"[runner-cf] parent exits={len(post_rows)} rows={len(records)} "
-          f"skipped_parent_exits={skipped}")
+          f"skipped_parent_exits={skipped} n_bad_json={n_bad_json}")
     for name, values in summary.items():
         print(f"  {name}: n={values['n']} sum=${values['sum_delta_usd']} "
               f"median=${values['median_delta_usd']} CI={values['bootstrap_95_ci_usd']} "

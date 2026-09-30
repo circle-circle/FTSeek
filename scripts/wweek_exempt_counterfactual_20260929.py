@@ -15,15 +15,17 @@ ORDER BY entry_time
 """).fetchall()
 
 ww = []
+_n_bad_meta = 0
 for r in rows:
     try:
         mj = json.loads(r['metadata_json']) if r['metadata_json'] else {}
     except Exception:
+        _n_bad_meta += 1   # 留痕 (棘轮清剿 2026-09-30): 坏 metadata 计数, 下方披露
         continue
     oa = mj.get('overnight_arm') or {}
     if oa.get('source') == 'w_week':
         ww.append((r, oa, mj))
-print(f'W_WEEK 豁免族 n={len(ww)} (含未平)')
+print(f'W_WEEK 豁免族 n={len(ww)} (含未平) | 坏 metadata_json 行 n={_n_bad_meta}')
 
 # 美股假日 2026 (FTSeek SSOT 离线表口径)
 HOL = {'2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25','2026-06-19',

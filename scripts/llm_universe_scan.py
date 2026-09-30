@@ -561,6 +561,7 @@ def _long_breakdown_trend(router: Any, symbol: str, asof_date: str) -> Tuple[str
         return "no_data", None
     # 只用严格早于 asof 的已完成日线 (与 compute_screening_atr 同口径), 同日去重取最后一条
     parsed: Dict[str, float] = {}
+    n_bad_bars = 0
     for bar in bars:
         if not isinstance(bar, dict):
             continue
@@ -570,6 +571,7 @@ def _long_breakdown_trend(router: Any, symbol: str, asof_date: str) -> Tuple[str
         try:
             parsed[raw_date] = float(bar.get("close"))
         except (TypeError, ValueError):
+            n_bad_bars += 1   # 留痕 (棘轮清剿 2026-09-30): 坏 bar 计数进 detail, 控制流不变
             continue
     series = [parsed[k] for k in sorted(parsed)]
     detail = None
@@ -577,6 +579,8 @@ def _long_breakdown_trend(router: Any, symbol: str, asof_date: str) -> Tuple[str
         trend, detail = classify_ma_trend(series)
         if detail is not None:
             detail["bars_asof"] = sorted(parsed)[-1]
+            if n_bad_bars:
+                detail["bars_bad"] = n_bad_bars
     else:
         trend = "no_data"
     return trend, detail

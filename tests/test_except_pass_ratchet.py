@@ -14,7 +14,14 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 925  # 2026-09-24 用户裁「清剿新增点位」 调低 (950→925):
+BASELINE = 924  # 2026-09-30 meta_audit 核查批调低 (925→924): 9/24 基线后他批 +5
+                  #   (extended_hours_entry_executor 1, llm_universe_scan 1,
+                  #    runner_exit_counterfactual 1, shadow_board 1,
+                  #    wweek_exempt_counterfactual_20260929 1) 全量就地清剿 —
+                  #   5 处均改坏行/坏bar计数留痕 (n_bad_rows/n_bad_bars/n_bad_json/
+                  #   _n_bad_meta 进产物或 print) 或告警行 (shadow_board stat 失败),
+                  #   控制流零变更。只降不升。
+                  # 2026-09-24 用户裁「清剿新增点位」 调低 (950→925):
                   #   9/15 基线后新增 ~70 处 (多批次累积, 无单一罪魁), 本批全量清剿:
                   #   ① 新文件 39 处 (review_coverage_scan 5, orphan_ext_order_watch 6,
                   #      cancel_orphan_ext_order 3, carrier_orphan_census 1, 等 20+ 新脚本);

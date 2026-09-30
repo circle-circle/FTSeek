@@ -669,6 +669,7 @@ def _guard_lines(entries):
         try:
             age = (now - p.stat().st_mtime) / 86400.0
         except OSError:
+            out.append(f"  ⚠️ 产物 stat 失败: {artifact} ⇒ 本段无法判新鲜度 (非'正常无触发')")
             continue
         terminal = s is not None and (
             s.collection_retired

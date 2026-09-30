@@ -455,6 +455,18 @@ def _is_active(finding: dict) -> bool:
     return finding.get("status") in ACTIVE_STATUSES
 
 
+def _due_for(finding: dict) -> str:
+    """展示轴 = 逾期轴 (2026-09-30 修复): 此前 STATE/digest 用 action_due_by 优先,
+    逾期计算用 decide_by 优先 ⇒ 同一条 finding 看板显示的 due 与逾期判定不同轴
+    (实测 rc64370b7228 重开后显示首开旧值 due=9/22, 显得逾期 8 天)。"""
+    return (finding.get("decide_by") or finding.get("action_due_by")
+            or finding.get("review_by") or "-")
+
+
+def _is_overdue(finding: dict) -> bool:
+    return _is_active(finding) and _due_for(finding) < _today()
+
+
 def _bundle_blocks(store: dict, finding: dict) -> list[str]:
     if finding.get("closure_mode") != "ALL" or not finding.get("bundle_id"):
         return []
@@ -566,6 +578,10 @@ def _migrate_intraday_keys(state: dict, history: list, collected: list = ()):
         if not INTRA_FAMILY_RE.match(key) or key.startswith("intraday_health:rc"):
             continue
         finding = store[key]
+        if finding.get("status") == "CLOSED" and finding.get("suppression") == "MERGED_DUPLICATE":
+            # 幂等跳过 (2026-09-30 修复): 已归并的旧键每轮被重新关闭 ⇒ closed_at 刷成当天
+            # ⇒ 进签名 ⇒ hash 天天变 ⇒ 每日假推送 (实测 9/26~9/30 与昨日实质同板仍推)。
+            continue
         evidence = finding.get("evidence") or ""
         roots = _structured_roots(evidence)
         hosts = [target_index[h] for h in roots if h in target_index]
@@ -706,7 +722,13 @@ def reconcile(state: dict, collected: list, source_state: dict, decisions: list)
         elif finding.get("status") == "CLOSED":
             finding["status"] = "OPEN"
             finding["first_seen"] = _today()
-            finding["decide_by"] = _date_plus(SEVERITY_SLA[finding["severity"]]["decide_days"])
+            # REOPEN 必须重置全部 SLA 轴 (2026-09-30 修复): 此前只重置 decide_by,
+            # action_due_by/review_by 留首开旧值 ⇒ 看板显示 due 早于重开日, 复发项
+            # 看似逾期 N 天 (实测 rc64370b7228 9/29 重开却显示 due=9/22)。
+            _sla = SEVERITY_SLA[finding["severity"]]
+            finding["decide_by"] = _date_plus(_sla["decide_days"])
+            finding["action_due_by"] = _date_plus(_sla["action_days"])
+            finding["review_by"] = _date_plus(_sla["review_days"])
             finding["closed_at"] = None
             finding["close_evidence"] = None
             finding["recurrence_count"] = int(finding.get("recurrence_count") or 0) + 1
@@ -812,9 +834,7 @@ def reconcile(state: dict, collected: list, source_state: dict, decisions: list)
     state["decision_count"] = len(decisions)
     active = [finding for finding in store.values() if _is_active(finding)]
     closed = [finding for finding in store.values() if finding.get("status") == "CLOSED"]
-    overdue = [finding for finding in store.values() if _is_active(finding) and (
-        finding.get("decide_by") or finding.get("action_due_by") or finding.get("review_by") or "9999"
-    ) < _today()]
+    overdue = [finding for finding in store.values() if _is_overdue(finding)]
     return active, closed, overdue, history
 
 
@@ -884,7 +904,7 @@ def _render_state_md(store, source_state, summary, previous_run="-"):
         key=lambda item: (SEVERITY_ORDER.get(item.get("severity"), 9), item.get("key", "")),
     )
     for finding in active:
-        due = finding.get("action_due_by") or finding.get("review_by") or finding.get("decide_by") or "-"
+        due = _due_for(finding)
         evidence = str(finding.get("evidence") or "").replace("|", "/")[:180]
         lines.append(f"| {finding.get('severity')} | {finding.get('key')} | {finding.get('status')} | "
                      f"{finding.get('pnl_path')} | {finding.get('owner')} | {due} | {evidence} |")
@@ -939,7 +959,7 @@ def _digest(summary, store):
         key=lambda item: (SEVERITY_ORDER.get(item.get("severity"), 9), item.get("key", "")),
     )
     for finding in active[:MAX_DIGEST_ITEMS]:
-        due = finding.get("action_due_by") or finding.get("review_by") or finding.get("decide_by") or "-"
+        due = _due_for(finding)
         marker = "🔥" if finding.get("severity") == "P0" else "⚠️"
         lines.append(
             f"[meta_audit] {marker} {finding.get('severity')} {finding.get('status')} {finding.get('key')} | "
@@ -959,8 +979,7 @@ def _status():
     for finding in sorted(rows, key=lambda item: (
         SEVERITY_ORDER.get(item.get("severity"), 9), item.get("key", "")
     )):
-        due = (finding.get("action_due_by") or finding.get("review_by")
-               or finding.get("decide_by") or "-")
+        due = _due_for(finding)
         print(f"  {finding.get('severity')} {finding.get('status'):15} {finding.get('key'):60} "
               f"owner={finding.get('owner')} due={due}")
     return 0
@@ -1011,6 +1030,11 @@ def main(argv):
             "closed": sorted(
                 f"{key}|{finding.get('closed_at')}" for key, finding in state["findings"].items()
                 if finding.get("status") == "CLOSED"
+            ),
+            # 逾期是独立状态维度 (2026-09-30 修复): 日期本身不随天变 ⇒ 某项今天
+            # 新变逾期时签名不变、永不推送 (此前被归并 closed_at 每日 churn 掩盖)。
+            "overdue": sorted(
+                key for key, finding in state["findings"].items() if _is_overdue(finding)
             ),
             "stale_sources": sorted(summary["stale_sources"]),
             "done": summary["done"],
