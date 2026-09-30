@@ -298,6 +298,52 @@ def test_ondemand_detector_finding_closes_when_consumer_alive(repo, capsys):
     assert findings(repo)["findings"][key]["status"] == "CLOSED"
 
 
+# ── 产物自声明退役 (2026-09-30 门活性探针冻结批; 刻意停采 ≠ 失明, 判活四轴之 (c)) ──
+
+def test_retired_artifact_is_not_a_sensor_failure(repo, capsys):
+    """周期源产物带 retired 标记 ⇒ 不取读数、不报停更、探测器健康仍 true。"""
+    seed_fresh_sources(repo)
+    run(repo, capsys=capsys)
+    assert findings(repo)["findings"]["gate_liveness:dead_gate"]["status"] == "OPEN"
+
+    put(repo, "data/gate_liveness_latest.json", {"retired": "2026-09-30 冻结归档: 上游通道已裁关"})
+    _, out, _ = run(repo, "--force-print", capsys=capsys)
+    fs = findings(repo)["findings"]
+    assert "detector:gate_liveness" not in fs, "刻意退役被误报成探测器失明 (假 P0)"
+    assert "探测器健康=true" in out, "retired 源不得拖累停止条件"
+    assert "gate_liveness:dead_gate" not in fs or fs["gate_liveness:dead_gate"]["status"] != "OPEN"
+
+
+def test_retired_source_never_autocloses_open_findings(repo, capsys):
+    """反退化钉: 源退役后, 其 OPEN finding 只能落 UNVERIFIABLE, 绝不 CLOSED (尺子退役 ≠ 问题修好)。"""
+    seed_fresh_sources(repo)
+    run(repo, capsys=capsys)
+    key = "gate_liveness:dead_gate"
+    assert findings(repo)["findings"][key]["status"] == "OPEN"
+
+    put(repo, "data/gate_liveness_latest.json", {"retired": "冻结归档"})
+    run(repo, capsys=capsys)
+    f = findings(repo)["findings"][key]
+    assert f["status"] == "UNVERIFIABLE", f
+    assert not f.get("closed_at") and not f.get("close_evidence")
+
+
+def test_retired_source_revives_when_producer_overwrites(repo, capsys):
+    """复活零代码: 生产者重跑覆写产物 ⇒ retired 消失, 周期语义与 finding 生命周期自动恢复。"""
+    seed_fresh_sources(repo)
+    run(repo, capsys=capsys)
+    put(repo, "data/gate_liveness_latest.json", {"retired": "冻结归档"})
+    run(repo, capsys=capsys)
+    key = "gate_liveness:dead_gate"
+    assert findings(repo)["findings"][key]["status"] == "UNVERIFIABLE"
+
+    put(repo, "data/gate_liveness_latest.json", GATE_DOC_WITH_DEAD)
+    _, out, _ = run(repo, "--force-print", capsys=capsys)
+    f = findings(repo)["findings"][key]
+    assert f["status"] == "OPEN", "产物复活后 UNVERIFIABLE 应恢复 OPEN"
+    assert "P1 OPEN %s" % key in out
+
+
 # ── v2: 裁决闭环与无幻觉零问题 ────────────────────────────────────────────
 
 def test_open_finding_forces_loop_done_false(repo, capsys):

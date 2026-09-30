@@ -339,6 +339,18 @@ def collect():
 
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(doc, dict) and doc.get("retired"):
+                # 产物自声明退役 (2026-09-30, 门活性探针冻结批; 刻意停采 ≠ 失明, 判活四轴之 (c)):
+                # 不取读数、不报停更 (否则冻结 96h 后必生假 P0 detector finding 且 LOOP_DONE 永假)。
+                # fresh=True 保「探测器健康」; artifact_fresh=False 使残存 OPEN 项落 UNVERIFIABLE
+                # 而非被假关闭 (反退化钉 1: 尺子退役不得读成问题修好)。
+                # 复活零代码回滚: 生产者重跑覆写本产物 ⇒ retired 字段随之消失, 本源自动恢复周期语义。
+                source_state[name] = {
+                    "fresh": True, "carrier_alive": True, "artifact_fresh": False,
+                    "schema_valid": True, "n": 0, "retired": True,
+                    "why": f"已退役 (产物 retired 标记): {str(doc['retired'])[:160]}",
+                }
+                continue
             schema_errors = _validate_source(name, doc)
             if schema_errors:
                 raise ValueError("; ".join(schema_errors))
