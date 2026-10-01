@@ -1,6 +1,6 @@
 # DEB-20260930-skew-gate-vision-gap: 偏斜门视野盲区 (conf 倒置真机制) — 提案待裁 + RFC-121 撤回之撤回
 
-- **状态**: 提案 (2026-10-01 复核后**阶段 0 暂缓**: 先补事件快照/时序口径; 阶段 1 行为变更待用户+复查 agent 双裁)
+- **状态**: 阶段 0 record-only 影子已落地 (2026-10-01 Hermes 实施; 判定仍 batch-vision); 阶段 1 行为变更待前向影子期 + 用户/复查 agent 双裁
 - **目标读者**: 裁决者=用户; 复查者=第二 agent (只看本文档+跑命令即可独立证真/证伪); 执行者=裁决后的我
 - **一句话目标**: 偏斜门 (`_apply_portfolio_guardrails`) 判定时**只看到 bridge/topup 构建侧候选, 看不到同日 DA skill 直写、UE、reentry 行** → 用残缺分母算占比 → 9/30 实测 86% 超限砍掉 AMD/HPE(conf=70), 而当日并集 9B/4S=69% 根本不超限; 同时 conf=35 的 DA 直写单 (COIN/SNDK) 绕过本门照常成交 = conf 倒置真机制。
 - **前置**: RFC-121 已撤回 (day-scope prior 方案) — **本 DEB 部分推翻该撤回的归因** (见 §9 自曝)。
@@ -87,14 +87,13 @@ A: 三重折扣声明: ①毛口径 (无费/滑点); ②entry→当日收盘, �
 A: 救回单口径本身未定 (23/26), t 未算 (毛额+假设砍序, 算 t 是伪精确)。只主张: 缺陷存在性是**确定性结构问题** (写入方不进分母在数学上必然), 不依赖统计显著; 统计只用于前向影子期量化, 不作收益承诺。
 
 **Q10: 为什么先影子 (阶段0) 而不是直接 enforce?**
-A: 修的是**砍/不砍**的行为变更 (L2)。先落 append-only 事件快照, 影子期按 `ts <= guardrail_evaluated.ts` 重建 portfolio-vision, 与 batch-vision 双算; 判定仍用 batch-vision。≥10 个交易日后用真实前向数据验证分歧率、事件缺失率、分歧单成交与含费盈亏。
+A: 修的是**砍/不砍**的行为变更 (L2)。阶段 0 在判定点活读当日 DB, 双算 batch-vision 与 portfolio-vision 并落 append-only JSONL; 判定仍用 batch-vision。≥10 个交易日后用真实前向数据验证分歧率、DB 读失败率、分歧单成交与含费盈亏。该读数是活体判定点视野, 不回填历史。
 
 ## 4. 模块线索表
 
 | 模块 | 生产者 | 消费者 | 工件 | 幂等键 | 失败模式 | 回滚 |
 |---|---|---|---|---|---|---|
-| 事件快照 (阶段0a) | 全写入方/判定点/tracking | 影子回放与审计 | append-only JSONL | (event, instruction_id, ts, batch_id) | 写失败告警, 不改交易 | 删 emit 调用 |
-| 双算影子 (阶段0b) | guardrail 每轮 | 无 (jsonl 供人/agent 读) | `data/shadow/skew_gate_vision.jsonl` | (date, batch_ts) 追加 | 事件缺失标记 `invalid_vision`, 判定仍 batch-vision | 删 emit 调用 |
+| 双算影子 (阶段0) | guardrail 每轮 | 无 (jsonl 供人/agent 读) | `data/shadow/skew_gate_vision.jsonl` | (date, ts) 追加 | DB/写盘失败告警, 判定仍 batch-vision | 删 emit 调用 |
 | 判定日志 | guardrail | 值班人/诊断报告 | 日志行 | — | — | — |
 
 接线点唯一: `pipeline.py::_apply_portfolio_guardrails` 方向偏斜段 (2160-2178 现行行号)。
@@ -115,15 +114,15 @@ A: 修的是**砍/不砍**的行为变更 (L2)。先落 append-only 事件快照
 
 ## 6. 方案设计
 
-**阶段 0 (只读观测, 零行为变更; 2026-10-01 复核后暂缓)**:
-先补 append-only 事件快照 (写入/判定/tracking 全事件, 详见 RFC-122); 然后在 `_apply_portfolio_guardrails` 内双算 batch-vision 与 portfolio-vision。portfolio-vision 只按 `ts <= guardrail_evaluated.ts` 的事件重建, 不读后验 DB。影子行记录两占比、两判定、事件缺失数与构成; **交易判定仍用 batch-vision**。
+**阶段 0 (只读观测, 零行为变更; 2026-10-01 已落地)**:
+在 `_apply_portfolio_guardrails` 内双算 batch-vision 与 portfolio-vision。portfolio-vision 活读当日 DB, 过滤终态作废并按 symbol 去重本批候选; 影子行记录两占比、两判定与 symbol 构成, append-only 落 JSONL。DB/写盘失败仅告警; **交易判定仍用 batch-vision**。
 
-**阶段 0 前置**: 现有 `created_at/updated_at` 不能重建 point-in-time 视野。落地前必须先在每个写入/判定事件上落 append-only 快照 (至少 event、instruction_id、source、direction、skip_reason、ts、batch_id), 否则影子数据仍会被后续 tracking 覆盖污染。
+**历史边界**: 现有 `created_at/updated_at` 不能重建历史 point-in-time 视野。活读 DB 只服务前向影子, 不回填历史; 后验 DB 上的 9/30 探针读数会因 tracking/终态覆盖而与当时 9B/4S 不同。
 
 **阶段 1 (行为变更, 需事件完整影子期数据+用户二次裁决)**:
 判定分母切 portfolio-vision; 日志同时打两占比; skip_reason 打标 `方向偏斜超限(portfolio-vision B{x}/S{y})`; 配置开关 `playbook.guardrails.portfolio_vision: shadow|enforce|off` (默认 shadow), 回滚=改回 shadow 单行。
 
-**口径铁律**: 事件重放按时间截断、同 symbol 去重、终态事件不得回溯改变旧判定; 快照缺失时标记 `invalid_vision` 并继续现行判定, 不得静默补后验 DB。
+**口径铁律**: 活体判定点读 DB、同 symbol 去重、终态作废不计入; DB 读失败 fail-open 回现行判定, 不得静默补后验数据。topup 影子记录的是决策面组合, 阶段 1 前必须用落库/成交行复核最终组合差。
 
 ## 7. 决策依据最小充分集
 
@@ -144,7 +143,7 @@ A: 修的是**砍/不砍**的行为变更 (L2)。先落 append-only 事件快照
 
 影子期 ≥10 个交易日后裁决:
 1. **分歧日占比**: portfolio-vision 与 batch-vision 判定不同的日子 / 总 trim 触发日 ≥10%;
-2. **事件快照缺失率** <1%; 缺失判定标记 `invalid_vision`, 不得 enforce;
+2. **DB 读失败率** <1% (`偏斜门影子双算失败` WARNING / 判定次数);
 3. **救回单成交口径净额** ≥ 0 (portfolio-vision 放行且实际触发成交的单, 按真实成交 PnL 含费);
 4. **护栏压力**: 单日 notional 或购买力触顶频率较现状上升 ≤20%;
 5. **阈值购物禁令**: 判据 1-4 读数出来后不得调整 80% 偏斜阈值或 sector 阈值。
@@ -165,16 +164,16 @@ RFC-121 文档需追加"撤回之撤回"指针章 (正文原样留档, 按 revie
 
 ## 10. 待决问题 (frontier)
 
-- **F1 (用户裁)**: 阶段 0 事件快照 + 只读影子是否实施? (零交易行为变更; 2026-10-01 复核把前置从"可直接落"改为"先补事件快照", 另见 RFC-122)
+- **F1 (已落地)**: 阶段 0 只读影子已实施; 后续只采集前向读数, 不回填历史。
 - **F2 (已复核)**: trim 真时刻=generate 轮 13:05:55 UTC, 由 `playbook_generate_state.completed_at` 与同秒日志互证; `updated_at=20:02/20:13 UTC` 是后续 tracking 覆盖, 不能当 trim 时刻。
-- **F3 (登记不修)**: sector 集中度门同患盲区 (分母同样只含本批); 9 月 bridge 侧实际 11 次 sector skip, 原称零触发为误。阶段 1 若 enforce, sector 门是否同批修? 建议: 事件快照+影子期同点位双算 sector 分歧, 有读数再裁。
+- **F3 (登记不修)**: sector 集中度门同患盲区 (分母同样只含本批); 9 月 bridge 侧实际 11 次 sector skip, 原称零触发为误。本次阶段 0 只覆盖偏斜门; sector 分歧是否加影子, 阶段 1 前另行裁决。
 - **F4 (登记不修)**: 并列 conf=70 砍序=列表序 (§3 Q5), 影子期记录被砍/留存的 symbol 序, 攒样后看是否有信息。
 
 ## 11. 请复查者重点挑战 (点名)
 
 1. **E3/F2 时序解读 (已复核)**: generate_state `completed_at=13:05:55.477164 UTC` 与日志 21:05:55 CST 同秒互证; `updated_at=20:02/20:13 UTC` 是后续 tracking 覆盖。结构结论"guardrail 视野=6B/1S"仍成立。
 2. **E8 union 口径 (已复核)**: 原文档 +1,943.02 不可复现; 脚本显式区分 `doc_unfiltered` 与 `filter_terminal`, 且并列 conf=70 导致毛额随砍序区间化。回放仅作观察, 不作为阶段 1 裁决输入。
-3. **§1.3 "结构上不可能读到" (已复核)**: `_apply_portfolio_guardrails` 全仓唯一调用点在 `_build_instructions_from_votes`; generate/topup 走该 builder, DA/UE/reentry 不走。现有 created/updated 时间列也无法重建 point-in-time 视野, 故阶段 0 前置事件快照。
+3. **§1.3 "结构上不可能读到" (已复核)**: `_apply_portfolio_guardrails` 全仓唯一调用点在 `_build_instructions_from_votes`; generate/topup 走该 builder, DA/UE/reentry 不走。阶段 0 通过判定点活读 DB 补前向视野; 历史 created/updated 仍不能重建。
 
 ## 12. 讨论记录
 

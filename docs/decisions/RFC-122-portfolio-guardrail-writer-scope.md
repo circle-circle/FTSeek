@@ -1,6 +1,6 @@
-# RFC-122: 组合门写入方作用域与事件快照前置
+# RFC-122: 组合门写入方作用域与组合视野影子
 
-> **状态**: 提案 — 阶段 0 暂缓, 等待事件快照设计落地后裁决
+> **状态**: 阶段 0 已落地 (record-only; 2026-10-01 修订为活读 DB); 阶段 1 待前向影子期与用户二次裁决
 > **日期**: 2026-10-01
 > **类型**: L2 行为变更前置提案; 本 RFC 不实施交易行为变更
 > **关联**: RFC-121、DEB-20260930-skew-gate-vision-gap
@@ -9,7 +9,7 @@
 
 ## 摘要
 
-方向偏斜与 sector 集中度门声称度量"组合级"风险, 但当前唯一调用点位于 `_build_instructions_from_votes`, 只覆盖 generate/topup 构建侧; DA skill 直写、UE 与 reentry 不进入该分母。历史库是 UPSERT 后验状态, `created_at/updated_at` 不能重建判定时刻视野, 因此先用 append-only 事件快照补齐审计链, 再做只读影子与行为变更裁决。
+方向偏斜与 sector 集中度门声称度量"组合级"风险, 但唯一调用点位于 `_build_instructions_from_votes`, 只覆盖 generate/topup 构建侧; DA skill 直写、UE 与 reentry 不进入该分母。历史库是 UPSERT 后验状态, 不能重建历史判定视野。2026-10-01 实施修订为: 在活体判定点直接读当日 DB, 记录 batch-vision 与 portfolio-vision 双口径; 判定仍使用 batch-vision。事件快照不实施, 仅在需要重建历史事件序列时另行立项。
 
 ---
 
@@ -25,24 +25,18 @@
 
 ## 提议方案
 
-### 阶段 0a: append-only 事件快照
+### 阶段 0: 只读影子 (已落地)
 
-为每条指令写入/判定事件落一行 JSONL:
-
-- 字段: `event`, `instruction_id`, `date`, `symbol`, `source`, `direction`, `skip_reason`, `confidence`, `ts`, `batch_id`。
-- 事件: `instruction_written`, `guardrail_evaluated`, `tracking_updated`。
-- 写入为 append-only; 禁止用 UPSERT 覆盖历史事件。
-- 消费侧失败不得影响既有交易路径; 先落观测, 不改判定。
-
-### 阶段 0b: 只读影子
-
-- 偏斜与 sector 门在同一判定点双算 `batch-vision` 与 `portfolio-vision`。
-- portfolio-vision 从事件快照按 `ts <= guardrail_evaluated.ts` 重建, 不读后验 DB 行。
-- 判定仍使用 batch-vision, 交易行为零变化。
+- 在 `_apply_portfolio_guardrails` 判定点双算 `batch-vision` 与 `portfolio-vision`。
+- portfolio-vision 活读当日 DB: 过滤终态作废行, 并按 symbol 去重本批候选。
+- 影子行 append-only 写入 `data/shadow/skew_gate_vision.jsonl`; 交易判定仍使用 batch-vision。
+- DB 读/影子写失败仅告警, 不影响交易判定。
+- 该读数是活体判定点视野, 不回填历史; 历史回放仍不得使用后验 DB 伪造事件序列。
+- 本批影子只覆盖方向偏斜门, 不覆盖 sector 门。
 
 ### 阶段 1: 行为变更
 
-仅在影子期数据满足预注册判据后, 将组合门分母切换为 portfolio-vision, 并提供 `playbook.guardrails.portfolio_vision: shadow|enforce|off` 开关, 默认 `shadow`。
+仅在影子期数据满足预注册判据后, 将 generate/topup 判定分母切换为 portfolio-vision, 并提供 `playbook.guardrails.portfolio_vision: shadow|enforce|off` 开关, 默认 `shadow`。注意: 该方案仍不会在 DA/UE/reentry 写入时执行组合门; 后续写入方是否需要同门, 必须在阶段 1 前另行裁决。
 
 ---
 
@@ -62,8 +56,10 @@
 
 ## 风险与缓解
 
-- **最坏情况**: 事件写入失败或乱序导致 portfolio-vision 漏计, enforce 后误放行。
-- **缓解**: 阶段 0b 逐行记录 `missing_event_count`; `>0` 时影子标记 `invalid_vision`, 不得进入 enforce; 写入失败只告警不改交易。
+- **最坏情况**: DB 读失败导致 portfolio-vision 漏计, enforce 后误放行。
+- **缓解**: DB 读失败 fail-open 回到 batch-vision 并输出 WARNING; 影子期以该 WARNING / 判定次数作为失败率。
+- **口径限制**: topup 调用方在 guardrail 后只保存满足补量数量的子集, 影子记录的是决策面组合, 不必然等于最终落库组合; 阶段 1 裁决前必须用落库/成交行复核。
+- **覆盖限制**: 后写入的 DA/UE/reentry 行仍绕过组合门; sector 门未进入本影子。
 - **回滚**: 阶段 0 删除 emit; 阶段 1 配置改回 `shadow`。
 
 ---
@@ -75,11 +71,11 @@
 ./venv/bin/python -m pytest tests/test_skew_gate_vision_replay.py tests/test_chase_cap_inversion_fix.py -q
 ```
 
-事件快照实施后追加:
+实施验证:
 
-1. 用 9/30 事件序列回放, portfolio-vision 必须得到 9B/4S=69%;
-2. 构造 DA/UE/reentry 写入事件, 断言全部进入组合分母;
-3. 构造 tracking 覆盖事件, 断言历史判定视野不变。
+1. 契约测试 `tests/test_skew_gate_vision_shadow.py` 全绿;
+2. 真实 9/30 探针输出 batch 6B/1S=86%、portfolio 8B/4S=67%、divergent=true;
+3. 阶段 1 前用影子行关联落库/成交记录, 复核 topup 子集与后写入方造成的口径差。
 
 ---
 

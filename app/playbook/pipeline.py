@@ -2163,7 +2163,10 @@ def _apply_portfolio_guardrails(
     try:
         _emit_skew_gate_vision_shadow(valid, today, max_direction_skew)
     except Exception as _sv_e:  # pragma: no cover — emit 自吞错, 此层是保险丝
-        logger.warning(f"[playbook guardrail] 偏斜门影子调用失败 (不影响判定): {_sv_e}")
+        logger.warning(
+            f"[playbook guardrail] 偏斜门影子调用失败 (不影响判定): {_sv_e}",
+            exc_info=True,
+        )
 
     total = len(valid)
 
@@ -2274,7 +2277,10 @@ def _emit_skew_gate_vision_shadow(valid: List[Any], today: str,
                 f"portfolio {pv_pct:.0%}({'砍' if pv_violates else '放'}) "
                 f"prior B{pb}/S{ps} — 判定仍按 batch")
     except Exception as _e:
-        logger.warning(f"[playbook guardrail] 偏斜门影子双算失败 (不影响判定): {_e}")
+        logger.warning(
+            f"[playbook guardrail] 偏斜门影子双算失败 (不影响判定): {_e}",
+            exc_info=True,
+        )
 
 
 def _trim_majority_direction(valid: List[Any], majority_dir: str, target_skew: float) -> int:
