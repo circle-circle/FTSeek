@@ -2015,7 +2015,8 @@ def _build_instructions_from_votes(
     )
 
     # 组合级 guardrail: 方向偏斜 / sector 集中度 / 最低 R:R
-    instructions = _apply_portfolio_guardrails(instructions)
+    # [RFC-122 阶段0] 传 today 供偏斜门双口径影子读当日 DB (record-only)
+    instructions = _apply_portfolio_guardrails(instructions, today=today)
 
     return instructions
 
@@ -2112,6 +2113,7 @@ def _apply_portfolio_guardrails(
     max_sector_pct: float = 0.40,
     max_direction_skew: float = 0.80,  # 2026-06-30: 0.65→0.80, 允许cautious regime偏SHORT
     min_rr: float = 1.0,  # 2026-07-16: 0.8→1.0, R:R≥1 保证正期望 (还需胜率>50%)
+    today: str = "",  # [RFC-122 阶段0] 偏斜门双口径影子读当日 DB 用; 空→影子跳过 (fail-open)
 ) -> List[Any]:
     """组合级风险 guardrail (2026-06-25).
 
@@ -2154,6 +2156,15 @@ def _apply_portfolio_guardrails(
     if len(valid) <= 1:
         return active
 
+    # [RFC-122 阶段0] 偏斜门双口径只读影子 — record-only, 判定仍用下方 batch-vision。
+    #   放在 len(valid)<=1 早返回之后: 只有 ≥2 条 valid (trim 可能发生) 才记录,
+    #   与真实决策面对齐 (单条永不触发 trim, 影子它无意义)。
+    #   双层防护: emit 内部全量吞错 + 调用点再包一层 — 遥测永不杀交易路径。
+    try:
+        _emit_skew_gate_vision_shadow(valid, today, max_direction_skew)
+    except Exception as _sv_e:  # pragma: no cover — emit 自吞错, 此层是保险丝
+        logger.warning(f"[playbook guardrail] 偏斜门影子调用失败 (不影响判定): {_sv_e}")
+
     total = len(valid)
 
     # 方向偏斜
@@ -2182,6 +2193,88 @@ def _apply_portfolio_guardrails(
             )
 
     return active
+
+
+def _emit_skew_gate_vision_shadow(valid: List[Any], today: str,
+                                  max_direction_skew: float) -> None:
+    """[RFC-122 阶段0 2026-10-01] 偏斜门双口径只读影子 — 零交易行为变更。
+
+    病灶 (DEB-20260930-skew-gate-vision-gap): guardrail 唯一调用点在
+    `_build_instructions_from_votes`, 分母只含本批构建侧候选; DA skill 直写/UE/reentry
+    行不进分母 (9 月 active 279 条中 195 条绕过组合门)。9/30 实证: 日志 86%=6B/1S
+    只有 bridge 侧, 当日并集 9B/4S=69%≤80% 本不该触发 → AMD/HPE(conf=70) 被误砍,
+    而 conf=35 的直写单 COIN/SNDK 绕门成交。
+
+    **为什么活读 DB 就是 point-in-time 真值 (RFC-122 原设计的 0a 全量事件台账对活体
+    判定是多余环节, 按做减法删)**: builder 内**不 save** (2020 `return instructions`),
+    save 在调用方 run_playbook_generate/topup (2405/2646)。⇒ guardrail 判定那一刻
+    本批尚未入库, DB 当日行 = 先入库的直写行 = 判定时真实组合。8 日实测 DA 直写
+    first_created_at 恒早于 generate completed_at (12:35-13:00 vs 13:05-13:07 UTC)。
+    "tracking 覆盖污染"只影响**事后历史回放** (E8 因此不可作裁决输入), 不影响活体判定。
+    本影子 jsonl 自身即 point-in-time 留痕, 无需另建事件台账。
+
+    纪律: 只算只记, 判定仍用 batch-vision (下方 majority_pct 逻辑一字未改);
+    best-effort 吞错 (同 _emit_exec_gate_audit 惯例), 写失败绝不影响交易路径。
+    """
+    try:
+        if not today:
+            return
+        batch_buy = sum(1 for i in valid if i.direction == "BUY")
+        batch_short = sum(1 for i in valid if i.direction == "SELL_SHORT")
+        batch_total = batch_buy + batch_short
+        if batch_total == 0:
+            return
+        batch_pct = max(batch_buy, batch_short) / batch_total
+        # violates 必须反映**真实砍/放**: guardrail 在 len(valid)<=1 时提前 return 不砍,
+        #   故单子 batch_pct=100% 但实际不触发 — 影子口径与真实判定对齐, 否则 divergent 失真
+        batch_violates = batch_total > 1 and batch_pct > max_direction_skew
+
+        # prior = 当日已入库活跃行 (先入库的直写/topup), 去重本批 symbol 防双计
+        from app.playbook.db import PlaybookDB
+        rows = PlaybookDB().get_instructions_by_date(today)
+        batch_syms = {getattr(i, "symbol", "") for i in valid}
+        pb = ps = 0
+        for r in rows:
+            if (r.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
+                continue  # 终态作废不计入组合
+            if r.get("symbol") in batch_syms:
+                continue  # 本批候选自身, 已由 batch_* 计数 (防 UPSERT 双计)
+            d = r.get("direction")
+            if d == "BUY":
+                pb += 1
+            elif d == "SELL_SHORT":
+                ps += 1
+        pv_buy, pv_short = batch_buy + pb, batch_short + ps
+        pv_total = pv_buy + pv_short
+        pv_pct = max(pv_buy, pv_short) / pv_total if pv_total else 0.0
+        # 与真实 trim 面对齐: 组合总数 <=1 时无可砍 (同 len(valid)<=1 早返回语义)
+        pv_violates = pv_total > 1 and pv_pct > max_direction_skew
+
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "date": today,
+            "batch_vision": {"buy": batch_buy, "short": batch_short,
+                             "pct": round(batch_pct, 4), "violates": batch_violates},
+            "portfolio_vision": {"buy": pv_buy, "short": pv_short, "prior_buy": pb,
+                                 "prior_short": ps, "pct": round(pv_pct, 4),
+                                 "violates": pv_violates},
+            "divergent": bool(batch_violates != pv_violates),
+            "batch_symbols": sorted(s for s in batch_syms if s),
+            "threshold": max_direction_skew,
+            "note": "record-only; 判定仍用 batch_vision (RFC-122 阶段0)",
+        }
+        _p = Path(__file__).resolve().parents[2] / "data" / "shadow" / "skew_gate_vision.jsonl"
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        with _p.open("a", encoding="utf-8") as _f:
+            _f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if rec["divergent"]:
+            logger.info(
+                f"[playbook guardrail] 偏斜门双口径分歧 (record-only): "
+                f"batch {batch_pct:.0%}({'砍' if batch_violates else '放'}) vs "
+                f"portfolio {pv_pct:.0%}({'砍' if pv_violates else '放'}) "
+                f"prior B{pb}/S{ps} — 判定仍按 batch")
+    except Exception as _e:
+        logger.warning(f"[playbook guardrail] 偏斜门影子双算失败 (不影响判定): {_e}")
 
 
 def _trim_majority_direction(valid: List[Any], majority_dir: str, target_skew: float) -> int:
