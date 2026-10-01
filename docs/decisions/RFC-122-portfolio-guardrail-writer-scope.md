@@ -51,7 +51,8 @@
 影子期 ≥10 个交易日后同时满足:
 
 1. 组合视野分歧日占比 ≥10%;
-2. 事件快照缺失率 <1%;
+2. ~~事件快照缺失率 <1%~~ → **(2026-10-01 阶段0 落地时修订)** 影子行 DB 读失败率 <1%
+   (`偏斜门影子双算失败` WARNING 次数 / 判定次数); 事件台账已删, 原判据随之失效;
 3. 被组合视野放行且实际成交的人群, 含费净 PnL ≥ 0;
 4. 单日 notional 或购买力护栏触顶频率未较现状上升超过 20%。
 
@@ -84,4 +85,18 @@
 
 ## 实施记录
 
-本 RFC 当前仅记录提案与判据, 未修改组合门行为。
+- **2026-10-01 阶段0 已落地** (commit d769a7beb, 用户令「继续」): 按做减法**精简掉
+  原设计的 0a 全量事件台账** — 结构核实 builder 内不 save (`_build_instructions_from_votes`
+  2020 `return instructions`, save 在调用方 run_playbook_generate/topup 2405/2646),
+  ⇒ guardrail 判定那一刻本批尚未入库, **活读当日 DB 即 point-in-time 真值**
+  (8 日实测 DA first_created_at 恒早于 generate completed_at: 12:35-13:00 vs 13:05-13:07 UTC)。
+  事件台账只能服务事后历史回放 (已被 tracking 覆盖、不可重建), 对活体判定是多余环节 → 删。
+  实现: `_emit_skew_gate_vision_shadow` 判定点双算 batch-vision vs portfolio-vision
+  (prior=当日 DB 活跃行, 去重本批 symbol 防 UPSERT 双计 + 过滤 INVALIDATED 终态),
+  落 `data/shadow/skew_gate_vision.jsonl` append-only; 判定仍用 batch-vision 零行为变更;
+  双层防护 (emit 自吞错 + 调用点保险丝)。契约测试 12 例 + 活体探针 (真 DB 9/30:
+  batch 86% 砍 vs portfolio 8B/4S=67% 放, JBL thesis_drift 终态正确剔除, divergent=True)。
+- **阶段 0a 事件台账**: 不实施 (上述结构核实证明对活体判定多余; 若未来需要重建
+  **历史**某日判定视野, 另行立项, 不阻塞本影子)。
+- **阶段 1 (判定切 portfolio-vision)**: 仍待影子期 ≥10 交易日 + 预注册判据 (§预注册判据) +
+  用户二次裁决。回滚: 删 `_emit_skew_gate_vision_shadow` 调用 (1 处) 即退回纯 batch-vision。
