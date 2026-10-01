@@ -7469,8 +7469,13 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "be_headroom_pct": _meta.get("_be_headroom_pct"),
                 }
                 if _mfe > 0:
+                    # [hotfix 2026-10-02] capture 钳位放开 (INTC 10/1 案): 旧 max(0.0,·)
+                    #   把负捕获 (实际盈亏吐穿 MFE, 真值 -8.7%) 钳成 0 → 推送恒显
+                    #   "capture 0%", 读者以为没吐回。去掉下限, 负值如实落 payload;
+                    #   上限 min(1.0,·) 保留 (MFE 为峰值, 捕获>100% 只可能来自费/舍入)。
+                    #   渲染端 (message.py) 同步 :.0f→:.1f 显示一位小数。
                     _px_extra["capture_pct"] = round(
-                        max(0.0, min(1.0, float(pnl_pct or 0) * 100.0 / _mfe)) * 100, 0)
+                        min(1.0, float(pnl_pct or 0) * 100.0 / _mfe) * 100, 1)
                 _e60 = _meta.get("e_shadow_60m")
                 if isinstance(_e60, dict):
                     _px_extra["e60_ok"] = float(_e60.get("mfe_pct", 0) or 0) >= 0.3
@@ -8681,6 +8686,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 _quote_src = ""  # 2026-08-18 报价源遥测 (WDC/AMD 案: 触发价与1分K线矛盾待对账)
                 _be_q_bid = 0.0  # 2026-09-25 P3: 初始化, 防 quote 缺失路径下 telemetry 构建 NameError
                 _be_q_ask = 0.0
+                _be_book_src = "quote_fallback"  # [hotfix 2026-10-02] 同款初始化 (见下方 L1 尺子修)
                 try:
                     quote = _batch_quotes.get(symbol)
                     if not (isinstance(quote, dict) and (quote.get("last") or quote.get("price"))):
@@ -8710,6 +8716,30 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         #   DEB-20260903 议题二毕业判分按侧分组 ⇒ 标尺必须可审计。纯观测, 不改下单。
                         _be_q_bid = float(quote.get("bid", 0) or 0)
                         _be_q_ask = float(quote.get("ask", 0) or 0)
+                        # [hotfix 2026-10-02] L1 尺子修 (INTC 10/1 案, 用户裁 P0-2):
+                        #   StockQuote push 协议不含盘口, PushQuoteHandler 用 last_price 合成
+                        #   bid/ask (book_is_proxy=True) → 9/25 埋点以来 23/23 笔 bid==ask、
+                        #   spread=0, 侧判定审计尺子全假。真 L1 一直在 _push_orderbook_cache
+                        #   (ORDER_BOOK 自 8/10 已在动态活跃集订阅, push handler 实时维护),
+                        #   本遥测从未读过。修法: 优先读真盘口, 读不到如实标注来源 —
+                        #   纯测量修复, 侧判定/限价计算 (current_price 基准) 行为零变更。
+                        if quote.get("book_is_proxy") or (
+                                _be_q_bid and _be_q_bid == _be_q_ask):
+                            _be_book_src = "proxy_quote"
+                        else:
+                            _be_book_src = "quote_book"
+                        try:
+                            _futu_p = getattr(data_router, "futu", None)
+                            _ob = (_futu_p.get_push_orderbook(symbol)
+                                   if _futu_p is not None else None)
+                            if _ob:
+                                _ob_bid = float(_ob.get("BidPrice", 0) or 0)
+                                _ob_ask = float(_ob.get("AskPrice", 0) or 0)
+                                if _ob_bid > 0 and _ob_ask > 0:
+                                    _be_q_bid, _be_q_ask = _ob_bid, _ob_ask
+                                    _be_book_src = "l1_push"
+                        except Exception as _ob_e:
+                            logger.debug(f"[playbook sim] {symbol} L1盘口遥测读取失败(降级quote): {_ob_e}")
                 except Exception:
                     pass
                 if not current_price or current_price <= 0:
@@ -9165,12 +9195,17 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                             "floor_px": _be_floor_px,
                             "pad_bps": _mkt_pad_bps,
                             # P3 侧判定审计三件 (设计缘由见上方 _be_q_bid 取价处注释)
+                            # [hotfix 2026-10-02] bid/ask 优先取 ORDER_BOOK push 真 L1,
+                            #   book_src 如实标注来源 (l1_push=真盘口 / proxy_quote=合成 /
+                            #   quote_book=quote自带盘口). side_basis 保持 last_price —
+                            #   侧判定确实比的是 current_price(=quote.last), 语义未变。
                             "bid": _be_q_bid,
                             "ask": _be_q_ask,
                             "spread_bps": (round((_be_q_ask - _be_q_bid) / current_price * 1e4, 2)
                                            if (_be_q_bid and _be_q_ask and current_price > 0
                                                and _be_q_ask >= _be_q_bid) else None),
                             "side_basis": "last_price",
+                            "book_src": _be_book_src,
                         }  # _be_close_telemetry (+bid/ask/spread 侧判定审计)
                         # 2026-09-03 (DEB-20260903 议题二后续, 用户裁"A"): 穿透影子 record-only
                         #   埋点 — 触发瞬间采集"快跌 vs V回"判别特征, 夜间回填离场后结局。

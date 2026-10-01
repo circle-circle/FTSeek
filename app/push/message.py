@@ -165,13 +165,22 @@ class PushMessage:
                 _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
                 _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
                 _cap = p.get("capture_pct")
-                _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
+                # [hotfix 2026-10-02] capture 尺子修: 负捕获(吐回超过峰值, INTC 10/1 真值
+                #   -8.7%)曾被 pipeline 侧 max(0.0,·) 钳成 0 → 恒显 "capture 0%"。
+                #   钳位已在 pipeline._px_extra 构造处放开; 渲染侧 :.0f→:.1f 配合显示。
+                _cap_s = f"  capture {float(_cap):.1f}%" if _cap is not None else ""
                 lines.append(f"📊 路径: MFE {float(p['mfe_pct']):.2f}%{_t2s} / MAE {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
             # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性: 区分初始线 vs 紧SL线 (ARM 9/15 案)
             _eff_sl = p.get("effective_sl")
             if _eff_sl:
                 _ep = float(p.get("entry_price", 0) or 0)
-                _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
+                # [hotfix 2026-10-02] 方向盲修 (INTC 10/1 案): 旧口径 (线-入场)/入场 对 SHORT
+                #   锁利线恒为负 (锁利线在入场价下方) → "锁住+0.32%毛利" 被读成 "亏0.3%"。
+                #   改盈亏语义: SHORT=(入场-线)/入场, LONG 公式不变; 词由符号派生 (正=锁利/负=止损)。
+                #   direction 缺失 → 不翻转 (回退旧 LONG 口径, 向后兼容)。
+                _eff_gap = _eff_line_gap(_eff_sl, _ep, direction)
+                _eff_pct = (f" ({'锁利' if _eff_gap >= 0 else '止损'} {_eff_gap / _ep * 100:+.1f}%)"
+                            if _eff_gap is not None else "")
                 _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
                 lines.append(f"🛡️ 触发线: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
             # 2026-09-25 P3 (TDOC 9/25 案): BE 几何退化提示 — fee+slip≥武装阈值 ⇒ 武装即触发,
@@ -298,13 +307,19 @@ class PushMessage:
                 _t2m = p.get("time_to_mfe_trading_min") or p.get("time_to_mfe")
                 _t2s = f" ({float(_t2m):.0f}min到峰)" if _t2m else ""
                 _cap = p.get("capture_pct")
-                _cap_s = f"  capture {float(_cap):.0f}%" if _cap is not None else ""
+                # [hotfix 2026-10-02] capture 尺子修 (同飞书文本口径): 负捕获钳位已在
+                #   pipeline._px_extra 构造处放开; :.0f→:.1f 配合显示。
+                _cap_s = f"  capture {float(_cap):.1f}%" if _cap is not None else ""
                 lines.append(f"**📊 MFE/MAE**: {float(p['mfe_pct']):.2f}%{_t2s} / {float(p.get('mae_pct', 0) or 0):.2f}%{_cap_s}")
             # [2026-09-16 用户裁"同意按建议执行"第1条] 生效SL观测性 (同飞书文本口径)
             _eff_sl = p.get("effective_sl")
             if _eff_sl:
                 _ep = float(p.get("entry_price", 0) or 0)
-                _eff_pct = f" ({(float(_eff_sl) - _ep) / _ep * 100:+.1f}%)" if _ep > 0 else ""
+                # [hotfix 2026-10-02] 方向盲修 (INTC 10/1 案, 同飞书文本口径):
+                #   SHORT 锁利线恒负显示被读成亏损 → 盈亏语义 (正=锁利/负=止损)。
+                _eff_gap = _eff_line_gap(_eff_sl, _ep, direction)
+                _eff_pct = (f" ({'锁利' if _eff_gap >= 0 else '止损'} {_eff_gap / _ep * 100:+.1f}%)"
+                            if _eff_gap is not None else "")
                 _eff_src = "早期紧SL(规则0.5)" if p.get("tight_sl_triggered") else "生效止损"
                 lines.append(f"**🛡️ 触发线**: ${float(_eff_sl):.2f}{_eff_pct} ← {_eff_src}")
             # 2026-09-25 P3 (TDOC 9/25 案): BE 几何退化提示 (同飞书文本口径)
@@ -383,6 +398,29 @@ class PushMessage:
 
 
 # ─── 渲染 helper ───
+def _eff_line_gap(eff_sl: Any, entry_price: float, direction: str) -> Optional[float]:
+    """触发线相对入场价的**盈亏语义**差值 (hotfix 2026-10-02, INTC 10/1 案).
+
+    旧口径 `(线-入场)` 是纯价格方向差, 对 SHORT 恒读反: 空头锁利线在入场价下方,
+    锁住 +0.32% 毛利却显示 "(-0.3%)" → 被读成亏损线。统一为盈亏语义 (正=锁利, 负=止损):
+      LONG:  线-入场 (线高于入场 = 已抬进盈利区; 旧口径对 LONG 本就正确, 不变)
+      SHORT: 入场-线 (线低于入场 = 锁住毛利)
+    direction 缺失/未知 → 按 LONG 旧口径回退 (向后兼容, 不翻转)。
+    entry_price<=0 → None (调用方不显示百分比)。
+    """
+    try:
+        ep = float(entry_price or 0)
+        line = float(eff_sl or 0)
+    except (TypeError, ValueError):
+        return None
+    if ep <= 0 or line <= 0:
+        return None
+    d = str(direction or "").upper()
+    if d in ("SHORT", "SELL", "SELL_SHORT"):
+        return ep - line
+    return line - ep
+
+
 def _profile_line(p: Dict[str, Any]) -> str:
     """画像行: cohort 分组 / horizon / streak 等分桶标签拼接 (有则显示).
 
