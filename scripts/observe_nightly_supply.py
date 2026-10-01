@@ -259,27 +259,27 @@ def section_single_entry(db: sqlite3.Connection, date: str, findings: list) -> N
         WHERE (date(created_at) = ? OR date = ?)
           AND direction IN ('BUY','SELL_SHORT')
     """, date, date)
-    if not rows:
-        print("  (今日无活跃指令)")
-        return
     have = [r for r in rows if r["has_adm"]]
     miss = [r for r in rows if not r["has_adm"]]
-    print(f"  活跃指令 {len(rows)} 条: 带 admission 字段 {len(have)}, 缺 {len(miss)}")
-    vc = Counter(str(r["verdict"]) for r in have)
-    print(f"  admission verdict 分布: {dict(vc)}")
-    if miss:
-        by_src = Counter(_did_source(r["decision_id"]) for r in miss)
-        print(f"  缺字段者按通道: {dict(by_src)}")
-        for r in miss[:6]:
-            print(f"    {r['symbol']:<10} {_did_source(r['decision_id'])} "
-                  f"exec={r['executed']} did={str(r['decision_id'])[:34]}")
-        # reentry 重武装行走不同构造路径, 缺 admission 属已知口径, 降 P2
-        if all(_did_source(r["decision_id"]) == "reentry" for r in miss):
-            findings.append(("P2", f"reentry {len(miss)} 条无 admission 字段 (已知口径)"))
+    if rows:
+        print(f"  活跃指令 {len(rows)} 条: 带 admission 字段 {len(have)}, 缺 {len(miss)}")
+        vc = Counter(str(r["verdict"]) for r in have)
+        print(f"  admission verdict 分布: {dict(vc)}")
+        if miss:
+            by_src = Counter(_did_source(r["decision_id"]) for r in miss)
+            print(f"  缺字段者按通道: {dict(by_src)}")
+            for r in miss[:6]:
+                print(f"    {r['symbol']:<10} {_did_source(r['decision_id'])} "
+                      f"exec={r['executed']} did={str(r['decision_id'])[:34]}")
+            # reentry 重武装行走不同构造路径, 缺 admission 属已知口径, 降 P2
+            if all(_did_source(r["decision_id"]) == "reentry" for r in miss):
+                findings.append(("P2", f"reentry {len(miss)} 条无 admission 字段 (已知口径)"))
+            else:
+                findings.append(("P1", f"{len(miss)} 条绕过统一入口 (无 admission 字段)"))
         else:
-            findings.append(("P1", f"{len(miss)} 条绕过统一入口 (无 admission 字段)"))
-    else:
-        print("  ✅ 全部经统一入口")
+            print("  ✅ 全部经统一入口")
+    # 注意: 无活跃指令也**不得提前返回** — 成交侧对照必须照跑
+    # (RFC-126 测试实证: "主链零指令 + 仅 EXT 成交"日, 提前 return 会漏掉空 did P1)。
 
     # 成交侧对照: 执行行是否都有指令行 (无幽灵成交)
     trades = _rows(db, """
@@ -293,6 +293,21 @@ def section_single_entry(db: sqlite3.Connection, date: str, findings: list) -> N
               f"{str(t['entry_time'])[:19]} did={str(t['decision_id'])[:30]}")
     # 10/1 ACN 教训: 空 did + strategy_id=extended_hours_entry = EXT 旁路实弹单
     # (绕 admission/不写指令行; EXT_ENTRY_EXEC_PRICE_SHADOW 只是记录器不拦下单)。
+    # RFC-126 后 EXT 成交带 EXT-<date>-<symbol>-<session> did = 归因成功, 不再 P1;
+    # 但 EXT 行仍不写指令行, 单独列出其 admission verdict 供审计。
+    ext_rows = [t for t in trades if str(t["decision_id"] or "").startswith("EXT-")]
+    for t in ext_rows:
+        adm = _rows(db, """
+            SELECT json_extract(metadata_json, '$.admission_verdict') AS v
+            FROM trade_records WHERE symbol = ? AND date(entry_time) = ?
+              AND strategy_id = 'extended_hours_entry' LIMIT 1
+        """, t["symbol"], date)
+        verdict = adm[0]["v"] if adm else None
+        print(f"    [EXT归因✅] {t['symbol']:<10} {t['direction']:<10} "
+              f"did={str(t['decision_id'])[:40]} admission={verdict}")
+        if verdict == "REJECT":
+            findings.append(("P2", f"EXT 成交在统一 admission 口径下 REJECT "
+                                   f"(record-only 未拦): {t['symbol']} — 人工复核"))
     for t in trades:
         if not str(t["decision_id"] or "").strip():
             findings.append(("P1", f"成交无指令行(绕统一入口): {t['symbol']} "

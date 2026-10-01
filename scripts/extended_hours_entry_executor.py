@@ -2885,7 +2885,7 @@ def collect(session, dry=False):
 def _write_open_position(
     symbol, qty, entry_px, decision_px, session, earn, chg, vol,
     buy_order_id="", position_usd=None, grade="B", structure=None,
-    gate_mode="strict", side="LONG",
+    gate_mode="strict", side="LONG", decision_id="", admission_meta=None,
 ):
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
     返回 position_id. 幂等且不覆盖既有仓位.
@@ -2919,7 +2919,13 @@ def _write_open_position(
                            ),
                            "cohort": "B",  # 2026-09-17 用户裁: EXT 仓可隔夜 (cohort B + PLAYBOOK_SIM 默认允许, 盈利跳过 PRE_CLOSE_EXIT)
                            "stop_loss": init_sl,           # 盘中 monitor_playbook_sim_exits 读此键做 SL
-                           "stop_source": "rule_engine_initial_sl"}, ensure_ascii=False)
+                           "stop_source": "rule_engine_initial_sl",
+                           # RFC-126: admission 统一口径 verdict 留痕 (record-only, 不拦单)。
+                           # EXT 不写 playbook_instructions ⇒ 绕开 save_instruction 收口点;
+                           # 此处成交时补算一遍, 使 EXT 与主链同口径可审计。
+                           "decision_id": decision_id or None,
+                           **(admission_meta or {}),
+                           }, ensure_ascii=False)
         conn.execute("BEGIN IMMEDIATE")
         existing_order = None
         if buy_order_id:
@@ -2955,12 +2961,14 @@ def _write_open_position(
             "INSERT INTO trade_records (trade_date, symbol, direction, entry_time, entry_price, "
             " quantity, source_type, trade_mode, mode, owner_strategy, strategy_id, "
             " futu_order_id, metadata_json, created_at, exit_price, exit_time, config_version, "
-            " entry_session) "
+            " entry_session, decision_id) "
             "VALUES (?, ?, ?, ?, ?, ?, 'PLAYBOOK_SIM', 'simulate', 'futu_simulate', "
-            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '', 'v2', ?)",
+            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '', 'v2', ?, ?)",
             # config_version='v2': 与规范写入方 app/storage/trade_store.py 一致。该表 schema 是
             # DEFAULT 'v1'，本列不写会落默认值 ⇒ W1 冻结窗出现版本分裂假象 (2026-09-18 F7 修复)。
-            (_today_et(), symbol, side, now, entry_px, qty, buy_order_id, meta, now, session))
+            # decision_id (RFC-126): EXT-<date>-<symbol>-<session> 归因, 消灭空 did 成交。
+            (_today_et(), symbol, side, now, entry_px, qty, buy_order_id, meta, now, session,
+             decision_id or None))
         conn.commit()
         return pos_id
     finally:
@@ -3085,12 +3093,39 @@ def _execute(
 
         fqty = float(fill["filled_qty"]); fpx = float(fill["avg_fill_price"])
         rec.update({"filled_qty": fqty, "avg_fill_price": fpx})
+        # 空头 SL 在**上方** (STOP_PCT 为负 ⇒ 取反); 退出链 _dir_sign 另行判向。
+        # (RFC-126 提前到 admission 留痕之前, 使 max_sl_pct 判据拿到真值)
+        rec["initial_sl"] = round(fpx * (1 + STOP_PCT / 100 * (1 if side == "LONG" else -1)), 2)
+        # ── RFC-126: 归因收口 (record-only, 零行为变更) ──
+        # 1) did: EXT-<date>-<symbol>-<session> — 消灭空 did 成交 (10/1 ACN 教训),
+        #    幂等: 同单重跑生成同 did。
+        ext_did = f"EXT-{_today_et()}-{symbol}-{session}"
+        # 2) admission verdict 留痕: 与主链同一纯函数同一生产配置 (unified_config
+        #    playbook.admission), 只记录不拦单。EXT 已有同源 $5 价格地板 (9/17
+        #    ce54f64eb) ⇒ 预期恒 PASS; 出现 REJECT = 新信号, 体检脚本会 P2 提示。
+        admission_meta = {}
+        try:
+            from app.playbook.admission import evaluate as _adm_evaluate
+            _adm = _adm_evaluate({
+                "date": _today_et(), "symbol": symbol,
+                "direction": "SELL_SHORT" if side == "SHORT" else "BUY",
+                "entry_price": fpx, "position_size": fqty,
+                "stop_loss": rec.get("initial_sl") or 0,
+            })
+            rec["admission"] = {"verdict": _adm["verdict"], "reasons": _adm["reasons"],
+                                "fee_bps": _adm["metrics"].get("fee_bps")}
+            admission_meta = {"admission_verdict": _adm["verdict"],
+                              "admission_reasons": _adm["reasons"],
+                              "admission_fee_bps": _adm["metrics"].get("fee_bps")}
+        except Exception as _adm_exc:  # 留痕失败绝不阻成交 (宁缺归因不误交易)
+            rec["admission_error"] = str(_adm_exc)[:120]
         # 成交 → 写 open_positions + trade_records (盘中监控闭环; metadata.stop_loss 供 SL 判定)
         try:
             pos_id = _write_open_position(
                 symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid,
                 position_usd=requested_position_usd, grade=grade, structure=structure,
                 gate_mode=gate_mode, side=side,
+                decision_id=ext_did, admission_meta=admission_meta,
             )
         except Exception as exc:
             rec["ok"] = False
@@ -3099,8 +3134,6 @@ def _execute(
             _audit(rec)
             return rec
         rec["position_id"] = pos_id
-        # 空头 SL 在**上方** (STOP_PCT 为负 ⇒ 取反); 退出链 _dir_sign 另行判向。
-        rec["initial_sl"] = round(fpx * (1 + STOP_PCT / 100 * (1 if side == "LONG" else -1)), 2)
         rec["ok"] = True
         _audit(rec)
         _push_filled(symbol, fqty, fpx, price, session, earn, chg, vol, rec, pos_id)
