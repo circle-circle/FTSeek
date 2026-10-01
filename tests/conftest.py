@@ -95,6 +95,10 @@ _PRODUCTION_DATA_SEAMS = (
      "llm_universe_inject.jsonl"),
     ("scripts.llm_universe_scan", "_LONG_GATE_LOG_PATH", "path",
      "ue_long_momentum_gate.jsonl"),
+    # 2026-10-01 (RFC-125 阶段0): 写库边界冲突影子 — save_instruction 无条件调用
+    #   (有冲突才落盘), 未登记时写者自身 except 会吞掉下方硬闸 = 隔离形同虚设。
+    ("app.playbook.conflict_shadow", "_CONFLICT_SHADOW_PATH", "path",
+     "instruction_conflict.jsonl"),
 )
 
 

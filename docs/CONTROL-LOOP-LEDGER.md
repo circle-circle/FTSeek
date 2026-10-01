@@ -99,6 +99,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | job_id | 名称 | schedule | 角色 | 误差信号 |
 |--------|------|----------|------|---------|
 | e0d574cc1a3c | deep-stock-analysis 盘前扫描 | 0 20 * * 1-5 | 信号生成侧 | — |
+| crontab-da-true-reverse-shadow | DA 分析师/独立挑战者真反向影子 (`scripts/da_true_reverse_shadow.py`, 系统 crontab 非 Hermes, RFC-125 阶段0) | 50 20 * * 1-5 (DA 常规完成后、bridge 推送前) | 只读扫描当日 DA checkpoint, 捕获 BUY↔SELL_SHORT 独立真反向、挑战者反证/失效机制/翻向条件, 幂等写 `data/shadow/da_true_reverse.jsonl`; 不改 DA 合成、指令、执行 | 断流或事件数与 checkpoint 复核不一致; DA 超时晚完成则该日缺失, 次日幂等补扫仍需人工核对 |
 | 2d69370d5c91 | 盘前综合预检 | 0 20 * * 1-5 | 数据源健康+IC+OKR盘前验证 | 数据新鲜度/可用性 |
 | 9ac3efd8c5e7 | Deepulse 科技情报日报 | 30 20 * * 1-5 | 外部情报 (开环输入, 非反馈) | — |
 | 7a40dd7c9e94 | 盘后综合复盘 | 0 4 * * 2-6 | 归因/告警/方向分析 (合并5旧job) | 成对口径误差 |

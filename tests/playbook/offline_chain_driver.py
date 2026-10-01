@@ -295,7 +295,11 @@ def run(workdir: Path, db_path: Path) -> dict:
              patch("scripts.llm_universe_scan._LONG_GATE_LOG_PATH",
                    workdir / "data" / "shadow" / "ue_long_momentum_gate.jsonl"),
              patch("app.playbook.candidate_eligibility.FUNNEL_PATH",
-                   workdir / "candidate_funnel.jsonl")]
+                   workdir / "candidate_funnel.jsonl"),
+             # [RFC-125] 写库边界冲突影子 (conftest 缝表已登记, 本驱动清单独立维护
+             #   — 漏改道 = 链内 save_instruction 触发冲突时直写生产 jsonl)。
+             patch("app.playbook.conflict_shadow._CONFLICT_SHADOW_PATH",
+                   workdir / "data" / "shadow" / "instruction_conflict.jsonl")]
     daily_active_pool_module._active_pool_instance = None
     original_pool_init = daily_active_pool_module.DailyActivePool.__init__
 

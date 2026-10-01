@@ -494,10 +494,21 @@ class PlaybookDB:
 
         _TERMINAL = ("win", "loss", "void")
         _existing = conn.execute(
-            "SELECT id, decision_id, executed, outcome FROM playbook_instructions "
+            "SELECT id, decision_id, executed, outcome, direction, skip_reason, "
+            "entry_price, stop_loss, take_profit, confidence "
+            "FROM playbook_instructions "
             "WHERE date = ? AND symbol = ? ORDER BY id",
             (_date, _symbol),
         ).fetchall()
+        try:
+            from app.playbook.conflict_shadow import emit_save_conflict_shadow
+            emit_save_conflict_shadow(inst, _existing)
+        except Exception as conflict_shadow_error:
+            logger.warning(
+                "[save_instruction] 冲突影子写入失败 (不影响仲裁/入库): "
+                f"{conflict_shadow_error}",
+                exc_info=True,
+            )
 
         _target_id = None   # 原地更新目标行
         _do_insert = False

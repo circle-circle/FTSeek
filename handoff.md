@@ -1,5 +1,46 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-01 RFC-125 批复查: 策略/逻辑成立, 三处守卫违规就地修复 (零行为变更)
+
+> **触发**: 用户令复查 agent 对 DA/UE 主通道的分析与 RFC-125 落地批。
+
+**复查结论 (逐条实证)**: 病灶诊断与影子设计成立 — ①checkpoint 字段契约与真实
+9/23 TSLA / 9/29 ORCL 逐字段一致 (`_debate` 25 字段全对得上); ②decision_id 前缀口径
+与 db.py 仲裁同源; ③db.py 扩列追加在原 4 列之后, 仲裁位置索引 r[0..3] 不受影响;
+④连接池 row_factory=sqlite3.Row (Row 缺键抛 IndexError, 已被 `_value` 捕获);
+⑤落盘产物与 9 月实跑 2 条独立真反向逐位吻合。
+
+**查出并修复 (agent 验证漏跑棘轮守卫 — "117 passed" 为真但不完整)**:
+1. except:pass 棘轮 924→927 红: 三个新文件各一处静默 `continue` → 改坏行计数 +
+   告警留痕 (R5 模式,  precedented by 9/30 meta_audit 批)。
+2. W6 日志卫生棘轮 db.py 4→5 红: 影子失败告警无栈 → 补 `exc_info=True`
+   (扫描脚本 except 内告警同补)。
+3. 生产数据隔离缝未登记: 冲突影子路径原为函数内联 ⇒ 无法登记; 实证
+   test_playbook_db.py 触发冲突时硬闸被 db.py 自身 except 吞掉 (告警 1 次) —
+   正是 conftest 缝表注释点名的反模式。已提模块常量 `_CONFLICT_SHADOW_PATH` 并
+   双登记 conftest `_PRODUCTION_DATA_SEAMS` + offline_chain_driver 私有清单;
+   修复后吞闸告警 0 次、测试零生产污染。
+
+**验证**: 四棘轮 31 passed (except/naive-now/utc4/W456); 原 117 集 + test_playbook_db
+全量 + offline 全链 173 passed; 扫描器幂等重跑 appended=0。db.py / conflict_shadow
+改动为零行为日志参数 + 常量重构, 下次例行重启即载 (不重启不影响交易与影子写入)。
+
+## 2026-10-01 RFC-125 多LLM真反向/指令冲突影子 (用户认同策略, 零交易行为变更)
+
+> **触发**: 用户确认“不要冲突和重复, 充分利用多LLM真反向结论”, 且反向专指 DA 分析师与独立挑战者的正反向结论。
+
+**已落地**:
+- `app/playbook/db.py`: `save_instruction` 唯一写库收口处新增 record-only 冲突影子; 检测非空 `decision_id` 重复、同 did 材料漂移、DA/UE/reentry 活跃方向冲突; 仲裁与入库行为不变。
+- `app/playbook/true_reverse_shadow.py` + `scripts/da_true_reverse_shadow.py`: 扫描 DA checkpoint, 只把 BUY↔SELL_SHORT 判为真反向; SKIP 视为弃权; 要求独立挑战者且独立方向确认反向; 保留挑战者理由、失效机制与翻向条件。
+- 新产物: `data/shadow/instruction_conflict.jsonl`、`data/shadow/da_true_reverse.jsonl`, 均幂等 `event_id` 去重。
+- 真 reverse 扫描已挂系统 crontab `50 20 * * 1-5`, 并登记 `docs/CONTROL-LOOP-LEDGER.md`。
+- 9月实跑: 捕获 2 条独立真反向 — 9/23 `US.TSLA` (分析师 SELL_SHORT vs 挑战者 BUY)、9/29 `US.ORCL` (分析师 BUY vs 挑战者 SELL_SHORT)。
+- 目标矩阵与 enforcement 门槛落档 `docs/decisions/RFC-125-multillm-conflict-resolution-shadow.md`; 阶段1仍须 ≥5 交易日影子 + 用户显式裁决。
+
+**验证**: `pytest tests/test_true_reverse_shadow.py tests/test_instruction_conflict_shadow.py tests/playbook/test_generate_da_priority_contract.py tests/test_playbook_db.py::TestRFC066MultiRoundLedger tests/test_stale_bridge_guard.py tests/test_control_loop_ledger.py -q` → **117 passed**; `py_compile` 通过。按规程两次重启 `ftseek-us` (首次加载影子、二次加载材料字段查询修正), `scripts/startup_smoke_check.py --wait 90` 七项全绿 (ConfigValidator/漂移/热重载/SSOT/模拟盘/退出快循环/零 Traceback)。
+
+**回滚**: 删 `db.py` 的影子调用 + 两个新模块/脚本/测试/RFC; 影子 JSONL 可保留或删除。
+
 ## 2026-09-29 RFC-117 P1 复核修订批 (用户裁「继续」, 行为口径零变化)
 
 > **触发**: 用户要求复查多 Agent 执行的 UE/DA 调整 (RFC-117 破位闸 + DA feed 双向 + 共享 momentum 重构)。复查结论: 整体合理, 落地 1×P1 + 1×P2 修正。
