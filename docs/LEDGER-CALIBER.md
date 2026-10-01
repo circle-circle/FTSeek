@@ -116,9 +116,14 @@ admission.py 自认 conf IC=−0.021(t=−0.33)。本轮按通道分层复核 (t
 |------|---|--------------|---|
 | deep_analysis | 249 | 0.006 | 0.10 |
 | universe_expansion | 53 | 0.072 | 0.51 |
-| bridge_scanner | 46 | −0.028 | −0.19 |
+| bridge_scanner* | 46 | −0.028 | −0.19 |
 | intraday_reentry | 26 | 0.0 | 0.0 |
 | 混合 | 379 | 0.047 | 0.92 |
+
+> \* 通道名义有误 (2026-10-01 复核): 该桶按 raw_instruction_json 字段分类, 但被
+> generate 重建批同 did 覆盖过的 DA 直写行 raw 字段已换成重建版 (RFC-122 附录B),
+> 实测这些行 decision_id 全为 `DA-` 前缀 = DA 直写。IC 数值不受影响 (算的是同一批
+> 交易), 但"bridge_scanner 独立通道"不存在 — 归属一律以 decision_id 前缀为准。
 
 所有通道 |t| < 1.1 → **conf 无方向预测力**。conf≥70 vs conf<55 的 WR(81% vs 82%)
 和净%中位(0.194% vs 0.213%)无差异。净$ 随 conf 上升是**仓位效应**(高 conf→大仓→大$波动),
