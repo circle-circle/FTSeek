@@ -89,6 +89,14 @@ class TestNormalizePure:
         assert chase_cap_violated("SELL_SHORT", 351.49, cap) is False  # 现价放行
         assert chase_cap_violated("SELL_SHORT", cap - 0.01, cap) is True  # 真追空仍拦
 
+    def test_direction_alias_contract(self):
+        """LONG 与 BUY、SHORT 与 SELL_SHORT 必须同侧, 防写入方别名错位。"""
+        assert chase_cap_violated("BUY", 100.01, 100.0) is True
+        assert chase_cap_violated("LONG", 100.01, 100.0) is True
+        assert chase_cap_violated("LONG", 99.99, 100.0) is False
+        assert chase_cap_violated("SELL_SHORT", 99.99, 100.0) is True
+        assert chase_cap_violated("SHORT", 99.99, 100.0) is True
+
 
 # ── ② 执行层锚纪律 (源级契约) ────────────────────────────────────────
 class TestGateAnchorContract:

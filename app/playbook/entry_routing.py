@@ -101,7 +101,7 @@ def parse_raw_semantics(raw_instruction_json: Any) -> Dict[str, Any]:
 def chase_cap_violated(direction: str, price: float, cap: Optional[float]) -> bool:
     """方向感知禁追线违例判定。纯函数。
 
-    BUY  : price > cap 即追高违例 (禁追线=价格上限)。
+    BUY/LONG: price > cap 即追高违例 (禁追线=价格上限)。
     SHORT: price < cap 即追空违例 (禁追线=价格下限, 低卖=更差的空头入场)。
     cap 缺失/非正数/价格非正数 → False (不判, 与无 cap 指令现状行为一致)。
     """
@@ -112,7 +112,8 @@ def chase_cap_violated(direction: str, price: float, cap: Optional[float]) -> bo
         return False
     if p <= 0 or c <= 0:
         return False
-    return (p > c) if str(direction).upper() == "BUY" else (p < c)
+    direction = str(direction).upper()
+    return (p > c) if direction in ("BUY", "LONG") else (p < c)
 
 
 def chase_cap_enforce_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:

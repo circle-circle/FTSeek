@@ -83,7 +83,7 @@ def _write_round_skip_reason(inst: Dict[str, Any], reason: str) -> None:
     except Exception as _sr_err:
         logger.warning(
             f"[playbook] 门拦截 skip_reason 回写失败 {inst.get('symbol')} "
-            f"(不影响拦截): {_sr_err}")
+            f"(不影响拦截): {_sr_err}", exc_info=True)
 
 # 2026-08-06 (DEB-20260806 终裁): 锚限价影子幂等集 ((inst_id, date) — 每指令触发只落一行).
 _LIMIT_SHADOW_EMITTED: set = set()
