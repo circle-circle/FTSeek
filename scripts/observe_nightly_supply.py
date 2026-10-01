@@ -291,6 +291,13 @@ def section_single_entry(db: sqlite3.Connection, date: str, findings: list) -> N
     for t in trades[:8]:
         print(f"    {t['symbol']:<10} {t['direction']:<10} "
               f"{str(t['entry_time'])[:19]} did={str(t['decision_id'])[:30]}")
+    # 10/1 ACN 教训: 空 did + strategy_id=extended_hours_entry = EXT 旁路实弹单
+    # (绕 admission/不写指令行; EXT_ENTRY_EXEC_PRICE_SHADOW 只是记录器不拦下单)。
+    for t in trades:
+        if not str(t["decision_id"] or "").strip():
+            findings.append(("P1", f"成交无指令行(绕统一入口): {t['symbol']} "
+                                   f"{t['direction']} strat={t['strategy_id']} "
+                                   f"@{str(t['entry_time'])[:19]}"))
 
 
 # ── 段 5: 异常清单 ────────────────────────────────────────────────

@@ -50,12 +50,23 @@
 - **EXT 旁路完全绕过 admission gate** (直接 place_order, 不写 playbook_instructions):
   admission 的 min_entry_price=5.0 / min_notional=2500 对其无效。与 RFC-122 偏斜门
   盲区**同构** (多路径写入/下单, 治理门只覆盖一条)。
-- **现状**: EXT 入场 9/18 后无新真单; 9/28 起 crontab 挂 EXT_ENTRY_EXEC_PRICE_SHADOW=true
-  纯影子 ($50 阈值), 日志证实零真单 → **黑洞已自我堵上, 无新增敞口**。
-  但 EXT 执行器代码内 MIN_PRICE=$5 地板 (L875 注释自证 CTNT $0.073/GIPR $0.435
+- **现状 (2026-10-01 21:10 更正 — 原"已自我堵上"结论被实弹证伪)**:
+  EXT 入场**一直在实弹运行**, 从未停用。crontab 的 `EXT_ENTRY_EXEC_PRICE_SHADOW=true`
+  只控制 `_record_execution_price_shadow` (executor L808/L815) —— 一个 record-only 的
+  "$50 执行池价格阈值对比" jsonl 记录器, **完全不碰 `_execute`/`place_order` 路径**
+  (L2963/L3051)。9/28 提交 `b2183f737` 标题自证: 「零交易行为变更, **生产闸仍
+  EXT_ENTRY_MIN_PRICE=5**」。
+  我原结论把"9/19–9/30 无新成交"误读为"已停用", 实际是**那段时间没有候选通过闸**
+  (价格闸 $5 拦 24 只、量闸、财报事件门), 不是通道关了。
+  **实弹复现**: 2026-10-01 08:10 ET `US.ACN SHORT 23股 @212.529`, futu_order_id=8219132,
+  `FILLED_ALL`, position_id=EXT-47604eaf9c8d, SL=223.16, gate_mode=strict,
+  entry_grade=A, 财报日 (ACN 2026-Q4 BMO, surprise +2.36%), change_pct=+15.9 →
+  `SHORT_ALLOW=true` (.env.us:191) + `change_pct >= SHORT_GAP_MIN=3.0` 判 SHORT。
+  ⇒ **遗留风险不是"若重开", 而是"一直开着"**。
+- 但 EXT 执行器代码内 MIN_PRICE=$5 地板 (L875 注释自证 CTNT $0.073/GIPR $0.435
   曾透过前三闸) — $5 地板挡不住 CTNT 型费用爆炸 ($0.072×68493 股 notional $4,931
   过 $5 闸? 否 — 实测 CTNT px=0.072 < $5 是 9/17 闸前入的; 现行 $5 闸会拦)。
-  **遗留风险**: 若 EXT 真单路径重开, 必须过 admission 费用门 (fee_bps 上限), 已登记 §4。
+  **遗留风险**: EXT 真单**从未停过** (§2.1 更正), 必须过 admission 费用门 (fee_bps 上限), 已登记 §4。
 
 ### 2.2 conf 无方向预测力 (分层 IC 复核, 修正 admission 的混合口径)
 
@@ -122,9 +133,9 @@ regime 两态 (cautious/risk_on) 在低波月无区分度是环境使然; regime
 
 ## 4. 登记观察 / 待裁 (不实施)
 
-1. **EXT 真单重开前置条件**: 必须过 admission 费用门 (或等价 fee_bps 上限,
+1. **EXT 真单从未停用 (§2.1 2026-10-01 更正)**: 前置条件 = 必须过 admission 费用门 (或等价 fee_bps 上限,
    建议 ≤30bps 往返); settlement fee 对 qty 线性、对价格无关 → 低价股必须有
-   max_shares 或 min_price×qty 联合闸。现状: EXT 纯影子, 无行动。
+   max_shares 或 min_price×qty 联合闸。现状: **实弹运行中** (10/1 ACN SHORT 实证), 待用户裁处置。
 2. **偏斜门砍单依据** (conf→?): 并入 RFC-122 阶段1 裁决包 (影子攒样 ≥10 交易日后)。
 3. **OVERNIGHT_GAP_STOP**: n≥30 再议; 候选 max_sl_pct 启用需先回放 (含对赢家的误杀面)。
 4. **regime×方向分层盈亏遥测**: 纯遥测, 待排期 (低优先, 当前 regime 无变异)。
