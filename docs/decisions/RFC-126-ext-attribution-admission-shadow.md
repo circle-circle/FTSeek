@@ -56,6 +56,24 @@
 2. 9/17-10/1 历史 7 笔重放 admission.evaluate: 预期全 PASS (与 §2 取证一致)。
 3. 明晨盘前窗口 (16-22 CST cron) 首笔 EXT 成交后: 体检脚本段4 应显示 EXT-did ✅。
 
+## 4.1 执行记录 (2026-10-01 21:20 CST)
+
+- 提交 `940c5c9a4` (代码+测试+RFC); 测试: 新契约 8 例 + EXT 全量回归 **85 passed**,
+  admission/影子/回填相关回归 **45 passed**; py_compile ✓。
+- 历史重放实际结果 (修正 §4 验证计划第2条的预期表述): CTNT/GIPR = **REJECT (PRICE_TOO_LOW)**,
+  其余 5 笔 PASS — 与 §2 取证表一致 ("预期全 PASS"表述不严谨, 以重放实值为准)。
+- **一次性回填** (SIM 期按既有授权直接落库): EXT 全部 7 行 trade_records
+  补 `decision_id='EXT-<date>-<symbol>-<session>'` + metadata_json 补
+  admission_verdict/reasons/fee_bps + `did_backfill='RFC-126 manual 2026-10-01'` 标记;
+  幂等复验剩余空 did = 0。首跑曾把 id=1521 (CTNT) 的 session 硬编码为 premarket
+  (恰与真值相同), 复跑起改用 entry_session 列真值。
+- 体检脚本终验 10/1: 活跃指令 6/6 带 admission; 成交 4 笔全归因
+  (INTC/FRO/TOST = DA-did, ACN = EXT-did ✅); 异常清单空。
+- 部署: EXT executor 为 cron 独立进程, **无需重启** — 下一轮 cron 自动加载新代码;
+  主链服务 (ftseek-us) 不 import 本 executor, 亦无需重启。
+- 测试捕获附带 bug: observe_nightly_supply 段4 "今日无活跃指令"提前 return 会跳过
+  成交侧对照 (仅 EXT 成交日漏报 P1) — 已修, 契约测试钉住。
+
 ## 5. 遗留 (不在本 RFC 范围)
 
 - EXT 与主链同标的反向对撞目前靠 symbol 级重复持仓守卫兜底, 无方向感知 — 登记观察,
