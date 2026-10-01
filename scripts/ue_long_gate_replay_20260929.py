@@ -6,8 +6,11 @@
 """
 import os, sys, time, sqlite3, statistics
 from datetime import date, timedelta
+from pathlib import Path
+
 os.environ.setdefault("FTSEEK_SHADOW_RUN", "1")
-sys.path.insert(0, "/opt/ftseek/FTSeek-US")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.storage.db_pool import get_db_path
 from scripts import llm_universe_scan as ue
 
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
@@ -36,7 +39,10 @@ class _AsOfRouter:
         return self._bars
 
 # 全部 UE LONG 成交 (不限窗, 用真实入场日)
-con = sqlite3.connect("file:/opt/ftseek/FTSeek-US/data/ftseek_us.db?mode=ro", uri=True)
+con = sqlite3.connect(
+    f"file:{get_db_path('ftseek_research')}?mode=ro",
+    uri=True,
+)
 con.row_factory = sqlite3.Row
 rows = con.execute("""
 SELECT symbol, direction, COALESCE(pnl_net,realized_pnl) pnl, realized_pnl gross, fees_est,

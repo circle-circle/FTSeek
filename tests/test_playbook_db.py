@@ -65,7 +65,18 @@ class TestEnsureTables:
         indexes = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_playbook%'"
         ).fetchall()
-        assert len(indexes) >= 4
+        index_names = {index["name"] for index in indexes}
+        assert "idx_playbook_instructions_decision_id" in index_names
+
+    def test_decision_id_lookup_uses_index(self, db):
+        conn = db._conn()
+        plan = conn.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM playbook_instructions WHERE decision_id = ?",
+            ("DA-test",),
+        ).fetchall()
+        assert any(
+            "idx_playbook_instructions_decision_id" in row["detail"] for row in plan
+        )
 
 
 class TestPlaybookInstructions:

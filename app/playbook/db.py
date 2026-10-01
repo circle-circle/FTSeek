@@ -131,6 +131,10 @@ class PlaybookDB:
                 "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_execution_state "
                 "ON playbook_instructions(execution_state, updated_at, id)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbook_instructions_decision_id "
+                "ON playbook_instructions(decision_id)"
+            )
             conn.commit()
             self._tables_created = True
             logger.debug("Playbook tables ensured")  # 2026-07-31 降噪: INFO→DEBUG (每 ensure 都打, 23条/11h)
@@ -289,6 +293,7 @@ class PlaybookDB:
         """为已存在的 playbook_instructions 表补缺失列 (SQLite 无 ADD COLUMN IF NOT EXISTS)."""
         # name → type, 仅列 schema 定义但可能未迁移的列
         needed = {
+            "decision_id": "TEXT DEFAULT ''",
             "fwd_return_intraday": "REAL",
             "fwd_return_t1": "REAL",
             "fwd_return_t3": "REAL",

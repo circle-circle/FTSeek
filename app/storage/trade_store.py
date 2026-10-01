@@ -243,6 +243,8 @@ class TradeStore:
                     "CREATE INDEX IF NOT EXISTS idx_owner_strategy ON trade_records(owner_strategy)",
                     "CREATE INDEX IF NOT EXISTS idx_trade_mode ON trade_records(mode)",
                     "CREATE INDEX IF NOT EXISTS idx_trade_records_trade_mode ON trade_records(trade_mode)",
+                    "CREATE INDEX IF NOT EXISTS idx_trade_records_decision_id "
+                    "ON trade_records(decision_id)",
                 ]:
                     try:
                         conn.execute(idx_def)
