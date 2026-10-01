@@ -617,8 +617,14 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
         extra_lines = [f"🆔 延长时段持仓: {pos_id}"]
         if is_research:
             extra_lines.insert(0, "🧪 研究臂·非财报动量 (SIM 样本, 不入严格臂台账)")
+        # 方向文案跟实际 side 走 (2026-10-01 [hotfix]): 原硬编码 "BUY" ⇒ ETH 首笔空单
+        #   (ACN 10/1, 券商 SELL/持仓 -23 股/DB SHORT 三源一致) 推送却显示"买入/做多"。
+        #   rec["side"] ∈ {"LONG","SHORT"} (_execute 构造 rec 时必带); 缺失回退 "BUY" = 原字面行为。
+        _is_short = str(rec.get("side") or "").upper() == "SHORT"
+        _sl_sign = "+" if _is_short else "-"   # 空头 SL 在上方, 多头在下方 (与 initial_sl 几何同源)
         return bool(hub.push(_m(
-            symbol=symbol, direction="BUY", qty=int(fqty), price=float(fpx),
+            symbol=symbol, direction=("SELL_SHORT" if _is_short else "BUY"),
+            qty=int(fqty), price=float(fpx),
             strategy=(
                 "extended_hours_research" if is_research else "extended_hours_entry"
             ),
@@ -630,7 +636,8 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
                 "ext_change_pct": chg,
                 "ext_volume": vol,
                 "gate_mode": gate_mode,
-                "stop_source": "规则引擎 initial_sl (-5%)",
+                # 符号跟 side 走 (同一 hotfix): 空头 SL=entry×1.05 在上方, 原文案恒 "-5%" 误导
+                "stop_source": f"规则引擎 initial_sl ({_sl_sign}{abs(STOP_PCT):g}%)",
                 "sim_no_broker_stop": True,
                 # 本链路按构造仅 SIM (trd_env 守卫在 _execute 内), 口径标 sim 与落库一致
                 "trade_mode": "sim",

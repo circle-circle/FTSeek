@@ -120,3 +120,57 @@ def test_push_filled_key_survives_hub_exception(tmp_path, monkeypatch):
                             {}, "pos-z") is False
     assert mod._push_filled("US.AMD", 5, 50.0, 50.0, "afterhours", {}, 2.0, 100000,
                             {}, "pos-z") is False      # 第二次: 已被去重挡住, 不再打 hub
+
+# ── ③ 成交富卡方向/止损符号契约 (2026-10-01 [hotfix] ETH 首笔空单推送文案错向) ──
+# 事故: ACN 10/1 SHORT 23股@212.529 (券商 SELL / 持仓 -23 / DB SHORT 三源一致),
+#   推送却写死 direction="BUY" 显示"买入/做多", stop_source 恒 "(-5%)" 而空头 SL 在上方 +5%。
+# 本组钉住: rec["side"] → payload.direction → 渲染文案 全链一致, 防空头臂后续回归。
+
+def _capture_card(monkeypatch, mod, tmp_path, rec, pos_id):
+    """跑一次 _push_filled, 返回富卡 PushMessage (真实 trade_entry 构造 + 渲染)。"""
+    monkeypatch.setattr(mod, "_PUSH_DEDUP", tmp_path / "dedup.json")
+    monkeypatch.setattr(mod, "_probe_mode", lambda: False)
+    sent = []
+
+    class _Hub:
+        def push(self, msg):
+            sent.append(msg)
+            return True
+
+    import app.push as _ap
+    monkeypatch.setattr(_ap, "get_push_hub", lambda: _Hub(), raising=False)
+    ok = mod._push_filled("US.ACN", 23, 212.529, 210.0, "premarket", {}, 15.9,
+                          4000000, rec, pos_id)
+    assert ok is True and len(sent) == 1
+    return sent[0]
+
+
+def test_push_filled_short_side_renders_sell_short(tmp_path, monkeypatch):
+    mod = _load("m_dir_short")
+    msg = _capture_card(monkeypatch, mod, tmp_path,
+                        {"side": "SHORT", "initial_sl": 223.16}, "pos-short-1")
+    assert msg.payload["direction"] == "SELL_SHORT"
+    for text in (msg.render_text(), msg.render_markdown()):
+        assert "卖出/做空" in text and "买入/做多" not in text
+        # 空头 SL 在入场价上方: 符号必须 +, 不得再写死 -5%
+        assert "initial_sl (+5%)" in text
+        assert "initial_sl (-5%)" not in text
+
+
+def test_push_filled_long_side_keeps_buy_and_minus_sign(tmp_path, monkeypatch):
+    """LONG 臂逐字保持原文案 (回归面: 6/6 历史成交全是 LONG)。"""
+    mod = _load("m_dir_long")
+    msg = _capture_card(monkeypatch, mod, tmp_path,
+                        {"side": "LONG", "initial_sl": 199.9}, "pos-long-1")
+    assert msg.payload["direction"] == "BUY"
+    for text in (msg.render_text(), msg.render_markdown()):
+        assert "买入/做多" in text
+        assert "initial_sl (-5%)" in text
+
+
+def test_push_filled_missing_side_falls_back_to_buy(tmp_path, monkeypatch):
+    """rec 缺 side (防御性): 回退原字面行为 BUY, 不抛异常 (通知永不阻断建仓)。"""
+    mod = _load("m_dir_fallback")
+    msg = _capture_card(monkeypatch, mod, tmp_path, {"initial_sl": 9.5}, "pos-noside")
+    assert msg.payload["direction"] == "BUY"
+    assert "买入/做多" in msg.render_text()
