@@ -26,3 +26,21 @@
 ## 验证
 
 UE/DA 核心回归 545 passed；`py_compile`、配置解析和 DA 外部 pipeline 语法检查通过。上线观察 transmission 封顶触发率、直写拒绝数、DA 对 UE 反证响应率、风险分层分布与新增枚举字段基数。
+
+## 追加: 风险分层参数的转正前置 (2026-10-02, RFC-129 §② 独立复核登记)
+
+复核方在本 ADR 落地后独立查证，登记一条前置，**不修改上文任何结论或参数值**：
+
+- `risk_layering_enabled` 是**直接启用**（非 shadow 先行），而它改的是 SL/TP 数值
+  ⇒ 属参数类行为变更。当前不构成风险，两条实测理由：
+  ① UE 直写通道**零实弹流量** — 近 7 日 `UE-` 前缀指令 281 条 / 执行 **0** 条
+  （成交全归 DA 32 + un 3 + EXT 1）；② 方向是**收紧**（`min(base, conservative)`
+  降档 + ATR 只做上限，不放大风险）。
+- **前置**：UE 直写通道**转正（开始真成交）之前必须复核 `conservative_stop_pct=2.0`**。
+  依据：2.0% 落在既有实证的「<2% 噪声扫损区」附近（7/9 分桶 WR47% 亏 $1352）；
+  且与 `trade_records.mae_pct` 分布对照 — 现行参数时代（entry ≥ 2026-08-20, n=283）
+  中位 MAE 仅 0.33%、MAE ≥ 2% 占 18.0%，2% 档的绑定率会显著高于 5% 档
+  （5% 仅 2.5%）⇒ **不是同一性质的死参数，需单独验证**。
+- 零实弹样本期间无法攒 shadow，故只登记前置、不在本 ADR 内裁决。
+  复核入口与数据见 `docs/decisions/RFC-129-blocked-release-push-and-sl-axis-verdict.md` §②。
+- 回滚键沿用上文：`universe_expansion.risk_layering_enabled=false` 恢复 3%/6%。

@@ -117,6 +117,65 @@ def _get_db_path():
     return str(get_main_db())
 
 
+# [RFC-129] 腿守卫缺口推送节流: {(symbol, intent_id): 上次推送 epoch}。
+# 为什么需要: 真幽灵仓分支只 DELETE open_positions, **不调 position_store.remove**
+# (external_close 分支才调, 见该分支 `self.position_store.remove(symbol)`) ⇒ 内存仓
+# 可能留存 ⇒ 该分支可重复进入。历史实测该分支 0 次触发, 节流属兜底不是主防线。
+_BLOCKED_PUSH_TS = {}
+_BLOCKED_PUSH_TTL = 900  # 15 分钟: 同一缺口一天最多刷几条, 但不会每轮同步都刷
+
+
+def _push_release_blocked(event):
+    """腿守卫拒绝释放 ⇒ 推送人工处置告警 (RFC-129, 缺口可见化).
+
+    为什么推: 仓已不在券商侧而我方 `pbe_*` 出场腿仍非终态 ⇒ 释放被拒 ⇒
+    该 symbol 继续进 `blocked_exits` ⇒ **SL 评估仍被跳过** (10/1 US.ACN 病灶变体,
+    当日 SL 越线 2.0pp 无保护 6 小时, 多暴露 42%)。守卫拒释放本身是对的
+    (意图 BOOKED 后无人看护活跃单 = 孤儿; `orphan_ext_order_watch` 只认
+    `ext_exit_` 前缀, 扫不到 `pbe_*`), 但它把"人工先撤腿"变成隐性前提 ⇒
+    必须让值班人看见, 而不是只躺在日志里。
+
+    为什么不自动撤腿: 撤单请求发出的瞬间该腿可能刚好成交 (成交竞态), 这是拿
+    一个 0 先例的罕见形态换一个钱链上的新竞态面。罕见 + 高危 + 可见 ⇒ 人工。
+
+    fail-open: 推送失败只记 WARNING, 绝不影响对账主流程。
+    """
+    try:
+        symbol = event.get("symbol") or "?"
+        intent_id = str(event.get("intent_id") or "")
+        key = (symbol, intent_id)
+        now_ts = time.time()
+        prev = _BLOCKED_PUSH_TS.get(key)
+        if prev is not None and (now_ts - prev) < _BLOCKED_PUSH_TTL:
+            return False
+        _BLOCKED_PUSH_TS[key] = now_ts
+
+        legs = event.get("unsafe_legs") or []
+        leg_txt = "; ".join(
+            f"#{lg.get('sequence')} oid={lg.get('order_id') or '-'} "
+            f"state={lg.get('state') or '-'} dealt={lg.get('dealt_qty')}"
+            for lg in legs) or "(无腿明细)"
+        text = (
+            f"🔴 [出场意图释放被阻] {symbol} {event.get('direction') or '?'}\n"
+            f"券商侧已无该仓 (外部平仓/幽灵仓对账), 但我方出场腿未终态 ⇒\n"
+            f"意图拒绝释放, 该标的 **SL/BE/trailing 评估被 blocked_exits 跳过**。\n"
+            f"腿: {leg_txt}\n"
+            f"处置: 先撤该腿 (或等其终态), 再跑\n"
+            f"  venv/bin/python scripts/release_stuck_exit_intent.py "
+            f"--intent-id {intent_id} --apply\n"
+            f"触发源: {event.get('reason') or '-'} | intent={intent_id[:12]}"
+        )
+        from app.push import push_text_safe
+        from app.push.message import Level, Category
+        ok = push_text_safe(text, level=Level.HIGH, category=Category.RISK_ALERT)
+        logger.warning("[US Sync] 出场意图释放被阻已推送 %s intent=%s ok=%s",
+                       symbol, intent_id[:12], ok)
+        return bool(ok)
+    except Exception as _push_err:  # 推送故障绝不影响对账
+        logger.warning("[US Sync] 释放被阻推送失败 (对账继续): %s", _push_err)
+        return False
+
+
 def release_exit_intents_on_external_close(symbol, direction, reason, evidence=None):
     """券商侧已无该仓时, 释放其未决出场意图 (RFC-128, SSOT 单点).
 
@@ -128,6 +187,9 @@ def release_exit_intents_on_external_close(symbol, direction, reason, evidence=N
 
     两处删仓分支 (external_close / 真幽灵仓) **共用本函数** — 不各写一份 inline
     (协议 Gate 4: 同一逻辑多处 inline = 漂移根源)。
+
+    RFC-129: 腿守卫拒释放时经 `_push_release_blocked` 推送人工处置告警
+    (回调在 ledger 事务外触发, 推送 I/O 不与 fast loop 抢写锁)。
 
     fail-open: 释放失败只 WARNING, **绝不阻断对账主流程** (trade_records 写入与
     用户通知比账目收尾更重要; 卡死的意图仍可由
@@ -148,6 +210,7 @@ def release_exit_intents_on_external_close(symbol, direction, reason, evidence=N
             reason=reason,
             now=time.time(),
             evidence=evidence or {},
+            on_blocked=_push_release_blocked,
         )
         if released:
             logger.warning(

@@ -332,7 +332,7 @@ class ExitLedger:
                                    (encoded, now, intent_id)).rowcount)
 
     def release_unsettled(self, *, account_id, target_env, symbol, direction, reason, now,
-                          evidence=None):
+                          evidence=None, on_blocked=None):
         """外部渠道平掉仓位后释放该仓的未决出场意图 (RFC-128).
 
         病灶: `position_sync` 的 external_close / 真幽灵仓对账只写 `trade_records`
@@ -370,6 +370,7 @@ class ExitLedger:
             'broker_qty_evidence': evidence if isinstance(evidence, dict) else {},
         }
         encoded = json_text(receipt)
+        blocked_events = []
         with self.transaction() as db:
             rows = db.execute(
                 "SELECT intent_id,direction,state FROM exit_intents "
@@ -397,6 +398,26 @@ class ExitLedger:
                             {'sequence': leg['sequence'], 'state': leg['state'],
                              'order_id': leg['order_id'], 'dealt_qty': leg['dealt_qty']}
                             for leg in unsafe_legs])
+                    # [RFC-129] 缺口可见化: 仓已不在券商侧 (external_close 前置保证) 而
+                    # 我方 pbe_* 腿仍非终态 ⇒ 释放被拒 ⇒ 该 symbol 继续进 blocked_exits
+                    # ⇒ **SL 评估仍被跳过** (即 10/1 ACN 病灶的变体)。守卫本身是对的
+                    # (BOOKED 后无人看护活跃单 = 孤儿, 且 orphan_ext_order_watch 只认
+                    # ext_exit_ 前缀扫不到 pbe_*), 但它把"人工先撤腿"变成隐性前提。
+                    # 缺口罕见 (生产 183/183 腿 TERMINAL, 该形态 0 先例) 且高危 ⇒
+                    # 正确处置是"看得见 + 人工", 不是自动撤单 (撤单有成交竞态风险)。
+                    # ⚠️ 只在此**收集**事件, 回调在事务外触发 — transaction() 用
+                    # BEGIN IMMEDIATE 持写锁, 推送的网络 I/O 若在锁内会拖长锁持有时间,
+                    # 与 fast loop (10s 节奏) 抢锁。
+                    blocked_events.append({
+                        'intent_id': row['intent_id'],
+                        'symbol': symbol,
+                        'direction': row['direction'],
+                        'reason': reason,
+                        'unsafe_legs': [
+                            {'sequence': leg['sequence'], 'state': leg['state'],
+                             'order_id': leg['order_id'], 'dealt_qty': leg['dealt_qty']}
+                            for leg in unsafe_legs],
+                    })
                     continue
                 if db.execute(
                         "UPDATE exit_intents SET state='BOOKED',receipt_json=?,last_error='',"
@@ -409,7 +430,18 @@ class ExitLedger:
                     'exit_intent_released_on_external_close symbol=%s env=%s account=%s '
                     'direction=%s intents=%s reason=%s — 该仓出场职责交回 SL/BE/trailing/EOD 兜底',
                     symbol, target_env, account_id, want_dir, released, reason)
-            return released
+        # [RFC-129] 回调在事务**外**触发 (写锁已释放, 推送 I/O 不与 fast loop 抢锁)。
+        # 单个回调故障只 WARNING, 不影响其余事件与已完成的释放。
+        for _ev in blocked_events:
+            if on_blocked is None:
+                break
+            try:
+                on_blocked(_ev)
+            except Exception as _cb_err:
+                logger.warning(
+                    'exit_intent_release_blocked_callback_failed symbol=%s intent=%s: %s',
+                    symbol, _ev.get('intent_id'), _cb_err)
+        return released
 
 
 class ExitLifecycle:
