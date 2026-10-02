@@ -1886,6 +1886,9 @@ class USPositionSync:
                     _auto_acc_ec = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
                     _trade_mode_label = 'live' if _auto_acc_ec == "real" else 'simulate'
                     _dup_skip = False  # 查重守卫命中标记 (2026-08-21): try 前初始化防 NameError
+                    _trade_id = None   # 同防 NameError (2026-10-02 复查补): 写入失败走 except 后,
+                                       # 下方 release evidence 仍引用 _trade_id ⇒ 未初始化会炸穿
+                                       # release 调用 (fail-open 变 fail-closed) + 跳过通知
                     try:
                         import sqlite3 as _sqlite3
                         _db_path = _get_db_path()

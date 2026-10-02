@@ -118,6 +118,23 @@ class TestReleaseUnsettled:
         assert _release(ledger) == [iid]
         assert _row(ledger, iid)["state"] == "BOOKED"
 
+    def test_released_at_derives_from_now_param(self, ledger):
+        """receipt released_at 与 DB updated_at 必须同源 (同一 now 瞬间, 审计可对齐)。
+
+        旧实现 receipt 用 `datetime.now(utc)` 独立取时, 与 SQL `updated_at=?` 之间
+        隔着 leg 检查循环, 两时间戳可发散 (2026-10-02 复查) ⇒ 改为从 now 派生。
+        """
+        from datetime import datetime, timezone
+        iid = _insert(ledger, state="PENDING")
+        fixed_now = 1780000000.0
+        assert _release(ledger, now=fixed_now) == [iid]
+        row = _row(ledger, iid)
+        receipt = json.loads(row["receipt_json"])
+        assert receipt["released_at"] == (
+            datetime.fromtimestamp(fixed_now, timezone.utc)
+            .isoformat(timespec="seconds"))
+        assert row["updated_at"] == fixed_now
+
     def test_direction_mismatch_does_not_release(self, ledger):
         """方向不符 ⇒ 零释放 (同 symbol 双向意图互不误伤)。"""
         iid = _insert(ledger, direction="SHORT", state="PENDING")
@@ -350,6 +367,17 @@ class TestSourceContract:
         body = _SYNC_SRC[pos:pos + 2800]
         assert not re.search(r"except[^\n]*:\s*\n\s*pass", body)
         assert "logger.warning" in body
+
+    def test_trade_id_initialized_before_try(self):
+        """[2026-10-02 复查] `_trade_id` 必须在 trade_record try 块前初始化。
+
+        病灶: `_dup_skip` 有 try 前初始化 (防 NameError) 而 `_trade_id` 没有 ⇒
+        写入失败走 except 后, release evidence 仍引用 `_trade_id` ⇒ NameError
+        炸穿 release 调用 (fail-open 变 fail-closed) 并跳过平仓通知。"""
+        pos = _SYNC_SRC.index("_dup_skip = False  # 查重守卫命中标记")
+        ctx = _SYNC_SRC[pos:pos + 400]
+        assert "_trade_id = None" in ctx, (
+            "_trade_id 须与 _dup_skip 同款 try 前初始化 (防 NameError 炸穿释放)")
 
     def test_ledger_method_lives_with_ack_booked(self):
         """释放方法与 ack_booked 同属 ExitLedger (数据所有者持有写操作)。"""

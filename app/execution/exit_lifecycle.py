@@ -366,7 +366,7 @@ class ExitLedger:
             'kind': 'external_close_release',
             'external_close_release': True,
             'reason': str(reason or ''),
-            'released_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'released_at': datetime.fromtimestamp(now, timezone.utc).isoformat(timespec='seconds'),
             'broker_qty_evidence': evidence if isinstance(evidence, dict) else {},
         }
         encoded = json_text(receipt)
