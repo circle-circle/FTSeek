@@ -125,8 +125,57 @@ def _cron_hits(token):
 _collect = _cron_hits("ue_quote_freshness_shadow.py")
 _eval = _cron_hits("ue_quote_freshness_shadow_eval")
 P(f"  采集器 ue_quote_freshness_shadow.py       cron 有效行: {len(_collect)}")
+# ⚠️⚠️ 结算器**没有 cron 是正确的**, 不是缺口 (2026-10-02 自查更正):
+#   注册项 `eval_on_demand=True` (shadow_registry.py:1798) + notes「届时手工/会话跑 eval_script 呈裁」
+#   我 R4 首版给它挂了 `55 5 * * 6` = 与该字段语义相悖的多余载体 + 违反台账纪律1(新增 cron 须入账,
+#   基线里没有我这条), 已撤销。**权威依据不是我的推断, 是注册表字段语义本身**
+#   (shadow_registry.py:99-100 逐字): 「False=应有 cron/调度挂载 (挂载核对话语权);
+#   True=按需手工/裁决日触发 (哨兵跳过挂载核对, 2026-09-01 挂载核对哨兵引入)」。
+#   同批对照实证: `ue_tier_gate` eval_on_demand=**False** ∧ 有周六 05:52 cron ⇒ 一致;
+#   本影子 eval_on_demand=**True** ∧ notes 逐字「届时**手工/会话跑** eval_script 呈裁」⇒ 不该有 cron。
+#   原「cron 0 命中 ⇒ 无载体 ⇒ 僵尸」的推断是**错的**: 判「有没有人裁」要看
+#   ①注册项 eval_on_demand 字段语义 ②notes 是否点名到期触发方式 ③裁决产物 generated_at,
+#   不是看 cron 有没有挂 (与 ⑬⑨「判进程活着不得只看 cron」同族, 这次是反向的同一错误)。
 P(f"  结算器 ue_quote_freshness_shadow_eval.py  cron 有效行: {len(_eval)}"
-  + ("  🔴 无载体 ⇒ 读数停在最后一次手工跑 (僵尸, 规则55)" if not _eval else ""))
+  + ("  ✅ 无 cron = 正确 (注册项 eval_on_demand=True ⇒ 按需手工/裁决日触发)" if not _eval else ""))
+_on_demand = run(f"grep -c 'eval_on_demand=True' {R}/app/playbook/shadow_registry.py")
+P(f"  注册表 eval_on_demand=True 登记数: {_on_demand}")
+# E48 的权威依据: 从注册表**运行时对象**取 (不 grep 源码文本 —— notes 是 Python 字符串
+#   跨行拼接, `grep -o '届时.*eval_script 呈裁'` 实测**匹配不到** = 空输出; 且 sed 取行会
+#   把注释换行切碎。运行时对象是唯一不会说谎的形态)。
+# ⚠️ 不用子进程: 首版写 `run(f"... -c {_shq(_py)}")` 而 `_shq` 在本脚本**根本没定义**
+#   ⇒ NameError 被下面的 try/except 吞成「🔴 提取失败」(自己给自己造假红)。
+#   本脚本本就在 `PYTHONPATH=.` 下跑 ⇒ 直接 import 即可, 少一层 shell 就少一层引号地狱。
+try:
+    from app.playbook.shadow_registry import REGISTRY as _REG
+    _e = [x for x in _REG if x.id == "ue_quote_freshness_shadow"][0]
+    P(f"  注册项真值: id={_e.id} eval_on_demand={_e.eval_on_demand} status={_e.status.name}")
+    P("  挂载哨兵语义 (registry 字段注释): eval_on_demand=False⇒应有 cron 挂载; "
+      "True⇒按需手工/裁决日触发, 哨兵跳过挂载核对")
+    _n = " ".join((_e.notes or "").split())
+    # ⚠️ 锚点必须是「届时」而非「到期触发」: notes 里「到期触发」出现两次,
+    #   第一处是「②裁决器 + **到期触发人** — 本条注册 + eval 脚本…」(讲注册动机),
+    #   我引用的是第二处「**到期触发**: …届时手工/会话跑 eval_script 呈裁」(讲触发方式)
+    #   ⇒ 用 find('到期触发') 会取到无关那段 = 引用了原文但答非所问。
+    _i = _n.find("届时")
+    P(f"  notes 到期触发方式原话: …{_n[max(0, _i - 46):_i + 60]}" if _i >= 0
+      else "  🔴 notes 未找到「届时…eval_script 呈裁」段")
+except Exception as _exc:  # noqa: BLE001 — 审计脚本不得因单段失败整体崩
+    # ⚠️ 变量名不得复用 `_e` (注册项对象): 否则 except 分支会把注册项覆盖成异常对象,
+    #   后续任何引用都变成异常 —— 这类 shadowing 在审计脚本里最难查 (只在失败路径出现)。
+    P(f"  🔴 注册项真值提取失败: {type(_exc).__name__}: {_exc}")
+_ev = R / "data/shadow/ue_quote_freshness_shadow_eval_latest.json"
+if _ev.exists():
+    _d = json.loads(_ev.read_text(encoding="utf-8"))
+    P(f"  裁决产物: verdict={_d.get('verdict')}  n_rows={_d.get('n_rows')}"
+      f"  n_rounds={_d.get('n_rounds')}/{_d.get('min_rounds')}")
+    P(f"  预注册判据 (钉死, 事后改阈值=重新预注册): threshold_used={_d.get('threshold_used')}"
+      f"  min_rounds={_d.get('min_rounds')}")
+    P(f"  会漂的读数 (不进期望列): age_genuine_p95={_d.get('age_genuine_p95')}"
+      f"  p50={_d.get('age_genuine_p50')}  会新拒={_d.get('n_newly_rejected_genuine')}")
+    P(f"  generated_at={_d.get('generated_at')}")
+else:
+    P("  🔴 裁决产物不存在 ⇒ 从未裁过 (这才是真僵尸判据)")
 P(f"  [对照] v1 宽子串 'shadow_eval' 命中 = {_cron_all.count('shadow_eval')} (含别的影子 ⇒ 假绿, 已弃用)")
 _other = [l.strip()[:70] for l in _cron_all.split("\n")
           if "shadow_eval" in l and "ue_quote_freshness" not in l and not l.lstrip().startswith("#")]
