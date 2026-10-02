@@ -11,13 +11,14 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 from pathlib import Path
 
 BASE = Path("/opt/ftseek/FTSeek-US")
 FEE_RT = 0.0015   # 往返费 0.15% (与 trail_lock_pyramid 结算同口径)
 SLIP = 0.0010     # 滑点 0.10% 方向感知
 
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 rows = list(c.execute("""

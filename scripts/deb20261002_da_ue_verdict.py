@@ -8,15 +8,16 @@ J3 基率本身的时间趋势: 31.3% → 29.5% → 16.7% ⇒ 既有机制迭代
 只读 mode=ro。
 """
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 from collections import defaultdict
 from pathlib import Path
 
 BASE = Path("/opt/ftseek/FTSeek-US")
-c = sqlite3.connect("file:" + str(BASE / "data/ftseek_us.db") + "?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
-POP = ("entry_time >= '2026-06-27' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
+POP = ("entry_time >= '2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
        "AND COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'')=''")
 rows = list(c.execute(
     "SELECT symbol, direction, entry_time, decision_id, entry_session,"

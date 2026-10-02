@@ -586,7 +586,14 @@ class MarketDataRouter:
                             ts_ctx["lv3_ask"] = futu_quote.get("ask", ts_ctx["price"])
                             ts_ctx["lv3_bid_vol"] = futu_quote.get("bid_vol", 0)
                             ts_ctx["lv3_ask_vol"] = futu_quote.get("ask_vol", 0)
-                            ts_ctx["lv3_delay_ms"] = futu_quote.get("delay_ms", "<10")
+                            # [P0-2] 原兜底默认 "<10" 同属**未核实声明**; provider 现统一写
+                            #   "unmeasured" (投递延迟不可测) ⇒ 这里不再补一个假数字兜底,
+                            #   取不到就 None。及时性真观测走下一行 additive 字段。
+                            ts_ctx["lv3_delay_ms"] = futu_quote.get("delay_ms")
+                            # [P0-2] 及时性真观测: 交易所 update_time → 报价龄 (ms)。
+                            #   这才是 SSOT 新鲜度门 (_source_time → stale_quote) 量的那个量;
+                            #   additive 字段, 零门消费方 ⇒ 纯遥测 (record-only)。
+                            ts_ctx["lv3_quote_age_ms"] = futu_quote.get("quote_age_ms")
                             # 买卖力量比
                             bid_vol = futu_quote.get("bid_vol", 0)
                             ask_vol = futu_quote.get("ask_vol", 0)
@@ -782,7 +789,9 @@ class MarketDataRouter:
                             # 合并: 保留 Futu LV3 实时报价, 补充 TwelveData 技术指标
                             _futu_price_keys = {"price", "change_percent", "volume",
                                                 "lv3_bid", "lv3_ask", "lv3_bid_vol",
-                                                "lv3_ask_vol", "lv3_delay_ms"}
+                                                "lv3_ask_vol", "lv3_delay_ms",
+                                                # [P0-2] 新增真观测字段同样须防被 TwelveData 覆盖
+                                                "lv3_quote_age_ms"}
                             for _k, _v in td_ctx.items():
                                 if _k not in _futu_price_keys:
                                     ts_ctx[_k] = _v

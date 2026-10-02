@@ -12,15 +12,16 @@ G5 逐月档间极差≥10pp / G8 最大档占比≤50% / G7 误杀率≤40%。�
 只读 mode=ro。
 """
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 from collections import defaultdict
 from pathlib import Path
 
 BASE = Path("/opt/ftseek/FTSeek-US")
-c = sqlite3.connect("file:" + str(BASE / "data/ftseek_us.db") + "?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
-POP_T = ("t.entry_time >= '2026-06-27' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL "
+POP_T = ("t.entry_time >= '2026-06-27' AND t.entry_time < '2026-10-02 00:00:00' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL "
          "AND COALESCE(json_extract(t.metadata_json,'$.exclusion_reason'),'')=''")
 J = ("FROM trade_records t JOIN playbook_instructions i ON i.id = ("
      "  SELECT MIN(i2.id) FROM playbook_instructions i2 WHERE i2.decision_id = t.decision_id) "

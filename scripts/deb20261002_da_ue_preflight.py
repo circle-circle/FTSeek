@@ -8,15 +8,16 @@
 只读: mode=ro, 零副作用。
 """
 import sqlite3
+from app.storage.db_pool import get_db_path
 from pathlib import Path
 
 BASE = Path("/opt/ftseek/FTSeek-US")
-c = sqlite3.connect("file:" + str(BASE / "data/ftseek_us.db") + "?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
-POP = ("entry_time >= '2026-06-27' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
+POP = ("entry_time >= '2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
        "AND COALESCE(json_extract(metadata_json,'$.exclusion_reason'),'')=''")
-POP_T = ("t.entry_time >= '2026-06-27' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL "
+POP_T = ("t.entry_time >= '2026-06-27' AND t.entry_time < '2026-10-02 00:00:00' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL "
          "AND COALESCE(json_extract(t.metadata_json,'$.exclusion_reason'),'')=''")
 J = ("FROM trade_records t JOIN playbook_instructions i ON i.decision_id = t.decision_id "
      "WHERE " + POP_T)

@@ -4,10 +4,11 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 
 BASE = "/opt/ftseek/FTSeek-US"
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 print("=== ② low_atr skip 行的意图方向 (direction 列='SKIP' ⇒ 查 raw_instruction_json) ===")
@@ -37,7 +38,7 @@ print(f"  ⇒ C1 (门加 LONG-only) "
 print("\n=== ③ EXT 通道最低价硬闸: 实弹反证 ===")
 for r in c.execute("SELECT symbol, entry_time, entry_price, quantity, source_type, "
                    "strategy_id, decision_id, pnl_net FROM trade_records "
-                   "WHERE entry_price < 5 AND entry_time>='2026-08-01' "
+                   "WHERE entry_price < 5 AND entry_time>='2026-08-01' AND entry_time<'2026-10-02 00:00:00' "
                    "AND exit_time IS NOT NULL"):
     px = r["entry_price"]
     qty = r["quantity"] or 0
@@ -46,10 +47,10 @@ for r in c.execute("SELECT symbol, entry_time, entry_price, quantity, source_typ
           f"st={r['source_type']} sid={r['strategy_id']} 净={(r['pnl_net'] or 0):+8.1f}")
 print("   ⇒ 价<$5 成交存在 ⇒ EXT 通道不受 admission.min_entry_price=5 约束")
 r = c.execute("SELECT COUNT(*) n, SUM(pnl_net) s FROM trade_records WHERE entry_price<5 "
-              "AND entry_time>='2026-06-27' AND exit_time IS NOT NULL").fetchone()
+              "AND entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL").fetchone()
 print(f"   全窗口 价<$5 成交: n={r['n']} 净={r['s'] or 0:+.1f}")
 r2 = c.execute("SELECT COUNT(*) n FROM trade_records WHERE entry_price<5 "
-               "AND entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+               "AND entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
                "AND strategy_id='extended_hours_entry'").fetchone()
 print(f"   其中走 EXT (strategy_id=extended_hours_entry): n={r2['n']}")
 
@@ -57,7 +58,7 @@ print("\n=== ① K1 单独 + 两成分: 双窗 / 逐月 / 剔尾 ===")
 rows = c.execute(
     "SELECT symbol, direction, entry_time, entry_price, quantity, metadata_json, "
     " mfe_pct, pnl_net, realized_pnl, fees_est "
-    "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+    "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
     " AND pnl_net IS NOT NULL").fetchall()
 recs = []
 for r in rows:

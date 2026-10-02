@@ -5,15 +5,16 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 
 BASE = "/opt/ftseek/FTSeek-US"
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 print("=== ② halved/flip 词表核验: 全库 metadata 里有无任何降仓标记键 ===")
 rows_all = c.execute("SELECT metadata_json FROM trade_records "
-                     "WHERE entry_time>='2026-06-27' AND metadata_json IS NOT NULL").fetchall()
+                     "WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND metadata_json IS NOT NULL").fetchall()
 keys = {}
 for r in rows_all:
     try:
@@ -42,7 +43,7 @@ print("\n=== ① K1+K2+K3 最终组合完整读数 ===")
 rows = c.execute(
     "SELECT symbol, direction, entry_time, entry_price, quantity, decision_id, "
     " metadata_json, mfe_pct, pnl_net, realized_pnl, fees_est "
-    "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+    "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
     " AND pnl_net IS NOT NULL").fetchall()
 recs = []
 for r in rows:

@@ -4,16 +4,17 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 
 BASE = "/opt/ftseek/FTSeek-US"
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 rows = c.execute(
     "SELECT symbol, direction, entry_time, entry_price, quantity, metadata_json, "
     " mfe_pct, pnl_net, realized_pnl, fees_est "
-    "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+    "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
     " AND pnl_net IS NOT NULL").fetchall()
 recs = []
 for r in rows:
@@ -73,7 +74,7 @@ print(f"\n  死单率按来源:")
 for src_name, pred in (("DA", lambda x: True),):
     pass
 did_rows = c.execute("SELECT decision_id, metadata_json, mfe_pct, pnl_net, direction "
-                     "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+                     "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
                      "AND pnl_net IS NOT NULL").fetchall()
 src_dead = {}
 for r in did_rows:
@@ -114,10 +115,10 @@ for k in sorted(set(hh) | set(tot_live)):
         print(f"   {k} 死{d_:3d} 活{l_:3d} 死率={d_/(d_+l_)*100:5.1f}%")
 
 print("\n=== ④ 加法轴可行性: 近期候选池里有多少 SHORT 低波票 ===")
-r = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE date>='2026-09-01' "
+r = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE date>='2026-09-01' AND date < '2026-10-02 00:00:00' "
               "AND atr_pct IS NOT NULL AND atr_pct < 0.03").fetchone()
 print(f"  9月起 指令行 atr_pct<0.03 (止损口径): {r['n']}")
-r2 = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE date>='2026-09-01' "
+r2 = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE date>='2026-09-01' AND date < '2026-10-02 00:00:00' "
                "AND atr_pct IS NOT NULL").fetchone()
 print(f"  9月起 指令行有 atr_pct: {r2['n']}")
 print("  ⇒ 注意: 指令行的 atr_pct 是**止损口径** (含VIX缩放/三层底限),")

@@ -9,9 +9,10 @@ db.py:41 的退化签名 = decision_id 内嵌日期 ≠ date 列 (历史仅 5 �
 """
 import re
 import sqlite3
+from app.storage.db_pool import get_db_path
 from collections import defaultdict
 
-c = sqlite3.connect("file:data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 DA_RE = re.compile(r"^DA-(\d{4})(\d{2})(\d{2})")
@@ -22,8 +23,9 @@ rows = c.execute("""
          t.id tid, t.pnl_net, COALESCE(t.mfe_pct,0) mfe, t.entry_time
   FROM playbook_instructions i
   LEFT JOIN trade_records t ON t.decision_id = i.decision_id
-       AND t.entry_time>='2026-06-27' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL
+       AND t.entry_time>='2026-06-27' AND t.entry_time < '2026-10-02 00:00:00' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL
   WHERE i.model_used = 'deterministic' AND i.decision_id LIKE 'DA-%'
+    AND i.date <= '2026-10-01'
   ORDER BY i.date
 """).fetchall()
 print(f"DA- 前缀且标 deterministic: n={len(rows)}")
@@ -85,18 +87,18 @@ print(f"  ⇒ 这 {n} 笔是 DA 真实产出, 被错标 deterministic, 污染了
 # 对照: 同期 DA- 且标真模型名的行
 ctl = c.execute("""
   SELECT COUNT(*) n, i.model_used FROM playbook_instructions i
-  WHERE i.decision_id LIKE 'DA-%' AND i.date >= '2026-09-01'
+  WHERE i.decision_id LIKE 'DA-%' AND i.date >= '2026-09-01' AND i.date < '2026-10-02 00:00:00' AND i.date <= '2026-10-01'
     AND i.model_used IS NOT NULL AND i.model_used != 'deterministic'
   GROUP BY i.model_used ORDER BY n DESC
 """).fetchall()
 print(f"\n=== 对照: 9月起 DA- 且标真模型名 ===")
 for r in ctl:
     print(f"  {r['model_used']:<28} n={r['n']}")
-tot_da = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE decision_id LIKE 'DA-%' AND date>='2026-09-01'").fetchone()["n"]
+tot_da = c.execute("SELECT COUNT(*) n FROM playbook_instructions WHERE decision_id LIKE 'DA-%' AND date>='2026-09-01' AND date < '2026-10-02 00:00:00' AND date<='2026-10-01'").fetchone()["n"]
 # ⚠️ 占比分子必须是「9月起全部被错标行」= A组(陈旧覆盖) + B组(写入缺口), 只算 B 组会漏 A 组
 det_sep = c.execute("""
   SELECT COUNT(*) FROM playbook_instructions
-  WHERE decision_id LIKE 'DA-%' AND date>='2026-09-01' AND model_used='deterministic'
+  WHERE decision_id LIKE 'DA-%' AND date>='2026-09-01' AND date < '2026-10-02 00:00:00' AND date<='2026-10-01' AND model_used='deterministic'
 """).fetchone()[0]
 nB_sep = len([x for x in sig_B if x[0]["date"][:7] >= "2026-09"])
 print(f"  9月起 DA- 总数={tot_da} ⇒ deterministic 占比={round(100*det_sep/tot_da,1) if tot_da else None}%")

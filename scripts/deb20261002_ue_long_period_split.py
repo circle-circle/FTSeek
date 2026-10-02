@@ -8,15 +8,16 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 
 BASE = "/opt/ftseek/FTSeek-US"
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 rows = c.execute(
     "SELECT symbol, direction, entry_time, entry_price, quantity, decision_id, "
     " strategy_id, metadata_json, mfe_pct, pnl_net, realized_pnl, fees_est "
-    "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+    "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
     " AND pnl_net IS NOT NULL AND decision_id LIKE 'universe_expansion%'").fetchall()
 
 recs = []
@@ -124,7 +125,7 @@ if len(lgo) >= 6:
 print("\n=== 对照: DA·LONG 过费用线 (同条件下 DA 是否更好) ===")
 da_rows = c.execute(
     "SELECT symbol, entry_time, entry_price, quantity, mfe_pct, pnl_net, realized_pnl, fees_est "
-    "FROM trade_records WHERE entry_time>='2026-06-27' AND exit_time IS NOT NULL "
+    "FROM trade_records WHERE entry_time>='2026-06-27' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL "
     "AND pnl_net IS NOT NULL AND direction='LONG' AND decision_id LIKE 'DA-%'").fetchall()
 dal = [{"price": r["entry_price"] or 0, "notional": (r["entry_price"] or 0) * (r["quantity"] or 0),
         "dead": 1 if (r["mfe_pct"] or 0) < 0.3 else 0, "net": r["pnl_net"] or 0,

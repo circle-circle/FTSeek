@@ -181,6 +181,40 @@ def _futu_sub_type_map() -> dict:
     }
 
 
+# ── [DEB-20261002-input-validity P0-2 2026-10-02] 及时性: 从「自我声明」改为「真实观测」 ──
+#   病灶: `delay_ms` 在三条取数路径上被硬编码成字面量 "<100"/"<10" (:966/:1008/:1063),
+#   下游 `market_data_router.py:271` 渲染进日志、`:589` 落 `ts_ctx["lv3_delay_ms"]`
+#   ⇒ 「及时性」这一层此前**零真实观测**, 只有未经核实的声明。全仓 grep 确认
+#   `delay_ms` **无任何门消费方** (只渲染 + 落 ts_ctx, 且 `lv3_delay_ms` 不进 prompt)
+#   ⇒ 改值是纯遥测, 零行为变更。
+#   ⚠️ 语义区分 (勿混为一谈, 这正是本层此前的错):
+#     · `delay_ms`     = 链路投递延迟 — 需要交易所**发送**时戳, 我方拿不到 ⇒ 不可测;
+#     · `quote_age_ms` = 报价陈旧度 (交易所 `update_time` → now) — **可测**, 且这才是
+#       SSOT 新鲜度门 (`candidate_eligibility._source_time` → `stale_quote`) 量的那个量。
+#   处置: 不可测的诚实标 `unmeasured` (缺数据不编数据), 可测的**新增**字段承载 (additive)。
+#   纪律: 时戳解析**复用 SSOT `_source_time`**, 绝不自写 — 影子
+#   `ue_quote_freshness_shadow._age_sec` docstring 逐字写明「抄一份就是造第二个真源」,
+#   因为 `_source_time` 里藏着 naive 串按 ET 解析的约定 (按本机 CST 解析会凭空多算 12h
+#   ⇒ 全批假陈旧)。fail-open: 取不到/解析失败 → None, 不抛异常、不编数字。
+def _measured_quote_age_ms(exchange_stamp: Any) -> Optional[int]:
+    """交易所 `update_time` → 报价龄 (毫秒 int)。不可得/不可解析 ⇒ None (fail-open)。
+
+    `now` 用 UTC-aware: `_source_time` 内部把 naive 串补成 ET-aware, 两个 aware 相减
+    与所选时区无关 ⇒ 不必私有导入该模块的 `_ET` (降低耦合)。
+    """
+    if exchange_stamp in (None, ""):
+        return None
+    try:
+        from datetime import timezone as _tz
+        from app.playbook.candidate_eligibility import _source_time
+        _, age = _source_time({"source_asof": exchange_stamp}, datetime.now(_tz.utc))
+        if age is None:
+            return None
+        return int(round(age * 1000))
+    except Exception:
+        return None
+
+
 class FutuLV3Provider:
     """
     富途 LV3 美股实时行情提供商
@@ -963,7 +997,10 @@ class FutuLV3Provider:
             quote.setdefault("pre_price", 0.0)        # push 无盘前字段, 占位对齐契约
             quote.setdefault("pre_change_rate", 0.0)  # 同上
             quote["data_source"] = "futu_lv3_push"
-            quote["delay_ms"] = "<100"
+            # [P0-2] 原 "<100" 是**自我声明**非观测值; 链路投递延迟我方不可测 ⇒ 诚实标注。
+            #   及时性改由下一行 additive 字段 `quote_age_ms` 承载 (可测且是门量的量)。
+            quote["delay_ms"] = "unmeasured"
+            quote["quote_age_ms"] = _measured_quote_age_ms(quote.get("update_time"))
             quote["symbol"] = symbol
             return quote
 
@@ -1005,7 +1042,10 @@ class FutuLV3Provider:
                             "data_source": "futu_lv3_subscribed",
                             "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
-                            "delay_ms": "<100",
+                            # [P0-2] 原 "<100" 是自我声明; 投递延迟不可测 ⇒ 诚实标注,
+                            #   及时性由 additive `quote_age_ms` 承载 (真观测, fail-open)。
+                            "delay_ms": "unmeasured",
+                            "quote_age_ms": _measured_quote_age_ms(row.get("update_time")),
                         }
                         self._cache[cache_key] = result
                         self._cache_time[cache_key] = time.time()
@@ -1060,7 +1100,11 @@ class FutuLV3Provider:
                             "data_source": "futu_lv3",
                             "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
-                            "delay_ms": "<10",  # LV3 延迟 < 10ms
+                            # [P0-2] 原 "<10" + 注释「LV3 延迟 < 10ms」是**未核实的声明**
+                            #   (无任何观测支撑); 投递延迟不可测 ⇒ 诚实标注, 及时性由
+                            #   additive `quote_age_ms` 承载 (真观测, fail-open → None)。
+                            "delay_ms": "unmeasured",
+                            "quote_age_ms": _measured_quote_age_ms(row.get("update_time")),
                         }
 
                         self._cache[cache_key] = result

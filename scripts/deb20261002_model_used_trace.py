@@ -12,12 +12,14 @@
   T4  逐月复核 (防单月主导)
 """
 import sqlite3
+from app.storage.db_pool import get_db_path
 import statistics as st
 from collections import defaultdict
 
 # 两表都有 exit_time/entry_time ⇒ 必须逐列加表前缀, 否则 ambiguous column
-POP = ("t.entry_time>='2026-06-27' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL")
-c = sqlite3.connect("file:data/ftseek_us.db?mode=ro", uri=True)
+POP = ("t.entry_time>='2026-06-27' AND t.entry_time < '2026-10-02 00:00:00' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL"
+       " AND t.entry_time < '2026-10-02 00:00:00' AND i.date <= '2026-10-01'")  # 结算窗上界: 钉死可复算, 详见 DEB E43 注
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 J = ("FROM trade_records t JOIN playbook_instructions i ON i.id = ("
      "  SELECT MIN(i2.id) FROM playbook_instructions i2 WHERE i2.decision_id = t.decision_id) "

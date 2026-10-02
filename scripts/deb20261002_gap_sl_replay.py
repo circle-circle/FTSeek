@@ -6,11 +6,12 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 from pathlib import Path
 
 BASE = Path("/opt/ftseek/FTSeek-US")
 FEE_RT = 0.0015
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 eq = c.execute("SELECT current_equity FROM capital_state ORDER BY rowid DESC LIMIT 1").fetchone()["current_equity"]

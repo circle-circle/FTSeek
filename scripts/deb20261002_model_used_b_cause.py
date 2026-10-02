@@ -8,9 +8,10 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 from collections import defaultdict
 
-c = sqlite3.connect("file:data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 # ── B 组 direction × skip_reason 分布 ────────────────────────
@@ -20,6 +21,7 @@ B = c.execute("""
   FROM playbook_instructions
   WHERE model_used='deterministic' AND decision_id LIKE 'DA-%'
     AND substr(decision_id,4,8) = replace(substr(date,1,10),'-','')
+    AND date <= '2026-10-01'
 """).fetchall()
 print(f"B 组 (did日期==date列) n={len(B)}")
 by_dir = defaultdict(list)
@@ -36,7 +38,7 @@ for d, g in sorted(by_dir.items(), key=lambda x: -len(x[1])):
 Q = c.execute("""
   SELECT id, decision_id, date, symbol, direction, model_used, confidence, skip_reason
   FROM playbook_instructions
-  WHERE decision_id LIKE 'DA-%' AND date>='2026-08-01'
+  WHERE decision_id LIKE 'DA-%' AND date>='2026-08-01' AND date < '2026-10-02 00:00:00' AND date<='2026-10-01'
     AND model_used IS NOT NULL AND model_used!='deterministic'
 """).fetchall()
 print(f"\n=== 对照 Q 组 (DA- 且写真模型名) n={len(Q)} ===")
@@ -74,7 +76,7 @@ if ids:
              t.decision_id
       FROM trade_records t
       WHERE t.decision_id IN (SELECT decision_id FROM playbook_instructions WHERE id IN ({ph}))
-        AND t.entry_time>='2026-06-27' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL
+        AND t.entry_time>='2026-06-27' AND t.entry_time < '2026-10-02 00:00:00' AND t.exit_time IS NOT NULL AND t.pnl_net IS NOT NULL
     """, ids).fetchall()
     n = len(tr)
     d = sum(1 for r in tr if r["mfe"] < 0.3)

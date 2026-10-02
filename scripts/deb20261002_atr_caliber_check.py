@@ -11,9 +11,10 @@
 """
 import json
 import sqlite3
+from app.storage.db_pool import get_db_path
 
 BASE = "/opt/ftseek/FTSeek-US"
-c = sqlite3.connect(f"file:{BASE}/data/ftseek_us.db?mode=ro", uri=True)
+c = sqlite3.connect(f"file:{get_db_path('ftseek_research')}?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 
 # 1. playbook_instructions 有无 atr_pct 列
@@ -25,7 +26,7 @@ print(f"  {[x for x in cols if 'atr' in x.lower() or 'vol' in x.lower() or 'stop
 tr = c.execute(
     "SELECT symbol, direction, entry_time, entry_price, metadata_json, decision_id, "
     " pnl_net, mfe_pct FROM trade_records "
-    "WHERE entry_time>='2026-07-24' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
+    "WHERE entry_time>='2026-07-24' AND entry_time < '2026-10-02 00:00:00' AND exit_time IS NOT NULL AND pnl_net IS NOT NULL "
     "AND direction='SHORT'").fetchall()
 
 print("\n=== 门上线后 SHORT 成交笔: metadata.atr vs 指令行 atr_pct ===")
