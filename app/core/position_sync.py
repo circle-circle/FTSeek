@@ -116,6 +116,51 @@ def _get_db_path():
     from app.core.db_utils import get_main_db
     return str(get_main_db())
 
+
+def release_exit_intents_on_external_close(symbol, direction, reason, evidence=None):
+    """券商侧已无该仓时, 释放其未决出场意图 (RFC-128, SSOT 单点).
+
+    为什么必须释放: `external_close` / 真幽灵仓对账只写 `trade_records` +
+    DELETE `open_positions`, **原本完全不碰 `exit_intents`** ⇒ 意图永久卡
+    PENDING/HELD, 于是 ①该 symbol 进 `blocked_exits` ⇒ **SL 评估被整体跳过**
+    ②fast loop 每 ~10s 告警 (10/1 US.ACN 当日 2029 条) ③RFC-127 影子按
+    已撤腿的 dealt_qty=0 落「剩余 N 股可升级」幽灵样本, 把阶段1 判据顶成假 PASS。
+
+    两处删仓分支 (external_close / 真幽灵仓) **共用本函数** — 不各写一份 inline
+    (协议 Gate 4: 同一逻辑多处 inline = 漂移根源)。
+
+    fail-open: 释放失败只 WARNING, **绝不阻断对账主流程** (trade_records 写入与
+    用户通知比账目收尾更重要; 卡死的意图仍可由
+    `scripts/release_stuck_exit_intent.py` 人工释放)。
+    """
+    try:
+        from app.core.trading_mode import TradingMode
+        from app.core.paths import get_exit_ledger_db
+        from app.execution.exit_lifecycle import ExitLedger
+
+        mode = TradingMode()
+        ledger = ExitLedger(get_exit_ledger_db())
+        released = ledger.release_unsettled(
+            account_id=str(mode.account_id()),
+            target_env=str(mode.target_env()),
+            symbol=symbol,
+            direction=direction,
+            reason=reason,
+            now=time.time(),
+            evidence=evidence or {},
+        )
+        if released:
+            logger.warning(
+                "🔓 [US Sync] 外部平仓已释放出场意图: %s %s intents=%s (%s) "
+                "— SL/BE/trailing/EOD 兜底重新接管",
+                symbol, direction, released, reason)
+        return released
+    except Exception as _release_err:  # 不阻断对账主流程
+        logger.warning(
+            "[US Sync] 出场意图释放失败 %s %s (对账继续, 可人工释放): %s",
+            symbol, direction, _release_err)
+        return []
+
 # Legacy module-level constant - replaced by _get_db_path() for mode isolation
 DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'ftseek_us.db'))
 
@@ -1913,7 +1958,22 @@ class USPositionSync:
                         _conn.close()
                     except Exception:
                         pass
-                    
+
+                    # [RFC-128] 券商侧已无该仓 ⇒ 同步释放其未决出场意图。
+                    # 原本 external_close 只写 trade_records + 删 open_positions, 完全不碰
+                    # exit_intents ⇒ 意图永久卡 PENDING/HELD: 该 symbol 进 blocked_exits
+                    # 使 SL 评估被整体跳过 + fast loop 每 10s 告警 (10/1 ACN 2029 条)
+                    # + RFC-127 影子落幽灵样本。释放是纯账目, 不会自动平仓。
+                    release_exit_intents_on_external_close(
+                        symbol, _dir_name, "external_close",
+                        evidence={
+                            "exit_price": _exit_price,
+                            "exit_qty": _exit_qty,
+                            "close_order_id": str(_deal_info.get("order_id") or ""),
+                            "trade_id": _trade_id if not _dup_skip else None,
+                            "duplicate_skip": bool(_dup_skip),
+                        })
+
                     # 发送正确的飞书通知 (有真实 PnL) — 查重命中时跳过(executor 已通知过)
                     if not _dup_skip:
                         try:
@@ -1946,6 +2006,27 @@ class USPositionSync:
                         _conn.close()
                     except Exception:
                         pass
+
+                    # [RFC-128] 与 external_close 同一根因: 仓已不在券商侧, 而 exit_intents
+                    # 无人释放 ⇒ 该 symbol 永久进 blocked_exits (SL 评估被跳过 + 告警风暴
+                    # + RFC-127 影子幽灵样本)。本分支还覆盖"外部平仓但成交不在今日订单表"
+                    # 的形态 (跨日手动单成交 / 订单查询漏行), 同样需要释放。
+                    # 方向取法与 external_close 逐字一致; existing_pos 为 None (罕见竞态)
+                    # 时传空方向 ⇒ release_unsettled 直接返回 [] (fail-safe, 不误释放),
+                    # 残留意图仍可由 scripts/release_stuck_exit_intent.py 人工释放。
+                    _ghost_dir = ""
+                    if existing_pos is not None:
+                        _ghost_dir = (existing_pos.direction.name
+                                      if hasattr(existing_pos.direction, 'name')
+                                      else str(existing_pos.direction))
+                    if _ghost_dir:
+                        release_exit_intents_on_external_close(
+                            symbol, _ghost_dir, "ghost_position_close",
+                            evidence={"broker_position_absent": True})
+                    else:
+                        logger.warning(
+                            "[US Sync] 真幽灵仓 %s 无法判定方向, 跳过出场意图释放 "
+                            "(如有卡死意图请人工释放)", symbol)
                     # ⛔ 不发通知 — 真幽灵仓没有真实成交，通知只会误导
 
         # 3. 数量变化 (部分成交/加仓) → 更新内存

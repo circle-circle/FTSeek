@@ -331,6 +331,71 @@ class ExitLedger:
                                    "version=version+1,updated_at=? WHERE intent_id=? AND state='FILLED_UNBOOKED'",
                                    (encoded, now, intent_id)).rowcount)
 
+    def release_unsettled(self, *, account_id, target_env, symbol, direction, reason, now,
+                          evidence=None):
+        """外部渠道平掉仓位后释放该仓的未决出场意图 (RFC-128).
+
+        病灶: `position_sync` 的 external_close / 真幽灵仓对账只写 `trade_records`
+        + DELETE `open_positions`, **完全不碰 `exit_intents`** ⇒ 意图永久卡
+        PENDING/HELD, 后果链 (2026-10-01 US.ACN 首例, 三方实证):
+          ① `_resume_playbook_exits` 把该 symbol 加进 `blocked_exits`
+             ⇒ 主退出循环 `continue`, **SL 评估被整体跳过** (当日 SL=223.16
+             被越过 2.0pp 而未平, 多暴露 42%);
+          ② fast loop 每 ~10s 告警一次 (当日 2029 条 ERROR);
+          ③ RFC-127 影子按 `result.dealt_qty` (系统自己那条已撤腿的 0) 落
+             「剩余 N 股可升级」幽灵样本 ⇒ 阶段1 判据2 被顶成假 PASS。
+
+        语义 (与 `ack_booked` 同一终态, **不新造状态值**): `state → 'BOOKED'`
+        同时做到 ①退出 `list_unsettled()` 枚举 (`WHERE state != 'BOOKED'`)
+        ⇒ 不再进 `blocked_exits` ⇒ SL/BE/trailing/EOD 兜底重新接管;
+        ②解除 partial unique index `exit_active_symbol … WHERE state != 'BOOKED'`
+        的 symbol busy ⇒ 该标的新意图可再建。
+        **释放不会自动平仓** — 纯账目, 平仓职责交回兜底链。
+
+        匹配键四元组 `(account_id, target_env, symbol, direction)`:
+        partial unique index 是 `(account_id, target_env, symbol)` ⇒ 意图**按账户隔离**,
+        而"券商侧无持仓"也是按账户查的 ⇒ 只按 symbol 匹配会误释放另一账户
+        (仓位可能还在) 的意图。方向不符同样不释放 (同 symbol 双向意图互不误伤)。
+
+        幂等: `WHERE state != 'BOOKED'` 天然保证重复调用返回空列表。
+        """
+        want_dir = token(direction)
+        if not (account_id and target_env and symbol and want_dir):
+            return []
+        receipt = {
+            'kind': 'external_close_release',
+            'external_close_release': True,
+            'reason': str(reason or ''),
+            'released_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'broker_qty_evidence': evidence if isinstance(evidence, dict) else {},
+        }
+        encoded = json_text(receipt)
+        with self.transaction() as db:
+            rows = db.execute(
+                "SELECT intent_id,direction,state FROM exit_intents "
+                "WHERE account_id=? AND target_env=? AND symbol=? AND state!='BOOKED'",
+                (str(account_id), str(target_env), str(symbol))).fetchall()
+            released = []
+            for row in rows:
+                if token(row['direction']) != want_dir:
+                    logger.warning(
+                        'exit_intent_release_direction_mismatch symbol=%s intent=%s '
+                        'intent_direction=%s closed_direction=%s (不释放)',
+                        symbol, row['intent_id'], row['direction'], want_dir)
+                    continue
+                if db.execute(
+                        "UPDATE exit_intents SET state='BOOKED',receipt_json=?,last_error='',"
+                        "version=version+1,updated_at=? "
+                        "WHERE intent_id=? AND state!='BOOKED'",
+                        (encoded, now, row['intent_id'])).rowcount:
+                    released.append(row['intent_id'])
+            if released:
+                logger.warning(
+                    'exit_intent_released_on_external_close symbol=%s env=%s account=%s '
+                    'direction=%s intents=%s reason=%s — 该仓出场职责交回 SL/BE/trailing/EOD 兜底',
+                    symbol, target_env, account_id, want_dir, released, reason)
+            return released
+
 
 class ExitLifecycle:
     def __init__(self, adapter, ledger, clock=None):
