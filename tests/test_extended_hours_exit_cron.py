@@ -6,7 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts import error_alert
-from scripts.extended_hours_exit_cron import _report_failure, collector_command, main
+from scripts.extended_hours_exit_cron import (
+    _report_failure,
+    _report_guard_failure,
+    collector_command,
+    main,
+    run_once,
+)
 
 
 def test_collector_command_selects_session_specific_script():
@@ -68,3 +74,127 @@ def test_report_failure_timeout_branch_and_main_exit(capsys, monkeypatch):
     printed = capsys.readouterr().out
     assert "] ERROR:" in printed, printed
     assert '"returncode": 1' in printed, printed     # JSON 块保留 (机读/审计)
+
+
+# ── INCIDENT-002 根因修: 守卫字段必须全路径在场 ──────────────────────────────
+# 病灶: 守卫早于 session 门控执行, 但结果只回填到「窗外」分支; 窗内
+# (premarket/afterhours/next_open) 的三个 return 全丢该字段 ⇒ 探针自身故障
+# (ok:false) 在最需要它的交易时段**无人可见**, 与 INCIDENT-001 同型。
+
+
+def _stub_guards(monkeypatch, *, closekey=None, orphan=None):
+    import scripts.extended_hours_exit_cron as cron
+
+    monkeypatch.setattr(cron, "scan_orphan_orders",
+                        lambda dry=False: orphan or {"ok": True, "skip": "stub"})
+    monkeypatch.setattr(cron, "scan_closekey_health",
+                        lambda dry=False: closekey or {"ok": True, "deadlocks": []})
+
+
+class TestGuardFieldsPresentOnEveryPath:
+    """run_once 的所有返回路径都必须带守卫字段 (单一出口契约)。"""
+
+    def test_outside_hours_carries_both_guards(self, monkeypatch):
+        _stub_guards(monkeypatch)
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session", lambda now=None: None)
+        r = run_once()
+        assert r["skip"] == "outside_extended_hours"
+        assert "orphan" in r and "closekey_health" in r
+
+    def test_in_session_dry_carries_both_guards(self, monkeypatch):
+        """窗内 dry 分支 — 首版正是这里丢字段。"""
+        _stub_guards(monkeypatch)
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session",
+            lambda now=None: "premarket")
+        r = run_once(dry=True)
+        assert r["session"] == "premarket" and r.get("dry") is True
+        assert "orphan" in r, "窗内分支必须带 orphan"
+        assert "closekey_health" in r, "窗内分支必须带 closekey_health"
+
+    def test_in_session_exec_carries_both_guards(self, monkeypatch, tmp_path):
+        """窗内真跑分支 (subprocess 完成)。"""
+        _stub_guards(monkeypatch)
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session",
+            lambda now=None: "afterhours")
+        monkeypatch.setattr("scripts.extended_hours_exit_cron.LOCK_FILE",
+                            tmp_path / "lock.file")
+
+        class _Done:
+            returncode = 0
+            stdout = "collector-ok"
+            stderr = ""
+
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: _Done())
+        r = run_once()
+        assert r["ok"] is True and r["returncode"] == 0
+        assert "orphan" in r and "closekey_health" in r
+
+    def test_timeout_branch_carries_both_guards(self, monkeypatch, tmp_path):
+        """超时分支 — 首版连 orphan 都丢 (最严重的信息丢失路径)。"""
+        import subprocess as _sp
+
+        _stub_guards(monkeypatch)
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session",
+            lambda now=None: "premarket")
+        monkeypatch.setattr("scripts.extended_hours_exit_cron.LOCK_FILE",
+                            tmp_path / "lock.file")
+
+        def _boom(*a, **k):
+            raise _sp.TimeoutExpired(cmd="x", timeout=1)
+
+        monkeypatch.setattr("subprocess.run", _boom)
+        r = run_once()
+        assert r["ok"] is False and "collector_timeout" in r["error"]
+        assert "orphan" in r and "closekey_health" in r, "超时分支不得丢守卫字段"
+
+
+class TestGuardFailureIsVisible:
+    """守卫自身故障必须发契约 ERROR 行 (否则只躺在 JSON 块 ⇒ error_alert 扫不到)。"""
+
+    def test_report_guard_failure_line_is_scannable(self, tmp_path, capsys):
+        _report_guard_failure("closekey_health",
+                              {"ok": False, "error": "sqlite3.DatabaseError: locked"})
+        out = capsys.readouterr().out.strip()
+        assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}", out), out
+        assert "] ERROR:" in out, out
+        assert "closekey_health" in out and "无人监视" in out, out
+        assert "locked" in out, out
+
+        # 复用既有仪表实测: error_alert 必须能数到它 (JSON 块是数不到的)
+        (tmp_path / "extended_hours_exit_cron.log").write_text(out + "\n", encoding="utf-8")
+        got = error_alert.scan(sorted(tmp_path.glob("*.log")))
+        assert got["count"] == 1 and got["unparsed"] == 0, got
+
+    def test_main_emits_guard_alert_without_failing_exit_chain(self, monkeypatch, capsys):
+        """守卫降级不得把退出链一起标红 (否则真故障被淹没)。"""
+        import scripts.extended_hours_exit_cron as cron
+
+        monkeypatch.setattr(sys, "argv", ["extended_hours_exit_cron"])
+        monkeypatch.setattr(cron, "run_once", lambda dry, timeout: {
+            "ok": True, "session": "premarket", "returncode": 0,
+            "orphan": {"ok": True},
+            "closekey_health": {"ok": False, "error": "boom"}})
+        main()                                  # 不抛 SystemExit (退出链本身是好的)
+        printed = capsys.readouterr().out
+        assert "] ERROR: 守卫 closekey_health 自身故障" in printed, printed
+        assert '"ok": true' in printed, printed
+
+    def test_guard_exception_degrades_not_crashes(self, monkeypatch):
+        """守卫抛异常 ⇒ ok:false + error 回填, run_once 不炸 (退出链优先)。"""
+        import scripts.extended_hours_exit_cron as cron
+
+        def _boom(dry=False):
+            raise RuntimeError("ledger db locked")
+
+        monkeypatch.setattr(cron, "scan_orphan_orders", lambda dry=False: {"ok": True})
+        monkeypatch.setattr(cron, "scan_closekey_health", _boom)
+        monkeypatch.setattr(cron, "get_exit_cron_session", lambda now=None: None)
+        r = run_once()
+        assert r["ok"] is True, "守卫故障不得让整轮判失败"
+        assert r["closekey_health"]["ok"] is False
+        assert "RuntimeError" in r["closekey_health"]["error"]
+        assert "ledger db locked" in r["closekey_health"]["error"]

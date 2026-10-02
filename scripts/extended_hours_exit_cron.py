@@ -64,37 +64,51 @@ def run_once(dry=False, timeout_s=240, now=None):
 
     另 (2026-09-18 §23.3 方案 A): 会话门控**之前**先跑孤儿单检测 (观察期只告警不撤单)。
     它按 durable 账本触发, 无事件时零券商调用; 失败不阻塞退出链 (只把错误回填到结果里)。
+
+    结构约束 (2026-10-02 INCIDENT-002 复查发现, 根因修):
+      守卫 (orphan / closekey_health) 必须**早于** session 门控执行 —— 阻塞事件
+      (RTH 09:3x) 与死锁/孤儿单 (ETH 05:50 创建) 都可能落在本 cron 窗外, 窗外返回
+      "outside_extended_hours" 就永远扫不到。
+      但「早于门控执行」不等于「结果被看见」: 首版只在窗外分支回填守卫字段, 窗内
+      三个 return 全丢 ⇒ 探针自身故障 (ok:false) 在盘前/盘后窗内**无人可见**,
+      与本文件 `_report_failure` docstring 记载的 INCIDENT-001 同型 (信息在 JSON 块里
+      但行首无时间戳 ⇒ error_alert 扫不到 ⇒ 静默)。
+      ⇒ 收敛为**单一返回出口** (`result` 逐层补字段), 守卫字段在所有路径都在场。
     """
-    # 孤儿单检测: 必须**早于** session 门控 —— 阻塞事件(RTH 09:3x)与孤儿单(ETH 05:50 创建)
-    #   都可能落在本 cron 的窗外, 窗外返回 "outside_extended_hours" 就永远扫不到。
+    # ── 守卫: 全部早于 session 门控 ──────────────────────────────────────
+    # 孤儿单检测: 按 durable 账本触发, 无事件时零券商调用。
     try:
         orphan = scan_orphan_orders(dry=dry)
     except Exception as _exc:      # 显式可见的降级, 不静默 (退出链优先)
         orphan = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
 
-    # close_key 死锁体检 (INCIDENT-002 P2-5): 同样早于 session 门控 — 死锁不分时段,
-    #   且该形态零未决意图 ⇒ blocked_exits/orphan watch/fast loop 全静默, 本探针是唯一哨兵。
+    # close_key 死锁体检 (INCIDENT-002 P2-5): 死锁不分时段, 且该形态零未决意图 ⇒
+    #   blocked_exits / orphan watch / fast loop 全静默, 本探针是唯一哨兵。
     try:
         closekey_health = scan_closekey_health(dry=dry)
     except Exception as _exc:      # 探针故障不阻塞退出链
         closekey_health = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
 
+    # 单一出口: 守卫字段在此一次性挂上, 后续任何分支都带着它返回。
+    result = {"ok": True, "orphan": orphan, "closekey_health": closekey_health}
+
     session = get_exit_cron_session(now)
     command = collector_command(session)
+    result["session"] = session
     if session is None or command is None:
-        return {"ok": True, "skip": "outside_extended_hours", "session": session,
-                "orphan": orphan, "closekey_health": closekey_health}
+        result["skip"] = "outside_extended_hours"
+        return result
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("a+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return {"ok": True, "skip": "previous_run_still_active", "session": session,
-                    "orphan": orphan}
+            result["skip"] = "previous_run_still_active"
+            return result
         if dry:
-            return {"ok": True, "dry": True, "session": session, "command": command,
-                    "orphan": orphan}
+            result.update({"dry": True, "command": command})
+            return result
         try:
             completed = subprocess.run(
                 command,
@@ -105,20 +119,18 @@ def run_once(dry=False, timeout_s=240, now=None):
                 timeout=timeout_s,
             )
         except subprocess.TimeoutExpired:
-            return {
+            result.update({
                 "ok": False,
-                "session": session,
                 "error": f"collector_timeout_after_{timeout_s}s",
-                "orphan": orphan,
-            }
-        return {
+            })
+            return result
+        result.update({
             "ok": completed.returncode == 0,
-            "session": session,
             "returncode": completed.returncode,
             "stdout_tail": (completed.stdout or "")[-1000:],
             "stderr_tail": (completed.stderr or "")[-1000:],
-            "orphan": orphan,
-        }
+        })
+        return result
 
 
 def _et_hhmm() -> str:
@@ -156,6 +168,20 @@ def _report_failure(result: dict) -> None:
           f"| {reason} (完整 stderr 见本文件 JSON 块)")
 
 
+def _report_guard_failure(name: str, guard: dict) -> None:
+    """守卫自身故障必须发**契约格式 ERROR 行** (与 `_report_failure` 同一纪律).
+
+    为什么不能只塞 JSON 块: error_alert 的 `_parse_line` 要求行首
+    `^YYYY-MM-DD HH:MM` ⇒ JSON 块整行无时间戳 ⇒ 被视作 unparsed 跳过。
+    守卫 (orphan / closekey_health) 是**唯一**能看见各自故障形态的哨兵,
+    它自己哑了而无人知晓 = INCIDENT-002「静默零保护」的同型复发。
+    """
+    err = (guard.get("error") or "").strip() or "unknown_error"
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{stamp} [extended_hours_exit_cron] ERROR: 守卫 {name} 自身故障 {_et_hhmm()} "
+          f"| {err[:180]} — 本守卫覆盖的形态当前**无人监视**, 请人工核查")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true")
@@ -164,6 +190,12 @@ def main():
     args = parser.parse_args()
     result = run_once(args.dry, args.timeout)
     print(json.dumps(result, ensure_ascii=False))
+    # 守卫故障单独发契约行 (不并入 rc=1: 守卫降级不该让退出链判失败 —
+    # 退出链本身可能是好的, 把它一起标红会淹没真故障)
+    for _name in ("orphan", "closekey_health"):
+        _guard = result.get(_name) or {}
+        if isinstance(_guard, dict) and _guard.get("ok") is False:
+            _report_guard_failure(_name, _guard)
     if not result.get("ok"):
         _report_failure(result)
         raise SystemExit(1)
