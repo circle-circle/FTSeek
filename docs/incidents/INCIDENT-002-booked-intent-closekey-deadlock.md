@@ -123,6 +123,25 @@ cp data/playbook_exits.db /opt/ftseek/backups/playbook_exits_pre_unlock_20261002
 7. **RFC-128 文档标注语义已订正**: 头部加醒目段落, 正文保留存设计史但注明
    「禁止按其实施」— 避免下一个操作者照已废弃的 §3.1 伪码重演同一病灶。
 
+### 第三批 (次日凌晨复查我自己的接线时发现): 探针自身带上了同一个静默缺陷
+8. **cron 守卫字段收敛单一出口** (`54f06e9a3`): P2-5 探针挂在 session 门控之前
+   是对的, 但结果**只回填到窗外分支**的 return; 窗内三个 return (dry / subprocess
+   完成 / timeout) 全丢 `closekey_health` 字段, timeout 分支连既有 `orphan` 都丢。
+   生产实证: 07:04-07:05 ET 窗内两轮 JSON 输出里根本没有该键 ⇒ 探针自身故障
+   (`ok:false`) 在盘前盘后最需要它的时段完全静默。**这正是我为「静默零保护」建的
+   哨兵, 自己带上了 INCIDENT-001 同型缺陷** (信息在 JSON 块里, 但 error_alert 的
+   `_parse_line` 要求行首时间戳 ⇒ 被视作 unparsed 跳过)。
+   根因修 = 做减法: `run_once()` 收敛为单一返回出口 (守卫字段开头一次性挂上,
+   各分支只 `result.update()` 补自己那部分), 结构上不可能再漏 — 四处 return 各自
+   罗列字段正是漏字的根源。另加 `_report_guard_failure()`: 守卫 `ok:false` 时发
+   契约格式 ERROR 行 (复用 error_alert 仪表), 但**不**并入 rc=1 (守卫降级不该把
+   退出链一起标红, 否则真故障被淹没)。
+9. **反证纪律** (新测试必须在旧代码上红, 否则是空测试): 把新测试拷进
+   `git archive a7a3927b0` 导出的旧代码 worktree 实跑 — 首轮 ImportError
+   (反证太弱, 只证函数缺失), 注入桩绕过 import 后**恰好新增 5 条全红、原有 5 条
+   全绿** ⇒ 钉的是真实行为差异。生产活体复核: 该脚本由 crontab 每分钟新进程调起
+   ⇒ 无需重启, 已实测 07:11/07:12 ET 窗内两轮 JSON 均带该字段 (2/2 在场)。
+
 ### 未落地 (需另裁)
 - **P1-4 RFC-127 阶段1** (ETH HELD → RTH 会话升级补腿): 预注册判据攒样中
   (影子现有 1 行, 门限 ≥5 交易日 ∧ ≥3 独立意图)。它是「ETH 腿被撤、仓位仍在」
@@ -145,6 +164,12 @@ cp data/playbook_exits.db /opt/ftseek/backups/playbook_exits_pre_unlock_20261002
 - **哨兵全依赖「未决态」触发源** — 终态行占用身份键的形态在监控面上不可见,
   探针 (P2-5) 补上; 同型自查: 还有哪些 UNIQUE 键无 state 谓词?
 - **推送文案与真实语义脱节** — 「待确认」字样让操作者以为系统在正常工作。
+- **为静默建的哨兵自己会静默** (最该记的一条): P2-5 探针首轮接线时结果只回填
+  窗外分支, 窗内三个 return 全丢字段 ⇒ 它在最需要它的交易时段自己失明, 与
+  INCIDENT-001「JSON 块里但 error_alert 扫不到」完全同型。教训可泛化: **补守卫时
+  必须验证守卫自身故障是否可见** — ①结果字段在所有返回路径都在场 (多 return
+  函数收敛单一出口); ②守卫 `ok:false` 走契约告警行而非只塞 JSON; ③新契约测试
+  必须在旧代码上跑红一次 (反证), 否则可能是空断言。
 
 ### 行动项
 
@@ -154,8 +179,10 @@ cp data/playbook_exits.db /opt/ftseek/backups/playbook_exits_pre_unlock_20261002
 | P0-2 release 工具改归档语义 + 契约测试 | Hermes | 2026-10-02 | ✅ 完成 |
 | P1-3 executor 推送文案 + 节流 | Hermes | 2026-10-02 | ✅ 完成 |
 | P2-5 closekey 死锁探针 + 载体接线 + 台账 | Hermes | 2026-10-02 | ✅ 完成 |
+| RFC-128 release_unsettled 改「归档+删除」+ SSOT 下沉 | Hermes | 2026-10-02 | ✅ 完成 (`a7a3927b0`) |
+| P2-5 探针接线复查: 守卫字段收敛单一出口 + 故障可见 | Hermes | 2026-10-03 | ✅ 完成 (`54f06e9a3`) |
 | P1-4 RFC-127 阶段1 (ETH→RTH 升级补腿) | 影子攒样 → 用户裁决 | 判据达标日 | 攒样中 |
-| RFC-128 release_unsettled 同型风险评估 | 用户裁决 | — | 待裁 |
+| ~~RFC-128 release_unsettled 同型风险评估~~ | 用户裁「一并改造」 | 2026-10-02 | ✅ 已实施 (见上) |
 
 ---
 
