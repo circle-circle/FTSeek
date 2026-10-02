@@ -71,6 +71,18 @@ def _unsettled(ledger):
     return [i["intent_id"] for i in ledger.list_unsettled()]
 
 
+def _leg(ledger, intent_id, *, sequence=1, state="ACTIVE", dealt_qty=None,
+          order_id="900001", broker_status="SUBMITTED"):
+    now = time.time()
+    with ledger.transaction() as db:
+        db.execute(
+            "INSERT INTO exit_legs (intent_id,sequence,kind,quantity,price,remark,"
+            "order_id,state,broker_status,dealt_qty,deadline,created_at,updated_at) "
+            "VALUES (?,?,'LIMIT',23.0,215.62,?,?,?,?,?,?,?,?)",
+            (intent_id, sequence, f"pbe_{uuid.uuid4().hex[:24]}", order_id,
+             state, broker_status, dealt_qty, now, now, now))
+
+
 def _release(ledger, **overrides):
     kwargs = dict(account_id=ACC, target_env=ENV, symbol="US.ACN",
                   direction="SHORT", reason="external_close", now=time.time())
@@ -207,6 +219,26 @@ class TestReleaseUnsettled:
         assert _release(ledger, evidence="not-a-dict") == [iid]
         receipt = json.loads(_row(ledger, iid)["receipt_json"])
         assert receipt["broker_qty_evidence"] == {}
+
+    @pytest.mark.parametrize("leg_state,dealt_qty,broker_status", [
+        ("ACTIVE", None, "SUBMITTED"),
+        ("PREPARED", None, ""),
+        ("CANCEL_REQUESTED", None, "CANCELLING_ALL"),
+        ("TERMINAL", None, "CANCELLED_ALL"),
+    ])
+    def test_unsettled_leg_blocks_release(self, ledger, caplog, leg_state,
+                                          dealt_qty, broker_status):
+        import logging
+        iid = _insert(ledger, state="PENDING")
+        _leg(ledger, iid, state=leg_state, dealt_qty=dealt_qty,
+             broker_status=broker_status)
+        with caplog.at_level(logging.WARNING, logger="app.execution.exit_lifecycle"):
+            assert _release(ledger) == []
+        assert "exit_intent_release_blocked_by_unsettled_leg" in caplog.text
+        row = _row(ledger, iid)
+        assert row["state"] == "PENDING"
+        assert row["receipt_json"] is None
+        assert iid in _unsettled(ledger)
 
 
 class TestSymbolBusyEndToEnd:

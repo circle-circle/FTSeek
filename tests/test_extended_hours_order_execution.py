@@ -91,7 +91,7 @@ def _create_db(path):
             trade_mode TEXT, mode TEXT, owner_strategy TEXT, strategy_id TEXT,
             futu_order_id TEXT, close_futu_order_id TEXT, metadata_json TEXT,
             mfe_pct REAL, mae_pct REAL, max_drawdown REAL, created_at TEXT,
-            config_version TEXT, entry_session TEXT
+            config_version TEXT, entry_session TEXT, decision_id TEXT
         );
         """
     )

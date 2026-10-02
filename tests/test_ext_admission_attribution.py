@@ -195,3 +195,63 @@ def test_observer_ext_did_not_p1_and_reject_is_p2(obs_db):
     assert any(lv == "P2" and "US.XYZ" in m for lv, m in levels), "REJECT 必须 P2"
     assert any(lv == "P1" and "US.GHOST" in m for lv, m in levels), "空 did 仍须 P1"
     obs_db.close()
+
+
+def test_observer_da_did_without_instruction_row_is_p1(obs_db):
+    """非 EXT did 必须能在 playbook_instructions 找到同 did 指令行 —
+    空 did 之外的第二种幽灵成交形态 (dangling did) 不得静默放行。"""
+    _insert_trade(obs_db, "US.DANGLING", "DA-20261002-US.DANGLING-x1")
+    obs_db.execute(
+        "INSERT INTO playbook_instructions (date, symbol, direction, decision_id) "
+        "VALUES ('2026-10-02', 'US.OTHER', 'BUY', 'DA-20261002-US.OTHER-x2')")
+    obs_db.commit()
+    findings = []
+    observer.section_single_entry(obs_db, "2026-10-02", findings)
+    assert any(
+        lv == "P1" and "幽灵归因" in msg and "US.DANGLING" in msg
+        for lv, msg in findings
+    ), "非 EXT did 无指令行 = 归因链断, 必须 P1"
+    obs_db.close()
+
+
+def test_observer_jsonl_bad_line_warns_and_skips(tmp_path, capsys):
+    """坏 JSON 行不得与"无事件"同形 (诊断器静默死亡守卫)。"""
+    path = tmp_path / "bad.jsonl"
+    path.write_text('{"date": "2026-10-02"}\nnot-json\n', encoding="utf-8")
+    rows = observer._jsonl(path)
+    assert len(rows) == 1 and rows[0]["date"] == "2026-10-02"
+    err = capsys.readouterr().err
+    assert "1 行坏 JSON" in err
+
+
+def test_observer_chase_cap_malformed_rows_are_counted(obs_db, capsys):
+    """cap/entry 畸形行留痕计数, 不与合规零违例混淆。"""
+    obs_db.execute(
+        "INSERT INTO playbook_instructions (date, symbol, direction, entry_price, "
+        "raw_instruction_json) VALUES ('2026-10-02', 'US.BAD', 'SELL_SHORT', "
+        "100.0, '{\"chase_cap_price\": \"abc\"}')")
+    obs_db.commit()
+    findings = []
+    observer.section_chase_cap(obs_db, "2026-10-02", findings)
+    out = capsys.readouterr().out
+    assert "cap/entry 畸形无法判定 1 条" in out
+    assert not findings
+    obs_db.close()
+
+
+def test_observer_skew_shadow_prints_pct_not_none(tmp_path, monkeypatch, capsys):
+    """影子记录键名是 pct (非 majority_pct) — 体检打印 None = 口径键错配。"""
+    monkeypatch.setattr(observer, "SHADOW", tmp_path)
+    (tmp_path / "skew_gate_vision.jsonl").write_text(
+        json.dumps({
+            "ts": "2026-10-02T13:05:41", "date": "2026-10-02",
+            "batch_vision": {"buy": 2, "short": 0, "pct": 1.0,
+                             "violates": True},
+            "portfolio_vision": {"buy": 6, "short": 2, "pct": 0.75,
+                                 "violates": False},
+            "divergent": True,
+        }) + "\n", encoding="utf-8")
+    observer.section_shadows("2026-10-02", [])
+    out = capsys.readouterr().out
+    assert "batch=2B/0S=1.0" in out
+    assert "batch=2B/0S=None" not in out

@@ -62,7 +62,8 @@
 3. 幂等: 同一 intent 重复调用返回空列表, 不重复写 (`WHERE state != 'BOOKED'` 天然保证);
 4. 四键不匹配 (方向相反 / 他账户 / 他 env) ⇒ **零释放** (防误释放还有仓的意图);
 5. ledger 不可达 / 异常 ⇒ **不阻断对账主流程** (WARNING + 返回空), 因为 external_close 的 trade_records 写入与通知更重要;
-6. 两处调用点都在 (源码契约测试钉住), 漏一处必红。
+6. 任一腿 `state != TERMINAL` 或 `dealt_qty IS NULL` ⇒ **零释放** + WARNING 留痕 (先撤销/等待该腿终态, 防止活跃出场单因意图 BOOKED 变孤儿单);
+7. 两处调用点都在 (源码契约测试钉住), 漏一处必红。
 
 ### 3.2 边界条件 (什么情况下不生效)
 
@@ -71,6 +72,7 @@
 | intent 已是 `BOOKED` | 跳过 (幂等) | `WHERE state != 'BOOKED'` |
 | direction 不匹配 (intent=LONG, 平掉的是 SHORT 仓) | 不释放 | 四键匹配; 防同 symbol 双向意图误伤 |
 | account_id / target_env 不匹配 | 不释放 | partial unique index 是 `(account_id, target_env, symbol)` ⇒ **按账户隔离**; 而"券商侧无持仓"是按账户查的 ⇒ 只按 symbol 匹配会误释放另一账户 (仓位可能还在) 的意图 |
+| 意图下存在 `PREPARED/ACTIVE/CANCEL_REQUESTED` 腿, 或 TERMINAL 腿 `dealt_qty` 未知 | 不释放 | `orphan_ext_order_watch` 只认 `ext_exit_` remark, playbook 腿是 `pbe_` 前缀 ⇒ 释放意图会让该单脱离现有看护; 先人工撤单/等终态后再释放 |
 | 部分平仓 (券商侧仍有剩余持仓) | **不触发** | external_close 的前置是 `ghost_symbols = mem_symbols - futu_symbols` ⇒ 只在券商侧**完全无持仓**时进此分支 (已实证); 部分平仓走 `_sync_once` 的数量变化分支, 不在本 RFC 范围 |
 | `_sync_once` 的 L994/L1170 删仓点 | **不改** | L994 有 `playbook_open_check(symbol, _pb_open_syms)` 跳过 playbook 仓 ⇒ playbook/EXT 仓不在此删; L1170 是期权 PRICE_FAIL 清理, 与 exit_intent 无关 |
 
@@ -104,4 +106,7 @@
 
 - 提交: (见 git log `[RFC-128]`)
 - 测试: `tests/test_exit_intent_external_release.py`
-- 重启: 待用户指定时点 (改动含 `app/` ⇒ 必须重启才生效)
+- 重启: 2026-10-02 10:59:44 CST 已部署; `startup_smoke_check.py --wait 90` 7/7 全绿 (exit=0)
+- 复查补丁 (2026-10-02): `release_unsettled()` 增加非终态腿守卫;
+  `scripts/release_stuck_exit_intent.py` 同步拒绝非终态/成交未知腿, 防人工释放
+  制造 `pbe_*` 孤儿单。契约测试新增 4 例参数化场景。

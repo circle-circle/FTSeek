@@ -64,13 +64,17 @@ def _jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
     out = []
+    bad_lines = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
             out.append(json.loads(line))
         except json.JSONDecodeError:
-            pass
+            bad_lines += 1
+    if bad_lines:
+        print(f"  ⚠️ 影子台账 {path.name} 有 {bad_lines} 行坏 JSON 已跳过",
+              file=sys.stderr)
     return out
 
 
@@ -161,10 +165,12 @@ def section_chase_cap(db: sqlite3.Connection, date: str, findings: list,
     print(f"  活跃指令: BUY {len(buys)} / SELL_SHORT {len(shorts)}")
 
     bad_short, bad_buy = [], []
+    malformed = 0
     for r in shorts:
         try:
             cap, entry = float(r["cap"]), float(r["entry_price"])
         except (TypeError, ValueError):
+            malformed += 1
             continue
         if cap <= 0 or entry <= 0:
             continue
@@ -174,6 +180,7 @@ def section_chase_cap(db: sqlite3.Connection, date: str, findings: list,
         try:
             cap, entry = float(r["cap"]), float(r["entry_price"])
         except (TypeError, ValueError):
+            malformed += 1
             continue
         if cap <= 0 or entry <= 0:
             continue
@@ -183,6 +190,8 @@ def section_chase_cap(db: sqlite3.Connection, date: str, findings: list,
     with_cap_s = sum(1 for r in shorts if r["cap"] not in (None, ""))
     with_cap_b = sum(1 for r in buys if r["cap"] not in (None, ""))
     print(f"  带 cap: SHORT {with_cap_s}/{len(shorts)}, BUY {with_cap_b}/{len(buys)}")
+    if malformed:
+        print(f"  ⚠️ cap/entry 畸形无法判定 {malformed} 条 (已跳过, 不计入违例)")
 
     def _dump(title: str, items: list, note: str) -> None:
         if not items:
@@ -219,7 +228,7 @@ def section_shadows(date: str, findings: list) -> None:
     for e in today_skew[-3:]:
         bv, pv = e.get("batch_vision", {}), e.get("portfolio_vision", {})
         print(f"    {e.get('ts','')[:19]} batch={bv.get('buy')}B/{bv.get('short')}S"
-              f"={bv.get('majority_pct')} violates={bv.get('violates')} | "
+              f"={bv.get('pct')} violates={bv.get('violates')} | "
               f"portfolio={pv.get('buy')}B/{pv.get('short')}S violates={pv.get('violates')}"
               f" divergent={e.get('divergent')}")
     if not today_skew:
@@ -246,6 +255,19 @@ def section_shadows(date: str, findings: list) -> None:
         print(f"    {v:>3}  {list(k)}")
     if not conf:
         print("    (文件尚不存在 = 尚未捕获任何冲突; 偏斜门同did覆盖会在此留痕)")
+
+    eth_held = _jsonl(SHADOW / "eth_held_exit_escalation.jsonl")
+    today_eth = [e for e in eth_held if str(e.get("date")) == date]
+    print(f"  RFC-127 ETH HELD→RTH 升级影子: 累计 {len(eth_held)} 行, 今日 {len(today_eth)} 行")
+    for e in today_eth[-3:]:
+        print(f"    {e.get('symbol')} {e.get('direction')} 剩余{e.get('remaining_qty')}股 "
+              f"intent_age={e.get('intent_age_seconds')}s order={e.get('futu_order_id')} "
+              f"proposed={e.get('proposed_resolution')}")
+    if today_eth:
+        syms = ", ".join(str(e.get("symbol")) for e in today_eth)
+        findings.append(("P1", f"ETH出场HELD在RTH仍阻塞 {len(today_eth)} 个意图 "
+                               f"({syms}) — SL评估被 blocked_exits 跳过, "
+                               "需人工处置或等 RFC-127 阶段1裁决"))
 
 
 # ── 段 4: 统一入口 ────────────────────────────────────────────────
@@ -283,7 +305,8 @@ def section_single_entry(db: sqlite3.Connection, date: str, findings: list) -> N
 
     # 成交侧对照: 执行行是否都有指令行 (无幽灵成交)
     trades = _rows(db, """
-        SELECT symbol, direction, entry_time, strategy_id, decision_id
+        SELECT symbol, direction, entry_time, strategy_id, decision_id,
+               json_extract(metadata_json, '$.admission_verdict') AS admission_verdict
         FROM trade_records
         WHERE date(entry_time) = ? AND source_type = 'PLAYBOOK_SIM'
     """, date)
@@ -297,22 +320,27 @@ def section_single_entry(db: sqlite3.Connection, date: str, findings: list) -> N
     # 但 EXT 行仍不写指令行, 单独列出其 admission verdict 供审计。
     ext_rows = [t for t in trades if str(t["decision_id"] or "").startswith("EXT-")]
     for t in ext_rows:
-        adm = _rows(db, """
-            SELECT json_extract(metadata_json, '$.admission_verdict') AS v
-            FROM trade_records WHERE symbol = ? AND date(entry_time) = ?
-              AND strategy_id = 'extended_hours_entry' LIMIT 1
-        """, t["symbol"], date)
-        verdict = adm[0]["v"] if adm else None
+        verdict = t["admission_verdict"]
         print(f"    [EXT归因✅] {t['symbol']:<10} {t['direction']:<10} "
               f"did={str(t['decision_id'])[:40]} admission={verdict}")
         if verdict == "REJECT":
             findings.append(("P2", f"EXT 成交在统一 admission 口径下 REJECT "
                                    f"(record-only 未拦): {t['symbol']} — 人工复核"))
     for t in trades:
-        if not str(t["decision_id"] or "").strip():
+        did = str(t["decision_id"] or "").strip()
+        if not did:
             findings.append(("P1", f"成交无指令行(绕统一入口): {t['symbol']} "
                                    f"{t['direction']} strat={t['strategy_id']} "
                                    f"@{str(t['entry_time'])[:19]}"))
+        elif not did.startswith("EXT-"):
+            match = db.execute(
+                "SELECT 1 FROM playbook_instructions WHERE decision_id = ? LIMIT 1",
+                (did,),
+            ).fetchone()
+            if not match:
+                findings.append(("P1", f"成交 did 无指令行(幽灵归因): {t['symbol']} "
+                                       f"{t['direction']} did={did[:40]} "
+                                       f"strat={t['strategy_id']}"))
 
 
 # ── 段 5: 异常清单 ────────────────────────────────────────────────

@@ -132,6 +132,11 @@ def main() -> int:
             print(f"    #{lg['sequence']} {lg['kind']} qty={lg['quantity']} px={lg['price']} "
                   f"oid={lg['order_id']} {lg['state']}/{lg['broker_status']} "
                   f"dealt={lg['dealt_qty']} remark={str(lg['remark'])[:44]}")
+        unsafe_legs = [lg for lg in legs
+                       if lg["state"] != "TERMINAL" or lg["dealt_qty"] is None]
+        if unsafe_legs:
+            print("  ⛔ 存在非终态/成交未知腿: 先撤销或等待其终态, 否则释放意图会把"
+                  "活跃出场单变成孤儿单。")
 
         # 券商侧地面真值
         print(f"\n═══ 券商侧真实持仓 ({symbol}) ═══")
@@ -172,6 +177,9 @@ def main() -> int:
         if not args.apply:
             print("\n[dry-run] 未写库。确认无误后加 --apply")
             return 0
+        if unsafe_legs:
+            print("\n❌ 检测到非终态/成交未知腿, 拒绝释放。请先处理该腿。")
+            return 2
 
         receipt = {"manual_release": True, "released_at": _utc_now(),
                    "prior_state": state, "reason": args.reason or "(未填)",

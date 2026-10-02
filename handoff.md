@@ -1,5 +1,108 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-02 多agent优化二轮复查: RFC-127/128方向成立, 两个P1纪律/安全问题就地收口
+
+> **触发**: 用户令复查其他 agent 的 `0f563afdc` (RFC-127) 与 `f1d8fdd98`
+> (RFC-128) 优化调整是否合理。
+
+**复查结论**: 两个 RFC 的方向与根因链均成立 — ACN 卡死释放、影子幽灵样本守卫、
+external_close 同步释放意图都指向真实缺口。但发现两个 P1:
+1. **提交不完整**: `0f563afdc` 提交了 `tests/test_eth_hed_exit_shadow.py`
+   的 observer 断言, 却未提交其依赖的 `scripts/observe_nightly_supply.py` 段3、
+   `tests/conftest.py` 生产数据缝、RFC-126 复查/测试与 handoff 落档。detached
+   HEAD `f1d8fdd98` 实测 1 failed/26 passed; 当前工作树补齐后 27 passed。
+2. **RFC-128 会制造 `pbe_*` 孤儿单**: 原实现只要四元组匹配就把 intent 改
+   `BOOKED`, 不检查腿状态; 若我方出场腿仍 `PREPARED/ACTIVE/CANCEL_REQUESTED`
+   且用户手动单外部平仓, 活跃腿无人 resume/撤, `orphan_ext_order_watch` 又只认
+   `ext_exit_` 前缀, 迟后成交可造裸仓。
+
+**本批修复**: `ExitLedger.release_unsettled()` 增加守卫 — 任一腿非 `TERMINAL`
+或 `dealt_qty IS NULL` 时零释放 + WARNING 留痕; `release_stuck_exit_intent.py`
+apply 时同样拒绝非终态/成交未知腿。RFC-128 边界/回执同步更新。
+
+**验证**: RFC-127/128/exit lifecycle 合跑 174 passed; `tests/execution` 232
+passed; EXT/RFC-126/影子定向回归 109 passed; `py_compile` ✓; detached HEAD 红
+复现 ✓。人工释放工具对 ACN (已 BOOKED/腿 TERMINAL) dry-run 幂等正常。
+
+**部署**: 重启前核对 ACN SHORT 23 (SL 223.16)、ALK LONG 147、未决 intent 0、
+非终态腿 0; app/scripts 改动仅本批复查产物。2026-10-02 10:59:44 重启,
+`startup_smoke_check.py --wait 90` 7/7 全绿 (exit=0)。
+
+**遗留 P3 (未动)**: `eth_held_exit_shadow` DB 路径仍硬编码
+`data/ftseek_us.db`; `release_stuck_exit_intent.py` 券商 host/port 硬编码且
+apply 再查一次快照。均只读/人工面, 后续独立小批处理。
+
+## 2026-10-01 RFC-127 阶段0: ETH出场HELD→RTH升级影子 (用户裁「按照建议执行」, record-only)
+
+> **触发**: 上一条复查批的现症 P1 — US.ACN SHORT 23股出场卡死, 用户选择建议方案 B
+>(ETH HELD 意图 RTH 开盘后会话升级补腿), 按纪律影子先行。
+
+**已落地**:
+- `docs/decisions/RFC-127-eth-held-exit-rth-escalation.md`: 根因链 (ETH 限价腿
+  TERMINAL → resume 早退 HELD; RTH 新意图被 session 冲突/symbol busy 拦;
+  blocked_exits 跳过 SL 评估) + 阶段1 预注册判据 (≥5交易日且≥3意图或单意图
+  SL 暴露≥$500; 可升级性 100%; 无害性反证; 告警噪声消失), 未实施行为变更。
+- `app/playbook/eth_held_exit_shadow.py` + `pipeline._resume_playbook_exits` 接线:
+  ETH + `exit_eth_partial_fill_held` + `is_market_open()` + 剩余>0 → 每意图一行
+  `data/shadow/eth_held_exit_escalation.jsonl` (event_id 幂等); 双层防护
+  (emit 自吞错 warning+栈 / 调用点保险丝), 恢复与告警行为零改动。
+- `observe_nightly_supply.py` 段3 接入: 今日有行 → P1 "ETH出场HELD在RTH仍阻塞"
+  (SL 评估被跳过, 需人工或等阶段1)。
+- `tests/conftest.py` 登记生产数据缝; 新契约测试 11 例 (触发四象限/幂等/
+  写失败自吞错/接线源级钉/observer P1)。
+
+**验证**: 新测试 11 passed; 棘轮+W456+RFC-126+冲突/偏斜影子回归 51 passed;
+`py_compile` ✓。部署完成: 22:28 重启 `ftseek-us` (重启前核过在仓 ALK/FRO/
+HPE/ACN 与在途 ACN HELD, app/scripts 改动仅本批 3 文件); 启动冒烟 7/7 全绿
+(exit=0)。活体验证: 重启后首个 fast loop 即落 1 行影子
+(`ETH-HELD-RTH:747ba9cf...`, US.ACN 剩余23股/order 8219159/intent_age 3804s),
+复扫 20s 后仍 1 行 (event_id 幂等); 退出行为零变化 (HELD 告警照旧);
+observer 段3 正确升 P1。
+
+**附带修复 (RFC-126 遗留红, 本批回归抓出)**:
+`tests/test_extended_hours_order_execution.py` 的 `trade_records` 测试夹具 schema
+缺 `decision_id` 列, 而 940c5c9a4 的生产 INSERT 已写该列 ⇒ 4 例既有红
+(full_fill/grade/partial_fill/idempotent)。补列后该文件 39 passed;
+exit_lifecycle+EXT+RFC-126+新影子+棘轮合跑 178 passed。纯测试 schema 同步,
+零生产码变更, 无需重启。
+
+**边界**: 当前 ACN 仓在阶段0 期间维持 HELD 现状 (用户未选手动平仓A);
+若需立即止血仍可改走 A (手动平仓 + extended_hours 出场对账)。
+
+## 2026-10-01 多agent优化总复查: 方案成立, 体检脚本三处缺陷就地修复 (零行为变更)
+
+> **触发**: 用户令复查多 agent 多轮优化 (RFC-120/122/124/125/126 + EXT hotfix)。
+
+**复查结论**: 整体方案成立 — ①RFC-120 归一化 SSOT 双侧同源, 执行层锚纪律
+(生成时价, 禁 reprice 活价) 正确; ②RFC-122/125 均为 record-only 影子且判定
+链零改动, 今日实跑 batch 2B/0S=100% 砍 vs portfolio 6B/2S=75% 放, divergent
+如预期落盘; ③RFC-126 did 唯一性经 attempts 键 (date:symbol) 复核, 同日同标
+重入被闸住, 无 did 碰撞; ④EXT 7 行回填唯一且 verdict 与 §4.1 记录一致。
+
+**查出并修复 (observe_nightly_supply.py, 只读工具)**:
+1. except:pass 棘轮 924→927 红: 3 处静默 `pass/continue` → 坏 JSON 行计数
+   告警 + cap/entry 畸形行计数留痕 (R5 模式, 控制流零变更)。
+2. 偏斜影子打印键名错配: `majority_pct`(不存在) → `pct`, 修掉实值 `None`。
+3. 段4 归因对照增强: EXT verdict 改同行 `json_extract` (防同 symbol 多行错配);
+   新增非 EXT dangling did (有 did 无指令行) → P1 幽灵归因检查。
+
+**验证**: 契约测试 11 passed; 棘轮 2 passed (924 回基线); 合并回归 37 passed;
+`py_compile` ✓; 活体复跑 10/1 体检无新增误报 (4 笔成交全归因)。零交易行为
+变更, 脚本为手动/cron 进程, 无需重启; 复核结论已回写 RFC-126 §4.2。
+启动冒烟七项核心断言全绿 (第八项"启动段早于本次重启"为 --wait 模式
+在未重启时运行的预期语义, 非故障)。
+
+**⚠️ 现症 P1 (需用户裁决, 本批未动交易)**: US.ACN SHORT 23股 @212.529 (sim)
+在途出场卡死 — 21:25 premarket flatten LIMIT 23@215.62 (订单8219159)
+60s 零成交被撤, durable intent `7b149...` 进 `exit_eth_partial_fill_held`
+(ETH 设计不追价)。此后 ①RTH 新退出被同 close_key `exit_session_conflict` +
+symbol busy 拦; ②fast loop 把该 symbol 加入 blocked_exits ⇒ SL(223.16) 评估
+被整体跳过; 22:14 现价 227.37 已越 SL ~1.9%, 浮亏约 -$342, 每~10s 告警一次
+(钉钉 21:30/21:45/22:00 已推)。DEB-20260910 §356 早已预告"长期 HELD 需人工
+对账处置流程", 但该流程尚未落地 — 今天是首例实弹。待裁: A) 手动平仓后跑
+extended_hours 出场对账; B) 预注册 RFC: ETH HELD 意图在 RTH 开盘后允许
+会话升级重试 (或价格越 SL 时解除 symbol busy), 影子先行。
+
 ## 2026-10-01 RFC-125 批复查: 策略/逻辑成立, 三处守卫违规就地修复 (零行为变更)
 
 > **触发**: 用户令复查 agent 对 DA/UE 主通道的分析与 RFC-125 落地批。

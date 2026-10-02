@@ -74,6 +74,17 @@
 - 测试捕获附带 bug: observe_nightly_supply 段4 "今日无活跃指令"提前 return 会跳过
   成交侧对照 (仅 EXT 成交日漏报 P1) — 已修, 契约测试钉住。
 
+## 4.2 复查批修订 (2026-10-01 22:10 CST)
+
+- 复查确认: EXT 7 行回填 did 全唯一; attempts 键为 `date:symbol`, 同日同标的
+  重入被闸住 ⇒ `EXT-<date>-<symbol>-<session>` 无碰撞面。
+- 体检脚本三处修订 (只读工具, 零交易行为):
+  ①3 处静默 `pass/continue` 改坏行/畸形计数留痕, except 棘轮 924→927 红转绿;
+  ②偏斜影子打印键名 `majority_pct`→`pct` (原实值恒 None);
+  ③EXT verdict 改同行 `json_extract` (防同 symbol 多行错配), 并新增非 EXT
+  dangling did (有 did 无指令行) → P1 幽灵归因检查。
+- 验证: 契约测试 11 passed; 合并回归 37 passed; 活体复跑 10/1 无新增误报。
+
 ## 5. 遗留 (不在本 RFC 范围)
 
 - EXT 与主链同标的反向对撞目前靠 symbol 级重复持仓守卫兜底, 无方向感知 — 登记观察,

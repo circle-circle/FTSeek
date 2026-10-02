@@ -99,6 +99,10 @@ _PRODUCTION_DATA_SEAMS = (
     #   (有冲突才落盘), 未登记时写者自身 except 会吞掉下方硬闸 = 隔离形同虚设。
     ("app.playbook.conflict_shadow", "_CONFLICT_SHADOW_PATH", "path",
      "instruction_conflict.jsonl"),
+    # 2026-10-01 (RFC-127 阶段0): ETH出场HELD→RTH升级影子 — 退出恢复循环调用,
+    #   按同纪律登记, 防测试写生产影子台账。
+    ("app.playbook.eth_held_exit_shadow", "_ETH_HELD_EXIT_SHADOW_PATH", "path",
+     "eth_held_exit_escalation.jsonl"),
 )
 
 

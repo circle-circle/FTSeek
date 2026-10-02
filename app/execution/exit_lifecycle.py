@@ -383,6 +383,21 @@ class ExitLedger:
                         'intent_direction=%s closed_direction=%s (不释放)',
                         symbol, row['intent_id'], row['direction'], want_dir)
                     continue
+                legs = db.execute(
+                    "SELECT sequence,state,order_id,dealt_qty FROM exit_legs "
+                    "WHERE intent_id=? ORDER BY sequence",
+                    (row['intent_id'],)).fetchall()
+                unsafe_legs = [leg for leg in legs
+                               if leg['state'] != 'TERMINAL' or leg['dealt_qty'] is None]
+                if unsafe_legs:
+                    logger.warning(
+                        'exit_intent_release_blocked_by_unsettled_leg symbol=%s intent=%s '
+                        'legs=%s — 先撤销/等待该出场腿终态, 再释放意图 (避免活跃单变孤儿)',
+                        symbol, row['intent_id'], [
+                            {'sequence': leg['sequence'], 'state': leg['state'],
+                             'order_id': leg['order_id'], 'dealt_qty': leg['dealt_qty']}
+                            for leg in unsafe_legs])
+                    continue
                 if db.execute(
                         "UPDATE exit_intents SET state='BOOKED',receipt_json=?,last_error='',"
                         "version=version+1,updated_at=? "
