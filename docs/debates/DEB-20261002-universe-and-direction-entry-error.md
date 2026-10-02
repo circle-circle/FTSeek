@@ -5,7 +5,7 @@
 > **目标读者**: 复查者(§5/§9/§11)→ 裁决者(§7/§10)→ 执行者(§8)
 > **交易行为变更**: 本文档落地前 **零**。全部动作 = record-only 影子腿 / 遥测补字段 / 撤回登记。
 > **样本**: `trade_records` 入场时间 ≥ 2026-06-27(playbook 参数冻结时代)且已平仓、`pnl_net` 非空 = **n=583**
-> **脚本**: `scripts/deb20261002_*.py`(14 个 = 12 回放 + 2 守卫,已入库可复跑;回放脚本全部只读 `mode=ro`)
+> **脚本**: `scripts/deb20261002_*.py`(20 个 = 12 回放 + 2 守卫 + 6 溯源轮,已入库可复跑;回放脚本全部只读 `mode=ro`)
 
 ---
 
@@ -150,6 +150,21 @@ git log --format="%h %ad %s" --date=iso -S "EXT_ENTRY_MIN_PRICE" -- scripts/exte
 | **E24** | 被拒人群**毛额为正**(=费用问题非入场问题);费bps 按价格档 337/36/17 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_cut_tail.py` | `n=45 毛=+262.0 费=1037.3 净=-775.3 费bps=44.6 死率=22%`<br>`⇒ 毛额 +262.0 (正=费用问题), 费 1037.3 是净亏的主因`<br>`<$5      n=  4 毛=  +116.2 费= 599.0 净=  -482.8 费bps= 337.3`<br>`$5-10    n=  6 毛=  +337.9 费= 124.7 净=  +213.1 费bps=  36.0`<br>`$10-26   n= 35 毛=  -192.0 费= 313.6 净=  -505.6 费bps=  17.4` |
 | **E25** | 9月起指令行 `atr_pct<0.03` 仅 27/344 ⇒ F2 不能复用 `atr_pct` 分档 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_power.py` | `9月起 指令行 atr_pct<0.03 (止损口径): 27`<br>`9月起 指令行有 atr_pct: 344`<br>`⇒ 影子若要按原始 ATR 分档, 需要新增采集字段, 不能复用 atr_pct` |
 | **E26** | CTNT/GIPR $0.07 成交早于价格闸上线 53 分钟 ⇒ 缺口当天已修,非活缺口 | `git log --format="%h %ad %s" --date=iso -S "EXT_ENTRY_MIN_PRICE" -- scripts/extended_hours_entry_executor.py` | `ce54f64eb 2026-09-17 16:59:36 +0800`<br>`用户裁方案A`<br>`CTNT/GIPR` |
+| **E28** | OVERNIGHT_GAP_STOP 族回翻率全数据集最低 (16.7%, 1/6) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_recovery.py` | `MFE_STALL_EXIT               14    12   12  100.0%       3`<br>`SL_BREAKEVEN                 42    34   25   73.5%       1`<br>`SL_INITIAL                   24    18   10   55.6%       3`<br>`OVERNIGHT_GAP_STOP            6     6    1   16.7%       6` |
+| **E29** | 该族逐笔: 6 笔中 5 笔 ttr_close=None (窗内未回翻), 唯一回翻笔耗时 6 交易日 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_recovery.py` | `US.GAP   LONG  出2026-08-31 亏 -6.42% 桶=deep(>3%) ttr_close=None ttr_touch=None ttr_be_arm=None max_close_gain=-7.92% net=-386.77 net_recov=False win_avail=18`<br>`US.UBER  LONG  出2026-09-08 亏  -4.9% 桶=deep(>3%) ttr_close=None ttr_touch=None ttr_be_arm=None max_close_gain=-6.99% net=-272.62 net_recov=False win_avail=13`<br>`US.SNDK  LONG  出2026-09-10 亏 -4.65% 桶=deep(>3%) ttr_close=6 ttr_touch=6 ttr_be_arm=6 max_close_gain=6.21% net=-251.82 net_recov=True win_avail=11`<br>`US.CRM   LONG  出2026-09-17 亏 -4.49% 桶=deep(>3%) ttr_close=None ttr_touch=None ttr_be_arm=None max_close_gain=-6.75% net=-268.05 net_recov=False win_avail=6`<br>`US.RIVN  LONG  出2026-09-23 亏 -5.19% 桶=deep(>3%) ttr_close=None ttr_touch=2 ttr_be_arm=None max_close_gain=-0.93% net=-319.55 net_recov=False win_avail=2`<br>`US.ORCL  LONG  出2026-09-24 亏 -6.71% 桶=deep(>3%) ttr_close=None ttr_touch=None ttr_be_arm=None max_close_gain=-6.98% net=-400.14 net_recov=False win_avail=1` |
+| **E30** | ⚠️ net_recov 是 bool 不是金额 (v1 求和得出的 Δ=+8678 是假数) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_recovery.py` | `═══ Q2: '不出场继续持有' 反事实 — ⚠️ 本产物 net_recov 是 **bool**(是否回翻) 不是金额 ═══`<br>`⚠️ 右删失: ORCL 窗仅 1 日 / RIVN 2 日 / CRM 6 日 ⇒ '未回翻' 含窗口不足的可能; GAP 窗 18 日、UBER 13 日、SNDK 11 日 窗口够长, 结论对这三笔是硬的` |
+| **E31** | 放宽 SL 单调恶化: 8% −2386.0 / 10% −3010.3 / 15% −3292.1 (基线 −2175.9) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_sl_replay.py` | `实际基线 (现役SL): Σ净 = -2175.9  (n=7)`<br>`SL= 5.0%: Σ净=  -1921.7  Δvs实际=   +254.3  被扫=6 持到窗末=1`<br>`SL= 7.0%: Σ净=  -2101.2  Δvs实际=    +74.8  被扫=5 持到窗末=2`<br>`SL= 8.0%: Σ净=  -2386.0  Δvs实际=   -210.1  被扫=5 持到窗末=2`<br>`SL=10.0%: Σ净=  -3010.3  Δvs实际=   -834.4  被扫=4 持到窗末=3`<br>`SL=15.0%: Σ净=  -3292.1  Δvs实际=  -1116.2  被扫=2 持到窗末=5` |
+| **E32** | 补仓 7/7 破单名帽 (medium tier 帽 $7,947; 补后 10.7–12.0% 净值) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_sl_replay.py` | `═══ 破帽算术 ═══`<br>`净值 equity = 99,281.00 ⇒ tier=medium ⇒ max_position_pct=0.08 ⇒ 单名帽 = $7,942`<br>`US.GAP    原名义=$  5,919 (5.96%净值) → 补仓后=$  11,839 (11.92%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=w_week 夜1 水深-3.603%`<br>`US.UBER   原名义=$  5,466 (5.51%净值) → 补仓后=$  10,933 (11.01%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=w_week 夜2 水深-3.0537%`<br>`US.SNDK   原名义=$  5,330 (5.37%净值) → 补仓后=$  10,660 (10.74%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=reentry_first_night 夜1 水深-0.7822%`<br>`US.CRM    原名义=$  5,876 (5.92%净值) → 补仓后=$  11,751 (11.84%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=w_week 夜1 水深-1.9238%`<br>`US.RIVN   原名义=$  5,965 (6.01%净值) → 补仓后=$  11,930 (12.02%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=w_week 夜2 水深-3.1477%`<br>`US.ORCL   原名义=$  5,896 (5.94%净值) → 补仓后=$  11,791 (11.88%) vs 帽$7,942 ⇒ 🔴 破帽   豁免臂=w_week 夜1 水深-1.9938%` |
+| **E33** | 情景C 补仓摊平: 亏损翻倍 (GAP T+1 −700 vs 实际 −387) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_gap_avgdown_replay.py` | `US.GAP        22.98     23.65   -2.92%      -700      -825      -640     -1396`<br>`US.UBER       75.61     76.83   -1.61%      -554      -635      -625      -880`<br>`US.ORCL      137.32    142.18   -3.54%      -248      CENS      CENS      CENS` |
+| **E34** | join 扇出 18.3× (10,486 行 / 572 交易) ⇒ 聚合必须 COUNT(DISTINCT t.id) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_preflight.py` | `join行数=10486  distinct_trade=572  扇出=YES-BAD`<br>`可join覆盖率 = 572/579 = 98.8%` |
+| **E35** | 填充率: pattern_verdict 0% / decision_reason 0% / ok_dimensions 32.5% ⇒ 列存在≠有数据 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_preflight.py` | `[MID] ok_dimensions            186/572  =  32.5%`<br>`[LOW] pattern_verdict            0/572  =   0.0%`<br>`[MID] decision_conf            261/572  =  45.6%` |
+| **E36** | 量纲实锤: signal_confidence 0–1 小数 / ok_dimensions 位掩码 / horizon_confidence 混存 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_preflight.py` | `--- ok_dimensions ---`<br>`--- horizon_confidence: min=0.0 max=2.0 avg=0.02 n=439` |
+| **E37** | 八轴全否决: 过 G3+G4+G8 的轴数 = 0/8 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_discrim.py` | `signal_confidence (0-1 小数)                     eta²= 4.14% t=+0.42 G5=PASS G8=PASS  否决`<br>`decision_conf (0.5-0.9)                        eta²= 1.47% t=+1.50 G5=FAIL G8=FAIL  否决`<br>`confidence (指令置信 0-100)                        eta²= 0.07% t=+0.25 G5=FAIL G8=PASS  否决`<br>`ok_dimensions popcount (DA 通过维度数)              eta²= 2.29% t=-1.66 G5=FAIL G8=PASS  否决`<br>`risk_reward                                    eta²= 1.15% t=-2.26 G5=FAIL G8=PASS  否决`<br>`horizon_confidence 归一(<1直接, >=1则/…混存仅取<1)      eta²= 2.33% t=+0.51 G5=FAIL G8=PASS  否决`<br>`model_used                                     eta²= 1.84% t=+1.28 G5=PASS G8=FAIL  否决`<br>`signal_strength (0-100)                        eta²= 0.89% t=-1.40 G5=FAIL G8=PASS  否决`<br>`过 G3(eta²≥5%)+G4(\|t\|≥2)+G8(基率≤50%) 的轴: 0/8` |
+| **E38** | confidence eta²=0.07% 且四档死率 23.1/26.3/26.2/26.3% = 零梯度 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_discrim.py` | `40-54                    n=  91 死=  21 ( 23.1%) 占比= 16.0% 净=   +184.9`<br>`55-69                    n=  57 死=  15 ( 26.3%) 占比= 10.1% 净=   -656.7`<br>`<40                      n= 187 死=  49 ( 26.2%) 占比= 33.0% 净=   -989.2`<br>`>=70                     n= 232 死=  61 ( 26.3%) 占比= 40.9% 净=   +758.5`<br>`月 2026-07 n=179 档间极差=+7.6pp  40-54=27% <40=29% >=70=35%`<br>`月 2026-08 n=206 档间极差=+10.1pp  40-54=24% 55-69=27% <40=34% >=70=30%` |
+| **E39** | J2: DA 23.6% vs UE 29.9% 逐月同号 3/3 但 eta²=1.14%<5% ⇒ 只呈报不建门 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `═══ J2: DA vs UE 源通道 — 逐月同号检验 ═══`<br>`全期    403/ 23.6%       87/ 29.9%    +6.3pp  -1.18`<br>`⇒ 逐月同号 3/3 ✅ G5 PASS` |
+| **E40** | J1: 时刻轴 G5 失败 (逐月 +4.9/+20.7/+2.5pp, 仅8月 t=−2.88) ⇒ 不可作静态门 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `2026-07   121/ 30.6%       62/ 35.5%    +4.9pp  -0.66`<br>`2026-08   143/ 23.1%       64/ 43.8%   +20.7pp  -2.88`<br>`2026-09   138/ 15.9%       38/ 18.4%    +2.5pp  -0.35`<br>`全期    402/ 22.9%      164/ 34.8%   +11.9pp  -2.77`<br>`⇒ pooled eta²=5.59% 过门, 但逐月差 +4.9/+20.7/+2.5pp 且仅8月 t 显著`<br>`⇒ G5 FAIL: 该轴由 8 月单月主导 ⇒ 不可作静态门; 需按 DEB-20261002 C12 反例判据登记收窄` |
+| **E41** | J3: 死单基率月度下降显著 32.4%→29.5%→16.5% (7月vs9月 t=+3.59, Δ−16.0pp) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `2026-07 n= 185 死率= 32.4% 净=   -939.3 均=  -5.08`<br>`2026-08 n= 207 死率= 29.5% 净=   -241.8 均=  -1.17`<br>`2026-09 n= 176 死率= 16.5% 净=   +113.0 均=  +0.64`<br>`7月 vs 9月 Welch t = +3.59  Δ=-16.0pp`<br>`⇒ 基率下降显著` |
+| **E42** | 现役禁触窗 0935 ⇒ 「9时」桶 = 09:35-09:59 窗内, 时刻轴读数已在窗内基线上 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `config: entry_open_blackout_enabled=true, entry_open_blackout_hhmm=0935`<br>`⇒ 「9时」桶实为 09:35-09:59 (窗内), 「10时+」为窗外`<br>`2026-07 窗内(09:35-59) n= 121 死率= 30.6%   窗外(10时+) n=  62 死率= 35.5%`<br>`2026-08 窗内(09:35-59) n= 143 死率= 23.1%   窗外(10时+) n=  64 死率= 43.8%`<br>`2026-09 窗内(09:35-59) n= 138 死率= 15.9%   窗外(10时+) n=  38 死率= 18.4%` |
 
 > 期望列为脚本实跑输出的**逐字行**(含全角空格),已用 `rebuild_e_table2.py` 逐格验证 27/27 命中。
 > 复查者跑同一命令后 `grep -F` 任一行即可比对;行内 `|` 已转义。
@@ -317,7 +332,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 
 | 阶段 | 动作 | 性质 | 验证命令 → 期望 | 回滚 |
 |---|---|---|---|---|
-| **0** | 本 DEB 入库 + README 索引加行 + 14 个脚本入库(12 回放 + 2 守卫) | 纯文档/只读 | `ls scripts/deb20261002_*.py \| wc -l` → `14`;`PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py` → 末行 `✅ 全部通过` | `git revert` 本提案阶段 0 的全部提交,清单用 `git log --oneline -- docs/debates/DEB-20261002-universe-and-direction-entry-error.md` 自查(纯文档/只读,无状态残留) |
+| **0** | 本 DEB 入库 + README 索引加行 + 20 个脚本入库(12 回放 + 2 守卫 + 6 溯源轮) | 纯文档/只读 | `ls scripts/deb20261002_*.py \| wc -l` → `20`;`PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py` → 末行 `✅ 全部通过` | `git revert` 本提案阶段 0 的全部提交,清单用 `git log --oneline -- docs/debates/DEB-20261002-universe-and-direction-entry-error.md` 自查(纯文档/只读,无状态残留) |
 | **1** | F4-a:`low_atr` skip 行落 `intent_direction` + `atr_pct`/`_atr_basis` 落列 | **零行为变更**(只补遥测) | 新 skip 行 SQL 查 `json_extract(metadata_json,'$.intent_direction')` 非空 | 删写入行 |
 | **2** | F4-b:指令生成落 `raw_atr_pct`(原始口径、比例单位) | **零行为变更** | V2 非空率 ≥95% | 删写入行 |
 | **3** | F1:`CANDIDATE_GATES` 追加 2 腿 + report 缺键 fail-open + 契约测试 | record-only | `wc -l data/fee_gate_shadow.jsonl` 增长;新行含 `price_lt_26` 键;`venv/bin/python -m pytest tests/ -k fee_gate` 绿 | 删两条腿(§5.6) |
@@ -338,7 +353,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 ```
 
-它解析**本文档落盘正文**的 C 表 + E 表共 39 条命令逐条实跑,并校验:①每条 rc=0 且输出非空 ②命令格剥掉代码块后残余不含括号(含括号注解 ⇒ 复制即 shell 报错)③命令格不含「同上」(复查者无法独立执行)④E 表抽样 E1/E5/E8/E11/E13/E26 期望行逐字命中 ⑤调 `scripts/deb20261002_doc_guard.py` 查表格列数一致 / 章节号无缺号重号 / §引用无悬空。末行 `✅ 全部通过` 即本文档所有可复算声称当下成立;**任何 🔴 行就是我文档里的真错**,请直接按该行反驳,不必再手工复跑。
+它解析**本文档落盘正文**的 C 表 + E 表共 54 条命令逐条实跑,并校验:①每条 rc=0 且输出非空 ②命令格剥掉代码块后残余不含括号(含括号注解 ⇒ 复制即 shell 报错)③命令格不含「同上」(复查者无法独立执行)④E 表抽样 E1/E5/E8/E11/E13/E26/E37/E41 期望行逐字命中 ⑤调 `scripts/deb20261002_doc_guard.py` 查表格列数一致 / 章节号无缺号重号 / §引用无悬空。末行 `✅ 全部通过` 即本文档所有可复算声称当下成立;**任何 🔴 行就是我文档里的真错**,请直接按该行反驳,不必再手工复跑。
 
 **复查约束(逐字)**:只读 —— 禁改文件、禁 `git` 写操作、禁重启服务。每条必须给**原始命令 + 原始输出**。不许软化,也不许为凑数编问题。工具调用预算 ≤25 次;**禁止批量拉多日历史行情**(本提案全部数字来自本地 DB,无需行情)。时间不够也必须按 `C编号 | 判定(成立/不成立/无法判定) | 原始输出摘录 | 理由` 输出 schema,不许留空。
 
@@ -416,8 +431,11 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | **⑥** | 一度把 CTNT $0.07 / GIPR $0.43 成交当成「EXT 通道绕过价格闸的活缺口」 | 闸 `ce54f64eb` 于 2026-09-17 16:59 CST 上线,成交在当日 04:06 ET(=16:06 CST)**早 53 分钟**;代码注释逐字点名这两笔为事故依据 ⇒ 当天已修 | §2.5 显式登记;C10 给复查者反例判据 |
 | **⑦** | 上一轮聊天里说「SHORT×ATR<5% n=49」等具体数字 | 该数字来自被 ① 污染的筛选,已在 E10 用正确口径替换为 `SHORT×ATR<3% n=21 净+677.7` | 本提案不引用任何第九/十轮的 ATR 分档数字 |
 | **⑧** | 探针列名两次猜错(`notional` / `raw_instruction`)导致脚本首跑失败 | 先 `PRAGMA table_info` 再取数(MEMORY 已有此纪律,本轮又犯) | 已修;入库脚本均为修好后的版本 |
+| **⑨** | 溯源轮(用户追问「DA/UE 深度分析能否降低入场错」)一度声称「入场时刻轴 **C12 反例判据命中**,择时归因被推翻」 | **该声称是错的**。C12 判据逐字 = 「时刻梯度非单调,**或** 11/12 时段合并后死率 ≤25%」;实测 11+12时 n=35 死率 **34.3%**(>25% 未命中)、粗分档 09-10 24.9%→11-13 39.0%→14-16 50.0%→EXT 50.0% **单调**(未命中)⇒ **两条反例判据都未触发,C12 归因仍成立**。我实际测到的是**另一条判据 G5(逐月同号)失败**:09时 vs 10时+ 逐月差 +4.9pp(t=−0.66)/+20.7pp(t=−2.88)/+2.5pp(t=−0.35)⇒ 仅 8 月显著 | G5≠C12,不可混用:**归因成立**(方向对)但**不可作静态门**(由 8 月单月主导)⇒ 恰好支持 F5 的处置(移交既有 `entry_delay_confirm` 影子攒样,不新开静态门)。已按 `scripts/deb20261002_da_ue_verdict.py` J1 段落留痕 |
+| **⑩** | 溯源轮 v1 判别脚本按字段名猜分桶阈值(`signal_confidence` 用 <40/40-59/60-79/≥80) | 实际量纲全错:`signal_confidence` 是 **0–1 小数**、`signal_strength` 才是 0–100、`decision_conf` 是 0.5–0.9、`ok_dimensions` 是**位掩码**(19=10011b 须 popcount)、`horizon_confidence` **混存**(2735 行<1 / 125 行≥1)⇒ v1 把 100% 样本塞进单档,`eta²=0/t=0` 是**分桶假象不是轴无判别力** | v1 读数整体作废(**不入库**);v2 修正量纲重算后 8/8 轴仍全否决 ⇒ 结论未变但依据换了。已登记为 C12 红线的「量纲陷阱留痕」段 |
+| **⑪** | 溯源轮把 `loss_exit_recovery` 产物的 `net_recov` 当金额求和,报出「Σ持有=97.0 / Δ=+8678.4」 | `net_recov` 是 **bool**(是否回翻)⇒ 97.0 实为回翻笔数计数,「Δ=+8678」是把 132 笔 bool 当美元减出来的假数 | 该三行读数作废;美元口径改用 `scripts/deb20261002_gap_sl_replay.py`(日K gap-aware 精确模拟)+ `deb20261002_gap_avgdown_replay.py`(补仓反事实)。入库版 `deb20261002_gap_recovery.py` 已改为只报回翻率与 Σ实际,并注明该字段是 bool |
 
-**本提案不引用的旧读数**:第九/十/十一轮的所有 ATR 分档数字(口径污染);第十八轮保留侧剔尾标记(口径错);上一轮聊天中的四刀落地建议与「P0 可直接上」表述。
+**本提案不引用的旧读数**:第九/十/十一轮的所有 ATR 分档数字(口径污染);第十八轮保留侧剔尾标记(口径错);上一轮聊天中的四刀落地建议与「P0 可直接上」表述;**溯源轮 v1 判别脚本的全部 eta²/t 读数(量纲错,⑩)**;**`net_recov` 求和得出的持有反事实美元数(⑪)**;**「C12 命中/择时归因被推翻」的说法(⑨,该归因成立)**。
 
 ---
 
@@ -425,7 +443,7 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 
 ### R1 — 2026-10-02(作者:Hermes Agent)
 
-用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(14 个脚本入库:12 回放 + 2 守卫)+ 6 轮自我更正(§11)得出:
+用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(14 个脚本入库:12 回放 + 2 守卫;溯源轮另加 6 个见 R2)+ 6 轮自我更正(§11)得出:
 
 1. **问题路径本身需要修正**:标的范围过滤降的是**费用**(费bps 12.1→7.6、净额 −1494→+734),不是**入场即错率**(26.8%→25.6%)。「入场即错」随入场时刻呈梯度(E3)、在各标的切片间无差异(E4)⇒ 是择时轴。
 2. **减法轴全线不过本仓预注册门**:四刀被砍人群误杀率 43–67% > 40%(E5),唯一过门的是现役闸 37%(E6)。上一轮聊天里的落地建议**全部撤回**(§11 ⑤)。
@@ -433,6 +451,18 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 4. **两个附带发现**:`low_atr_gate` 因止损口径三层底限,对低波空单结构上不生效(E11/E13),其立项理由只覆盖 LONG;该门 skip 行方向信息在 DB 中完全丢失(E14)⇒ 需 F4 遥测才能判 F6。
 
 **未落地任何交易行为变更。** 待用户裁 F1/F2-a/F2-b/F4/F5/F6。
+
+### R2 — 2026-10-02 溯源轮(作者:Hermes Agent;用户追问「通过 DA 和 UE 的深度分析和筛选能否降低这种入场错」)
+
+用户批准 R1 的两项落地(撤回登记 C11/C12 + 脚本入库),并要求**溯源**:DA/UE 的深度分析产物能否降低入场即错。经 4 个探针(preflight 填充率 → discrim 八轴判别力 → verdict 三判定 → hour_eta 口径对齐)得出:
+
+1. **加深分析不是杠杆 —— 8/8 轴全否决**(C12 红线,已登记)。预注册判据 G2 单调或两端差≥10pp / G3 **eta²≥5%** / G4 Welch \|t\|≥2 / G5 逐月档间极差≥10pp / G8 最大档占比≤50%。实测 `confidence` eta²=**0.07%**(四档死率 23.1/26.3/26.2/26.3% = 零梯度)、`decision_conf` 1.47%、`risk_reward` 1.15%、`ok_dimensions` popcount 2.29%、`model_used` 1.00%、`vol_bucket` 1.04%、`signal_confidence` 4.14%、`signal_strength` 0.89% ⇒ **无一过 G3+G4+G8**。
+2. **同尺横评:A 组(分析产物)max eta²=2.29% / 中位 1.10% vs B 组(市场状态轴)max eta²=2.12% / 中位 1.03%** ⇒ 两组同尺且都远低于 5% 门。**入场时刻(小时)eta²=5.59% 是唯一过门的轴**,但 G5 失败(逐月差 +4.9/+20.7/+2.5pp,仅 8 月 t=−2.88 显著)⇒ 归因成立(C12 反例判据未命中:11+12时合并死率 34.3%>25% 且粗分档单调)但**不可作静态门**,处置仍是 F5(移交既有影子)。
+3. **反直觉实锤(直接挑战「更深分析→更少入场错」)**:`model_used=deterministic`(**非 LLM** 规则通道)死率 **14.0%**(n=50)< `qwen3.7-max`(主力 LLM)**25.5%**(n=247)< `glm-5.2` **34.8%**(n=23);9 月分层复核仍成立(deterministic 11.1% / qwen3.7 14.3% / glm 24.1%)⇒ **规则通道优于 LLM 通道**。加深 LLM 分析在这份数据里没有对应的死单率收益。
+4. **DA vs UE 源通道**:DA 23.6%(n=403)vs UE-feed 29.9%(n=87),差 +6.3pp,**逐月同号 3/3(7月 +3.0 / 8月 +3.9 / 9月 +12.6pp)= G5 PASS**,但 eta²=1.14% <5% ⇒ 按 skill 纪律(eta²<5% 的因子不配驱动仓位/配额)**只作方向呈报,不建门**。与 R1 撤回「砍 UE·LONG」一致:P3(RFC-117 重开后)n=0 仍无发言权。
+5. **J3 新发现:死单基率自身在快速下降** —— 7月 **32.4%**(n=185,净 −939)→ 8月 **29.5%**(n=207,净 −242)→ 9月 **16.5%**(n=176,净 +113),7月 vs 9月 Welch **t=+3.59** 显著,Δ=**−16.0pp**。⇒ 既有机制迭代(blackout 8/15 放宽、chase_cap RFC-120、偏斜门、be_0.4+方案A)已在降死单率,**这是比任何静态筛选轴都大的杠杆**;也解释了为何 8 月单月主导时刻轴(J1)—— 基线在动,静态阈值必然漂移。
+
+**本轮落地**:C11(跳空仓禁放宽SL/补仓,四重证伪)+ C12(禁以加深 DA/UE 分析降入场即错,八轴证伪)两条红线写入 `docs/ADJUDICATED-CRITERIA.md`;6 个脚本入库并逐个冒烟 rc=0;§11 追加自曝 ⑨⑩⑪(C12/G5 判据混用、v1 量纲污染、`net_recov` bool 当金额求和)。**仍未落地任何交易行为变更。**
 
 ---
 
@@ -453,5 +483,11 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | `scripts/deb20261002_final_combo.py` | K1+K2+K3 最终组合 + 两个落地前提核验(E2/E18) |
 | `scripts/deb20261002_power.py` | F2 腿功效/MDE + 死单率切片 + 时刻分布 + 供给面(E3/E4/E8/E25) |
 | `scripts/deb20261002_atr_zero_diagnosis.py` | ATR 口径污染诊断:NULL/零值哨兵计数、百分数口径分档×方向双窗(E10b/E12) |
-| `scripts/deb20261002_verify_claims.py` | **一键复查守卫**:解析本文档 C 表+E 表 39 条命令逐条实跑 + E 表抽样逐字比对 + 调 doc_guard。复查者先跑这个 |
+| `scripts/deb20261002_verify_claims.py` | **一键复查守卫**:解析本文档 C 表+E 表 54 条命令逐条实跑 + E 表抽样逐字比对 + 调 doc_guard。复查者先跑这个 |
 | `scripts/deb20261002_doc_guard.py` | 文档结构守卫:表格块列数一致 / 章节号无缺号重号 / 内部 §引用无悬空 |
+| `scripts/deb20261002_gap_recovery.py` | **R2/C11** 隔夜跳空族回翻率逐族对比(读仓内既有产物,注明 `net_recov` 是 bool 不是金额) |
+| `scripts/deb20261002_gap_sl_replay.py` | **R2/C11** SL 网格 gap-aware 精确模拟(5/7/8/10/15%)+ 补仓破帽算术(medium tier 帽 $7,947) |
+| `scripts/deb20261002_gap_avgdown_replay.py` | **R2/C11** 三情景反事实:A 实际离场 / B 扩大SL持有 T+k / C 补仓摊平持到 T+k(美元口径) |
+| `scripts/deb20261002_da_ue_preflight.py` | **R2/C12** 填充率 + join 扇出核查 + 语义采样(量纲陷阱的取证脚本) |
+| `scripts/deb20261002_da_ue_discrim.py` | **R2/C12** 八轴判别力 G2–G8 全套判据(**v2 量纲修正版**;v1 因分桶阈值猜错作废未入库) |
+| `scripts/deb20261002_da_ue_verdict.py` | **R2/C12** J1 时刻轴 G5 复核 / J2 DA vs UE 逐月同号 / J3 死单基率月度趋势 |
