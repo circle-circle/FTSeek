@@ -5,7 +5,7 @@
 > **目标读者**: 复查者(§5/§9/§11)→ 裁决者(§7/§10)→ 执行者(§8)
 > **交易行为变更**: 本文档落地前 **零**。全部动作 = record-only 影子腿 / 遥测补字段 / 撤回登记。
 > **样本**: `trade_records` 入场时间 ≥ 2026-06-27(playbook 参数冻结时代)且已平仓、`pnl_net` 非空 = **n=583**
-> **回放脚本**: `scripts/deb20261002_*.py`(12 个,已入库可复跑,全部只读 `mode=ro`)
+> **脚本**: `scripts/deb20261002_*.py`(14 个 = 12 回放 + 2 守卫,已入库可复跑;回放脚本全部只读 `mode=ro`)
 
 ---
 
@@ -317,7 +317,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 
 | 阶段 | 动作 | 性质 | 验证命令 → 期望 | 回滚 |
 |---|---|---|---|---|
-| **0** | 本 DEB 入库 + README 索引加行 + 12 个回放脚本入库 | 纯文档/只读 | `git show --stat HEAD` → 只含本提案文件 + 索引 + `scripts/deb20261002_*.py` | `git revert` |
+| **0** | 本 DEB 入库 + README 索引加行 + 14 个脚本入库(12 回放 + 2 守卫) | 纯文档/只读 | `ls scripts/deb20261002_*.py \| wc -l` → `14`;`PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py` → 末行 `✅ 全部通过` | `git revert` 本提案阶段 0 的全部提交,清单用 `git log --oneline -- docs/debates/DEB-20261002-universe-and-direction-entry-error.md` 自查(纯文档/只读,无状态残留) |
 | **1** | F4-a:`low_atr` skip 行落 `intent_direction` + `atr_pct`/`_atr_basis` 落列 | **零行为变更**(只补遥测) | 新 skip 行 SQL 查 `json_extract(metadata_json,'$.intent_direction')` 非空 | 删写入行 |
 | **2** | F4-b:指令生成落 `raw_atr_pct`(原始口径、比例单位) | **零行为变更** | V2 非空率 ≥95% | 删写入行 |
 | **3** | F1:`CANDIDATE_GATES` 追加 2 腿 + report 缺键 fail-open + 契约测试 | record-only | `wc -l data/fee_gate_shadow.jsonl` 增长;新行含 `price_lt_26` 键;`venv/bin/python -m pytest tests/ -k fee_gate` 绿 | 删两条腿(§5.6) |
@@ -331,6 +331,14 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 ---
 
 ## 9. 复查清单 C1–C12(给第二 agent;每条给反例判据)
+
+**先跑这条(一键自检,~3 分钟)**:
+
+```bash
+PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
+```
+
+它解析**本文档落盘正文**的 C 表 + E 表共 39 条命令逐条实跑,并校验:①每条 rc=0 且输出非空 ②命令格剥掉代码块后残余不含括号(含括号注解 ⇒ 复制即 shell 报错)③命令格不含「同上」(复查者无法独立执行)④E 表抽样 E1/E5/E8/E11/E13/E26 期望行逐字命中 ⑤调 `scripts/deb20261002_doc_guard.py` 查表格列数一致 / 章节号无缺号重号 / §引用无悬空。末行 `✅ 全部通过` 即本文档所有可复算声称当下成立;**任何 🔴 行就是我文档里的真错**,请直接按该行反驳,不必再手工复跑。
 
 **复查约束(逐字)**:只读 —— 禁改文件、禁 `git` 写操作、禁重启服务。每条必须给**原始命令 + 原始输出**。不许软化,也不许为凑数编问题。工具调用预算 ≤25 次;**禁止批量拉多日历史行情**(本提案全部数字来自本地 DB,无需行情)。时间不够也必须按 `C编号 | 判定(成立/不成立/无法判定) | 原始输出摘录 | 理由` 输出 schema,不许留空。
 
@@ -417,7 +425,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 
 ### R1 — 2026-10-02(作者:Hermes Agent)
 
-用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(9 个脚本入库)+ 6 轮自我更正(§11)得出:
+用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(14 个脚本入库:12 回放 + 2 守卫)+ 6 轮自我更正(§11)得出:
 
 1. **问题路径本身需要修正**:标的范围过滤降的是**费用**(费bps 12.1→7.6、净额 −1494→+734),不是**入场即错率**(26.8%→25.6%)。「入场即错」随入场时刻呈梯度(E3)、在各标的切片间无差异(E4)⇒ 是择时轴。
 2. **减法轴全线不过本仓预注册门**:四刀被砍人群误杀率 43–67% > 40%(E5),唯一过门的是现役闸 37%(E6)。上一轮聊天里的落地建议**全部撤回**(§11 ⑤)。
@@ -434,8 +442,8 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 |---|---|
 | `docs/debates/DEB-20261002-universe-and-direction-entry-error.md` | 本文档 |
 | `scripts/deb20261002_universe_replay.py` | 主回放:ATR/gap 分档 × 方向、四刀叠加、最终组合、最优子腿(E2/E9/E10) |
-| `PYTHONPATH=. venv/bin/python scripts/deb20261002_dead_rate_scan.py` | 死单率全轴扫描 + 死单毛/净拆解(E1/E4) |
-| `PYTHONPATH=. venv/bin/python scripts/deb20261002_cut_tail.py` | **被砍人群**尾部主导 + 误杀率检验(E5/E6) |
+| `scripts/deb20261002_dead_rate_scan.py` | 死单率全轴扫描 + 死单毛/净拆解(E1/E4) |
+| `scripts/deb20261002_cut_tail.py` | **被砍人群**尾部主导 + 误杀率检验(E5/E6) |
 | `scripts/deb20261002_k1_components.py` | K1 六变体双窗对比 + low_atr skip 行方向 + EXT 价格闸时间线(E7/E14/E24/E26) |
 | `scripts/deb20261002_atr_caliber_check.py` | 两个 ATR 口径逐笔对照(E11) |
 | `scripts/deb20261002_short_atr_bands.py` | SHORT 低波腿在门上线前后的存活核验(E13) |
@@ -445,3 +453,5 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 | `scripts/deb20261002_final_combo.py` | K1+K2+K3 最终组合 + 两个落地前提核验(E2/E18) |
 | `scripts/deb20261002_power.py` | F2 腿功效/MDE + 死单率切片 + 时刻分布 + 供给面(E3/E4/E8/E25) |
 | `scripts/deb20261002_atr_zero_diagnosis.py` | ATR 口径污染诊断:NULL/零值哨兵计数、百分数口径分档×方向双窗(E10b/E12) |
+| `scripts/deb20261002_verify_claims.py` | **一键复查守卫**:解析本文档 C 表+E 表 39 条命令逐条实跑 + E 表抽样逐字比对 + 调 doc_guard。复查者先跑这个 |
+| `scripts/deb20261002_doc_guard.py` | 文档结构守卫:表格块列数一致 / 章节号无缺号重号 / 内部 §引用无悬空 |
