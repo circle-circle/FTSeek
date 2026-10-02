@@ -338,9 +338,9 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 |---|---|---|---|
 | **C1** | 死单率不随标的范围动(−1.2pp) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_final_combo.py` | 任一范围组合把死单率降到 ≤20%(即 Δ≥6.8pp)⇒ 我的「选股轴无效」结论不成立 |
 | **C2** | `metadata.atr` 与 `atr_pct` 不是同一物 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_atr_caliber_check.py` | 出现 `md<3% 中 inst 也 <0.03 (门该拦): k/18` 且 k>0 ⇒ 两者部分同值,E11 的 18/18 结论要收窄 |
-| **C3** | `low_atr_gate` 对低波空单结构上不生效 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_short_atr_bands.py`(看「门上线后 19 笔」) | 门上线后 SHORT×原始ATR<3% 成交笔数 = 0 ⇒ 该腿已被门杀死,是样本饿死不是活腿 |
+| **C3** | `low_atr_gate` 对低波空单结构上不生效(看输出的「门上线后 19 笔」与「结论判定」两段) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_short_atr_bands.py` | 门上线后 SHORT×原始ATR<3% 成交笔数 = 0 ⇒ 该腿已被门杀死,是样本饿死不是活腿 |
 | **C4** | 四刀被砍人群误杀率全 >40% | `PYTHONPATH=. venv/bin/python scripts/deb20261002_cut_tail.py` | 任一刀误杀率 ≤40% **且** 剔最亏3票后仍为负 ⇒ 该刀其实够格落地,我撤回错了 |
-| **C5** | 现役闸(K1c)是唯一过误杀率门的 | 同上,`K1c` 行 | K1c 误杀率 >40% ⇒ 「现役闸已够好」不成立,需重议 |
+| **C5** | 现役闸(K1c)是唯一过误杀率门的(读输出「双窗同号的唯一候选」段的 `K1c 拒` 行) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_cut_tail.py` | K1c 误杀率 >40% ⇒ 「现役闸已够好」不成立,需重议 |
 | **C6** | K1 全(价≥26∧名义≥4200)双窗反号 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_k1_components.py` | `K1 全` 行 ISΔ均 与 OOSΔ均 同号 ⇒ E7 的反号结论错,该刀可重新考虑 |
 | **C7** | SHORT 低波平开腿 t=+2.60 且死单率 0% | `PYTHONPATH=. venv/bin/python scripts/deb20261002_power.py`+ `PYTHONPATH=. venv/bin/python scripts/deb20261002_universe_replay.py` | t<1.860 或死单率 >15% ⇒ F2 的统计支撑不成立,应降为「假设待攒样」 |
 | **C8** | 该腿不与 gap 轴影子人群重叠 >50% | 读 `shadow_registry.py` 中 `gap_chase_gate`(ag≥5%)与 `extreme_gap_ban_shadow`(ag≤−3/≥+4)人群定义,与本腿 `\|gap\|<1%` 对比 | 定义上存在交集 ⇒ X3 触发,F2 不得独立立项 |
