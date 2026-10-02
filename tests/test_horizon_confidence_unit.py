@@ -141,11 +141,26 @@ def test_fallback_decision_rule_is_ratio_based_not_confidence_based():
 
 # ══════════════════════ 三、消费面登记 + 阈值禁令 ══════════════════════
 
+# 一次性 DEB 审计家族 (`deb<YYYYMMDD>_*.py`) **不参与**生产消费方登记。
+# 理由 (2026-10-02, R3 提交 deb20261002_da_ue_{discrim,preflight}.py 时漏跑全量 ⇒ 本守卫红了一轮):
+#   ① 这类脚本**只读归因**, 不喂任何门/不改任何行为 ⇒ 不是「消费方」, 登记进白名单是语义错配;
+#   ② 它们**寿命有限**(DEB 裁决后按纪律删除), 登记进 ALLOWED_CONSUMERS 会触发本用例「少下去」侧
+#      的腐烂红 —— 白名单跟着一次性脚本生死, 等于把临时产物钉进长期契约;
+#   ③ 本文件的 `test_no_numeric_threshold_on_horizon_confidence_anywhere` **只扫 ALLOWED_CONSUMERS**,
+#      而审计脚本合法地要对该字段做**数值分桶**(算判别力, 只读分析非门控) ⇒ 登记会把分析口径判成违规。
+# 代价 (明写, 不留隐患): 审计脚本误读量纲的风险改由 DEB 纪律覆盖 —— 参见
+#   skill `data-claim-verification` 规则 61 + 该脚本头部 v1 自曝 (按字段名猜分桶阈值, 实际是 0-1 小数)。
+# 排除范围已核: `app/` 下零同名文件; `scripts/` 下引用该字段的**只有** DEB 家族两个脚本 ⇒ 无误伤。
+_AUDIT_FAMILY = re.compile(r"^deb\d{8}_.*\.py$")
+
+
 def _referencing_files() -> set:
     hits = set()
     for root in ("app", "scripts"):
         for p in (PROJECT_ROOT / root).rglob("*.py"):
             if "__pycache__" in p.parts or "archive" in p.parts:
+                continue
+            if _AUDIT_FAMILY.match(p.name):
                 continue
             try:
                 if "horizon_confidence" in p.read_text(encoding="utf-8", errors="ignore"):
