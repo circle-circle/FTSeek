@@ -194,6 +194,12 @@ def release_exit_intents_on_external_close(symbol, direction, reason, evidence=N
     fail-open: 释放失败只 WARNING, **绝不阻断对账主流程** (trade_records 写入与
     用户通知比账目收尾更重要; 卡死的意图仍可由
     `scripts/release_stuck_exit_intent.py` 人工释放)。
+
+    释放语义 (INCIDENT-002 订正): ledger 内部走 `archive_and_delete` SSOT —
+    **归档并删除行**, 不是改 BOOKED。BOOKED 会永久占用
+    `UNIQUE(account_id,target_env,close_key)` ⇒ 同仓的 ETH 重放与 RTH 兜底
+    双双发不出单 (静默零保护)。删行后 close_key 真正空出, 下面那句
+    「兜底重新接管」才成立 (旧语义下它只恢复评估, 不恢复执行能力)。
     """
     try:
         from app.core.trading_mode import TradingMode

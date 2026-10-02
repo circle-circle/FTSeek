@@ -3,6 +3,15 @@
 - 日期: 2026-10-02
 - 类型: L1 — 功能修复 (账目语义补全, 零交易行为变更)
 - 状态: 已实施 (用户 2026-10-02 裁「按建议执行」)
+- ⚠️ **释放语义已于 2026-10-02 同日订正 (INCIDENT-002, 用户裁「一并改造」)**:
+  本文 §1.4 / §3.1 / §3.2 描述的 `state → 'BOOKED'` 语义**已废弃**。
+  实证: BOOKED 行永久占用 `UNIQUE(account_id, target_env, close_key)` (无 state
+  谓词) ⇒ ETH 重放链 `reserve_leg=None` + RTH 链 `exit_session_conflict`,
+  **退出双通道全锁死**; 而该形态零未决意图 ⇒ 本 RFC 引以为据的「SL 兜底重新
+  接管」只恢复了**评估**, 没有恢复**执行能力**。现行语义 = `ExitLedger.
+  archive_and_delete()` 归档并删除 (close_key 真正空出), 人工工具与自动释放
+  共用同一 SSOT。详见 `docs/incidents/INCIDENT-002-booked-intent-closekey-deadlock.md`。
+  下文保留原文以存设计史, **禁止按其实施**。
 - 前置: RFC-127 (ETH HELD→RTH 升级影子, `0f563afdc`) — 本 RFC 补其 §6 遗留的人工处置流程的自动化面
 - 回滚: 单提交 revert (不涉及 schema 变更 / 不涉及配置键)
 

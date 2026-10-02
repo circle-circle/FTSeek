@@ -978,3 +978,128 @@ def test_entry_reconciliation_drops_placeholder_orders():
     assert active_orders == []
     assert conflicts == []
     assert state["attempts"] == {}
+
+
+# ---------------------------------------------------------------------------
+# P1-3 (INCIDENT-002): 推送文案真实性 + 跨进程节流
+# 病灶: 10/2 盘前 ACN 每分钟重放陈旧 BOOKED 结果, 推「锁盈待确认」— 实际无任何
+# 单待确认 (账本已终结而仓位仍在 = 零保护), 且无节流 (台账 32 条同文推送)。
+# ---------------------------------------------------------------------------
+
+class _BookedStaleBroker:
+    """复现 10/2 ACN 形态: request 命中旧 BOOKED 行, result() 原样返回陈旧存量。"""
+
+    def close_position(self, *args, **kwargs):
+        return {
+            "success": False, "order_filled": False,
+            "error": "exit_order_pending", "exit_state": "BOOKED",
+            "exit_intent_id": "7b149410fb274548b209659b822b9ba7",
+            "futu_order_id": "8219159", "filled_price": 0.0, "dealt_qty": 0.0,
+            "price_source": "exit_evidence_pending",
+        }
+
+
+def _capture_push(monkeypatch):
+    sent = []
+    monkeypatch.setattr(exit_executor, "_push",
+                        lambda text, level=None, category=None: sent.append(text) or True)
+    return sent
+
+
+def test_booked_stale_replay_push_says_no_exit_path_not_pending_confirmation(
+    exit_environment, monkeypatch
+):
+    """exit_state=BOOKED 且未成交 ⇒ 文案必须直说「无可用退出路径」+ 释放命令。"""
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: _BookedStaleBroker())
+    sent = _capture_push(monkeypatch)
+
+    result = exit_executor.execute(
+        "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+    )
+
+    assert result["ok"] is False and result["exit_state"] == "BOOKED"
+    assert len(sent) == 1
+    text = sent[0]
+    assert "锁盈待确认" not in text, "陈旧 BOOKED 重放不得再冒充「待确认」"
+    assert "无可用退出路径" in text
+    assert "release_stuck_exit_intent.py" in text, "必须给出可粘贴的释放命令"
+    assert "7b149410fb274548b209659b822b9ba7" in text
+
+
+def test_repeated_identical_failure_push_is_throttled(exit_environment, monkeypatch):
+    """同态连续重放: 首行必推, 之后 30 分钟内静默 (每分钟 cron = 每行 ~60s)。"""
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: _BookedStaleBroker())
+    sent = _capture_push(monkeypatch)
+
+    for _ in range(10):
+        exit_executor.execute(
+            "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+        )
+
+    assert len(sent) == 1, f"10 次同态重放只应推首行, 实际 {len(sent)}"
+
+
+def test_awaiting_confirmation_repeats_never_push_again(exit_environment, monkeypatch):
+    """等券商回报是瞬态: 首推后同态重复不再推。"""
+    class PendingBroker:
+        def close_position(self, *args, **kwargs):
+            return {
+                "success": False, "order_filled": False,
+                "error": "exit_order_evidence_pending", "exit_state": "HELD",
+                "exit_intent_id": "pending-intent", "futu_order_id": "900004",
+                "filled_price": 0.0, "dealt_qty": 0.0,
+                "price_source": "exit_evidence_pending",
+            }
+
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: PendingBroker())
+    sent = _capture_push(monkeypatch)
+
+    for _ in range(5):
+        exit_executor.execute(
+            "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+        )
+
+    assert len(sent) == 1 and "等待券商回报" in sent[0]
+
+
+def test_throttle_reminds_every_30_runs(exit_environment, monkeypatch):
+    """长阻塞不能永久静默: 第 30 行同态必须再提醒一次。"""
+    monkeypatch.setenv("FUTU_TRD_ENV", "SIMULATE")
+    monkeypatch.setattr(exit_executor, "_get_dual_broker", lambda: _BookedStaleBroker())
+    sent = _capture_push(monkeypatch)
+
+    for i in range(30):
+        exit_executor.execute(
+            "US.TEST", "LONG", 100, 11.0, "premarket", "lock_in", dry=False,
+        )
+
+    assert len(sent) == 2, f"第 1 与第 30 行各推一次, 实际 {len(sent)}"
+
+
+def test_should_push_unit_semantics():
+    """节流闸纯函数语义: 首行推 / awaiting 重复不推 / 每 30 行提醒。"""
+    assert exit_executor._should_push("failed_or_held", 1) is True
+    assert exit_executor._should_push("awaiting_confirmation", 1) is True
+    assert exit_executor._should_push("awaiting_confirmation", 2) is False
+    assert exit_executor._should_push("failed_or_held", 2) is False
+    assert exit_executor._should_push("failed_or_held", 29) is False
+    assert exit_executor._should_push("failed_or_held", 30) is True
+    assert exit_executor._should_push("failed_or_held", 60) is True
+
+
+def test_repeat_run_len_reads_bounded_tail(tmp_path, monkeypatch):
+    """节流取证只看尾部窗口: 审计文件增长后不得退化为每分钟整读。"""
+    record = json.dumps({
+        "symbol": "US.TEST", "status": "failed_or_held", "error": "same",
+    })
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text((record + "\n") * 20)
+    monkeypatch.setattr(exit_executor, "_AUDIT_LOG", audit)
+    monkeypatch.setattr(exit_executor, "_TAIL_BYTES", 6 * (len(record) + 1))
+
+    assert exit_executor._repeat_run_len(
+        "US.TEST", "failed_or_held", "same"
+    ) == 5

@@ -120,13 +120,23 @@ class TestPositionGuard:
         assert event is not None and event["remaining_qty"] == 23.0
         assert event["position_open_guard"] == "injected"
 
-    def test_query_failure_fails_open(self, caplog):
-        """守卫自身故障 (None) ⇒ 照常落样本, 绝不因守卫丢真样本。"""
+    def test_query_failure_fails_open(self, caplog, monkeypatch):
+        """守卫自身故障 (None) ⇒ 照常落样本, 绝不因守卫丢真样本。
+
+        **必须显式把守卫打成 None**, 不能靠 `position_open=None`: 该值既是
+        「调用方未提供」哨兵、又被本用例当作「查询失败」注入值 ⇒ 撞值后代码走
+        真守卫去查生产 open_positions, 测试结果随**线上仓位**漂移。
+        2026-10-02 INCIDENT-002 平掉 US.ACN 后本用例立刻变红 (真守卫返回 False
+        而非 None ⇒ 走幽灵抑制分支), 暴露的正是这个假绿: 此前它只在
+        `data/` 不可达的环境里偶然通过, 从未真正验证过 fail-open 分支。
+        """
+        monkeypatch.setattr(_shadow_mod, "_position_still_open",
+                            lambda symbol, direction: None)
         with caplog.at_level(logging.WARNING,
                              logger="ftseek.playbook.eth_held_exit_shadow"):
             event = build_eth_held_rth_event(
-                _intent(), _result(), rth_open=True, position_open=None)
-        assert event is not None
+                _intent(), _result(), rth_open=True)
+        assert event is not None, "守卫 None (查询失败) 必须 fail-open 照常落样本"
         assert "幽灵样本守卫" not in caplog.text
 
     def test_default_path_queries_ro_db(self, tmp_path, monkeypatch):

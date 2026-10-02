@@ -66,6 +66,15 @@ ALLOWLIST = {
         "W3 防复发守卫: 只读统计两库互污行数 (sim 库 live 行 / live 库 sim 行), "
         "比对而非消费, 与 data_health_check 同类。单库翻转日后 sim 侧检测自动空转、"
         "live 侧继续有效, 改用 mode-aware 解析器反而丢掉守卫意义。",
+    # 2026-10-02 (INCIDENT-002 P2-5): 同样是**先被本门抓红、后补登记**的 (与
+    # env_separation_shadow / daily_invariant_check 同例), 记档以证该门证伪力 ——
+    # 双载体健康检查类, 比对而非消费, 只读不写。
+    "scripts/exit_closekey_health.py":
+        "close_key 死锁体检探针: **必须**同时只读 sim + live 两个仓位载体, 因为 "
+        "exit_intents.target_env 分 sim/real ⇒ 死锁可能落在任一载体; mode-aware "
+        "解析器只返回当前一个载体, 会让探针对另一载体的死锁**完全失明** (切盘后"
+        "尤其致命 — 恰是静默零保护形态)。产物是两载体各自的死锁清单, 即「差集/普查」"
+        "而非消费, 与 daily_invariant_check / data_health_check 同类。",
     # 2026-09-15 (DEB-20260914-cutover §十): 以下两条同样是**先被本门抓红、后补登记**
     # (与 env_separation_shadow / daily_invariant_check 同例), 记档以证该门证伪力 ——
     # 二者是 sim⇄live **双向**切换预检/彩排工具, 产物本身就是"两载体之差"。
@@ -86,6 +95,10 @@ ALLOWLIST = {
         "`tests/test_cutover_infra.py::test_rehearse_touches_production_only_by_copy`。"
         "实证价值已兑现: 查出切 live 当天会在真钱库执行 2 条 `DROP TABLE` "
         "(`daemon_heartbeat`/`entry_context_snapshot`), 以及 D-A 回切丢本臂基线。",
+    "scripts/exit_closekey_health.py":
+        "close_key 死锁健康检查: 只读扫描 sim/live 两个仓位载体, 检测任一环境"
+        "活仓被 BOOKED intent 锁死; mode-aware 解析器只返回当前环境, 会漏另一"
+        "载体死锁, 故必须双载体豁免。",
 }
 
 

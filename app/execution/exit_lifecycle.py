@@ -51,6 +51,7 @@ def held(error, *, intent=None, owner=None, decision=None, state='HELD'):
 class ExitLedger:
     def __init__(self, path):
         self.path = str(path)
+        self._archive_dir = Path(self.path).resolve().parent / 'exit_intents_archive'
         with self.transaction() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS exit_intents (
@@ -331,9 +332,183 @@ class ExitLedger:
                                    "version=version+1,updated_at=? WHERE intent_id=? AND state='FILLED_UNBOOKED'",
                                    (encoded, now, intent_id)).rowcount)
 
+    # ── INCIDENT-002: 归档并删除 = 释放语义 SSOT ────────────────────────────
+    REFUSE_NOT_FOUND = 'exit_release_intent_not_found'
+    REFUSE_UNSAFE_LEG = 'exit_release_unsafe_leg'
+    REFUSE_UNBOOKED = 'exit_release_filled_unbooked'
+    REFUSE_RACE = 'exit_release_intent_changed'
+    REFUSE_VERIFY = 'exit_release_verification_failed'
+
+    @property
+    def archive_dir(self) -> Path:
+        return self._archive_dir
+
+    @staticmethod
+    def _unsafe_legs(legs):
+        """非终态 / 成交量未知的腿 — 删意图会让活跃出场单变孤儿。"""
+        return [leg for leg in legs
+                if leg['state'] != 'TERMINAL' or leg['dealt_qty'] is None]
+
+    def _snapshot(self, db, intent_id):
+        intent = db.execute('SELECT * FROM exit_intents WHERE intent_id=?',
+                            (intent_id,)).fetchone()
+        if intent is None:
+            return None, None
+        legs = [dict(row) for row in db.execute(
+            'SELECT * FROM exit_legs WHERE intent_id=? ORDER BY sequence', (intent_id,))]
+        return dict(intent), legs
+
+    def _unsafe_leg_detail(self, intent_id):
+        """拒释放时给回调/日志用的腿明细 (罕见路径, 单独一次只读查询)。"""
+        with self.transaction() as db:
+            rows = db.execute(
+                'SELECT sequence,state,order_id,dealt_qty FROM exit_legs '
+                'WHERE intent_id=? ORDER BY sequence', (intent_id,)).fetchall()
+        return [{'sequence': r['sequence'], 'state': r['state'],
+                 'order_id': r['order_id'], 'dealt_qty': r['dealt_qty']}
+                for r in rows
+                if r['state'] != 'TERMINAL' or r['dealt_qty'] is None]
+
+    def _write_archive(self, intent, legs, *, reason, now, kind, evidence) -> Path:
+        """整行意图 (含 receipt_json/result_json 原文) + 全部腿 → 归档 JSON。
+
+        写盘在事务**外** (文件 I/O 不得占 BEGIN IMMEDIATE 写锁 — 与 RFC-129
+        推送同理, 否则与 fast loop 10s 节奏抢锁)。tmp + replace 原子落盘。
+        """
+        self._archive_dir.mkdir(parents=True, exist_ok=True)
+        path = self._archive_dir / (
+            '%s_%d_%s.json' % (intent['intent_id'], int(now), uuid.uuid4().hex[:8]))
+        payload = {
+            'archived_at': now,
+            'archived_at_utc': datetime.fromtimestamp(now, timezone.utc).isoformat(timespec='seconds'),
+            'kind': kind,
+            # RFC-128 §3.1 的机读契约位保留 (原写在 receipt_json, 现随档保存)
+            'external_close_release': kind == 'external_close_release',
+            'reason': str(reason or ''),
+            'broker_qty_evidence': evidence if isinstance(evidence, dict) else {},
+            'intent': intent,
+            'legs': legs,
+        }
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        tmp.replace(path)
+        return path
+
+    def archive_and_delete(self, intent_id, *, reason, now, evidence=None,
+                           kind='manual_release'):
+        """归档并删除意图+腿 ⇒ **close_key 真正空出** (INCIDENT-002 释放语义 SSOT).
+
+        为什么不是改 `state='BOOKED'` (RFC-128 原语义, 已被 10/2 ACN 实证证伪):
+        `UNIQUE(account_id, target_env, close_key)` **无 state 谓词** ⇒ BOOKED 行
+        永久占用 close_key。于是 ①ETH 链 `request()` 原样返回旧 BOOKED 行,
+        而 `reserve_leg` 对 BOOKED/FILLED_UNBOOKED 直接 None ⇒ 一单发不出;
+        ②RTH 链 `close_position` 默认 `session='RTH'` ≠ 旧行 'ETH' ⇒
+        `exit_session_conflict` BLOCKED ⇒ SL 兜底同样封死。检验 C 证明改 session
+        也不够。BOOKED 只解除 `list_unsettled()` 枚举与 symbol busy,
+        **恢复评估 ≠ 恢复执行能力** ⇒ 把可见告警换成静默零保护。
+
+        返回 `(archive_path, None)` 成功; `(None, refuse_code)` 被守卫拒绝。
+        守卫 (fail-closed, 宁可不释放也不制造孤儿/丢账):
+          · 非终态腿或成交量未知 ⇒ REFUSE_UNSAFE_LEG (活跃出场单会变孤儿);
+          · state=FILLED_UNBOOKED ⇒ REFUSE_UNBOOKED (成交已发生簿记未完成,
+            删行会掐断 `acknowledge_close`/`ack_booked` 的落账路径)。
+        归档写盘失败 ⇒ 异常上抛, **不删行** (证据保全优先于释放)。
+        读档与删除之间意图发生变化 (如成交回流) ⇒ 回滚删除 + 撤销刚写的档。
+        """
+        with self.transaction() as db:
+            intent, legs = self._snapshot(db, intent_id)
+        if intent is None:
+            return None, self.REFUSE_NOT_FOUND
+        if intent['state'] == 'FILLED_UNBOOKED':
+            return None, self.REFUSE_UNBOOKED
+        if self._unsafe_legs(legs or []):
+            return None, self.REFUSE_UNSAFE_LEG
+
+        path = self._write_archive(intent, legs or [], reason=reason, now=now,
+                                   kind=kind, evidence=evidence)
+
+        with self.transaction() as db:
+            # 竞态复核: 读档后意图可能已被并发进程推进 (成交回流 → FILLED_UNBOOKED,
+            # 或新腿变 ACTIVE)。任一守卫在此刻不成立 ⇒ 不删, 并撤销刚写的档。
+            current, cur_legs = self._snapshot(db, intent_id)
+            if current is None or current['state'] == 'FILLED_UNBOOKED' \
+                    or self._unsafe_legs(cur_legs or []):
+                try:
+                    path.unlink()
+                except OSError:
+                    logger.warning('exit_release_archive_cleanup_failed path=%s',
+                                   path, exc_info=True)
+                return None, (self.REFUSE_NOT_FOUND if current is None
+                              else self.REFUSE_UNBOOKED if current['state'] == 'FILLED_UNBOOKED'
+                              else self.REFUSE_RACE)
+            db.execute('DELETE FROM exit_legs WHERE intent_id=?', (intent_id,))
+            db.execute('DELETE FROM exit_intents WHERE intent_id=?', (intent_id,))
+            gone = db.execute('SELECT 1 FROM exit_intents WHERE intent_id=?',
+                              (intent_id,)).fetchone() is None
+            key_free = db.execute(
+                'SELECT 1 FROM exit_intents WHERE account_id=? AND target_env=? AND close_key=?',
+                (intent['account_id'], intent['target_env'], intent['close_key'])).fetchone() is None
+            legs_gone = db.execute('SELECT 1 FROM exit_legs WHERE intent_id=?',
+                                   (intent_id,)).fetchone() is None
+        if not (gone and key_free and legs_gone):
+            # 回读不成立 = 不声称成功 (档已写, 行可能仍在 ⇒ 人工介入, 不静默)。
+            # 注: 此处**不在 except 块内** (是回读断言失败, 非异常) ⇒ 不加 exc_info,
+            # 否则日志暗示有栈可读, 而 sys.exc_info() 实为 None ⇒ 误导值班人。
+            logger.error('exit_release_verification_failed intent=%s gone=%s key_free=%s '
+                         'legs_gone=%s archive=%s', intent_id, gone, key_free, legs_gone,
+                         path)
+            return None, self.REFUSE_VERIFY
+        return path, None
+
+    def restore_archived(self, intent_id):
+        """从归档回插 intent+legs (人工释放的回滚路径).
+
+        close_key 已被现役意图占用 ⇒ 拒 (不覆盖现役账目)。
+        返回 `(archive_path, None)` 成功; `(None, refuse_code)` 失败。
+        """
+        if not self._archive_dir.is_dir():
+            return None, 'exit_restore_archive_missing'
+        archives = sorted(self._archive_dir.glob('%s_*.json' % intent_id))
+        if not archives:
+            return None, 'exit_restore_archive_missing'
+        try:
+            payload = json.loads(archives[-1].read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            logger.error('exit_restore_archive_unreadable path=%s: %s', archives[-1], exc,
+                         exc_info=True)
+            return None, 'exit_restore_archive_invalid'
+        intent = payload.get('intent') or {}
+        legs = payload.get('legs') or []
+        if intent.get('intent_id') != intent_id:
+            return None, 'exit_restore_archive_invalid'
+        with self.transaction() as db:
+            conflict = db.execute(
+                'SELECT intent_id FROM exit_intents WHERE account_id=? AND target_env=? '
+                'AND close_key=?',
+                (intent.get('account_id'), intent.get('target_env'),
+                 intent.get('close_key'))).fetchone()
+            if conflict:
+                return None, 'exit_restore_close_key_busy'
+            icols = list(intent.keys())
+            db.execute('INSERT OR IGNORE INTO exit_intents (%s) VALUES (%s)'
+                       % (','.join(icols), ','.join('?' * len(icols))),
+                       tuple(intent[c] for c in icols))
+            for leg in legs:
+                lcols = list(leg.keys())
+                db.execute('INSERT OR IGNORE INTO exit_legs (%s) VALUES (%s)'
+                           % (','.join(lcols), ','.join('?' * len(lcols))),
+                           tuple(leg[c] for c in lcols))
+            back = db.execute('SELECT 1 FROM exit_intents WHERE intent_id=?',
+                              (intent_id,)).fetchone() is not None
+            n_legs = db.execute('SELECT COUNT(*) FROM exit_legs WHERE intent_id=?',
+                                (intent_id,)).fetchone()[0]
+        if back and n_legs == len(legs):
+            return archives[-1], None
+        return None, 'exit_restore_verification_failed'
+
     def release_unsettled(self, *, account_id, target_env, symbol, direction, reason, now,
                           evidence=None, on_blocked=None):
-        """外部渠道平掉仓位后释放该仓的未决出场意图 (RFC-128).
+        """外部渠道平掉仓位后释放该仓的未决出场意图 (RFC-128; 语义见 INCIDENT-002).
 
         病灶: `position_sync` 的 external_close / 真幽灵仓对账只写 `trade_records`
         + DELETE `open_positions`, **完全不碰 `exit_intents`** ⇒ 意图永久卡
@@ -345,11 +520,11 @@ class ExitLedger:
           ③ RFC-127 影子按 `result.dealt_qty` (系统自己那条已撤腿的 0) 落
              「剩余 N 股可升级」幽灵样本 ⇒ 阶段1 判据2 被顶成假 PASS。
 
-        语义 (与 `ack_booked` 同一终态, **不新造状态值**): `state → 'BOOKED'`
-        同时做到 ①退出 `list_unsettled()` 枚举 (`WHERE state != 'BOOKED'`)
-        ⇒ 不再进 `blocked_exits` ⇒ SL/BE/trailing/EOD 兜底重新接管;
-        ②解除 partial unique index `exit_active_symbol … WHERE state != 'BOOKED'`
-        的 symbol busy ⇒ 该标的新意图可再建。
+        释放语义 (2026-10-02 INCIDENT-002 订正): **归档并删除** (`archive_and_delete`
+        SSOT), 不是改 BOOKED。BOOKED 虽能同时解除 `list_unsettled()` 枚举与
+        partial unique index 的 symbol busy, 但 `UNIQUE(account_id,target_env,close_key)`
+        无 state 谓词 ⇒ 它**永久占用 close_key**, ETH 重放与 RTH SL 兜底双双发不出单
+        (详见 `archive_and_delete` docstring 的检验 A/B/C)。删除才真正空出身份键。
         **释放不会自动平仓** — 纯账目, 平仓职责交回兜底链。
 
         匹配键四元组 `(account_id, target_env, symbol, direction)`:
@@ -357,79 +532,65 @@ class ExitLedger:
         而"券商侧无持仓"也是按账户查的 ⇒ 只按 symbol 匹配会误释放另一账户
         (仓位可能还在) 的意图。方向不符同样不释放 (同 symbol 双向意图互不误伤)。
 
-        幂等: `WHERE state != 'BOOKED'` 天然保证重复调用返回空列表。
+        幂等: `WHERE state != 'BOOKED'` 天然保证重复调用返回空列表; 已 BOOKED 的
+        历史意图**不在释放面内** (它们是正常平仓的账目, 不是卡死意图)。
         """
         want_dir = token(direction)
         if not (account_id and target_env and symbol and want_dir):
             return []
-        receipt = {
-            'kind': 'external_close_release',
-            'external_close_release': True,
-            'reason': str(reason or ''),
-            'released_at': datetime.fromtimestamp(now, timezone.utc).isoformat(timespec='seconds'),
-            'broker_qty_evidence': evidence if isinstance(evidence, dict) else {},
-        }
-        encoded = json_text(receipt)
-        blocked_events = []
         with self.transaction() as db:
             rows = db.execute(
-                "SELECT intent_id,direction,state FROM exit_intents "
+                "SELECT intent_id,direction FROM exit_intents "
                 "WHERE account_id=? AND target_env=? AND symbol=? AND state!='BOOKED'",
                 (str(account_id), str(target_env), str(symbol))).fetchall()
-            released = []
-            for row in rows:
-                if token(row['direction']) != want_dir:
-                    logger.warning(
-                        'exit_intent_release_direction_mismatch symbol=%s intent=%s '
-                        'intent_direction=%s closed_direction=%s (不释放)',
-                        symbol, row['intent_id'], row['direction'], want_dir)
-                    continue
-                legs = db.execute(
-                    "SELECT sequence,state,order_id,dealt_qty FROM exit_legs "
-                    "WHERE intent_id=? ORDER BY sequence",
-                    (row['intent_id'],)).fetchall()
-                unsafe_legs = [leg for leg in legs
-                               if leg['state'] != 'TERMINAL' or leg['dealt_qty'] is None]
-                if unsafe_legs:
-                    logger.warning(
-                        'exit_intent_release_blocked_by_unsettled_leg symbol=%s intent=%s '
-                        'legs=%s — 先撤销/等待该出场腿终态, 再释放意图 (避免活跃单变孤儿)',
-                        symbol, row['intent_id'], [
-                            {'sequence': leg['sequence'], 'state': leg['state'],
-                             'order_id': leg['order_id'], 'dealt_qty': leg['dealt_qty']}
-                            for leg in unsafe_legs])
-                    # [RFC-129] 缺口可见化: 仓已不在券商侧 (external_close 前置保证) 而
-                    # 我方 pbe_* 腿仍非终态 ⇒ 释放被拒 ⇒ 该 symbol 继续进 blocked_exits
-                    # ⇒ **SL 评估仍被跳过** (即 10/1 ACN 病灶的变体)。守卫本身是对的
-                    # (BOOKED 后无人看护活跃单 = 孤儿, 且 orphan_ext_order_watch 只认
-                    # ext_exit_ 前缀扫不到 pbe_*), 但它把"人工先撤腿"变成隐性前提。
-                    # 缺口罕见 (生产 183/183 腿 TERMINAL, 该形态 0 先例) 且高危 ⇒
-                    # 正确处置是"看得见 + 人工", 不是自动撤单 (撤单有成交竞态风险)。
-                    # ⚠️ 只在此**收集**事件, 回调在事务外触发 — transaction() 用
-                    # BEGIN IMMEDIATE 持写锁, 推送的网络 I/O 若在锁内会拖长锁持有时间,
-                    # 与 fast loop (10s 节奏) 抢锁。
-                    blocked_events.append({
-                        'intent_id': row['intent_id'],
-                        'symbol': symbol,
-                        'direction': row['direction'],
-                        'reason': reason,
-                        'unsafe_legs': [
-                            {'sequence': leg['sequence'], 'state': leg['state'],
-                             'order_id': leg['order_id'], 'dealt_qty': leg['dealt_qty']}
-                            for leg in unsafe_legs],
-                    })
-                    continue
-                if db.execute(
-                        "UPDATE exit_intents SET state='BOOKED',receipt_json=?,last_error='',"
-                        "version=version+1,updated_at=? "
-                        "WHERE intent_id=? AND state!='BOOKED'",
-                        (encoded, now, row['intent_id'])).rowcount:
-                    released.append(row['intent_id'])
-            if released:
+            candidates = [(row['intent_id'], row['direction']) for row in rows]
+        released, blocked_events = [], []
+        for intent_id, row_direction in candidates:
+            if token(row_direction) != want_dir:
                 logger.warning(
-                    'exit_intent_released_on_external_close symbol=%s env=%s account=%s '
-                    'direction=%s intents=%s reason=%s — 该仓出场职责交回 SL/BE/trailing/EOD 兜底',
-                    symbol, target_env, account_id, want_dir, released, reason)
+                    'exit_intent_release_direction_mismatch symbol=%s intent=%s '
+                    'intent_direction=%s closed_direction=%s (不释放)',
+                    symbol, intent_id, row_direction, want_dir)
+                continue
+            path, refuse = self.archive_and_delete(
+                intent_id, reason=reason, now=now, evidence=evidence,
+                kind='external_close_release')
+            if path is not None:
+                released.append(intent_id)
+                continue
+            if refuse == self.REFUSE_UNSAFE_LEG:
+                unsafe_legs = self._unsafe_leg_detail(intent_id)
+                logger.warning(
+                    'exit_intent_release_blocked_by_unsettled_leg symbol=%s intent=%s '
+                    'legs=%s — 先撤销/等待该腿终态, 再释放意图 (避免活跃单变孤儿)',
+                    symbol, intent_id, unsafe_legs)
+                # [RFC-129] 缺口可见化: 仓已不在券商侧 (external_close 前置保证) 而
+                # 我方 pbe_* 腿仍非终态 ⇒ 释放被拒 ⇒ 该 symbol 继续进 blocked_exits
+                # ⇒ **SL 评估仍被跳过** (即 10/1 ACN 病灶的变体)。守卫本身是对的
+                # (意图删除后无人看护活跃单 = 孤儿, 且 orphan_ext_order_watch 只认
+                # ext_exit_ 前缀扫不到 pbe_*), 但它把"人工先撤腿"变成隐性前提。
+                # 缺口罕见 (生产 183/183 腿 TERMINAL, 该形态 0 先例) 且高危 ⇒
+                # 正确处置是"看得见 + 人工", 不是自动撤单 (撤单有成交竞态风险)。
+                # ⚠️ 只在此**收集**事件, 回调在事务外触发 (推送网络 I/O 不占写锁)。
+                blocked_events.append({
+                    'intent_id': intent_id,
+                    'symbol': symbol,
+                    'direction': row_direction,
+                    'reason': reason,
+                    'unsafe_legs': unsafe_legs,
+                })
+                continue
+            # 其余拒绝码 (UNBOOKED/NOT_FOUND/RACE/VERIFY) 都是 fail-closed 留痕:
+            # 不静默, 但也不进 blocked_events (不是"人工撤腿就能解"的同一形态)
+            logger.warning(
+                'exit_intent_release_refused symbol=%s intent=%s refuse=%s '
+                '(fail-closed: 意图保留, 需人工核查)', symbol, intent_id, refuse)
+        if released:
+            logger.warning(
+                'exit_intent_released_on_external_close symbol=%s env=%s account=%s '
+                'direction=%s intents=%s reason=%s — 意图已归档删除, close_key 空出, '
+                '该仓出场职责交回 SL/BE/trailing/EOD 兜底',
+                symbol, target_env, account_id, want_dir, released, reason)
         # [RFC-129] 回调在事务**外**触发 (写锁已释放, 推送 I/O 不与 fast loop 抢锁)。
         # 单个回调故障只 WARNING, 不影响其余事件与已完成的释放。
         for _ev in blocked_events:

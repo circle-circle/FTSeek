@@ -127,6 +127,55 @@ def _audit(result):
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+# P1-3 节流参数: 首行必推, 之后每 _PUSH_REMIND_EVERY 次连续同态提醒一次
+_PUSH_REMIND_EVERY = int(os.getenv("EXT_EXIT_PUSH_REMIND_EVERY", "30"))
+_TAIL_LINES = 400
+_TAIL_BYTES = 512 * 1024
+
+
+def _repeat_run_len(symbol, status, error):
+    """审计文件尾部连续相同 (symbol,status,error) 的行数 (含刚写入的本行).
+
+    跨进程节流的依据: 本脚本每分钟被 cron 以新进程调起, 内存去重无效。
+    只读尾部 (≤400 行), 不整读大文件。
+    """
+    try:
+        if not _AUDIT_LOG.exists():
+            return 1
+        with _AUDIT_LOG.open() as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - _TAIL_BYTES)
+            handle.seek(start)
+            lines = handle.read().splitlines()
+            if start and lines:
+                lines = lines[1:]
+            lines = lines[-_TAIL_LINES:]
+        run = 0
+        for line in reversed(lines):
+            try:
+                r = json.loads(line)
+            except Exception:
+                break
+            if (r.get("symbol") == symbol and r.get("status") == status
+                    and r.get("error") == error):
+                run += 1
+            else:
+                break
+        return max(run, 1)
+    except Exception:
+        return 1  # fail-open: 读不了审计就按首行处理 (宁可多推一次, 不可静默)
+
+
+def _should_push(status, run_len):
+    """同态连续重放只推首行 + 每 _PUSH_REMIND_EVERY 行提醒一次; ok 行不走此闸。"""
+    if run_len <= 1:
+        return True
+    if status == "awaiting_confirmation":
+        return False  # 等券商回报是瞬态, 重复提醒无信息量
+    return run_len % _PUSH_REMIND_EVERY == 0
+
+
 def _in_session_window(session):
     start, end = SESSION_WINDOWS[session]
     now = _now_et()
@@ -281,15 +330,31 @@ def execute(symbol, direction, qty, price, session, reason, dry=False):
             "error": close_result.get("error", ""),
         }
         _audit(result)
+        # P1-3 (INCIDENT-002): ①BOOKED 陈旧结果不再冒充「待确认」— 那是账本已终结
+        # 而仓位仍在的零保护形态, 文案必须直说并给出释放命令; ②跨进程节流 —
+        # 本脚本由 cron 每分钟新进程调起, 内存节流无效, 用审计文件尾部连续
+        # 相同 (symbol,status,error) 行数判定: 首行必推, 之后每 30 分钟提醒一次。
+        _run_len = _repeat_run_len(result["symbol"], result["status"],
+                                   result["error"])
         if result["ok"]:
             _push(f"✅ {_stage(session)}锁盈已成交\n{symbol} {dealt_qty:g}股 @ "
                   f"{result['avg_fill_price']:.2f}\n订单 {result['order_id']} | 原因 {reason}")
-        elif awaiting_confirmation:
-            _push(f"⏳ {_stage(session)}锁盈等待券商回报\n{symbol} {dealt_qty:g}/{qty:g}股\n"
-                  f"intent={result['exit_intent_id']} {result['error']}（非执行失败）")
-        else:
-            _push(f"⚠️ {_stage(session)}锁盈待确认\n{symbol} {dealt_qty:g}/{qty:g}股\n"
-                  f"intent={result['exit_intent_id']} {result['error']}")
+        elif _should_push(result["status"], _run_len):
+            if (close_result.get("exit_state") == "BOOKED"
+                    and not close_result.get("success")):
+                _push(f"🚫 {_stage(session)}锁盈被阻: 账本已终结但仓位仍在\n"
+                      f"{symbol} {qty:g}股 无可用退出路径 "
+                      f"(intent={result['exit_intent_id']} state=BOOKED, "
+                      f"close_key 被已终结意图占用 ⇒ ETH 重放与 RTH SL 兜底均发不出单)\n"
+                      f"人工核对券商持仓后释放: PYTHONPATH=. venv/bin/python3.11 "
+                      f"scripts/release_stuck_exit_intent.py --intent-id "
+                      f"{result['exit_intent_id']} --apply")
+            elif awaiting_confirmation:
+                _push(f"⏳ {_stage(session)}锁盈等待券商回报\n{symbol} {dealt_qty:g}/{qty:g}股\n"
+                      f"intent={result['exit_intent_id']} {result['error']}（非执行失败）")
+            else:
+                _push(f"⚠️ {_stage(session)}锁盈未成交\n{symbol} {dealt_qty:g}/{qty:g}股\n"
+                      f"intent={result['exit_intent_id']} {result['error']}")
         return result
     except Exception as exc:
         result = {"ok": False, "symbol": symbol, "qty": qty, "price": price,

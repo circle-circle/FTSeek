@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.extended_hours_market_session import get_extended_hours_session
 from scripts.orphan_ext_order_watch import scan as scan_orphan_orders
+from scripts.exit_closekey_health import scan as scan_closekey_health
 
 LOCK_FILE = ROOT / "logs" / "extended_hours_exit_cron.lock"
 NEXT_OPEN_START_MINUTES = 570
@@ -71,11 +72,18 @@ def run_once(dry=False, timeout_s=240, now=None):
     except Exception as _exc:      # 显式可见的降级, 不静默 (退出链优先)
         orphan = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
 
+    # close_key 死锁体检 (INCIDENT-002 P2-5): 同样早于 session 门控 — 死锁不分时段,
+    #   且该形态零未决意图 ⇒ blocked_exits/orphan watch/fast loop 全静默, 本探针是唯一哨兵。
+    try:
+        closekey_health = scan_closekey_health(dry=dry)
+    except Exception as _exc:      # 探针故障不阻塞退出链
+        closekey_health = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
+
     session = get_exit_cron_session(now)
     command = collector_command(session)
     if session is None or command is None:
         return {"ok": True, "skip": "outside_extended_hours", "session": session,
-                "orphan": orphan}
+                "orphan": orphan, "closekey_health": closekey_health}
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("a+") as handle:

@@ -6,9 +6,11 @@
   ② fast loop 每 ~10s 告警 (当日 2029 条 ERROR);
   ③ RFC-127 影子落幽灵样本 ⇒ 阶段1 判据2 被顶成假 PASS。
 
-释放语义: state → 'BOOKED' (与 ack_booked 同一终态, 不新造状态值), 同时退出
-list_unsettled() 枚举 + 解除 partial unique index 的 symbol busy。
-**纯账目, 不会自动平仓。**
+释放语义 (2026-10-02 INCIDENT-002 订正): **归档并删除** (`archive_and_delete`
+SSOT), 不是改 BOOKED。BOOKED 虽退出 list_unsettled() 枚举 + 解除 partial unique
+index 的 symbol busy, 但 `UNIQUE(account_id,target_env,close_key)` 无 state 谓词
+⇒ 它永久占用 close_key, ETH 重放与 RTH SL 兜底双双发不出单 (静默零保护)。
+删除才真正空出身份键。**纯账目, 不会自动平仓。**
 
 测试取数纪律: `release_unsettled` 只消费 exit_intents 的
 (account_id, target_env, symbol, direction, state) 五列 ⇒ 大多数用例直接 INSERT
@@ -91,6 +93,15 @@ def _row(ledger, intent_id):
     return dict(row) if row else None
 
 
+def _archive(ledger, intent_id):
+    """读该意图的归档文件 (INCIDENT-002: 证据从 receipt_json 移到归档 JSON)。"""
+    arch_dir = ledger.archive_dir
+    if not arch_dir.is_dir():
+        return None
+    files = sorted(arch_dir.glob(f"{intent_id}_*.json"))
+    return json.loads(files[-1].read_text(encoding="utf-8")) if files else None
+
+
 def _unsettled(ledger):
     return [i["intent_id"] for i in ledger.list_unsettled()]
 
@@ -115,8 +126,8 @@ def _release(ledger, **overrides):
 
 
 class TestReleaseUnsettled:
-    def test_releases_stuck_intent_and_marks_booked(self, ledger):
-        """卡死的 HELD 意图被释放 ⇒ BOOKED + 退出未决枚举 (SL 兜底重新接管)。"""
+    def test_releases_stuck_intent_and_archives_deletes(self, ledger):
+        """卡死的 HELD 意图被释放 ⇒ 归档+删除, close_key 空出, 退出未决枚举。"""
         iid = _insert(ledger, state="PENDING")
         assert iid in _unsettled(ledger)
 
@@ -124,40 +135,46 @@ class TestReleaseUnsettled:
                                               "close_order_id": "8219620"})
 
         assert released == [iid]
-        row = _row(ledger, iid)
-        assert row["state"] == "BOOKED"
-        assert row["last_error"] == ""
+        # INCIDENT-002: 释放 = 行被删除 (不是改 BOOKED — BOOKED 会永久占用 close_key)
+        assert _row(ledger, iid) is None
         assert iid not in _unsettled(ledger)
-        receipt = json.loads(row["receipt_json"])
-        assert receipt["external_close_release"] is True
-        assert receipt["kind"] == "external_close_release"
-        assert receipt["reason"] == "external_close"
-        assert receipt["broker_qty_evidence"]["close_order_id"] == "8219620"
-        assert receipt["released_at"]
+        # 证据保全到归档文件 (原写在 receipt_json 的机读契约位一并保留)
+        arch = _archive(ledger, iid)
+        assert arch is not None
+        assert arch["external_close_release"] is True
+        assert arch["kind"] == "external_close_release"
+        assert arch["reason"] == "external_close"
+        assert arch["broker_qty_evidence"]["close_order_id"] == "8219620"
+        assert arch["archived_at_utc"]
+        assert arch["intent"]["intent_id"] == iid
 
     def test_held_state_also_released(self, ledger):
         """10/1 实况形态: state=PENDING 而 last_error=exit_eth_partial_fill_held。"""
         iid = _insert(ledger, state="PENDING",
                       last_error="exit_eth_partial_fill_held")
         assert _release(ledger) == [iid]
-        assert _row(ledger, iid)["state"] == "BOOKED"
+        assert _row(ledger, iid) is None
 
     def test_released_at_derives_from_now_param(self, ledger):
-        """receipt released_at 与 DB updated_at 必须同源 (同一 now 瞬间, 审计可对齐)。
+        """归档 archived_at 必须派生自 now 参数 (同一瞬间, 审计可对齐)。
 
         旧实现 receipt 用 `datetime.now(utc)` 独立取时, 与 SQL `updated_at=?` 之间
-        隔着 leg 检查循环, 两时间戳可发散 (2026-10-02 复查) ⇒ 改为从 now 派生。
+        隔着 leg 检查循环, 两时间戳可发散 (2026-10-02 复查) ⇒ 改为从 now 派生;
+        INCIDENT-002 后落点是归档文件而非 DB 行 (行已删), 同源要求不变。
         """
         from datetime import datetime, timezone
         iid = _insert(ledger, state="PENDING")
         fixed_now = 1780000000.0
         assert _release(ledger, now=fixed_now) == [iid]
-        row = _row(ledger, iid)
-        receipt = json.loads(row["receipt_json"])
-        assert receipt["released_at"] == (
+        arch = _archive(ledger, iid)
+        assert arch["archived_at"] == fixed_now
+        assert arch["archived_at_utc"] == (
             datetime.fromtimestamp(fixed_now, timezone.utc)
             .isoformat(timespec="seconds"))
-        assert row["updated_at"] == fixed_now
+        # 归档文件名按 now 取整 (可按时序排序); 唯一后缀防同秒覆盖
+        archive_name = sorted(ledger.archive_dir.glob(f"{iid}_*.json"))[-1].name
+        assert archive_name.startswith(f"{iid}_{int(fixed_now)}_")
+        assert archive_name.endswith(".json")
 
     def test_direction_mismatch_does_not_release(self, ledger):
         """方向不符 ⇒ 零释放 (同 symbol 双向意图互不误伤)。"""
@@ -223,10 +240,17 @@ class TestReleaseUnsettled:
         iid = _insert(ledger, state="PENDING")
         assert _release(ledger) == [iid]
         assert _release(ledger) == []
-        assert _row(ledger, iid)["state"] == "BOOKED"
+        # 行已删 (INCIDENT-002 语义): 幂等 = 第二次无候选
+        assert _row(ledger, iid) is None
 
     def test_already_booked_untouched(self, ledger):
-        """已 BOOKED 的意图 (正常平仓收尾) 不被改写 — 幂等且不覆盖既有 receipt。"""
+        """已 BOOKED 的意图 (正常平仓收尾) 不被改写 — 幂等且不覆盖既有 receipt。
+
+        注: BOOKED 行不在释放面内 (`WHERE state != 'BOOKED'`), 所以它的
+        close_key 占用不受本函数影响; 若 BOOKED 行占着**活仓**的 close_key
+        (INCIDENT-002 死锁形态), 那是人工工具 release_stuck_exit_intent.py +
+        exit_closekey_health 探针的职责面, 不归自动释放管。
+        """
         iid = _insert(ledger, state="BOOKED", last_error="")
         with ledger.transaction() as db:
             db.execute("UPDATE exit_intents SET receipt_json=? WHERE intent_id=?",
@@ -253,13 +277,15 @@ class TestReleaseUnsettled:
             legs = db.execute("SELECT COUNT(*) FROM exit_legs WHERE intent_id=?",
                               (iid,)).fetchone()[0]
         assert legs == 0
+        arch = _archive(ledger, iid)
+        assert arch["legs"] == []
 
     def test_evidence_non_dict_is_ignored(self, ledger):
         """evidence 非 dict ⇒ 落空字典, 不炸 (对账侧传值形态可能演化)。"""
         iid = _insert(ledger, state="PENDING")
         assert _release(ledger, evidence="not-a-dict") == [iid]
-        receipt = json.loads(_row(ledger, iid)["receipt_json"])
-        assert receipt["broker_qty_evidence"] == {}
+        arch = _archive(ledger, iid)
+        assert arch["broker_qty_evidence"] == {}
 
     @pytest.mark.parametrize("leg_state,dealt_qty,broker_status", [
         ("ACTIVE", None, "SUBMITTED"),
@@ -408,6 +434,22 @@ class TestSourceContract:
         from app.execution import exit_lifecycle as el
         assert hasattr(el.ExitLedger, "release_unsettled")
         assert hasattr(el.ExitLedger, "ack_booked")
+        # INCIDENT-002: 释放语义 SSOT 也在账本层 (人工脚本与自动释放共用)
+        assert hasattr(el.ExitLedger, "archive_and_delete")
+        assert hasattr(el.ExitLedger, "restore_archived")
+
+    def test_manual_script_delegates_to_ledger_ssot(self):
+        """人工工具不得自己内联写库 — 必须走 ledger SSOT (两调用方永不漂移)。
+
+        协议 Gate 4「SSOT 提取反模式」: 同一逻辑多处 inline = 漂移根源。
+        INCIDENT-002 的直接教训之一就是人工脚本与自动释放各写一份释放语义。
+        """
+        script = (ROOT / "scripts" / "release_stuck_exit_intent.py").read_text(
+            encoding="utf-8")
+        assert "archive_and_delete" in script, "人工脚本必须调 ledger SSOT"
+        assert "restore_archived" in script
+        assert "DELETE FROM exit_intents" not in script, "禁止内联删除 SQL"
+        assert "INSERT OR IGNORE INTO exit_intents" not in script, "禁止内联回插 SQL"
 
 
 class TestAcnScenarioReplay:
@@ -434,17 +476,21 @@ class TestAcnScenarioReplay:
                                               "trade_id": 9999})
         assert released == [iid]
 
-        # 释放后: 退出未决枚举 ⇒ 不再 blocked ⇒ SL 兜底重新接管
+        # 释放后: 行已删除 ⇒ 退出未决枚举 ⇒ 不再 blocked, 且 close_key 空出
         assert _unsettled(ledger) == []
-        row = _row(ledger, iid)
-        assert row["state"] == "BOOKED" and row["last_error"] == ""
-        assert json.loads(row["receipt_json"])["broker_qty_evidence"]["trade_id"] == 9999
+        assert _row(ledger, iid) is None
+        arch = _archive(ledger, iid)
+        assert arch["broker_qty_evidence"]["trade_id"] == 9999
 
-        # 腿记录保留 (证据保全, 不因释放而删)
+        # 腿记录随意图一并删除, 但**证据保全在归档文件** (INCIDENT-002 语义:
+        # 只有删行才能真正空出 close_key; 旧版"腿记录保留"是与 BOOKED 语义配套的)
         with ledger.transaction() as db:
             n = db.execute("SELECT COUNT(*) FROM exit_legs WHERE intent_id=?",
                            (iid,)).fetchone()[0]
-        assert n == 1
+        assert n == 0
+        assert len(arch["legs"]) == 1
+        assert arch["legs"][0]["order_id"] == "8219159"
+        assert arch["legs"][0]["broker_status"] == "CANCELLED_ALL"
 
 
 # ── RFC-129: 腿守卫缺口可见化 (on_blocked 回调 + 推送) ───────────────────
@@ -519,7 +565,8 @@ class TestBlockedCallback:
 
         # 无腿 ⇒ 正常释放路径; 回调不会被调用, 但即使调用也不该炸
         assert _release(ledger, on_blocked=boom) == [iid]
-        assert _row(ledger, iid)["state"] == "BOOKED"
+        assert _row(ledger, iid) is None, "释放=归档删除 (INCIDENT-002 语义)"
+        assert _archive(ledger, iid) is not None, "证据仍须保全到归档"
 
     def test_callback_exception_logged_not_swallowed(self, ledger, caplog):
         """回调故障必须留痕 (埋点禁静默死亡 — 本仓既有教训)。"""
