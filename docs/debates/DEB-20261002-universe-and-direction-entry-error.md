@@ -5,7 +5,7 @@
 > **目标读者**: 复查者(§5/§9/§11)→ 裁决者(§7/§10)→ 执行者(§8)
 > **交易行为变更**: 本文档落地前 **零**。全部动作 = record-only 影子腿 / 遥测补字段 / 撤回登记。
 > **样本**: `trade_records` 入场时间 ≥ 2026-06-27(playbook 参数冻结时代)且已平仓、`pnl_net` 非空 = **n=583**
-> **脚本**: `scripts/deb20261002_*.py`(20 个 = 12 回放 + 2 守卫 + 6 溯源轮,已入库可复跑;回放脚本全部只读 `mode=ro`)
+> **脚本**: `scripts/deb20261002_*.py`(23 个 = 12 回放 + 2 守卫 + 9 溯源轮,已入库可复跑;回放脚本全部只读 `mode=ro`)
 
 ---
 
@@ -165,6 +165,10 @@ git log --format="%h %ad %s" --date=iso -S "EXT_ENTRY_MIN_PRICE" -- scripts/exte
 | **E40** | J1: 时刻轴 G5 失败 (逐月 +4.9/+20.7/+2.5pp, 仅8月 t=−2.88) ⇒ 不可作静态门 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `2026-07   121/ 30.6%       62/ 35.5%    +4.9pp  -0.66`<br>`2026-08   143/ 23.1%       64/ 43.8%   +20.7pp  -2.88`<br>`2026-09   138/ 15.9%       38/ 18.4%    +2.5pp  -0.35`<br>`全期    402/ 22.9%      164/ 34.8%   +11.9pp  -2.77`<br>`⇒ pooled eta²=5.59% 过门, 但逐月差 +4.9/+20.7/+2.5pp 且仅8月 t 显著`<br>`⇒ G5 FAIL: 该轴由 8 月单月主导 ⇒ 不可作静态门; 需按 DEB-20261002 C12 反例判据登记收窄` |
 | **E41** | J3: 死单基率月度下降显著 32.4%→29.5%→16.5% (7月vs9月 t=+3.59, Δ−16.0pp) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `2026-07 n= 185 死率= 32.4% 净=   -939.3 均=  -5.08`<br>`2026-08 n= 207 死率= 29.5% 净=   -241.8 均=  -1.17`<br>`2026-09 n= 176 死率= 16.5% 净=   +113.0 均=  +0.64`<br>`7月 vs 9月 Welch t = +3.59  Δ=-16.0pp`<br>`⇒ 基率下降显著` |
 | **E42** | 现役禁触窗 0935 ⇒ 「9时」桶 = 09:35-09:59 窗内, 时刻轴读数已在窗内基线上 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_da_ue_verdict.py` | `config: entry_open_blackout_enabled=true, entry_open_blackout_hhmm=0935`<br>`⇒ 「9时」桶实为 09:35-09:59 (窗内), 「10时+」为窗外`<br>`2026-07 窗内(09:35-59) n= 121 死率= 30.6%   窗外(10时+) n=  62 死率= 35.5%`<br>`2026-08 窗内(09:35-59) n= 143 死率= 23.1%   窗外(10时+) n=  64 死率= 43.8%`<br>`2026-09 窗内(09:35-59) n= 138 死率= 15.9%   窗外(10时+) n=  38 死率= 18.4%` |
+| **E43** | deterministic 组 n=50 中 45 笔(90%)是 DA- 前缀被错标 ⇒ 标签污染 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_model_used_trace.py` | `DA-              n=45   死=5   死率=11.1%  净=  +382.5  🔴 标签与前缀矛盾 = 退化污染`<br>`TFB              n=5    死=2   死率=40.0%  净=   -95.3  ✅ 前缀一致` |
+| **E44** | 真·确定性链仅 n=5 死率 40.0% > LLM 29.5% ⇒ 方向相反且 n<30 不可判定 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_model_used_trace.py` | `真·确定性      n=5    死率=40.0%  净=    -95.3  🔴 n<30 不可判定`<br>`退化污染       n=45   死率=11.1%  净=   +382.5  ✅ n≥30`<br>`LLM 通道     n=333  死率=24.9%  净=   -397.1  ✅ n≥30`<br>`⇒ 该数字含 45 笔退化污染行 (90% of 组)` |
+| **E45** | B 组 n=122 (did日期==date列, 无覆盖) ⇒ 写入侧缺口; raw_json 零 model* 键; 9月起 DA- 行 46.8% 被错标(123/263) | `PYTHONPATH=. venv/bin/python scripts/deb20261002_model_used_cause.py` | `A) did日期 ≠ date列 (陈旧覆盖退化, db.py:41 同签名): n=5`<br>`B) did日期 == date列 (无覆盖 ⇒ 写入侧缺口):        n=122`<br>`B 组 n=122, raw_json 含 model* 键: 0`<br>`raw_json 顶层键 top12: [('entry_price_source', 60), ('atr_source', 60), ('da_thesis', 60), ('admission', 60), ('entry_archetype', 56), ('confirmation', 56), ('chase_cap_price', 56), ('ssr_shadow', 6)]`<br>`9月起 DA- 总数=263 ⇒ deterministic 占比=46.8%`<br>`分子拆解: 9月起被错标共 123 行 = A组(陈旧覆盖) 5 + B组(写入缺口) 118` |
+| **E46** | B 组含 59 真指令行(41 笔已成交 死率9.8% 净+225.3) + 63 SKIP 行(全有 entry_price/atr_pct, conf 恒70) ⇒ 非占位行, 是 DA 真分析被门拦; B∩Q 交集=0 ⇒ 两条互斥写入路径 | `PYTHONPATH=. venv/bin/python scripts/deb20261002_model_used_b_cause.py` | `已成交结算: n=41 死率=9.8% 净=+225.3`<br>`有 entry_price: 63/63   有 atr_pct: 63/63`<br>`confidence 分布: {70: 63}`<br>`B 组键 n=122  Q 组键 n=394  交集 n=0` |
 
 > 期望列为脚本实跑输出的**逐字行**(含全角空格),已用 `rebuild_e_table2.py` 逐格验证 27/27 命中。
 > 复查者跑同一命令后 `grep -F` 任一行即可比对;行内 `|` 已转义。
@@ -332,7 +336,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 
 | 阶段 | 动作 | 性质 | 验证命令 → 期望 | 回滚 |
 |---|---|---|---|---|
-| **0** | 本 DEB 入库 + README 索引加行 + 20 个脚本入库(12 回放 + 2 守卫 + 6 溯源轮) | 纯文档/只读 | `ls scripts/deb20261002_*.py \| wc -l` → `20`;`PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py` → 末行 `✅ 全部通过` | `git revert` 本提案阶段 0 的全部提交,清单用 `git log --oneline -- docs/debates/DEB-20261002-universe-and-direction-entry-error.md` 自查(纯文档/只读,无状态残留) |
+| **0** | 本 DEB 入库 + README 索引加行 + 23 个脚本入库(12 回放 + 2 守卫 + 9 溯源轮) | 纯文档/只读 | `ls scripts/deb20261002_*.py \| wc -l` → `23`;`PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py` → 末行 `✅ 全部通过` | `git revert` 本提案阶段 0 的全部提交,清单用 `git log --oneline -- docs/debates/DEB-20261002-universe-and-direction-entry-error.md` 自查(纯文档/只读,无状态残留) |
 | **1** | F4-a:`low_atr` skip 行落 `intent_direction` + `atr_pct`/`_atr_basis` 落列 | **零行为变更**(只补遥测) | 新 skip 行 SQL 查 `json_extract(metadata_json,'$.intent_direction')` 非空 | 删写入行 |
 | **2** | F4-b:指令生成落 `raw_atr_pct`(原始口径、比例单位) | **零行为变更** | V2 非空率 ≥95% | 删写入行 |
 | **3** | F1:`CANDIDATE_GATES` 追加 2 腿 + report 缺键 fail-open + 契约测试 | record-only | `wc -l data/fee_gate_shadow.jsonl` 增长;新行含 `price_lt_26` 键;`venv/bin/python -m pytest tests/ -k fee_gate` 绿 | 删两条腿(§5.6) |
@@ -353,7 +357,7 @@ CANDIDATE_GATES = ("price_lt_1", "notional_lt_4000", "notional_lt_5000",
 PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 ```
 
-它解析**本文档落盘正文**的 C 表 + E 表共 54 条命令逐条实跑,并校验:①每条 rc=0 且输出非空 ②命令格剥掉代码块后残余不含括号(含括号注解 ⇒ 复制即 shell 报错)③命令格不含「同上」(复查者无法独立执行)④E 表抽样 E1/E5/E8/E11/E13/E26/E37/E41 期望行逐字命中 ⑤调 `scripts/deb20261002_doc_guard.py` 查表格列数一致 / 章节号无缺号重号 / §引用无悬空。末行 `✅ 全部通过` 即本文档所有可复算声称当下成立;**任何 🔴 行就是我文档里的真错**,请直接按该行反驳,不必再手工复跑。
+它解析**本文档落盘正文**的 C 表 + E 表共 58 条命令逐条实跑,并校验:①每条 rc=0 且输出非空 ②命令格剥掉代码块后残余不含括号(含括号注解 ⇒ 复制即 shell 报错)③命令格不含「同上」(复查者无法独立执行)④E 表抽样 E1/E5/E8/E11/E13/E26/E37/E41/E44/E46 期望行逐字命中 ⑤调 `scripts/deb20261002_doc_guard.py` 查表格列数一致 / 章节号无缺号重号 / §引用无悬空。末行 `✅ 全部通过` 即本文档所有可复算声称当下成立;**任何 🔴 行就是我文档里的真错**,请直接按该行反驳,不必再手工复跑。
 
 **复查约束(逐字)**:只读 —— 禁改文件、禁 `git` 写操作、禁重启服务。每条必须给**原始命令 + 原始输出**。不许软化,也不许为凑数编问题。工具调用预算 ≤25 次;**禁止批量拉多日历史行情**(本提案全部数字来自本地 DB,无需行情)。时间不够也必须按 `C编号 | 判定(成立/不成立/无法判定) | 原始输出摘录 | 理由` 输出 schema,不许留空。
 
@@ -414,6 +418,7 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | **F4** | 用户:是否批准两处遥测补字段 | **批准** | 零行为变更;不补则 `low_atr_gate` 方向语义永远不可判定(现状 8/8 行方向丢失) |
 | **F5** | 用户:「入场即错」目标是否移交给既有 `entry_delay_confirm`(D2')影子,不新开轴 | **移交** | E3/E4 证明是择时轴;D2' 的立项动机逐字就是「SL_INITIAL 出血族尸检 19笔16笔MFE=0/11笔≤25min」= 同一病灶 |
 | **F6** | 用户:`low_atr_gate` 是否加 LONG-only 方向条件 | **暂缓,等 F4 数据** | 门的立项理由(「低波票做日内动量结构性失败」)是 LONG 逻辑,而 SHORT 侧低波是最强腿(E10);但历史 8 行 skip 方向不可判定(E14)⇒ 现在改等于盲改 |
+| **F7** | 用户:`model_used` 写入侧缺口(DA 侧从未写该字段 ⇒ `or "deterministic"` 兜底)是否修 | **修,但归 P2 遥测批**(与 F4 同批落,零行为变更) | 实测 B 组 n=122 行(59 真指令行 / 41 笔已成交)`raw_instruction_json` 零 `model*` 键,9月起 DA- 行 **46.8% 被错标** ⇒ 任何按模型分层的读数都失真(⑫ 假信号即由此产生);但**无活消费方**(`intraday_reentry.py:385` 只判 `!= "intraday_reentry_v1"`;`db.py:323` 注释声称的 scorecard 分层在仓内零命中)⇒ 不构成 P0。修法:DA skill 侧写真模型名 + 兜底值改为 `unknown`(缺失默认值不得伪装成通道名) |
 
 ---
 
@@ -434,8 +439,9 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | **⑨** | 溯源轮(用户追问「DA/UE 深度分析能否降低入场错」)一度声称「入场时刻轴 **C12 反例判据命中**,择时归因被推翻」 | **该声称是错的**。C12 判据逐字 = 「时刻梯度非单调,**或** 11/12 时段合并后死率 ≤25%」;实测 11+12时 n=35 死率 **34.3%**(>25% 未命中)、粗分档 09-10 24.9%→11-13 39.0%→14-16 50.0%→EXT 50.0% **单调**(未命中)⇒ **两条反例判据都未触发,C12 归因仍成立**。我实际测到的是**另一条判据 G5(逐月同号)失败**:09时 vs 10时+ 逐月差 +4.9pp(t=−0.66)/+20.7pp(t=−2.88)/+2.5pp(t=−0.35)⇒ 仅 8 月显著 | G5≠C12,不可混用:**归因成立**(方向对)但**不可作静态门**(由 8 月单月主导)⇒ 恰好支持 F5 的处置(移交既有 `entry_delay_confirm` 影子攒样,不新开静态门)。已按 `scripts/deb20261002_da_ue_verdict.py` J1 段落留痕 |
 | **⑩** | 溯源轮 v1 判别脚本按字段名猜分桶阈值(`signal_confidence` 用 <40/40-59/60-79/≥80) | 实际量纲全错:`signal_confidence` 是 **0–1 小数**、`signal_strength` 才是 0–100、`decision_conf` 是 0.5–0.9、`ok_dimensions` 是**位掩码**(19=10011b 须 popcount)、`horizon_confidence` **混存**(2735 行<1 / 125 行≥1)⇒ v1 把 100% 样本塞进单档,`eta²=0/t=0` 是**分桶假象不是轴无判别力** | v1 读数整体作废(**不入库**);v2 修正量纲重算后 8/8 轴仍全否决 ⇒ 结论未变但依据换了。已登记为 C12 红线的「量纲陷阱留痕」段 |
 | **⑪** | 溯源轮把 `loss_exit_recovery` 产物的 `net_recov` 当金额求和,报出「Σ持有=97.0 / Δ=+8678.4」 | `net_recov` 是 **bool**(是否回翻)⇒ 97.0 实为回翻笔数计数,「Δ=+8678」是把 132 笔 bool 当美元减出来的假数 | 该三行读数作废;美元口径改用 `scripts/deb20261002_gap_sl_replay.py`(日K gap-aware 精确模拟)+ `deb20261002_gap_avgdown_replay.py`(补仓反事实)。入库版 `deb20261002_gap_recovery.py` 已改为只报回翻率与 Σ实际,并注明该字段是 bool |
+| **⑫** | 溯源轮向用户报「`model_used=deterministic` 死率 14.0% < LLM 25.5% ⇒ **规则通道优于 LLM 通道**,加深 LLM 分析无收益」,并当作挑战「更深分析→更少入场错」的反直觉实锤 | **假信号,已撤回**。命中 skill 规则 54.3 前科(`model_used = raw.get(...) or "deterministic"` 让缺失默认值被当成独立通道)。按 `decision_id` 前缀交叉验真归属:deterministic 组 n=50 中 **45 笔(90%)是 `DA-` 前缀被错标** ⇒ 真·确定性链仅 **n=5、死率 40.0% > LLM 29.5%**,**方向相反且 n<30 不可判定**。根因两处:`pipeline.py:3227` `or "deterministic"` 兜底 + `db.py:1004` SKIP 占位行硬编码同值;实测 B 组 n=122 行(其中 59 真指令行、41 笔已成交)**`raw_instruction_json` 零 `model*` 键** ⇒ DA 侧从未写该字段 | C12 红线依据退回 eta²=1.00%<5% + G8 FAIL(标签被污染 ⇒ 更不该建门);**遥测缺口单独立项 F7**(P2:实测无活消费方,`intraday_reentry.py:385` 只判 `!= "intraday_reentry_v1"` 不受影响,注释声称的 scorecard 分层在仓内零命中)。教训:引用任何**通道/模型/策略名**列做人群对比前,必须先 grep 写入侧 `or "`/`COALESCE` 兜底 + 用 id 前缀交叉验,否则「缺失默认值」会伪装成一个表现优异的通道 |
 
-**本提案不引用的旧读数**:第九/十/十一轮的所有 ATR 分档数字(口径污染);第十八轮保留侧剔尾标记(口径错);上一轮聊天中的四刀落地建议与「P0 可直接上」表述;**溯源轮 v1 判别脚本的全部 eta²/t 读数(量纲错,⑩)**;**`net_recov` 求和得出的持有反事实美元数(⑪)**;**「C12 命中/择时归因被推翻」的说法(⑨,该归因成立)**。
+**本提案不引用的旧读数**:第九/十/十一轮的所有 ATR 分档数字(口径污染);第十八轮保留侧剔尾标记(口径错);上一轮聊天中的四刀落地建议与「P0 可直接上」表述;**溯源轮 v1 判别脚本的全部 eta²/t 读数(量纲错,⑩)**;**`net_recov` 求和得出的持有反事实美元数(⑪)**;**「C12 命中/择时归因被推翻」的说法(⑨,该归因成立)**;**「deterministic 规则通道优于 LLM 通道」的推论(⑫,标签污染假信号,真链 n=5 且方向相反)**。
 
 ---
 
@@ -443,7 +449,7 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 
 ### R1 — 2026-10-02(作者:Hermes Agent)
 
-用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(14 个脚本入库:12 回放 + 2 守卫;溯源轮另加 6 个见 R2)+ 6 轮自我更正(§11)得出:
+用户问「选什么标的范围和策略方向能降低入场即错」。经 18 轮回放(14 个脚本入库:12 回放 + 2 守卫;溯源轮另加 9 个见 R2/R3)+ 6 轮自我更正(§11)得出:
 
 1. **问题路径本身需要修正**:标的范围过滤降的是**费用**(费bps 12.1→7.6、净额 −1494→+734),不是**入场即错率**(26.8%→25.6%)。「入场即错」随入场时刻呈梯度(E3)、在各标的切片间无差异(E4)⇒ 是择时轴。
 2. **减法轴全线不过本仓预注册门**:四刀被砍人群误杀率 43–67% > 40%(E5),唯一过门的是现役闸 37%(E6)。上一轮聊天里的落地建议**全部撤回**(§11 ⑤)。
@@ -458,11 +464,22 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 
 1. **加深分析不是杠杆 —— 8/8 轴全否决**(C12 红线,已登记)。预注册判据 G2 单调或两端差≥10pp / G3 **eta²≥5%** / G4 Welch \|t\|≥2 / G5 逐月档间极差≥10pp / G8 最大档占比≤50%。实测 `confidence` eta²=**0.07%**(四档死率 23.1/26.3/26.2/26.3% = 零梯度)、`decision_conf` 1.47%、`risk_reward` 1.15%、`ok_dimensions` popcount 2.29%、`model_used` 1.00%、`vol_bucket` 1.04%、`signal_confidence` 4.14%、`signal_strength` 0.89% ⇒ **无一过 G3+G4+G8**。
 2. **同尺横评:A 组(分析产物)max eta²=2.29% / 中位 1.10% vs B 组(市场状态轴)max eta²=2.12% / 中位 1.03%** ⇒ 两组同尺且都远低于 5% 门。**入场时刻(小时)eta²=5.59% 是唯一过门的轴**,但 G5 失败(逐月差 +4.9/+20.7/+2.5pp,仅 8 月 t=−2.88 显著)⇒ 归因成立(C12 反例判据未命中:11+12时合并死率 34.3%>25% 且粗分档单调)但**不可作静态门**,处置仍是 F5(移交既有影子)。
-3. **反直觉实锤(直接挑战「更深分析→更少入场错」)**:`model_used=deterministic`(**非 LLM** 规则通道)死率 **14.0%**(n=50)< `qwen3.7-max`(主力 LLM)**25.5%**(n=247)< `glm-5.2` **34.8%**(n=23);9 月分层复核仍成立(deterministic 11.1% / qwen3.7 14.3% / glm 24.1%)⇒ **规则通道优于 LLM 通道**。加深 LLM 分析在这份数据里没有对应的死单率收益。
+3. **~~反直觉实锤~~ ⚠️ 该条已撤回(同日,规则 54.3 前科命中)**:原判「`model_used=deterministic`(**非 LLM** 规则通道)死率 **14.0%**(n=50)< `qwen3.7-max` 25.5%(n=247)< `glm-5.2` 34.8%(n=23)⇒ 规则通道优于 LLM 通道」—— **是假信号**。按 `decision_id` 前缀交叉验真归属(规则 54.3:类别/通道列引用前必须 grep 写入侧 `or "` 兜底并用 id 前缀验证)后实测:deterministic 组 50 笔中 **45 笔(90%)是 `DA-` 前缀被错标**(写入侧缺口 → `pipeline.py:3227` 的 `or "deterministic"` 兜底;`db.py:1004` 另有 SKIP 占位行硬编码同值),真·确定性链仅 **n=5、死率 40.0% > LLM 组 29.5%** ⇒ **方向相反**,且 n=5 **不可判定**。⇒ 本条**不构成**对「更深分析→更少入场错」的反证;C12 红线的依据退回 eta²=1.00%<5% + G8 FAIL(且该列标签已被污染,更不该建门)。详见 §11 ⑫。
 4. **DA vs UE 源通道**:DA 23.6%(n=403)vs UE-feed 29.9%(n=87),差 +6.3pp,**逐月同号 3/3(7月 +3.0 / 8月 +3.9 / 9月 +12.6pp)= G5 PASS**,但 eta²=1.14% <5% ⇒ 按 skill 纪律(eta²<5% 的因子不配驱动仓位/配额)**只作方向呈报,不建门**。与 R1 撤回「砍 UE·LONG」一致:P3(RFC-117 重开后)n=0 仍无发言权。
 5. **J3 新发现:死单基率自身在快速下降** —— 7月 **32.4%**(n=185,净 −939)→ 8月 **29.5%**(n=207,净 −242)→ 9月 **16.5%**(n=176,净 +113),7月 vs 9月 Welch **t=+3.59** 显著,Δ=**−16.0pp**。⇒ 既有机制迭代(blackout 8/15 放宽、chase_cap RFC-120、偏斜门、be_0.4+方案A)已在降死单率,**这是比任何静态筛选轴都大的杠杆**;也解释了为何 8 月单月主导时刻轴(J1)—— 基线在动,静态阈值必然漂移。
 
 **本轮落地**:C11(跳空仓禁放宽SL/补仓,四重证伪)+ C12(禁以加深 DA/UE 分析降入场即错,八轴证伪)两条红线写入 `docs/ADJUDICATED-CRITERIA.md`;6 个脚本入库并逐个冒烟 rc=0;§11 追加自曝 ⑨⑩⑪(C12/G5 判据混用、v1 量纲污染、`net_recov` bool 当金额求和)。**仍未落地任何交易行为变更。**
+
+### R3 — 2026-10-02 deterministic 通道溯源(作者:Hermes Agent;用户裁「同意既有机制迭代跑」+ 要求溯源 deterministic 死率)
+
+用户批准 R2 建议 2(继续让既有机制迭代跑)并要求溯源 deterministic 通道死率。按 skill 规则 54.3 先证伪「缺失默认值冒充独立通道」再谈结论,三探针得出:
+
+1. **R2 第 3 条「规则通道优于 LLM」是假信号,已撤回**(§11 ⑫)。`model_used='deterministic'` 组 n=50 中 **45 笔(90%)是 `DA-` 前缀被错标**(E43);真·确定性链仅 **n=5、死率 40.0% > LLM 组 29.5%** ⇒ **方向相反**,且 n<30 不可判定(E44)。C12 红线依据退回 eta²=1.00%<5% + G8 FAIL(标签被污染 ⇒ 更不该建门),红线本身不受影响。
+2. **成因是写入侧缺口,不是陈旧覆盖**(E45)。按 `did日期 vs date列` 拆分:A 组陈旧覆盖退化 **n=5**(全 9/1,与 `db.py:41` 记录的守卫事件逐字一致);B 组 **n=122** did日期==date列 = 无覆盖 ⇒ DA 侧**从未写 `model_used`**(122 行 `raw_instruction_json` 零 `model*` 键),被 `pipeline.py:3227` 的 `or "deterministic"` 兜底吞掉。9月起 DA- 行 **46.8%(123/263 = A组陈旧覆盖 5 + B组写入缺口 118)** 被错标。
+3. **B 组不是占位行,是真 DA 产出**(E46)。含 **59 真指令行**(BUY 46 / SELL_SHORT 13),其中 **41 笔已成交结算、死率 9.8%、净 +225.3**;另 63 行 SKIP **全部有 `entry_price`+`atr_pct`、conf 恒 70** ⇒ 是 DA 真分析后被门拦下(主因:方向偏斜 guardrail 46 行),不是 `db.py:1004` 那类反事实占位行。B∩Q 交集 **0** ⇒ 与「写了真模型名」的 394 行是**两条互斥写入路径**。
+4. **定性 P2 遥测缺口,立项 F7**(零活消费方):唯一读取点 `intraday_reentry.py:385` 只判 `!= "intraday_reentry_v1"`,错标 deterministic 不影响其逻辑;`db.py:323` 注释声称的「scorecard 按模型分层」在仓内**零命中** ⇒ 不构成 P0。但它是 ⑫ 假信号的直接成因 ⇒ 修法 = DA skill 侧写真模型名 + 兜底值改 `unknown`(缺失默认值不得伪装成通道名),与 F4 同批落。
+
+**方法论教训(已固化进 skill)**:引用任何**通道/模型/策略名**列做人群对比前,必须先 grep 写入侧 `or "`/`COALESCE` 兜底 + 用 `decision_id` 前缀交叉验真归属。否则「缺失默认值」会伪装成一个表现优异的通道,并且**看起来逐月稳定**(本案 9 月分层复核也「成立」,因为污染本身就集中在 9 月)。
 
 ---
 
@@ -483,7 +500,7 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | `scripts/deb20261002_final_combo.py` | K1+K2+K3 最终组合 + 两个落地前提核验(E2/E18) |
 | `scripts/deb20261002_power.py` | F2 腿功效/MDE + 死单率切片 + 时刻分布 + 供给面(E3/E4/E8/E25) |
 | `scripts/deb20261002_atr_zero_diagnosis.py` | ATR 口径污染诊断:NULL/零值哨兵计数、百分数口径分档×方向双窗(E10b/E12) |
-| `scripts/deb20261002_verify_claims.py` | **一键复查守卫**:解析本文档 C 表+E 表 54 条命令逐条实跑 + E 表抽样逐字比对 + 调 doc_guard。复查者先跑这个 |
+| `scripts/deb20261002_verify_claims.py` | **一键复查守卫**:解析本文档 C 表+E 表 58 条命令逐条实跑 + E 表抽样逐字比对 + 调 doc_guard。复查者先跑这个 |
 | `scripts/deb20261002_doc_guard.py` | 文档结构守卫:表格块列数一致 / 章节号无缺号重号 / 内部 §引用无悬空 |
 | `scripts/deb20261002_gap_recovery.py` | **R2/C11** 隔夜跳空族回翻率逐族对比(读仓内既有产物,注明 `net_recov` 是 bool 不是金额) |
 | `scripts/deb20261002_gap_sl_replay.py` | **R2/C11** SL 网格 gap-aware 精确模拟(5/7/8/10/15%)+ 补仓破帽算术(medium tier 帽 $7,947) |
@@ -491,3 +508,6 @@ PYTHONPATH=. venv/bin/python scripts/deb20261002_verify_claims.py
 | `scripts/deb20261002_da_ue_preflight.py` | **R2/C12** 填充率 + join 扇出核查 + 语义采样(量纲陷阱的取证脚本) |
 | `scripts/deb20261002_da_ue_discrim.py` | **R2/C12** 八轴判别力 G2–G8 全套判据(**v2 量纲修正版**;v1 因分桶阈值猜错作废未入库) |
 | `scripts/deb20261002_da_ue_verdict.py` | **R2/C12** J1 时刻轴 G5 复核 / J2 DA vs UE 逐月同号 / J3 死单基率月度趋势 |
+| `scripts/deb20261002_model_used_trace.py` | **R3/F7** `model_used` 标签真伪拆解:按 `decision_id` 前缀交叉验真归属 + 真确定性 vs 退化污染 vs LLM 三组死单率(E43/E44) |
+| `scripts/deb20261002_model_used_cause.py` | **R3/F7** 成因定性:A 陈旧覆盖退化(did日期≠date列)vs B 写入侧缺口(did日期==date列)+ raw_json model 键取证 + 占比(E45) |
+| `scripts/deb20261002_model_used_b_cause.py` | **R3/F7** B 组收口:SKIP 占位 vs 真指令行判别 + B∩Q 互斥写入路径(E46) |

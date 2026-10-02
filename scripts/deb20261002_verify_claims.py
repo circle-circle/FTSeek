@@ -76,7 +76,7 @@ for eid, ln, c, why in bad_run:
     print(f"   🔴 {eid} line{ln}: {c}\n      {why}")
 
 # ── 2. E 表抽样重验 (期望行逐字命中) ──────────────────────────
-SAMPLE = ["E1", "E5", "E8", "E11", "E13", "E26", "E37", "E41"]
+SAMPLE = ["E1", "E5", "E8", "E11", "E13", "E26", "E37", "E41", "E44", "E46"]
 print(f"\n=== E 表抽样重验 {SAMPLE} ===")
 sample_fail = []
 for eid, ln, cmdcell, cs in targets:
