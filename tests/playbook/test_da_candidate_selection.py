@@ -127,7 +127,11 @@ class TestRfc117SharedMomentum:
 
     def test_ue_candidate_record_fields_survive_bridge_and_db(self):
         source = SKILL_PIPELINE.read_text(encoding="utf-8")
-        for field in ("ue_direction", "ue_confidence", "ue_scanned_at"):
+        for field in ("ue_direction", "ue_confidence", "ue_scanned_at", "ue_batch_id",
+                      "ue_evidence_citation_state", "ue_confidence_basis",
+                      "ue_confidence_calibration", "ue_counter_evidence",
+                      "ue_event_phase", "ue_move_basis",
+                      "ue_transmission_confirmation_required"):
             assert f'candidate.get("{field}"' in source
 
     def test_ue_candidate_metadata_reaches_signal_snapshots(self):
@@ -477,7 +481,11 @@ class TestUeFeedBatch:
         assert ue["symbol_normalized"] == "US.HHH"
         assert {"ue_causal_chain", "ue_invalidation", "ue_horizon_hours",
                 "ue_expected_move_pct", "ue_self_tier", "ue_short_check",
-                "ue_streak_days", "ue_scanned_at"} <= set(ue["fields_passthrough"])
+                "ue_streak_days", "ue_scanned_at", "ue_batch_id",
+                "ue_evidence_citation_state", "ue_confidence_basis",
+                "ue_confidence_calibration", "ue_counter_evidence",
+                "ue_event_phase", "ue_move_basis",
+                "ue_transmission_confirmation_required"} <= set(ue["fields_passthrough"])
 
 
 # ══ 10. 兼容包装 / fail-open ═════════════════════════════════════════════

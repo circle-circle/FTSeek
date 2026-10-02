@@ -59,6 +59,14 @@ FIELD_RULES = {
     #   P4 unit_cell_daily_readout 全漏斗 LLM 段分层。
     "evidence_citation_state": {"min_unique": 2, "max_top_share": 0.95,
                                 "min_entropy": 0.20},
+    "confidence_basis": {"min_unique": 2, "max_top_share": 0.95,
+                         "min_entropy": 0.20},
+    "event_phase": {"min_unique": 2, "max_top_share": 0.95,
+                    "min_entropy": 0.20},
+    "move_basis": {"min_unique": 2, "max_top_share": 0.95,
+                   "min_entropy": 0.20},
+    "borrow_data_basis": {"min_unique": 2, "max_top_share": 0.95,
+                          "min_entropy": 0.20},
 }
 
 
@@ -153,10 +161,15 @@ def collect(days: int) -> list:
         results.append(check_field(
             "ue_instruction", "confidence",
             [c for _d, c in ue if c is not None]))
-        for field in ("raw_confidence", "self_tier", "rubric_score"):
+        for field in ("raw_confidence", "self_tier", "rubric_score",
+                      "confidence_basis", "event_phase", "move_basis"):
             vals = [(_d.get("origin") or {}).get(field) for _d, _c in ue]
             vals = [v for v in vals if v is not None]
             results.append(check_field("ue_instruction", field, vals))
+        vals = [((_d.get("origin") or {}).get("short_check") or {}).get(
+            "borrow_data_basis") for _d, _c in ue]
+        vals = [v for v in vals if v is not None]
+        results.append(check_field("ue_instruction", "borrow_data_basis", vals))
 
     # ── UE 扫描级 (inject 前视图, v2.9 依从监控口径) ──
     scan_rows = [r for r in _read_jsonl(_UE_SCAN_LOG)
@@ -165,9 +178,14 @@ def collect(days: int) -> list:
     surfaced = [s for r in scan_rows for s in (r.get("surfaced") or [])
                 if isinstance(s, dict)]
     for field in ("confidence", "self_tier", "rubric_score",
-                  "evidence_citation_state"):
+                  "evidence_citation_state", "confidence_basis",
+                  "event_phase", "move_basis"):
         vals = [s[field] for s in surfaced if s.get(field) is not None]
         results.append(check_field("ue_scan", field, vals))
+    vals = [(s.get("short_check") or {}).get("borrow_data_basis")
+            for s in surfaced]
+    vals = [v for v in vals if v is not None]
+    results.append(check_field("ue_scan", "borrow_data_basis", vals))
 
     return results
 

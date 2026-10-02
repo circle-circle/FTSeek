@@ -168,15 +168,26 @@ class TestNormalizeSurfacedWiring:
                     "evidence_grounded"):
             assert key not in got, key
 
-    def test_does_not_change_grounded_tier_or_confidence(self, index_loaded):
-        """红线: 三态是附加留痕, 不是新闸门。"""
+    def test_entity_and_not_found_do_not_change_confidence(self, index_loaded):
+        """红线: 非传导三态是附加留痕, 不是新闸门。"""
         for ev, sym in ((HARD, "VRTX"), (MACRO, "KRE"), ("凭空编造的一句", "ZZZ")):
             got = ue._normalize_surfaced(_raw(symbol=sym, ev=ev), with_tier=True)[0]
             assert got["evidence_grounded"] == ue._evidence_grounded(
                 ev, [e["text"] for e in _index()])
             assert got["self_tier"] == "HARD_EVENT"
-            assert got["confidence"] == 0.8
-            assert got["clamped"] is False
+            if got["evidence_citation_state"] != "transmission_assumed":
+                assert got["confidence"] == 0.8
+                assert got["clamped"] is False
+
+    def test_transmission_assumed_confidence_is_calibrated(self, index_loaded):
+        got = ue._normalize_surfaced(_raw(symbol="KRE", ev=MACRO), with_tier=True)[0]
+        assert got["evidence_citation_state"] == "transmission_assumed"
+        assert got["confidence"] == 0.55
+        assert got["raw_confidence"] == 0.8
+        assert got["confidence_calibration"]["reasons"] == [
+            "transmission_assumed_cap_0.55",
+            "transmission_requires_market_confirmation",
+        ]
 
     def test_fabricated_ref_still_passes_through_when_enforce_off(self, index_loaded):
         """not_found 在 enforce=false 下**不拦不改** — 本轮不借此打开强制门。"""
@@ -239,6 +250,15 @@ class TestCardinalityRegistration:
         rule = sfc.FIELD_RULES["evidence_citation_state"]
         assert rule["min_unique"] == 2
         assert sfc.DEFAULT_RULE["min_unique"] > rule["min_unique"]
+
+    def test_v214_enum_fields_registered_in_shadow_cardinality(self):
+        import scripts.shadow_field_cardinality as sfc
+        for field in ("confidence_basis", "event_phase", "move_basis",
+                      "borrow_data_basis"):
+            assert field in sfc.FIELD_RULES
+            assert sfc.FIELD_RULES[field]["min_unique"] == 2
+            assert sfc.FIELD_RULES[field]["min_unique"] < (
+                sfc.DEFAULT_RULE["min_unique"])
 
     def test_consumer_registered_in_source(self):
         """无消费方的字段一律删 (P7 军规) ⇒ 消费方必须写在代码里, 不只写在 DEB。"""

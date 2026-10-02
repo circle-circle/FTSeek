@@ -579,6 +579,7 @@ class FutuLV3Provider:
                                         float(row.get("bid_price", 0) or 0) > 0
                                         and float(row.get("ask_price", 0) or 0) > 0
                                     ),
+                                    "update_time": str(row.get("update_time", "") or ""),
                                     "timestamp": time.time(),
                                 }
                                 updated += 1
@@ -1002,6 +1003,7 @@ class FutuLV3Provider:
                             "bid_vol": 0.0,
                             "ask_vol": 0.0,
                             "data_source": "futu_lv3_subscribed",
+                            "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
                             "delay_ms": "<100",
                         }
@@ -1056,6 +1058,7 @@ class FutuLV3Provider:
                             "pre_price": float(row.get("pre_price", 0) or 0),
                             "pre_change_rate": float(row.get("pre_change_rate", 0) or 0),
                             "data_source": "futu_lv3",
+                            "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
                             "delay_ms": "<10",  # LV3 延迟 < 10ms
                         }
@@ -1202,6 +1205,7 @@ class FutuLV3Provider:
                             "pre_price": float(row.get("pre_price", 0) or 0),
                             "pre_change_rate": float(row.get("pre_change_rate", 0) or 0),
                             "data_source": "futu_lv3",
+                            "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
                         }
 

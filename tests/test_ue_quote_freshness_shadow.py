@@ -497,9 +497,7 @@ def _alias_writers_and_callers(src: str):
 
 
 class TestAliasConfinedToGateOffPaths:
-    """边界钉子 (2026-09-15 补口): `alias`(把我方**抓取时刻**当行情时点) 只允许存在于
-    **新鲜度门关着**的路径 —— 现役唯一合法用法是 UE 扫描期初筛 (`max_quote_age_sec=1e12`
-    + 纯读不落库 + 落 `source_asof_basis` 标注)。
+    """边界钉子: 任何路径都不得把我方**抓取时刻**写成行情源时点。
 
     实测依据 (§22.5): `alias` **会洗白真陈旧** 1/5 (AXON 别名口径 −10s"很新鲜" / 交易所
     口径 159.1s 已超阈)。若同一套逻辑进了 inject/执行侧 (90s 真执法), 就会把真陈旧判成
@@ -531,18 +529,15 @@ class TestAliasConfinedToGateOffPaths:
         assert "stale_quote" in sc2["reasons"], "门没牙 ⇒ 上面的'不判 stale'就不构成证据"
         assert sc2["status"] == "REJECT"
 
-    def test_scan_phase_normalizer_is_confined_to_prescreen(self):
-        """源码钉: 在 `llm_universe_scan.py` 里, 把抓取时刻写进 `source_asof` 的**只有**
-        `_prescreen_quotes_with_asof`, 且它**只被初筛** (`_prescreen_input_symbols`) 调用。
+    def test_scan_phase_has_no_alias_writer(self):
+        """源码钉: `llm_universe_scan.py` 不存在把 `timestamp` 写成 source_asof/update_time 的归一写点。
 
         一旦它被 inject 侧复用, "新鲜度门关着的路径"这个前提就不成立了 ⇒ 直接洗白真陈旧。
         """
         src = (_ROOT / "scripts" / "llm_universe_scan.py").read_text(encoding="utf-8")
         writers, callers = _alias_writers_and_callers(src)
-        assert writers == {"_prescreen_quotes_with_asof"}, (
-            f"归一写点跑到别的函数里了 (别名口径可能已进入门开着的路径): {writers}")
-        assert callers == {"_prescreen_input_symbols"}, (
-            f"归一函数被非初筛路径调用 ⇒ alias 将进入真实执法的门: {callers}")
+        assert writers == set(), f"别名写点不得存在: {writers}"
+        assert callers == {"_prescreen_input_symbols"}
 
     def test_checker_can_fail_positive_control(self):
         """阳性对照: 检查器对"写点搬到 inject 侧"的合成源**必须报出来** (否则它是恒绿的尺子)。"""

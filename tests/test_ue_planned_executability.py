@@ -27,6 +27,7 @@
 (见 DEB §20 回滚段)。
 """
 import ast
+import hashlib
 import inspect
 import json
 import os
@@ -863,7 +864,7 @@ class TestBuildPlannedExecutability:
         """v1→v2 是 blob 口径升版; 与 prompt 尺子 (PROMPT_VERSION/BRIEF_TEMPLATE_VERSION)
         必须继续分离 —— 改预览口径不等于改模型输入。
         """
-        assert ue.PLANNED_PREVIEW_VERSION == "ue_planned_v2"
+        assert ue.PLANNED_PREVIEW_VERSION == "ue_planned_v3"
         assert ue.PLANNED_PREVIEW_VERSION != ue.PROMPT_VERSION
         assert ue.PLANNED_PREVIEW_VERSION != ue.BRIEF_TEMPLATE_VERSION
 
@@ -1005,12 +1006,10 @@ class TestNoModelInputDrift:
     """P3.3-3.5 不碰模型输入 — 四项指纹必须原样 (与 P3.1 收口时逐值相同)。"""
 
     def test_prompt_rulers_unchanged(self):
-        # 版号钉跟当前版号走 (v2.13 = 2026-09-14 市场佐证段时点诚实化); 哈希/长度两条
-        #   是**真正的**"不碰 SYSTEM_PROMPT_V2"钉子 —— 本批为 brief 侧变更, 两者不得移动。
-        assert ue.PROMPT_VERSION == "v2.13"
-        assert ue.PROMPT_HASH_V2 == "70e4680597af"
-        assert len(ue.SYSTEM_PROMPT_V2) == 2582
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v4"
+        assert ue.PROMPT_VERSION == "v2.14"
+        assert ue.PROMPT_HASH_V2 == hashlib.sha1(
+            ue.SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v5"
 
     def test_compute_numbers_return_shape_unchanged(self):
         """P3.3-3.5 没动 _compute_numbers ⇒ 返回面仍是 P3.1 的 4 键。"""

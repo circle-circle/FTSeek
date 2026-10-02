@@ -163,7 +163,7 @@ def brief_evidence_index() -> List[Dict[str, Any]]:
     return [{k: e.get(k) for k in EVIDENCE_SCHEMA} for e in _BRIEF_EVIDENCE]
 
 
-PROMPT_VERSION = "v2.13"  # scan 落库归因戳; v2.13=市场佐证段**时点诚实化** (2026-09-14, DEB-20260914-premarket-data-validity-audit §一 P1-3, 用户裁"诚实化+补时点标签"): [市场佐证] 三条源 (DA 日更盘前轮动 / 机械 capture 回退源 / 当日盘中脉搏) 的渲染行补齐**数据时点口径** —— 修前模型看到的是**无日期**的 "轮入板块: XLK(Technology) +1.32%", 无从判断是今日还是上一交易日, 而实测该回退源的数字**本就是上一交易日收盘**(capture 的 date 是采集时刻 ET 日期, cron ET 00:30) 且 `published_at` 也照抄该采集日 ⇒ 时点错一个交易日; 同批修①生产两窗 (ET 07:40 da_feed / 09:10) 结构上永不成立却挂着"盘中板块脉搏(实时)"标签的**失实声明**(实测唯一命中者是 ET 12:30 的 `--midday` **只读影子** ⇒ 该输入从未进过任何生产指令), ②`_age_days` 负数(未来日期)被放行的守卫缺口, ③脉搏分支 `except: pass` 静默吞错 → 显式留痕。**刻意不放宽守卫**: 盘前仍不注入上一交易日脉搏 — DEB-20260729 §十 作者按其价值判断"建议不修"(pulse 真归宿是盘中板块 veto, 至今仍在参数冻结后排队), 本批只消除"宣称有而实际没有"的静默, 不改变该价值判断; 材料一条不增不外扩、全程 fail-open; ⚠ 与 v2.11/v2.12 同族盲区**第三次出现**: 本变更改的是 brief(user)侧渲染 ⇒ `PROMPT_HASH_V2` 只哈希 SYSTEM_PROMPT_V2 故**哈希不变**(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.12 前后**; 分段必须改用本批同步升版的 `BRIEF_TEMPLATE_VERSION=ue_brief_v4` + `brief_template_hash`/`brief_content_hash` (三指纹基建见 P2.5, 已于 2026-09-13 起落进 scan 与 thinking-eval 两条记录) — 即"缺口已兑现": 用户裁要分段时历史轮次**有键可切**; ⚠ 另: thinking-eval 预注册判据 (ledger cron 1e96c03c945e, 到期 2026-09-22) 的切分键是 `prompt_hash`, 本批**不动判据**(改判据＝改尺子须用户裁, DEB-20260910 §17.6 已在待裁项), 但本批使该序列新增一个 brief 分段点(v3→v4), 故 9/22 读数须按 `brief_template_version` 分段后再判"有效轮次"; v2.12=P2.2 输入具名标的可交易性初筛段 (2026-09-12, DEB-20260910 §17 / proud-slope-falcon, 用户裁"按设计计划执行落地"): clue brief 末尾按 **P1 同一资格口径**追加"可作直接交易候选 / 仅背景(context_only) / 未定(缺数据)"三态清单 —— 属 brief(user)侧**输入变更**, 故升版; 材料一条不删、全程 fail-open、扫描期口径刻意不含执行时微结构门(报价新鲜度/点差/借券, 见 _scan_phase_policy); ⚠ 与 v2.11 同族盲区**再次出现**: PROMPT_HASH_V2(:195) 只哈希 SYSTEM_PROMPT_V2 ⇒ 本变更不改哈希(仍 70e4680597af), 按 prompt_hash 切分的口径**分不开 v2.11/v2.12**; 分段请改用本批同时落库的 brief_template_version(=ue_brief_v3) / brief_template_hash / brief_content_hash —— P2.5 已把该基建补上, 所以这次是"缺口已兑现"而非"又添一个盲区"(盲区记录见下方 v2.11 段与 tests/test_ue_contract_validator.py::test_brief_only_bump_leaves_hash_identical_to_v210); 同批 P2.4 引证三态 / P2.6 空转跳批均为**代码侧附加留痕与预算守卫**, 不改模型输入, 不单独占版号; v2.11=负反馈表口径两处修 (2026-09-11, DEB-20260910 §11.1/§11.6-item6/§11.8, 用户裁"核查确认无误按建议执行"+"升 v2.11 记 U1, 缺口另立项"): ①U1 反号修(本 U1 = DEB-20260910 编号, 非下方 v2.9 段旧 U1) — 删读侧二次签名(写侧 ic_tracker 已按方向签名), 修前自 2026-07-25 起 UE SHORT 有 fwd 共 66 条、66/66 标签反转, 其中 41 条做对的空头被标"推错"喂进抑制规则; ②U1b 零收益三态 — adj==0 由归入 ✗ 改判 ＝, 表头与抑制规则同步定义三态并显式排除 ＝ 计入「连续推错」, 判定用精确零不用显示舍入(否则 08-11 US.CVX 真值 +0.0249% 会被误判中性); ⚠️归因盲区就地声明: 本版两处均在 brief/user 侧, 而 PROMPT_HASH_V2(:126) 只哈希 SYSTEM_PROMPT_V2 ⇒ 升版号不改变哈希, brief 侧指纹基建缺口按用户裁另立项(§11.6-item6), 不得据 v2.11 认定 brief 变更已被指纹覆盖; v2.10=失效条件逐metric补单位, 成交量改20日完整日线量比 (2026-09-08); v2.9=kimi收敛稿全文重写55→26行 (2026-09-05, PROPOSAL-20260905 U4, 用户裁"如无问题可以实施"): ①字段表补invalidation_triggers进JSON示例(v2.8漏,E3规律"示例没有≈不存在",实测填充率仅36%); ②LONG示例short_check/skip_reason改null+新增完整SHORT示例(v2.8示例自违null规则=教错误行为); ③删"充分浮现不设数量上限"(放量偏置,质量分层由tier闸接管); ④删板块级联/结构约束/回调优先三散文(不可测不依从,U1渲染侧+U3 tier闸已对冲); ⑤夹逼写成可预期事实("代码将核验/封顶")替代"自律约束"; v2.8=E3-fix 输出模板 {字段...} 占位展开为显式字段列表(含 invalidation_triggers) — E3 8臂实弹: 只改措辞强度 0%→0%, 字段写进 JSON 模板即 83-100% 填充且全过白名单 (2026-08-31, DEB-20260830第5轮, 用户裁"按建议先执行"); v2.7=invalidation_triggers 强制≥1条→可空数组降级 (2026-08-30, DEB-20260829第7轮, 0/208填充实测); v2.6=SKIP skip_reason 字段 (2026-08-25, DEB-ue-audit U4, 拒绝可归因); v2.5=删死止损规则 (2026-08-16, DEB-fullchain #23) + 版本戳/归因修复 (2026-08-25, DEB-ue-audit U1); v2.4=结构约束前置+回调优先 (2026-08-09, DEB-20260808 §17.1); v2.3=板块级联 (07-28); v2.2=可证伪字段+证据清单 (07-25)
+PROMPT_VERSION = "v2.14"  # v2.14=证据分层/校准/反证/事件阶段契约 (2026-10-02)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -190,34 +190,20 @@ SYSTEM_PROMPT_V2 = (
     "你是资深事件驱动型美股分析师。职责: 从给定材料浮现受事件/市场驱动的可交易美股标的, 多空对等, 质量分层由下游代码执行。\n"
     "输出契约(逐字段, 缺字段=违约):\n"
     "1. symbol: 美股代码不带前缀, 只输出真实可交易标的; direction: LONG/SHORT/SKIP, 不确定=SKIP。\n"
-    "2. evidence_ref: 引用给定材料中的具体证据原文(新闻标题/异动数据/人工线索); 仅凭行业常识或板块联想则留空字符串。"
-    "代码将核验引证真实性, 空引证将被强制降级。\n"
-    "3. self_tier: HARD_EVENT=因果链锚定evidence_ref里的具体事件(封锁/战争/财报/监管/事故); "
-    "MARKET_CORROBORATED=无具体事件但evidence_ref是真实市场异动/板块轮动数据; THESIS_ONLY=evidence_ref为空仅逻辑联想。\n"
-    "4. causal_chain: 事件→传导→标的一句话; thesis: 交易论点≤60字(THESIS_ONLY必须以'板块联想:'或'逻辑推演:'开头)。\n"
-    "5. confidence: 0~1小数, 如实反映证据强度(HARD_EVENT>MARKET_CORROBORATED>THESIS_ONLY; 空引证者将被代码封顶0.60)。\n"
-    "6. invalidation: 一句话失效条件≤40字(非SKIP必填); invalidation_triggers: 代码可判定失效条件数组, "
-    "每条{metric,operator,value}, metric限收盘价/量比/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字。"
-    "收盘价单位=USD; 量比=当日累计成交量÷最近20个完整交易日平均成交量(无量纲, 如2.0); 两个涨跌幅指标单位=百分比百分点(如-5); 无可判定条件填[]。\n"
-    "7. evidence_checklist: {catalyst_specific,catalyst_within_24h,price_volume_confirmed,crowding_low}均bool, 如实勾选不得美化。\n"
-    "8. horizon_hours: 预期兑现时效整数小时(日内动量4-8); expected_move_pct: 预期方向幅度%小数; "
-    "is_universe_external: bool; winner_loser: WINNER/LOSER; corroborated_by_market: bool。\n"
-    "9. 仅SHORT填short_check对象{borrow_feasible(bool),downside_catalyst_expiry_hours(int),squeeze_risk(1-5)}, 非SHORT填null; "
-    "无具体下跌催化剂(仅'估值高'/'涨多了')的SHORT不得浮现。仅SKIP填skip_reason一句话, 非SKIP填null。\n"
-    "不输出任何价格数字(entry/止损/止盈由下游代码计算)。严格只输出JSON, 字段与顺序与示例完全一致:\n"
+    "2. evidence_ref: 引用给定材料中的具体证据原文; 仅凭行业常识或板块联想则留空字符串。代码将核验引证真实性, 空引证将被强制降级。\n"
+    "3. self_tier: HARD_EVENT/MARKET_CORROBORATED/THESIS_ONLY; confidence_basis: DIRECT_ENTITY/MARKET_CONFIRMED/TRANSMISSION_ASSUMED/THESIS_ONLY。\n"
+    "4. causal_chain必须按固定三段: \"事实:...\"+\"传导假设:...\"+\"市场确认:...\"; 市场未确认就写\"市场确认:未确认\"。counter_evidence: 最强反证≤60字, 非SKIP必填, 找不到明确反证写\"未发现明确反证\"。\n"
+    "5. confidence: 0~1小数。校准规则: 传导假设且无价格量能确认不得超过0.55; 空引证者代码封顶0.60; 不要用乐观预期补偿证据缺口。\n"
+    "6. event_phase: ONE_SHOT(一次性事件)/CONTINUING(持续发酵)/PRICE_IN(已被充分定价)。\n"
+    "7. invalidation: 一句话失效条件≤40字(非SKIP必填); invalidation_triggers数组每条{metric,operator,value}, metric限收盘价/量比/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字; 无可判定条件填[]。\n"
+    "8. horizon_hours: 预期兑现时效整数小时; expected_move_pct: 方向幅度%; move_basis: VOLATILITY_ALIGNED/EVENT_MAP/UNQUALIFIED。若材料给出ATR比例, 预期幅度不得超过2倍ATR%; 无波动依据必须用UNQUALIFIED。\n"
+    "9. evidence_checklist四项均bool, 如实勾选: catalyst_specific/catalyst_within_24h/price_volume_confirmed/crowding_low; 量比=当日累计成交量÷最近20个完整交易日平均成交量。\n"
+    "10. 仅SHORT填short_check{borrow_feasible,borrow_data_basis(MATERIAL/UNKNOWN),downside_catalyst_expiry_hours,squeeze_risk(1-5)}, 非SHORT填null。材料无借券数据时borrow_data_basis=UNKNOWN且borrow_feasible=false; 无具体下跌催化剂的SHORT不得浮现。仅SKIP填skip_reason, 非SKIP填null。\n"
+    "11. is_universe_external/winner_loser/corroborated_by_market按事实填写。不输出任何价格数字(entry/止损/止盈由下游代码计算)。\n"
+    "严格只输出JSON, 字段与顺序与示例完全一致:\n"
     "{\"surfaced\": [\n"
-    " {\"symbol\": \"AAPL\", \"direction\": \"LONG\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"HARD_EVENT\", "
-    "\"causal_chain\": \"事件→传导→标的\", \"thesis\": \"交易论点≤60字\", \"confidence\": 0.72, "
-    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}, {\"metric\": \"量比\", \"operator\": \"<\", \"value\": 0.8}], "
-    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": true}, "
-    "\"horizon_hours\": 6, \"expected_move_pct\": 2.5, \"is_universe_external\": false, \"winner_loser\": \"WINNER\", "
-    "\"corroborated_by_market\": true, \"short_check\": null, \"skip_reason\": null},\n"
-    " {\"symbol\": \"XYZ\", \"direction\": \"SHORT\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"MARKET_CORROBORATED\", "
-    "\"causal_chain\": \"事件→传导→标的\", \"thesis\": \"交易论点≤60字\", \"confidence\": 0.65, "
-    "\"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [], "
-    "\"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": false}, "
-    "\"horizon_hours\": 8, \"expected_move_pct\": 3.0, \"is_universe_external\": true, \"winner_loser\": \"LOSER\", "
-    "\"corroborated_by_market\": true, \"short_check\": {\"borrow_feasible\": true, \"downside_catalyst_expiry_hours\": 24, \"squeeze_risk\": 2}, \"skip_reason\": null}\n"
+    " {\"symbol\": \"AAPL\", \"direction\": \"LONG\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"HARD_EVENT\", \"confidence_basis\": \"DIRECT_ENTITY\", \"causal_chain\": \"事实:...; 传导假设:...; 市场确认:...\" , \"counter_evidence\": \"最强反证\", \"confidence\": 0.72, \"event_phase\": \"CONTINUING\", \"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], \"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": true}, \"horizon_hours\": 6, \"expected_move_pct\": 2.5, \"move_basis\": \"VOLATILITY_ALIGNED\", \"is_universe_external\": false, \"winner_loser\": \"WINNER\", \"corroborated_by_market\": true, \"short_check\": null, \"skip_reason\": null},\n"
+    " {\"symbol\": \"XYZ\", \"direction\": \"SHORT\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"MARKET_CORROBORATED\", \"confidence_basis\": \"MARKET_CONFIRMED\", \"causal_chain\": \"事实:...; 传导假设:...; 市场确认:...\" , \"counter_evidence\": \"最强反证\", \"confidence\": 0.65, \"event_phase\": \"ONE_SHOT\", \"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [], \"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": false}, \"horizon_hours\": 8, \"expected_move_pct\": 3.0, \"move_basis\": \"EVENT_MAP\", \"is_universe_external\": true, \"winner_loser\": \"LOSER\", \"corroborated_by_market\": true, \"short_check\": {\"borrow_feasible\": true, \"borrow_data_basis\": \"MATERIAL\", \"downside_catalyst_expiry_hours\": 24, \"squeeze_risk\": 2}, \"skip_reason\": null}\n"
     "]}"
 )
 
@@ -246,7 +232,7 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 #                           **不可**当分段键 (每天都变)。
 # 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
 #   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
-BRIEF_TEMPLATE_VERSION = "ue_brief_v4"   # v4 = 市场佐证段时点口径 (2026-09-14, PROMPT_VERSION v2.13)
+BRIEF_TEMPLATE_VERSION = "ue_brief_v5"  # v5=初筛ATR输入 + v2.14证据分层契约
                                          #  v3 = P2.1 材料索引 + P2.2 输入初筛段
 # [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
 #   planned_* 记的是"生成时刻的数值与口径", 而 default_stop_pct/default_tp_pct/
@@ -258,7 +244,7 @@ BRIEF_TEMPLATE_VERSION = "ue_brief_v4"   # v4 = 市场佐证段时点口径 (202
 #   切分, 会把"当时刻意没算"(v1) 与"算了但缺数"(v2 的 not_computed_*) 混成一类。
 #   sizing/cost 口径自身的版本另记 planned_executability.PLANNED_EXEC_BASIS_VERSION
 #   (只改借券基准或上限归因时升那个, 不必升 blob 版本)。
-PLANNED_PREVIEW_VERSION = "ue_planned_v2"
+PLANNED_PREVIEW_VERSION = "ue_planned_v3"  # v3=risk_layering + move_calibration
 _LAST_BRIEF_FINGERPRINTS: Dict[str, Any] = {}
 
 
@@ -419,6 +405,17 @@ def _streak_passes(s: Dict[str, Any], max_streak: int) -> bool:
     return _stk <= max_streak
 
 
+def _transmission_confirmation_passes(s: Dict[str, Any]) -> bool:
+    """UE直写通道的传导假设确认门; DA供料不走此门, 由DA辩论独立裁决。"""
+    if s.get("evidence_citation_state") != "transmission_assumed":
+        return True
+    if not bool(_cfg(
+            "universe_expansion.transmission_assumed_require_market_confirmation", True)):
+        return True
+    checklist = s.get("evidence_checklist") or {}
+    return bool(checklist.get("price_volume_confirmed"))
+
+
 # ── [UE-B2 2026-08-29, DEB-20260829 第3轮批准] inject 拒绝落盘 ──
 # 根因 (D3 病灶台账 U3): inject 各拒绝分支只留 stdout — "SHORT 27→9 衰减黑箱"
 #   无法归因。每个被拒候选落一行结构化记录, 连续10交易日后首次成表分解衰减漏斗。
@@ -452,6 +449,8 @@ def _log_inject_reject(surfaced: List[Dict[str, Any]], min_conf: float,
                 reason = f"direction({s.get('direction','')})"
             elif conf < min_conf:
                 reason = f"conf({conf:.2f}<{min_conf:g})"
+            elif not _transmission_confirmation_passes(s):
+                reason = "transmission_confirmation_required(price_volume_not_confirmed)"
             elif sym in positions:
                 reason = "already_in_position"
             elif sym in existing_pb:
@@ -1691,22 +1690,11 @@ def _scan_phase_policy(base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return policy
 
 
-# ── [P2.2-fix 2026-09-15, DEB-20260910 §20 后续] 扫描期报价时戳**键名归一** ──────────
-# 病灶 (2026-09-14 两轮首跑实测): 30/30 受检标的 `missing_fields` 恒含 `source_asof`、
-#   `quote_age_sec=None` ⇒ `evaluate_candidate` 的 PASS 要求"零 missing" ⇒ **`tradeable` 恒空**,
-#   P2 验收①的正向半边从未生效 (负向 `low_atr`/`price_floor` 正常, 零误杀)。
-# 根因不是缺数据, 是**键名错配**: 供应商报价字典带的是 `timestamp` (unix; = 我方取数/入 push
-#   缓存的时刻, 见 `app/data/futu_lv3_provider.py:1098` 与 `:1056`), 而
-#   `app/playbook/candidate_eligibility.py:_source_time` 只认 `source_asof`/`update_time`。
-# ⚠ 为什么**只在扫描期**归一、不去改 SSOT 的 `_source_time`: inject 侧 (:3289) 按
-#   `status != "REJECT"` **真过滤**, 且 inject 用 `load_candidate_policy()` 的
-#   `max_quote_age_sec=90` ⇒ 全局补时戳会**新激活 `stale_quote` 拒绝并真丢候选** =
-#   交易路径行为变更, 按 AGENT.md C4「行为变更一律影子先行」须另立影子批 (已登记待裁)。
-#   扫描期口径本就**不含**新鲜度门 (`_scan_phase_policy` 把 `max_quote_age_sec` 设成 1e12),
-#   所以这里补时戳只让"缺数"不再冒充"未知", **不产生任何新拒绝、不改任何门**。
-# 语义诚实: `timestamp` 是"我方观测到该报价的时刻", **不是**交易所撮合时点 ⇒ 归一后在
-#   summary 里写 `source_asof_basis` 标明口径, 供审计区分 (不当成行情时点用)。
-# fail-open: 预取异常 ⇒ 返回 None, `screen_candidates` 自己取价 (行为逐字退回修前, 不炸本段)。
+# ── [UE freshness P0 2026-10-02] 扫描期报价只认真实源时点 ─────────────────────
+# `timestamp` 是我方抓取/入缓存时刻, 不是交易所报价所属时刻。把它归一成
+# `source_asof` 会把 stale quote 洗成新鲜 (2026-10-01 OXY/VIR 影子实证)。
+# 这里只透传供应商 `source_asof`/`update_time`; 缺真实源时点由 SSOT 判 UNKNOWN。
+# fail-open: 预取异常 ⇒ 返回 None, `screen_candidates` 自己取价, 不炸本段。
 def _prescreen_quotes_with_asof(router, symbols, now=None):
     try:
         from app.playbook.candidate_eligibility import _SYMBOL, canonical_symbol
@@ -1720,19 +1708,15 @@ def _prescreen_quotes_with_asof(router, symbols, now=None):
         print(f"  [warn] 初筛报价预取失败 (退回 screen_candidates 自取价): {exc}")
         return None, 0
     out: Dict[str, Any] = {}
-    normalized = 0
+    genuine_asof = 0
     for key, quote in (raw or {}).items():
         if not isinstance(quote, dict):
             continue
-        row = dict(quote)
-        if not (row.get("source_asof") or row.get("update_time")):
-            stamp = row.get("timestamp")
-            if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
-                row["source_asof"] = float(stamp)
-                normalized += 1
-        out[key] = row
-    print(f"  [prescreen] 报价命中 {len(out)}/{len(canon)}, 时戳键归一 {normalized} 条")
-    return out, normalized
+        out[key] = dict(quote)
+        if quote.get("source_asof") or quote.get("update_time"):
+            genuine_asof += 1
+    print(f"  [prescreen] 报价命中 {len(out)}/{len(canon)}, 真实源时点 {genuine_asof} 条")
+    return out, genuine_asof
 
 
 def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
@@ -1756,7 +1740,7 @@ def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
     summary: Dict[str, Any] = {
         "status": "ok", "named_in_materials": len(ordered),
         "checked": 0, "overflow_skipped": ordered[max_symbols:],
-        "tradeable": [], "context_only": [], "unknown": [],
+        "tradeable": [], "tradeable_details": [], "context_only": [], "unknown": [],
         "policy_version": None, "phase": "ue_input_prescreen",
         "ordering": ordering,
     }
@@ -1782,9 +1766,9 @@ def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
         batch_id = make_batch_id(INPUT_PRESCREEN_SOURCE, now)
         if _quotes is not None:
             summary["quotes_prefetched"] = len(_quotes)
-            summary["source_asof_normalized"] = _n_asof
+            summary["source_asof_available"] = _n_asof
             if _n_asof:
-                summary["source_asof_basis"] = "provider_observation_timestamp"
+                summary["source_asof_basis"] = "provider_exchange_timestamp"
         rows = screen_candidates([{"symbol": s} for s in ordered], router,
                                  source=INPUT_PRESCREEN_SOURCE, batch_id=batch_id,
                                  now=now, policy=policy, quotes=_quotes)
@@ -1805,6 +1789,10 @@ def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
         summary["checked"] += 1
         if status == "PASS":
             summary["tradeable"].append(bare)
+            summary["tradeable_details"].append({
+                "symbol": bare,
+                "screening_atr_ratio": scr.get("screening_atr_ratio"),
+            })
         elif status == "REJECT":
             summary["context_only"].append(entry)
         else:
@@ -1884,8 +1872,18 @@ def _render_input_prescreen(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     lines: List[Dict[str, Any]] = []
     tradeable = list(summary.get("tradeable") or [])
     if tradeable:
+        detail_by_symbol = {
+            str(entry.get("symbol")): entry
+            for entry in (summary.get("tradeable_details") or [])
+            if isinstance(entry, dict)
+        }
+        rendered = []
+        for symbol in tradeable:
+            ratio = (detail_by_symbol.get(symbol) or {}).get("screening_atr_ratio")
+            rendered.append(
+                f"{symbol}(ATR≈{float(ratio) * 100:.1f}%)" if ratio is not None else symbol)
         lines.append(_fact("input_prescreen",
-                           "可作直接交易候选: " + ", ".join(tradeable),
+                           "可作直接交易候选: " + ", ".join(rendered),
                            symbols=tradeable, published_at=_today(),
                            event_key="prescreen_tradeable"))
     for entry in (summary.get("context_only") or []):
@@ -2267,7 +2265,7 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
         item = {
             "symbol": sym,
             "direction": direction,
-            "causal_chain": str(it.get("causal_chain", ""))[:200],
+            "causal_chain": str(it.get("causal_chain", ""))[:400],
             "thesis": str(it.get("thesis", ""))[:120],
             "confidence": round(conf, 3),
             "is_universe_external": bool(it.get("is_universe_external", False)),
@@ -2282,6 +2280,21 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             #   否则"未过核验"会被误记成"模型没给引证"(no_ref), 两种缺陷在账上混成一类。
             _ev_raw = ev
             tier = str(it.get("self_tier", "")).upper().strip()
+            confidence_basis = str(it.get("confidence_basis", "")).upper().strip()
+            if confidence_basis not in (
+                    "DIRECT_ENTITY", "MARKET_CONFIRMED", "TRANSMISSION_ASSUMED", "THESIS_ONLY"):
+                confidence_basis = "UNQUALIFIED"
+            event_phase = str(it.get("event_phase", "")).upper().strip()
+            if event_phase not in ("ONE_SHOT", "CONTINUING", "PRICE_IN"):
+                event_phase = "UNKNOWN"
+            move_basis = str(it.get("move_basis", "")).upper().strip()
+            if move_basis not in ("VOLATILITY_ALIGNED", "EVENT_MAP", "UNQUALIFIED"):
+                move_basis = "UNQUALIFIED"
+            _cl_raw = it.get("evidence_checklist") or {}
+            if not isinstance(_cl_raw, dict):
+                _cl_raw = {}
+            _keys = ("catalyst_specific", "catalyst_within_24h", "price_volume_confirmed", "crowding_low")
+            evidence_checklist = {k: bool(_cl_raw.get(k, False)) for k in _keys}
             _tier_fallback = False  # 2026-08-22 (UE P1): 非法 tier 静默替换留痕, 攒样数据可区分
             if tier not in ("HARD_EVENT", "MARKET_CORROBORATED", "THESIS_ONLY"):
                 tier = "THESIS_ONLY"
@@ -2300,11 +2313,13 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                     ev = ""  # 视同无引证 → 下方 Track A 夹逼接管
             raw_conf = conf
             clamped = False
+            calibration_reasons: List[str] = []
             if not ev:  # Track A 夹逼: 无证据 → 强制降级 (兜底 LLM 不守自律约束)
                 tier = "THESIS_ONLY"
                 if conf > 0.60:
                     clamped = True
                 conf = min(conf, 0.60)
+                calibration_reasons.append("no_evidence_cap_0.60")
             item["evidence_ref"] = ev
             item["self_tier"] = tier
             # [U8] 引证真实性留痕 — 供攒样判误杀率; 未过核验且未开强制时不改变判定
@@ -2326,8 +2341,35 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["evidence_id"] = _cit.get("evidence_id")
             item["evidence_matched_symbols"] = list(_cit.get("matched_symbols") or [])
             item["evidence_matched_source"] = _cit.get("matched_source")
+            if _cit.get("state") == "transmission_assumed":
+                transmission_cap = float(_cfg(
+                    "universe_expansion.transmission_assumed_confidence_cap", 0.55))
+                if conf > transmission_cap:
+                    calibration_reasons.append(
+                        f"transmission_assumed_cap_{transmission_cap:.2f}")
+                    conf = min(conf, transmission_cap)
+                if (direction in ("LONG", "SHORT")
+                        and not evidence_checklist.get("price_volume_confirmed")
+                        and bool(_cfg(
+                            "universe_expansion.transmission_assumed_require_market_confirmation",
+                            True))):
+                    item["transmission_confirmation_required"] = True
+                    calibration_reasons.append("transmission_requires_market_confirmation")
+                if confidence_basis == "DIRECT_ENTITY":
+                    confidence_basis = "TRANSMISSION_ASSUMED"
+                    calibration_reasons.append("confidence_basis_corrected_to_transmission")
+            item["confidence_basis"] = confidence_basis
+            item["event_phase"] = event_phase
+            item["move_basis"] = move_basis
+            item["counter_evidence"] = str(it.get("counter_evidence", ""))[:120]
             item["raw_confidence"] = round(raw_conf, 3)
             item["clamped"] = clamped
+            item["confidence_calibration"] = {
+                "raw": round(raw_conf, 3),
+                "final": round(conf, 3),
+                "reasons": calibration_reasons,
+                "evidence_citation_state": _cit.get("state"),
+            }
             if _tier_fallback:
                 item["_tier_fallback"] = True  # LLM 输出非法 tier, 被代码兜底替换
             item["confidence"] = round(conf, 3)
@@ -2363,14 +2405,8 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                 item["expected_move_pct"] = round(float(it.get("expected_move_pct", 0) or 0), 2)
             except (TypeError, ValueError):
                 item["expected_move_pct"] = 0.0
-            # v2.2 (P2 rubric化): 校准从模型移到代码 — 模型只枚举证据, 分数代码算。
-            #   rubric_score = 四项 checklist 命中数 (0-4), 与 conf 并列落库供相关性对比 (预注册 Q2)。
-            _cl = it.get("evidence_checklist") or {}
-            if not isinstance(_cl, dict):
-                _cl = {}
-            _keys = ("catalyst_specific", "catalyst_within_24h", "price_volume_confirmed", "crowding_low")
-            item["evidence_checklist"] = {k: bool(_cl.get(k, False)) for k in _keys}
-            item["rubric_score"] = sum(1 for k in _keys if _cl.get(k))
+            item["evidence_checklist"] = evidence_checklist
+            item["rubric_score"] = sum(1 for k in _keys if evidence_checklist.get(k))
             # v2.2 (P5 SHORT 高门槛): short_check 解析落库 (纯归因, 不拦不改流程)
             if direction == "SHORT":
                 _sc = it.get("short_check") or {}
@@ -2386,6 +2422,10 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
                     _dce = 0
                 item["short_check"] = {
                     "borrow_feasible": bool(_sc.get("borrow_feasible", False)),
+                    "borrow_data_basis": (
+                        str(_sc.get("borrow_data_basis", "")).upper().strip()
+                        if str(_sc.get("borrow_data_basis", "")).upper().strip() in ("MATERIAL", "UNKNOWN")
+                        else "UNKNOWN"),
                     "downside_catalyst_expiry_hours": _dce,
                     "squeeze_risk": _sqz,
                     "provided": bool(_sc),   # 模型是否交作业 (未交=旧习惯残留, 切片可判)
@@ -2535,14 +2575,36 @@ def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, A
             sc = s.get("short_check") or {}
             if not sc.get("provided"):
                 m.append("short_check")
-            elif int(sc.get("downside_catalyst_expiry_hours") or 0) <= 0:
-                m.append("short_check.downside_catalyst_expiry_hours")
+            else:
+                if int(sc.get("downside_catalyst_expiry_hours") or 0) <= 0:
+                    m.append("short_check.downside_catalyst_expiry_hours")
+                if str(sc.get("borrow_data_basis") or "") not in (
+                        "MATERIAL", "UNKNOWN"):
+                    m.append("short_check.borrow_data_basis")
         elif d == "SKIP":
             if not str(s.get("skip_reason") or "").strip():
                 m.append("skip_reason")
         if d in ("LONG", "SHORT"):
             if not str(s.get("invalidation") or "").strip():
                 m.append("invalidation")
+            if not str(s.get("counter_evidence") or "").strip():
+                m.append("counter_evidence")
+            if str(s.get("confidence_basis") or "") not in (
+                    "DIRECT_ENTITY", "MARKET_CONFIRMED", "TRANSMISSION_ASSUMED", "THESIS_ONLY"):
+                m.append("confidence_basis")
+            if str(s.get("event_phase") or "") not in ("ONE_SHOT", "CONTINUING", "PRICE_IN"):
+                m.append("event_phase")
+            if str(s.get("move_basis") or "") not in (
+                    "VOLATILITY_ALIGNED", "EVENT_MAP", "UNQUALIFIED"):
+                m.append("move_basis")
+            chain = str(s.get("causal_chain") or "")
+            if not all(label in chain for label in ("事实:", "传导假设:", "市场确认:")):
+                m.append("causal_chain_labels")
+            if d == "SHORT":
+                sc = s.get("short_check") or {}
+                if sc.get("provided") and str(sc.get("borrow_data_basis") or "") not in (
+                        "MATERIAL", "UNKNOWN"):
+                    m.append("short_check.borrow_data_basis")
         return m
 
     bad = [(i, s, _missing(s)) for i, s in enumerate(surfaced)]
@@ -2560,7 +2622,7 @@ def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, A
                        "完整补齐值。禁止改动任何其他字段。严格 JSON: "
                        "{\"repairs\": [{\"symbol\": str, \"invalidation\": str(缺失时), "
                        "\"skip_reason\": str(缺失时), \"short_check\": {\"borrow_feasible\": bool, "
-                       "\"downside_catalyst_expiry_hours\": int, \"squeeze_risk\": int}(缺失时)}]}\n\n"
+                       "\"borrow_data_basis\": MATERIAL或UNKNOWN, \"downside_catalyst_expiry_hours\": int, \"squeeze_risk\": int}(缺失时)}]}\n\n"
                        + json.dumps([{"symbol": s.get("symbol"), "direction": s.get("direction"),
                                       "thesis": s.get("thesis"), "causal_chain": s.get("causal_chain"),
                                       "missing": m} for _, s, m in bad], ensure_ascii=False))
@@ -2602,6 +2664,7 @@ def _validate_and_repair_surfaced(surfaced: List[Dict[str, Any]]) -> Dict[str, A
                             _sqz = 0
                         s["short_check"] = {
                             "borrow_feasible": bool(rsc.get("borrow_feasible", False)),
+                            "borrow_data_basis": str(rsc.get("borrow_data_basis") or "UNKNOWN").upper(),
                             "downside_catalyst_expiry_hours": _dce,
                             "squeeze_risk": _sqz,
                             "provided": True,
@@ -3135,7 +3198,59 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
 
 
 # ── inject: 代码出数值 → 写作战计划 (flag 闸门) ─────────────────
-def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
+def _ue_risk_profile(candidate: Optional[Dict[str, Any]],
+                     screening: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """UE直写风险分层: 弱证据/PRICE_IN降档, ATR只做上限不放大风险。"""
+    base_stop = float(_cfg("universe_expansion.default_stop_pct", 3.0))
+    base_tp = float(_cfg("universe_expansion.default_tp_pct", 6.0))
+    profile = "standard"
+    stop_pct, tp_pct = base_stop, base_tp
+    if not bool(_cfg("universe_expansion.risk_layering_enabled", True)):
+        return {"profile": profile, "stop_pct": stop_pct, "tp_pct": tp_pct,
+                "atr_pct": None, "reasons": ["risk_layering_disabled"]}
+    candidate = candidate or {}
+    screening = screening or {}
+    reasons: List[str] = []
+    weak_evidence = (
+        candidate.get("evidence_citation_state") == "transmission_assumed"
+        or candidate.get("event_phase") == "PRICE_IN"
+        or candidate.get("move_basis") in ("UNQUALIFIED", "")
+        or candidate.get("self_tier") == "THESIS_ONLY")
+    if weak_evidence:
+        profile = "conservative"
+        stop_pct = min(base_stop, float(_cfg(
+            "universe_expansion.conservative_stop_pct", 2.0)))
+        tp_pct = min(base_tp, float(_cfg(
+            "universe_expansion.conservative_tp_pct", 4.0)))
+        reasons.append("weak_evidence_or_price_in")
+    atr_ratio = _positive_float(screening.get("screening_atr_ratio"))
+    atr_pct = atr_ratio * 100.0 if atr_ratio is not None else None
+    if atr_pct is not None and atr_pct > 0:
+        stop_cap = max(1.0, min(6.0, atr_pct * float(_cfg(
+            "universe_expansion.atr_stop_multiplier", 1.25))))
+        tp_cap = max(2.0, min(12.0, atr_pct * float(_cfg(
+            "universe_expansion.atr_tp_multiplier", 2.0))))
+        if stop_pct > stop_cap:
+            stop_pct = stop_cap
+            reasons.append("atr_stop_cap")
+        if tp_pct > tp_cap:
+            tp_pct = tp_cap
+            reasons.append("atr_tp_cap")
+    return {"profile": profile, "stop_pct": stop_pct, "tp_pct": tp_pct,
+            "atr_pct": atr_pct, "reasons": reasons}
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) and out > 0 else None
+
+
+def _compute_numbers(entry_price: float, direction: str,
+                     candidate: Optional[Dict[str, Any]] = None,
+                     screening: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """代码出数值 (Track A): entry_zone via entry_band, SL/TP 锚定 entry_zone 边界外.
 
     SL/TP 从 entry_zone 的 low/high 外扩 (而非 entry_price 中价), 保证:
@@ -3172,8 +3287,9 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
         return {"entry_zone": [], "stop_loss": 0.0, "take_profit": 0.0,
                 "planned_preview": {"state": "not_generated_invalid_band",
                                     "version": PLANNED_PREVIEW_VERSION}}
-    stop_pct = float(_cfg("universe_expansion.default_stop_pct", 3.0)) / 100.0
-    tp_pct = float(_cfg("universe_expansion.default_tp_pct", 6.0)) / 100.0
+    _risk = _ue_risk_profile(candidate, screening)
+    stop_pct = _risk["stop_pct"] / 100.0
+    tp_pct = _risk["tp_pct"] / 100.0
     if is_short:
         stop_loss = high * (1 + stop_pct)   # SL 高于 zone high
         take_profit = low * (1 - tp_pct)    # TP 低于 zone low
@@ -3187,6 +3303,15 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
     #   会让读账的人以为生成止损是 3%; 只记实测值则常量一改就无法复算 ⇒ 两个都记。
     _sl_dist = abs(entry_price - stop_loss)
     _tp_dist = abs(take_profit - entry_price)
+    _expected_move = _positive_float((candidate or {}).get("expected_move_pct"))
+    if _risk.get("atr_pct") is None:
+        _move_state = "not_evaluable_no_atr"
+    elif _expected_move is None:
+        _move_state = "not_evaluable_no_expected_move"
+    elif _expected_move <= 2.0 * float(_risk["atr_pct"]):
+        _move_state = "within_2atr"
+    else:
+        _move_state = "exceeds_2atr"
     _preview = {
         "state": "generated",
         "version": PLANNED_PREVIEW_VERSION,
@@ -3203,6 +3328,15 @@ def _compute_numbers(entry_price: float, direction: str) -> Dict[str, Any]:
         "risk_distance": round(_sl_dist, 4),
         "sl_pct_cfg": round(stop_pct * 100.0, 4),
         "tp_pct_cfg": round(tp_pct * 100.0, 4),
+        "risk_profile": _risk,
+        "move_calibration": {
+            "state": _move_state,
+            "expected_move_pct": _expected_move,
+            "atr_pct": _risk.get("atr_pct"),
+            "expected_move_atr_multiple": (
+                round(_expected_move / float(_risk["atr_pct"]), 4)
+                if _expected_move is not None and _risk.get("atr_pct") else None),
+        },
         "sl_pct_from_entry": (round(_sl_dist / float(entry_price) * 100.0, 4)
                               if entry_price else None),
         "tp_pct_from_entry": (round(_tp_dist / float(entry_price) * 100.0, 4)
@@ -3369,6 +3503,7 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
     cand = [s for s in surfaced
             if s["direction"] in ("LONG", "SHORT")
             and s["confidence"] >= min_conf
+            and _transmission_confirmation_passes(s)
             and s["symbol"] not in positions
             and s["symbol"] not in existing_pb
             and _streak_passes(s, _max_streak)]
@@ -3581,7 +3716,8 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
                 print(f"  [skip] {s['symbol']} {_reason}")
                 _log_inject_loop_reject(s, _reason)
                 continue
-        nums = _compute_numbers(float(px), s["direction"])
+        nums = _compute_numbers(float(px), s["direction"], candidate=s,
+                                screening=_sc)
         if not nums["entry_zone"]:
             print(f"  [skip] {s['symbol']} entry_zone 无效")
             _log_inject_loop_reject(s, "entry_zone_invalid")
@@ -3695,6 +3831,14 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
                     # [2026-07-22] 解除数量压制后按证据层级分层判分的前提: tier/证据透传落库
                     "self_tier": s.get("self_tier") or None,
                     "evidence_ref": (s.get("evidence_ref") or "")[:300] or None,
+                    "evidence_citation_state": s.get("evidence_citation_state"),
+                    "evidence_matched_symbols": s.get("evidence_matched_symbols"),
+                    "confidence_basis": s.get("confidence_basis"),
+                    "confidence_calibration": s.get("confidence_calibration"),
+                    "transmission_confirmation_required": s.get("transmission_confirmation_required", False),
+                    "counter_evidence": s.get("counter_evidence") or None,
+                    "event_phase": s.get("event_phase") or None,
+                    "move_basis": s.get("move_basis") or None,
                     # [2026-07-25 信息源复盘] cap 前原始 conf 落库 (0-100 整数)。
                     #   2026-09-05 U2 删 cap 后顶层 confidence 与本键同值 (历史行
                     #   顶层=cap50 截断值, 本键才是原值 — 跨史 join 须用本键)。
@@ -4160,6 +4304,10 @@ def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
         "checklist_ok": 0, "horizon_present": 0, "move_present": 0,
         "short_check_compliant": 0, "skip_reason_compliant": 0,
         "wl_valid": 0, "conf_valid": 0, "_conf_sum": 0.0,
+        "counter_evidence_filled_non_skip": 0,
+        "confidence_basis_valid": 0, "event_phase_valid": 0,
+        "move_basis_valid": 0, "causal_chain_labels_valid": 0,
+        "borrow_data_basis_compliant": 0,
     }
     for it in items:
         d = str(it.get("direction", "")).upper().strip()
@@ -4177,6 +4325,19 @@ def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
             st["non_skip"] += 1
             if str(it.get("invalidation") or "").strip():
                 st["invalidation_filled_non_skip"] += 1
+            if str(it.get("counter_evidence") or "").strip():
+                st["counter_evidence_filled_non_skip"] += 1
+            if str(it.get("confidence_basis") or "") in (
+                    "DIRECT_ENTITY", "MARKET_CONFIRMED", "TRANSMISSION_ASSUMED", "THESIS_ONLY"):
+                st["confidence_basis_valid"] += 1
+            if str(it.get("event_phase") or "") in ("ONE_SHOT", "CONTINUING", "PRICE_IN"):
+                st["event_phase_valid"] += 1
+            if str(it.get("move_basis") or "") in (
+                    "VOLATILITY_ALIGNED", "EVENT_MAP", "UNQUALIFIED"):
+                st["move_basis_valid"] += 1
+            if all(label in str(it.get("causal_chain") or "")
+                   for label in ("事实:", "传导假设:", "市场确认:")):
+                st["causal_chain_labels_valid"] += 1
         tr = it.get("invalidation_triggers")
         if isinstance(tr, list):
             st["triggers_present"] += 1
@@ -4196,10 +4357,12 @@ def _v29_contract_stats(raw_items: Any) -> Dict[str, Any]:
         sc = it.get("short_check")
         if d == "SHORT":
             if isinstance(sc, dict) and all(
-                k in sc for k in ("borrow_feasible",
+                k in sc for k in ("borrow_feasible", "borrow_data_basis",
                                   "downside_catalyst_expiry_hours", "squeeze_risk")
             ):
                 st["short_check_compliant"] += 1
+                if str(sc.get("borrow_data_basis") or "") in ("MATERIAL", "UNKNOWN"):
+                    st["borrow_data_basis_compliant"] += 1
         elif sc is None:
             st["short_check_compliant"] += 1
         sr = it.get("skip_reason")

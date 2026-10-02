@@ -2157,6 +2157,16 @@ universe_expansion:
     #   源头拦截OTC仙股(AETN案例: Futu无OTC行情→死指令+轮询噪音). 与DA扫描器$5闸+
     #   admission.min_entry_price同源. 0=禁用. 回滚: 改回0或删除本行.
   da_candidate_feed: true
+  # [UE v2.14 2026-10-02] 事件真实但标的未直接具名时, 保守校准传导假设:
+  #   1) confidence 封顶; 2) UE直写通道必须有价格/量能确认; DA供料不受该直写确认门限制。
+  transmission_assumed_confidence_cap: 0.55
+  transmission_assumed_require_market_confirmation: true
+  # [UE v2.14 2026-10-02] 直写数值分层: 弱证据/PRICE_IN降档, ATR只做上限不放大风险。
+  risk_layering_enabled: true
+  conservative_stop_pct: 2.0
+  conservative_tp_pct: 4.0
+  atr_stop_multiplier: 1.25
+  atr_tp_multiplier: 2.0
   # [RFC-117 2026-09-29, 用户裁"3 不用影子模式,有助于提升交易质量的可以直接上"]
   #   UE LONG 双向接入: ①da_candidate_feed_long — DA 侧 _load_ue_short_candidates
   #   同时取 LONG 候选进深分析池 (修前只取 SHORT, "DA LONG 过量供给"是 8/3 旧口径);

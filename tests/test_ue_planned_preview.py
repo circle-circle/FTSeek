@@ -26,6 +26,7 @@
 回滚: 删本文件即可 (代码侧回滚见 DEB §19)。
 """
 import inspect
+import hashlib
 import os
 import re
 import sys
@@ -116,7 +117,7 @@ class TestPreviewCaliber:
             #   executability 三段 (本文件只钉 P3.1 那三段, 新增段由
             #   tests/test_ue_planned_executability.py 钉)。升版是为了让读账的人能按
             #   版本切分: v1 行"当时刻意没算", v2 行才有"算了但缺数"的显式状态。
-            assert pv["version"] == ue.PLANNED_PREVIEW_VERSION == "ue_planned_v2"
+            assert pv["version"] == ue.PLANNED_PREVIEW_VERSION == "ue_planned_v3"
 
     def test_value_origin_distinguishes_code_from_model(self):
         """⚠ 与 DA 侧 planned_* 同名不同源, 必须能被分辨。
@@ -131,6 +132,59 @@ class TestPreviewCaliber:
         stamp = _pv("LONG", XOM_LONG)["generated_at"]
         parsed = datetime.fromisoformat(stamp)
         assert parsed.tzinfo is not None, "naive 时间戳会在跨时区复算时移半天"
+
+
+class TestUEv214RiskLayering:
+    def _cfg(self, key, default=None):
+        return {
+            "universe_expansion.default_stop_pct": 3.0,
+            "universe_expansion.default_tp_pct": 6.0,
+            "universe_expansion.risk_layering_enabled": True,
+            "universe_expansion.conservative_stop_pct": 2.0,
+            "universe_expansion.conservative_tp_pct": 4.0,
+            "universe_expansion.atr_stop_multiplier": 1.25,
+            "universe_expansion.atr_tp_multiplier": 2.0,
+        }.get(key, default)
+
+    @pytest.mark.parametrize("candidate", [
+        {"event_phase": "PRICE_IN", "move_basis": "VOLATILITY_ALIGNED",
+         "self_tier": "MARKET_CORROBORATED",
+         "evidence_citation_state": "entity_linked"},
+        {"event_phase": "CONTINUING", "move_basis": "UNQUALIFIED",
+         "self_tier": "MARKET_CORROBORATED",
+         "evidence_citation_state": "entity_linked"},
+    ])
+    def test_weak_evidence_uses_conservative_sl_tp(self, monkeypatch, candidate):
+        monkeypatch.setattr(ue, "_cfg", self._cfg)
+        preview = ue._compute_numbers(
+            XOM_LONG, "LONG", candidate=candidate, screening={})["planned_preview"]
+        assert preview["risk_profile"] == {
+            "profile": "conservative", "stop_pct": 2.0, "tp_pct": 4.0,
+            "atr_pct": None, "reasons": ["weak_evidence_or_price_in"],
+        }
+        assert preview["sl_pct_cfg"] == 2.0
+        assert preview["tp_pct_cfg"] == 4.0
+
+    def test_atr_caps_risk_without_enlarging_it_and_records_move_calibration(
+            self, monkeypatch):
+        candidate = {"event_phase": "CONTINUING",
+                     "move_basis": "VOLATILITY_ALIGNED",
+                     "self_tier": "MARKET_CORROBORATED",
+                     "evidence_citation_state": "entity_linked",
+                     "expected_move_pct": 3.0}
+        screening = {"screening_atr_ratio": 0.01}
+        monkeypatch.setattr(ue, "_cfg", self._cfg)
+        preview = ue._compute_numbers(
+            XOM_LONG, "LONG", candidate=candidate,
+            screening=screening)["planned_preview"]
+        assert preview["risk_profile"]["stop_pct"] == 1.25
+        assert preview["risk_profile"]["tp_pct"] == 2.0
+        assert "atr_stop_cap" in preview["risk_profile"]["reasons"]
+        assert "atr_tp_cap" in preview["risk_profile"]["reasons"]
+        assert preview["move_calibration"] == {
+            "state": "exceeds_2atr", "expected_move_pct": 3.0,
+            "atr_pct": 1.0, "expected_move_atr_multiple": 3.0,
+        }
 
 
 # ══ B. 零漂移: 既有契约逐字不变 ══════════════════════════════════════════
@@ -187,15 +241,11 @@ class TestZeroDriftOnExistingContract:
 
 class TestRulerUnchanged:
     def test_prompt_version_and_hash_untouched_by_p3(self):
-        """P3.1 只加落库审计, 不改模型看到的一个字符。
-
-        改 SYSTEM_PROMPT_V2 / PROMPT_HASH_V2 = 中途换 A/B 尺子, 须用户裁。
-        本测试变红即代表有人把 P3 做成了改 prompt。
-        """
-        assert ue.PROMPT_VERSION == "v2.13"
-        assert ue.PROMPT_HASH_V2 == "70e4680597af"
-        assert len(ue.SYSTEM_PROMPT_V2) == 2582
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v4"
+        """落库审计与输入尺子分离; v2.14 是本批有意升级。"""
+        assert ue.PROMPT_VERSION == "v2.14"
+        assert ue.PROMPT_HASH_V2 == hashlib.sha1(
+            ue.SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v5"
 
     def test_planned_preview_version_is_its_own_ruler(self):
         """输入版本与落库审计版本分尺: 改 planned 口径不该逼着升 prompt 版。"""
@@ -272,6 +322,13 @@ class TestInjectSiteWiring:
         head = src.split('"raw_instruction"')[0]
         for key in ('"planned_entry"', '"planned_stop_loss"', '"planned_take_profit"'):
             assert key not in head, f"{key} 出现在 raw_instruction 之前 (顶层)"
+
+    def test_origin_carries_fields_needed_by_da_traceability(self, src):
+        origin = src.split('"origin"', 1)[1].split('"raw_confidence"', 1)[0]
+        for key in ('"evidence_citation_state"', '"confidence_basis"',
+                    '"confidence_calibration"', '"counter_evidence"',
+                    '"event_phase"', '"move_basis"'):
+            assert key in origin
 
 
 # ══ E. 非有限入场价拒绝 (本批测试自己抓到的既有缺陷, 计划 P3「非有限数…拒绝」) ══

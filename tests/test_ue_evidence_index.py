@@ -168,11 +168,11 @@ def stubbed_brief(monkeypatch, tmp_path):
 # ══ 1. 缺陷本体: 四类以 `[` 开头的事实行必须进索引 ══════════════════════════
 class TestDroppedFactLinesNowIndexed:
     def test_hard_event_classified_line_is_indexed(self, stubbed_brief):
-        ue._build_clue_brief("")
+        brief = ue._build_clue_brief("")
         assert HARD_LINE in ue._LAST_BRIEF_MATERIALS
 
     def test_earnings_reported_line_is_indexed(self, stubbed_brief):
-        ue._build_clue_brief("")
+        brief = ue._build_clue_brief("")
         assert EARN_REPORTED in ue._LAST_BRIEF_MATERIALS
 
     def test_earnings_upcoming_line_is_indexed(self, stubbed_brief):
@@ -1040,15 +1040,12 @@ class TestBriefEndToEndPrescreen:
         assert "上限外未判定" in brief
         assert not [e for e in ps["context_only"] if e["symbol"] in overflow]
 
-    def test_provider_timestamp_only_shape_reaches_pass(self, prescreen_on, monkeypatch):
-        """[2026-09-15 回归钉] **生产报价形态**必须仍能判出 PASS。
+    def test_provider_timestamp_only_is_not_washed_to_pass(self, prescreen_on, monkeypatch):
+        """[2026-10-02 P0] 抓取时戳不得冒充交易所源时点。
 
-        病灶: 2026-09-14 两轮首跑 30/30 受检标的 `missing_fields` 恒含 `source_asof`
-        ⇒ `tradeable` 恒空。根因是键名错配 —— 供应商给的是 `timestamp`(unix, 我方观测时刻,
-        `app/data/futu_lv3_provider.py:1098`), 而 SSOT `_source_time` 只认
-        `source_asof`/`update_time`。
-        ⚠ 本钉存在的原因: 既有夹具(`_ps_quote`/`_e2e_router`)一律喂 `source_asof`,
-          **比生产宽松** ⇒ 键名错配在测试里隐形(假绿)。本钉把报价改成生产形态。
+        `timestamp` 是抓取完成时刻, 可把交易所侧已陈旧的报价洗成新鲜
+        (2026-10-01 OXY/VIR 影子实证)。缺真实 `update_time/source_asof` 必须落
+        UNKNOWN, 不得为了 `tradeable` 覆盖率而伪造 PASS。
         """
         router = prescreen_on.router
         stamp = (datetime.now().astimezone() - timedelta(minutes=5)).timestamp()
@@ -1063,11 +1060,31 @@ class TestBriefEndToEndPrescreen:
         brief = ue._build_clue_brief("")
         ps = ue._LAST_INPUT_PRESCREEN
         assert ps["status"] == "ok", ps
-        assert ps["tradeable"], f"PASS 态仍不可达 — 键名错配未修: {ps}"
+        assert ps["tradeable"] == [], ps
+        assert ps.get("source_asof_available", 0) == 0
+        assert all(e["status"] == "UNKNOWN" and "source_asof" in e["missing_fields"]
+                   for e in ps["unknown"])
+        assert "[输入具名标的可交易性初筛" in brief
+
+    def test_provider_exchange_update_time_reaches_pass(self, prescreen_on, monkeypatch):
+        """Futu 快照透传交易所 `update_time` 后, PASS 态仍可达。"""
+        router = prescreen_on.router
+        now = ue._now_et() - timedelta(minutes=5)
+        prod = {}
+        for sym, q in router.quotes.items():
+            stripped = {k: v for k, v in q.items()
+                        if k not in ("source_asof", "update_time")}
+            if stripped:
+                stripped["update_time"] = now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            prod[sym] = stripped
+        monkeypatch.setattr(router, "quotes", prod)
+        brief = ue._build_clue_brief("")
+        ps = ue._LAST_INPUT_PRESCREEN
+        assert ps["status"] == "ok", ps
+        assert ps["tradeable"], ps
         assert "VRTX" in ps["tradeable"]
-        assert ps.get("source_asof_normalized", 0) > 0
-        assert ps.get("source_asof_basis") == "provider_observation_timestamp"
-        # 真缺数的仍必须诚实落 UNKNOWN, 不得被归一洗白成 PASS
+        assert ps.get("source_asof_available", 0) > 0
+        assert ps.get("source_asof_basis") == "provider_exchange_timestamp"
         assert [e["symbol"] for e in ps["unknown"]] == ["ESTC"]
         assert "ESTC" not in ps["tradeable"]
         assert "[输入具名标的可交易性初筛" in brief

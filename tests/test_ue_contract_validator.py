@@ -10,6 +10,7 @@ from scripts.llm_universe_scan import (  # noqa: E402
     PROMPT_HASH_V2,
     PROMPT_VERSION,
     SYSTEM_PROMPT_V2,
+    _transmission_confirmation_passes,
     _normalize_surfaced,
     _validate_and_repair_surfaced,
 )
@@ -17,9 +18,22 @@ from scripts.llm_universe_scan import (  # noqa: E402
 
 def _mk(direction="LONG", invalidation="跌破支撑", skip_reason="", short_check=None):
     s = {"symbol": "TEST", "direction": direction,
-         "invalidation": invalidation, "skip_reason": skip_reason}
+         "invalidation": invalidation, "skip_reason": skip_reason,
+         "counter_evidence": "未发现明确反证",
+         "confidence_basis": "DIRECT_ENTITY",
+         "event_phase": "CONTINUING",
+         "move_basis": "VOLATILITY_ALIGNED",
+         "causal_chain": "事实:事件落地; 传导假设:业务受益; 市场确认:价格量能上行"}
+    s["evidence_checklist"] = {
+        "catalyst_specific": True,
+        "catalyst_within_24h": True,
+        "price_volume_confirmed": True,
+        "crowding_low": True,
+    }
     if direction == "SHORT":
         s["short_check"] = short_check or {"provided": True,
+                                           "borrow_feasible": True,
+                                           "borrow_data_basis": "MATERIAL",
                                            "downside_catalyst_expiry_hours": 8,
                                            "squeeze_risk": 2}
     return s
@@ -62,6 +76,8 @@ class TestViolationDetection:
 
     def test_short_zero_expiry(self):
         s = _mk("SHORT", short_check={"provided": True,
+                                      "borrow_feasible": True,
+                                      "borrow_data_basis": "MATERIAL",
                                       "downside_catalyst_expiry_hours": 0,
                                       "squeeze_risk": 1})
         with mock.patch("scripts.llm_universe_scan._cfg", return_value=False):
@@ -116,10 +132,12 @@ class TestRepairWhitelist:
         s["short_check"] = {"provided": False}
         st = self._run_with_mock_repair([s], {"repairs": [
             {"symbol": "TEST", "short_check": {"borrow_feasible": True,
+                                               "borrow_data_basis": "MATERIAL",
                                                "downside_catalyst_expiry_hours": 6,
                                                "squeeze_risk": 3}}]})
         assert s["short_check"]["provided"] is True
         assert s["short_check"]["downside_catalyst_expiry_hours"] == 6
+        assert s["short_check"]["borrow_data_basis"] == "MATERIAL"
         assert s["short_check"]["repaired"] is True
 
     def test_enforce_drops_unrepairable(self):
@@ -166,39 +184,62 @@ class TestNormalizeSkipReason:
         assert len(out[0]["skip_reason"]) <= 120
 
 
+class TestTransmissionConfirmationGate:
+    def test_unconfirmed_transmission_is_rejected_in_ue_direct_channel(self):
+        candidate = {
+            "evidence_citation_state": "transmission_assumed",
+            "evidence_checklist": {"price_volume_confirmed": False},
+        }
+        with mock.patch(
+                "scripts.llm_universe_scan._cfg",
+                side_effect=lambda key, default=None: (
+                    True if key == (
+                        "universe_expansion."
+                        "transmission_assumed_require_market_confirmation"
+                    ) else default)):
+            assert _transmission_confirmation_passes(candidate) is False
+
+    def test_confirmed_transmission_and_non_transmission_pass(self):
+        confirmed = {
+            "evidence_citation_state": "transmission_assumed",
+            "evidence_checklist": {"price_volume_confirmed": True},
+        }
+        entity_linked = {"evidence_citation_state": "entity_linked",
+                         "evidence_checklist": {"price_volume_confirmed": False}}
+        with mock.patch(
+                "scripts.llm_universe_scan._cfg",
+                side_effect=lambda key, default=None: (
+                    True if key == (
+                        "universe_expansion."
+                        "transmission_assumed_require_market_confirmation"
+                    ) else default)):
+            assert _transmission_confirmation_passes(confirmed) is True
+            assert _transmission_confirmation_passes(entity_linked) is True
+
+
 class TestPromptVersionContract:
     def test_version_and_hash_derive_from_current_prompt(self):
         # v2.11 (2026-09-11): 负反馈表 U1 反号修 + U1b 零收益三态, 均在 brief/user 侧。
         # v2.12 (2026-09-12, DEB-20260910 §17): P2.2 输入具名标的可交易性初筛段,
         #   同为 brief/user 侧输入变更 (材料一条不删, 只在末尾追加三态清单)。
-        # v2.13 (2026-09-14, DEB-20260914 §一 P1-3): 市场佐证段补数据时点口径,
-        #   仍是 brief/user 侧变更 (SYSTEM_PROMPT_V2 与哈希一字不动)。
+        # v2.14 (2026-10-02): 证据分层/校准/反证/事件阶段契约升级, SYSTEM_PROMPT_V2 有意变更。
         # 升版者必须同时改这里 —— 这条钉子变红是它的设计意图, 不是回归。
-        assert PROMPT_VERSION == "v2.13"
+        assert PROMPT_VERSION == "v2.14"
         expected = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
         assert PROMPT_HASH_V2 == expected
 
-    def test_brief_only_bump_leaves_hash_identical_to_v210(self):
-        """v2.10 → v2.11 未动 SYSTEM_PROMPT_V2 ⇒ 哈希必须**完全不变**。这是盲区, 不是 bug。
-
-        实测: v2.10 与 v2.11 的 `PROMPT_HASH_V2` 同为 `70e4680597af`、`SYSTEM_PROMPT_V2`
-        同为 2582 字符 (v2.10 值见 `docs/analysis/2026-09-09-core-chain-brief-for-claude.md`
-        §Prompt 版本锚)。⇒ 任何按 `prompt_hash` 切分样本的口径都**无法区分这两个行为版本**,
-        例如 `docs/CONTROL-LOOP-LEDGER.md` thinking-eval 预注册判据「跨 prompt_hash 不得混合」
-        在 9/11 这次 brief 变更上**不会触发序列归零**。只能按 `prompt_version` 切分。
-        指纹扩到 brief 侧属另立项 (DEB-20260910 §11.6-6, 用户裁「缺口另立项」), 本钉不代其实现。
-
-        [2026-09-12 更新, DEB-20260910 §17 / P2.5] 该"另立项"已兑现: 新增
-        `BRIEF_TEMPLATE_VERSION` + `_brief_fingerprints()`, 落库 `brief_template_version /
-        brief_template_hash / brief_content_hash / brief_material_stats`。⇒ v2.12 (P2.2 初筛段)
-        是**第一次** brief 侧变更能被自动指纹看见的版本。但本钉的两条断言**继续有效且必须
-        继续红在改 SYSTEM_PROMPT_V2 的那天**: brief 侧指纹是**补充**, 不是 prompt_hash 的替代
-        —— 既有 A/B 预注册判据仍按 prompt_hash 切分, 中途换尺子须用户裁。
-        """
-        assert PROMPT_HASH_V2 == "70e4680597af", (
-            "SYSTEM_PROMPT_V2 被改动了 — 若属有意, 需同时升 PROMPT_VERSION 并更新本钉与 "
-            "DEB-20260910 §11.6-6 的盲区记录; 若属无意, 即回归")
-        assert len(SYSTEM_PROMPT_V2) == 2582
+    def test_v214_prompt_contract_fields_present(self):
+        required_fragments = (
+            "confidence_basis: DIRECT_ENTITY/MARKET_CONFIRMED/TRANSMISSION_ASSUMED/THESIS_ONLY",
+            "counter_evidence",
+            "传导假设且无价格量能确认不得超过0.55",
+            "event_phase: ONE_SHOT",
+            "move_basis: VOLATILITY_ALIGNED/EVENT_MAP/UNQUALIFIED",
+            "borrow_data_basis",
+            "事实:...\"+\"传导假设:...\"+\"市场确认:...",
+        )
+        for fragment in required_fragments:
+            assert fragment in SYSTEM_PROMPT_V2
 
     def test_prompt_and_parser_share_trigger_metrics(self):
         expected_metrics = {"收盘价", "量比", "5日涨跌", "盘前涨跌幅"}
