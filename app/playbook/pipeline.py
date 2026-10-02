@@ -8360,6 +8360,15 @@ def _resume_playbook_exits(*, allow_submit):
         try:
             result = dual.resume_close(intent["intent_id"], allow_submit=allow_submit)
             closed += _book_playbook_exit_result(dual, result)
+            # [RFC-127 阶段0] ETH出场HELD且RTH已开盘 → 只记录"本可会话升级补腿",
+            # 不改恢复/告警行为 (10/1 ACN 首例: SL评估被blocked_exits整体跳过)。
+            try:
+                from app.playbook.eth_held_exit_shadow import emit_eth_held_exit_shadow
+                emit_eth_held_exit_shadow(intent, result)
+            except Exception as _eth_held_shadow_error:
+                logger.warning(
+                    "[playbook] ETH HELD出场影子调用失败 (不影响恢复/告警): %s",
+                    _eth_held_shadow_error, exc_info=True)
             if not result.get("success"):
                 _alert_close_failure(intent["symbol"], intent["target_env"],
                                      "EXIT_" + result.get("exit_state", "HELD"),
