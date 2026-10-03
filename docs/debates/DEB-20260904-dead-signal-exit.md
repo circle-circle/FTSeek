@@ -74,6 +74,11 @@ exit_disable_cf.dead_signal 臂毕业门（写入注册表 graduation_criteria�
   - 本 DEB 文档建档。
 - 待裁决项：方案选择（A/B/C/D 或折中门）。
 - 已补数据（9/4）：R1 仓位利用率 — playbook 上限 15，近 30 天并发峰值 11 / 中位 8（peak 73% / median 53%），机会成本论据弱化。
+- **2026-10-03 当前读数补录**（空跑审计批，零行为变更，不改原提案/判据，署名 Hermes）：
+  - exit_disable_cf DEAD_SIGNAL 臂 **n=34**（saved 中位 +0.220% / 持有更优率 82.4% / saved 合计 $283），较立案 n=27 增 7 笔后**停滞**。MFE_STALL 臂 n=31 已 `EXHAUSTED_FINAL_READOUT`（该规则 8/15 已实盘禁用，本项对其为事后验证，非待裁）。
+  - **样本供给结构性枯竭（立案时不存在的新事实）**：9/22–10/02 十个交易日 DEAD_SIGNAL_EXIT 实际触发 **0 笔**，同期 W_WEEK 水下隔夜豁免（`_loser_overnight_exempt`）命中 **28 次**（管线活跃：10/1 单日 57 行退出活动）。触发面被 8/16 W_WEEK 豁免 + RFC-073 隔夜口径 + reentry 延长窗三重后续修复吃空（逐月 26→10→0）。
+  - ⇒ 方案 C「攒样 ~10 周达 n=50」前提（日增 ≈0.48 笔）**已失效**；折中门 n≥40 尚差 6 笔，按当前零触发速率大概率在 `exhausted_after=2026-10-19`（20 连续零样本交易日）前凑不到。exit_disable_cf 已内置 exhaustion_policy 兜底 =「以现有 n 收口 + limited confidence + no behavior change」。
+  - **裁决含义**：DEAD_SIGNAL 对 SIM 水下隔夜仓已被 W_WEEK 豁免**事实架空**（触发 0/28），方案 A（禁用）与现状对 SIM 差异极小；但 W_WEEK 豁免仅 SIM，**LIVE 零影响** — 切实盘时 DEAD_SIGNAL 会重新起作用，禁用与否对 LIVE 仍是真决策。MFE_STALL 那 $282 是已执行禁用决策的事后验证，不构成待裁 alpha。
 
 ---
 
