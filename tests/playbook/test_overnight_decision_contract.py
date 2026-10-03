@@ -123,12 +123,19 @@ def test_track3_has_no_source_filter_pinned(monkeypatch):
                                      is_reentry=YES) == (True, "reentry_first_night")
 
 
-def test_w_week_sim_only(monkeypatch):
+def test_w_week_dual_arm(monkeypatch):
+    """RFC-130 (2026-10-03 用户裁「sim和实盘策略一致」): W_WEEK 豁免双臂同语义.
+
+    原 test_w_week_sim_only 断言 LIVE 不豁免 (False, None) — 该分叉已按用户裁决
+    删除, LIVE 臂继承同一 W_WEEK 语义。SHADOW/其他源仍不豁免 (非双臂白名单)。
+    """
     _set_cfgs(monkeypatch, False, True)
     assert od.overnight_eod_decision("SYM", "PLAYBOOK_LIVE", _today(), -0.8,
-                                     is_reentry=NO) == (False, None)
+                                     is_reentry=NO) == (True, "w_week")
     assert od.overnight_eod_decision("SYM", "PLAYBOOK_SIM", _today(), -0.8,
                                      is_reentry=NO) == (True, "w_week")
+    assert od.overnight_eod_decision("SYM", "PLAYBOOK_SHADOW", _today(), -0.8,
+                                     is_reentry=NO) == (False, None)
 
 
 def test_both_off_never_exempt(monkeypatch):

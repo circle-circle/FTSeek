@@ -63,28 +63,6 @@ def assign_cohort(symbol: str, trade_date: str) -> str:
     return "B" if (hash(f"{symbol}-{trade_date}") % 2 == 1) else "A"
 
 
-def live_overnight_enabled() -> bool:
-    """RFC-061: 是否允许 cohort B 在 PLAYBOOK_LIVE (实盘) 上跳过 EOD 持夜.
-
-    默认 False — 实盘隔夜是风险跃迁, 不从 sim 自动继承. 切 live 后须显式设
-    env RFC061_LIVE_OVERNIGHT_ENABLED=1 才开. 避免"开了 live 就自动隔夜持真实仓".
-    """
-    import os
-    return os.environ.get("RFC061_LIVE_OVERNIGHT_ENABLED", "").lower() in ("1", "true", "yes")
-
-
-def cohort_b_skip_allowed(source_type: str) -> bool:
-    """RFC-061: cohort B 跳过 EOD 是否对该 source_type 允许.
-
-    PLAYBOOK_LIVE 需 live_overnight_enabled() 显式开; 其余 (PLAYBOOK_SHADOW/SIM,
-    MAIN_PIPELINE) 默认允许 (shadow/sim 是验证态, 不涉真实资金风险).
-    """
-    if source_type == "PLAYBOOK_LIVE":
-        return live_overnight_enabled()
-    return True
-
-
-
 def _get_runtime_mode() -> str:
     """运行时取 mode (sandbox / normal). 失败默认 normal."""
     try:

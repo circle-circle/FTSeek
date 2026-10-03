@@ -1505,6 +1505,22 @@ playbook:
     config_path: config/playbook_horizon.yaml
     enabled: true
   live_trial: true
+  # ── RFC-130 (2026-10-03 用户裁「双臂常驻 + sim/实盘策略一致 + 实盘启用开关」) ──
+  # LIVE 手动臂总开关 (键路径沿用 RFC-090 §17.3.1 设计)。消费方:
+  #   app/playbook/playbook_service.py `_execute_via_dual_broker_inner` (target_env=real 分支)。
+  # enabled=false (默认): LIVE 臂 disarm — 拒绝 live 新仓 (HALT_NEW_LIVE), 不降级 sim;
+  #   出场不受本门管 (disarm 只停新仓, 已有 LIVE 仓继续由出场监控管理)。
+  # enabled=true: 放行 live 新仓, 仍受半翻互锁 + 毕业门禁 + ALLOW_REAL_TRADING 授权锁约束。
+  # 开火仪式 (RFC-090 §17.3.1): ①预授权 ALLOW_REAL_TRADING=true + REAL_ACCOUNT_ID + 重启;
+  #   ②用户 CONFIRM_REAL_ACCOUNT_ID 后置 enabled=true。C2 红线: 首次真实 LIVE 执行仍需
+  #   毕业门禁通过或用户 DEB 显式「知情破例 + 签字」。
+  # max_open_positions/max_order_qty/session: V1 首期限额占位 (1 仓/1 股/RTH),
+  #   当前消费方仅 enabled; 其余三键为 RFC-090 §17.3.3 入场路由实施时接线, 现登记备用。
+  live_manual_arm:
+    enabled: false
+    max_open_positions: 1
+    max_order_qty: 1
+    session: RTH
   direction_gate:
     buy_position_factor: 1.0
     buy_daily_exec_quota: 999

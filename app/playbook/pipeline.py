@@ -8875,7 +8875,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 if abs(current_price - entry_price) / entry_price > 0.15:
                     continue  # 价格异常跳过 (2026-07-02: 50%→15%, 50%让巨亏/巨盈仓位失保护)
 
-                # cohort B skip 判定 (sim 特有: LIVE 需显式开 overnight)
+                # cohort B skip 判定 (RFC-130 2026-10-03: SIM/LIVE 同语义, 原 LIVE env 门已退役)
                 _cohort = meta.get("cohort", "A")
                 _src = r["source_type"]
                 # P2b 单点化 (2026-09-06): 公式收进 exit_engine.cohort_b_skip_eligible.
@@ -9411,7 +9411,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                     continue
 
                 # RFC-061 v2: cohort B 盈利仓跳过 EOD broker 兜底 (持过夜); 5 交易日仍平 (MAX_HOLD_T5).
-                # 仅 PLAYBOOK_SIM/LIVE 且 cohort_b_skip_allowed (LIVE 需显式开); ORB 强制平 (日内语义).
+                # 仅 cohort B (RFC-130: SIM/LIVE 同语义, 原 cohort_b_skip_allowed LIVE 门已退役); ORB 强制平 (日内语义).
                 _meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
                 if not isinstance(_meta, dict):
                     raise ValueError("trade metadata must be an object")

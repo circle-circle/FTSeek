@@ -268,14 +268,16 @@ def _load_horizon_config(horizon: str) -> Dict[str, Any]:
 
 
 def cohort_b_skip_eligible(cohort: str, source_type: str) -> bool:
-    """名义隔夜资格单点 (P2b, 2026-09-06): cohort B 且 source 允许 (LIVE 需显式开).
+    """名义隔夜资格单点 (P2b, 2026-09-06): cohort B 即有名义资格。
 
-    合并前 poll monitor 与 EOD 兜底 sweeper 两处逐字相同的公式
-    `cohort == "B" and cohort_b_skip_allowed(src)`。异常不吞 (与合并前 inline 一致:
-    env/store 读错沿调用栈上抛, 各自既有的 except 链兜底口径不变)。
+    2026-10-03 用户裁「sim和实盘策略一致」(RFC-130): 原公式
+    `cohort == "B" and cohort_b_skip_allowed(src)` 中 LIVE 侧 env 门
+    (RFC061_LIVE_OVERNIGHT_ENABLED) 删除 — SIM/LIVE 双臂同语义,
+    cohort_b_skip_allowed/live_overnight_enabled 随之退役 (恒 True 死门)。
+    source_type 参数保留 (调用方/契约测试矩阵签名不变), 不再参与判定。
+    异常不吞 (与合并前 inline 一致)。
     """
-    from app.storage.trade_store import cohort_b_skip_allowed
-    return bool(cohort == "B" and cohort_b_skip_allowed(source_type))
+    return bool(cohort == "B")
 
 
 def overnight_master_switch_on() -> bool:
@@ -923,8 +925,9 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   必触发 DEAD_SIGNAL → patient_exit eod 腿/立即卖 → 第2天必出局, W_WEEK 的
     #   5日修复空间被截断成2天。回放实锤 (overnight_loser_multiday_replay, n=15):
     #   W_WEEK +$629 中 MFE<0.2% 子集 n=6 贡献 +$698 (100%修复), 全部会被本规则杀掉。
-    #   豁免范围 = _loser_overnight_exempt (仅 PLAYBOOK_SIM + 水下 + ≤5交易日);
-    #   LIVE 零影响; SL 仍最高优先级兜底; 豁免仓转入 SL/TIME_EXIT(已豁免)/EOD转正/5日上限链。
+    #   豁免范围 = _loser_overnight_exempt (PLAYBOOK_SIM/LIVE 双臂 + 水下 + ≤5交易日;
+    #   RFC-130 2026-10-03 用户裁「sim和实盘策略一致」删原 SIM-only 门, LIVE 臂同语义);
+    #   SL 仍最高优先级兜底; 豁免仓转入 SL/TIME_EXIT(已豁免)/EOD转正/5日上限链。
     #   回滚: 删本 if 包裹 (恢复无条件触发) 或 loser_overnight_enabled=false。
     if not exit_reason and bool(_pb_cfg.get("dead_signal_exit_enabled", False)):
         _ds_minutes = float(_pb_cfg.get("dead_signal_exit_minutes", 60))
@@ -1055,7 +1058,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     #   根因: short_horizon max_hold_days=1, 若将来 overnight_hold_enabled 打开 →
     #   _skip_allowed=True → 水下仓第2天被 1日 cap 强平, W_WEEK 的 5 日窗口作废。
     #   豁免范围与 DEAD_SIGNAL/TIME_EXIT/EOD 同款 (_loser_overnight_exempt):
-    #   仅 PLAYBOOK_SIM + 水下 + ≤loser_overnight_max_hold_days(5)。回滚: 删本 if 包裹。
+    #   PLAYBOOK_SIM/LIVE 双臂 + 水下 + ≤loser_overnight_max_hold_days(5)
+    #   (RFC-130 对齐)。回滚: 删本 if 包裹。
     if not exit_reason and _skip_allowed and held_minutes > 0:
         if _horizon_max_hold_hit(entry_time_str, _max_hold_days):
             # 8/17 净口径: 豁免水下判定用净盈亏 (微盈仓=净水下→豁免, 同 DEAD_SIGNAL/EOD).

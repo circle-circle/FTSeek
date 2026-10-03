@@ -96,13 +96,31 @@ def _call_inner(svc, iid, target_env):
     )
 
 
-def _live_prereqs(monkeypatch, db_live=True):
+def _live_prereqs(monkeypatch, db_live=True, armed=True):
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
     monkeypatch.setattr("app.core.db_utils.is_live_mode", lambda: db_live)
     monkeypatch.setattr(
         "app.playbook.pipeline._check_graduation_gate",
         lambda: {"graduated": True},
     )
+    # RFC-130 (2026-10-03): LIVE 臂总开关 playbook.live_manual_arm.enabled 是
+    # live 新仓第三道前置 (默认 false = HALT_NEW_LIVE)。本 helper 构造 live 前置
+    # ⇒ armed 随参 (默认 True = 开火态)。其余键回落真实 ConfigContainer,
+    # 不破坏 live_trial / quote-gate 等下游读取。
+    import app.core.config_container as _cc
+    _real_get_config = _cc.get_config
+
+    def _armed_get_config():
+        real = _real_get_config()
+
+        class _Wrap:
+            def get_dotted(self, key, default=None):
+                if key == "playbook.live_manual_arm":
+                    return {"enabled": armed, "max_open_positions": 1,
+                            "max_order_qty": 1, "session": "RTH"}
+                return real.get_dotted(key, default)
+        return _Wrap()
+    monkeypatch.setattr("app.core.config_container.get_config", _armed_get_config)
 
 
 def _config(monkeypatch, **overrides):

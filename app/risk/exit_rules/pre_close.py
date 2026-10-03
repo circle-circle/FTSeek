@@ -11,7 +11,11 @@ from typing import Optional, Dict, Any
 from .base import BaseExitRule
 from ..atr_stop_engine import compute_profit_atr_signed
 from ..eod_config import load_eod_config
-from app.storage.trade_store import cohort_b_skip_allowed
+
+# 2026-10-03 RFC-130 (用户裁「sim和实盘策略一致」): cohort_b_skip_allowed 退役 —
+# 其唯一分叉是 LIVE 侧 env 门 RFC061_LIVE_OVERNIGHT_ENABLED (恒 False ⇒ LIVE 恒不允许),
+# 对齐后该函数恒 True = 死门 ⇒ 三处消费点的 `and cohort_b_skip_allowed(src)` 直接删除
+# (恒真条件), 不替换成新函数。cohort == "B" 判定保留 (那是真判据)。
 
 logger = logging.getLogger("ftseek.exit_monitor")
 
@@ -89,12 +93,11 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
 
         # ── RFC-061 (2026-06-24): cohort B 盈利仓跳过 EOD 持夜到 ~T+5 ──
         # MAIN_PIPELINE 的 ATR_STOP 是独立引擎 (atr_stop_engine), 不进本函数的判定链,
-        # 故跳过 pre_close 不影响硬止损. LIVE 需 live_overnight_enabled() 显式开 (不从 sim 继承).
+        # 故跳过 pre_close 不影响硬止损. (RFC-130: SIM/LIVE 同语义, 原 LIVE env 门已退役)
         try:
             _meta = getattr(position, "metadata", None) or {}
             _cohort = _meta.get("cohort", "A")
-            _src = _meta.get("source_type", "")
-            if _cohort == "B" and profit_atr_signed > 0 and cohort_b_skip_allowed(_src):
+            if _cohort == "B" and profit_atr_signed > 0:
                 logger.info(
                     f"[pre_close·RFC-061] {position.symbol} cohort=B profit={profit_atr_signed:.2f}ATR "
                     f"→ 跳过 EOD 持夜 (MAX_HOLD_T5 兜底)"
@@ -417,11 +420,11 @@ def check_adaptive_pre_close_exit(
         profit_atr = profit / atr
 
         # ── RFC-061 (2026-06-24): cohort B 盈利仓跳过 EOD 持夜 (adaptive 路径同 legacy) ──
+        # RFC-130: SIM/LIVE 同语义, 原 LIVE env 门 (cohort_b_skip_allowed) 已退役。
         try:
             _meta = position.get("metadata", {}) if isinstance(position, dict) else (getattr(position, "metadata", None) or {})
             _cohort = _meta.get("cohort", "A") if isinstance(_meta, dict) else "A"
-            _src = _meta.get("source_type", "") if isinstance(_meta, dict) else ""
-            if _cohort == "B" and profit_atr > 0 and cohort_b_skip_allowed(_src):
+            if _cohort == "B" and profit_atr > 0:
                 logger.info(
                     f"[pre_close·adaptive·RFC-061] {symbol} cohort=B profit={profit_atr:.2f}ATR → 跳过 EOD 持夜"
                 )
@@ -551,9 +554,8 @@ def check_max_hold_t5(position, current_price=None) -> Optional[Dict]:
             return None
         if meta.get("cohort") != "B":
             return None
-        # LIVE 守卫: 实盘需显式开 (不从 sim 继承)
-        if not cohort_b_skip_allowed(meta.get("source_type", "")):
-            return None
+        # (RFC-130 2026-10-03: 原「LIVE 守卫: 实盘需显式开」块删除 —
+        #  cohort_b_skip_allowed 对齐后恒 True 死门, SIM/LIVE 同语义)
         entry_time = getattr(position, "entry_time", None)
         if not entry_time:
             return None

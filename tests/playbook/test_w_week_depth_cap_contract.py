@@ -68,6 +68,17 @@ class TestWWeekDepthCap:
         """盈利仓不豁免 (原行为)."""
         assert _loser_overnight_exempt("PLAYBOOK_SIM", now_et().isoformat(), 0.5) is False
 
-    def test_live_not_exempt(self, cfg):
-        """LIVE 零影响 (原行为)."""
-        assert _loser_overnight_exempt("PLAYBOOK_LIVE", now_et().isoformat(), -1.0) is False
+    def test_live_same_as_sim(self, cfg):
+        """RFC-130 (2026-10-03 用户裁「sim和实盘策略一致」): LIVE 与 SIM 同语义.
+
+        原 test_live_not_exempt 断言 LIVE 恒不豁免 — 该 SIM-only 分叉已删除,
+        LIVE 臂继承同一 W_WEEK 豁免 (水下 + 未达持有上限即豁免)。
+        """
+        assert _loser_overnight_exempt("PLAYBOOK_LIVE", now_et().isoformat(), -1.0) is True
+        assert _loser_overnight_exempt("PLAYBOOK_LIVE", now_et().isoformat(), -1.0) == \
+               _loser_overnight_exempt("PLAYBOOK_SIM", now_et().isoformat(), -1.0)
+
+    def test_shadow_source_still_not_exempt(self, cfg):
+        """非双臂白名单源 (SHADOW/其他) 仍不豁免 — 对齐只覆盖 SIM/LIVE 双臂。"""
+        assert _loser_overnight_exempt("PLAYBOOK_SHADOW", now_et().isoformat(), -1.0) is False
+        assert _loser_overnight_exempt("MAIN_PIPELINE", now_et().isoformat(), -1.0) is False

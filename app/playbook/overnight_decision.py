@@ -68,7 +68,9 @@ def w_week_loser_exempt(source_type: str, entry_time_str: str, profit_pct: float
 
     条件 (任一不满足 → 照常退出, 保守):
       1. 配置开关 playbook.loser_overnight_enabled;
-      2. 仅 PLAYBOOK_SIM (LIVE 隔夜是风险跃迁, 与 cohort B LIVE guard 同纪律, 须另裁);
+      2. PLAYBOOK_SIM / PLAYBOOK_LIVE 同语义 (2026-10-03 用户裁「sim和实盘策略一致」:
+         删原 SIM-only 门 — LIVE 臂继承同一策略语义; 执行安全层 (broker STOP/PDT/
+         购买力门) 不属策略语义, 保持 LIVE 特有不动。SHADOW/其他源仍不豁免);
       3. 水下 (profit_pct < 0) — 盈利仓仍当日落袋;
       4. 未达 loser_overnight_max_hold_days 交易日 (默认5≈一周, 交易日历计算);
          到期 → False → PRE_CLOSE 正常收。
@@ -84,7 +86,13 @@ def w_week_loser_exempt(source_type: str, entry_time_str: str, profit_pct: float
         from app.playbook.config import get_playbook_config
         if not get_playbook_config().get("loser_overnight_enabled", False):
             return False
-        if source_type != "PLAYBOOK_SIM":
+        if source_type not in ("PLAYBOOK_SIM", "PLAYBOOK_LIVE"):
+            # 2026-10-03 用户裁「sim和实盘策略一致」: 原 `!= "PLAYBOOK_SIM"` 单臂门
+            # 改为双臂白名单 — LIVE 臂继承同一 W_WEEK 语义 (水下仓多夜修复窗口)。
+            # 零当前行为变更前提 (已实测): live 库 auto 臂 0 行 (trade_records 仅
+            # MANUAL 12 / POSITION_SYNC 2, open_positions size>0 = 0), LIVE 臂从未
+            # 运行 ⇒ 本改动只影响未来 armed 的 LIVE 臂, SIM 侧逐字不变。
+            # SHADOW/MAIN_PIPELINE/ORB 仍不豁免 (非 playbook 双臂, 语义不同)。
             return False
         if float(profit_pct) >= 0:
             return False

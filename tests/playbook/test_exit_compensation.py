@@ -51,6 +51,10 @@ def compensation_case(monkeypatch, tmp_path):
         "playbook.execute_mode": "futu_simulate",
         "risk.playbook_vix_gate_enabled": False,
         "playbook.live_trial": False,
+        # RFC-130: real 参数化用例走 armed LIVE 前置 (arm 门默认 false 会 HALT_NEW_LIVE,
+        # 补偿路径测的是"入场已提交后簿记失败"语义, 须在开火态下才可达)。
+        "playbook.live_manual_arm": {"enabled": True, "max_open_positions": 1,
+                                     "max_order_qty": 1, "session": "RTH"},
     }
     module("app.core.config_container", get_config=lambda: SimpleNamespace(
         get_dotted=lambda key, default=None: config.get(key, default)))

@@ -1258,6 +1258,34 @@ class PlaybookService:
                 target_env = "sim"
                 _is_live = False
 
+        # ── RFC-130 (2026-10-03 用户裁「双臂常驻+实盘启用开关」): LIVE 手动臂总开关 ──
+        # playbook.live_manual_arm.enabled = LIVE 新仓唯一入口门 (键路径沿用 RFC-090 §17.3.1
+        # 设计, 不另造)。语义:
+        #   false (默认) = LIVE 臂 disarm — 拒绝 live 新仓 (HALT_NEW_LIVE), 不降级 sim
+        #     (双臂目标架构下 sim 臂独立执行同一候选, 降级会造成同 decision_id 双执行);
+        #   true = armed — 放行 live 新仓 (仍受上方半翻互锁 + 毕业门禁 + ALLOW_REAL_TRADING
+        #     授权锁约束, 本门不替代任何一道)。
+        # 出场不受本门管: disarm 只停新仓, 已有 LIVE 仓继续由出场监控管理 (RFC-090 §17.5
+        # LIVE_DRAIN 语义)。fail-closed: 读配置异常 → 视为未 armed, 拒绝。
+        # 零当前行为变更: LIVE auto 臂从未运行 (live 库 auto 臂 0 行, 2026-10-03 实测)。
+        if _is_live:
+            _armed = False
+            try:
+                from app.core.config_container import get_config as _get_cfg_arm
+                _arm_cfg = _get_cfg_arm().get_dotted("playbook.live_manual_arm", None) or {}
+                _armed = bool(_arm_cfg.get("enabled", False)) if isinstance(_arm_cfg, dict) else False
+            except Exception as _ae:
+                logger.error(f"[playbook] LIVE 臂开关读取异常 (fail-closed 拒绝): {_ae}")
+                _armed = False
+            if not _armed:
+                logger.critical(
+                    f"🚫 [playbook] LIVE 臂未 armed (playbook.live_manual_arm.enabled=false) — "
+                    f"HALT_NEW_LIVE: 拒绝 {symbol} live 新仓, 不降级 sim (RFC-130)。"
+                    f"开火仪式见 RFC-090 §17.3.1 (预授权 ALLOW_REAL_TRADING + CONFIRM)"
+                )
+                return {"success": False,
+                        "message": f"[LIVE_ARM] {symbol} LIVE 臂未 armed, HALT_NEW_LIVE (RFC-130)"}
+
         # LIVE_TRIAL 试运行 (Phase 2): target_env=real 且 live_trial 开启时仓位×0.5,
         # 对冲 sim→live 不可见的滑点 gap. 验证 sim PnL≈live PnL (10-20笔) 后用户关 live_trial 放全量.
         if _is_live:

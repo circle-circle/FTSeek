@@ -79,13 +79,23 @@ class TestDeadSignalWWeekExempt:
                           minutes_from_open=61)
         assert reason == "", f"W_WEEK水下仓应豁免DEAD_SIGNAL, got {reason}"
 
-    def test_live_underwater_dead_signal_fires(self):
-        """LIVE 零影响: 同场景 LIVE 仓仍被 DEAD_SIGNAL 杀掉."""
+    def test_live_underwater_overnight_exempt_same_as_sim(self):
+        """RFC-130 (2026-10-03 用户裁「sim和实盘策略一致」): LIVE 与 SIM 同语义.
+
+        原 test_live_underwater_dead_signal_fires 断言「LIVE 零影响, 同场景仍被杀」—
+        该 SIM-only 分叉已按用户裁决删除: W_WEEK 豁免改为双臂白名单
+        (PLAYBOOK_SIM/PLAYBOOK_LIVE), LIVE 水下隔夜仓同样豁免 DEAD_SIGNAL。
+        零当前行为变更前提: LIVE auto 臂从未运行 (live 库 auto 臂 0 行, 10-03 实测)。
+        """
         entry = (now_et() - timedelta(days=1)).isoformat()
-        reason, *_ = _run(current_price=99.0, peak_price=100.1,
-                          held_minutes=800, entry_time_str=entry,
-                          source_type="PLAYBOOK_LIVE", minutes_from_open=61)
-        assert reason == "DEAD_SIGNAL_EXIT", f"LIVE不受豁免影响, got {reason}"
+        reason_live, *_ = _run(current_price=99.0, peak_price=100.1,
+                               held_minutes=800, entry_time_str=entry,
+                               source_type="PLAYBOOK_LIVE", minutes_from_open=61)
+        reason_sim, *_ = _run(current_price=99.0, peak_price=100.1,
+                              held_minutes=800, entry_time_str=entry,
+                              source_type="PLAYBOOK_SIM", minutes_from_open=61)
+        assert reason_live == "", f"RFC-130: LIVE 水下隔夜仓应豁免 DEAD_SIGNAL, got {reason_live}"
+        assert reason_live == reason_sim, "SIM/LIVE 分叉复活 — 必须同语义"
 
     def test_sim_nonunderwater_dead_signal_fires(self):
         """水下边界: profit>=0 (微盈) 不在豁免范围, DEAD_SIGNAL 仍触发."""
