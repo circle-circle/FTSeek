@@ -25,9 +25,17 @@ rows = list(c.execute("""
     SELECT symbol, direction, entry_time, exit_time, entry_price, exit_price, quantity,
            COALESCE(pnl_net, realized_pnl) AS net, mfe_pct, mae_pct, exit_reason, metadata_json
     FROM trade_records
-    WHERE exit_reason = 'OVERNIGHT_GAP_STOP' ORDER BY entry_time
-"""))
+    WHERE exit_reason = 'OVERNIGHT_GAP_STOP'
+      AND entry_time>='2026-06-27' AND entry_time<'2026-10-02 00:00:00'
+    ORDER BY entry_time
+"""))  # 钉结算窗 (2026-10-03 复查 P3 修复): 与本族 12 脚本同口径, 重跑读数不随新交易漂移
 print(f"═══ 地面真值: OVERNIGHT_GAP_STOP n={len(rows)} ═══")
+
+
+def _sign(direction) -> int:
+    """SHORT/SELL_SHORT → −1 (2026-10-03 复查 P3 修复: B/C 情景原文档自称方向感知
+    实则全按 LONG 算 — 现症为零 (7 笔全 LONG), SHORT 出现时结论会反)。"""
+    return -1 if str(direction or "").upper() in ("SHORT", "SELL_SHORT") else 1
 
 
 def load_bars(sym, start):
@@ -56,7 +64,8 @@ for r in rows:
     ep, xp, q = r["entry_price"], r["exit_price"], r["quantity"]
     notional = ep * q
     bars = load_bars(sym, r["exit_time"])
-    d = dict(sym=sym, dir=r["direction"], ep=ep, xp=xp, q=q, notional=notional,
+    d = dict(sym=sym, dir=r["direction"], sign=_sign(r["direction"]), ep=ep, xp=xp, q=q,
+             notional=notional,
              net=r["net"], mfe=r["mfe_pct"] or 0.0, mae=r["mae_pct"] or 0.0,
              exit_date=r["exit_time"][:10], bars=bars, n_bars=len(bars),
              entry_date=r["entry_time"][:10])
@@ -65,7 +74,7 @@ for r in rows:
           f"价{ep:>9.2f}→{xp:>9.2f} q={q:>4} 名义={notional:>9.0f} 净={r['net']:>8.1f} "
           f"MFE={d['mfe']:.2f}% MAE={d['mae']:.2f}%  bars可用={len(bars)}")
 
-print("\n═══ 情景B: 扩大SL = 不出场, 持到 T+k 收盘 (LONG: (close-entry)/entry) ═══")
+print("\n═══ 情景B: 扩大SL = 不出场, 持到 T+k 收盘 (方向感知: sign×(close−entry)/entry) ═══")
 print(f"{'sym':<9} {'T+1':>9} {'T+3':>9} {'T+5':>9} {'T+10':>9} {'T+20':>9}  窗长")
 HOLD = (1, 3, 5, 10, 20)
 for d in recs:
@@ -73,7 +82,7 @@ for d in recs:
     for k in HOLD:
         if len(d["bars"]) >= k:
             cl = d["bars"][k - 1][4]               # (date,o,h,l,c) 第5元 = 收盘
-            pct = 100 * (cl - d["ep"]) / d["ep"]
+            pct = 100 * d["sign"] * (cl - d["ep"]) / d["ep"]
             usd = pct / 100 * d["notional"] - d["notional"] * (FEE_RT + SLIP)
             cells.append(f"{usd:>+9.0f}")
         else:
@@ -91,13 +100,13 @@ for d in recs:
     add_q = d["notional"] / add_px                 # 同名义一份
     tot_q = d["q"] + add_q
     avg = (d["ep"] * d["q"] + add_px * add_q) / tot_q
-    need = 100 * (avg - d["ep"]) / d["ep"]         # 新均价相对原入场的抬升
+    need = 100 * d["sign"] * (avg - d["ep"]) / d["ep"]  # 新均价相对原入场的不利抬升(LONG=涨,SHORT=跌)
     tot_notional = d["notional"] * 2
     cells = []
     for k in (1, 3, 5, 10):
         if len(d["bars"]) >= k:
             cl = d["bars"][k - 1][4]
-            pnl = (cl - avg) * tot_q - tot_notional * (FEE_RT + SLIP)
+            pnl = d["sign"] * (cl - avg) * tot_q - tot_notional * (FEE_RT + SLIP)
             cells.append(f"{pnl:>+9.0f}")
         else:
             cells.append(f"{'CENS':>9}")
@@ -113,7 +122,7 @@ for k in HOLD:
     b_sum = 0.0
     for d in ok:
         cl = d["bars"][k - 1][4]
-        b_sum += (cl - d["ep"]) * d["q"] - d["notional"] * (FEE_RT + SLIP)
+        b_sum += d["sign"] * (cl - d["ep"]) * d["q"] - d["notional"] * (FEE_RT + SLIP)
     a_sum = sum(d["net"] for d in ok)
     print(f"  T+{k:<2} n={len(ok)}  A实际离场Σ={a_sum:>+9.1f}   B扩大SL持有Σ={b_sum:>+9.1f}   "
           f"Δ(B−A)={b_sum - a_sum:>+9.1f}")

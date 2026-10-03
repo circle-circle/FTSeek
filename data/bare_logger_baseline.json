@@ -1,0 +1,115 @@
+{
+ "counts": {
+  "app/data/futu_lv3_provider.py": 1,
+  "app/data/newsnow_us_news.py": 1,
+  "app/data/rsshub_us_news.py": 1,
+  "app/risk/exit_policy_guardian.py": 1,
+  "scripts/backfill_forward_returns.py": 1,
+  "scripts/borrow_rate_snapshot.py": 1,
+  "scripts/daily_ic_analysis.py": 1,
+  "scripts/daily_invariant_check.py": 1,
+  "scripts/hermes_worker.py": 1,
+  "scripts/markout_capture.py": 1,
+  "scripts/post_market_audit.py": 1,
+  "scripts/sector_pulse.py": 1,
+  "scripts/settle_shadow_portfolio.py": 1,
+  "scripts/spread_depth_capture.py": 1,
+  "scripts/update_signal_lifecycle.py": 1
+ },
+ "refs": {
+  "app/data/futu_lv3_provider.py": [
+   {
+    "line": 60,
+    "code": "logging.getLogger('futu')"
+   }
+  ],
+  "app/data/newsnow_us_news.py": [
+   {
+    "line": 43,
+    "code": "logging.getLogger('rsshub_us')"
+   }
+  ],
+  "app/data/rsshub_us_news.py": [
+   {
+    "line": 59,
+    "code": "logging.getLogger('rsshub_us')"
+   }
+  ],
+  "app/risk/exit_policy_guardian.py": [
+   {
+    "line": 29,
+    "code": "logging.getLogger('exit_policy_guardian')"
+   }
+  ],
+  "scripts/backfill_forward_returns.py": [
+   {
+    "line": 42,
+    "code": "logging.getLogger('backfill_ic')"
+   }
+  ],
+  "scripts/borrow_rate_snapshot.py": [
+   {
+    "line": 29,
+    "code": "logging.getLogger('borrow_rate_snapshot')"
+   }
+  ],
+  "scripts/daily_ic_analysis.py": [
+   {
+    "line": 35,
+    "code": "logging.getLogger('daily_ic_analysis')"
+   }
+  ],
+  "scripts/daily_invariant_check.py": [
+   {
+    "line": 60,
+    "code": "logging.getLogger('invariant_check')"
+   }
+  ],
+  "scripts/hermes_worker.py": [
+   {
+    "line": 68,
+    "code": "logging.getLogger('hermes_worker')"
+   }
+  ],
+  "scripts/markout_capture.py": [
+   {
+    "line": 37,
+    "code": "logging.getLogger('markout_capture')"
+   }
+  ],
+  "scripts/post_market_audit.py": [
+   {
+    "line": 51,
+    "code": "logging.getLogger('post_market_audit')"
+   }
+  ],
+  "scripts/sector_pulse.py": [
+   {
+    "line": 29,
+    "code": "logging.getLogger('sector_pulse')"
+   }
+  ],
+  "scripts/settle_shadow_portfolio.py": [
+   {
+    "line": 58,
+    "code": "logging.getLogger('FTConsoleLog')"
+   }
+  ],
+  "scripts/spread_depth_capture.py": [
+   {
+    "line": 32,
+    "code": "logging.getLogger('spread_capture')"
+   }
+  ],
+  "scripts/update_signal_lifecycle.py": [
+   {
+    "line": 32,
+    "code": "logging.getLogger('update_lifecycle')"
+   }
+  ]
+ },
+ "established_at": "2026-09-09T23:17:06-04:00",
+ "note": "日志卫生棘轮基线 (DEB-20260910 §8.2/§5, W2 同款纪律)。counts = per-file 计数, 判据只用它; refs = 诊断样本 (带行号, 会随编辑漂移, **不参与判定**)。只降不升: 计数下降由人工收缩本文件, 守卫绝不自动改写。改 counts = 改判据, 须先落档 ADR/DEB 并在 refs 写裁决出处。",
+ "fix": "logger 名改 `ftseek.<subsystem>.<module>` (DEB-20260910 §5 建议的 SSOT 约定) — 裸名无法按子系统设级/过滤",
+ "deb_ref": "DEB-20260910-logging-observability-batch §8.2/§5"
+}

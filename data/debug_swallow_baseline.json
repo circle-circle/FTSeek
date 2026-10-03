@@ -1,0 +1,1800 @@
+{
+ "counts": {
+  "app/agents/debate/claude_cli_runner.py": 1,
+  "app/agents/debate/claude_code_runner.py": 1,
+  "app/agents/debate/debate_planner.py": 1,
+  "app/agents/debate/unified_debate_engine.py": 1,
+  "app/analysis/market_state.py": 3,
+  "app/analysis/plan_effectiveness.py": 2,
+  "app/analysis/signal_ic_tracker.py": 1,
+  "app/analysis/systemic_issue_analyzer.py": 1,
+  "app/analysis/voting_accuracy_tracker.py": 3,
+  "app/backtest/walk_forward.py": 1,
+  "app/backtest/weekly_optimizer.py": 2,
+  "app/catalyst/detector.py": 2,
+  "app/catalyst/event_classifier.py": 1,
+  "app/catalyst/postmarket_review.py": 2,
+  "app/catalyst/sources/csrc_source.py": 1,
+  "app/catalyst/sources/hkex_source.py": 1,
+  "app/coordinator/capital_allocator.py": 4,
+  "app/coordinator/dual_mode_params.py": 2,
+  "app/coordinator/manual_hold_registry.py": 1,
+  "app/coordinator/strategy_coordinator.py": 1,
+  "app/core/atr_provider.py": 1,
+  "app/core/config_writer.py": 1,
+  "app/core/min_confidence_resolver.py": 1,
+  "app/core/position_sync.py": 13,
+  "app/core/review_loop.py": 2,
+  "app/core/scheduler_core.py": 20,
+  "app/core/scheduler_triggers.py": 26,
+  "app/core/trade_guard.py": 4,
+  "app/data/alphavantage_provider.py": 2,
+  "app/data/analyst_revision_provider.py": 4,
+  "app/data/earnings_calendar.py": 1,
+  "app/data/futu_lv3_provider.py": 11,
+  "app/data/market_data_router.py": 9,
+  "app/data/news_provider.py": 2,
+  "app/data/orderbook_analyzer.py": 1,
+  "app/data/premarket_enrichment.py": 1,
+  "app/data/providers/fundamental_provider.py": 3,
+  "app/data/rsshub_us_news.py": 2,
+  "app/data/sec_form4_provider.py": 4,
+  "app/data/split_event_guard.py": 1,
+  "app/data/subscription_manager.py": 3,
+  "app/data/ticker_analyzer.py": 1,
+  "app/data/twelvedata_provider.py": 1,
+  "app/decision/cost_model.py": 1,
+  "app/decision/edge_shadow_gate.py": 3,
+  "app/decision/edge_weekly_report.py": 11,
+  "app/diagnostics/shadow_account.py": 1,
+  "app/execution/broker_adapter.py": 2,
+  "app/execution/dual_broker.py": 6,
+  "app/execution/greeks_calculator.py": 1,
+  "app/factors/registry.py": 1,
+  "app/harness/us_audit.py": 1,
+  "app/llm/agent_bridge.py": 6,
+  "app/llm/features/audit_db.py": 2,
+  "app/llm/hermes_client.py": 3,
+  "app/llm/model_call.py": 5,
+  "app/llm/pre_entry_gate.py": 1,
+  "app/llm/thesis_challenge.py": 1,
+  "app/llm/thesis_inferer.py": 6,
+  "app/monitoring/trading_monitor.py": 2,
+  "app/news_v2/processor/llm_classifier.py": 1,
+  "app/news_v2/quality/embedding_matcher.py": 1,
+  "app/news_v2/quality/ticker_dictionary.py": 3,
+  "app/news_v2/sources/cailianpress_source.py": 1,
+  "app/news_v2/sources/eastmoney_us_source.py": 2,
+  "app/news_v2/sources/finnhub_news_source.py": 1,
+  "app/news_v2/sources/rsshub_us_source.py": 2,
+  "app/news_v2/sources/wallstreetcn_source.py": 1,
+  "app/notifier/dingtalk.py": 2,
+  "app/observability/intraday_heartbeat.py": 8,
+  "app/orb/engine.py": 4,
+  "app/pipeline/llm_pipeline.py": 12,
+  "app/pipeline/order_executor.py": 94,
+  "app/pipeline/position_monitor.py": 31,
+  "app/pipeline/post_trade_hook.py": 1,
+  "app/pipeline/signal_pipeline.py": 14,
+  "app/pipeline/stages/risk_stage.py": 7,
+  "app/pipeline/stages/signal_stage.py": 11,
+  "app/plan/analysts/news_analyst.py": 1,
+  "app/plan/analysts/sentiment_analyst.py": 6,
+  "app/plan/day_score.py": 6,
+  "app/plan/deep_analysis_engine.py": 2,
+  "app/plan/deep_research_pipeline.py": 1,
+  "app/plan/factor_engine.py": 14,
+  "app/plan/llm_validator.py": 1,
+  "app/plan/plan_feedback.py": 1,
+  "app/plan/position_intelligence.py": 3,
+  "app/playbook/data_collector.py": 7,
+  "app/playbook/exit_engine.py": 2,
+  "app/playbook/feishu_push.py": 1,
+  "app/playbook/ic_tracker.py": 3,
+  "app/playbook/overnight_decision.py": 4,
+  "app/playbook/pipeline.py": 47,
+  "app/playbook/playbook_service.py": 8,
+  "app/playbook/premarket_invalidation.py": 1,
+  "app/playbook/screener.py": 2,
+  "app/playbook/shadow_tracker.py": 2,
+  "app/positions/reconciler.py": 8,
+  "app/push/aggregator.py": 1,
+  "app/push/health.py": 5,
+  "app/push/hub.py": 4,
+  "app/recommendations/accuracy_tracker.py": 1,
+  "app/recommendations/price_calibrator.py": 1,
+  "app/recommendations/push_trigger.py": 1,
+  "app/recommendations/signal_validator.py": 1,
+  "app/recommendations/synthesizer.py": 2,
+  "app/review/attribution_scheduler.py": 1,
+  "app/review/daily_review.py": 9,
+  "app/review/review_orchestrator.py": 1,
+  "app/review/suggestion_engine.py": 1,
+  "app/review/weekly_review.py": 1,
+  "app/risk/atr_stop_engine.py": 1,
+  "app/risk/capital_safety.py": 4,
+  "app/risk/drawdown_control.py": 3,
+  "app/risk/earnings_guard.py": 1,
+  "app/risk/engine.py": 2,
+  "app/risk/exit_quality_scorer.py": 1,
+  "app/risk/exit_rules/pre_close.py": 5,
+  "app/risk/exit_rules/scale_out.py": 1,
+  "app/risk/exit_rules/trailing_stop.py": 3,
+  "app/risk/manual_position_guard.py": 1,
+  "app/risk/market_regime_detector.py": 1,
+  "app/risk/pdt_guard.py": 2,
+  "app/risk/pnl_outlier_monitor.py": 2,
+  "app/risk/position_exit_monitor.py": 18,
+  "app/risk/pre_trade_check.py": 6,
+  "app/risk/price_momentum_gate.py": 3,
+  "app/risk/strategy_health_monitor.py": 1,
+  "app/risk/trail_state_store.py": 1,
+  "app/risk/vix_monitor.py": 5,
+  "app/signals/pre_market_ranker.py": 1,
+  "app/storage/decision_recorder.py": 1,
+  "app/storage/exit_quality_tracker.py": 2,
+  "app/storage/metrics_tables.py": 2,
+  "app/storage/rejection_logger.py": 1,
+  "app/strategy/llm_strategy_engine.py": 2,
+  "app/strategy/pure/earnings_revision.py": 1,
+  "app/strategy/pure/insider.py": 1,
+  "app/strategy/regime_adapter.py": 2,
+  "app/strategy/regime_filter.py": 2,
+  "app/strategy/signal_quality_scorer.py": 1,
+  "app/us_pipeline/battle_plan_manager.py": 5,
+  "app/us_pipeline/emergency_interceptor.py": 3,
+  "app/us_pipeline/open_checker.py": 2,
+  "app/utils/critical_alerts.py": 2,
+  "app/utils/holiday_calendar.py": 2,
+  "app/utils/timezone.py": 1,
+  "app/utils/watchlist_manager.py": 2,
+  "app/web_dashboard/data_service.py": 5,
+  "app/web_dashboard/env_scope.py": 4,
+  "app/web_dashboard/mode_switch_service.py": 1,
+  "app/web_dashboard/order/audit.py": 2,
+  "app/web_dashboard/order/executor.py": 10,
+  "app/web_dashboard/order/gates.py": 6,
+  "app/web_dashboard/order/thesis.py": 1,
+  "app/web_dashboard/order/validator.py": 5,
+  "app/web_dashboard/routes/battle_plan.py": 14,
+  "app/web_dashboard/routes/dashboard.py": 3,
+  "app/web_dashboard/routes/trade_intel.py": 3,
+  "app/web_dashboard/routes/watchlist.py": 4,
+  "app/web_dashboard/routes/ws.py": 1,
+  "main.py": 3,
+  "scripts/backfill_forward_returns.py": 2,
+  "scripts/post_market_audit.py": 1
+ },
+ "refs": {
+  "app/agents/debate/claude_cli_runner.py": [
+   {
+    "line": 188,
+    "code": "logger.debug(f'[ClaudeCLI] 输出前 200 字符: {stdout[:200]}')"
+   }
+  ],
+  "app/agents/debate/claude_code_runner.py": [
+   {
+    "line": 222,
+    "code": "logger.debug(f'[ClaudeRunner] 原始响应: {response[:500]}')"
+   }
+  ],
+  "app/agents/debate/debate_planner.py": [
+   {
+    "line": 591,
+    "code": "logger.debug(f'[DebateMetrics] 记录指标失败: {e}')"
+   }
+  ],
+  "app/agents/debate/unified_debate_engine.py": [
+   {
+    "line": 762,
+    "code": "logger.debug(f'[UnifiedDebate] 日志保存失败: {e}')"
+   }
+  ],
+  "app/analysis/market_state.py": [
+   {
+    "line": 120,
+    "code": "logger.debug(f'LV3 获取 SPY 失败: {e}')"
+   },
+   {
+    "line": 171,
+    "code": "logger.debug(f'FRED CSV 获取 VIX 失败: {e}')"
+   },
+   {
+    "line": 197,
+    "code": "logger.debug(f'AlphaVantage 获取 VIX 失败: {e}')"
+   }
+  ],
+  "app/analysis/plan_effectiveness.py": [
+   {
+    "line": 131,
+    "code": "logger.debug(f'[PlanEffectiveness] 保存空报告失败: {e}')"
+   },
+   {
+    "line": 145,
+    "code": "logger.debug(f'[PlanEffectiveness] 评估 target 失败: {e}')"
+   }
+  ],
+  "app/analysis/signal_ic_tracker.py": [
+   {
+    "line": 295,
+    "code": "logger.debug(f'[SignalIC] 记录快照失败 (不影响主流程): {e}')"
+   }
+  ],
+  "app/analysis/systemic_issue_analyzer.py": [
+   {
+    "line": 264,
+    "code": "logger.debug(f'[SystemicAnalyzer] 保存失败: {e}')"
+   }
+  ],
+  "app/analysis/voting_accuracy_tracker.py": [
+   {
+    "line": 503,
+    "code": "logger.debug(f'[ModelBenchmark] compare_models 失败: {e}')"
+   },
+   {
+    "line": 132,
+    "code": "logger.debug(f'[VotingAccuracy] record_prediction 失败: {e}')"
+   },
+   {
+    "line": 196,
+    "code": "logger.debug(f'[VotingAccuracy] update_outcome 失败: {e}')"
+   }
+  ],
+  "app/backtest/walk_forward.py": [
+   {
+    "line": 171,
+    "code": "logger.debug('signal_generator 签名内省失败, 按单参调用: %s', _e)"
+   }
+  ],
+  "app/backtest/weekly_optimizer.py": [
+   {
+    "line": 736,
+    "code": "logger.debug(f'heatmap {p} 失败: {e}')"
+   },
+   {
+    "line": 262,
+    "code": "logger.debug(f'[WeeklyOptimizer] 跳过异常行: {e}')"
+   }
+  ],
+  "app/catalyst/detector.py": [
+   {
+    "line": 144,
+    "code": "logger.debug('[Catalyst] NewsPipelineV2 获取失败: %s', e)"
+   },
+   {
+    "line": 176,
+    "code": "logger.debug('[Catalyst] NewsNow DB 回退失败: %s', e)"
+   }
+  ],
+  "app/catalyst/event_classifier.py": [
+   {
+    "line": 446,
+    "code": "logger.debug('[Catalyst] LLM 辅助失败 (保留原始分类): %s', e)"
+   }
+  ],
+  "app/catalyst/postmarket_review.py": [
+   {
+    "line": 331,
+    "code": "logger.debug('[CatalystReview] 保存失败: %s', e)"
+   },
+   {
+    "line": 275,
+    "code": "logger.debug('[CatalystReview] LLM 分析失败: %s', e)"
+   }
+  ],
+  "app/catalyst/sources/csrc_source.py": [
+   {
+    "line": 168,
+    "code": "logger.debug(f'[CSRC] 解析条目失败: {e}')"
+   }
+  ],
+  "app/catalyst/sources/hkex_source.py": [
+   {
+    "line": 157,
+    "code": "logger.debug(f'[HKEX] 解析行失败: {e}')"
+   }
+  ],
+  "app/coordinator/capital_allocator.py": [
+   {
+    "line": 586,
+    "code": "logger.debug(f'[CapitalAllocator] _persist_state failed: {e}')"
+   },
+   {
+    "line": 608,
+    "code": "logger.debug(f'[CapitalAllocator] _persist_state_all failed: {e}')"
+   },
+   {
+    "line": 411,
+    "code": "logger.debug(f'[CapitalAllocator·auto_capacity_report] classify err: {_e}')"
+   }
+  ],
+  "app/coordinator/dual_mode_params.py": [
+   {
+    "line": 81,
+    "code": "logger.debug(f'[dual_mode] 获取 level 异常 (降级为 conservative): {e}')"
+   },
+   {
+    "line": 94,
+    "code": "logger.debug(f'[dual_mode] yaml 读取 dual_mode.{level} 失败: {e}')"
+   }
+  ],
+  "app/coordinator/manual_hold_registry.py": [
+   {
+    "line": 258,
+    "code": "logger.debug(f'[ManualHoldRegistry] DB owner=manual scan skipped: {_dbe}')"
+   }
+  ],
+  "app/coordinator/strategy_coordinator.py": [
+   {
+    "line": 386,
+    "code": "logger.debug(f'[Coordinator·reconcile·Task#35] report 生成失败: {_re}')"
+   }
+  ],
+  "app/core/atr_provider.py": [
+   {
+    "line": 140,
+    "code": "logger.debug(f'[ATRProvider] {symbol} 获取价格异常: {e}')"
+   }
+  ],
+  "app/core/config_writer.py": [
+   {
+    "line": 605,
+    "code": "logger.debug(f'[ConfigWriter] 热加载失败 (不影响写入): {e}')"
+   }
+  ],
+  "app/core/min_confidence_resolver.py": [
+   {
+    "line": 77,
+    "code": "logger.debug(f'[MinConfResolver] lesson_injector 查询失败: {e}')"
+   }
+  ],
+  "app/core/position_sync.py": [
+   {
+    "line": 711,
+    "code": "logger.debug(f'[US Sync·P3] 查询 Futu 当日委托失败: {e}')"
+   },
+   {
+    "line": 1067,
+    "code": "logger.debug(f'[US Sync·P3] manual_order_audit 查询失败: {e}')"
+   },
+   {
+    "line": 2272,
+    "code": "logger.debug(f'[US Sync Consistency] 校验异常 (已忽略): {e}')"
+   }
+  ],
+  "app/core/review_loop.py": [
+   {
+    "line": 1074,
+    "code": "logger.debug(f'[ExperienceAcc] 经验积累失败 (不影响主流程): {acc_err}')"
+   },
+   {
+    "line": 201,
+    "code": "logger.debug(f\"[IssueDetector] 规则 {rule['name']} 检测失败: {e}\")"
+   }
+  ],
+  "app/core/scheduler_core.py": [
+   {
+    "line": 172,
+    "code": "logger.debug(f'[config-diff] 强度键分歧检查失败(忽略): {e}')"
+   },
+   {
+    "line": 422,
+    "code": "logger.debug(f'[SANDBOX] universe 覆盖失败 (走 watchlist): {_se}')"
+   },
+   {
+    "line": 865,
+    "code": "logger.debug(f'[Cooldown·DB恢复] 失败 (不影响启动): {e}')"
+   }
+  ],
+  "app/core/scheduler_triggers.py": [
+   {
+    "line": 84,
+    "code": "logger.debug(f'[silent_except:scheduler_triggers.py] {_silent_e}')"
+   },
+   {
+    "line": 103,
+    "code": "logger.debug(f'[market_phase] 收盘时刻取值失败, 兜底 16:00: {_ec_err}')"
+   },
+   {
+    "line": 306,
+    "code": "logger.debug(f'[Recommendations] 准确率模块未就绪 (跳过): {ie}')"
+   }
+  ],
+  "app/core/trade_guard.py": [
+   {
+    "line": 122,
+    "code": "logger.debug('PDT 状态保存失败')"
+   },
+   {
+    "line": 389,
+    "code": "logger.debug('[TradeGuard] 拒绝日志写入失败')"
+   },
+   {
+    "line": 534,
+    "code": "logger.debug('[ConflictArbiter] 仲裁日志写入失败')"
+   }
+  ],
+  "app/data/alphavantage_provider.py": [
+   {
+    "line": 571,
+    "code": "logger.debug(f'[Finnhub] VIXY 代理获取失败: {fh_e}')"
+   },
+   {
+    "line": 592,
+    "code": "logger.debug(f'[FRED] VIX 获取失败: {fred_e}')"
+   }
+  ],
+  "app/data/analyst_revision_provider.py": [
+   {
+    "line": 118,
+    "code": "logger.debug(f'[Yahoo] Session setup failed: {e}')"
+   },
+   {
+    "line": 140,
+    "code": "logger.debug(f'[Yahoo] Request failed: {url[:80]}... -> {e}')"
+   },
+   {
+    "line": 112,
+    "code": "logger.debug(f'[Yahoo] Crumb fetch failed: {e}')"
+   }
+  ],
+  "app/data/earnings_calendar.py": [
+   {
+    "line": 772,
+    "code": "logger.debug(f'[财报日历] 富途 beat 榜获取失败 (非致命): {e}')"
+   }
+  ],
+  "app/data/futu_lv3_provider.py": [
+   {
+    "line": 1419,
+    "code": "logger.debug(f'[FutuLV3] {symbol} K 线异常: {e}')"
+   },
+   {
+    "line": 1704,
+    "code": "logger.debug(f'[FutuLV3·历史] 盘后连接失败: {e}')"
+   },
+   {
+    "line": 1737,
+    "code": "logger.debug(f'[FutuLV3·ETH] 快照查询异常: {e}')"
+   }
+  ],
+  "app/data/market_data_router.py": [
+   {
+    "line": 838,
+    "code": "logger.debug(f'[Router] get_spy_context() 失败: {e}')"
+   },
+   {
+    "line": 998,
+    "code": "logger.debug(f'[Router] LV3 获取 SPY 报价失败: {e}')"
+   },
+   {
+    "line": 507,
+    "code": "logger.debug(f'[Router] 日ATR覆盖失败 (用1分钟ATR): {_atr_err}')"
+   }
+  ],
+  "app/data/news_provider.py": [
+   {
+    "line": 126,
+    "code": "logger.debug(f'RSS抓取失败 {url}: {e}')"
+   },
+   {
+    "line": 245,
+    "code": "logger.debug(f'RSS抓取失败 {url}: {e}')"
+   }
+  ],
+  "app/data/orderbook_analyzer.py": [
+   {
+    "line": 228,
+    "code": "logger.debug(f'[OrderBookAnalyzer] {symbol} 异常: {e}')"
+   }
+  ],
+  "app/data/premarket_enrichment.py": [
+   {
+    "line": 672,
+    "code": "logger.debug(f'[PreMarket] 盘前榜回退读文件失败: {e}')"
+   }
+  ],
+  "app/data/providers/fundamental_provider.py": [
+   {
+    "line": 57,
+    "code": "logger.debug(f'[FundamentalProvider] Finnhub {endpoint} error: {e}')"
+   },
+   {
+    "line": 351,
+    "code": "logger.debug(f'[FundamentalProvider] Yahoo error: {e}')"
+   },
+   {
+    "line": 365,
+    "code": "logger.debug(f'[FundamentalProvider] AlphaVantage error: {e}')"
+   }
+  ],
+  "app/data/rsshub_us_news.py": [
+   {
+    "line": 581,
+    "code": "logger.debug(f'[RSSHub-US] 旧数据清理失败 (不阻塞): {_cl_e}')"
+   },
+   {
+    "line": 510,
+    "code": "logger.debug(f'RSSHub {instance} 失败: {e}')"
+   }
+  ],
+  "app/data/sec_form4_provider.py": [
+   {
+    "line": 108,
+    "code": "logger.debug(f'[SEC] Request failed: {url[:80]}... -> {e}')"
+   },
+   {
+    "line": 583,
+    "code": "logger.debug(f'[SEC] Cache write failed: {e}')"
+   },
+   {
+    "line": 510,
+    "code": "logger.debug(f'[Insider] {sym} scan error: {e}')"
+   }
+  ],
+  "app/data/split_event_guard.py": [
+   {
+    "line": 124,
+    "code": "logger.debug(f'[SplitGuard] yaml 加载失败 (可忽略): {e}')"
+   }
+  ],
+  "app/data/subscription_manager.py": [
+   {
+    "line": 128,
+    "code": "logger.debug(f'[FutuLV3Adapter] is_healthy 异常: {e}')"
+   },
+   {
+    "line": 151,
+    "code": "logger.debug(f'[FutuLV3Adapter] ping 异常: {e}')"
+   },
+   {
+    "line": 464,
+    "code": "logger.debug(f'[Watchdog] is_healthy 异常 (忽略): {e}')"
+   }
+  ],
+  "app/data/ticker_analyzer.py": [
+   {
+    "line": 205,
+    "code": "logger.debug(f'[TickerAnalyzer] {symbol} 异常: {e}')"
+   }
+  ],
+  "app/data/twelvedata_provider.py": [
+   {
+    "line": 452,
+    "code": "logger.debug(f'[TwelveData] 批量解析跳过 {sym}: {e}')"
+   }
+  ],
+  "app/decision/cost_model.py": [
+   {
+    "line": 264,
+    "code": "logger.debug('[cost] net_edge calc failed: %s', e)"
+   }
+  ],
+  "app/decision/edge_shadow_gate.py": [
+   {
+    "line": 88,
+    "code": "logger.debug(f'[EdgeShadowGate] 刷新 expectancy 表失败 (忽略): {e}')"
+   },
+   {
+    "line": 147,
+    "code": "logger.debug(f'[EdgeShadowGate] 判定失败 (忽略, 返回 PASS): {e}')"
+   },
+   {
+    "line": 179,
+    "code": "logger.debug(f'[EdgeShadowGate] 写影子日志失败 (忽略): {e}')"
+   }
+  ],
+  "app/decision/edge_weekly_report.py": [
+   {
+    "line": 54,
+    "code": "logger.debug(f'[EdgeWeekly] 读影子日志失败: {e}')"
+   },
+   {
+    "line": 110,
+    "code": "logger.debug(f'[EdgeWeekly] 读 signal_quality 失败: {e}')"
+   },
+   {
+    "line": 206,
+    "code": "logger.debug(f'[EdgeWeekly] 记录完整性失败: {e}')"
+   }
+  ],
+  "app/diagnostics/shadow_account.py": [
+   {
+    "line": 176,
+    "code": "logger.debug(f'[{self.name}] 加载交易数据失败: {e}')"
+   }
+  ],
+  "app/execution/broker_adapter.py": [
+   {
+    "line": 148,
+    "code": "logger.debug(f'[BROKER·兜底] {symbol} 估价失败: {e}')"
+   },
+   {
+    "line": 322,
+    "code": "logger.debug(f'[富途] 断开连接: {e}')"
+   }
+  ],
+  "app/execution/dual_broker.py": [
+   {
+    "line": 641,
+    "code": "logger.debug(f'[DualBroker] order_list_query fallback 失败 {futu_order_id}: {e}')"
+   },
+   {
+    "line": 689,
+    "code": "logger.debug(f'[DualBroker] get_short_pool 失败 (调用方 fail-open): {e}')"
+   },
+   {
+    "line": 624,
+    "code": "logger.debug(f'[DualBroker] history_deal_list_query 失败 {futu_order_id}: {e}')"
+   }
+  ],
+  "app/execution/greeks_calculator.py": [
+   {
+    "line": 154,
+    "code": "logger.debug('[Greeks] futu 未安装，使用理论计算')"
+   }
+  ],
+  "app/factors/registry.py": [
+   {
+    "line": 157,
+    "code": "logger.debug('[FactorRegistry] 跳过 %s: %s', module_path, e)"
+   }
+  ],
+  "app/harness/us_audit.py": [
+   {
+    "line": 239,
+    "code": "logger.debug(f'   Signal IC 摘要获取失败 (不影响主流程): {e}')"
+   }
+  ],
+  "app/llm/agent_bridge.py": [
+   {
+    "line": 575,
+    "code": "logger.debug(f'[Agent-US] 队列写入跳过: {e}')"
+   },
+   {
+    "line": 678,
+    "code": "logger.debug(f'[Agent-US] 队列写入跳过: {e}')"
+   },
+   {
+    "line": 871,
+    "code": "logger.debug(f'[Agent-US] 净期望统计失败(不阻断): {_perf_e}')"
+   }
+  ],
+  "app/llm/features/audit_db.py": [
+   {
+    "line": 135,
+    "code": "logger.debug(f'[LLM Audit] 写入失败: {e}')"
+   },
+   {
+    "line": 153,
+    "code": "logger.debug(f'[LLM Audit] 查询失败: {e}')"
+   }
+  ],
+  "app/llm/hermes_client.py": [
+   {
+    "line": 208,
+    "code": "logger.debug('ping 失败: %s', e)"
+   },
+   {
+    "line": 183,
+    "code": "logger.debug('_raw_request read error: %s', e)"
+   },
+   {
+    "line": 176,
+    "code": "logger.debug('非 JSON 行: %s', line[:100])"
+   }
+  ],
+  "app/llm/model_call.py": [
+   {
+    "line": 61,
+    "code": "logger.debug(f'[ModelCall] yaml 读取失败 (用空配置): {e}')"
+   },
+   {
+    "line": 286,
+    "code": "logger.debug(f'[ModelCall·cache] 保存失败 {feature}: {e}')"
+   },
+   {
+    "line": 301,
+    "code": "logger.debug(f'[ModelCall·cache] 读取失败 {feature}: {e}')"
+   }
+  ],
+  "app/llm/pre_entry_gate.py": [
+   {
+    "line": 130,
+    "code": "logger.debug(f'[PreEntryGate·history] {symbol}/{direction} 查询失败: {e}')"
+   }
+  ],
+  "app/llm/thesis_challenge.py": [
+   {
+    "line": 324,
+    "code": "logger.debug(f'[ThesisChallenge] Technicals error: {e}')"
+   }
+  ],
+  "app/llm/thesis_inferer.py": [
+   {
+    "line": 190,
+    "code": "logger.debug(f'[ThesisInferer] 获取资金流失败：{e}')"
+   },
+   {
+    "line": 222,
+    "code": "logger.debug(f'[ThesisInferer] 获取历史胜率失败：{e}')"
+   },
+   {
+    "line": 253,
+    "code": "logger.debug(f'[ThesisInferer] 获取市场环境失败：{e}')"
+   }
+  ],
+  "app/monitoring/trading_monitor.py": [
+   {
+    "line": 275,
+    "code": "logger.debug(f'[Monitor] PDT 检查失败 (非关键): {e}')"
+   },
+   {
+    "line": 290,
+    "code": "logger.debug(f'[Monitor] 熔断器检查失败 (非关键): {e}')"
+   }
+  ],
+  "app/news_v2/processor/llm_classifier.py": [
+   {
+    "line": 269,
+    "code": "logger.debug(f'[NewsClassifier·persist] 失败: {e}')"
+   }
+  ],
+  "app/news_v2/quality/embedding_matcher.py": [
+   {
+    "line": 83,
+    "code": "logger.debug(f'[EmbeddingMatcher·encode] 失败: {e}')"
+   }
+  ],
+  "app/news_v2/quality/ticker_dictionary.py": [
+   {
+    "line": 256,
+    "code": "logger.debug(f'[TickerDict·yaml] 加载失败: {e}')"
+   },
+   {
+    "line": 260,
+    "code": "logger.debug(f'[TickerDict·db] 加载失败: {e}')"
+   },
+   {
+    "line": 306,
+    "code": "logger.debug(f'[TickerDict·trade_records] {e}')"
+   }
+  ],
+  "app/news_v2/sources/cailianpress_source.py": [
+   {
+    "line": 210,
+    "code": "logger.debug(f'[CailianPress] 解析单条失败 (跳过): {e}')"
+   }
+  ],
+  "app/news_v2/sources/eastmoney_us_source.py": [
+   {
+    "line": 85,
+    "code": "logger.debug(f'[Eastmoney·{sym}] 拉取失败 (跳过): {e}')"
+   },
+   {
+    "line": 187,
+    "code": "logger.debug(f'[Eastmoney·{symbol}] 解析失败 (跳过): {e}')"
+   }
+  ],
+  "app/news_v2/sources/finnhub_news_source.py": [
+   {
+    "line": 95,
+    "code": "logger.debug('Finnhub 请求失败: %s', e)"
+   }
+  ],
+  "app/news_v2/sources/rsshub_us_source.py": [
+   {
+    "line": 178,
+    "code": "logger.debug('[%s] 第1次尝试失败，重试: %s', name, e)"
+   },
+   {
+    "line": 148,
+    "code": "logger.debug('[%s] pubDate 解析失败, 丢弃该条: %r', route['name'], pub_date)"
+   }
+  ],
+  "app/news_v2/sources/wallstreetcn_source.py": [
+   {
+    "line": 180,
+    "code": "logger.debug(f'[WallstreetCN] 解析单条失败 (跳过): {e}')"
+   }
+  ],
+  "app/notifier/dingtalk.py": [
+   {
+    "line": 366,
+    "code": "logger.debug(f'[钉钉] notify_exit 异常: {e}')"
+   },
+   {
+    "line": 363,
+    "code": "logger.debug(f'[飞书] 平仓通知推送失败: {e}')"
+   }
+  ],
+  "app/observability/intraday_heartbeat.py": [
+   {
+    "line": 125,
+    "code": "logger.debug(f'[Heartbeat] trades query 失败: {e}')"
+   },
+   {
+    "line": 151,
+    "code": "logger.debug(f'[Heartbeat] entries query 失败: {e}')"
+   },
+   {
+    "line": 166,
+    "code": "logger.debug(f'[Heartbeat] rejects query 失败: {e}')"
+   }
+  ],
+  "app/orb/engine.py": [
+   {
+    "line": 784,
+    "code": "logger.debug(f'[ORB·跨引擎冷却] {symbol} 查询失败: {e}')"
+   },
+   {
+    "line": 840,
+    "code": "logger.debug('[ORB] _get_account_equity 委托 _get_equity 失败: %s', e)"
+   },
+   {
+    "line": 1172,
+    "code": "logger.debug(f'[ORB][quality] 上报质量异常 (忽略): {_e}')"
+   }
+  ],
+  "app/pipeline/llm_pipeline.py": [
+   {
+    "line": 919,
+    "code": "logger.debug(f'[silent_except:llm_pipeline.py] {_silent_e}')"
+   },
+   {
+    "line": 951,
+    "code": "logger.debug(f'[silent_except:llm_pipeline.py] {_silent_e}')"
+   },
+   {
+    "line": 299,
+    "code": "logger.debug(f'[LLM策略] 获取行情上下文失败: {e}')"
+   }
+  ],
+  "app/pipeline/order_executor.py": [
+   {
+    "line": 259,
+    "code": "logger.debug(f'[平仓·broker持仓刷新] {symbol} 异常: {_e}')"
+   },
+   {
+    "line": 331,
+    "code": "logger.debug(f'[平仓·open_orders] {symbol} 查询异常: {_e}')"
+   },
+   {
+    "line": 446,
+    "code": "logger.debug(f'[平仓·broker0] {position.symbol} coordinator 释放失败 (忽略): {_ce}')"
+   }
+  ],
+  "app/pipeline/position_monitor.py": [
+   {
+    "line": 52,
+    "code": "logger.debug(f'[退出屏障·恢复] 失败 (不影响启动): {_e}')"
+   },
+   {
+    "line": 71,
+    "code": "logger.debug(f'[退出屏障·保存] 失败: {_e}')"
+   },
+   {
+    "line": 179,
+    "code": "logger.debug(f'[分批止盈·预检异常] {position.symbol}: {_precheck_err}')"
+   }
+  ],
+  "app/pipeline/post_trade_hook.py": [
+   {
+    "line": 206,
+    "code": "_logging.getLogger('ftseek_us.post_trade_hook').debug(f'[broker_stop_guard] {symbol} 跳过: {e}')"
+   }
+  ],
+  "app/pipeline/signal_pipeline.py": [
+   {
+    "line": 436,
+    "code": "logger.debug(f'[RegimeQuickSwitch] 检测异常 (不影响主流程): {_rre}')"
+   },
+   {
+    "line": 465,
+    "code": "logger.debug(f'[StrategyHealth] 评估调用失败 (不影响主流程): {_sh_err}')"
+   },
+   {
+    "line": 829,
+    "code": "logger.debug(f'[信号] 因子分解失败 (保留原始 model_scores): {_fd_e}')"
+   }
+  ],
+  "app/pipeline/stages/risk_stage.py": [
+   {
+    "line": 32,
+    "code": "logger.debug(f'[Risk] 获取 Futu provider 失败: {e}')"
+   },
+   {
+    "line": 43,
+    "code": "logger.debug(f'[LIQUIDITY] {symbol} 检查失败: {e}')"
+   },
+   {
+    "line": 54,
+    "code": "logger.debug(f'[TICKER] {symbol} 流向查询失败: {e}')"
+   }
+  ],
+  "app/pipeline/stages/signal_stage.py": [
+   {
+    "line": 74,
+    "code": "logger.debug(f'[FastLaneSkip] 落库异常(忽略): {_e}')"
+   },
+   {
+    "line": 254,
+    "code": "logger.debug(f'[TechnicalArbitration] shadow log failed: {e}')"
+   },
+   {
+    "line": 409,
+    "code": "logger.debug(f'[SignalStage] quality scoring failed: {qe}')"
+   }
+  ],
+  "app/plan/analysts/news_analyst.py": [
+   {
+    "line": 124,
+    "code": "logger.debug(f'[news_analyst] {symbol} finnhub news error: {e}')"
+   }
+  ],
+  "app/plan/analysts/sentiment_analyst.py": [
+   {
+    "line": 120,
+    "code": "logger.debug(f'[sentiment_analyst] {symbol} error: {e}')"
+   },
+   {
+    "line": 172,
+    "code": "logger.debug(f'[sentiment] Fear&Greed/VIX error: {e}')"
+   },
+   {
+    "line": 222,
+    "code": "logger.debug(f'[sentiment] StockTwits {symbol} error: {e}')"
+   }
+  ],
+  "app/plan/day_score.py": [
+   {
+    "line": 88,
+    "code": "logger.debug(f'[DayScore] 配置加载失败，使用默认值: {e}')"
+   },
+   {
+    "line": 107,
+    "code": "logger.debug(f'[DayScore] VIX读取失败: {e}')"
+   },
+   {
+    "line": 186,
+    "code": "logger.debug(f'[DayScore] SPY趋势获取失败: {e}')"
+   }
+  ],
+  "app/plan/deep_analysis_engine.py": [
+   {
+    "line": 323,
+    "code": "logger.debug(f'[deep_analysis] 基本面格式化失败: {e}')"
+   },
+   {
+    "line": 152,
+    "code": "logger.debug(f'[deep_analysis] JSON 二次解析失败: {e}')"
+   }
+  ],
+  "app/plan/deep_research_pipeline.py": [
+   {
+    "line": 523,
+    "code": "logger.debug(f'[deep_research·{symbol}] risk_debate {name} error: {e}')"
+   }
+  ],
+  "app/plan/factor_engine.py": [
+   {
+    "line": 133,
+    "code": "logger.debug(f'[FactorEngine] premarket cache read error: {e}')"
+   },
+   {
+    "line": 156,
+    "code": "logger.debug(f'[FactorEngine] futu premarket rank read error: {e}')"
+   },
+   {
+    "line": 200,
+    "code": "logger.debug(f'[FactorEngine] finnhub mover scan error: {e}')"
+   }
+  ],
+  "app/plan/llm_validator.py": [
+   {
+    "line": 493,
+    "code": "logger.debug(f'[Validator] peer changes error: {e}')"
+   }
+  ],
+  "app/plan/plan_feedback.py": [
+   {
+    "line": 110,
+    "code": "logger.debug(f'[PlanFeedback] fwd returns error: {e}')"
+   }
+  ],
+  "app/plan/position_intelligence.py": [
+   {
+    "line": 108,
+    "code": "logger.debug(f'_calc_hold_days 解析失败: {created_at!r} ({e})')"
+   },
+   {
+    "line": 174,
+    "code": "logger.debug(f'_get_avg_hold_days({symbol},{direction}) 查询失败: {e}')"
+   },
+   {
+    "line": 239,
+    "code": "logger.debug(f'_check_invalidation_simple 解析失败: {e}')"
+   }
+  ],
+  "app/playbook/data_collector.py": [
+   {
+    "line": 217,
+    "code": "logger.debug(f'Failed to get VIX: {e}')"
+   },
+   {
+    "line": 646,
+    "code": "logger.debug(f'Finnhub earnings calendar failed for {symbol}: {e}')"
+   },
+   {
+    "line": 675,
+    "code": "logger.debug(f'Finnhub earnings history failed for {symbol}: {e}')"
+   }
+  ],
+  "app/playbook/exit_engine.py": [
+   {
+    "line": 259,
+    "code": "logger.debug(f'[playbook] 读取 horizon 配置失败: {e}, 使用默认')"
+   },
+   {
+    "line": 647,
+    "code": "logger.debug(f'[shadow·reentry_tp] 触达记录跳过: {_rqtp_e}')"
+   }
+  ],
+  "app/playbook/feishu_push.py": [
+   {
+    "line": 71,
+    "code": "logger.debug(f'[playbook] 实时 regime 评估失败, 回退 regime_log 缓存: {_re}')"
+   }
+  ],
+  "app/playbook/ic_tracker.py": [
+   {
+    "line": 85,
+    "code": "logger.debug(f'Spearman computation failed, using fallback: {e}')"
+   },
+   {
+    "line": 408,
+    "code": "logger.debug(f'[PlaybookIC] 机制调整影子回填失败 (不影响主口径): {_e_adj}')"
+   },
+   {
+    "line": 426,
+    "code": "logger.debug(f'Failed to update IC for {symbol}: {e}')"
+   }
+  ],
+  "app/playbook/overnight_decision.py": [
+   {
+    "line": 53,
+    "code": "logger.debug(f'[playbook·horizon] MAX_HOLD 日期计算异常 (不强平): {e}')"
+   },
+   {
+    "line": 148,
+    "code": "logger.debug(f'[overnight_decision] 轨③判定异常 {symbol} (继续判 W_WEEK): {_e3}')"
+   },
+   {
+    "line": 153,
+    "code": "logger.debug(f'[overnight_decision] W_WEEK 判定异常 {symbol} (不豁免): {_ew}')"
+   }
+  ],
+  "app/playbook/pipeline.py": [
+   {
+    "line": 487,
+    "code": "logger.debug(f'[playbook] 方向审计日志失败: {e}')"
+   },
+   {
+    "line": 531,
+    "code": "logger.debug(f'[playbook] 节假日检查异常, 按交易日处理: {e}')"
+   },
+   {
+    "line": 558,
+    "code": "logger.debug(f'[playbook·RFC-061] MAX_HOLD_T5 日期计算异常 (不强平): {e}')"
+   }
+  ],
+  "app/playbook/playbook_service.py": [
+   {
+    "line": 360,
+    "code": "logger.debug(f'[playbook] signal_context 查询失败: {e}')"
+   },
+   {
+    "line": 705,
+    "code": "logger.debug(f'[playbook] 加载 {rel_path} 失败: {e}')"
+   },
+   {
+    "line": 772,
+    "code": "logger.debug(f'[playbook] 方向审计加载失败: {e}')"
+   }
+  ],
+  "app/playbook/premarket_invalidation.py": [
+   {
+    "line": 129,
+    "code": "logger.debug(f'[盘前失效] 评估异常 (已隔离): {e}')"
+   }
+  ],
+  "app/playbook/screener.py": [
+   {
+    "line": 229,
+    "code": "logger.debug(f'[SCREENER] 因子IC加载失败: {e}')"
+   },
+   {
+    "line": 448,
+    "code": "logger.debug(f'Condition evaluation failed: {condition}, error: {e}')"
+   }
+  ],
+  "app/playbook/shadow_tracker.py": [
+   {
+    "line": 501,
+    "code": "logger.debug(f'[shadow] get_daily_bars failed for {symbol}: {e}')"
+   },
+   {
+    "line": 513,
+    "code": "logger.debug(f'[shadow] get_quote fallback failed for {symbol}: {e}')"
+   }
+  ],
+  "app/positions/reconciler.py": [
+   {
+    "line": 167,
+    "code": "logger.debug(f'[Reconciler] USPositionSync fetch 失败: {e}')"
+   },
+   {
+    "line": 287,
+    "code": "logger.debug(f'[Reconciler·_infer_source·manual_check] {symbol}: {e}')"
+   },
+   {
+    "line": 295,
+    "code": "logger.debug(f'[Reconciler·_infer_source·trade_records] {symbol}: {e}')"
+   }
+  ],
+  "app/push/aggregator.py": [
+   {
+    "line": 95,
+    "code": "logger.debug(f'[PushAggregator·loop] {e}')"
+   }
+  ],
+  "app/push/health.py": [
+   {
+    "line": 102,
+    "code": "logger.debug(f'[PushHealth] {ch.name} 熔丝调优失败 (priority 只读?): {_e}')"
+   },
+   {
+    "line": 106,
+    "code": "logger.debug(f'[PushHealth] {ch.name} 熔丝标记不可用失败: {_e}')"
+   },
+   {
+    "line": 54,
+    "code": "logger.debug(f'[PushHealth·loop] {e}')"
+   }
+  ],
+  "app/push/hub.py": [
+   {
+    "line": 168,
+    "code": "logger.debug(f'[PushHub·async] submit 失败, 降级同步: {e}')"
+   },
+   {
+    "line": 260,
+    "code": "logger.debug(f'[PushHub·_record_failure] 落盘失败 (忽略): {e}')"
+   },
+   {
+    "line": 204,
+    "code": "logger.debug(f'[PushHub] channel {ch.name} 异常: {e}')"
+   }
+  ],
+  "app/recommendations/accuracy_tracker.py": [
+   {
+    "line": 355,
+    "code": "logger.debug(f'[AccuracyTracker] MarketDataRouter 初始化失败: {e}')"
+   }
+  ],
+  "app/recommendations/price_calibrator.py": [
+   {
+    "line": 66,
+    "code": "logger.debug(f'[PriceCalibrator] 配置读取失败，使用默认值: {e}')"
+   }
+  ],
+  "app/recommendations/push_trigger.py": [
+   {
+    "line": 129,
+    "code": "logger.debug(f'[PushTrigger] config 加载失败, 使用默认: {e}')"
+   }
+  ],
+  "app/recommendations/signal_validator.py": [
+   {
+    "line": 326,
+    "code": "logger.debug(f'[SignalValidator] DB 统计失败: {e}')"
+   }
+  ],
+  "app/recommendations/synthesizer.py": [
+   {
+    "line": 63,
+    "code": "logger.debug(f'[Synthesizer] 置信度阈值读取失败, 使用默认值: {e}')"
+   },
+   {
+    "line": 530,
+    "code": "logger.debug(f'[Synthesizer] sector map 加载失败: {e}')"
+   }
+  ],
+  "app/review/attribution_scheduler.py": [
+   {
+    "line": 242,
+    "code": "logger.debug(f'[AttributionScheduler] 取 context_snapshot 失败: {e}')"
+   }
+  ],
+  "app/review/daily_review.py": [
+   {
+    "line": 673,
+    "code": "logger.debug(f'[attribution] metadata 源读取失败: {e}')"
+   },
+   {
+    "line": 797,
+    "code": "logger.debug(f'[五因子归因] 调用失败 (不影响主流程): {e}')"
+   },
+   {
+    "line": 873,
+    "code": "logger.debug(f'[plan_vs_actual] 获取失败: {e}')"
+   }
+  ],
+  "app/review/review_orchestrator.py": [
+   {
+    "line": 553,
+    "code": "logger.debug(f'[RichContext] 资金轨迹行时间戳解析失败, 跳过: {_e}')"
+   }
+  ],
+  "app/review/suggestion_engine.py": [
+   {
+    "line": 176,
+    "code": "logger.debug(f'[SuggestionEngine] 列对齐检查失败: {e}')"
+   }
+  ],
+  "app/review/weekly_review.py": [
+   {
+    "line": 170,
+    "code": "logger.debug(f'读取日报失败 {date_str}: {e}')"
+   }
+  ],
+  "app/risk/atr_stop_engine.py": [
+   {
+    "line": 218,
+    "code": "logger.debug('[ATR cap] earnings_guard.get_atr_cap(%s) error: %s', symbol, e)"
+   }
+  ],
+  "app/risk/capital_safety.py": [
+   {
+    "line": 545,
+    "code": "logger.debug(f'[DualMode] PositionStore 不可用: {e}')"
+   },
+   {
+    "line": 697,
+    "code": "logger.debug(f'[资本安全] YAML 配置加载失败，使用默认值: {e}')"
+   },
+   {
+    "line": 739,
+    "code": "logger.debug(f'[资本安全] 清理 capital_state 历史重复行失败: {_de}')"
+   }
+  ],
+  "app/risk/drawdown_control.py": [
+   {
+    "line": 99,
+    "code": "logger.debug(f'[回撤持久化] 建表失败: {e}')"
+   },
+   {
+    "line": 137,
+    "code": "logger.debug(f'[回撤持久化] 加载失败 (使用默认值): {e}')"
+   },
+   {
+    "line": 155,
+    "code": "logger.debug(f'[回撤持久化] 保存失败: {e}')"
+   }
+  ],
+  "app/risk/earnings_guard.py": [
+   {
+    "line": 204,
+    "code": "logger.debug('[EarningsGuard] get_upcoming_earnings 异常: %s', e)"
+   }
+  ],
+  "app/risk/engine.py": [
+   {
+    "line": 188,
+    "code": "logger.debug(f'[风控·持仓同步] 检查异常: {sync_err}')"
+   },
+   {
+    "line": 185,
+    "code": "logger.debug(f'[风控·持仓同步] Broker方向拆分失败 (依赖总限额): {broker_err}')"
+   }
+  ],
+  "app/risk/exit_quality_scorer.py": [
+   {
+    "line": 77,
+    "code": "logger.debug(f'[ExitQualityScorer] 加载 rule_priorities 失败, 使用默认值: {e}')"
+   }
+  ],
+  "app/risk/exit_rules/pre_close.py": [
+   {
+    "line": 235,
+    "code": "logger.debug(f'盘末退出检查失败 {position.symbol}: {e}')"
+   },
+   {
+    "line": 104,
+    "code": "logger.debug(f'[pre_close·RFC-061] cohort 检查异常 (降级为 A): {_e}')"
+   },
+   {
+    "line": 158,
+    "code": "logger.debug(f'[盘末退出·隔夜检查] 失败: {e}')"
+   }
+  ],
+  "app/risk/exit_rules/scale_out.py": [
+   {
+    "line": 78,
+    "code": "logger.debug(f'[scale_out] Failed to load config: {e}')"
+   }
+  ],
+  "app/risk/exit_rules/trailing_stop.py": [
+   {
+    "line": 133,
+    "code": "logger.debug(f'[regime_adjust] {position.symbol} regime={regime} (raw={_raw_regime}) 调整失败, 沿用基础 atr_mult: {e}'"
+   },
+   {
+    "line": 159,
+    "code": "logger.debug(f'[{position.symbol}] cost 估算失败, cost_bps=0: {e}')"
+   },
+   {
+    "line": 246,
+    "code": "logger.debug(f'[技术破位] 检查失败 {position.symbol}: {e}')"
+   }
+  ],
+  "app/risk/manual_position_guard.py": [
+   {
+    "line": 197,
+    "code": "logger.debug(f'[ManualGuard] 批量报价失败, 回落逐仓取价: {e}')"
+   }
+  ],
+  "app/risk/market_regime_detector.py": [
+   {
+    "line": 120,
+    "code": "logger.debug(f'[RegimeDetector·adx] 计算失败: {e}')"
+   }
+  ],
+  "app/risk/pdt_guard.py": [
+   {
+    "line": 169,
+    "code": "logger.debug(f'[PDT] 清理旧记录失败: {e}')"
+   },
+   {
+    "line": 204,
+    "code": "logger.debug(f'[PDT] 富途equity查询失败 (用DB旧值): {e}')"
+   }
+  ],
+  "app/risk/pnl_outlier_monitor.py": [
+   {
+    "line": 64,
+    "code": "logger.debug(f'[PnLOutlierMonitor] 统计计算失败: {e}')"
+   },
+   {
+    "line": 132,
+    "code": "logger.debug(f'[PnLOutlierMonitor·persist] 失败: {e}')"
+   }
+  ],
+  "app/risk/position_exit_monitor.py": [
+   {
+    "line": 265,
+    "code": "logger.debug(f'[ExitMonitor] Failed to load exit policy in __init__: {e}')"
+   },
+   {
+    "line": 391,
+    "code": "logger.debug(f'[ExitMonitor] _reload_exit_monitor_params 失败 (使用默认): {e}')"
+   },
+   {
+    "line": 402,
+    "code": "logger.debug(f'[ExitMonitor] EarningsGuard (Phase 3) 初始化失败: {e}')"
+   }
+  ],
+  "app/risk/pre_trade_check.py": [
+   {
+    "line": 59,
+    "code": "logger.debug(f'[BlackList] dynamic_blacklist.json 读取失败(忽略): {_dyn_err}')"
+   },
+   {
+    "line": 311,
+    "code": "logger.debug(f'[RFC056] 异常 (规则降级): {_e_rfc056}')"
+   },
+   {
+    "line": 396,
+    "code": "logger.debug(f'[RFC058] 异常 (规则降级): {_e_rfc058}')"
+   }
+  ],
+  "app/risk/price_momentum_gate.py": [
+   {
+    "line": 133,
+    "code": "logger.debug(f'[动量门控] {symbol} K 线检查异常: {e}')"
+   },
+   {
+    "line": 158,
+    "code": "logger.debug(f'[动量门控] {symbol} 成交量检查异常: {e}')"
+   },
+   {
+    "line": 192,
+    "code": "logger.debug(f'[动量门控] {symbol} 波动检查异常: {e}')"
+   }
+  ],
+  "app/risk/strategy_health_monitor.py": [
+   {
+    "line": 86,
+    "code": "logger.debug(f'[StrategyHealth] 加载配置失败 (使用默认值): {e}')"
+   }
+  ],
+  "app/risk/trail_state_store.py": [
+   {
+    "line": 96,
+    "code": "logger.debug(f'[TrailStateStore] snapshot 同步失败 {symbol}: {_se}')"
+   }
+  ],
+  "app/risk/vix_monitor.py": [
+   {
+    "line": 210,
+    "code": "logger.debug('FRED VIX 获取失败: %s', e)"
+   },
+   {
+    "line": 237,
+    "code": "logger.debug('AlphaVantage VIX 失败: %s', e)"
+   },
+   {
+    "line": 265,
+    "code": "logger.debug('Finnhub VIXY 获取失败: %s', e)"
+   }
+  ],
+  "app/signals/pre_market_ranker.py": [
+   {
+    "line": 72,
+    "code": "logger.debug(f'[Ranker] K线获取失败 {symbol}: {e}')"
+   }
+  ],
+  "app/storage/decision_recorder.py": [
+   {
+    "line": 290,
+    "code": "logger.debug(f'[DecisionRecorder] SignalIC 快照记录失败 (不影响主流程): {_ic_e}')"
+   }
+  ],
+  "app/storage/exit_quality_tracker.py": [
+   {
+    "line": 102,
+    "code": "logger.debug('[退出质量] 记录失败 (不影响主流程): %s', e)"
+   },
+   {
+    "line": 163,
+    "code": "logger.debug('[退出质量] 单条评估失败 %s: %s', row.get('symbol', '?'), e)"
+   }
+  ],
+  "app/storage/metrics_tables.py": [
+   {
+    "line": 338,
+    "code": "logger.debug(f'解析 labels JSON 失败：{e}')"
+   },
+   {
+    "line": 490,
+    "code": "logger.debug(f'解析 labels JSON 失败：{e}')"
+   }
+  ],
+  "app/storage/rejection_logger.py": [
+   {
+    "line": 96,
+    "code": "logger.debug(f'[拒绝日志] 记录失败 (不影响主流程): {e}')"
+   }
+  ],
+  "app/strategy/llm_strategy_engine.py": [
+   {
+    "line": 620,
+    "code": "logger.debug(f'[LLM 审计] {symbol} 线程异常 (已忽略): {e}')"
+   },
+   {
+    "line": 618,
+    "code": "logger.debug(f'[LLM 审计] {symbol} 调用异常 (已忽略): {e}')"
+   }
+  ],
+  "app/strategy/pure/earnings_revision.py": [
+   {
+    "line": 54,
+    "code": "logging.getLogger(__name__).debug(f'[EarningsRev] {symbol} fetch error: {e}')"
+   }
+  ],
+  "app/strategy/pure/insider.py": [
+   {
+    "line": 66,
+    "code": "logging.getLogger(__name__).debug(f'[Insider] {symbol} fetch error: {e}')"
+   }
+  ],
+  "app/strategy/regime_adapter.py": [
+   {
+    "line": 173,
+    "code": "logger.debug(f'[RegimeAdapter] 配置加载失败 (使用默认): {e}')"
+   },
+   {
+    "line": 385,
+    "code": "logger.debug(f'[RegimeAdapter] 写事件失败 (忽略): {e}')"
+   }
+  ],
+  "app/strategy/regime_filter.py": [
+   {
+    "line": 128,
+    "code": "logger.debug(f'[RegimeHistory] 记录失败 (不影响主流程): {e}')"
+   },
+   {
+    "line": 94,
+    "code": "logger.debug(f'[RegimeHistory] 表初始化失败 (不影响主流程): {e}')"
+   }
+  ],
+  "app/strategy/signal_quality_scorer.py": [
+   {
+    "line": 102,
+    "code": "logger.debug(f'[Calibration] Load failed (no-op): {e}')"
+   }
+  ],
+  "app/us_pipeline/battle_plan_manager.py": [
+   {
+    "line": 244,
+    "code": "logger.debug(f'[计划] confidence 统一化异常(忽略): {_e}')"
+   },
+   {
+    "line": 259,
+    "code": "logger.debug(f'[ConvictionTracker] 初始化异常(忽略): {_e}')"
+   },
+   {
+    "line": 302,
+    "code": "logger.debug(f'[DayScore] 计算异常(忽略): {_de}')"
+   }
+  ],
+  "app/us_pipeline/emergency_interceptor.py": [
+   {
+    "line": 478,
+    "code": "logger.debug(f'[行情获取] {symbol} Futu 获取失败: {e}')"
+   },
+   {
+    "line": 357,
+    "code": "logger.debug(f'[行情拦截] {symbol} 检查异常: {e}')"
+   },
+   {
+    "line": 690,
+    "code": "logger.debug(f'[新闻获取] {symbol} 失败: {e}')"
+   }
+  ],
+  "app/us_pipeline/open_checker.py": [
+   {
+    "line": 212,
+    "code": "logger.debug(f'[OpenChecker] 经济事件检查异常 (不阻断): {econ_err}')"
+   },
+   {
+    "line": 250,
+    "code": "logger.debug(f'[OpenChecker] 技术检查异常 (不阻断): {tech_err}')"
+   }
+  ],
+  "app/utils/critical_alerts.py": [
+   {
+    "line": 38,
+    "code": "logger.debug(f'[CriticalNotifier] DingTalk fail: {e}')"
+   },
+   {
+    "line": 49,
+    "code": "logger.debug(f'[CriticalNotifier] Feishu fail: {e}')"
+   }
+  ],
+  "app/utils/holiday_calendar.py": [
+   {
+    "line": 156,
+    "code": "logger.debug(f'[TradingCalendar] Futu API 调用失败: {e}')"
+   },
+   {
+    "line": 179,
+    "code": "logger.debug(f'[TradingCalendar] get_market_state 失败: {e}')"
+   }
+  ],
+  "app/utils/timezone.py": [
+   {
+    "line": 237,
+    "code": "logger.debug(f'[TimezoneUtils] 动态收盘分钟获取失败, 回退 16:00: {_e}')"
+   }
+  ],
+  "app/utils/watchlist_manager.py": [
+   {
+    "line": 366,
+    "code": "logger.debug('[龙头池] 模块未加载，使用静态 watchlist')"
+   },
+   {
+    "line": 85,
+    "code": "logger.debug(f'[BLACKLIST] watchlist_manager 读取全局黑名单失败: {e}')"
+   }
+  ],
+  "app/web_dashboard/data_service.py": [
+   {
+    "line": 690,
+    "code": "logger.debug(f'[DataService] reference_stocks failed: {e}')"
+   },
+   {
+    "line": 770,
+    "code": "logger.debug(f'[DataService] kline {symbol} failed: {e}')"
+   },
+   {
+    "line": 797,
+    "code": "logger.debug(f'[DataService] orderbook {symbol} failed: {e}')"
+   }
+  ],
+  "app/web_dashboard/env_scope.py": [
+   {
+    "line": 95,
+    "code": "logger.debug(f'[EnvIsolation] account_type 列探测失败 ({target}): {e}')"
+   },
+   {
+    "line": 132,
+    "code": "logger.debug(f'[EnvIsolation] is_simulate_row({symbol}) 探测失败: {e}')"
+   },
+   {
+    "line": 102,
+    "code": "logger.debug(f'[EnvIsolation] 探测连接 close 失败 ({key}): {e}')"
+   }
+  ],
+  "app/web_dashboard/mode_switch_service.py": [
+   {
+    "line": 531,
+    "code": "logger.debug(f'[ModeSwitch] graduation 查询失败: {_e}')"
+   }
+  ],
+  "app/web_dashboard/order/audit.py": [
+   {
+    "line": 119,
+    "code": "logger.debug(f'[schema] lifecycle 列确保失败 (不影响业务): {e}')"
+   },
+   {
+    "line": 557,
+    "code": "logger.debug(f'[手动下单] 同步 in-memory metadata.source 跳过 ({symbol}): {_mem_err}')"
+   }
+  ],
+  "app/web_dashboard/order/executor.py": [
+   {
+    "line": 385,
+    "code": "logger.debug(f'[手动平仓] {symbol} 竞态锁释放失败: {_e}')"
+   },
+   {
+    "line": 1332,
+    "code": "logger.debug(f'[exit_price] query attempt {i + 1} failed: {_e}')"
+   },
+   {
+    "line": 313,
+    "code": "logger.debug(f'[auto-thesis] 生成失败 (不影响下单): {_thesis_err}')"
+   }
+  ],
+  "app/web_dashboard/order/gates.py": [
+   {
+    "line": 36,
+    "code": "logger.debug(f'[gates] kill switch 读取跳过: {err}')"
+   },
+   {
+    "line": 66,
+    "code": "logger.debug(f'[gates] 资本安全读取跳过: {err}')"
+   },
+   {
+    "line": 82,
+    "code": "logger.debug(f'[gates] 回撤熔断读取跳过: {err}')"
+   }
+  ],
+  "app/web_dashboard/order/thesis.py": [
+   {
+    "line": 225,
+    "code": "logger.debug(f'[auto-thesis] DB 写入失败 (不影响下单): {e}')"
+   }
+  ],
+  "app/web_dashboard/order/validator.py": [
+   {
+    "line": 48,
+    "code": "logger.debug(f'[手动下单] Kill Switch 检查跳过: {_ks_err}')"
+   },
+   {
+    "line": 158,
+    "code": "logger.debug(f'[手动下单] 回撤检查跳过: {_dd_err}')"
+   },
+   {
+    "line": 173,
+    "code": "logger.debug(f'[手动下单] 资本安全检查跳过: {_cs_err}')"
+   }
+  ],
+  "app/web_dashboard/routes/battle_plan.py": [
+   {
+    "line": 160,
+    "code": "logger.debug(f'[BattlePlan] position refresh fetch error: {e}')"
+   },
+   {
+    "line": 1664,
+    "code": "logger.debug(f'[ai-suggest] 报价获取失败 {symbol}: {e}')"
+   },
+   {
+    "line": 1684,
+    "code": "logger.debug(f'[ai-suggest] ATR 获取失败 {symbol}: {e}')"
+   }
+  ],
+  "app/web_dashboard/routes/dashboard.py": [
+   {
+    "line": 1185,
+    "code": "logger.debug(f'[snapshot] earnings calendar failed: {e}')"
+   },
+   {
+    "line": 238,
+    "code": "logger.debug(f'[dashboard] graduation 查询失败: {_ge}')"
+   },
+   {
+    "line": 244,
+    "code": "logger.debug(f'[dashboard] factor_stats 查询失败: {_fe}')"
+   }
+  ],
+  "app/web_dashboard/routes/trade_intel.py": [
+   {
+    "line": 89,
+    "code": "logger.debug(f'[Intel] signal query failed: {e}')"
+   },
+   {
+    "line": 119,
+    "code": "logger.debug(f'[Intel] trades query failed: {e}')"
+   },
+   {
+    "line": 177,
+    "code": "logger.debug(f'[Intel] position query failed: {e}')"
+   }
+  ],
+  "app/web_dashboard/routes/watchlist.py": [
+   {
+    "line": 52,
+    "code": "logger.debug(f'[watchlist] signal_snapshots query failed: {e}')"
+   },
+   {
+    "line": 215,
+    "code": "logger.debug(f'[watchlist] historical edge query failed: {e}')"
+   },
+   {
+    "line": 110,
+    "code": "logger.debug(f'[watchlist] trade_records query failed ({db_name}): {e}')"
+   }
+  ],
+  "app/web_dashboard/routes/ws.py": [
+   {
+    "line": 223,
+    "code": "logger.debug(f'[WS] 连接异常: {e}')"
+   }
+  ],
+  "main.py": [
+   {
+    "line": 125,
+    "code": "logger.debug(f'[ConfigIntegrity] 校验跳过: {e}')"
+   },
+   {
+    "line": 681,
+    "code": "logger.debug(f'[关键告警通道] 检测异常: {_alc}')"
+   },
+   {
+    "line": 160,
+    "code": "logger.debug('锁候选 %s 无存活进程: %s', cand, _e)"
+   }
+  ],
+  "scripts/backfill_forward_returns.py": [
+   {
+    "line": 187,
+    "code": "logger.debug(f'backtest_cache 读取失败 {csv_path}: {e}')"
+   },
+   {
+    "line": 222,
+    "code": "logger.debug(f'router: {symbol} 失败: {e}')"
+   }
+  ],
+  "scripts/post_market_audit.py": [
+   {
+    "line": 934,
+    "code": "logger.debug(f'费用净额视角跳过 (旧库无列?): {_fn_err}')"
+   }
+  ]
+ },
+ "established_at": "2026-09-09T23:17:06-04:00",
+ "tightened_at": "2026-09-10T03:47:40-04:00",
+ "tighten_ref": "DEB-20260910-logging-observability-batch §10.5 ④ (用户裁「需要」; 愈合来自另一批次 M2 定稿清剿)",
+ "prev_totals": {
+  "2026-09-09T23:17:06-04:00": 704
+ },
+ "healed_detail": {
+  "2026-09-10T03:47:40-04:00": {
+   "main.py": "4→3"
+  }
+ },
+ "note": "日志卫生棘轮基线 (DEB-20260910 §8.2/§5, W2 同款纪律)。counts = per-file 计数, 判据只用它; refs = 诊断样本 (带行号, 会随编辑漂移, **不参与判定**)。只降不升: 计数下降由人工收缩本文件, 守卫绝不自动改写。改 counts = 改判据, 须先落档 ADR/DEB 并在 refs 写裁决出处。",
+ "fix": "except 块内改 logger.warning(..., exc_info=True) — 失败必须可见且带栈; 确属可忽略噪声就删掉这行 debug, 别靠 LOG_LEVEL=INFO 把它藏起来",
+ "deb_ref": "DEB-20260910-logging-observability-batch §8.2/§5"
+}

@@ -6,6 +6,7 @@
 """
 import json
 import sqlite3
+import sys
 from app.storage.db_pool import get_db_path
 from pathlib import Path
 
@@ -25,8 +26,16 @@ print(f"  净值 equity = {eq:,.2f} ⇒ tier={TIER} ⇒ max_position_pct={CAP_PC
 rows = list(c.execute("""
     SELECT symbol, direction, entry_time, exit_time, entry_price, exit_price, quantity,
            COALESCE(pnl_net, realized_pnl) AS net, mfe_pct, mae_pct, metadata_json
-    FROM trade_records WHERE exit_reason='OVERNIGHT_GAP_STOP' ORDER BY entry_time
-"""))
+    FROM trade_records WHERE exit_reason='OVERNIGHT_GAP_STOP'
+      AND entry_time>='2026-06-27' AND entry_time<'2026-10-02 00:00:00'
+    ORDER BY entry_time
+"""))  # 钉结算窗 (2026-10-03 复查 P3 修复): 与本族 12 脚本同口径, 重跑读数不随新交易漂移
+
+
+def _sign(direction) -> int:
+    """SHORT/SELL_SHORT → −1, 其余 → +1 (方向感知 PnL/SL 线, 2026-10-03 复查 P3 修复:
+    原版全按 LONG 算, SHORT 触发 OVERNIGHT_GAP_STOP 时结论会反)。"""
+    return -1 if str(direction or "").upper() in ("SHORT", "SELL_SHORT") else 1
 
 
 def load_bars(sym, start):
@@ -37,7 +46,8 @@ def load_bars(sym, start):
                 if b[0] >= start[:10]:
                     out.append(b)   # [date, o, h, l, c]
         except Exception:
-            pass
+            print(f"skip bad replay bar file: {p}", file=sys.stderr)
+            continue
     seen, uniq = set(), []
     for b in sorted(out, key=lambda x: x[0]):
         if b[0] not in seen:
@@ -66,7 +76,8 @@ SL_GRID = (5.0, 7.0, 8.0, 10.0, 15.0)
 recs = []
 for r in rows:
     bars = load_bars(r["symbol"], r["exit_time"])
-    recs.append(dict(sym=r["symbol"], ep=r["entry_price"], q=r["quantity"],
+    recs.append(dict(sym=r["symbol"], dir=r["direction"], sign=_sign(r["direction"]),
+                     ep=r["entry_price"], q=r["quantity"],
                      notional=r["entry_price"] * r["quantity"], net=r["net"],
                      bars=bars, exit_date=r["exit_time"][:10], mae=r["mae_pct"] or 0))
 
@@ -74,17 +85,20 @@ print(f"  实际基线 (现役SL): Σ净 = {sum(d['net'] for d in recs):+.1f}  (
 for sl in SL_GRID:
     tot, hit, cens = 0.0, 0, 0
     for d in recs:
-        line = d["ep"] * (1 - sl / 100)
+        s = d["sign"]
+        line = d["ep"] * (1 - s * sl / 100)   # LONG 线在下方, SHORT 线在上方
         if not d["bars"]:
             cens += 1
             continue
         out_px, done = None, False
         for b in d["bars"]:
-            o, lo = b[1], b[3]
-            if o <= line:            # 开盘已穿破 ⇒ gap-aware 按 open
+            o, hi, lo = b[1], b[2], b[3]
+            breached_at_open = (o <= line) if s > 0 else (o >= line)
+            touched_intraday = (lo <= line) if s > 0 else (hi >= line)
+            if breached_at_open:     # 开盘已穿破 ⇒ gap-aware 按 open
                 out_px = o
                 break
-            if lo <= line:           # 盘中触及 ⇒ 按 SL 线
+            if touched_intraday:     # 盘中触及 ⇒ 按 SL 线
                 out_px = line
                 break
         if out_px is None:           # 全程未触 ⇒ 持到窗末收盘 (右删失, 标 CENS)
@@ -92,7 +106,7 @@ for sl in SL_GRID:
             cens += 1
         else:
             hit += 1
-        tot += (out_px - d["ep"]) * d["q"] - d["notional"] * FEE_RT
+        tot += s * (out_px - d["ep"]) * d["q"] - d["notional"] * FEE_RT
     print(f"  SL={sl:>4.1f}%: Σ净={tot:>+9.1f}  Δvs实际={tot - sum(x['net'] for x in recs):>+9.1f}  "
           f"被扫={hit} 持到窗末={cens}")
 
@@ -103,8 +117,12 @@ for d in recs:
     if not d["bars"]:
         print(f"{d['sym']:<9} 无 bars (9/28 出场, 缓存右端)")
         continue
-    lo_min = min(b[3] for b in d["bars"])
-    l7, l10 = d["ep"] * 0.93, d["ep"] * 0.90
+    s = d["sign"]
+    extreme = min(b[3] for b in d["bars"]) if s > 0 else max(b[2] for b in d["bars"])
+    l7 = d["ep"] * (1 - s * 0.07)
+    l10 = d["ep"] * (1 - s * 0.10)
+    swept7 = (extreme <= l7) if s > 0 else (extreme >= l7)
+    swept10 = (extreme <= l10) if s > 0 else (extreme >= l10)
     print(f"{d['sym']:<9} {d['ep']:>9.2f} {d['net']:>8.1f} {d['mae']:>6.2f} "
-          f"{'':>9}{l7:>9.2f} {l10:>9.2f} {lo_min:>9.2f}  "
-          f"{'7%被扫' if lo_min <= l7 else '7%未被扫'} / {'10%被扫' if lo_min <= l10 else '10%未被扫'}")
+          f"{'':>9}{l7:>9.2f} {l10:>9.2f} {extreme:>9.2f}  "
+          f"{'7%被扫' if swept7 else '7%未被扫'} / {'10%被扫' if swept10 else '10%未被扫'}")

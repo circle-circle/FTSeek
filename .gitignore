@@ -45,6 +45,12 @@ data/backups/
 # 白名单仅保留审计种子 (配置冻结快照)。新增需入库的 data 种子须在此加 ! 显式放行。
 data/*
 !data/config_freeze_v2.json
+# 2026-10-03 (复查批): W456 日志卫生棘轮的基线同为判据种子 (与 preflight_baseline 同性质) —
+#   此前不入库 + 测试约定「基线缺失即重建同零违反」= 删掉基线文件即可洗白违规 (结构性漏洞)。
+#   入库后: 基线变更 = 可评审 diff; 本地删除 = git status 可见。回滚 = 删以下三行。
+!data/debug_swallow_baseline.json
+!data/bare_logger_baseline.json
+!data/except_stack_baseline.json
 
 # 2026-09-14 (DEB-20260914-cutover-bidirectional-seamless): 切换预检的**棘轮基线**是判据种子
 # (与 config_freeze_v2 同性质 — 记录"何时把什么冻结为已知常态"), 须入库以便评审。
