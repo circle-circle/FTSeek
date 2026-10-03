@@ -242,7 +242,7 @@ class TestConservativeInputs:
 # ── 接线与 v1 动作边界 (结构契约) ──────────────────────────────────────────
 
 def _monitor_fn_span():
-    start = _PIPE_SRC.index("def monitor_playbook_sim_exits(")
+    start = _PIPE_SRC.index("def monitor_playbook_exits(")
     nxt = _PIPE_SRC.index("\ndef ", start + 10)
     return start, nxt
 
@@ -253,9 +253,10 @@ class TestWiringContract:
         start, end = _monitor_fn_span()
         body = _PIPE_SRC[start:end]
         assert "_batch_quotes: dict = {}" in body
-        assert "_portfolio_backstop_evaluate(rows, _batch_quotes, _bs_cfg)" in body
+        evaluate_call = "_portfolio_backstop_evaluate(_bs_arm_rows, _batch_quotes, _bs_cfg)"
+        assert evaluate_call in body
         assert body.index("_batch_quotes: dict = {}") < body.index(
-            "_portfolio_backstop_evaluate(rows, _batch_quotes, _bs_cfg)")
+            evaluate_call)
 
     def test_backstop_gated_by_enabled_flag_and_quotes(self):
         """enabled=false 或本轮无报价 → 整段不跑 (热载回滚开关必须在场)."""

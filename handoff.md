@@ -1,5 +1,211 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-03 DEB 路由收敛执行批: LIVE 门控单点化, 镜像前置, Path A 退役
+
+**触发**: 用户令「按照建议执行」— 采纳 DEB 修正版方案 A。
+
+**实施**:
+- 新增 `app/playbook/live_arm_gate.py`：`evaluate_live_arm_gate` 单点覆盖 arm/mode/probe
+  授权、env/account/lane、LONG/BUY、1 股/1 仓、RTH、open cap；计数失败 fail-close。
+- pipeline 在 `_mirror_instruction_to_live` 前重新过门；open cap/RTH/方向/授权不满足时
+  不写 LIVE instruction，并经 `app.push` hub 通知。
+- `PlaybookDB()` 默认改为 `ftseek_research`；`ftseek_research` 不随 `TRADE_ENV` 漂移，
+  且保留 `FTSEEK_DB_FILE` A/B 覆盖。
+- 删除 pipeline/service 双份 `_trade_records_db_for_arm` 包装；`paths.py` SIM 解析去重。
+- `AUTO_TRADE_ACCOUNT=real` 且未显式 `target_env=real` 的旧 Path A 返回
+  `LIVE_PATH_A_RETIRED`，fail-close，不再降级 SIM。
+- `monitor_playbook_sim_exits` 活跃名改为 `monitor_playbook_exits`，旧名保留兼容别名；
+  scheduler 活跃调用点已切换。
+
+**验证**: `tests/playbook` 全量 **967 passed / 1 warning**；四棘轮
+（except/naive-now/W456/doc_guard）**29 passed + doc_guard 通过**；受影响
+`test_rfc080_half_flip_interlock.py + test_rfc080_research_pin.py +
+test_cutover_infra.py + test_db_connection_chokepoint.py` 共 **45 passed**。
+新增行为钉：TRADE_ENV=0 生成/执行同 SIM lane、open cap 不写镜像、非 RTH service 拒绝、
+Path A fail-close、LIVE gate 子集矩阵。
+
+**部署**: 2026-10-03 22:41:14 CST 执行 `systemctl restart ftseek-us`，重启前核对
+SIM/LIVE 未平仓均为 0、有效持仓均为 0、exit intents 仅 `BOOKED`。冒烟 7/7 通过，
+服务 `active/running`（PID 3817330），重启窗口零 warning/error；重启后仍为
+0 未平仓/0 有效持仓。`cutover_preflight.py` 维持 `block=1 warn=6`，硬阻塞为
+P1 毕业门禁。LIVE 开关仍全关；本批不构成启用授权，启用前须先收口/分离 worktree WIP。
+
+## 2026-10-03 RFC-131 双臂补齐后重启检测: 7/7 全绿, LIVE 仍全关, preflight 维持 BLOCK
+
+**触发**: 用户令「请重启再检测」。
+
+**重启前安全核对**: SIM/LIVE `trade_records` 未平仓均为 0；两库
+`open_positions.size>0` 均为 0（LIVE 仅剩 8 条历史 `size=0` manual 僵尸行）；
+`playbook_exits.db.exit_intents` 无 `BOOKED` 之外的非终态在途出场。
+
+**部署与检测**: 21:16:07 CST 执行 `systemctl restart ftseek-us`，服务
+`active/running`（PID 3810515）。`startup_smoke_check.py --wait 90` 7/7 通过：
+ConfigValidator、漂移检测、热重载、SSOT 审计、模拟盘安全、退出快循环、
+零 Traceback/CRITICAL。重启后日志 warning/error 为 0。
+
+**切换预检**: `cutover_preflight.py` 维持 `block=1 warn=6`；硬阻塞仍是
+P1 毕业门禁（`graduated=false / ic_t3=-0.0403`），WARN 集中在 schema 彩排、
+LIVE capital 基线、8 条僵尸 manual 行、broker STOP 里程、研究脚本载体等既有缺口。
+
+**安全状态**: `TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`、
+`ALLOW_REAL_TRADING=false`、`live_manual_arm.enabled=false`、
+`probe.authorized=false`；SIM/LIVE 均无自动持仓。本次重启加载的是未提交 worktree
+（含其他 agent 在途 WIP），**不构成 LIVE 启用授权**；启用前仍需先隔离/提交本批并清
+BLOCK/WARN 裁决面。
+
+## 2026-10-03 RFC-130 复查补充: arm 门提前 fail-close; 明确「最小实现 ≠ 双臂已就绪」
+
+**触发**: 用户令复查另一 agent 的 RFC-130 实施, 下周再裁决是否启用。
+
+**已确认**: commit `175c3b359` 已部署并重启 (19:29:25, 启动冒烟 7/7); 当前仍全 SIM
+(`TRADE_ENV=1 / AUTO_TRADE_ACCOUNT=sim / ALLOW_REAL_TRADING=false /
+live_manual_arm.enabled=false`)。RFC-130 定向测试 115 passed, 切换/DB 契约 46 passed。
+
+**复查发现**: 原 arm 门排在半翻互锁/毕业门禁之后, `TRADE_ENV=1` 时 `target_env=real`
+会先降级 SIM, 到不了 arm 门, 与 RFC-130「未 armed ⇒ HALT_NEW_LIVE、不降级 SIM」矛盾。
+已补: `app/playbook/playbook_service.py` 将 arm 门提前到所有降级逻辑前;
+`tests/playbook/test_m2_c2_live_quote_gate.py` 新增未 armed 场景, 断言 broker 0 触达、
+instruction 未认领、不降级 SIM。RFC-130 §7 已落档。
+
+**启用前缺口**: L1/L2 (`route_playbook_db` + 双库出场扫描) 与 L4 (LIVE instruction 镜像)
+未实施; `max_open_positions/max_order_qty/session` 仅登记未接线; 当前 `AUTO_TRADE_ACCOUNT`
+仍是全局单臂派发; preflight 仍 `block=1 warn=6` (毕业门禁 `graduated=false,
+ic_t3=-0.0403`)。**下周不建议启用 LIVE; 也不建议翻旧全局 `TRADE_ENV=0` 模型。**
+
+## 2026-10-03 实盘切换目标修订: 设计更新为 SIM 常驻 + 手动 LIVE 臂, 零行为改动
+
+**触发**: 用户明确目标为「手动切换实盘, 可空仓切, 先跑通链路; SIM 继续运行, 需要时可切实盘」。
+
+**落地**: 在 `RFC-090` 追加 §17, 将原「全局 `TRADE_ENV=0` 四键同翻」修订为「SIM 常驻 +
+LIVE manual arm」: `TRADE_ENV` 保持 1; LIVE 入场由 `playbook.live_manual_arm.enabled`
+单独控制; sim/live 账本按 `target_env` 显式路由; 出场监控双库扫描; disarm 只停 LIVE 新仓、
+不停 LIVE 出场。切换状态机为 `SIM_ONLY → SIM_PLUS_LIVE_ARMED → LIVE_DRAIN → SIM_ONLY`。
+
+**治理**: C2 未放宽。首次真实 LIVE 执行仍要求毕业门禁通过, 或用户在 DEB 中显式记录
+「知情破例 + 签字」。当前预检仍为 `block=1 warn=6`, 硬阻塞是毕业门禁
+`graduated=false / ic_t3=-0.0403`。
+
+**本批只改文档, 未改代码/配置/开关, 未重启。** 实施顺序与验收判据见
+`docs/decisions/RFC-090-live-cutover-switch-surface-convergence.md` §17。
+
+## 2026-10-03 影子/证伪门清理批: 已按军规重启观察, 7/7 全绿
+
+**重启**: 用户令「重启观察」; 重启前核零未平仓/在途出场, app/ 在途改动仅剩本批
+`app/playbook/shadow_registry.py` 与 `scripts/shadow_board.py`, 随后仅执行
+`systemctl restart ftseek-us`。当前 `active`, PID `3776834`, 11:20:08 CST 启动,
+`NRestarts=0`。
+
+**观察**: `startup_smoke_check.py --wait 90` 7/7 全绿 (启动段 11:20:13);
+未平仓 0; 注册表 76 项、`needs_adjudication=0`; mount/consumer/intent 三哨兵
+均 0; `shadow_board` 推送门判定 False; 重启窗口零
+`ERROR/CRITICAL/Traceback/Exception`。落档见
+`docs/decisions/REVIEW-20261003-shadow-cleanup.md`。
+
+## 2026-10-03 策略分析/优化总批复查: 结论成立, 数据逐条复算吻合; HEAD 棘轮红由在途 WIP 修复 (待归属)
+
+> **触发**: 用户令复查 agent 的策略分析与调整优化 (DEB-20261002 系列 9 提交 +
+> INCIDENT-002/RFC-129/DEB-20261003 6 提交 + 未提交的影子清理批 REVIEW-20261003)。
+
+**复查方式**: 两路并行独立复查 (委托代理逐提交核) + 本线对未提交批逐项实证 (读原始
+数据重算, 不引用其文档数字)。
+
+**成立面 (抽验全过)**:
+- 清理批 5 项退役读数全部复算吻合: reentry_quick_tp 13 行 tp_touched=0/13 ✓;
+  conflict 36 事件/25 日 opposite_flip=5 成交=2 ✓; ue_midday 我亲跑 eval =
+  10日 n=41 命中 22.5%/均值 −0.78% 双 FAIL ✓; cluster summary cap3 blocked=29
+  +$433.18 cap4/5/6=8/4/2 ✓; earnings_clue write-only ✓。
+- 「5 键热重载生效, 无需重启」为真: 日志实证 10:06:34 (yaml 末次写入后)
+  HotReloader 失效链重置 PlaybookConfig/FeatureFlags/WatchlistManager ✓。
+- cron 6 行注释退役带墓碑+回滚 ✓; crontab baseline 同步删 5 豁免 ✓;
+  推送门 fail-open 语义+守卫测试钉 marker ✓; 停摆守卫对 KILLED/停采项豁免
+  (不会退休后日日误报) ✓; 待裁面 needs_adjudication=0 ✓ (76 项注册)。
+- DEB-20261002 回放方法论可靠 (entry_time 锚定无前视, 删失标注, 13 条自曝);
+  R3 假信号撤回正确 (90% deterministic 标签系 or-兜底污染); P0-1 cron 撤回自洽
+  (eval_on_demand=True 不该挂 cron)。
+- INCIDENT-002「归档+删除」根治 close_key 死锁成立 (双守卫 fail-closed +
+  归档可回插); 方案A 1351 行删除零活引用 (含 .pyc 残魂与 scheduler 墓碑测试);
+  DA trace 保留不动 RFC-066 已结算行保护 (preserve 仅在 _target_id 非空时调,
+  所有拒绝路径早退)。
+
+**查出问题**:
+1. 🔴 **HEAD (已提交态) 两棘轮红** — except:pass 924→926 (DEB-20261002 回放脚本
+   2 处静默吞错) + W456 四击 (pipeline W4 47→48 / exit_lifecycle+1 (RFC-129) /
+   eth_held_exit_shadow+1 (RFC-127) / position_sync 14→16 (INCIDENT-002))。
+   即 10-01~10-03 六个提交批的验证均未跑棘轮 (10-01 我已抓过一次同型遗漏,
+   未制度化)。工作树里的 5 个 app/ 文件 + 4 个 deb 脚本改动正是这些修复,
+   但**无任何批次认领** (REVIEW-20261003 自称「本批 app/ 仅 shadow_registry」) —
+   在途 WIP 待归属, 下个提交者须 `git diff --cached` 逐行核归属 (9c299cb31 教训)。
+2. 🟡 **DEB 回放脚本欠账** (委托复查发现, 未修): gap_sl_replay/gap_avgdown_replay
+   WHERE 无日期钉窗 (重跑读数随新交易漂移); gap_sl_replay PnL 公式只有 LONG 向
+   (SHORT 触发 OVERNIGHT_GAP_STOP 时变 latent bug, 当前 6 笔全 LONG 不现症)。
+3. 🟡 yaml 残留过时注释: unified_config 1218 行「热重载不覆盖本路径」已被 8/28
+   invalidate_config_snapshots 失效链推翻, 与本批「热重载生效」自述矛盾。
+4. 🟡 结构性观察: W456 基线文件 (data/*_baseline.json) 不受 git 跟踪且「基线若删
+   则重建同零违反」— 删基线文件=违规自动洗白, 依赖生产 data/ 连续性 (设计内风险,
+   建议知悉)。
+
+**验证**: 工作树四棘轮 + 守卫/契约合跑 226 passed; HEAD 态棘轮红用临时 worktree
+隔离实证 (已清理)。
+
+**执行情况 (2026-10-03 用户裁「按照建议执行」)**:
+- `c1c879c8a` 棘轮修复归核: 在途 WIP 8 文件署名入库 (5 app/ 日志卫生 + 3 deb 脚本
+  留痕); 复查中另发现 WIP 自炸缺陷 — 四处用 `sys.stderr` 但脚本均未 `import sys`
+  (异常路径即 NameError), 已补。
+- `c777d57fc` P3 修复: gap_sl/gap_avgdown 钉结算窗 (与同族 12 脚本同口径
+  ['2026-06-27','2026-10-02')) + 方向感知 PnL/SL 线 (修复前后 LONG 输出逐字节一致,
+  SHORT 合成三态验证) + W456 三基线按 preflight 先例入库 (堵「删基线洗白」漏洞)。
+- yaml 过时注释已修 (unified_config reentry_quick_tp 段, 「热重载不覆盖本路径」→
+  失效链已覆盖), 留在工作树随清理批同文件提交 (避免拆 hunk 归属混乱)。
+- 未动: 10-03 清理批本体 (shadow_registry/config 5 键/shadow_board/推送门等)
+  仍待其责任批提交; obsidian 为例行产物。
+- 终验: HEAD 四棘轮 18 passed 回绿。
+
+## 2026-10-03 影子/证伪门清理批: SSOT 补登记 + 到期裁决落地 + 推送收口 (用户令「梳理清理, 减空耗提信噪比」)
+
+> **落档**: `docs/decisions/REVIEW-20261003-shadow-cleanup.md` (完整盘点/判据读数/不动清单/待裁面)。
+> **权限层**: 零交易行为变更 — 全部为测量面 (shadow-only 开关/cron 注释/注册表记账/推送门);
+> 两条判据处置 (ue_midday / reentry_quick_tp) 为**预注册判据的机械执行**, 判据一字未改。
+
+**结算/退役 (5 项, 数据全留档)**:
+- `ue_midday_shadow` 预注册判据双 FAIL (10 日 n=41, 命中率 22.5%/门 55%, 均值
+  −0.78%/门 +0.5%) ⇒ 按判据自带处置退役: 午间 cron 已注释 + `midday_shadow_enabled=false`
+  (停掉每日 12:30 ET LLM 扫描 = 本批最大空耗削减)。
+- `reentry_quick_tp_gate` 窗 9/1–9/30 满结算: 13 行实弹 **tp_touched=0/13** ⇒ KILLED
+  停采 (开关 false); 门禁维持; quick_tp 参数零触发 = 死参数, 删除提案留用户裁 (L3)。
+- `cluster_concentration_shadow` 44 日判据门 0/3 过 (cap3 blocked 29<30 且被拦合计
+  +$433 = 拦盈利单) ⇒ KILLED 停采, 不立簇帽。
+- `conflict_shadow` n=36 达标: 翻转仅 5/36 (成交 2), 候选端排除无证据 ⇒ KILLED 停采。
+- `ue_earnings_clue_shadow` write-only 38 天 (零判据/零读方) ⇒ KILLED 停采。
+
+**SSOT 修复**: 5 条在采未注册项补登记 (62→69, 含 `shadow_portfolio` PERMANENT_MEASURE);
+后续 cron×注册表审计再补 7 条漏网 (69→76: `premarket_reprice` / `regime_divergence` /
+`reentry_gate_cf` / `direction_cf` / `t5_cf` 终态, `da_true_reverse` / `ue_confirm_gate` 留观);
+`premarket_peer_shadow` 重归类 KILLED+采集保留 (jsonl=UE peer_surge 输入, 同
+universe_expansion 先例); `_CONSUMER_ACK` 新增 4 条逐条认领。
+
+**待裁面清账 8→0**: 当日实跑/直读 7 项读数入 ADJUDICATED (ue_tier_gate /
+ue_quote_freshness / fee_gate / trail_lock_pyramid / rfc104 / ext_entry_exec_price /
+reentry_quick_tp), 全部自动续观带重看窗; `futu_channel_top_movers` 9/30 闹钟到期后
+按用户确认终裁③: SUPERSEDED 并入 kr3 轴, 不新增门/影子, 采集维持 true。
+
+**推送收口**: `shadow_board --push` 加 actionable-only 门 (无待裁/无停摆 → 只落日志不推,
+fail-open); D2' 入场确认门日报双面自动续观时空输出静默 (已部署 Hermes);
+`ue_short_boost` 停摆阈值按事件驱动节奏校准 4→8 天 (历史最大自然间隙 11 天)。
+
+**cron×注册表审计**: 41 个 shadow-ish 活跃脚本逐项核对 data_path/消费方; 5 条空转环
+已注释退役 (regime 分歧率、盘前重定价、方向 CF、T+5 CF、证伪门 CF), 数据/脚本留档;
+`capital_flow_daily_aggregate` 等为写方/消费方假阳, 未停; `eth_ext_entry_prefilter`
+改 SUPERSEDED, `ue_short_boost` 54/60 登 10/10 重看。
+
+**部署**: 5 个 config 键置 false 全部经热重载生效 (ConfigContainer/PlaybookConfig
+失效链), **服务未重启** (app/ 有其他 agent 在途 WIP, 不顺带上线); 零持仓核对 0;
+crontab 午间行 + 5 条审计空转行注释 (备份
+`data/crontab.backup.20261003_midday_retire.txt` / `...shadow_audit.txt`)。
+
+**验证**: 16 个守卫/契约测试文件 **178 passed**; `check_artifact_consumers` /
+`check_intent_uniqueness` / `check_mounting` 全绿 (ticket_size 已重跑刷新);
+D2' 静默门完整实跑 exit=0、stdout/stderr 均空。
+
 ## 2026-10-02 多agent优化二轮复查: RFC-127/128方向成立, 两个P1纪律/安全问题就地收口
 
 > **触发**: 用户令复查其他 agent 的 `0f563afdc` (RFC-127) 与 `f1d8fdd98`

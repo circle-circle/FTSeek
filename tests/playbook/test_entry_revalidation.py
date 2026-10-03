@@ -197,9 +197,11 @@ def env(tmp_path, monkeypatch):
            RiskState=SimpleNamespace(RISK_OFF="RISK_OFF", HALT="HALT"),
            RiskStateMachine=lambda: SimpleNamespace(get_state=lambda: "NORMAL"))
     module("app.us_pipeline.emergency_interceptor", check_kill_switch=lambda: False)
-    module("app.playbook.db", PlaybookDB=lambda: db)
+    module("app.playbook.db", PlaybookDB=lambda: db,
+           route_playbook_db=lambda target_env: db)
     module("app.playbook.playbook_service", PlaybookService=lambda database: service)
-    module("app.core.paths", get_trade_records_db=lambda: budget_db)
+    module("app.core.paths", get_trade_records_db=lambda: budget_db,
+           get_trade_records_db_for_arm=lambda target_env: budget_db)
     module("app.core.db_utils", safe_sqlite_connect=isolated_connect)
     atr_provider = SimpleNamespace(get_atr_pct=Mock(return_value=0.03))
     module("app.core.di_container", get_di_container=lambda: SimpleNamespace(

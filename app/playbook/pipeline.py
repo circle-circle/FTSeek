@@ -3869,6 +3869,92 @@ def _emit_exec_gate_audit(inst: Dict[str, Any], *, action: str, entry: float,
         pass  # 纯审计, 绝不影响交易主流程
 
 
+def _live_engineering_probe_context() -> Optional[Dict[str, Any]]:
+    """Build the LIVE C-lite context only after the shared base gate passes."""
+    try:
+        import os
+        from app.core.config_container import get_config
+        from app.playbook.db import route_playbook_db
+        from app.playbook.live_arm_gate import evaluate_live_arm_gate
+        from app.playbook.playbook_service import PlaybookService
+        from app.core.scheduler_triggers import get_market_phase
+
+        arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
+        live_db = route_playbook_db("real")
+        base_gate = evaluate_live_arm_gate(
+            arm,
+            allow_real_trading=os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true",
+            real_account_id=os.getenv("REAL_ACCOUNT_ID", ""),
+            lane_db_name=live_db.db_name,
+            instruction_direction="BUY",
+            market_phase=get_market_phase().value,
+            open_live_positions=0,
+        )
+        if not base_gate.get("allowed"):
+            return None
+
+        return {"db": live_db, "service": PlaybookService(live_db)}
+    except Exception as error:
+        logger.warning(f"[playbook] LIVE C-lite context unavailable: {error}", exc_info=True)
+        return None
+
+
+def _mirror_instruction_to_live(inst: Dict[str, Any], live_db) -> Optional[int]:
+    """Mirror one SIM instruction into the LIVE lane with the same decision_id."""
+    try:
+        mirror = dict(inst)
+        metadata = mirror.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["dual_arm"] = {
+            "target_env": "real",
+            "source_instruction_id": inst.get("id"),
+            "decision_id": inst.get("decision_id"),
+            "mode": "engineering_probe",
+        }
+        mirror["metadata"] = metadata
+        mirror["position_size"] = 1
+        return int(live_db.save_instruction(mirror))
+    except Exception as error:
+        logger.error(f"[playbook] LIVE instruction mirror failed {inst.get('symbol')}: {error}", exc_info=True)
+        return None
+
+
+def _live_mirror_gate_decision(live_db, inst: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-run the shared LIVE gate immediately before writing a mirror row."""
+    import os
+    from app.core.paths import get_trade_records_db_for_arm
+    from app.core.config_container import get_config
+    from app.core.scheduler_triggers import get_market_phase
+    from app.playbook.live_arm_gate import count_open_live_positions, evaluate_live_arm_gate
+
+    arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
+    return evaluate_live_arm_gate(
+        arm,
+        allow_real_trading=os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true",
+        real_account_id=os.getenv("REAL_ACCOUNT_ID", ""),
+        lane_db_name=getattr(live_db, "db_name", ""),
+        instruction_direction=str(inst.get("direction") or ""),
+        market_phase=get_market_phase().value,
+        open_live_positions=count_open_live_positions(
+            get_trade_records_db_for_arm("real")
+        ),
+    )
+
+
+def _mirror_instruction_to_live_if_allowed(inst: Dict[str, Any], live_db):
+    """Return (mirror_id, gate); a rejected gate never writes the LIVE lane."""
+    gate = _live_mirror_gate_decision(live_db, inst)
+    if not gate.get("allowed"):
+        return None, gate
+    return _mirror_instruction_to_live(inst, live_db), gate
+
+
 def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """
     盘中自动执行 triggered 的指令 (Paper Trade 模式)。
@@ -3882,7 +3968,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
     幂等: 同一指令不会重复执行 (executed=1 后跳过)。
     """
     try:
-        from app.playbook.db import PlaybookDB
+        from app.playbook.db import route_playbook_db
         from app.playbook.playbook_service import PlaybookService
 
         # 1. 检查配置开关
@@ -3968,8 +4054,9 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             return {"date": today, "executed": 0, "skipped": 0,
                     "reason": "daily_loss_circuit", "detail": _dl}
 
-        db = PlaybookDB()
+        db = route_playbook_db("sim")
         service = PlaybookService(db)
+        live_context = _live_engineering_probe_context()
         instructions = db.get_instructions_by_date(today)
 
         logger.info(f"[playbook] auto_execute 开始: {len(instructions)} 条指令 (now={_now_et_dt.strftime('%H:%M')} ET)")
@@ -3980,6 +4067,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
 
         executed_count = 0
         skipped_count = 0
+        live_executed_count = 0
+        live_skipped_count = 0
         errors = []
 
         # P0 fix (2026-06-25): 开仓前 buying_power 总量检查
@@ -3988,8 +4077,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         _max_deploy = 0.0
         try:
             from app.core.db_utils import safe_sqlite_connect
-            from app.core.paths import get_trade_records_db as _get_trdb
-            _bp_conn = safe_sqlite_connect(_get_trdb(), timeout=5)
+            from app.core.paths import get_trade_records_db_for_arm
+            _bp_conn = safe_sqlite_connect(get_trade_records_db_for_arm("sim"), timeout=5)
             # 2026-08-16 (DEB§37, Qoder §36.4 结构性关注实锤修复): 删除 entry_time
             #   时间窗 (-1 day). 根因: W_WEEK 多夜持仓 (§34, 最长5交易日) 第3-5天仓位
             #   漏出统计 → 预算门低估已用敞口; 且 date('now') 为 UTC, entry_time 为 ET,
@@ -4168,15 +4257,17 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     _pb_rec = None
                     try:
                         import sqlite3 as _sql3_ah
+                        from app.core.paths import get_trade_records_db_for_arm
                         _dir_norm = "LONG" if inst.get("direction", "").upper() == "BUY" else "SHORT"
                         if _ah_conn is None:
-                            _ah_conn = _sql3_ah.connect("/opt/ftseek/FTSeek-US/data/ftseek_us.db", timeout=10.0)
+                            _ah_conn = _sql3_ah.connect(
+                                str(get_trade_records_db_for_arm("sim")), timeout=10.0)
                             _ah_conn.row_factory = _sql3_ah.Row
                         _pb_rec = _ah_conn.execute(
                             "SELECT entry_price, exit_price, exit_time, exit_reason, realized_pnl, pnl_pct, quantity, "
                             "pnl_net "
                             "FROM trade_records WHERE symbol = ? AND substr(entry_time,1,10) = ? "
-                            "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                            "AND source_type = 'PLAYBOOK_SIM' "
                             "AND UPPER(direction) = ? ORDER BY id DESC LIMIT 1",
                             (_symbol, today, _dir_norm)
                         ).fetchone()
@@ -5047,6 +5138,71 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                     _open_positions_count += 1
                     _audit_action = "executed"
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
+
+                    if live_context is not None:
+                        live_instruction_id, live_gate = _mirror_instruction_to_live_if_allowed(
+                            inst, live_context["db"]
+                        )
+                        if not live_gate.get("allowed"):
+                            reason_messages = "; ".join(
+                                reason.get("message", "unknown") for reason in live_gate.get("reasons", [])
+                            )
+                            live_skipped_count += 1
+                            errors.append(
+                                f"{inst['symbol']}: LIVE gate rejected mirror — {reason_messages}"
+                            )
+                            logger.info(
+                                f"[playbook] LIVE mirror rejected before write: {inst['symbol']} "
+                                f"reasons={[reason.get('code') for reason in live_gate.get('reasons', [])]}"
+                            )
+                            try:
+                                from app.push import get_push_hub
+                                from app.push.message import Level
+                                get_push_hub().push_text(
+                                    f"⚠️ [LIVE C-lite] {inst['symbol']} 未镜像: {reason_messages}",
+                                    level=Level.HIGH,
+                                )
+                            except Exception as push_error:
+                                logger.warning(
+                                    f"[playbook] LIVE gate rejection push failed: {push_error}",
+                                    exc_info=True,
+                                )
+                        else:
+                            if live_instruction_id is None:
+                                live_skipped_count += 1
+                                errors.append(f"{inst['symbol']}: LIVE mirror failed")
+                            else:
+                                live_result = live_context["service"].execute_instruction(
+                                    instruction_id=live_instruction_id,
+                                    acknowledge_risk=True,
+                                    custom_params=_reprice_params,
+                                    target_env="real",
+                                )
+                                if live_result.get("success"):
+                                    live_executed_count += 1
+                                    logger.info(
+                                        f"[playbook] ✅ LIVE C-lite 执行: {inst['symbol']} "
+                                        f"decision_id={inst.get('decision_id')}"
+                                    )
+                                else:
+                                    live_skipped_count += 1
+                                    errors.append(
+                                        f"{inst['symbol']}: LIVE C-lite skipped — "
+                                        f"{live_result.get('message', 'unknown')}"
+                                    )
+                                    try:
+                                        from app.push import get_push_hub
+                                        from app.push.message import Level
+                                        get_push_hub().push_text(
+                                            f"⚠️ [LIVE C-lite] {inst['symbol']} 未执行: "
+                                            f"{live_result.get('message', 'unknown')}",
+                                            level=Level.HIGH,
+                                        )
+                                    except Exception as push_error:
+                                        logger.warning(
+                                            f"[playbook] LIVE C-lite failure push failed: {push_error}",
+                                            exc_info=True,
+                                        )
                 else:
                     skipped_count += 1
                     if result.get("ttl_expired"):
@@ -5092,6 +5248,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
             "date": today,
             "executed": executed_count,
             "skipped": skipped_count,
+            "live_executed": live_executed_count,
+            "live_skipped": live_skipped_count,
             "errors": errors[:5],  # 最多返回 5 个错误
         }
 
@@ -8474,11 +8632,11 @@ def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
     return box.get("r"), False, box.get("e")
 
 
-def monitor_playbook_sim_exits(scheduler) -> int:
-    """盘中监控 PLAYBOOK_SIM 真实模拟仓位的退出.
+def monitor_playbook_exits(scheduler) -> int:
+    """盘中监控 PLAYBOOK_SIM / PLAYBOOK_LIVE 真实仓位的退出.
 
-    与 monitor_playbook_shadow_exits 的区别: PLAYBOOK_SIM 是富途模拟账户的真实持仓,
-    退出时必须调 DualBrokerAdapter.close_position(target_env="sim") 真实平仓,
+    与 monitor_playbook_shadow_exits 的区别: PLAYBOOK_SIM/PLAYBOOK_LIVE 是券商账户
+    的真实持仓, 退出时必须调 DualBrokerAdapter.close_position 按臂真实平仓,
     而非仅更新 trade_records 字段.
 
     退出规则 (与 shadow 对齐, 复用 exit_policy 阈值):
@@ -8489,11 +8647,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
     Returns: 本轮平仓数量
     """
     conn = None
+    _arm_connections = {}
     exited = 0
     try:
         import sqlite3
         import json as _json
-        from app.core.paths import get_trade_records_db
+        from app.core.paths import get_trade_records_db_for_arm
         from app.core.scheduler_triggers import ET as _et
         # 注: datetime 用模块级 import (顶部 L23) — 局部 import 会遮蔽模块名,
         #     使测试无法经 pipeline_mod.datetime 冻结时钟 (2026-09-02 钉修复配套).
@@ -8505,28 +8664,37 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         if phase != MarketPhase.TRADING or not recovery_ok:
             return exited
 
-        db_path = str(get_trade_records_db())
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-
-        rows = conn.execute("""
-            SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type,
-                   decision_id, futu_order_id
-            FROM trade_records
-            WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
-              AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)
-        """ + _PB_CLOSED_TWIN_NOT_EXISTS + """
-            ORDER BY id DESC
-        """).fetchall()
+        rows = []
+        rows_by_arm = {}
+        for _arm_target in ("sim", "real"):
+            db_path = str(get_trade_records_db_for_arm(_arm_target))
+            if not Path(db_path).exists():
+                continue
+            arm_conn = sqlite3.connect(db_path)
+            arm_conn.row_factory = sqlite3.Row
+            _arm_connections[db_path] = arm_conn
+            source_type = "PLAYBOOK_SIM" if _arm_target == "sim" else "PLAYBOOK_LIVE"
+            arm_rows = arm_conn.execute("""
+                SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type,
+                       decision_id, futu_order_id
+                FROM trade_records
+                WHERE source_type = ?
+                  AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)
+            """ + _PB_CLOSED_TWIN_NOT_EXISTS + """
+                ORDER BY id DESC
+            """, (source_type,)).fetchall()
+            arm_rows = [dict(row) | {"arm_db_path": db_path} for row in arm_rows]
+            rows.extend(arm_rows)
+            rows_by_arm[db_path] = arm_rows
 
         if not rows:
-            monitor_playbook_sim_exits._last_n = 0
+            monitor_playbook_exits._last_n = 0
             return exited
 
         # 2026-07-31 降噪: 20s 循环每轮 INFO → 持仓数变化才 INFO, 不变 DEBUG (~180条/盘中h → ~0)
-        if len(rows) != getattr(monitor_playbook_sim_exits, "_last_n", None):
+        if len(rows) != getattr(monitor_playbook_exits, "_last_n", None):
             logger.info(f"[playbook dual] 退出监控: {len(rows)} 个未平仓 sim/live 仓位待检查")
-            monitor_playbook_sim_exits._last_n = len(rows)
+            monitor_playbook_exits._last_n = len(rows)
         else:
             logger.debug(f"[playbook dual] 退出监控: {len(rows)} 个未平仓 (不变)")
 
@@ -8564,14 +8732,14 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         for _pb_s in _batch_quotes:
             _pb_oldest_age = max(_pb_oldest_age, time.time() - _PB_EXIT_PRICE_CACHE_TS.get(_pb_s, 0.0))
         if _pb_oldest_age > _PB_EXIT_STALE_ALERT_SEC:
-            if not getattr(monitor_playbook_sim_exits, "_pb_stale_alerted", False):
-                monitor_playbook_sim_exits._pb_stale_alerted = True
+            if not getattr(monitor_playbook_exits, "_pb_stale_alerted", False):
+                monitor_playbook_exits._pb_stale_alerted = True
                 logger.warning(
                     f"[playbook dual] 取价降级: 本轮用兜底价评估退出 (最旧 {_pb_oldest_age:.0f}s) "
                     f"— 快循环不停摆, 报价恢复即自动切回实时"
                 )
         else:
-            monitor_playbook_sim_exits._pb_stale_alerted = False
+                monitor_playbook_exits._pb_stale_alerted = False
 
         # 市场时段 (ET) — 复用 scheduler_triggers.ET (pytz, 处理夏令时)
         now_et = datetime.now(_et)
@@ -8634,15 +8802,16 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     _bs_cfg[_bs_k] = _bs_raw[_bs_k]
 
         if _bs_cfg.get("enabled") and _batch_quotes:
-            # 聚合与阈值判定走纯函数 _portfolio_backstop_evaluate (可单测);
-            # 本处只保留告警动作 (需 logger/push, 不入纯函数)。
-            _bs_agg = _portfolio_backstop_evaluate(rows, _batch_quotes, _bs_cfg)
-            if _bs_agg is not None:
+            # RFC-090 §17: portfolio backstop is evaluated per arm. SIM drawdown
+            # must not trigger from LIVE exposure and vice versa.
+            for _bs_arm_path, _bs_arm_rows in rows_by_arm.items():
+                _bs_agg = _portfolio_backstop_evaluate(_bs_arm_rows, _batch_quotes, _bs_cfg)
+                if _bs_agg is None:
+                    continue
                 _bs_n = _bs_agg["n_priced"]
-                # 脏行留痕 (棘轮纪律): 仅在计数变化时 warn, 避免 20s 快环刷屏
                 _bs_bad = _bs_agg.get("n_unusable_rows") or 0
-                if _bs_bad and _bs_bad != getattr(monitor_playbook_sim_exits, "_bs_last_bad_rows", 0):
-                    monitor_playbook_sim_exits._bs_last_bad_rows = _bs_bad
+                if _bs_bad and _bs_bad != getattr(monitor_playbook_exits, "_bs_last_bad_rows", 0):
+                    monitor_playbook_exits._bs_last_bad_rows = _bs_bad
                     logger.warning(
                         f"[playbook组合兜底] {_bs_bad} 行无法计入聚合 (敞口按保守少算) | "
                         f"末条错误: {_bs_agg.get('unusable_last_err')}")
@@ -8651,16 +8820,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 _bs_sl_sum = _bs_agg["sl_loss_sum_usd"]
                 _bs_unreal = _bs_agg["unrealized_usd"]
                 _bs_thresh = _bs_agg["threshold_usd"]
-                # 判定复用纯函数的 breached 键 (判定只此一处, 防双写分裂);
-                # cooldown_sec 加 or 兜底 — yaml 误配 null 时 float(None) 会炸当轮监控循环。
                 if _bs_agg["breached"]:
                     _bs_now_ts = time.time()
-                    _bs_last_ts = getattr(monitor_playbook_sim_exits, "_bs_last_alert_ts", 0.0)
+                    _bs_last_ts = getattr(monitor_playbook_exits, "_bs_last_alert_ts", 0.0)
                     if _bs_now_ts - _bs_last_ts >= float(_bs_cfg.get("cooldown_sec") or 300.0):
-                        monitor_playbook_sim_exits._bs_last_alert_ts = _bs_now_ts
+                        monitor_playbook_exits._bs_last_alert_ts = _bs_now_ts
                         _bs_pct = (_bs_unreal / _bs_cost * 100.0) if _bs_cost else 0.0
                         logger.critical(
-                            f"🚨 [playbook组合兜底] {_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
+                            f"🚨 [playbook组合兜底] arm={Path(_bs_arm_path).name} "
+                            f"{_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
                             f"({_bs_pct:.2f}%) ≥ 阈值 ${_bs_thresh:,.2f} "
                             f"(Σ逐仓SL距离 ${_bs_sl_sum:,.2f} × {_bs_cfg['sl_loss_multiple']}, "
                             f"绝对下限 ${_bs_cfg['min_abs_loss_usd']:,.0f}) — 逐仓 SL 已集体失效, "
@@ -8670,7 +8838,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                             from app.push import get_push_hub
                             from app.push.message import Level as _BsLevel
                             get_push_hub().push_text(
-                                f"🚨 [Playbook组合兜底] {_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
+                                f"🚨 [Playbook组合兜底] arm={Path(_bs_arm_path).name} "
+                                f"{_bs_n} 仓合并浮亏 ${-_bs_unreal:,.2f} "
                                 f"({_bs_pct:.2f}%) 越过组合阈值 ${_bs_thresh:,.2f}. "
                                 f"逐仓 SL 未能兜住, 请人工核查是否全平. "
                                 f"(G-01/A9, 阈值=ΣSL距离×{_bs_cfg['sl_loss_multiple']})",
@@ -8681,6 +8850,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
         for r in rows:
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
+            db_path = r["arm_db_path"]
+            conn = _arm_connections[db_path]
             try:
                 if (_row_target, r["symbol"]) in blocked_exits:
                     continue
@@ -8994,8 +9165,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                                  now_et=now_et, exiting=bool(exit_reason))
                 except Exception as _pyr_e:
                     # R5 模式 (except:pass 棘轮): warn 留痕但进程级只报一次, 防 20s 循环刷屏
-                    if not getattr(monitor_playbook_sim_exits, "_pyr_warned", False):
-                        monitor_playbook_sim_exits._pyr_warned = True
+                    if not getattr(monitor_playbook_exits, "_pyr_warned", False):
+                        monitor_playbook_exits._pyr_warned = True
                         logger.warning(f"[pyramid影子] 采集钩子异常 (本进程只报一次): {_pyr_e}",
                                        exc_info=True)
 
@@ -9302,8 +9473,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         return exited
 
     finally:
-        if conn is not None:
-            conn.close()
+        for _arm_conn in _arm_connections.values():
+            try:
+                _arm_conn.close()
+            except Exception:
+                pass
+
+
+# Compatibility alias for legacy callers/tests; the active name reflects both arms.
+monitor_playbook_sim_exits = monitor_playbook_exits
 
 
 def _mark_overnight_arm(conn, row_id: int, meta: dict, source: str,

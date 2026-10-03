@@ -98,7 +98,7 @@ def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
 class PlaybookDB:
     """Playbook 数据库操作"""
 
-    def __init__(self, db_name: str = "ftseek_us", conn: sqlite3.Connection = None):
+    def __init__(self, db_name: str = "ftseek_research", conn: sqlite3.Connection = None):
         """
         Args:
             db_name: 数据库池名称 (生产用)
@@ -1623,6 +1623,20 @@ def _row_to_dict(row) -> Optional[Dict]:
             except (json.JSONDecodeError, TypeError):
                 pass
     return d
+
+
+def route_playbook_db(target_env: str) -> PlaybookDB:
+    """Route instructions to the explicit SIM/LIVE playbook lane.
+
+    SIM uses the pinned research lane; LIVE uses the isolated live lane. Neither
+    depends on the legacy global TRADE_ENV switch.
+    """
+    normalized = str(target_env or "").strip().lower()
+    if normalized in {"real", "live"}:
+        return PlaybookDB(db_name="ftseek_us_live")
+    if normalized in {"sim", "simulate"}:
+        return PlaybookDB(db_name="ftseek_research")
+    raise ValueError(f"unknown playbook target_env: {target_env!r}")
 
 
 # ========== Schema SQL ==========

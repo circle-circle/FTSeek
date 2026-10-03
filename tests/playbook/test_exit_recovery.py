@@ -166,6 +166,7 @@ def recovery(entry_env, tmp_path, monkeypatch):
         return callbacks[name]
 
     module("app.core.paths", get_trade_records_db=lambda: source,
+           get_trade_records_db_for_arm=lambda target_env: source,
            get_exit_ledger_db=lambda: ledger_path)
     module("app.core.scheduler_triggers", ET=timezone.utc,
            MarketPhase=SimpleNamespace(TRADING="TRADING", CLOSED="CLOSED"),
@@ -273,7 +274,7 @@ def recovery(entry_env, tmp_path, monkeypatch):
             exit_owner=owner, exit_decision=decision)
 
     def monitor():
-        return pipeline.monitor_playbook_sim_exits(scheduler)
+        return pipeline.monitor_playbook_exits(scheduler)
 
     def eod():
         return pipeline._force_close_orphaned_sim_positions(scheduler)

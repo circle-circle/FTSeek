@@ -1,6 +1,6 @@
 # RFC-130: SIM/LIVE 双臂策略一致性对齐 + LIVE 手动臂启用开关
 
-> **状态**: ✅ 已实施 (2026-10-03, 用户裁「我认同双臂常驻，想让sim和实盘一致的策略，同时配置实盘启用开关」)
+> **状态**: ✅ 最小范围已实施 (2026-10-03, 用户裁「我认同双臂常驻，想让sim和实盘一致的策略，同时配置实盘启用开关」; 复查补充见 §7; L1/L2/L4 延续见 RFC-131)
 > **日期**: 2026-10-03
 > **作者**: Hermes
 > **类型**: L2 (策略语义对齐, 零当前行为变更 — 前提实测见 §2)
@@ -68,18 +68,17 @@ playbook:
 ```
 
 消费方: `app/playbook/playbook_service.py` `_execute_via_dual_broker_inner`,
-`target_env=real` 分支第三道门 (半翻互锁 → 毕业门禁 → **arm 门**):
+`target_env=real` 分支总前置门:
 
-- `enabled=false` (默认): **HALT_NEW_LIVE** — 拒绝 live 新仓, `return {"success": False}`,
-  **不降级 sim** (双臂目标架构下 sim 臂独立执行同一候选; 降级会造成同 decision_id 双执行);
-- `enabled=true`: 放行 (仍受半翻互锁 + 毕业门禁 + `ALLOW_REAL_TRADING` 授权锁约束, 本门不替代任何一道);
+- `enabled=false` (默认): 共享门返回 **HALT_NEW_LIVE**, 不调用 broker、不降级 SIM;
+- `enabled=true` 只是必要条件之一; 仍须通过 `evaluate_live_arm_gate` 的
+  mode/auth/env/account/lane/LONG/BUY/1 股/1 仓/RTH/open-cap 全量校验, 任一项失败均 fail-close;
 - **出场不受本门管**: disarm 只停新仓, 已有 LIVE 仓继续由出场监控管理 (RFC-090 §17.5 LIVE_DRAIN 语义);
 - **fail-closed**: 读配置异常 → 视为未 armed, 拒绝。
 
-与 RFC-090 §17 L3 批的关系: 本门是 L3 的**最小前置落地** (只接 enabled 键);
-两步开火仪式 (预授权 + CONFIRM)、max_open_positions/max_order_qty/session 的入场路由接线、
-`route_playbook_db` lane 路由仍按 RFC-090 §17.6 L1-L6 批次实施 — **Codex 实施 L3 时应复用本门,
-不得另造平行开关** (本文件即协调记录)。
+当前落地关系: `evaluate_live_arm_gate` 是 service 权威门与 pipeline 镜像前置门共享的
+单一判定面; `route_playbook_db`、双库退出、镜像与限额接线已由 RFC-131/DEB-20261003
+收口。后续扩展不得另造平行门或先镜像后校验。
 
 ### 3.3 契约测试翻面 + 墓碑 (4 文件)
 
@@ -129,3 +128,71 @@ live_manual_arm.enabled=true 的前置 (缺一不可):
   ⑥ RFC-090 L1-L4 lane 路由落地 (route_playbook_db + 双库出场扫描 + instruction 镜像),
      或用户显式裁「全局 TRADE_ENV=0 旧模型」并知悉 §17.2 四条反对理由。
 ```
+
+---
+
+## 7. 2026-10-03 复查补充 (Codex, 零开关改动)
+
+### 7.1 已确认
+
+1. **部署状态**: commit `175c3b359` 后服务已于 19:29:25 CST 重启, 当前 `active`;
+   启动冒烟 7/7 通过 (19:29:30 启动段)。
+2. **当前模式**: `TRADE_ENV=1` / `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=false`,
+   `live_manual_arm.enabled=false`; 生产仍全 SIM, 未启用 LIVE。
+3. **定向测试**: RFC-130 相关 6 个测试文件 `115 passed`; 切换/DB 契约另有 `46 passed`。
+4. **策略对齐**: W_WEEK 豁免与 cohort B 持夜已扩展到 `PLAYBOOK_LIVE`, 旧
+   `RFC061_LIVE_OVERNIGHT_ENABLED` 读取面清零。
+
+### 7.2 复查发现并已补
+
+旧实现曾把 arm 门放在半翻互锁与毕业门禁之后。若 `TRADE_ENV=1` 且有人请求
+`target_env=real`, 请求会先被旧互锁降级为 SIM, **到达不了 arm 门**, 与本文
+「enabled=false ⇒ HALT_NEW_LIVE, 不降级 sim」的语义相反。
+
+已补:
+
+- `app/playbook/playbook_service.py`: 权威门改为调用共享 `evaluate_live_arm_gate`;
+- `app/playbook/pipeline.py`: 写 LIVE 镜像前重新调用共享门, 拒绝时不写 LIVE instruction;
+- `tests/playbook/test_m2_c2_live_quote_gate.py`: 新增
+  `test_disarmed_live_halt_precedes_half_flip_downgrade`, 断言未 armed 时
+  broker 触达 0 次、不降级 SIM、instruction 未认领。
+
+### 7.3 启用前仍缺 (不可把本批误读为双臂切换已完成)
+
+1. **L1/L2 已由 RFC-131 最小落地**: `route_playbook_db(target_env)` 与双库
+   退出扫描已实施; 但 preflight 的 schema/capital/manual-position 风险未清零。
+2. **L4 已由 RFC-131 最小落地**: LIVE instruction 镜像、同一 `decision_id`、
+   explicit `target_env="real"` 与 1 股/1 仓接线已实施。
+3. **限额键已接线**: `max_open_positions=1` / `max_order_qty=1` / `session=RTH`
+   均由共享 LIVE gate 判定; service 权威门与 pipeline 镜像前置门同口径。
+4. **预检仍 BLOCK**: `block=1 warn=6`; 毕业门禁 `graduated=false`,
+   `ic_t3=-0.0403`。策略转正仍不得启用; 1 股工程探针须走 RFC-131 独立授权。
+5. **旧模型风险仍在**: 若下周直接翻 `AUTO_TRADE_ACCOUNT=real + TRADE_ENV=0`,
+   仍是旧单库翻转, SIM 研究臂会停, 不是本 RFC/§17 目标架构。
+
+### 7.4 下周决策板
+
+| 决策 | 建议默认 | 说明 |
+|---|---|---|
+| 是否启用 `live_manual_arm.enabled=true` | **暂不启用** | preflight 仍 BLOCK, 且工程探针需单独授权 |
+| 是否先跑旧模型全局翻转 | **不建议** | 会停 SIM, 与「SIM 继续运行」冲突 |
+| 是否接受知情破例先做 1 股链路 | 用户裁决 | 走 RFC-131 `probe.authorization_id`, 且仅限 1 股 LONG |
+| 是否先做只读/哑 broker 彩排 | **建议** | 可在零真钱下验证 arm 门与路由缺口 |
+
+---
+
+## 8. 后续实施记录 (2026-10-03, RFC-131)
+
+本文件的「最小范围」已被 RFC-131 延续为 1 股 C-lite 工程探针:
+
+- `route_playbook_db("sim"|"real")` 分臂路由;
+- SIM/LIVE 双库退出扫描与分臂组合兜底;
+- LIVE instruction 镜像, 同 `decision_id`, 强制 1 股/1 仓/LONG;
+- LIVE 失败一律 `HALT_NEW_LIVE`, 不再降级 SIM;
+- `TRADE_ENV` 不再作为 LIVE lane 的降级依据。
+
+启用仪式、SSOT 边界与剩余阻塞见
+`docs/decisions/RFC-131-live-one-share-engineering-probe.md`。
+
+注意: RFC-131 代码已完成并测试通过，但因当前 worktree 混有其他 WIP，
+尚未重启部署到运行中的 ftseek-us 服务。

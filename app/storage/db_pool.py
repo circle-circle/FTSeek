@@ -44,14 +44,27 @@ _ftseek_us_db = os.getenv(
     "FTSEEK_DB_FILE",
     "ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db",
 )
+
+
+def _resolve_research_db() -> Path:
+    """Resolve the pinned SIM/research lane while preserving the A/B file override."""
+    override = os.getenv("FTSEEK_DB_FILE", "").strip()
+    if override:
+        override_path = Path(override)
+        return override_path if override_path.is_absolute() else PROJECT_ROOT / "data" / override_path
+    return PROJECT_ROOT / "data" / "ftseek_us.db"
+
+
 _DB_PATHS: Dict[str, Path] = {
     "ftseek_us": PROJECT_ROOT / "data" / _ftseek_us_db,
+    # RFC-090 §17: LIVE playbook lane is an explicit arm, independent of TRADE_ENV.
+    "ftseek_us_live": PROJECT_ROOT / "data" / "ftseek_us_live.db",
     # [RFC-080 S1 2026-09-09] 研究库 pin — 毕业门禁/IC 读方专用, 恒 ftseek_us.db,
     # 不随 TRADE_ENV 漂移 (缺口1: 翻 TRADE_ENV=0 后门禁读 live 库 16 行 → 永判未毕业
     # → 降级 sim 下单但记录写 live = 自锁)。证据: sim 库 playbook_instructions 1918 行
     # (max_date 9/8) vs live 库 16 行 (止于 6/22)。详见
     # docs/PROPOSAL-20260909-cutover-dual-arm-routing.md + db_utils.get_research_db()。
-    "ftseek_research": PROJECT_ROOT / "data" / "ftseek_us.db",
+    "ftseek_research": _resolve_research_db(),
     "llm_audit": PROJECT_ROOT / "data" / "llm_audit.db",
     "rejections": PROJECT_ROOT / "data" / "rejections.db",
     "anomaly": PROJECT_ROOT / "data" / "anomaly_queue.db",

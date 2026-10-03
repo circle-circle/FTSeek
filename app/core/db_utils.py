@@ -124,10 +124,9 @@ def _parse_trade_env_from_file() -> bool:
 # ── R-3 (2026-08-23 DEB-20260823): 进程内固化 ──
 # 原实现每次调用重读 .env.us (docstring 自述"无需重启进程"), 而 broker 路由用
 # os.getenv("AUTO_TRADE_ACCOUNT") (position_sync.py:576) 需重启 → 两者不同源。
-# 后果: 运行期把 .env.us 的 TRADE_ENV 改成 0, get_trade_records_db() 立刻指向
-# ftseek_us_live.db 而 broker 仍是 SIMULATE; 此时 monitor_playbook_sim_exits
-# 查到 rows=[] 直接 return 0 (pipeline.py:6890) → 全部在仓静默失去止损监控, 零告警。
-# 这是"三态无状态机"最短的一条自毁路径, 且此前零测试覆盖。现固化为启动值。
+# 历史后果: 运行期把 .env.us 的 TRADE_ENV 改成 0 会使旧单库监控路径失明。
+# RFC-131 后 monitor_playbook_exits 按 explicit arm 双库扫描, SIM 不随 TRADE_ENV
+# 漂移; 该注释仅保留事故背景, 不再描述当前退出扫描行为。
 _LIVE_MODE_CACHE: Optional[bool] = None
 _LIVE_MODE_LOCK = threading.Lock()
 

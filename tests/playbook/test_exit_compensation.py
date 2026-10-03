@@ -26,7 +26,10 @@ def compensation_case(monkeypatch, tmp_path):
         raise AssertionError("external compensation-test boundary attempted")
 
     def safe_connect(path, *args, **kwargs):
-        if str(path) != ":memory:" and not Path(path).resolve().is_relative_to(tmp_path):
+        raw_path = str(path)
+        if raw_path.startswith("file:"):
+            raw_path = raw_path[5:].split("?", 1)[0]
+        if raw_path != ":memory:" and not Path(raw_path).resolve().is_relative_to(tmp_path):
             return forbidden(path, *args, **kwargs)
         return original_connect(path, *args, **kwargs)
 
@@ -46,7 +49,9 @@ def compensation_case(monkeypatch, tmp_path):
         replacement.__dict__.update(attributes)
         monkeypatch.setitem(sys.modules, name, replacement)
 
-    module("app.push", get_push_hub=forbidden, trade_entry=forbidden, trade_exit=forbidden)
+    push_hub = SimpleNamespace(push_text=lambda text, level=None: None)
+    module("app.push", get_push_hub=lambda: push_hub,
+           trade_entry=forbidden, trade_exit=forbidden)
     config = {
         "playbook.execute_mode": "futu_simulate",
         "risk.playbook_vix_gate_enabled": False,
@@ -54,7 +59,11 @@ def compensation_case(monkeypatch, tmp_path):
         # RFC-130: real 参数化用例走 armed LIVE 前置 (arm 门默认 false 会 HALT_NEW_LIVE,
         # 补偿路径测的是"入场已提交后簿记失败"语义, 须在开火态下才可达)。
         "playbook.live_manual_arm": {"enabled": True, "max_open_positions": 1,
-                                     "max_order_qty": 1, "session": "RTH"},
+                                     "mode": "engineering_probe",
+                                     "max_order_qty": 1, "session": "RTH",
+                                     "probe": {"authorized": True,
+                                               "authorization_id": "TEST-AUTH",
+                                               "direction": "LONG"}},
     }
     module("app.core.config_container", get_config=lambda: SimpleNamespace(
         get_dotted=lambda key, default=None: config.get(key, default)))
@@ -118,21 +127,29 @@ def compensation_case(monkeypatch, tmp_path):
         "gap_dive_halve_enabled": False,
     })
     monkeypatch.setattr(pipeline, "_check_graduation_gate", lambda: {"graduated": True})
+    monkeypatch.setattr(
+        "app.core.scheduler_triggers.get_market_phase",
+        lambda: SimpleNamespace(value="TRADING"),
+    )
     book = MagicMock(return_value=True)
     monkeypatch.setattr(pipeline, "_book_playbook_exit_result", book)
     monkeypatch.setattr(db_utils, "is_live_mode", lambda: True)
     monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "sim")
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.setenv("REAL_ACCOUNT_ID", "123456789")
 
     trade_path = tmp_path / "source-trades.db"
     monkeypatch.setattr(paths, "get_trade_records_db", lambda: trade_path)
+    monkeypatch.setattr(paths, "get_trade_records_db_for_arm", lambda target_env: trade_path)
     source = sqlite3.connect(trade_path)
     source.execute("CREATE TABLE voting_predictions (decision_id TEXT, model_votes TEXT, predicted_strength REAL, predicted_confidence REAL)")
+    source.execute("CREATE TABLE trade_records (id INTEGER PRIMARY KEY, source_type TEXT, exit_time TEXT)")
     source.commit()
     source.close()
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     db = PlaybookDB(conn=conn)
+    db.db_name = "ftseek_us_live"
     service = service_module.PlaybookService(playbook_db=db)
     iid = db.save_instruction({
         "date": "2026-09-10", "symbol": "US.COMP", "direction": "BUY",
@@ -200,17 +217,20 @@ def test_compensation_carries_original_source_and_entry_identity(compensation_ca
     case = compensation_case
     case.failure = failure
     monkeypatch.setenv("AUTO_TRADE_ACCOUNT", target_env)
-    response = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+    response = case.service.execute_instruction(
+        case.iid, acknowledge_risk=True, target_env=target_env
+    )
     assert response["success"] is False
     args, kwargs = case.broker.close_position.call_args
-    assert args == ("US.COMP", 10, "LONG")
+    expected_qty = 1 if target_env == "real" else 10
+    assert args == ("US.COMP", expected_qty, "LONG")
     assert kwargs["target_env"] == target_env
     owner = kwargs["exit_owner"]
     assert owner == {
         "kind": "compensation", "db_path": str(case.trade_path.resolve()),
         "close_key": "entry:ENTRY-17", "instruction_id": case.iid, "execution_attempt": 1,
         "entry_order_id": "ENTRY-17", "entry_time": "2026-09-10T10:00:00-04:00",
-        "entry_price": 100.25, "quantity": 10, "symbol": "US.COMP", "direction": "LONG",
+        "entry_price": 100.25, "quantity": expected_qty, "symbol": "US.COMP", "direction": "LONG",
         "source_type": "PLAYBOOK_LIVE" if target_env == "real" else "PLAYBOOK_SIM",
     }
     assert kwargs["exit_decision"] == {
@@ -239,6 +259,23 @@ def test_partial_entry_compensates_only_observed_owned_quantity(compensation_cas
     assert kwargs["exit_owner"]["quantity"] == 4
     case.book.assert_called_once_with(case.broker, case.broker.close_position.return_value)
     assert_m2_locked(case)
+
+
+def test_legacy_auto_real_path_fails_closed(compensation_case, monkeypatch):
+    case = compensation_case
+    monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
+
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+
+    assert response["success"] is False
+    assert "LIVE_PATH_A_RETIRED" in response["message"]
+    case.broker.submit_order.assert_not_called()
+    row = case.conn.execute(
+        "SELECT execution_state, executed FROM playbook_instructions WHERE id=?",
+        (case.iid,),
+    ).fetchone()
+    assert row["execution_state"] == "PENDING"
+    assert not row["executed"]
 
 
 @pytest.mark.parametrize("failing_boundary", ["close", "book"])

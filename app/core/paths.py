@@ -68,16 +68,44 @@ def get_rejections_db() -> Path:
     return _get_project_root() / relative
 
 
-def get_trade_records_db() -> Path:
-    """获取 ftseek_us.db 路径 (实盘: ftseek_us_live.db)"""
-    # 实盘隔离 (2026-06-09): TRADE_ENV=0 时使用独立数据库文件
-    if os.getenv("TRADE_ENV", "1").strip() == "0":
-        return _get_project_root() / "data" / "ftseek_us_live.db"
+def _resolve_sim_trade_records_db() -> Path:
+    """Resolve the SIM trade ledger from override/config without TRADE_ENV routing."""
+    override = os.getenv("FTSEEK_DB_FILE", "").strip()
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else _get_project_root() / path
     cfg = _get_config()
     relative = cfg.get_dotted("paths.trade_records_db", "data/ftseek_us.db")
     if os.path.isabs(relative):
         return Path(relative)
     return _get_project_root() / relative
+
+
+def get_trade_records_db() -> Path:
+    """获取 ftseek_us.db 路径 (实盘: ftseek_us_live.db)"""
+    # 实盘隔离 (2026-06-09): TRADE_ENV=0 时使用独立数据库文件
+    if os.getenv("TRADE_ENV", "1").strip() == "0":
+        return _get_project_root() / "data" / "ftseek_us_live.db"
+    return _resolve_sim_trade_records_db()
+
+
+def get_trade_records_db_for_arm(target_env: str) -> Path:
+    """Resolve the execution ledger for an explicit playbook arm.
+
+    The SIM arm must remain the research ledger even if legacy TRADE_ENV=0 is set.
+    The LIVE arm is always the isolated real ledger and never follows TRADE_ENV.
+    """
+    normalized = str(target_env or "").strip().lower()
+    if normalized in {"real", "live"}:
+        return _get_project_root() / "data" / "ftseek_us_live.db"
+
+    # In normal operation (TRADE_ENV=1) this preserves the historical resolver so
+    # callers/tests that override get_trade_records_db() keep working. If legacy
+    # TRADE_ENV=0 is ever set, SIM is pinned explicitly and cannot drift to LIVE.
+    if os.getenv("TRADE_ENV", "1").strip() != "0":
+        return get_trade_records_db()
+
+    return _resolve_sim_trade_records_db()
 
 
 def get_exit_quality_db() -> Path:

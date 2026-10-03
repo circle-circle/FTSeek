@@ -5,6 +5,7 @@ import json
 import sqlite3
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,6 +43,13 @@ def svc(db, monkeypatch, tmp_path):
     finally:
         conn.close()
     monkeypatch.setattr("app.core.db_utils.get_main_db", lambda: main_db)
+    db.db_name = "ftseek_us_live"
+    live_ledger = tmp_path / "live-ledger.sqlite"
+    monkeypatch.setattr(
+        "app.core.paths.get_trade_records_db_for_arm",
+        lambda target_env: live_ledger,
+    )
+    monkeypatch.setattr("app.push.get_push_hub", lambda: MagicMock())
     return PlaybookService(playbook_db=db)
 
 
@@ -68,6 +76,7 @@ def _mk_dual():
     def submit(order, target_env="sim"):
         captured["called"] = True
         captured["target_env"] = target_env
+        captured["order_qty"] = getattr(order, "quantity", None)
         return {
             "success": False,
             "submit_state": "DEFINITIVE_REJECT",
@@ -98,10 +107,15 @@ def _call_inner(svc, iid, target_env):
 
 def _live_prereqs(monkeypatch, db_live=True, armed=True):
     monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.setenv("REAL_ACCOUNT_ID", "123456789")
     monkeypatch.setattr("app.core.db_utils.is_live_mode", lambda: db_live)
     monkeypatch.setattr(
         "app.playbook.pipeline._check_graduation_gate",
         lambda: {"graduated": True},
+    )
+    monkeypatch.setattr(
+        "app.core.scheduler_triggers.get_market_phase",
+        lambda: SimpleNamespace(value="TRADING"),
     )
     # RFC-130 (2026-10-03): LIVE 臂总开关 playbook.live_manual_arm.enabled 是
     # live 新仓第三道前置 (默认 false = HALT_NEW_LIVE)。本 helper 构造 live 前置
@@ -116,8 +130,18 @@ def _live_prereqs(monkeypatch, db_live=True, armed=True):
         class _Wrap:
             def get_dotted(self, key, default=None):
                 if key == "playbook.live_manual_arm":
-                    return {"enabled": armed, "max_open_positions": 1,
-                            "max_order_qty": 1, "session": "RTH"}
+                    return {
+                        "enabled": armed,
+                        "mode": "engineering_probe",
+                        "max_open_positions": 1,
+                        "max_order_qty": 1,
+                        "session": "RTH",
+                        "probe": {
+                            "authorized": armed,
+                            "authorization_id": "TEST-AUTH" if armed else "",
+                            "direction": "LONG",
+                        },
+                    }
                 return real.get_dotted(key, default)
         return _Wrap()
     monkeypatch.setattr("app.core.config_container.get_config", _armed_get_config)
@@ -326,6 +350,24 @@ class TestLiveFailClose:
         assert captured.get("called") is True
         assert captured["target_env"] == "real"
 
+    def test_live_engineering_probe_clamps_order_qty_to_one(self, svc, db, monkeypatch):
+        _live_prereqs(monkeypatch)
+        _config(
+            monkeypatch,
+            pretrade_quote_gate_enabled=False,
+            entry_freshness_gate_enabled=False,
+        )
+        iid = _save_inst(db)
+        dual, captured = _mk_dual()
+
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
+            "app.playbook.playbook_service._private_router_quote", side_effect=_fresh_quote
+        ):
+            _call_inner(svc, iid, "real")
+
+        assert captured.get("called") is True
+        assert captured["order_qty"] == 1
+
 
 class TestSimulationUnchanged:
     def test_sim_without_quote_remains_fail_open(self, svc, db):
@@ -362,16 +404,85 @@ class TestSimulationUnchanged:
             _call_inner(svc, iid, "sim")
         assert captured.get("called") is True
 
-    def test_half_flip_downgrades_to_sim_before_quote_gate(self, svc, db, monkeypatch):
+    def test_legacy_trade_env_does_not_downgrade_live_to_sim(self, svc, db, monkeypatch):
         _live_prereqs(monkeypatch, db_live=False)
         iid = _save_inst(db)
         dual, captured = _mk_dual()
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
             "app.playbook.playbook_service._private_router_quote", return_value=None
         ):
-            _call_inner(svc, iid, "real")
-        assert captured.get("called") is True
-        assert captured["target_env"] == "sim"
+            result = _call_inner(svc, iid, "real")
+        assert result["success"] is False
+        assert not captured
+        _assert_not_claimed(svc, iid)
+
+    def test_disarmed_live_halt_precedes_half_flip_downgrade(self, svc, db, monkeypatch):
+        _live_prereqs(monkeypatch, db_live=False, armed=False)
+        iid = _save_inst(db)
+        dual, captured = _mk_dual()
+
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
+            "app.playbook.playbook_service._private_router_quote", return_value=None
+        ):
+            result = _call_inner(svc, iid, "real")
+
+        assert result["success"] is False
+        assert any(
+            reason["code"] == "LIVE_ARM_NOT_ENABLED"
+            for reason in result["reasons"]
+        )
+        assert not captured
+        _assert_not_claimed(svc, iid)
+
+
+def test_live_open_cap_rejects_before_execution_claim(svc, db, monkeypatch, tmp_path):
+    _live_prereqs(monkeypatch)
+    ledger = tmp_path / "live-open-cap.sqlite"
+    connection = sqlite3.connect(ledger)
+    try:
+        connection.execute("CREATE TABLE trade_records (source_type TEXT, exit_time TEXT)")
+        connection.execute("INSERT INTO trade_records VALUES ('PLAYBOOK_LIVE', '')")
+        connection.commit()
+    finally:
+        connection.close()
+    monkeypatch.setattr(
+        "app.core.paths.get_trade_records_db_for_arm",
+        lambda target_env: ledger,
+    )
+    iid = _save_inst(db)
+    dual, captured = _mk_dual()
+
+    with patch("app.execution.dual_broker.get_dual_broker", return_value=dual):
+        result = _call_inner(svc, iid, "real")
+
+    assert result["success"] is False
+    assert any(
+        reason["code"] == "LIVE_PROBE_OPEN_CAP_REACHED"
+        for reason in result["reasons"]
+    )
+    assert not captured
+    _assert_not_claimed(svc, iid)
+
+
+def test_live_service_gate_enforces_rth(svc, db, monkeypatch):
+    _live_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        "app.core.scheduler_triggers.get_market_phase",
+        lambda: SimpleNamespace(value="PRE_MARKET"),
+    )
+    iid = _save_inst(db)
+    dual, captured = _mk_dual()
+
+    with patch("app.execution.dual_broker.get_dual_broker", return_value=dual):
+        result = _call_inner(svc, iid, "real")
+
+    assert result["success"] is False
+    assert any(
+        reason["code"] == "LIVE_MARKET_PHASE_REJECTED"
+        for reason in result["reasons"]
+    )
+    assert not captured
+    _assert_not_claimed(svc, iid)
 
 
 def test_c2_gate_precedes_execution_claim_and_is_absent_from_exit_monitor():

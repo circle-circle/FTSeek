@@ -23,7 +23,9 @@ import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 
+from app.core import paths as core_paths
 from app.playbook.db import PlaybookDB
+from app.playbook.live_arm_gate import count_open_live_positions, evaluate_live_arm_gate
 from app.utils.timezone import now_et
 
 logger = logging.getLogger(__name__)
@@ -779,6 +781,7 @@ class PlaybookService:
         instruction_id: int,
         acknowledge_risk: bool = False,
         custom_params: Dict = None,
+        target_env: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         执行一条 Playbook 指令
@@ -1114,36 +1117,29 @@ class PlaybookService:
         if not (isinstance(_route_exec, dict) and _route_exec.get("action") == "limit"):
             _route_exec = None
 
-        # ── broker 路径 (futu_simulate / live 统一): target_env 由 AUTO_TRADE_ACCOUNT 决定 ──
-        # 2026-06-24 修复: 之前 futu_simulate/live 各写死 target_env, 与 switch_mode (写 AUTO_TRADE_ACCOUNT)
-        # 不通 → 系统页切实盘时 playbook 仍在 sim. 现统一: target_env = AUTO_TRADE_ACCOUNT (sim|real).
+        # ── broker 路径: 显式 target_env 是唯一交易臂入口 ──
+        # Path A (AUTO_TRADE_ACCOUNT=real 全局翻转/降级) 已于 RFC-131 收口退役:
+        # 未显式传 target_env 的调用只能执行 SIM；请求 real 一律 HALT，不再静默降级。
         import os as _os
-        _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
-
-        if _auto_account == "real":
-            # 实盘: graduation gate 前置, 未毕业 fail-close 降级 sim
-            try:
-                from app.playbook.pipeline import _check_graduation_gate
-                _gate = _check_graduation_gate()
-            except Exception as _ge:
-                logger.error(f"[playbook] graduation gate 异常 (fail-close → 降级 sim): {_ge}")
-                return self._execute_via_dual_broker(
-                    inst, instruction_id, symbol, direction, entry_price, stop_loss,
-                    take_profit, position_size, mos_direction, _matched_decision_id,
-                    target_env="sim", archetype_route=_route_exec,
-                )
-            if not _gate.get("graduated"):
-                logger.warning(f"[playbook] AUTO_TRADE_ACCOUNT=real 但未毕业, 降级 sim: {_gate.get('reason')}")
-                return self._execute_via_dual_broker(
-                    inst, instruction_id, symbol, direction, entry_price, stop_loss,
-                    take_profit, position_size, mos_direction, _matched_decision_id,
-                    target_env="sim", archetype_route=_route_exec,
-                )
+        _explicit_target = str(target_env or "").strip().lower()
+        if _explicit_target in {"sim", "real"}:
             return self._execute_via_dual_broker(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, _matched_decision_id,
-                target_env="real", archetype_route=_route_exec,
+                target_env=_explicit_target, archetype_route=_route_exec,
             )
+
+        _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+
+        if _auto_account == "real":
+            logger.critical(
+                "[playbook] AUTO_TRADE_ACCOUNT=real without explicit target_env=real — "
+                "Path A retired; HALT_NEW_LIVE. Use playbook.live_manual_arm."
+            )
+            return {
+                "success": False,
+                "message": "[LIVE_PATH_A_RETIRED] explicit target_env=real and live_manual_arm are required",
+            }
 
         # AUTO_TRADE_ACCOUNT=sim → 模拟盘真实下单 (futu_simulate, OKR 验证)
         return self._execute_via_dual_broker(
@@ -1215,76 +1211,68 @@ class PlaybookService:
 
         _is_live = (target_env == "real")
 
-        # [RFC-080 S2' 2026-09-09] 半翻互锁 (fail-close): real 臂的完整前提 =
-        #   ALLOW_REAL_TRADING=true + TRADE_ENV=0 (单库翻转模型: 两臂记录都进 live 库,
-        #   source_type 列区分, 退出监控/broker 按行路由自洽)。
-        # 为什么必须锁: 本函数上方 dispatch (playbook_service:1116) 直接读 env, 绕过
-        #   di_container 的 ALLOW_REAL_TRADING 降级门 ⇒ 半翻态 (AUTO=real 但
-        #   ALLOW_REAL_TRADING=false 或 TRADE_ENV=1) 此前只靠毕业门禁单挡。半翻后果:
-        #   broker 真钱下单但记录进 sim 研究库 → 实盘归属分裂 + 研究臂污染
-        #   (db_utils._assert_env_routing_consistent 只 WARN 不阻断, 且它比的是
-        #   TRADE_ENV vs AUTO_TRADE_ACCOUNT, 不含 ALLOW_REAL_TRADING)。
-        # 降级方向与既有模式一致 (di_container 同款: 强制降级 sim, 宁可不下真钱单)。
         if _is_live:
-            import os as _os_il
-            _allow_real = str(_os_il.getenv("ALLOW_REAL_TRADING", "false")).strip().lower() == "true"
-            _db_is_live = False
-            try:
-                from app.core.db_utils import is_live_mode as _is_live_db_mode
-                _db_is_live = _is_live_db_mode()
-            except Exception:
-                _db_is_live = False  # fail-close: 读不到路由状态 → 视为不一致
-            if not _allow_real or not _db_is_live:
-                logger.critical(
-                    f"🚨 [playbook] 半翻互锁: target_env=real 但前提不完整 "
-                    f"(ALLOW_REAL_TRADING={_allow_real}, TRADE_ENV→live库={_db_is_live}) "
-                    f"— 强制降级 sim, 禁止真钱下单进错误账本 (RFC-080 S2')"
-                )
-                target_env = "sim"
-                _is_live = False
-
-        # 2026-06-28 fail-closed guard: 任何路径请求 live 都必须先通过毕业门禁.
-        # 如果未毕业(包括异常), 强制降级 sim, 避免误下实盘单.
-        if _is_live:
-            try:
-                from app.playbook.pipeline import _check_graduation_gate
-                _gate = _check_graduation_gate()
-                if not _gate.get("graduated"):
-                    logger.warning(f"[playbook] target_env=real 但未毕业, 强制降级 sim: {_gate.get('reason')}")
-                    target_env = "sim"
-                    _is_live = False
-            except Exception as _ge:
-                logger.error(f"[playbook] 毕业门禁异常, 强制降级 sim: {_ge}")
-                target_env = "sim"
-                _is_live = False
-
-        # ── RFC-130 (2026-10-03 用户裁「双臂常驻+实盘启用开关」): LIVE 手动臂总开关 ──
-        # playbook.live_manual_arm.enabled = LIVE 新仓唯一入口门 (键路径沿用 RFC-090 §17.3.1
-        # 设计, 不另造)。语义:
-        #   false (默认) = LIVE 臂 disarm — 拒绝 live 新仓 (HALT_NEW_LIVE), 不降级 sim
-        #     (双臂目标架构下 sim 臂独立执行同一候选, 降级会造成同 decision_id 双执行);
-        #   true = armed — 放行 live 新仓 (仍受上方半翻互锁 + 毕业门禁 + ALLOW_REAL_TRADING
-        #     授权锁约束, 本门不替代任何一道)。
-        # 出场不受本门管: disarm 只停新仓, 已有 LIVE 仓继续由出场监控管理 (RFC-090 §17.5
-        # LIVE_DRAIN 语义)。fail-closed: 读配置异常 → 视为未 armed, 拒绝。
-        # 零当前行为变更: LIVE auto 臂从未运行 (live 库 auto 臂 0 行, 2026-10-03 实测)。
-        if _is_live:
-            _armed = False
+            _arm_cfg = {}
             try:
                 from app.core.config_container import get_config as _get_cfg_arm
                 _arm_cfg = _get_cfg_arm().get_dotted("playbook.live_manual_arm", None) or {}
-                _armed = bool(_arm_cfg.get("enabled", False)) if isinstance(_arm_cfg, dict) else False
             except Exception as _ae:
                 logger.error(f"[playbook] LIVE 臂开关读取异常 (fail-closed 拒绝): {_ae}")
-                _armed = False
-            if not _armed:
-                logger.critical(
-                    f"🚫 [playbook] LIVE 臂未 armed (playbook.live_manual_arm.enabled=false) — "
-                    f"HALT_NEW_LIVE: 拒绝 {symbol} live 新仓, 不降级 sim (RFC-130)。"
-                    f"开火仪式见 RFC-090 §17.3.1 (预授权 ALLOW_REAL_TRADING + CONFIRM)"
+                _arm_cfg = {}
+
+            import os as _os_live
+            try:
+                from app.core.scheduler_triggers import get_market_phase
+                _market_phase = get_market_phase().value
+            except Exception as _phase_error:
+                logger.error(f"[playbook] LIVE market phase read failed: {_phase_error}")
+                _market_phase = ""
+
+            _gate = evaluate_live_arm_gate(
+                _arm_cfg,
+                allow_real_trading=_os_live.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true",
+                real_account_id=_os_live.getenv("REAL_ACCOUNT_ID", ""),
+                lane_db_name=getattr(self.db, "db_name", ""),
+                instruction_direction=str(direction or ""),
+                market_phase=_market_phase,
+                open_live_positions=count_open_live_positions(
+                    core_paths.get_trade_records_db_for_arm("real")
+                ),
+            )
+            if not _gate.get("allowed"):
+                _reason_text = "; ".join(
+                    reason.get("message", "unknown") for reason in _gate.get("reasons", [])
                 )
-                return {"success": False,
-                        "message": f"[LIVE_ARM] {symbol} LIVE 臂未 armed, HALT_NEW_LIVE (RFC-130)"}
+                logger.critical(
+                    f"🚫 [playbook] LIVE arm gate rejected {symbol}: {_reason_text} — HALT_NEW_LIVE"
+                )
+                return {
+                    "success": False,
+                    "message": f"[LIVE_ARM_GATE] {symbol} {_reason_text}",
+                    "reasons": _gate.get("reasons", []),
+                }
+
+            _probe = _arm_cfg.get("probe") if isinstance(_arm_cfg.get("probe"), dict) else {}
+            _max_qty = 1
+            if not position_size:
+                position_size = 1
+            elif int(position_size) > _max_qty:
+                logger.info(
+                    f"[playbook] LIVE engineering probe clamps {symbol} qty "
+                    f"{int(position_size)} → {_max_qty}"
+                )
+                position_size = 1
+
+            try:
+                from app.push import get_push_hub
+                from app.push.message import Level as _PushLevel
+                get_push_hub().push_text(
+                    f"🟡 [LIVE C-lite] {symbol} LONG 1股探针准备提交 "
+                    f"(auth={_probe.get('authorization_id')})",
+                    level=_PushLevel.HIGH,
+                )
+            except Exception as _probe_push_error:
+                logger.warning(f"[playbook] LIVE probe push failed: {_probe_push_error}")
 
         # LIVE_TRIAL 试运行 (Phase 2): target_env=real 且 live_trial 开启时仓位×0.5,
         # 对冲 sim→live 不可见的滑点 gap. 验证 sim PnL≈live PnL (10-20笔) 后用户关 live_trial 放全量.
@@ -1361,8 +1349,8 @@ class PlaybookService:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_dup
             if bool(_get_pb_cfg_dup().get("duplicate_position_guard_enabled", False)):
                 import sqlite3 as _dup_sql
-                from app.core.db_utils import get_main_db as _dup_main_db
-                _dup_conn = _dup_sql.connect(str(_dup_main_db()), timeout=3)
+                _dup_conn = _dup_sql.connect(
+                    str(core_paths.get_trade_records_db_for_arm(target_env)), timeout=3)
                 try:
                     _dup_conn.row_factory = _dup_sql.Row
                     _dup_row = _dup_conn.execute(
@@ -1789,8 +1777,7 @@ class PlaybookService:
         # 写 trade_records (真实成交价, source_type 按 target_env 区分)
         _trade_db_path = None
         try:
-            from app.core.paths import get_trade_records_db
-            _trade_db_path = str(get_trade_records_db().resolve())
+            _trade_db_path = str(core_paths.get_trade_records_db_for_arm(target_env).resolve())
             from app.storage.trade_store import TradeStore
             _ts = TradeStore(_trade_db_path)
             _trace_id = f"playbook-{_mode_label}-{symbol}-{_now_iso[:10]}"
@@ -1848,7 +1835,7 @@ class PlaybookService:
                 _vp_conn = None
                 try:
                     import sqlite3 as _sqlite3
-                    _vp_db = str(get_trade_records_db())
+                    _vp_db = str(core_paths.get_trade_records_db_for_arm(target_env))
                     _vp_conn = _sqlite3.connect(_vp_db)
                     _vp_conn.row_factory = _sqlite3.Row
                     _vp_row = _vp_conn.execute(

@@ -2312,8 +2312,8 @@ class TradingScheduler:
                     #   DB outcome 幂等兜底仍在, 双保险). 回滚: 配置 enabled=false 即恢复此路径.
                     if not self.PLAYBOOK_EXIT_FAST_LOOP_ENABLED:
                         try:
-                            from app.playbook.pipeline import monitor_playbook_sim_exits
-                            monitor_playbook_sim_exits(self)
+                            from app.playbook.pipeline import monitor_playbook_exits
+                            monitor_playbook_exits(self)
                         except Exception as _e:
                             logger.warning(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
 
@@ -2898,8 +2898,8 @@ class TradingScheduler:
                 if sleep_if_market_closed(self.PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC, lambda: self.running):
                     continue
 
-                from app.playbook.pipeline import monitor_playbook_sim_exits
-                monitor_playbook_sim_exits(self)
+                from app.playbook.pipeline import monitor_playbook_exits
+                monitor_playbook_exits(self)
             except Exception as _e:
                 logger.warning(f"[PlaybookExit] 快循环异常 (已隔离): {_e}")
 

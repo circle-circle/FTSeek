@@ -122,7 +122,7 @@ class TestExitCallSiteIsBounded:
         src = pb.__file__
         with open(src, "r", encoding="utf-8") as fh:
             text = fh.read()
-        start = text.index("def monitor_playbook_sim_exits(")
+        start = text.index("def monitor_playbook_exits(")
         return text[start:text.index("\ndef ", start + 10)]
 
     def test_batch_and_single_fetches_go_through_bounded_helper(self):
@@ -167,6 +167,7 @@ class TestExitMonitorDoesNotStallOnHungPriceSource:
 
         fake_paths = types.ModuleType("app.core.paths")
         fake_paths.get_trade_records_db = lambda: str(db)
+        fake_paths.get_trade_records_db_for_arm = lambda target_env: str(db)
         fake_paths.get_exit_ledger_db = lambda: str(tmp_path / "ledger.db")
         monkeypatch.setitem(sys.modules, "app.core.paths", fake_paths)
 
@@ -190,7 +191,7 @@ class TestExitMonitorDoesNotStallOnHungPriceSource:
 
         scheduler = types.SimpleNamespace(data_router=HungRouter())
         t0 = time.time()
-        pb.monitor_playbook_sim_exits(scheduler)
+        pb.monitor_playbook_exits(scheduler)
         elapsed = time.time() - t0
         # 上界证据 (非假绿): 批量取价确实发起过且被放弃 (仍在途), 说明阻塞的是取价线程
         assert "batch" in pb._PB_EXIT_FETCH_INFLIGHT, "未走到批量取价 (测试前置失败, 非绿)"

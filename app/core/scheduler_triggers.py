@@ -678,8 +678,8 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                 #   ② data/daily_battle_plan_us.json 冻结在 date=2026-07-31 (ADR-012 旧作战
                 #      计划轨道下线) → _load_plan 日期不匹配恒 None, plan_effectiveness 恒 {'count': 0};
                 #   ③ match_plan_trades 一旦可达必崩: SQL 引用不存在的列 close_time/strategy,
-                #      且 DB_PATH 指向废弃同名单库 ftseek_us_live.db, trade_mode!='simulate'
-                #      又排除 718/726 行 (当前轨道全部 simulate)。
+                #      且 DB_PATH 误指 ftseek_us_live.db (该库现为 LIVE 臂账本),
+                #      trade_mode!='simulate' 又排除 718/726 行 (当前轨道全部 simulate)。
                 # 产物实锤: feedback_2026-08-06…27 恒 186 字节全空 → 推送分支 (count>0) 从未触发,
                 # 失败仅 logger.debug (LOG_LEVEL=INFO 不可见) — 典型"降级不报警"。
                 # 指令命中率反馈由上方 PlanEffectivenessTracker (playbook_instructions 轨道) 承担。

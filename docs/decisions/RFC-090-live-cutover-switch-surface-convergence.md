@@ -468,3 +468,184 @@ sed -n '210,235p' app/web_dashboard/mode_switch_service.py
 ### 16.4 本轮未推翻的第一轮结论
 
 §15 的 C1-C14 判定本轮抽查了 C9 (mode_switch 分支 3 键/5 键不对称, `sed -n '199,260p'` 复核属实)、C11 (`.env.us` 现值五键复核属实: `TRADE_ENV=1` / `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=false` / `LIVE_CONSERVATIVE=1` / `EXT_ENTRY_ALLOW_SIM=true`)、C8 相关面 (`monitor_playbook_sim_exits` 单 SQL 两臂属实), **均与第一轮一致, 无更正**。
+
+---
+
+## 17. 2026-10-03 目标修订: 手动实盘臂 + SIM 常驻 (设计更新, 零行为改动)
+
+> **触发**: 用户明确新目标: 「手动切换实盘, 可以空仓切, 先跑通链路, 我再来决策; SIM 还是需要继续运行; 目标是在需要时可以随时切到实盘。」
+> **性质**: 本节只修订目标架构与实施顺序; **不改代码、不翻任何开关、不重启服务**。
+> **治理边界**: C2「打标前严格不切实盘」仍有效。本文提供技术准备; 首次真实 LIVE 执行仍需毕业门禁通过, 或用户在 DEB 中显式记录「知情破例 + 签字」。
+
+### 17.1 目标重定义
+
+原 §5 的主目标是把全局模式从 SIM 翻到 LIVE。该模型与 2026-10-03 新目标冲突: 一旦 `TRADE_ENV=0`, SIM 研究臂、周报、IC/OKR 的默认载体都会被切走, 不满足「SIM 继续运行」。
+
+新目标改为**双臂常驻**:
+
+| 臂 | 常驻性 | 入场 | 账本 | 出场 |
+|---|---|---|---|---|
+| SIM research arm | 永远运行 | Playbook 现行为 | `ftseek_us.db` | 现有规则引擎 |
+| LIVE manual arm | 用户手动 arm/disarm | 仅在 arm 后执行, 首期限额 1 仓/1 股 | `ftseek_us_live.db` | 同一套规则引擎, 按 `PLAYBOOK_LIVE` 路由 REAL |
+
+因此, 本目标下的「切实盘」不是全局模式切换, 而是**打开 LIVE 入场臂**; 「回 SIM」也不是翻库, 而是**关闭 LIVE 入场臂并等待 LIVE 出场归零**。
+
+### 17.2 为什么不能沿用全局 `TRADE_ENV=0`
+
+1. **会停掉 SIM 研究臂**: `TRADE_ENV=0` 使 `get_main_db()` / 默认 `PlaybookDB()` 指向 live 库, SIM 数据采集与 IC/OKR 默认读方断供。
+2. **回滚有监控真空**: `monitor_playbook_sim_exits` 目前只查 `get_trade_records_db()`; 带仓回切后 live 库仓位失去规则引擎可见性 (见 §16-F-3)。
+3. **半翻态风险高**: `AUTO_TRADE_ACCOUNT` / `TRADE_ENV` / `ALLOW_REAL_TRADING` 三键全局翻转, 任一不同步都会造成 broker 与账本分裂。
+4. **与 `DualBrokerAdapter` 现有能力不匹配**: 该适配器已持有 sim/real 两个 context 并支持 per-call `target_env`, 无需全局翻账号。
+
+### 17.3 V1 架构: lane 路由, 不翻全局模式
+
+#### 17.3.1 单一控制面
+
+新增唯一 LIVE 臂控制键 (落在既有 `unified_config.yaml`, 不新增配置文件):
+
+```yaml
+playbook:
+  live_manual_arm:
+    enabled: false      # true = LIVE 臂可入场; false = 只停新仓, 不停出场
+    max_open_positions: 1
+    max_order_qty: 1
+    session: RTH
+```
+
+语义:
+
+- `enabled=false`: LIVE 停新仓; 已有 LIVE 仓继续由出场监控管理。
+- `enabled=true`: 仅放行一个 LIVE 新仓, 首期 1 股、RTH-only。
+- `ALLOW_REAL_TRADING=true` 仍是授权锁, 不作为 lane 开关。
+- `LIVE_CONSERVATIVE` / `playbook.live_trial` 只管风险倍数, 不得再作为切换权威。
+- `AUTO_TRADE_ACCOUNT` 保留为兼容字段; V1 不要求翻成 `real`, SIM 默认臂继续为 `sim`。
+
+切换必须保留两步仪式:
+
+1. **预授权**: 独立确认 `ALLOW_REAL_TRADING=true` + `REAL_ACCOUNT_ID` + unlock 密码, 并重启使进程环境生效。
+2. **开火**: 用户输入 `CONFIRM_REAL_ACCOUNT_ID`, 原子写 `live_manual_arm.enabled=true`; 该动作不复制历史、不清库、不改 SIM 臂。
+
+#### 17.3.2 账本路由
+
+新增唯一函数:
+
+```python
+route_playbook_db(target_env: Literal["sim", "real"]) -> Path
+```
+
+规则:
+
+| `target_env` | DB |
+|---|---|
+| `sim` | `data/ftseek_us.db` |
+| `real` | `data/ftseek_us_live.db` |
+
+验收要点:
+
+- `TRADE_ENV` 不再参与 Playbook LIVE/SIM 臂路由; V1 保持 `TRADE_ENV=1`, SIM 常驻。
+- `playbook_service` 中 LIVE 执行的 instruction 状态、`trade_records`、`open_positions` 均写 live 库。
+- SIM 指令与交易继续写 sim 库。
+- 跨臂关联只用稳定业务键 (`decision_id` / `trade_date` / `symbol`), 禁止用两边独立自增 `id` 做 join。
+
+#### 17.3.3 入场路由
+
+当前 `playbook_service` 用 `AUTO_TRADE_ACCOUNT` 决定 `target_env`, 且 `_execute_via_dual_broker` 用全局 `TRADE_ENV` 做半翻互锁。V1 改为:
+
+1. 指令生成仍在 SIM 研究库完成, 保持候选/IC 数据连续。
+2. LIVE 臂 armed 时, 将当日可执行指令镜像为 live 库的 `PLAYBOOK_LIVE` 执行行 (稳定键为 `decision_id`), 再走 `_execute_via_dual_broker(..., target_env="real")`。
+3. SIM 臂照常执行同一候选的 `PLAYBOOK_SIM` 行, 形成同信号双臂对照。
+4. 半翻互锁改为检查: `target_env=real` ⇒ `ALLOW_REAL_TRADING=true` + `route_playbook_db("real")` + LIVE 臂 enabled + 账号匹配。**不再以全局 `TRADE_ENV=0` 为前提**。
+5. 门禁失败动作改为 `HALT_NEW_LIVE`, 禁止降级为 SIM 后把 LIVE 执行行写入 live 库。
+
+#### 17.3.4 出场路由
+
+`monitor_playbook_sim_exits` 改为双库扫描:
+
+1. 查 sim 库 `PLAYBOOK_SIM` 未平仓行 → `DualBroker.close_position(target_env="sim")`。
+2. 查 live 库 `PLAYBOOK_LIVE` 未平仓行 → `DualBroker.close_position(target_env="real")`。
+3. `exit_intents` 已带 `account_id` / `target_env`, 继续作为幂等与恢复真相源。
+4. LIVE disarm 后, 新仓入口关闭, 但两库扫描与 REAL 出场继续运行。
+
+这同时解决「空仓回切」与「出事当天回切」:
+
+- 若 LIVE 已空仓: disarm 后立即回到 SIM-only。
+- 若 LIVE 未空仓: 进入 `LIVE_DRAIN`, 停新仓但继续管出场; 不翻全局 `TRADE_ENV`。
+
+### 17.4 风控与账户口径
+
+1. **capital_state 按臂**: live 库必须显式预置基线, 不能由首次同步把 peak/drawdown/lock 归零。
+2. **REAL 总敞口帽**: 风控输入为 REAL 全账户, 含既有 manual 持仓; 计算式为 `existing_market_value + new_order_notional ≤ equity × cap`。cap 需用户裁决, 首期建议保守值。
+3. **购买力/可借量硬门**: REAL 下单前调用 `acctradinginfo_query`; `max_cash_buy` 是股数, 不是金额。SHORT 还需 `get_margin_ratio` 可空确认。
+4. **STOP fail-close**: LIVE 成交后挂 STOP 失败, 不得只 warning; 首期建议立即平仓并 CRITICAL, 或撤回未成交入场。该方向需用户裁决。
+5. **manual/auto 同标的**: ManualHoldRegistry 必须按 REAL 账户挡 auto-live; 反向手动下单前也要查 auto-live 持仓。live 库 8 条 `size=0` manual 僵尸行需先校正, 否则 8 个标的被静默禁碰。
+6. **ETH**: V1 明确 RTH-only; `EXT_REAL_AUTHORIZED` 保持 false, 实盘 ETH 出场链不启用。
+
+### 17.5 切换状态机
+
+```text
+SIM_ONLY
+  └─ arm(pass preflight + C2 gate/signoff) → SIM_PLUS_LIVE_ARMED
+
+SIM_PLUS_LIVE_ARMED
+  ├─ disarm → LIVE_DRAIN
+  └─ live position flat + disarm → SIM_ONLY
+
+LIVE_DRAIN
+  ├─ live exits continue
+  └─ live open positions = 0 && unsettled exit intents = 0 → SIM_ONLY
+```
+
+`arm` 前置:
+
+- live DB 无 `size>0` 的 auto-live `open_positions`;
+- REAL 无未终态 auto-live exit intent / 活动订单;
+- schema 彩排 clean;
+- live `capital_state` 已预置;
+- REAL account/buying-power/shortable/STOP 探针通过;
+- 技术预flight `block=0`;
+- C2: graduation gate 通过, 或用户显式签字知情破例。
+
+`disarm` 不要求空仓; 它只停新仓, 出场继续。
+
+### 17.6 实施顺序
+
+| 批 | 内容 | 行为变化 |
+|---|---|---|
+| L1 | `route_playbook_db(target_env)` + 单测; `TRADE_ENV` 对 Playbook lane 降级为兼容字段 | SIM 行为零变化 |
+| L2 | 双库出场扫描 + exit intent lane 断言 | SIM 可见性不变, LIVE 获得常驻监控 |
+| L3 | `live_manual_arm` 控制面 + 两步确认 + `HALT_NEW_LIVE` | 默认 false, 零行为 |
+| L4 | LIVE instruction 镜像/执行/账本写入, 首期限 1 仓 1 股 | armed 前零行为 |
+| L5 | REAL 风控、STOP fail-close、manual/auto 双向守卫 | armed 前零行为 |
+| L6 | preflight/彩排/runbook 更新; 清理 size=0 僵尸行与 schema 缺口 | 只读或一次性数据修正 |
+
+**2026-10-03 实施状态**: L1/L2/L4 已由 RFC-131 最小落地；L3 的 `enabled`
+门已生效，1 股/1 仓/LONG/RTH 与 probe authorization 亦已接线。L5/L6 仍未
+完成，preflight 仍 `block=1 warn=6`，因此不得启用 LIVE。
+
+### 17.7 验收判据
+
+1. `TRADE_ENV=1` 且 `live_manual_arm.enabled=true` 时, `target_env=real` 不被降级; SIM 指令仍走 sim。
+2. 同一 `decision_id` 可在两库分别形成 `PLAYBOOK_SIM` / `PLAYBOOK_LIVE` 行, 无自增 id 跨库 join。
+3. 出场监控在 sim/live 两库各插入一条未平仓测试行, 能分别路由到 SIM/REAL close。
+4. disarm 后: LIVE 新仓为 0, 但 LIVE 未平仓行仍被监控。
+5. sim 库不新增 `trade_mode=live` 行; live 库不新增 `trade_mode=simulate` 行。
+6. STOP 挂单失败注入后, 不出现「仅 warning 裸奔」路径。
+7. `scripts/cutover_rehearse.py --to live` 无阻塞性残留; 切换日 DDL 面为 0。
+8. `scripts/cutover_preflight.py` 将技术风险与 C2 治理门分开展示: 技术项须 `block=0`, 治理项不得被静默吞掉。
+
+### 17.8 当前实测基线 (2026-10-03)
+
+- 当前环境: `TRADE_ENV=1` / `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=false`, 三态一致。
+- 预检: `block=1 warn=6`; 硬阻塞为毕业门禁 `graduated=false`, `ic_t3=-0.0403`, `n_t3=273`。
+- REAL 能力探针: 行情/账户/费用/历史成交 `ALL_CORE_PASS`; buying-power 只读探针通过。
+- 彩排: 32/33 缺列可自愈, 但 `playbook_factor_stats_bak_rfc112` 缺表仍为阻塞残留。
+- live `capital_state`: 0 行; live `open_positions`: 8 条 `size=0` manual 僵尸行。
+- broker STOP 生产里程: sim/live 均为 0, 需 REAL 最小探针。
+- 工作树存在其他在途 WIP; 任何实施/重启前必须先收口归属, 不得混批上线。
+
+### 17.9 与既有文档的关系
+
+- 取代本文 §5 中「全局四键同翻」作为新目标的主切换协议; §5 保留为历史设计, 不再作为 V1 实施方案。
+- 承接 `PROPOSAL-20260909` 的双臂目标, 但修正其已被 §三·五证伪的 S2 原始路线: V1 采用显式双库 lane 路由, 不做单库翻转。
+- 承接 `CUTOVER-DECISION-PACKAGE-20260909` A' 的两账本永久分离、证据快照、门禁 HALT、周报分臂原则。
+- C2 红线不因本节放宽; 首次 LIVE 执行仍需用户最终签字。
