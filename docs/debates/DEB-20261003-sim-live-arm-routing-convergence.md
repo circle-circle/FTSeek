@@ -195,6 +195,33 @@ playbook_service.py:93-102 与 pipeline.py:55-66 是同一函数的两份拷贝�
   重启窗口无 warning/error。`cutover_preflight.py` 仍为 `block=1 warn=6`，硬阻塞为
   P1 毕业门禁；LIVE 开关保持全关。
 
+### P0 硬化补充（2026-10-03 深夜，承接 RFC-132）
+
+用户令「执行修复」后，复查确认路由收口仍未消除四条分臂状态串读风险，本批补齐：
+
+- [x] LIVE capital 独立实例：`get_capital_safety_system_for_arm("real")` 固定
+      LIVE ledger + `trade_env=0`；执行前从 REAL broker 刷新资金，失败 fail-close。
+- [x] AccountCircuitBreaker / AbsoluteCircuitBreaker / symbol day loss /
+      DualBroker notional cap 全部显式按 `target_env` 取台账与资金。
+- [x] ManualHoldRegistry 内部键改为 `(account, symbol)`；SSOT fallback 用
+      `get_trade_records_db_for_arm(target_env)`。SIM 与 LIVE 同 symbol 互不覆盖。
+- [x] LIVE broker STOP 强验证：必须 `success=true + futu_order_id`，并写
+      trade/open position receipt；失败 HIGH 推送 + 持久化 HALT_NEW_LIVE，
+      不自动平既有仓。
+- [x] `prepare_live_probe.py --apply` 完成 LIVE schema 迁移、8 条 size=0 manual
+      僵尸行清理、REAL 资金基线预置（$73,057.35，trade_env=0，green/unlocked）。
+      写前备份：`data/backups/ftseek_us_live_before_probe_prep_20261003_234848.db`。
+- [x] `cutover_rehearse.py --to live` 达成「DDL 干净 + capital 双向 roundtrip 无缝」。
+- [x] `cutover_preflight.py --to live` 从 `block=1 warn=6` 收敛为
+      `block=1 warn=4`；唯一 BLOCK 仍为 P1 毕业门禁
+      `graduated=false / ic_t3=-0.0403`。
+- [x] 本 P0 硬化批按重启纪律加载并跑 `startup_smoke_check.py --wait 90`：
+      2026-10-04 00:10:44 CST 最终 `systemctl restart ftseek-us`（含 STOP
+      失败推送语义修正），PID 3826815，冒烟 7/7 通过，重启窗口
+      warning/error 为 0。复跑 preflight 仍为 `block=1 warn=4`。
+- [x] 2026-10-04 用户裁决接受毕业门禁知情破例：仅限 1 股 LONG 工程探针；
+      LIVE 仍全关，`probe.authorization_id` 未填写，本裁决不构成启用授权。
+
 ## 回滚
 
 每执行项独立 commit，逐项 `git revert` 即可；全部改动在 `TRADE_ENV=1` 下为零行为变更，回滚无运行时风险。若用户裁 C：仅将本 DEB 状态改 REJECTED，五发现转入 RFC-131 §6 清单人工核对。

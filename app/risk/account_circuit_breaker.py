@@ -45,7 +45,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
-from app.core.paths import get_trade_records_db
+from app.core.paths import get_trade_records_db, get_trade_records_db_for_arm
 from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
@@ -73,12 +73,13 @@ class AccountCircuitBreaker:
         self.halt_threshold = halt_threshold
         self.liquidate_threshold = liquidate_threshold
 
-    def check(self, current_equity: float) -> CircuitResult:
+    def check(self, current_equity: float, target_env: str = "sim") -> CircuitResult:
         """
         检查账户风控状态。
 
-        Args:
+            Args:
             current_equity: 当前账户权益
+            target_env: sim/real；决定读取哪条台账和资金峰值
 
         Returns:
             CircuitResult
@@ -93,13 +94,17 @@ class AccountCircuitBreaker:
             )
 
         today = _et_trade_date(now_et())
-        daily_pnl = self._get_daily_pnl(today)
+        daily_pnl = self._get_daily_pnl(today, target_env)
         # 2026-06-26: peak_equity 不用 trade_records 的 max(notional) — ETF 大批量交易
         # (如 XLF 22404股=$1.14M) 会产生虚假 peak, 导致回撤 91% 误判熔断.
         # 改用 capital_safety 的 peak_equity (真实账户历史峰值).
         try:
-            from app.risk.capital_safety import get_capital_safety_system
-            peak_equity = get_capital_safety_system()._state.peak_equity
+            if str(target_env).lower() in {"real", "live"}:
+                from app.risk.capital_safety import get_capital_safety_system_for_arm
+                peak_equity = get_capital_safety_system_for_arm(target_env)._state.peak_equity
+            else:
+                from app.risk.capital_safety import get_capital_safety_system
+                peak_equity = get_capital_safety_system()._state.peak_equity
             if peak_equity <= 0:
                 peak_equity = current_equity
         except Exception:
@@ -141,7 +146,7 @@ class AccountCircuitBreaker:
             current_equity=current_equity,
         )
 
-    def _get_daily_pnl(self, today: str) -> float:
+    def _get_daily_pnl(self, today: str, target_env: str = "sim") -> float:
         """当日已实现净盈亏 (2026-08-27 口径修复): 按出场日 exit_time 归集,
         净额 pnl_net 优先 (费用可见), 旧行 NULL 回退毛额 realized_pnl.
 
@@ -159,7 +164,10 @@ class AccountCircuitBreaker:
         fail-close: 查询异常返回 -inf (无法确认状态 → 按最坏处理).
         """
         try:
-            db_path = str(get_trade_records_db())
+            if str(target_env).lower() in {"real", "live"}:
+                db_path = str(get_trade_records_db_for_arm(target_env))
+            else:
+                db_path = str(get_trade_records_db())
             conn = sqlite3.connect(db_path)
             row = conn.execute(
                 "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
@@ -194,6 +202,6 @@ def get_account_circuit_breaker(
     return _circuit_breaker_instance
 
 
-def check_circuit_breaker(equity: float) -> CircuitResult:
+def check_circuit_breaker(equity: float, target_env: str = "sim") -> CircuitResult:
     """便捷函数"""
-    return get_account_circuit_breaker().check(equity)
+    return get_account_circuit_breaker().check(equity, target_env=target_env)

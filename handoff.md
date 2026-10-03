@@ -1,5 +1,46 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-04 RFC-132 LIVE 双臂 P0 硬化: 分臂风险/资金/手动仓/STOP, 预置完成并重启
+
+**触发**: 用户令「执行修复」，目标是下周可裁决是否做 1 股 LIVE 工程探针；SIM 必须常驻。
+
+**用户裁决 (2026-10-04)**: 已接受策略毕业门禁知情破例，仅限 1 股 LONG
+工程探针；不改变策略转正红线，不构成 LIVE 启用授权。`probe.authorized=false`
+与实盘开关仍保持关闭，正式执行前需填写 `probe.authorization_id`。
+
+**修复**:
+- LIVE capital 独立实例 (`get_capital_safety_system_for_arm("real")`)，固定
+  LIVE ledger + `trade_env=0`；执行前从 REAL broker 刷新资金，失败 fail-close。
+- AccountCircuitBreaker / AbsoluteCircuitBreaker / symbol day loss / DualBroker
+  名义本金兜底全部按 `target_env` 分库分资金；ACB 分 SIM/LIVE 两个实例。
+- ManualHoldRegistry 内部键改为 `(account, symbol)`，SSOT fallback 走
+  `get_trade_records_db_for_arm(target_env)`；同 symbol 双臂互不覆盖/互不注销。
+- LIVE broker STOP 强验证：必须 `success=true + futu_order_id`，写
+  trade/open-position receipt；失败 HIGH 推送 + 持久化 `live_arm_halt.json`，
+  HALT_NEW_LIVE，不平既有仓。
+- `scripts/prepare_live_probe.py --apply` 完成 LIVE schema 迁移、8 条
+  size=0 manual 僵尸行清理、REAL 资金基线预置；写前备份
+  `data/backups/ftseek_us_live_before_probe_prep_20261003_234848.db`。
+
+**实测与验证**:
+- REAL 账户基线：total `$73,057.35`、cash `$15,597.77`、market value
+  `$57,459.58`、buying power `$31,423.59`；`capital_state` 为
+  `trade_env=0 / green / unlocked`。
+- `tests/playbook` 全量 **972 passed / 1 warning**；`tests/risk` 全量
+  **193 passed / 1 warning**；四棘轮 **29 passed + doc_guard 通过**。
+- `cutover_rehearse.py --to live`：DDL 干净 + capital 双向 roundtrip 无缝。
+- `cutover_preflight.py --to live`：`block=1 warn=4`，唯一硬阻塞仍为
+  P1 毕业门禁 `graduated=false / ic_t3=-0.0403`。
+- 2026-10-04 00:10:44 CST 最终重启加载（含 STOP 失败推送语义修正：
+  已成交但 STOP 保护失败不再误报为未执行）；重启后 PID 3826815，
+  冒烟 7/7 通过，warning/error 为 0。复跑
+  `cutover_preflight.py --to live --no-write` 仍为 `block=1 warn=4`。
+
+**安全状态**: `TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`、
+`ALLOW_REAL_TRADING=false`、`live_manual_arm.enabled=false`、
+`probe.authorized=false`。本批不构成 LIVE 启用授权。启用前仍建议先人工完成
+broker STOP 挂/改/撤极小仓三段演练（P6 里程仍为 0），并提交/隔离当前 worktree。
+
 ## 2026-10-03 DEB 路由收敛执行批: LIVE 门控单点化, 镜像前置, Path A 退役
 
 **触发**: 用户令「按照建议执行」— 采纳 DEB 修正版方案 A。

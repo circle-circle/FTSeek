@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.utils.timezone import now_et
+
 
 _RTH_SESSION = "RTH"
 _TRADING_PHASE = "TRADING"
+_HALT_FILE = Path(__file__).resolve().parents[2] / "data" / "live_arm_halt.json"
 
 
 def _reason(code: str, message: str) -> Dict[str, str]:
@@ -36,6 +40,36 @@ def count_open_live_positions(live_ledger: Path) -> Optional[int]:
         return None
 
 
+def read_live_arm_halt() -> Dict[str, Any]:
+    """Read the persistent HALT_NEW_LIVE state without creating a file."""
+    try:
+        return json.loads(_HALT_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {"halted": True, "reason": "halt_state_unreadable", "raw_error": "invalid JSON"}
+
+
+def halt_live_new_positions(reason: str) -> Dict[str, Any]:
+    """Persist HALT_NEW_LIVE; existing positions remain under the exit monitor."""
+    state = {
+        "halted": True,
+        "reason": str(reason),
+        "created_at": now_et().isoformat(timespec="seconds"),
+    }
+    _HALT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _HALT_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return state
+
+
+def clear_live_arm_halt(reason: str = "manual_clear") -> None:
+    """Manual-only recovery after a LIVE halt has been investigated."""
+    state = {"halted": False, "reason": reason,
+             "cleared_at": now_et().isoformat(timespec="seconds")}
+    _HALT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _HALT_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def evaluate_live_arm_gate(
     arm_config: Mapping[str, Any],
     *,
@@ -45,6 +79,7 @@ def evaluate_live_arm_gate(
     instruction_direction: str,
     market_phase: str,
     open_live_positions: Optional[int],
+    halted: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate every LIVE engineering-probe precondition without side effects."""
     reasons = []
@@ -53,6 +88,9 @@ def evaluate_live_arm_gate(
 
     if not bool(arm.get("enabled", False)):
         reasons.append(_reason("LIVE_ARM_NOT_ENABLED", "LIVE arm is not armed"))
+
+    if halted:
+        reasons.append(_reason("LIVE_NEW_POSITIONS_HALTED", "LIVE new positions are halted by a prior safety event"))
 
     mode = str(arm.get("mode") or "engineering_probe")
     if mode != "engineering_probe":

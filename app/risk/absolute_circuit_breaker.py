@@ -53,7 +53,7 @@ def _write_audit(event: Dict[str, Any]) -> None:
 
 class AbsoluteCircuitBreaker:
     """
-    绝对风控底线熔断器 (单例)
+    绝对风控底线熔断器 (per-arm 实例)
 
     三重保护:
     1. DAILY_MAX_LOSS: 日内累计亏损 > $2000 → 暂停新仓
@@ -64,6 +64,7 @@ class AbsoluteCircuitBreaker:
     """
 
     _instance: Optional["AbsoluteCircuitBreaker"] = None
+    _real_instance: Optional["AbsoluteCircuitBreaker"] = None
     _lock = threading.Lock()
 
     # ── 硬限参数 (不可通过配置覆盖) ──
@@ -95,7 +96,15 @@ class AbsoluteCircuitBreaker:
     HOURLY_MIN_PAUSE_SEC = 900.0                 # 时亏最短冷静期 (提前解除的地板)
     HOURLY_EARLY_RELEASE_PNL = -500.0            # 时亏提前解除线 (触发小时口径回升到此值以上)
 
-    def __new__(cls):
+    def __new__(cls, target_env: str = "sim"):
+        normalized = str(target_env or "sim").strip().lower()
+        if normalized in {"real", "live"}:
+            if cls._real_instance is None:
+                with cls._lock:
+                    if cls._real_instance is None:
+                        cls._real_instance = super().__new__(cls)
+                        cls._real_instance._initialized = False
+            return cls._real_instance
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -103,10 +112,11 @@ class AbsoluteCircuitBreaker:
                     cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, target_env: str = "sim"):
         if self._initialized:
             return
         self._initialized = True
+        self.target_env = "real" if str(target_env or "sim").strip().lower() in {"real", "live"} else "sim"
         self._state_lock = threading.Lock()
 
         # 日计数
@@ -158,10 +168,8 @@ class AbsoluteCircuitBreaker:
     def _restore_from_db(self) -> None:
         """从 trade_records 重建当日 日亏/时亏/连亏 (出场日记账 + 净额口径).
 
-        总体对齐: 实盘只有 playbook 一个喂数方
-        (app/playbook/pipeline.py: record_trade_result("playbook", ...)), 故重建范围取
-        source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') — 新增喂数策略时需同步扩该映射,
-        否则恢复值会低于实时累计值。
+        总体对齐: playbook 按执行臂分库喂数。SIM 实例只读 PLAYBOOK_SIM,
+        LIVE 实例只读 PLAYBOOK_LIVE — 两臂连亏/日亏互不触发对方的停新仓。
 
         已知代价 (fail-closed, 有意): manual_reset 的 _manual_override 只存内存,
         故人工放行不跨重启 — 崩溃自愈后若当日亏损仍超线, 熔断会重新触发。此前重启
@@ -171,23 +179,27 @@ class AbsoluteCircuitBreaker:
         try:
             import sqlite3
             from app.core import paths as _paths
-            db_path = str(_paths.get_trade_records_db())
+            if self.target_env == "real":
+                db_path = str(_paths.get_trade_records_db_for_arm("real"))
+            else:
+                db_path = str(_paths.get_trade_records_db())
             today = _et_trade_date(now_et())
             hour_prefix = now_et().strftime("%Y-%m-%dT%H")
-            _src_filter = "source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE')"
+            _source_type = "PLAYBOOK_LIVE" if self.target_env == "real" else "PLAYBOOK_SIM"
+            _src_filter = "source_type = ?"
 
             with sqlite3.connect(db_path) as conn:
                 day_row = conn.execute(
                     f"SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0), COUNT(*) "
                     f"FROM trade_records WHERE substr(exit_time, 1, 10) = ? "
                     f"AND exit_price > 0 AND {_src_filter}",
-                    (today,),
+                    (today, _source_type),
                 ).fetchone()
                 hour_row = conn.execute(
                     f"SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
                     f"FROM trade_records WHERE substr(exit_time, 1, 13) = ? "
                     f"AND exit_price > 0 AND {_src_filter}",
-                    (hour_prefix,),
+                    (hour_prefix, _source_type),
                 ).fetchone()
                 # 净额缺失行不参与连亏链 (避免一行 NULL 被当成"非亏"把连亏清零)
                 pnl_rows = conn.execute(
@@ -195,7 +207,7 @@ class AbsoluteCircuitBreaker:
                     f"WHERE substr(exit_time, 1, 10) = ? AND exit_price > 0 "
                     f"AND COALESCE(pnl_net, realized_pnl) IS NOT NULL AND {_src_filter} "
                     f"ORDER BY exit_time DESC",
-                    (today,),
+                    (today, _source_type),
                 ).fetchall()
 
             self._trade_date = today
@@ -226,7 +238,7 @@ class AbsoluteCircuitBreaker:
                 self._arm_consec_pause("playbook")
 
             logger.info(
-                f"[AbsoluteCircuitBreaker·restore] ET 今日({today}) 已了结 "
+                f"[AbsoluteCircuitBreaker·restore:{self.target_env}] ET 今日({today}) 已了结 "
                 f"{int(day_row[1] or 0)} 笔 净额=${self._daily_pnl:.2f} "
                 f"(本小时=${self._hourly_pnl:.2f}, 连亏={consecutive}) | "
                 f"daily_paused={self._daily_paused} "
@@ -671,6 +683,6 @@ class AbsoluteCircuitBreaker:
 
 
 # ── 全局单例访问 ──
-def get_absolute_circuit_breaker() -> AbsoluteCircuitBreaker:
-    """获取 AbsoluteCircuitBreaker 全局单例"""
-    return AbsoluteCircuitBreaker()
+def get_absolute_circuit_breaker(target_env: str = "sim") -> AbsoluteCircuitBreaker:
+    """获取某一执行臂的 AbsoluteCircuitBreaker 实例."""
+    return AbsoluteCircuitBreaker(target_env)

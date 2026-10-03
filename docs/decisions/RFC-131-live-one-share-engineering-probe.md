@@ -1,9 +1,10 @@
 # RFC-131: LIVE 1 股工程探针与双臂路由落地
 
-> **状态**: ✅ L1/L2/L4 代码已实施并通过测试 (2026-10-03; 默认零实盘行为; **尚未重启部署**)
+> **状态**: ✅ L1/L2/L4 代码已实施、测试并重启验证；LIVE 仍全关
 > **日期**: 2026-10-03
 > **承接**: RFC-090 §17 (双臂常驻), RFC-130 (策略语义一致 + manual arm)
-> **用户裁决**: 先不接受策略转正破例; 先用 1 股跑通工程链路; SIM 继续运行
+> **用户裁决**: 2026-10-04 接受毕业门禁知情破例，仅限 1 股 LONG 工程探针；
+> 不构成策略转正或 LIVE 启用授权，SIM 继续运行
 
 ---
 
@@ -140,15 +141,44 @@ LIVE 新仓必须同时满足：
 
 ## 6. 启用前仍必须完成
 
-1. `scripts/cutover_preflight.py` 技术项清零；当前仍 `block=1 warn=6`。
-2. LIVE `capital_state` 显式预置，防回撤保护开局失明。
-3. LIVE 8 条 `size=0` manual 僵尸行用券商真值校正。
-4. schema 彩排清零切换日 DDL 面。
+1. `scripts/cutover_preflight.py` 技术项清零；P0 硬化后为
+   `block=1 warn=4`，唯一硬阻塞是毕业门禁 `graduated=false / ic_t3=-0.0403`。
+2. ✅ LIVE `capital_state` 已显式预置：`$73,057.35`，`trade_env=0`，
+   `green/unlocked`。
+3. ✅ LIVE 8 条 `size=0` manual 僵尸行已清理，清理前已备份 LIVE 库。
+4. ✅ schema 彩排清零切换日阻塞性 DDL；`playbook_factor_stats_bak_rfc112`
+   属 SIM 历史备份表，无运行时消费者，不迁移。
 5. broker STOP 挂/改/撤生产里程 ≥1；当前为 0。
-6. 手动持仓与 auto LIVE 的同 symbol 双向守卫复核。
-7. 当前工作树混有其他 WIP；启用前必须先分离并提交本批。
+6. ✅ 手动持仓与 auto LIVE 的同 symbol 守卫已按 `(account, symbol)` 分臂；
+   LIVE manual 只挡 LIVE auto，不管理/平仓该手动仓。
+7. 当前工作树仅本批 RFC-132 修复未提交；启用前必须先提交/隔离。
 8. 已完成：DEB 收口批已于 2026-10-03 22:41:14 CST 重启加载，冒烟 7/7 通过；
-   后续任何路由/门控变更仍须执行同款重启纪律。
+   后续任何路由/门控变更仍须执行同款重启纪律。RFC-132 P0 硬化批已于
+   2026-10-04 00:10:44 CST 最终重启加载（含 STOP 失败推送语义修正），
+   冒烟 7/7 通过（PID 3826815），重启窗口 warning/error 为 0。
+
+### 6.1 P0 硬化补充 (2026-10-03)
+
+详见 RFC-132。本节只更新 RFC-131 的启用前置：
+
+- LIVE 资金、账户熔断、绝对熔断、单标的日亏、名义本金兜底均改为显式分臂；
+- LIVE broker STOP 从“尽力而为”改为“成功 + order id + 台账 receipt”强验证；
+- STOP 失败会 HIGH 推送、持久化 HALT_NEW_LIVE，且不平既有仓；
+- LIVE schema/baseline/僵尸行已由 `scripts/prepare_live_probe.py --apply` 预置；
+
+### 6.2 知情破例裁决 (2026-10-04)
+
+用户已明确裁决接受策略毕业门禁知情破例。边界如下：
+
+- 破例对象：仅 `graduated=false / ic_t3=-0.0403` 这一项工程探针前置；
+- 允许形态：仅 1 股、1 仓、LONG、RTH 的 LIVE 工程链路验证；
+- 不改变：策略转正红线、SIM 常驻、SHORT 跳过、手动仓不自动平仓；
+- 不等于启用：`probe.authorized=false` 与实盘三开关仍保持关闭；
+- 正式执行前仍需填写非空 `probe.authorization_id`，并单独打开
+  `ALLOW_REAL_TRADING` 与 `live_manual_arm.enabled`。
+- 本修复不改变 `TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`、
+  `ALLOW_REAL_TRADING=false`、`live_manual_arm.enabled=false`、
+  `probe.authorized=false`。
 
 ## 7. 1 股探针 runbook
 

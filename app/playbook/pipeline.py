@@ -3875,7 +3875,7 @@ def _live_engineering_probe_context() -> Optional[Dict[str, Any]]:
         import os
         from app.core.config_container import get_config
         from app.playbook.db import route_playbook_db
-        from app.playbook.live_arm_gate import evaluate_live_arm_gate
+        from app.playbook.live_arm_gate import evaluate_live_arm_gate, read_live_arm_halt
         from app.playbook.playbook_service import PlaybookService
         from app.core.scheduler_triggers import get_market_phase
 
@@ -3889,6 +3889,7 @@ def _live_engineering_probe_context() -> Optional[Dict[str, Any]]:
             instruction_direction="BUY",
             market_phase=get_market_phase().value,
             open_live_positions=0,
+            halted=bool(read_live_arm_halt().get("halted")),
         )
         if not base_gate.get("allowed"):
             return None
@@ -3931,7 +3932,11 @@ def _live_mirror_gate_decision(live_db, inst: Dict[str, Any]) -> Dict[str, Any]:
     from app.core.paths import get_trade_records_db_for_arm
     from app.core.config_container import get_config
     from app.core.scheduler_triggers import get_market_phase
-    from app.playbook.live_arm_gate import count_open_live_positions, evaluate_live_arm_gate
+    from app.playbook.live_arm_gate import (
+        count_open_live_positions,
+        evaluate_live_arm_gate,
+        read_live_arm_halt,
+    )
 
     arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
     return evaluate_live_arm_gate(
@@ -3944,6 +3949,7 @@ def _live_mirror_gate_decision(live_db, inst: Dict[str, Any]) -> Dict[str, Any]:
         open_live_positions=count_open_live_positions(
             get_trade_records_db_for_arm("real")
         ),
+        halted=bool(read_live_arm_halt().get("halted")),
     )
 
 
@@ -5186,18 +5192,31 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                                     )
                                 else:
                                     live_skipped_count += 1
-                                    errors.append(
-                                        f"{inst['symbol']}: LIVE C-lite skipped — "
-                                        f"{live_result.get('message', 'unknown')}"
-                                    )
+                                    if live_result.get("stop_protection_failed"):
+                                        errors.append(
+                                            f"{inst['symbol']}: LIVE C-lite 已成交但 STOP 保护失败 — "
+                                            f"{live_result.get('message', 'unknown')}"
+                                        )
+                                    else:
+                                        errors.append(
+                                            f"{inst['symbol']}: LIVE C-lite skipped — "
+                                            f"{live_result.get('message', 'unknown')}"
+                                        )
                                     try:
                                         from app.push import get_push_hub
                                         from app.push.message import Level
-                                        get_push_hub().push_text(
-                                            f"⚠️ [LIVE C-lite] {inst['symbol']} 未执行: "
-                                            f"{live_result.get('message', 'unknown')}",
-                                            level=Level.HIGH,
-                                        )
+                                        if live_result.get("stop_protection_failed"):
+                                            get_push_hub().push_text(
+                                                f"🔴 [LIVE C-lite] {inst['symbol']} 已成交但 STOP 保护失败: "
+                                                f"{live_result.get('message', 'unknown')}",
+                                                level=Level.HIGH,
+                                            )
+                                        else:
+                                            get_push_hub().push_text(
+                                                f"⚠️ [LIVE C-lite] {inst['symbol']} 未执行: "
+                                                f"{live_result.get('message', 'unknown')}",
+                                                level=Level.HIGH,
+                                            )
                                     except Exception as push_error:
                                         logger.warning(
                                             f"[playbook] LIVE C-lite failure push failed: {push_error}",
@@ -7414,7 +7433,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             # "假盈利"行 (毛>0 净<0, 8/1-8/20 实测 23/125) 在熔断侧被当赢单清零连亏计数,
             # 且日亏累计少计费用。费用估算缺失时 _net_pnl_pair 自回退毛值 (fail-open)。
             _acb_pnl = _net_pnl_pair(pnl, pnl_pct, _fees_total, _tr)[0]
-            get_absolute_circuit_breaker().record_trade_result("playbook", float(_acb_pnl), symbol)
+            _acb_target = "real" if _tr and _tr[5] == "PLAYBOOK_LIVE" else "sim"
+            get_absolute_circuit_breaker(_acb_target).record_trade_result(
+                "playbook", float(_acb_pnl), symbol
+            )
         except Exception as _acb_e:
             logger.debug(f"[风控接线] ACB record 跳过 {symbol}: {_acb_e}")
         # #6: 复用 _tr (原此处独立 SELECT entry_time)
@@ -7505,7 +7527,10 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry as _mhr_close
             if _mhr_close.get_hold_info(symbol) is not None:
-                _mhr_close.unregister(symbol)
+                _mhr_close.unregister(
+                    symbol,
+                    account="real" if _tr and _tr[5] == "PLAYBOOK_LIVE" else "sim",
+                )
         except Exception as _unreg_e:
             logger.debug(f"[playbook] ManualHoldRegistry 注销跳过 {symbol}: {_unreg_e}")
     

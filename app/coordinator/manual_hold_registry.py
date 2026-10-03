@@ -11,10 +11,10 @@ ManualHoldRegistry — 手动持仓标记注册表 (全局单例)
   from app.coordinator.manual_hold_registry import manual_hold_registry
 
   # 手动开仓/挂单成功后:
-  manual_hold_registry.register(symbol, direction, qty, reason)
+  manual_hold_registry.register(symbol, direction, qty, reason, account="real")
 
   # 手动全部平仓后:
-  manual_hold_registry.unregister(symbol)
+  manual_hold_registry.unregister(symbol, account="real")
 
   # 自动管线扫描时:
   if manual_hold_registry.is_manual_held(symbol):
@@ -63,13 +63,23 @@ class ManualHoldRegistry:
 
     def __init__(self):
         if not self._initialized:
-            self._holdings: Dict[str, ManualHoldInfo] = {}
+            self._holdings: Dict[tuple, ManualHoldInfo] = {}
             self._initialized = True
+
+    @staticmethod
+    def _normalize_account(account: Optional[str]) -> str:
+        normalized = str(account or "").strip().lower()
+        if normalized in {"real", "live"}:
+            return "real"
+        if normalized in {"sim", "simulate"}:
+            return "sim"
+        return normalized
 
     def register(self, symbol: str, direction: str, quantity: int, reason: str = "", account: str = "real"):
         """手动开仓/挂单时立即注册. account: real(默认,手动走实盘)/sim."""
+        account = self._normalize_account(account)
         with self._lock:
-            self._holdings[symbol] = ManualHoldInfo(
+            self._holdings[(account, symbol)] = ManualHoldInfo(
                 symbol=symbol,
                 direction=direction,
                 quantity=quantity,
@@ -81,18 +91,24 @@ class ManualHoldRegistry:
                 f"qty={quantity} account={account} reason={reason}"
             )
 
-    def unregister(self, symbol: str):
+    def unregister(self, symbol: str, account: Optional[str] = None):
         """手动全部平仓后注销"""
+        normalized_account = self._normalize_account(account) if account is not None else None
         with self._lock:
-            if symbol in self._holdings:
-                info = self._holdings.pop(symbol)
+            keys = [
+                key for key in self._holdings
+                if key[1] == symbol and normalized_account in (None, key[0])
+            ]
+            for key in keys:
+                info = self._holdings.pop(key)
                 logger.info(
-                    f"[ManualHoldRegistry] UNREGISTERED: {symbol} "
+                    f"[ManualHoldRegistry] UNREGISTERED: {symbol} account={key[0]} "
                     f"(was {info.direction} qty={info.quantity})"
                 )
-            else:
+            if not keys:
                 logger.warning(
-                    f"[ManualHoldRegistry] UNREGISTER called but {symbol} not found"
+                    f"[ManualHoldRegistry] UNREGISTER called but {symbol} "
+                    f"account={normalized_account} not found"
                 )
 
     def is_manual_held(self, symbol: str, account: Optional[str] = None) -> bool:
@@ -102,12 +118,10 @@ class ManualHoldRegistry:
         account='sim'/'real': 仅该账户持有才 True.
         """
         with self._lock:
-            info = self._holdings.get(symbol)
-            if info is None:
-                return False
             if account is None:
-                return True
-            return info.account == account
+                return any(key[1] == symbol for key in self._holdings)
+            account = self._normalize_account(account)
+            return (account, symbol) in self._holdings
 
     # SSOT 回落缓存 (60s TTL) — 见 is_auto_blocked
     _SSOT_TTL_SEC = 60.0
@@ -131,7 +145,7 @@ class ManualHoldRegistry:
         try:
             import sqlite3
             from app.core import paths as _paths
-            db = str(_paths.get_trade_records_db())
+            db = str(_paths.get_trade_records_db_for_arm(account))
             acc_types = ManualHoldRegistry._ACCOUNT_TYPES.get(account, (account,))
             with sqlite3.connect(db) as conn:
                 rows = conn.execute(
@@ -159,7 +173,7 @@ class ManualHoldRegistry:
             )
         return symbols
 
-    def is_auto_blocked(self, symbol: str) -> bool:
+    def is_auto_blocked(self, symbol: str, target_env: Optional[str] = None) -> bool:
         """自动交易闸门: 该标的是否在 *当前自动交易账户* 中被手动占用.
 
         根据 AUTO_TRADE_ACCOUNT 环境变量决定查 sim 还是 real:
@@ -172,7 +186,11 @@ class ManualHoldRegistry:
         2026-08-28 (全链路复查): 内存 dict 未命中时回落 open_positions SSOT — 手动单由
         dashboard 进程注册, 主交易进程此前当日永不感知 (见 _ssot_manual_symbols)。
         """
-        _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        _auto_acc = (
+            self._normalize_account(target_env)
+            if target_env is not None
+            else os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        )
         if self.is_manual_held(symbol, account=_auto_acc):
             return True
         return symbol in self._ssot_manual_symbols(_auto_acc)
@@ -180,12 +198,19 @@ class ManualHoldRegistry:
     def get_all_manual_symbols(self) -> Set[str]:
         """获取所有手动占用的标的列表"""
         with self._lock:
-            return set(self._holdings.keys())
+            return {key[1] for key in self._holdings}
 
     def get_hold_info(self, symbol: str) -> Optional[ManualHoldInfo]:
         """获取手动持仓详情 (供 Dashboard 展示)"""
         with self._lock:
-            return self._holdings.get(symbol)
+            _auto_acc = self._normalize_account(os.getenv("AUTO_TRADE_ACCOUNT", "sim"))
+            info = self._holdings.get((_auto_acc, symbol))
+            if info is not None:
+                return info
+            for key, candidate in self._holdings.items():
+                if key[1] == symbol:
+                    return candidate
+            return None
 
     def get_all_holdings(self) -> Dict[str, ManualHoldInfo]:
         """获取所有手动持仓详情"""

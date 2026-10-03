@@ -166,7 +166,8 @@ class DualBrokerAdapter:
     # ── 风控兜底: 单笔名义本金硬上限 (30% equity) ──
     _NOTIONAL_HARD_CAP_PCT = 0.30
 
-    def _notional_sanity_check(self, symbol: str, qty, price: float, is_close: bool = False) -> bool:
+    def _notional_sanity_check(self, symbol: str, qty, price: float, is_close: bool = False,
+                               target_env: str = "sim") -> bool:
         """兜底检查: 单笔名义 ≤ equity × 30%. 平仓单放行, equity 不可用时 fail-close."""
         if is_close:
             return True
@@ -175,8 +176,8 @@ class DualBrokerAdapter:
         notional = float(qty) * float(price)
         equity = 0.0
         try:
-            from app.risk.capital_safety import get_capital_safety_system
-            _cap = get_capital_safety_system()
+            from app.risk.capital_safety import get_capital_safety_system_for_arm
+            _cap = get_capital_safety_system_for_arm(target_env)
             if _cap._state.current_equity > 0:
                 equity = _cap._state.current_equity
         except Exception:
@@ -210,7 +211,9 @@ class DualBrokerAdapter:
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
             _order_meta = getattr(order, 'metadata', None) or {}
             _is_close = bool(_order_meta.get('is_exit', False)) if isinstance(_order_meta, dict) else False
-            if not self._notional_sanity_check(order.symbol, order.quantity, order.price, is_close=_is_close):
+            if not self._notional_sanity_check(
+                    order.symbol, order.quantity, order.price,
+                    is_close=_is_close, target_env=target_env):
                 return {"success": False, "submit_state": "DEFINITIVE_REJECT",
                         "error": "dual_broker_notional_cap", "futu_order_id": ""}
 
@@ -493,6 +496,31 @@ class DualBrokerAdapter:
             return out
         except Exception as e:
             logger.debug(f"[DualBroker] get_short_pool 失败 (调用方 fail-open): {e}")
+            return {}
+
+    def get_account_info(self, target_env: str = "sim") -> Dict[str, Any]:
+        """Query and USD-normalize one account's Futu funds snapshot."""
+        try:
+            from futu import RET_OK
+            from app.execution.futu_accounting import normalize_futu_account
+
+            ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.accinfo_query(
+                    trd_env=trd_env,
+                    acc_id=int(acc_id) if acc_id else 0,
+                    refresh_cache=True,
+                )
+            if ret != RET_OK or data is None or data.empty:
+                logger.warning("[DualBroker] account info query failed env=%s ret=%s", target_env, ret)
+                return {}
+
+            raw = dict(data.iloc[0])
+            account = normalize_futu_account(raw)
+            account["_target_env"] = target_env
+            return account
+        except Exception as e:
+            logger.warning("[DualBroker] account info query exception env=%s: %s", target_env, e)
             return {}
 
     def place_protective_stop(self, symbol: str, qty: float, direction_held: str,

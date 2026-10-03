@@ -67,16 +67,23 @@ def compensation_case(monkeypatch, tmp_path):
     }
     module("app.core.config_container", get_config=lambda: SimpleNamespace(
         get_dotted=lambda key, default=None: config.get(key, default)))
-    module("app.risk.account_circuit_breaker", check_circuit_breaker=lambda equity: SimpleNamespace(
+    module("app.risk.account_circuit_breaker", check_circuit_breaker=lambda equity, target_env="sim": SimpleNamespace(
         action="NORMAL", reason="sealed"))
-    module("app.risk.capital_safety", get_capital_safety_system=lambda: SimpleNamespace(
-        _state=SimpleNamespace(current_equity=100000), can_open_position=lambda: (True, "sealed")))
-    module("app.risk.absolute_circuit_breaker", get_absolute_circuit_breaker=lambda: SimpleNamespace(
+    _capital_state = SimpleNamespace(current_equity=100000)
+    _capital = SimpleNamespace(
+        _state=_capital_state,
+        can_open_position=lambda: (True, "sealed"),
+        update_account=lambda **kwargs: _capital_state,
+    )
+    module("app.risk.capital_safety",
+           get_capital_safety_system=lambda: _capital,
+           get_capital_safety_system_for_arm=lambda target_env: _capital)
+    module("app.risk.absolute_circuit_breaker", get_absolute_circuit_breaker=lambda target_env="sim": SimpleNamespace(
         can_open_new_position=lambda strategy: (True, "sealed"), get_position_scale=lambda strategy: 1))
     module("app.risk.pdt_guard", get_pdt_guard=lambda: SimpleNamespace(
         check_trade_permission=lambda: (True, "sealed", "NORMAL")))
     module("app.coordinator.manual_hold_registry", manual_hold_registry=SimpleNamespace(
-        is_auto_blocked=lambda symbol: False, register=forbidden))
+        is_auto_blocked=lambda symbol, target_env=None: False, register=forbidden))
     module("app.playbook.admission", evaluate=lambda inst: {"verdict": "PASS"},
            apply=lambda inst: (inst, {"verdict": "PASS"}))
     monkeypatch.setattr(market_regime, "MarketRegimeGate", lambda: SimpleNamespace(
@@ -86,6 +93,10 @@ def compensation_case(monkeypatch, tmp_path):
 
     state = SimpleNamespace(failure="constructor", saved=[], violations=violations)
     broker = SimpleNamespace(
+        get_account_info=MagicMock(return_value={
+            "total_assets": 100000, "cash": 90000,
+            "market_val": 10000, "buying_power": 180000,
+        }),
         submit_order=MagicMock(return_value={
             "success": True, "submit_state": "ACCEPTED", "futu_order_id": "ENTRY-17",
             "broker_order_status": "FILLED_ALL", "filled_price": 100.25, "filled_qty": 10,

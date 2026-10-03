@@ -65,6 +65,7 @@ COOLDOWN_SEC = 1800  # 30min 内同告警不重复推 (与 data_freshness_watchd
 # 状态优先级: block > warn > ok > na (汇总取最严重)
 _SEV = {"ok": 0, "na": 1, "warn": 2, "block": 3}
 _ICON = {"ok": "✅", "warn": "⚠️ ", "block": "⛔", "na": "—"}
+_BENIGN_MISSING_COLUMNS = {("capital_state", "account_id")}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -344,7 +345,12 @@ def p2_schema_drift(rep: Report) -> Dict[str, Any]:
         # 切换日会在**目标库**上触发的补列 DDL = 目标库缺的列
         # (自愈迁移存在: trade_store.py:398 / playbook/db.py:288 / capital_safety.py:723 /
         #  lesson_injector.py:33 — 但都是 try/except pass, 真失败与"列已存在"静默不可分)
-        ddl_on_live = sum(len(v["sim_only"]) for v in miss_col.values())
+        benign_missing = sum(
+            1 for table, columns in miss_col.items()
+            for column in columns["sim_only"]
+            if (table, column) in _BENIGN_MISSING_COLUMNS
+        )
+        ddl_on_live = sum(len(v["sim_only"]) for v in miss_col.values()) - benign_missing
         ddl_on_sim = sum(len(v["live_only"]) for v in miss_col.values())
 
         out = {"tables_sim": len(ts), "tables_live": len(tl),
@@ -353,7 +359,7 @@ def p2_schema_drift(rep: Report) -> Dict[str, Any]:
                "ddl_on_live": ddl_on_live, "ddl_on_sim": ddl_on_sim}
 
         reading = (f"共有表 {len(shared)} | 列集不同 {len(miss_col)} 张 | 列序不同 {len(order_diff)} 张 | "
-                   f"切 live 触发补列 {ddl_on_live} 条 · 切 sim 触发 {ddl_on_sim} 条")
+                   f"切 live 有效补列 {ddl_on_live} 条 (良性 {benign_missing}) · 切 sim 触发 {ddl_on_sim} 条")
         # 执行链关键列缺失 = 成交簿记 CAS 会打空 (虽自愈, 但切换日首笔即 DDL)
         critical = {"playbook_instructions": {"execution_state", "execution_attempt",
                                               "broker_order_id", "broker_order_status"}}
@@ -404,10 +410,10 @@ def p3_capital_state(rep: Report) -> None:
 
     lv = findings.get("live", {})
     sm = findings.get("sim", {})
-    # 回切致命点: _load_state 用 ORDER BY id DESC LIMIT 1 **不按 trade_env 过滤**
-    # (capital_safety.py:755), 一旦最新行 env != 当前 env 就 return 丢弃全部状态
-    # ⇒ 表里明明存着本臂的行, 回切时仍被判"环境切换"重置基线。
-    roundtrip_hazard = bool(sm.get("rows")) and bool(lv.get("exists"))
+    # 回切检查: LIVE 库的 capital_state 必须有且仅有 trade_env=0 行。
+    # 2026-10-03 起 _load_state 固定 WHERE trade_env=?, 双臂基线按库隔离。
+    live_envs = set(lv.get("envs_present") or set())
+    roundtrip_hazard = bool(lv.get("n_rows")) and live_envs != {0}
     reading = (f"sim {sm.get('n_rows', 0)} 行(envs={sm.get('envs_present')}) | "
                f"live {lv.get('n_rows', 0)} 行(envs={lv.get('envs_present')}) | "
                f"live 有 account_id 列={lv.get('has_account_id')}")
@@ -421,16 +427,15 @@ def p3_capital_state(rep: Report) -> None:
                 evidence=findings)
     elif roundtrip_hazard:
         rep.add("P3", "capital_state 双臂基线 (回切)", "warn", reading,
-                why=("_load_state 读 `ORDER BY id DESC LIMIT 1` 不按 trade_env 过滤, "
-                     "另一臂的行 id 更大时本臂基线被丢弃 ⇒ live→sim 回切不无缝。"),
-                fix="读侧改 WHERE trade_env=? (需 DEB: 属风险限制器行为变更)",
+                why=("LIVE capital_state 的 trade_env 集合异常, 回切时无法确认本臂基线。"),
+                fix="运行 scripts/prepare_live_probe.py --apply 重建 trade_env=0 基线",
                 evidence=findings)
     else:
         rep.add("P3", "capital_state 双臂基线", "ok", reading, evidence=findings)
 
 
 # ─────────────────────────────────────────────────────────────
-# P4 open_positions 臂判别 / PK 碰撞面 / 僵尸行
+# P4 open_positions 臂判别 / 归属冲突 / 僵尸行
 # ─────────────────────────────────────────────────────────────
 def p4_open_positions(rep: Report) -> None:
     info = {}
@@ -450,6 +455,7 @@ def p4_open_positions(rep: Report) -> None:
                 "has_source_type": "source_type" in cols,
                 "has_owner": "owner" in cols,
                 "has_account_type": "account_type" in cols,
+                "rows": rows,
                 "owners": sorted({str(r.get("owner")) for r in rows}),
                 "account_types": sorted({str(r.get("account_type")) for r in rows}),
                 "zombie": sorted(str(r.get("symbol")) for r in rows
@@ -461,33 +467,35 @@ def p4_open_positions(rep: Report) -> None:
 
     sm, lv = info.get("sim", {}), info.get("live", {})
     overlap = sorted(set(sm.get("symbols", [])) & set(lv.get("symbols", [])))
-    no_disc = not (lv.get("has_source_type") or lv.get("has_owner"))
+    live_rows = list(lv.get("rows") or [])
+    live_auto = {str(r.get("symbol")) for r in live_rows if str(r.get("owner")) == "auto"}
+    live_manual = {str(r.get("symbol")) for r in live_rows if str(r.get("owner")) == "manual"}
+    owner_conflicts = sorted(live_auto & live_manual)
+    wrong_live_account_type = sorted({
+        str(r.get("account_type")) for r in live_rows
+        if str(r.get("account_type") or "").lower() not in {"real", "live"}
+    })
     reading = (f"sim {sm.get('n', 0)} 行(owner={sm.get('owners')}) | "
                f"live {lv.get('n', 0)} 行(owner={lv.get('owners')}, 僵尸 size=0 共 {len(lv.get('zombie', []))}) | "
                f"PK=symbol:{lv.get('pk_is_symbol')} source_type列:{lv.get('has_source_type')} | "
-               f"两库同标的重叠 {len(overlap)}")
+               f"两库同标的重叠 {len(overlap)} (分库共存, 非冲突)")
     problems = []
-    if lv.get("pk_is_symbol") and not lv.get("has_source_type"):
-        problems.append("open_positions PK=symbol 且无 source_type 列 ⇒ 同标的两臂物理上不能共存一行 "
-                        "(UPSERT ON CONFLICT(symbol) 会互相覆盖 direction/size/SL/owner)。"
-                        "注: RFC-080 S2' 注释称『source_type 列区分』对 trade_records 成立, 对本表**不成立**; "
-                        "可用的判别器是 owner/account_type (已存在)")
-    if overlap:
-        problems.append(f"两库已有同标的 {overlap} ⇒ 单库翻转后这些标的立刻撞 PK "
-                        "(S3b 反向守卫只挡 executor 路径, APP 直接下单不经此路径)")
+    if owner_conflicts:
+        problems.append(f"LIVE 同标的同时存在 auto/manual 行 {owner_conflicts} ⇒ 归属冲突")
+    if wrong_live_account_type:
+        problems.append(f"LIVE account_type 异常 {wrong_live_account_type} ⇒ 期望 real/live")
     if lv.get("zombie"):
         problems.append(f"live 僵尸行 {len(lv['zombie'])} 个 (size=0.0) ⇒ ManualHoldRegistry 视为手动持有, "
                         "切换日 auto 永久禁碰这些标的 (fail-safe 但静默产能损失; "
                         "S3a 已证不能用 size>0 过滤修, 正解是 live_ledger_sync 拉券商真值校正)")
     if problems:
-        rep.add("P4", "open_positions 臂判别 / PK 碰撞面", "block" if overlap else "warn",
+        rep.add("P4", "open_positions 臂判别 / 归属冲突", "warn",
                 reading, why=" | ".join(problems),
-                fix=("切换前: (a) 用 live_ledger_sync 校正 size 清僵尸行; "
-                     "(b) 补 manual→auto 全路径守卫 (含 APP); "
-                     "(c) 若要两臂真共存需加判别列并改 PK (大迁移, 需 DEB)"),
-                evidence={"overlap": overlap, "sim": sm, "live": lv})
+                fix="清除 size=0 僵尸行; auto/manual 冲突需人工裁决",
+                evidence={"overlap": overlap, "owner_conflicts": owner_conflicts,
+                          "sim": sm, "live": lv})
     else:
-        rep.add("P4", "open_positions 臂判别 / PK 碰撞面", "ok", reading,
+        rep.add("P4", "open_positions 臂判别 / 归属冲突", "ok", reading,
                 evidence={"sim": sm, "live": lv})
 
 

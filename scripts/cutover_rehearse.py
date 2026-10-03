@@ -71,7 +71,9 @@ BENIGN_MISSING_TABLES = {
     #     thesis_challenges → app/llm/thesis_challenge.py
     "live_deal_records", "live_position_snapshots", "live_round_trips", "thesis_challenges",
     # (c) 全仓 app/+scripts/ **零引用**的孤儿表 (rg 实测 0 命中) ⇒ 无人读, 缺了不影响任何链路:
-    "option_peak_profits", "performance_stats", "shadow_daily_stats", "shadow_schema_version",
+    # playbook_factor_stats_bak_rfc112 是 SIM 侧历史备份表, 无运行时消费者, 不迁移到 LIVE.
+    "option_peak_profits", "performance_stats", "shadow_daily_stats",
+    "shadow_schema_version", "playbook_factor_stats_bak_rfc112",
 }
 
 

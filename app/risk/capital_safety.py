@@ -22,6 +22,7 @@ import logging
 import os
 import sqlite3
 import json
+import threading
 from datetime import datetime, date
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
@@ -962,8 +963,10 @@ class CapitalSafetySystem:
             logger.warning(f"[资本安全] 重置后保存失败: {e}")
 
 
-# 全局单例
+# 全局单例。SIM 继续使用 legacy 单例，LIVE 使用独立 per-arm 实例。
 _capital_instance: Optional[CapitalSafetySystem] = None
+_capital_real_instance: Optional[CapitalSafetySystem] = None
+_capital_instances_lock = threading.Lock()
 
 def get_capital_safety_system(initial_capital: Optional[float] = None,
                                trade_env: int = None) -> CapitalSafetySystem:
@@ -998,3 +1001,38 @@ def get_capital_safety_system(initial_capital: Optional[float] = None,
                 f"[资本安全] 单例已存在 (initial_capital={_capital_instance._state.initial_capital}), "
                 f"忽略本次传入 initial_capital={initial_capital} — 基准不一致, 请确认调用方")
     return _capital_instance
+
+
+def get_capital_safety_system_for_arm(
+    target_env: str,
+    initial_capital: Optional[float] = None,
+) -> CapitalSafetySystem:
+    """Resolve the capital SSOT for an explicit execution arm.
+
+    SIM deliberately keeps the legacy process singleton so existing consumers are
+    unchanged. LIVE always reads and writes the isolated live ledger and never
+    follows AUTO_TRADE_ACCOUNT, which remains pinned to SIM during dual-arm mode.
+    """
+    normalized = str(target_env or "sim").strip().lower()
+    if normalized in {"sim", "simulate"}:
+        return get_capital_safety_system(initial_capital=initial_capital, trade_env=1)
+    if normalized not in {"real", "live"}:
+        raise ValueError(f"unknown capital safety target_env: {target_env!r}")
+
+    global _capital_real_instance
+    with _capital_instances_lock:
+        if _capital_real_instance is None:
+            from app.core.paths import get_trade_records_db_for_arm
+            _capital_real_instance = CapitalSafetySystem(
+                db_path=str(get_trade_records_db_for_arm("real")),
+                initial_capital=initial_capital,
+                trade_env=0,
+            )
+        elif (initial_capital is not None
+              and abs(initial_capital - _capital_real_instance._state.initial_capital) > 1e-6):
+            logger.warning(
+                "[资本安全] LIVE 实例已存在 (initial_capital=%.2f), 忽略新初值=%.2f",
+                _capital_real_instance._state.initial_capital,
+                initial_capital,
+            )
+        return _capital_real_instance

@@ -296,6 +296,7 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
                     manual_hold_registry.register(
                         order.symbol, order.direction, int(order.quantity),
                         reason=f"manual_order:{order.reason}",
+                        account="real",
                     )
                 except Exception as _reg_err:
                     logger.warning(f"[手动下单] ManualHoldRegistry 注册失败 (不影响下单): {_reg_err}")
@@ -680,7 +681,7 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                         logger.debug(f"[手动平仓] position_store 清理跳过 (position_sync 会兜底): {_ps_err}")
                     # 全平时从 ManualHoldRegistry 注销, 释放标的给自动管线
                     try:
-                        manual_hold_registry.unregister(symbol)
+                        manual_hold_registry.unregister(symbol, account="real")
                     except Exception as _unreg_err:
                         logger.warning(f"[手动平仓] ManualHoldRegistry 注销失败 (不影响平仓): {_unreg_err}")
 

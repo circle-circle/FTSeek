@@ -25,7 +25,11 @@ from datetime import datetime, date
 
 from app.core import paths as core_paths
 from app.playbook.db import PlaybookDB
-from app.playbook.live_arm_gate import count_open_live_positions, evaluate_live_arm_gate
+from app.playbook.live_arm_gate import (
+    count_open_live_positions,
+    evaluate_live_arm_gate,
+    read_live_arm_halt,
+)
 from app.utils.timezone import now_et
 
 logger = logging.getLogger(__name__)
@@ -222,6 +226,89 @@ class PlaybookService:
         self._pv_key: Optional[str] = None
 
     # ========== 查询接口 ==========
+
+    def _get_capital_safety_for_execution(self, target_env: str):
+        """Return the capital system owned by the explicit execution arm."""
+        if str(target_env).lower() in {"real", "live"}:
+            from app.risk.capital_safety import get_capital_safety_system_for_arm
+            return get_capital_safety_system_for_arm(target_env)
+        from app.risk.capital_safety import get_capital_safety_system
+        return get_capital_safety_system()
+
+    def _refresh_live_capital_context(self):
+        """Refresh LIVE capital from the real broker before any risk gate."""
+        from app.execution.dual_broker import get_dual_broker
+        from app.risk.capital_safety import get_capital_safety_system_for_arm
+
+        capital = get_capital_safety_system_for_arm("real")
+        account_info = get_dual_broker().get_account_info("real")
+        current_equity = float(account_info.get("total_assets", 0) or 0) if account_info else 0.0
+        if current_equity <= 0:
+            raise RuntimeError("REAL account equity unavailable (fail-close)")
+
+        capital.update_account(
+            current_equity=current_equity,
+            cash=float(account_info.get("cash", 0) or 0),
+            market_value=float(account_info.get("market_val", 0) or 0),
+            buying_power=float(account_info.get("buying_power", 0) or 0),
+        )
+        return capital
+
+    def _record_live_stop_receipt(
+        self,
+        symbol: str,
+        entry_broker_order_id: str,
+        stop_broker_order_id: str,
+        stop_price: float,
+        quantity: int,
+    ) -> None:
+        """Persist broker STOP evidence in the LIVE instruction/position ledgers."""
+        import json as _json
+        import sqlite3 as _sqlite3
+
+        ledger = str(core_paths.get_trade_records_db_for_arm("real"))
+        receipt = {
+            "sl_broker_order_id": stop_broker_order_id,
+            "stop_price": float(stop_price),
+            "quantity": int(quantity),
+            "entry_broker_order_id": str(entry_broker_order_id),
+        }
+        connection = _sqlite3.connect(ledger, timeout=5)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT id, metadata_json FROM trade_records "
+                "WHERE source_type='PLAYBOOK_LIVE' AND futu_order_id=? LIMIT 1",
+                (str(entry_broker_order_id),),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"LIVE trade record not found for STOP receipt entry={entry_broker_order_id}"
+                )
+            metadata = {}
+            try:
+                metadata = _json.loads(row[1] or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata.update(receipt)
+            metadata["broker_stop"] = receipt
+            connection.execute(
+                "UPDATE trade_records SET metadata_json=? WHERE id=?",
+                (_json.dumps(metadata, ensure_ascii=False), row[0]),
+            )
+            connection.execute(
+                "UPDATE open_positions SET sl_broker_order_id=? "
+                "WHERE symbol=? AND source_type='PLAYBOOK_LIVE'",
+                (stop_broker_order_id, symbol),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def get_today_instructions(self, trade_date: str = None) -> List[Dict]:
         """获取今日交易指令"""
@@ -812,6 +899,20 @@ class PlaybookService:
         if inst.get("direction") == "SKIP":
             return {"success": False, "message": "SKIP 指令不可执行"}
 
+        _risk_target = "real" if str(target_env or "").strip().lower() in {"real", "live"} else "sim"
+        if _risk_target == "real":
+            try:
+                self._refresh_live_capital_context()
+            except Exception as _live_capital_error:
+                logger.error(
+                    f"[playbook] LIVE capital refresh failed: {_live_capital_error}",
+                    exc_info=True,
+                )
+                return {
+                    "success": False,
+                    "message": f"[LIVE_CAPITAL_FAIL_CLOSE] {_live_capital_error}",
+                }
+
         # 风控分级复权缩放 (2026-09-05, 用户裁"按照建议执行"): 两个半仓来源取 min —
         #   ① OKR 账户熔断的 REDUCE_50 档 (此前**无任何消费方**, 见下方接线);
         #   ② 绝对熔断连亏冷静期到期后的"观察期"(AbsoluteCircuitBreaker.get_position_scale)。
@@ -823,11 +924,13 @@ class PlaybookService:
         # 停新仓同效 — 见 account_circuit_breaker.py 头注 2026-08-28 纠偏).
         try:
             from app.risk.account_circuit_breaker import check_circuit_breaker
-            from app.risk.capital_safety import get_capital_safety_system
-            _cs = get_capital_safety_system()
+            _cs = self._get_capital_safety_for_execution(_risk_target)
             _equity = float(getattr(_cs._state, 'current_equity', 0) or 0)
             if _equity > 0:
-                _cb = check_circuit_breaker(_equity)
+                if _risk_target == "real":
+                    _cb = check_circuit_breaker(_equity, target_env="real")
+                else:
+                    _cb = check_circuit_breaker(_equity)
                 if _cb.action in ("HALT", "LIQUIDATE"):
                     _msg = f"[OKR熔断] {_cb.reason}, 暂停 Playbook 执行"
                     logger.warning(_msg)
@@ -871,7 +974,10 @@ class PlaybookService:
         #   live 切换时翻 closed, 符合"可回滚、可配置化"铁律.
         try:
             from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
-            _acb = get_absolute_circuit_breaker()
+            if _risk_target == "real":
+                _acb = get_absolute_circuit_breaker("real")
+            else:
+                _acb = get_absolute_circuit_breaker()
             _allowed, _acb_reason = _acb.can_open_new_position("playbook")
             if not _allowed:
                 logger.warning(f"[绝对熔断] {_acb_reason}, 拒绝开仓")
@@ -909,8 +1015,7 @@ class PlaybookService:
             _ws_gate_on = True
         if _ws_gate_on:
             try:
-                from app.risk.capital_safety import get_capital_safety_system as _get_cs_gate
-                _cs_ok, _cs_msg = _get_cs_gate().can_open_position()
+                _cs_ok, _cs_msg = self._get_capital_safety_for_execution(_risk_target).can_open_position()
                 if not _cs_ok:
                     logger.warning(f"🛑 [资本安全水位] {inst.get('symbol','')} 拒绝开仓: {_cs_msg}")
                     return {"success": False, "message": f"[资本安全水位] {_cs_msg}"}
@@ -1238,6 +1343,7 @@ class PlaybookService:
                 open_live_positions=count_open_live_positions(
                     core_paths.get_trade_records_db_for_arm("real")
                 ),
+                halted=bool(read_live_arm_halt().get("halted")),
             )
             if not _gate.get("allowed"):
                 _reason_text = "; ".join(
@@ -1296,7 +1402,11 @@ class PlaybookService:
         # 这是 flat-switch 下最安全的同账户隔离方式, 无需深改 open_positions 主键.
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry
-            if manual_hold_registry.is_auto_blocked(symbol):
+            if target_env == "real":
+                _manual_blocked = manual_hold_registry.is_auto_blocked(symbol, target_env="real")
+            else:
+                _manual_blocked = manual_hold_registry.is_auto_blocked(symbol)
+            if _manual_blocked:
                 logger.info(f"[playbook] {symbol} 被手动持有(同账户), 跳过 {_mode_label} 执行 (避免同 symbol 冲突)")
                 return {
                     "success": False,
@@ -1324,7 +1434,10 @@ class PlaybookService:
             if _dl_gate_on:
                 try:
                     from app.risk.symbol_day_loss import is_symbol_day_loss_exceeded
-                    _blocked, _day_net = is_symbol_day_loss_exceeded(symbol)
+                    _blocked, _day_net = is_symbol_day_loss_exceeded(
+                        symbol,
+                        db_path=str(core_paths.get_trade_records_db_for_arm(target_env)),
+                    )
                     if _blocked:
                         logger.warning(
                             f"🚫 [playbook·单标的日亏损] {symbol} 当日已了结净额 "
@@ -2066,13 +2179,61 @@ class PlaybookService:
 
         # live 兜底: 挂 broker STOP 单 (服务断连时仍止损; sim 跳过由规则引擎兜底)
         if _is_live and stop_loss and float(stop_loss) > 0:
+            _stop_result = {}
+            _stop_failed = False
+            _stop_error = ""
             try:
-                _dual.place_protective_stop(
+                _stop_result = _dual.place_protective_stop(
                     symbol, _effective_qty,
                     mos_direction, float(stop_loss), target_env="real",
                 )
+                if not isinstance(_stop_result, dict) or not _stop_result.get("success"):
+                    _stop_failed = True
+                    _stop_error = str(_stop_result.get("error") if isinstance(_stop_result, dict) else _stop_result)
+                else:
+                    _stop_order_id = str(_stop_result.get("futu_order_id") or "").strip()
+                    if not _stop_order_id:
+                        _stop_failed = True
+                        _stop_error = "broker STOP accepted response has no futu_order_id"
+                    else:
+                        self._record_live_stop_receipt(
+                            symbol, _futu_id or _order_id, _stop_order_id,
+                            float(stop_loss), int(_effective_qty),
+                        )
             except Exception as _se:
-                logger.warning(f"[playbook] live STOP 兜底失败 {symbol}: {_se}")
+                _stop_failed = True
+                _stop_error = f"{type(_se).__name__}: {_se}"
+
+            if _stop_failed:
+                from app.playbook.live_arm_gate import halt_live_new_positions
+                _halt_state = halt_live_new_positions(
+                    f"LIVE broker STOP verification failed: {_stop_error}"
+                )
+                logger.critical(
+                    f"🚨 [playbook] LIVE STOP 兜底失败 {symbol}: {_stop_error} — "
+                    f"HALT_NEW_LIVE state={_halt_state}; existing position remains open"
+                )
+                try:
+                    from app.push import get_push_hub
+                    from app.push.message import Level as _PushLevel
+                    get_push_hub().push_text(
+                        f"🔴 [LIVE STOP FAIL] {symbol} qty={_effective_qty} "
+                        f"stop={float(stop_loss)} entry_id={_futu_id or _order_id} "
+                        f"error={_stop_error} — 已 HALT_NEW_LIVE，既有仓位不平仓，请人工接管",
+                        level=_PushLevel.HIGH,
+                    )
+                except Exception as _stop_push_error:
+                    logger.error(
+                        f"[playbook] LIVE STOP fail push failed: {_stop_push_error}",
+                        exc_info=True,
+                    )
+                return {
+                    "success": False,
+                    "message": f"[LIVE_STOP_FAIL_CLOSE] {_stop_error}; HALT_NEW_LIVE",
+                    "broker_order_id": _futu_id or _order_id,
+                    "stop_protection_failed": True,
+                    "halted": True,
+                }
 
         # 2026-07-16: playbook 成交逐笔飞书推送 (复用 PushHub trade_entry)。
         #   来源精准标注 — sim→playbook_sim / live→playbook_live。自带 try/except, 绝不影响下单。
