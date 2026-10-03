@@ -8,13 +8,13 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from app.utils.timezone import ET, _localize
 
 from app.utils.symbol_utils import normalize_symbol
 
 POLICY_VERSION = "da_ue_v1"
 FUNNEL_PATH = Path(__file__).resolve().parents[2] / "data/shadow/candidate_funnel.jsonl"
-_ET = ZoneInfo("America/New_York")
+_ET = ET
 _SYMBOL = re.compile(r"US\.[A-Z]{1,6}(?:[.-][A-Z])?\Z")
 # 真实存在但**不在本策略可交易宇宙**的形状: 权证/优先股/存托份额等多字母后缀。
 #   实测 (2026-09-12, data/shadow/llm_universe_scan*.jsonl 近 901 次浮现):
@@ -141,7 +141,7 @@ def _source_time(quote, now):
         else:
             stamp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
             if stamp.tzinfo is None:
-                stamp = stamp.replace(tzinfo=_ET)
+                stamp = _localize(stamp, _ET)
         return stamp.isoformat(), (now - stamp).total_seconds()
     except (ValueError, TypeError, OverflowError, OSError):
         return None, None

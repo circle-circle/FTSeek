@@ -4,6 +4,7 @@
 """
 import json
 import sqlite3
+import sys
 from app.storage.db_pool import get_db_path
 import statistics as st
 
@@ -20,7 +21,8 @@ for r in c.execute("SELECT date, symbol, direction, atr_pct, raw_instruction_jso
         d = json.loads(ri) if ri else {}
         intent_dir = d.get("direction") or d.get("action") or d.get("signal")
     except Exception:
-        pass
+        print(f"skip bad raw_instruction_json row: {r['date']} {r['symbol']}", file=sys.stderr)
+        intent_dir = "(unparsable)"
     print(f"   {r['date']} {r['symbol']:9s} direction列={r['direction']!r} "
           f"atr_pct={r['atr_pct']} 意图方向={intent_dir!r} | {str(r['skip_reason'])[:46]}")
 dirs = set()

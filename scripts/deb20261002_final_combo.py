@@ -5,6 +5,7 @@
 """
 import json
 import sqlite3
+import sys
 from app.storage.db_pool import get_db_path
 import statistics as st
 
@@ -19,7 +20,8 @@ keys = {}
 for r in rows_all:
     try:
         md = json.loads(r["metadata_json"])
-    except Exception:
+    except Exception as exc:
+        print(f"skip bad metadata_json row: {exc}", file=sys.stderr)
         continue
     for k in md:
         keys[k] = keys.get(k, 0) + 1

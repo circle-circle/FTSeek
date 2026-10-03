@@ -69,7 +69,7 @@ def _position_still_open(symbol: str, direction: str) -> bool | None:
     except Exception as error:  # 守卫故障不得吞样本
         logger.warning(
             "[eth-held-exit-shadow] 持仓守卫查询失败 (fail-open 照常落样本): %s",
-            error)
+            error, exc_info=True)
         return None
     return any(_canon_direction(row[0]) == canon and float(row[1] or 0.0) > 0
                for row in rows)

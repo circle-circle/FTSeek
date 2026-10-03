@@ -9,6 +9,7 @@ db.py:41 的退化签名 = decision_id 内嵌日期 ≠ date 列 (历史仅 5 �
 """
 import re
 import sqlite3
+import sys
 from app.storage.db_pool import get_db_path
 from collections import defaultdict
 
@@ -61,7 +62,8 @@ keys_seen = defaultdict(int)
 for r, dd, cd in sig_B[:60]:
     try:
         j = json.loads(r["raw_instruction_json"] or "{}")
-    except Exception:
+    except Exception as exc:
+        print(f"skip bad raw_instruction_json row: {exc}", file=sys.stderr)
         continue
     for k in j:
         keys_seen[k] += 1

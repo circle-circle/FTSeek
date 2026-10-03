@@ -539,7 +539,7 @@ def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_dir
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as e:
-        logger.debug(f"[playbook] 方向审计日志失败: {e}")
+        logger.warning(f"[playbook] 方向审计日志失败: {e}", exc_info=True)
 
 
 # ── 模块级单例: 避免每只候选股票都新建 DB 连接 ─────────────────────────

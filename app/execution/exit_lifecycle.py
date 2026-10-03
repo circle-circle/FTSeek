@@ -601,7 +601,7 @@ class ExitLedger:
             except Exception as _cb_err:
                 logger.warning(
                     'exit_intent_release_blocked_callback_failed symbol=%s intent=%s: %s',
-                    symbol, _ev.get('intent_id'), _cb_err)
+                    symbol, _ev.get('intent_id'), _cb_err, exc_info=True)
         return released
 
 

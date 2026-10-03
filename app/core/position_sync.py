@@ -172,7 +172,8 @@ def _push_release_blocked(event):
                        symbol, intent_id[:12], ok)
         return bool(ok)
     except Exception as _push_err:  # 推送故障绝不影响对账
-        logger.warning("[US Sync] 释放被阻推送失败 (对账继续): %s", _push_err)
+        logger.warning("[US Sync] 释放被阻推送失败 (对账继续): %s", _push_err,
+                       exc_info=True)
         return False
 
 
@@ -227,7 +228,7 @@ def release_exit_intents_on_external_close(symbol, direction, reason, evidence=N
     except Exception as _release_err:  # 不阻断对账主流程
         logger.warning(
             "[US Sync] 出场意图释放失败 %s %s (对账继续, 可人工释放): %s",
-            symbol, direction, _release_err)
+            symbol, direction, _release_err, exc_info=True)
         return []
 
 # Legacy module-level constant - replaced by _get_db_path() for mode isolation
