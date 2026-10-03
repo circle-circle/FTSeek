@@ -97,3 +97,66 @@ def test_every_board_section_is_registered():
             if reg_id not in known:
                 missing.append(reg_id)
     assert not missing, f"看板段引用了未登记的注册 id: {missing}"
+
+
+# ── 推送门 (2026-10-03 清理批): 无料不推, 有料必推, 尺子坏了 fail-open ──────────
+def test_push_gate_silent_when_nothing_actionable(monkeypatch):
+    """无待裁 + 无守卫告警 ⇒ 不推送 (全文仍进日志)。"""
+    m = _load()
+    import app.review.criteria_status as cs
+    monkeypatch.setattr(cs, "pending_adjudications", lambda: [])
+    ok, reason = m._board_actionable("🌓 看板正常, 无任何 ⚠️")
+    assert ok is False
+    assert "无待裁" in reason
+
+
+def test_push_gate_pushes_on_pending_adjudication(monkeypatch):
+    """待裁面非空 ⇒ 必推 (含 id 清单)。"""
+    m = _load()
+    import app.review.criteria_status as cs
+    monkeypatch.setattr(cs, "pending_adjudications", lambda: [
+        {"id": "some_gate", "needs_adjudication": True}])
+    ok, reason = m._board_actionable("看板正常")
+    assert ok is True
+    assert "some_gate" in reason
+
+
+def test_push_gate_pushes_on_guard_marker():
+    """守卫告警 (生产者停摆等) 在看板正文 ⇒ 必推, 不依赖待裁面。"""
+    m = _load()
+    ok, reason = m._board_actionable("某段: ⚠️ 生产者停摆 data/x.jsonl 已 20 天未更新")
+    assert ok is True
+    assert "生产者停摆" in reason
+
+
+def test_push_gate_fails_open_when_query_breaks(monkeypatch):
+    """待裁面查询异常 ⇒ fail-open 推送 (尺子坏了必须可见, 不许静默)。"""
+    m = _load()
+    import app.review.criteria_status as cs
+    def _boom():
+        raise RuntimeError("sensor broken")
+    monkeypatch.setattr(cs, "pending_adjudications", _boom)
+    ok, reason = m._board_actionable("看板正常")
+    assert ok is True
+    assert "fail-open" in reason
+
+
+def test_main_push_suppresses_feishu_when_quiet(monkeypatch, capsys):
+    """main(push=True) 静默日: 不调 send_text, stdout 落 [push-gate] 抑制行。"""
+    m = _load()
+    import app.review.criteria_status as cs
+    monkeypatch.setattr(cs, "pending_adjudications", lambda: [])
+    sent = []
+    monkeypatch.setattr(m, "build_board", lambda: "quiet board")
+    class _FakeFeishu:
+        @staticmethod
+        def send_text(msg):
+            sent.append(msg)
+    import types
+    fake_mod = types.ModuleType("app.notifier.feishu")
+    fake_mod.send_text = _FakeFeishu.send_text
+    monkeypatch.setitem(__import__("sys").modules, "app.notifier.feishu", fake_mod)
+    m.main(push=True)
+    out = capsys.readouterr().out
+    assert sent == []
+    assert "[push-gate]" in out and "不推送" in out

@@ -14,6 +14,11 @@
 每日亏损对比 (回避省$ vs 照进多付$) + forward 攒样进度 + 毕业判据状态 + D案裁决进度。
 结算文件陈旧 (>26h) → 推警告行 (传感器失效可见化, 8/28 教训)。
 本脚本零写入 (DB ro + 不碰 jsonl), 失败时输出错误行而非静默。
+
+[2026-10-03 清理批 (REVIEW-20261003)] SNR 推送门: 双面均处「已读判据·自动续观」
+  (entry_delay_confirm 未到重看窗且无需用户裁; D案 adr035 机械判决已出且不接线)
+  时**静默退出** (空 stdout = Hermes 不推送, 报告内容不再日复一日刷屏);
+  任一面到期/待裁/传感器陈旧 ⇒ 照常全量推送。判定 fail-open: 查询失败不静默。
 """
 import json
 import sqlite3
@@ -38,6 +43,27 @@ def _fmt_usd(v: float) -> str:
     return f"${v:+,.0f}"
 
 
+def _auto_watch_only() -> bool:
+    """推送门: entry_delay_confirm 与 D案 双面均无待裁动作 ⇒ True (静默)."""
+    try:
+        sys.path.insert(0, str(REPO))
+        from app.playbook.shadow_registry import REGISTRY, adjudication_state
+        item = next(s for s in REGISTRY if s.id == "entry_delay_confirm")
+        st = adjudication_state(item)
+        if not (st["adjudicated"] and not st["overdue"] and not st["needs_user"]):
+            return False
+    except Exception:
+        return False  # fail-open: 判定不了就不静默 (尺子坏了必须可见)
+    try:
+        cf = json.loads(CF_LATEST.read_text())
+        verdict = (cf.get("summary", {}) or {}).get("adr035_verdict") or {}
+        if not verdict or verdict.get("wire_routing") is not False:
+            return False  # 无机械判决或待接线 ⇒ 有事, 推
+    except Exception:
+        return False
+    return True
+
+
 def main() -> int:
     now = datetime.now()
     lines = [f"🔬 入场确认门影子(D2') 日报 {now:%m-%d}"]
@@ -59,6 +85,10 @@ def main() -> int:
     r2 = [r for r in rows if r.get("delay_min") == 2 and r.get("status") == "ok"]
     if not r2:
         print("\n".join(lines + ["⚠️ jsonl 无 N=2 ok 行"]))
+        return 0
+
+    # ── SNR 推送门 (2026-10-03): 双面均「已读·自动续观」⇒ 空输出静默 ──
+    if _auto_watch_only():
         return 0
 
     # ── 昨日批次 (最近一个已结算交易日) ──

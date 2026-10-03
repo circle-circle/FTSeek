@@ -25,7 +25,10 @@ def _base_meta(**kw):
 
 # ── ① note_gate_swallowed_touch 单元 ──────────────────────────────────────
 
-def test_note_touch_long_records_once():
+def test_note_touch_long_records_once(monkeypatch):
+    # 2026-10-03 清理批: 生产开关已随判据窗满 KILLED 置 false (退役),
+    # 本文件钉的是「写方机制」而非开关默认值 ⇒ 显式强开。
+    monkeypatch.setattr(rts, "_enabled", lambda: True)
     meta = _base_meta()
     rts.note_gate_swallowed_touch(meta, "LONG", 101.5, 101.4, peak_profit_pct=1.5, held_minutes=30)
     assert rts.TOUCH_KEY in meta
@@ -37,7 +40,8 @@ def test_note_touch_long_records_once():
     assert meta[rts.TOUCH_KEY] is first
 
 
-def test_note_touch_short_and_no_touch():
+def test_note_touch_short_and_no_touch(monkeypatch):
+    monkeypatch.setattr(rts, "_enabled", lambda: True)
     meta = _base_meta()
     # SHORT: 价格 ≤ TP 才算触达
     rts.note_gate_swallowed_touch(meta, "SHORT", 98.5, 98.6, peak_profit_pct=1.4, held_minutes=20)
@@ -71,7 +75,8 @@ def _make_db(tmp_path, decision_id, meta_extra):
     return conn
 
 
-def test_settle_reentry_with_touch_writes_row(tmp_path):
+def test_settle_reentry_with_touch_writes_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(rts, "_enabled", lambda: True)
     conn = _make_db(tmp_path, "intraday_reentry_20260901_US.TEST",
                     {rts.TOUCH_KEY: {"price": 101.4, "ts": "t0", "held_minutes": 25.0,
                                      "mfe_pct": 1.4}})
@@ -114,7 +119,8 @@ def test_settle_disabled_flag_writes_nothing(tmp_path, monkeypatch):
 
 # ── ③④ 集成: 退出行为不变 + 触达记录 ──────────────────────────────────────
 
-def test_gate_swallowed_tp_no_exit_but_touch_recorded_long():
+def test_gate_swallowed_tp_no_exit_but_touch_recorded_long(monkeypatch):
+    monkeypatch.setattr(rts, "_enabled", lambda: True)
     # RR = 1.4/2.5 = 0.56 < 1.5 → TP 被门禁吞; 价格已越过 TP
     meta = _base_meta(take_profit=101.4, stop_loss=97.5)
     reason, exit_price, peak, be = _check_playbook_exit_rules(
@@ -126,7 +132,8 @@ def test_gate_swallowed_tp_no_exit_but_touch_recorded_long():
     assert rts.TOUCH_KEY in meta, "触达应记入 meta"
 
 
-def test_gate_swallowed_tp_no_exit_but_touch_recorded_short():
+def test_gate_swallowed_tp_no_exit_but_touch_recorded_short(monkeypatch):
+    monkeypatch.setattr(rts, "_enabled", lambda: True)
     meta = _base_meta(take_profit=98.6, stop_loss=102.5)
     reason, *_ = _check_playbook_exit_rules(
         direction="SHORT", entry_price=100.0, current_price=98.5,

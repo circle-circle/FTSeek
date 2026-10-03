@@ -1215,8 +1215,13 @@ playbook:
     #   → 提案恢复快TP(门禁豁免,另立DEB); 否则维持门禁+废 quick_tp。窗内禁改。
     #   归位说明: 本键必须在 execution_parameters 内 — get_playbook_config() 只合并
     #   risk/execution_parameters 两段, 放 playbook 顶层=死键 (2026-08-31 自查发现)。
-    #   回滚: false + 重启 (PlaybookConfig 单例缓存, 热重载不覆盖本路径)。
-    reentry_quick_tp_shadow_enabled: true
+    #   回滚: true + 热重载即生效 (2026-08-28 起 main.py 热重载回调调
+    #   invalidate_config_snapshots() 重置 PlaybookConfig 单例 — 此处旧注释
+    #   「热重载不覆盖本路径」已被该失效链推翻, 2026-10-03 复查更正)。
+    #   2026-10-03 清理批 (REVIEW-20261003): 窗 9/1-9/30 已满, 结算 13 行 reentry 实弹
+    #   tp_touched=0/13 ⇒ 判据「n≥10 触达」实际 n=0, 落「否则」分支 — 门禁维持,
+    #   影子 KILLED 停采 (quick_tp 参数删除另走 L3 待裁)。回滚: true + 注册表 revert。
+    reentry_quick_tp_shadow_enabled: false
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
     intraday_vol_gate_grace_min: 15
@@ -1650,7 +1655,10 @@ playbook:
   #   "12并发仓=3-4个相关赌注"假设被证伪(那是日累计开仓非同刻在场)。
   #   record-only零执行改动。判据 n≥30日+blocked≥30笔+净差>0+p<0.05才议真簇帽。
   #   回滚: false + 重启。
-  cluster_concentration_shadow_enabled: true
+  #   2026-10-03 清理批 (REVIEW-20261003): 44 日判据门已过 — cap3 blocked=29<30 且
+  #   被拦合计 +$433 (拦的全是盈利单, 方向反) ⇒ 0/3 门不过, 不立簇帽, 影子 KILLED
+  #   停采。回滚: true + 注册表 revert OBSERVING。
+  cluster_concentration_shadow_enabled: false
   # 2026-08-12 (时段策略分析①去同步化): 入场同步结构影子打标 — 8/11 实锤禁触窗解除
   #   瞬间 21秒5笔齐射 4亏1赢 (独立信号变相关性=1篮子单); 历史自然分散入场同区间
   #   +$487. 盘后打 volley 聚类(≤120s相邻) + 时段分区标签 → data/entry_sync_shadow.jsonl.
@@ -1668,7 +1676,10 @@ playbook:
   # 2026-08-16 (W_WEEK多夜持仓配套): 隔夜持仓×新指令冲突影子打标 — 执行段防御已有
   #   (pipeline L3244 同向拦截/反向放行), 本影子攒观测样本→data/conflict_shadow.jsonl。
   #   n≥30再裁候选端排除。回滚: false + 重启。
-  conflict_shadow_enabled: true
+  #   2026-10-03 清理批 (REVIEW-20261003): 36 事件/25 日达标 — 翻转仅 5 (成交 2),
+  #   候选端排除无证据, 影子 KILLED 停采 (执行侧方向感知防御不动)。回滚: true +
+  #   注册表 revert。
+  conflict_shadow_enabled: false
   # 2026-08-16 (空头供给断崖诊断): 空头转化漏斗影子打标 — SELL_SHORT 8/7后断崖,
   #   真实断点=LLM分析层 (35只→看空仅1), 解析DA日志评级分布攒样→data/short_funnel_shadow.jsonl。
   #   n≥10交易日再裁分层gate。回滚: false + 重启。
@@ -2138,7 +2149,10 @@ universe_expansion:
   # 2026-08-14 (DEB §13): 午间影子扫描开关 — ET 12:30 只 scan 不 inject, 独立 jsonl。
   #   判据: scripts/ue_midday_shadow_eval.py (≥10日+n≥30, 命中率≥55%且均值≥0.5%→开inject)。
   #   回滚: false 或删 crontab 行。
-  midday_shadow_enabled: true
+  #   2026-10-03 清理批 (REVIEW-20261003): 预注册判据 (8/14 用户裁) 实跑 FAIL —
+  #   10 日 n=41, 命中率 22.5% (门 55%), 均值 -0.78% (门 +0.5%) ⇒ 按判据自带处置
+  #   退役: 午间 cron 已注释 + 本键 false。回滚须另立 DEB (改判据=重裁)。
+  midday_shadow_enabled: false
   # Phase 0 (2026-08-23, DEB-20260823 策略侧): 同标的同方向冷却天数.
   #   LLM 对同一新闻可连续多天产出同标的同方向指令 (ORCL 连续 6 天空, 累计 -$100)。
   #   查 trade_records 近 N 天同标的同方向记录, 有则跳过不写入。0=禁用。回滚: 改 0。
@@ -2274,7 +2288,9 @@ universe_expansion:
   # UE-A3: 8-K/13DG clue 噪声过滤 (商品信托/权证/优先股, 保守向宁漏不误杀)。回滚: false。
   clue_sec_noise_filter: true
   # UE-B1影子: 全市场财报 clue 只记不喂 (ue_earnings_clue_shadow.jsonl)。回滚: false。
-  clue_earnings_shadow: true
+  #   2026-10-03 清理批 (REVIEW-20261003): write-only 38+ 天, 零判据/零 eval/零读方
+  #   (唯一引用=写方自身) ⇒ 按 write-only 纪律退役停采, 数据留档。重开须先立预注册判据。
+  clue_earnings_shadow: false
   # 2026-08-30 (DEB-20260829 第6轮, 用户裁"要 完成后提交"): C 系列观察项两开关。
   #   代码内 default=true, 显式声明使回滚路径可发现 (值与默认一致=零行为变更)。
   # DA-C1: 方向结构测量 (候选池方向分布 vs DA 输出方向分布) → ue_direction_structure.jsonl。回滚: false。

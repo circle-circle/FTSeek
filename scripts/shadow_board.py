@@ -702,7 +702,10 @@ def _init_table():
         (_sec_eth_short_family, (
             ("overnight_earnings_carry", "data/overnight_earnings_carry_shadow.jsonl", None),
             ("short_funnel_shadow", "data/short_funnel_shadow.jsonl", 4),
-            ("ue_short_boost_shadow", "data/ue_short_boost_shadow.jsonl", 4),
+            # 2026-10-03 清理批: 事件驱动写方 (SHORT boost 信号出现才写), 历史最大
+            # 自然间隙 11 天 (26 个写日, gap 中位 1) ⇒ 4 天阈会周期性误报停摆。
+            # 按 8 天校准 (历史上仅 1 次超过), 保留断流检测但去日推噪声。
+            ("ue_short_boost_shadow", "data/ue_short_boost_shadow.jsonl", 8),
             ("eth_earnings_direction_path", "data/earnings_direction_path_shadow.jsonl", 4),
         )),
     )
@@ -799,10 +802,45 @@ def build_board():
     return "\n".join(head + [""] + body + tail)
 
 
+def _board_actionable(board_text: str) -> tuple[bool, str]:
+    """推送门 (2026-10-03 清理批, REVIEW-20261003): 无待裁/无停摆 → 只落日志不推飞书.
+
+    SNR 治理背景: 看板此前 --push 每日全量推送, 而多数日子既无待裁项也无生产者
+    停摆 — 全文进日志 (cron 重定向), 推送面只保留「有事发生」的日子。
+    判定 (两路任一命中即推):
+      ① 待裁面: pending_adjudications() 里 needs_adjudication=True 的项
+         (判据已读但 needs_user / 重看闹钟到期 / READY 且无挂账);
+      ② 守卫告警: 看板正文含 生产者停摆/缺产物/注册面缺失/守卫行异常/整段异常。
+    fail-open 纪律: 待裁面查询失败 ⇒ 视为 actionable (尺子坏了必须可见, 不许静默)。
+    """
+    guard_markers = ("生产者停摆", "生产者缺产物", "注册面缺失", "守卫行异常", "整段异常")
+    hit = [m for m in guard_markers if m in board_text]
+    if hit:
+        return True, "看板守卫告警: " + "+".join(hit)
+    try:
+        from app.review.criteria_status import pending_adjudications
+        pending = [r.get("id") for r in pending_adjudications()
+                   if r.get("needs_adjudication")]
+    except Exception as e:
+        return True, f"待裁面查询失败 ({type(e).__name__}) — fail-open 推送"
+    if pending:
+        shown = ",".join(pending[:6]) + ("…" if len(pending) > 6 else "")
+        return True, f"待裁 {len(pending)} 项: {shown}"
+    return False, "无待裁/停摆事项"
+
+
 def main(push=False):
     msg = build_board()
     print(msg)
     if push:
+        try:
+            actionable, reason = _board_actionable(msg)
+        except Exception as e:
+            actionable, reason = True, f"推送门异常 ({type(e).__name__}) — fail-open"
+        if not actionable:
+            print(f"\n[push-gate] {reason} → 本次不推送 (全文已落日志; 2026-10-03 SNR 收口)")
+            return
+        print(f"\n[push-gate] {reason}")
         try:
             from app.notifier.feishu import send_text
             send_text(msg)

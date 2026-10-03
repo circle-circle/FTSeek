@@ -173,9 +173,15 @@ def test_ack_ids_must_exist_in_registry():
 
 
 def test_ack_does_not_hide_unclaimed_new_cases():
-    """豁免表只准含已实测认领的存量 4 条 (防后人批量塞 id 绕过守卫)。"""
+    """豁免表只准含已实测认领的条目 (防后人批量塞 id 绕过守卫)。
+
+    2026-10-03 清理批新增 4 条 (REVIEW-20261003, 各自 verdict_history 留证据):
+    premarket_peer_shadow / ue_midday_shadow / ue_earnings_clue_shadow /
+    eth_ext_entry_prefilter — 均为「判据终态但写方代码引用残留」型, 逐条 grep 实测后认领。
+    """
     expected = {"universe_expansion_shadow", "limit_entry", "da_glm_shadow",
-                "da_prompt_distill_shadow"}
+                "da_prompt_distill_shadow", "premarket_peer_shadow",
+                "ue_midday_shadow", "ue_earnings_clue_shadow", "eth_ext_entry_prefilter"}
     assert set(sr._CONSUMER_ACK) == expected, (
         f"豁免表新增了未认领条目: {set(sr._CONSUMER_ACK) - expected} — "
         f"每条必须逐条实测 (消费者是终点报表还是生产门) 后才可加, 禁批量豁免")

@@ -28,7 +28,6 @@ da_chain_health_report.py  # 存量测量/回填环, 台账回填待专项
 da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
 daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
 data_quality_census.py  # 存量测量/回填环, 台账回填待专项
-direction_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
 exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
 exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项
 factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
@@ -38,7 +37,6 @@ factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
 freeze_sentinel.py  # 存量测量/回填环, 台账回填待专项
 gap_alignment_shadow.py  # 存量测量/回填环, 台账回填待专项
 gap_chase_gate_eval.py  # 存量测量/回填环, 台账回填待专项
-gate_counterfactual_ruler.py  # 存量测量/回填环, 台账回填待专项
 gen_event_symbols.py  # 存量测量/回填环, 台账回填待专项
 ic_health_check.py  # 存量测量/回填环, 台账回填待专项
 ic_weekly_report.py  # 存量测量/回填环, 台账回填待专项
@@ -52,8 +50,6 @@ pangan_daily_rebuild.py  # 存量测量/回填环, 台账回填待专项
 position_path_collector.py  # 存量测量/回填环, 台账回填待专项
 premarket_data_check.py  # 存量测量/回填环, 台账回填待专项
 premarket_peer_shadow.py  # 存量测量/回填环, 台账回填待专项
-premarket_reprice_shadow.py  # 存量测量/回填环, 台账回填待专项
-regime_divergence_shadow.py  # 存量测量/回填环, 台账回填待专项
 rotate_data_backups.py  # 存量测量/回填环, 台账回填待专项
 sector_pulse.py  # 存量测量/回填环, 台账回填待专项
 settle_winner_overnight_shadow.py  # 存量测量/回填环, 台账回填待专项
@@ -62,7 +58,6 @@ short_supply_funnel_report.py  # 存量测量/回填环, 台账回填待专项
 slippage_report.py  # 存量测量/回填环, 台账回填待专项
 ssr_shadow_daily.py  # 存量测量/回填环, 台账回填待专项
 symbol_performance_report.py  # 存量测量/回填环, 台账回填待专项
-t5_hold_counterfactual.py  # 存量测量/回填环, 台账回填待专项
 trend_state_recorder.py  # 存量测量/回填环, 台账回填待专项
 trigger_gate_report.py  # 存量测量/回填环; 2026-09-06 修尺子批②追加 (用户裁「同意」) crontab 行加 --push 作动面 → 已入台账 §2.4 `crontab-trigger-gate-anchor-push` (锚点裁决推送, 周六 06:24); 存量回填专项仍待
 tripwire_checker.py  # 存量测量/回填环, 台账回填待专项

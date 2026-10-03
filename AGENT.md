@@ -25,6 +25,12 @@
 
 ## 军规（减法R2 裁决，2026-07-26）
 
+- **推送默认静默 (2026-10-03 清理批, REVIEW-20261003)**: 新增/修改报表推送一律走
+  「无料不推」门 (待裁/守卫告警/状态变化才推, 尺子坏了 fail-open) — 先例:
+  `shadow_board._board_actionable` / `pending_adjudication_carrier` (state 变化才推) /
+  D2' 入场确认门日报双面自动续观静默。影子/证伪事项到期必须**当日结算入注册表**
+  (判据 FAIL ≠采集自动停: 先查 `_CONSUMER_ACK`/消费方再动 cron); 在采影子未注册 = 禁止态,
+  注册表 (62→69 项) 是唯一 SSOT。
 - **新增推送必须走 `app/push/` hub**（去重/聚合/健康监控），禁止直连 notifier 或自写 webhook。存量 5 个旁路不动，08-29 后按"谁先出 bug 谁先迁"处理。
 - **新增熔断/regime 类机制前先查分层地图**：熔断见 `docs/circuit-breaker-map.md`（6 层正交，禁造平行层）；regime 合一待 shadow 分歧率数据（减法R2-5c）。
 - **归档/删除前的零引用验证必须覆盖五个调用面**：仓内 import / crontab / systemd / **Hermes prompt 文本**（`/root/.hermes/cron/jobs.json`）/ **`.git/hooks`**（2026-09-06 实证：`check_undefined_names.py` 被 pre-commit §5.5 引用，却在减法 R2 被当零引用归档，门禁静默失效 ~40 天）—— archive/ 目录必须零 import。

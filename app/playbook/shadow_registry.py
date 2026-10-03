@@ -126,10 +126,8 @@ class ShadowItem:
 #           needs_user = 判据读数已出但处置待用户裁 (与"自动续观"区分)。
 ADJUDICATED: dict[str, dict] = {
     "futu_channel_top_movers": {
-        # 2026-09-21 用户裁 (程序性, 批准记录见 handoff 当日下午增量): 闹钟设 9/30
-        # (判据字典 B13 禁改窗结束日), 到期一次性结算用途; 闹钟前不做任何实质改动、
-        # 不启动反向池论证。needs_user 保持 True = 9/30 结算仍需用户裁用途三选一。
-        "read_at": "2026-09-21", "recheck_after": "2026-09-30", "needs_user": True,
+        # 2026-10-03 闹钟到期, 用户确认执行 9/21b 建议③ (并入 kr3 轴, 不新增门/影子)。
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
         "note": "榜内横截面 IC=-0.44/t=-13 (榜首续跌) 与笔级 top10 +$15.20/笔 符号相反 ⇒ 用途待裁 "
                 "(RFC-092 §8.2/§9.1)。用途三条路 (排除/反向池/并入 kr3) 均需另立预注册。"
                 "2026-09-21 用户裁: 9/30 窗满后一次裁, 在此之前维持现状 (榜单继续做参考层输入)。"
@@ -138,11 +136,73 @@ ADJUDICATED: dict[str, dict] = {
                 "mid +0.6875 / bottom10 +0.7093 (榜首组最弱=反向); 30min 窗均值 +0.4286%。"
                 "⚠️ 尺子缺陷已修: 该脚本 verdict 判据是 abs(t)>=2 ⇒ 负 IC 也印 "
                 "IC_SIGNIFICANT_GRADUATE_CANDIDATE, 照抄会把「该反向用」读成「可接候选池(同向)」; "
-                "已在 stdout 加 [只印不判] IC 方向行并列十分位 (判决字段一字未动, 改判据=重新裁决)。",
+                "已在 stdout 加 [只印不判] IC 方向行并列十分位 (判决字段一字未动, 改判据=重新裁决)。"
+                "│2026-10-03 终裁: ③并入 kr3_direction_runup_gate 轴, 本影子不转正/不加门; "
+                "榜内横截面 IC 仅作 kr3 解读佐证。采集维持 (9/21 用户已裁继续采, "
+                "覆盖是③轴瓶颈)。",
     },
     "reentry_quick_tp_gate": {
-        "read_at": "2026-09-21", "recheck_after": "2026-09-30", "needs_user": False,
-        "note": "n=13/10 达标; 判据点名 9/1-9/30 窗内禁改, 到期一次性结算 (判据字典 B13)。",
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "窗满机械结算 (判据字典 B13; verdict_history 同日): 13 行 reentry 实弹, "
+                "tp_touched=0/13 ⇒ 判据轴「TP 触达 n≥10」实际 n=0, 落「否则」分支 — "
+                "门禁维持, quick_tp 参数在现行门禁下零触发。quick_tp 参数的删除属 L3 "
+                "待用户裁 (docs/decisions/REVIEW-20261003-shadow-cleanup.md), 影子本体已 "
+                "KILLED 停采。〔前读 2026-09-21: n=13/10 达标, 窗内禁改, 到期一次性结算。〕",
+    },
+    "premarket_reprice_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "窗 8/18-9/30, settled=58 (hold 26 / tighten 15 / be_raise 17)。"
+                "「按盘前价离场 vs 实际」差: hold -$756.83 (-$29.11/笔), "
+                "tighten -$397.72 (-$26.51/笔), be_raise +$31.04 (+$1.83/笔); "
+                "be_raise 组 15/17 触达 BE 线但总改善仅 $31 ⇒ 无可复现净改善, "
+                "KILLED 停采 (DEB-20260818-overnight-reprice-shadow)。",
+    },
+    "regime_divergence_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "54 行/51 交易日全部 all_agree=False, 但采集尺本身失真: 只有两个模块"
+                "产出标签, MarketRegimeDetector 无参 detect 用 vix=20/spy_change=0 "
+                "占位 (DEB-20260819-symbol-pangan); 不能按分歧率裁「语义正交/合一」。"
+                "无活消费者 ⇒ KILLED 停采, 数据留档。",
+    },
+    "reentry_gate_counterfactual": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "输入 data/intraday_reentry_shadow.jsonl 已 2026-09-17 停供, 最新行"
+                "9/16; 本尺 10/3 仍在重算同一份 3756 拒/1770 可评。与 "
+                "crontab-reentry-gate-effect 同型空转, KILLED 停采 "
+                "(docs/CONTROL-LOOP-LEDGER.md)。",
+    },
+    "direction_counterfactual_ruler": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "原始问题「方向是否稳定偏向/有 edge」已有终读: BUY intraday/T+1/T+3/"
+                "T+5 均落 45-55 掷币带; SELL_SHORT 4 档 3 档掷币带, 仅 intraday "
+                "55.7% 正指但均值 -0.016% (DEB-20260816 §19.2)。产物无活读者 ⇒ "
+                "KILLED 停采, 历史可手动复跑。",
+    },
+    "t5_hold_counterfactual": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "507 笔可评: T+5 反事实 -$13,436 vs 实际 -$2,038, Δ-$22.48/笔, "
+                "中位 Δ-$13.80; 描述带 ≤-$10 判「不支持摆动」。产物无活读者 ⇒ "
+                "KILLED 停采 (DEB-20260822-health-check-t5-counterfactual)。",
+    },
+    "ue_confirm_gate": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-31", "needs_user": False,
+        "note": "26 交易日/135 裁决/133 join: PRICE_IN n=57 mean +7.13% "
+                "(median +0.25%, 仙股尾部主导), CONFIRM n=69 mean -0.40% "
+                "(median -0.27%) ⇒ 判据两项方向均不过, verdict=KEEP_SAMPLING; "
+                "10/31 重看 (scripts/settle_ue_confirm_gate.py 产物)。",
+    },
+    "eth_ext_entry_prefilter": {
+        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        "note": "n=5/30, 末行 2026-09-18; EXT_PREFILTER_SHADOW 默认 false 且现行"
+                "crontab 未传 ⇒ 已停采。同人群价格轴由 ext_entry_exec_price_shadow "
+                "接管 (546 轮, $5→$50 二分反事实), 判 SUPERSEDED "
+                "(docs/debates/DEB-20260928-ext-exec-price50-shadow.md)。",
+    },
+    "ue_short_boost_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-10", "needs_user": False,
+        "note": "临时读数: n=54/60 (decision_id 去重), 末行 2026-09-28; "
+                "事件驱动写方最大自然间隙 11 天, 尚未达主门。10/10 重看并建/跑 "
+                "结算器; 未到门前不抬待裁 (DEB-20260805-supply §四.3)。",
     },
     "gap_chase_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -455,6 +515,49 @@ ADJUDICATED: dict[str, dict] = {
                 "本项可能长期停在分支②(留档反证), 这是判据文写明的预期结局之一, 不是断供。"
                 "本条是本 agent 上一轮自己登记的判据, 同型欠账 (登判据字典时漏同步注册表)。",
     },
+    # ── 2026-10-03 清理批: 待裁面「已读判据」登记 (把 7 项机械读数从 needs_user 面摘下,
+    #    全部为当日实跑/既有产物读数, 判据一字未改; 改判据=重新裁决) ──────────────────
+    "ue_tier_gate": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "10/03 实跑 ue_tier_gate_shadow_eval.py: 19/15 日, 候选 79, 被拦仅 7 "
+                "(fwd 可评: ALL 2 vs 放行 32; LONG 2 vs 17; SHORT 0 vs 15) ⇒ 被拦子样本"
+                "太小, verdict=KEEP_SAMPLING 自动续观。附带通道经济性 (只印不判): n=88 "
+                "净 −$770, 毛利率 −5.79bps < 费率 13.10bps, 净 t=−1.069 不显著。",
+    },
+    "ue_quote_freshness_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "10/03 实跑: 有效 14/10 日, genuine 龄 P95=1283.9s ≫ 阈值 90s (14 倍) ⇒ "
+                "verdict=NOT_READY — 现值激活会系统性误杀 (超阈 25 会新拒 15), 维持不激活。"
+                "预注册纪律: 不得事后改阈值重算; 盘前专属阈值须重新预注册。",
+    },
+    "fee_gate_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "fee_gate_shadow_latest.json (cron 45 6 产物): baseline n=64, 期望/笔 −$2.48; "
+                "各门 blocked 子集: price<$1 n=2 / 名义<$4k n=2 (exp −$41.6) / <$5k n=4 "
+                "(exp −$20.5) ⇒ 方向对 (被拦更差) 但子样本 2-4 笔太小, 不构成转正证据, "
+                "继续攒样至 10/11 双窗口回放终裁窗。",
+    },
+    "trail_lock_pyramid": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "10/03 实跑 settle: armed=31, settled=25, executable=22/40 ✗, 腿净中位 "
+                "−0.28 ✗, Σ净 −$13.63 ✗, 回吐门 ✓ (1/4), 日聚类 t=−2.312 MDE80=4.13 ⇒ "
+                "verdict=KEEP_SAMPLING — 负向读数但 n 未满 40, 按预注册攒满再机械判, 不提前裁。",
+    },
+    "rfc104_eth_event_plan": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-10", "needs_user": False,
+        "note": "graduation_check (10/03 09:08): 7/7 日 ✓, 计划带 0-44 ✓, 但覆盖率 "
+                "全行 PASS 仅 3/7 日 (fail 5 行/4 日) ⇒ verdict=NOT_READY, 阶段1 (影子消费) "
+                "不立项; 继续观察覆盖率是否收敛 (判据要求连续 7 日无漏票)。",
+    },
+    "ext_entry_exec_price_shadow": {
+        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "10/03 按预注册四点直读 jsonl+DB (n=546 轮/5 日, 门 ≥60 行/≥3 日 ✓; "
+                "完整口径与 SQL 见 docs/decisions/REVIEW-20261003-shadow-cleanup.md): "
+                "①中位 candidates_n=46 / current_price_pool_n=12 / shadow_pool_n=2; "
+                "②$5→$50 候选池缩减中位 73.9% (均值 72.7%); ③窗口内 EXT 实际成交 1 笔 "
+                "(ACN 10/01), entry<$50 占比 0/1; ④shadow 价池 ∩ 实际成交 = ACN 10/01 (1 命中, "
+                "即现行唯一成交不会被 $50 门槛排除)。首读完成但窗口仅 5 日 ⇒ 续观至判据窗/死线 11/30。",
+    },
 }
 
 
@@ -679,7 +782,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="futu_channel_top_movers",
         name="富途全市场盘中异动榜 (通道 E)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.SUPERSEDED,
         description="通道 E (8/29 新增, 能力利用率审计用户裁'全做'): get_top_movers_rank(Market.US) "
                     "全市场实时异动榜快照 (~1832标的, 每轮1行含Top100涨幅/换手/量比)。"
                     "此前系统盘中无异动发现通道 — 影子先行攒样评估 "
@@ -718,7 +821,13 @@ REGISTRY: list[ShadowItem] = [
                                       "⇒ ①≡kr3 的同一假设, 落地即重复; 且榜级 IC(-0.44) 与笔级(+15.2) 符号相反, "
                                       "说明'追高吃亏'在**已成交笔**上不成立 (与 kr3 自身'LONG blocked 胜率 73%、"
                                       "尾部支配'一致)。**处置: 做减法 — 不新增门/影子, 轴归 kr3 (③)**; "
-                                      "本项只保留其特有面 (榜内横截面 IC, kr3 不覆盖) 继续观测。"}],
+                                     "本项只保留其特有面 (榜内横截面 IC, kr3 不覆盖) 继续观测。"},
+                         {"date": "2026-10-03", "verdict": "SUPERSEDED (③并入 kr3 轴, 采集保留)",
+                          "evidence": "9/30 闹钟到期后, 用户确认执行 9/21b 建议③。判面: "
+                                      "不新增门/影子/反向池, 笔级追高假设归 "
+                                      "kr3_direction_runup_gate 轴; 本项仅保留特有横截面 IC "
+                                      "作解读佐证。采集开关继续 true (9/21 用户裁继续采, "
+                                      "RFC-092 §9.1/§10.3 与 config 注释), 停采须另行裁决。"}],
         notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
               "可量口径二: scripts/top_movers_trade_join.py (榜单 × 已成交笔, 用于评估'冷却'类用法); "
               "**同轴声明 (RFC-092b §9)**: 本榜'追高排除/冷却'用法与 kr3 测同一批笔 (rank≤10 的 11 笔中 10 笔落在 "
@@ -1112,7 +1221,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="reentry_quick_tp_gate",
         name="再入场快TP门禁吞掉",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="8/7 裁决的再入场快收 TP (RR≈0.58) 被 7/10 min_tp_rr=1.5 门禁静默吞掉, "
                     "13 笔实弹 0 笔 TAKE_PROFIT。影子记'价格触及被吞TP'反事实 + 平仓结算差, "
                     "回答'恢复快TP还是废quick_tp参数'。两次裁决互杀, 2026-08-31 退出核查发现。",
@@ -1125,8 +1234,23 @@ REGISTRY: list[ShadowItem] = [
                             "窗内禁改门禁/快收参数。",
         eval_script=None,
         created="2026-08-31",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (窗满机械结算: TP 触达 0/13)",
+             "evidence": "预注册窗 9/1-9/30 已闭 (B13: 到期一次性结算)。结算产物 13 行 reentry "
+                         "实弹全部落盘, 其中 **tp_touched=0/13** ⇒ 判据轴「TP 触达结算行 n≥10」"
+                         "实际 n=0, 落预注册「否则」分支: ①门禁维持 (现状即门禁, 零动作); "
+                         "②quick_tp 参数在现行 min_tp_rr=1.5 门禁下**物理零触发** = 死参数, "
+                         "其删除属 L3 生产变更, 本批仅提案不执行 (REVIEW-20261003 待裁面)。"
+                         "停采: reentry_quick_tp_shadow_enabled false (真 shadow-only 键, "
+                         "reentry_tp_shadow.py:42 热重载可读); 数据 13 行留档。回滚: 开关 true "
+                         "+ 本条 revert OBSERVING。"},
+        ],
         notes="count_mode=lines; 结算行含 is_reentry/touch/tp_vs_actual_pct; "
-              "DEB-20260831-reentry-quick-tp-gate-conflict §四; 判据字典 B13",
+              "DEB-20260831-reentry-quick-tp-gate-conflict §四; 判据字典 B13。"
+              "2026-10-03 清理批: 窗满结算判据轴 n=0 (0/13 触达) ⇒ KILLED; quick_tp 参数"
+              "处置 (删除/保留) 待用户裁, 不在本批执行。",
     ),
 
     # ── 隔夜退出时机重构批 (2026-09-02, 用户裁"方案C同意") ──
@@ -2039,13 +2163,21 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="eth_ext_entry_prefilter",
         name="入场判据①②对照影子",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.SUPERSEDED,
         description="现行判据 vs 对照判据在**同一批候选**上的裁决对照 (旧判据在生产误拦了多少)。只记账。",
         data_path="data/ext_entry_prefilter_shadow.jsonl",
         min_n=30,
         graduation_criteria="对照显示旧判据误拦持续存在且方向一致 ⇒ 提案切换判据; 影子与生产裁决不一致率需可解释",
         eval_script="scripts/eth_stage_daily_report.py",
         created="2026-09-23",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        cross_ref=("ext_entry_exec_price_shadow",),
+        verdict_history=[{"date": "2026-10-03", "verdict": "SUPERSEDED (同轴由 $50 执行池影子接管)",
+                          "evidence": "仅 5/30 行且 2026-09-18 后断流; 现行 cron 不传 "
+                                      "EXT_PREFILTER_SHADOW, 默认 false。DEB-20260928 "
+                                      "同轴枚举已将其列为旧案, 新影子 546 轮覆盖同人群 "
+                                      "price_band/$50 二分反事实。"}],
         notes="观测与决策解耦: 判据评估已前移到涨幅带/量闸之前, 否则样本被下游闸截断。",
     ),
     ShadowItem(
@@ -2069,6 +2201,7 @@ REGISTRY: list[ShadowItem] = [
                             "切换生产须另立 DEB + 用户裁。死线 2026-11-30 自动停采 "
                             "(防僵尸影子, eth_relative_volume_gate 同型先例)。",
         created="2026-09-28",
+        cross_ref=("eth_ext_entry_prefilter",),
         notes="P0.5 同轴枚举 (2026-09-28 复核后补登, 立案时漏查注册表违反当日 template 新增"
               "强制项): ①eth_ext_entry_prefilter — 同人群(盘前入场候选)同轴(price_band 五档含 "
               "$50~200)且粒度更细, 但末行 2026-09-18、EXT_PREFILTER_SHADOW 默认 false 且 "
@@ -2448,7 +2581,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="premarket_peer_shadow",
         name="盘前存储峰群影子 (MU/SNDK/WDC/STX 同向+放量)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="富途盘前趋势+成交量对存储峰群做「同向+放量」双条件确认, 与 DA 指令方向对照 "
                     "join pnl_pct (假设: 峰群确认时胜率/收益更好? 背离时更该 SKIP?)。看板段6 数据面。",
         data_path="data/shadow/premarket_peer_shadow.jsonl",
@@ -2458,10 +2591,160 @@ REGISTRY: list[ShadowItem] = [
                             "(打法自述同 divergence_arbitration: 先攒证据, 有 edge 再切执行前置闸门)。",
         eval_script="scripts/premarket_peer_shadow.py",
         created="2026-07-13",
+        last_evaluated="2026-10-03",
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (判据面 7/22 已证伪; 采集转生产输入, 同 universe_expansion 先例)",
+             "evidence": "判据面 (峰群确认→跟随) 7 天回测 **-8.48%** 已于 7/22 证伪 "
+                         "(llm_universe_scan.py `_gather_peer_surge` docstring 载明); 此后注册表一直挂 "
+                         "NO_CRITERIA「待立 DEB」⇒ 判据无预注册、裁决无出口 = 本清理批要治的攒样无目标形态。"
+                         "**采集保留**: premarket_peer_shadow.jsonl 是 UE 盘前 clue `_gather_peer_surge` "
+                         "(evidence_ref=peer_surge) 的**唯一数据源** (scripts/llm_universe_scan.py:1441-1449), "
+                         "摘 cron = 改 UE 交易行为超授权 — 与 universe_expansion_shadow 9/26 KILLED 同型: "
+                         "判据退役 ≠ 采集退役。故不设 collection_retired (语义矛盾); 两条 cron 维持。"},
+        ],
         notes="补登 (2026-09-26 RFC-109②): cron 5 21 * * 1-5 采集 + 12 6 * * 2-6 --refresh-join "
               "回填 pnl。按 date upsert ⇒ count_mode=distinct:date (行数=交易日数)。",
-        no_adjudication_reason="NO_CRITERIA: 无预注册数值门 (补登不得事后造判据) — 裁决前先立 DEB",
+        no_adjudication_reason="PERMANENT_MEASURE: 判据已退役 (7/22 证伪), 采集喂 UE 生产 prompt "
+                               "(peer_surge clue) — 与 universe_expansion_shadow 同型, 无毕业门",
         count_mode="distinct:date",
+    ),
+    ShadowItem(
+        id="premarket_reprice_shadow",
+        name="隔夜仓盘前重定价影子",
+        status=ShadowStatus.KILLED,
+        description="盘前价格信号 → be_raise/tighten/hold 建议, 次轮用完整日K与实际"
+                    "平仓结局结算, 回答「持有中保护线是否应盘前动态重定价」。",
+        data_path="data/premarket_reprice_shadow.jsonl",
+        min_n=30,
+        graduation_criteria="RFC-067 预注册: n≥30 settled 且 be_raise/tighten 各≥5, "
+                            "相对 hold 基线有可复现净改善才提案转正; 否则关门。",
+        created="2026-08-18",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-03", "verdict": "KILLED (无可复现净改善)",
+                          "evidence": "settled=58: hold 26 / tighten 15 / be_raise 17。"
+                                      "盘前价离场反事实差: hold -$756.83 (-$29.11/笔), "
+                                      "tighten -$397.72 (-$26.51/笔), be_raise +$31.04 "
+                                      "(+$1.83/笔); be_touched=15/17。be_raise 微弱正差 "
+                                      "不足支撑行为变更, tighten/hold 均负。"}],
+        notes="2026-10-03 cron 21:02 行已注释退役, 数据留档; 无服务重启/交易行为变更。"
+              "count_mode=where:settled=True — 判据 n 轴为已结算行。",
+        count_mode="where:settled=True",
+    ),
+    ShadowItem(
+        id="regime_divergence_shadow",
+        name="regime 判定分歧率对比器",
+        status=ShadowStatus.KILLED,
+        description="同一时刻采集 7 套 regime/市场状态模块, 预注册 n≥10 交易日后按分歧率"
+                    "裁「合一」或「重命名消歧」。",
+        data_path="data/shadow/regime_divergence.jsonl",
+        min_n=10,
+        graduation_criteria="DEB-20260726 §R2-5c: 分歧率<10% ⇒ 冗余合一; 分歧率高 ⇒ "
+                            "重命名消歧。前提是各模块同输入/同语义可比较。",
+        created="2026-07-26",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-03", "verdict": "KILLED (尺子失真, 不构成判据读数)",
+                          "evidence": "54 行/51 交易日 all_agree=False; 但仅 2 套产出标签, "
+                                      "MarketRegimeDetector.detect() 无参调用使用默认占位 "
+                                      "(DEB-20260819-symbol-pangan §43.5)。无活消费者。"}],
+        notes="2026-10-03 cron 23:00 行已注释退役; 数据留档。count_mode=distinct:date。",
+        count_mode="distinct:date",
+    ),
+    ShadowItem(
+        id="reentry_gate_counterfactual",
+        name="再入场证伪门 T+5 反事实尺子",
+        status=ShadowStatus.KILLED,
+        description="读 intraday_reentry_shadow 被拒行, 用日K算 T+5 方向带符号收益并按"
+                    "拒因聚合, 度量证伪门是否误拦赢家。描述性证据, 不构成启停判据。",
+        data_path="data/gate_cf_latest.json",
+        min_n=0,
+        graduation_criteria="描述性遥测, 无转正门 (docs/design/2026-08-22_execution_accuracy_blueprint.md)。",
+        eval_script="scripts/gate_counterfactual_ruler.py",
+        created="2026-08-22",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-03", "verdict": "KILLED (输入源已停供, 冻结重算空转)",
+                          "evidence": "intraday_reentry_shadow 最新行 2026-09-16 "
+                                      "(intraday_reentry.enabled=false 后停供); 10/2 仍重算 "
+                                      "同一份 3756 拒/1770 可评, 与 reentry_gate_effect_tracker "
+                                      "2026-09-23 冻结同型。"}],
+        notes="2026-10-03 cron 06:56 行已注释退役; 产物留档。若将来 intraday_reentry 重启, "
+              "须先复活本尺并重开影子窗。",
+    ),
+    ShadowItem(
+        id="direction_counterfactual_ruler",
+        name="方向反事实尺子",
+        status=ShadowStatus.KILLED,
+        description="指令级方向×周期矩阵 + 候选级反事实对侧视图, 回答方向是否稳定偏向/"
+                    "有 edge。预注册 45-55% 为掷币带, 只产读数不设门。",
+        data_path="data/direction_counterfactual_ruler_latest.json",
+        min_n=30,
+        graduation_criteria="DEB-20260816 §19.2: n≥30 后, 命中率<45% 反指 / 45-55 掷币带 / "
+                            ">55 正指; 只作方向裁决读数。",
+        eval_script="scripts/direction_counterfactual_ruler.py",
+        created="2026-08-20",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-03", "verdict": "KILLED (原始问题已答, 产物无活读者)",
+                          "evidence": "BUY 4 档均掷币带; SELL_SHORT 4 档 3 档掷币带, "
+                                      "唯一 intraday 55.7% 正指但 dir_mean=-0.016%。"
+                                      "产物全仓无代码读者, 仅历史 DEB 引用。"}],
+        notes="2026-10-03 cron 06:50 行已注释退役; latest/history 留档, 可手动复跑。",
+    ),
+    ShadowItem(
+        id="t5_hold_counterfactual",
+        name="T+5 摆动持有反事实尺子",
+        status=ShadowStatus.KILLED,
+        description="对已平仓 PLAYBOOK 交易反事实持有至 T+5 收盘, 同费配对比较实际净额, "
+                    "供「更长持有期」赛道判读参考。",
+        data_path="data/t5_hold_cf_latest.json",
+        min_n=30,
+        graduation_criteria="DEB-20260822 §四: 描述带 Δ/笔 ≥+$10 支持 / ±$10 中性 / "
+                            "≤-$10 不支持; 不替代任何 GO/PIVOT/STOP 判据。",
+        eval_script="scripts/t5_hold_counterfactual.py",
+        created="2026-08-22",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-03", "verdict": "KILLED (不支持摆动, 产物无活读者)",
+                          "evidence": "507 笔: actual -$2,038.38, T+5 CF -$13,436.21, "
+                                      "Δ-$22.48/笔, 中位 Δ-$13.80, CF 胜率 47.7% vs "
+                                      "实际 58.4%。"}],
+        notes="2026-10-03 cron 06:53 行已注释退役; latest/history/SPY cache 留档。",
+    ),
+    ShadowItem(
+        id="da_true_reverse_shadow",
+        name="多LLM真反向影子 (阶段0)",
+        status=ShadowStatus.OBSERVING,
+        description="扫描 DA checkpoint, 登记分析师与独立挑战者 BUY↔SELL_SHORT 真反向"
+                    "及反证/失效/翻向条件; Phase 0 record-only, 不改仲裁和交易路径。",
+        data_path="data/shadow/da_true_reverse.jsonl",
+        min_n=5,
+        graduation_criteria="RFC-125 §5: 连续≥5 交易日正常落盘, 非空 decision_id 多行=0, "
+                            "checkpoint 与事件一致, 写失败率<1%; Phase 1 enforcement 另需用户裁。",
+        created="2026-10-01",
+        last_evaluated="2026-10-03",
+        no_adjudication_reason="NO_EVAL_SCRIPT: 阶段0健康轴是 cron 扫描成功率而非事件行数; "
+                               "现无独立 eval, 达窗后人工核对 logs 与事件再呈裁",
+        notes="cron 20:50 * * 1-5 幂等补扫; 当前 2 条独立真反向 (TSLA 9/23 / ORCL 9/29)。"
+              "事件行数≠交易日健康行, 故不用计数器自动 READY。",
+    ),
+    ShadowItem(
+        id="ue_confirm_gate",
+        name="UE 开盘确认门 (U11)",
+        status=ShadowStatus.OBSERVING,
+        description="llm_universe_scan confirm 每交易日裁决 PRICE_IN/CONFIRM/REVERSED, "
+                    "结算器 join fwd_ret_t1 判断确认门是否应接为 inject 前置闸。",
+        data_path="data/shadow/ue_confirm_gate_report_latest.json",
+        min_n=30,
+        graduation_criteria="≥10 交易日 ∧ n≥30 ∧ PRICE_IN 前瞻≤0 ∧ CONFIRM 前瞻>0 → "
+                            "READY_TO_ADJUDICATE; 任一不满足 → KEEP_SAMPLING。",
+        eval_script="scripts/settle_ue_confirm_gate.py",
+        created="2026-08-26",
+        last_evaluated="2026-10-03",
+        notes="采集 cron 21:40/22:40 由 llm_universe_scan.py confirm 承担; 结算 cron 06:04。"
+              "当前读数 KEEP_SAMPLING, 10/31 重看。count_mode=json_key:n_verdicts_total。",
+        count_mode="json_key:n_verdicts_total",
     ),
     ShadowItem(
         id="short_funnel_shadow",
@@ -2512,7 +2795,8 @@ REGISTRY: list[ShadowItem] = [
         eval_script=None,
         created="2026-08-06",
         notes="补登 (2026-09-26 RFC-109②): 写方=llm_universe_scan 指令写入环 (开关只读一次)。"
-              "count_mode=distinct:decision_id (每指令一样本, 防重跑灌水)。",
+              "count_mode=distinct:decision_id (每指令一样本, 防重跑灌水)。"
+              "2026-10-03 临时读数 54/60, 重看闹钟 10/10。",
         no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (主门 n=60, 补登时 52/60) 但无结算执行体 — 达门前建 eval 或届时人工结算",
         count_mode="distinct:decision_id",
     ),
@@ -2649,9 +2933,157 @@ REGISTRY: list[ShadowItem] = [
                             "gross_bps_notional_weighted_excl_top3 剔极值口径 — DEB② 撤回后, "
                             "「≥$100 层剔极值仍正」观察项并入本产物跟踪。",
         eval_script="scripts/ticket_size_breakeven.py",
+        # 2026-10-03 清理批: read_only 按需重算器 (无 cron 亦不应挂 cron — 产物只在
+        # 人工复核时刷新), 同 sltp_verify_shadow 等 11 条 eval_on_demand 先例。
+        eval_on_demand=True,
         created="2026-07-11",
         notes="补登 (2026-09-28): 产物 since 2026-07-11、read_only。DEB-20260928② (供给价格分层) "
               "因 P0.5 普查未见本项而重复立案, §15.2/§17.3 双重确认后撤回并入本项。",
+    ),
+
+    # ── 2026-10-03 清理批 (REVIEW-20261003): 补 SSOT 缺口 + 到期裁决落地 ──────────
+    # 立项理由: 交叉审计发现 5 条**在采**影子未注册 (config 开关 true + 产物日更,
+    # 注册表查无) ⇒ 周检/待裁面/挂载哨兵全部失明; 其中两条 (cluster/conflict)
+    # 判据门早已达标无人裁, 一条 (ue_midday) 预注册判据已 FAIL 未执行退役处置。
+    ShadowItem(
+        id="shadow_portfolio",
+        name="影子组合 (全门被拦指令反事实 P&L 台账)",
+        status=ShadowStatus.OBSERVING,
+        description="pipeline 对「被门拦下但本会触发」的指令按 (inst_id,date) 去重登记, "
+                    "盘后按生产退出栈重放到当日收盘 (settle_shadow_portfolio.py, Hermes "
+                    "08:10 no_agent, 空结算静默), 回答「每道门拦掉的到底是钱还是坑」。"
+                    "用户口径: 影子组合 = 证伪门/门禁族的统一反事实地基。",
+        data_path="data/shadow_portfolio_entries.jsonl",
+        config_key="playbook.shadow_portfolio_enabled",
+        min_n=0,
+        graduation_criteria="永久测量项 — 无毕业门 (反事实台账随门族存续); 单门归因禁用本台账 "
+                            "(跨原因去重先到先占, 漏计后发原因), 归因须用 "
+                            "trigger_miss_telemetry.jsonl (逐轮按 reason 区分)。",
+        eval_script="scripts/settle_shadow_portfolio.py",
+        eval_on_demand=True,
+        created="2026-08-09",
+        notes="2026-10-03 补登记 (清理批): 采集+结算+消费链全活 (ic_weekly_report 读 outcomes; "
+              "Hermes 影子组合每日结算 job), 但注册表查无 ⇒ 挂载/待裁面失明。结算 cron 在 "
+              "Hermes (shadow_settle_daily.sh) 而非 root crontab ⇒ eval_on_demand=True "
+              "(同 sltp_verify 先例)。count_mode=lines (行=已登记被拦指令, 结算端幂等去重)。",
+        no_adjudication_reason="PERMANENT_MEASURE: 反事实地基, 无毕业门 (详见判据字段)",
+        count_mode="lines",
+    ),
+    ShadowItem(
+        id="cluster_concentration_shadow",
+        name="簇浓度影子 (同簇并发开仓帽反事实)",
+        status=ShadowStatus.KILLED,
+        description="scheduler AFTER_HOURS 重放每日开仓, 按手工簇映射记同簇并发数, "
+                    "任意 cap (3/4/5/6) 可离线重切 — 回答「日开仓帽16/并发帽12 之外, "
+                    "是否需要结构维度(单簇)真帽」。写方 scripts/cluster_concentration_shadow.py。",
+        data_path="data/cluster_concentration_shadow.jsonl",
+        config_key="playbook.cluster_concentration_shadow_enabled",
+        min_n=30,
+        graduation_criteria="写方头部预注册 (逐字, summary.criteria 同步): n≥30日 且 "
+                            "blocked≥30笔 且 blocked_pnl净差>0 + 符号p<0.05 才议真簇帽。",
+        eval_script=None,
+        created="2026-08-27",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (判据门 44 日已过, 方向反 + 子样本不足)",
+             "evidence": "summary (updated 10/02): n_days=44 ✓ (门 30); cap3 blocked=29 ✗ (门 30, "
+                         "最激进档仍差 1 笔), 且 blocked_pnl_sum=**+$433.18** — 被拦的是**盈利单**, "
+                         "立帽=主动弃利, 与判据『净差>0』方向相反; cap4/5/6 拦得更少 (8/4/2 笔)。"
+                         "max_cluster_concurrent_ever=7。三条门 0/3 过 ⇒ 不立簇帽。停采: "
+                         "cluster_concentration_shadow_enabled=false (scheduler 读 ConfigContainer, "
+                         "热重载可读); 44 日数据 + summary 留档。回滚: true + revert OBSERVING。"},
+        ],
+        notes="2026-10-03 补登记+结案 (清理批): 未注册 44 天且判据门早已到期无人裁。"
+              "采集停后 summary 不再刷新 — 读历史以 verdict 落档日为界。",
+    ),
+    ShadowItem(
+        id="conflict_shadow",
+        name="隔夜持仓×新指令冲突影子",
+        status=ShadowStatus.KILLED,
+        description="W_WEEK 多夜持仓后, 隔夜股次日被 DA/UE 再选中时记录冲突形态 "
+                    "(同向拦截/反向翻转/候选浪费)。执行段已有方向感知防御 "
+                    "(pipeline 同向拦截/反向放行), 本影子回答「是否还需候选端排除」。"
+                    "写方 scripts/conflict_shadow_tag.py (AFTER_HOURS)。",
+        data_path="data/conflict_shadow.jsonl",
+        config_key="playbook.conflict_shadow_enabled",
+        min_n=30,
+        graduation_criteria="scheduler 挂载注释预注册 (逐字): n≥30 再裁是否加候选端排除。",
+        eval_script=None,
+        created="2026-08-16",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (n=36 达标: 频率低, 排除提案无证据)",
+             "evidence": "36 事件/25 交易日 (n≥30 ✓): 同向拦截 28 (既有方向感知防御在位), "
+                         "反向翻转仅 5 (其中实际成交 2: HOOD 9/8, ACN 10/2; ACN 结局未平), "
+                         "候选浪费 3。翻转频率 ≈0.2/日 (5/36=14%); 成交翻转结局 n=2 不可判。"
+                         "⇒ 候选端排除无证据支持, 不提案; 停采: conflict_shadow_enabled=false "
+                         "(热重载可读); 36 行留档。回滚: true + revert OBSERVING。"},
+        ],
+        notes="2026-10-03 补登记+结案 (清理批): 未注册 48 天, n≥30 门早已过无人裁。"
+              "既有执行侧防御 (同向拦截/反向放行) 继续在位, 本裁决零交易行为变更。",
+    ),
+    ShadowItem(
+        id="ue_midday_shadow",
+        name="UE 午间影子扫描 (12:30 ET 浮现前瞻)",
+        status=ShadowStatus.KILLED,
+        description="午间独立扫描 (llm_universe_scan.py scan --midday) 落 "
+                    "llm_universe_scan_midday.jsonl, 主链路 (inject/push/score/DA供料) 只读主 "
+                    "scan 文件, 午间记录零污染。判据: 方向调整后 12:30→收盘前瞻。",
+        data_path="data/shadow/llm_universe_scan_midday.jsonl",
+        config_key="universe_expansion.midday_shadow_enabled",
+        min_n=30,
+        graduation_criteria="scripts/ue_midday_shadow_eval.py 头部预注册 (DEB-20260814 §13.3, "
+                            "2026-08-14 用户裁, 逐字): ≥10 交易日 且 午间浮现 n≥30 "
+                            "(tradeable, 按 symbol+date 去重); 命中率 (ret≥0.5%) ≥55% 且均值 "
+                            "≥+0.5% → 开启午间 inject (带全套守卫); 否则: 退役 (删 crontab 行 + "
+                            "midday_shadow_enabled=false), 零残留。",
+        eval_script="scripts/ue_midday_shadow_eval.py",
+        created="2026-08-14",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (预注册判据双 FAIL, 机械执行退役处置)",
+             "evidence": "10/03 09:56 实跑 ue_midday_shadow_eval.py: 10 个交易日 (门 ≥10 ✓), "
+                         "tradeable n=41 (可评 40, 门 ≥30 ✓); 命中率 22.5% (门 55% ✗), "
+                         "均值 −0.78% (门 +0.5% ✗) ⇒ **双判据 FAIL**。按预注册处置原文执行: "
+                         "① cron 午间行 30 0 * * 2-6 已注释 (墓碑留档); ② "
+                         "midday_shadow_enabled=false。数据 50 行/35 日留档。回滚: 去 cron 注释 + "
+                         "开关 true + revert OBSERVING (改判据=重裁, 须另立 DEB)。"},
+        ],
+        notes="2026-10-03 补登记+结案 (清理批): 采集 50 天未注册; 判据 8/14 用户裁预注册, "
+              "今日实跑读数 FAIL ⇒ 按其自带处置机械退役。此为清理批停掉的唯一**日频 LLM 扫描** "
+              "(每日 12:30 ET 一次 scan, 判据已死后继续空跑 = 空耗实锤)。",
+    ),
+    ShadowItem(
+        id="ue_earnings_clue_shadow",
+        name="UE 财报 clue 影子 (全市场只记不喂)",
+        status=ShadowStatus.KILLED,
+        description="llm_universe_scan.py 将全市场财报 clue 落 "
+                    "ue_earnings_clue_shadow.jsonl 而不进 clue brief (record-only), "
+                    "用于后续评估财报 clue 的边际价值。写方 gated by "
+                    "universe_expansion.clue_earnings_shadow (DEB-20260829 第3轮, UE-B1)。",
+        data_path="data/shadow/ue_earnings_clue_shadow.jsonl",
+        config_key="universe_expansion.clue_earnings_shadow",
+        min_n=30,
+        graduation_criteria="无 — 立项时只声明「只记不喂」, 从未预注册数值门, 也无 eval 脚本 "
+                            "(补登不得事后造判据)。",
+        eval_script=None,
+        created="2026-08-26",
+        last_evaluated="2026-10-03",
+        collection_retired=True,
+        verdict_history=[
+            {"date": "2026-10-03", "verdict": "KILLED (write-only 38 天, 零判据零消费方)",
+             "evidence": "交叉审计: 全仓唯一引用 = 写方自身 (scripts/llm_universe_scan.py:1315), "
+                         "**零读方/零 eval/零预注册判据**; 产物 100KB 持续增长 38+ 天。按 "
+                         "AGENT.md「无消费方的字段一律删 — write-only 是膨胀主因」同纪律与用户 "
+                         "2026-10-03 清理令 (减攒样/提信噪比) 退役: clue_earnings_shadow=false "
+                         "(热重载可读), 数据留档。回滚: true + revert OBSERVING (届时须先补预注册判据)。"},
+        ],
+        notes="2026-10-03 补登记+结案 (清理批): 未注册 38 天。若未来重开, 判据必须先立 "
+              "(同 premarket_peer 教训: 无判据攒样 = 无出口)。midday 影子同日 KILLED 与本条无关 "
+              "(彼有预注册判据, 此无)。",
     ),
 ]
 
@@ -2926,6 +3358,27 @@ _CONSUMER_ACK: dict[str, str] = {
     "da_prompt_distill_shadow": (
         "同上 daily_llm_token_report.py 终点报表 (读 v2_tokens_in/out 统计蒸馏增量成本)。"
         "⇒ 停采只让成本表少一行, 不断生产料。"),
+    # ── 2026-10-03 清理批新增认领 (终态但产物仍喂生产链, 逐条写理由) ──────────────
+    "premarket_peer_shadow": (
+        "2026-10-03 清理批判 KILLED 时实测确认: **采集必须保留** — "
+        "scripts/llm_universe_scan.py `_gather_peer_surge` (cron 主 scan 21:10 在挂) 只读本文件"
+        "当日 peers_snapshot 行, 是 UE 盘前 clue (evidence_ref=peer_surge) 的唯一数据源; "
+        "摘采集 cron = 改 UE 交易行为, 超出判据退役授权 — 与 universe_expansion_shadow "
+        "9/26 先例同型 (判据 KILLED ≠ 采集退役)。详见本条 verdict_history。"),
+    "ue_midday_shadow": (
+        "2026-10-03 判据 FAIL 退役: llm_universe_scan.py 是**写方** (scan --midday 分支, "
+        "唯一引用=模块常量 _MIDDAY_PATH), 非生产读方。退役后午间 cron 已注释 + "
+        "midday_shadow_enabled=false ⇒ 该分支 inert (不再被调度; 即使手动跑也被开关跳过)。"
+        "eval 脚本仅按需读历史留档。停采不断任何生产料。"),
+    "ue_earnings_clue_shadow": (
+        "2026-10-03 write-only 退役 (grep 实测): llm_universe_scan.py 是**写方** (clue 收集分支, "
+        "唯一引用=模块常量 _EARNINGS_SHADOW_PATH), 非生产读方。clue_earnings_shadow=false "
+        "⇒ 该分支 inert; 全仓无其他读方。停采不断任何生产料。"),
+    "eth_ext_entry_prefilter": (
+        "2026-10-03 SUPERSEDED 归档: 活跃 cron 调 extended_hours_entry_executor.py, 但该文件"
+        "对本 jsonl 是**写方** (PREFILTER_SHADOW 常量 + _record_prefilter_shadow); 现行 cron "
+        "未传 EXT_PREFILTER_SHADOW 且默认 false ⇒ 写分支 inert, grep 实测无生产读方。"
+        "停采不断任何生产料。"),
 }
 
 
