@@ -3180,6 +3180,8 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
     risks = list(getattr(inst, "risks", []) or [])
     dq = getattr(inst, "data_quality", {}) or {}
     ok_dims = sum(1 for v in dq.values() if v == "ok")
+    decision_id = str(getattr(inst, "decision_id", "") or "")
+    is_da_instruction = decision_id.startswith("DA-")
     return {
         "date": today,
         "symbol": inst.symbol,
@@ -3208,6 +3210,7 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         "matched_patterns": [],
         "pattern_verdict": None,
         "raw_instruction": {
+            "source": "deep_analysis" if is_da_instruction else "",
             "entry_price_source": getattr(inst, "entry_price_source", ""),
             "atr_source": getattr(inst, "atr_source", ""),
             # 2026-07-11 Stage 1: DA 真实论点存入 raw json (不占独立列, 不覆盖模板 thesis)
@@ -3224,7 +3227,7 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         # 2026-08-05 (DEB-20260805 项C 终裁): model_used 归因补全 — 本映射走 TechnicalFallbackAdapter
         #   确定性链 (无 LLM), 原恒 NULL (NVDA 08-04 topup_pool 缺口实例). UE 路径由
         #   llm_universe_scan 记录级写真实模型名, DA skill 写 config.LLM_MODEL, 互不覆盖.
-        "model_used": getattr(inst, "model_used", None) or "deterministic",
+        "model_used": None if is_da_instruction else (getattr(inst, "model_used", None) or "deterministic"),
         "horizon": getattr(inst, "horizon", "short"),
         "horizon_confidence": getattr(inst, "horizon_confidence", 0.0),
         "horizon_reasoning": getattr(inst, "horizon_reasoning", {}),

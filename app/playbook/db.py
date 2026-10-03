@@ -576,6 +576,9 @@ class PlaybookDB:
                 )
                 return _existing[-1][0]
 
+        if _target_id is not None:
+            _preserve_same_decision_trace(conn, inst, _target_id, _did_new)
+
         _params = (
             inst.get("date"),
             inst.get("symbol"),
@@ -1573,6 +1576,36 @@ def _to_json(value) -> Optional[str]:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def _preserve_same_decision_trace(conn, inst: Dict[str, Any], target_id: int, decision_id: str) -> None:
+    if not decision_id:
+        return
+    row = conn.execute(
+        "SELECT decision_id, raw_instruction_json, model_used "
+        "FROM playbook_instructions WHERE id=?",
+        (target_id,),
+    ).fetchone()
+    if row is None or row[0] != decision_id:
+        return
+
+    def decode_raw(value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return value
+
+    existing_raw = decode_raw(row[1])
+    incoming_raw = inst.get("raw_instruction")
+    if isinstance(existing_raw, dict):
+        inst["raw_instruction"] = (
+            {**existing_raw, **incoming_raw}
+            if isinstance(incoming_raw, dict) else existing_raw
+        )
+    if decision_id.startswith("DA-") and not str(inst.get("model_used") or ""):
+        inst["model_used"] = row[2]
 
 
 def _row_to_dict(row) -> Optional[Dict]:
