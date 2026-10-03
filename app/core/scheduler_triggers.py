@@ -34,6 +34,20 @@ ET = pytz.timezone("America/New_York")
 # 重接归因写入后置 True (与 review_loop 退役⑦ 恢复条件一致).
 _TASK30_SYSTEMIC_ANALYZER_ENABLED = False
 
+# Task #16 周频参数优化 kill switch (2026-10-03, DEB-20261003 P0-1, 用户裁「同意 停推送」):
+# WeeklyOptimizer 头条建议 (sl=-0.4) 是列名 bug 伪影 — load_trade_rows 请求的
+# max_drawdown_during_trade 列在生产 trade_records 不存在, pick() 静默回退 NULL ⇒
+# SL 反事实从未触发, stop_loss_pct 不可识别 (5 网格值 1 个 pnl 序列), -0.4 = 并列 tie-break
+# 恒选网格序首个, 连续 7 周输出常量; 对比基线 LIVE_CURRENT_PARAMS 虚构 (sl/tp/trail 三值
+# 生产配置零命中); 4 参数中 trailing_stop_trigger 全仓零消费点、min_signal_strength
+# playbook 链不读; OOS 窗口重叠泄漏 + 实评 n=9 + bootstrap CI 跨零 42 单位宽。
+# LiveBacktestComparison 共享同一虚构基线 (import LIVE_CURRENT_PARAMS) ⇒ 同批停。
+# 契约测试钉住: tests/test_weekly_optimizer_contracts.py (xfail-strict 绊线, 修复即 XPASS 报警)。
+# 恢复条件: P2-6 (docs/debates/DEB-20261003-weekly-optimizer-p26-rebuild.md 草案) 用
+# 轮询级模拟器 + playbook_horizon.yaml 真源重建并通过契约测试后置 True。
+# 周报展示面已由 weekly_scorecard_carrier 第三块 (exit_shadow_report: 真实参数 vs 影子参数) 承接。
+_TASK16_WEEKLY_OPTIMIZER_ENABLED = False
+
 
 
 def _get_contract_multiplier(symbol: str) -> int:
@@ -757,7 +771,18 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
 
                 # ── Task #16 (2026-05-27): 周频参数优化 ──
                 # 周末/周五盘后运行回测驱动的参数优化, 仅产出建议报告, 不自动落地
+                # 2026-10-03 DEB-20261003 P0-1 停推送 (用户裁「同意 停推送」): 输出无裁决价值
+                # (头条 sl=-0.4 是列名 bug + tie-break 伪影, live 基线虚构), 修好前每周推送
+                # 带 ✅ 的假建议是净负。kill switch 见 _TASK16_WEEKLY_OPTIMIZER_ENABLED 注释;
+                # 恢复条件 = P2-6 轮询级模拟器重建 (DEB-20261003 草案) 落地并通过契约测试。
+                # 真实参数 vs 影子参数对比已由周六记分牌载体承接 (exit_shadow_report 块)。
                 try:
+                    if not _TASK16_WEEKLY_OPTIMIZER_ENABLED:
+                        raise RuntimeError(
+                            "Task#16 WeeklyOptimizer/LiveBacktestCompare 已停推送 "
+                            "(DEB-20261003 P0-1: 输出建立在列名 bug + 虚构 live 基线上, "
+                            "恢复条件见 _TASK16_WEEKLY_OPTIMIZER_ENABLED 注释)"
+                        )
                     from app.backtest.weekly_optimizer import run_weekly_optimization
                     from app.backtest.live_backtest_comparison import run_comparison
                     opt_report = run_weekly_optimization(notifier=scheduler.notifier)

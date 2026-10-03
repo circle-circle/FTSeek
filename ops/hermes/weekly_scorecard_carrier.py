@@ -36,6 +36,12 @@ TAIL_LINES = 10
 JOBS = (
     ("exit_scorecard.py", REPO / "logs" / "exit_scorecard_cron.log"),
     ("direction_hit_scorecard.py", REPO / "logs" / "direction_scorecard_cron.log"),
+    # 2026-10-03 DEB-20261003 (用户裁「停推送 可以复用已有的周报 显示当前的真实的参数和
+    # 影子参数效果对比和展示」): WeeklyOptimizer 停推送后, 退出参数对比展示面由本块承接。
+    # exit_shadow_report = 退出参数影子 capture 报告: M5 漂移诊断行印**现行真实参数**
+    # (读 config/playbook_horizon.yaml), 变体表印**影子参数**各臂 vs 实盘效果 (净口径)。
+    # 脚本纯只读无落库 (不带 --push, 零推送副作用); 26 行 < MAX_LINES 不截断。
+    ("exit_shadow_report.py", REPO / "logs" / "exit_shadow_report_cron.log"),
 )
 
 
