@@ -172,41 +172,67 @@ def test_overnight_second_night_not_exempt(monkeypatch):
     assert not ir.overnight_loser_exempt("AVGO", _yesterday_entry(), -0.8, is_reentry=YES)
 
 
-# ── quick_sl_tp_pct (2026-08-07 用户裁决: SL放宽/TP降档/ATR相对按标的) ──
+# ── quick_sl_pct (2026-08-07 用户裁决 SL 放宽/ATR 相对; 2026-10-03 DEB-20261003 quick_tp 退役) ──
 
-def test_quick_mid_range_atr():
-    # TSM 类 ATR 3%: SL=0.6×3=1.8→floor 2.0, TP=0.35×3=1.05
-    sl, tp = ir.quick_sl_tp_pct(3.0, _cfg())
-    assert sl == 2.0 and tp == 1.05
-
-
-def test_quick_high_atr_scaling():
-    # AVGO 类 ATR 5%: SL=3.0, TP=1.75 (均在 clamp 内, 体现 ATR 相对)
-    sl, tp = ir.quick_sl_tp_pct(5.0, _cfg())
-    assert sl == 3.0 and tp == 1.75
+def test_quick_sl_mid_range_atr():
+    # TSM 类 ATR 3%: SL=0.6×3=1.8→floor 2.0
+    assert ir.quick_sl_pct(3.0, _cfg()) == 2.0
 
 
-def test_quick_low_atr_floors():
-    # AAPL 类 ATR 1.8%: SL=1.08→floor 2.0, TP=0.63→floor 1.0
-    sl, tp = ir.quick_sl_tp_pct(1.8, _cfg())
-    assert sl == 2.0 and tp == 1.0
+def test_quick_sl_high_atr_scaling():
+    # AVGO 类 ATR 5%: SL=3.0 (clamp 内, 体现 ATR 相对)
+    assert ir.quick_sl_pct(5.0, _cfg()) == 3.0
 
 
-def test_quick_extreme_atr_ceils():
-    sl, tp = ir.quick_sl_tp_pct(12.0, _cfg())
-    assert sl == 3.5 and tp == 2.0   # 双触顶
+def test_quick_sl_low_atr_floor():
+    # AAPL 类 ATR 1.8%: SL=1.08→floor 2.0
+    assert ir.quick_sl_pct(1.8, _cfg()) == 2.0
 
 
-def test_quick_missing_atr_fallback():
+def test_quick_sl_extreme_atr_ceil():
+    assert ir.quick_sl_pct(12.0, _cfg()) == 3.5   # 触顶
+
+
+def test_quick_sl_missing_atr_fallback():
     for bad in (None, 0, -1.5, "x"):
-        assert ir.quick_sl_tp_pct(bad, _cfg()) == (None, None)
+        assert ir.quick_sl_pct(bad, _cfg()) is None
 
 
-def test_quick_per_symbol_differentiation():
-    # 同一配置, 不同标的 ATR → 不同 SL/TP (用户要求"基于不同的标的股")
-    hi = ir.quick_sl_tp_pct(5.0, _cfg())
-    lo = ir.quick_sl_tp_pct(1.8, _cfg())
-    assert hi[0] > lo[0] and hi[1] > lo[1]
+def test_quick_sl_per_symbol_differentiation():
+    # 同一配置, 不同标的 ATR → 不同 SL (用户要求"基于不同的标的股")
+    assert ir.quick_sl_pct(5.0, _cfg()) > ir.quick_sl_pct(1.8, _cfg())
+
+
+# ── quick_tp 退役契约 (DEB-20261003 用户裁「按建议执行」, 行为中性版) ──
+# 原 DEB §五 守卫「断言 fallback TP RR<1.5 被门禁吞」前提错误: tp_rr=1.6 ≥ 门 1.5,
+# sl_pct×tp_rr 填充会激活未验证的固定 TP 腿。已裁行为中性: ATR 有效 ⇒ TP=0。
+# 以下守卫钉死「零交易行为变更」的实现选择。
+
+def test_quick_tp_params_gone_from_defaults():
+    """三键从 _DEFAULTS 物理删除 (复活须新 DEB + 用户裁 + 影子先行)。"""
+    for k in ("quick_tp_atr_mult", "quick_tp_floor_pct", "quick_tp_ceil_pct"):
+        assert k not in ir._DEFAULTS
+
+
+def test_arm_atr_valid_take_profit_zero(monkeypatch):
+    """ATR 有效 ⇒ take_profit=0 (无固定 TP 腿, exit_engine 规则1.5 要求 TP>0 才进)."""
+    fake = _FakePDBCapture()
+    _patch_pdb(monkeypatch, lambda: fake)
+    for direction in ("BUY", "SELL_SHORT"):
+        ir._arm_instruction("US.AMD", direction, 100.0, _cfg(), 1451, atr_pct=5.0)
+        assert fake.saved["take_profit"] == 0.0, direction
+        # SL 仍走 quick_sl (放宽给跨夜空间, 未动)
+        assert fake.saved["stop_loss"] == (97.0 if direction == "BUY" else 103.0)
+
+
+def test_arm_atr_missing_tp_unchanged(monkeypatch):
+    """ATR 缺失回退路径输出不变 (sl_pct×tp_rr=RR1.6, 该 TP 腿历史上就是活的 — 不动)."""
+    fake = _FakePDBCapture()
+    _patch_pdb(monkeypatch, lambda: fake)
+    ir._arm_instruction("US.AMD", "BUY", 100.0, {"sl_pct": 1.5, "tp_rr": 1.6}, 1451,
+                        atr_pct=None)
+    assert fake.saved["stop_loss"] == 98.5          # SL 1.5%
+    assert fake.saved["take_profit"] == 102.4       # TP = 1.5×1.6 = 2.4%
 
 
 def test_overnight_non_reentry_not_exempt(monkeypatch):

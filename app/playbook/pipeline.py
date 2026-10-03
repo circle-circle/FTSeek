@@ -4453,20 +4453,24 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                             _tp_mult = float(_hp.get("rr_ratio", 1.5))
 
                         # ── 2026-08-07 (用户裁决: 再入场快收结构) ──
-                        #   intraday_reentry- 前缀指令不走 vol_bucket: SL 放宽给跨夜空间 /
-                        #   TP 降档快速落袋, ATR 相对按标的自适应 (quick_sl_tp_pct).
+                        #   intraday_reentry- 前缀指令不走 vol_bucket: SL 放宽给跨夜空间,
+                        #   ATR 相对按标的自适应 (quick_sl_pct).
+                        #   2026-10-03 DEB-20261003: quick_tp 退役 (RR≈0.58 恒被 min_tp_rr=1.5
+                        #   门禁吞, 物理零触发死参数) ⇒ re-price 同式复算 TP=0 (_tp_mult=0 →
+                        #   _new_tp=0.0, 无固定TP腿) — 与被吞后的实际行为逐字一致, 零行为变更。
+                        #   ⚠️ 不得回退 vol_bucket _tp_mult: 那会给 reentry 装上 RR≥1.5 的活 TP 腿。
                         #   用触发时刻 ATR 复算 (atr_pct 此处为分数口径 → ×100 转百分数);
                         #   异常/ATR缺失 → 不落本分支, 维持 vol_bucket 原逻辑 (保守).
                         try:
                             if str(inst.get("decision_id", "") or "").startswith("intraday_reentry-"):
-                                from app.playbook.intraday_reentry import quick_sl_tp_pct as _qstp
-                                _q_sl, _q_tp = _qstp(atr_pct * 100.0 if atr_pct else None)
-                                if _q_sl is not None and _q_tp is not None:
+                                from app.playbook.intraday_reentry import quick_sl_pct as _qsp
+                                _q_sl = _qsp(atr_pct * 100.0 if atr_pct else None)
+                                if _q_sl is not None:
                                     _sl_pct = _q_sl
-                                    _tp_mult = _q_tp / _q_sl
+                                    _tp_mult = 0.0   # 无固定 TP (下方 _tp_mult 假值分支 → _new_tp=0.0)
                                     logger.info(
                                         f"[playbook] {inst['symbol']} 再入场快收: "
-                                        f"SL={_q_sl:.2f}% TP={_q_tp:.2f}% (ATR相对, 替代vol_bucket)"
+                                        f"SL={_q_sl:.2f}% TP=无固定腿 (quick_tp 已退役, 骑 trailing/EOD)"
                                     )
                         except Exception:
                             pass

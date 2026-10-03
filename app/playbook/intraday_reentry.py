@@ -117,25 +117,30 @@ def prior_exit_reenterable(exit_reason: Optional[str], pnl_pct: float,
         return False
 
 
-def quick_sl_tp_pct(atr_pct: Optional[float], cfg: Optional[Dict[str, Any]] = None):
-    """纯函数: ATR 相对快收 SL/TP 百分数 (2026-08-07 用户裁决: SL放宽/TP降档/按标的).
+def quick_sl_pct(atr_pct: Optional[float], cfg: Optional[Dict[str, Any]] = None):
+    """纯函数: ATR 相对快收 SL 百分数 (2026-08-07 用户裁决 SL 放宽; 2026-10-03 DEB-20261003 收敛为仅 SL).
 
-    SL = clamp(quick_sl_atr_mult×atr_pct, floor, ceil) — 放宽给跨夜空间;
-    TP = clamp(quick_tp_atr_mult×atr_pct, floor, ceil) — 降档快速落袋.
-    atr_pct 为百分数口径 (5.0=5%); 缺失/<=0 → (None, None), 调用方回退 sl_pct/tp_rr.
+    SL = clamp(quick_sl_atr_mult×atr_pct, floor, ceil) — 放宽给跨夜空间.
+    atr_pct 为百分数口径 (5.0=5%); 缺失/<=0 → None, 调用方回退 sl_pct/tp_rr.
+
+    ⛔ 快 TP 已退役 (2026-10-03, DEB-20261003-reentry-quick-tp-deletion, 用户裁「按建议执行」):
+    原 quick_tp (0.35×ATR clamp[1,2]% ⇒ RR≈0.5-0.58) 恒被 exit_engine min_tp_rr=1.5
+    门禁吞掉 — 13 笔实弹 0 笔 TAKE_PROFIT, 影子窗 9/1-9/30 判据轴 tp_touched=0/13,
+    物理零触发 = 死参数。删除后 ATR 有效路径 **take_profit=0 (无固定 TP 腿)** —
+    与被吞后的实际行为逐字一致 (出场靠 SL/trailing/breakeven/EOD), 零交易行为变更。
+    ⚠️ 不得用 sl_pct×tp_rr 填充: tp_rr=1.6 ≥ 门 1.5 会激活一条从未跑过的固定 TP
+    出场腿 = 未验证实盘变更 (原 DEB §三.2 的前提错误, 见 EXEC-20261003 记录)。
     """
     cfg = cfg or _cfg()
     try:
         atr = float(atr_pct)
     except Exception:
-        return None, None
+        return None
     if atr <= 0:
-        return None, None
+        return None
     sl = min(max(float(cfg["quick_sl_atr_mult"]) * atr,
                  float(cfg["quick_sl_floor_pct"])), float(cfg["quick_sl_ceil_pct"]))
-    tp = min(max(float(cfg["quick_tp_atr_mult"]) * atr,
-                 float(cfg["quick_tp_floor_pct"])), float(cfg["quick_tp_ceil_pct"]))
-    return round(sl, 2), round(tp, 2)
+    return round(sl, 2)
 
 
 def cumulative_exposure_ok(prior_notional: float, max_pos_pct: float,
@@ -195,19 +200,25 @@ _DEFAULTS: Dict[str, Any] = {
     "min_vol_ratio": 0.8,         # 盘中实时量能比 (与 chase 门同档)
     "max_spread_bps": 25.0,       # L1 盘口 spread 上限
     "min_atr_pct": 2.0,           # 日 ATR% 下限 (低波不做动量, 比 low_atr_gate 3% 宽一档)
-    "sl_pct": 1.5,                # 再入场止损回退值 (ATR 缺失时; 主口径见 quick_* 快收组)
-    "tp_rr": 1.6,                 # TP = SL×1.6 (回退口径, 过 min_tp_rr=1.5 门)
-    # 2026-08-07 (用户裁决: 再入场可跨夜 → SL 放宽给空间 / TP 降档快落袋, 退出栈不变):
+    "sl_pct": 1.5,                # 再入场止损回退值 (ATR 缺失时; ATR 有效主口径见 quick_sl_*)
+    "tp_rr": 1.6,                 # TP = SL×1.6 — **仅 ATR 缺失回退路径**用 (过 min_tp_rr=1.5 门)。
+    #                             ⚠️ ATR 有效路径已不再算 TP (quick_tp 退役, 见下) — 不得把
+    #                             本键套到 ATR 有效路径: RR1.6≥门1.5 会激活未验证的固定TP腿。
+    # 2026-08-07 (用户裁决: 再入场可跨夜 → SL 放宽给空间, 退出栈不变):
     #   ATR 相对化 = 按标的自适应 (高波 AVGO 与低波 AAPL 不同档); 触发 re-price 同式复算.
-    #   SL = clamp(0.6×ATR%, 2.0, 3.5)  TP = clamp(0.35×ATR%, 1.0, 2.0)
-    #   示例: AVGO(ATR5%)→SL3.0/TP1.75  AAPL(ATR1.8%)→SL2.0/TP1.0  TSM(ATR3%)→SL2.0/TP1.05
-    #   代价明示: RR≈0.5-0.6 倒置, 需净胜率 >~62% 才正期望 — 由 eval_intraday_reentry 验证.
+    #   SL = clamp(0.6×ATR%, 2.0, 3.5)
+    #   示例: AVGO(ATR5%)→SL3.0  AAPL(ATR1.8%)→SL2.0  TSM(ATR3%)→SL2.0
+    # ⛔ quick_tp_atr_mult / quick_tp_floor_pct / quick_tp_ceil_pct 已删除
+    #   (2026-10-03, DEB-20261003-reentry-quick-tp-deletion, 用户裁「按建议执行」):
+    #   快 TP (0.35×ATR clamp[1,2]%, RR≈0.5-0.58) 恒被 exit_engine min_tp_rr=1.5 门禁
+    #   吞掉, 13 笔实弹 0 笔 TAKE_PROFIT, 影子窗 9/1-9/30 tp_touched=0/13 ⇒ 物理零触发
+    #   死参数。ATR 有效路径改为 **不设固定 TP** (take_profit=0), 与被吞后的实际行为
+    #   逐字一致 (出场靠 SL/trailing/breakeven/EOD) ⇒ 零交易行为变更。
+    #   回滚 = revert 本提交 (参数删除即锁死: 恢复快 TP 须新立 DEB + 用户裁 + 影子先行,
+    #   不允许只调 min_tp_rr 复活旧冲突)。
     "quick_sl_atr_mult": 0.6,
     "quick_sl_floor_pct": 2.0,    # 对齐 vol_bucket 低波噪声地板, 不入 <2% 扫损区
     "quick_sl_ceil_pct": 3.5,
-    "quick_tp_atr_mult": 0.35,
-    "quick_tp_floor_pct": 1.0,
-    "quick_tp_ceil_pct": 2.0,
     # 水下仓持夜豁免 (2026-08-06 用户裁决"再入场亏损可隔夜"):
     #   本开关管"首夜豁免" (entry date == 当日 ET), 仅水下仓 (盈利仍当日落袋,
     #   与 DEB-20260806-asymmetric ① 一致), 仅本生成器武装的仓 (decision_id 前缀判定).
@@ -659,8 +670,9 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     - 盲区2: 旧复位 UPDATE 带 WHERE executed=1 → 触发未成交时不复位。RFC-066
       起复位逻辑整体删除 (新轮次行天然 executed=0/triggered=0)。
 
-    2026-08-07 (用户裁决快收结构): SL/TP 主口径改 quick_sl_tp_pct (ATR 相对,
-    SL放宽/TP降档); ATR 缺失回退 sl_pct/tp_rr 固定值。
+    2026-08-07 (用户裁决快收结构): SL 主口径改 ATR 相对 (SL放宽); ATR 缺失回退
+    sl_pct/tp_rr 固定值。2026-10-03 DEB-20261003: quick_tp 退役 ⇒ ATR 有效路径
+    take_profit=0 (无固定 TP 腿, 与原门禁吞 TP 后的实际行为一致); 详见 quick_sl_pct docstring。
 
     entry_metrics (PROPOSAL-20260906 R2①): 武装时刻指标+证伪门输入快照
     (slope_5m_pct/vwap_dev_pct/atr_pct 百分数, spread_bps 万分数, vol_ratio 倍数,
@@ -671,15 +683,21 @@ def _arm_instruction(symbol: str, direction: str, price: float,
     db = PlaybookDB()
     today = _today_et_str()
     is_long = direction.upper() == "BUY"
-    _q_sl, _q_tp = quick_sl_tp_pct(atr_pct, cfg)
-    if _q_sl is not None and _q_tp is not None:
-        sl_pct, tp_pct = _q_sl / 100.0, _q_tp / 100.0
+    # ── SL/TP 口径 (2026-10-03 DEB-20261003 quick_tp 退役后) ──
+    #   ATR 有效: SL=quick_sl (0.6×ATR clamp[2,3.5]%); TP=0 ⇒ **不设固定 TP 腿**
+    #     (原 quick_tp RR≈0.58 恒被 min_tp_rr=1.5 门禁吞, 从未真正出场过 —
+    #      TP=0 与被吞后的实际行为逐字一致, 出场靠 SL/trailing/breakeven/EOD)。
+    #   ATR 缺失: 回退 sl_pct/tp_rr (RR1.6≥门1.5, 该 TP 腿历史上就是活的 — 不动)。
+    _q_sl = quick_sl_pct(atr_pct, cfg)
+    if _q_sl is not None:
+        sl_pct, tp_pct = _q_sl / 100.0, None
     else:
         sl_pct = float(cfg["sl_pct"]) / 100.0
         tp_pct = sl_pct * float(cfg["tp_rr"])
     stop_loss = round(price * (1 - sl_pct), 2) if is_long else round(price * (1 + sl_pct), 2)
-    take_profit = (round(price * (1 + tp_pct), 2) if is_long
-                   else round(price * (1 - tp_pct), 2))
+    take_profit = (0.0 if tp_pct is None else
+                   (round(price * (1 + tp_pct), 2) if is_long
+                    else round(price * (1 - tp_pct), 2)))
     hhmm = _now_hhmm_et()
 
     # ── RFC-066: 快照取当日第一轮指令 (多行台账下 = 最小 id 行; 旧时代是唯一行) ──
@@ -1187,9 +1205,12 @@ def run_scan(scheduler=None) -> int:
             })
         base["action"] = "armed" if inst_id else "arm_failed"
         base["instruction_id"] = inst_id
-        _f_sl, _f_tp = quick_sl_tp_pct(float(atr_pct) if atr_pct is not None else None, cfg)
+        # 影子埋点须镜像**实际武装值** (2026-10-03 quick_tp 退役: ATR 有效 ⇒ TP=0 无固定TP腿;
+        # ATR 缺失 ⇒ 回退 sl_pct×tp_rr, 与 _arm_instruction 同口径)。零读方 (grep 实测
+        # reentry shadow 的 tp_pct 无消费者), 但落 0 而非旧 quick_tp 值 = 遥测不撒谎。
+        _f_sl = quick_sl_pct(float(atr_pct) if atr_pct is not None else None, cfg)
         base["sl_pct"] = _f_sl if _f_sl is not None else cfg["sl_pct"]
-        base["tp_pct"] = _f_tp if _f_tp is not None else round(cfg["sl_pct"] * cfg["tp_rr"], 2)
+        base["tp_pct"] = 0.0 if _f_sl is not None else round(cfg["sl_pct"] * cfg["tp_rr"], 2)
         _shadow_write(base)
         if inst_id:
             armed += 1

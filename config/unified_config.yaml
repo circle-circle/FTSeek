@@ -1702,9 +1702,13 @@ playbook:
     quick_sl_atr_mult: 0.6
     quick_sl_floor_pct: 2.0
     quick_sl_ceil_pct: 3.5
-    quick_tp_atr_mult: 0.35
-    quick_tp_floor_pct: 1.0
-    quick_tp_ceil_pct: 2.0
+    # ⛔ quick_tp_atr_mult / quick_tp_floor_pct / quick_tp_ceil_pct 已删除
+    #   (2026-10-03, DEB-20261003-reentry-quick-tp-deletion, 用户裁「按建议执行」):
+    #   快 TP (0.35×ATR clamp[1,2]%, RR≈0.5-0.58) 恒被 exit_engine min_tp_rr=1.5 门禁
+    #   吞掉, 13 笔实弹 0 笔 TAKE_PROFIT, 影子窗 9/1-9/30 tp_touched=0/13 ⇒ 物理零触发
+    #   死参数。ATR 有效路径改为不设固定 TP (take_profit=0), 与被吞后实际行为逐字一致
+    #   ⇒ 零交易行为变更。⚠️ 勿用 tp_rr(=1.6≥门1.5) 填充 ATR 有效路径 — 会激活未验证的
+    #   固定 TP 出场腿 (原 DEB §三.2 前提错误)。回滚 = revert; 恢复须新立 DEB+用户裁+影子先行。
     # (隔夜三轨之③, 见 playbook.overnight_hold_enabled 处互参标注 — 本键只管
     #   再入场生成器武装仓的首夜 EOD 豁免, intraday_reentry.py:1034)
     overnight_hold_loser_enabled: true
