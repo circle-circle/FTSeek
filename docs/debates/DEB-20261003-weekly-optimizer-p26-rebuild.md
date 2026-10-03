@@ -1,7 +1,8 @@
 # DEB-20261003: WeeklyOptimizer P2-6 架构收敛 — 退出参数评估回归已有真源与官方引擎
 
-> **状态**: 草案 (R1 提案待辩论) — 用户 2026-10-03 裁「同意 停推送 + 复用已有的周报显示真实参数与影子参数效果对比」, P0-1/P0-3/周报承接已落地, 本草案只裁 P2-6 重建方向
-> **待谁裁**: 用户 (方案 A/B/C/D 收敛后); 辩论方按 multi-model-debate skill v0.1.0 三角色分工
+> **状态**: ✅ **已裁决并落地** — 用户 2026-10-03 裁「A」(退役收敛), 当日执行完毕 (见 §8 执行记录)。此前同日早批已裁「同意 停推送 + 复用已有的周报显示真实参数与影子参数效果对比」(P0-1/P0-3/周报承接, commit 00cccd060)
+> **裁决**: 方案 A — WeeklyOptimizer/LiveBacktestComparison 整体删除 (1351 行), 退出参数评估职责收敛到既有三资产 (§4 方案 A)。B/C/D 未采纳 (死因见 §4 比较表)
+> **守卫**: tests/test_weekly_optimizer_contracts.py 由绊线转墓碑 (7 例, 复活即红, 反证已做)
 > **交易行为变更**: 本文档落地前 **零**。P0-1 停的是推送 (record 面 JSON/MD 仍落盘), 不碰任何生产参数
 > **样本与证据**: `data/optimization_reports/` 7 周报告 (08-28 ~ 10-02) + `data/shadow/exit_param_shadow.jsonl` (533 行, 可用 473) + `config/playbook_horizon.yaml` 现行真值 + 生产 DDL (`app/storage/trade_store.py`)
 > **前置实测** (本会话 2026-10-03 复算, 全部可复跑): 契约测试 `tests/test_weekly_optimizer_contracts.py` 3 xfail-strict 绊线钉住 P0-①② 缺陷现状
@@ -107,3 +108,19 @@
 | P2-6 重建 | ⏳ 本草案 | 待辩论收敛 + 用户裁决 |
 
 **回滚**: P0-1 = kill switch 置 True (须先满足本草案恢复条件); 周报块 = JOBS 元组删一行; 契约测试 = 删文件 (不建议, 它是唯一钉住病灶的守卫)。
+
+## 8. 执行记录 (2026-10-03, 用户裁「A」后当日落地)
+
+| 步骤 | 动作 | 结果 |
+|---|---|---|
+| Guard-First 普查 | grep 全仓消费者: weekly_optimizer (app 侧仅 scheduler_triggers Task#16 + live_backtest_comparison import; 其余全是 docs/.qoder 文档引用) / live_backtest_comparison (仅 Task#16) / optimization_reports 产物 (零消费者) / `app/backtest/__init__.py` (无 re-export, 仅 walk_forward+statistical_gate) | ✅ 删除闭包 = 2 模块 + Task#16 接线 + 契约测试转墓碑, 无第三方消费者 |
+| 删除 | `git rm app/backtest/weekly_optimizer.py app/backtest/live_backtest_comparison.py` (957+394=1351 行) | ✅ |
+| 接线摘除 | scheduler_triggers Task#16 try 块 → 退役注释墓碑 (P8/ORB 退役同款造型); kill switch flag 一并删除 (模块已不存在, 留 flag = 装饰性配置) | ✅ |
+| 契约测试转墓碑 | v1 3 条 xfail 绊线 (对象已删) → v2 墓碑 7 例: 模块文件不存在 ×2 + import 层面钉死 + scheduler 无活引用 + 全仓无活引用 + 生产 DDL 列名锚 + LIVE_CURRENT_PARAMS/死参数键不得再生。**反证已做**: 从 HEAD 恢复 weekly_optimizer.py → 4 例红; 再删 → 7 例绿 ⇒ 墓碑真咬人 | ✅ |
+| 台账补账 | CONTROL-LOOP-LEDGER §2.1 增 P12 退役行 (Task#16 此前**从未入过台账**, 本行即补账) | ✅ |
+| 等基对比 | 裸 worktree@HEAD 基线 vs 活仓改动后, 相关测试面: **新增失败 = 0**; 基线侧 3 条「已消除」逐条归因为环境性 (worktree 缺 data/+logs/: FileNotFoundError ×2 + sqlite unable to open ×1; 活仓同套件 9 passed) | ✅ |
+| 守卫套件 | test_weekly_optimizer_contracts + dead_db_literal_gate + ops_scripts_sync + control_loop_ledger + replay_engine_import_smoke = 32 passed | ✅ |
+
+**执行中发现的同族残留 (不在本批范围, 留档待独立评估)**: `app/risk/position_exit_monitor.py:537` 存在 `dyn_cfg.get("stop_loss", -0.045)` 运行时 fallback 默认值 — 与 LIVE_CURRENT_PARAMS 虚构基线同族的「代码默认值」坏习惯 (恰为同一数值 -0.045), 但它在风控退出路径且是 fallback 而非对比基线, 未按退役批连带修改 (外科手术纪律); 墓碑测试已注明该排除项及原因。
+
+**P2-6 原命题的落点**: 用户原始表述是「用轮询级模拟器重建」; 执行时按方案 A 收敛 — 重建载体不是新模拟器, 而是**既有的**官方引擎 (`exit_replay_backtest.py`, 复用生产 SSOT `_compute_dynamic_effective_sl`, 与轮询级模拟器 `trailing_polling_sim.py` 同族语义) + 实弹影子 (`exit_param_shadow`, 攒样中) + yaml 真源。当前无待裁参数问题排队 (9/26 影子三门全 FAIL 留痕), 故不新建任何自动机; 下次需要评估退出参数时按 §5 硬约束直接跑这两套。

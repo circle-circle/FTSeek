@@ -34,19 +34,13 @@ ET = pytz.timezone("America/New_York")
 # 重接归因写入后置 True (与 review_loop 退役⑦ 恢复条件一致).
 _TASK30_SYSTEMIC_ANALYZER_ENABLED = False
 
-# Task #16 周频参数优化 kill switch (2026-10-03, DEB-20261003 P0-1, 用户裁「同意 停推送」):
-# WeeklyOptimizer 头条建议 (sl=-0.4) 是列名 bug 伪影 — load_trade_rows 请求的
-# max_drawdown_during_trade 列在生产 trade_records 不存在, pick() 静默回退 NULL ⇒
-# SL 反事实从未触发, stop_loss_pct 不可识别 (5 网格值 1 个 pnl 序列), -0.4 = 并列 tie-break
-# 恒选网格序首个, 连续 7 周输出常量; 对比基线 LIVE_CURRENT_PARAMS 虚构 (sl/tp/trail 三值
-# 生产配置零命中); 4 参数中 trailing_stop_trigger 全仓零消费点、min_signal_strength
-# playbook 链不读; OOS 窗口重叠泄漏 + 实评 n=9 + bootstrap CI 跨零 42 单位宽。
-# LiveBacktestComparison 共享同一虚构基线 (import LIVE_CURRENT_PARAMS) ⇒ 同批停。
-# 契约测试钉住: tests/test_weekly_optimizer_contracts.py (xfail-strict 绊线, 修复即 XPASS 报警)。
-# 恢复条件: P2-6 (docs/debates/DEB-20261003-weekly-optimizer-p26-rebuild.md 草案) 用
-# 轮询级模拟器 + playbook_horizon.yaml 真源重建并通过契约测试后置 True。
-# 周报展示面已由 weekly_scorecard_carrier 第三块 (exit_shadow_report: 真实参数 vs 影子参数) 承接。
-_TASK16_WEEKLY_OPTIMIZER_ENABLED = False
+# Task #16 周频参数优化已退役 (2026-10-03, DEB-20261003 方案A, 用户裁「A」):
+# weekly_optimizer.py + live_backtest_comparison.py 整体删除 (原 kill switch
+# _TASK16_WEEKLY_OPTIMIZER_ENABLED 随之删除 — 模块已不存在, 留 flag = 装饰性配置)。
+# 退役理由/证据/职责归宿见 check_weekly_review 内 Task #16 注释块与
+# docs/debates/DEB-20261003-weekly-optimizer-p26-rebuild.md。
+# 复活禁止: tests/test_weekly_optimizer_contracts.py 墓碑测试钉住
+# (模块不得复活 + scheduler 不得再引用 + LIVE_CURRENT_PARAMS 虚构基线不得再生)。
 
 
 
@@ -769,34 +763,21 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
                 except Exception as oe:
                     logger.debug(f"[Orchestrator] 周复盘增强失败 (不影响主流程): {oe}")
 
-                # ── Task #16 (2026-05-27): 周频参数优化 ──
-                # 周末/周五盘后运行回测驱动的参数优化, 仅产出建议报告, 不自动落地
-                # 2026-10-03 DEB-20261003 P0-1 停推送 (用户裁「同意 停推送」): 输出无裁决价值
-                # (头条 sl=-0.4 是列名 bug + tie-break 伪影, live 基线虚构), 修好前每周推送
-                # 带 ✅ 的假建议是净负。kill switch 见 _TASK16_WEEKLY_OPTIMIZER_ENABLED 注释;
-                # 恢复条件 = P2-6 轮询级模拟器重建 (DEB-20261003 草案) 落地并通过契约测试。
-                # 真实参数 vs 影子参数对比已由周六记分牌载体承接 (exit_shadow_report 块)。
-                try:
-                    if not _TASK16_WEEKLY_OPTIMIZER_ENABLED:
-                        raise RuntimeError(
-                            "Task#16 WeeklyOptimizer/LiveBacktestCompare 已停推送 "
-                            "(DEB-20261003 P0-1: 输出建立在列名 bug + 虚构 live 基线上, "
-                            "恢复条件见 _TASK16_WEEKLY_OPTIMIZER_ENABLED 注释)"
-                        )
-                    from app.backtest.weekly_optimizer import run_weekly_optimization
-                    from app.backtest.live_backtest_comparison import run_comparison
-                    opt_report = run_weekly_optimization(notifier=scheduler.notifier)
-                    logger.info(
-                        f"[WeeklyOptimizer] 完成: best_score={opt_report.best_score} "
-                        f"overfit={opt_report.overfit_warning}"
-                    )
-                    cmp_report = run_comparison(notifier=scheduler.notifier)
-                    logger.info(
-                        f"[LiveBacktestCompare] 完成: live={cmp_report.n_live} "
-                        f"sharpe_diff={cmp_report.diffs.get('sharpe_diff')}"
-                    )
-                except Exception as wo_err:
-                    logger.debug(f"[WeeklyOptimizer] 失败 (不影响主流程): {wo_err}")
+                # ── Task #16 (2026-05-27): 周频参数优化 — ⛔ 已退役 (2026-10-03) ──
+                # DEB-20261003 方案A (用户裁「A」= 退役收敛): weekly_optimizer.py (957行) +
+                # live_backtest_comparison.py (394行) 整体删除。根因: _replay_trade 是与生产
+                # 退出链零共享代码的 4 参数近似回放 (列名 bug ⇒ SL 反事实从未触发, 头条
+                # sl=-0.4 = tie-break 伪影连续 7 周常量; LIVE_CURRENT_PARAMS 虚构基线三值
+                # 生产配置零命中; 4 参数中 2 个不属于被测链), 它优化的从来不是真实策略。
+                # 退出参数评估职责收敛到既有资产: ①实弹影子 exit_param_shadow +
+                # exit_shadow_graduation 预注册三门 (9/26 裁决留痕) ②官方回放引擎
+                # scripts/exit_replay_backtest.py (复用生产 SSOT _compute_dynamic_effective_sl,
+                # reason_match<0.80 冻结门 + era 分层) ③真源 config/playbook_horizon.yaml。
+                # 周报展示面 = weekly_scorecard_carrier 第三块 exit_shadow_report (真实参数
+                # vs 影子参数对比, 2026-10-03 已落地)。守卫: tests/test_weekly_optimizer_contracts.py
+                # 已由绊线测试转墓碑测试 (钉模块不得复活 + scheduler 不得再引用)。
+                # 历史报告留档 data/optimization_reports/ (零消费者, 仅作伪影证据)。
+                # 详见 docs/debates/DEB-20261003-weekly-optimizer-p26-rebuild.md。
 
                 # ── Task #30 (2026-05-27): 系统性问题周度归纳 ──
                 # 从 trade_attribution 聚合本周系统性问题, 按 systemic_pattern 聚类

@@ -76,6 +76,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | P9 | position_sync | ~30s | DB == Broker 镜像 | Broker API | 幽灵仓根因防线 (broker-first) |
 | P10 | Coordinator reconcile | 300s | 多通道一致性 | 各引擎状态 | — |
 | P11 | LiveDealPush (RFC-078 批E 实盘成交推送) | 事件驱动 (Futu deal push, 零轮询) | REAL-only 过滤 (sim 同账户 SIMULATE 成交不入实盘账本) | OpenD 成交推送 | 推送漏 (重启窗口/OpenD 断线) → 每日 live_ledger_sync cron 幂等兜底; 双 ctx 双收 → deal_id 幂等去重 |
+| P12 | ~~Task#16 周频参数优化~~ **已退役 (2026-10-03)** | 周五 16:00+ ET (scheduler 内周触发, **从未入过台账** — 本行即补账) | WeeklyOptimizer 4 参数网格 (mss/sl/tp/trail) | trade_records 聚合字段 | **退役 (DEB-20261003 方案A, 用户裁「A」)**: `_replay_trade` 与生产退出链零共享代码; 列名错配 (max_drawdown_during_trade 不存在→静默 NULL) ⇒ SL 反事实 205 笔零触发, 头条 sl=-0.4 = tie-break 伪影连续 7 周常量; LIVE_CURRENT_PARAMS 虚构基线三值生产配置零命中; 修好列名后全候选被 MAX_DD 淘汰 = 输出「无解」。`app/backtest/weekly_optimizer.py` (957行) + `live_backtest_comparison.py` (394行) 整体删除; 职责收敛到 exit_param_shadow 影子 (预注册三门) + `scripts/exit_replay_backtest.py` 官方引擎 (生产 SSOT 数学 + reason_match<0.80 冻结门) + `playbook_horizon.yaml` 真源; 周报展示面 = weekly_scorecard_carrier 第三块 exit_shadow_report (真实参数 vs 影子参数, 已落地)。守卫: `tests/test_weekly_optimizer_contracts.py` 墓碑 7 例 (复活即红, 反证已做: HEAD 恢复模块→4 红); 历史报告留档 data/optimization_reports/。回滚 = revert 退役 commit (推送已停 1 周期在前, 零交易行为变更) |
 
 ### 2.2 盘中快环 (Hermes cron, ET 交易时段)
 
