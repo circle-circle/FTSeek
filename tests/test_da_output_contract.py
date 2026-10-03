@@ -753,3 +753,28 @@ class TestRound14:
         assert frontmatter_version == latest_changelog_version == "0.91"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
+
+
+class TestRFC133:
+    """RFC-133 DA prompt 审计修正批 A+B: 把一次性 grep 冒烟固化为回归测试.
+
+    版本棘轮 (0.91) 只保证"版本号改了", 不保证"修复文本还在" — 历史上 prompt 常在
+    未升版本号的情况下被改动 (PROMPT_HASH 机制的由来)。本组钉死 A+B 两处关键文本,
+    防止后续重构把量比旧臂或 3 天连续推荐死规则悄悄带回来。
+    """
+
+    def test_fix_a_high_criterion_uses_premarket_volume_caliber(self):
+        user_contract = L._USER_CONTRACT_RENDERED
+        assert "量比<1.5" not in user_contract
+        assert "盘前成交量未见放量" in user_contract
+        assert "量比/换手率是上一交易日口径" in user_contract
+        assert "盘前涨跌幅/盘前成交量" in L.SYSTEM_PROMPT
+        assert "RFC-133 时点错配修正" in L.SYSTEM_PROMPT
+
+    def test_fix_b_three_day_repeat_dead_rule_stays_deleted(self):
+        user_contract = L._USER_CONTRACT_RENDERED
+        for stale in ("过去3天内已被你推荐", "这次有何不同"):
+            assert stale not in L.SYSTEM_PROMPT
+            assert stale not in user_contract
+        assert "三类信息可用" not in user_contract
+        assert "两类信息可用" in user_contract

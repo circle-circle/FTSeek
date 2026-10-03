@@ -12,7 +12,8 @@
 DSPy/prompt 自动优化轴经 IC 实测 KILLED (挑战者五维尺子 vs 前向收益 rho=+0.115, 不显著且反向;
 见 signal-ic-analysis skill references/challenger-ruler-dspy-verdict-20261003.md)。
 转入静态审计: 逐字读 DA 生产 prompt (分析师 SYSTEM_PROMPT + 输出契约 + 挑战者 v2) 与 UE V2 (v2.14),
-对照 15 交易日 305 份 da_checkpoint 实测。UE v2.14 于 10/2 刚切版, 本批不动 UE。
+对照 15 交易日 308 份 da_checkpoint 实测 (307 份有 score_band; US.QCOM 缺 band, 不入档位统计)。
+UE v2.14 于 10/2 刚切版, 本批不动 UE。
 
 ## 变更 A: HIGH 判据②删"量比<1.5"臂 (时点错配)
 
@@ -21,22 +22,31 @@ DSPy/prompt 自动优化轴经 IC 实测 KILLED (挑战者五维尺子 vs 前向
 (`_t1_note`, 2026-09-14 盘前数据有效性审计所加: "盘前量比实为昨日量能, 不是今日放量")。
 用昨日量能判"今日信息是否已被反映"= 结构性自相矛盾。
 
-**实测暴露面** (2026-09-14→10-02, 305 份 checkpoint):
+**实测暴露面** (2026-09-14→10-02, 308 份 checkpoint, 307 份有效 score_band):
 
 | 项 | 读数 |
 | --- | --- |
 | HIGH 档总数 | 149 |
 | 其中 \|盘前涨跌\|≥2% (判据②第一臂不满足) | 20 (13%) |
-| 其中仅靠昨日量比<1.5 通过第二臂 | 17 |
-| 该组 executed 子集 fwd1 均值 | **−0.886%** (全体 executed +0.480%) |
+| 其中仅靠昨日量比<1.5 通过第二臂 | 17 (另 3 条量比≥1.5 = 模型违反判据) |
+| 20 条组 executed 子集 fwd1 均值 | **−0.886%** (n=19; 全体 executed +0.480%, n=228) |
+| 17 条量比臂子组 executed fwd1 均值 | −0.382% (n=16) |
+
+口径说明: 本文件 "executed 推荐" = LLM direction ∈ {BUY, SELL_SHORT} 的非 SKIP 有向推荐
+(245 条; 非券商成交 — 同窗 trade_records 实际成交 116 条)。fwd1 = signal_snapshots.fwd_ret_t1,
+该字段已按推荐方向计号 (LONG=+raw, SHORT=−raw, 见 factor_ic_backfill.py 口径注)。
 
 **修法** (最小文本修正, 不新增维度):
 - 判据②第二臂改为"盘前成交量未见放量"(⚡盘前时段数据段的 pre_volume, 当日真值);
 - 显式标注"量比/换手率是上一交易日口径, 不得用于本判据";
 - 【校准原则】edge 判定同步: 判断材料改为"盘前涨跌幅/盘前成交量"并加同口径警告。
 
-**行为影响**: 约 11% 的 HIGH 将降 MEDIUM (score 8→6), gate tier 可能"优"→"良" (仓位 normal→small)。
-方向性证据支持 (n=19, −0.89% vs +0.48%), 未达统计显著 — 正当性主要基于 prompt 内部自洽 (时点错配是确定性缺陷)。
+**行为影响 (上界估计)**: 若模型把"盘前成交量未见放量"判为假, 最多约 11% 的 HIGH (17/149) 降
+MEDIUM (score 8→6), gate tier 可能"优"→"良" (仓位 normal→small)。注意新判据②语义本身允许
+"|盘前涨跌|≥2% 且盘前量未放大"的案例保持 HIGH — 上述 20 条的 pre_volume 普遍远小于昨日
+全日量 (如 FDS +3.94% 盘前仅 2 股), 实际降档率可能显著低于上界, 以切版后 15 日实测为准。
+方向性证据支持 (20 条组 n=19, −0.89% vs +0.48%; 17 条子组 n=16, −0.38%), 未达统计显著 —
+正当性主要基于 prompt 内部自洽 (时点错配是确定性缺陷)。
 
 ## 变更 B: 删"同标的3天内连续推荐须新证据"死规则
 
@@ -52,10 +62,18 @@ DSPy/prompt 自动优化轴经 IC 实测 KILLED (挑战者五维尺子 vs 前向
 
 ## 预注册判据 (切版后 15 交易日, 与既有窗口纪律一致)
 
-1. **A 生效**: HIGH 档中 |盘前涨跌|≥2% 的占比从 13% → <3%;
-2. **无害**: HIGH 档 executed 组 T+5 均值不低于切版前基线 +0.81% 超过 0.3pp。
+> 2026-10-04 复查修订 (生效前, 下一 cron 10-05): 原判据① "|盘前涨跌|≥2% 占比 13%→<3%"
+> 与新判据②自身语义冲突 (≥2% 异动但盘前量未放大仍可正当地 HIGH), 按原口径可能误触发回滚;
+> 硬门改为直接检测旧臂残留, 占比降为观察项。
 
-任一不过 → 回滚 .bak 锚 + 版本棘轮三处回退。
+1. **A 生效 (硬门)**: HIGH 且 |盘前涨跌|≥2% 的决策中, 论证文本 (executive_summary /
+   bull_case / bear_case) 引用"量比"或"换手率"(上一交易日口径字段) 支撑"未被价格反映"
+   判断的占比 <3%;
+2. **观察项 (非硬门)**: HIGH 档中 |盘前涨跌|≥2% 的占比 (切版前 13%) — 只作诊断, 不作回滚依据;
+3. **无害 (硬门)**: HIGH 档 executed 组 T+5 均值 ≥ 切版前基线 +0.81% − 0.3pp = **+0.51%**
+   (仅取 T+5 已成熟行; 切版前基线 n=100)。
+
+任一硬门 (①③) 不过 → 回滚 .bak 锚 + 版本棘轮三处回退。
 评估脚本复用本轮审计配方 (da_checkpoint → _llm_output.score_band + snapshot.pre_change;
 signal_snapshots join fwd_ret_t5, join 键 _ic_decision_id ↔ decision_id)。
 
@@ -75,6 +93,8 @@ signal_snapshots join fwd_ret_t5, join 键 _ic_decision_id ↔ decision_id)。
 - skill `tests/`: **18 passed**
 - 白盒冒烟: 旧文本零残留 ('量比<1.5'/'过去3天'/'这次有何不同' 全 grep 零) + 新文本在位 + build_user_prompt 正常 + 新 hash `43d14dddcad1` ✅
 - 版本棘轮三处同步: SKILL.md `version: 0.91` / CHANGELOG v0.91 条目 / test 断言 "0.91" ✅
+- 2026-10-04 复查: 白盒冒烟固化为 `TestRFC133` 两条回归测试 (本文件 58 passed);
+  skill tests 18 passed; PROMPT_HASH 复算仍 `43d14dddcad1` (本批复查只改文档/测试, 未动 prompt) ✅
 
 ## 部署 (Gate 6)
 
