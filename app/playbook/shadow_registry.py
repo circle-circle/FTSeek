@@ -894,13 +894,17 @@ REGISTRY: list[ShadowItem] = [
         # chase_30m −2.08) 是 `limit_entry` 那族的读数, 与本条 RFC-065 判据 (双事件 new/changed
         # + widen/flat path) 无关。挂错 eval_script 比不挂更坏: 待裁面会拿别族死源数字当本条
         # 证据。改为 NO_EVAL_SCRIPT 挂账 (照 ue_short_boost_shadow 惯例), 达门前建真结算器。
-        eval_script=None,
+        # 2026-10-04 [RFC-065 缺口填补] 用户裁「按建议执行」: 建 scripts/settle_entry_band_widen.py
+        # (读活源 entry_band_widen_shadow.jsonl, 事件级 widen-vs-flat 反事实回放, 判据字面出自
+        # RFC-065: sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门 + 日聚类t + 尾部诊断)。
+        # eval_on_demand=True: 与 short_funnel_shadow 同款 — 结算器是**待裁项出读数用**的按需
+        # 评估器, 非周期环, 不挂 cron (哨兵豁免); 达门自动裁 = refresh_counts 迁移 READY 时
+        # 由待裁面/人工跑本脚本呈裁。首跑 2026-10-04: n=34 (台账36, 缺bars 2), RFC-065 n≥30
+        # 门已达, 判决 NOT_ESTABLISHED_KEEP_SAMPLING (安全门过 p_worse=0.058>0.025, 正向证据
+        # 不足 mean=-19.09/CI95含0/符号p=0.30) ⇒ 按预注册顺延攒样, 不翻开关。
+        eval_script="scripts/settle_entry_band_widen.py",
+        eval_on_demand=True,
         created="2026-08-06",
-        no_adjudication_reason="NO_EVAL_SCRIPT: RFC-065 判据已预注册 (sign-flip B=10000 α=0.025 "
-                               "双条件+符号共门, min_n=60, 现 n=30) 但无结算执行体 — 2026-09-27 "
-                               "摘除错轴的 limit_entry_shadow_replay.py (读 limit_entry 影子的死源, "
-                               "非本条 data_path), 达门前建读 entry_band_widen_shadow.jsonl 的结算器 "
-                               "或届时人工结算",
     ),
     ShadowItem(
         id="limit_entry",
