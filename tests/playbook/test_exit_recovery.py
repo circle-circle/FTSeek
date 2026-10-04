@@ -179,7 +179,10 @@ def recovery(entry_env, tmp_path, monkeypatch):
     module("app.playbook.overnight_hold_shadow", emit=callback("overnight"))
     acb = SimpleNamespace(record_trade_result=callback("acb"))
     pdt = SimpleNamespace(record_close=callback("pdt"))
-    module("app.risk.absolute_circuit_breaker", get_absolute_circuit_breaker=lambda: acb)
+    # 2026-10-04 修陈旧桩: 同 tests/test_playbook_pipeline.py — RFC-132 起生产带 target_env 参数,
+    #   原无参桩会抛 TypeError 并被 except 吞掉, 使 "acb" 永不进 calls。
+    module("app.risk.absolute_circuit_breaker",
+           get_absolute_circuit_breaker=lambda target_env="sim": acb)
     module("app.risk.pdt_guard", get_pdt_guard=lambda: pdt)
     module("app.risk.position_exit_monitor", get_market_hours_us=lambda *args: 0.1)
     module("app.coordinator", __path__=[])

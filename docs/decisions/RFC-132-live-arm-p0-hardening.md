@@ -172,5 +172,16 @@ SIM 执行。
 `probe.authorization_id`，并确认 `ALLOW_REAL_TRADING` 与
 `live_manual_arm.enabled`。
 
+**授权来源复核 (2026-10-04 09:32 CST, Hermes)**：上述「用户裁决」原仅以
+`handoff.md` 转述为据，属 C2 红线事项（切实盘须预注册签字），第三方复查无法独立核实。
+主会话已当面询问，用户明确回复「确认授权来自于我」⇒ 授权链闭合，本破例成立。
+
+- 授权范围（与 §6.2 边界一致，未扩大）：仅 1 股 / 1 仓 / LONG / RTH 工程链路验证；
+- 授权**不构成**：策略转正、LIVE 启用、SHORT 放行、手动仓自动平仓；
+- 授权**不豁免**后续技术前置：`probe.authorization_id` 非空 + `ALLOW_REAL_TRADING`
+  + `live_manual_arm.enabled` 三关仍须单独打开并经用户最终确认；
+- 复核时实测全关状态（未被本次授权改动）：`TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`、
+  `ALLOW_REAL_TRADING=false`、`live_manual_arm.enabled=false`、`probe.authorized=false`。
+
 启用前仍必须：提交/隔离本批、重启并跑冒烟、用户填写
 `probe.authorization_id`、确认 `ALLOW_REAL_TRADING` 与 `live_manual_arm.enabled`。

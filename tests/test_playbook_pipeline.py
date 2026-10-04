@@ -117,7 +117,13 @@ class TestCloseTradeRecord:
         module("app.playbook.reentry_tp_shadow", settle_on_close=callback("reentry"))
         acb = SimpleNamespace(record_trade_result=callback("acb"))
         pdt = SimpleNamespace(record_close=callback("pdt"))
-        module("app.risk.absolute_circuit_breaker", get_absolute_circuit_breaker=lambda: acb)
+        # 2026-10-04 修陈旧桩: RFC-132 起生产签名为 get_absolute_circuit_breaker(target_env="sim")
+        #   并按臂路由 ("real" if source_type=="PLAYBOOK_LIVE" else "sim")。原桩 lambda: acb 无参
+        #   ⇒ 生产带参调用抛 TypeError ⇒ 被 pipeline 的 except 吞掉 ⇒ "acb" 永不进 calls,
+        #   4 条断言红。此处接住 target_env 并记录, 使 per-arm 路由成为可断言事实而非静默通过。
+        acb_targets = []
+        module("app.risk.absolute_circuit_breaker",
+               get_absolute_circuit_breaker=lambda target_env="sim": (acb_targets.append(target_env), acb)[1])
         module("app.risk.pdt_guard", get_pdt_guard=lambda: pdt)
         module("app.coordinator.manual_hold_registry", manual_hold_registry=SimpleNamespace(
             get_hold_info=lambda symbol: {}, unregister=callback("unregister")))
