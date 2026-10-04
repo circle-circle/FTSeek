@@ -64,3 +64,5 @@ data/cutover/*
 # 2026-08-22 (DEB-20260822): cron 自动重生成的产物出库 — 树常年脏淹没真变更; 回滚=删以下两行+git add
 config/exit_calibration.json
 data/exit_rule_expectancy_latest.json
+# Added by code-review-graph
+.code-review-graph/

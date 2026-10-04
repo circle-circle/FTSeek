@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "/root/.crg-venv/bin/code-review-graph",
+      "args": [
+        "serve"
+      ],
+      "cwd": "/opt/ftseek/FTSeek-US",
+      "type": "stdio",
+      "env": {
+        "CRG_TOOLS": "detect_changes_tool,get_impact_radius_tool,query_graph_tool,get_minimal_context_tool"
+      }
+    }
+  }
+}
