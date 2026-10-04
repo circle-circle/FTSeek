@@ -169,10 +169,16 @@ class TestClusterLabel:
 class TestRunScanAndGates:
     def test_end_to_end_labels_and_promotion(self, tmp_path):
         db = _mkdb(tmp_path)
-        # 9/3: NVDA LONG 226.96 > cap 225 (违例) + UBER LONG 78.09 > cap 78 (违例)
-        _add_trade(db, 1, "2026-09-03", "US.NVDA", "LONG", price=226.96,
+        # 相对日期 (本文件既有约定, 见 test_retire_after_30d_and_revival 的 now-45d):
+        #   闸3 RETIRE_AFTER_DAYS=30 用 run_scan 内的 now_et=datetime.now(ET) 判 age,
+        #   硬编码日期会随日历增长把本用例 (测闸1 promote) 拖进闸3 retire 而翻红 —
+        #   2026-10-04 实测: 原 "2026-09-03" 起 age=31 > 30 ⇒ status_after=RETIRED。
+        #   retire 语义由 test_retire_after_30d_and_revival 专测, 本用例只需 age 恒 < 30。
+        day = (datetime.now(ET) - timedelta(days=2)).strftime("%Y-%m-%d")
+        # NVDA LONG 226.96 > cap 225 (违例) + UBER LONG 78.09 > cap 78 (违例)
+        _add_trade(db, 1, day, "US.NVDA", "LONG", price=226.96,
                    pnl_net=-10.0, decision_id="DA-1")
-        _add_trade(db, 2, "2026-09-03", "US.UBER", "LONG", price=78.09,
+        _add_trade(db, 2, day, "US.UBER", "LONG", price=78.09,
                    pnl_net=5.0, decision_id="DA-2")
         _add_pi(db, 1, "DA-1", atr_pct=0.03, cap=225.0)
         _add_pi(db, 2, "DA-2", atr_pct=0.03, cap=78.0)
