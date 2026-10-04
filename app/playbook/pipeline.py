@@ -7445,8 +7445,9 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
             #   任何取实例/记账异常都会走此分支; 静默 ⇒ 熔断在实盘形同虚设。
             #   不 re-raise: 平仓链路不得因风控记账失败而中断 (fail-open 语义保持)。
             logger.warning(
-                "[风控接线] ACB record 跳过 %s (target=%s pnl=%s): %r — 熔断计数未更新, 需人工核对",
-                symbol, _acb_target, _acb_pnl, _acb_e,
+                "[风控接线] ACB record 跳过 %s (target=%s pnl=%s) — 熔断计数未更新, 需人工核对",
+                symbol, _acb_target, _acb_pnl,
+                exc_info=True,   # W6_except_stack: 有告警无栈等于让值班人猜根因
             )
         # #6: 复用 _tr (原此处独立 SELECT entry_time)
         _entry_time_val = _tr[3] if _tr is not None else None
