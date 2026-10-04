@@ -283,6 +283,8 @@ def _severity_for(key: str, source: str) -> str:
         return "P0"
     if key == "W1_kr2_cohort_broken":
         return "P0"
+    if key == "W1_oct_cohort_broken":
+        return "P0"
     if key == "W6_except_stack_grew":
         return "P2"
     return "P1"

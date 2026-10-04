@@ -1,5 +1,11 @@
 # 10 月开跑会裁决材料 (OKR-2026-09 结算 → OKR-2026-10 立案)
 
+> **裁决记录 (2026-10-04)**: 用户裁「按建议执行」= **A1 + B1 + C1 全部采纳**。
+> 落地: `docs/OKR-2026-10.md` 立案 (KR1 oct cohort 9/17 起点 + KR2 edge 三态判定 + KR3 SHORT 腿收尾) /
+> `daily_invariant_check.py` 增 `_OCT_COHORT_START` + `oct_cohort` 判分维 (W1_oct_cohort_broken 直推, P0) /
+> `kr3_direction_runup_gate` ADJUDICATED 闹钟提前至 10/17 / `kr3_final_adjudication.py` 增 `--window-end`
+> (延长窗授权标注, 防 SHORT 腿「假延长观察」)。以下为裁决材料原文留档。
+
 - 生成: 2026-10-04 (用户裁「按建议执行」触发整理; 材料中全部数字为当日实测, 可复跑)
 - 依据: `docs/OKR-2026-09.md` §结算判据 — 「KR2 破 ⇒ 9 月样本作废, 10 月开跑会需项目级裁决 (用户主持, 选项开放)」
 - 复跑入口:

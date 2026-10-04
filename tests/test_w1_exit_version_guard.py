@@ -519,3 +519,97 @@ def test_main_push_enabled_flag_gates_external_side_effect(tmp_path, monkeypatch
     assert "def main(push_enabled: bool = True) -> int:" in src
     assert "if push_enabled:" in src and '"w1_direct_push": w1_push' in src
     assert "push_enabled=False" in src, "禁用原因须写在产物里, 不得静默缺键"
+
+
+# ══════════ oct_cohort 判分维 (2026-10-04, OKR-2026-10 KR1, 开跑会 A1) ══════════
+# 与 sub_cohort (纯观测) 的本质区别: oct_cohort **判分并告警** (W1_oct_cohort_broken)。
+# 三条红线: ①起点字面钉死 (移窗=改判据面=须先落 DEB+改 OKR) ②本维 BROKEN 不得污染
+# 主 cohort 判定/全窗 status (口径并列不冒充) ③not_kr2_09_verdict 防误读标记必在。
+_OCT_CUR = "exit-34c7153088a1"   # OKR-2026-10 KR1 现行版本 (DEB-20260917, 用户裁+豁免在册)
+_OCT_NEW = "exit-dddddddddddd"   # 假想的 10 月违规换版
+
+
+def test_oct_cohort_start_is_pinned_and_documented():
+    """源级契约: oct 窗起点写死 + 修订出处可审计 (改窗 = 改判据 = 须先改 OKR)。"""
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    assert '_OCT_COHORT_START = "2026-09-17"' in src
+    assert "OKR-2026-10 KR1" in src and "W1_oct_cohort_broken" in src
+    assert "不得静默移窗" in src, "移窗禁令必须写在告警文本里 (可审计)"
+
+
+def test_oct_cohort_single_version_in_track_without_alarming(tmp_path, monkeypatch):
+    """窗内单版本 ⇒ in_track, 不产生任何 W1 违反 (判分维的'绿'必须是无声的)。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OCT_CUR, n=5, day="2026-09-18")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_OCT_CUR,)))
+    o = info["oct_cohort"]
+    assert o["n_unique"] == 1 and o["status"] == "single_version"
+    assert o["n_closed"] == 5 and o["okr"] == "2026-10"
+    assert o["not_kr2_09_verdict"] is True
+    assert [h[0] for h in hits] == []
+
+
+def test_oct_cohort_second_hash_alarms_p0_key(tmp_path, monkeypatch):
+    """窗内第 2 个哈希 ⇒ W1_oct_cohort_broken 当天告警, 且豁免清单**不适用** (预算 0)。
+
+    子集关系钉死 (2026-10-04 落地时实测): oct 窗 (9/17→) ⊂ 主 cohort 窗 (9/3→, 查询无尾界),
+    ⇒ 10 月任何违规换版**必然同时**触发主窗 W1_kr2_cohort_broken — 两键并报是正确语义
+    (9 月判据 BROKEN 终局不改写 + 10 月判据独立告警), 不得把主键当噪音摘掉。
+    """
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OCT_CUR, n=4, day="2026-09-18")
+    _row_closed(db, exit_hash=_OCT_NEW, n=2, day="2026-09-25")
+    # _OCT_NEW 已入豁免清单 (模拟'先豁免后换版') — 两个判分维照样各自 BROKEN
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_OCT_CUR, _OCT_NEW)))
+    o = info["oct_cohort"]
+    assert o["n_unique"] == 2 and o["status"] == "broken"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken", "W1_oct_cohort_broken"]
+    oct_hit = next(h for h in hits if h[0] == "W1_oct_cohort_broken")
+    assert "不得静默移窗" in oct_hit[2]
+
+
+def test_oct_cohort_broken_does_not_mask_or_fake_main_verdicts(tmp_path, monkeypatch):
+    """口径并列: oct BROKEN 不改主 cohort 判定; 主 BROKEN 也不豁免 oct 维各自告警。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OLD, n=2, day="2026-09-05")        # 主 cohort 窗第 1 版
+    _row_closed(db, exit_hash=_CUR, n=2, day="2026-09-12")       # 主 cohort 窗第 2 版 → 主 BROKEN
+    _row_closed(db, exit_hash=_OCT_CUR, n=3, day="2026-09-18")   # oct 窗单版本 → in_track
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_OLD, _CUR, _OCT_CUR)))
+    assert info["cohort"]["status"] == "broken"
+    assert info["oct_cohort"]["status"] == "single_version"
+    assert [h[0] for h in hits] == ["W1_kr2_cohort_broken"], \
+        "oct in_track 不得消掉主判定; oct 未破也不得多报"
+
+
+def test_oct_cohort_hashless_rows_counted_not_versioned(tmp_path, monkeypatch):
+    """无哈希行 (extended_hours_entry 链缺口) 只计数不当版本 — 缺失不制造假 broken。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OCT_CUR, n=3, day="2026-09-18")
+    _row_closed(db, exit_hash=None, n=4, day="2026-09-19")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_OCT_CUR,)))
+    o = info["oct_cohort"]
+    assert o["hash_missing_rows"] == 4
+    assert o["n_unique"] == 1 and o["status"] == "single_version"
+    assert hits == []
+
+
+def test_oct_cohort_skipped_on_old_schema_without_hostaging(tmp_path, monkeypatch):
+    """缺 exit_price 列 ⇒ oct 维 skipped_old_schema, 主 cohort 判分不得被绑架 (9/11 教训)。"""
+    db = _mk_db(tmp_path)                                  # 无 exit_price 列
+    _row(db, exit_hash=_NEW, n=3, day="2026-09-03")
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_NEW,)))
+    assert info["oct_cohort"]["status"] == "skipped_old_schema"
+    assert info["oct_cohort"]["not_kr2_09_verdict"] is True
+    assert info["cohort"]["n_unique"] == 1 and info["cohort"]["status"] == "single_version"
+
+
+def test_oct_cohort_no_rows_distinguishable(tmp_path, monkeypatch):
+    """oct 窗零闭合行 ⇒ no_rows, 不得读成'单版本在轨' (零样本≠判据通过)。"""
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_CUR, n=2, day="2026-09-12")   # 全在 oct 窗前
+    info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_CUR,)))
+    assert info["oct_cohort"]["status"] == "no_rows"
+    assert info["oct_cohort"]["n_closed"] == 0
+    assert hits == []

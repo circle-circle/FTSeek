@@ -233,8 +233,18 @@ ADJUDICATED: dict[str, dict] = {
         "note": "被挡笔期望 +45.0 (门 ≤-10, 方向相反) 但 forward 仅 14<30 ⇒ 按已记录规则不下结论。 (读数出处: RFC-092 §3 #5)",
     },
     "kr3_direction_runup_gate": {
-        "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "LONG blocked n=36 均值 -1.9/中位 +1.1 (尾部驱动); SHORT blocked n=16<30 ⇒ 延长观察。 (读数出处: RFC-092 §5)",
+        # 2026-10-04 更新 (10 月开跑会 B1, 用户裁「按建议执行」): LONG 腿期末判分已出
+        # (FALSIFIED 干净证伪), SHORT 腿 §三.5 样本门未达 (n=23<30) → 延长观察, 闹钟提前至
+        # 10/17 (实测速率 9/4 以来 0.57 笔/日, 已结算 24, 还需 6 笔 ≈ 11 天 → ~10/15 达门,
+        # 闹钟留 2 天余量; 到点重跑 scripts/kr3_final_adjudication.py)。
+        # needs_user=False: SHORT 腿 verdict 出来后按预注册自动落档, 处置 (停采/立案) 才需用户。
+        "read_at": "2026-10-04", "recheck_after": "2026-10-17", "needs_user": False,
+        "note": "期末裁决批 2026-10-04 (scripts/kr3_final_adjudication.py, 现写现验): "
+                "LONG|blocked n=43 三要素 0/3 (日聚类t=-0.02/声称+2.10<MDE32.88/OOS 翻转-4.00→+10.36) "
+                "= **FALSIFIED 干净证伪**; SHORT|blocked n=23<30 = §三.5 不裁决延长观察 "
+                "(观测: OOS 同向-45→-43, 尾部占比 86.4%, 只记录不结论)。证伪不立即换假设 (KR3 明令); "
+                "SHORT 腿攒至 n≥30 重跑同脚本, 闹钟 10/17。 (读数出处: registry verdict_history 10/4 条目 "
+                "+ data/shadow/kr3_final_adjudication.json + docs/OKR-2026-09.md 变更记录 10/4 行)",
     },
     "penetration_shadow": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,

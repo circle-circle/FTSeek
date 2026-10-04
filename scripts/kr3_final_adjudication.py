@@ -39,7 +39,12 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "data" / "shadow" / "kr3_direction_runup_gate.jsonl"
 OUT = REPO / "data" / "shadow" / "kr3_final_adjudication.json"
 
-WINDOW_END = "2026-09-30"      # §三.0 冻结窗尾 (entry_time 口径)
+WINDOW_END = "2026-09-30"      # §三.0 冻结窗尾 (entry_time 口径; 9 月期末批的预注册窗)
+# 窗口延长授权 (2026-10-04): SHORT 腿 §三.5 样本门未达 (n=23<30), B1 裁决 (用户裁「按建议执行」)
+# = 继续攒样至 n≥30 后重跑本脚本 ⇒ 判分窗尾须随裁决日延长 (--window-end 参数), 否则 9/30 后
+# 新行永不入账, SHORT 腿数学上永远到不了 30 = 假「延长观察」。**诚实边界**: 延长窗读数不再是
+# 原预注册窗的判分 — 产物 window.authority 字段必须如实标注延长授权出处, LONG 腿 FALSIFIED
+# 结论以冻结窗 (9/30) 为准不受影响 (已落档 verdict_history 10/4 条目)。
 OOS_SPLIT = "2026-09-17"       # §三.3 窗口最后 2 周分界
 MIN_N_BLOCK = 30               # §三.5 样本门
 MDE_Z = 2.802                  # z0.975(1.960) + z0.80(0.842)
@@ -169,17 +174,23 @@ def _adjudicate_leg(rows, direction):
     return leg
 
 
-def main():
+def main(window_end=WINDOW_END):
     rows = _load_rows()
     in_win = [r for r in rows
               if r.get("realized_pnl") is not None
-              and (r.get("entry_time") or "")[:10] <= WINDOW_END]
+              and (r.get("entry_time") or "")[:10] <= window_end]
     thr = {r.get("runup_block_pct_frozen") for r in rows if r.get("runup_block_pct_frozen") is not None}
+    extended = window_end > WINDOW_END
     out = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "prereg": "RFC-072 §三 (判据冻结) / §六.3 (裁决批现写现验)",
-        "window": {"start": "预注册采集起点 (jsonl 首行)", "end": WINDOW_END,
-                   "caliber": "entry_time ≤ 窗尾 且 realized_pnl 非空 (已结算可判分)"},
+        "window": {"start": "预注册采集起点 (jsonl 首行)", "end": window_end,
+                   "caliber": "entry_time ≤ 窗尾 且 realized_pnl 非空 (已结算可判分)",
+                   "authority": ("延长窗 (B1 裁决 2026-10-04, 用户裁「按建议执行」): SHORT 腿样本门"
+                                 "未达继续攒样, 窗尾随裁决日延长 — 读数**不再是**原预注册窗判分;"
+                                 " LONG 腿 FALSIFIED 以冻结窗 9/30 落档结论为准不受影响"
+                                 if extended else
+                                 "原预注册窗 (RFC-072 §三.0 冻结)")},
         "threshold_guard": {"runup_block_pct_frozen_values": sorted(thr),
                             "expected": RUNUP_BLOCK_PCT_FROZEN,
                             "ok": thr == {RUNUP_BLOCK_PCT_FROZEN}},
@@ -192,7 +203,9 @@ def main():
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     # stdout 摘要
     print(f"═══ RFC-072 KR3 期末裁决批 ({out['generated_at']}) ═══")
-    print(f"窗口: {out['window']['caliber']}, ≤{WINDOW_END} | 台账 {len(rows)} 行 → 判分 {len(in_win)}")
+    print(f"窗口: {out['window']['caliber']}, ≤{window_end} | 台账 {len(rows)} 行 → 判分 {len(in_win)}")
+    if extended:
+        print(f"⚠️ {out['window']['authority']}")
     print(f"阈值守卫: runup_block_pct_frozen={sorted(thr)} (期望 {RUNUP_BLOCK_PCT_FROZEN}) "
           f"{'✅' if out['threshold_guard']['ok'] else '🔴 漂移'}")
     for leg in out["legs"]:
@@ -218,4 +231,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    _ap = argparse.ArgumentParser(description="RFC-072 KR3 期末裁决批 (§六.3 现写现验)")
+    _ap.add_argument("--window-end", default=WINDOW_END,
+                     help=f"判分窗尾 (entry_time ≤, 默认 {WINDOW_END}=冻结窗; "
+                          f"SHORT 腿延长观察时按 B1 裁决传更晚日期, 产物标注延长授权)")
+    main(window_end=_ap.parse_args().window_end)

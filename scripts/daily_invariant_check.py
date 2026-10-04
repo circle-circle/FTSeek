@@ -136,6 +136,16 @@ _FREEZE_COHORT_START = "2026-09-03"
 # 退出 9/10T09:38=变更后), 把混源交易放进"单版本窗"会重新制造歧义; 实测两段退出时刻
 # 间隔 ≈20h 零交错 (de49 末 9/9T13:33 ET → 13f6 首 9/10T09:38 ET), 9/10 是干净边界。
 _SUB_COHORT_START = "2026-09-10"
+# ── oct_cohort 判分维 (2026-10-04, OKR-2026-10 KR1, 10 月开跑会裁决 A1, 用户裁「按建议执行」) ──
+# OKR-2026-09 KR2 BROKEN 终局 (9 月三段哈希只作跨版本对照) 后, 10 月功效窗的判分对象:
+# exit-34c7153088a1 (DEB-20260917 §20–§22 延长时段退出链重构, **用户裁产生 + 已入豁免清单**)
+# 的首个干净退出日 = 9/17。边界实测: 13f6 末笔退出 9/16T14:37 ET → 34c7 首笔 9/17T09:48 ET
+# (~19h 零交错); 唯一骑墙笔 (trade_date=9/16 入场、34c7 隔夜退出) 按 sub_cohort 骑墙笔先例
+# (trade 1473) 排除窗外。**与 sub_cohort 的本质区别**: sub_cohort 是观测面 (不判分),
+# 本块是 OKR-2026-10 KR1 的**判分维** (窗内出现第 2 个哈希 ⇒ W1_oct_cohort_broken 当天直推)。
+# 移动本常量 = 改判据面, 必须先落 DEB + 改 OKR (与 _FREEZE_COHORT_START 同纪律),
+# 并由 tests/test_w1_exit_version_guard.py 字面钉死强制留痕。
+_OCT_COHORT_START = "2026-09-17"
 # ── W1_* 关键违反直推 (2026-09-11, DEB-20260909 §7.7 清单⑤(i), 用户裁选项(d) 同批落地) ──
 #    断链根因 (§7.2): 事件型告警 (判据破, 一违反即关键) vs error_alert 的速率型行数阈值
 #    (地板 3) 结构性不兼容 — 调低阈值只会让日常噪声刷屏, 不是解法。W1_* 是"零违反=判据
@@ -190,6 +200,18 @@ def _check_config_freeze(rec) -> dict:
                 if not _is_structural_error(_se):
                     raise
                 sub_cohort_pairs = None
+            # oct_cohort 判分维 (2026-10-04, OKR-2026-10 KR1): 同款最小 schema 面 + 独立容错 —
+            # 观测面/判分维的查询失败都不得拖垮主 cohort 维 (W1 主判据), 与 sub_cohort 同一纪律。
+            try:
+                oct_cohort_pairs = conn.execute(
+                    "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*), "
+                    "MIN(trade_date), MAX(trade_date) "
+                    "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
+                    "AND exit_price > 0 GROUP BY 1", (_OCT_COHORT_START,)).fetchall()
+            except Exception as _oe:
+                if not _is_structural_error(_oe):
+                    raise
+                oct_cohort_pairs = None
         finally:
             conn.close()
         versions = {str(v): n for v, n in pairs}
@@ -245,6 +267,45 @@ def _check_config_freeze(rec) -> dict:
                          "主 cohort 窗 BROKEN 后仍在攒样的单版本子窗, 只报已闭合笔数与唯一性, "
                          "**不是** KR2 判分对象, 不得据此宣称 KR2 达标或 9 月样本有效"),
             }
+        # ── oct_cohort: OKR-2026-10 KR1 判分维 (2026-10-04 开跑会 A1) ──
+        # 与 sub_cohort (纯观测, 不 rec) 不同: 本块**判分并告警** — 窗内 ≥2 个退出哈希
+        # ⇒ W1_oct_cohort_broken (走 W1_* 直推通道, 当天送达用户)。
+        # 刻意**不参与 info["status"] 取劣**: status 的既有语义 = 全窗维 (档案列 + 退出哈希豁免对账)
+        # 的漂移状态, 消费方 (meta_audit / 周报) 按该语义读; 混入 oct 维会改变既有键语义
+        # (改判据面之外的口径)。本维的告警出口是 W1 key, 不是 status。
+        if oct_cohort_pairs is None:
+            info["oct_cohort"] = {
+                "okr": "2026-10", "window_start": _OCT_COHORT_START,
+                "status": "skipped_old_schema", "not_kr2_09_verdict": True,
+                "note": "exit_price 列缺失 (旧库形态) — 判分维跳过, 主 cohort 维不受影响",
+            }
+        else:
+            oct_versions = {str(v): {"n": n, "first": f, "last": la}
+                            for v, n, f, la in oct_cohort_pairs if str(v).startswith("exit-")}
+            oct_n_unique = len(oct_versions)
+            info["oct_cohort"] = {
+                "okr": "2026-10",
+                "window_start": _OCT_COHORT_START,
+                "versions": oct_versions,
+                "n_unique": oct_n_unique,
+                "n_closed": sum(d["n"] for d in oct_versions.values()),
+                "n_target": 200,      # OKR-2026-10 KR1 功效目标 (非判据, 只作进度提示)
+                "hash_missing_rows": sum(n for v, n, _, _ in oct_cohort_pairs
+                                         if not str(v).startswith("exit-")),
+                "status": ("single_version" if oct_n_unique == 1 else
+                           "broken" if oct_n_unique > 1 else "no_rows"),
+                # 显式防误读: 本块判的是 OKR-2026-10 KR1, 与 9 月 KR2 (BROKEN 终局) 不是同一判据
+                "not_kr2_09_verdict": True,
+                "note": ("OKR-2026-10 KR1 判分维 (开跑会 A1, 2026-10-04 用户裁「按建议执行」): "
+                         "34c7 单版本功效窗, 起点=9/17 (骑墙笔按 trade 1473 先例排除窗外)。"
+                         "**不是** OKR-2026-09 KR2 的判分对象 — 后者 BROKEN 终局不改写, "
+                         "本块 in_track 不得被读成 9 月达标"),
+            }
+            if oct_n_unique > 1:
+                rec("W1_oct_cohort_broken", "-", ",".join(sorted(oct_versions)),
+                    f"OKR-2026-10 KR1 功效窗 ({_OCT_COHORT_START}→) 出现 {oct_n_unique} 个退出哈希 "
+                    f"⇒ 判据 **BROKEN** (变更预算 0, P0 豁免通道对本维关闭); 按预注册回滚线须 "
+                    f"DEB 落档 + 开跑会级裁决, **不得静默移窗** (移动 _OCT_COHORT_START = 改判据面)")
         if not versions:
             info["status"] = "no_rows_in_window"
             return info
