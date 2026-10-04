@@ -1617,7 +1617,7 @@ REGISTRY: list[ShadowItem] = [
                             "(防链式 fishing, OKR-2026-09 KR3 明令)。",
         eval_script="scripts/kr3_runup_report.py",
         created="2026-09-02",
-        last_evaluated="2026-09-13",
+        last_evaluated="2026-10-04",
         intent="chase_high_ban",
         cross_ref=("futu_channel_top_movers",),
         verdict_history=[{"date": "2026-09-04", "verdict": "NO_ADJUDICATION",
@@ -1640,6 +1640,20 @@ REGISTRY: list[ShadowItem] = [
                                      "中位翻正), 说明早读数是尾部噪声 — 印证样本门不可绕过。"
                                      "注: 判据①②③(日聚类t/MDE/OOS)按 RFC-072 §六.3 期末才现写, "
                                      "本次不出该三值属设计。"},
+                         {"date": "2026-10-04", "verdict": "LONG=FALSIFIED / SHORT=INSUFFICIENT_SAMPLE",
+                          "evidence": "期末裁决批 (scripts/kr3_final_adjudication.py, 现写现验, "
+                                     "产物 data/shadow/kr3_final_adjudication.json): 窗口=预注册→9/30 "
+                                     "入场且已结算 n=159, 阈值守卫 runup=1.0 未漂移。"
+                                     "LONG|blocked n=43≥30: ①日聚类t=-0.02 (df=18.3) ②声称效应+2.10 < "
+                                     "MDE80=32.88 ③OOS 前段-4.00 vs 后2周+10.36 **翻转** ⇒ 三要素 0/3 "
+                                     "→ **干净证伪** (被拦组不更差, 门无 LONG 侧 edge; 稳健性: blocked "
+                                     "median +15.4, worst2=-383.6 尾部占比 49.6% = 尾部风险形态而非方向错)。"
+                                     "SHORT|blocked n=23<30 ⇒ §三.5 样本门未达 → **不裁决延长观察** "
+                                     "(观测读数: t=-0.49 / 声称-39.02<MDE75.73 / OOS 同向一致-45→-43, "
+                                     "尾部占比 86.4% — 方向线索存在但不可测, 只作记录不作结论)。"
+                                     "处置 (OKR KR3 明令): 证伪如实记录, **不立即换假设**; LONG 腿证伪 + "
+                                     "SHORT 腿样本门未达的最终处置 (记录/延长/停采/10月新假设) 属项目级, "
+                                     "10 月开跑会用户裁决 (用户裁「按建议执行」2026-10-04 授权本判分批)。"},
                         ],
         notes="计数口径 = jsonl 行数 (trade_id 去重); **min_n=30 数的是 would-block 子集已结算笔数, "
               "不是总行数** ⇒ 注册表 READY 不等于可裁决, 裁决批须按子集 n 判 (2026-09-06 面板实测 "
