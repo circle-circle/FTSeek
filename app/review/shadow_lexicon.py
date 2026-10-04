@@ -63,7 +63,10 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "kr3_direction_runup_gate": {
         "plain": "已经涨很多了还做多（追高禁令）",
-        "conclusion": "多头被拦 n=36 均值 −1.9 但中位 +1.1（尾部驱动）; 空头被拦 n=16<30 ⇒ 不裁决, 延长观察",
+        "conclusion": "期末判分已出 (2026-10-04, scripts/kr3_final_adjudication.py): **LONG 腿干净证伪** "
+                      "(被拦 n=43≥30, 三要素 0/3 — 日聚类 t=−0.02 / 声称+2.1<MDE 32.9 / OOS 翻转−4.0→+10.4 ⇒ "
+                      "追高禁令在 LONG 侧无边际价值); SHORT 腿被拦 n=23<30 ⇒ §三.5 延长观察 "
+                      "(闹钟 10/17, 攒满重跑同脚本)。证伪不立即换假设 (KR3 明令)",
         "cls": "AUTO_WATCH",
     },
     "penetration_shadow": {
