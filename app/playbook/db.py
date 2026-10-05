@@ -109,10 +109,22 @@ class PlaybookDB:
         self._tables_created = False
 
     def _conn(self):
-        """获取连接"""
+        """获取连接 (必须把 db_name 传到底 — 池方法不吃外层参数).
+
+        [P0 lane 隔离 2026-10-06] 原写法 `get_db(self.db_name).connection()`:
+          - `get_db(name)` 只 `return get_pool()`, name 从未被使用;
+          - `connection(name="ftseek_us")` 又用默认值.
+        ⇒ SIM/LIVE 两条 lane 都落到 data/ftseek_us.db, `route_playbook_db("real")`
+        的 "isolated live lane" 承诺落空 (实证: 两 lane PRAGMA database_list 同文件).
+        后果: LIVE 镜像行写进 SIM 库, 撞 (date,symbol) 唯一约束覆盖原 BUY 指令
+        (2026-10-05 US.GEO/US.ORCL: direction 被 admission 改成 SKIP、
+         position_size 被强设 1、skip_reason=NOTIONAL_TOO_SMALL(33<2500)),
+        随后 `_find_instruction_by_id` 因 `WHERE direction != 'SKIP'` 查不到
+        → execute_instruction 返回"指令不存在"。
+        """
         if self._direct_conn is not None:
             return self._direct_conn
-        return get_db(self.db_name).connection()
+        return get_db(self.db_name).connection(self.db_name)
 
     def ensure_tables(self):
         """创建所有 playbook 表 (IF NOT EXISTS) + 列迁移"""
