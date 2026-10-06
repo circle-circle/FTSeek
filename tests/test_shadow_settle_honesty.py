@@ -75,7 +75,10 @@ def test_dominance_flag_silent_when_no_single_driver():
 def test_guardrail_lines_present():
     out = "\n".join(ssp.summarize(DAY, DAY, DELAYED, skipped=0))
     assert "判读护栏" in out and "n<30" in out
-    assert "周六预注册周检" in out
+    # 2026-10-06 P2: 末行指向真实消费方 (周日 IC 周报影子组合段)。
+    # 旧文案"周六预注册周检"是错误指引 — ftseek_weekly_checkpoint.py 不读本台账 (grep 0 命中)。
+    assert "周日 IC 周报" in out
+    assert "周六预注册周检" not in out
     assert "先到先占" in out          # 归因披露 (blocked_by 非单门完整总体)
     # 旧判读行 (单日笔均→松/紧) 必须已移除
     assert "该松" not in out
@@ -95,11 +98,23 @@ def test_cumulative_column_uses_all_rows_minus_delayed():
 
 
 def test_header_first_line_preserves_silent_convention():
-    """shell 包装器按 '^新结算 0 笔' grep 静默 — 首行格式不可破坏."""
+    """shell 包装器按首行两计数判 eff_new (N==M ⇒ 静默) — 首行格式不可破坏.
+
+    2026-10-06: 守卫从字面 '^新结算 0 笔' 改为 eff_new 判定 (N_new==M_delayed),
+    修复 '7 进 7 剔' 形态的零信息量推送漏网 (当日实弹)。本测试钉住守卫依赖的
+    首行三形态: 0 笔 / N 笔无剔除 / N 笔含剔除段。
+    """
     out0 = ssp.summarize([], [], set(), skipped=2)
     assert out0[0].startswith("新结算 0 笔")
     out6 = ssp.summarize(DAY, DAY, DELAYED, skipped=0)
     assert out6[0].startswith("新结算 6 笔")
+    assert "剔除延迟成交 2 笔" in out6[0]
+    # 全部剔除形态 (今日实弹: 7 进 7 剔) — 首行必须同时含两个计数供 shell 比对
+    all_delayed = {_r["inst_id"] for _r in DAY}
+    out_full = ssp.summarize(DAY, DAY, all_delayed, skipped=0)
+    assert out_full[0].startswith("新结算 6 笔")
+    assert "剔除延迟成交 6 笔" in out_full[0]
+    assert not any(l.startswith("| 门 |") for l in out_full)   # eff_new=0 ⇒ 无表格 = 守卫静默正确
 
 
 def test_no_rows_still_prints_guardrails():

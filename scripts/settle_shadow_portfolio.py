@@ -141,7 +141,10 @@ def summarize(new_rows, all_rows, delayed_ids, skipped):
       2. 单笔主导标记: 当日门合计被 |最大单笔|>80% 主导时打 ⚠ 并点名 —
          实测 n≥3 的门×日 4/5 被单笔主导 (09-14: NOK -259 占 125%), 日符号≠门画像。
       3. 累计 n<30 仅方向 (宪章第 9 律), 判读行不再引导从单日笔均下"松/紧"结论;
-         门裁决唯一权威 = 周六预注册周检 (按日聚类 t/MDE, n_真被拦≥30)。
+         门读数的汇总消费方 = 周日 IC 周报影子组合段 (ic_weekly_report, 同一台账)。
+         2026-10-06 P2 勘误: 原文案称"裁决以周六预注册周检为准", 实测
+         ftseek_weekly_checkpoint.py 不读本台账 (grep 0 命中) ⇒ 指向了不存在的裁决面;
+         按日聚类 t/MDE 是周报信号 IC 段的判据, 不属于本台账。
       4. 归因披露: blocked_by 是 (inst_id,date) 先到先占 (_shadow_portfolio_emit),
          实测捕获率 ~87%, 非单门完整总体 (完整总体在 trigger_miss_telemetry)。
     """
@@ -188,7 +191,7 @@ def summarize(new_rows, all_rows, delayed_ids, skipped):
 
     lines.append("")
     lines.append("判读护栏: 当日读数仅监控快照 (n 小, 易被单笔主导, 见 ⚠); 累计 n<30 只报方向。")
-    lines.append("门的松/紧裁决以周六预注册周检为准 (按日聚类 t/MDE 判据, n_真被拦≥30 才启用)。")
+    lines.append("门的松/紧汇总读数由周日 IC 周报影子组合段承接 (与本日报同一台账, 按 blocked_by 聚合; 累计 n≥30 前仅方向参考)。")
     lines.append("归因注意: blocked_by 先到先占 (实测捕获 ~87%), 非单门完整总体; 延迟成交已剔除。")
     return lines
 
