@@ -32,6 +32,7 @@
 """
 import argparse
 import json
+import math
 import re
 import time
 import logging
@@ -82,7 +83,7 @@ WATCHLIST = [
     #   price_fail_closed (责任 DEB-20260726 Q2, 已清空保留机制)。
     #   [2026-08-23] SHORT 门控两件 (hard_to_borrow/short_interest.json) 已随死门删除移出清单 —
     #   用户裁"不值得" (88天空文件静默 fail-open 实案, 责任同 R2 Q1), 消费门已删, 文件不再需要。
-    ("data/price_fail_closed.json",               999, "[人工名单] 期权跳过集 (仅人工维护, 静止正常)", False),
+    ("data/price_fail_closed.json",          math.inf, "[人工名单] 期权跳过集 (仅人工维护, 静止正常)", False),
 ]
 
 
