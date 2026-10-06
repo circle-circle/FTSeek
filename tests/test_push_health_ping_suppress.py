@@ -193,3 +193,54 @@ def test_get_push_hub_reads_suppress_window():
     src = inspect.getsource(hub_mod.get_push_hub)
     assert "push.ping_suppress_window_sec" in src, "get_push_hub 未读该配置键"
     assert "ping_suppress_window_sec=ping_suppress" in src, "读到但未传入 PushHub 构造"
+
+
+# ══════════ ④ 抑制必须在生产 LOG_LEVEL 下可见 ══════════
+def test_suppression_logged_at_info_not_debug(ch, caplog):
+    """抑制分支必须 logger.info — 生产 LOG_LEVEL=INFO 下 debug **根本不落盘**.
+
+    病灶 (2026-10-06 自查): 抑制分支原写 logger.debug ⇒ 日志里「心跳消失」与
+    「心跳线程死了」**完全同貌**, 运维无从区分, 而抑制正是 B1 的核心行为。
+    这条钉子防它退回 debug 后静默复发 (get_status() 的计数是内存态, 进程重启即丢,
+    日志是唯一跨重启的取证面)。
+    """
+    import logging
+
+    hm = HealthMonitor([ch], suppress_window_sec=14400)
+    hm.note_success(ch.name)
+    with caplog.at_level(logging.INFO):
+        _ping(hm)
+    assert ch.sent == [], "前置: 本轮确实被抑制"
+    txt = caplog.text
+    assert "跳过本轮 ping" in txt, (
+        "抑制在 INFO 级别下不可见 ⇒ 退回 debug 了 (生产 LOG_LEVEL=INFO 不落盘, "
+        "运维无法区分'抑制生效'与'心跳线程死了')"
+    )
+    # 累计计数入日志 — 收益核实的跨重启取证面 (get_status() 是内存态会丢)
+    assert "累计抑制 1 次" in txt, "抑制计数未入日志 ⇒ 重启后收益无从核实"
+
+
+def test_suppression_log_frequency_is_bounded():
+    """频率安全: 每通道每轮最多 1 行 ⇒ 单通道 ≤24 行/天, 不超过它替代的外发量."""
+    import inspect
+    import re
+
+    from app.push import health as health_mod
+
+    src = inspect.getsource(health_mod.HealthMonitor._ping_all)
+    # 锚点必须选 _ping_all 体内真存在的符号 (初版误用 "ping_suppressed" —
+    # 那只出现在 get_status(), 在本函数里 find 返回 -1 ⇒ 断言假红, 实测踩过)。
+    anchor = src.find("_last_business_ok.get")
+    assert anchor > 0, "抑制分支的锚点符号变了 ⇒ 重核"
+    i_info = src.find("logger.info(", anchor)
+    i_cont = src.find("continue", i_info)
+    assert 0 < i_info < i_cont, "抑制日志与 continue 的位置关系变了 ⇒ 重核频率上界"
+    # 精确计数: 只有 logger.info 调用算 (源码注释里也含「跳过本轮 ping」字样,
+    # 用裸 str.count 会把注释算进去 = 假红, 本条初版就踩了)。
+    info_hits = len(re.findall(r"logger\.info\([^)]*跳过本轮 ping", src, re.S))
+    debug_hits = len(re.findall(r"logger\.debug\([^)]*跳过本轮 ping", src, re.S))
+    assert info_hits == 1, f"抑制 INFO 日志应恰 1 处, 实得 {info_hits} ⇒ 频率上界失效"
+    assert debug_hits == 0, (
+        "抑制分支退回 logger.debug 了 ⇒ 生产 LOG_LEVEL=INFO 不落盘, "
+        "「心跳消失」与「心跳线程死了」同貌 (test_suppression_logged_at_info_not_debug 同源)"
+    )

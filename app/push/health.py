@@ -122,10 +122,16 @@ class HealthMonitor:
                     _last_biz = self._last_business_ok.get(ch.name, 0.0)
                     if _last_biz and (time.time() - _last_biz) < self.suppress_window_sec:
                         self._suppressed[ch.name] = self._suppressed.get(ch.name, 0) + 1
-                        logger.debug(
+                        # ⚠️ 必须 INFO 不能 debug (2026-10-06 自查修正): 生产 LOG_LEVEL=INFO
+                        #   ⇒ debug 根本不落盘 ⇒ 「心跳消失」在日志里与「心跳线程死了」
+                        #   **完全同貌**, 运维无从区分, 而抑制是 B1 的核心行为。
+                        #   频率安全: 每通道每 interval(3600s) 最多 1 行 ⇒ 单通道 ≤24 行/天,
+                        #   比它替代的心跳推送 (24 条/天外发) 更便宜。
+                        logger.info(
                             f"[PushHealth] {ch.name} 跳过本轮 ping "
                             f"(业务消息 {(time.time()-_last_biz)/60:.0f}min 前成功外发, "
-                            f"< 抑制窗 {self.suppress_window_sec/3600:.1f}h)")
+                            f"< 抑制窗 {self.suppress_window_sec/3600:.1f}h; "
+                            f"累计抑制 {self._suppressed[ch.name]} 次)")
                         continue
                 ok = ch.send(msg)
                 if ok:
