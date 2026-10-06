@@ -1,5 +1,186 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-06 13:42 双臂切换优化复查与探针安全补强
+
+**触发**: 用户令「美股昨晚已经完成交易，另外的 AGENT 也针对实盘和 SIM 切换做了优化，请复查」。
+
+**复查结论**:
+- `PlaybookDB._conn()` lane 隔离修复有效：`route_playbook_db("sim")` 走研究/SIM 库，
+  `route_playbook_db("real")` 走 `data/ftseek_us_live.db`；
+- 昨晚未发生 LIVE 探针成交：SIM 主库 `PLAYBOOK_LIVE=0`，LIVE 库今日 `0`、
+  LIVE 自动仓 `0`，`HALT` 不存在；
+- 发现 SIM 指令 `3707 US.ORCL`、`3710 US.GEO` 的 `metadata_json` 残留
+  `dual_arm.target_env="real"`；交易记录、持仓与执行臂本身干净，仅元数据污染。
+
+**安全补强**:
+- LIVE waiver 必须携带非空 `authorization_id`，且必须与
+  `playbook.live_manual_arm.probe.authorization_id` 精确一致；
+- waiver 必须只覆盖 `ALLOW_REAL_TRADING=true`，不能放宽其他四锁；
+- `NOTIONAL_TOO_SMALL` 探针豁免收紧为 `BUY + position_size=1 +
+  target_env in {real,live} + mode=engineering_probe`，防止标记污染放大敞口；
+- 修正 waiver 字段校验优先级，保留“过期时间不可解析”的原始失败原因。
+- 终检补齐两个 STOP 边界：券商 STOP 先成交时，退出监控会按 STOP 单成交
+  证据补记 `SL_BROKER_STOP` 并删除 open position；平仓清理改用
+  `entry_broker_order_id` 验证入场身份，不再把 STOP 单号误当入场单号；
+- LIVE 手动持仓检查异常时 fail-close 拒绝新仓；SIM 保持原放行语义。
+
+**数据清理**:
+- 备份：`data/backups/ftseek_us_before_dual_arm_metadata_cleanup_20261006_134058.db`；
+- 仅删除上述两条 SIM 指令的 `dual_arm` 键，未覆盖其他 metadata；
+- 清理后两行 `broker_env=sim`、`dual_arm` 残留 `0`。
+
+**验证与重启**:
+- 终检定向契约 **146 passed**：waiver / admission / dual-arm routing /
+  quote gate / exit compensation / LIVE P0 / startup mode / risk arm /
+  atomic mode switch / startup smoke；
+- `py_compile` 与 `git diff --check` 通过；
+- 13:41:38 CST 重启，新 PID `4058947`，环境仍为 `TRADE_ENV=1`、
+  `AUTO_TRADE_ACCOUNT=sim`、`ALLOW_REAL_TRADING=true`；
+- `startup_smoke_check.py --live-probe` **7/7 通过**；
+- LIVE gate 当前唯一拒绝为 `LIVE_MARKET_PHASE_REJECTED`（隔夜），
+  RTH 后具备执行条件。
+
+**边界提醒**:
+- `cutover_preflight --to live --no-write` 对“全量切换”仍报
+  `P1 graduated=False` BLOCK，另有 broker STOP 里程、研究臂连续性 WARN；
+  `--skip-gate` 后 BLOCK=0；这说明**全量切换未毕业**，不阻断已授权的 1 股工程探针；
+- 旧 `/api/mode/switch live_*` 实测返回 **410** 且无写文件/无重启；
+  `switch_mode("simulate")` 在双臂健康态为 no-op，不会误关 LIVE 探针授权。
+- 探针仍只允许 LONG/BUY、1 股、1 仓、RTH；SHORT 拒绝；
+- 若要临时停 LIVE 新仓，优先删除 `data/live_probe_lock_waiver.json` 或落
+  `data/live_arm_halt.json`，不改全局 SIM 常驻配置。
+
+## 2026-10-05 LIVE 1 股工程探针授权与重启验证
+
+**触发**: 用户明确指令「现在重启下一步，授权1股探针」。
+
+**授权边界**:
+- 授权 ID: `AUTH-20261005-1SHARE-LONG-RFC132`；
+- 仅允许 **1 股、1 仓、LONG/BUY、RTH 工程探针**；
+- 全局仍保持 `TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`，SIM 常驻；
+- SHORT 继续拒绝，不放大仓位，不自动平仓手动仓。
+
+**实施**:
+- `.env.us` 设置 `ALLOW_REAL_TRADING=true`；
+- `config/unified_config.yaml` 设置 `playbook.live_manual_arm.enabled=true`、
+  `probe.authorized=true`、`authorization_id=AUTH-20261005-1SHARE-LONG-RFC132`；
+- 2026-10-05 22:03:06 CST 重启服务，新 PID `3972792`；
+- 启动段确认 `broker=sim db=sim ALLOW_REAL_TRADING=True`。
+
+**验证**:
+- `startup_smoke_check.py --live-probe` **7/7 通过**；
+- LIVE gate 只读评估 `allowed=true`，HALT 不存在，LIVE 自动仓 `0`；
+- REAL 账户只读刷新成功：总资产 `$75,595.25`，购买力 `$32,066.01`；
+- `cutover_preflight` P5 已清零；LIVE 库已备份并预迁移
+  `entry_broker_order_id`，切换日有效补列 `0`；
+- 22:03 轮 SHORT `US.TSLA` 被正确拒绝 (`LIVE_PROBE_DIRECTION_REJECTED`)；
+- 剩余 BUY 触发分别被 chase cap / VWAP 证伪门拦截，未绕行。
+
+**冒烟脚本补丁**:
+- `startup_smoke_check.py` 新增 `--live-probe` 显式模式；
+- 全局路由仍必须 `sim`，仅授权探针允许 `ALLOW_REAL_TRADING=True`；
+- 启动段终止于 `[PlaybookExit] 快循环已启动`，不再把运行期 pending 回报误判为启动失败；
+- 相关测试 `24 passed`。
+
+## 2026-10-05 LIVE 探针前 P0/P5 补丁: 入场/止损单号语义拆分 + STOP 收据 SQL 修复
+
+**触发**: 用户令「继续」。盘中实链路核查后继续下钻，发现两个启用前硬伤:
+
+1. `TradeStore.upsert_position_simple()` 把**入场单号**写入
+   `open_positions.sl_broker_order_id`。该字段被 OCO/止损替换逻辑按**真实 STOP 单号**
+   消费，语义碰撞可能导致撤错入场单或止损替换被误判。
+2. `PlaybookService._record_live_stop_receipt()` 更新 `open_positions` 时使用
+   `source_type='PLAYBOOK_LIVE'`，但该表**没有 `source_type` 列**。首次 LIVE STOP
+   记账会抛 `OperationalError`，被上层当作 STOP 失败并触发 `HALT_NEW_LIVE`。
+
+**修复**:
+- `open_positions` 新增 `entry_broker_order_id`，入场单号只写该列；
+- `sl_broker_order_id` 插入时保持空，重 upsert 不覆盖既有 STOP 单号；
+- LIVE STOP 收据按 `symbol + account_type='live' + owner_strategy='playbook_live'
+  + owner='auto'` 定位仓位，并回写 entry/STOP 两个单号；
+- 若找不到对应 LIVE 自动仓，STOP 收据 fail-close。
+
+**验证**:
+- `tests/playbook/test_live_arm_p0_contracts.py` 新增两个防回归测试：
+  入场/止损单号语义拆分、真实 STOP 收据 SQL；
+- 定向测试 **55 passed, 1 skipped**；`py_compile` / `git diff --check` 通过；
+- `cutover_rehearse.py --to live` 副本彩排通过：切换日阻塞性 DDL 残留 0，
+  SIM↔LIVE 资金基线回切可恢复；
+- `TradeStore` 启动迁移已包含幂等数据修复：仅当 `sl_broker_order_id` 与同标的
+  `trade_records.futu_order_id` 精确匹配时，才搬入 `entry_broker_order_id` 并清空；
+  未重启、未改生产库、未授权 LIVE。当前预检 P5 仍会命中旧行，重启后应复核清零。
+
+## 2026-10-04 RFC-134 复查补记: 16:03 重启入档 + 修复通道边界 + 工作树混批风险
+
+**触发**: 用户令「claude 已经执行落地，请复查」。独立复查 RFC-134 全部改动面
+（`main.py` 启动守卫 / `mode_switch_service.py` 410 语义 / risk 三模块 SIM 分臂 pin /
+Dashboard UI 退役 / 路由 / 测试），并核验当前运行态。
+
+**复查结论**: 通过，可保留上线。关键证据:
+- 定向契约 **42 passed**（startup_mode + ACB pnl + arm risk context + atomic mode switch）；
+  `tests/risk + tests/web_dashboard` 全量 **337 passed**。
+- `py_compile` / Jinja parse（system+dashboard）/ `node --check`（dashboard.js +
+  system.html 内联 JS，经 `{% block scripts %}` 提取）/ `git diff --check` 全过。
+- 行为实测: `switch_mode("live_normal")` → **410** 无写文件/无备份/无重启；
+  `switch_mode("simulate")` 健康态 no-op 不误关 `ALLOW_REAL_TRADING`；
+  `set_auto_account("real")` → **410**。
+- SIM 风险二线实测: CapitalSafety sim → `data/ftseek_us.db`；ACB target_env=sim；
+  `TRADE_ENV=0` 注入下三模块均不漂 LIVE（钉子测试覆盖）。
+- 四锁全关: `TRADE_ENV=1` / `AUTO_TRADE_ACCOUNT=sim` / `ALLOW_REAL_TRADING=false` /
+  `live_manual_arm.enabled=false` + `probe.authorized=false`；live 库
+  `PLAYBOOK_LIVE` **0 行**；sim 未平仓 **0**（周日休市）。
+
+**16:03:57 重启入档（原 RFC-134 记录缺失）**: 当前进程 PID `3883669`（16:03:56 起，
+`NRestarts=0`，`ExecMainStatus=0`），启动段 16:04:03 `StartupMode 模式一致:
+broker=sim db=sim`。本会话 18:56 补跑冒烟 **7/7 ✓**（"启动段早于本次重启"提示
+是因为运行时刻距重启 3h、未伴随新重启 —— 反假阳性守卫按设计工作，非故障）。
+**该重启的发起者/原因未在任何 handoff 条目认领** — 如属其他会话请补录；本条至少
+保证"谁在跑什么"可追溯。
+
+**修复通道边界（鸡生蛋，非缺陷）**: 若 `.env.us` 真漂移到 `AUTO_TRADE_ACCOUNT=real`
+或 `TRADE_ENV=0`，启动守卫拒启 ⇒ 主进程（含 dashboard/API）不可用 ⇒ API 修复通道
+结构上不可达。三条出路已具备: ① 拒启前 HIGH 推送先行发出（值班可见）；
+② 手改 `.env.us` 三键回 SIM；③ `FTSEEK_ALLOW_LEGACY_GLOBAL_FLIP=1` 逃生门
+（仅显式测试/回滚）。已补进 RFC-134 文档「复查补记」节。
+
+**工作树混批风险（待用户裁）**: 当前未提交面含 **RFC-132/133/134 三批运行时代码 +
+本会话 3 个纯文档**共 20 文件；`data/cutover/preflight_baseline.json` 的重冻结
+（00:27:52）属前夜更早批次，与 RFC-134 混放。任何人下次重启会**全量带上**。
+建议尽快**分批 commit**（每批独立回滚锚）；按军规 commit 须用户明确指令，本会话未提交。
+
+## 2026-10-04 RFC-134 旧全局实盘切换退役: UI/API 410 + 启动防误翻 + SIM 风险二线
+
+**触发**: 用户令「根据建议执行修复」。目标是消除旧 `/api/mode/switch` 全局翻转入口与
+双臂常驻模型的冲突，防止误配后 SIM 研究臂停摆、非 Playbook 默认路由漂到 LIVE 库。
+
+**实施**:
+- `switch_mode(live_*)` 与 `set_auto_account("real")` 改为 fail-closed `410`，
+  不写 `.env.us`、不备份、不重启；返回码 `LEGACY_GLOBAL_REAL_SWITCH_RETIRED`。
+- `switch_mode("simulate")` / `set_auto_account("sim")` 只保留为旧全局快照修复通道；
+  正常 SIM_ONLY 下 no-op，不误关 LIVE 预授权；漂移修复时写
+  `AUTO_TRADE_ACCOUNT=sim / TRADE_ENV=1 / ALLOW_REAL_TRADING=false`。
+- `main._validate_startup_mode_or_exit` 新增生产守卫：`AUTO_TRADE_ACCOUNT=real`
+  或 `TRADE_ENV=0` 拒绝启动并 HIGH 推送；仅
+  `FTSEEK_ALLOW_LEGACY_GLOBAL_FLIP=1` 允许显式测试/回滚。
+- 系统页移除旧“实盘保守/标准”卡片；Dashboard 移除 REAL 自动账户按钮。
+- SIM ACB/OKR/CapitalSafety 显式走 `get_trade_records_db_for_arm("sim")`，
+  在注入 `TRADE_ENV=0` 时仍不漂到 LIVE 库。
+
+**边界**: 本批不实现新的 `/api/live-arm/*` 控制台，不打开
+`ALLOW_REAL_TRADING`，不填写 `probe.authorization_id`，不构成 LIVE 启用授权。
+
+**验证与部署**:
+- 定向契约 **34 passed**；风险 + LIVE 臂 + 退出补偿 **232 passed**；
+  Dashboard 全量 **141 passed**。
+- `py_compile`、Jinja parse、`node --check`、系统页内联 JS `node --check`、
+  `git diff --check` 均通过。
+- `cutover_preflight.py --to live --no-write` 维持 `block=1 warn=4`，
+  唯一硬阻塞仍为毕业门禁。
+- 2026-10-04 01:01:45 CST 重启加载；PID `3832796`；
+  `startup_smoke_check.py --wait 90` 7/7 通过，warning/error 为 0。
+- 当前 `TRADE_ENV=1`、`AUTO_TRADE_ACCOUNT=sim`、`ALLOW_REAL_TRADING=false`、
+  `live_manual_arm.enabled=false`、`probe.authorized=false`；无 HALT 标记。
+
 ## 2026-10-04 RFC-132 LIVE 双臂 P0 硬化: 分臂风险/资金/手动仓/STOP, 预置完成并重启
 
 **触发**: 用户令「执行修复」，目标是下周可裁决是否做 1 股 LIVE 工程探针；SIM 必须常驻。

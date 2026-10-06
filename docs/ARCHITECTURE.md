@@ -83,7 +83,7 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 
 [Playbook 仓] scheduler_core _playbook_exit_fast_loop (1696, 2026-07-21 独立成环)
   → app/playbook/pipeline.py::monitor_playbook_sim_exits
-    市场开放时每 20s (PLAYBOOK_EXIT_FAST_LOOP_INTERVAL_SEC) 跑一次
+    市场开放时每 10s 跑一次（yaml 现值 10s，代码默认 20s；端到端退出延迟 ~25s）
     端到端退出延迟 ~25s; 旧宿主 llm_strategy_loop 调用点已让位 (scheduler_core.py:2681-2707)
   order_executor 旧管线平仓路径对 playbook 仓关闭: order_executor.py:4304
 ```
@@ -150,7 +150,7 @@ CapitalAllocator.try_reserve → 方向路由。
 | VIXMonitor | 1673 | VIX 告警 | 条件启动 |
 | ManualGuard | 1680 | 手动仓风控（ManualOrderService 固定 REAL 路由，di_container.py:141） | LIVE |
 | InsiderScan | 1687 | SEC Form4 日扫 | LIVE |
-| PlaybookExitFast | 1696 | monitor_playbook_sim_exits（20s，yaml:1527 enabled） | LIVE（§3） |
+| PlaybookExitFast | 1696 | monitor_playbook_sim_exits（10s，yaml 现值；代码默认 20s） | LIVE（§3） |
 | ORB Engine | 703 | orb_engine.start() | ❌ 未启动（enabled=false；注意 yaml:949 mode=active，若误开会直接主动交易） |
 
 启动前：`_restore_positions_from_db()` + `startup_reconcile()`（内存↔DB 双向同步）。
