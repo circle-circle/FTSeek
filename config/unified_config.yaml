@@ -1524,7 +1524,7 @@ playbook:
   # RFC-131 C-lite: mode/probe/max_* 已接线。首期只允许 LONG、1 股、1 仓、RTH;
   # probe.authorized=false 时即使 enabled=true 也拒绝 LIVE 新仓。
   live_manual_arm:
-    enabled: false
+    enabled: true
     # RFC-131 C-lite: first live execution is an explicit 1-share engineering
     # probe, not a strategy graduation exception. Both keys stay false until the
     # user signs the probe authorization.
@@ -1533,8 +1533,8 @@ playbook:
     max_order_qty: 1
     session: RTH
     probe:
-      authorized: false
-      authorization_id: ""
+      authorized: true
+      authorization_id: "AUTH-20261005-1SHARE-LONG-RFC132"
       direction: LONG
   direction_gate:
     buy_position_factor: 1.0
