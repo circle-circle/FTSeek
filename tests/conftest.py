@@ -429,3 +429,48 @@ def _futu_thread_exit_bailout():
             threading._shutdown_locks.clear()
     except Exception:
         pass
+
+
+# ── LIVE 臂生产运维态文件隔离 (全测试面) ─────────────────────────────
+# 2026-10-06 两次实证: ①10-05 运维落 HALT 止血 ⇒ 走 LIVE gate 的 14 条用例恒红
+# (红因与代码无关); ②RFC-135 waiver 身份绑定上线后, tests/ 根目录的
+# test_rfc080_half_flip_interlock.py 读到生产 waiver (auth id 不匹配合成配置) 转红。
+# 同型病灶: 生产运维可写的态文件 (HALT/waiver) 不得泄漏进测试。fixture 原在
+# tests/playbook/conftest.py (作用域限该目录), 根目录同型缺口上提到此单点收口 —
+# 语义与默认值与原版逐字一致 (playbook 目录内层 fixture 已移除, 以此为准)。
+import json as _json_live_iso
+from datetime import timedelta as _td_live_iso
+
+from app.utils.timezone import now_et as _now_et_live_iso
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_arm_halt_file(monkeypatch, tmp_path):
+    """把 LIVE 臂 HALT 态文件指向空 tmp_path, 使测试与生产运维态解耦."""
+    monkeypatch.setattr(
+        "app.playbook.live_arm_gate._HALT_FILE",
+        tmp_path / "live_arm_halt.json",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_probe_waiver_file(monkeypatch, tmp_path):
+    """把四锁破例预注册载体指向 tmp_path, 并默认写成**有效**破例 (TEST-AUTH).
+
+    防两坑: (a) 读生产载体 ⇒ 到期日 2026-10-12 后全场面转红 (硬编码日期定时炸弹
+    同型); (b) 指向不存在文件 (fail-close) ⇒ 走 LIVE 臂的用例在下游断言炸,
+    红因与用例意图无关。到期/缺失/坏文件语义由
+    tests/playbook/test_live_probe_lock_waiver.py 显式覆盖 (那里自写文件)。
+    到期日相对当前时间 +3650 天 ⇒ 永不过期。
+    """
+    waiver_path = tmp_path / "live_probe_lock_waiver.json"
+    expires = (_now_et_live_iso() + _td_live_iso(days=3650)).isoformat(timespec="seconds")
+    waiver_path.write_text(_json_live_iso.dumps({
+        "waiver_id": "TEST-WAIVER",
+        "authorization_id": "TEST-AUTH",
+        "granted": "2026-10-06",
+        "granted_by": "tests/conftest.py (测试夹具, 非生产授权)",
+        "locks_waived": {"ALLOW_REAL_TRADING": "true"},
+        "expires": expires,
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr("app.playbook.live_arm_gate._WAIVER_FILE", waiver_path)
