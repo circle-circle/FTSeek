@@ -405,5 +405,67 @@ if findings:
     for i, f in enumerate(findings, 1):
         add(f"{i}. {f}")
 
+# ── B2/项3 (2026-10-06 推送治理批): 语义无变化则静默 ──────────────────
+# 病灶: 本载体每 30min 无条件投递, 交易结束后内容语义冻结 (仅时间戳 + equity/cash
+#   浮点漂移 + SPY/VIX 微变), 仍照发。实测冗余率 **59%** (近8天 22 条投递 →
+#   语义去重后 9 条): 10-06 场景 01:00 CST 起 10 笔全平 PnL=$77.15 后, 01:30–04:30
+#   共 8 条投递的逐笔明细/指令计数/持仓结构完全相同。
+# 归一化只剔除**被证明易变的量**, 交易数据一字不动:
+#   · 时间戳行 (📊 盘中状态 ... ET)
+#   · equity=/cash= 浮点 (资金漂移不是交易事件; 大额出入金会改其它行, 仍会触发)
+#   · SPY=/MA20=/MA50=/MA200=/VIX= 浮点 (含 VIX=14.0(trade_records) 那处)
+#   · "末次评估N分钟前" 的 N
+#   刻意**不**归一化: 持仓 size/dir/entry/SL/TP (trailing 移动 SL 是真事件)、
+#   regime 名与 score (盘面翻转必须推)、指令/交易/信号计数与逐笔 pnl/reason、
+#   异常段、关注点段。
+# fail-open: 状态文件读写任何异常 ⇒ 照发, 绝不因去重逻辑吞掉一次真投递。
+_LAST_HASH_PATH = '/opt/ftseek/FTSeek-US/data/.intraday_diagnose_late_last'
+# 常驻严重告警不参与静默 — 服务未运行时重复提醒是特性不是噪音
+_ALWAYS_DELIVER_MARKERS = ('服务未运行',)
+
+
+def _semantic_fingerprint(text):
+    """归一化后取 sha1 — 只抹掉被证明易变的量, 交易语义全保留."""
+    import hashlib
+    import re as _re
+    t = text
+    # ⚠️ 先抽出交易日 (标题行的 ET 日期) 作指纹前缀, **再**抹掉时间戳行 —
+    #   顺序不可颠倒: 若整行直接删掉, 两个「零持仓零交易」的连续交易日会得到
+    #   相同指纹 ⇒ 第二个交易日被静默吞掉 (实测抓到, 非纸面推演)。
+    #   时间戳的**时分**仍是易变量 (要抹), 日期是语义 (要留)。
+    m_day = _re.search(r'盘中状态\s+(\d{4}-\d{2}-\d{2})', t)
+    day_prefix = (m_day.group(1) + '|') if m_day else ''
+    # 时间戳行整行剔除 (日期已进前缀)
+    t = _re.sub(r'^📊 盘中状态 .*$', '', t, flags=_re.M)
+    # equity/cash 浮点
+    t = _re.sub(r'(equity|cash)=\$[\d.,]+', r'\1=<F>', t)
+    # 行情浮点 (SPY/MA20/MA50/MA200/VIX, 含尾随的 (trade_records) 变体)
+    t = _re.sub(r'(SPY|MA20|MA50|MA200|VIX)=[\d.]+', r'\1=<F>', t)
+    # 相对时长
+    t = _re.sub(r'末次评估\d+分钟前', '末次评估<N>分钟前', t)
+    t = _re.sub(r'\d+\s*(分钟|min)前', '<AGE>', t)
+    return hashlib.sha1((day_prefix + _re.sub(r'\s+', '', t)).encode('utf-8')).hexdigest()
+
+
+_out_text = '\n'.join(lines)
+
+try:
+    _fp = _semantic_fingerprint(_out_text)
+    _prev = None
+    if os.path.exists(_LAST_HASH_PATH):
+        with open(_LAST_HASH_PATH, encoding='utf-8') as _f:
+            _prev = _f.read().strip()
+    _force = any(m in _out_text for m in _ALWAYS_DELIVER_MARKERS)
+    if _prev and _prev == _fp and not _force:
+        # 语义与上次投递完全一致 ⇒ 空 stdout = SILENT (no_agent 契约, 同非交易日分支)
+        # 状态文件不重写 (值相同), 下次仍与它比对 — 长静默期不会因写失败而漏判
+        sys.exit(0)
+    _tmp = _LAST_HASH_PATH + '.tmp'
+    with open(_tmp, 'w', encoding='utf-8') as _f:
+        _f.write(_fp)
+    os.replace(_tmp, _LAST_HASH_PATH)   # 原子替换, 不留半截文件
+except Exception:
+    pass    # fail-open: 去重逻辑坏了就照发, 绝不吞真投递
+
 # Output to stdout — delivered verbatim by no_agent cron
-print('\n'.join(lines))
+print(_out_text)

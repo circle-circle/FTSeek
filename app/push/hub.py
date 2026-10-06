@@ -52,6 +52,11 @@ class PushHub:
         #   只对"钱动"的交易类事件生效, 日报/告警等仍走主通道优先, 避免噪音翻倍。
         #   传 None = 用 yaml push.broadcast_trade_events 的实际值 (默认 True)。
         broadcast_trade_events: Optional[bool] = None,
+        # B1 (2026-10-06 推送治理批, 用户裁「继续」): 通道心跳 ping 抑制窗 (秒)。
+        #   语义见 HealthMonitor.suppress_window_sec — 距上次业务消息成功外发 < 本窗口
+        #   时跳过 ping (业务推送成功已是 webhook 可用的直接证据, 此时 ping 是冗余噪音)。
+        #   0 = 关闭抑制 (原行为: 每小时必发一条)。探测能力不减: 真失效时无证据 ⇒ ping 照发。
+        ping_suppress_window_sec: int = 0,
     ):
         # 默认 channel 优先级: DingTalk > Feishu > FlagFile
         self.channels: List[Channel] = channels or [
@@ -83,7 +88,10 @@ class PushHub:
             flush_callback=lambda m: self._async_send(m),
         )
         self._aggregator.start()
-        self._health = HealthMonitor(self.channels) if enable_health_check else None
+        self._health = (HealthMonitor(
+            self.channels,
+            suppress_window_sec=max(0, int(ping_suppress_window_sec or 0)),
+        ) if enable_health_check else None)
         if self._health:
             self._health.start()
         self._lock = threading.Lock()
@@ -247,6 +255,15 @@ class PushHub:
                 ok = self._send_once_with_retry(ch, msg)
                 if ok:
                     sent_count += 1
+                    # B1 (2026-10-06): 业务消息成功 = 该通道 webhook 可用的直接证据,
+                    #   记给 HealthMonitor 作 ping 抑制依据。**必须排除 HEALTH 类** —
+                    #   ping 自身成功若也记证据, 则第一条 ping 后永远被抑制 = 探测彻底失效
+                    #   (自我抑制环, 与 health.py note_success docstring 同一约束)。
+                    #   不另包 try/except: 本循环体已有 per-channel except 兜底,
+                    #   再包一层只会新增「except 里 debug 吞异常」的日志卫生违反 (W4 棘轮)。
+                    if (self._health is not None
+                            and msg.category != Category.HEALTH):
+                        self._health.note_success(ch.name)
                     if not broadcast_all:
                         break
             except Exception as e:
@@ -328,13 +345,15 @@ def get_push_hub() -> PushHub:
                 agg_window = int(cfg.get_dotted("push.aggregate_window_sec", 300))
                 health = bool(cfg.get_dotted("push.health_check", True))
                 send_retries = int(cfg.get_dotted("push.send_retries", 1))
+                ping_suppress = int(cfg.get_dotted("push.ping_suppress_window_sec", 0))
             except Exception:
-                dedup_ttl, agg_window, health, send_retries = 60, 300, True, 1
+                dedup_ttl, agg_window, health, send_retries, ping_suppress = 60, 300, True, 1, 0
             _singleton = PushHub(
                 dedup_ttl_sec=dedup_ttl,
                 aggregate_window_sec=agg_window,
                 enable_health_check=health,
                 send_retries=send_retries,
+                ping_suppress_window_sec=ping_suppress,
             )
     return _singleton
 
