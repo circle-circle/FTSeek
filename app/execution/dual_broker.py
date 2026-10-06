@@ -553,11 +553,21 @@ class DualBrokerAdapter:
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
             # LONG 持仓 → SELL STOP; SHORT 持仓 → BUY STOP
             stop_side = TrdSide.SELL if direction_held == "LONG" else TrdSide.BUY
+            # 2026-10-06 P0 (首笔 LIVE 探针实测事故): 富途 STOP 单触发价必须走
+            #   aux_price — 只传 price 会被拒「下单缺少必要参数触发价格」
+            #   (仓内 8/5 已实证, scripts/probe_sim_stop_20260805.py:44 + 看板
+            #   executor.py:1236 同款写法); price=0 = 触发后市价成交。
+            #   time_in_force=GTC: 默认 DAY 会在当日收盘失效, 而 W_WEEK 持仓
+            #   最多持 5 个交易日, 兜底必须跨日有效 (同看板 executor.py:1236)。
+            from futu import TimeInForce as _TIF
             with lock:
                 ret, data = ctx.place_order(
-                    price=stop_price, qty=qty, code=symbol,
+                    price=0, qty=qty, code=symbol,
                     trd_side=stop_side, order_type=FutuOrderType.STOP,
                     trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0,
+                    time_in_force=_TIF.GTC,
+                    aux_price=stop_price,  # 触发价 (Futu STOP 单必须用 aux_price)
+                    trail_spread=0,  # 非追踪止损
                     remark=f"pb_stop_{symbol}_{target_env}",  # B4: STOP 单留痕
                 )
             if ret != RET_OK:
