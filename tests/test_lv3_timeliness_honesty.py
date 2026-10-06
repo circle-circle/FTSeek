@@ -35,6 +35,7 @@ from app.data.futu_lv3_provider import _measured_quote_age_ms
 
 _PROV = Path(_prov_mod.__file__)
 _MDR = Path(_mdr_mod.__file__)
+_PLAYBOOK = Path(__file__).resolve().parents[1] / "app" / "playbook" / "playbook_service.py"
 _ET = pytz.timezone("America/New_York")
 
 
@@ -135,3 +136,15 @@ def test_merge_guard_covers_new_field():
     assert m, "找不到 _futu_price_keys 防覆盖集合"
     assert '"lv3_quote_age_ms"' in m.group(1), (
         "🔴 新字段未入防覆盖集合 ⇒ 合并路径下真观测值会被覆盖")
+
+
+def test_trade_snapshot_persists_measured_age_but_not_unmeasured_delay():
+    """成交快照必须持久化 quote_age; delay=unmeasured 不参与数值分组。"""
+    src = _PLAYBOOK.read_text(encoding="utf-8")
+    match = re.search(r"for\s+_k\s*in\s*\((.*?)\):", src, re.S)
+    assert match, "找不到成交 ts_ctx 快照白名单"
+    keys = set(re.findall(r'"([a-z0-9_]+)"', match.group(1)))
+    assert "lv3_quote_age_ms" in keys, (
+        "🔴 lv3_quote_age_ms 未入成交快照 ⇒ 盘中分组指标无法回溯")
+    assert "lv3_delay_ms" not in keys, (
+        "🔴 lv3_delay_ms 是 unmeasured 标记, 不得混入数值分组")

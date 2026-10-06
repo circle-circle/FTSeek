@@ -175,6 +175,8 @@ def _isolate_production_data_writes(monkeypatch, request, production_data_sandbo
     _orig_path_open = Path.open
     _orig_write_text = Path.write_text
     _orig_write_bytes = Path.write_bytes
+    _orig_os_replace = os.replace
+    _orig_os_rename = os.rename
 
     def _path_open_guarded(self, mode="r", *a, **kw):
         if any(c in mode for c in "wax+"):
@@ -189,10 +191,20 @@ def _isolate_production_data_writes(monkeypatch, request, production_data_sandbo
         _guard(_resolve_maybe(self), "Path.write_bytes")
         return _orig_write_bytes(self, *a, **kw)
 
+    def _os_replace_guarded(src, dst, *a, **kw):
+        _guard(_resolve_maybe(dst), "os.replace")
+        return _orig_os_replace(src, dst, *a, **kw)
+
+    def _os_rename_guarded(src, dst, *a, **kw):
+        _guard(_resolve_maybe(dst), "os.rename")
+        return _orig_os_rename(src, dst, *a, **kw)
+
     monkeypatch.setattr(builtins, "open", _open_guarded)
     monkeypatch.setattr(Path, "open", _path_open_guarded)
     monkeypatch.setattr(Path, "write_text", _write_text_guarded)
     monkeypatch.setattr(Path, "write_bytes", _write_bytes_guarded)
+    monkeypatch.setattr(os, "replace", _os_replace_guarded)
+    monkeypatch.setattr(os, "rename", _os_rename_guarded)
     yield
 
 

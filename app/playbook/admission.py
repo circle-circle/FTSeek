@@ -74,8 +74,16 @@ def _is_live_engineering_probe(inst: Dict[str, Any]) -> bool:
     dual = md.get("dual_arm")
     if not isinstance(dual, dict):
         return False
-    return (str(dual.get("target_env") or "").strip().lower() in ("real", "live")
-            and str(dual.get("mode") or "").strip() == "engineering_probe")
+    try:
+        quantity = int(inst.get("position_size") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        str(dual.get("target_env") or "").strip().lower() in ("real", "live")
+        and str(dual.get("mode") or "").strip() == "engineering_probe"
+        and str(inst.get("direction") or "").strip().upper() == "BUY"
+        and quantity == 1
+    )
 
 # ── 内置缺省 (可被 unified_config.yaml `playbook.admission` 覆盖) ──
 _DEFAULTS: Dict[str, Any] = {

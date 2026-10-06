@@ -10,7 +10,7 @@
   2. [ConfigGov] ✅ 漂移检测已启动
   3. [ConfigGov] ✅ 热重载已启动
   4. [ConfigAudit] ✅ SSOT 配置一致性审计通过 (0 BLOCKING)
-  5. 模拟盘安全确认 (**语义判定**, 两个独立证据源就位者必须全部说是 sim):
+  5. 双臂安全确认 (**语义判定**, 两个独立证据源就位者必须全部一致):
      · `[StartupMode] 模式一致: broker=… db=… ALLOW_REAL_TRADING=…` (main.py)
      · `[交易环境] 账户路由 AUTO_TRADE_ACCOUNT=… | ALLOW_REAL_TRADING=…` (scheduler_core)
   6. [PlaybookExit] 快循环已启动
@@ -18,6 +18,8 @@
 
 用法 (重启 SOP, 见 AGENT.md 军规):
   systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90
+  已显式授权 1 股 LIVE 工程探针时才可追加 --live-probe:
+  systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90 --live-probe
   --wait N : 最多轮询 N 秒 (每 5s 重读日志), 适配启动耗时; 缺省单次判定
   --push   : 失败时飞书告警 (app.notifier.feishu)
 退出码: 0=全过 / 1=断言失败 (含"证据到位且确认不是模拟盘") /
@@ -66,26 +68,29 @@ LAST_COVERAGE = {"sources": 0, "spliced": False}
 _MODE_RE = re.compile(
     r"\[StartupMode\] 模式一致: broker=(\S+) db=(\S+) ALLOW_REAL_TRADING=(\S+)")
 _ROUTE_RE = re.compile(r"账户路由 AUTO_TRADE_ACCOUNT=(\S+) \| ALLOW_REAL_TRADING=(\S+)")
+_SIM_EXPECTED = (("sim", "sim", "False"), ("sim", "False"))
+_LIVE_PROBE_EXPECTED = (("sim", "sim", "True"), ("sim", "True"))
 _MODE_PROBES = (
-    ("StartupMode", _MODE_RE, ("sim", "sim", "False")),
-    ("交易环境横幅", _ROUTE_RE, ("sim", "False")),
+    ("StartupMode", _MODE_RE),
+    ("交易环境横幅", _ROUTE_RE),
 )
-_MODE_SOURCES_REQUIRED = tuple(name for name, _rx, _exp in _MODE_PROBES)
+_MODE_SOURCES_REQUIRED = tuple(name for name, _rx in _MODE_PROBES)
 
 
-def _mode_sources(seg: str) -> dict:
+def _mode_sources(seg: str, *, live_probe: bool = False) -> dict:
     """{源名: (实测值元组, 期望值元组)} — 只含在启动段里**就位**的源。"""
     got = {}
-    for name, rx, expected in _MODE_PROBES:
+    expected_values = _LIVE_PROBE_EXPECTED if live_probe else _SIM_EXPECTED
+    for (name, rx), expected in zip(_MODE_PROBES, expected_values):
         m = rx.search(seg)
         if m:
             got[name] = (m.groups(), expected)
     return got
 
 
-def _is_sim_mode(seg: str) -> bool:
-    """断言 5: 已就位的证据源必须**全部**判定为模拟盘 (缺席走 exit 2, 不在这里放行)。"""
-    got = _mode_sources(seg)
+def _is_safe_arm_mode(seg: str, *, live_probe: bool = False) -> bool:
+    """断言 5: 全局 SIM 常驻; LIVE 只能作为显式授权的独立工程探针。"""
+    got = _mode_sources(seg, live_probe=live_probe)
     return bool(got) and all(actual == expected for actual, expected in got.values())
 
 
@@ -95,7 +100,7 @@ CHECKS = [
     ("漂移检测已启动",           lambda s: "[ConfigGov] ✅ 漂移检测已启动" in s),
     ("热重载已启动",             lambda s: "[ConfigGov] ✅ 热重载已启动" in s),
     ("SSOT 审计 0 BLOCKING",     lambda s: "[ConfigAudit] ✅ SSOT 配置一致性审计通过" in s),
-    ("模拟盘安全确认",           _is_sim_mode),
+    ("双臂安全确认",             _is_safe_arm_mode),
     ("退出快循环已启动",         lambda s: "[PlaybookExit] 快循环已启动" in s),
     ("零 Traceback/CRITICAL",    lambda s: not re.search(
         r"Traceback|ImportError|ModuleNotFoundError| CRITICAL", s)),
@@ -103,6 +108,7 @@ CHECKS = [
 
 BOOT_MARKER = "[StartupMode]"         # 每次启动最早的稳定标记 (模式判定三分支都会打)
 BOOT_MARKER_FALLBACK = "[PreFlight]"  # 回退: 上游再改名时, OpenD 预检仍在启动路径上
+BOOT_END_MARKER = "[PlaybookExit] 快循环已启动"
 MAX_BOOT_AGE_HOURS = 6               # 启动段太旧 = 本次重启没产生新段, 判定无效
 
 
@@ -114,6 +120,10 @@ def _extract_boot_segment(text: str):
     if idx < 0:
         return None, None
     seg = text[idx:]
+    end = seg.find(BOOT_END_MARKER)
+    if end >= 0:
+        end_of_line = seg.find("\n", end)
+        seg = seg[: end_of_line + 1] if end_of_line >= 0 else seg[: end + len(BOOT_END_MARKER)]
     m = re.match(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", text[text.rfind("\n", 0, idx) + 1:idx + 30].strip())
     boot_time = None
     if m:
@@ -167,7 +177,7 @@ def _read_boot_window() -> str:
     return "\n".join(parts)
 
 
-def run_once():
+def run_once(*, live_probe: bool = False):
     """单次判定. 返回 (exit_code, 失败清单, boot_time)"""
     if not _log_sources():
         return 2, [f"日志文件缺失: {LOG} (且 {_ROTATE_LOOKBACK_DAYS} 日内无轮转档)"], None
@@ -178,11 +188,21 @@ def run_once():
                    f"(已跨轮转拼接 {LAST_COVERAGE['sources']} 档)"], None
     if boot_time and datetime.now() - boot_time > timedelta(hours=MAX_BOOT_AGE_HOURS):
         return 2, [f"最近启动段过旧 ({boot_time}), 本次重启可能未产生日志"], boot_time
-    missing = [n for n in _MODE_SOURCES_REQUIRED if n not in _mode_sources(seg)]
+    missing = [
+        n for n in _MODE_SOURCES_REQUIRED
+        if n not in _mode_sources(seg, live_probe=live_probe)
+    ]
     if missing:
         return 2, [f"模式证据缺失 {missing} ⇒ 判定无效 (守卫失明 ≠ 安全); "
                    f"段界标记={BOOT_MARKER}/{BOOT_MARKER_FALLBACK}"], boot_time
-    failed = [name for name, fn in CHECKS if not fn(seg)]
+    failed = []
+    for name, fn in CHECKS:
+        if name == "双臂安全确认":
+            passed = fn(seg, live_probe=live_probe)
+        else:
+            passed = fn(seg)
+        if not passed:
+            failed.append(name)
     return (1 if failed else 0), failed, boot_time
 
 
@@ -190,6 +210,9 @@ def main():
     ap = argparse.ArgumentParser(description="FTSeek-US 启动冒烟检查")
     ap.add_argument("--wait", type=int, default=0, help="最多轮询 N 秒 (每 5s), 适配启动耗时")
     ap.add_argument("--push", action="store_true", help="失败时飞书告警")
+    ap.add_argument(
+        "--live-probe", action="store_true",
+        help="显式授权的 1 股 LIVE 工程探针模式 (全局仍必须是 SIM)")
     args = ap.parse_args()
 
     # 2026-07-27 修复 (实战暴露): restart 后立即跑 --wait 时, 新启动段尚未写出,
@@ -198,7 +221,7 @@ def main():
     script_start = datetime.now()
     deadline = time.time() + max(args.wait, 0)
     while True:
-        code, failed, boot_time = run_once()
+        code, failed, boot_time = run_once(live_probe=args.live_probe)
         stale_boot = (args.wait > 0 and boot_time is not None
                       and boot_time < script_start - timedelta(seconds=120))
         if stale_boot:

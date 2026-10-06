@@ -83,6 +83,7 @@ class TestSectorPulseGuard:
         fake_now = MagicMock()
         fake_now.strftime.side_effect = lambda f: fake_date if "%Y" in f else "10:00"
         with patch.object(sp, "now_et", return_value=fake_now), \
+             patch.object(sp, "OUT", tmp_path / "sector_pulse.json"), \
              patch.object(sp, "HIST", hist), \
              patch("app.data.market_data_router.MarketDataRouter") as m_router:
             rc = sp.main()

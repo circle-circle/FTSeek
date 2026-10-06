@@ -29,7 +29,7 @@ def svc(db, monkeypatch, tmp_path):
     # These upstream state queries are not the quote-gate contract under test.
     monkeypatch.setattr(
         "app.coordinator.manual_hold_registry.manual_hold_registry.is_auto_blocked",
-        lambda symbol: False,
+        lambda symbol, target_env=None: False,
     )
     monkeypatch.setattr(
         "app.risk.symbol_day_loss.is_symbol_day_loss_exceeded",

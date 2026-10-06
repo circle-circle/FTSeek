@@ -40,8 +40,9 @@ def _prod_cfg():
     A.reset_cache()
 
 
-def _inst(symbol="US.GEO", ep=33.15, sl=31.49, tp=35.64, qty=1, probe=False):
-    inst = dict(date="2026-10-06", symbol=symbol, direction="BUY", entry_price=ep,
+def _inst(symbol="US.GEO", ep=33.15, sl=31.49, tp=35.64, qty=1,
+          probe=False, direction="BUY"):
+    inst = dict(date="2026-10-06", symbol=symbol, direction=direction, entry_price=ep,
                 stop_loss=sl, take_profit=tp, position_size=qty, confidence=45)
     if probe:
         inst["metadata"] = {"dual_arm": {
@@ -60,6 +61,20 @@ def test_exemption_only_applies_to_live_probe_marker():
     assert sim["verdict"] == "REJECT"
     assert any(r.startswith("NOTIONAL_TOO_SMALL") for r in sim["reasons"])
     assert sim["exempted_reasons"] == []
+
+
+def test_exemption_requires_one_share_buy_probe_shape():
+    """防标记污染/未来镜像 bug: 非 BUY 或非 1 股不得吃探针豁免。"""
+    short = evaluate(_inst(qty=1, probe=True, direction="SELL_SHORT"))
+    oversized = evaluate(_inst(qty=2, probe=True))
+
+    assert short["verdict"] == "REJECT"
+    assert any(r.startswith("NOTIONAL_TOO_SMALL") for r in short["reasons"])
+    assert short["exempted_reasons"] == []
+
+    assert oversized["verdict"] == "REJECT"
+    assert any(r.startswith("NOTIONAL_TOO_SMALL") for r in oversized["reasons"])
+    assert oversized["exempted_reasons"] == []
 
 
 def test_sim_arm_verdict_is_unchanged_by_exemption():

@@ -298,11 +298,16 @@ class PlaybookService:
                 "UPDATE trade_records SET metadata_json=? WHERE id=?",
                 (_json.dumps(metadata, ensure_ascii=False), row[0]),
             )
-            connection.execute(
-                "UPDATE open_positions SET sl_broker_order_id=? "
-                "WHERE symbol=? AND source_type='PLAYBOOK_LIVE'",
-                (stop_broker_order_id, symbol),
+            cursor = connection.execute(
+                "UPDATE open_positions SET entry_broker_order_id=?, sl_broker_order_id=? "
+                "WHERE symbol=? AND account_type='live' "
+                "AND owner_strategy='playbook_live' AND owner='auto'",
+                (str(entry_broker_order_id), stop_broker_order_id, symbol),
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError(
+                    f"LIVE open position not found for STOP receipt entry={entry_broker_order_id}"
+                )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -1414,7 +1419,19 @@ class PlaybookService:
                     "skipped_manual_held": True,
                 }
         except Exception as _mhe:
-            logger.warning(f"[playbook] ManualHoldRegistry 检查异常 (放行): {_mhe}")
+            logger.warning(
+                f"[playbook] ManualHoldRegistry 检查异常 "
+                f"(SIM放行 / LIVE fail-close): {_mhe}"
+            )
+            if _is_live:
+                return {
+                    "success": False,
+                    "message": (
+                        f"[LIVE_MANUAL_HOLD_CHECK_FAIL_CLOSE] {symbol}: "
+                        f"{_mhe}"
+                    ),
+                    "manual_hold_check_failed": True,
+                }
 
         # P0 (2026-08-28 全链路复查): 单标的当日亏损限额 — 死亡螺旋防线接进实盘执行链.
         #   根因: 该防线 ($500/标的/日) 此前只写在 order_executor._check_symbol_daily_loss,
@@ -1935,7 +1952,8 @@ class PlaybookService:
                 from app.data.market_data_router import get_market_data_router as _get_mdr_f2
                 _ctx = _get_mdr_f2().get_full_market_context(symbol) or {}
                 for _k in ("rsi", "macd", "atr", "atr_percent", "vwap", "vwap_intraday",
-                           "volume_ratio", "order_flow_imbalance", "price"):
+                           "volume_ratio", "order_flow_imbalance", "price",
+                           "lv3_quote_age_ms"):
                     if _ctx.get(_k) is not None:
                         _ts_ctx_snap[_k] = round(float(_ctx[_k]), 6)
             except Exception:

@@ -445,6 +445,15 @@ class DualBrokerAdapter:
 
         return 0.0, 0.0
 
+    def query_order_fill(self, futu_order_id: str, target_env: str = "real"):
+        """Return broker fill evidence for a submitted order.
+
+        This is read-only and is used to reconcile broker-side protective STOP
+        fills after the entry ledger is already open.
+        """
+        ctx, _acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+        return self._query_fill(ctx, str(futu_order_id), trd_env, lock)
+
     def get_positions(self, target_env: str = "sim") -> list:
         """查询指定账户持仓."""
         try:

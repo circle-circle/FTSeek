@@ -35,6 +35,8 @@ SIM_MODE = "[StartupMode] 模式一致: broker=sim db=sim ALLOW_REAL_TRADING=Fal
 REAL_MODE = "[StartupMode] 模式一致: broker=real db=real ALLOW_REAL_TRADING=True"
 SIM_ROUTE = "  账户路由 AUTO_TRADE_ACCOUNT=sim | ALLOW_REAL_TRADING=False"
 REAL_ROUTE = "  账户路由 AUTO_TRADE_ACCOUNT=live | ALLOW_REAL_TRADING=True"
+LIVE_PROBE_MODE = "[StartupMode] 模式一致: broker=sim db=sim ALLOW_REAL_TRADING=True"
+LIVE_PROBE_ROUTE = "  账户路由 AUTO_TRADE_ACCOUNT=sim | ALLOW_REAL_TRADING=True"
 
 
 def _load():
@@ -62,10 +64,10 @@ def _boot_lines(*, mode_line=SIM_MODE, route_line=SIM_ROUTE,
     ]
     if route_line:
         parts.append(route_line)
-    parts.append(f"{stamp} [PlaybookExitFastLoop] [app.core.scheduler_core] INFO: "
-                 "[PlaybookExit] 快循环已启动 (interval=10s)")
     if extra:
         parts.append(extra)
+    parts.append(f"{stamp} [PlaybookExitFastLoop] [app.core.scheduler_core] INFO: "
+                 "[PlaybookExit] 快循环已启动 (interval=10s)")
     return parts
 
 
@@ -90,6 +92,35 @@ def test_healthy_boot_passes_all_seven(tmp_path):
     assert boot_time is not None
 
 
+def test_authorized_live_probe_keeps_global_sim_route(tmp_path):
+    """双臂安全形态: 全局 broker/db 仍 sim, 仅显式 LIVE 探针允许 REAL 开关。"""
+    ssc = _load()
+    ssc.LOG = _write_boot_log(
+        tmp_path, mode_line=LIVE_PROBE_MODE, route_line=LIVE_PROBE_ROUTE
+    )
+    code, failed, _boot_time = ssc.run_once(live_probe=True)
+    assert code == 0, failed
+
+    code, failed, _boot_time = ssc.run_once(live_probe=False)
+    assert code == 1
+    assert "双臂安全确认" in failed
+
+
+def test_runtime_traceback_after_service_started_is_not_startup_failure(tmp_path):
+    """启动段止于「服务已启动」; 运行期已知 pending 回报不得污染启动冒烟。"""
+    ssc = _load()
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ssc.LOG = tmp_path / "ftseek_us.log"
+    ssc.LOG.write_text(
+        "\n".join(_boot_lines())
+        + f"\n{stamp} [MainThread] [ftseek_us.main] INFO: ✅ FTSeek-US 服务已启动"
+        + "\nTraceback (most recent call last):",
+        encoding="utf-8",
+    )
+    code, failed, _boot_time = ssc.run_once()
+    assert code == 0, failed
+
+
 def test_segment_starts_at_startup_mode_even_though_preflight_is_later(tmp_path):
     """①病根钉: `[StartupMode]` 在 `[PreFlight]` **之前**一行时, 必须仍落在启动段内。"""
     ssc, (_code, _failed, _bt) = _run(tmp_path)
@@ -102,14 +133,14 @@ def test_real_mode_fails_sim_assertion(tmp_path):
     """②真钱模式必须判红 (守卫的存在意义)。"""
     _ssc, (code, failed, _bt) = _run(tmp_path, mode_line=REAL_MODE, route_line=REAL_ROUTE)
     assert code == 1
-    assert "模拟盘安全确认" in failed
+    assert "双臂安全确认" in failed
 
 
 def test_disagreeing_sources_fail(tmp_path):
     """②两个证据源互相矛盾 (一个 sim 一个 live) 也必须判红 — 不许"有一个说 sim 就放行"。"""
     _ssc, (code, failed, _bt) = _run(tmp_path, mode_line=SIM_MODE, route_line=REAL_ROUTE)
     assert code == 1
-    assert "模拟盘安全确认" in failed
+    assert "双臂安全确认" in failed
 
 
 def test_missing_all_mode_evidence_is_invalid_not_pass(tmp_path):
@@ -219,10 +250,9 @@ class TestCrossRotation:
         """
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _ssc, (code, failed, _bt) = _run_split(
-            tmp_path, boot_lines=_boot_lines(), tail_lines=[
-                f"{now} [PlaybookExitFastLoop] [app.playbook.pipeline] ERROR: 退出链异常",
-                "Traceback (most recent call last):",
-                '  File "app/playbook/pipeline.py", line 1, in x',
+            tmp_path, boot_lines=_boot_lines(extra="Traceback (most recent call last):"), tail_lines=[
+                f"{now} [VIXMonitorLoop] [app.core.scheduler_core] INFO: "
+                "[VIX] 当前值=14.8 | 级别=NORMAL",
             ])
         assert code == 1, failed
         assert "零 Traceback/CRITICAL" in failed

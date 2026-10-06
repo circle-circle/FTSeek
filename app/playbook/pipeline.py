@@ -7367,14 +7367,14 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                         "direction": _tr[1], "size": _tr[4],
                         "avg_entry_price": _tr[2], "entry_time": _tr[3],
                     }
-                    # Playbook UPSERT stores its entry order here, while retaining
-                    # entry_time on symbol conflict. A changed ID disproves ownership
-                    # even when direction/price/quantity/time happen to be identical.
-                    if _position.get("sl_broker_order_id"):
+                    # Playbook stores the entry order in entry_broker_order_id.
+                    # A changed entry ID disproves ownership even when the other
+                    # fields happen to match; sl_broker_order_id is a STOP order.
+                    if _position.get("entry_broker_order_id"):
                         _original_order = conn.execute(
                             "SELECT futu_order_id FROM trade_records WHERE id=?", (trade_id,),
                         ).fetchone()[0]
-                        _position_identity["sl_broker_order_id"] = str(_original_order or "")
+                        _position_identity["entry_broker_order_id"] = str(_original_order or "")
                     if all(value is not None and _position.get(key) == value
                            for key, value in _position_identity.items()):
                         _deleted = conn.execute(
@@ -8428,6 +8428,61 @@ def _playbook_exit_decision(reason, reference_price, meta, holding_hours=0.0):
             "metadata": snapshot, "holding_hours": holding_hours}
 
 
+def _reconcile_broker_stop_exit(dual, conn, row, meta) -> bool:
+    """Book a live position already closed by its broker-side STOP order."""
+    if row.get("source_type") != "PLAYBOOK_LIVE":
+        return False
+    stop_order_id = str(meta.get("sl_broker_order_id") or "").strip()
+    if not stop_order_id:
+        return False
+
+    try:
+        filled_price, filled_qty = dual.query_order_fill(
+            stop_order_id, target_env="real"
+        )
+    except Exception as error:
+        logger.warning(
+            "[playbook live] broker STOP fill reconciliation pending "
+            f"{row.get('symbol')} stop_id={stop_order_id}: {error}"
+        )
+        return False
+
+    quantity = float(row.get("quantity") or 0)
+    if not filled_price or filled_qty != quantity:
+        return False
+
+    entry_price = float(row["entry_price"] or 0)
+    direction = str(row["direction"] or "").upper()
+    pnl = (
+        (filled_price - entry_price) * quantity
+        if direction == "LONG"
+        else (entry_price - filled_price) * quantity
+    )
+    booked = _close_trade_record(
+        conn,
+        int(row["id"]),
+        float(filled_price),
+        "SL_BROKER_STOP",
+        pnl,
+        pnl / (entry_price * quantity),
+        0.0,
+        symbol=str(row["symbol"]),
+        close_futu_order_id=stop_order_id,
+        exit_metadata={
+            "exit_price_source": "broker_stop_reconciled",
+            "broker_stop_reconciled": True,
+            "broker_stop_order_id": stop_order_id,
+            "broker_stop_dealt_qty": filled_qty,
+        },
+    )
+    if booked:
+        logger.info(
+            f"[playbook live] broker STOP fill reconciled {row['symbol']} "
+            f"qty={quantity} price={filled_price} stop_id={stop_order_id}"
+        )
+    return bool(booked)
+
+
 def _book_playbook_exit_result(dual, result, conn=None):
     from app.execution.exit_lifecycle import number
     if not (result.get("success") and result.get("order_filled")
@@ -8902,6 +8957,12 @@ def monitor_playbook_exits(scheduler) -> int:
                 stop_loss = float(meta.get("stop_loss", 0))
                 inst_id = meta.get("playbook_instruction_id")
                 qty = r["quantity"] or 0
+
+                if _row_target == "real":
+                    from app.execution.dual_broker import get_dual_broker
+                    if _reconcile_broker_stop_exit(get_dual_broker(), conn, r, meta):
+                        exited += 1
+                        continue
 
                 # 当前价 (2026-07-21: 批量快照优先, 缺失/无价的标的回落单原取价)
                 current_price = None

@@ -78,12 +78,19 @@
 
 **只覆盖**: `ALLOW_REAL_TRADING` 一把锁, 只在其值为 `true` 时。
 
+**身份绑定**: waiver 的 `authorization_id` 必须与
+`playbook.live_manual_arm.probe.authorization_id` 精确一致；缺授权 ID、授权 ID
+不匹配、或 waiver 范围不是 `ALLOW_REAL_TRADING=true` 时，探针 gate 拒绝。
+
 **不覆盖 / 不改变**:
 - `AUTO_TRADE_ACCOUNT=sim`、`execute_mode=futu_simulate` 两把锁照常要求 (松动即响)
 - **不构成毕业打标** — `graduated` 仍为 `False`, KR4 `verdict` 仍记 `NOT_MET`, fail-close 硬拦保持
 - **不覆盖 SIM 臂** — SIM 侧 1 股小额指令仍被 admission 改写 SKIP (契约钉 `test_apply_still_rewrites_sim_direction`)
 - **不覆盖手动实盘平仓通道** — `executor.py:410` 的 `ALLOW_REAL_TRADING` 消费点不在本破例授权内 (见 §6 遗留)
 - **不放宽探针自身的其他门** — 方向 (只 LONG/BUY)、时段 (只 RTH)、持仓上限 (`max_open_positions=1`)、`max_order_qty=1` 全部照旧, 破例只解锁那一把锁 (钉: `test_waiver_does_not_loosen_other_probe_gates`)
+- **admission 豁免同样收窄** — 只有 `BUY + position_size=1 +
+  target_env in {real,live} + mode=engineering_probe` 的指令可豁免
+  `NOTIONAL_TOO_SMALL`；标记污染或非 1 股 BUY 均不得放大敞口。
 
 **窗口**: 5 个交易日 (D1=10-06 周二 → D5=10-12 周一), `expires` 取 D5 收盘 ET 16:00。
 
@@ -132,3 +139,18 @@ git revert <本提交>                       # 完整: 判据回到 alarm = not 
 - 生产实测: `measure_locks()` → `all_closed=False` (诚实) / `alarm_suppressed=True` / `loose_locks=[]` / `days_left=6`; `kr4_hard_gate().alarm=False`, `verdict=NOT_MET`
 - 周检实跑: `check_locks()` → `ok=False` / `suppressed=True` / `uncovered=[]`; 渲染 `🔕 四锁: sim/true/futu_simulate`
 - 产物重生成: `okr_history.jsonl` 保持 180 行 (`okr_status.py` L539-543 同日幂等去重生效, 非纯追加)
+
+### 2026-10-06 复查补充
+
+- 补齐 waiver `authorization_id` 非空校验、与探针配置的一致性校验、
+  `ALLOW_REAL_TRADING=true` 精确范围校验；
+- admission 豁免收紧为 1 股 BUY 工程探针形态，防止 `dual_arm` 标记污染；
+- 定向回归 `waiver / admission / routing / quote gate / exit compensation /
+  LIVE P0` 共 **94 passed**；
+- 生产重启后 `startup_smoke_check.py --live-probe` **7/7 通过**，全局仍
+  `broker=sim db=sim AUTO_TRADE_ACCOUNT=sim`，LIVE 仅显式探针授权；
+- SIM 指令 `3707/3710` 的历史 `dual_arm` metadata 污染已备份并清理，
+  交易记录与持仓分臂保持干净。
+- 追加 STOP 终检：若 broker STOP 先于规则引擎触发，退出监控用券商成交
+  证据补记 `SL_BROKER_STOP`，并按 `entry_broker_order_id` 清理 open position；
+  LIVE 手动持仓检查异常时 fail-close。终检定向回归 **146 passed**。

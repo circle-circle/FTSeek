@@ -109,6 +109,11 @@ def read_live_probe_waiver(path: Optional[Path] = None) -> Dict[str, Any]:
                 "expires": expires_raw, "authorization_id": auth_id or None,
                 "locks_waived": waived, "days_left": None, "raw": raw}
 
+    if not auth_id:
+        return {"active": False, "reason": "waiver_missing_authorization_id",
+                "expires": expires_raw, "authorization_id": None,
+                "locks_waived": waived, "days_left": None, "raw": raw}
+
     now = now_et()
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=now.tzinfo)
@@ -187,6 +192,20 @@ def evaluate_live_arm_gate(
                 "ALLOW_REAL_TRADING=true requires an active pre-registered lock waiver "
                 f"(data/live_probe_lock_waiver.json); got {_waiver.get('reason')!r}",
             ))
+        else:
+            waived_real_lock = str(
+                (_waiver.get("locks_waived") or {}).get("ALLOW_REAL_TRADING", "")
+            ).strip().lower()
+            if waived_real_lock != "true":
+                reasons.append(_reason(
+                    "LIVE_PROBE_WAIVER_SCOPE_INVALID",
+                    "Live probe waiver must cover ALLOW_REAL_TRADING=true exactly",
+                ))
+            if str(_waiver.get("authorization_id") or "") != str(probe.get("authorization_id") or ""):
+                reasons.append(_reason(
+                    "LIVE_PROBE_WAIVER_AUTHORIZATION_MISMATCH",
+                    "Waiver authorization_id does not match live_manual_arm.probe.authorization_id",
+                ))
 
     if not bool(probe.get("authorized", False)) or not str(probe.get("authorization_id") or "").strip():
         reasons.append(_reason("LIVE_PROBE_NOT_AUTHORIZED", "Engineering probe authorization is missing"))

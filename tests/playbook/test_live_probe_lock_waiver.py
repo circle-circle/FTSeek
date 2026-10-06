@@ -75,6 +75,7 @@ def test_waiver_non_object_is_inactive(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("drop,reason", [
+    ("authorization_id", "waiver_missing_authorization_id"),
     ("locks_waived", "waiver_missing_locks_waived"),
     ("expires", "waiver_missing_expires"),
 ])
@@ -169,6 +170,19 @@ def test_gate_rejects_when_waiver_absent_but_real_trading_on(tmp_path, monkeypat
     d = G.evaluate_live_arm_gate(_ARM, halted=False, **_GATE_KW)
     assert d["allowed"] is False
     assert "LIVE_PROBE_WAIVER_INACTIVE" in [r["code"] for r in d["reasons"]]
+
+
+def test_gate_rejects_waiver_scope_or_authorization_mismatch(tmp_path, monkeypatch):
+    p = tmp_path / "w.json"
+    _write_waiver(p, locks_waived={"OTHER_LOCK": "true"})
+    monkeypatch.setattr(G, "_WAIVER_FILE", p)
+    d = G.evaluate_live_arm_gate(_ARM, halted=False, **_GATE_KW)
+    assert "LIVE_PROBE_WAIVER_SCOPE_INVALID" in [r["code"] for r in d["reasons"]]
+
+    _write_waiver(p, authorization_id="DIFFERENT-AUTH")
+    monkeypatch.setattr(G, "_WAIVER_FILE", p)
+    d = G.evaluate_live_arm_gate(_ARM, halted=False, **_GATE_KW)
+    assert "LIVE_PROBE_WAIVER_AUTHORIZATION_MISMATCH" in [r["code"] for r in d["reasons"]]
 
 
 def test_waiver_does_not_loosen_other_probe_gates(tmp_path, monkeypatch):
