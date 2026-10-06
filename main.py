@@ -188,6 +188,35 @@ def _validate_startup_mode_or_exit():
         for error in result["errors"]:
             logger.critical("[StartupMode] %s: %s", error["code"], error["message"])
         raise SystemExit(1)
+
+    legacy_global_flip = (
+        result["broker_route"] == "real" or result["db_route"] == "live"
+    )
+    if legacy_global_flip:
+        legacy_override = os.getenv(
+            "FTSEEK_ALLOW_LEGACY_GLOBAL_FLIP", ""
+        ).strip().lower() == "1"
+        if not legacy_override:
+            message = (
+                "检测到旧全局 REAL/TRADE_ENV 翻转。RFC-131 后 LIVE 必须走 "
+                "playbook.live_manual_arm 显式双臂，SIM 必须常驻；启动被拒绝。"
+            )
+            logger.critical("[StartupMode] LEGACY_GLOBAL_FLIP_BLOCKED: %s", message)
+            try:
+                from app.push import Level, push_text_safe
+                push_text_safe(
+                    f"🚨 [启动阻断] 旧全局实盘翻转\n{message}",
+                    level=Level.HIGH,
+                    title="旧全局实盘翻转被阻断",
+                    sync=True,
+                )
+            except Exception as push_error:
+                logger.warning("[StartupMode] 阻断通知发送失败: %s", push_error)
+            raise SystemExit(1)
+        logger.warning(
+            "[StartupMode] LEGACY_GLOBAL_FLIP_OVERRIDE=1: 允许旧全局模式启动（仅限显式测试/回滚）"
+        )
+
     logger.info(
         "[StartupMode] 模式一致: broker=%s db=%s ALLOW_REAL_TRADING=%s",
         result["broker_route"], result["db_route"], result["allow_real_trading"],

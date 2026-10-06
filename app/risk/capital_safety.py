@@ -137,8 +137,10 @@ class CapitalSafetySystem:
                 initial_capital = 100_000  # Fallback (临时, broker 刷新后覆盖)
 
         self._state = AccountState(initial_capital=initial_capital)
-        from app.core.db_utils import get_main_db
-        self._db_path = db_path or str(get_main_db())
+        from app.core.paths import get_trade_records_db_for_arm
+        self._db_path = db_path or str(
+            get_trade_records_db_for_arm("real" if trade_env == 0 else "sim")
+        )
         self._peak_initialized = False
         
         self._ensure_db_table()

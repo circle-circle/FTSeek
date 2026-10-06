@@ -98,42 +98,30 @@ def test_switch_to_sim_repairs_half_flip_atomically(isolated_env_file, monkeypat
     assert values["ALLOW_REAL_TRADING"] == "false"
 
 
-def test_switch_to_live_writes_one_complete_snapshot(isolated_env_file, monkeypatch):
+def test_switch_to_live_is_retired_without_side_effects(isolated_env_file, monkeypatch):
     isolated_env_file.write_text(
         "AUTO_TRADE_ACCOUNT=sim\nTRADE_ENV=1\nALLOW_REAL_TRADING=true\n"
         "LIVE_CONSERVATIVE=1\nplaybook.live_trial=true\n"
         "REAL_ACCOUNT_ID=123\nFUTU_UNLOCK_PWD_MD5=secret\n"
     )
-    monkeypatch.setattr(mode_service, "_backup_env_file", lambda: None)
+    monkeypatch.setattr(mode_service, "_backup_env_file", lambda: pytest.fail("must not back up"))
     monkeypatch.setattr(
         mode_service,
         "_restart_ftseek_us",
-        lambda: {"success": True, "message": " restarted"},
+        lambda: pytest.fail("must not restart"),
     )
-    import app.playbook.pipeline as pipeline
-    monkeypatch.setattr(pipeline, "_check_graduation_gate", lambda: {"graduated": True})
-    real_write = mode_service.write_env_keys
-    calls = []
-
-    def capture(updates):
-        calls.append(dict(updates))
-        real_write(updates)
-
-    monkeypatch.setattr(mode_service, "write_env_keys", capture)
+    monkeypatch.setattr(
+        mode_service, "write_env_keys", lambda updates: pytest.fail("must not write")
+    )
     result = mode_service.switch_mode("live_normal", confirm="CONFIRM")
 
-    assert result["success"] is True
-    assert calls == [{
-        "AUTO_TRADE_ACCOUNT": "real",
-        "TRADE_ENV": "0",
-        "ALLOW_REAL_TRADING": "true",
-        "LIVE_CONSERVATIVE": "0",
-        "playbook.live_trial": "false",
-    }]
-    assert _read(isolated_env_file).items() >= calls[0].items()
+    assert result["success"] is False
+    assert result["code"] == mode_service.LEGACY_GLOBAL_REAL_SWITCH_RETIRED
+    assert result["http_status"] == 410
+    assert _read(isolated_env_file)["AUTO_TRADE_ACCOUNT"] == "sim"
 
 
-def test_live_switch_requires_existing_permission(isolated_env_file, monkeypatch):
+def test_live_switch_retired_even_without_preauth(isolated_env_file, monkeypatch):
     original = (
         "AUTO_TRADE_ACCOUNT=sim\nTRADE_ENV=1\nALLOW_REAL_TRADING=false\n"
         "REAL_ACCOUNT_ID=123\nFUTU_UNLOCK_PWD_MD5=secret\n"
@@ -144,41 +132,55 @@ def test_live_switch_requires_existing_permission(isolated_env_file, monkeypatch
     result = mode_service.switch_mode("live_conservative", confirm="CONFIRM")
 
     assert result["success"] is False
-    assert "ALLOW_REAL_TRADING" in result["message"]
+    assert result["code"] == mode_service.LEGACY_GLOBAL_REAL_SWITCH_RETIRED
     assert isolated_env_file.read_text() == original
 
 
-@pytest.mark.parametrize(
-    ("account", "expected"),
-    [
-        ("sim", {"AUTO_TRADE_ACCOUNT": "sim", "TRADE_ENV": "1"}),
-        (
-            "real",
-            {
-                "AUTO_TRADE_ACCOUNT": "real",
-                "TRADE_ENV": "0",
-                "ALLOW_REAL_TRADING": "true",
-            },
-        ),
-    ],
-)
-def test_set_auto_account_uses_atomic_snapshot(isolated_env_file, monkeypatch, account, expected):
+def test_set_auto_account_sim_is_noop_when_dual_arm_is_healthy(isolated_env_file, monkeypatch):
     isolated_env_file.write_text(
         "AUTO_TRADE_ACCOUNT=sim\nTRADE_ENV=1\nALLOW_REAL_TRADING=true\n"
     )
-    import app.playbook.pipeline as pipeline
-    monkeypatch.setattr(pipeline, "_check_graduation_gate", lambda: {"graduated": True})
-    calls = []
-    real_write = mode_service.write_env_keys
-
-    def capture(updates):
-        calls.append(dict(updates))
-        real_write(updates)
-
-    monkeypatch.setattr(mode_service, "write_env_keys", capture)
+    monkeypatch.setattr(
+        mode_service, "write_env_keys", lambda updates: pytest.fail("must not write")
+    )
     service = mode_service.ModeSwitchService()
-    result = service.set_auto_account(account)
+    result = service.set_auto_account("sim")
 
     assert result["success"] is True
-    assert calls == [expected]
-    assert _read(isolated_env_file).items() >= expected.items()
+    assert result["restart_required"] is False
+    assert _read(isolated_env_file)["ALLOW_REAL_TRADING"] == "true"
+
+
+def test_set_auto_account_real_is_retired(isolated_env_file, monkeypatch):
+    isolated_env_file.write_text(
+        "AUTO_TRADE_ACCOUNT=sim\nTRADE_ENV=1\nALLOW_REAL_TRADING=true\n"
+    )
+    monkeypatch.setattr(
+        mode_service, "write_env_keys", lambda updates: pytest.fail("must not write")
+    )
+    service = mode_service.ModeSwitchService()
+
+    result = service.set_auto_account("real")
+
+    assert result["success"] is False
+    assert result["code"] == mode_service.LEGACY_GLOBAL_REAL_SWITCH_RETIRED
+    assert result["http_status"] == 410
+    assert _read(isolated_env_file)["AUTO_TRADE_ACCOUNT"] == "sim"
+
+
+def test_legacy_live_mode_cards_are_removed_from_ui():
+    template = Path("app/web_dashboard/templates/system.html").read_text(
+        encoding="utf-8"
+    )
+    dashboard_template = Path(
+        "app/web_dashboard/templates/dashboard.html"
+    ).read_text(encoding="utf-8")
+    dashboard_js = Path("app/web_dashboard/static/js/dashboard.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "opt-live_conservative" not in template
+    assert "opt-live_normal" not in template
+    assert "autoAccountReal" not in dashboard_template
+    assert "autoAccountReal" not in dashboard_js
+    assert "_switchAutoAccount" not in dashboard_js

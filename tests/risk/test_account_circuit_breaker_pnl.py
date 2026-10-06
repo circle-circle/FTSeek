@@ -28,7 +28,8 @@ def breaker(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setattr(
-        "app.risk.account_circuit_breaker.get_trade_records_db", lambda: db)
+        "app.risk.account_circuit_breaker.get_trade_records_db_for_arm",
+        lambda target_env: db)
     return AccountCircuitBreaker()
 
 
@@ -45,9 +46,8 @@ def _insert(db_path, **kw):
 
 
 def _db(breaker, monkeypatch):
-    # fixture 只留实例; 拿回 monkeypatch 后的 db 路径 (get_trade_records_db 已指向 tmp)
-    from app.risk.account_circuit_breaker import get_trade_records_db
-    return get_trade_records_db()
+    from app.risk.account_circuit_breaker import get_trade_records_db_for_arm
+    return get_trade_records_db_for_arm("sim")
 
 
 def test_overnight_exit_today_counts_toward_today(breaker, monkeypatch):
@@ -129,8 +129,8 @@ def test_mixed_same_day_net_sum(breaker, monkeypatch):
 def test_db_failure_fail_close(breaker, monkeypatch):
     """fail-close: 查询异常返回 -inf → check() 判 LIQUIDATE (拒单)."""
     monkeypatch.setattr(
-        "app.risk.account_circuit_breaker.get_trade_records_db",
-        lambda: "/nonexistent_dir_xyz/trade_records.db")
+        "app.risk.account_circuit_breaker.get_trade_records_db_for_arm",
+        lambda target_env: "/nonexistent_dir_xyz/trade_records.db")
     assert breaker._get_daily_pnl("2026-08-27") == float("-inf")
 
 

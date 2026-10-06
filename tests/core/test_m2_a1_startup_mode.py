@@ -111,6 +111,60 @@ def test_invalid_snapshot_exits(monkeypatch):
     assert exc.value.code == 1
 
 
+def test_legacy_global_real_flip_is_blocked_before_scheduler(monkeypatch):
+    import main
+    from app.core import trading_mode
+    import app.push
+
+    values = {
+        "AUTO_TRADE_ACCOUNT": "real",
+        "TRADE_ENV": "0",
+        "ALLOW_REAL_TRADING": "true",
+        "FTSEEK_DB_FILE": "",
+        "FUTU_TRADE_ENV": "",
+    }
+    monkeypatch.setattr(trading_mode, "read_startup_mode_snapshot", lambda: values)
+    monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
+    monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.delenv("FTSEEK_DB_FILE", raising=False)
+    monkeypatch.delenv("FTSEEK_ALLOW_LEGACY_GLOBAL_FLIP", raising=False)
+    pushed = []
+    monkeypatch.setattr(
+        app.push,
+        "push_text_safe",
+        lambda *args, **kwargs: pushed.append((args, kwargs)) or True,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main._validate_startup_mode_or_exit()
+
+    assert exc.value.code == 1
+    assert pushed
+
+
+def test_legacy_global_flip_requires_explicit_override(monkeypatch):
+    import main
+    from app.core import trading_mode
+
+    values = {
+        "AUTO_TRADE_ACCOUNT": "real",
+        "TRADE_ENV": "0",
+        "ALLOW_REAL_TRADING": "true",
+        "FTSEEK_DB_FILE": "",
+        "FUTU_TRADE_ENV": "",
+    }
+    monkeypatch.setattr(trading_mode, "read_startup_mode_snapshot", lambda: values)
+    monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
+    monkeypatch.setenv("ALLOW_REAL_TRADING", "true")
+    monkeypatch.setenv("FTSEEK_ALLOW_LEGACY_GLOBAL_FLIP", "1")
+    monkeypatch.delenv("FTSEEK_DB_FILE", raising=False)
+
+    result = main._validate_startup_mode_or_exit()
+
+    assert result["valid"] is True
+    assert result["broker_route"] == "real"
+
+
 def test_external_broker_override_is_checked_against_file_db_route(monkeypatch):
     import main
     from app.core import trading_mode

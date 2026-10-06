@@ -243,6 +243,7 @@ class TradeStore:
                         current_sl        REAL,
                         initial_tp        REAL,
                         take_profit_json  TEXT,  -- JSON array
+                        entry_broker_order_id TEXT,
                         trail_state_json  TEXT,  -- JSON object
                         entry_time        TEXT,
                         time_stop_hours   INTEGER,
@@ -387,6 +388,7 @@ class TradeStore:
                     "ALTER TABLE trade_records ADD COLUMN mae_pct REAL",
                     "ALTER TABLE trade_records ADD COLUMN mfe_pct REAL",
                     "ALTER TABLE open_positions ADD COLUMN account_type TEXT",
+                    "ALTER TABLE open_positions ADD COLUMN entry_broker_order_id TEXT",
                     "ALTER TABLE open_positions ADD COLUMN entry_context_json TEXT",
                     "ALTER TABLE open_positions ADD COLUMN expected_hold_days INTEGER",
                     "ALTER TABLE open_positions ADD COLUMN invalidation_price REAL",
@@ -405,6 +407,25 @@ class TradeStore:
                         conn.execute(stmt)
                     except Exception:
                         pass  # 列已存在
+
+                cursor = conn.execute("""
+                    UPDATE open_positions AS op
+                    SET entry_broker_order_id=COALESCE(
+                            entry_broker_order_id, op.sl_broker_order_id),
+                        sl_broker_order_id=NULL
+                    WHERE COALESCE(op.sl_broker_order_id, '') <> ''
+                      AND EXISTS (
+                          SELECT 1
+                          FROM trade_records AS tr
+                          WHERE tr.symbol=op.symbol
+                            AND tr.futu_order_id=op.sl_broker_order_id
+                      )
+                """)
+                if cursor.rowcount:
+                    logger.info(
+                        "[TradeStore] 迁移入场单号到 entry_broker_order_id: %s 行",
+                        cursor.rowcount,
+                    )
 
                 conn.commit()
                 logger.info("[TradeStore] 交易记录表初始化完成")
@@ -953,7 +974,7 @@ class TradeStore:
         position_sync发现DB有记录 → 走UPDATE分支 → 不会误标manual.
 
         2026-07-02 fix: 移除 futu_order_id/source_type 列引用 (open_positions schema 无此列).
-        futu_order_id 存入 sl_broker_order_id (语义匹配: 入场单的 broker order id).
+        futu_order_id 存入 entry_broker_order_id; sl_broker_order_id 只承载真实 STOP 单号.
         source_type 不存入 open_positions (仅在 trade_records 中保留).
 
         entry_time (2026-09-06 R-12b 裁决): 传入权威成交时刻 (如 trade_records 的
@@ -981,22 +1002,24 @@ class TradeStore:
                 INSERT INTO open_positions
                 (symbol, direction, size, avg_entry_price, initial_sl, current_sl,
                  entry_time, updated_at, strategy_id, trader_type, owner_strategy,
-                 owner, sync_status, is_filled, mode, account_type, sl_broker_order_id,
+                 owner, sync_status, is_filled, mode, account_type,
+                 entry_broker_order_id, sl_broker_order_id,
                  stop_loss_price)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     direction=excluded.direction, size=excluded.size,
                     avg_entry_price=excluded.avg_entry_price,
                     current_sl=excluded.current_sl, updated_at=excluded.updated_at,
                     owner_strategy=excluded.owner_strategy, owner=excluded.owner,
                     sync_status=excluded.sync_status, account_type=excluded.account_type,
-                    sl_broker_order_id=excluded.sl_broker_order_id,
+                    entry_broker_order_id=excluded.entry_broker_order_id,
                     stop_loss_price=excluded.stop_loss_price,
                     trader_type=excluded.trader_type,
                     strategy_id=excluded.strategy_id
             """, (symbol, direction, size, entry_price, stop_loss, stop_loss,
                   _entry_ts, _now, owner_strategy, 'AUTO', owner_strategy,
-                  owner, sync_status, 'normal', account_type, futu_order_id, stop_loss))
+                  owner, sync_status, 'normal', account_type, futu_order_id,
+                  None, stop_loss))
             conn.commit()
         finally:
             if hasattr(conn, 'close'):

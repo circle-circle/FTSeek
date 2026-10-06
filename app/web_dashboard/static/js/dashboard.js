@@ -770,14 +770,12 @@
         el.innerHTML = html;
     }
 
-    // ── Graduation 毕业门禁 (高信号: verdict + 切换开关) ──
+    // ── Graduation 毕业门禁 (高信号: verdict + SIM 常驻状态) ──
     function renderGraduation(grad, autoAccount) {
         var card = document.getElementById('graduationCard');
         if (!card) return;
         var verdictEl = document.getElementById('gradVerdict');
         var checksEl = document.getElementById('gradChecks');
-        var simBtn = document.getElementById('autoAccountSim');
-        var realBtn = document.getElementById('autoAccountReal');
         if (!grad) {
             verdictEl.textContent = 'N/A'; verdictEl.style.background = '#21262d'; verdictEl.style.color = '#8b949e';
             checksEl.innerHTML = '<span style="color:#7d8590">毕业数据未就绪</span>';
@@ -808,28 +806,8 @@
             '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #21262d;font-size:11px;color:#8b949e">' +
             'IC覆盖: T+1=' + (grad.sample_t1||0) + ' T+3=' + (grad.sample_t3||0) + ' T+5=' + (grad.sample_t5||0) + ' 条' +
             ' | IC(T1)=' + icT1 + ' IC(T5)=' + icT5 + '</div>';
-        // auto_account 按钮 (real 未毕业灰色)
-        function setBtn(btn, active, enabled) {
-            btn.style.background = active ? '#238636' : '#21262d';
-            btn.style.color = enabled ? '#e1e4e8' : '#7d8590';
-            btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
-            btn.style.opacity = enabled ? '1' : '0.5';
-        }
-        var isSim = autoAccount === 'sim';
-        setBtn(simBtn, isSim, true);
-        setBtn(realBtn, !isSim, graduated);  // real 需毕业才可点
-        simBtn.onclick = function() { _switchAutoAccount('sim'); };
-        realBtn.onclick = function() { if (graduated) _switchAutoAccount('real'); else alert('未毕业, 无法切实盘\n' + (grad.reason || '')); };
-    }
-    function _switchAutoAccount(account) {
-        if (!confirm('确认自动交易账户切换到: ' + (account === 'real' ? '实盘' : '模拟') + '?\n(需重启 ftseek-us 生效)')) return;
-        fetch('/api/auto-trade/auto-account', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({account: account})})
-            .then(function(r){return r.json();})
-            .then(function(d){
-                if (d.ok) { alert('已切换 → ' + account + '\n需重启 ftseek-us 服务生效'); location.reload(); }
-                else { var e = d.error || {}; alert('切换失败: ' + (e.message || JSON.stringify(d)) + (e.data && e.data.graduation ? '\n' + (e.data.graduation.reason||'') : '')); }
-            })
-            .catch(function(e){ alert('请求失败: ' + e); });
+        var status = document.getElementById('autoAccountStatus');
+        if (status) status.textContent = autoAccount === 'sim' ? 'SIM 常驻' : '旧全局翻转';
     }
 
     // ── Factor Performance 因子性能 (打磨杠杆, 高信号低噪声) ──

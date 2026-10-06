@@ -179,10 +179,7 @@ class AbsoluteCircuitBreaker:
         try:
             import sqlite3
             from app.core import paths as _paths
-            if self.target_env == "real":
-                db_path = str(_paths.get_trade_records_db_for_arm("real"))
-            else:
-                db_path = str(_paths.get_trade_records_db())
+            db_path = str(_paths.get_trade_records_db_for_arm(self.target_env))
             today = _et_trade_date(now_et())
             hour_prefix = now_et().strftime("%Y-%m-%dT%H")
             _source_type = "PLAYBOOK_LIVE" if self.target_env == "real" else "PLAYBOOK_SIM"

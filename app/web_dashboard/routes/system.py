@@ -82,7 +82,7 @@ def register(app, templates):
         import asyncio
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, do_switch_mode, target, confirm)
-        status_code = 200 if result["success"] else 400
+        status_code = 200 if result["success"] else result.get("http_status", 400)
         return JSONResponse(content=result, status_code=status_code)
 
     @router.post("/api/mode/restart")

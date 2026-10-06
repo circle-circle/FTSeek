@@ -59,7 +59,8 @@ def okr(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     monkeypatch.setattr(
-        "app.risk.account_circuit_breaker.get_trade_records_db", lambda: db)
+        "app.risk.account_circuit_breaker.get_trade_records_db_for_arm",
+        lambda target_env: db)
     monkeypatch.setattr("app.risk.account_circuit_breaker.now_et", lambda: TODAY)
     monkeypatch.setattr(
         "app.risk.account_circuit_breaker._et_trade_date", lambda _dt: TODAY)

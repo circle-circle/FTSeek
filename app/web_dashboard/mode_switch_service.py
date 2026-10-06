@@ -23,6 +23,7 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger("ftseek_us.mode_switch")
 
 ENV_FILE = Path(__file__).parent.parent.parent / ".env.us"
+LEGACY_GLOBAL_REAL_SWITCH_RETIRED = "LEGACY_GLOBAL_REAL_SWITCH_RETIRED"
 
 # 模式相关的环境变量
 MODE_KEYS = {
@@ -199,41 +200,46 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
     """
     切换交易模式
 
-    target_mode: "simulate" | "live_conservative" | "live_normal"
-    confirm: 实盘切换需输入 "CONFIRM"
+    target_mode: "simulate"（修复旧全局快照）；live_* 已退役
+    confirm: 兼容旧请求体，live_* 一律拒绝
 
     返回: {"success": bool, "message": str, "mode": dict, "restart_needed": bool}
     """
     if not target_mode or target_mode not in ("simulate", "live_conservative", "live_normal"):
         return {"success": False, "message": f"无效模式: '{target_mode}'，可选: simulate / live_conservative / live_normal"}
 
+    if target_mode.startswith("live_"):
+        return {
+            "success": False,
+            "code": LEGACY_GLOBAL_REAL_SWITCH_RETIRED,
+            "http_status": 410,
+            "message": (
+                "旧全局实盘切换已退役：请使用 playbook.live_manual_arm 显式 LIVE 臂，"
+                "不得翻转 AUTO_TRADE_ACCOUNT/TRADE_ENV"
+            ),
+        }
+
     current = get_current_mode()
     env = read_env_file()
     if target_mode == "simulate":
+        if (
+            (env.get("AUTO_TRADE_ACCOUNT") or "sim").strip().lower() == "sim"
+            and (env.get("TRADE_ENV") or "1").strip() == "1"
+        ):
+            return {
+                "success": True,
+                "message": "SIM 研究臂常驻，无需全局切换",
+                "mode": current,
+                "restart_needed": False,
+                "no_op": True,
+            }
         updates = {
             "AUTO_TRADE_ACCOUNT": "sim",
             "TRADE_ENV": "1",
+            "ALLOW_REAL_TRADING": "false",
             "LIVE_CONSERVATIVE": "1",
         }
-        msg = "已切换到模拟盘 (自动交易→模拟账户)"
-    elif target_mode == "live_conservative":
-        updates = {
-            "AUTO_TRADE_ACCOUNT": "real",
-            "TRADE_ENV": "0",
-            "ALLOW_REAL_TRADING": "true",
-            "LIVE_CONSERVATIVE": "1",
-            "playbook.live_trial": "true",
-        }
-        msg = "已切换到实盘(保守/LIVE_TRIAL) — 仓位×0.5, 需重启生效"
-    else:
-        updates = {
-            "AUTO_TRADE_ACCOUNT": "real",
-            "TRADE_ENV": "0",
-            "ALLOW_REAL_TRADING": "true",
-            "LIVE_CONSERVATIVE": "0",
-            "playbook.live_trial": "false",
-        }
-        msg = "已切换到实盘(正常/LIVE_FULL) — 全量仓位, 需重启生效"
+        msg = "已修复为 SIM_ONLY 全局快照 (自动交易→模拟账户)"
 
     if current["mode"] == target_mode and all(env.get(key) == value for key, value in updates.items()):
         logger.info(f"[模式切换] 拒绝重复切换: 当前已是 {current['mode_label']}")
@@ -244,31 +250,6 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
             "restart_needed": False,
             "no_op": True,
         }
-
-    if target_mode.startswith("live_") and confirm != "CONFIRM":
-        return {
-            "success": False,
-            "message": "切换到实盘需要输入 CONFIRM 确认",
-        }
-
-    if target_mode.startswith("live_"):
-        if env.get("ALLOW_REAL_TRADING", "false").strip().lower() != "true":
-            return {"success": False, "message": "ALLOW_REAL_TRADING!=true"}
-        if not env.get("REAL_ACCOUNT_ID"):
-            return {"success": False, "message": "REAL_ACCOUNT_ID 未设置，无法切实盘"}
-        if not env.get("FUTU_UNLOCK_PWD_MD5"):
-            return {"success": False, "message": "FUTU_UNLOCK_PWD_MD5 未设置，无法切实盘"}
-        try:
-            from app.playbook.pipeline import _check_graduation_gate
-            _gate = _check_graduation_gate()
-            if not _gate.get("graduated"):
-                return {
-                    "success": False,
-                    "message": f"未毕业, 无法切实盘: {_gate.get('reason')}",
-                    "graduation": _gate,
-                }
-        except Exception as _ge:
-            return {"success": False, "message": f"graduation 门禁检查异常 (fail-close): {_ge}"}
 
     bak = _backup_env_file()
     if bak:
@@ -550,41 +531,40 @@ class ModeSwitchService:
         ).strip().lower()
 
     def set_auto_account(self, account: str) -> dict:
-        """设置自动交易目标账户: sim | real (Phase 2).
-
-        real 需 graduation 通过 (IC>0.05/样本≥30/无5连亏) + ALLOW_REAL_TRADING.
-        flat-switch 语义: 调用方应确保无未平仓 sim 仓位 (盘后切).
-        """
+        """Repair the legacy global snapshot to SIM; REAL global flips are retired."""
         account = (account or "").strip().lower()
         if account not in ("sim", "real"):
             return {"success": False, "error": f"invalid account: {account}"}
 
-        env = read_env_file()
-        gate = None
         if account == "real":
-            if env.get("ALLOW_REAL_TRADING", "false").strip().lower() != "true":
-                return {"success": False, "error": "ALLOW_REAL_TRADING!=true"}
-            try:
-                from app.playbook.pipeline import _check_graduation_gate
-                gate = _check_graduation_gate()
-            except Exception as _e:
-                return {"success": False, "error": f"graduation 检查异常: {_e}"}
-            if not gate.get("graduated"):
-                return {
-                    "success": False,
-                    "error": f"未毕业, 无法切实盘: {gate.get('reason')}",
-                    "graduation": gate,
-                }
-            updates = {
-                "AUTO_TRADE_ACCOUNT": "real",
-                "TRADE_ENV": "0",
-                "ALLOW_REAL_TRADING": "true",
+            return {
+                "success": False,
+                "error": (
+                    "旧全局 REAL 账户切换已退役：请使用 playbook.live_manual_arm "
+                    "显式 LIVE 臂"
+                ),
+                "code": LEGACY_GLOBAL_REAL_SWITCH_RETIRED,
+                "http_status": 410,
             }
-        else:
-            updates = {
-                "AUTO_TRADE_ACCOUNT": "sim",
-                "TRADE_ENV": "1",
+
+        env = read_env_file()
+        if (
+            (env.get("AUTO_TRADE_ACCOUNT") or "sim").strip().lower() == "sim"
+            and (env.get("TRADE_ENV") or "1").strip() == "1"
+        ):
+            return {
+                "success": True,
+                "auto_account": "sim",
+                "restart_required": False,
+                "message": "SIM 研究臂常驻，无需全局切换",
+                "graduation": self.get_mode_status().get("graduation"),
             }
+
+        updates = {
+            "AUTO_TRADE_ACCOUNT": "sim",
+            "TRADE_ENV": "1",
+            "ALLOW_REAL_TRADING": "false",
+        }
 
         try:
             write_env_keys(updates)

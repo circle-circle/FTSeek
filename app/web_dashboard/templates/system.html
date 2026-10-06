@@ -52,8 +52,6 @@
         .mode-opt .check { color: #58a6ff; font-size: 16px; margin-top: 4px; display: none; }
         .mode-opt.current-opt .check { display: block; }
 
-        .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
-        .overlay.show { display: flex; }
         .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; max-width: 400px; width: 90%; }
         .modal h3 { margin-bottom: 8px; font-size: 16px; }
         .modal .desc { color: #8b949e; font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
@@ -63,9 +61,6 @@
         .btn-go { background: #ef4444; color: #fff; }
         .btn-back { background: #21262d; color: #8b949e; }
         .btn-sim { background: #22c55e; color: #000; }
-        .result { padding: 12px; border-radius: 6px; margin-top: 12px; display: none; font-size: 13px; }
-        .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
-        .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
 
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
@@ -122,25 +117,14 @@
             </div>
         </div>
 
-        <h2 class="section-title">🔄 模式切换</h2>
+        <h2 class="section-title">🧭 全局模式状态</h2>
         <div id="modeSection">
             <div class="current-mode sim" id="currentModeBlock"><div class="cm-label">当前模式</div><div class="cm-value" id="currentModeLabel">加载中...</div></div>
             <div class="mode-cards">
-                <div class="mode-opt" id="opt-simulate" onclick="askSwitch('simulate')"><h3>🟢 模拟盘</h3><p>Futu 模拟账户，无真实资金</p><span class="badge b-safe">安全</span><span class="check">✓ 当前模式</span></div>
-                <div class="mode-opt" id="opt-live_conservative" onclick="askSwitch('live_conservative')"><h3>🟡 实盘(保守)</h3><p>真实账户，仓位 ×0.5，风控 ×0.3</p><span class="badge b-warn">谨慎</span><span class="check">✓ 当前模式</span></div>
-                <div class="mode-opt" id="opt-live_normal" onclick="askSwitch('live_normal')"><h3>🔴 实盘(标准)</h3><p>真实账户，标准风控参数</p><span class="badge b-danger">高风险</span><span class="check">✓ 当前模式</span></div>
+                <div class="mode-opt current-opt" id="opt-simulate"><h3>🟢 SIM 研究臂</h3><p>常驻运行，继续积累样本</p><span class="badge b-safe">安全</span><span class="check">✓ 当前模式</span></div>
+                <div class="mode-opt" id="opt-live-arm"><h3>🔴 LIVE 工程臂</h3><p>待独立控制台；旧全局实盘切换已退役</p><span class="badge b-warn">未开放</span></div>
             </div>
-            <div class="result" id="result"></div>
-        </div>
-
-        <div class="overlay" id="overlay">
-            <div class="modal">
-                <h3 id="mTitle"></h3>
-                <div class="desc" id="mDesc"></div>
-                <div id="mPosWarn"></div>
-                <div id="mInputWrap" style="display:none"><label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label><input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off"></div>
-                <div class="btns"><button class="btn" id="mBtn" onclick="doSwitch()">确认</button><button class="btn btn-back" onclick="closeModal()">取消</button></div>
-            </div>
+            <div style="font-size:11px;color:#8b949e;margin-top:8px">LIVE 只能通过 <b>playbook.live_manual_arm</b> 显式授权；不得翻转 AUTO_TRADE_ACCOUNT / TRADE_ENV。</div>
         </div>
     </div>
 {% endblock %}
@@ -172,22 +156,21 @@
             } catch(e) { console.error('System status fetch failed:', e); }
         }
 
-        let _currentMode = 'simulate', _targetMode = null, _hasPrereq = true;
+        let _currentMode = 'simulate';
 
         async function loadModeInfo() {
             try {
                 const res = await fetch('/api/mode');
                 const d = await res.json();
                 _currentMode = d.mode || 'simulate';
-                _hasPrereq = !!(d.REAL_ACCOUNT_ID);
                 const block = document.getElementById('currentModeBlock');
                 const label = document.getElementById('currentModeLabel');
                 const modeTag = document.getElementById('modeTag');
                 if (_currentMode.startsWith('live_')) {
-                    block.className = 'current-mode live'; label.textContent = d.mode_label || '实盘';
+                    block.className = 'current-mode live'; label.textContent = '旧全局翻转（启动会被阻断）';
                     ['modeTag', 'modeTag2', 'modeTag3'].forEach(function(id) {
                         var el = document.getElementById(id);
-                        if (el) { el.textContent = '🔴 实盘'; el.className = 'mode-tag live'; }
+                        if (el) { el.textContent = '🔴 异常'; el.className = 'mode-tag live'; }
                     });
                 } else {
                     block.className = 'current-mode sim'; label.textContent = d.mode_label || '模拟盘';
@@ -196,57 +179,10 @@
                         if (el) { el.textContent = '🟢 模拟'; el.className = 'mode-tag sim'; }
                     });
                 }
-                ['simulate', 'live_conservative', 'live_normal'].forEach(m => {
-                    const el = document.getElementById('opt-' + m);
-                    if (el) el.classList.toggle('current-opt', m === _currentMode);
-                });
+                const simCard = document.getElementById('opt-simulate');
+                if (simCard) simCard.classList.toggle('current-opt', _currentMode === 'simulate');
             } catch(e) { console.error('Mode fetch failed:', e); }
         }
-
-        async function askSwitch(mode) {
-            if (mode === _currentMode) { showMsg('ok', '当前已经是 ' + mode + ' 模式'); return; }
-            if (mode.startsWith('live_') && !_hasPrereq) { showMsg('err', '无法切实盘：需要在 .env.us 中设置 REAL_ACCOUNT_ID'); return; }
-            _targetMode = mode;
-            const isLive = mode.startsWith('live_');
-            const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(标准)' };
-            let posWarnHtml = '';
-            try { const resp = await fetch('/api/live-account'); const data = await resp.json(); if (data.positions && data.positions.length > 0) { const codes = data.positions.map(p => p.code).join(', '); posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5"><b>⚠️ 安全警告：当前有 ' + data.positions.length + ' 个未平仓持仓</b><br>持仓标的: ' + codes + '<br>切换模式将重启交易引擎，请确保这些持仓已妥善处理。</div>'; } } catch(e) {}
-            document.getElementById('mTitle').textContent = isLive ? '🔴 切换到 ' + labels[mode] : '切换到 ' + labels[mode];
-            document.getElementById('mTitle').style.color = isLive ? '#f87171' : '#4ade80';
-            document.getElementById('mDesc').textContent = isLive ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。' : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
-            document.getElementById('mPosWarn').innerHTML = posWarnHtml;
-            document.getElementById('mInputWrap').style.display = isLive ? 'block' : 'none';
-            document.getElementById('mConfirm').value = '';
-            const btn = document.getElementById('mBtn');
-            btn.className = 'btn ' + (isLive ? 'btn-go' : 'btn-sim');
-            btn.textContent = isLive ? '确认切实盘' : '切换';
-            btn.disabled = false;
-            document.getElementById('overlay').classList.add('show');
-            if (isLive) setTimeout(() => document.getElementById('mConfirm').focus(), 100);
-        }
-
-        function closeModal() { document.getElementById('overlay').classList.remove('show'); _targetMode = null; }
-
-        async function doSwitch() {
-            if (!_targetMode) return;
-            const isLive = _targetMode.startsWith('live_');
-            const confirm = document.getElementById('mConfirm').value;
-            if (isLive && confirm !== 'CONFIRM') { showMsg('err', '请输入 CONFIRM'); return; }
-            document.getElementById('mBtn').disabled = true;
-            document.getElementById('mBtn').textContent = '⏳ 切换中，引擎重启 (约10-30秒)...';
-            try {
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 75000);
-                const res = await fetch('/api/mode/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_mode: _targetMode, confirm: confirm }), signal: controller.signal });
-                clearTimeout(timeout);
-                const d = await res.json();
-                closeModal();
-                if (d.success) { showMsg('ok', d.message); setTimeout(() => location.reload(), 2000); }
-                else { showMsg('err', d.message); document.getElementById('mBtn').disabled = false; document.getElementById('mBtn').textContent = '确认切换'; }
-            } catch(e) { closeModal(); showMsg('err', '网络异常: ' + e.message); }
-        }
-
-        function showMsg(type, msg) { const el = document.getElementById('result'); el.className = 'result ' + type; el.textContent = msg; el.style.display = 'block'; }
 
         // ── 自动交易控制 (开关 + 激进度) ──
         var _atEnabled = false;
@@ -271,9 +207,9 @@
                 '• 止损放宽 <b>20%</b>（给更多波动空间），每日最多 <b>5</b> 笔'
         };
 
-        var ENV_MULT_MAP = {simulate: 1.0, live_conservative: 0.5, live_normal: 0.8};
+        var ENV_MULT_MAP = {simulate: 1.0};
         var AGG_MULT_MAP = {conservative: 0.5, normal: 1.0, aggressive: 1.5};
-        var ENV_LABEL = {simulate: '模拟盘 ×1.0', live_conservative: '实盘保守 ×0.5', live_normal: '实盘标准 ×0.8'};
+        var ENV_LABEL = {simulate: 'SIM 研究臂 ×1.0'};
 
         async function loadAutoTrade() {
             try {
@@ -340,11 +276,6 @@
             try {
                 var envLabel = document.getElementById('currentModeLabel');
                 var envKey = 'simulate';
-                if (envLabel) {
-                    var txt = envLabel.textContent || '';
-                    if (txt.indexOf('保守') >= 0) envKey = 'live_conservative';
-                    else if (txt.indexOf('标准') >= 0 || txt.indexOf('normal') >= 0) envKey = 'live_normal';
-                }
                 var envMult = ENV_MULT_MAP[envKey] || 1.0;
                 var aggMult = AGG_MULT_MAP[_atLevel] || 0.5;
                 var combined = (envMult * aggMult).toFixed(2);
@@ -418,5 +349,4 @@
         loadAutoTrade();
         setInterval(loadSystemStatus, 30 * 1000);
         setInterval(loadAutoTrade, 30 * 1000);
-        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 {% endblock %}

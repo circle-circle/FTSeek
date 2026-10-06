@@ -669,7 +669,7 @@ def register(app, templates):
 
     @router.post("/api/auto-trade/auto-account")
     async def set_auto_account(request: Request):
-        """设置自动交易目标账户 (sim|real). real 需 graduation + ALLOW_REAL_TRADING."""
+        """Repair the legacy global snapshot to SIM; REAL is retired."""
         try:
             body = await request.json()
         except Exception:
@@ -678,6 +678,11 @@ def register(app, templates):
         result = get_mode_switch_service().set_auto_account(account)
         if result.get("success"):
             return api_ok(result)
-        return api_error("AUTO_ACCOUNT_ERROR", result.get("error", "操作失败"), 400, data={"graduation": result.get("graduation")})
+        return api_error(
+            "AUTO_ACCOUNT_ERROR",
+            result.get("error", "操作失败"),
+            result.get("http_status", 400),
+            data={"code": result.get("code"), "graduation": result.get("graduation")},
+        )
 
     app.include_router(router)

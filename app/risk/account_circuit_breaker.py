@@ -45,7 +45,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
-from app.core.paths import get_trade_records_db, get_trade_records_db_for_arm
+from app.core.paths import get_trade_records_db_for_arm
 from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
@@ -164,10 +164,7 @@ class AccountCircuitBreaker:
         fail-close: 查询异常返回 -inf (无法确认状态 → 按最坏处理).
         """
         try:
-            if str(target_env).lower() in {"real", "live"}:
-                db_path = str(get_trade_records_db_for_arm(target_env))
-            else:
-                db_path = str(get_trade_records_db())
+            db_path = str(get_trade_records_db_for_arm(target_env))
             conn = sqlite3.connect(db_path)
             row = conn.execute(
                 "SELECT COALESCE(SUM(COALESCE(pnl_net, realized_pnl)), 0) "
