@@ -1,5 +1,113 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-06 23:30 首笔 LIVE 探针成交 + STOP 事故修复全链留痕
+
+**事件**: 21:38 ET(09:38) US.PBR LIVE 1股 @24.0171 真实成交 (futu_id
+FH1D3F38AC542E8000, 同 decision_id SIM 臂 247股 @24.02, 对照滑点 -0.012%);
+broker STOP 挂单被拒「下单缺少必要参数触发价格」→ fail-close 按 RFC-132
+设计精确执行 (CRITICAL + live_arm_halt.json + 钉钉 HIGH ×2), 仓位保留。
+
+**根因**: dual_broker.place_protective_stop 只传 price 未传 aux_price
+(富途 STOP 触发价必须走 aux_price — 仓内 8/5 已知, probe_sim_stop_20260805.py:44
++ 看板 executor.py:1236 生产先例); 该函数生产里程为零, 首跑即暴露。
+连带: 未传 time_in_force (默认 DAY 当夜失效, W_WEEK 跨日持仓失去兜底)。
+
+**修复链** (全部已提交):
+- `9014d3ca1` STOP 修复: price=0 + aux_price + GTC + trail_spread=0 + 契约钉×3;
+- `3a9daca25` 测试隔离上提: HALT/waiver fixture 从 tests/playbook/conftest.py
+  上提 tests/conftest.py (修根目录 test_rfc080 读生产 waiver 恒红, 同型病灶);
+- 23:16 重启生效 (冒烟 --live-probe 7/7);
+- `scripts/rehang_live_stop.py --apply` 23:23 补挂 PBR STOP 成功
+  (futu_id FH1D3F50CF57F79000 @22.96 GTC), 回执双台账已核
+  (open_positions.sl_broker_order_id + trade_records.metadata.broker_stop);
+- HALT 人工清除 23:25 (备份 data/backups/live_arm_halt_cleared_20261006_2325.json);
+  门函数复测: 唯一拒绝理由 = LIVE_PROBE_OPEN_CAP_REACHED (PBR 在仓, 1 仓帽在位,
+  HALT 已解) — 探针授权恢复, 待 PBR 了结后下一信号自动镜像。
+
+**教训**: ①仓内已有知识必须检索复用 (8/5 探针脚本就记录过 aux_price);
+②preflight P6「STOP 生产里程=0」的警示在探针前未做人工三段演练, 直接首跑暴露 —
+下次授权前把「演练里程≥1」当硬前置执行, 不接受跳过。
+
+## 2026-10-06 22:21 UE新鲜事件并入DA当日候选池（Phase 1影子）
+
+**触发**: 用户裁「UE扫描做当日新鲜事件做当日候选池」。
+
+**架构边界**:
+- UE保留事件发现/供料/确认门影子，**不再由21:10 cron直接 `inject/push`**；
+- DA成为唯一指令写出方：新增 `--fresh-event` 增量批，显式消费UE `premarket` 批次；
+- 默认**隔离影子**：`--no-db-write --no-pool-write`，输出到
+  `data/shadow/da_fresh_event/<ET日期>/`；观察合格后再切 `--execute` 写生产指令。
+
+**改动**:
+- DA skill v0.92：`_load_ue_short_candidates(window=...)` 支持显式窗口；
+  `Pipeline(--ue-window, --ue-only)` 与 CLI `--ue-window/--fresh-event`；
+  fresh批复用当日 `opportunity_scan` 市场上下文，跳过Stage1重扫，只分析UE候选。
+- 常规DA主链增加ET 07:55-08:15启动窗；off-season发车返回
+  `DA_MAIN_ET_WINDOW` skip JSON，不扫描/不调LLM/不写库，人工补跑用`--force`。
+- FTSeek新增 `scripts/da_fresh_event_batch.py`：ET 0900-0929启动窗、交易日守卫、
+  UE批次1h时效、当日幂等、事件审计 `data/shadow/ue_fresh_da_candidate_pool.jsonl`。
+- UE `cmd_scan` 增加ET窗口守卫（da_feed 0730-0805 / premarket 0900-0929），
+  `--force-window` 仅测试/人工补跑；防止DST双季双挂时off-season发车写批次。
+- 新增Hermes no_agent作业 `9476e44276dc`（`0 21 * * 1-5`）与载体
+  `ops/hermes/da_main_carrier.py` → `/root/.hermes/scripts/da_main_carrier.py`：
+  EST 21:00 CST=08:00 ET执行主DA；EDT 09:00 ET由窗口守卫跳过。
+
+**自动化层**:
+- 备份：`data/backups/crontab-before-ue-fresh-event-20261006.txt`
+  (sha256 `4650db473ed96f827cdb70b341ff0501763f88023464e3fc75f5831da808ce08`)；
+- 21:10原`scan→inject→push`替换为`scan→da_fresh_event_batch.py`（影子）；
+- UE premarket双季双挂：EDT `10 21` / EST `10 22`；越窗发车由脚本守卫拒绝；
+- UE da_feed双季双挂：EDT `00 20` / EST `00 21`；越窗发车由脚本守卫拒绝；
+- 回滚：`crontab data/backups/crontab-before-ue-fresh-event-20261006.txt`。
+- Hermes jobs备份：`data/backups/hermes-jobs-before-da-est-carrier-20261006.json`
+  (sha256 `4884c127639e53577d1966b6dbb9bcfc9857af28a5572f8e45898f484370569d`)；
+  回滚 = 还原该JSON并删除新增job/载体。
+
+**验证**:
+- `py_compile` 通过；
+- `tests/test_da_fresh_event_batch.py` 3例通过；
+- `tests/test_da_main_carrier.py` 1例通过（窗外静默+审计落盘）；
+- `tests/playbook/test_da_candidate_selection.py` + `tests/test_da_output_contract.py`
+  **130 passed**（含fresh-event窗口/ue-only契约、DA主链ET窗与v0.92版本棘轮）；
+- `tests/playbook/test_ue_funnel_batch.py::TestInjectWiring` **8 passed**；
+- 上述fresh/main/candidate/output/UE接线合并集 **142 passed**；
+- 冒烟：当前ET 10:18在窗外，wrapper正确记录`skipped_outside_window`且不启动管线。
+- DA主链窗口冒烟：当前ET 10:28运行`--mode full`返回
+  `skip_reason=DA_MAIN_ET_WINDOW`且零扫描/零LLM/零写库；
+  EST载体从`/root/.hermes/scripts`无PYTHONPATH直跑，当前ET 10:33正确跳过且
+  stdout/stderr=0（载体自身不import仓内app，交易日/watchlist均走venv子进程）；
+  新Hermes作业45s后仍为`scheduled/enabled`，next_run=`2026-10-07 21:00 CST`。
+- 结构化对账：Hermes jobs 35→36，仅新增`9476e44276dc`，既有作业零字段变化；
+  crontab目标diff仅包含UE da_feed双季、UE premarket双季与fresh-event影子批。
+
+**待裁决**: 影子观察合格后，将cron中的 `da_fresh_event_batch.py` 加 `--execute`
+切换为生产DA增量指令；此前UE直注保持退役，不放宽`require_auto_sim`。
+
+## 2026-10-06 21:05 DA cron 执行模式收口: 长命令首发即后台
+
+**触发**: 用户令「按照建议执行优化，确保正常」(基于 10-06 DA 全链路现场观察)。
+
+**病灶 (10-06 实证)**: cron agent 首发用前台/顺序模式跑 `pipeline.py`，被 hermes
+终端工具 420s 顺序超时在 Stage 1 扫描刚完成时杀掉 —— DA 产物零落盘 (已核查无重复
+副作用)，白烧一轮全市场扫描 (~7-10min Futu 配额) 后才转后台重跑成功。属 agent
+执行模式选择的非确定性问题, 非管线缺陷。
+
+**改动 (自动化层, 单点)**: `~/.hermes/cron/jobs.json` 作业 `e0d574cc1a3c` 的
+`prompt` 字段 Step 3 处新增「执行方式」两条: ①**首发即用 terminal background=true
+模式执行** + 输出重定向模板 + 轮询进度判据 (进程存活 / 检查点数递增 / `重活完成
+N/M` 推进); ②**禁止前台/顺序模式执行**, 注明 10-06 实证教训。
+
+**留痕与回滚**:
+- 备份: `~/.hermes/cron/jobs.json.bak-rfc133-bgmode-20261006`
+  (sha256 `badcc4bd478032acf1109fa4739e5a293359febe13863fdb88cd0da85f3ec59b`);
+- 结构化 diff: 全部 35 个作业逐字段比对, **仅** `e0d574cc1a3c.prompt` 变化
+  (4125→4596 字符), schedule/enabled/state/next_run_at 全部原样;
+- 回滚 = 还原备份文件 (Hermes scheduler 每 tick 重读 jobs.json, 无需 reload)。
+
+**验证**: JSON 合法加载; 写入 90s 后复查 prompt 存活、作业 `scheduled/enabled`、
+`next_run_at=2026-10-07T20:00`、`last_status=ok`; hermes gateway 存活
+(PID 3896515); 当前无 DA 管线进程在跑, 明晚 20:00 生效。
+
 ## 2026-10-06 13:42 双臂切换优化复查与探针安全补强
 
 **触发**: 用户令「美股昨晚已经完成交易，另外的 AGENT 也针对实盘和 SIM 切换做了优化，请复查」。
