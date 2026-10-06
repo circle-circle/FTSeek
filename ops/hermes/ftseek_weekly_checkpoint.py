@@ -34,10 +34,47 @@ def check_locks():
         "execute_mode": "futu_simulate" if "execute_mode: futu_simulate" in cfg
         else "⚠️ 非simulate",
     }
-    ok = (locks["AUTO_TRADE_ACCOUNT"] == "sim"
-          and locks["ALLOW_REAL_TRADING"] == "false"
-          and locks["execute_mode"] == "futu_simulate")
-    return ok, locks
+    # 逐锁记闭合态 (而非只算一个总 ok): 破例需要知道**哪把**锁松着才能判精确覆盖。
+    # 三处字面值与 scripts/okr_2026_09_scoring.LOCK_EXPECT 逐字同源
+    # (tests/test_okr_2026_09_scoring.py::test_lock_literals_match_weekly_checkpoint 钉)。
+    closed = {
+        "AUTO_TRADE_ACCOUNT": locks["AUTO_TRADE_ACCOUNT"] == "sim",
+        "ALLOW_REAL_TRADING": locks["ALLOW_REAL_TRADING"] == "false",
+        "execute_mode": locks["execute_mode"] == "futu_simulate",
+    }
+    ok = all(closed.values())
+
+    # ── RFC-135 四锁破例 (2026-10-06 用户裁 A) ────────────────────────────
+    # ok 保持实测真相, 不因有授权而翻 True (翻 True = 撒谎, 且会掩盖下一次真松动)。
+    # 破例只决定"要不要吵醒值班人", 体现在返回的 waiver 段 + suppressed 标志。
+    # 判定源复用 app.playbook.live_arm_gate.read_live_probe_waiver = 与 gate 到期
+    # 判定同一真源 (两处各写一份日期解析会分叉, 正是上面四锁字面值同源钉所防的病)。
+    # fail-close: 读不到判定源 / 文件缺失 / 过期 / 坏 JSON ⇒ suppressed=False, 告警照响。
+    waiver = {"active": False, "reason": "reader_unavailable"}
+    suppressed = False
+    uncovered = [k for k, v in closed.items() if not v]
+    try:
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from app.playbook.live_arm_gate import read_live_probe_waiver
+        w = read_live_probe_waiver(REPO / WAIVER_FILE)
+        waiver = {"active": bool(w.get("active")), "reason": w.get("reason"),
+                  "expires": w.get("expires"), "days_left": w.get("days_left"),
+                  "authorization_id": w.get("authorization_id"),
+                  "waiver_id": (w.get("raw") or {}).get("waiver_id"),
+                  "locks_waived": w.get("locks_waived") or {}}
+        if w.get("active"):
+            waived = w.get("locks_waived") or {}
+            # 精确覆盖: 松动的锁必须在授权清单里且实测值==授权值, 少一条即不抑制
+            uncovered = [k for k in uncovered
+                         if not (k in waived and locks.get(k) == waived[k])]
+            suppressed = not uncovered
+    except Exception as exc:                       # noqa: BLE001
+        waiver = {"active": False, "reason": f"reader_error: {type(exc).__name__}: {exc}"}
+    return ok, locks, waiver, suppressed, uncovered
+
+
+WAIVER_FILE = "data/live_probe_lock_waiver.json"
 
 
 def check_edge_vs_fee():
@@ -226,13 +263,35 @@ def main():
     out.append(f"服务: {'✓' if svc == 'active' else '⚠️ ' + svc}")
 
     # 1. 四锁 + 打标
-    ok, locks = check_locks()
+    ok, locks, waiver, suppressed, uncovered = check_locks()
     grad = check_graduation()
-    mark = "✓" if ok and not grad.get("graduated") else "⚠️"
+    # 三态标记: ✓ 全闭且未打标 | 🔕 四锁松动但被有效预注册破例覆盖 (RFC-135) | ⚠️ 其余
+    # 破例期不显示 ✓ — 锁确实松着, 显示 ✓ 会让值班人误判为安全侧;
+    # 也不显示 ⚠️ — 那是已裁决的已知例外, 每周重复报警会让告警失去信号价值 (狼来了)。
+    # 判定顺序要紧: 🔕 只在"四锁松动"这一种情形下成立。若写成 elif suppressed 而不带
+    # `not ok`, 则 ok=True ∧ graduated=True 时 suppressed 也为 True (uncovered 为空)
+    # ⇒ 已打标 (用户明令硬拦) 会被误渲染成 🔕 静默。graduated=True 必须走 ⚠️。
+    if ok and not grad.get("graduated"):
+        mark = "✓"
+    elif (not ok) and suppressed:
+        mark = "🔕"
+    else:
+        mark = "⚠️"
     out.append(f"{mark} 四锁: {locks['AUTO_TRADE_ACCOUNT']}/"
                f"{locks['ALLOW_REAL_TRADING']}/{locks['execute_mode']} | "
                f"毕业门禁 graduated={grad.get('graduated')} "
                f"({'维持拦截' if not grad.get('graduated') else '⚠️ 已打标! 需用户签字确认'})")
+    if not ok:
+        if suppressed:
+            out.append(f"  🔕 破例生效 (RFC-135): {waiver.get('waiver_id')} "
+                       f"授权={waiver.get('authorization_id')} "
+                       f"覆盖={sorted(waiver.get('locks_waived') or {})} "
+                       f"到期={waiver.get('expires')} (剩 {waiver.get('days_left')} 天) "
+                       f"— 到期后告警自动复响; 撤销=删 data/live_probe_lock_waiver.json")
+        else:
+            out.append(f"  ⚠️ 四锁松动且无有效破例覆盖: 松动={uncovered} "
+                       f"| 破例状态={waiver.get('reason')} "
+                       f"| 到期={waiver.get('expires')} — 立即呈裁, 不得继续跑任何结算")
 
     # 2. 参数冻结
     rows, total = check_freeze()

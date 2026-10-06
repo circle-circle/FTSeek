@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import json
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -14,6 +15,12 @@ from app.utils.timezone import now_et
 _RTH_SESSION = "RTH"
 _TRADING_PHASE = "TRADING"
 _HALT_FILE = Path(__file__).resolve().parents[2] / "data" / "live_arm_halt.json"
+# 四锁破例预注册载体 (2026-10-06 用户裁 A; RFC-135)。
+# 为什么需要: live_arm_gate 要求 ALLOW_REAL_TRADING=true (L99), 而四锁/周检
+# 要求 false ⇒ 判据互相矛盾, 探针在四锁体系下结构性不可运行。破例期内
+# 审计侧静默 (见 scripts/okr_2026_09_scoring.py + ops/hermes/ftseek_weekly_checkpoint.py),
+# 本模块负责**到期自动失效** — 与"到期自动复响"对称。
+_WAIVER_FILE = Path(__file__).resolve().parents[2] / "data" / "live_probe_lock_waiver.json"
 
 
 def _reason(code: str, message: str) -> Dict[str, str]:
@@ -48,6 +55,72 @@ def read_live_arm_halt() -> Dict[str, Any]:
         return {}
     except Exception:
         return {"halted": True, "reason": "halt_state_unreadable", "raw_error": "invalid JSON"}
+
+
+def read_live_probe_waiver(path: Optional[Path] = None) -> Dict[str, Any]:
+    """四锁破例预注册状态 (RFC-135). fail-close: 文件缺失/坏 JSON/无到期 = 未授权.
+
+    审计侧 (四锁 + 周检) 与本 gate 共用本函数 = 单一判定源, 不在两处各写一份
+    到期解析逻辑 (那会分叉, 同 test_lock_literals_match_weekly_checkpoint 所防的病)。
+
+    Args:
+        path: 破例文件路径。None ⇒ 用生产路径 _WAIVER_FILE (gate 走这条);
+              审计器传 repo_root/data/... 以保持合成仓测试的 hermetic 性。
+
+    Returns:
+      {"active": bool, "reason": str, "expires": str|None, "authorization_id": str|None,
+       "locks_waived": dict, "days_left": int|None, "raw": dict}
+    """
+    src = Path(path) if path is not None else _WAIVER_FILE
+    try:
+        raw = json.loads(src.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"active": False, "reason": "waiver_file_absent", "expires": None,
+                "authorization_id": None, "locks_waived": {}, "days_left": None,
+                "raw": {}}
+    except Exception as exc:                       # noqa: BLE001
+        # 坏文件不静默当作"无破例"(那会让探针莫名停用), 但也不 fail-open
+        return {"active": False, "reason": "waiver_unreadable",
+                "raw_error": f"{type(exc).__name__}: {exc}", "expires": None,
+                "authorization_id": None, "locks_waived": {}, "days_left": None,
+                "raw": {}}
+
+    if not isinstance(raw, dict):
+        return {"active": False, "reason": "waiver_not_an_object", "expires": None,
+                "authorization_id": None, "locks_waived": {}, "days_left": None,
+                "raw": {}}
+
+    expires_raw = str(raw.get("expires") or "").strip()
+    auth_id = str(raw.get("authorization_id") or "").strip()
+    waived = raw.get("locks_waived")
+    if not isinstance(waived, dict) or not waived:
+        return {"active": False, "reason": "waiver_missing_locks_waived",
+                "expires": expires_raw or None, "authorization_id": auth_id or None,
+                "locks_waived": {}, "days_left": None, "raw": raw}
+    if not expires_raw:
+        return {"active": False, "reason": "waiver_missing_expires",
+                "expires": None, "authorization_id": auth_id or None,
+                "locks_waived": waived, "days_left": None, "raw": raw}
+
+    try:
+        expires = datetime.fromisoformat(expires_raw)
+    except ValueError:
+        return {"active": False, "reason": "waiver_expires_unparsable",
+                "expires": expires_raw, "authorization_id": auth_id or None,
+                "locks_waived": waived, "days_left": None, "raw": raw}
+
+    now = now_et()
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=now.tzinfo)
+    days_left = int((expires - now).total_seconds() // 86400)
+    if now >= expires:
+        return {"active": False, "reason": "waiver_expired", "expires": expires_raw,
+                "authorization_id": auth_id or None, "locks_waived": waived,
+                "days_left": days_left, "raw": raw}
+
+    return {"active": True, "reason": "waiver_active", "expires": expires_raw,
+            "authorization_id": auth_id or None, "locks_waived": waived,
+            "days_left": days_left, "raw": raw}
 
 
 def halt_live_new_positions(reason: str) -> Dict[str, Any]:
@@ -101,6 +174,19 @@ def evaluate_live_arm_gate(
             "LIVE_PREREQ_INCOMPLETE",
             "ALLOW_REAL_TRADING, REAL_ACCOUNT_ID, or LIVE instruction lane is incomplete",
         ))
+
+    # 破例到期即停 (RFC-135, 2026-10-06 用户裁 A): ALLOW_REAL_TRADING=true 是四锁
+    # 判定的"松动"状态, 必须有**有效的预注册授权**覆盖才能开真钱单。到期/文件缺失/
+    # 坏 JSON ⇒ 拒。与审计侧"到期自动复响"对称, 且不需要人工记得去关开关。
+    # 只在 allow_real_trading=True 时判 — False 时上面 LIVE_PREREQ_INCOMPLETE 已拒。
+    if allow_real_trading:
+        _waiver = read_live_probe_waiver()
+        if not _waiver.get("active"):
+            reasons.append(_reason(
+                "LIVE_PROBE_WAIVER_INACTIVE",
+                "ALLOW_REAL_TRADING=true requires an active pre-registered lock waiver "
+                f"(data/live_probe_lock_waiver.json); got {_waiver.get('reason')!r}",
+            ))
 
     if not bool(probe.get("authorized", False)) or not str(probe.get("authorization_id") or "").strip():
         reasons.append(_reason("LIVE_PROBE_NOT_AUTHORIZED", "Engineering probe authorization is missing"))

@@ -74,6 +74,9 @@ LOCK_EXPECT = {
 GATE_PREREG_DRAFT = "docs/decisions/RFC-077-graduation-gate-redefinition-preregistration.md"
 ENV_FILE = ".env.us"
 CONFIG_FILE = "config/unified_config.yaml"
+# 四锁破例预注册载体 (RFC-135, 2026-10-06 用户裁 A)。data/* 是 gitignored ⇒
+# 属运维文件, 预注册留痕落在 docs/decisions/RFC-135-*.md (同 RFC-082 知情破例先例)。
+WAIVER_FILE = "data/live_probe_lock_waiver.json"
 WEEKLY_CHECKPOINT = "ops/hermes/ftseek_weekly_checkpoint.py"
 SHADOW_REGISTRY = "app/playbook/shadow_registry.py"
 
@@ -176,6 +179,12 @@ def measure_locks(repo_root, graduation=None, graduation_deprecated=None):
 
     第 4 锁 (毕业门禁 fail-close) 取 okr_status 已算出的 graduation 状态, 不再 subprocess
     调 `_check_graduation_gate()` (周检已每日/每周调; 这里只要"是否已打标"这一个布尔)。
+
+    破例语义 (RFC-135, 2026-10-06 用户裁 A):
+      `closed` 永远是**实测真相** — 锁松着就记 False, 不因有授权而改写 (改写=撒谎,
+      且会让下一次真松动无法被发现)。授权体现在独立的 `waived` 段 +
+      `alarm_suppressed`: 只有当"松动的每一把锁都被有效预注册授权精确覆盖"时,
+      KR4 才不 alarm。破例文件缺失/过期/坏 JSON ⇒ 读不到 ⇒ 告警自动复响。
     """
     root = Path(repo_root)
     locks, errors = {}, []
@@ -197,9 +206,46 @@ def measure_locks(repo_root, graduation=None, graduation_deprecated=None):
     graduated = str(graduation or "").upper() == "GRADUATED"
     closed = {k: (observed[k] == v) for k, v in LOCK_EXPECT.items()}
     closed["graduation_fail_close"] = (graduated is False)
+    all_closed = all(closed.values())
+
+    waiver, alarm_suppressed, uncovered = _measure_lock_waiver(root, observed, closed, errors)
     return {"observed": observed, "expected": dict(LOCK_EXPECT), "closed": closed,
-            "all_closed": all(closed.values()), "graduated": graduated,
-            "graduation_deprecated": bool(graduation_deprecated), "errors": errors}
+            "all_closed": all_closed, "graduated": graduated,
+            "graduation_deprecated": bool(graduation_deprecated), "errors": errors,
+            "waiver": waiver, "alarm_suppressed": alarm_suppressed,
+            "loose_locks": uncovered}
+
+
+def _measure_lock_waiver(root, observed, closed, errors):
+    """破例覆盖判定 (RFC-135). 返回 (waiver段, alarm_suppressed, 未被覆盖的松动锁).
+
+    复用 `app.playbook.live_arm_gate.read_live_probe_waiver` = 与 gate 到期判定**同一真源**,
+    不在审计器另写一份日期解析 (那会分叉 — 正是 test_lock_literals_match_weekly_checkpoint
+    所防的病)。传显式 path 以保持合成仓测试 hermetic (不读生产 data/)。
+
+    fail-close 方向: 任何读不到/解析失败 ⇒ 无破例 ⇒ alarm 照响。
+    """
+    loose = [k for k, ok in closed.items() if not ok and k != "graduation_fail_close"]
+    try:
+        from app.playbook.live_arm_gate import read_live_probe_waiver
+    except Exception as exc:                       # noqa: BLE001
+        # 读不到判定源时不得静默当作"无破例"了事 — 记进 errors 供审计
+        errors.append(f"lock_waiver_reader: {type(exc).__name__}: {exc}")
+        return {"active": False, "reason": "reader_unavailable"}, False, loose
+    w = read_live_probe_waiver(root / WAIVER_FILE)
+    info = {"active": bool(w.get("active")), "reason": w.get("reason"),
+            "expires": w.get("expires"), "authorization_id": w.get("authorization_id"),
+            "waiver_id": (w.get("raw") or {}).get("waiver_id"),
+            "locks_waived": w.get("locks_waived") or {}, "days_left": w.get("days_left")}
+    if not w.get("active"):
+        return info, False, loose
+    waived = w.get("locks_waived") or {}
+    # 精确覆盖: 松动的锁必须在授权清单里, 且实测值 == 授权值。
+    # 少一条即不抑制 (授权不得当万能消音器 — 别的锁松了必须响)。
+    uncovered = [k for k in loose if not (k in waived and observed.get(k) == waived[k])]
+    suppressed = (not uncovered)
+    info["covers_all_loose"] = suppressed
+    return info, suppressed, uncovered
 
 
 def kr1_ruler(ic_playbook=None, exit_scorecard=None, exit_scorecard_error=None):
@@ -458,9 +504,27 @@ def kr4_hard_gate(locks=None, gate_redefined=False, weekly_checkpoint_present=No
     lk = locks or {}
     closed = lk.get("closed") or {}
     all_closed = bool(lk.get("all_closed"))
+    # RFC-135 破例: alarm 只在"松动且未被有效预注册授权覆盖"时响。
+    # all_closed 保持实测真相 (锁松着就是 False) — 授权不改写事实, 只决定要不要吵醒值班人。
+    alarm_suppressed = bool(lk.get("alarm_suppressed"))
+    waiver = lk.get("waiver") or {}
+    loose_locks = lk.get("loose_locks") or []
+    alarm = (not all_closed) and (not alarm_suppressed)
     clauses = [
+        # ok 保持实测真相: 破例只抑制 alarm (不吵醒值班人), 不改写"锁是否闭合"这个事实,
+        # 也不把 clause 记成通过 — 否则下一次真松动会被同一把"已消音"的门吞掉。
         {"id": "four_locks_all_closed", "ok": all_closed,
-         "evidence": f"observed={lk.get('observed')} closed={closed}"},
+         "evidence": (f"observed={lk.get('observed')} closed={closed}"
+                      + ("" if all_closed else
+                         f" | 破例: active={waiver.get('active')} "
+                         f"reason={waiver.get('reason')} "
+                         f"waiver_id={waiver.get('waiver_id')} "
+                         f"authorization_id={waiver.get('authorization_id')} "
+                         f"expires={waiver.get('expires')} "
+                         f"days_left={waiver.get('days_left')} "
+                         f"covers_all_loose={waiver.get('covers_all_loose')} "
+                         f"未被覆盖的松动锁={loose_locks or '无'} "
+                         f"alarm_suppressed={alarm_suppressed}"))},
         {"id": "graduation_gate_redefined_preregistered", "ok": bool(gate_redefined),
          "evidence": ("新判据已预注册 + 用户批准 ⇒ 生效" if gate_redefined else
                       "旧 confidence IC 判据已 DEPRECATED; 新判据"
@@ -482,11 +546,16 @@ def kr4_hard_gate(locks=None, gate_redefined=False, weekly_checkpoint_present=No
         evidence={"clauses": clauses, "passed": sum(1 for c in judged if c["ok"]),
                   "judged": len(judged), "lock_errors": lk.get("errors")},
         gate="全月 (2026-08-24→09-30); 打标前严格不切实盘 = 用户明令",
-        score=None, alarm=not all_closed,
+        score=None, alarm=alarm,
         note=("四锁全闭 ✅ (硬门未破; 规则=任一松动即 alarm 呈裁, 不是扣分项)。门禁重定义未完成 "
               "⇒ KR4 记 NOT_MET, 但系统仍在安全侧 (graduated=False ⇒ fail-close)。"
               if all_closed else
-              "🚨 **四锁松动** (alarm=True) — 立即呈裁, 不得继续跑任何结算"))
+              ("🔕 **四锁松动但已被有效预注册破例覆盖** (alarm 抑制) — RFC-135 "
+               f"waiver_id={waiver.get('waiver_id')} expires={waiver.get('expires')} "
+               f"days_left={waiver.get('days_left')}。破例到期或撤销后告警自动复响; "
+               "破例期不代表锁已闭合 (closed 仍记实测真相)。"
+               if alarm_suppressed else
+               "🚨 **四锁松动** (alarm=True) — 立即呈裁, 不得继续跑任何结算")))
 
 
 def kr5_tuition(cnt=None, window_days=None, fee_bps=None, avg_notional=None,

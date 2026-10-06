@@ -510,8 +510,26 @@ def test_production_artifact_carries_both_blocks():
     assert b["krs"]["KR2"]["verdict"] in (sc.VERDICT_ACCUMULATING, sc.VERDICT_MET,
                                           sc.VERDICT_NOT_MET)
     assert b["krs"]["KR3"]["evidence"]["sample_gate"]["min_n"] == 30
-    assert b["krs"]["KR4"]["alarm"] is False and b["locks"]["all_closed"] is True, \
-        "生产四锁必须全闭 — 若本断言红, 是实盘硬门真破了, 立即呈裁"
+    # 生产四锁: 全闭, 或**全部松动锁都被有效预注册破例覆盖** (RFC-135, 用户裁 A
+    # 2026-10-06)。破例只抑制 alarm, 不改写 closed/all_closed 的实测真相 ⇒ 这里
+    # 不得断言 all_closed is True (那会让破例期恒红, 红灯失去信号价值)。
+    # 但仍必须严格: 只要有一把松动锁未被授权精确覆盖 (loose_locks 非空),
+    # 或 alarm 竟然响着, 就是实盘硬门真破 ⇒ 断言红 + 立即呈裁。
+    lk = b["locks"]
+    kr4 = b["krs"]["KR4"]
+    assert kr4["alarm"] is False, \
+        "生产四锁 alarm 响着 — 实盘硬门真破 (或被未覆盖的松动锁触发), 立即呈裁"
+    assert lk["all_closed"] is True or (
+        lk.get("alarm_suppressed") is True and not lk.get("loose_locks")), \
+        ("生产四锁既非全闭, 也未被有效预注册破例完整覆盖 — 立即呈裁。"
+         f" closed={lk.get('closed')} loose_locks={lk.get('loose_locks')} "
+         f"waiver={lk.get('waiver')}")
+    if not lk["all_closed"]:
+        # 破例期: 授权必须可追溯 (有 ID + 有到期), 且到期日未过
+        wv = lk.get("waiver") or {}
+        assert wv.get("active") is True and wv.get("authorization_id"), \
+            f"破例生效但授权不可追溯: {wv}"
+        assert wv.get("expires"), f"破例无到期日 = 永久消音器, 拒绝: {wv}"
     assert b["krs"]["KR1"]["verdict"] == sc.VERDICT_MET, "批② 已修的尺子应让 KR1 达成"
 
 

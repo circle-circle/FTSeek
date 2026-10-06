@@ -26,7 +26,12 @@ tests/playbook/test_live_arm_p0_contracts.py:116 同款 (指向 tmp_path 空文�
 不代改; 实测受影响的 14 条全部在本目录。
 """
 
+import json
+from datetime import timedelta
+
 import pytest
+
+from app.utils.timezone import now_et
 
 
 @pytest.fixture(autouse=True)
@@ -36,3 +41,34 @@ def _isolate_live_arm_halt_file(monkeypatch, tmp_path):
         "app.playbook.live_arm_gate._HALT_FILE",
         tmp_path / "live_arm_halt.json",
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_probe_waiver_file(monkeypatch, tmp_path):
+    """把四锁破例预注册载体指向 tmp_path, 并默认写成**有效**破例.
+
+    2026-10-06 立项 (RFC-135, 用户裁 A): gate 新增 LIVE_PROBE_WAIVER_INACTIVE 判据 —
+    allow_real_trading=True 时必须有**有效的**破例文件才放行。两个坑都要防:
+
+    (a) 生产载体 data/live_probe_lock_waiver.json 带 expires=2026-10-12T16:00:00-04:00,
+        若测试读它, 所有传 allow_real_trading=True 的用例会在该时刻起集体转红
+        (与 tests/test_daily_violation_scan.py 曾有的"硬编码日期定时炸弹"同型)。
+    (b) 若默认指向**不存在**的文件 (fail-close 语义), 走 LIVE 臂的 14 条用例会
+        因 gate 拒绝而在下游断言处炸 (mirror_id=None / KeyError error_code),
+        红因与用例意图无关 ⇒ 实测 2026-10-06: 14 failed。
+
+    ⇒ 默认写"有效破例", 让 LIVE 臂用例照原意图跑; 到期/缺失/坏文件语义由
+      tests/playbook/test_live_probe_lock_waiver.py 显式覆盖 (那里自写文件)。
+    到期日用**相对当前时间**算 (+3650天), 不写死绝对日期 ⇒ 永不过期, 无定时炸弹。
+    """
+    waiver_path = tmp_path / "live_probe_lock_waiver.json"
+    expires = (now_et() + timedelta(days=3650)).isoformat(timespec="seconds")
+    waiver_path.write_text(json.dumps({
+        "waiver_id": "TEST-WAIVER",
+        "authorization_id": "TEST-AUTH",
+        "granted": "2026-10-06",
+        "granted_by": "tests/playbook/conftest.py (测试夹具, 非生产授权)",
+        "locks_waived": {"ALLOW_REAL_TRADING": "true"},
+        "expires": expires,
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr("app.playbook.live_arm_gate._WAIVER_FILE", waiver_path)
