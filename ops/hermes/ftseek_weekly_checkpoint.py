@@ -12,6 +12,7 @@
 回滚: 删本脚本 + 对应 cron job。
 """
 import json
+import re  # B4 (2026-10-06): READY 横幅压缩需按行抽 id/n/判据
 import sqlite3
 import subprocess
 import sys
@@ -312,13 +313,29 @@ def main():
             # R5 留痕: 豁免清单不可读必须显性 (否则退回全告警, 不静默)
             _exempt_err = str(e)[:80]
         unknown = [(v, n) for v, n in rows if v not in exempt]
-        if not unknown:
+        # A2 (2026-10-06 推送治理批): 分离「缺字段」与「真版本分裂」两类 —
+        #   实测病灶: 本查询口径 (source_type='PLAYBOOK_SIM' ∧ trade_date≥FREEZE_START) 下
+        #   有 8 笔平仓 metadata_json 缺 config_version (写方埋点缺口, 退出日 9/16–9/17),
+        #   SQL 的 COALESCE 把它们折成字面量 '(null)' ⇒ 与真 exit-* 哈希混在同一维计数,
+        #   于是每周渲染成「⚠️ 参数冻结已破 (KR2 破, 需复盘)」永久重放。
+        #   写方已修 (同口径 9/18 起 82 笔平仓零缺失) ⇒ 这是**一次性历史缺口**, 不是参数漂移。
+        # 为什么修渲染层而不进豁免清单: 把 '(null)' 登记进 exit_versions 会让**未来写方
+        #   埋点再次回归时静默通过** (豁免键 = 从此不再告警, 见 test_kr2_freeze_exemption
+        #   的红绿纪律)。缺字段必须是自己的告警类别, 语义与版本分裂不同。
+        missing = [(v, n) for v, n in unknown if v == "(null)"]
+        split = [(v, n) for v, n in unknown if v != "(null)"]
+        if not split and not missing:
             desc = " / ".join(f"{v[:16]}…:{n}" for v, n in rows)
             out.append(f"✓ 参数冻结: {len(rows)} 个版本均在豁免清单 (KR2 例外通道, "
                        f"见 config_freeze_baseline.json) — {desc}")
-        else:
-            desc = " / ".join(f"{v[:16]}…:{n}" for v, n in unknown)
-            out.append(f"⚠️ 参数冻结已破: {len(unknown)} 个未豁免版本 — {desc} (KR2 破, 需复盘)")
+        if split:
+            desc = " / ".join(f"{v[:16]}…:{n}" for v, n in split)
+            out.append(f"⚠️ 参数冻结已破: {len(split)} 个未豁免版本 — {desc} (KR2 破, 需复盘)")
+        if missing:
+            n = sum(c for _, c in missing)
+            out.append(f"ℹ️ 退出哈希缺字段: {n} 笔 metadata_json 无 config_version "
+                       f"(写方埋点缺口, 非参数分裂) — 实测 9/16–9/17 一次性, 写方已修 "
+                       f"(9/18 起 82 笔零缺失); 不计入 KR2 版本分裂判分")
         if _exempt_err:
             out.append(f"⚠️ 豁免清单读取失败 (按未豁免告警口径处理): {_exempt_err}")
 
@@ -412,8 +429,32 @@ def main():
         # 意图唯一性哨兵 (2026-09-11, DEB-20260911 P0-3①): 同假设双影子未互指 = 双转正风险
         for m in reg.get("intents", []):
             out.append(m)
-        for n in reg.get("notifs", []):
-            out.append(f"🔔 {n}")
+        # B4 (2026-10-06 推送治理批): READY 横幅从「逐条整段」压成「一行一项」。
+        #   病灶: refresh_counts() 是内存态不落盘 (shadow_board.py:639 同注), 每次调用
+        #   都重新「发现」同一批 READY ⇒ 每周把 N 条模板整段重推。实测 10-03 那次投递:
+        #   29 条 🔔 横幅 = 17.7KB, 占正文 31.5KB 的 **58%** (单条均值 624B)。
+        #   压缩量用同代码 A/B 变异对照实测 (非跨版本相减 — 会混入 A1 出数增量):
+        #   旧渲染 34475B → 本渲染 26330B = 省 8145B (24%); 横幅块 18.1KB → 10.0KB。
+        #   口径: 全文按 len(encode()) 字节数 (中文 3B/字, 与字符数差 1.51 倍, 勿混算)。
+        #   为什么不整段删: 横幅里的 graduation_criteria 是该影子的预注册判据, 而下方
+        #   summary() 只渲染 notes[:60] ⇒ 直接删会丢判据。改逐条抽 id/n/min_n/判据成单行。
+        #   为什么不指向「待裁决面」了事: 实测 29 条里 ue_confirm_gate **不在**待裁面
+        #   (已判 KEEP_SAMPLING、10/31 重看, 注册表 read_at 已记) ⇒ 压缩必须自持信息,
+        #   不依赖另一载体的覆盖面 (跨载体去重会静默丢项)。
+        #   同一批影子的白话结论 + eval 指引在周六 09:14 待裁决通知里质量更高, 本段只留
+        #   判据备查, 避免两处各写一遍长文。
+        _notifs = reg.get("notifs", [])
+        if _notifs:
+            out.append(f"🔔 影子样本量达标 (READY) {len(_notifs)} 项 — 仅样本量, "
+                       f"判据需实测; 白话结论+eval 指引见周六待裁决通知")
+            for n in _notifs:
+                m = re.search(r"影子 \[([a-z0-9_]+)\] (.+?) 样本量已达 (\d+)/(\d+)", n)
+                c = re.search(r"判据: (.*)$", n, re.S)
+                if m:
+                    out.append(f"  · {m.group(1)} n={m.group(3)}/{m.group(4)}"
+                               + (f" | {c.group(1).strip()}" if c else ""))
+                else:
+                    out.append(f"  · {n[:160]}")  # 形态不合预期 ⇒ 原样截断, 不静默吞
         out.append(reg.get("summary", ""))
 
     print("\n".join(out))

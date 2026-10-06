@@ -38,3 +38,28 @@ def test_each_exemption_carries_adjudication_note():
         assert isinstance(v, str) and len(v.strip()) >= 8, (
             f"豁免 {k} 缺裁决说明 — 抑制 KR2 告警必须留 adjudication 依据"
         )
+
+
+# ── A2 回归钉 (2026-10-06 推送治理批) ──────────────────────────────
+# 病灶: 周检 check_freeze 的 SQL 用 COALESCE(...,'(null)') 把「metadata_json 缺
+#   config_version」折成字面量 '(null)', 与真 exit-* 哈希同维计数 ⇒ 渲染成
+#   「⚠️ 参数冻结已破 (KR2 破, 需复盘)」永久重放。实测 8 笔 (PLAYBOOK_SIM 口径,
+#   退出日 9/16–9/17) 是写方埋点缺口, 写方已修 (同口径 9/18 起 82 笔零缺失)。
+# 为什么钉在渲染层而**不是**把 '(null)' 加进 exit_versions:
+#   豁免键 = 从此不再告警 (本文件 KNOWN_EXEMPT 的红绿纪律)。把 '(null)' 登记进去
+#   会让**未来写方埋点再次回归时静默通过** ⇒ 缺字段必须保持独立告警类别,
+#   语义与「参数版本分裂」不同。本测试钉住这个分离, 防止被后人合并回同一告警。
+_CHECKPOINT = Path(__file__).resolve().parents[1] / "ops" / "hermes" / "ftseek_weekly_checkpoint.py"
+
+
+def test_null_hash_rendered_as_instrumentation_gap_not_freeze_break():
+    src = _CHECKPOINT.read_text(encoding="utf-8")
+    assert 'v == "(null)"' in src, (
+        "周检不再单独识别 '(null)' 退出哈希 — 缺字段会重新混进「参数冻结已破 (KR2 破)」"
+        "告警永久重放。缺字段是写方埋点缺口, 必须与真版本分裂分开渲染。"
+    )
+    assert "退出哈希缺字段" in src, "缺字段告警文案丢失 (须明示是埋点缺口, 非参数分裂)"
+    assert "(null)" not in json.loads(BASELINE.read_text(encoding="utf-8")).get("exit_versions", {}), (
+        "'(null)' 被登记进 exit_versions 豁免清单 — 这会让未来写方埋点回归时静默通过, "
+        "缺字段必须保持可告警, 不得进豁免"
+    )
