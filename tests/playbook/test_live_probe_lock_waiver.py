@@ -29,7 +29,7 @@ from scripts import okr_2026_09_scoring as sc
 
 _ARM = {
     "enabled": True, "mode": "engineering_probe",
-    "max_order_qty": 1, "max_open_positions": 1, "session": "RTH",
+    "max_order_qty": 1, "max_open_positions": 3, "session": "RTH",
     "probe": {"authorized": True, "authorization_id": "TEST-AUTH", "direction": "LONG"},
 }
 _GATE_KW = dict(
@@ -192,7 +192,7 @@ def test_waiver_does_not_loosen_other_probe_gates(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "_WAIVER_FILE", p)
     for label, over in (("SHORT 方向", dict(instruction_direction="SELL_SHORT")),
                         ("盘后", dict(market_phase="AFTER_HOURS")),
-                        ("已持仓到上限", dict(open_live_positions=1)),
+                        ("已持仓到上限", dict(open_live_positions=3)),
                         ("持仓数不可得", dict(open_live_positions=None))):
         kw = {**_GATE_KW, **over}
         d = G.evaluate_live_arm_gate(_ARM, halted=False, **kw)

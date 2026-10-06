@@ -1,5 +1,24 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-07 LIVE 工程探针多持仓扩展（3仓 / 每单1股）
+
+**用户裁决**: 为验证 LIVE 多持仓股场景，`max_open_positions` 从 1 调整为 3；
+`max_order_qty` 仍固定 1 股，继续先跑通全链路。
+
+**边界不变**: 仅 LONG/BUY、仅 RTH、SIM 常驻；3 仓上限只作用于 LIVE
+`PLAYBOOK_LIVE` 自动持仓，不管理/平仓手动仓；每笔新仓仍逐笔挂 broker STOP，
+退出链路沿用“STOP 成交回补或规则退出前释放自有 STOP”的 P0 闭环。
+
+**授权/破例**: 配置授权 ID 更新为
+`AUTH-20261007-3POS-1SHARE-LONG-RFC132`；四锁 waiver 仍只覆盖
+`ALLOW_REAL_TRADING=true`，到期时间不变，范围更新为最多 3 仓 / 每单 1 股。
+原 1 仓 waiver 已备份到
+`data/backups/live_probe_lock_waiver_before_3pos_20261006.json`。
+
+**门禁**: `LIVE_PROBE_LIMIT_INVALID` 继续拒绝 `max_order_qty!=1` 或
+`max_open_positions∉[1,3]`；`open_live_positions>=3` 时拒绝新仓。当前 PBR
+计 1/3，满足其他条件时可自然镜像下一个 BUY 探针。
+
 ## 2026-10-06 23:55 LIVE 规则退出前释放自有 broker STOP（P0 闭环）
 
 **背景**: 首笔 PBR LIVE 探针成交后，broker STOP 已补挂为 `WAITING_SUBMIT`。

@@ -1516,12 +1516,13 @@ playbook:
   # enabled=false (默认): LIVE 臂 disarm — 拒绝 live 新仓 (HALT_NEW_LIVE), 不降级 sim;
   #   出场不受本门管 (disarm 只停新仓, 已有 LIVE 仓继续由出场监控管理)。
   # enabled=true: 仅代表 arm 已开启; 新仓仍必须通过 RFC-131 共享门
-  # (mode/probe 授权/REAL_ACCOUNT_ID/LIVE lane/RTH/open cap/1股1仓)。
+  # (mode/probe 授权/REAL_ACCOUNT_ID/LIVE lane/RTH/open cap/每单1股)。
   # 开火仪式 (RFC-090 §17.3.1): ①预授权 ALLOW_REAL_TRADING=true + REAL_ACCOUNT_ID + 重启;
   #   ②用户 CONFIRM_REAL_ACCOUNT_ID 后置 enabled=true。C2 红线: 首次真实 LIVE 执行仍需
   #   毕业门禁通过或用户 DEB 显式「知情破例 + 签字」；工程探针等价物 =
   #   probe.authorization_id 用户授权留痕。
-  # RFC-131 C-lite: mode/probe/max_* 已接线。首期只允许 LONG、1 股、1 仓、RTH;
+  # RFC-131 C-lite: mode/probe/max_* 已接线。工程探针仅允许 LONG、每单 1 股、
+  # 最多 3 个同时持仓、RTH；3 仓用于验证多持仓账本/STOP/退出链路。
   # probe.authorized=false 时即使 enabled=true 也拒绝 LIVE 新仓。
   live_manual_arm:
     enabled: true
@@ -1529,12 +1530,12 @@ playbook:
     # probe, not a strategy graduation exception. Both keys stay false until the
     # user signs the probe authorization.
     mode: engineering_probe
-    max_open_positions: 1
+    max_open_positions: 3
     max_order_qty: 1
     session: RTH
     probe:
       authorized: true
-      authorization_id: "AUTH-20261005-1SHARE-LONG-RFC132"
+      authorization_id: "AUTH-20261007-3POS-1SHARE-LONG-RFC132"
       direction: LONG
   direction_gate:
     buy_position_factor: 1.0

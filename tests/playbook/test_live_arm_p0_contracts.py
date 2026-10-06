@@ -27,7 +27,7 @@ _ARM_CONFIG = {
     "enabled": True,
     "mode": "engineering_probe",
     "max_order_qty": 1,
-    "max_open_positions": 1,
+    "max_open_positions": 3,
     "session": "RTH",
     "probe": {
         "authorized": True,

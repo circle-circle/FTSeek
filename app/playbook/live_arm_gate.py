@@ -14,6 +14,7 @@ from app.utils.timezone import now_et
 
 _RTH_SESSION = "RTH"
 _TRADING_PHASE = "TRADING"
+_MAX_ENGINEERING_PROBE_OPEN_POSITIONS = 3
 _HALT_FILE = Path(__file__).resolve().parents[2] / "data" / "live_arm_halt.json"
 # 四锁破例预注册载体 (2026-10-06 用户裁 A; RFC-135)。
 # 为什么需要: live_arm_gate 要求 ALLOW_REAL_TRADING=true (L99), 而四锁/周检
@@ -224,10 +225,17 @@ def evaluate_live_arm_gate(
     except (TypeError, ValueError):
         max_order_qty = 0
         max_open_positions = 0
-    if max_order_qty != 1 or max_open_positions != 1:
+    if (
+        max_order_qty != 1
+        or not (
+            1
+            <= max_open_positions
+            <= _MAX_ENGINEERING_PROBE_OPEN_POSITIONS
+        )
+    ):
         reasons.append(_reason(
             "LIVE_PROBE_LIMIT_INVALID",
-            "Engineering probe requires max_order_qty=1 and max_open_positions=1",
+            "Engineering probe requires max_order_qty=1 and 1<=max_open_positions<=3",
         ))
 
     session = str(arm.get("session") or _RTH_SESSION).upper()

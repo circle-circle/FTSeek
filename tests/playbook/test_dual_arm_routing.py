@@ -14,7 +14,7 @@ _ARM_CONFIG = {
     "enabled": True,
     "mode": "engineering_probe",
     "max_order_qty": 1,
-    "max_open_positions": 1,
+    "max_open_positions": 3,
     "session": "RTH",
     "probe": {
         "authorized": True,
@@ -86,9 +86,11 @@ def test_live_arm_gate_is_the_single_decision_surface():
         ("LIVE_PROBE_NOT_AUTHORIZED", {"arm_config": {**_ARM_CONFIG, "probe": {}}}),
         ("LIVE_PROBE_DIRECTION_REJECTED", {"instruction_direction": "SELL_SHORT"}),
         ("LIVE_PROBE_LIMIT_INVALID", {"max_order_qty": 2}),
+        ("LIVE_PROBE_LIMIT_INVALID", {"max_open_positions": 4}),
+        ("LIVE_PROBE_LIMIT_INVALID", {"max_open_positions": 0}),
         ("LIVE_SESSION_UNSUPPORTED", {"session": "OVERNIGHT"}),
         ("LIVE_MARKET_PHASE_REJECTED", {"market_phase": "PRE_MARKET"}),
-        ("LIVE_PROBE_OPEN_CAP_REACHED", {"open_live_positions": 1}),
+        ("LIVE_PROBE_OPEN_CAP_REACHED", {"open_live_positions": 3}),
         ("LIVE_OPEN_COUNT_UNAVAILABLE", {"open_live_positions": None}),
     ]
     for expected_code, mutation in cases:
@@ -124,7 +126,7 @@ def test_rejected_live_gate_never_writes_mirror(monkeypatch):
     )
     monkeypatch.setattr(
         "app.playbook.live_arm_gate.count_open_live_positions",
-        lambda ledger: 1,
+        lambda ledger: 3,
     )
 
     mirror_id, decision = pipeline._mirror_instruction_to_live_if_allowed(instruction, live_db)
@@ -134,6 +136,16 @@ def test_rejected_live_gate_never_writes_mirror(monkeypatch):
     assert "LIVE_PROBE_OPEN_CAP_REACHED" in {
         reason["code"] for reason in decision["reasons"]
     }
+
+
+def test_engineering_probe_allows_two_open_positions():
+    kwargs = _valid_gate_kwargs()
+    kwargs["open_live_positions"] = 2
+
+    decision = evaluate_live_arm_gate(_ARM_CONFIG, **kwargs)
+
+    assert decision["allowed"] is True
+    assert decision["reasons"] == []
 
 
 def test_allowed_live_gate_writes_mirror_once(monkeypatch):
