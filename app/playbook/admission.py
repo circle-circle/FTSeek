@@ -32,7 +32,50 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional, Tuple
+
+# ── LIVE 工程探针豁免 (2026-10-06, 用户裁「1只股真实试运行」) ─────────────
+# 只豁免**经济性**判据; 安全性判据 (SL_STOP_TOO_WIDE / PRICE_TOO_LOW /
+# SHARES_ABOVE_FEE_KNEE) 一律保留 — 探针也必须有止损卫生与价格地板。
+#
+# 为什么必须豁免: `max_order_qty=1` 是 RFC-131 C-lite 的**硬要求**
+# (live_arm_gate.py:122 `max_order_qty != 1` → LIVE_PROBE_LIMIT_INVALID),
+# 而 notional = 1 × 股价 恒 < min_notional_usd=2500 ⇒ 门恒 REJECT ⇒
+# 探针结构性不可执行 (美股最高价股 notional≈$1,200 仍不足)。
+# 实证 2026-10-05: US.GEO/US.ORCL 镜像行被本门改写 SKIP
+# (skip_reason=NOTIONAL_TOO_SMALL(33<2500)), 随后死于「指令不存在」。
+#
+# 为什么豁免不违背本门立项理由: 名义额地板的存在理由是费用地板
+# (docstring 根因 2: qty≤199 恒付 $1.99/腿), 那是**盈利性**约束;
+# 探针不以盈利为目的, 只验证 SIM→LIVE 全链路 (含券商 STOP 台账落库),
+# 故豁免经济性门不损其目的。该笔 fee_bps 会很高 (GEO 1股≈1231bp),
+# 属预期 — 它是链路验证成本, 不得计入策略经济性样本。
+#
+# 无需独立开关: 探针关闭 (live_manual_arm.enabled=false / probe.authorized=false /
+# HALT / ALLOW_REAL_TRADING=false) 后不再生成镜像行, 本豁免自动失效 (惰性)。
+_PROBE_EXEMPT_REASONS = frozenset({"NOTIONAL_TOO_SMALL"})
+
+
+def _is_live_engineering_probe(inst: Dict[str, Any]) -> bool:
+    """该指令是否为 LIVE 工程探针镜像行 (标记由 pipeline._mirror_instruction_to_live 写入).
+
+    只认双条件 target_env∈{real,live} ∧ mode=="engineering_probe" — SIM 行
+    无此标记, 故 SIM 臂判定完全不受影响 (不放宽任何生产门)。
+    """
+    md = inst.get("metadata")
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except (TypeError, ValueError):
+            return False
+    if not isinstance(md, dict):
+        return False
+    dual = md.get("dual_arm")
+    if not isinstance(dual, dict):
+        return False
+    return (str(dual.get("target_env") or "").strip().lower() in ("real", "live")
+            and str(dual.get("mode") or "").strip() == "engineering_probe")
 
 # ── 内置缺省 (可被 unified_config.yaml `playbook.admission` 覆盖) ──
 _DEFAULTS: Dict[str, Any] = {
@@ -122,7 +165,8 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
 
     # 只判可执行方向; SKIP/未知方向直接放行 (它们本就不下单)
     if direction not in ("BUY", "SELL_SHORT"):
-        return {"verdict": "PASS", "reasons": [], "metrics": metrics,
+        return {"verdict": "PASS", "reasons": [], "exempted_reasons": [],
+                "metrics": metrics,
                 "enforce": bool(cfg.get("enforce", False))}
 
     entry_price = _f(inst.get("entry_price"))
@@ -188,9 +232,27 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
     if _min_conf > 0 and confidence < _min_conf:
         reasons.append(f"LOW_CONFIDENCE({confidence:.0f}<{_min_conf:g})")
 
+    # LIVE 工程探针: 豁免经济性判据 (见模块头 _PROBE_EXEMPT_REASONS 注释).
+    # 安全性判据保留 — 若探针同时命中 NOTIONAL_TOO_SMALL 与 SL_STOP_TOO_WIDE,
+    # 仍 REJECT (只是理由里少了经济性那条)。豁免事实写进 metrics 供审计。
+    _exempted: List[str] = []
+    if reasons and _is_live_engineering_probe(inst):
+        _exempted = [r for r in reasons
+                     if r.split("(", 1)[0] in _PROBE_EXEMPT_REASONS]
+        if _exempted:
+            reasons = [r for r in reasons if r not in _exempted]
+            metrics["probe_exemption"] = {
+                "exempted_reasons": _exempted,
+                "mode": "engineering_probe",
+                "notional": metrics.get("notional"),
+                "fee_bps": metrics.get("fee_bps"),
+                "note": "经济性门对 LIVE 1股探针豁免; 本笔不得计入策略经济性样本",
+            }
+
     return {
         "verdict": "REJECT" if reasons else "PASS",
         "reasons": reasons,
+        "exempted_reasons": _exempted,
         "metrics": metrics,
         "enforce": bool(cfg.get("enforce", False)),
     }
