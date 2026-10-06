@@ -16,6 +16,11 @@ PLAYBOOK_SOURCE_SQL = """CASE
 #   §4.4 采纳率分母。decision_id 是 UE 源的权威标识 (inject 写入
 #   'universe_expansion:{date}:{SYM}')。边界实测: 与 ue_candidate/topup 零交集,
 #   CASE 优先级无冲突。版本号 rfc117_v1→v2 (daily/weekly funnel 落库字段同步)。
+# [2026-10-06 UE fresh-event 批·留痕] UE inject 已退役 (crontab inject/push 行改串
+#   da_fresh_event_batch.py) ⇒ 'UE直写' 腿自此**恒 0 新增** (历史行保留, 读取面不删);
+#   UE 源的在役承接腿 = 'DA-UE确认' (raw 含 ue_candidate, DA --fresh-event/UE 供料注入
+#   origin="ue_candidate")。SQL 判据字面量未变、decision_id 前缀腿保留为历史行权威标识
+#   (删了旧账本读不出归属)。后人解读口径: 按日期分层, 退役日起 UE直写=0 是设计而非通道死。
 
 
 def playbook_source_sql() -> str:

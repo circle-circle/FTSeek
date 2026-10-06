@@ -2870,13 +2870,24 @@ def _scan_fail_alert(reason: str, midday: bool = False) -> None:
         print(f"  [warn] scan 失败告警发送失败 (不阻断): {e}")
 
 
-def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False) -> int:
+def cmd_scan(manual_clue: str = "", midday: bool = False, da_feed: bool = False,
+             force_window: bool = False) -> int:
     if not _is_us_trading_day_today():
         print(f"[scan] {_today()} 非美股交易日 (周末/节假日), 跳过扫描")
         return 0
     from app.playbook.candidate_eligibility import make_batch_id, POLICY_VERSION
     window = "midday" if midday else ("da_feed" if da_feed else "premarket")
     now = _now_et()
+    if not force_window:
+        _hm = now.hour * 100 + now.minute
+        if da_feed and not 730 <= _hm <= 805:
+            print(f"[scan] 当前 ET 时刻 {_hm:04d} 在 da_feed 窗口(0730-0805)外, 拒绝运行 "
+                  "(--force-window 覆盖)")
+            return 0
+        if not midday and not da_feed and not 900 <= _hm <= 929:
+            print(f"[scan] 当前 ET 时刻 {_hm:04d} 在 premarket 窗口(0900-0929)外, 拒绝运行 "
+                  "(--force-window 覆盖)")
+            return 0
     batch = {"batch_id": make_batch_id("UE", now), "date": _today(),
              "scan_window": window, "started_at": now.isoformat(),
              "policy_version": POLICY_VERSION}
@@ -4915,6 +4926,8 @@ def main() -> int:
     p_scan.add_argument("--da-feed", action="store_true",
                         help="DA 供料早跑 (19:40 CST): 写主jsonl(scan_window=da_feed)供 DA 取 scans[-1]; "
                              "跳过R5快照; 不进 inject/push/confirm/score — 与 --midday 互斥")
+    p_scan.add_argument("--force-window", action="store_true",
+                        help="忽略 da_feed/premarket ET 时点窗口守卫 (测试/人工补跑)")
     p_inj = sub.add_parser("inject", help="代码出数值→写作战计划 (仅 entry_enabled=true)")
     p_inj.add_argument("--dry-run", action="store_true", help="强制只打印不写盘")
     sub.add_parser("score", help="对已 scan 未评分标的算前瞻收益")
@@ -4938,7 +4951,8 @@ def main() -> int:
     try:
         if args.cmd == "scan":
             return cmd_scan(manual_clue=args.clue, midday=args.midday,
-                            da_feed=getattr(args, "da_feed", False))
+                            da_feed=getattr(args, "da_feed", False),
+                            force_window=getattr(args, "force_window", False))
         if args.cmd == "inject":
             return cmd_inject(force_dry=args.dry_run)
         if args.cmd == "score":

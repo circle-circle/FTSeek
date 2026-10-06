@@ -677,6 +677,14 @@ class TestInjectWiring:
         assert window_expr in inspect.getsource(ue.cmd_scan)
         assert impl_expr in inspect.getsource(ue._cmd_scan_impl)
 
+    def test_scan_et_window_guards_survive_dst_dual_cron(self):
+        """双季双挂后, off-season 那一发必须在写批次前被 ET 窗口拒绝。"""
+        src = inspect.getsource(ue.cmd_scan)
+        assert "730 <= _hm <= 805" in src
+        assert "900 <= _hm <= 929" in src
+        assert "force_window" in src
+        assert "--force-window" in inspect.getsource(ue.main)
+
     def test_score_and_report_slice_by_window(self):
         """da_feed 早跑不入评分/报表 (否则同一交易日前瞻收益被计两次)。"""
         for fn in (ue.cmd_score, ue.cmd_report):

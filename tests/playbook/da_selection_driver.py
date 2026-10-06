@@ -398,6 +398,45 @@ def _ue_feed():
     return out
 
 
+@register("fresh_event")
+def _fresh_event():
+    """UE premarket fresh-event increment: explicit window + UE-only candidate pool."""
+    KLINE.clear()
+    arm(["US.FEA", "US.FEB"])
+    feed = os.path.join(WORKDIR, "ue_fresh_feed.jsonl")
+
+    def write(rows):
+        with open(feed, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    stamp = (NOW - timedelta(minutes=5)).isoformat()
+    write([
+        {"type": "scan", "date": TODAY.isoformat(), "scan_window": "premarket",
+         "batch_id": "UE:fresh", "batch_status": "complete",
+         "started_at": stamp, "scanned_at": stamp,
+         "surfaced": [
+             {"symbol": "FEA", "direction": "LONG", "confidence": 0.8, "thesis": "fresh"},
+             {"symbol": "FEB", "direction": "SHORT", "confidence": 0.7, "thesis": "fresh"},
+         ]},
+    ])
+    original_path = PL._UE_SCAN_JSONL
+    PL._UE_SCAN_JSONL = feed
+    out = {}
+    try:
+        ue = PL._load_ue_short_candidates(window="premarket")
+        out["window_symbols"] = [row["symbol"] for row in ue]
+        scan = scan_of([sym("MAIN", 9.0)], [sym("BEAR", 1.0)])
+        selection = PL._select_deep_candidates(
+            scan, [], ue, top_n=5, output_dir=WORKDIR, ue_only=True)
+        out["ue_only_symbols"] = selection["selected_symbols"]
+        out["ue_only_pool_size"] = selection["filter"]["pool_size"]
+        out["ue_only_premarket_movers"] = selection["filter"]["premarket_mover_injected"]
+    finally:
+        PL._UE_SCAN_JSONL = original_path
+    return out
+
+
 # ══ 兼容包装 / fail-open ═════════════════════════════════════════════════
 @register("compat_and_failopen")
 def _compat_and_failopen():

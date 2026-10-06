@@ -750,9 +750,54 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.91"
+        assert frontmatter_version == latest_changelog_version == "0.93"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
+
+
+class TestDAMainScheduleWindow:
+    def test_full_mode_has_et_window_guard_with_force_escape(self):
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        assert "755 <= _hm <= 815" in pipeline
+        assert "DA_MAIN_ET_WINDOW" in pipeline
+        assert "not args.fresh_event" in pipeline
+        assert "not args.force" in pipeline
+
+    def test_late_window_rejection_is_loud_not_silent(self):
+        """v0.93 复查P1-b: 迟发拒绝 (hm>815) 必须 exit 2, 不得与「跑了没事」同貌。
+
+        病灶: EDT 季 agent job 启动延迟超窗 ⇒ DA 全天零指令而 exit 0 静默
+        (10-06 实测余量仅 4.2min)。过早拒绝维持 exit 0 (DST off-season 载体
+        预期发车, 契约内静默) — 两侧都要钉住, 防「全静默」或「全响」的过度修正。
+        """
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        assert "if _hm > 815:" in pipeline
+        assert "sys.exit(2)" in pipeline
+
+    def test_cli_exit_code_is_not_swallowed(self):
+        """v0.93 根因修: `__main__` 收尾必须真把 _exit_code 交给解释器。
+
+        病灶: 原收尾只算 _exit_code 不用 (仅 _cli_teardown 的 os._exit 路径生效),
+        线程干净 ⇒ 解释器 exit 0 ⇒ sys.exit(1)/未捕获异常全被吞成「成功」。
+        实测钉案: `--mode analyze` 缺 --symbol 修复前 exit=0。
+        """
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        assert "sys.exit(_exit_code)" in pipeline
+
+    def test_et_clock_uses_zoneinfo_not_month_heuristic(self):
+        """v0.93: `_et_now()` 必须以 zoneinfo 为真源, 月份启发式只可作 tzdata 缺失回退。
+
+        病灶: `3<=month<=11 → -4h` 在 11 月 (EST 已生效) / 3 月上旬 (EDT 未生效) 钟错 1h,
+        实测 2026-11-05 21:00 CST 发车真实 08:00 EST (窗内) 被读成 09:00 (窗外错拒)。
+        与 llm_universe_scan._now_et 8/26 修复同款 (那次是 cmd_confirm 整冬静默错样)。
+        """
+        import re
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        src = re.search(r"def _et_now\(\):(.*?)\ndef ", pipeline, re.S).group(1)
+        assert 'ZoneInfo' in src and 'America/New_York' in src
+        # zoneinfo 必须是 try 的首选项, 月份启发式必须落在 except 回退支里
+        assert src.index("ZoneInfo") < src.index("3 <= _dt.now().month <= 11")
+        assert "except Exception" in src
 
 
 class TestRFC133:

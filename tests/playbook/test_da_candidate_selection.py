@@ -24,7 +24,8 @@
   8. DailyActivePool 只消费最终合格名单 + 合格 analyses, **不从 scanner Top 重拼**;
   9. checkpoint 按候选策略口径校验 (阈值/分桶排序/先过滤后预算 变了即作废);
  10. UE feed 只认最新有效 `da_feed` 批次 (窗口隔离/空批/失败批/过期/未来/naive 全拒);
- 11. deps 不可导入 → fail-open (只标注 UNKNOWN 不拒绝), 不静默改判定口径。
+ 11. fresh-event 增量批可显式消费 premarket 窗, 且 `ue_only` 不带主池/盘前异动;
+ 12. deps 不可导入 → fail-open (只标注 UNKNOWN 不拒绝), 不静默改判定口径。
 """
 import json
 import os
@@ -44,8 +45,8 @@ SKILL_IC_WRITER = SKILL / "ic_writer.py"
 SKILL_SCANNER = SKILL / "market_scanner.py"
 
 CASES = ("thresholds", "atr", "main_pool", "backfill", "dedup_budgets",
-         "empty_and_legacy", "checkpoint", "ue_feed", "compat_and_failopen",
-         "pool_write")
+         "empty_and_legacy", "checkpoint", "ue_feed", "fresh_event",
+         "compat_and_failopen", "pool_write")
 
 
 @pytest.fixture(scope="module")
@@ -488,7 +489,20 @@ class TestUeFeedBatch:
                 "ue_transmission_confirmation_required"} <= set(ue["fields_passthrough"])
 
 
-# ══ 10. 兼容包装 / fail-open ═════════════════════════════════════════════
+# ══ 10. UE premarket fresh-event 增量批 ═════════════════════════════════
+class TestFreshEvent:
+    def test_premarket_window_can_be_consumed_explicitly(self, driver_result):
+        fresh = case(driver_result, "fresh_event")
+        assert fresh["window_symbols"] == ["US.FEA", "US.FEB"]
+
+    def test_ue_only_does_not_pull_main_pool_or_movers(self, driver_result):
+        fresh = case(driver_result, "fresh_event")
+        assert fresh["ue_only_symbols"] == ["US.FEA", "US.FEB"]
+        assert fresh["ue_only_pool_size"] == 0
+        assert fresh["ue_only_premarket_movers"] == 0
+
+
+# ══ 11. 兼容包装 / fail-open ═══════════════════════════════════════════
 class TestCompatAndFailOpen:
     def test_prefilter_wrapper_still_filters(self, driver_result):
         """`_prefilter_candidates()` 保留为兼容薄包装 (回滚入口), 判定与新链同源。"""
