@@ -34,16 +34,26 @@ class ErrorPatternDetector:
     """错误模式检测器"""
     
     # 错误模式定义
+    #
+    # 2026-10-06 判据生死普查 (现行期 333 笔 + 全历史值域实测) — 共删 3 个判据:
+    #   low_signal_entry        (final_strength)   命中 0/333   ← 化石列恒 False
+    #   high_disagreement_entry (consensus_level)  命中 0/333   ← 化石列恒 False, sev=high!
+    #   late_stop_loss          (exit_reason!="STOP_LOSS")      ← 判别式恒 True, 语义退化
+    # 化石列根因: 3 模型投票 2026-07-12 退役 (voting_predictions 停写), playbook 路径
+    #   voting_data 查询恒 miss ⇒ final_strength/consensus_level 恒 0 ⇒
+    #   `(0 or 50) < 50` 与 `(0.0 or 1) < 0.5` 恒 False (fallback 值本身即阈值边界)。
+    # 危害不是「不触发」, 是**值班人以为有 high 级守卫在守, 实际它已静默死亡**。
+    # 处置范式同 daily_review._analyze_voting_consistency (2026-09-04 M4 已裁决):
+    #   上游退役 ⇒ 明确标不可用, 不保留恒 False 的尸体判据 + 注释化妆。
+    # 若未来恢复投票管线, 判据须按当时的真实值域重写, 不得直接复活这三条。
+    #
+    # 保留但当前休眠的判据 (值域脱钩, 非死码 — 仓位放大即自然复活):
+    #   large_loss (<-$1000, critical) / late_stop_loss 的同类: 现行 realized_pnl 极值
+    #   [-$396, +$449] ⇒ 0 命中。这是仓位规模变化的结果, 不是判据写错, 故不删。
     ERROR_PATTERNS = {
         # 入场错误
-        "low_signal_entry": {
-            "name": "低信号强度入场",
-            "type": "entry",
-            "condition": lambda t: (t.get("final_strength") or 50) < 50,
-            "description": "信号强度低于 50 时入场",
-            "suggestion": "提高信号强度阈值至 50 以上",
-            "severity": "medium",
-        },
+        # signal_confidence 是活字段 (现行期 0.35-0.78, 填充率 97.9%) ⇒ 本判据有效,
+        # 实测命中 60/333 = 18.0%, 累计亏损 $1,227.78。
         "low_confidence_entry": {
             "name": "低置信度入场",
             "type": "entry",
@@ -52,39 +62,33 @@ class ErrorPatternDetector:
             "suggestion": "提高置信度阈值至 50% 以上",
             "severity": "medium",
         },
-        "high_disagreement_entry": {
-            "name": "高分歧入场",
-            "type": "entry",
-            "condition": lambda t: (t.get("consensus_level") or 1) < 0.5,
-            "description": "模型一致性低于 50% 时入场",
-            "suggestion": "提高一致性阈值，等待模型达成共识",
-            "severity": "high",
-        },
-        
+
         # 出场错误
+        # 2026-10-06 修: holding_hours 可为 NULL (现行期 1/333) ⇒ `None < 1` 抛
+        #   TypeError, 被 detect_patterns 的 except 静默吞掉 (整行跳过, 无声)。
+        #   改 `or 0` 与同判据内 realized_pnl 的既有写法一致。
         "early_exit": {
             "name": "过早平仓",
             "type": "exit",
             "condition": lambda t: (
-                t.get("holding_hours", 0) < 1 and 
-                (t.get("realized_pnl", 0) or 0) > 0
+                (t.get("holding_hours") or 0) < 1 and
+                (t.get("realized_pnl") or 0) > 0
             ),
             "description": "持仓不足 1 小时即平仓，可能错过更大收益",
             "suggestion": "延长持仓时间，设置更合理的止盈目标",
             "severity": "low",
         },
-        "late_stop_loss": {
-            "name": "止损延迟",
-            "type": "exit",
-            "condition": lambda t: (
-                (t.get("realized_pnl", 0) or 0) < -500 and
-                t.get("exit_reason") != "STOP_LOSS"
-            ),
-            "description": "亏损较大但未触发止损",
-            "suggestion": "严格执行止损纪律，避免亏损扩大",
-            "severity": "high",
-        },
-        
+        # 2026-10-06 删 late_stop_loss (sev=high): 其判别式 `exit_reason != "STOP_LOSS"`
+        #   在生产值域 (全历史 41 个 distinct exit_reason, 实测无 "STOP_LOSS" 字面量) 下
+        #   **恒为 True** ⇒ 该判据从未真正检测「止损延迟」, 一直等价于纯
+        #   `realized_pnl < -500`, 与下方 large_loss (<-1000) 是同类金额判据的重复。
+        #   要「修对」需维护一份止损类 exit_reason 白名单, 但该值域已漂移到 41 个且仍在长
+        #   (SL_*/sl_hit/ORB_*_STOP/HARD_STOP/…大小写与新旧命名并存) ⇒ 白名单必然再次静默
+        #   过期, 重蹈本次覆辙。按「删门非加守卫」: 删除, 大额亏损由 large_loss 兜底。
+        #   注: 现行仓位规模下 realized_pnl 极值 [-$396, +$449], 两条金额判据当前均休眠
+        #   (仓位缩小后结构上够不到 $500/$1000); large_loss 保留为 critical 级灾难兜底,
+        #   仓位若放大可自然复活, 不删。
+
         # 风控错误
         "stop_loss_violation": {
             "name": "止损违规",
@@ -175,7 +179,19 @@ class ErrorPatternDetector:
                         pnl = trade.get("realized_pnl", 0) or 0
                         if pnl < 0:
                             total_loss += abs(pnl)
-                except Exception:
+                except Exception as error:
+                    # 2026-10-06: 原为裸 `continue` — 判据抛异常时整行静默跳过, 无日志。
+                    # 实测代价: early_exit 因 holding_hours 为 NULL 抛 TypeError, 该行被无声
+                    # 吞掉, 普查时才暴露 (若只读代码会以为判据在跑)。埋点禁静默吞异常。
+                    # 仍不中断扫描 (单行脏数据不该毁掉整份报告), 但必须留痕可查。
+                    # 注: 本 warning 只在判据真抛异常时触发; 已修 holding_hours 的 NULL
+                    # TypeError ⇒ 稳态下不产生日志量, 不会撞 W456 日志卫生棘轮。
+                    logger.warning(
+                        f"[错误模式] 判据 {pattern_id} 在 trade id="
+                        f"{trade.get('id')} 上抛异常, 该行跳过: "
+                        f"{type(error).__name__}: {error}",
+                        exc_info=True,
+                    )
                     continue
             
             if affected_trades:

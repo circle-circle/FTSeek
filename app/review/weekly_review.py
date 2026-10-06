@@ -355,22 +355,61 @@ class WeeklyReviewGenerator:
         return {'strategy_breakdown': stats}
     
     def _analyze_voting(self, trades: List) -> Dict:
-        """投票效果分析"""
+        """投票效果分析
+
+        2026-10-06 修: 原判据用 `(t.get('final_strength') or 50)` fallback, 而
+        final_strength/consensus_level 是**化石列恒 0** (3 模型投票 2026-07-12 退役,
+        voting_predictions 停写) ⇒
+          high_strength (>=70) : 恒 0 笔
+          medium_strength      : 恒吞掉全部 335/335 笔
+          low_strength  (<50)  : 恒 0 笔
+          avg_signal_strength  : 恒等于常量 50.00  ← 不是测量值, 是 fallback 假数
+        实测现行期 333 笔全落 medium 桶 ⇒ 本函数每周把一份**结构性假数据**推进周报
+        (L132 voting_analysis 进主链, L441 亦消费)。
+        处置同 daily_review._analyze_voting_consistency (2026-09-04 M4 已裁决):
+        上游退役 ⇒ 明确标不可用, 不用 or-50 造出看似合理的数字。
+        """
         if not trades:
-            return {}
-        
-        high_strength = [t for t in trades if (t.get('final_strength') or 50) >= 70]
-        medium_strength = [t for t in trades if 50 <= (t.get('final_strength') or 50) < 70]
-        low_strength = [t for t in trades if (t.get('final_strength') or 50) < 50]
-        
+            return {
+                'data_available': False,
+                'status': 'no_trades',
+            }
+
+        final_strengths = [t.get('final_strength') for t in trades]
+        consensus_levels = [t.get('consensus_level') for t in trades]
+        has_valid_strength = any(s and s > 0 for s in final_strengths)
+        has_valid_consensus = any(c and c > 0 for c in consensus_levels)
+
+        if not has_valid_strength and not has_valid_consensus:
+            return {
+                'data_available': False,
+                'status': 'retired',
+                'note': '3模型投票已退役 (voting_predictions 停写于 2026-07-12), '
+                        'final_strength/consensus_level 为化石列恒 0 ⇒ 投票效果分析不可用。'
+                        '此前 avg_signal_strength 恒 50.00 是 or-50 fallback 假数, 已停报。'
+                        '信号质量见 signal_confidence (活字段) 与 daily_review 的 signal_quality 维度。',
+                # 保留键位以免下游 KeyError; 值为 None 表示「不可用」而非 0。
+                'avg_signal_strength': None,
+                'high_strength_trades': 0,
+                'medium_strength_trades': 0,
+                'low_strength_trades': 0,
+            }
+
+        high_strength = [t for t in trades if (t.get('final_strength') or 0) >= 70]
+        medium_strength = [t for t in trades if 50 <= (t.get('final_strength') or 0) < 70]
+        low_strength = [t for t in trades if 0 < (t.get('final_strength') or 0) < 50]
+
         def calc_win_rate(trade_list):
             if not trade_list:
                 return 0
             wins = sum(1 for t in trade_list if (t.get('realized_pnl', 0) or 0) > 0)
             return round(wins / len(trade_list), 4)
-        
+
         return {
-            'avg_signal_strength': round(sum(t.get('final_strength', 50) or 50 for t in trades) / len(trades), 2),
+            'data_available': True,
+            'status': 'ok',
+            'avg_signal_strength': round(
+                sum(t.get('final_strength', 0) or 0 for t in trades) / len(trades), 2),
             'high_strength_trades': len(high_strength),
             'high_strength_win_rate': calc_win_rate(high_strength),
             'medium_strength_trades': len(medium_strength),
@@ -394,20 +433,39 @@ class WeeklyReviewGenerator:
         }
     
     def _calculate_consistency(self, trades: List) -> Dict:
-        """一致性评分 - 交易风格是否稳定"""
+        """一致性评分 - 交易风格是否稳定
+
+        2026-10-06 修: 原判据 `[t.get('final_strength', 50) or 50 ...]` 在化石列
+        (final_strength 恒 0, 3模型投票 2026-07-12 退役) 上 ⇒ 全部落 fallback 50 ⇒
+        std_strength = 0.00 ⇒ consistency = 1 - 0/30 = **1.00 恒满分**,
+        interpretation 恒 'high'。实测现行期 333 笔即如此。
+        危害: 周报每周推送「🎯 一致性 🟢 1.00 (high)」= **假满分**, 比假 50.00 更误导 —
+        它声称「交易风格非常稳定」, 而实际是零信息。
+        处置沿用本仓既有约定 (scheduler_triggers._format_weekly_review 判
+        `score is not None and 'note' not in consistency` 才渲染): 不可用时 score=None + note,
+        格式化器自动跳过该行, 无需改推送端。
+        """
         if len(trades) < 2:
-            return {'score': 1.0, 'note': '交易数不足，无法评估一致性'}
-        
-        # 信号强度标准差 (越低越一致)
-        strengths = [t.get('final_strength', 50) or 50 for t in trades]
-        avg_strength = sum(strengths) / len(strengths)
-        variance = sum((s - avg_strength) ** 2 for s in strengths) / len(strengths)
+            return {'score': None, 'note': '交易数不足，无法评估一致性'}
+
+        strengths = [t.get('final_strength') for t in trades]
+        # 化石列检测: 全 0/None ⇒ 无信息, 不得用 or-50 造出假满分
+        if not any(s and s > 0 for s in strengths):
+            return {
+                'score': None,
+                'note': 'final_strength 为化石列恒 0 (3模型投票已退役 2026-07-12) '
+                        '⇒ 一致性无法评估。此前恒报 1.00/high 是 or-50 fallback 的假满分。',
+            }
+
+        vals = [s for s in strengths if s and s > 0]
+        avg_strength = sum(vals) / len(vals)
+        variance = sum((s - avg_strength) ** 2 for s in vals) / len(vals)
         std_strength = variance ** 0.5
-        
+
         # 归一化到 0-1 (0=完全不一致, 1=完全一致)
         # 标准差 < 10 → 非常一致, > 30 → 很不一致
         consistency = max(0, min(1, 1 - (std_strength / 30)))
-        
+
         return {
             'score': round(consistency, 2),
             'avg_strength': round(avg_strength, 2),
