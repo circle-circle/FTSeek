@@ -1,5 +1,27 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-06 23:55 LIVE 规则退出前释放自有 broker STOP（P0 闭环）
+
+**背景**: 首笔 PBR LIVE 探针成交后，broker STOP 已补挂为 `WAITING_SUBMIT`。
+复核发现既有 `ExitLifecycle.preflight` 会把该 SELL STOP 视作活跃平仓单并触发
+`exit_unowned_active_order`。这防双卖是对的，但导致在线规则退出（TP/时间/EOD）
+无法在同一套链路里平仓；DEB-20260910 已将其列为实盘部署阻塞项。
+
+**修复**:
+- `DualBrokerAdapter.query_order_status()`：只读查询订单身份/状态/成交证据；
+- `_release_live_broker_stop_for_rule_exit()`：只释放
+  `pb_stop_<symbol>_real`、同 symbol/方向/数量的本策略 STOP；
+- 顺序固定为：先回补已成交 STOP → 未成交则撤单 → 复查到取消类终态且零成交
+  → 才提交规则平仓；身份不匹配、部分成交、撤单未终态一律 fail-close 告警；
+- 覆盖三条 LIVE 平仓路径：SL 兜底、常规规则退出、EOD 兜底。
+
+**验证**: `tests/execution/test_dual_broker_positions.py`、
+`tests/playbook/test_live_arm_p0_contracts.py`、`tests/test_rehang_live_stop.py`、
+`tests/playbook/test_dual_arm_routing.py` 共 35 passed；退出生命周期扩展回归
+`tests/execution/test_exit_lifecycle.py + tests/playbook/test_exit_recovery.py`
+共 155 passed。23:50 已重启生效，退出快循环恢复，PBR 仍在监控，券商 STOP 未被
+测试性撤单。
+
 ## 2026-10-06 23:30 首笔 LIVE 探针成交 + STOP 事故修复全链留痕
 
 **事件**: 21:38 ET(09:38) US.PBR LIVE 1股 @24.0171 真实成交 (futu_id

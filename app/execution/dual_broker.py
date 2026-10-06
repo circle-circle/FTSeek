@@ -454,6 +454,36 @@ class DualBrokerAdapter:
         ctx, _acc_id, trd_env, lock = self._ctx_and_acc(target_env)
         return self._query_fill(ctx, str(futu_order_id), trd_env, lock)
 
+    def query_order_status(self, futu_order_id: str, target_env: str = "real") -> Dict[str, Any]:
+        """Return read-only broker order identity/status evidence."""
+        try:
+            from futu import RET_OK
+            ctx, _acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.order_list_query(
+                    order_id=str(futu_order_id),
+                    trd_env=trd_env,
+                    refresh_cache=True,
+                )
+            if ret != RET_OK or data is None or data.empty:
+                return {"success": False, "error": str(data)}
+            row = data.iloc[0]
+            fields = (
+                "order_id", "code", "trd_side", "order_type", "order_status",
+                "qty", "dealt_qty", "dealt_avg_price", "price", "aux_price",
+                "time_in_force", "fill_outside_rth", "remark",
+            )
+            return {
+                "success": True,
+                **{key: row.get(key) for key in fields if key in data.columns},
+            }
+        except Exception as error:
+            logger.warning(
+                "[DualBroker] query_order_status failed %s env=%s: %s",
+                futu_order_id, target_env, error,
+            )
+            return {"success": False, "error": str(error)}
+
     def get_positions(self, target_env: str = "sim") -> list:
         """查询指定账户持仓."""
         try:

@@ -239,6 +239,126 @@ def test_partial_broker_stop_fill_is_not_booked(tmp_path):
     connection.close()
 
 
+class _StopReleaseBroker:
+    def __init__(self, statuses):
+        self.statuses = list(statuses)
+        self.cancels = []
+
+    def query_order_status(self, order_id, target_env="real"):
+        assert order_id == "STOP-1" and target_env == "real"
+        if len(self.statuses) > 1:
+            return self.statuses.pop(0)
+        return self.statuses[0]
+
+    def cancel_order(self, order_id, target_env="real"):
+        assert order_id == "STOP-1" and target_env == "real"
+        self.cancels.append(order_id)
+        return {"success": True, "error": ""}
+
+
+def _stop_release_row(**overrides):
+    row = {
+        "source_type": "PLAYBOOK_LIVE",
+        "symbol": "US.MU",
+        "direction": "LONG",
+        "quantity": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def _stop_status(**overrides):
+    status = {
+        "success": True,
+        "order_id": "STOP-1",
+        "code": "US.MU",
+        "trd_side": "SELL",
+        "order_type": "STOP",
+        "order_status": "WAITING_SUBMIT",
+        "qty": 1.0,
+        "dealt_qty": 0.0,
+        "remark": "pb_stop_US.MU_real",
+    }
+    status.update(overrides)
+    return status
+
+
+def test_live_rule_exit_releases_own_stop_after_terminal_cancel(monkeypatch):
+    monkeypatch.setattr(pipeline.time, "sleep", lambda seconds: None)
+    broker = _StopReleaseBroker([
+        _stop_status(),
+        _stop_status(order_status="CANCELLED_ALL"),
+    ])
+
+    release = pipeline._release_live_broker_stop_for_rule_exit(
+        broker, object(), _stop_release_row(), {"sl_broker_order_id": "STOP-1"}
+    )
+
+    assert release == {"action": "proceed"}
+    assert broker.cancels == ["STOP-1"]
+
+
+def test_live_rule_exit_does_not_cancel_unmatched_stop():
+    broker = _StopReleaseBroker([
+        _stop_status(order_id="MANUAL-STOP", remark="manual"),
+    ])
+
+    release = pipeline._release_live_broker_stop_for_rule_exit(
+        broker, object(), _stop_release_row(), {"sl_broker_order_id": "STOP-1"}
+    )
+
+    assert release["action"] == "hold"
+    assert release["error"] == "broker_stop_identity_mismatch"
+    assert broker.cancels == []
+
+
+def test_live_rule_exit_holds_when_cancel_never_reaches_terminal(monkeypatch):
+    monkeypatch.setattr(pipeline.time, "sleep", lambda seconds: None)
+    broker = _StopReleaseBroker(
+        [_stop_status()] + [_stop_status(order_status="CANCELLING_ALL")] * 20
+    )
+
+    release = pipeline._release_live_broker_stop_for_rule_exit(
+        broker, object(), _stop_release_row(), {"sl_broker_order_id": "STOP-1"}
+    )
+
+    assert release["action"] == "hold"
+    assert release["error"] == "broker_stop_cancel_pending"
+    assert broker.cancels == ["STOP-1"]
+
+
+def test_live_rule_exit_books_raced_stop_fill_instead_of_closing_twice(monkeypatch):
+    broker = _StopReleaseBroker([
+        _stop_status(order_status="FILLED_ALL", dealt_qty=1.0),
+    ])
+    connection = object()
+    row = _stop_release_row()
+    meta = {"sl_broker_order_id": "STOP-1"}
+    reconciled = []
+
+    def fake_reconcile(dual, conn, reconcile_row, reconcile_meta):
+        reconciled.append((dual, conn, reconcile_row, reconcile_meta))
+        return True
+
+    monkeypatch.setattr(pipeline, "_reconcile_broker_stop_exit", fake_reconcile)
+
+    release = pipeline._release_live_broker_stop_for_rule_exit(
+        broker, connection, row, meta
+    )
+
+    assert release == {"action": "reconciled"}
+    assert reconciled == [(broker, connection, row, meta)]
+    assert broker.cancels == []
+
+
+def test_all_live_close_paths_release_broker_stop_before_close():
+    monitor_source = inspect.getsource(pipeline.monitor_playbook_exits)
+    eod_source = inspect.getsource(pipeline._force_close_orphaned_sim_positions)
+
+    assert monitor_source.count("_release_live_broker_stop_for_rule_exit") == 2
+    assert "_release_live_broker_stop_for_rule_exit" in eod_source
+
+
 def test_open_position_entry_and_stop_order_ids_have_separate_semantics(tmp_path):
     store = TradeStore(str(tmp_path / "order-ids.db"))
     store.upsert_position_simple(

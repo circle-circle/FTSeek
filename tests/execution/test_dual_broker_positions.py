@@ -8,6 +8,7 @@
 import threading
 
 import pandas as pd
+from futu import TrdEnv
 
 from app.execution.dual_broker import DualBrokerAdapter
 
@@ -61,15 +62,36 @@ class _FakeOrderCtx:
 
     def __init__(self):
         self.calls = []
+        self.queries = []
 
     def place_order(self, **kwargs):
         self.calls.append(kwargs)
         return 0, pd.DataFrame([{"order_id": "TEST-STOP-1"}])  # RET_OK=0
 
+    def order_list_query(self, **kwargs):
+        self.queries.append(kwargs)
+        return 0, pd.DataFrame([{
+            "order_id": "TEST-STOP-1",
+            "code": "US.TEST",
+            "trd_side": "SELL",
+            "order_type": "STOP",
+            "order_status": "WAITING_SUBMIT",
+            "qty": 1.0,
+            "dealt_qty": 0.0,
+            "dealt_avg_price": 0.0,
+            "price": 0.0,
+            "aux_price": 22.96,
+            "time_in_force": "GTC",
+            "fill_outside_rth": False,
+            "remark": "pb_stop_US.TEST_real",
+        }])
+
 
 def _adapter_with_order_ctx(ctx):
     adapter = DualBrokerAdapter()
-    adapter._ctx_and_acc = lambda target_env: (ctx, "19930000", None, threading.Lock())
+    adapter._ctx_and_acc = lambda target_env: (
+        ctx, "19930000", TrdEnv.REAL, threading.Lock()
+    )
     return adapter
 
 
@@ -95,6 +117,25 @@ def test_live_stop_order_uses_aux_price_and_gtc():
     assert call["time_in_force"] == TimeInForce.GTC
     assert call["order_type"] == FutuOrderType.STOP
     assert call["trd_side"] == TrdSide.SELL    # LONG 持仓 → SELL STOP
+
+
+def test_query_order_status_returns_read_only_broker_evidence():
+    ctx = _FakeOrderCtx()
+    adapter = _adapter_with_order_ctx(ctx)
+
+    status = adapter.query_order_status("TEST-STOP-1", target_env="real")
+
+    assert status["success"] is True
+    assert status["order_id"] == "TEST-STOP-1"
+    assert status["code"] == "US.TEST"
+    assert status["order_type"] == "STOP"
+    assert status["order_status"] == "WAITING_SUBMIT"
+    assert status["aux_price"] == 22.96
+    assert ctx.queries == [{
+        "order_id": "TEST-STOP-1",
+        "trd_env": "REAL",
+        "refresh_cache": True,
+    }]
 
 
 def test_live_stop_short_side_buys_to_cover():

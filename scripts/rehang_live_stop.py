@@ -41,23 +41,46 @@ def _find_missing_stop_positions(ledger: Path):
         conn.close()
 
 
-def _broker_open_stop_ids(ctx, symbol: str) -> list:
-    """查券商侧该标的在途 STOP 委托 (防重复补挂)."""
-    from futu import OrderType as FutuOrderType, TrdEnv
+def _broker_open_stop_ids(ctx, symbol: str, direction_held: str, qty: float) -> list:
+    """查券商侧属于本策略的 STOP 委托 (防重复补挂/误绑手动单)."""
+    from futu import OrderType as FutuOrderType, TrdEnv, TrdSide
     ret, data = ctx.order_list_query(code=symbol, trd_env=TrdEnv.REAL, refresh_cache=True)
     if ret != 0 or data is None or data.empty:
         return []
     ids = []
+    expected_side = str(TrdSide.SELL if direction_held == "LONG" else TrdSide.BUY)
+    expected_remark = f"pb_stop_{symbol}_real"
     for _, row in data.iterrows():
-        if str(row.get("order_type", "")) == str(FutuOrderType.STOP):
-            ids.append(str(row.get("order_id", "")))
+        if str(row.get("order_type", "")) != str(FutuOrderType.STOP):
+            continue
+        if str(row.get("code", "")) != symbol:
+            continue
+        if str(row.get("remark", "")) != expected_remark:
+            continue
+        if str(row.get("trd_side", "")) != expected_side:
+            continue
+        try:
+            row_qty = float(row.get("qty", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if row_qty != float(qty):
+            continue
+        if str(row.get("order_status", "")).upper() in {
+            "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DISABLED",
+        }:
+            continue
+        ids.append(str(row.get("order_id", "")))
     return ids
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只检查本地缺 STOP 持仓 (默认行为, 显式别名)")
     parser.add_argument("--apply", action="store_true", help="实际挂单 (默认 dry-run)")
     args = parser.parse_args()
+    if args.dry_run and args.apply:
+        parser.error("--dry-run 与 --apply 互斥")
 
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env.us")  # override=False: 不覆盖进程已有环境
@@ -105,7 +128,9 @@ def main() -> int:
             continue
 
         ctx, acc_id, trd_env, lock = broker._ctx_and_acc("real")
-        existing = _broker_open_stop_ids(ctx, symbol)
+        existing = _broker_open_stop_ids(
+            ctx, symbol, str(row["direction"]), float(row["size"])
+        )
         if existing:
             entry["result"] = f"券商已有在途 STOP {existing}, 仅补台账"
             stop_id = existing[0]

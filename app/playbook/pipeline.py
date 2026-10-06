@@ -8483,6 +8483,115 @@ def _reconcile_broker_stop_exit(dual, conn, row, meta) -> bool:
     return bool(booked)
 
 
+def _release_live_broker_stop_for_rule_exit(dual, conn, row, meta) -> Dict[str, Any]:
+    """Release only this arm's broker STOP before a LIVE rule exit.
+
+    The normal broker STOP remains the offline protection. When an online rule
+    exit needs to close the position, this gate first books a raced STOP fill,
+    otherwise cancels the STOP and waits for a terminal no-fill cancellation.
+    It never releases an unmatched/manual order.
+    """
+    if row.get("source_type") != "PLAYBOOK_LIVE":
+        return {"action": "proceed"}
+    stop_order_id = str(meta.get("sl_broker_order_id") or "").strip()
+    if not stop_order_id:
+        return {"action": "proceed"}
+
+    symbol = str(row.get("symbol") or "")
+    direction = str(row.get("direction") or "").upper()
+    quantity = float(row.get("quantity") or 0)
+    expected_side = "SELL" if direction == "LONG" else "BUY"
+    expected_remark = f"pb_stop_{symbol}_real"
+    terminal_no_fill = {
+        "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DISABLED", "DELETED",
+    }
+
+    def _status():
+        raw = dual.query_order_status(stop_order_id, target_env="real")
+        if not isinstance(raw, dict) or not raw.get("success"):
+            error = str(raw.get("error", "broker STOP status unavailable") if isinstance(raw, dict) else raw)
+            return None, f"broker_stop_status_pending: {error}"
+        return raw, ""
+
+    def _identity_matches(raw):
+        try:
+            raw_qty = float(raw.get("qty", 0) or 0)
+        except (TypeError, ValueError):
+            raw_qty = -1.0
+        values = {
+            "order_id": str(raw.get("order_id", "") or "").strip(),
+            "code": str(raw.get("code", "") or "").strip(),
+            "trd_side": str(raw.get("trd_side", "") or "").rsplit(".", 1)[-1].upper(),
+            "order_type": str(raw.get("order_type", "") or "").rsplit(".", 1)[-1].upper(),
+            "remark": str(raw.get("remark", "") or "").strip(),
+        }
+        return (
+            values["order_id"] == stop_order_id
+            and values["code"] == symbol
+            and values["trd_side"] == expected_side
+            and values["order_type"] == "STOP"
+            and values["remark"] == expected_remark
+            and raw_qty == quantity
+        )
+
+    def _dealt_qty(raw):
+        try:
+            return float(raw.get("dealt_qty", 0) or 0)
+        except (TypeError, ValueError):
+            return -1.0
+
+    raw, error = _status()
+    if raw is None:
+        return {"action": "hold", "error": error}
+    if not _identity_matches(raw):
+        logger.error(
+            "[playbook live] broker STOP identity mismatch "
+            f"{symbol} stop_id={stop_order_id}"
+        )
+        return {"action": "hold", "error": "broker_stop_identity_mismatch"}
+
+    dealt_qty = _dealt_qty(raw)
+    if dealt_qty > 0:
+        if _reconcile_broker_stop_exit(dual, conn, row, meta):
+            return {"action": "reconciled"}
+        return {"action": "hold", "error": "broker_stop_fill_reconcile_pending"}
+    if str(raw.get("order_status", "") or "").upper() in terminal_no_fill:
+        return {"action": "proceed"}
+
+    cancel_result = dual.cancel_order(stop_order_id, target_env="real")
+    if not cancel_result.get("success"):
+        raw, error = _status()
+        if (
+            raw is not None
+            and _identity_matches(raw)
+            and _dealt_qty(raw) == 0
+            and str(raw.get("order_status", "") or "").upper() in terminal_no_fill
+        ):
+            return {"action": "proceed"}
+        return {"action": "hold", "error": "broker_stop_cancel_failed"}
+
+    for _ in range(20):
+        time.sleep(0.25)
+        raw, error = _status()
+        if raw is None:
+            return {"action": "hold", "error": error}
+        if not _identity_matches(raw):
+            return {"action": "hold", "error": "broker_stop_identity_mismatch"}
+        dealt_qty = _dealt_qty(raw)
+        if dealt_qty > 0:
+            if _reconcile_broker_stop_exit(dual, conn, row, meta):
+                return {"action": "reconciled"}
+            return {"action": "hold", "error": "broker_stop_fill_reconcile_pending"}
+        if str(raw.get("order_status", "") or "").upper() in terminal_no_fill:
+            logger.info(
+                "[playbook live] broker STOP released before rule exit "
+                f"{symbol} stop_id={stop_order_id}"
+            )
+            return {"action": "proceed"}
+
+    return {"action": "hold", "error": "broker_stop_cancel_pending"}
+
+
 def _book_playbook_exit_result(dual, result, conn=None):
     from app.execution.exit_lifecycle import number
     if not (result.get("success") and result.get("order_filled")
@@ -9108,6 +9217,20 @@ def monitor_playbook_exits(scheduler) -> int:
                         )
                         from app.execution.dual_broker import get_dual_broker
                         dual = get_dual_broker()
+                        if _row_target == "real":
+                            release = _release_live_broker_stop_for_rule_exit(
+                                dual, conn, r, meta
+                            )
+                            if release["action"] == "reconciled":
+                                exited += 1
+                                continue
+                            if release["action"] != "proceed":
+                                _alert_close_failure(
+                                    symbol, _row_target, "BROKER_STOP_RELEASE",
+                                    release["error"],
+                                    error=release["error"].split(":", 1)[0]
+                                )
+                                continue
                         if isinstance(meta.get("patient_exit"), dict) and not meta["patient_exit"].get("exit_mode"):
                             meta["patient_exit"]["exit_mode"] = "sl_override"
                         decision_pnl_pct = ((current_price - entry_price) if direction == "LONG"
@@ -9519,6 +9642,20 @@ def monitor_playbook_exits(scheduler) -> int:
                 try:
                     from app.execution.dual_broker import get_dual_broker
                     dual = get_dual_broker()
+                    if _row_target == "real":
+                        release = _release_live_broker_stop_for_rule_exit(
+                            dual, conn, r, meta
+                        )
+                        if release["action"] == "reconciled":
+                            exited += 1
+                            continue
+                        if release["action"] != "proceed":
+                            _alert_close_failure(
+                                symbol, _row_target, "BROKER_STOP_RELEASE",
+                                release["error"],
+                                error=release["error"].split(":", 1)[0]
+                            )
+                            continue
                     # 2026-08-20 (方案A): 限价超时 8s→3s 配置化. 8/20 实弹: MU 限价悬空等满 8s,
                     #   期间价格续跌 0.43% → 降级市价砸在 940.16 (净-$24.42). 等待本身就是出血.
                     #   配合滑点垫 (触发线抬高→限价翻主动侧), 3s 足够吃价; 超时仍降级市价无卡单.
@@ -9799,6 +9936,20 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                         f"当日已连续失败 {_fail_count} 次, 需人工对账确认是否孤儿仓"
                     )
                     continue
+                if _row_target == "real":
+                    release = _release_live_broker_stop_for_rule_exit(
+                        dual, conn, r, _meta
+                    )
+                    if release["action"] == "reconciled":
+                        closed += 1
+                        continue
+                    if release["action"] != "proceed":
+                        _alert_close_failure(
+                            symbol, _row_target, "BROKER_STOP_RELEASE",
+                            release["error"],
+                            error=release["error"].split(":", 1)[0]
+                        )
+                        continue
                 try:
                     close_res = dual.close_position(
                         symbol, qty, direction, target_env=_row_target,
