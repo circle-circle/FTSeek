@@ -750,7 +750,7 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.93"
+        assert frontmatter_version == latest_changelog_version == "0.94"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
 
@@ -823,3 +823,88 @@ class TestRFC133:
             assert stale not in user_contract
         assert "三类信息可用" not in user_contract
         assert "两类信息可用" in user_contract
+
+
+class TestMarketTrendPropagation:
+    def test_code_market_trend_renders_in_market_environment(self):
+        collected = {
+            "symbol": "TEST",
+            "market_context": {
+                "_source": "market_context_v041",
+                "market_trend": {
+                    "premarket": {"trend": "DOWN", "spy_chg_pct": -0.35,
+                                  "qqq_chg_pct": -0.67},
+                    "daily": {"trend": "UP", "spy_trend": "UP", "qqq_trend": "UP"},
+                },
+            },
+        }
+        prompt_data = L._format_data_for_prompt(collected)
+        assert "## 大盘环境" in prompt_data
+        assert "大盘趋势(代码判定, SPY/QQQ): 盘前DOWN (SPY -0.35%, QQQ -0.67%); 日线UP" in prompt_data
+
+    def test_data_collector_classifies_premarket_and_daily_trends(self):
+        import data_collector
+        spy_context = {
+            "trend": "UP",
+            "snapshot": {"pre_chg_pct": -0.35},
+        }
+        qqq_context = {
+            "trend": "UP",
+            "snapshot": {"pre_chg_pct": -0.67},
+        }
+        market_trend = data_collector.classify_market_trend(spy_context, qqq_context)
+        assert market_trend["premarket"]["trend"] == "DOWN"
+        assert market_trend["premarket"]["spy_chg_pct"] == -0.35
+        assert market_trend["premarket"]["qqq_chg_pct"] == -0.67
+        assert market_trend["daily"]["trend"] == "UP"
+
+    def test_code_industry_trend_renders_in_industry_comparison(self):
+        collected = {
+            "symbol": "TEST",
+            "industry_peers": {
+                "industry": "Semiconductors",
+                "peers": [],
+                "peer_count": 8,
+                "industry_avg_chg_today_pct": -0.2,
+                "industry_avg_chg_5d_pct": 6.2,
+                "industry_trend": {
+                    "today": "DOWN",
+                    "five_day": "UP",
+                    "combined": "MIXED",
+                },
+            },
+        }
+        prompt_data = L._format_data_for_prompt(collected)
+        assert "## 行业对比 (Semiconductors)" in prompt_data
+        assert "行业趋势(代码判定, peer均值): 今日DOWN, 5日UP, 综合MIXED" in prompt_data
+
+    def test_data_collector_classifies_industry_trend(self):
+        import data_collector
+        industry_trend = data_collector.classify_industry_trend(
+            today_change=-0.2, five_day_change=6.2, peer_count=8)
+        assert industry_trend == {
+            "today": "DOWN",
+            "five_day": "UP",
+            "combined": "MIXED",
+        }
+        empty_trend = data_collector.classify_industry_trend(0, 0, peer_count=0)
+        assert empty_trend == {
+            "today": "UNKNOWN",
+            "five_day": "UNKNOWN",
+            "combined": "UNKNOWN",
+        }
+
+    def test_scan_condition_renders_in_market_environment(self):
+        condition = "扫描51只候选：10涨34跌7平，平均-2.7%，普跌行情"
+        collected = {
+            "symbol": "TEST",
+            "market_context": {"_source": "market_context_v041", "scan_condition": condition},
+        }
+        prompt_data = L._format_data_for_prompt(collected)
+        assert "## 大盘环境" in prompt_data
+        assert f"扫描层市况(当日候选池广度): {condition}" in prompt_data
+
+    def test_pipeline_attaches_scan_condition_to_each_candidate(self):
+        pipeline = (_SKILL_ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        assert '_scan_market_condition = str(scan_result.get("market_condition", "") or "").strip()' in pipeline
+        assert '_market_context["scan_condition"] = _scan_market_condition' in pipeline

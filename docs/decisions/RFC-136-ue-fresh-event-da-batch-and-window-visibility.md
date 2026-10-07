@@ -80,3 +80,23 @@
   test_control_loop_ledger 守卫绿。
 - 生产首跑观察点: 10-07 20:00 CST agent job (EDT 窗内) + 21:10 CST fresh-event 影子
   (`data/shadow/ue_fresh_da_candidate_pool.jsonl` 首行事件)。
+
+## 6. 2026-10-07 生产首跑复核
+
+### A. UE/DA 融合链路
+- **主链融合正常**: 08:00 ET UE `da_feed` 扫描产出, DA 主链消费后, `US.BKV` 与
+  `US.MRVL` 在 bridge/raw instruction 中带 `origin="ue_candidate"`; UE 直写腿为 0 条
+  (退役后设计状态, 非通道死亡)。
+- **fresh-event 影子批**: 09:12 首跑因旧 bridge schema 只有 `candidate_count` 而
+  DA pipeline 读 `candidates_total` 失败; v0.94 已做双键兼容。09:24–09:29 手动重跑
+  成功, 3 个 UE premarket 候选中仅 `US.RARE` 进入深分析, `US.ALKT` 因不可借券、
+  `US.SHEL` 因低 ATR 被筛除; 影子模式未写生产 DB。
+
+### B. 产出口径更正
+- bridge 文件为 **5 个 DA 候选**; 生产 `playbook_instructions` 最终为 **5 条 DA 指令**,
+  其中 **2 条可交易 (`CEG BUY`, `BKV BUY`)**, **3 条 guardrail SKIP**
+  (`PENG/NOK` 方向偏斜, `MRVL` 半导体集中度)。
+- 旧钉钉推送只写「候选5只 + instruction直写DB」, 未显示 DB 最终 2/5 可交易,
+  会误读为 5 条均可交易。修复: `scripts/da_bridge_dingtalk_push.py` 推送前只读查询
+  生产 DB, 消息与 `data/da_push_instruction_summary.jsonl` 台账均记录
+  bridge候选数、DB指令数、可交易数、SKIP数及逐标的 SKIP原因。

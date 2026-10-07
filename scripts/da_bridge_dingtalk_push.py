@@ -12,8 +12,10 @@
 运行: PYTHONPATH=. ./venv/bin/python scripts/da_bridge_dingtalk_push.py [--date YYYY-MM-DD] [--dry]
 """
 import argparse
+import fcntl
 import json
 import os
+import sqlite3
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.utils.timezone import ET
 
 DATA = Path(__file__).resolve().parents[1] / "data"
+DB_PATH = Path(__file__).resolve().parents[1] / "data" / "ftseek_us.db"
 
 # 自含 dotenv 加载: FINNHUB_API_KEY / 钉钉 webhook 均在 .env.us, 保证 cron 下也能拿到
 try:
@@ -40,6 +43,70 @@ def _today_et():
 
 def _bridge_path(date):
     return DATA / f"opportunity_scan_{date}.json"
+
+
+def _instruction_summary(date, db_path=DB_PATH):
+    """读生产DB最终指令状态, 区分 bridge 候选与真正可交易指令。"""
+    try:
+        connection = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT symbol, direction, COALESCE(skip_reason, '') AS skip_reason "
+            "FROM playbook_instructions "
+            "WHERE date = ? AND decision_id LIKE 'DA-%' ORDER BY id",
+            (date,),
+        ).fetchall()
+        connection.close()
+        instruction_rows = [dict(row) for row in rows]
+        executable_rows = [
+            row for row in instruction_rows
+            if row["direction"] in ("BUY", "SELL_SHORT") and not row["skip_reason"]
+        ]
+        skipped_rows = [
+            row for row in instruction_rows
+            if row["direction"] == "SKIP" or row["skip_reason"]
+        ]
+        return {
+            "status": "ok",
+            "instruction_count": len(instruction_rows),
+            "executable_count": len(executable_rows),
+            "skipped_count": len(skipped_rows),
+            "rows": instruction_rows,
+        }
+    except Exception as exc:
+        return {"status": "db_error", "error": str(exc), "rows": []}
+
+
+def _append_summary_record(date, bridge, summary, status, path=None):
+    """推送口径留痕: bridge候选数与DB可交易数不得再混为一个数字。"""
+    record_path = path or (DATA / "da_push_instruction_summary.jsonl")
+    record = {
+        "type": "da_push_instruction_summary",
+        "date": date,
+        "status": status,
+        "bridge_candidate_count": len(bridge.get("candidates", []) or []),
+        "db_instruction_count": summary.get("instruction_count"),
+        "executable_count": summary.get("executable_count"),
+        "skipped_count": summary.get("skipped_count"),
+        "symbols": [
+            {
+                "symbol": row.get("symbol"),
+                "direction": row.get("direction"),
+                "skip_reason": row.get("skip_reason"),
+            }
+            for row in summary.get("rows", [])
+        ],
+        "recorded_at": datetime.now(ET).isoformat(),
+    }
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    with record_path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.flush()
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _finnhub_price(symbol):
@@ -179,8 +246,23 @@ def _pangan_section(candidates):
 
 def _build_message(date, bridge):
     candidates = bridge.get("candidates", []) or []
-    lines = [f"📊 盘前Bridge生成完成 ({date})",
-             f"候选: {len(candidates)}只(动态扫描+熟股)", ""]
+    instruction_summary = _instruction_summary(date)
+    instruction_rows = {
+        row.get("symbol"): row for row in instruction_summary.get("rows", [])
+    }
+    if instruction_summary.get("status") == "ok":
+        count_line = (
+            f"候选: {len(candidates)}只(动态扫描+熟股) | "
+            f"DB可交易: {instruction_summary['executable_count']}/"
+            f"{instruction_summary['instruction_count']} | "
+            f"guardrail SKIP: {instruction_summary['skipped_count']}"
+        )
+    else:
+        count_line = (
+            f"候选: {len(candidates)}只(动态扫描+熟股) | "
+            "DB最终状态查询失败(推送仅代表bridge候选)"
+        )
+    lines = [f"📊 盘前Bridge生成完成 ({date})", count_line, ""]
     for c in candidates:
         sym = c.get("symbol", "")
         current = _finnhub_price(sym)
@@ -192,6 +274,14 @@ def _build_message(date, bridge):
         price_str = f"现价${current:.2f}" if current else "现价N/A"
         lines.append(f"{sym}: {direction} conf={conf} {price_str}")
         lines.append(f"  LLM建议入场${entry} SL${sl} (实际以re-price为准)")
+        db_row = instruction_rows.get(sym)
+        if db_row:
+            if db_row["direction"] in ("BUY", "SELL_SHORT") and not db_row["skip_reason"]:
+                lines.append(f"  DB状态: {db_row['direction']} ✅可交易")
+            else:
+                lines.append(
+                    f"  DB状态: {db_row['direction']} ⚠️SKIP — {db_row['skip_reason']}"
+                )
         if debate:
             lines.append(f"  辩论: {debate}")
     _pg = _pangan_section(candidates)
@@ -202,7 +292,16 @@ def _build_message(date, bridge):
     if _hs:
         lines.append(_hs)
         lines.append("")
-    lines.append("instruction直写DB ✅  实际执行价=re-price实时bid/ask")
+    if instruction_summary.get("status") == "ok":
+        lines.append(
+            f"落库口径: DA {instruction_summary['instruction_count']}条 | "
+            f"可交易 {instruction_summary['executable_count']}条 | "
+            f"SKIP {instruction_summary['skipped_count']}条; "
+            "仅 BUY/SELL_SHORT 进入执行"
+        )
+    else:
+        lines.append("落库口径: DB查询失败, 本消息候选数不等于可交易数")
+    lines.append("实际执行价=re-price实时bid/ask")
     return "\n".join(lines)
 
 
@@ -229,13 +328,16 @@ def main(date=None, dry=False):
     if dry:
         print("\n[dry-run] 未推送")
         return
+    instruction_summary = _instruction_summary(date)
     try:
         from app.push import push_text_safe
         from app.push.message import Level as _Lv, Category as _Ct
         push_text_safe(msg, level=_Lv.NORMAL, category=_Ct.SYSTEM)
         print("\n[ok] 已推送 (PushHub)")
+        _append_summary_record(date, bridge, instruction_summary, "pushed")
     except Exception as e:
         print(f"\n[warn] 钉钉推送失败(不影响链路): {e}")
+        _append_summary_record(date, bridge, instruction_summary, "push_failed")
 
 
 if __name__ == "__main__":

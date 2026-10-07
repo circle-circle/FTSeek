@@ -437,6 +437,28 @@ def _fresh_event():
     return out
 
 
+@register("legacy_scan_schema")
+def _legacy_scan_schema():
+    """opportunity_scan 旧 schema (`candidate_count`) 必须可进入 DA 管线。"""
+    KLINE.clear()
+    arm(["US.FEA"])
+    legacy_scan = {
+        "candidate_count": 1,
+        "market_condition": "扫描层市况",
+        "top_bullish": [sym("FEA", 9.0)],
+        "top_bearish": [],
+        "all_scored": [sym("FEA", 9.0)],
+    }
+    PL._reset_screening_cache()
+    selection = PL._select_deep_candidates(
+        legacy_scan, [], [], top_n=5, output_dir=WORKDIR,
+        batch_id="DA:driver-legacy-schema")
+    return {
+        "selected_symbols": selection["selected_symbols"],
+        "filter_input": selection["filter"]["input"],
+    }
+
+
 # ══ 兼容包装 / fail-open ═════════════════════════════════════════════════
 @register("compat_and_failopen")
 def _compat_and_failopen():

@@ -3528,3 +3528,21 @@ extended_hours 出场对账; B) 预注册 RFC: ETH HELD 意图在 RTH 开盘后�
   - **该触发器实际上已经"响过"了**：其条件是「到 08-10 干净样本 ≥40 笔且期望值仍 <0 且 KR2 未改善 → 停止参数微调，回到『信号源(DA skill)是否真有 edge』的根本问题」。DEB-20260823 三判决（**毛期望精确为零** / 每周调参循环=过拟合机器 / 尺子失效）+ 8/23 换轨就是它的兑现，只是结论改判为「**尺子问题非执行问题**」（KR1 判据需 n≈1386 才可测）。
   - **"DA 是否真有 edge" 现在有答案了（2026-09-06 复核）**: DA 论据级 IC `overall_ic_t1 = −0.0061 ≈ 0`（`claim_ic_cache.json`，2026-09-05 更新，`total_samples=1805`、101 个 claim_type），快照基数 **1,844 条 / 1,808 条有 T1** ⇒ **不再是"样本不够"**。与 DEB-20260820「方向无 alpha 三方证据链闭合」同判：**DA 的方向选择测不出 alpha，系统里唯一被验证的优势是 gate 负筛 + 退出锁利（`SL_TRAIL_LOCK`）**。⇒ 修复点不在"让 DA 预测得更准"，在供给质量/成本/退出结构；任何"提升 DA 方向准确率"的提案应先被这条 caveat 挡一次。
 - **纪律**: hard-to-reverse/线上写操作先备份+确认; 不为凑样本放松风控; 一次一个变量。
+
+## 2026-10-07 DA/UE 融合首跑复核与推送口径修正（用户令「继续」）
+
+**结论**: DA 主链与 UE 融合正常。今日 bridge 为 **5 个 DA 候选**; 生产 DB 最终
+**5 条 DA 指令**, 其中 **2 条可交易** (`US.CEG BUY`, `US.BKV BUY`), **3 条 SKIP**
+(`US.PENG/US.NOK` 方向偏斜, `US.MRVL` 半导体集中度)。旧推送把「候选5」与
+「instruction直写DB」并列, 未写最终可交易数, 已修正。
+
+**UE/DA 融合**: 08:00 ET `da_feed` 主链融合正常, `US.BKV/US.MRVL` 带
+`origin="ue_candidate"`; UE 直写腿 0 条为退役设计。09:12 fresh-event 影子批首跑因
+`candidate_count/candidates_total` schema 错配失败, v0.94 已兼容; 09:24–09:29 重跑
+成功, 仅 `US.RARE` 深分析 (`ALKT` 不可借券, `SHEL` 低 ATR), 未写生产 DB。
+
+**修正**: `scripts/da_bridge_dingtalk_push.py` 现在只读查询生产 DB, 推送写明
+「候选 / DB可交易 / guardrail SKIP」三口径, 逐标的显示 DB 状态与 SKIP 原因, 并写
+`data/da_push_instruction_summary.jsonl` 台账; 新增
+`tests/test_da_bridge_dingtalk_push.py` 固化 5→2 口径。详细记录见
+`docs/decisions/RFC-136-ue-fresh-event-da-batch-and-window-visibility.md` §6。

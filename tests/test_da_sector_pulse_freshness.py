@@ -81,7 +81,7 @@ class TestPulseDateGuard:
             _SR, today_et=date(2026, 9, 14),
             pulse_path=_pulse_file(tmp_path, "2026-09-04"))
         assert "盘中板块脉搏" not in ctx, "过期脉搏绝不能注入"
-        assert "上一交易日板块涨跌(弱→强)" in ctx, "日历/脉搏缺失不该断掉涨跌段"
+        assert "当前快照板块ETF涨跌(弱→强)" in ctx, "日历/脉搏缺失不该断掉涨跌段"
 
     def test_future_dated_pulse_is_dropped(self, tmp_path):
         """B: 日期晚于期望 (时钟异常/人为写坏) 同样不注入 —— 不可信即不用。"""
@@ -95,7 +95,7 @@ class TestPulseDateGuard:
         ctx = PL.build_sector_context(
             _SR, today_et=date(2026, 9, 14),
             pulse_path=str(tmp_path / "nope.json"))
-        assert ctx == "上一交易日板块涨跌(弱→强): Technology(-1.20%), Energy(+0.80%)"
+        assert ctx == "当前快照板块ETF涨跌(弱→强): Technology(-1.20%), Energy(+0.80%)"
 
     def test_label_never_says_yesterday_or_today(self, tmp_path):
         """A 的负向面: 标签里不得出现无日期的时点措辞 ('昨日'/'今日盘中')。"""

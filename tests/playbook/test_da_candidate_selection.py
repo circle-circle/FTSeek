@@ -45,7 +45,7 @@ SKILL_IC_WRITER = SKILL / "ic_writer.py"
 SKILL_SCANNER = SKILL / "market_scanner.py"
 
 CASES = ("thresholds", "atr", "main_pool", "backfill", "dedup_budgets",
-         "empty_and_legacy", "checkpoint", "ue_feed", "fresh_event",
+         "empty_and_legacy", "checkpoint", "ue_feed", "fresh_event", "legacy_scan_schema",
          "compat_and_failopen", "pool_write")
 
 
@@ -500,6 +500,14 @@ class TestFreshEvent:
         assert fresh["ue_only_symbols"] == ["US.FEA", "US.FEB"]
         assert fresh["ue_only_pool_size"] == 0
         assert fresh["ue_only_premarket_movers"] == 0
+
+
+class TestLegacyScanSchema:
+    def test_candidate_count_is_accepted_without_key_error(self, driver_result):
+        """2026-10-07 fresh-event 首跑失败回归: 旧 bridge 输出只有 candidate_count。"""
+        legacy = case(driver_result, "legacy_scan_schema")
+        assert legacy["filter_input"] == 1
+        assert legacy["selected_symbols"] == ["US.FEA"]
 
 
 # ══ 11. 兼容包装 / fail-open ═══════════════════════════════════════════
