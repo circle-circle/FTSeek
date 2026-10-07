@@ -30,8 +30,8 @@ _emit_widen_shadow 采集, 8/19 起) 记录 "widen 带能触发而 flat 带未�
     其真实世界未发生交易即无费用; flat 臂非 0 时 pnl_net 已是净口径)
 
 预注册判据 (见数前写死, 逐字抄自 RFC-065 §13/§29.3 + shadow_registry):
-  样本门:  widen 专属事件已结算 n ≥ 30 (RFC-065 原文; 注册表 min_n=60 是 READY
-           迁移锚 — 两轴并存如实并报, 不互相冒充)
+  样本门:  widen 专属事件已结算 n ≥ 30 (RFC-065 原文; 2026-10-07 DEB-20261007 方案B
+           修复注册表串台后 min_n=30 与本门同轴, 原 min_n=60 属 DEB-20260806 错轴)
   主门:    配对符号翻转置换 (sign-flip permutation), B=10000, 单侧 α=0.025
            — 安全门 = 「widen 显著劣于 flat」才 FAIL (obs Σδ<0 且 p_worse<0.025)
   双条件:  mean δ > 0 且 bootstrap CI95 下界 > 0 (正向证据, 判分协议模板同款)
@@ -50,7 +50,7 @@ _emit_widen_shadow 采集, 8/19 起) 记录 "widen 带能触发而 flat 带未�
 产物: data/reports/entry_band_widen_verdict_latest.json (atomic write)
      + data/reports/entry_band_widen_verdict_history.jsonl (追加)
 挂载: eval_on_demand=True (裁点/n 达门触发, 照 short_funnel_shadow_eval 惯例,
-     不挂 cron — 影子 36 行未达 min_n=60, 周期跑无增量)
+     不挂 cron — 按需出读数, 周期跑无增量)
 回滚: 删本脚本 + 两份产物 + shadow_registry eval_script 改回 None。
 
 用法: venv/bin/python scripts/settle_entry_band_widen.py [--fetch] [--json-only]

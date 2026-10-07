@@ -897,8 +897,17 @@ REGISTRY: list[ShadowItem] = [
         description="RFC-065: 入场带按 ATR 只放宽不收窄 (chase 上限 8%)。record-only 常开攒样。",
         data_path="data/entry_band_widen_shadow.jsonl",
         config_key="playbook.execution_parameters.entry_band_widen_shadow_enabled",
-        min_n=60,
-        graduation_criteria="预注册见 RFC-065: sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门",
+        # 2026-10-07 [DEB-20261007 方案B, 用户裁「按建议执行」] 判据串台修复:
+        #   原 graduation_criteria 抄的是 DEB-20260806 锚限价影子 (limit_entry) 的主门
+        #   (sign-flip B=10000), min_n=60 亦同批带入 — RFC-065 原文是 n≥30 + 单侧安全门。
+        #   本次只改回 RFC-065 逐字原文 (docs/decisions/RFC-065-entry-band-vol-widen.md:74),
+        #   未下调任何门槛数字 (30 = 文档原值, 非放宽)。守卫: tests/test_shadow_registry_criteria_provenance.py
+        min_n=30,
+        graduation_criteria="预注册见 RFC-065: widen 专属事件 n≥30、单侧安全门 (widen 组不显著劣于 flat)、分组事先固定、分时间窗",
+        verdict_history=[{"date": "2026-10-04", "verdict": "NOT_ESTABLISHED_KEEP_SAMPLING",
+                         "evidence": "settle_entry_band_widen.py 首跑: n=34 (台账36, 缺bars 2), RFC-065 n≥30 门已达; "
+                                     "安全门过 (p_worse=0.058>0.025), 正向证据不足 (mean=-19.09/CI95含0/符号p=0.30) "
+                                     "⇒ 按预注册顺延攒样, 不翻开关。"}],
         # 2026-09-27 [RFC-115] 摘除错轴 eval_script (原挂 limit_entry_shadow_replay.py):
         # 该重放器读的是**别族影子的源** data/limit_entry_shadow.jsonl (189 行, 属 `limit_entry`
         # 影子, 8/29 用户裁 KILLED 停采 ⇒ 8/28 23:20 后零新增), 而本条 data_path 指的是活源
@@ -916,6 +925,8 @@ REGISTRY: list[ShadowItem] = [
         # 由待裁面/人工跑本脚本呈裁。首跑 2026-10-04: n=34 (台账36, 缺bars 2), RFC-065 n≥30
         # 门已达, 判决 NOT_ESTABLISHED_KEEP_SAMPLING (安全门过 p_worse=0.058>0.025, 正向证据
         # 不足 mean=-19.09/CI95含0/符号p=0.30) ⇒ 按预注册顺延攒样, 不翻开关。
+        # 2026-10-07 串台修复后 min_n=30 与结算器 MIN_N_RFC=30 同轴 (原 60 是 DEB-20260806
+        # 的锚, 造成「按文档口径已过门、按注册表口径差 22 行」的双轴并存, 现已消除)。
         eval_script="scripts/settle_entry_band_widen.py",
         eval_on_demand=True,
         created="2026-08-06",
