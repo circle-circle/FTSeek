@@ -1,5 +1,34 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-07 DEB-20261007 F1–F5 落地批（用户裁「按建议执行」）
+
+**裁决**: F1 落地（RFC-123 阶段0 双锚影子）/ F2 修（注册表判据串台）/ F3 关闭留痕（方案 C）/
+F4 并入既有载体（判据实测值栏）/ F5 核实后自动关闭（推送层 G3 确在动态算）。
+
+**提交**: `98590b07b`（F2）、`7b7e718fe`（F1+F4）、+ 本批（核验环 + 台账 + 文档）。
+DEB 验证器 `scripts/verify_deb20261007.py` = E 表 34/34 + C 表 7/7 + 结构 0。
+
+**F1 埋点要点**（`app/playbook/pipeline.py`）: 模块级纯函数 `_resolve_generated_anchor`
+（三级优先级 `raw.planned_entry` → band 沿反推 → `missing`，**`missing` 绝不回退 DB
+`entry_price`**）+ `_anchor_trigger_geometry`（逐分支复刻生产判定段）；`_emit_entry_shadow`
+加嵌套 `dual_anchor` 块（schema `rfc123-s0-v1`），既有平键零改动 ⇒ W7 哨兵 /
+`eval_vwap_gate` / `entry_gate_daily_report` 不受影响。开关
+`playbook.execution_parameters.entry_anchor_dual_shadow_enabled: true`（**改它须重启**，
+HotReloader 穿不透 `playbook.*`）。注册表条目 `entry_anchor_dual`
+（`min_n=300`、`count_mode=where:anchor_recorded=True`、判据逐字引 RFC-123 四条）。
+
+**⚠️ 生效状态**: 已 `systemctl restart ftseek-us`（16:26:16 CST > 提交 16:24:16），零 ERROR、
+4 持仓恢复、Broker 对账一致。但重启时刻是 **ET 04:26 盘前**，`_check_intraday_trigger`
+未被调用 ⇒ 生产 `anchor_recorded` 行数当时 = 0，**接线状态不可判**（不得以「测试全绿」
+声称生效）。已挂一次性核验 job `fe648f3aa7e0`（CST 22:10 ≡ ET 10:10）读生产 jsonl 真值
+定三态 LIVE/DEAD/TOO_EARLY；DEAD 时按脚本内三步排查（grep `[双锚影子]` warning /
+核 `pb_cfg` 真读到开关 / 核启动时刻）。
+
+**遗留债**: ①`entry_anchor_dual` 的 `eval_script` 未写（阶段1 裁决前必须补，否则重演台账
+「有入口无出口」）；②RFC-123 阶段1（锚持久化分离 = 真行为变更）**未授权未动**，须待影子期
+≥10 交易日读数后另案裁决；③方案 A 采集面（指令×轮）是判据人群（指令×ET 日）的**超集**，
+结算器须给两口径分层读数。
+
 ## 2026-10-07 LIVE 工程探针多持仓扩展（3仓 / 每单1股）
 
 **用户裁决**: 为验证 LIVE 多持仓股场景，`max_open_positions` 从 1 调整为 3；
