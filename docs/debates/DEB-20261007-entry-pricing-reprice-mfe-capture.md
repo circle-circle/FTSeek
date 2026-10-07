@@ -1,0 +1,461 @@
+# 议题：盘前入场定价 / 盘中 reprice 范围 / 阈值门 —— 从 MFE·MAE 捕获率、成交率、盈利目标看是否还有可优化点
+
+## 状态
+
+- [x] 进行中（提案待裁）
+- [ ] 待决策
+- [ ] 已决策
+- [ ] 已验证
+- [ ] 已关闭
+
+**状态头**
+
+| 项 | 值 |
+|---|---|
+| 类型 | 辩论分析提案（含 2 项零行为变更治理 + 1 项影子双臂预注册） |
+| 立案日 | 2026-10-07 |
+| 提出者 | Hermes Agent（用户令「讨论辩论分析主题…是否有值得改进优化的点」） |
+| 待谁裁决 | **用户**（frontier F1–F5，见 §10） |
+| 目标读者 | ①裁决者=用户（读 §1 结论 + §10 待裁 + §11 自曝）②复查者=第二 agent（读 §5 E 表 + §9 C 表，全部可独立复跑）③执行者（读 §8 实施步骤，仅在裁决后） |
+| 交易行为变更 | **本提案落地部分零变更**。方案 A/B 纯治理，方案 C 为 record-only 影子双臂（不换退出参数哈希） |
+| 已落码 | 14 个复算脚本 + 1 个验证器已入库 `scripts/deb20261007_*.py`（rc=0 全通过，无 scratch 依赖）；生产代码零改动 |
+
+---
+
+## 1. 一句话目标与可判定子目标
+
+**目标**：判定「盘前设定价格 + 盘中 reprice 范围 + 阈值门」这一族是否还存在可提升盈利/胜率的优化空间；若有，给出**不违反既有恒真红线**且**不破坏在跑功效窗**的最小路径。
+
+四条可判定子目标（每条都能用命令判真假）：
+
+| # | 子目标 | 判定式 | 实测结论 |
+|---|---|---|---|
+| S1 | band 放宽能否换来更多成交？ | 触发率是否随 band 总宽**单调上升** | **否**（6–8% 触发率 67.8% > 8–10% 的 52.9%，反向）⇒ 无空间 |
+| S2 | 盘中 reprice 是否在改写定价、造成损耗？ | reprice 偏移量级 vs band 半宽 | **否**（偏移中位 0.0412%，远小于 band 半宽 3%）⇒ 不是损耗源 |
+| S3 | 阈值门里定价门在真实拦单吗？占多少？ | 漏斗全量归因（**禁 LIMIT 截断**） | **是，33/94 = 35.1%**（chase_cap 32 + knife_gate 1） |
+| S4 | MFE/MAE 捕获失败是「入场端」还是「退出端」性质？ | 失败组 vs 成功组的达峰时刻 / 达峰幅度 | **混合，但偏入场端弱单**（见 §5 E9–E11 与 §11 自曝#4）⇒ 定价轴救不了 |
+
+**头条结论（费用后净额口径）**：用户问的三个轴里，**盘前定价 / reprice 范围这一轴已无剩余空间**，且有三方独立互证（§4）。真正剩余的靶点是：①**退出轴的早达峰处置**（但被 OKR-2026-10 KR1 冻结至 10/31，见 §6）②**锚生命周期混用**（元问题，零行为变更可治）③**注册表判据串台**（治理缺陷，导致该影子永远等不到裁决日）。
+
+---
+
+## 2. 问题陈述（含普查实测）
+
+### 2.1 用户原始问题
+
+> 「讨论辩论分析主题，关于盘前设定价格 盘中reprice的范围逻辑 包括阈值门等，从mfe/mae 捕获率，成交率以及盈利目标而言，是否有值得改进优化的点」
+
+### 2.2 机制现状（读码实测）
+
+| 组件 | 位置 | 实值 |
+|---|---|---|
+| band SSOT | `app/playbook/entry_band.py`（113 行） | `knife=3%` / `chase=5%` 扁平；vol_widen 分支存在但开关关闭 |
+| vol_widen 生产开关 | `config/unified_config.yaml:1254` | `entry_band_vol_widen_enabled: false` |
+| vol_widen 影子开关 | `config/unified_config.yaml:1255` | `entry_band_widen_shadow_enabled: true` |
+| reprice 主体 | `app/playbook/pipeline.py` ~4440–4770 | `_new_entry` = `_ask`(BUY) / `_bid`(SHORT)，或走 archetype 路由 `limit_price` |
+| chase_cap 归一锚 fallback② | `pipeline.py:4905,4928` | band 沿反推生成价（**优先级②**，①为 `raw.planned_entry`） |
+| chase_cap 终态拦截 | `config/unified_config.yaml:1579` | `chase_cap_enforce_enabled: true` |
+| T4 双轨契约 | `tests/test_entry_zone_dual_track_contract.py` | 执行端**禁读** `entry_low/entry_high`，触发几何按 `entry_price` 现算 3%/5% |
+
+### 2.3 既有实现与消费者普查（P0，原始输出）
+
+```
+$ grep -n "entry_band_vol_widen_enabled\|chase_cap_enforce_enabled\|entry_archetype_routing_enabled\|pullback_limit_shadow_enabled\|limit_entry_shadow_observe" config/unified_config.yaml
+1254:      entry_band_vol_widen_enabled: false
+1255:      entry_band_widen_shadow_enabled: true
+1566:      limit_entry_shadow_observe: false
+1571:      pullback_limit_shadow_enabled: true
+1579:      chase_cap_enforce_enabled: true
+1584:      entry_archetype_routing_enabled: false
+```
+
+⇒ 定价族里**只有 `chase_cap_enforce_enabled` 是 live 拦截**，其余全部 `false`（含 RFC-118 的路由开关）。**这决定了本提案不能提「调 reprice 范围」——因为可调的东西大多没开着。**
+
+### 2.4 同轴既有影子枚举（P0.5 强制检查，grep 注册表而非凭记忆）
+
+| shadow_id | status | min_n | 当前 n（`_count_samples` 实算） | 与本 DEB 的关系 |
+|---|---|---|---|---|
+| `entry_band_widen` | OBSERVING | 60 | 38 | **本 DEB 方案 B 的修复对象**（判据串台，见 §5 E14） |
+| `pullback_limit_replay`(RFC-118) | OBSERVING | — | forward n_paired=30/腿 | 本 DEB §7 复算其 6 门读数，**不重裁** |
+| `exit_param_shadow` | OBSERVING | 30 | **549（18.3×）** | **本 DEB 方案 C 的宿主**（加一个 variant 双臂） |
+| `early_dead_signal_shadow` | OBSERVING | 30 | **439（14.6×）** | 相关：捕获失败批的 DEAD_SIGNAL 出口 |
+| `entry_delay_confirm` | OBSERVING | 20 | 1108 | 与 RFC-118 互斥（转正时二选一），本 DEB 不动 |
+| `gap_chase_gate` | OBSERVING | 30 | 32 | 相邻轴（gap 追高），本 DEB 不动 |
+| `premarket_invalidation` | OBSERVING | 20 | 47 | 相邻轴（盘前失效），本 DEB 不动 |
+
+**撞车普查结论**：本 DEB 的唯一增量 = ①用 `time_to_mfe` 字段首次判定捕获失败的**时机 vs 幅度**性质（既有文档无此读数）②用 `planned_entry` 真锚证伪「band 违反规格」这一伪缺陷（既有文档均按 DB `entry_price` 算）③发现注册表 `entry_band_widen` 判据串台（既有文档与 RFC-115 均未发现）。**不新建任何台账、不新建 cron。**
+
+### 2.5 既有裁决撞车普查（红线）
+
+`docs/ADJUDICATED-CRITERIA.md:63` **C9 逐字**：
+
+> **不得据「未触发集的错失收益」改触发确认门或 entry 定价**（含「entry 改可成交价 / 距最高价 X% 自动下调」类提案）…**「改 entry 定价使其可成交」= 把纸面 edge 落地化，一律不予受理**
+
+同族已闭合轴（本 DEB **不重开**，只在 §4 用新数据交叉验证其成立）：
+
+| 轴 | 出处 | 实测依据 |
+|---|---|---|
+| re-price 封顶 | RFC-068 | 172 笔复演：真追高仅 4 笔且 4 笔全盈利；封顶救不了任何一笔历史亏损 |
+| band 区间收窄 | DEB-20260829 方案B | 不利区成交胜率最高 61.4%，收窄会拒掉回调赢家 |
+| DA 定价直通 | DEB-20260916 §七 | Spearman ρ 全部 < 0.15（SL距 +0.080 / RR −0.123 / 追价距离 −0.020） |
+| re-price 几何守卫 | DEB-20260916 | 日配对差 −$16.76/笔，t=−0.35，与 0 不可分辨 |
+| deep_far 深被动限价 | DEB-20260806 主张3 | 8.6% 成交率；漏单子集净 −$497.55（避开的全是输家 = 选择偏差） |
+| 延长 TTL | DEB-20260930 | 5min Δ+416.8 vs 30min Δ−224.4；拖长 = 资金挂死 |
+| 入场价位置是盈亏主因 | DEB-20260829 方案D | 追价偏离度与盈亏无单调关系（E6）；成交均匀散布全区间（中位 0.51 分位） |
+
+**本 DEB 的合规性声明**：不提任何「改 entry 定价使其可成交」类方案；不提任何以「未触发集错失收益」为依据的门调整。所有建议要么是零行为变更治理（A/B），要么是 record-only 影子（C），要么是维持现状（D）。
+
+---
+
+## 3. 非目标（划界，防范围蔓延）
+
+1. **不重裁 RFC-118**：其 6 门读数本 DEB 只做独立复算与披露，不改 θ、不改判据、不提接线。
+2. **不动 `chase_cap` / band 宽度 / reprice 范围的任何参数**：C9 红线 + §4 三方互证。
+3. **不新建台账、不新建 cron、不新建注册表条目**：方案 C 复用既有 `exit_param_shadow`（549 行、18.3× 门槛）。
+4. **不在 2026-10-31 前改任何退出参数**：会换哈希 ⇒ `W1_oct_cohort_broken` 直推 ⇒ OKR-2026-10 KR1 破功（§6）。
+5. **不据现役窗（10/1 起）净额作裁决依据**：窗净仅 +$520.38，剔 Top-3 盈利笔后转负（§5 E7）⇒ 单票支配。
+6. **不提「加深 DA/UE 分析质量以降低入场即错」**：C12 恒真红线（8/8 轴全否决）。
+
+---
+
+## 4. 三方互证：定价轴为何已无剩余空间
+
+这是本 DEB 最重要的判读——**三条互相独立的证据链同向**，不是单一读数的孤证：
+
+| 证据链 | 读数 | 含义 |
+|---|---|---|
+| **① band 宽度 ↔ 触发率（反向）** | 总宽 6–8%：n=475，触发率 **67.8%**，执行率 63.6%<br>总宽 8–10%：n=308，触发率 **52.9%**，执行率 49.0% | 「放宽 band 换更多成交」被数据直接否证——**越宽越难触发** |
+| **② reprice 偏移量级（微小）** | n=633，执行价 vs 落库 entry 偏差中位 **0.0412%**，p90=0.1904%，max=3.7557% | 盘中 reprice 几乎不改价；量级远小于 band 半宽 3% ⇒ 不是损耗源 |
+| **③ 成交价落在 band 外的比例（极低）** | 8/633 = **1.3%** | 定价几何与实际成交几乎不冲突 |
+
+**加上既有裁决的第四方**：RFC-068 已证「re-price 封顶救不了任何一笔历史亏损」（8/28 全部亏损笔均在锚定价 ±0.3% 内成交，亏损发生在持仓段）。
+
+⇒ **定价/reprice 轴的机制前提不成立**：它既没在改价（②），改价也没造成损耗（③），而放宽几何还会降低触发率（①）。
+
+---
+
+## 5. 数据与实证表（E 表）
+
+**量纲铁律**（本轮踩过，见 §11 自曝#1）：`trade_records.pnl_pct` = **小数比例**；`mfe_pct`/`mae_pct` = **百分点**。捕获率 = `pnl_pct*100 / mfe_pct`。
+**C3 成交判定铁律**：用反事实限价腿 `status ∈ {entered, expired_unfilled}`，**不得**用 `actual_executed`（后者是市价腿，会差一个数量级）。
+
+所有命令作者已实跑（2026-10-07），期望列为**真实输出逐字摘录**。工作目录一律 `/opt/ftseek/FTSeek-US`。
+
+| 编号 | 声称 | 复现命令 | 期望输出（作者实跑值） |
+|---|---|---|---|
+| E1 | MFE/MAE 填充率足以支撑捕获率分析 | `venv/bin/python -c "import sqlite3;c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True);print(c.execute('SELECT COUNT(*),COUNT(mfe_pct),COUNT(mae_pct),MAX(trade_date) FROM trade_records').fetchone())"` | `(959, 957, 957, '2026-10-06')` ⇒ 填充率 99.8% |
+| E2 | 整体捕获率与费用后净额 | `venv/bin/python scripts/deb20261007_mfe_capture.py` | 含 `捕获中位`、`MFE中位`、`费用`、`WR` 行；全量 n=957 |
+| E3 | 摸到够付费用的利润 vs 实际落袋的落差 | `venv/bin/python scripts/deb20261007_capture_failure.py` | `摸到过够付费用的利润 = 619 (65.2%)` / `落袋成功 = 462   落袋失败 = 157  ⇒ 捕获失败率 = 25.4%` |
+| E4 | 捕获失败批是「刚够付费用就反向」而非大利润回吐 | `venv/bin/python scripts/deb20261007_capture_failure.py` | `落袋失败     n= 157  MFE bps: 中位=   52.2 p75=   76.3 p90=  106.5` / `落袋 bps: 中位=  -13.2  \|MAE\|中位=0.64%` |
+| E5 | 捕获失败批分散，可作方向判读（非单日支配） | `venv/bin/python scripts/deb20261007_capture_failure.py` | `捕获失败批总净=$-5014.02  独立日数=55` / `⇒ Top-3 日占比 = 27.8% (分散, 可作方向判读)` |
+| E6 | 死 MFE 池已被既有治理吃掉大半（73.3%→18.5%） | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `~2026-06-26 (旧架构)            344    252    73.3%` / `2026-09-01~09-30             184     34    18.5%` / `2026-10-01~ (现役)              31      6    19.4%` |
+| E7 | 现役窗净额单票支配，不得作裁决依据 | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `9/1 起 n=215  死池 n=40 (18.6%)` / `窗净=$11.26` |
+| E8 | 死池出血口 88% 是 SL_INITIAL + OVERNIGHT_GAP（已由 C11 + B19 承载） | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `SL_INITIAL                 n= 13 净=$ -1569.74` / `OVERNIGHT_GAP_STOP         n=  5 净=$ -1516.55`（合计 −$3,086 / 死池 −$3,518 = 87.7%） |
+| E9 | **决定性**：失败组达峰更早、持有更久 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `落袋成功     n= 308` … `time_to_mfe: 中位=  25.20min` … `⇒ MFE 达峰时刻占持有时长 = 70.0%`<br>`落袋失败     n= 107` … `time_to_mfe: 中位=  15.90min` … `⇒ MFE 达峰时刻占持有时长 = 22.1%` |
+| E10 | 落袋成功率随达峰变晚而**上升**（单调） | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `5-15         163      68.1%` / `15-30         80      75.0%` / `30-60         63      74.6%` / `60-120        35      82.9%` / `>120min       74      82.4%` |
+| E11 | **自曝#4 依据**：两组「>费用线占比」几乎相同 ⇒ 「拿不住」判读不成立 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `失败     45m       57    0.189%    0.229%       77.2%` vs `成功     45m      131    0.335%    0.738%       78.6%` |
+| E12 | band 越宽触发率越低（S1 反向证据） | `venv/bin/python scripts/deb20261007_deadpool_fee_band.py` | `6-8%         475    67.8%    63.6%` / `8-10%        308    52.9%    49.0%` |
+| E13 | reprice 偏移量级微小（S2 证据） | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `n=633  \|exec-entry\|/entry 中位=0.0412% p90=0.1904% max=3.7557%` |
+| E14 | **注册表判据串台**：文本抄的是 DEB-20260806 锚限价影子的主门，不是 RFC-065 的 | `grep -n -A10 'id="entry_band_widen"' app/playbook/shadow_registry.py \| head -14` | `min_n=60,` / `graduation_criteria="预注册见 RFC-065: sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门",` |
+| E15 | RFC-065 文档的真实判据是 n≥30 + 单侧安全门 | `grep -n "n≥30" docs/decisions/RFC-065-entry-band-vol-widen.md` | `13:- 翻开关路径: 影子事件 n≥30 + 单侧安全门 + 分时间窗 → entry_band_vol_widen_enabled: true + 重启`<br>`74:- 翻开关判据预注册 (判分协议模板同款): widen 专属事件 n≥30、单侧安全门 (widen 组不显著劣于 flat)、分组事先固定、分时间窗` |
+| E16 | 该影子当前 n=38 ⇒ 按文档口径已过 n 门，按注册表口径差 22 行 | `venv/bin/python scripts/deb20261007_adjudication_backlog.py` | 含 `entry_band_widen` 行，counted=38 / min_n=60 |
+| E17 | **自曝#2 依据**：用真生成锚重算，band 违反率从 61.0% 降到 0.3% | `venv/bin/python scripts/deb20261007_band_artifact.py` | `违反「只放宽不收窄」规格: entry_price锚 = 478/783 (61.0%)` / `planned_entry锚 = 2/605 (0.3%)` / `分类翻转总数 = 407 / 605 (67.3%)` |
+| E18 | band 反推锚与真生成价吻合 99.7%，与 DB entry_price 仅吻合 33.6% | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `吻合(\|偏差\|<0.1%) = 603/605 (99.7%)`（vs planned_entry）/ `吻合(\|偏差\|<0.1%) = 203/605 (33.6%)`（vs entry_price）/ `量化: 66.4% 的指令 entry_price ≠ 生成价` |
+| E19 | chase_cap fallback② 当前影响面为 0（缺陷现在不咬人） | `venv/bin/python scripts/deb20261007_band_impact.py` | `cap 倒挂需归一的指令 n=36` / `其中走 fallback② (无 raw.planned_entry) n=0` / `fallback② 且 band 畸形 ⇒ 归一锚失真 n=0` |
+| E20 | **自曝#3 依据**：漏斗定价门占比是 35.1%，不是 0% | `venv/bin/python scripts/deb20261007_funnel_breakdown.py` | `已触发未执行 全量 n=94` / `定价门(chase/knife)             33 ( 35.1%)` / `资金/时段/执行失败                   43 ( 45.7%)` |
+| E21 | C3 可达性梯度严格单调（RFC-118 唯一活信号） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `<0.25ATR     n=  55 entered= 41 fill=  74.5%` / `0.25-0.5     n=  49 entered= 12 fill=  24.5%` / `0.5-1.0      n=  45 entered=  1 fill=   2.2%` / `>1.0         n=  14 entered=  0 fill=   0.0%` |
+| E22 | C3 修正口径后与生产读数卡逐位吻合 | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `不可达(>0.5ATR)     n=  59 entered=  1 fill=0.017` / `可达(≤0.5ATR)      n= 104 entered= 53 fill=0.510` |
+| E23 | RFC-118 误杀率 85.1% vs G5 门 ≤40%（差 2 倍） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `expired n=109  actual_net 已知 n=74  其中赢家 n=63` / `⇒ 全窗误杀率 = 85.1%  (G5 门 ≤40%)` |
+| E24 | RFC-118 forward 6 门读数（两腿各 5/6 FAIL） | `venv/bin/python -c "import json;s=json.load(open('data/shadow/pullback_limit_replay_v2_latest.json'))['summary']['rfc118_gate_sim']['legs'];print({k:(v['forward']['n_paired'],v['forward']['bp_per_trade_vs_market'],v['forward']['in_gate']['c3_fill_official_denom'],v['forward']['in_gate']['miskill_expired']['rate'],v['forward']['in_gate']['forgone_same_ruler_usd'],v['forward']['day_clustered']['t']) for k,v in s.items()})"` | `{'0.25': (30, -0.3, 0.75, 0.75, 41.76, 0.09), '0.5': (30, -8.6, 0.538, 0.75, 183.86, -0.33)}`<br>键序 = (n_paired, bp_per_trade, c3_fill, miskill_rate, forgone_usd, t) |
+| E25 | 费用线现状：forward 窗毛利已覆盖费用（缺口 −33.9bp），立项时的 ~6.9bp 已过期 | `venv/bin/python scripts/deb20261007_fee_gap_forward.py` | `forward (>=09-30)      n=  33 名义=$     187,647  费用=   9.1bp  毛利=  43.0bp  缺口= -33.9bp`<br>`9月全月                   n= 208 名义=$   1,135,295  费用=  14.2bp  毛利=  14.3bp  缺口=  -0.1bp`<br>`全历史                    n= 950 名义=$  15,262,864  费用=   6.0bp  毛利=  14.5bp  缺口=  -8.5bp` |
+| E26 | 31 条影子样本达标仍 OBSERVING；退出轴超门槛最狠 | `venv/bin/python scripts/deb20261007_adjudication_backlog.py` | 含 `exit_param_shadow` 549/30、`early_dead_signal_shadow` 439/30 |
+| E27 | 退出参数功效窗冻结至 10/31（决定方案 C 时序） | `grep -n "_OCT_COHORT_START = " scripts/daily_invariant_check.py` | `_OCT_COHORT_START = "2026-09-17"` |
+| E28 | KR1 判据原文（换哈希 = 破功） | `grep -n "KR1" docs/OKR-2026-10.md \| head -3` | `### KR1 (功效窗冻结): oct cohort 退出哈希唯一值数 = 1, 攒满 200 笔已结算` |
+| E29 | C9 红线逐字（本 DEB 合规性依据） | `grep -n "^\| C9" docs/ADJUDICATED-CRITERIA.md \| cut -c1-200` | 以 `\| C9 \| **不得据「未触发集的错失收益」改触发确认门或 entry 定价**` 开头 |
+| E30 | 复算脚本已入库且无 scratch 依赖 | `ls scripts/deb20261007_*.py \| wc -l && grep -rn "hermes/cache/scratch\|/tmp/" scripts/deb20261007_*.py \| wc -l` | `14` 换行 `0` |
+| E31 | `time_to_mfe` 覆盖率仅 45.8%，缺失**结构性**偏向最坏出口（自曝#10 依据） | `venv/bin/python scripts/deb20261007_time_to_mfe_probe.py` | `有 time_to_mfe n=437  缺失 n=518 (覆盖率 45.8%)` / `sl_hit` `TRAILING_STOP` `STRUCTURE_EXIT` 缺失率 `100.0%` / `SL_INITIAL` 缺失率 `85.7%` |
+| E32 | E9/E10 人群是**优选人群**（中位单笔 +$6.97 vs 缺失人群 −$18.88），死池最大出血口仅覆盖 14.3% | `venv/bin/python scripts/deb20261007_ttm_bias.py` | `有值人群 n=437 净=$   5542.05 中位单笔=$    6.97` / `缺失人群 n=518 净=$   7413.62 中位单笔=$  -18.88` / `SL_INITIAL             全量 n=  28 净=$  -4421.99 \| 有值 n=  4 净=$  -804.63  ⇒ 覆盖 14.3% 的人, 18.2% 的钱` |
+
+**integrity 块**（产物类数字）：
+
+| 项 | 值 |
+|---|---|
+| n（实际样本） | trade_records 全量 959 行；有 MFE 957；有费用 950；有 band 783；有 `time_to_mfe` **437（占已结算 955 的 45.8%）** —— ⚠️ 与 E9–E11 用的 53.3% 是**两个人群口径**（53.3% = 占「捕获候选 823」；45.8% = 占「全部已结算 955」），缺失为**结构性**（E31/E32），是 E9–E11 的主要局限 |
+| window | 2026-04-24 ~ 2026-10-06（DB `MAX(trade_date)`）；RFC-118 forward 窗 = 2026-09-30 起，n_days=5 |
+| universe | `trade_records`（PLAYBOOK_SIM 已结算，`exit_time` 非空口径）；C3 用 `data/shadow/pullback_limit_replay_v2.jsonl`（183 行） |
+| truncation_checked | ✅ E 表命令均为全量聚合，**无 LIMIT 截断**（自曝#3 的根因正是 LIMIT 6）；RFC-118 产物 mtime `2026-10-07 05:47:05`，为当日新鲜产物 |
+
+⚠️ **口径差必须显式标注**：E3/E4 的「落袋失败 157 笔」人群 = 有费用+MFE 的 n=950 中「摸到过利润但未落袋」；E9/E10/E11 的「落袋失败 107 笔」人群 = **有 `time_to_mfe` 字段的 n=439 子集**中的失败批。两者**不可相加、不可混用**。`time_to_mfe` 覆盖率仅 53.3% 是 E9–E11 的主要局限（见 §9 C6）。
+
+---
+
+## 6. 🔴 时序约束：退出参数正被 OKR-2026-10 KR1 冻结
+
+这是本 DEB 唯一的硬时序约束，也是我在会话中**先判错后自纠**的一项（§11 自曝#9）。
+
+| 项 | 实值 | 证据 |
+|---|---|---|
+| 冻结载体 | `_OCT_COHORT_START = "2026-09-17"` | `scripts/daily_invariant_check.py:148` |
+| 判分窗 | 2026-09-17 → **2026-10-31** | `docs/OKR-2026-10.md:4` |
+| KR1 判据 | oct cohort 退出哈希唯一值数 = 1，攒满 200 笔已结算 | `docs/OKR-2026-10.md:17` |
+| 当前进度 | 34c7 已结算 81 笔（9/17→10/2，~6.8 笔/交易日）⇒ **200 笔预计 ~10/24 达成** | `docs/OKR-2026-10.md:21` |
+| 违反后果 | 窗内出现第 2 个哈希 ⇒ `W1_oct_cohort_broken` **当天直推** ⇒ KR1 破功 | `daily_invariant_check.py:145–147` 注释 |
+
+**判读**：C1「退出参数 9 月全月冻结」确实已到期（9/30），但它**被 OKR-2026-10 KR1 接替**，不是解冻。现在动任何退出参数 = 毁掉 9/17 以来 20 天的干净功效窗 ⇒ KR2 的「edge vs 费用线」三态结论失去统计基础。
+
+⇒ **方案 C 必须设计成不换哈希的形态**（record-only 影子双臂），这是它唯一的合法落地路径。
+
+---
+
+## 7. RFC-118 复算披露（不重裁，只独立复核 + 更正一处）
+
+生产产物 `data/shadow/pullback_limit_replay_v2_latest.json`（mtime 2026-10-07 05:47）的 `summary.rfc118_gate_sim.legs`：
+
+| 门 | 判据（逐字，`criteria` 字段） | θ=0.25 | θ=0.5 |
+|---|---|---|---|
+| G1 | forward paired n≥40（每腿） | 30 ❌ | 30 ❌ |
+| G2 | 门内 C3 fill≥0.5（官方分母） | **0.75 ✅** | **0.538 ✅** |
+| G3 | bp_per_trade≥费用缺口bp（推送层动态算） | −0.3 ❌ | −8.6 ❌ |
+| G4 | 日聚类 df 校正临界 | t=0.09, n_days=5 ❌ | t=−0.33, n_days=5 ❌ |
+| G5 | 门内 expired 误杀≤0.40（RFC-081 冻结分母） | **0.75 ❌** | **0.75 ❌** |
+| G6 | forgone_same_ruler≤0 | +41.76 ❌ | +183.86 ❌ |
+| **合计** | 双腿各自独立过全门才呈裁 | **5/6 FAIL** | **5/6 FAIL** |
+
+🔴 **更正（§11 自曝#8）**：我在会话中曾说「θ=0.5 腿 6/6 FAIL」。**错**——θ=0.5 的 `c3_fill_official_denom=0.538 ≥ 0.5`，**G2 是过的**。两腿均为 5/6 FAIL。
+
+**判读**：G5 误杀率 0.75 vs 门 ≤0.40（差近 2 倍）、G6 放弃经济 +$41.76/+$183.86 vs 门 ≤0（符号相反）。全窗独立复算的误杀面更极端：expired 已知结局 74 笔中 63 笔是赢家 = **85.1%**，误杀批真实净额 **+$928.47**（门内可达 83.3% / +$289.68，门外不可达 87.5% / +$638.79）。
+
+⇒ 这是**方向性负读数，不是样本不足**。挂限价等回踩等不到，而这些单本来市价成交能赚钱。**维持攒样、不接线**（方案 D）。
+
+---
+
+## 8. 方案设计
+
+### 方案 A：RFC-123 阶段 0 双锚影子（record-only，零行为变更）
+
+- **提出者**：Hermes（本 DEB）
+- **核心思路**：`entry_price` 同时承担「生成锚」与「执行锚」，reprice 逐轮把它改写为当前可执行价，而其它路径仍拿它当生成锚。RFC-123 主张把两个锚分开存。**阶段 0 = 只埋点记录分歧，不改任何判定**。
+- **实测依据**：66.4% 的指令 `entry_price` ≠ 生成价（E18）；band 沿反推锚与真生成价吻合 99.7%、与 DB `entry_price` 仅吻合 33.6%（E18）；偏差中位 1.0101%、p90=3.6536%、max=7.5326%。
+- **当前影响面 = 0**（E19）：cap 倒挂需归一的 36 笔**全部有 `raw.planned_entry`**（优先级①），无一走 fallback②。**所以这个缺陷现在不咬人。**
+- **真实代价**：①`pipeline.py:4905,4928` 的 fallback② 已写在生产代码里，只是暂时没被走到——任何未来新增的「以 DB `entry_price` 为锚」逻辑都会踩雷；②**所有事后分析都会被污染**——本 DEB 作者本轮就中招两次（自曝#2、#3 的根因都是它）。
+- **优点**：治的是「分析被污染」这个元问题；零交易行为变更；不碰退出哈希（不受 §6 约束）；RFC-120 已用同一逻辑禁了 chase_cap 那一处，A 是把它推广 + 加可见性。
+- **缺点**：`planned_entry` 缺失率 **22.7%**（178/783）⇒ 影子会大量落 `missing`，**必须先定 `missing` 的处置语义**，否则分歧率读数无意义。
+- **适用条件**：用户裁 F1 通过。
+- **落地形态**：追加字段到既有 jsonl（**不新建台账**，遵守 review-system-design 铁律 3），按日去重 + TEST 守卫，注册表登记为独立 `collection_retired`-compatible 条目。
+
+### 方案 B：修 `entry_band_widen` 注册表判据串台（治理，零行为变更）
+
+- **提出者**：Hermes（本 DEB）
+- **核心思路**：注册表 `graduation_criteria` 抄错了对象——`sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门` 是 **DEB-20260806 锚限价影子**的主门（置换检验），不是 RFC-065 的。RFC-065 的真实判据是 `widen 专属事件 n≥30 + 单侧安全门(widen组不显著劣于flat) + 分组事先固定 + 分时间窗`。连带 `min_n` 被从 30 拉到 60。
+- **加重情节**：注册表 `:902–906` 注释显示 **RFC-115 已修过一次同条目的「错轴 eval_script」**（原挂别族影子的 `limit_entry_shadow_replay.py`），但**同批漏了 `graduation_criteria` 的错轴**。这正是 review-system-design Pitfalls「修完一处根因缺陷就默认兄弟路径同修」的实例。
+- **后果**：当前 n=38 ⇒ **按文档口径已过 n 门，按注册表口径差 22 行，永远等不到裁决日**。与台账记载的「攒着永远没有裁决日 = 用无限攒样规避裁决」同族。
+- **优点**：修 bug 不是挪门柱；让该影子重新有裁决日；零行为变更。
+- **缺点**：RFC-065 判据是**合取**，n 达标 ≠ 判据达标；文档自己记录了「新增组 n=6 且 MU 占 67%、高 ATR 池本身为负（止血非变正）」⇒ 证据本来就弱，修完大概率仍不翻开关。
+- **适用条件**：用户裁 F2 通过。**约束：只准把判据文本改回 RFC-065 逐字原文，不得下调任何门槛数字。**
+- **附带实测**（修正我上一轮的措辞，见 §11 自曝#5）：planned_entry 锚下 knife/chase 中位在**所有 ATR 桶都是 3.00%/5.00%**，含 extreme 桶（ATR 中位 9.52%）。按 vol_widen 规格该桶应得 knife≈3.96%/chase≈6.6% ⇒ **vol_widen 分支从未在生产生效**（与 `entry_band_vol_widen_enabled: false` 一致）。所以准确说法是「band 全走扁平带、几何合规」，不是「vol_widen 合规生效」。
+
+### 方案 C：退出轴「早达峰处置」变体进 `exit_param_shadow` 双臂（record-only，不换哈希）⭐推荐主线
+
+- **提出者**：Hermes（本 DEB）
+- **核心思路**：E9/E10 显示捕获失败批**达峰更早**（15.9min vs 25.2min）、**持有更久**（72min vs 36min）、**达峰占持有时长仅 22.1%**（成功组 70.0%），且落袋成功率随达峰变晚单调上升（68.1%→82.9%）。⇒ 存在「早达峰单处置不足」的可测假设。
+- 🔴 **依据强度已下修（自曝#10）**：上述读数建立在 `time_to_mfe` **覆盖率仅 45.8% 且缺失结构性偏向最坏出口**的人群上（`SL_INITIAL` 仅覆盖 14.3%；有值人群中位单笔 +$6.97 vs 缺失人群 −$18.88）。
+  ⇒ E9/E10 证明的是「**在优选人群上，早达峰与落袋失败相关**」，**不是**「早达峰导致失败」。
+  ⇒ 因此本方案定位从「可测靶点」降为「**因果未证的相关性观察**」；若 F3 裁通过，第一步必须是补 `time_to_mfe` 采集覆盖（含旧架构出口命名），**不是**直接加 variant 臂。在既有 `exit_param_shadow`（549 行、18.3× 门槛、record-only）里**加一个 variant 臂**同步攒样，10/31 窗关闭时直接拿配对读数裁决。
+- **为什么是唯一合法路径**：§6 显示改退出参数 = 换哈希 = KR1 破功。而 variant 臂是 record-only 反事实计算，**不进生产退出链、不换哈希** ⇒ 既不破 KR1，又不浪费这 20 天。
+- **优点**：零等待（10/31 一到就有裁决材料）；复用既有宿主与结算器，不新建台账/cron；宿主样本已 18.3× 门槛。
+- **缺点 / 必须诚实披露的收益上限**：**E11 已削弱本方案的强度**（自曝#4）——失败组与成功组的「>费用线占比」几乎相同（45m: 77.2% vs 78.6%，差 1.4pp），说明**不是「利润来了拿不住」**，而是失败组 MFE 幅度只有一半（0.189% vs 0.335%）⇒ **本就是弱单，早锁只能救一部分**。因此本方案的期望收益**必须按「幅度减半的弱单可挽回分量」估，不得按「全部 157 笔回吐」估**。
+- **适用条件**：用户裁 F3 通过 + 预注册判据先写死（§8.C 判据）。
+- **预注册判据（先写死再攒样，防阈值购物）**：
+
+| 门 | 判据 | 依据 |
+|---|---|---|
+| **H0（前置，自曝#10 新增）** | `time_to_mfe` 覆盖率 ≥80% **且** `SL_INITIAL`/`OVERNIGHT_GAP_STOP` 两出口各自覆盖率 ≥60% | 现覆盖率 45.8%、`SL_INITIAL` 14.3% ⇒ **H0 未过前不得进 H1**；否则在优选人群上攒样 = 把选择偏倚固化进判据 |
+| H1 | 变体臂配对样本 n≥40 | 对齐 RFC-118 G1 同量级；`exit_param_shadow` 既有判据 N≥30 之上加严（因本轴为新假设 + 因果未证） |
+| H2 | 变体臂 capture > baseline，且优于比例 ≥55% | **逐字复用**宿主既有判据（`exit_shadow_graduation.py` 预注册 2/3 条），不自创阈值 |
+| H3 | 按日聚类 \|t\|≥2 且双侧 p≤0.05，附 MDE(80%) | 宪章第 9 律（统计结论必须带日聚类 + MDE） |
+| H4 | 剔除最强单日后净额仍 >0 | 防单票支配（E7 现役窗教训） |
+| H5 | 变体臂**不得**增加 `OVERNIGHT_GAP_STOP` / `SL_INITIAL` 笔数 | C11 红线：这两个出口已承载死池 87.7% 出血（E8），早锁若把单推到隔夜 = 反向恶化 |
+| 裁决 | **H0 不过 ⇒ 方案 C 直接关闭**（不进入攒样）；H0 过且其余全门过 ⇒ 10/31 窗关闭后提请转正（另案，须换哈希 ⇒ 须新 cohort）；任一不过 ⇒ 变体臂退役留痕 | 与 RFC-118「都不过→影子退役留痕」同纪律 |
+
+### 方案 D：RFC-118 维持攒样、不接线（现状）
+
+- 依据：§7 两腿各 5/6 FAIL，G5/G6 为**方向性负读数**。
+- 优点：零动作零风险。缺点：无。
+- **不建议**在窗内改 θ（`criteria` 逐字：「窗内改θ=重新裁决」）。
+
+### 方案 E：G3 判据的「费用缺口」改按 forward 窗动态读（判据维护）
+
+- **依据**：E25 显示现役窗（9/1 起 $3–6k 主力档）费用中位 7.6bp、毛利中位 27.8bp ⇒ 毛利已覆盖费用；而 RFC-118 立项时用的 ~6.9bp 缺口已过期。`criteria` 字段本身写的是「bp_per_trade≥费用缺口bp（**推送层动态算**，同屏）」⇒ **判据文本已要求动态算，本方案只是核实推送层真的在动态算**，若写死则修。
+- 优点：判据不失真。缺点：属维护性，不产生新收益。
+- **约束**：这是判据维护，**不是放宽门**。核实后若发现推送层已动态算 ⇒ 本方案自动关闭，零动作。
+
+### ❌ 不予受理的方案（C9 红线 + 本文数据反向）
+
+| 提议 | 为何不予受理 |
+|---|---|
+| 放宽 band 以多成交 | E12 反向：band 越宽触发率越低（67.8%→52.9%） |
+| 收窄 band 以提精度 | DEB-20260829 方案B 已裁：不利区成交胜率最高 61.4%，收窄会拒掉回调赢家 |
+| 调 chase_cap / reprice 范围 | E13：reprice 偏移中位仅 0.0412%，不是损耗源；且 C9「改 entry 定价使其可成交」一律不予受理 |
+| re-price 封顶 | RFC-068 已证：救不了任何一笔历史亏损（亏损发生在持仓段非入场段） |
+| DA 定价直通 | DEB-20260916 §七：ρ 全部 <0.15，无增量预测力 |
+| 针对死 MFE 池新建入场门 | E6：死池率已 73.3%→18.5%；E8：出血口 87.7% 已由 C11+B19 承载；C12 恒真红线 8/8 轴全否决 |
+| 以「未触发集错失收益」改触发确认门 | C9 恒真红线，一律不予受理 |
+
+---
+
+## 9. 复查清单（C 表 —— 请第二 agent 逐条打假）
+
+**复查者纪律**：只读（禁改文件、禁 git 写操作、禁重启服务）；必须给原始命令与原始输出；不许软化也不许为凑数编问题。**任何否决性结论请自行在真文件上重跑一遍**——本文作者的自报告同样是声称（本文 §11 有 9 条自曝为证）。
+
+| 编号 | 声称 | 复查命令 | **反例判据**（什么输出说明我错） |
+|---|---|---|---|
+| C1 | 定价轴无剩余空间（S1+S2 反向证据成立） | `venv/bin/python scripts/deb20261007_deadpool_fee_band.py` 与 `venv/bin/python scripts/deb20261007_anchor_provenance.py` | band 总宽 8–10% 桶触发率 **≥** 6–8% 桶 ⇒ S1 反向证据不成立；或 reprice 偏移中位 **>1%** ⇒ S2 不成立 |
+| C2 | band「违反只放宽规格」是伪影，真锚下违反率 0.3% | `venv/bin/python scripts/deb20261007_band_artifact.py` | `planned_entry锚` 行违反率 **>5%** ⇒ 不是伪影，是真 SSOT 漂移（本 DEB 方案 A 的紧迫性需上调） |
+| C3 | 注册表 `entry_band_widen` 判据串台（抄了 DEB-20260806 的门） | `grep -n -A10 'id="entry_band_widen"' app/playbook/shadow_registry.py \| head -14` 后 `grep -rn "sign-flip B=10000" docs/debates/DEB-20260806*.md docs/decisions/RFC-065*.md` | `sign-flip B=10000` 在 **RFC-065** 文档里命中 ⇒ 注册表没抄错，是我认错出处 |
+| C4 | RFC-065 文档判据是 n≥30 而非 60 | `grep -n "n≥30" docs/decisions/RFC-065-entry-band-vol-widen.md` | 出现 `n≥60` 或 min_n=60 的原文 ⇒ 注册表 min_n=60 有据，方案 B 不成立 |
+| C5 | 漏斗定价门占比 35.1%（33/94），不是 0% | `venv/bin/python scripts/deb20261007_funnel_breakdown.py` | 定价门行数 **<33** 或全量 n **≠94** ⇒ 我的全量重算有误（注意核脚本内**无 LIMIT**） |
+| C6 | **E9–E11 的 `time_to_mfe` 读数可信**（本 DEB 最脆弱处）；三查 = 单位 / 缺失是否非随机 / 两字段是否同值 | `venv/bin/python scripts/deb20261007_time_to_mfe_probe.py` | `覆盖率=45.8%  中位=24.40min  max=8627.30min  telemetry不一致=0` ⇒ 单位是分钟、两字段同值；但 `⇒ n≥20 的出场原因缺失率区间 = 5.2% ~ 100.0%  (跨度 94.8pp)` ⇒ **缺失非随机**，若你认为该跨度不足以构成选择偏倚 ⇒ 自曝#10 过度保守 |
+| C7 | 失败组「>费用线占比」与成功组几乎相同 ⇒ 「拿不住」判读不成立 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` 看 ⑳-3 段 | 两组占比差 **>15pp** ⇒ 我的自曝#4 过度保守，「持有过久」仍是可治靶点（方案 C 收益上限应上调） |
+| C8 | RFC-118 两腿各 5/6 FAIL（G2 两腿均过） | E24 命令 | θ=0.5 的 `c3_fill_official_denom` **<0.5** ⇒ 是 6/6 FAIL，我的更正#8 反而错了 |
+| C9 | C3 修正口径与生产读数卡逐位吻合 | `venv/bin/python scripts/deb20261007_c3_reachability.py` | 可达腿 fill **≠0.510** 或 n **≠104** ⇒ 我的口径修正有误（注意必须用 `status`，不是 `actual_executed`） |
+| C10 | 退出参数冻结至 10/31，现在改会破 KR1 | `grep -n "_OCT_COHORT_START = " scripts/daily_invariant_check.py` + `grep -n "判分窗" docs/OKR-2026-10.md \| head -2` | 窗终点早于 2026-10-07，或 KR1 已判 BROKEN ⇒ §6 时序约束不成立，方案 C 可立即落地而非等 10/31 |
+| C11 | chase_cap fallback② 当前影响面为 0 | `venv/bin/python scripts/deb20261007_band_impact.py` | `走 fallback②` 计数 **>0** ⇒ 方案 A 从「预防性治理」升级为「在咬人的缺陷」，优先级需上调至 P0 之前 |
+| C12 | 31 条影子达标未裁**不是新发现**（台账已记载） | `grep -n "有入口无出口" docs/CONTROL-LOOP-LEDGER.md` | 零命中 ⇒ 台账没记载，我的「非新发现」定性错误（届时本 DEB 需把它列为新增缺陷而非增量读数） |
+| C13 | **自曝#10 依据**：E9/E10 是在优选人群上做的对比（`SL_INITIAL` 仅覆盖 14.3%） | `venv/bin/python scripts/deb20261007_ttm_bias.py` | `SL_INITIAL             全量 n=  28 净=$  -4421.99 \| 有值 n=  4 净=$  -804.63  ⇒ 覆盖 14.3% 的人, 18.2% 的钱`；`有值人群 n=437 净=$   5542.05 中位单笔=$    6.97` vs `缺失人群 n=518 净=$   7413.62 中位单笔=$  -18.88` ⇒ 若 `SL_INITIAL` 覆盖率 **>60%** 或两人群中位单笔差 **<\$10** ⇒ 偏倚不成立，方案 C 收益上限可回升 |
+
+**请复查者重点挑战这 3 点**（点名请求，防复查退化成确认作者叙事）：
+
+1. **C6/C7 —— `time_to_mfe` 的口径与覆盖率**。这是方案 C 的唯一依据，而覆盖率只有 53.3%。请特别核：①单位是否真是分钟 ②缺失的 46.7% 是否**非随机缺失**（若缺失集中在某类出场原因，E9/E10 的对比就有选择偏倚）③`exit_telemetry.time_to_mfe` 与顶层 `time_to_mfe` 是否同值（脚本取了 `or` 兜底，两者不一致会造成混合口径）。
+2. **§4 三方互证是否真是「独立」证据链**。①②③ 都来自同一批 `trade_records`/指令表，若三者共享同一个上游污染（如 band 列本身被 reprice 回写），「三方」可能只是「一方的三个投影」。请给出它们是否真正独立的判断。
+3. **方案 C 的收益上限是否被我低估或高估**。我自曝#4 把「拿不住」判读否掉后，方案 C 的期望收益应大幅下修；但 E10 的单调性（68.1%→82.9%）仍是真实信号。请判断：这个单调性是**因果**（早达峰导致失败）还是**共线**（弱单既早达峰又易失败，早达峰只是弱单的标记）？若是后者，方案 C 治不了任何东西。
+
+---
+
+## 10. 待决问题（frontier）
+
+| # | 需要谁裁什么 | 推荐 | 一行理由 |
+|---|---|---|---|
+| **F1** | 用户裁：是否落地方案 A（RFC-123 阶段 0 双锚影子） | **推荐落地** | 零行为变更；治的是「分析被污染」元问题（本文 9 条自曝有 2 条源于它）；但须先定 `planned_entry` 缺失（22.7%）的 `missing` 语义 |
+| **F2** | 用户裁：是否修方案 B（注册表判据串台） | **推荐修** | 修 bug 非挪门柱；**约束：只准改回 RFC-065 逐字原文，不得下调门槛数字** |
+| **F3** | 用户裁：方案 C 走哪条时序 | **推荐 C-折中**（只做影子双臂，10/31 后裁决） | C-守KR1 = 等到 10/31 后再动（保住 200 笔功效窗，代价是弱单继续流失）；C-立即动 = 现在改（代价是 KR1 破功、11 月 OKR 无法设盈利目标、需重攒 ~20 天）；**C-折中 = 现在加 variant 臂攒样，10/31 窗关闭时直接拿配对读数裁决，零等待且不破 KR1** |
+| **F4** | 用户裁：31 条达标未裁影子的**裁决触发**怎么补 | 推荐并入既有 `pending_adjudication_carrier.py`（job `4378c93a89e6`，周六 09:15），**不新建载体** | 台账 `:172` 已记载「注册表 37 项有入口无出口」；载体已存在，缺的是把「判据实测值」栏补上（review-system-design P4：READY 只代表样本够，不代表判据过） |
+| **F5** | 用户裁：方案 E 是否核实推送层 G3 缺口动态算 | 推荐核实（成本低） | `criteria` 字段已写「推送层动态算」；核实后若已动态 ⇒ 自动关闭零动作 |
+
+**决策依据最小充分集自检**（反「拍脑袋」硬契约）：
+
+| 项 | 本 DEB 状态 |
+|---|---|
+| ① 固定样本来源 | ✅ `trade_records` 全量 959 + `pullback_limit_replay_v2.jsonl` 183；窗口/universe 见 §5 integrity |
+| ② 多窗口（≥2 段） | ✅ 4 段时间窗（~6/26、6/27–8/31、9/1–9/30、10/1–）+ RFC-118 forward 窗（9/30 起） |
+| ③ 配对或对照臂 | ✅ 方案 C 设计为双臂配对；C3 有限价腿 vs 市价腿对照（可达 51.0% vs 81.7%） |
+| ④ 尾部 | ✅ Top-3 日占比 27.8%（E5）；现役窗剔 Top-3 转负（E7）；回吐比 p90=143.5% |
+| ⑤ 费用后口径 | ✅ 全部用 `pnl_net`（净额），费用/毛利 bps 并列（E25） |
+| ⑥ 机制诊断 | ✅ E9–E11 达峰时刻/幅度/占比三量；E21 可达性梯度四桶单调 |
+| ⑦ 功效/显著性 | ⚠️ **部分**：RFC-118 有 t/MDE（t=0.09/−0.33，n_days=5 ⇒ 不可分辨）；**方案 C 的 H3/H4 判据已预注册但尚无读数** ⇒ 现状只能写「证据不足」，不得写「负期望」 |
+| ⑧ 预注册判据 + 回滚 + 复现命令 | ✅ §8 方案 C 判据表 H1–H5；回滚见下；复现命令 = §5 E 表 30 行 |
+
+---
+
+## 11. 自曝 / 更正记录
+
+**纪律**：被证伪的写成「部分证伪」（原说法 + 实测值 + 改成什么），不悄悄改题。本节 10 条，其中 #1/#2/#3/#4/#8/#9/#10 是**我本轮先说错后被自己的数据推翻**。
+
+| # | 我先说的 | 实测推翻 | 根因 | 处置 |
+|---|---|---|---|---|
+| 1 | MFE 中位 43.59%、捕获率 0.5% | MFE 中位 **0.44%**、捕获率 **49.7%** | `mfe_pct`/`mae_pct` 是**百分点**，`pnl_pct` 是**小数比例**，差 100 倍；我的自动量纲判定式太弱没检出 | 已钉进 §5 量纲铁律 |
+| 2 | 「45.2% / 61.0% 的 band 违反 `entry_band.py` 只放宽规格」 | 用真生成锚 `planned_entry` 重算，违反率 **0.3%**（603/605=99.7% 精确落在扁平 3.00%/5.00%） | 我用被 reprice 污染的 DB `entry_price` 当锚 | E17；**伪缺陷转为 RFC-123 真缺陷的硬证据** |
+| 3 | 「定价门在已触发未执行中占 0/94 = 0.0%」 | **33/94 = 35.1%**（chase_cap 32 + knife_gate 1） | 用 `LIMIT 6` 截断的列表求和，漏掉 32 条 `chase_cap_enforced` | E20；**普查范围/截断就是结论的可信度** |
+| 4 | 「捕获失败 = 利润来了拿不住，退出时机是高价值靶点」 | 失败组「>费用线占比」45m=**77.2%** vs 成功组 **78.6%**（差 1.4pp）⇒ 判读**不成立** | 只看了达峰时刻差（15.9 vs 25.2min），没看幅度差（MFE 0.189% vs 0.335%） | E11；**方案 C 收益上限据此下修**（本就是弱单，早锁只救一部分） |
+| 5 | 「band 几何合规」 | planned_entry 锚下所有 ATR 桶 knife/chase 中位**均为 3.00%/5.00%**，含 extreme 桶（ATR 中位 9.52%，规格应得 3.96%/6.6%） | 措辞不准：合规的原因是**全走扁平带**，`entry_band_vol_widen_enabled=false` ⇒ vol_widen 分支从未生效 | §8 方案 B 附带实测；措辞改为「band 全走扁平带、几何合规」 |
+| 6 | （子代理声称）`EXT_ENTRY_EXEC_PRICE_SHADOW` 在 `.env.us`/config 无实值键 | crontab 内联设置 **2 处**；注册表 notes 自己就写「开关走 cront」 | 子代理只 grep `.env.us`/`config/`，漏了 crontab | **子代理误报，不采信**；已按 skill「普查范围就是结论的可信度」登记 |
+| 7 | （我暗示）31 条达标未裁是新发现 | `docs/CONTROL-LOOP-LEDGER.md:172` 9/21 已记载「注册表 37 项**有入口无出口**…实测 19 项挂 READY」，载体 `pending_adjudication_carrier.py`（job `4378c93a89e6`）已存在 | 未先查台账就定性为「新」 | 降为**今日口径的增量读数**（19→31），F4 改为「并入既有载体」而非新建 |
+| 8 | 「RFC-118 θ=0.5 腿 6/6 FAIL」 | θ=0.5 的 `c3_fill_official_denom=**0.538** ≥ 0.5` ⇒ **G2 是过的**，两腿均 **5/6 FAIL** | 凭印象填门数，未逐门核生产产物 | §7 已更正；E24 给可复算命令 |
+| 9 | 「C1 退出参数 9 月冻结已到期 ⇒ 退出轴现在可动」（上一条会话建议的 P1 时序） | `_OCT_COHORT_START="2026-09-17"`，判分窗 → **2026-10-31**；KR1 要求窗内退出哈希唯一 ⇒ 现在动 = 破功 | 只查了 C1 的 9 月窗，没查是否被 10 月 OKR 接替 | **新增 §6 整节**；方案 C 因此必须设计成 record-only 双臂 |
+| 10 | 「E9/E10 显示失败组达峰更早 ⇒ 早达峰处置是可测靶点」（方案 C 的依据） | `time_to_mfe` 覆盖率仅 **45.8%**，且缺失是**结构性**的：`sl_hit`/`TRAILING_STOP`/`STRUCTURE_EXIT`/`EOD_FORCE_CLOSE`/`DAY_TRADE_TP` 缺失率 **100%**（旧架构命名），`SL_INITIAL` 缺失 **85.7%**；有值人群是**优选人群**（中位单笔 **+$6.97** vs 缺失人群 **−$18.88**）；死池最大出血口 `SL_INITIAL` 全量 28 笔 −$4,421.99，有值仅 **4 笔 −$804.63**（覆盖 14.3% 的人、18.2% 的钱） | 写 E9/E10 时只看了覆盖率数字（53.3%），**没查缺失是否随机**——而缺失集中在最坏出口 ⇒ E9/E10 的「失败组」根本不含最坏的那批单 | 新增 E31/E32 + C6/C13 + `deb20261007_time_to_mfe_probe.py` / `deb20261007_ttm_bias.py`；**方案 C 定位下修**：从「早达峰处置是可测靶点」降为「**在优选人群上观察到的相关性，因果未证**」，H1 判据加严（见 §8 方案 C） |
+
+**不引用 / 已被更正的旧读数**：本文**不引用**任何 anchor 基准（`fwd_return_t1` / `shadow_pnl`）——DEB-20260816 §零 永久禁令 + C9「anchor 基准虚高约 6 倍禁作裁决」。
+
+---
+
+## 12. 风险与取舍 / 回滚
+
+### 反方三问（review-system-design 强制，至少三条反方视角）
+
+1. **这些改动会多出单 / 多赚钱吗？** → **A/B/E：不会。** 收益全在「可见性 + 语义正确 + 防止后人踩雷」，零交易行为变更。**C：可能会，但收益上限已被自曝#4 下修**——失败组本就是弱单（MFE 幅度只有成功组一半），早锁能挽回的是「幅度减半的弱单可挽回分量」，不是全部 157 笔回吐。**必须直说，否则用户会拿错期望验收。**
+2. **新失败模式是什么？**
+   - A：逐轮多写 jsonl ⇒ 需按日去重 + TEST 守卫，否则遥测污染；`planned_entry` 缺失 22.7% ⇒ 若不定 `missing` 语义，分歧率读数无意义（**最大风险**）。
+   - B：改注册表字段 = 改判据面 ⇒ 必须只改回 RFC-065 逐字原文；若顺手「优化」门槛数字 = 挪门柱。
+   - C：variant 臂若误接入生产退出链 ⇒ 换哈希 ⇒ KR1 破功（**最严重**）。防线：variant 只在结算器里做反事实计算，禁写 `metadata_json.config_version`；须加契约测试钉住「variant 臂不影响哈希」。
+   - C：H5 门（不得增加 OVERNIGHT_GAP/SL_INITIAL 笔数）是防「早锁把单推到更坏出口」的护栏，**不可省**。
+3. **与已回滚 / 已证伪方案是什么关系？**
+   - A 与 C9 **正交**：C9 禁的是「据未触发集错失收益改 entry 定价」；RFC-123 治的是「同一列承担两种锚的生命周期混用」——**不改任何定价，只把两个锚分开存**。证伪源：`docs/ADJUDICATED-CRITERIA.md` C9 + `DEB-20260816 §零` anchor 禁令（永久有效）。
+   - C 与 `mfe_stall_exit`（DEB-20260815 已否决，`config:1287` `mfe_stall_exit_enabled: false`）**必须区分**：`mfe_stall` 是「MFE 停滞就退出」（时间+停滞双条件），本方案 C 是「早达峰单的处置」（达峰时刻分层）。**若复查者判定两者实为同一条轴换个措辞 ⇒ C 应直接关闭**（这是 C 表挑战点 #3 的核心）。
+   - D 维持现状，与 RFC-118「窗内改θ=重新裁决」纪律一致。
+
+### 回滚（两层：法子 + 触发条件）
+
+| 方案 | 回滚法子 | **回滚触发条件**（哪几条读数出现就必须回滚，不留给下次讨论） |
+|---|---|---|
+| A | 删 jsonl 追加字段 + 删注册表条目（record-only，删除即静默） | ①`missing` 语义未定就上线 ⇒ 立即回滚 ②影子写入导致 pipeline 单轮耗时增加 >10% ③出现任何由新字段而非事实闸导致的下单 |
+| B | `git revert` 注册表条目改动 | ①改后 `graduation_criteria` 与 RFC-065 原文**逐字不符** ②`min_n` 被改成非 30（既非文档值也非原值）⇒ 立即回滚 |
+| C | 删 variant 分支 + 删结算器对应变体计算（宿主 `exit_param_shadow` 主体不动） | ①`metadata_json.config_version` 出现第 2 个哈希（`W1_oct_cohort_broken` 直推）⇒ **立即回滚 + 当日报告** ②H5 被触发（变体臂增加 OVERNIGHT_GAP/SL_INITIAL 笔数）③变体臂写入生产退出链任何判定点 |
+| E | 无（核实性动作，若已动态算则零改动） | — |
+
+**复核日**：建议与 **2026-10-31**（KR1 窗关闭）同批仲裁，便于一次裁完；方案 A/B 的复核可提前至落地后首个周六 09:15（并入既有 `pending_adjudication_carrier` 推送面，**不新增推送**）。
+
+---
+
+## 13. 实施步骤（仅在裁决后执行；每步可独立回滚）
+
+| 步 | 动作 | 验证命令 | 期望 |
+|---|---|---|---|
+| 0 | 本 DEB 落库 + 索引加行（**当前步**） | `ls docs/debates/DEB-20261007*.md && grep -c "DEB-20261007" docs/debates/README.md` | 文件存在；索引命中 ≥1 |
+| 1 | 方案 B：注册表 `entry_band_widen` 判据改回 RFC-065 逐字原文 + `min_n` 60→30 | `grep -n -A10 'id="entry_band_widen"' app/playbook/shadow_registry.py \| head -12` | `graduation_criteria` 含 `n≥30`；`min_n=30` |
+| 2 | 方案 B 守卫：加测试钉住「注册表判据文本必须能在其引用的 RFC 文档里逐字命中」 | `venv/bin/python -m pytest tests/ -k shadow_registry -q` | 全绿；且注入错轴判据时**必须红**（负向测试） |
+| 3 | 方案 A：定 `planned_entry` 缺失（22.7%）的 `missing` 处置语义 → 写进 DEB 追加节 | 人工裁 | 语义明确（建议：`missing` 单列一桶，**不计入分歧率分子分母**） |
+| 4 | 方案 A：埋点落地（追加字段到既有 jsonl，按日去重 + TEST 守卫）+ 注册表登记 | `venv/bin/python -m pytest tests/ -k "anchor or dual_track" -q` | 全绿；`tests/test_entry_zone_dual_track_contract.py` 仍绿（T4 未被破坏） |
+| 5 | 方案 C：`exit_param_shadow` 加 variant 臂（record-only）+ 契约测试钉住「不影响 config_version 哈希」 | `venv/bin/python -m pytest tests/ -k exit_param -q` + 核 `W1_oct_cohort` 未触发 | 全绿；`daily_invariant_check` 的 oct_cohort 仍 in_track |
+| 6 | 方案 C：H1–H5 判据写死进结算器头部（**先于任何读数**） | `grep -n "H1\|H5" scripts/exit_shadow_graduation.py` | 判据文本在脚本头，先于裁决读数 |
+| 7 | 10/31 窗关闭后：出 C 的配对读数 + 提请转正裁决（另案，须新 cohort） | — | — |
+
+**落地后强制核查**（模板要求）：
+- [ ] 采集器钩子传参 ↔ 判据人群定义对读（方案 C 的 variant 触发条件与 H1–H5 人群是否同一集合？若为超集/子集须登记并给分层读数——教训锚 DEB-20260928①）
+- [ ] 折叠/去重逻辑取首条还是末条 + 有无哨兵（方案 A 的按日去重）
+- [ ] 生产代码是否真生效（`playbook.*` 改动 HotReloader 穿不透 ⇒ 核服务重启时刻晚于提交时刻）
+- [ ] cron 新增行注释标 ET 等价（本 DEB **不新增 cron**，若 F4 改推送面则须核）
+- [ ] 哨兵清单同步进 `docs/CONTROL-LOOP-LEDGER.md`
+
+---
+
+## 14. 讨论记录
+
+### 第 1 轮（2026-10-07，Hermes Agent）
+
+- **Hermes**：完成 P0.5 既有裁决普查（16 份文档 + C8–C12 红线）、机制读码、MFE/MAE 捕获率取数、C3 口径修正、RFC-118 6 门复算、band 影响面测量、time_to_mfe 决定性分析、裁决欠账实读。结论：定价/reprice 轴已无剩余空间（§4 三方互证 + C9 红线）；剩余靶点为退出轴早达峰处置（受 §6 冻结约束）、锚生命周期混用（方案 A）、注册表判据串台（方案 B）。
+- **Hermes（自曝）**：本轮共 10 条自曝，其中 7 条是自己先说错后被自己的数据推翻（量纲 / band 伪影 / LIMIT 截断 / ⑳-3 判读 / KR1 冻结时序）。全部登记于 §11，未悄悄改题。
+- **子代理复查（2 单元）**：Task 1 提取既有裁决（C9 红线 + 14 条已关闭轴）已被本文采纳；Task 2 报影子清单与 config 实值，其中 `EXT_ENTRY_EXEC_PRICE_SHADOW`「无配置」为**误报**（§11 自曝#6），已由作者复算推翻。
+- **待第二 agent 复查**：见 §9 C1–C12 + 三个点名挑战点。
+
+---
+
+## 附录：复现材料
+
+| 脚本 | 用途 | 对应 E 表 |
+|---|---|---|
+| `scripts/deb20261007_mfe_capture.py` | 量纲修正 + band 几何 + 成交率 + 捕获率全量 | E1, E2 |
+| `scripts/deb20261007_capture_failure.py` | 捕获失败 157 笔构成 + 回吐比 + 按日聚类 | E3, E4, E5 |
+| `scripts/deb20261007_deadpool_window.py` | 死 MFE 池 4 段时间窗拆分 + 费用线 | E6, E7, E8, E25 |
+| `scripts/deb20261007_time_to_mfe.py` | 🔑 决定性：达峰时刻/幅度/占比 + 分桶单调性 | E9, E10, E11 |
+| `scripts/deb20261007_deadpool_fee_band.py` | 死池方向拆 + 费用 vs edge + band↔触发率 | E12 |
+| `scripts/deb20261007_anchor_provenance.py` | 🔑 反推锚 vs planned_entry vs entry_price 判别 | E13, E18 |
+| `scripts/deb20261007_band_artifact.py` | 🔑 band 违反伪影判定（61.0%→0.3%） | E17 |
+| `scripts/deb20261007_band_impact.py` | chase_cap fallback② 影响面（=0） | E19 |
+| `scripts/deb20261007_funnel_breakdown.py` | 🔑 漏斗全量归因（定价门 33/94） | E20 |
+| `scripts/deb20261007_fee_gap_forward.py` | 🔑 G3 费用缺口 forward 动态实值 + vol_widen 事件语义（含自曝#3 根因修复：原 LIMIT 6 → 全量） | E25 |
+| `scripts/deb20261007_c3_reachability.py` | 🔑 C3 口径修正 + 可达性梯度 + 误杀面 | E21, E22, E23 |
+| `scripts/deb20261007_adjudication_backlog.py` | 31 条达标未裁影子实读 | E16, E26 |
+| `scripts/deb20261007_time_to_mfe_probe.py` | 🔑 C6 三查：单位 / 缺失是否非随机 / 两字段同值 | E31, C6 |
+| `scripts/deb20261007_ttm_bias.py` | 🔑 自曝#10 偏倚量化（优选人群判定） | E32, C13 |
+| `scripts/verify_deb20261007.py` | 本文档 E/C 表命令逐格实跑验证器 + 结构守卫（复查者可自行重跑整套守卫） | — |
+
+全部 14 个分析脚本 + 1 个验证器 `rc=0`、无 scratch/`/tmp` 依赖、无 `PYTHONPATH` 前置要求（复查者在任意 cwd 用仓库内 `venv/bin/python` 直接跑即可）。
