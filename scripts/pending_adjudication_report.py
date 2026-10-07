@@ -81,6 +81,45 @@ def _artifact_verdict(artifact: str) -> str:
     return ""
 
 
+# ── 判据实测值栏 (DEB-20261007 F4, 2026-10-07 用户裁「按建议执行」) ──────────
+# 为什么: READY 只代表样本量够, 不代表判据过 (review-system-design P4; 2026-09-13 实锤
+# 5 个 READY 逐个跑 eval_script 0 个过门)。通知面过去只给白话结论快照, 用户裁决时
+# 还得自己去跑脚本 — 本栏把产物 json 里的**实测读数**直接抬到待裁行下方。
+# 边界: 只读产物 json 的裁决码与少量数值键, **不同步跑 eval_script** (报表是通知载体,
+# 跑脚本可能拉行情/耗时; 判据实测的权威入口仍是 eval_script 本身, 栏内给出命令)。
+_READOUT_NUM_KEYS = ("n", "n_days", "n_settled", "n_pairs", "coverage", "ic", "t_stat",
+                     "expectancy", "blocked_expectancy", "hit_rate", "p_value", "sign_p")
+
+
+def _artifact_readout(artifact: str, eval_script) -> str:
+    """产物 json → 一行「判据实测」读数 (取不到 → 指路 eval_script, 不臆造)。"""
+    v = _artifact_verdict(artifact)
+    p = Path(str(artifact).split(" (" )[0].strip())
+    if not p.is_absolute():
+        p = REPO / p
+    nums = {}
+    if p.exists() and p.suffix == ".json":
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(d, dict):
+                for k in _READOUT_NUM_KEYS:
+                    val = d.get(k)
+                    if isinstance(val, (int, float)) and not isinstance(val, bool):
+                        nums[k] = round(float(val), 4) if isinstance(val, float) else val
+        except Exception:                                         # noqa: BLE001
+            pass
+    parts = []
+    if v:
+        parts.append(VERDICT_PLAIN.get(v, v))
+    if nums:
+        parts.append(" ".join(f"{k}={val}" for k, val in list(nums.items())[:6]))
+    if parts:
+        return "判据实测：" + "；".join(parts)
+    if eval_script:
+        return f"判据实测：产物无读数 — 跑 `{eval_script}` 取 (勿凭 READY 状态当判据过)"
+    return "判据实测：无产物读数且未挂 eval_script (有入口无出口 — 须先补结算器)"
+
+
 def build_report(*, force: bool = False, dry: bool = False) -> str:
     from app.review.criteria_status import pending_adjudications
 
@@ -134,6 +173,8 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
         for it in needs:
             L.append(f"- **{it['plain']}**（`{it['id']}`，样本 {it['progress']}）")
             L.append(f"  结论：{it['conclusion']}")
+            # F4 (DEB-20261007): 判据实测值栏 — READY≠判据过, 裁决前先看实测读数
+            L.append(f"  {_artifact_readout(it.get('artifact', ''), it.get('eval_script'))}")
         L.append("")
     else:
         L.append("**① 需要你决定：当前 0 项** ✅（我不会自己动任何治理变更）")
@@ -162,6 +203,9 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
                 v = _artifact_verdict(r.get("artifact", ""))
                 extra = f"（产物裁决码：{VERDICT_PLAIN.get(v, v)}）" if v else ""
                 L.append(f"- `{r['id']}` → **{r['status']}**：{clip_for_push(note, 100)}{extra}")
+                _ro = _artifact_readout(r.get("artifact", ""), r.get("eval_script"))
+                if not v:  # 有裁决码时 extra 已含, 不重复
+                    L.append(f"  {_ro}")
             L.append("")
 
     if first_run:

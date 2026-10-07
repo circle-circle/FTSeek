@@ -889,6 +889,40 @@ REGISTRY: list[ShadowItem] = [
         count_mode="distinct:collected_at",
     ),
 
+    # ── RFC-123 阶段0 双锚影子 (DEB-20261007 F1, 2026-10-07 用户裁「按建议执行」) ──
+    ShadowItem(
+        id="entry_anchor_dual",
+        name="入场锚双轨影子 (生成锚 vs 执行锚, RFC-123 阶段0)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-123 阶段0: entry_price 一列两义 (生成锚被 reprice 逐轮覆盖为执行锚, "
+                    "实测 66.4% 指令已改写, 偏差中位 1.01%/p90 3.65%, E18)。写方 pipeline.py "
+                    "_emit_entry_shadow 在 ETS 行加嵌套 dual_anchor 块 (生成锚=planned_entry→"
+                    "band沿反推→missing 三级, 绝不回退 DB entry_price; + 生成锚反事实触发几何)。"
+                    "record-only 零交易行为变更; 量化分歧面/missing率/分歧触发分布, 供阶段1 "
+                    "(锚持久化分离) 裁决。missing 单列一桶不计入分歧率分子分母 (DEB §13 步3)。",
+        data_path="data/entry_timing_shadow.jsonl (dual_anchor 块, anchor_recorded=True 行)",
+        config_key="playbook.execution_parameters.entry_anchor_dual_shadow_enabled",
+        min_n=300,
+        count_mode="where:anchor_recorded=True",
+        graduation_criteria="预注册见 RFC-123 §预注册判据: 影子期≥10个交易日 ∧ ①生成锚缺失率<1% "
+                            "②双锚触发判定分歧率≥5%且分歧非纯数据错误 ③分歧样本按生成锚判定的"
+                            "触发质量(含费PnL)不低于现行锚 ④现行护栏触顶频率无异常上升 → "
+                            "另行裁决阶段1 (行为分离); 读数后不得调整入场带/确认位/触发阈值。"
+                            "(n 口径 = anchor_recorded 行数 count_mode=where:anchor_recorded=True, "
+                            "300 = 按 ETS 日均 ~150 行×2 交易日余量; 判据①-④的比率口径以指令×日去重)",
+        eval_script=None,
+        created="2026-10-07",
+        verdict_history=[
+            {"date": "2026-10-07", "verdict": "PHASE0_SHADOW_STARTED",
+             "evidence": "DEB-20261007 F1 用户裁「按建议执行」落地: pipeline.py 模块级纯函数 "
+                         "_resolve_generated_anchor/_anchor_trigger_geometry + _emit_entry_shadow "
+                         "dual_anchor 块 + YAML 开关 entry_anchor_dual_shadow_enabled=true。"
+                         "立起动机含自曝#11: 污染列已 3 次毒化本 DEB 分析 (E12/E13 伪影)。"},
+        ],
+        notes="阶段0=只埋点记录分歧, 判定仍完全用现行 effective_anchor (RFC-123 原文)。"
+              "eval_script 待攒样后补 (阶段1 裁决前须先写结算器, 防「有入口无出口」— 台账 :172 教训)。"
+              "回滚: YAML 开关 false + systemctl restart (playbook.* 热重载穿不透), 数据留档。",
+    ),
     # ── 既有影子 (Phase 0 / 7月) — 代表性事项, 非穷举 ──
     ShadowItem(
         id="entry_band_widen",

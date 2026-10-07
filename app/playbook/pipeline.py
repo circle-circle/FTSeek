@@ -5811,6 +5811,85 @@ def _check_borrow_pool_gate(symbol: str, planned_qty: float, pb_cfg) -> tuple:
         return True, f"failopen: {type(_bp_err).__name__}"  # 门自身异常不得拦交易
 
 
+# ── [RFC-123 阶段0] 双锚影子纯函数 (DEB-20261007 F1, 2026-10-07 用户裁「按建议执行」) ──
+#   record-only: 量化「生成锚 vs 执行锚」分歧面, 判定/返回值零影响 (RFC-123 §阶段0:
+#   「判定仍完全使用现行 effective_anchor; 观测写失败不改变交易」)。
+#   两个函数刻意放模块级而非 _check_intraday_trigger 内:
+#   ① T4 双轨契约 (tests/test_entry_zone_dual_track_contract.py) 扫描该函数体内
+#     entry_low/high 消费 — 本处 band 沿反推仅用于**影子锚溯源** (RFC-120 chase_cap
+#     归一化优先级②同源先例), 不进触发几何, 放模块级避免误伤契约且语义更清晰;
+#   ② 纯函数可单测 (DEB §13 步4 验证命令要求)。
+
+def _resolve_generated_anchor(inst: Dict[str, Any], is_short: bool):
+    """生成锚解析 (RFC-123 阶段0, 纯函数)。返回 (anchor|None, source)。
+
+    优先级 (与 RFC-120 chase_cap 归一化同源纪律, pipeline:4905 注释①②③):
+      ① raw_instruction_json.planned_entry — 生成值 (DA 直写/UE P3.1 后落库);
+      ② band 沿反推 — SHORT: entry_low/(1-CHASE), BUY: entry_high/(1+CHASE)
+         (「reprice 永不覆盖」列; E18 实测反推锚与 planned_entry 吻合 99.7%);
+      ③ missing — **绝不回退 DB entry_price** (该列被 reprice 逐轮覆盖 = 用答案当锚,
+         RFC-123 验证计划第3条 + 自曝#11 教训: e≠planned 群触发率 99.3% 的污染投影)。
+    missing 单列一桶, 不计入分歧率分子分母 (DEB-20261007 §13 步3 语义, 用户裁「按建议执行」)。
+    """
+    try:
+        raw = inst.get("raw_instruction_json")
+        if isinstance(raw, str):
+            import json as _jga
+            try:
+                raw = _jga.loads(raw or "{}")
+            except Exception:
+                raw = {}
+        if isinstance(raw, dict):
+            pe = raw.get("planned_entry")
+            if isinstance(pe, (int, float)) and float(pe) > 0:
+                return float(pe), "planned_entry"
+    except Exception:
+        pass
+    try:
+        from app.playbook.entry_band import CHASE_ZONE_PCT as _ga_chase
+        edge = inst.get("entry_low") if is_short else inst.get("entry_high")
+        if edge:
+            a = float(edge) / (1 - _ga_chase) if is_short else float(edge) / (1 + _ga_chase)
+            if a > 0:
+                return a, "band_edge"
+    except (TypeError, ValueError):
+        pass
+    except Exception:
+        pass
+    return None, "missing"
+
+
+def _anchor_trigger_geometry(anchor, current_price, is_short: bool,
+                             knife: float, chase: float, vol_ok: bool,
+                             near_miss_tol: float):
+    """反事实触发几何 (RFC-123 阶段0, 纯函数) — 逐分支复刻 _check_intraday_trigger
+    的判定段 (pullback/chase/chase_near_miss/out_of_band × LONG/SHORT), 仅把锚换成
+    生成锚。返回 (triggered|None, path|None); 输入非法 → (None, None) 不臆造。
+    ⚠️ 生产判定段若改分支, 本函数必须同步改 (契约测试钉住关键分支值)。"""
+    try:
+        a = float(anchor or 0)
+        p = float(current_price or 0)
+    except (TypeError, ValueError):
+        return None, None
+    if a <= 0 or p <= 0:
+        return None, None
+    if is_short:
+        if p >= a:
+            return (p <= a * (1 + knife)), "pullback"
+        if p >= a * (1 - chase):
+            return bool(vol_ok), "chase"
+        if p >= a * (1 - chase - near_miss_tol):
+            return bool(vol_ok), "chase_near_miss"
+        return False, "out_of_band"
+    if p <= a:
+        return (p >= a * (1 - knife)), "pullback"
+    if p <= a * (1 + chase):
+        return bool(vol_ok), "chase"
+    if p <= a * (1 + chase + near_miss_tol):
+        return bool(vol_ok), "chase_near_miss"
+    return False, "out_of_band"
+
+
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     """盘中实时检查指令是否触发 (突破当日高低点).
 
@@ -5969,6 +6048,43 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 "micro": _micro,
                 "features": _feat,
             }
+            # ── [RFC-123 阶段0] 双锚影子块 (DEB-20261007 F1, 用户裁「按建议执行」) ──
+            #   record-only: 同轮双记 生成锚(planned_entry/band沿/missing) vs 执行锚
+            #   (DB entry_price, 被 reprice 逐轮覆盖) + 生成锚反事实触发几何。
+            #   嵌套块不碰既有平键 ⇒ ETS 下游 (W7 哨兵/eval_vwap_gate/entry_gate 报表)
+            #   全部 .get() 平键读取, 零影响。TEST 守卫已由本函数头部承担。
+            #   回滚: entry_anchor_dual_shadow_enabled=false (playbook.* 热重载穿不透,
+            #   须 systemctl restart) 或 revert 本块。
+            try:
+                if bool(pb_cfg.get("entry_anchor_dual_shadow_enabled", True)):
+                    _da_gen, _da_src = _resolve_generated_anchor(inst, is_short)
+                    _da_ct, _da_cp = _anchor_trigger_geometry(
+                        _da_gen, current_price, is_short,
+                        _knife_floor, _chase_zone, _vol_ok, _near_miss_tolerance)
+                    _da_div = (None if not _da_gen else
+                               round((float(entry_price or 0) - _da_gen) / _da_gen * 100.0, 4))
+                    _da_tdiv = (None if (_da_gen is None or _da_ct is None)
+                                else (bool(_da_ct) != bool(triggered_val)))
+                    _row["anchor_recorded"] = True
+                    _row["dual_anchor"] = {
+                        "schema": "rfc123-s0-v1",
+                        "date": _today_et_str(),
+                        "generated": (round(_da_gen, 4) if _da_gen else None),
+                        "gen_source": _da_src,
+                        "effective": round(float(entry_price or 0), 4),
+                        "divergence_pct": _da_div,
+                        "gen_triggered": _da_ct,
+                        "gen_path": _da_cp,
+                        "live_triggered": bool(triggered_val),
+                        "live_path": entry_path,
+                        "trigger_divergent": _da_tdiv,
+                    }
+            except Exception as _da_err:
+                # A6 fail-loud (2026-08-24 同款): 影子丢行必须可见 — 禁 except:pass
+                # (静默丢行 = 攒样进度虚高 + 判据面缺样不可察)。warning 不抛, 不拦单。
+                logger.warning(
+                    f"[双锚影子] {symbol} dual_anchor 块构造失败: {_da_err} "
+                    f"(该行缺块, RFC-123 判据面缺样)")
             _tp = _Path(__file__).resolve().parents[2] / "data" / "entry_timing_shadow.jsonl"
             with open(_tp, "a", encoding="utf-8") as _f:
                 _f.write(_json.dumps(_row, ensure_ascii=False) + "\n")

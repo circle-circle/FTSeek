@@ -1253,6 +1253,11 @@ playbook:
     # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
     entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065
     entry_band_widen_shadow_enabled: true    # 影子开关: record-only常开攒样(new/changed双事件)
+    # ── RFC-123 阶段0 双锚影子 (DEB-20261007 F1, 2026-10-07 用户裁「按建议执行」) ──
+    #   record-only: ETS 行加嵌套 dual_anchor 块 (生成锚 vs 被 reprice 覆盖的执行锚 +
+    #   反事实触发几何), 量化分歧面供 RFC-123 阶段1 裁决。零交易行为变更。
+    #   ⚠️ playbook.* 键热重载穿不透 ⇒ 改动须 systemctl restart。回滚: false + 重启。
+    entry_anchor_dual_shadow_enabled: true
     #   风险声明: 9:30-10:15窗历史期望为负(7/1起n=181净-$1111), 此为基建保真裁决非PnL最优.
     #   历史: 1000→1015(8/12水坝修复). 回滚: 改回1015+重启.
     dead_signal_exit_enabled: true
