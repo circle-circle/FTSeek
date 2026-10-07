@@ -1,5 +1,5 @@
 #!/opt/ftseek/FTSeek-US/venv/bin/python
-"""Winter/EST DA main carrier for the dual-season ET schedule."""
+"""DA main carrier for the dual-season ET schedule."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def main() -> int:
     symbols = watchlist_symbols()
     if not symbols:
         append_event({**base_event, "status": "failed_empty_watchlist"})
-        print(f"[DA-main-EST] {date} watchlist empty, skipped pipeline")
+        print(f"[DA-main] {date} watchlist empty, skipped pipeline")
         return 1
     symbol_arg = ",".join(symbols)
 
@@ -87,7 +87,7 @@ def main() -> int:
         check=False,
     )
     if pullback.returncode != 0:
-        print(f"[DA-main-EST] pullback refresh failed (non-blocking): "
+        print(f"[DA-main] pullback refresh failed (non-blocking): "
               f"{pullback.stderr[-500:]}")
 
     SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -104,7 +104,7 @@ def main() -> int:
         )
     except subprocess.TimeoutExpired:
         append_event({**base_event, "status": "pipeline_timeout"})
-        print(f"[DA-main-EST] {date} pipeline timeout")
+        print(f"[DA-main] {date} pipeline timeout")
         return 1
 
     output_path.write_text(completed.stdout, encoding="utf-8")
@@ -112,7 +112,7 @@ def main() -> int:
     if completed.returncode != 0:
         append_event({**base_event, "status": "pipeline_failed",
                       "returncode": completed.returncode, "finished_at": finished_at})
-        print(f"[DA-main-EST] {date} pipeline failed rc={completed.returncode}")
+        print(f"[DA-main] {date} pipeline failed rc={completed.returncode}")
         print(completed.stderr[-2000:])
         return completed.returncode or 1
 
@@ -121,13 +121,13 @@ def main() -> int:
     except json.JSONDecodeError:
         append_event({**base_event, "status": "pipeline_json_parse_failed",
                       "finished_at": finished_at})
-        print(f"[DA-main-EST] {date} pipeline JSON parse failed")
+        print(f"[DA-main] {date} pipeline JSON parse failed")
         print(completed.stdout[-2000:])
         return 1
     if result.get("skipped"):
         append_event({**base_event, "status": "pipeline_skipped",
                       "skip_reason": result.get("skip_reason"), "finished_at": finished_at})
-        print(f"[DA-main-EST] {date} pipeline skipped: {result.get('skip_reason')}")
+        print(f"[DA-main] {date} pipeline skipped: {result.get('skip_reason')}")
         return 0
 
     stages = result.get("stages", {})
@@ -136,7 +136,7 @@ def main() -> int:
     for row in analyses:
         direction = str(row.get("direction") or row.get("rating") or "?")
         directions[direction] = directions.get(direction, 0) + 1
-    print(f"[DA-main-EST] {date} candidates={stages.get('signal', {}).get('candidates_total', 0)} "
+    print(f"[DA-main] {date} candidates={stages.get('signal', {}).get('candidates_total', 0)} "
           f"analyses={len(analyses)} directions={directions} output={output_path}")
     append_event({**base_event, "status": "complete",
                   "candidates_total": stages.get("signal", {}).get("candidates_total", 0),

@@ -1,0 +1,189 @@
+"""Contracts for the execution-time portfolio guardrail."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+
+from app.playbook.db import PlaybookDB
+from app.playbook.playbook_service import PlaybookService
+from app.playbook.portfolio_execution_guardrail import evaluate_portfolio_guardrail
+
+
+def _row(row_id, symbol, direction, confidence, sector=""):
+    return {
+        "id": row_id,
+        "symbol": symbol,
+        "direction": direction,
+        "confidence": confidence,
+        "sector": sector,
+        "skip_reason": "",
+    }
+
+
+def test_direction_guardrail_selects_global_low_confidence_rows():
+    rows = [
+        _row(1, "US.AAA", "BUY", 70),
+        _row(2, "US.BBB", "BUY", 70),
+        _row(3, "US.CCC", "BUY", 70),
+        _row(4, "US.DDD", "BUY", 35),
+        _row(5, "US.EEE", "BUY", 50),
+        _row(6, "US.FFF", "SELL_SHORT", 70),
+    ]
+
+    low = evaluate_portfolio_guardrail(rows, 4)
+    high = evaluate_portfolio_guardrail(rows, 3)
+
+    assert low["should_skip"] is True
+    assert "组合方向偏斜" in low["reason"]
+    assert low["direction_counts"] == {"BUY": 5, "SELL_SHORT": 1}
+    assert 4 in low["skip_ids"]
+    assert high["should_skip"] is False
+
+
+def test_sector_guardrail_uses_balanced_direction_portfolio():
+    rows = [
+        _row(1, "US.AAA", "BUY", 70, "Technology"),
+        _row(2, "US.BBB", "SELL_SHORT", 70, "Technology"),
+        _row(3, "US.CCC", "BUY", 35, "Technology"),
+    ]
+
+    result = evaluate_portfolio_guardrail(rows, 3)
+
+    assert result["should_skip"] is True
+    assert "组合行业集中度" in result["reason"]
+    assert result["direction_counts"] == {"BUY": 2, "SELL_SHORT": 1}
+
+
+def test_terminal_skip_rows_leave_denominator():
+    rows = [
+        _row(1, "US.AAA", "BUY", 70),
+        _row(2, "US.BBB", "BUY", 70),
+        {
+            **_row(3, "US.CCC", "BUY", 35),
+            "skip_reason": "thesis_drift_invalidate",
+        },
+    ]
+
+    result = evaluate_portfolio_guardrail(rows, 3)
+
+    assert result["should_skip"] is False
+    assert result["active_count"] == 2
+
+
+def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp_path):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    db = PlaybookDB(conn=conn)
+    db.ensure_tables()
+    service = PlaybookService(playbook_db=db)
+    audit_path = tmp_path / "portfolio_execution_guardrail.jsonl"
+    monkeypatch.setattr(
+        "app.playbook.playbook_service._PORTFOLIO_GUARDRAIL_AUDIT_PATH", audit_path
+    )
+
+    high_id = db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.AAA",
+        "direction": "BUY",
+        "entry_price": 100.0,
+        "stop_loss": 95.0,
+        "take_profit": 110.0,
+        "position_size": 100,
+        "confidence": 70,
+        "conditions": [],
+    })
+    low_id = db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.BBB",
+        "direction": "BUY",
+        "entry_price": 50.0,
+        "stop_loss": 47.0,
+        "take_profit": 55.0,
+        "position_size": 100,
+        "confidence": 35,
+        "conditions": [],
+    })
+    mid_id = db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.CCC",
+        "direction": "BUY",
+        "entry_price": 75.0,
+        "stop_loss": 71.0,
+        "take_profit": 82.0,
+        "position_size": 100,
+        "confidence": 50,
+        "conditions": [],
+    })
+
+    result = service.execute_instruction(low_id)
+
+    assert result["success"] is False
+    assert result["skipped_portfolio_guardrail"] is True
+    assert "组合方向偏斜" in result["message"]
+    row = next(row for row in db.get_instructions_by_date("2026-10-08") if row["id"] == low_id)
+    assert row["direction"] == "SKIP"
+    assert "组合方向偏斜" in row["skip_reason"]
+
+    second_result = service.execute_instruction(mid_id)
+    assert second_result["success"] is False
+    assert second_result["skipped_portfolio_guardrail"] is True
+    second_row = next(
+        row for row in db.get_instructions_by_date("2026-10-08")
+        if row["id"] == mid_id
+    )
+    assert second_row["direction"] == "SKIP"
+    assert "组合方向偏斜" in second_row["skip_reason"]
+    audit = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert audit["instruction_id"] == mid_id
+    assert audit["decision"] == "SKIP"
+    assert high_id not in audit["skip_ids"]
+
+    conn.close()
+
+
+def test_guardrail_db_failure_is_fail_close():
+    class FailingDB:
+        def ensure_tables(self):
+            return None
+
+        def get_instructions_by_date(self, date):
+            raise RuntimeError("database unavailable")
+
+    service = PlaybookService(playbook_db=FailingDB())
+    allowed, reason, result = service._check_execution_portfolio_guardrail(
+        {"date": "2026-10-08", "symbol": "US.AAA", "direction": "BUY"}, 1
+    )
+
+    assert allowed is False
+    assert "PORTFOLIO_GUARDRAIL_FAIL_CLOSE" in reason
+    assert result["status"] == "error"
+
+
+def test_guardrail_skip_does_not_overwrite_booked_row():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    db = PlaybookDB(conn=conn)
+    db.ensure_tables()
+    instruction_id = db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.AAA",
+        "direction": "BUY",
+        "entry_price": 100.0,
+        "stop_loss": 95.0,
+        "take_profit": 110.0,
+        "position_size": 100,
+        "confidence": 35,
+        "conditions": [],
+    })
+    db.update_instruction_tracking(instruction_id, {"executed": 1})
+
+    marked = db.mark_instruction_guardrail_skip(
+        instruction_id, "组合方向偏斜 guardrail 拒绝执行"
+    )
+
+    assert marked is False
+    row = db.get_instruction("2026-10-08", "US.AAA")
+    assert row["direction"] == "BUY"
+    assert row["skip_reason"] == ""
+    conn.close()

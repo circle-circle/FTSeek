@@ -198,12 +198,17 @@ class TestDirectionGateC:
         }.get(k, d)
         return patch("app.core.config_container.get_config", return_value=mock_cfg)
 
-    def test_buy_quota_blocks_third(self, svc, db):
+    def test_buy_quota_blocks_third(self, svc, db, monkeypatch, tmp_path):
         """配额=2 时当日已有 2 笔 executed BUY → 第 3 笔被拦且不置 executed."""
         self._patch_gates_ok()
+        monkeypatch.setattr(
+            "app.playbook.playbook_service._PORTFOLIO_GUARDRAIL_AUDIT_PATH",
+            tmp_path / "portfolio_execution_guardrail.jsonl")
         for sym in ("US.QA", "US.QB"):
             iid = _save_inst(db, symbol=sym)
             db.update_instruction_tracking(iid, {"executed": 1})
+        iid_short = _save_inst(db, symbol="US.QS", direction="SELL_SHORT")
+        db.update_instruction_tracking(iid_short, {"executed": 1})
         iid3 = _save_inst(db, symbol="US.QC")
         with self._patch_dg(quota=2), self._find(db, "US.QC"):
             result = svc.execute_instruction(iid3)
@@ -213,12 +218,17 @@ class TestDirectionGateC:
         assert not row["executed"]
         assert "buy_quota" in (row["skip_reason"] or "")
 
-    def test_buy_quota_rollback_999(self, svc, db):
+    def test_buy_quota_rollback_999(self, svc, db, monkeypatch, tmp_path):
         """配额=999 (回滚态) → 第 3 笔 BUY 通过配额门."""
         self._patch_gates_ok()
+        monkeypatch.setattr(
+            "app.playbook.playbook_service._PORTFOLIO_GUARDRAIL_AUDIT_PATH",
+            tmp_path / "portfolio_execution_guardrail.jsonl")
         for sym in ("US.RA", "US.RB"):
             iid = _save_inst(db, symbol=sym)
             db.update_instruction_tracking(iid, {"executed": 1})
+        iid_short = _save_inst(db, symbol="US.RS", direction="SELL_SHORT")
+        db.update_instruction_tracking(iid_short, {"executed": 1})
         _save_inst(db, symbol="US.RC")
         with self._patch_dg(quota=999), \
              self._find(db, "US.RC"), \

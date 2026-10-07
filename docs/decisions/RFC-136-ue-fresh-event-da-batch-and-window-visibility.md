@@ -100,3 +100,16 @@
   会误读为 5 条均可交易。修复: `scripts/da_bridge_dingtalk_push.py` 推送前只读查询
   生产 DB, 消息与 `data/da_push_instruction_summary.jsonl` 台账均记录
   bridge候选数、DB指令数、可交易数、SKIP数及逐标的 SKIP原因。
+
+### C. 2026-10-07 P0 根因与执行体切换
+- **checkpoint=11 不是扫描供给不足**: opportunity 漏斗 raw=104 / quality=51,
+  但 20:00 agent job 的命令携带 `$SYMBOLS`; 实际 Hermes agent 进程没有注入该变量,
+  filter 只收到当日已有 checkpoint 里的 11 只。watchlist SSOT 本身可读出 44 只,
+  断点在 agent prompt 变量落地, 不在候选源。
+- **修复**: 20:00 `e0d574cc1a3c` 从 agent job 切到 no-agent
+  `da_main_carrier.py`; 载体用仓内 `get_stock_codes()` 确定性读出 watchlist,
+  以 `--symbols US.A,...` 显式传入 DA pipeline, 不再依赖 prompt 环境变量。
+  21:00 `9476e44276dc` 维持同一载体; 双季各自发车, off-season 一发由载体自身
+  ET 窗守卫写 `skipped_outside_window` 后 rc=0 退出。输出前缀改为中性 `[DA-main]`。
+- **回滚**: `e0d574cc1a3c` 恢复原 agent prompt/workdir, `9476e44276dc` 删除或恢复
+  原 EST 说明; 两侧 `da_main_carrier.py` 同步回滚。数据面回滚无迁移。

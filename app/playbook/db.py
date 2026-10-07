@@ -801,6 +801,24 @@ class PlaybookDB:
         )
         conn.commit()
 
+    def mark_instruction_guardrail_skip(
+        self, instruction_id: int, reason: str
+    ) -> bool:
+        """Mark a pending instruction as SKIP without touching booked/in-flight rows."""
+        conn = self._conn()
+        cursor = conn.execute(
+            """
+            UPDATE playbook_instructions
+            SET direction = 'SKIP', skip_reason = ?, updated_at = ?
+            WHERE id = ?
+              AND COALESCE(executed, 0) = 0
+              AND execution_state = 'PENDING'
+            """,
+            (reason, now_utc().isoformat(), instruction_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def merge_instruction_metadata(self, instruction_id: int, patch: Dict[str, Any]) -> bool:
         """把 patch 浅合并进 playbook_instructions.metadata_json (读-改-写, 零 schema 迁移)。
 

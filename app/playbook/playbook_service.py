@@ -20,6 +20,7 @@ import logging
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 
@@ -30,7 +31,8 @@ from app.playbook.live_arm_gate import (
     evaluate_live_arm_gate,
     read_live_arm_halt,
 )
-from app.utils.timezone import now_et
+from app.playbook.portfolio_execution_guardrail import evaluate_portfolio_guardrail
+from app.utils.timezone import now_et, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,10 @@ _DUP_GUARD_AUDITED: set = set()
 
 # pipeline_view TTL 缓存 (秒). 盘中数据每 5min 才变, 30s 缓存挡住高频轮询打 DB.
 _PV_TTL = 30
+_PORTFOLIO_GUARDRAIL_AUDIT_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "shadow"
+    / "portfolio_execution_guardrail.jsonl"
+)
 
 # ── 本模块私有 MarketDataRouter 单例 (2026-09-03, DEB-20260903-intraday-chain-audit §五 D3(b)) ──
 # 病灶: 下单路径两处**每单** new MarketDataRouter() → 每单一条 OpenD 连接 + 一个 30s 健康守护
@@ -866,6 +872,51 @@ class PlaybookService:
             logger.debug(f"[playbook] 方向审计加载失败: {e}")
             return {}
 
+    def _check_execution_portfolio_guardrail(
+        self, inst: Dict[str, Any], instruction_id: int
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        try:
+            trade_date = str(inst.get("date") or now_et().date().isoformat())
+            rows = self.db.get_instructions_by_date(trade_date)
+            result = evaluate_portfolio_guardrail(rows, instruction_id, inst)
+            record = {
+                "ts": now_utc().isoformat(),
+                "date": trade_date,
+                "instruction_id": instruction_id,
+                "symbol": inst.get("symbol", ""),
+                "decision": "SKIP" if result["should_skip"] else "PASS",
+                "reason": result["reason"],
+                "active_count": result["active_count"],
+                "direction_counts": result["direction_counts"],
+                "sector_counts": result["sector_counts"],
+                "skip_ids": result["skip_ids"],
+            }
+            try:
+                _PORTFOLIO_GUARDRAIL_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+                with _PORTFOLIO_GUARDRAIL_AUDIT_PATH.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception as audit_error:
+                logger.warning(f"[playbook] 组合guardrail审计写入失败: {audit_error}")
+            if result["should_skip"]:
+                marked = self.db.mark_instruction_guardrail_skip(
+                    instruction_id, result["reason"]
+                )
+                if not marked:
+                    result["should_skip"] = False
+                    result["status"] = "execution_claim_race"
+                    return False, (
+                        "[PORTFOLIO_GUARDRAIL_EXECUTION_RACE] "
+                        "指令已离开 PENDING, 拒绝覆盖执行状态"
+                    ), result
+                logger.warning(
+                    f"[playbook] {inst.get('symbol', '')} 执行前组合guardrail拒绝: "
+                    f"{result['reason']}"
+                )
+            return not result["should_skip"], result["reason"], result
+        except Exception as error:
+            logger.error(f"[playbook] 执行前组合guardrail检查失败: {error}", exc_info=True)
+            return False, f"[PORTFOLIO_GUARDRAIL_FAIL_CLOSE] {error}", {"status": "error"}
+
     # ========== 执行接口 ==========
 
     def execute_instruction(
@@ -903,6 +954,17 @@ class PlaybookService:
 
         if inst.get("direction") == "SKIP":
             return {"success": False, "message": "SKIP 指令不可执行"}
+
+        guardrail_allowed, guardrail_reason, guardrail_result = (
+            self._check_execution_portfolio_guardrail(inst, instruction_id)
+        )
+        if not guardrail_allowed:
+            return {
+                "success": False,
+                "message": guardrail_reason,
+                "skipped_portfolio_guardrail": bool(guardrail_result.get("should_skip")),
+                "portfolio_guardrail": guardrail_result,
+            }
 
         _risk_target = "real" if str(target_env or "").strip().lower() in {"real", "live"} else "sim"
         if _risk_target == "real":

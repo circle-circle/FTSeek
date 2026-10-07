@@ -7,6 +7,14 @@
 > `docs/debates/DEB-20260930-skew-gate-vision-gap.md` (§9 自曝表逐条更正)。
 > 本文件按 P7 纪律**正文原样留档不改**, 仅此指针章为后补。撤回操作本身 (回滚未验证的
 > 行为变更代码) 仍是正确的 — 错的是撤回**归因**。
+>
+> **2026-10-07 实施记录**: 本 RFC 原案的 builder 侧 day-scope 改法仍不落地;
+> 针对已确证的多写入方视野盲区, 改在**执行前统一收口**: `execute_instruction()`
+> 读取当日 DB 指令 (终态 skip 不入分母), 用与批次门同阈值的方向偏斜 / 行业集中度
+> 纯函数重算存活集合, 再决定当前直写或批次指令是否可执行。命中写 direction=SKIP
+> 与 skip_reason,
+> 审计落 `data/shadow/portfolio_execution_guardrail.jsonl`; DB 读失败 fail-close。
+> 该方案不调整 80% / 40% 阈值, 也不给 confidence 豁免。
 
 - **日期**: 2026-09-30 (提案) → 2026-09-30 (撤回)
 - **状态**: **WITHDRAWN — 代码已回滚 (git checkout HEAD, 未提交任何 skew 改动)**
