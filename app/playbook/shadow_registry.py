@@ -420,12 +420,16 @@ ADJUDICATED: dict[str, dict] = {
                 "9/23 一次性回放, 本批未能复现, 不引为裁决证据。",
     },
     "eth_short_probe": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-07", "needs_user": False,
-        "note": "**未跑 eval_script** — probe_eth_short_open.py 静态扫描命中 ORDER ×7 "
-                "(真下 1 股 SIM 单), 按 skill「命中副作用一律绕开 main」纪律只读产物: "
-                "4 行 attempt 全部 execute=true / trd_env=SIMULATE (9/23 盘前 ×3 + 9/25 盘后 ×1), "
-                "n=4/3 达样本量但判据=RFC-099 §10 五条回滚触发 + **复核日 2026-10-07** "
-                "(逐日 attempt 上限=额度, 非样本量目标) ⇒ 复核窗未到, 不裁决, 闹钟设 10/7。",
+        "read_at": "2026-10-06", "recheck_after": "2026-10-20", "needs_user": False,
+        "note": "✅**§10 复核已裁 (2026-10-06, 四条触发独立实测均不命中 ⇒ 续开观察, 零行为变更)**: "
+                "①券源/合规: EXT 空侧探针/成交无券商拒单、无裸卖 (日志 reject 行全为 FDS/JBL "
+                "『surprise STALE』数据新鲜度拒绝, 非订单拒绝; shortable 全≥1); ②止损方向: 唯一 "
+                "EXT 空侧成交 US.ACN 10-01 entry=212.529 / SL=223.16 在上方=正确, exit=SL_TRAIL_LOCK "
+                "+$19.44; ③尾部: EXT 空侧单日净额仅 10-01 +19.44, 无一日 ≤-$400 (连续 0 天); "
+                "④观测 (按 §10.1 更正后口径=闸计数唯一面): 近 3 个日档 39/114/66 行全 >0, 未停摆。"
+                "样本 n=1 不足以判『续开有效』或调门 ⇒ 按 §10.1 预注册建议续开观察, "
+                "EXT_ENTRY_ALLOW_SHORT=true 维持; 下次重看 10/20。"
+                "〔前读 2026-09-26: 复核窗未到不裁决, 闹钟 10/7 — 本条即该闹钟的落地〕",
     },
     "short_funnel_shadow": {
         # ✅ 2026-09-26 用户裁「2 按建议执行」⇒ 维持观测, 不在本批立 bridge 层门
@@ -2248,7 +2252,7 @@ REGISTRY: list[ShadowItem] = [
         data_path="data/eth_short_probe.jsonl",
         config_key="EXT_ENTRY_ALLOW_SHORT",
         min_n=3,
-        graduation_criteria="见 RFC-099 §10 五条回滚触发; 复核日 2026-10-07 (逐日 attempt 上限=额度, 非样本量目标)",
+        graduation_criteria="见 RFC-099 §10 四条回滚触发 (§10.1 更正: 原文实为 4 条编号项, 触发4观测面以②闸计数为唯一可执行口径); 复核日 2026-10-07 (逐日 attempt 上限=额度, 非样本量目标)",
         eval_script="scripts/probe_eth_short_open.py",
         created="2026-09-23",
         notes="选标按价差最窄且 ≤1%, 无合格返回 no_liquid_candidate (不下一张注定不成交的单)。",

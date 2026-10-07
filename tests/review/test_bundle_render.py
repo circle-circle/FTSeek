@@ -50,7 +50,8 @@ def test_render_reports_ready_adjudications_without_flooding_push():
     bundle = build(connection, "2026-09-18")
     bundle.pending_adjudications = [
         {"id": f"ready-{index}", "status": "READY_TO_EVALUATE", "progress": "30/30",
-         "ready": True, "ready_since": f"2026-09-1{index}", "criteria": "criteria"}
+         "ready": True, "needs_adjudication": True, "ready_since": f"2026-09-1{index}",
+         "criteria": "criteria"}
         for index in range(6)
     ] + [
         {"id": "observing", "status": "OBSERVING", "progress": "1/30", "ready": False,
@@ -70,6 +71,61 @@ def test_render_reports_ready_adjudications_without_flooding_push():
     assert "ready-3" not in push_text and "ready-5" not in push_text
     assert "其余 3 项" in push_text, "被折叠的条数必须写明 (读者要知道还有多少)"
     assert "样本攒够 ≠ 判据通过" in push_text
+
+
+def test_push_pending_count_uses_needs_adjudication_not_ready():
+    """「待裁决 N 项」计数 = 真待裁面 (needs_adjudication), 不是裸 ready (样本量达标)。
+
+    实锤 2026-10-06: 29 个 READY 里 28 个已出读数登记 (recheck 未到期), 推送却报
+    「待裁决 29 项」+ 把已裁项顶上白话前三 ⇒ 用户被催裁不存在的事 (幽灵 P0)。
+    """
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "adjudicated-ghost", "status": "READY_TO_EVALUATE", "progress": "2400/600",
+         "ready": True, "needs_adjudication": False, "ready_since": "2026-09-19",
+         "adjudicated_at": "2026-09-21", "recheck_after": "2026-10-21",
+         "criteria": "已裁项的判据原文"},
+        {"id": "truly-pending", "status": "READY_TO_EVALUATE", "progress": "4/3",
+         "ready": True, "needs_adjudication": True, "ready_since": "2026-09-23",
+         "criteria": "待裁项判据"},
+    ]
+
+    _full, push_text = render_md(bundle)
+
+    assert "待裁决 1 项" in push_text, "已裁项不得计入待裁决数"
+    assert "待裁决 2 项" not in push_text
+    assert "truly-pending" in push_text
+    assert "adjudicated-ghost" not in push_text, "已裁项不得顶上白话位 (那是催裁不存在的事)"
+
+
+def test_push_omits_pending_block_when_all_rows_adjudicated():
+    """全部 READY 项都已出读数 ⇒ 无待裁块 (零噪声), 不得假装有事。"""
+    connection = _create_db()
+    _insert_trade(
+        connection, symbol="US.A", direction="LONG",
+        entry_time="2026-09-18T10:00:00-04:00", exit_time="2026-09-18T11:00:00-04:00",
+        session="regular", net=25.0,
+    )
+    bundle = build(connection, "2026-09-18")
+    bundle.pending_adjudications = [
+        {"id": "ghost-a", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "needs_adjudication": False, "ready_since": "2026-09-01",
+         "criteria": "c"},
+        {"id": "ghost-b", "status": "READY_TO_EVALUATE", "progress": "30/30",
+         "ready": True, "needs_adjudication": False, "ready_since": "2026-09-02",
+         "criteria": "c"},
+    ]
+
+    _full, push_text = render_md(bundle)
+
+    assert "待裁决" not in push_text
+    assert "样本攒够 ≠ 判据通过" not in push_text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -133,7 +189,8 @@ def test_push_explains_each_shadow_in_plain_language(monkeypatch):
     bundle = build(connection, "2026-09-18")
     bundle.pending_adjudications = [
         {"id": "ready-0", "status": "READY_TO_EVALUATE", "progress": "30/30",
-         "ready": True, "ready_since": "2026-09-15", "criteria": "注册判据原文"},
+         "ready": True, "needs_adjudication": True, "ready_since": "2026-09-15",
+         "criteria": "注册判据原文"},
     ]
 
     full_md, push_text = render_md(bundle)
@@ -158,7 +215,8 @@ def test_push_falls_back_to_registered_criteria_and_never_invents_plain_language
     bundle = build(connection, "2026-09-18")
     bundle.pending_adjudications = [
         {"id": "brand-new-shadow", "status": "READY_TO_EVALUATE", "progress": "30/30",
-         "ready": True, "ready_since": "2026-09-15", "criteria": "注册的判据原文 text"},
+         "ready": True, "needs_adjudication": True, "ready_since": "2026-09-15",
+         "criteria": "注册的判据原文 text"},
     ]
 
     _full, push_text = render_md(bundle)
@@ -177,7 +235,8 @@ def test_glossary_explains_pending_and_points_to_plain_list():
     bundle = build(connection, "2026-09-18")
     bundle.pending_adjudications = [
         {"id": "ready-0", "status": "READY_TO_EVALUATE", "progress": "30/30",
-         "ready": True, "ready_since": "2026-09-15", "criteria": "c"},
+         "ready": True, "needs_adjudication": True, "ready_since": "2026-09-15",
+         "criteria": "c"},
     ]
     _full, push_text = render_md(bundle)
     assert "样本攒够 ≠ 判据通过" in push_text, (

@@ -38,7 +38,12 @@ def escalation_candidates(
     """
     out: List[Dict[str, Any]] = []
     for row in rows:
-        if not row.get("ready"):
+        # 升级面 = **真待裁面** (needs_adjudication, RFC-092 §10.3 语义), 不是裸 `ready`
+        # (样本量达标)。已读判据且 recheck 未到期的项 (adjudicated ∧ ¬needs_user ∧ ¬overdue)
+        # 属「已读数待攒样」, 不构成逾期 — 拿 `ready` 当判据会把它们误催成「逾期 N 天请裁决」。
+        # 实锤 2026-10-06: futu_channel_ofi_baseline 9/21 已裁 (recheck 10/21, needs_user=False,
+        # 结论「无停采依据」), 却因 ready_since=9/19 被报「READY 17 天逾期」= 幽灵 P0。
+        if not row.get("needs_adjudication"):
             continue
         since = (ready_state.get(row["id"]) or {}).get("ready_since")
         if not since:

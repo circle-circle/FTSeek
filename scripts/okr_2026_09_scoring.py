@@ -89,6 +89,10 @@ ARTIFACTS = {
     "exit_scorecard": ("data/exit_scorecard_latest.json", 192),
     "freeze_baseline": ("data/config_freeze_baseline.json", None),
     "kr3_verdict": ("data/shadow/kr3_runup_verdict_latest.json", None),
+    # 期末裁决批产物 (RFC-072 §六.3 现写现验, 2026-10-04 落地 scripts/kr3_final_adjudication.py):
+    # kr3_verdict 是**攒样中间读数**, 本产物才是**裁决结论** — 存在即裁决批已开,
+    # KR3 不得再报 READY_TO_ADJUDICATE「可开裁决批」(10-06 复盘实锤陈旧: 10/4 已裁仍催裁)。
+    "kr3_final": ("data/shadow/kr3_final_adjudication.json", None),
 }
 
 # ── KR2 修订判据 (2026-09-06, 用户授权代裁「交给你来做决策」; 落档 docs/OKR-2026-09.md 变更记录) ──
@@ -402,8 +406,28 @@ def kr2_freeze(invariant=None, baseline=None, cohort_settled=None, today=None):
                           f"不得冒充本判据达成。{power}"))
 
 
+def _kr3_final_summary(kr3_final):
+    """期末裁决批产物 → 机器可读摘要 (缺失/损坏 → None, 走原攒样分支, fail-soft)。"""
+    art = kr3_final or {}
+    doc = art.get("doc") if isinstance(art, dict) else None
+    if not isinstance(doc, dict) or not doc.get("legs"):
+        return None
+    legs = doc.get("legs") or []
+    parts, adjudicated = [], False
+    for leg in legs:
+        d = leg.get("direction", "?")
+        v = str(leg.get("verdict") or "?")
+        n = leg.get("n_blocked")
+        parts.append(f"{d}|blocked n={n} → {v}")
+        if "FALSIFIED" in v or "CONFIRMED" in v:
+            adjudicated = True  # 干净证伪/确认 = §结算判据的达成事件
+    return {"adjudicated": adjudicated, "legs_text": "; ".join(parts),
+            "generated_at": doc.get("generated_at"),
+            "window": doc.get("window"), "error": art.get("error")}
+
+
 def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS,
-               min_blocked_n=KR3_MIN_BLOCKED_N):
+               min_blocked_n=KR3_MIN_BLOCKED_N, kr3_final=None):
     """KR3 (找 edge): ①只许一个预注册假设 ②RFC-072 §三.5 样本门 ③裁决批是否可开。
 
     **归因更正 (2026-09-06, 修尺子批④)**: 批③ 把"预注册三要素 (按日聚类 t / MDE / OOS) 在产物
@@ -462,6 +486,7 @@ def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS,
         "verdict_by_direction": (doc or {}).get("verdict_by_direction"),
         "artifact_age_hours": art.get("age_hours"),
         "registered_in_shadow_registry": registry_mentions,
+        "final_adjudication": _kr3_final_summary(kr3_final),
     }
     unit = "假设数 (个) + would-block 已结算样本 n (笔)"
     source = f"{OKR_DOC} KR3 + docs/decisions/RFC-072-* + {ARTIFACTS['kr3_verdict'][0]}"
@@ -473,6 +498,19 @@ def kr3_prereg(kr3=None, repo_root=None, prereg_docs=KR3_PREREG_DOCS,
         return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_UNMEASURABLE,
                       unit=unit, source=source, evidence=evidence, gate=gate, score=None,
                       note=f"载体不可用 (fail-close): {err or '产物为空'}{registry_note}")
+    # 期末裁决批产物存在 ⇒ 裁决批已开且已出腿级 verdict — 不得再报 READY「可开裁决批」
+    # (2026-10-06 实锤陈旧: 10/4 已裁 LONG=FALSIFIED 达成, 面板仍催「样本门已达可开独立裁决批」)。
+    # OKR-2026-09 §结算判据: 「KR3 给出干净的确认或证伪都算达成」。
+    _fin = _kr3_final_summary(kr3_final)
+    if _fin and _fin.get("adjudicated"):
+        return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_MET,
+                      unit=unit, source=source, evidence=evidence, gate=gate, score=100.0,
+                      note=(f"✅ **期末裁决批已落地** ({ARTIFACTS['kr3_final'][0]}, "
+                            f"generated_at={_fin.get('generated_at')}): "
+                            f"{_fin.get('legs_text')}。按 §结算判据「干净的确认或证伪都算 KR3 达成」"
+                            f"⇒ **达成 (证据产出)**。SHORT 腿 §三.5 样本门未达属观察延长 (闹钟 10/17, "
+                            f"已登记 ADJUDICATED), 不阻塞本 KR; 证伪不立即换假设 (KR3 明令, "
+                            f"防链式 fishing), 新假设与否归 OKR-2026-10 KR3 裁决。{registry_note}"))
     if not count_ok:
         return _block("KR3", "找 edge: 预注册入场侧假设, 只许一个", VERDICT_NOT_MET,
                       unit=unit, source=source, evidence=evidence, gate=gate, score=0.0,
@@ -656,7 +694,8 @@ def collect_and_score(repo_root, ic_playbook=None, graduation=None,
         "KR2": kr2_freeze(invariant=arts["invariant"], baseline=arts["freeze_baseline"],
                           cohort_settled=cohort_settled,
                           today=today or _now(now).date().isoformat()),
-        "KR3": kr3_prereg(kr3=arts["kr3_verdict"], repo_root=root),
+        "KR3": kr3_prereg(kr3=arts["kr3_verdict"], repo_root=root,
+                         kr3_final=arts.get("kr3_final")),
         "KR4": kr4_hard_gate(locks=locks, gate_redefined=gate_redefined,
                              weekly_checkpoint_present=(root / WEEKLY_CHECKPOINT).exists(),
                              gate_prereg_draft=(GATE_PREREG_DRAFT

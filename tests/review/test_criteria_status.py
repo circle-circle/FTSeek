@@ -79,9 +79,9 @@ def test_ready_state_adds_new_and_removes_left_items(tmp_path):
 
 def test_escalation_candidates_filters_overdue_and_sorts_oldest_first():
     rows = [
-        {"id": "recent", "ready": True},
-        {"id": "old-a", "ready": True},
-        {"id": "old-b", "ready": True},
+        {"id": "recent", "ready": True, "needs_adjudication": True},
+        {"id": "old-a", "ready": True, "needs_adjudication": True},
+        {"id": "old-b", "ready": True, "needs_adjudication": True},
         {"id": "not-ready", "ready": False},
     ]
     ready_state = {
@@ -95,9 +95,36 @@ def test_escalation_candidates_filters_overdue_and_sorts_oldest_first():
     assert result[1]["days_ready"] == 19
 
 
+def test_escalation_candidates_excludes_adjudicated_rows():
+    """已出读数登记 (needs_adjudication=False) 的 READY 项不催办 — 幽灵 P0 回归钉。
+
+    实锤 2026-10-06: futu_channel_ofi_baseline 9/21 已裁 (结论「无停采依据」,
+    recheck_after=10/21), 却因 ready_since=9/19 被推送面报「READY 17 天逾期请裁决」。
+    升级面必须走真待裁面 (needs_adjudication), 不是裸 ready (样本量达标)。
+    """
+    rows = [
+        {"id": "adjudicated-ghost", "ready": True, "needs_adjudication": False,
+         "adjudicated_at": "2026-09-21", "recheck_after": "2026-10-21"},
+        {"id": "truly-pending", "ready": True, "needs_adjudication": True},
+    ]
+    ready_state = {
+        "adjudicated-ghost": {"ready_since": "2026-09-01"},  # 23 days — 但已裁, 不催
+        "truly-pending": {"ready_since": "2026-09-05"},
+    }
+    result = escalation_candidates(rows, ready_state, "2026-09-24")
+    assert [r["id"] for r in result] == ["truly-pending"]
+
+
+def test_escalation_candidates_treats_missing_flag_conservatively():
+    """needs_adjudication 缺失 (旧调用方/旧 fixture) = 保守不升级, 不误催。"""
+    rows = [{"id": "legacy-row", "ready": True}]
+    ready_state = {"legacy-row": {"ready_since": "2026-09-01"}}
+    assert escalation_candidates(rows, ready_state, "2026-09-24") == []
+
+
 def test_escalation_candidates_excludes_exactly_14_days():
     """门槛是 >14 (严格大于), 恰好 14 天不升级 (保守: 门槛日不算逾期)."""
-    rows = [{"id": "boundary", "ready": True}]
+    rows = [{"id": "boundary", "ready": True, "needs_adjudication": True}]
     ready_state = {"boundary": {"ready_since": "2026-09-10"}}
     result = escalation_candidates(rows, ready_state, "2026-09-24")
     assert result == []
@@ -105,7 +132,7 @@ def test_escalation_candidates_excludes_exactly_14_days():
 
 def test_escalation_candidates_handles_missing_ready_since():
     """ready_since 缺失 = 保守不升级 (不得因为 state 损坏误催)."""
-    rows = [{"id": "no-since", "ready": True}]
+    rows = [{"id": "no-since", "ready": True, "needs_adjudication": True}]
     ready_state = {}
     result = escalation_candidates(rows, ready_state, "2026-09-24")
     assert result == []

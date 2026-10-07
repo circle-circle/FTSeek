@@ -37,6 +37,19 @@ SINGLE_MIN_N = 30
 PAIR_MIN_N = 8
 
 
+def _read_all_rows():
+    """读全历史 jsonl 行 (供分方向汇总); 损坏行跳过。"""
+    if not OUTPUT.exists():
+        return []
+    out = []
+    for line in OUTPUT.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            continue
+    return out
+
+
 def _seen_keys():
     if not OUTPUT.exists():
         return set()
@@ -117,6 +130,37 @@ def main():
     n_skip = sum(1 for r in rows_out if r["would_skip"])
     print(f"[factor_neg_edge_shadow] {n_new} 条新记录 "
           f"(被标SKIP {n_skip} 笔 净{skip_pnl:+.1f} / 放行 {len(rows_out)-n_skip} 笔 净{pass_pnl:+.1f})")
+
+    # ── 全历史分方向判别力读数 (2026-10-06 修: Step 9 明令「必须分 LONG/SHORT」, 但脚本只印
+    #    当日聚合 ⇒ 报告 agent 被迫自行解析 jsonl 并误读字段名 (把 actual_pnl_net 当 pnl_net,
+    #    报「596条全null 分方向不可用」—— 实测 596/596 非空)。让脚本自己印全量分方向读数,
+    #    消除误读面。判据: 被标组净PnL 显著 < 放行组 = 门有判别力 (负edge因子该拦)。
+    _all = _read_all_rows()
+    if _all:
+        from collections import defaultdict
+        _agg = defaultdict(lambda: {"n": 0, "pnl": 0.0, "win": 0})
+        for r in _all:
+            d = r.get("direction") or "?"
+            arm = "SKIP" if r.get("would_skip") else "PASS"
+            k = (d, arm)
+            pnl = r.get("actual_pnl_net")
+            if pnl is None:
+                continue
+            _agg[k]["n"] += 1
+            _agg[k]["pnl"] += pnl
+            _agg[k]["win"] += 1 if pnl > 0 else 0
+        print(f"[factor_neg_edge_shadow] 全历史分方向 (n={len(_all)} 行, 字段=actual_pnl_net):")
+        for d in ("BUY", "SELL_SHORT"):
+            s = _agg.get((d, "SKIP"), {"n": 0, "pnl": 0.0, "win": 0})
+            pa = _agg.get((d, "PASS"), {"n": 0, "pnl": 0.0, "win": 0})
+            s_wr = (s["win"] / s["n"] * 100) if s["n"] else 0.0
+            p_wr = (pa["win"] / pa["n"] * 100) if pa["n"] else 0.0
+            s_avg = (s["pnl"] / s["n"]) if s["n"] else 0.0
+            p_avg = (pa["pnl"] / pa["n"]) if pa["n"] else 0.0
+            # 判别力: 被标组均PnL < 放行组均PnL ⇒ 门筛掉了更差的单 (有判别力)
+            disc = "有判别力" if (s["n"] and pa["n"] and s_avg < p_avg) else "无判别力/反向"
+            print(f"  {d:10s} 被标SKIP n={s['n']:4d} 净{s['pnl']:+9.2f} 均{s_avg:+7.2f} WR={s_wr:.0f}% | "
+                  f"放行 n={pa['n']:4d} 净{pa['pnl']:+9.2f} 均{p_avg:+7.2f} WR={p_wr:.0f}% ⇒ {disc}")
 
 
 if __name__ == "__main__":

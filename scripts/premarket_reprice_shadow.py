@@ -312,12 +312,73 @@ def settle(today_et: str, dry: bool) -> int:
     return n_done
 
 
+def _archive_readout():
+    """KILLED 档案读数 (2026-10-03 终裁后本脚本唯一合法输出面)。
+
+    为什么在脚本侧印而不是让报告 agent 自己解析 jsonl: 10-06 复盘实锤 agent 误读
+    嵌套字段 (settle.cf_exit_at_pre_delta 当顶层 pnl 字段, 报「cf 全 null 累计 $0.00
+    待补充计算」—— 实测 61/61 非空, 累计 -$1375.37, 且该影已于 10/3 KILLED 终裁)。
+    """
+    if not OUTPUT.exists():
+        print("[archive] 无档案文件")
+        return
+    rows = []
+    for line in OUTPUT.read_text().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    stray = [r for r in rows if (r.get("trade_date") or "") > "2026-09-30"]
+    # 裁决窗 = 8/18-9/30 (10/3 终裁冻结口径, 与注册表 verdict_history 数字对齐);
+    # 窗外杂散行不入裁决读数, 单独报数。
+    settled = [r for r in rows if r.get("settled")
+               and (r.get("trade_date") or "") <= "2026-09-30"]
+    by_action = {}
+    for r in settled:
+        a = r.get("action", "?")
+        d = by_action.setdefault(a, {"n": 0, "cf": 0.0, "act": 0.0})
+        s = r.get("settle") or {}
+        d["n"] += 1
+        d["cf"] += s.get("cf_exit_at_pre_delta") or 0.0
+        d["act"] += s.get("actual_pnl_net") or 0.0
+    cf_total = sum(d["cf"] for d in by_action.values())
+    n_null_cf = sum(1 for r in settled
+                    if (r.get("settle") or {}).get("cf_exit_at_pre_delta") is None)
+    parts = " | ".join(f"{a} n={d['n']} cf={d['cf']:+.2f} actual={d['act']:+.2f}"
+                       for a, d in sorted(by_action.items()))
+    print(f"[archive] KILLED 2026-10-03 终裁 (无可复现净改善, DEB-20260818 + RFC-067 预注册): "
+          f"窗内 settled={len(settled)} (cf_null={n_null_cf}) 反事实累计={cf_total:+.2f} :: {parts}")
+    print("[archive] 注: n/cf 为**当前重算**, 含终裁后迟到结算行 (如 9/30 入场仓 10 月才平仓), "
+          "与注册表 verdict_history 冻结读数 (settled=58: hold26/tighten15/be_raise17, "
+          "cf hold -756.83/tighten -397.72/be_raise +31.04) 可差 ±1-2 行 — 裁决以冻结读数为准, "
+          "迟到行不改判 (be_raise 仍 ≈0 无可复现改善)")
+    if stray:
+        print(f"[archive] ⚠️ 终裁窗 (8/18-9/30) 后有 {len(stray)} 行杂散采集 "
+              f"(KILLED 后复盘 Step 8 仍跑 collect 所致, 本版本已堵): "
+              f"{[(r.get('trade_date'), r.get('symbol')) for r in stray[:5]]} — 不入裁决读数")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--settle-only", action="store_true",
                     help="只结算历史行, 跳过当日采集 (原名 --collect-only 语义反转, 8/18 勘误)")
     args = ap.parse_args()
+
+    # ── KILLED 守卫 (2026-10-06): 注册表 status=KILLED/collection_retired ⇒ 档案冻结 ──
+    # 只印档案读数, 不采集不结算。堵两个洞: ①KILLED 后复盘 Step 8 每天仍 collect
+    # (10/1-10/6 已漏 5 行杂散进冻结档案); ②报告 agent 误读嵌套字段报「cf 全 null」。
+    try:
+        from app.playbook.shadow_registry import REGISTRY
+        _item = next((it for it in REGISTRY if it.id == "premarket_reprice_shadow"), None)
+        _status = getattr(getattr(_item, "status", None), "value", getattr(_item, "status", ""))
+        if _item is not None and (str(_status) == "KILLED" or getattr(_item, "collection_retired", False)):
+            _archive_readout()
+            return
+    except Exception as e:  # 注册表不可读时 fail-close: 不采集 (宁停勿污染冻结档案)
+        print(f"[guard] 注册表状态不可读 ({e}) ⇒ 保守跳过采集; 档案读数如下:")
+        _archive_readout()
+        return
 
     today_et = _today_et()
     if not _is_trading_day():

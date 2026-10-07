@@ -396,26 +396,30 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
         push_lines.append(f"P0 异常 {len(anomalies)}：{anomalies[0]['kind']}")
     else:
         push_lines.append("P0 异常 0")
-    ready_rows = sorted(
-        (row for row in pending if row.get("ready")),
+    # 「待裁决」计数 = **真待裁面** (needs_adjudication, RFC-092 §10.3 语义), 不是裸 `ready`
+    # (样本量达标)。实锤 2026-10-06: 29 个 READY 里 28 个已出读数登记 (recheck 未到期),
+    # 推送却报「待裁决 29 项」并把已裁项顶上白话前三 ⇒ 用户被催裁不存在的事。
+    # needs_adjudication 缺失 (旧 fixture/旧调用方) = 保守不计入, 不误催。
+    adjudication_rows = sorted(
+        (row for row in pending if row.get("needs_adjudication")),
         key=lambda row: str(row.get("ready_since", "")),
     )
-    if ready_rows:
-        oldest_since = str(ready_rows[0].get("ready_since") or "?")
+    if adjudication_rows:
+        oldest_since = str(adjudication_rows[0].get("ready_since") or "?")
         push_lines.append(
-            f"待裁决 {len(ready_rows)} 项（最久 {oldest_since} 起）· 白话：这些影子是什么 / 在问什么 / 现在读数"
+            f"待裁决 {len(adjudication_rows)} 项（最久 {oldest_since} 起）· 白话：这些影子是什么 / 在问什么 / 现在读数"
         )
         # 用户 2026-09-22 令: 「待裁决的影子背景和问题以及结论是不清楚的, 白话主要是对这些影子的解释」
         #   ⇒ 推送面按「每个影子讲三件事」排: 是什么(plain) / 在问什么(含在 plain 里) / 现读数(conclusion).
         #   只报最久等待前 3 项 (防刷屏, 与 DEB §279「只给计数 + 最久前 N」的防噪设计同宗),
         #   全文白话在 MD 与「影子验收清单」里; 词典缺项一律回落注册判据原文, 不编白话.
-        for index, row in enumerate(ready_rows[:3], start=1):
+        for index, row in enumerate(adjudication_rows[:3], start=1):
             push_lines.append(f"{'①②③'[index - 1]} {row['id']}（{row['progress']}）")
             push_lines.extend(_shadow_plain_lines(row, _lexicon, width=90))
-        if len(ready_rows) > 3:
+        if len(adjudication_rows) > 3:
             push_lines.append(
-                f"（其余 {len(ready_rows) - 3} 项白话版见「影子验收清单」通知, 周六 09:15 有变化才发; "
-                f"全量 {len(ready_rows)} 项逐条见判决书 MD）"
+                f"（其余 {len(adjudication_rows) - 3} 项白话版见「影子验收清单」通知, 周六 09:15 有变化才发; "
+                f"全量 {len(adjudication_rows)} 项逐条见判决书 MD）"
             )
         else:
             push_lines.append(
@@ -434,7 +438,7 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
     # 白话注释 (2026-09-22, 用户令「需要推送 添加容易理解的注释」):
     #   推送面必须自解释 — 收货人不在终端, 无法 grep/PRAGMA; 术语一律就地翻译, 数字就地给口径.
     #   与 shadow 验收清单同风格 (背景 30 秒 + 白话行), 两处口径一致: "待裁决" ≠ 判据通过.
-    glossary = _push_glossary(headline, ready_rows)
+    glossary = _push_glossary(headline, adjudication_rows)
     if glossary:
         push_lines.append("——")
         push_lines.append(glossary)

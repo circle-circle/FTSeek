@@ -178,8 +178,8 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "eth_short_probe": {
         "plain": "盘前/盘后真下一张 1 股 SIM 空单, 探一探券商通道到底能不能开空（额度/借券/时段限制）",
-        "conclusion": "**未跑 eval**（静态扫描命中 `ORDER ×7` = 真下 1 股 SIM 单, 按纪律绕开 main 只读产物）: 4 行 attempt 全部 `execute=true` / `trd_env=SIMULATE`（9/23 盘前 ×3 + 9/25 盘后 ×1）⇒ 通道是通的。判据是 RFC-099 §10 的五条回滚触发（逐日 attempt 上限=额度, **不是样本量目标**）, 复核窗 **2026-10-07** 未到 ⇒ 不裁决, 闹钟已设 10/7",
-        "cls": "WINDOW",
+        "conclusion": "✅**§10 复核已裁（2026-10-06, 四条触发独立实测均不命中 ⇒ 续开观察, 零行为变更）**: ①无券商拒单/裸卖（日志 reject 行全为数据新鲜度拒绝, 非订单拒绝）; ②唯一 EXT 空侧成交 US.ACN 10-01 SL=223.16 在 entry=212.53 上方=方向正确, +$19.44; ③EXT 空侧无一日 ≤−$400; ④闸计数近 3 日档全 >0 未停摆（§10.1 更正后唯一可执行观测面）。样本 n=1 ⇒ 按 §10.1 预注册建议续开观察, `EXT_ENTRY_ALLOW_SHORT=true` 维持; 下次重看 **10/20**",
+        "cls": "AUTO_WATCH",
     },
     "eth_premarket_exit_shadow": {
         "plain": "盘前持仓的几种出场法（到点就出 / 拿到开盘 / 只锁盈不止损）到底哪种净额更好",

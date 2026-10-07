@@ -351,6 +351,48 @@ def test_kr3_sample_gate_counts_blocked_subset_only(tmp_path):
     assert "延长观察" in kr3["note"]
 
 
+def test_kr3_met_when_final_adjudication_artifact_present(tmp_path):
+    """期末裁决批产物存在 (LONG=FALSIFIED) ⇒ KR3=MET, 不得再报 READY「可开裁决批」。
+
+    实锤 2026-10-06: 10/4 裁决批已落地 (kr3_final_adjudication.json), 面板仍报
+    READY_TO_ADJUDICATE 催「可开独立裁决批」= 陈旧催裁。OKR-2026-09 §结算判据:
+    干净的确认或证伪都算达成。
+    """
+    kr3doc = {"generated_at": _NOW.isoformat(),
+              "groups": {"LONG|blocked": {"n_eval": 43}, "SHORT|blocked": {"n_eval": 23},
+                         "LONG|pass": {"n_eval": 74}, "SHORT|pass": {"n_eval": 19}}}
+    finaldoc = {"generated_at": "2026-10-04T21:47:51",
+                "legs": [
+                    {"direction": "LONG", "n_blocked": 43, "verdict": "FALSIFIED"},
+                    {"direction": "SHORT", "n_blocked": 23,
+                     "verdict": "INSUFFICIENT_SAMPLE_DO_NOT_ADJUDICATE"}],
+                "window": {"end": "2026-09-30"}}
+    root = _repo(tmp_path, kr3=kr3doc)
+    (root / sc.ARTIFACTS["kr3_final"][0]).write_text(json.dumps(finaldoc), encoding="utf-8")
+    b = sc.collect_and_score(repo_root=root, now=_NOW)
+    kr3 = b["krs"]["KR3"]
+    assert kr3["verdict"] == sc.VERDICT_MET and kr3["score"] == 100.0
+    assert "FALSIFIED" in kr3["note"] and "达成" in kr3["note"]
+    assert kr3["evidence"]["final_adjudication"]["adjudicated"] is True
+    # settlement: KR3 MET 后不再进 accumulating
+    assert "KR3" not in b["settlement"]["accumulating"]
+
+
+def test_kr3_final_artifact_insufficient_only_stays_accumulating(tmp_path):
+    """产物存在但两腿都无干净裁决 (如全 INSUFFICIENT) ⇒ 不算达成, 走原样本门分支。"""
+    kr3doc = {"generated_at": _NOW.isoformat(),
+              "groups": {"LONG|blocked": {"n_eval": 22}, "SHORT|blocked": {"n_eval": 9}}}
+    finaldoc = {"generated_at": "2026-10-04T21:47:51",
+                "legs": [{"direction": "LONG", "n_blocked": 22,
+                          "verdict": "INSUFFICIENT_SAMPLE_DO_NOT_ADJUDICATE"},
+                         {"direction": "SHORT", "n_blocked": 9,
+                          "verdict": "INSUFFICIENT_SAMPLE_DO_NOT_ADJUDICATE"}]}
+    root = _repo(tmp_path, kr3=kr3doc)
+    (root / sc.ARTIFACTS["kr3_final"][0]).write_text(json.dumps(finaldoc), encoding="utf-8")
+    kr3 = sc.collect_and_score(repo_root=root, now=_NOW)["krs"]["KR3"]
+    assert kr3["verdict"] == sc.VERDICT_READY, "无干净裁决事件 ⇒ 维持原 READY 分支"
+
+
 def test_kr3_ready_to_adjudicate_when_sample_gate_met(tmp_path):
     kr3doc = {"generated_at": _NOW.isoformat(),
               "groups": {"LONG|blocked": {"n_eval": 22}, "SHORT|blocked": {"n_eval": 9},
