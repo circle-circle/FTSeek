@@ -292,8 +292,11 @@ def main():
                    f"触band {trig_n}条" + (f", 影子合计 {trig_pnl:+.2f}%" if trig_n else ""))
         out.extend(lines[:15])
     if cum_cont_n:
+        # [DEB-20261008 裁决] B类轴 FAIL 关闭: 累计正读数由 8/29 prev_close 修复前脏行
+        # + 15% 杠杆/加密ETF(不可执行)支撑; 干净窗 mean −0.12%/t=−0.58。禁转实盘信号。
         out.append(f"\n累计 (n={cum_cont_n}): 延续率 {cum_cont_hit/cum_cont_n*100:.0f}% | "
-                   f"顺势影子均 {cum_ret/cum_ret_n:+.2f}%/笔 — n≥30 后再评估是否转实盘信号")
+                   f"顺势影子均 {cum_ret/cum_ret_n:+.2f}%/笔 — ⚖️已裁 FAIL·B类轴关闭 "
+                   f"(DEB-20261008/判据C13, 2026-10-08): 禁转实盘信号; 本行仅作采集健康度")
     print('\n'.join(out))
 
 
