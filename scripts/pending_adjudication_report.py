@@ -91,6 +91,18 @@ _READOUT_NUM_KEYS = ("n", "n_days", "n_settled", "n_pairs", "coverage", "ic", "t
                      "expectancy", "blocked_expectancy", "hit_rate", "p_value", "sign_p")
 
 
+def _era_line(era) -> str:
+    """RFC-138 借鉴①: 参数时代漂移 ⇒ 一行 ⚠️ 标注 (旧结论防无标注复活)。
+
+    只在 applies=False 时输出; True/None(不可判定) 静默 — 报告不为无漂移条目加噪音,
+    fail-open 也不冒充判定 (era 的 note 已含失败原因, 调试走 --json/日志面)。
+    """
+    if not isinstance(era, dict) or era.get("applies") is not False:
+        return ""
+    return (f"⚠️ 参数时代漂移（RFC-138）：该结论裁决于退出参数 `{era.get('then')}` 时代"
+            f"（{era.get('note', '')}）— 引用前须复算或重裁")
+
+
 def _artifact_readout(artifact: str, eval_script) -> str:
     """产物 json → 一行「判据实测」读数 (取不到 → 指路 eval_script, 不臆造)。"""
     v = _artifact_verdict(artifact)
@@ -175,6 +187,10 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
             L.append(f"  结论：{it['conclusion']}")
             # F4 (DEB-20261007): 判据实测值栏 — READY≠判据过, 裁决前先看实测读数
             L.append(f"  {_artifact_readout(it.get('artifact', ''), it.get('eval_script'))}")
+            # RFC-138: 参数时代漂移标注 (applies=False 才出现; 漂移时裁决参照已失效)
+            _el = _era_line(it.get("verdict_era"))
+            if _el:
+                L.append(f"  {_el}")
         L.append("")
     else:
         L.append("**① 需要你决定：当前 0 项** ✅（我不会自己动任何治理变更）")
@@ -206,6 +222,10 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
                 _ro = _artifact_readout(r.get("artifact", ""), r.get("eval_script"))
                 if not v:  # 有裁决码时 extra 已含, 不重复
                     L.append(f"  {_ro}")
+                # RFC-138: 终态结论被抬出时同样受「旧结论复活」风险, 漂移即标注
+                _el = _era_line(r.get("verdict_era"))
+                if _el:
+                    L.append(f"  {_el}")
             L.append("")
 
     if first_run:

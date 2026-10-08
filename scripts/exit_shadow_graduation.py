@@ -235,6 +235,28 @@ def _assess_dead_signal(records: List[Dict]) -> Dict[str, Any]:
     return {"variants": results}
 
 
+def _era_block() -> Dict[str, Any]:
+    """RFC-138: 当前指纹 vs 冻结裁决日指纹 (read_at 从 ADJUDICATED SSOT 读).
+
+    返回 {"current", "adjudicated_at", "then", "applies", "note"}; 异常 fail-open
+    ⇒ {"error": ...} (报告照常, 只标注不改三门判定)。
+    """
+    try:
+        from app.playbook.shadow_registry import ADJUDICATED
+        read_at = str((ADJUDICATED.get("exit_param_shadow") or {}).get("read_at") or "")
+        from app.review.verdict_era import era_status
+        st = era_status(read_at)
+        return {
+            "current": st["now"],
+            "adjudicated_at": read_at,
+            "then": st["then"],
+            "applies": st["applies"],
+            "note": st["note"],
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"era 查询失败 ({type(e).__name__}: {e}) — 不作适用性判定"}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Exit Shadow Graduation Report")
     parser.add_argument("--days", type=int, default=0, help="只看近N天 (0=全量)")
@@ -255,6 +277,10 @@ def main():
             "min_samples": MIN_SAMPLES,
             "min_consistency": MIN_CONSISTENCY,
         },
+        # RFC-138 借鉴①: era 块 = 当前退出参数指纹 vs 9/26 冻结裁决日指纹。
+        # 裁决日从 shadow_registry ADJUDICATED 读 (SSOT, 不硬编码); fail-open:
+        # 查询失败 ⇒ era={"error": ...}, 报告照常 (只标注不改判定)。
+        "era": _era_block(),
         "exit_variants": _assess_exit_variants(records),
         "dead_signal": _assess_dead_signal(records),
         "abort_30m": _assess_counterfactual_variants(records, "abort_30m", "ABORT_30M_VARIANTS"),
@@ -274,6 +300,16 @@ def main():
     print(f"  EXIT SHADOW GRADUATION REPORT")
     print(f"  样本: {len(records)} 笔 | 窗口: {'全量' if not args.days else f'近{args.days}天'}")
     print(f"  门禁: N≥{MIN_SAMPLES}, 一致性≥{MIN_CONSISTENCY:.0%}")
+    # RFC-138: era 行 — 漂移时显式 ⚠️ (三门判定不受影响, 只标注适用性)
+    _era = report.get("era") or {}
+    if _era.get("error"):
+        print(f"  era: ⚠️ {_era['error']}")
+    elif _era.get("applies") is False:
+        print(f"  era: ⚠️ {_era.get('note')}")
+    elif _era.get("applies") is True:
+        print(f"  era: ✅ {_era.get('note')}")
+    else:
+        print(f"  era: ⏳ 不可判定 — {_era.get('note', '')}")
     print(f"{'='*60}")
 
     # EXIT_VARIANTS

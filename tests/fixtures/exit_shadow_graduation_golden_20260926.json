@@ -1,0 +1,138 @@
+{
+ "_meta": {
+  "adjudication_ref": "shadow_registry ADJUDICATED[exit_param_shadow] read_at=2026-09-26 (N=495, 三门: BE/DD 5变体全FAIL, abort FAIL, early_tight 5变体全FAIL; 唯二PASS=dead_signal_60m_mfe0.2/0.3)",
+  "discipline": "改本fixture=改判据=重新裁决 (须DEB+用户裁); 引擎演化致数字变化时: 要么证明无害并在RFC留痕, 要么承认旧裁决不可复现并触发era分层。tests/test_graduation_golden.py 语义钉防重生成洗白。",
+  "era_fingerprint": "exit-34c7153088a1",
+  "era_fingerprint_note": "裁决日 (9/26) 现役退出参数指纹 (get_exit_config_version, 9/17 起); 与 fixture 同源可核: trade_records.metadata_json.config_version",
+  "frozen_window": "ts date <= 2026-09-26",
+  "generated_at": "2026-10-08",
+  "rfc": "RFC-138 (docs/decisions/RFC-138-verdict-era-fingerprint-and-golden-fixture.md)",
+  "source": "data/shadow/exit_param_shadow.jsonl (production, append-only)"
+ },
+ "abort_30m": {
+  "variant_key": "ABORT_30M_VARIANTS",
+  "variants": {
+   "abort_30m_mfe0.1_loss": {
+    "mean_saved_pct": -0.0299,
+    "n": 289,
+    "positive_rate": 0.46,
+    "reason": "反事实均值≤0 (-0.0299%)",
+    "status": "FAIL"
+   }
+  }
+ },
+ "dead_signal": {
+  "variants": {
+   "dead_signal_60m_mfe0.2": {
+    "mean_not_triggered_pct": 0.2965,
+    "mean_triggered_pct": -0.9152,
+    "n_total": 465,
+    "n_triggered": 111,
+    "reason": "分离度=1.212pp (triggered=-0.915% vs not=0.297%)",
+    "separation_pp": 1.2117,
+    "status": "PASS"
+   },
+   "dead_signal_60m_mfe0.3": {
+    "mean_not_triggered_pct": 0.3406,
+    "mean_triggered_pct": -0.8162,
+    "n_total": 465,
+    "n_triggered": 134,
+    "reason": "分离度=1.157pp (triggered=-0.816% vs not=0.341%)",
+    "separation_pp": 1.1568,
+    "status": "PASS"
+   }
+  }
+ },
+ "early_tight": {
+  "variant_key": "EARLY_TIGHT_VARIANTS",
+  "variants": {
+   "early_tight_30m_1pct": {
+    "mean_saved_pct": 0.2375,
+    "n": 91,
+    "positive_rate": 0.473,
+    "reason": "一致性不足 (47.3% < 55%)",
+    "status": "FAIL"
+   },
+   "early_tight_30m_mfe0.3": {
+    "mean_saved_pct": 0.2621,
+    "n": 85,
+    "positive_rate": 0.471,
+    "reason": "一致性不足 (47.1% < 55%)",
+    "status": "FAIL"
+   },
+   "early_tight_30m_mfe0.5": {
+    "mean_saved_pct": 0.2261,
+    "n": 87,
+    "positive_rate": 0.471,
+    "reason": "一致性不足 (47.1% < 55%)",
+    "status": "FAIL"
+   },
+   "early_tight_60m_mfe0.3": {
+    "mean_saved_pct": 0.2593,
+    "n": 101,
+    "positive_rate": 0.475,
+    "reason": "一致性不足 (47.5% < 55%)",
+    "status": "FAIL"
+   },
+   "early_tight_60m_mfe0.5": {
+    "mean_saved_pct": 0.1994,
+    "n": 109,
+    "positive_rate": 0.459,
+    "reason": "一致性不足 (45.9% < 55%)",
+    "status": "FAIL"
+   }
+  }
+ },
+ "exit_variants": {
+  "baseline_mean_capture": -1.5004,
+  "baseline_n": 437,
+  "variants": {
+   "be0.3_dd0.3": {
+    "baseline_capture": -1.5004,
+    "consistency": 0.382,
+    "improvement": 0.1909,
+    "mean_capture": -1.3095,
+    "n": 437,
+    "reason": "一致性不足 (38.2% < 55%)",
+    "status": "FAIL"
+   },
+   "be0.5_dd0.4": {
+    "baseline_capture": -1.5004,
+    "consistency": 0.259,
+    "improvement": 0.0436,
+    "mean_capture": -1.4569,
+    "n": 437,
+    "reason": "一致性不足 (25.9% < 55%)",
+    "status": "FAIL"
+   },
+   "profit_override_1.5_dd0.5": {
+    "baseline_capture": -1.5004,
+    "consistency": 0.104,
+    "improvement": -0.074,
+    "mean_capture": -1.5744,
+    "n": 412,
+    "reason": "均值无改善 (variant=-1.574 ≤ baseline=-1.500)",
+    "status": "FAIL"
+   },
+   "tiered_dd0.4_tier1.2": {
+    "baseline_capture": -1.5004,
+    "consistency": 0.123,
+    "improvement": 0.3319,
+    "mean_capture": -1.1686,
+    "n": 359,
+    "reason": "一致性不足 (12.3% < 55%)",
+    "status": "FAIL"
+   },
+   "tiered_dd0.5_tier1.5": {
+    "baseline_capture": -1.5004,
+    "consistency": 0.128,
+    "improvement": 0.3377,
+    "mean_capture": -1.1628,
+    "n": 359,
+    "reason": "一致性不足 (12.8% < 55%)",
+    "status": "FAIL"
+   }
+  }
+ },
+ "frozen_n": 495
+}

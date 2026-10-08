@@ -47,6 +47,9 @@ def test_pending_adjudications_reads_registry_without_new_ledger(monkeypatch):
             "artifact": "data/fixture.jsonl",
             "eval_script": None,
             "count_mode": "lines",
+            # RFC-138 借鉴①: 裁决参数指纹适用性字段 (契约加法, 消费方用 .get 向后兼容)。
+            # 本条 FakeItem 不在 ADJUDICATED ⇒ read_at 为空 ⇒ 未裁条目不查询, 恒 None。
+            "verdict_era": None,
             "evidence": {
                 "kind": "artifact",
                 "ref": "app/playbook/shadow_registry.py :: id=fixture-ready",

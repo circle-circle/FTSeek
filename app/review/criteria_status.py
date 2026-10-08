@@ -98,6 +98,13 @@ def guard_escalation(
 
 def pending_adjudications() -> List[Dict[str, Any]]:
     refresh_counts()
+    # RFC-138 借鉴①: 每条已裁结论附「裁决时参数指纹 vs 现役」适用性标注。
+    # fail-open: era 查询失败 ⇒ verdict_era.applies=None, 报告照常 (只标注不降级)。
+    try:
+        from app.review.verdict_era import era_map as _era_map_fn
+        _emap = _era_map_fn()
+    except Exception:                                             # noqa: BLE001
+        _emap = {}
     rows: List[Dict[str, Any]] = []
     for item in REGISTRY:
         status = getattr(item.status, "value", item.status)
@@ -109,6 +116,15 @@ def pending_adjudications() -> List[Dict[str, Any]]:
         # 不构成待裁面 (2026-09-21 RFC-092 §8.6-2/§10.3 字段级修法)。
         needs = bool(ready and not item.no_adjudication_reason
                      and (not adj["adjudicated"] or adj["needs_user"] or adj["overdue"]))
+        # era 标注只对**已裁**条目有意义 (未裁条目没有旧结论可复活); 未裁 ⇒ None 不查询。
+        _era = None
+        if adj["read_at"]:
+            try:
+                from app.review.verdict_era import era_status as _era_status_fn
+                _era = _era_status_fn(adj["read_at"], _emap)
+            except Exception as e:                                # noqa: BLE001
+                _era = {"then": None, "now": "", "applies": None,
+                        "note": f"era 查询失败 ({type(e).__name__}) — 不作适用性判定"}
         rows.append(
             {
                 "id": item.id,
@@ -124,6 +140,8 @@ def pending_adjudications() -> List[Dict[str, Any]]:
                 "artifact": item.data_path,
                 "eval_script": item.eval_script,
                 "count_mode": getattr(item, "count_mode", None),
+                # RFC-138: 裁决参数指纹适用性 (退出参数 era); None = 未裁/不可判定。
+                "verdict_era": _era,
                 "evidence": {
                     "kind": "artifact",
                     "ref": f"app/playbook/shadow_registry.py :: id={item.id}",
