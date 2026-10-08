@@ -143,40 +143,40 @@ $ grep -n "entry_band_vol_widen_enabled\|chase_cap_enforce_enabled\|entry_archet
 
 | 编号 | 声称 | 复现命令 | 期望输出（作者实跑值） |
 |---|---|---|---|
-| E1 | MFE/MAE 填充率足以支撑捕获率分析 | `venv/bin/python -c "import sqlite3;c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True);print(c.execute('SELECT COUNT(*),COUNT(mfe_pct),COUNT(mae_pct),MAX(trade_date) FROM trade_records').fetchone())"` | `(959, 957, 957, '2026-10-06')` ⇒ 填充率 99.8% |
+| E1 | MFE/MAE 填充率足以支撑捕获率分析 | `venv/bin/python -c "import sqlite3;c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True);print(c.execute('SELECT COUNT(*),COUNT(mfe_pct),COUNT(mae_pct),MAX(trade_date) FROM trade_records').fetchone())"` | `(961, 959, 959, '2026-10-07')` ⇒ 填充率 99.8% |
 | E2 | 整体捕获率与费用后净额 | `venv/bin/python scripts/deb20261007_mfe_capture.py` | 含 `捕获中位`、`MFE中位`、`费用`、`WR` 行；全量 n=957 |
-| E3 | 摸到够付费用的利润 vs 实际落袋的落差 | `venv/bin/python scripts/deb20261007_capture_failure.py` | `摸到过够付费用的利润 = 619 (65.2%)` / `落袋成功 = 462   落袋失败 = 157  ⇒ 捕获失败率 = 25.4%` |
+| E3 | 摸到够付费用的利润 vs 实际落袋的落差 | `venv/bin/python scripts/deb20261007_capture_failure.py` | `摸到过够付费用的利润 = 624 (65.3%)` / `落袋成功 = 467   落袋失败 = 157  ⇒ 捕获失败率 = 25.2%` |
 | E4 | 捕获失败批是「刚够付费用就反向」而非大利润回吐 | `venv/bin/python scripts/deb20261007_capture_failure.py` | `落袋失败     n= 157  MFE bps: 中位=   52.2 p75=   76.3 p90=  106.5` / `落袋 bps: 中位=  -13.2  \|MAE\|中位=0.64%` |
 | E5 | 捕获失败批分散，可作方向判读（非单日支配） | `venv/bin/python scripts/deb20261007_capture_failure.py` | `捕获失败批总净=$-5014.02  独立日数=55` / `⇒ Top-3 日占比 = 27.8% (分散, 可作方向判读)` |
-| E6 | 死 MFE 池已被既有治理吃掉大半（73.3%→18.5%） | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `~2026-06-26 (旧架构)            344    252    73.3%` / `2026-09-01~09-30             184     34    18.5%` / `2026-10-01~ (现役)              31      6    19.4%` |
-| E7 | 现役窗净额单票支配，不得作裁决依据 | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `9/1 起 n=215  死池 n=40 (18.6%)` / `窗净=$11.26` |
+| E6 | 死 MFE 池已被既有治理吃掉大半（73.3%→18.5%） | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `~2026-06-26 (旧架构)            344    252    73.3%` / `2026-09-01~09-30             184     34    18.5%` / `2026-10-01~ (现役)              33      3     9.1%` |
+| E7 | 现役窗净额单票支配，不得作裁决依据 | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `9/1 起 n=217  死池 n=37 (17.1%)` / `窗净=$143.93` |
 | E8 | 死池出血口 88% 是 SL_INITIAL + OVERNIGHT_GAP（已由 C11 + B19 承载） | `venv/bin/python scripts/deb20261007_deadpool_window.py` | `SL_INITIAL                 n= 13 净=$ -1569.74` / `OVERNIGHT_GAP_STOP         n=  5 净=$ -1516.55`（合计 −$3,086 / 死池 −$3,518 = 87.7%） |
-| E9 | **决定性**：失败组达峰更早、持有更久 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `落袋成功     n= 308` … `time_to_mfe: 中位=  25.20min` … `⇒ MFE 达峰时刻占持有时长 = 70.0%`<br>`落袋失败     n= 107` … `time_to_mfe: 中位=  15.90min` … `⇒ MFE 达峰时刻占持有时长 = 22.1%` |
-| E10 | 落袋成功率随达峰变晚而**上升**（单调）🔴自曝#12：幅度桶内单调性消失/反向 ⇒ 共线伪影，数字仍可复现但不得作方案 C 依据（判别见 E34） | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `5-15         163      68.1%` / `15-30         80      75.0%` / `30-60         63      74.6%` / `60-120        35      82.9%` / `>120min       74      82.4%` |
-| E11 | **自曝#4 依据**：两组「>费用线占比」几乎相同 ⇒ 「拿不住」判读不成立 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `失败     45m       57    0.189%    0.229%       77.2%` vs `成功     45m      131    0.335%    0.738%       78.6%` |
-| E12 | band 越宽触发率越低（S1 反向证据）🔴自曝#11：真宽度恒 8.0%，桶差是 entry_price 污染投影 ⇒ 方向性作废（判别见 E33），数字仍可复现 | `venv/bin/python scripts/deb20261007_deadpool_fee_band.py` | `6-8%         475    67.8%    63.6%` / `8-10%        308    52.9%    49.0%` |
-| E13 | reprice 偏移量级微小（S2 证据）🔴自曝#11：0.0412% 是成交价 vs reprice 后值的滑点（同义反复）；真 reprice 幅度见 E18（中位 1.0101%） | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `n=633  \|exec-entry\|/entry 中位=0.0412% p90=0.1904% max=3.7557%` |
+| E9 | **决定性**：失败组达峰更早、持有更久 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `落袋成功     n= 313` … `time_to_mfe: 中位=  25.20min` … `⇒ MFE 达峰时刻占持有时长 = 70.0%`<br>`落袋失败     n= 107` … `time_to_mfe: 中位=  15.90min` … `⇒ MFE 达峰时刻占持有时长 = 22.1%` |
+| E10 | 落袋成功率随达峰变晚而**上升**（单调）🔴自曝#12：幅度桶内单调性消失/反向 ⇒ 共线伪影，数字仍可复现但不得作方案 C 依据（判别见 E34） | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `5-15         165      68.5%` / `15-30         80      75.0%` / `30-60         63      74.6%` / `60-120        35      82.9%` / `>120min       77      83.1%` |
+| E11 | **自曝#4 依据**：两组「>费用线占比」几乎相同 ⇒ 「拿不住」判读不成立 | `venv/bin/python scripts/deb20261007_time_to_mfe.py` | `失败     45m       57    0.189%    0.229%       77.2%` vs `成功     45m      134    0.323%    0.726%       79.1%` |
+| E12 | band 越宽触发率越低（S1 反向证据）🔴自曝#11：真宽度恒 8.0%，桶差是 entry_price 污染投影 ⇒ 方向性作废（判别见 E33），数字仍可复现 | `venv/bin/python scripts/deb20261007_deadpool_fee_band.py` | `6-8%         476    67.9%    63.7%` / `8-10%        309    53.1%    49.2%` |
+| E13 | reprice 偏移量级微小（S2 证据）🔴自曝#11：0.0412% 是成交价 vs reprice 后值的滑点（同义反复）；真 reprice 幅度见 E18（中位 1.0101%） | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `n=635  \|exec-entry\|/entry 中位=0.0412% p90=0.1904% max=3.7557%` |
 | E14 | **注册表判据串台**：文本抄的是 DEB-20260806 锚限价影子的主门，不是 RFC-065 的 ⟹ ✅**F2 已修**（commit `98590b07b`）：本行期望片段已从「串台现状」改为「修复后真值」（原说法：`min_n=60,` + `graduation_criteria="预注册见 RFC-065: sign-flip B=10000 单侧α=0.025 + 双条件 + 符号共门",`——即 E14 原钉的是缺陷本身，修好后必然不再命中；串台的历史铁证见 §9 C3「注册表同文件内 `:901` 错标 RFC-065 / `:931` 正标 DEB-20260806 同文本双出处」+ `git show 98590b07b`） | `grep -n -A14 'id="entry_band_widen"' app/playbook/shadow_registry.py` | `min_n=30,` / `graduation_criteria="预注册见 RFC-065: widen 专属事件 n≥30、单侧安全门 (widen 组不显著劣于 flat)、分组事先固定、分时间窗",` |
 | E15 | RFC-065 文档的真实判据是 n≥30 + 单侧安全门 | `grep -n "n≥30" docs/decisions/RFC-065-entry-band-vol-widen.md` | `13:- 翻开关路径: 影子事件 n≥30 + 单侧安全门 + 分时间窗 → entry_band_vol_widen_enabled: true + 重启`<br>`74:- 翻开关判据预注册 (判分协议模板同款): widen 专属事件 n≥30、单侧安全门 (widen 组不显著劣于 flat)、分组事先固定、分时间窗` |
 | E16 | 该影子当前 n=38 ⇒ 按文档口径已过 n 门，按注册表口径差 22 行 ⟹ ✅**F2 已修**：两轴合一（均 30），本行期望片段随之从 `min_n=60` 改为 `min_n=30` + 实测 `✅达标`（原读数：counted=38 / min_n=60 = 差 22 行的死锁；现 38/30 = 1.3× 达标 ⇒ 死锁解除，但 **READY≠判据过**，判决仍是 `NOT_ESTABLISHED_KEEP_SAMPLING`） | `venv/bin/python scripts/deb20261007_adjudication_backlog.py` | `entry_band_widen                         30       38    1.3x` / `entry_band_widen                 min_n=30    实测n=38      ✅达标` |
-| E17 | **自曝#2 依据**：用真生成锚重算，band 违反率从 61.0% 降到 0.3% | `venv/bin/python scripts/deb20261007_band_artifact.py` | `违反「只放宽不收窄」规格: entry_price锚 = 478/783 (61.0%)` / `planned_entry锚 = 2/605 (0.3%)` / `分类翻转总数 = 407 / 605 (67.3%)` |
-| E18 | band 反推锚与真生成价吻合 99.7%，与 DB entry_price 仅吻合 33.6% | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `吻合(\|偏差\|<0.1%) = 603/605 (99.7%)`（vs planned_entry）/ `吻合(\|偏差\|<0.1%) = 203/605 (33.6%)`（vs entry_price）/ `量化: 66.4% 的指令 entry_price ≠ 生成价` |
+| E17 | **自曝#2 依据**：用真生成锚重算，band 违反率从 61.1% 降到 0.3% | `venv/bin/python scripts/deb20261007_band_artifact.py` | `违反「只放宽不收窄」规格: entry_price锚 = 480/785 (61.1%)` / `planned_entry锚 = 2/607 (0.3%)` / `分类翻转总数 = 409 / 607 (67.4%)` |
+| E18 | band 反推锚与真生成价吻合 99.7%，与 DB entry_price 仅吻合 33.4% | `venv/bin/python scripts/deb20261007_anchor_provenance.py` | `吻合(\|偏差\|<0.1%) = 605/607 (99.7%)`（vs planned_entry）/ `吻合(\|偏差\|<0.1%) = 203/607 (33.4%)`（vs entry_price）/ `量化: 66.6% 的指令 entry_price ≠ 生成价` |
 | E19 | chase_cap fallback② 当前影响面为 0（缺陷现在不咬人） | `venv/bin/python scripts/deb20261007_band_impact.py` | `cap 倒挂需归一的指令 n=36` / `其中走 fallback② (无 raw.planned_entry) n=0` / `fallback② 且 band 畸形 ⇒ 归一锚失真 n=0` |
 | E20 | **自曝#3 依据**：漏斗定价门占比是 35.1%，不是 0% | `venv/bin/python scripts/deb20261007_funnel_breakdown.py` | `已触发未执行 全量 n=94` / `定价门(chase/knife)             33 ( 35.1%)` / `资金/时段/执行失败                   43 ( 45.7%)` |
-| E21 | C3 可达性梯度严格单调（RFC-118 唯一活信号） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `<0.25ATR     n=  55 entered= 41 fill=  74.5%` / `0.25-0.5     n=  49 entered= 12 fill=  24.5%` / `0.5-1.0      n=  45 entered=  1 fill=   2.2%` / `>1.0         n=  14 entered=  0 fill=   0.0%` |
-| E22 | C3 修正口径后与生产读数卡逐位吻合 | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `不可达(>0.5ATR)     n=  59 entered=  1 fill=0.017` / `可达(≤0.5ATR)      n= 104 entered= 53 fill=0.510` |
-| E23 | RFC-118 误杀率 85.1% vs G5 门 ≤40%（差 2 倍） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `expired n=109  actual_net 已知 n=74  其中赢家 n=63` / `⇒ 全窗误杀率 = 85.1%  (G5 门 ≤40%)` |
-| E24 | RFC-118 forward 6 门读数（两腿各 5/6 FAIL） | `venv/bin/python -c "import json;s=json.load(open('data/shadow/pullback_limit_replay_v2_latest.json'))['summary']['rfc118_gate_sim']['legs'];print({k:(v['forward']['n_paired'],v['forward']['bp_per_trade_vs_market'],v['forward']['in_gate']['c3_fill_official_denom'],v['forward']['in_gate']['miskill_expired']['rate'],v['forward']['in_gate']['forgone_same_ruler_usd'],v['forward']['day_clustered']['t']) for k,v in s.items()})"` | `{'0.25': (30, -0.3, 0.75, 0.75, 41.76, 0.09), '0.5': (30, -8.6, 0.538, 0.75, 183.86, -0.33)}`<br>键序 = (n_paired, bp_per_trade, c3_fill, miskill_rate, forgone_usd, t) |
-| E25 | 费用线现状：forward 窗毛利已覆盖费用（缺口 −33.9bp），立项时的 ~6.9bp 已过期 | `venv/bin/python scripts/deb20261007_fee_gap_forward.py` | `forward (>=09-30)      n=  33 名义=$     187,647  费用=   9.1bp  毛利=  43.0bp  缺口= -33.9bp`<br>`9月全月                   n= 208 名义=$   1,135,295  费用=  14.2bp  毛利=  14.3bp  缺口=  -0.1bp`<br>`全历史                    n= 950 名义=$  15,262,864  费用=   6.0bp  毛利=  14.5bp  缺口=  -8.5bp` |
+| E21 | C3 可达性梯度严格单调（RFC-118 唯一活信号） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `<0.25ATR     n=  56 entered= 42 fill=  75.0%` / `0.25-0.5     n=  49 entered= 12 fill=  24.5%` / `0.5-1.0      n=  46 entered=  1 fill=   2.2%` / `>1.0         n=  14 entered=  0 fill=   0.0%` |
+| E22 | C3 修正口径后与生产读数卡逐位吻合 | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `不可达(>0.5ATR)     n=  60 entered=  1 fill=0.017` / `可达(≤0.5ATR)      n= 105 entered= 54 fill=0.514` |
+| E23 | RFC-118 误杀率 85.5% vs G5 门 ≤40%（差 2 倍） | `venv/bin/python scripts/deb20261007_c3_reachability.py` | `expired n=110  actual_net 已知 n=76  其中赢家 n=65` / `⇒ 全窗误杀率 = 85.5%  (G5 门 ≤40%)` |
+| E24 | RFC-118 forward 6 门读数（两腿各 5/6 FAIL） | `venv/bin/python -c "import json;s=json.load(open('data/shadow/pullback_limit_replay_v2_latest.json'))['summary']['rfc118_gate_sim']['legs'];print({k:(v['forward']['n_paired'],v['forward']['bp_per_trade_vs_market'],v['forward']['in_gate']['c3_fill_official_denom'],v['forward']['in_gate']['miskill_expired']['rate'],v['forward']['in_gate']['forgone_same_ruler_usd'],v['forward']['day_clustered']['t']) for k,v in s.items()})"` | `{'0.25': (35, 2.7, 0.765, 0.75, 41.76, 0.2), '0.5': (35, -9.3, 0.556, 0.75, 183.86, -0.37)}`<br>键序 = (n_paired, bp_per_trade, c3_fill, miskill_rate, forgone_usd, t) |
+| E25 | 费用线现状：forward 窗毛利已覆盖费用（缺口 −36.0bp），立项时的 ~6.9bp 已过期 | `venv/bin/python scripts/deb20261007_fee_gap_forward.py` | `forward (>=09-30)      n=  38 名义=$     213,514  费用=   9.2bp  毛利=  45.2bp  缺口= -36.0bp`<br>`9月全月                   n= 213 名义=$   1,161,161  费用=  14.1bp  毛利=  15.3bp  缺口=  -1.2bp`<br>`全历史                    n= 955 名义=$  15,288,730  费用=   6.0bp  毛利=  14.6bp  缺口=  -8.6bp` |
 | E26 | 31 条影子样本达标仍 OBSERVING；退出轴超门槛最狠 | `venv/bin/python scripts/deb20261007_adjudication_backlog.py` | 含 `exit_param_shadow` 549/30、`early_dead_signal_shadow` 439/30 |
 | E27 | 退出参数功效窗冻结至 10/31（决定方案 C 时序） | `grep -n "_OCT_COHORT_START = " scripts/daily_invariant_check.py` | `_OCT_COHORT_START = "2026-09-17"` |
 | E28 | KR1 判据原文（换哈希 = 破功） | `grep -n "KR1" docs/OKR-2026-10.md \| head -3` | `### KR1 (功效窗冻结): oct cohort 退出哈希唯一值数 = 1, 攒满 200 笔已结算` |
 | E29 | C9 红线逐字（本 DEB 合规性依据） | `grep -n "^\| C9" docs/ADJUDICATED-CRITERIA.md \| cut -c1-200` | 以 `\| C9 \| **不得据「未触发集的错失收益」改触发确认门或 entry 定价**` 开头 |
 | E30 | 复算脚本已入库且无 scratch 依赖（**真门柱是第二个数 `0`**；第一个数是入库计数，随批次递增：初版 14 → 第2轮 16 → 第4轮 23 → 第5轮 24 → 第6轮 **25**） | `ls scripts/deb20261007_*.py \| wc -l && grep -rn "hermes/cache/scratch\|/tmp/" scripts/deb20261007_*.py \| wc -l` | `25` 换行 `0` |
-| E31 | `time_to_mfe` 覆盖率仅 45.8%，缺失**结构性**偏向最坏出口（自曝#10 依据） | `venv/bin/python scripts/deb20261007_time_to_mfe_probe.py` | `有 time_to_mfe n=437  缺失 n=518 (覆盖率 45.8%)` / `sl_hit` `TRAILING_STOP` `STRUCTURE_EXIT` 缺失率 `100.0%` / `SL_INITIAL` 缺失率 `85.7%` |
-| E32 | E9/E10 人群是**优选人群**（中位单笔 +$6.97 vs 缺失人群 −$18.88），死池最大出血口仅覆盖 14.3% | `venv/bin/python scripts/deb20261007_ttm_bias.py` | `有值人群 n=437 净=$   5542.05 中位单笔=$    6.97` / `缺失人群 n=518 净=$   7413.62 中位单笔=$  -18.88` / `SL_INITIAL             全量 n=  28 净=$  -4421.99 \| 有值 n=  4 净=$  -804.63  ⇒ 覆盖 14.3% 的人, 18.2% 的钱` |
-| E33 | **自曝#11 依据**：链①「band 越宽触发率越低」是 reprice 污染伪影——真宽度恒 8.0%，e≠planned 群触发率 99.2–99.3% vs e==planned 群 11.2% | `venv/bin/python scripts/deb20261007_review2_chain1_artifact.py` | `真宽度 (hi-lo)/planned 分布: [(8.0, 605)]` / `触发率=11.2%` |
-| E34 | **自曝#12 依据**：E10 单调性在 MFE 幅度匹配桶内不存活（最大样本桶 C 晚−早=+0.3pp 平坦、桶 B 反向 −9.7pp）⇒ 共线非因果 | `venv/bin/python scripts/deb20261007_review2_ttm_magnitude.py` | `合格样本 n=415` / `晚-早=+0.3pp` / `晚-早=-9.7pp` |
+| E31 | `time_to_mfe` 覆盖率仅 46.0%，缺失**结构性**偏向最坏出口（自曝#10 依据） | `venv/bin/python scripts/deb20261007_time_to_mfe_probe.py` | `有 time_to_mfe n=442  缺失 n=518 (覆盖率 46.0%)` / `sl_hit` `TRAILING_STOP` `STRUCTURE_EXIT` 缺失率 `100.0%` / `SL_INITIAL` 缺失率 `85.7%` |
+| E32 | E9/E10 人群是**优选人群**（中位单笔 +$7.57 vs 缺失人群 −$18.88），死池最大出血口仅覆盖 14.3% | `venv/bin/python scripts/deb20261007_ttm_bias.py` | `有值人群 n=442 净=$   5674.72 中位单笔=$    7.57` / `缺失人群 n=518 净=$   7413.62 中位单笔=$  -18.88` / `SL_INITIAL             全量 n=  28 净=$  -4421.99 \| 有值 n=  4 净=$  -804.63  ⇒ 覆盖 14.3% 的人, 18.2% 的钱` |
+| E33 | **自曝#11 依据**：链①「band 越宽触发率越低」是 reprice 污染伪影——真宽度恒 8.0%，e≠planned 群触发率 99.2–99.3% vs e==planned 群 11.2% | `venv/bin/python scripts/deb20261007_review2_chain1_artifact.py` | `真宽度 (hi-lo)/planned 分布: [(8.0, 607)]` / `触发率=11.2%` |
+| E34 | **自曝#12 依据**：E10 单调性在 MFE 幅度匹配桶内不存活（最大样本桶 C 晚−早=+1.2pp 平坦、桶 B 反向 −8.1pp）⇒ 共线非因果 | `venv/bin/python scripts/deb20261007_review2_ttm_magnitude.py` | `合格样本 n=420` / `晚-早=+1.2pp` / `晚-早=-8.1pp` |
 
 **integrity 块**（产物类数字）：
 
@@ -596,6 +596,38 @@ $ grep -n "entry_band_vol_widen_enabled\|chase_cap_enforce_enabled\|entry_archet
   3. **结构性上限**：盘前 08:00 无法预知 09:30 开盘 gap + 触发前中位 66.6 分钟价格演化；盘前报价本身低流动性（bid/ask 宽）。「合理」的判据若= 成交后更优 MFE，则已被 P1/P2 证伪；若= 位移更小，那是执行质量问题而非收益问题。
   4. **红线**：C9 禁止据「未触发集的错失收益」改 entry 定价；任何时窗/prompt 行为变更须影子先行（C4）。已在途的观察通道 = **RFC-123 双锚影子（F1 已落地）**，它逐轮记录生成锚 vs 执行锚分歧 — 若未来要测「更晚重锚」，只能以影子双臂另行预注册排队。
 - **本轮零生产参数改动、零行为变更。复现**：`venv/bin/python scripts/deb20261007_da_timing_window.py`（只读 DB，任意 cwd rc=0）。
+
+### 第 7 轮（2026-10-08，E 表漂移刷新批 — 复查「继续」授权）
+
+**性质**：非辩论轮次，纯证据面维护。验证器复跑发现 20 行 E 表格子未命中，逐格实跑重证
+**全部为落档后 DB/影子数据继续进账所致**（10-07 又结算 2 笔：n 959→961），**无一翻转结论**。
+同型先例：DEB-20261008 晨批 E 表 6 格刷新。旧值 → 新值（断言栏同步）：
+
+| 行 | 旧 → 新 | 结论影响 |
+|---|---|---|
+| E1 | (959,957,957,'10-06') → (961,959,959,'10-07') | 无（填充率 99.8% 不变） |
+| E3 | 619(65.2%)/462/25.4% → 624(65.3%)/467/25.2% | 无（捕获失败率同向） |
+| E6 | 现役窗 31/6/19.4% → 33/3/9.1% | 无（死池占比继续降，治理空间更小的方向不变） |
+| E7 | n=215/死池40(18.6%)/窗净$11.26 → n=217/37(17.1%)/$143.93 | 无（「单票支配不作裁决依据」定性不变，窗净仍小） |
+| E9 | 成功 n=308 → 313 | 无 |
+| E10 | 5-15: 163/68.1% → 165/68.5%；>120min: 74/82.4% → 77/83.1% | 无（且本行方向性已被自曝#12 作废，仅留可复现数字） |
+| E11 | 成功45m 131/0.335%/0.738%/78.6% → 134/0.323%/0.726%/79.1% | 无（两组「>费用线占比」仍几乎相同） |
+| E12 | 6-8% 475/67.8/63.6 → 476/67.9/63.7；8-10% 308/52.9/49.0 → 309/53.1/49.2 | 无（同 E10 已作废方向性） |
+| E13 | n=633 → 635（中位/p90/max 全不变） | 无 |
+| E17 | 478/783(61.0%)/2/605/407(67.3%) → 480/785(61.1%)/2/607/409(67.4%) | 无（自曝#2 依据：61.1%→0.3% 对照不变） |
+| E18 | 603/605(99.7%)/203/605(33.6%)/66.4% → 605/607(99.7%)/203/607(33.4%)/66.6% | 无 |
+| E21 | <0.25ATR 55/41/74.5% → 56/42/75.0%；0.5-1.0 45/1/2.2% → 46/1/2.2% | 无（梯度严格单调不变） |
+| E22 | 不可达 59/0.017 / 可达 104/0.510 → 60/0.017 / 105/0.514 | 无 |
+| E23 | expired 109/74/63，误杀率 85.1% → 110/76/65，85.5% | 无（仍 ≫ G5 门 40%） |
+| E24 | 0.25 腿 (30,−0.3,0.75,…) → (35,+2.7,0.765,…)；0.5 腿 (30,−8.6,0.538,…) → (35,−9.3,0.556,…) | **bp_per_trade 符号翻转（−0.3→+2.7bp）但 t=0.2/p=0.85 与零不可区分 ⇒ 门判定不变**；两腿 FAIL 格局不变 |
+| E25 | forward −33.9bp → **−36.0bp**；9月 −0.1 → −1.2bp；全历史 −8.5 → −8.6bp | 无（「毛利已覆盖费用」方向不变且加强）。⚠️ DEB-20261008 §5 引用的「−33.9bp/−8.5bp」是**引用时点快照**，本行新值 −36.0/−8.6 使其论证方向更强，不反向 |
+| E31 | 437/518(45.8%) → 442/518(46.0%) | 无（结构性缺失结论不变） |
+| E32 | 有值 437/$5542.05/$6.97 → 442/$5674.72/$7.57 | 无（优选人群结论不变） |
+| E33 | [(8.0, 605)] → [(8.0, 607)] | 无（真宽度恒 8.0% 不变） |
+| E34 | n=415/+0.3pp/−9.7pp → n=420/+1.2pp/−8.1pp | 无（C 桶仍平坦、B 桶仍反向 ⇒ 共线伪影判定不变） |
+
+**处理后**：`verify_deb20261007.py` 复跑 0 失败 0 结构问题。自曝表与第 1–6 轮叙事
+保留原值（历史记录不改写），本表为唯一最新实测面。
 
 ---
 
