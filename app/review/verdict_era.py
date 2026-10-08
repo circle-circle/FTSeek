@@ -153,7 +153,8 @@ def era_status(read_at: str, _emap: Optional[Dict[str, Dict[str, Any]]] = None) 
                            then["version"], then["as_of"], out["now"]))
         return out
     except Exception as e:  # noqa: BLE001 — 呈现面尺子 fail-open: 不拦报告, 不冒充判定
-        _log.warning("[verdict_era] era_status 查询失败 (fail-open 不作判定): %s", e)
+        _log.warning("[verdict_era] era_status 查询失败 (fail-open 不作判定): %s", e,
+                     exc_info=True)
         out["applies"] = None
         out["note"] = "era 查询失败 ({}: {}) — 不作适用性判定".format(type(e).__name__, e)
         return out
