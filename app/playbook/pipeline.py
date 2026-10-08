@@ -2107,6 +2107,27 @@ def _get_vault_industry_map(max_age_s: float = 3600.0) -> Dict[str, str]:
     return _m
 
 
+def portfolio_guardrail_enabled() -> bool:
+    """组合层方向/行业闸总开关 (DEB-20261008 F1, 2026-10-08 用户裁决「摘闸」)。
+
+    覆盖: 生成期 G4 方向偏斜 + G6 sector 集中度 (_apply_portfolio_guardrails)
+          与执行期 G5 (playbook_service._check_execution_portfolio_guardrail)。
+    默认 False = 摘闸为裁决后默认态 (yaml 键丢失也维持裁决); 配置读失败 → True
+    (风险门 fail-safe 保持开启, R5 留痕)。影子采集 (skew_gate_vision /
+    portfolio_execution_guardrail jsonl) 不受开关影响, 照常写 (判据退役≠采集退役)。
+    回滚: unified_config playbook.portfolio_guardrail_enabled=true (热重载即生效)。
+    """
+    try:
+        from app.core.config_container import get_config as _gc_pg
+        return bool(_gc_pg().get_dotted("playbook.portfolio_guardrail_enabled", False))
+    except Exception as _pg_e:
+        logger.warning(
+            f"[playbook] 组合闸开关读取失败 (fail-safe 保持开启): {_pg_e}",
+            exc_info=True,
+        )
+        return True
+
+
 def _apply_portfolio_guardrails(
     instructions: List[Any],
     *,
@@ -2167,6 +2188,12 @@ def _apply_portfolio_guardrails(
             f"[playbook guardrail] 偏斜门影子调用失败 (不影响判定): {_sv_e}",
             exc_info=True,
         )
+
+    # [DEB-20261008 F1, 2026-10-08 用户裁决摘闸] G4/G6 砍单停用: 影子照算 (上方
+    #   vision 保留), 方向偏斜/sector 集中度不再降级 SKIP。min_rr 过滤与 sector
+    #   回填 (上方) 不受影响 — 它们不是方向闸。回滚: portfolio_guardrail_enabled=true。
+    if not portfolio_guardrail_enabled():
+        return active
 
     total = len(valid)
 

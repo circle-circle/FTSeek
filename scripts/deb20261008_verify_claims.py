@@ -11,7 +11,7 @@
   C2 闸的总量贡献 pp        正文「只贡献 +X.Xpp」
   C3 UE 通道空头占比        正文「空头占比 XX.X%」
   C4 P1-4 漏计空头条数      正文「其中 N 条 SELL_SHORT」
-  C5 被拦行 fwd 填充率      正文「填充率 0.0%」
+  C5 被拦行 fwd 填充率      正文 §13「F4 后被拦行填充率实测口径 **X%**」(F4 后口径, 曾 0.0%)
   C6 对照行 fwd 填充率      正文「成交行 XXX.X%」
   C7 空头清零日天数         正文「= N 天」
 
@@ -151,7 +151,7 @@ def main() -> int:
     check("C2 闸的总量贡献 pp", _grab(txt, r"只贡献 \+(\d+\.\d)pp", "C2"), p3 - p1)
     check("C3 UE 空头占比", _grab(txt, r"空头占比 (\d+\.\d)%", "C3"), ue_pct)
     check("C4 漏计空头条数", _grab(txt, r"其中 (\d+) 条 SELL_SHORT", "C4"), float(miss_s), tol=0.0)
-    check("C5 被拦行 fwd 填充率", _grab(txt, r"被拦行填充率 \*\*(\d+\.\d)%\*\*", "C5"), cut_pct)
+    check("C5 被拦行 fwd 填充率", _grab(txt, r"后被拦行填充率实测口径 \*\*(\d+\.\d)%\*\*", "C5"), cut_pct)
     check("C6 对照行 fwd 填充率", _grab(txt, r"成交行 (\d+\.\d)%", "C6"), ctrl_pct)
     check("C7 空头清零日天数", _grab(txt, r"的日子 = (\d+) 天", "C7"), float(zero_days), tol=0.0)
 

@@ -54,7 +54,8 @@ def _instruction_summary(date, db_path=DB_PATH):
         rows = connection.execute(
             "SELECT symbol, direction, COALESCE(skip_reason, '') AS skip_reason "
             "FROM playbook_instructions "
-            "WHERE date = ? AND decision_id LIKE 'DA-%' ORDER BY id",
+            "WHERE date = ? AND (decision_id LIKE 'DA-%' "
+            "OR decision_id LIKE 'universe_expansion%') ORDER BY id",
             (date,),
         ).fetchall()
         connection.close()

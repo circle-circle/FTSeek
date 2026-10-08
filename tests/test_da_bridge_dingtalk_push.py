@@ -59,6 +59,26 @@ def test_instruction_summary_separates_candidates_and_executable_rows(tmp_path):
     assert summary["skipped_count"] == 3
 
 
+def test_instruction_summary_includes_ue_rows(tmp_path):
+    """[DEB-20261008 F5] 推送口径不得漏 UE 行 — universe_expansion: 前缀的指令
+    (含 SELL_SHORT) 必须计入, 否则推送在方向上系统性失真 (实测漏 9 条/5 空)。"""
+    db_path = tmp_path / "ftseek_us.db"
+    _write_instructions(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "INSERT INTO playbook_instructions VALUES (?, ?, ?, ?, ?, ?)",
+        (99, "2026-10-07", "US.CORT", "SELL_SHORT", "",
+         "universe_expansion:2026-10-07:CORT"),
+    )
+    connection.commit()
+    connection.close()
+    summary = PUSH._instruction_summary("2026-10-07", db_path=db_path)
+    assert summary["instruction_count"] == 6
+    assert summary["executable_count"] == 3
+    ue_rows = [r for r in summary["rows"] if r["symbol"] == "US.CORT"]
+    assert ue_rows and ue_rows[0]["direction"] == "SELL_SHORT"
+
+
 def test_message_states_bridge_candidates_and_db_executable_count(
         tmp_path, monkeypatch):
     db_path = tmp_path / "ftseek_us.db"

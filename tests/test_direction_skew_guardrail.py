@@ -141,8 +141,14 @@ def test_e2e_boundary_80pct_not_triggered():
     )
 
 
-def test_e2e_all_buy_batch_skips_with_honest_reason():
-    """纯 BUY 批 (8/31 真实形态): 4/4 = 100% > 80% → 砍到 ≤80%。"""
+def test_e2e_all_buy_batch_skips_with_honest_reason(monkeypatch):
+    """纯 BUY 批 (8/31 真实形态): 4/4 = 100% > 80% → 砍到 ≤80%。
+
+    [DEB-20261008 F1] 摘闸后默认不再砍单 — 本用例显式打开开关, 钉住
+    「开关打开时行为不变」; 关闸零砍单见 test_e2e_gate_off_means_zero_cull。"""
+    monkeypatch.setattr(
+        "app.playbook.pipeline.portfolio_guardrail_enabled", lambda: True
+    )
     guardrails = _guardrails()
     insts = [
         _Inst("US.BABA", "BUY", confidence=70, position_size=50),
@@ -160,3 +166,21 @@ def test_e2e_all_buy_batch_skips_with_honest_reason():
     # 砍后剩余偏斜 ≤ 80% (或只剩 1 只)
     if len(actionable) > 1:
         assert len(actionable) / len([x for x in out if x.direction in ("BUY", "SELL_SHORT")]) <= 0.80 + 1e-9
+
+
+def test_e2e_gate_off_means_zero_cull(monkeypatch):
+    """[DEB-20261008 F1, 2026-10-08 用户裁决摘闸] 开关关闭 (默认): 100% 纯 BUY 批
+    也零砍单 — 方向偏斜不再是 SKIP 的理由 (影子仍由 vision 层照算)。"""
+    monkeypatch.setattr(
+        "app.playbook.pipeline.portfolio_guardrail_enabled", lambda: False
+    )
+    guardrails = _guardrails()
+    insts = [
+        _Inst("US.BABA", "BUY", confidence=70, position_size=50),
+        _Inst("US.BWXT", "BUY", confidence=70, position_size=38),
+        _Inst("US.LLY", "BUY", confidence=70, position_size=5),
+        _Inst("US.META", "BUY", confidence=70, position_size=10),
+    ]
+    out = guardrails(insts)
+    assert all(i.direction == "BUY" for i in out), "摘闸后 100% 偏斜也不再砍单"
+    assert all(not i.skip_reason for i in out)

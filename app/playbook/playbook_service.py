@@ -876,6 +876,10 @@ class PlaybookService:
         self, inst: Dict[str, Any], instruction_id: int
     ) -> tuple[bool, str, Dict[str, Any]]:
         try:
+            # [DEB-20261008 F1, 2026-10-08 用户裁决摘闸] G5 砍单停用: 评估+审计照跑
+            #   (影子采集保留), enforced=false 时 would-skip 只告警不拦截。
+            from app.playbook.pipeline import portfolio_guardrail_enabled
+            enforced = portfolio_guardrail_enabled()
             trade_date = str(inst.get("date") or now_et().date().isoformat())
             rows = self.db.get_instructions_by_date(trade_date)
             result = evaluate_portfolio_guardrail(rows, instruction_id, inst)
@@ -885,6 +889,7 @@ class PlaybookService:
                 "instruction_id": instruction_id,
                 "symbol": inst.get("symbol", ""),
                 "decision": "SKIP" if result["should_skip"] else "PASS",
+                "enforced": enforced,
                 "reason": result["reason"],
                 "active_count": result["active_count"],
                 "direction_counts": result["direction_counts"],
@@ -897,6 +902,13 @@ class PlaybookService:
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as audit_error:
                 logger.warning(f"[playbook] 组合guardrail审计写入失败: {audit_error}")
+            if result["should_skip"] and not enforced:
+                logger.warning(
+                    f"[playbook] {inst.get('symbol', '')} 组合guardrail would-skip "
+                    f"(F1摘闸影子照算, 不拦截): {result['reason']}"
+                )
+                result["shadow_would_skip"] = True
+                return True, "", result
             if result["should_skip"]:
                 marked = self.db.mark_instruction_guardrail_skip(
                     instruction_id, result["reason"]

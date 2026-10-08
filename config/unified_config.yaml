@@ -1609,6 +1609,17 @@ playbook:
   #   任一侧非 DA 源/不可解析 → 不介入。历史面 8/1 起 274 条 DA 指令仅 9/1 那 5 行越界。
   #   回滚: 置 false (回到无条件同源类替换)。
   stale_did_overwrite_guard_enabled: true
+  # 2026-10-08 (DEB-20261008 F1, 用户裁决「摘闸」): 组合层方向/行业闸总开关。
+  #   覆盖生成期 G4 方向偏斜 + G6 sector 集中度 (pipeline._apply_portfolio_guardrails)
+  #   与执行期 G5 (playbook_service._check_execution_portfolio_guardrail)。
+  #   裁决依据: 模型自身提案已 77% 多头 (闸只 +1.6pp), 但闸在 4 个空头稀缺日把 SHORT
+  #   清成零 (9/21/9-22/10-02/10-07), 且 G5 存在 0 空头日恒留 1 条的断崖副作用。
+  #   false = 摘闸: 影子照算照写 (skew_gate_vision / portfolio_execution_guardrail
+  #   jsonl 保留, 判据退役≠采集退役), 砍单不执行。G1 破位硬买门保留 (防接飞刀,
+  #   用户裁决); min_rr 过滤与 sector 回填不受影响 (非方向闸)。
+  #   回滚: 置 true (热重载即生效, ConfigContainer 读取); 代码侧 fail-safe:
+  #   配置读失败 → 保持开启。
+  portfolio_guardrail_enabled: false
   admission:
     enabled: true
     enforce: true

@@ -117,3 +117,20 @@ conf 是 DA 自评分, 用它豁免组合级风控 = 让被风控对象给自己
   虚高 2.1 倍, 已修正, 留痕防复用错口径)。
 - 关联: RFC-071 (砍半→SKIP 死因覆写修复), RFC-120 (chase_cap 倒挂),
   用户原则 8/2 "反对不对称限流" / 8/14 "可回放直接回放裁决"。
+
+## 7. 变更记录 (2026-10-08, DEB-20261008 F1 用户裁决「摘闸」)
+
+本 RFC 的执行前收口实施 (G5, `10adea0c8`) 与生成期 G4/G6 已被 DEB-20261008 裁决摘除:
+
+- `playbook.portfolio_guardrail_enabled=false` (unified_config, 热重载生效) —
+  `_apply_portfolio_guardrails` 的偏斜/sector 砍单段与 `playbook_service` 执行前 G5
+  拦截全部停用; **影子照算照写** (skew_gate_vision.jsonl + portfolio_execution_guardrail
+  .jsonl 新增 `enforced` 字段), 80%/40% 常量保留未删 (供影子口径与可能的回滚)。
+- 裁决依据 (DEB-20261008): 模型提案自身 77% 多头 (闸只 +1.6pp); 4 个空头清零日;
+  §4.4 断崖 (0 空头日 G5 恒留 1 条); F4 回填后被拦 78 笔 T+1 均值 +1.36%/胜率 60%
+  (闸净拦盈利单)。
+- G1 破位硬买门保留 (用户裁决: 防接飞刀); G2 降为纯记录 (skill v0.95)。
+- 测试: 砍单断言改为显式开开关钉行为不变, 新增关闸零砍单+影子照写用例
+  (test_portfolio_execution_guardrail / test_direction_skew_guardrail /
+  test_skew_gate_vision_shadow 同步更新)。
+- 回滚: yaml 置 true 即恢复全部门禁 (无需改码)。

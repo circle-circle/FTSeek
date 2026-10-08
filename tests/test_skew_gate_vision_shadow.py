@@ -45,6 +45,9 @@ def _skewed_batch():
 class TestShadowZeroBehaviorChange:
     def test_judgment_identical_with_and_without_today(self, monkeypatch):
         """today="" (影子跳过) 与 today="date" (影子跑) 的判定结果逐字一致。"""
+        # [DEB-20261008 F1] 摘闸后默认不砍单; 本类钉的是「影子不改判定」,
+        # 显式打开开关以保留对「砍单判定」本身的观察对象。
+        monkeypatch.setattr(P, "portfolio_guardrail_enabled", lambda: True)
         calls = []
         monkeypatch.setattr(P, "_emit_skew_gate_vision_shadow",
                             lambda *a, **k: calls.append(a))
@@ -61,6 +64,7 @@ class TestShadowZeroBehaviorChange:
 
     def test_shadow_exception_does_not_break_guardrails(self, monkeypatch):
         """影子抛任何异常 → 判定照常完成 (调用点保险丝 + emit 自吞错双层)。"""
+        monkeypatch.setattr(P, "portfolio_guardrail_enabled", lambda: True)  # F1 摘闸后为关, 钉旧判定须显式开
         def _boom(*a, **k):
             raise RuntimeError("simulated shadow failure")
         monkeypatch.setattr(P, "_emit_skew_gate_vision_shadow", _boom)

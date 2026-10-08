@@ -72,6 +72,11 @@ def test_terminal_skip_rows_leave_denominator():
 
 
 def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp_path):
+    """[DEB-20261008 F1] 摘闸后默认为关 — 本用例显式打开开关, 钉住「开关打开时
+    行为不变」; 关闸零拦截 + 影子照写见 test_gate_off_allows_but_shadows。"""
+    monkeypatch.setattr(
+        "app.playbook.pipeline.portfolio_guardrail_enabled", lambda: True
+    )
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     db = PlaybookDB(conn=conn)
@@ -186,4 +191,63 @@ def test_guardrail_skip_does_not_overwrite_booked_row():
     row = db.get_instruction("2026-10-08", "US.AAA")
     assert row["direction"] == "BUY"
     assert row["skip_reason"] == ""
+    conn.close()
+
+
+def test_gate_off_allows_but_shadows(monkeypatch, tmp_path):
+    """[DEB-20261008 F1, 2026-10-08 用户裁决摘闸] 开关关闭 (默认): 全域 100% BUY
+    也不再拦截 (0 空头日断崖消除), 但评估+审计照跑 — would-skip 落影子
+    (enforced=false) 供「闸拦对没拦对」回测 (F4 配套)。"""
+    monkeypatch.setattr(
+        "app.playbook.pipeline.portfolio_guardrail_enabled", lambda: False
+    )
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    db = PlaybookDB(conn=conn)
+    db.ensure_tables()
+    service = PlaybookService(playbook_db=db)
+    audit_path = tmp_path / "portfolio_execution_guardrail.jsonl"
+    monkeypatch.setattr(
+        "app.playbook.playbook_service._PORTFOLIO_GUARDRAIL_AUDIT_PATH", audit_path
+    )
+
+    low_id = db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.BBB",
+        "direction": "BUY",
+        "entry_price": 50.0,
+        "stop_loss": 47.0,
+        "take_profit": 55.0,
+        "position_size": 100,
+        "confidence": 35,
+        "conditions": [],
+    })
+    db.save_instruction({
+        "date": "2026-10-08",
+        "symbol": "US.AAA",
+        "direction": "BUY",
+        "entry_price": 100.0,
+        "stop_loss": 95.0,
+        "take_profit": 110.0,
+        "position_size": 100,
+        "confidence": 70,
+        "conditions": [],
+    })
+
+    allowed, reason, result = service._check_execution_portfolio_guardrail(
+        {"date": "2026-10-08", "symbol": "US.BBB", "direction": "BUY"}, low_id
+    )
+
+    # 摘闸: would-skip 但不拦截, 行不被改 SKIP
+    assert allowed is True
+    assert reason == ""
+    assert result["shadow_would_skip"] is True
+    row = next(r for r in db.get_instructions_by_date("2026-10-08") if r["id"] == low_id)
+    assert row["direction"] == "BUY"
+    # 影子照写: 审计行含 would-skip 判定 + enforced=false
+    audit = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert audit["instruction_id"] == low_id
+    assert audit["decision"] == "SKIP"
+    assert audit["enforced"] is False
+    assert "组合方向偏斜" in audit["reason"]
     conn.close()
