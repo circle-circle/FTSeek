@@ -30,6 +30,18 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+# ── 解释器守卫 (2026-10-08) ──
+# 根因: cron agent 后台化命令时会丢掉 `source venv/bin/activate`, 裸 python3 命中
+#   gateway PATH 首位的 hermes-agent venv (protobuf 6.x) → futu pb2 报
+#   "Descriptors cannot be created directly" 假故障, 曾被误诊为需重新生成 _pb2。
+# 修复: 非本项目 venv 启动时直接 re-exec 到 venv python (源头消除, 不依赖调用方纪律)。
+# ⚠️ 判据用 sys.prefix, 不用 realpath(sys.executable) — 两个 venv 的 python3 都是
+#   同一 uv base interpreter 的 symlink, realpath 相同会跳过 re-exec (2026-10-08 实测踩坑)。
+_VENV_PY = BASE_DIR / "venv" / "bin" / "python3"
+if (_VENV_PY.exists() and sys.prefix != str(BASE_DIR / "venv")
+        and os.environ.get("PREMARKET_NO_REEXEC") != "1"):
+    os.execv(str(_VENV_PY), [str(_VENV_PY)] + sys.argv)
+
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger("ftseek_us.premarket")
@@ -78,11 +90,16 @@ def run_premarket_check() -> dict:
         strategy_count = len(router.strategies)
         default_method = cfg.get("default_method", "unknown")  # 2026-07-21 修复键名漂移: 配置真实键=default_method, 此前读default_short_method永远显示unknown
         sim_force = cfg.get("simulated_mode_force_options", False)
-
+        # 2026-10-08 显示修正: config default_method=options_put 是死配置 — ADR-003 移除期权
+        #   路径后 select_strategy 恒返回 stock_short, 该键全仓无消费方 (仅本显示读取)。
+        #   以路由器实际策略为主读数, 死值降为标注, 防"默认=options_put"误导为走期权。
+        _actual = sorted(s.method.value for s in router.strategies.values())
+        _dead_note = " (死配置: 期权路径已删, 无消费方, 不会被执行)" if default_method not in _actual else ""
         results["checks"].append({
             "name": "做空策略路由器",
             "status": "PASS",
-            "detail": f"策略数={strategy_count} | 默认={default_method} | 模拟盘强制期权={sim_force}"
+            "detail": f"实际路由={'/'.join(_actual) or '?'} | 策略数={strategy_count} | "
+                      f"配置默认={default_method}{_dead_note} | 模拟盘强制期权={sim_force}"
         })
     except Exception as e:
         results["checks"].append({"name": "做空策略路由器", "status": "FAIL", "detail": str(e)})
