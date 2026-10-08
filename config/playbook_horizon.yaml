@@ -399,6 +399,9 @@ short_horizon:
                  # 若未来要做"无TP"实验, 须预注册 A/B 并实现真开关, 不得再用哨兵.
   max_hold_days: 1
   skip_pre_close_if_profit: false
+  # 2026-10-08 配置显式化: 此前 short 靠代码默认 3.0 兜底 (exit_engine.py L363),
+  # 生效阈值无 yaml 溯源。显式写同值 = 零行为变更, 纯消除"3% 从哪来"的考证成本。
+  overnight_gap_stop_pct: 3.0
   time_exit_hours: 2.0
   # Phase 2 (2026-06-30): 波动率分桶止损/止盈
   # 2026-07-08: sl_multiplier 0.8/0.7/0.6/0.5 → 1.2/1.5/1.5/1.2

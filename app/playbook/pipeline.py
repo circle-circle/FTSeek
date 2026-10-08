@@ -7335,6 +7335,9 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                     "effective_sl": float(_tmeta.get("_effective_sl_at_exit", 0) or 0),
                     "tight_sl_triggered": bool(_tmeta.get("_tight_sl_killed", False)),
                     "take_profit": float(_tmeta.get("take_profit", 0) or 0),
+                    # RFC-106 §5.2: gap 证据镜像 (record-only, 结构与 entry_gap 对称;
+                    # quote 缺 prev_close/open 时为 None — 历史仓/缺价不虚构)
+                    "exit_gap": _tmeta.get("exit_gap"),
                     "config_version": _tmeta.get("config_version", ""),
                     "recorded_at": now_iso,
                 }
@@ -9459,6 +9462,10 @@ def monitor_playbook_exits(scheduler) -> int:
                         reason = _sl_fallback_exit_reason(
                             decision_pnl_pct, r["entry_time"], meta.get("horizon", "short"),
                             attribution=attribution)
+                        # RFC-106 §5.2: 出场日 gap 证据 (record-only) — 该路径正是
+                        # OVERNIGHT_GAP_STOP 归因的主要来源, QCOM 10/8 案此前只能靠日志猜 gap。
+                        from app.playbook.exit_engine import note_exit_gap as _note_exit_gap
+                        _note_exit_gap(meta, quote, reason, current_price)
                         decision = _playbook_exit_decision(
                             reason, current_price, meta, round(held_minutes / 60, 1))
                         decision["sl_fallback_attribution"] = attribution
@@ -9877,6 +9884,10 @@ def monitor_playbook_exits(scheduler) -> int:
                         _be_timeout = float(_get_pb_cfg_be().get("breakeven_limit_timeout_s", 8.0))
                     except Exception:
                         _be_timeout = 8.0
+                    # RFC-106 §5.2: 出场日 gap 证据 (record-only) — 规则链出场同源落盘,
+                    # 供 OVERNIGHT_GAP_STOP / SL_* 桶按真 gap vs 开盘后下杀分层复盘。
+                    from app.playbook.exit_engine import note_exit_gap as _note_exit_gap
+                    _note_exit_gap(meta, quote, exit_reason, current_price)
                     decision = _playbook_exit_decision(
                         exit_reason, current_price, meta, round(held_minutes / 60, 1))
                     decision["emit_overnight_shadow"] = True

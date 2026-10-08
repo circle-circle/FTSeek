@@ -68,6 +68,42 @@ def _is_overnight_position(entry_time_str: str) -> bool:
 
 
 
+def note_exit_gap(meta: dict, quote, exit_reason: str, current_price: float) -> None:
+    """出场日 gap 证据采集 (record-only, RFC-106 §5.2 未决项落地).
+
+    OVERNIGHT_GAP_STOP 判据无 gap 校验 (见 _is_overnight_position 勘误) — 本函数
+    **不改任何判据/阈值/平仓动作**, 只在出场决策成立时把决策时刻报价里的
+    prev_close / today_open 落盘, 供复盘区分「真开盘跳空」与「开盘后下杀」。
+    与入场侧 entry_gap 对称 (playbook_service 复用 _arr_ctx 同款字段)。
+    fail-open: quote 缺 prev_close/open → 不写键 (历史缺省语义不变), 绝不阻断平仓。
+    回滚: 删本函数 + 两个调用点。
+    """
+    try:
+        if not isinstance(meta, dict) or not isinstance(quote, dict) or meta.get("exit_gap"):
+            return
+        prev_close = float(quote.get("prev_close", 0) or 0)
+        today_open = float(quote.get("open", 0) or 0)
+        if prev_close <= 0 or today_open <= 0:
+            return
+        gap_pct = (today_open - prev_close) / prev_close * 100.0
+        decision_price = float(current_price or 0)
+        decision_vs_open_pct = (
+            (decision_price - today_open) / today_open * 100.0
+            if decision_price > 0 else None)
+        meta["exit_gap"] = {
+            "prev_close": round(prev_close, 4),
+            "today_open": round(today_open, 4),
+            "gap_pct": round(gap_pct, 3),
+            "decision_price": round(decision_price, 4) if decision_price > 0 else None,
+            "decision_vs_open_pct": round(decision_vs_open_pct, 3)
+                if decision_vs_open_pct is not None else None,
+            "quote_source": str(quote.get("data_source", "") or ""),
+            "recorded_for": str(exit_reason or ""),
+        }
+    except Exception:
+        return
+
+
 # 2026-07-19 (DEB-round3 #6-A): factor_exit 缺规则 WARN 去重 (进程级, 防刷屏)
 _factor_exit_warned = set()
 
