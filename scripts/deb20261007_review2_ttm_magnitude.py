@@ -42,6 +42,7 @@ def get_ttm(r):
     return float(v) if isinstance(v, (int, float)) else None
 
 pool = []
+n_bad = 0
 for r in rows:
     t = get_ttm(r)
     if t is None:
@@ -54,12 +55,15 @@ for r in rows:
         gb = float(r["g"] or 0) / notional * 10000
         mb = abs(float(r["m"] or 0)) * 100
     except Exception:
+        n_bad += 1  # 2026-10-08 棘轮清剿: 解析失败计数 (原为静默 continue)
         continue
     if mb <= fb:
         continue
     pool.append((mb, t, gb > fb))
 
 print(f"合格样本 n={len(pool)}")
+if n_bad:
+    print(f"[warn] 解析失败跳过 {n_bad} 条")
 
 tb = collections.defaultdict(lambda: [0, 0])
 for mb, t, ok in pool:

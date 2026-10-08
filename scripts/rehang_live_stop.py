@@ -61,7 +61,10 @@ def _broker_open_stop_ids(ctx, symbol: str, direction_held: str, qty: float) -> 
             continue
         try:
             row_qty = float(row.get("qty", 0) or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as _qty_e:
+            # 2026-10-08 棘轮清剿: 券商在途单 qty 解析失败须留痕 (原为静默 continue)
+            print(f"[warn] 在途单 qty 解析失败, 跳过该行: {row.get('order_id')}: {_qty_e}",
+                  file=sys.stderr)
             continue
         if row_qty != float(qty):
             continue

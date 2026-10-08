@@ -24,15 +24,19 @@ def _dt(s):
     s = str(s or "").strip()
     if not s:
         return None
+    _fmt_misses = 0
     for f in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S.%f",
               "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
         try:
             return datetime.strptime(s.replace("Z", "+0000"), f)
         except Exception:
+            _fmt_misses += 1  # 2026-10-08 棘轮清剿: 格式 miss 计数 (逐档试是设计, 不逐档刷屏)
             continue
     try:
         return datetime.fromisoformat(s)
     except Exception:
+        # 全部格式 + fromisoformat 均失败 = 真坏串, 必须可见 (原为静默 return None 前的吞错)
+        print(f"[warn] 时间串无法解析 ({_fmt_misses} 档格式均 miss): {s!r}")
         return None
 
 

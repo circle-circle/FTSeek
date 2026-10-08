@@ -31,7 +31,7 @@ import pytz
 
 from app.data import futu_lv3_provider as _prov_mod
 from app.data import market_data_router as _mdr_mod
-from app.data.futu_lv3_provider import _measured_quote_age_ms
+from app.data.futu_lv3_provider import _measured_quote_age_ms, _push_exchange_stamp
 
 _PROV = Path(_prov_mod.__file__)
 _MDR = Path(_mdr_mod.__file__)
@@ -112,6 +112,17 @@ def test_return_type_is_int_ms():
     """返回 int 毫秒 (与 ts_ctx 其余数值字段同型, 便于下游直接比较/落库)。"""
     v = _measured_quote_age_ms(time.time() - 3)
     assert isinstance(v, int) and not isinstance(v, bool)
+
+
+def test_push_exchange_stamp_uses_futu_data_fields():
+    """push 行没有 update_time; 交易所时戳在 data_date/data_time 两个字段里。"""
+    row = {"data_date": "2026-10-07", "data_time": "11:04:19.176"}
+    stamp = _push_exchange_stamp(row)
+    assert stamp == "2026-10-07 11:04:19.176"
+    assert _measured_quote_age_ms(stamp) is not None
+    assert _push_exchange_stamp({}) == ""
+    assert _push_exchange_stamp({"update_time": "2026-10-07 11:04:19"}) == (
+        "2026-10-07 11:04:19")
 
 
 # ── 5/6: router 透传契约 ──

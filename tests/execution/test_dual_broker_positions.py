@@ -63,6 +63,7 @@ class _FakeOrderCtx:
     def __init__(self):
         self.calls = []
         self.queries = []
+        self.fee_queries = []
 
     def place_order(self, **kwargs):
         self.calls.append(kwargs)
@@ -85,6 +86,13 @@ class _FakeOrderCtx:
             "fill_outside_rth": False,
             "remark": "pb_stop_US.TEST_real",
         }])
+
+    def order_fee_query(self, **kwargs):
+        self.fee_queries.append(kwargs)
+        return 0, pd.DataFrame([
+            {"order_id": "TEST-ENTRY-1", "fee_amount": 1.99},
+            {"order_id": "TEST-EXIT-1", "fee_amount": 2.01},
+        ])
 
 
 def _adapter_with_order_ctx(ctx):
@@ -135,6 +143,22 @@ def test_query_order_status_returns_read_only_broker_evidence():
         "order_id": "TEST-STOP-1",
         "trd_env": "REAL",
         "refresh_cache": True,
+    }]
+
+
+def test_query_order_fees_returns_read_only_broker_evidence():
+    ctx = _FakeOrderCtx()
+    adapter = _adapter_with_order_ctx(ctx)
+
+    result = adapter.query_order_fees(
+        ["TEST-ENTRY-1", "TEST-EXIT-1"], target_env="real"
+    )
+
+    assert result["success"] is True
+    assert result["fees"] == {"TEST-ENTRY-1": 1.99, "TEST-EXIT-1": 2.01}
+    assert ctx.fee_queries == [{
+        "order_id_list": ["TEST-ENTRY-1", "TEST-EXIT-1"],
+        "trd_env": TrdEnv.REAL,
     }]
 
 

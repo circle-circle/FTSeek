@@ -1,5 +1,89 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-08 Hermes 批次复查（用户令「复查分析」）
+
+**复查范围**: RFC-137 LIVE 券商实收费对账、DEB-20261008 盈利阶梯分批止盈、
+DEB-20261007 第 5/6 轮、Futu push 交易所时戳、W7 分母探针、RFC-099 §10.1。
+
+**三处须修缺陷（均已修）**:
+① RFC-137 初版在 `_close_trade_record` 内直调 `get_dual_broker()` 单例 →
+p0 单测（PLAYBOOK_LIVE 行）绕过注入的 FakeDualBroker 打开真实 Futu socket，
+合并跑 `live_arm_p0 + exit_recovery` 出现 `55 passed + 19 errors`（I/O guard 捕获
+后台 `socket.send`）。**HEAD 基线同命令 55 全绿 ⇒ 非既有隔离问题，是本批回归**。
+修复: `_close_trade_record` 新增 `fee_broker` 注入参数（两个调用点传链路已有的
+`dual`），并加回归守卫 `test_broker_stop_reconciliation_needs_no_broker_singleton`；
+修复后四套件合并 `75 passed`（含新守卫）。
+② DEB-20261008 声称的验证器 `scripts/verify_deb20261008.py` **不存在**（「一键验证」
+命令必失败）。已按 `verify_deb20261007.py` 契约补建（E 表 21 行逐格实跑 + 结构守卫 +
+「同 E#」引用复用），当前 `21/21 命中, 0 结构问题`。
+③ E 表 6 格陈旧/手抄偏差（E4 漏 `$` 列、E6 83.9→83.8、E7 464→465、E15 N=417→419
+cap/一致性漂移、E19 命令 `\\"` 转义致 shell 不可跑、E20 N=525→527/-0.780→-0.764/
++1.125→+1.109pp）——全部为落档后 DB/影子数据继续进账所致，**无一翻转结论**，已按
+验证器实测值刷新；B2/§2/§6/§12 同步。
+
+**其余核验通过**: 生产回填 PBR/CEG/BKV 三行 `fees_source='broker'` 与 RFC §5 表逐值
+一致（毛 +$1.66 / 费 $11.97 / 净 −$10.31，备份存在）；Futu SDK push 行 schema 实为
+`data_date/data_time`（无 `update_time`）⇒ 时戳修复方向正确；`order_fee_query` SDK
+签名/返回列（order_id/fee_amount）对上；DEB 挑战点 2（新架构八腿重算：MFE≥2% n=79
+落袋中位 2.22% WR 98.7% ≈ 全样本）与挑战点 5（费用减半 26→29 笔 / 26.3%→29.3%）
+独立复算维持结论；RFC-099 §10.1 抽查（`if detail:`/`if dry:`/crontab 无 `--dry`）属实。
+
+**测试**: `26 passed`（费用对账/dual_broker/W7/LV3 时戳）+ `207 passed`
+（加 entry_revalidation 五文件）+ `75 passed`（p0+exit_recovery 等四套件合并）+
+DEB 验证器 21/21 + `py_compile` 通过。
+
+## 2026-10-07 DA/UE 融合首跑复核与推送口径修正（用户令「继续」）
+
+**结论**: DA 主链与 UE 融合正常。今日 bridge 为 **5 个 DA 候选**; 生产 DB 最终
+**5 条 DA 指令**, 其中 **2 条可交易** (`US.CEG BUY`, `US.BKV BUY`), **3 条 SKIP**
+(`US.PENG/US.NOK` 方向偏斜, `US.MRVL` 半导体集中度)。旧推送把「候选5」与
+「instruction直写DB」并列, 未写最终可交易数, 已修正。
+
+**UE/DA 融合**: 08:00 ET `da_feed` 主链融合正常, `US.BKV/US.MRVL` 带
+`origin="ue_candidate"`; UE 直写腿 0 条为退役设计。09:12 fresh-event 影子批首跑因
+`candidate_count/candidates_total` schema 错配失败, v0.94 已兼容; 09:24–09:29 重跑
+成功, 仅 `US.RARE` 深分析 (`ALKT` 不可借券, `SHEL` 低 ATR), 未写生产 DB。
+
+**修正**: `scripts/da_bridge_dingtalk_push.py` 现在只读查询生产 DB, 推送写明
+「候选 / DB可交易 / guardrail SKIP」三口径, 逐标的显示 DB 状态与 SKIP 原因, 并写
+`data/da_push_instruction_summary.jsonl` 台账; 新增
+`tests/test_da_bridge_dingtalk_push.py` 固化 5→2 口径。详细记录见
+`docs/decisions/RFC-136-ue-fresh-event-da-batch-and-window-visibility.md` §6。
+
+## 2026-10-07 DEB-20261007 第6轮：DA LLM 盘前定价时窗与 entry_price 可行性（用户追问）
+
+**问题**：entry_price 能否由 DA LLM 基于盘前（什么时间段）+ 历史数据 + 预判找到合理价格？
+
+**机制现状（读码）**：这件事**系统已在做** — DA 主链窗 **07:55–08:15 ET**
+（`ops/hermes/da_main_carrier.py` 守卫），更早 deep-stock-analysis 扫描窗 04:00–06:00 ET；
+`planned_entry` 即 DA LLM 直写（`execution_plan.entry_price`），prompt 硬规锚定盘前有效现价
+（严禁锚昨收）并注入盘前异动 + 技术/基本面/新闻历史数据段；盘中触发时机械 reprice 到实时 bid/ask。
+
+**实测（新脚本 T1–T4）**：晚定价只机械减小位移（04–06 时 |dev| 中位 2.103% vs 07–08 时
+1.436%，ρ(小时,|dev|)=−0.13），但**不改结局** — 早窗 mfe 0.72% 反而高于主链窗 0.59%；
+DA 内部 Spearman(|dev|,mfe)=+0.08 / (adverse,mfe)=+0.08 / (|dev|,pnl)=−0.00 全近零。
+与 DEB-20260916 §7.3（DA 精确取值 ρ 全<0.15）和本 DEB P1 六刀三层互证：
+**换时窗/换 prompt 找「更合理入场价」不是可测收益杠杆**；观察通道 = RFC-123 双锚影子（已落地）。
+
+**入库**：`scripts/deb20261007_da_timing_window.py`（只读，任意 cwd rc=0）；DEB §14 第 6 轮；
+E30 计数 24→25。零生产参数改动、零行为变更、无需重启。
+
+## 2026-10-07 DEB-20261007 第5轮：盘中 reprice / 盘前计划价获利空间分析·独立复查（用户令「请复查」）
+
+**复核结论**：第 4 轮三条结论**全部维持**——①入场价位移轴无判别力（P1 六刀全灭复现）；
+②「等回踩」负选择成立且被加固（LONG/SHORT 分层差 −$67.02/−$79.43 同向、剔最大符号仍 −$52.43）；
+③MFE 杠杆在出口结构不在入场价。「不落地 / 不提案」决策不变。
+
+**新发现 4 项须修缺陷**（均不推翻结论，已落自曝 #17–#20 + §14 第 5 轮）：
+①`mfe_driver_scan.py` join 双计 4 笔（去重后 SL_TRAIL_LOCK +$6,638 / SL_INITIAL −$4,422 / Spearman n=594）；
+②`r4_falsification.py` X3 结论行未随自曝#16 更新（仍印「方向有利」）+ 省额公式高估 1.27%；
+③X0 的 mae 口径核查对 SHORT 空转（386/396=97% 只约束 LONG；生产码+独立验 30/34 证明结论仍对）；
+④P0 头条 n=645 混入 236 笔从未 reprice 的未执行指令（executed-only 中位 1.5444% vs 混合 1.0363%）。
+次级：§14 K/R/X 表无机器验证覆盖（verify 只扫 E/C 行首）；状态头「已落码 16」过期未同步。
+
+**入库**：`scripts/deb20261007_review5_recheck.py`（V1–V7 独立对抗核验，只读 DB，任意 cwd rc=0）；
+DEB §14 新增第 5 轮 + 自曝 #17–#20；E30 脚本计数 23→24。零生产参数改动、零行为变更、无需重启。
+
 ## 2026-10-07 DEB-20261007 F1–F5 落地批（用户裁「按建议执行」）
 
 **裁决**: F1 落地（RFC-123 阶段0 双锚影子）/ F2 修（注册表判据串台）/ F3 关闭留痕（方案 C）/
@@ -3528,21 +3612,3 @@ extended_hours 出场对账; B) 预注册 RFC: ETH HELD 意图在 RTH 开盘后�
   - **该触发器实际上已经"响过"了**：其条件是「到 08-10 干净样本 ≥40 笔且期望值仍 <0 且 KR2 未改善 → 停止参数微调，回到『信号源(DA skill)是否真有 edge』的根本问题」。DEB-20260823 三判决（**毛期望精确为零** / 每周调参循环=过拟合机器 / 尺子失效）+ 8/23 换轨就是它的兑现，只是结论改判为「**尺子问题非执行问题**」（KR1 判据需 n≈1386 才可测）。
   - **"DA 是否真有 edge" 现在有答案了（2026-09-06 复核）**: DA 论据级 IC `overall_ic_t1 = −0.0061 ≈ 0`（`claim_ic_cache.json`，2026-09-05 更新，`total_samples=1805`、101 个 claim_type），快照基数 **1,844 条 / 1,808 条有 T1** ⇒ **不再是"样本不够"**。与 DEB-20260820「方向无 alpha 三方证据链闭合」同判：**DA 的方向选择测不出 alpha，系统里唯一被验证的优势是 gate 负筛 + 退出锁利（`SL_TRAIL_LOCK`）**。⇒ 修复点不在"让 DA 预测得更准"，在供给质量/成本/退出结构；任何"提升 DA 方向准确率"的提案应先被这条 caveat 挡一次。
 - **纪律**: hard-to-reverse/线上写操作先备份+确认; 不为凑样本放松风控; 一次一个变量。
-
-## 2026-10-07 DA/UE 融合首跑复核与推送口径修正（用户令「继续」）
-
-**结论**: DA 主链与 UE 融合正常。今日 bridge 为 **5 个 DA 候选**; 生产 DB 最终
-**5 条 DA 指令**, 其中 **2 条可交易** (`US.CEG BUY`, `US.BKV BUY`), **3 条 SKIP**
-(`US.PENG/US.NOK` 方向偏斜, `US.MRVL` 半导体集中度)。旧推送把「候选5」与
-「instruction直写DB」并列, 未写最终可交易数, 已修正。
-
-**UE/DA 融合**: 08:00 ET `da_feed` 主链融合正常, `US.BKV/US.MRVL` 带
-`origin="ue_candidate"`; UE 直写腿 0 条为退役设计。09:12 fresh-event 影子批首跑因
-`candidate_count/candidates_total` schema 错配失败, v0.94 已兼容; 09:24–09:29 重跑
-成功, 仅 `US.RARE` 深分析 (`ALKT` 不可借券, `SHEL` 低 ATR), 未写生产 DB。
-
-**修正**: `scripts/da_bridge_dingtalk_push.py` 现在只读查询生产 DB, 推送写明
-「候选 / DB可交易 / guardrail SKIP」三口径, 逐标的显示 DB 状态与 SKIP 原因, 并写
-`data/da_push_instruction_summary.jsonl` 台账; 新增
-`tests/test_da_bridge_dingtalk_push.py` 固化 5→2 口径。详细记录见
-`docs/decisions/RFC-136-ue-fresh-event-da-batch-and-window-visibility.md` §6。

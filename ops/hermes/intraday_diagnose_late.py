@@ -464,8 +464,10 @@ try:
     with open(_tmp, 'w', encoding='utf-8') as _f:
         _f.write(_fp)
     os.replace(_tmp, _LAST_HASH_PATH)   # 原子替换, 不留半截文件
-except Exception:
-    pass    # fail-open: 去重逻辑坏了就照发, 绝不吞真投递
+except Exception as _dedup_e:
+    # fail-open: 去重逻辑坏了就照发, 绝不吞真投递; 2026-10-08 棘轮清剿: 留痕到 stderr
+    # (stdout 是 no_agent 投递载体, 不能污染)
+    print(f"[warn] 去重指纹写入失败 (本次照发): {_dedup_e}", file=sys.stderr)
 
 # Output to stdout — delivered verbatim by no_agent cron
 print(_out_text)

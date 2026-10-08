@@ -57,6 +57,7 @@ print(f"全量指令 n={len(rows)}  (禁 LIMIT, 与 DEB E 表口径一致)")
 
 A = []   # reprice_audit 人群 (权威)
 B = []   # planned_entry 人群
+n_bad_ra = 0
 for r in rows:
     try:
         md = json.loads(r["md"]) if r["md"] else {}
@@ -69,6 +70,7 @@ for r in rows:
         try:
             f_, t_ = float(ra["reprice_from"]), float(ra["reprice_to"])
         except Exception:
+            n_bad_ra += 1  # 2026-10-08 棘轮清剿: reprice_audit 解析失败计数 (原为静默 continue)
             continue
         if f_ > 0 and t_ > 0:
             A.append(dict(r=r, f=f_, t=t_, dev=(t_ - f_) / f_ * 100,
@@ -87,6 +89,8 @@ for r in rows:
                       did=str(r["did"] or ""), date=r["date"]))
 
 print(f"A) reprice_audit 人群 n={len(A)}   B) planned_entry 人群 n={len(B)}")
+if n_bad_ra:
+    print(f"   [warn] reprice_audit 解析失败跳过 {n_bad_ra} 条")
 print(f"   A 与 B 重叠 (同 id) n={len({a['r']['id'] for a in A} & {b['r']['id'] for b in B})}")
 
 

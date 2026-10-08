@@ -71,11 +71,13 @@ def main() -> int:
     # ── 实测重算 (与 deb20261008_bias_funnel.py 同口径) ──────────────────────
     l1b = l1s = 0
     surv_b = surv_s = 0
+    n_bad_gate = 0
     day_l1: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for ln in gate.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             d = json.loads(ln)
         except Exception:
+            n_bad_gate += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
         if not isinstance(d, dict) or str(d.get("trade_date") or "") < SINCE:
             continue
@@ -91,6 +93,8 @@ def main() -> int:
             if dec in ("PASS", "WARN"):
                 surv_s += 1
     p1 = 100.0 * l1b / (l1b + l1s) if (l1b + l1s) else 0.0
+    if n_bad_gate:
+        print(f"  [warn] gate jsonl 坏行跳过 {n_bad_gate} 条", file=sys.stderr)
 
     fin_l = conn.execute("""SELECT COUNT(*) FROM playbook_instructions WHERE date>=?
                             AND direction='BUY' AND (skip_reason IS NULL OR skip_reason='')""",

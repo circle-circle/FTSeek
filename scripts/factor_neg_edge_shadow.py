@@ -54,12 +54,16 @@ def _seen_keys():
     if not OUTPUT.exists():
         return set()
     seen = set()
+    n_bad = 0
     for line in OUTPUT.read_text().splitlines():
         try:
             r = json.loads(line)
             seen.add((r.get("symbol"), r.get("trade_date")))
         except Exception:
+            n_bad += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
+    if n_bad:
+        print(f"[warn] {OUTPUT.name}: 坏行跳过 {n_bad} 条", file=sys.stderr)
     return seen
 
 

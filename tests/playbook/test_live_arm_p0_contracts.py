@@ -239,6 +239,42 @@ def test_partial_broker_stop_fill_is_not_booked(tmp_path):
     connection.close()
 
 
+def test_broker_stop_reconciliation_needs_no_broker_singleton(tmp_path, monkeypatch):
+    """RFC-137 回归守卫: 费用对账必须复用注入的 dual, 不得构造单例.
+
+    初版 _close_trade_record 直调 get_dual_broker() → 本用例的 PLAYBOOK_LIVE 行
+    会绕过 FakeDualBroker 打开真实 Futu socket, 后台线程污染后续套件 I/O guard.
+    """
+    ledger = tmp_path / "live.db"
+    _broker_stop_reconciliation_ledger(ledger)
+    monkeypatch.setattr("app.push.trade_exit", lambda *args, **kwargs: None)
+
+    singleton_calls = []
+
+    def spy_singleton():
+        singleton_calls.append(1)
+        return object()
+
+    monkeypatch.setattr("app.execution.dual_broker.get_dual_broker", spy_singleton)
+
+    class FakeDualBroker:
+        def query_order_fill(self, order_id, target_env="real"):
+            return 99.0, 1.0
+
+    connection = sqlite3.connect(ledger)
+    connection.row_factory = sqlite3.Row
+    row = dict(connection.execute("SELECT * FROM trade_records WHERE id=1").fetchone())
+    meta = json.loads(row["metadata_json"])
+
+    booked = pipeline._reconcile_broker_stop_exit(
+        FakeDualBroker(), connection, row, meta
+    )
+
+    assert booked is True
+    assert singleton_calls == []
+    connection.close()
+
+
 class _StopReleaseBroker:
     def __init__(self, statuses):
         self.statuses = list(statuses)

@@ -17,11 +17,13 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 DAY = "2026-10-07"
 CST = timezone(timedelta(hours=8))
-ET = timezone(timedelta(hours=-4))
+# 2026-10-08 棘轮清剿: 硬编码 UTC-4 假钟 → 真时区 (冬令时 EST=UTC-5 不错位)
+ET = ZoneInfo("America/New_York")
 
 
 def _ro(p: Path) -> sqlite3.Connection:
@@ -80,13 +82,17 @@ def main() -> int:
     sk = ROOT / "data/shadow/skew_gate_vision.jsonl"
     g4_ts = None
     if sk.exists():
+        n_bad = 0
         for ln in sk.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 d = json.loads(ln)
             except Exception:
+                n_bad += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
                 continue
             if d.get("date") == DAY:
                 g4_ts = d.get("ts")
+        if n_bad:
+            print(f"  [warn] skew_gate_vision 坏行跳过 {n_bad} 条", file=sys.stderr)
     print(f"  skew_gate_vision 今日 ts = {g4_ts}")
     if g4_ts:
         t = datetime.fromisoformat(str(g4_ts).replace("Z", "+00:00"))

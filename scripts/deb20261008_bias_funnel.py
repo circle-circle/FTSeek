@@ -57,10 +57,12 @@ def main() -> int:
     block_by = collections.defaultdict(collections.Counter)
     day_l1: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
 
+    n_bad = 0
     for ln in gate.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             d = json.loads(ln)
         except Exception:
+            n_bad += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
         if not isinstance(d, dict):
             continue
@@ -84,6 +86,8 @@ def main() -> int:
             l2[f"{dirn}/{dec}"] += 1
 
     section(f"E5 L1→L2 DA 侧两道闸 (窗 >= {SINCE}, 至 {DAY})")
+    if n_bad:
+        print(f"  [warn] gate jsonl 坏行跳过 {n_bad} 条", file=sys.stderr)
     print(f"  L1 闸前原始提案 n={sum(l1.values())}: {dict(l1.most_common())}")
     tot = l1["BUY"] + l1["SELL_SHORT"]
     print(f"  ⇒ **模型自己提的多头占比 = {_pct(l1['BUY'], l1['SELL_SHORT']):.1f}%** "

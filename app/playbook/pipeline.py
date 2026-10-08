@@ -5852,8 +5852,9 @@ def _resolve_generated_anchor(inst: Dict[str, Any], is_short: bool):
             a = float(edge) / (1 - _ga_chase) if is_short else float(edge) / (1 + _ga_chase)
             if a > 0:
                 return a, "band_edge"
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as _ga_ve:
+        # 2026-10-08 棘轮清剿: band 沿反推解析失败须留痕 (原为 except: pass)
+        logger.warning(f"[双锚影子] band 沿反推解析失败 (回退 missing): {_ga_ve}", exc_info=True)
     except Exception:
         pass
     return None, "missing"
@@ -6084,7 +6085,7 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
                 # (静默丢行 = 攒样进度虚高 + 判据面缺样不可察)。warning 不抛, 不拦单。
                 logger.warning(
                     f"[双锚影子] {symbol} dual_anchor 块构造失败: {_da_err} "
-                    f"(该行缺块, RFC-123 判据面缺样)")
+                    f"(该行缺块, RFC-123 判据面缺样)", exc_info=True)
             _tp = _Path(__file__).resolve().parents[2] / "data" / "entry_timing_shadow.jsonl"
             with open(_tp, "a", encoding="utf-8") as _f:
                 _f.write(_json.dumps(_row, ensure_ascii=False) + "\n")
@@ -7051,7 +7052,8 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                         pnl: float, pnl_pct: float, holding_hours: float,
                         inst_id = None, symbol: str = None,
                         close_futu_order_id: str = None, *, exit_intent_id=None,
-                        exit_owner=None, exit_metadata=None, exit_time=None) -> bool:
+                        exit_owner=None, exit_metadata=None, exit_time=None,
+                        fee_broker=None) -> bool:
     """统一平仓写入 — 原子更新 trade_records + playbook_instructions + open_positions.
 
     Owns a clean transaction; returns True for a new close, False for receipt replay.
@@ -7712,6 +7714,66 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
                 pass
             logger.warning(f"[归因] {symbol} 自动归因失败 (不影响平仓): {_attr_e}", exc_info=True)
 
+    # 2026-10-08: LIVE-only fee truth reconciliation. Futu can return actual
+    # order fees after fills, while SIM cannot. This upgrades the LIVE ledger
+    # and push message to broker-authoritative fees without changing strategy
+    # decisions or touching SIM rows. Failure is observable but never blocks exit.
+    if _tr is not None and _tr[5] == "PLAYBOOK_LIVE":
+        try:
+            from app.execution.live_fee_reconciliation import (
+                fee_discrepancy_is_material,
+                reconcile_live_order_fees,
+            )
+            # 2026-10-08 复查修复: 优先复用调用链已持有的 broker (测试注入 FakeDualBroker
+            # 时不再触发 get_dual_broker() 单例 → 真实 Futu socket 污染 I/O guard)。
+            if fee_broker is None:
+                from app.execution.dual_broker import get_dual_broker
+                fee_broker = get_dual_broker()
+            _fee_reconcile = reconcile_live_order_fees(fee_broker, conn, trade_id)
+            if _fee_reconcile.get("status") == "ok":
+                _fees_total = float(_fee_reconcile["fees_total"])
+                if fee_discrepancy_is_material(
+                    _fee_reconcile.get("estimated_total"), _fees_total
+                ):
+                    try:
+                        from app.push import get_push_hub
+                        from app.push.message import Level
+                        get_push_hub().push_text(
+                            f"⚠️ [LIVE费用对账] {symbol} 券商实收费=${_fees_total:.2f}, "
+                            f"估算=${_fee_reconcile.get('estimated_total'):.2f}, "
+                            f"差异=${_fee_reconcile.get('difference'):.2f}",
+                            level=Level.HIGH,
+                        )
+                    except Exception as _fee_push_error:
+                        logger.warning(
+                            f"[LIVE费用对账] {symbol} 差异推送失败: {_fee_push_error}",
+                            exc_info=True,
+                        )
+            elif _fee_reconcile.get("status") == "failed":
+                logger.warning(
+                    f"[LIVE费用对账] {symbol} trade_id={trade_id} 失败: "
+                    f"{_fee_reconcile.get('reason')}"
+                )
+                try:
+                    from app.push import get_push_hub
+                    from app.push.message import Level
+                    get_push_hub().push_text(
+                        f"🔴 [LIVE费用对账] {symbol} 券商实收费获取失败, 净额暂用估算: "
+                        f"{_fee_reconcile.get('reason')}",
+                        level=Level.HIGH,
+                    )
+                except Exception as _fee_push_error:
+                    logger.warning(
+                        f"[LIVE费用对账] {symbol} 失败推送失败: {_fee_push_error}",
+                        exc_info=True,
+                    )
+        except Exception as _fee_reconcile_error:
+            logger.warning(
+                f"[LIVE费用对账] {symbol} trade_id={trade_id} 异常 (不影响平仓): "
+                f"{_fee_reconcile_error}",
+                exc_info=True,
+            )
+
     # 2026-07-16: playbook 平仓逐笔飞书推送 (复用 PushHub trade_exit)。
     #   来源精准标注 — 按 trade_records.source_type 映射 strategy (PLAYBOOK_SIM→playbook_sim,
     #   PLAYBOOK_LIVE→playbook_live); shadow 仓不推 (纯影子追踪, 非真实成交)。
@@ -8195,8 +8257,10 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
         _today = now_et.strftime("%Y-%m-%d")
         if _armed_day and _armed_day != _today:
             return "expire", "跨交易日, 等待状态作废"
-    except Exception:
-        pass
+    except Exception as _pe_day_e:
+        # 2026-10-08 棘轮清剿: 跨日守卫异常须留痕 (原为 except: pass)
+        logger.warning(f"[playbook] patient_exit 跨日守卫异常 (守卫本轮失效): {_pe_day_e}",
+                       exc_info=True)
     try:
         _stop_pct = float(pb_cfg.get("patient_exit_stop_pct", 1.5))
         _deadline = int(pb_cfg.get("patient_exit_deadline_hhmm", 1550))
@@ -8225,8 +8289,10 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
         _hhmm = now_et.hour * 100 + now_et.minute
         if _hhmm >= _deadline:
             return "eod", f"{_hhmm:04d} ≥ {_deadline:04d} 强制兜底"
-    except Exception:
-        pass
+    except Exception as _pe_eod_e:
+        # 2026-10-08 棘轮清剿: EOD 兜底判定异常须留痕 (原为 except: pass)
+        logger.warning(f"[playbook] patient_exit EOD 兜底判定异常 (本轮回退规则链): {_pe_eod_e}",
+                       exc_info=True)
     return "", ""
 
 
@@ -8559,7 +8625,8 @@ def _reconcile_broker_stop_exit(dual, conn, row, meta) -> bool:
     except Exception as error:
         logger.warning(
             "[playbook live] broker STOP fill reconciliation pending "
-            f"{row.get('symbol')} stop_id={stop_order_id}: {error}"
+            f"{row.get('symbol')} stop_id={stop_order_id}: {error}",
+            exc_info=True,
         )
         return False
 
@@ -8590,6 +8657,7 @@ def _reconcile_broker_stop_exit(dual, conn, row, meta) -> bool:
             "broker_stop_order_id": stop_order_id,
             "broker_stop_dealt_qty": filled_qty,
         },
+        fee_broker=dual,
     )
     if booked:
         logger.info(
@@ -8803,7 +8871,8 @@ def _book_playbook_exit_result(dual, result, conn=None):
             conn, owner["trade_id"], price, exit_reason, pnl, pnl / (entry * qty),
             decision.get("holding_hours", 0.0), inst_id=owner.get("instruction_id"),
             symbol=owner["symbol"], close_futu_order_id=result.get("futu_order_id"),
-            exit_intent_id=intent_id, exit_owner=owner, exit_metadata=meta, exit_time=closed_at)
+            exit_intent_id=intent_id, exit_owner=owner, exit_metadata=meta, exit_time=closed_at,
+            fee_broker=dual)
         if booked and decision.get("emit_overnight_shadow"):
             try:
                 from app.playbook.overnight_hold_shadow import emit as overnight_emit
@@ -9825,8 +9894,10 @@ def monitor_playbook_exits(scheduler) -> int:
         for _arm_conn in _arm_connections.values():
             try:
                 _arm_conn.close()
-            except Exception:
-                pass
+            except Exception as _arm_close_e:
+                # 2026-10-08 棘轮清剿: 连接关闭失败须留痕 (原为 except: pass)
+                logger.warning(f"[playbook sim] arm 连接关闭失败 (不影响退出监控): {_arm_close_e}",
+                               exc_info=True)
 
 
 # Compatibility alias for legacy callers/tests; the active name reflects both arms.

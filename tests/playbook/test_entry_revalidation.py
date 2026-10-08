@@ -182,7 +182,14 @@ def env(tmp_path, monkeypatch):
         return {"success": True}
 
     service = SimpleNamespace(execute_instruction=Mock(side_effect=execute_instruction))
-    broker = SimpleNamespace(get_positions=Mock(return_value=[]))
+    def query_order_fees(order_ids, target_env="real"):
+        fees = {str(order_id): 2.0 for order_id in order_ids}
+        return {"success": True, "fees": fees, "rows": []}
+
+    broker = SimpleNamespace(
+        get_positions=Mock(return_value=[]),
+        query_order_fees=query_order_fees,
+    )
     capital = SimpleNamespace(get_available_budget_for_auto=lambda: 80000.0,
                               get_position_multiplier=lambda: 1.0,
                               get_risk_multiplier=lambda: 1.0,

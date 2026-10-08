@@ -211,7 +211,7 @@ def _validate_startup_mode_or_exit():
                     sync=True,
                 )
             except Exception as push_error:
-                logger.warning("[StartupMode] 阻断通知发送失败: %s", push_error)
+                logger.warning("[StartupMode] 阻断通知发送失败: %s", push_error, exc_info=True)
             raise SystemExit(1)
         logger.warning(
             "[StartupMode] LEGACY_GLOBAL_FLIP_OVERRIDE=1: 允许旧全局模式启动（仅限显式测试/回滚）"

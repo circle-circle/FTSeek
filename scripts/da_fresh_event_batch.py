@@ -37,6 +37,7 @@ def _read_jsonl(path: Path) -> List[Dict]:
     if not path.exists():
         return []
     rows = []
+    n_bad = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -45,7 +46,10 @@ def _read_jsonl(path: Path) -> List[Dict]:
             if isinstance(row, dict):
                 rows.append(row)
         except json.JSONDecodeError:
+            n_bad += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
+    if n_bad:
+        print(f"[warn] {path.name}: 跳过坏行 {n_bad} 条", file=sys.stderr)
     return rows
 
 

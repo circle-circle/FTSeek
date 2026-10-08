@@ -1,40 +1,28 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-09-23), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-08), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **171** 个 DEB 文件。
+共 **191** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **24** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **12** 个近 14 天新文件未在 README 索引收录 (需补登):
 
-- `DEB-20260909-exit-params-multi-model-debate.md`
-- `DEB-20260909-sl-initial-rootcause-and-entry-gate.md`
-- `DEB-20260910-da-ue-target-instruction-chain-review.md`
-- `DEB-20260910-logging-observability-batch.md`
-- `DEB-20260910-us-trading-fullchain-live-readiness.md`
-- `DEB-20260911-premarket-invalidation-axis-and-rule-conflicts.md`
-- `DEB-20260914-cutover-bidirectional-seamless.md`
-- `DEB-20260916-da-source-traceback-reprice-geometry.md`
-- `DEB-20260916-fullchain-bughunt-recheck.md`
-- `DEB-20260916-fullchain-subtraction-optimization.md`
-- `DEB-20260917-mrcy-twin-row-exit-loop-fix.md`
-- `DEB-20260918-crm-overnight-gap-review.md`
-- `DEB-20260918-extended-hours-ssot-and-observability.md`
-- `DEB-20260918-preflight-report-content-update.md`
-- `DEB-20260918-quality-caliber-and-llm-thinking-budget.md`
-- `DEB-20260918-ue-push-readout-alignment.md`
-- `DEB-20260919-extended-hours-profit-lock-and-trail.md`
-- `DEB-20260920-loop-engineering-landing.md`
-- `DEB-20260921-factor-weight-verdict-reconciliation.md`
-- `DEB-20260921-playbook-open-position-cap.md`
-- `DEB-20260922-w7-chg-denominator-adjudication.md`
-- `DEB-20260923-eth-scan-efficiency.md`
-- `DEB-20260923-shadow-board-caliber-fixes.md`
-- `DEB-20260923-ue-long-cut-replay.md`
+- `DEB-20260926-composite-bear-veto-falsification.md`
+- `DEB-20260928-averaging-down-separability.md`
+- `DEB-20260928-ext-exec-price50-shadow.md`
+- `DEB-20260928-profitability-and-loss-reduction-survey.md`
+- `DEB-20260928-sl-initial-stop-geometry.md`
+- `DEB-20260928-supply-price-tier-shadow.md`
+- `DEB-20260928-trail-lock-pyramid-shadow.md`
+- `DEB-20260930-earnings-direction-replay.md`
+- `DEB-20261003-reentry-quick-tp-deletion.md`
+- `DEB-20261003-weekly-optimizer-p26-rebuild.md`
+- `DEB-20261008-premarket-trend-continuation-verdict.md`
+- `DEB-20261008-profit-ladder-scaleout-feasibility.md`
 
-📦 历史归档 **129** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
+📦 历史归档 **153** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -165,6 +153,30 @@
 - `DEB-20260905-sim-data-collection.md`
 - `DEB-20260907-prompt-contract-role-boundary-review.md`
 - `DEB-20260907-three-rulers-and-engine-break.md`
+- `DEB-20260909-exit-params-multi-model-debate.md`
+- `DEB-20260909-sl-initial-rootcause-and-entry-gate.md`
+- `DEB-20260910-da-ue-target-instruction-chain-review.md`
+- `DEB-20260910-logging-observability-batch.md`
+- `DEB-20260910-us-trading-fullchain-live-readiness.md`
+- `DEB-20260911-premarket-invalidation-axis-and-rule-conflicts.md`
+- `DEB-20260914-cutover-bidirectional-seamless.md`
+- `DEB-20260916-da-source-traceback-reprice-geometry.md`
+- `DEB-20260916-fullchain-bughunt-recheck.md`
+- `DEB-20260916-fullchain-subtraction-optimization.md`
+- `DEB-20260917-mrcy-twin-row-exit-loop-fix.md`
+- `DEB-20260918-crm-overnight-gap-review.md`
+- `DEB-20260918-extended-hours-ssot-and-observability.md`
+- `DEB-20260918-preflight-report-content-update.md`
+- `DEB-20260918-quality-caliber-and-llm-thinking-budget.md`
+- `DEB-20260918-ue-push-readout-alignment.md`
+- `DEB-20260919-extended-hours-profit-lock-and-trail.md`
+- `DEB-20260920-loop-engineering-landing.md`
+- `DEB-20260921-factor-weight-verdict-reconciliation.md`
+- `DEB-20260921-playbook-open-position-cap.md`
+- `DEB-20260922-w7-chg-denominator-adjudication.md`
+- `DEB-20260923-eth-scan-efficiency.md`
+- `DEB-20260923-shadow-board-caliber-fixes.md`
+- `DEB-20260923-ue-long-cut-replay.md`
 
 ## 全量清单 (按日期)
 
@@ -262,7 +274,7 @@
 | [DEB-20260815-stable-profit-feasibility](DEB-20260815-stable-profit-feasibility.md) | 2026-08-15 | 提案裁决中 (实验预注册; Phase 0 冻结基线即刻生效) | - | 1605 |
 | [DEB-20260816-fullchain-code-review](DEB-20260816-fullchain-code-review.md) | 2026-08-16 | 审查完成 (只读, 零代码变更); P0/P1 待裁决修复顺序 | - | 570 |
 | [DEB-20260816-long-expectancy-audit](DEB-20260816-long-expectancy-audit.md) | 2026-08-16 | 已立案 (纯只读分析; L-E1 台账脚本待批落地; 任何供给/门变更需预注册判据触发) | - | 761 |
-| [DEB-20260816-no-trigger-direction-edge](DEB-20260816-no-trigger-direction-edge.md) | 2026-08-16 | 提案裁决中 (未实施; 回放脚本已落地, 纯只读) | 3 | 362 |
+| [DEB-20260816-no-trigger-direction-edge](DEB-20260816-no-trigger-direction-edge.md) | 2026-08-16 | 已裁决：不实施（归档）** — 用户 2026-09-26 裁「归档」。裁决依据 = 下方 2026-09-26 OOS 刷新读数（P1 在含 9 月的样本外窗口上不成立：BUY OOS 扣费后 −0.022% ✗ 净均>0、t=+0.43 ✗ t>1、IS→OOS 衰减 79%、SHORT 侧 IS/OOS 符号翻转… | 3 | 425 |
 | [DEB-20260816-regime-entry-gate](DEB-20260816-regime-entry-gate.md) | 2026-08-16 | 提案裁决中 (未实施; 用户策略哲学第①点"入场选择做好接线") | - | 108 |
 | [DEB-20260816-short-generation-funnel](DEB-20260816-short-generation-funnel.md) | 2026-08-16 | 共识项1已实施 (2026-08-16 §九: prompt score 语义+record-only一致性校验, 零执行风险); 项2-5 按阶段纪律留待 | - | 777 |
 | [DEB-20260817-symbol-profile-market-sense](DEB-20260817-symbol-profile-market-sense.md) | 2026-08-17 | (未标注) | 7 | 610 |
@@ -305,7 +317,7 @@
 | [DEB-20260903-intraday-chain-audit](DEB-20260903-intraday-chain-audit.md) | 2026-09-03 | §二 三项已修并实测验证（零交易行为变更）**；**§三 D1 已由用户裁决并执行止血（`tripwire_checker_enforce: true→false`，见 §3.1，判定照跑/审计照落/DB 不写，恢复条件=消费端守卫+影子≥10交易日）**，D1 的守卫修法本身仍待排期；**§四 D2 / §五 D3 … | - | 257 |
 | [DEB-20260903-merged-findings-for-verification-112-clusters-20260904](DEB-20260903-merged-findings-for-verification-112-clusters-20260904.md) | 2026-09-03 | (未标注) | - | 3 |
 | [DEB-20260903-trade-attribution-zombie-watch](DEB-20260903-trade-attribution-zombie-watch.md) | 2026-09-03 | (未标注) | - | 79 |
-| [DEB-20260904-dead-signal-exit](DEB-20260904-dead-signal-exit.md) | 2026-09-04 | 待裁决**（本文件为提案+证据包，零实盘行为变更） | - | 89 |
+| [DEB-20260904-dead-signal-exit](DEB-20260904-dead-signal-exit.md) | 2026-09-04 | 待裁决**（本文件为提案+证据包，零实盘行为变更） | - | 94 |
 | [DEB-20260904-experience-generalization-system](DEB-20260904-experience-generalization-system.md) | 2026-09-04 | 多模型辩论完成** (三角色, §九; kimi-reviewer 事实核查 / qwen-architect 证伪攻击 / glm-verifier 实证复现), ~~**最终共识方案待用户裁决 (§十, 批次0)**~~ **最终共识方案已裁决 — 2026-09-05 用户裁"按建议执行" (D1 维持冻结 / … | - | 420 |
 | [DEB-20260904-fullchain-bughunt](DEB-20260904-fullchain-bughunt.md) | 2026-09-04 | 待决策 — 112/112 簇已独立核实裁决 (CONFIRMED 101 / REJECTED 11), 由 harness merge_verdicts_deb 于 2026-09-04 10:27 回注 | - | 1770 |
 | [DEB-20260905-sim-data-collection](DEB-20260905-sim-data-collection.md) | 2026-09-05 | 已裁决 + 已执行 (2026-09-05 14:00 CST 批, 裁决依据 = 用户当日指令"我需要不停止 sim 模拟交易, 且要保障正常交易且收集数据…不要终止开仓, 要继续交易下去") | - | 2146 |
@@ -331,13 +343,33 @@
 | [DEB-20260918-quality-caliber-and-llm-thinking-budget](DEB-20260918-quality-caliber-and-llm-thinking-budget.md) | 2026-09-18 | (未标注) | - | 119 |
 | [DEB-20260918-ue-push-readout-alignment](DEB-20260918-ue-push-readout-alignment.md) | 2026-09-18 | (未标注) | - | 164 |
 | [DEB-20260919-extended-hours-profit-lock-and-trail](DEB-20260919-extended-hours-profit-lock-and-trail.md) | 2026-09-19 | (未标注) | - | 508 |
-| [DEB-20260919-review-decision-support-system](DEB-20260919-review-decision-support-system.md) | 2026-09-19 | P0–P4.6 已落码入库**（§21–§28；P0–P4 于 `4c529f7f6`，P4.5/P4.6 于 `e656c4893`）· 4 轮独立复查完成（§17 / §19 / §26 / §29）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（头部由第 4 轮核… | 4 | 1266 |
+| [DEB-20260919-review-decision-support-system](DEB-20260919-review-decision-support-system.md) | 2026-09-19 | P0–P4.6 已落码入库**（§21–§28；P0–P4 于 `4c529f7f6`，P4.5/P4.6 于 `e656c4893`）· 4 轮独立复查完成（§17 / §19 / §26 / §29）· P5（cron+golden+载体+skill）与 §13/§20 待决项**待用户裁决**（头部由第 4 轮核… | 4 | 1279 |
 | [DEB-20260920-extended-hours-sim-direct-gates](DEB-20260920-extended-hours-sim-direct-gates.md) | 2026-09-20 | 已直接落地 SIM；独立复核第一轮意见已落地（§10 二轮加固 + §10.6 三轮核查补强 + §10.7 四批锚点修订 + §10.8/§10.9 互核回执，待下个交易日实盘验证） | - | 755 |
 | [DEB-20260920-loop-engineering-landing](DEB-20260920-loop-engineering-landing.md) | 2026-09-20 | 候选 B 已落地入库** (commit `7b1d2d550` / `1329832af` / `e4d438d6a` + 本轮按需源语义批) · 独立复查完成 (异模型, verdict=确认, defects=0, 见 RFC-091 §11) · **候选 A 未启动** (闸: 本环观察窗至 2026-10-… | - | 165 |
 | [DEB-20260921-factor-weight-verdict-reconciliation](DEB-20260921-factor-weight-verdict-reconciliation.md) | 2026-09-21 | 对账已实测 (本文件) · 只读告警已上线 (job `241c896213eb`) · **权重处置待裁 (本批一分未改) | - | 356 |
 | [DEB-20260921-playbook-open-position-cap](DEB-20260921-playbook-open-position-cap.md) | 2026-09-21 | (未标注) | - | 102 |
-| [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 245 |
+| [DEB-20260922-w7-chg-denominator-adjudication](DEB-20260922-w7-chg-denominator-adjudication.md) | 2026-09-22 | 待裁决** (owner=用户) · 出具日 2026-09-22 · 出具人 维护批/Hermes 元环 | - | 350 |
 | [DEB-20260923-eth-scan-efficiency](DEB-20260923-eth-scan-efficiency.md) | 2026-09-23 | 进行中 / **待决策**（本文只出方案与实证，不落地） | 2 | 349 |
-| [DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility](DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility.md) | 2026-09-23 | 调研与回放完成，**未改动任何交易逻辑**；候选方案 A/B/C 待用户裁决（§6 / §10）；独立复核分析与裁决建议见 **§12**（2026-09-23 追加）；第三轮实证复核 + 生产活例见 **§13**（2026-09-23 追加）；第四轮独立复算 + 实现语义钉死见 **§14**（2026-09-23… | - | 401 |
-| [DEB-20260923-shadow-board-caliber-fixes](DEB-20260923-shadow-board-caliber-fixes.md) | 2026-09-23 | (未标注) | - | 362 |
+| [DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility](DEB-20260923-extended-hours-earnings-criterion-and-short-feasibility.md) | 2026-09-23 | 调研与回放完成；**用户 2026-09-24 裁决：A/B/D 全部批准**（§15）。A 已落地（口径修正 + 温和票带 + 四态 stale + 对照台账）；B 探针脚本就位 + crontab 调度已配（下一 ETH 窗触发，不自动执行）；D 独立回放验证脚本就位。C 不批（用户选 A 绑温和票约束，优于 C … | - | 457 |
+| [DEB-20260923-shadow-board-caliber-fixes](DEB-20260923-shadow-board-caliber-fixes.md) | 2026-09-23 | (未标注) | - | 364 |
 | [DEB-20260923-ue-long-cut-replay](DEB-20260923-ue-long-cut-replay.md) | 2026-09-23 | (未标注) | - | 72 |
+| [DEB-20260924-jev-bounded-judgment-layer-feasibility](DEB-20260924-jev-bounded-judgment-layer-feasibility.md) | 2026-09-24 | 提案，**未落码**（本文 = L5 纯文档，零行为变更；Phase 0 若获裁，另立实现批次） | 6 | 728 |
+| [DEB-20260924-premarket-index-caliber-and-down-day-regime](DEB-20260924-premarket-index-caliber-and-down-day-regime.md) | 2026-09-24 | R8（2026-09-25）**——P0 落地（skill v0.85）；普跌日轴终局关闭（71 交易日扩窗）；F5/F14 已落码（`05fa9e441`）；剩 F5-enforce（影子攒 5-10 交易日后裁）/ F12（第 5 交易日触发）/ F3 / T3 解锁观察。 | - | 652 |
+| [DEB-20260926-composite-bear-veto-falsification](DEB-20260926-composite-bear-veto-falsification.md) | 2026-09-26 | (未标注) | - | 303 |
+| [DEB-20260928-averaging-down-separability](DEB-20260928-averaging-down-separability.md) | 2026-09-28 | Phase 0 已读出 ⇒ 按预注册判据结题（2026-09-28，用户批准 Phase 0 后执行）**：初版脚本唯一机械过闸的 F2 被 §十代码级修正为用 `time_to_mae` 回推触发时刻，正典 12.8pp 且 CI 跨 0；无一特征合格 ⇒ **"两类不可分 ⇒ 不补"，话题归档**（§九初版记录 +… | - | 349 |
+| [DEB-20260928-ext-exec-price50-shadow](DEB-20260928-ext-exec-price50-shadow.md) | 2026-09-28 | 影子已落地（零交易行为变更） | - | 69 |
+| [DEB-20260928-profitability-and-loss-reduction-survey](DEB-20260928-profitability-and-loss-reduction-survey.md) | 2026-09-28 | 三案已终裁（2026-09-28 用户授权代理终裁，见 §二十）**：①金字塔=立项并落地 record-only 影子（采集+结算已在跑）；②价格分层=撤回并入 `ticket_size_breakeven`（已补登注册表）；③止损几何=结题（假设不成立，保留几何硬发现）。F1 等到期自动呈裁、F2 观察判据已设。本… | - | 634 |
+| [DEB-20260928-sl-initial-stop-geometry](DEB-20260928-sl-initial-stop-geometry.md) | 2026-09-28 | 已裁决结题（2026-09-28 用户授权代理终裁，父 DEB §二十）**——原假设"1×ATR 对日内噪音过紧"数据不支持（正典 noise 6/10=60.0% vs breakdown 3/5=60.0%，p=1.0）；保留硬发现"止损系统性按 1×ATR 放置"；LLY 离群已查明=9/2 前单位混装旧 bu… | - | 198 |
+| [DEB-20260928-supply-price-tier-shadow](DEB-20260928-supply-price-tier-shadow.md) | 2026-09-28 | 已裁决撤回（2026-09-28 用户授权代理终裁，父 DEB §二十）**——不建新影子、不新增 cron；唯一残余观察（"≥$100 层剔极值仍正"）并入 `ticket_size_breakeven`（该影子已同日补登注册表，堵 P0.5 漏查根因）；零实盘行为变更 | - | 144 |
+| [DEB-20260928-trail-lock-pyramid-shadow](DEB-20260928-trail-lock-pyramid-shadow.md) | 2026-09-28 | 已裁决立项（2026-09-28 用户授权代理终裁，父 DEB §二十）并已落地 record-only 影子**（采集 `app/playbook/pyramid_shadow.py` + 结算 `scripts/trail_lock_pyramid_settle.py` cron 41 6 * * 2-6 + 注册… | - | 226 |
+| [DEB-20260929-profitability-loss-reduction-round2](DEB-20260929-profitability-loss-reduction-round2.md) | 2026-09-29 | 执行中（§10/§11 复查完成；§12 用户确认后已落地 P0/P1/P3 观测——runner 离线回放 **FAIL 关闭**；F1–F8 待后续裁决） | - | 719 |
+| [DEB-20260930-earnings-direction-replay](DEB-20260930-earnings-direction-replay.md) | 2026-09-30 | (未标注) | - | 366 |
+| [DEB-20260930-skew-gate-vision-gap](DEB-20260930-skew-gate-vision-gap.md) | 2026-09-30 | 阶段 0 record-only 影子已落地 (2026-10-01 Hermes 实施; 判定仍 batch-vision); 阶段 1 行为变更待前向影子期 + 用户/复查 agent 双裁 | - | 181 |
+| [DEB-20261002-universe-and-direction-entry-error](DEB-20261002-universe-and-direction-entry-error.md) | 2026-10-02 | 提案待裁决 + 五项减法刀**已被本提案自己的预注册判据否决**(撤回登记) | - | 564 |
+| [DEB-20261003-reentry-quick-tp-deletion](DEB-20261003-reentry-quick-tp-deletion.md) | 2026-10-03 | (未标注) | - | 77 |
+| [DEB-20261003-sim-live-arm-routing-convergence](DEB-20261003-sim-live-arm-routing-convergence.md) | 2026-10-03 | (未标注) | 1 | 234 |
+| [DEB-20261003-weekly-optimizer-p26-rebuild](DEB-20261003-weekly-optimizer-p26-rebuild.md) | 2026-10-03 | ✅ **已裁决并落地** — 用户 2026-10-03 裁「A」(退役收敛), 当日执行完毕 (见 §8 执行记录)。此前同日早批已裁「同意 停推送 + 复用已有的周报显示真实参数与影子参数效果对比」(P0-1/P0-3/周报承接, commit 00cccd060) | - | 127 |
+| [DEB-20261007-entry-pricing-reprice-mfe-capture](DEB-20261007-entry-pricing-reprice-mfe-capture.md) | 2026-10-07 | (未标注) | 6 | 634 |
+| [DEB-20261008-direction-gates-long-short-bias](DEB-20261008-direction-gates-long-short-bias.md) | 2026-10-08 | (未标注) | - | 367 |
+| [DEB-20261008-premarket-trend-continuation-verdict](DEB-20261008-premarket-trend-continuation-verdict.md) | 2026-10-08 | (未标注) | - | 88 |
+| [DEB-20261008-profit-ladder-scaleout-feasibility](DEB-20261008-profit-ladder-scaleout-feasibility.md) | 2026-10-08 | PROPOSED → 证据已收齐，待用户裁决 | - | 190 |

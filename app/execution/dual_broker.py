@@ -480,7 +480,40 @@ class DualBrokerAdapter:
         except Exception as error:
             logger.warning(
                 "[DualBroker] query_order_status failed %s env=%s: %s",
-                futu_order_id, target_env, error,
+                futu_order_id, target_env, error, exc_info=True,
+            )
+            return {"success": False, "error": str(error)}
+
+    def query_order_fees(self, futu_order_ids: list[str], target_env: str = "real") -> Dict[str, Any]:
+        """Return read-only broker fee evidence for submitted orders."""
+        try:
+            from futu import RET_OK
+            order_ids = [str(order_id) for order_id in futu_order_ids if str(order_id or "").strip()]
+            if not order_ids:
+                return {"success": False, "error": "no order ids"}
+            ctx, _acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.order_fee_query(
+                    order_id_list=order_ids,
+                    trd_env=trd_env,
+                )
+            if ret != RET_OK or data is None or data.empty:
+                return {"success": False, "error": str(data)}
+            rows = data.to_dict("records")
+            fees = {
+                str(row.get("order_id")): float(row.get("fee_amount") or 0)
+                for row in rows
+                if row.get("order_id") is not None
+            }
+            return {
+                "success": True,
+                "fees": fees,
+                "rows": rows,
+            }
+        except Exception as error:
+            logger.warning(
+                "[DualBroker] query_order_fees failed env=%s: %s",
+                target_env, error, exc_info=True,
             )
             return {"success": False, "error": str(error)}
 
@@ -559,7 +592,8 @@ class DualBrokerAdapter:
             account["_target_env"] = target_env
             return account
         except Exception as e:
-            logger.warning("[DualBroker] account info query exception env=%s: %s", target_env, e)
+            logger.warning("[DualBroker] account info query exception env=%s: %s", target_env, e,
+                           exc_info=True)
             return {}
 
     def place_protective_stop(self, symbol: str, qty: float, direction_held: str,

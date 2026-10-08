@@ -29,6 +29,15 @@ SYMBOLS = ["US.RIVN", "US.NOK"]          # 只抓 2 只: 避开 snapshot 预算
 OPEN_D_HOST, OPEN_D_PORT = "127.0.0.1", 11111
 
 
+def _stale_pair_hit(last: float, prev: float, c1: float | None,
+                    c2: float | None) -> bool:
+    if prev <= 0 or c1 is None or c2 is None:
+        return False
+    if abs(c1 - c2) < 0.01:
+        return False
+    return abs(prev - c1) < 0.01 and abs(last - c2) < 0.05
+
+
 def main() -> int:
     try:
         from futu import AuType, KLType, OpenQuoteContext, RET_OK
@@ -55,7 +64,7 @@ def main() -> int:
             c2 = closes[-2] if len(closes) > 1 else None   # 再前一日收盘
             cp_snap = ((last - prev) / prev * 100) if prev > 0 else None
             cp_prior = ((c1 - c2) / c2 * 100) if (c1 and c2) else None
-            hit = (prev > 0 and c1 and c2 and abs(prev - c1) < 0.01 and abs(last - c2) < 0.05)
+            hit = _stale_pair_hit(last, prev, c1, c2)
             rows.append({
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "code": code, "update_time": r.get("update_time"),

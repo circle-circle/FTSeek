@@ -323,11 +323,15 @@ def _archive_readout():
         print("[archive] 无档案文件")
         return
     rows = []
+    n_bad = 0
     for line in OUTPUT.read_text().splitlines():
         try:
             rows.append(json.loads(line))
         except Exception:
+            n_bad += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
+    if n_bad:
+        print(f"[warn] {OUTPUT.name}: 坏行跳过 {n_bad} 条", file=sys.stderr)
     stray = [r for r in rows if (r.get("trade_date") or "") > "2026-09-30"]
     # 裁决窗 = 8/18-9/30 (10/3 终裁冻结口径, 与注册表 verdict_history 数字对齐);
     # 窗外杂散行不入裁决读数, 单独报数。

@@ -114,10 +114,12 @@ def e2_block_volume() -> None:
     gdir = collections.defaultdict(collections.Counter)
     p = ROOT / "data/da_gate_decisions.jsonl"
     if p.exists():
+        n_bad_g = 0
         for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 d = json.loads(ln)
             except Exception:
+                n_bad_g += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
                 continue
             if not isinstance(d, dict) or str(d.get("trade_date") or "") < SINCE:
                 continue
@@ -129,6 +131,8 @@ def e2_block_volume() -> None:
             if "方向冲突" in rs:
                 gj["G2 方向冲突 (降档命中)"] += 1
                 gdir["G2"][dirn] += 1
+        if n_bad_g:
+            print(f"    [warn] da_gate_decisions 坏行跳过 {n_bad_g} 条", file=sys.stderr)
     print("\n  --- DA 生成期 (da_gate_decisions.jsonl 侧) ---")
     for k, v in gj.most_common():
         print(f"    {k:26s} {v:4d} 次   原方向分布={dict(gdir[k.split()[0]].most_common())}")
@@ -139,12 +143,16 @@ def e2_block_volume() -> None:
     print("\n  --- UE 侧 (影子) ---")
     if p3.exists():
         g3 = collections.Counter()
+        n_bad_3 = 0
         for ln in p3.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 d = json.loads(ln)
             except Exception:
+                n_bad_3 += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
                 continue
             g3[str(d.get("action") or d.get("decision") or d.get("blocked"))] += 1
+        if n_bad_3:
+            print(f"    [warn] ue_long_momentum_gate 坏行跳过 {n_bad_3} 条", file=sys.stderr)
         print(f"    G3 UE 动量门影子 n={sum(g3.values())} 分布={dict(g3)}")
         print("    ⚠️ n<20 ⇒ 样本不足, 不可单独裁决 (skill 纪律: 每组≥30)")
     else:

@@ -14,7 +14,14 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 924  # 2026-09-30 meta_audit 核查批调低 (925→924): 9/24 基线后他批 +5
+BASELINE = 921  # 2026-10-08 棘轮清剿批调低 (924→921): 9/30 基线后 +20 处全量就地清剿
+                  #   (pipeline 4: 双锚影子 band 沿反推/patient_exit 跨日守卫/EOD 兜底/arm 连接关闭;
+                  #    intraday_diagnose_late 1: 去重指纹 fail-open 留痕 stderr;
+                  #    scripts 15: da_fresh_event_batch/reprice×2/ttm×3/deb20261008×5/
+                  #    factor_neg_edge/premarket_reprice/rehang_live_stop 坏行计数进 print/stderr)
+                  #   − 顺带净愈合 3 处 (weekly_optimizer −2, error_pattern_detector −1)。
+                  #   全部改 logger.warning(exc_info=True)/计数留痕, 零控制流变更。只降不升。
+                  # 2026-09-30 meta_audit 核查批调低 (925→924): 9/24 基线后他批 +5
                   #   (extended_hours_entry_executor 1, llm_universe_scan 1,
                   #    runner_exit_counterfactual 1, shadow_board 1,
                   #    wweek_exempt_counterfactual_20260929 1) 全量就地清剿 —

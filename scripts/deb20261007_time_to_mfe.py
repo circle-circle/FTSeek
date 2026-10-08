@@ -62,6 +62,7 @@ print("=" * 92)
 print("⑳-1  捕获失败批 vs 成功批: MFE 何时达到 (判时机 vs 幅度)")
 print("=" * 92)
 grp = collections.defaultdict(list)
+n_bad_1 = 0
 for r, t, ta in witht:
     try:
         notional = float(r["ep"]) * float(r["q"])
@@ -70,9 +71,12 @@ for r, t, ta in witht:
         gb = float(r["g"] or 0) / notional * 10000
         mb = abs(float(r["m"] or 0)) * 100
     except Exception:
+        n_bad_1 += 1  # 2026-10-08 棘轮清剿: 解析失败计数 (原为静默 continue)
         continue
     if mb <= fb: continue                       # 没摸到够付费用的利润, 不属捕获问题
     grp["落袋成功" if gb > fb else "落袋失败"].append((r, t, ta, mb, gb, fb))
+if n_bad_1:
+    print(f"  [warn] ⑳-1 解析失败跳过 {n_bad_1} 条")
 
 for nm in ("落袋成功", "落袋失败"):
     v = grp[nm]
@@ -115,10 +119,12 @@ print("=" * 92)
 print("⑳-3  e_shadow_45/60/90m 快照: 捕获失败批在各时点的 MFE (判是否早该走)")
 print("=" * 92)
 snap = collections.defaultdict(list)
+n_bad_3 = 0
 for r, t, ta in witht:
     try:
         m = json.loads(r["mj"]) if isinstance(r["mj"], str) else {}
     except Exception:
+        n_bad_3 += 1  # 2026-10-08 棘轮清剿: metadata 解析失败计数 (原为静默 continue)
         continue
     if not isinstance(m, dict): continue
     try:
@@ -127,6 +133,7 @@ for r, t, ta in witht:
         gb = float(r["g"] or 0) / notional * 10000
         mb = abs(float(r["m"] or 0)) * 100
     except Exception:
+        n_bad_3 += 1  # 2026-10-08 棘轮清剿: 数值解析失败计数 (原为静默 continue)
         continue
     if mb <= fb: continue
     lab = "成功" if gb > fb else "失败"
@@ -135,6 +142,8 @@ for r, t, ta in witht:
         if isinstance(s, dict):
             v = s.get("mfe_pct")
             if isinstance(v, (int, float)): snap[(lab, win)].append(float(v))
+if n_bad_3:
+    print(f"    [warn] ⑳-3 解析失败跳过 {n_bad_3} 条")
 print(f"    {'组':6s} {'时点':6s} {'n':>5s} {'MFE中位':>9s} {'MFE均值':>9s} {'>费用线占比':>11s}")
 for lab in ("成功", "失败"):
     for win in ("45", "60", "90"):

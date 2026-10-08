@@ -215,6 +215,15 @@ def _measured_quote_age_ms(exchange_stamp: Any) -> Optional[int]:
         return None
 
 
+def _push_exchange_stamp(row: Dict[str, Any]) -> str:
+    """Futu push 行的交易所时戳: data_date + data_time → 单一 source_asof 串。"""
+    data_date = str(row.get("data_date", "") or "").strip()
+    data_time = str(row.get("data_time", "") or "").strip()
+    if data_date and data_time:
+        return f"{data_date} {data_time}"
+    return str(row.get("update_time", "") or "")
+
+
 class FutuLV3Provider:
     """
     富途 LV3 美股实时行情提供商
@@ -613,7 +622,7 @@ class FutuLV3Provider:
                                         float(row.get("bid_price", 0) or 0) > 0
                                         and float(row.get("ask_price", 0) or 0) > 0
                                     ),
-                                    "update_time": str(row.get("update_time", "") or ""),
+                                    "update_time": _push_exchange_stamp(row),
                                     "timestamp": time.time(),
                                 }
                                 updated += 1

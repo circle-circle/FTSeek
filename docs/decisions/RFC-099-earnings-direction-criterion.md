@@ -118,3 +118,101 @@
 **回滚动作（一个词，零代码）**：`.env.us` 的 `EXT_ENTRY_ALLOW_SHORT=false` ⇒ 下一轮 tick 生效（本链 cron 每轮新进程，**无需重启**）；同时把 `scripts/probe_eth_short_open.py` 维持可用（探针不受该开关影响）以便复核。
 
 **复核日**：**2026-10-07**（两周）—— 读空侧实际笔数/净额/门链读数，决定续开、调门、或关停。
+
+### 10.1 复核前置更正（2026-10-06 实测，复核日前一天落档）
+
+> ⚠️ **触发 4「观测停摆」是死判据：机械套用会误杀空侧开关。**
+> 本节只更正**可执行性**，不改 §10 四条触发的判据语义与阈值。
+
+**问题**：§10 触发 4 点名三个观测面（`研究臂拒绝细分` / `闸计数` / dry 臂 `direction`），
+但**没写产物路径**，三者里有两个从未具备可观测面。实测（2026-10-06，全部历史档
+`logs/ext_entry.log*` + `data/`）：
+
+| 观测面 | 实测 | 字面判定 | 真实归因 |
+|---|---|---|---|
+| ①`研究臂拒绝细分` | 打印 **38 次全在 09-24 一天**（09-23 也 0 次，见下方补注），09-25 起 **10 个有产出的日档零打印** | ★缺失 >2 日 | 代码 `extended_hours_entry_executor.py:2339` 是**条件性打印** `if detail:`；而 `research_pool` 自 09-25 起 **976/976 行恒 = 0** ⇒ `detail` 恒空 ⇒ 不打印。根因是**研究臂已关**：`EXT_ENTRY_RESEARCH_MOMENTUM` 既不在 `.env.us`（mtime 10-05 22:02）也不在 crontab（**0 处**），默认 `false` ⇒ `RESEARCH_ARM_ON=False`。是「被观测对象不存在」，**不是观测断** |
+| ②`闸计数` | 12 个日档**全部 >0**（最少 48 行/日） | ✓ 活 | 唯一健康的观测面，`counts` 每轮打印 |
+| ③dry 臂 `direction` | 全档 `"direction": "SHORT/LONG"` **零命中**；`"dry": true` **零命中** | ★缺失 >2 日 | **根因是 dry 分支生产从不执行**：crontab 两行 EXT 载体（L306/307）**都不带 `--dry`**（实测 0 处；`ops/hermes/*.sh` 也无）⇒ `collect(session, dry=False)` ⇒ L2360 `if dry:` 整块（含 L2534 的 `direction`）永不进入。落盘面本身**是有的**（L3152 `print(json.dumps(rs))` → stdout → `logs/ext_entry.log`，实测 `no_signal_passed_all_gates` 出现 66 次证明 stdout 确实落盘）⇒ 不是「未接线」，是「分支未被调度」 |
+
+⇒ ①③ 字面均已缺失 >2 交易日，而 §10 写「**任一命中，不辩论**」⇒
+明日复核若机械套用，会直接判回滚 `EXT_ENTRY_ALLOW_SHORT=false`，
+**而依据是假的**（观测面从未接线 / 被观测对象已关，不等于「不能判断在发生什么」）。
+
+**①的补注（本节曾留悬空引用，补齐）**：细分类观测面**曾经工作过**，不是从未接线。
+修正正则后全档普查（`zcat -f`，含 `.gz`）：
+
+```
+research_market_cap_too_low 38   research_turnover_too_low 17   research_entry_window 17
+research_liquidity          16   research_structure         5
+```
+全部落在 **09-24 一天**（38 次打印），由 `5570f3089`（09-23 04:52，DEB-20260920）引入。
+
+⚠️ **09-23 是反例，且它推翻「池非零必有细分打印」的直觉**：09-23 档 `research_pool`
+11 行里 9 行非零（取值 4/5/6），但细分类打印 **0 次**。原因是 `if detail:` —— 那天池内候选
+**全部通过下游门、无一被拒** ⇒ `detail` 恒空 ⇒ 不打印。
+
+⇒ **触发 4① 从设计上就不可靠**：细分打印缺失有两种完全不同的成因 ——
+  (a) 研究臂开着但**无拒绝**（09-23，正常）；(b) 研究臂**已关**（09-25 起，`research_pool` 976/976 恒 0）。
+两者在日志面**同貌**，而 §10 把「缺失」一律读成「可见性契约破坏 = 盲跑」。
+本判据无法区分 (a)/(b)，故不能用于「不辩论」级回滚 —— 这是把它从触发 4 移除的第二重理由
+（第一重是它观测的是研究臂，而回滚动作关的是空侧开关，**对象错配**）。
+
+
+**更正后的触发 4 判据（只此一条，供 10-07 复核使用）**：
+- 以 **②`闸计数`** 为唯一可执行观测面：`logs/ext_entry.log*` 中「闸计数」行**连续 2 个交易日为 0** ⇒ 命中。
+- ①③ **不参与触发 4 判定**，改为**待接线观测债**（见下），其缺失不构成「观测停摆」：
+  - ①：研究臂当前是关的 ⇒ 无样本可拒 ⇒ 无细分可报。**若将来重开研究臂**
+    （`.env.us: EXT_ENTRY_RESEARCH_MOMENTUM=true`），则「开着却连续 2 交易日无细分打印」才是真停摆。
+  - ③：**dry 臂分支未被调度**，故其 `direction` 观测面在生产永无数据。根因不是「未接线」——
+    落盘面是有的（L3152 `print(json.dumps(rs))` → stdout → `logs/ext_entry.log`），
+    是 crontab 两行 EXT 载体（L306/307）**都不带 `--dry`**（实测 0 处）⇒ L2360 `if dry:` 整块
+    （含 L2534 的 `direction`）永不进入。要让它可观测只有两条路：给 crontab 加一个 `--dry` 观测载体，
+    或**接受 live 臂已有等价观测**（推荐后者，零新增载体）：
+    实测 live 臂方向已落 DB，且**必须用顶层 `direction` 列，不能用 `metadata_json.direction`** ⚠️：
+
+    | 口径 | 实测（EXT 全部 7 笔） |
+    |---|---|
+    | 顶层 `trade_records.direction` | **7/7 有值**（`LONG`×6 + `SHORT`×1）✓ |
+    | `json_extract(metadata_json,'$.direction')` | **6/7 为 NULL** ✗ |
+
+    根因：`metadata_json.direction` 的写入点是 `07dd9559e`（**09-23 13:41**，RFC-099 §5 落码），
+    而 09-17/09-18 的 6 笔在它之前 ⇒ 该字段只有 10-01 那笔（`SHORT`）有值。
+    本节初稿曾建议用 `metadata_json->>'$.direction'` 作 10-07 口径，**已推翻**（会在自己的数据上漏 6 行）。
+    ⇒ 10-07 复核请直接用 `WHERE owner_strategy='extended_hours_entry' AND direction='SHORT'`。
+    ⚠️ 顺带一处注释与接线不符（同族于 DEB-20260922 §4.3）：L2532 注释称该字段让
+    「dry 台账按方向可分列，空侧候选不再与多侧混在同一个 `ordered` 里无法归因」——
+    但 dry 分支既然从不执行，这个「可分列」的收益在生产**一次也没兑现过**。
+    （⚠️ 本节写作过程中还纠正过一处自我误判：一度以为 `decision_id LIKE 'EXT-%'` 是
+    不可靠过滤器 —— 实测它与 `owner_strategy='extended_hours_entry'` 给出**同一批 7 笔**，
+    两者一致；NULL 的成因是字段引入时点，不是归属口径分叉。）
+
+**触发 1/2/3 的 10-07 复核读数（已实测，供裁决，不代裁）**：
+
+| 触发 | 判据 | 实测（09-23 开关开启至今） | 结论 |
+|---|---|---|---|
+| 1 券源/合规 | `short_borrow_unavailable` 之外拒单 / 裸卖（`max_sell_short<1` 却下单） | 探针 4 行 `place_ret` 全 0；`shortable` = 3535/3535/804/1484 **全 ≥1** | **不触发** |
+| 2 止损失效 | 空侧成交仓无 SL 或 SL 在下方（应 = `entry×(1+STOP_PCT/100)` 在上方） | 唯一 EXT 空侧成交 `US.ACN` 2026-10-01：`entry_price=212.529`，`metadata_json.stop_loss=**223.16**`（`stop_source=rule_engine_initial_sl`）⇒ **SL 在上方 = 方向正确**；`exit_reason=SL_TRAIL_LOCK`，`peak_price=210.67`，`breakeven_triggered=True` | **不触发** |
+| 3 尾部超限 | 单日空侧净额 ≤ −$400 且连续 3 个这样的一天 | EXT 口径：仅 1 个交易日（10-01）**+19.44**；全空侧口径（含 `playbook_sim` RTH fade 16 笔）8 个交易日最差 09-28 **−200.90** ⇒ **无一日 ≤−$400** | **不触发**（连续 0 天） |
+
+**§10 复核日要的「空侧实际笔数/净额」实测口径**（⚠️ 必须先归因，否则会误读）：
+- `owner_strategy='extended_hours_entry'` 的空侧 = **1 笔**（`US.ACN` 10-01 premarket，qty=23，
+  `decision_id=EXT-2026-10-01-US.ACN-premarket`，`pnl_net=+19.44`，`mfe_pct=0.8747`，`mae_pct=0`，
+  `fees_est=4.23`，`exit_slippage_bps=−39.8`）。
+- 空侧**全部** = 17 笔 / 净额 **−190.39**，但其中 **16 笔属 `playbook_sim`（RTH fade）**，
+  **不是本开关管的**（`EXT_ENTRY_ALLOW_SHORT` 只作用于 `extended_hours_entry_executor.py:145`
+  `SHORT_ALLOW`）。⇒ 拿 17 笔 −190.39 去判 EXT 空侧是**口径错配**（同族陷阱见 MEMORY：
+  归属看 `decision_id`/`owner_strategy` 而非 `strategy_id` 泛查）。
+- **样本量本身不足以支撑续开/调门结论**：EXT 空侧 n=1。§10 复核日原文要「决定续开、调门、或关停」，
+  但 1 笔无法区分「空侧有效」与「碰巧一笔为正」⇒ 建议按**四条触发均不命中 ⇒ 续开观察**，
+  而非据 n=1 调门。
+- 注册表 `graduation_criteria` 写「RFC-099 §10 **五条**回滚触发」，而 §10 实际只有 **4 条**编号项
+  ⇒ 注册表计数与文档不符，10-07 复核须以 §10 原文 4 条为准（`app/playbook/shadow_registry.py:2251`）。
+
+**探针可用性（§10 L118 要求「维持可用以便复核」）已核**：
+`scripts/probe_eth_short_open.py` 存在、`py_compile` OK、可手动跑；
+上一批「推送治理 A4」删的是**死调度**（`ops/hermes/probe_eth_short_open.py` 壳体，本就无 job 指向），
+**未删真身** ⇒ §10 L118 的复核能力完好。crontab 中 `probe_eth_short_open` 仅 1 处命中且为
+**注释行**（L352 说明文字，非活体调度）⇒ 与 A4 记录一致，无冲突。
+
+**回滚动作未执行**（本节零配置变更）：`EXT_ENTRY_ALLOW_SHORT=true` 保持原值，
+`.env.us` 未改一字 —— 裁决权在 10-07 复核，本节只提供可执行的判据与实测读数。
