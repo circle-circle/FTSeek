@@ -213,6 +213,14 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
     else:
         L.append(f"_（本次变化 {len(changed)} 项：{', '.join(changed[:8])}）_")
 
+    # DEB-20261008 F4/B5 (2026-10-08 用户裁「继续」): 已否决轴附录 — 防重复立案。
+    # 只在报告本就非空时附加 (静默契约不动: 无变化即无推送)。
+    L.append("**⑤ 已否决轴（防重复立案，附复算脚本）**")
+    L.append("- scale_out 盈利阶梯分批止盈（2%/3%/4% 出半仓/全出）：DEB-20260627 真跑禁用 "
+             "+ DEB-20261008 三重证据否决（复算: `scripts/deb20261008_scaleout_binding.py` / "
+             "`_cf.py` / `_arith.py`，验证器 `scripts/verify_deb20261008.py`）")
+    L.append("")
+
     if not dry:
         STATE.parent.mkdir(parents=True, exist_ok=True)
         tmp = STATE.with_suffix(".tmp")

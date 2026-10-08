@@ -369,7 +369,7 @@
 | [DEB-20261003-reentry-quick-tp-deletion](DEB-20261003-reentry-quick-tp-deletion.md) | 2026-10-03 | (未标注) | - | 77 |
 | [DEB-20261003-sim-live-arm-routing-convergence](DEB-20261003-sim-live-arm-routing-convergence.md) | 2026-10-03 | (未标注) | 1 | 234 |
 | [DEB-20261003-weekly-optimizer-p26-rebuild](DEB-20261003-weekly-optimizer-p26-rebuild.md) | 2026-10-03 | ✅ **已裁决并落地** — 用户 2026-10-03 裁「A」(退役收敛), 当日执行完毕 (见 §8 执行记录)。此前同日早批已裁「同意 停推送 + 复用已有的周报显示真实参数与影子参数效果对比」(P0-1/P0-3/周报承接, commit 00cccd060) | - | 127 |
-| [DEB-20261007-entry-pricing-reprice-mfe-capture](DEB-20261007-entry-pricing-reprice-mfe-capture.md) | 2026-10-07 | (未标注) | 6 | 634 |
+| [DEB-20261007-entry-pricing-reprice-mfe-capture](DEB-20261007-entry-pricing-reprice-mfe-capture.md) | 2026-10-07 | (未标注) | 7 | 666 |
 | [DEB-20261008-direction-gates-long-short-bias](DEB-20261008-direction-gates-long-short-bias.md) | 2026-10-08 | (未标注) | - | 367 |
 | [DEB-20261008-premarket-trend-continuation-verdict](DEB-20261008-premarket-trend-continuation-verdict.md) | 2026-10-08 | (未标注) | - | 88 |
-| [DEB-20261008-profit-ladder-scaleout-feasibility](DEB-20261008-profit-ladder-scaleout-feasibility.md) | 2026-10-08 | PROPOSED → 证据已收齐，待用户裁决 | - | 190 |
+| [DEB-20261008-profit-ladder-scaleout-feasibility](DEB-20261008-profit-ladder-scaleout-feasibility.md) | 2026-10-08 | ADJUDICATED（2026-10-08 用户裁「继续」批推 F1–F4 按建议执行） | - | 200 |

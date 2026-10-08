@@ -1,6 +1,11 @@
 # ============================================================
 # FTSeek-US Exit Profiles — Harness/Shadow 影子系统专用
 # ============================================================
+# ⚠️ 已否决轴 (DEB-20261008 F4/B6, 2026-10-08 用户裁「继续」):
+# - scale_out / tiered 分批止盈已被 DEB-20260627 (真跑禁用) + DEB-20261008
+#   (三重证据否决) 双否决, 本文件中相关配置仅回测 harness 用, 禁止据此重新立案 —
+#   复算: scripts/deb20261008_scaleout_{binding,cf,arith}.py
+#
 # ⚠️ 适用范围 (重要, 避免误改):
 # - 仅由 app/harness/shadow_bridge.py 加载 (通过 ExitModuleRegistry)
 # - 用于策略辩论引擎 / 回测 / shadow 测试, 不影响生产 PnL
