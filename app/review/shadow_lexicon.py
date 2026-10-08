@@ -203,7 +203,7 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "eth_relative_volume_gate": {
         "plain": "事件票被绝对量闸拦下后, 用『相对自己近 20 日中位量的比值』替代绝对量门 — 拦得对不对",
-        "conclusion": "n=53/30 达门, 但 eval_script 是采集器不是结算器 — 三条判据（中位数>0 / 胜率≥55% / 剔最强单日仍>0）还没出读数 ⇒ 须先补结算脚本再呈裁（NO_SETTLER）; 死线 2026-11-30",
+        "conclusion": "真 n 轴 = would_pass_relative 样本, 实测 0/30 (53 行全是 turnover_too_low 采样, would_pass 均 None; 交易日 1/15) ⇒ **远未达门, 非 53/30** (2026-10-08 RFC-139 复查修复批 P1: count_mode lines→where:would_pass_relative=True 纠正假达标)。且 eval_script 是采集器不是结算器 — 三条判据（中位数>0 / 胜率≥55% / 剔最强单日仍>0）还没出读数 ⇒ 达门后须先补结算脚本再呈裁（NO_SETTLER）; 死线 2026-11-30",
         "cls": "NEEDS_USER",
     },
 }

@@ -62,7 +62,12 @@ class TestClassification:
 
     def test_collector_only(self, runner, tmp_path, monkeypatch):
         monkeypatch.setattr(runner, "REPO", tmp_path)
-        row = _row("x")  # 无产物 ⇒ 脚本在但只算采集器
+        # COLLECTOR_ONLY 语义 = 脚本真实存在 (能跑) 但不产 verdict; 建一个真脚本,
+        # 否则会被 P2 修复判成 SCRIPT_MISSING (read-only 不再对不存在脚本假称「能跑」)。
+        sc = tmp_path / "scripts" / "fake_eval.py"
+        sc.parent.mkdir(parents=True, exist_ok=True)
+        sc.write_text("# collector only, no verdict\n")
+        row = _row("x")  # eval_script=scripts/fake_eval.py 现在真实存在
         out = runner.evaluate([row])
         assert out["items"][0]["classification"] == "COLLECTOR_ONLY"
 
@@ -110,5 +115,9 @@ class TestRender:
 
     def test_render_collector_gap(self, runner, tmp_path, monkeypatch):
         monkeypatch.setattr(runner, "REPO", tmp_path)
+        # 同 test_collector_only: COLLECTOR_ONLY 需脚本真实存在 (P2 修复后不存在=SCRIPT_MISSING)
+        sc = tmp_path / "scripts" / "fake_eval.py"
+        sc.parent.mkdir(parents=True, exist_ok=True)
+        sc.write_text("# collector only\n")
         report = runner.evaluate([_row("x")])
         assert "采集器≠结算器" in runner.render(report)

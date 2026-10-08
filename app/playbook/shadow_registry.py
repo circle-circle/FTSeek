@@ -302,6 +302,23 @@ ADJUDICATED: dict[str, dict] = {
                 "(dead_signal_exit_enabled=true/60min, 8/10-9/21 实跑 36 笔 -$309; 可复跑: scripts/exit_shadow_graduation.py) ⇒ 属既成"
                 "事实确认, 非新提案。判据不过的变体维持纯观测, 不改任何退出参数。",
     },
+    # ── RFC-139 复查修复批 P4 (2026-10-08): entry_band_widen 假待裁修复 ──
+    # 病灶: 10/04 结算器首跑已出读数 NOT_ESTABLISHED_KEEP_SAMPLING (RFC-065 判据:
+    # 安全门过但正向证据不足 ⇒ 顺延攒样不翻开关), 10/07 DEB-20261007 方案B 又把判据串台
+    # 修回 RFC-065 原文 — 但始终未登记 ADJUDICATED ⇒ needs_adjudication 恒 True,
+    # 每周被抬进「① 需要你决定」段, 而 lexicon cls=AUTO_WATCH 的背景块同时印
+    # 「你要决定: 暂无」⇒ ①段标题与内容自相矛盾 (正是它想消除的「混淆决策源」)。
+    # 本登记只把既有裁决收进 SSOT (同 9/26 清账批先例), 判据/采集/结算器零改动。
+    "entry_band_widen": {
+        "read_at": "2026-10-04", "recheck_after": "2026-11-04", "needs_user": False,
+        "note": "10/04 首跑结算器 (scripts/settle_entry_band_widen.py, RFC-065 §13/§29.3 预注册): "
+                "n_settled=36/30 达门 ✓, 单侧安全门过 (perm p_worse=0.0586>0.025, 不显著劣于 flat) ✓, "
+                "但正向证据不足 (mean δ=-$17.73 / bootstrap CI95=[-40.0,1.68] 含 0 / 符号 p=0.309) ✗ "
+                "⇒ verdict=NOT_ESTABLISHED_KEEP_SAMPLING — 按预注册顺延攒样, 不翻开关。"
+                "10/07 DEB-20261007 方案B: graduation_criteria 串台修复回 RFC-065 逐字原文, "
+                "min_n 60→30, 判决不变 (判据原文未动)。可复跑: scripts/settle_entry_band_widen.py "
+                "(产物 data/reports/entry_band_widen_verdict_latest.json)。",
+    },
     "universe_expansion_shadow": {
         # 2026-09-26 用户裁「退役」(判据 FAIL_CRITERIA_MET) ⇒ status KILLED, needs_user=False
         # 退出待裁面; recheck_after=None = **已终裁不周期性推回** (同 eth_exit_forgone_upside 先例:
@@ -2372,6 +2389,13 @@ REGISTRY: list[ShadowItem] = [
                     "自门控: RFC-104 阶段0 reconcile PASS <7 日时 dormant。record-only 零下单。",
         data_path="data/shadow/eth_relative_volume_gate_shadow.jsonl",
         config_key=None,
+        # 📐 count_mode 口径修复 (2026-10-08 RFC-139 复查修复批 P1, 判据/阈值逐字未动):
+        # 旧值缺省 lines 把**全部拒单采样行**计入 current_n — 实测 53 行全部
+        # turnover_too_low ∧ would_pass_relative=None, 而判据 n 轴 = would_pass 样本 n≥30
+        # ⇒ 53/30 虚假迁移 READY_TO_EVALUATE, 把「真轴 0/30 ∧ 交易日 1/15」抬进待裁面
+        # (违反「count_mode 必须与判据 n 轴同轴」军规, short_chase_ban_shadow 9/18 同型)。
+        # ≥15 交易日轴 count_mode 单轴表达不了, 结算时由判据脚本双轴同查。
+        count_mode="where:would_pass_relative=True",
         min_n=30,
         graduation_criteria="提案§⑤预注册 (读数前写死): ≥15 交易日 ∧ would_pass_relative 样本 n≥30 ⇒ "
                             "①cf_net_usd/笔中位数>0 ②胜率≥55% ③剔除最强单日仍>0 → 立 DEB 提请相对量通道; "

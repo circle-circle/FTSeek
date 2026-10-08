@@ -103,12 +103,41 @@ def _run_script(script: str, timeout: int) -> dict:
 def _classify(row: dict, spec_artifact: str | None, exec_result: dict | None) -> str:
     if not row.get("eval_script"):
         return "NO_EVAL_SCRIPT"
+    # 顺序 (P2 修复 2026-10-08): ① 有 verdict 产物即证明脚本曾跑出结论 ⇒ VERDICT_ARTIFACT
+    # (产物是证据, 与脚本文件当下是否存在无关); ② 真跑过且 rc≠0 ⇒ SCRIPT_FAILED (实跑结果
+    # 是权威证据, 优先于文件存在性推断); ③ read-only 且脚本文件缺失 ⇒ SCRIPT_MISSING
+    # (不得假称「能跑」— 文件存在性不执行也能确定性判定); ④ 脚本在但无 verdict ⇒
+    # COLLECTOR_ONLY (采集器≠结算器)。
     artifact = _load_artifact(spec_artifact)
     if _verdict_code(artifact):
         return "VERDICT_ARTIFACT"
     if exec_result is not None and exec_result.get("rc", 0) != 0:
         return "SCRIPT_FAILED"
+    if not (REPO / row["eval_script"]).exists():
+        return "SCRIPT_MISSING"
     return "COLLECTOR_ONLY"
+
+
+def _gate_line(row: dict, spec_d: dict | None) -> str:
+    """P1 修复 (2026-10-08 复查批): spec.sample_gates 接线成消费面 (此前 write-only 死门).
+
+    只呈报不判分 (runner 边界不动): 把 spec 机器可读门与注册面 n 并列印出,
+    「达/未达」由预注册判据与用户判, 不由 runner 判。
+    入参 = evaluate() 产出的 spec dict (非 CriteriaSpec 对象; render 只见 JSON 面)。
+    """
+    if not spec_d or not spec_d.get("sample_gates"):
+        return ""
+    gates_raw = spec_d["sample_gates"]
+    gates = {k: v for k, v in gates_raw.items()
+             if k.endswith("_min") and isinstance(v, int)}
+    if not gates:
+        return ""
+    n = row.get("n") or 0
+    parts = [f"{k}={v} (注册面 n={n}{', 未达' if n < v else ', 达'})" for k, v in sorted(gates.items())]
+    extra = gates_raw.get("note") or (f"deadline={gates_raw['deadline']}"
+                                      if "deadline" in gates_raw else "")
+    tail = f" · {extra}" if extra else ""
+    return "  样本门(spec): " + "; ".join(parts) + tail
 
 
 def evaluate(rows: list[dict], *, execute: bool = False, timeout: int = _TIMEOUT_S) -> dict:
@@ -183,21 +212,31 @@ def render(report: dict) -> str:
             L.append("  实测: " + ", ".join(f"{k}={ro[k]:.4g}" if isinstance(ro[k], float) else f"{k}={ro[k]}" for k in keys))
         if it.get("verdict"):
             L.append(f"  verdict: {it['verdict']} ({_PLAIN_VERDICT.get(it['verdict'], '见产物原文')})")
+        # P1 修复: spec.sample_gates 接线呈报 (达/未达并列, 不判分)
+        gl = _gate_line(it, sp)
+        if gl:
+            L.append(gl)
         cls = it["classification"]
         if cls == "COLLECTOR_ONLY":
             gap = (sp or {}).get("known_gap") or "eval_script 能跑但不产 verdict (采集器≠结算器)"
             L.append(f"  ⚠️ 缺口: {gap}")
+        elif cls == "SCRIPT_MISSING":
+            L.append(f"  ⚠️ 缺口: eval_script 文件不存在 ({it.get('eval_script')}) — read-only 未实跑, 仅文件存在性判定")
         elif cls == "NO_EVAL_SCRIPT":
             L.append("  ⚠️ 缺口: 无 eval_script (有入口无出口, 须补结算器或降纯观察)")
         elif cls == "SCRIPT_FAILED":
             L.append(f"  ⚠️ 实跑失败: rc={it['exec_result']['rc']} — {it['exec_result']['stderr_tail'][:120]}")
+        # P3 修复 (2026-10-08 复查批): era 三态分开印, 不把 fail-open(applies=None)
+        # 冒充「未裁项」— 违反 RFC-138「尺子坏了不冒充判定」纪律。
         era = it.get("verdict_era")
-        if era and era.get("applies") is False:
-            L.append(f"  ⚠️ 参数时代漂移: {era.get('note')}")
-        elif era and era.get("applies") is True:
-            L.append(f"  era: ✅ {era.get('note')}")
-        else:
+        if era is None:
             L.append("  era: 未裁项 (本次读数即现役参数读数, 裁决后自动带 era)")
+        elif era.get("applies") is False:
+            L.append(f"  ⚠️ 参数时代漂移: {era.get('note')}")
+        elif era.get("applies") is True:
+            L.append(f"  era: ✅ {era.get('note')}")
+        else:  # applies=None: era 查询失败 / read_at 不可推导 ⇒ 显式披露, 不冒充未裁
+            L.append(f"  era: ⏳ 不可判定 — {era.get('note') or '(无 note)'}")
         L.append("")
     L.append("  边界: runner 只执行并呈报, 不判过/不过; 判分权在预注册判据 + 用户。")
     return "\n".join(L)
