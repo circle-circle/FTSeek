@@ -44,6 +44,8 @@ from app.review.shadow_lexicon import SHADOW_LEXICON as CURATED  # noqa: E402
 # 推送截断 SSOT (RFC-109④收口): 原裸切片 conclusion[:96]/[:100] 无句读边界也无「…」标记
 # ⇒ 长结论被拦腰截成半句且读者看不出被截断 (实测 exit_param_shadow/premarket_invalidation 两条)。
 from app.review.bundle_render import clip_for_push  # noqa: E402
+# RFC-139 L1: 判据 schema (决策源机器可读投影; 未收录回落注册表原文)
+from app.review.criteria_spec import get_spec  # noqa: E402
 
 VERDICT_PLAIN = {
     "KEEP_SAMPLING": "还看不出结论, 继续攒样",
@@ -103,8 +105,48 @@ def _era_line(era) -> str:
             f"（{era.get('note', '')}）— 引用前须复算或重裁")
 
 
-def _artifact_readout(artifact: str, eval_script) -> str:
-    """产物 json → 一行「判据实测」读数 (取不到 → 指路 eval_script, 不臆造)。"""
+def _background_block(it: dict) -> list[str]:
+    """RFC-139 L4 通俗决策背景: 每条待裁推送带「这是什么/决策源/卡在哪/裁什么」四行。
+
+    全部从注册表 SSOT 字段 + 白话词典 + L1 spec 推导, 不另写第二真源;
+    未收录项回落注册表原文 (判据首 80 字) 并标注「未收录白话名」。
+    """
+    spec = get_spec(it.get("id", ""))
+    lines = ["  📎 背景（防遗忘/决策源）:"]
+    # 这是什么: 词典 plain; 未收录回落 id + progress
+    lex = CURATED.get(it.get("id", ""), {})
+    if lex.get("plain"):
+        lines.append(f"    · 这是什么: {lex['plain']}")
+    else:
+        lines.append(f"    · 这是什么: 未收录白话名（`{it.get('id')}`）— 以注册表 description 为准")
+    # 决策源: spec.source 优先 (机器可读出处); 回落判据原文首 80 字
+    if spec and spec.source:
+        lines.append(f"    · 决策源: {spec.source}")
+    crit = (it.get("criteria") or "").strip()
+    if crit:
+        shown = crit if len(crit) <= 80 else crit[:80] + "…"
+        lines.append(f"    · 判据原文: {shown}")
+    if spec and spec.known_gap:
+        lines.append(f"    · 已知缺口: {spec.known_gap}")
+    # 你要决定什么: 按 lexicon 分类给出明确动作
+    cls = lex.get("cls", "")
+    if cls == "NEEDS_USER":
+        lines.append("    · 你要决定: 立刻处置（补结算器/裁停采/裁转正）— 不要放着, 会混淆决策源")
+    else:
+        lines.append("    · 你要决定: 暂无（自动续观; 下次达门/漂移时再抬出）")
+    return lines
+
+
+def _artifact_readout(artifact: str, eval_script, item_id: str = "") -> str:
+    """产物 json → 一行「判据实测」读数 (取不到 → 指路 eval_script, 不臆造)。
+
+    RFC-139 修复: `artifact` 是注册表 data_path (采集 jsonl), 判据读数在 verdict 产物 json。
+    L1 spec 有 `verdict_artifact` 时优先读它 (如 entry_band_widen_verdict_latest.json);
+    未收录 spec 回落原行为 (读 data_path, jsonl 取不到 ⇒ 指路 eval_script)。
+    """
+    spec = get_spec(item_id) if item_id else None
+    if spec and spec.verdict_artifact:
+        artifact = spec.verdict_artifact
     v = _artifact_verdict(artifact)
     p = Path(str(artifact).split(" (" )[0].strip())
     if not p.is_absolute():
@@ -186,7 +228,9 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
             L.append(f"- **{it['plain']}**（`{it['id']}`，样本 {it['progress']}）")
             L.append(f"  结论：{it['conclusion']}")
             # F4 (DEB-20261007): 判据实测值栏 — READY≠判据过, 裁决前先看实测读数
-            L.append(f"  {_artifact_readout(it.get('artifact', ''), it.get('eval_script'))}")
+            L.append(f"  {_artifact_readout(it.get('artifact', ''), it.get('eval_script'), it.get('id', ''))}")
+            # RFC-139 L4: 通俗决策背景 (这是什么/决策源/判据原文/已知缺口/要裁什么)
+            L.extend(_background_block(it))
             # RFC-138: 参数时代漂移标注 (applies=False 才出现; 漂移时裁决参照已失效)
             _el = _era_line(it.get("verdict_era"))
             if _el:
@@ -219,13 +263,15 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
                 v = _artifact_verdict(r.get("artifact", ""))
                 extra = f"（产物裁决码：{VERDICT_PLAIN.get(v, v)}）" if v else ""
                 L.append(f"- `{r['id']}` → **{r['status']}**：{clip_for_push(note, 100)}{extra}")
-                _ro = _artifact_readout(r.get("artifact", ""), r.get("eval_script"))
+                _ro = _artifact_readout(r.get("artifact", ""), r.get("eval_script"), r.get("id", ""))
                 if not v:  # 有裁决码时 extra 已含, 不重复
                     L.append(f"  {_ro}")
                 # RFC-138: 终态结论被抬出时同样受「旧结论复活」风险, 漂移即标注
                 _el = _era_line(r.get("verdict_era"))
                 if _el:
                     L.append(f"  {_el}")
+                # RFC-139 L4: 终态抬出也带背景块 (防遗忘/混淆决策源)
+                L.extend(_background_block(r))
             L.append("")
 
     if first_run:
