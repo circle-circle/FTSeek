@@ -1,5 +1,33 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-08 复查批落地 + 棘轮清剿（用户令「请复查」→「继续」）
+
+**提交**: `8047b494f`（76 文件 +4713/−153）→ 已 `systemctl restart ftseek-us`
+（12:23:06 CST），冒烟 7/7 全过（`--live-probe`，双臂安全确认 ✓）。
+
+**复查发现并已修**:
+① 本批新增 3 处无栈 warning（dual_broker query_order_fees + pipeline 对账块 ×2）→
+补 `exc_info=True`；② HEAD 级棘轮旧债第三次复发（worktree 隔离实证 HEAD f3ff16fc3
+即红，非本批引入）：except:pass 924→941(+17)、W456 +4、UTC-4 18→19(+1)。
+全量就地清剿 25 处（pipeline 4 改 warning+exc_info / intraday_diagnose_late fail-open
+留痕 stderr / scripts 15 坏行计数进 print·stderr / gate_attribution ET 改
+ZoneInfo("America/New_York") 冬令时不错位），except:pass 基线 924→**921** 调低
+（含净愈合 3 处），零控制流变更；W456 基线未动（dual_broker 愈 1 格 6<7，
+收紧须 DEB 落档留下批）。**四棘轮 31 passed 复绿**。
+
+**部署注意（已闭环）**: 服务 10:31 重启后 pipeline.py 又于 11:25 改（fee_broker 修复）
+⇒ 运行进程一度是初版；期间无 LIVE 平仓、对账路径未触发，无影响窗口。12:23 重启后
+修复版已生效。
+
+**既有环境债（HEAD 基线实证，与本批无关，未动）**: `test_offline_full_chain` 18 errors
+（driver 子进程 `require_auto_sim()` 读生产 LIVE 配置抛错）+ `test_window_isolation`
+1 failed — 建议另批核查 driver 缝表/私有清单登记（offline-chain-driver-private-patch-list
+记忆同型）。
+
+**遗留**: verify_deb20261007.py 20 格 E 表陈旧（DB 落档后续进账所致，同 10-08 晨批
+DEB-20261008 E 表刷新同型），建议另批刷新；DEB-20261008 F1–F4 与 RFC-099 §10.1
+复核裁决仍待用户。
+
 ## 2026-10-08 Hermes 批次复查（用户令「复查分析」）
 
 **复查范围**: RFC-137 LIVE 券商实收费对账、DEB-20261008 盈利阶梯分批止盈、
