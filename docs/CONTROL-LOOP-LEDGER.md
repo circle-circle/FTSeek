@@ -82,7 +82,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 
 | job_id | 名称 | schedule | 角色 | 失效模式 |
 |--------|------|----------|------|---------|
-| 36cc015242ee | ftseek-intraday-diagnose | */30 21-23 * * 1-5 | 执行层体检 (交易日检查+全量诊断) | 非交易日静默; 已 no_agent 化零推理 |
+| 36cc015242ee | ftseek-intraday-diagnose | */30 21-23 * * 1-5 | 执行层体检·事件门控 (2026-10-09 用户裁方案A): 交易日首轮推「计划快照」(指令表+水位+隔夜仓), 其后仅白名单事件推送 (E1服务宕机每轮重复/E2触发未执行>10min/E3水位变化/E4退出卡单/E5 ERROR突增≥3或CRITICAL/E6新增指令), 每事件当日去重 (state 落盘 data/.intraday_diagnose_events.json), 无事件=空 stdout 静默; 成交/PnL 不再重播 (实时富卡已双发飞书) | 非交易日静默; no_agent 零推理; fail-open (state 损坏照发首轮快照); 契约测试 tests/test_intraday_diagnose_event_gate.py (含 E2 禁用 updated_at 判龄钉 — chase_cap 每轮刷新该列会致挂单永不告警) |
 | 5513c8e94b06 | ftseek-intraday-diagnose-late | */30 0-4 * * 2-6 | 同上 (尾盘段) | 同上 |
 | 0104bac6e9fd | DEB-20260815 硬止损监控·上午 | */30 21-23 * * 1-5 | 硬止损执行验证 | no_agent 确定性脚本 |
 | 582b61f0e1a4 | DEB-20260815 硬止损监控·下午 | */30 0-4 * * 2-6 | 同上 | 同上 |
