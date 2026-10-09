@@ -3206,6 +3206,54 @@ REGISTRY: list[ShadowItem] = [
               "(同 premarket_peer 教训: 无判据攒样 = 无出口)。midday 影子同日 KILLED 与本条无关 "
               "(彼有预注册判据, 此无)。",
     ),
+    ShadowItem(
+        id="premarket_trend_continuation_shadow",
+        name="盘前异动延续率 / 顺势影子收益 (C13)",
+        # 2026-10-08 用户裁 FAIL·轴关闭 (判据字典 C13, n=665/39 交易日到期即裁)。
+        # 五关全不过 + 正读数双重支撑皆伪 (脏行+加密族独占) ⇒ 禁止新建入场信号/prompt 注入。
+        # 载体处置: cron 保留 (build_symbol_trading_cards.py 消费 jsonl + A类避损核查仍有效),
+        # 采集逻辑/行格式零改动, 仅输出累计行文案标「已裁 FAIL」; jsonl 留档不删。
+        status=ShadowStatus.KILLED,
+        description="C13: 盘前 |chg|≥4% 顺势 open→close 轴 (v0.64 B类)。n=665/39 交易日, "
+                    "五关全不过: ①显著性 日聚类 t=+0.60; ②效应量 mean +0.252% < 0.30% 地板、"
+                    "扣费 +0.152%; ③安慰剂 obs ∈ CI95 pct=80%; ④尾部主导 剔 top3 后 +0.052%≈归零; "
+                    "⑤方向分层 做多腿 −0.219% (负)、做空腿 +0.838% 但 regime 代理。"
+                    "正读数双重支撑皆伪: (a) 8/29 prev_close 修复前脏行 15 笔物理不可能, "
+                    "干净窗 −0.122% (t=−0.58); (b) 15% 杠杆/加密 ETF 行独占全部正均值, "
+                    "加密族同日齐动 ⇒ 有效 n ≪ 665 且做空无券池=物理不可执行。"
+                    "「延续率 94%」不可变现: 延续量收盘vs昨收而影子量开盘→收盘, "
+                    "延续✓的 622 笔中 50% 开盘后为负=缺口开盘即 price-in。"
+                    "禁止反手使用做空腿 (T28 inversion ban)。",
+        data_path="data/premarket_trend_outcomes.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="C13 (预注册, 改=重裁): n≥30 再评估。到期即裁五关: "
+                            "①日聚类 |t|≥2; ②扣费 mean≥0.30%; ③安慰剂 obs ∉ CI95; "
+                            "④剔 top3 后方向一致; ⑤方向分层同号。"
+                            "复活条件 (全部满足): 新论据+新数据源; 人群预过滤到可执行集 "
+                            "(排杠杆/加密 ETF、<$5、低流动性, 同族同日不重复计数); "
+                            "干净窗扣费 mean≥0.30% ∧ 日聚类 |t|≥2 ∧ 双窗同号; "
+                            "与现役通道重叠切分后差集仍有增量。不得引用本轮已裁参数点。",
+        eval_script="ops/hermes/premarket_trend_verify.py",
+        created="2026-08-12",
+        last_evaluated="2026-10-08",
+        collection_retired=False,  # 采集保留: build_symbol_trading_cards.py 消费 + A类避损核查
+        verdict_history=[
+            {"date": "2026-10-08", "verdict": "KILLED (五关全不过, 正读数双重支撑皆伪)",
+             "evidence": "DEB-20261008-premarket-trend-continuation-verdict: n=665/39 交易日, "
+                         "五关全不过 (详见 description); 正读数双重支撑皆伪: (a) 脏行 15 笔 "
+                         "(NBIL/NBIZ day_chg ±68%、SGLD pm+248%), 干净窗 (8/31–10/7, n=437) "
+                         "−0.122% (t=−0.58); (b) 杠杆/加密 ETF 独占正均值, 加密族同日齐动 "
+                         "(8/21 单日 13 只 XRP/BTC 系) ⇒ 有效 n ≪ 665。in_da 子集 −0.570% ⇒ "
+                         "对现役通道零增量 (T14)。禁止反手使用做空腿 (T28 inversion ban)。"
+                         "载体处置: cron 保留 (build_symbol_trading_cards.py 消费 jsonl + "
+                         "A类避损核查仍有效), 采集逻辑/行格式零改动, jsonl 留档不删。"},
+        ],
+        notes="2026-10-09 补登记 (C13 治理缺口留痕: 攒样器 57 天从未入 shadow_registry, "
+              "周检/哨兵不可见, B21/B22 缺口族第 4 例)。采集维持: cron 2a0eb17a475e 保留 "
+              "(build_symbol_trading_cards.py 消费 jsonl + A类避损核查仍有效), 仅输出累计行"
+              "文案标「已裁 FAIL」。治理: 不得以本判据新建入场信号/prompt 注入或门。",
+    ),
 ]
 
 

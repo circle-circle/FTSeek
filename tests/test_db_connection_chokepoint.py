@@ -43,6 +43,33 @@ GRANDFATHER = frozenset({
     "ops/audit/drill_chase_zero.py",           # DEB-20260916 审计批
     "ops/audit/trace_arm_origin.py",           # DEB-20260916 审计批
     "ops/hermes/ue_glm53_first_run_verify.py", # d5a64bb9b chore 批 (一次性核验)
+    # ── 2026-10-09 DEB-20261007/08 分析批祖父化登记 (用户裁「清剿立项」) ──
+    # 25 个 DEB 裁决分析脚本, 全部 mode=ro 只读, 无写交易库/无下单路径
+    "scripts/deb20261007_anchor_provenance.py",
+    "scripts/deb20261007_atr_lever_and_session.py",
+    "scripts/deb20261007_band_artifact.py",
+    "scripts/deb20261007_band_impact.py",
+    "scripts/deb20261007_capture_failure.py",
+    "scripts/deb20261007_da_timing_window.py",
+    "scripts/deb20261007_deadpool_fee_band.py",
+    "scripts/deb20261007_deadpool_window.py",
+    "scripts/deb20261007_fee_gap_forward.py",
+    "scripts/deb20261007_funnel_breakdown.py",
+    "scripts/deb20261007_mfe_driver_scan.py",
+    "scripts/deb20261007_pullback_feasibility.py",
+    "scripts/deb20261007_r4_falsification.py",
+    "scripts/deb20261007_reprice_stage1b_attribution.py",
+    "scripts/deb20261007_reprice_stage2_robustness.py",
+    "scripts/deb20261007_reprice_vs_plan_stage1.py",
+    "scripts/deb20261007_review2_chain1_artifact.py",
+    "scripts/deb20261007_review2_ttm_magnitude.py",
+    "scripts/deb20261007_review5_recheck.py",
+    "scripts/deb20261007_time_to_mfe.py",
+    "scripts/deb20261007_time_to_mfe_probe.py",
+    "scripts/deb20261007_ttm_bias.py",
+    "scripts/deb20261008_scaleout_arith.py",
+    "scripts/deb20261008_scaleout_binding.py",
+    "scripts/deb20261008_scaleout_cf.py",
 })
 
 _LITERAL_DB_CONNECT = re.compile(r'sqlite3\.connect\(\s*f?"[^"]*(?:\.db|/)[^"]*"')

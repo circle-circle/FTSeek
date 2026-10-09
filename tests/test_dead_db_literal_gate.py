@@ -99,6 +99,18 @@ ALLOWLIST = {
         "close_key 死锁健康检查: 只读扫描 sim/live 两个仓位载体, 检测任一环境"
         "活仓被 BOOKED intent 锁死; mode-aware 解析器只返回当前环境, 会漏另一"
         "载体死锁, 故必须双载体豁免。",
+    # 2026-10-09 (DEB-20261009 §14 EventStream 批): **先被本门抓红、后补登记**
+    # (与 cutover_rehearse / migrate_live_records_to_live_db 同例), 记档以证该门证伪力 ——
+    # LIVE 载体初始化工具, 必须直接操作 live 库。
+    "scripts/prepare_live_probe.py":
+        "LIVE 通道离线准备探针 (DEB-20261009-event §14): --apply 前 dry-run 只读 "
+        "(schema 检查 + capital_state/zombie 行统计), --apply 后才写 (WAL 备份 → "
+        "app 真迁移路径 → zombie 清理 → capital 基线初始化)。必须直接引用 live 库路径: "
+        "① 它的工作对象就是 live 载体本身 (与 migrate_live_records_to_live_db 同类); "
+        "② --apply 的 schema 迁移走 app 真路径, 需要物理 live 库; ③ capital 基线从 "
+        "REAL 账户取数后落 live 库 (CapitalSafetySystem db_path=LIVE_DB)。"
+        "mode-aware 解析器按 TRADE_ENV 返回一个载体, 而本工具的工作对象就是那个特定载体。"
+        "默认 dry-run (零写), --apply 前强制 WAL 备份 (_backup_live_db)。",
 }
 
 

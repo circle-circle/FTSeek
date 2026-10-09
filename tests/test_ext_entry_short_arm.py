@@ -96,7 +96,8 @@ def _stub(mod, monkeypatch, tmp_path, ctx, *, short_allow=False, opened=None):
 
     def _fake_write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg, vol,
                                  buy_order_id="", position_usd=None, grade="B", structure=None,
-                                 gate_mode="strict", side="LONG"):
+                                 gate_mode="strict", side="LONG", decision_id="", admission_meta=None):
+        # RFC-126 (2026-10-08): 新增 decision_id + admission_meta 参数 (归因收口, record-only)。
         if opened is not None:
             opened.append({"symbol": symbol, "side": side, "qty": qty, "entry_px": entry_px})
         return "EXT-testpos"
@@ -113,6 +114,12 @@ def _stub(mod, monkeypatch, tmp_path, ctx, *, short_allow=False, opened=None):
             return "SIMULATE"
 
     monkeypatch.setattr(mod, "_mode", lambda: _Mode())
+    # Hermetic 时钟钉 (2026-10-09): _now_et() 内部 `from zoneinfo import ZoneInfo`
+    # 在 Python 3.8 测试环境不可用 (zoneinfo 3.9+; 生产环境 3.9+ 无此问题)。
+    # 固定 EDT 偏移 (-04:00) 足以满足 _today_et()/_now_hhmm_et()/.isoformat() 全链。
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    _fake_now = _dt(2026, 10, 9, 9, 15, tzinfo=_tz(_td(hours=-4)))
+    monkeypatch.setattr(mod, "_now_et", lambda: _fake_now)
 
 
 def _exec(mod, side="LONG"):

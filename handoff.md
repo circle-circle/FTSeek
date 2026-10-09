@@ -1,5 +1,25 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-10 既有红 16 条清剿批 (用户裁「1和2都做」= 清剿 + 推送)
+
+**缘起**: 10-09 复查批全量套件发现的 16 条 HEAD 即红 (与迁移无关的既有债)。
+**分流**: 4 agent 并行 (注册表类 4 / coordinator 2 / EXT 3 / 杂项 6) + 主线程补漏 1
+(cutover_infra, 分派时漏排) = 16/16 全绿。
+
+**定因分布**: 登记缺失 4 (chokepoint 祖父 +25 只读分析脚本 / dead_db 白名单 +1
+prepare_live_probe / crontab 基线 +2 环路 data_retention+event_stream_ingest /
+shadow_registry 补登 C13 已裁 FAIL 影子); 测试锚点过期 8 (RFC-131 账户路由缝 /
+RFC-126 schema+签名演进 / RFC-132 P4 overlap block→warn 语义 / v2.14 版本钉 /
+conftest waiver fixture 副作用 / 盘前窗时钟依赖 / 语义抑制率阈值随真实数据演进
+0.40→0.25 留 4pp 余量); 副本漂移 2 (intraday_diagnose_late 三副本 sha256 归一,
+仓外已备份); **真 bug 1** (trade_store.py futu_order_id 缺 ALTER 兜底 ⇒ 遗留库
+_init_db 非幂等, 已修 + 迁移 UPDATE 包 try + W456 合规 warning 带栈)。
+
+**并行协调**: intraday_diagnose.py 事件门控重写是并行会话在途 WIP (本批未动);
+其 decide_by_stdout 红在对方落地后已自行转绿。
+**验证**: 棘轮家族 5 件 + 18 个涉红文件合计 506 passed; 全量 7001 passed /
+2 failed (2 红 = 漏排的 cutover + 并行在途, 均已于本批收口前转绿)。
+
 ## 2026-10-09 pipeline 拆分独立复查 + 修复批 + 开盘体检优化批
 
 **触发**: 用户令「另外agent已完成了对pipeline.py的调整和优化，请复查」→ 复查报告 →

@@ -23,6 +23,7 @@ cf_pullback_limit_replay.py  # 存量测量/回填环, 台账回填待专项
 condition_expectancy_report.py  # 存量测量/回填环, 台账回填待专项
 config_key_census.py  # 存量测量/回填环, 台账回填待专项
 da_blocked_signal_cf_eval.py  # 存量测量/回填环, 台账回填待专项
+data_retention.py  # 2026-10-08 运维体检批: replay_cache 按龄保留治理 (可再生缓存清理), crontab 04:20, dry-run/--apply
 da_bridge_dingtalk_push.py  # 存量测量/回填环, 台账回填待专项
 da_chain_health_report.py  # 存量测量/回填环, 台账回填待专项
 da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
@@ -30,6 +31,7 @@ daily_llm_token_report.py  # 存量测量/回填环, 台账回填待专项
 data_quality_census.py  # 存量测量/回填环, 台账回填待专项
 exit_calibration_refresh.py  # 存量测量/回填环, 台账回填待专项
 exit_geometry_postfix_watch.py  # 存量测量/回填环, 台账回填待专项
+event_stream_ingest.py  # 2026-10-09 DEB-20261009-event §14: EventStream 四源 observe-only 摄入, crontab */5, 产物 event_stream.db
 factor_ic_backfill.py  # 存量测量/回填环, 台账回填待专项
 # fee_unit_economics_scorecard.py — 2026-09-24 退役 (DEB-20260919 §13.3 用户裁「按 §20 建议」:
 #   无消费者+产物无读者, cron 注释观察期至 2026-10-24, 30 天无反弹再删脚本; 环已下线故删基线行 —

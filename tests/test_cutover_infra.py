@@ -285,7 +285,12 @@ def test_contamination_block_and_clean_ok(preflight, tmp_path, monkeypatch):
 
 
 def test_zombie_rows_flagged_and_overlap_blocks(preflight, tmp_path, monkeypatch):
-    """size=0 僵尸行 → warn; 两库同标的重叠 → block (单库翻转后立刻撞 PK=symbol)."""
+    """size=0 僵尸行 → warn; 两库同标的存在感与僵尸清单进 evidence。
+
+    语义演进 (RFC-132, 92f22b829, 用户裁): P4 状态由「overlap → block」改为恒 warn —
+    双臂双库下同标的**分库共存非冲突** (sim/live 各管各的), block 面收敛到
+    owner 冲突/account_type 异常。重叠与僵尸仍须在 evidence 里可见 (降级不丢信息)。
+    """
     sim = _mk_db(tmp_path / "s.db", size=10.0, owner="auto")
     live = _mk_db(tmp_path / "l.db", size=0.0, owner="manual", account_type="real")
     monkeypatch.setattr(preflight, "SIM_DB", sim)
@@ -293,7 +298,8 @@ def test_zombie_rows_flagged_and_overlap_blocks(preflight, tmp_path, monkeypatch
     rep = preflight.Report()
     preflight.p4_open_positions(rep)
     item = rep.items[0]
-    assert item["status"] == "block", f"同标的 US.TEST 重叠应 block: {item['reading']}"
+    assert item["status"] == "warn", \
+        f"RFC-132 后 overlap+僵尸为 warn 非 block (分库共存非冲突): {item['reading']}"
     assert item["evidence"]["overlap"] == ["US.TEST"]
     assert item["evidence"]["live"]["zombie"] == ["US.TEST"]
 

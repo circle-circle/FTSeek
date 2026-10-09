@@ -45,6 +45,12 @@ def ssot_env(tmp_path, monkeypatch):
 
     import app.core.paths as paths_mod
     monkeypatch.setattr(paths_mod, "get_trade_records_db", lambda: db)
+    # RFC-131 (2026-10-03, 153bd8a42): _ssot_manual_symbols 改用
+    # get_trade_records_db_for_arm(account), real 臂直接返回
+    # ftseek_us_live.db 绕过 get_trade_records_db. 测试须同时桩两者,
+    # 否则 AUTO_TRADE_ACCOUNT=real 用例读不到 tmp DB 里的测试数据.
+    monkeypatch.setattr(paths_mod, "get_trade_records_db_for_arm",
+                        lambda target_env: db)
 
     # 进程级类属性: 每用例复位 (缓存 + 内存注册表)
     monkeypatch.setattr(ManualHoldRegistry, "_ssot_cache",

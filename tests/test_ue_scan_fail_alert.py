@@ -57,6 +57,11 @@ class TestScanFailAlert:
 class TestCmdScanFailureBranches:
     def test_llm_failure_sends_alert_and_returns_1(self, monkeypatch, feishu_out):
         monkeypatch.setattr(scan_mod, "_is_us_trading_day_today", lambda: True)
+        # cmd_scan 的 premarket 窗口守卫 (0900-0929 ET) 用 _now_et() 实参判定 —
+        #   不注入就会随真实时刻漂移 (2026-10-09 11:34 ET 在窗外 → rc=0 早退, 与本例
+        #   意图无关)。注入一个窗内时刻使测试意图 (LLM 失败 → rc=1 + 告警) 独立于时钟。
+        from datetime import datetime as _dt
+        monkeypatch.setattr(scan_mod, "_now_et", lambda: _dt(2026, 10, 9, 9, 15))
 
         def _stub_brief(manual=""):
             # 桩必须履行真 `_build_clue_brief` 的**状态契约**: 入口清空材料索引与指纹。

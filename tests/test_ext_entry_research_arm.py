@@ -31,6 +31,12 @@ def _chg_band_pinned_off(monkeypatch):
     # 同因 (2026-09-23 空侧开启): fixture 票 chg=5~9% 在 SHORT_ALLOW=true 下会被
     # 空侧事件门拦 (研究臂按 LONG 语义写) ⇒ 钉回多侧。空侧行为见 test_ext_entry_short_arm.py。
     monkeypatch.setattr(executor, "SHORT_ALLOW", False)
+    # Hermetic 时钟钉 (2026-10-09): _now_et() 内部 `from zoneinfo import ZoneInfo`
+    # 在 Python 3.8 测试环境不可用 (zoneinfo 3.9+; 生产环境 3.9+ 无此问题)。
+    # 固定 EDT 偏移 (-04:00) 足以满足 _today_et()/_now_hhmm_et()/.isoformat() 全链。
+    from datetime import timedelta, timezone as _tz
+    _fake_now = datetime(2026, 10, 9, 9, 15, tzinfo=_tz(timedelta(hours=-4)))
+    monkeypatch.setattr(executor, "_now_et", lambda: _fake_now)
 
 
 # ── 最小桩件 ──────────────────────────────────────────────────────────────────
@@ -301,7 +307,7 @@ def test_execute_tags_audit_and_db_metadata(isolated_state, tmp_path, monkeypatc
             trade_mode TEXT, mode TEXT, owner_strategy TEXT, strategy_id TEXT,
             futu_order_id TEXT, close_futu_order_id TEXT, metadata_json TEXT,
             mfe_pct REAL, mae_pct REAL, max_drawdown REAL, created_at TEXT,
-            config_version TEXT, entry_session TEXT
+            config_version TEXT, entry_session TEXT, decision_id TEXT
         );
         """
     )

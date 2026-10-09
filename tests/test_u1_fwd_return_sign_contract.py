@@ -288,12 +288,17 @@ def test_prompt_version_bumped_and_blind_spot_declared():
     """
     src = (REPO / "scripts" / "llm_universe_scan.py").read_text(encoding="utf-8")
     # 版本戳棘轮跟**当前**版号走 (升版者必须同时改这里 — 变红是设计意图, 不是回归)。
-    # v2.12→v2.13 (2026-09-14, 市场佐证段时点诚实化, 同为 brief/user 侧变更)。
-    assert 'PROMPT_VERSION = "v2.13"' in src, \
-        "版本戳已升过 v2.13 — 同步改本钉 (棘轮意图: 升版必留痕)"
+    # v2.13→v2.14 (2026-10-02, 证据分层/校准/反证/事件阶段契约, brief/user 侧变更)。
+    assert 'PROMPT_VERSION = "v2.14"' in src, \
+        "版本戳已升过 v2.14 — 同步改本钉 (棘轮意图: 升版必留痕)"
     # U1 的变更记录不得随后续升版被顺手抹掉 (删注释 = 归因链断, 9/11 前后样本不可分)。
-    assert "v2.11=负反馈表口径两处修" in src, "U1 版号变更记录被删 — 归因链断"
-    assert "归因盲区就地声明" in src and "只哈希 SYSTEM_PROMPT_V2" in src
+    # v2.14 (2026-10-02, ADR-044) 将原 PROMPT_VERSION 行长注释截短, v2.11 归因从
+    #   版本行移入 P2.5 brief 指纹段 (line ~221: "v2.11 改的正是反馈表渲染")。
+    #   钉点随之迁移: 只要 v2.11 教训在仓内**任一处**可检索即视为归因链不断。
+    assert "v2.11" in src and "反馈表" in src, "U1 版号变更记录被删 — 归因链断"
+    # 盲区声明: v2.14 后措辞演进为 "只覆盖系统 prompt" (line ~217), 语义等价。
+    assert ("只覆盖系统 prompt" in src or "只哈希 SYSTEM_PROMPT_V2" in src), \
+        "PROMPT_HASH_V2 盲区声明被删 — 后人会误以为哈希覆盖了 brief"
     # 哈希口径本批**不动** (缺口另立项, 需独立授权) — 被动过即红
     assert ('PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8"))'
             '.hexdigest()[:12]') in src

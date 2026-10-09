@@ -96,7 +96,9 @@ class TestIdempotency:
         monkeypatch.setattr("sys.argv", ["ucr", "--date", "2026-09-09"])
         ucr.main()
         ucr.main()
-        assert [p.name for p in tmp_path.iterdir()] == ["unit_cells_2026-09-09.md"]
+        assert [p.name for p in tmp_path.iterdir() if p.suffix == ".md"] == ["unit_cells_2026-09-09.md"]
+        # 只过滤 .md: conftest._isolate_live_probe_waiver_file (autouse) 会向 tmp_path
+        # 写 live_probe_lock_waiver.json 做四锁破例隔离 — 与本幂等断言无关。
 
 
 class TestReadOnlyDiscipline:

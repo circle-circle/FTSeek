@@ -186,6 +186,16 @@ class TradeStore:
                 except Exception:
                     pass  # 列已存在
 
+                # 2026-10-09 (DEB-20261009·test_legacy_db): futu_order_id 在
+                # CREATE TABLE DDL 里但没有 ALTER TABLE 兜底 — 早于该列加入的
+                # 遗留 DB (CREATE TABLE IF NOT EXISTS 是 no-op) 走到下方迁移
+                # UPDATE (tr.futu_order_id) 或 save_trade INSERT 时
+                # OperationalError. 补 ALTER 使 _init_db 对任意历史 schema 幂等.
+                try:
+                    conn.execute("ALTER TABLE trade_records ADD COLUMN futu_order_id TEXT")
+                except Exception:
+                    pass  # 列已存在 (绝大多数 DB 由 CREATE TABLE 创建时即有)
+
                 # Karpathy 统一记录: 添加来源分类 + 理由字段 (2026-04-29)
                 # Phase A (2026-05-14): 加 owner_strategy 列, 与 source_type 互补
                 #   - source_type: 来源大类 (MAIN_PIPELINE/...)
@@ -408,23 +418,36 @@ class TradeStore:
                     except Exception:
                         pass  # 列已存在
 
-                cursor = conn.execute("""
-                    UPDATE open_positions AS op
-                    SET entry_broker_order_id=COALESCE(
-                            entry_broker_order_id, op.sl_broker_order_id),
-                        sl_broker_order_id=NULL
-                    WHERE COALESCE(op.sl_broker_order_id, '') <> ''
-                      AND EXISTS (
-                          SELECT 1
-                          FROM trade_records AS tr
-                          WHERE tr.symbol=op.symbol
-                            AND tr.futu_order_id=op.sl_broker_order_id
-                      )
-                """)
-                if cursor.rowcount:
-                    logger.info(
-                        "[TradeStore] 迁移入场单号到 entry_broker_order_id: %s 行",
-                        cursor.rowcount,
+                # 一次性数据迁移: 把误存入 sl_broker_order_id 的入场单号迁到
+                # entry_broker_order_id. 包裹 try/except — 遗留 DB 可能缺少
+                # 引用列 (futu_order_id / sl_broker_order_id / entry_broker_order_id),
+                # 迁移失败不应阻断初始化 (2026-10-09, test_legacy_db 实证).
+                try:
+                    cursor = conn.execute("""
+                        UPDATE open_positions AS op
+                        SET entry_broker_order_id=COALESCE(
+                                entry_broker_order_id, op.sl_broker_order_id),
+                            sl_broker_order_id=NULL
+                        WHERE COALESCE(op.sl_broker_order_id, '') <> ''
+                          AND EXISTS (
+                              SELECT 1
+                              FROM trade_records AS tr
+                              WHERE tr.symbol=op.symbol
+                                AND tr.futu_order_id=op.sl_broker_order_id
+                          )
+                    """)
+                    if cursor.rowcount:
+                        logger.info(
+                            "[TradeStore] 迁移入场单号到 entry_broker_order_id: %s 行",
+                            cursor.rowcount,
+                        )
+                except Exception as _mig_e:
+                    # W456 (2026-10-09): except 内不用 debug (INFO 下不可见 = 静默);
+                    #   遗留库迁移失败必须可见且带栈 — 逢遗留 schema 一次性可见,
+                    #   新库永不触发, 不构成噪音。
+                    logger.warning(
+                        "[TradeStore] 入场单号迁移跳过 (遗留 schema 缺列): %s",
+                        _mig_e, exc_info=True,
                     )
 
                 conn.commit()
