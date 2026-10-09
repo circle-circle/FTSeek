@@ -32,9 +32,10 @@
 6. 日内 ≤ **10** 笔、同时 ≤ **5** 仓; 单笔 **$5,000** (B 档 $2,500)
 
 **出场** `[源: crontab 每分钟行 → scripts/extended_hours_exit_cron.py (包装) → scripts/premarket_exit_shadow.py (2026-09-17 起已非 record-only) + scripts/extended_hours_profit_exit_rules.py]`
-- 延长时段 **只做止盈、不做止损** (2026-09-17 用户令; 依据=自建盘前影子台账 20 笔真实盘中持仓: 带盘前止损 −0.11% → 去掉后 −0.07%, 只止盈 +1.5/2.0/3.0% = +0.42/0.39/0.38% ⇒ **盘前止损是负贡献**, 止损职责回收给盘中)。实读 `premarket_exit_shadow.py:134-141`
+- 延长时段 **只做止盈、不做止损** (2026-09-17 用户令; 2026-10-08 用户进一步要求未触发利润保护时移交盘中)。实读 `premarket_exit_shadow.py`
 - 止盈/回本锁: `decide_original_profit_exit` + B 档浮盈 ≥ **+3%** 启动保本锁 (`EXT_GRADE_B_CERT_LOCK_PCT=3.0`, 出场标签 `SL_CERT_LOCK`; A 档 0.0 = 不锁)
-- **09:25 ET 收口强平** (`EXT_PREMARKET_FLATTEN_FROM=925`) —— **只作用 `entry_time` ET 日期 == 今日的当日仓** (代码 `flatten_now()` 实读, 见 `premarket_exit_shadow.py:243-253`); 隔夜仓不在范围, 交盘中
+- **09:25 ET 不再默认收口强平**: 今日盘前仓未触发利润保护时持有到 RTH, 交盘中 Playbook SL/BE/trailing/EOD 接管 (`EXT_PREMARKET_FLATTEN=false` 默认; `true` 为旧语义回滚开关)
+- ETH 限价腿**零成交**后进入 HELD 时, RTH 开盘且本地持仓仍在 ⇒ 自动归档删除该 intent, 解除 `blocked_exits`, 盘中策略立即恢复评估; 部分成交仍需人工先核对部分仓位/账本, 不自动释放
 - 不给亏损仓"免死金牌"(设计不变量); 挂单超时 60s (`EXT_EXIT_LIMIT_TIMEOUT_S=60`); 孤儿单检测 on
 
 **实测 (为什么它安静)**: 一周被**价格闸**拦 ~1 万票次, 其中 **99% 是 <$5 的微盘泵票(价中位 $1.4)**; 过价格闸的票再被市值/深度/价差/涨幅带层层拦掉; 最终 **0–2 笔/日**, 最近一次成交 **9/18**。⇒ 不是故障, 是"**财报票人群天然低频**" + "异动榜与闸不匹配"。
@@ -47,8 +48,7 @@
 - 时段 ET 16:00–20:00 (crontab `*/5 4-8 * * 2-6`)
 - 财报相位 = **amc** (盘后发财报的票)
 - 出场多了**持夜与次日交接**语义 `[源: scripts/premarket_exit_shadow.py]`:
-  `EXT_AFTERHOURS_HOLD_TO_OPEN=true` (盘后仓默认**持到次日开盘**), 次日 **09:30–09:45 ET** 是盘后仓的离场窗 (`EXT_NEXT_OPEN_EXIT_FROM=930` / `EXT_NEXT_OPEN_EXIT_TO=945`);
-  水下仓在 EOD 兜底时可被**主动豁免持夜** (RIVN 9/21 就是这样过夜的), 次日交盘中退出栈接管
+  `EXT_AFTERHOURS_HOLD_TO_OPEN=false` (2026-10-08 起), 未触发利润保护不做次日开盘限价兑现, 下一 RTH 交盘中退出栈接管; `true` 为旧开盘兑现回滚开关
 
 ---
 

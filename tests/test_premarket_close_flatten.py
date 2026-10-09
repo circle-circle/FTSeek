@@ -36,7 +36,8 @@ def test_entry_et_date_converts_cst_to_et_across_day():
     assert M._entry_et_date(datetime(2026, 9, 18, 16, 30, 0)) == TODAY
 
 
-def test_flatten_requires_all_three_conditions():
+def test_flatten_requires_all_three_conditions(monkeypatch):
+    monkeypatch.setattr(M, "FLATTEN_ENABLED", True)
     today_entry = "2026-09-18 16:30:00"
     # ① 时间未到 09:20
     assert M.flatten_now(919, today_entry, TODAY, True) is False
@@ -93,6 +94,7 @@ def test_collect_wires_flatten_to_exit_executor(monkeypatch, tmp_path):
 
     monkeypatch.setattr(M, "_today_et", lambda: TODAY)
     monkeypatch.setattr(M, "_now_et_hhmm", lambda: 925)
+    monkeypatch.setattr(M, "FLATTEN_ENABLED", True)
     # 今日盘前开仓 (CST 16:30 = ET 04:30), 成本 10.0 → bid 9.7 = -3%.
     monkeypatch.setattr(M, "_load_open_positions", lambda: [
         ("US.FAKE", "LONG", 100, 10.0, 9.5, "2026-09-18 16:30:00", "sig1", None)])
@@ -184,7 +186,7 @@ def _snap_row(bid):
     return _FakeSnap()
 
 
-def _run_collect(monkeypatch, tmp_path, bid, mode):
+def _run_collect(monkeypatch, tmp_path, bid, mode, enabled=True):
     """跑一轮 collect, 返回 (调用记录, 影子行)."""
     import json as _json
     import subprocess as _sp
@@ -198,6 +200,7 @@ def _run_collect(monkeypatch, tmp_path, bid, mode):
         get_market_snapshot=lambda syms: (0, _snap_row(bid)), close=lambda: None)
     monkeypatch.setitem(_sys.modules, "futu", fake_futu)
     monkeypatch.setattr(M, "FLATTEN_MODE", mode)
+    monkeypatch.setattr(M, "FLATTEN_ENABLED", enabled)
     monkeypatch.setattr(M, "_today_et", lambda: TODAY)
     monkeypatch.setattr(M, "_now_et_hhmm", lambda: 925)
     monkeypatch.setattr(M, "_load_open_positions", lambda: [
@@ -212,6 +215,13 @@ def _run_collect(monkeypatch, tmp_path, bid, mode):
     M.collect(dry=False)
     row = _json.loads((tmp_path / "out.jsonl").read_text().strip())
     return calls, row
+
+
+def test_default_hands_unrealized_premarket_position_to_rth(monkeypatch, tmp_path):
+    calls, row = _run_collect(monkeypatch, tmp_path, 9.7, "unconditional", enabled=False)
+    assert "cmd" not in calls
+    assert row["action"] == "hold_no_stop"
+    assert row["flatten_enabled"] is False
 
 
 def test_collect_conditional_mode_hands_off_shallow_loss(monkeypatch, tmp_path):

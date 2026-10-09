@@ -28,15 +28,15 @@
   hold_no_stop, 亏损止损仍由盘中处理. peak/breakeven 状态持久化到
   trade_records.metadata_json, 跨盘前/盘中/盘后连续.
 
-盘前收口强平 (2026-09-17 回放裁决, 详见 DEB §16.5):
-  09:20-09:25 ET 对**今日盘前开的仓**无条件平仓 (action=pre_close_flatten, 覆盖其它信号),
-  因为回放里"什么都不做等到收口"净 +0.78%/+0.26%, 而现役规则 -0.06%/-0.19%、-1.5%止损最差。
-  回滚: EXT_PREMARKET_FLATTEN=false
+盘前收口强平 (2026-09-17 回放裁决; 2026-10-08 用户改为默认移交盘中):
+  默认不再对今日盘前仓做 09:25 无条件收口; 未触发利润保护时持有到 RTH,
+  由盘中 Playbook SL/BE/trailing/EOD 策略接管。显式设置
+  EXT_PREMARKET_FLATTEN=true 可恢复旧收口语义。
 
-盘后进场仓 (2026-09-17 用户令「不强止损，直接持有到次日开盘」):
+盘后进场仓 (2026-10-08 用户改为移交盘中):
   盘后 carry 仓在次日盘前仍先计算原 Playbook 利润保护; 触发止盈/回本/trailing/cert lock
-  时直接用 ETH 限价单落袋。未触发利润保护则不强止损, 09:30-09:45 ET 开盘兑现
-  (调 exit executor --session next_open = RTH 单)。回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+  时直接用 ETH 限价单落袋。未触发利润保护则不强止损, 09:30 ET 后交盘中
+  Playbook SL/BE/trailing/EOD 策略接管。回滚旧开盘兑现: EXT_AFTERHOURS_HOLD_TO_OPEN=true
 
 执行 (2026-09-17 用户裁「方案1」; 2026-09-18 勘误为原利润保护规则):
   TAKE_PROFIT / SL_BREAKEVEN / SL_TRAIL_LOCK 三信号且窗内 → 调
@@ -90,8 +90,8 @@ OUTPUT = ROOT / "data" / "premarket_exit_shadow.jsonl"
 #     且把盘前仓带进盘中是负期望 (与既有"盘前 spike 开盘蒸发"同向)。
 #   实现范围 (只覆盖被回放验证过的 cohort): 仅 **entry_time ET 日期 == 今日** 的当日在盘前开的仓;
 #     隔夜/legacy 仓回放未覆盖 → 仍走原 decide() 规则。
-#   回滚: EXT_PREMARKET_FLATTEN=false (单 env, 不用改码)。
-FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "true").lower() == "true"
+#   回滚旧收口: EXT_PREMARKET_FLATTEN=true (单 env, 不用改码)。
+FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "false").lower() == "true"
 FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:20 ET 起每次轮询都强平
 
 # ─ 收口豁免预注册 (2026-09-19, RFC-087; 用户令「按建议做」) ──
@@ -134,13 +134,11 @@ def conditional_flatten_verdict(pnl_pct, armed, mode=None, deep_loss_pct=None):
         return True, "deep_loss"
     return False, ("shallow_loss" if pnl_pct >= -3.0 else "mid_loss")
 
-# ─ 盘后进场仓: 不强止损, 持有到次日开盘兑现 (2026-09-17 用户令「不强止损，直接持有到次日开盘」) ──
-#   依据 (DEB §16.6 盘后回放 60 交易日): 现役盘后规则净 -0.64%(负); 盘后收口平 +0.94%;
-#   **持有到次日开盘 +3.47%/中位+4.84%/WR 76%/合计+86.7%** = 最强臂; 持有到次日收盘 -1.14%。
-#   盘后入场多为信息驱动跳空 (MFE 3.85-6.36%) ⇒ 止损/锁小利是在砍趋势, 与盘前噪声型 spike 相反。
-#   尾部如实: 该臂最差 -19.39% (25 笔中 6 笔亏) —— 真隔夜跳空风险, 非无风险套利。
+# ─ 盘后进场仓: 不强止损, 下一 RTH 交盘中策略 (2026-10-08 用户令) ──
+#   未触发利润保护时不做次日开盘限价兑现, 持有到 RTH 后由盘中
+#   Playbook SL/BE/trailing/EOD 策略接管。
 #   范围: 仅"entry ET 时间在盘后窗 (16:00-20:00) 且 ET 日期 != 今日"的 carry 仓; 其余仓走原规则。
-#   回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+#   回滚旧开盘兑现: EXT_AFTERHOURS_HOLD_TO_OPEN=true
 # ─ 延长时段"只做止盈, 不做止损" (2026-09-17 用户令: 「只做止盈，不做止损(止损放在盘中)」) ──
 #   依据 = 我们自建的盘前影子台账 (20 个**真实盘中持仓**的盘前路径):
 #     现役组合(回本锁+0.3%/止盈+2% + 盘前止损-1.5%)  均值 -0.11%
@@ -149,7 +147,7 @@ def conditional_flatten_verdict(pnl_pct, armed, mode=None, deep_loss_pct=None):
 #     什么都不做(持到盘前收口)                        +0.21%
 #     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
 #       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
-AFTERHOURS_HOLD_TO_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
+AFTERHOURS_HOLD_TO_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "false").lower() == "true"
 NEXT_OPEN_EXIT_FROM = int(os.getenv("EXT_NEXT_OPEN_EXIT_FROM", "930"))
 NEXT_OPEN_EXIT_TO = int(os.getenv("EXT_NEXT_OPEN_EXIT_TO", "945"))
 AFTERHOURS_WINDOW_FROM, AFTERHOURS_WINDOW_TO = 1600, 2000
@@ -220,7 +218,7 @@ def _entry_et_dt(entry_time):
 
 
 def is_afterhours_carry(entry_time, today_et: str, enabled: bool = None) -> bool:
-    """该仓是否属"盘后进场 → 次日开盘兑现" cohort (纯函数, 可测).
+    """该仓是否属旧版"盘后进场 → 次日开盘兑现" cohort (纯函数, 可测).
 
     判据: entry 的 ET 时间落在盘后窗 (16:00-20:00) 且 ET 日期 != 今日
     (今日的盘后仓归盘后影子管, 不归盘前影子)。
@@ -396,6 +394,8 @@ def collect(dry: bool) -> int:
             elif _flat and _cond_verdict:
                 # 收口强平只兜底, 不覆盖 TAKE_PROFIT/BE/TRAIL_LOCK.
                 fallback = "pre_close_flatten"
+            elif not in_window and hhmm >= 930:
+                fallback = "hold_intraday_takeover"
             action = prioritize_profit_exit(action, fallback)
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
             _exec_ok = in_window or action == "next_open_exit"   # 开盘兑现发生在盘前窗之外

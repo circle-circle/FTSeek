@@ -57,7 +57,8 @@ def test_entry_time_conversion_is_cst_to_et_across_day():
     assert str(CST_AH_ENTRY)[:10] == "2026-09-18" == TODAY
 
 
-def test_is_afterhours_carry_requires_window_and_previous_day():
+def test_is_afterhours_carry_requires_window_and_previous_day(monkeypatch):
+    monkeypatch.setattr(PM, "AFTERHOURS_HOLD_TO_OPEN", True)
     assert PM.is_afterhours_carry(CST_AH_ENTRY, TODAY) is True           # 昨盘后进的仓
     assert PM.is_afterhours_carry(CST_AH_ENTRY, "2026-09-17") is False   # 当日盘后仓归盘后影子
     assert PM.is_afterhours_carry(CST_PRE_ENTRY, TODAY) is False         # 今日盘前进的仓
@@ -73,6 +74,7 @@ def test_premarket_shadow_holds_afterhours_carry_before_open(monkeypatch, tmp_pa
          "prev_close_price": 10.0, "pre_high_price": 9.2, "update_time": "2026-09-18 09:20:00"}))
     monkeypatch.setattr(PM, "_today_et", lambda: TODAY)
     monkeypatch.setattr(PM, "_now_et_hhmm", lambda: 920)
+    monkeypatch.setattr(PM, "AFTERHOURS_HOLD_TO_OPEN", True)
     monkeypatch.setattr(PM, "_load_open_positions", lambda: [
         ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1", '{"stop_loss":9.5}')])
     monkeypatch.setattr(PM, "OUTPUT", tmp_path / "out.jsonl")
@@ -94,6 +96,7 @@ def test_premarket_shadow_exits_afterhours_carry_on_profit_signal(monkeypatch, t
          "pre_high_price": 12.6, "update_time": "2026-09-18 09:20:00"}))
     monkeypatch.setattr(PM, "_today_et", lambda: TODAY)
     monkeypatch.setattr(PM, "_now_et_hhmm", lambda: 920)
+    monkeypatch.setattr(PM, "AFTERHOURS_HOLD_TO_OPEN", True)
     monkeypatch.setattr(PM, "_load_open_positions", lambda: [
         ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1",
          '{"stop_loss":9.5,"take_profit":12.4}')])
@@ -119,6 +122,7 @@ def test_premarket_shadow_exits_at_next_open(monkeypatch, tmp_path):
          "prev_close_price": 10.0, "pre_high_price": 9.9, "update_time": "2026-09-18 09:35:00"}))
     monkeypatch.setattr(PM, "_today_et", lambda: TODAY)
     monkeypatch.setattr(PM, "_now_et_hhmm", lambda: 935)
+    monkeypatch.setattr(PM, "AFTERHOURS_HOLD_TO_OPEN", True)
     monkeypatch.setattr(PM, "_load_open_positions", lambda: [
         ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1", '{"stop_loss":9.5}')])
     monkeypatch.setattr(PM, "OUTPUT", tmp_path / "out.jsonl")
@@ -147,6 +151,25 @@ def test_premarket_shadow_hands_over_after_window(monkeypatch, tmp_path):
         returncode=0, stdout="", stderr=""))
     PM.collect(dry=False)
     assert json.loads((tmp_path / "out.jsonl").read_text().strip())["action"] == "hold_intraday_takeover"
+    assert calls == []
+
+
+def test_default_holds_afterhours_carry_for_intraday_strategy(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setitem(sys.modules, "futu", _futu_stub(
+        {"code": "US.FAKE", "last_price": 9.0, "pre_price": 9.0, "pre_volume": 90000.0,
+         "prev_close_price": 10.0, "pre_high_price": 9.2, "update_time": "2026-09-18 09:20:00"}))
+    monkeypatch.setattr(PM, "_today_et", lambda: TODAY)
+    monkeypatch.setattr(PM, "_now_et_hhmm", lambda: 920)
+    monkeypatch.setattr(PM, "_load_open_positions", lambda: [
+        ("US.FAKE", "LONG", 100, 10.0, 9.5, CST_AH_ENTRY, "sig1", '{"stop_loss":9.5}')])
+    monkeypatch.setattr(PM, "OUTPUT", tmp_path / "out.jsonl")
+    monkeypatch.setattr(_sp, "run", lambda cmd, **kw: calls.append(cmd) or types.SimpleNamespace(
+        returncode=0, stdout="", stderr=""))
+    PM.collect(dry=False)
+    row = json.loads((tmp_path / "out.jsonl").read_text().strip())
+    assert row["action"] == "hold_no_stop"
+    assert row["is_afterhours_carry"] is False
     assert calls == []
 
 
@@ -200,7 +223,8 @@ def test_exit_executor_has_next_open_session():
     assert 'order_session = "RTH" if session == "next_open" else "ETH"' in src
     assert '"premarket", "afterhours", "next_open"' in src
 
-def test_is_afterhours_carry_with_et_aware_timestamp():
+def test_is_afterhours_carry_with_et_aware_timestamp(monkeypatch):
+    monkeypatch.setattr(PM, "AFTERHOURS_HOLD_TO_OPEN", True)
     """生产真实格式: EXT/playbook 写的是 **ET-aware** ISO (实测 AEHL 2026-09-17T07:10:25.538879-04:00),
     不是纯 CST. 两种格式都必须判对."""
     assert PM._entry_et_date("2026-09-17T04:15:00-04:00") == "2026-09-17"          # 盘前仓

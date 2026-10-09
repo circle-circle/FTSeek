@@ -53,10 +53,10 @@ OUTPUT = ROOT / "data" / "afterhours_exit_shadow.jsonl"
 # 决策参数单一真源 = app/playbook/exit_engine.py + config/playbook_horizon.yaml.
 # 2026-09-18 用户勘误: 不再使用临时 +0.3% breakeven_lock / +2% lock_in 阈值.
 
-# 2026-09-17 用户令「不强止损，直接持有到次日开盘」: 当日在盘后进的仓保留上述利润保护;
-# 无有效利润信号时不强止损, 改持到次日开盘兑现 (DEB §16.6: 现役盘后规则净 -0.64%,
-# 持到次日开盘 +3.47%)。
-# 回滚: EXT_AFTERHOURS_HOLD_TO_OPEN=false
+# 2026-10-08 用户令「盘前盘后成交的标的股交由盘中策略接手」:
+# 当日盘后仓保留上述利润保护; 未触发利润信号时不做次日开盘限价兑现,
+# 持有到下一 RTH 由盘中 Playbook SL/BE/trailing/EOD 策略接管。
+# 回滚旧语义: EXT_AFTERHOURS_HOLD_TO_OPEN=true
 # ─ 延长时段"只做止盈, 不做止损" (2026-09-17 用户令: 「只做止盈，不做止损(止损放在盘中)」) ──
 #   依据 = 我们自建的盘前影子台账 (20 个**真实盘中持仓**的盘前路径):
 #     现役组合(回本锁+0.3%/止盈+2% + 盘前止损-1.5%)  均值 -0.11%
@@ -65,7 +65,7 @@ OUTPUT = ROOT / "data" / "afterhours_exit_shadow.jsonl"
 #     什么都不做(持到盘前收口)                        +0.21%
 #     ⇒ **盘前止损是负贡献** (与 DEB §16.5/§16.8 同向, 机制: 盘前回撤多会在收口前回归);
 #       止损职责回收到盘中 (playbook 规则引擎读 initial_sl), 延长时段只负责"高价兑现"。
-HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true").lower() == "true"
+HOLD_TO_NEXT_OPEN = os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "false").lower() == "true"
 # 2026-09-19 用户令: 峰值口径改用"进场之后"的真实 high (env 开关, 默认关)
 PEAK_USE_SESSION_HIGH = os.getenv("EXT_PEAK_USE_SESSION_HIGH", "0").lower() in {"1", "true", "yes"}
 
@@ -228,11 +228,12 @@ def collect(dry: bool) -> int:
             action = decision["action"]
             if not dry:
                 persist_profit_exit_state(DB, trade_id, decision, direction)
-            fallback = (
-                "hold_to_next_open"
-                if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et)
-                else None
-            )
+            if HOLD_TO_NEXT_OPEN and _is_afterhours_entry_today(entry_time, today_et):
+                fallback = "hold_to_next_open"
+            elif _is_afterhours_entry_today(entry_time, today_et):
+                fallback = "hold_intraday_takeover"
+            else:
+                fallback = None
             action = prioritize_profit_exit(action, fallback)
             # 2026-09-18 用户勘误: 只执行原 Playbook 利润保护/止盈信号.
             if (action in ("TAKE_PROFIT", "SL_BREAKEVEN", "SL_TRAIL_LOCK", "SL_CERT_LOCK")
