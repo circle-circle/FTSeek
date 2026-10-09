@@ -198,17 +198,18 @@ def main() -> int:
     #   两条纪律约束:
     #   (a) 只查**代码行**的真实路径依赖, 跳过注释与 docstring ⇒ 否则本守卫的 docstring
     #       提到 scratch 就会自指报红 (第一版实测踩到)。
-    #   (b) 只查本 DEB 附录明确列名的 4 个脚本, **不用 glob** ⇒ 同日期前缀下可能有其他
+    #   (b) 只查本 DEB 附录明确列名的 5 个脚本, **不用 glob** ⇒ 同日期前缀下可能有其他
     #       agent 并行新建的脚本 (实测存在 deb20261008_scaleout_*.py 3 个), glob 会让本守卫
     #       因他人的文件漂移而报红, 也可能把他人的文件卷入本批提交。
     OWN = ["deb20261008_direction_gate_census.py",
            "deb20261008_gate_attribution.py",
            "deb20261008_bias_funnel.py",
+           "deb20261008_blocked_outcome_backfill.py",
            "deb20261008_verify_claims.py"]
     # 自指排除: 本文件是 _NEEDLES 的**定义处**, 字面量必然出现在自己的源码里
     #   (实测三版均自命中: 检测行里写 needle ⇒ needle 命中检测行)。
     #   因此本文件跳过 scratch/tmp 检查, 但仍参与「文件必须存在」检查。
-    #   其余 3 个附录脚本一律照检, 不排除。
+    #   其余 4 个附录脚本一律照检, 不排除。
     SKIP_SELF = {Path(__file__).resolve().name}
     for name in OWN:
         f = ROOT / "scripts" / name
@@ -230,7 +231,7 @@ def main() -> int:
             if any(nd in line for nd in needles):
                 bad.append(f"{name}:{i} 依赖 scratch/tmp")
                 print(f"  🔴 {name}:{i} 代码行含 scratch/tmp 依赖: {st[:80]}")
-    print(f"  本 DEB 附录脚本 (只查这 4 个, 不 glob): {len(OWN)} 个, 全部存在={all((ROOT/'scripts'/n).exists() for n in OWN)}")
+    print(f"  本 DEB 附录脚本 (只查这 {len(OWN)} 个, 不 glob): {len(OWN)} 个, 全部存在={all((ROOT/'scripts'/n).exists() for n in OWN)}")
     others = sorted(x.name for x in ROOT.glob("scripts/deb20261008_*.py") if x.name not in OWN)
     if others:
         print(f"  ℹ️ 同日期前缀下另有他人/他议题脚本 (本守卫不检查、不提交): {others}")

@@ -132,6 +132,32 @@ def _compute_fills(direction: str, entry: float, inst_date: str,
     return updates
 
 
+def _write_provenance(records: list[Dict[str, Any]], path: Path = PROVENANCE_PATH,
+                      *, dry: bool = False) -> None:
+    """事件级取证台账; dry-run 必须零写盘, 不得覆盖已填充记录。"""
+    if dry:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: Dict[int, Dict[str, Any]] = {}
+    if path.exists():
+        bad = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+                existing[int(record.get("id") or 0)] = record
+            except (json.JSONDecodeError, ValueError):
+                bad += 1
+        if bad:
+            logger.warning("取证台账 %s 有 %d 行坏 JSON 已跳过", path, bad)
+    for record in records:
+        existing[int(record["id"])] = record
+    with path.open("w", encoding="utf-8") as handle:
+        for record in sorted(existing.values(), key=lambda item: int(item["id"])):
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry", action="store_true", help="只算不写 (预览填充率)")
@@ -218,27 +244,9 @@ def main() -> int:
             n_filled += 1
         provenance.append(prov)
 
-    # 取证链落盘 (幂等: 按 id 去重, 重跑以末次为准)
+    # 取证链落盘 (幂等: 按 id 去重, 重跑以末次为准; --dry 零写盘)
     try:
-        PROVENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        existing: Dict[int, Dict[str, Any]] = {}
-        if PROVENANCE_PATH.exists():
-            bad = 0
-            for line in PROVENANCE_PATH.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                    existing[int(rec.get("id") or 0)] = rec
-                except (json.JSONDecodeError, ValueError):
-                    bad += 1
-            if bad:
-                logger.warning("取证台账 %s 有 %d 行坏 JSON 已跳过", PROVENANCE_PATH, bad)
-        for rec in provenance:
-            existing[int(rec["id"])] = rec
-        with PROVENANCE_PATH.open("w", encoding="utf-8") as fh:
-            for rec in sorted(existing.values(), key=lambda r: int(r["id"])):
-                fh.write(json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n")
+        _write_provenance(provenance, dry=args.dry)
     except Exception as prov_err:  # 台账失败不影响回填结果 (已落库), 但必须可见
         logger.warning("取证台账写入失败: %s", prov_err, exc_info=True)
 

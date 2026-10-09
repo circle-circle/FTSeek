@@ -13,6 +13,7 @@ from scripts.deb20261008_blocked_outcome_backfill import (  # noqa: E402
     _compute_fills,
     _recover_direction,
     _sign,
+    _write_provenance,
 )
 
 
@@ -82,3 +83,14 @@ class TestSign:
         assert _sign("LONG") == 1
         assert _sign("SELL_SHORT") == -1
         assert _sign("SHORT") == -1
+
+
+class TestProvenance:
+    def test_dry_run_never_writes_or_overwrites(self, tmp_path):
+        path = tmp_path / "provenance.jsonl"
+        existing = json.dumps({"id": 1, "status": "filled"}) + "\n"
+        path.write_text(existing, encoding="utf-8")
+
+        _write_provenance([{"id": 1, "status": "dry"}], path, dry=True)
+
+        assert path.read_text(encoding="utf-8") == existing

@@ -17,13 +17,19 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from dateutil.tz import gettz
 
 ROOT = Path(__file__).resolve().parents[1]
 DAY = "2026-10-07"
 CST = timezone(timedelta(hours=8))
 # 2026-10-08 棘轮清剿: 硬编码 UTC-4 假钟 → 真时区 (冬令时 EST=UTC-5 不错位)
-ET = ZoneInfo("America/New_York")
+try:
+    ET = ZoneInfo("America/New_York")
+except NameError:
+    ET = gettz("America/New_York")
 
 
 def _ro(p: Path) -> sqlite3.Connection:
@@ -36,6 +42,17 @@ def section(t: str) -> None:
     print("\n" + "=" * 106)
     print(t)
     print("=" * 106)
+
+
+_G5_LOADED_AT = datetime(2026, 10, 8, 23, 10, tzinfo=CST)
+
+
+def _after_g5_load(line: str) -> bool:
+    try:
+        timestamp = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    return timestamp.replace(tzinfo=CST) >= _G5_LOADED_AT
 
 
 def main() -> int:
@@ -112,13 +129,29 @@ def main() -> int:
         "SELECT COUNT(*) FROM playbook_instructions WHERE skip_reason LIKE '%组合行业集中度 guardrail 拒绝执行%'"
     ).fetchone()[0]
     audit = ROOT / "data/shadow/portfolio_execution_guardrail.jsonl"
+    audit_events = 0
+    audit_enforced = 0
+    n_bad_lines = 0
+    if audit.exists():
+        for event_line in audit.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                event = json.loads(event_line)
+            except Exception:
+                # R5 留痕 (2026-10-09 复查清剿): 坏行计数进汇总行,
+                #   不让「零坏行」与「坏行被吞」输出同形。
+                n_bad_lines += 1
+            else:
+                audit_events += 1
+                audit_enforced += int(bool(event.get("enforced")))
     print(f"  G5 专属文案「组合方向偏斜 guardrail 拒绝执行」全库 n = {n5}")
     print(f"  G6' 专属文案「组合行业集中度 guardrail 拒绝执行」全库 n = {n5s}")
-    print(f"  G5 审计留痕 {audit.name}: {'存在 '+str(audit.stat().st_size)+'B' if audit.exists() else '不存在'}")
-    print(f"  ⇒ {'🔴 G5 至今零实弹拦截' if (n5 == 0 and n5s == 0 and not audit.exists()) else 'G5 已有实弹记录'}")
+    print(f"  G5 审计留痕 {audit.name}: 事件={audit_events}, enforced={audit_enforced}"
+          f"{f', 坏行={n_bad_lines}' if n_bad_lines else ''}")
+    live_g5 = n5 > 0 or n5s > 0 or audit_enforced > 0
+    print(f"  ⇒ {'G5 已有实弹记录' if live_g5 else 'G5 至今零实弹拦截 (仅有影子事件)'}")
     print("  归因更正: 今日 5→2 由 **G4 生成期偏斜门 + G6 行业集中度门** 造成 (文案为旧门措辞),")
-    print("           **不是** Codex 新增的 G5。G5 于 CST 23:10 随服务重启加载, 当时已收盘 (ET 11:10),")
-    print("           无执行机会 ⇒ 首次实弹检验 = 下一交易日开盘。")
+    print("           **不是** Codex 新增的 G5。G5 于 CST 23:10 随服务重启加载, 当时为盘中 (ET 11:10),")
+    print("           加载后执行机会以⑥日志过滤为准。")
 
     section("⑤ G5 加载时刻 vs 收盘时刻 (判「为何零拦截」是否合理)")
     import subprocess
@@ -136,14 +169,16 @@ def main() -> int:
     hits = []
     if log.exists():
         for ln in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if ("2026-10-07 23:" in ln or "2026-10-08 0" in ln) and (
+            if _after_g5_load(ln) and (
                 "execute_instruction" in ln or "auto_execute" in ln
                 or "PORTFOLIO_GUARDRAIL" in ln or "组合guardrail" in ln):
                 hits.append(ln)
     print(f"  G5 加载后 (CST 23:10 起) 执行路径日志命中 n={len(hits)}")
     for h in hits[-8:]:
         print(f"    {h[:170]}")
-    if not hits:
+    if hits:
+        print("    ⇒ 加载后已有执行轮次; 结合 G5 enforced/拦截数判断是否已实弹")
+    else:
         print("    ⇒ 无执行轮次经过 ⇒ G5「零拦截」= **时机未到 (TOO_EARLY)**, 不等于接线死")
         print("    ⇒ 按 Gate 6 时段依赖埋点三态纪律: 不可判 LIVE/DEAD, 须等下一交易日")
 

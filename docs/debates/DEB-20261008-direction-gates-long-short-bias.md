@@ -386,12 +386,153 @@ F6 另案分析 (当日完成首轮, 见 docs/debates/DEB-20261008-model-long-bi
   (G4 从 skip_reason 多数方解析 / G6 查 DA checkpoint→bridge 兜底) + ic_tracker
   同口径四列回填 (entry/open 双锚), NULL-only 幂等。**实测: n=78 填充率
   0.0%→100%** (判据 ≥80% 达成), 取证链落 data/shadow/blocked_outcome_backfill.jsonl。
-  验证器锚: F4 后被拦行填充率实测口径 **100.0%** (n=78, fwd_return_intraday)。
+  验证器锚: F4 后被拦行填充率实测口径 **100.0%** (n=78, `fwd_return_intraday`;
+  当日开盘锚同 78/78。T+1/T+1 open 当时为 75/78, 3 条 10-07 行等待 10-08 收盘)。
 - F5: `da_bridge_dingtalk_push.py` 推送口径补 `OR decision_id LIKE 'universe_expansion%'`
   + 契约测试 (UE SHORT 行不再被漏计)。
 - RFC-121 §变动记录 追加 (跨 agent 协调项, 见该文档)。
 
 **F4 回填后的 S4 首读** (回答「闸拦对没拦对」, open 锚=诚实尺子):
-被拦 78 笔若按原计划成交 — 当日均值 +0.92% (胜率 53%), T+1 均值 +1.36%
-(胜率 60%)。**闸净拦的是盈利单** ⇒ 摘闸裁决获回填证据支持 (与 10-03 清理批
-cluster +$433 同向)。注意: 纸面收益未含费用, 且 entry 锚含未成交限价优势。
+被拦 78 笔若按原计划成交 — pooled 当日均值 +0.92% (胜率 53%), pooled T+1 均值
++1.36% (n=75, 胜率 60%)。按日聚类后分别为 +0.638% (t=1.26) 与 +0.443%
+(t=0.48), 均与 0 不可区分; 因此本读数**只说明 pooled 首读为正, 不能作为
+「闸净拦盈利单」的统计背书**。纸面收益未含费用, entry 锚含未成交限价优势。
+
+---
+
+## 14. 独立复查轮（Codex, 2026-10-08, 复查提交 `40b4b6a1f`）
+
+### 14.1 代码与测试复验
+
+```bash
+PYTHONPATH=. ./venv/bin/python -m pytest \
+  tests/test_deb20261008_blocked_backfill.py \
+  tests/test_da_bridge_dingtalk_push.py \
+  tests/test_direction_skew_guardrail.py \
+  tests/test_portfolio_execution_guardrail.py \
+  tests/test_skew_gate_vision_shadow.py -q
+
+PYTHONPATH=. ./venv/bin/python -m pytest \
+  tests/test_except_pass_ratchet.py \
+  tests/test_naive_datetime_now_ratchet.py \
+  tests/test_w456_log_hygiene_ratchet.py -q
+
+PYTHONPATH=. ./venv/bin/python -m pytest tests/playbook -q
+./venv/bin/python scripts/deb20261008_verify_claims.py
+```
+
+结果：
+- 相关五文件：**40 passed**。
+- 三条日志/时间棘轮：**29 passed**。
+- `tests/playbook`：**1004 passed + 18 errors**。18 errors 全部集中在
+  `test_offline_full_chain.py`，根因仍是驱动子进程 `require_auto_sim()` 读生产
+  LIVE 配置后拒绝 SIM；属既有环境债，非本提交引入（本提交未改 driver/env 路由）。
+- E13：7 个数字 claim 与 DB 实测一致，结构自检 0 问题。
+- F6 §2 分解漏斗独立复跑：scanner `bullish 113 / bearish 68`；LLM
+  `BUY 224 / SELL_SHORT 68 / SKIP 72`；交叉计数与文档逐项一致。
+- F2 仓外 skill 实物存在：`SKILL.md version 0.95`，`signal_gate.py` 已移除
+  tier 降档，`references/CHANGELOG.md` 有 v0.95 条目。
+
+### 14.2 复查发现（不推翻落地，但必须修正解读）
+
+#### F4「闸净拦盈利单」目前只是 pooled 读数，不满足按日聚类 + MDE 军规
+
+§13 的 `+0.92% / +1.36%` 是逐行 pooled 均值。同日信号高度相关，按宪章数据口径
+第 9 律必须报按日聚类值 + MDE。独立复算（open 锚）：
+
+| 口径 | pooled n | 聚类天数 | pooled 均值 | 日均均值 | 日均 SE | t | 95% MDE |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 当日 | 78 | 19 | +0.919% | +0.638% | 0.506pp | 1.26 | ~0.99pp |
+| T+1 | 75 | 18 | +1.359% | +0.443% | 0.928pp | 0.48 | ~1.82pp |
+
+结论修正：
+- **当日与 T+1 的按日聚类均值均与 0 不可区分**（t=1.26 / 0.48），MDE 分别约
+  0.99pp / 1.82pp。
+- §13 「闸净拦的是盈利单 ⇒ 摘闸裁决获回填证据支持」表述过强，应降级为：
+  「pooled 首读为正；按日聚类后尚不显著，不能作为摘闸的统计背书。」
+- F1 落地本身不因此回滚：摘闸另有点头、空头清零日与用户裁决；但 F4 不能继续被
+  引用为「已证明拦错」。
+
+#### F4 的 100% 是 `fwd_return_intraday` 口径，不是四列全量 100%
+
+当前 DB：n=78 中当日/当日 open 均 78/78；T+1/T+1 open 均 75/78。缺的 3 行全部是
+2026-10-07 的 PENG/NOK/MRVL，T+1 对应 2026-10-08，当时美股尚未收盘，属窗口未到期。
+§13 已写明验证器锚是 `fwd_return_intraday`，这点成立；但读者不得把「四列回填」
+读成「四列均 78/78」。今晚收盘后重跑可补 T+1，届时需重算聚类表。
+
+#### G6 影子「照算照写」不是事件级全覆盖
+
+`skew_gate_vision.jsonl` 只记录方向偏斜（G4），不记录 sector 集中度 would-skip；
+`portfolio_execution_guardrail.jsonl` 只在执行前 G5 检查时写，且当前文件尚不存在。
+因此 F1 对 G4 的影子是自动事件级；对 G6 只能事后从保留的 sector 字志重放，不是
+「照算照写」的自动影子。文档应把 G6 标为「可重放、未自动落影子」，或补一个
+sector would-skip shadow record。
+
+#### E13 守卫白名单漏了 F4 新脚本
+
+`deb20261008_verify_claims.py` 的 `OWN` 仍只列 4 个旧附录脚本，未把本提交新增的
+`deb20261008_blocked_outcome_backfill.py` 加进去；实跑输出还把它列在
+「他人/他议题脚本」里。这不影响 DB 对账，但 scratch/代码行守卫没有覆盖 F4 脚本。
+建议下批把它加入 `OWN` 并把注释/输出从 4 个改为 5 个。
+
+#### F2「纯记录」仍保留 `quality_score -= 10`
+
+仓外 `signal_gate.py` 已不再降 tier，但 `dir_conflict` 仍扣 `quality_score` 10 分。
+当前 tier 判定不消费 quality_score，因此交易判定确实只剩记录；但如果「纯记录」被
+理解为「不再产生任何方向性扣分」，则尚未做到。文档应明确：**F2 = 不降 tier，仍保留
+既有 quality_score 扣分**；若用户要求彻底纯记录，需另删该扣分并另立验证。
+
+#### F4 `--dry` 会改写取证台账状态
+
+脚本在 dry 模式仍重写 `blocked_outcome_backfill.jsonl`，并把既有 `status=filled`
+覆盖成 `dry`。DB 不受影响，但「只算不写」的语义不严格，且会污染取证链。建议：
+dry 模式不写 provenance，或 status 单独标 `dry_preview` 且不覆盖既有 filled 记录。
+
+### 14.3 复查裁决
+
+- **代码可保留，不建议回滚 `40b4b6a1f`**：F1/F5 的实现与测试成立，F4 数据回填
+  本身可复算，F6 §2 漏斗可复现。
+- **统计结论须降级**：F4 不构成「拦错盈利单」的显著性证据；后续引用必须带
+  按日聚类 + MDE。
+- **下批小修清单**：E13 `OWN` 加 F4 脚本；G6 影子语义补自动记录或改文档；
+  F2 扣分语义改文档或按用户裁决删除；F4 dry-run 不覆盖 provenance。
+
+---
+
+## 15. 复查修复批（用户令「请修复」, 2026-10-08）
+
+### 15.1 修复项
+
+| 问题 | 修复 | 锚点 |
+|---|---|---|
+| G6 摘闸后无事件级 would-skip 影子 | `skew_gate_vision.jsonl` 同记录新增 `sector_vision`: sector counts、violations、would_skip_count、低置信 victim symbols；不新增第二影子产物、不改判定 | `app/playbook/pipeline.py:2230` |
+| E13 白名单漏 F4 脚本 | `OWN` 加入 `deb20261008_blocked_outcome_backfill.py`，守卫覆盖 5 个本 DEB 脚本 | `scripts/deb20261008_verify_claims.py:204` |
+| F4 `--dry` 覆盖取证台账 | 抽出 `_write_provenance(..., dry=True)`；dry-run 零写盘，不覆盖 filled 状态 | `scripts/deb20261008_blocked_outcome_backfill.py:135` |
+| F2 仍保留 `quality_score -= 10` | 仓外 skill 删除该扣分；「纯记录」现在同时无扣分、无降档，仅 reasons/risk_notes 留痕 | `/root/.hermes/skills/deep-stock-analysis/scripts/signal_gate.py:120` |
+| F4 统计表述过强 | §13 降级为 pooled 首读；按日聚类 D0 +0.638% (t=1.26)、T+1 +0.443% (t=0.48)，不作显著性背书 | 本文 §13/§14 |
+
+### 15.2 验证
+
+```bash
+PYTHONPATH=. ./venv/bin/python -m pytest \
+  tests/test_skew_gate_vision_shadow.py \
+  tests/test_deb20261008_blocked_backfill.py \
+  tests/test_direction_skew_guardrail.py \
+  tests/test_portfolio_execution_guardrail.py -q
+
+./venv/bin/python scripts/deb20261008_verify_claims.py
+./venv/bin/python -m py_compile \
+  app/playbook/pipeline.py \
+  scripts/deb20261008_blocked_outcome_backfill.py \
+  scripts/deb20261008_verify_claims.py
+/root/.hermes/skills/deep-stock-analysis/scripts/signal_gate.py
+```
+
+实测结果：专项 **38 passed**；E13 **7/7 claim 一致 + 结构 0 问题 + 5 个附录脚本
+全覆盖**；py_compile 全过；F4 `--dry` 前后 provenance SHA-256 均为
+`fe4ce03510c496d74dd4778160c79602a4d2a5dd0e2ac48f11ba0d687ef3bec8`；
+`tests/playbook --deselect tests/playbook/test_offline_full_chain.py` **1004 passed,
+18 deselected**（既有 offline-chain 环境债另行处理）。
+
+部署状态：`pipeline.py` 代码需下一合法重启窗口生效；F2 仓外 skill 由下次 DA
+进程读取即生效；F4/E13/文档即时生效。本轮未重启。
