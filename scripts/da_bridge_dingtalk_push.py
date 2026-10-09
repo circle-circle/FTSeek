@@ -7,9 +7,12 @@
 
 设计:
   - 与 A 解耦: 不改 A 的 prompt; 单挂 cron 在 A 完成之后 (盘前) 触发。
+  - ET 窗口守卫: 08:50-09:25 ET 才允许推送, 双季 cron 双挂时每季恰一响。
+  - 当日幂等: 已有 pushed 记录则不再推送, push_failed 允许下一挂重试。
   - 新鲜度守卫: 只推"今日 ET"的 bridge 文件; 文件不存在/非今日 → 跳过不推 (绝不推陈旧)。
+  - 跳过留痕: 窗外/缺文件/解析失败/已推送均写入 summary 台账, 不再静默。
   - 失败安全: 取价/推送异常都吞掉, 绝不抛错。
-运行: PYTHONPATH=. ./venv/bin/python scripts/da_bridge_dingtalk_push.py [--date YYYY-MM-DD] [--dry]
+运行: PYTHONPATH=. ./venv/bin/python scripts/da_bridge_dingtalk_push.py [--date YYYY-MM-DD] [--dry] [--force-window]
 """
 import argparse
 import fcntl
@@ -26,6 +29,8 @@ from app.utils.timezone import ET
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 DB_PATH = Path(__file__).resolve().parents[1] / "data" / "ftseek_us.db"
+PUSH_WINDOW_START_MIN = 8 * 60 + 50
+PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 26
 
 # 自含 dotenv 加载: FINNHUB_API_KEY / 钉钉 webhook 均在 .env.us, 保证 cron 下也能拿到
 try:
@@ -39,6 +44,16 @@ except Exception:
 
 def _today_et():
     return datetime.now(ET).strftime("%Y-%m-%d")
+
+
+def _now_et():
+    return datetime.now(ET)
+
+
+def _in_push_window(now=None):
+    now = now or _now_et()
+    minutes = now.hour * 60 + now.minute
+    return PUSH_WINDOW_START_MIN <= minutes < PUSH_WINDOW_END_EXCLUSIVE_MIN
 
 
 def _bridge_path(date):
@@ -79,13 +94,14 @@ def _instruction_summary(date, db_path=DB_PATH):
         return {"status": "db_error", "error": str(exc), "rows": []}
 
 
-def _append_summary_record(date, bridge, summary, status, path=None):
+def _append_summary_record(date, bridge, summary, status, path=None, reason=None):
     """推送口径留痕: bridge候选数与DB可交易数不得再混为一个数字。"""
     record_path = path or (DATA / "da_push_instruction_summary.jsonl")
     record = {
         "type": "da_push_instruction_summary",
         "date": date,
         "status": status,
+        "reason": reason,
         "bridge_candidate_count": len(bridge.get("candidates", []) or []),
         "db_instruction_count": summary.get("instruction_count"),
         "executable_count": summary.get("executable_count"),
@@ -100,6 +116,8 @@ def _append_summary_record(date, bridge, summary, status, path=None):
         ],
         "recorded_at": datetime.now(ET).isoformat(),
     }
+    if reason is None:
+        del record["reason"]
     record_path.parent.mkdir(parents=True, exist_ok=True)
     with record_path.open("a", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -108,6 +126,40 @@ def _append_summary_record(date, bridge, summary, status, path=None):
             handle.flush()
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _has_pushed_record(date, path=None):
+    record_path = path or (DATA / "da_push_instruction_summary.jsonl")
+    if not record_path.exists():
+        return False
+    bad_lines = 0
+    found = False
+    with record_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                bad_lines += 1
+                continue
+            if record.get("date") == date and record.get("status") == "pushed":
+                found = True
+                break
+    if bad_lines:
+        # 2026-10-09 复查棘轮清剿: 坏行计数留痕, 不得静默 (R5 模式)
+        print(f"  [warn] push 台账坏行 {bad_lines} 条已跳过", file=sys.stderr)
+    return found
+
+
+def _append_skip_record(date, reason, path=None):
+    summary = {
+        "status": "ok",
+        "instruction_count": None,
+        "executable_count": None,
+        "skipped_count": None,
+        "rows": [],
+    }
+    return _append_summary_record(
+        date, {}, summary, "skipped", path=path, reason=reason)
 
 
 def _finnhub_price(symbol):
@@ -306,22 +358,34 @@ def _build_message(date, bridge):
     return "\n".join(lines)
 
 
-def main(date=None, dry=False):
+def main(date=None, dry=False, force_window=False):
     date = date or _today_et()
-    path = _bridge_path(date)
+    now = _now_et()
+    if not force_window and not _in_push_window(now):
+        print(f"[skip] 当前 ET {now.strftime('%H:%M')} 在推送窗口 08:50-09:25 外")
+        _append_skip_record(date, "outside_window")
+        return
 
-    # 新鲜度守卫: 文件必须存在, 且其 trade_date 就是目标日 (绝不推陈旧文件)
+    path = _bridge_path(date)
     if not path.exists():
         print(f"[skip] bridge 文件不存在: {path.name} (A 可能尚未生成或非交易日)")
+        _append_skip_record(date, "bridge_missing")
         return
     try:
         bridge = json.loads(path.read_text())
     except Exception as e:
         print(f"[skip] bridge 文件解析失败: {e}")
+        _append_skip_record(date, "bridge_parse_failed")
         return
     td = bridge.get("trade_date")
     if td and td != date:
         print(f"[skip] bridge trade_date={td} ≠ 目标日 {date}, 视为陈旧, 不推")
+        _append_skip_record(date, "trade_date_mismatch")
+        return
+
+    if not dry and _has_pushed_record(date):
+        print(f"[skip] {date} 已有 pushed 记录, 当日不重复推送")
+        _append_skip_record(date, "already_pushed")
         return
 
     msg = _build_message(date, bridge)
@@ -345,5 +409,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="盘前 DA bridge 钉钉摘要 (只读 bridge 文件)")
     ap.add_argument("--date", help="bridge 日期 YYYY-MM-DD (默认今日 ET)")
     ap.add_argument("--dry", action="store_true", help="只打印不推送")
+    ap.add_argument("--force-window", action="store_true", help="跳过 ET 窗口守卫")
     a = ap.parse_args()
-    main(date=a.date, dry=a.dry)
+    main(date=a.date, dry=a.dry, force_window=a.force_window)

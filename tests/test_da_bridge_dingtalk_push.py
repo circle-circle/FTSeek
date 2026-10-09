@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 
@@ -110,3 +111,75 @@ def test_summary_record_is_persisted(tmp_path):
     assert record["executable_count"] == 2
     assert record["skipped_count"] == 3
     assert len(record["symbols"]) == 5
+
+
+def test_push_window_boundaries():
+    def at(hour, minute):
+        return PUSH.ET.localize(datetime(2026, 10, 7, hour, minute))
+
+    assert not PUSH._in_push_window(at(8, 49))
+    assert PUSH._in_push_window(at(8, 50))
+    assert PUSH._in_push_window(at(9, 25))
+    assert not PUSH._in_push_window(at(9, 26))
+
+
+def test_outside_window_records_skip_and_does_not_push(tmp_path, monkeypatch):
+    monkeypatch.setattr(PUSH, "DATA", tmp_path)
+    (tmp_path / "opportunity_scan_2026-10-07.json").write_text(
+        json.dumps(_bridge()), encoding="utf-8")
+    monkeypatch.setattr(
+        PUSH, "_now_et",
+        lambda: PUSH.ET.localize(datetime(2026, 10, 7, 7, 55)))
+    monkeypatch.setattr(PUSH, "_build_message", lambda date, bridge: "message")
+    monkeypatch.setattr(PUSH, "_instruction_summary", lambda date: {"status": "ok"})
+    pushes = []
+    monkeypatch.setattr("app.push.push_text_safe", lambda *args, **kwargs: pushes.append(args))
+
+    PUSH.main(date="2026-10-07")
+
+    assert pushes == []
+    record = json.loads(
+        (tmp_path / "da_push_instruction_summary.jsonl").read_text(encoding="utf-8"))
+    assert record["status"] == "skipped"
+    assert record["reason"] == "outside_window"
+
+
+def test_missing_bridge_records_skip(tmp_path, monkeypatch):
+    monkeypatch.setattr(PUSH, "DATA", tmp_path)
+    monkeypatch.setattr(
+        PUSH, "_now_et",
+        lambda: PUSH.ET.localize(datetime(2026, 10, 7, 8, 55)))
+
+    PUSH.main(date="2026-10-07")
+
+    record = json.loads(
+        (tmp_path / "da_push_instruction_summary.jsonl").read_text(encoding="utf-8"))
+    assert record["status"] == "skipped"
+    assert record["reason"] == "bridge_missing"
+
+
+def test_successful_push_is_once_per_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(PUSH, "DATA", tmp_path)
+    (tmp_path / "opportunity_scan_2026-10-07.json").write_text(
+        json.dumps(_bridge()), encoding="utf-8")
+    monkeypatch.setattr(
+        PUSH, "_now_et",
+        lambda: PUSH.ET.localize(datetime(2026, 10, 7, 8, 55)))
+    monkeypatch.setattr(PUSH, "_build_message", lambda date, bridge: "message")
+    monkeypatch.setattr(
+        PUSH, "_instruction_summary",
+        lambda date: {"status": "ok", "instruction_count": 5})
+    pushes = []
+    monkeypatch.setattr("app.push.push_text_safe", lambda *args, **kwargs: pushes.append(args))
+
+    PUSH.main(date="2026-10-07")
+    PUSH.main(date="2026-10-07")
+
+    assert len(pushes) == 1
+    records = [
+        json.loads(line)
+        for line in
+        (tmp_path / "da_push_instruction_summary.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["status"] for record in records] == ["pushed", "skipped"]
+    assert records[1]["reason"] == "already_pushed"

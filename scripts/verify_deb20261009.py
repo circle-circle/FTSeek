@@ -59,6 +59,7 @@ def verify_e_table(src: str) -> tuple[int, int, list[str]]:
     rows = parse_e_table(src)
     probe_out = None
     ok, fails = 0, []
+    p01_applied = "## 15. P0-1 执行记录" in src
     for r in rows:
         if PROBE_REL in r["cmd"]:
             if probe_out is None:  # 探针只跑一次
@@ -66,6 +67,10 @@ def verify_e_table(src: str) -> tuple[int, int, list[str]]:
             out = probe_out
         else:
             out = _run(r["cmd"] + " 2>&1")
+        if p01_applied and r["id"] == "E4":
+            r["expect"] = r["expect"].replace("122", "123").replace("104", "105")
+        if p01_applied and r["id"] == "E7":
+            r["expect"] = "2"
         # 期望列可含多个片段 (以 ` 与 ` 连接, 如 E4), 全部命中才算通过
         frags = [f.strip().strip("`") for f in re.split(r"`?\s+与\s+`?", r["expect"]) if f.strip()]
         missing = [f for f in frags if f and f not in out]
@@ -88,6 +93,7 @@ def verify_doc_claims(src: str, probe_out: str) -> list[str]:
     """
     problems = []
     sec13 = src[src.index("## 13. 第二 Agent 独立复查"):]
+    p01_delta = 1 if "## 15. P0-1 执行记录" in src else 0
 
     # L1 真边界差异数
     m = re.search(r"真边界差异 \| \*\*(\d+) 处\*\*", sec13)
@@ -117,7 +123,7 @@ def verify_doc_claims(src: str, probe_out: str) -> list[str]:
         if m:
             key = "crontab 有效行数 = " if "有效" in label else "周日不触发的 cron 行数 = "
             pm = re.search(re.escape(key) + r"(\d+)", probe_out)
-            if pm and int(m.group(1)) != int(pm.group(1)):
+            if pm and int(pm.group(1)) != int(m.group(1)) + p01_delta:
                 problems.append(f"L3: 正文『{label} {m.group(1)}』≠ 探针实测 {pm.group(1)}")
     return problems
 

@@ -1,7 +1,7 @@
 ---
 title: 统一市场时段与盘前/盘中/盘后/夜盘扫描调度设计
 date: 2026-10-09
-status: 待决策（仅设计落档，未改代码/配置/cron；多 Agent 只读复查意见已纳入 · §13 Hermes 独立复查已推翻 §1.3 立项依据，建议改采 B′ 先减法后新件）
+status: 整体待决策；P0-1 da_bridge 冬令时热修已执行（§15），未落地 SessionResolver/夜盘/交易行为；多 Agent 只读复查意见已纳入 · §13 Hermes 独立复查已推翻 §1.3 立项依据，建议改采 B′ 先减法后新件 · §14 主线程复核：E 表全中，新增 N1–N5 实证，P0-1 修复配方更正为三件套，裁决建议见 14.3
 trigger: 用户提出结合 2026-11-01 冬令时切换与 2026-12-06 起美股核心交易所夜盘，评估盘前、盘中、盘后扫描是否可通过现有服务机制融合并按场景快速配置
 ---
 
@@ -560,3 +560,80 @@ scan_scenes:
 4. **awk 解析 crontab 丢行**：我用 awk 提取字段时输出被截断，一度误判"da-feed 无双挂"，进而怀疑 §7.2 主链表有误。改用原始行 `cut -c1-125` 复核后确认**提案是对的**（`00 20` + `00 21` 双挂确实存在）。这条差点让我把一个正确结论报成错误。
 
 > 上述 4 条全部是"我的测量错"而非"提案错"。提案 §7.2 运维节的每一条声称，在我正确测量后**全部成立**。
+
+## 14. 第三轮独立复核与裁决建议（主线程 · 2026-10-09 · 只读实测复核）
+
+> 复核人：主线程（Claude）。方法：对 §13 E 表逐条重跑 + 对 §13.5 修复方案做前向验证（"不轻信复查者自身结论"同样适用于复查者）。
+> 本节**只追加**，§1–§13 正文逐字未动。
+
+### 14.1 §13 E 表重跑结果（全部命中）
+
+| 重跑项 | 读数 | 判定 |
+|---|---|---|
+| 探针全量重跑（E1–E6） | 真边界差异 0 处；死口径 2 处；SSOT = get_market_phase（55 调用点 / 29 文件）；crontab 122 行、周日漏触发 104 行；2026-12-06 = 周日；P0-2 重叠 = ET 21:00–23:00 | ✅ 与 E 表一致 |
+| E7 da_bridge 单挂 | `55 20 * * 1-5`，全表恰 1 行 | ✅ |
+| E8 freeze_sentinel 相位门 | `get_market_phase() == MarketPhase.TRADING` 恰 1 处 | ✅ |
+| E9 trade_session_policy 全仓 grep | 0 命中（含 ops/ tests/） | ✅ |
+| E10 timezone.py:211 闭区间 | `return 16.0 <= hour_min <= 20.0` 原文命中 | ✅ |
+
+§13 结论（含 13.7 四条自曝）经独立重跑后**全部认可**。
+
+### 14.2 新增实证点（§13 未覆盖，均只读实测）
+
+| # | 发现 | 证据 | 影响 |
+|---|---|---|---|
+| N1 | `get_market_phase()` **无参**（`def get_market_phase() -> MarketPhase`，内部 `datetime.now(ET)`） | scheduler_triggers.py:65-66 | §13.7-1 假阳的根源坐实。B′ 落地第一步必须是 clock 注入重构（无参默认 = `now(ET)` ⇒ 55 个调用点零迁移），契约测试先行 |
+| N2 | `MarketPhase.AFTER_HOURS` docstring 已占中文名"**盘后夜盘** (16:00-20:00 ET)" | scheduler_triggers.py:61 | 12/6 真夜盘进来后"夜盘"一词两义，日志/告警/文档必混。建议：新 session 中文固定为"**隔夜盘**"，枚举 `overnight_trading` 不变；profile 落地时同步把 AFTER_HOURS 注释改为"盘后" |
+| N3 | DEB-20260918 Phase 1 复选框 `- [ ] 新增 trade_session_policy` 至今未勾 | DEB-20260918:387-389 | §13.5"双账本"风险坐实：该 SSOT 设计稿自立项起 3 周未动。本 DEB 裁决时必须显式二选一（本 DEB 承接同槽位，或在 20260918 标注接管），否则两份"会话策略 SSOT"设计稿并存 |
+| N4 | da_bridge 有新鲜度守卫但**无 push-once 幂等** | da_bridge_dingtalk_push.py:313-340：文件存在且当日 ⇒ 每次调用都推；`_append_summary_record(...,"pushed")`（:338）只写不读 | §13.5-4"加 21:55 CST 第二挂"配方**不完整**：直接双挂 ⇒ 夏令时 08:55/09:55 ET 两发都过新鲜度守卫 ⇒ 每日双推钉钉（新故障）。正确配方 = **三件套**：① 脚本内 ET 窗口守卫（候选 08:50–09:25 ET）② push-once 幂等（推前查当日 summary 记录）③ `55 21 * * 1-5` 第二挂 |
+| N5 | da_bridge skip 路径只 `print` 无任何告警；全仓 grep 无任何 watchdog 监控该推送 | skip 分支仅 print（:315-324）；grep `da_bridge` 命中全为下游数据消费方（playbook 归因 playbook_service.py:527、仪表盘徽标 battle_plan.html:421），无一监控推送本身 | P0-1 真实爆炸半径比 §13.2 更大：**11-01 起整个冬令时（~4.5 个月）每个交易日盘前钉钉摘要静默缺失**，唯一信号是"没人收到"。P0-1 从"排序错位"升级为"静默失效"；修复紧迫性不变（今天距 11-01 仅 23 天），但验收必须含"skip 可观测"（至少落一条 expected-but-skipped 记录） |
+
+### 14.3 裁决建议（供用户裁决，不预设结论）
+
+1. **采纳 B′（先减法后新件）**，但补一条 §13 未写明的边界：**降级的是实现位置，不是返回契约**。§6.1 返回字段（尤其 `trade_date` / `profile_version`——§6.4 dispatcher 的 `session_id+scene+job_id` 幂等键依赖它）不能随 resolver 降级一起砍。B′ 落地形态 = 在既有 `get_market_phase` 上扩 `overnight_trading` 分支 + clock 注入 + profile 开关；§6.3 兼容映射表随之从"保险"降级为"不需要"（没有第六个口径，就无需兼容它）。
+2. **P0-1 立即单独成批修复**，不等本 DEB 整体裁决（23 天窗口，成本极低）。三件套缺一不可：只加第二挂 → 夏季双推；只加守卫不加第二挂 → 冬季单挂 07:55 ET 在窗外永远被拒 ⇒ 断链照旧。回滚 = 删第二挂 + 关守卫开关。
+3. **§11 待裁项按 §13.3 重排**（裁决时以本表替代 §11 阅读）：
+   - 项 1（方案 B）→ 改裁"方案 B′（§13.5 + 本节 14.3-1 边界）"；
+   - 项 3（11-01 前 DST P0 清单）→ **只含 P0-1**；P0-2 真截止日 2026-12-06，归 Phase 4 前置；P0-3/P0-4 归夜盘专项；
+   - 新增项 5：`trade_session_policy` 承接关系（N3：承接 DEB-20260918 同槽位，或在 20260918 显式标注本 DEB 接管）；
+   - 新增项 6：批准删除 `timezone.is_pre_market` / `is_after_hours` 两处死码（零消费方，行为逐字不变，顺带消灭 20:00 闭区间自相矛盾）。
+4. **P0-4 修复范围收窄**：104 行周日漏触发 ≠ 104 行都要补。绝大多数 cron 任务在周日夜盘**本无业务义务**（盘前 scan/confirm/score 均锚定常规交易日）。正确顺序：先列"夜盘/周日有业务义务"任务清单（observation 探针、心跳、监控类，预计 <10 项），仅清单内任务进 dispatcher 或补 dow ⇒ 进一步支持声明式 dispatcher 而非逐行补丁。
+5. **实现注意点（供 Phase 1 承接者）**：现行 `get_market_phase` 第一道分支是 weekend/holiday ⇒ 周日 21:00 永远先落 `WEEKEND`。夜盘 profile 的 `overnight_trading` 判定必须插入 weekend 判定**之前**（或与日历判定合并改写），否则跨午夜首夜死锁在 WEEKEND。这是 §6.2 跨午夜语义落到具体代码的第一个分叉口。
+
+### 14.4 与 §13 的分歧登记
+
+- **无实质分歧**。
+- 一处补强（非分歧）：§13.5-4 的 P0-1 修复配方缺 push-once（N4）。按原配方直接落地会引入"夏令时每日双推"新故障 ⇒ 修复包必须含 N4 三件套，否则不如不修。
+
+## 15. P0-1 执行记录（2026-10-09 · 用户裁“按建议执行”）
+
+> 范围：只修 `da_bridge` 冬令时断链；不落地 SessionResolver、不开启夜盘、不改 Playbook、不改交易行为。
+
+### 15.1 已落地
+
+1. `scripts/da_bridge_dingtalk_push.py`
+   - 新增 ET 推送窗 `08:50–09:25`（09:25 含边界）。
+   - 新增当日 `pushed` 幂等读取；`push_failed` 不拦截下一挂重试。
+   - 新增 skip 台账：`outside_window`、`bridge_missing`、`bridge_parse_failed`、`trade_date_mismatch`、`already_pushed`。
+   - 新增 `--force-window` 仅供人工补跑/诊断；生产 cron 不使用。
+2. `tests/test_da_bridge_dingtalk_push.py`
+   - 新增窗口边界、窗外 skip 留痕、缺文件 skip 留痕、当日成功只推一次 4 组契约。
+3. crontab
+   - 保留夏令时触发：`55 20 * * 1-5`。
+   - 新增冬令时触发：`55 21 * * 1-5`。
+   - 备份：`data/crontab.backup.20261009_da_bridge_p0.txt`。
+
+### 15.2 回滚
+
+1. 删除 crontab 中 `55 21 * * 1-5` 的 `da_bridge_dingtalk_push.py` 行，或直接从备份恢复。
+2. Revert `scripts/da_bridge_dingtalk_push.py` 与 `tests/test_da_bridge_dingtalk_push.py`。
+3. 本批为 cron 脚本变更，`ftseek-us` 服务不需要重启；下一 cron tick 直接使用新脚本。
+
+### 15.3 验证
+
+- [x] `PYTHONPATH=. venv/bin/python -m pytest tests/test_da_bridge_dingtalk_push.py -q`
+- [x] `PYTHONPATH=. venv/bin/python -m pytest tests/test_da_bridge_dingtalk_push.py tests/test_r8_timezone_contracts.py -q`
+- [x] `PYTHONPATH=. venv/bin/python -m py_compile scripts/da_bridge_dingtalk_push.py`
+- [x] `git diff --check`
+- [x] crontab diff：仅新增一行 `55 21 * * 1-5 ... da_bridge_dingtalk_push.py`
+- [x] `scripts/verify_deb20261009.py` 已识别 §15 后当前态：crontab 有效行 `123`、周日漏触发 `105`、`da_bridge` 行数 `2`
