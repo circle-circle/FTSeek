@@ -270,6 +270,47 @@ def generate_cumulative_stats() -> Dict:
     return stats
 
 
+def check_scan_executed(date_str: str) -> Dict:
+    """核实 InsiderScan 当日是否真的执行 (区分"扫了没信号" vs "扫描没跑")
+
+    背景 (2026-10-09 误报实锤): 旧实现 0 信号一律输出"建议检查 scheduler",
+    而当日扫描 18:00 正常执行完成 88 秒 — 0 信号本是常态 (集群买入基率约 1-3 次/月)。
+    此处从当前 + 全部轮转日志 (含 .gz) 找当日 [InsiderScan] 开始扫描/扫描完成 行。
+    日志时间戳为服务器本地 (CST), 与 date_str (datetime.now 同日) 同轴。
+    """
+    import gzip
+    started_pat = re.compile(r'(\d{4}-\d{2}-\d{2}) .*?\[InsiderScan\] 开始扫描 (\d+) 只标的')
+    done_pat = re.compile(r'(\d{4}-\d{2}-\d{2}) .*?\[InsiderScan\] 扫描完成')
+    result = {'started': False, 'completed': False, 'symbols': 0}
+    files = [LOG_FILE] + sorted(LOG_FILE.parent.glob("ftseek_us.log-*"))
+    for lf in files:
+        if not lf.exists():
+            continue
+        try:
+            if lf.suffix == '.gz':
+                f = gzip.open(lf, 'rt', encoding='utf-8', errors='replace')
+            else:
+                f = open(lf, 'r', encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        try:
+            for line in f:
+                if '[InsiderScan]' not in line:
+                    continue
+                m = started_pat.search(line)
+                if m:
+                    if m.group(1) == date_str:
+                        result['started'] = True
+                        result['symbols'] = int(m.group(2))
+                    continue
+                m2 = done_pat.search(line)
+                if m2 and m2.group(1) == date_str:
+                    result['completed'] = True
+        finally:
+            f.close()
+    return result
+
+
 def print_summary(report: Dict):
     """打印报告摘要"""
     stats = report['stats']
@@ -278,8 +319,16 @@ def print_summary(report: Dict):
     print(f"{'='*60}")
     
     if stats['total_signals'] == 0:
-        print("\n⚠ No signals generated today")
-        print("建议：检查 scheduler 是否正常运行，或等待下一个交易日")
+        scan = check_scan_executed(report['date'])
+        if scan['started'] and scan['completed']:
+            print(f"\n✓ 扫描已正常执行 ({scan['symbols']} 只标的, 已完成), 未发现集群买入信号")
+            print("0 信号 = 正常 (集群买入基率约 1-3 次/月), 无需检查 scheduler")
+        elif scan['started']:
+            print("\n⚠ 扫描已开始但未见「扫描完成」— 可能被中断")
+            print("建议：检查 logs/ftseek_us.log 中 InsiderScan 线程状态及服务重启记录")
+        else:
+            print("\n⚠ 今日扫描未执行 (日志无当日「开始扫描」记录)")
+            print("建议：检查 scheduler / InsiderScan 线程 (ET 06:00-10:00 扫描窗口) 是否正常运行")
     else:
         print(f"\n✓ Total signals: {stats['total_signals']}")
         print(f"✓ Unique symbols: {stats['symbol_count']} ({', '.join(stats['symbols'][:5])}{'...' if len(stats['symbols']) > 5 else ''})")
