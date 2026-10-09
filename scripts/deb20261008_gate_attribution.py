@@ -44,7 +44,10 @@ def section(t: str) -> None:
     print("=" * 106)
 
 
-_G5_LOADED_AT = datetime(2026, 10, 8, 23, 10, tzinfo=CST)
+# DEB §4.3 锚点: G5 (commit 10adea0c8, CST 22:58:35) 随 2026-10-07 23:10:46 CST
+# 重启加载。2026-10-09 复查修复: 原值误写 10-08 23:10 (无对应重启), 会把
+# 10-08 03:47–03:59 的 5×68 轮次与 10-08 21:36 实际成交轮次全部滤掉 ⇒ E10 失真。
+_G5_LOADED_AT = datetime(2026, 10, 7, 23, 10, 46, tzinfo=CST)
 
 
 def _after_g5_load(line: str) -> bool:
@@ -53,6 +56,24 @@ def _after_g5_load(line: str) -> bool:
     except ValueError:
         return False
     return timestamp.replace(tzinfo=CST) >= _G5_LOADED_AT
+
+
+def _iter_service_log_lines():
+    """当前 + 已轮转服务日志 (含 .gz), 保证 E10 证据不随 logrotate 丢失。"""
+    import gzip
+    for path in sorted((ROOT / "logs").glob("ftseek_us.log*")):
+        if not path.is_file():
+            continue
+        try:
+            if path.suffix == ".gz":
+                with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        yield line.rstrip("\n")
+            else:
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    yield line
+        except (OSError, EOFError) as read_err:
+            print(f"  ⚠️ 日志读取失败 {path.name}: {read_err}")
 
 
 def main() -> int:
@@ -150,30 +171,29 @@ def main() -> int:
     live_g5 = n5 > 0 or n5s > 0 or audit_enforced > 0
     print(f"  ⇒ {'G5 已有实弹记录' if live_g5 else 'G5 至今零实弹拦截 (仅有影子事件)'}")
     print("  归因更正: 今日 5→2 由 **G4 生成期偏斜门 + G6 行业集中度门** 造成 (文案为旧门措辞),")
-    print("           **不是** Codex 新增的 G5。G5 于 CST 23:10 随服务重启加载, 当时为盘中 (ET 11:10),")
-    print("           加载后执行机会以⑥日志过滤为准。")
+    print("           **不是** Codex 新增的 G5。G5 于 2026-10-07 CST 23:10:46 随服务重启加载")
+    print("           (当时 ET 11:10 盘中), 加载后执行机会以⑥日志过滤为准。")
 
     section("⑤ G5 加载时刻 vs 收盘时刻 (判「为何零拦截」是否合理)")
     import subprocess
     r = subprocess.run(["systemctl", "show", "ftseek-us", "-p", "ActiveEnterTimestamp"],
                        capture_output=True, text=True, timeout=60)
-    print(f"  服务启动: {r.stdout.strip()}")
+    print(f"  当前服务启动 (仅供参考, 后续重启会漂移, 非 G5 加载时刻): {r.stdout.strip()}")
     r2 = subprocess.run(["git", "log", "-1", "--format=%ad %h", "--date=format:%Y-%m-%d %H:%M:%S %z",
                          "10adea0c8"], capture_output=True, text=True, timeout=60, cwd=str(ROOT))
     print(f"  G5 提交:   {r2.stdout.strip()}")
-    print(f"  美股收盘 (EDT 10月) = ET 16:00 = CST 04:00(次日); G5 加载于 CST 23:10 = ET 11:10 (盘中)")
+    print(f"  美股收盘 (EDT 10月) = ET 16:00 = CST 04:00(次日); G5 加载于 {_G5_LOADED_AT:%Y-%m-%d %H:%M:%S} CST = ET 11:10 (盘中)")
     print("  ⚠️ 但 SIM 环境当日是否还有执行轮次需查 auto_execute 日志 — 见 ⑥")
 
     section("⑥ G5 加载后是否有执行轮次经过它 (若有轮次而零拦截 = 门未接线; 若无轮次 = 时机未到)")
-    log = ROOT / "logs/ftseek_us.log"
     hits = []
-    if log.exists():
-        for ln in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if _after_g5_load(ln) and (
-                "execute_instruction" in ln or "auto_execute" in ln
-                or "PORTFOLIO_GUARDRAIL" in ln or "组合guardrail" in ln):
-                hits.append(ln)
-    print(f"  G5 加载后 (CST 23:10 起) 执行路径日志命中 n={len(hits)}")
+    for ln in _iter_service_log_lines():
+        if _after_g5_load(ln) and (
+            "execute_instruction" in ln or "auto_execute" in ln
+            or "PORTFOLIO_GUARDRAIL" in ln or "组合guardrail" in ln):
+            hits.append(ln)
+    hits.sort(key=lambda ln: ln[:19])
+    print(f"  G5 加载后 ({_G5_LOADED_AT:%Y-%m-%d %H:%M:%S} CST 起, 含轮转日志) 执行路径日志命中 n={len(hits)}")
     for h in hits[-8:]:
         print(f"    {h[:170]}")
     if hits:

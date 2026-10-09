@@ -2,9 +2,9 @@
 
 ## 状态
 
-- [x] 进行中（提案待裁）
+- [ ] 进行中（提案待裁）
 - [ ] 待决策
-- [ ] 已决策
+- [x] 已决策（§13：F1 摘 / F2 纯记录 / F3 保留 G1 / F4 做 / F5 做 / F6 另案）
 - [ ] 已验证
 - [ ] 已关闭
 
@@ -12,14 +12,14 @@
 
 | 项 | 值 |
 |---|---|
-| 类型 | 辩论分析提案（闸普查 + 偏向归因 + 摘闸方案待裁；**本批零交易行为变更**） |
+| 类型 | 已裁决落档（闸普查 + 偏向归因 + 摘闸落地 + 三轮复查修复） |
 | 立案日 | 2026-10-08（问题起于 2026-10-07 盘前推送复查） |
 | 提出者 | Hermes Agent（用户令「请确认今日 DA 产出是否正常 / UE 融合是否合理」→「多空不要人为拦截限定」→「请落 deb 文档」） |
-| 待谁裁决 | **用户**（frontier F1–F5，见 §10） |
-| 目标读者 | ①裁决者=用户（读 §1 结论 + §10 待裁 + §11 自曝）②复查者=第二 agent（读 §5 E 表，全部可独立复跑）③执行者（读 §8，仅在裁决后） |
-| 交易行为变更 | **本提案落地部分零变更**。3 个只读普查脚本入库；F1–F5 全部待裁 |
-| 已落码 | 3 个复算脚本入库 `scripts/deb20261008_*.py`（rc=0，无 scratch 依赖，任意 cwd + 无 PYTHONPATH 冷跑）；生产代码零改动 |
-| 时效性 | 🔴 **G5（执行前组合偏斜门）已随服务 CST 23:10 重启实弹生效**，首次实际拦截 = 下一交易日开盘；F1 若采纳须在开盘前落地 |
+| 待谁裁决 | 已裁决（见 §13 状态行） |
+| 目标读者 | ①裁决者=用户（§1 + §10 + §13）②复查者=第二 agent（§5 E 表 + §14–§16）③执行者（§8 为历史步骤，已执行） |
+| 交易行为变更 | 已生效：F1 摘 G4/G5/G6、F2 G2 纯记录、F5 推送口径；G1 保留。§16 起零新增 |
+| 已落码 | 5 个附录脚本 + `sector_vision` 影子 + skill v0.95 + F4 回填（四列 78/78） |
+| 时效性 | E13 已钉 as-of 2026-10-07（§16.2）；`sector_vision` 实址随 80d8817ba 拆分迁移至 `pipeline_parts/portfolio_guardrails.py:282` |
 
 ---
 
@@ -536,3 +536,63 @@ PYTHONPATH=. ./venv/bin/python -m pytest \
 
 部署状态：`pipeline.py` 代码需下一合法重启窗口生效；F2 仓外 skill 由下次 DA
 进程读取即生效；F4/E13/文档即时生效。本轮未重启。
+
+---
+
+## 16. 复核修复批（Codex 复查 §14/§15 增补，2026-10-09 用户令「需要」）
+
+### 16.1 复核结论
+
+- §14 六项发现全部实证成立、可复现：按日聚类数值逐位复算一致（D0 `+0.638%/
+  t=1.26/MDE≈0.99pp`，T+1 旧读数 `+0.443%/t=0.48`）；四列口径 78/78、78/78、
+  75/78、75/78 属实；G6 影子缺失、E13 白名单、F2 扣分、F4 `--dry` 污染四项
+  均如 §14.2 所述，且 §15 修复全部落地可验（专项 38 passed + gate_attribution
+  1 passed；F4 dry 前后 provenance hash 不变；F2 无扣分无降档；`sector_vision`
+  生产已有首条真实记录）。
+- 但发现 3 个须修问题：① `gate_attribution` 的 G5 加载时刻误写 10-08 23:10
+  （实际 10-07 23:10:46 CST），E10 证据被滤掉；② E13 只有下界无 as-of 上界，
+  10-08（摘闸后首日）进窗即把 C1/C2/C3 刷成 3 红——活窗口噪声而非历史 claim 错；
+  ③ 状态头停留在「提案待裁」，与 §13 已裁决落地不符。
+
+### 16.2 修复项
+
+| 问题 | 修复 | 锚点 |
+|---|---|---|
+| G5 加载时刻 off-by-one | `_G5_LOADED_AT` 改为 2026-10-07 23:10:46 CST；⑥ 改读当前+轮转日志（含 .gz）并按时间排序，修复前命中 11 → 修复后 233 | `scripts/deb20261008_gate_attribution.py:50` |
+| E13 活窗口噪声 | C1–C7 全部钉 `date<=2026-10-07`（裁决时点）：新交易日不再误报，历史行被改写仍能抓；实测 7/7 绿 rc=0 | `scripts/deb20261008_verify_claims.py:39` |
+| E10 证据随 logrotate 丢失 | ⑥ 覆盖 `logs/ftseek_us.log*` 全量（含 gz）；同时披露 §4.3 的「5 次 auto_execute」本身是当时日志可见窗口的产物——全量重放为 96 轮（10-07 23:11→10-08 03:59 CST），结论不变：0 条可执行指令到达 G5 | `scripts/deb20261008_gate_attribution.py:61` |
+| 状态头过期 | 勾「已决策」并把状态头改写为裁决后实况（F1/F2/F5 已生效、G1 保留、§16 起零新增）；§4.3/E10 原文保留为历史轮次不改写 | 本文 §状态 |
+| T+1 3 行待补 | 10-08 收盘后实跑非 dry 回填：PENG `+6.30%` / NOK `−4.02%` / MRVL `−2.36%`（open 锚）；四列 78/78/78/78，provenance 78 条 | `scripts/deb20261008_blocked_outcome_backfill.py:3` |
+| §15.1 锚点漂移 | pipeline 拆分（80d8817ba）后 `sector_vision` 实址为 `portfolio_guardrails.py:282`；§15.1 原锚为当时实址，不改写 | `app/playbook/pipeline_parts/portfolio_guardrails.py:282` |
+
+### 16.3 T+1 补齐后聚类表重算（open 锚）
+
+| 口径 | pooled n | 聚类天数 | pooled 均值 | 日均均值 | 日均 SE | t | 95% MDE |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 当日（不变） | 78 | 19 | +0.919% | +0.638% | 0.506pp | 1.26 | ~0.99pp |
+| T+1（§14.2 旧读数，n=75） | 75 | 18 | +1.359% | +0.443% | 0.928pp | 0.48 | ~1.82pp |
+| **T+1（补齐后，n=78）** | **78** | **19** | **+1.306%** | **+0.418%** | **0.878pp** | **0.48** | **~1.72pp** |
+
+结论不变：T+1 仍与 0 不可区分（t=0.48），「闸净拦盈利单」依旧不构成统计
+背书；新补 3 行两负一正，pooled 由 +1.359% 回落至 +1.306%，胜率 60%→59%。
+
+### 16.4 验证
+
+```bash
+./venv/bin/python scripts/deb20261008_verify_claims.py
+./venv/bin/python scripts/deb20261008_gate_attribution.py
+./venv/bin/python scripts/deb20261008_blocked_outcome_backfill.py
+PYTHONPATH=. ./venv/bin/python -m pytest tests/scripts/test_deb20261008_gate_attribution.py -q
+PYTHONPATH=. ./venv/bin/python -m pytest \
+  tests/test_skew_gate_vision_shadow.py \
+  tests/test_deb20261008_blocked_backfill.py \
+  tests/test_direction_skew_guardrail.py \
+  tests/test_portfolio_execution_guardrail.py -q
+./venv/bin/python -m py_compile scripts/deb20261008_gate_attribution.py \
+  scripts/deb20261008_verify_claims.py scripts/deb20261008_blocked_outcome_backfill.py
+```
+
+实测：E13 **7/7 + 结构 0 问题 rc=0**；gate_attribution ⑥ 命中 11→**233**（10-07
+17 条 / 10-08 137 条 / 10-09 79 条，含 96 轮 68 指令批）；F4 四列 **78/78/78/78**；
+专项 **38 passed** + gate_attribution **1 passed**；py_compile 全过。生产服务
+active（10-09 12:47 CST 重启后零 ERROR）；本批零生产代码改动，无需重启。

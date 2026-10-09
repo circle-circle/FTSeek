@@ -16,6 +16,10 @@
   C7 空头清零日天数         正文「= N 天」
 
 只读。任意 cwd + 无 PYTHONPATH 可冷跑。退出码非 0 = 有不一致 (可作 CI 守卫)。
+
+2026-10-09 复查修复: C1–C7 全部钉 as-of 上界 date<=2026-10-07 (本 DEB 裁决时点)。
+原版只有下界, 10-08 (摘闸后首日) 进窗即把 C1/C2/C3 刷成 3 红 — 那是活窗口噪声,
+不是历史 claim 错。钉上界后: 新交易日不再误报, 历史行被改写仍能抓 (漂移检测保留)。
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ DEB = ROOT / "docs/debates/DEB-20261008-direction-gates-long-short-bias.md"
 _NEEDLES = ("hermes/cache/" + "scratch", '"' + "/" + "tmp/", "'" + "/" + "tmp/")
 SINCE = "2026-09-17"
 DAY = "2026-10-07"
+UNTIL = "2026-10-07"
 
 
 def _ro(p: Path) -> sqlite3.Connection:
@@ -79,7 +84,8 @@ def main() -> int:
         except Exception:
             n_bad_gate += 1  # 2026-10-08 棘轮清剿: 坏行计数留痕 (原为静默 continue)
             continue
-        if not isinstance(d, dict) or str(d.get("trade_date") or "") < SINCE:
+        day = str(d.get("trade_date") or "") if isinstance(d, dict) else ""
+        if day < SINCE or day > UNTIL:
             continue
         dirn = str(d.get("direction") or "")
         dec = str(d.get("decision") or "")
@@ -96,17 +102,17 @@ def main() -> int:
     if n_bad_gate:
         print(f"  [warn] gate jsonl 坏行跳过 {n_bad_gate} 条", file=sys.stderr)
 
-    fin_l = conn.execute("""SELECT COUNT(*) FROM playbook_instructions WHERE date>=?
+    fin_l = conn.execute("""SELECT COUNT(*) FROM playbook_instructions WHERE date>=? AND date<=?
                             AND direction='BUY' AND (skip_reason IS NULL OR skip_reason='')""",
-                         (SINCE,)).fetchone()[0]
-    fin_s = conn.execute("""SELECT COUNT(*) FROM playbook_instructions WHERE date>=?
+                         (SINCE, UNTIL)).fetchone()[0]
+    fin_s = conn.execute("""SELECT COUNT(*) FROM playbook_instructions WHERE date>=? AND date<=?
                             AND direction='SELL_SHORT' AND (skip_reason IS NULL OR skip_reason='')""",
-                         (SINCE,)).fetchone()[0]
+                         (SINCE, UNTIL)).fetchone()[0]
     p3 = 100.0 * fin_l / (fin_l + fin_s) if (fin_l + fin_s) else 0.0
 
     ue_l = ue_s = 0
-    for r in conn.execute("""SELECT direction FROM playbook_instructions WHERE date>=?
-                             AND raw_instruction_json LIKE '%ue_candidate%'""", (SINCE,)):
+    for r in conn.execute("""SELECT direction FROM playbook_instructions WHERE date>=? AND date<=?
+                             AND raw_instruction_json LIKE '%ue_candidate%'""", (SINCE, UNTIL)):
         if r["direction"] == "BUY":
             ue_l += 1
         elif r["direction"] == "SELL_SHORT":
@@ -115,7 +121,7 @@ def main() -> int:
 
     miss_s = 0
     for r in conn.execute("""SELECT direction, skip_reason, decision_id FROM playbook_instructions
-                             WHERE date>=date(?,'-14 day')""", (DAY,)):
+                             WHERE date>=date(?,'-14 day') AND date<=?""", (DAY, UNTIL)):
         did = str(r["decision_id"] or "")
         if did.startswith("DA-") or r["skip_reason"]:
             continue
@@ -125,11 +131,12 @@ def main() -> int:
     CUT = ("skip_reason LIKE '%方向偏斜%' OR skip_reason LIKE '%sector%' "
            "OR skip_reason LIKE '%行业集中度%' OR skip_reason LIKE '%组合方向偏斜%'")
     q = conn.execute(f"""SELECT COUNT(*) n, SUM(fwd_return_intraday IS NOT NULL) fi
-                         FROM playbook_instructions WHERE date>=? AND ({CUT})""", (SINCE,)).fetchone()
+                         FROM playbook_instructions WHERE date>=? AND date<=? AND ({CUT})""",
+                     (SINCE, UNTIL)).fetchone()
     q2 = conn.execute("""SELECT COUNT(*) n, SUM(fwd_return_intraday IS NOT NULL) fi
-                         FROM playbook_instructions WHERE date>=?
+                         FROM playbook_instructions WHERE date>=? AND date<=?
                          AND direction IN ('BUY','SELL_SHORT')
-                         AND (skip_reason IS NULL OR skip_reason='')""", (SINCE,)).fetchone()
+                         AND (skip_reason IS NULL OR skip_reason='')""", (SINCE, UNTIL)).fetchone()
     cut_pct = 100.0 * (q["fi"] or 0) / q["n"] if q["n"] else 0.0
     ctrl_pct = 100.0 * (q2["fi"] or 0) / q2["n"] if q2["n"] else 0.0
 
